@@ -89,6 +89,7 @@ if(type=='standt') continuoustime<-FALSE
   }
   out<-list(parameters=ctspec,n.latent=n.latent,n.manifest=n.manifest,n.TIpred=n.TIpred,n.TDpred=n.TDpred,
     latentNames=latentNames,manifestNames=manifestNames,TIpredNames=TIpredNames,TDpredNames=TDpredNames,subjectIDname='id',
+    timeName='time',
     continuoustime=continuoustime)
   class(out)<-'ctsemStanModel'
  return(out)
