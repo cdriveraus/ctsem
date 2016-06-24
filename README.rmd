@@ -2,12 +2,9 @@
 title: "ctsem 2.0 introduction"
 author: "Charles Driver"
 date: "24 June 2016"
-output:
-  md_document:
-    variant: markdown_github
+output: html_document
 ---
 
-<!-- README.md is generated from README.Rmd. Please edit that file -->
 
 ```{setup, include = FALSE, cache = FALSE, echo = FALSE}
 library('ctsem')
