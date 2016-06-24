@@ -1,0 +1,23 @@
+citHeader("To cite package 'ctsem' in publications use:")
+#citFooter(paste("BibTeX entries for LaTeX users are obtained by:\n\n",
+#  "toBibtex(citation('ctsem'))\n\n"))
+
+#personlist<-c(person("Manuel", "Voelkle", role = c("aut","cph"), comment = "Development of continuous time model specification within OpenMx, advisor for further development"),person("Han", "Oud", role = c("aut","cph"), comment = "Development of continuous time model specification within OpenMx"),person("Charles", "Driver", role = c("aut","cre","cph"), comment = "Further development of continuous time model specification within OpenMx, package development, documentation and maintenance",email="driver@mpib-berlin.mpg.de"))
+     
+#desc <- packageDescription("ctsem")
+#year <- substring(desc$Date, 1, 4)
+#revision <- sub("\\..?$", "", sub("-.*", "", desc$Version))
+#vers <- paste("R package version", revision)
+#authors <- eval(parse(text=desc[["Authors@R"]]))
+     
+citEntry(entry="article",
+	title = paste("Continuous time structural equation modelling with R package ctsem"),
+              author = c(
+		  person(c("Charles", "C."), "Driver"),
+		  person(c("Johan", "H.L"), "Oud"),
+		  person(c("Manuel", "C."), "Voelkle")),
+              journal = "Journal of Statistical Software",
+              year = "in press",
+              textVersion = paste("Charles C. Driver,", "Johan H.L Oud,",
+		  "Manuel C. Voelkle.",
+		  "Continuous time structural equation modelling with R package ctsem. Journal of Statistical Software."))

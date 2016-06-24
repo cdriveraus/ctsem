@@ -1,0 +1,13 @@
+^.*\.Rproj$
+^\.Rproj\.user$
+^.omx
+^\ignore\*.*
+^util/
+^staging/
+^R/old/*.*
+^R/donotpackage/*.*
+^.git
+^.gitignore
+^README\.Rmd$
+^README-.*\.png$
+changelog.txt

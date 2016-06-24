@@ -1,0 +1,54 @@
+Package: ctsem
+Type: Package
+Title: Continuous Time Structural Equation Modelling
+Version: 2.0.0
+Date: 2016-7-1
+Authors@R: c(person("Charles", "Driver", role =
+    c("aut","cre","cph"),email="driver@mpib-berlin.mpg.de"),
+    person("Manuel", "Voelkle", role = c("aut","cph")),
+    person("Han", "Oud", role = c("aut","cph") ))
+Description: An easily accessible continuous (and discrete) time dynamic
+    modelling package for panel and time series data, reliant upon the OpenMx.
+    package (http://openmx.psyc.virginia.edu/) for computation. Most dynamic
+    modelling approaches to longitudinal data rely on the assumption that time
+    intervals between observations are consistent. When this assumption is
+    adhered to, the data gathering process is necessarily limited to a specific
+    schedule, and when broken, the resulting parameter estimates may be biased
+    and reduced in power. Continuous time models are conceptually similar to
+    vector autoregressive models (thus also the latent change models popularised
+    in a structural equation modelling context), however by explicitly including
+    the length of time between observations, continuous time models are freed
+    from the assumption that measurement intervals are consistent. This allows:
+    data to be gathered irregularly; the elimination of noise and bias due to
+    varying measurement intervals; parsimonious structures for complex dynamics.
+    The application of such a model in this SEM framework allows full-information
+    maximum-likelihood estimates for both N = 1 and N > 1 cases, multiple measured
+    indicators per latent process, and the flexibility to incorporate additional
+    elements, including individual heterogeneity in the latent process and
+    manifest intercepts, and time dependent and independent exogenous covariates.
+    Furthermore, due to the SEM implementation we are able to estimate a random
+    effects model where the impact of time dependent and time independent predictors
+    can be assessed simultaneously, but without the classic problems of random
+    effects models assuming no covariance between unit level effects and predictors.
+License: GPL-3
+Depends:
+    R (>= 3.0.0),
+    OpenMx (>= 2.3.0),
+    rstan
+URL: http://ctsem.r-forge.r-project.org/
+Imports:
+    MASS,
+    Matrix,
+    stats,
+    utils,graphics,methods,
+    grDevices
+LazyData: Yes
+Suggests:
+    knitr,
+    testthat,
+    PSM,
+    cts,
+    yuima,
+    shinystan
+VignetteBuilder: knitr
+RoxygenNote: 5.0.1

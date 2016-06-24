@@ -1,0 +1,233 @@
+  %\VignetteIndexEntry{Continuous time structural equation modelling with ctsem} 
+  %\VignetteKeyword{SEM, time series, panel data, dynamic models}
+  %\VignetteEngine{knitr::knitr} 
+\documentclass[nojss]{jss}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% declarations for jss.cls %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% almost as usual
+\author{Charles C. Driver \\ Max Planck Institute for Human Development \And 
+Manuel C. Voelkle \\ Humboldt University Berlin \\ Max Planck Institute for Human Development}
+\title{Intro to Hierarchical Continuous Time Dynamic Modelling With \pkg{ctsem}}
+
+%% for pretty printing and a nice hypersummary also set:
+\Plainauthor{Charles C. Driver, Manuel C. Voelkle} %% comma-separated
+\Plaintitle{Intro to Hierarchical Continuous Time Dynamic Modelling with ctsem} %% without formatting
+\Shorttitle{Intro to Hierarchical Continuous Time Dynamic Modelling with \pkg{ctsem}} %% a short title (if necessary)
+
+\Abstract{
+For version 2 of the \proglang{R} package \pkg{ctsem}, we include a Bayesian specification and fitting routine that uses the \pkg{Stan} probabilistic programming language, via the \pkg{rstan} package in R. This allows for all subject level parameters to individually vary, according to estimated population mean and variance. In other words, random effects for all subject level parameters, and relationship to covariates (time independent predictors).   
+}
+
+\Keywords{hierarchical time series, longitudinal, panel data, state space, structural equation, continuous time, stochastic differential equation, dynamic models, Kalman filter, \proglang{R}}
+\Plainkeywords{hierarchical time series, longitudinal, panel data, state space, structural equation, continuous time, stochastic differential equation, dynamic models, Kalman filter, R} %% without formatting
+%% at least one keyword must be supplied
+
+%% publication information
+%% NOTE: Typically, this can be left commented and will be filled out by the technical editor
+%% \Volume{50}
+%% \Issue{9}
+%% \Month{June}
+%% \Year{2012}
+%% \Submitdate{2012-06-04}
+%% \Acceptdate{2012-06-04}
+
+%% The address of (at least) one author should be given
+%% in the following format:
+\Address{
+Charles Driver\\
+Center for Lifespan Psychology\\
+Max Planck Institute for Human Development\\
+Lentzeallee 94, 14195 Berlin\\
+Telephone: +49 30 82406-367
+E-mail: \email{driver@mpib-berlin.mpg.de}\\
+URL: \url{http://www.mpib-berlin.mpg.de/en/staff/charles-driver}
+}
+%% It is also possible to add a telephone and fax number
+%% before the e-mail in the following format:
+%% Telephone: +43/512/507-7103
+%% Fax: +43/512/507-2851
+
+%% for those who use Sweave please include the following line (with % symbols):
+%% need no \usepackage{Sweave.sty}
+
+%% end of declarations %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\shortcites{boker2014openmx, boker2011openmx:, neale2015openmx, iacus2015pkgsde, king2010pkgpomp} %set any articles with more than 6 authors to short citation style first
+\defcitealias{vonoertzen2015structural}{ }
+
+\widowpenalty=50000
+\clubpenalty=50000
+\raggedbottom
+
+\usepackage{amsmath} %for multiple line equations
+\newcommand\numberthis{\addtocounter{equation}{1}\tag{\theequation}} %for adding numbers to specific lines
+
+% Set lowercase greek letters to non-italicised
+% \usepackage{Sweavel}
+% \usepackage{Sweave}
+\usepackage[libertine]{newtxmath}
+\usepackage[pdftex]{thumbpdf}
+
+% \usepackage[bm]
+
+\makeatletter
+\re@DeclareMathSymbol{\alpha}{\mathord}{lettersA}{11}
+\re@DeclareMathSymbol{\beta}{\mathord}{lettersA}{12}
+\re@DeclareMathSymbol{\gamma}{\mathord}{lettersA}{13}
+\re@DeclareMathSymbol{\delta}{\mathord}{lettersA}{14}
+\re@DeclareMathSymbol{\epsilon}{\mathord}{lettersA}{15}
+\re@DeclareMathSymbol{\zeta}{\mathord}{lettersA}{16}
+\re@DeclareMathSymbol{\eta}{\mathord}{lettersA}{17}
+\re@DeclareMathSymbol{\theta}{\mathord}{lettersA}{18}
+\re@DeclareMathSymbol{\iota}{\mathord}{lettersA}{19}
+\re@DeclareMathSymbol{\kappa}{\mathord}{lettersA}{20}
+\re@DeclareMathSymbol{\lambda}{\mathord}{lettersA}{21}
+\re@DeclareMathSymbol{\mu}{\mathord}{lettersA}{22}
+\re@DeclareMathSymbol{\nu}{\mathord}{lettersA}{23}
+\iftx@altnu
+\re@DeclareMathSymbol{\nu}{\mathord}{lettersA}{40}
+\fi
+\re@DeclareMathSymbol{\xi}{\mathord}{lettersA}{24}
+\re@DeclareMathSymbol{\pi}{\mathord}{lettersA}{25}
+\re@DeclareMathSymbol{\rho}{\mathord}{lettersA}{26}
+\re@DeclareMathSymbol{\sigma}{\mathord}{lettersA}{27}
+\re@DeclareMathSymbol{\tau}{\mathord}{lettersA}{28}
+\re@DeclareMathSymbol{\upsilon}{\mathord}{lettersA}{29}
+\re@DeclareMathSymbol{\phi}{\mathord}{lettersA}{30}
+\re@DeclareMathSymbol{\chi}{\mathord}{lettersA}{31}
+\re@DeclareMathSymbol{\psi}{\mathord}{lettersA}{32}
+\re@DeclareMathSymbol{\omega}{\mathord}{lettersA}{33}
+\re@DeclareMathSymbol{\varepsilon}{\mathord}{lettersA}{34}
+\re@DeclareMathSymbol{\vartheta}{\mathord}{lettersA}{35}
+\re@DeclareMathSymbol{\varpi}{\mathord}{lettersA}{36}
+\re@DeclareMathSymbol{\varrho}{\mathord}{lettersA}{37}
+\re@DeclareMathSymbol{\varsigma}{\mathord}{lettersA}{38}
+\re@DeclareMathSymbol{\varphi}{\mathord}{lettersA}{39}
+\makeatother
+
+\begin{document}
+%  \SweaveOpts{concordance = TRUE} %% I GUESS THIS COMMAND NEEDS TO GO SOMEWHERE ELSE 
+%% include your article here, just as usual
+%% Note that you should use the \pkg{}, \proglang{} and \code{} commands.
+
+<<setup, include = FALSE, cache = FALSE, echo = FALSE>>=
+library('ctsem')
+library(knitr)
+render_sweave()
+set.seed(22)
+opts_chunk$set(fig.path = 'figures/plots-', warning = FALSE, fig.align = 'center', width.cutoff = 80, fig.show = 'hold', eval = TRUE, echo = TRUE, message = FALSE, background = "white", prompt = FALSE, highlight = FALSE, comment = NA, tidy = FALSE, out.truncate = 80)
+options(replace.assign = TRUE, width = 80, scipen = 12, digits = 3)
+
+
+# setwd('C:\\Users\\driver\\Dropbox\\MPIB\\CT-SEM\\manual') #set this working directory!
+Sys.setenv(TEXINPUTS = getwd(),
+  BIBINPUTS = getwd(),
+  BSTINPUTS = getwd())
+
+Tpoints=5
+n.manifest=2
+n.TDpred=1
+n.TIpred=3
+n.latent=2
+n.subjects=50
+gm<-ctModel(type='omx', Tpoints=Tpoints,n.latent=n.latent,n.TDpred=n.TDpred,n.TIpred=n.TIpred,n.manifest=n.manifest,
+  MANIFESTVAR=diag(0.5,2),
+  TIPREDEFFECT=matrix(c(.5,0,0,-.5,0,0),nrow=2),
+  TIPREDVAR=matrix(c(1,-.2,0, 0,1,0, 0,0,.5),nrow=3),
+  TDPREDEFFECT=matrix(c(.1,-.2),nrow=2),
+  TDPREDVAR=matrix(0,nrow=n.TDpred*(Tpoints-1),ncol=n.TDpred*(Tpoints-1)),
+  TDPREDMEANS=matrix(rnorm(n.TDpred*(Tpoints-1),0,1),nrow=n.TDpred*(Tpoints-1)),
+  LAMBDA=diag(1,2), 
+  # DRIFT=matrix(c(-.6+rnorm(1,0,.15),-.2+rnorm(1,0,.1),.12+rnorm(1,0,.1),-.3+rnorm(1,0,.05)),nrow=2),
+  DRIFT=matrix(c(-.3,.2,-.1,-.2),nrow=2),
+  TRAITVAR=t(chol(matrix(c(4,3,3,4),nrow=2))),
+  # T0TRAITEFFECT=diag(3,n.latent),
+  DIFFUSION=matrix(c(.3,.1,0,.2),2),CINT=matrix(c(0,0),nrow=2),T0MEANS=matrix(0,ncol=1,nrow=2),
+  T0VAR=diag(100,2))
+
+cd<-ctGenerate(gm,n.subjects=50,burnin=300, dT=1,asymptotes=F,simulTDpredeffect = T)
+checkm<-ctModel(type='stanct',n.latent=n.latent,n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,LAMBDA=diag(n.latent))
+long<-ctWideToLong(cd,Tpoints,n.manifest=checkm$n.manifest,manifestNames = checkm$manifestNames, 
+  n.TDpred=n.TDpred,n.TIpred=n.TIpred,TDpredNames = checkm$TDpredNames,TIpredNames = checkm$TIpredNames)
+long[is.na(long)]<-0
+# fit<-ctStanFit(long,checkm,iter=500,chains=2,fit=T,plot=T,densehyper=F,noncentered=F,optimize=F,
+#   vb=F,tol_rel_obj=.001,eta=1, kalman=T)
+@
+
+\section{Overview of steps}
+Install software using \code{install.packages("ctsem")}.
+
+Prepare data in long format, each row containing one time point of data for one subject. We need a subject id column (named by default "id"), columns for manifest variables (the names of which must be given in the next, ctModel, step), columns for time dependent predictors (these vary over time but have no model estimatedand are assumed to impact latent processes instantly - generally intervention or event dummy variables), and columns for time independent predictors (the value will be stable for each measurement of a particular subject). Relationships are estimated between time independent predictors and individually varying subject level parameters. 
+
+<<data,echo=FALSE>>=
+head(long,10)
+@
+
+Specify model using \code{ctModel(type="stanct",...)}. "stanct" specifies a continuous time model in Stan format, "standt" specifies discrete time, while "omx" is the classic \pkg{ctsem} behaviour and prepares an \pkg{OpenMx} model. Other arguments to ctModel proceed as normal, although many matrices are not relevant for the Stan formats, either because the between subject matrices have been removed, or because time dependent and independent predictors (covariates that either change over time or don't) are now treated as fixed regressors and only require effect (or design) matrices.
+
+<<model>>=
+checkm<-ctModel(type='stanct',n.latent=2,
+  n.manifest=2,n.TDpred=1,n.TIpred=3,LAMBDA=diag(2))
+
+head(checkm$parameters,8)
+@
+
+This generates a simple first order bivariate latent process model, with each process measured by a potentially noisy manifest variable. Additional complexity or restrictions may be added, for more details see the help files or papers. The parameters subobject of the created model object shows the parameter specification that will go into Stan, including both fixed and free parameters, whether the parameters vary across individuals, how the parameter is transformed from a standard normal distribution (thus setting both priors and bounds), and whether that parameter is regressed on the time independent predictors.
+
+One may modify the output model to either restrict between subject differences (set some parameters to fixed over subjects), alter the transformation used to determine the prior / bounds, or restrict which effects of time independent predictors to estimate. Plotting the original prior, making a change, and plotting the resulting prior, are shown here -- in this case we believe the latent process error for our first latent process, captured by row 1 and column 1 of the DIFFUSION matrix, to be very small, so restrict our prior accordingly to both speed and improve sampling.
+
+<<transform>>=
+par(mfrow=c(1,2))
+ctStanPlotPriors(checkm,rows=11)
+checkm$parameters$transform[11]<- 'log(exp((param)*1.5)+1)*2'
+ctStanPlotPriors(checkm,rows=11)
+@
+
+The plots show the prior distribution for the population mean of DIFFUSION[1,1] in black, as well as two possible priors for the subject level parameters. The blue prior results from assuming the population mean is two standard deviations lower than the mean for our prior, and assuming that the population standard deviation is 1, which given our prior on population standard deviations is a truncated normal(0, 0.5) distribution, is also two sd's from the base of 0. To understand better, the pre-transformation population sd prior for all subject level parameters looks like:
+
+<<sdprior>>=
+sd<-rnorm(5000000,0,.5)
+sd<-sd[sd>0]
+plot(density(sd,bw=.01,n=50000),lwd=2)
+@
+
+Restrict between subject effects as desired. Unnecessary between subject effects will slow sampling, but be aware of the many parameter dependencies in these models -- restricting one parameter may sometimes lead to variation from it showing up elsewhere.
+
+<<restrictbetween>>=
+checkm$parameters[25:28,]
+checkm$parameters[25:28,]$indvarying<-FALSE
+@
+
+Also restrict time independent predictor effects in a similar way, for similar reasons. In this case, the only adverse effects of restriction are that the relationship between the predictor and variables will not be estimated, but the subject level parameters themselves should not be very different, as they are still freely estimated. Note that such effects are only estimated for individually varying parameters anyway -- so after the above change there is no need to set the tipredeffect to FALSE for the T0VAR variables, it is assumed. Instead, we restrict the tipredeffects on all parameters, and free them only for the auto effect of the first latent process.
+
+<<restricttipred>>=
+checkm$parameters[,c('TI1_effect','TI2_effect','TI3_effect')]<-FALSE
+checkm$parameters[7,c('TI1_effect','TI2_effect','TI3_effect')]<-TRUE
+@
+
+Once model specification is complete, the model is fit to the data using the ctStanFit function as follows -- depending on the data, model, and number of iterations requested, this can take anywhere from a few minutes to days. Current experience suggests 500 iterations is enough to get an idea of what is going on, but more are necessary for robust inference.
+
+<<fitting,eval=FALSE>>=
+fit<-ctStanFit(long,checkm,iter=500,chains=2,fit=T,plot=T,
+  densehyper=F)
+@
+
+The plot argument allows for plotting of sampling chains in real time, which is useful for slow models to ensure that sampling is proceeding in a functional manner. The densehyper argument may be set to TRUE to estimate priors for the correlation between parameters, which may allow somewhat better priors for subject level parameters to be estimated, but also tends to slow down sampling substantially. 
+
+After fitting, the standard rstan output functions such as summary and extract are available, and the shinystan package provides an excellent browser based interface. The parameters which are likely to be of most interest in the output all begin with an "output" prefix, followed by either "hmean" for hyper (population) mean, or "hsd" for hyper standard deviation. Subject specific parameters are denoted by the matrix they are from, then the first index represents the subject id, followed by standard matrix notation. For example, the 2nd row and 1st column of the DRIFT matrix for subject 8 is $"DRIFT[8,2,1]"$. Parameters are all returned in the form used for internal calculations -- that is, variance covariance matrices are returned as such, rather than the lower-triangular standard deviation and cholesky correlation matrices required for input.
+
+<<output,eval=FALSE>>=
+library("shinystan")
+launch_shinystan(fit)
+@
+
+\end{document}
+
+
+
+
+

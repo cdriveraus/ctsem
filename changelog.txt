@@ -1,0 +1,13 @@
+ctsem changelog:
+
+#### ctsem 1.1.6 ####
+Features added:
+- now with a change log!
+- ctCompareExpectation plots expected means and covariances against model implied.
+- remove log transform of drift matrix diagonal, positive drift diagonals again possible.
+- ctRefineTo allows easy step wise fitting from simple to complex - faster and more robust fitting in many cases.
+- ctPlot is a new function that allows more customization of plots.
+- ctModel now allows time varying means to be specified.
+
+Bugs fixed:
+- corrected handling of Cholesky inputs for ctGenerate
