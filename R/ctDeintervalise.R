@@ -23,6 +23,6 @@ ctDeintervalise<-function(datalong,id='id', dT='dT',startoffset=0){
         datalong[i,dT]<-sum(c(datalong[i,dT],startoffset),na.rm=T) #otherwise create new total time with new interval and offset
       }
   }
-  colnames(datalong)[colnames(datalong) %in% dT] <-'AbsTime'
+  colnames(datalong)[colnames(datalong) %in% dT] <-'time'
   return(datalong)
 }

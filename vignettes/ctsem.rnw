@@ -858,7 +858,7 @@ ctsemFit <- ctFit(ctsemData, ctsemModel, stationary = c('T0VAR'))
 output[i,2] <- mxEval(DRIFT, ctsemFit$mxobj)
 
 ### CTS package
-ctsData <- longData[, c('AbsTime', 'Y1')]
+ctsData <- longData[, c('time', 'Y1')]
 library(cts)
 ctsFit <- car(ctsData, order = 1, scale = 1)
 output[i, 3] <- -1 * (1 + ctsFit$phi) / (1 - ctsFit$phi) 

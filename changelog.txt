@@ -1,5 +1,11 @@
 ctsem changelog:
 
+#### 2.0.0 ####
+Features:
+- Hierarchical Bayesian modeling using Stan
+- Defaults change: Fix CINT to 0 and free MANIFESTMEANS
+
+
 #### ctsem 1.1.6 ####
 Features added:
 - now with a change log!

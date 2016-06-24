@@ -47,7 +47,7 @@ test_that("time calc", {
   
   testlong<-ctDeintervalise(testlong)
   
-  testwide<-ctLongToWide(testlong,id='id',time='AbsTime',
+  testwide<-ctLongToWide(testlong,id='id',time='time',
     manifestNames=manifestNames,TDpredNames=TDpredNames,TIpredNames=TIpredNames)
   
   testwide<-ctIntervalise(testwide,n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred, Tpoints=Tpoints,

@@ -44,7 +44,7 @@ ctPSMfit<-function(datawide,ctmodelobj,omxStartValues=NULL, ...){
       n.manifest=ctmodelobj$n.manifest, manifestNames=ctmodelobj$manifestNames)
     
     long<-suppressMessages(ctDeintervalise(long))
-    colnames(long)[which(colnames(long)=='AbsTime')] <-'Time'
+    colnames(long)[which(colnames(long)=='time')] <-'Time'
     out<-list(Time=long[,'Time'], Y=t(long[,ctmodelobj$manifestNames]))
     out$U=matrix(1,nrow=1,ncol=ncol(out$Y))
     return(out)

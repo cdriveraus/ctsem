@@ -312,7 +312,7 @@ ctFit  <- function(datawide, ctmodelobj,
     
     if(objective == 'Kalmanmx') {
       datawide<-ctDeintervalise(datawide,dT='dT1')
-    colnames(datawide)[which(colnames(datawide)=='AbsTime')] <-'dT1'
+    colnames(datawide)[which(colnames(datawide)=='time')] <-'dT1'
     }
     
     if(n.TDpred >0){
