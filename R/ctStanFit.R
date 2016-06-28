@@ -21,7 +21,7 @@
 #' @param iter number of iterations, half of which will be devoted to warmup.
 #' @param chains number of chains to sample.
 #' @export
-ctStanFit<-function(datalong, ctstanmodelobj, kalman=TRUE, densehyper=FALSE,
+ctStanFit<-function(datalong, ctstanmodelobj, iter=1000, kalman=TRUE, densehyper=FALSE,
   fit=TRUE, plot=FALSE, noncentered=TRUE,
   optimize=FALSE, vb=FALSE, chains=3,...){
   
@@ -171,16 +171,16 @@ ctStanFit<-function(datalong, ctstanmodelobj, kalman=TRUE, densehyper=FALSE,
     matrix fillcholcordiag(matrix mat){
     matrix[rows(mat),cols(mat)] out;
     real tempsum;
-    out[1,1]<-1;
+    out[1,1]=1;
     if(rows(mat) > 1){
     for(rowi in 2:rows(out)){
-    tempsum<-0;
+    tempsum=0;
     for(coli in 1:(rowi-1)){
-    out[rowi,coli]<-mat[rowi,coli];
-    out[coli,rowi] <- 0;
-    tempsum <- tempsum + mat[rowi,coli]^2;
+    out[rowi,coli]=mat[rowi,coli];
+    out[coli,rowi] = 0;
+    tempsum = tempsum + mat[rowi,coli]^2;
     }
-    out[rowi,rowi]<-sqrt(fabs(1-tempsum));
+    out[rowi,rowi]=sqrt(fabs(1-tempsum));
     }
     }
     return out;
@@ -194,23 +194,23 @@ ctStanFit<-function(datalong, ctstanmodelobj, kalman=TRUE, densehyper=FALSE,
     matrix[rows(mat),cols(mat)] mcholcor;
     matrix[rows(mat),cols(mat)] mchol;
     matrix[rows(mat),cols(mat)] mtx;
-    ndim <- cols(mat);
+    ndim = cols(mat);
     for(coli in 1:ndim){
     for(rowi in 1:ndim){
     
     if(rowi==coli) {
-    mscale[rowi,coli] <-  mat[rowi,coli];
+    mscale[rowi,coli] =  mat[rowi,coli];
     }
     
     if(rowi > coli){
-    mscale[rowi,coli] <-0;
-    mscale[coli,rowi] <-0;
-    mcholcor[rowi,coli] <-  mat[rowi,coli]; 
+    mscale[rowi,coli] =0;
+    mscale[coli,rowi] =0;
+    mcholcor[rowi,coli] =  mat[rowi,coli]; 
     }
     }}
-    mcholcor <- fillcholcordiag(mcholcor);
-    mchol <- mscale * mcholcor;
-    mtx<-multiply_lower_tri_self_transpose(mchol) ;
+    mcholcor = fillcholcordiag(mcholcor);
+    mchol = mscale * mcholcor;
+    mtx=multiply_lower_tri_self_transpose(mchol) ;
     return mtx;
     }
     
@@ -237,69 +237,69 @@ ctStanFit<-function(datalong, ctstanmodelobj, kalman=TRUE, densehyper=FALSE,
     matrix[rows(A),rows(A)] B6;
     matrix[rows(A),rows(A)] A2;
     
-    si <- 0;
-    C <- padeC;
-    Cbig <- padeCbig;
+    si = 0;
+    C = padeC;
+    Cbig = padeCbig;
     
-    n <-rows(A);
+    n =rows(A);
     if(n != cols(A)) print("expmp: Matrix not square!")
     
-    if (n <= 1) X <- exp(A);
+    if (n <= 1) X = exp(A);
     else{
     
-    // nA <- Matrix::norm(A, "1")
-    nA <- 0;
+    // nA = Matrix::norm(A, "1")
+    nA = 0;
     for(coli in 1:n){
-    colsum<-0;
+    colsum=0;
     for(rowi in 1:n){
-    colsum<-colsum+fabs(A[rowi,coli]);
+    colsum=colsum+fabs(A[rowi,coli]);
     }
-    if(colsum > nA) nA <- colsum;
+    if(colsum > nA) nA = colsum;
     }
     
-    I <- diag_matrix(rep_vector(1,n));
+    I = diag_matrix(rep_vector(1,n));
     if (nA <= 2.1) {
-    t[1] <- 0.015; t[2]<- 0.25; t[3]<- 0.95; t[4]<- 2.1;
+    t[1] = 0.015; t[2]= 0.25; t[3]= 0.95; t[4]= 2.1;
     
-    //l <- which.max(nA <= t)
+    //l = which.max(nA <= t)
     for(ti in 1:4){
     if(l==0){
-    if(nA <= t[ti]) l <- ti;
+    if(nA <= t[ti]) l = ti;
     }
     }
     
-    A2 <- A * A;
-    P <- I;
-    U <- C[l, 2] * I;
-    V <- C[l, 1] * I;
+    A2 = A * A;
+    P = I;
+    U = C[l, 2] * I;
+    V = C[l, 1] * I;
     for (k in 1:l) {
-    P <- P * A2;
-    U <- U + C[l, (2 * k) + 2] * P;
-    V <- V + C[l, (2 * k) + 1] * P;
+    P = P * A2;
+    U = U + C[l, (2 * k) + 2] * P;
+    V = V + C[l, (2 * k) + 1] * P;
     }
-    U <- A * U;
-    X <- inverse(V - U) * (V + U);
+    U = A * U;
+    X = inverse(V - U) * (V + U);
     }
     
     else {
-    s <- log2(nA/5.4);
-    B <- A;
+    s = log2(nA/5.4);
+    B = A;
     if (s > 0) {
-    s <- ceil(s);
-    B <- B/(2^s);
+    s = ceil(s);
+    B = B/(2^s);
     }
     
-    B2 <- B * B;
-    B4 <- B2 * B2;
-    B6 <- B2*B4;
-    U <- B*(B6*(Cbig[14] * B6 + Cbig[12] * B4 + Cbig[10] * B2) + Cbig[8] * B6 + Cbig[6] * B4 + Cbig[4] * B2 + Cbig[2] * I);
-    V <- B6*(Cbig[13] * B6 + Cbig[11] * B4 + Cbig[9] * B2) + Cbig[7] * B6 + Cbig[5] * B4 + Cbig[3] * B2 + Cbig[1] * I;
-    X <- inverse(V - U) * (V + U);
+    B2 = B * B;
+    B4 = B2 * B2;
+    B6 = B2*B4;
+    U = B*(B6*(Cbig[14] * B6 + Cbig[12] * B4 + Cbig[10] * B2) + Cbig[8] * B6 + Cbig[6] * B4 + Cbig[4] * B2 + Cbig[2] * I);
+    V = B6*(Cbig[13] * B6 + Cbig[11] * B4 + Cbig[9] * B2) + Cbig[7] * B6 + Cbig[5] * B4 + Cbig[3] * B2 + Cbig[1] * I;
+    X = inverse(V - U) * (V + U);
     
     if (s > 0) {
     while (si < s){ 
-    si <- si + 1;
-    X <- X * X;
+    si = si + 1;
+    X = X * X;
     }
     }
     }
@@ -307,6 +307,15 @@ ctStanFit<-function(datalong, ctstanmodelobj, kalman=TRUE, densehyper=FALSE,
     }
     return X;
     }
+
+vector vecsqrt(vector in) {
+    vector[num_elements(in)] out;
+    for (i in 1:num_elements(in)){
+        out[i] <- sqrt(in[i]);
+    }
+    return out;
+}
+
     
     
     
@@ -318,15 +327,15 @@ ctStanFit<-function(datalong, ctstanmodelobj, kalman=TRUE, densehyper=FALSE,
     int n;
     int q;
     matrix[rows(mata)*rows(matb),cols(mata)*cols(matb)] C;
-    m<-rows(mata);
-    p<-rows(matb);
-    n<-cols(mata);
-    q<-cols(matb);
+    m=rows(mata);
+    p=rows(matb);
+    n=cols(mata);
+    q=cols(matb);
     for (i in 1:m){
     for (j in 1:n){
     for (k in 1:p){
     for (l in 1:q){
-    C[p*(i-1)+k,q*(j-1)+l] <- mata[i,j]*matb[k,l];
+    C[p*(i-1)+k,q*(j-1)+l] = mata[i,j]*matb[k,l];
     }
     }
     }
@@ -336,10 +345,10 @@ ctStanFit<-function(datalong, ctstanmodelobj, kalman=TRUE, densehyper=FALSE,
     
     matrix makesym(matrix mat){
     matrix[rows(mat),cols(mat)] out;
-    out<-mat;
+    out=mat;
     for(rowi in 1:rows(mat)){
     for(coli in 1:cols(mat)){
-    if(coli > rowi) out[rowi,coli]<-out[coli,rowi];
+    if(coli > rowi) out[rowi,coli]=out[coli,rowi];
     }
     }
     return out;
@@ -377,7 +386,7 @@ ctStanFit<-function(datalong, ctstanmodelobj, kalman=TRUE, densehyper=FALSE,
     
     transformed data{
     matrix[nlatent,nlatent] IIlatent;
-    IIlatent <- diag_matrix(rep_vector(1,nlatent));
+    IIlatent = diag_matrix(rep_vector(1,nlatent));
     }
     
     parameters {
@@ -427,10 +436,10 @@ ctStanFit<-function(datalong, ctstanmodelobj, kalman=TRUE, densehyper=FALSE,
         if(is.na(ctspec$value[rowi]) & ctspec$indvarying[rowi]) {
           tirow<-tirow+1
           for(predi in 1:n.TIpred){
-            if(ctspec[rowi, paste0(TIpredNames[predi],'_effect')] == FALSE) out<-c(out, ' tipredeffect[',tirow,', ', predi,'] <- 0; \n')
+            if(ctspec[rowi, paste0(TIpredNames[predi],'_effect')] == FALSE) out<-c(out, ' tipredeffect[',tirow,', ', predi,'] = 0; \n')
             if(ctspec[rowi, paste0(TIpredNames[predi],'_effect')] == TRUE) {
               count<-count+1
-              out<-c(out, ' tipredeffect[',tirow,', ', predi,'] <- tipredeffectparams[',count,']; \n ')
+              out<-c(out, ' tipredeffect[',tirow,', ', predi,'] = tipredeffectparams[',count,']; \n ')
             }
           }
         }}
@@ -439,9 +448,9 @@ ctStanFit<-function(datalong, ctstanmodelobj, kalman=TRUE, densehyper=FALSE,
 
     
     ',if(any(ctspec$indvarying)) paste0(
-      if(densehyper==TRUE) 'paramchol<- diag_pre_multiply(hypersd,hypercholcorr); ',
-      if(densehyper==FALSE) 'paramchol<-diag_matrix(hypersd);',
-      'invparamchol <- inverse(paramchol);\n'),'
+      if(densehyper==TRUE) 'paramchol= diag_pre_multiply(hypersd,hypercholcorr); ',
+      if(densehyper==FALSE) 'paramchol=diag_matrix(hypersd);',
+      'invparamchol = inverse(paramchol);\n'),'
     
     {
     ',if(continuoustime) 'matrix[nlatent*nlatent,nlatent*nlatent] DRIFTHATCH;  \n','
@@ -449,7 +458,7 @@ ctStanFit<-function(datalong, ctstanmodelobj, kalman=TRUE, densehyper=FALSE,
     
     ',if(any(ctspec$indvarying)) paste0('
       for(subjecti in 1:nsubjects){ // transform subject parameters to standard normal dist
-      indparamstrans[(1+(subjecti-1)*nindvarying):(subjecti*nindvarying)]<-invparamchol * (indparams[subjecti]',
+      indparamstrans[(1+(subjecti-1)*nindvarying):(subjecti*nindvarying)]=invparamchol * (indparams[subjecti]',
       if(n.TIpred>0) '-tipredeffect * tipreds[subjecti]\' ',
       if(noncentered==FALSE) '-hypermeans[indvaryingindex]',
       ');
@@ -466,7 +475,7 @@ ctStanFit<-function(datalong, ctstanmodelobj, kalman=TRUE, densehyper=FALSE,
           'MANIFESTVAR', 'TDPREDEFFECT', 'T0VAR')) paste0(' , ', ctspec[rowi,'col']),
         ']') 
       
-      paste0(x, '<- ', 
+      paste0(x, '= ', 
         if(is.na(ctspec[rowi,'value']) & (noncentered | !ctspec$indvarying[rowi])) paste0('hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),']'),
         if(ctspec[rowi,'indvarying'] & noncentered) ' + ',
         if(ctspec[rowi,'indvarying']) paste0('indparams[subjecti][',which(ctspec[ctspec$indvarying,'param']==ctspec[rowi,'param']),']'),
@@ -476,7 +485,7 @@ ctStanFit<-function(datalong, ctstanmodelobj, kalman=TRUE, densehyper=FALSE,
         '; \n',
         
         if(!is.na(ctspec$transform[rowi]) & is.na(ctspec$value[rowi])) paste0(
-          x, ' <- ', gsub('param',x,ctspec$transform[rowi]),'; \n'),
+          x, ' = ', gsub('param',x,ctspec$transform[rowi]),'; \n'),
         
         collapse='')
     })),collapse=''),
@@ -485,27 +494,27 @@ ctStanFit<-function(datalong, ctstanmodelobj, kalman=TRUE, densehyper=FALSE,
     
     for(individual in 1:nsubjects){ // perform any whole matrix transformations 
     
-    MANIFESTVAR[individual] <- varmatrixtransform(MANIFESTVAR[individual]);
-    DIFFUSION[individual] <- varmatrixtransform(DIFFUSION[individual]);
-    T0VAR[individual] <- varmatrixtransform(T0VAR[individual]);
+    MANIFESTVAR[individual] = varmatrixtransform(MANIFESTVAR[individual]);
+    DIFFUSION[individual] = varmatrixtransform(DIFFUSION[individual]);
+    T0VAR[individual] = varmatrixtransform(T0VAR[individual]);
     
     ',if(continuoustime==TRUE) paste0('
-      invDRIFT[individual] <- inverse(DRIFT[individual]);
-      DRIFTHATCH <- kron_prod(DRIFT[individual],diag_matrix(rep_vector(1, nlatent))) + kron_prod(diag_matrix(rep_vector(1, nlatent)),DRIFT[individual]);
+      invDRIFT[individual] = inverse(DRIFT[individual]);
+      DRIFTHATCH = kron_prod(DRIFT[individual],diag_matrix(rep_vector(1, nlatent))) + kron_prod(diag_matrix(rep_vector(1, nlatent)),DRIFT[individual]);
       
-      asymDIFFUSIONvec <- -inverse(DRIFTHATCH) * to_vector(DIFFUSION[individual]);
+      asymDIFFUSIONvec = -inverse(DRIFTHATCH) * to_vector(DIFFUSION[individual]);
       for(drowi in 1:nlatent) {
       for(dcoli in 1:nlatent){
-      asymDIFFUSION[individual][drowi,dcoli] <- asymDIFFUSIONvec[drowi+(dcoli-1)*nlatent];
-      if(drowi > dcoli) asymDIFFUSION[individual][drowi,dcoli] <- asymDIFFUSION[individual][dcoli,drowi]; //symmetry enforcement
+      asymDIFFUSION[individual][drowi,dcoli] = asymDIFFUSIONvec[drowi+(dcoli-1)*nlatent];
+      if(drowi > dcoli) asymDIFFUSION[individual][drowi,dcoli] = asymDIFFUSION[individual][dcoli,drowi]; //symmetry enforcement
       }}
       '),
     if(continuoustime==FALSE) paste0('
-      asymDIFFUSIONvec <- (diag_matrix(rep_vector(1, nlatent*nlatent)) - kron_prod(DRIFT[individual],DRIFT[individual])) * to_vector(DIFFUSION[individual]);
+      asymDIFFUSIONvec = (diag_matrix(rep_vector(1, nlatent*nlatent)) - kron_prod(DRIFT[individual],DRIFT[individual])) * to_vector(DIFFUSION[individual]);
       for(drowi in 1:nlatent) {
       for(dcoli in 1:nlatent){
-      asymDIFFUSION[individual][drowi,dcoli] <- asymDIFFUSIONvec[drowi+(dcoli-1)*nlatent];
-      if(drowi > dcoli) asymDIFFUSION[individual][drowi,dcoli] <- asymDIFFUSION[individual][dcoli,drowi]; //symmetry enforcement
+      asymDIFFUSION[individual][drowi,dcoli] = asymDIFFUSIONvec[drowi+(dcoli-1)*nlatent];
+      if(drowi > dcoli) asymDIFFUSION[individual][drowi,dcoli] = asymDIFFUSION[individual][dcoli,drowi]; //symmetry enforcement
       }}
       '),'
     }
@@ -552,32 +561,32 @@ hypermeans~normal(0,1);
   int subjecti;
   
   for(rowi in 1:ndatapoints){
-  subjecti <- subject[rowi];
+  subjecti = subject[rowi];
   
   if(T0check[rowi]==1) { // if first row for this subjecti
-  invMANIFESTVARchol <- inverse(cholesky_decompose(MANIFESTVAR[subjecti]));
+  invMANIFESTVARchol = inverse(cholesky_decompose(MANIFESTVAR[subjecti]));
   ',if(continuoustime==FALSE) paste0('
-    discreteDRIFT<- DRIFT[subjecti];
-    discreteCINT<- CINT[subjecti];
-    invdiscreteDIFFUSIONchol <- cholesky_decompose(inverse_spd(DIFFUSION[subjecti]));
+    discreteDRIFT= DRIFT[subjecti];
+    discreteCINT= CINT[subjecti];
+    invdiscreteDIFFUSIONchol = cholesky_decompose(inverse_spd(DIFFUSION[subjecti]));
     '),'
   }
   
   ',if(continuoustime==TRUE) 'if(T0check[rowi]==0 && intervalChange[rowi]==1){ // if the time interval changes and its not the first row
-  discreteDRIFT<- expmp(DRIFT[subjecti] * dT[rowi], padeC, padeCbig);
-  discreteCINT<- invDRIFT[subjecti] * (discreteDRIFT - IIlatent) * CINT[subjecti];
-  discreteDIFFUSION <- asymDIFFUSION[subjecti] - quad_form(asymDIFFUSION[subjecti], discreteDRIFT\');
-  invdiscreteDIFFUSIONchol <- inverse(cholesky_decompose(discreteDIFFUSION));
+  discreteDRIFT= expmp(DRIFT[subjecti] * dT[rowi], padeC, padeCbig);
+  discreteCINT= invDRIFT[subjecti] * (discreteDRIFT - IIlatent) * CINT[subjecti];
+  discreteDIFFUSION = asymDIFFUSION[subjecti] - quad_form(asymDIFFUSION[subjecti], discreteDRIFT\');
+  invdiscreteDIFFUSIONchol = inverse(cholesky_decompose(discreteDIFFUSION));
   }','
   
   if(T0check[rowi] ==0){ //transform latent states to standard normal and increment loglik to acccount for density warp
   
-  if(T0check[rowi-1] ==1)  etatrans[((rowi-1-subjecti)*nlatent+1) : ((rowi-subjecti)*nlatent)] <- 
+  if(T0check[rowi-1] ==1)  etatrans[((rowi-1-subjecti)*nlatent+1) : ((rowi-subjecti)*nlatent)] = 
   invdiscreteDIFFUSIONchol * (eta[rowi-subjecti] - discreteDRIFT * T0MEANS[subjecti] - discreteCINT',
   if(n.TDpred > 0) '- TDPREDEFFECT[subjecti] * tdpreds[rowi]',
   '); \n','
   
-  if(T0check[rowi-1] ==0)  etatrans[((rowi-1-subjecti)*nlatent+1) : ((rowi-subjecti)*nlatent)] <- 
+  if(T0check[rowi-1] ==0)  etatrans[((rowi-1-subjecti)*nlatent+1) : ((rowi-subjecti)*nlatent)] = 
   invdiscreteDIFFUSIONchol * (eta[rowi-subjecti] - discreteDRIFT * eta[rowi-1-subjecti] + discreteCINT',
   if(n.TDpred > 0) '- TDPREDEFFECT[subjecti] * tdpreds[rowi]',
   '); \n','
@@ -585,13 +594,13 @@ hypermeans~normal(0,1);
   increment_log_prob(sum(log(diagonal(invdiscreteDIFFUSIONchol))));
   }
   
-  if(T0check[rowi] ==0) Ytrans[((rowi-1)*nmanifest+1):(rowi*nmanifest)] <- 
+  if(T0check[rowi] ==0) Ytrans[((rowi-1)*nmanifest+1):(rowi*nmanifest)] = 
   invMANIFESTVARchol * (Y[rowi] - LAMBDA[subjecti] * ',
   if(nonlinear==FALSE) 'eta[rowi-subjecti]', 
   if(nonlinear==TRUE) '(1 ./ (1+exp(eta[rowi-subjecti])))',
   ' - MANIFESTMEANS[subjecti]);
   
-  if(T0check[rowi] ==1) Ytrans[((rowi-1)*nmanifest+1):(rowi*nmanifest)] <- 
+  if(T0check[rowi] ==1) Ytrans[((rowi-1)*nmanifest+1):(rowi*nmanifest)] = 
   invMANIFESTVARchol * (Y[rowi] - LAMBDA[subjecti] * ',
   if(nonlinear==FALSE) 'T0MEANS[subjecti]', 
   if(nonlinear==TRUE) '(1 ./ (1+exp(T0MEANS[subjecti])))',
@@ -608,44 +617,44 @@ hypermeans~normal(0,1);
 
 ',if(kalman==TRUE) paste0('      
   
-  obscount<-1;
+  obscount=1;
   {
   int subjecti;
   int nobsi;
   
   for(rowi in 1:ndatapoints){
-  subjecti<-subject[rowi];
-  nobsi <- nobs_y[rowi];
+  subjecti=subject[rowi];
+  nobsi = nobs_y[rowi];
   
-  if(rowi!=1) obscount<-obscount+nobs_y[rowi-1]; // number of non missing observations until now
+  if(rowi!=1) obscount=obscount+nobs_y[rowi-1]; // number of non missing observations until now
   
   if(T0check[rowi] == 1) { // calculate initial matrices if this is first row for subjecti
   
   ',if(continuoustime==FALSE) paste0('
-    discreteDRIFT<- DRIFT[subjecti]; // discrete time models dont need to be udpdated each row
-    discreteCINT<- CINT[subjecti];
-    discreteDIFFUSION <- DIFFUSION[subjecti];'),'
+    discreteDRIFT= DRIFT[subjecti]; // discrete time models dont need to be udpdated each row
+    discreteCINT= CINT[subjecti];
+    discreteDIFFUSION = DIFFUSION[subjecti];'),'
   
-  etaprior[rowi] <- T0MEANS[subjecti]; //prior for latent state of this row
-  ',if(n.TDpred > 0) paste0('etaprior[rowi] <-TDPREDEFFECT[subjecti] * tdpreds[rowi] + etaprior[rowi];'),'
-  etapriorcov[rowi] <-  T0VAR[subjecti];
+  etaprior[rowi] = T0MEANS[subjecti]; //prior for latent state of this row
+  ',if(n.TDpred > 0) paste0('etaprior[rowi] =TDPREDEFFECT[subjecti] * tdpreds[rowi] + etaprior[rowi];'),'
+  etapriorcov[rowi] =  T0VAR[subjecti];
   }
   
   if(T0check[rowi]==0){
   ',if(continuoustime==TRUE) paste0('
     if(intervalChange[rowi]==1){ // if the time interval changes we need to calculate new discrete time matrices
-    discreteDRIFT<- expmp(DRIFT[subjecti] * dT[rowi], padeC, padeCbig);
-    discreteCINT<- invDRIFT[subjecti] * (discreteDRIFT - IIlatent) * CINT[subjecti];
-    discreteDIFFUSION <- asymDIFFUSION[subjecti] - quad_form_sym(asymDIFFUSION[subjecti], discreteDRIFT\');
+    discreteDRIFT= expmp(DRIFT[subjecti] * dT[rowi], padeC, padeCbig);
+    discreteCINT= invDRIFT[subjecti] * (discreteDRIFT - IIlatent) * CINT[subjecti];
+    discreteDIFFUSION = asymDIFFUSION[subjecti] - quad_form_sym(asymDIFFUSION[subjecti], discreteDRIFT\');
     }'),'
-  etaprior[rowi] <- discreteCINT  + discreteDRIFT * etapost[rowi]; //prior for latent state of this row
-  ',if(n.TDpred > 0) paste0('etaprior[rowi] <-TDPREDEFFECT[subjecti] * tdpreds[rowi-1] + etaprior[rowi];'),'
-  etapriorcov[rowi] <-  quad_form(etapostcov[rowi], discreteDRIFT\')  + discreteDIFFUSION;
+  etaprior[rowi] = discreteCINT  + discreteDRIFT * etapost[rowi]; //prior for latent state of this row
+  ',if(n.TDpred > 0) paste0('etaprior[rowi] =TDPREDEFFECT[subjecti] * tdpreds[rowi-1] + etaprior[rowi];'),'
+  etapriorcov[rowi] =  quad_form(etapostcov[rowi], discreteDRIFT\')  + discreteDIFFUSION;
     }
   
   if (nobsi == 0) {      // if all observations missing
-  etapost[rowi + 1] <- etaprior[rowi];
-  etapostcov[rowi + 1] <- etapriorcov[rowi];
+  etapost[rowi + 1] = etaprior[rowi];
+  etapostcov[rowi + 1] = etapriorcov[rowi];
   
   } else { // if some observations create right size matrices for missingness and calculate...
   vector[nobsi] Y_filt;
@@ -660,29 +669,29 @@ hypermeans~normal(0,1);
   matrix[nobsi, nobsi] invYpredcov_filt_chol;
   
   for(obsi in 1:nobsi){ // for non missing observations in this row
-  Y_filt[obsi] <- Y[rowi][whichobs_y[rowi][obsi]]; // filter the data
-  MANIFESTMEANS_filt[obsi] <- MANIFESTMEANS[subjecti][whichobs_y[rowi][obsi]]; // and manifest means
-  LAMBDA_filt[obsi] <- LAMBDA[subjecti][whichobs_y[rowi][obsi]]; // and loading matrix
+  Y_filt[obsi] = Y[rowi][whichobs_y[rowi][obsi]]; // filter the data
+  MANIFESTMEANS_filt[obsi] = MANIFESTMEANS[subjecti][whichobs_y[rowi][obsi]]; // and manifest means
+  LAMBDA_filt[obsi] = LAMBDA[subjecti][whichobs_y[rowi][obsi]]; // and loading matrix
   for(obsj in 1:nobsi){
-  MANIFESTVAR_filt[obsi,obsj] <- MANIFESTVAR[subjecti][whichobs_y[rowi][obsi], whichobs_y[rowi][obsj]]; // and manifest variance
+  MANIFESTVAR_filt[obsi,obsj] = MANIFESTVAR[subjecti][whichobs_y[rowi][obsi], whichobs_y[rowi][obsj]]; // and manifest variance
   }
   }
   
-  Ypred_filt <- MANIFESTMEANS_filt + LAMBDA_filt * etaprior[rowi]; // predictions of y given prior
-  Ypredcov_filt <- quad_form(etapriorcov[rowi], LAMBDA_filt\') + MANIFESTVAR_filt;
+  Ypred_filt = MANIFESTMEANS_filt + LAMBDA_filt * etaprior[rowi]; // predictions of y given prior
+  Ypredcov_filt = quad_form(etapriorcov[rowi], LAMBDA_filt\') + MANIFESTVAR_filt;
   
-  err <- Y_filt - Ypred_filt; // prediction error
+  err = Y_filt - Ypred_filt; // prediction error
   
-  invYpredcov_filt <- inverse_spd(Ypredcov_filt) ;
-  invYpredcov_filt_chol<-cholesky_decompose(invYpredcov_filt); 
+  invYpredcov_filt = inverse_spd(Ypredcov_filt) ;
+  invYpredcov_filt_chol=cholesky_decompose(invYpredcov_filt); 
   
-  K_filt <- etapriorcov[rowi] * LAMBDA_filt\' * invYpredcov_filt; 
+  K_filt = etapriorcov[rowi] * LAMBDA_filt\' * invYpredcov_filt; 
   
-  etapost[rowi + 1] <- etaprior[rowi] + K_filt * err;
+  etapost[rowi + 1] = etaprior[rowi] + K_filt * err;
   
-  etapostcov[rowi + 1] <- (IIlatent - K_filt * LAMBDA_filt) * etapriorcov[rowi];
+  etapostcov[rowi + 1] = (IIlatent - K_filt * LAMBDA_filt) * etapriorcov[rowi];
   
-  errtrans[obscount:(obscount+nobsi-1)]<-invYpredcov_filt_chol*err; //transform pred errors to standard normal dist and collect
+  errtrans[obscount:(obscount+nobsi-1)]=invYpredcov_filt_chol*err; //transform pred errors to standard normal dist and collect
   increment_log_prob(sum(log(diagonal(invYpredcov_filt_chol)))); //account for transformation of scale in loglik
   }
     }
@@ -715,7 +724,7 @@ hypermeans~normal(0,1);
   }
 generated quantities{
 
-',if(nindvarying > 1) 'matrix[nindvarying,nindvarying] output_indparams_cov; \n','
+',if(nindvarying > 1) 'matrix[nindvarying,nindvarying] output_indparams_cor; \n','
 
 ',paste0('real output_hmean_',ctspec$param[is.na(ctspec$value)],'; \n',collapse=''),'
 
@@ -739,21 +748,22 @@ generated quantities{
   for(subjecti in 1:nsubjects){
   ',
   paste0(unlist(lapply(1:nindvarying,function(indvi){
-    paste0('output_indparams[subjecti,',indvi,'] <- ',
+    paste0('output_indparams[subjecti,',indvi,'] = ',
       gsub('param', paste0('indparams[subjecti,',indvi,']'),ctspec$transform[ctspec$indvarying][indvi]),'; \n')})),collapse=''),'
   }
   for (parami in 1:nindvarying){
-  output_indmeans[parami] <- mean(row(output_indparams, parami));
+  output_indmeans[parami] = mean(row(output_indparams, parami));
   for (subjecti in 1:nsubjects)  {
-  output_indparams_centered[subjecti,parami] <- output_indparams[subjecti,parami] - output_indmeans[parami];
+  output_indparams_centered[subjecti,parami] = output_indparams[subjecti,parami] - output_indmeans[parami];
   }
   }
-  output_indparams_cov <- output_indparams_centered\' * output_indparams_centered / (nsubjects-1);
-  output_indparams_cov <- .5*(output_indparams_cov + output_indparams_cov\'); 
+  output_indparams_cor = output_indparams_centered\' * output_indparams_centered / (nsubjects-1);
+  output_indparams_cor = .5*(output_indparams_cor + output_indparams_cor\'); 
+  output_indparams_cor = inverse(diag_matrix(vecsqrt(diagonal(output_indparams_cor)))) * output_indparams_cor * inverse(diag_matrix(vecsqrt(diagonal(output_indparams_cor))));
   }'),'
 
 ',paste0(unlist(lapply(1:nrow(ctspec),function(rowi){
-  if(is.na(ctspec$value[rowi])) paste0('output_hmean_',ctspec$param[rowi],' <- ',
+  if(is.na(ctspec$value[rowi])) paste0('output_hmean_',ctspec$param[rowi],' = ',
     gsub('param',
       paste0('hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),']'),
       ctspec$transform[rowi]),'; \n')
@@ -761,10 +771,10 @@ generated quantities{
 
 
 ',paste0(unlist(lapply(1:nrow(ctspec),function(rowi){
-  if(ctspec$indvarying[rowi]) paste0('output_hsd_',ctspec$param[rowi],' <- ',
+  if(ctspec$indvarying[rowi]) paste0('output_hsd_',ctspec$param[rowi],' = ',
     'hypersd[',which(ctspec$param[ctspec$indvarying] == ctspec$param[rowi]),']; \n',
     if(!is.na(ctspec$transform[rowi])) paste0(
-      'output_hsd_',ctspec$param[rowi],' <- fabs((', 
+      'output_hsd_',ctspec$param[rowi],' = fabs((', 
       gsub('param', paste0('hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),'] + output_hsd_',ctspec$param[rowi]),ctspec$transform[rowi]), ' - ',
       gsub('param', paste0('hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),'] - output_hsd_',ctspec$param[rowi]),ctspec$transform[rowi]),')/2); \n')
   )
@@ -774,16 +784,16 @@ generated quantities{
 ',if(n.TIpred > 0) paste0(unlist(lapply(1:n.TIpred,function(tip){
   paste0(unlist(lapply(1:nrow(ctspec),function(rowi){
     if(ctspec$indvarying[rowi] & ctspec[,paste0(TIpredNames[tip],'_effect')][rowi]) paste0('
-      output_tip_',TIpredNames[tip], '_on_', ctspec$param[rowi],' <- ',
+      output_tip_',TIpredNames[tip], '_on_', ctspec$param[rowi],' = ',
       'tipredeffect[',which(ctspec$param[ctspec$indvarying] == ctspec$param[rowi]),',',tip,']; \n',
-      if(!is.na(ctspec$transform[rowi])) paste0('output_tip_', TIpredNames[tip], '_on_', ctspec$param[rowi],' <- ((', 
+      if(!is.na(ctspec$transform[rowi])) paste0('output_tip_', TIpredNames[tip], '_on_', ctspec$param[rowi],' = ((', 
         gsub('param', 
           paste0('hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),'] + tipredeffect[',which(ctspec$param[ctspec$indvarying] == ctspec$param[rowi]),',',tip,']'),
           ctspec$transform[rowi]), 
-        ' - ',
+        ') - (',
         gsub('param', 
           paste0('hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),'] - tipredeffect[',which(ctspec$param[ctspec$indvarying] == ctspec$param[rowi]),',',tip,']'),
-          ctspec$transform[rowi]),')/2); \n')
+          ctspec$transform[rowi]),'))/2; \n')
     )
   })),collapse='')
   })),collapse=''),'
@@ -835,9 +845,9 @@ generated quantities{
 
     
     control<-list(adapt_delta=.8,
-      # adapt_term_buffer=100,
-      adapt_init_buffer=2,
-      adapt_window=2,
+      adapt_term_buffer=min(c(iter/10,75)),
+      adapt_init_buffer=10,
+      adapt_window=10,
       # adapt_kappa=.95,
       # adapt_gamma=.01,
       # metric="dense_e",

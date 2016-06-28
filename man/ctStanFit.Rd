@@ -6,7 +6,7 @@
 \usage{
 ctStanFit(datalong, ctstanmodelobj, kalman = TRUE, densehyper = FALSE,
   fit = TRUE, plot = FALSE, noncentered = TRUE, optimize = FALSE,
-  vb = FALSE, iter = 100, chains = 1, ...)
+  vb = FALSE, chains = 3, ...)
 }
 \arguments{
 \item{datalong}{long format data containing columns for subject id, manifest variables, 
@@ -32,9 +32,9 @@ no parameters vary across subjects.}
 
 \item{vb}{if TRUE, use Stan's variational approximation. Presently experimental and not recommended.}
 
-\item{iter}{number of iterations, half of which will be devoted to warmup.}
-
 \item{chains}{number of chains to sample.}
+
+\item{iter}{number of iterations, half of which will be devoted to warmup.}
 }
 \description{
 Fits a ctsem model specified via \code{\link{ctModel}} with type either 'stanct' or 'standt', using Bayseian inference software
