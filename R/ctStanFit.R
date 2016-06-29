@@ -865,6 +865,7 @@ generated quantities{
     out <- stan(model_code = c(stanmodelobj), 
       enable_random_init=TRUE,init_r=.5,
       refresh=20,
+      iter=iter,
       data = standata, chains = ifelse(optimize==FALSE & vb==FALSE,chains,0), control=control,
       sample_file=sample_file,
       cores=max(c(chains,detectCores())),...) 
