@@ -51,7 +51,7 @@ ctCI<-function(ctfitobj, confidenceintervals, optimizer='NPSOL', verbose=0){
   mxComputeSequence(list(
     mxComputeConfidenceInterval(plan=mxComputeGradientDescent(nudgeZeroStarts=FALSE, 
       maxMajorIter=3000),
-      constraintType=ifelse(mxOption(NULL, "Default optimizer") == 'NPSOL','none','ineq')),
+      constraintType=ifelse(mxOption(NULL, "Default optimizer") == 'SLSQP','ineq','none')),
     mxComputeNumericDeriv(), mxComputeStandardError(), 
     mxComputeReportDeriv()))
   )

@@ -188,22 +188,22 @@ This generates a simple first order bivariate latent process model, with each pr
 \hline
  n.manifest & \textit{c} & & Number of manifest indicators per individual at each measurement occasion.\\
  n.latent & \textit{v} & & Number of latent processes.\\
- LAMBDA & $\boldsymbol{\Lambda}$& & n.manifest $\times$ n.latent loading matrix relating latent to manifest variables.\\
+ LAMBDA & $\Lambda$& & n.manifest $\times$ n.latent loading matrix relating latent to manifest variables.\\
  manifestNames & & Y1, Y2, etc & n.manifest length character vector of manifest names.\\
  latentNames & & eta1, eta2, etc & n.latent length character vector of latent names.\\
  T0VAR & & free & lower tri n.latent $\times$ n.latent matrix of latent process initial cov.\\
  T0MEANS & & free & n.latent $\times$ 1 matrix of latent process means at first time point, T0.\\
- MANIFESTMEANS & $\boldsymbol{\tau}$ & free & n.manifest $\times$ 1 matrix of manifest means.\\
- MANIFESTVAR & $\boldsymbol{\Theta}$ & free diag & lower triangular matrix of var / cov between manifests\\
- DRIFT & \textbf{A} & free & n.latent $\times$ n.latent matrix of continuous auto and cross effects.\\
- CINT & $\boldsymbol{\kappa}$ & 0 & n.latent $\times$ 1 matrix of continuous intercepts.\\
- DIFFUSION & $\textbf{Q}$ & free & lower triangular n.latent $\times$ n.latent matrix of diffusion variance / covariance.\\
+ MANIFESTMEANS & $h$ & free & n.manifest $\times$ 1 matrix of manifest means.\\
+ MANIFESTVAR & $\Theta$ & free diag & lower triangular matrix of var / cov between manifests\\
+ DRIFT & $A$ & free & n.latent $\times$ n.latent matrix of continuous auto and cross effects.\\
+ CINT & $b$ & 0 & n.latent $\times$ 1 matrix of continuous intercepts.\\
+ DIFFUSION & $Q$ & free & lower triangular n.latent $\times$ n.latent matrix of diffusion variance / covariance.\\
  n.TDpred & \textit{l} & 0 & Number of time dependent predictors in the dataset.\\
  TDpredNames & & TD1, TD2, etc & n.TDpred length character vector of time dependent predictor names.\\
- TDPREDEFFECT & $\textbf{M}$ & free & n.latent $\times$ n.TDpred matrix of effects from time dependent predictors to latent processes.\\
+ TDPREDEFFECT & $M$ & free & n.latent $\times$ n.TDpred matrix of effects from time dependent predictors to latent processes.\\
  n.TIpred & \textit{p} & 0 & Number of time independent predictors.\\
  TIpredNames & & TI1, TI2, etc & n.TIpred length character vector of time independent predictor names.\\
- TIPREDEFFECT & $\textbf{B}$ & free & n.latent $\times$ n.TIpred effect matrix of time independent predictors on latent processes.\\
+ TIPREDEFFECT & $\beta$ & free & n.latent $\times$ n.TIpred effect matrix of time independent predictors on latent processes.\\
 \end{tabular}
 \end{table}
 

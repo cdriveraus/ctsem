@@ -539,13 +539,15 @@ matrix[nlatent,nlatent] discreteDRIFT;
 
 hypermeans~normal(0,1);
 
-',if(n.TIpred > 0) paste0('tipredeffectparams ~ normal(0,.1); \n '),' 
+',if(n.TIpred > 0) paste0('tipredeffectparams ~ normal(0,1); \n '),' 
 
 ',if(any(ctspec$indvarying)) paste0('
-  hypersd ~ normal(0,.5);
+  hypersd ~ normal(0,1);
   indparamstrans ~ normal(0,1);
   increment_log_prob(sum(log(diagonal(invparamchol)))*nsubjects); //adjust loglik for density warping transform of prediction errors
   '),' 
+
+',if(sum(ctspec$indvarying)>1 & densehyper==TRUE) 'hypercholcorr ~ lkj_corr_cholesky(2);','
 
 
 
@@ -774,9 +776,10 @@ generated quantities{
   if(ctspec$indvarying[rowi]) paste0('output_hsd_',ctspec$param[rowi],' = ',
     'hypersd[',which(ctspec$param[ctspec$indvarying] == ctspec$param[rowi]),']; \n',
     if(!is.na(ctspec$transform[rowi])) paste0(
-      'output_hsd_',ctspec$param[rowi],' = fabs((', 
-      gsub('param', paste0('hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),'] + output_hsd_',ctspec$param[rowi]),ctspec$transform[rowi]), ' - ',
-      gsub('param', paste0('hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),'] - output_hsd_',ctspec$param[rowi]),ctspec$transform[rowi]),')/2); \n')
+      'output_hsd_',ctspec$param[rowi],' = fabs
+      (', 
+      gsub('param', paste0('(hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),'] + output_hsd_',ctspec$param[rowi]),ctspec$transform[rowi]), ') - (',
+      gsub('param', paste0('hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),'] - output_hsd_',ctspec$param[rowi]),ctspec$transform[rowi]),'))/2; \n')
   )
 })),collapse=''),'
 
@@ -846,8 +849,8 @@ generated quantities{
     
     control<-list(adapt_delta=.8,
       adapt_term_buffer=min(c(iter/10,75)),
-      adapt_init_buffer=10,
-      adapt_window=10,
+      adapt_init_buffer=2,
+      adapt_window=2,
       # adapt_kappa=.95,
       # adapt_gamma=.01,
       # metric="dense_e",

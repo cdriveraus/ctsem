@@ -21,7 +21,7 @@ ctStanPlotPriors<-function(ctstanmodelobj,rows='all',wait=TRUE){
       param<-rep(2,n)+rnorm(n)
       points(density(eval(parse(text=paste0(m$transform[rowi]))),bw=.05,n=5000),type='l',col='red')
       legend('topright',c('pop mean prior', '-2sd mean, 2sd','+2sd mean, 2sd'),text.col=c('black','blue','red'),bty='n')
-      if(wait==TRUE & rowi != tail(rows)){
+      if(wait==TRUE & rowi != tail(rows,1)){
         message("Press [enter] to display next plot")
         readline()
       }
