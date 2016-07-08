@@ -75,6 +75,8 @@ if(type=='standt') continuoustime<-FALSE
   ctspec$indvarying[is.na(ctspec$value)]<-indvarying
   ctspec$indvarying[!is.na(ctspec$value)]<-FALSE
   
+  ctspec$sdscale<-1
+  
   
  
   if(n.TIpred > 0) {

@@ -5,7 +5,7 @@
 \title{Simulate continuous time data}
 \usage{
 ctGenerate(ctmodelobj, n.subjects = 1000, burnin = 0, dT = 1,
-  asymptotes = FALSE)
+  asymptotes = FALSE, simulTDpredeffect = FALSE)
 }
 \arguments{
 \item{ctmodelobj}{ctsem model object from \code{\link{ctModel}}.}

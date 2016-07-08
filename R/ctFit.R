@@ -269,7 +269,7 @@ ctFit  <- function(datawide, ctmodelobj,
   if(nrow(datawide)==1){
     message('Single subject dataset or Kalman objective specified - ignoring any specified between subject 
       variance matrices (TRAITVAR, MANIFESTTRAITVAR, TIPREDEFFECT, TIPREDVAR, TDTIPREDCOV, T0TIPREDEFFECT)')
-    if(objective != "Kalman" | objective != "Kalmanmx") message('Estimation could be much faster if objective="Kalman" was specified!')  
+    if(objective != "Kalman" & objective != "Kalmanmx") message('Estimation could be much faster if objective="Kalman" was specified!')  
     n.TIpred<-0
   }
   
@@ -284,10 +284,10 @@ ctFit  <- function(datawide, ctmodelobj,
   
   ###check which extensions (e.g. traits) need to be included 
   if(any(ctmodelobj$TRAITVAR!=0) & nrow(datawide) > 1 )   traitExtension <- TRUE
-  if(all(ctmodelobj$TRAITVAR==0) | nrow(datawide)==1 | objective=='Kalman')    traitExtension <- FALSE
+  if(all(ctmodelobj$TRAITVAR==0) | nrow(datawide)==1 | objective=='Kalman' | objective=='Kalmanmx')    traitExtension <- FALSE
   
   if(any(ctmodelobj$MANIFESTTRAITVAR != 0)) manifestTraitvarExtension <- TRUE
-  if(all(ctmodelobj$MANIFESTTRAITVAR == 0)  | nrow(datawide)==1 | objective=='Kalman') manifestTraitvarExtension <- FALSE
+  if(all(ctmodelobj$MANIFESTTRAITVAR == 0)  | nrow(datawide)==1 | objective=='Kalman'| objective!='Kalmanmx') manifestTraitvarExtension <- FALSE
   
   ## if Kalman objective, rearrange data to long format and set Tpoints to 2 (so only single discrete algebras are generated)
   if(objective=='Kalman' | objective=='Kalmanmx') {
@@ -467,7 +467,7 @@ ctFit  <- function(datawide, ctmodelobj,
   
   
   ###section to define base RAM matrices
-  if(objective!='Kalman') { #configure matrices 
+  if(objective!='Kalman' & objective!='Kalmanmx') { #configure matrices 
     #   defineRAM <- function(){  
     
     #basic indexes to reuse, and modify if changed
@@ -608,7 +608,7 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
   
   
   ###section to append RAM matrices with process traits
-  if(objective!='Kalman' & traitExtension == TRUE){ #if needed, process and include traits in matrices
+  if(objective!='Kalman' & traitExtension == TRUE & objective!='Kalmanmx'){ #if needed, process and include traits in matrices
     #   traitMatrices <- function(){
     
     #update indices
@@ -682,7 +682,7 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
   
   
   ###section to append matrices with manifest trait latents
-  if( objective!='Kalman' & manifestTraitvarExtension == TRUE){
+  if( objective!='Kalman' & manifestTraitvarExtension == TRUE & objective!='Kalmanmx'){
     
     #update indices
     manifeststart <- manifeststart+n.manifest #adding n.manifest latent variables to matrix indices, retaining trait indices notation rather than splitting to process and manifest
@@ -750,7 +750,7 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
   
   
   ####TDpred random matrix section
-  if(n.TDpred > 0 & objective!='Kalman') {
+  if(n.TDpred > 0 & objective!='Kalman' & objective!='Kalmanmx') {
     
     
     #function to insert rows and columns of single specified value into matrices
@@ -2165,17 +2165,28 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
   
   
   if(objective=='Kalmanmx'){ 
+    
+    if(n.TDpred > 0) Bmat<-mxMatrix(name='B',values=cbind(CINT$values,TDPREDEFFECT$values),
+      labels=cbind(CINT$labels,TDPREDEFFECT$labels),free=cbind(CINT$free,TDPREDEFFECT$free),
+      nrow=n.latent,ncol=1+n.TDpred)
+    
+    if(n.TDpred == 0) Bmat<-mxMatrix(name='B',values=cbind(CINT$values),
+      labels=cbind(CINT$labels),free=cbind(CINT$free),
+      nrow=n.latent,ncol=1)
   
     model<-OpenMx::mxModel(model,
       
-      mxMatrix(name='D', values=MANIFESTMEANS$values, labels=MANIFESTMEANS$labels, 
-        nrow=n.manifest, ncol=1, free=MANIFESTMEANS$free), 
+      mxMatrix(name='D', values=cbind(MANIFESTMEANS$values,matrix(0,nrow=n.manifest,ncol=n.TDpred)), 
+        labels=cbind(MANIFESTMEANS$labels,matrix(NA,nrow=n.manifest,ncol=n.TDpred)),
+        nrow=n.manifest, ncol=1+n.TDpred, free=cbind(MANIFESTMEANS$free,matrix(FALSE,nrow=n.manifest,ncol=n.TDpred))), 
       
-      mxMatrix(name='u', values=1, nrow=1, ncol=1, free=F), 
+      mxMatrix(name='u',values=c(1,n.TDpred),labels=c(NA,if(gm$n.TDpred > 0) paste0('data.',TDpredNames)),nrow=1+n.TDpred,ncol=1),
+      
+      Bmat,
       
       mxMatrix('Full', 1, 1, name='time', labels='data.dT1'),
       
-      mxExpectationSSCT(A='DRIFT', B='CINT', C='LAMBDA', 
+      mxExpectationSSCT(A='DRIFT', B='B', C='LAMBDA', 
         D="D", Q='DIFFUSION', R='MANIFESTVAR', x0='T0MEANS', P0='T0VAR', u="u", t='time'), 
       
       mxFitFunctionML(vector=FALSE)

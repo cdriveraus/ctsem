@@ -6,7 +6,8 @@
 \usage{
 ctStanFit(datalong, ctstanmodelobj, iter = 1000, kalman = TRUE,
   densehyper = FALSE, fit = TRUE, plot = FALSE, noncentered = TRUE,
-  optimize = FALSE, vb = FALSE, chains = 3, ...)
+  stdnorm = TRUE, adapt_delta = 0.8, optimize = FALSE, vb = FALSE,
+  chains = 3, ...)
 }
 \arguments{
 \item{datalong}{long format data containing columns for subject id, manifest variables, 

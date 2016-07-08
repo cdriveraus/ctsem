@@ -11,7 +11,7 @@ ctKalman(ctstanmodelobj, kalmanpars, datalong, subject)
 
 \item{kalmanpars}{list object containing DRIFT,T0VAR,DIFFUSION,CINT,T0MEANS,TDPREDEFFECT,
 MANIFESTMEANS, LAMBDA, and MANIFESTVAR matrices, with list elements named accordingly. A ctsem model of type 'omx',
-fulfills these requirements.}
+fulfills these requirements, so long as full covariance matrices are specified instead of lower triangular.}
 
 \item{datalong}{long format data object containing as used by \code{\link{ctStanFit}}.}
 
