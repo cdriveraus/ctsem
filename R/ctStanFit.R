@@ -796,7 +796,7 @@ generated quantities{
 
 ',paste0('real output_hmean_',ctspec$param[is.na(ctspec$value)],'; \n',collapse=''),'
 
-',if(nindvarying > 1) paste0(unlist(lapply(1:nrow(ctspec),function(rowi){
+',if(nindvarying > 0) paste0(unlist(lapply(1:nrow(ctspec),function(rowi){
   if(ctspec$indvarying[rowi]) paste0('real output_hsd_',ctspec$param[rowi],'; \n')
 })),collapse=''),'
 
@@ -840,8 +840,8 @@ generated quantities{
 
 ',paste0(unlist(lapply(1:nrow(ctspec),function(rowi){
   if(ctspec$indvarying[rowi]) paste0('output_hsd_',ctspec$param[rowi],' = ',
-    'hypersd[',which(ctspec$param[ctspec$indvarying] == ctspec$param[rowi]),'] * 
-    sdscale[',which(ctspec$param[ctspec$indvarying] == ctspec$param[rowi]),']; \n',
+    'hypersd[',which(ctspec$param[ctspec$indvarying] == ctspec$param[rowi]),'] * ', 
+    'sdscale[',which(ctspec$param[ctspec$indvarying] == ctspec$param[rowi]),']; \n',
     if(!is.na(ctspec$transform[rowi])) paste0(
       'output_hsd_',ctspec$param[rowi],' = fabs
       (', 
