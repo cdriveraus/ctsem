@@ -874,7 +874,7 @@ generated quantities{
   
   if(fit==TRUE){
     
-    
+    # browser()
     standata<-list(
       Y=cbind(datalong[,manifestNames]),
       subject=datalong[,'id'],
@@ -888,7 +888,7 @@ generated quantities{
       ntdpred=n.TDpred,
       nparams=nparams,
       nindvarying=nindvarying,
-      sdscale=ctspec$sdscale[ctspec$indvarying],
+      sdscale=array(ctspec$sdscale[ctspec$indvarying]),
       IIparams = diag(nparams),
       ndatapoints=nrow(datalong),
       padeC=rbind(c(120, 60, 12, 1, 0, 0, 0, 0, 0, 0), c(30240, 
