@@ -37,7 +37,7 @@ ctStanPredictions<-function(ctstanmodelobj,ctstanfitobj, datalong, subjects=1,wa
      eval(parse(text=paste0(par$matrix[rowi],'[',par$row[rowi],',',par$col[rowi],'] <- ',
        if(!is.na(par$value[rowi])) par$value[rowi],
        if(is.na(par$value[rowi])) sum$summary[which(rownames(sum$summary) %in% 
-           paste0(par$matrix[rowi],'[',subjecti,',',par$row[rowi],
+           paste0(par$matrix[rowi],'[',ifelse(par$indvarying[rowi],subjecti,1),',',par$row[rowi],
              if(!(par$matrix[rowi] %in% c('T0MEANS','MANIFESTMEANS','CINT'))) paste0(',',par$col[rowi]),
                ']')
          ),'mean'])))

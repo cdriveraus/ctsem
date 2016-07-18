@@ -9,6 +9,9 @@
 #' fulfills these requirements, so long as full covariance matrices are specified instead of lower triangular.
 #' @param datalong long format data object containing as used by \code{\link{ctStanFit}}.
 #' @param subject integer denoting which subjects data to use. 
+#' 
+#' @value Returns a list containing matrix objects etaprior, ypred, prederror, etapost, y, loglik,  with values for each time point in each row. 
+#' Covariance matrices etapriorcov, ypredcov, etapostcov, are returned in a sublist containing matrices for each time point.
 #' @export
 
 ctKalman<-function(ctstanmodelobj,kalmanpars,datalong,subject){
@@ -16,12 +19,12 @@ ctKalman<-function(ctstanmodelobj,kalmanpars,datalong,subject){
 m<-ctstanmodelobj
 kp<-kalmanpars
 
-dlong<-datalong[which(datalong[,m$subjectIDname]==subject),]
+dlong<-datalong[which(datalong[,m$subjectIDname]==subject),,drop=FALSE]
 
-Y<-dlong[,m$manifestNames]
-dt<-dlong[,m$timeName]
+Y<-dlong[,m$manifestNames,drop=FALSE]
+dt<-dlong[,m$timeName,drop=FALSE]
 if(m$n.TDpred > 0) {
-  tdpreds<-dlong[,m$TDpredNames]
+  tdpreds<-dlong[,m$TDpredNames,drop=FALSE]
 if(any(is.na(tdpreds))) stop('missingness in time dependent predictors! ctKalman cannot run.')
 }
 
@@ -111,9 +114,20 @@ if(rowi>1){
 # }
 }
 
+etaprior<-matrix(unlist(etaprior),byrow=T,ncol=m$n.latent)
+colnames(etaprior)<-m$latentNames
+etapost<-matrix(unlist(etapost),byrow=T,ncol=m$n.latent)
+colnames(etapost)<-m$latentNames
+ypred<-matrix(unlist(ypred),byrow=T,ncol=m$n.manifest)
+colnames(ypred)<-m$manifestNames
+y<-dlong[,c(m$manifestNames,m$TDpredNames),drop=FALSE]
+colnames(y)<-m$manifestNames
+err<-matrix(unlist(err),byrow=T,ncol=m$n.manifest)
+colnames(err)<-m$manifestNames
+
 out<-list(observed,etaprior=etaprior,etapriorcov=etapriorcov,
   etapost=etapost,etapostcov=etapostcov,loglik=loglik,
-  err=err,ypred=ypred,ypredcov=ypredcov)
+  prederror=err,y=y,yypred=ypred,ypredcov=ypredcov)
 
 }
 

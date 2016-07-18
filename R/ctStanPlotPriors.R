@@ -16,9 +16,9 @@ ctStanPlotPriors<-function(ctstanmodelobj,rows='all',wait=TRUE){
     param<-rnorm(n)
     if(is.na(m$value[rowi])){
     plot(density(eval(parse(text=paste0(m$transform[rowi]))),bw=.05,n=5000),main=m$param[rowi],lwd=2)
-      param<-rep(-1,n)+rnorm(n,0,m$sdscale[rowi])
+      param<-rep(-1,n)+rnorm(n,0,(log(exp(2)*1.5)+1)*m$sdscale[rowi])
       points(density(eval(parse(text=paste0(m$transform[rowi]))),bw=.05,n=5000),type='l',col='blue')
-      param<-rep(1,n)+rnorm(n,0,m$sdscale[rowi])
+      param<-rep(1,n)++rnorm(n,0,(log(exp(2)*1.5)+1)*m$sdscale[rowi])
       points(density(eval(parse(text=paste0(m$transform[rowi]))),bw=.05,n=5000),type='l',col='red')
       legend('topright',c('pop mean prior', '-1sd mean, 2sd','+1sd mean, 2sd'),text.col=c('black','blue','red'),bty='n')
       if(wait==TRUE & rowi != tail(rows,1)){
