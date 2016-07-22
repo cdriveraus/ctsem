@@ -10,8 +10,8 @@
 #' @param datalong long format data object containing as used by \code{\link{ctStanFit}}.
 #' @param subject integer denoting which subjects data to use. 
 #' 
-#' @value Returns a list containing matrix objects etaprior, ypred, prederror, etapost, y, loglik,  with values for each time point in each row. 
-#' Covariance matrices etapriorcov, ypredcov, etapostcov, are returned in a sublist containing matrices for each time point.
+#' @value Returns a list containing matrix objects etaprior, yprior, prederror, etapost, y, loglik,  with values for each time point in each row. 
+#' Covariance matrices etapriorcov, ypriorcov, etapostcov, are returned in a sublist containing matrices for each time point.
 #' @export
 
 ctKalman<-function(ctstanmodelobj,kalmanpars,datalong,subject){
@@ -20,6 +20,7 @@ m<-ctstanmodelobj
 kp<-kalmanpars
 
 dlong<-datalong[which(datalong[,m$subjectIDname]==subject),,drop=FALSE]
+
 
 Y<-dlong[,m$manifestNames,drop=FALSE]
 dt<-dlong[,m$timeName,drop=FALSE]
@@ -38,8 +39,10 @@ etapriorcov<-list()
 etapost<-list()
 etapostcov<-list()
 err<-list()
-ypred<-list()
-ypredcov<-list()
+yprior<-list()
+ypriorcov<-list()
+ypost<-list()
+ypostcov<-list()
 
 etaprior[[1]]<-kp$T0MEANS
 if(m$n.TDpred > 0) etaprior[[1]]<-etaprior[[1]]+kp$TDPREDEFFECT %*% t(dlong[rowi,m$TDpredNames,drop=FALSE])
@@ -73,11 +76,11 @@ if(rowi>1){
         y <- Y[rowi,,drop=FALSE][,nafilter,drop=FALSE]
         
         # // one step ahead predictive distribution of y
-        ypred[[rowi]] <- kp$MANIFESTMEANS + kp$LAMBDA %*% etaprior[[rowi]]
-        ypredcov[[rowi]] <- kp$LAMBDA %*% etapriorcov[[rowi]] %*% t(kp$LAMBDA) + kp$MANIFESTVAR
+        yprior[[rowi]] <- kp$MANIFESTMEANS + kp$LAMBDA %*% etaprior[[rowi]]
+        ypriorcov[[rowi]] <- kp$LAMBDA %*% etapriorcov[[rowi]] %*% t(kp$LAMBDA) + kp$MANIFESTVAR
         # // forecast error
         err[[rowi]]<-matrix(NA,nrow=n.manifest)
-        err[[rowi]][nafilter] <- y - ypred[[rowi]][nafilter,drop=FALSE]
+        err[[rowi]][nafilter] <- y - yprior[[rowi]][nafilter,drop=FALSE]
         
         #if all missing...
         if(all(!nafilter)){
@@ -89,9 +92,9 @@ if(rowi>1){
         if(any(nafilter)){
           
         # // Kalman gain
-        invypredcov <- solve(ypredcov[[rowi]][nafilter,nafilter,drop=FALSE])
+        invypriorcov <- solve(ypriorcov[[rowi]][nafilter,nafilter,drop=FALSE])
         K<-matrix(0,nrow=m$n.latent,ncol=m$n.manifest)
-        K[,nafilter] <-  etapriorcov[[rowi]] %*%   t(kp$LAMBDA[nafilter,,drop=FALSE]) %*% invypredcov
+        K[,nafilter] <-  etapriorcov[[rowi]] %*%   t(kp$LAMBDA[nafilter,,drop=FALSE]) %*% invypriorcov
         
         # // posterior distribution 
         # etapost[[rowi + 1]] <- etaprior[[rowi]]
@@ -107,27 +110,59 @@ if(rowi>1){
         # // log likelihood
       
          loglik[rowi] <- - 0.5 * (nrow(kp$LAMBDA[nafilter,,drop=FALSE]) * log(2 * pi)  + 
-             log(det(ypredcov[[rowi]][nafilter,nafilter,drop=FALSE]))    + 
-            t(err[[rowi]][nafilter,,drop=FALSE]) %*% invypredcov %*% (err[[rowi]][nafilter,,drop=FALSE]))
+             log(det(ypriorcov[[rowi]][nafilter,nafilter,drop=FALSE]))    + 
+            t(err[[rowi]][nafilter,,drop=FALSE]) %*% invypriorcov %*% (err[[rowi]][nafilter,,drop=FALSE]))
+         
+         ypost[[rowi]] <- kp$MANIFESTMEANS + kp$LAMBDA %*% etapost[[rowi]]
+         ypostcov[[rowi]] <- kp$LAMBDA %*% etapostcov[[rowi]] %*% t(kp$LAMBDA) + kp$MANIFESTVAR
         
         }
 # }
+}
+
+etasmooth<-list()
+etasmoothcov<-list()
+ysmooth<-list()
+ysmoothcov<-list()
+
+for(rowi in nrow(dlong):1){
+  if(rowi==nrow(dlong)) {
+    etasmooth[[rowi]]<-etapost[[rowi]]
+    etasmoothcov[[rowi]]<-etapostcov[[rowi]]
+  } else{
+  smoother<- etapostcov[[rowi]] %*% t(kp$LAMBDA) %*% solve(etapriorcov[[rowi+1]])
+  etasmooth[[rowi]]<-etapost[[rowi]]+smoother %*% (etasmooth[[rowi+1]] - etaprior[[rowi+1]])
+  etasmoothcov[[rowi]]<-etapostcov[[rowi]] + smoother %*% ( etasmoothcov[[rowi+1]] - etapriorcov[[rowi+1]])
+  }
+  ysmooth[[rowi]] <- kp$MANIFESTMEANS + kp$LAMBDA %*% etasmooth[[rowi]]
+  ysmoothcov[[rowi]] <- kp$LAMBDA %*% etasmoothcov[[rowi]] %*% t(kp$LAMBDA) + kp$MANIFESTVAR
+  
+  
 }
 
 etaprior<-matrix(unlist(etaprior),byrow=T,ncol=m$n.latent)
 colnames(etaprior)<-m$latentNames
 etapost<-matrix(unlist(etapost),byrow=T,ncol=m$n.latent)
 colnames(etapost)<-m$latentNames
-ypred<-matrix(unlist(ypred),byrow=T,ncol=m$n.manifest)
-colnames(ypred)<-m$manifestNames
+yprior<-matrix(unlist(yprior),byrow=T,ncol=m$n.manifest)
+colnames(yprior)<-m$manifestNames
 y<-dlong[,c(m$manifestNames,m$TDpredNames),drop=FALSE]
 colnames(y)<-m$manifestNames
 err<-matrix(unlist(err),byrow=T,ncol=m$n.manifest)
 colnames(err)<-m$manifestNames
+ypost<-matrix(unlist(ypost),byrow=T,ncol=m$n.manifest)
+colnames(ypost)<-m$manifestNames
+
+etasmooth<-matrix(unlist(etasmooth),byrow=T,ncol=m$n.latent)
+colnames(etapost)<-m$latentNames
+ysmooth<-matrix(unlist(ysmooth),byrow=T,ncol=m$n.manifest)
+colnames(ysmooth)<-m$manifestNames
 
 out<-list(observed,etaprior=etaprior,etapriorcov=etapriorcov,
   etapost=etapost,etapostcov=etapostcov,loglik=loglik,
-  prederror=err,y=y,yypred=ypred,ypredcov=ypredcov)
+  prederror=err,y=y,yprior=yprior,ypriorcov=ypriorcov,
+  ypost=ypost,ypostcov=ypostcov,
+  etasmooth=etasmooth,etasmoothcov=etasmoothcov,ysmooth=ysmooth,ysmoothcov=ysmoothcov)
 
 }
 
