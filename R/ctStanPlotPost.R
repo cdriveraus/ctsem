@@ -59,7 +59,8 @@ ctStanPlotPost<-function(ctstanmodelobj,ctstanfitobj, rows='all',wait=FALSE){
         dhypersdpost<-density(hypersd,bw=.05,n=50000)
         dhypersdprior<-density((log(exp(param*1.5)+1) *m$sdscale[rowi]),bw=.02,n=50000)
         ylim<-c(0,max(c(dhypersdpost$y,dhypersdprior$y)+.1))
-        plot(dhypersdpost,main=paste0('Pre-tform pop. sd ',m$param[rowi]),xlab='Value',lwd=2,xlim=c(0,max(c(dhypersdpost$x,m$sdscale[rowi]*2))),ylim=ylim,xaxs='i',yaxs='i')
+        plot(dhypersdpost,main=paste0('Pre-tform pop. sd ',m$param[rowi]),xlab='Value',lwd=2,
+          xlim=c(0,max(c(dhypersdpost$x,m$sdscale[rowi]*2))),ylim=ylim,xaxs='i',yaxs='i')
         points(dhypersdprior,col='blue',type='l',lty=2,lwd=2)
         legend('topright',c('Pop. sd posterior','Pop. sd prior'),
           text.col=c('black','blue'),bty='n')

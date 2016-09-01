@@ -36,16 +36,10 @@ ctCI<-function(ctfitobj, confidenceintervals, optimizer='NPSOL', verbose=0){
   
   originalOptimizer<- mxOption(NULL, "Default optimizer")
   
-  if(optimizer=='NPSOL'){
-  if(imxHasNPSOL()==TRUE) mxOption(NULL,'Default optimizer', 'NPSOL')
-  if(imxHasNPSOL()==FALSE) message("NPSOL optimizer not available - recommend installing OpenMx using command:  source('http://openmx.psyc.virginia.edu/getOpenMx.R') ")
-  }
+  if(optimizer=='NPSOL' & imxHasNPSOL()==FALSE) message("NPSOL optimizer not available - recommend installing OpenMx using command:  source('http://openmx.psyc.virginia.edu/getOpenMx.R') ")
   
-  if(optimizer!='NPSOL') {
     mxOption(NULL,'Default optimizer', optimizer)
-  }
-    
-  # if(class(ctfitobj)=='ctsemFit'){
+
   ctfitobj$mxobj <- OpenMx::mxModel(ctfitobj$mxobj, 
     mxCI(confidenceintervals, interval = 0.95, type = "both"),
   mxComputeSequence(list(
@@ -55,24 +49,7 @@ ctCI<-function(ctfitobj, confidenceintervals, optimizer='NPSOL', verbose=0){
     mxComputeNumericDeriv(), mxComputeStandardError(), 
     mxComputeReportDeriv()))
   )
-  # }
   
-#   if(class(ctfitobj)=='ctsemMultigroupFit'){
-#     for(i in names(ctfitobj$mxobj$submodels)){
-#     submodel <- OpenMx::mxModel(ctfitobj$mxobj$submodels[[i]], 
-#       mxCI(confidenceintervals, interval = 0.95, type = "both"),
-#       mxComputeSequence(list(
-#         mxComputeConfidenceInterval(plan=mxComputeGradientDescent(nudgeZeroStarts=FALSE, 
-#           verbose=verbose,
-#           maxMajorIter=3000),
-#           constraintType=ifelse(mxOption(NULL, "Default optimizer") == 'NPSOL','none','ineq')),
-#         mxComputeNumericDeriv(), mxComputeStandardError(), 
-#         mxComputeReportDeriv()))
-#     )
-#     ctfitobj$mxobj<-OpenMx::mxModel(ctfitobj$mxobj, remove=T, i)
-#     ctfitobj$mxobj<-OpenMx::mxModel(ctfitobj$mxobj, submodel)
-#     }
-#   }
 
   ctfitobj$mxobj<-mxRun(ctfitobj$mxobj,intervals=TRUE)
   ctfitobj$mxobj@compute<-NULL

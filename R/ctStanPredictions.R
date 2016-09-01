@@ -19,7 +19,7 @@ ctStanPredictions<-function(ctstanmodelobj,ctstanfitobj, datalong, subjects=1,wa
   sum<-getMethod('summary','stanfit')(f)
   
   out<-list()
-  
+
   for(subjecti in subjects){
   
   DRIFT<-matrix(NA,nrow=m$n.latent,ncol=m$n.latent)
@@ -47,8 +47,9 @@ ctStanPredictions<-function(ctstanmodelobj,ctstanfitobj, datalong, subjects=1,wa
   MANIFESTVAR[upper.tri(MANIFESTVAR)] <- (t(MANIFESTVAR))[upper.tri(MANIFESTVAR)]
   
   model<-list(DRIFT=DRIFT,T0VAR=T0VAR,DIFFUSION=DIFFUSION,CINT=CINT,T0MEANS=T0MEANS,
-    if(m$n.TDpred > 1) TDPREDEFFECT=TDPREDEFFECT,MANIFESTMEANS=MANIFESTMEANS,MANIFESTVAR=MANIFESTVAR,
-    LAMBDA=LAMBDA)
+    MANIFESTMEANS=MANIFESTMEANS,MANIFESTVAR=MANIFESTVAR, LAMBDA=LAMBDA)
+  
+  if(m$n.TDpred > 0) model$TDPREDEFFECT<-TDPREDEFFECT
   
   out[[subjecti]]<-ctKalman(ctstanmodelobj=ctstanmodelobj,kalmanpars=model,datalong=datalong,subject=subjecti)
 

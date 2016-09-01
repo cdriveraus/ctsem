@@ -10,7 +10,7 @@
 #' @param datalong long format data object containing as used by \code{\link{ctStanFit}}.
 #' @param subject integer denoting which subjects data to use. 
 #' 
-#' @value Returns a list containing matrix objects etaprior, yprior, prederror, etapost, y, loglik,  with values for each time point in each row. 
+#' @return Returns a list containing matrix objects etaprior, yprior, prederror, etapost, y, loglik,  with values for each time point in each row. 
 #' Covariance matrices etapriorcov, ypriorcov, etapostcov, are returned in a sublist containing matrices for each time point.
 #' @export
 
@@ -45,7 +45,7 @@ ypost<-list()
 ypostcov<-list()
 
 etaprior[[1]]<-kp$T0MEANS
-if(m$n.TDpred > 0) etaprior[[1]]<-etaprior[[1]]+kp$TDPREDEFFECT %*% t(dlong[rowi,m$TDpredNames,drop=FALSE])
+if(m$n.TDpred > 0) etaprior[[1]]<-etaprior[[1]]+kp$TDPREDEFFECT %*% t(dlong[1,m$TDpredNames,drop=FALSE])
 etapriorcov[[1]]<-kp$T0VAR
 loglik<-rep(0,nrow(dlong))
 observed<-list()
@@ -146,8 +146,10 @@ etapost<-matrix(unlist(etapost),byrow=T,ncol=m$n.latent)
 colnames(etapost)<-m$latentNames
 yprior<-matrix(unlist(yprior),byrow=T,ncol=m$n.manifest)
 colnames(yprior)<-m$manifestNames
-y<-dlong[,c(m$manifestNames,m$TDpredNames),drop=FALSE]
+y<-dlong[,m$manifestNames,drop=FALSE]
 colnames(y)<-m$manifestNames
+if(m$n.TDpred>0) tdpreds<-dlong[,m$TDpredNames,drop=FALSE]
+colnames(tdpreds)<-m$TDpredNames
 err<-matrix(unlist(err),byrow=T,ncol=m$n.manifest)
 colnames(err)<-m$manifestNames
 ypost<-matrix(unlist(ypost),byrow=T,ncol=m$n.manifest)
@@ -161,6 +163,7 @@ colnames(ysmooth)<-m$manifestNames
 out<-list(observed,etaprior=etaprior,etapriorcov=etapriorcov,
   etapost=etapost,etapostcov=etapostcov,loglik=loglik,
   prederror=err,y=y,yprior=yprior,ypriorcov=ypriorcov,
+  tdpreds=tdpreds,
   ypost=ypost,ypostcov=ypostcov,
   etasmooth=etasmooth,etasmoothcov=etasmoothcov,ysmooth=ysmooth,ysmoothcov=ysmoothcov)
 

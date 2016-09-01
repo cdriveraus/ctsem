@@ -47,21 +47,28 @@ if(type=='standt') continuoustime<-FALSE
   ctspec$transform<-NA
   
   ######### STAN parameter transforms
-  ctspec$transform[ctspec$matrix %in% c('T0MEANS','MANIFESTMEANS','TDPREDEFFECT','CINT','LAMBDA') & freeparams] <- '(param) * 10'
+  ctspec$transform[ctspec$matrix %in% c('T0MEANS','MANIFESTMEANS','TDPREDEFFECT','CINT','LAMBDA') & 
+      freeparams] <- '(param) * 10'
   
-  ctspec$transform[ctspec$matrix %in% c('DIFFUSION','MANIFESTVAR', 'T0VAR') & freeparams & ctspec$row != ctspec$col] <- '2/(1+exp((param)*-1.5))-1'
+  ctspec$transform[ctspec$matrix %in% c('DIFFUSION','MANIFESTVAR', 'T0VAR') & 
+      freeparams & ctspec$row != ctspec$col] <- '2/(1+exp((param)*-1.5))-1'
   
-  ctspec$transform[ctspec$matrix %in% c('DIFFUSION','MANIFESTVAR', 'T0VAR') & freeparams & ctspec$row == ctspec$col] <- 'log(exp((param)*1.5)+1)*5' #'1/(.1+exp(param*1.8))*10+.001'
+  ctspec$transform[ctspec$matrix %in% c('DIFFUSION','MANIFESTVAR', 'T0VAR') & 
+      freeparams & ctspec$row == ctspec$col] <- 'log(exp((param))+1)*5' #'1/(.1+exp(param*1.8))*10+.001'
   
   if(continuoustime==TRUE){
-    ctspec$transform[ctspec$matrix %in% c('DRIFT') & freeparams & ctspec$row == ctspec$col] <- '-log(exp((param)*1)+1)' #'log(1/(1+(exp(param*-1.5))))'
+    ctspec$transform[ctspec$matrix %in% c('DRIFT') & 
+        freeparams & ctspec$row == ctspec$col] <- '-log(exp((-param)*1.5)+1)' #'log(1/(1+(exp(param*-1.5))))'
     
-    ctspec$transform[ctspec$matrix %in% c('DRIFT') & freeparams & ctspec$row != ctspec$col] <- '(param)*.5'
+    ctspec$transform[ctspec$matrix %in% c('DRIFT') & freeparams & 
+        ctspec$row != ctspec$col] <- '(param)*.5'
   }
   if(continuoustime==FALSE){
-    ctspec$transform[ctspec$matrix %in% c('DRIFT') & freeparams & ctspec$row == ctspec$col] <- '1/(1+exp((param)*-1.5))'
+    ctspec$transform[ctspec$matrix %in% c('DRIFT') & freeparams & 
+        ctspec$row == ctspec$col] <- '1/(1+exp((param)*-1.5))'
     
-    ctspec$transform[ctspec$matrix %in% c('DRIFT') & freeparams & ctspec$row != ctspec$col] <- '(param)'
+    ctspec$transform[ctspec$matrix %in% c('DRIFT') & freeparams & 
+        ctspec$row != ctspec$col] <- '(param)'
   }
   
   nparams<-sum(freeparams)

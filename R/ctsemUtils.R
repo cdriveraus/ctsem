@@ -71,3 +71,35 @@ cseq <- function(from, to, by){
   return(temp)
 }
 
+get_stan_params <- function(object) {
+  stopifnot(is(object, "stanfit"))
+  params <- grep("context__.vals_r", fixed = TRUE, value = TRUE,
+    x = strsplit(get_cppcode(get_stanmodel(object)), "\n")[[1]])
+  params <- sapply(strsplit(params, "\""), FUN = function(x) x[[2]])
+  params <- intersect(params, object@model_pars)
+  return(params)
+}
+
+
+get_stan_massmat<-function(fit){
+  
+  spars<-get_stan_params(fit)
+  spars2<-c()
+  for(pari in spars){
+    spars2<-c(spars2,grep(paste0(pari,'['),names(fit@sim$samples[[1]]),fixed=TRUE))
+  }
+  
+  massmat<-list()
+  for(chaini in 1:fit@sim$chains){
+    temp<-c()
+    for(pari in spars2){
+      newval<-cov(cbind(fit@sim$samples[[chaini]][[pari]][(fit@sim$warmup - fit@stan_args[[1]]$control$adapt_term_buffer):fit@sim$warmup]))
+      names(newval)<-names(fit@sim$samples[[chaini]])[pari]
+      temp<-c(temp,newval)
+    }
+    massmat[[chaini]]<-temp
+  }
+  return(massmat)
+}
+
+

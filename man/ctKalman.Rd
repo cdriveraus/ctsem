@@ -17,6 +17,10 @@ fulfills these requirements, so long as full covariance matrices are specified i
 
 \item{subject}{integer denoting which subjects data to use.}
 }
+\value{
+Returns a list containing matrix objects etaprior, yprior, prederror, etapost, y, loglik,  with values for each time point in each row. 
+Covariance matrices etapriorcov, ypriorcov, etapostcov, are returned in a sublist containing matrices for each time point.
+}
 \description{
 Takes list containing ctsem subject matrices, as well as long form data object, and calculates 
 predicted and updated latent states, likelihoods, and predicted observations using the Kalman filter.
