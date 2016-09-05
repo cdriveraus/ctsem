@@ -2,7 +2,7 @@
 #' Computes confidence intervals on specified parameters / matrices for already fitted ctsem fit object.
 #' @param ctfitobj Already fit ctsem fit object (class: ctsemFit) to estimate confidence intervals for.
 #' @param confidenceintervals character vector of matrices and or parameters for which to estimate 95\% confidence intervals for.
-#' @param optimizer character vector. Defaults to NPSOL (recommended), but other optimizers available within OpenMx (e.g. 'SLSQP') may be specified.
+#' @param optimizer character vector. Defaults to NPSOL (recommended), but other optimizers available within OpenMx (e.g. 'CSOLNP') may be specified.
 #' @param verbose Integer between 0 and 3 reflecting amount of output while calculating.
 #' @return ctfitobj, with confidence intervals included.
 #' @details Confidence intervals typically estimate more reliably using the proprietary NPSOL optimizer available within OpenMx only when
@@ -31,13 +31,14 @@ ctCI<-function(ctfitobj, confidenceintervals, optimizer='NPSOL', verbose=0){
   if(class(ctfitobj)!= 'ctsemFit' & class(ctfitobj)!= 'ctsemMultigroupFit') stop('Not a ctsem fit object!')
   
   if(class(ctfitobj)=='ctsemMultigroupFit') confidenceintervals<-unlist(lapply(confidenceintervals,function(x){
-    paste0(names(ctfitobj$mxobj$submodels),'.', confidenceintervals)
+    paste0(rep(names(ctfitobj$mxobj$submodels),each=length(confidenceintervals)),'.', confidenceintervals)
   }))
   
   originalOptimizer<- mxOption(NULL, "Default optimizer")
   
-  if(optimizer=='NPSOL' & imxHasNPSOL()==FALSE) message("NPSOL optimizer not available - recommend installing OpenMx using command:  source('http://openmx.psyc.virginia.edu/getOpenMx.R') ")
-  
+  if(optimizer=='NPSOL' & imxHasNPSOL()==FALSE) {
+    stop("NPSOL optimizer not available - try CSOLNP or install OpenMx using command:  source('http://openmx.psyc.virginia.edu/getOpenMx.R') ")
+  }
     mxOption(NULL,'Default optimizer', optimizer)
 
   ctfitobj$mxobj <- OpenMx::mxModel(ctfitobj$mxobj, 

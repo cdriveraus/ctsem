@@ -50,24 +50,28 @@ etapriorcov[[1]]<-kp$T0VAR
 loglik<-rep(0,nrow(dlong))
 observed<-list()
 
+discreteDRIFT<- list()
+discreteCINT<- list()
+discreteDIFFUSION <- list()
+
 for(rowi in 1:(nrow(dlong))){
   
-  if(rowi==1 |(rowi > 0 && m$continuoustime && dt[rowi] != dt[rowi-1])){
+  # if(rowi==1 |(rowi > 0 && m$continuoustime && dt[rowi] != dt[rowi-1])){
     if(m$continuoustime){
-    discreteDRIFT <- OpenMx::expm(kp$DRIFT)
-    discreteCINT <- solve(kp$DRIFT) %*% (discreteDRIFT - diag(m$n.latent)) %*% kp$CINT
-    discreteDIFFUSION <- asymDIFFUSION - (discreteDRIFT %*% asymDIFFUSION %*% t(discreteDRIFT))
+    discreteDRIFT[[rowi]] <- OpenMx::expm(kp$DRIFT)
+    discreteCINT[[rowi]] <- solve(kp$DRIFT) %*% (discreteDRIFT[[rowi]] - diag(m$n.latent)) %*% kp$CINT
+    discreteDIFFUSION[[rowi]] <- asymDIFFUSION - (discreteDRIFT[[rowi]] %*% asymDIFFUSION %*% t(discreteDRIFT[[rowi]]))
     }
     if(!m$continuoustime){
-      discreteDRIFT <-kp$DRIFT
-      discreteCINT<- kp$CINT
-      discreteDIFFUSION <- kp$DIFFUSION
+      discreteDRIFT[[rowi]] <-kp$DRIFT
+      discreteCINT[[rowi]]<- kp$CINT
+      discreteDIFFUSION[[rowi]] <- kp$DIFFUSION
     }
-  }
+  # }
 if(rowi>1){
-        etaprior[[rowi]] <- discreteCINT  + discreteDRIFT %*% etapost[[rowi-1]]
+        etaprior[[rowi]] <- discreteCINT[[rowi]]  + discreteDRIFT[[rowi]] %*% etapost[[rowi-1]]
         if(m$n.TDpred > 0) etaprior[[rowi]] <- etaprior[[rowi]] + kp$TDPREDEFFECT %*% t(dlong[rowi,m$TDpredNames,drop=FALSE])
-        etapriorcov[[rowi]] <-  discreteDRIFT %*% etapostcov[[rowi-1]] %*% t(discreteDRIFT)  + discreteDIFFUSION #check transpose
+        etapriorcov[[rowi]] <-  discreteDRIFT[[rowi]] %*% etapostcov[[rowi-1]] %*% t(discreteDRIFT[[rowi]])  + discreteDIFFUSION[[rowi]] #check transpose
 }
 
           nafilter<-!is.na(Y[rowi,])
@@ -79,7 +83,7 @@ if(rowi>1){
         yprior[[rowi]] <- kp$MANIFESTMEANS + kp$LAMBDA %*% etaprior[[rowi]]
         ypriorcov[[rowi]] <- kp$LAMBDA %*% etapriorcov[[rowi]] %*% t(kp$LAMBDA) + kp$MANIFESTVAR
         # // forecast error
-        err[[rowi]]<-matrix(NA,nrow=n.manifest)
+        err[[rowi]]<-matrix(NA,nrow=m$n.manifest)
         err[[rowi]][nafilter] <- y - yprior[[rowi]][nafilter,drop=FALSE]
         
         #if all missing...
@@ -130,7 +134,8 @@ for(rowi in nrow(dlong):1){
     etasmooth[[rowi]]<-etapost[[rowi]]
     etasmoothcov[[rowi]]<-etapostcov[[rowi]]
   } else{
-  smoother<- etapostcov[[rowi]] %*% t(kp$LAMBDA) %*% solve(etapriorcov[[rowi+1]])
+  smoother<- etapostcov[[rowi]] %*% t(discreteDRIFT[[rowi+1]]) %*% #is the rowi+1 correct?
+    solve(etapriorcov[[rowi+1]])
   etasmooth[[rowi]]<-etapost[[rowi]]+smoother %*% (etasmooth[[rowi+1]] - etaprior[[rowi+1]])
   etasmoothcov[[rowi]]<-etapostcov[[rowi]] + smoother %*% ( etasmoothcov[[rowi+1]] - etapriorcov[[rowi+1]])
   }
@@ -148,8 +153,10 @@ yprior<-matrix(unlist(yprior),byrow=T,ncol=m$n.manifest)
 colnames(yprior)<-m$manifestNames
 y<-dlong[,m$manifestNames,drop=FALSE]
 colnames(y)<-m$manifestNames
-if(m$n.TDpred>0) tdpreds<-dlong[,m$TDpredNames,drop=FALSE]
+if(m$n.TDpred>0) {
+  tdpreds<-dlong[,m$TDpredNames,drop=FALSE]
 colnames(tdpreds)<-m$TDpredNames
+}
 err<-matrix(unlist(err),byrow=T,ncol=m$n.manifest)
 colnames(err)<-m$manifestNames
 ypost<-matrix(unlist(ypost),byrow=T,ncol=m$n.manifest)
@@ -163,7 +170,7 @@ colnames(ysmooth)<-m$manifestNames
 out<-list(observed,etaprior=etaprior,etapriorcov=etapriorcov,
   etapost=etapost,etapostcov=etapostcov,loglik=loglik,
   prederror=err,y=y,yprior=yprior,ypriorcov=ypriorcov,
-  tdpreds=tdpreds,
+  if(m$n.TDpred > 0) tdpreds=tdpreds,
   ypost=ypost,ypostcov=ypostcov,
   etasmooth=etasmooth,etasmoothcov=etasmoothcov,ysmooth=ysmooth,ysmoothcov=ysmoothcov)
 

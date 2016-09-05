@@ -29,7 +29,8 @@ one must consider how average level differences between subjects are accounted f
 See \code{\link{ctMultigroupFit}} for the possibility to apply the Kalman filter over multiple subjects)}
 
 \item{stationary}{Character vector of T0 matrix names in which to constrain any free parameters to stationarity.
-Defaults to c('T0TIPREDEFFECT'), constraining only the between subject difference effects. 
+Defaults to c('T0TRAITEFFECT','T0TIPREDEFFECT'), constraining only the between subject difference effects to be
+constant over time. 
 Can be set to NULL to force all T0 matrices to be estimated, can be 
 set to 'all' to constrain all T0 matrices to stationarity.}
 

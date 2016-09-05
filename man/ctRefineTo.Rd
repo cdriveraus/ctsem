@@ -9,7 +9,7 @@ ctRefineTo(datawide, ctmodelobj, modfunc = NULL, ...)
 \arguments{
 \item{datawide}{Data in ctsem wide format}
 
-\item{ctmodelobj}{A continuous time model specified via the \code{\link{ctModel}} function.}
+\item{ctmodelobj}{A continuous time m specified via the \code{\link{ctModel}} function.}
 
 \item{modfunc}{function to run prior to each optimization step, that takes ctsem fit object, modifies it as desired, and returns the fit object.}
 
@@ -19,11 +19,11 @@ ctRefineTo(datawide, ctmodelobj, modfunc = NULL, ...)
 Returns a fitted ctsem object in the same manner as \code{\link{ctFit}}.
 }
 \description{
-Fits a ctsem model in a stepwise fashion to help with difficult optimization.
+Fits a ctsem m in a stepwise fashion to help with difficult optimization.
 }
 \details{
 This function fits a sequence of ctsem models increasing in complexity, 
-starting with a model involving fixed and relatively strong auto effects, no cross effects, no predictors, and no off-diagonal covariances.
+starting with a m involving fixed and relatively strong auto effects, no cross effects, no predictors, and no off-diagonal covariances.
 For many models this can improve the speed and robustness of fitting
 }
 

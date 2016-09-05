@@ -97,8 +97,12 @@ summary.ctsemFit<-function(object,ridging=FALSE,timeInterval=1,verbose=FALSE,...
 
 
 omxSummary<-function(object,verbose=FALSE){
-  if(unlist(utils::packageVersion('OpenMx'))[2] >= 5) omxsummary<-utils::getS3method("summary","MxModel")(object$mxobj) #get openmx summary
-  if(unlist(utils::packageVersion('OpenMx'))[2] < 5) omxsummary<-methods::getMethod("summary","MxModel")(object$mxobj) #get openmx summary
+  omxver<-unlist(utils::packageVersion('OpenMx'))
+  if(omxver[1] < 3 & omxver[2] < 5) {
+    omxsummary<-methods::getMethod("summary","MxModel")(object$mxobj) #get openmx summary
+  } else { 
+    omxsummary<-utils::getS3method("summary","MxModel")(object$mxobj) #get openmx summary
+  }
   
   output<-list()
   if(verbose==TRUE) output<-c(omxsummary['parameters'])

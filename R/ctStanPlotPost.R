@@ -23,6 +23,7 @@ ctStanPlotPost<-function(ctstanmodelobj,ctstanfitobj, rows='all',wait=FALSE){
   nsubjects<-max(  as.numeric(unlist(lapply(grep('^indparams[[]',sumnames),function(x){
     strsplit(gsub("[^0-9,]", "", sumnames[x]), ",")[1]
   }))))
+  if(nsubjects < 1) nsubjects<-1
   
   
   n<-500000

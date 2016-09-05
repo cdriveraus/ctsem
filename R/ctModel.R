@@ -69,6 +69,10 @@
 #' or lower triangular n.latent*n.latent cholesky matrix of trait variance / covariance.
 #' "auto" freely estimates all parameters.
 #' 
+#' @param T0TRAITEFFECT For type='omx' only. Either NULL, if no trait / individual heterogeneity effect, 
+#' or lower triangular n.latent*n.latent cholesky matrix of initial trait variance / covariance.
+#' "auto" freely estimates all parametrers.
+#' 
 #' @param MANIFESTTRAITVAR For type='omx' only. Either NULL (default) if no trait variance / individual heterogeneity in the level of
 #' the manifest indicators, otherwise a lower triangular n.manifest * n.manifest variance / covariance matrix. 
 #' Set to "auto" to include and free all parameters - but identification problems will arise if \code{TRAITVAR} is 
@@ -162,7 +166,8 @@ ctModel<-function(type, n.manifest, n.latent, LAMBDA, Tpoints=NULL,
   T0VAR="auto", T0MEANS="auto", MANIFESTMEANS="auto", MANIFESTVAR="auto", 
   DRIFT="auto", CINT="auto", DIFFUSION="auto",
   n.TDpred=0, TDpredNames='auto', n.TIpred=0, TIpredNames='auto',
-  TRAITVAR=NULL, MANIFESTTRAITVAR=NULL,
+  TRAITVAR=NULL, T0TRAITEFFECT=NULL,
+  MANIFESTTRAITVAR=NULL,
   TDPREDMEANS="auto", TDPREDEFFECT="auto", 
   T0TDPREDCOV="auto", TDPREDVAR="auto",  
   TRAITTDPREDCOV="auto", TDTIPREDCOV='auto',
@@ -303,9 +308,21 @@ ctModel<-function(type, n.manifest, n.latent, LAMBDA, Tpoints=NULL,
   
   
   
-  if(!is.null(TRAITVAR) && TRAITVAR[1]=="auto") TRAITVAR<-ctLabel(TDpredNames=TDpredNames,TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="TRAITVAR",n.latent=n.latent,
+  if(!is.null(TRAITVAR) && TRAITVAR[1]=="auto") TRAITVAR<-ctLabel(TDpredNames=TDpredNames,
+    TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="TRAITVAR",
+    n.latent=n.latent,n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
+  if(!is.null(TRAITVAR) && nrow(TRAITVAR)+ncol(TRAITVAR)!=n.latent*2) stop ("
+    Dimensions of TRAITVAR are not n.latent * n.latent")
+  
+  if(!is.null(TRAITVAR) && (is.null(T0TRAITEFFECT) || T0TRAITEFFECT[1] == 'auto')) T0TRAITEFFECT<-
+    ctLabel(TDpredNames=TDpredNames,TIpredNames=TIpredNames,manifestNames=manifestNames,
+      latentNames=latentNames,matrixname="T0TRAITEFFECT",n.latent=n.latent,
     n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
-  if(!is.null(TRAITVAR) && nrow(TRAITVAR)+ncol(TRAITVAR)!=n.latent*2) stop ("Dimensions of TRAITVAR are not n.latent * n.latent")
+  
+  if(!is.null(T0TRAITEFFECT) && nrow(T0TRAITEFFECT)+ncol(T0TRAITEFFECT)!=n.latent*2) stop ("Dimensions of TRAITVAR are not n.latent * n.latent")
+  
+  
+  
   
   
   
@@ -452,7 +469,7 @@ ctModel<-function(type, n.manifest, n.latent, LAMBDA, Tpoints=NULL,
     assign('tempmat',get(tempmatname))
     if(is.null(tempmat)) next
     if(all(suppressWarnings(as.numeric(tempmat[upper.tri(tempmat)])) %in% 0)) next
-    stop(paste0(tempmatname,' is not lower triangular! Covariance matrices must be specified in cholesky decomposed form.'))
+    stop(paste0(tempmatname,' is not lower triangular! Covariance type matrices must be specified in the appropriate lower-triangular form.'))
   }
   
  
@@ -468,7 +485,7 @@ ctModel<-function(type, n.manifest, n.latent, LAMBDA, Tpoints=NULL,
   completemodel<-list(n.manifest,n.latent,n.TDpred,n.TIpred,Tpoints,LAMBDA,
     manifestNames,latentNames,TDpredNames,TIpredNames,
     T0VAR,T0MEANS,MANIFESTMEANS,MANIFESTVAR,DRIFT,CINT,DIFFUSION,
-    TRAITVAR,MANIFESTTRAITVAR,
+    TRAITVAR,T0TRAITEFFECT,MANIFESTTRAITVAR,
     TDPREDEFFECT, TDPREDMEANS, T0TDPREDCOV, TRAITTDPREDCOV,
     TIPREDEFFECT, TIPREDMEANS, T0TIPREDEFFECT,
     TIPREDVAR, TDPREDVAR,TDTIPREDCOV,   
@@ -477,7 +494,7 @@ ctModel<-function(type, n.manifest, n.latent, LAMBDA, Tpoints=NULL,
   names(completemodel)<-c("n.manifest","n.latent","n.TDpred","n.TIpred","Tpoints","LAMBDA",
     "manifestNames","latentNames","TDpredNames","TIpredNames",
     "T0VAR","T0MEANS","MANIFESTMEANS","MANIFESTVAR","DRIFT","CINT","DIFFUSION",
-    "TRAITVAR","MANIFESTTRAITVAR",
+    "TRAITVAR",'T0TRAITEFFECT',"MANIFESTTRAITVAR",
     'TDPREDEFFECT', 'TDPREDMEANS', 'T0TDPREDCOV', 'TRAITTDPREDCOV',
     'TIPREDEFFECT', 'TIPREDMEANS', 'T0TIPREDEFFECT',
     'TIPREDVAR', 'TDPREDVAR','TDTIPREDCOV',  

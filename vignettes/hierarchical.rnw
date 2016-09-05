@@ -292,7 +292,7 @@ model$parameters[7,c('TI1_effect','TI2_effect','TI3_effect')]<-TRUE
 Once model specification is complete, the model is fit to the data using the ctStanFit function as follows -- depending on the data, model, and number of iterations requested, this can take anywhere from a few minutes to days. Current experience suggests 500 iterations is often enough to get an idea of what is going on, but more are necessary for robust inference.
 
 <<fitting,eval=FALSE>>=
-fit<-ctStanFit(long,model,iter=500,chains=2,fit=T,plot=F)
+fit<-ctStanFit(long,model,iter=500,chains=2,plot=F)
 @
 
 <<fitdummy,echo=FALSE,cache=TRUE,include=FALSE>>=
@@ -301,7 +301,9 @@ fit<-ctStanFit(long,model,iter=20,chains=1,fit=T,plot=F)
 
 
 <<fittests,eval=FALSE,include=FALSE>>=
-fit<-ctStanFit(long,model,iter=500,chains=2,fit=T,plot=T,estsd=F,noncentered=T)
+fit<-ctStanFit(long,model,iter=500,chains=2,fit=T,plot=T,estsd=T,max_treedepth=12,adapt_delta = .99, noncentered=T)
+library(shinystan)
+launch_shinystan(fit)
 @
 
 The plot argument allows for plotting of sampling chains in real time, which is useful for slow models to ensure that sampling is proceeding in a functional manner. Models with many parameters (e.g., many subjects and all parameters varying over subject) may be too taxing for the function to handle smoothly - we have had succcess with up to around 4000 parameters.  

@@ -9,11 +9,11 @@ ctModel(type, n.manifest, n.latent, LAMBDA, Tpoints = NULL,
   T0MEANS = "auto", MANIFESTMEANS = "auto", MANIFESTVAR = "auto",
   DRIFT = "auto", CINT = "auto", DIFFUSION = "auto", n.TDpred = 0,
   TDpredNames = "auto", n.TIpred = 0, TIpredNames = "auto",
-  TRAITVAR = NULL, MANIFESTTRAITVAR = NULL, TDPREDMEANS = "auto",
-  TDPREDEFFECT = "auto", T0TDPREDCOV = "auto", TDPREDVAR = "auto",
-  TRAITTDPREDCOV = "auto", TDTIPREDCOV = "auto", TIPREDMEANS = "auto",
-  TIPREDEFFECT = "auto", T0TIPREDEFFECT = "auto", TIPREDVAR = "auto",
-  startValues = NULL, timeVarying = NULL)
+  TRAITVAR = NULL, T0TRAITEFFECT = NULL, MANIFESTTRAITVAR = NULL,
+  TDPREDMEANS = "auto", TDPREDEFFECT = "auto", T0TDPREDCOV = "auto",
+  TDPREDVAR = "auto", TRAITTDPREDCOV = "auto", TDTIPREDCOV = "auto",
+  TIPREDMEANS = "auto", TIPREDEFFECT = "auto", T0TIPREDEFFECT = "auto",
+  TIPREDVAR = "auto", startValues = NULL, timeVarying = NULL)
 }
 \arguments{
 \item{type}{character string. If 'omx' (default) configures model for maximum likelihood fitting with ctFit, using OpenMx. 
@@ -81,6 +81,10 @@ as they appear in the data structure.  Default names are TI1, TI2, etc.}
 \item{TRAITVAR}{For type='omx' only. Either NULL, if no trait / individual heterogeneity effect, 
 or lower triangular n.latent*n.latent cholesky matrix of trait variance / covariance.
 "auto" freely estimates all parameters.}
+
+\item{T0TRAITEFFECT}{For type='omx' only. Either NULL, if no trait / individual heterogeneity effect, 
+or lower triangular n.latent*n.latent cholesky matrix of initial trait variance / covariance.
+"auto" freely estimates all parametrers.}
 
 \item{MANIFESTTRAITVAR}{For type='omx' only. Either NULL (default) if no trait variance / individual heterogeneity in the level of
 the manifest indicators, otherwise a lower triangular n.manifest * n.manifest variance / covariance matrix. 

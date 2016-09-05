@@ -12,7 +12,7 @@ ctCI(ctfitobj, confidenceintervals, optimizer = "NPSOL", verbose = 0)
 
 \item{confidenceintervals}{character vector of matrices and or parameters for which to estimate 95\% confidence intervals for.}
 
-\item{optimizer}{character vector. Defaults to NPSOL (recommended), but other optimizers available within OpenMx (e.g. 'SLSQP') may be specified.}
+\item{optimizer}{character vector. Defaults to NPSOL (recommended), but other optimizers available within OpenMx (e.g. 'CSOLNP') may be specified.}
 
 \item{verbose}{Integer between 0 and 3 reflecting amount of output while calculating.}
 }

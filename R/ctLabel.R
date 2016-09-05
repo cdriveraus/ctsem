@@ -11,7 +11,7 @@ ctLabel<-function(matrixname, n.latent, n.manifest, n.TDpred, n.TIpred, Tpoints,
   if(matrixname=="CINT") out <- matrix(paste0("cint_",latentNames[1:n.latent]),ncol=1)
   if(matrixname=="DIFFUSION") out <- indexMatrix(dimension=n.latent,starttext="diffusion_",lowerTriangular=TRUE,sep="_",namesvector=latentNames)
   if(matrixname=="TRAITVAR") out <- indexMatrix(dimension=n.latent,starttext="traitvar_",lowerTriangular=TRUE,sep="_",namesvector=latentNames)
-  if(matrixname=="T0TRAITEFFECT") out <- indexMatrix(dimension=n.latent,starttext="T0effect_",symmetrical=FALSE,sep="_",namesvector=latentNames,endtext='Trait')
+  if(matrixname=="T0TRAITEFFECT") out <- indexMatrix(dimension=n.latent,starttext="T0traiteffect_",symmetrical=FALSE,sep="_",namesvector=latentNames,endtext='Trait')
   if(matrixname=="MANIFESTTRAITVAR") out <- indexMatrix(dimension=n.manifest,starttext="manifesttraitvar_",lowerTriangular=TRUE,sep="_",namesvector=manifestNames)
   if(matrixname=="MANIFESTMEANS") out <- matrix(paste0("manifestmeans_",manifestNames[1:n.manifest]),ncol=1)
   

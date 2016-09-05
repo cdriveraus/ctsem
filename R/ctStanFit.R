@@ -547,7 +547,7 @@ vector[nparams] hypermeans;
 ',if(any(indvarying)) paste0('
 paramcov = cov(indparams,nsubjects,nindvarying);
 paramcor = cov2cor(paramcov,nindvarying);
-',if(!estsd) 'hypersd = log(exp(vecsqrt(diagonal(paramcov)))-1)/1.5;','
+',if(!estsd) 'hypersd = log(exp(vecsqrt(diagonal(paramcov)))-1);','
 ',if(estsd) 'hypersd = hypersdbase;'),'
 
     
@@ -633,6 +633,7 @@ paramcor = cov2cor(paramcov,nindvarying);
       for(dcoli in 1:nlatent){
       asymDIFFUSION[individual][drowi,dcoli] =  asymDIFFUSIONvec[individual][drowi+(dcoli-1)*nlatent];
       }}
+      asymDIFFUSION[individual] = makesym(asymDIFFUSION[individual]);
       }
       '),
     
@@ -799,7 +800,7 @@ hypermeans~normal(0,1);
 
   etaprior[rowi] = discreteCINT  + discreteDRIFT * etapost[rowi]; //prior for latent state of this row
   ',if(n.TDpred > 0) paste0('etaprior[rowi] =TDPREDEFFECT',checkvarying('TDPREDEFFECT','[subjecti]','[1]'),' * tdpreds[rowi-1] + etaprior[rowi];'),'
-  etapriorcov[rowi] =  quad_form(etapostcov[rowi], discreteDRIFT\')  + discreteDIFFUSION;
+  etapriorcov[rowi] =  makesym(quad_form(etapostcov[rowi], discreteDRIFT\')  + discreteDIFFUSION);
     }
   
   if(nobsi==0){     // if no observations...
