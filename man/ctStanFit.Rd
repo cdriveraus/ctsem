@@ -8,7 +8,7 @@ ctStanFit(datalong, ctstanmodelobj, stanmodelobj = NA, iter = 2000,
   kalman = TRUE, binomial = FALSE, densehyper = TRUE, fit = TRUE,
   plot = FALSE, noncentered = TRUE, adapt_delta = 0.8, stdnorm = TRUE,
   max_treedepth = 10, estmeans = TRUE, estsd = TRUE, estcorr = FALSE,
-  optimize = FALSE, vb = FALSE, chains = 1, ...)
+  stationaryvar = FALSE, optimize = FALSE, vb = FALSE, chains = 1, ...)
 }
 \arguments{
 \item{datalong}{long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables, 
@@ -53,6 +53,11 @@ by computing them from subject level parameters.}
 
 \item{estcorr}{Whether to sample parameters for the population correlation parameters or approximate them 
 from subject level parameters. If TRUE, estimation may be much slower and more problematic, thus the default is FALSE.}
+
+\item{stationaryvar}{if TRUE, increases fitting speed at cost of model flexibility - T0VAR in the model specification is ignored, the DIFFUSION matrix specification is used as the 
+asymptotic DIFFUSION matrix (Q*_inf in the vignette / paper) (making it difficult if not impossible to properly specify
+higher order processes). The speed increases come about because the internal Kalman filter routine has many steps removed, and the
+asymptotic diffusion parameters are less dependent on the DRIFT matrix.}
 
 \item{optimize}{if TRUE, use Stan's optimizer for maximum a posteriori estimates. Not recommended unless
 no parameters vary across subjects.}
