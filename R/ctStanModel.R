@@ -9,6 +9,7 @@ if(type=='standt') continuoustime<-FALSE
     out<-as.data.frame(out,stringsAsFactors =FALSE)
     objectlist<-c('T0MEANS','LAMBDA','DRIFT','DIFFUSION','MANIFESTVAR','MANIFESTMEANS', 'CINT', if(n.TDpred > 0) 'TDPREDEFFECT', 'T0VAR')
     for(obji in objectlist){
+      if(!is.na(ctmodelobj[[obji]][1])){
       for(rowi in 1:nrow(ctmodelobj[[obji]])){
         for(coli in 1:ncol(ctmodelobj[[obji]])){
           out<-rbind(out,data.frame(obji,rowi,coli,
@@ -21,6 +22,7 @@ if(type=='standt') continuoustime<-FALSE
             stringsAsFactors =FALSE
           ))
         }
+      }
       }
     }
     colnames(out)<-c('matrix','row','col','param','value')

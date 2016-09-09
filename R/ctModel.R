@@ -264,7 +264,7 @@ ctModel<-function(type, n.manifest, n.latent, LAMBDA, Tpoints=NULL,
   
   
   
-  
+  if(!is.na(MANIFESTVAR[1])){
   if(all(MANIFESTVAR=="auto")) {
     MANIFESTVAR<-ctLabel(TDpredNames=TDpredNames,TIpredNames=TIpredNames,
     manifestNames=manifestNames,latentNames=latentNames,matrixname="MANIFESTVAR",n.latent=n.latent,
@@ -279,7 +279,7 @@ ctModel<-function(type, n.manifest, n.latent, LAMBDA, Tpoints=NULL,
   }
   
   if(nrow(MANIFESTVAR)!=n.manifest | ncol(MANIFESTVAR)!=n.manifest) stop("Dimensions of MANIFESTVAR matrix are not n.manifest * n.manifest")
-  
+  }
   
   
   

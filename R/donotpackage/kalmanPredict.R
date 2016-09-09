@@ -3,7 +3,7 @@
 kalmanPredict<-function(mxobj,submodel=NULL,mxstyle=TRUE,timeVaryingParams=FALSE,...){
  
   KalmanFilter <- function(A, B, C, D, Q, R, x, y, u, P){ #Mike Hunter's Kalman Filter from OpenMx, copied here for convenience.
-browser()
+# browser()
     x <- A %*% x + B %*% u
     P <- A %*% P %*% t(A) + Q
     # if(any(diag(P) < 0)) P[diag(P)<0]<-.0001
@@ -33,10 +33,43 @@ browser()
       
       const <- length(rf)*log(2*pi)
       m2ll <- log(det(Sf)) + t(rf) %*% Sfinv %*% rf + const
-      print(m2ll)
       return(list(x.pred=x.pred, P.pred=P.pred, x.upda=xu, P.upda=Pu, m2ll=m2ll, L=exp(m2ll/-2) ))
     }
   }
+  
+  
+  
+  KalmanFilter <- function(A, B, C, D, Q, R, x, y, u, P){
+    x <- A %*% x + B %*% u
+    P <- A %*% P %*% t(A) + Q
+    x.pred <- x
+    P.pred <- P
+    
+    r <- y - (C %*% x + D %*% u)
+    notMiss <- !is.na(r)
+    r[!notMiss] <- 0
+    if(length(r)==sum(!notMiss)){#all missing row
+      m2ll <- log(det(C %*% P %*% t(C) + R))
+      return(list(x.pred=x.pred, P.pred=P.pred, x.upda=x.pred, P.upda=P.pred, m2ll=m2ll, L=exp(m2ll/-2) ))
+    } else {
+      Cf <- C[notMiss, , drop=FALSE]
+      Rf <- R[notMiss, notMiss, drop=FALSE]
+      S <- Cf %*% P %*% t(Cf) + Rf
+      Sinv <- solve(S)
+      rf <- matrix(r[notMiss], ncol=1)
+      K <- P %*% t(Cf) %*% Sinv
+      x <- x + K %*% rf
+      P <- P - K %*% Cf %*% P
+      x.upda <- x
+      P.upda <- P
+      
+      const <- length(rf)*log(2*pi)
+      m2ll <- log(det(S)) + t(rf) %*% Sinv %*% rf + const
+      
+      return(list(x.pred=x.pred, P.pred=P.pred, x.upda=x.upda, P.upda=P.upda, m2ll=m2ll, L=exp(m2ll/-2) ))
+    }
+  }
+  
 
 
     data<-mxobj$data$observed
@@ -55,7 +88,6 @@ x0<-mxEvalByName(expectation$x0, mxobj, compute=T,defvar.row=2)
 P0<-mxEvalByName(expectation$P0, mxobj, compute=TRUE,defvar.row=2)
 PPredicted<-list()
 PUpdated<-list()
-PPredicted[[1]]<-P0
 PUpdated[[1]]<-P0
 m2ll<-numeric(nrow(data)+1)
 m2ll[1]<-0
@@ -96,7 +128,7 @@ latentUpdated[1,]<- x0
       
       latentForecast[i,]<-kalman$x.pred
       m2ll[i]<-kalman$m2ll
-      latentForecast[i,]<- A %*% latentUpdated[i-1,] + B %*% u
+      # latentForecast[i,]<- A %*% latentUpdated[i-1,] + B %*% u
       
       latentUpdated[i,] <- kalman$x.upda
       PPredicted[[i]] <- kalman$P.pred

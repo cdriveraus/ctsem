@@ -301,7 +301,11 @@ fit<-ctStanFit(long,model,iter=20,chains=1,fit=T,plot=F)
 
 
 <<fittests,eval=FALSE,include=FALSE>>=
-fit<-ctStanFit(long,model,iter=500,chains=2,fit=T,plot=T,estsd=T,max_treedepth=12,adapt_delta = .99, noncentered=T)
+model$parameters$sdscale<-.05
+model$parameters$sdscale[19:20]<-1
+
+long<-long[1:40,]
+fit<-ctStanFit(long,model,iter=5,chains=1,fit=T,plot=T,estsd=T,max_treedepth=10,adapt_delta = .8, noncentered=T,stationaryvar = T)
 library(shinystan)
 launch_shinystan(fit)
 @
@@ -326,18 +330,16 @@ subject<-6 #which subject to attain estimates for
 pred<-ctStanPredictions(ctstanmodelobj=model,ctstanfitobj=fit, #Get kalman estimates
   datalong=long, subjects=subject)
 
-y<-long[long[,'id']==subject,model$manifestNames,drop=FALSE] #get subjects data
-
-ypred<-pred[[subject]]$ypred
-
-ylim<-c(min(c(y,ypred),na.rm=T),max(c(y,ypred)+1,na.rm=T))
+ylim<-c(min(c(pred[[subject]]$y,pred[[subject]]$ypred),na.rm=T),
+  max(c(pred[[subject]]$y,pred[[subject]]$ypred),na.rm=T))
 
 #plot observed versus smoothed results
-plot(y[,1],type='b',lwd=3, ylim=ylim, col='red',lty=3,xlab='Time',ylab='Value')
+plot(pred[[subject]]$y[,1],type='b',lwd=2, ylim=ylim, col='red',
+  lty=3,xlab='Time',ylab='Value')
 grid()
-points(y[,2],type='b',lwd=3,col='blue',pch=2,lty=3)
+points(pred[[subject]]$y[,2],type='b',lwd=2,col='blue',pch=2,lty=4)
 
-legend('topright',c('Obs. process 1','Obs. process 2',
+legend('bottomleft',c('Obs. process 1','Obs. process 2',
   'Est. process 1', 'Est. process 2'),
   pch=c(1,2,19,17),col=c('red','blue'),text.col=c('red','blue'),
   lty=c(3,3,1,1),bty='n')
