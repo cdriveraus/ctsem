@@ -305,7 +305,7 @@ model$parameters$sdscale<-.05
 model$parameters$sdscale[19:20]<-1
 
 long<-long[1:40,]
-fit<-ctStanFit(long,model,iter=5,chains=1,fit=T,plot=T,estsd=T,max_treedepth=10,adapt_delta = .8, noncentered=T,stationaryvar = T)
+fit<-ctStanFit(long,model,iter=5,chains=1,fit=T,plot=T,estsd=T,max_treedepth=10,adapt_delta = .8, noncentered=T,stationaryvar = F)
 library(shinystan)
 launch_shinystan(fit)
 @
