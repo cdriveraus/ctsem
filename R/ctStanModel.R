@@ -49,8 +49,10 @@ if(type=='standt') continuoustime<-FALSE
   ctspec$transform<-NA
   
   ######### STAN parameter transforms
-  ctspec$transform[ctspec$matrix %in% c('T0MEANS','MANIFESTMEANS','TDPREDEFFECT','CINT','LAMBDA') & 
+  ctspec$transform[ctspec$matrix %in% c('T0MEANS','MANIFESTMEANS','TDPREDEFFECT','CINT') & 
       freeparams] <- '(param) * 10'
+  
+  ctspec$transform[ctspec$matrix %in% c('LAMBDA') &  freeparams] <- '(param+1) * 10'
   
   ctspec$transform[ctspec$matrix %in% c('DIFFUSION','MANIFESTVAR', 'T0VAR') & 
       freeparams & ctspec$row != ctspec$col] <- '2/(1+exp((param)*-1.5))-1'
