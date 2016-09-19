@@ -201,7 +201,7 @@ ctModel<-function(type, n.manifest, n.latent, LAMBDA, Tpoints=NULL,
   
 
 
-  
+  if(type=='omx' & is.null(Tpoints)) stop('Type "omx" requires Tpoints specified!')
   
 
   

@@ -152,7 +152,7 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
 
 ctFit  <- function(datawide, ctmodelobj, 
   objective='auto', 
-  stationary=c('T0TIPREDEFFECT'), 
+  stationary=c('T0TRAITEFFECT','T0TIPREDEFFECT'), 
   optimizer='SLSQP', 
   retryattempts=15, iterationSummary=FALSE, carefulFit=TRUE,  
   showInits=FALSE, asymptotes=FALSE,
