@@ -6,22 +6,56 @@
 #' @param rows vector of integers denoting which rows of ctstanmodelobj$parameters to plot priors for. 
 #' Character string 'all' plots all rows with parameters to be estimated.
 #' @param wait If true, user is prompted to continue before plotting next graph.
+#' @param samples Numeric. Higher values increase fidelity (smoothness / accuracy) of density plots, at cost of speed.
 #' @export
 
-ctStanPlotPriors<-function(ctstanmodelobj,rows='all',wait=FALSE){
+ctStanPlotPriors<-function(ctstanmodelobj,rows='all',wait=FALSE,samples=1e5){
   m<-ctstanmodelobj$parameters
-  n<-500000
+  n<-500
+  maxiter=5
+  highmean=1
+  lowmean=-1
   if(rows=='all') rows<-1:nrow(m)
   for(rowi in rows){
-    param<-rnorm(n)
+    param<-rnorm(samples)
+    xlims<-c(-Inf,Inf)
     if(is.na(m$value[rowi])){
-    plot(density(eval(parse(text=paste0(m$transform[rowi]))),bw=.05,n=5000),main=m$param[rowi],lwd=2)
       
-      param<-rep(-1,n)+rnorm(n,0,m$sdscale[rowi])
-      points(density(eval(parse(text=paste0(m$transform[rowi]))),bw=.05,n=5000),type='l',col='blue')
       
-      param<-rep(1,n)+rnorm(n,0,m$sdscale[rowi])
-      points(density(eval(parse(text=paste0(m$transform[rowi]))),bw=.05,n=5000),type='l',col='red')
+      for(i in 1:maxiter){
+        if(i!= maxiter) param=c(rnorm(samples),rnorm(samples,highmean,m$sdscale[rowi]),rnorm(samples,lowmean,m$sdscale[rowi]))  
+        if(i==maxiter) param=rnorm(samples*1e2)
+        x=eval(parse(text=paste0(m$transform[rowi])))
+        x=x[x>xlims[1] & x < xlims[2]]
+      densx=density(x,bw=.02,n=n)
+      if(i!=maxiter) densxlim<-densx$x[densx$y> (max(densx$y)/100)]
+      if(i!=maxiter) xlims=c(min(densxlim)-1, max(densxlim)+1)
+      if(i!=maxiter) x=x[x>xlims[1] & x < xlims[2]]
+      }
+      ymax= max(densx$y) / (max(densx$y) / mean(densx$y)) * 10
+      
+      bw=(xlims[2]-xlims[1])/300
+    plot(density(x,bw=bw,n=n),main=m$param[rowi],lwd=2,xlim=c(xlims[1]+1,xlims[2]-1),ylim=c(0,ymax))
+    
+    # browser()
+    
+    # hypersd<- -3
+    # actualsd<- exp((2*hypersd-1-m$sdscale[rowi])* m$sdscale[rowi]+.0001)
+    
+      param<-rnorm(samples,lowmean,m$sdscale[rowi])
+      x=eval(parse(text=paste0(m$transform[rowi])))
+      x=x[x>xlims[1] & x < xlims[2]]
+      densx=density(x,bw=bw,n=n)
+      points(densx,type='l',col='blue')
+      
+      param<-rnorm(samples,highmean,m$sdscale[rowi])
+      x=eval(parse(text=paste0(m$transform[rowi])))
+      x=x[x>xlims[1] & x < xlims[2]]
+      densx=density(x,bw=bw,n=n)
+      points(densx,type='l',col='red')
+      
+      # browser()
+      
       
       legend('topright',c('pop mean prior', '-1sd mean, 1sd','+1sd mean, 1sd'),text.col=c('black','blue','red'),bty='n')
       if(wait==TRUE & rowi != tail(rows,1)){

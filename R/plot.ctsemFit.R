@@ -105,8 +105,9 @@ plot.ctsemFit<-function(x,resolution=50,wait=TRUE,max.time="auto",mean=TRUE,
   paramlabels<-matrix(c(paste0(rep(latentNames,n.latent),'_',rep(latentNames,each=n.latent))),n.latent,n.latent)
   
   if(max.time=='auto' & ctfitobj$ctfitargs$objective!='cov'){
+   
     if(max.time=="auto" & ctfitobj$ctfitargs$objective!='Kalman') max.time	<- max(rowSums(as.matrix(mxobj$data$observed[,paste0('dT',1:(Tpoints-1)),drop=FALSE]),na.rm=T)) 			# max time of plot 
-    if(max.time=="auto" & ctfitobj$ctfitargs$objective=='Kalman') max.time  <- sum(mxobj$data$observed[,'dT1'],na.rm=T) 			# max time of plot 
+    if(max.time=="auto" & ctfitobj$ctfitargs$objective=='Kalman') max.time  <- sum(mxobj$data$observed[mxobj$data$observed[,'id']==1,'dT1'],na.rm=T) 			# max time of plot 
   }
   if(max.time=='auto' & ctfitobj$ctfitargs$objective=='cov') stop('max.time argument must be set when plotting covariance based data')
   

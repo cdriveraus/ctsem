@@ -84,7 +84,7 @@ if(rowi>1){
         ypriorcov[[rowi]] <- kp$LAMBDA %*% etapriorcov[[rowi]] %*% t(kp$LAMBDA) + kp$MANIFESTVAR
         # // forecast error
         err[[rowi]]<-matrix(NA,nrow=m$n.manifest)
-        err[[rowi]][nafilter] <- y - yprior[[rowi]][nafilter,drop=FALSE]
+        err[[rowi]][nafilter] <- as.numeric(y - yprior[[rowi]][nafilter,])
         
         #if all missing...
         if(all(!nafilter)){

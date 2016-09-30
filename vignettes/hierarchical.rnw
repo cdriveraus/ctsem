@@ -269,7 +269,7 @@ ctStanPlotPriors(model,rows=11)
 
 The plots show the prior distribution for the population mean of DIFFUSION[1,1] in black, as well as two possible priors for the subject level parameters. The blue prior results from assuming the population mean is a standard deviation lower than the mean for our prior, and assuming that the population standard deviation is 1, on the standard normal (pre-transformation) scale.
 
-Restrict between subject effects as desired. Unnecessary between subject effects will slow sampling, but be aware of the many parameter dependencies in these models -- restricting one parameter may sometimes lead to variation from it showing up elsewhere. The prior scale for between subject variance may need to be restricted when limited data (in either the number of time points or number of subjects) is available, to ensure adequate regularisation. Here we restrict T0VAR effects between subjects, and set all prior scales for the standard deviation to to 0.2, and plot the priors for DIFFUSION[1,1] once more -- note the narrower ranges of the blue and red `possible subject level distributions` due to the sdscale change.
+Restrict between subject effects as desired. Unnecessary between subject effects will slow sampling and hinder appropriate regularization, but be aware of the many parameter dependencies in these models -- restricting one parameter may lead to genuine variation in the restricted parameter expressing itself elsewhere. The prior scale for between subject variance may need to be restricted when limited data (in either the number of time points or number of subjects) is available, to ensure adequate regularisation. Here we restrict T0VAR effects between subjects, and set all prior scales for the standard deviation to 0.2, and plot the priors for DIFFUSION[1,1] once more -- note the narrower ranges of the blue and red `possible subject level distributions` due to the sdscale change.
 
 <<restrictbetween>>=
 model$parameters[25:28,]$indvarying<-FALSE
@@ -305,7 +305,7 @@ model$parameters$sdscale<-.05
 model$parameters$sdscale[19:20]<-1
 
 long<-long[1:40,]
-fit<-ctStanFit(long,model,iter=5,chains=1,fit=T,plot=T,estsd=T,max_treedepth=10,adapt_delta = .8, noncentered=T,stationaryvar = F)
+fit<-ctStanFit(long,model,iter=500,chains=2,fit=T,plot=T,estsd=T,max_treedepth=10,adapt_delta = .8, noncentered=T,stationaryvar = F)
 library(shinystan)
 launch_shinystan(fit)
 @

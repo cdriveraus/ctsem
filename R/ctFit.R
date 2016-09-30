@@ -166,7 +166,7 @@ ctFit  <- function(datawide, ctmodelobj,
  largeAlgebras<-TRUE
  if(nofit == TRUE) carefulFit <- FALSE
  
- if(all(stationary=='all')) stationary<-c('T0VAR','T0MEANS','T0TIPREDEFFECT')
+ if(all(stationary %in% 'all')) stationary<-c('T0VAR','T0MEANS','T0TIPREDEFFECT','T0TRAITEFFECT')
   
   n.latent<-ctmodelobj$n.latent
   n.manifest<-ctmodelobj$n.manifest
@@ -2092,7 +2092,6 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
   if(objective=='Kalman'){ 
     
     if(n.subjects > 1){
-      
       discreteDIFFUSIONmatrix<-OpenMx::mxMatrix(name='discreteDIFFUSIONmatrix',
         labels=paste0('discreteDIFFUSION_T1[',1:n.latent,',', rep(1:n.latent,each=n.latent),']'),
         nrow=n.latent,ncol=n.latent,free=F)

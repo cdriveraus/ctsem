@@ -44,18 +44,21 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
   asymdiffusion=FALSE,optimize=FALSE, vb=FALSE, chains=1,auxiliaryvars=FALSE,fixedkalman=FALSE,...){
   
   nonlinear=FALSE
+  tmpdir=tempdir()
+  tmpdir=gsub('\\','/',tmpdir,fixed=T)
   # fixedkalman=FALSE
   
   if(fixedkalman & !kalman) stop('fixedkalman estimation only possible using Kalman filter, for now')
   if(fixedkalman & !asymdiffusion) stop('fixedkalman needs asymdiffusion=TRUE!')
   
- 
+
   
   stanplot<-function(chains,seed){
-    wd<-  paste0("setwd('",getwd(),"')")
+    wd<-  paste0("setwd('",tmpdir,"')")
     writeLines(text=paste0(wd,'
       seed<-',seed,';
       chains<-',chains,';
+      iter<-',iter,';
       
       notyet<-TRUE
       while(notyet==TRUE){
@@ -82,7 +85,7 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
       maxi<-max(unlist(lapply(1:chains,function(chaini) samps[[chaini]][-1:-begin,parameter])),na.rm=T)
       lengthi<-max(unlist(lapply(1:chains,function(chaini) length(samps[[chaini]][-1:-begin,parameter]))),na.rm=T)
       
-      plot(begin:lengthi,
+      plot((begin):(lengthi+begin-1),
       c(samps[[1]][-1:-begin,parameter],rep(NA,lengthi-length(samps[[1]][-1:-begin,parameter]))),
       type="l",xlab="",ylab="",main=parameter,
       log=ifelse(parameter %in% c("stepsize__"),"y",""),
@@ -91,18 +94,18 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
       )
       
       if(chains > 1) for(chaini in 2:chains){
-      points(begin:lengthi,c(samps[[chaini]][-1:-begin,parameter],rep(NA,lengthi-length(samps[[chaini]][-1:-begin,parameter]))),type="l",xlab="",ylab="",main=parameter,col=chaini)
+      points(begin:(lengthi+begin-1),c(samps[[chaini]][-1:-begin,parameter],rep(NA,lengthi-length(samps[[chaini]][-1:-begin,parameter]))),type="l",xlab="",ylab="",main=parameter,col=chaini)
       }
       grid()
       
       })
       },ui=fluidPage(
       # Application title
-      titlePanel("Hello Shiny!"),
+      titlePanel("ctsem mid-sampling plots..."),
       sidebarLayout(
       # Sidebar with a slider input for number of observations
       sidebarPanel(
-      sliderInput("begin", "Start of range:", min = 1,max=length(samps[,2]),value = 1,step=1), 
+      sliderInput("begin", "Start of range:", min = 1,max=iter,value = 1,step=1), 
       selectInput("parameter", "Choose a parameter:", choices = varnames),
       actionButton("refresh", "Refresh sample data")
       ),
@@ -113,8 +116,8 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
       )
       ))),
       launch.browser=TRUE)
-      quit(save="no")'),con='stanplottemp.R')
-    system(paste0("Rscript.exe --slave --no-restore -e source('",getwd(),"/stanplottemp.R')"),wait=F)
+      quit(save="no")'),con=paste0(tmpdir,"/stanplottemp.R"))
+    system(paste0("Rscript.exe --slave --no-restore -e source('",tmpdir,"/stanplottemp.R')"),wait=F)
     
   }
   
@@ -134,7 +137,7 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
   #read in ctmodel values
   ctspec<-ctstanmodelobj$parameters
   
-  if(binomial) {
+    if(binomial) {
     ctspec<-ctspec[ctspec$matrix != 'MANIFESTVAR',]
     message(paste0('MANIFESTVAR matrix is ignored when binomial=TRUE'))
   }
@@ -144,6 +147,16 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
     ctspec<-ctspec[-which(ctspec$matrix %in% 'T0VAR'),]
     if(any(!is.na(ctspec[ctspec$matrix %in% 'T0MEANS','value']))) message('ATTENTION: Some T0MEANS are fixed - may be unwanted when kalman=FALSE \n')
   }
+  
+  #clean ctspec structure
+  for(rowi in 1:nrow(ctspec)){
+    if( !is.na(ctspec$value[rowi])) {
+      found<-TRUE
+      ctspec[rowi,c('param','transform','indvarying')]<-c(NA,NA,FALSE)
+    }
+  }
+  if(found) message('Inconsistencies in model found - removing param name, transform and indvarying from any parameters with a value specified')
+  
   
   n.latent<-ctstanmodelobj$n.latent
   n.manifest<-ctstanmodelobj$n.manifest
@@ -243,7 +256,7 @@ message('Unique discreteDIFFUSION calculations per iteration required = ', lengt
   
 
   
-  
+
   
   if(is.na(stanmodelobj)){ 
     stanmodelobj <- paste0('
@@ -603,7 +616,7 @@ message('Unique discreteDIFFUSION calculations per iteration required = ', lengt
       ',if(any(indvarying)) paste0('
         paramcov = cov(indparams,nsubjects,nindvarying);
         paramcor = cov2cor(paramcov,nindvarying);
-        ',if(!estsd) 'hypersd = log(exp(vecsqrt(diagonal(paramcov)))-1);','
+        ',if(!estsd) 'hypersd = log(vecsqrt(diagonal(paramcov)));','
         ',if(estsd) 'hypersd = hypersdbase;'),'
       
       
@@ -619,15 +632,16 @@ message('Unique discreteDIFFUSION calculations per iteration required = ', lengt
         hypercorr[rowi,coli] = 2/(1+exp(-hypercorrpars[parcount]))-1;
         hypercorr[coli,rowi] = hypercorr[rowi,coli];
         }
-        if(rowi==coli) hypercorr[rowi,coli]=  exp(hypersd[rowi]); // log(exp(hypersd[rowi]* 1)+1) * sdscale[rowi];
+        if(rowi==coli) hypercorr[rowi,coli]=  exp(hypersd[rowi]); //exp((2*hypersd[rowi]-1-sdscale[rowi])* sdscale[rowi]+.0001); // log(exp(hypersd[rowi]* 1)+1) * sdscale[rowi];
         }
         } } \n'),'    
       
       
       ',if(any(ctspec$indvarying)) paste0(
         if(densehyper) 'paramchol = varmatrixtransform2(hypercorr,1); \n ',
-        if(!densehyper) 'paramchol=diag_matrix(log(exp(hypersd * 1)+1) .* sdscale)\n needs updating!;',
-        if(stdnorm) 'invparamchol = inverse(paramchol); \n'),'
+        if(!densehyper) 'paramchol=diag_matrix(exp((2*hypersd-1-sdscale) .* sdscale +.0001));',
+        if(stdnorm & densehyper) 'invparamchol = inverse(paramchol); \n',
+        if(stdnorm & !densehyper) 'invparamchol = diag_matrix(1 ./ diagonal(paramchol));'),'
       
       {
       ',if(continuoustime & !asymdiffusion) paste0('matrix[nlatent*nlatent,nlatent*nlatent] DRIFTHATCH',checkvarying(c('DRIFT'),'[nsubjects]','[1]'),';  \n','
@@ -733,13 +747,13 @@ model{
           ')),'
       
       ',if(!optimize) paste0('hypermeans~normal(0,1);
+                              //target += sum(normal_log(hypermeans,0,1) *nsubjects);
                               ',if(auxiliaryvars) 'hypermeansscale~normal(0,1);'),'
       
       ',if(n.TIpred > 0 & !optimize) paste0('tipredeffectparams ~ normal(0,1); \n '),' 
       
       ',if(any(ctspec$indvarying) & !optimize) paste0('
         //hypersd ~ normal(0,1);
-        //target += -log(hypersd);
         ',if(densehyper & estcorr) 'hypercorrpars ~ normal(0,1);','
         ',if(stdnorm) 'indparamstrans ~ normal(0,1);
         target +=(sum(log(diagonal(invparamchol)))*nsubjects);  //adjust loglik for density warping transform',
@@ -834,14 +848,14 @@ counter=counter+1;}
             'if(T0check[rowi]==1 || T0check[rowi-1] ==1){',
           paste0( checkvarying(c('DIFFUSION','LAMBDA','MANIFESTVAR'),'','if(rowi<=2){'),
             'if(T0check[rowi]==1) Ypredcov = quad_form(T0VAR',
-            checkvarying('DIFFUSION','[subjecti]','[1]'),', LAMBDA',
+            checkvarying('T0VAR','[subjecti]','[1]'),', LAMBDA',
             checkvarying('LAMBDA','[subjecti]','[1]'),'\') + MANIFESTVAR',
             checkvarying('MANIFESTVAR','[subjecti]','[1]'),';
             if(T0check[rowi]==0) Ypredcov = quad_form(DIFFUSION',
             checkvarying('DIFFUSION','[subjecti]','[1]'),', LAMBDA',
             checkvarying('LAMBDA','[subjecti]','[1]'),'\') + MANIFESTVAR',
             checkvarying('MANIFESTVAR','[subjecti]','[1]'),';
-            invYpredcov = inverse(Ypredcov);
+            invYpredcov = makesym(inverse(Ypredcov));
             invYpredcov_chol=cholesky_decompose(invYpredcov); 
             K = DIFFUSION',
             checkvarying('DIFFUSION','[subjecti]','[1]'),' * LAMBDA',checkvarying('LAMBDA','[subjecti]','[1]'),'\' * invYpredcov; 
@@ -887,7 +901,7 @@ counter=counter+1;}
         
         ',if(!fixedkalman) paste0(
           'Ypredcov_filt = quad_form(etapriorcov[rowi], LAMBDA_filt\') + MANIFESTVAR_filt;
-          invYpredcov_filt = inverse(Ypredcov_filt) ;
+          invYpredcov_filt = makesym(inverse(Ypredcov_filt)) ;
           invYpredcov_filt_chol=cholesky_decompose(invYpredcov_filt); 
           K_filt = etapriorcov[rowi] * LAMBDA_filt\' * invYpredcov_filt; 
           etapostcov[(rowi + 1)] = (IIlatent - K_filt * LAMBDA_filt) * etapriorcov[rowi];
@@ -1037,7 +1051,7 @@ counter=counter+1;}
     
     control<-list(adapt_delta=adapt_delta,
       adapt_term_buffer=min(c(iter/10,max(iter-20,75))),
-      adapt_init_buffer=20,
+      adapt_init_buffer=10,
       adapt_window=2,
       # adapt_kappa=.6,
       # adapt_gamma=.1,
@@ -1049,12 +1063,12 @@ counter=counter+1;}
       stanplot(chains=chains,seed=stanseed)
     }
     if(!exists('sample_file')){
-      if(plot==TRUE) sample_file<-paste0(stanseed,'samples.csv')
+      if(plot==TRUE) sample_file<-paste0(tmpdir,'\\\\',stanseed,'samples.csv')
       if(plot==FALSE) sample_file<-NULL
     }
     
     out <- stan(model_code = c(stanmodelobj), 
-      enable_random_init=TRUE,init_r=.5,
+      enable_random_init=TRUE,init_r=.1,
       refresh=20,
       iter=iter,
       data = standata, chains = ifelse(optimize==FALSE & vb==FALSE,chains,0), control=control,
@@ -1071,6 +1085,7 @@ counter=counter+1;}
     }
     
     if(optimize==TRUE && fit==TRUE) {
+      browser()
       out <- optimizing(object = out@stanmodel, 
         # init=0,
         # algorithm='BFGS',
