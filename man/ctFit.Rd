@@ -5,7 +5,7 @@
 \title{Fit a ctsem object}
 \usage{
 ctFit(datawide, ctmodelobj, objective = "auto",
-  stationary = c("T0TIPREDEFFECT"), optimizer = "SLSQP",
+  stationary = c("T0TRAITEFFECT", "T0TIPREDEFFECT"), optimizer = "SLSQP",
   retryattempts = 15, iterationSummary = FALSE, carefulFit = TRUE,
   showInits = FALSE, asymptotes = FALSE, meanIntervals = FALSE,
   plotOptimization = F, crossEffectNegStarts = TRUE, nofit = FALSE,

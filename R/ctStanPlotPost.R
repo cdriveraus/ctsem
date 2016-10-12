@@ -38,7 +38,7 @@ ctStanPlotPost<-function(ctstanmodelobj,ctstanfitobj, rows='all',wait=FALSE){
         param<-rnorm(n)
         indvaryingcount<-indvaryingcount+1
         hypermean<- s$hypermeans[,hypermeancount]
-        hypersd<-log(exp(s$hypersd[,indvaryingcount]*1.5)+1) *m$sdscale[rowi]
+        hypersd<-exp(s$hypersd[,indvaryingcount]*2-1-m$sdscale[rowi]) * m$sdscale[rowi]
         indparams<-s[['indparams']][,1:nsubjects,indvaryingcount] + hypermean
         
         param<-indparams
@@ -58,7 +58,7 @@ ctStanPlotPost<-function(ctstanmodelobj,ctstanfitobj, rows='all',wait=FALSE){
           text.col=c('black','red','blue'),bty='n')
         
         dhypersdpost<-density(hypersd,bw=.05,n=50000)
-        dhypersdprior<-density((log(exp(param*1.5)+1) *m$sdscale[rowi]),bw=.02,n=50000)
+        dhypersdprior<-density(exp(param*2-1-m$sdscale[rowi]) *m$sdscale[rowi] + .00001,bw=.02,n=50000)
         ylim<-c(0,max(c(dhypersdpost$y,dhypersdprior$y)+.1))
         plot(dhypersdpost,main=paste0('Pre-tform pop. sd ',m$param[rowi]),xlab='Value',lwd=2,
           xlim=c(0,max(c(dhypersdpost$x,m$sdscale[rowi]*2))),ylim=ylim,xaxs='i',yaxs='i')
