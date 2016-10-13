@@ -58,7 +58,7 @@ if(type=='standt') continuoustime<-FALSE
       freeparams & ctspec$row != ctspec$col] <- '1.999/(1+exp((param)*-1.5))-1'
   
   ctspec$transform[ctspec$matrix %in% c('DIFFUSION','MANIFESTVAR', 'T0VAR') & 
-      freeparams & ctspec$row == ctspec$col] <- 'exp(param*4) +.001' #'1/(.1+exp(param*1.8))*10+.001'
+      freeparams & ctspec$row == ctspec$col] <- 'exp(param*4) +.0001' #'1/(.1+exp(param*1.8))*10+.001'
   
   if(continuoustime==TRUE){
     ctspec$transform[ctspec$matrix %in% c('DRIFT') & 
@@ -109,8 +109,8 @@ if(type=='standt') continuoustime<-FALSE
   if(n.TIpred > 0) out$tipredeffectprior <- 'normal(0,1)'
   out$hypersdprior <- 'normal(-3,2)'
   out$hypersdtransform <- 'exp(hypersd[rowi]) * sdscale[rowi]'
-  out$stationarymeanprior <- rep(1,n.latent)
-  out$stationaryvarprior <- rep(1,n.latent)
+  out$stationarymeanprior <- rep(.1,n.latent)
+  out$stationaryvarprior <- rep(.1,n.latent)
   
  return(out)
 }

@@ -4,7 +4,7 @@
 \alias{ctStanSummary}
 \title{ctStanSummary}
 \usage{
-ctStanSummary(ctstanfitobject, trace = TRUE, density = TRUE)
+ctStanSummary(ctstanfitobject)
 }
 \arguments{
 \item{ctstanfitobject}{Stan fit object from \link{\code{ctStanFit}}.}

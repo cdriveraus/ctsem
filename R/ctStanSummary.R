@@ -6,17 +6,22 @@
 #' @import rstan
 #' @export
 
-ctStanSummary<-function(ctstanfitobject,trace=TRUE,density=TRUE){
+ctStanSummary<-function(ctstanfitobject){
+  
+  trace=FALSE
+  density=FALSE
   
   fit<-ctstanfitobject
 
 if(trace==TRUE) {
-  rstan:::traceplot(fit,fit@model_pars[grep('output_hmean',fit@model_pars,fixed=TRUE)],inc_warmup=F)
-  rstan:::traceplot(fit,fit@model_pars[grep('output_hsd',fit@model_pars,fixed=TRUE)],inc_warmup=F)
+
+  getMethod('traceplot','stanfit')(fit,fit@model_pars[grep('output_hmean',fit@model_pars,fixed=TRUE)],inc_warmup=F)
+  getMethod('traceplot','stanfit')(fit,fit@model_pars[grep('output_hsd',fit@model_pars,fixed=TRUE)],inc_warmup=F)
 }
 if( density == TRUE) {
-  rstan:::stan_dens(fit,c('lp__',fit@model_pars[grep('output_hmean',fit@model_pars,fixed=TRUE)]),inc_warmup=F)
-  rstan:::stan_dens(fit,c('lp__',fit@model_pars[grep('output_hsd',fit@model_pars,fixed=TRUE)]),inc_warmup=F)
+  densfunc<-rstan:::stan_dens
+  densfunc(fit,c('lp__',fit@model_pars[grep('output_hmean',fit@model_pars,fixed=TRUE)]),inc_warmup=F)
+  getMethod('stan_dens','stanfit')(fit,c('lp__',fit@model_pars[grep('output_hsd',fit@model_pars,fixed=TRUE)]),inc_warmup=F)
 }
 s<-getMethod('summary','stanfit')(fit)
 return(s$summary[c(grep('output',rownames(s$summary)),grep('lp',rownames(s$summary))),

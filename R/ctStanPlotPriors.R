@@ -7,57 +7,65 @@
 #' Character string 'all' plots all rows with parameters to be estimated.
 #' @param wait If true, user is prompted to continue before plotting next graph.
 #' @param samples Numeric. Higher values increase fidelity (smoothness / accuracy) of density plots, at cost of speed.
+#' @details Plotted in black is the prior for the population mean. In red and blue are the subject level priors that result
+#' given that the population mean is estimated at 1 std deviation above the mean of the prior, or 1 std deviation below. 
+#' The distributions around these two points are then obtained by marginalising over the prior for the population std deviation - 
+#' so the red and blue distributions do not represent any specific subject level prior, but rather characterise the general amount
+#' and shape of possible subject level priors at the selected points of the population mean prior.
 #' @export
 
-ctStanPlotPriors<-function(ctstanmodelobj,rows='all',wait=FALSE,samples=1e5){
+ctStanPlotPriors<-function(ctstanmodelobj,rows='all',wait=FALSE,samples=1e6){
   m<-ctstanmodelobj$parameters
-  n<-500
-  maxiter=5
-  highmean=1
+  n<-5000
+   highmean=1
   lowmean=-1
   if(rows=='all') rows<-1:nrow(m)
   for(rowi in rows){
-    param<-rnorm(samples)
-    xlims<-c(-Inf,Inf)
     if(is.na(m$value[rowi])){
-      
-      
-      for(i in 1:maxiter){
-        if(i!= maxiter) param=c(rnorm(samples),rnorm(samples,highmean,m$sdscale[rowi]),rnorm(samples,lowmean,m$sdscale[rowi]))  
-        if(i==maxiter) param=rnorm(samples*1e2)
-        x=eval(parse(text=paste0(m$transform[rowi])))
-        x=x[x>xlims[1] & x < xlims[2]]
-      densx=density(x,bw=.02,n=n)
-      if(i!=maxiter) densxlim<-densx$x[densx$y> (max(densx$y)/100)]
-      if(i!=maxiter) xlims=c(min(densxlim)-1, max(densxlim)+1)
-      if(i!=maxiter) x=x[x>xlims[1] & x < xlims[2]]
-      }
-      ymax= max(densx$y) / (max(densx$y) / mean(densx$y)) * 10
-      
-      bw=(xlims[2]-xlims[1])/300
-    plot(density(x,bw=bw,n=n),main=m$param[rowi],lwd=2,xlim=c(xlims[1]+1,xlims[2]-1),ylim=c(0,ymax))
     
-    # browser()
+    #hypersd
+    hypersdpriorbase<-  eval(parse(text=gsub('normal(', 'rnorm(samples,',ctstanmodelobj$hypersdprior,fixed=TRUE)))
+    hypersdprior<-eval(parse(text=gsub('sdscale[rowi]' ,'m$sdscale[rowi]', #hypersd samples
+      gsub('hypersd[rowi]','hypersdpriorbase',
+        ctstanmodelobj$hypersdtransform,fixed=TRUE),fixed=TRUE)))
+    # mean(hypersdprior)
     
-    # hypersd<- -3
-    # actualsd<- exp((2*hypersd-1-m$sdscale[rowi])* m$sdscale[rowi]+.0001)
+#mean
+      param=rnorm(samples)
+      xmean=eval(parse(text=paste0(m$transform[rowi])))
+      meanxlims<-quantile(xmean,probs=c(.1,.9))
+      
+      #high
+      param=rnorm(samples,highmean,hypersdprior)
+      xhigh=eval(parse(text=paste0(m$transform[rowi])))
+      highxlims <- quantile(xhigh,probs=c(.1,.9))
+        
+      #low
+      param=rnorm(samples,lowmean,hypersdprior)
+      xlow=eval(parse(text=paste0(m$transform[rowi])))
+      lowxlims <- quantile(xlow,probs=c(.1,.9))
+      
+      #combined
+      xlims=c(min(meanxlims[1],lowxlims[1],highxlims[1]),max(meanxlims[2],lowxlims[2],highxlims[2]))
+      xdistance= ( (highxlims[1]-lowxlims[1]) + (highxlims[2]-lowxlims[2]) )/2
+      
+       xmean=xmean[xmean>(xlims[1]-xdistance) & xmean < (xlims[2]+xdistance)]
+       xhigh=xhigh[xhigh>(xlims[1]-xdistance) & xhigh < (xlims[2]+xdistance)]
+       xlow=xlow[xlow>(xlims[1]-xdistance) & xlow < (xlims[2]+xdistance)]
+       
+       bw=(xlims[2]-xlims[1])/300
+       
+      densxmean=density(xmean,bw=bw,n=n)
+      densxlow=density(xlow,bw=bw,n=n)
+      densxhigh=density(xhigh,bw=bw,n=n)
+
+    ymax= max(c(densxmean$y),c(densxlow$y),c(densxhigh$y))
     
-      param<-rnorm(samples,lowmean,m$sdscale[rowi])
-      x=eval(parse(text=paste0(m$transform[rowi])))
-      x=x[x>xlims[1] & x < xlims[2]]
-      densx=density(x,bw=bw,n=n)
-      points(densx,type='l',col='blue')
-      
-      param<-rnorm(samples,highmean,m$sdscale[rowi])
-      x=eval(parse(text=paste0(m$transform[rowi])))
-      x=x[x>xlims[1] & x < xlims[2]]
-      densx=density(x,bw=bw,n=n)
-      points(densx,type='l',col='red')
-      
-      # browser()
-      
-      
-      legend('topright',c('pop mean prior', '-1sd mean, 1sd','+1sd mean, 1sd'),text.col=c('black','blue','red'),bty='n')
+    plot(densxmean,main=m$param[rowi],lwd=2,xlim=c(xlims[1],xlims[2]),ylim=c(0,ymax))
+    points(densxhigh,lwd=2,type='l',col='red',lty=3)
+    points(densxlow,lwd=2,type='l',col='blue',lty=3)
+
+      legend('topright',c('pop mean prior', '-1sd mean','+1sd mean'),text.col=c('black','blue','red'),bty='n')
       if(wait==TRUE & rowi != tail(rows,1)){
         message("Press [enter] to display next plot")
         readline()

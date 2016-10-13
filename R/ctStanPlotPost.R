@@ -21,7 +21,7 @@ ctStanPlotPost<-function(ctstanmodelobj,ctstanfitobj, rows='all',wait=FALSE){
   sum<-getMethod('summary','stanfit')(ctstanfitobj)
   sumnames<-dimnames(sum$summary)[[1]]
   nsubjects<-max(  as.numeric(unlist(lapply(grep('^indparams[[]',sumnames),function(x){
-    strsplit(gsub("[^0-9,]", "", sumnames[x]), ",")[1]
+    strsplit(gsub("[^0-9,]", "", sumnames[x]), ",")[[1]][1]
   }))))
   if(nsubjects < 1) nsubjects<-1
   
@@ -38,7 +38,11 @@ ctStanPlotPost<-function(ctstanmodelobj,ctstanfitobj, rows='all',wait=FALSE){
         param<-rnorm(n)
         indvaryingcount<-indvaryingcount+1
         hypermean<- s$hypermeans[,hypermeancount]
-        hypersd<-exp(s$hypersd[,indvaryingcount]*2-1-m$sdscale[rowi]) * m$sdscale[rowi]
+        
+        hypersd<-eval(parse(text=gsub('sdscale[rowi]' ,'m$sdscale[rowi]', #hypersd samples
+          gsub('hypersd[rowi]','s$hypersd[,indvaryingcount]',
+            ctstanmodelobj$hypersdtransform,fixed=TRUE),fixed=TRUE)))
+
         indparams<-s[['indparams']][,1:nsubjects,indvaryingcount] + hypermean
         
         param<-indparams
@@ -57,8 +61,15 @@ ctStanPlotPost<-function(ctstanmodelobj,ctstanfitobj, rows='all',wait=FALSE){
         legend('topright',c('Subject param posterior','Subject param prior','Pop mean prior'),
           text.col=c('black','red','blue'),bty='n')
         
+        #pre-transform hyper std dev
         dhypersdpost<-density(hypersd,bw=.05,n=50000)
-        dhypersdprior<-density(exp(param*2-1-m$sdscale[rowi]) *m$sdscale[rowi] + .00001,bw=.02,n=50000)
+        
+        hypersdpriorbase<-  eval(parse(text=gsub('normal(', 'rnorm(n,',ctstanmodelobj$hypersdprior,fixed=TRUE)))
+        hypersdprior<-eval(parse(text=gsub('sdscale[rowi]' ,'m$sdscale[rowi]', #hypersd samples
+          gsub('hypersd[rowi]','hypersdpriorbase',
+            ctstanmodelobj$hypersdtransform,fixed=TRUE),fixed=TRUE)))
+        dhypersdprior<-density(hypersdprior,bw=.02,n=50000)
+        
         ylim<-c(0,max(c(dhypersdpost$y,dhypersdprior$y)+.1))
         plot(dhypersdpost,main=paste0('Pre-tform pop. sd ',m$param[rowi]),xlab='Value',lwd=2,
           xlim=c(0,max(c(dhypersdpost$x,m$sdscale[rowi]*2))),ylim=ylim,xaxs='i',yaxs='i')
@@ -66,24 +77,23 @@ ctStanPlotPost<-function(ctstanmodelobj,ctstanfitobj, rows='all',wait=FALSE){
         legend('topright',c('Pop. sd posterior','Pop. sd prior'),
           text.col=c('black','blue'),bty='n')
         
+        #post-transform hyper std dev
+        hsd <- s[[paste0('output_hsd_',m$param[rowi])]]
+        dhsdpost<-density(hsd,bw=.05,n=50000)
         
-        param<-(hypermean+hypersd)
-        high<-eval(parse(text=paste0(m$transform[rowi])))
-        param<-(hypermean-hypersd)
-        low<-eval(parse(text=paste0(m$transform[rowi])))
-        thypersdpost<-abs(high - low)/2
-        dthypersdpost<-density(thypersdpost,bw=.04,n=5000)
+
+        param<-(hypermean+hypersd) #use delta method to determine prior
+
         onesd<-rnorm(n,0,hypersd)
         param<-(hypermean+onesd)
         high<-eval(parse(text=paste0(m$transform[rowi])))
         param<-(hypermean-onesd)
         low<-eval(parse(text=paste0(m$transform[rowi])))
-        thypersdprior<-abs(high - low)/2
-        dthypersdprior<-density(thypersdprior,bw=.001,n=5000)
-        ylim<-c(0,max(c(dthypersdpost$y,dthypersdprior$y)+.1))
-        plot(dthypersdpost,main=paste0('Pop. sd ',m$param[rowi]),xlab='Value',lwd=2,ylim=ylim,xlim=c(0,max(dthypersdpost$x)),yaxs='i',xaxs='i')
-        points(dthypersdprior,col='blue',type='l',lty=2,lwd=2)
-        points(s[[paste0('hsd_',m$param[rowi])]],col='red',type='l',lty=2,lwd=2)
+        thsdprior<-abs(high - low)/2
+        dthsdprior<-density(thsdprior,bw=.001,n=5000)
+        ylim<-c(0,max(c(dhsdpost$y,dthsdprior$y)+.1))
+        plot(dhsdpost,main=paste0('Pop. sd ',m$param[rowi]),xlab='Value',lwd=2,ylim=ylim,xlim=c(0,max(dhsdpost$x)),yaxs='i',xaxs='i')
+        points(dthsdprior,col='blue',type='l',lty=2,lwd=2)
         legend('topright',c('Pop. sd posterior','Pop. sd prior'),
           text.col=c('black','blue'),bty='n')
         
@@ -99,8 +109,10 @@ ctStanPlotPost<-function(ctstanmodelobj,ctstanfitobj, rows='all',wait=FALSE){
         
         
         
-        pmeans[,indvaryingcount]<-sum$summary[sumnames %in% paste0(m$matrix[rowi],'[',1:nsubjects,',',m$row[rowi],
-          if(!(m$matrix[rowi] %in% c('T0MEANS','CINT','MANIFESTMEANS'))) paste0(',',m$col[rowi]),']'),1]
+        pmeans[,indvaryingcount]<-sum$summary[sumnames %in% 
+            paste0(m$matrix[rowi],'[',1:nsubjects,',',m$row[rowi],
+                  if(!(m$matrix[rowi] %in% c('T0MEANS','CINT','MANIFESTMEANS'))) paste0(',',m$col[rowi]),']'),
+          1]
         
         pnames[indvaryingcount]<-paste0(m$matrix[rowi],'[',m$row[rowi],',',m$col[rowi],']')
         

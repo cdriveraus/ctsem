@@ -845,7 +845,7 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
           '),'
         '),' 
       
-      
+// pre-calculate necessary discrete time matrices      
       counter=0;
       for(rowi in 1:ndatapoints) if(T0check[rowi]==0 && (rowi==1 || driftindex[rowi] > counter)) { discreteDRIFT[driftindex[rowi]] = ',
       if(!continuoustime) paste0('DRIFT',checkvarying('DRIFT','[subject[rowi]]','[1]'),';'),
@@ -866,24 +866,25 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
       if(continuoustime) paste0('invDRIFT',checkvarying('DRIFT','[subject[rowi]]','[1]'),' * (discreteDRIFT[driftindex[rowi]] - IIlatent) * CINT',
         checkvarying('CINT','[subject[rowi]]','[1]'),';'),'
       counter=counter+1;}
-      //test
       
-      ', if(stationaryvar) paste0('for(individual in 1:nsubjects) {
+      
+// stationarity priors
+      for(individual in 1:nsubjects) {
         (diagonal(',
        if(!asymdiffusion) 'asym', 'DIFFUSION[',
         checkvarying(c('DIFFUSION','DRIFT'),'individual','1'),']) - diagonal(T0VAR[',
         checkvarying('T0VAR','individual','1'),'])) ~ normal(0,stationaryvarprior); // variance stationarity prior
-      }'),'
+      }
 
-    ', if(stationarymeans) paste0('for(individual in 1:nsubjects) {
+    for(individual in 1:nsubjects) {
       T0MEANS[',checkvarying('T0MEANS','individual','1'),'] - ',
         '( invDRIFT[',checkvarying('DRIFT','individual','1'),'] * CINT[',checkvarying('CINT','individual','1'),'] )',
       ' ~ normal(0,stationarymeanprior); // mean stationarity prior
-        }'),'
+        }
       
  
+// filtering
         obscount=1;
-
         for(rowi in 1:ndatapoints){
         int whichobs[nobs_y[rowi]];
         whichobs = whichobs_y[rowi][1:nobs_y[rowi]];
@@ -1138,16 +1139,15 @@ matrix[nlatent, nobsi] K_filt; // kalman gain
     }
     
     if(initwithoptim & chains > 0){#optimize with bfgs for initial values
-      # browser()
+      
       sm <- stan(model_code = c(stanmodelobj), 
         data = standata, chains = 0)
       
-      hypersdindex=((npars+1 -  sum(ctspec$indvarying)):npars)-
-        length(constrain_pars(sm,rep(0,npars))$tipredeffect)
-      
-      
       npars=get_num_upars(sm)
       
+      if(any(ctspec$indvarying)) hypersdindex=((npars+1 -  sum(ctspec$indvarying)):npars)-
+        length(constrain_pars(sm,rep(0,npars))$tipredeffect) else hypersdindex<-NULL
+
       lp<-function(parm) {
         parm[hypersdindex]<-0
         out<-try(log_prob(sm,upars=parm))
@@ -1155,7 +1155,7 @@ matrix[nlatent, nobsi] K_filt; // kalman gain
           out=-9999999999999999
           print(constrain_pars(sm,parm))
         }
-        out=out +sum(dnorm(parm,0,2,log=TRUE))
+        out=out +sum(dnorm(parm,0,10,log=TRUE))
         return(out)
       }
       
@@ -1196,7 +1196,7 @@ matrix[nlatent, nobsi] K_filt; // kalman gain
     }
   
   out <- stan(model_code = c(stanmodelobj), 
-    enable_random_init=TRUE,init_r=.1,
+    enable_random_init=TRUE,init_r=1,
     init=staninits,
     refresh=20,
     iter=iter,
