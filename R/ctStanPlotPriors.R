@@ -7,6 +7,9 @@
 #' Character string 'all' plots all rows with parameters to be estimated.
 #' @param wait If true, user is prompted to continue before plotting next graph.
 #' @param samples Numeric. Higher values increase fidelity (smoothness / accuracy) of density plots, at cost of speed.
+#' @param hypersd Either 'marginalise' to sample from the specified (in the ctstanmodelobj) 
+#' prior distribution for the population standard deviation, or a numeric value to use for the population standard deviation
+#' for all subject level prior plots - the plots in dotted blue or red.
 #' @details Plotted in black is the prior for the population mean. In red and blue are the subject level priors that result
 #' given that the population mean is estimated at 1 std deviation above the mean of the prior, or 1 std deviation below. 
 #' The distributions around these two points are then obtained by marginalising over the prior for the population std deviation - 
@@ -14,7 +17,7 @@
 #' and shape of possible subject level priors at the selected points of the population mean prior.
 #' @export
 
-ctStanPlotPriors<-function(ctstanmodelobj,rows='all',wait=FALSE,samples=1e6){
+ctStanPlotPriors<-function(ctstanmodelobj,rows='all',wait=FALSE,samples=1e6, hypersd='marginalise'){
   m<-ctstanmodelobj$parameters
   n<-5000
    highmean=1
@@ -24,11 +27,12 @@ ctStanPlotPriors<-function(ctstanmodelobj,rows='all',wait=FALSE,samples=1e6){
     if(is.na(m$value[rowi])){
     
     #hypersd
+      if(hypersd[1]=='marginalise'){
     hypersdpriorbase<-  eval(parse(text=gsub('normal(', 'rnorm(samples,',ctstanmodelobj$hypersdprior,fixed=TRUE)))
     hypersdprior<-eval(parse(text=gsub('sdscale[rowi]' ,'m$sdscale[rowi]', #hypersd samples
       gsub('hypersd[rowi]','hypersdpriorbase',
         ctstanmodelobj$hypersdtransform,fixed=TRUE),fixed=TRUE)))
-    # mean(hypersdprior)
+      } else if(is.na(as.numeric(hypersd))) stop('hypersd argument is ill specified!') else hypersdprior <- hypersd
     
 #mean
       param=rnorm(samples)

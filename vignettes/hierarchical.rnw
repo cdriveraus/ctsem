@@ -60,7 +60,7 @@ Manuel C. Voelkle \\ Humboldt University Berlin \\ Max Planck Institute for Huma
 \Shorttitle{Introduction to Hierarchical Continuous Time Dynamic Modelling with \pkg{ctsem}} %% a short title (if necessary)
 
 \Abstract{
-ctsem allows for easy specification and fitting of a range of continuous and discrete time dynamic models, including multiple indicators (dynamic factor analysis), multiple, potentially higher order processes, and time dependent (varying within subject) and time independent (not varying within subject) covariates. Classic longitudinal models like latent growth curves and latent change score models are also possible.  Version 1 of ctsem provided SEM based functionality by linking to the OpenMx software, allowing mixed effects models (random means but fixed regression and variance parameters) for multiple subjects. For version 2 of the \proglang{R} package \pkg{ctsem}, we include a Bayesian specification and fitting routine that uses the \pkg{Stan} probabilistic programming language, via the \pkg{rstan} package in R. This allows for all parameters of the dynamic model to individually vary, using an estimated population mean and variance, and any time independent covariate effects, as a prior. ctsem version 1 is documented in a forthcoming JSS publication (Driver, Voelkle, Oud, in press), and in R vignette form at \url{https://cran.r-project.org/web/packages/ctsem/vignettes/ctsem.pdf }, here we provide the basics for getting started with the new Bayesian approach included in version 2.
+ctsem allows for easy specification and fitting of a range of continuous and discrete time dynamic models. The models may including multiple indicators (dynamic factor analysis), multiple, interrelated, potentially higher order processes, and time dependent (varying within subject) and time independent (not varying within subject) covariates. Classic longitudinal models like latent growth curves and latent change score models are also possible.  Version 1 of ctsem provided SEM based functionality by linking to the OpenMx software, allowing mixed effects models (random means but fixed regression and variance parameters) for multiple subjects. For version 2 of the \proglang{R} package \pkg{ctsem}, we include a Bayesian specification and fitting routine that uses the \pkg{Stan} probabilistic programming language, via the \pkg{rstan} package in R. This allows for all parameters of the dynamic model to individually vary, using an estimated population mean and variance, and any time independent covariate effects, as a prior. ctsem version 1 is documented in a forthcoming JSS publication (Driver, Voelkle, Oud, in press), and in R vignette form at \url{https://cran.r-project.org/web/packages/ctsem/vignettes/ctsem.pdf }, here we provide the basics for getting started with the new Bayesian approach included in version 2.
 }
 
 \Keywords{hierarchical time series, Bayesian, longitudinal, panel data, state space, structural equation, continuous time, stochastic differential equation, dynamic models, Kalman filter, \proglang{R}}
@@ -121,7 +121,7 @@ opts_chunk$set(warning = FALSE, fig.align = 'center', width.cutoff = 100, fig.sh
 options(width = 100, scipen = 12, digits = 3)
 
 
-Tpoints=30
+Tpoints=50
 n.manifest=2
 n.TDpred=1
 n.TIpred=3
@@ -142,7 +142,7 @@ gm<-ctModel(type='omx', Tpoints=Tpoints,n.latent=n.latent,n.TDpred=n.TDpred,n.TI
   DIFFUSION=matrix(c(.3,.1,0,.2),2),CINT=matrix(c(0,0),nrow=2),T0MEANS=matrix(0,ncol=1,nrow=2),
   T0VAR=diag(100,2))
 
-cd<-ctGenerate(gm,n.subjects=50,burnin=300, dT=1,asymptotes=F,simulTDpredeffect = T)
+cd<-ctGenerate(gm,n.subjects=n.subjects,burnin=300, dT=1,asymptotes=F,simulTDpredeffect = T)
 model<-ctModel(type='stanct',n.latent=n.latent,n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,LAMBDA=diag(n.latent))
 long<-ctWideToLong(cd,Tpoints,n.manifest=model$n.manifest,manifestNames = model$manifestNames, 
   n.TDpred=n.TDpred,n.TIpred=n.TIpred,TDpredNames = model$TDpredNames,TIpredNames = model$TIpredNames)
@@ -276,7 +276,7 @@ Restrict between subject effects as desired. Unnecessary between subject effects
 
 <<restrictbetween>>=
 model$parameters[25:28,]$indvarying<-FALSE
-model$parameters$sdscale[1:28] <- 1
+model$parameters$sdscale[1:28] <- .2
 
 par(mfrow=c(1,2))
 ctStanPlotPriors(model,rows=11)
@@ -284,7 +284,7 @@ model$parameters$transform[11]<- "(exp(param*4) +.0001)*.2"
 ctStanPlotPriors(ctstanmodelobj = model,rows=11)
 @
 
-Also restrict which parameters to include time independent predictor effects for a similar way, for similar reasons. In this case, the only adverse effects of restriction are that the relationship between the predictor and variables will not be estimated, but the subject level parameters themselves should not be very different, as they are still freely estimated. Note that such effects are only estimated for individually varying parameters anyway -- so after the above change there is no need to set the tipredeffect to FALSE for the T0VAR variables, it is assumed. Instead, we restrict the tipredeffects on all parameters, and free them only for the auto effect of the first latent process.
+Also restrict which parameters to include time independent predictor effects for in a similar way, for similar reasons. In this case, the only adverse effects of restriction are that the relationship between the predictor and variables will not be estimated, but the subject level parameters themselves should not be very different, as they are still freely estimated. Note that such effects are only estimated for individually varying parameters anyway -- so after the above change there is no need to set the tipredeffect to FALSE for the T0VAR variables, it is assumed. Instead, we restrict the tipredeffects on all parameters, and free them only for the auto effect of the first latent process.
 
 <<restricttipred>>=
 model$parameters[,c('TI1_effect','TI2_effect','TI3_effect')]<-FALSE
@@ -295,11 +295,11 @@ model$parameters[7,c('TI1_effect','TI2_effect','TI3_effect')]<-TRUE
 Once model specification is complete, the model is fit to the data using the ctStanFit function as follows -- depending on the data, model, and number of iterations requested, this can take anywhere from a few minutes to days. Current experience suggests 500 iterations is often enough to get an idea of what is going on, but more may be necessary for robust inference. This will of course vary massively depending on model and data.
 
 <<fitting,eval=FALSE>>=
-fit<-ctStanFit(long,model,iter=200,chains=2,plot=F)
+fit<-ctStanFit(long,model,iter=300,chains=2,plot=T,initwithoptim=T,estsd=F)
 @
 
 <<fitdummy,echo=FALSE,cache=TRUE,include=FALSE>>=
-fit<-ctStanFit(long,model,iter=20,chains=1,fit=T,plot=F)
+fit<-ctStanFit(long,model,iter=20,chains=1,fit=T,plot=F,initwithoptim=T,estsd=F)
 @
 
 
@@ -322,6 +322,13 @@ After fitting, the ctStanSummary function may be used, which runs the rstan summ
 ctStanSummary(fit)
 library("shinystan")
 launch_shinystan(fit)
+@
+
+The relation between posteriors and priors for variables of interest can also be plotted as follows:
+
+<<outputposterior>>=
+par(mfrow=c(3,1))
+ctStanPlotPost(ctstanmodelobj = model, ctstanfitobj = fit, rows = 11)
 @
 
 \subsection{Stationarity}

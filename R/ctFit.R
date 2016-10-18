@@ -288,8 +288,9 @@ ctFit  <- function(datawide, ctmodelobj,
   if(any(ctmodelobj$TRAITVAR!=0) & nrow(datawide) > 1 )   traitExtension <- TRUE
   if(all(ctmodelobj$TRAITVAR==0) | nrow(datawide)==1 | objective=='Kalman' | objective=='Kalmanmx')    traitExtension <- FALSE
   
+  
   if(any(ctmodelobj$MANIFESTTRAITVAR != 0)) manifestTraitvarExtension <- TRUE
-  if(all(ctmodelobj$MANIFESTTRAITVAR == 0)  | nrow(datawide)==1 | objective=='Kalman'| objective!='Kalmanmx') manifestTraitvarExtension <- FALSE
+  if(all(ctmodelobj$MANIFESTTRAITVAR == 0)  | nrow(datawide)==1 | objective=='Kalman'| objective=='Kalmanmx') manifestTraitvarExtension <- FALSE
   
   ## if Kalman objective, rearrange data to long format and set Tpoints to 2 (so only single discrete algebras are generated)
   if(objective=='Kalman' | objective=='Kalmanmx') {
@@ -694,7 +695,7 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
   
   ###section to append matrices with manifest trait latents
   if( objective!='Kalman' & manifestTraitvarExtension == TRUE & objective!='Kalmanmx'){
-    
+   
     #update indices
     manifeststart <- manifeststart+n.manifest #adding n.manifest latent variables to matrix indices, retaining trait indices notation rather than splitting to process and manifest
     manifestend <- manifestend+n.manifest

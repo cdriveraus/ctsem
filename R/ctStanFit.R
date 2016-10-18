@@ -333,7 +333,8 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
   
   
   
-  if(is.na(stanmodelobj)){ 
+  
+    writemodel<-function(init=FALSE,optimize=FALSE){
     stanmodelobj <- paste0('
       functions{
       
@@ -603,7 +604,7 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
       int nindvarying; // number of subject level parameters that are varying across subjects
       ',if(nindvarying>0) paste0('int indvaryingindex[nindvarying]',';
         vector[nindvarying] sdscale;'),'
-
+    
       vector[nlatent] stationarymeanprior; // prior std dev for difference between process asymptotic mean and initial mean
       vector[nlatent] stationaryvarprior; // prior std dev for difference between process asymptotic variance and initial variance
       
@@ -613,7 +614,11 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
       
       transformed data{
       matrix[nlatent,nlatent] IIlatent;
+',if(init & nindvarying >0) 'vector[nindvarying] hypersd;','
       IIlatent = diag_matrix(rep_vector(1,nlatent));
+      ',if(init & nindvarying >0) 'hypersd[1:nindvarying] = rep_vector(1,nindvarying);','
+     
+
       }
       
       parameters {
@@ -622,7 +627,7 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
       
       ',if(any(indvarying)) paste0(
         'vector[nindvarying] indparams[nsubjects]; //subject level parameters
-        ',if(estsd | 1==1) 'vector[nindvarying] hypersdbase; // population sd of any varying subject level parameters
+        ',if(!init & (estsd | 1==1)) 'vector[nindvarying] hypersdbase; // population sd of any varying subject level parameters
         '),'
       
       ',if(any(indvarying) & densehyper & estcorr) paste0('vector[(nindvarying*nindvarying-nindvarying)/2] hypercorrparsbase;'),'
@@ -643,7 +648,7 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
       vector[(nindvarying*nindvarying-nindvarying)/2] hypercorrpars; \n','
       
       ',if(any(nindvarying)) paste0('
-        vector[nindvarying] hypersd;
+        ',if(!init) 'vector[nindvarying] hypersd;','
         matrix[nindvarying,nindvarying] paramcov;
         matrix[nindvarying,nindvarying] paramcor;
         
@@ -694,8 +699,8 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
       ',if(any(indvarying)) paste0('
         paramcov = cov(indparams,nsubjects,nindvarying);
         paramcor = cov2cor(paramcov,nindvarying);
-        ',if(!estsd) 'hypersd = log(vecsqrt(diagonal(paramcov))) + hypersdbase;','
-        ',if(estsd) 'hypersd = hypersdbase;'),'
+        ',if(!estsd & !init) 'hypersd = log(vecsqrt(diagonal(paramcov))) + hypersdbase;','
+        ',if(estsd & !init) 'hypersd = hypersdbase;'),'
       
       
       ',if(any(indvarying) & densehyper==TRUE) paste0(
@@ -717,7 +722,7 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
       
       ',if(any(ctspec$indvarying)) paste0(
         if(densehyper) 'paramchol = varmatrixtransform2(hypercorr,1); // transform correlation and sd matrix to cholesky decomp cov \n ',
-        if(!densehyper) paste0('paramchol=diag_matrix(',hypersdtransform,');'),
+        if(!densehyper) paste0('paramchol=diag_matrix(',ctstanmodelobj$hypersdtransform,');'),
         if(stdnorm & densehyper) 'invparamchol = inverse(paramchol); \n',
         if(stdnorm & !densehyper) 'invparamchol = diag_matrix(1 ./ diagonal(paramchol));'),'
       
@@ -830,7 +835,7 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
         
       ',if(n.TIpred > 0 & !optimize) paste0('tipredeffectparams ~ ',ctstanmodelobj$tipredeffectprior, '; \n '),' 
       
-      ',if(any(ctspec$indvarying)) paste0(' hypersd ~ ',ctstanmodelobj$hypersdprior,';
+      ',if(any(ctspec$indvarying) & !optimize) paste0(' hypersd ~ ',ctstanmodelobj$hypersdprior,';
         ',if(densehyper & estcorr) 'hypercorrpars ~ normal(0,1);','
         ',if(stdnorm) 'indparamstrans ~ normal(0,1);
         target +=(sum(log(diagonal(invparamchol)))*nsubjects);  //adjust loglik for density warping transform',
@@ -881,7 +886,6 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
         '( invDRIFT[',checkvarying('DRIFT','individual','1'),'] * CINT[',checkvarying('CINT','individual','1'),'] )',
       ' ~ normal(0,stationarymeanprior); // mean stationarity prior
         }
-      
  
 // filtering
         obscount=1;
@@ -1071,7 +1075,9 @@ matrix[nlatent, nobsi] K_filt; // kalman gain
         })),collapse=''),'
     
         }')
-  }
+    }
+    
+    if(is.na(stanmodelobj)) stanmodelobj<-writemodel(init=initwithoptim,optimize=initwithoptim || optimize)
       
   
   out<-stanmodelobj
@@ -1149,29 +1155,30 @@ matrix[nlatent, nobsi] K_filt; // kalman gain
         length(constrain_pars(sm,rep(0,npars))$tipredeffect) else hypersdindex<-NULL
 
       lp<-function(parm) {
-        parm[hypersdindex]<-0
+        # parm[hypersdindex]<-2
         out<-try(log_prob(sm,upars=parm))
         if(class(out)=='try-error') {
           out=-9999999999999999
-          print(constrain_pars(sm,parm))
+          # print(constrain_pars(sm,parm))
         }
-        out=out +sum(dnorm(parm,0,10,log=TRUE))
+        # out=out +sum(dnorm(parm,0,10,log=TRUE))
         return(out)
       }
       
       grf<-function(parm) {
-        parm[hypersdindex]<-0
+        # parm[hypersdindex]<-0
         grad_log_prob(sm,upars=parm)
       }
     
     optimfit <- optim(rnorm(npars,0,.001), lp, gr=grf, 
-      control = list(fnscale = -1,trace=1,parscale=rep(.0001,npars),maxit=1000,factr=1e-12,reltol=1e-12,lmm=40), 
-      method='BFGS',hessian = FALSE)
+      control = list(fnscale = -1,trace=1,parscale=rep(.00001,npars),maxit=2000,factr=1e-14,reltol=1e-12,lmm=100), 
+      method='L-BFGS-B',hessian = FALSE)
     # browser()
     parsout=optimfit$par
-    parsout[hypersdindex]=0
+    # parsout[hypersdindex]=0
     
-    inits=rstan::constrain_pars(sm,parsout+rnorm(npars,0,.05))
+    inits=rstan::constrain_pars(sm,parsout)
+    stanmodelobj<-writemodel(init=FALSE,optimize=FALSE)
   }
 
   if(!is.null(inits)){
@@ -1183,10 +1190,10 @@ matrix[nlatent, nobsi] K_filt; // kalman gain
     }
   }
     
-    
+  
     if(is.null(inits)){
       staninits=list()
-      for(i in 1:(chains)){
+      for(i in 1:(chains+1)){
         staninits[[i]]=list(hypersdbase=array(rnorm(nindvarying,1,.5),dim=c(nindvarying)))
       }
     }
@@ -1196,7 +1203,7 @@ matrix[nlatent, nobsi] K_filt; // kalman gain
     }
   
   out <- stan(model_code = c(stanmodelobj), 
-    enable_random_init=TRUE,init_r=1,
+    enable_random_init=TRUE,init_r=.1,
     init=staninits,
     refresh=20,
     iter=iter,
@@ -1219,8 +1226,8 @@ matrix[nlatent, nobsi] K_filt; // kalman gain
       # init=0,
       # algorithm='BFGS',
       as_vector=F,
-      history_size=10,
-      # init_alpha=.001,
+      history_size=20,
+      init_alpha=1e-4,
       tol_obj=1e-12, tol_grad=1e-12,tol_param=1e-12,tol_rel_grad=0, tol_rel_obj=0,
       data = standata, iter=120000)
     
