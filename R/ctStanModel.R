@@ -58,11 +58,11 @@ if(type=='standt') continuoustime<-FALSE
       freeparams & ctspec$row != ctspec$col] <- '1.999/(1+exp((param)*-1.5))-1'
   
   ctspec$transform[ctspec$matrix %in% c('DIFFUSION','MANIFESTVAR', 'T0VAR') & 
-      freeparams & ctspec$row == ctspec$col] <- 'exp(param*4) +.0001' #'1/(.1+exp(param*1.8))*10+.001'
+      freeparams & ctspec$row == ctspec$col] <- 'exp(param*4) +.00001' #'1/(.1+exp(param*1.8))*10+.001'
   
   if(continuoustime==TRUE){
     ctspec$transform[ctspec$matrix %in% c('DRIFT') & 
-        freeparams & ctspec$row == ctspec$col] <- '-log(exp((-param))+1)-.0001' #'log(1/(1+(exp(param*-1.5))))'
+        freeparams & ctspec$row == ctspec$col] <- '-exp(-param)-.00001' #'log(1/(1+(exp(param*-1.5))))'
     
     ctspec$transform[ctspec$matrix %in% c('DRIFT') & freeparams & 
         ctspec$row != ctspec$col] <- '(param)*.5'

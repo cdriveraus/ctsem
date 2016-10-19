@@ -5,11 +5,10 @@
 \title{ctStanFit}
 \usage{
 ctStanFit(datalong, ctstanmodelobj, stanmodelobj = NA, iter = 2000,
-  kalman = TRUE, binomial = FALSE, densehyper = TRUE, fit = TRUE,
-  plot = FALSE, noncentered = TRUE, adapt_delta = 0.8, stdnorm = TRUE,
-  max_treedepth = 10, estmeans = TRUE, estsd = TRUE, estcorr = FALSE,
-  asymdiffusion = FALSE, optimize = FALSE, vb = FALSE, chains = 1,
-  inits = NULL, initwithoptim = FALSE, ...)
+  kalman = TRUE, binomial = FALSE, fit = TRUE, plot = FALSE,
+  adapt_delta = 0.8, max_treedepth = 10, asymdiffusion = FALSE,
+  optimize = FALSE, vb = FALSE, chains = 1, inits = NULL,
+  initwithoptim = FALSE, ...)
 }
 \arguments{
 \item{datalong}{long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables, 
@@ -24,37 +23,22 @@ models respectively.}
 \item{iter}{number of iterations, half of which will be devoted to warmup by default.}
 
 \item{kalman}{logical indicating whether or not to integrate over latent states using a Kalman filter. 
-Generally recommended to set TRUE unless using non-gaussian measurement model.}
+Generally recommended to set TRUE unless using non-gaussian measurement model. If not using Kalman filter, experience
+suggests that some models / datasets require a relatively high amount of very fast iterations before the sampler is
+in the high density region. This can make it difficult to determine the number of iterations needed a priori - in such cases 
+setting initwithoptim=TRUE may be helpful.}
 
 \item{binomial}{logical indicating the use of binomial rather than Gaussian data, as with IRT analyses.}
-
-\item{densehyper}{logical indicating whether to estimate a prior for correlations between parameters, or fix it to 0.}
 
 \item{fit}{If TRUE, fit specified model using Stan, if FALSE, return stan model object without fitting.}
 
 \item{plot}{if TRUE, a Shiny program is launched upon fitting to interactively plot samples. 
 May struggle with many (e.g., > 5000) parameters, and may leave sample files in working directory if sampling is terminated.}
 
-\item{noncentered}{if FALSE, sample subject level parameters directly, if TRUE, sample subject level parameters as
-deviations from the estimated population mean. TRUE seems to result in somewhat more effective sampling, 
-based on limited testing.}
-
 \item{adapt_delta}{Stan control parameter denoting acceptance ratio to aim for. Increasing is meant to be useful
 as a way to decrease divergent transitions, but I've not observed this for these models.}
 
-\item{stdnorm}{logical indicating whether to rely on transformations to standard normal internally. Included for internal testing
-purposes.}
-
 \item{max_treedepth}{Stan control parameter, may be worth increasing if many post-warmup iterations reach max treedepth.}
-
-\item{estmeans}{Whether to sample parameters for the population means or approximate this 
-by computing the mean from subject level parameters.}
-
-\item{estsd}{Whether to sample parameters for the population standard deviations or approximate this 
-by computing them from subject level parameters.}
-
-\item{estcorr}{Whether to sample parameters for the population correlation parameters or approximate them 
-from subject level parameters. If TRUE, estimation may be much slower and more problematic, thus the default is FALSE.}
 
 \item{asymdiffusion}{if TRUE, increases fitting speed at cost of model flexibility - T0VAR in the model specification is ignored, the DIFFUSION matrix specification is used as the 
 asymptotic DIFFUSION matrix (Q*_inf in the vignette / paper) (making it difficult if not impossible to properly specify
@@ -70,7 +54,9 @@ no parameters vary across subjects.}
 
 \item{inits}{vector of parameter start values, as returned by the rstan function \code{\link{unconstrain_pars}} for instance.}
 
-\item{initwithoptim}{generate initial values using a penalised maximum likelihood fit via BFGS.}
+\item{initwithoptim}{Logical. If TRUE, the model, with population standard deviations fixed to 1 
+(so approx 65% of the population mean prior), is first fit with penalised maximum likelihood to determine starting values
+for the chains. This can help speed convergence and avoid problematic regions for certain problems.}
 }
 \description{
 Fits a ctsem model specified via \code{\link{ctModel}} with type either 'stanct' or 'standt', using Bayseian inference software
