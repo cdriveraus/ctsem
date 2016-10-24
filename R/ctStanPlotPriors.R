@@ -26,12 +26,12 @@ ctStanPlotPriors<-function(ctstanmodelobj,rows='all',wait=FALSE,samples=1e6, hyp
   for(rowi in rows){
     if(is.na(m$value[rowi])){
     
-    #hypersd
+    #loghypersd
       if(hypersd[1]=='marginalise'){
-    hypersdpriorbase<-  eval(parse(text=gsub('normal(', 'rnorm(samples,',ctstanmodelobj$hypersdprior,fixed=TRUE)))
-    hypersdprior<-eval(parse(text=gsub('sdscale[rowi]' ,'m$sdscale[rowi]', #hypersd samples
-      gsub('hypersd[rowi]','hypersdpriorbase',
-        ctstanmodelobj$hypersdtransform,fixed=TRUE),fixed=TRUE)))
+    loghypersdpriorbase<-  eval(parse(text=gsub('normal(', 'rnorm(samples,',ctstanmodelobj$loghypersdprior,fixed=TRUE)))
+    loghypersdprior<-eval(parse(text=gsub('sdscale[rowi]' ,'m$sdscale[rowi]', #hypersd samples
+      gsub('loghypersd[rowi]','loghypersdpriorbase',
+        ctstanmodelobj$loghypersdtransform,fixed=TRUE),fixed=TRUE)))
       } else if(is.na(as.numeric(hypersd))) stop('hypersd argument is ill specified!') else hypersdprior <- hypersd
     
 #mean
@@ -40,12 +40,12 @@ ctStanPlotPriors<-function(ctstanmodelobj,rows='all',wait=FALSE,samples=1e6, hyp
       meanxlims<-quantile(xmean,probs=c(.1,.9))
       
       #high
-      param=rnorm(samples,highmean,hypersdprior)
+      param=rnorm(samples,highmean,loghypersdprior)
       xhigh=eval(parse(text=paste0(m$transform[rowi])))
       highxlims <- quantile(xhigh,probs=c(.1,.9))
         
       #low
-      param=rnorm(samples,lowmean,hypersdprior)
+      param=rnorm(samples,lowmean,loghypersdprior)
       xlow=eval(parse(text=paste0(m$transform[rowi])))
       lowxlims <- quantile(xlow,probs=c(.1,.9))
       

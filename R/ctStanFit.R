@@ -538,7 +538,7 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
       vector[nparams] hypermeans; // population level means \n','
       
       ',if(any(indvarying)) paste0(
-        'vector[nindvarying] hypersd; //population level std dev
+        'vector[nindvarying] loghypersd; //population level std dev
         cholesky_factor_corr[nindvarying] hypercorrchol; // population level cholesky correlation
         vector[nindvarying*nsubjects] indparamsbase; //subject level parameters
         '),'
@@ -596,7 +596,7 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
       ',if(any(indvarying)) paste0('
         for(subi in 1:nsubjects) {
         indparams[subi]= 
-        diag_pre_multiply(exp(hypersd) .* sdscale, hypercorrchol) * indparamsbase[(1+(subi-1)*nindvarying):(subi*nindvarying)] +',
+        diag_pre_multiply(exp(loghypersd) .* sdscale, hypercorrchol) * indparamsbase[(1+(subi-1)*nindvarying):(subi*nindvarying)] +',
         'hypermeans[indvaryingindex]',
         if(n.TIpred>0) ' + tipredeffect * tipreds[subi]\' ',
         ';
@@ -707,8 +707,8 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
   
   ',if(n.TIpred > 0 & !optimize) paste0('tipredeffectparams ~ ',ctstanmodelobj$tipredeffectprior, '; \n '),' 
   
-  ',if(any(ctspec$indvarying) & !optimize) paste0(' hypersd ~ ',ctstanmodelobj$hypersdprior,';
-    hypercorrchol ~ lkj_corr_cholesky(2);
+  ',if(any(ctspec$indvarying) & !optimize) paste0(' loghypersd ~ ',ctstanmodelobj$loghypersdprior,';
+    //hypercorrchol ~ lkj_corr_cholesky(2);
     indparamsbase ~ normal(0,1);
     '),' 
 
@@ -880,7 +880,7 @@ for(rowi in 1:ndatapoints) {
 
   ', if(optimize==TRUE && n.TIpred > 0) paste0('print("tipredeffect ",tipredeffect);'),'
   ', if(optimize==TRUE | vb==TRUE) paste0('
-    //print("hypersd",hypersd);
+    //print("loghypersd",loghypersd);
     //print("paramchol",paramchol);
     //print("covariance",cov(indparams,nsubjects,nindvarying));
     //print("cor",cov2cor(cov(indparams,nsubjects,nindvarying),nindvarying));
@@ -923,7 +923,7 @@ for(rowi in 1:ndatapoints) {
   
   ',paste0(unlist(lapply(1:nrow(ctspec),function(rowi){
     if(ctspec$indvarying[rowi]) paste0('output_hsd_',ctspec$param[rowi],' = ',
-      'exp(hypersd[',which(ctspec$param[ctspec$indvarying] == ctspec$param[rowi]),']); \n',
+      'exp(loghypersd[',which(ctspec$param[ctspec$indvarying] == ctspec$param[rowi]),']); \n',
       if(!is.na(ctspec$transform[rowi])) paste0(
         'output_hsd_',ctspec$param[rowi],' = fabs
         ((', 

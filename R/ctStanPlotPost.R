@@ -38,15 +38,15 @@ ctStanPlotPost<-function(ctstanmodelobj,ctstanfitobj, rows='all',wait=FALSE){
         indvaryingcount<-which(m$param[is.na(m$value) & m$indvarying] %in% m$param[rowi])
         hypermean<- s$hypermeans[,hypermeancount]
         
-        hypersd<-eval(parse(text=gsub('sdscale[rowi]' ,'m$sdscale[rowi]', #hypersd samples
-          gsub('hypersd[rowi]','s$hypersd[,indvaryingcount]',
-            ctstanmodelobj$hypersdtransform,fixed=TRUE),fixed=TRUE)))
+        loghypersd<-eval(parse(text=gsub('sdscale[rowi]' ,'m$sdscale[rowi]', #loghypersd samples
+          gsub('loghypersd[rowi]','s$loghypersd[,indvaryingcount]',
+            ctstanmodelobj$loghypersdtransform,fixed=TRUE),fixed=TRUE)))
 
         indparams<-s[['indparams']][,1:nsubjects,indvaryingcount]
         
         param<-indparams
         dindparams<-ctDensity(eval(parse(text=paste0(m$transform[rowi]))))
-        param<-rnorm(50000,hypermean,hypersd)
+        param<-rnorm(50000,hypermean,loghypersd)
         dsubjectprior<-ctDensity(eval(parse(text=paste0(m$transform[rowi]))))
         param<-rnorm(50000,0,1)
         meanprior <- eval(parse(text=paste0(m$transform[rowi])))
@@ -62,19 +62,19 @@ ctStanPlotPost<-function(ctstanmodelobj,ctstanfitobj, rows='all',wait=FALSE){
           text.col=c('black','red','blue'),bty='n')
         
         #pre-transform hyper std dev
-        dhypersdpost<-ctDensity(hypersd)
+        dloghypersdpost<-ctDensity(loghypersd)
         
-        hypersdpriorbase<-  eval(parse(text=gsub('normal(', 'rnorm(50000,',ctstanmodelobj$hypersdprior,fixed=TRUE)))
-        hypersdprior<-eval(parse(text=gsub('sdscale[rowi]' ,'m$sdscale[rowi]', #hypersd samples
-          gsub('hypersd[rowi]','hypersdpriorbase',
-            ctstanmodelobj$hypersdtransform,fixed=TRUE),fixed=TRUE)))
-        dhypersdprior<-ctDensity(hypersdprior)
+        loghypersdprior<-  eval(parse(text=gsub('normal(', 'rnorm(50000,',ctstanmodelobj$loghypersdprior,fixed=TRUE)))
+        hypersdprior<-eval(parse(text=gsub('sdscale[rowi]' ,'m$sdscale[rowi]', #loghypersd samples
+          gsub('loghypersd[rowi]','loghypersdprior',
+            ctstanmodelobj$loghypersdtransform,fixed=TRUE),fixed=TRUE)))
+        dloghypersdprior<-ctDensity(loghypersdprior)
 
-        plot(dhypersdpost$density,main=paste0('Pre-tform pop. sd ',m$param[rowi]),xlab='Value',lwd=2,
-          xlim=c(min(dhypersdprior$xlim[1],dhypersdpost$xlim[1]),max(dhypersdprior$xlim[2],dhypersdpost$xlim[2])),
-          ylim=c(0,max(dhypersdprior$ylim[2],dhypersdpost$ylim[2])),
+        plot(dloghypersdpost$density,main=paste0('Pre-tform pop. sd ',m$param[rowi]),xlab='Value',lwd=2,
+          xlim=c(min(dloghypersdprior$xlim[1],dloghypersdpost$xlim[1]),max(dloghypersdprior$xlim[2],dloghypersdpost$xlim[2])),
+          ylim=c(0,max(dloghypersdprior$ylim[2],dloghypersdpost$ylim[2])),
           xaxs='i',yaxs='i')
-        points(dhypersdprior$density,col='blue',type='l',lty=2,lwd=2)
+        points(dloghypersdprior$density,col='blue',type='l',lty=2,lwd=2)
         legend('topright',c('Pop. sd posterior','Pop. sd prior'),
           text.col=c('black','blue'),bty='n')
         
@@ -82,9 +82,9 @@ ctStanPlotPost<-function(ctstanmodelobj,ctstanfitobj, rows='all',wait=FALSE){
         hsdpost <- s[[paste0('output_hsd_',m$param[rowi])]]
         dhsdpost<-ctDensity(hsdpost)
         
-        param<-hypermean+hypersdprior*.01
+        param<-hypermean+loghypersdprior*.01
         high<-eval(parse(text=paste0(m$transform[rowi])))
-        param<-hypermean-hypersdprior*.01
+        param<-hypermean-loghypersdprior*.01
         low<-eval(parse(text=paste0(m$transform[rowi])))
         hsdprior<-abs(high - low)/2*100
 
