@@ -43,7 +43,7 @@
 #' set.seed(2)
 #' 
 #' #Specify a ctsem model of type 'omx' for data generation
-#' Tpoints<-20
+#' Tpoints<-30
 #' 
 #' gm<-ctModel(type='omx', n.latent=1, n.manifest=1, Tpoints=Tpoints,
 #' LAMBDA=diag(1), DRIFT=diag(-.4,1), CINT=diag(0,1),
@@ -53,7 +53,7 @@
 #'  TIPREDEFFECT = diag(.5,1), TIPREDVAR = diag(2,1),
 #'  MANIFESTVAR=t(chol(diag(.1,1))), DIFFUSION=t(chol(diag(5,1))))
 #' 
-#' cd<-ctGenerate(gm, n.subjects=50, burnin=300) #generate data
+#' cd<-ctGenerate(gm, n.subjects=20, burnin=300) #generate data
 #' 
 #' ctIndplot(cd, n.subjects=6, Tpoints=Tpoints, n.manifest=1) #plot a few subjects
 #' 
@@ -75,39 +75,32 @@
 #' #Set all parameters except the manifest means to be fixed across subjects
 #' checkm$parameters$indvarying[-6]<-FALSE
 #' 
-#' #Fit the model to the data using 200 iterations, 2 chains and 
-#' #plotting the fit progress.
-#' fit<-ctStanFit(long, checkm, iter=200, chains=2, plot=TRUE)
+#' #Fit the model to the data using 20 iterations, 2 chains and 
+#' #plotting the fit progress. 20 iterations is only suitable for testing!
+#' fit<-ctStanFit(long, checkm, iter=200, chains=2, plot=TRUE, 
+#' initwithoptim=TRUE)
 #' 
-#' #traceplot output parameters
-#' traceplot(fit, 
-#' fit@model_pars[grep('output',fit@model_pars)], 
-#' inc_warmup=FALSE) 
-#' 
-#' #density plot output parameters
-#' stan_dens(fit,c('lp__',
-#' fit@model_pars[grep('output',fit@model_pars)]),
-#' inc_warmup=FALSE) 
-#' 
-#' s<-summary(fit) #construct summary using stan summary function
-#' 
-#' #### display rows of summary relevant to output parameters
-#' s$summary[c(grep('output',rownames(s$summary)),grep('lp',rownames(s$summary))),
-#'   c('mean','sd','n_eff','Rhat')] 
+#' ctStanSummary(fit) #summary of output parameters
 #' 
 #' ####shinystan provides a web gui for exploring the samples
 #' #require(shinystan) 
 #' #launch_shinystan(fit)
 #' 
 #' #### generate and plot subject specific estimates 
-#' #### for subjects 2 and 3, using the Kalman filter
+#' #### for subjects 2 and 3, using the Kalman filter.
+#' #### (for updated or smoothed estimates, use
+#' #### $yupdated or $ysmoothed. For estimates of the latent states,
+#' #### use eta instead of y.
 #' pred<-ctStanPredictions(ctstanmodelobj=checkm,
 #' ctstanfitobj=fit, subjects=c(2,3), datalong=long)
 #' 
 #' plot(pred[[2]]$y, type='b', lwd=1, lty=3,col='red')
-#' points(pred[[2]]$ysmooth, type='b', col='red', lwd=2)
+#' points(pred[[2]]$ypred, type='b', col='red', lwd=2)
 #' points(pred[[3]]$y, type='b', lwd=1, lty=3,col='blue')
-#' points(pred[[3]]$ysmooth, type='b', col='blue', lwd=2)
+#' points(pred[[3]]$ypred, type='b', col='blue', lwd=2)
+#' 
+#' ### Use rstan's traceplot to traceplot output parameters only
+#' rstan::traceplot(fit,rownames(ctStanSummary(fit)))
 #' }
 #' @export
 ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman=TRUE, binomial=FALSE,
@@ -552,18 +545,15 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
       
       ',if(n.TIpred > 0) paste0('vector[',sum(unlist(ctspec[,paste0(TIpredNames,'_effect')])),'] tipredeffectparams; // effects of time independent covariates\n'),'
       
-      ',if(!kalman)  'vector[nlatent] etapost[ndatapoints]; //sampled latent states posterior','
+      ',if(!kalman)  'vector[nlatent*ndatapoints] etapostbase; //sampled latent states posterior','
       
       
       }
       
-      transformed parameters{
+  transformed parameters{
       
       
-      ',if(nindvarying > 0) paste0('
-        vector[nindvarying] indparams[nsubjects];
-        vector[nindvarying*nsubjects] indparamstrans; // transformation of subject level parameters to standard normal dist \n'
-    ),'
+      ',if(nindvarying > 0) 'vector[nindvarying] indparams[nsubjects]; \n','
 
       matrix[nlatent,nlatent] DIFFUSION',checkvarying('DIFFUSION','[nsubjects]','[1]'),'; //additive latent process variance
       matrix[nlatent,nlatent] T0VAR',checkvarying('T0VAR','[nsubjects]','[1]'),'; //initial latent process variance
@@ -606,7 +596,7 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
       ',if(any(indvarying)) paste0('
         for(subi in 1:nsubjects) {
         indparams[subi]= 
-        diag_pre_multiply(exp(hypersd), hypercorrchol) * indparamsbase[(1+(subi-1)*nindvarying):(subi*nindvarying)] +',
+        diag_pre_multiply(exp(hypersd) .* sdscale, hypercorrchol) * indparamsbase[(1+(subi-1)*nindvarying):(subi*nindvarying)] +',
         'hypermeans[indvaryingindex]',
         if(n.TIpred>0) ' + tipredeffect * tipreds[subi]\' ',
         ';
@@ -698,8 +688,9 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
   
   vector[nlatent] etaprior[ndatapoints]; //prior for latent states
   ',if(kalman) paste0('matrix[nlatent, nlatent] etapriorcov[ndatapoints]; //prior for covariance of latent states
-  vector[nlatent] etapost[ndatapoints]; //posterior for latent states'),'
+                  vector[nlatent] etapost[ndatapoints]; //posterior for latent states'),'
   ',if(kalman) 'matrix[nlatent, nlatent] etapostcov[ndatapoints]; //posterior for covariance of latent states','
+  ',if(!kalman) 'vector[nlatent] etapost[ndatapoints]; \n','
   
   vector[sum(nobs_y)] errtrans; // collection of prediction errors transformed to standard normal
   int obscount; // counter summing over number of non missing observations in each row
@@ -721,15 +712,22 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
     indparamsbase ~ normal(0,1);
     '),' 
 
+      ',if(!kalman) 'etapostbase ~ normal(0,1); \n','
+
   // pre-calculate necessary discrete time matrices      
   counter=0;
-  for(rowi in 1:ndatapoints) if(T0check[rowi]==0 && (rowi==1 || driftindex[rowi] > counter)) { discreteDRIFT[driftindex[rowi]] = ',
+for(rowi in 1:ndatapoints) {
+    if(T0check[rowi]==0 && (rowi==1 || driftindex[rowi] > counter)) { 
+    discreteDRIFT[driftindex[rowi]] = ',
   if(!continuoustime) paste0('DRIFT',checkvarying('DRIFT','[subject[rowi]]','[1]'),';'),
   if(continuoustime) paste0('expmp(DRIFT',checkvarying('DRIFT','[subject[rowi]]','[1]'),' * dT[rowi], padeC, padeCbig);'),'
-  counter=counter+1;}
-  counter=0;
+    counter=counter+1;
+    }
+}
+counter=0;
 
-  ',if(!fixedkalman) paste0('for(rowi in 1:ndatapoints) if(T0check[rowi]==0 && (rowi==1 || diffusionindex[rowi] > counter)){ 
+  ',if(!fixedkalman) paste0('for(rowi in 1:ndatapoints) {
+  if(T0check[rowi]==0 && (rowi==1 || diffusionindex[rowi] > counter)){ 
     discreteDIFFUSION[diffusionindex[rowi]] = ',
     if(!continuoustime) paste0('DIFFUSION',checkvarying(c('DIFFUSION','DRIFT'),'[subject[rowi]]','[1]'),';'),
     if(continuoustime & !asymdiffusion) paste0('asymDIFFUSION',checkvarying(c('DIFFUSION','DRIFT'),'[subject[rowi]]','[1]'),' - 
@@ -738,15 +736,20 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
       quad_form(DIFFUSION',checkvarying(c('DIFFUSION','DRIFT'),'[subject[rowi]]','[1]'),' , discreteDRIFT[driftindex[rowi]]\');'),'
     counter=counter+1;
     ',if(!kalman) 'discreteDIFFUSIONchol[diffusionindex[rowi]] = cholesky_decompose(discreteDIFFUSION[diffusionindex[rowi]]);','
+  }
 }
     counter=0;
     '),'
 
-  for(rowi in 1:ndatapoints) if(T0check[rowi]==0 && (rowi==1 || cintindex[rowi] > counter)) { discreteCINT[cintindex[rowi]] = ',
+for(rowi in 1:ndatapoints) {
+  if(T0check[rowi]==0 && (rowi==1 || cintindex[rowi] > counter)) { 
+    discreteCINT[cintindex[rowi]] = ',
   if(!continuoustime) paste0('CINT',checkvarying('CINT','[subject[rowi]]','[1]'),';'),
   if(continuoustime) paste0('invDRIFT',checkvarying('DRIFT','[subject[rowi]]','[1]'),' * (discreteDRIFT[driftindex[rowi]] - IIlatent) * CINT',
     checkvarying('CINT','[subject[rowi]]','[1]'),';'),'
-  counter=counter+1;}
+  counter=counter+1;
+}
+}
   
   
   // stationarity priors
@@ -795,7 +798,8 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
   etaprior[rowi] = T0MEANS',checkvarying('T0MEANS','[subjecti]','[1]'),'; //prior for latent state of this row
   ',if(n.TDpred > 0) paste0('etaprior[rowi] =TDPREDEFFECT',checkvarying('TDPREDEFFECT','[subjecti]','[1]'),' * tdpreds[rowi] + etaprior[rowi];'),'
   ',if(kalman & !fixedkalman) paste0('etapriorcov[rowi] =  T0VAR',checkvarying('T0VAR','[subjecti]','[1]'),';'),'
- ',if(!kalman) paste0('etapost[rowi] ~ multi_normal_cholesky(etaprior[rowi], T0VARchol',checkvarying('T0VAR','[subjecti]','[1]'),');'),'
+ ',if(!kalman) paste0('etapost[rowi] = etaprior[rowi] + T0VARchol',checkvarying('T0VAR','[subjecti]','[1]'),
+                      ' * etapostbase[(1+(rowi-1)*nlatent):(rowi*nlatent)];'),'
 }
   
 
@@ -803,7 +807,7 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
   etaprior[rowi] = discreteCINT[cintindex[rowi]]  + discreteDRIFT[driftindex[rowi]] * etapost[rowi-1]; //prior for latent state of this row
   ',if(n.TDpred > 0) paste0('etaprior[rowi] =TDPREDEFFECT',checkvarying('TDPREDEFFECT','[subjecti]','[1]'),' * tdpreds[rowi-1] + etaprior[rowi];'),'
   ',if(kalman && !fixedkalman) paste0('etapriorcov[rowi] =  makesym(quad_form(etapostcov[rowi-1], discreteDRIFT[driftindex[rowi]]\')  + discreteDIFFUSION[diffusionindex[rowi]]);'),'
-  ',if(!kalman) 'etapost[rowi]  ~ multi_normal_cholesky(etaprior[rowi], discreteDIFFUSIONchol[diffusionindex[rowi]]);','
+  ',if(!kalman) 'etapost[rowi] = etaprior[rowi] +  discreteDIFFUSIONchol[diffusionindex[rowi]] * etapostbase[(1+(rowi-1)*nlatent):(rowi*nlatent)];','
   }
   
   
@@ -923,10 +927,10 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
       if(!is.na(ctspec$transform[rowi])) paste0(
         'output_hsd_',ctspec$param[rowi],' = fabs
         ((', 
-        gsub('param', paste0('(hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),'] + output_hsd_',
+        gsub('param', paste0('(hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),'] + .01 * output_hsd_',
           ctspec$param[rowi],')'),ctspec$transform[rowi]), ') - (',
-        gsub('param', paste0('(hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),'] - output_hsd_',
-          ctspec$param[rowi],')'),ctspec$transform[rowi]),'))/2; \n')
+        gsub('param', paste0('(hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),'] - .01 * output_hsd_',
+          ctspec$param[rowi],')'),ctspec$transform[rowi]),'))/2 * 100; \n')
         )
   })),collapse=''),'
 
@@ -951,13 +955,13 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
   }')
     }
 
-if(is.na(stanmodelobj)) stanmodelobj<-writemodel(init=initwithoptim,optimize= optimize)
+if(is.na(stanmodelobj)) stanmodeltext<-writemodel(init=initwithoptim,optimize= optimize)
 
 
-out<-stanmodelobj
+out<-stanmodeltext
 
 if(fit==TRUE){
-  # browser()
+  
   standata<-list(
     Y=cbind(datalong[,manifestNames]),
     subject=datalong[,'id'],
@@ -1002,6 +1006,9 @@ if(fit==TRUE){
   
   if(n.TDpred > 0) standata<-c(standata,list(tdpreds=array(tdpreds,dim=c(nrow(tdpreds),ncol(tdpreds)))))
   
+  suppressMessages(suppressWarnings( sm <- stan(model_code = c(stanmodeltext), 
+    data = standata, chains = 0)))
+  
   
   control<-list(adapt_delta=adapt_delta,
     adapt_term_buffer=min(c(iter/10,max(iter-20,75))),
@@ -1021,40 +1028,35 @@ if(fit==TRUE){
   
   if(initwithoptim & chains > 0){#optimize with bfgs for initial values
     
-    sm <- stan(model_code = c(stanmodelobj), 
-      data = standata, chains = 0)
-    
     npars=get_num_upars(sm)
     
-    if(any(ctspec$indvarying)) hypersdindex=((npars+1 -  sum(ctspec$indvarying)):npars)-
-      length(constrain_pars(sm,rep(0,npars))$tipredeffect) else hypersdindex<-NULL
+    if(any(ctspec$indvarying)) hypersdindex=(nparams+1):(nparams+ sum(ctspec$indvarying)) else hypersdindex<-NULL
     
     lp<-function(parm) {
-      parm[hypersdindex]<-1
+      parm[hypersdindex]<-0
       out<-try(log_prob(sm,upars=parm))
       if(class(out)=='try-error') {
         out=-1e20
-        # print(constrain_pars(stanmodelobj,parm))
       }
-      # out=out +sum(dnorm(parm,0,10,log=TRUE))
       return(out)
     }
     
     grf<-function(parm) {
-      parm[hypersdindex]<-1
+      parm[hypersdindex]<-0
       out=grad_log_prob(sm,upars=parm)
       out[hypersdindex]=0
       return(out)
     }
     
+    message('Optimizing to get inits...')
     optimfit <- optim(rnorm(npars,0,.001), lp, gr=grf, 
-      control = list(fnscale = -1,trace=1,parscale=rep(.00001,npars),maxit=2000,factr=1e-12,lmm=100), 
+      control = list(fnscale = -1,trace=0,parscale=rep(.00001,npars),maxit=2000,factr=1e-12,lmm=100), 
       method='L-BFGS-B',hessian = FALSE)
-    # browser()
     parsout=optimfit$par
-    parsout[hypersdindex]=1
+    parsout[hypersdindex]=0
     
     inits=rstan::constrain_pars(sm,parsout)
+    message('Got inits.')
   }
   
   if(!is.null(inits)){
@@ -1070,7 +1072,7 @@ if(fit==TRUE){
   if(is.null(inits)){
     staninits=list()
     for(i in 1:(chains+1)){
-      staninits[[i]]=list(etapost=array(0,dim=c(nrow(datalong),n.latent)))
+      staninits[[i]]=list(etapost=array(rnorm(nrow(datalong)*n.latent,0,.1),dim=c(nrow(datalong),n.latent)))
     }
   }
   
@@ -1078,7 +1080,7 @@ if(fit==TRUE){
     stanplot(chains=chains,seed=stanseed)
   }
   
-  out <- stan(model_code = c(stanmodelobj), 
+  out <- rstan::stan(fit = sm, 
     enable_random_init=TRUE,init_r=.1,
     init=staninits,
     refresh=20,
@@ -1098,11 +1100,11 @@ if(fit==TRUE){
   
   if(optimize==TRUE && fit==TRUE) {
     
-    out <- optimizing(object = out@stanmodel, 
+    out <- rstan::optimizing(object = out@stanmodel, 
       # init=0,
       # algorithm='BFGS',
       as_vector=F,
-      history_size=20,
+      history_size=100,
       init_alpha=1e-4,
       tol_obj=1e-12, tol_grad=1e-12,tol_param=1e-12,tol_rel_grad=0, tol_rel_obj=0,
       data = standata, iter=120000)
@@ -1111,9 +1113,9 @@ if(fit==TRUE){
   }
   
   if(vb==TRUE && fit==TRUE) {
-    out <- vb(object = out@stanmodel, 
+    out <- rstan::vb(object = out@stanmodel, 
       iter=iter,
-      eta=1e-6,
+      # eta=1e-6,
       data = standata,...)
     
   }

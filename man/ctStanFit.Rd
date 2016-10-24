@@ -71,7 +71,7 @@ Stan.
 set.seed(2)
 
 #Specify a ctsem model of type 'omx' for data generation
-Tpoints<-20
+Tpoints<-30
 
 gm<-ctModel(type='omx', n.latent=1, n.manifest=1, Tpoints=Tpoints,
 LAMBDA=diag(1), DRIFT=diag(-.4,1), CINT=diag(0,1),
@@ -81,7 +81,7 @@ LAMBDA=diag(1), DRIFT=diag(-.4,1), CINT=diag(0,1),
  TIPREDEFFECT = diag(.5,1), TIPREDVAR = diag(2,1),
  MANIFESTVAR=t(chol(diag(.1,1))), DIFFUSION=t(chol(diag(5,1))))
 
-cd<-ctGenerate(gm, n.subjects=50, burnin=300) #generate data
+cd<-ctGenerate(gm, n.subjects=20, burnin=300) #generate data
 
 ctIndplot(cd, n.subjects=6, Tpoints=Tpoints, n.manifest=1) #plot a few subjects
 
@@ -103,39 +103,32 @@ long<-ctDeintervalise(long) # Convert from time intervals to absolute time
 #Set all parameters except the manifest means to be fixed across subjects
 checkm$parameters$indvarying[-6]<-FALSE
 
-#Fit the model to the data using 200 iterations, 2 chains and 
-#plotting the fit progress.
-fit<-ctStanFit(long, checkm, iter=200, chains=2, plot=TRUE)
+#Fit the model to the data using 20 iterations, 2 chains and 
+#plotting the fit progress. 20 iterations is only suitable for testing!
+fit<-ctStanFit(long, checkm, iter=200, chains=2, plot=TRUE, 
+initwithoptim=TRUE)
 
-#traceplot output parameters
-traceplot(fit, 
-fit@model_pars[grep('output',fit@model_pars)], 
-inc_warmup=FALSE) 
-
-#density plot output parameters
-stan_dens(fit,c('lp__',
-fit@model_pars[grep('output',fit@model_pars)]),
-inc_warmup=FALSE) 
-
-s<-summary(fit) #construct summary using stan summary function
-
-#### display rows of summary relevant to output parameters
-s$summary[c(grep('output',rownames(s$summary)),grep('lp',rownames(s$summary))),
-  c('mean','sd','n_eff','Rhat')] 
+ctStanSummary(fit) #summary of output parameters
 
 ####shinystan provides a web gui for exploring the samples
 #require(shinystan) 
 #launch_shinystan(fit)
 
 #### generate and plot subject specific estimates 
-#### for subjects 2 and 3, using the Kalman filter
+#### for subjects 2 and 3, using the Kalman filter.
+#### (for updated or smoothed estimates, use
+#### $yupdated or $ysmoothed. For estimates of the latent states,
+#### use eta instead of y.
 pred<-ctStanPredictions(ctstanmodelobj=checkm,
 ctstanfitobj=fit, subjects=c(2,3), datalong=long)
 
 plot(pred[[2]]$y, type='b', lwd=1, lty=3,col='red')
-points(pred[[2]]$ysmooth, type='b', col='red', lwd=2)
+points(pred[[2]]$ypred, type='b', col='red', lwd=2)
 points(pred[[3]]$y, type='b', lwd=1, lty=3,col='blue')
-points(pred[[3]]$ysmooth, type='b', col='blue', lwd=2)
+points(pred[[3]]$ypred, type='b', col='blue', lwd=2)
+
+### Use rstan's traceplot to traceplot output parameters only
+rstan::traceplot(fit,rownames(ctStanSummary(fit)))
 }
 }
 

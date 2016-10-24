@@ -26,84 +26,84 @@ ctStanPlotPost<-function(ctstanmodelobj,ctstanfitobj, rows='all',wait=FALSE){
   if(nsubjects < 1) nsubjects<-1
   
   
-  n<-500000
   indvaryingcount<-0
   hypermeancount<-0
   pmeans<-matrix(NA,nrow=nsubjects,ncol=sum(m$indvarying))
   pnames<-rep(NA,sum(m$indvarying))
   for(rowi in rows){
     if(is.na(m$value[rowi])){
-      hypermeancount <- hypermeancount +1
+      hypermeancount <- which(m$param[is.na(m$value)] %in% m$param[rowi])
       if(m$indvarying[rowi]){
-        param<-rnorm(n)
-        indvaryingcount<-indvaryingcount+1
+        
+        indvaryingcount<-which(m$param[is.na(m$value) & m$indvarying] %in% m$param[rowi])
         hypermean<- s$hypermeans[,hypermeancount]
         
         hypersd<-eval(parse(text=gsub('sdscale[rowi]' ,'m$sdscale[rowi]', #hypersd samples
           gsub('hypersd[rowi]','s$hypersd[,indvaryingcount]',
             ctstanmodelobj$hypersdtransform,fixed=TRUE),fixed=TRUE)))
 
-        indparams<-s[['indparams']][,1:nsubjects,indvaryingcount] + hypermean
+        indparams<-s[['indparams']][,1:nsubjects,indvaryingcount]
         
         param<-indparams
-        dindparams<-density(eval(parse(text=paste0(m$transform[rowi]))))
-        param<-rnorm(n,hypermean,hypersd)
-        dsubjectprior<-density(eval(parse(text=paste0(m$transform[rowi]))),bw=.02,n=5000)
-        param<-rnorm(n,0,1)
-        dmeanprior<-density(eval(parse(text=paste0(m$transform[rowi]))),bw=.02,n=5000)
-        
-        xlim<-range(c(dindparams$x))
-        ylim<-range(c(dindparams$y,dsubjectprior$y,dmeanprior$y))
-        
-        plot(dindparams,xlab='Value',main=m$param[rowi],lwd=2,yaxs='i',ylim=ylim,xlim=xlim)
-        points(dsubjectprior,col='red',lwd=2,lty=2,type='l')
-        points(dmeanprior,lwd=2,type='l',col='blue',lty=3)
+        dindparams<-ctDensity(eval(parse(text=paste0(m$transform[rowi]))))
+        param<-rnorm(50000,hypermean,hypersd)
+        dsubjectprior<-ctDensity(eval(parse(text=paste0(m$transform[rowi]))))
+        param<-rnorm(50000,0,1)
+        meanprior <- eval(parse(text=paste0(m$transform[rowi])))
+        meanprior <- meanprior[meanprior > dsubjectprior$xlim[1]-5 & meanprior < dsubjectprior$xlim[2] + 5]
+        dmeanprior<-ctDensity(meanprior)
+
+        plot(dindparams$density,xlab='Value',main=m$param[rowi],lwd=2,yaxs='i',
+          ylim=c(0,max(dsubjectprior$ylim[2],dindparams$ylim[2])),
+          xlim=c(min(dsubjectprior$xlim[1],dindparams$xlim[1]),max(dsubjectprior$xlim[2],dindparams$xlim[2])))
+        points(dsubjectprior$density,col='red',lwd=2,lty=2,type='l')
+        points(dmeanprior$density,lwd=2,type='l',col='blue',lty=3)
         legend('topright',c('Subject param posterior','Subject param prior','Pop mean prior'),
           text.col=c('black','red','blue'),bty='n')
         
         #pre-transform hyper std dev
-        dhypersdpost<-density(hypersd,bw=.05,n=50000)
+        dhypersdpost<-ctDensity(hypersd)
         
-        hypersdpriorbase<-  eval(parse(text=gsub('normal(', 'rnorm(n,',ctstanmodelobj$hypersdprior,fixed=TRUE)))
+        hypersdpriorbase<-  eval(parse(text=gsub('normal(', 'rnorm(50000,',ctstanmodelobj$hypersdprior,fixed=TRUE)))
         hypersdprior<-eval(parse(text=gsub('sdscale[rowi]' ,'m$sdscale[rowi]', #hypersd samples
           gsub('hypersd[rowi]','hypersdpriorbase',
             ctstanmodelobj$hypersdtransform,fixed=TRUE),fixed=TRUE)))
-        dhypersdprior<-density(hypersdprior,bw=.02,n=50000)
-        
-        ylim<-c(0,max(c(dhypersdpost$y,dhypersdprior$y)+.1))
-        plot(dhypersdpost,main=paste0('Pre-tform pop. sd ',m$param[rowi]),xlab='Value',lwd=2,
-          xlim=c(0,max(c(dhypersdpost$x,m$sdscale[rowi]*2))),ylim=ylim,xaxs='i',yaxs='i')
-        points(dhypersdprior,col='blue',type='l',lty=2,lwd=2)
+        dhypersdprior<-ctDensity(hypersdprior)
+
+        plot(dhypersdpost$density,main=paste0('Pre-tform pop. sd ',m$param[rowi]),xlab='Value',lwd=2,
+          xlim=c(min(dhypersdprior$xlim[1],dhypersdpost$xlim[1]),max(dhypersdprior$xlim[2],dhypersdpost$xlim[2])),
+          ylim=c(0,max(dhypersdprior$ylim[2],dhypersdpost$ylim[2])),
+          xaxs='i',yaxs='i')
+        points(dhypersdprior$density,col='blue',type='l',lty=2,lwd=2)
         legend('topright',c('Pop. sd posterior','Pop. sd prior'),
           text.col=c('black','blue'),bty='n')
         
         #post-transform hyper std dev
-        hsd <- s[[paste0('output_hsd_',m$param[rowi])]]
-        dhsdpost<-density(hsd,bw=.05,n=50000)
+        hsdpost <- s[[paste0('output_hsd_',m$param[rowi])]]
+        dhsdpost<-ctDensity(hsdpost)
         
-
-        param<-(hypermean+hypersd) #use delta method to determine prior
-
-        onesd<-rnorm(n,0,hypersd)
-        param<-(hypermean+onesd)
+        param<-hypermean+hypersdprior*.01
         high<-eval(parse(text=paste0(m$transform[rowi])))
-        param<-(hypermean-onesd)
+        param<-hypermean-hypersdprior*.01
         low<-eval(parse(text=paste0(m$transform[rowi])))
-        thsdprior<-abs(high - low)/2
-        dthsdprior<-density(thsdprior,bw=.001,n=5000)
-        ylim<-c(0,max(c(dhsdpost$y,dthsdprior$y)+.1))
-        plot(dhsdpost,main=paste0('Pop. sd ',m$param[rowi]),xlab='Value',lwd=2,ylim=ylim,xlim=c(0,max(dhsdpost$x)),yaxs='i',xaxs='i')
-        points(dthsdprior,col='blue',type='l',lty=2,lwd=2)
+        hsdprior<-abs(high - low)/2*100
+
+        dhsdprior<-ctDensity(sample(hsdprior,50000,replace=TRUE))
+        plot(dhsdpost$density,main=paste0('Pop. sd ',m$param[rowi]),xlab='Value',lwd=2,
+          ylim=c(0,max(dhsdpost$ylim[2],dhsdprior$ylim[2])),
+          xlim=c(min(dhsdprior$xlim[1],dhsdpost$xlim[1]), max(dhsdprior$xlim[2],dhsdpost$xlim[2])),
+            yaxs='i',xaxs='i')
+        points(dhsdprior$density,col='blue',type='l',lty=2,lwd=2)
         legend('topright',c('Pop. sd posterior','Pop. sd prior'),
           text.col=c('black','blue'),bty='n')
         
         param<-hypermean
-        dhypermeanpost<-density(eval(parse(text=paste0(m$transform[rowi]))))
-        param<-rnorm(n,0,1)
-        dhypermeanprior<-density(eval(parse(text=paste0(m$transform[rowi]))),bw=.02)
-        ylim<-c(0,max(c(dhypermeanpost$y,dhypermeanprior$y)+.1))
-        plot(dhypermeanpost,main=paste0('Pop. mean ',m$param[rowi]),xlab='Value',lwd=2,ylim=ylim,xaxs='i',yaxs='i')
-        points(dhypermeanprior,col='blue',type='l',lty=2,lwd=2)
+        dhypermeanpost<-ctDensity(eval(parse(text=paste0(m$transform[rowi]))))
+        plot(dhypermeanpost$density,main=paste0('Pop. mean ',m$param[rowi]),
+          xlim=dhypermeanpost$xlim,
+          ylim=c(0,dhypermeanpost$ylim[2]),
+          xlab='Value',lwd=2,xaxs='i',yaxs='i')
+        points(dmeanprior$density,col='blue',type='l',lty=2,lwd=2)
         legend('topright',c('Pop. mean posterior','Pop. mean prior'),
           text.col=c('black','blue'),bty='n')
         

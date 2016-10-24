@@ -10,8 +10,8 @@
 #' @param datalong long format data object containing as used by \code{\link{ctStanFit}}.
 #' @param subject integer denoting which subjects data to use. 
 #' 
-#' @return Returns a list containing matrix objects etaprior, yprior, prederror, etapost, y, loglik,  with values for each time point in each row. 
-#' Covariance matrices etapriorcov, ypriorcov, etapostcov, are returned in a sublist containing matrices for each time point.
+#' @return Returns a list containing matrix objects etaprior, etaupd, etasmooth, y, yprior, yupd, ysmooth, prederror, loglik,  with values for each time point in each row. 
+#' Covariance matrices etapriorcov, etaupdcov, etasmoothcov, ypriorcov, yupdcov, ysmoothcov,  are returned in a sublist containing matrices for each time point.
 #' @export
 
 ctKalman<-function(ctstanmodelobj,kalmanpars,datalong,subject){
@@ -168,11 +168,11 @@ ysmooth<-matrix(unlist(ysmooth),byrow=T,ncol=m$n.manifest)
 colnames(ysmooth)<-m$manifestNames
 
 out<-list(observed,etaprior=etaprior,etapriorcov=etapriorcov,
-  etapost=etapost,etapostcov=etapostcov,loglik=loglik,
+  etaupd=etapost,etaupdcov=etapostcov,loglik=loglik,
   prederror=err,y=y,yprior=yprior,ypriorcov=ypriorcov,
   if(m$n.TDpred > 0) tdpreds=tdpreds,
-  ypost=ypost,ypostcov=ypostcov,
-  etasmooth=etasmooth,etasmoothcov=etasmoothcov,ysmooth=ysmooth,ysmoothcov=ysmoothcov)
+  yupd=ypost,yupdcov=ypostcov,
+  etasmooth=etasmooth, etasmoothcov=etasmoothcov, ysmooth=ysmooth, ysmoothcov=ysmoothcov)
 
 }
 
