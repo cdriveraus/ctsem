@@ -60,7 +60,7 @@ Manuel C. Voelkle \\ Humboldt University Berlin \\ Max Planck Institute for Huma
 \Shorttitle{Introduction to Hierarchical Continuous Time Dynamic Modelling with \pkg{ctsem}} %% a short title (if necessary)
 
 \Abstract{
-ctsem allows for easy specification and fitting of a range of continuous and discrete time dynamic models. The models may including multiple indicators (dynamic factor analysis), multiple, interrelated, potentially higher order processes, and time dependent (varying within subject) and time independent (not varying within subject) covariates. Classic longitudinal models like latent growth curves and latent change score models are also possible.  Version 1 of ctsem provided structural equation model based functionality by linking to the OpenMx software, allowing mixed effects models (random means but fixed regression and variance parameters) for multiple subjects. For version 2 of the \proglang{R} package \pkg{ctsem}, we include a Bayesian specification and fitting routine that uses the \pkg{Stan} probabilistic programming language, via the \pkg{rstan} package in R. This allows for all parameters of the dynamic model to individually vary, using an estimated population mean and variance, and any time independent covariate effects, as a prior. ctsem version 1 is documented in a forthcoming JSS publication (Driver, Voelkle, Oud, in press), and in R vignette form at \url{https://cran.r-project.org/web/packages/ctsem/vignettes/ctsem.pdf }, here we provide the basics for getting started with the new Bayesian approach included in version 2.
+ctsem allows for specification and fitting of a range of continuous and discrete time dynamic models. The models may including multiple indicators (dynamic factor analysis), multiple, interrelated, potentially higher order processes, and time dependent (varying within subject) and time independent (not varying within subject) covariates. Classic longitudinal models like latent growth curves and latent change score models are also possible.  Version 1 of ctsem provided structural equation model based functionality by linking to the OpenMx software, allowing mixed effects models (random means but fixed regression and variance parameters) for multiple subjects. For version 2 of the \proglang{R} package \pkg{ctsem}, we include a Bayesian specification and fitting routine that uses the \pkg{Stan} probabilistic programming language, via the \pkg{rstan} package in R. This allows for all parameters of the dynamic model to individually vary, using an estimated population mean and variance, and any time independent covariate effects, as a prior. ctsem version 1 is documented in a forthcoming JSS publication (Driver, Voelkle, Oud, in press), and in R vignette form at \url{https://cran.r-project.org/web/packages/ctsem/vignettes/ctsem.pdf }, here we provide the basics for getting started with the new Bayesian approach included in version 2.
 }
 
 \Keywords{hierarchical time series, Bayesian, longitudinal, panel data, state space, structural equation, continuous time, stochastic differential equation, dynamic models, Kalman filter, \proglang{R}}
@@ -210,8 +210,11 @@ install_github("ctsem",username='cdriveraus')
 Prepare data in long format, each row containing one time point of data for one subject. We need a subject id column containing numbers from 1 to total subjects, rising incrementally with each subject going down the data structure. This is to ensure coherence with the internal structure of the Stan model, the column is named by default "id", though this can be changed in the model specification. We also need a time column "time", containing numeric values for time, columns for manifest variables (the names of which must be given in the next step using ctModel), columns for time dependent predictors (these vary over time but have no model estimated and are assumed to impact latent processes instantly - generally these would be intervention or event dummy variables), and columns for time independent predictors (which predict the subject level parameters, that are themselves time invariant -- thus the values for a particular time independent predictor should be the same within a single subject).
 
 <<data,echo=FALSE,size='footnotesize'>>=
-head(long,10)
+long[,'time']=long[,'time']+round(rnorm(nrow(long),0,.1),2)
+long[c(1:5,87:89),]
 @
+
+At present, missingness is fine on manifest indicators, but not allowed elsewhere.
 
 \subsection{Model specification}
 Specify model using \code{ctModel(type="stanct",...)}. "stanct" specifies a continuous time model in Stan format, "standt" specifies discrete time, while "omx" is the classic \pkg{ctsem} behaviour and prepares an \pkg{OpenMx} model. Other arguments to ctModel proceed as normal, although some matrices used for type `omx' are not relevant for the Stan formats, either because the between subject matrices have been removed, or because time dependent and independent predictors are now treated as fixed regressors and only require effect (or design) matrices. These differences are documented in the help for ctModel.
@@ -287,16 +290,14 @@ model$parameters[c(19,20),c('TI1_effect','TI2_effect','TI3_effect')]<-TRUE
 @
 
 \subsection{Model fitting}
-Once model specification is complete, the model is fit to the data using the ctStanFit function as follows -- depending on the data, model, and number of iterations requested, this can take anywhere from a few minutes to days. Current experience suggests 300 iterations is often enough to get an idea of what is going on, but more may be necessary for robust inference. This will of course vary massively depending on model and data. For the sake of speed for this example we generate start values using optimisation, and only sample for 100 iterations with a lowered max_treedepth - this latter parameter controls the maximum number of steps the Hamiltonian sampler is allowed to take per iteration, with each increase of 1 doubling the maximum. With these settings the fit should take only a few minutes (but will not be fit for inference!).
+Once model specification is complete, the model is fit to the data using the ctStanFit function as follows -- depending on the data, model, and number of iterations requested, this can take anywhere from a few minutes to days. Current experience suggests 300 iterations is often enough to get an idea of what is going on, but more may be necessary for robust inference. This will of course vary massively depending on model and data. For the sake of speed for this example we generate start values using optimisation, and only sample for 100 iterations with a lowered max\_treedepth - this latter parameter controls the maximum number of steps the Hamiltonian sampler is allowed to take per iteration, with each increase of 1 doubling the maximum. With these settings the fit should take only a few minutes (but will not be adequate for inference!).
 
 <<fitting,cache=TRUE>>=
-fit<-ctStanFit(long, model, iter=100, chains=2, 
+fit<-ctStanFit(long, model, iter=100, chains=3, 
   initwithoptim=TRUE, plot=FALSE, max_treedepth = 6)
 @
 
 The plot argument allows for plotting of sampling chains in real time, which is useful for slow models to ensure that sampling is proceeding in a functional manner. Models with many parameters (e.g., many subjects and all parameters varying over subject) may be too taxing for the function to handle smoothly - we have had succcess with up to around 4000 parameters.  
-
-In this document we have walked through a multivariate process with cross effects and additional predictors, which will take some time to fit - to more quickly see the software in action, we can also fit the classic sunspot data and 
 
 \subsection{Output}
 After fitting, the ctStanSummary function may be used, which runs the rstan summary function but returns only certain output parameters likely to be of interest. However, the standard rstan output functions such as summary and extract are also available, and the shinystan package provides an excellent browser based interface. The parameters which are likely to be of most interest in the output all begin with an "output" prefix, followed by either "hmean" for hyper (population) mean, or "hsd" for hyper standard deviation. Any hmean parameters are returned in the form used for input - so correlations and standard deviations for any of the covariance related parameters. Subject specific parameters are denoted by the matrix they are from, then the first index represents the subject id, followed by standard matrix notation. For example, the 2nd row and 1st column of the DRIFT matrix for subject 8 is $"DRIFT[8,2,1]"$. Parameters in such matrices are returned in the form used for internal calculations -- that is, variance covariance matrices are returned as such, rather than the lower-triangular standard deviation and correlation matrices required for input. The exception to this are the time independent predictor effects, prefixed with $"output\_tip\_"$, for which a linear effect of a change of 1 on the predictor is approximated. So although "output\_tip\_TI1" is only truly linear with respect to internal parameterisations, we approximate the linear effect by averaging the effect of a score of +1 or -1 on the predictor, on the population mean. For any subject that substantially differs from the mean, or simply when precise absolute values of the effects are required (as opposed to general directions), they will need to be calculated manually.
@@ -372,22 +373,19 @@ long<-ctDeintervalise(long)
 For diagnosing problems or modifying the model in ways not achievable via the ctsem model specification, one can use ctsem to generate the Stan code and then work directly with that, simply by specifying the argument fit=FALSE to the ctStanFit function. 
 
 \subsection{Oscillating, single subject example - sunspots data}
-In the following example we fit the sunspots data available within R, which has previously been fit by various authors including \citet{tomasson2013computational}. We have used the same CARMA(2,1) model and obtained similar estimates -- we expect any differences are due to the contrast between Bayes and maximum likelihood, though if desired one could adjust the code to fit using maximum likelihood, as here we have only one subject.
-<<sunspots,eval=FALSE>>=
+In the following example we fit the sunspots data available within R, which has previously been fit by various authors including \citet{tomasson2013computational}. We have used the same CARMA(2,1) model and obtained similar estimates -- some differences are due to the contrast between Bayes and maximum likelihood, though if desired one could adjust the code to fit using maximum likelihood, as here we have only one subject.
+<<sunspots,cache=TRUE>>=
  sunspots<-sunspot.year
- sunspots<-sunspots[50: (length(sunspots)-(1988-1924))]
+ sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
  id <- 1
  time <- 1749:1924
-datalong <- cbind(id,time,sunspots)
+datalong <- cbind(id, time, sunspots)
 
  model <- ctModel(type='stanct', n.latent=2, n.manifest=1, 
   manifestNames='sunspots', 
   latentNames=c('sunspots_level','sunspots_velocity'),
    LAMBDA=matrix(c( 1, 'ma1' ), nrow=1, ncol=2),
-   DRIFT=matrix(c(
-     0,  1,
-     'a21',   'a22'
-   ), nrow=2, ncol=2, byrow=TRUE),
+   DRIFT=matrix(c(0, 1,   'a21', 'a22'), nrow=2, ncol=2, byrow=TRUE),
    MANIFESTMEANS=matrix(c('m1'), nrow=1, ncol=1),
    MANIFESTVAR=matrix(0, nrow=1, ncol=1),
    CINT=matrix(c(0, 0), nrow=2, ncol=1),
@@ -395,67 +393,30 @@ datalong <- cbind(id,time,sunspots)
      0, 0,
      0, "diffusion"), ncol=2, nrow=2, byrow=TRUE))
  
- model$parameters$indvarying<-FALSE
- model$parameters$transform[14]<- '(param)*5+44 '
- model$parameters$transform[7]<-'-log(exp(-param*1.5)+1)'
- model$stationarymeanprior<-5
- model$stationaryvarprior<-5
+ model$parameters$indvarying<-FALSE #Because single subject
+ model$parameters$transform[14]<- '(param)*5+44 ' #Because not mean centered
+ model$parameters$transform[7]<-'-log(exp(-param*1.5)+1)' #Higher order cross effect
+ model$stationaryvarprior <- 10 
+ model$stationarymeanprior <- 10
 
-fit <- ctStanFit(datalong, model, plot=TRUE, iter=200, kalman=T, chains=2,initwithoptim=T)
+fit <- ctStanFit(datalong, model, iter=200, chains=2, 
+initwithoptim=TRUE)
 
 ctStanSummary(fit)
 traceplot(fit,rownames(ctStanSummary(fit)),inc_warmup=TRUE)
 
-pred<-ctStanPredictions(ctstanmodelobj=model,ctstanfitobj=fit,subjects=1,datalong=datalong)
+pred<-ctStanPredictions(ctstanmodelobj=model, 
+ctstanfitobj=fit, subjects=1, datalong=datalong)
 
-plot(pred[[1]]$y,type='b',lwd=2,lty=3)
-points(pred[[1]]$yprior,type='b',col='red',lwd=2)
+plot(pred[[1]]$y, type='b', lwd=2, lty=3)
+points(pred[[1]]$yprior, type='b', col='red', lwd=2)
 @
 
-<<sunspotseval,echo=FALSE,cache=TRUE>>=
- sunspots<-sunspot.year
- sunspots<-sunspots[50: (length(sunspots)-(1988-1924))]
- id <- 1
- time <- 1749:1924
-datalong <- cbind(id,time,sunspots)
-
- model <- ctModel(type='stanct', n.latent=2, n.manifest=1, 
-  manifestNames='sunspots', 
-  latentNames=c('sunspots_level','sunspots_velocity'),
-   LAMBDA=matrix(c( 1, 'ma1' ), nrow=1, ncol=2),
-   DRIFT=matrix(c(
-     0,  1,
-     'a21',   'a22'
-   ), nrow=2, ncol=2, byrow=TRUE),
-   MANIFESTMEANS=matrix(c('m1'), nrow=1, ncol=1),
-   MANIFESTVAR=matrix(0.0001, nrow=1, ncol=1),
-   CINT=matrix(c(0, 0), nrow=2, ncol=1),
-   DIFFUSION=matrix(c(
-     0, 0,
-     0, "diffusion"), ncol=2, nrow=2, byrow=TRUE))
- 
- model$parameters$indvarying<-FALSE
- model$parameters$transform[14]<- '(param) *5+44 '
- model$parameters$transform[7]<-'-exp(param)'
- model$stationarymeanprior<-5
- model$stationaryvarprior<-5
-
-fit <- ctStanFit(datalong, model, plot=FALSE, iter=20, chains=3,initwithoptim=T)
-
-ctStanSummary(fit)
-
-pred<-ctStanPredictions(ctstanmodelobj=model,ctstanfitobj=fit,subjects=1,datalong=datalong)
-
-plot(pred[[1]]$y,type='b',lwd=2,lty=3)
-points(pred[[1]]$yprior,type='b',col='red',lwd=2)
-@
 
 
 \subsection{Population standard deviations - understanding the transforms}
 Internally, we sample parameters that we will refer to here as the `raw' parameters -- these parameters have no bounds and are drawn from normal distributions. Both population mean (internally: hypermeans) and subject level (internally: indparamsbase) raw parameters are drawn from a normal(0, 1) distribution. Depending on the specific parameter, various transformations may be applied to set appropriate bounds and priors. The log of the population standard deviation (loghypersd) for these raw parameters is sampled (by default) from a normal(-3, 2) distribution. So, the population standard deviation of the raw parameters can be calculated by a simple exponential of the loghypersd parameter. This resulting distribution can be scaled on a per parameter basis by the sdscale multiplier in the model specification, which defaults to 1. The following script shows a didactic sequence of sampling and transformation for a model with a single parameter, the auto effect of the drift matrix, and 50 subjects. Although we sample the priors here, this is merely to reflect the prior and enable understanding and plotting.
 <<sdtransforms>>=
-par(mfrow=c(2,2))
-
 #population mean and subject level deviations (pre-transformation)
 
 hypermeans_prior <- rnorm(99999, 0, 1)
@@ -496,11 +457,6 @@ indparams <- -log(exp(-1.5 * indparams) + 1)
 hsd_ourparameter <- abs( #via delta approximation
   (-log(exp(-1.5 * (hypermeans_post + hypersd_post)) + 1) - 
    -log(exp(-1.5 * (hypermeans_post - hypersd_post)) + 1) ) / 2)
-
-sd(indparams_posttransform) #compute sd directly
-
-
-
 @
 
 
