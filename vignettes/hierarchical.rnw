@@ -210,8 +210,10 @@ install_github("ctsem",username='cdriveraus')
 Prepare data in long format, each row containing one time point of data for one subject. We need a subject id column containing numbers from 1 to total subjects, rising incrementally with each subject going down the data structure. This is to ensure coherence with the internal structure of the Stan model, the column is named by default "id", though this can be changed in the model specification. We also need a time column "time", containing numeric values for time, columns for manifest variables (the names of which must be given in the next step using ctModel), columns for time dependent predictors (these vary over time but have no model estimated and are assumed to impact latent processes instantly - generally these would be intervention or event dummy variables), and columns for time independent predictors (which predict the subject level parameters, that are themselves time invariant -- thus the values for a particular time independent predictor should be the same within a single subject).
 
 <<data,echo=FALSE,size='footnotesize'>>=
+temp=long
 long[,'time']=long[,'time']+round(rnorm(nrow(long),0,.1),2)
 long[c(1:5,87:89),]
+long=temp
 @
 
 At present, missingness is fine on manifest indicators, but not allowed elsewhere.
@@ -321,7 +323,7 @@ Shown are approximate density plots based on the post-warmup samples drawn. For 
 
 
 \subsection{Stationarity}
-By default, a substantial prior is placed on the stationarity of the dynamic models, calculated as the difference between the T0MEANS and the long run asymptotes of the expected value of the processs, as well as the difference between the diagonals of the T0VAR covariance matrix and the long run asymptotes of the covariance of the processes. Such a prior encourages a minimisation of these differences, and can help to ensure that sensible, non-explosive models are estimated, and also help the sampler get past difficult regions of relative flatness in the parameter space due to colinearities between the within and between subject parameters. However there are a range of models where one may wish to reduce such a prior -- the standard deviation of the normal distribution on the mentioned differences can be observed and modified using the model$stationarymeanprior and model$stationaryvarprior vectors, where the number of elements in the vector correspond to the number of latent processes.
+A prior can be placed on the stationarity of the dynamic models, calculated as the difference between the T0MEANS and the long run asymptotes of the expected value of the processs, as well as the difference between the diagonals of the T0VAR covariance matrix and the long run asymptotes of the covariance of the processes. Such a prior encourages a minimisation of these differences, and can help to ensure that sensible, non-explosive models are estimated, and also help the sampler get past difficult regions of relative flatness in the parameter space due to colinearities between the within and between subject parameters. However if such a prior is too strong it can also induce difficult dependcies in model parameters, and there are a range of models where one may not wish to have such a prior. To place such a prior, the model$stationarymeanprior and model$stationaryvarprior slots can be changed from the default of NA to a numeric vector, representing the normal standard deviation of the deviations from stationarity. The number of elements in the vector correspond to the number of latent processes.
 
 \subsection{Individual level analyses}
 Individual level results can also be considered, as ctsem includes functionality to output prior (based on all prior observations), updated (based on all prior and current observations), and smoothed (based on all observations) expectations and covariances from the Kalman filter, based on specific subjects models. For ease of comparison, expected manifest indicator scores conditional on prior, updated and smoothed states are also included. This approach allows for: predictions regarding individuals states at any point in time, given any values on the time dependent predictors (external inputs such as interventions or events); residual analysis to check for unmodeled dependencies in the data; or simply as a means of visualization, for comprehension and model sanity checking purposes. An example of such is depicted in Figure \ref{fig:kalmanplot}, where we see observed and estimated scores for a randomly selected subject from our sample. If we wanted to predict unobserved states in the past or future, we would need only to include the relevant time and missing observations in our data structure.
@@ -373,7 +375,7 @@ long<-ctDeintervalise(long)
 For diagnosing problems or modifying the model in ways not achievable via the ctsem model specification, one can use ctsem to generate the Stan code and then work directly with that, simply by specifying the argument fit=FALSE to the ctStanFit function. 
 
 \subsection{Oscillating, single subject example - sunspots data}
-In the following example we fit the sunspots data available within R, which has previously been fit by various authors including \citet{tomasson2013computational}. We have used the same CARMA(2,1) model and obtained similar estimates -- some differences are due to the contrast between Bayes and maximum likelihood, though if desired one could adjust the code to fit using maximum likelihood, as here we have only one subject.
+In the following example we fit the sunspots data available within R, which has previously been fit by various authors including \citet{tomasson2013computational}. We have used the same CARMA(2,1) model and obtained similar estimates -- some differences are due to the contrast between Bayes and maximum likelihood, though if desired one could adjust the code to fit using maximum likelihood, as here we have only one subject. There are usually some divergent transitions (indicating a difficulty in the sampling chain and a potential threat to inference) generated in this fit, possibly caused by a strong dependency between the diffusion parameter and moving average parameter -- alternate parameterisations or an increase in the adapt\_delta value (defaulting to 0.8 with a maximum of 1, though 1 is not recommended...) may help.
 <<sunspots,cache=TRUE>>=
  sunspots<-sunspot.year
  sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
@@ -383,7 +385,7 @@ datalong <- cbind(id, time, sunspots)
 
  model <- ctModel(type='stanct', n.latent=2, n.manifest=1, 
   manifestNames='sunspots', 
-  latentNames=c('sunspots_level','sunspots_velocity'),
+  latentNames=c('sunspots_level', 'sunspots_velocity'),
    LAMBDA=matrix(c( 1, 'ma1' ), nrow=1, ncol=2),
    DRIFT=matrix(c(0, 1,   'a21', 'a22'), nrow=2, ncol=2, byrow=TRUE),
    MANIFESTMEANS=matrix(c('m1'), nrow=1, ncol=1),
@@ -395,12 +397,9 @@ datalong <- cbind(id, time, sunspots)
  
  model$parameters$indvarying<-FALSE #Because single subject
  model$parameters$transform[14]<- '(param)*5+44 ' #Because not mean centered
- model$parameters$transform[7]<-'-log(exp(-param*1.5)+1)' #Higher order cross effect
- model$stationaryvarprior <- 10 
- model$stationarymeanprior <- 10
+ model$parameters$transform[4]<-'exp(param)' #To avoid multi modality with ma effect
 
-fit <- ctStanFit(datalong, model, iter=200, chains=2, 
-initwithoptim=TRUE)
+fit <- ctStanFit(datalong, model, iter=400, chains=2, adapt_delta=.8)
 
 ctStanSummary(fit)
 traceplot(fit,rownames(ctStanSummary(fit)),inc_warmup=TRUE)

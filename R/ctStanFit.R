@@ -522,8 +522,8 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
       ',if(nindvarying>0) paste0('int indvaryingindex[nindvarying]',';
         vector[nindvarying] sdscale;'),'
       
-      ',if(!is.null(ctstanmodelobj$stationarymeanprior)) 'vector[nlatent] stationarymeanprior; // prior std dev for difference between process asymptotic mean and initial mean','
-      ',if(!is.null(ctstanmodelobj$stationaryvarprior)) 'vector[nlatent] stationaryvarprior; // prior std dev for difference between process asymptotic variance and initial variance','
+      ',if(!is.na(ctstanmodelobj$stationarymeanprior)) 'vector[nlatent] stationarymeanprior; // prior std dev for difference between process asymptotic mean and initial mean','
+      ',if(!is.na(ctstanmodelobj$stationaryvarprior)) 'vector[nlatent] stationaryvarprior; // prior std dev for difference between process asymptotic variance and initial variance','
       
       int<lower = 0, upper = nmanifest> nobs_y[ndatapoints];  // number of observed variables per observation
       int<lower = 0, upper = nmanifest> whichobs_y[ndatapoints, nmanifest]; // index of which variables are observed per observation
@@ -753,7 +753,7 @@ for(rowi in 1:ndatapoints) {
   
   
   // stationarity priors
-  ',if(!is.null(ctstanmodelobj$stationaryvarprior)) paste0('
+  ',if(!is.na(ctstanmodelobj$stationaryvarprior)) paste0('
   for(individual in 1:nsubjects) {
   (diagonal(',
   if(!asymdiffusion) 'asym', 'DIFFUSION[',
@@ -762,7 +762,7 @@ for(rowi in 1:ndatapoints) {
   }
 '),'
   
-  ',if(!is.null(ctstanmodelobj$stationarymeanprior)) paste0('
+  ',if(!is.na(ctstanmodelobj$stationarymeanprior)) paste0('
   for(individual in 1:nsubjects) {
   T0MEANS[',checkvarying('T0MEANS','individual','1'),'] - ',
   '( invDRIFT[',checkvarying('DRIFT','individual','1'),'] * CINT[',checkvarying('CINT','individual','1'),'] )',
@@ -1004,8 +1004,8 @@ if(fit==TRUE){
       out
     }) ),nrow=c(nrow(datalong),ncol=n.manifest)))
   
-  if(!is.null(ctstanmodelobj$stationarymeanprior)) standata$stationarymeanprior=array(ctstanmodelobj$stationarymeanprior,dim=n.latent)
-  if(!is.null(ctstanmodelobj$stationaryvarprior)) standata$stationaryvarprior=array(ctstanmodelobj$stationaryvarprior,dim=n.latent)
+  if(!is.na(ctstanmodelobj$stationarymeanprior)) standata$stationarymeanprior=array(ctstanmodelobj$stationarymeanprior,dim=n.latent)
+  if(!is.na(ctstanmodelobj$stationaryvarprior)) standata$stationaryvarprior=array(ctstanmodelobj$stationaryvarprior,dim=n.latent)
   
   if(n.TIpred > 0) standata$tipreds <- tipreds
   
