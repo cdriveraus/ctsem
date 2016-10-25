@@ -109,8 +109,8 @@ if(type=='standt') continuoustime<-FALSE
   if(n.TIpred > 0) out$tipredeffectprior <- 'normal(0,1)'
   out$loghypersdprior <- 'normal(-3,2)'
   out$loghypersdtransform <- 'exp(loghypersd[rowi]) * sdscale[rowi]'
-  out$stationarymeanprior <- rep(.1,n.latent)
-  out$stationaryvarprior <- rep(.1,n.latent)
+  out$stationarymeanprior <- NULL
+  out$stationaryvarprior <- NULL
   
  return(out)
 }

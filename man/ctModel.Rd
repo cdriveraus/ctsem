@@ -4,7 +4,7 @@
 \alias{ctModel}
 \title{Define a ctsem model}
 \usage{
-ctModel(type, n.manifest, n.latent, LAMBDA, Tpoints = NULL,
+ctModel(n.manifest, n.latent, LAMBDA, type = "omx", Tpoints = NULL,
   manifestNames = "auto", latentNames = "auto", T0VAR = "auto",
   T0MEANS = "auto", MANIFESTMEANS = "auto", MANIFESTVAR = "auto",
   DRIFT = "auto", CINT = "auto", DIFFUSION = "auto", n.TDpred = 0,
@@ -16,10 +16,6 @@ ctModel(type, n.manifest, n.latent, LAMBDA, Tpoints = NULL,
   TIPREDVAR = "auto", startValues = NULL, timeVarying = NULL)
 }
 \arguments{
-\item{type}{character string. If 'omx' (default) configures model for maximum likelihood fitting with ctFit, using OpenMx. 
-If 'stanct' or 'standt' configures either continuous ('stanct') or discrete ('standt') time 
-model for Bayesian fitting with \code{\link{ctStanFit}}, using Stan.}
-
 \item{n.manifest}{Number of manifest indicators per individual at each measurement occasion / time point.
 Manifest variables are included as the first element of the wide data matrix, with all the 1:n.manifest manifest variables 
 at time 1 followed by those of time 2, and so on.}
@@ -29,6 +25,10 @@ at time 1 followed by those of time 2, and so on.}
 \item{LAMBDA}{n.manifest*n.latent loading matrix relating latent to manifest variables, 
 with latent processes 1:n.latent along the columns, and manifest variables
 1:n.manifest in the rows.}
+
+\item{type}{character string. If 'omx' (default) configures model for maximum likelihood fitting with ctFit, using OpenMx. 
+If 'stanct' or 'standt' configures either continuous ('stanct') or discrete ('standt') time 
+model for Bayesian fitting with \code{\link{ctStanFit}}, using Stan.}
 
 \item{Tpoints}{For type='omx' only. Number of time points, or measurement occasions, in the data.  This will generally be the maximum 
 number of time points for a single individual, but may be one extra if sample relative time intervals are used, 

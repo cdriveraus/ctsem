@@ -11,12 +11,17 @@ ctDensity(x)
 }
 \description{
 Wrapper for base R density function that removes outliers and computes 'reasonable' bandwidth and x and y limits.
+Used for ctsem density plots.
 }
 \examples{
 y <- ctDensity(exp(rnorm(80)))
 plot(y$density,xlim=y$xlim,ylim=y$ylim)
 
 #### Compare to base defaults:
+par(mfrow=c(1,2))
+y=exp(rnorm(10000))
+ctdens<-ctDensity(y)
+plot(ctdens$density, ylim=ctdens$ylim,xlim=ctdens$xlim)
 plot(density(y))
 }
 

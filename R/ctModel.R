@@ -161,7 +161,7 @@
 #' 
 #' @export
 
-ctModel<-function(type, n.manifest, n.latent, LAMBDA, Tpoints=NULL, 
+ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL, 
   manifestNames='auto', latentNames='auto', 
   T0VAR="auto", T0MEANS="auto", MANIFESTMEANS="auto", MANIFESTVAR="auto", 
   DRIFT="auto", CINT="auto", DIFFUSION="auto",
@@ -209,6 +209,9 @@ ctModel<-function(type, n.manifest, n.latent, LAMBDA, Tpoints=NULL,
   ###### RUN SEQUENCE
   
   if(type!='omx') Tpoints<-3
+  if(type=='omx' && is.null(Tpoints)) stop('Tpoints must be specified for type="omx"')
+  if(!(type %in% c('stanct','standt','omx'))) stop('type must be either omx, stanct, or standt
+    !')
   
   #names
   if(all(manifestNames=='auto')) manifestNames=paste0('Y',1:n.manifest)
@@ -503,11 +506,9 @@ ctModel<-function(type, n.manifest, n.latent, LAMBDA, Tpoints=NULL,
 
   
   
-  class(completemodel)<-"ctsemInit"
+  if(type=='omx') class(completemodel)<-"ctsemInit"
   
   if(type=='stanct' | type=='standt') completemodel<-ctStanModel(completemodel,type=type)
-  if(!(type %in% c('stanct','standt','omx'))) stop('type must be either omx, stanct, or standt
-    !')
   
   return(completemodel)
 }
