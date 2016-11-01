@@ -119,59 +119,19 @@ omxSummary<-function(object,verbose=FALSE){
 
 ctParamsSummary<-function(object,ctSummaryMatrices){
   
-  # out<-matrix(NA,ncol=4,nrow=length(names(omxGetParameters(object$mxobj))))
   parnames<-rownames(object$mxobj$output$standardErrors)
   parvalues<-c(object$mxobj$output$estimate)
   newparvalues<-parvalues
   parsd<-c(object$mxobj$output$standardErrors)
   parmatrix<-rep(NA,length(parnames))
-  #   mxparams<-summary(object$mxobj)$parameters
-  #   sdmatrices<-list()
-  #   valuematrices<-list()
-  #   detransformedsdmatrices<-list()
-  #   detransformedvaluematrices<-list()
-  # 
-  #   for(matrixi in c('DIFFUSIONlogchol', 'T0VARlogchol','MANIFESTVARlogchol','MANIFESTTRAITVARlogchol','TRAITVARlogchol','TIPREDVARlogchol','TDPREDVARlogchol')){
-  #     valuematrices[[matrixi]]<-try(mxEvalByName(matrixi,object$mxobj,compute=T),silent=TRUE)
-  #     sdmatrices[[matrixi]]<-valuematrices[[matrixi]]
-  #     if(class(valuematrices[[matrixi]]) != 'try-error') {
-  #       for(rowi in 1:nrow(mxparams)){
-  #        if(mxparams$matrix[rowi] == matrixi) {
-  #          sdmatrices[[matrixi]][mxparams[rowi,'row'],mxparams[rowi,'col']] <- mxparams[rowi,'Std.Error']
-  #        }
-  #       }
-  #       detransformedvaluematrices[[matrixi]]<-valuematrices[[matrixi]]
-  #       diag(detransformedvaluematrices[[matrixi]])<-exp(diag(detransformedvaluematrices[[matrixi]]))
-  #       detransformedvaluematrices[[matrixi]]<-detransformedvaluematrices[[matrixi]] %*% t(detransformedvaluematrices[[matrixi]])
-  #       
-  #       
-  #         gdt<-detransformedvaluematrices[[matrixi]] / solve(valuematrices[[matrixi]])
-  #         
-  #         
-  #         detransformedsdmatrices[[matrixi]]<- gdt %*% valuematrices[[matrixi]] %*% sdmatrices[[matrixi]] %*% gdt %*% t(valuematrices[[matrixi]])
-  #         sdmatrices[[matrixi]] %*% detransformedvaluematrices[[matrixi]]  %*% t(sdmatrices[[matrixi]])
-  # 
-  #     }
-  #   }
-  # browser()
+ 
   
   for(parami in 1:length(parnames)){ #for every free param
     for(matrixi in names(ctSummaryMatrices)[names(ctSummaryMatrices) %in% names(object$ctmodelobj)]){ #check every matrix that is in both ctmodelobj and output
       if(parnames[parami] %in% object$ctmodelobj[[matrixi]]) { #if the free param is in the ctmodelobj matrix
         parmatrix[parami]<-matrixi
         newparvalues[parami]<-ctSummaryMatrices[[matrixi]][match(parnames[parami],object$ctmodelobj[[matrixi]])]
-        # if(object$ctfitargs$transformedParams==TRUE) { #if we need to transform std errors
-        # if(matrixi=='DRIFT' && parnames[parami] %in% diag(object$ctmodelobj[[matrixi]])) { #if the paramater is a drift diagonal
-        # parvalues[parami]<- -exp(parvalues[parami])
         parsd[parami]<- abs(((newparvalues[parami]) / parvalues[parami]) * parsd[parami]) #first order delta approximation of std error
-        
-        #           }
-        #           if(matrixi %in% c('DIFFUSION', 'T0VAR','MANIFESTVAR','MANIFESTTRAITVAR','TRAITVAR','TIPREDVAR','TDPREDVAR') && 
-        #               parnames[parami] %in% diag(object$ctmodelobj[[matrixi]])) { #if the parameter is a logchol diagonal
-        #             # parvalues[parami]<- exp(parvalues[parami])^2
-        #             parsd[parami]<- (newparvalues[parami] - parvalues[parami]) / parvalues[parami] * parsd[parami]*2
-        #           }
-        # }
         parvalues[parami]<- newparvalues[parami]
       }
     }

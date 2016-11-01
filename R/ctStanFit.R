@@ -326,29 +326,43 @@ ctStanFit<-function(datalong, ctstanmodelobj, stanmodelobj=NA, iter=2000, kalman
     stanmodelobj <- paste0('
       functions{
       
+      row_vector vecpower(row_vector vec, real power){
+      row_vector[num_elements(vec)] out;
+      for(i in 1:num_elements(vec)){
+      out[i] = vec[i]^power;
+      }
+return out;
+}
+
       matrix varmatrixtransform2(matrix mat,int chol){ //converts from cor and sd to chol or cov
       int ndim;
       matrix[rows(mat),cols(mat)] mscale;
       matrix[rows(mat),cols(mat)] mcholcor;
       matrix[rows(mat),cols(mat)] out;
       real tempsum;
-      
+
       ndim = cols(mat);
-      mcholcor[1,1]=1;
+      mcholcor=diag_matrix(rep_vector(1,ndim));
       mscale = diag_matrix(diagonal(mat));
       
+      if(ndim > 1){
       for(coli in 1:ndim){
-      tempsum=0;
       for(rowi in coli:ndim){
-      mcholcor[rowi,coli] =  mat[rowi,coli]; 
-      mcholcor[coli,rowi] = 0;
-      tempsum = tempsum + mcholcor[rowi,coli]^2;
+        if(rowi > coli){
+          mcholcor[rowi,coli] =  mat[rowi,coli]; 
+          mcholcor[coli,rowi] = 0;
+        }
       }
-      mcholcor[coli,coli]=sqrt(fabs(1-tempsum));
+      }
+
+      for(rowi in 2:ndim){
+          mcholcor[rowi,rowi]<-sqrt(fabs(1-sum(vecpower(mcholcor[rowi,1:(rowi-1)],2))));
+      }
       }
       
       out = mscale * mcholcor; //cholesky
-      if(chol == 0) out=multiply_lower_tri_self_transpose(out) ; //cov
+      if(chol == 0) out=multiply_lower_tri_self_transpose(out); //cov
+      //out = out + diag_matrix(rep_vector(.000001,ndim)); //light regularisation needed
       return out;
       }
       
@@ -1011,8 +1025,10 @@ if(fit==TRUE){
   
   if(n.TDpred > 0) standata<-c(standata,list(tdpreds=array(tdpreds,dim=c(nrow(tdpreds),ncol(tdpreds)))))
   
-  suppressMessages(suppressWarnings( sm <- stan(model_code = c(stanmodeltext), 
-    data = standata, chains = 0)))
+  # suppressMessages(suppressWarnings( 
+    sm <- stan(model_code = c(stanmodeltext), 
+    data = standata, chains = 0)
+    # ))
   
   
   control<-list(adapt_delta=adapt_delta,
@@ -1076,7 +1092,7 @@ if(fit==TRUE){
   
   if(is.null(inits)){
     staninits=list()
-    for(i in 1:(chains+1)){
+    for(i in 1:(chains)){
       staninits[[i]]=list(etapost=array(rnorm(nrow(datalong)*n.latent,0,.1),dim=c(nrow(datalong),n.latent)))
     }
   }
