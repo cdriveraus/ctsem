@@ -29,8 +29,11 @@ s<-getMethod('summary','stanfit')(fit)
 parnames=gsub('output_hsd_','',fit@model_pars[grep('hsd',fit@model_pars)])
 
 #### generate covcor matrices of raw and transformed subject level params
+out=list()
 e=extract(fit)
+# browser()
 iter=dim(e$hypercorrchol)[1]
+if(!is.null(iter)){ #then there is some individual variation so continue
 npars=dim(e$hypercorrchol)[2]
 
 getMean=function(myarray){
@@ -91,23 +94,21 @@ hypercorrcholsd=matrix(hypercorrcholsdpars,byrow=T,nrow=sqrt(length(hypercorrcho
 dimnames(hypercorrcholmean)<-list(parnames,parnames)
 dimnames(hypercorrcholsd)<-list(parnames,parnames)
 
-
-
-outputpars=s$summary[c(grep('output',rownames(s$summary)),grep('lp',rownames(s$summary))),
-  c('mean','sd','n_eff','Rhat')]
-
 out=list(note1='The following matrix is the posterior means for the raw subject level parameters correlation matrix',
   hypercorr_means=hypercorrcholmean %*% t(hypercorrcholmean),
   note2='The following matrix is the posterior std dev. for the raw subject level parameters correlation matrix',
   hypercorr_sd=hypercorrcholsd %*% t(hypercorrcholsd),
-  note3=paste0('The following matrix is the posterior mean for the post transformation subject level parameters correlation and covariance matrix,' 
-  ' with correlations on the lower triangle'),
+  note3=paste0('The following matrix is the posterior mean for the post transformation subject level parameters correlation and covariance matrix,', 
+    ' with correlations on the lower triangle'),
   hypercovcor_transformedmean=hypercovcor_transformedmean,
-  note4=paste'The following matrix is the posterior std dev. for the post transformation subject level parameters correlation and covariance matrix,' 
-  'with correlations on the lower triangle'),
-  hypercovcor_transformedsd=hypercovcor_transformedsd,
-  output_params=outputpars)
-  
+  note4=paste('The following matrix is the posterior std dev. for the post transformation subject level parameters correlation and covariance matrix,', 
+    'with correlations on the lower triangle'),
+  hypercovcor_transformedsd=hypercovcor_transformedsd)
+
+}
+
+out$outputpars=s$summary[c(grep('output',rownames(s$summary)),grep('lp',rownames(s$summary))),
+  c('mean','sd','n_eff','Rhat')]
 
 return(out)
 }
