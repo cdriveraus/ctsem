@@ -353,7 +353,7 @@ functions{
     
     ndim = cols(mat);
     mcholcor=diag_matrix(rep_vector(0,ndim));
-    betad = eta + (ndim-1)/2;
+    //betad = eta + (ndim-1)/2;
     mcholcor[1,1]=1;
     
     if(ndim > 1){
