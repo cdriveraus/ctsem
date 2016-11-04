@@ -55,7 +55,7 @@ if(type=='standt') continuoustime<-FALSE
   ctspec$transform[ctspec$matrix %in% c('LAMBDA') &  freeparams] <- '(param+.5) * 10'
   
   ctspec$transform[ctspec$matrix %in% c('DIFFUSION','MANIFESTVAR', 'T0VAR') & 
-      freeparams & ctspec$row != ctspec$col] <- '1.999/(1+exp((param)*-1.5))-1'
+      freeparams & ctspec$row != ctspec$col] <- 'inv_logit(param)*2-1'
   
   ctspec$transform[ctspec$matrix %in% c('DIFFUSION','MANIFESTVAR', 'T0VAR') & 
       freeparams & ctspec$row == ctspec$col] <- 'exp(param*2) +.00001' #'1/(.1+exp(param*1.8))*10+.001'
