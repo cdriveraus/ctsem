@@ -15,6 +15,22 @@ indexMatrix<-function(dimension,symmetrical=FALSE,upper=FALSE,lowerTriangular=FA
   return(tempmatrix)
 }
 
+#' ctCollapse
+#' Easily collapse an array margin using a specified function.
+#' @param inarray Input array of more than one dimension.
+#' @param collapsemargin Integers denoting which margins to collapse.
+#' @param collapsefunc function to use over the collapsing margin.
+#' @param ... additional parameters to pass to collapsefunc.
+#' @examples
+#' testarray <- array(rnorm(900,2,1),dim=c(100,3,3))
+#' ctCollapse(testarray,1,mean)
+#' @export
+ctCollapse<-function(inarray,collapsemargin,collapsefunc,...){
+  indims<-dim(inarray)
+  out<-array(plyr::aaply(inarray,(1:length(indims))[-collapsemargin],collapsefunc,...,
+    .drop=TRUE),dim=indims[-collapsemargin])
+  return(out)
+}
 
 
 

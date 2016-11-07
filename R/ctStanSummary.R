@@ -3,7 +3,8 @@
 #' Summarise a Stan fit object fit using \link{\code{ctStanFit}}. 
 #' 
 #' @param ctstanfitobject Stan fit object from \link{\code{ctStanFit}}. 
-#' @import rstan
+#' @examples
+#' ctStanSummary(ctstantestfit)
 #' @export
 
 ctStanSummary<-function(ctstanfitobject){

@@ -56,7 +56,7 @@
 #' 
 #' cd<-ctGenerate(gm, n.subjects=20, burnin=300) #generate data
 #' 
-#' ctIndplot(cd, n.subjects=6, Tpoints=Tpoints, n.manifest=1) #plot a few subjects
+#' ctIndplot(cd, n.subjects=6, Tpoints=Tpoints, n.manifest=1) #plot a few subjects data
 #' 
 #' #### generate continuous time ctstan model
 #' checkm<-ctModel(type='stanct', n.latent=1, n.manifest=1, LAMBDA=diag(1)) 
@@ -77,9 +77,8 @@
 #' checkm$parameters$indvarying[-6]<-FALSE
 #' 
 #' #Fit the model to the data using 20 iterations, 2 chains and 
-#' #plotting the fit progress. 20 iterations is only suitable for testing!
-#' fit<-ctStanFit(long, checkm, iter=200, chains=2, plot=TRUE, 
-#' initwithoptim=TRUE)
+#' 20 iterations is only suitable for testing!
+#' fit<-ctStanFit(long, checkm, iter=200, chains=2)
 #' 
 #' ctStanSummary(fit) #summary of output parameters
 #' 
@@ -101,7 +100,10 @@
 #' points(pred[[3]]$ypred, type='b', col='blue', lwd=2)
 #' 
 #' ### Use rstan's traceplot to traceplot output parameters only
-#' rstan::traceplot(fit,rownames(ctStanSummary(fit)))
+#' rstan::stan_trace(fit, pars = rownames(ctStanSummary(fit)))
+#' 
+#' ### Use rstan's density plot on output parameters only
+#' rstan::stan_dens(fit, pars = rownames(ctStanSummary(fit)))
 #' }
 #' @export
 ctStanFit<-function(datalong, ctstanmodelobj, stanmodeltext=NA, iter=2000, kalman=TRUE, binomial=FALSE,

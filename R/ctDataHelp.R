@@ -90,4 +90,9 @@ NULL
 #' @name longexample
 NULL
 
-
+#' ctstantestfit
+#' 
+#' Minimal output from \link{\code{ctStanFit}} from ctsem package.
+#' @format stanfit class.
+#' @name ctstantestfit
+NULL

@@ -2,7 +2,7 @@ Package: ctsem
 Type: Package
 Title: Continuous Time Structural Equation Modelling
 Version: 2.0.0
-Date: 2016-7-1
+Date: 2016-11-5
 Authors@R: c(person("Charles", "Driver", role =
     c("aut","cre","cph"),email="driver@mpib-berlin.mpg.de"),
     person("Manuel", "Voelkle", role = c("aut","cph")),
@@ -34,13 +34,16 @@ License: GPL-3
 Depends:
     R (>= 3.0.0),
     OpenMx (>= 2.3.0),
-    rstan
+    rstan,
+    plyr
 URL: https://github.com/cdriveraus/ctsem
 Imports:
     MASS,
     Matrix,
     stats,
-    utils,graphics,methods,
+    utils,
+    graphics,
+    methods,
     grDevices
 LazyData: Yes
 Suggests:

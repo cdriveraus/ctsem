@@ -12,4 +12,7 @@ ctStanSummary(ctstanfitobject)
 \description{
 Summarise a Stan fit object fit using \link{\code{ctStanFit}}.
 }
+\examples{
+ctStanSummary(ctstantestfit)
+}
 
