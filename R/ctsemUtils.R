@@ -32,6 +32,10 @@ ctCollapse<-function(inarray,collapsemargin,collapsefunc,...){
   return(out)
 }
 
+rl<-function(x) { #robust logical - wrap checks likely to return NA's in this
+  if(is.na(x)) return(FALSE) else return(x)
+}
+
 
 
 #' ctWideNames

@@ -95,4 +95,43 @@ NULL
 #' Minimal output from \link{\code{ctStanFit}} from ctsem package.
 #' @format stanfit class.
 #' @name ctstantestfit
+#' @examples 
+#' \dontrun{
+#' ### generator for ctstantestfit
+#' set.seed(2)
+#' Tpoints=50
+#' n.manifest=2
+#' n.TDpred=0
+#' n.TIpred=3
+#' n.latent=2
+#' n.subjects=3
+#' 
+#' testm<-ctModel(type='omx',Tpoints=Tpoints,n.latent=n.latent,n.TDpred=n.TDpred,n.TIpred=n.TIpred,n.manifest=n.manifest,
+#'   MANIFESTVAR=diag(0.5,2),
+#'   TIPREDEFFECT=matrix(c(0,0,0,0,0,0),nrow=2),
+#'   TIPREDVAR=matrix(c(1,-.2,0, 0,1,0, 0,0,.5),nrow=3),
+#'   TDPREDEFFECT=matrix(c(.1,-.2),nrow=2),
+#'   TDPREDVAR=matrix(0,nrow=n.TDpred*(Tpoints-1),ncol=n.TDpred*(Tpoints-1)),
+#'   TDPREDMEANS=matrix(rnorm(n.TDpred*(Tpoints-1),0,1),nrow=n.TDpred*(Tpoints-1)),
+#'   LAMBDA=diag(1,2),
+#'   DRIFT=matrix(c(-.3,.2,-.1,-.2),nrow=2),
+#'   DIFFUSION=matrix(c(.3,.1,0,.2),2),CINT=matrix(c(0,0),nrow=2),T0MEANS=matrix(0,ncol=1,nrow=2),
+#'   T0VAR=diag(100,2))
+#' cd<-ctGenerate(testm,n.subjects=n.subjects,burnin=300,simulTDpredeffect=TRUE)
+#' 
+#' dlong<-ctWideToLong(cd,Tpoints,n.manifest=n.manifest, n.TDpred = n.TDpred, n.TIpred = n.TIpred)
+#' dlong<-ctDeintervalise(dlong)
+#' dlong<-dlong[c(1:10,18:40,48:80,90:120,140:150),]
+#' 
+#' checkm<-ctModel(type='stanct',Tpoints=Tpoints,
+#'   n.latent=n.latent,n.TDpred=n.TDpred,n.TIpred=n.TIpred,
+#'   n.manifest=n.manifest,LAMBDA=diag(2))
+#'   
+#' checkm$parameters$indvarying[-1:-2] <- FALSE
+#' 
+#' ctstantestfit<-ctStanFit(dlong,checkm,iter=20,chains=1,initwithoptim=TRUE)
+#' save(ctstantestfit,file='.\\data\\ctstantestfit.rda')
+#' }
 NULL
+
+

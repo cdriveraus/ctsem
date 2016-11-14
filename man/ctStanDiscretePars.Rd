@@ -5,26 +5,27 @@
 \title{ctStanDiscretePars}
 \usage{
 ctStanDiscretePars(ctstanfitobj, subjects = "all", times = seq(from = 0, to
-  = 10, by = 0.1), quantiles = c(0.05, 0.5, 0.95), type = "all")
+  = 10, by = 0.1), quantiles = c(0.05, 0.5, 0.95), plot = FALSE, ...)
 }
 \arguments{
-\item{ctstanfitobj}{Continuous time model fit from \link{\code{ctStanFit}}}
+\item{ctstanfitobj}{Continuous time model fit from \code{\link{ctStanFit}}}
 
 \item{subjects}{Either 'all', to take the average over all subjects, or a vector of integers denoting which
 subjects.}
 
 \item{times}{Numeric vector of positive values, discrete time parameters will be calculated for each.}
 
-\item{type}{String. 'all' returns all possible outputs in a list. 
-'discreteDRIFT' returns only discrete time auto and cross regression effects.
-'latentMeans' returns only the expected latent means, given initial (T0MEANS) level, 
-latent intercept (CINT) and temporal effects (DRIFT).}
+\item{plot}{Logical. If TRUE, plots output using \code{\link{ctStanDiscreteParsPlot}}
+instead of returning output.}
+
+\item{...}{additional plotting arguments to control \code{\link{ctStanDiscreteParsPlot}}}
 }
 \description{
-Generate discrete time parameters for a sequence of times based on a continuous time model fit
-from ctStanFit
+Calculate model implied regressions for a sequence of time intervals based on a continuous time model fit
+from ctStanFit, for specified subjects.
 }
 \examples{
-ctStanDiscretePars(ctstantestfit,times=c(.5,1))
+ctStanDiscretePars(ctstantestfit,times=c(.5,1), 
+plot=TRUE,indices='all')
 }
 

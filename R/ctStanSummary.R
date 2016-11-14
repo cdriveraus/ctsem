@@ -1,37 +1,23 @@
-#' ctStanSummary
+#' summary.ctStanFit
 #'
-#' Summarise a Stan fit object fit using \link{\code{ctStanFit}}. 
+#' Summarise a ctStanFit object that was fit using \code{\link{ctStanFit}}. 
 #' 
-#' @param ctstanfitobject Stan fit object from \link{\code{ctStanFit}}. 
+#' @param object fit object from \code{\link{ctStanFit}}, of class ctStanFit.
+#' @param ... Unused at present.
+#' @return List containing summary items.
 #' @examples
-#' ctStanSummary(ctstantestfit)
+#' Summary(ctstantestfit)
 #' @export
 
-ctStanSummary<-function(ctstanfitobject){
-  
-  trace=FALSE
-  density=FALSE
-  
-  fit<-ctstanfitobject
+summary.ctStanFit<-function(object,...){
 
-if(trace==TRUE) {
+s<-getMethod('summary','stanfit')(object$stanfit)
 
-  getMethod('traceplot','stanfit')(fit,fit@model_pars[grep('output_hmean',fit@model_pars,fixed=TRUE)],inc_warmup=F)
-  getMethod('traceplot','stanfit')(fit,fit@model_pars[grep('output_hsd',fit@model_pars,fixed=TRUE)],inc_warmup=F)
-}
-if( density == TRUE) {
-  densfunc<-rstan:::stan_dens
-  densfunc(fit,c('lp__',fit@model_pars[grep('output_hmean',fit@model_pars,fixed=TRUE)]),inc_warmup=F)
-  getMethod('stan_dens','stanfit')(fit,c('lp__',fit@model_pars[grep('output_hsd',fit@model_pars,fixed=TRUE)]),inc_warmup=F)
-}
-  
-s<-getMethod('summary','stanfit')(fit)
-
-parnames=gsub('output_hsd_','',fit@model_pars[grep('hsd',fit@model_pars)])
+parnames=gsub('hsd_','',object$stanfit@model_pars[grep('hsd',object$stanfit@model_pars)])
 
 #### generate covcor matrices of raw and transformed subject level params
 out=list()
-e=extract(fit)
+e=extract(object$stanfit)
 # browser()
 iter=dim(e$hypercorrchol)[1]
 if(!is.null(iter)){ #then there is some individual variation so continue
@@ -105,11 +91,16 @@ out=list(note1='The following matrix is the posterior means for the raw subject 
   note4=paste('The following matrix is the posterior std dev. for the post transformation subject level parameters correlation and covariance matrix,', 
     'with correlations on the lower triangle'),
   hypercovcor_transformedsd=hypercovcor_transformedsd)
-
 }
 
-out$outputpars=s$summary[c(grep('output',rownames(s$summary)),grep('lp',rownames(s$summary))),
-  c('mean','sd','n_eff','Rhat')]
+out$popmeans=round(s$summary[c(grep('hmean_',rownames(s$summary)),grep('lp',rownames(s$summary))),
+  c('mean','sd','2.5%','97.5%','n_eff','Rhat')],3)
+
+out$popsd=round(s$summary[c(grep('hsd_',rownames(s$summary)),grep('lp',rownames(s$summary))),
+  c('mean','sd','2.5%','97.5%','n_eff','Rhat')],3)
+
+out$tipreds=round(s$summary[c(grep('tipred_',rownames(s$summary)),grep('lp',rownames(s$summary))),
+  c('mean','sd','2.5%','97.5%','n_eff','Rhat')],3)
 
 return(out)
 }

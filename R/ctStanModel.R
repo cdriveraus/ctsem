@@ -107,8 +107,8 @@ if(type=='standt') continuoustime<-FALSE
   class(out)<-'ctsemStanModel'
   
   if(n.TIpred > 0) out$tipredeffectprior <- 'normal(0,1)'
-  out$loghypersdprior <- 'normal(-3,2)'
-  out$loghypersdtransform <- 'exp(loghypersd[rowi]) * sdscale[rowi]'
+  # out$hypersdpriorscale <- 1
+  # out$hypersdtransform <- 'hypersd .* sdscale'
   out$stationarymeanprior <- NA
   out$stationaryvarprior <- NA
   

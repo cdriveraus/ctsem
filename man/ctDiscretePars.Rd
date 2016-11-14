@@ -21,7 +21,7 @@ Generate discrete time parameters for a sequence of times based on a list contai
 parameter matrices as used in ctsem.
 }
 \examples{
-pars <- ctStanGetPars(ctstantestfit)
+pars <- ctStanContinuousPars(ctstantestfit)
 ctDiscretePars(pars,times=c(.5,1))
 
 }
