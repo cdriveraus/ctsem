@@ -463,13 +463,14 @@ A visual depiction of the relationships between the processes over time is given
 \subsection{Unobserved heterogeneity}\nopagebreak
 \subsubsection{Traits at the latent level} \label{sec:heterogeneity} \nopagebreak
 When modelling panel data, the continuous intercept parameter $\boldsymbol{\kappa}$ reflects the expected value for continuous time intercept $\boldsymbol{\xi}$, which determines the average level of a process. In panel data, however, it is common that \textit{individuals} exhibit stable differences in the level. Within \pkg{ctsem} we call such stable differences \textit{traits}, but they may also be thought of more abstractly as \textit{unit level} or \textit{between subject} differences, or \textit{unobserved heterogeneity}. Fitting a model that fails to account for it will result in parameter estimates that will not reflect the processes of individual subjects, but will mix between and within-person information \citep{balestra1966pooling, oud2000continuous, halaby2004panel}. 
-To avoid this bias, individual differences can be incorporated in two different ways. One way is to control for observed covariates as will be discussed in Section \ref{sec:tipreds}. However as covariates are likely to be insufficient, one may also estimate the latent trait variance by estimating the variance and covariance $\boldsymbol{\phi}_{\xi}$ of the intercept parameters $\boldsymbol{\xi}$ across individuals.\footnote{Note that this is a substantially different approach to achieve unbiased effect estimates than the \textit{fixed effects} approach \citep[see for example][]{mundlak1978pooling}, as our SEM specification, while a \textit{random effects} model which have at times been associated with bias for within effects, allows unbiased estimation of \textit{within} and \textit{between} effects at the same time. For further details on the estimation of unobserved heterogeneity in an SEM context, see \citet{bollen2010general}, and in the continuous time case \citet{voelkle2015accounting}.} In \pkg{ctsem}, freely estimated latent trait variances and covariances may be added with the argument \code{TRAITVAR = "auto"} to the \code{ctModel} command. If the user is interested in a specific variance-covariance structure, it is of course also possible to specify the n.latent $\times$ n.latent lower-triangular matrix of free or fixed parameters by hand. To illustrate the inclusion of trait variance, we fit the same model on simulated leisure time and happiness introduced above, but also model the traits.
+To avoid this bias, individual differences can be incorporated in two different ways. One way is to control for observed covariates as will be discussed in Section \ref{sec:tipreds}. However as covariates are likely to be insufficient, one may also estimate the latent trait variance by estimating the variance and covariance $\boldsymbol{\phi}_{\xi}$ of the intercept parameters $\boldsymbol{\xi}$ across individuals.\footnote{Note that this is a substantially different approach to achieve unbiased effect estimates than the \textit{fixed effects} approach \citep[see for example][]{mundlak1978pooling}, as our SEM specification, while a \textit{random effects} model which have at times been associated with bias for within effects, allows unbiased estimation of \textit{within} and \textit{between} effects at the same time. For further details on the estimation of unobserved heterogeneity in an SEM context, see \citet{bollen2010general}, and in the continuous time case \citet{voelkle2015accounting}.} In \pkg{ctsem}, freely estimated latent trait variances and covariances may be added with the argument \code{TRAITVAR = "auto"} to the \code{ctModel} command. If the user is interested in a specific variance-covariance structure, it is of course also possible to specify the n.latent $\times$ n.latent lower-triangular matrix of free or fixed parameters by hand. To illustrate the inclusion of trait variance, we fit the same model on simulated leisure time and happiness introduced above, but also model the traits. Note: This example has been changed to MANIFESTTRAITVAR instead of TRAITVAR, due to changes in the fitting routine -- with MANIFESTTRAITVAR it is typically easier to achieve a reliable fit. There are no substantive differences in this case but can be if multiple indicators are used.
 
 <<example2fit, cache = TRUE>>=
+
 data("ctExample1")
 traitmodel <- ctModel(n.manifest = 2, n.latent = 2, Tpoints = 6, 
   LAMBDA = diag(2), manifestNames = c("LeisureTime", "Happiness"), 
-  latentNames = c("LeisureTime", "Happiness"), TRAITVAR = "auto")
+  latentNames = c("LeisureTime", "Happiness"), MANIFESTTRAITVAR = "auto")
 traitfit <- ctFit(datawide = ctExample1, ctmodelobj = traitmodel)
 @
 
@@ -668,7 +669,7 @@ data("ctExample4")
 
 basemodel <- ctModel(n.latent = 1, n.manifest = 3, Tpoints = 20,
   LAMBDA = matrix(c(1, "lambda2", "lambda3"), nrow = 3, ncol = 1),
-  TRAITVAR="auto", MANIFESTMEANS = matrix(c(0, "manifestmean2", 
+  MANIFESTMEANS = matrix(c(0, "manifestmean2", 
     "manifestmean3"), nrow = 3, ncol = 1))
 
 freemodel <- basemodel
@@ -676,7 +677,7 @@ freemodel$LAMBDA[3, 1] <- "groupfree"
 groups <- paste0("g", rep(1:2, each = 10))
 
 multif <- ctMultigroupFit(datawide = ctExample4, groupings = groups,
-  ctmodelobj = basemodel, freemodel = freemodel)
+  objective='Kalman',ctmodelobj = basemodel, freemodel = freemodel)
 @
 
 <<multigroupOutput, echo = FALSE>>=
@@ -815,7 +816,7 @@ To highlight the problems associated with treating all time intervals in a datas
 data("ctExample1")
 traitmodel <- ctModel(n.manifest = 2, n.latent = 2, Tpoints = 6, 
   LAMBDA = diag(2), manifestNames = c("LeisureTime", "Happiness"), 
-  latentNames = c("LeisureTime", "Happiness"), TRAITVAR = "auto")
+  latentNames = c("LeisureTime", "Happiness"), MANIFESTTRAITVAR = "auto")
 traitfit <- ctFit(datawide = ctExample1, ctmodelobj = traitmodel)
 
 discrete <- ctExample1
@@ -826,7 +827,7 @@ discretefit <- ctCI(discretefit, confidenceintervals = 'DRIFT')
 summary(discretefit)$omxsummary$CI
 @
 
-The 95\% confidence intervals for DRIFT[1,2] now do not include 0 and the point estimate is lower, which could lead one to accept the hypothesis that earlier increases in happiness lead to later decreases in leisure time. This is however not the case, the true parameter for DRIFT[1,2] is 0. If we fit confidence intervals for the already fitted correct model (from Section \ref{sec:heterogeneity}, that accounts for different time intervals, the true value of 0 is within the 95\% confidence region.
+The 95\% confidence intervals for drift\_LeisureTime\_Happiness now do not include 0 and the point estimate is lower, which could lead one to accept the hypothesis that earlier increases in happiness lead to later decreases in leisure time. This is however not the case, the true parameter is 0. If we fit confidence intervals for the already fitted correct model (from Section \ref{sec:heterogeneity}, that accounts for different time intervals, the true value of 0 is within the 95\% confidence region.
 
 <<traitfitconfidenceintervals,cache=TRUE >>=
 example1traitfit <- ctCI(traitfit, confidenceintervals = 'DRIFT')

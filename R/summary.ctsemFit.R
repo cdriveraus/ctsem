@@ -136,8 +136,8 @@ ctParamsSummary<-function(object,ctSummaryMatrices){
       }
     }
   }
-  out<-data.frame(parnames,parvalues,parmatrix,parsd)
-  colnames(out)<-c('Continuous time free param', 'Value', 'Matrix', 'StdError')
+  out<-data.frame(parvalues,parmatrix,parsd)
+  colnames(out)<-c( 'Value', 'Matrix', 'StdError')
   out<-as.data.frame(out)
 }
 
