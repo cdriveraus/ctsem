@@ -243,7 +243,7 @@ To see exactly how the various matrices are transformed into a RAM SEM, one may 
 <<eval=FALSE>>=
 data('datastructure')
 datastructure
-semModel<-ctModel(type='omx', n.latent=2, n.manifest=3, TRAITVAR='auto', 
+semModel<-ctModel(n.latent=2, n.manifest=3, TRAITVAR='auto', 
   n.TIpred=2, n.TDpred=1, Tpoints=3, 
   LAMBDA=matrix(c(1,'lambda21', 0, 0,1,0),nrow=3))
 semFit<-ctFit(datastructure, semModel, nofit=T)
@@ -384,7 +384,7 @@ startValues & & NULL & a named vector, where the names of each value must match 
 \end{table}
 An example model specification relying heavily on the defaults is: 
 <<simplemodel, include = TRUE, echo = TRUE, results = 'hide'>>=
-examplemodel <- ctModel(type='omx', n.latent = 2, n.manifest = 2, Tpoints = 3, 
+examplemodel <- ctModel(n.latent = 2, n.manifest = 2, Tpoints = 3, 
   LAMBDA = diag(2))
 @
 \begin{figure}[!p]
@@ -413,7 +413,7 @@ The \code{ctFit} function estimates the specified model, calling the data in wid
 
 <<example1ctfit, include = TRUE, cache = TRUE, echo = TRUE, results = 'hide'>>=
 data("ctExample1")
-example1model <- ctModel(type='omx', n.latent = 2, n.manifest = 2, Tpoints = 6, 
+example1model <- ctModel(n.latent = 2, n.manifest = 2, Tpoints = 6, 
   manifestNames = c("LeisureTime", "Happiness"), 
   latentNames = c("LeisureTime", "Happiness"), LAMBDA = diag(2))
 example1fit <- ctFit(datawide = ctExample1, ctmodelobj = example1model)
@@ -467,7 +467,7 @@ To avoid this bias, individual differences can be incorporated in two different 
 
 <<example2fit, cache = TRUE>>=
 data("ctExample1")
-traitmodel <- ctModel(type='omx', n.manifest = 2, n.latent = 2, Tpoints = 6, 
+traitmodel <- ctModel(n.manifest = 2, n.latent = 2, Tpoints = 6, 
   LAMBDA = diag(2), manifestNames = c("LeisureTime", "Happiness"), 
   latentNames = c("LeisureTime", "Happiness"), TRAITVAR = "auto")
 traitfit <- ctFit(datawide = ctExample1, ctmodelobj = traitmodel)
@@ -498,7 +498,7 @@ Time independent predictors are added by including the data as per the structure
 
 <<example1TIpred, include = TRUE, cache = TRUE, echo = TRUE, results = 'hide'>>=
 data("ctExample1TIpred")
-tipredmodel <- ctModel(type='omx', n.manifest = 2, n.latent = 2, n.TIpred = 1,
+tipredmodel <- ctModel(n.manifest = 2, n.latent = 2, n.TIpred = 1,
   manifestNames = c("LeisureTime", "Happiness"),
   latentNames = c("LeisureTime", "Happiness"),
   TIpredNames = "NumFriends",
@@ -534,14 +534,21 @@ The matrices output from \code{summary, verbose = TRUE} will now include matrice
 \begin{figure}[!h]
 <<tdpreddemo, echo = FALSE, eval = TRUE, fig.height = 3>>=
 Tpoints = 20
-testm <- ctModel(type='omx', Tpoints = Tpoints, n.latent = 1, n.TDpred = 1, n.manifest = 1, LAMBDA = diag(1), DRIFT = diag(-.3, 1),
-  DIFFUSION = diag(.1, 1), TDPREDEFFECT = diag(1, 1), TDPREDVAR = diag(0, Tpoints-1), CINT = diag(4, 1), T0MEANS = matrix(0, ncol = 1, nrow = 1),
-  T0VAR = diag(100, 1), TDPREDMEANS = matrix(c(0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), ncol = 1, nrow = (Tpoints-1)))
+testm <- ctModel(Tpoints = Tpoints, n.latent = 1, 
+  n.TDpred = 1, n.manifest = 1, LAMBDA = diag(1), DRIFT = diag(-.3, 1),
+  DIFFUSION = diag(.1, 1), TDPREDEFFECT = diag(1, 1), 
+  TDPREDVAR = diag(0, Tpoints-1), CINT = diag(4, 1), T0MEANS = matrix(0, ncol = 1, nrow = 1),
+  T0VAR = diag(100, 1), 
+  TDPREDMEANS = matrix(c(0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), ncol = 1, nrow = (Tpoints-1)))
 testd <- ctGenerate(testm, n.subjects = 100, burnin = 300)
 
-testm <- ctModel(type='omx', Tpoints = Tpoints, n.latent = 1, n.TDpred = 1, n.manifest = 1, LAMBDA = diag(1), DRIFT = diag(-.3, 1),
-  DIFFUSION = diag(.0, 1), TDPREDEFFECT = diag(1, 1), TDPREDVAR = diag(0, Tpoints-1), CINT = diag(4, 1), T0MEANS = matrix(0, ncol = 1, nrow = 1),
-  T0VAR = diag(1, 1), TDPREDMEANS = matrix(c(0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), ncol = 1, nrow = (Tpoints-1)))
+testm <- ctModel(Tpoints = Tpoints, n.latent = 1, n.TDpred = 1, 
+  n.manifest = 1, LAMBDA = diag(1), DRIFT = diag(-.3, 1),
+  DIFFUSION = diag(.001, 1), TDPREDEFFECT = diag(1, 1), 
+  TDPREDVAR = diag(0, Tpoints-1), CINT = diag(4, 1), 
+  T0MEANS = matrix(0, ncol = 1, nrow = 1),
+  T0VAR = diag(1, 1), 
+  TDPREDMEANS = matrix(c(0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), ncol = 1, nrow = (Tpoints-1)))
 testdpure <- ctGenerate(testm, n.subjects = 1, burnin = 300)
 
 par(mfrow = c(1, 2), cex = .7)
@@ -552,14 +559,20 @@ for(i in 1:5){
 }
 
 Tpoints = 20
-testm <- ctModel(type='omx', Tpoints = Tpoints, n.latent = 1, n.TDpred = 1, n.manifest = 1, LAMBDA = diag(1), DRIFT = diag(-.3, 1),
-  DIFFUSION = diag(.15, 1), TDPREDEFFECT = diag(1.6, 1), TDPREDVAR = diag(0, Tpoints-1), CINT = diag(4, 1), T0MEANS = matrix(0, ncol = 1, nrow = 1),
-  T0VAR = diag(100, 1), TDPREDMEANS = matrix(c(0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1), ncol = 1, nrow = (19)))
+testm <- ctModel(Tpoints = Tpoints, n.latent = 1, 
+  n.TDpred = 1, n.manifest = 1, LAMBDA = diag(1), DRIFT = diag(-.3, 1),
+  DIFFUSION = diag(.15, 1), TDPREDEFFECT = diag(1.6, 1), 
+  TDPREDVAR = diag(0, Tpoints-1), CINT = diag(4, 1), T0MEANS = matrix(0, ncol = 1, nrow = 1),
+  T0VAR = diag(100, 1), 
+  TDPREDMEANS = matrix(c(0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1), ncol = 1, nrow = (19)))
 testd <- ctGenerate(testm, n.subjects = 100, burnin = 300)
 
-testm <- ctModel(type='omx', Tpoints = Tpoints, n.latent = 1, n.TDpred = 1, n.manifest = 1, LAMBDA = diag(1), DRIFT = diag(-.3, 1),
-  DIFFUSION = diag(.0, 1), TDPREDEFFECT = diag(1.6, 1), TDPREDVAR = diag(0, Tpoints-1), CINT = diag(4, 1), T0MEANS = matrix(0, ncol = 1, nrow = 1),
-  T0VAR = diag(1, 1), TDPREDMEANS = matrix(c(0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1), ncol = 1, nrow = (19)))
+testm <- ctModel(Tpoints = Tpoints, n.latent = 1, 
+  n.TDpred = 1, n.manifest = 1, LAMBDA = diag(1), DRIFT = diag(-.3, 1),
+  DIFFUSION = diag(.001, 1), TDPREDEFFECT = diag(1.6, 1), 
+  TDPREDVAR = diag(0, Tpoints-1), CINT = diag(4, 1), T0MEANS = matrix(0, ncol = 1, nrow = 1),
+  T0VAR = diag(1, 1), 
+  TDPREDMEANS = matrix(c(0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1), ncol = 1, nrow = (19)))
 testdpure <- ctGenerate(testm, n.subjects = 1, burnin = 300)
 
 plot(0:(Tpoints-1), testdpure[, 1:Tpoints], type = 'l', ylim = c(min(testd[, 1:Tpoints]), max(testd[, 1:Tpoints])), ylab = 'Dependent variable', xlab = 'Time', lwd = 3, main = 'Level predictor')
@@ -574,7 +587,7 @@ A single time dependent predictor can be incorporated in a \pkg{ctsem} model by 
 
 <<example2TDpred, include = TRUE, cache = TRUE, echo = TRUE, results = 'hide', fig.height = 4, fig.width = 4, fig.align = 'center'>>=
 data("ctExample2")
-tdpredmodel <- ctModel(type='omx', n.manifest = 2, n.latent = 2, n.TDpred = 1, 
+tdpredmodel <- ctModel(n.manifest = 2, n.latent = 2, n.TDpred = 1, 
   Tpoints = 8, manifestNames = c("LeisureTime", "Happiness"), 
   TDpredNames = "MoneyInt", latentNames = c("LeisureTime", "Happiness"),
   T0TDPREDCOV = matrix(0, nrow = 2, ncol=7),
@@ -604,7 +617,7 @@ To test the longer term changes introduced via the monetary intervention, we mus
 
 <<example2TDpredlevel, include = TRUE, eval = TRUE, echo = TRUE, cache = TRUE>>=
 data("ctExample2")
-tdpredlevelmodel <- ctModel(type='omx', n.manifest = 2, n.latent = 3, 
+tdpredlevelmodel <- ctModel(n.manifest = 2, n.latent = 3, 
   n.TDpred = 1, 
   Tpoints = 8, manifestNames = c("LeisureTime", "Happiness"), 
   TDpredNames = "MoneyInt", 
@@ -639,7 +652,7 @@ In the examples so far, we have dealt with multiple individuals with relatively 
 
 <<timeseries, cache = TRUE, echo = TRUE>>=
 data("ctExample3")
-model <- ctModel(type='omx', n.latent = 1, n.manifest = 3, Tpoints = 100, 
+model <- ctModel(n.latent = 1, n.manifest = 3, Tpoints = 100, 
   LAMBDA = matrix(c(1, "lambda2", "lambda3"), nrow = 3, ncol = 1), 
   MANIFESTMEANS = matrix(c(0, "manifestmean2", "manifestmean3"), nrow = 3, 
     ncol = 1))
@@ -653,7 +666,7 @@ In some cases, certain groups or individuals may exhibit different model paramet
 <<multigroup, cache = TRUE, echo = TRUE>>=
 data("ctExample4")
 
-basemodel <- ctModel(type='omx', n.latent = 1, n.manifest = 3, Tpoints = 20,
+basemodel <- ctModel(n.latent = 1, n.manifest = 3, Tpoints = 20,
   LAMBDA = matrix(c(1, "lambda2", "lambda3"), nrow = 3, ncol = 1),
   TRAITVAR="auto", MANIFESTMEANS = matrix(c(0, "manifestmean2", 
     "manifestmean3"), nrow = 3, ncol = 1))
@@ -709,7 +722,7 @@ Continuous time models of this variety are theoretically plausible, as changes t
 % Moving average terms achieve this by incorporating the effect of \textit{l} past innovations. This is however inconsistent with a view of continuously evolving processes through time, as suddenly after \textit{l} observations the effect is gone. Furthermore, if modeled in continuous time, the length of time past innovations would maintain influence would depend on the number of observations in the specific time window -- but why should we assume that the act of observing is altering the impact of past innovations? In contrast to these problems an autoregressive diffusion in continuous time can allow for slower, smoother trends in a manner consistent with a view of processes that evolve continuously -- there is no point reached where suddenly the influence of past innovations drops to 0, rather they decay exponentially with time according to the continuous DRIFT matrix. 
 
 <<dynamicresidualmodel, echo = TRUE, results='hide',fig.keep='none'>>=
-genm <- ctModel(type='omx', Tpoints = 200, n.latent = 2, n.manifest = 1, 
+genm <- ctModel(Tpoints = 200, n.latent = 2, n.manifest = 1, 
   LAMBDA = matrix(c(1, 0), nrow = 1, ncol = 2),
   DIFFUSION = matrix(c(0, 0, 0, 1), 2),
   MANIFESTVAR = diag(.6,1),
@@ -720,7 +733,7 @@ data <- ctGenerate(genm, n.subjects = 1, burnin = 200, dT = 1)
 
 ctIndplot(data, n.subjects = 1 , n.manifest = 1, Tpoints = 200)
 
-model <- ctModel(type='omx', Tpoints = 200, n.latent = 2, n.manifest = 1, 
+model <- ctModel(Tpoints = 200, n.latent = 2, n.manifest = 1, 
   LAMBDA = matrix(c(1, 0), nrow = 1, ncol = 2),
   DIFFUSION = matrix(c(0, 0, 0, "diffusion"), 2),
   DRIFT = matrix(c(0, "regulation", 1, "diffusionAR"), nrow = 2),   
@@ -740,7 +753,7 @@ inits <- c(-38, -.5, 1, 1, .1, 1, 0, .9)
 names(inits) <- c("crosseffect","autoeffect", "diffusion",
   "T0var11", "T0var21", "T0var22","m1", "m2")
 
-oscillatingm <- ctModel(type='omx', n.latent = 2, n.manifest = 1, Tpoints = 11, 
+oscillatingm <- ctModel(n.latent = 2, n.manifest = 1, Tpoints = 11, 
   MANIFESTVAR = matrix(c(0), nrow = 1, ncol = 1), 
   LAMBDA = matrix(c(1, 0), nrow = 1, ncol = 2),
   T0MEANS = matrix(c('m1', 'm2'), nrow = 2, ncol = 1), 
@@ -800,7 +813,7 @@ To highlight the problems associated with treating all time intervals in a datas
 
 <<fulldiscretecomparison,cache=TRUE >>=
 data("ctExample1")
-traitmodel <- ctModel(type='omx', n.manifest = 2, n.latent = 2, Tpoints = 6, 
+traitmodel <- ctModel(n.manifest = 2, n.latent = 2, Tpoints = 6, 
   LAMBDA = diag(2), manifestNames = c("LeisureTime", "Happiness"), 
   latentNames = c("LeisureTime", "Happiness"), TRAITVAR = "auto")
 traitfit <- ctFit(datawide = ctExample1, ctmodelobj = traitmodel)
@@ -840,7 +853,7 @@ The following script loops over a sequence in which data is generated from a ver
 output <- matrix(NA, 10, 7)
 colnames(output) <- c('True', 'ctsem', 'cts', 'PSM', 'yuima', 'arima', 'OpenMx')
 for(i in 1:nrow(output)){
-generatingModel <- ctModel(type='omx', n.latent = 1, n.manifest = 1, 
+generatingModel <- ctModel(n.latent = 1, n.manifest = 1, 
   Tpoints = 500,
   LAMBDA = diag(1), DRIFT = matrix(-.3, nrow = 1),
   CINT = matrix(3, 1, 1),
@@ -854,7 +867,7 @@ longData <- ctWideToLong(ctsemData, Tpoints=500, n.manifest=1)
 longData <- ctDeintervalise(longData)
 
 ### ctsem package
-ctsemModel <- ctModel(type='omx', n.latent=1, n.manifest = 1, 
+ctsemModel <- ctModel(n.latent=1, n.manifest = 1, 
   Tpoints = 500,
   MANIFESTVAR = diag(0, 1),
   LAMBDA = diag(1))
@@ -885,7 +898,7 @@ log(arfit$coef[1]) #transform ar1 parameter to drift parameter
 output[i, 6]<-log(arfit$coef[1])
 
 ### OpenMx state space continuous time function (specified via ctsem here)
-ctsemModel <- ctModel(type='omx', n.latent=1, n.manifest = 1, 
+ctsemModel <- ctModel(n.latent=1, n.manifest = 1, 
   Tpoints = 500,
   MANIFESTVAR = diag(0, 1), T0VAR=diag(1), LAMBDA = diag(1))
 mxFit <- ctFit(ctsemData, ctsemModel, objective='Kalmanmx', 
