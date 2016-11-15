@@ -6,9 +6,10 @@
 \usage{
 ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 2000,
   kalman = TRUE, binomial = FALSE, fit = TRUE, plot = FALSE,
-  adapt_delta = 0.8, max_treedepth = 10, asymdiffusion = FALSE,
-  optimize = FALSE, vb = FALSE, chains = 1, inits = NULL,
-  initwithoptim = FALSE, ...)
+  asymdiffusion = FALSE, optimize = FALSE, vb = FALSE, chains = 1,
+  inits = NULL, initwithoptim = FALSE, control = list(adapt_delta = 0.9,
+  adapt_init_buffer = 30, adapt_window = 2, max_treedepth = 10, stepsize =
+  0.001), ...)
 }
 \arguments{
 \item{datalong}{long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables, 
@@ -36,11 +37,6 @@ setting initwithoptim=TRUE may be helpful.}
 \item{plot}{if TRUE, a Shiny program is launched upon fitting to interactively plot samples. 
 May struggle with many (e.g., > 5000) parameters, and may leave sample files in working directory if sampling is terminated.}
 
-\item{adapt_delta}{Stan control parameter denoting acceptance ratio to aim for. Increasing is meant to be useful
-as a way to decrease divergent transitions, but I've not observed this for these models.}
-
-\item{max_treedepth}{Stan control parameter, may be worth increasing if many post-warmup iterations reach max treedepth.}
-
 \item{asymdiffusion}{if TRUE, increases fitting speed at cost of model flexibility - T0VAR in the model specification is ignored, the DIFFUSION matrix specification is used as the 
 asymptotic DIFFUSION matrix (Q*_inf in the vignette / paper) (making it difficult if not impossible to properly specify
 higher order processes). The speed increases come about because the internal Kalman filter routine has many steps removed, and the
@@ -58,6 +54,8 @@ no parameters vary across subjects.}
 \item{initwithoptim}{Logical. If TRUE, the model, with population standard deviations fixed to 1 
 (so approx 65% of the population mean prior), is first fit with penalised maximum likelihood to determine starting values
 for the chains. This can help speed convergence and avoid problematic regions for certain problems.}
+
+\item{control}{List of arguments sent to \code{\link[rstan]{stan}} control argument, regarding warmup / sampling behaviour.}
 }
 \description{
 Fits a ctsem model specified via \code{\link{ctModel}} with type either 'stanct' or 'standt', using Bayseian inference software
@@ -65,73 +63,31 @@ Stan.
 }
 \examples{
 \dontrun{
-### Single latent process, measured by 1 indicator, 50 subjects, 
-### 20 time points, varying intercepts for indicators, single
-### time independent predictor.
+#test data with 2 manifest indicators measuring 1 latent process each, 
+# 1 time dependent predictor, 3 time independent predictors
+head(ctstantestdat) 
 
-set.seed(2)
+#generate a ctStanModel
+model<-ctModel(type='stanct',
+n.latent=2, latentNames=c('eta1','eta2'),
+n.manifest=2, manifestNames=c('Y1','Y2'),
+n.TDpred=1, TDpredNames='TD1', 
+n.TIpred=3, TIpredNames=c('TI1','TI2','TI3'),
+LAMBDA=diag(2))
 
-#Specify a ctsem model of type 'omx' for data generation
-Tpoints<-30
+#set all parameters except manifest means to be fixed across subjects
+model$parameters$indvarying[-c(19,20)] <- FALSE
 
-gm<-ctModel(type='omx', n.latent=1, n.manifest=1, Tpoints=Tpoints,
-LAMBDA=diag(1), DRIFT=diag(-.4,1), CINT=diag(0,1),
- MANIFESTMEANS=matrix(0,nrow=1,ncol=1),
- TRAITVAR=diag(1,1),
- n.TIpred=1,
- TIPREDEFFECT = diag(.5,1), TIPREDVAR = diag(2,1),
- MANIFESTVAR=t(chol(diag(.1,1))), DIFFUSION=t(chol(diag(5,1))))
+#fit model to data (takes a few minutes - but insufficient 
+# iterations and max_treedepth for inference!)
+fit<-ctStanFit(ctstantestdat, model, iter=200, chains=2, 
+control=list(max_treedepth=6))
 
-cd<-ctGenerate(gm, n.subjects=20, burnin=300) #generate data
+#output functions
+summary(fit) 
 
-ctIndplot(cd, n.subjects=6, Tpoints=Tpoints, n.manifest=1) #plot a few subjects data
+plot(fit)
 
-#### generate continuous time ctstan model
-checkm<-ctModel(type='stanct', n.latent=1, n.manifest=1, LAMBDA=diag(1)) 
- 
- #### plot the population priors and some example subject level priors
- ctStanPlotPriors(checkm, wait=FALSE) 
- 
- #### Convert ctsem wide format data (used with type = 'omx') 
- #### to appropriate long format
-long<-ctWideToLong(cd,Tpoints,n.manifest=checkm$n.manifest,
-manifestNames = checkm$manifestNames, n.TDpred=checkm$n.TDpred,
-n.TIpred=checkm$n.TIpred, TDpredNames = checkm$TDpredNames,
-TIpredNames = checkm$TIpredNames)
-  
-long<-ctDeintervalise(long) # Convert from time intervals to absolute time
-
-#Set all parameters except the manifest means to be fixed across subjects
-checkm$parameters$indvarying[-6]<-FALSE
-
-#Fit the model to the data using 20 iterations, 2 chains and 
-20 iterations is only suitable for testing!
-fit<-ctStanFit(long, checkm, iter=200, chains=2)
-
-ctStanSummary(fit) #summary of output parameters
-
-####shinystan provides a web gui for exploring the samples
-#require(shinystan) 
-#launch_shinystan(fit)
-
-#### generate and plot subject specific estimates 
-#### for subjects 2 and 3, using the Kalman filter.
-#### (for updated or smoothed estimates, use
-#### $yupdated or $ysmoothed. For estimates of the latent states,
-#### use eta instead of y.
-pred<-ctStanPredictions(ctstanmodel=checkm,
-ctstanfitobj=fit, subjects=c(2,3), datalong=long)
-
-plot(pred[[2]]$y, type='b', lwd=1, lty=3,col='red')
-points(pred[[2]]$ypred, type='b', col='red', lwd=2)
-points(pred[[3]]$y, type='b', lwd=1, lty=3,col='blue')
-points(pred[[3]]$ypred, type='b', col='blue', lwd=2)
-
-### Use rstan's traceplot to traceplot output parameters only
-rstan::stan_trace(fit, pars = rownames(ctStanSummary(fit)))
-
-### Use rstan's density plot on output parameters only
-rstan::stan_dens(fit, pars = rownames(ctStanSummary(fit)))
 }
 }
 

@@ -8,7 +8,7 @@ ctStanContinuousPars(ctstanfitobj, subjects = "all", iter = "all",
   calcfunc = mean, ...)
 }
 \arguments{
-\item{ctstanfitobj}{fit object from \code{\link{ctStanFit}}}
+\item{ctstanfitobj}{fit object from \code{\link[rstan]{ctStanFit}}}
 
 \item{subjects}{Either 'all', or integers denoting which subjects to perform the calculation over. 
 When multiple subjects are specified, the returned matrices will be a mean over subjects.}
@@ -18,8 +18,9 @@ or an integer specifying which iteration/s to use.}
 
 \item{calcfunc}{Function to apply over samples, must return a single value. 
 By default the mean over all samples is returned, but one might also be interested in
-the \code{\link{sd}} or \code{\link{quantile}} functions.
-... additional parameters to pass to calcfunc. For instance, with calcfunc = quantile, 
+the \code{\link[stats]{sd}} or \code{\link[stats]{quantile}} functions.}
+
+\item{...}{additional parameters to pass to calcfunc. For instance, with calcfunc = quantile, 
 the probs argument is needed to ensure only a single value is returned.}
 }
 \description{

@@ -5,7 +5,7 @@
 \alias{plot.ctStanFit}
 \title{plot.ctStanFit}
 \usage{
-plot.ctStanFit(x, types = "all", wait = TRUE, ...)
+\method{plot}{ctStanFit}(x, types = "all", wait = TRUE, ...)
 }
 \arguments{
 \item{x}{Fit object from \code{\link{ctStanFit}}.}

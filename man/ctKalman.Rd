@@ -4,8 +4,8 @@
 \alias{ctKalman}
 \title{ctKalman}
 \usage{
-ctKalman(kpars, datalong, manifestNames, latentNames, TDpredNames = NULL,
-  continuoustime = TRUE, timecol = "time")
+ctKalman(kpars, datalong, manifestNames, latentNames, imputeMissings = FALSE,
+  TDpredNames = NULL, continuoustime = TRUE, timecol = "time")
 }
 \arguments{
 \item{kpars}{list object containing DRIFT,T0VAR,DIFFUSION,CINT,T0MEANS,TDPREDEFFECT,
@@ -18,6 +18,9 @@ but must contain only a single subjects' data and does not need an id column.}
 \item{manifestNames}{String vector of names of manifest variables to use from datalong.}
 
 \item{latentNames}{String vector of names of latent variables.}
+
+\item{imputeMissings}{Logical. If TRUE, randomly generate any missing observations of 
+manifest variables according to model.}
 
 \item{TDpredNames}{If model contains time dependent predictors, 
 string vector of their names in the data.}

@@ -38,6 +38,45 @@ rl<-function(x) { #robust logical - wrap checks likely to return NA's in this
 
 
 
+#' ctDensity
+#'
+#' Wrapper for base R density function that removes outliers and computes 'reasonable' bandwidth and x and y limits.
+#' Used for ctsem density plots.
+#' 
+#' @param x numeric vector to compute density for.
+#' @examples
+#' y <- ctDensity(exp(rnorm(80)))
+#' plot(y$density,xlim=y$xlim,ylim=y$ylim)
+#' 
+#' #### Compare to base defaults:
+#' par(mfrow=c(1,2))
+#' y=exp(rnorm(10000))
+#' ctdens<-ctDensity(y)
+#' plot(ctdens$density, ylim=ctdens$ylim,xlim=ctdens$xlim)
+#' plot(density(y))
+#' @export
+
+ctDensity<-function(x){
+  xlims=stats::quantile(x,probs=c(.02,.98))
+  mid=mean(c(xlims[2],xlims[1]))
+  xlims[1] = xlims[1] - (mid-xlims[1])
+  xlims[2] = xlims[2] + (xlims[2]-mid)
+  x=x[x>xlims[1] & x<xlims[2]]
+  bw=(max(x)-min(x))^1.5 / length(x)^.4 *.5
+  
+  xlims=stats::quantile(x,probs=c(.01,.99))
+  mid=mean(c(xlims[2],xlims[1]))
+  xlims[1] = xlims[1] - (mid-xlims[1])/8
+  xlims[2] = xlims[2] + (xlims[2]-mid)/8
+  
+  out1<-stats::density(x,bw=bw,n=5000)
+  out3=c(0,max(out1$y)*1.1)
+  return(list(density=out1,xlim=xlims,ylim=out3))
+}
+
+
+
+
 #' ctWideNames
 #' sets default column names for wide ctsem datasets. Primarily intended for internal ctsem usage.
 #' @param n.manifest number of manifest variables per time point in the data.
@@ -92,9 +131,9 @@ cseq <- function(from, to, by){
 }
 
 get_stan_params <- function(object) {
-  stopifnot(is(object, "stanfit"))
+  stopifnot(methods::is(object, "stanfit"))
   params <- grep("context__.vals_r", fixed = TRUE, value = TRUE,
-    x = strsplit(get_cppcode(get_stanmodel(object)), "\n")[[1]])
+    x = strsplit(rstan::get_cppcode(rstan::getstanmodel(object)), "\n")[[1]])
   params <- sapply(strsplit(params, "\""), FUN = function(x) x[[2]])
   params <- intersect(params, object@model_pars)
   return(params)
@@ -103,7 +142,7 @@ get_stan_params <- function(object) {
 
 get_stan_massmat<-function(fit){
   
-  spars<-get_stan_params(fit)
+  spars<-rstan::getstan_params(fit)
   spars2<-c()
   for(pari in spars){
     spars2<-c(spars2,grep(paste0(pari,'['),names(fit@sim$samples[[1]]),fixed=TRUE))
@@ -113,7 +152,7 @@ get_stan_massmat<-function(fit){
   for(chaini in 1:fit@sim$chains){
     temp<-c()
     for(pari in spars2){
-      newval<-cov(cbind(fit@sim$samples[[chaini]][[pari]][(fit@sim$warmup - fit@stan_args[[1]]$control$adapt_term_buffer):fit@sim$warmup]))
+      newval<-stats::cov(cbind(fit@sim$samples[[chaini]][[pari]][(fit@sim$warmup - fit@stan_args[[1]]$control$adapt_term_buffer):fit@sim$warmup]))
       names(newval)<-names(fit@sim$samples[[chaini]])[pari]
       temp<-c(temp,newval)
     }

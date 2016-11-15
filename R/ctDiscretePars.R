@@ -2,15 +2,15 @@
 #'
 #'Returns the continuous time parameter matrices for specified subjects of a ctStanFit fit object
 #'
-#'@param ctstanfitobj fit object from \code{\link{ctStanFit}}
+#'@param ctstanfitobj fit object from \code{\link[rstan]{ctStanFit}}
 #'@param subjects Either 'all', or integers denoting which subjects to perform the calculation over. 
 #'When multiple subjects are specified, the returned matrices will be a mean over subjects.
 #'@param iter Either character string 'all' which will then use all post-warmup iterations, 
 #'or an integer specifying which iteration/s to use.
 #'@param calcfunc Function to apply over samples, must return a single value. 
 #'By default the mean over all samples is returned, but one might also be interested in
-#'the \code{\link{sd}} or \code{\link{quantile}} functions.
-#'... additional parameters to pass to calcfunc. For instance, with calcfunc = quantile, 
+#'the \code{\link[stats]{sd}} or \code{\link[stats]{quantile}} functions.
+#'@param ... additional parameters to pass to calcfunc. For instance, with calcfunc = quantile, 
 #'the probs argument is needed to ensure only a single value is returned.
 #'@examples
 #'#posterior mean over all subjects
@@ -27,7 +27,7 @@ ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
   
   if(class(ctstanfitobj)!='ctStanFit') stop('Not an object of class ctStanFit')
   
-  e<-extract(ctstanfitobj$stanfit) #first dim of subobjects is iter, 2nd subjects
+  e<-rstan::extract(ctstanfitobj$stanfit) #first dim of subobjects is iter, 2nd subjects
   niter=dim(e$DRIFT)[1]
   
   if(iter!='all') {
@@ -134,6 +134,7 @@ ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
 #'@param subjects Either 'all', to take the average over all subjects, or a vector of integers denoting which
 #'subjects.
 #'@param times Numeric vector of positive values, discrete time parameters will be calculated for each.
+#'@param quantiles Which quantiles to return
 #'@param plot Logical. If TRUE, plots output using \code{\link{ctStanDiscreteParsPlot}}
 #'instead of returning output. 
 #'@param ... additional plotting arguments to control \code{\link{ctStanDiscreteParsPlot}}
@@ -147,7 +148,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   type='discreteDRIFT'
   collapseSubjects=TRUE #consider this for a switch
   
-  e<-extract(ctstanfitobj$stanfit)
+  e<-rstan::extract(ctstanfitobj$stanfit)
   if(type=='all') type=c('discreteDRIFT','latentMeans') #must match with ctDiscretePars
   
   if(subjects[1] != 'all' && !is.integer(as.integer(subjects))) stop('
@@ -191,10 +192,10 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
     message('Getting ',typei,' / ', length(type), ', ',type[typei])
     matrixtype=ifelse(type[typei] %in% c('discreteDRIFT'),TRUE, FALSE) #include any matrix type outputs
     
-    out[[typei]] <- aaply(1:niter,1,function(iterx){
+    out[[typei]] <- plyr::aaply(1:niter,1,function(iterx){
       if(collapseSubjects) subjectvec=1 else subjectvec=1:nsubjects #average over subjects before computing? much faster but answers dif question.
-      aaply(subjectvec,1,function(subjecty){
-        ctparsxy <- llply(ctpars, function(obji) {
+      plyr::aaply(subjectvec,1,function(subjecty){
+        ctparsxy <- plyr::llply(ctpars, function(obji) {
           ismatrix = length(dim(obji)) > 3 #check if obji is a matrix or vector
           out=eval(parse(text=paste0('obji[,',
             if(ismatrix) ',',
@@ -269,7 +270,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
 #' denoting line types for each quantile.
 #' 'auto' specifies c(3, 1, 3) if there are 3 quantiles to be plotted (default), otherwise simply 1.
 #'@param colorvec Either 'auto', or a vector of color values denoting colors for each index to be plotted.
-#''auto' generates colors using the \code{\link{rainbow}} function.
+#''auto' generates colors using the \code{\link[grDevices]{rainbow}} function.
 #'@param plotcontrol list of arguments to pass to plot function. 
 #'The following arguments are ignored: ylim,lwd,lty,col,x,y.
 #'@param legendcontrol list of arguments to pass to legend function. 'legend=' and 'text.col=' arguments
@@ -310,7 +311,7 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
     rep(1:nlatent,nlatent),
     rep(1:nlatent,each=nlatent))
   
-  if(colorvec[1]=='auto') colorvec=rainbow(nrow(indices),alpha=.8)
+  if(colorvec[1]=='auto') colorvec=grDevices::rainbow(nrow(indices),alpha=.8)
   
   if(ylim=='auto') ylim=range(plyr::aaply(input,c(3,4),function(x)
     x[indices]),na.rm=TRUE) #range of diagonals

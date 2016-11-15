@@ -22,7 +22,7 @@ ctDensity<-function(x){
   xlims[1] = xlims[1] - (mid-xlims[1])
   xlims[2] = xlims[2] + (xlims[2]-mid)
   x=x[x>xlims[1] & x<xlims[2]]
-  bw=(max(x)-min(x)) / length(x)^.4 *.2
+  bw=(max(x)-min(x)) / length(x)^.4 *.3
   
   xlims=quantile(x,probs=c(.01,.99))
   mid=mean(c(xlims[2],xlims[1]))

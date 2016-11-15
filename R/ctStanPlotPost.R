@@ -20,18 +20,19 @@ ctStanPlotPost<-function(ctstanfitobj, rows='all',mfrow='auto',
   
   inv_logit<-function(x) exp(x)/(1+exp(x))
   
-  paroriginal<-par()[c('mfrow','mgp','mar')]
+  paroriginal<-graphics::par()[c('mfrow','mgp','mar')]
   
-  do.call(par,parcontrol)
+  do.call(graphics::par,parcontrol)
   
-  s<-extract(ctstanfitobj$stanfit)
+  s<-rstan::extract(ctstanfitobj$stanfit)
   m<-ctstanfitobj$ctstanmodel$parameters
   if(rows=='all') rows<-(1:nrow(m))[is.na(m$value)]  
   if(!is.null(mfrow)){
     if(mfrow=='auto') {
-      par(mfrow=c(min(4,n2mfrow(length(rows)*4)[2]),min(4,n2mfrow(length(rows)*4)[1])))
+      graphics::par(mfrow=c(min(3,grDevices::n2mfrow( (length(rows)+sum(m$indvarying)*3))[2]), 
+        min(3,n2mfrow( (length(rows)+sum(m$indvarying)*3))[1])))
     }
-    if(mfrow!='auto') par(mfrow=mfrow)
+    if(mfrow!='auto') graphics::par(mfrow=mfrow)
   }
   
   
@@ -54,10 +55,32 @@ ctStanPlotPost<-function(ctstanfitobj, rows='all',mfrow='auto',
   pnames<-rep(NA,sum(m$indvarying))
   for(rowi in rows){
     hypermeancount <- which(m$param[is.na(m$value)] %in% m$param[rowi])
+    
+    hypermean<- s$hypermeans[,hypermeancount]
+    
+    param<-hypermean
+    dhypermeanpost<-ctDensity(eval(parse(text=paste0(m$transform[rowi]))))
+    graphics::plot(dhypermeanpost$density,main=paste0('Pop. mean ',m$param[rowi]),
+      xlim=dhypermeanpost$xlim,
+      ylim=c(0,dhypermeanpost$ylim[2]),
+      xlab='Value',lwd=2,xaxs='i',yaxs='i')
+    
+    param<-stats::rnorm(50000,0,1)
+    meanprior <- eval(parse(text=paste0(m$transform[rowi])))
+    dmeanprior<-ctDensity(meanprior)
+    
+    
+    # meanprior <- meanprior[meanprior > dsubjectprior$xlim[1]-5 & meanprior < dsubjectprior$xlim[2] + 5]
+    
+    graphics::points(dmeanprior$density,col='blue',type='l',lty=2,lwd=2)
+    graphics::legend('topright',c('Pop. mean posterior','Pop. mean prior'),
+      text.col=c('black','blue'),bty='n')
+    
+    
     if(m$indvarying[rowi]){
       
       indvaryingcount<-which(m$param[is.na(m$value) & m$indvarying] %in% m$param[rowi])
-      hypermean<- s$hypermeans[,hypermeancount]
+      
       
       hypersd<-s$hypersd[,indvaryingcount] * m$sdscale[rowi] #hypersd samples
       hypersd<- hypersd[hypersd>0]
@@ -66,34 +89,31 @@ ctStanPlotPost<-function(ctstanfitobj, rows='all',mfrow='auto',
       
       param<-indparams
       dindparams<-ctDensity(eval(parse(text=paste0(m$transform[rowi]))))
-      param<-rnorm(50000,hypermean,hypersd)
+      param<-stats::rnorm(50000,hypermean,hypersd)
       dsubjectprior<-ctDensity(eval(parse(text=paste0(m$transform[rowi]))))
-      param<-rnorm(50000,0,1)
-      meanprior <- eval(parse(text=paste0(m$transform[rowi])))
-      meanprior <- meanprior[meanprior > dsubjectprior$xlim[1]-5 & meanprior < dsubjectprior$xlim[2] + 5]
-      dmeanprior<-ctDensity(meanprior)
+      param<-stats::rnorm(50000,0,1)
       
-      plot(dindparams$density,xlab='Value',main=m$param[rowi],lwd=2,yaxs='i',
+      graphics::plot(dindparams$density,xlab='Value',main=m$param[rowi],lwd=2,yaxs='i',
         ylim=c(0,max(dsubjectprior$ylim[2],dindparams$ylim[2])),
         xlim=c(min(dsubjectprior$xlim[1],dindparams$xlim[1]),max(dsubjectprior$xlim[2],dindparams$xlim[2])))
-      points(dsubjectprior$density,col='red',lwd=2,lty=2,type='l')
-      points(dmeanprior$density,lwd=2,type='l',col='blue',lty=3)
-      legend('topright',c('Subject param posterior','Subject param prior','Pop mean prior'),
+      graphics::points(dsubjectprior$density,col='red',lwd=2,lty=2,type='l')
+      graphics::points(dmeanprior$density,lwd=2,type='l',col='blue',lty=3)
+      graphics::legend('topright',c('Subject param posterior','Subject param prior','Pop mean prior'),
         text.col=c('black','red','blue'),bty='n')
       
       #pre-transform hyper std dev
       dhypersdpost<-ctDensity(hypersd)
       
-      hypersdprior<-  rnorm(100000,0,m$sdscale[rowi])
+      hypersdprior<-  stats::rnorm(100000,0,m$sdscale[rowi])
       hypersdprior <- hypersdprior[hypersdprior>0]
       dhypersdprior<-ctDensity(hypersdprior)
       
-      plot(dhypersdpost$density,main=paste0('Pre-tform pop. sd ',m$param[rowi]),xlab='Value',lwd=2,
+      graphics::plot(dhypersdpost$density,main=paste0('Pre-tform pop. sd ',m$param[rowi]),xlab='Value',lwd=2,
         xlim=c(min(dhypersdprior$xlim[1],dhypersdpost$xlim[1]),max(dhypersdprior$xlim[2],dhypersdpost$xlim[2])),
         ylim=c(0,max(dhypersdprior$ylim[2],dhypersdpost$ylim[2])),
         xaxs='i',yaxs='i')
-      points(dhypersdprior$density,col='blue',type='l',lty=2,lwd=2)
-      legend('topright',c('Pop. sd posterior','Pop. sd prior'),
+      graphics::points(dhypersdprior$density,col='blue',type='l',lty=2,lwd=2)
+      graphics::legend('topright',c('Pop. sd posterior','Pop. sd prior'),
         text.col=c('black','blue'),bty='n')
       
       #post-transform hyper std dev
@@ -107,25 +127,13 @@ ctStanPlotPost<-function(ctstanfitobj, rows='all',mfrow='auto',
       hsdprior<-abs(high - low)/2*100
       
       dhsdprior<-ctDensity(sample(hsdprior,50000,replace=TRUE))
-      plot(dhsdpost$density,main=paste0('Pop. sd ',m$param[rowi]),xlab='Value',lwd=2,
+      graphics::plot(dhsdpost$density,main=paste0('Pop. sd ',m$param[rowi]),xlab='Value',lwd=2,
         ylim=c(0,max(dhsdpost$ylim[2],dhsdprior$ylim[2])),
         xlim=c(min(dhsdprior$xlim[1],dhsdpost$xlim[1]), max(dhsdprior$xlim[2],dhsdpost$xlim[2])),
         yaxs='i',xaxs='i')
-      points(dhsdprior$density,col='blue',type='l',lty=2,lwd=2)
-      legend('topright',c('Pop. sd posterior','Pop. sd prior'),
+      graphics::points(dhsdprior$density,col='blue',type='l',lty=2,lwd=2)
+      graphics::legend('topright',c('Pop. sd posterior','Pop. sd prior'),
         text.col=c('black','blue'),bty='n')
-      
-      param<-hypermean
-      dhypermeanpost<-ctDensity(eval(parse(text=paste0(m$transform[rowi]))))
-      plot(dhypermeanpost$density,main=paste0('Pop. mean ',m$param[rowi]),
-        xlim=dhypermeanpost$xlim,
-        ylim=c(0,dhypermeanpost$ylim[2]),
-        xlab='Value',lwd=2,xaxs='i',yaxs='i')
-      points(dmeanprior$density,col='blue',type='l',lty=2,lwd=2)
-      legend('topright',c('Pop. mean posterior','Pop. mean prior'),
-        text.col=c('black','blue'),bty='n')
-      
-      
       
       pmeans[,indvaryingcount]<-sum$summary[sumnames %in% 
           paste0(m$matrix[rowi],'[',1:nsubjects,',',m$row[rowi],
@@ -135,47 +143,47 @@ ctStanPlotPost<-function(ctstanfitobj, rows='all',mfrow='auto',
       pnames[indvaryingcount]<-paste0(m$matrix[rowi],'[',m$row[rowi],',',m$col[rowi],']')
       
       
-      if(wait==TRUE & rowi != tail(rows,1)){
+      if(wait==TRUE & rowi != utils::tail(rows,1)){
         message("Press [enter] to display next plot")
         readline()
       }
     }
   }
   
-  if(length(rows)>1){
-    require(lattice)
-    colnames(pmeans)<-pnames
-    splom(pmeans,
-      upper.panel=function(x,y) panel.loess(x, y),
-      diag.panel = function(x,...){
-        yrng <- current.panel.limits()$ylim
-        d <- density(x, na.rm=TRUE)
-        d$y <- with(d, yrng[1] + 0.95 * diff(yrng) * y / max(y) )
-        panel.lines(d)
-        diag.panel.splom(x,...)
-      },
-      lower.panel = function(x, y, i,j){
-        panel.splom(x,y,col=rgb(0,0,1,alpha=.2),pch=16)
-        
-        if( j==1)  panel.axis(side=c('left'),outside=T,
-          at=round(seq(max(y),min(y),length.out=5)[c(-1,-5)],digits=3),tck=1,
-          labels=round(seq(max(y),min(y),length.out=5)[c(-1,-5)],digits=3))
-        
-        if( i==ncol(pmeans))  panel.axis(side=c('bottom'),outside=T,
-          at=round(seq(max(x),min(x),length.out=5)[c(-1,-5)],digits=3),tck=1,
-          labels=round(seq(max(y),min(y),length.out=5)[c(-1,-5)],digits=3))
-      },
-      pscales=0,
-      as.matrix = TRUE,
-      varname.cex=.4,
-      strip=T,
-      main='Subject level parameter plots',
-      xlab=NULL,ylab=NULL,
-      col=rgb(0,0,1,alpha=.2),pch=16
-    )
-  }
+  # if(length(rows)>1){
+  #   require(lattice)
+  #   colnames(pmeans)<-pnames
+  #   splom(pmeans,
+  #     upper.panel=function(x,y) panel.loess(x, y),
+  #     diag.panel = function(x,...){
+  #       yrng <- current.panel.limits()$ylim
+  #       d <- density(x, na.rm=TRUE)
+  #       d$y <- with(d, yrng[1] + 0.95 * diff(yrng) * y / max(y) )
+  #       panel.lines(d)
+  #       diag.panel.splom(x,...)
+  #     },
+  #     lower.panel = function(x, y, i,j){
+  #       panel.splom(x,y,col=rgb(0,0,1,alpha=.2),pch=16)
+  #       
+  #       if( j==1)  panel.axis(side=c('left'),outside=T,
+  #         at=round(seq(max(y),min(y),length.out=5)[c(-1,-5)],digits=3),tck=1,
+  #         labels=round(seq(max(y),min(y),length.out=5)[c(-1,-5)],digits=3))
+  #       
+  #       if( i==ncol(pmeans))  panel.axis(side=c('bottom'),outside=T,
+  #         at=round(seq(max(x),min(x),length.out=5)[c(-1,-5)],digits=3),tck=1,
+  #         labels=round(seq(max(y),min(y),length.out=5)[c(-1,-5)],digits=3))
+  #     },
+  #     pscales=0,
+  #     as.matrix = TRUE,
+  #     varname.cex=.4,
+  #     strip=T,
+  #     main='Subject level parameter plots',
+  #     xlab=NULL,ylab=NULL,
+  #     col=rgb(0,0,1,alpha=.2),pch=16
+  #   )
+  # }
   
-  do.call(par,paroriginal)
+  do.call(graphics::par,paroriginal)
   
 }
 

@@ -4,9 +4,9 @@
 \alias{plot.ctsemFit}
 \title{Plotting function for object class ctsemFit}
 \usage{
-plot.ctsemFit(x, resolution = 50, wait = TRUE, max.time = "auto",
-  mean = TRUE, withinVariance = TRUE, AR = TRUE, CR = TRUE,
-  standardiseCR = TRUE, randomImpulse = FALSE,
+\method{plot}{ctsemFit}(x, resolution = 50, wait = TRUE,
+  max.time = "auto", mean = TRUE, withinVariance = TRUE, AR = TRUE,
+  CR = TRUE, standardiseCR = TRUE, randomImpulse = FALSE,
   experimentalImpulse = FALSE, xlab = "Time", meansylim = "auto",
   ARylim = "auto", CRylim = "auto", ylab = "Value", ...)
 }

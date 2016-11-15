@@ -245,16 +245,16 @@ ctStanKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
         
         
         if(subjecti == subjects[1] & kveci==1 && dimi == 1 && !add) {
-          do.call(plot.default,plist) 
+          do.call(graphics::plot.default,plist) 
           if(grid) grid()
-        } else do.call(points.default,plist) 
+        } else do.call(graphics::points.default,plist) 
         
         if(!is.na(errorvec[kveci])){
           if(is.null(out[[subiname]][[errorvec[kveci]]])) stop('Invalid errorvec specified!')
           backwardstimesindex=order(plist$x,decreasing=TRUE)
 
           # if(is.null(polygoncontrol$angle)) 
-            polygoncontrol$angle=runif(1,0,359)
+            polygoncontrol$angle=stats::runif(1,0,359)
             polygonargs<-polygoncontrol
             polygonargs$x=c(plist$x,plist$x[backwardstimesindex])
             polygonargs$y=c(plist$y + errormultiply * out[[subiname]][[errorvec[kveci]]][kdimi,kdimi,], 

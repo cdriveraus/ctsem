@@ -13,6 +13,8 @@
 #' @param latentNames String vector of names of latent variables.
 #' @param TDpredNames If model contains time dependent predictors, 
 #' string vector of their names in the data.
+#' @param imputeMissings Logical. If TRUE, randomly generate any missing observations of 
+#' manifest variables according to model.
 #' @param continuoustime Logical, whether to use a continuous time Kalman filter or discrete time. 
 #' Refers only to latent states, observations are always at discrete time points.
 #' @param timecol name of time column in datalong. Note that time column must be an ascending sequence
@@ -48,7 +50,8 @@
 #' @export
 
 ctKalman<-function(kpars,datalong,
-  manifestNames,latentNames,TDpredNames=NULL,
+  manifestNames,latentNames,imputeMissings=FALSE,
+  TDpredNames=NULL,
   continuoustime=TRUE,
   timecol='time'){
   
@@ -110,14 +113,19 @@ ctKalman<-function(kpars,datalong,
       etapriorcov[[rowi]] <-  discreteDRIFT[[rowi]] %*% etaupdcov[[rowi-1]] %*% t(discreteDRIFT[[rowi]])  + discreteDIFFUSION[[rowi]] #check transpose
     }
     
+    if(imputeMissings) Y[rowi,] <- 0 #etaprior[[rowi]] + t(chol(etapriorcov[[rowi]])) %*% rnorm(nmanifest,0,1)
+    
     nafilter<-!is.na(Y[rowi,])
     observed[[rowi]]<-nafilter
-    
-    y <- Y[rowi,,drop=FALSE][,nafilter,drop=FALSE]
     
     # // one step ahead predictive distribution of y
     yprior[[rowi]] <- kpars$MANIFESTMEANS + kpars$LAMBDA %*% etaprior[[rowi]]
     ypriorcov[[rowi]] <- kpars$LAMBDA %*% etapriorcov[[rowi]] %*% t(kpars$LAMBDA) + kpars$MANIFESTVAR
+    
+    if(imputeMissings) Y[rowi,] <- yprior[[rowi]] + t(chol(ypriorcov[[rowi]])) %*% rnorm(nmanifest,0,1)
+    
+    y <- Y[rowi,,drop=FALSE][,nafilter,drop=FALSE]
+    
     # // forecast error
     err[[rowi]]<-matrix(NA,nrow=nmanifest)
     err[[rowi]][nafilter] <- as.numeric(y - yprior[[rowi]][nafilter,])
@@ -196,7 +204,7 @@ ctKalman<-function(kpars,datalong,
   yupd<-matrix(unlist(yupd),byrow=T,ncol=nmanifest,
     dimnames=list(timedims,manifestNames))
   
-  y<-matrix(datalong[,manifestNames,drop=FALSE],ncol=nmanifest)
+  y<-Y #matrix(datalong[,manifestNames,drop=FALSE],ncol=nmanifest)
   colnames(y)<-manifestNames
   
   if(ntdpred>0) {
@@ -210,7 +218,7 @@ ctKalman<-function(kpars,datalong,
   ysmooth<-matrix(unlist(ysmooth),byrow=T,ncol=nmanifest,
     dimnames=list(timedims,manifestNames))
   
-  etapriorcov <- alply(etapriorcov,1,function(x) x,.dims=TRUE)
+  etapriorcov <- plyr::alply(etapriorcov,1,function(x) x,.dims=TRUE)
   dimnames(etapriorcov)
   
   

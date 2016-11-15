@@ -39,7 +39,7 @@ upper and lower limits of y axis.}
 'auto' specifies c(1,3,1) if there are 3 quantiles to be plotted (default), otherwise simply 3.}
 
 \item{colorvec}{Either 'auto', or a vector of color values denoting colors for each index to be plotted.
-'auto' generates colors using the \code{\link{rainbow}} function.}
+'auto' generates colors using the \code{\link[grDevices]{rainbow}} function.}
 
 \item{ltyvec}{Either 'auto', or a vector of line type integers (as for the lty parameter normally)
 denoting line types for each quantile.

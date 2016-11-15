@@ -17,6 +17,9 @@ ctGenerate(ctmodelobj, n.subjects = 1000, burnin = 0, dT = 1,
 \item{dT}{Time interval (delta T) to use, defaults to 1.}
 
 \item{asymptotes}{Are the parameters provided asymptotic paramters, or the regular continuous time parameters?}
+
+\item{simulTDpredeffect}{logical - whether time dependent predictors impact instantaneously, or an
+instant *after* instantaneously. Switch reflects difference between ctStanFit and ctFit.}
 }
 \description{
 This function generates data according to the specified ctsem model object. 

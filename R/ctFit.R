@@ -20,7 +20,8 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
   "TIPREDVAR","CINT","n.manifest","LAMBDA","MANIFESTMEANS","MANIFESTVAR",
   "mxFitFunctionMultigroup", "asymDIFFUSION", 'data.id',
   'filteredExpCovchol','filteredExpCovcholinv',
-  'A','M','testd'))
+  'A','M','testd',
+  'T0VAR','T0MEANS'))
 
 #' Fit a ctsem object
 #' 
@@ -481,7 +482,7 @@ ctFit  <- function(datawide, ctmodelobj,
     traitend <- latentend #because no traits yet
     latenttraitend <- traitend
     manifeststart <- n.latent * Tpoints+1
-    manifestend <- latentend+n.manifest * Tpoints
+    manifestend <- manifeststart-1 + n.manifest * Tpoints
     manifestExtent <-manifestend # includes *all* manifests - predictors also
     intervalstart <- manifestend+1
     intervalend <- manifestend+Tpoints - 1
@@ -605,8 +606,7 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
   }#close base matrices definition function
   
   #### end RAM matrix section
-  
-  
+
   
   
   
@@ -623,6 +623,8 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
     latenttraitend <- traitend
     latentExtent <- traitend
     manifestExtent <- manifestend
+    intervalstart <- manifestend+1
+    intervalend <- manifestend+Tpoints - 1
     
     #function to insert n.latent rows and columns of single specified value into matrices 
     insertProcessTraitsToMatrix <- function(x, value){      
@@ -655,8 +657,8 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
     #     rep(1:n.latent,each=Tpoints*n.manifest))]
     
     #new trait loadings to latent
-    A$values[1:latentend, (latentend+1):(latentend+n.latent)] <- diag(n.latent)
-    
+    A$values[cbind(rep(1:latentend,each=n.latent), (latentend+1):(latentend+n.latent))] <- diag(n.latent)
+
     #trait variance
     S$values[(latentend+1):(latentend+n.latent), (latentend+1):(latentend+n.latent)] <- diag(1,n.latent)
     TRAITVAR$ref <- matrix(paste0("TRAITVAR[", indexMatrix(symmetrical = TRUE, dimension = n.latent, sep = ","), "]"), nrow = n.latent)
@@ -704,6 +706,8 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
     if(traitExtension == TRUE) traitend <- traitend + n.manifest
     if(traitExtension == FALSE) traitend <- latentend + n.manifest
     manifesttraitstart <- traitend - n.manifest + 1
+    intervalstart <- manifestend+1
+    intervalend <- manifestend+Tpoints - 1
     
     #function to insert n.manifest rows and columns of single specified value into matrices 
     insertManifestTraitsToMatrix <- function(x, value){      
@@ -1733,20 +1737,7 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
   
   #model options
   originaloptimizer<- OpenMx::mxOption(NULL, "Default optimizer")
-  
-  if(optimizer=='NPSOL') {
-    # message("Setting NPSOL optimizer for OpenMx temporarily") 
-    OpenMx::mxOption(NULL, "Default optimizer", "NPSOL")
-    # OpenMx::mxOption(model, "Function precision", 1e-12) #1e-14
-  }
-  if(optimizer=='CSOLNP') {
-    # message("Setting CSOLNP optimizer for OpenMx temporarily") 
-    OpenMx::mxOption(NULL, "Default optimizer", "CSOLNP")
-  }
-  if(optimizer=='SLSQP') {
-    # message("Setting SLSQP optimizer for OpenMx temporarily") 
-    OpenMx::mxOption(NULL, "Default optimizer", "SLSQP")
-  }
+  OpenMx::mxOption(NULL, "Default optimizer", optimizer)
   
   #     model <- mxOption(model, "Standard Errors", "No")
   #     model <- mxOption(model, "Calculate Hessian", "No")
@@ -2199,7 +2190,7 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
         labels=cbind(MANIFESTMEANS$labels,matrix(NA,nrow=n.manifest,ncol=n.TDpred)),
         nrow=n.manifest, ncol=1+n.TDpred, free=cbind(MANIFESTMEANS$free,matrix(FALSE,nrow=n.manifest,ncol=n.TDpred))), 
       
-      mxMatrix(name='u',values=c(1,n.TDpred),labels=c(NA,if(gm$n.TDpred > 0) paste0('data.',TDpredNames)),nrow=1+n.TDpred,ncol=1),
+      mxMatrix(name='u',values=c(1,n.TDpred),labels=c(NA,if(n.TDpred > 0) paste0('data.',TDpredNames)),nrow=1+n.TDpred,ncol=1),
       
       Bmat,
       

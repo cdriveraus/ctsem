@@ -121,35 +121,35 @@ opts_chunk$set(warning = FALSE, fig.align = 'center', width.cutoff = 100, fig.sh
 options(width = 100, scipen = 12, digits = 3)
 
 
-Tpoints=50
-n.manifest=2
-n.TDpred=1
-n.TIpred=3
-n.latent=2
-n.subjects=20
-gm<-ctModel(type='omx', Tpoints=Tpoints,n.latent=n.latent,n.TDpred=n.TDpred,n.TIpred=n.TIpred,n.manifest=n.manifest,
-  MANIFESTVAR=diag(0.5,2),
-  TIPREDEFFECT=matrix(c(.5,0,0,-.5,0,0),nrow=2),
-  TIPREDVAR=matrix(c(1,-.2,0, 0,1,0, 0,0,.5),nrow=3),
-  TDPREDEFFECT=matrix(c(.1,-.2),nrow=2),
-  TDPREDVAR=matrix(0,nrow=n.TDpred*(Tpoints-1),ncol=n.TDpred*(Tpoints-1)),
-  TDPREDMEANS=matrix(rnorm(n.TDpred*(Tpoints-1),0,1),nrow=n.TDpred*(Tpoints-1)),
-  LAMBDA=diag(1,2), 
-  # DRIFT=matrix(c(-.6+rnorm(1,0,.15),-.2+rnorm(1,0,.1),.12+rnorm(1,0,.1),-.3+rnorm(1,0,.05)),nrow=2),
-  DRIFT=matrix(c(-.3,.2,-.1,-.2),nrow=2),
-  TRAITVAR=t(chol(matrix(c(4,3,3,4),nrow=2))),
-  # T0TRAITEFFECT=diag(3,n.latent),
-  DIFFUSION=matrix(c(.3,.1,0,.2),2),CINT=matrix(c(0,0),nrow=2),T0MEANS=matrix(0,ncol=1,nrow=2),
-  T0VAR=diag(100,2))
+# Tpoints=50
+# n.manifest=2
+# n.TDpred=1
+# n.TIpred=3
+# n.latent=2
+# n.subjects=20
+# gm<-ctModel(type='omx', Tpoints=Tpoints,n.latent=n.latent,n.TDpred=n.TDpred,n.TIpred=n.TIpred,n.manifest=n.manifest,
+#   MANIFESTVAR=diag(0.5,2),
+#   TIPREDEFFECT=matrix(c(.5,0,0,-.5,0,0),nrow=2),
+#   TIPREDVAR=matrix(c(1,-.2,0, 0,1,0, 0,0,.5),nrow=3),
+#   TDPREDEFFECT=matrix(c(.1,-.2),nrow=2),
+#   TDPREDVAR=matrix(0,nrow=n.TDpred*(Tpoints-1),ncol=n.TDpred*(Tpoints-1)),
+#   TDPREDMEANS=matrix(rnorm(n.TDpred*(Tpoints-1),0,1),nrow=n.TDpred*(Tpoints-1)),
+#   LAMBDA=diag(1,2), 
+#   # DRIFT=matrix(c(-.6+rnorm(1,0,.15),-.2+rnorm(1,0,.1),.12+rnorm(1,0,.1),-.3+rnorm(1,0,.05)),nrow=2),
+#   DRIFT=matrix(c(-.3,.2,-.1,-.2),nrow=2),
+#   TRAITVAR=t(chol(matrix(c(4,3,3,4),nrow=2))),
+#   # T0TRAITEFFECT=diag(3,n.latent),
+#   DIFFUSION=matrix(c(.3,.1,0,.2),2),CINT=matrix(c(0,0),nrow=2),T0MEANS=matrix(0,ncol=1,nrow=2),
+#   T0VAR=diag(100,2))
+# 
+# cd<-ctGenerate(gm,n.subjects=n.subjects,burnin=300, dT=1,asymptotes=F,simulTDpredeffect = T)
+# model<-ctModel(type='stanct',n.latent=n.latent,n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,LAMBDA=diag(n.latent))
+# long<-ctWideToLong(cd,Tpoints,n.manifest=model$n.manifest,manifestNames = model$manifestNames, 
+#   n.TDpred=n.TDpred,n.TIpred=n.TIpred,TDpredNames = model$TDpredNames,TIpredNames = model$TIpredNames)
+# long<-ctDeintervalise(long)
+# long[is.na(long)]<-0
+# ctstantestdat <- long
 
-cd<-ctGenerate(gm,n.subjects=n.subjects,burnin=300, dT=1,asymptotes=F,simulTDpredeffect = T)
-model<-ctModel(type='stanct',n.latent=n.latent,n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,LAMBDA=diag(n.latent))
-long<-ctWideToLong(cd,Tpoints,n.manifest=model$n.manifest,manifestNames = model$manifestNames, 
-  n.TDpred=n.TDpred,n.TIpred=n.TIpred,TDpredNames = model$TDpredNames,TIpredNames = model$TIpredNames)
-long<-ctDeintervalise(long)
-long[is.na(long)]<-0
-# fit<-ctStanFit(long,model,iter=500,chains=2,fit=T,plot=T,densehyper=F,noncentered=F,optimize=F,
-#   vb=F,tol_rel_obj=.001,eta=1, kalman=T)
 @
 \section{Overview}
 
@@ -210,10 +210,10 @@ install_github("ctsem",username='cdriveraus')
 Prepare data in long format, each row containing one time point of data for one subject. We need a subject id column containing numbers from 1 to total subjects, rising incrementally with each subject going down the data structure. This is to ensure coherence with the internal structure of the Stan model, the column is named by default "id", though this can be changed in the model specification. We also need a time column "time", containing numeric values for time, columns for manifest variables (the names of which must be given in the next step using ctModel), columns for time dependent predictors (these vary over time but have no model estimated and are assumed to impact latent processes instantly - generally these would be intervention or event dummy variables), and columns for time independent predictors (which predict the subject level parameters, that are themselves time invariant -- thus the values for a particular time independent predictor should be the same within a single subject).
 
 <<data,echo=FALSE,size='footnotesize'>>=
-temp=long
-long[,'time']=long[,'time']+round(rnorm(nrow(long),0,.1),2)
-long[c(1:5,87:89),]
-long=temp
+temp=ctstantestdat
+ctstantestdat[,'time']=ctstantestdat[,'time']+round(rnorm(nrow(ctstantestdat),0,.1),2)
+ctstantestdat[c(1:5,87:89),]
+ctstantestdat=temp
 @
 
 At present, missingness is fine on manifest indicators, but not allowed elsewhere.
@@ -269,10 +269,10 @@ One may modify the output model to either restrict between subject differences (
 
 <<transform, fig.width=8, fig.height=6>>=
 par(mfrow=c(1,2))
-ctStanPlotPriors(model,rows=11)
+plot(model,rows=11)
 print(model$parameters$transform[11])
 model$parameters$transform[11]<- "(exp(param*2) +.0001)*.2"
-ctStanPlotPriors(model,rows=11)
+plot(model,rows=11)
 @
 
 The plots show the prior distribution for the population mean of DIFFUSION[1,1] in black, as well as two possible priors for the subject level parameters. The blue prior results from assuming the population mean is one standard deviation lower than the mean of the prior, and marginalising over the prior for the standard deviation of the population distribution. This latter prior can be scaled using the sdscale column of the parameters subobject, but is by default a normal distribution with mean -3 and SD 2 on the log of the standard deviation, giving essentially a lightly regularised form of Jeffreys, or reference, prior.
@@ -295,8 +295,8 @@ model$parameters[c(19,20),c('TI1_effect','TI2_effect','TI3_effect')]<-TRUE
 Once model specification is complete, the model is fit to the data using the ctStanFit function as follows -- depending on the data, model, and number of iterations requested, this can take anywhere from a few minutes to days. Current experience suggests 300 iterations is often enough to get an idea of what is going on, but more may be necessary for robust inference. This will of course vary massively depending on model and data. For the sake of speed for this example we only sample for 100 iterations with a lowered max\_treedepth - this latter parameter controls the maximum number of steps the Hamiltonian sampler is allowed to take per iteration, with each increase of 1 doubling the maximum. With these settings the fit should take only a few minutes (but will not be adequate for inference!).
 
 <<fitting,cache=TRUE>>=
-fit<-ctStanFit(long, model, iter=100, chains=3, 
-  plot=FALSE, max_treedepth = 6)
+fit<-ctStanFit(datalong = ctstantestdat, ctstanmodel = model, iter=200, chains=3, 
+  plot=FALSE, control=list(max_treedepth = 6))
 @
 
 The plot argument allows for plotting of sampling chains in real time, which is useful for slow models to ensure that sampling is proceeding in a functional manner. Models with many parameters (e.g., many subjects and all parameters varying over subject) may be too taxing for the function to handle smoothly - we have had succcess with up to around 4000 parameters.  
@@ -305,15 +305,14 @@ The plot argument allows for plotting of sampling chains in real time, which is 
 After fitting, the ctStanSummary function may be used, which runs the rstan summary function but returns only certain output parameters likely to be of interest. However, the standard rstan output functions such as summary and extract are also available, and the shinystan package provides an excellent browser based interface. The parameters which are likely to be of most interest in the output all begin with an "output" prefix, followed by either "hmean" for hyper (population) mean, or "hsd" for hyper standard deviation. Any hmean parameters are returned in the form used for input - so correlations and standard deviations for any of the covariance related parameters. Subject specific parameters are denoted by the matrix they are from, then the first index represents the subject id, followed by standard matrix notation. For example, the 2nd row and 1st column of the DRIFT matrix for subject 8 is $"DRIFT[8,2,1]"$. Parameters in such matrices are returned in the form used for internal calculations -- that is, variance covariance matrices are returned as such, rather than the lower-triangular standard deviation and correlation matrices required for input. The exception to this are the time independent predictor effects, prefixed with $"output\_tip\_"$, for which a linear effect of a change of 1 on the predictor is approximated. So although "output\_tip\_TI1" is only truly linear with respect to internal parameterisations, we approximate the linear effect by averaging the effect of a score of +1 or -1 on the predictor, on the population mean. For any subject that substantially differs from the mean, or simply when precise absolute values of the effects are required (as opposed to general directions), they will need to be calculated manually.
 
 <<output,eval=FALSE>>=
-ctStanSummary(fit)
+summary(fit)
 @
 
-Reported by ctStanSummary are the mean and standard deviation of the distributions, as well as the number of effective samples and the potential scale reduction factor, rhat. More detailed statistics can be obtained using the regular rstan summary function or shinystan.
+Summary outputs a range of matrices regarding correlations betweeen subject level parameters. hypercorr\_means reports the posterior mean of the correlatin between raw (not yet transformed from the standard normal scale) parameters. hypercorr_sd reports the standard deviation of these parameters. hypercovcor_transformedmean a Reported by summary are the mean, standard deviation, and credible intervals of the distributions, as well as the number of effective samples and the potential scale reduction factor, rhat. More statistics can be obtained using the regular rstan summary functions or shinystan.
 
 The relation between posteriors and priors for variables of interest can also be plotted as follows:
 
 <<outputposterior>>=
-par(mfrow=c(2,2))
 ctStanPlotPost(ctstanfitobj = fit, rows=11)
 @
 
@@ -331,32 +330,20 @@ ctStanKalman(fit, subjects=2, timerange=c(0,60), timestep=.1, plot=TRUE)
 @
 
 
-\subsection{Convert from wide data}
-Data can be converted from the wide format data used for the OpenMx based ctsem approach as follows, though in the event one does not have a ctModel of type omx specified, the necessary values can be filled in by hand.
-
-<<convertdata,eval=FALSE>>=
-#Where mymodel is a ctsem model of type omx, and mydata is a dataset in the wide format used by omx type ctsem models.
-long<-ctWideToLong(mydata,mymodel$Tpoints,
-n.manifest=mymodel$n.manifest, manifestNames = mymodel$manifestNames, 
-  n.TDpred=mymodel$n.TDpred, TDpredNames = mymodel$TDpredNames,
-  n.TIpred=mymodel$n.TIpred, TIpredNames = mymodel$TIpredNames)
-
-long<-ctDeintervalise(long)
-@
-
-
 \subsection{Accessing Stan model code}
 For diagnosing problems or modifying the model in ways not achievable via the ctsem model specification, one can use ctsem to generate the Stan code and then work directly with that, simply by specifying the argument fit=FALSE to the ctStanFit function. 
 
 \subsection{Oscillating, single subject example - sunspots data}
 In the following example we fit the sunspots data available within R, which has previously been fit by various authors including \citet{tomasson2013computational}. We have used the same CARMA(2,1) model and obtained similar estimates -- some differences are due to the contrast between Bayes and maximum likelihood, though if desired one could adjust the code to fit using maximum likelihood, as here we have only one subject. There are usually some divergent transitions (indicating a difficulty in the sampling chain and a potential threat to inference) generated in this fit, possibly caused by a strong dependency between the diffusion parameter and moving average parameter -- alternate parameterisations or an increase in the adapt\_delta value (which defaults to 0.8 with a maximum of 1, though 1 is not recommended...) may help.
 <<sunspots,cache=TRUE>>=
+#get data
  sunspots<-sunspot.year
  sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
  id <- 1
  time <- 1749:1924
 datalong <- cbind(id, time, sunspots)
 
+#setup model
  model <- ctModel(type='stanct', n.latent=2, n.manifest=1, 
   manifestNames='sunspots', 
   latentNames=c('ss_level', 'ss_velocity'),
@@ -373,15 +360,12 @@ datalong <- cbind(id, time, sunspots)
  model$parameters$transform[14]<- '(param)*5+44 ' #Because not mean centered
  model$parameters$transform[4]<-'exp(param)' #To avoid multi modality with ma effect
 
+#fit
 fit <- ctStanFit(datalong, model, iter=400, chains=2, adapt_delta=.8)
 
+#output
 summary(fit)
-
-ctStanKalman(fit,plot=TRUE,
-  plotargs=list(kalmanvec=c('y','ysmooth'),
-  errorvec=c(NA,'etasmoothcov')))
 @
-
 
 
 \subsection{Population standard deviations - understanding the transforms}

@@ -34,17 +34,19 @@ License: GPL-3
 Depends:
     R (>= 3.0.0),
     OpenMx (>= 2.3.0),
-    rstan,
-    plyr
 URL: https://github.com/cdriveraus/ctsem
 Imports:
+    rstan,
+    plyr,
     MASS,
     Matrix,
     stats,
     utils,
     graphics,
     methods,
-    grDevices
+    grDevices,
+    parallel,
+    methods
 LazyData: Yes
 Suggests:
     knitr,

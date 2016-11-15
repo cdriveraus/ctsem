@@ -104,7 +104,7 @@ if(type=='standt') continuoustime<-FALSE
     latentNames=latentNames,manifestNames=manifestNames,TIpredNames=TIpredNames,TDpredNames=TDpredNames,subjectIDname='id',
     timeName='time',
     continuoustime=continuoustime)
-  class(out)<-'ctsemStanModel'
+  class(out)<-'ctStanModel'
   
   if(n.TIpred > 0) out$tipredeffectprior <- 'normal(0,1)'
   # out$hypersdpriorscale <- 1
