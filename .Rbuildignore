@@ -16,3 +16,4 @@
 ^vignettes/*.bbl
 ^vignettes/jss.cls
 ^vignettes/*.log
+^\.travis\.yml$
