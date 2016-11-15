@@ -725,11 +725,11 @@ Continuous time models of this variety are theoretically plausible, as changes t
 genm <- ctModel(Tpoints = 200, n.latent = 2, n.manifest = 1, 
   LAMBDA = matrix(c(1, 0), nrow = 1, ncol = 2),
   DIFFUSION = matrix(c(0, 0, 0, 1), 2),
-  MANIFESTVAR = diag(.6,1),
+  MANIFESTVAR = t(chol(diag(.6,1))),
   DRIFT = matrix(c(0, -.1, 1, -.2), nrow = 2),   
   CINT = matrix(c(1, 0), nrow = 2))
 
-data <- ctGenerate(genm, n.subjects = 1, burnin = 200, dT = 1)
+data <- ctGenerate(genm, n.subjects = 1, burnin = 200)
 
 ctIndplot(data, n.subjects = 1 , n.manifest = 1, Tpoints = 200)
 
@@ -739,7 +739,7 @@ model <- ctModel(Tpoints = 200, n.latent = 2, n.manifest = 1,
   DRIFT = matrix(c(0, "regulation", 1, "diffusionAR"), nrow = 2),   
   CINT = matrix(c("processCINT", 0), nrow = 2))
 
-fit <- ctFit(data, model, stationary = c("T0VAR"), carefulFit = FALSE)
+fit <- ctFit(data, model, stationary = c("T0VAR"))
 @
 
 In the above, we focus on a model for a single subject, and specify with LAMBDA that a single manifest variable measures only the first latent process. With DIFFUSION we specify that only the 2nd process, our unobserved diffusion process, experiences standard random innovations. With DRIFT, we specify that the 2nd process has a freely estimated autoregression term, that the diffusion process directly impacts the first process with a 1:1 relationship, and that as the level of the main process increases, the level of the diffusion process decreases -- providing necessary regulation. With CINT we specify that only the main process has a freely estimated continuous intercept (necessary for identification in this case). 

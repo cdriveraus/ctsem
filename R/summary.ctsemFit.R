@@ -34,7 +34,7 @@ summary.ctsemMultigroupFit<-function(object,group='show chooser',...){
   
   out$ctParameters<-ctParamsSummary(object=tempctobj,ctSummaryMatrices=out)
   out$ctparammessage<-'Note: Continuous time parameter estimates above are of the full variance-covariance matrices, not cholesky decompositions as used by ctModel.'
-  if(tempctobj$ctfitargs$transformedParams==TRUE) out$ctparammessage<- c(out$ctparammessage, 'Note: Standard errors are approximated with delta method so are only rough approximations.')
+  if(tempctobj$ctfitargs$transformedParams==TRUE) out$ctparammessage<- c(out$ctparammessage, 'Note: Some standard errors are approximated with delta method..')
   
   out$omxsummary<-omxSummary(tempctobj,verbose=TRUE)
   return(out)
