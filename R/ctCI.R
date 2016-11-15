@@ -37,7 +37,8 @@ ctCI<-function(ctfitobj, confidenceintervals, optimizer='NPSOL', verbose=0){
   originalOptimizer<- mxOption(NULL, "Default optimizer")
   
   if(optimizer=='NPSOL' & imxHasNPSOL()==FALSE) {
-    stop("NPSOL optimizer not available - try CSOLNP or install OpenMx using command:  source('http://openmx.psyc.virginia.edu/getOpenMx.R') ")
+    optimizer='CSOLNP'
+    message("NPSOL optimizer not available - switching to CSOLNP - consider installing OpenMx using command:  source('http://openmx.psyc.virginia.edu/getOpenMx.R') ")
   }
     mxOption(NULL,'Default optimizer', optimizer)
 
