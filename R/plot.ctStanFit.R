@@ -25,7 +25,7 @@
 #' @aliases ctStanPlot
 #' @method plot ctStanFit
 #' @examples
-#' plot(ctstantestfit,types=c('regression','kalman',priorcheck'))
+#' plot(ctstantestfit,types=c('regression','kalman','priorcheck'))
 #' 
 #' \dontrun{
 #' ### complete example

@@ -40,10 +40,15 @@ may be simpler in many cases to access those directly. They are:
  other options.
 }
 \examples{
+plot(ctstantestfit,types=c('regression','kalman','priorcheck'))
+
+\dontrun{
+### complete example
 plot(ctstantestfit)
 
 #### example plot using rstan functions
 rstan::stan_trace(ctstantestfit$stanfit, 
 pars=ctStanParnames(ctstantestfit,'hmean_'))
+}
 }
 
