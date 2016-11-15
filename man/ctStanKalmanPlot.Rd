@@ -13,38 +13,49 @@ ctStanKalmanPlot(x, subjects, kalmanvec = c("y", "yprior"),
   legendcontrol = list(x = "topright", bg = "white"))
 }
 \arguments{
-\item{x}{}
+\item{x}{Output from \code{\link{ctStanKalman}}. In general it is easier to call 
+\code{\link{ctStanKalman}} directly with the \code{plot=TRUE} argument, which calls this function.}
 
 \item{subjects}{vector of integers denoting which subjects (from 1 to N) to plot predictions for.}
 
-\item{kalmanvec}{}
+\item{kalmanvec}{string vector of names of any elements of the output you wish to plot, 
+the defaults of 'y' and 'yprior' plot the original data, 'y', 
+and the prior from the Kalman filter for y. Replacing 'y' by 'eta' will 
+plot latent variables instead (though 'eta' alone does not exist) and replacing 'prior' 
+with 'upd' or 'smooth' respectively plotting updated (conditional on all data up to current time point)
+or smoothed (conditional on all data) estimates.}
 
-\item{errorvec}{}
+\item{errorvec}{vector of names of covariance elements to use for uncertainty indication 
+around the kalmanvec items. 'auto' includes the latent covariance when plotting
+latent states, and total covariance when plotting expectations of observed states.}
 
-\item{errormultiply}{}
+\item{errormultiply}{Numeric denoting the multiplication factor of the std deviation of errorvec objects. 
+Defaults to 1.96, for 95\% credible intervals.}
 
-\item{ltyvec}{}
+\item{ltyvec}{vector of line types, varying over dimensions of the kalmanvec object.}
 
-\item{colvec}{}
+\item{colvec}{color vector, varying either over subject if multiple subjects, or otherwise over 
+the dimensions of the kalmanvec object.}
 
-\item{lwdvec}{}
+\item{lwdvec}{vector of line widths, varying over the kalmanvec objects.}
 
-\item{subsetindices}{}
+\item{subsetindices}{Either NULL, or vector of integers to use for subsetting the (columns) of kalmanvec objects.}
 
-\item{pchvec}{}
+\item{pchvec}{vector of symbol types, varying over the dimensions of the kalmanvec object.}
 
-\item{typevec}{}
+\item{typevec}{vector of plot types, varying over the kalmanvec objects. 'auto' plots lines for
+any  'prior', 'upd', or 'smooth' objects, and points otherwise.}
 
-\item{grid}{}
+\item{grid}{Logical. Plot a grid?}
 
-\item{add}{}
+\item{add}{Logical. Create a new plot or update existing plot?}
 
 \item{plotcontrol}{List of graphical arguments (see \code{\link{par}}), 
 though lty,col,lwd,x,y, will all be ignored.}
 
-\item{polygoncontrol}{}
+\item{polygoncontrol}{List of arguments to the \code{\link{polygon}} function for filling the uncertainty region.}
 
-\item{polygonalpha}{}
+\item{polygonalpha}{Numeric for the opacity of the uncertainty region.}
 
 \item{legend}{Logical, whether to include a legend if plotting.}
 
@@ -54,7 +65,7 @@ though lty,col,lwd,x,y, will all be ignored.}
 Nothing. Generates plots.
 }
 \description{
-ctStanKalmanPlot
+Plots Kalman filter output from ctStanKalman.
 }
 \examples{
 ### Get output from ctStanKalman

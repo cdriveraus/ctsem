@@ -1,7 +1,8 @@
 #' Define a ctsem model
 #' 
 #' This function is used to specify a continuous time structural equation model, 
-#' which can then be fit to data with function \code{\link{ctFit}}.  
+#' which can then be fit to data with function \code{\link{ctFit}}, or \code{\link{ctStanFit}}
+#' for Bayesian models.
 #' 
 #' @param type character string. If 'omx' (default) configures model for maximum likelihood fitting with ctFit, using OpenMx. 
 #' If 'stanct' or 'standt' configures either continuous ('stanct') or discrete ('standt') time 
@@ -131,8 +132,9 @@
 #' 
 #' @param timeVarying For type='omx' only. character vector of matrices to allow to vary over measurement occasions. Currently only accepts 'MANIFESTMEANS'. 
 #' @examples 
-#' 
-#'  ### impulse and level change time dependent predictor example from Driver, Oud, Voelkle (2015)
+#'  ### Frequentist example:
+#'  ### impulse and level change time dependent predictor 
+#'  ### example from Driver, Oud, Voelkle (2015)
 #'  data('ctExample2')
 #'  tdpredmodel <- ctModel(n.manifest = 2, n.latent = 3, n.TDpred = 1, 
 #'  Tpoints = 8, manifestNames = c('LeisureTime', 'Happiness'), 
@@ -152,12 +154,16 @@
 #'  tdpredmodel$T0MEANS[3] <- 0
 #'  tdpredmodel$TDPREDEFFECT[3, ] <- 1
 #'  tdpredmodel$DRIFT[3, ] <- 0
+#'  
+#'  
+#' ###Bayesian example:
+#' model<-ctModel(type='stanct',
+#' n.latent=2, latentNames=c('eta1','eta2'),
+#' n.manifest=2, manifestNames=c('Y1','Y2'),
+#' n.TDpred=1, TDpredNames='TD1', 
+#' n.TIpred=3, TIpredNames=c('TI1','TI2','TI3'),
+#' LAMBDA=diag(2))
 #'
-#'  \dontrun{
-#'  tdpredfit <- ctFit(datawide = ctExample2, ctmodelobj = tdpredmodel)
-#'
-#'  summary(tdpredfit)
-#'  }
 #' 
 #' @export
 

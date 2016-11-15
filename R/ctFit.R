@@ -1,28 +1,3 @@
-utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
-"mxData","mxMatrix","mxAlgebra","MANIFESTVARbase","MANIFESTVARcholdiag",
-"MANIFESTVARchol","T0VARbase","T0VARcholdiag","T0VARchol","DIFFUSIONbase",
-"DIFFUSIONcholdiag","DIFFUSIONchol","invDRIFTHATCH","cvectorize","DRIFTHATCH",
-  "TRAITVARbase","TRAITVARcholdiag","TRAITVARchol","MANIFESTTRAITVARbase",
-  "MANIFESTTRAITVARcholdiag","MANIFESTTRAITVARchol","mxComputeSequence",
-  "mxComputeGradientDescent","mxComputeReportDeriv","TDPREDVARbase",
-  "TDPREDVARcholdiag","TDPREDVARchol","TIPREDVARbase","TIPREDVARcholdiag",
-  "TIPREDVARchol","mxExpectationRAM","mxFitFunctionML","Ilatent","Alatent",
-  "Amanifestcov","invIminusAlatent","Smanifest","Amanifest","Mmanifest",
-  "mxExpectationNormal","omxSelectRowsAndCols","expCov","existenceVector",
-  "omxSelectCols","expMean","log2pi","numVar_i","filteredExpCov","%&%",
-  "filteredDataRow","filteredExpMean","firstHalfCalc","secondHalfCalc",
-  "rowResults","mxFitFunctionRow","TdpredNames","discreteCINT_T1","discreteDRIFT_T1",
-  "discreteDIFFUSION_T1","mxExpectationStateSpace","mxExpectationSSCT","ctsem.fitfunction",
-  "ctsem.penalties","FIMLpenaltyweight","ctsem.simpleDynPenalty","ieigenval",
-  "mxFitFunctionAlgebra","mxCI","mxComputeConfidenceInterval","DRIFT",
-  "n.latent","DIFFUSION","TRAITVAR","n.TDpred","TDPREDEFFECT","TDPREDMEANS",
-  "TDPREDVAR","TRAITTDPREDCOV","n.TIpred","TIPREDEFFECT","TIPREDMEANS",
-  "TIPREDVAR","CINT","n.manifest","LAMBDA","MANIFESTMEANS","MANIFESTVAR",
-  "mxFitFunctionMultigroup", "asymDIFFUSION", 'data.id',
-  'filteredExpCovchol','filteredExpCovcholinv',
-  'A','M','testd',
-  'T0VAR','T0MEANS'))
-
 #' Fit a ctsem object
 #' 
 #' This function fits continuous time SEM models specified via \code{\link{ctModel}}

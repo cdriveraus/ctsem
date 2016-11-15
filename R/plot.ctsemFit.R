@@ -6,6 +6,7 @@
 #' @param group character string of subgroup to plot. Default of 'show chooser' displays list and lets you select.
 #' @param ... additional parameters to pass to \code{\link{plot.ctsemFit}} function.
 #' @return Nothing. Side-effect: plots graphs.
+#' @method plot ctsemMultigroupFit
 #' @export
 plot.ctsemMultigroupFit<-function(x,group='show chooser',...){
   
@@ -51,6 +52,7 @@ plot.ctsemMultigroupFit<-function(x,group='show chooser',...){
 #' @param CRylim Vector of min and max limits for cross regression plot. 'auto' is c(-1,1), and expands if necessary.
 #' @param ... Other options passed to \code{plot()}.
 #' @return Nothing. Side-effect: plots graphs.
+#' @method plot ctsemFit
 #' @examples 
 #' ## Examples set to 'dontrun' because they take longer than 5s.
 #' 

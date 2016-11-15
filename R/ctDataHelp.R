@@ -1,7 +1,8 @@
 #' AnomAuth
 #'
 #' A dataset containing panel data assessments of individuals Anomia and Authoritarianism.
-#' @format data frame with 2722 rows, 14 columns. Column Y1 represents anomia, Y2 Authoritarianism, dTx the time interval for measurement occasion x.
+#' @format data frame with 2722 rows, 14 columns. Column Y1 represents anomia, 
+#' Y2 Authoritarianism, dTx the time interval for measurement occasion x.
 #' @source See \url{http://psycnet.apa.org/journals/met/17/2/176/} for details.
 #' @name AnomAuth
 NULL
@@ -31,7 +32,8 @@ NULL
 #'
 #' Simulated example dataset for the ctsem package
 #' @format 100 by 18 matrix containing containing ctsem wide format data. 
-#' 8 measurement occasions of leisure time and happiness, 7 measurement occasions of a money intervention dummy,
+#' 8 measurement occasions of leisure time and happiness, 
+#' 7 measurement occasions of a money intervention dummy,
 #' and 7 measurement intervals for each of 50 individuals.
 #' @name ctExample2
 NULL
@@ -39,14 +41,16 @@ NULL
 #' ctExample3
 #'
 #' Simulated example dataset for the ctsem package
-#' @format 1 by 399 matrix containing containing ctsem wide format data. 100 observations of variables Y1 and Y2 and 199 measurement intervals, for 1 subject.
+#' @format 1 by 399 matrix containing containing ctsem wide format data. 
+#' 100 observations of variables Y1 and Y2 and 199 measurement intervals, for 1 subject.
 #' @name ctExample3
 NULL
 
 #' ctExample4
 #'
 #' Simulated example dataset for the ctsem package
-#' @format 20 by 79 matrix containing 20 observations of variables Y1, Y2, Y3, and 19 measurement intervals dTx, for each of 20 individuals.
+#' @format 20 by 79 matrix containing 20 observations of variables 
+#' Y1, Y2, Y3, and 19 measurement intervals dTx, for each of 20 individuals.
 #' @name ctExample4
 NULL
 
@@ -63,7 +67,9 @@ NULL
 #' ctExample2level
 #'
 #' Simulated example dataset for the ctsem package
-#' @format 100 by 18 matrix containing ctsem wide format data. 8 measurement occasions of leisure time and happiness, 7 measurement occasions of a money intervention dummy,
+#' @format 100 by 18 matrix containing ctsem wide format data. 
+#' 8 measurement occasions of leisure time and happiness, 
+#' 7 measurement occasions of a money intervention dummy,
 #' and 7 measurement intervals for each of 50 individuals.
 #' @name ctExample2level
 NULL
@@ -75,7 +81,8 @@ NULL
 #' @format 2 by 15 matrix containing containing ctsem wide format data. 
 #' 3 measurement occasions of manifest variables Y1 and Y2, 
 #' 2 measurement occasions of time dependent predictor TD1, 
-#' 2 measurement intervals dTx, and 2 time independent predictors TI1 and TI2, for 2 individuals.
+#' 2 measurement intervals dTx, and 2 time independent predictors 
+#' TI1 and TI2, for 2 individuals.
 #' @name datastructure
 NULL
 
@@ -92,7 +99,7 @@ NULL
 
 #' ctstantestfit
 #' 
-#' Minimal output from \link{\code{ctStanFit}} from ctsem package.
+#' Minimal output from \code{\link{ctStanFit}} from ctsem package.
 #' @format stanfit class.
 #' @name ctstantestfit
 #' @examples 
@@ -106,7 +113,8 @@ NULL
 #' n.latent=2
 #' n.subjects=3
 #' 
-#' testm<-ctModel(type='omx',Tpoints=Tpoints,n.latent=n.latent,n.TDpred=n.TDpred,n.TIpred=n.TIpred,n.manifest=n.manifest,
+#' testm<-ctModel(type='omx',Tpoints=Tpoints,n.latent=n.latent,
+#' n.TDpred=n.TDpred,n.TIpred=n.TIpred,n.manifest=n.manifest,
 #'   MANIFESTVAR=diag(0.5,2),
 #'   TIPREDEFFECT=matrix(c(0,0,0,0,0,0),nrow=2),
 #'   TIPREDVAR=matrix(c(1,-.2,0, 0,1,0, 0,0,.5),nrow=3),
@@ -115,21 +123,18 @@ NULL
 #'   TDPREDMEANS=matrix(rnorm(n.TDpred*(Tpoints-1),0,1),nrow=n.TDpred*(Tpoints-1)),
 #'   LAMBDA=diag(1,2),
 #'   DRIFT=matrix(c(-.3,.2,-.1,-.2),nrow=2),
-#'   DIFFUSION=matrix(c(.3,.1,0,.2),2),CINT=matrix(c(0,0),nrow=2),T0MEANS=matrix(0,ncol=1,nrow=2),
+#'   DIFFUSION=matrix(c(.3,.1,0,.2),2),CINT=matrix(c(0,0),nrow=2),
+#'   T0MEANS=matrix(0,ncol=1,nrow=2),
 #'   T0VAR=diag(100,2))
-#' cd<-ctGenerate(testm,n.subjects=n.subjects,burnin=300,simulTDpredeffect=TRUE)
-#' 
-#' dlong<-ctWideToLong(cd,Tpoints,n.manifest=n.manifest, n.TDpred = n.TDpred, n.TIpred = n.TIpred)
-#' dlong<-ctDeintervalise(dlong)
-#' dlong<-dlong[c(1:10,18:40,48:80,90:120,140:150),]
+#' cd<-ctGenerate(testm,n.subjects=n.subjects,burnin=300,simultdpredeffect=TRUE,wide=FALSE)
 #' 
 #' checkm<-ctModel(type='stanct',Tpoints=Tpoints,
 #'   n.latent=n.latent,n.TDpred=n.TDpred,n.TIpred=n.TIpred,
 #'   n.manifest=n.manifest,LAMBDA=diag(2))
 #'   
-#' checkm$parameters$indvarying[-1:-2] <- FALSE
+#' checkm$pars$indvarying[-1:-2] <- FALSE
 #' 
-#' ctstantestfit<-ctStanFit(dlong,checkm,iter=20,chains=1,initwithoptim=TRUE)
+#' ctstantestfit<-ctStanFit(cd,checkm,iter=20,chains=1,initwithoptim=TRUE)
 #' save(ctstantestfit,file='.\\data\\ctstantestfit.rda')
 #' }
 NULL
@@ -139,7 +144,7 @@ NULL
 
 #' ctstantestdat
 #' 
-#' Generated dataset for testing \link{\code{ctStanFit}} from ctsem package.
+#' Generated dataset for testing \code{\link{ctStanFit}} from ctsem package.
 #' @format matrix
 #' @name ctstantestdat
 #' @examples 
@@ -150,25 +155,30 @@ NULL
 #' n.TIpred=3
 #' n.latent=2
 #' n.subjects=20
-#' gm<-ctModel(type='omx', Tpoints=Tpoints,n.latent=n.latent,n.TDpred=n.TDpred,n.TIpred=n.TIpred,n.manifest=n.manifest,
+#' gm<-ctModel(type='omx', Tpoints=Tpoints,n.latent=n.latent,
+#' n.TDpred=n.TDpred,n.TIpred=n.TIpred,n.manifest=n.manifest,
 #'   MANIFESTVAR=diag(0.5,2),
 #'   TIPREDEFFECT=matrix(c(.5,0,0,-.5,0,0),nrow=2),
 #'   TIPREDVAR=matrix(c(1,-.2,0, 0,1,0, 0,0,.5),nrow=3),
 #'   TDPREDEFFECT=matrix(c(.1,-.2),nrow=2),
 #'   TDPREDVAR=matrix(0,nrow=n.TDpred*(Tpoints-1),ncol=n.TDpred*(Tpoints-1)),
-#'   TDPREDMEANS=matrix(rnorm(n.TDpred*(Tpoints-1),0,1),nrow=n.TDpred*(Tpoints-1)),
+#'   TDPREDMEANS=matrix(rnorm(n.TDpred*(Tpoints-1),0,1),
+#'    nrow=n.TDpred*(Tpoints-1)),
 #'   LAMBDA=diag(1,2),
-#'   # DRIFT=matrix(c(-.6+rnorm(1,0,.15),-.2+rnorm(1,0,.1),.12+rnorm(1,0,.1),-.3+rnorm(1,0,.05)),nrow=2),
 #'   DRIFT=matrix(c(-.3,.2,-.1,-.2),nrow=2),
 #'   TRAITVAR=t(chol(matrix(c(4,3,3,4),nrow=2))),
-#'   # T0TRAITEFFECT=diag(3,n.latent),
-#'   DIFFUSION=matrix(c(.3,.1,0,.2),2),CINT=matrix(c(0,0),nrow=2),T0MEANS=matrix(0,ncol=1,nrow=2),
+#'   DIFFUSION=matrix(c(.3,.1,0,.2),2),CINT=matrix(c(0,0),nrow=2),
+#'   T0MEANS=matrix(0,ncol=1,nrow=2),
 #'   T0VAR=diag(100,2))
 #' 
-#' cd<-ctGenerate(gm,n.subjects=n.subjects,burnin=300, dT=1,asymptotes=F,simulTDpredeffect = T)
-#' model<-ctModel(type='stanct',n.latent=n.latent,n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,LAMBDA=diag(n.latent))
-#' long<-ctWideToLong(cd,Tpoints,n.manifest=model$n.manifest,manifestNames = model$manifestNames,
-#'   n.TDpred=n.TDpred,n.TIpred=n.TIpred,TDpredNames = model$TDpredNames,TIpredNames = model$TIpredNames)
+#' cd<-ctGenerate(gm,n.subjects=n.subjects,burnin=300, 
+#' dT=1,asymptotes=F,simulTDpredeffect = T)
+#' model<-ctModel(type='stanct',n.latent=n.latent,
+#' n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,LAMBDA=diag(n.latent))
+#' long<-ctWideToLong(cd,Tpoints,n.manifest=model$n.manifest,
+#' manifestNames = model$manifestNames,
+#'   n.TDpred=n.TDpred,n.TIpred=n.TIpred,
+#'   TDpredNames = model$TDpredNames,TIpredNames = model$TIpredNames)
 #' long<-ctDeintervalise(long)
 #' long[is.na(long)]<-0
 #' ctstantestdat <- long

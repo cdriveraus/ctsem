@@ -43,7 +43,8 @@ rl<-function(x) { #robust logical - wrap checks likely to return NA's in this
 #' Wrapper for base R density function that removes outliers and computes 'reasonable' bandwidth and x and y limits.
 #' Used for ctsem density plots.
 #' 
-#' @param x numeric vector to compute density for.
+#' @param x numeric vector on which to compute density.
+#' 
 #' @examples
 #' y <- ctDensity(exp(rnorm(80)))
 #' plot(y$density,xlim=y$xlim,ylim=y$ylim)
@@ -62,7 +63,7 @@ ctDensity<-function(x){
   xlims[1] = xlims[1] - (mid-xlims[1])
   xlims[2] = xlims[2] + (xlims[2]-mid)
   x=x[x>xlims[1] & x<xlims[2]]
-  bw=(max(x)-min(x))^1.5 / length(x)^.4 *.5
+  bw=(max(x)-min(x))^1.2 / length(x)^.4 *.4
   
   xlims=stats::quantile(x,probs=c(.01,.99))
   mid=mean(c(xlims[2],xlims[1]))
@@ -133,7 +134,7 @@ cseq <- function(from, to, by){
 get_stan_params <- function(object) {
   stopifnot(methods::is(object, "stanfit"))
   params <- grep("context__.vals_r", fixed = TRUE, value = TRUE,
-    x = strsplit(rstan::get_cppcode(rstan::getstanmodel(object)), "\n")[[1]])
+    x = strsplit(rstan::get_cppcode(rstan::get_stanmodel(object)), "\n")[[1]])
   params <- sapply(strsplit(params, "\""), FUN = function(x) x[[2]])
   params <- intersect(params, object@model_pars)
   return(params)
@@ -142,7 +143,7 @@ get_stan_params <- function(object) {
 
 get_stan_massmat<-function(fit){
   
-  spars<-rstan::getstan_params(fit)
+  spars<-get_stan_params(fit)
   spars2<-c()
   for(pari in spars){
     spars2<-c(spars2,grep(paste0(pari,'['),names(fit@sim$samples[[1]]),fixed=TRUE))

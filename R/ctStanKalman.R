@@ -13,30 +13,8 @@
 #' indicating the time step to use for interpolating values.
 #' @param subjects vector of integers denoting which subjects (from 1 to N) to plot predictions for. 
 #' @param plot Logical. If TRUE, plots output instead of returning it. 
-#' See \link{\code{ctStanKalmanPlot}} for the possible arguments.
-#' @details If plotting, the various arguments ending in vec are specified as the appropriate format vectors
-#' for the parameter type. 
-#' 
-#' kalmanvec is a vector of names of any elements of the output you wish to plot, 
-#' the defaults of 'y' and 'yprior' plot the original data, 'y', 
-#' and the prior from the Kalman filter for y. Replacing 'y' by 'eta' will 
-#' plot latent variables instead (though 'eta' alone does not exist) and replacing 'prior' 
-#' with 'upd' or 'smooth' respectively plotting updated (conditional on all data up to current time point)
-#' or smoothed (conditional on all data) estimates.
-#' 
-#' errorvec is a vector of names of covariance elements to use for uncertainty indication 
-#' around the kalmanvec items. 'auto' includes the latent covariance when plotting
-#' latent states, and total covariance when plotting expectations of observed states.
-#' 
-#' ltyvec is a vector of line types, varying over dimensions of the kalmanvec object.
-#' colvec is a color vector, varying either over subject if multiple subjects, or over 
-#' the dimensions of the kalmanvec object.
-#' lwdvec is a vector of line widths, varying over the kalmanvec objects. 
-#' pchvec is a vector of symbol types, varying over the dimensions of the kalmanvec object.
-#' 
-#' typevec is a vector of plot types, varying over the kalmanvec objects. 'auto' plots lines for
-#' any  'prior', 'upd', or 'smooth' objects, and points otherwise.
-#' subsetindices can be a vector of integers to use for subsetting the (columns) of kalmanvec objects.
+#' See \code{\link{ctStanKalmanPlot}} for the possible arguments.
+#' @param ... additional arguments to pass to \code{\link{ctStanKalmanPlot}}.
 #' @return Returns a list containing matrix objects etaprior, etaupd, etasmooth, y, yprior, 
 #' yupd, ysmooth, prederror, time, loglik,  with values for each time point in each row. 
 #' eta refers to latent states and y to manifest indicators - y itself is thus just 
@@ -115,36 +93,42 @@ ctStanKalman<-function(ctstanfitobj, datalong=NULL, timerange='asdata', timestep
 }
 
 
-
-
-
-
-
 #' ctStanKalmanPlot
+#' 
+#' Plots Kalman filter output from ctStanKalman.
 #'
-#' @param x 
+#' @param x Output from \code{\link{ctStanKalman}}. In general it is easier to call 
+#' \code{\link{ctStanKalman}} directly with the \code{plot=TRUE} argument, which calls this function.
 #' @param subjects vector of integers denoting which subjects (from 1 to N) to plot predictions for. 
-#' @param kalmanvec 
-#' @param errorvec 
-#' @param errormultiply 
-#' @param ltyvec 
-#' @param colvec 
-#' @param lwdvec 
-#' @param subsetindices 
-#' @param pchvec 
-#' @param typevec 
-#' @param grid 
-#' @param add 
+#' @param kalmanvec string vector of names of any elements of the output you wish to plot, 
+#' the defaults of 'y' and 'yprior' plot the original data, 'y', 
+#' and the prior from the Kalman filter for y. Replacing 'y' by 'eta' will 
+#' plot latent variables instead (though 'eta' alone does not exist) and replacing 'prior' 
+#' with 'upd' or 'smooth' respectively plotting updated (conditional on all data up to current time point)
+#' or smoothed (conditional on all data) estimates.
+#' @param errorvec vector of names of covariance elements to use for uncertainty indication 
+#' around the kalmanvec items. 'auto' includes the latent covariance when plotting
+#' latent states, and total covariance when plotting expectations of observed states.
+#' @param errormultiply Numeric denoting the multiplication factor of the std deviation of errorvec objects. 
+#' Defaults to 1.96, for 95\% credible intervals.
+#' @param ltyvec vector of line types, varying over dimensions of the kalmanvec object.
+#' @param colvec color vector, varying either over subject if multiple subjects, or otherwise over 
+#' the dimensions of the kalmanvec object.
+#' @param lwdvec vector of line widths, varying over the kalmanvec objects. 
+#' @param subsetindices Either NULL, or vector of integers to use for subsetting the (columns) of kalmanvec objects.
+#' @param pchvec vector of symbol types, varying over the dimensions of the kalmanvec object.
+#' @param typevec vector of plot types, varying over the kalmanvec objects. 'auto' plots lines for
+#' any  'prior', 'upd', or 'smooth' objects, and points otherwise.
+#' @param grid Logical. Plot a grid?
+#' @param add Logical. Create a new plot or update existing plot?
 #' @param plotcontrol List of graphical arguments (see \code{\link{par}}), 
 #' though lty,col,lwd,x,y, will all be ignored.
 #' @param legend Logical, whether to include a legend if plotting.
 #' @param legendcontrol List of arguments to the \code{\link{legend}} function.
-#' @param polygoncontrol 
-#' @param polygonalpha 
-#'
+#' @param polygoncontrol List of arguments to the \code{\link{polygon}} function for filling the uncertainty region.
+#' @param polygonalpha Numeric for the opacity of the uncertainty region.
 #' @return Nothing. Generates plots.
 #' @export
-#'
 #' @examples
 #' ### Get output from ctStanKalman
 #' x<-ctStanKalman(ctstantestfit,subjects=2)
@@ -167,7 +151,8 @@ ctStanKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
   if(is.null(plotcontrol$xlim)) plotcontrol$xlim <- range(sapply(out,function(x) x$time))
   
   
-  if(is.null(plotcontrol$ylim)) plotcontrol$ylim <- range(unlist(lapply(out,function(x) {
+  if(is.null(plotcontrol$ylim)) {
+    plotcontrol$ylim <- range(unlist(lapply(out,function(x) {
     if(!is.null(x)){
     ret<-c()
     
@@ -177,6 +162,10 @@ ctStanKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
         )
     }
     return(ret)}})),na.rm=TRUE)
+    #extend range somewhat...
+    plotcontrol$ylim[1] = plotcontrol$ylim[1] - plotcontrol$ylim[1]/3
+    plotcontrol$ylim[2] = plotcontrol$ylim[2] + plotcontrol$ylim[2]/3
+  }
   
 
   if(length(subjects) > 1 & colvec[1] =='auto') colvec = rainbow(length(subjects))
@@ -257,8 +246,8 @@ ctStanKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
             polygoncontrol$angle=stats::runif(1,0,359)
             polygonargs<-polygoncontrol
             polygonargs$x=c(plist$x,plist$x[backwardstimesindex])
-            polygonargs$y=c(plist$y + errormultiply * out[[subiname]][[errorvec[kveci]]][kdimi,kdimi,], 
-              (plist$y - errormultiply * out[[subiname]][[errorvec[kveci]]][kdimi,kdimi,])[backwardstimesindex])
+            polygonargs$y=c(plist$y + errormultiply * sqrt(out[[subiname]][[errorvec[kveci]]][kdimi,kdimi,]), 
+              (plist$y - errormultiply * sqrt(out[[subiname]][[errorvec[kveci]]][kdimi,kdimi,]))[backwardstimesindex])
             polygonargs$col=grDevices::adjustcolor(plist$col,alpha.f=polygonalpha)
             do.call(graphics::polygon,polygonargs)
           }

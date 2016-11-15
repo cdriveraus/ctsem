@@ -1,22 +1,47 @@
+utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
+  "mxData","mxMatrix","mxAlgebra","MANIFESTVARbase","MANIFESTVARcholdiag",
+  "MANIFESTVARchol","T0VARbase","T0VARcholdiag","T0VARchol","DIFFUSIONbase",
+  "DIFFUSIONcholdiag","DIFFUSIONchol","invDRIFTHATCH","cvectorize","DRIFTHATCH",
+  "TRAITVARbase","TRAITVARcholdiag","TRAITVARchol","MANIFESTTRAITVARbase",
+  "MANIFESTTRAITVARcholdiag","MANIFESTTRAITVARchol","mxComputeSequence",
+  "mxComputeGradientDescent","mxComputeReportDeriv","TDPREDVARbase",
+  "TDPREDVARcholdiag","TDPREDVARchol","TIPREDVARbase","TIPREDVARcholdiag",
+  "TIPREDVARchol","mxExpectationRAM","mxFitFunctionML","Ilatent","Alatent",
+  "Amanifestcov","invIminusAlatent","Smanifest","Amanifest","Mmanifest",
+  "mxExpectationNormal","omxSelectRowsAndCols","expCov","existenceVector",
+  "omxSelectCols","expMean","log2pi","numVar_i","filteredExpCov","%&%",
+  "filteredDataRow","filteredExpMean","firstHalfCalc","secondHalfCalc",
+  "rowResults","mxFitFunctionRow","TdpredNames","discreteCINT_T1","discreteDRIFT_T1",
+  "discreteDIFFUSION_T1","mxExpectationStateSpace","mxExpectationSSCT","ctsem.fitfunction",
+  "ctsem.penalties","FIMLpenaltyweight","ctsem.simpleDynPenalty","ieigenval",
+  "mxFitFunctionAlgebra","mxCI","mxComputeConfidenceInterval","DRIFT",
+  "n.latent","DIFFUSION","TRAITVAR","n.TDpred","TDPREDEFFECT","TDPREDMEANS",
+  "TDPREDVAR","TRAITTDPREDCOV","n.TIpred","TIPREDEFFECT","TIPREDMEANS",
+  "TIPREDVAR","CINT","n.manifest","LAMBDA","MANIFESTMEANS","MANIFESTVAR",
+  "mxFitFunctionMultigroup", "asymDIFFUSION", 'data.id',
+  'filteredExpCovchol','filteredExpCovcholinv',
+  'A','M','testd',
+  'T0VAR','T0MEANS',
+  'TDpredNames', 'TIpredNames', 'Tpoints', 'extract', 'latentNames', 'manifestNames',
+  'plot', 'points','T0TRAITEFFECT'))
+
 #' ctsem
 #' 
 #' ctsem is an R package for continuous time structural equation modelling of panel (N > 1) 
-#' and time series (N = 1) data, using either full information maximum likelihood (FIML) or the Kalman filter. Most 
-#' dynamic models for longitudinal data in the social and behavioural sciences are discrete time models. An assumption of 
-#' discrete time models is that time intervals between measurements are equal, and that all subjects were assessed at the same 
-#' intervals. Violations of this assumption are regularly ignored due to the difficulty of accounting for varying time intervals, 
-#' therefore parameter estimates can be severely biased. By using stochastic differential equations and estimating an underlying 
-#' continuous process, continuous time models allow for any pattern of measurement occasions. By interfacing to a general purpose 
-#' SEM package (OpenMx), ctsem combines the flexible specification of structural equation models with the enhanced 
-#' data gathering opportunities and improved estimation of continuous time models. ctsem can estimate relationships over 
-#' time for multiple latent processes, measured by multiple noisy indicators with varying time intervals between observations. 
-#' Within and between effects are estimated simultaneously by modelling both observed covariates and unobserved heterogeneity. 
-#' Exogenous shocks with different shapes, group differences, higher order diffusion effects and oscillating processes can all 
-#' be simply modelled. To use ctsem, one first specifies a model using \code{\link{ctModel}}, fits this to wide format data using \code{\link{ctFit}}, then 
-#' \code{plot} (\code{\link{plot.ctsemFit}}) and \code{summary} (\code{\link{summary.ctsemFit}}) methods are available to analyse the fitted object.  
-#' \code{\link{ctMultigroupFit}} may be used in place of \code{\link{ctFit}} to specify a multi group model.
-#' For examples, see \code{\link{ctFit}}. For more detailed information, see the vignette by running: \code{vignette('ctsem')}
+#' and time series (N = 1) data, using either a frequentist or Bayesian approach. 
+#' The frequentist approach is faster but can only estimate random-effects on the intercepts, 
+#' while the Bayesian approach allows for random-effects across all model parameters. 
+#' 
+#' The general workflow begins by specifying a model using the \code{\link{ctModel}} function, 
+#' in which the \code{type} of model is also specified. Then the model is fit to data using 
+#' either \code{\link{ctFit}} if an 'omx' (OpenMx, frequentist) model is specified or 
+#' \code{\link{ctStanFit}} if a 'stanct' or 'standt' (Stan, continuous / discrete time, Bayesian)
+#' model is specified. 
+#' For examples, see either \code{\link{ctFit}} or \code{\link{ctStanFit}}. 
+#' For more detailed information, see the frequentist vignette by running: \code{vignette('ctsem')} 
+#' For citation info, please run \code{citation('ctsem')} .
 #'  
 #' @docType package
 #' @name ctsem
+#' @import grDevices methods stats rstan OpenMx graphics
 NULL

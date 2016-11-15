@@ -262,7 +262,7 @@ These matrices may all be specified using a combination of character strings to 
 The parameters subobject of the created model object shows the parameter specification that will go into Stan, including both fixed and free parameters, whether the parameters vary across individuals, how the parameter is transformed from a standard normal distribution (thus setting both priors and bounds), and whether that parameter is regressed on the time independent predictors.
 
 <<modelpars,size='footnotesize'>>=
-head(model$parameters,8)
+head(model$pars,8)
 @
 
 One may modify the output model to either restrict between subject differences (set some parameters to fixed over subjects), alter the transformation used to determine the prior / bounds, or restrict which effects of time independent predictors to estimate. Plotting the original prior, making a change, and plotting the resulting prior, are shown here -- in this case we believe the latent process innovation for our first latent process, captured by row 1 and column 1 of the DIFFUSION matrix, to be small, so scale our prior accordingly to both speed and improve sampling. Rather than simply scaling by 0.2 as shown here, one could also construct a new form of prior, so long as the resulting distribution was within the bounds required for the specific parameter. Note that the resulting distribution is a result of applying the specified transformation to a standard normal distribution, with mean of 0 and standard deviation of 1. To change the underlying standard normal, one would need to edit the resulting Stan code directly.
@@ -270,8 +270,8 @@ One may modify the output model to either restrict between subject differences (
 <<transform, fig.width=8, fig.height=6>>=
 par(mfrow=c(1,2))
 plot(model,rows=11)
-print(model$parameters$transform[11])
-model$parameters$transform[11]<- "(exp(param*2) +.0001)*.2"
+print(model$pars$transform[11])
+model$pars$transform[11]<- "(exp(param*2) +.0001)*.2"
 plot(model,rows=11)
 @
 
@@ -280,15 +280,15 @@ The plots show the prior distribution for the population mean of DIFFUSION[1,1] 
 Restrict between subject effects as desired. Unnecessary between subject effects will slow sampling and hinder appropriate regularization, but be aware of the many parameter dependencies in these models -- restricting one parameter may lead to genuine variation in the restricted parameter expressing itself elsewhere. The prior scale for between subject variance may need to be restricted when limited data (in either the number of time points or number of subjects) is available, to ensure adequate regularisation. Here we restrict MANIFESTVAR effects between subjects, and set all prior scales for the standard deviation of the population distribution to 0.2, from the default of 1.0. A rough interpretation of this change in sdscale is simply that we expect lower values for the population standard deviation, but to better interpret the effect of this latter change, see the section on standard deviation transformations.
 
 <<restrictbetween>>=
-model$parameters[c(15,18),]$indvarying<-FALSE
-model$parameters$sdscale[1:28] <- .5
+model$pars[c(15,18),]$indvarying<-FALSE
+model$pars$sdscale[1:28] <- .5
 @
 
 Also restrict which parameters to include time independent predictor effects for in a similar way, for similar reasons. In this case, the only adverse effects of restriction are that the relationship between the predictor and variables will not be estimated, but the subject level parameters themselves should not be very different, as they are still freely estimated. Note that such effects are only estimated for individually varying parameters anyway -- so after the above change there is no need to set the tipredeffect to FALSE for the T0VAR variables, it is assumed. Instead, we restrict the tipredeffects on all parameters, and free them only for the manifest intercept parameters.
 
 <<restricttipred>>=
-model$parameters[,c('TI1_effect','TI2_effect','TI3_effect')]<-FALSE
-model$parameters[c(19,20),c('TI1_effect','TI2_effect','TI3_effect')]<-TRUE
+model$pars[,c('TI1_effect','TI2_effect','TI3_effect')]<-FALSE
+model$pars[c(19,20),c('TI1_effect','TI2_effect','TI3_effect')]<-TRUE
 @
 
 \subsection{Model fitting}
@@ -308,7 +308,7 @@ After fitting, the ctStanSummary function may be used, which runs the rstan summ
 summary(fit)
 @
 
-Summary outputs a range of matrices regarding correlations betweeen subject level parameters. hypercorr\_means reports the posterior mean of the correlatin between raw (not yet transformed from the standard normal scale) parameters. hypercorr_sd reports the standard deviation of these parameters. hypercovcor_transformedmean a Reported by summary are the mean, standard deviation, and credible intervals of the distributions, as well as the number of effective samples and the potential scale reduction factor, rhat. More statistics can be obtained using the regular rstan summary functions or shinystan.
+Summary outputs a range of matrices regarding correlations betweeen subject level parameters. hypercorr\_means reports the posterior mean of the correlatin between raw (not yet transformed from the standard normal scale) parameters. hypercorr\_sd reports the standard deviation of these parameters. hypercovcor\_transformedmean a Reported by summary are the mean, standard deviation, and credible intervals of the distributions, as well as the number of effective samples and the potential scale reduction factor, rhat. More statistics can be obtained using the regular rstan summary functions or shinystan.
 
 The relation between posteriors and priors for variables of interest can also be plotted as follows:
 
@@ -334,7 +334,7 @@ ctStanKalman(fit, subjects=2, timerange=c(0,60), timestep=.1, plot=TRUE)
 For diagnosing problems or modifying the model in ways not achievable via the ctsem model specification, one can use ctsem to generate the Stan code and then work directly with that, simply by specifying the argument fit=FALSE to the ctStanFit function. 
 
 \subsection{Oscillating, single subject example - sunspots data}
-In the following example we fit the sunspots data available within R, which has previously been fit by various authors including \citet{tomasson2013computational}. We have used the same CARMA(2,1) model and obtained similar estimates -- some differences are due to the contrast between Bayes and maximum likelihood, though if desired one could adjust the code to fit using maximum likelihood, as here we have only one subject. There are usually some divergent transitions (indicating a difficulty in the sampling chain and a potential threat to inference) generated in this fit, possibly caused by a strong dependency between the diffusion parameter and moving average parameter -- alternate parameterisations or an increase in the adapt\_delta value (which defaults to 0.8 with a maximum of 1, though 1 is not recommended...) may help.
+In the following example we fit the sunspots data available within R, which has previously been fit by various authors including \citet{tomasson2013computational}. We have used the same CARMA(2,1) model and obtained similar estimates -- some differences are due to the contrast between Bayes and maximum likelihood, though if desired one could adjust the code to fit using maximum likelihood, as here we have only one subject. There are usually some divergent transitions (indicating a difficulty in the sampling chain and a potential threat to inference) generated in this fit -- alternate parameterisations or an increase in the adapt\_delta control argument to Stan (which defaults to 0.9 in ctsem, with a maximum of 1, though 1 is not recommended...) may help.
 <<sunspots,cache=TRUE>>=
 #get data
  sunspots<-sunspot.year
@@ -356,12 +356,13 @@ datalong <- cbind(id, time, sunspots)
      0, 0,
      0, "diffusion"), ncol=2, nrow=2, byrow=TRUE))
  
- model$parameters$indvarying<-FALSE #Because single subject
- model$parameters$transform[14]<- '(param)*5+44 ' #Because not mean centered
- model$parameters$transform[4]<-'exp(param)' #To avoid multi modality with ma effect
+ model$pars$indvarying<-FALSE #Because single subject
+ model$pars$transform[14]<- '(param)*5+44 ' #Because not mean centered
+ model$pars$transform[4]<-'exp(param)' #To avoid multi modality with ma effect
 
 #fit
-fit <- ctStanFit(datalong, model, iter=400, chains=2, adapt_delta=.8)
+fit <- ctStanFit(datalong, model, iter=400, chains=2, 
+  control=list(adapt_delta=.9))
 
 #output
 summary(fit)

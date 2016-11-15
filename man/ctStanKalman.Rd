@@ -23,7 +23,9 @@ indicating the time step to use for interpolating values.}
 \item{subjects}{vector of integers denoting which subjects (from 1 to N) to plot predictions for.}
 
 \item{plot}{Logical. If TRUE, plots output instead of returning it. 
-See \link{\code{ctStanKalmanPlot}} for the possible arguments.}
+See \code{\link{ctStanKalmanPlot}} for the possible arguments.}
+
+\item{...}{additional arguments to pass to \code{\link{ctStanKalmanPlot}}.}
 }
 \value{
 Returns a list containing matrix objects etaprior, etaupd, etasmooth, y, yprior, 
@@ -37,31 +39,6 @@ If plot=TRUE, nothing is returned but a plot is generated.
 \description{
 Outputs predicted, updated, and smoothed estimates of manifest indicators and latent states, 
 with covariances, for specific subjects from data fit with \code{\link{ctStanFit}}.
-}
-\details{
-If plotting, the various arguments ending in vec are specified as the appropriate format vectors
-for the parameter type. 
-
-kalmanvec is a vector of names of any elements of the output you wish to plot, 
-the defaults of 'y' and 'yprior' plot the original data, 'y', 
-and the prior from the Kalman filter for y. Replacing 'y' by 'eta' will 
-plot latent variables instead (though 'eta' alone does not exist) and replacing 'prior' 
-with 'upd' or 'smooth' respectively plotting updated (conditional on all data up to current time point)
-or smoothed (conditional on all data) estimates.
-
-errorvec is a vector of names of covariance elements to use for uncertainty indication 
-around the kalmanvec items. 'auto' includes the latent covariance when plotting
-latent states, and total covariance when plotting expectations of observed states.
-
-ltyvec is a vector of line types, varying over dimensions of the kalmanvec object.
-colvec is a color vector, varying either over subject if multiple subjects, or over 
-the dimensions of the kalmanvec object.
-lwdvec is a vector of line widths, varying over the kalmanvec objects. 
-pchvec is a vector of symbol types, varying over the dimensions of the kalmanvec object.
-
-typevec is a vector of plot types, varying over the kalmanvec objects. 'auto' plots lines for
-any  'prior', 'upd', or 'smooth' objects, and points otherwise.
-subsetindices can be a vector of integers to use for subsetting the (columns) of kalmanvec objects.
 }
 \examples{
 #Basic

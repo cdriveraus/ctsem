@@ -30,8 +30,6 @@ Refers only to latent states, observations are always at discrete time points.}
 
 \item{timecol}{name of time column in datalong. Note that time column must be an ascending sequence
 of numeric values from row 1 to row n. Ignored if continuoustime=FALSE.}
-
-\item{subject}{integer denoting which subjects data to use.}
 }
 \value{
 Returns a list containing matrix objects etaprior, etaupd, etasmooth, y, yprior, 
@@ -46,7 +44,10 @@ Takes list containing ctsem subject matrices, as well as long form data object, 
 predicted and updated latent states, likelihoods, and predicted observations using the Kalman filter.
 }
 \examples{
+### ctstantestfit is a dummy ctStanFit object with 2 manifest indicators,
+###  4 latents, and 1 time dependent predictor.
 
+### get parameter matrices
 kpars <- ctStanContinuousPars(ctstantestfit)
 
 #construct dummy data
@@ -57,8 +58,8 @@ print(datalong)
 
 #obtain Kalman filtered estimates
 kout <- ctKalman(kpars=kpars, datalong=datalong,
-  subject=1, manifestNames=paste0('Y',1:2),
-  latentNames=paste0('eta',1:4))
+  manifestNames=paste0('Y',1:nrow(kpars$MANIFESTMEANS)),
+  latentNames=paste0('eta',1:nrow(kpars$DRIFT)))
 
 #print and plot smoothed estimates (conditional on all states) of indicators.
 print(kout$ysmooth)

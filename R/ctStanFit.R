@@ -33,6 +33,7 @@
 #' for the chains. This can help speed convergence and avoid problematic regions for certain problems.
 #' @param chains number of chains to sample.
 #' @param control List of arguments sent to \code{\link[rstan]{stan}} control argument, regarding warmup / sampling behaviour.
+#' @param ... additional arguments to pass to \code{\link[rstan]{stan}} function.
 #' @examples
 #' \dontrun{
 #' #test data with 2 manifest indicators measuring 1 latent process each, 
@@ -48,7 +49,7 @@
 #' LAMBDA=diag(2))
 #' 
 #' #set all parameters except manifest means to be fixed across subjects
-#' model$parameters$indvarying[-c(19,20)] <- FALSE
+#' model$pars$indvarying[-c(19,20)] <- FALSE
 #' 
 #' #fit model to data (takes a few minutes - but insufficient 
 #' # iterations and max_treedepth for inference!)
@@ -163,7 +164,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
   
   
   #read in ctmodel values
-  ctspec<-ctstanmodel$parameters
+  ctspec<-ctstanmodel$pars
   
   if(binomial) {
     ctspec<-ctspec[ctspec$matrix != 'MANIFESTVAR',]
@@ -184,7 +185,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
     }
   }
   if(found) message('Minor inconsistencies in model found - removing param name, transform and indvarying from any parameters with a value specified')
-  ctstanmodel$parameters <- ctspec
+  ctstanmodel$pars <- ctspec
   
   n.latent<-ctstanmodel$n.latent
   n.manifest<-ctstanmodel$n.manifest

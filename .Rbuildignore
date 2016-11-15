@@ -10,4 +10,9 @@
 ^.gitignore
 ^README\.Rmd$
 ^README-.*\.png$
-changelog.txt
+^vignettes/*.pdf
+^vignettes/cache
+^vignettes/figure
+^vignettes/*.bbl
+^vignettes/jss.cls
+^vignettes/*.log

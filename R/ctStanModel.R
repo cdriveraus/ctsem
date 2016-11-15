@@ -100,7 +100,7 @@ if(type=='standt') continuoustime<-FALSE
     }
     if(sum(unlist(ctspec[,paste0(TIpredNames,'_effect')]))==0) stop('TI predictors included but no effects specified!')
   }
-  out<-list(parameters=ctspec,n.latent=n.latent,n.manifest=n.manifest,n.TIpred=n.TIpred,n.TDpred=n.TDpred,
+  out<-list(pars=ctspec,n.latent=n.latent,n.manifest=n.manifest,n.TIpred=n.TIpred,n.TDpred=n.TDpred,
     latentNames=latentNames,manifestNames=manifestNames,TIpredNames=TIpredNames,TDpredNames=TDpredNames,subjectIDname='id',
     timeName='time',
     continuoustime=continuoustime)

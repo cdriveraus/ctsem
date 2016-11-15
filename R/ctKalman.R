@@ -8,7 +8,6 @@
 #' Such a list is returned by \code{\link{ctStanContinuousPars}}.
 #' @param datalong long format data object as used by \code{\link{ctStanFit}}, 
 #' but must contain only a single subjects' data and does not need an id column.
-#' @param subject integer denoting which subjects data to use.  
 #' @param manifestNames String vector of names of manifest variables to use from datalong.
 #' @param latentNames String vector of names of latent variables.
 #' @param TDpredNames If model contains time dependent predictors, 
@@ -26,10 +25,10 @@
 #' Covariance matrices etapriorcov, etaupdcov, etasmoothcov, ypriorcov, yupdcov, ysmoothcov,  
 #' are returned in a row * column * time array. 
 #' @examples
-#ctstantestfit is a dummy ctStanFit object with 2 manifest indicators,
-# 4 latents, and 1 time dependent predictor.
+#' ### ctstantestfit is a dummy ctStanFit object with 2 manifest indicators,
+#' ###  4 latents, and 1 time dependent predictor.
 #' 
-#get parameter matrices
+#' ### get parameter matrices
 #' kpars <- ctStanContinuousPars(ctstantestfit)
 #' 
 #' #construct dummy data
@@ -40,8 +39,8 @@
 #' 
 #' #obtain Kalman filtered estimates
 #' kout <- ctKalman(kpars=kpars, datalong=datalong,
-#'   subject=1, manifestNames=paste0('Y',1:2),
-#'   latentNames=paste0('eta',1:4))
+#'   manifestNames=paste0('Y',1:nrow(kpars$MANIFESTMEANS)),
+#'   latentNames=paste0('eta',1:nrow(kpars$DRIFT)))
 #' 
 #' #print and plot smoothed estimates (conditional on all states) of indicators.
 #' print(kout$ysmooth)

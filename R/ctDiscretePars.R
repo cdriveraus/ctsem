@@ -1,8 +1,31 @@
+#' ctStanParnames
+#' 
+#' Gets internal stan parameter names of a ctStanFit object based on specified substrings.
+#'
+#' @param x ctStanFit object
+#' @param substrings vector of character strings, parameter names of the stan model
+#' containing any of these strings will be returned. Useful strings may be 'hmean_' for 
+#' hyper (population) means, 'hsd_' for hyper standard deviations, 'tipred_' for time
+#' independent predictors, or specific combinations such as 'hmean_drift' for the population
+#' means of temporal dynamics parameters
+#' @return vector of character strings.
+#' @examples
+#' ctStanParnames(ctstantestfit,substrings=c('hmean_','hsd_'))
+#' @export
+ctStanParnames <- function(x,substrings=c('hmean_','hsd_')){
+  out<-c()
+  for(subsi in substrings){
+    out<- c(out, x$stanfit@model_pars[grep(subsi,x$stanfit@model_pars)])
+  }
+  return(out)
+}
+
+
 #'ctStanContinuousPars
 #'
 #'Returns the continuous time parameter matrices for specified subjects of a ctStanFit fit object
 #'
-#'@param ctstanfitobj fit object from \code{\link[rstan]{ctStanFit}}
+#'@param ctstanfitobj fit object from \code{\link{ctStanFit}}
 #'@param subjects Either 'all', or integers denoting which subjects to perform the calculation over. 
 #'When multiple subjects are specified, the returned matrices will be a mean over subjects.
 #'@param iter Either character string 'all' which will then use all post-warmup iterations, 
@@ -110,7 +133,7 @@ ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
   out<-list()
   
   discreteDRIFT = array(unlist(lapply(times, function(x) 
-    expm::expm(ctpars$DRIFT*x))),
+    OpenMx::expm(ctpars$DRIFT*x))),
     dim=c(nlatent,nlatent,length(times)),
     dimnames=list(latentNames,latentNames,paste0('t',times)))
   
@@ -139,7 +162,7 @@ ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
 #'instead of returning output. 
 #'@param ... additional plotting arguments to control \code{\link{ctStanDiscreteParsPlot}}
 #'@examples
-#'ctStanDiscretePars(ctstantestfit,times=c(.5,1), 
+#'ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
 #'plot=TRUE,indices='all')
 #'@export
 ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=10,by=.1), 
@@ -240,7 +263,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   names(out) <- type
   
   if(plot) {
-    ctStanDiscreteParsPlot(out,...)
+    ctStanDiscreteParsPlot(out,times=times,...)
   } else return(out)
 }
 
@@ -260,7 +283,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
 #'@param legend Logical. If TRUE, generates a legend.
 #'@param polygon Logical. If TRUE, fills a polygon between the first and last specified quantiles.
 #'@param quantiles numeric vector of values between 0 and 1, specifying which quantiles to plot.
-#'The default of c(.05,.5,.95) plots 95\% credible intervals and the posterior mean at 50\%. 
+#'The default of c(.05,.5,.95) plots 95\% credible intervals and the posterior median at 50\%. 
 #'@param times Numeric vector of positive values, discrete time parameters will be calculated for each.
 #'@param ylim Either 'auto' to determine automatically, or vector of length 2 specifying
 #'upper and lower limits of y axis.
@@ -280,7 +303,9 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
 #'@param polygoncontrol list of arguments to pass to polgyon function (if polygon=TRUE).
 #'x,y, and col arguments will be ignored.
 #'@examples
-#'ctStanDiscreteParsPlot(ctstantestfit, 'CR')
+#'x <- ctStanDiscretePars(ctstantestfit)
+#'
+#'ctStanDiscreteParsPlot(x, 'CR')
 #'@export
 
 ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon=TRUE, 

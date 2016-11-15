@@ -56,6 +56,8 @@ no parameters vary across subjects.}
 for the chains. This can help speed convergence and avoid problematic regions for certain problems.}
 
 \item{control}{List of arguments sent to \code{\link[rstan]{stan}} control argument, regarding warmup / sampling behaviour.}
+
+\item{...}{additional arguments to pass to \code{\link[rstan]{stan}} function.}
 }
 \description{
 Fits a ctsem model specified via \code{\link{ctModel}} with type either 'stanct' or 'standt', using Bayseian inference software
@@ -76,7 +78,7 @@ n.TIpred=3, TIpredNames=c('TI1','TI2','TI3'),
 LAMBDA=diag(2))
 
 #set all parameters except manifest means to be fixed across subjects
-model$parameters$indvarying[-c(19,20)] <- FALSE
+model$pars$indvarying[-c(19,20)] <- FALSE
 
 #fit model to data (takes a few minutes - but insufficient 
 # iterations and max_treedepth for inference!)

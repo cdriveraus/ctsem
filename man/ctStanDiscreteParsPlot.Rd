@@ -28,7 +28,7 @@ overlayed on existing plot.}
 \item{polygon}{Logical. If TRUE, fills a polygon between the first and last specified quantiles.}
 
 \item{quantiles}{numeric vector of values between 0 and 1, specifying which quantiles to plot.
-The default of c(.05,.5,.95) plots 95\% credible intervals and the posterior mean at 50\%.}
+The default of c(.05,.5,.95) plots 95\% credible intervals and the posterior median at 50\%.}
 
 \item{times}{Numeric vector of positive values, discrete time parameters will be calculated for each.}
 
@@ -62,6 +62,8 @@ Plots model implied regression strengths at specified times for
 continuous time models fit with ctStanFit.
 }
 \examples{
-ctStanDiscreteParsPlot(ctstantestfit, 'CR')
+x <- ctStanDiscretePars(ctstantestfit)
+
+ctStanDiscreteParsPlot(x, 'CR')
 }
 

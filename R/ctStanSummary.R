@@ -6,7 +6,8 @@
 #' @param ... Unused at present.
 #' @return List containing summary items.
 #' @examples
-#' Summary(ctstantestfit)
+#' summary(ctstantestfit)
+#' @method summary ctStanFit
 #' @export
 
 summary.ctStanFit<-function(object,...){

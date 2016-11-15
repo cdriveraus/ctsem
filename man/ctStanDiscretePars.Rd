@@ -27,7 +27,7 @@ Calculate model implied regressions for a sequence of time intervals based on a 
 from ctStanFit, for specified subjects.
 }
 \examples{
-ctStanDiscretePars(ctstantestfit,times=c(.5,1), 
+ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
 plot=TRUE,indices='all')
 }
 

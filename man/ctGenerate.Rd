@@ -2,10 +2,10 @@
 % Please edit documentation in R/ctGenerate.R
 \name{ctGenerate}
 \alias{ctGenerate}
-\title{Simulate continuous time data}
+\title{ctGenerate}
 \usage{
-ctGenerate(ctmodelobj, n.subjects = 1000, burnin = 0, dT = 1,
-  asymptotes = FALSE, simulTDpredeffect = FALSE)
+ctGenerate(ctmodelobj, n.subjects = 1000, burnin = 0, dtmean = 1,
+  logdtsd = 0, wide = TRUE, simultdpredeffect = FALSE)
 }
 \arguments{
 \item{ctmodelobj}{ctsem model object from \code{\link{ctModel}}.}
@@ -14,20 +14,23 @@ ctGenerate(ctmodelobj, n.subjects = 1000, burnin = 0, dT = 1,
 
 \item{burnin}{Number of initial time points to discard (to simulate stationary data)}
 
-\item{dT}{Time interval (delta T) to use, defaults to 1.}
+\item{dtmean}{Positive numeric. Average time interval (delta T) to use.}
 
-\item{asymptotes}{Are the parameters provided asymptotic paramters, or the regular continuous time parameters?}
+\item{logdtsd}{Numeric. Standard deviation for variability of the time interval.}
 
-\item{simulTDpredeffect}{logical - whether time dependent predictors impact instantaneously, or an
-instant *after* instantaneously. Switch reflects difference between ctStanFit and ctFit.}
+\item{wide}{Logical. Output in wide format?}
+
+\item{simultdpredeffect}{logical - whether time dependent predictors impact 
+instantaneously, or an instant *after* instantaneously. 
+Switch reflects difference between ctStanFit and ctFit.}
 }
 \description{
-This function generates data according to the specified ctsem model object. 
-Not all T0 matrices are included at present,
-safest to use a high burnin (where 'high' is sufficient for the process to forget starting values)
+This function generates data according to the specified ctsem model object.
 }
 \details{
-TRAITTDPREDCOV and TIPREDCOV matrices are not accurately accounted for, at present.
+TRAITTDPREDCOV and TIPREDCOV matrices are not accounted for, at present. 
+The first 1:n.TDpred rows and columns of TDPREDVAR are used for generating
+tdpreds at each time point.
 }
 \examples{
 #generate data for 2 process model, each process measured by noisy indicator, 
@@ -43,55 +46,6 @@ generatingModel<-ctModel(Tpoints=8,n.latent=2,n.TDpred=0,n.TIpred=0,n.manifest=2
  T0MEANS=matrix(0,ncol=1,nrow=2),
  T0VAR=diag(1,2))
 
-data<-ctGenerate(generatingModel,n.subjects=150,burnin=500)
-
-## Further examples set to 'dontrun' because they take longer than 5s. 
-
-\dontrun{
-ctIndplot(data,n.manifest=2,Tpoints=4,n.subjects=10)
-
-model<-ctModel(Tpoints=8, TRAITVAR='auto', n.latent=2,
- n.manifest=2, LAMBDA=diag(2))
-
-checkf<-ctFit(data,model,stationary=c('T0VAR','T0MEANS'))
-summary(checkf,verbose=TRUE)
- 
- 
-#### with 2 process from 4 indicators, latent trait, TDpred and TIpred 
-Tpoints=8
-n.latent=2
-n.manifest=4
-n.TDpred=1
-n.TIpred=1
-
-generatingModel<-ctModel(Tpoints=Tpoints,n.latent=n.latent,
- n.TDpred=n.TDpred,n.TIpred=n.TIpred,n.manifest=n.manifest,
- LAMBDA=matrix(c(1,.4,.8,0,0,0,0,1),nrow=n.manifest,ncol=n.latent),
- MANIFESTVAR=diag(c(.2),n.manifest),
- MANIFESTTRAITVAR=matrix(c(.3,.1,0,.2,  0,.2,0,.15, 
- 0,0,0,0, 0,0,0,.4) ,n.manifest,n.manifest),
- MANIFESTMEANS=matrix(c(0,0,0,0),n.manifest,1),
- DRIFT=matrix(c(-.23,.1,.0,-.4),n.latent),
- DIFFUSION=matrix(c(8.3,5.1,0,8.4),n.latent,n.latent),
- CINT=matrix(c(0,.4),n.latent,1),
- TDPREDEFFECT=matrix(c(1.2,-.4),nrow=n.latent,ncol=n.TDpred),
- TIPREDEFFECT=matrix(c(.32,-.08),nrow=n.latent,ncol=n.TIpred),
- TDPREDMEANS=matrix(c(0,0,1,rep(0, (Tpoints-1-3)*n.TDpred)),nrow=n.TDpred*(Tpoints-1)),
- TIPREDMEANS=matrix(0,nrow=n.TIpred),
- TDPREDVAR=diag(0.1,n.TDpred*(Tpoints-1)),
- TIPREDVAR=diag(.4,n.TIpred),
- T0MEANS=matrix(0,ncol=1,nrow=n.latent))
- 
-data<-ctGenerate(generatingModel,n.subjects=100,burnin=500)
-
-model<-ctModel(n.latent=n.latent, n.TDpred=n.TDpred, n.TIpred=n.TIpred, 
-n.manifest=n.manifest, 
-LAMBDA=matrix(c(1,"l2","l3",0,0,0,0,1),n.manifest,n.latent),  
-TRAITVAR='auto',Tpoints=Tpoints)
-
-
-fit<-ctFit(data,model, stationary=c('T0VAR','T0MEANS', 'T0TIPREDEFFECT'))
-summary(checkf)  
-}
+data<-ctGenerate(generatingModel,n.subjects=15,burnin=10)
 }
 

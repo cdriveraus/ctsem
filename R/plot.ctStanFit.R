@@ -23,11 +23,18 @@
 #'  other options.
 #' @return Nothing. Generates plots.
 #' @aliases ctStanPlot
+#' @method plot ctStanFit
 #' @examples
+#' plot(ctstantestfit,types=c('regression','kalman',priorcheck'))
+#' 
+#' \dontrun{
+#' ### complete example
 #' plot(ctstantestfit)
 #' 
 #' #### example plot using rstan functions
-#' rstan::stan_trace(ctstantestfit$stanfit, pars=ctStanParnames(ctstantestfit,
+#' rstan::stan_trace(ctstantestfit$stanfit, 
+#' pars=ctStanParnames(ctstantestfit,'hmean_'))
+#' }
 #' @export
 plot.ctStanFit <- function(x, types='all',wait=TRUE,...){
   
@@ -134,25 +141,4 @@ plot.ctStanFit <- function(x, types='all',wait=TRUE,...){
 }
 
 
-#' ctStanParnames
-#' 
-#' Gets internal stan parameter names of a ctStanFit object based on specified substrings.
-#'
-#' @param x ctStanFit object
-#' @param substrings vector of character strings, parameter names of the stan model
-#' containing any of these strings will be returned. Useful strings may be 'hmean_' for 
-#' hyper (population) means, 'hsd_' for hyper standard deviations, 'tipred_' for time
-#' independent predictors, or specific combinations such as 'hmean_drift' for the population
-#' means of temporal dynamics parameters
-#' @return vector of character strings.
-#' @examples
-#' ctStanParnames(ctstantestfit,substrings=c('hmean_','hsd_'))
-#' @export
-ctStanParnames <- function(x,substrings=c('hmean_','hsd_')){
-  out<-c()
-  for(subsi in substrings){
-    out<- c(out, x$stanfit@model_pars[grep(subsi,x$stanfit@model_pars)])
-  }
-  return(out)
-}
 

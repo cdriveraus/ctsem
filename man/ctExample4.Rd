@@ -3,7 +3,8 @@
 \name{ctExample4}
 \alias{ctExample4}
 \title{ctExample4}
-\format{20 by 79 matrix containing 20 observations of variables Y1, Y2, Y3, and 19 measurement intervals dTx, for each of 20 individuals.}
+\format{20 by 79 matrix containing 20 observations of variables 
+Y1, Y2, Y3, and 19 measurement intervals dTx, for each of 20 individuals.}
 \description{
 Simulated example dataset for the ctsem package
 }

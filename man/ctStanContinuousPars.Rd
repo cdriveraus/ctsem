@@ -8,7 +8,7 @@ ctStanContinuousPars(ctstanfitobj, subjects = "all", iter = "all",
   calcfunc = mean, ...)
 }
 \arguments{
-\item{ctstanfitobj}{fit object from \code{\link[rstan]{ctStanFit}}}
+\item{ctstanfitobj}{fit object from \code{\link{ctStanFit}}}
 
 \item{subjects}{Either 'all', or integers denoting which subjects to perform the calculation over. 
 When multiple subjects are specified, the returned matrices will be a mean over subjects.}
