@@ -295,7 +295,7 @@ model$pars[c(19,20),c('TI1_effect','TI2_effect','TI3_effect')]<-TRUE
 Once model specification is complete, the model is fit to the data using the ctStanFit function as follows -- depending on the data, model, and number of iterations requested, this can take anywhere from a few minutes to days. Current experience suggests 300 iterations is often enough to get an idea of what is going on, but more may be necessary for robust inference. This will of course vary massively depending on model and data. For the sake of speed for this example we only sample for 100 iterations with a lowered max\_treedepth - this latter parameter controls the maximum number of steps the Hamiltonian sampler is allowed to take per iteration, with each increase of 1 doubling the maximum. With these settings the fit should take only a few minutes (but will not be adequate for inference!).
 
 <<fitting,cache=TRUE>>=
-fit<-ctStanFit(datalong = ctstantestdat, ctstanmodel = model, iter=100, chains=3, 
+fit<-ctStanFit(datalong = ctstantestdat, ctstanmodel = model, iter=100, chains=2, 
   plot=FALSE, control=list(max_treedepth = 6))
 @
 
