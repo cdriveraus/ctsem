@@ -76,9 +76,11 @@ ctGenerate<-function(ctmodelobj,n.subjects=1000,burnin=0,dtmean=1,logdtsd=0,wide
   
   fullTpoints<-burnin+Tpoints
   
-  if(n.TDpred > 0) TDPREDMEANS <- rbind(matrix(0,nrow=(burnin+ifelse(simultdpredeffect,0,1))*n.TDpred),
-    TDPREDMEANS,
-    matrix(0,nrow=ifelse(simultdpredeffect,0,1)))
+  if(n.TDpred > 0) {
+    TDPREDMEANS <- rbind(matrix(0,nrow=(burnin+ifelse(simultdpredeffect,0,1))*n.TDpred),
+    TDPREDMEANS)
+    if(simultdpredeffect) TDPREDMEANS=rbind(TDPREDMEANS,0)
+  }
   
   # TRAITVARchol = t(chol(-solve(DRIFT) %*% TRAITVAR %*% -t(solve(DRIFT))))
   
