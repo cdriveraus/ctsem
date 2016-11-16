@@ -17,6 +17,6 @@ AutoAppendNewline: Yes
 BuildType: Package
 PackageUseDevtools: Yes
 PackageInstallArgs: --no-multiarch --with-keep.source
-PackageBuildArgs: --no-build-vignettes --resave-data
+PackageBuildArgs: --no-build-vignettes --resave-data --compact-vignettes"gs+qpdf"
 PackageCheckArgs: --no-build-vignettes --resave-data
 PackageRoxygenize: rd,collate,namespace
