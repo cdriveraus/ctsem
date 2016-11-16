@@ -212,7 +212,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   
   
   for(typei in 1:length(type)){ #for all types of discrete parameter requested, compute pars
-    message('Getting ',typei,' / ', length(type), ', ',type[typei])
+    message('Getting ', type[typei],', may take a moment...')
     matrixtype=ifelse(type[typei] %in% c('discreteDRIFT'),TRUE, FALSE) #include any matrix type outputs
     
     out[[typei]] <- plyr::aaply(1:niter,1,function(iterx){
@@ -241,7 +241,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
         
         return(discreteparsxy)
       },.drop=FALSE)
-    },.drop=FALSE,.progress='text')
+    },.drop=FALSE)
     
     out[[typei]] = plyr::aaply(quantiles, 1, function(quantx) 
       ctCollapse(inarray=out[[typei]],collapsemargin=c(1,if(collapseSubjects) 2),collapsefunc=quantile,probs=quantx)

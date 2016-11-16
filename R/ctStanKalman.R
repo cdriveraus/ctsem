@@ -163,8 +163,9 @@ ctStanKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
     }
     return(ret)}})),na.rm=TRUE)
     #extend range somewhat...
-    plotcontrol$ylim[1] = plotcontrol$ylim[1] - (plotcontrol$ylim[2] - plotcontrol$ylim[2])/3
-    plotcontrol$ylim[2] = plotcontrol$ylim[2] + (plotcontrol$ylim[2] - plotcontrol$ylim[2])/3
+   
+    plotcontrol$ylim[1] = plotcontrol$ylim[1] - (plotcontrol$ylim[2] - plotcontrol$ylim[1])/5
+    plotcontrol$ylim[2] = plotcontrol$ylim[2] + (plotcontrol$ylim[2] - plotcontrol$ylim[1])/5
   }
   
 

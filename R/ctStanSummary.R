@@ -69,10 +69,10 @@ hypercorr=array(unlist(lapply(1:iter,function(x){ #get array of hypercorr sample
 })),dim=c(npars,npars,iter))
 
 
-popcorr <- ctCollapse(hypercorr,3,mean)[lower.tri(diag(dim(hypercorr)[1]))]
-popcorr <- cbind(popcorr,ctCollapse(hypercorr,3,sd)[lower.tri(diag(dim(hypercorr)[1]))])
-popcorr <- cbind(popcorr,ctCollapse(hypercorr,3,quantile,probs=c(.05))[lower.tri(diag(dim(hypercorr)[1]))])
-popcorr <- cbind(popcorr,ctCollapse(hypercorr,3,quantile,probs=c(.95))[lower.tri(diag(dim(hypercorr)[1]))])
+popcorr <- ctCollapse(hypercorr_transformed,3,mean)[lower.tri(diag(dim(hypercorr_transformed)[1]))]
+popcorr <- cbind(popcorr,ctCollapse(hypercorr_transformed,3,sd)[lower.tri(diag(dim(hypercorr_transformed)[1]))])
+popcorr <- cbind(popcorr,ctCollapse(hypercorr_transformed,3,quantile,probs=c(.05))[lower.tri(diag(dim(hypercorr_transformed)[1]))])
+popcorr <- cbind(popcorr,ctCollapse(hypercorr_transformed,3,quantile,probs=c(.95))[lower.tri(diag(dim(hypercorr_transformed)[1]))])
 colnames(popcorr) <- c('mean','sd','2.5%','97.5%')
 rownames(popcorr) <- matrix(paste0('corr_',parnames,'__',rep(parnames,each=length(parnames))),
   length(parnames),length(parnames))[lower.tri(diag(dim(hypercorr)[1]))]
