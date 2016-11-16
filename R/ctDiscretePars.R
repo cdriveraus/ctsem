@@ -263,7 +263,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   names(out) <- type
   
   if(plot) {
-    ctStanDiscreteParsPlot(out,times=times,...)
+    ctStanDiscreteParsPlot(out,times=times,latentNames=ctstanfitobj$ctstanmodel$latentNames,...)
   } else return(out)
 }
 
@@ -282,9 +282,11 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
 #'overlayed on existing plot.
 #'@param legend Logical. If TRUE, generates a legend.
 #'@param polygon Logical. If TRUE, fills a polygon between the first and last specified quantiles.
-#'@param quantiles numeric vector of values between 0 and 1, specifying which quantiles to plot.
+#'@param quantiles numeric vector of length 3, with values between 0 and 1, specifying which quantiles to plot.
 #'The default of c(.05,.5,.95) plots 95\% credible intervals and the posterior median at 50\%. 
 #'@param times Numeric vector of positive values, discrete time parameters will be calculated for each.
+#'@param latentNames Vector of character strings denoting names for the latent variables. 
+#''auto' just uses eta1 eta2 etc.
 #'@param ylim Either 'auto' to determine automatically, or vector of length 2 specifying
 #'upper and lower limits of y axis.
 #'@param lwdvec Either 'auto', or a vector of positive integers denoting line widths for each quantile.
@@ -292,13 +294,13 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
 #'@param ltyvec Either 'auto', or a vector of line type integers (as for the lty parameter normally)
 #' denoting line types for each quantile.
 #' 'auto' specifies c(3, 1, 3) if there are 3 quantiles to be plotted (default), otherwise simply 1.
-#'@param colorvec Either 'auto', or a vector of color values denoting colors for each index to be plotted.
+#'@param colvec Either 'auto', or a vector of color values denoting colors for each index to be plotted.
 #''auto' generates colors using the \code{\link[grDevices]{rainbow}} function.
 #'@param plotcontrol list of arguments to pass to plot function. 
 #'The following arguments are ignored: ylim,lwd,lty,col,x,y.
 #'@param legendcontrol list of arguments to pass to legend function. 'legend=' and 'text.col=' arguments
 #'will be ignored.
-#'@param polygonalpha Numeric between 0 and 1 to multiply the alpha (transparency) of colorvec by for 
+#'@param polygonalpha Numeric between 0 and 1 to multiply the alpha (transparency) of colvec by for 
 #'the fill polygon.
 #'@param polygoncontrol list of arguments to pass to polgyon function (if polygon=TRUE).
 #'x,y, and col arguments will be ignored.
@@ -309,22 +311,28 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
 #'@export
 
 ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon=TRUE, 
-  quantiles=c(.05,.5,.95), times=seq(0,10,.1),
-  ylim='auto',lwdvec='auto',colorvec='auto',ltyvec='auto',
+  quantiles=c(.05,.5,.95), times=seq(0,10,.1),latentNames='auto',
+  ylim='auto',lwdvec='auto',colvec='auto',ltyvec='auto',
   plotcontrol=list(ylab='Value',xlab='Time interval',
     main='Regression coefficients',type='l'),
   legendcontrol=list(x='topright',bg='white'),
-  polygonalpha=.05,
+  polygonalpha=.1,
   polygoncontrol=list(border=NA)){
   
   input <- x[[1]] #ctStanDiscretePars(x,type='discreteDRIFT',times=times,quantiles=quantiles,...)[[1]]
   
   nlatent=dim(input)[1]
   
-  latentNames=paste0('eta',1:nlatent)
+  if(latentNames[1]=='auto') latentNames=paste0('eta',1:nlatent)
   
-  if(ltyvec=='auto' & length(quantiles)==3) ltyvec=c(3,1,3) else ltyvec=1
-  if(lwdvec=='auto' & length(quantiles)==3) lwdvec=c(1,3,1) else lwdvec=3
+  if(is.null(plotcontrol$ylab)) plotcontrol$ylab  <- 'Value'
+  if(is.null(plotcontrol$xlab)) plotcontrol$xlab  <- 'Time interval'
+  if(is.null(plotcontrol$main)) plotcontrol$main  <- 'Regression coefficients'
+  if(is.null(plotcontrol$type)) plotcontrol$type  <- 'l'
+  
+  if(is.null(legendcontrol$x)) legendcontrol$x = 'topright'
+  if(is.null(legendcontrol$bg)) legendcontrol$bg = 'white'
+  
   
   if(indices[1]=='AR') indices <- matrix(1:nlatent,nrow=nlatent,ncol=2)
   
@@ -336,12 +344,16 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
     rep(1:nlatent,nlatent),
     rep(1:nlatent,each=nlatent))
   
-  if(colorvec[1]=='auto') colorvec=grDevices::rainbow(nrow(indices),alpha=.8)
+  if(ltyvec[1]=='auto') ltyvec=1:nrow(indices)
+  if(lwdvec[1]=='auto') lwdvec= rep(3,nrow(indices))
+  
+  if(colvec[1]=='auto') colvec=grDevices::rainbow(nrow(indices),alpha=.8)
   
   if(ylim=='auto') ylim=range(plyr::aaply(input,c(3,4),function(x)
     x[indices]),na.rm=TRUE) #range of diagonals
   
-  for(qi in 1:length(quantiles)){
+  ####plotting quantiles - now just using polygon so only plotting middle quantile
+  for(qi in 1:3){
     cc=0
     for(indexi in 1:nrow(indices)){
       cc=cc+1
@@ -351,10 +363,9 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
       plotargs<-plotcontrol
       plotargs$x=times
       plotargs$y=input[ri,ci,,qi]
-      plotargs$lty=ltyvec[qi]
-      plotargs$col=colorvec[cc]
-      plotargs$lwd=lwdvec[qi]
-      plotargs$lty=ltyvec[qi]
+      plotargs$lty=ltyvec[cc]
+      plotargs$col=ifelse(qi!= 2,grDevices::adjustcolor(colvec[cc],alpha.f=sqrt(polygonalpha)) ,colvec[cc])
+      plotargs$lwd=ifelse(qi!= 2,1, lwdvec[cc])
       plotargs$ylim=ylim
       
       if(qi==1 && indexi==1 & !add) do.call(plot,plotargs) else do.call(points,plotargs)
@@ -370,13 +381,16 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
       polygonargs<-polygoncontrol
       polygonargs$x=c(times,times[backwardstimesindex])
       polygonargs$y=c(input[ri,ci,,1], input[ri,ci,,length(quantiles)][backwardstimesindex])
-      polygonargs$col=grDevices::adjustcolor(colorvec[cc],alpha.f=polygonalpha)
+      polygonargs$col=grDevices::adjustcolor(colvec[cc],alpha.f=polygonalpha)
       do.call(graphics::polygon,polygonargs)
     }
   }
   
   legendcontrol$legend=paste0(latentNames[indices[,1]],'_',latentNames[indices[,2]])
-  legendcontrol$text.col=colorvec
+  legendcontrol$text.col=colvec
+  legendcontrol$col=colvec
+  legendcontrol$lty = ltyvec
+  legendcontrol$lwd=lwdvec
   
   if(legend) do.call(graphics::legend,legendcontrol)
   

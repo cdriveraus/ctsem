@@ -42,6 +42,7 @@ getSd=function(myarray){
   return(out)
 }
 
+
 #transformed subject level params
 hypercorr_transformed= array(sapply(1:iter, function(x) cor(e$indparams[x,,])),dim=c(npars,npars,iter))
 hypercov_transformed= array(sapply(1:iter, function(x) cov(e$indparams[x,,])),dim=c(npars,npars,iter))
@@ -67,8 +68,20 @@ hypercorr=array(unlist(lapply(1:iter,function(x){ #get array of hypercorr sample
   hypercorrchol%*% t(hypercorrchol)
 })),dim=c(npars,npars,iter))
 
-# browser()
 
+popcorr <- ctCollapse(hypercorr,3,mean)[lower.tri(diag(dim(hypercorr)[1]))]
+popcorr <- cbind(popcorr,ctCollapse(hypercorr,3,sd)[lower.tri(diag(dim(hypercorr)[1]))])
+popcorr <- cbind(popcorr,ctCollapse(hypercorr,3,quantile,probs=c(.05))[lower.tri(diag(dim(hypercorr)[1]))])
+popcorr <- cbind(popcorr,ctCollapse(hypercorr,3,quantile,probs=c(.95))[lower.tri(diag(dim(hypercorr)[1]))])
+colnames(popcorr) <- c('mean','sd','2.5%','97.5%')
+rownames(popcorr) <- matrix(paste0('corr_',parnames,'__',rep(parnames,each=length(parnames))),
+  length(parnames),length(parnames))[lower.tri(diag(dim(hypercorr)[1]))]
+popcorr <- round(popcorr,3)
+
+popcorr <- cbind(popcorr,popcorr[,'mean'] / popcorr[,'sd'])
+colnames(popcorr)[5] <- 'z'
+
+popcorr <- popcorr[order(popcorr[,'z']),]
 
 hypercorrmean=getMean(hypercorr)
 hypercorrsd=getSd(hypercorr)
@@ -94,13 +107,19 @@ out=list(note1='The following matrix is the posterior means for the raw subject 
   hypercovcor_transformedsd=hypercovcor_transformedsd)
 }
 
-out$popmeans=round(s$summary[c(grep('hmean_',rownames(s$summary)),grep('lp',rownames(s$summary))),
+
+out$popcorr = popcorr
+
+out$tipreds=round(s$summary[c(grep('tipred_',rownames(s$summary))),
   c('mean','sd','2.5%','97.5%','n_eff','Rhat')],3)
 
-out$popsd=round(s$summary[c(grep('hsd_',rownames(s$summary)),grep('lp',rownames(s$summary))),
+out$popsd=round(s$summary[c(grep('hsd_',rownames(s$summary))),
   c('mean','sd','2.5%','97.5%','n_eff','Rhat')],3)
 
-out$tipreds=round(s$summary[c(grep('tipred_',rownames(s$summary)),grep('lp',rownames(s$summary))),
+out$popmeans=round(s$summary[c(grep('hmean_',rownames(s$summary))),
+  c('mean','sd','2.5%','97.5%','n_eff','Rhat')],3)
+
+out$logprob=round(s$summary[c(grep('lp',rownames(s$summary))),
   c('mean','sd','2.5%','97.5%','n_eff','Rhat')],3)
 
 return(out)
