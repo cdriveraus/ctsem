@@ -14,7 +14,7 @@ n.manifest=2
 n.TDpred=1
 n.TIpred=3
 n.latent=2
-n.subjects=20
+n.subjects=5
 gm<-ctModel(type='omx', Tpoints=Tpoints,n.latent=n.latent,
 n.TDpred=n.TDpred,n.TIpred=n.TIpred,n.manifest=n.manifest,
   MANIFESTVAR=diag(0.5,2),
@@ -31,17 +31,9 @@ n.TDpred=n.TDpred,n.TIpred=n.TIpred,n.manifest=n.manifest,
   T0MEANS=matrix(0,ncol=1,nrow=2),
   T0VAR=diag(100,2))
 
-cd<-ctGenerate(gm,n.subjects=n.subjects,burnin=300, 
-dT=1,asymptotes=F,simulTDpredeffect = T)
-model<-ctModel(type='stanct',n.latent=n.latent,
-n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,LAMBDA=diag(n.latent))
-long<-ctWideToLong(cd,Tpoints,n.manifest=model$n.manifest,
-manifestNames = model$manifestNames,
-  n.TDpred=n.TDpred,n.TIpred=n.TIpred,
-  TDpredNames = model$TDpredNames,TIpredNames = model$TIpredNames)
-long<-ctDeintervalise(long)
-long[is.na(long)]<-0
-ctstantestdat <- long
+ctstantestdat<-ctGenerate(gm,n.subjects=n.subjects,burnin=30,
+wide=FALSE, simultdpredeffect = TRUE)
+save(ctstantestdat,file='.\\\\data\\\\ctstantestdat.rda')
 }
 }
 
