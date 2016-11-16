@@ -1,7 +1,7 @@
 # R for travis: see documentation at https://docs.travis-ci.com/user/languages/r
 
 language: R
-sudo: required
+sudo: false
 cache: packages
 r_build_args: --resave-data --compact-vignettes=gs+qpdf
 r_check_args: --resave-data --compact-vignettes=gs+qpdf
