@@ -105,10 +105,11 @@ out=list(note1='The following matrix is the posterior means for the raw subject 
   note4=paste('The following matrix is the posterior std dev. for the post transformation subject level parameters correlation and covariance matrix,', 
     'with correlations on the lower triangle'),
   hypercovcor_transformedsd=hypercovcor_transformedsd)
+
+out$popcorr = popcorr
 }
 
 
-out$popcorr = popcorr
 
 out$tipreds=round(s$summary[c(grep('tipred_',rownames(s$summary))),
   c('mean','sd','2.5%','97.5%','n_eff','Rhat')],3)
