@@ -110,7 +110,7 @@ Manuel C. Voelkle \\ Humboldt University Berlin \\ Max Planck Institute for Huma
 \Shorttitle{Introduction to Hierarchical Continuous Time Dynamic Modelling with \pkg{ctsem}} %% a short title (if necessary)
 
 \Abstract{
-ctsem allows for specification and fitting of a range of continuous and discrete time dynamic models. The models may include multiple indicators (dynamic factor analysis), multiple, interrelated, potentially higher order processes, and time dependent (varying within subject) and time independent (not varying within subject) covariates. Classic longitudinal models like latent growth curves and latent change score models are also possible.  Version 1 of ctsem provided structural equation model based functionality by linking to the OpenMx software, allowing mixed effects models (random means but fixed regression and variance parameters) for multiple subjects. For version 2 of the \proglang{R} package \pkg{ctsem}, we include a Bayesian specification and fitting routine that uses the \pkg{Stan} probabilistic programming language, via the \pkg{rstan} package in R. This allows for all parameters of the dynamic model to individually vary, using an estimated population mean and variance, and any time independent covariate effects, as a prior. ctsem version 1 is documented in a forthcoming JSS publication (Driver, Voelkle, Oud, in press), and in R vignette form at \url{https://cran.r-project.org/web/packages/ctsem/vignettes/ctsem.pdf }, here we provide the basics for getting started with the new Bayesian approach included in version 2.
+ctsem allows for specification and fitting of a range of continuous and discrete time dynamic models with stochastic system noise. The models may include multiple indicators (dynamic factor analysis), multiple, interrelated, potentially higher order processes, and time dependent (varying within subject) and time independent (not varying within subject) covariates. Classic longitudinal models like latent growth curves and latent change score models are also possible.  Version 1 of ctsem provided structural equation model based functionality by linking to the OpenMx software, allowing mixed effects models (random means but fixed regression and variance parameters) for multiple subjects. For version 2 of the \proglang{R} package \pkg{ctsem}, we include a Bayesian specification and fitting routine that uses the \pkg{Stan} probabilistic programming language, via the \pkg{rstan} package in R. This allows for all parameters of the dynamic model to individually vary, using an estimated population mean and variance, and any time independent covariate effects, as a prior. Frequentist approaches with ctsem are documented in a forthcoming JSS publication (Driver, Voelkle, Oud, in press), and in R vignette form at \url{https://cran.r-project.org/web/packages/ctsem/vignettes/ctsem.pdf }, here we provide the basics for getting started with the Bayesian approach included in version 2.
 }
 
 \Keywords{hierarchical time series, Bayesian, longitudinal, panel data, state space, structural equation, continuous time, stochastic differential equation, dynamic models, Kalman filter, \proglang{R}}
@@ -221,7 +221,7 @@ Install ctsem software from github repository https://github.com/cdriveraus/ctse
 \end{kframe}
 \end{knitrout}
 
-Prepare data in long format, each row containing one time point of data for one subject. We need a subject id column containing numbers from 1 to total subjects, rising incrementally with each subject going down the data structure. This is to ensure coherence with the internal structure of the Stan model, the column is named by default "id", though this can be changed in the model specification. We also need a time column "time", containing numeric values for time, columns for manifest variables (the names of which must be given in the next step using ctModel), columns for time dependent predictors (these vary over time but have no model estimated and are assumed to impact latent processes instantly - generally these would be intervention or event dummy variables), and columns for time independent predictors (which predict the subject level parameters, that are themselves time invariant -- thus the values for a particular time independent predictor should be the same within a single subject).
+Prepare data in long format, each row containing one time point of data for one subject. We need a subject id column containing numbers from 1 to total subjects, rising incrementally with each subject going down the data structure. This is to ensure coherence with the internal structure of the Stan model. The column is named by default "id", though this can be changed in the model specification. We also need a time column "time", containing numeric values for time, columns for manifest variables (the names of which must be given in the next step using ctModel), columns for time dependent predictors (these vary over time but have no model estimated and are assumed to impact latent processes instantly), and columns for time independent predictors (which predict the subject level parameters, that are themselves time invariant -- thus the values for a particular time independent predictor must be the same across all observations of a particular subject).
 
 \begin{knitrout}\footnotesize
 \definecolor{shadecolor}{rgb}{0.969, 0.969, 0.969}\color{fgcolor}\begin{kframe}
@@ -257,7 +257,7 @@ Specify model using \code{ctModel(type="stanct",...)}. "stanct" specifies a cont
 \end{kframe}
 \end{knitrout}
 
-This generates a first order bivariate latent process model, with each process measured by a single, potentially noisy, manifest variable. Additional complexity or restrictions may be added, the table below shows the basic arguments one may consider and their link to the dynamic model parameters. For more details see the ctsem help files or papers. Note that for the Stan implementation, ctModel requires variance covariance matrices (DIFFUSION, T0VAR, MANIFESTVAR) to be specified with standard deviations on the diagonal, correlations on the lower off diagonal, and zeroes on the upper off diagonal. 
+This generates a first order bivariate latent process model, with each process measured by a single, potentially noisy, manifest variable. A single time dependent predictor is included in the model, and three time independent predictors. Additional complexity or restrictions may be added, the table below shows the basic arguments one may consider and their link to the dynamic model parameters. For more details see the ctsem help files or papers. Note that for the Stan implementation, ctModel requires variance covariance matrices (DIFFUSION, T0VAR, MANIFESTVAR) to be specified with standard deviations on the diagonal, correlations on the lower off diagonal, and zeroes on the upper off diagonal. 
 
 \begin{table}\footnotesize
 \begin{tabular}{l|l|l p{8cm} }
@@ -316,7 +316,7 @@ The parameters subobject of the created model object shows the parameter specifi
 \end{kframe}
 \end{knitrout}
 
-One may modify the output model to either restrict between subject differences (set some parameters to fixed over subjects), alter the transformation used to determine the prior / bounds, or restrict which effects of time independent predictors to estimate. Plotting the original prior, making a change, and plotting the resulting prior, are shown here -- in this case we believe the latent process innovation for our first latent process, captured by row 1 and column 1 of the DIFFUSION matrix, to be small, so scale our prior accordingly to both speed and improve sampling. Rather than simply scaling by 0.2 as shown here, one could also construct a new form of prior, so long as the resulting distribution was within the bounds required for the specific parameter. Note that the resulting distribution is a result of applying the specified transformation to a standard normal distribution, with mean of 0 and standard deviation of 1. To change the underlying standard normal, one would need to edit the resulting Stan code directly.
+One may modify the output model to either restrict between subject differences (set some parameters to not vary over individuals), alter the transformation used to determine the prior / bounds, or restrict which effects of time independent predictors to estimate. Plotting the original prior, making a change, and plotting the resulting prior, are shown here -- in this case we believe the stochastic latent process innovation for our first latent process, captured by row 1 and column 1 of the DIFFUSION matrix, to be small, so scale our prior accordingly to both speed and improve sampling. Rather than simply scaling by 0.2 as shown here, one could also construct a new form of prior, so long as the resulting distribution was within the bounds required for the specific parameter. Note that the resulting distribution is a result of applying the specified transformation to a standard normal distribution, with mean of 0 and standard deviation of 1. To change the underlying standard normal, one would need to edit the resulting Stan code directly.
 
 \begin{knitrout}\small
 \definecolor{shadecolor}{rgb}{0.969, 0.969, 0.969}\color{fgcolor}\begin{kframe}
@@ -342,7 +342,7 @@ One may modify the output model to either restrict between subject differences (
 
 \end{knitrout}
 
-The plots show the prior distribution for the population mean of DIFFUSION[1,1] in black, as well as two possible priors for the subject level parameters. The blue prior results from assuming the population mean is one standard deviation lower than the mean of the prior, and marginalising over the prior for the standard deviation of the population distribution. This latter prior can be scaled using the sdscale column of the parameters subobject, but is by default a normal distribution with mean -3 and SD 2 on the log of the standard deviation, giving essentially a lightly regularised form of Jeffreys, or reference, prior.
+The plots show the prior distribution for the population mean of DIFFUSION[1,1] in black, as well as two possible priors for the subject level parameters. The blue prior results from assuming the population mean is one standard deviation lower than the mean of the prior, and marginalising over the prior for the standard deviation of the population distribution. This latter prior can be scaled using the sdscale column of the parameters subobject, but is by default a truncated normal distribution with mean 0 and SD 1.
 
 Restrict between subject effects as desired. Unnecessary between subject effects will slow sampling and hinder appropriate regularization, but be aware of the many parameter dependencies in these models -- restricting one parameter may lead to genuine variation in the restricted parameter expressing itself elsewhere. The prior scale for between subject variance may need to be restricted when limited data (in either the number of time points or number of subjects) is available, to ensure adequate regularisation. Here we restrict MANIFESTVAR effects between subjects, and set all prior scales for the standard deviation of the population distribution to 0.2, from the default of 1.0. A rough interpretation of this change in sdscale is simply that we expect lower values for the population standard deviation, but to better interpret the effect of this latter change, see the section on standard deviation transformations.
 
@@ -367,12 +367,12 @@ Also restrict which parameters to include time independent predictor effects for
 \end{knitrout}
 
 \subsection{Model fitting}
-Once model specification is complete, the model is fit to the data using the ctStanFit function as follows -- depending on the data, model, and number of iterations requested, this can take anywhere from a few minutes to days. Current experience suggests 300 iterations is often enough to get an idea of what is going on, but more may be necessary for robust inference. This will of course vary massively depending on model and data. For the sake of speed for this example we only sample for 100 iterations with a lowered max\_treedepth - this latter parameter controls the maximum number of steps the Hamiltonian sampler is allowed to take per iteration, with each increase of 1 doubling the maximum. With these settings the fit should take only a few minutes (but will not be adequate for inference!).
+Once model specification is complete, the model is fit to the data using the ctStanFit function as follows -- depending on the data, model, and number of iterations requested, this can take anywhere from a few minutes to days. Current experience suggests 300 iterations is often enough to get an idea of what is going on, but more may be necessary for robust inference. This will of course vary massively depending on model and data. For the sake of speed for this example we only sample for 100 iterations with a lowered max\_treedepth - this latter parameter controls the maximum number of steps the Hamiltonian sampler is allowed to take per iteration, with each increase of 1 doubling the maximum. With these settings the fit should take only a few minutes (but will not be adequate for inference!). Those that wish to try out the functions without waiting, can simply use the already existing ctstantestfit object instead of creating the fit object (and adjust the code as needed!).
 
 \begin{knitrout}\small
 \definecolor{shadecolor}{rgb}{0.969, 0.969, 0.969}\color{fgcolor}\begin{kframe}
 \begin{alltt}
-\hlstd{fit}\hlkwb{<-}\hlkwd{ctStanFit}\hlstd{(}\hlkwc{datalong} \hlstd{= ctstantestdat,} \hlkwc{ctstanmodel} \hlstd{= model,} \hlkwc{iter}\hlstd{=}\hlnum{100}\hlstd{,} \hlkwc{chains}\hlstd{=}\hlnum{3}\hlstd{,}
+\hlstd{fit}\hlkwb{<-}\hlkwd{ctStanFit}\hlstd{(}\hlkwc{datalong} \hlstd{= ctstantestdat,} \hlkwc{ctstanmodel} \hlstd{= model,} \hlkwc{iter}\hlstd{=}\hlnum{100}\hlstd{,} \hlkwc{chains}\hlstd{=}\hlnum{2}\hlstd{,}
   \hlkwc{plot}\hlstd{=}\hlnum{FALSE}\hlstd{,} \hlkwc{control}\hlstd{=}\hlkwd{list}\hlstd{(}\hlkwc{max_treedepth} \hlstd{=} \hlnum{6}\hlstd{))}
 \end{alltt}
 \end{kframe}
@@ -380,8 +380,9 @@ Once model specification is complete, the model is fit to the data using the ctS
 
 The plot argument allows for plotting of sampling chains in real time, which is useful for slow models to ensure that sampling is proceeding in a functional manner. Models with many parameters (e.g., many subjects and all parameters varying over subject) may be too taxing for the function to handle smoothly - we have had succcess with up to around 4000 parameters.  
 
-\subsection{Output}
-After fitting, the ctStanSummary function may be used, which runs the rstan summary function but returns only certain output parameters likely to be of interest. However, the standard rstan output functions such as summary and extract are also available, and the shinystan package provides an excellent browser based interface. The parameters which are likely to be of most interest in the output all begin with an "output" prefix, followed by either "hmean" for hyper (population) mean, or "hsd" for hyper standard deviation. Any hmean parameters are returned in the form used for input - so correlations and standard deviations for any of the covariance related parameters. Subject specific parameters are denoted by the matrix they are from, then the first index represents the subject id, followed by standard matrix notation. For example, the 2nd row and 1st column of the DRIFT matrix for subject 8 is $"DRIFT[8,2,1]"$. Parameters in such matrices are returned in the form used for internal calculations -- that is, variance covariance matrices are returned as such, rather than the lower-triangular standard deviation and correlation matrices required for input. The exception to this are the time independent predictor effects, prefixed with $"output\_tip\_"$, for which a linear effect of a change of 1 on the predictor is approximated. So although "output\_tip\_TI1" is only truly linear with respect to internal parameterisations, we approximate the linear effect by averaging the effect of a score of +1 or -1 on the predictor, on the population mean. For any subject that substantially differs from the mean, or simply when precise absolute values of the effects are required (as opposed to general directions), they will need to be calculated manually.
+\subsection{Summary}
+After fitting, the summary function may be used on the fit object, which returns details regarding the population mean parameters, population standard deviation parameters, population correlations, and the effect parameters of time independent predictors. 
+Additionally, summary outputs a range of matrices regarding correlations betweeen subject level parameters. hypercorr\_means reports the posterior mean of the correlation between raw (not yet transformed from the standard normal scale) parameters. hypercorr\_sd reports the standard deviation of these parameters. hypercovcor\_transformedmean reports the correlation between transformed parameters on the lower triangle, the variance of these parameters on the diagonal, and the covariance on the upper triangle.
 
 \begin{knitrout}\small
 \definecolor{shadecolor}{rgb}{0.969, 0.969, 0.969}\color{fgcolor}\begin{kframe}
@@ -391,7 +392,23 @@ After fitting, the ctStanSummary function may be used, which runs the rstan summ
 \end{kframe}
 \end{knitrout}
 
-Summary outputs a range of matrices regarding correlations betweeen subject level parameters. hypercorr\_means reports the posterior mean of the correlatin between raw (not yet transformed from the standard normal scale) parameters. hypercorr\_sd reports the standard deviation of these parameters. hypercovcor\_transformedmean a Reported by summary are the mean, standard deviation, and credible intervals of the distributions, as well as the number of effective samples and the potential scale reduction factor, rhat. More statistics can be obtained using the regular rstan summary functions or shinystan.
+In the summary output, the population parameters are returned in the same form that they are input to ctModel - that is, standard deviations and partial correlations, which can be more difficult to interpret when more than two processes are modeled. To return the full set of continuous time parameter matrices for a specified subject or collection of subjects, the ctStanContinuousPars function can be used, with the calcfunc argument set appropriately depending on whether one wants the mean, sd, or a specific quantile (which would require an additional argument, probs).
+
+\subsection{Plotting}
+The plot function outputs a sequence of plots, all generated by specific functions. The name of the specific function appears in a message in the R console, checking the help for each specific function and running them separately will allow more customization. Some of the plots, such as the trace, density, and interval, are generated by the relevant rstan function and hopefully self explanatory. The plots specific to the heirarchical continuous time dynamic model are as follows:
+
+\begin{knitrout}\small
+\definecolor{shadecolor}{rgb}{0.969, 0.969, 0.969}\color{fgcolor}
+
+{\centering \includegraphics[width=\maxwidth]{figure/plots1-1} 
+
+}
+
+
+
+\end{knitrout}
+
+The above plot shows the dynamic regression coefficients (between latent states at different time points) that are implied by the model for particular time intervals, as well as the uncertainty of these coefficients.
 
 The relation between posteriors and priors for variables of interest can also be plotted as follows:
 
@@ -414,7 +431,7 @@ Shown are approximate density plots based on the post-warmup samples drawn. For 
 
 
 \subsection{Stationarity}
-A prior can be placed on the stationarity of the dynamic models, calculated as the difference between the T0MEANS and the long run asymptotes of the expected value of the processs, as well as the difference between the diagonals of the T0VAR covariance matrix and the long run asymptotes of the covariance of the processes. Such a prior encourages a minimisation of these differences, and can help to ensure that sensible, non-explosive models are estimated, and also help the sampler get past difficult regions of relative flatness in the parameter space due to colinearities between the within and between subject parameters. However if such a prior is too strong it can also induce difficult dependcies in model parameters, and there are a range of models where one may not wish to have such a prior. To place such a prior, the model$stationarymeanprior and model$stationaryvarprior slots can be changed from the default of NA to a numeric vector, representing the normal standard deviation of the deviations from stationarity. The number of elements in the vector correspond to the number of latent processes.
+A prior can be placed on the stationarity of the dynamic models, calculated as the difference between the T0MEANS and the long run asymptotes of the expected value of the process, as well as the difference between the diagonals of the T0VAR covariance matrix and the long run asymptotes of the covariance of the processes. Such a prior encourages a minimisation of these differences, and can help to ensure that sensible, non-explosive models are estimated, and also help the sampler get past difficult regions of relative flatness in the parameter space due to colinearities between the within and between subject parameters. However if such a prior is too strong it can also induce difficult dependencies in model parameters, and there are a range of models where one may not wish to have such a prior. To place such a prior, the model\$stationarymeanprior and model\$stationaryvarprior slots can be changed from the default of NA to a numeric vector, representing the normal standard deviation of the deviations from stationarity. The number of elements in the vector correspond to the number of latent processes.
 
 \subsection{Individual level analyses}
 Individual level results can also be considered, as ctsem includes functionality to output prior (based on all prior observations), updated (based on all prior and current observations), and smoothed (based on all observations) expectations and covariances from the Kalman filter, based on specific subjects models. For ease of comparison, expected manifest indicator scores conditional on prior, updated and smoothed states are also included. This approach allows for: predictions regarding individuals states at any point in time, given any values on the time dependent predictors (external inputs such as interventions or events); residual analysis to check for unmodeled dependencies in the data; or simply as a means of visualization, for comprehension and model sanity checking purposes. An example of such is depicted below, where we see observed and estimated scores for a selected subject from our sample. If we wanted to predict unobserved states in the past or future, we would need only to include the relevant time and missing observations in our data structure.
@@ -436,7 +453,11 @@ Individual level results can also be considered, as ctsem includes functionality
 
 
 \subsection{Accessing Stan model code}
-For diagnosing problems or modifying the model in ways not achievable via the ctsem model specification, one can use ctsem to generate the Stan code and then work directly with that, simply by specifying the argument fit=FALSE to the ctStanFit function. 
+For diagnosing problems or modifying the model in ways not achievable via the ctsem model specification, one can use ctsem to generate the Stan code and then work directly with that, simply by specifying the argument fit=FALSE to the ctStanFit function. Any altered code can be passed back into ctStanFit by using the stanmodeltext argument, which can be convenient for setting up the data in particular.
+
+\subsection{Using Rstan functions}
+The standard rstan output functions such as summary and extract are also available, and the shinystan package provides an excellent browser based interface. The stan fit object is stored under the \$stanfit subobject from the ctStanFit output. The parameters which are likely to be of most interest in the output are prefixed by "hmean\_" for hyper (population) mean, "hsd\_" for hyper standard deviation, and "tipred\_" for time independent predictor. Any hmean parameters are returned in the form used for input - so correlations and standard deviations for any of the covariance related parameters. Subject specific parameters are denoted by the matrix they are from, then the first index represents the subject id, followed by standard matrix notation. For example, the 2nd row and 1st column of the DRIFT matrix for subject 8 is $"DRIFT[8,2,1]"$. Parameters in such matrices are returned in the form used for internal calculations -- that is, variance covariance matrices are returned as such, rather than the lower-triangular standard deviation and correlation matrices required for input. The exception to this are the time independent predictor effects, prefixed with $"tipred\_"$, for which a linear effect of a change of 1 on the predictor is approximated. So although "tipred\_TI1" is only truly linear with respect to internal parameterisations, we approximate the linear effect by averaging the effect of a score of +1 or -1 on the predictor, on the population mean. For any subject that substantially differs from the mean, or simply when precise absolute values of the effects are required (as opposed to general directions), they will need to be calculated manually.
+
 
 \subsection{Oscillating, single subject example - sunspots data}
 In the following example we fit the sunspots data available within R, which has previously been fit by various authors including \citet{tomasson2013computational}. We have used the same CARMA(2,1) model and obtained similar estimates -- some differences are due to the contrast between Bayes and maximum likelihood, though if desired one could adjust the code to fit using maximum likelihood, as here we have only one subject. There are usually some divergent transitions (indicating a difficulty in the sampling chain and a potential threat to inference) generated in this fit -- alternate parameterisations or an increase in the adapt\_delta control argument to Stan (which defaults to 0.9 in ctsem, with a maximum of 1, though 1 is not recommended...) may help.
@@ -472,38 +493,28 @@ In the following example we fit the sunspots data available within R, which has 
   \hlkwc{control}\hlstd{=}\hlkwd{list}\hlstd{(}\hlkwc{adapt_delta}\hlstd{=}\hlnum{.9}\hlstd{))}
 
 \hlcom{#output}
-\hlkwd{summary}\hlstd{(fit)}
+\hlkwd{summary}\hlstd{(fit)}\hlopt{$}\hlstd{popmeans}
 \end{alltt}
 \begin{verbatim}
-$popmeans
-                                        mean     sd     2.5%    97.5% n_eff  Rhat
-hmean_T0mean_ss_level                 14.486 10.878   -8.386   32.791  90.9 1.029
-hmean_T0mean_ss_velocity               8.732  9.479   -9.033   25.138 209.1 1.002
-hmean_ma1                              0.627  0.237    0.171    1.065  35.6 1.000
-hmean_a21                             -0.355  0.048   -0.456   -0.266  64.5 1.003
-hmean_a22                             -0.326  0.104   -0.516   -0.149  57.2 0.996
-hmean_diffusion                       15.688  2.850   11.273   21.574  42.9 0.996
-hmean_manifestvar_sunspots_sunspots    1.505  1.624    0.027    5.312  43.2 1.018
-hmean_m1                              45.539  2.757   39.623   50.441 160.6 1.031
-hmean_T0var_ss_level_ss_level         18.425 34.980    0.048  122.067 170.2 1.028
-hmean_T0var_ss_velocity_ss_level      -0.001  0.394   -0.671    0.734  91.7 1.011
-hmean_T0var_ss_velocity_ss_velocity    5.873 11.075    0.024   41.754 203.1 1.009
-lp__                                -577.034  2.406 -583.021 -573.503 121.7 1.015
-
-$popsd
-   mean      sd    2.5%   97.5%   n_eff    Rhat 
--577.03    2.41 -583.02 -573.50  121.68    1.01 
-
-$tipreds
-   mean      sd    2.5%   97.5%   n_eff    Rhat 
--577.03    2.41 -583.02 -573.50  121.68    1.01 
+                                      mean     sd    2.5%   97.5% n_eff  Rhat
+hmean_T0mean_ss_level               11.145 11.653 -10.393  32.040 243.4 1.002
+hmean_T0mean_ss_velocity             8.067  9.556 -10.744  25.960 211.0 1.001
+hmean_ma1                            0.629  0.208   0.133   1.054  86.1 0.999
+hmean_a21                           -0.349  0.046  -0.448  -0.268 175.3 1.000
+hmean_a22                           -0.332  0.088  -0.518  -0.174 160.1 1.006
+hmean_diffusion                     15.787  2.620  11.026  20.832 121.4 0.999
+hmean_manifestvar_sunspots_sunspots  1.232  1.425   0.012   5.224  70.1 1.028
+hmean_m1                            45.121  2.996  39.223  50.860 275.8 0.996
+hmean_T0var_ss_level_ss_level       21.147 30.366   0.061 111.672 237.7 0.997
+hmean_T0var_ss_velocity_ss_level     0.014  0.414  -0.717   0.762 264.5 1.005
+hmean_T0var_ss_velocity_ss_velocity  7.121 22.358   0.021  42.762  70.1 1.024
 \end{verbatim}
 \end{kframe}
 \end{knitrout}
 
 
 \subsection{Population standard deviations - understanding the transforms}
-Internally, we sample parameters that we will refer to here as the `raw' parameters -- these parameters have no bounds and are drawn from normal distributions. Both population mean (internally: hypermeans) and subject level (internally: indparamsbase) raw parameters are drawn from a normal(0, 1) distribution. Depending on the specific parameter, various transformations may be applied to set appropriate bounds and priors. The log of the population standard deviation (loghypersd) for these raw parameters is sampled (by default) from a normal(-3, 2) distribution. So, the population standard deviation of the raw parameters can be calculated by a simple exponential of the loghypersd parameter. This resulting distribution can be scaled on a per parameter basis by the sdscale multiplier in the model specification, which defaults to 1. The following script shows a didactic sequence of sampling and transformation for a model with a single parameter, the auto effect of the drift matrix, and 50 subjects. Although we sample the priors here, this is merely to reflect the prior and enable understanding and plotting.
+Internally, we sample parameters that we will refer to here as the `raw' parameters -- these parameters have no bounds and are drawn from normal distributions. Both population mean (internally: hypermeans) and subject level (internally: indparamsbase) raw parameters are drawn from a normal(0, 1) distribution. Depending on the specific parameter, various transformations may be applied to set appropriate bounds and priors. The population standard deviation (hypersd) for these raw parameters is sampled (by default) from a truncated normal(0, 1) distribution. This distribution can be scaled on a per parameter basis by the sdscale multiplier in the model specification, which defaults to 1. The following script shows a didactic sequence of sampling and transformation for a model with a single parameter, the auto effect of the drift matrix, and 50 subjects. Although we sample the priors here, this is merely to reflect the prior and enable understanding and plotting.
 \begin{knitrout}\small
 \definecolor{shadecolor}{rgb}{0.969, 0.969, 0.969}\color{fgcolor}\begin{kframe}
 \begin{alltt}
@@ -517,13 +528,12 @@ Internally, we sample parameters that we will refer to here as the `raw' paramet
 
 \hlcom{#population standard deviation prior}
 
-\hlstd{loghypersd_prior} \hlkwb{<-} \hlkwd{rnorm}\hlstd{(}\hlnum{99999}\hlstd{,} \hlopt{-}\hlnum{3}\hlstd{,} \hlnum{2}\hlstd{)}
-\hlstd{hypersd_prior} \hlkwb{<-} \hlkwd{exp}\hlstd{(loghypersd_prior)}
+\hlstd{hypersd_prior} \hlkwb{<-} \hlkwd{rnorm}\hlstd{(}\hlnum{99999}\hlstd{,} \hlnum{0}\hlstd{,} \hlnum{1}\hlstd{)}
+\hlstd{hypersd_prior} \hlkwb{<-} \hlstd{hypersd_prior[hypersd_prior} \hlopt{>} \hlnum{0}\hlstd{]}
 
 \hlcom{#population standard deviation posterior}
 
-\hlstd{loghypersd_post} \hlkwb{<-} \hlopt{-}\hlnum{1.2} \hlcom{#hypothetical}
-\hlstd{hypersd_post} \hlkwb{<-} \hlkwd{exp}\hlstd{(loghypersd_post)}
+\hlstd{hypersd_post} \hlkwb{<-} \hlnum{.4} \hlcom{#hypothetical}
 
 \hlcom{#population cholesky correlation matrix}
 \hlcom{#lower triangle sampled from uniform(-1, 1), }
