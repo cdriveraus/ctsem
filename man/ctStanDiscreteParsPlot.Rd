@@ -6,10 +6,11 @@
 \usage{
 ctStanDiscreteParsPlot(x, indices = "all", add = FALSE, legend = TRUE,
   polygon = TRUE, quantiles = c(0.05, 0.5, 0.95), times = seq(0, 10, 0.1),
-  ylim = "auto", lwdvec = "auto", colorvec = "auto", ltyvec = "auto",
-  plotcontrol = list(ylab = "Value", xlab = "Time interval", main =
-  "Regression coefficients", type = "l"), legendcontrol = list(x = "topright",
-  bg = "white"), polygonalpha = 0.05, polygoncontrol = list(border = NA))
+  latentNames = "auto", ylim = "auto", lwdvec = "auto", colvec = "auto",
+  ltyvec = "auto", plotcontrol = list(ylab = "Value", xlab =
+  "Time interval", main = "Regression coefficients", type = "l"),
+  legendcontrol = list(x = "topright", bg = "white"), polygonalpha = 0.1,
+  polygoncontrol = list(border = NA))
 }
 \arguments{
 \item{x}{list object returned from \code{\link{ctStanDiscretePars}}.}
@@ -27,10 +28,13 @@ overlayed on existing plot.}
 
 \item{polygon}{Logical. If TRUE, fills a polygon between the first and last specified quantiles.}
 
-\item{quantiles}{numeric vector of values between 0 and 1, specifying which quantiles to plot.
+\item{quantiles}{numeric vector of length 3, with values between 0 and 1, specifying which quantiles to plot.
 The default of c(.05,.5,.95) plots 95\% credible intervals and the posterior median at 50\%.}
 
 \item{times}{Numeric vector of positive values, discrete time parameters will be calculated for each.}
+
+\item{latentNames}{Vector of character strings denoting names for the latent variables. 
+'auto' just uses eta1 eta2 etc.}
 
 \item{ylim}{Either 'auto' to determine automatically, or vector of length 2 specifying
 upper and lower limits of y axis.}
@@ -38,7 +42,7 @@ upper and lower limits of y axis.}
 \item{lwdvec}{Either 'auto', or a vector of positive integers denoting line widths for each quantile.
 'auto' specifies c(1,3,1) if there are 3 quantiles to be plotted (default), otherwise simply 3.}
 
-\item{colorvec}{Either 'auto', or a vector of color values denoting colors for each index to be plotted.
+\item{colvec}{Either 'auto', or a vector of color values denoting colors for each index to be plotted.
 'auto' generates colors using the \code{\link[grDevices]{rainbow}} function.}
 
 \item{ltyvec}{Either 'auto', or a vector of line type integers (as for the lty parameter normally)
@@ -51,7 +55,7 @@ The following arguments are ignored: ylim,lwd,lty,col,x,y.}
 \item{legendcontrol}{list of arguments to pass to legend function. 'legend=' and 'text.col=' arguments
 will be ignored.}
 
-\item{polygonalpha}{Numeric between 0 and 1 to multiply the alpha (transparency) of colorvec by for 
+\item{polygonalpha}{Numeric between 0 and 1 to multiply the alpha (transparency) of colvec by for 
 the fill polygon.}
 
 \item{polygoncontrol}{list of arguments to pass to polgyon function (if polygon=TRUE).
