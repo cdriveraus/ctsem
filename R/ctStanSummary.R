@@ -79,9 +79,9 @@ rownames(popcorr) <- matrix(paste0('corr_',parnames,'__',rep(parnames,each=lengt
 popcorr <- round(popcorr,3)
 
 popcorr <- cbind(popcorr,popcorr[,'mean'] / popcorr[,'sd'])
-colnames(popcorr)[5] <- 'z'
+colnames(popcorr)[5] <- 't'
 
-popcorr <- popcorr[order(popcorr[,'z']),]
+popcorr <- popcorr[order(popcorr[,'t']),]
 
 hypercorrmean=getMean(hypercorr)
 hypercorrsd=getSd(hypercorr)

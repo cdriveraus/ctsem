@@ -1,12 +1,15 @@
 ctsem news:
 
+18/11/2017
 #### 2.0.0 ####
 Features:
-- Hierarchical Bayesian modeling using Stan, see ctStanFit function.
+- Hierarchical Bayesian modeling using Stan, see ctStanFit function and 
+  the vignette at 
 
 Changes:
 - Defaults change: Fix CINT to 0 and free MANIFESTMEANS
-- Reintroduce TRAITVAR with variable effect at T0
+- Reintroduce variable effect of TRAITVAR at T0 (more flexible but more 
+    fitting problems - try MANIFESTTRAITVAR instead if problematic!)
 
 
 #### ctsem 1.1.6 ####
