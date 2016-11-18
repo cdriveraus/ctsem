@@ -7,29 +7,15 @@ Authors@R: c(person("Charles", "Driver", role =
     c("aut","cre","cph"),email="driver@mpib-berlin.mpg.de"),
     person("Manuel", "Voelkle", role = c("aut","cph")),
     person("Han", "Oud", role = c("aut","cph") ))
-Description: An easily accessible continuous (and discrete) time dynamic
-    modelling package for panel and time series data, reliant upon the OpenMx.
-    package (http://openmx.psyc.virginia.edu/) for computation. Most dynamic
-    modelling approaches to longitudinal data rely on the assumption that time
-    intervals between observations are consistent. When this assumption is
-    adhered to, the data gathering process is necessarily limited to a specific
-    schedule, and when broken, the resulting parameter estimates may be biased
-    and reduced in power. Continuous time models are conceptually similar to
-    vector autoregressive models (thus also the latent change models popularised
-    in a structural equation modelling context), however by explicitly including
-    the length of time between observations, continuous time models are freed
-    from the assumption that measurement intervals are consistent. This allows:
-    data to be gathered irregularly; the elimination of noise and bias due to
-    varying measurement intervals; parsimonious structures for complex dynamics.
-    The application of such a model in this SEM framework allows full-information
-    maximum-likelihood estimates for both N = 1 and N > 1 cases, multiple measured
-    indicators per latent process, and the flexibility to incorporate additional
-    elements, including individual heterogeneity in the latent process and
-    manifest intercepts, and time dependent and independent exogenous covariates.
-    Furthermore, due to the SEM implementation we are able to estimate a random
-    effects model where the impact of time dependent and time independent predictors
-    can be assessed simultaneously, but without the classic problems of random
-    effects models assuming no covariance between unit level effects and predictors.
+Description: A multivariate continuous (and discrete) time dynamic modelling 
+    package for panel and time series data, using linear stochastic differential 
+    equations. Contains a faster frequentist set of functions using OpenMx for 
+    single subject and mixed-effects (random intercepts only) structural 
+    equation models, or a hierarchical Bayesian implementation using Stan that 
+    allows for random effects over all model parameters. Allows for modelling of 
+    multiple noisy measurements of multiple stochastic processes, time varying 
+    input / event covariates, and time invariant covariates used to predict the 
+    parameters.
 License: GPL-3
 Depends:
     R (>= 3.0.0),
