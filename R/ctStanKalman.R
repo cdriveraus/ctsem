@@ -244,7 +244,7 @@ ctStanKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
           backwardstimesindex=order(plist$x,decreasing=TRUE)
 
           # if(is.null(polygoncontrol$angle)) 
-            polygoncontrol$angle=stats::runif(1,0,359)
+            # polygoncontrol$angle=stats::runif(1,0,359)
             polygonargs<-polygoncontrol
             polygonargs$x=c(plist$x,plist$x[backwardstimesindex])
             polygonargs$y=c(plist$y + errormultiply * sqrt(out[[subiname]][[errorvec[kveci]]][kdimi,kdimi,]), 

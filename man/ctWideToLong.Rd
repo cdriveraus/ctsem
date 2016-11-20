@@ -29,6 +29,10 @@ ctWideToLong(datawide, Tpoints, n.manifest, n.TDpred = 0, n.TIpred = 0,
 ctWideToLong
 Convert ctsem wide to long format
 }
+\details{
+Names must account for *all* the columns in the data - i.e. do not leave certain variables out
+just because you do not need them.
+}
 \examples{
  #First load the example ctsem wide format data with absolute times
  data('datastructure')

@@ -19,8 +19,7 @@
 
 ctStanPlotPost<-function(ctstanfitobj, rows='all',mfrow='auto',
   parcontrol=list(mgp=c(1.3,.5,0),mar=c(3,2,2,1)+.2),wait=FALSE){
-  
-  inv_logit<-function(x) exp(x)/(1+exp(x))
+
   
   paroriginal<-graphics::par()[c('mfrow','mgp','mar')]
   

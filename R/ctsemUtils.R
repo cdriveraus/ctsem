@@ -38,6 +38,22 @@ rl<-function(x) { #robust logical - wrap checks likely to return NA's in this
 
 
 
+
+#' Inverse logit
+#' 
+#' Maps the stan function so the same code works in R.
+#'
+#' @param x value to calculate the inverse logit for. 
+#'
+#' @examples
+#' inv_logit(-3)
+#' @export
+inv_logit<-function(x) {
+  exp(x)/(1+exp(x))
+}
+
+
+
 #' ctDensity
 #'
 #' Wrapper for base R density function that removes outliers and computes 'reasonable' bandwidth and x and y limits.
@@ -75,6 +91,26 @@ ctDensity<-function(x){
   return(list(density=out1,xlim=xlims,ylim=out3))
 }
 
+
+#' Plots uncertainty bands
+#'
+#' @param x x values
+#' @param ylow lower limits of y
+#' @param yhigh upper limits of y
+#' @param ... arguments to pass to polygon()
+#'
+#' @return Nothing. Adds a polygon to existing plot.
+#' @export
+#'
+#' @examples
+#' plot(0:100,sqrt(0:100),type='l')
+#' ctPoly(0:100, sqrt(0:100) - runif(101), sqrt(0:100) + runif(101),
+#' col=adjustcolor('red',alpha.f=.1),border=NA)
+ctPoly <- function(x,ylow,yhigh,...){
+  xf <- c(x,x[length(x):1])
+  yf <- c(ylow,yhigh[length(yhigh):1])
+  polygon(xf,yf,...)
+}
 
 
 

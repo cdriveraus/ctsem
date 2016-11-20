@@ -8,6 +8,9 @@
 #' @param manifestNames Character vector of manifest variable names.
 #' @param TDpredNames Character vector of time dependent predictor names.
 #' @param TIpredNames Character vector of time independent predictor names.
+#' @details
+#' Names must account for *all* the columns in the data - i.e. do not leave certain variables out
+#' just because you do not need them.
 #' @examples 
 #'  #First load the example ctsem wide format data with absolute times
 #'  data('datastructure')
