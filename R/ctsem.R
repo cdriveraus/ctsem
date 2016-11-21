@@ -43,5 +43,5 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
 #'  
 #' @docType package
 #' @name ctsem
-#' @import grDevices methods stats rstan OpenMx graphics
+#' @import grDevices methods stats rstan OpenMx graphics plyr
 NULL
