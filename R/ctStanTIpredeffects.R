@@ -104,7 +104,7 @@ if(!plot) return(out) else {
 #' @param typevec type vector of same length as 2nd margin.
 #' @param mainvec main vector of same length as 2nd margin, only used if 
 #' separate=TRUE.
-#' @param plotcontrol list of arguments to pass to \code{\link[graphics]{plot}}.
+#' @param plotcontrol list of arguments to pass to plot.
 #' @param legend Logical. Draw a legend?
 #' @param legendcontrol list of arguments to pass to \code{\link[graphics]{legend}}.
 #' @param polygon Logical. Draw the uncertainty polygon?
