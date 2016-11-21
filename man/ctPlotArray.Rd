@@ -31,7 +31,7 @@ or plot all on one?}
 \item{mainvec}{main vector of same length as 2nd margin, only used if 
 separate=TRUE.}
 
-\item{plotcontrol}{list of arguments to pass to \code{\link[graphics]{plot}}.}
+\item{plotcontrol}{list of arguments to pass to plot.}
 
 \item{legend}{Logical. Draw a legend?}
 

@@ -26,10 +26,10 @@ level parameters to compute effects on.
 'auto' uses all available, which is equivalent to 
 \code{1:sum(fit$ctstanmodel$pars$indvarying)}}
 
-\item{plot}{Logical. If TRUE, nothing is returned but instead \code{\link{ctArrayPlot}}
+\item{plot}{Logical. If TRUE, nothing is returned but instead \code{\link{ctPlotArray}}
 is used to plot the output instead.}
 
-\item{...}{arguments to pass to \code{\link{ctArrayPlot}} for plotting.}
+\item{...}{arguments to pass to \code{\link{ctPlotArray}} for plotting.}
 }
 \value{
 Either a three dimensional array of predictor effects, or nothing with a plot
