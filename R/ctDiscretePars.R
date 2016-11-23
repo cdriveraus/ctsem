@@ -31,19 +31,21 @@ ctStanParnames <- function(x,substrings=c('hmean_','hsd_')){
 #'@param iter Either character string 'all' which will then use all post-warmup iterations, 
 #'or an integer specifying which iteration/s to use.
 #'@param calcfunc Function to apply over samples, must return a single value. 
-#'By default the mean over all samples is returned, but one might also be interested in
-#'the \code{\link[stats]{sd}} or \code{\link[stats]{quantile}} functions.
-#'@param ... additional parameters to pass to calcfunc. For instance, with calcfunc = quantile, 
+#'By default the median over all samples is returned using the \code{\link[stats]{quantile}} function, 
+#'but one might also be interested in the \code{\link[stats]{mean}} or \code{\link[stats]{sd}}, for instance.
+#'@param calcfuncargs A list of additional parameters to pass to calcfunc. 
+#'For instance, with the default of calcfunc = quantile, 
 #'the probs argument is needed to ensure only a single value is returned.
 #'@examples
-#'#posterior mean over all subjects
+#'#posterior median over all subjects (also reflects mean of unconstrained pars)
 #'ctStanContinuousPars(ctstantestfit)
 #'
 #'#posterior 95% quantiles for subject 2
-#'ctStanContinuousPars(ctstantestfit, subjects=2, calcfunc=quantile, probs = .95)
+#'ctStanContinuousPars(ctstantestfit, subjects=2, calcfunc=quantile, 
+#'calcfuncargs=list(probs=0.95))
 #'@export
 ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
-  calcfunc=mean,...){
+  calcfunc=quantile,calcfuncargs=list(probs=0.5)){
   
   if(subjects[1] != 'all' && !is.integer(as.integer(subjects))) stop('
     subjects argument must be either "all" or an integer denoting specific subjects')
@@ -83,24 +85,24 @@ ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
     
     if(matname %in% c('T0MEANS','CINT', 'MANIFESTMEANS')) vector <- TRUE
     
-    if(!vector) assign(matname, 
-      array(ctCollapse(inarray = e[[matname]][,subselection,,,drop=FALSE],
-        collapsemargin = collapsemargin, 
-        collapsefunc = calcfunc,...),dim=dim(e[[matname]])[-c(1,2)])
-    )
+    calcfuncargs$collapsemargin = collapsemargin
+    calcfuncargs$collapsefunc=calcfunc
     
-    if(vector) assign(matname,
-      array(ctCollapse(inarray = e[[matname]][,subselection,,drop=FALSE],
-        collapsemargin = collapsemargin, 
-        collapsefunc = calcfunc, 
-        ...),dim=c(dim(e[[matname]])[-c(1,2)],1))
-    )
+    if(!vector) {
+      calcfuncargs$inarray = e[[matname]][,subselection,,,drop=FALSE]
+      assign(matname, array(do.call(ctCollapse,calcfuncargs),dim=dim(e[[matname]])[-c(1,2)]))
+    }
+    
+    if(vector) {
+      calcfuncargs$inarray = e[[matname]][,subselection,,drop=FALSE]
+      assign(matname, array(do.call(ctCollapse,calcfuncargs),dim=c(dim(e[[matname]])[-c(1,2)],1)))
+    }
     
   }
   
   DRIFTHATCH<-DRIFT %x% diag(nrow(DRIFT)) + diag(nrow(DRIFT)) %x% DRIFT
   asymDIFFUSION<-matrix(-solve(DRIFTHATCH) %*% c(DIFFUSION), nrow=nrow(DRIFT)) 
-
+  
   model<-list(DRIFT=DRIFT,T0VAR=T0VAR,DIFFUSION=DIFFUSION,asymDIFFUSION=asymDIFFUSION,CINT=CINT,T0MEANS=T0MEANS,
     MANIFESTMEANS=MANIFESTMEANS,MANIFESTVAR=MANIFESTVAR, LAMBDA=LAMBDA)
   
@@ -160,7 +162,8 @@ ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
 #'@param subjects Either 'all', to take the average over all subjects, or a vector of integers denoting which
 #'subjects.
 #'@param times Numeric vector of positive values, discrete time parameters will be calculated for each.
-#'@param quantiles Which quantiles to return
+#'@param quantiles Which quantiles to return. If plotting, specify 3 quantiles, 
+#'the 2nd will be plotted as a line with 1 and 3 as uncertainty bounds.
 #'@param plot Logical. If TRUE, plots output using \code{\link{ctStanDiscreteParsPlot}}
 #'instead of returning output. 
 #'@param ... additional plotting arguments to control \code{\link{ctStanDiscreteParsPlot}}
