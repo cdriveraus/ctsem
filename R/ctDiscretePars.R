@@ -32,7 +32,7 @@ ctStanParnames <- function(x,substrings=c('hmean_','hsd_')){
 #'or an integer specifying which iteration/s to use.
 #'@param calcfunc Function to apply over samples, must return a single value. 
 #'By default the median over all samples is returned using the \code{\link[stats]{quantile}} function, 
-#'but one might also be interested in the \code{\link[stats]{mean}} or \code{\link[stats]{sd}}, for instance.
+#'but one might also be interested in the \code{\link[base]{mean}} or \code{\link[stats]{sd}}, for instance.
 #'@param calcfuncargs A list of additional parameters to pass to calcfunc. 
 #'For instance, with the default of calcfunc = quantile, 
 #'the probs argument is needed to ensure only a single value is returned.

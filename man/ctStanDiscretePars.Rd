@@ -15,7 +15,8 @@ subjects.}
 
 \item{times}{Numeric vector of positive values, discrete time parameters will be calculated for each.}
 
-\item{quantiles}{Which quantiles to return}
+\item{quantiles}{Which quantiles to return. If plotting, specify 3 quantiles, 
+the 2nd will be plotted as a line with 1 and 3 as uncertainty bounds.}
 
 \item{plot}{Logical. If TRUE, plots output using \code{\link{ctStanDiscreteParsPlot}}
 instead of returning output.}
