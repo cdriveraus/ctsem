@@ -152,7 +152,7 @@ polygon=TRUE, polygonalpha=.1,polygoncontrol=list(border=NA)){
   if(all(colvec=='auto')) colvec = rainbow(nvars)
   if(all(typevec=='auto')) typevec = rep('l',nvars)
   if(all(mainvec=='auto')){
-    if(separate) mainvec=dimnames(yarray)[[2]] else mainvec =rep('',nvars)
+    if(separate) mainvec=dimnames(yarray)[[2]] else mainvec =rep(ifelse(is.null(plotcontrol$main),'',plotcontrol$main),nvars)
   }
 
   plotargs<-plotcontrol
