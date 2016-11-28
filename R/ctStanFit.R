@@ -260,9 +260,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
     }
     oldsubi<-subi
   }
-  message('Unique discreteDRIFT calculations per iteration required = ', length(unique(driftindex)))
-  message('Unique discreteCINT calculations per iteration required = ', length(unique(cintindex)))
-  message('Unique discreteDIFFUSION calculations per iteration required = ', length(unique(diffusionindex)))
+  message('Unique discreteDRIFT calculations per step required = ', length(unique(driftindex)))
+  message('Unique discreteCINT calculations per step required = ', length(unique(cintindex)))
+  message('Unique discreteDIFFUSION calculations per step required = ', length(unique(diffusionindex)))
   # browser()
   # datalong[sort(c(which(dT > 5),which(dT > 5)+1,which(dT > 5)-1)),1:2]
   
@@ -877,7 +877,7 @@ if(!kalman & !binomial) '
   }
   }
   
-  ',if(!binomial) 'errtrans~normal(0,1); ','
+  ',if(!binomial) 'target += normal_lpdf(errtrans|0,1); ','
   
   
     }
