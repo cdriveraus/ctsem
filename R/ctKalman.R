@@ -108,9 +108,10 @@ ctKalman<-function(kpars,datalong,
     # }
     if(rowi>1){
       etaprior[[rowi]] <- discreteCINT[[rowi]]  + discreteDRIFT[[rowi]] %*% etaupd[[rowi-1]]
-      if(ntdpred > 0) etaprior[[rowi]] <- etaprior[[rowi]] + kpars$TDPREDEFFECT %*% t(datalong[rowi,TDpredNames,drop=FALSE])
       etapriorcov[[rowi]] <-  discreteDRIFT[[rowi]] %*% etaupdcov[[rowi-1]] %*% t(discreteDRIFT[[rowi]])  + discreteDIFFUSION[[rowi]] #check transpose
     }
+    
+    if(ntdpred > 0) etaprior[[rowi]] <- etaprior[[rowi]] + kpars$TDPREDEFFECT %*% t(datalong[rowi,TDpredNames,drop=FALSE])
     
     if(imputeMissings) Y[rowi,] <- 0 #etaprior[[rowi]] + t(chol(etapriorcov[[rowi]])) %*% rnorm(nmanifest,0,1)
     
@@ -179,6 +180,9 @@ ctKalman<-function(kpars,datalong,
     } else{
       smoother<- etaupdcov[[rowi]] %*% t(discreteDRIFT[[rowi+1]]) %*% #is the rowi+1 correct?
         solve(etapriorcov[[rowi+1]])
+      # etasmoothtemp <-  etasmooth[[rowi+1]]
+      # if(ntdpred > 0) etasmoothtemp <- etasmoothtemp - kpars$TDPREDEFFECT %*% t(datalong[rowi,TDpredNames,drop=FALSE])
+      
       etasmooth[[rowi]]<-etaupd[[rowi]]+smoother %*% (etasmooth[[rowi+1]] - etaprior[[rowi+1]])
       etasmoothcov[[rowi]]<-etaupdcov[[rowi]] + smoother %*% ( etasmoothcov[[rowi+1]] - etapriorcov[[rowi+1]])
     }

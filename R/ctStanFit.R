@@ -878,24 +878,6 @@ if(!kalman & !binomial) '
   }
   
   ',if(!binomial) 'errtrans~normal(0,1); ','
-
-
-  ', if(optimize==TRUE && n.TIpred > 0) paste0('print("tipredeffect ",tipredeffect);'),'
-  ', if(optimize==TRUE | vb==TRUE) paste0('
-    //print("loghypersd",loghypersd);
-    //print("paramchol",paramchol);
-    //print("covariance",cov(indparams,nsubjects,nindvarying));
-    //print("cor",cov2cor(cov(indparams,nsubjects,nindvarying),nindvarying));
-    //print("hypercorr",hypercorr);
-    print("DRIFT ", DRIFT[1]);
-    print("DIFFUSION ", DIFFUSION[1]);
-    ',if(!fixedkalman) paste0('print("T0VAR ", T0VAR[1]);'),'
-    print("MANIFESTVAR ", MANIFESTVAR[1]);
-    print("T0MEANS[1] ", T0MEANS[1]);
-    print("CINT ", CINT[1]);
-    print("MANIFESTMEANS ", MANIFESTMEANS[1]);
-    print("lp =",get_lp());
-    '),'\n
   
   
     }
@@ -1100,7 +1082,7 @@ if(fit==TRUE){
   
   if(optimize==TRUE && fit==TRUE) {
     
-    stanfit <- rstan::optimizing(object = out@stanmodel, 
+    stanfit <- rstan::optimizing(object = stanfit@stanmodel, 
       # init=0,
       # algorithm='BFGS',
       as_vector=F,
@@ -1113,7 +1095,7 @@ if(fit==TRUE){
   }
   
   if(vb==TRUE && fit==TRUE) {
-    stanfit <- rstan::vb(object = out@stanmodel, 
+    stanfit <- rstan::vb(object = stanfit@stanmodel, 
       iter=iter,
       # eta=1e-6,
       data = standata,...)
