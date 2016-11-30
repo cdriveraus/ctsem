@@ -57,6 +57,8 @@ ctStanKalman<-function(ctstanfitobj, datalong=NULL, timerange='asdata', timestep
   }
   if(!all(subjects %in% datalong[,'subject'])) stop('Invalid subjects specified!')
   
+  diffusionindices<-ctstanfitobj$data$diffusionindices
+  
   for(subjecti in subjects){
     
     #setup subjects data, interpolating and extending as necessary
@@ -84,7 +86,8 @@ ctStanKalman<-function(ctstanfitobj, datalong=NULL, timerange='asdata', timestep
       manifestNames=ctstanfitobj$ctstanmodel$manifestNames,
       latentNames=ctstanfitobj$ctstanmodel$latentNames,
       TDpredNames=ctstanfitobj$ctstanmodel$TDpredNames,
-      timecol='time')
+      timecol='time',
+      diffusionindices=diffusionindices)
   }
   
   if(plot) {

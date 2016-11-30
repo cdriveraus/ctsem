@@ -19,13 +19,17 @@
 #' @param fit If TRUE, fit specified model using Stan, if FALSE, return stan model object without fitting.
 #' @param plot if TRUE, a Shiny program is launched upon fitting to interactively plot samples. 
 #' May struggle with many (e.g., > 5000) parameters, and may leave sample files in working directory if sampling is terminated.
+#' @param diffusionindices vector of integers denoting which latent variables are involved in covariance calculations.
+#' latents involved only in deterministic trends or input effects can be removed from matrices, speeding up calculations. 
+#' If unsure, leave default of 'all' ! Ignored if kalman=FALSE.
 #' @param asymdiffusion if TRUE, increases fitting speed at cost of model flexibility - T0VAR in the model specification is ignored, the DIFFUSION matrix specification is used as the 
 #' asymptotic DIFFUSION matrix (Q*_inf in the vignette / paper) (making it difficult if not impossible to properly specify
 #' higher order processes). The speed increases come about because the internal Kalman filter routine has many steps removed, and the
 #' asymptotic diffusion parameters are less dependent on the DRIFT matrix.
 #' @param optimize if TRUE, use Stan's optimizer for maximum a posteriori estimates. Not recommended unless
 #' no parameters vary across subjects.
-#' @param vb if TRUE, use Stan's variational approximation. Rudimentary testing suggests it is not accurate at present.
+#' @param vb if TRUE, use Stan's variational approximation. Rudimentary testing suggests it is not accurate 
+#' for many ctsem models at present.
 #' @param iter number of iterations, half of which will be devoted to warmup by default.
 #' @param inits vector of parameter start values, as returned by the rstan function \code{\link{unconstrain_pars}} for instance. 
 #' @param initwithoptim Logical. If TRUE, the model, with population standard deviations fixed to 1 
@@ -64,7 +68,7 @@
 #' }
 #' @export
 ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=TRUE, binomial=FALSE,
-  fit=TRUE, plot=FALSE,  
+  fit=TRUE, plot=FALSE,  diffusionindices='all',
   asymdiffusion=FALSE,optimize=FALSE, vb=FALSE, chains=1,inits=NULL,initwithoptim=FALSE,
   control=list(adapt_delta=.9, adapt_init_buffer=30, adapt_window=2,
     max_treedepth=10,stepsize=.001),...){
@@ -286,7 +290,14 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
   indvaryingcorindex= which(ctspec$param[ctspec$indvarying] %in% ctspec$param[is.na(ctspec$value) & 
       ctspec$indvarying & ctspec$row != ctspec$col & ctspec$matrix %in% c('T0VAR','DIFFUSION')])
   
-  
+  #check diffusion indices input by user - which latents are involved in covariance
+  if(diffusionindices=='all' || kalman==FALSE) diffusionindices = 1:nlatent
+  diffusionindices = as.integer(diffusionindices)
+  if(any(diffusionindices > nlatent)) stop('diffusionindices > than nlatent found!')
+  if(length(diffusionindices) > nlatent) stop('diffusionindices vector cannot be longer than nlatent!')
+  if(length(unique(diffusionindices)) < length(diffusionindices)) stop('diffusionindices vector cannot contain duplicates or!')
+  ndiffusion=length(diffusionindices)
+  message(paste(ndiffusion ,'/',nlatent,'latent variables required for covariance calculations'))
   
   
   
@@ -523,6 +534,8 @@ data {
   
   int<lower = 0, upper = nmanifest> nobs_y[ndatapoints];  // number of observed variables per observation
   int<lower = 0, upper = nmanifest> whichobs_y[ndatapoints, nmanifest]; // index of which variables are observed per observation
+  int<lower=0> ndiffusion; //number of latents involved in covariance calcs
+  int<lower=0,upper=nlatent> diffusionindices[ndiffusion]; //index of which latent variables are involved in covariance calculations
 }
 
 transformed data{
@@ -560,7 +573,7 @@ transformed parameters{
   vector[nlatent] T0MEANS',checkvarying('T0MEANS','[nsubjects]','[1]'),'; // initial (T0) latent states
   matrix[nmanifest,nlatent] LAMBDA',checkvarying('LAMBDA','[nsubjects]','[1]'),'; // loading matrix
   vector[nlatent] CINT',checkvarying('CINT','[nsubjects]','[1]'),'; // latent process intercept
-  ',if(!asymdiffusion) paste0('matrix[nlatent,nlatent] asymDIFFUSION',checkvarying(c('DIFFUSION','DRIFT'),'[nsubjects]','[1]'),'; //latent process variance as time interval goes to inf'),'
+  ',if(!asymdiffusion) paste0('matrix[ndiffusion,ndiffusion] asymDIFFUSION',checkvarying(c('DIFFUSION','DRIFT'),'[nsubjects]','[1]'),'; //latent process variance as time interval goes to inf'),'
   
   ',if(n.TDpred > 0) paste0('matrix[nlatent,ntdpred] TDPREDEFFECT',checkvarying('TDPREDEFFECT','[nsubjects]','[1]'),'; // effect of time dependent predictors'),'
   ',if(n.TIpred > 0) paste0('matrix[',nindvarying,',',n.TIpred,'] tipredeffect; //design matrix of individual time independent predictor effects'),'
@@ -601,8 +614,8 @@ transformed parameters{
         '),'
       
       {
-      vector[nlatent*nlatent] asymDIFFUSIONvec',checkvarying(c('DIFFUSION','DRIFT'),'[nsubjects]','[1]'),';
-      ',if(continuoustime & !asymdiffusion) paste0('matrix[nlatent*nlatent,nlatent*nlatent] DRIFTHATCH',checkvarying(c('DRIFT'),'[nsubjects]','[1]'),';'),'
+      vector[ndiffusion*ndiffusion] asymDIFFUSIONvec',checkvarying(c('DIFFUSION','DRIFT'),'[nsubjects]','[1]'),';
+      ',if(continuoustime & !asymdiffusion) paste0('matrix[ndiffusion*ndiffusion,ndiffusion*ndiffusion] DRIFTHATCH',checkvarying(c('DRIFT'),'[nsubjects]','[1]'),';'),'
       
       // create subject specific parameter matrices from fixed and transformed free effects 
       ',paste0(unlist(lapply(1:nrow(ctspec),function(rowi) {
@@ -646,15 +659,16 @@ transformed parameters{
         for(individual in 1:',checkvarying('DRIFT','nsubjects','1'),') {
         invDRIFT[individual] = inverse(DRIFT[individual]);
         ',if(!asymdiffusion) paste0(
-          'DRIFTHATCH[individual] = kron_prod(DRIFT[individual],diag_matrix(rep_vector(1, nlatent))) +  kron_prod(diag_matrix(rep_vector(1, nlatent)),DRIFT[individual]);
+          'DRIFTHATCH[individual] = kron_prod(DRIFT[individual][diffusionindices,diffusionindices],diag_matrix(rep_vector(1, ndiffusion))) +  ',
+            'kron_prod(diag_matrix(rep_vector(1, ndiffusion)),DRIFT[individual][diffusionindices,diffusionindices]);
           '),'
         }
         
         ',if(!asymdiffusion) paste0('
           for(individual in 1:',checkvarying(c('DIFFUSION','DRIFT'),'nsubjects','1'),'){
-          asymDIFFUSIONvec[individual] =  -inverse(DRIFTHATCH',checkvarying(c('DRIFT'),'[individual]','[1]'),') * to_vector(DIFFUSION',checkvarying(c('DIFFUSION'),'[individual]','[1]'),');
-          for(drowi in 1:nlatent) {
-          for(dcoli in 1:nlatent){
+          asymDIFFUSIONvec[individual] =  -inverse(DRIFTHATCH',checkvarying(c('DRIFT'),'[individual]','[1]'),') * to_vector(DIFFUSION',checkvarying(c('DIFFUSION'),'[individual]','[1]'),'[diffusionindices,diffusionindices]);
+          for(drowi in 1:ndiffusion) {
+          for(dcoli in 1:ndiffusion){
           asymDIFFUSION[individual][drowi,dcoli] =  asymDIFFUSIONvec[individual][drowi+(dcoli-1)*nlatent];
           }}
           asymDIFFUSION[individual] = makesym(asymDIFFUSION[individual]);
@@ -679,13 +693,13 @@ model{
   int counter;
   matrix[nlatent,nlatent] discreteDRIFT[',max(driftindex),']; 
   vector[nlatent] discreteCINT[',max(cintindex),'];
-  ',if(!fixedkalman) paste0('matrix[nlatent,nlatent] discreteDIFFUSION[',max(diffusionindex),'];',
-      if(!kalman) paste0('matrix[nlatent,nlatent] discreteDIFFUSIONchol[',max(diffusionindex),'];')),'
+  ',if(!fixedkalman) paste0('matrix[ndiffusion,ndiffusion] discreteDIFFUSION[',max(diffusionindex),'];',
+      if(!kalman) paste0('matrix[ndiffusion,ndiffusion] discreteDIFFUSIONchol[',max(diffusionindex),'];')),'
   
   vector[nlatent] etaprior[ndatapoints]; //prior for latent states
-  ',if(kalman) paste0('matrix[nlatent, nlatent] etapriorcov[ndatapoints]; //prior for covariance of latent states
+  ',if(kalman) paste0('matrix[ndiffusion, ndiffusion] etapriorcov[ndatapoints]; //prior for covariance of latent states
   vector[nlatent] etapost[ndatapoints]; //posterior for latent states'),'
-  ',if(kalman) 'matrix[nlatent, nlatent] etapostcov[ndatapoints]; //posterior for covariance of latent states','
+  ',if(kalman) 'matrix[ndiffusion, ndiffusion] etapostcov[ndatapoints]; //posterior for covariance of latent states','
   ',if(!kalman) 'vector[nlatent] etapost[ndatapoints]; \n','
   
   vector[sum(nobs_y)] errtrans; // collection of prediction errors transformed to standard normal
@@ -729,9 +743,9 @@ model{
       discreteDIFFUSION[diffusionindex[rowi]] = ',
     if(!continuoustime) paste0('DIFFUSION',checkvarying(c('DIFFUSION','DRIFT'),'[subject[rowi]]','[1]'),';'),
     if(continuoustime & !asymdiffusion) paste0('asymDIFFUSION',checkvarying(c('DIFFUSION','DRIFT'),'[subject[rowi]]','[1]'),' - 
-        quad_form(asymDIFFUSION',checkvarying(c('DIFFUSION','DRIFT'),'[subject[rowi]]','[1]'),' , discreteDRIFT[driftindex[rowi]]\');'),
-      if(continuoustime & asymdiffusion) paste0('DIFFUSION',checkvarying(c('DIFFUSION','DRIFT'),'[subject[rowi]]','[1]'),' - 
-      quad_form(DIFFUSION',checkvarying(c('DIFFUSION','DRIFT'),'[subject[rowi]]','[1]'),' , discreteDRIFT[driftindex[rowi]]\');'),'
+        quad_form(asymDIFFUSION',checkvarying(c('DIFFUSION','DRIFT'),'[subject[rowi]]','[1]'),' , discreteDRIFT[driftindex[rowi]][diffusionindices,diffusionindices]\');'),
+      if(continuoustime & asymdiffusion) paste0('DIFFUSION',checkvarying(c('DIFFUSION','DRIFT'),'[subject[rowi]]','[1]'),'[diffusionindices,diffusionindices] - 
+      quad_form(DIFFUSION',checkvarying(c('DIFFUSION','DRIFT'),'[subject[rowi]]','[1]'),'[diffusionindices,diffusionindices] , discreteDRIFT[driftindex[rowi]][diffusionindices,diffusionindices]\');'),'
     counter=counter+1;
     ',if(!kalman) 'discreteDIFFUSIONchol[diffusionindex[rowi]] = cholesky_decompose(discreteDIFFUSION[diffusionindex[rowi]]);','
   }
@@ -756,7 +770,7 @@ if(continuoustime) paste0('invDRIFT',checkvarying('DRIFT','[subject[rowi]]','[1]
   (diagonal(',
     if(!asymdiffusion) 'asym', 'DIFFUSION[',
     checkvarying(c('DIFFUSION','DRIFT'),'individual','1'),']) - diagonal(T0VAR[',
-    checkvarying('T0VAR','individual','1'),'])) ~ normal(0,stationaryvarprior); // variance stationarity prior
+    checkvarying('T0VAR','individual','1'),'][diffusionindices,diffusionindices])) ~ normal(0,stationaryvarprior); // variance stationarity prior
   }
 '),'
   
@@ -799,8 +813,8 @@ if(continuoustime) paste0('invDRIFT',checkvarying('DRIFT','[subject[rowi]]','[1]
   if(T0check[rowi] == 1) { // calculate initial matrices if this is first row for subjecti
   etaprior[rowi] = T0MEANS',checkvarying('T0MEANS','[subjecti]','[1]'),'; //prior for latent state of this row
   ',if(n.TDpred > 0) paste0('etaprior[rowi] =TDPREDEFFECT',checkvarying('TDPREDEFFECT','[subjecti]','[1]'),' * tdpreds[rowi] + etaprior[rowi];'),'
-  ',if(kalman & !fixedkalman) paste0('etapriorcov[rowi] =  T0VAR',checkvarying('T0VAR','[subjecti]','[1]'),';'),'
- ',if(!kalman) paste0('etapost[rowi] = etaprior[rowi] + T0VARchol',checkvarying('T0VAR','[subjecti]','[1]'),
+  ',if(kalman & !fixedkalman) paste0('etapriorcov[rowi] =  T0VAR',checkvarying('T0VAR','[subjecti]','[1]'),'[diffusionindices,diffusionindices];'),'
+ ',if(!kalman) paste0('etapost[rowi] = etaprior[rowi] + T0VARchol',checkvarying('T0VAR','[subjecti]','[1][diffusionindices,diffusionindices]'),
    ' * etapostbase[(1+(rowi-1)*nlatent):(rowi*nlatent)];'),'
 }
   
@@ -808,16 +822,14 @@ if(continuoustime) paste0('invDRIFT',checkvarying('DRIFT','[subject[rowi]]','[1]
   if(T0check[rowi]==0){
   etaprior[rowi] = discreteCINT[cintindex[rowi]]  + discreteDRIFT[driftindex[rowi]] * etapost[rowi-1]; //prior for latent state of this row
   ',if(n.TDpred > 0) paste0('etaprior[rowi] =TDPREDEFFECT',checkvarying('TDPREDEFFECT','[subjecti]','[1]'),' * tdpreds[rowi-1] + etaprior[rowi];'),'
-  ',if(kalman && !fixedkalman) paste0('etapriorcov[rowi] =  makesym(quad_form(etapostcov[rowi-1], discreteDRIFT[driftindex[rowi]]\')  + discreteDIFFUSION[diffusionindex[rowi]]);'),'
+  ',if(kalman && !fixedkalman) paste0('etapriorcov[rowi] =  makesym(quad_form(etapostcov[rowi-1], discreteDRIFT[driftindex[rowi]][diffusionindices,diffusionindices]\')  + discreteDIFFUSION[diffusionindex[rowi]]);'),'
   ',if(!kalman) 'etapost[rowi] = etaprior[rowi] +  discreteDIFFUSIONchol[diffusionindex[rowi]] * etapostbase[(1+(rowi-1)*nlatent):(rowi*nlatent)];','
   }
   
   
-  
-  if(nobsi==0){     // if no observations...
+
   ',if(kalman) 'etapost[rowi] = etaprior[rowi];','
   ',if(kalman && !fixedkalman) paste0('etapostcov[rowi] = etapriorcov[rowi];'),'
-  }
   
   if (nobsi > 0) {  // if some observations create right size matrices for missingness and calculate...
   
@@ -830,7 +842,7 @@ if(continuoustime) paste0('invDRIFT',checkvarying('DRIFT','[subject[rowi]]','[1]
   
   ',if(kalman) paste0('
     matrix[nobsi, nobsi] Ypredcov_filt;
-    matrix[nlatent, nobsi] K_filt; // kalman gain
+    matrix[ndiffusion, nobsi] K_filt; // kalman gain
     matrix[nobsi, nobsi] invYpredcov_filt;
     '),'
   ',if(!binomial) paste0('
@@ -849,11 +861,12 @@ if(!kalman & !binomial) '
   err = Y_filt - Ypred_filt; // prediction error','
   
   ',if(kalman && !fixedkalman) paste0(
-    'Ypredcov_filt = quad_form(etapriorcov[rowi], LAMBDA_filt\') + MANIFESTVAR_filt;
+    '//print("LAMBDA",LAMBDA, "LAMBDA_filt",LAMBDA_filt[,diffusionindices]\', "etapriorcov"      , etapriorcov[rowi],"diffusionindices",diffusionindices);
+    Ypredcov_filt = quad_form(etapriorcov[rowi], LAMBDA_filt[,diffusionindices]\') + MANIFESTVAR_filt;
     invYpredcov_filt = makesym(inverse(Ypredcov_filt)) ;
     invYpredcov_filt_chol=cholesky_decompose(invYpredcov_filt); 
-    K_filt = etapriorcov[rowi] * LAMBDA_filt\' * invYpredcov_filt; 
-    etapostcov[rowi] = (IIlatent - K_filt * LAMBDA_filt) * etapriorcov[rowi];
+    K_filt = etapriorcov[rowi] * LAMBDA_filt[,diffusionindices]\' * invYpredcov_filt; 
+    etapostcov[rowi] = (IIlatent[diffusionindices,diffusionindices] - K_filt * LAMBDA_filt[,diffusionindices]) * etapriorcov[rowi];
     '),'
   
   ',if(fixedkalman) paste0(
@@ -861,7 +874,7 @@ if(!kalman & !binomial) '
     K_filt = K[,whichobs]; 
     '),'
   
-  ',if(kalman) 'etapost[rowi] = etaprior[rowi] + K_filt * err;','
+  ',if(kalman) 'etapost[rowi,diffusionindices] = etaprior[rowi][diffusionindices] + K_filt * err;','
   
   ',if(!kalman & !binomial) 'invYpredcov_filt_chol = diag_matrix( rep_vector(1,nobsi) ./ vecsqrt(diagonal(MANIFESTVAR_filt)));','
   
@@ -977,6 +990,8 @@ if(fit==TRUE){
     driftindex=driftindex,
     cintindex=cintindex,
     diffusionindex=diffusionindex,
+    diffusionindices=array(diffusionindices,dim=ndiffusion),
+    ndiffusion=ndiffusion,
     nobs_y=array(apply(datalong[,manifestNames,drop=FALSE],1,function(x) length(x[x!=99999])),dim=nrow(datalong)),
     whichobs_y=matrix(t(apply(datalong[,manifestNames,drop=FALSE],1,function(x) {
       out<-as.numeric(which(x!=99999))
