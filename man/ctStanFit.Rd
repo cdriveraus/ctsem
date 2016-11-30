@@ -6,10 +6,10 @@
 \usage{
 ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 2000,
   kalman = TRUE, binomial = FALSE, fit = TRUE, plot = FALSE,
-  asymdiffusion = FALSE, optimize = FALSE, vb = FALSE, chains = 1,
-  inits = NULL, initwithoptim = FALSE, control = list(adapt_delta = 0.9,
-  adapt_init_buffer = 30, adapt_window = 2, max_treedepth = 10, stepsize =
-  0.001), ...)
+  diffusionindices = "all", asymdiffusion = FALSE, optimize = FALSE,
+  vb = FALSE, chains = 1, inits = NULL, initwithoptim = FALSE,
+  control = list(adapt_delta = 0.9, adapt_init_buffer = 30, adapt_window = 2,
+  max_treedepth = 10, stepsize = 0.001), ...)
 }
 \arguments{
 \item{datalong}{long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables, 
@@ -37,6 +37,10 @@ setting initwithoptim=TRUE may be helpful.}
 \item{plot}{if TRUE, a Shiny program is launched upon fitting to interactively plot samples. 
 May struggle with many (e.g., > 5000) parameters, and may leave sample files in working directory if sampling is terminated.}
 
+\item{diffusionindices}{vector of integers denoting which latent variables are involved in covariance calculations.
+latents involved only in deterministic trends or input effects can be removed from matrices, speeding up calculations. 
+If unsure, leave default of 'all' ! Ignored if kalman=FALSE.}
+
 \item{asymdiffusion}{if TRUE, increases fitting speed at cost of model flexibility - T0VAR in the model specification is ignored, the DIFFUSION matrix specification is used as the 
 asymptotic DIFFUSION matrix (Q*_inf in the vignette / paper) (making it difficult if not impossible to properly specify
 higher order processes). The speed increases come about because the internal Kalman filter routine has many steps removed, and the
@@ -45,7 +49,8 @@ asymptotic diffusion parameters are less dependent on the DRIFT matrix.}
 \item{optimize}{if TRUE, use Stan's optimizer for maximum a posteriori estimates. Not recommended unless
 no parameters vary across subjects.}
 
-\item{vb}{if TRUE, use Stan's variational approximation. Rudimentary testing suggests it is not accurate at present.}
+\item{vb}{if TRUE, use Stan's variational approximation. Rudimentary testing suggests it is not accurate 
+for many ctsem models at present.}
 
 \item{chains}{number of chains to sample.}
 

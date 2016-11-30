@@ -5,7 +5,8 @@
 \title{ctKalman}
 \usage{
 ctKalman(kpars, datalong, manifestNames, latentNames, imputeMissings = FALSE,
-  TDpredNames = NULL, continuoustime = TRUE, timecol = "time")
+  TDpredNames = NULL, continuoustime = TRUE, timecol = "time",
+  diffusionindices = "all")
 }
 \arguments{
 \item{kpars}{list object containing DRIFT,T0VAR,DIFFUSION,CINT,T0MEANS,TDPREDEFFECT,
@@ -30,6 +31,8 @@ Refers only to latent states, observations are always at discrete time points.}
 
 \item{timecol}{name of time column in datalong. Note that time column must be an ascending sequence
 of numeric values from row 1 to row n. Ignored if continuoustime=FALSE.}
+
+\item{diffusionindices}{vector of integers denoting which latent variables are involved in covariance calcs.}
 }
 \value{
 Returns a list containing matrix objects etaprior, etaupd, etasmooth, y, yprior, 
