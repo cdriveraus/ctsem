@@ -62,7 +62,7 @@ ctStanKalman<-function(ctstanfitobj, datalong=NULL, timerange='asdata', timestep
   for(subjecti in subjects){
     
     #setup subjects data, interpolating and extending as necessary
-    sdat=datalong[datalong[,'subject'] == subjecti,]
+    sdat=datalong[datalong[,'subject'] == subjecti,,drop=FALSE]
     if(timestep != 'asdata' || timerange[1] != 'asdata') {
       if(timerange[1]=='asdata') stimerange <- range(sdat[,'time']) else {
         stimerange <- timerange
