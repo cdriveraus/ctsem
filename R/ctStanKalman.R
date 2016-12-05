@@ -49,7 +49,8 @@ ctStanKalman<-function(ctstanfitobj, datalong=NULL, timerange='asdata', timestep
   
   if(is.null(datalong)) { #get relevant data
     time<-ctstanfitobj$data$time
-    datalong<-cbind(ctstanfitobj$data$subject,time,ctstanfitobj$data$Y,ctstanfitobj$data$tdpreds)
+    datalong<-cbind(ctstanfitobj$data$subject,time,ctstanfitobj$data$Y)
+    if(ctstanfitobj$ctstanmodel$n.TDpred > 0) datalong <- cbind(datalong,ctstanfitobj$data$tdpreds)
     
     colnames(datalong)<-c('subject','time',
       ctstanfitobj$ctstanmodel$manifestNames,

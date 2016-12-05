@@ -184,7 +184,7 @@ for(pari in 1:dim(yarray)[2]){
     do.call(ctPoly,ctpolyargs) 
   }
   
-  if(separate) {
+  if(separate & legend) {
     legargs$legend=dimnames(yarray)[[2]][pari]
     legargs$col = plotargs$col
     legargs$lty = plotargs$lty
@@ -194,7 +194,7 @@ for(pari in 1:dim(yarray)[2]){
   }
 }
 
-if(!separate) {
+if(!separate & legend) {
   legargs$legend=dimnames(yarray)[[2]]
   legargs$col = colvec
   legargs$lty = ltyvec

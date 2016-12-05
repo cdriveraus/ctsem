@@ -291,13 +291,13 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
       ctspec$indvarying & ctspec$row != ctspec$col & ctspec$matrix %in% c('T0VAR','DIFFUSION')])
   
   #check diffusion indices input by user - which latents are involved in covariance
-  if(diffusionindices=='all' || kalman==FALSE) diffusionindices = 1:nlatent
+  if(diffusionindices=='all' || kalman==FALSE) diffusionindices = 1:n.latent
   diffusionindices = as.integer(diffusionindices)
-  if(any(diffusionindices > nlatent)) stop('diffusionindices > than nlatent found!')
-  if(length(diffusionindices) > nlatent) stop('diffusionindices vector cannot be longer than nlatent!')
+  if(any(diffusionindices > n.latent)) stop('diffusionindices > than n.latent found!')
+  if(length(diffusionindices) > n.latent) stop('diffusionindices vector cannot be longer than n.latent!')
   if(length(unique(diffusionindices)) < length(diffusionindices)) stop('diffusionindices vector cannot contain duplicates or!')
   ndiffusion=length(diffusionindices)
-  message(paste(ndiffusion ,'/',nlatent,'latent variables required for covariance calculations'))
+  message(paste(ndiffusion ,'/',n.latent,'latent variables required for covariance calculations'))
   
   
   
