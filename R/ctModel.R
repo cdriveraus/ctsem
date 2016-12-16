@@ -214,7 +214,7 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
   
   ###### RUN SEQUENCE
   
-  if(type!='omx') Tpoints<-3
+  if(type!='omx' && is.null(Tpoints)) Tpoints<-3
   if(type=='omx' && is.null(Tpoints)) stop('Tpoints must be specified for type="omx"')
   if(!(type %in% c('stanct','standt','omx'))) stop('type must be either omx, stanct, or standt
     !')

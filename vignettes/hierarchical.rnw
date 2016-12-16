@@ -200,11 +200,10 @@ $\vect{y} (t)\in\mathbb{R}^{c}$ is the vector of manifest variables, $\vect{\Lam
 Parameters for each subject are first drawn from a simultaneously estimated higher level distribution over an unconstrained space, then a set of parameter specific transformations are applied so that a) each parameter conforms to necessary bounds and b) is subject to the desired prior, then a range of matrix transformations are applied to generate the continuous time matrices described, as well as all relevant discrete time instantiations (More variability in measurement time intervals thus means more computations). The higher level distribution has a multivariate normal prior. A more comprehensive description is found at the end of this document. 
 
 \subsection{Install software and prepare data}
-Install ctsem software from github repository https://github.com/cdriveraus/ctsem .
+Install ctsem software:
 
 <<install,eval=FALSE>>=
-require('devtools')
-install_github("ctsem",username='cdriveraus')
+install.packages("ctsem")
 @
 
 Prepare data in long format, each row containing one time point of data for one subject. We need a subject id column containing numbers from 1 to total subjects, rising incrementally with each subject going down the data structure. This is to ensure coherence with the internal structure of the Stan model. The column is named by default "id", though this can be changed in the model specification. We also need a time column "time", containing numeric values for time, columns for manifest variables (the names of which must be given in the next step using ctModel), columns for time dependent predictors (these vary over time but have no model estimated and are assumed to impact latent processes instantly), and columns for time independent predictors (which predict the subject level parameters, that are themselves time invariant -- thus the values for a particular time independent predictor must be the same across all observations of a particular subject).

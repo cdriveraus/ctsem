@@ -7,14 +7,14 @@ Authors@R: c(person("Charles", "Driver", role =
     c("aut","cre","cph"),email="driver@mpib-berlin.mpg.de"),
     person("Manuel", "Voelkle", role = c("aut","cph")),
     person("Han", "Oud", role = c("aut","cph") ))
-Description: A multivariate continuous (and discrete) time dynamic modelling 
-    package for panel and time series data, using linear stochastic differential 
-    equations. Contains a faster frequentist set of functions using OpenMx for 
-    single subject and mixed-effects (random intercepts only) structural 
-    equation models, or a hierarchical Bayesian implementation using Stan that 
-    allows for random effects over all model parameters. Allows for modelling of 
-    multiple noisy measurements of multiple stochastic processes, time varying 
-    input / event covariates, and time invariant covariates used to predict the 
+Description: A multivariate continuous (and discrete) time dynamic modelling
+    package for panel and time series data, using linear stochastic differential
+    equations. Contains a faster frequentist set of functions using OpenMx for
+    single subject and mixed-effects (random intercepts only) structural
+    equation models, or a hierarchical Bayesian implementation using Stan that
+    allows for random effects over all model parameters. Allows for modelling of
+    multiple noisy measurements of multiple stochastic processes, time varying
+    input / event covariates, and time invariant covariates used to predict the
     parameters.
 License: GPL-3
 Depends:
@@ -40,4 +40,4 @@ Suggests:
     yuima,
     shinystan
 VignetteBuilder: knitr
-RoxygenNote: 5.0.1.9000
+RoxygenNote: 5.0.1
