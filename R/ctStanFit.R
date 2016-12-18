@@ -977,6 +977,7 @@ if(fit==TRUE){
   if(is.null(control$adapt_delta)) control$adapt_delta <- .9
     if(is.null(control$adapt_window)) control$adapt_window <- 2
     if(is.null(control$max_treedepth)) control$max_treedepth <- 10
+    if(is.null(control$adapt_init_buffer)) adapt_init_buffer=30
   
   stanseed<-floor(as.numeric(Sys.time()))
   
@@ -1020,7 +1021,7 @@ if(fit==TRUE){
   
   if(!is.null(inits)){
     staninits=list(inits)
-    if(chains > 1){
+    if(chains > 0){
       for(i in 2:chains){
         staninits[[i]]<-inits
       }
@@ -1030,8 +1031,10 @@ if(fit==TRUE){
   
   if(is.null(inits)){
     staninits=list()
+    if(chains > 0){
     for(i in 1:(chains)){
       staninits[[i]]=list(etapost=array(stats::rnorm(nrow(datalong)*n.latent,0,.1),dim=c(nrow(datalong),n.latent)))
+    }
     }
   }
   
@@ -1046,7 +1049,7 @@ if(fit==TRUE){
     iter=iter,
     data = standata, chains = ifelse(optimize==FALSE & vb==FALSE,chains,0), control=control,
     sample_file=sample_file,
-    cores=max(c(chains,parallel::detectCores())),...) 
+    cores=min(c(chains,parallel::detectCores())),...) 
   
   
   
