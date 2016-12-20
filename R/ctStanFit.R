@@ -380,6 +380,7 @@ functions{
     matrix[rows(A),rows(A)] A2;
     
     si = 0;
+    l=0;
     C = padeC;
     Cbig = padeCbig;
     
