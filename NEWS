@@ -1,15 +1,31 @@
 ctsem news:
 
+20/12/2017
+#### 2.0.1 ####
+Features:
+- Empirical Bayes, experimental but can now optimize with hierarchical model 
+  (when using the Kalman filter, as per defaults)
+- Easy extraction and plotting of time independent predictor (covariate) effects,
+  see ctStanTIpredEffects for example.
+  
+
+Bugs fixed:
+- incorrect number of cores spawned for parallel sessions.
+- optimize and variational bayes switches for ctStanFit did not work.
+- ctKalman would break if only 1 row of data passed in.
+
+
 18/11/2017
 #### 2.0.0 ####
 Features:
 - Hierarchical Bayesian modeling using Stan, see ctStanFit function and 
-  the vignette at 
+  the vignette at https://cran.r-project.org/package=ctsem/vignettes/hierarchical.pdf
 
 Changes:
 - Defaults change: Fix CINT to 0 and free MANIFESTMEANS
 - Reintroduce variable effect of TRAITVAR at T0 (more flexible but more 
-    fitting problems - try MANIFESTTRAITVAR instead if problematic!)
+    fitting problems - try MANIFESTTRAITVAR instead if problematic, or 
+    use step-wise fitting approach, automated with ctRefineTo)
 
 
 #### ctsem 1.1.6 ####

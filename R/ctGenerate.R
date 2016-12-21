@@ -98,6 +98,10 @@ ctGenerate<-function(ctmodelobj,n.subjects=1000,burnin=0,dtmean=1,logdtsd=0,wide
       skpars$T0MEANS = skpars$T0MEANS + T0TRAITEFFECT %*% traits
     }
     
+    if(any(MANIFESTTRAITVARchol != 0)) {
+      skpars$MANIFESTMEANS = skpars$MANIFESTMEANS + MANIFESTTRAITVARchol %*% rnorm(n.latent,0,1)
+    }
+    
     if(n.TIpred > 0) {
       tipreds <- TIPREDMEANS + TIPREDVARchol %*% rnorm(n.TIpred,0,1)
       skpars$CINT = skpars$CINT + TIPREDEFFECT %*% tipreds

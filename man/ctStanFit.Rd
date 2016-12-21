@@ -5,11 +5,12 @@
 \title{ctStanFit}
 \usage{
 ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 2000,
-  kalman = TRUE, binomial = FALSE, fit = TRUE, plot = FALSE,
-  diffusionindices = "all", asymdiffusion = FALSE, optimize = FALSE,
-  vb = FALSE, chains = 1, inits = NULL, initwithoptim = FALSE,
-  control = list(adapt_delta = 0.9, adapt_init_buffer = 30, adapt_window = 2,
-  max_treedepth = 10, stepsize = 0.001), ...)
+  kalman = TRUE, binomial = FALSE, esthyper = TRUE, fit = TRUE,
+  plot = FALSE, diffusionindices = "all", asymdiffusion = FALSE,
+  optimize = FALSE, vb = FALSE, chains = 1, inits = NULL,
+  initwithoptim = FALSE, control = list(adapt_delta = 0.9, adapt_init_buffer
+  = 30, adapt_window = 2, max_treedepth = 10, stepsize = 0.001),
+  verbose = FALSE, ...)
 }
 \arguments{
 \item{datalong}{long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables, 
@@ -22,7 +23,8 @@ models respectively.}
 \item{stanmodeltext}{already specified Stan model character string, generally leave NA unless modifying Stan model directly.
 (Possible after modification of output from fit=FALSE)}
 
-\item{iter}{number of iterations, half of which will be devoted to warmup by default.}
+\item{iter}{number of iterations, half of which will be devoted to warmup by default when sampling.
+When optimizing, this is the maximum number of iterations to allow -- convergence hopefully occurs before this!}
 
 \item{kalman}{logical indicating whether or not to integrate over latent states using a Kalman filter. 
 Generally recommended to set TRUE unless using non-gaussian measurement model. If not using Kalman filter, experience
@@ -31,6 +33,9 @@ in the high density region. This can make it difficult to determine the number o
 setting initwithoptim=TRUE may be helpful.}
 
 \item{binomial}{logical indicating the use of binomial rather than Gaussian data, as with IRT analyses.}
+
+\item{esthyper}{Logical indicating whether to explictly estimate distributions for any individually varying
+parameters, or to fix the distributions to maximum likelihood estimates conditional on subject parameters.}
 
 \item{fit}{If TRUE, fit specified model using Stan, if FALSE, return stan model object without fitting.}
 
@@ -46,8 +51,8 @@ asymptotic DIFFUSION matrix (Q*_inf in the vignette / paper) (making it difficul
 higher order processes). The speed increases come about because the internal Kalman filter routine has many steps removed, and the
 asymptotic diffusion parameters are less dependent on the DRIFT matrix.}
 
-\item{optimize}{if TRUE, use Stan's optimizer for maximum a posteriori estimates. Not recommended unless
-no parameters vary across subjects.}
+\item{optimize}{if TRUE, use Stan's optimizer for maximum a posteriori estimates. 
+Setting this also sets \code{esthyper=FALSE}}
 
 \item{vb}{if TRUE, use Stan's variational approximation. Rudimentary testing suggests it is not accurate 
 for many ctsem models at present.}
@@ -61,6 +66,8 @@ for many ctsem models at present.}
 for the chains. This can help speed convergence and avoid problematic regions for certain problems.}
 
 \item{control}{List of arguments sent to \code{\link[rstan]{stan}} control argument, regarding warmup / sampling behaviour.}
+
+\item{verbose}{Logical. If TRUE, prints log probability at each iteration.}
 
 \item{...}{additional arguments to pass to \code{\link[rstan]{stan}} function.}
 }
