@@ -41,6 +41,8 @@
 #' @param chains number of chains to sample.
 #' @param control List of arguments sent to \code{\link[rstan]{stan}} control argument, regarding warmup / sampling behaviour.
 #' @param verbose Logical. If TRUE, prints log probability at each iteration.
+#' @param stationary Logical. If TRUE, T0VAR and T0MEANS input matrices are ignored, 
+#' the parameters are instead fixed to long run expectations
 #' @param ... additional arguments to pass to \code{\link[rstan]{stan}} function.
 #' @examples
 #' \dontrun{
@@ -72,7 +74,7 @@
 #' }
 #' @export
 ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=TRUE, binomial=FALSE,
-  esthyper=TRUE, fit=TRUE, plot=FALSE,  diffusionindices='all',
+  esthyper=TRUE, fit=TRUE, stationary=FALSE,plot=FALSE,  diffusionindices='all',
   asymdiffusion=FALSE,optimize=FALSE, vb=FALSE, chains=1,inits=NULL,initwithoptim=FALSE,
   control=list(adapt_delta=.9, adapt_init_buffer=30, adapt_window=2,
     max_treedepth=10,stepsize=.001),verbose=FALSE,...){
@@ -178,13 +180,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
     ctspec<-ctspec[ctspec$matrix != 'MANIFESTVAR',]
     message(paste0('MANIFESTVAR matrix is ignored when binomial=TRUE'))
   }
-  
-  # if(!kalman) {
-  #   message('ATTENTION: T0VAR matrix is ignored when kalman=FALSE  \n')
-  #   ctspec<-ctspec[-which(ctspec$matrix %in% 'T0VAR'),]
-  #   if(any(!is.na(ctspec[ctspec$matrix %in% 'T0MEANS','value']))) message('ATTENTION: Some T0MEANS are fixed - may be unwanted when kalman=FALSE \n')
-  # }
-  
+
   #clean ctspec structure
   for(rowi in 1:nrow(ctspec)){
     if( !is.na(ctspec$value[rowi])) {
@@ -193,7 +189,11 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
     }
   }
   if(found) message('Minor inconsistencies in model found - removing param name, transform and indvarying from any parameters with a value specified')
-  ctstanmodel$pars <- ctspec
+  
+  #remove T0VAR and T0MEANS if stationary
+  message('removing T0VAR and T0MEANS from parameter matrices because stationary=TRUE')
+  if(stationary) ctspec=ctspec[ctspec$matrix %in% c('T0VAR','T0MEANS')==FALSE,,drop=FALSE]
+  ctstanmodel$pars <- ctspec #updating because we save the model later
   
   n.latent<-ctstanmodel$n.latent
   n.manifest<-ctstanmodel$n.manifest
@@ -217,6 +217,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
   
   #fit spec checks
   if(binomial & any(kalman)) stop('Binomial observations only possible with kalman=FALSE')
+  
+
+
   
   
   T0check<-1
@@ -475,12 +478,12 @@ matrix cov(vector[] mat,int nrows,int ncols){
           vector[nindvarying] hypersd;')),'
       
       matrix[nlatent,nlatent] DIFFUSION',checkvarying('DIFFUSION','[nsubjects]','[1]'),'; //additive latent process variance
-      matrix[nlatent,nlatent] T0VAR',checkvarying('T0VAR','[nsubjects]','[1]'),'; //initial latent process variance
+      matrix[nlatent,nlatent] T0VAR',checkvarying(if(!stationary) 'T0VAR' else(c('DRIFT','DIFFUSION')),'[nsubjects]','[1]'),'; //initial latent process variance
       ',if(!kalman)  paste0('matrix[nlatent,nlatent] T0VARchol',checkvarying('T0VAR','[nsubjects]','[1]'),'; //initial latent process variance'),'
       matrix[nlatent,nlatent] DRIFT',checkvarying('DRIFT','[nsubjects]','[1]'),'; //dynamic relationships of processes
       ',if(!binomial) paste0('matrix[nmanifest,nmanifest] MANIFESTVAR',checkvarying('MANIFESTVAR','[nsubjects]','[1]'),'; // manifest error variance'),'
       vector[nmanifest] MANIFESTMEANS',checkvarying('MANIFESTMEANS','[nsubjects]','[1]'),';
-      vector[nlatent] T0MEANS',checkvarying('T0MEANS','[nsubjects]','[1]'),'; // initial (T0) latent states
+      vector[nlatent] T0MEANS',checkvarying(if(!stationary) 'T0MEANS' else c('DRIFT','CINT'),'[nsubjects]','[1]'),'; // initial (T0) latent states
       matrix[nmanifest,nlatent] LAMBDA',checkvarying('LAMBDA','[nsubjects]','[1]'),'; // loading matrix
       vector[nlatent] CINT',checkvarying('CINT','[nsubjects]','[1]'),'; // latent process intercept
       ',if(!asymdiffusion) paste0('matrix[ndiffusion,ndiffusion] asymDIFFUSION',checkvarying(c('DIFFUSION','DRIFT'),'[nsubjects]','[1]'),'; //latent process variance as time interval goes to inf'),'
@@ -566,13 +569,8 @@ matrix cov(vector[] mat,int nrows,int ncols){
         ',if(!binomial) paste0(
           'for(individual in 1:',checkvarying('MANIFESTVAR','nsubjects','1'),') MANIFESTVAR[individual] = sdpcor2cov_lp(MANIFESTVAR[individual],0,1);
           '),'
-        
+        print("DIFFUSION " ,DIFFUSION[1]);
         for(individual in 1:',checkvarying('DIFFUSION','nsubjects','1'),') DIFFUSION[individual] = sdpcor2cov_lp(DIFFUSION[individual],0,1);
-        
-        for(individual in 1:',checkvarying('T0VAR','nsubjects','1'),') {
-        T0VAR[individual] = sdpcor2cov_lp(T0VAR[individual],0,1);
-        ',if(!kalman) 'T0VARchol[individual] = cholesky_decompose(T0VAR[individual]);','
-        }
         
         ',if(continuoustime) paste0('
           for(individual in 1:',checkvarying('DRIFT','nsubjects','1'),') {
@@ -603,7 +601,27 @@ matrix cov(vector[] mat,int nrows,int ncols){
           }}
           }
           '),'
+
+      for(individual in 1:',
+        checkvarying(if(!stationary) 'T0VAR' else(c('DRIFT','DIFFUSION')),'nsubjects','1'),') {
+        T0VAR[individual] = ',
+          if(!stationary) paste0('sdpcor2cov_lp(T0VAR[individual],0,1);'),
+          if(stationary) paste0(if(!asymdiffusion) 'asym', 'DIFFUSION',
+            checkvarying(c('DRIFT','DIFFUSION'),'[individual]','[1]'),';'),'
+        ',if(!kalman) 'T0VARchol[individual] = cholesky_decompose(T0VAR[individual]);','
+      }
+
+    ',if(stationary) paste0('for(individual in 1:',checkvarying(c('DRIFT','CINT'),'nsubjects','1'),') {
+        T0MEANS[individual] = -DRIFT', checkvarying('DRIFT','[individual]','[1]'),
+            ' \\ CINT',checkvarying('CINT','[individual]','[1]'),'; // prior for initial latent states is stationary mean
+      }'),'
+
         }
+
+print("DRIFT " ,DRIFT[1]);
+print("DIFFUSION " ,DIFFUSION[1]);
+print("asymDIFFUSION " ,asymDIFFUSION[1]);
+
   }
         
         model{
@@ -625,15 +643,15 @@ matrix cov(vector[] mat,int nrows,int ncols){
         int obscount; // counter summing over number of non missing observations in each row
         int nobsi; 
         
-        ',if(!noshrinkage) paste0('hypermeans~normal(0,1);'),'
+        ',if(!noshrinkage) paste0('target += normal_lpdf(hypermeans|0,1);'),'
         
         ',if(n.TIpred > 0 & !noshrinkage) paste0('tipredeffectparams ~ ',ctstanmodel$tipredeffectprior, '; \n '),' 
         
         ',if(any(ctspec$indvarying) & !noshrinkage) paste0(
-          'hypercorrchol ~ lkj_corr_cholesky(1);',
+          'hypercorrchol ~ lkj_corr_cholesky(1); \n',
           if(esthyper) 'hypersd ~ normal(0,1);
             indparamsbase ~ normal(0,1);',
-          if(!esthyper) 'target += -log(determinant(mlcov))/2*nsubjects; 
+          if(!esthyper) 'target += -log(determinant(mlcov)); // /2*nsubjects; 
           indparams ~ multi_normal(hypermeans[indvaryingindex], mlcov);','
           '),'
       
@@ -706,10 +724,10 @@ matrix cov(vector[] mat,int nrows,int ncols){
       if(rowi!=1) obscount=obscount+nobs_y[rowi-1]; // number of non missing observations until now
       
       if(T0check[rowi] == 1) { // calculate initial matrices if this is first row for subjecti
-      etaprior[rowi] = T0MEANS',checkvarying('T0MEANS','[subjecti]','[1]'),'; //prior for latent state of this row
+      etaprior[rowi] = T0MEANS',checkvarying('T0MEANS','[subjecti]','[1]'),'; //prior for initial latent state
       ',if(n.TDpred > 0) paste0('etaprior[rowi] =TDPREDEFFECT',checkvarying('TDPREDEFFECT','[subjecti]','[1]'),' * tdpreds[rowi] + etaprior[rowi];'),'
       ',if(kalman) paste0('etapriorcov[rowi] =  T0VAR',checkvarying('T0VAR','[subjecti]','[1]'),'[diffusionindices,diffusionindices];'),'
-      ',if(!kalman) paste0('etapost[rowi] = etaprior[rowi] + T0VARchol',checkvarying('T0VAR','[subjecti]','[1][diffusionindices,diffusionindices]'),
+      ',if(!kalman) paste0('etapost[rowi] = etaprior[rowi] + T0VARchol',checkvarying('T0VAR','[subjecti]','[1]'),'[diffusionindices,diffusionindices]',
         ' * etapostbase[(1+(rowi-1)*nlatent):(rowi*nlatent)];'),'
       }
       
@@ -746,8 +764,7 @@ matrix cov(vector[] mat,int nrows,int ncols){
       err = Y[rowi][whichobs] - ( MANIFESTMEANS',checkvarying('MANIFESTMEANS','[subjecti]','[1]'),'[whichobs] + LAMBDA_filt * etapost[rowi] ); // prediction error','
       
       ',if(kalman) paste0(
-        '//print("LAMBDA",LAMBDA, "LAMBDA_filt",LAMBDA_filt[,diffusionindices]\', "etapriorcov"      , etapriorcov[rowi],"diffusionindices",diffusionindices);
-        Ypredcov_filt = quad_form(etapriorcov[rowi], LAMBDA_filt[,diffusionindices]\') + MANIFESTVAR',checkvarying('MANIFESTVAR','[subjecti]','[1]'),'[whichobs,whichobs];
+        'Ypredcov_filt = quad_form(etapriorcov[rowi], LAMBDA_filt[,diffusionindices]\') + MANIFESTVAR',checkvarying('MANIFESTVAR','[subjecti]','[1]'),'[whichobs,whichobs];
         Ypredcov_filt_chol=cholesky_decompose(makesym(Ypredcov_filt)); 
         K_filt = etapriorcov[rowi] * LAMBDA_filt[,diffusionindices]\' / Ypredcov_filt; 
         etapostcov[rowi] = (IIlatent[diffusionindices,diffusionindices] - K_filt * LAMBDA_filt[,diffusionindices]) * etapriorcov[rowi];
@@ -755,7 +772,7 @@ matrix cov(vector[] mat,int nrows,int ncols){
       
       ',if(kalman) 'etapost[rowi,diffusionindices] = etaprior[rowi][diffusionindices] + K_filt * err;','
       
-      ',if(!kalman & !binomial) paste0('Ypredcov_filt_chol = diag_matrix( rep_vector(1,nobsi) .* sqrt(diagonal(MANIFESTVAR',checkvarying('MANIFESTVAR','[subjecti]','[1]'),'[whichobs,whichobs])));'),'
+      ',if(!kalman & !binomial) paste0('Ypredcov_filt_chol = diag_matrix( sqrt(diagonal(MANIFESTVAR',checkvarying('MANIFESTVAR','[subjecti]','[1]'),'[whichobs,whichobs])));'),'
       
       ',if(!binomial) '
       errtrans[obscount:(obscount+nobsi-1)]=Ypredcov_filt_chol \\ err; //transform pred errors to standard normal dist and collect

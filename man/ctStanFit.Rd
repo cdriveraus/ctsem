@@ -6,11 +6,11 @@
 \usage{
 ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 2000,
   kalman = TRUE, binomial = FALSE, esthyper = TRUE, fit = TRUE,
-  plot = FALSE, diffusionindices = "all", asymdiffusion = FALSE,
-  optimize = FALSE, vb = FALSE, chains = 1, inits = NULL,
-  initwithoptim = FALSE, control = list(adapt_delta = 0.9, adapt_init_buffer
-  = 30, adapt_window = 2, max_treedepth = 10, stepsize = 0.001),
-  verbose = FALSE, ...)
+  stationary = FALSE, plot = FALSE, diffusionindices = "all",
+  asymdiffusion = FALSE, optimize = FALSE, vb = FALSE, chains = 1,
+  inits = NULL, initwithoptim = FALSE, control = list(adapt_delta = 0.9,
+  adapt_init_buffer = 30, adapt_window = 2, max_treedepth = 10, stepsize =
+  0.001), verbose = FALSE, ...)
 }
 \arguments{
 \item{datalong}{long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables, 
@@ -38,6 +38,9 @@ setting initwithoptim=TRUE may be helpful.}
 parameters, or to fix the distributions to maximum likelihood estimates conditional on subject parameters.}
 
 \item{fit}{If TRUE, fit specified model using Stan, if FALSE, return stan model object without fitting.}
+
+\item{stationary}{Logical. If TRUE, T0VAR and T0MEANS input matrices are ignored, 
+the parameters are instead fixed to long run expectations}
 
 \item{plot}{if TRUE, a Shiny program is launched upon fitting to interactively plot samples. 
 May struggle with many (e.g., > 5000) parameters, and may leave sample files in working directory if sampling is terminated.}

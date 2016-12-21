@@ -290,11 +290,11 @@ model$pars[c(19,20),c('TI1_effect','TI2_effect','TI3_effect')]<-TRUE
 @
 
 \subsection{Model fitting}
-Once model specification is complete, the model is fit to the data using the ctStanFit function as follows -- depending on the data, model, and number of iterations requested, this can take anywhere from a few minutes to days. Current experience suggests 300 iterations is often enough to get an idea of what is going on, but more may be necessary for robust inference. This will of course vary massively depending on model and data. For the sake of speed for this example we only sample for 100 iterations with a lowered max\_treedepth - this latter parameter controls the maximum number of steps the Hamiltonian sampler is allowed to take per iteration, with each increase of 1 doubling the maximum. With these settings the fit should take only a few minutes (but will not be adequate for inference!). Those that wish to try out the functions without waiting, can simply use the already existing ctstantestfit object instead of creating the fit object (and adjust the code as needed!).
+Once model specification is complete, the model is fit to the data using the ctStanFit function as follows -- depending on the data, model, and number of iterations requested, this can take anywhere from a few minutes to days. Current experience suggests 300 iterations is often enough to get an idea of what is going on, but more may be necessary for robust inference. This will of course vary massively depending on model and data. For the sake of speed for this example we only sample for 200 iterations with a lowered max\_treedepth - this latter parameter controls the maximum number of steps the Hamiltonian sampler is allowed to take per iteration, with each increase of 1 doubling the maximum. With these settings the fit should take only a few minutes (but will not be adequate for inference!). Those that wish to try out the functions without waiting, can simply use the already existing ctstantestfit object instead of creating the fit object (and adjust the code in following sections as needed!).
 
 <<fitting,cache=TRUE>>=
-fit<-ctStanFit(datalong = ctstantestdat, ctstanmodel = model, iter=100, chains=2, 
-  plot=FALSE, control=list(max_treedepth = 6))
+fit<-ctStanFit(datalong = ctstantestdat, ctstanmodel = model, iter=200, 
+  chains=2, plot=FALSE, control=list(max_treedepth = 6))
 @
 
 The plot argument allows for plotting of sampling chains in real time, which is useful for slow models to ensure that sampling is proceeding in a functional manner. Models with many parameters (e.g., many subjects and all parameters varying over subject) may be too taxing for the function to handle smoothly - we have had succcess with up to around 4000 parameters.  
@@ -302,12 +302,13 @@ The plot argument allows for plotting of sampling chains in real time, which is 
 \subsection{Summary}
 After fitting, the summary function may be used on the fit object, which returns details regarding the population mean parameters, population standard deviation parameters, population correlations, and the effect parameters of time independent predictors. 
 Additionally, summary outputs a range of matrices regarding correlations betweeen subject level parameters. hypercorr\_means reports the posterior mean of the correlation between raw (not yet transformed from the standard normal scale) parameters. hypercorr\_sd reports the standard deviation of these parameters. hypercovcor\_transformedmean reports the correlation between transformed parameters on the lower triangle, the variance of these parameters on the diagonal, and the covariance on the upper triangle.
+To view the posterior median of the continuous time parameter matrices, the ctStanContinuousPars function can be used.
 
 <<output,eval=FALSE>>=
 summary(fit)
 @
 
-In the summary output, the population parameters are returned in the same form that they are input to ctModel - that is, standard deviations and partial correlations, which can be more difficult to interpret when more than two processes are modeled. To return the full set of continuous time parameter matrices for a specified subject or collection of subjects, the ctStanContinuousPars function can be used, with the calcfunc argument set appropriately depending on whether one wants the mean, sd, or a specific quantile (which would require an additional argument, probs).
+In the summary output, the population parameters are returned in the same form that they are input to ctModel - that is, standard deviations and partial correlations, which can be more difficult to interpret when more than two processes are modeled. To return the full set of continuous time parameter matrices for a specified subject or collection of subjects, the ctStanContinuousPars function can be used, with the calcfunc argument set appropriately depending on whether one wants the median,mean, sd, or a specific quantile (which would require changing the probs argument also).
 
 \subsection{Plotting}
 The plot function outputs a sequence of plots, all generated by specific functions. The name of the specific function appears in a message in the R console, checking the help for each specific function and running them separately will allow more customization. Some of the plots, such as the trace, density, and interval, are generated by the relevant rstan function and hopefully self explanatory. The plots specific to the heirarchical continuous time dynamic model are as follows:
@@ -328,7 +329,8 @@ Shown are approximate density plots based on the post-warmup samples drawn. For 
 
 
 \subsection{Stationarity}
-A prior can be placed on the stationarity of the dynamic models, calculated as the difference between the T0MEANS and the long run asymptotes of the expected value of the process, as well as the difference between the diagonals of the T0VAR covariance matrix and the long run asymptotes of the covariance of the processes. Such a prior encourages a minimisation of these differences, and can help to ensure that sensible, non-explosive models are estimated, and also help the sampler get past difficult regions of relative flatness in the parameter space due to colinearities between the within and between subject parameters. However if such a prior is too strong it can also induce difficult dependencies in model parameters, and there are a range of models where one may not wish to have such a prior. To place such a prior, the model\$stationarymeanprior and model\$stationaryvarprior slots can be changed from the default of NA to a numeric vector, representing the normal standard deviation of the deviations from stationarity. The number of elements in the vector correspond to the number of latent processes.
+When it is reasonable to assume that the prior for long term expectation and variance of the latent states is the same as (or very similar to) the prior for initial expectations and variances, setting the argument stationary=TRUE to ctStanFit can reduce uncertainty and aid in fitting. This argument ignores any T0VAR and T0MEANS matrices in the input, instead replacing them with asymptotic expectations based on the DRIFT, DIFFUSION, and CINT matrices.
+Alternatively, a prior can be placed on the stationarity of the dynamic models, calculated as the difference between the T0MEANS and the long run asymptotes of the expected value of the process, as well as the difference between the diagonals of the T0VAR covariance matrix and the long run asymptotes of the covariance of the processes. Such a prior encourages a minimisation of these differences, and can help to ensure that sensible, non-explosive models are estimated, and also help the sampler get past difficult regions of relative flatness in the parameter space due to colinearities between the within and between subject parameters. However if such a prior is too strong it can also induce difficult dependencies in model parameters, and there are a range of models where one may not wish to have such a prior. To place such a prior, the model\$stationarymeanprior and model\$stationaryvarprior slots can be changed from the default of NA to a numeric vector, representing the normal standard deviation of the deviations from stationarity. The number of elements in the vector correspond to the number of latent processes.
 
 \subsection{Individual level analyses}
 Individual level results can also be considered, as ctsem includes functionality to output prior (based on all prior observations), updated (based on all prior and current observations), and smoothed (based on all observations) expectations and covariances from the Kalman filter, based on specific subjects models. For ease of comparison, expected manifest indicator scores conditional on prior, updated and smoothed states are also included. This approach allows for: predictions regarding individuals states at any point in time, given any values on the time dependent predictors (external inputs such as interventions or events); residual analysis to check for unmodeled dependencies in the data; or simply as a means of visualization, for comprehension and model sanity checking purposes. An example of such is depicted below, where we see observed and estimated scores for a selected subject from our sample. If we wanted to predict unobserved states in the future, we would need only to specify the appropriate timerange (Prediction into earlier times is possible but makes little sense unless the model is restricted to stationarity).
@@ -374,7 +376,7 @@ datalong <- cbind(id, time, sunspots)
 
 #fit
 fit <- ctStanFit(datalong, model, iter=400, chains=2, 
-  control=list(adapt_delta=.9))
+  stationary=TRUE, control=list(adapt_delta=.9))
 
 #output
 summary(fit)$popmeans

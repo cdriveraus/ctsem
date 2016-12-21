@@ -7,7 +7,8 @@ Features:
   (when using the Kalman filter, as per defaults)
 - Easy extraction and plotting of time independent predictor (covariate) effects,
   see ctStanTIpredEffects for example.
-  
+- Added stationary argument to ctStanFit - much more efficient than setting 
+  priors on stationarity.
 
 Bugs fixed:
 - incorrect number of cores spawned for parallel sessions.
