@@ -191,8 +191,11 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
   if(found) message('Minor inconsistencies in model found - removing param name, transform and indvarying from any parameters with a value specified')
   
   #remove T0VAR and T0MEANS if stationary
-  message('removing T0VAR and T0MEANS from parameter matrices because stationary=TRUE')
-  if(stationary) ctspec=ctspec[ctspec$matrix %in% c('T0VAR','T0MEANS')==FALSE,,drop=FALSE]
+  
+  if(stationary) {
+    ctspec=ctspec[ctspec$matrix %in% c('T0VAR','T0MEANS')==FALSE,,drop=FALSE]
+    message('removing T0VAR and T0MEANS from parameter matrices because stationary=TRUE')
+  }
   ctstanmodel$pars <- ctspec #updating because we save the model later
   
   n.latent<-ctstanmodel$n.latent
