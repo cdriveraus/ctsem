@@ -39,6 +39,8 @@
 #' (so approx 65% of the population mean prior), is first fit with penalised maximum likelihood to determine starting values
 #' for the chains. This can help speed convergence and avoid problematic regions for certain problems.
 #' @param chains number of chains to sample.
+#' @param cores number of cpu cores to use. Either 'maxneeded' to use as many as available,
+#' up to the number of chains, or an integer.
 #' @param control List of arguments sent to \code{\link[rstan]{stan}} control argument, regarding warmup / sampling behaviour.
 #' @param verbose Logical. If TRUE, prints log probability at each iteration.
 #' @param stationary Logical. If TRUE, T0VAR and T0MEANS input matrices are ignored, 
@@ -75,7 +77,7 @@
 #' @export
 ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=TRUE, binomial=FALSE,
   esthyper=TRUE, fit=TRUE, stationary=FALSE,plot=FALSE,  diffusionindices='all',
-  asymdiffusion=FALSE,optimize=FALSE, vb=FALSE, chains=1,inits=NULL,initwithoptim=FALSE,
+  asymdiffusion=FALSE,optimize=FALSE, vb=FALSE, chains=1,cores='maxneeded', inits=NULL,initwithoptim=FALSE,
   control=list(adapt_delta=.9, adapt_init_buffer=30, adapt_window=2,
     max_treedepth=10,stepsize=.001),verbose=FALSE,...){
   
@@ -980,6 +982,8 @@ print("lp = ", target());
       stanplot(chains=chains,seed=stanseed)
     }
     
+    if(cores=='maxneeded') cores=min(c(chains,parallel::detectCores()))
+    
     stanfit <- rstan::stan(fit = sm, 
       enable_random_init=TRUE,init_r=.1,
       init=staninits,
@@ -987,7 +991,7 @@ print("lp = ", target());
       iter=iter,
       data = standata, chains = ifelse(optimize==FALSE & vb==FALSE,chains,0), control=control,
       sample_file=sample_file,
-      cores=min(c(chains,parallel::detectCores())),...) 
+      cores=cores,...) 
     
     
     

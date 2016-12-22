@@ -8,9 +8,9 @@ ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 2000,
   kalman = TRUE, binomial = FALSE, esthyper = TRUE, fit = TRUE,
   stationary = FALSE, plot = FALSE, diffusionindices = "all",
   asymdiffusion = FALSE, optimize = FALSE, vb = FALSE, chains = 1,
-  inits = NULL, initwithoptim = FALSE, control = list(adapt_delta = 0.9,
-  adapt_init_buffer = 30, adapt_window = 2, max_treedepth = 10, stepsize =
-  0.001), verbose = FALSE, ...)
+  cores = "maxneeded", inits = NULL, initwithoptim = FALSE,
+  control = list(adapt_delta = 0.9, adapt_init_buffer = 30, adapt_window = 2,
+  max_treedepth = 10, stepsize = 0.001), verbose = FALSE, ...)
 }
 \arguments{
 \item{datalong}{long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables, 
@@ -61,6 +61,9 @@ Setting this also sets \code{esthyper=FALSE}}
 for many ctsem models at present.}
 
 \item{chains}{number of chains to sample.}
+
+\item{cores}{number of cpu cores to use. Either 'maxneeded' to use as many as available,
+up to the number of chains, or an integer.}
 
 \item{inits}{vector of parameter start values, as returned by the rstan function \code{\link{unconstrain_pars}} for instance.}
 
