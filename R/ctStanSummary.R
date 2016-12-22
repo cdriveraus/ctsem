@@ -19,10 +19,12 @@ parnames=gsub('hsd_','',object$stanfit@model_pars[grep('hsd',object$stanfit@mode
 #### generate covcor matrices of raw and transformed subject level params
 out=list()
 e=extract(object$stanfit)
-# browser()
+
 iter=dim(e$hypercorrchol)[1]
 if(!is.null(iter)){ #then there is some individual variation so continue
 npars=dim(e$hypercorrchol)[2]
+
+if(npars>1){
 
 getMean=function(myarray){
   out=matrix(NA,nrow=npars,ncol=npars)
@@ -108,20 +110,21 @@ out=list(note1='The following matrix is the posterior means for the raw subject 
 
 out$popcorr = popcorr
 }
+}
 
 
 
 out$tipreds=round(s$summary[c(grep('tipred_',rownames(s$summary))),
-  c('mean','sd','2.5%','97.5%','n_eff','Rhat')],3)
+  c('mean','sd','2.5%','97.5%','n_eff','Rhat'),drop=FALSE],3)
 
 out$popsd=round(s$summary[c(grep('hsd_',rownames(s$summary))),
-  c('mean','sd','2.5%','97.5%','n_eff','Rhat')],3)
+  c('mean','sd','2.5%','97.5%','n_eff','Rhat'),drop=FALSE],3)
 
 out$popmeans=round(s$summary[c(grep('hmean_',rownames(s$summary))),
-  c('mean','sd','2.5%','97.5%','n_eff','Rhat')],3)
+  c('mean','sd','2.5%','97.5%','n_eff','Rhat'),drop=FALSE],3)
 
 out$logprob=round(s$summary[c(grep('lp',rownames(s$summary))),
-  c('mean','sd','2.5%','97.5%','n_eff','Rhat')],3)
+  c('mean','sd','2.5%','97.5%','n_eff','Rhat'),drop=FALSE],3)
 
 return(out)
 }
