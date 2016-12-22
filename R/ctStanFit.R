@@ -569,7 +569,7 @@ matrix cov(vector[] mat,int nrows,int ncols){
         ',if(!binomial) paste0(
           'for(individual in 1:',checkvarying('MANIFESTVAR','nsubjects','1'),') MANIFESTVAR[individual] = sdpcor2cov_lp(MANIFESTVAR[individual],0,1);
           '),'
-        print("DIFFUSION " ,DIFFUSION[1]);
+
         for(individual in 1:',checkvarying('DIFFUSION','nsubjects','1'),') DIFFUSION[individual] = sdpcor2cov_lp(DIFFUSION[individual],0,1);
         
         ',if(continuoustime) paste0('
@@ -617,10 +617,6 @@ matrix cov(vector[] mat,int nrows,int ncols){
       }'),'
 
         }
-
-print("DRIFT " ,DRIFT[1]);
-print("DIFFUSION " ,DIFFUSION[1]);
-print("asymDIFFUSION " ,asymDIFFUSION[1]);
 
   }
         
@@ -758,10 +754,11 @@ print("asymDIFFUSION " ,asymDIFFUSION[1]);
         LAMBDA_filt = LAMBDA',checkvarying('LAMBDA','[subjecti]','[1]'),'[whichobs]; // and loading matrix
         '),'
       
-      ',if(kalman) '
-      err = Y[rowi][whichobs] - ( MANIFESTMEANS',checkvarying('MANIFESTMEANS','[subjecti]','[1]'),'[whichobs] + LAMBDA_filt * etaprior[rowi] ); // prediction error',
-      if(!kalman & !binomial) '
-      err = Y[rowi][whichobs] - ( MANIFESTMEANS',checkvarying('MANIFESTMEANS','[subjecti]','[1]'),'[whichobs] + LAMBDA_filt * etapost[rowi] ); // prediction error','
+      ',if(kalman) paste0('err = Y[rowi][whichobs] - ( MANIFESTMEANS',
+            checkvarying('MANIFESTMEANS','[subjecti]','[1]'),'[whichobs] + LAMBDA_filt * etaprior[rowi] ); // prediction error'),
+      if(!kalman & !binomial) paste0('err = Y[rowi][whichobs] - ( MANIFESTMEANS',
+        checkvarying('MANIFESTMEANS','[subjecti]','[1]'),
+        '[whichobs] + LAMBDA_filt * etapost[rowi] ); // prediction error'),'
       
       ',if(kalman) paste0(
         'Ypredcov_filt = quad_form(etapriorcov[rowi], LAMBDA_filt[,diffusionindices]\') + MANIFESTVAR',checkvarying('MANIFESTVAR','[subjecti]','[1]'),'[whichobs,whichobs];
