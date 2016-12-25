@@ -1,6 +1,6 @@
 ctsem news:
 
-20/12/2017
+20/12/2016
 #### 2.0.1 ####
 Features:
 - Empirical Bayes, experimental but can now optimize with hierarchical model 
@@ -16,7 +16,7 @@ Bugs fixed:
 - ctKalman would break if only 1 row of data passed in.
 
 
-18/11/2017
+18/11/2016
 #### 2.0.0 ####
 Features:
 - Hierarchical Bayesian modeling using Stan, see ctStanFit function and 
