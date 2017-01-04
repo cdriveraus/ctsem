@@ -862,7 +862,7 @@ print("lp = ", target());
   if(fit==TRUE){
     
     standata<-list(
-      Y=cbind(datalong[,manifestNames]),
+      Y=cbind(as.matrix(datalong[,manifestNames])),
       subject=datalong[,'id'],
       nsubjects=nsubjects,
       nmanifest=n.manifest,
@@ -905,7 +905,7 @@ print("lp = ", target());
     if(!is.na(ctstanmodel$stationarymeanprior)) standata$stationarymeanprior=array(ctstanmodel$stationarymeanprior,dim=n.latent)
     if(!is.na(ctstanmodel$stationaryvarprior)) standata$stationaryvarprior=array(ctstanmodel$stationaryvarprior,dim=n.latent)
     
-    if(n.TIpred > 0) standata$tipreds <- tipreds
+    if(n.TIpred > 0) standata$tipreds <- as.matrix(tipreds)
     
     if(n.TDpred > 0) standata<-c(standata,list(tdpreds=array(tdpreds,dim=c(nrow(tdpreds),ncol(tdpreds)))))
     
