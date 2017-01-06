@@ -148,12 +148,13 @@ plot.ctsemFit<-function(x,resolution=50,wait=TRUE,max.time="auto",mean=TRUE,
       )
       
       #extract tdpred observations and match with rounded times
-      TDpredMeans<-matrix(NA,nrow=length(plottimes),ncol=n.TDpred)
+      TDpredMeans<-matrix(NA,nrow=max(obstimes*resolution),ncol=n.TDpred)
       for(predi in 1:n.TDpred){
-        TDpredObs<-matrix(0,nrow=length(plottimes),ncol=nrow(data))
+        TDpredObs<-matrix(0,nrow=max(obstimes*resolution),ncol=nrow(data))
         TDpredObs[cbind(c(obstimes * resolution),c(row(obstimes)))] <- data[,paste0(TDpredNames[predi],'_T',0:(Tpoints-2))]
         TDpredMeans[,predi]<-apply(TDpredObs,1,mean,na.rm=T)
       }
+      TDpredMeans=TDpredMeans[1:length(plottimes),,drop=FALSE]
       
       TDPREDEFFECT <- OpenMx::mxEval(TDPREDEFFECT,mxobj,compute=T)
       ARforResolution <- OpenMx::expm(DRIFT*(1/resolution))
@@ -161,6 +162,7 @@ plot.ctsemFit<-function(x,resolution=50,wait=TRUE,max.time="auto",mean=TRUE,
         tdpredeffect[i,]<- ARforResolution %*% t(tdpredeffect[i-1, ,drop=F]) + TDPREDEFFECT %*% t(TDpredMeans[i-1, ,drop=F])
       }
     }
+      
     
     
     means<-matrix(apply(cbind(1:length(plottimes)),1,function(x) {

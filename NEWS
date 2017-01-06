@@ -1,7 +1,20 @@
 ctsem news:
 
+6/1/2017
+#### 2.1.1 ####
+Improvements:
+- improved fitting of frequentist models with ctFit and ctRefineTo, due to
+  changes to carefulFit penalisation and refining approach.
+
+Changes:
+- Removed package 'PSM' from suggests field and vignette as requested by CRAN
+
+Fixes:
+- rstan 2.14 caused problems with data import for ctStanFit
+
+
 20/12/2016
-#### 2.0.1 ####
+#### 2.1.0 ####
 Features:
 - Empirical Bayes, experimental but can now optimize with hierarchical model 
   (when using the Kalman filter, as per defaults)

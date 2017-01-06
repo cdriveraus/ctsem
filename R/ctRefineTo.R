@@ -27,8 +27,8 @@ ctRefineTo<-function(datawide,ctmodelobj,modfunc=NULL,...){
   if( m$n.manifest > 1) m$MANIFESTVAR[!diag(m$n.manifest)]<-0
   #if( m$n.latent > 1) m$T0VAR[!diag(m$n.latent)]<-0
   if(!is.null(m$MANIFESTTRAITVAR) & m$n.manifest > 1) m$MANIFESTTRAITVAR[!diag(m$n.manifest)]<-0
+  m$DRIFT[row(m$DRIFT) != col(m$DRIFT)][is.na(suppressWarnings(as.numeric(m$DRIFT[row(m$DRIFT) != col(m$DRIFT)])))]<- -.00001
   m$DRIFT[is.na(suppressWarnings(as.numeric(m$DRIFT)))]<-diag(-.3,m$n.latent)[is.na(suppressWarnings(as.numeric(m$DRIFT)))]
-  m$DRIFT[row(m$DRIFT) != col(m$DRIFT)][is.na(suppressWarnings(as.numeric(m$DRIFT[row(m$DRIFT) != col(m$DRIFT)])))]<- 0
   m$LAMBDA[suppressWarnings(is.na(as.numeric(m$LAMBDA)))]<-1
   if(m$n.TDpred > 0) m$TDPREDEFFECT<-matrix(0,nrow=m$n.latent,ncol=m$n.TDpred)
   if(m$n.TDpred > 0) m$T0TDPREDCOV<-matrix(0,nrow=m$n.latent,ncol=(m$n.TDpred*(m$Tpoints-1)))
@@ -51,7 +51,7 @@ ctRefineTo<-function(datawide,ctmodelobj,modfunc=NULL,...){
   
     message('Adding correlations, autoeffects, and any predictors, but no free cross effects')
   m<-ctmodelobj
-  m$DRIFT[row(m$DRIFT) != col(m$DRIFT)][is.na(suppressWarnings(as.numeric(m$DRIFT[row(m$DRIFT) != col(m$DRIFT)])))]<- -.001
+  m$DRIFT[row(m$DRIFT) != col(m$DRIFT)][is.na(suppressWarnings(as.numeric(m$DRIFT[row(m$DRIFT) != col(m$DRIFT)])))]<- -.00001
   fit<-ctFit(datawide,m,nofit=TRUE,omxStartValues=startValues,...)
   if(!is.null(modfunc)) fit<-modfunc(fit)
   fit$mxobj<-mxTryHard(fit$mxobj, initialTolerance=1e-14,

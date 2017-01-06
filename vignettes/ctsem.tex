@@ -154,7 +154,7 @@ Obviously, parameter estimates and, thus, scientific conclusions, are biased whe
 
 % The \proglang{R} package \pkg{ctsem} interfaces to \pkg{OpenMx} \citep{boker2011openmx:}, a powerful general purpose SEM and modelling package for \proglang{R} \citep{r_core_team2014r:}. This allows \pkg{ctsem} to capitalize on all the possibilities of structural equation models, including manifest and latent variables, flexibility in imposing parameter constraints, multiple group functionality, as well as the use of different fitting functions and non-linear constraints. Most importantly, by interfacing to \pkg{OpenMx} the user may tailor standard continuous time models to his or her specific needs. \pkg{OpenMx} was chosen as the basis for \pkg{ctsem} because of its capacity to incorporate the necessary matrix algebra constraints, such as the matrix exponential.
 
-While there are already a range of packages that deal with continuous time (stochastic differential equation) models in \proglang{R}, most focus on single subject applications. These include \pkg{sde} \citep{iacus2015pkgsde}, \pkg{yuima} \citep{brouste2014pkgyuima}, \pkg{SIM.DiffProc} \citep{boukhetala2014pkgsim}, \pkg{cts} \citep{wang2013pkgcts}, \pkg{POMP} \citep{king2010pkgpomp}. For multi-subject approaches, \pkg{OpenMx} \citep{neale2015openmx} now includes the function \code{mxExpectationStateSpaceContinuousTime}, which can be combined with the function \code{mxFitFunctionMultigroup} for fixed effects based group analysis. \pkg{PSM} \citep{klim2009population} has implemented a broad range of mixed-effects models, but the specification and optimization of models is relatively demanding in terms of user skill and computational resources. \pkg{ctsem} is focused on providing an accessible workflow for full information maximum likelihood estimation of time series and panel data based continuous time multivariate autoregressive models with random intercepts. Using \pkg{ctsem}, one may specify: Cross lagged panel models; latent growth curve models; random intercepts at the latent or manifest level; damped oscillators; dynamic factor analysis models; constant or time dependent exogenous predictors; continuous time ARMAX models from the time series tradition; multiple groups or individuals with different parameters; or any combination of the preceding. First order models should be generally equivalent to discrete time first order models, if there is no variability in time intervals. For an example of this equivalence in regards to dual change score models see \citet{voelkle2015relating}. For an \proglang{R} script and plot comparing estimates from \pkg{ctsem} and other packages (as well as the use of the \code{ctPSMfit} function, to fit some models specified using \pkg{ctsem} with \pkg{PSM}), see Appendix \ref{app:appendixA}.
+While there are already a range of packages that deal with continuous time (stochastic differential equation) models in \proglang{R}, most focus on single subject applications. These include \pkg{sde} \citep{iacus2015pkgsde}, \pkg{yuima} \citep{brouste2014pkgyuima}, \pkg{SIM.DiffProc} \citep{boukhetala2014pkgsim}, \pkg{cts} \citep{wang2013pkgcts}, \pkg{POMP} \citep{king2010pkgpomp}. For multi-subject approaches, \pkg{OpenMx} \citep{neale2015openmx} now includes the function \code{mxExpectationStateSpaceContinuousTime}, which can be combined with the function \code{mxFitFunctionMultigroup} for fixed effects based group analysis.  \pkg{ctsem} is focused on providing an accessible workflow for full information maximum likelihood estimation of time series and panel data based continuous time multivariate autoregressive models with random intercepts. Using \pkg{ctsem}, one may specify: Cross lagged panel models; latent growth curve models; random intercepts at the latent or manifest level; damped oscillators; dynamic factor analysis models; constant or time dependent exogenous predictors; continuous time ARMAX models from the time series tradition; multiple groups or individuals with different parameters; or any combination of the preceding. First order models should be generally equivalent to discrete time first order models, if there is no variability in time intervals. For an example of this equivalence in regards to dual change score models see \citet{voelkle2015relating}. For an \proglang{R} script and plot comparing estimates from \pkg{ctsem} and other packages, see Appendix \ref{app:appendixA}.
 
 % There already exist a number of packages that can perform for stochastic calculus in \proglang{R}; see \CRANpkg{sde}~\citep{Stefano2009} and \CRANpkg{yuima} project package for SDEs~\citep{Stefano2014} a freely available on CRAN, this packages provides functions for simulation and inference for stochastic differential equations. It is the accompanying package to the book of~\citet{Stefano2008}.
 
@@ -449,8 +449,8 @@ R> summary(example1fit, verbose = TRUE)["discreteDRIFTstd"]
 \begin{Soutput}
 $discreteDRIFTstd
             LeisureTime Happiness
-LeisureTime      0.9728   -0.0499
-Happiness       -0.0138    0.9146
+LeisureTime      0.9800   -0.0742
+Happiness       -0.0118    0.9269
 \end{Soutput}
 \end{Schunk}
 
@@ -481,9 +481,9 @@ The result may then be compared to the original model with a likelihood ratio te
 R> mxCompare(example1fit$mxobj, testfit$mxobj)
 \end{Sinput}
 \begin{Soutput}
-   base comparison ep minus2LL   df  AIC diffLL diffdf          p
-1 ctsem       <NA> 16     4177 1184 1809     NA     NA         NA
-2 ctsem      ctsem 15     4197 1185 1827   19.9      1 0.00000833
+   base comparison ep minus2LL   df  AIC diffLL diffdf      p
+1 ctsem       <NA> 16     4191 1184 1823     NA     NA     NA
+2 ctsem      ctsem 15     4197 1185 1827   5.94      1 0.0148
 \end{Soutput}
 \end{Schunk}
 According to the conventional \textit{p} < .05 criterion, results show that the more constrained model fits the data significantly worse, that is, happiness has a significant effect on later leisure time for this model and data. 
@@ -494,11 +494,11 @@ An alternative to this approach is to estimate likelihood based 95\% confidence 
 R> example1cifit <- ctCI(example1fit, confidenceintervals = "DRIFT")
 \end{Sinput}
 \begin{Soutput}
-                               lbound estimate  ubound note
-drift_LeisureTime_LeisureTime -0.0468  -0.0280 -0.0125     
-drift_LeisureTime_Happiness   -0.1083  -0.0697 -0.0377     
-drift_Happiness_LeisureTime   -0.0312  -0.0111  0.0087     
-drift_Happiness_Happiness     -0.1486  -0.0896 -0.0459     
+                               lbound estimate   ubound note
+drift_LeisureTime_LeisureTime -0.0381  -0.0207 -0.00737     
+drift_LeisureTime_Happiness   -0.1038  -0.0673 -0.03810     
+drift_Happiness_LeisureTime   -0.0337  -0.0143  0.00404     
+drift_Happiness_Happiness     -0.1379  -0.0764 -0.02805     
 \end{Soutput}
 \end{Schunk}
 
@@ -567,15 +567,15 @@ R> summary(tipredfit, verbose = TRUE)["addedTIPREDVAR"]
 \begin{Soutput}
 $TIPREDEFFECT
             NumFriends
-LeisureTime    -0.3866
-Happiness       0.0916
+LeisureTime     -0.663
+Happiness        1.840
 \end{Soutput}
 
 \begin{Soutput}
 $discreteTIPREDEFFECT
             NumFriends
-LeisureTime    -0.3458
-Happiness       0.0799
+LeisureTime     -0.482
+Happiness        0.929
 \end{Soutput}
 \end{Schunk}
  \end{minipage}
@@ -584,15 +584,15 @@ Happiness       0.0799
 \begin{Soutput}
 $asymTIPREDEFFECT
             NumFriends
-LeisureTime     -1.672
-Happiness        0.229
+LeisureTime     -1.664
+Happiness        0.228
 \end{Soutput}
 
 \begin{Soutput}
 $addedTIPREDVAR
             LeisureTime Happiness
-LeisureTime       2.835   -0.3889
-Happiness        -0.389    0.0533
+LeisureTime       2.807   -0.3840
+Happiness        -0.384    0.0525
 \end{Soutput}
 \end{Schunk}
 \vspace{\baselineskip}
@@ -637,8 +637,8 @@ R> summary(tdpredfit, verbose = TRUE)["discreteTDPREDEFFECT"]
 \begin{Soutput}
 $TDPREDEFFECT
             MoneyInt
-LeisureTime    0.672
-Happiness      1.473
+LeisureTime     2.28
+Happiness       1.39
 \end{Soutput}
 \end{Schunk}
 \end{minipage}
@@ -647,8 +647,8 @@ Happiness      1.473
 \begin{Soutput}
 $discreteTDPREDEFFECT
             MoneyInt
-LeisureTime    0.585
-Happiness      0.636
+LeisureTime    0.942
+Happiness      0.622
 \end{Soutput}
 \end{Schunk}
 \vspace{\baselineskip}
@@ -690,8 +690,8 @@ R> summary(tdpredlevelfit, verbose = TRUE)["DRIFT"]
 \begin{Soutput}
 $DRIFT
                LeisureTime Happiness MoneyIntLatent
-LeisureTime      -0.016159 -0.021163      -0.011249
-Happiness        -0.032625 -0.111059      -0.050052
+LeisureTime      -0.008246 -0.006428      -0.006663
+Happiness        -0.020276 -0.350616      -0.183562
 MoneyIntLatent   -0.000001 -0.000001      -0.000001
 \end{Soutput}
 \begin{Sinput}
@@ -701,8 +701,8 @@ R> summary(tdpredlevelfit, timeInterval = 20,
 \begin{Soutput}
 $discreteTDPREDEFFECT
                MoneyInt
-LeisureTime       0.300
-Happiness        -0.451
+LeisureTime       0.405
+Happiness        -0.547
 MoneyIntLatent    1.000
 \end{Soutput}
 \end{Schunk}
@@ -815,7 +815,7 @@ R> fit <- ctFit(data, model, stationary = c("T0VAR"))
 
 In the above, we focus on a model for a single subject, and specify with LAMBDA that a single manifest variable measures only the first latent process. With DIFFUSION we specify that only the 2nd process, our unobserved diffusion process, experiences standard random innovations. With DRIFT, we specify that the 2nd process has a freely estimated autoregression term, that the diffusion process directly impacts the first process with a 1:1 relationship, and that as the level of the main process increases, the level of the diffusion process decreases -- providing necessary regulation. With CINT we specify that only the main process has a freely estimated continuous intercept (necessary for identification in this case). 
 \subsubsection{Damped linear oscillator}\nopagebreak
-\citet{voelkle2013continuous} discuss modelling a damped linear oscillator in detail, however here we demonstrate how to load the data and fit the oscillating model from their paper. In this case, we also specify good starting values with the \code{startValues} argument to \code{ctModel}. Note that in both above and below examples, the argument \code{carefulFit = FALSE} is specified for \code{ctFit}, as we have found it can hinder optimization of higher order models.
+\citet{voelkle2013continuous} discuss modelling a damped linear oscillator in detail, however here we demonstrate how to load the data and fit the oscillating model from their paper. In this case, we also specify good starting values with the \code{startValues} argument to \code{ctModel}, and because of this, set the argument \code{carefulFit = FALSE}.
 
 \begin{Schunk}
 \begin{Sinput}
@@ -832,8 +832,7 @@ R> oscillatingm <- ctModel(n.latent = 2, n.manifest = 1, Tpoints = 11,
 +   T0VAR = matrix(c("T0var11", "T0var21", 0, "T0var22"), nrow = 2, ncol = 2),
 +   DRIFT = matrix(c(0, "crosseffect", 1, "autoeffect"), nrow = 2, ncol = 2), 
 +   CINT = matrix(0, ncol = 1, nrow = 2),
-+   DIFFUSION = matrix(c(0, 0, 0, "diffusion"), nrow = 2, ncol = 2),
-+   startValues = inits)
++   DIFFUSION = matrix(c(0, 0, 0, "diffusion"), nrow = 2, ncol = 2))
 R> 
 R> oscillatingf <- ctFit(Oscillating, oscillatingm, carefulFit = FALSE)
 \end{Sinput}
@@ -932,10 +931,6 @@ The following script loops over a sequence in which data is generated from a ver
 
 \begin{Schunk}
 \begin{Sinput}
-R>   if (!requireNamespace("PSM", quietly = TRUE)) {
-+     stop("PSM package needed for this function to work. Please install it.",
-+       call. = FALSE)
-+   }
 R>   if (!requireNamespace("cts", quietly = TRUE)) {
 +     stop("cts package needed for this function to work. Please install it.",
 +       call. = FALSE)
@@ -944,14 +939,14 @@ R>   if (!requireNamespace("yuima", quietly = TRUE)) {
 +     stop("yuima package needed for this function to work. Please install it.",
 +       call. = FALSE)
 +   }
-R> output <- matrix(NA, 10, 7)
-R> colnames(output) <- c('True', 'ctsem', 'cts', 'PSM', 'yuima', 'arima', 'OpenMx')
+R> output <- matrix(NA, 10, 6)
+R> colnames(output) <- c('True', 'ctsem', 'cts', 'yuima', 'arima', 'OpenMx')
 R> for(i in 1:nrow(output)){
 + generatingModel <- ctModel(n.latent = 1, n.manifest = 1, 
 +   Tpoints = 500,
 +   LAMBDA = diag(1), DRIFT = matrix(-.3, nrow = 1),
 +   CINT = matrix(3, 1, 1),
-+   MANIFESTVAR = diag(0, 1),
++   MANIFESTVAR = diag(0.00001, 1),
 +   DIFFUSION = t(chol(diag(5, 1))))
 + 
 + output[i, 1] <- generatingModel$DRIFT #true value
@@ -974,22 +969,17 @@ R> for(i in 1:nrow(output)){
 + ctsFit <- car(ctsData, order = 1, scale = 1)
 + output[i, 3] <- -1 * (1 + ctsFit$phi) / (1 - ctsFit$phi) 
 + 
-+ ### PSM package
-+ psmFit <- ctPSMfit(ctsemData, omxStartValues = 
-+     omxGetParameters(ctsemFit$mxobj), ctsemModel)
-+ output[i, 4] <- -exp(psmFit$PSMfit$opt$par[2])
-+ 
 + ### yuima package (not plotted - potential issues due to dT=1)
 + library(yuima)
 + mod <- setModel(drift="drift * x + cint", diffusion = "diffusion")
 + ou <- setYuima(model = mod, data = setData(longData[,'Y1'], delta = 1))
 + mlout <- qmle(ou,start = list(drift = -.3, diffusion = 1, cint = 1))
-+ output[i, 5] <- mlout@coef[2]
++ output[i, 4] <- mlout@coef[2]
 + 
 + ### arima (from stats package, discrete time analysis only)
 + arfit <- arima(longData[, 'Y1'], order = c(1, 0, 0))
 + log(arfit$coef[1]) #transform ar1 parameter to drift parameter
-+ output[i, 6]<-log(arfit$coef[1])
++ output[i, 5]<-log(arfit$coef[1])
 + 
 + ### OpenMx state space continuous time function (specified via ctsem here)
 + ctsemModel <- ctModel(n.latent=1, n.manifest = 1, 
@@ -997,7 +987,7 @@ R> for(i in 1:nrow(output)){
 +   MANIFESTVAR = diag(0, 1), T0VAR=diag(1), LAMBDA = diag(1))
 + mxFit <- ctFit(ctsemData, ctsemModel, objective='Kalmanmx', 
 +   carefulFit = FALSE)
-+ output[i,7] <- mxEval(DRIFT, ctsemFit$mxobj)
++ output[i,6] <- mxEval(DRIFT, ctsemFit$mxobj)
 + 
 + } #end for loop
 R> 
@@ -1006,12 +996,11 @@ R> plot(density(output[1:i, 2]), xlim = c(-.4, -.1), lty = 2, lwd = 1,
 +   ylab='Density',
 +   main = 'Density of estimates of drift parameter (true value -0.3)')
 R> points(density(output[1:i, 3]), col='red', type='l', lty=3, lwd=1)
-R> points(density(output[1:i, 4]), col='green', type='l', lty=2, lwd=1)
-R> points(density(output[1:i, 6]), col='blue', type='l', lwd=1, lty=3)
-R> points(density(output[1:i, 7]), col='yellow', type='l', lwd=1, lty=5)
+R> points(density(output[1:i, 5]), col='blue', type='l', lwd=1, lty=3)
+R> points(density(output[1:i, 6]), col='green', type='l', lwd=1, lty=5)
 R> legend('topleft', bty='n', 
-+   text.col = c('black','red','green','blue', 'yellow'),
-+   legend = c('ctsem', 'cts', 'PSM', 'arima', 'OpenMx'))
++   text.col = c('black','red','blue', 'green'),
++   legend = c('ctsem', 'cts', 'arima', 'OpenMx'))
 \end{Sinput}
 \end{Schunk}
 
