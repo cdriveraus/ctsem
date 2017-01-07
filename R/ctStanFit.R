@@ -184,10 +184,15 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
   }
 
   #clean ctspec structure
+  found=FALSE
+  comparison=c(NA,NA,"FALSE")
+  names(comparison)=c('param','transform','indvarying')
   for(rowi in 1:nrow(ctspec)){
     if( !is.na(ctspec$value[rowi])) {
-      found<-TRUE
-      ctspec[rowi,c('param','transform','indvarying')]<-c(NA,NA,FALSE)
+      if(!identical(unlist(ctspec[rowi,c('param','transform','indvarying')]),comparison)) {
+        found<-TRUE
+        ctspec[rowi,c('param','transform','indvarying')]=comparison
+      }
     }
   }
   if(found) message('Minor inconsistencies in model found - removing param name, transform and indvarying from any parameters with a value specified')
@@ -909,6 +914,7 @@ print("lp = ", target());
     
     if(n.TDpred > 0) standata<-c(standata,list(tdpreds=array(tdpreds,dim=c(nrow(tdpreds),ncol(tdpreds)))))
     
+    message('Compiling model - ignore below warning re number of chains')
     sm <- rstan::stan(model_code = c(stanmodeltext), 
       data = standata, chains = 0)
     
@@ -984,6 +990,7 @@ print("lp = ", target());
     
     if(cores=='maxneeded') cores=min(c(chains,parallel::detectCores()))
     
+    message('Sampling...')
     stanfit <- rstan::stan(fit = sm, 
       enable_random_init=TRUE,init_r=.1,
       init=staninits,

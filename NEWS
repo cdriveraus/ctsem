@@ -11,6 +11,7 @@ Changes:
 
 Fixes:
 - rstan 2.14 caused problems with data import for ctStanFit
+- eliminated spurious warnings for ctStanFit
 
 
 20/12/2016
