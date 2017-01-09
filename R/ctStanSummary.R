@@ -115,16 +115,16 @@ out$popcorr = popcorr
 
 
 out$tipreds=round(s$summary[c(grep('tipred_',rownames(s$summary))),
-  c('mean','sd','2.5%','97.5%','n_eff','Rhat'),drop=FALSE],3)
+  c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],3)
 
 out$popsd=round(s$summary[c(grep('hsd_',rownames(s$summary))),
-  c('mean','sd','2.5%','97.5%','n_eff','Rhat'),drop=FALSE],3)
+  c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],3)
 
 out$popmeans=round(s$summary[c(grep('hmean_',rownames(s$summary))),
-  c('mean','sd','2.5%','97.5%','n_eff','Rhat'),drop=FALSE],3)
+  c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],3)
 
 out$logprob=round(s$summary[c(grep('lp',rownames(s$summary))),
-  c('mean','sd','2.5%','97.5%','n_eff','Rhat'),drop=FALSE],3)
+  c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],3)
 
 return(out)
 }
