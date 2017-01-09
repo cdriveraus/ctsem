@@ -213,29 +213,31 @@ ctFit  <- function(datawide, ctmodelobj,
   
   
   ####0 variance predictor fix
-  varCheck<-FALSE
   if(n.TDpred>0 & objective != 'Kalman' & objective != 'Kalmanmx'){ #check for 0 variance predictors for random predictors implementation (not needed for Kalman because fixed predictors)
 
     varCheck<-try(any(diag(stats::cov(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-2), each=n.TDpred))],
       use="pairwise.complete.obs"))==0))
     if(class(varCheck)=='try-error') {
       warning('unable to compute covariance matrix for time dependent predictors - unstable estimates may result if any variances are 0')
-    }
+      varCheck<-FALSE
+      }
 
     if(varCheck==TRUE &
         all(is.na(suppressWarnings(as.numeric(diag(ctmodelobj$TDPREDVAR))))) ) {
       ctmodelobj$TDPREDVAR <- diag(.1,n.TDpred*(Tpoints-1))
       message(paste0('Time dependent predictors with 0 variance and free TDPREDVAR matrix detected - fixing TDPREDVAR matrix diagonal to 0.01 to allow estimation.'))
     }
+    
+    #### if all tdpreds non missing, use observed covariance and means
+    if(!varCheck & all(!is.na(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-2), each=n.TDpred))]))){
+      ctmodelobj$TDPREDVAR= t(chol(Matrix::nearPD(
+        cov(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-2), each=n.TDpred))]))$mat))
+      ctmodelobj$TDPREDMEANS[,]=apply(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-2), each=n.TDpred))],2,mean)
+      message('No missing time dependent predictors - TDPREDVAR and TDPREDMEANS fixed to observed moments for speed')
+    }
   }
 
-  #### if all tdpreds non missing, use observed covariance and means
-  if(!varCheck & all(!is.na(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-2), each=n.TDpred))]))){
-    ctmodelobj$TDPREDVAR= t(chol(Matrix::nearPD(
-      cov(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-2), each=n.TDpred))]))$mat))
-    ctmodelobj$TDPREDMEANS[,]=apply(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-2), each=n.TDpred))],2,mean)
-    message('No missing time dependent predictors - TDPREDVAR and TDPREDMEANS fixed to observed moments for speed')
-  }
+ 
 
   
   
