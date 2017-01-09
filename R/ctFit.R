@@ -213,13 +213,13 @@ ctFit  <- function(datawide, ctmodelobj,
   
   
   ####0 variance predictor fix
+  varCheck<-FALSE
   if(n.TDpred>0 & objective != 'Kalman' & objective != 'Kalmanmx'){ #check for 0 variance predictors for random predictors implementation (not needed for Kalman because fixed predictors)
 
     varCheck<-try(any(diag(stats::cov(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-2), each=n.TDpred))],
       use="pairwise.complete.obs"))==0))
     if(class(varCheck)=='try-error') {
       warning('unable to compute covariance matrix for time dependent predictors - unstable estimates may result if any variances are 0')
-      varCheck<-FALSE
     }
 
     if(varCheck==TRUE &
