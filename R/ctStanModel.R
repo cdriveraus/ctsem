@@ -1,4 +1,16 @@
-ctStanModel<-function(ctmodelobj, type, indvarying='all'){
+#' Convert a frequentist (omx) ctsem model specification to Bayesian (Stan).
+#'
+#' @param ctmodelobj ctsem model object of type 'omx' (default)
+#' @param type either 'stanct' for continuous time, or 'standt' for discrete time.
+#' @param indvarying either 'all' or a logical vector of the same length as the number of
+#' free parameters in the model. Generally it is much simpler to set 'all' and then restrict this
+#' by modififying the output model object afterwards.
+#'
+#' @return List object of class ctStanModel
+#' @export
+#'
+#' @examples
+ctStanModel<-function(ctmodelobj, type='stanct', indvarying='all'){
 if(type=='stanct') continuoustime<-TRUE
 if(type=='standt') continuoustime<-FALSE
   
