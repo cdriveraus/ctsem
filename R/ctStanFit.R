@@ -536,7 +536,7 @@ matrix cov(vector[] mat,int nrows,int ncols){
         ';
         }
         ',if(!esthyper) paste0('
-          mlcov = cov(indparams,nsubjects,nindvarying) + diag_matrix(rep_vector(.001,nindvarying));
+          mlcov = cov(indparams,nsubjects,nindvarying) + diag_matrix(rep_vector(.000001,nindvarying));
           hypersd=sqrt(diagonal(mlcov));
           hypermeans=hypermeansbase;
           for(pari in 1:nindvarying){
@@ -654,11 +654,11 @@ matrix cov(vector[] mat,int nrows,int ncols){
         ',if(n.TIpred > 0 & !noshrinkage) paste0('tipredeffectparams ~ ',ctstanmodel$tipredeffectprior, '; \n '),' 
         
         ',if(any(ctspec$indvarying) & !noshrinkage) paste0(
-          'hypercorrchol ~ lkj_corr_cholesky(1); \n',
-          if(esthyper) 'hypersd ~ normal(0,1);
-            indparamsbase ~ normal(0,1);',
+          'hypercorrchol ~ lkj_corr_cholesky(1); 
+          indparamsbase ~ normal(0,1); 
+          hypersd',if(!esthyper) 'base', ' ~ normal(0,1);',
           if(!esthyper) 'target += -log(determinant(mlcov)); // /2*nsubjects; 
-          indparams ~ multi_normal(hypermeans[indvaryingindex], mlcov);','
+          target += multi_normal_lpdf(indparams| hypermeans[indvaryingindex], mlcov);','
           '),'
       
       ',if(!kalman) 'etapostbase ~ normal(0,1); \n','
@@ -990,7 +990,7 @@ print("lp = ", target());
     
     if(cores=='maxneeded') cores=min(c(chains,parallel::detectCores()))
     
-    message('Sampling...')
+    if(!optimize & !vb) message('Sampling...')
     stanfit <- rstan::stan(fit = sm, 
       enable_random_init=TRUE,init_r=.1,
       init=staninits,
@@ -1011,15 +1011,48 @@ print("lp = ", target());
     
     if(optimize==TRUE && fit==TRUE) {
       
-      stanfit <- rstan::optimizing(object = stanfit@stanmodel, 
-        init=0,
-        # algorithm='BFGS',
-        as_vector=F,
-        history_size=6,
-        init_alpha=.00001,
-        tol_obj=1e-12, tol_grad=1e-12,tol_param=1e-12,tol_rel_grad=0, tol_rel_obj=0,
-        data = standata, iter=iter)
+      browser()
+      # stanfit <- rstan::optimizing(object = stanfit@stanmodel, 
+      #   init=0,
+      #   # algorithm='BFGS',
+      #   as_vector=F,
+      #   history_size=6,
+      #   init_alpha=.00001,
+      #   tol_obj=1e-12, tol_grad=1e-12,tol_param=1e-12,tol_rel_grad=0, tol_rel_obj=0,
+      #   data = standata, iter=iter)
       
+      npars=rstan::get_num_upars(sm)
+      
+      if(any(ctspec$indvarying)) hypersdindex=(nparams+1):(nparams+ sum(ctspec$indvarying)) else hypersdindex<-NULL
+      
+      lp<-function(parm) {
+        out<-try(rstan::log_prob(sm,upars=parm))
+        if(class(out)=='try-error') out=-1e20
+        return(out)
+      }
+      
+      grf<-function(parm) {
+        out=try(rstan::grad_log_prob(sm,upars=parm))
+        if(class(out)=='try-error') out=rep(0,length(parm))
+        return(out)
+      }
+      
+      message('Optimizing...')
+      convergence=1
+      iteri=0
+      optimstarts=stats::rnorm(npars,0,.001)
+      while(convergence==1){
+        if(iteri > 0) {
+          message(paste0('Iteration ', iteri * 100, ', Log prob = ', optimfit$value))
+          optimstarts=optimfit$par
+        }
+        iteri=iteri+1
+      optimfit <- stats::optim(optimstarts, lp, gr=grf, 
+        control = list(fnscale = -1,trace=0,parscale=rep(.00001,npars),maxit=100,factr=1e-10,lmm=6), 
+        method='L-BFGS-B',hessian = FALSE)
+      convergence=optimfit$convergence
+      }
+      stanfit=list(pars=constrain_pars(sm,optimfit$par),lp=optimfit$value)
       
     }
     
