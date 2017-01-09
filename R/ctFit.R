@@ -54,21 +54,24 @@
 #' @param omxStartValues A named vector containing the raw (potentially log transformed) OpenMx starting values for free parameters, as captured by
 #' OpenMx function \code{omxGetParameters(ctmodelobj$mxobj)}. These values will take precedence 
 #' over any starting values already specified using ctModel.
-#' @param transformedParams Logical indicating whether or not to log transform parameters internally to allow unconstrained estimation over
-#' entire 'sensible' range for parameters. When TRUE (default) raw OpenMx parameters will reflect these transformations and may be harder to 
-#' interpret, but summary matrices 
+#' @param transformedParams Logical indicating whether or not to log transform 
+#' certain parameters internally to allow unconstrained estimation over
+#' entire 'sensible' range for parameters. 
+#' When TRUE (default) raw OpenMx parameters (only reported if \code{verbose=TRUE} argument used
+#' for summary function) will reflect these transformations and may be harder to 
+#' interpret, but summary matrices are reported as normal.
 #' @param crossEffectNegStarts Logical. If TRUE (default) free DRIFT matrix cross effect parameters have starting values 
 #' set to small negative values (e.g. -.05), if FALSE, the start values are 0. The TRUE setting is useful for easy 
 #' initialisation of higher order models, while the FALSE setting is useful when one has already estimated a model without cross effects,
 #' and wishes to begin optimization from those values by using the omxStartValues switch.
 #' are re-transformed into regular continuous time parameter matrices, and may be interpreted as normal.
-#'  @details For full discussion of how to structure the data and use this function, see the vignette using: \code{vignette('ctsem')}.
-#'  Models are specified using the \code{\link{ctModel}} function.
-#'  For help regarding the summary function, see \code{\link{summary.ctsemFit}}, 
-#'  and for the plot function, \code{\link{plot.ctsemFit}}.
-#'  Multigroup models may be specified using \code{\link{ctMultigroupFit}}.
-#'  Confidence intervals for any matrices and or parameters 
-#'  may be estimated using \code{\link{ctCI}}.
+#' @details For full discussion of how to structure the data and use this function, see the vignette using: \code{vignette('ctsem')}.
+#' Models are specified using the \code{\link{ctModel}} function.
+#' For help regarding the summary function, see \code{\link{summary.ctsemFit}}, 
+#' and for the plot function, \code{\link{plot.ctsemFit}}.
+#' Multigroup models may be specified using \code{\link{ctMultigroupFit}}.
+#' Confidence intervals for any matrices and or parameters 
+#' may be estimated using \code{\link{ctCI}}.
 #' @examples 
 #' ## Examples set to 'dontrun' because they take longer than 5s.
 #' \dontrun{
@@ -208,33 +211,33 @@ ctFit  <- function(datawide, ctmodelobj,
   }
   
   
+  
   ####0 variance predictor fix
   if(n.TDpred>0 & objective != 'Kalman' & objective != 'Kalmanmx'){ #check for 0 variance predictors for random predictors implementation (not needed for Kalman because fixed predictors)
-   
-    varCheck<-try(any(diag(stats::cov(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-2), each=n.TDpred))], 
+
+    varCheck<-try(any(diag(stats::cov(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-2), each=n.TDpred))],
       use="pairwise.complete.obs"))==0))
     if(class(varCheck)=='try-error') {
       warning('unable to compute covariance matrix for time dependent predictors - unstable estimates may result if any variances are 0')
       varCheck<-FALSE
     }
-      
-    if(varCheck==TRUE & 
+
+    if(varCheck==TRUE &
         all(is.na(suppressWarnings(as.numeric(diag(ctmodelobj$TDPREDVAR))))) ) {
-      
       ctmodelobj$TDPREDVAR <- diag(.1,n.TDpred*(Tpoints-1))
-      #       tdpreds<-datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-2), each=n.TDpred))]
-      #       problemcols<-colnames(tdpreds)[round(diag(var(tdpreds)), digits=3)==0]
-      #       
-      #       problempreds<-unlist(lapply(TDpredNames, function(x) if(any(unlist(regexec(x, problemcols))==1)) return (x)))
-      
-      message(paste0('Time dependent predictors with 0 variance and free TDPREDVAR matrix detected - fixing TDPREDVAR matrix diagonal to 0.01 to allow estimation.')) 
-      #         paste(problempreds, collapse=', ')))
-      #       
-      #       datawide[, paste0(rep(problempreds, each=(Tpoints-1)), '_T', 0:(Tpoints-2))] <- 
-      #         datawide[, paste0(rep(problempreds, each=(Tpoints-1)), '_T', 0:(Tpoints-2))] +
-      #         stats::rnorm(length(datawide[, paste0(rep(problempreds, each=(Tpoints-1)), '_T', 0:(Tpoints-2))]), 0, .1)
+      message(paste0('Time dependent predictors with 0 variance and free TDPREDVAR matrix detected - fixing TDPREDVAR matrix diagonal to 0.01 to allow estimation.'))
     }
   }
+
+  #### if all tdpreds non missing, use observed covariance and means
+  if(!varCheck & all(!is.na(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-2), each=n.TDpred))]))){
+    ctmodelobj$TDPREDVAR= t(chol(Matrix::nearPD(
+      cov(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-2), each=n.TDpred))]))$mat))
+    ctmodelobj$TDPREDMEANS[,]=apply(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-2), each=n.TDpred))],2,mean)
+    message('No missing time dependent predictors - TDPREDVAR and TDPREDMEANS fixed to observed moments for speed')
+  }
+
+  
   
   
   ### check single subject model adequately constrained and warn
@@ -415,7 +418,7 @@ ctFit  <- function(datawide, ctmodelobj,
   if (n.TDpred > 0){
     TDPREDMEANS <- processInputMatrix(ctmodelobj["TDPREDMEANS"], symmetric = FALSE, diagadd = 0)
     TDPREDEFFECT <- processInputMatrix(ctmodelobj["TDPREDEFFECT"], symmetric = FALSE, diagadd = 0, randomscale=0)
-    T0TDPREDCOV <- processInputMatrix(ctmodelobj["T0TDPREDCOV"], symmetric = FALSE, diagadd = 0, randomscale=0) 
+    T0TDPREDCOV <- processInputMatrix(ctmodelobj["T0TDPREDCOV"], symmetric = FALSE, diagadd = 0, randomscale=0.001) 
 
     TDPREDVAR <- processInputMatrix(ctmodelobj["TDPREDVAR"], symmetric = FALSE, diagadd = 1, randomscale=0.01,chol=TRUE) 
     if(transformedParams==TRUE){
@@ -791,7 +794,7 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
     S$values[predictorTDstart:predictorTDend, 1:n.latent] <- t(T0TDPREDCOV$values) #add starting values 
     
     S$labels[1:n.latent, predictorTDstart:predictorTDend]  <-  T0TDPREDCOV$ref #insert combined labels to S matrix
-    S$labels[predictorTDstart:predictorTDend, 1:n.latent]  <-  t(T0TDPREDCOV$ref) #insert combined labels to S matrix
+    S$labels[predictorTDstart:predictorTDend, 1:n.latent]  <-  t(S$labels[1:n.latent, predictorTDstart:predictorTDend]) #insert combined labels to S matrix
     
     #add cov between all td predictors 
     #     if(fastPredictors==TRUE){ #then don't optimize, just use estimates from cov
@@ -839,13 +842,14 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
     M$labels  <- rbind(M$labels, TDPREDMEANS$ref)
     
     #filter matrix    
-    FILTER$values    <- cbind(matrix(0, nrow = (n.manifest * Tpoints+n.TDpred * (Tpoints - 1)), ncol = manifeststart - 1), 
-      diag(1, nrow = n.manifest * Tpoints+n.TDpred * (Tpoints - 1)))
+    FILTER$values    <- cbind(matrix(0, nrow = (n.manifest * Tpoints+n.TDpred*(Tpoints-1)), 
+      ncol = manifeststart - 1), 
+      diag(1,n.manifest * Tpoints+n.TDpred*(Tpoints-1)))
     
     FILTERnamesy <- c(FILTERnamesy, #already specified FILTERnames
       paste0(rep(TDpredNames, each=(Tpoints-1)), "_T", 0:(Tpoints-2))) #TDpred names
     
-    FILTERnamesx     <- c(FILTERnamesx, 
+    FILTERnamesx     <- c(FILTERnamesx,
       paste0(rep(TDpredNames, each=(Tpoints-1)), "_T", 0:(Tpoints-2)))
     
     #     returnAllLocals() #return objects from this function to parent function
