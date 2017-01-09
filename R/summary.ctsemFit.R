@@ -458,18 +458,18 @@ ctSummaryMatrices<-function(object,ridging=FALSE,timeInterval=1,verbose=FALSE,..
         outlist<-c(outlist,'discreteTDPREDEFFECT')
       }
       
-      TDPREDVAR<-tryCatch({OpenMx::mxEval(TDPREDVAR,mxobj,compute=TRUE) }, error=function(e) e )
-      tryCatch({  dimnames(TDPREDVAR)<-list(TDpredNames,TDpredNames)}, error=function(e) e )
-      outlist<-c(outlist,'TDPREDVAR')
+      # TDPREDVAR<-tryCatch({OpenMx::mxEval(TDPREDVAR,mxobj,compute=TRUE) }, error=function(e) e )
+      # tryCatch({  dimnames(TDPREDVAR)<-list(TDpredNames,TDpredNames)}, error=function(e) e )
+      # outlist<-c(outlist,'TDPREDVAR')
+      # 
+      # if(verbose==TRUE){
+      #   TDPREDVARdiag<-tryCatch({diag((diag(TDPREDVAR))+diag(ridging,n.TDpred))}, error=function(e) e )
+      #   TDPREDVARstd<-tryCatch({suppressWarnings(solve(sqrt(TDPREDVARdiag)) %&% TDPREDVAR)}, error=function(e) e )
+      #   tryCatch({  dimnames(TDPREDVARstd)<-list(TDpredNames,TDpredNames)}, error=function(e) e )
+      #   outlist<-c(outlist,'TDPREDVARstd')
+      # }
       
-      if(verbose==TRUE){
-        TDPREDVARdiag<-tryCatch({diag((diag(TDPREDVAR))+diag(ridging,n.TDpred))}, error=function(e) e )
-        TDPREDVARstd<-tryCatch({suppressWarnings(solve(sqrt(TDPREDVARdiag)) %&% TDPREDVAR)}, error=function(e) e )
-        tryCatch({  dimnames(TDPREDVARstd)<-list(TDpredNames,TDpredNames)}, error=function(e) e )
-        outlist<-c(outlist,'TDPREDVARstd')
-      }
-      
-    } # end TIpred section
+    } # end TDpred section
     
     ctsummary<-mget(outlist)
     output<-ctsummary
