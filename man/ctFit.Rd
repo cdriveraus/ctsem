@@ -70,14 +70,7 @@ output checkpoint file to working directory, then creates a plot for each parame
 set to small negative values (e.g. -.05), if FALSE, the start values are 0. The TRUE setting is useful for easy 
 initialisation of higher order models, while the FALSE setting is useful when one has already estimated a model without cross effects,
 and wishes to begin optimization from those values by using the omxStartValues switch.
-are re-transformed into regular continuous time parameter matrices, and may be interpreted as normal.
- @details For full discussion of how to structure the data and use this function, see the vignette using: \code{vignette('ctsem')}.
- Models are specified using the \code{\link{ctModel}} function.
- For help regarding the summary function, see \code{\link{summary.ctsemFit}}, 
- and for the plot function, \code{\link{plot.ctsemFit}}.
- Multigroup models may be specified using \code{\link{ctMultigroupFit}}.
- Confidence intervals for any matrices and or parameters 
- may be estimated using \code{\link{ctCI}}.}
+are re-transformed into regular continuous time parameter matrices, and may be interpreted as normal.}
 
 \item{nofit}{if TRUE, output only openmx model without fitting}
 
@@ -95,13 +88,25 @@ useful for using custom optimizers or fitting to specified parameters.}
 OpenMx function \code{omxGetParameters(ctmodelobj$mxobj)}. These values will take precedence 
 over any starting values already specified using ctModel.}
 
-\item{transformedParams}{Logical indicating whether or not to log transform parameters internally to allow unconstrained estimation over
-entire 'sensible' range for parameters. When TRUE (default) raw OpenMx parameters will reflect these transformations and may be harder to 
-interpret, but summary matrices}
+\item{transformedParams}{Logical indicating whether or not to log transform 
+certain parameters internally to allow unconstrained estimation over
+entire 'sensible' range for parameters. 
+When TRUE (default) raw OpenMx parameters (only reported if \code{verbose=TRUE} argument used
+for summary function) will reflect these transformations and may be harder to 
+interpret, but summary matrices are reported as normal.}
 }
 \description{
 This function fits continuous time SEM models specified via \code{\link{ctModel}}
 to a dataset containing one or more subjects.
+}
+\details{
+For full discussion of how to structure the data and use this function, see the vignette using: \code{vignette('ctsem')}.
+Models are specified using the \code{\link{ctModel}} function.
+For help regarding the summary function, see \code{\link{summary.ctsemFit}}, 
+and for the plot function, \code{\link{plot.ctsemFit}}.
+Multigroup models may be specified using \code{\link{ctMultigroupFit}}.
+Confidence intervals for any matrices and or parameters 
+may be estimated using \code{\link{ctCI}}.
 }
 \examples{
 ## Examples set to 'dontrun' because they take longer than 5s.
