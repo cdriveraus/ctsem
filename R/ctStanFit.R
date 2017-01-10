@@ -185,7 +185,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
 
   #clean ctspec structure
   found=FALSE
-  comparison=c(NA,NA,"FALSE")
+  ctspec$indvarying=as.logical(ctspec$indvarying)
+  comparison=c(NA,NA,FALSE)
   names(comparison)=c('param','transform','indvarying')
   for(rowi in 1:nrow(ctspec)){
     if( !is.na(ctspec$value[rowi])) {
@@ -523,7 +524,7 @@ matrix cov(vector[] mat,int nrows,int ncols){
       
       
       
-      
+      ',if(!esthyper) 'hypermeans = hypermeansbase; \n','
       ',if(any(indvarying)) paste0('
         hypercovchol= diag_pre_multiply(hypersd',if(!esthyper) 'base',
         ' .* sdscale, hypercorrchol);  
@@ -656,9 +657,9 @@ matrix cov(vector[] mat,int nrows,int ncols){
         ',if(any(ctspec$indvarying) & !noshrinkage) paste0(
           'hypercorrchol ~ lkj_corr_cholesky(1); 
           indparamsbase ~ normal(0,1); 
-          hypersd',if(!esthyper) 'base', ' ~ normal(0,1);',
+          hypersd',if(!esthyper) 'base', ' ~ normal(0,10);',
           if(!esthyper) 'target += -log(determinant(mlcov)); // /2*nsubjects; 
-          target += multi_normal_lpdf(indparams| hypermeans[indvaryingindex], mlcov);','
+          // target += multi_normal_lpdf(indparams| hypermeans[indvaryingindex], mlcov);','
           '),'
       
       ',if(!kalman) 'etapostbase ~ normal(0,1); \n','
@@ -1011,7 +1012,7 @@ print("lp = ", target());
     
     if(optimize==TRUE && fit==TRUE) {
       
-      browser()
+      
       # stanfit <- rstan::optimizing(object = stanfit@stanmodel, 
       #   init=0,
       #   # algorithm='BFGS',
@@ -1033,7 +1034,7 @@ print("lp = ", target());
       
       grf<-function(parm) {
         out=try(rstan::grad_log_prob(sm,upars=parm))
-        if(class(out)=='try-error') out=rep(0,length(parm))
+        if(class(out)=='try-error') out=rnorm(length(parm))
         return(out)
       }
       
@@ -1048,7 +1049,7 @@ print("lp = ", target());
         }
         iteri=iteri+1
       optimfit <- stats::optim(optimstarts, lp, gr=grf, 
-        control = list(fnscale = -1,trace=0,parscale=rep(.00001,npars),maxit=100,factr=1e-10,lmm=6), 
+        control = list(fnscale = -1,trace=0,parscale=rep(.00001,npars),maxit=100,factr=1e-8,lmm=6), 
         method='L-BFGS-B',hessian = FALSE)
       convergence=optimfit$convergence
       }

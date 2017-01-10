@@ -84,7 +84,7 @@ or lower triangular n.latent*n.latent cholesky matrix of trait variance / covari
 
 \item{T0TRAITEFFECT}{For type='omx' only. Either NULL, if no trait / individual heterogeneity effect, 
 or lower triangular n.latent*n.latent cholesky matrix of initial trait variance / covariance.
-"auto" freely estimates all parametrers.}
+"auto" freely estimates all parametrers, if the TRAITVAR matrix is specified.}
 
 \item{MANIFESTTRAITVAR}{For type='omx' only. Either NULL (default) if no trait variance / individual heterogeneity in the level of
 the manifest indicators, otherwise a lower triangular n.manifest * n.manifest variance / covariance matrix. 
@@ -102,18 +102,20 @@ Effects from 1:n.TDpred columns TDpredictors go to 1:n.latent rows of latent pro
 
 \item{T0TDPREDCOV}{For type='omx' only. n.latent rows * ((Tpoints-1) rows * n.TDpred) columns covariance matrix 
 between latents at T0 and time dependent predictors.
-"auto" freely estimates all parameters.}
+Default of "auto" restricts covariance to 0, which is consistent with covariance to other time points. 
+To freely estimate parameters, specify either 'free', or the desired matrix.}
 
 \item{TDPREDVAR}{For type='omx' only. lower triangular (n.TDpred * (Tpoints-1)) rows * (n.TDpred * (Tpoints-1)) columns variance / covariance
 cholesky matrix for time dependent predictors.
 "auto" (default) freely estimates all parameters.}
 
 \item{TRAITTDPREDCOV}{For type='omx' only. n.latent rows * (n.TDpred*(Tpoints-1)) columns covariance matrix of 
-latent traits and time dependent predictors.  
+latent traits and time dependent predictors. Defaults to zeroes, 
+assuming predictors are independent of subjects baseline levels. When predictors depend on the subjects,
+this should instead be set to 'free' or manually specified.
 The Tpoints-1 columns of the first preditor are followed by those of the second and so on.
 Covariances with the trait variance of latent process 1 are specified in row 1, process 2 in row 2, etc.
-"auto" (default) freely estimates covariance between time dependent predictors and traits, 
-(if both exist, otherwise this matrix is set to NULL, and ignored in any case).}
+"auto" (default) sets this matrix to zeroes, (if both traits and time dependent predictors exist, otherwise this matrix is set to NULL, and ignored in any case).}
 
 \item{TDTIPREDCOV}{For type='omx' only. (n.TDpred * (Tpoints-1)) rows * n.TIpred columns covariance
 matrix between time dependent and time independent predictors.

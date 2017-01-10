@@ -1,5 +1,17 @@
 ctsem news:
 
+1/2/2017
+#### 2.2.0 ####
+Changes:
+- Default to 0 covariance between time dependent predictors and initial (T0) 
+  latents / traits / time independent predictors. Specify matrix as 'free' 
+  in ctModel to estimate instead.
+
+Fixes:
+- Improve optimization approach for ctStanFit
+
+
+
 6/1/2017
 #### 2.1.1 ####
 Improvements:
