@@ -8,3 +8,5 @@ r_check_args: --resave-data --compact-vignettes=gs+qpdf
 script: -|
   R CMD build .
   travis_wait 20 R CMD check ctsem*tar.gz
+after_failure:
+  find *Rcheck -name '*.fail' -print -exec cat '{}' \;

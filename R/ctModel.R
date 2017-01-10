@@ -390,7 +390,7 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
   
   if(all(T0TDPREDCOV=="free") && n.TDpred>0) T0TDPREDCOV<-ctLabel(TDpredNames=TDpredNames,TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="T0TDPREDCOV",n.latent=n.latent,
     n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
-  if(all(T0TDPREDCOV=="auto") && n.TDpred>0) T0TDPREDCOV<-matrix(0,nlatent,n.TDpred*(Tpoints-1))
+  if(all(T0TDPREDCOV=="auto") && n.TDpred>0) T0TDPREDCOV<-matrix(0,n.latent,n.TDpred*(Tpoints-1))
   if(n.TDpred==0) T0TDPREDCOV<-NULL
 
   if(n.TDpred>0) if(nrow(T0TDPREDCOV) != n.latent | ncol(T0TDPREDCOV) != n.TDpred*(Tpoints-1))  stop(
