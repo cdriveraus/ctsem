@@ -5,3 +5,6 @@ sudo: false
 cache: packages
 r_build_args: --resave-data --compact-vignettes=gs+qpdf
 r_check_args: --resave-data --compact-vignettes=gs+qpdf
+script: -|
+  R CMD build .
+  travis_wait 20 R CMD check ctsem*tar.gz
