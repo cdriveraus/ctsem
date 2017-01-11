@@ -289,8 +289,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
   # datalong[sort(c(which(dT > 5),which(dT > 5)+1,which(dT > 5)-1)),1:2]
   
   if(n.TDpred > 0) {
-    datalong[,TDpredNames][is.na(datalong[,TDpredNames])] <-0 ## temporary fix for missingness
-    if(any(is.na(datalong[,TDpredNames]))) stop('Missingness in TDpreds!')
+    tdpreds <- datalong[,TDpredNames,drop=FALSE]
+    if(any(is.na(tdpreds))) message('Missingness in TDpreds! Replaced by zeroes...')
+    tdpreds[is.na(tdpreds)] <-0 ## rough fix for missingness
   }
   if(n.TIpred > 0) {
     if(n.TIpred > 0) tipreds <- datalong[match(unique(datalong[,id]),datalong[,id]),TIpredNames,drop=FALSE]
@@ -298,9 +299,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
   }
   
   datalong[is.na(datalong)]<-99999 #missing data
-  
-  if(n.TDpred > 0) tdpreds <- datalong[,TDpredNames,drop=FALSE]
-  
+
   nsubjects <- length(unique(datalong[, 'id'])) 
   
   indvaryingindex = array(which(ctspec$indvarying[is.na(ctspec$value)]),dim=c(nindvarying)) #which free parameters vary across subjects
@@ -741,7 +740,7 @@ matrix cov(vector[] mat,int nrows,int ncols){
       
       if(T0check[rowi]==0){
       etaprior[rowi] = discreteCINT[cintindex[rowi]]  + discreteDRIFT[driftindex[rowi]] * etapost[rowi-1]; //prior for latent state of this row
-      ',if(n.TDpred > 0) paste0('etaprior[rowi] =TDPREDEFFECT',checkvarying('TDPREDEFFECT','[subjecti]','[1]'),' * tdpreds[rowi-1] + etaprior[rowi];'),'
+      ',if(n.TDpred > 0) paste0('etaprior[rowi] =TDPREDEFFECT',checkvarying('TDPREDEFFECT','[subjecti]','[1]'),' * tdpreds[rowi] + etaprior[rowi];'),'
       ',if(kalman) paste0('etapriorcov[rowi] =  makesym(quad_form(etapostcov[rowi-1], discreteDRIFT[driftindex[rowi]][diffusionindices,diffusionindices]\')  + discreteDIFFUSION[diffusionindex[rowi]]);'),'
       ',if(!kalman) 'etapost[rowi] = etaprior[rowi] +  discreteDIFFUSIONchol[diffusionindex[rowi]] * etapostbase[(1+(rowi-1)*nlatent):(rowi*nlatent)];','
       }
@@ -915,7 +914,7 @@ print("lp = ", target());
     
     if(n.TDpred > 0) standata<-c(standata,list(tdpreds=array(tdpreds,dim=c(nrow(tdpreds),ncol(tdpreds)))))
     
-    message('Compiling model - ignore below warning re number of chains')
+    message('Compiling model - ignore forthcoming warning re number of chains')
     sm <- rstan::stan(model_code = c(stanmodeltext), 
       data = standata, chains = 0)
     
@@ -991,7 +990,8 @@ print("lp = ", target());
     
     if(cores=='maxneeded') cores=min(c(chains,parallel::detectCores()))
     
-    if(!optimize & !vb) message('Sampling...')
+    if(!optimize & !vb) {
+      message('Sampling...')
     stanfit <- rstan::stan(fit = sm, 
       enable_random_init=TRUE,init_r=.1,
       init=staninits,
@@ -1000,10 +1000,7 @@ print("lp = ", target());
       data = standata, chains = ifelse(optimize==FALSE & vb==FALSE,chains,0), control=control,
       sample_file=sample_file,
       cores=cores,...) 
-    
-    
-    
-    if(optimize==FALSE & vb==FALSE){ #summarise
+
       if(plot==TRUE) {
         for(chaini in 1:chains) system(paste0("rm ",tmpdir,'/',stanseed,"samples.csv",chaini))
         system(paste0('rm ',tmpdir,'/stanplottemp.R'))
@@ -1044,12 +1041,12 @@ print("lp = ", target());
       optimstarts=stats::rnorm(npars,0,.001)
       while(convergence==1){
         if(iteri > 0) {
-          message(paste0('Iteration ', iteri * 100, ', Log prob = ', optimfit$value))
+          message(paste0('Iteration ', iteri * 500, ', Log prob = ', optimfit$value))
           optimstarts=optimfit$par
         }
         iteri=iteri+1
       optimfit <- stats::optim(optimstarts, lp, gr=grf, 
-        control = list(fnscale = -1,trace=0,parscale=rep(.00001,npars),maxit=100,factr=1e-8,lmm=6), 
+        control = list(fnscale = -1,trace=0,parscale=rep(.00001,npars),maxit=500,factr=1e-8,lmm=6), 
         method='L-BFGS-B',hessian = FALSE)
       convergence=optimfit$convergence
       }
