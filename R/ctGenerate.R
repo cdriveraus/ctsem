@@ -31,7 +31,8 @@
 #' data<-ctGenerate(generatingModel,n.subjects=15,burnin=10)
 #' @export
 
-ctGenerate<-function(ctmodelobj,n.subjects=1000,burnin=0,dtmean=1,logdtsd=0,wide=TRUE,simultdpredeffect=FALSE){
+ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,
+  wide=TRUE,simultdpredeffect=TRUE){
   
   
   ###read in model
@@ -77,7 +78,7 @@ ctGenerate<-function(ctmodelobj,n.subjects=1000,burnin=0,dtmean=1,logdtsd=0,wide
   fullTpoints<-burnin+Tpoints
   
   if(n.TDpred > 0) {
-    TDPREDMEANS <- rbind(matrix(0,nrow=(burnin+ifelse(simultdpredeffect,0,1))*n.TDpred),
+    TDPREDMEANS <- rbind(matrix(0,nrow=(1+burnin+ifelse(simultdpredeffect,0,1))*n.TDpred)[-1,,drop=FALSE],
     TDPREDMEANS)
     if(simultdpredeffect) TDPREDMEANS=rbind(TDPREDMEANS,0)
   }
@@ -130,7 +131,6 @@ ctGenerate<-function(ctmodelobj,n.subjects=1000,burnin=0,dtmean=1,logdtsd=0,wide
   if(wide==FALSE) return(datalong) else {
     datawide <- ctLongToWide(datalong = datalong,id = 'id',time = 'time',
       manifestNames = manifestNames, TDpredNames = TDpredNames,TIpredNames = TIpredNames)
-    
     datawide <- ctIntervalise(datawide = datawide,Tpoints = Tpoints,n.manifest = n.manifest,n.TDpred = n.TDpred,n.TIpred = n.TIpred,
       manifestNames=manifestNames,TDpredNames=TDpredNames,TIpredNames=TIpredNames)
     return(datawide)

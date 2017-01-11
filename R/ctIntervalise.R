@@ -70,8 +70,8 @@ ctIntervalise<-function(datawide,Tpoints,n.manifest,n.TDpred=0,n.TIpred=0,impute
   
   tempwide<-as.matrix(datawide,nrow=nrow(datawide)) #ensure matrix for transformations
   
-  timeindex<-((Tpoints*n.manifest+(Tpoints-1)*n.TDpred)+1) : 
-    ((Tpoints*n.manifest+(Tpoints-1)*n.TDpred)+Tpoints) #set appropriate time index for tempwide object
+  timeindex<-((Tpoints*n.manifest+(Tpoints)*n.TDpred)+1) : 
+    ((Tpoints*n.manifest+(Tpoints)*n.TDpred)+Tpoints) #set appropriate time index for tempwide object
   
   
   if(imputedefs==TRUE) { #impute def vars from column mean
@@ -130,18 +130,18 @@ ctIntervalise<-function(datawide,Tpoints,n.manifest,n.TDpred=0,n.TIpred=0,impute
   
   
   if(nrow(tempwide)==1) individualRelativeTime<-TRUE #if only 1 subject then flatten start time to 0
-  if(length(unique(tempwide[,Tpoints*n.manifest+(Tpoints-1)*n.TDpred+1])) == 1) individualRelativeTime<-TRUE #if all Tpoint 1 times are equal, then flatten start time to 0
+  if(length(unique(tempwide[,Tpoints*n.manifest+(Tpoints)*n.TDpred+1])) == 1) individualRelativeTime<-TRUE #if all Tpoint 1 times are equal, then flatten start time to 0
   
   if(n.TIpred>0) tempwide<-tempwide[,-ncol(tempwide) : 
       -(ncol(tempwide)-n.TIpred+1),drop=FALSE] #remove TI predictors for moment
   
   if(all(is.na(
-    tempwide[,Tpoints*n.manifest+(Tpoints-1)*n.TDpred+1])
+    tempwide[,Tpoints*n.manifest+(Tpoints)*n.TDpred+1])
   )){ #if no data in first time column
     
     message("first time column empty! setting to startoffset and adjusting")
     
-    tempwide[,Tpoints*n.manifest+(Tpoints-1)*n.TDpred+1] <- startoffset
+    tempwide[,Tpoints*n.manifest+(Tpoints)*n.TDpred+1] <- startoffset
     individualRelativeTime<-TRUE
   }
   
@@ -156,7 +156,7 @@ ctIntervalise<-function(datawide,Tpoints,n.manifest,n.TDpred=0,n.TIpred=0,impute
       tempwide[,1:(n.manifest*Tpoints)], #then manifests
       rep(NA, times = (n.TDpred) * nrow(tempwide)), #then extra blank TDpredictors columns as needed
       tempwide[,(n.manifest*Tpoints+1) : 
-          (n.manifest*Tpoints+n.TDpred*(Tpoints-1)+Tpoints)] #then rest of data
+          (n.manifest*Tpoints+n.TDpred*(Tpoints)+Tpoints)] #then rest of data
     ), nrow=nrow(tempwide))
     
     Tpoints<-Tpoints+1 #because extra column was added
@@ -165,8 +165,8 @@ ctIntervalise<-function(datawide,Tpoints,n.manifest,n.TDpred=0,n.TIpred=0,impute
     colnames(temp)<- ctWideNames(n.manifest=n.manifest, n.TDpred = n.TDpred,
       Tpoints=Tpoints, manifestNames=manifestNames, TDpredNames=TDpredNames, TIpredNames=TIpredNames, n.TIpred=0) #set colnames here for easier debugging, but set later too
     
-    timeindex<-((Tpoints*n.manifest+(Tpoints-1)*n.TDpred)+1) : 
-      ((Tpoints*n.manifest+(Tpoints-1)*n.TDpred)+Tpoints-1) #set index of time variables in temp object
+    timeindex<-((Tpoints*n.manifest+(Tpoints)*n.TDpred)+1) : 
+      ((Tpoints*n.manifest+(Tpoints)*n.TDpred)+Tpoints-1) #set index of time variables in temp object
     
     if(startoffset>0) temp[,timeindex] <- temp[,timeindex]+startoffset   #if setting start offset, set first interval to start offset (first obs will then all be NA)
     
@@ -203,21 +203,21 @@ ctIntervalise<-function(datawide,Tpoints,n.manifest,n.TDpred=0,n.TIpred=0,impute
   
   
   
-  if(individualRelativeTime==T){ #if the user wants to set the first obs time for each subject to 0 (generally makes sense - only problematic if some effect directly on the wave is to be implemented)
+  if(individualRelativeTime==TRUE){ #if the user wants to set the first obs time for each subject to 0 (generally makes sense - only problematic if some effect directly on the wave is to be implemented)
     
-    timeindex <- ((Tpoints*n.manifest+(Tpoints-1)*n.TDpred)+1) : 
-      (Tpoints*n.manifest+(Tpoints-1)*n.TDpred+Tpoints) #set appropriate time index for temp object
+    timeindex <- ((Tpoints*n.manifest+(Tpoints)*n.TDpred)+1) : 
+      (Tpoints*n.manifest+(Tpoints)*n.TDpred+Tpoints) #set appropriate time index for temp object
     temp <- tempwide
     
     if(any(is.na(temp[,timeindex[1]]))) temp[is.na(temp[,timeindex[1]]),timeindex[1]]<-0 #Any missing time data for first obs are set to 0 - this is ok to set because we've removed data or imputed missing time obs above
-    intervals<-temp[,timeindex,drop=F] #extract intervals for a moment so structure is not broken
+    intervals<-temp[,timeindex,drop=FALSE] #extract intervals for a moment so structure is not broken
     
     intervals<-matrix(apply(intervals,1,function(x) {
       x<-c(x)#subtract first obs time from all obs to flatten start time
       x <- x - as.numeric(x[1])
       return(x)
     })
-      ,ncol=(Tpoints),byrow=T)
+      ,ncol=(Tpoints),byrow=TRUE)
     
     temp[,timeindex]<-intervals #push intervals back into data structure
     temp<-temp[,-timeindex[1],drop=FALSE] #remove first time column (as this is now 0 in all cases)

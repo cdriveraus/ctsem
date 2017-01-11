@@ -200,7 +200,7 @@ ctFit  <- function(datawide, ctmodelobj,
   }
   
   ####check data contains correct number of columns (ignore if discreteTime specified)
-  neededColumns<-Tpoints * n.manifest+(Tpoints - 1)+n.TDpred * (Tpoints - 1)+n.TIpred
+  neededColumns<-Tpoints * n.manifest+(Tpoints - 1)+n.TDpred * (Tpoints)+n.TIpred
   if(ncol(datawide)!=neededColumns & discreteTime != TRUE) stop("Number of columns in data (", paste0(ncol(datawide)), ") do not match model (", paste0(neededColumns), ")")
   
   if(discreteTime == TRUE){
@@ -215,17 +215,17 @@ ctFit  <- function(datawide, ctmodelobj,
 
   if(n.TDpred>0 & objective != 'Kalman' & objective != 'Kalmanmx'){ 
     #### if all tdpreds non missing, use observed covariance and means
-    if(all(!is.na(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-2), each=n.TDpred))]))){
+    if(all(!is.na(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-1), each=n.TDpred))]))){
       ctmodelobj$TDPREDVAR= t(chol(Matrix::nearPD(
-        cov(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-2), each=n.TDpred))]) + 
-          diag(.0000001, n.TDpred*(Tpoints-1)))$mat))
-      ctmodelobj$TDPREDMEANS[,]=apply(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-2), each=n.TDpred))],2,mean)
+        cov(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-1), each=n.TDpred))]) + 
+          diag(.0000001, n.TDpred*(Tpoints)))$mat))
+      ctmodelobj$TDPREDMEANS[,]=apply(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-1), each=n.TDpred))],2,mean)
       message('No missing time dependent predictors - TDPREDVAR and TDPREDMEANS fixed to observed moments for speed')
     }
 
     #check for 0 variance predictors for random predictors implementation (not needed for Kalman because fixed predictors)
     ####0 variance predictor fix
-    varCheck<-try(any(diag(stats::cov(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-2), each=n.TDpred))],
+    varCheck<-try(any(diag(stats::cov(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-1), each=n.TDpred))],
       use="pairwise.complete.obs"))==0))
     if(class(varCheck)=='try-error') {
       warning('unable to compute covariance matrix for time dependent predictors - unstable estimates may result if any variances are 0')
@@ -234,7 +234,7 @@ ctFit  <- function(datawide, ctmodelobj,
 
     if(varCheck==TRUE &
         all(is.na(suppressWarnings(as.numeric(diag(ctmodelobj$TDPREDVAR))))) ) {
-      ctmodelobj$TDPREDVAR <- diag(.1,n.TDpred*(Tpoints-1))
+      ctmodelobj$TDPREDVAR <- diag(.1,n.TDpred*(Tpoints))
       message(paste0('Time dependent predictors with 0 variance and free TDPREDVAR matrix detected - fixing TDPREDVAR matrix diagonal to 0.01 to allow estimation.'))
     }
 
@@ -281,7 +281,7 @@ ctFit  <- function(datawide, ctmodelobj,
     #     if(nrow(datawide) > 1) stop('To use Kalman filter implementation with multiple subjects, see function ctMultigroupFit')
     
     if(n.TDpred >0){
-      if(any(is.na(datawide[, paste0(TDpredNames, '_T', 0:(Tpoints-2))] ))) stop('NA predictors are not possible with Kalman objective')
+      if(any(is.na(datawide[, paste0(TDpredNames, '_T', 0:(Tpoints-1))] ))) stop('NA predictors are not possible with Kalman objective')
     }
     if(n.TIpred >0) message('Time independent predictors are not possible with single subject data, ignoring')  
     
@@ -302,10 +302,10 @@ ctFit  <- function(datawide, ctmodelobj,
     colnames(datawide)[which(colnames(datawide)=='time')] <-'dT1'
     }
     
-    if(n.TDpred >0){
-      datawide[2:(Tpoints), TDpredNames]<-datawide[1:(Tpoints-1), TDpredNames]
-      datawide[1, TDpredNames]<-0
-    }
+    # if(n.TDpred >0){
+    #   datawide[1:(Tpoints), TDpredNames]<-datawide[1:(Tpoints), TDpredNames]
+    #   datawide[1, TDpredNames]<-0
+    # }
     
     
     
@@ -755,16 +755,16 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
     #function to insert rows and columns of single specified value into matrices
     insertTDpredsToMatrix <- function(target, value){
       target <- rbind(target, #insert rows and columns for traits
-        matrix(value, nrow = n.TDpred * (Tpoints - 1), ncol = ncol(target)))
+        matrix(value, nrow = n.TDpred * (Tpoints), ncol = ncol(target)))
       target <- cbind(target, 
-        matrix(value, nrow = nrow(target), ncol = n.TDpred * (Tpoints - 1)))
+        matrix(value, nrow = nrow(target), ncol = n.TDpred * (Tpoints)))
       return(target)
     }
     
     #update indices
     
     predictorTDstart <- manifestend+1
-    predictorTDend <- manifestend+n.TDpred * (Tpoints - 1)
+    predictorTDend <- manifestend+n.TDpred * (Tpoints)
     predictorstart<-predictorTDstart
     predictorend<-predictorTDend
     
@@ -778,61 +778,34 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
     
     #create time dependent predictor effects on processes
     TDPREDEFFECT$ref <- paste0(
-      "discreteTDPREDEFFECT", 
-      "_T", 
-      rep(1:(Tpoints - 1), each=n.latent), 
+      "TDPREDEFFECT", 
       "[", 
       1:n.latent, 
       ",", 
-      rep(1:n.TDpred, each = (Tpoints - 1)*n.latent), 
+      rep(1:n.TDpred, each = n.latent), 
       "]")
     
     
-    A$values[cbind(rep( (1+n.latent):latentend, times=n.TDpred), 
+    A$values[cbind(rep( 1:n.latent, times=n.TDpred*Tpoints) + n.latent*rep(0:(Tpoints-1),each=n.latent*n.TDpred), 
       rep(predictorTDstart:predictorTDend, each=n.latent))] <- TDPREDEFFECT$values #insert starting values specifying fixed for algebras
-    A$labels[cbind(rep( (1+n.latent):latentend, times=n.TDpred), 
+    A$labels[cbind(rep( 1:n.latent, times=n.TDpred*Tpoints) + n.latent*rep(0:(Tpoints-1),each=n.latent*n.TDpred), 
       rep(predictorTDstart:predictorTDend, each=n.latent))] <- TDPREDEFFECT$ref #insert TDPREDEFFECT algebra references to A$labels    
     
     #add cov of time dependent predictors with T0
-    T0TDPREDCOV$ref <- paste0('T0TDPREDCOV[', 1:n.latent, ',', rep( 1:(n.TDpred*(Tpoints-1)), each=n.latent ), ']')
+    T0TDPREDCOV$ref <- paste0('T0TDPREDCOV[', 1:n.latent, ',', rep( 1:(n.TDpred*(Tpoints)), each=n.latent ), ']')
     S$values[1:n.latent, predictorTDstart:predictorTDend] <- T0TDPREDCOV$values #add starting values 
     S$values[predictorTDstart:predictorTDend, 1:n.latent] <- t(T0TDPREDCOV$values) #add starting values 
     
     S$labels[1:n.latent, predictorTDstart:predictorTDend]  <-  T0TDPREDCOV$ref #insert combined labels to S matrix
     S$labels[predictorTDstart:predictorTDend, 1:n.latent]  <-  t(S$labels[1:n.latent, predictorTDstart:predictorTDend]) #insert combined labels to S matrix
     
-    #add cov between all td predictors 
-    #     if(fastPredictors==TRUE){ #then don't optimize, just use estimates from cov
-    #       temp<-matrix(paste0('FFF', stats::cov(datawide[, paste0(rep(TDpredNames, each=(Tpoints-1)), '_T', 0:(Tpoints-2))], use='pairwise.complete.obs')), 
-    #         nrow=nrow(TDPREDVAR$values))
-    #       
-    #         TDpreds<-datawide[, paste0(rep(TDpredNames, each=(Tpoints-1)), '_T', 0:(Tpoints-2))]
-    #         
-    #         covmodel<-OpenMx::mxModel(mxData(stats::cov(TDpreds), means=apply(TDpreds, 2, mean, na.rm=T), type='cov', numObs=nrow(TDpreds)), 
-    #           mxMatrix(name='A', values=0, free=F, type='Full', nrow=ncol(TDpreds), ncol=ncol(TDpreds)), 
-    #           mxMatrix(name='S', values=stats::cov(TDpreds), free=T, type='Full', nrow=ncol(TDpreds), ncol=ncol(TDpreds)), 
-    #           mxMatrix(name='F', values=diag(ncol(TDpreds)), free=F, type='Full', nrow=ncol(TDpreds), ncol=ncol(TDpreds)), 
-    #           mxMatrix(name='M', values=apply(TDpreds, 2, mean, na.rm=T), free=T, type='Full', nrow=1, ncol=ncol(TDpreds)), 
-    #           mxExpectationRAM(M='M', dimnames=colnames(TDpreds)), 
-    #           mxFitFunctionML()
-    #         )
-    #         tempcov<-OpenMx::mxRun(covmodel, silent=TRUE)
-    #         
-    #   
-    #       
-    #       if(all(!is.na(temp))){
-    #         TDPREDVAR$values<-temp
-    #         TDPREDVAR$free<-FALSE  
-    #       }
-    #       if(any(is.na(temp))) message('Too much missingness in TD predictors to use calculated covariance for TDPREDVAR, so estimating...')
-    #     }
-    TDPREDVAR$ref<-paste0('TDPREDVAR[', 1:(n.TDpred*(Tpoints-1)), ',', rep( 1:(n.TDpred*(Tpoints-1)), each=n.TDpred*(Tpoints-1) ), ']')
-    S$values[predictorTDstart:predictorTDend, predictorTDstart:predictorTDend]  <- diag(10,n.TDpred*(Tpoints-1))    #insert values    
+    TDPREDVAR$ref<-paste0('TDPREDVAR[', 1:(n.TDpred*(Tpoints)), ',', rep( 1:(n.TDpred*(Tpoints)), each=n.TDpred*(Tpoints) ), ']')
+    S$values[predictorTDstart:predictorTDend, predictorTDstart:predictorTDend]  <- diag(1,n.TDpred*(Tpoints))    #insert values    
     S$labels[predictorTDstart:predictorTDend, predictorTDstart:predictorTDend ] <- TDPREDVAR$ref #insert combined labels into S matrix
     
     #introduce covariance between TDpreds and traits    
     if(traitExtension == TRUE && !is.null(ctmodelobj$TRAITTDPREDCOV)){
-      TRAITTDPREDCOV$ref<-paste0('TRAITTDPREDCOV[', 1:n.latent, ',', rep( 1:(n.TDpred*(Tpoints-1)), each=n.latent ), ']')
+      TRAITTDPREDCOV$ref<-paste0('TRAITTDPREDCOV[', 1:n.latent, ',', rep( 1:(n.TDpred*(Tpoints)), each=n.latent ), ']')
       S$values[traitstart:(latentend+n.latent), predictorTDstart:predictorTDend ]  <- TRAITTDPREDCOV$values #insert starting values
       S$values[predictorTDstart:predictorTDend, traitstart:(latentend+n.latent) ]  <- t(TRAITTDPREDCOV$values)#insert symmetric starting values
       
@@ -842,20 +815,20 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
     
     #Means
     
-    TDPREDMEANS$ref<-matrix(paste0('TDPREDMEANS[',1:(n.TDpred*(Tpoints-1)),',1]'),ncol=ncol(TDPREDMEANS$labels))
+    TDPREDMEANS$ref<-matrix(paste0('TDPREDMEANS[',1:(n.TDpred*(Tpoints)),',1]'),ncol=ncol(TDPREDMEANS$labels))
     M$values  <- rbind(M$values, TDPREDMEANS$values)
     M$labels  <- rbind(M$labels, TDPREDMEANS$ref)
     
     #filter matrix    
-    FILTER$values    <- cbind(matrix(0, nrow = (n.manifest * Tpoints+n.TDpred*(Tpoints-1)), 
+    FILTER$values    <- cbind(matrix(0, nrow = (n.manifest * Tpoints+n.TDpred*(Tpoints)), 
       ncol = manifeststart - 1), 
-      diag(1,n.manifest * Tpoints+n.TDpred*(Tpoints-1)))
+      diag(1,n.manifest * Tpoints+n.TDpred*(Tpoints)))
     
     FILTERnamesy <- c(FILTERnamesy, #already specified FILTERnames
-      paste0(rep(TDpredNames, each=(Tpoints-1)), "_T", 0:(Tpoints-2))) #TDpred names
+      paste0(TDpredNames, "_T", rep(0:(Tpoints-1),each=n.TDpred))) #TDpred names
     
     FILTERnamesx     <- c(FILTERnamesx,
-      paste0(rep(TDpredNames, each=(Tpoints-1)), "_T", 0:(Tpoints-2)))
+      paste0(TDpredNames, "_T", rep(0:(Tpoints-1),each=n.TDpred)))
     
     #     returnAllLocals() #return objects from this function to parent function
   }#close TD predictor matrices function
@@ -879,7 +852,7 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
     }
     
     #update indices
-    predictorTIstart <- manifestend + n.TDpred*(Tpoints-1) + 1
+    predictorTIstart <- manifestend + n.TDpred*(Tpoints) + 1
     predictorTIend <- predictorTIstart+n.TIpred-1
     predictorend<-predictorTIend
     if(n.TDpred == 0) predictorstart<-predictorTIstart
@@ -923,22 +896,8 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
     
     #add cov between TDpreds and TIpreds
     if(n.TDpred > 0 & n.TIpred > 0){
-      #       #fast predictor estimates if fastPredictors is set
-      #       if(fastPredictors==TRUE){
-      #         
-      #         temp<-matrix(paste0('FFF', stats::cov(y=datawide[, TIpredNames], 
-      #          x=datawide[, paste0(rep(TDpredNames, each=(Tpoints-1)), '_T', 0:(Tpoints-2))], use='pairwise.complete.obs')), 
-      #           nrow=nrow(TDTIPREDCOV$values))
-      #         
-      #         if(all(!is.na(temp))){
-      #           TDTIPREDCOV$values<-temp
-      #           TDTIPREDCOV$free<-FALSE  
-      #         }
-      #         if(any(is.na(temp))) message('Too much missingness in TI and TD predictors to use calculated covariance for TDTIPREDCOV, so estimating...')
-      #       }
-      
-      
-      TDTIPREDCOV$ref <- paste0('TDTIPREDCOV[',rep(1:(n.TDpred*(Tpoints-1)),n.TIpred),',',rep(1:n.TIpred,each=n.TDpred*(Tpoints-1)),']')
+
+      TDTIPREDCOV$ref <- paste0('TDTIPREDCOV[',rep(1:(n.TDpred*(Tpoints)),n.TIpred),',',rep(1:n.TIpred,each=n.TDpred*(Tpoints)),']')
       S$values[predictorTDstart:predictorTDend, predictorTIstart:predictorTIend]  <- TDTIPREDCOV$values        
       S$labels[predictorTDstart:predictorTDend, predictorTIstart:predictorTIend] <- TDTIPREDCOV$ref 
       
@@ -953,8 +912,8 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
     M$labels  <- rbind(M$labels, TIPREDMEANS$ref)
     
     #Filter matrix
-    FILTER$values    <- cbind(matrix(0, nrow = (n.manifest * Tpoints+n.TDpred * (Tpoints - 1)+n.TIpred), ncol = manifeststart - 1), 
-      diag(1, nrow = n.manifest * Tpoints+n.TDpred * (Tpoints - 1)+n.TIpred))
+    FILTER$values    <- cbind(matrix(0, nrow = (n.manifest * Tpoints+n.TDpred * (Tpoints)+n.TIpred), ncol = manifeststart - 1), 
+      diag(1, nrow = n.manifest * Tpoints+n.TDpred * (Tpoints)+n.TIpred))
     
     FILTERnamesy <- c(FILTERnamesy, TIpredNames)      
     FILTERnamesx     <- c(FILTERnamesx, TIpredNames)
@@ -993,7 +952,7 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
   #discreteDRIFTallintervals
   discreteDRIFTallintervals <- list()
   for( i in 1:length(uniqueintervals)){
-    if(discreteTime==FALSE) fullAlgString <- paste0("omxExponential(DRIFT %x%", uniqueintervals[i], ")")
+    if(discreteTime==FALSE) fullAlgString <- paste0("expm(DRIFT %x%", uniqueintervals[i], ")")
     
     if(discreteTime==TRUE) fullAlgString <- paste0("DRIFT")
     
@@ -1167,20 +1126,6 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
     if(meanIntervals==TRUE) datawide[,paste0('dT', 1:(Tpoints-1))] <- 
         matrix(apply(datawide[,paste0('dT', 1:(Tpoints-1))],2,mean,na.rm=T), byrow=T,nrow=nrow(datawide), ncol=(Tpoints-1))
     
-    #   uniqueintervals<-c(sort(unique(c(datawide[,paste0('dT', 1:(Tpoints-1))]))))
-    #   
-    #   intervalsi <- matrix(apply(datawide[,paste0('dT', 1:(Tpoints-1)),drop=F], 2, 
-    #     function(x) match(x, uniqueintervals)),ncol=(Tpoints-1))
-    #   colnames(intervalsi)<-paste0('intervalID_T',1:(Tpoints-1))
-    #   
-    #   if(objective != 'cov') intervalID_T<-mxMatrix(name='intervalID_T',nrow=1,ncol=(Tpoints-1), free=F,
-    #     labels=paste0('data.intervalID_T',1:(Tpoints-1)))
-    #   
-    #   if(objective == 'cov') intervalID_T<-mxMatrix(name='intervalID_T',nrow=1,ncol=(Tpoints-1), free=F,
-    #     values=intervalsi[1,])
-    #   
-    #   datawide<-cbind(datawide,intervalsi)
-    
     ######## discreteDRIFT
     #discreteDRIFTallintervals
     discreteDRIFTallintervals <- list()
@@ -1192,26 +1137,6 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
       discreteDRIFTallintervals[[i]] <- eval(substitute(OpenMx::mxAlgebra(theExpression, name = paste0("discreteDRIFT_T", i)), 
         list(theExpression = parse(text = fullAlgString)[[1]])))
     }
-    
-    #   #discreteDRIFTbig
-    #   partAlgString<- paste0('discreteDRIFT_i', 1:(length(uniqueintervals)),collapse=', ')
-    #   fullAlgString <- paste0('rbind(',partAlgString,')')
-    #   discreteDRIFTbig <- eval(substitute(OpenMx::mxAlgebra(theExpression, name = paste0("discreteDRIFTbig")), 
-    #     list(theExpression = parse(text = fullAlgString)[[1]])))
-    #   
-    #   #discreteDRIFTtpoints
-    #   discreteDRIFTtpoints <- list()
-    #   for( i in 1:(Tpoints-1)){
-    #     if(discreteTime==FALSE) fullAlgString <- paste0('discreteDRIFTbig[
-    #       ((intervalID_T[1,',i,'] -1) * nlatent + 1) : (intervalID_T[1,',i,'] * nlatent),1:nlatent]')
-    #     
-    #     if(discreteTime==TRUE) fullAlgString <- paste0("DRIFT")
-    #     
-    #     discreteDRIFTtpoints[[i]] <- eval(substitute(OpenMx::mxAlgebra(theExpression, name = paste0("discreteDRIFT_T", i)), 
-    #       list(theExpression = parse(text = fullAlgString)[[1]])))
-    #   }
-    #   
-    #   nlatent<-mxMatrix(name='nlatent',nrow=1,ncol=1,free=F,values=n.latent)
     
     EXPalgs<-list(discreteDRIFTallintervals)
     
@@ -1233,25 +1158,6 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
       discreteCINTallintervals[[i]] <- eval(substitute(OpenMx::mxAlgebra(theExpression, name = paste0("discreteCINT_T", i)), 
         list(theExpression = parse(text = fullAlgString)[[1]])))
     }
-    
-    
-    #   #discreteCINTbig
-    #   partAlgString<- paste0('discreteCINT_i', 1:(length(uniqueintervals)),collapse=', ')
-    #   fullAlgString <- paste0('rbind(',partAlgString,')')
-    #   discreteCINTbig <- eval(substitute(OpenMx::mxAlgebra(theExpression, name = paste0("discreteCINTbig")), 
-    #     list(theExpression = parse(text = fullAlgString)[[1]])))
-    #   
-    #   #discreteCINTtpoints
-    #   discreteCINTtpoints <- list()
-    #   for( i in 1:(Tpoints-1)){
-    #     if(discreteTime==FALSE) fullAlgString <- paste0('discreteCINTbig[
-    #       ((intervalID_T[1,',i,'] -1) * nlatent + 1) : (intervalID_T[1,',i,'] * nlatent),1]')
-    #     
-    #     if(discreteTime==TRUE) fullAlgString <- paste0("CINT")
-    #     
-    #     discreteCINTtpoints[[i]] <- eval(substitute(OpenMx::mxAlgebra(theExpression, name = paste0("discreteCINT_T", i)), 
-    #       list(theExpression = parse(text = fullAlgString)[[1]])))
-    #   }
     
     INTalgs<-list(discreteCINTallintervals)
     
@@ -1282,25 +1188,6 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
       discreteDIFFUSIONallintervals[[i]] <- eval(substitute(OpenMx::mxAlgebra(theExpression, name = paste0("discreteDIFFUSION_T", i)), 
         list(theExpression = parse(text = fullAlgString)[[1]])))
     }
-    
-    
-    #   #discreteDIFFUSIONbig
-    #   partAlgString<- paste0('discreteDIFFUSION_i', 1:(length(uniqueintervals)),collapse=', ')
-    #   fullAlgString <- paste0('rbind(',partAlgString,')')
-    #   discreteDIFFUSIONbig <- eval(substitute(OpenMx::mxAlgebra(theExpression, name = paste0("discreteDIFFUSIONbig")), 
-    #     list(theExpression = parse(text = fullAlgString)[[1]])))
-    #   
-    #   #discreteDIFFUSIONtpoints
-    #   discreteDIFFUSIONtpoints <- list()
-    #   for( i in 1:(Tpoints-1)){
-    #     if(discreteTime==FALSE) fullAlgString <- paste0('discreteDIFFUSIONbig[
-    #       ((intervalID_T[1,',i,']-1) * nlatent^2 + 1) : (intervalID_T[1,',i,'] * nlatent^2), 1]')
-    #     
-    #     if(discreteTime==TRUE) fullAlgString <- paste0("DIFFUSION")
-    #     
-    #     discreteDIFFUSIONtpoints[[i]] <- eval(substitute(OpenMx::mxAlgebra(theExpression, name = paste0("discreteDIFFUSION_T", i)), 
-    #       list(theExpression = parse(text = fullAlgString)[[1]])))
-    #   }
     
     Qdalgs<-list(discreteDIFFUSIONallintervals)
   }#end small algebras
@@ -1336,45 +1223,7 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
   
   
   #### Predictors algebra setup
-    if( n.TDpred > 0 ) { #if there are TD predictors     
-      TDPREDEFFECTalgs <- list()
-      
-      
-      ######## tdpred
-      discreteTDPREDEFFECTallintervals <- list()
-      for( i in 1:length(uniqueintervals)){
-        if(discreteTime==FALSE) fullAlgString <- paste0("discreteDRIFT_i", i, " %*% TDPREDEFFECT")
-        if(discreteTime==TRUE) fullAlgString <- paste0("TDPREDEFFECT")
-        
-        discreteTDPREDEFFECTallintervals[[i]] <- eval(substitute(OpenMx::mxAlgebra(theExpression, name = paste0("discreteTDPREDEFFECT_i", i)), 
-          list(theExpression = parse(text = fullAlgString)[[1]])))
-      }
-      
-      
-      #discreteTDPREDEFFECTbig
-      partAlgString<- paste0('discreteTDPREDEFFECT_i', 1:(length(uniqueintervals)),collapse=', ')
-      fullAlgString <- paste0('rbind(',partAlgString,')')
-      discreteTDPREDEFFECTbig <- eval(substitute(OpenMx::mxAlgebra(theExpression, name = paste0("discreteTDPREDEFFECTbig")), 
-        list(theExpression = parse(text = fullAlgString)[[1]])))
-      
-      #discreteTDPREDEFFECTtpoints
-      discreteTDPREDEFFECTtpoints <- list()
-      for( i in 1:(Tpoints-1)){
-        if(discreteTime==FALSE) fullAlgString <- paste0('discreteTDPREDEFFECTbig[
-          ((intervalID_T[1,',i,']-1) * nlatent + 1) : (intervalID_T[1,',i,'] * nlatent), 1:nTDpred]')
-        
-        if(discreteTime==TRUE) fullAlgString <- paste0("TDPREDEFFECT")
-        
-        discreteTDPREDEFFECTtpoints[[i]] <- eval(substitute(OpenMx::mxAlgebra(theExpression, name = paste0("discreteTDPREDEFFECT_T", i)), 
-          list(theExpression = parse(text = fullAlgString)[[1]])))
-      }
-      
-      nTDpred<-mxMatrix(name='nTDpred',values=n.TDpred,nrow=1,ncol=1,free=FALSE)
-      
-      TDPREDEFFECTalgs<-list(nTDpred,discreteTDPREDEFFECTtpoints, discreteTDPREDEFFECTbig, discreteTDPREDEFFECTallintervals)
-    }
-    
-    
+ 
     if (n.TIpred > 0){ #if there are fixed time independent predictors
       discreteTIPREDEFFECTalgs <- list()
       for(j in 1:(Tpoints - 1)){
@@ -1452,23 +1301,6 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
 #         negDRIFTlog - vec2diag(diag2vec(negDRIFTlog)) + vec2diag(-exp(diag2vec(negDRIFTlog))))
     )
     
-#     T0VAR$mxmatrix<-list(
-#       OpenMx::mxMatrix(name = "T0VARbase", values=T0VAR$values, labels=T0VAR$labels, 
-#         ncol=n.latent, nrow=n.latent, free=T0VAR$free, type='Full'), 
-#       OpenMx::mxAlgebra(name='T0VARcholcorlower', ((lowertrionelatent/(exp(T0VARbase)+lowertrionelatent)) #inverse log link
-#         * (lowertrionelatent+lowertrionelatent)-lowertrionelatent ) * #linear rescale to -1:1
-#         (lowertrionelatent-IIlatent)+IIlatent), #remove resulting diagonal and replace with 1's
-#       OpenMx::mxAlgebra(name='T0VARcholcor',T0VARcholcorlower - IIlatent + #just the lower correlation triangle 
-#           vec2diag(diag2vec( # and just the diagonal of...
-#             sqrt(abs(IIlatent - (T0VARcholcorlower * T0VARcholcorlower) %*% t(lowertrionelatent-IIlatent))) #rowsums of lower triangle
-#             ))),
-#       OpenMx::mxAlgebra(name='T0VARchol', vec2diag(exp(diag2vec(T0VARbase))) %*% T0VARcholcor),        
-#       OpenMx::mxAlgebra(name='T0VAR', T0VARchol %*% t(T0VARchol)),
-#       OpenMx::mxMatrix(name='lowertrionelatent',type='Lower',values=1,free=FALSE,nrow=n.latent,ncol=n.latent),
-#       OpenMx::mxMatrix(name='lowertrionemanifest',type='Lower',values=1,free=FALSE,nrow=n.manifest,ncol=n.manifest),
-#       OpenMx::mxMatrix(name='IIlatent',type='Diag',values=1,free=FALSE,nrow=n.latent,ncol=n.latent),
-#       OpenMx::mxMatrix(name='IImanifest',type='Diag',values=1,free=FALSE,nrow=n.manifest,ncol=n.manifest)
-#     )
 
     T0VAR$mxmatrix<-list(
       OpenMx::mxMatrix(name = "T0VARbase", values=T0VAR$values, labels=T0VAR$labels, 
@@ -1565,31 +1397,8 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
     asymDIFFUSION <- OpenMx::mxMatrix(name='asymDIFFUSION', labels=paste0('asymDIFFUSIONalg[',1:n.latent^2,',1]'),
       values=diag(10,n.latent),nrow=n.latent,ncol=n.latent)
     model<-OpenMx::mxModel(model,DRIFTHATCH,asymDIFFUSIONalg,asymDIFFUSION)
-    
-#     model<-OpenMx::mxModel(model, 
-#       mxAlgebra(DRIFT%x%II + II%x%DRIFT, name = "DRIFTHATCH"), #used in continuous DIFFUSION algebras
-#       discreteDRIFTHATCHalgs,
-#       mxAlgebra(solve(DRIFTHATCH), name='invDRIFTHATCH'),
-#       mxMatrix("Full", values = (matrix(1, n.latent^2, n.latent^2) - diag(n.latent^2)), name = "tempb") #used in continuous DIFFUSION algebras  
-#     )
-    
   }
-  
-  
-#   if(discreteTime==FALSE && simpleDynamics==TRUE){
-#     
-#     model<-mxModel(model,'DRIFT',remove=TRUE)
-#     model<-mxModel(model,
-#       mxMatrix(name='DRIFTeval',type='Diag',values=-.5,nrow=n.latent, ncol=n.latent, free=T),
-#       mxMatrix(name='DRIFTevec', nrow=n.latent,ncol=n.latent,values=2,free=T),
-#       mxAlgebra(name='DRIFTalg', DRIFTevec %&% -(abs(DRIFTeval))),
-#       mxMatrix(name = "DRIFT", type = "Full", nrow=n.latent, ncol=n.latent,
-#         labels = paste0('DRIFTalg[',rep(1:n.latent,n.latent),',',rep(1:n.latent,each=n.latent),']'), free = F)
-#     )
-#     
-#   }
-  
-  
+
   if('T0VAR' %in% stationary) {
     
     if(asymptotes==FALSE){
@@ -1707,41 +1516,10 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
     }
   }
   
-  
-  
-  
-#   if(useOptimizer==TRUE) model <- OpenMx::mxModel(model,
-#     mxComputeSequence(list(
-#       #  		    mxComputeGradientDescent(verbose=1),  # default is forward
-#       mxComputeGradientDescent(verbose=verbose,
-#         #gradientAlgo="central", nudgeZeroStarts=FALSE, #tolerance=.001,  gradientIterations = 1,
-#         maxMajorIter=3000),
-#       mxComputeNumericDeriv(), mxComputeStandardError(),   mxComputeReportDeriv())))
-  
-  
   #model options
   originaloptimizer<- OpenMx::mxOption(NULL, "Default optimizer")
   OpenMx::mxOption(NULL, "Default optimizer", optimizer)
-  
-  #     model <- mxOption(model, "Standard Errors", "No")
-  #     model <- mxOption(model, "Calculate Hessian", "No")
-  #     model <- mxOption(model, "No Sort Data", "ctsem")
-  
-  #     mxOption(model, "Derivative level", 0) #0
-           
-  #       #     mxOption(model, "Infinite bound size", 1e+15) #1.0e+15
-  #     mxOption(model, "Line search tolerance", .99) #.3
-  #           mxOption(model, "Feasibility tolerance", 1.0e-14) #1.0e-05
-  #       #     mxOption(model, "mvnMaxPointsA", 0) #0
-  #       #     mxOption(model, "mvnMaxPointsB", 0) #0
-  #           mxOption(model, "mvnMaxPointsC", 2500000) #5000
-  #           mxOption(model, "mvnAbsEps", .000000001) #.001
-  #           mxOption(model, "mvnRelEps", 0.0000000001) #0
-  #     mxOption(model, "Verify level", 3) #-1
-  #     mxOption(model, "Minor print level", 5) #-1
-  #     mxOption(model, "Print level", 5) #-1
-  #     mxOption(model, "Print file", "test") #-1
-  
+
   #end base model spec
   
   
@@ -1762,7 +1540,6 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
       }
       
       model <- OpenMx::mxModel(model, 
-        TDPREDEFFECTalgs, 
         mxMatrix(type = "Full", 
           labels = TDPREDEFFECT$labels, values = TDPREDEFFECT$values, free = TDPREDEFFECT$free, name = "TDPREDEFFECT"))
       
@@ -1771,7 +1548,7 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
         if(discreteTime==FALSE && transformedParams==TRUE){
         model <- OpenMx::mxModel(model, 
           OpenMx::mxMatrix(name = "TDPREDVARbase", values=TDPREDVAR$values, labels=TDPREDVAR$labels, 
-            ncol=n.TDpred*(Tpoints-1), nrow=n.TDpred*(Tpoints-1), free=TDPREDVAR$free, type='Full'), 
+            ncol=n.TDpred*(Tpoints), nrow=n.TDpred*(Tpoints), free=TDPREDVAR$free, type='Full'), 
           OpenMx::mxAlgebra(name='TDPREDVARchol', vec2diag(exp(diag2vec(TDPREDVARbase))) + #inverse log link for diagonal
               TDPREDVARbase - #plus the base matrix
               vec2diag(diag2vec(TDPREDVARbase))), #minus the diagonal of the base matrix   
@@ -1785,7 +1562,7 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
           model <- OpenMx::mxModel(model, 
             mxMatrix(type = "Full", 
               labels = TDPREDVAR$labels, values = TDPREDVAR$values, free = TDPREDVAR$free, 
-              ncol=n.TDpred*(Tpoints-1), nrow=n.TDpred*(Tpoints-1),name = "TDPREDVAR")
+              ncol=n.TDpred*(Tpoints), nrow=n.TDpred*(Tpoints),name = "TDPREDVAR")
           )
         }
         

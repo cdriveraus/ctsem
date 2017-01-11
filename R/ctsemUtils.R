@@ -144,7 +144,7 @@ ctWideNames<-function(n.manifest,Tpoints,n.TDpred=0,n.TIpred=0,manifestNames='au
   
   manifestnames<-paste0(manifestNames,"_T",rep(0:(Tpoints-1),each=n.manifest))
   if(n.TDpred > 0 && Tpoints > 1) {
-      TDprednames<-paste0(TDpredNames,"_T",rep(0:(Tpoints-2),each=n.TDpred))
+      TDprednames<-paste0(TDpredNames,"_T",rep(0:(Tpoints-1),each=n.TDpred))
   } else {
       TDprednames<-NULL
   }
