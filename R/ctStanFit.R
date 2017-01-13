@@ -41,7 +41,8 @@
 #' @param chains number of chains to sample.
 #' @param cores number of cpu cores to use. Either 'maxneeded' to use as many as available,
 #' up to the number of chains, or an integer.
-#' @param control List of arguments sent to \code{\link[rstan]{stan}} control argument, regarding warmup / sampling behaviour.
+#' @param control List of arguments sent to \code{\link[rstan]{stan}} control argument, 
+#' regarding warmup / sampling behaviour.
 #' @param verbose Logical. If TRUE, prints log probability at each iteration.
 #' @param stationary Logical. If TRUE, T0VAR and T0MEANS input matrices are ignored, 
 #' the parameters are instead fixed to long run expectations
@@ -83,6 +84,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
   
   if(class(ctstanmodel) != 'ctStanModel') stop('not a ctStanModel object')
   
+  args=match.call()
+  
   noncentered=FALSE
   fixedkalman=FALSE
   noshrinkage=FALSE
@@ -91,7 +94,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
     esthyper=FALSE
   }
   tmpdir=tempdir()
-  tmpdir=gsub('\\','/',tmpdir,fixed=T)
+  tmpdir=gsub('\\','/',tmpdir,fixed=TRUE)
   # initwithoptim=FALSE
   
   stanplot<-function(chains,seed){
@@ -186,13 +189,17 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
   #clean ctspec structure
   found=FALSE
   ctspec$indvarying=as.logical(ctspec$indvarying)
-  comparison=c(NA,NA,FALSE)
-  names(comparison)=c('param','transform','indvarying')
+  ctspec$value=as.numeric(ctspec$value)
+  ctspec$transform=as.character(ctspec$transform)
+  ctspec$param=as.character(ctspec$param)
+  comparison=c(NA,NA,'FALSE')
+  replacement=c(NA,NA,FALSE)
+  # names(comparison)=c('param','transform','indvarying')
   for(rowi in 1:nrow(ctspec)){
     if( !is.na(ctspec$value[rowi])) {
-      if(!identical(unlist(ctspec[rowi,c('param','transform','indvarying')]),comparison)) {
+      if(!identical(as.character(unlist(ctspec[rowi,c('param','transform','indvarying')])),comparison)) {
         found<-TRUE
-        ctspec[rowi,c('param','transform','indvarying')]=comparison
+        ctspec[rowi,c('param','transform','indvarying')]=replacement
       }
     }
   }
@@ -256,7 +263,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
       subistartrow<-rowi
     }
     if(subi - oldsubi == 0) {
-      if(continuoustime) dT[rowi]<-datalong[rowi,timeName] - datalong[rowi-1,timeName]
+      if(continuoustime) dT[rowi]<-round(datalong[rowi,timeName] - datalong[rowi-1,timeName],8)
       if(!continuoustime) dT[rowi]<-1
       if(dT[rowi] <=0) stop(paste0('A time interval of ', dT[rowi],' was found at row ',rowi))
       # if(subi!=oldsubi) intervalChange[rowi] <-  0
@@ -282,9 +289,10 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
     }
     oldsubi<-subi
   }
-  message('Unique discreteDRIFT calculations per step required = ', length(unique(driftindex)))
-  message('Unique discreteCINT calculations per step required = ', length(unique(cintindex)))
-  message('Unique discreteDIFFUSION calculations per step required = ', length(unique(diffusionindex)))
+
+  message('Unique discreteDRIFT calculations per step required = ', length(unique(driftindex))-1)
+  message('Unique discreteCINT calculations per step required = ', length(unique(cintindex))-1)
+  message('Unique discreteDIFFUSION calculations per step required = ', length(unique(diffusionindex))-1)
   # browser()
   # datalong[sort(c(which(dT > 5),which(dT > 5)+1,which(dT > 5)-1)),1:2]
   
@@ -914,9 +922,9 @@ print("lp = ", target());
     
     if(n.TDpred > 0) standata<-c(standata,list(tdpreds=array(tdpreds,dim=c(nrow(tdpreds),ncol(tdpreds)))))
     
-    message('Compiling model - ignore forthcoming warning re number of chains')
-    sm <- rstan::stan(model_code = c(stanmodeltext), 
-      data = standata, chains = 0)
+    message('Compiling model, ignore forthcoming warning re number of chains...')
+    sm <- rstan::stan(model_code = c(stanmodeltext),
+      data = standata, chains = 0, iter=1, control=list(max_treedepth=1))
     
     #control arguments for rstan
     if(is.null(control$adapt_term_buffer)) control$adapt_term_buffer <- min(c(iter/10,max(iter-20,75)))
@@ -1026,13 +1034,13 @@ print("lp = ", target());
       lp<-function(parm) {
         out<-try(rstan::log_prob(sm,upars=parm))
         if(class(out)=='try-error') out=-1e20
-        return(out)
+        return(-out)
       }
       
       grf<-function(parm) {
         out=try(rstan::grad_log_prob(sm,upars=parm))
         if(class(out)=='try-error') out=rnorm(length(parm))
-        return(out)
+        return(-out)
       }
       
       message('Optimizing...')
@@ -1046,12 +1054,22 @@ print("lp = ", target());
         }
         iteri=iteri+1
       optimfit <- stats::optim(optimstarts, lp, gr=grf, 
-        control = list(fnscale = -1,trace=0,parscale=rep(.00001,npars),maxit=500,factr=1e-8,lmm=6), 
-        method='L-BFGS-B',hessian = FALSE)
+        control = list(trace=0,maxit=500,factr=1e5), 
+        method='L-BFGS-B',hessian = TRUE)
       convergence=optimfit$convergence
       }
-      stanfit=list(pars=constrain_pars(sm,optimfit$par),lp=optimfit$value)
+      # browser()
+      est=optimfit$par
+      sds=sqrt(diag(solve(optimfit$hessian)))
+      lest= est - 1.96 * sds
+      uest= est + 1.96 * sds
       
+      transformedpars=cbind(unlist(rstan::constrain_pars(sm,lest)),
+        unlist(rstan::constrain_pars(sm,est)),
+        unlist(rstan::constrain_pars(sm,lest)))
+      colnames(transformedpars)=c('2.5%','mean','97.5%')
+
+      stanfit=list(optimfit=optimfit,transformedpars=transformedpars)
     }
     
     if(vb==TRUE && fit==TRUE) {
@@ -1062,7 +1080,7 @@ print("lp = ", target());
       
     }
     
-    out <- list(data=standata, ctstanmodel=ctstanmodel,stanfit=stanfit)
+    out <- list(args=args,data=standata, ctstanmodel=ctstanmodel,stanfit=stanfit)
     class(out) <- 'ctStanFit'
     
   } # end if fit==TRUE

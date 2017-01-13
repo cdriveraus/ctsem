@@ -100,7 +100,7 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,
     }
     
     if(any(MANIFESTTRAITVARchol != 0)) {
-      skpars$MANIFESTMEANS = skpars$MANIFESTMEANS + MANIFESTTRAITVARchol %*% rnorm(n.latent,0,1)
+      skpars$MANIFESTMEANS = skpars$MANIFESTMEANS + MANIFESTTRAITVARchol %*% rnorm(n.manifest,0,1)
     }
     
     if(n.TIpred > 0) {

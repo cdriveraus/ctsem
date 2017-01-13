@@ -71,7 +71,8 @@ up to the number of chains, or an integer.}
 (so approx 65% of the population mean prior), is first fit with penalised maximum likelihood to determine starting values
 for the chains. This can help speed convergence and avoid problematic regions for certain problems.}
 
-\item{control}{List of arguments sent to \code{\link[rstan]{stan}} control argument, regarding warmup / sampling behaviour.}
+\item{control}{List of arguments sent to \code{\link[rstan]{stan}} control argument, 
+regarding warmup / sampling behaviour.}
 
 \item{verbose}{Logical. If TRUE, prints log probability at each iteration.}
 

@@ -12,6 +12,9 @@
 
 summary.ctStanFit<-function(object,...){
 
+  if(is.null(object$stanfit$optimfit$convergence)){ #summary of samples
+  
+  
 s<-getMethod('summary','stanfit')(object$stanfit)
 
 parnames=gsub('hsd_','',object$stanfit@model_pars[grep('hsd',object$stanfit@model_pars)])
@@ -125,6 +128,13 @@ out$popmeans=round(s$summary[c(grep('hmean_',rownames(s$summary))),
 
 out$logprob=round(s$summary[c(grep('lp',rownames(s$summary))),
   c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],3)
-
+  }
+  
+  
+if(!is.null(object$stanfit$optimfit$convergence)){ #optimization summary
+out$popmeans=object$stanfit$transformedpars[grep('hmean_',rownames(object$stanfit$transformedpars)),]
+out$popsd=object$stanfit$transformedpars[grep('hsd_',rownames(object$stanfit$transformedpars)),]
+}
+  
 return(out)
 }
