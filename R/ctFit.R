@@ -141,7 +141,6 @@ ctFit  <- function(datawide, ctmodelobj,
   omxStartValues=NULL, transformedParams=TRUE){
   
  # transformedParams<-TRUE
- simpleDynamics<-FALSE
  largeAlgebras<-TRUE
  if(nofit == TRUE) carefulFit <- FALSE
  
@@ -193,12 +192,7 @@ ctFit  <- function(datawide, ctmodelobj,
   
   #ensure data is a matrix
   datawide<-as.matrix(datawide)
-  
-  if(simpleDynamics==TRUE) {
-    message('simpleDynamics set to TRUE so also setting carefulFit=TRUE')
-    carefulFit <- TRUE
-  }
-  
+
   ####check data contains correct number of columns (ignore if discreteTime specified)
   neededColumns<-Tpoints * n.manifest+(Tpoints - 1)+n.TDpred * (Tpoints)+n.TIpred
   if(ncol(datawide)!=neededColumns & discreteTime != TRUE) stop("Number of columns in data (", paste0(ncol(datawide)), ") do not match model (", paste0(neededColumns), ")")
@@ -1997,11 +1991,6 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
         )
  
     penaltyLL <- OpenMx::mxAlgebra(sum(ctsem.fitfunction)+ctsem.penalties*FIMLpenaltyweight, name='penaltyLL')
-    
-    if(simpleDynamics==TRUE){
-      penaltyLL <- OpenMx::mxAlgebra(sum(ctsem.fitfunction)+ctsem.penalties*FIMLpenaltyweight + ctsem.simpleDynPenalty, name='penaltyLL')
-     penalties<- list(penalties, OpenMx::mxAlgebra(name='simpleDynPenalty', sum(abs(ieigenval(DRIFT)))*1) )
-    }
     
     modelwithpenalties <- OpenMx::mxModel(model, 
       penalties, 
