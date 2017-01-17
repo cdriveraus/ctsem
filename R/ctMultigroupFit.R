@@ -20,9 +20,9 @@
 #' OpenMx function \code{omxGetParameters(ctmodelobj$mxobj)}. These values will take precedence 
 #' over any starting values already specified using ctModel.
 #' @param carefulFit if TRUE, first fits the specified model with a penalised likelihood function 
-#' to encourage parameters to remain closer to 0, then
+#' to discourage parameters from boundary conditions, then
 #' fits the specified model normally, using these estimates as starting values. 
-#' Can help with optimization in some cases, though results in user specified inits being ignored for the final fit.
+#' Can help / speed optimization, though results in user specified inits being ignored for the final fit.
 #' @param retryattempts Number of fit retries to make.
 #' @param ... additional arguments to pass to \code{\link{ctFit}}.
 #' @return Returns an OpenMx fit object.
@@ -65,7 +65,7 @@
 
 
 ctMultigroupFit<-function(datawide,groupings,ctmodelobj,fixedmodel=NA,freemodel=NA,
- carefulFit=FALSE,omxStartValues=NULL,
+ carefulFit=TRUE, omxStartValues=NULL,
   retryattempts=5,showInits=FALSE,...){
 
   if(any(suppressWarnings(!is.na(as.numeric(groupings))))) stop("grouping variable must not contain purely numeric items")
@@ -425,7 +425,7 @@ ctMultigroupFit<-function(datawide,groupings,ctmodelobj,fixedmodel=NA,freemodel=
       labels=names(omxStartValues)[names(omxStartValues) %in% names(omxGetParameters(fullmodel))],
       values=omxStartValues[names(omxStartValues) %in% names(omxGetParameters(fullmodel))],strict=FALSE)
     
-      fullmodel<-OpenMx::mxTryHard(fullmodel,initialTolerance=1e-16,
+      fullmodel<-OpenMx::mxTryHard(fullmodel,initialTolerance=1e-14,
       showInits=showInits,
       bestInitsOutput=FALSE,
       extraTries=retryattempts,loc=1,scale=.2,paste=FALSE) 
