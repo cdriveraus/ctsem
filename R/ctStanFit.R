@@ -664,7 +664,7 @@ matrix cov(vector[] mat,int nrows,int ncols){
         ',if(any(ctspec$indvarying) & !noshrinkage) paste0(
           'hypercorrchol ~ lkj_corr_cholesky(1); 
           indparamsbase ~ normal(0,1); 
-          hypersd',if(!esthyper) 'base', ' ~ normal(0,10);',
+          hypersd',if(!esthyper) 'base', ' ~ normal(0,1);',
           if(!esthyper) 'target += -log(determinant(mlcov)); // /2*nsubjects; 
           // target += multi_normal_lpdf(indparams| hypermeans[indvaryingindex], mlcov);','
           '),'
@@ -1066,7 +1066,7 @@ print("lp = ", target());
       
       transformedpars=cbind(unlist(rstan::constrain_pars(sm,lest)),
         unlist(rstan::constrain_pars(sm,est)),
-        unlist(rstan::constrain_pars(sm,lest)))
+        unlist(rstan::constrain_pars(sm,uest)))
       colnames(transformedpars)=c('2.5%','mean','97.5%')
 
       stanfit=list(optimfit=optimfit,transformedpars=transformedpars)

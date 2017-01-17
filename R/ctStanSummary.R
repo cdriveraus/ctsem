@@ -12,7 +12,7 @@
 
 summary.ctStanFit<-function(object,...){
 
-  if(is.null(object$stanfit$optimfit$convergence)){ #summary of samples
+  if(class(object$stanfit)=='stanfit'){ #summary of samples
   
   
 s<-getMethod('summary','stanfit')(object$stanfit)
@@ -131,9 +131,11 @@ out$logprob=round(s$summary[c(grep('lp',rownames(s$summary))),
   }
   
   
-if(!is.null(object$stanfit$optimfit$convergence)){ #optimization summary
+if(class(object$stanfit)!='stanfit'){ #optimization summary
+  out=list()
 out$popmeans=object$stanfit$transformedpars[grep('hmean_',rownames(object$stanfit$transformedpars)),]
 out$popsd=object$stanfit$transformedpars[grep('hsd_',rownames(object$stanfit$transformedpars)),]
+out$logprob=round(-object$stanfit$optimfit$value)
 }
   
 return(out)
