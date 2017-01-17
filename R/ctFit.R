@@ -1960,51 +1960,7 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
   
   
   
-  if(carefulFit==TRUE) {
-    originalmodel<-model
-    
-#     if(transformedParams==TRUE) model$negDRIFTlog$free[row(DRIFT$free)!=col(DRIFT$free)] <- FALSE #fix off diagonal DRIFT params
-#     if(transformedParams==FALSE) model$DRIFT$free[row(DRIFT$free)!=col(DRIFT$free)] <- FALSE
-    
-    if(traitExtension==TRUE) penalties <- OpenMx::mxAlgebra(name='penalties',
-      sum(T0VAR*T0VAR) + sum(1/(diag2vec(T0VAR) * diag2vec(T0VAR))) +
-        sum(DRIFT*DRIFT) + sum(1/(diag2vec(DRIFT) * diag2vec(DRIFT))) +
-        sum(DIFFUSION*DIFFUSION) + sum(1/(diag2vec(DIFFUSION) * diag2vec(DIFFUSION))) +
-        sum(MANIFESTVAR*MANIFESTVAR) + sum(1/(diag2vec(MANIFESTVAR) * diag2vec(MANIFESTVAR))) +
-        sum(TRAITVAR * TRAITVAR) + sum(1/(diag2vec(TRAITVAR) * diag2vec(TRAITVAR))) +
-        sum(T0TRAITEFFECT * T0TRAITEFFECT) + sum(1/(diag2vec(T0TRAITEFFECT) * diag2vec(T0TRAITEFFECT)))
-        )
 
-    if(manifestTraitvarExtension==TRUE) penalties <- OpenMx::mxAlgebra(name='penalties',
-      sum(T0VAR*T0VAR) + sum(1/(diag2vec(T0VAR) * diag2vec(T0VAR))) +
-        sum(DRIFT*DRIFT) + sum(1/(diag2vec(DRIFT) * diag2vec(DRIFT))) +
-        sum(DIFFUSION*DIFFUSION) + sum(1/(diag2vec(DIFFUSION) * diag2vec(DIFFUSION))) +
-        sum(MANIFESTVAR*MANIFESTVAR) + sum(1/(diag2vec(MANIFESTVAR) * diag2vec(MANIFESTVAR))) +
-      sum(MANIFESTTRAITVAR * MANIFESTTRAITVAR) + sum(1/(diag2vec(MANIFESTTRAITVAR) * diag2vec(MANIFESTTRAITVAR)))
-        )
-
-    if(traitExtension==FALSE & manifestTraitvarExtension==FALSE)  penalties <- OpenMx::mxAlgebra(name='penalties', 
-      sum(T0VAR*T0VAR) + sum(1/(diag2vec(T0VAR) * diag2vec(T0VAR))) +
-        sum(DRIFT*DRIFT) + sum(1/(diag2vec(DRIFT) * diag2vec(DRIFT))) +
-        sum(DIFFUSION*DIFFUSION) + sum(1/(diag2vec(DIFFUSION) * diag2vec(DIFFUSION))) +
-        sum(MANIFESTVAR*MANIFESTVAR) + sum(1/(diag2vec(MANIFESTVAR) * diag2vec(MANIFESTVAR)))
-        )
- 
-    penaltyLL <- OpenMx::mxAlgebra(sum(ctsem.fitfunction)+ctsem.penalties*FIMLpenaltyweight, name='penaltyLL')
-    
-    modelwithpenalties <- OpenMx::mxModel(model, 
-      penalties, 
-      mxFitFunctionML(vector=FALSE)
-    )
-    
-    model<-OpenMx::mxModel('ctsemCarefulFit', 
-      modelwithpenalties, penaltyLL,
-      #             mxMatrix(type='Full', name='FIMLpenaltyweight', nrow=1, ncol=1, values=FIMLpenaltyweight, free=F), 
-      mxMatrix(name='FIMLpenaltyweight', values=10,free=F,nrow=1,ncol=1,type='Full' ), 
-      mxFitFunctionAlgebra('penaltyLL')
-    )
- 
-  }
   
   
   #     if(objective == "mxFIMLpenalised") {  ## attempt for multigroup
@@ -2089,7 +2045,7 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
   if(carefulFit==TRUE) {
     carefulFit<-FALSE
 
-    mxobj<-try(suppressWarnings(OpenMx::mxRun(model))) #fit with the penalised likelihood
+    mxobj<-carefulFit(model,traitExtension=traitExtension,manifestTraitvarExtension=manifestTraitvarExtension) #fit with the penalised likelihood
     #         mxobj<-OpenMx::mxRun(model) #fit with the penalised likelihood
     
     # message(paste0('carefulFit penalisation:  ', mxEval(ctsem.penalties, mxobj,compute=T),'\n'))
@@ -2098,10 +2054,7 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
       message('Generated start values from carefulFit=TRUE')
       message(paste(names(newstarts), ": ", newstarts, "\n"))
     }
-    model<-originalmodel #revert to our single layer model without the penalties fit function
-    #     model<-OpenMx::mxModel(model, 'penalties', remove=TRUE) #and remove the penalties object
-  
-    
+
     if(class(newstarts)!="try-error" & !is.null(newstarts)) model<-OpenMx::omxSetParameters(model, 
       labels=names(newstarts),  values=newstarts,strict=FALSE) #set the params of it
     #     objective<-targetObjective #revert our objective to whatever was specified
@@ -2111,28 +2064,6 @@ if('MANIFESTMEANS' %in% ctmodelobj$timeVarying) paste0('_T',rep(0:(Tpoints-1),ea
   if(nofit == TRUE) mxobj <- model #if we're not fitting the model, just return the unfitted openmx model
   
   if(nofit == FALSE){ #but otherwise...  
-    
-#     if(!is.null(confidenceintervals))  {
-#       #     engine<-ifelse(npsol==TRUE, 'NPSOL', 'CSOLNP')
-#       #     mxOption(NULL, "Default optimizer", "NPSOL")
-#       model <- OpenMx::mxModel(model, 
-#         mxCI(confidenceintervals, interval = 0.95, type = "both"))
-#       ,
-#         mxComputeSequence(list(model$compute,
-#         mxComputeConfidenceInterval(constraintType=ifelse(optimizer=='NPSOL','none','ineq'),
-#           plan=mxComputeGradientDescent(nudgeZeroStarts=FALSE, maxMajorIter=150, gradientAlgo="central"))))) #if 95% confidence intervals are to be calculated
-      #     model <- OpenMx::mxModel(model, 
-      #       mxComputeSequence(steps=list(
-      #         mxComputeGradientDescent(engine=engine), 
-      #         mxComputeConfidenceInterval(engine="NPSOL"), 
-      # #         MxComputeNumericDeriv(), 
-      #         MxComputeStandardError()
-      # #         MxComputeHessianQuality(), 
-      # #         MxComputeReportDeriv()        
-      #       )))
-      
-    # }
-    
 
     if(useOptimizer==TRUE) mxobj <- mxTryHard(model, initialTolerance=1e-14,
       # finetuneGradient=FALSE,
