@@ -7,7 +7,8 @@
 # 
 # test_that("time calc", {
 #   
-  
+  if(1==0){
+    
   pars=cbind(c('drift11',-.1),
     c('tdpredeffect11', .1),
     c('tdpredeffect12', -3),
@@ -131,5 +132,4 @@
       }
     }
   }
-# }
-# )
+}

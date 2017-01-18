@@ -195,7 +195,7 @@ ctSummaryMatrices<-function(object,ridging=FALSE,timeInterval=1,verbose=FALSE,..
     outlist<-c(outlist,'MANIFESTVAR')
     
     if(verbose==TRUE){
-      MANIFESTVARdiag<-tryCatch({ diag(diag(MANIFESTVAR),n.manifest)+diag(ridging,n.manifest)}, error=function(e) e )
+      MANIFESTVARdiag<-tryCatch({ diag(diag(MANIFESTVAR),n.manifest)+diag(c(ridging),n.manifest)}, error=function(e) e )
       MANIFESTVARstd<-tryCatch({ suppressWarnings(solve(sqrt(MANIFESTVARdiag)) %&% MANIFESTVAR)}, error=function(e) e )
       tryCatch({  dimnames(MANIFESTVARstd)<-list(latentNames,latentNames)}, error=function(e) e )
       outlist<-c(outlist,'MANIFESTVARstd')
@@ -233,7 +233,7 @@ ctSummaryMatrices<-function(object,ridging=FALSE,timeInterval=1,verbose=FALSE,..
       tryCatch({  dimnames(asymDIFFUSION)<-list(latentNames,latentNames)}, error=function(e) e )
       outlist<-c(outlist,'asymDIFFUSION')
       
-      asymDIFFUSIONdiag<-tryCatch({ diag(diag(asymDIFFUSION),n.latent)+diag(ridging,n.latent)}, error=function(e) e )
+      asymDIFFUSIONdiag<-tryCatch({ diag(diag(asymDIFFUSION),n.latent)+diag(c(ridging),n.latent)}, error=function(e) e )
       asymDIFFUSIONstd<-tryCatch({ suppressWarnings(solve(sqrt(asymDIFFUSIONdiag)) %&% asymDIFFUSION)}, error=function(e) e )
       tryCatch({  dimnames(asymDIFFUSIONstd)<-list(latentNames,latentNames)}, error=function(e) e )
       outlist<-c(outlist,'asymDIFFUSIONstd')
@@ -250,7 +250,7 @@ ctSummaryMatrices<-function(object,ridging=FALSE,timeInterval=1,verbose=FALSE,..
     #     outlist<-c(outlist,'asymTOTALVAR')
     #     
     #     
-    #             asymTOTALVARdiag<-tryCatch({ diag(diag(asymTOTALVAR),n.latent)+diag(ridging,n.latent)}, error=function(e) e )
+    #             asymTOTALVARdiag<-tryCatch({ diag(diag(asymTOTALVAR),n.latent)+diag(c(ridging),n.latent)}, error=function(e) e )
     #             asymTOTALVARstd<-tryCatch({ suppressWarnings(solve(sqrt(asymTOTALVARdiag)) %&% asymTOTALVAR)}, error=function(e) e )
     #     tryCatch({  dimnames(asymTOTALVARstd)<-list(latentNames,latentNames)}, error=function(e) e )
     #     outlist<-c(outlist,'asymTOTALVARstd')
@@ -266,7 +266,7 @@ ctSummaryMatrices<-function(object,ridging=FALSE,timeInterval=1,verbose=FALSE,..
       #       outlist<-c(outlist,'T0TOTALVAR')
       
       if(verbose==TRUE){
-        T0VARdiag<-tryCatch({ diag(diag(T0VAR),n.latent)+diag(ridging,n.latent)}, error=function(e) e )
+        T0VARdiag<-tryCatch({ diag(diag(T0VAR),n.latent)+diag(c(ridging),n.latent)}, error=function(e) e )
         T0VARstd<-tryCatch({ suppressWarnings(solve(sqrt(T0VARdiag)) %&% T0VAR)}, error=function(e) e )
         tryCatch({  dimnames(T0VARstd)<-list(latentNames,latentNames)}, error=function(e) e )
         outlist<-c(outlist,'T0VARstd')
@@ -307,7 +307,7 @@ ctSummaryMatrices<-function(object,ridging=FALSE,timeInterval=1,verbose=FALSE,..
       #           asymTOTALVAR<-tryCatch({ asymDIFFUSION + asymTRAITVAR}, error=function(e) e )
       #       tryCatch({  dimnames(asymTOTALVAR)<-list(latentNames,latentNames)}, error=function(e) e )
       #       
-      #           asymTOTALVARdiag<-tryCatch({ diag(diag(asymTOTALVAR),n.latent)+diag(ridging,n.latent)}, error=function(e) e )
+      #           asymTOTALVARdiag<-tryCatch({ diag(diag(asymTOTALVAR),n.latent)+diag(c(ridging),n.latent)}, error=function(e) e )
       #           asymTOTALVARstd<-tryCatch({ suppressWarnings(solve(sqrt(asymTOTALVARdiag)) %&% asymTOTALVAR)}, error=function(e) e )
       #       tryCatch({  dimnames(asymTOTALVARstd)<-list(latentNames,latentNames)}, error=function(e) e )
       
@@ -352,7 +352,7 @@ ctSummaryMatrices<-function(object,ridging=FALSE,timeInterval=1,verbose=FALSE,..
       outlist<-c(outlist,'MANIFESTTRAITVAR')
       
       if(verbose==TRUE){
-        MANIFESTTRAITVARdiag<-tryCatch({ diag(diag(MANIFESTTRAITVAR),n.manifest)+diag(ridging,n.manifest)}, error=function(e) e )
+        MANIFESTTRAITVARdiag<-tryCatch({ diag(diag(MANIFESTTRAITVAR),n.manifest)+diag(c(ridging),n.manifest)}, error=function(e) e )
         MANIFESTTRAITVARstd<-tryCatch({ suppressWarnings(solve(sqrt(MANIFESTTRAITVARdiag)) %&% MANIFESTTRAITVAR)}, error=function(e) e )
         tryCatch({  dimnames(MANIFESTTRAITVARstd)<-list(manifestNames,manifestNames)}, error=function(e) e )
         outlist<-c(outlist,'MANIFESTTRAITVARstd')
@@ -378,7 +378,7 @@ ctSummaryMatrices<-function(object,ridging=FALSE,timeInterval=1,verbose=FALSE,..
       outlist<-c(outlist,'TIPREDVAR')
       
       if(verbose==TRUE){
-        TIPREDVARdiag<-tryCatch({diag(diag(TIPREDVAR),n.TIpred)+diag(ridging,n.TIpred)}, error=function(e) e )
+        TIPREDVARdiag<-tryCatch({diag(diag(TIPREDVAR),n.TIpred)+diag(c(ridging),n.TIpred)}, error=function(e) e )
         TIPREDVARstd<-tryCatch({suppressWarnings(solve(sqrt(TIPREDVARdiag)) %&% TIPREDVAR)}, error=function(e) e )
         tryCatch({  dimnames(TIPREDVARstd)<-list(TIpredNames,TIpredNames)}, error=function(e) e )
         outlist<-c(outlist,'TIPREDVARstd')
@@ -401,7 +401,7 @@ ctSummaryMatrices<-function(object,ridging=FALSE,timeInterval=1,verbose=FALSE,..
         tryCatch({  dimnames(addedTIPREDVAR)<-list(latentNames,latentNames)}, error=function(e) e )
         outlist<-c(outlist,'addedTIPREDVAR')
         
-        addedTIPREDVARdiag<-tryCatch({diag(diag(addedTIPREDVAR),n.latent)+diag(ridging,n.latent)}, error=function(e) e )
+        addedTIPREDVARdiag<-tryCatch({diag(diag(addedTIPREDVAR),n.latent)+diag(c(ridging),n.latent)}, error=function(e) e )
         addedTIPREDVARstd<-tryCatch({suppressWarnings(solve(sqrt(addedTIPREDVARdiag)) %&% addedTIPREDVAR)}, error=function(e) e )
         tryCatch({  dimnames(addedTIPREDVARstd)<-list(latentNames,latentNames)}, error=function(e) e )
         outlist<-c(outlist,'addedTIPREDVARstd')
@@ -410,7 +410,7 @@ ctSummaryMatrices<-function(object,ridging=FALSE,timeInterval=1,verbose=FALSE,..
       #            asymTOTALVAR<-tryCatch({asymTOTALVAR + addedTIPREDVAR}, error=function(e) e )
       #             tryCatch({  dimnames(asymTOTALVAR)<-list(latentNames,latentNames)}, error=function(e) e )
       #       
-      #               asymTOTALVARdiag<-tryCatch({diag(diag(asymTOTALVAR),n.latent)+diag(ridging,n.latent)}, error=function(e) e )
+      #               asymTOTALVARdiag<-tryCatch({diag(diag(asymTOTALVAR),n.latent)+diag(c(ridging),n.latent)}, error=function(e) e )
       #             asymTOTALVARstd<-tryCatch({suppressWarnings(solve(sqrt(asymTOTALVARdiag)) %&% asymTOTALVAR)}, error=function(e) e )
       #               tryCatch({  dimnames(asymTOTALVARstd)<-list(latentNames,latentNames)}, error=function(e) e )
       
@@ -434,7 +434,7 @@ ctSummaryMatrices<-function(object,ridging=FALSE,timeInterval=1,verbose=FALSE,..
         #       T0TOTALVAR<-tryCatch({addedT0TIPREDVAR+T0TOTALVAR }, error=function(e) e )#update totalvar
         #       tryCatch({  dimnames(T0TOTALVAR)<-list(latentNames,latentNames)}, error=function(e) e )
         #       
-        #       T0TOTALVARdiag<-tryCatch({diag(diag(T0TOTALVAR),n.latent)+diag(ridging,n.latent)}, error=function(e) e )
+        #       T0TOTALVARdiag<-tryCatch({diag(diag(T0TOTALVAR),n.latent)+diag(c(ridging),n.latent)}, error=function(e) e )
         #       T0TOTALVARstd<-tryCatch({suppressWarnings(solve(sqrt(T0TOTALVARdiag)) %&% T0TOTALVAR)}, error=function(e) e )
         #       tryCatch({  dimnames(T0TOTALVARstd)<-list(latentNames,latentNames)}, error=function(e) e )
         
@@ -463,7 +463,7 @@ ctSummaryMatrices<-function(object,ridging=FALSE,timeInterval=1,verbose=FALSE,..
       # outlist<-c(outlist,'TDPREDVAR')
       # 
       # if(verbose==TRUE){
-      #   TDPREDVARdiag<-tryCatch({diag((diag(TDPREDVAR))+diag(ridging,n.TDpred))}, error=function(e) e )
+      #   TDPREDVARdiag<-tryCatch({diag((diag(TDPREDVAR))+diag(c(ridging),n.TDpred))}, error=function(e) e )
       #   TDPREDVARstd<-tryCatch({suppressWarnings(solve(sqrt(TDPREDVARdiag)) %&% TDPREDVAR)}, error=function(e) e )
       #   tryCatch({  dimnames(TDPREDVARstd)<-list(TDpredNames,TDpredNames)}, error=function(e) e )
       #   outlist<-c(outlist,'TDPREDVARstd')
