@@ -36,6 +36,37 @@ NULL
 #' 7 measurement occasions of a money intervention dummy,
 #' and 7 measurement intervals for each of 50 individuals.
 #' @name ctExample2
+#' @examples
+#' \dontrun{
+#' #two process, one time dependent predictor example
+#' Tpoints=20
+#' manifestNames<-c('LeisureTime','Happiness')
+#' TDpredNames<-'MoneyInt'
+#' testm<-ctModel(Tpoints=Tpoints,n.latent=3,n.TDpred=1,n.TIpred=0,n.manifest=2,    
+#'   LAMBDA=cbind(diag(1,2),0),
+#'   MANIFESTVAR=diag(.1,2),
+#'   DRIFT=matrix(c(-.3,.12,0,  -.02,-.3,0, 1,-.3,-.0001  ),nrow=3,ncol=3),
+#'   TRAITVAR=t(chol(matrix(c(.2,-.1,0,  -.1,.21,0,  0,0,0.00001),ncol=3,nrow=3))),
+#'   DIFFUSION=t(chol(diag(c(1.2,.6,0.0001),3))),
+#'   CINT=matrix(c(1,.3,0),nrow=3),
+#'   T0MEANS=matrix(0,ncol=1,nrow=3),
+#'   T0VAR=diag(c(1,1,0),3),
+#'   TDPREDEFFECT=matrix(c(.6,.4,1),nrow=3),
+#'   TDPREDVAR=diag(c(rep(0,Tpoints)),Tpoints),
+#'   TDPREDMEANS=matrix(c(0,0,0,0,0,1,rep(0,Tpoints-6)),ncol=1,nrow=(Tpoints)))
+#' testd<-ctGenerate(testm,n.subjects=10,burnin=10) #generate data
+#' 
+#' ctIndplot(testd,Tpoints=Tpoints,n.manifest=2,n.subjects=10,colourby="variable")
+#' 
+#' timestokeep=c(0,1,4,5,7,8,16,19)
+#' deltaT<-timestokeep[-1] - timestokeep[-8]
+#' testd<-testd[,c(paste0('Y',1:2,'_T',rep(timestokeep,each=2)),paste0('TD1_T',timestokeep))]
+#' testd<-cbind(testd,matrix(deltaT,nrow=nrow(testd),ncol=length(deltaT),byrow=TRUE))
+#' 
+#' colnames(testd)<-ctWideNames(n.manifest=2,Tpoints=8,n.TDpred=1,manifestNames=manifestNames,TDpredNames=TDpredNames)
+#' ctExample2<-testd
+#' save(ctExample2,file=".\\data\\ctExample2.rda") 
+#' }
 NULL
 
 #' ctExample3
@@ -84,6 +115,31 @@ NULL
 #' 2 measurement intervals dTx, and 2 time independent predictors 
 #' TI1 and TI2, for 2 individuals.
 #' @name datastructure
+#' @examples
+#' \dontrun{
+#' Tpoints=30
+#' testm<-ctModel(Tpoints=Tpoints,n.latent=1,n.TDpred=1,n.TIpred=2,n.manifest=3,    
+#'   LAMBDA=matrix(1,ncol=1,nrow=3),
+#'   DRIFT=diag(-.3,1),
+#'   DIFFUSION=diag(.1,1),
+#'   CINT=diag(2,1),
+#'   MANIFESTVAR=diag(1,3),
+#'   TDPREDEFFECT=diag(.2,1),
+#'   TIPREDEFFECT=matrix(.8,nrow=1,ncol=2),
+#'   TDPREDVAR=diag(1,1*(Tpoints)),
+#'   TIPREDVAR=diag(1,2)
+#' )
+#' longexample<-round(ctGenerate(testm,n.subjects=2,logdtsd = 1,burnin=3,wide=FALSE)[c(1:3,32:34),],2)
+#' longexample[2,c(2,7)]<-NA
+#' longexample[4,c(3)]<-NA
+#' datastructure <- ctLongToWide(datalong = longexample,id='id',time='time',
+#'   manifestNames = testm$manifestNames,TDpredNames = testm$TDpredNames,
+#'   TIpredNames=testm$TIpredNames)
+#' datastructure<-ctIntervalise(datawide = datastructure,
+#'   Tpoints = 3,n.manifest = testm$n.manifest,n.TDpred = testm$n.TDpred,
+#'   n.TIpred=testm$n.TIpred)
+#' save(datastructure,file='.\\data\\datastructure.rda')
+#' }
 NULL
 
 
@@ -95,6 +151,27 @@ NULL
 #' one time dependent predictor TD1, two time independent predictors TI1 and TI2, 
 #' and absolute timing information Time.
 #' @name longexample
+#' @examples
+#' \dontrun{
+#' #long example (using datastructure base)
+#' Tpoints=30
+#' testm<-ctModel(Tpoints=Tpoints,n.latent=1,n.TDpred=1,n.TIpred=2,n.manifest=3,    
+#'   LAMBDA=matrix(1,ncol=1,nrow=3),
+#'   DRIFT=diag(-.3,1),
+#'   DIFFUSION=diag(.1,1),
+#'   CINT=diag(2,1),
+#'   MANIFESTVAR=diag(1,3),
+#'   TDPREDEFFECT=diag(.2,1),
+#'   TIPREDEFFECT=matrix(.8,nrow=1,ncol=2),
+#'   TDPREDVAR=diag(1,1*(Tpoints)),
+#'   TIPREDVAR=diag(1,2)
+#' )
+#' longexample<-round(ctGenerate(testm,n.subjects=2,logdtsd = 1,burnin=3,wide=FALSE)[c(1:3,32:35),],2)
+#' longexample[2,c(2,7)]<-NA
+#' longexample[4,c(3)]<-NA
+#' longexample
+#' save(longexample,file='.\\data\\longexample.rda')
+#' }
 NULL
 
 #' ctstantestfit

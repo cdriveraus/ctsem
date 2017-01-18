@@ -452,12 +452,6 @@ ctSummaryMatrices<-function(object,ridging=FALSE,timeInterval=1,verbose=FALSE,..
       tryCatch({  dimnames(TDPREDEFFECT)<-list(latentNames,TDpredNames)}, error=function(e) e )
       outlist<-c(outlist,'TDPREDEFFECT')
       
-      if(verbose==TRUE){
-        discreteTDPREDEFFECT<- OpenMx::expm(DRIFT * timeInterval) %*% TDPREDEFFECT
-        tryCatch({  dimnames(discreteTDPREDEFFECT)<-list(latentNames,TDpredNames)}, error=function(e) e )
-        outlist<-c(outlist,'discreteTDPREDEFFECT')
-      }
-      
       # TDPREDVAR<-tryCatch({OpenMx::mxEval(TDPREDVAR,mxobj,compute=TRUE) }, error=function(e) e )
       # tryCatch({  dimnames(TDPREDVAR)<-list(TDpredNames,TDpredNames)}, error=function(e) e )
       # outlist<-c(outlist,'TDPREDVAR')
