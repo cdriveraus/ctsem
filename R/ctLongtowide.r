@@ -86,9 +86,9 @@ ctLongToWide <- function(datalong, id, time, manifestNames, TDpredNames=NULL, TI
       direction = "wide",
       drop=c(manifestNames,"time",TIpredNames)) [,-1,drop=FALSE]
     
-    if(is.list(manifestNames_wide)) {
-      manifestNames_wide<-as.matrix(manifestNames_wide,nrow=1) #because reshape outputs lists when only one row!
-      colnames(manifestNames_wide)<-paste0(TDpredNames,
+    if(is.list(TDpred_wide)) {
+      TDpred_wide<-as.matrix(TDpred_wide,nrow=1) #because reshape outputs lists when only one row!
+      colnames(TDpred_wide)<-paste0(TDpredNames,
         rep(paste0('_T',0:( (ncol(TDpred_wide)/length(TDpredNames))-1)),each=length(TDpredNames)))
     }
     

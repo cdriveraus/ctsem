@@ -52,6 +52,7 @@ ctIntervalise<-function(datawide,Tpoints,n.manifest,n.TDpred=0,n.TIpred=0,impute
   manifestNames='auto', TDpredNames='auto',TIpredNames='auto',
   digits=5,mininterval=.001,individualRelativeTime=TRUE,startoffset=0){
 
+ 
   #names
   if(all(manifestNames=='auto')) manifestNames=paste0('Y',1:n.manifest)
   if(length(manifestNames) != n.manifest) stop("Length of manifestNames does not equal n.manifest!") 
@@ -149,7 +150,7 @@ ctIntervalise<-function(datawide,Tpoints,n.manifest,n.TDpred=0,n.TIpred=0,impute
   
   
   
-  if(individualRelativeTime==F){ #if there are multiple cases and the observations do not all start at the same time, and the wave structure should be retained
+  if(individualRelativeTime==FALSE){ #if there are multiple cases and the observations do not all start at the same time, and the wave structure should be retained
     
     
     temp <- matrix(c( rep(NA, times = (n.manifest) * nrow(tempwide)) , #add blank first observation columns to front 
