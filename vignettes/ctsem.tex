@@ -331,21 +331,13 @@ Given the specific wide structure required by \pkg{ctsem}, and that the time poi
 \begin{Schunk}
 \begin{Sinput}
 R> data("longexample")
-R> wideexample <- ctLongToWide(datalong = longexample, id = "subject", 
-+   time = "Time", manifestNames = c("Y1", "Y2", "Y3"), 
+R> wideexample <- ctLongToWide(datalong = longexample, id = "id", 
++   time = "time", manifestNames = c("Y1", "Y2", "Y3"), 
 +   TDpredNames = "TD1", TIpredNames = c("TI1", "TI2"))
-\end{Sinput}
-\begin{Soutput}
-Error in `[.data.frame`(as.data.frame(datalong), c(id, manifestNames, : undefined columns selected
-\end{Soutput}
-\begin{Sinput}
-R> wide <- ctIntervalise(datawide = wideexample, Tpoints = 3, n.manifest = 3, 
+R> wide <- ctIntervalise(datawide = wideexample, Tpoints = 4, n.manifest = 3, 
 +   n.TDpred = 1, n.TIpred = 2, manifestNames = c("Y1", "Y2", "Y3"), 
 +   TDpredNames = "TD1", TIpredNames = c("TI1", "TI2") )
 \end{Sinput}
-\begin{Soutput}
-Error in as.matrix(datawide, nrow = nrow(datawide)): object 'wideexample' not found
-\end{Soutput}
 \end{Schunk}
 
 \subsection{Choice of initial time point and time scale} \label{sec:datatimescale}\nopagebreak
