@@ -534,23 +534,23 @@ The matrices output from \code{summary, verbose = TRUE} will now include matrice
 
 \begin{figure}[!h]
 <<tdpreddemo, echo = FALSE, eval = TRUE, fig.height = 3>>=
-Tpoints = 20
+Tpoints = 19
 testm <- ctModel(Tpoints = Tpoints, n.latent = 1, 
   n.TDpred = 1, n.manifest = 1, LAMBDA = diag(1), DRIFT = diag(-.3, 1),
   DIFFUSION = diag(.1, 1), TDPREDEFFECT = diag(1, 1), 
-  TDPREDVAR = diag(0, Tpoints-1), CINT = diag(4, 1), T0MEANS = matrix(0, ncol = 1, nrow = 1),
+  CINT = diag(4, 1), T0MEANS = matrix(0, ncol = 1, nrow = 1),
   T0VAR = diag(100, 1), 
-  TDPREDMEANS = matrix(c(0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), ncol = 1, nrow = (Tpoints-1)))
-testd <- ctGenerate(testm, n.subjects = 100, burnin = 300)
+  TDPREDMEANS = matrix(c(0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), ncol = 1, nrow = (Tpoints)))
+testd <- ctGenerate(testm, n.subjects = 100, burnin = 30)
 
 testm <- ctModel(Tpoints = Tpoints, n.latent = 1, n.TDpred = 1, 
   n.manifest = 1, LAMBDA = diag(1), DRIFT = diag(-.3, 1),
   DIFFUSION = diag(.001, 1), TDPREDEFFECT = diag(1, 1), 
-  TDPREDVAR = diag(0, Tpoints-1), CINT = diag(4, 1), 
+  CINT = diag(4, 1), 
   T0MEANS = matrix(0, ncol = 1, nrow = 1),
   T0VAR = diag(1, 1), 
-  TDPREDMEANS = matrix(c(0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), ncol = 1, nrow = (Tpoints-1)))
-testdpure <- ctGenerate(testm, n.subjects = 1, burnin = 300)
+  TDPREDMEANS = matrix(c(0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), ncol = 1, nrow = (Tpoints)))
+testdpure <- ctGenerate(testm, n.subjects = 1, burnin = 30)
 
 par(mfrow = c(1, 2), cex = .7)
 plot(0:(Tpoints-1), testdpure[, 1:Tpoints], type = 'l', ylim = c(min(testd[, 1:Tpoints]), max(testd[, 1:Tpoints])),
@@ -559,22 +559,22 @@ for(i in 1:5){
   points(0:(Tpoints-1), testd[i, 1:Tpoints], col = 1+i, type = 'b')
 }
 
-Tpoints = 20
+Tpoints = 19
 testm <- ctModel(Tpoints = Tpoints, n.latent = 1, 
   n.TDpred = 1, n.manifest = 1, LAMBDA = diag(1), DRIFT = diag(-.3, 1),
   DIFFUSION = diag(.15, 1), TDPREDEFFECT = diag(1.6, 1), 
-  TDPREDVAR = diag(0, Tpoints-1), CINT = diag(4, 1), T0MEANS = matrix(0, ncol = 1, nrow = 1),
+  CINT = diag(4, 1), T0MEANS = matrix(0, ncol = 1, nrow = 1),
   T0VAR = diag(100, 1), 
   TDPREDMEANS = matrix(c(0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1), ncol = 1, nrow = (19)))
-testd <- ctGenerate(testm, n.subjects = 100, burnin = 300)
+testd <- ctGenerate(testm, n.subjects = 100, burnin = 30)
 
 testm <- ctModel(Tpoints = Tpoints, n.latent = 1, 
   n.TDpred = 1, n.manifest = 1, LAMBDA = diag(1), DRIFT = diag(-.3, 1),
   DIFFUSION = diag(.001, 1), TDPREDEFFECT = diag(1.6, 1), 
-  TDPREDVAR = diag(0, Tpoints-1), CINT = diag(4, 1), T0MEANS = matrix(0, ncol = 1, nrow = 1),
+  CINT = diag(4, 1), T0MEANS = matrix(0, ncol = 1, nrow = 1),
   T0VAR = diag(1, 1), 
   TDPREDMEANS = matrix(c(0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1), ncol = 1, nrow = (19)))
-testdpure <- ctGenerate(testm, n.subjects = 1, burnin = 300)
+testdpure <- ctGenerate(testm, n.subjects = 1, burnin = 30)
 
 plot(0:(Tpoints-1), testdpure[, 1:Tpoints], type = 'l', ylim = c(min(testd[, 1:Tpoints]), max(testd[, 1:Tpoints])), ylab = 'Dependent variable', xlab = 'Time', lwd = 3, main = 'Level predictor')
 for(i in 1:5){
@@ -734,19 +734,20 @@ In the above, we focus on a model for a single subject, and specify with LAMBDA 
 <<osscilating, cache = TRUE, echo = TRUE, eval = TRUE, include = TRUE>>=
 data("Oscillating")
 
-inits <- c(-39, -.5, 1, 1, .1, 1, 0, .9)
+inits <- c(-39, -.3, 1.01, 10.01, .1, 10.01, 0.05, .9, 0)
 names(inits) <- c("crosseffect","autoeffect", "diffusion",
-  "T0var11", "T0var21", "T0var22","m1", "m2")
+  "T0var11", "T0var21", "T0var22","m1", "m2", 'manifestmean')
 
-oscillatingm <- ctModel(n.latent = 2, n.manifest = 1, Tpoints = 11, 
-  MANIFESTVAR = matrix(c(0), nrow = 1, ncol = 1), 
+oscillatingm <- ctModel(n.latent = 2, n.manifest = 1, Tpoints = 11,
+  MANIFESTVAR = matrix(c(0), nrow = 1, ncol = 1),
   LAMBDA = matrix(c(1, 0), nrow = 1, ncol = 2),
-  T0MEANS = matrix(c('m1', 'm2'), nrow = 2, ncol = 1), 
+  T0MEANS = matrix(c('m1', 'm2'), nrow = 2, ncol = 1),
   T0VAR = matrix(c("T0var11", "T0var21", 0, "T0var22"), nrow = 2, ncol = 2),
-  DRIFT = matrix(c(0, "crosseffect", 1, "autoeffect"), nrow = 2, ncol = 2), 
+  DRIFT = matrix(c(0, "crosseffect", 1, "autoeffect"), nrow = 2, ncol = 2),
   CINT = matrix(0, ncol = 1, nrow = 2),
+  MANIFESTMEANS = matrix('manifestmean', nrow = 1, ncol = 1),
   DIFFUSION = matrix(c(0, 0, 0, "diffusion"), nrow = 2, ncol = 2),
-  startValues=inits)
+ startValues=inits)
 
 oscillatingf <- ctFit(Oscillating, oscillatingm, carefulFit = FALSE)
 @

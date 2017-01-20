@@ -358,7 +358,7 @@ ctFit  <- function(datawide, ctmodelobj,
   }
   
   T0VAR <- processInputMatrix(ctmodelobj['T0VAR'], symmetric = FALSE, randomscale=0, diagadd = 1, chol=TRUE)
-  
+
   T0MEANS <- processInputMatrix(ctmodelobj["T0MEANS"], symmetric = FALSE, randomscale=1, diagadd = 0)
   MANIFESTMEANS <- processInputMatrix(ctmodelobj["MANIFESTMEANS"], symmetric = FALSE, randomscale=1, diagadd = 0)
   LAMBDA <- processInputMatrix(ctmodelobj["LAMBDA"], symmetric = FALSE, randomscale=.1, addvalues=1, diagadd = 0)
@@ -1299,11 +1299,12 @@ ctFit  <- function(datawide, ctmodelobj,
     T0VAR$mxmatrix<-list(
       OpenMx::mxMatrix(name = "T0VARbase", values=T0VAR$values, labels=T0VAR$labels, 
         ncol=n.latent, nrow=n.latent, free=T0VAR$free, type='Full'), 
-      OpenMx::mxAlgebra(name='T0VARchol', vec2diag(exp(diag2vec(T0VARbase))) + #inverse log link for diagonal
+      OpenMx::mxAlgebra(name='T0VARchol', vec2diag(exp(diag2vec(T0VARbase))) + #exp of diagonal
           T0VARbase - #plus the base matrix
           vec2diag(diag2vec(T0VARbase))), #minus the diagonal of the base matrix   
       OpenMx::mxAlgebra(name='T0VAR', T0VARchol %*% t(T0VARchol))
     )
+ 
     
     DIFFUSION$mxmatrix<-list(
       OpenMx::mxMatrix(name = "DIFFUSIONbase", values=DIFFUSION$values, labels=DIFFUSION$labels, 
