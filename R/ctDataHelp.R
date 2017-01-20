@@ -63,7 +63,8 @@ NULL
 #' testd<-testd[,c(paste0('Y',1:2,'_T',rep(timestokeep,each=2)),paste0('TD1_T',timestokeep))]
 #' testd<-cbind(testd,matrix(deltaT,nrow=nrow(testd),ncol=length(deltaT),byrow=TRUE))
 #' 
-#' colnames(testd)<-ctWideNames(n.manifest=2,Tpoints=8,n.TDpred=1,manifestNames=manifestNames,TDpredNames=TDpredNames)
+#' colnames(testd)<-ctWideNames(n.manifest=2,Tpoints=8,n.TDpred=1,
+#' manifestNames=manifestNames,TDpredNames=TDpredNames)
 #' ctExample2<-testd
 #' save(ctExample2,file=".\\data\\ctExample2.rda") 
 #' }
