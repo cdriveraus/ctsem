@@ -7,8 +7,8 @@ test_that("intervals", {
   data('longexample')
   
   #Then convert to wide format
-  wideexample <- ctLongToWide(datalong = longexample, id = "subject",
-                              time = "Time", manifestNames = c("Y1", "Y2", "Y3"),
+  wideexample <- ctLongToWide(datalong = longexample, id = "id",
+                              time = "time", manifestNames = c("Y1", "Y2", "Y3"),
                               TDpredNames = "TD1", TIpredNames = c("TI1", "TI2"))
   
   #Then convert the absolute times to intervals, using the Tpoints reported from the prior step.
