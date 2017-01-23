@@ -1,15 +1,28 @@
 ctsem news:
 
+Known bugs / limitations:
+- Duplicated parameter names in a model may in certain cases generate compilation errors.
+
 1/2/2017
 #### 2.2.0 ####
 Changes:
+- Time dependent predictors now have instantaneous effect in both frequentist and 
+  Bayesian approaches, and the documentation is updated to reflect this.
+  Previously, no TDpreds affecting first time point in frequentist.
+  Accordingly, wide data structure is accordingly different, with an extra column 
+  per predictor and predictors now sorted by time point as for indicators. 
+  See vignette for example. 
 - Default to 0 covariance between time dependent predictors and initial (T0) 
   latents / traits / time independent predictors. Specify matrix as 'free' 
   in ctModel to estimate instead.
+- Default carefulFit = TRUE for multiple groups frequentist models (ctMultigroupFit)
+- Improve optimization approach for ctStanFit - but still not reliable for random effects.
 
 Fixes:
-- Improve optimization approach for ctStanFit
-
+- Multiple time dependent predictors with multiple processes resulted in inaccurate
+  estimates for TDPREDEFFECT in frequentist approach of previous versions.
+- Prevent ctGenerate from auto-filling matrices to 0 variance.
+- Correct oscillating example for change in tolerance in OpenMx.
 
 
 6/1/2017

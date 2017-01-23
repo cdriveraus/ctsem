@@ -18,5 +18,5 @@ BuildType: Package
 PackageUseDevtools: Yes
 PackageInstallArgs: --no-multiarch --with-keep.source
 PackageBuildArgs: --resave-data --compact-vignettes=gs+qpdf
-PackageCheckArgs: --resave-data --compact-vignettes=gs+qpdf
+PackageCheckArgs: --resave-data --compact-vignettes=gs+qpdf --no-build-vignettes
 PackageRoxygenize: rd,collate,namespace
