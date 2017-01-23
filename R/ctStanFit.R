@@ -324,7 +324,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
   ndiffusion=length(diffusionindices)
   message(paste(ndiffusion ,'/',n.latent,'latent variables required for covariance calculations'))
   
-  
+  uniqueparsctspec<-ctspec[!duplicated(ctspec$param),]
+
   
   writemodel<-function(init=FALSE,noshrinkage=FALSE){
     stanmodel <- paste0('
@@ -811,55 +812,62 @@ print("lp = ", target());
       }
       generated quantities{
       
-      ',paste0('real hmean_',ctspec$param[is.na(ctspec$value)],'; \n',collapse=''),'
+      ',paste0('real hmean_',uniqueparsctspec$param[is.na(uniqueparsctspec$value)],'; \n',collapse=''),'
       
-      ',if(nindvarying > 0) paste0(unlist(lapply(1:nrow(ctspec),function(rowi){
-        if(ctspec$indvarying[rowi]) paste0('real hsd_',ctspec$param[rowi],'; \n')
+      ',if(nindvarying > 0) paste0(unlist(lapply(1:nrow(uniqueparsctspec),function(rowi){
+        if(uniqueparsctspec$indvarying[rowi]) paste0('real hsd_',uniqueparsctspec$param[rowi],'; \n')
       })),collapse=''),'
 
       ',if(n.TIpred > 0) paste0(unlist(lapply(1:n.TIpred,function(tip){
-        paste0(unlist(lapply(1:nrow(ctspec),function(rowi){
-          if(ctspec$indvarying[rowi] & ctspec[,paste0(TIpredNames[tip],'_effect')][rowi]) paste0('real tipred_',
-            TIpredNames[tip], '_on_', ctspec$param[rowi],'; \n'
+        paste0(unlist(lapply(1:nrow(uniqueparsctspec),function(rowi){
+          if(uniqueparsctspec$indvarying[rowi] & 
+              uniqueparsctspec[,paste0(TIpredNames[tip],'_effect')][rowi]) paste0('real tipred_',
+            TIpredNames[tip], '_on_', uniqueparsctspec$param[rowi],'; \n'
           )
         })),collapse='')
       })),collapse=''),'
 
-      ',paste0(unlist(lapply(1:nrow(ctspec),function(rowi){
-        if(is.na(ctspec$value[rowi])) paste0('hmean_',ctspec$param[rowi],' = ',
+      ',paste0(unlist(lapply(1:nrow(uniqueparsctspec),function(rowi){
+        if(is.na(uniqueparsctspec$value[rowi])) paste0('hmean_',uniqueparsctspec$param[rowi],' = ',
           gsub('param',
-            paste0('hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),']'),
-            ctspec$transform[rowi]),'; \n')
+            paste0('hypermeans[',
+              which(uniqueparsctspec$param[is.na(uniqueparsctspec$value)] == uniqueparsctspec$param[rowi]),
+              ']'),
+            uniqueparsctspec$transform[rowi]),'; \n')
       })),collapse=''),'
 
       
-      ',paste0(unlist(lapply(1:nrow(ctspec),function(rowi){
-        if(ctspec$indvarying[rowi]) paste0('hsd_',ctspec$param[rowi],' = ',
-          'hypersd[',which(ctspec$param[ctspec$indvarying] == ctspec$param[rowi]),']; \n',
-          if(!is.na(ctspec$transform[rowi])) paste0(
-            'hsd_',ctspec$param[rowi],' = fabs
+      ',paste0(unlist(lapply(1:nrow(uniqueparsctspec),function(rowi){
+        if(uniqueparsctspec$indvarying[rowi]) paste0('hsd_',uniqueparsctspec$param[rowi],' = ',
+          'hypersd[',which(uniqueparsctspec$param[uniqueparsctspec$indvarying] == uniqueparsctspec$param[rowi]),']; \n',
+          if(!is.na(uniqueparsctspec$transform[rowi])) paste0(
+            'hsd_',uniqueparsctspec$param[rowi],' = fabs
             ((', 
-            gsub('param', paste0('(hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),'] + .01 * hsd_',
-              ctspec$param[rowi],')'),ctspec$transform[rowi]), ') - (',
-            gsub('param', paste0('(hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),'] - .01 * hsd_',
-              ctspec$param[rowi],')'),ctspec$transform[rowi]),'))/2 * 100; \n')
+            gsub('param', paste0('(hypermeans[',
+              which(uniqueparsctspec$param[is.na(uniqueparsctspec$value)] == uniqueparsctspec$param[rowi]),
+              '] + .01 * hsd_',
+              uniqueparsctspec$param[rowi],')'),uniqueparsctspec$transform[rowi]), ') - (',
+            gsub('param', 
+              paste0('(hypermeans[',which(uniqueparsctspec$param[is.na(uniqueparsctspec$value)] == uniqueparsctspec$param[rowi]),
+              '] - .01 * hsd_',
+              uniqueparsctspec$param[rowi],')'),uniqueparsctspec$transform[rowi]),'))/2 * 100; \n')
             )
       })),collapse=''),'
 
       
       ',if(n.TIpred > 0) paste0(unlist(lapply(1:n.TIpred,function(tip){
-        paste0(unlist(lapply(1:nrow(ctspec),function(rowi){
-          if(ctspec$indvarying[rowi] & ctspec[,paste0(TIpredNames[tip],'_effect')][rowi]) paste0('
-            tipred_',TIpredNames[tip], '_on_', ctspec$param[rowi],' = ',
-            'tipredeffect[',which(ctspec$param[ctspec$indvarying] == ctspec$param[rowi]),',',tip,']; \n',
-            if(!is.na(ctspec$transform[rowi])) paste0('tipred_', TIpredNames[tip], '_on_', ctspec$param[rowi],' = ((', 
+        paste0(unlist(lapply(1:nrow(uniqueparsctspec),function(rowi){
+          if(uniqueparsctspec$indvarying[rowi] & uniqueparsctspec[,paste0(TIpredNames[tip],'_effect')][rowi]) paste0('
+            tipred_',TIpredNames[tip], '_on_', uniqueparsctspec$param[rowi],' = ',
+            'tipredeffect[',which(uniqueparsctspec$param[uniqueparsctspec$indvarying] == uniqueparsctspec$param[rowi]),',',tip,']; \n',
+            if(!is.na(uniqueparsctspec$transform[rowi])) paste0('tipred_', TIpredNames[tip], '_on_', uniqueparsctspec$param[rowi],' = ((', 
               gsub('param', 
-                paste0('hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),'] + tipredeffect[',which(ctspec$param[ctspec$indvarying] == ctspec$param[rowi]),',',tip,']'),
-                ctspec$transform[rowi]), 
+                paste0('hypermeans[',which(uniqueparsctspec$param[is.na(uniqueparsctspec$value)] == uniqueparsctspec$param[rowi]),'] + tipredeffect[',which(uniqueparsctspec$param[uniqueparsctspec$indvarying] == uniqueparsctspec$param[rowi]),',',tip,']'),
+                uniqueparsctspec$transform[rowi]), 
               ') - (',
               gsub('param', 
-                paste0('hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),'] - tipredeffect[',which(ctspec$param[ctspec$indvarying] == ctspec$param[rowi]),',',tip,']'),
-                ctspec$transform[rowi]),'))/2; \n')
+                paste0('hypermeans[',which(uniqueparsctspec$param[is.na(uniqueparsctspec$value)] == uniqueparsctspec$param[rowi]),'] - tipredeffect[',which(uniqueparsctspec$param[uniqueparsctspec$indvarying] == uniqueparsctspec$param[rowi]),',',tip,']'),
+                uniqueparsctspec$transform[rowi]),'))/2; \n')
           )
         })),collapse='')
         })),collapse=''),'
