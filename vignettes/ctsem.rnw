@@ -198,20 +198,13 @@ The solution of the stochastic differential Equation \ref{eq:process1} for any t
 \mathrm{e}^{ \textbf{A} (\mathnormal{t-t_0})  }  \boldsymbol{\eta}_\mathnormal{i}(\mathnormal{t_0}) \: + \\
 &\textbf{A}^{-1} [\mathrm{e}^{\textbf{A} \mathnormal{(t-t_0)} } - \textbf{I}] \boldsymbol{\xi}_\mathnormal{i} \: + \\
 &\textbf{A}^{-1} [\mathrm{e}^{\textbf{A} \mathnormal{(t-t_0)} } - \textbf{I}]\textbf{Bz}_\mathnormal{i} \: + \\
-& \int_{\mathnormal{t_0}}^\mathnormal{t} \mathrm{e}^{\mathbf{A}(t-s)} \mathbf{M}\boldsymbol{\chi}_\mathnormal{i} ( \mathnormal{s})  \textrm{d} \mathnormal{s} \: + \\
-% & \sum_{\mathnormal{u \in U_i \cap [t_0,t)}} \mathrm{e}^{\mathbf{A}(t-u)} \mathbf{Mx}_{i,u} + \\
+&\mathbf{M} \mathrm{ \sum_{\mathnormal{u} \in \mathnormal{U_i}}  \mathbf{x}_{\mathnormal{i,u}} \boldsymbol{\delta} ( \mathnormal{t-u} )} \: + \\
 &\int_{\mathnormal{t_0}}^\mathnormal{t} \mathrm{e}^{\textbf{A} \mathnormal{(t-s)} } \textbf{G}\textrm{d}\textbf{W}_\mathnormal{i}\mathnormal{(s)} \numberthis 
 \label{eq:solution}
 \end{align*}
 
 The five summands of this equation correspond to the five of Equation \ref{eq:process1}, and give the
 link between the continuous time model and discrete instantiations of the process. 
-
-Because we treat time dependent predictors $\boldsymbol{\chi}_\mathnormal{i}$ as impulses, as shown in Equation \ref{eq:spike}, the integral shown in the last but one summand of Equation \ref{eq:solution} is easily solved, due to the sifting property of the delta function: 
-
-\begin{equation}
-\int_{\mathnormal{t_0}}^\mathnormal{t} \mathrm{e}^{\mathbf{A}(t-s)} \mathbf{M}\boldsymbol{\chi}_\mathnormal{i} ( \mathnormal{s})  \textrm{d} \mathnormal{s} =\mathbf{M}\sum_{\mathnormal{u \in U_i \cap [t_0,t)}} \mathrm{e}^{\mathbf{A}(t-u)} \mathbf{x}_{i,u}     
- \end{equation}
 
 The last summand of Equation \ref{eq:solution}, the integral of the diffusion over the given time interval, exhibits covariance matrix:
 

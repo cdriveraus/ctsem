@@ -38,7 +38,8 @@ If plot=TRUE, nothing is returned but a plot is generated.
 }
 \description{
 Outputs predicted, updated, and smoothed estimates of manifest indicators and latent states, 
-with covariances, for specific subjects from data fit with \code{\link{ctStanFit}}.
+with covariances, for specific subjects from data fit with \code{\link{ctStanFit}}, 
+based on medians of parameter distribution.
 }
 \examples{
 #Basic

@@ -110,21 +110,22 @@
 #' ###Oscillating model from Voelkle & Oud (2013). 
 #' data("Oscillating")
 #' 
-#' inits <- c(-38, -.5, 1, 1, .1, 1, 0, .9)
+#' inits <- c(-39, -.3, 1.01, 10.01, .1, 10.01, 0.05, .9, 0)
 #' names(inits) <- c("crosseffect","autoeffect", "diffusion",
-#'   "T0var11", "T0var21", "T0var22","m1", "m2")
+#'   "T0var11", "T0var21", "T0var22","m1", "m2", 'manifestmean')
 #' 
-#' oscillatingm <- ctModel(n.latent = 2, n.manifest = 1, Tpoints = 11, 
-#'   MANIFESTVAR = matrix(c(0), nrow = 1, ncol = 1), 
+#' oscillatingm <- ctModel(n.latent = 2, n.manifest = 1, Tpoints = 11,
+#'   MANIFESTVAR = matrix(c(0), nrow = 1, ncol = 1),
 #'   LAMBDA = matrix(c(1, 0), nrow = 1, ncol = 2),
-#'   T0MEANS = matrix(c('m1', 'm2'), nrow = 2, ncol = 1), 
+#'   T0MEANS = matrix(c('m1', 'm2'), nrow = 2, ncol = 1),
 #'   T0VAR = matrix(c("T0var11", "T0var21", 0, "T0var22"), nrow = 2, ncol = 2),
-#'   DRIFT = matrix(c(0, "crosseffect", 1, "autoeffect"), nrow = 2, ncol = 2), 
+#'   DRIFT = matrix(c(0, "crosseffect", 1, "autoeffect"), nrow = 2, ncol = 2),
 #'   CINT = matrix(0, ncol = 1, nrow = 2),
+#'   MANIFESTMEANS = matrix('manifestmean', nrow = 1, ncol = 1),
 #'   DIFFUSION = matrix(c(0, 0, 0, "diffusion"), nrow = 2, ncol = 2),
-#'   startValues = inits)
+#'   startValues=inits)
 #' 
-#' oscillatingf <- ctFit(Oscillating, oscillatingm,carefulFit=FALSE)
+#' oscillatingf <- ctFit(Oscillating, oscillatingm, carefulFit = FALSE)
 #' }
 #' @import OpenMx
 #' @export
