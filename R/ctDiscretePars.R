@@ -295,6 +295,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
 #'@param add Logical. If FALSE, a new plot is generated, if TRUE, specified plot/s are
 #'overlayed on existing plot.
 #'@param legend Logical. If TRUE, generates a legend.
+#'@param grid Logical. Plot with a grid?
 #'@param polygon Logical. If TRUE, fills a polygon between the first and last specified quantiles.
 #'@param quantiles numeric vector of length 3, with values between 0 and 1, specifying which quantiles to plot.
 #'The default of c(.05,.5,.95) plots 95\% credible intervals and the posterior median at 50\%. 
@@ -316,8 +317,10 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
 #'will be ignored.
 #'@param polygonalpha Numeric between 0 and 1 to multiply the alpha (transparency) of colvec by for 
 #'the fill polygon.
-#'@param polygoncontrol list of arguments to pass to polgyon function (if polygon=TRUE).
-#'x,y, and col arguments will be ignored.
+#'@param polygoncontrol list of arguments to pass to ctPoly function (if polygon=TRUE).
+#'x,y, and col arguments will be ignored. Border is removed by default because quantile
+#'borders are differently, and steps specifies the number of polygons to overlay to 
+#'create a graduated transparency. Set to 1 for a flat looking plot.
 #'@examples
 #'x <- ctStanDiscretePars(ctstantestfit)
 #'
@@ -328,10 +331,10 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
   quantiles=c(.05,.5,.95), times=seq(0,10,.1),latentNames='auto',
   ylim='auto',lwdvec='auto',colvec='auto',ltyvec='auto',
   plotcontrol=list(ylab='Value',xlab='Time interval',
-    main='Regression coefficients',type='l'),
+    main='Regression coefficients',type='l'),grid=TRUE,
   legendcontrol=list(x='topright',bg='white'),
   polygonalpha=.1,
-  polygoncontrol=list(border=NA)){
+  polygoncontrol=list(border=NA, steps=50)){
   
   input <- x[[1]] #ctStanDiscretePars(x,type='discreteDRIFT',times=times,quantiles=quantiles,...)[[1]]
   
@@ -366,7 +369,39 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
   if(ylim=='auto') ylim=range(plyr::aaply(input,c(3,4),function(x)
     x[indices]),na.rm=TRUE) #range of diagonals
   
-  ####plotting quantiles - now just using polygon so only plotting middle quantile
+
+  
+ 
+  #blank plot
+  blankargs=plotcontrol
+  blankargs$ylim=ylim
+  blankargs$xlim=range(times)
+  blankargs$y=NA
+  blankargs$x=NA
+  do.call(plot,blankargs)
+  if(grid) grid()
+  
+  ####plotting quantiles
+  if(polygon) {
+    cc=0
+    ccup=TRUE
+    for(indexi in c(1:nrow(indices))){
+      cc=ifelse(ccup,cc+1,cc-1)
+      if(indexi==nrow(indices)) ccup=FALSE
+      ri=indices[indexi,1]
+      ci=indices[indexi,2]
+      polygonargs<-polygoncontrol
+      polygonargs$x=times
+      polygonargs$y=input[ri,ci,,2]
+      polygonargs$ylow=input[ri,ci,,1]
+      polygonargs$yhigh=input[ri,ci,,length(quantiles)]
+      polygonargs$col=grDevices::adjustcolor(colvec[cc],alpha.f=max(c(.004,polygonalpha/polygonargs$steps)))
+      do.call(ctPoly,polygonargs)
+    }
+  }
+  
+  ####plotting quantiles
+  needtoplot=FALSE
   for(qi in 1:3){
     cc=0
     for(indexi in 1:nrow(indices)){
@@ -378,27 +413,18 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
       plotargs$x=times
       plotargs$y=input[ri,ci,,qi]
       plotargs$lty=ltyvec[cc]
-      plotargs$col=ifelse(qi!= 2,grDevices::adjustcolor(colvec[cc],alpha.f=sqrt(polygonalpha)) ,colvec[cc])
+      plotargs$col=ifelse(qi!= 2,grDevices::adjustcolor(colvec[cc],alpha.f=.5) ,colvec[cc])
       plotargs$lwd=ifelse(qi!= 2,1, lwdvec[cc])
       plotargs$ylim=ylim
       
-      if(qi==1 && indexi==1 & !add) do.call(plot,plotargs) else do.call(points,plotargs)
+      if(needtoplot==TRUE & !add) {
+        do.call(plot,plotargs) 
+        needtoplot=FALSE
+      } 
+      else do.call(points,plotargs)
     }}
   
-  if(polygon) {
-    cc=0
-    backwardstimesindex=order(times,decreasing=TRUE)
-    for(indexi in 1:nrow(indices)){
-      cc=cc+1
-      ri=indices[indexi,1]
-      ci=indices[indexi,2]
-      polygonargs<-polygoncontrol
-      polygonargs$x=c(times,times[backwardstimesindex])
-      polygonargs$y=c(input[ri,ci,,1], input[ri,ci,,length(quantiles)][backwardstimesindex])
-      polygonargs$col=grDevices::adjustcolor(colvec[cc],alpha.f=polygonalpha)
-      do.call(graphics::polygon,polygonargs)
-    }
-  }
+  
   
   legendcontrol$legend=paste0(latentNames[indices[,1]],'_',latentNames[indices[,2]])
   legendcontrol$text.col=colvec

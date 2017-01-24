@@ -106,10 +106,14 @@ ctDensity<-function(x){
 #' plot(0:100,sqrt(0:100),type='l')
 #' ctPoly(0:100, sqrt(0:100) - runif(101), sqrt(0:100) + runif(101),
 #' col=adjustcolor('red',alpha.f=.1),border=NA)
-ctPoly <- function(x,ylow,yhigh,...){
+ctPoly <- function(x,y,ylow,yhigh,steps=50,...){
+  for(i in 1:steps){
+    tylow= y + (ylow-y)*i/steps
+    tyhigh= y + (yhigh-y)*i/steps
   xf <- c(x,x[length(x):1])
-  yf <- c(ylow,yhigh[length(yhigh):1])
+  yf <- c(tylow,tyhigh[length(tyhigh):1])
   polygon(xf,yf,...)
+  }
 }
 
 

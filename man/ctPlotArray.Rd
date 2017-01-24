@@ -6,9 +6,9 @@
 \usage{
 ctPlotArray(yarray, x, grid = TRUE, separate = FALSE, colvec = "auto",
   lwdvec = "auto", ltyvec = "auto", typevec = "auto", mainvec = "auto",
-  plotcontrol = list(ylab = "Array values", xlab = "X values"),
+  plotcontrol = list(ylab = "Array values", xlab = "X values", xaxs = "i"),
   legend = TRUE, legendcontrol = list(x = "topright"), polygon = TRUE,
-  polygonalpha = 0.1, polygoncontrol = list(border = NA))
+  polygonalpha = 0.1, polygoncontrol = list(border = NA, steps = 50))
 }
 \arguments{
 \item{yarray}{3 dimensional array to use for Y values}

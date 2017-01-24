@@ -125,9 +125,9 @@ ctPlotArray <- function(yarray,x,
 grid=TRUE,separate=FALSE,
   colvec='auto',lwdvec='auto',ltyvec='auto',typevec='auto',
   mainvec='auto',
-  plotcontrol=list(ylab='Array values', xlab='X values'),
+  plotcontrol=list(ylab='Array values', xlab='X values',xaxs='i'),
 legend=TRUE,legendcontrol=list(x='topright'),
-polygon=TRUE, polygonalpha=.1,polygoncontrol=list(border=NA)){
+polygon=TRUE, polygonalpha=.1,polygoncontrol=list(border=NA,steps=50)){
 
   nvars<-dim(yarray)[2]
   
@@ -160,30 +160,43 @@ polygon=TRUE, polygonalpha=.1,polygoncontrol=list(border=NA)){
   plotargs<-plotcontrol
   plotargs$x <- x
   if(!separate && is.null(plotcontrol$ylim)) plotargs$ylim = range(yarray)
-   plotargs$xlim = range(x)
+   plotargs$xlim = range(x,na.rm=TRUE)
    
    ctpolyargs<-polygoncontrol
    
    legargs<-legendcontrol
   
-for(pari in 1:dim(yarray)[2]){
-  
-  plotargs$y = yarray[,pari,2]
+   
+   #blank plot
+   blankargs=plotargs
+   blankargs$y=NA
+   blankargs$x=NA
+   do.call(plot,blankargs)
+   if(grid) grid()
+   
+   #confidence
+   if(polygon) {
+     for(pari in c(1:dim(yarray)[2],dim(yarray)[2]:1)){
+     ctpolyargs$col=adjustcolor(colvec[pari],alpha.f=max(c(.004,polygonalpha/ctpolyargs$steps)))
+     ctpolyargs$x=plotargs$x
+     ctpolyargs$y=yarray[,pari,2]
+     ctpolyargs$yhigh = yarray[,pari,3]
+     ctpolyargs$ylow = yarray[,pari,1]
+     
+     do.call(ctPoly,ctpolyargs) 
+     }
+   }
+   
+for(pari in c(1:dim(yarray)[2],dim(yarray)[2]:1)){
+  for(qi in 1:3){
+  plotargs$y = yarray[,pari,qi]
   plotargs$col=colvec[pari]
-  plotargs$lwd=lwdvec[pari]
+  plotargs$lwd=ifelse(qi==2,lwdvec[pari],1)
   plotargs$lty=ltyvec[pari]
+  if(qi!=2) plotargs$col =grDevices::adjustcolor(plotargs$col,alpha.f=.5)
   plotargs$type=typevec[pari]
   plotargs$main=mainvec[pari]
-  
-  if(pari==1 || separate) do.call(plot,plotargs)  else do.call(points,plotargs)
-  if(grid) grid()
-  if(polygon) {
-    ctpolyargs$col=adjustcolor(plotargs$col,alpha.f=polygonalpha)
-    ctpolyargs$x=plotargs$x
-    ctpolyargs$yhigh = yarray[,pari,3]
-    ctpolyargs$ylow = yarray[,pari,1]
-    
-    do.call(ctPoly,ctpolyargs) 
+  do.call(points,plotargs)
   }
   
   if(separate & legend) {
