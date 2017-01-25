@@ -43,6 +43,5 @@ on subject level parameters of a ctStanFit object.
 }
 \examples{
 ctStanTIpredeffects(ctstantestfit,plot=TRUE)
-ctStanTIpredeffects(ctstantestfit,plot=TRUE,separate=TRUE)
 }
 

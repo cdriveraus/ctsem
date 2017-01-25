@@ -381,7 +381,7 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
   do.call(plot,blankargs)
   if(grid) grid()
   
-  ####plotting quantiles
+  ####plotting confidence region
   if(polygon) {
     cc=0
     ccup=TRUE
@@ -400,8 +400,7 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
     }
   }
   
-  ####plotting quantiles
-  needtoplot=FALSE
+  ####plotting quantile lines
   for(qi in 1:3){
     cc=0
     for(indexi in 1:nrow(indices)){
@@ -416,12 +415,7 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
       plotargs$col=ifelse(qi!= 2,grDevices::adjustcolor(colvec[cc],alpha.f=.5) ,colvec[cc])
       plotargs$lwd=ifelse(qi!= 2,1, lwdvec[cc])
       plotargs$ylim=ylim
-      
-      if(needtoplot==TRUE & !add) {
-        do.call(plot,plotargs) 
-        needtoplot=FALSE
-      } 
-      else do.call(points,plotargs)
+      do.call(points,plotargs)
     }}
   
   

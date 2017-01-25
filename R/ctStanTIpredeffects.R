@@ -28,7 +28,6 @@
 #'
 #' @examples
 #' ctStanTIpredeffects(ctstantestfit,plot=TRUE)
-#' ctStanTIpredeffects(ctstantestfit,plot=TRUE,separate=TRUE)
 ctStanTIpredeffects<-function(fit,probs=c(.25,.5,.75),
   whichTIpreds=1,whichpars='all',
   plot=FALSE,...){
@@ -83,7 +82,7 @@ out <- aperm(out, c(3,2,1))
 
 if(!plot) return(out) else {
   ctPlotArray(yarray=out,x=tipreds[,1],
-  plotcontrol=list(ylab='Effect',xlab=colnames(tipreds)[1]))
+  plotcontrol=list(ylab='Effect',xlab=colnames(tipreds)[1]),...)
 }
 }
 
@@ -98,14 +97,10 @@ if(!plot) return(out) else {
 #' @param yarray 3 dimensional array to use for Y values
 #' @param x numeric vector specifying x axis
 #' @param grid Logical. Plot with a grid?
-#' @param separate Logical. Generate a plot per variable (2nd margin of array)
-#' or plot all on one?
 #' @param colvec color vector of same length as 2nd margin.
 #' @param lwdvec lwd vector of same length as 2nd margin.
 #' @param ltyvec lty vector of same length as 2nd margin.
 #' @param typevec type vector of same length as 2nd margin.
-#' @param mainvec main vector of same length as 2nd margin, only used if 
-#' separate=TRUE.
 #' @param plotcontrol list of arguments to pass to plot.
 #' @param legend Logical. Draw a legend?
 #' @param legendcontrol list of arguments to pass to \code{\link[graphics]{legend}}.
@@ -120,15 +115,15 @@ if(!plot) return(out) else {
 #' @examples
 #' y <- ctStanTIpredeffects(ctstantestfit,plot=FALSE)
 #' x<-ctstantestfit$data$tipreds[order(ctstantestfit$data$tipreds[,1]),1]
-#' ctPlotArray(y,x,separate=TRUE)
+#' ctPlotArray(y,x)
 ctPlotArray <- function(yarray,x,
-grid=TRUE,separate=FALSE,
+grid=TRUE,
   colvec='auto',lwdvec='auto',ltyvec='auto',typevec='auto',
-  mainvec='auto',
   plotcontrol=list(ylab='Array values', xlab='X values',xaxs='i'),
 legend=TRUE,legendcontrol=list(x='topright'),
 polygon=TRUE, polygonalpha=.1,polygoncontrol=list(border=NA,steps=50)){
 
+  separate=FALSE
   nvars<-dim(yarray)[2]
   
   plotcontrolpars <- c('ylab','xlab')
@@ -153,9 +148,9 @@ polygon=TRUE, polygonalpha=.1,polygoncontrol=list(border=NA,steps=50)){
   if(all(lwdvec=='auto')) lwdvec = rep(3,nvars)
   if(all(colvec=='auto')) colvec = rainbow(nvars)
   if(all(typevec=='auto')) typevec = rep('l',nvars)
-  if(all(mainvec=='auto')){
-    if(separate) mainvec=dimnames(yarray)[[2]] else mainvec =rep(ifelse(is.null(plotcontrol$main),'',plotcontrol$main),nvars)
-  }
+  # if(all(mainvec=='auto')){
+  #   if(separate) mainvec=dimnames(yarray)[[2]] else mainvec =rep(ifelse(is.null(plotcontrol$main),'',plotcontrol$main),nvars)
+  # }
 
   plotargs<-plotcontrol
   plotargs$x <- x
@@ -195,7 +190,7 @@ for(pari in c(1:dim(yarray)[2],dim(yarray)[2]:1)){
   plotargs$lty=ltyvec[pari]
   if(qi!=2) plotargs$col =grDevices::adjustcolor(plotargs$col,alpha.f=.5)
   plotargs$type=typevec[pari]
-  plotargs$main=mainvec[pari]
+  # plotargs$main=mainvec[pari]
   do.call(points,plotargs)
   }
   

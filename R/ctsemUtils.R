@@ -92,11 +92,14 @@ ctDensity<-function(x){
 }
 
 
-#' Plots uncertainty bands
+#' Plots uncertainty bands with shading
 #'
 #' @param x x values
+#' @param y y values
 #' @param ylow lower limits of y
 #' @param yhigh upper limits of y
+#' @param steps number of polygons to overlay - higher integers lead to 
+#' smoother changes in transparency between y and yhigh / ylow.
 #' @param ... arguments to pass to polygon()
 #'
 #' @return Nothing. Adds a polygon to existing plot.
@@ -104,7 +107,9 @@ ctDensity<-function(x){
 #'
 #' @examples
 #' plot(0:100,sqrt(0:100),type='l')
-#' ctPoly(0:100, sqrt(0:100) - runif(101), sqrt(0:100) + runif(101),
+#' ctPoly(x=0:100, y=sqrt(0:100), 
+#' yhigh=sqrt(0:100) - runif(101), 
+#' ylow=sqrt(0:100) + runif(101),
 #' col=adjustcolor('red',alpha.f=.1),border=NA)
 ctPoly <- function(x,y,ylow,yhigh,steps=50,...){
   for(i in 1:steps){
