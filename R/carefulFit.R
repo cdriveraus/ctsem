@@ -37,7 +37,7 @@ carefulFit=function(model,traitExtension,manifestTraitvarExtension){
     model<-OpenMx::mxModel('ctsemCarefulFit', 
       modelwithpenalties, penaltyLL,
       #             mxMatrix(type='Full', name='FIMLpenaltyweight', nrow=1, ncol=1, values=FIMLpenaltyweight, free=F), 
-      mxMatrix(name='FIMLpenaltyweight', values=10,free=FALSE,nrow=1,ncol=1,type='Full' ), 
+      mxMatrix(name='FIMLpenaltyweight', values=1000,free=FALSE,nrow=1,ncol=1,type='Full' ), 
       mxFitFunctionAlgebra('penaltyLL')
     )
     

@@ -470,7 +470,9 @@ matrix cov(vector[] mat,int nrows,int ncols){
       
       transformed data{
       matrix[nlatent,nlatent] IIlatent;
+      matrix[nlatent*nlatent,nlatent*nlatent] IIlatent2;
       IIlatent = diag_matrix(rep_vector(1,nlatent));
+      IIlatent2 = diag_matrix(rep_vector(1,nlatent*nlatent));
       }
       
       parameters {
@@ -590,6 +592,8 @@ matrix cov(vector[] mat,int nrows,int ncols){
           '),'
 
         for(individual in 1:',checkvarying('DIFFUSION','nsubjects','1'),') DIFFUSION[individual] = sdpcor2cov_lp(DIFFUSION[individual],0,1);
+
+        //for(individual in 1:',checkvarying('DRIFT','nsubjects','1'),') DRIFT[individual] = -matrix_exp(DRIFT[individual]);
         
         ',if(continuoustime) paste0('
           for(individual in 1:',checkvarying('DRIFT','nsubjects','1'),') {
@@ -601,7 +605,9 @@ matrix cov(vector[] mat,int nrows,int ncols){
           
           ',if(!asymdiffusion) paste0('
             for(individual in 1:',checkvarying(c('DIFFUSION','DRIFT'),'nsubjects','1'),'){
-            asymDIFFUSIONvec[individual] =  -(DRIFTHATCH',checkvarying(c('DRIFT'),'[individual]','[1]'),' \\ to_vector(DIFFUSION',checkvarying(c('DIFFUSION'),'[individual]','[1]'),'[diffusionindices,diffusionindices]));
+            asymDIFFUSIONvec[individual] =  -(DRIFTHATCH',checkvarying(c('DRIFT'),'[individual]','[1]'),
+              ' \\ to_vector(DIFFUSION',checkvarying(c('DIFFUSION'),'[individual]','[1]'),
+              '[diffusionindices,diffusionindices]));
             for(drowi in 1:ndiffusion) {
             for(dcoli in 1:ndiffusion){
             asymDIFFUSION[individual][drowi,dcoli] =  asymDIFFUSIONvec[individual][drowi+(dcoli-1)*ndiffusion];
@@ -612,7 +618,7 @@ matrix cov(vector[] mat,int nrows,int ncols){
         
         if(!continuoustime & !asymdiffusion) paste0('
           for(individual in 1:',checkvarying(c('DIFFUSION','DRIFT'),'nsubjects','1'),'){
-          asymDIFFUSIONvec[individual] = (iilatent2 - kron_prod(DRIFT',checkvarying(c('DRIFT'),'[individual]','[1]'),', DRIFT',checkvarying(c('DRIFT'),'[individual]','[1]'),')) * 
+          asymDIFFUSIONvec[individual] = (IIlatent2 - kron_prod(DRIFT',checkvarying(c('DRIFT'),'[individual]','[1]'),', DRIFT',checkvarying(c('DRIFT'),'[individual]','[1]'),')) * 
           to_vector(DIFFUSION',checkvarying(c('DIFFUSION'),'[individual]','[1]'),');
           for(drowi in 1:nlatent) {
           for(dcoli in 1:nlatent){

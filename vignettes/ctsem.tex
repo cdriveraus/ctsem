@@ -665,7 +665,7 @@ R> summary(tdpredlevelfit, verbose = TRUE)[c("DRIFT","TDPREDEFFECT")]
 $DRIFT
                LeisureTime Happiness MoneyIntLatent
 LeisureTime        -0.1386   -0.0739       0.569824
-Happiness           0.0526   -0.0726      -0.290855
+Happiness           0.0526   -0.0726      -0.290856
 MoneyIntLatent      0.0000    0.0000      -0.000001
 
 $TDPREDEFFECT
@@ -810,7 +810,7 @@ R> oscillatingf <- ctFit(Oscillating, oscillatingm, carefulFit = FALSE)
 \end{Schunk}
 
 \section[Tips]{Additional specification options and tips for model estimation} \label{sec:tips}\nopagebreak
-Given the complexity of parameter constraints, and that for some classes of models multiple minima may exist, parameter estimation is sometimes difficult. To ensure reliable estimation, there are some additional approaches that may be helpful. By default the argument \code{carefulFit = TRUE} for the \code {ctFit} function is specified. This initiates a two-step procedure, in which the first step penalises the likelihood\footnote{The sum of squares of each parameter that is neither factor loading nor mean related is added to the likelihood} to help maintain potentially problematic parameters close to 0, and then uses these estimates as starting values for maximum likelihood estimation. Though often useful, in some cases (particularly those with complex dynamics) it can help to switch this off. Beyond this, as a general guideline we suggest starting with simpler, more constrained models and freeing parameters in a stepwise fashion. This could involve developing the measurement model separately, estimating only autoregressive parameters of the DRIFT matrix at first (in simple models, this means constraining the off-diagonals of the DRIFT matrix to 0), or fixing the factor loading matrix prior to free estimation. If progression to additional complexity results in worse likelihood values, the optimization has resulted in a local rather than global optimum. In such a case, ensure that sensible starting values are specified. These may be specified in the \code{startValues} argument of \code{ctModel}, as shown in the oscillating example of Section \ref{sec:diffusiondynamics}, or alternatively, the raw \pkg{OpenMx} parameters \footnote{One should bear in mind that the parameters used within OpenMx are transformations of the continuous time parameters to allow unconstrained optimization, see Section \ref{sec:modelspec}.} may be extracted from a previous fit using the \pkg{OpenMx} function \code{omxGetParameters}, and used with \code{ctFit} via the \code{omxStartValues} argument. The following code is an example of how this would be applied to the first fitting example, from Section \ref{sec:modelfit}.
+Given the complexity of parameter constraints, and that for some classes of models multiple minima may exist, parameter estimation is sometimes difficult. To ensure reliable estimation, there are some additional approaches that may be helpful. By default the argument \code{carefulFit = TRUE} for the \code {ctFit} function is specified. This initiates a two-step procedure, in which the first step penalises the likelihood\footnote{The sum of squares of each parameter that is neither factor loading nor mean related is added to the likelihood, as is the inverse of any parameters on the diagonals of square matrices -- essentially penalising values at the extremes} to help maintain potentially problematic parameters close to 0, and then uses these estimates as starting values for maximum likelihood estimation. Though often useful, in some cases (particularly those with complex dynamics) it can help to switch this off. Beyond this, as a general guideline we suggest starting with simpler, more constrained models and freeing parameters in a stepwise fashion (not as a means of model development, simply for fitting purposes). The \code{ctRefineTo} function can be used as a replacement for \code{ctFit} and automates this step-wise progression. One could do this manually by developing the measurement model separately, estimating only autoregressive parameters of the DRIFT matrix at first (in simple models, this means constraining the off-diagonals of the DRIFT matrix to 0), or fixing the factor loading matrix prior to free estimation. If progression to additional complexity results in worse likelihood values, the optimization has resulted in a local rather than global optimum. In such a case, ensure that sensible starting values are specified. These may be specified in the \code{startValues} argument of \code{ctModel}, as shown in the oscillating example of Section \ref{sec:diffusiondynamics}, or alternatively, the raw \pkg{OpenMx} parameters \footnote{One should bear in mind that the parameters used within OpenMx are transformations of the continuous time parameters to allow unconstrained optimization, see Section \ref{sec:modelspec}.} may be extracted from a previous fit using the \pkg{OpenMx} function \code{omxGetParameters}, and used with \code{ctFit} via the \code{omxStartValues} argument. The following code is an example of how this would be applied to the first fitting example, from Section \ref{sec:modelfit}.
 
 \begin{Schunk}
 \begin{Sinput}
@@ -872,11 +872,11 @@ R> discretefit <- ctCI(discretefit, confidenceintervals = 'DRIFT')
 R> summary(discretefit)$omxsummary$CI
 \end{Sinput}
 \begin{Soutput}
-                              lbound estimate ubound note
-drift_LeisureTime_LeisureTime  0.145    0.332     NA  !!!
-drift_LeisureTime_Happiness       NA   -0.299  -0.12  !!!
-drift_Happiness_LeisureTime    0.229    0.951     NA  !!!
-drift_Happiness_Happiness         NA   -0.742  -0.11  !!!
+                                lbound estimate  ubound note
+drift_LeisureTime_LeisureTime -0.78172  -0.3548 -0.0966     
+drift_LeisureTime_Happiness   -0.09037   0.0717  0.5012     
+drift_Happiness_LeisureTime   -0.00908   0.0715  0.1904     
+drift_Happiness_Happiness     -0.15883  -0.0687 -0.0262     
 \end{Soutput}
 \end{Schunk}
 
