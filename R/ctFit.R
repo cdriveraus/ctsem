@@ -15,11 +15,11 @@
 #' 'Kalman' may be specified for multiple subjects, however as no trait matrices are used by the Kalman filter
 #' one must consider how average level differences between subjects are accounted for.
 #' See \code{\link{ctMultigroupFit}} for the possibility to apply the Kalman filter over multiple subjects)
-#' @param stationary Character vector of T0 matrix names in which to constrain any free parameters to stationarity.  
-#' Defaults to c('T0TRAITEFFECT','T0TIPREDEFFECT'), constraining only the between subject difference effects to be
-#' constant over time. 
-#' Can be set to NULL to force all T0 matrices to be estimated, can be 
-#' set to 'all' to constrain all T0 matrices to stationarity. 
+#' @param stationary Character vector of T0 matrix names in which to constrain any 
+#' free parameters to stationarity. 
+#' Defaults to \code{c('T0TRAITEFFECT','T0TIPREDEFFECT')}, constraining only
+#' between person effects to stationarity. Use \code{NULL} for no constraints,
+#' or 'all' to constrain all T0 matrices.
 #' @param optimizer character string, defaults to the open-source 'SLSQP' optimizer that is distributed
 #' in all versions of OpenMx. However, 'NPSOL' may sometimes perform better for these problems,
 #' though requires that you have installed OpenMx via the OpenMx web site, by running:
@@ -637,8 +637,10 @@ ctFit  <- function(datawide, ctmodelobj,
     #     rep(1:n.manifest,times=Tpoints*n.latent),
     #     rep(1:n.latent,each=Tpoints*n.manifest))]
     
-    #new trait loadings to latent
-    A$values[cbind(rep(1:latentend,each=n.latent), (latentend+1):(latentend+n.latent))] <- diag(n.latent)
+    #trait loadings to latent
+    # browser()
+    A$labels[cbind(rep(1:latentend,each=n.latent), (latentend+1):(latentend+n.latent))] <- paste0('discreteTRAIT_T',
+      rep(0:(Tpoints-1),each=n.latent^2),'[',rep(1:n.latent,each=n.latent),',',1:n.latent,']')
     
     #trait variance
     S$values[(latentend+1):(latentend+n.latent), (latentend+1):(latentend+n.latent)] <- diag(1,n.latent)
@@ -1198,25 +1200,26 @@ ctFit  <- function(datawide, ctmodelobj,
   
   
   ####TRAIT EXTENSION ALGEBRAS
-  #   if(traitExtension == TRUE) {  
-  #     
-  #     traitalgs <- list()
-  #     for(i in 1:(Tpoints - 1)){
-  #       
-  #       if(discreteTime==FALSE){
-  #         #         if(asymptotes==FALSE) 
-  #         fullAlgString <- paste0("invDRIFT %*%   (omxExponential(DRIFT %x%", defcall[i], ") - invDRIFT)")   #optimize using continuous traitvar        
-  #         if(asymptotes==TRUE)    fullAlgString <- paste0("II - discreteDRIFT_T", i) #using asymptotic trait variance 
-  #       }
-  #       
-  #       if(discreteTime==TRUE) fullAlgString <- paste0("II")
-  #       
-  #       traitalgs[i] <- eval(substitute(OpenMx::mxAlgebra(theExpression, name = paste0("TRAITd", i)  ), 
-  #         list(theExpression = parse(text = fullAlgString)[[1]])))  	
-  #     }
-  #     
-  #     #     returnAllLocals()
-  #   }#end Trait algebra definition function
+    if(traitExtension == TRUE) {
+
+      traitalgs <- list()
+      for(i in 1:(Tpoints - 1)){
+
+        if(discreteTime==FALSE){
+          #         if(asymptotes==FALSE)
+          # fullAlgString <- paste0("invDRIFT %*%   (omxExponential(DRIFT %x%", defcall[i], ") - invDRIFT)")   #optimize using continuous traitvar
+          # if(asymptotes==TRUE)    
+            fullAlgString <- paste0("II - discreteDRIFT_T", i) #using asymptotic trait variance
+        }
+
+        if(discreteTime==TRUE) fullAlgString <- paste0("II")
+
+        traitalgs[[i]] <- eval(substitute(OpenMx::mxAlgebra(theExpression, name = paste0("discreteTRAIT_T", i)  ),
+          list(theExpression = parse(text = fullAlgString)[[1]])))
+      }
+
+      #     returnAllLocals()
+    }#end Trait algebra definition function
   
   
   
@@ -1442,24 +1445,25 @@ ctFit  <- function(datawide, ctmodelobj,
     
     if('T0TRAITEFFECT' %in% stationary){
       
-      if(asymptotes==FALSE){
-        T0TRAITEFFECT$labels[T0TRAITEFFECT$free==TRUE] <-
-          paste0('T0TRAITEFFECTalg[', 1:n.latent, ',', rep(1:n.latent, each=n.latent), ']')[T0TRAITEFFECT$free==TRUE]
-        
-        T0TRAITEFFECT$free <-FALSE
-        T0TRAITEFFECTalg<- OpenMx::mxAlgebra(name='T0TRAITEFFECTalg', -invDRIFT)
-        if(discreteTime==TRUE) T0TRAITEFFECTalg<- OpenMx::mxAlgebra(name='T0TRAITEFFECTalg', solve(II - DRIFT))
-      }
-      
-      if(asymptotes==TRUE){
+      # if(asymptotes==FALSE){
+      #   T0TRAITEFFECT$labels[T0TRAITEFFECT$free==TRUE] <-
+      #     paste0('T0TRAITEFFECTalg[', 1:n.latent, ',', rep(1:n.latent, each=n.latent), ']')[T0TRAITEFFECT$free==TRUE]
+      #   
+      #   T0TRAITEFFECT$free <-FALSE
+      #   T0TRAITEFFECTalg<- OpenMx::mxAlgebra(name='T0TRAITEFFECTalg', -invDRIFT)
+      #   if(discreteTime==TRUE) T0TRAITEFFECTalg<- OpenMx::mxAlgebra(name='T0TRAITEFFECTalg', solve(II - DRIFT))
+      # }
+      # 
+      # if(asymptotes==TRUE){
         T0TRAITEFFECT$labels[T0TRAITEFFECT$free==TRUE] <- NA
         T0TRAITEFFECT$values[T0TRAITEFFECT$free==TRUE] <- diag(n.latent)[T0TRAITEFFECT$free==TRUE]
         T0TRAITEFFECT$free <-FALSE
-      }
+      # }
     }
     
     if(discreteTime==FALSE && transformedParams==TRUE){
       model <- OpenMx::mxModel(model, 
+        traitalgs,
         OpenMx::mxMatrix(name = "TRAITVARbase", values=TRAITVAR$values, labels=TRAITVAR$labels, 
           ncol=n.latent, nrow=n.latent, free=TRAITVAR$free, type='Full'), 
         OpenMx::mxAlgebra(name='TRAITVARchol', vec2diag(exp(diag2vec(TRAITVARbase))) + #inverse log link for diagonal
@@ -1485,7 +1489,7 @@ ctFit  <- function(datawide, ctmodelobj,
       )
     }
     
-    if('T0TRAITEFFECT' %in% stationary & asymptotes==FALSE) model<-OpenMx::mxModel(model, T0TRAITEFFECTalg)
+    # if('T0TRAITEFFECT' %in% stationary & asymptotes==FALSE) model<-OpenMx::mxModel(model, T0TRAITEFFECTalg)
     
   }
   
