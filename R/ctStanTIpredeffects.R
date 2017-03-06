@@ -4,6 +4,10 @@
 #' on subject level parameters of a ctStanFit object.
 #'
 #' @param fit fit object from \code{\link{ctStanFit}}
+#' @param returndifference logical. If FALSE, absolute parameter values are returned. 
+#' If TRUE, only the effect of the covariate (i.e. without the average value of the parameter)
+#' are returned. The former can be easier to interpret, but the latter are more likely to fit on 
+#' a single plot.
 #' @param probs numeric vector of quantile probabilities from 0 to 1. Specify 3
 #' values if plotting, the 2nd will be drawn as a line with uncertainty polygon
 #' based on 1st and 3rd.
@@ -28,7 +32,7 @@
 #'
 #' @examples
 #' ctStanTIpredeffects(ctstantestfit,plot=TRUE)
-ctStanTIpredeffects<-function(fit,probs=c(.25,.5,.75),
+ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   whichTIpreds=1,whichpars='all',
   plot=FALSE,...){
   
@@ -70,9 +74,9 @@ noeffect<-aaply(1:npars, 1,function(pari){ #for each param
   return(out)
 })
 
-deffect<-effect-array(noeffect,dim=dim(effect))
+if(returndifference) effect<-effect-array(noeffect,dim=dim(effect))
 
-out<-aaply(probs,1,function(x) ctCollapse(deffect,2,quantile,probs=x))
+out<-aaply(probs,1,function(x) ctCollapse(effect,2,quantile,probs=x))
 dimnames(out)=list(Quantile=paste0('Quantile',probs),
   popmean=spec$param,
   subject=tiorder #subjects reordered because tipreds were at top

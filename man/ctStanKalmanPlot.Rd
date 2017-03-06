@@ -77,4 +77,3 @@ ctStanKalmanPlot(x, subjects=2)
 ###Single step procedure:
 ctStanKalman(ctstantestfit,subjects=2,plot=TRUE)
 }
-

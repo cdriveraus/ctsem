@@ -24,4 +24,3 @@ Easily collapse an array margin using a specified function.
 testarray <- array(rnorm(900,2,1),dim=c(100,3,3))
 ctCollapse(testarray,1,mean)
 }
-

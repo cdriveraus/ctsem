@@ -49,4 +49,3 @@ y <- ctStanTIpredeffects(ctstantestfit,plot=FALSE)
 x<-ctstantestfit$data$tipreds[order(ctstantestfit$data$tipreds[,1]),1]
 ctPlotArray(y,x)
 }
-

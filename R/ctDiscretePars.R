@@ -40,9 +40,9 @@ ctStanParnames <- function(x,substrings=c('hmean_','hsd_')){
 #'#posterior median over all subjects (also reflects mean of unconstrained pars)
 #'ctStanContinuousPars(ctstantestfit)
 #'
-#'#posterior 95% quantiles for subject 2
+#'#posterior 97.5% quantiles for subject 2
 #'ctStanContinuousPars(ctstantestfit, subjects=2, calcfunc=quantile, 
-#'calcfuncargs=list(probs=0.95))
+#'calcfuncargs=list(probs=0.975))
 #'@export
 ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
   calcfunc=quantile,calcfuncargs=list(probs=0.5)){
@@ -174,7 +174,7 @@ ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
 #'plot=TRUE,indices='all')
 #'@export
 ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=10,by=.1), 
-  quantiles = c(.05, .5, .95),plot=FALSE,...){
+  quantiles = c(.025, .5, .975),plot=FALSE,...){
   
   type='discreteDRIFT'
   collapseSubjects=TRUE #consider this for a switch

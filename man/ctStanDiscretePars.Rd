@@ -5,7 +5,7 @@
 \title{ctStanDiscretePars}
 \usage{
 ctStanDiscretePars(ctstanfitobj, subjects = "all", times = seq(from = 0, to
-  = 10, by = 0.1), quantiles = c(0.05, 0.5, 0.95), plot = FALSE, ...)
+  = 10, by = 0.1), quantiles = c(0.025, 0.5, 0.975), plot = FALSE, ...)
 }
 \arguments{
 \item{ctstanfitobj}{Continuous time model fit from \code{\link{ctStanFit}}}
@@ -31,4 +31,3 @@ from ctStanFit, for specified subjects.
 ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
 plot=TRUE,indices='all')
 }
-

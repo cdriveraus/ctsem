@@ -11,7 +11,9 @@
 #' @param simultdpredeffect logical - whether time dependent predictors impact 
 #' instantaneously, or an instant *after* instantaneously. 
 #' Switch reflects difference between ctStanFit and ctFit.
-#' @details TRAITTDPREDCOV and TIPREDCOV matrices are not accounted for, at present. 
+#' @details TRAITVAR and MANIFESTRAITVAR are treated as Cholesky factor covariances 
+#' of CINT and MANIFESTMEANS, respectively. 
+#' TRAITTDPREDCOV and TIPREDCOV matrices are not accounted for, at present. 
 #' The first 1:n.TDpred rows and columns of TDPREDVAR are used for generating
 #' tdpreds at each time point. 
 #' @examples 

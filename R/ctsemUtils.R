@@ -29,6 +29,7 @@ ctCollapse<-function(inarray,collapsemargin,collapsefunc,...){
   indims<-dim(inarray)
   out<-array(plyr::aaply(inarray,(1:length(indims))[-collapsemargin],collapsefunc,...,
     .drop=TRUE),dim=indims[-collapsemargin])
+  dimnames(out)=dimnames(inarray)[-collapsemargin]
   return(out)
 }
 

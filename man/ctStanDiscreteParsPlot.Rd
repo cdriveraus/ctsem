@@ -74,4 +74,3 @@ x <- ctStanDiscretePars(ctstantestfit)
 
 ctStanDiscreteParsPlot(x, 'CR')
 }
-

@@ -15,4 +15,3 @@ Maps the stan function so the same code works in R.
 \examples{
 inv_logit(-3)
 }
-

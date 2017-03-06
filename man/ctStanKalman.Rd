@@ -58,4 +58,3 @@ ctStanKalman(ctstantestfit, timerange=c(0,60), timestep=.1, plot=TRUE,
   plotcontrol=list(xlim=c(0,55),main='Observations and priors'),
   polygoncontrol=list(density=20))
 }
-

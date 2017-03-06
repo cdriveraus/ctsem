@@ -19,4 +19,3 @@ Summary of ctsemMultigroupFit object
 \description{
 Provides summary details for objects fitted with \code{\link{ctMultigroupFit}}.
 }
-

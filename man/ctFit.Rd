@@ -7,10 +7,11 @@
 ctFit(datawide, ctmodelobj, objective = "auto",
   stationary = c("T0TRAITEFFECT", "T0TIPREDEFFECT"), optimizer = "SLSQP",
   retryattempts = 15, iterationSummary = FALSE, carefulFit = TRUE,
-  showInits = FALSE, asymptotes = FALSE, meanIntervals = FALSE,
-  plotOptimization = F, crossEffectNegStarts = TRUE, nofit = FALSE,
-  discreteTime = FALSE, verbose = 0, useOptimizer = TRUE,
-  omxStartValues = NULL, transformedParams = TRUE)
+  carefulFitWeight = 100, showInits = FALSE, asymptotes = FALSE,
+  meanIntervals = FALSE, plotOptimization = F,
+  crossEffectNegStarts = TRUE, nofit = FALSE, discreteTime = FALSE,
+  verbose = 0, useOptimizer = TRUE, omxStartValues = NULL,
+  transformedParams = TRUE)
 }
 \arguments{
 \item{datawide}{the data you wish to fit a ctsem model to.}
@@ -48,6 +49,9 @@ to force MANIFESTVAR, DRIFT, TRAITVAR, MANIFESTTRAITVAR parameters to remain clo
 fits the specified model normally, using these estimates as starting values. 
 Can help to ensure optimization begins at sensible, non-exteme values, 
 though results in any user specified start values being ignored for the final fit (though they are still used for initial fit).}
+
+\item{carefulFitWeight}{Positive numeric. Sets the weight for the penalisation (or prior) applied by the carefulFit algorithm. 
+Generally unnecessary to adjust, may be helpful to try a selection of values (perhaps between 0 and 1000) when optimization is problematic.}
 
 \item{showInits}{if TRUE, prints the list of 
 starting values for free parameters. These are the 'raw' values used by OpenMx, 
@@ -164,4 +168,3 @@ oscillatingm <- ctModel(n.latent = 2, n.manifest = 1, Tpoints = 11,
 oscillatingf <- ctFit(Oscillating, oscillatingm, carefulFit = FALSE)
 }
 }
-

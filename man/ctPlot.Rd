@@ -57,4 +57,3 @@ traitfit <- ctFit(datawide=ctExample1, ctmodelobj=traitmodel)
 ctPlot(traitfit, type='CR', xlim=c(0,5),ylim=c(-1,1))
 }
 }
-

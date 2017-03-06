@@ -37,4 +37,3 @@ datastructure<-ctIntervalise(datawide = datastructure,
 save(datastructure,file='.\\\\data\\\\datastructure.rda')
 }
 }
-

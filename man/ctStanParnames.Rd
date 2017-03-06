@@ -24,4 +24,3 @@ Gets internal stan parameter names of a ctStanFit object based on specified subs
 \examples{
 ctStanParnames(ctstantestfit,substrings=c('hmean_','hsd_'))
 }
-

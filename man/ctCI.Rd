@@ -45,4 +45,3 @@ fit <- ctCI(fit, confidenceintervals = 'DRIFT')
 summary(fit)$omxsummary$CI
 }
 }
-

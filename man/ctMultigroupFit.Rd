@@ -87,4 +87,3 @@ summary(multif)
 \seealso{
 \code{\link{ctFit}} and \code{\link{ctModel}}
 }
-

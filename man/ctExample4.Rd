@@ -8,4 +8,3 @@ Y1, Y2, Y3, and 19 measurement intervals dTx, for each of 20 individuals.}
 \description{
 Simulated example dataset for the ctsem package
 }
-

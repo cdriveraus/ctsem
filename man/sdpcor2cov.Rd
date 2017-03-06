@@ -22,4 +22,3 @@ print(testmat)
 covmat <- sdpcor2cov(testmat) #convert to covariance
 cov2cor(covmat) #convert covariance to correlation
 }
-

@@ -35,6 +35,8 @@
 #' fits the specified model normally, using these estimates as starting values. 
 #' Can help to ensure optimization begins at sensible, non-exteme values, 
 #' though results in any user specified start values being ignored for the final fit (though they are still used for initial fit).
+#' @param carefulFitWeight Positive numeric. Sets the weight for the penalisation (or prior) applied by the carefulFit algorithm. 
+#' Generally unnecessary to adjust, may be helpful to try a selection of values (perhaps between 0 and 1000) when optimization is problematic.
 #' @param plotOptimization If TRUE, uses checkpointing for OpenMx function \code{mxRun}, set to checkpoint every iteration, 
 #' output checkpoint file to working directory, then creates a plot for each parameter's values over iterations.
 #' @param meanIntervals Use average time intervals for each column for calculation 
@@ -135,6 +137,7 @@ ctFit  <- function(datawide, ctmodelobj,
   stationary=c('T0TRAITEFFECT','T0TIPREDEFFECT'), 
   optimizer='SLSQP', 
   retryattempts=15, iterationSummary=FALSE, carefulFit=TRUE,  
+  carefulFitWeight=100,
   showInits=FALSE, asymptotes=FALSE,
   meanIntervals=FALSE, plotOptimization=F, 
   crossEffectNegStarts=TRUE,
@@ -358,17 +361,17 @@ ctFit  <- function(datawide, ctmodelobj,
     return(output)
   }
   
-  T0VAR <- processInputMatrix(ctmodelobj['T0VAR'], symmetric = FALSE, randomscale=0, diagadd = 1, chol=TRUE)
+  T0VAR <- processInputMatrix(ctmodelobj['T0VAR'], symmetric = FALSE, randomscale=0, diagadd = 3, chol=TRUE)
 
   T0MEANS <- processInputMatrix(ctmodelobj["T0MEANS"], symmetric = FALSE, randomscale=1, diagadd = 0)
   MANIFESTMEANS <- processInputMatrix(ctmodelobj["MANIFESTMEANS"], symmetric = FALSE, randomscale=1, diagadd = 0)
   LAMBDA <- processInputMatrix(ctmodelobj["LAMBDA"], symmetric = FALSE, randomscale=.1, addvalues=1, diagadd = 0)
-  MANIFESTVAR <- processInputMatrix(ctmodelobj["MANIFESTVAR"],  symmetric = FALSE, randomscale=0, diagadd = 1)    
+  MANIFESTVAR <- processInputMatrix(ctmodelobj["MANIFESTVAR"],  symmetric = FALSE, randomscale=0, diagadd = 3)    
   
   DRIFT <- processInputMatrix(ctmodelobj["DRIFT"],  symmetric = FALSE,randomscale=0, 
     addvalues= ifelse(crossEffectNegStarts==TRUE,-.05,0), diagadd=ifelse(discreteTime==TRUE,.5,-.4))
   
-  DIFFUSION <- processInputMatrix(ctmodelobj["DIFFUSION"], symmetric = FALSE, randomscale=0, diagadd = 1)      
+  DIFFUSION <- processInputMatrix(ctmodelobj["DIFFUSION"], symmetric = FALSE, randomscale=0, diagadd = 3)      
   
   CINT <- processInputMatrix(ctmodelobj["CINT"], randomscale=.1)    
   
@@ -393,8 +396,8 @@ ctFit  <- function(datawide, ctmodelobj,
   
   
   if(traitExtension == TRUE){ #if needed, process and include traits in matrices
-    TRAITVAR <- processInputMatrix(ctmodelobj["TRAITVAR"],symmetric = FALSE, diagadd = 1, randomscale=0,chol=TRUE)
-    T0TRAITEFFECT <- processInputMatrix(ctmodelobj["T0TRAITEFFECT"],symmetric = FALSE, diagadd = 1, randomscale=0,chol=FALSE)
+    TRAITVAR <- processInputMatrix(ctmodelobj["TRAITVAR"],symmetric = FALSE, diagadd = 3, randomscale=0,chol=TRUE)
+    T0TRAITEFFECT <- processInputMatrix(ctmodelobj["T0TRAITEFFECT"],symmetric = FALSE, diagadd = 3, randomscale=0,chol=FALSE)
     if(transformedParams==TRUE){
       diag(TRAITVAR$values) <- log(diag(TRAITVAR$values))
       diag(TRAITVAR$values)[diag(TRAITVAR$values)== -Inf] <- -999
@@ -403,7 +406,7 @@ ctFit  <- function(datawide, ctmodelobj,
   
   
   if(manifestTraitvarExtension == TRUE){
-    MANIFESTTRAITVAR <- processInputMatrix(ctmodelobj["MANIFESTTRAITVAR"],  symmetric = FALSE, randomscale=0, diagadd = 1,chol=TRUE)
+    MANIFESTTRAITVAR <- processInputMatrix(ctmodelobj["MANIFESTTRAITVAR"],  symmetric = FALSE, randomscale=0, diagadd = 3,chol=TRUE)
     if(transformedParams==TRUE){
       diag(MANIFESTTRAITVAR$values) <- log(diag(MANIFESTTRAITVAR$values))
       diag(MANIFESTTRAITVAR$values)[diag(MANIFESTTRAITVAR$values)== -Inf] <- -999
@@ -420,7 +423,7 @@ ctFit  <- function(datawide, ctmodelobj,
     TDPREDEFFECT <- processInputMatrix(ctmodelobj["TDPREDEFFECT"], symmetric = FALSE, diagadd = 0, randomscale=0)
     T0TDPREDCOV <- processInputMatrix(ctmodelobj["T0TDPREDCOV"], symmetric = FALSE, diagadd = 0, randomscale=0.001) 
     
-    TDPREDVAR <- processInputMatrix(ctmodelobj["TDPREDVAR"], symmetric = FALSE, diagadd = 1, randomscale=0.01,chol=TRUE) 
+    TDPREDVAR <- processInputMatrix(ctmodelobj["TDPREDVAR"], symmetric = FALSE, diagadd = 3, randomscale=0.01,chol=TRUE) 
     if(transformedParams==TRUE){
       diag(TDPREDVAR$values) <- log(diag(TDPREDVAR$values))
       diag(TDPREDVAR$values)[diag(TDPREDVAR$values)== -Inf] <- -999
@@ -431,7 +434,7 @@ ctFit  <- function(datawide, ctmodelobj,
     TIPREDMEANS <- processInputMatrix(ctmodelobj["TIPREDMEANS"], symmetric = FALSE, diagadd = 0)
     TIPREDEFFECT <- processInputMatrix(ctmodelobj["TIPREDEFFECT"], symmetric = FALSE, diagadd = 0, randomscale=.01)
     T0TIPREDEFFECT <- processInputMatrix(ctmodelobj["T0TIPREDEFFECT"], symmetric = FALSE, diagadd = 0, randomscale=.01)
-    TIPREDVAR <- processInputMatrix(ctmodelobj["TIPREDVAR"], symmetric = FALSE, diagadd = 1, randomscale=0,chol=TRUE)    
+    TIPREDVAR <- processInputMatrix(ctmodelobj["TIPREDVAR"], symmetric = FALSE, diagadd = 3, randomscale=0,chol=TRUE)    
     if(transformedParams==TRUE){
       diag(TIPREDVAR$values) <- log(diag(TIPREDVAR$values))
       diag(TIPREDVAR$values)[diag(TIPREDVAR$values)== -Inf] <- -999
@@ -2039,7 +2042,8 @@ ctFit  <- function(datawide, ctmodelobj,
   if(carefulFit==TRUE) {
     carefulFit<-FALSE
     
-    mxobj<-carefulFit(model,traitExtension=traitExtension,manifestTraitvarExtension=manifestTraitvarExtension) #fit with the penalised likelihood
+    mxobj<-carefulFit(model,traitExtension=traitExtension,
+      manifestTraitvarExtension=manifestTraitvarExtension,weighting=carefulFitWeight) #fit with the penalised likelihood
     #         mxobj<-OpenMx::mxRun(model) #fit with the penalised likelihood
     
     # message(paste0('carefulFit penalisation:  ', mxEval(ctsem.penalties, mxobj,compute=T),'\n'))

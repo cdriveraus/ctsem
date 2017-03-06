@@ -39,4 +39,3 @@ stanmodel=ctStanModel(model)
 
 
 }
-

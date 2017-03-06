@@ -69,4 +69,3 @@ print(kout$ysmooth)
 matplot(kout$time,kout$ysmooth,type='l')
 matplot(kout$time,datalong[,2:3],type='p',add=TRUE,pch=1)
 }
-

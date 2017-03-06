@@ -31,8 +31,7 @@ Returns the continuous time parameter matrices for specified subjects of a ctSta
 #posterior median over all subjects (also reflects mean of unconstrained pars)
 ctStanContinuousPars(ctstantestfit)
 
-#posterior 95\% quantiles for subject 2
+#posterior 97.5\% quantiles for subject 2
 ctStanContinuousPars(ctstantestfit, subjects=2, calcfunc=quantile, 
-calcfuncargs=list(probs=0.95))
+calcfuncargs=list(probs=0.975))
 }
-

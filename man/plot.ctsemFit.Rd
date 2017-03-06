@@ -68,4 +68,3 @@ traitfit <- ctFit(datawide=ctExample1, ctmodelobj=traitmodel)
 plot(traitfit, wait=FALSE)
 }
 }
-

@@ -76,17 +76,18 @@ hypercorr=array(unlist(lapply(1:iter,function(x){ #get array of hypercorr sample
 
 popcorr <- ctCollapse(hypercorr_transformed,3,mean)[lower.tri(diag(dim(hypercorr_transformed)[1]))]
 popcorr <- cbind(popcorr,ctCollapse(hypercorr_transformed,3,sd)[lower.tri(diag(dim(hypercorr_transformed)[1]))])
-popcorr <- cbind(popcorr,ctCollapse(hypercorr_transformed,3,quantile,probs=c(.05))[lower.tri(diag(dim(hypercorr_transformed)[1]))])
-popcorr <- cbind(popcorr,ctCollapse(hypercorr_transformed,3,quantile,probs=c(.95))[lower.tri(diag(dim(hypercorr_transformed)[1]))])
-colnames(popcorr) <- c('mean','sd','2.5%','97.5%')
+popcorr <- cbind(popcorr,ctCollapse(hypercorr_transformed,3,quantile,probs=c(.025))[lower.tri(diag(dim(hypercorr_transformed)[1]))])
+popcorr <- cbind(popcorr,ctCollapse(hypercorr_transformed,3,quantile,probs=c(.5))[lower.tri(diag(dim(hypercorr_transformed)[1]))])
+popcorr <- cbind(popcorr,ctCollapse(hypercorr_transformed,3,quantile,probs=c(.975))[lower.tri(diag(dim(hypercorr_transformed)[1]))])
+colnames(popcorr) <- c('mean','sd','2.5%','50%','97.5%')
 rownames(popcorr) <- matrix(paste0('corr_',parnames,'__',rep(parnames,each=length(parnames))),
   length(parnames),length(parnames))[lower.tri(diag(dim(hypercorr)[1]))]
 popcorr <- round(popcorr,3)
 
 popcorr <- cbind(popcorr,popcorr[,'mean'] / popcorr[,'sd'])
-colnames(popcorr)[5] <- 't'
+colnames(popcorr)[ncol(popcorr)] <- 't'
 
-popcorr <- popcorr[order(popcorr[,'t']),]
+popcorr <- popcorr[order(popcorr[,'t']),,drop=FALSE]
 
 hypercorrmean=getMean(hypercorr)
 hypercorrsd=getSd(hypercorr)
@@ -125,6 +126,9 @@ out$popsd=round(s$summary[c(grep('hsd_',rownames(s$summary))),
 
 out$popmeans=round(s$summary[c(grep('hmean_',rownames(s$summary))),
   c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],3)
+
+out$note1=paste0('Parameters are reported as specified in ctModel -- diagonals of covariance related matrices are std. deviations, ',
+'off-diagonals are partial correlations. Full covariance matrices can be attained using ctStanContinuousPars')
 
 out$logprob=round(s$summary[c(grep('lp',rownames(s$summary))),
   c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],3)

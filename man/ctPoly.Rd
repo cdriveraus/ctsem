@@ -33,4 +33,3 @@ yhigh=sqrt(0:100) - runif(101),
 ylow=sqrt(0:100) + runif(101),
 col=adjustcolor('red',alpha.f=.1),border=NA)
 }
-

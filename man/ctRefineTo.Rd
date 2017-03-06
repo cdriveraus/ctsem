@@ -26,4 +26,3 @@ This function fits a sequence of ctsem models increasing in complexity,
 starting with a m involving fixed and relatively strong auto effects, no cross effects, no predictors, and no off-diagonal covariances.
 For many models this can improve the speed and robustness of fitting
 }
-

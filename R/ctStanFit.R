@@ -293,7 +293,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
   message('Unique discreteDRIFT calculations per step required = ', length(unique(driftindex))-1)
   message('Unique discreteCINT calculations per step required = ', length(unique(cintindex))-1)
   message('Unique discreteDIFFUSION calculations per step required = ', length(unique(diffusionindex))-1)
-  # browser()
+  
   # datalong[sort(c(which(dT > 5),which(dT > 5)+1,which(dT > 5)-1)),1:2]
   
   if(n.TDpred > 0) {
@@ -677,6 +677,18 @@ matrix cov(vector[] mat,int nrows,int ncols){
           '),'
       
       ',if(!kalman) 'etapostbase ~ normal(0,1); \n','
+
+// adjust partial correlation probabilities 
+        ',paste0(unlist(lapply(1:nrow(ctspec),function(rowi) {
+          out<-''
+          if(ctspec$matrix[rowi] %in% c('T0VAR','DIFFUSION') & ctspec$row[rowi] > ctspec$col[rowi]) {
+            out=paste0('target += beta_lpdf(inv_logit(',
+            'hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),']',
+            ')| 1.5 + (nlatent-1)/2 - .6 * ',ctspec$col[rowi],', 1.5 + (nlatent-1)/2 - .6 * ',ctspec$col[rowi],'); \n ')
+          }
+return(out)
+})),collapse=''),'
+
       
       // pre-calculate necessary discrete time matrices      
       counter=0;
@@ -715,8 +727,9 @@ matrix cov(vector[] mat,int nrows,int ncols){
       }
       
       
-      // stationarity priors
+      
       ',if(!is.na(ctstanmodel$stationaryvarprior)) paste0('
+  // stationarity priors
         for(individual in 1:nsubjects) {
         (diagonal(',
         if(!asymdiffusion) 'asym', 'DIFFUSION[',
@@ -945,7 +958,7 @@ print("lp = ", target());
     if(is.null(control$adapt_delta)) control$adapt_delta <- .9
     if(is.null(control$adapt_window)) control$adapt_window <- 2
     if(is.null(control$max_treedepth)) control$max_treedepth <- 10
-    if(is.null(control$adapt_init_buffer)) adapt_init_buffer=30
+    if(is.null(control$adapt_init_buffer)) adapt_init_buffer=3
     
     stanseed<-floor(as.numeric(Sys.time()))
     
@@ -1072,7 +1085,7 @@ print("lp = ", target());
         method='L-BFGS-B',hessian = TRUE)
       convergence=optimfit$convergence
       }
-      # browser()
+      
       est=optimfit$par
       sds=sqrt(diag(solve(optimfit$hessian)))
       lest= est - 1.96 * sds

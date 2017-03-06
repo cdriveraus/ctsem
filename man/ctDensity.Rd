@@ -24,4 +24,3 @@ ctdens<-ctDensity(y)
 plot(ctdens$density, ylim=ctdens$ylim,xlim=ctdens$xlim)
 plot(density(y))
 }
-

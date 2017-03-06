@@ -43,4 +43,3 @@ ctstantestfit<-ctStanFit(cd,checkm,iter=20,chains=1,initwithoptim=TRUE)
 save(ctstantestfit,file='.\\\\data\\\\ctstantestfit.rda')
 }
 }
-
