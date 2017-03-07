@@ -6,7 +6,7 @@
 \usage{
 \method{plot}{ctsemFit}(x, resolution = 50, wait = TRUE,
   max.time = "auto", mean = TRUE, withinVariance = TRUE, AR = TRUE,
-  CR = TRUE, standardiseCR = TRUE, randomImpulse = FALSE,
+  CR = TRUE, standardiseCR = FALSE, randomImpulse = FALSE,
   experimentalImpulse = FALSE, xlab = "Time", meansylim = "auto",
   ARylim = "auto", CRylim = "auto", ylab = "Value", ...)
 }
@@ -27,7 +27,7 @@
 
 \item{CR}{if TRUE, plot of cross regressive values from 0 to max.time included in output.}
 
-\item{standardiseCR}{if TRUE (default), cross regression values are standardised based on estimated within subject variance.}
+\item{standardiseCR}{if TRUE , cross regression values are standardised based on estimated within subject variance.}
 
 \item{randomImpulse}{if TRUE (default), plots expected change in processes given a random fluctuation of +1 for each process -- 
 plot is then a mixture of DIFFUSION and DRIFT characteristics.}
