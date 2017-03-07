@@ -78,8 +78,8 @@ Each TIpredictor is inserted at the right of the data matrix, after the time int
 \item{TIpredNames}{n.TIpred length vector of time independent predictor variable names,
 as they appear in the data structure.  Default names are TI1, TI2, etc.}
 
-\item{TRAITVAR}{For type='omx' only. Either NULL, if no trait / individual heterogeneity effect, 
-or lower triangular n.latent*n.latent cholesky matrix of trait variance / covariance.
+\item{TRAITVAR}{For type='omx' only. Either NULL, if no trait / unobserved heterogeneity effect, 
+or lower triangular n.latent*n.latent cholesky matrix of trait variance / covariance across subjects.
 "auto" freely estimates all parameters.}
 
 \item{T0TRAITEFFECT}{For type='omx' only. Either NULL, if no trait / individual heterogeneity effect, 

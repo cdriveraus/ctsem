@@ -225,7 +225,7 @@ ctFit  <- function(datawide, ctmodelobj,
     ####0 variance predictor fix
     varCheck<-try(any(diag(stats::cov(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-1), each=n.TDpred))],
       use="pairwise.complete.obs"))==0))
-    if(class(varCheck)=='try-error') {
+    if(class(varCheck)=='try-error' || any(is.na(varCheck))) {
       warning('unable to compute covariance matrix for time dependent predictors - unstable estimates may result if any variances are 0')
       varCheck<-FALSE
     }

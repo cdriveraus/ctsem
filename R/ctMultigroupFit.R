@@ -66,7 +66,7 @@
 
 ctMultigroupFit<-function(datawide,groupings,ctmodelobj,fixedmodel=NA,freemodel=NA,
  carefulFit=TRUE, omxStartValues=NULL,
-  retryattempts=5,showInits=FALSE,...){
+  retryattempts=15,showInits=FALSE,...){
 
   if(any(suppressWarnings(!is.na(as.numeric(groupings))))) stop("grouping variable must not contain purely numeric items")
   if(length(groupings)!= nrow(datawide)) stop('length of groupings does not equal number of rows of datawide')

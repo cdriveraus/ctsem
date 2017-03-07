@@ -66,8 +66,8 @@
 #' number of time points for a single individual, but may be one extra if sample relative time intervals are used, 
 #' see \code{\link{ctIntervalise}}. 
 #' 
-#' @param TRAITVAR For type='omx' only. Either NULL, if no trait / individual heterogeneity effect, 
-#' or lower triangular n.latent*n.latent cholesky matrix of trait variance / covariance.
+#' @param TRAITVAR For type='omx' only. Either NULL, if no trait / unobserved heterogeneity effect, 
+#' or lower triangular n.latent*n.latent cholesky matrix of trait variance / covariance across subjects.
 #' "auto" freely estimates all parameters.
 #' 
 #' @param T0TRAITEFFECT For type='omx' only. Either NULL, if no trait / individual heterogeneity effect, 

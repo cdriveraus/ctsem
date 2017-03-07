@@ -289,9 +289,9 @@ ctSummaryMatrices<-function(object,ridging=FALSE,timeInterval=1,verbose=FALSE,..
       tryCatch({  dimnames(TRAITVAR)<-list(latentNames,latentNames)}, error=function(e) e )
       outlist<-c(outlist,'TRAITVAR')
       
-              asymTRAITVAR<-tryCatch({ solve(DRIFT) %*% TRAITVAR %*% t(solve(DRIFT))}, error=function(e) e )
-            tryCatch({  dimnames(asymTRAITVAR)<-list(latentNames,latentNames)}, error=function(e) e )
-            outlist<-c(outlist,'asymTRAITVAR')
+            #   asymTRAITVAR<-tryCatch({ solve(DRIFT) %*% TRAITVAR %*% t(solve(DRIFT))}, error=function(e) e )
+            # tryCatch({  dimnames(asymTRAITVAR)<-list(latentNames,latentNames)}, error=function(e) e )
+            # outlist<-c(outlist,'asymTRAITVAR')
 
 
       #       discreteTRAITVAR<-tryCatch({ (diag(n.latent)-OpenMx::expm(DRIFT * timeInterval)) %*% asymTRAITVAR %*% t((diag(n.latent)-OpenMx::expm(DRIFT * timeInterval)))}, error=function(e) e )

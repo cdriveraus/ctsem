@@ -1,7 +1,20 @@
 ctsem news:
 
 Known bugs / limitations:
-- Duplicated parameter names in a model may in certain cases generate compilation errors.
+- Duplicated parameter names in a ctStanFit model may in certain cases generate compilation errors.
+
+3/3/2017
+#### 2.3.0 ####
+Fixes:
+- TRAITVAR in frequentist ctsem was incorrectly accounting for differing time 
+  intervals since v2.0.0. TRAITVAR is now (again) reported as total between subjects
+  variance.
+- Default quantiles on ctStanDiscretePars adjusted to 95%.
+- Hierarchical correlation probabilities adjusted in ctStanFit for more consistent
+  behaviour with high dimensional processes.
+
+Changes:
+- Default to unstandardised cross effects plots.
 
 1/2/2017
 #### 2.2.0 ####
@@ -9,7 +22,7 @@ Changes:
 - Time dependent predictors now have instantaneous effect in both frequentist and 
   Bayesian approaches, and the documentation is updated to reflect this.
   Previously, no TDpreds affecting first time point in frequentist.
-  Accordingly, wide data structure is accordingly different, with an extra column 
+  Accordingly, wide data structure is changed, with an extra column 
   per predictor and predictors now sorted by time point as for indicators. 
   See vignette for example. 
 - Default to 0 covariance between time dependent predictors and initial (T0) 

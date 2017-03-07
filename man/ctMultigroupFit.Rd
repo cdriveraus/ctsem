@@ -6,7 +6,7 @@
 \usage{
 ctMultigroupFit(datawide, groupings, ctmodelobj, fixedmodel = NA,
   freemodel = NA, carefulFit = TRUE, omxStartValues = NULL,
-  retryattempts = 5, showInits = FALSE, ...)
+  retryattempts = 15, showInits = FALSE, ...)
 }
 \arguments{
 \item{datawide}{Wide format data, as used in \code{\link{ctFit}}.  See \code{\link{ctLongToWide}} to

@@ -40,7 +40,7 @@ plot.ctsemMultigroupFit<-function(x,group='show chooser',...){
 #' @param withinVariance if TRUE, plot within subject variance / covariance.
 #' @param AR if TRUE, plot of autoregressive values from 0 to max.time included in output.
 #' @param CR if TRUE, plot of cross regressive values from 0 to max.time included in output.
-#' @param standardiseCR if TRUE (default), cross regression values are standardised based on estimated within subject variance.
+#' @param standardiseCR if TRUE , cross regression values are standardised based on estimated within subject variance.
 #' @param randomImpulse if TRUE (default), plots expected change in processes given a random fluctuation of +1 for each process -- 
 #' plot is then a mixture of DIFFUSION and DRIFT characteristics.
 #' @param experimentalImpulse if TRUE (default), plots expected change in processes given an exogenous input of +1 for each process -- 
@@ -69,7 +69,7 @@ plot.ctsemMultigroupFit<-function(x,group='show chooser',...){
 #' @export
 
 plot.ctsemFit<-function(x,resolution=50,wait=TRUE,max.time="auto",mean=TRUE,
-  withinVariance=TRUE,AR=TRUE,CR=TRUE,standardiseCR=TRUE,randomImpulse=FALSE,
+  withinVariance=TRUE,AR=TRUE,CR=TRUE,standardiseCR=FALSE,randomImpulse=FALSE,
   experimentalImpulse=FALSE,
   xlab="Time",
   meansylim='auto',ARylim='auto', CRylim='auto', ylab="Value",...){
