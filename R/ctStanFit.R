@@ -79,7 +79,7 @@
 ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=TRUE, binomial=FALSE,
   esthyper=TRUE, fit=TRUE, stationary=FALSE,plot=FALSE,  diffusionindices='all',
   asymdiffusion=FALSE,optimize=FALSE, vb=FALSE, chains=1,cores='maxneeded', inits=NULL,initwithoptim=FALSE,
-  control=list(adapt_delta=.9, adapt_init_buffer=30, adapt_window=2,
+  control=list(adapt_delta=.9, adapt_init_buffer=5, adapt_window=2,
     max_treedepth=10,stepsize=.001),verbose=FALSE,...){
   
   if(class(ctstanmodel) != 'ctStanModel') stop('not a ctStanModel object')
@@ -430,8 +430,6 @@ matrix cov(vector[] mat,int nrows,int ncols){
       
       }
       data {
-      matrix[4,10] padeC; // for matrix exponential
-      vector[14] padeCbig;
       int<lower=0> ndatapoints;
       int<lower=1> nmanifest;
       int<lower=1> nlatent;
@@ -897,10 +895,8 @@ print("lp = ", target());
   if(is.na(stanmodeltext)) stanmodeltext<-writemodel(init=initwithoptim,noshrinkage= noshrinkage)
   
   
-  out<-stanmodeltext
+  # out<-list(stanmodeltext=stanmodeltext)
   
-  if(fit==TRUE){
-    
     standata<-list(
       Y=cbind(as.matrix(datalong[,manifestNames])),
       subject=datalong[,'id'],
@@ -918,15 +914,6 @@ print("lp = ", target());
       sdscale=array(ctspec$sdscale[ctspec$indvarying]),
       IIparams = diag(nparams),
       ndatapoints=nrow(datalong),
-      padeC=rbind(c(120, 60, 12, 1, 0, 0, 0, 0, 0, 0), c(30240, 
-        15120, 3360, 420, 30, 1, 0, 0, 0, 0), c(17297280, 
-          8648640, 1995840, 277200, 25200, 1512, 56, 1, 0, 
-          0), c(17643225600, 8821612800, 2075673600, 302702400, 
-            30270240, 2162160, 110880, 3960, 90, 1)),
-      padeCbig= c(64764752532480000, 32382376266240000, 7771770303897600, 
-        1187353796428800, 129060195264000, 10559470521600, 
-        670442572800, 33522128640, 1323241920, 40840800, 
-        960960, 16380, 182, 1),
       dT=dT,
       time=datalong[,timeName],
       driftindex=driftindex,
@@ -948,6 +935,8 @@ print("lp = ", target());
     if(n.TIpred > 0) standata$tipreds <- as.matrix(tipreds)
     
     if(n.TDpred > 0) standata<-c(standata,list(tdpreds=array(tdpreds,dim=c(nrow(tdpreds),ncol(tdpreds)))))
+    
+  if(fit==TRUE){
     
     message('Compiling model, ignore forthcoming warning re number of chains...')
     sm <- rstan::stan(model_code = c(stanmodeltext),
@@ -1107,11 +1096,12 @@ print("lp = ", target());
       
     }
     
-    out <- list(args=args,data=standata, ctstanmodel=ctstanmodel,stanfit=stanfit)
+    out <- list(args=args,stanmodeltext=stanmodeltext, data=standata, ctstanmodel=ctstanmodel,stanfit=stanfit)
     class(out) <- 'ctStanFit'
     
   } # end if fit==TRUE
   
+    if(!fit) out=list(stanmodeltext=stanmodeltext,data=standata, ctstanmodel=ctstanmodel)
   
   
   return(out)

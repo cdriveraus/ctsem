@@ -109,7 +109,8 @@ ctKalman<-function(kpars,datalong,
       discreteCINT[[rowi]]<- kpars$CINT
       discreteDIFFUSION[[rowi]] <- kpars$DIFFUSION[diffusionindices,diffusionindices,drop=FALSE]
     }
-    # }
+
+    
     if(rowi>1){
       etaprior[[rowi]] <- discreteCINT[[rowi]]  + discreteDRIFT[[rowi]] %*% etaupd[[rowi-1]]
       etapriorcov[[rowi]] <-  discreteDRIFT[[rowi]][diffusionindices,diffusionindices,drop=FALSE] %*% 

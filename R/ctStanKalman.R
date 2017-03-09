@@ -77,6 +77,10 @@ ctStanKalman<-function(ctstanfitobj, datalong=NULL, timerange='asdata', timestep
       sdat <- rbind(sdat,snewdat)
       sdat<-sdat[!duplicated(sdat[,'time']),]
       sdat <- sdat[order(sdat[,'time']),]
+      sdat[,c(ctstanfitobj$ctstanmodel$manifestNames,
+        ctstanfitobj$ctstanmodel$TDpredNames)][sdat[,c(ctstanfitobj$ctstanmodel$manifestNames,
+          ctstanfitobj$ctstanmodel$TDpredNames)]==99999] <- NA
+      sdat[,'subject'] <- subjecti
     }
     
     #get parameter matrices
