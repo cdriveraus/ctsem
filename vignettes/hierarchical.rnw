@@ -375,8 +375,7 @@ datalong <- cbind(id, time, sunspots)
  model$pars$transform[4]<-'exp(param)' #To avoid multi modality with ma effect
 
 #fit
-fit <- ctStanFit(datalong, model, iter=400, chains=2, 
-  stationary=TRUE, control=list(adapt_delta=.9))
+fit <- ctStanFit(datalong, model, iter=400, chains=2, control=list(adapt_delta=.9))
 
 #output
 summary(fit)$popmeans
