@@ -103,12 +103,33 @@ ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
   DRIFTHATCH<-DRIFT %x% diag(nrow(DRIFT)) + diag(nrow(DRIFT)) %x% DRIFT
   asymDIFFUSION<-matrix(-solve(DRIFTHATCH) %*% c(DIFFUSION), nrow=nrow(DRIFT)) 
   
+  ln=ctstanfitobj$ctstanmodel$latentNames
+  mn=ctstanfitobj$ctstanmodel$manifestNames
+  tdn=ctstanfitobj$ctstanmodel$TDpredNames
+  dimnames(DRIFT)=list(ln,ln)
+  dimnames(DIFFUSION)=list(ln,ln)
+  dimnames(asymDIFFUSION)=list(ln,ln)
+  rownames(CINT)=ln
+  rownames(MANIFESTMEANS)=mn
+  rownames(T0MEANS)=ln
+
+  dimnames(T0VAR)=list(ln,ln)
+  dimnames(asymDIFFUSION)=list(ln,ln)
+  dimnames(LAMBDA)=list(mn,ln)
+  
   model<-list(DRIFT=DRIFT,T0VAR=T0VAR,DIFFUSION=DIFFUSION,asymDIFFUSION=asymDIFFUSION,CINT=CINT,T0MEANS=T0MEANS,
     MANIFESTMEANS=MANIFESTMEANS, LAMBDA=LAMBDA)
   
-  if(!is.null(e$MANIFESTVAR)) model$MANIFESTVAR=MANIFESTVAR
+  if(!is.null(e$MANIFESTVAR)) {
+    dimnames(MANIFESTVAR)=list(mn,mn)
+    model$MANIFESTVAR=MANIFESTVAR
+    
+  }
   
-  if(!is.null(e$TDPREDEFFECT)) model$TDPREDEFFECT<-TDPREDEFFECT
+  if(!is.null(e$TDPREDEFFECT)) {
+    dimnames(TDPREDEFFECT)=list(ln,tdn)
+    model$TDPREDEFFECT<-TDPREDEFFECT
+  }
   
   return(model)
 }

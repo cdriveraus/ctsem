@@ -14,7 +14,7 @@ DRIFT=matrix(c(-.3, .2, 0, -0.5), byrow=TRUE, nrow=n.latent, ncol=n.latent)
 
 genm=ctModel(Tpoints=Tpoints,
   n.latent=n.latent, n.manifest=n.manifest,
-  LAMBDA=matrix(c(1, 0,1,.2), nrow=n.manifest, ncol=n.latent),
+  LAMBDA=matrix(c(1, 0,0,1), nrow=n.manifest, ncol=n.latent),
   DRIFT=DRIFT,
   DIFFUSION=matrix(c(2, 0, 0, 1), byrow=TRUE, nrow=n.latent, ncol=n.latent),
   MANIFESTVAR=matrix(c(1, 0,0,.5), nrow=n.manifest, ncol=n.manifest),

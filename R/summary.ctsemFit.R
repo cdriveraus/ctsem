@@ -118,11 +118,10 @@ omxSummary<-function(object,verbose=FALSE){
 
 
 ctParamsSummary<-function(object,ctSummaryMatrices){
-  
-  parnames<-rownames(object$mxobj$output$standardErrors)
-  parvalues<-c(object$mxobj$output$estimate)
+  parnames<-names(omxGetParameters(object$mxobj))
+  parvalues<-omxGetParameters(object$mxobj)
   newparvalues<-parvalues
-  parsd<-c(object$mxobj$output$standardErrors)
+  parsd<-rep(NA,length(parnames))
   parmatrix<-rep(NA,length(parnames))
  
   

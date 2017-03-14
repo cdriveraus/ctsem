@@ -249,6 +249,7 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
   
   if(ncol(T0MEANS)>1) stop("Specified T0MEANS matrix has more than one column")
   if(nrow(T0MEANS)!=n.latent) stop ("Specified T0MEANS matrix rows not equal to n.latent")
+  rownames(T0MEANS)=latentNames
   
   
   
@@ -259,7 +260,7 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
     n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
   
   if(nrow(T0VAR)!=n.latent | ncol(T0VAR)!=n.latent) stop("Dimensions of T0VAR matrix are not n.latent * n.latent")
-  
+  dimnames(T0VAR)=list(latentNames,latentNames)
 
   
   
@@ -270,7 +271,7 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
     n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
   if(ncol(MANIFESTMEANS)>1) stop("Specified MANIFESTMEANS matrix has more than one column")
   if(nrow(MANIFESTMEANS)!=n.manifest) stop ("Specified MANIFESTMEANS matrix rows not equal to n.manifest")
-  
+  rownames(MANIFESTMEANS)=manifestNames
   
   
   
@@ -290,6 +291,7 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
   
   if(nrow(MANIFESTVAR)!=n.manifest | ncol(MANIFESTVAR)!=n.manifest) stop("Dimensions of MANIFESTVAR matrix are not n.manifest * n.manifest")
   }
+  dimnames(MANIFESTVAR)=list(manifestNames,manifestNames)
   
   
   
@@ -297,14 +299,14 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
   if(DRIFT[1]=="auto") DRIFT<-ctLabel(TDpredNames=TDpredNames,TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="DRIFT",n.latent=n.latent,
     n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
   if(nrow(DRIFT)!= n.latent | ncol(DRIFT)!= n.latent) stop("Dimensions of DRIFT matrix are not n.latent * n.latent")
-  
+  dimnames(DRIFT)=list(latentNames,latentNames)
   
   
   
   
   if(CINT[1]=="auto") CINT<-matrix(0,nrow=n.latent,ncol=1)
   if(ncol(CINT)!=1 | nrow(CINT)!=n.latent) stop("Dimensions of CINT are not n.latent * 1")
-  
+  rownames(CINT)=latentNames
   
   
   
@@ -312,26 +314,31 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
   if(DIFFUSION[1]=="auto") DIFFUSION<-ctLabel(TDpredNames=TDpredNames,TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="DIFFUSION",n.latent=n.latent,
     n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
   if(nrow(DIFFUSION)!=n.latent | ncol(DIFFUSION) != n.latent) stop("Dimensions of DIFFUSION are not n.latent * n.latent")
-
+  dimnames(DIFFUSION)=list(latentNames,latentNames)
   
   
   
   
   
-  if(!is.null(TRAITVAR) && TRAITVAR[1]=="auto") TRAITVAR<-ctLabel(TDpredNames=TDpredNames,
+  if(!is.null(TRAITVAR)){
+    
+    if(all(TRAITVAR=="auto")) TRAITVAR<-ctLabel(TDpredNames=TDpredNames,
     TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="TRAITVAR",
     n.latent=n.latent,n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
-  if(!is.null(TRAITVAR) && nrow(TRAITVAR)+ncol(TRAITVAR)!=n.latent*2) stop ("
+    
+  if(nrow(TRAITVAR)+ncol(TRAITVAR)!=n.latent*2) stop ("
     Dimensions of TRAITVAR are not n.latent * n.latent")
+  dimnames(TRAITVAR)=list(latentNames,latentNames)
   
-  if(!is.null(TRAITVAR) && (is.null(T0TRAITEFFECT) || T0TRAITEFFECT[1] == 'auto')) T0TRAITEFFECT<-
+  if(is.null(T0TRAITEFFECT) || all(T0TRAITEFFECT == 'auto')) T0TRAITEFFECT<-
     ctLabel(TDpredNames=TDpredNames,TIpredNames=TIpredNames,manifestNames=manifestNames,
       latentNames=latentNames,matrixname="T0TRAITEFFECT",n.latent=n.latent,
     n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
+  dimnames(T0TRAITEFFECT)=list(latentNames,latentNames)
   
   if(!is.null(T0TRAITEFFECT) && nrow(T0TRAITEFFECT)+ncol(T0TRAITEFFECT)!=n.latent*2) stop ("Dimensions of TRAITVAR are not n.latent * n.latent")
   
-  
+}
   
   
   
@@ -340,38 +347,44 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
 
   
   
-  if(!is.null(MANIFESTTRAITVAR) && MANIFESTTRAITVAR[1]=="auto") MANIFESTTRAITVAR<-ctLabel(TDpredNames=TDpredNames,TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="MANIFESTTRAITVAR",n.latent=n.latent,
+  if(!is.null(MANIFESTTRAITVAR)){
+    
+    if(MANIFESTTRAITVAR[1]=="auto") MANIFESTTRAITVAR<-ctLabel(TDpredNames=TDpredNames,TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="MANIFESTTRAITVAR",n.latent=n.latent,
     n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
-  if(!is.null(MANIFESTTRAITVAR) && nrow(MANIFESTTRAITVAR)+ncol(MANIFESTTRAITVAR)!=n.manifest*2) stop ("Dimensions of MANIFESTTRAITVAR are not n.manifest * n.manifest")
+    
+  if(nrow(MANIFESTTRAITVAR)+ncol(MANIFESTTRAITVAR)!=n.manifest*2) stop ("Dimensions of MANIFESTTRAITVAR are not n.manifest * n.manifest")
 #   if(is.null(MANIFESTTRAITVAR)) MANIFESTTRAITVAR <- matrix(0,nrow=n.manifest,ncol=n.manifest)
-  
-  
+  dimnames(MANIFESTTRAITVAR)=list(manifestNames,manifestNames)
+  }
   
   
   
   
   #effect matrix of time dependent predictors (with time independent effect strength)
-  if(TDPREDEFFECT[1]=="auto" && n.TDpred!=0)  TDPREDEFFECT<-ctLabel(TDpredNames=TDpredNames,
+  if(n.TDpred > 0){
+  if(all(TDPREDEFFECT=="auto"))  {
+    
+    TDPREDEFFECT<-ctLabel(TDpredNames=TDpredNames,
     TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="TDPREDEFFECT",n.latent=n.latent,
     n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
-  if(n.TDpred==0) TDPREDEFFECT<-NULL
-  if(n.TDpred!=0) if(nrow(TDPREDEFFECT) != n.latent | ncol(TDPREDEFFECT) != n.TDpred) stop("Dimensions of TDPREDEFFECT are not n.latent * n.TDpred")
+    
+  if(nrow(TDPREDEFFECT) != n.latent | ncol(TDPREDEFFECT) != n.TDpred) stop("Dimensions of TDPREDEFFECT are not n.latent * n.TDpred")
+  }
+    dimnames(TDPREDEFFECT)=list(latentNames,TDpredNames)
   
-  
-  
-
   # means of TD predictors
   if(all(TDPREDMEANS=="auto") & n.TDpred > 0) TDPREDMEANS <- ctLabel(TDpredNames=TDpredNames,
     TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="TDPREDMEANS",n.latent=n.latent,
     n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
-  
-  if(n.TDpred==0) TDPREDMEANS<-NULL
-  
-  if(n.TDpred > 0) if(nrow(TDPREDMEANS) != n.TDpred*(Tpoints) | ncol(TDPREDMEANS) != 1) stop(
+
+  if(nrow(TDPREDMEANS) != n.TDpred*(Tpoints) | ncol(TDPREDMEANS) != 1) stop(
     "Dimensions of TDPREDMEANS are not (n.TDpred*Tpoints) rows * 1 column")
+  }
   
-  
-  
+  if(n.TDpred==0) {
+    TDPREDEFFECT<-NULL
+    TDPREDMEANS<-NULL
+  }
   
   
   # means of TI predictors
@@ -483,6 +496,7 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
   
  
   if(any(dim(LAMBDA)!=c(n.manifest,n.latent))) stop("Incorrect LAMBDA structure specified - check number or rows and columns")
+  dimnames(LAMBDA)=list(manifestNames,latentNames)
   
 
   
