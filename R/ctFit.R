@@ -639,8 +639,16 @@ ctFit  <- function(datawide, ctmodelobj,
     
     #trait loadings to latent
     # browser()
-    A$labels[cbind(rep(1:latentend,each=n.latent), (latentend+1):(latentend+n.latent))] <- paste0('discreteTRAIT_T',
+    if(!discreteTime) A$labels[cbind(rep(1:latentend,each=n.latent), (latentend+1):(latentend+n.latent))] <- paste0('discreteTRAIT_T',
       rep(0:(Tpoints-1),each=n.latent^2),'[',rep(1:n.latent,each=n.latent),',',1:n.latent,']')
+    
+     if(discreteTime) {
+       for(i in 1:(Tpoints-1)){
+         # browser()
+         A$values[(i*n.latent+1):(i*n.latent+n.latent), (latentend+1):(latentend+n.latent)] <- diag(1,n.latent)
+       }
+     }
+     
     
     #trait variance
     S$values[(latentend+1):(latentend+n.latent), (latentend+1):(latentend+n.latent)] <- diag(1,n.latent)
