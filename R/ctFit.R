@@ -1473,7 +1473,15 @@ ctFit  <- function(datawide, ctmodelobj,
         
         OpenMx::mxMatrix(name = "T0TRAITEFFECT", values=T0TRAITEFFECT$values, labels=T0TRAITEFFECT$labels, 
           ncol=n.latent, nrow=n.latent, free=T0TRAITEFFECT$free, type='Full')
-        
+      )
+    }
+    if(discreteTime==FALSE && transformedParams==FALSE){
+      model <- OpenMx::mxModel(model, 
+        traitalgs,
+        OpenMx::mxMatrix(name = "TRAITVAR", values=TRAITVAR$values, labels=TRAITVAR$labels, 
+          ncol=n.latent, nrow=n.latent, free=TRAITVAR$free, type='Full'),
+        OpenMx::mxMatrix(name = "T0TRAITEFFECT", values=T0TRAITEFFECT$values, labels=T0TRAITEFFECT$labels, 
+          ncol=n.latent, nrow=n.latent, free=T0TRAITEFFECT$free, type='Full')
       )
     }
     
