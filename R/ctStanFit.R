@@ -75,6 +75,7 @@
 #' plot(fit)
 #' 
 #' }
+#' @importFrom Rcpp evalCpp
 #' @export
 ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=TRUE, binomial=FALSE,
   esthyper=TRUE, fit=TRUE, stationary=FALSE,plot=FALSE,  diffusionindices='all',
@@ -971,7 +972,7 @@ print("lp = ", target());
   if(fit==TRUE){
     
     message('Compiling model, ignore forthcoming warning re number of chains...')
-    sm <- rstan::stan(model_code = c(stanmodeltext),
+    sm <- stan(model_code = c(stanmodeltext),
       data = standata, chains = 0, iter=1, control=list(max_treedepth=1))
     
     #control arguments for rstan
@@ -990,13 +991,13 @@ print("lp = ", target());
     
     if(initwithoptim & chains > 0){#optimize with bfgs for initial values
       
-      npars=rstan::get_num_upars(sm)
+      npars=get_num_upars(sm)
       
       if(any(ctspec$indvarying)) hypersdindex=(nparams+1):(nparams+ sum(ctspec$indvarying)) else hypersdindex<-NULL
       
       lp<-function(parm) {
         parm[hypersdindex]<-0
-        out<-try(rstan::log_prob(sm,upars=parm))
+        out<-try(log_prob(sm,upars=parm))
         if(class(out)=='try-error') {
           out=-1e20
         }
@@ -1005,7 +1006,7 @@ print("lp = ", target());
       
       grf<-function(parm) {
         parm[hypersdindex]<-0
-        out=rstan::grad_log_prob(sm,upars=parm)
+        out=grad_log_prob(sm,upars=parm)
         out[hypersdindex]=0
         return(out)
       }
@@ -1017,7 +1018,7 @@ print("lp = ", target());
       parsout=optimfit$par
       parsout[hypersdindex]=0
       
-      inits=rstan::constrain_pars(sm,parsout)
+      inits=constrain_pars(sm,parsout)
       message('Got inits.')
     }
     
@@ -1048,7 +1049,7 @@ print("lp = ", target());
     
     if(!optimize & !vb) {
       message('Sampling...')
-    stanfit <- rstan::stan(fit = sm, 
+    stanfit <- stan(fit = sm, 
       enable_random_init=TRUE,init_r=.2,
       init=staninits,
       refresh=20,
@@ -1066,7 +1067,7 @@ print("lp = ", target());
     if(optimize==TRUE && fit==TRUE) {
       
       
-      # stanfit <- rstan::optimizing(object = stanfit@stanmodel, 
+      # stanfit <- optimizing(object = stanfit@stanmodel, 
       #   init=0,
       #   # algorithm='BFGS',
       #   as_vector=F,
@@ -1075,18 +1076,18 @@ print("lp = ", target());
       #   tol_obj=1e-12, tol_grad=1e-12,tol_param=1e-12,tol_rel_grad=0, tol_rel_obj=0,
       #   data = standata, iter=iter)
       
-      npars=rstan::get_num_upars(sm)
+      npars=get_num_upars(sm)
       
       if(any(ctspec$indvarying)) hypersdindex=(nparams+1):(nparams+ sum(ctspec$indvarying)) else hypersdindex<-NULL
       
       lp<-function(parm) {
-        out<-try(rstan::log_prob(sm,upars=parm))
+        out<-try(log_prob(sm,upars=parm))
         if(class(out)=='try-error') out=-1e20
         return(-out)
       }
       
       grf<-function(parm) {
-        out=try(rstan::grad_log_prob(sm,upars=parm))
+        out=try(grad_log_prob(sm,upars=parm))
         if(class(out)=='try-error') out=rnorm(length(parm))
         return(-out)
       }
@@ -1112,16 +1113,16 @@ print("lp = ", target());
       lest= est - 1.96 * sds
       uest= est + 1.96 * sds
       
-      transformedpars=cbind(unlist(rstan::constrain_pars(sm,lest)),
-        unlist(rstan::constrain_pars(sm,est)),
-        unlist(rstan::constrain_pars(sm,uest)))
+      transformedpars=cbind(unlist(constrain_pars(sm,lest)),
+        unlist(constrain_pars(sm,est)),
+        unlist(constrain_pars(sm,uest)))
       colnames(transformedpars)=c('2.5%','mean','97.5%')
 
       stanfit=list(optimfit=optimfit,transformedpars=transformedpars)
     }
     
     if(vb==TRUE && fit==TRUE) {
-      stanfit <- rstan::vb(object = stanfit@stanmodel, 
+      stanfit <- vb(object = stanfit@stanmodel, 
         iter=iter,
         # eta=1e-6,
         data = standata,...)
