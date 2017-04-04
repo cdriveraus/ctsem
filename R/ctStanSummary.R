@@ -17,6 +17,8 @@ summary.ctStanFit<-function(object,...){
   
 s<-getMethod('summary','stanfit')(object$stanfit)
 
+if('98%' %in% colnames(s$summary)) colnames(s$summary)[colnames(s$summary)=='98%'] <- '97.5%'
+
 parnames=gsub('hsd_','',object$stanfit@model_pars[grep('hsd',object$stanfit@model_pars)])
 
 #### generate covcor matrices of raw and transformed subject level params
@@ -118,7 +120,7 @@ out$popcorr = popcorr
 
 
 
-out$tipreds=round(s$summary[c(grep('tipred_',rownames(s$summary))),
+if(object$ctstanmodel$n.TIpred > 0) out$tipreds=round(s$summary[c(grep('tipred_',rownames(s$summary))),
   c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],3)
 
 out$popsd=round(s$summary[c(grep('hsd_',rownames(s$summary))),
@@ -132,7 +134,10 @@ out$note1=paste0('Parameters are reported as specified in ctModel -- diagonals o
 
 out$logprob=round(s$summary[c(grep('lp',rownames(s$summary))),
   c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],3)
-  }
+  
+# out$posteriorpredictive=round(s$summary[c(grep('stateppll',rownames(s$summary))),
+#     c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],3)
+}
   
   
 if(class(object$stanfit)!='stanfit'){ #optimization summary

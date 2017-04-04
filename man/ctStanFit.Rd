@@ -9,7 +9,7 @@ ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 2000,
   stationary = FALSE, plot = FALSE, diffusionindices = "all",
   asymdiffusion = FALSE, optimize = FALSE, vb = FALSE, chains = 1,
   cores = "maxneeded", inits = NULL, initwithoptim = FALSE,
-  control = list(adapt_delta = 0.9, adapt_init_buffer = 30, adapt_window = 2,
+  control = list(adapt_delta = 0.9, adapt_init_buffer = 10, adapt_window = 5,
   max_treedepth = 10, stepsize = 0.001), verbose = FALSE, ...)
 }
 \arguments{

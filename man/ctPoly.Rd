@@ -4,7 +4,7 @@
 \alias{ctPoly}
 \title{Plots uncertainty bands with shading}
 \usage{
-ctPoly(x, y, ylow, yhigh, steps = 50, ...)
+ctPoly(x, y, ylow, yhigh, steps = 20, ...)
 }
 \arguments{
 \item{x}{x values}

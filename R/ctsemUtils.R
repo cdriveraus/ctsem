@@ -112,7 +112,7 @@ ctDensity<-function(x){
 #' yhigh=sqrt(0:100) - runif(101), 
 #' ylow=sqrt(0:100) + runif(101),
 #' col=adjustcolor('red',alpha.f=.1),border=NA)
-ctPoly <- function(x,y,ylow,yhigh,steps=50,...){
+ctPoly <- function(x,y,ylow,yhigh,steps=20,...){
   for(i in 1:steps){
     tylow= y + (ylow-y)*i/steps
     tyhigh= y + (yhigh-y)*i/steps

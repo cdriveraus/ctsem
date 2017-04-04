@@ -79,7 +79,7 @@
 ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=TRUE, binomial=FALSE,
   esthyper=TRUE, fit=TRUE, stationary=FALSE,plot=FALSE,  diffusionindices='all',
   asymdiffusion=FALSE,optimize=FALSE, vb=FALSE, chains=1,cores='maxneeded', inits=NULL,initwithoptim=FALSE,
-  control=list(adapt_delta=.9, adapt_init_buffer=5, adapt_window=2,
+  control=list(adapt_delta=.9, adapt_init_buffer=10, adapt_window=5,
     max_treedepth=10,stepsize=.001),verbose=FALSE,...){
   
   if(class(ctstanmodel) != 'ctStanModel') stop('not a ctStanModel object')
@@ -423,7 +423,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
     
     matrix[nobsi, nlatent] LAMBDA_filt;
     ',if(!binomial) 'vector[nobsi] err;','
-    vector[nobsi] Y_filt;
+    ',ifelse(binomial, 'int Y_filt[nobsi];','vector[nobsi] Y_filt;'),'
     
     ',if(kalman) paste0('
       matrix[nobsi, nobsi] Ypredcov_filt;
@@ -452,7 +452,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
       checkvarying('MANIFESTMEANS','[subjecti]','[1]'),'[whichobs] + LAMBDA_filt * etaprior[rowi], MANIFESTVAR',
       checkvarying('MANIFESTVAR','[subjecti]','[1]'),'[whichobs,whichobs]);'),'
     
-    ',if(binomial & ppchecking) paste0('for(obsi in 1:nobsi) Y_filt[obsi] = bernoulli_rng(inv_logit(LAMBDAfilt * etapost[rowi] + ', 
+    ',if(binomial & ppchecking) paste0('for(obsi in 1:nobsi) Y_filt[obsi] = bernoulli_rng(inv_logit(LAMBDA_filt * etapost[rowi] + ', 
       'MANIFESTMEANS',checkvarying('MANIFESTMEANS','[subjecti]','[1]'),'[whichobs])[obsi]);'),'
     
     ',if(kalman) paste0('err = Y_filt - ( MANIFESTMEANS',
@@ -468,7 +468,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
     errtrans[obscount:(obscount+nobsi-1)]=Ypredcov_filt_chol \\ err; //transform pred errors to standard normal dist and collect
     errscales[obscount:(obscount+nobsi-1)]=log(rep_vector(1,nobsi) ./ diagonal(Ypredcov_filt_chol)); //account for transformation of scale in loglik ','
     
-    ',if(binomial) paste0('ll =  ll + bernoulli_logit_lpmf(Y_filt | LAMBDAfilt * etapost[rowi] + ', 
+    ',if(binomial) paste0('ll =  ll + bernoulli_logit_lpmf(Y_filt | LAMBDA_filt * etapost[rowi] + ', 
       'MANIFESTMEANS',checkvarying('MANIFESTMEANS','[subjecti]','[1]'),'[whichobs]);'),'
     }
     }
@@ -977,9 +977,9 @@ print("lp = ", target());
     #control arguments for rstan
     if(is.null(control$adapt_term_buffer)) control$adapt_term_buffer <- min(c(iter/10,max(iter-20,75)))
     if(is.null(control$adapt_delta)) control$adapt_delta <- .9
-    if(is.null(control$adapt_window)) control$adapt_window <- 2
+    if(is.null(control$adapt_window)) control$adapt_window <- 5
     if(is.null(control$max_treedepth)) control$max_treedepth <- 10
-    if(is.null(control$adapt_init_buffer)) adapt_init_buffer=3
+    if(is.null(control$adapt_init_buffer)) adapt_init_buffer=10
     
     stanseed<-floor(as.numeric(Sys.time()))
     
@@ -1049,7 +1049,7 @@ print("lp = ", target());
     if(!optimize & !vb) {
       message('Sampling...')
     stanfit <- rstan::stan(fit = sm, 
-      enable_random_init=TRUE,init_r=.1,
+      enable_random_init=TRUE,init_r=.2,
       init=staninits,
       refresh=20,
       iter=iter,

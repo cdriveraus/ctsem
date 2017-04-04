@@ -9,8 +9,8 @@ ctStanDiscreteParsPlot(x, indices = "all", add = FALSE, legend = TRUE,
   latentNames = "auto", ylim = "auto", lwdvec = "auto", colvec = "auto",
   ltyvec = "auto", plotcontrol = list(ylab = "Value", xlab =
   "Time interval", main = "Regression coefficients", type = "l"), grid = TRUE,
-  legendcontrol = list(x = "topright", bg = "white"), polygonalpha = 0.1,
-  polygoncontrol = list(border = NA, steps = 50))
+  legendcontrol = list(x = "topright", bg = "white"), polygonalpha = 0.3,
+  polygoncontrol = list(border = NA, steps = 20))
 }
 \arguments{
 \item{x}{list object returned from \code{\link{ctStanDiscretePars}}.}
