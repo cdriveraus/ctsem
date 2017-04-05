@@ -1,23 +1,23 @@
-citHeader("To cite package 'ctsem' in publications use:")
-#citFooter(paste("BibTeX entries for LaTeX users are obtained by:\n\n",
-#  "toBibtex(citation('ctsem'))\n\n"))
+bibentry(bibtype = "Article",
+  title        = "Continuous Time Structural Equation Modeling with {R} Package {ctsem}",
+  author       = c(person(given = c("Charles", "C."),
+                          family = "Driver"),
+                   person(given = c("Johan", "H.", "L."),
+                          family = "Oud"),
+                   person(given = c("Manuel", "C."),
+                          family = "Voelkle")),
+  journal      = "Journal of Statistical Software",
+  year         = "2017",
+  volume       = "77",
+  number       = "5",
+  pages        = "1--35",
+  doi          = "10.18637/jss.v077.i05",
 
-#personlist<-c(person("Manuel", "Voelkle", role = c("aut","cph"), comment = "Development of continuous time model specification within OpenMx, advisor for further development"),person("Han", "Oud", role = c("aut","cph"), comment = "Development of continuous time model specification within OpenMx"),person("Charles", "Driver", role = c("aut","cre","cph"), comment = "Further development of continuous time model specification within OpenMx, package development, documentation and maintenance",email="driver@mpib-berlin.mpg.de"))
-     
-#desc <- packageDescription("ctsem")
-#year <- substring(desc$Date, 1, 4)
-#revision <- sub("\\..?$", "", sub("-.*", "", desc$Version))
-#vers <- paste("R package version", revision)
-#authors <- eval(parse(text=desc[["Authors@R"]]))
-     
-citEntry(entry="article",
-	title = paste("Continuous time structural equation modelling with R package ctsem"),
-              author = c(
-		  person(c("Charles", "C."), "Driver"),
-		  person(c("Johan", "H.L"), "Oud"),
-		  person(c("Manuel", "C."), "Voelkle")),
-              journal = "Journal of Statistical Software",
-              year = "in press",
-              textVersion = paste("Charles C. Driver,", "Johan H.L Oud,",
-		  "Manuel C. Voelkle.",
-		  "Continuous time structural equation modelling with R package ctsem. Journal of Statistical Software."))
+  header       = "To cite ctsem in publications use:",
+  textVersion  =
+  paste("Charles C. Driver, Johan H. L. Oud, Manuel C. Voelkle (2017).",
+        "Continuous Time Structural Equation Modeling with R Package ctsem.",
+        "Journal of Statistical Software, 77(5), 1-35.",
+        "doi:10.18637/jss.v077.i05")
+)
+

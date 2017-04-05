@@ -480,7 +480,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
 ')
     return(out)
   }
-  
+
   writemodel<-function(init=FALSE,noshrinkage=FALSE){
     stanmodel <- paste0('
       functions{
@@ -823,7 +823,7 @@ return out;
 // adjust partial correlation probabilities 
         ',paste0(unlist(lapply(1:nrow(ctspec),function(rowi) {
           out<-''
-          if(ctspec$matrix[rowi] %in% c('T0VAR','DIFFUSION') & ctspec$row[rowi] > ctspec$col[rowi]) {
+          if(ctspec$matrix[rowi] %in% c('T0VAR','DIFFUSION') & ctspec$row[rowi] > ctspec$col[rowi] & is.na(ctspec$value[rowi])) {
             out=paste0('target += beta_lpdf(inv_logit(',
             'hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),']',
             ')| 1.5 + (inttoreal(nlatent)-1)/2 - .6 * ',ctspec$col[rowi],', 1.5 + (inttoreal(nlatent)-1)/2 - .6 * ',ctspec$col[rowi],'); \n ')
