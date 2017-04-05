@@ -118,7 +118,7 @@ may be estimated using \code{\link{ctCI}}.
 mfrowOld<-par()$mfrow
 par(mfrow=c(2, 3))
 
-### example from Driver, Oud, Voelkle (2015), 
+### example from Driver, Oud, Voelkle (2017), 
 ### simulated happiness and leisure time with unobserved heterogeneity.
 data(ctExample1)
 traitmodel <- ctModel(n.manifest=2, n.latent=2, Tpoints=6, LAMBDA=diag(2), 
