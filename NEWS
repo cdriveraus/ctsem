@@ -10,6 +10,7 @@ Fixes:
 - ctStanFit: 2.3.0 hierarchical correlation changes were applied too broadly
 - ctFit: discreteTime switch no longer gives errors when traits included
 - ctFit: transformedParams=FALSE argument no longer throwing errors.
+- ctStanKalman: correct handling of missing data for plotting.
 
 3/3/2017
 #### 2.3.0 ####

@@ -208,6 +208,7 @@ ctFit  <- function(datawide, ctmodelobj,
     #     stationary<-NULL    
     if(transformedParams==FALSE){
       stop('For discreteTime=TRUE you must also set transformedParams=FALSE')
+    }
   }
   
   
