@@ -3,6 +3,14 @@ ctsem news:
 Known bugs / limitations:
 - Duplicated parameter names in a ctStanFit model may in certain cases generate compilation errors.
 
+6/4/2017
+#### 2.3.1 ####
+Fixes:
+- summary: Standard errors were not reported in some cases
+- ctStanFit: 2.3.0 hierarchical correlation changes were applied too broadly
+- ctFit: discreteTime switch no longer gives errors when traits included
+- ctFit: transformedParams=FALSE argument no longer throwing errors.
+
 3/3/2017
 #### 2.3.0 ####
 Fixes:
