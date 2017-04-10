@@ -9,7 +9,7 @@ carefulFit=function(model,traitExtension,manifestTraitvarExtension, weighting = 
         sum(DIFFUSION*DIFFUSION) + sum(1/(diag2vec(DIFFUSION) * diag2vec(DIFFUSION))) +
         sum(MANIFESTVAR*MANIFESTVAR) + sum(1/(diag2vec(MANIFESTVAR) * diag2vec(MANIFESTVAR))) +
         sum(TRAITVAR * TRAITVAR) + sum(1/(diag2vec(TRAITVAR) * diag2vec(TRAITVAR))) +
-        sum(T0TRAITEFFECT * T0TRAITEFFECT) + sum(1/(diag2vec(T0TRAITEFFECT) * diag2vec(T0TRAITEFFECT)))
+        sum(T0TRAITEFFECT * T0TRAITEFFECT) - sum((diag2vec(T0TRAITEFFECT) * diag2vec(T0TRAITEFFECT)))
     )
 
     if(manifestTraitvarExtension==TRUE) penalties <- OpenMx::mxAlgebra(name='penalties',

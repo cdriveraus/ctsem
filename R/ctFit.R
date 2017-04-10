@@ -206,9 +206,9 @@ ctFit  <- function(datawide, ctmodelobj,
     message('discreteTime==TRUE set -- timing information ignored. Parameter estimates will *not* correspond with those from continous time models.')
     #     carefulFit<-FALSE
     #     stationary<-NULL    
-    if(transformedParams==FALSE){
-      stop('For discreteTime=TRUE you must also set transformedParams=FALSE')
-    }
+    # if(transformedParams==TRUE){
+    #   stop('For discreteTime=TRUE you must also set transformedParams=FALSE')
+    # }
   }
   
   

@@ -94,85 +94,12 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
     if(esthyper==TRUE) message('Setting esthyper=FALSE for optimization')
     esthyper=FALSE
   }
-  tmpdir=tempdir()
-  tmpdir=gsub('\\','/',tmpdir,fixed=TRUE)
-  # initwithoptim=FALSE
-  
-  stanplot<-function(chains,seed){
-    wd<-  paste0("setwd('",tmpdir,"')")
-    writeLines(text=paste0(wd,'
-      seed<-',seed,';
-      chains<-',chains,';
-      iter<-',iter,';
-      
-      notyet<-TRUE
-      while(notyet==TRUE){
-      Sys.sleep(10);
-      samps<-try(read.csv(file=paste0(seed,"samples.csv",1),comment.char="#"))
-      if(class(samps) != "try-error") notyet<-FALSE
-      }
-      varnames<-colnames(samps);
-      require(shiny); 
-      shiny::runApp(appDir=list(server=function(input, output,session) {
-      
-      output$chainPlot <- renderPlot({
-      parameter<-input$parameter
-      begin<-input$begin
-      colimport<-rep("NULL",length(varnames))
-      colimport[which(varnames %in% parameter)]<-NA
-      begin<-input$begin
-      samps<-list()
-      for(chaini in 1:chains) {
-      samps[[chaini]]<-read.csv(file=paste0(seed,"samples.csv",chaini),comment.char="#",colClasses = colimport)
-      }
-      
-      mini<-min(unlist(lapply(1:chains,function(chaini) samps[[chaini]][-1:-begin,parameter])),na.rm=T)
-      maxi<-max(unlist(lapply(1:chains,function(chaini) samps[[chaini]][-1:-begin,parameter])),na.rm=T)
-      lengthi<-max(unlist(lapply(1:chains,function(chaini) length(samps[[chaini]][,parameter]))),na.rm=T) #-1:-begin
-      
-      plot((begin):(lengthi+begin-1),
-      c(samps[[1]][-1:-begin,parameter],rep(NA,lengthi-length(samps[[1]][-1:-begin,parameter]))),
-      type="l",xlab="",ylab="",main=parameter,
-      log=ifelse(parameter %in% c("stepsize__"),"y",""),
-      xlim=c(begin,lengthi),
-      ylim=c(mini,maxi)
-      )
-      
-      if(chains > 1) for(chaini in 2:chains){
-      points(begin:(lengthi+begin-1),c(samps[[chaini]][-1:-begin,parameter],rep(NA,lengthi-length(samps[[chaini]][-1:-begin,parameter]))),type="l",xlab="",ylab="",main=parameter,col=chaini)
-      }
-      grid()
-      
-      })
-      },ui=fluidPage(
-      # Application title
-      titlePanel("ctsem mid-sampling plots..."),
-      sidebarLayout(
-      # Sidebar with a slider input for number of observations
-      sidebarPanel(
-      sliderInput("begin", "Start of range:", min = 1,max=iter,value = 1,step=1), 
-      selectInput("parameter", "Choose a parameter:", choices = varnames),
-      actionButton("refresh", "Refresh sample data")
-      ),
-      
-      # Show a plot of the generated distribution
-      mainPanel(
-      plotOutput("chainPlot")
-      )
-      ))),
-      launch.browser=TRUE)
-      quit(save="no")'),con=paste0(tmpdir,"/stanplottemp.R"))
-    system(paste0("Rscript.exe --slave --no-restore -e source('",tmpdir,"/stanplottemp.R')"),wait=F)
-    
-  }
-  
-  
-  
+
   checkvarying<-function(matrixnames,yesoutput,nooutput=''){#checks if a matrix is set to individually vary in ctspec
     check<-0
     out<-nooutput
     for( matname in matrixnames){
-      if(any(ctspec$indvarying[ctspec$matrix %in% matrixnames])) check<-c(check,1)
+      if(any(c(ctspec$indvarying,ctspecduplicates$indvarying)[c(ctspec$matrix,ctspecduplicates$matrix) %in% matrixnames])) check<-c(check,1)
     }
     if(sum(check)==length(matrixnames))  out<-yesoutput
     return(out)
@@ -207,12 +134,24 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
   if(found) message('Minor inconsistencies in model found - removing param name, transform and indvarying from any parameters with a value specified')
   
   #remove T0VAR and T0MEANS if stationary
-  
   if(stationary) {
     ctspec=ctspec[ctspec$matrix %in% c('T0VAR','T0MEANS')==FALSE,,drop=FALSE]
     message('removing T0VAR and T0MEANS from parameter matrices because stationary=TRUE')
   }
+
   ctstanmodel$pars <- ctspec #updating because we save the model later
+  
+  #split ctspec into unique and non-unique components
+  ctspecduplicates <- ctspec[duplicated(ctspec$param)&!is.na(ctspec$param),]
+  hypermeanduplicates<-c()
+  ctspec <- ctspec[!duplicated(ctspec$param) | is.na(ctspec$param),]
+  
+  if(any(duplicated(ctspec$param)&!is.na(ctspec$param))){
+  for(i in 1:nrow(ctspecduplicates)){
+    hypermeanduplicates[i] = paste0('hypermeans[',which(ctspec$param == ctspecduplicates$param[i]),']')
+  }
+  }
+  ctspecduplicates=cbind(ctspecduplicates,hypermeanduplicates)
   
   n.latent<-ctstanmodel$n.latent
   n.manifest<-ctstanmodel$n.manifest
@@ -226,7 +165,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
   id<-ctstanmodel$subjectIDname
   timeName<-ctstanmodel$timeName
   continuoustime<-ctstanmodel$continuoustime
-  indvarying<-ctspec$indvarying
+  indvarying<-c(ctspec$indvarying,ctspecduplicates$indvarying)
   nindvarying<-sum(indvarying)
   nparams<-sum(is.na(ctspec$value))
   
@@ -310,11 +249,15 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
   datalong[is.na(datalong)]<-99999 #missing data
 
   nsubjects <- length(unique(datalong[, 'id'])) 
+
+  indvaryingindex = array(
+    c(which(ctspec$indvarying[is.na(ctspec$value)]), #unique hypermeans
+      which(ctspec$param == ctspecduplicates$param[which(ctspecduplicates$indvarying[is.na(ctspecduplicates$value)])])), #duplicated hypermeans
+      dim=c(nindvarying)) #which free parameters vary across subjects
   
-  indvaryingindex = array(which(ctspec$indvarying[is.na(ctspec$value)]),dim=c(nindvarying)) #which free parameters vary across subjects
-  
-  indvaryingcorindex= which(ctspec$param[ctspec$indvarying] %in% ctspec$param[is.na(ctspec$value) & 
-      ctspec$indvarying & ctspec$row != ctspec$col & ctspec$matrix %in% c('T0VAR','DIFFUSION')])
+  #
+  # indvaryingcorindex= which(ctspec$param[ctspec$indvarying] %in% ctspec$param[is.na(ctspec$value) & 
+  #     ctspec$indvarying & ctspec$row != ctspec$col & ctspec$matrix %in% c('T0VAR','DIFFUSION')])
   
   #check diffusion indices input by user - which latents are involved in covariance
   if(diffusionindices=='all' || kalman==FALSE) diffusionindices = 1:n.latent
@@ -393,12 +336,12 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
     
     
     
-    obscount=1;
+    obscount=1; //running total of observed indicators
     for(rowi in 1:ndatapoints){
     int whichobs[nobs_y[rowi]];
-    whichobs = whichobs_y[rowi][1:nobs_y[rowi]];
+    whichobs = whichobs_y[rowi][1:nobs_y[rowi]]; //which are not missing in this row
     subjecti=subject[rowi];
-    nobsi = nobs_y[rowi];
+    nobsi = nobs_y[rowi]; //number of obs this row
     
     if(rowi!=1) obscount=obscount+nobs_y[rowi-1]; // number of non missing observations until now
     
@@ -406,15 +349,14 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
     etaprior[rowi] = T0MEANS',checkvarying('T0MEANS','[subjecti]','[1]'),'; //prior for initial latent state
     ',if(n.TDpred > 0) paste0('etaprior[rowi] =TDPREDEFFECT',checkvarying('TDPREDEFFECT','[subjecti]','[1]'),' * tdpreds[rowi] + etaprior[rowi];'),'
     ',if(kalman) paste0('etapriorcov[rowi] =  T0VAR',checkvarying('T0VAR','[subjecti]','[1]'),'[diffusionindices,diffusionindices];'),'
-    ',if(!kalman) paste0('etapost[rowi] = etaprior[rowi] + T0VARchol',checkvarying('T0VAR','[subjecti]','[1]'),'[diffusionindices,diffusionindices]',
-      ' * etapostbase[(1+(rowi-1)*nlatent):(rowi*nlatent)];'),'
+    etapost[rowi] = etaprior[rowi];
     }
     
     if(T0check[rowi]==0){
     etaprior[rowi] = discreteCINT[cintindex[rowi]]  + discreteDRIFT[driftindex[rowi]] * etapost[rowi-1]; //prior for latent state of this row
     ',if(n.TDpred > 0) paste0('etaprior[rowi] =TDPREDEFFECT',checkvarying('TDPREDEFFECT','[subjecti]','[1]'),' * tdpreds[rowi] + etaprior[rowi];'),'
     ',if(kalman) paste0('etapriorcov[rowi] =  makesym(quad_form(etapostcov[rowi-1], discreteDRIFT[driftindex[rowi]][diffusionindices,diffusionindices]\')  + discreteDIFFUSION[diffusionindex[rowi]]);'),'
-    ',if(!kalman) 'etapost[rowi] = etaprior[rowi] +  discreteDIFFUSIONchol[diffusionindex[rowi]] * etapostbase[(1+(rowi-1)*nlatent):(rowi*nlatent)];','
+    ',if(!kalman) 'etapost[rowi] = etaprior[rowi] +  discreteDIFFUSIONchol[diffusionindex[rowi]] * etapostbase[(1+(rowi-1-subjecti)*nlatent):((rowi-subjecti)*nlatent)];','
     }
     
     ',if(kalman) 'etapost[rowi] = etaprior[rowi];','
@@ -439,7 +381,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
       'Ypredcov_filt = quad_form(etapriorcov[rowi], LAMBDA_filt[,diffusionindices]\') + MANIFESTVAR',checkvarying('MANIFESTVAR','[subjecti]','[1]'),'[whichobs,whichobs];
       Ypredcov_filt_chol=cholesky_decompose(makesym(Ypredcov_filt)); 
       K_filt = etapriorcov[rowi] * LAMBDA_filt[,diffusionindices]\' / Ypredcov_filt; 
-      etapostcov[rowi] = (IIlatent[diffusionindices,diffusionindices] - K_filt * LAMBDA_filt[,diffusionindices]) * etapriorcov[rowi];
+      if(T0check[rowi]==0) etapostcov[rowi] = (IIlatent[diffusionindices,diffusionindices] - K_filt * LAMBDA_filt[,diffusionindices]) * etapriorcov[rowi];
       '),'
     
     ',if(!kalman & !binomial) paste0('Ypredcov_filt_chol = diag_matrix( sqrt(diagonal(MANIFESTVAR',checkvarying('MANIFESTVAR','[subjecti]','[1]'),'[whichobs,whichobs])));'),'
@@ -480,6 +422,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
 ')
     return(out)
   }
+      
+      # browser()
 
   writemodel<-function(init=FALSE,noshrinkage=FALSE){
     stanmodel <- paste0('
@@ -699,7 +643,9 @@ return out;
         for(subi in 1:nsubjects) {
         indparams[subi]= 
         hypercovchol * indparamsbase[(1+(subi-1)*nindvarying):(subi*nindvarying)] +',
-        'hypermeans',if(!esthyper) 'base', '[indvaryingindex]',
+        'hypermeans',
+        if(!esthyper) 'base', 
+        '[indvaryingindex]',
         if(n.TIpred>0) ' + tipredeffect * tipreds[subi]\' ',
         ';
         }
@@ -739,7 +685,29 @@ return out;
             x, ' = ', gsub('param',y,ctspec$transform[rowi]),'; \n')
           return(out)
         })),collapse=''),
+
         '
+        // create subject specific parameter matrices from duplicated transformed free effects 
+        ',if(nrow(ctspecduplicates)>0) paste0(unlist(lapply(1:nrow(ctspecduplicates),function(rowi) {
+          
+          x<-paste0(
+            checkvarying(ctspecduplicates[rowi,'matrix'],'for(subi in 1:nsubjects) '),
+            ctspecduplicates[rowi,'matrix'], checkvarying(ctspecduplicates[rowi,'matrix'],'[subi]','[1]'),'[', ctspecduplicates[rowi,'row'], 
+            if(ctspecduplicates[rowi,'matrix'] %in% c('LAMBDA','DRIFT','DIFFUSION',
+              'MANIFESTVAR', 'TDPREDEFFECT', 'T0VAR')) paste0(' , ', ctspecduplicates[rowi,'col']),
+            ']') 
+          
+          y<- paste0('(',
+            if(is.na(ctspecduplicates[rowi,'value']) & (noncentered | !ctspecduplicates$indvarying[rowi])) ctspecduplicates$hypermeanduplicates[rowi],
+            if(ctspecduplicates[rowi,'indvarying'] & noncentered) ' + ',
+            if(ctspecduplicates[rowi,'indvarying']) paste0('indparams[subi][',which(ctspecduplicates[ctspecduplicates$indvarying,'param']==ctspecduplicates[rowi,'param']) + sum(ctspec$indvarying),']')
+            ,')')
+          
+          if(!is.na(ctspecduplicates$transform[rowi]) & is.na(ctspecduplicates$value[rowi])) out<-paste0(
+            x, ' = ', gsub('param',y,ctspecduplicates$transform[rowi]),'; \n')
+          return(out)
+        })),collapse=''),
+'
         
         
         // perform any whole matrix transformations 
@@ -821,7 +789,7 @@ return out;
   ll = 0;
 
 // adjust partial correlation probabilities 
-        ',paste0(unlist(lapply(1:nrow(ctspec),function(rowi) {
+        ',if(!noshrinkage) paste0(unlist(lapply(1:nrow(ctspec),function(rowi) {
           out<-''
           if(ctspec$matrix[rowi] %in% c('T0VAR','DIFFUSION') & ctspec$row[rowi] > ctspec$col[rowi] & is.na(ctspec$value[rowi])) {
             out=paste0('target += beta_lpdf(inv_logit(',
@@ -982,13 +950,7 @@ print("lp = ", target());
     if(is.null(control$max_treedepth)) control$max_treedepth <- 10
     if(is.null(control$adapt_init_buffer)) adapt_init_buffer=10
     
-    stanseed<-floor(as.numeric(Sys.time()))
-    
-    if(!exists('sample_file')){
-      if(plot==TRUE) sample_file<-paste0(tmpdir,'\\\\',stanseed,'samples.csv')
-      if(plot==FALSE) sample_file<-NULL
-    }
-    
+
     if(initwithoptim & chains > 0){#optimize with bfgs for initial values
       
       npars=get_num_upars(sm)
@@ -1041,27 +1003,20 @@ print("lp = ", target());
       }
     }
     
-    if(plot==TRUE) {
-      stanplot(chains=chains,seed=stanseed)
-    }
-    
     if(cores=='maxneeded') cores=min(c(chains,parallel::detectCores()))
     
     if(!optimize & !vb) {
       message('Sampling...')
-    stanfit <- stan(fit = sm, 
+      
+    stanargs <- list(fit = sm, 
       enable_random_init=TRUE,init_r=.2,
       init=staninits,
       refresh=20,
       iter=iter,
       data = standata, chains = ifelse(optimize==FALSE & vb==FALSE,chains,0), control=control,
-      sample_file=sample_file,
-      cores=cores,...) 
+      cores=cores) 
 
-      if(plot==TRUE) {
-        for(chaini in 1:chains) system(paste0("rm ",tmpdir,'/',stanseed,"samples.csv",chaini))
-        system(paste0('rm ',tmpdir,'/stanplottemp.R'))
-      }
+      if(plot==TRUE) stanfit <- do.call(stanWplot,stanargs,...) else stanfit <- do.call(stan,stanargs,...)
     }
     
     if(optimize==TRUE && fit==TRUE) {
