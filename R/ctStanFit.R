@@ -171,6 +171,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
   
   
   #data checks
+    if (!(id %in% colnames(datalong))) stop(paste('id column', omxQuotes(id), "not found in data"))
   if(any(is.na(as.numeric(datalong[,id])))) stop('id column may not contain NA\'s or character strings!')
   
   #fit spec checks
@@ -185,6 +186,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
     T0check<-c(T0check, ifelse(datalong[,'id'][i] != datalong[,'id'][i-1], 1, 0))
   }
   
+    if (!(timeName %in% colnames(datalong))) stop(paste('time column', omxQuotes(id), "not found in data"))
   if(any(is.na(datalong[,timeName]))) stop('Missing "time" column!')
   
   #check id and calculate intervals, discrete matrix indices
