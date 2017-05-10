@@ -279,8 +279,7 @@ ctFit  <- function(datawide, ctmodelobj,
   
   ## if Kalman objective, rearrange data to long format and set Tpoints to 2 (so only single discrete algebras are generated)
   if(objective=='Kalman' | objective=='Kalmanmx') {
-    #     if(nrow(datawide) > 1) stop('To use Kalman filter implementation with multiple subjects, see function ctMultigroupFit')
-    
+
     if(n.TDpred >0){
       if(any(is.na(datawide[, paste0(TDpredNames, '_T', 0:(Tpoints-1))] ))) stop('NA predictors are not possible with Kalman objective')
     }
@@ -302,14 +301,7 @@ ctFit  <- function(datawide, ctmodelobj,
       datawide<-ctDeintervalise(datawide,dT='dT1')
       colnames(datawide)[which(colnames(datawide)=='time')] <-'dT1'
     }
-    
-    # if(n.TDpred >0){
-    #   datawide[1:(Tpoints), TDpredNames]<-datawide[1:(Tpoints), TDpredNames]
-    #   datawide[1, TDpredNames]<-0
-    # }
-    
-    
-    
+
     Tpoints<-2
     firstObsDummy<-matrix(c(1,rep(NA,times=nrow(datawide)-1)), nrow=nrow(datawide))
     for(i in 2:nrow(datawide)){
@@ -1898,9 +1890,7 @@ ctFit  <- function(datawide, ctmodelobj,
         D, u,  discreteDIFFUSIONmatrix, discreteDRIFT,
         mxAlgebra(name='intercept', (1-firstObsDummy) %x% discreteCINT_T1 + firstObsDummy %x% T0MEANS),
         
-        
-        
-        mxAlgebra(name='discreteDIFFUSIONwithdummy',  (1-firstObsDummy) %x% discreteDIFFUSIONmatrix + firstObsDummy %x% (T0VAR)),
+       mxAlgebra(name='discreteDIFFUSIONwithdummy',  (1-firstObsDummy) %x% discreteDIFFUSIONmatrix + firstObsDummy %x% (T0VAR)),
         
         mxMatrix(name='firstObsDummy', free=FALSE, labels='data.firstObsDummy', nrow=1, ncol=1),
         
@@ -1926,16 +1916,15 @@ ctFit  <- function(datawide, ctmodelobj,
       #        )
       
     } #end multi subject kalman
-    # browser()
     
     if(n.TDpred>0){
       discreteCINT_T1labels<-matrix(paste0('discreteCINT_T1[', 1:n.latent, ',','1]'), nrow=n.latent)
-      discreteTDPREDEFFECT_T1labels<-matrix(paste0('discreteTDPREDEFFECT_T1[', 1:n.latent, ',', rep(1:n.TDpred, each=n.latent), ']'), nrow=n.latent)
+      TDPREDEFFECT_T1labels<-matrix(paste0('TDPREDEFFECT[', 1:n.latent, ',', rep(1:n.TDpred, each=n.latent), ']'), nrow=n.latent)
       TDPREDEFFECT$ref<-paste0('data.', TDpredNames)
       
       model<-OpenMx::mxModel(model, 
         mxMatrix(name='B', free=FALSE , nrow=n.latent, ncol=n.TDpred+1, 
-          labels=cbind(discreteCINT_T1labels, discreteTDPREDEFFECT_T1labels)), 
+          labels=cbind(discreteCINT_T1labels, TDPREDEFFECT_T1labels)), 
         
         mxMatrix(name='D', nrow=n.manifest, ncol=1+n.TDpred, 
           free=c(MANIFESTMEANS$free, rep(FALSE, n.TDpred*n.manifest)), 
