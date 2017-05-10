@@ -43,7 +43,7 @@ Either a three dimensional array of predictor effects, or nothing with a plot
 generated.
 }
 \description{
-COmputes and plots combined effects and quantiles for effects of time independent predictors
+Computes and plots combined effects and quantiles for effects of time independent predictors
 on subject level parameters of a ctStanFit object.
 }
 \examples{

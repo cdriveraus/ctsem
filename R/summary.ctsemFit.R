@@ -192,13 +192,17 @@ ctSummaryMatrices<-function(object,ridging=FALSE,timeInterval=1,verbose=FALSE,..
     MANIFESTVAR<-tryCatch({ mxEval(MANIFESTVAR,mxobj, compute=TRUE)}, error=function(e) e )
     tryCatch({  dimnames(MANIFESTVAR)<-list(manifestNames,manifestNames)}, error=function(e) e )
     outlist<-c(outlist,'MANIFESTVAR')
-    
+
     if(verbose==TRUE){
       MANIFESTVARdiag<-tryCatch({ diag(diag(MANIFESTVAR),n.manifest)+diag(c(ridging),n.manifest)}, error=function(e) e )
       MANIFESTVARstd<-tryCatch({ suppressWarnings(solve(sqrt(MANIFESTVARdiag)) %&% MANIFESTVAR)}, error=function(e) e )
       tryCatch({  dimnames(MANIFESTVARstd)<-list(latentNames,latentNames)}, error=function(e) e )
       outlist<-c(outlist,'MANIFESTVARstd')
     }
+    
+    MANIFESTMEANS<-tryCatch({ mxEval(MANIFESTMEANS,mxobj, compute=TRUE)}, error=function(e) e )
+    tryCatch({  dimnames(MANIFESTMEANS)<-list(manifestNames,manifestNames)}, error=function(e) e )
+    outlist<-c(outlist,'MANIFESTMEANS')
     
     CINT<-tryCatch({ mxobj$CINT$values}, error=function(e) e )
     if(asymptotes==TRUE) CINT <- tryCatch({ -DRIFT %*% CINT}, error=function(e) e )
