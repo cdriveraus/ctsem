@@ -144,13 +144,15 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
   #split ctspec into unique and non-unique components
   ctspecduplicates <- ctspec[duplicated(ctspec$param)&!is.na(ctspec$param),]
   hypermeanduplicates<-c()
-  ctspec <- ctspec[!duplicated(ctspec$param) | is.na(ctspec$param),]
   
   if(any(duplicated(ctspec$param)&!is.na(ctspec$param))){
   for(i in 1:nrow(ctspecduplicates)){
-    hypermeanduplicates[i] = paste0('hypermeans[',which(ctspec$param == ctspecduplicates$param[i]),']')
+    # browser()
+    hypermeanduplicates[i] = paste0('hypermeans[',which(ctspecduplicates$param[i] %in% ctspec$param),']')
   }
   }
+  
+  ctspec <- ctspec[!duplicated(ctspec$param) | is.na(ctspec$param),]
   ctspecduplicates=cbind(ctspecduplicates,hypermeanduplicates)
   
   n.latent<-ctstanmodel$n.latent
