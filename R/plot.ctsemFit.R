@@ -40,7 +40,7 @@ plot.ctsemMultigroupFit<-function(x,group='show chooser',...){
 #' @param withinVariance if TRUE, plot within subject variance / covariance.
 #' @param AR if TRUE, plot of autoregressive values from 0 to max.time included in output.
 #' @param CR if TRUE, plot of cross regressive values from 0 to max.time included in output.
-#' @param standardiseCR if TRUE (default), cross regression values are standardised based on estimated within subject variance.
+#' @param standardiseCR if TRUE , cross regression values are standardised based on estimated within subject variance.
 #' @param randomImpulse if TRUE (default), plots expected change in processes given a random fluctuation of +1 for each process -- 
 #' plot is then a mixture of DIFFUSION and DRIFT characteristics.
 #' @param experimentalImpulse if TRUE (default), plots expected change in processes given an exogenous input of +1 for each process -- 
@@ -69,7 +69,7 @@ plot.ctsemMultigroupFit<-function(x,group='show chooser',...){
 #' @export
 
 plot.ctsemFit<-function(x,resolution=50,wait=TRUE,max.time="auto",mean=TRUE,
-  withinVariance=TRUE,AR=TRUE,CR=TRUE,standardiseCR=TRUE,randomImpulse=FALSE,
+  withinVariance=TRUE,AR=TRUE,CR=TRUE,standardiseCR=FALSE,randomImpulse=FALSE,
   experimentalImpulse=FALSE,
   xlab="Time",
   meansylim='auto',ARylim='auto', CRylim='auto', ylab="Value",...){
@@ -123,53 +123,53 @@ plot.ctsemFit<-function(x,resolution=50,wait=TRUE,max.time="auto",mean=TRUE,
     
     #TD predictors
     tdpredeffect<-matrix(0,nrow=length(plottimes),ncol=n.latent) #default 0 matrix
-    #extract and round absolute times to resolution
-    if(n.TDpred >0){
-      if(ctfitobj$ctfitargs$objective!='Kalman') data<-mxobj$data$observed
-      if(ctfitobj$ctfitargs$objective=='Kalman') {
-        data<- ctLongToWide(mxobj$data$observed,id='id',time='dT1',
-          manifestNames=manifestNames,TDpredNames=TDpredNames,TIpredNames=TIpredNames)
-        data<-data[,-which(colnames(data)=='T0'),drop=F]
-        colnames(data)[which(colnames(data) %in% paste0('T',1:(Tpoints-1)))]<-paste0('dT',1:(Tpoints-1))
-      }
-      
-      obstimes<-cbind(
-        matrix(rep(0,nrow(data)),ncol=1), 
-        matrix(
-          apply(data[,paste0('dT',1:(Tpoints-1)),drop=F],1,function(x){
-            obstimesi<-c()
-            for(i in 1:(length(x))){
-              obstimesi[i]<-round(sum(x[1:i])*resolution,digits=0) / resolution
-            }
-            return(obstimesi)
-          }
-          ),
-          byrow=T,ncol=(Tpoints-1))
-      )
-      
-      #extract tdpred observations and match with rounded times
-      TDpredMeans<-matrix(NA,nrow=max(obstimes*resolution),ncol=n.TDpred)
-      for(predi in 1:n.TDpred){
-        TDpredObs<-matrix(0,nrow=max(obstimes*resolution),ncol=nrow(data))
-        TDpredObs[cbind(c(obstimes * resolution),c(row(obstimes)))] <- data[,paste0(TDpredNames[predi],'_T',0:(Tpoints-2))]
-        TDpredMeans[,predi]<-apply(TDpredObs,1,mean,na.rm=T)
-      }
-      TDpredMeans=TDpredMeans[1:length(plottimes),,drop=FALSE]
-      
-      TDPREDEFFECT <- OpenMx::mxEval(TDPREDEFFECT,mxobj,compute=T)
-      ARforResolution <- OpenMx::expm(DRIFT*(1/resolution))
-      for(i in 2:length(plottimes)){
-        tdpredeffect[i,]<- ARforResolution %*% t(tdpredeffect[i-1, ,drop=F]) + TDPREDEFFECT %*% t(TDpredMeans[i-1, ,drop=F])
-      }
-    }
+   
+     #extract and round absolute times to resolution
+    # if(n.TDpred >0){
+    #   if(ctfitobj$ctfitargs$objective!='Kalman') data<-mxobj$data$observed
+    #   if(ctfitobj$ctfitargs$objective=='Kalman') {
+    #     data<- ctLongToWide(mxobj$data$observed,id='id',time='dT1',
+    #       manifestNames=manifestNames,TDpredNames=TDpredNames,TIpredNames=TIpredNames)
+    #     data<-data[,-which(colnames(data)=='T0'),drop=F]
+    #     colnames(data)[which(colnames(data) %in% paste0('T',1:(Tpoints-1)))]<-paste0('dT',1:(Tpoints-1))
+    #   }
+    #   
+    #   obstimes<-cbind(
+    #     matrix(rep(0,nrow(data)),ncol=1), 
+    #     matrix(
+    #       apply(data[,paste0('dT',1:(Tpoints-1)),drop=F],1,function(x){
+    #         obstimesi<-c()
+    #         for(i in 1:(length(x))){
+    #           obstimesi[i]<-round(sum(x[1:i])*resolution,digits=0) / resolution
+    #         }
+    #         return(obstimesi)
+    #       }
+    #       ),
+    #       byrow=T,ncol=(Tpoints-1))
+    #   )
+    #   
+    #   #extract tdpred observations and match with rounded times
+    #   TDpredMeans<-matrix(NA,nrow=max(obstimes*resolution),ncol=n.TDpred)
+    #   for(predi in 1:n.TDpred){
+    #     TDpredObs<-matrix(0,nrow=max(obstimes*resolution),ncol=nrow(data))
+    #     TDpredObs[cbind(c(obstimes * resolution),c(row(obstimes)))] <- data[,paste0(TDpredNames[predi],'_T',0:(Tpoints-2))]
+    #     TDpredMeans[,predi]<-apply(TDpredObs,1,mean,na.rm=T)
+    #   }
+    #   TDpredMeans=TDpredMeans[1:length(plottimes),,drop=FALSE]
+    #   
+    #   TDPREDEFFECT <- OpenMx::mxEval(TDPREDEFFECT,mxobj,compute=T)
+    #   ARforResolution <- OpenMx::expm(DRIFT*(1/resolution))
+    #   for(i in 2:length(plottimes)){
+    #     tdpredeffect[i,]<- ARforResolution %*% t(tdpredeffect[i-1, ,drop=F]) + TDPREDEFFECT %*% t(TDpredMeans[i-1, ,drop=F])
+    #   }
+    # }
       
     
     
     means<-matrix(apply(cbind(1:length(plottimes)),1,function(x) {
       dT<-plottimes[x]
       OpenMx::expm(DRIFT*dT) %*% T0MEANS + 
-        solve(DRIFT) %*% (OpenMx::expm(DRIFT*dT)-diag(nrow(DRIFT))) %*% CINT +
-        t(tdpredeffect[x,,drop=F])
+        solve(DRIFT) %*% (OpenMx::expm(DRIFT*dT)-diag(nrow(DRIFT))) %*% CINT 
     }), byrow=T,ncol=nrow(DRIFT))
     
     if(meansylim=='auto') meansylim<- c(min(means),max(means))
@@ -533,52 +533,51 @@ ctPlot<-function(x,plotType,xlim,resolution=50,impulseIndex=NULL,subject=1,typeV
     #TD predictors
     tdpredeffect<-matrix(0,nrow=length(plottimes),ncol=n.latent) #default 0 matrix
     #extract and round absolute times to resolution
-    if(n.TDpred >0){
-      if(ctfitobj$ctfitargs$objective!='Kalman') data<-mxobj$data$observed
-      if(ctfitobj$ctfitargs$objective=='Kalman') {
-        data<- ctLongToWide(mxobj$data$observed,id='id',time='dT1',
-          manifestNames=manifestNames,TDpredNames=TDpredNames,TIpredNames=TIpredNames)
-        data<-data[,-which(colnames(data)=='T0'),drop=F]
-        colnames(data)[which(colnames(data) %in% paste0('T',1:(Tpoints-1)))]<-paste0('dT',1:(Tpoints-1))
-      }
-      
-      obstimes<-cbind(
-        matrix(rep(0,nrow(data)),ncol=1), 
-        matrix(
-          apply(data[,paste0('dT',1:(Tpoints-1)),drop=F],1,function(x){
-            obstimesi<-c()
-            for(i in 1:(length(x))){
-              obstimesi[i]<-round(sum(x[1:i])*resolution,digits=0) / resolution
-            }
-            return(obstimesi)
-          }
-          ),
-          byrow=T,ncol=(Tpoints-1))
-      )
-      # obstimes=obstimes[obstimes <=xlim]
-      
-      #extract tdpred observations and match with rounded times
-      TDpredMeans<-matrix(NA,nrow=max(obstimes*resolution),ncol=n.TDpred)
-      for(predi in 1:n.TDpred){
-        TDpredObs<-matrix(0,nrow=max(obstimes*resolution),ncol=nrow(data))
-        TDpredObs[cbind(c(obstimes * resolution),c(row(obstimes)))] <- data[,paste0(TDpredNames[predi],'_T',0:(Tpoints-2))]
-        TDpredMeans[,predi]<-apply(TDpredObs,1,mean,na.rm=T)
-      }
-      TDpredMeans=TDpredMeans[1:length(plottimes),,drop=FALSE]
-      
-      TDPREDEFFECT <- OpenMx::mxEval(TDPREDEFFECT,mxobj,compute=T)
-      ARforResolution <- OpenMx::expm(DRIFT*(1/resolution))
-      for(i in 2:length(plottimes)){
-        tdpredeffect[i,]<- ARforResolution %*% t(tdpredeffect[i-1, ,drop=F]) + TDPREDEFFECT %*% t(TDpredMeans[i-1, ,drop=F])
-      }
-    }
+    # if(n.TDpred >0){
+    #   if(ctfitobj$ctfitargs$objective!='Kalman') data<-mxobj$data$observed
+    #   if(ctfitobj$ctfitargs$objective=='Kalman') {
+    #     data<- ctLongToWide(mxobj$data$observed,id='id',time='dT1',
+    #       manifestNames=manifestNames,TDpredNames=TDpredNames,TIpredNames=TIpredNames)
+    #     data<-data[,-which(colnames(data)=='T0'),drop=F]
+    #     colnames(data)[which(colnames(data) %in% paste0('T',1:(Tpoints-1)))]<-paste0('dT',1:(Tpoints-1))
+    #   }
+    #   
+    #   obstimes<-cbind(
+    #     matrix(rep(0,nrow(data)),ncol=1), 
+    #     matrix(
+    #       apply(data[,paste0('dT',1:(Tpoints-1)),drop=F],1,function(x){
+    #         obstimesi<-c()
+    #         for(i in 1:(length(x))){
+    #           obstimesi[i]<-round(sum(x[1:i])*resolution,digits=0) / resolution
+    #         }
+    #         return(obstimesi)
+    #       }
+    #       ),
+    #       byrow=T,ncol=(Tpoints-1))
+    #   )
+    #   # obstimes=obstimes[obstimes <=xlim]
+    #   
+    #   #extract tdpred observations and match with rounded times
+    #   TDpredMeans<-matrix(NA,nrow=max(obstimes*resolution),ncol=n.TDpred)
+    #   for(predi in 1:n.TDpred){
+    #     TDpredObs<-matrix(0,nrow=max(obstimes*resolution),ncol=nrow(data))
+    #     TDpredObs[cbind(c(obstimes * resolution),c(row(obstimes)))] <- data[,paste0(TDpredNames[predi],'_T',0:(Tpoints-2))]
+    #     TDpredMeans[,predi]<-apply(TDpredObs,1,mean,na.rm=T)
+    #   }
+    #   TDpredMeans=TDpredMeans[1:length(plottimes),,drop=FALSE]
+    #   
+    #   TDPREDEFFECT <- OpenMx::mxEval(TDPREDEFFECT,mxobj,compute=T)
+    #   ARforResolution <- OpenMx::expm(DRIFT*(1/resolution))
+    #   for(i in 2:length(plottimes)){
+    #     tdpredeffect[i,]<- ARforResolution %*% t(tdpredeffect[i-1, ,drop=F]) + TDPREDEFFECT %*% t(TDpredMeans[i-1, ,drop=F])
+    #   }
+    # }
     
     
     means<-matrix(apply(cbind(1:length(plottimes)),1,function(x) {
       dT<-plottimes[x]
       OpenMx::expm(DRIFT*dT) %*% T0MEANS + 
-        solve(DRIFT) %*% (OpenMx::expm(DRIFT*dT)-diag(nrow(DRIFT))) %*% CINT +
-        t(tdpredeffect[x,,drop=F])
+        solve(DRIFT) %*% (OpenMx::expm(DRIFT*dT)-diag(nrow(DRIFT))) %*% CINT
     }), byrow=T,ncol=nrow(DRIFT))
     
     plotdata<-means

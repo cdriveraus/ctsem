@@ -29,6 +29,7 @@ ctCollapse<-function(inarray,collapsemargin,collapsefunc,...){
   indims<-dim(inarray)
   out<-array(plyr::aaply(inarray,(1:length(indims))[-collapsemargin],collapsefunc,...,
     .drop=TRUE),dim=indims[-collapsemargin])
+  dimnames(out)=dimnames(inarray)[-collapsemargin]
   return(out)
 }
 
@@ -92,11 +93,14 @@ ctDensity<-function(x){
 }
 
 
-#' Plots uncertainty bands
+#' Plots uncertainty bands with shading
 #'
 #' @param x x values
+#' @param y y values
 #' @param ylow lower limits of y
 #' @param yhigh upper limits of y
+#' @param steps number of polygons to overlay - higher integers lead to 
+#' smoother changes in transparency between y and yhigh / ylow.
 #' @param ... arguments to pass to polygon()
 #'
 #' @return Nothing. Adds a polygon to existing plot.
@@ -104,12 +108,18 @@ ctDensity<-function(x){
 #'
 #' @examples
 #' plot(0:100,sqrt(0:100),type='l')
-#' ctPoly(0:100, sqrt(0:100) - runif(101), sqrt(0:100) + runif(101),
+#' ctPoly(x=0:100, y=sqrt(0:100), 
+#' yhigh=sqrt(0:100) - runif(101), 
+#' ylow=sqrt(0:100) + runif(101),
 #' col=adjustcolor('red',alpha.f=.1),border=NA)
-ctPoly <- function(x,ylow,yhigh,...){
+ctPoly <- function(x,y,ylow,yhigh,steps=20,...){
+  for(i in 1:steps){
+    tylow= y + (ylow-y)*i/steps
+    tyhigh= y + (yhigh-y)*i/steps
   xf <- c(x,x[length(x):1])
-  yf <- c(ylow,yhigh[length(yhigh):1])
+  yf <- c(tylow,tyhigh[length(tyhigh):1])
   polygon(xf,yf,...)
+  }
 }
 
 
@@ -144,7 +154,7 @@ ctWideNames<-function(n.manifest,Tpoints,n.TDpred=0,n.TIpred=0,manifestNames='au
   
   manifestnames<-paste0(manifestNames,"_T",rep(0:(Tpoints-1),each=n.manifest))
   if(n.TDpred > 0 && Tpoints > 1) {
-      TDprednames<-paste0(TDpredNames,"_T",rep(0:(Tpoints-2),each=n.TDpred))
+      TDprednames<-paste0(TDpredNames,"_T",rep(0:(Tpoints-1),each=n.TDpred))
   } else {
       TDprednames<-NULL
   }

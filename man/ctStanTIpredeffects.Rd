@@ -4,11 +4,16 @@
 \alias{ctStanTIpredeffects}
 \title{Get time independent predictor effect estimates}
 \usage{
-ctStanTIpredeffects(fit, probs = c(0.25, 0.5, 0.75), whichTIpreds = 1,
-  whichpars = "all", plot = FALSE, ...)
+ctStanTIpredeffects(fit, returndifference = FALSE, probs = c(0.025, 0.5,
+  0.975), whichTIpreds = 1, whichpars = "all", plot = FALSE, ...)
 }
 \arguments{
 \item{fit}{fit object from \code{\link{ctStanFit}}}
+
+\item{returndifference}{logical. If FALSE, absolute parameter values are returned. 
+If TRUE, only the effect of the covariate (i.e. without the average value of the parameter)
+are returned. The former can be easier to interpret, but the latter are more likely to fit on 
+a single plot.}
 
 \item{probs}{numeric vector of quantile probabilities from 0 to 1. Specify 3
 values if plotting, the 2nd will be drawn as a line with uncertainty polygon
@@ -38,11 +43,9 @@ Either a three dimensional array of predictor effects, or nothing with a plot
 generated.
 }
 \description{
-COmputes and plots combined effects and quantiles for effects of time independent predictors
+Computes and plots combined effects and quantiles for effects of time independent predictors
 on subject level parameters of a ctStanFit object.
 }
 \examples{
 ctStanTIpredeffects(ctstantestfit,plot=TRUE)
-ctStanTIpredeffects(ctstantestfit,plot=TRUE,separate=TRUE)
 }
-

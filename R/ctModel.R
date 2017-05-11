@@ -66,13 +66,13 @@
 #' number of time points for a single individual, but may be one extra if sample relative time intervals are used, 
 #' see \code{\link{ctIntervalise}}. 
 #' 
-#' @param TRAITVAR For type='omx' only. Either NULL, if no trait / individual heterogeneity effect, 
-#' or lower triangular n.latent*n.latent cholesky matrix of trait variance / covariance.
+#' @param TRAITVAR For type='omx' only. Either NULL, if no trait / unobserved heterogeneity effect, 
+#' or lower triangular n.latent*n.latent cholesky matrix of trait variance / covariance across subjects.
 #' "auto" freely estimates all parameters.
 #' 
 #' @param T0TRAITEFFECT For type='omx' only. Either NULL, if no trait / individual heterogeneity effect, 
 #' or lower triangular n.latent*n.latent cholesky matrix of initial trait variance / covariance.
-#' "auto" freely estimates all parametrers.
+#' "auto" freely estimates all parametrers, if the TRAITVAR matrix is specified.
 #' 
 #' @param MANIFESTTRAITVAR For type='omx' only. Either NULL (default) if no trait variance / individual heterogeneity in the level of
 #' the manifest indicators, otherwise a lower triangular n.manifest * n.manifest variance / covariance matrix. 
@@ -88,22 +88,25 @@
 #' Effects from 1:n.TDpred columns TDpredictors go to 1:n.latent rows of latent processes.
 #' "auto" freely estimates all parameters.
 #' 
-#' @param T0TDPREDCOV For type='omx' only. n.latent rows * ((Tpoints-1) rows * n.TDpred) columns covariance matrix 
+#' @param T0TDPREDCOV For type='omx' only. n.latent rows * (Tpoints * n.TDpred) columns covariance matrix 
 #' between latents at T0 and time dependent predictors.
-#' "auto" freely estimates all parameters.
+#' Default of "auto" restricts covariance to 0, which is consistent with covariance to other time points. 
+#' To freely estimate parameters, specify either 'free', or the desired matrix.
 #' 
-#' @param TDPREDVAR For type='omx' only. lower triangular (n.TDpred * (Tpoints-1)) rows * (n.TDpred * (Tpoints-1)) columns variance / covariance
+#' @param TDPREDVAR For type='omx' only. lower triangular (n.TDpred * Tpoints) rows 
+#' * (n.TDpred * Tpoints) columns variance / covariance
 #' cholesky matrix for time dependent predictors.
 #' "auto" (default) freely estimates all parameters.
 #' 
-#' @param TRAITTDPREDCOV For type='omx' only. n.latent rows * (n.TDpred*(Tpoints-1)) columns covariance matrix of 
-#' latent traits and time dependent predictors.  
-#' The Tpoints-1 columns of the first preditor are followed by those of the second and so on.
+#' @param TRAITTDPREDCOV For type='omx' only. n.latent rows * (n.TDpred*Tpoints) columns covariance matrix of 
+#' latent traits and time dependent predictors. Defaults to zeroes, 
+#' assuming predictors are independent of subjects baseline levels. When predictors depend on the subjects,
+#' this should instead be set to 'free' or manually specified.
+#' The Tpoints columns of the first preditor are followed by those of the second and so on.
 #' Covariances with the trait variance of latent process 1 are specified in row 1, process 2 in row 2, etc.
-#' "auto" (default) freely estimates covariance between time dependent predictors and traits, 
-#' (if both exist, otherwise this matrix is set to NULL, and ignored in any case).
+#' "auto" (default) sets this matrix to zeroes, (if both traits and time dependent predictors exist, otherwise this matrix is set to NULL, and ignored in any case).
 #' 
-#' @param TDTIPREDCOV For type='omx' only. (n.TDpred * (Tpoints-1)) rows * n.TIpred columns covariance
+#' @param TDTIPREDCOV For type='omx' only. (n.TDpred * Tpoints) rows * n.TIpred columns covariance
 #' matrix between time dependent and time independent predictors.
 #' "auto" (default) freely estimates all parameters.
 #'  
@@ -140,8 +143,6 @@
 #'  Tpoints = 8, manifestNames = c('LeisureTime', 'Happiness'), 
 #'  TDpredNames = 'MoneyInt', 
 #'  latentNames = c('LeisureTime', 'Happiness', 'MoneyIntLatent'),
-#'  T0TDPREDCOV = matrix(0, nrow = 3, ncol = 7),
-#'  TRAITTDPREDCOV = matrix(0, nrow = 3, ncol = 7), 
 #'  LAMBDA = matrix(c(1,0, 0,1, 0,0), ncol = 3), TRAITVAR = "auto")
 #'
 #'  tdpredmodel$TRAITVAR[3, ] <- 0
@@ -248,6 +249,7 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
   
   if(ncol(T0MEANS)>1) stop("Specified T0MEANS matrix has more than one column")
   if(nrow(T0MEANS)!=n.latent) stop ("Specified T0MEANS matrix rows not equal to n.latent")
+  rownames(T0MEANS)=latentNames
   
   
   
@@ -258,7 +260,7 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
     n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
   
   if(nrow(T0VAR)!=n.latent | ncol(T0VAR)!=n.latent) stop("Dimensions of T0VAR matrix are not n.latent * n.latent")
-  
+  dimnames(T0VAR)=list(latentNames,latentNames)
 
   
   
@@ -269,7 +271,7 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
     n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
   if(ncol(MANIFESTMEANS)>1) stop("Specified MANIFESTMEANS matrix has more than one column")
   if(nrow(MANIFESTMEANS)!=n.manifest) stop ("Specified MANIFESTMEANS matrix rows not equal to n.manifest")
-  
+  rownames(MANIFESTMEANS)=manifestNames
   
   
   
@@ -289,6 +291,7 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
   
   if(nrow(MANIFESTVAR)!=n.manifest | ncol(MANIFESTVAR)!=n.manifest) stop("Dimensions of MANIFESTVAR matrix are not n.manifest * n.manifest")
   }
+  dimnames(MANIFESTVAR)=list(manifestNames,manifestNames)
   
   
   
@@ -296,14 +299,14 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
   if(DRIFT[1]=="auto") DRIFT<-ctLabel(TDpredNames=TDpredNames,TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="DRIFT",n.latent=n.latent,
     n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
   if(nrow(DRIFT)!= n.latent | ncol(DRIFT)!= n.latent) stop("Dimensions of DRIFT matrix are not n.latent * n.latent")
-  
+  dimnames(DRIFT)=list(latentNames,latentNames)
   
   
   
   
   if(CINT[1]=="auto") CINT<-matrix(0,nrow=n.latent,ncol=1)
   if(ncol(CINT)!=1 | nrow(CINT)!=n.latent) stop("Dimensions of CINT are not n.latent * 1")
-  
+  rownames(CINT)=latentNames
   
   
   
@@ -311,26 +314,31 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
   if(DIFFUSION[1]=="auto") DIFFUSION<-ctLabel(TDpredNames=TDpredNames,TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="DIFFUSION",n.latent=n.latent,
     n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
   if(nrow(DIFFUSION)!=n.latent | ncol(DIFFUSION) != n.latent) stop("Dimensions of DIFFUSION are not n.latent * n.latent")
-
+  dimnames(DIFFUSION)=list(latentNames,latentNames)
   
   
   
   
   
-  if(!is.null(TRAITVAR) && TRAITVAR[1]=="auto") TRAITVAR<-ctLabel(TDpredNames=TDpredNames,
+  if(!is.null(TRAITVAR)){
+    
+    if(all(TRAITVAR=="auto")) TRAITVAR<-ctLabel(TDpredNames=TDpredNames,
     TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="TRAITVAR",
     n.latent=n.latent,n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
-  if(!is.null(TRAITVAR) && nrow(TRAITVAR)+ncol(TRAITVAR)!=n.latent*2) stop ("
+    
+  if(nrow(TRAITVAR)+ncol(TRAITVAR)!=n.latent*2) stop ("
     Dimensions of TRAITVAR are not n.latent * n.latent")
+  dimnames(TRAITVAR)=list(latentNames,latentNames)
   
-  if(!is.null(TRAITVAR) && (is.null(T0TRAITEFFECT) || T0TRAITEFFECT[1] == 'auto')) T0TRAITEFFECT<-
+  if(is.null(T0TRAITEFFECT) || all(T0TRAITEFFECT == 'auto')) T0TRAITEFFECT<-
     ctLabel(TDpredNames=TDpredNames,TIpredNames=TIpredNames,manifestNames=manifestNames,
       latentNames=latentNames,matrixname="T0TRAITEFFECT",n.latent=n.latent,
     n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
+  dimnames(T0TRAITEFFECT)=list(latentNames,latentNames)
   
   if(!is.null(T0TRAITEFFECT) && nrow(T0TRAITEFFECT)+ncol(T0TRAITEFFECT)!=n.latent*2) stop ("Dimensions of TRAITVAR are not n.latent * n.latent")
   
-  
+}
   
   
   
@@ -339,38 +347,44 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
 
   
   
-  if(!is.null(MANIFESTTRAITVAR) && MANIFESTTRAITVAR[1]=="auto") MANIFESTTRAITVAR<-ctLabel(TDpredNames=TDpredNames,TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="MANIFESTTRAITVAR",n.latent=n.latent,
+  if(!is.null(MANIFESTTRAITVAR)){
+    
+    if(MANIFESTTRAITVAR[1]=="auto") MANIFESTTRAITVAR<-ctLabel(TDpredNames=TDpredNames,TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="MANIFESTTRAITVAR",n.latent=n.latent,
     n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
-  if(!is.null(MANIFESTTRAITVAR) && nrow(MANIFESTTRAITVAR)+ncol(MANIFESTTRAITVAR)!=n.manifest*2) stop ("Dimensions of MANIFESTTRAITVAR are not n.manifest * n.manifest")
+    
+  if(nrow(MANIFESTTRAITVAR)+ncol(MANIFESTTRAITVAR)!=n.manifest*2) stop ("Dimensions of MANIFESTTRAITVAR are not n.manifest * n.manifest")
 #   if(is.null(MANIFESTTRAITVAR)) MANIFESTTRAITVAR <- matrix(0,nrow=n.manifest,ncol=n.manifest)
-  
-  
+  dimnames(MANIFESTTRAITVAR)=list(manifestNames,manifestNames)
+  }
   
   
   
   
   #effect matrix of time dependent predictors (with time independent effect strength)
-  if(TDPREDEFFECT[1]=="auto" && n.TDpred!=0)  TDPREDEFFECT<-ctLabel(TDpredNames=TDpredNames,
+  if(n.TDpred > 0){
+  if(all(TDPREDEFFECT=="auto"))  {
+    
+    TDPREDEFFECT<-ctLabel(TDpredNames=TDpredNames,
     TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="TDPREDEFFECT",n.latent=n.latent,
     n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
-  if(n.TDpred==0) TDPREDEFFECT<-NULL
-  if(n.TDpred!=0) if(nrow(TDPREDEFFECT) != n.latent | ncol(TDPREDEFFECT) != n.TDpred) stop("Dimensions of TDPREDEFFECT are not n.latent * n.TDpred")
+    
+  if(nrow(TDPREDEFFECT) != n.latent | ncol(TDPREDEFFECT) != n.TDpred) stop("Dimensions of TDPREDEFFECT are not n.latent * n.TDpred")
+  }
+    dimnames(TDPREDEFFECT)=list(latentNames,TDpredNames)
   
-  
-  
-
   # means of TD predictors
-  if(TDPREDMEANS[1]=="auto" & n.TDpred > 0) TDPREDMEANS <- ctLabel(TDpredNames=TDpredNames,
+  if(all(TDPREDMEANS=="auto") & n.TDpred > 0) TDPREDMEANS <- ctLabel(TDpredNames=TDpredNames,
     TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="TDPREDMEANS",n.latent=n.latent,
     n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
+
+  if(nrow(TDPREDMEANS) != n.TDpred*(Tpoints) | ncol(TDPREDMEANS) != 1) stop(
+    "Dimensions of TDPREDMEANS are not (n.TDpred*Tpoints) rows * 1 column")
+  }
   
-  if(n.TDpred==0) TDPREDMEANS<-NULL
-  
-  if(n.TDpred > 0) if(nrow(TDPREDMEANS) != n.TDpred*(Tpoints-1) | ncol(TDPREDMEANS) != 1) stop(
-    "Dimensions of TDPREDMEANS are not (n.TDpred*(Tpoints-1)) rows * 1 column")
-  
-  
-  
+  if(n.TDpred==0) {
+    TDPREDEFFECT<-NULL
+    TDPREDMEANS<-NULL
+  }
   
   
   # means of TI predictors
@@ -386,18 +400,19 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
   
   
   
-  if(T0TDPREDCOV[1]=="auto" && n.TDpred>0) T0TDPREDCOV<-ctLabel(TDpredNames=TDpredNames,TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="T0TDPREDCOV",n.latent=n.latent,
+  if(all(T0TDPREDCOV=="free") && n.TDpred>0) T0TDPREDCOV<-ctLabel(TDpredNames=TDpredNames,TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="T0TDPREDCOV",n.latent=n.latent,
     n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
+  if(all(T0TDPREDCOV=="auto") && n.TDpred>0) T0TDPREDCOV<-matrix(0,n.latent,n.TDpred*(Tpoints))
   if(n.TDpred==0) T0TDPREDCOV<-NULL
 
-  if(n.TDpred>0) if(nrow(T0TDPREDCOV) != n.latent | ncol(T0TDPREDCOV) != n.TDpred*(Tpoints-1))  stop(
-    "Dimensions of T0TDPREDCOV are not n.latent * (n.TDpred*(Tpoints-1))")
+  if(n.TDpred>0) if(nrow(T0TDPREDCOV) != n.latent | ncol(T0TDPREDCOV) != n.TDpred*(Tpoints))  stop(
+    "Dimensions of T0TDPREDCOV are not n.latent * (n.TDpred*Tpoints)")
   
   
   
   
   
-  if(TIPREDEFFECT[1]=="auto" && n.TIpred>0) TIPREDEFFECT<-ctLabel(TDpredNames=TDpredNames,TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="TIPREDEFFECT",n.latent=n.latent,
+  if(all(TIPREDEFFECT=="auto") && n.TIpred>0) TIPREDEFFECT<-ctLabel(TDpredNames=TDpredNames,TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="TIPREDEFFECT",n.latent=n.latent,
     n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
   if(n.TIpred==0) TIPREDEFFECT<-NULL
     if(n.TIpred>0) if(nrow(TIPREDEFFECT) != n.latent | ncol(TIPREDEFFECT) != n.TIpred) stop("Dimensions of TIPREDEFFECT are not n.latent * n.TIpred")
@@ -406,7 +421,7 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
   
   
 
-  if(T0TIPREDEFFECT[1]=="auto" && n.TIpred > 0) T0TIPREDEFFECT <- ctLabel(TDpredNames=TDpredNames,
+  if(all(T0TIPREDEFFECT=="auto") && n.TIpred > 0) T0TIPREDEFFECT <- ctLabel(TDpredNames=TDpredNames,
     TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="T0TIPREDEFFECT",n.latent=n.latent,
     n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
   
@@ -418,7 +433,7 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
   
   
   
-  if(TIPREDVAR[1]=="auto" && n.TIpred > 0)  TIPREDVAR <- ctLabel(TDpredNames=TDpredNames,
+  if(all(TIPREDVAR=="auto") && n.TIpred > 0)  TIPREDVAR <- ctLabel(TDpredNames=TDpredNames,
     TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="TIPREDVAR",n.latent=n.latent,
       n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints) 
   
@@ -437,21 +452,19 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
   
   if(n.TDpred==0) TDPREDVAR<-NULL
   
-  if(n.TDpred > 0) if(nrow(TDPREDVAR) != n.TDpred*(Tpoints-1) | ncol(TDPREDVAR) != n.TDpred*(Tpoints-1)) stop(
-    "Dimensions of TDPREDVAR are not (n.TDpred*(Tpoints-1)) * (n.TDpred*(Tpoints-1))")
+  if(n.TDpred > 0) if(nrow(TDPREDVAR) != n.TDpred*(Tpoints) | ncol(TDPREDVAR) != n.TDpred*(Tpoints)) stop(
+    "Dimensions of TDPREDVAR are not (n.TDpred*Tpoints) * (n.TDpred*Tpoints)")
   
   
   
   
-  if(all(TDTIPREDCOV=="auto") & n.TDpred > 0 & n.TIpred > 0)  TDTIPREDCOV <- ctLabel(TDpredNames=TDpredNames,
+  if(all(TDTIPREDCOV=="free") & n.TDpred > 0 & n.TIpred > 0)  TDTIPREDCOV <- ctLabel(TDpredNames=TDpredNames,
     TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="TDTIPREDCOV",n.latent=n.latent,
     n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
-  
-   
+  if(all(TDTIPREDCOV=="auto") & n.TDpred > 0 & n.TIpred > 0)  TDTIPREDCOV <- matrix(0,(n.TDpred*(Tpoints)), n.TIpred)
   if(n.TDpred == 0 | n.TIpred == 0) TDTIPREDCOV<-NULL
-  
-  if(n.TDpred > 0 & n.TIpred > 0) if(nrow(TDTIPREDCOV) != (n.TDpred*(Tpoints-1)) | ncol(TDTIPREDCOV) != n.TIpred) stop(
-    "Dimensions of TDTIPREDCOV are not (n.TDpred*(Tpoints-1)) * n.TIpred")
+  if(n.TDpred > 0 & n.TIpred > 0) if(nrow(TDTIPREDCOV) != (n.TDpred*(Tpoints)) | ncol(TDTIPREDCOV) != n.TIpred) stop(
+    "Dimensions of TDTIPREDCOV are not (n.TDpred*Tpoints) * n.TIpred")
   
   
   
@@ -459,12 +472,12 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
   
   # TDpredictor and trait covariances
   if(n.TDpred > 0) { #then set covariance matrix for heterogeneity and predictors    
-    if(TRAITTDPREDCOV[1] == "auto") TRAITTDPREDCOV<-ctLabel(TDpredNames=TDpredNames,
+    if(all(TRAITTDPREDCOV == "free")) TRAITTDPREDCOV<-ctLabel(TDpredNames=TDpredNames,
       TIpredNames=TIpredNames,manifestNames=manifestNames,latentNames=latentNames,matrixname="TRAITTDPREDCOV",n.latent=n.latent,
       n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)  
-    
-    if(nrow(TRAITTDPREDCOV) != n.latent | ncol(TRAITTDPREDCOV) != n.TDpred*(Tpoints-1)) stop(
-      "Dimensions of TRAITTDPREDCOV are not n.latent * (n.TDpred*(Tpoints-1))")
+    if(all(TRAITTDPREDCOV == "auto")) TRAITTDPREDCOV<-matrix(0,n.latent, (n.TDpred*(Tpoints)))
+    if(nrow(TRAITTDPREDCOV) != n.latent | ncol(TRAITTDPREDCOV) != n.TDpred*(Tpoints)) stop(
+      "Dimensions of TRAITTDPREDCOV are not n.latent * (n.TDpred*Tpoints)")
   }
  
   if(n.TDpred==0)  TRAITTDPREDCOV<-NULL #if no predictors, assume no covariance between heterogeneity and predictors
@@ -483,6 +496,7 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
   
  
   if(any(dim(LAMBDA)!=c(n.manifest,n.latent))) stop("Incorrect LAMBDA structure specified - check number or rows and columns")
+  dimnames(LAMBDA)=list(manifestNames,latentNames)
   
 
   

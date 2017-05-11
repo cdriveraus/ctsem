@@ -18,4 +18,3 @@ ctDeintervalise(datalong, id = "id", dT = "dT", startoffset = 0)
 \description{
 Converts intervals in ctsem long format data to absolute time
 }
-

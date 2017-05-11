@@ -11,4 +11,3 @@ See \url{http://psycnet.apa.org/journals/met/17/2/176/} for details.
 \description{
 A dataset containing panel data assessments of individuals Anomia and Authoritarianism.
 }
-

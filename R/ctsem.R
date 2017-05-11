@@ -21,7 +21,7 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
   "mxFitFunctionMultigroup", "asymDIFFUSION", 'data.id',
   'filteredExpCovchol','filteredExpCovcholinv',
   'A','M','testd',
-  'T0VAR','T0MEANS',
+  'T0VAR','T0MEANS', 'MANIFESTTRAITVAR',
   'TDpredNames', 'TIpredNames', 'Tpoints', 'extract', 'latentNames', 'manifestNames',
   'plot', 'points','T0TRAITEFFECT'))
 

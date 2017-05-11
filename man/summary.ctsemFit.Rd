@@ -53,4 +53,3 @@ traitfit <- ctFit(datawide=ctExample1, ctmodelobj=traitmodel)
 summary(traitfit,timeInterval=1)
 }
 }
-

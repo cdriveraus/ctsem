@@ -63,7 +63,7 @@ ctRefineTo<-function(datawide,ctmodelobj,modfunc=NULL,...){
     oldfit<-fit
   
     if(any(is.na(suppressWarnings(as.numeric(ctmodelobj$DRIFT[!diag(ctmodelobj$n.latent)]))))){
-  message('Fitting complete user specified m')
+  message('Fitting complete user specified model')
   m<-ctmodelobj
   fit<-ctFit(datawide,m,nofit=TRUE,omxStartValues=startValues,crossEffectNegStarts=FALSE,...)
   if(!is.null(modfunc)) fit<-modfunc(fit)

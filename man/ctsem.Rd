@@ -21,4 +21,3 @@ For examples, see either \code{\link{ctFit}} or \code{\link{ctStanFit}}.
 For more detailed information, see the frequentist vignette by running: \code{vignette('ctsem')} 
 For citation info, please run \code{citation('ctsem')} .
 }
-

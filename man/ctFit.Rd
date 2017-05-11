@@ -7,10 +7,11 @@
 ctFit(datawide, ctmodelobj, objective = "auto",
   stationary = c("T0TRAITEFFECT", "T0TIPREDEFFECT"), optimizer = "SLSQP",
   retryattempts = 15, iterationSummary = FALSE, carefulFit = TRUE,
-  showInits = FALSE, asymptotes = FALSE, meanIntervals = FALSE,
-  plotOptimization = F, crossEffectNegStarts = TRUE, nofit = FALSE,
-  discreteTime = FALSE, verbose = 0, useOptimizer = TRUE,
-  omxStartValues = NULL, transformedParams = TRUE)
+  carefulFitWeight = 100, showInits = FALSE, asymptotes = FALSE,
+  meanIntervals = FALSE, plotOptimization = F,
+  crossEffectNegStarts = TRUE, nofit = FALSE, discreteTime = FALSE,
+  verbose = 0, useOptimizer = TRUE, omxStartValues = NULL,
+  transformedParams = TRUE)
 }
 \arguments{
 \item{datawide}{the data you wish to fit a ctsem model to.}
@@ -28,11 +29,11 @@ unless there are no individual differences in time interval and no missing data.
 one must consider how average level differences between subjects are accounted for.
 See \code{\link{ctMultigroupFit}} for the possibility to apply the Kalman filter over multiple subjects)}
 
-\item{stationary}{Character vector of T0 matrix names in which to constrain any free parameters to stationarity.
-Defaults to c('T0TRAITEFFECT','T0TIPREDEFFECT'), constraining only the between subject difference effects to be
-constant over time. 
-Can be set to NULL to force all T0 matrices to be estimated, can be 
-set to 'all' to constrain all T0 matrices to stationarity.}
+\item{stationary}{Character vector of T0 matrix names in which to constrain any 
+free parameters to stationarity. 
+Defaults to \code{c('T0TRAITEFFECT','T0TIPREDEFFECT')}, constraining only
+between person effects to stationarity. Use \code{NULL} for no constraints,
+or 'all' to constrain all T0 matrices.}
 
 \item{optimizer}{character string, defaults to the open-source 'SLSQP' optimizer that is distributed
 in all versions of OpenMx. However, 'NPSOL' may sometimes perform better for these problems,
@@ -48,6 +49,9 @@ to force MANIFESTVAR, DRIFT, TRAITVAR, MANIFESTTRAITVAR parameters to remain clo
 fits the specified model normally, using these estimates as starting values. 
 Can help to ensure optimization begins at sensible, non-exteme values, 
 though results in any user specified start values being ignored for the final fit (though they are still used for initial fit).}
+
+\item{carefulFitWeight}{Positive numeric. Sets the weight for the penalisation (or prior) applied by the carefulFit algorithm. 
+Generally unnecessary to adjust, may be helpful to try a selection of values (perhaps between 0 and 1000) when optimization is problematic.}
 
 \item{showInits}{if TRUE, prints the list of 
 starting values for free parameters. These are the 'raw' values used by OpenMx, 
@@ -114,7 +118,7 @@ may be estimated using \code{\link{ctCI}}.
 mfrowOld<-par()$mfrow
 par(mfrow=c(2, 3))
 
-### example from Driver, Oud, Voelkle (2015), 
+### example from Driver, Oud, Voelkle (2017), 
 ### simulated happiness and leisure time with unobserved heterogeneity.
 data(ctExample1)
 traitmodel <- ctModel(n.manifest=2, n.latent=2, Tpoints=6, LAMBDA=diag(2), 
@@ -146,21 +150,21 @@ fit <- ctFit(data = ctExample3, ctmodelobj = model, objective = 'Kalman',
 ###Oscillating model from Voelkle & Oud (2013). 
 data("Oscillating")
 
-inits <- c(-38, -.5, 1, 1, .1, 1, 0, .9)
+inits <- c(-39, -.3, 1.01, 10.01, .1, 10.01, 0.05, .9, 0)
 names(inits) <- c("crosseffect","autoeffect", "diffusion",
-  "T0var11", "T0var21", "T0var22","m1", "m2")
+  "T0var11", "T0var21", "T0var22","m1", "m2", 'manifestmean')
 
-oscillatingm <- ctModel(n.latent = 2, n.manifest = 1, Tpoints = 11, 
-  MANIFESTVAR = matrix(c(0), nrow = 1, ncol = 1), 
+oscillatingm <- ctModel(n.latent = 2, n.manifest = 1, Tpoints = 11,
+  MANIFESTVAR = matrix(c(0), nrow = 1, ncol = 1),
   LAMBDA = matrix(c(1, 0), nrow = 1, ncol = 2),
-  T0MEANS = matrix(c('m1', 'm2'), nrow = 2, ncol = 1), 
+  T0MEANS = matrix(c('m1', 'm2'), nrow = 2, ncol = 1),
   T0VAR = matrix(c("T0var11", "T0var21", 0, "T0var22"), nrow = 2, ncol = 2),
-  DRIFT = matrix(c(0, "crosseffect", 1, "autoeffect"), nrow = 2, ncol = 2), 
+  DRIFT = matrix(c(0, "crosseffect", 1, "autoeffect"), nrow = 2, ncol = 2),
   CINT = matrix(0, ncol = 1, nrow = 2),
+  MANIFESTMEANS = matrix('manifestmean', nrow = 1, ncol = 1),
   DIFFUSION = matrix(c(0, 0, 0, "diffusion"), nrow = 2, ncol = 2),
-  startValues = inits)
+  startValues=inits)
 
-oscillatingf <- ctFit(Oscillating, oscillatingm,carefulFit=FALSE)
+oscillatingf <- ctFit(Oscillating, oscillatingm, carefulFit = FALSE)
 }
 }
-

@@ -31,4 +31,3 @@ Plots posterior and prior distributions of model parameters in a ctStanFit objec
 \examples{
 ctStanPlotPost(ctstantestfit)
 }
-

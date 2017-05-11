@@ -99,7 +99,7 @@ ctKalman<-function(kpars,datalong,
     
     if(continuoustime){
       dt<-datalong[rowi,timecol]-datalong[max(c(1,rowi-1)),timecol]
-      discreteDRIFT[[rowi]] <- OpenMx::expm(kpars$DRIFT * dt)
+      discreteDRIFT[[rowi]] <- expm(kpars$DRIFT * dt)
       discreteCINT[[rowi]] <- solve(kpars$DRIFT, (discreteDRIFT[[rowi]] - diag(nlatent))) %*% kpars$CINT
       discreteDIFFUSION[[rowi]] <- asymDIFFUSION - (discreteDRIFT[[rowi]][diffusionindices,diffusionindices,drop=FALSE] %*% 
           asymDIFFUSION %*% t(discreteDRIFT[[rowi]][diffusionindices,diffusionindices,drop=FALSE]))
@@ -109,7 +109,8 @@ ctKalman<-function(kpars,datalong,
       discreteCINT[[rowi]]<- kpars$CINT
       discreteDIFFUSION[[rowi]] <- kpars$DIFFUSION[diffusionindices,diffusionindices,drop=FALSE]
     }
-    # }
+
+    
     if(rowi>1){
       etaprior[[rowi]] <- discreteCINT[[rowi]]  + discreteDRIFT[[rowi]] %*% etaupd[[rowi-1]]
       etapriorcov[[rowi]] <-  discreteDRIFT[[rowi]][diffusionindices,diffusionindices,drop=FALSE] %*% 

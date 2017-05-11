@@ -4,11 +4,11 @@
 \alias{ctPlotArray}
 \title{Plots a three dimensional array}
 \usage{
-ctPlotArray(yarray, x, grid = TRUE, separate = FALSE, colvec = "auto",
-  lwdvec = "auto", ltyvec = "auto", typevec = "auto", mainvec = "auto",
-  plotcontrol = list(ylab = "Array values", xlab = "X values"),
-  legend = TRUE, legendcontrol = list(x = "topright"), polygon = TRUE,
-  polygonalpha = 0.1, polygoncontrol = list(border = NA))
+ctPlotArray(yarray, x, grid = TRUE, colvec = "auto", lwdvec = "auto",
+  ltyvec = "auto", typevec = "auto", plotcontrol = list(ylab =
+  "Array values", xlab = "X values", xaxs = "i"), legend = TRUE,
+  legendcontrol = list(x = "topright"), polygon = TRUE,
+  polygonalpha = 0.1, polygoncontrol = list(border = NA, steps = 50))
 }
 \arguments{
 \item{yarray}{3 dimensional array to use for Y values}
@@ -17,9 +17,6 @@ ctPlotArray(yarray, x, grid = TRUE, separate = FALSE, colvec = "auto",
 
 \item{grid}{Logical. Plot with a grid?}
 
-\item{separate}{Logical. Generate a plot per variable (2nd margin of array)
-or plot all on one?}
-
 \item{colvec}{color vector of same length as 2nd margin.}
 
 \item{lwdvec}{lwd vector of same length as 2nd margin.}
@@ -27,9 +24,6 @@ or plot all on one?}
 \item{ltyvec}{lty vector of same length as 2nd margin.}
 
 \item{typevec}{type vector of same length as 2nd margin.}
-
-\item{mainvec}{main vector of same length as 2nd margin, only used if 
-separate=TRUE.}
 
 \item{plotcontrol}{list of arguments to pass to plot.}
 
@@ -53,6 +47,5 @@ Nothing. Generates plots.
 \examples{
 y <- ctStanTIpredeffects(ctstantestfit,plot=FALSE)
 x<-ctstantestfit$data$tipreds[order(ctstantestfit$data$tipreds[,1]),1]
-ctPlotArray(y,x,separate=TRUE)
+ctPlotArray(y,x)
 }
-

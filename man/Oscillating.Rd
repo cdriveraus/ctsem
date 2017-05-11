@@ -11,4 +11,3 @@ See \url{http://onlinelibrary.wiley.com/doi/10.1111/j.2044-8317.2012.02043.x/abs
 \description{
 Simulated example dataset for the ctsem package.
 }
-

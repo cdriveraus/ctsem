@@ -28,4 +28,3 @@ for an individual in the input data structure.}
 ctWideNames
 sets default column names for wide ctsem datasets. Primarily intended for internal ctsem usage.
 }
-

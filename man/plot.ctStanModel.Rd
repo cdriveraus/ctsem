@@ -33,4 +33,3 @@ The distributions around these two points are then obtained by marginalising ove
 so the red and blue distributions do not represent any specific subject level prior, but rather characterise the general amount
 and shape of possible subject level priors at the selected points of the population mean prior.
 }
-

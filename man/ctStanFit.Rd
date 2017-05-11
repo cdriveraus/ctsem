@@ -9,7 +9,7 @@ ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 2000,
   stationary = FALSE, plot = FALSE, diffusionindices = "all",
   asymdiffusion = FALSE, optimize = FALSE, vb = FALSE, chains = 1,
   cores = "maxneeded", inits = NULL, initwithoptim = FALSE,
-  control = list(adapt_delta = 0.9, adapt_init_buffer = 30, adapt_window = 2,
+  control = list(adapt_delta = 0.9, adapt_init_buffer = 10, adapt_window = 5,
   max_treedepth = 10, stepsize = 0.001), verbose = FALSE, ...)
 }
 \arguments{
@@ -71,7 +71,8 @@ up to the number of chains, or an integer.}
 (so approx 65% of the population mean prior), is first fit with penalised maximum likelihood to determine starting values
 for the chains. This can help speed convergence and avoid problematic regions for certain problems.}
 
-\item{control}{List of arguments sent to \code{\link[rstan]{stan}} control argument, regarding warmup / sampling behaviour.}
+\item{control}{List of arguments sent to \code{\link[rstan]{stan}} control argument, 
+regarding warmup / sampling behaviour.}
 
 \item{verbose}{Logical. If TRUE, prints log probability at each iteration.}
 
@@ -110,4 +111,3 @@ plot(fit)
 
 }
 }
-

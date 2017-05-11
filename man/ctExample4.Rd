@@ -8,4 +8,28 @@ Y1, Y2, Y3, and 19 measurement intervals dTx, for each of 20 individuals.}
 \description{
 Simulated example dataset for the ctsem package
 }
+\examples{
+\dontrun{
+Tpoints=20
+subjects=20
+full<-c()
+for(i in 1:20){
+  LAMBDA<-matrix(c(1,.7,ifelse(i >(subjects/2),.2,1.4)))
+  print(LAMBDA)
+  testm<-ctModel(Tpoints=Tpoints,n.latent=1,n.TDpred=0,n.TIpred=0,n.manifest=3,
+    MANIFESTVAR=diag(.2,3),
+    # TRAITVAR=diag(.2,1),
+    LAMBDA=LAMBDA,
+    DRIFT=matrix(c(-.1),nrow=1,ncol=1),
+    DIFFUSION=diag(c(.12),1),
+    MANIFESTMEANS=matrix(c(0,.42,1.3),ncol=1),
+    CINT=matrix(c(.2),ncol=1))
+  
+  testd<-ctGenerate(testm,n.subjects=1,burnin=300)
+  full<-rbind(full,testd)
+}
 
+ctExample4<-full
+save(ctExample4,file=".\\\\data\\\\ctExample4.rda") #save wide format example
+}
+}

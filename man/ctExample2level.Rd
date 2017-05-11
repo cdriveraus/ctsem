@@ -10,4 +10,3 @@ and 7 measurement intervals for each of 50 individuals.}
 \description{
 Simulated example dataset for the ctsem package
 }
-

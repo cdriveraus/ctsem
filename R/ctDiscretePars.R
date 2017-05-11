@@ -40,9 +40,9 @@ ctStanParnames <- function(x,substrings=c('hmean_','hsd_')){
 #'#posterior median over all subjects (also reflects mean of unconstrained pars)
 #'ctStanContinuousPars(ctstantestfit)
 #'
-#'#posterior 95% quantiles for subject 2
+#'#posterior 97.5% quantiles for subject 2
 #'ctStanContinuousPars(ctstantestfit, subjects=2, calcfunc=quantile, 
-#'calcfuncargs=list(probs=0.95))
+#'calcfuncargs=list(probs=0.975))
 #'@export
 ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
   calcfunc=quantile,calcfuncargs=list(probs=0.5)){
@@ -103,12 +103,33 @@ ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
   DRIFTHATCH<-DRIFT %x% diag(nrow(DRIFT)) + diag(nrow(DRIFT)) %x% DRIFT
   asymDIFFUSION<-matrix(-solve(DRIFTHATCH) %*% c(DIFFUSION), nrow=nrow(DRIFT)) 
   
+  ln=ctstanfitobj$ctstanmodel$latentNames
+  mn=ctstanfitobj$ctstanmodel$manifestNames
+  tdn=ctstanfitobj$ctstanmodel$TDpredNames
+  dimnames(DRIFT)=list(ln,ln)
+  dimnames(DIFFUSION)=list(ln,ln)
+  dimnames(asymDIFFUSION)=list(ln,ln)
+  rownames(CINT)=ln
+  rownames(MANIFESTMEANS)=mn
+  rownames(T0MEANS)=ln
+
+  dimnames(T0VAR)=list(ln,ln)
+  dimnames(asymDIFFUSION)=list(ln,ln)
+  dimnames(LAMBDA)=list(mn,ln)
+  
   model<-list(DRIFT=DRIFT,T0VAR=T0VAR,DIFFUSION=DIFFUSION,asymDIFFUSION=asymDIFFUSION,CINT=CINT,T0MEANS=T0MEANS,
     MANIFESTMEANS=MANIFESTMEANS, LAMBDA=LAMBDA)
   
-  if(!is.null(e$MANIFESTVAR)) model$MANIFESTVAR=MANIFESTVAR
+  if(!is.null(e$MANIFESTVAR)) {
+    dimnames(MANIFESTVAR)=list(mn,mn)
+    model$MANIFESTVAR=MANIFESTVAR
+    
+  }
   
-  if(!is.null(e$TDPREDEFFECT)) model$TDPREDEFFECT<-TDPREDEFFECT
+  if(!is.null(e$TDPREDEFFECT)) {
+    dimnames(TDPREDEFFECT)=list(ln,tdn)
+    model$TDPREDEFFECT<-TDPREDEFFECT
+  }
   
   return(model)
 }
@@ -132,7 +153,7 @@ ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
 #'
 #'@export
 ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
-  
+
   if(type=='all') type=c('discreteDRIFT','latentMeans') #this needs to match with ctStanDiscretePars
   nlatent=nrow(ctpars$DRIFT)
   latentNames=paste0('eta',1:nlatent)
@@ -174,7 +195,7 @@ ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
 #'plot=TRUE,indices='all')
 #'@export
 ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=10,by=.1), 
-  quantiles = c(.05, .5, .95),plot=FALSE,...){
+  quantiles = c(.025, .5, .975),plot=FALSE,...){
   
   type='discreteDRIFT'
   collapseSubjects=TRUE #consider this for a switch
@@ -192,7 +213,8 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   outdims=dim(e$DRIFT)
   niter=outdims[1]
   nlatent=outdims[3]
-  latentNames=paste0('eta',1:nlatent)
+  latentNames=ctstanfitobj$ctstanmodel$latentNames
+
   
   out<-list()
   
@@ -275,6 +297,9 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   }
   
   names(out) <- type
+
+  dimnames(out$discreteDRIFT)$row=latentNames
+  dimnames(out$discreteDRIFT)$col=latentNames
   
   if(plot) {
     ctStanDiscreteParsPlot(out,times=times,latentNames=ctstanfitobj$ctstanmodel$latentNames,...)
@@ -295,6 +320,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
 #'@param add Logical. If FALSE, a new plot is generated, if TRUE, specified plot/s are
 #'overlayed on existing plot.
 #'@param legend Logical. If TRUE, generates a legend.
+#'@param grid Logical. Plot with a grid?
 #'@param polygon Logical. If TRUE, fills a polygon between the first and last specified quantiles.
 #'@param quantiles numeric vector of length 3, with values between 0 and 1, specifying which quantiles to plot.
 #'The default of c(.05,.5,.95) plots 95\% credible intervals and the posterior median at 50\%. 
@@ -316,8 +342,10 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
 #'will be ignored.
 #'@param polygonalpha Numeric between 0 and 1 to multiply the alpha (transparency) of colvec by for 
 #'the fill polygon.
-#'@param polygoncontrol list of arguments to pass to polgyon function (if polygon=TRUE).
-#'x,y, and col arguments will be ignored.
+#'@param polygoncontrol list of arguments to pass to ctPoly function (if polygon=TRUE).
+#'x,y, and col arguments will be ignored. Border is removed by default because quantile
+#'borders are differently, and steps specifies the number of polygons to overlay to 
+#'create a graduated transparency. Set to 1 for a flat looking plot.
 #'@examples
 #'x <- ctStanDiscretePars(ctstantestfit)
 #'
@@ -328,16 +356,16 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
   quantiles=c(.05,.5,.95), times=seq(0,10,.1),latentNames='auto',
   ylim='auto',lwdvec='auto',colvec='auto',ltyvec='auto',
   plotcontrol=list(ylab='Value',xlab='Time interval',
-    main='Regression coefficients',type='l'),
+    main='Regression coefficients',type='l'),grid=TRUE,
   legendcontrol=list(x='topright',bg='white'),
-  polygonalpha=.1,
-  polygoncontrol=list(border=NA)){
+  polygonalpha=.3,
+  polygoncontrol=list(border=NA, steps=20)){
   
   input <- x[[1]] #ctStanDiscretePars(x,type='discreteDRIFT',times=times,quantiles=quantiles,...)[[1]]
   
   nlatent=dim(input)[1]
   
-  if(latentNames[1]=='auto') latentNames=paste0('eta',1:nlatent)
+  if(latentNames[1]=='auto') latentNames=dimnames(x$discreteDRIFT)$row
   
   if(is.null(plotcontrol$ylab)) plotcontrol$ylab  <- 'Value'
   if(is.null(plotcontrol$xlab)) plotcontrol$xlab  <- 'Time interval'
@@ -366,7 +394,38 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
   if(ylim=='auto') ylim=range(plyr::aaply(input,c(3,4),function(x)
     x[indices]),na.rm=TRUE) #range of diagonals
   
-  ####plotting quantiles - now just using polygon so only plotting middle quantile
+
+  
+ 
+  #blank plot
+  blankargs=plotcontrol
+  blankargs$ylim=ylim
+  blankargs$xlim=range(times)
+  blankargs$y=NA
+  blankargs$x=NA
+  do.call(plot,blankargs)
+  if(grid) grid()
+  
+  ####plotting confidence region
+  if(polygon) {
+    cc=0
+    ccup=TRUE
+    for(indexi in c(1:nrow(indices))){
+      cc=ifelse(ccup,cc+1,cc-1)
+      if(indexi==nrow(indices)) ccup=FALSE
+      ri=indices[indexi,1]
+      ci=indices[indexi,2]
+      polygonargs<-polygoncontrol
+      polygonargs$x=times
+      polygonargs$y=input[ri,ci,,2]
+      polygonargs$ylow=input[ri,ci,,1]
+      polygonargs$yhigh=input[ri,ci,,length(quantiles)]
+      polygonargs$col=grDevices::adjustcolor(colvec[cc],alpha.f=max(c(.004,polygonalpha/polygonargs$steps)))
+      do.call(ctPoly,polygonargs)
+    }
+  }
+  
+  ####plotting quantile lines
   for(qi in 1:3){
     cc=0
     for(indexi in 1:nrow(indices)){
@@ -378,27 +437,13 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
       plotargs$x=times
       plotargs$y=input[ri,ci,,qi]
       plotargs$lty=ltyvec[cc]
-      plotargs$col=ifelse(qi!= 2,grDevices::adjustcolor(colvec[cc],alpha.f=sqrt(polygonalpha)) ,colvec[cc])
+      plotargs$col=ifelse(qi!= 2,grDevices::adjustcolor(colvec[cc],alpha.f=.5) ,colvec[cc])
       plotargs$lwd=ifelse(qi!= 2,1, lwdvec[cc])
       plotargs$ylim=ylim
-      
-      if(qi==1 && indexi==1 & !add) do.call(plot,plotargs) else do.call(points,plotargs)
+      do.call(points,plotargs)
     }}
   
-  if(polygon) {
-    cc=0
-    backwardstimesindex=order(times,decreasing=TRUE)
-    for(indexi in 1:nrow(indices)){
-      cc=cc+1
-      ri=indices[indexi,1]
-      ci=indices[indexi,2]
-      polygonargs<-polygoncontrol
-      polygonargs$x=c(times,times[backwardstimesindex])
-      polygonargs$y=c(input[ri,ci,,1], input[ri,ci,,length(quantiles)][backwardstimesindex])
-      polygonargs$col=grDevices::adjustcolor(colvec[cc],alpha.f=polygonalpha)
-      do.call(graphics::polygon,polygonargs)
-    }
-  }
+  
   
   legendcontrol$legend=paste0(latentNames[indices[,1]],'_',latentNames[indices[,2]])
   legendcontrol$text.col=colvec

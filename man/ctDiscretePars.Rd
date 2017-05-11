@@ -25,4 +25,3 @@ pars <- ctStanContinuousPars(ctstantestfit)
 ctDiscretePars(pars,times=c(.5,1))
 
 }
-

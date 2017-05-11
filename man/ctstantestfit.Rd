@@ -39,8 +39,7 @@ checkm<-ctModel(type='stanct',Tpoints=Tpoints,
   
 checkm$pars$indvarying[-1:-2] <- FALSE
 
-ctstantestfit<-ctStanFit(cd,checkm,iter=20,chains=1,initwithoptim=TRUE)
+ctstantestfit<-ctStanFit(cd,checkm,iter=20,chains=2)
 save(ctstantestfit,file='.\\\\data\\\\ctstantestfit.rda')
 }
 }
-

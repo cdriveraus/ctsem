@@ -38,7 +38,8 @@ If plot=TRUE, nothing is returned but a plot is generated.
 }
 \description{
 Outputs predicted, updated, and smoothed estimates of manifest indicators and latent states, 
-with covariances, for specific subjects from data fit with \code{\link{ctStanFit}}.
+with covariances, for specific subjects from data fit with \code{\link{ctStanFit}}, 
+based on medians of parameter distribution.
 }
 \examples{
 #Basic
@@ -57,4 +58,3 @@ ctStanKalman(ctstantestfit, timerange=c(0,60), timestep=.1, plot=TRUE,
   plotcontrol=list(xlim=c(0,55),main='Observations and priors'),
   polygoncontrol=list(density=20))
 }
-

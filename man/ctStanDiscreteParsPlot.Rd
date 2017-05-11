@@ -8,9 +8,9 @@ ctStanDiscreteParsPlot(x, indices = "all", add = FALSE, legend = TRUE,
   polygon = TRUE, quantiles = c(0.05, 0.5, 0.95), times = seq(0, 10, 0.1),
   latentNames = "auto", ylim = "auto", lwdvec = "auto", colvec = "auto",
   ltyvec = "auto", plotcontrol = list(ylab = "Value", xlab =
-  "Time interval", main = "Regression coefficients", type = "l"),
-  legendcontrol = list(x = "topright", bg = "white"), polygonalpha = 0.1,
-  polygoncontrol = list(border = NA))
+  "Time interval", main = "Regression coefficients", type = "l"), grid = TRUE,
+  legendcontrol = list(x = "topright", bg = "white"), polygonalpha = 0.3,
+  polygoncontrol = list(border = NA, steps = 20))
 }
 \arguments{
 \item{x}{list object returned from \code{\link{ctStanDiscretePars}}.}
@@ -52,14 +52,18 @@ denoting line types for each quantile.
 \item{plotcontrol}{list of arguments to pass to plot function. 
 The following arguments are ignored: ylim,lwd,lty,col,x,y.}
 
+\item{grid}{Logical. Plot with a grid?}
+
 \item{legendcontrol}{list of arguments to pass to legend function. 'legend=' and 'text.col=' arguments
 will be ignored.}
 
 \item{polygonalpha}{Numeric between 0 and 1 to multiply the alpha (transparency) of colvec by for 
 the fill polygon.}
 
-\item{polygoncontrol}{list of arguments to pass to polgyon function (if polygon=TRUE).
-x,y, and col arguments will be ignored.}
+\item{polygoncontrol}{list of arguments to pass to ctPoly function (if polygon=TRUE).
+x,y, and col arguments will be ignored. Border is removed by default because quantile
+borders are differently, and steps specifies the number of polygons to overlay to 
+create a graduated transparency. Set to 1 for a flat looking plot.}
 }
 \description{
 Plots model implied regression strengths at specified times for 
@@ -70,4 +74,3 @@ x <- ctStanDiscretePars(ctstantestfit)
 
 ctStanDiscreteParsPlot(x, 'CR')
 }
-

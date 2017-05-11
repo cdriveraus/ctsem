@@ -69,7 +69,7 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,samples=1e6, hypersd='margina
 
     ymax= max(c(densxmean$y),c(densxlow$y),c(densxhigh$y))
     
-    graphics::plot(densxmean,main=m$param[rowi],lwd=2,xlim=c(xlims[1],xlims[2]),ylim=c(0,ymax))
+    graphics::plot(densxmean,main=m$param[rowi],lwd=2,xlim=c(xlims[1],xlims[2]),ylim=c(0,ymax),ylab='Par Value')
     graphics::points(densxhigh,lwd=2,type='l',col='red',lty=3)
     graphics::points(densxlow,lwd=2,type='l',col='blue',lty=3)
 

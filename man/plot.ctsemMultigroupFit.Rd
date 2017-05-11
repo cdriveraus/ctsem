@@ -19,4 +19,3 @@ Nothing. Side-effect: plots graphs.
 \description{
 Plots \code{\link{ctMultigroupFit}} objects.
 }
-

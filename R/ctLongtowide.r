@@ -17,12 +17,12 @@
 #' data('longexample')
 #' 
 #' #Then convert to wide format
-#' wideexample <- ctLongToWide(datalong = longexample, id = "subject", 
-#' time = "Time", manifestNames = c("Y1", "Y2", "Y3"), 
+#' wideexample <- ctLongToWide(datalong = longexample, id = "id", 
+#' time = "time", manifestNames = c("Y1", "Y2", "Y3"), 
 #' TDpredNames = "TD1", TIpredNames = c("TI1", "TI2"))
 #' 
 #' #Then convert the absolute times to intervals, using the Tpoints reported from the prior step.
-#' wide <- ctIntervalise(datawide = wideexample, Tpoints = 3, n.manifest = 3, 
+#' wide <- ctIntervalise(datawide = wideexample, Tpoints = 4, n.manifest = 3, 
 #' n.TDpred = 1, n.TIpred = 2, manifestNames = c("Y1", "Y2", "Y3"), 
 #' TDpredNames = "TD1", TIpredNames = c("TI1", "TI2") )
 #' 
@@ -79,25 +79,36 @@ ctLongToWide <- function(datalong, id, time, manifestNames, TDpredNames=NULL, TI
   
   TDpred_wide<-matrix(NA,ncol=0,nrow=nrow(manifestNames_wide)) #set null dataframe to avoid errors
   if(!is.null(TDpredNames[1])){ #if TDpredNames are specified
-    for(i in 1:length(TDpredNames)){ #for every TDpredictor
-      predi <- stats::reshape(data_long, 
-        v.names = TDpredNames[i], 
-        idvar = "id", 
-        timevar = "discrete.time.point", 
-        direction = "wide",
-        drop=c(manifestNames,TDpredNames[-i],"time",TIpredNames)) [,-1]
-      
-      if(!is.data.frame(predi)) predi<-as.matrix(predi,nrow=1)
-      colnames(predi) <- paste0(TDpredNames,'_T',0:(ncol(predi)-1))
-      
-      if(any(!is.na(predi[,ncol(predi)]))) { #check for non empty final column of TD predictors
-        message(paste0("Warning:  measures of time dependent predictor ",i,
-          " occurring at final measurement occasion removed, as they have no time to impact processes"))
-      } 
-      
-      TDpred_wide<-cbind(TDpred_wide,
-        predi[,-ncol(predi),drop=F]) #bind TD predictors variable i (without final Tpoint) to full TDpredictor object
-    }  
+    TDpred_wide<-stats::reshape(data_long,  #create wide format manifestNames
+      v.names = TDpredNames, 
+      idvar = "id", 
+      timevar = "discrete.time.point", 
+      direction = "wide",
+      drop=c(manifestNames,"time",TIpredNames)) [,-1,drop=FALSE]
+    
+    if(is.list(TDpred_wide)) {
+      TDpred_wide<-as.matrix(TDpred_wide,nrow=1) #because reshape outputs lists when only one row!
+      colnames(TDpred_wide)<-paste0(TDpredNames,
+        rep(paste0('_T',0:( (ncol(TDpred_wide)/length(TDpredNames))-1)),each=length(TDpredNames)))
+    }
+    
+    
+    # for(i in 1:length(TDpredNames)){ #for every TDpredictor
+    #   predi <- stats::reshape(data_long, 
+    #     v.names = TDpredNames[i], 
+    #     idvar = "id", 
+    #     timevar = "discrete.time.point", 
+    #     direction = "wide",
+    #     drop=c(manifestNames,TDpredNames[-i],"time",TIpredNames)) [,-1]
+    #   
+    #   if(!is.data.frame(predi)) predi<-as.matrix(predi,nrow=1)
+    #   colnames(predi) <- paste0(TDpredNames,'_T',0:(ncol(predi)-1))
+    #   
+    # 
+    #   
+    #   TDpred_wide<-cbind(TDpred_wide,
+    #     predi) #bind TD predictors variable i to full TDpredictor object
+    # }  
   }
   
   
@@ -136,27 +147,7 @@ ctLongToWide <- function(datalong, id, time, manifestNames, TDpredNames=NULL, TI
       
       
       
-      
-#       
-#       data_long[,TIpredNames[i]] <- apply(data_long, 1, function(x) { #set all observations to the max observed (to avoid missings propagating into wide format)
-#         max(data_long[which(data_long[,"id"] == as.numeric(x[1])) ,
-#           TIpredNames[i]],
-#           na.rm=TRUE)
-#       }
-#       )
-#       
-#       data_long[which(data_long[,TIpredNames[i]] < -99999),TIpredNames[i]] <- NA #when no TI predictors exist above sums to -Inf, so set to NA
-#     })
-#     
-#     TIpred_wide<-stats::reshape(data_long, 
-#       v.names=manifestNames, 
-#       idvar = "id",  #reshape TIpreds with other data
-#       timevar = "discrete.time.point", 
-#       direction = "wide",
-#       drop=c(TDpredNames,"time")) 
-#     if(is.list(TIpred_wide)) TIpred_wide<-as.matrix(TIpred_wide,nrow=1) #because reshape outputs lists when only one row!
-#     TIpred_wide<-TIpred_wide[,c(-1,-(length(TIpredNames)+2):-(ncol(TIpred_wide))),drop=F] #remove other data to leave just TIpreds
-    colnames(TIpred_wide)<-TIpredNames
+ colnames(TIpred_wide)<-TIpredNames
   }
   
   

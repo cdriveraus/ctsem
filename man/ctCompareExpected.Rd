@@ -27,4 +27,3 @@ ctCompareExpected(fitobj, cov = TRUE, outputmatrices = FALSE,
 ctCompareExpected
 Compares model implied to observed means and covariances for panel data fit with ctsem.
 }
-

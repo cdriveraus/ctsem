@@ -4,8 +4,8 @@
 \alias{ctGenerate}
 \title{ctGenerate}
 \usage{
-ctGenerate(ctmodelobj, n.subjects = 1000, burnin = 0, dtmean = 1,
-  logdtsd = 0, wide = TRUE, simultdpredeffect = FALSE)
+ctGenerate(ctmodelobj, n.subjects = 100, burnin = 0, dtmean = 1,
+  logdtsd = 0, wide = TRUE, simultdpredeffect = TRUE)
 }
 \arguments{
 \item{ctmodelobj}{ctsem model object from \code{\link{ctModel}}.}
@@ -28,6 +28,8 @@ Switch reflects difference between ctStanFit and ctFit.}
 This function generates data according to the specified ctsem model object.
 }
 \details{
+TRAITVAR and MANIFESTRAITVAR are treated as Cholesky factor covariances 
+of CINT and MANIFESTMEANS, respectively. 
 TRAITTDPREDCOV and TIPREDCOV matrices are not accounted for, at present. 
 The first 1:n.TDpred rows and columns of TDPREDVAR are used for generating
 tdpreds at each time point.
@@ -48,4 +50,3 @@ generatingModel<-ctModel(Tpoints=8,n.latent=2,n.TDpred=0,n.TIpred=0,n.manifest=2
 
 data<-ctGenerate(generatingModel,n.subjects=15,burnin=10)
 }
-
