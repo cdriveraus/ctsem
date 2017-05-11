@@ -4,18 +4,19 @@
 \alias{ctIndplot}
 \title{ctIndplot}
 \usage{
-ctIndplot(datawide, n.subjects, n.manifest, Tpoints, colourby = "subject",
-  vars = "all", opacity = 1, varnames = NULL, xlab = "Time",
-  ylab = "Value", start = 0, legendposition = "topright", ...)
+ctIndplot(datawide, n.manifest, Tpoints, n.subjects = "all",
+  colourby = "variable", vars = "all", opacity = 1, varnames = NULL,
+  xlab = "Time", ylab = "Value", type = "b", start = 0,
+  legendposition = "topright", new = TRUE, jittersd = 0.05, ...)
 }
 \arguments{
 \item{datawide}{ctsem wide format data}
 
-\item{n.subjects}{Number of subjects to randomly select for plotting.}
-
 \item{n.manifest}{Number of manifest variables in data structure}
 
 \item{Tpoints}{Number of discrete time points per case in data structure}
+
+\item{n.subjects}{Number of subjects to randomly select for plotting, or character vector 'all'.}
 
 \item{colourby}{set  plot colours by "subject" or "variable"}
 
@@ -29,14 +30,22 @@ ctIndplot(datawide, n.subjects, n.manifest, Tpoints, colourby = "subject",
 
 \item{ylab}{Y axis label.}
 
+\item{type}{character specifying plot type, as per usual base R plot commands. 
+Defaults to 'b', both points and lines.}
+
 \item{start}{Measurement occasion to start plotting from - defaults to T0.}
 
 \item{legendposition}{Where to position the legend.}
 
+\item{new}{logical. If TRUE, creates a new plot, otherwise overlays on current plot.}
+
+\item{jittersd}{positive numeric indicating standard deviation of noise to add to observed
+data for plotting purposes.}
+
 \item{...}{additional plotting parameters.}
 }
 \description{
-Convenience function to simply plot individual subject trajectories from ctsem wide format data
+Convenience function to simply plot individuals trajectories from ctsem wide format data
 }
 \examples{
 
