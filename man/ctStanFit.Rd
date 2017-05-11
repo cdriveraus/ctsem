@@ -7,8 +7,8 @@
 ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 2000,
   kalman = TRUE, binomial = FALSE, esthyper = TRUE, fit = TRUE,
   stationary = FALSE, plot = FALSE, diffusionindices = "all",
-  asymdiffusion = FALSE, optimize = FALSE, vb = FALSE, chains = 1,
-  cores = "maxneeded", inits = NULL, initwithoptim = FALSE,
+  asymdiffusion = FALSE, optimize = FALSE, nopriors = FALSE, vb = FALSE,
+  chains = 1, cores = "maxneeded", inits = NULL, initwithoptim = FALSE,
   control = list(adapt_delta = 0.9, adapt_init_buffer = 10, adapt_window = 5,
   max_treedepth = 10, stepsize = 0.001), verbose = FALSE, ...)
 }
@@ -56,6 +56,8 @@ asymptotic diffusion parameters are less dependent on the DRIFT matrix.}
 
 \item{optimize}{if TRUE, use Stan's optimizer for maximum a posteriori estimates. 
 Setting this also sets \code{esthyper=FALSE}}
+
+\item{nopriors}{logical. If TRUE, any priors are disabled, can be desirable for optimization.}
 
 \item{vb}{if TRUE, use Stan's variational approximation. Rudimentary testing suggests it is not accurate 
 for many ctsem models at present.}
