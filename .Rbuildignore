@@ -15,5 +15,6 @@
 ^vignettes/figure
 ^vignettes/*.bbl
 ^vignettes/jss.cls
+^vignettes/Sweave.sty
 ^vignettes/*.log
 ^\.travis\.yml$
