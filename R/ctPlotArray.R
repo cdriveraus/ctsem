@@ -83,9 +83,9 @@ ctPlotArray <- function(yarray,x,
     for(pari in c(1:dim(yarray)[2],dim(yarray)[2]:1)){
       ctpolyargs$col=adjustcolor(colvec[pari],alpha.f=max(c(.004,polygonalpha/ctpolyargs$steps)))
       ctpolyargs$x=plotargs$x
-      ctpolyargs$y=predict(loess(yarray[,pari,2]~ctpolyargs$x))
-      ctpolyargs$yhigh = predict(loess(yarray[,pari,3]~ctpolyargs$x))
-      ctpolyargs$ylow = predict(loess(yarray[,pari,1]~ctpolyargs$x))
+      ctpolyargs$y=yarray[,pari,2] #predict(loess(yarray[,pari,2]~ctpolyargs$x))
+      ctpolyargs$yhigh = yarray[,pari,3] #predict(loess(yarray[,pari,3]~ctpolyargs$x))
+      ctpolyargs$ylow = yarray[,pari,1]#predict(loess(yarray[,pari,1]~ctpolyargs$x))
       
       do.call(ctPoly,ctpolyargs) 
     }
@@ -93,7 +93,7 @@ ctPlotArray <- function(yarray,x,
   
   for(pari in c(1:dim(yarray)[2],dim(yarray)[2]:1)){
     for(qi in 1:3){
-      plotargs$y = predict(loess(yarray[,pari,qi]~plotargs$x))
+      plotargs$y = yarray[,pari,qi]#predict(loess(yarray[,pari,qi]~plotargs$x))
       plotargs$col=colvec[pari]
       plotargs$lwd=ifelse(qi==2,lwdvec[pari],1)
       plotargs$lty=ltyvec[pari]

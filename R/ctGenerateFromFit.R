@@ -71,8 +71,8 @@ gm$Tpoints=length(seq(timerange[1],timerange[2],timestep))
 out=c()
 for(i in 1:n.subjects){
   predSub=sample(x = predictorSubjects,size = 1)
-  if(gm$n.TDpred > 0) gm$TDPREDMEANS=dat[predSub,paste0(gm$TDpredNames,'_T',rep(0:(gm$Tpoints-1),gm$n.TDpred))]
-  if(gm$n.TIpred > 0) gm$TIPREDMEANS=dat[predSub,paste0(gm$TIpredNames)]
+  if(gm$n.TDpred > 0) gm$TDPREDMEANS=matrix(dat[predSub,paste0(gm$TDpredNames,'_T',rep(0:(gm$Tpoints-1),each=gm$n.TDpred))],ncol=1)
+  if(gm$n.TIpred > 0) gm$TIPREDMEANS=matrix(dat[predSub,paste0(gm$TIpredNames),drop=FALSE],ncol=1)
   
   new=suppressMessages(ctGenerate(ctmodelobj = gm,n.subjects = 1,dtmean=timestep,...))
   new[,'id']=i

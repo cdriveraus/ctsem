@@ -121,7 +121,8 @@ ctParamsSummary<-function(object,ctSummaryMatrices){
   parnames<-names(omxGetParameters(object$mxobj))
   parvalues<-omxGetParameters(object$mxobj)
   newparvalues<-parvalues
-  parsd<-object$mxobj$output$standardErrors
+  if(is.null(object$mxobj$output$standardErrors)) parsd<-matrix(NA,nrow=length(parvalues))
+  else parsd<-object$mxobj$output$standardErrors
   parmatrix<-rep(NA,length(parnames))
  
   # browser()
@@ -259,7 +260,7 @@ ctSummaryMatrices<-function(object,ridging=FALSE,timeInterval=1,verbose=FALSE,..
     #     outlist<-c(outlist,'asymTOTALVARstd')
     
     
-    if('T0VAR' %in% stationary == FALSE){ #then include base T0 matrices
+    # if('T0VAR' %in% stationary == FALSE){ #then include base T0 matrices
       T0VAR<-tryCatch({ OpenMx::mxEval(T0VAR, mxobj,compute=TRUE)}, error=function(e) e )
       tryCatch({  dimnames(T0VAR)<-list(latentNames,latentNames)}, error=function(e) e )
       outlist<-c(outlist,'T0VAR')
@@ -275,13 +276,13 @@ ctSummaryMatrices<-function(object,ridging=FALSE,timeInterval=1,verbose=FALSE,..
         outlist<-c(outlist,'T0VARstd')
       }
       
-    } # end T0VAR matrices
+    # } # end T0VAR matrices
     
-    if('T0MEANS' %in% stationary == FALSE){ #then include base T0 matrices
+    # if('T0MEANS' %in% stationary == FALSE){ #then include base T0 matrices
       T0MEANS<-tryCatch({ OpenMx::mxEval(T0MEANS, mxobj,compute=TRUE)}, error=function(e) e )
       tryCatch({  rownames(T0MEANS)<-latentNames}, error=function(e) e )
       outlist<-c(outlist,'T0MEANS')
-    }
+    # }
     
     
     #trait matrices

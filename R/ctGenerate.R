@@ -8,9 +8,6 @@
 #' @param dtmean Positive numeric. Average time interval (delta T) to use.
 #' @param logdtsd Numeric. Standard deviation for variability of the time interval.
 #' @param wide Logical. Output in wide format?
-#' @param simultdpredeffect logical - whether time dependent predictors impact 
-#' instantaneously, or an instant *after* instantaneously. 
-#' Switch reflects difference between ctStanFit and ctFit.
 #' @details TRAITVAR and MANIFESTRAITVAR are treated as Cholesky factor covariances 
 #' of CINT and MANIFESTMEANS, respectively. 
 #' TRAITTDPREDCOV and TIPREDCOV matrices are not accounted for, at present. 
@@ -34,7 +31,7 @@
 #' @export
 
 ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,
-  wide=TRUE,simultdpredeffect=TRUE){
+  wide=TRUE){
   
   
   ###read in model
@@ -88,10 +85,9 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,
   
   fullTpoints<-burnin+Tpoints
   
-  if(n.TDpred > 0) {
-    TDPREDMEANS <- rbind(matrix(0,nrow=(1+burnin+ifelse(simultdpredeffect,0,1))*n.TDpred)[-1,,drop=FALSE],
+  if(n.TDpred > 0) { #add burnin to TDPREDMEANS
+    TDPREDMEANS <- rbind(matrix(0,nrow=1+(burnin)*n.TDpred)[-1,,drop=FALSE], #additional row added then removed in case no burnin
     TDPREDMEANS)
-    if(simultdpredeffect) TDPREDMEANS=rbind(TDPREDMEANS,0)
   }
   
   # TRAITVARchol = t(chol(-solve(DRIFT) %*% TRAITVAR %*% -t(solve(DRIFT))))
