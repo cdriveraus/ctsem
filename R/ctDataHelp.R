@@ -228,7 +228,7 @@ NULL
 #'   DIFFUSION=matrix(c(.3,.1,0,.2),2),CINT=matrix(c(0,0),nrow=2),
 #'   T0MEANS=matrix(0,ncol=1,nrow=2),
 #'   T0VAR=diag(100,2))
-#' cd<-ctGenerate(testm,n.subjects=n.subjects,burnin=300,simultdpredeffect=TRUE,wide=FALSE)
+#' cd<-ctGenerate(testm,n.subjects=n.subjects,burnin=300,wide=FALSE)
 #' 
 #' checkm<-ctModel(type='stanct',Tpoints=Tpoints,
 #'   n.latent=n.latent,n.TDpred=n.TDpred,n.TIpred=n.TIpred,
@@ -274,7 +274,7 @@ NULL
 #'   T0VAR=diag(100,2))
 #' 
 #' ctstantestdat<-ctGenerate(gm,n.subjects=n.subjects,burnin=30,
-#' wide=FALSE, simultdpredeffect = TRUE)
+#' wide=FALSE)
 #' save(ctstantestdat,file='.\\data\\ctstantestdat.rda')
 #' paths <- sort(Sys.glob(c("data/*.rda", "data/*.RData")))
 #' library(tools)

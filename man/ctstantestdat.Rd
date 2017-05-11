@@ -32,7 +32,7 @@ n.TDpred=n.TDpred,n.TIpred=n.TIpred,n.manifest=n.manifest,
   T0VAR=diag(100,2))
 
 ctstantestdat<-ctGenerate(gm,n.subjects=n.subjects,burnin=30,
-wide=FALSE, simultdpredeffect = TRUE)
+wide=FALSE)
 save(ctstantestdat,file='.\\\\data\\\\ctstantestdat.rda')
 paths <- sort(Sys.glob(c("data/*.rda", "data/*.RData")))
 library(tools)

@@ -4,7 +4,7 @@ Known bugs / limitations:
 - Duplicated parameter names in a ctStanFit model may in certain cases generate compilation errors.
 
 Fixes:
-- Time dependent predictors generated errors with the frequentist Kalman filter form.
+- Time dependent predictors generated errors with the frequentist Kalman filter form since 2.2.0
 
 Features:
 - ctGenerateFromFit generates data based on a model fitted with ctFit.

@@ -30,6 +30,7 @@
 #' asymptotic diffusion parameters are less dependent on the DRIFT matrix.
 #' @param optimize if TRUE, use Stan's optimizer for maximum a posteriori estimates. 
 #' Setting this also sets \code{esthyper=FALSE}
+#' @param nopriors logical. If TRUE, any priors are disabled, can be desirable for optimization.
 #' @param vb if TRUE, use Stan's variational approximation. Rudimentary testing suggests it is not accurate 
 #' for many ctsem models at present.
 #' @param iter number of iterations, half of which will be devoted to warmup by default when sampling.
@@ -79,7 +80,7 @@
 #' @export
 ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=TRUE, binomial=FALSE,
   esthyper=TRUE, fit=TRUE, stationary=FALSE,plot=FALSE,  diffusionindices='all',
-  asymdiffusion=FALSE,optimize=FALSE, vb=FALSE, chains=1,cores='maxneeded', inits=NULL,initwithoptim=FALSE,
+  asymdiffusion=FALSE,optimize=FALSE, nopriors=FALSE, vb=FALSE, chains=1,cores='maxneeded', inits=NULL,initwithoptim=FALSE,
   control=list(adapt_delta=.9, adapt_init_buffer=10, adapt_window=5,
     max_treedepth=10,stepsize=.001),verbose=FALSE,...){
   
@@ -89,7 +90,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
   
   noncentered=FALSE
   fixedkalman=FALSE
-  noshrinkage=FALSE
   if(optimize) {
     if(esthyper==TRUE) message('Setting esthyper=FALSE for optimization')
     esthyper=FALSE
@@ -427,7 +427,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
       
       # browser()
 
-  writemodel<-function(init=FALSE,noshrinkage=FALSE){
+  writemodel<-function(init=FALSE,nopriors=FALSE){
     stanmodel <- paste0('
       functions{
       row_vector vecpower(row_vector vec, real power){
@@ -774,11 +774,11 @@ return out;
         
         model{
     real ll;
-        ',if(!noshrinkage) paste0('target += normal_lpdf(hypermeans|0,1);'),'
+        ',if(!nopriors) paste0('target += normal_lpdf(hypermeans|0,1);'),'
         
-        ',if(n.TIpred > 0 & !noshrinkage) paste0('tipredeffectparams ~ ',ctstanmodel$tipredeffectprior, '; \n '),' 
+        ',if(n.TIpred > 0 & !nopriors) paste0('tipredeffectparams ~ ',ctstanmodel$tipredeffectprior, '; \n '),' 
         
-        ',if(any(ctspec$indvarying) & !noshrinkage) paste0(
+        ',if(any(ctspec$indvarying) & !nopriors) paste0(
           'hypercorrchol ~ lkj_corr_cholesky(1); 
           indparamsbase ~ normal(0,1); 
           hypersd',if(!esthyper) 'base', ' ~ normal(0,1);',
@@ -791,7 +791,7 @@ return out;
   ll = 0;
 
 // adjust partial correlation probabilities 
-        ',if(!noshrinkage) paste0(unlist(lapply(1:nrow(ctspec),function(rowi) {
+        ',if(!nopriors) paste0(unlist(lapply(1:nrow(ctspec),function(rowi) {
           out<-''
           if(ctspec$matrix[rowi] %in% c('T0VAR','DIFFUSION') & ctspec$row[rowi] > ctspec$col[rowi] & is.na(ctspec$value[rowi])) {
             out=paste0('target += beta_lpdf(inv_logit(',
@@ -895,7 +895,7 @@ print("lp = ", target());
       }')
     }
   
-  if(is.na(stanmodeltext)) stanmodeltext<-writemodel(init=initwithoptim,noshrinkage= noshrinkage)
+  if(is.na(stanmodeltext)) stanmodeltext<-writemodel(init=initwithoptim,nopriors= nopriors)
   
   
   # out<-list(stanmodeltext=stanmodeltext)

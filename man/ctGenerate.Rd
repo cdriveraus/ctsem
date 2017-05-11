@@ -5,7 +5,7 @@
 \title{ctGenerate}
 \usage{
 ctGenerate(ctmodelobj, n.subjects = 100, burnin = 0, dtmean = 1,
-  logdtsd = 0, wide = TRUE, simultdpredeffect = TRUE)
+  logdtsd = 0, wide = TRUE)
 }
 \arguments{
 \item{ctmodelobj}{ctsem model object from \code{\link{ctModel}}.}
@@ -19,10 +19,6 @@ ctGenerate(ctmodelobj, n.subjects = 100, burnin = 0, dtmean = 1,
 \item{logdtsd}{Numeric. Standard deviation for variability of the time interval.}
 
 \item{wide}{Logical. Output in wide format?}
-
-\item{simultdpredeffect}{logical - whether time dependent predictors impact 
-instantaneously, or an instant *after* instantaneously. 
-Switch reflects difference between ctStanFit and ctFit.}
 }
 \description{
 This function generates data according to the specified ctsem model object.
