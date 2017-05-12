@@ -6,7 +6,7 @@
 \usage{
 ctPostPredict(fit, timestep = 0.1, n.subjects = 1000, probs = c(0.025,
   0.5, 0.975), plot = TRUE, ctPlotArrayArgs = list(grid = FALSE, legend =
-  FALSE), indplotargs = list(colourby = "subject", lwd = 2, new = FALSE, type
+  FALSE), indPlotArgs = list(colourby = "subject", lwd = 2, new = FALSE, type
   = "p", opacity = 0.3), mfrow = "auto")
 }
 \arguments{
@@ -24,13 +24,13 @@ For plotting, vector should be of length 3 and values should be rising.}
 \item{ctPlotArrayArgs}{additional arguments to pass to \code{\link{ctPlotArray}} function,
 for plotting generated distributions.}
 
+\item{indPlotArgs}{list of parameters to pass to ctIndplot, for 
+plotting original data. Only used if plot=TRUE.}
+
 \item{mfrow}{2 dimensional integer vector defining number of rows and columns of plots,
 as per the mfrow argument to \code{\link[graphics]{par}}.
 'auto' determines automatically, to a maximum of 4 by 4, while \code{NULL} 
 uses the current system setting.}
-
-\item{indPlotArgs}{list of parameters to pass to ctIndplot, for 
-plotting original data. Only used if plot=TRUE.}
 }
 \value{
 Either nothing (if plot=TRUE) or an array containing generated data over quantiles.

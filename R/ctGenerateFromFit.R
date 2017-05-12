@@ -18,8 +18,10 @@
 #' 
 #' dwide <- ctGenerateFromFit(AnomAuthfit,n.subjects=100)
 #' 
-#' ctIndplot(datawide = dwide,n.subjects = 100,n.manifest = 2,Tpoints = 4)
-#' ctIndplot(datawide = AnomAuth+rnorm(length(AnomAuth),n.subjects = 100,n.manifest = 2,Tpoints = 4)
+#' par(mfrow=c(1,2))
+#' ctIndplot(datawide = dwide,n.subjects = 10,n.manifest = 2,vars=1,Tpoints = 4)
+#' ctIndplot(datawide = AnomAuth+rnorm(length(AnomAuth)),vars=1,n.subjects = 10,
+#' n.manifest = 2,Tpoints = 4)
 #' 
 ctGenerateFromFit<-function(fit,n.subjects=100,timestep=.1,timerange='asdata',
   predictorSubjects='all',...){
@@ -75,7 +77,7 @@ for(i in 1:n.subjects){
   if(gm$n.TIpred > 0) gm$TIPREDMEANS=matrix(dat[predSub,paste0(gm$TIpredNames),drop=FALSE],ncol=1)
   
   new=suppressMessages(ctGenerate(ctmodelobj = gm,n.subjects = 1,dtmean=timestep,...))
-  new[,'id']=i
+  # new[,'id']=i
    out=rbind(out,new)
    # if(i==1 & n.subjects > 1) out=rbind(out,matrix(NA,nrow=nrow(out)*(n.subjects-1),ncol=ncol(out))) #preallocate
 }

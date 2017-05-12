@@ -30,7 +30,7 @@
 
 ctPostPredict<-function(fit,timestep=.1,n.subjects = 1000,probs=c(.025,.5,.975),
   plot=TRUE, ctPlotArrayArgs=list(grid=FALSE,legend=FALSE), 
-  indplotargs=list(colourby = 'subject',lwd=2,new=FALSE,type='p',opacity=.3),
+  indPlotArgs=list(colourby = 'subject',lwd=2,new=FALSE,type='p',opacity=.3),
   mfrow='auto'){
 
 pcheck=ctGenerateFromFit(fit = fit,n.subjects = n.subjects,wide=FALSE,timestep = timestep)
@@ -82,13 +82,13 @@ if(plot==TRUE){
   do.call(ctPlotArray,ctPlotArrayArgs)
 
   
-  indplotargs$datawide = data
-  indplotargs$n.subjects = nrow(data)
-  indplotargs$vars=i
-  indplotargs$n.manifest = fit$ctmodelobj$n.manifest
-  indplotargs$Tpoints = fit$ctmodelobj$Tpoints
+  indPlotArgs$datawide = data
+  indPlotArgs$n.subjects = nrow(data)
+  indPlotArgs$vars=i
+  indPlotArgs$n.manifest = fit$ctmodelobj$n.manifest
+  indPlotArgs$Tpoints = fit$ctmodelobj$Tpoints
   
-suppressMessages(do.call(ctIndplot,indplotargs))
+suppressMessages(do.call(ctIndplot,indPlotArgs))
 }
 do.call(graphics::par,paroriginal) #end plotting and reset graphics
 } 

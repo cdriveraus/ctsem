@@ -60,7 +60,7 @@ ctIndplot<-function(datawide,n.manifest,Tpoints,n.subjects='all',colourby="varia
         col=ifelse(colourby=="variable",colourvector[j],colourvector[i]),type=type,pch=j,lty=1,...) 
     }}
   
-  if(is.null(varnames)) varnames <- paste0("Y",1:n.manifest) #set varnames for legend
+  if(is.null(varnames)) varnames <- paste0("var",vars) #set varnames for legend
   
   if(colourby=="variable") {
     graphics::legend(legendposition,varnames,pch=vars,col=colourvector,text.col=colourvector,bty="n")
