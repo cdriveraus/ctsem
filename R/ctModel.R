@@ -81,7 +81,7 @@
 #' 
 #' @param TDPREDMEANS For type='omx' only. (n.TDpred * (Tpoints - 1)) rows * 1 column matrix of time dependent predictor means.
 #' If 'auto', the means are freely estimated.  Otherwise, 
-#' the means for the Tpoints-1 observations of your first time dependent predictor 
+#' the means for the Tpoints observations of your first time dependent predictor 
 #' are followed by those of TDpred 2, and so on.
 #' 
 #' @param TDPREDEFFECT n.latent*n.TDpred matrix of effects from time dependent predictors to latent processes.

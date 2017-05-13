@@ -64,10 +64,10 @@ if(plot==TRUE){
   #convert kalman data to wide
   if(is.null(fit$mxobj$expectation$P0))  data<-fit$mxobj$data$observed #if not kalman based fit
   if(!is.null(fit$mxobj$expectation$P0)) { 
-    data<- ctLongToWide(fit$mxobj$data$observed,id='id',time='dT1',
+    data<- suppressMessages(ctLongToWide(fit$mxobj$data$observed,id='id',time='dT1',
       manifestNames=fit$ctmodelobj$manifestNames,
       TDpredNames=fit$ctmodelobj$TDpredNames,
-      TIpredNames=fit$ctmodelobj$TIpredNames)
+      TIpredNames=fit$ctmodelobj$TIpredNames))
     data<-data[,-which(colnames(data)=='T0'),drop=FALSE]
     colnames(data)[which(colnames(data) %in% paste0('T',1:(fit$ctmodelobj$Tpoints-1)))]<-paste0('dT',1:(fit$ctmodelobj$Tpoints-1))
   }
@@ -78,7 +78,7 @@ if(plot==TRUE){
   ctPlotArrayArgs$yarray = pcheck[,i,,drop=FALSE]
   ctPlotArrayArgs$x = seq(0,timeupper,timestep)
   ctPlotArrayArgs$plotcontrol=list(ylab='Values',xlab='Time', main=fit$ctmodelobj$manifestNames[i],
-    ylim=range(c(ctPlotArrayArgs$yarray,data[,paste0(fit$ctmodelobj$manifestNames,'_T',0:(fit$ctmodelobj$Tpoints-1))]),na.rm=TRUE))
+    ylim=range(c(ctPlotArrayArgs$yarray,data[,paste0(fit$ctmodelobj$manifestNames[i],'_T',0:(fit$ctmodelobj$Tpoints-1))]),na.rm=TRUE))
   do.call(ctPlotArray,ctPlotArrayArgs)
 
   

@@ -85,8 +85,7 @@ ctKalman<-function(kpars,datalong,
   yupd<-list()
   yupdcov<-list()
   
-  etaprior[[1]]<-kpars$T0MEANS
-  if(ntdpred > 0) etaprior[[1]]<-etaprior[[1]]+kpars$TDPREDEFFECT %*% t(datalong[1,TDpredNames,drop=FALSE])
+  etaprior[[1]]<-kpars$T0MEANS #tdpreds added below
   etapriorcov[[1]]<-kpars$T0VAR[diffusionindices,diffusionindices,drop=FALSE]
   loglik<-rep(0,nrow(datalong))
   observed<-list()

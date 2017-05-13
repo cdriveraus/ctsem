@@ -72,9 +72,29 @@ gm$Tpoints=length(seq(timerange[1],timerange[2],timestep))
 
 out=c()
 for(i in 1:n.subjects){
-  predSub=sample(x = predictorSubjects,size = 1)
-  if(gm$n.TDpred > 0) gm$TDPREDMEANS=matrix(dat[predSub,paste0(gm$TDpredNames,'_T',rep(0:(gm$Tpoints-1),each=gm$n.TDpred))],ncol=1)
-  if(gm$n.TIpred > 0) gm$TIPREDMEANS=matrix(dat[predSub,paste0(gm$TIpredNames),drop=FALSE],ncol=1)
+  
+  if(gm$n.TDpred + gm$n.TIpred > 0){ #then discretise data for this subject to timestep so that predictor information is accurate
+    predSub=sample(x = predictorSubjects,size = 1)
+    
+    ndlong <- suppressMessages(ctWideToLong(datawide=dat[predSub,,drop=FALSE],Tpoints=fit$ctmodelobj$Tpoints,
+      n.manifest=gm$n.manifest,n.TDpred=gm$n.TDpred,n.TIpred=gm$n.TIpred,
+      manifestNames=gm$manifestNames,TDpredNames=gm$TDpredNames,TIpredNames=gm$TIpredNames))
+    
+    ndlong <- suppressMessages(ctDeintervalise(datalong=ndlong))
+    ndlong <- ctDiscretiseData(dlong=ndlong,timestep=timestep,
+      TDpredNames=gm$TDpredNames,TIpredNames=gm$TIpredNames)
+    
+  if(gm$n.TDpred > 0) {
+    gm$TDPREDMEANS=matrix(ndlong[,gm$TDpredNames],ncol=1)
+    gm$TDPREDVAR = diag(0,gm$Tpoints*gm$n.TDpred)
+    # gm$T0TDPREDCOV = matrix(0,gm$n.latent,gm$n.TDpred*gm$Tpoints)
+    # gm$TRAITTDPREDCOV = matrix(0,gm$n.latent,gm$n.TDpred*gm$Tpoints)
+  }
+  if(gm$n.TIpred > 0) {
+    gm$TIPREDMEANS=matrix(ndlong[,gm$TIpredNames],ncol=1)
+    gm$TIPREDVAR = diag(0,gm$n.TIpred)
+  }
+  }
   
   new=suppressMessages(ctGenerate(ctmodelobj = gm,n.subjects = 1,dtmean=timestep,...))
   # new[,'id']=i
