@@ -28,7 +28,7 @@
 #' AnomAuthFit <- ctFit(AnomAuth, AnomAuthmodel)
 #' ctPostPredict(AnomAuthFit,timestep=.5,n.subjects=500)
 
-ctPostPredict<-function(fit,timestep=.1,n.subjects = 1000,probs=c(.025,.5,.975),
+ctPostPredict<-function(fit,timestep=.1,n.subjects = 100,probs=c(.025,.5,.975),
   plot=TRUE, ctPlotArrayArgs=list(grid=FALSE,legend=FALSE), 
   indPlotArgs=list(colourby = 'subject',lwd=2,new=FALSE,type='p',opacity=.3),
   mfrow='auto'){
@@ -87,6 +87,7 @@ if(plot==TRUE){
   indPlotArgs$vars=i
   indPlotArgs$n.manifest = fit$ctmodelobj$n.manifest
   indPlotArgs$Tpoints = fit$ctmodelobj$Tpoints
+  indPlotArgs$legend=FALSE
   
 suppressMessages(do.call(ctIndplot,indPlotArgs))
 }

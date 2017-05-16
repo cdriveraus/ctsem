@@ -1011,7 +1011,8 @@ print("lp = ", target());
       message('Sampling...')
       
     stanargs <- list(fit = sm, 
-      enable_random_init=TRUE,init_r=.2,
+      # enable_random_init=TRUE,
+      init_r=.2,
       init=staninits,
       refresh=20,
       iter=iter,

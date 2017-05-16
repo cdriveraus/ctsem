@@ -23,7 +23,7 @@
 #' ctIndplot(datawide = AnomAuth+rnorm(length(AnomAuth)),vars=1,n.subjects = 10,
 #' n.manifest = 2,Tpoints = 4)
 #' 
-ctGenerateFromFit<-function(fit,n.subjects=100,timestep=.1,timerange='asdata',
+ctGenerateFromFit<-function(fit,timestep=.1,n.subjects=100,timerange='asdata',
   predictorSubjects='all',...){
 s=summary(fit,verbose=TRUE)
 

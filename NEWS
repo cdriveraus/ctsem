@@ -1,10 +1,14 @@
 ctsem news:
 
 Known bugs / limitations:
-- Duplicated parameter names in a ctStanFit model may in certain cases generate compilation errors.
 
+16/5/2017
+#### 2.4.0 ####
 Fixes:
 - Time dependent predictors generated errors with the frequentist Kalman filter form since 2.2.0
+- With stationary set to NULL (not the default but offered in help file) for ctFit, 
+t0 matrices were mistakenly set to stationary.
+- Duplicated parameter names now allowed in a ctStanFit model.
 
 Features:
 - ctGenerateFromFit generates data based on a model fitted with ctFit.
