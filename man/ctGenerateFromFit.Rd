@@ -39,8 +39,8 @@ AnomAuthfit <- ctFit(AnomAuth, AnomAuthmodel)
 dwide <- ctGenerateFromFit(AnomAuthfit,timestep=1,n.subjects=5)
 
 par(mfrow=c(1,2))
-ctIndplot(datawide = dwide,n.subjects = 10,n.manifest = 2,vars=1,Tpoints = 4)
-ctIndplot(datawide = AnomAuth+rnorm(length(AnomAuth)),vars=1,n.subjects = 10,
+ctIndplot(datawide = dwide,n.subjects = 5,n.manifest = 2,vars=1,Tpoints = 4)
+ctIndplot(datawide = AnomAuth+rnorm(length(AnomAuth)),vars=1,n.subjects = 5,
 n.manifest = 2,Tpoints = 4)
 
 }
