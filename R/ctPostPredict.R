@@ -26,7 +26,7 @@
 #' AnomAuthmodel <- ctModel(LAMBDA = matrix(c(1, 0, 0, 1), nrow = 2, ncol = 2), 
 #'   Tpoints = 5, n.latent = 2, n.manifest = 2, MANIFESTVAR=diag(0, 2), TRAITVAR = 'auto') 
 #' AnomAuthFit <- ctFit(AnomAuth, AnomAuthmodel)
-#' ctPostPredict(AnomAuthFit,timestep=.5,n.subjects=500)
+#' ctPostPredict(AnomAuthFit,timestep=.5,n.subjects=100)
 
 ctPostPredict<-function(fit,timestep=.1,n.subjects = 100,probs=c(.025,.5,.975),
   plot=TRUE, ctPlotArrayArgs=list(grid=FALSE,legend=FALSE), 
