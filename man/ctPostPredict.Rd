@@ -4,10 +4,10 @@
 \alias{ctPostPredict}
 \title{Posterior predictive type check for ctsemFit.}
 \usage{
-ctPostPredict(fit, timestep = 0.1, n.subjects = 1000, probs = c(0.025,
-  0.5, 0.975), plot = TRUE, ctPlotArrayArgs = list(grid = FALSE, legend =
-  FALSE), indPlotArgs = list(colourby = "subject", lwd = 2, new = FALSE, type
-  = "p", opacity = 0.3), mfrow = "auto")
+ctPostPredict(fit, timestep = 0.1, n.subjects = 100, probs = c(0.025, 0.5,
+  0.975), plot = TRUE, ctPlotArrayArgs = list(grid = FALSE, legend = FALSE),
+  indPlotArgs = list(colourby = "subject", lwd = 2, new = FALSE, type = "p",
+  opacity = 0.3), mfrow = "auto")
 }
 \arguments{
 \item{fit}{object of class ctsemFit as returned from \code{\link{ctFit}}}
