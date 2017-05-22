@@ -26,11 +26,11 @@
 #' AnomAuthmodel <- ctModel(LAMBDA = matrix(c(1, 0, 0, 1), nrow = 2, ncol = 2), 
 #'   Tpoints = 5, n.latent = 2, n.manifest = 2, MANIFESTVAR=diag(0, 2), TRAITVAR = 'auto') 
 #' AnomAuthFit <- ctFit(AnomAuth, AnomAuthmodel)
-#' ctPostPredict(AnomAuthFit,timestep=.5,n.subjects=500)
+#' ctPostPredict(AnomAuthFit,timestep=.5,n.subjects=100)
 
-ctPostPredict<-function(fit,timestep=.1,n.subjects = 1000,probs=c(.025,.5,.975),
+ctPostPredict<-function(fit,timestep=.1,n.subjects = 100,probs=c(.025,.5,.975),
   plot=TRUE, ctPlotArrayArgs=list(grid=FALSE,legend=FALSE), 
-  indplotargs=list(colourby = 'subject',lwd=2,new=FALSE,type='p',opacity=.3),
+  indPlotArgs=list(colourby = 'subject',lwd=2,new=FALSE,type='p',opacity=.3),
   mfrow='auto'){
 
 pcheck=ctGenerateFromFit(fit = fit,n.subjects = n.subjects,wide=FALSE,timestep = timestep)
@@ -64,10 +64,10 @@ if(plot==TRUE){
   #convert kalman data to wide
   if(is.null(fit$mxobj$expectation$P0))  data<-fit$mxobj$data$observed #if not kalman based fit
   if(!is.null(fit$mxobj$expectation$P0)) { 
-    data<- ctLongToWide(fit$mxobj$data$observed,id='id',time='dT1',
+    data<- suppressMessages(ctLongToWide(fit$mxobj$data$observed,id='id',time='dT1',
       manifestNames=fit$ctmodelobj$manifestNames,
       TDpredNames=fit$ctmodelobj$TDpredNames,
-      TIpredNames=fit$ctmodelobj$TIpredNames)
+      TIpredNames=fit$ctmodelobj$TIpredNames))
     data<-data[,-which(colnames(data)=='T0'),drop=FALSE]
     colnames(data)[which(colnames(data) %in% paste0('T',1:(fit$ctmodelobj$Tpoints-1)))]<-paste0('dT',1:(fit$ctmodelobj$Tpoints-1))
   }
@@ -78,17 +78,18 @@ if(plot==TRUE){
   ctPlotArrayArgs$yarray = pcheck[,i,,drop=FALSE]
   ctPlotArrayArgs$x = seq(0,timeupper,timestep)
   ctPlotArrayArgs$plotcontrol=list(ylab='Values',xlab='Time', main=fit$ctmodelobj$manifestNames[i],
-    ylim=range(c(ctPlotArrayArgs$yarray,data[,paste0(fit$ctmodelobj$manifestNames,'_T',0:(fit$ctmodelobj$Tpoints-1))]),na.rm=TRUE))
+    ylim=range(c(ctPlotArrayArgs$yarray,data[,paste0(fit$ctmodelobj$manifestNames[i],'_T',0:(fit$ctmodelobj$Tpoints-1))]),na.rm=TRUE))
   do.call(ctPlotArray,ctPlotArrayArgs)
 
   
-  indplotargs$datawide = data
-  indplotargs$n.subjects = nrow(data)
-  indplotargs$vars=i
-  indplotargs$n.manifest = fit$ctmodelobj$n.manifest
-  indplotargs$Tpoints = fit$ctmodelobj$Tpoints
+  indPlotArgs$datawide = data
+  indPlotArgs$n.subjects = nrow(data)
+  indPlotArgs$vars=i
+  indPlotArgs$n.manifest = fit$ctmodelobj$n.manifest
+  indPlotArgs$Tpoints = fit$ctmodelobj$Tpoints
+  indPlotArgs$legend=FALSE
   
-suppressMessages(do.call(ctIndplot,indplotargs))
+suppressMessages(do.call(ctIndplot,indPlotArgs))
 }
 do.call(graphics::par,paroriginal) #end plotting and reset graphics
 } 

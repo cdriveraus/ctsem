@@ -6,7 +6,7 @@
 \usage{
 ctIndplot(datawide, n.manifest, Tpoints, n.subjects = "all",
   colourby = "variable", vars = "all", opacity = 1, varnames = NULL,
-  xlab = "Time", ylab = "Value", type = "b", start = 0,
+  xlab = "Time", ylab = "Value", type = "b", start = 0, legend = TRUE,
   legendposition = "topright", new = TRUE, jittersd = 0.05, ...)
 }
 \arguments{
@@ -34,6 +34,8 @@ ctIndplot(datawide, n.manifest, Tpoints, n.subjects = "all",
 Defaults to 'b', both points and lines.}
 
 \item{start}{Measurement occasion to start plotting from - defaults to T0.}
+
+\item{legend}{Logical. Plot a legend?}
 
 \item{legendposition}{Where to position the legend.}
 

@@ -14,6 +14,7 @@
 #' @param type character specifying plot type, as per usual base R plot commands. 
 #' Defaults to 'b', both points and lines.
 #' @param start Measurement occasion to start plotting from - defaults to T0.
+#' @param legend Logical. Plot a legend?
 #' @param legendposition Where to position the legend.
 #' @param ... additional plotting parameters.
 #' @param new logical. If TRUE, creates a new plot, otherwise overlays on current plot.
@@ -26,7 +27,7 @@
 #' 
 #' @export
 ctIndplot<-function(datawide,n.manifest,Tpoints,n.subjects='all',colourby="variable",
-  vars='all',opacity=1,varnames=NULL,xlab='Time',ylab='Value',type='b',start=0,
+  vars='all',opacity=1,varnames=NULL,xlab='Time',ylab='Value',type='b',start=0,legend=TRUE,
   legendposition='topright',new=TRUE,jittersd=.05,...){
 
   if(n.subjects=='all') n.subjects=nrow(datawide)
@@ -46,7 +47,7 @@ ctIndplot<-function(datawide,n.manifest,Tpoints,n.subjects='all',colourby="varia
     apply(datawide[individuals,,drop=FALSE][,paste0('dT',1:x),drop=FALSE],1,sum,na.rm=T)
   })),ncol=(Tpoints-1))
   
-  if(new==TRUE) graphics::plot(0,ylim=c(ymin,ymax),xlim=c(start,max(times)),
+  if(new==TRUE) graphics::plot(NA,ylim=c(ymin,ymax),xlim=c(start,max(times)),
     ylab=ylab,xlab=xlab,...)
   
  
@@ -60,12 +61,15 @@ ctIndplot<-function(datawide,n.manifest,Tpoints,n.subjects='all',colourby="varia
         col=ifelse(colourby=="variable",colourvector[j],colourvector[i]),type=type,pch=j,lty=1,...) 
     }}
   
-  if(is.null(varnames)) varnames <- paste0("Y",1:n.manifest) #set varnames for legend
+  if(is.null(varnames)) varnames <- paste0("var",vars) #set varnames for legend
   
+  if(legend==TRUE){
   if(colourby=="variable") {
     graphics::legend(legendposition,varnames,pch=vars,col=colourvector,text.col=colourvector,bty="n")
   }
   if(colourby=="subject") {
     graphics::legend(legendposition,varnames,pch=vars,bty="n")
   }
+  }
+  
 }

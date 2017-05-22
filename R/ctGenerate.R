@@ -85,19 +85,26 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,
   
   fullTpoints<-burnin+Tpoints
   
-  if(n.TDpred > 0) { #add burnin to TDPREDMEANS
-    TDPREDMEANS <- rbind(matrix(0,nrow=1+(burnin)*n.TDpred)[-1,,drop=FALSE], #additional row added then removed in case no burnin
-    TDPREDMEANS)
-  }
+  # if(n.TDpred > 0) { #add burnin to TDPREDMEANS
+  #   browser()
+  #   TDPREDMEANS <- matrix(rbind(matrix(0,nrow=1+(burnin),ncol=n.TDpred)[-1,,drop=FALSE], #additional row added then removed in case no burnin
+  #   matrix(TDPREDMEANS,ncol=n.TDpred)),ncol=1) #ugly transform to avoid burnin offset with multiple tdpreds 
+  # }
   
   # TRAITVARchol = t(chol(-solve(DRIFT) %*% TRAITVAR %*% -t(solve(DRIFT))))
   
   for(si in 1:n.subjects){
+    
     dt<- exp(rnorm(fullTpoints,log(dtmean),logdtsd))
     time=rep(0,fullTpoints)
     for(t in 2:fullTpoints) time[t] = round(time[t-1] + dt[t],3)
-    if(n.TDpred > 0) tdpreds <- matrix(sapply(1:(fullTpoints),function(x) 
-      TDPREDMEANS[(1+(x-1)*n.TDpred):(x*n.TDpred)] + TDPREDVARchol[1:n.TDpred,1:n.TDpred] %*% rnorm(n.TDpred,0,1)),byrow=TRUE, ncol=n.TDpred)
+    
+    
+    if(n.TDpred > 0) {
+     
+      tdpreds <- rbind(matrix(0,nrow=1+(burnin),ncol=n.TDpred)[-1,,drop=FALSE], #additional row added then removed in case no burnin
+        matrix(TDPREDMEANS + TDPREDVARchol %*% rnorm(nrow(TDPREDVARchol),0,1),ncol=n.TDpred))
+}
     
     skpars=kpars
     if(any(TRAITVARchol != 0)) {
