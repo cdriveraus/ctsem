@@ -26,6 +26,7 @@ stanWplot <- function(iter=2000,chains=4,...){
 tmpdir=tempdir()
 tmpdir=gsub('\\','/',tmpdir,fixed=TRUE)
 
+windows= Sys.info()[1]=='Windows'
 
 stanplot<-function(chains,seed){
   wd<-  paste0("setwd('",tmpdir,"')")
@@ -37,7 +38,7 @@ stanplot<-function(chains,seed){
     notyet<-TRUE
     while(notyet==TRUE){
     Sys.sleep(1);
-    samps<-try(read.csv(file=paste0(seed,"samples_1.csv"),comment.char="#"))
+    samps<-try(read.csv(file=paste0(seed,"samples_1.csv"),comment.char="#"),silent=TRUE)
     if(class(samps) != "try-error") notyet<-FALSE
     }
     varnames<-colnames(samps);
@@ -52,7 +53,7 @@ stanplot<-function(chains,seed){
     begin<-input$begin
     samps<-list()
     for(chaini in 1:chains) {
-    samps[[chaini]]<-try(read.csv(file=paste0(seed,"samples_",chaini,".csv"),comment.char="#",colClasses = colimport))
+    samps[[chaini]]<-try(read.csv(file=paste0(seed,"samples_",chaini,".csv"),comment.char="#",colClasses = colimport),silent=TRUE)
     if(class(samps[[chaini]])=="try-error") samps[[chaini]]=samps[[1]][1,,drop=FALSE]
 }
     
@@ -92,7 +93,9 @@ stanplot<-function(chains,seed){
     ))),
     launch.browser=TRUE)
     quit(save="no")'),con=paste0(tmpdir,"/stanplottemp.R"))
-  system(paste0("Rscript --slave --no-restore -e source(\'",tmpdir,"/stanplottemp.R\')"),wait=FALSE)
+  
+  if(windows) system(paste0("Rscript --slave --no-restore -e source(\'",tmpdir,"/stanplottemp.R\')"),wait=FALSE) else
+    system(paste0("Rscript --slave --no-restore -e source\\(\\\'",tmpdir,"\\/stanplottemp.R\\\'\\)"),wait=FALSE)
   
 }
 
