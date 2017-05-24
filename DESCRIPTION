@@ -31,7 +31,8 @@ Imports:
     graphics,
     methods,
     grDevices,
-    parallel
+    parallel,
+    shiny
 LazyData: Yes
 Suggests:
     knitr,

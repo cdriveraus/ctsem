@@ -95,7 +95,7 @@ stanplot<-function(chains,seed){
     quit(save="no")'),con=paste0(tmpdir,"/stanplottemp.R"))
   
   if(windows) system(paste0("Rscript --slave --no-restore -e source(\'",tmpdir,"/stanplottemp.R\')"),wait=FALSE) else
-    system(paste0("Rscript --slave --no-restore -e source\\(\\\'",tmpdir,"\\/stanplottemp.R\\\'\\)"),wait=FALSE)
+    system(paste0(R.home(component = "home"),"/Rscript --slave --no-restore -e source\\(\\\'",tmpdir,"\\/stanplottemp.R\\\'\\)"),wait=FALSE)
   
 }
 
