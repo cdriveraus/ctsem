@@ -254,13 +254,13 @@ ctFit  <- function(datawide, ctmodelobj,
       all(is.na(suppressWarnings(as.numeric(ctmodelobj$T0MEANS)))) & nofit==FALSE) stop('Cannot estimate model for single individuals unless either 
         T0VAR or T0MEANS matrices are fixed, or set to stationary')
   
-  if(nrow(datawide)==1){
+  if(objective == "Kalman" | objective == "Kalmanmx"){
     message('Single subject dataset or Kalman objective specified - ignoring any specified between subject 
       variance matrices (TRAITVAR, T0TRAITEFFECT,MANIFESTTRAITVAR, TIPREDEFFECT, TIPREDVAR, TDTIPREDCOV, T0TIPREDEFFECT)')
-    if(objective != "Kalman" & objective != "Kalmanmx") message('Estimation could be much faster if objective="Kalman" was specified!')  
     n.TIpred<-0
   }
   
+
   if(objective=='cov') {
     if(nrow(datawide)==1) stop('Covariance based estimation impossible for single subject data')
     message('Covariance based estimation requested - meanIntervals set to TRUE')

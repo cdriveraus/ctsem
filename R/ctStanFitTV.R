@@ -1,7 +1,7 @@
-#' ctStanFit
+#' ctStanFitTV
 #'
 #' Fits a ctsem model specified via \code{\link{ctModel}} with type either 'stanct' or 'standt', using Bayseian inference software
-#' Stan. 
+#' Stan, in time varying parameter form - experimental function!
 #' 
 #' @param datalong long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables, 
 #' any time dependent (i.e. varying within subject) predictors, 
@@ -76,7 +76,7 @@
 #' 
 #' }
 #' @importFrom Rcpp evalCpp
-#' 
+#' @export
 ctStanFitTV<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=TRUE, binomial=FALSE,
   esthyper=TRUE, fit=TRUE, stationary=FALSE,plot=FALSE,  diffusionindices='all',
   asymdiffusion=FALSE,optimize=FALSE, vb=FALSE, chains=1,cores='maxneeded', inits=NULL,initwithoptim=FALSE,
@@ -90,7 +90,7 @@ ctStanFitTV<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman
   noncentered=FALSE
   fixedkalman=FALSE
   ppchecking=FALSE
-  noshrinkage=FALSE
+  noshrinkage=TRUE
   if(optimize) {
     if(esthyper==TRUE) message('Setting esthyper=FALSE for optimization')
     esthyper=FALSE
@@ -171,7 +171,8 @@ ctStanFitTV<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman
   continuoustime<-ctstanmodel$continuoustime
   indvarying<-c(ctspec$indvarying,ctspecduplicates$indvarying)
   nindvarying<-sum(indvarying)
-  nparams<-sum(is.na(ctspec$value))
+
+  nparams<-sum(is.na(ctspec$value) & ctspec$matrix %in% c('T0MEANS','T0VAR'))
   
   
   #data checks
@@ -428,7 +429,7 @@ return out;
       }
       
       parameters {
-      vector[nlatent] hypermeans; // population level means ','
+      vector[nparams] hypermeans; // population level means ','
       }
       
       model{
@@ -491,7 +492,9 @@ ll = 0;
               ']') 
             
             y<- paste0('(',
-              if(is.na(ctspec[rowi,'value']) & (noncentered | !ctspec$indvarying[rowi])) paste0('hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),']'),
+              if(is.na(ctspec[rowi,'value']) & (noncentered | !ctspec$indvarying[rowi])) paste0('hypermeans[',
+                which(ctspec$param[is.na(ctspec$value) & ctspec$matrix %in% c('T0MEANS','T0VAR')] == ctspec$param[rowi]),
+                ']'),
               if(ctspec[rowi,'indvarying'] & noncentered) ' + ',
               if(ctspec[rowi,'indvarying']) paste0('indparams[subi][',which(ctspec[ctspec$indvarying,'param']==ctspec[rowi,'param']),']')
               ,')')

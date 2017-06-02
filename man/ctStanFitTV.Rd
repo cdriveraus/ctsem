@@ -2,7 +2,7 @@
 % Please edit documentation in R/ctStanFitTV.R
 \name{ctStanFitTV}
 \alias{ctStanFitTV}
-\title{ctStanFit}
+\title{ctStanFitTV}
 \usage{
 ctStanFitTV(datalong, ctstanmodel, stanmodeltext = NA, iter = 2000,
   kalman = TRUE, binomial = FALSE, esthyper = TRUE, fit = TRUE,
@@ -80,7 +80,7 @@ regarding warmup / sampling behaviour.}
 }
 \description{
 Fits a ctsem model specified via \code{\link{ctModel}} with type either 'stanct' or 'standt', using Bayseian inference software
-Stan.
+Stan, in time varying parameter form - experimental function!
 }
 \examples{
 \dontrun{

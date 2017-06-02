@@ -583,8 +583,8 @@ tdpredmodel <- ctModel(n.manifest = 2, n.latent = 2, n.TDpred = 1,
   Tpoints = 8, manifestNames = c("LeisureTime", "Happiness"), 
   TDpredNames = "MoneyInt", latentNames = c("LeisureTime", "Happiness"),
   LAMBDA = diag(2), TRAITVAR = "auto")
-tdpredfit <- ctFit(datawide = ctExample2, ctmodelobj = tdpredmodel)
-
+tdpredfit <- ctFit(datawide = ctExample2, ctmodelobj = tdpredmodel,
+  stationary=c('T0VAR','T0TRAITEFFECT'))
 summary(tdpredfit, verbose = TRUE)["TDPREDEFFECT"]
 
 @
@@ -616,7 +616,8 @@ tdpredlevelmodel$TDPREDEFFECT[1:3, ] <- c(0,0,1)
 tdpredlevelmodel$DRIFT[3, ] <- c(0,0,-.000001)
 
 tdpredlevelfit <- ctFit(datawide = ctExample2, 
-  ctmodelobj = tdpredlevelmodel)
+  ctmodelobj = tdpredlevelmodel, 
+  stationary=c('T0VAR','T0TRAITEFFECT'))
 
 summary(tdpredlevelfit, verbose = TRUE)[c("DRIFT","TDPREDEFFECT")]
 @

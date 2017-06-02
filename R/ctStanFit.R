@@ -1012,7 +1012,7 @@ print("lp = ", target());
       
     stanargs <- list(fit = sm, 
       # enable_random_init=TRUE,
-      init_r=.2,
+      init_r=.02,
       init=staninits,
       refresh=20,
       iter=iter,
