@@ -2,9 +2,10 @@
 #' 
 #' This function fits continuous time SEM models specified via \code{\link{ctModel}}
 #' to a dataset containing one or more subjects.
-#' @param datawide the data you wish to fit a ctsem model to.
+#' @param dat the data you wish to fit a ctsem model to, in either wide format (one individual per row), 
+#' or long format (one time point of one individual per row). See details. 
 #' @param ctmodelobj the ctsem model object you wish to use, specified via the \code{\link{ctModel}} function.
-#' @param nofit if TRUE, output only openmx model without fitting
+#' @param fit if TRUE, output only openmx model without fitting
 #' @param objective 'auto' selects either 'Kalman', if fitting to single subject data, 
 #' or 'mxRAM' for multiple subjects. For single subject data, 'Kalman' uses the \code{mxExpectationStateSpace }
 #' function from OpenMx to implement the Kalman filter. 
@@ -67,7 +68,14 @@
 #' initialisation of higher order models, while the FALSE setting is useful when one has already estimated a model without cross effects,
 #' and wishes to begin optimization from those values by using the omxStartValues switch.
 #' are re-transformed into regular continuous time parameter matrices, and may be interpreted as normal.
-#' @details For full discussion of how to structure the data and use this function, see the vignette using: \code{vignette('ctsem')}.
+#' @param datawide included for compatibility with scripts written for earlier versions of ctsem. 
+#' Do not use this argument, instead use the dat argument, and the dataform argument now specifies whether the
+#' data is in wide or long format.
+#' @details For full discussion of how to structure the data and use this function, see the vignette using: \code{vignette('ctsem')}, or
+#' the data examples \code{data("longexample") ; longexample} for long and \code{data("datastructure") ; datastructure} for wide. 
+#' If using long format, the subject id column must be numeric and grouped by ascending time within subject, and named 'id'. 
+#' The time column must also be numeric, and representing absolute time (e.g., since beginning of study, *not* time intervals),
+#' and called 'time'.
 #' Models are specified using the \code{\link{ctModel}} function.
 #' For help regarding the summary function, see \code{\link{summary.ctsemFit}}, 
 #' and for the plot function, \code{\link{plot.ctsemFit}}.
@@ -132,7 +140,7 @@
 #' @import OpenMx
 #' @export
 
-ctFit  <- function(datawide, ctmodelobj, 
+ctFit  <- function(dat, ctmodelobj, dataform='wide',
   objective='auto', 
   stationary=c('T0TRAITEFFECT','T0TIPREDEFFECT'), 
   optimizer='SLSQP', 
@@ -141,12 +149,20 @@ ctFit  <- function(datawide, ctmodelobj,
   showInits=FALSE, asymptotes=FALSE,
   meanIntervals=FALSE, plotOptimization=F, 
   crossEffectNegStarts=TRUE,
-  nofit = FALSE, discreteTime=FALSE, verbose=0, useOptimizer=TRUE,
-  omxStartValues=NULL, transformedParams=TRUE){
+  fit = TRUE, discreteTime=FALSE, verbose=0, useOptimizer=TRUE,
+  omxStartValues=NULL, transformedParams=TRUE,
+  datawide=NA){
   
+  if(length(datawide) > 1 || !is.na(datawide)) {
+    warning('ctsem now uses the dat argument instead of the datawide argument, and the form (wide or long) may be specified via the dataform argument.')
+  if(class(try(length(dat),silent = TRUE)) == 'try-error') {
+    message ('dat not specified, using datawide')
+    dat <- datawide
+  }
+  }
   # transformedParams<-TRUE
   largeAlgebras<-TRUE
-  if(nofit == TRUE) carefulFit <- FALSE
+  if(fit == FALSE) carefulFit <- FALSE
   
   if(all(stationary %in% 'all')) stationary<-c('T0VAR','T0MEANS','T0TIPREDEFFECT','T0TRAITEFFECT')
   if(is.null(stationary)) stationary <- c('')
@@ -162,6 +178,25 @@ ctFit  <- function(datawide, ctmodelobj,
   latentNames<-ctmodelobj$latentNames
   TDpredNames<-ctmodelobj$TDpredNames
   TIpredNames<-ctmodelobj$TIpredNames
+  
+  if(dataform != 'wide' & dataform !='long') stop('dataform must be either "wide" or "long"!')
+  if(dataform == 'long'){
+    
+    obsTpoints=max(unlist(lapply(unique(dat[,idcol]),function(x) 
+      length(dat[dat[,idcol]==x, idcol]) )))
+    
+    if(Tpoints != obsTpoints) stop(
+        paste0('Tpoints in ctmodelobj = ',Tpoints,', not equal to ', obsTpoints, ', the maximum number of rows of any subject in dat'))
+    
+      datawide=ctLongToWide(datalong = dat,id = 'id',
+        time = 'time',manifestNames = manifestNames,TDpredNames=TDpredNames,TIpredNames = TIpredNames)
+      
+      datawide=suppressMessages(ctIntervalise(datawide = datawide,Tpoints = Tpoints,
+        n.manifest = n.manifest,manifestNames = manifestNames,
+        n.TDpred=n.TDpred,n.TIpred = n.TIpred,
+        TDpredNames=TDpredNames,TIpredNames = TIpredNames))
+  }
+  if(dataform == 'wide') datawide = dat
   
   missingManifest <- is.na(match(paste0(manifestNames, "_T0"), colnames(datawide)))
   if (any(missingManifest)) {
@@ -191,9 +226,9 @@ ctFit  <- function(datawide, ctmodelobj,
   
   #capture arguments
   ctfitargs<- list(stationary, optimizer, verbose,
-    retryattempts, carefulFit, showInits, meanIntervals, nofit, objective, discreteTime, asymptotes, transformedParams)
+    retryattempts, carefulFit, showInits, meanIntervals, fit, objective, discreteTime, asymptotes, transformedParams)
   names(ctfitargs)<-c('stationary', 'optimizer', 'verbose',
-    'retryattempts', 'carefulFit', 'showInits', 'meanIntervals', 'nofit', 'objective', 'discreteTime', 'asymptotes', 'transformedParams')
+    'retryattempts', 'carefulFit', 'showInits', 'meanIntervals', 'fit', 'objective', 'discreteTime', 'asymptotes', 'transformedParams')
   
   #ensure data is a matrix
   datawide<-as.matrix(datawide)
@@ -251,7 +286,7 @@ ctFit  <- function(datawide, ctmodelobj,
   
   if(nrow(datawide)==1 & 'T0VAR' %in% stationary ==FALSE & 'T0MEANS' %in% stationary == FALSE & 
       all(is.na(suppressWarnings(as.numeric(ctmodelobj$T0VAR[lower.tri(ctmodelobj$T0VAR,diag=T)])))) & 
-      all(is.na(suppressWarnings(as.numeric(ctmodelobj$T0MEANS)))) & nofit==FALSE) stop('Cannot estimate model for single individuals unless either 
+      all(is.na(suppressWarnings(as.numeric(ctmodelobj$T0MEANS)))) & fit == TRUE) stop('Cannot estimate model for single individuals unless either 
         T0VAR or T0MEANS matrices are fixed, or set to stationary')
   
   if(objective == "Kalman" | objective == "Kalmanmx"){
@@ -2096,9 +2131,9 @@ ctFit  <- function(datawide, ctmodelobj,
     #     setobjective() #and set it
   }
   
-  if(nofit == TRUE) mxobj <- model #if we're not fitting the model, just return the unfitted openmx model
+  if(fit == FALSE) mxobj <- model #if we're not fitting the model, just return the unfitted openmx model
   
-  if(nofit == FALSE){ #but otherwise...  
+  if(fit == TRUE){ #but otherwise...  
     
     if(useOptimizer==TRUE) mxobj <- mxTryHard(model, initialTolerance=1e-14,
       # finetuneGradient=FALSE,
@@ -2132,4 +2167,4 @@ ctFit  <- function(datawide, ctmodelobj,
   class(out) <- "ctsemFit" #and give it the class of a ctsemFit object
   
   return(out)
-}
+  }

@@ -2,7 +2,7 @@
 #'
 #' Takes list containing ctsem subject matrices, as well as long form data object, and calculates 
 #' predicted and updated latent states, likelihoods, and predicted observations using the Kalman filter.
-
+#'
 #' @param kpars list object containing DRIFT,T0VAR,DIFFUSION,CINT,T0MEANS,TDPREDEFFECT,
 #' MANIFESTMEANS, LAMBDA, and MANIFESTVAR matrices, with list elements named accordingly. 
 #' Such a list is returned by \code{\link{ctStanContinuousPars}}.
@@ -54,6 +54,8 @@ ctKalman<-function(kpars,datalong,
   TDpredNames=NULL,
   continuoustime=TRUE,
   timecol='time', diffusionindices='all'){
+  
+  datalong=as.matrix(datalong)
   
   nmanifest=length(manifestNames)
   nlatent=length(latentNames)
@@ -108,7 +110,7 @@ ctKalman<-function(kpars,datalong,
       discreteCINT[[rowi]]<- kpars$CINT
       discreteDIFFUSION[[rowi]] <- kpars$DIFFUSION[diffusionindices,diffusionindices,drop=FALSE]
     }
-
+    
     
     if(rowi>1){
       etaprior[[rowi]] <- discreteCINT[[rowi]]  + discreteDRIFT[[rowi]] %*% etaupd[[rowi-1]]
@@ -122,6 +124,7 @@ ctKalman<-function(kpars,datalong,
     
     nafilter<-!is.na(Y[rowi,])
     observed[[rowi]]<-nafilter
+    err[[rowi]]<-matrix(NA,nrow=nmanifest) #init prediction errors for this row
     
     # // one step ahead predictive distribution of y
     yprior[[rowi]] <- kpars$MANIFESTMEANS + kpars$LAMBDA %*% etaprior[[rowi]]
@@ -131,10 +134,6 @@ ctKalman<-function(kpars,datalong,
     if(imputeMissings) Y[rowi,] <- yprior[[rowi]] + t(chol(ypriorcov[[rowi]])) %*% rnorm(nmanifest,0,1)
     
     y <- Y[rowi,,drop=FALSE][,nafilter,drop=FALSE]
-    
-    # // forecast error
-    err[[rowi]]<-matrix(NA,nrow=nmanifest)
-    err[[rowi]][nafilter] <- as.numeric(y - yprior[[rowi]][nafilter,])
     
     #if all missing...
     if(all(!nafilter)){
@@ -146,6 +145,9 @@ ctKalman<-function(kpars,datalong,
     
     #if any not missing
     if(any(nafilter)){
+      
+      # // forecast error
+      err[[rowi]][nafilter] <- as.numeric(y - yprior[[rowi]][nafilter,])
       
       # // Kalman gain
       invypriorcov <- solve(ypriorcov[[rowi]][nafilter,nafilter,drop=FALSE])
@@ -159,7 +161,7 @@ ctKalman<-function(kpars,datalong,
       
       # etaupdcov[[rowi + 1]] <- etapriorcov[[rowi]]
       etaupdcov[[rowi]] <- (diag(ndiffusion) - K[diffusionindices,nafilter,drop=FALSE] %*% 
-        kpars$LAMBDA[nafilter,diffusionindices,drop=FALSE]) %*% etapriorcov[[rowi]]
+          kpars$LAMBDA[nafilter,diffusionindices,drop=FALSE]) %*% etapriorcov[[rowi]]
       
       # // log likelihood
       loglik[rowi] <- - 0.5 * (nrow(kpars$LAMBDA[nafilter,diffusionindices,drop=FALSE]) * log(2 * pi)  + 
@@ -208,7 +210,7 @@ ctKalman<-function(kpars,datalong,
   
   etaprior<-matrix(unlist(etaprior),byrow=T,ncol=nlatent,
     dimnames=list(timedims,latentNames))
-
+  
   etaupd<-matrix(unlist(etaupd),byrow=T,ncol=nlatent,
     dimnames=list(timedims,latentNames))
   
@@ -221,7 +223,7 @@ ctKalman<-function(kpars,datalong,
   yupd<-matrix(unlist(yupd),byrow=T,ncol=nmanifest,
     dimnames=list(timedims,manifestNames))
   
-  y<-Y #matrix(datalong[,manifestNames,drop=FALSE],ncol=nmanifest)
+  y<-Y #matrix(datalong[,manifestNames,drop=FALSE],ncol=nmanifest) #
   colnames(y)<-manifestNames
   
   if(ntdpred>0) {
@@ -231,7 +233,7 @@ ctKalman<-function(kpars,datalong,
   
   err<-matrix(unlist(err),byrow=T,ncol=nmanifest,
     dimnames=list(timedims,manifestNames))
-
+  
   ysmooth<-matrix(unlist(ysmooth),byrow=T,ncol=nmanifest,
     dimnames=list(timedims,manifestNames))
   

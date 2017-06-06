@@ -29,33 +29,9 @@
 #' 
 ctGenerateFromFit<-function(fit,timestep=.1,n.subjects=100,timerange='asdata',
   predictorSubjects='all',...){
-s=summary(fit,verbose=TRUE)
-
-gm=fit$ctmodelobj
 
 
-
-#fix ctmodel matrices to fitted matrices
-gm$LAMBDA=s$LAMBDA
-gm$DRIFT=s$DRIFT
-gm$DIFFUSION=t(chol(Matrix::nearPD(s$DIFFUSION+diag(1e-8,gm$n.latent))$mat))
-gm$CINT=s$CINT
-gm$T0MEANS=s$T0MEANS
-gm$MANIFESTMEANS=s$MANIFESTMEANS
-gm$T0VAR=t(chol(Matrix::nearPD(s$T0VAR)$mat))
-gm$MANIFESTVAR=t(chol(Matrix::nearPD(s$MANIFESTVAR+diag(1e-8,gm$n.manifest))$mat))
-
-if(!is.null(gm$TRAITVAR)) { #adjust traitvar from asymptotic form to cint variance form
-  gm$TRAITVAR<- (gm$DRIFT) %*% s$TRAITVAR %*% t(gm$DRIFT)
-  gm$TRAITVAR=t(chol(Matrix::nearPD(gm$TRAITVAR+diag(1e-8,gm$n.latent))$mat))
-}
-
-if(!is.null(gm$MANIFESTTRAITVAR)) gm$MANIFESTTRAITVAR=t(chol(Matrix::nearPD(s$MANIFESTTRAITVAR+diag(1e-8,gm$n.manifest))$mat))
-
-if(gm$n.TDpred > 0) gm$TDPREDEFFECT=s$TDPREDEFFECT
-if(gm$n.TIpred > 0) gm$TIPREDEFFECT=s$TIPREDEFFECT
-
-
+gm=ctModelFromFit(fit)
 
 if(!is.null(fit$mxobj$expectation$P0)) { #if fit with kalman filter then data needs rearranging
   dat=suppressMessages(ctLongToWide(datalong = fit$mxobj$data$observed,
