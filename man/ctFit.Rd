@@ -4,17 +4,18 @@
 \alias{ctFit}
 \title{Fit a ctsem object}
 \usage{
-ctFit(datawide, ctmodelobj, objective = "auto",
+ctFit(dat, ctmodelobj, dataform = "wide", objective = "auto",
   stationary = c("T0TRAITEFFECT", "T0TIPREDEFFECT"), optimizer = "SLSQP",
   retryattempts = 15, iterationSummary = FALSE, carefulFit = TRUE,
   carefulFitWeight = 100, showInits = FALSE, asymptotes = FALSE,
   meanIntervals = FALSE, plotOptimization = F,
-  crossEffectNegStarts = TRUE, nofit = FALSE, discreteTime = FALSE,
+  crossEffectNegStarts = TRUE, fit = TRUE, discreteTime = FALSE,
   verbose = 0, useOptimizer = TRUE, omxStartValues = NULL,
-  transformedParams = TRUE)
+  transformedParams = TRUE, datawide = NA)
 }
 \arguments{
-\item{datawide}{the data you wish to fit a ctsem model to.}
+\item{dat}{the data you wish to fit a ctsem model to, in either wide format (one individual per row), 
+or long format (one time point of one individual per row). See details.}
 
 \item{ctmodelobj}{the ctsem model object you wish to use, specified via the \code{\link{ctModel}} function.}
 
@@ -76,7 +77,7 @@ initialisation of higher order models, while the FALSE setting is useful when on
 and wishes to begin optimization from those values by using the omxStartValues switch.
 are re-transformed into regular continuous time parameter matrices, and may be interpreted as normal.}
 
-\item{nofit}{if TRUE, output only openmx model without fitting}
+\item{fit}{if TRUE, output only openmx model without fitting}
 
 \item{discreteTime}{Estimate a discrete time model - ignores timing information, parameter
 estimates will correspond to those of classical vector autoregression models, 
@@ -98,13 +99,21 @@ entire 'sensible' range for parameters.
 When TRUE (default) raw OpenMx parameters (only reported if \code{verbose=TRUE} argument used
 for summary function) will reflect these transformations and may be harder to 
 interpret, but summary matrices are reported as normal.}
+
+\item{datawide}{included for compatibility with scripts written for earlier versions of ctsem. 
+Do not use this argument, instead use the dat argument, and the dataform argument now specifies whether the
+data is in wide or long format.}
 }
 \description{
 This function fits continuous time SEM models specified via \code{\link{ctModel}}
 to a dataset containing one or more subjects.
 }
 \details{
-For full discussion of how to structure the data and use this function, see the vignette using: \code{vignette('ctsem')}.
+For full discussion of how to structure the data and use this function, see the vignette using: \code{vignette('ctsem')}, or
+the data examples \code{data("longexample") ; longexample} for long and \code{data("datastructure") ; datastructure} for wide. 
+If using long format, the subject id column must be numeric and grouped by ascending time within subject, and named 'id'. 
+The time column must also be numeric, and representing absolute time (e.g., since beginning of study, *not* time intervals),
+and called 'time'.
 Models are specified using the \code{\link{ctModel}} function.
 For help regarding the summary function, see \code{\link{summary.ctsemFit}}, 
 and for the plot function, \code{\link{plot.ctsemFit}}.

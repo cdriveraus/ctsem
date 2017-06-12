@@ -267,11 +267,15 @@ ctKalman<-function(kpars,datalong,
   
   names(loglik) = timedims
   
-  out<-list(observed,etaprior=etaprior,etapriorcov=etapriorcov,
-    etaupd=etaupd,etaupdcov=etaupdcov,loglik=loglik, 
-    prederror=err,y=y,yprior=yprior,ypriorcov=ypriorcov,
+  out<-list(observed,
+    etaprior=etaprior,etapriorcov=etapriorcov,
+    etaupd=etaupd,etaupdcov=etaupdcov,
+    loglik=loglik, 
+    prederror=err,y=y,
+    yprior=yprior,ypriorcov=ypriorcov,
     yupd=yupd,yupdcov=yupdcov,
-    etasmooth=etasmooth, etasmoothcov=etasmoothcov, ysmooth=ysmooth, ysmoothcov=ysmoothcov)
+    etasmooth=etasmooth, etasmoothcov=etasmoothcov, 
+    ysmooth=ysmooth, ysmoothcov=ysmoothcov)
   
   if(ntdpred > 0) out$tdpreds=tdpreds
   if(continuoustime) out$time=datalong[,timecol]

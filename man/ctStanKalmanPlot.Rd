@@ -26,11 +26,11 @@ with 'upd' or 'smooth' respectively plotting updated (conditional on all data up
 or smoothed (conditional on all data) estimates.}
 
 \item{errorvec}{vector of names of covariance elements to use for uncertainty indication 
-around the kalmanvec items. 'auto' includes the latent covariance when plotting
+around the kalmanvec items. 'auto' uses the latent covariance when plotting
 latent states, and total covariance when plotting expectations of observed states.}
 
 \item{errormultiply}{Numeric denoting the multiplication factor of the std deviation of errorvec objects. 
-Defaults to 1.96, for 95\% credible intervals.}
+Defaults to 1.96, for 95\% intervals.}
 
 \item{ltyvec}{vector of line types, varying over dimensions of the kalmanvec object.}
 

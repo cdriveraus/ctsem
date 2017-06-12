@@ -181,7 +181,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   
   if(dataform != 'wide' & dataform !='long') stop('dataform must be either "wide" or "long"!')
   if(dataform == 'long'){
-    
+    idcol='id'
     obsTpoints=max(unlist(lapply(unique(dat[,idcol]),function(x) 
       length(dat[dat[,idcol]==x, idcol]) )))
     
