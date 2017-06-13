@@ -73,11 +73,15 @@ ctStanKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata'
     if(type=='omx'){
       if(is.null(fit$mxobj$expectation$P0)) { #if not fit with kalman filter then data needs rearranging
         datalong=suppressMessages(ctWideToLong(datawide = fit$mxobj$data$observed[subjects,,drop=FALSE],
+          Tpoints=fit$ctmodelobj$Tpoints,
           n.manifest=fit$ctmodelobj$n.manifest,manifestNames = manifestNames,
           n.TDpred=fit$ctmodelobj$n.TDpred,TDpredNames = TDpredNames,
           n.TIpred = fit$ctmodelobj$n.TIpred, TIpredNames = fit$ctmodelobj$TIpredNames))
-      } else datalong=fit$mxobj$data$observed
-      datalong <- ctDeintervalise(datalong = datalong,id = 'id',dT = 'dT1')
+        datalong <- suppressMessages(ctDeintervalise(datalong = datalong,id = 'id',dT = 'dT'))
+      } else {
+        datalong=fit$mxobj$data$observed
+      datalong <- supressMessages(ctDeintervalise(datalong = datalong,id = 'id',dT = 'dT1'))
+      }
       colnames(datalong)[colnames(datalong) == 'id'] <- 'subject'
     }
     
