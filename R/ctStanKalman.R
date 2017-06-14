@@ -80,7 +80,7 @@ ctStanKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata'
         datalong <- suppressMessages(ctDeintervalise(datalong = datalong,id = 'id',dT = 'dT'))
       } else {
         datalong=fit$mxobj$data$observed
-      datalong <- supressMessages(ctDeintervalise(datalong = datalong,id = 'id',dT = 'dT1'))
+      datalong <- suppressMessages(ctDeintervalise(datalong = datalong,id = 'id',dT = 'dT1'))
       }
       colnames(datalong)[colnames(datalong) == 'id'] <- 'subject'
     }

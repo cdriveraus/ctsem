@@ -150,11 +150,11 @@ ctKalman<-function(kpars,datalong,
       err[[rowi]][nafilter] <- as.numeric(y - yprior[[rowi]][nafilter,])
       
       # // Kalman gain
-      invypriorcov <- solve(ypriorcov[[rowi]][nafilter,nafilter,drop=FALSE])
+      # invypriorcov <- solve(ypriorcov[[rowi]][nafilter,nafilter,drop=FALSE])
       K<-matrix(0,nrow=nlatent,ncol=nmanifest)
       
-      K[diffusionindices,nafilter] <-  etapriorcov[[rowi]] %*%   
-        t(kpars$LAMBDA[nafilter,diffusionindices,drop=FALSE]) %*% invypriorcov
+      K[diffusionindices,nafilter] <-  t(solve(t(ypriorcov[[rowi]][nafilter,nafilter,drop=FALSE]),
+        t(etapriorcov[[rowi]] %*%  t(kpars$LAMBDA[nafilter,diffusionindices,drop=FALSE]) ) ))
       
       # updated distribution 
       etaupd[[rowi]] <- etaprior[[rowi]] + K[,nafilter,drop=FALSE] %*% (err[[rowi]][nafilter,,drop=FALSE])
@@ -166,7 +166,8 @@ ctKalman<-function(kpars,datalong,
       # // log likelihood
       loglik[rowi] <- - 0.5 * (nrow(kpars$LAMBDA[nafilter,diffusionindices,drop=FALSE]) * log(2 * pi)  + 
           log(det(ypriorcov[[rowi]][nafilter,nafilter,drop=FALSE]))    + 
-          t(err[[rowi]][nafilter,,drop=FALSE]) %*% invypriorcov %*% (err[[rowi]][nafilter,,drop=FALSE]))
+          t(err[[rowi]][nafilter,,drop=FALSE]) %*% 
+          solve(ypriorcov[[rowi]][nafilter,nafilter,drop=FALSE],err[[rowi]][nafilter,,drop=FALSE]))
       
       yupd[[rowi]] <- kpars$MANIFESTMEANS + kpars$LAMBDA %*% etaupd[[rowi]]
       yupdcov[[rowi]] <- kpars$LAMBDA[,diffusionindices,drop=FALSE] %*% etaupdcov[[rowi]] %*% 
@@ -189,9 +190,9 @@ ctKalman<-function(kpars,datalong,
       etasmoothcov[[rowi]]<-etaupdcov[[rowi]]
     } else{
       smoother<-diag(0,nlatent)
-      smoother[diffusionindices,diffusionindices]<- etaupdcov[[rowi]] %*% 
-        t(discreteDRIFT[[rowi+1]][diffusionindices,diffusionindices,drop=FALSE]) %*% #is the rowi+1 correct?
-        solve(etapriorcov[[rowi+1]])
+      smoother[diffusionindices,diffusionindices]<- t(solve(t(etapriorcov[[rowi+1]]), t( etaupdcov[[rowi]] %*% 
+        t(discreteDRIFT[[rowi+1]][diffusionindices,diffusionindices,drop=FALSE]) ) )) #is the rowi+1 correct?
+        
       
       # trying to account for impulse effect - no good
       # etasmoothtemp <-  etasmooth[[rowi+1]]

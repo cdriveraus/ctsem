@@ -1,6 +1,6 @@
 
 ctFitAuto <- function(datalong,manifestNames,idcol='id',timecol='time',
-  sequence=c('addtrend','extendtrend','addbetween','extendbetween','adddynamics','extenddynamics') ){
+  sequence=c('addtrend','extendtrend','addbetween','extendbetween','adddynamics','extenddynamics','removetrend') ){
   
   Tpoints=max(unlist(lapply(unique(datalong[,idcol]),function(x) 
     length(datalong[datalong[,idcol]==x, idcol]) )))
@@ -22,7 +22,7 @@ ctFitAuto <- function(datalong,manifestNames,idcol='id',timecol='time',
       out[[manifestNames[mani]]][[modelcount]] <- list()
       
       #reset next model addition
-      nm<-list(addtrend=FALSE,addbetween=FALSE,adddynamics=FALSE,extendtrend=FALSE,extendbetween=FALSE,extenddynamics=FALSE)
+      nm<-list(addtrend=FALSE,addbetween=FALSE,adddynamics=FALSE,extendtrend=FALSE,extendbetween=FALSE,extenddynamics=FALSE,removetrend=FALSE)
       
       if(modelcount > 1) {
         cm = bm #set current model to best model
@@ -98,8 +98,27 @@ ctFitAuto <- function(datalong,manifestNames,idcol='id',timecol='time',
         DRIFT[cm$trendlatents[cm$ntrend],cm$trendlatents[cm$ntrend]] <-paste0('drift_trend',cm$trendlatents[cm$ntrend],cm$trendlatents[cm$ntrend])
         DRIFT[cm$trendlatents[cm$ntrend-1],cm$trendlatents[cm$ntrend-1]]<- -.0001
       
-        DIFFUSION=cbind(  rbind(bm$m$DIFFUSION,0) , c(rep(0,nrow(bm$m$DIFFUSION)),.00001))
+        DIFFUSION=cbind(  rbind(bm$m$DIFFUSION,0) , c(rep(0,nrow(bm$m$DIFFUSION)),.0001))
         T0MEANS=rbind(bm$m$T0MEANS,paste0('t0_trend_',cm$ntrend))
+      }
+      
+      
+      if(nm$removetrend){
+        message('Decreasing order of deterministic trend')
+        # browser()
+
+        LAMBDA=bm$m$LAMBDA[,- cm$trendlatents[cm$ntrend],drop=FALSE ]
+        T0VAR=bm$m$T0VAR[- cm$trendlatents[cm$ntrend] ,- cm$trendlatents[cm$ntrend] ,drop=FALSE]
+        
+        DRIFT=bm$m$DRIFT[- cm$trendlatents[cm$ntrend] ,- cm$trendlatents[cm$ntrend] ,drop=FALSE]
+       
+        DIFFUSION=bm$m$DIFFUSION[- cm$trendlatents[cm$ntrend] ,- cm$trendlatents[cm$ntrend] ,drop=FALSE]
+        T0MEANS=bm$m$T0MEANS[- cm$trendlatents[cm$ntrend] , ,drop=FALSE]
+        
+        cm$n.latent=cm$n.latent-1
+        cm$trendlatents=cm$trendlatents[-cm$ntrend]
+        cm$ntrend=cm$ntrend-1
+        cm$dynlatents[-1] <- cm$dynlatents[-1] -1 #accounting for one less latent, all dynamics happen after trends (except first)
       }
       
       if(nm$extendbetween){
@@ -117,8 +136,7 @@ ctFitAuto <- function(datalong,manifestNames,idcol='id',timecol='time',
             if(i >=j) T0VAR[i,j] <- paste0('t0var_between_',i,j)
           }
         }
-        print(T0VAR)
-        # browser()
+
       }
       
       if(nm$extenddynamics) {
@@ -141,6 +159,8 @@ ctFitAuto <- function(datalong,manifestNames,idcol='id',timecol='time',
       }
       
       
+      #build ct model
+      
       cm$m <- ctModel(n.manifest=1,n.latent=cm$n.latent,Tpoints=Tpoints, 
         manifestNames=manifestNames[mani],
         LAMBDA=LAMBDA,
@@ -148,6 +168,8 @@ ctFitAuto <- function(datalong,manifestNames,idcol='id',timecol='time',
         DIFFUSION=DIFFUSION,
         T0VAR=T0VAR,
         T0MEANS=T0MEANS)
+      
+      #generate omx model and do omx based changes
       
       if(modelcount == 1) fi=ctFit(dat = datalong,ctmodelobj = cm$m,dataform = 'long',
         objective = 'Kalman',meanIntervals = TRUE,verbose=0,fit=FALSE)
@@ -198,6 +220,7 @@ ctFitAuto <- function(datalong,manifestNames,idcol='id',timecol='time',
           # 
           # fi$mxobj$T0VARbase$values[cm$trendlatents[cm$ntrend],cm$trendlatents[cm$ntrend]] <- 0
         }
+
         
         if(nm$extenddynamics){  
           #DRIFT 
@@ -277,15 +300,21 @@ ctFitAuto <- function(datalong,manifestNames,idcol='id',timecol='time',
         bm <- cm
       }
       if(modelcount > 1){
-        compared<-mxCompare(out[[manifestNames[mani]]][[modelcount]]$fit$mxobj,
-          out[[manifestNames[mani]]][[bestmodelindex]]$fit$mxobj)
+        # compared<-mxCompare(out[[manifestNames[mani]]][[modelcount]]$fit$mxobj,
+        #   out[[manifestNames[mani]]][[bestmodelindex]]$fit$mxobj)
+        
+        aic <- 2 * length(out[[manifestNames[mani]]][[modelcount]]$fit$mxobj$estimate) + 
+          out[[manifestNames[mani]]][[modelcount]]$fit$mxobj$output$fit
+        
+        aicbest <- 2 * length(out[[manifestNames[mani]]][[bestmodelindex]]$fit$mxobj$estimate) + 
+          out[[manifestNames[mani]]][[bestmodelindex]]$fit$mxobj$output$fit
         
         print(sequence[sequenceposition])
-        print(compared)
+        print(paste0('AIC improvement = ', aicbest - aic))
         
         # if(compared$diffLL[2] < .1) browser()
         
-        if(compared$p[2] < .05) { #if model improved
+        if(aic < aicbest -6) { #if model improved
           bm <- cm
           bestmodelindex=modelcount
           
@@ -293,10 +322,18 @@ ctFitAuto <- function(datalong,manifestNames,idcol='id',timecol='time',
             sequenceposition=sequenceposition+1
           }
           
-          if((nm$extendbetween | nm$addbetween) & cm$nbetween > cm$ntrend) sequenceposition=sequenceposition+1 #when all trend vars have bw differences
+          
+          if((nm$extendbetween | nm$addbetween) & cm$nbetween > cm$ntrend) {
+            sequenceposition=sequenceposition+1 #when all trend vars have bw differences
+          }
+          
+          if(nm$removetrend & cm$ntrend == 0) {
+            sequenceposition=sequenceposition+1 #when all trend vars are eliminated
+          }
+          
         }
         
-        if(compared$p[2] >= .05) {#if model didn't improve
+        if(aic >= aicbest -6) {#if model didn't improve
           
           sequenceposition <- sequenceposition + 1
           
@@ -305,7 +342,10 @@ ctFitAuto <- function(datalong,manifestNames,idcol='id',timecol='time',
           if(nm$adddynamics & sequence[sequenceposition]=='extenddynamics') sequenceposition <- sequenceposition + 1 
         }
       }
-      
+      if(sequenceposition <= length(sequence)){ #then check if the next step is viable
+      if(sequence[sequenceposition]=='extendbetween' & cm$ntrend==0) sequenceposition <- sequenceposition +1 #if no trend to add differences for then skip
+      if(sequence[sequenceposition]=='removetrend' & cm$ntrend==0) sequenceposition <- sequenceposition +1 #if no trend to remove then skip
+      }
       
       
     }
