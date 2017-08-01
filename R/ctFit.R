@@ -6,6 +6,7 @@
 #' or long format (one time point of one individual per row). See details. 
 #' @param ctmodelobj the ctsem model object you wish to use, specified via the \code{\link{ctModel}} function.
 #' @param fit if TRUE, output only openmx model without fitting
+#' @param nofit Deprecated. If FALSE, output only openmx model without fitting
 #' @param objective 'auto' selects either 'Kalman', if fitting to single subject data, 
 #' or 'mxRAM' for multiple subjects. For single subject data, 'Kalman' uses the \code{mxExpectationStateSpace }
 #' function from OpenMx to implement the Kalman filter. 
@@ -149,19 +150,20 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   showInits=FALSE, asymptotes=FALSE,
   meanIntervals=FALSE, plotOptimization=F, 
   crossEffectNegStarts=TRUE,
-  fit = TRUE, discreteTime=FALSE, verbose=0, useOptimizer=TRUE,
+  fit = TRUE, nofit=FALSE, discreteTime=FALSE, verbose=0, useOptimizer=TRUE,
   omxStartValues=NULL, transformedParams=TRUE,
   datawide=NA){
   
   if(length(datawide) > 1 || !is.na(datawide)) {
     warning('ctsem now uses the dat argument instead of the datawide argument, and the form (wide or long) may be specified via the dataform argument.')
-  if(class(try(length(dat),silent = TRUE)) == 'try-error') {
-    message ('dat not specified, using datawide')
-    dat <- datawide
-  }
+    if(class(try(length(dat),silent = TRUE)) == 'try-error') {
+      message ('dat not specified, using datawide')
+      dat <- datawide
+    }
   }
   # transformedParams<-TRUE
   largeAlgebras<-TRUE
+  if(nofit) fit <- FALSE
   if(fit == FALSE) carefulFit <- FALSE
   
   if(all(stationary %in% 'all')) stationary<-c('T0VAR','T0MEANS','T0TIPREDEFFECT','T0TRAITEFFECT')
@@ -186,15 +188,15 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
       length(dat[dat[,idcol]==x, idcol]) )))
     
     if(Tpoints != obsTpoints) stop(
-        paste0('Tpoints in ctmodelobj = ',Tpoints,', not equal to ', obsTpoints, ', the maximum number of rows of any subject in dat'))
+      paste0('Tpoints in ctmodelobj = ',Tpoints,', not equal to ', obsTpoints, ', the maximum number of rows of any subject in dat'))
     
-      datawide=ctLongToWide(datalong = dat,id = 'id',
-        time = 'time',manifestNames = manifestNames,TDpredNames=TDpredNames,TIpredNames = TIpredNames)
-      
-      datawide=suppressMessages(ctIntervalise(datawide = datawide,Tpoints = Tpoints,
-        n.manifest = n.manifest,manifestNames = manifestNames,
-        n.TDpred=n.TDpred,n.TIpred = n.TIpred,
-        TDpredNames=TDpredNames,TIpredNames = TIpredNames))
+    datawide=ctLongToWide(datalong = dat,id = 'id',
+      time = 'time',manifestNames = manifestNames,TDpredNames=TDpredNames,TIpredNames = TIpredNames)
+    
+    datawide=suppressMessages(ctIntervalise(datawide = datawide,Tpoints = Tpoints,
+      n.manifest = n.manifest,manifestNames = manifestNames,
+      n.TDpred=n.TDpred,n.TIpred = n.TIpred,
+      TDpredNames=TDpredNames,TIpredNames = TIpredNames))
   }
   if(dataform == 'wide') datawide = dat
   
@@ -295,7 +297,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
     n.TIpred<-0
   }
   
-
+  
   if(objective=='cov') {
     if(nrow(datawide)==1) stop('Covariance based estimation impossible for single subject data')
     message('Covariance based estimation requested - meanIntervals set to TRUE')
@@ -315,7 +317,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   
   ## if Kalman objective, rearrange data to long format and set Tpoints to 2 (so only single discrete algebras are generated)
   if(objective=='Kalman' | objective=='Kalmanmx') {
-
+    
     if(n.TDpred >0){
       if(any(is.na(datawide[, paste0(TDpredNames, '_T', 0:(Tpoints-1))] ))) stop('NA predictors are not possible with Kalman objective')
     }
@@ -337,7 +339,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
       datawide<-ctDeintervalise(datawide,dT='dT1')
       colnames(datawide)[which(colnames(datawide)=='time')] <-'dT1'
     }
-
+    
     Tpoints<-2
     firstObsDummy<-matrix(c(1,rep(NA,times=nrow(datawide)-1)), nrow=nrow(datawide))
     for(i in 2:nrow(datawide)){
@@ -393,7 +395,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   }
   
   T0VAR <- processInputMatrix(ctmodelobj['T0VAR'], symmetric = FALSE, randomscale=0, diagadd = 10, chol=TRUE)
-
+  
   T0MEANS <- processInputMatrix(ctmodelobj["T0MEANS"], symmetric = FALSE, randomscale=1, diagadd = 0)
   MANIFESTMEANS <- processInputMatrix(ctmodelobj["MANIFESTMEANS"], symmetric = FALSE, randomscale=1, diagadd = 0)
   LAMBDA <- processInputMatrix(ctmodelobj["LAMBDA"], symmetric = FALSE, randomscale=.1, addvalues=1, diagadd = 0)
@@ -673,13 +675,13 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
     if(!discreteTime) A$labels[cbind(rep(1:latentend,each=n.latent), (latentend+1):(latentend+n.latent))] <- paste0('discreteTRAIT_T',
       rep(0:(Tpoints-1),each=n.latent^2),'[',rep(1:n.latent,each=n.latent),',',1:n.latent,']')
     
-     if(discreteTime) {
-       for(i in 1:(Tpoints-1)){
-         # browser()
-         A$values[(i*n.latent+1):(i*n.latent+n.latent), (latentend+1):(latentend+n.latent)] <- diag(1,n.latent)
-       }
-     }
-     
+    if(discreteTime) {
+      for(i in 1:(Tpoints-1)){
+        # browser()
+        A$values[(i*n.latent+1):(i*n.latent+n.latent), (latentend+1):(latentend+n.latent)] <- diag(1,n.latent)
+      }
+    }
+    
     
     #trait variance
     S$values[(latentend+1):(latentend+n.latent), (latentend+1):(latentend+n.latent)] <- diag(1,n.latent)
@@ -1239,26 +1241,26 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   
   
   ####TRAIT EXTENSION ALGEBRAS
-    if(traitExtension == TRUE) {
-
-      traitalgs <- list()
-      for(i in 1:(Tpoints - 1)){
-
-        if(discreteTime==FALSE){
-          #         if(asymptotes==FALSE)
-          # fullAlgString <- paste0("invDRIFT %*%   (omxExponential(DRIFT %x%", defcall[i], ") - invDRIFT)")   #optimize using continuous traitvar
-          # if(asymptotes==TRUE)    
-            fullAlgString <- paste0("II - discreteDRIFT_T", i) #using asymptotic trait variance
-        }
-
-        if(discreteTime==TRUE) fullAlgString <- paste0("II")
-
-        traitalgs[[i]] <- eval(substitute(OpenMx::mxAlgebra(theExpression, name = paste0("discreteTRAIT_T", i)  ),
-          list(theExpression = parse(text = fullAlgString)[[1]])))
+  if(traitExtension == TRUE) {
+    
+    traitalgs <- list()
+    for(i in 1:(Tpoints - 1)){
+      
+      if(discreteTime==FALSE){
+        #         if(asymptotes==FALSE)
+        # fullAlgString <- paste0("invDRIFT %*%   (omxExponential(DRIFT %x%", defcall[i], ") - invDRIFT)")   #optimize using continuous traitvar
+        # if(asymptotes==TRUE)    
+        fullAlgString <- paste0("II - discreteDRIFT_T", i) #using asymptotic trait variance
       }
-
-      #     returnAllLocals()
-    }#end Trait algebra definition function
+      
+      if(discreteTime==TRUE) fullAlgString <- paste0("II")
+      
+      traitalgs[[i]] <- eval(substitute(OpenMx::mxAlgebra(theExpression, name = paste0("discreteTRAIT_T", i)  ),
+        list(theExpression = parse(text = fullAlgString)[[1]])))
+    }
+    
+    #     returnAllLocals()
+  }#end Trait algebra definition function
   
   
   
@@ -1350,7 +1352,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
           vec2diag(diag2vec(T0VARbase))), #minus the diagonal of the base matrix   
       OpenMx::mxAlgebra(name='T0VAR', T0VARchol %*% t(T0VARchol))
     )
- 
+    
     
     DIFFUSION$mxmatrix<-list(
       OpenMx::mxMatrix(name = "DIFFUSIONbase", values=DIFFUSION$values, labels=DIFFUSION$labels, 
@@ -1499,9 +1501,9 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
       # }
       # 
       # if(asymptotes==TRUE){
-        T0TRAITEFFECT$labels[T0TRAITEFFECT$free==TRUE] <- NA
-        T0TRAITEFFECT$values[T0TRAITEFFECT$free==TRUE] <- diag(n.latent)[T0TRAITEFFECT$free==TRUE]
-        T0TRAITEFFECT$free <-FALSE
+      T0TRAITEFFECT$labels[T0TRAITEFFECT$free==TRUE] <- NA
+      T0TRAITEFFECT$values[T0TRAITEFFECT$free==TRUE] <- diag(n.latent)[T0TRAITEFFECT$free==TRUE]
+      T0TRAITEFFECT$free <-FALSE
       # }
     }
     
@@ -1915,7 +1917,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
     kalmanT0MEANS <- OpenMx::mxAlgebra(name='kalmanT0MEANS',T0MEANS)
     
     x0 <-  OpenMx::mxAlgebra(name='x0', T0MEANS)
-
+    
     # if(n.subjects==1){ #then simple kalman
     #   
     #   model<-OpenMx::mxModel(model, 
@@ -1927,22 +1929,22 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
     # }
     # 
     # if(n.subjects > 1){ #then account for further first time point observations
-      
-      
-      #free intercepts
-      #      randIntercepts<- OpenMx::mxMatrix(type = "Full", 
-      #         labels = paste0('s',rep(unique(datawide[,'id']),each=n.latent),'_', CINT$labels), 
-      #         values = CINT$values, 
-      #         free = CINT$free, nrow=n.latent, ncol=n.subjects, name = "randIntercepts")
-      #       
-      #         model<-OpenMx::mxModel(model,'CINT',remove=T)
-      #        model<-OpenMx::mxModel(model,
-      #          randIntercepts,
-      #          # mxAlgebra(name='tCINTmatrix',t(CINTmatrix)),
-      #          mxAlgebra(name='CINTalg',randIntercepts[,data.id]),
-      #          mxMatrix(name='CINT',labels=paste0('CINTalg[',1:n.latent,',1]'),nrow=n.latent,ncol=1,type='Full')
-      #        )
-      # 
+    
+    
+    #free intercepts
+    #      randIntercepts<- OpenMx::mxMatrix(type = "Full", 
+    #         labels = paste0('s',rep(unique(datawide[,'id']),each=n.latent),'_', CINT$labels), 
+    #         values = CINT$values, 
+    #         free = CINT$free, nrow=n.latent, ncol=n.subjects, name = "randIntercepts")
+    #       
+    #         model<-OpenMx::mxModel(model,'CINT',remove=T)
+    #        model<-OpenMx::mxModel(model,
+    #          randIntercepts,
+    #          # mxAlgebra(name='tCINTmatrix',t(CINTmatrix)),
+    #          mxAlgebra(name='CINTalg',randIntercepts[,data.id]),
+    #          mxMatrix(name='CINT',labels=paste0('CINTalg[',1:n.latent,',1]'),nrow=n.latent,ncol=1,type='Full')
+    #        )
+    # 
     # } #end multi subject kalman
     
     if(n.TDpred>0){
@@ -1954,7 +1956,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
           labels=paste0('data.', TDpredNames),free=FALSE,ncol=1,nrow=n.TDpred))
       
       intercept<-  OpenMx::mxMatrix(type='Full',name='intercept', free=FALSE , nrow=n.latent, ncol=n.TDpred+1, 
-          labels=cbind(interceptCINTlabels, interceptTDPREDlabels))
+        labels=cbind(interceptCINTlabels, interceptTDPREDlabels))
       
       kalmanT0MEANS <- OpenMx::mxMatrix(type='Full',name='kalmanT0MEANS',free=FALSE,nrow=n.latent,ncol=n.TDpred+1,
         labels=c(paste0('T0MEANS[',1:n.latent,',1]'),rep(NA,n.TDpred*n.latent)),values=0)
@@ -1962,37 +1964,37 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
       kalmanT0MEANS <- OpenMx::mxAlgebra(name='kalmanT0MEANS',cbind(T0MEANS,TDPREDEFFECT))
       
       x0 <-  OpenMx::mxAlgebra(name='x0', T0MEANS) # + TDPREDEFFECT %*% TDPREDS
-        
+      
       D <-  OpenMx::mxMatrix(name='D', nrow=n.manifest, ncol=1+n.TDpred, 
-          free=c(MANIFESTMEANS$free, rep(FALSE, n.TDpred*n.manifest)), 
-          values=c(MANIFESTMEANS$values, rep(0, n.TDpred*n.manifest)), 
-          labels=c(MANIFESTMEANS$labels, rep(NA, n.TDpred*n.manifest)))
-        
+        free=c(MANIFESTMEANS$free, rep(FALSE, n.TDpred*n.manifest)), 
+        values=c(MANIFESTMEANS$values, rep(0, n.TDpred*n.manifest)), 
+        labels=c(MANIFESTMEANS$labels, rep(NA, n.TDpred*n.manifest)))
+      
       u <-  OpenMx::mxMatrix(name='u', ncol=1, nrow=n.TDpred+1, free=FALSE, 
-          values=c(1, rep(0, n.TDpred)), 
-          labels=c(NA, paste0('data.', TDpredNames)))
+        values=c(1, rep(0, n.TDpred)), 
+        labels=c(NA, paste0('data.', TDpredNames)))
       
       
     }
- 
-  
-  
-  model<-OpenMx::mxModel(model, 
-    D, u, discreteDRIFT,intercept,kalmanT0MEANS,x0,
     
-    mxAlgebra(name='B', (1-firstObsDummy) %x% intercept + firstObsDummy %x% kalmanT0MEANS), # 
     
-    mxAlgebra(name='discreteDIFFUSIONwithdummy',  (1-firstObsDummy) %x% discreteDIFFUSION_T1 + firstObsDummy %x% (T0VAR)),
     
-    mxMatrix(name='firstObsDummy', free=FALSE, labels='data.firstObsDummy', nrow=1, ncol=1),
+    model<-OpenMx::mxModel(model, 
+      D, u, discreteDRIFT,intercept,kalmanT0MEANS,x0,
+      
+      mxAlgebra(name='B', (1-firstObsDummy) %x% intercept + firstObsDummy %x% kalmanT0MEANS), # 
+      
+      mxAlgebra(name='discreteDIFFUSIONwithdummy',  (1-firstObsDummy) %x% discreteDIFFUSION_T1 + firstObsDummy %x% (T0VAR)),
+      
+      mxMatrix(name='firstObsDummy', free=FALSE, labels='data.firstObsDummy', nrow=1, ncol=1),
+      
+      mxExpectationStateSpace(A='discreteDRIFT', B='B', C='LAMBDA', 
+        D="D", Q='discreteDIFFUSIONwithdummy', R='MANIFESTVAR', x0='x0', P0='T0VAR', u="u"), 
+      
+      mxFitFunctionML()
+      
+    )
     
-    mxExpectationStateSpace(A='discreteDRIFT', B='B', C='LAMBDA', 
-      D="D", Q='discreteDIFFUSIONwithdummy', R='MANIFESTVAR', x0='x0', P0='T0VAR', u="u"), 
-    
-    mxFitFunctionML()
-    
-  )
-  
   }
   
   
@@ -2098,6 +2100,28 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
     message(paste(names(newstarts), ": ", newstarts, "\n"))
   }
   
+  #specfic stationarity constraints
+  if(!('T0VAR' %in% stationary) && any(T0VAR$labels =='stationary')){
+    model <- mxModel(model,'T0VAR',remove = TRUE)
+    model <- mxModel(model,
+      mxAlgebra(T0VARchol %*% t(T0VARchol),name='T0VARalg'),
+      mxMatrix(name='T0VAR',free=FALSE,values=0,nrow=n.latent,ncol=n.latent,
+        labels=paste0('T0VARalg[',1:n.latent,',',rep(1:n.latent,each=n.latent),']'))
+    )
+    
+    for(i in 1:n.latent){ #covariance between all dynamic latents
+      for(j in 1:n.latent){
+        if( rl(T0VAR$labels[i,j]=='stationary')){
+          model$T0VARbase$free[i, j] <- FALSE
+          model$T0VAR$labels[i, j] <- paste0('asymDIFFUSION[',i,',',j,']')
+        }
+      }
+    }
+  }
+  
+  
+  
+  
   if(plotOptimization==TRUE){
     model<- OpenMx::mxOption(model, 'Always Checkpoint', 'Yes')
     model<- OpenMx::mxOption(model, 'Checkpoint Units', 'iterations')
@@ -2167,4 +2191,4 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   class(out) <- "ctsemFit" #and give it the class of a ctsemFit object
   
   return(out)
-  }
+}

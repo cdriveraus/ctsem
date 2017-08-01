@@ -85,8 +85,15 @@ dimnames(out)=list(Quantile=paste0('Quantile',probs),
 out <- aperm(out, c(3,2,1))
 
 if(!plot) return(out) else {
-  ctPlotArray(yarray=out,x=tipreds[,1],
-  plotcontrol=list(ylab='Effect',xlab=colnames(tipreds)[1]),...)
+  dots <- list(...)
+  dots$yarray=out
+  dots$x=tipreds[,1]
+  if(is.null(dots$plotcontrol)) dots$plotcontrol=list(
+    ylab='Effect',
+    xlab=colnames(tipreds)[whichTIpreds[1]],
+    xaxs='i')
+  
+  do.call(ctPlotArray,dots)
 }
 }
 

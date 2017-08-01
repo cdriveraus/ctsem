@@ -9,9 +9,9 @@ ctFit(dat, ctmodelobj, dataform = "wide", objective = "auto",
   retryattempts = 15, iterationSummary = FALSE, carefulFit = TRUE,
   carefulFitWeight = 100, showInits = FALSE, asymptotes = FALSE,
   meanIntervals = FALSE, plotOptimization = F,
-  crossEffectNegStarts = TRUE, fit = TRUE, discreteTime = FALSE,
-  verbose = 0, useOptimizer = TRUE, omxStartValues = NULL,
-  transformedParams = TRUE, datawide = NA)
+  crossEffectNegStarts = TRUE, fit = TRUE, nofit = FALSE,
+  discreteTime = FALSE, verbose = 0, useOptimizer = TRUE,
+  omxStartValues = NULL, transformedParams = TRUE, datawide = NA)
 }
 \arguments{
 \item{dat}{the data you wish to fit a ctsem model to, in either wide format (one individual per row), 
@@ -78,6 +78,8 @@ and wishes to begin optimization from those values by using the omxStartValues s
 are re-transformed into regular continuous time parameter matrices, and may be interpreted as normal.}
 
 \item{fit}{if TRUE, output only openmx model without fitting}
+
+\item{nofit}{Deprecated. If FALSE, output only openmx model without fitting}
 
 \item{discreteTime}{Estimate a discrete time model - ignores timing information, parameter
 estimates will correspond to those of classical vector autoregression models, 
