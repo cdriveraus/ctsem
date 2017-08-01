@@ -440,46 +440,39 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=2000, kalman=T
       return out;
       }
 
-      matrix cholcor_lp(matrix mat, real eta){ //converts from lower partial cor matrix to cholesky cor
-      int ndim;
+      matrix pcov2cor(matrix mat){ //converts from lower partial cov matrix to cholesky cor
       matrix[rows(mat),cols(mat)] mcholcor;
-      //real betad;
-      
-      ndim = cols(mat);
-      mcholcor=rep_matrix(0,ndim,ndim);
-      //betad = eta + (ndim-1)/2;
-      mcholcor[1,1]=1;
-      
-      if(ndim > 1){
-      //betad = eta + (ndim-1)/2;
+    matrix[rows(mat),cols(mat)] mdiag;
+int ndim;
+
+ndim=rows(mat);
+
       for(coli in 1:ndim){
-      //betad = betad - .5;
       for(rowi in coli:ndim){
-      if(rowi > coli) {
-      //mat[rowi,coli]/2+.5 ~ beta(betad,betad);
+     mcholcor[rowi,coli]=mat[rowi,coli];
+   mcholcor[coli,rowi]=mat[rowi,coli];
       }
-      if(coli==1 && rowi > 1) mcholcor[rowi,coli] =  mat[rowi,coli]; 
-      if(coli > 1){
-      if(rowi == coli) mcholcor[rowi,coli] = prod(sqrt(1-vecpower(mat[rowi,1:(coli-1)],2)));
-      if(rowi > coli) mcholcor[rowi,coli] = mat[rowi,coli] * prod(sqrt(1-vecpower(mat[rowi,1:(coli-1)],2)));
+mcholcor[coli,coli]=2;
       }
-      }
-      }
-      }
+
+mcholcor=inverse(mcholcor);
+ mdiag=diag_matrix(sqrt(rep_vector(1,rows(mat)) ./ diagonal(mat)));
+  mcholcor = mdiag *mat*mdiag;
       return mcholcor;
       }
-      
-      matrix sdpcor2cov_lp(matrix mat, int cholesky, real eta){ //converts from lower partial cor and diag sd to cov or cholesky cov
+
+      matrix sdpcov2cov(matrix mat, int cholesky){ //converts from lower partial cor and diag sd to cov or cholesky cov
       int ndim;
       matrix[rows(mat),rows(mat)] mscale;
       matrix[rows(mat),rows(mat)] out;
       
       mscale=diag_matrix(diagonal(mat));
-      out=cholcor_lp(mat,eta);
-      out= mscale * out;
-      if(cholesky==0) out = multiply_lower_tri_self_transpose(out);
+      out=pcov2cor(mat);
+      out= mscale * out * mscale;
+      if(cholesky==1) out = cholesky_decompose(out);
       return(out);
-      }
+  }
+      
       
 
       matrix kron_prod(matrix mata, matrix matb){
@@ -717,10 +710,10 @@ return out;
         // perform any whole matrix transformations 
         
         ',if(!binomial) paste0(
-          'for(individual in 1:',checkvarying('MANIFESTVAR','nsubjects','1'),') MANIFESTVAR[individual] = sdpcor2cov_lp(MANIFESTVAR[individual],0,1);
+          'for(individual in 1:',checkvarying('MANIFESTVAR','nsubjects','1'),') MANIFESTVAR[individual] = sdpcov2cov(MANIFESTVAR[individual],0);
           '),'
 
-        for(individual in 1:',checkvarying('DIFFUSION','nsubjects','1'),') DIFFUSION[individual] = sdpcor2cov_lp(DIFFUSION[individual],0,1);
+        for(individual in 1:',checkvarying('DIFFUSION','nsubjects','1'),') DIFFUSION[individual] = sdpcov2cov(DIFFUSION[individual],0);
 
         //for(individual in 1:',checkvarying('DRIFT','nsubjects','1'),') DRIFT[individual] = -matrix_exp(DRIFT[individual]);
         
@@ -759,7 +752,7 @@ return out;
       for(individual in 1:',
         checkvarying(if(!stationary) 'T0VAR' else(c('DRIFT','DIFFUSION')),'nsubjects','1'),') {
         T0VAR[individual] = ',
-          if(!stationary) paste0('sdpcor2cov_lp(T0VAR[individual],0,1);'),
+          if(!stationary) paste0('sdpcov2cov(T0VAR[individual],0);'),
           if(stationary) paste0(if(!asymdiffusion) 'asym', 'DIFFUSION',
             checkvarying(c('DRIFT','DIFFUSION'),'[individual]','[1]'),';'),'
         ',if(!kalman) 'T0VARchol[individual] = cholesky_decompose(T0VAR[individual]);','
@@ -796,7 +789,7 @@ return out;
         ',if(!nopriors) paste0(unlist(lapply(1:nrow(ctspec),function(rowi) {
           out<-''
           if(ctspec$matrix[rowi] %in% c('T0VAR','DIFFUSION') & ctspec$row[rowi] > ctspec$col[rowi] & is.na(ctspec$value[rowi])) {
-            out=paste0('target += beta_lpdf(inv_logit(',
+            out=paste0('//target += beta_lpdf(inv_logit(',
             'hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),']',
             ')| 1.5 + (inttoreal(nlatent)-1)/2 - .6 * ',ctspec$col[rowi],', 1.5 + (inttoreal(nlatent)-1)/2 - .6 * ',ctspec$col[rowi],'); \n ')
           }
