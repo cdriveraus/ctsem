@@ -91,26 +91,20 @@ colnames(popcorr)[ncol(popcorr)] <- 't'
 
 popcorr <- popcorr[order(popcorr[,'t']),,drop=FALSE]
 
-hypercorrmean=getMean(hypercorr)
-hypercorrsd=getSd(hypercorr)
+hypercorrmean= ctCollapse(array(apply(e$hypercorrchol,1,function(x) x%*% t(x)),dim = dim(e$hypercorrchol)[c(2,3,1)]),3,mean)
+hypercorrsd= ctCollapse(array(apply(e$hypercorrchol,1,function(x) x%*% t(x)),dim = dim(e$hypercorrchol)[c(2,3,1)]),3,sd)
 
-hypercorrcholmeanpars=s$summary[grep('hypercorrchol',rownames(s$summary)),'mean']
-hypercorrcholmean=matrix(hypercorrcholmeanpars,byrow=T,nrow=sqrt(length(hypercorrcholmeanpars)))
+dimnames(hypercorrmean)<-list(parnames,parnames)
+dimnames(hypercorrsd)<-list(parnames,parnames)
 
-hypercorrcholsdpars=s$summary[grep('hypercorrchol',rownames(s$summary)),'sd']
-hypercorrcholsd=matrix(hypercorrcholsdpars,byrow=T,nrow=sqrt(length(hypercorrcholsdpars)))
-
-dimnames(hypercorrcholmean)<-list(parnames,parnames)
-dimnames(hypercorrcholsd)<-list(parnames,parnames)
-
-out=list(note1='The following matrix is the posterior means for the raw subject level parameters correlation matrix',
-  hypercorr_means=hypercorrcholmean %*% t(hypercorrcholmean),
-  note2='The following matrix is the posterior std dev. for the raw subject level parameters correlation matrix',
-  hypercorr_sd=hypercorrcholsd %*% t(hypercorrcholsd),
-  note3=paste0('The following matrix is the posterior mean for the post transformation subject level parameters correlation and covariance matrix,', 
+out=list(note1='The following matrix is the posterior means of the raw parameter population distribution correlation matrix',
+  hypercorr_mean=hypercorrmean,
+  note2='The following matrix is the posterior std dev. of the raw parameter population distribution correlation matrix',
+  hypercorr_sd=hypercorrsd,
+  note3=paste0('The following matrix is the posterior mean of the correlation and covariance matrix of subject level parameters,', 
     ' with correlations on the lower triangle'),
   hypercovcor_transformedmean=hypercovcor_transformedmean,
-  note4=paste('The following matrix is the posterior std dev. for the post transformation subject level parameters correlation and covariance matrix,', 
+  note4=paste('The following matrix is the posterior std dev. of the correlation and covariance matrix of subject level parameters,', 
     'with correlations on the lower triangle'),
   hypercovcor_transformedsd=hypercovcor_transformedsd)
 
@@ -130,7 +124,7 @@ out$popmeans=round(s$summary[c(grep('hmean_',rownames(s$summary))),
   c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],3)
 
 out$note1=paste0('Parameters are reported as specified in ctModel -- diagonals of covariance related matrices are std. deviations, ',
-'off-diagonals are partial correlations. Full covariance matrices can be attained using ctStanContinuousPars')
+'off-diagonals are sqrt(logit(x/2+.5)) of partial correlations. Full covariance matrices can be attained using ctStanContinuousPars')
 
 out$logprob=round(s$summary[c(grep('lp',rownames(s$summary))),
   c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],3)

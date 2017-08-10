@@ -366,6 +366,7 @@ datalong <- cbind(id, time, sunspots)
    MANIFESTMEANS=matrix(c('m1'), nrow=1, ncol=1),
    # MANIFESTVAR=matrix(0, nrow=1, ncol=1),
    CINT=matrix(c(0, 0), nrow=2, ncol=1),
+   T0VAR=matrix(c(0,0,0,1), nrow=2, ncol=2), #Because single subject
    DIFFUSION=matrix(c(
      0, 0,
      0, "diffusion"), ncol=2, nrow=2, byrow=TRUE))
@@ -375,7 +376,7 @@ datalong <- cbind(id, time, sunspots)
  model$pars$transform[4]<-'log(exp(-param*1.5)+1)' #To avoid multi modality 
 
 #fit
-fit <- ctStanFit(datalong, model, iter=400, chains=2, control=list(adapt_delta=.9))
+fit <- ctStanFit(datalong, model, iter=400, chains=2)
 
 #output
 summary(fit)$popmeans

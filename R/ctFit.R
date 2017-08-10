@@ -2101,7 +2101,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   }
   
   #specfic stationarity constraints
-  if(!('T0VAR' %in% stationary) && any(T0VAR$labels =='stationary')){
+  if(!('T0VAR' %in% stationary) && 'stationary' %in% T0VAR$labels ){
     model <- mxModel(model,'T0VAR',remove = TRUE)
     model <- mxModel(model,
       mxAlgebra(T0VARchol %*% t(T0VARchol),name='T0VARalg'),

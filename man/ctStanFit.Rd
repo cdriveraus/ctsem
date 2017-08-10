@@ -4,12 +4,12 @@
 \alias{ctStanFit}
 \title{ctStanFit}
 \usage{
-ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 2000,
+ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 1000,
   kalman = TRUE, binomial = FALSE, esthyper = TRUE, fit = TRUE,
   stationary = FALSE, plot = FALSE, diffusionindices = "all",
   asymdiffusion = FALSE, optimize = FALSE, nopriors = FALSE, vb = FALSE,
   chains = 1, cores = "maxneeded", inits = NULL, initwithoptim = FALSE,
-  control = list(adapt_delta = 0.9, adapt_init_buffer = 10, adapt_window = 5,
+  control = list(adapt_delta = 0.8, adapt_init_buffer = 2, adapt_window = 2,
   max_treedepth = 10, stepsize = 0.001), verbose = FALSE, ...)
 }
 \arguments{
