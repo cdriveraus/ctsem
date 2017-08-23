@@ -5,7 +5,8 @@
 \title{ctStanDiscretePars}
 \usage{
 ctStanDiscretePars(ctstanfitobj, subjects = "all", times = seq(from = 0, to
-  = 10, by = 0.1), quantiles = c(0.025, 0.5, 0.975), plot = FALSE, ...)
+  = 10, by = 0.1), quantiles = c(0.025, 0.5, 0.975), nsamples = 500,
+  plot = FALSE, ...)
 }
 \arguments{
 \item{ctstanfitobj}{Continuous time model fit from \code{\link{ctStanFit}}}
@@ -17,6 +18,10 @@ subjects.}
 
 \item{quantiles}{Which quantiles to return. If plotting, specify 3 quantiles, 
 the 2nd will be plotted as a line with 1 and 3 as uncertainty bounds.}
+
+\item{nsamples}{Number of samples from the stanfit to use for plotting. Higher values will
+increase smoothness / accuracy, at cost of plotting speed. Values greater than the total
+number of samples will be set to total samples.}
 
 \item{plot}{Logical. If TRUE, plots output using \code{\link{ctStanDiscreteParsPlot}}
 instead of returning output.}

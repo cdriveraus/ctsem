@@ -40,7 +40,9 @@ parameters, or to fix the distributions to maximum likelihood estimates conditio
 \item{fit}{If TRUE, fit specified model using Stan, if FALSE, return stan model object without fitting.}
 
 \item{stationary}{Logical. If TRUE, T0VAR and T0MEANS input matrices are ignored, 
-the parameters are instead fixed to long run expectations}
+the parameters are instead fixed to long run expectations. More control over this can be achieved
+by instead setting parameter names of T0MEANS and T0VAR matrices in the input model to 'stationary', for
+elements that should be fixed to stationarity.}
 
 \item{plot}{if TRUE, a Shiny program is launched upon fitting to interactively plot samples. 
 May struggle with many (e.g., > 5000) parameters, and may leave sample files in working directory if sampling is terminated.}

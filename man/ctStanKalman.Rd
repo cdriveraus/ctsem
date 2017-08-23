@@ -18,7 +18,8 @@ allowing for estimates outside the range of observed data.}
 
 \item{timestep}{Either 'asdata' to just use the observed data 
 (which also requires 'asdata' for timerange) or a positive numeric value
-indicating the time step to use for interpolating values.}
+indicating the time step to use for interpolating values. Lower values give a more accurate / smooth representation,
+but take a little more time to calculate.}
 
 \item{subjects}{vector of integers denoting which subjects (from 1 to N) to plot predictions for.}
 
