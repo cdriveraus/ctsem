@@ -22,7 +22,7 @@
 #' 'auto' uses all available, which is equivalent to 
 #' \code{1:sum(fit$ctstanmodel$pars$indvarying)}.
 #' The integer corresponding to specific parameters can be found as follows, replacing \code{fit} as appropriate:
-#' \code{fit$ctstanmodel$pars[sf$ctstanmodel$pars$indvarying,'param']}.
+#' \code{fit$ctstanmodel$pars[fit$ctstanmodel$pars$indvarying,'param']}.
 #' @param plot Logical. If TRUE, nothing is returned but instead \code{\link{ctPlotArray}}
 #' is used to plot the output instead.
 #' @param ... arguments to pass to \code{\link{ctPlotArray}} for plotting.

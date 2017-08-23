@@ -22,7 +22,7 @@
 #'  'hmean' denotes hyper (population) means, but see \code{\link{ctStanParnames}} for
 #'  other options.
 #' @return Nothing. Generates plots.
-#' @aliases ctStanPlot
+#' @aliases ctStanPlot plot.ctStanFit
 #' @method plot ctStanFit
 #' @examples
 #' plot(ctstantestfit,types=c('regression','kalman','priorcheck'))

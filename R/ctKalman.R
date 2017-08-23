@@ -68,7 +68,8 @@ ctKalman<-function(kpars,datalong,
   Y<-datalong[,manifestNames,drop=FALSE]
   if(ntdpred > 0) {
     tdpreds<-datalong[,TDpredNames,drop=FALSE]
-    if(any(is.na(tdpreds))) stop('missingness in time dependent predictors! ctKalman cannot run.')
+    tdpreds[is.na(tdpreds)] <- 0
+    # if(any(is.na(tdpreds))) stop('missingness in time dependent predictors! ctKalman cannot run.')
   }
   
   if(continuoustime) {

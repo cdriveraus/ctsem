@@ -11,7 +11,8 @@
 #' allowing for estimates outside the range of observed data.
 #' @param timestep Either 'asdata' to just use the observed data 
 #' (which also requires 'asdata' for timerange) or a positive numeric value
-#' indicating the time step to use for interpolating values.
+#' indicating the time step to use for interpolating values. Lower values give a more accurate / smooth representation,
+#' but take a little more time to calculate.
 #' @param subjects vector of integers denoting which subjects (from 1 to N) to plot predictions for. 
 #' @param plot Logical. If TRUE, plots output instead of returning it. 
 #' See \code{\link{ctStanKalmanPlot}} for the possible arguments.
@@ -63,6 +64,7 @@ ctStanKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata'
     if(type=='stan') {
       time<-fit$data$time
       datalong<-cbind(fit$data$subject,time,fit$data$Y)
+      datalong[,-1:-2][datalong[,-1:-2] == 99999] <- NA #because stan can't handle NA's
       if(n.TDpred > 0) datalong <- cbind(datalong,fit$data$tdpreds)
       colnames(datalong)<-c('subject','time',
         fit$ctstanmodel$manifestNames,
@@ -94,7 +96,6 @@ ctStanKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata'
   if(type=='stan') diffusionindices<-fit$data$diffusionindices else diffusionindices<-c()
   
   for(subjecti in subjects){
-    
     #setup subjects data, interpolating and extending as necessary
     sdat=datalong[datalong[,'subject'] == subjecti,,drop=FALSE]
     if(timestep != 'asdata' || timerange[1] != 'asdata') {
@@ -118,6 +119,7 @@ ctStanKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata'
     if(type=='omx') model <- ctModelFromFit(fit)
     
     #get kalman estimates
+
     out[[paste('subject',subjecti)]]<-ctKalman(kpars=model,
       datalong=sdat,
       manifestNames=manifestNames,
@@ -179,7 +181,7 @@ ctStanKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata'
 #' ###Single step procedure:
 #' ctStanKalman(ctstantestfit,subjects=2,plot=TRUE)
 ctStanKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
-  errorvec='auto', errormultiply=2,
+  errorvec='auto', errormultiply=1.96,
   ltyvec="auto",colvec='auto', lwdvec='auto', 
   subsetindices=NULL,pchvec='auto', typevec='auto',grid=TRUE,add=FALSE, 
   plotcontrol=list(ylab='Value',xlab='Time'),
@@ -210,16 +212,15 @@ ctStanKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
   
   
   if(length(subjects) > 1 & colvec[1] =='auto') colvec = rainbow(length(subjects))
-  if(length(subjects) == 1 & colvec[1] =='auto') colvec = rainbow(length(kalmanvec))
   
-  if(rl(lwdvec[1]=='auto')) lwdvec=rep(2,length(kalmanvec))
+  if(lwdvec[1] %in% 'auto') lwdvec=rep(2,length(kalmanvec))
   
   if(is.null(plotcontrol$ylab)) plotcontrol$ylab='Value'
   if(is.null(plotcontrol$xlab)) plotcontrol$xlab='Time'
   
-  if(rl(typevec[1]=='auto')) typevec=c('p','l')[grepl("prior|upd|smooth|eta",kalmanvec)+1]
+  if(typevec[1] %in% 'auto') typevec=c('p','l')[grepl("prior|upd|smooth|eta",kalmanvec)+1]
   
-  if(rl(errorvec[1]=='auto')) {
+  if(errorvec[1] %in% 'auto') {
     errorvec=rep(NA,length(kalmanvec))
     errorvec[grepl("prior|upd|smooth",kalmanvec)]<-paste0(
       kalmanvec[grepl("prior|upd|smooth",kalmanvec)],'cov')
@@ -230,14 +231,7 @@ ctStanKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
   legendlty<-c()
   legendpch<-c()
   
-  if(length(subjects) > 1 && length(unique(colvec))>1) { #include subject color in legend if necessary
-    legendtext<-c(legendtext,paste('Subject', subjects))
-    legendcol <- c(legendcol,colvec)
-    legendlty <-c(legendlty,rep(0,length(subjects)))
-    legendpch <-c(legendpch,rep(NA,length(subjects)))
-  }
-  
-  
+
   for(si in 1:length(subjects)){#subjects
     subjecti = subjects[si]
     subiname=paste('subject',subjecti)
@@ -248,6 +242,7 @@ ctStanKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
     
     for(kveci in 1:length(kalmanvec)){ #kalman output types
       kvecdims=1:dim(out[[subiname]][[kalmanvec[kveci]]])[-1]
+      if(length(subjects) == 1 & colvec[1] =='auto') colvec = rainbow(length(kvecdims))
       if(any(subsetindices > max(kvecdims))) stop('subsetindices contains a value greater than relevant dimensions of object in kalmanvec!')
       if(!is.null(subsetindices)) kvecdims=kvecdims[subsetindices]
       if(rl(ltyvec[1]=='auto')) ltyvec <- 1:length(kvecdims)
@@ -303,6 +298,13 @@ ctStanKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
         }
       }
     }
+  }
+  
+  if(length(subjects) > 1 && length(unique(colvec))>1) { #include subject color in legend if necessary
+    legendtext<-c(legendtext,paste('Subject', subjects))
+    legendcol <- c(legendcol,colvec)
+    legendlty <-c(legendlty,rep(0,length(subjects)))
+    legendpch <-c(legendpch,rep(NA,length(subjects)))
   }
   
   if(legend && length(legendtext)>0){

@@ -20,13 +20,16 @@
 ctStanPlotPost<-function(ctstanfitobj, rows='all',mfrow='auto',
   parcontrol=list(mgp=c(1.3,.5,0),mar=c(3,2,2,1)+.2),wait=FALSE){
 
+  #get unique parameters
+  m <- ctstanfitobj$ctstanmodel$par[match(unique(ctstanfitobj$ctstanmodel$par$param), ctstanfitobj$ctstanmodel$par$param),]
+  m <- m[!is.na(m$param),] #remove non free param
+  m <- m[!(m$param %in% 'stationary'),] #remove stationary params
   
   paroriginal<-graphics::par()[c('mfrow','mgp','mar')]
   
   do.call(graphics::par,parcontrol)
   
   s<-rstan::extract(ctstanfitobj$stanfit)
-  m<-ctstanfitobj$ctstanmodel$pars
   if(rows=='all') rows<-(1:nrow(m))[is.na(m$value)]  
   if(!is.null(mfrow)){
     if(mfrow=='auto') {

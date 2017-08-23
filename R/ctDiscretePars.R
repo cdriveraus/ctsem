@@ -187,6 +187,9 @@ ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
 #'@param times Numeric vector of positive values, discrete time parameters will be calculated for each.
 #'@param quantiles Which quantiles to return. If plotting, specify 3 quantiles, 
 #'the 2nd will be plotted as a line with 1 and 3 as uncertainty bounds.
+#'@param nsamples Number of samples from the stanfit to use for plotting. Higher values will
+#'increase smoothness / accuracy, at cost of plotting speed. Values greater than the total
+#'number of samples will be set to total samples.
 #'@param plot Logical. If TRUE, plots output using \code{\link{ctStanDiscreteParsPlot}}
 #'instead of returning output. 
 #'@param ... additional plotting arguments to control \code{\link{ctStanDiscreteParsPlot}}
@@ -195,12 +198,15 @@ ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
 #'plot=TRUE,indices='all')
 #'@export
 ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=10,by=.1), 
-  quantiles = c(.025, .5, .975),plot=FALSE,...){
+  quantiles = c(.025, .5, .975),nsamples=500,plot=FALSE,...){
   
   type='discreteDRIFT'
   collapseSubjects=TRUE #consider this for a switch
   
   e<-rstan::extract(ctstanfitobj$stanfit)
+  
+ 
+  
   if(type=='all') type=c('discreteDRIFT','latentMeans') #must match with ctDiscretePars
   
   if(subjects[1] != 'all' && !is.integer(as.integer(subjects))) stop('
@@ -214,6 +220,9 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   niter=outdims[1]
   nlatent=outdims[3]
   latentNames=ctstanfitobj$ctstanmodel$latentNames
+  
+  if(nsamples > niter) nsamples <- niter
+  samples <- sample(1:niter,nsamples)
 
   
   out<-list()
@@ -245,14 +254,14 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
     message('Getting ', type[typei],', may take a moment...')
     matrixtype=ifelse(type[typei] %in% c('discreteDRIFT'),TRUE, FALSE) #include any matrix type outputs
     
-    out[[typei]] <- plyr::aaply(1:niter,1,function(iterx){ #for every iteration
+    out[[typei]] <- plyr::aaply(1:nsamples,1,function(iterx){ #for every iteration
       if(collapseSubjects) subjectvec=1 else subjectvec=1:nsubjects #average over subjects before computing? much faster but answers dif question.
       plyr::aaply(subjectvec,1,function(subjecty){ #for all subjects at once, or 1 subject at a time...
         ctparsxy <- plyr::llply(ctpars, function(obji) { #
           ismatrix = length(dim(obji)) > 3 #check if obji (ctparameter) is a matrix or vector
           ctparsout=array(eval(parse(text=paste0('obji[,',
             if(ismatrix) ',',
-            iterx,',',
+            samples[iterx],',',
             ifelse(dim(obji)[ifelse(ismatrix,4,3)] > 1, #if the parameter varies over multiple subjects,
               ifelse(collapseSubjects, '1:nsubjects',  #and we collapse over subjects, return values for all subjects
                 'subjecty'), #if we don't collapse over subjects, just return for specified subject
