@@ -131,7 +131,11 @@ ctParamsSummary<-function(object,ctSummaryMatrices){
       if(parnames[parami] %in% object$ctmodelobj[[matrixi]]) { #if the free param is in the ctmodelobj matrix
         parmatrix[parami]<-matrixi
         newparvalues[parami]<-ctSummaryMatrices[[matrixi]][match(parnames[parami],object$ctmodelobj[[matrixi]])]
-        parsd[parami]<- abs(((newparvalues[parami]) / parvalues[parami]) * parsd[parami]) #first order delta approximation of std error
+        parsd[parami]<- parsd[parami]
+        #delta approx for sd pars
+        if(newparvalues[parami] != parvalues[parami]) parsd[parami]<- 
+         (exp(parvalues[parami] + parsd[parami]) - exp(parvalues[parami] - parsd[parami]))/2
+        # parsd[parami]<- abs(((newparvalues[parami]) / parvalues[parami]) * parsd[parami]) #old, bad? first order delta approximation of std error
         parvalues[parami]<- newparvalues[parami]
       }
     }
