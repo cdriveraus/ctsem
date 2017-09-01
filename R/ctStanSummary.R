@@ -87,9 +87,9 @@ rownames(popcorr) <- matrix(paste0('corr_',parnames,'__',rep(parnames,each=lengt
 popcorr <- round(popcorr,3)
 
 popcorr <- cbind(popcorr,popcorr[,'mean'] / popcorr[,'sd'])
-colnames(popcorr)[ncol(popcorr)] <- 't'
+colnames(popcorr)[ncol(popcorr)] <- 'z'
 
-popcorr <- popcorr[order(popcorr[,'t']),,drop=FALSE]
+popcorr <- popcorr[order(popcorr[,'z']),,drop=FALSE]
 
 hypercorrmean= ctCollapse(array(apply(e$hypercorrchol,1,function(x) x%*% t(x)),dim = dim(e$hypercorrchol)[c(2,3,1)]),3,mean)
 hypercorrsd= ctCollapse(array(apply(e$hypercorrchol,1,function(x) x%*% t(x)),dim = dim(e$hypercorrchol)[c(2,3,1)]),3,sd)
@@ -114,8 +114,12 @@ out$popcorr = popcorr
 
 
 
-if(object$ctstanmodel$n.TIpred > 0) out$tipreds=round(s$summary[c(grep('tipred_',rownames(s$summary))),
+if(object$ctstanmodel$n.TIpred > 0) {
+  out$tipreds=round(s$summary[c(grep('tipred_',rownames(s$summary))),
   c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],3)
+  z = out$tipreds[,'mean'] / out$tipreds[,'sd'] 
+  out$tipreds= cbind(out$tipreds,z)
+}
 
 out$popsd=round(s$summary[c(grep('hsd_',rownames(s$summary))),
   c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],3)
@@ -128,6 +132,7 @@ out$note1=paste0('Parameters are reported as specified in ctModel -- diagonals o
 
 out$logprob=round(s$summary[c(grep('lp',rownames(s$summary))),
   c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],3)
+
   
 # out$posteriorpredictive=round(s$summary[c(grep('stateppll',rownames(s$summary))),
 #     c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],3)
