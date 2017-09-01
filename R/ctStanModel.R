@@ -85,8 +85,11 @@ if(type=='standt') continuoustime<-FALSE
   ctspec$transform[ctspec$matrix %in% c('DIFFUSION','MANIFESTVAR', 'T0VAR') & 
       freeparams & ctspec$row != ctspec$col] <- '(param)' #'inv_logit(param)*2-1'
   
-  ctspec$transform[ctspec$matrix %in% c('DIFFUSION','MANIFESTVAR', 'T0VAR') & 
-      freeparams & ctspec$row == ctspec$col] <- 'exp(param*2) +.00001' #'1/(.1+exp(param*1.8))*10+.001'
+  ctspec$transform[ctspec$matrix %in% c('MANIFESTVAR', 'T0VAR') & 
+      freeparams & ctspec$row == ctspec$col] <- 'exp(param)' #'1/(.1+exp(param*1.8))*10+.001'
+  
+  ctspec$transform[ctspec$matrix %in% c('DIFFUSION') & 
+      freeparams & ctspec$row == ctspec$col] <- 'exp(param*2)' #'1/(.1+exp(param*1.8))*10+.001'
   
   if(continuoustime==TRUE){
     ctspec$transform[ctspec$matrix %in% c('DRIFT') & 
@@ -138,7 +141,10 @@ if(type=='standt') continuoustime<-FALSE
     continuoustime=continuoustime)
   class(out)<-'ctStanModel'
   
-  if(n.TIpred > 0) out$tipredeffectprior <- 'normal(0,1)'
+  if(n.TIpred > 0) {
+    out$tipredeffectprior <- 'normal(0,1)'
+    out$tipredsimputedprior <- 'normal(0,10)'
+  }
   # out$hypersdpriorscale <- 1
   out$rawhypersd <- 'normal(0,1)'
   out$rawhypersdlowerbound <- c()
