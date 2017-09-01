@@ -313,7 +313,7 @@ ctFitAuto <- function(datalong,manifestNames,idcol='id',timecol='time',
       # #check misspecification via errors
       # kal<-list()
       # for(idi in unique(datalong[,idcol])){
-      # kal[[idi]]=ctKalman(kpars = ctModelFromFit(fi),
+      # kal[[idi]]=Kalman(kpars = ctModelFromFit(fi),
       #   datalong = datalong[datalong[,idcol]==idi, c(idcol,timecol,manifestNames[mani])],
       #   manifestNames = manifestNames[mani],
       #   latentNames=paste0('eta',1:n.latent))

@@ -398,7 +398,7 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
   if(ltyvec[1]=='auto') ltyvec=1:nrow(indices)
   if(lwdvec[1]=='auto') lwdvec= rep(3,nrow(indices))
   
-  if(colvec[1]=='auto') colvec=grDevices::rainbow(nrow(indices),alpha=.8)
+  if(colvec[1]=='auto') colvec=grDevices::rainbow(nrow(indices),alpha=.8,v=.9)
   
   if(ylim=='auto') ylim=range(plyr::aaply(input,c(3,4),function(x)
     x[indices]),na.rm=TRUE) #range of diagonals

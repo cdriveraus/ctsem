@@ -130,7 +130,7 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,
     
     colnames(sdat) <- colnames(datalong)
     
-    sdat[,manifestNames] <- ctKalman(kpars=skpars,datalong=sdat,manifestNames=manifestNames,TDpredNames=TDpredNames,
+    sdat[,manifestNames] <- Kalman(kpars=skpars,datalong=sdat,manifestNames=manifestNames,TDpredNames=TDpredNames,
       latentNames=latentNames,
       imputeMissings=TRUE)$y
     

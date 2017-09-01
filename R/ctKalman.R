@@ -188,9 +188,10 @@ ctKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
   polygoncontrol=list(border=NA),polygonalpha=.1,
   legend=TRUE, legendcontrol=list(x='topright',bg='white')){
   
+
   out<-x
   
-  if(length(subjects) > 1 & colvec[1] =='auto') colvec = rainbow(length(subjects))
+  if(length(subjects) > 1 & colvec[1] =='auto') colvec = rainbow(length(subjects),v=.9)
   
   if(lwdvec[1] %in% 'auto') lwdvec=rep(2,length(kalmanvec))
   
@@ -250,12 +251,12 @@ ctKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
     
     for(kveci in 1:length(kalmanvec)){ #kalman output types
       kvecdims=1:dim(out[[subiname]][[kalmanvec[kveci]]])[-1]
-      if(length(subjects) == 1 & colvec[1] =='auto') colvec = rainbow(length(kvecdims))
+      if(length(subjects) == 1 & colvec[1] =='auto') colvecnew = rainbow(length(kvecdims),v=.9)
       if(any(subsetindices > max(kvecdims))) stop('subsetindices contains a value greater than relevant dimensions of object in kalmanvec!')
       if(!is.null(subsetindices)) kvecdims=kvecdims[subsetindices]
-      if(rl(ltyvec[1]=='auto')) ltyvec <- 1:length(kvecdims)
+      if(rl(ltyvec[1]=='auto')) ltyvecnew <- 1:length(kvecdims) else ltyvecnew <- ltyvec
       
-      if(rl(pchvec[1] =='auto')) pchvec = 1:(length(kvecdims))
+      if(rl(pchvec[1] =='auto')) pchvecnew = 1:(length(kvecdims)) else pchvecnew <- pchvec
       
       # if((length(unique(pchvec[typevec!='l']))>1) || 
       #     (length(subjects) == 1 && length(unique(colvec)) > 1)) { #if changing pch, then legend needs to show pch elements along with lty and maybe colour
@@ -271,10 +272,10 @@ ctKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
         plist$x=out[[subiname]]$time
         plist$y=out[[subiname]][[kalmanvec[kveci]]][,kdimi] 
         plist$lwd=lwdvec[kveci]
-        plist$lty=ltyvec[dimi] 
-        plist$pch=pchvec[dimi]
+        plist$lty=ltyvecnew[dimi] 
+        plist$pch=pchvecnew[dimi]
         plist$type=typevec[kveci]
-        if(length(subjects)==1) plist$col=colvec[dimi]
+        if(length(subjects)==1) plist$col=colvecnew[dimi]
         
         
         if(subjecti == subjects[1] & kveci==1 && dimi == 1 && !add) {
@@ -297,11 +298,11 @@ ctKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
         }
         
         #if changing lty then legend needs lty types
-        if(length(unique(ltyvec))>1 && subjecti == subjects[1]) {
-          legendtext<-c(legendtext,paste(kalmanvec[kveci],
+        if(subjecti == subjects[1]) { #length(unique(ltyvecnew))>1 && 
+          legendtext<-c(legendtext,paste0(kalmanvec[kveci],': ',
             colnames(out[[subiname]][[kalmanvec[kveci]]])[kdimi]))
-          legendlty <- c(legendlty,ifelse(plist$type=='p',0,ltyvec[dimi]))
-          legendpch <- c(legendpch,ifelse(plist$type=='l',NA,pchvec[dimi]))
+          legendlty <- c(legendlty,ifelse(plist$type=='p',0,ltyvecnew[dimi]))
+          legendpch <- c(legendpch,ifelse(plist$type=='l',NA,pchvecnew[dimi]))
           if(length(subjects) == 1) legendcol = c(legendcol,plist$col) else legendcol=c(legendcol,'black')
         }
       }

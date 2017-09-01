@@ -298,10 +298,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, kalman=T
   }
   if(n.TIpred > 0) {
     tipreds <- datalong[match(unique(datalong[,id]),datalong[,id]),TIpredNames,drop=FALSE]
-    tipredsdata<-tipreds
-    if(any(is.na(tipredsdata))) {
+    if(any(is.na(tipreds))) {
       message(paste0('Missingness in TIpreds - imputing ', sum(is.na(tipreds)),' values'))
-      tipredsdata[is.na(tipredsdata)] = 99999
+      tipreds[is.na(tipreds)] = 99999
     }
   }
   

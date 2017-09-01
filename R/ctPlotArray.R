@@ -55,7 +55,7 @@ ctPlotArray <- function(yarray,x,
   
   if(all(ltyvec=='auto')) ltyvec = 1:nvars
   if(all(lwdvec=='auto')) lwdvec = rep(3,nvars)
-  if(all(colvec=='auto')) colvec = rainbow(nvars)
+  if(all(colvec=='auto')) colvec = rainbow(nvars,v=.9)
   if(all(typevec=='auto')) typevec = rep('l',nvars)
   # if(all(mainvec=='auto')){
   #   if(separate) mainvec=dimnames(yarray)[[2]] else mainvec =rep(ifelse(is.null(plotcontrol$main),'',plotcontrol$main),nvars)
