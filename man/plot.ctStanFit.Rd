@@ -28,7 +28,7 @@ Plots for ctStanFit objects
 \details{
 This function is just a wrapper calling the necessary functions for plotting - it 
 may be simpler in many cases to access those directly. They are:
- \code{\link{ctStanDiscretePars}},\code{\link{ctStanKalman}},
+ \code{\link{ctStanDiscretePars}},\code{\link{ctKalman}},
  \code{\link{ctStanPlotPost}},\code{\link[rstan]{stan_trace}},
  \code{\link[rstan]{stan_dens}},\code{\link[rstan]{stan_plot}}
  rstan offers many plotting possibilities not available here, to use that functionality
