@@ -190,27 +190,6 @@ ctStanKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
   
   out<-x
   
-  if(is.null(plotcontrol$xlim)) plotcontrol$xlim <- range(sapply(out,function(x) x$time))
-  
-  
-  if(is.null(plotcontrol$ylim)) {
-    plotcontrol$ylim <- range(unlist(lapply(out,function(x) {
-      if(!is.null(x)){
-        ret<-c()
-        
-        for(kveci in kalmanvec){
-          ret<-c(ret,x[[kveci]][,
-            if(is.null(subsetindices)) 1:dim(x[[kveci]])[2] else subsetindices]
-          )
-        }
-        return(ret)}})),na.rm=TRUE)
-    #extend range somewhat...
-    
-    plotcontrol$ylim[1] = plotcontrol$ylim[1] - (plotcontrol$ylim[2] - plotcontrol$ylim[1])/5
-    plotcontrol$ylim[2] = plotcontrol$ylim[2] + (plotcontrol$ylim[2] - plotcontrol$ylim[1])/5
-  }
-  
-  
   if(length(subjects) > 1 & colvec[1] =='auto') colvec = rainbow(length(subjects))
   
   if(lwdvec[1] %in% 'auto') lwdvec=rep(2,length(kalmanvec))
@@ -225,6 +204,35 @@ ctStanKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
     errorvec[grepl("prior|upd|smooth",kalmanvec)]<-paste0(
       kalmanvec[grepl("prior|upd|smooth",kalmanvec)],'cov')
   }
+  
+  if(is.null(plotcontrol$xlim)) plotcontrol$xlim <- range(sapply(out,function(x) x$time))
+  
+
+  if(is.null(plotcontrol$ylim)) {
+    plotcontrol$ylim <- range(unlist(lapply(out,function(x) { #for every subject
+      if(!is.null(x)){
+        ret<-c()
+        
+        for(kveci in 1:length(kalmanvec)){
+          est<-x[[kalmanvec[kveci]]][,
+            if(is.null(subsetindices)) 1:dim(x[[kalmanvec[kveci]]])[2] else subsetindices]
+          
+          if(!is.na(errorvec[kveci])) err <- sqrt(abs(c(apply(x[[errorvec[kveci]]][
+            (if(is.null(subsetindices)) 1:dim(x[[errorvec[kveci]]])[2] else subsetindices),
+            (if(is.null(subsetindices)) 1:dim(x[[errorvec[kveci]]])[2] else subsetindices),
+            ,drop=FALSE],3,diag))))
+          
+      if(is.na(errorvec[kveci])) err <- 0
+      
+          esthigh <- est + err*errormultiply
+          estlow <- est - err*errormultiply
+            ret <- c(ret,esthigh,estlow)
+        }
+        return(ret)}})),na.rm=TRUE)
+  }
+  
+  
+  
   
   legendtext<-c()
   legendcol <- c()
@@ -282,8 +290,8 @@ ctStanKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
           # polygoncontrol$angle=stats::runif(1,0,359)
           polygonargs<-polygoncontrol
           polygonargs$x=c(plist$x,plist$x[backwardstimesindex])
-          polygonargs$y=c(plist$y + errormultiply * sqrt(out[[subiname]][[errorvec[kveci]]][kdimi,kdimi,]), 
-            (plist$y - errormultiply * sqrt(out[[subiname]][[errorvec[kveci]]][kdimi,kdimi,]))[backwardstimesindex])
+          polygonargs$y=c(plist$y + errormultiply * sqrt(abs(out[[subiname]][[errorvec[kveci]]][kdimi,kdimi,])), 
+            (plist$y - errormultiply * sqrt(abs(out[[subiname]][[errorvec[kveci]]][kdimi,kdimi,])))[backwardstimesindex])
           polygonargs$col=grDevices::adjustcolor(plist$col,alpha.f=polygonalpha)
           do.call(graphics::polygon,polygonargs)
         }
