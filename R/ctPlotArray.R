@@ -63,7 +63,7 @@ ctPlotArray <- function(yarray,x,
   
   plotargs<-plotcontrol
   plotargs$x <- x
-  if(!separate && is.null(plotcontrol$ylim)) plotargs$ylim = range(yarray)
+  if(!separate && is.null(plotcontrol$ylim)) plotargs$ylim = range(yarray,na.rm=TRUE)
   plotargs$xlim = range(x,na.rm=TRUE)
   
   ctpolyargs<-polygoncontrol
@@ -82,10 +82,10 @@ ctPlotArray <- function(yarray,x,
   if(polygon) {
     for(pari in c(1:dim(yarray)[2],dim(yarray)[2]:1)){
       ctpolyargs$col=adjustcolor(colvec[pari],alpha.f=max(c(.004,polygonalpha/ctpolyargs$steps)))
-      ctpolyargs$x=plotargs$x
-      ctpolyargs$y=yarray[,pari,2] #predict(loess(yarray[,pari,2]~ctpolyargs$x))
-      ctpolyargs$yhigh = yarray[,pari,3] #predict(loess(yarray[,pari,3]~ctpolyargs$x))
-      ctpolyargs$ylow = yarray[,pari,1]#predict(loess(yarray[,pari,1]~ctpolyargs$x))
+      ctpolyargs$x=plotargs$x[!is.na(plotargs$x) & !is.na(yarray[,pari,2])]
+      ctpolyargs$y=yarray[,pari,2][!is.na(plotargs$x) & !is.na(yarray[,pari,2])] #predict(loess(yarray[,pari,2]~ctpolyargs$x))
+      ctpolyargs$yhigh = yarray[,pari,3][!is.na(plotargs$x) & !is.na(yarray[,pari,2])] #predict(loess(yarray[,pari,3]~ctpolyargs$x))
+      ctpolyargs$ylow = yarray[,pari,1][!is.na(plotargs$x) & !is.na(yarray[,pari,2])]#predict(loess(yarray[,pari,1]~ctpolyargs$x))
       
       do.call(ctPoly,ctpolyargs) 
     }

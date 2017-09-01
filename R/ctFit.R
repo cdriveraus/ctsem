@@ -255,9 +255,10 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   if(n.TDpred>0 & objective != 'Kalman' & objective != 'Kalmanmx'){ 
     #### if all tdpreds non missing, use observed covariance and means
     if(all(!is.na(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-1), each=n.TDpred))]))){
+      temp<-cov(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-1), each=n.TDpred)),drop=FALSE]) + 
+        diag(.000001, n.TDpred*(Tpoints))
       ctmodelobj$TDPREDVAR= t(chol(Matrix::nearPD(
-        cov(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-1), each=n.TDpred)),drop=FALSE]) + 
-          diag(.0000001, n.TDpred*(Tpoints)))$mat))
+        temp)$mat))
       ctmodelobj$TDPREDMEANS[,]=apply(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-1), each=n.TDpred))],2,mean)
       message('No missing time dependent predictors - TDPREDVAR and TDPREDMEANS fixed to observed moments for speed')
     }
