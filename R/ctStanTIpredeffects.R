@@ -36,12 +36,20 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   whichTIpreds=1,whichpars='all',
   plot=FALSE,...){
   
-  if(all(whichpars=='all')) whichpars=1:sum(fit$ctstanmodel$pars$indvarying)
   
+  #drop fixed and duplicated params
+  spec <- fit$ctstanmodel$pars[is.na(fit$ctstanmodel$pars$value),,drop=FALSE]
+  spec <- spec[!duplicated(spec$param),]
+  
+  #get indvarying hypermeans
 e<-extract(fit$stanfit)
-hypermeans <- e$hypermeans[,
-  fit$ctstanmodel$pars$indvarying[is.na(fit$ctstanmodel$pars$value)],
-  drop=FALSE] #first get indvarying hypermeans
+hypermeans <- e$hypermeans[,spec$indvarying,drop=FALSE] 
+
+#update ctspec to only indvarying and those in whichpars
+spec <- spec[spec$indvarying,]
+if(all(whichpars=='all')) whichpars=1:sum(spec$indvarying)
+spec <- spec[whichpars,,drop=FALSE]
+
 hypermeans <- hypermeans[,whichpars,drop=FALSE]  #then just the ones in whichpars
 tieffect<-e$tipredeffect[,whichpars,whichTIpreds,drop=FALSE]
 tipreds<-fit$data$tipreds[,whichTIpreds,drop=FALSE]
@@ -50,8 +58,7 @@ tipreds<-tipreds[tiorder,,drop=FALSE] #order tipreds according to first one
 npars<-length(whichpars)
 niter<-dim(e$hypermeans)[1]
 nsubjects <- nrow(tipreds)
-spec <- fit$ctstanmodel$pars[fit$ctstanmodel$pars$indvarying,,drop=FALSE]
-spec <- spec[whichpars,,drop=FALSE]
+
 
 message('Calculating time independent predictor effects...')
   
@@ -76,7 +83,7 @@ noeffect<-aaply(1:npars, 1,function(pari){ #for each param
 
 if(returndifference) effect<-effect-array(noeffect,dim=dim(effect))
 
-out<-aaply(probs,1,function(x) ctCollapse(effect,2,quantile,probs=x),.drop=FALSE)
+out<-aaply(probs,1,function(x) ctCollapse(effect,2,quantile,probs=x,na.rm=TRUE),.drop=FALSE)
 dimnames(out)=list(Quantile=paste0('Quantile',probs),
   popmean=spec$param,
   subject=tiorder #subjects reordered because tipreds were at top

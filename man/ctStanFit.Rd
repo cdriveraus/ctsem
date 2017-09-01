@@ -10,7 +10,7 @@ ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 1000,
   asymdiffusion = FALSE, optimize = FALSE, nopriors = FALSE, vb = FALSE,
   chains = 1, cores = "maxneeded", inits = NULL, initwithoptim = FALSE,
   control = list(adapt_delta = 0.8, adapt_init_buffer = 2, adapt_window = 2,
-  max_treedepth = 10, stepsize = 0.001), verbose = FALSE, ...)
+  max_treedepth = 8, stepsize = 0.001), verbose = FALSE, ...)
 }
 \arguments{
 \item{datalong}{long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables, 
