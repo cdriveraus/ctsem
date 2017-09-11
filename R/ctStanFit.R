@@ -720,7 +720,7 @@ out[coli,rowi] = out[rowi,coli];
       vector[nparams] hypermeans',if(!esthyper) 'base','; // population level means \n','
       
       ',if(any(indvarying)) paste0(
-        'vector',if(length(ctstanmodel$rawhypersdlowerbound) ==1) paste0('<lower=',ctstanmodel$rawhypersdlowerbound[1],'>'),'[nindvarying] rawhypersd',if(!esthyper) 'base','; //population level std dev
+        'vector',if(!is.na(ctstanmodel$rawhypersdlowerbound)) paste0('<lower=',ctstanmodel$rawhypersdlowerbound[1],'>'),'[nindvarying] rawhypersd',if(!esthyper) 'base','; //population level std dev
         //cholesky_factor_corr[nindvarying] hypercorrchol; // population level cholesky correlation
         //cov_matrix[nindvarying] wishmat;
         vector[nindvaryingoffdiagonals] sqrtpcov;
@@ -1352,7 +1352,7 @@ target +=  detpenalty;
     standataout <- relist(standataout,skeleton=standata)
     
     
-    out <- list(args=args,stanmodeltext=stanmodeltext, data=standata, ctstanmodel=ctstanmodel,stanfit=stanfit)
+    out <- list(args=args,stanmodeltext=stanmodeltext, data=standataout, ctstanmodel=ctstanmodel,stanfit=stanfit)
     class(out) <- 'ctStanFit'
     
   } # end if fit==TRUE

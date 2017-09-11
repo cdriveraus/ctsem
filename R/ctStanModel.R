@@ -147,7 +147,7 @@ if(type=='standt') continuoustime<-FALSE
   }
   # out$hypersdpriorscale <- 1
   out$rawhypersd <- 'normal(0,1)'
-  out$rawhypersdlowerbound <- c()
+  out$rawhypersdlowerbound <- NA
   out$hypersdtransform <- 'exp(rawhypersd * 2 ) .* sdscale'
   out$stationarymeanprior <- NA
   out$stationaryvarprior <- NA

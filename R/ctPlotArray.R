@@ -63,7 +63,8 @@ ctPlotArray <- function(yarray,x,
   
   plotargs<-plotcontrol
   plotargs$x <- x
-  if(!separate && is.null(plotcontrol$ylim)) plotargs$ylim = range(yarray,na.rm=TRUE)
+  if(!separate && is.null(plotcontrol$ylim)) plotargs$ylim = range(yarray,na.rm=TRUE)+ c(0,
+    (max(yarray,na.rm=TRUE) - min(yarray,na.rm=TRUE)) /3)
   plotargs$xlim = range(x,na.rm=TRUE)
   
   ctpolyargs<-polygoncontrol

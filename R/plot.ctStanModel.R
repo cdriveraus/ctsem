@@ -31,8 +31,12 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,samples=1e6, hypersd='margina
     
     #hypersd
       if(hypersd[1]=='marginalise'){
-    hypersdpriorbase<-  stats::rnorm(samples*2)
-    hypersdprior<-hypersdpriorbase[hypersdpriorbase>0] * m$sdscale[rowi]
+    rawhypersd<-  stats::rnorm(samples)
+    if(!is.na(x$rawhypersdlowerbound)) rawhypersd <- rawhypersd[rawhypersd>x$rawhypersdlowerbound]
+    sdscale <- m$sdscale[rowi]
+    tform <- gsub('.*', '*',x$hypersdtransform,fixed=TRUE)
+    hypersdprior<-eval(parse(text=tform))
+    
     samples<-length(hypersdprior) #adjust number of samples because of random n > 0
       } else if(is.na(as.numeric(hypersd))) stop('hypersd argument is ill specified!') else {
         hypersdprior <- rep(hypersd,samples)
