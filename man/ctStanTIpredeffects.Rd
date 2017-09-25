@@ -5,15 +5,16 @@
 \title{Get time independent predictor effect estimates}
 \usage{
 ctStanTIpredeffects(fit, returndifference = FALSE, probs = c(0.025, 0.5,
-  0.975), whichTIpreds = 1, whichpars = "all", plot = FALSE, ...)
+  0.975), whichTIpreds = 1, parmatrices = TRUE, whichpars = "all",
+  nsamples = 200, timeinterval = 1, plot = FALSE, ...)
 }
 \arguments{
 \item{fit}{fit object from \code{\link{ctStanFit}}}
 
 \item{returndifference}{logical. If FALSE, absolute parameter values are returned. 
 If TRUE, only the effect of the covariate (i.e. without the average value of the parameter)
-are returned. The former can be easier to interpret, but the latter are more likely to fit on 
-a single plot.}
+are returned. The former can be easier to interpret, but the latter are more likely to fit multiple plots together. 
+Not used if \code{parmatrices=TRUE}.}
 
 \item{probs}{numeric vector of quantile probabilities from 0 to 1. Specify 3
 values if plotting, the 2nd will be drawn as a line with uncertainty polygon
@@ -26,12 +27,21 @@ predictor has been included, then you can specify both the linear and squared ve
 The x axis of the plot (if generated) will be based off the first indexed predictor. To 
 check what predictors are in the model, run \code{fit$ctstanmodel$TIpredNames}.}
 
+\item{parmatrices}{Logical. If TRUE (default), the \code{\link{ctStanParMatrices}} function
+is used to return an expanded range of possible matrices of interest.}
+
 \item{whichpars}{Integer vector specifying Which of the individually varying subject
-level parameters to compute effects on. 
-'auto' uses all available, which is equivalent to 
+level parameters to compute effects on. Only used if \code{parmatrices=FALSE} .
+'all' uses all available, which is equivalent to 
 \code{1:sum(fit$ctstanmodel$pars$indvarying)}.
 The integer corresponding to specific parameters can be found as follows, replacing \code{fit} as appropriate:
 \code{fit$ctstanmodel$pars[fit$ctstanmodel$pars$indvarying,'param']}.}
+
+\item{nsamples}{Positive integer specifying the maximum number of samples to use. 
+Character string 'all' can also be used.}
+
+\item{timeinterval}{positive numeric indicating time interval to use for discrete time parameter matrices,
+if \code{parmatrices=TRUE}.}
 
 \item{plot}{Logical. If TRUE, nothing is returned but instead \code{\link{ctPlotArray}}
 is used to plot the output instead.}
