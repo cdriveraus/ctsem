@@ -10,8 +10,9 @@
 #' @export
 #'
 #' @examples
+#' ctStanParMatrices(ctstantestfit)
 ctStanParMatrices <- function(model, parvalues, timeinterval=1){
-  if(class(model)=='ctStanFit') model<- fit$ctstanmodel
+  if(class(model)=='ctStanFit') model<- model$ctstanmodel
   if(class(model) !='ctStanModel') stop('not a ctStanModel')
   
   valuespec <- model$pars[is.na(model$pars$param),]

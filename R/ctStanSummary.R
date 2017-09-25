@@ -167,12 +167,13 @@ removeindices <- c(removeindices,which((rownames(parmats) %in% c('MANIFESTVAR','
 removeindices <- c(removeindices,which((rownames(parmats) %in% c('T0VARcor','DIFFUSIONcor','dtDIFFUSIONcor','asymDIFFUSIONcor') & 
     parmats[,'Row'] == parmats[,'Col'])))
 
-parmatarray <- parmatarray[-removeindices,]
+parmats <- parmats[-removeindices,]
 
 
 out$parmatrices=round(parmats,digits=digits)
 
-out$parmatNote=paste0('parmatrices calculated with time interval of ', timeinterval,' for discrete time (dt) matrices. Asymptotic (asym) matrices based on infinitely large time interval.')
+out$parmatNote=paste0('parmatrices calculated with time interval of ', timeinterval,' for discrete time (dt) matrices. ',
+'Covariance related matrices shown as covariance matrices, correlations have (cor) suffix. Asymptotic (asym) matrices based on infinitely large time interval.')
 
 
 # out$posteriorpredictive=round(s$summary[c(grep('stateppll',rownames(s$summary))),
