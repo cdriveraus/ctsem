@@ -14,7 +14,9 @@ ctStanParMatrices(model, parvalues, timeinterval = 1)
 \item{timeinterval}{time interval to use for discrete time (dt) matrix calculations.}
 }
 \value{
-A list containing the various matrices used for computing the likelihood of a continuous time dynamic model.
+A list containing various matrices related to a continuous time dynamic model. 
+Matrices with "dt" in front refers to discrete time, "asym" refers to asymptotic (time interval = infinity), 
+and "cor" refers to correlations.
 }
 \description{
 Returns model equation matrices from a ctStanModel or ctStanFit, and vector of values for free parameters.

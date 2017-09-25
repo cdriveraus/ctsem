@@ -4,7 +4,9 @@
 #' @param parvalues vector of parameter values to assign to any free parameters in the model
 #' @param timeinterval time interval to use for discrete time (dt) matrix calculations.
 #'
-#' @return A list containing the various matrices used for computing the likelihood of a continuous time dynamic model.
+#' @return A list containing various matrices related to a continuous time dynamic model. 
+#' Matrices with "dt" in front refers to discrete time, "asym" refers to asymptotic (time interval = infinity), 
+#' and "cor" refers to correlations. 
 #' @export
 #'
 #' @examples
@@ -70,12 +72,14 @@ sdcovchol2cov <- function(mat, cholesky){
   }
   
 DIFFUSION = sdcovchol2cov(DIFFUSION,0)
+DIFFUSIONcor = stats::cov2cor(DIFFUSION)
 T0VAR=sdcovchol2cov(T0VAR,0)
+T0VARcor = stats::cov2cor(T0VAR)
 MANIFESTVAR=MANIFESTVAR^2
 
 DRIFTHATCH<-DRIFT %x% diag(nrow(DRIFT)) + diag(nrow(DRIFT)) %x% DRIFT
 asymDIFFUSION<-matrix(-solve(DRIFTHATCH, c(DIFFUSION)), nrow=nrow(DRIFT))
-
+asymDIFFUSIONcor <- cov2cor(asymDIFFUSION)
 
 ln=model$latentNames
 mn=model$manifestNames
@@ -96,13 +100,16 @@ dimnames(LAMBDA)=list(mn,ln)
 dtDRIFT=expm(DRIFT * timeinterval)
 
 dtDIFFUSION = asymDIFFUSION - (dtDRIFT %*% asymDIFFUSION %*% t(dtDRIFT ))
+dtDIFFUSIONcor = cov2cor(dtDIFFUSION)
 
 dtCINT = (solve(DRIFT) %*%(dtDRIFT - diag(2)) %*% (CINT))
 
 asymCINT = -solve(DRIFT) %*% CINT
 
-out<-list(DRIFT=DRIFT,dtDRIFT=dtDRIFT, T0VAR=T0VAR,DIFFUSION=DIFFUSION,dtDIFFUSION=dtDIFFUSION,
-  asymDIFFUSION=asymDIFFUSION,CINT=CINT,dtCINT=dtCINT, asymCINT=asymCINT, T0MEANS=T0MEANS,
+out<-list(DRIFT=DRIFT,dtDRIFT=dtDRIFT, T0VAR=T0VAR, T0VARcor=T0VARcor, 
+  DIFFUSION=DIFFUSION, DIFFUSIONcor=DIFFUSIONcor, dtDIFFUSION=dtDIFFUSION, dtDIFFUSIONcor=dtDIFFUSIONcor,
+  asymDIFFUSION=asymDIFFUSION, asymDIFFUSIONcor=asymDIFFUSIONcor, 
+  CINT=CINT,dtCINT=dtCINT, asymCINT=asymCINT, T0MEANS=T0MEANS,
   MANIFESTMEANS=MANIFESTMEANS, LAMBDA=LAMBDA)
 
 if('MANIFESTVAR' %in% model$pars$matrix) {
