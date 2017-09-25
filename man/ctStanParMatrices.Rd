@@ -21,3 +21,6 @@ and "cor" refers to correlations.
 \description{
 Returns model equation matrices from a ctStanModel or ctStanFit, and vector of values for free parameters.
 }
+\examples{
+ctStanParMatrices(ctstantestfit,rep(0,16))
+}

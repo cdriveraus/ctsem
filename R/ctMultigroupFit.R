@@ -3,9 +3,9 @@
 #' Fits a single continuous time structural equation models to multiple groups (where each group contains 1 or more subjects),
 #' by default, all parameters are free across groups.  Can also be used to easily estimate seperate models for each group.
 #' 
-#' @param datawide Wide format data, as used in \code{\link{ctFit}}.  See \code{\link{ctLongToWide}} to
+#' @param dat Wide format data, as used in \code{\link{ctFit}}.  See \code{\link{ctLongToWide}} to
 #' easily convert long format data.
-#' @param groupings For wide format: Vector of character labels designating group membership for each row of datawide.  
+#' @param groupings For wide format: Vector of character labels designating group membership for each row of dat.  
 #' For long format: Named list of groups, with each list element containing a vector of subject id's for the group.
 #' In both cases, group names will be prefixed on relevant parameter estimates in the summary.
 #' @param ctmodelobj Continuous time model to fit, specified via \code{\link{ctModel}} function.
@@ -46,7 +46,7 @@
 #' freemodel$LAMBDA[3,1]<-'groupfree'
 #' groups<-paste0('g',rep(1:2, each=10),'_')
 #' 
-#' multif<-ctMultigroupFit(datawide=ctExample4, groupings=groups,
+#' multif<-ctMultigroupFit(dat=ctExample4, groupings=groups,
 #'                        ctmodelobj=basemodel, freemodel=freemodel)
 #' summary(multif)
 #' 
@@ -57,7 +57,7 @@
 #' fixedmodel$LAMBDA[2,1]<-'groupfixed'
 #' groups<-paste0('g',rep(1:2, each=10),'_')
 #' 
-#' multif<-ctMultigroupFit(datawide=ctExample4, groupings=groups,
+#' multif<-ctMultigroupFit(dat=ctExample4, groupings=groups,
 #'                        ctmodelobj=basemodel, fixedmodel=fixedmodel)
 #' summary(multif) 
 #'}
@@ -67,13 +67,13 @@
 #' @export
 
 
-ctMultigroupFit<-function(datawide,groupings,ctmodelobj,dataform='wide',fixedmodel=NA,freemodel=NA,
+ctMultigroupFit<-function(dat,groupings,ctmodelobj,dataform='wide',fixedmodel=NA,freemodel=NA,
  carefulFit=TRUE, omxStartValues=NULL,
   retryattempts=15,showInits=FALSE,...){
 
   if(dataform=='wide') if(any(suppressWarnings(!is.na(as.numeric(groupings))))) stop("grouping variable must not contain purely numeric items")
-  if(dataform=='wide') if(length(groupings)!= nrow(datawide)) stop('length of groupings does not equal number of rows of datawide')
-  if(dataform=='long') if(length(unlist(groupings)) != length(unique(datawide[,'id']))) stop('groupings list does not contain the right number of subjects!')
+  if(dataform=='wide') if(length(groupings)!= nrow(dat)) stop('length of groupings does not equal number of rows of dat')
+  if(dataform=='long') if(length(unlist(groupings)) != length(unique(dat[,'id']))) stop('groupings list does not contain the right number of subjects!')
   if(dataform=='long') if(any(suppressWarnings(!is.na(as.numeric(names(groupings)))))) stop("grouping variable must not contain purely numeric items")
   
   if(all(is.na(fixedmodel))) fixedmodel<-ctmodelobj #so that it is not null or na
@@ -87,8 +87,8 @@ ctMultigroupFit<-function(datawide,groupings,ctmodelobj,dataform='wide',fixedmod
   if(dataform=='long') groups <- unique(names(groupings))
   for(i in groups){ #for every specified group
 
-    if(dataform=='wide') singlegroup<-datawide[which(groupings == i),,drop=FALSE] #data for the group
-    if(dataform=='long') singlegroup<-datawide[which(datawide[,'id'] %in% groupings[[i]]),,drop=FALSE] #data for the group
+    if(dataform=='wide') singlegroup<-dat[which(groupings == i),,drop=FALSE] #data for the group
+    if(dataform=='long') singlegroup<-dat[which(dat[,'id'] %in% groupings[[i]]),,drop=FALSE] #data for the group
     
     singlectspec<-ctmodelobj
     
