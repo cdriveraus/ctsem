@@ -145,7 +145,7 @@
 ctFit  <- function(dat, ctmodelobj, dataform='wide',
   objective='auto', 
   stationary=c('T0TRAITEFFECT','T0TIPREDEFFECT'), 
-  optimizer='SLSQP', 
+  optimizer='CSOLNP', 
   retryattempts=15, iterationSummary=FALSE, carefulFit=TRUE,  
   carefulFitWeight=100,
   showInits=FALSE, asymptotes=FALSE,
@@ -289,7 +289,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   ### check single subject model adequately constrained and warn
   
   if(nrow(datawide)==1 & 'T0VAR' %in% stationary ==FALSE & 'T0MEANS' %in% stationary == FALSE & 
-      all(is.na(suppressWarnings(as.numeric(ctmodelobj$T0VAR[lower.tri(ctmodelobj$T0VAR,diag=T)])))) & 
+      all(is.na(suppressWarnings(as.numeric(ctmodelobj$T0VAR[lower.tri(ctmodelobj$T0VAR,diag=TRUE)])))) & 
       all(is.na(suppressWarnings(as.numeric(ctmodelobj$T0MEANS)))) & fit == TRUE) stop('Cannot estimate model for single individuals unless either 
         T0VAR or T0MEANS matrices are fixed, or set to stationary')
   
@@ -975,7 +975,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   if(largeAlgebras==TRUE){
     
     if(meanIntervals==TRUE) datawide[,paste0('dT', 1:(Tpoints-1))] <- 
-        matrix(apply(datawide[,paste0('dT', 1:(Tpoints-1)),drop=FALSE],2,mean,na.rm=T), byrow=T,nrow=nrow(datawide), ncol=(Tpoints-1))
+        matrix(apply(datawide[,paste0('dT', 1:(Tpoints-1)),drop=FALSE],2,mean,na.rm=TRUE), byrow=TRUE,nrow=nrow(datawide), ncol=(Tpoints-1))
     
     uniqueintervals<-c(sort(unique(c(datawide[,paste0('dT', 1:(Tpoints-1))]))))
     
@@ -983,10 +983,10 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
       function(x) match(x, uniqueintervals)),ncol=(Tpoints-1))
     colnames(intervalsi)<-paste0('intervalID_T',1:(Tpoints-1))
     
-    if(objective != 'cov') intervalID_T<-mxMatrix(name='intervalID_T',nrow=1,ncol=(Tpoints-1), free=F,
+    if(objective != 'cov') intervalID_T<-mxMatrix(name='intervalID_T',nrow=1,ncol=(Tpoints-1), free=FALSE,
       labels=paste0('data.intervalID_T',1:(Tpoints-1)))
     
-    if(objective == 'cov') intervalID_T<-mxMatrix(name='intervalID_T',nrow=1,ncol=(Tpoints-1), free=F,
+    if(objective == 'cov') intervalID_T<-mxMatrix(name='intervalID_T',nrow=1,ncol=(Tpoints-1), free=FALSE,
       values=intervalsi[1,])
     
     datawide<-cbind(datawide,intervalsi)
@@ -1021,7 +1021,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
         list(theExpression = parse(text = fullAlgString)[[1]])))
     }
     
-    nlatent<-mxMatrix(name='nlatent',nrow=1,ncol=1,free=F,values=n.latent)
+    nlatent<-mxMatrix(name='nlatent',nrow=1,ncol=1,free=FALSE,values=n.latent)
     
     EXPalgs<-list(nlatent, intervalID_T, discreteDRIFTtpoints, discreteDRIFTbig, discreteDRIFTallintervals)
     
@@ -1057,7 +1057,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
     #         list(theExpression = parse(text = fullAlgString)[[1]])))
     #     }
     #     
-    #     nlatent<-mxMatrix(name='nlatent',nrow=1,ncol=1,free=F,values=n.latent)
+    #     nlatent<-mxMatrix(name='nlatent',nrow=1,ncol=1,free=FALSE,values=n.latent)
     
     # discreteDRIFTHATCHalgs<-list(discreteDRIFTHATCHtpoints, discreteDRIFTHATCHbig, discreteDRIFTHATCHallintervals)
     #     discreteDRIFTHATCHalgs<-list(DRIFTHATCH)
@@ -1167,7 +1167,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   
   if(largeAlgebras==FALSE){
     if(meanIntervals==TRUE) datawide[,paste0('dT', 1:(Tpoints-1))] <- 
-        matrix(apply(datawide[,paste0('dT', 1:(Tpoints-1))],2,mean,na.rm=T), byrow=T,nrow=nrow(datawide), ncol=(Tpoints-1))
+        matrix(apply(datawide[,paste0('dT', 1:(Tpoints-1))],2,mean,na.rm=TRUE), byrow=TRUE,nrow=nrow(datawide), ncol=(Tpoints-1))
     
     ######## discreteDRIFT
     #discreteDRIFTallintervals
@@ -1894,7 +1894,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
     covData<-matrix(Matrix::nearPD(stats::cov(datawide[,manifests],use='pairwise.complete.obs'))[["mat"]],nrow=length(manifests),
       dimnames = list(manifests,manifests))
     
-    meanData <- apply(datawide[,manifests,drop=FALSE],2,mean,na.rm=T)
+    meanData <- apply(datawide[,manifests,drop=FALSE],2,mean,na.rm=TRUE)
     model<-OpenMx::mxModel(model, mxData(covData, type='cov', means=meanData, numObs=nrow(datawide)),
       mxExpectationRAM(M='M'),
       mxFitFunctionML()
@@ -1939,7 +1939,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
     #         values = CINT$values, 
     #         free = CINT$free, nrow=n.latent, ncol=n.subjects, name = "randIntercepts")
     #       
-    #         model<-OpenMx::mxModel(model,'CINT',remove=T)
+    #         model<-OpenMx::mxModel(model,'CINT',remove=TRUE)
     #        model<-OpenMx::mxModel(model,
     #          randIntercepts,
     #          # mxAlgebra(name='tCINTmatrix',t(CINTmatrix)),
@@ -2051,7 +2051,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   #         mxAlgebra(t(F%*%(solve(bigI - A))%*%t(M)), name = "expMean"), 
   #         mxMatrix(type = "Iden", nrow = nrow(Alabels), ncol = ncol(Alabels), name = "bigI"), 
   #         #                         mxData(observed = datawide, type = "raw"), 
-  #         mxMatrix(type='Full', name='FIMLpenaltyweight', nrow=1, ncol=1, values=FIMLpenaltyweight, free=F), 
+  #         mxMatrix(type='Full', name='FIMLpenaltyweight', nrow=1, ncol=1, values=FIMLpenaltyweight, free=FALSE), 
   #         mxFitFunctionML(vector=TRUE), 
   #         penalties, 
   #         mxAlgebra(sum(fitfunction)+penalties, name='m2ll'), #
@@ -2131,6 +2131,8 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   }
   
   model<-mxOption(model,'RAM Inverse Optimization', 'No')
+  model<-mxOption(model, 'Nudge zero starts', FALSE)
+  # model<-mxOption(model, 'Gradient step size', 1e-4)
   
   ###fit model
   if(!is.null(omxStartValues)) model<-omxSetParameters(model,
@@ -2144,7 +2146,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
       manifestTraitvarExtension=manifestTraitvarExtension,weighting=carefulFitWeight) #fit with the penalised likelihood
     #         mxobj<-OpenMx::mxRun(model) #fit with the penalised likelihood
     
-    # message(paste0('carefulFit penalisation:  ', mxEval(ctsem.penalties, mxobj,compute=T),'\n'))
+    # message(paste0('carefulFit penalisation:  ', mxEval(ctsem.penalties, mxobj,compute=TRUE),'\n'))
     newstarts <- try(OpenMx::omxGetParameters(mxobj)) #get the params
     if(showInits==TRUE) {
       message('Generated start values from carefulFit=TRUE')
@@ -2161,12 +2163,13 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   
   if(fit == TRUE){ #but otherwise...  
     
-    if(useOptimizer==TRUE) mxobj <- mxTryHard(model, initialTolerance=1e-14,
+    if(useOptimizer==TRUE) mxobj <- mxTryHardctsem(model, initialTolerance=1e-14,
       # finetuneGradient=FALSE,
       initialGradientIterations=1,
+      initialGradientStepSize = 1e-6,
       showInits=showInits, checkHess=TRUE, greenOK=FALSE, 
       iterationSummary=iterationSummary, bestInitsOutput=FALSE, verbose=verbose,
-      extraTries=retryattempts, loc=1, scale=0.1, paste=FALSE)
+      extraTries=retryattempts, loc=.5, scale=0.2, paste=FALSE)
     
     if(useOptimizer==FALSE) mxobj <- OpenMx::mxRun(model,useOptimizer=useOptimizer)
   }
@@ -2174,8 +2177,8 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   
   if(plotOptimization==TRUE){
     
-    checkpoints<-utils::read.table(file='ctsem.omx', header=T, sep='\t')
-    if(carefulFit==TRUE) checkpoints<-rbind(checkpoints, NA, NA, NA, NA, NA, utils::read.table(file='ctsemCarefulfit.omx', header=T, sep='\t'))
+    checkpoints<-utils::read.table(file='ctsem.omx', header=TRUE, sep='\t')
+    if(carefulFit==TRUE) checkpoints<-rbind(checkpoints, NA, NA, NA, NA, NA, utils::read.table(file='ctsemCarefulfit.omx', header=TRUE, sep='\t'))
     mfrow<-graphics::par()$mfrow
     graphics::par(mfrow=c(3, 3))
     for(i in 6:ncol(checkpoints)) {
