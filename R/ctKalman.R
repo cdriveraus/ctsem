@@ -240,6 +240,11 @@ ctKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
   legendlty<-c()
   legendpch<-c()
   
+  #when not set to auto, must define 'new' vector as the user specified vector
+  colvecnew <- colvec
+  ltyvecnew<-ltyvec
+  pchvecnew <- pchvec
+  
 
   for(si in 1:length(subjects)){#subjects
     subjecti = subjects[si]

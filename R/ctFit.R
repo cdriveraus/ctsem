@@ -4,6 +4,7 @@
 #' to a dataset containing one or more subjects.
 #' @param dat the data you wish to fit a ctsem model to, in either wide format (one individual per row), 
 #' or long format (one time point of one individual per row). See details. 
+#' @param dataform either "wide" or "long" depending on which input format you wish to use for the data. See details and or vignette.
 #' @param ctmodelobj the ctsem model object you wish to use, specified via the \code{\link{ctModel}} function.
 #' @param fit if TRUE, output only openmx model without fitting
 #' @param nofit Deprecated. If FALSE, output only openmx model without fitting
@@ -148,7 +149,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   retryattempts=15, iterationSummary=FALSE, carefulFit=TRUE,  
   carefulFitWeight=100,
   showInits=FALSE, asymptotes=FALSE,
-  meanIntervals=FALSE, plotOptimization=F, 
+  meanIntervals=FALSE, plotOptimization=FALSE, 
   crossEffectNegStarts=TRUE,
   fit = TRUE, nofit=FALSE, discreteTime=FALSE, verbose=0, useOptimizer=TRUE,
   omxStartValues=NULL, transformedParams=TRUE,

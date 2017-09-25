@@ -32,6 +32,7 @@ ctPlotArray <- function(yarray,x,
   legend=TRUE,legendcontrol=list(x='topright'),
   polygon=TRUE, polygonalpha=.1,polygoncontrol=list(border=NA,steps=50)){
   
+  # browser()
   separate=FALSE
   nvars<-dim(yarray)[2]
   

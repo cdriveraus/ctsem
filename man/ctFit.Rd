@@ -8,7 +8,7 @@ ctFit(dat, ctmodelobj, dataform = "wide", objective = "auto",
   stationary = c("T0TRAITEFFECT", "T0TIPREDEFFECT"), optimizer = "SLSQP",
   retryattempts = 15, iterationSummary = FALSE, carefulFit = TRUE,
   carefulFitWeight = 100, showInits = FALSE, asymptotes = FALSE,
-  meanIntervals = FALSE, plotOptimization = F,
+  meanIntervals = FALSE, plotOptimization = FALSE,
   crossEffectNegStarts = TRUE, fit = TRUE, nofit = FALSE,
   discreteTime = FALSE, verbose = 0, useOptimizer = TRUE,
   omxStartValues = NULL, transformedParams = TRUE, datawide = NA)
@@ -18,6 +18,8 @@ ctFit(dat, ctmodelobj, dataform = "wide", objective = "auto",
 or long format (one time point of one individual per row). See details.}
 
 \item{ctmodelobj}{the ctsem model object you wish to use, specified via the \code{\link{ctModel}} function.}
+
+\item{dataform}{either "wide" or "long" depending on which input format you wish to use for the data. See details and or vignette.}
 
 \item{objective}{'auto' selects either 'Kalman', if fitting to single subject data, 
 or 'mxRAM' for multiple subjects. For single subject data, 'Kalman' uses the \code{mxExpectationStateSpace }
