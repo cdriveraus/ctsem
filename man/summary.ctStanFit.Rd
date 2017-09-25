@@ -4,10 +4,15 @@
 \alias{summary.ctStanFit}
 \title{summary.ctStanFit}
 \usage{
-\method{summary}{ctStanFit}(object, ...)
+\method{summary}{ctStanFit}(object, timeinterval = 1, digits = 3, ...)
 }
 \arguments{
 \item{object}{fit object from \code{\link{ctStanFit}}, of class ctStanFit.}
+
+\item{timeinterval}{positive numeric indicating time interval to use for discrete time parameter calculations
+reported in summary.}
+
+\item{digits}{integer denoting number of digits to report.}
 
 \item{...}{Unused at present.}
 }
