@@ -20,7 +20,9 @@ Manuel C. Voelkle \\ Humboldt University Berlin \\ Max Planck Institute for Huma
 \Shorttitle{Continuous Time Structural Equation Modelling With \pkg{ctsem}} %% a short title (if necessary)
 
 \Abstract{
-We introduce \pkg{ctsem} \citep{driver2017continuous}, an \proglang{R} package for continuous time structural equation modelling of panel (\textit{N} > 1) and time series (\textit{N} = 1) data, using full information maximum likelihood. Most dynamic models (e.g., cross-lagged panel models) in the social and behavioural sciences are discrete time models. An assumption of discrete time models is that time intervals between measurements are equal, and that all subjects were assessed at the same intervals. Violations of this assumption are often ignored due to the difficulty of accounting for varying time intervals, therefore parameter estimates can be biased and the time course of effects becomes ambiguous. By using stochastic differential equations to estimate an underlying continuous process, continuous time models allow for any pattern of measurement occasions. By interfacing to \pkg{OpenMx}, \pkg{ctsem} combines the flexible specification of structural equation models with the enhanced data gathering opportunities and improved estimation of continuous time models. \pkg{ctsem} can estimate relationships over time for multiple latent processes, measured by multiple noisy indicators with varying time intervals between observations. Within and between effects are estimated simultaneously by modelling both observed covariates and unobserved heterogeneity. Exogenous shocks with different shapes, group differences, higher order diffusion effects and oscillating processes can all be simply modeled. We first introduce and define continuous time models, then show how to specify and estimate a range of continuous time models using \pkg{ctsem}.     
+Note: This paper introduces the frequentist, maximum likelihood based form of ctsem. For the Bayesian implementation, see \href{http://www.researchgate.net/publication/310747801_Hierarchical_Bayesian_Continuous_Time_Dynamic_Modeling}{Hierarchical Bayesian Continuous Time Dynamic Modelling} and \href{http://cran.r-project.org/web/packages/ctsem/vignettes/hierarchical.pdf}{Introduction to Hierarchical Continuous Time Dynamic Modelling With ctsem}. 
+
+We introduce \pkg{ctsem} \citep{driver2017continuous}, an \proglang{R} package for continuous time structural equation modelling of panel (\textit{N} > 1) and time series (\textit{N} = 1) data using full information maximum likelihood. Most dynamic models (e.g., cross-lagged panel models) in the social and behavioural sciences are discrete time models. An assumption of discrete time models is that time intervals between measurements are equal, and that all subjects were assessed at the same intervals. Violations of this assumption are often ignored due to the difficulty of accounting for varying time intervals, therefore parameter estimates can be biased and the time course of effects becomes ambiguous. By using stochastic differential equations to estimate an underlying continuous process, continuous time models allow for any pattern of measurement occasions. By interfacing to \pkg{OpenMx}, \pkg{ctsem} combines the flexible specification of structural equation models with the enhanced data gathering opportunities and improved estimation of continuous time models. \pkg{ctsem} can estimate relationships over time for multiple latent processes, measured by multiple noisy indicators with varying time intervals between observations. Within and between effects are estimated simultaneously by modelling both observed covariates and unobserved heterogeneity. Exogenous shocks with different shapes, group differences, higher order diffusion effects and oscillating processes can all be simply modeled. We first introduce and define continuous time models, then show how to specify and estimate a range of continuous time models using \pkg{ctsem}.     
 }
 
 \Keywords{time series, longitudinal modelling, panel data, state space, structural equation modelling, continuous time, stochastic differential equation, dynamic models, Kalman filter, \proglang{R}}
@@ -120,7 +122,7 @@ library(knitr)
 render_sweave()
 set.seed(22)
 knit_hooks$set(crop = hook_pdfcrop)
-opts_chunk$set(fig.path = 'figures/plots-', warning = FALSE, fig.align = 'center', width.cutoff = 80, fig.show = 'hold', eval = TRUE, echo = TRUE, message = FALSE, background = "white", prompt = TRUE, highlight = FALSE, comment = NA, tidy = FALSE, out.truncate = 80)
+opts_chunk$set(fig.path = 'figures/plots-', warning = FALSE, fig.align = 'center', width.cutoff = 80, fig.show = 'hold', eval = TRUE, echo = TRUE, message = FALSE, background = "white", prompt = FALSE, highlight = FALSE, comment = NA, tidy = FALSE, out.truncate = 80)
 options(replace.assign = TRUE, width = 80, prompt = "R> ", scipen = 12, digits = 3,crop=TRUE)
 
 
@@ -129,7 +131,7 @@ Sys.setenv(TEXINPUTS = getwd(),
   BIBINPUTS = getwd(),
   BSTINPUTS = getwd())
 @
-
+\newpage
 \section[Introduction]{Introduction}\nopagebreak
 Dynamic models, such as the well known vector autoregressive model, are widely used in the social and behavioural sciences. They allow us to see how fluctuations in processes relate to later values of those processes, the effect of an input at a particular time, how the various factors relate to average levels of the processes, and many other possibilities.
 % are widely used in the social and behavioural sciences \citep{mcardle2009latent}. 
@@ -279,10 +281,10 @@ For the latest development versions, \url{http://github.com/cdriveraus/ctsem} pr
 Estimating continuous time models via \pkg{ctsem} comprises four steps: First, the data must be adequately prepared (Section \ref{sec:datastructure}). Then, the continuous time model must be specified by creating a \pkg{ctsem} model object using the function \code{ctModel} (Sections \ref{sec:modelspec} and \ref{sec:extensions}). After specification, the model must be fit to the data using the function \code{ctFit}, after which \code{summary} and \code{plot} methods may be used to examine parameter estimates, standard errors, and fit statistics (Section \ref{sec:modelfit}). We will discuss these steps in the following.  
 
 \section{Data structure} \label{sec:datastructure}\nopagebreak
-The internal functions of \code{ctFit} use data in a wide layout, with all data for each individual in a single row, including the time intervals between measurement occasions for this individual. Because this is the format used internally when fitting, for the sake of transparency it is also required as the input format, and is detailed below in Section \ref{sec:datawide}. In some cases it may however be simpler to maintain data in a long format, and use the \code{ctLongToWide} and \code{ctIntervalise} functions we provide to convert from long format with absolute times to wide format with time intervals. This functionality is discussed in Section \ref{sec:datalong}. The choice of time scale and treatment of the initial time point can influence results and will be discussed in Section \ref{sec:datatimescale}, though first time users may find it easier to return to later.
+Both a wide format (with time intervals) and a long format (with absolute times) are, as of version 2.5.0, available as input formats for ctsem. Wide format is the default, though \code{dataform='long'} can be specified in the arguments to the \code{ctFit} function. In general, a long format may be easier to work with, though a wide format may match existing panel data configurations in some cases. Conversion from long format with absolute times to wide format with is possible via the \code{ctLongToWide} and \code{ctIntervalise} functions, and conversion from wide to long is possible using the \code{ctWideToLong} and \code{ctDeintervalise} functions. The choice of time scale and treatment of the initial time point can influence results and will be discussed in Section \ref{sec:datatimescale}, though first time users may find it easier to return to later.
 
 \subsection{Wide format} \label{sec:datawide}\nopagebreak 
-This is the data format required when fitting a model with \pkg{ctsem}. The example data below depicts two individuals, observed at three occasions, on three manifest variables, one time dependent predictor, and two time independent predictors. A corresponding path diagram of one possible model for this data is shown in Figure \ref{fig:pathdiagramtwoprocessfull}. The data are ordered into blocks as follows: Manifest process variables, time dependent predictors, time intervals, time independent predictors. Manifest variables are grouped by \textit{measurement occasion} and ordered within this by \textit{variable}. In the example there are three manifest variables (Y1, Y2, Y3) assessed across three measurement occasions. In this case, the first three columns of the data (Y1\_T0, Y2\_T0, Y3\_T0) represent the three manifest variables at the first measurement occasion, time point 0, followed by the columns of the second measurement occasion and so on. Note that measurement occasions subsequent to the first may occur at different times for different individuals.  Also note the naming convention, wherein the variable name is followed by an underscore and T, followed by an integer denoting the measurement occasion, beginning at T0.  After the manifest variables, any time dependent predictors (there need not be any) are also grouped by \textit{measurement occasion} and ordered within this by \textit{variable} (changed since v2.2.0). These are named in the same way as the manifest variables, with the predictor name preceded by an underscore and T, then the measurement occasion integer beginning from 0. In the data below and the model in Figure \ref{fig:pathdiagramtwoprocessfull}, there is only one time dependent predictor, TD1, though more could be added. After the time dependent predictors, \textit{T}-1 time intervals are specified in chronological order, with column names dT followed by the number of the measurement occasion occurring \textit{after} the interval . That is, dT1 refers to the time interval between the first measurement occasion, T0, and the second, T1.  In continuous time modelling it is imperative to know the time point at which an observation takes place. Thus, while missing values on observed scores are no problem, missing values on time intervals are not allowed. Finally, two time independent predictors (TI1, TI2 -- the naming here is only with variable names) are contained in the last two columns of the data structure.
+The example data below depicts two individuals, observed at three occasions, on three manifest variables, one time dependent predictor, and two time independent predictors. A corresponding path diagram of one possible model for this data is shown in Figure \ref{fig:pathdiagramtwoprocessfull}. The data are ordered into blocks as follows: Manifest process variables, time dependent predictors, time intervals, time independent predictors. Manifest variables are grouped by \textit{measurement occasion} and ordered within this by \textit{variable}. In the example there are three manifest variables (Y1, Y2, Y3) assessed across three measurement occasions. In this case, the first three columns of the data (Y1\_T0, Y2\_T0, Y3\_T0) represent the three manifest variables at the first measurement occasion, time point 0, followed by the columns of the second measurement occasion and so on. Note that measurement occasions subsequent to the first may occur at different times for different individuals.  Also note the naming convention, wherein the variable name is followed by an underscore and T, followed by an integer denoting the measurement occasion, beginning at T0.  After the manifest variables, any time dependent predictors (there need not be any) are also grouped by \textit{measurement occasion} and ordered within this by \textit{variable} (changed since v2.2.0). These are named in the same way as the manifest variables, with the predictor name preceded by an underscore and T, then the measurement occasion integer beginning from 0. In the data below and the model in Figure \ref{fig:pathdiagramtwoprocessfull}, there is only one time dependent predictor, TD1, though more could be added. After the time dependent predictors, \textit{T}-1 time intervals are specified in chronological order, with column names dT followed by the number of the measurement occasion occurring \textit{after} the interval . That is, dT1 refers to the time interval between the first measurement occasion, T0, and the second, T1.  In continuous time modelling it is imperative to know the time point at which an observation takes place. Thus, while missing values on observed scores are no problem, missing values on time intervals are not allowed. Finally, two time independent predictors (TI1, TI2 -- the naming here is only with variable names) are contained in the last two columns of the data structure.
 
 \begin {scriptsize}
 <<wideformat, echo = FALSE, out.truncate=100, width.cutoff=100 >>=
@@ -298,15 +300,16 @@ options(width = 80)
 \caption{ \label{fig:pathdiagramtwoprocessfull} The first three time points of a two process continuous time model, with three manifest indicators (blue) measuring 2 latent processes (purple), one time dependent predictor(dark green), and two time independent predictors (light green). Variance / covariance paths are in orange, regressions in red. Light grey paths indicate those that are constrained to a function of other parameters. Note that the value of parameters for all paths to latents at time 2 and higher do not directly represent the effect, rather, the effect depends on a function including the shown parameter and the time interval $\Delta$\textit{t}. Manifest intercepts are not shown.}
 \end{figure}
 
-\subsection{Conversion from long format with absolute times} \label{sec:datalong}\nopagebreak 
-Although \pkg{ctsem} uses the wide format as default data input, often data are stored in long format, that is, each subject has multiple rows of data, with each row reflecting a particular measurement occasion. In addition, time intervals may not be readily available at the individual level, instead the \textit{absolute time} when a measurement took place is recorded. To convert from long format, the data must contain a subject identification column, columns for every observed variable, and a time variable. Unlike for the wide format data, at this point additional unused variables in the long structure are no problem. In the example below, three manifest variables of interest (Y1, Y2, Y3) have been observed across a number of occasions, along with one time dependent predictor (TD1) and two time independent predictors (TI1, TI2). The variable 'time' contains the time when the measurement took place (e.g., in weeks from the beginning of the study). 
+\subsection{Long format with absolute times} \label{sec:datalong}\nopagebreak 
+For the from long format, the data must contain a subject identification column, columns for every observed variable, and a time variable. Unlike for the wide format data, at this point additional unused variables in the long structure are no problem. In the example below, three manifest variables of interest (Y1, Y2, Y3) have been observed across a number of occasions, along with one time dependent predictor (TD1) and two time independent predictors (TI1, TI2). The variable 'time' contains the time when the measurement took place (e.g., in weeks from the beginning of the study). 
 
 <<longformat, include = TRUE, cache = FALSE, echo = FALSE, results = 'markup'>>=
 data('longexample')
 head(longexample, 7)
 @
 
-Given the specific wide structure required by \pkg{ctsem}, and that the time points of measurement may vary across individuals, restructuring from long to wide can be complicated, so we have included functions to manage this. First, the long format data with information on the absolute time of measurement must be converted to the wide format, using the \code{ctLongToWide} function (The number of Tpoints in the generated data is also messaged to the user at this point, to be used in the next step). Then, subject specific time intervals based on the absolute time information must be generated, using the function \code{ctIntervalise}. One should take care that the defaults used by \code{ctIntervalise} for structuring the data and handling missing time information are appropriate.\footnote{By default, when timing information is missing, variables measured at that time are also set to NA for the individual missing the information. Once this is done the actual time of measurement no longer influences parameter estimates or likelihood, so we can set it to an arbitrary minimum interval. By default, the \code{mininterval} argument to \code{ctIntervalise} is set to .001. This argument must be set \textit{lower} than the minimum time interval recorded in the data, so that later observations can be adjusted without problems.}
+\subsection{Converting from long to wide format}
+This is an example of the conversion process, which can also go from wide to long format. First, the long format data with information on the absolute time of measurement must be converted to the wide format, using the \code{ctLongToWide} function (The number of Tpoints in the generated data is also messaged to the user at this point, to be used in the next step). Then, subject specific time intervals based on the absolute time information must be generated, using the function \code{ctIntervalise}. One should take care that the defaults used by \code{ctIntervalise} for structuring the data and handling missing time information are appropriate.\footnote{By default, when timing information is missing, variables measured at that time are also set to NA for the individual missing the information. Once this is done the actual time of measurement no longer influences parameter estimates or likelihood, so we can set it to an arbitrary minimum interval. By default, the \code{mininterval} argument to \code{ctIntervalise} is set to .001. This argument must be set \textit{lower} than the minimum time interval recorded in the data, so that later observations can be adjusted without problems.}
 
 <<longformatconversion, include = TRUE, cache = FALSE, echo = TRUE, results = 'markup'>>=
 data("longexample")
@@ -400,14 +403,14 @@ While not affecting interpretations of the matrix input or output, internally, b
 %To avoid problems with singular matrices, internally, DIFFUSIONlogchol diagonals have .00001 subtracted. This ensures that DIFFUSION diagonals are always positive. When values outside these bounds are input by the user (either as fixed or starting values), the values are adjusted as necessary and the user is informed.
 
 \section{Model estimation} \label{sec:modelfit}\nopagebreak
-The \code{ctFit} function estimates the specified model, calling the data in wide format along with the \pkg{ctsem} model object. For an example, we can fit a similar model to that defined in Section \ref{sec:modelspec}. We first load an example dataset contained in the \pkg{ctsem} package, then use the \code{ctFit} function for parameter estimation. Output information can be obtained via the \code{summary} function. The dataset used in this example, is a simulation of the relation between leisure time and happiness for 100 individuals across 6 measurement occasions.  Because our data here does not use the default manifest variable names of \code{Y1} and \code{Y2}, but rather \code{LeisureTime} and \code{Happiness}, we must include a \code{manifestNames} character vector in our model specification.  Because each manifest directly measures a latent process, we can use the same character vector for the \code{latentNames} argument, though one could specify any character vector of length 2 here, or rely on the defaults of \code{eta1} and \code{eta2}. 
+The \code{ctFit} function estimates the specified model, using the specified data along with the \pkg{ctsem} model object. For an example, we can fit a similar model to that defined in Section \ref{sec:modelspec}. We first load an example dataset contained in the \pkg{ctsem} package, then use the \code{ctFit} function for parameter estimation. Output information can be obtained via the \code{summary} function. The dataset used in this example, is a simulation of the relation between leisure time and happiness for 100 individuals across 6 measurement occasions.  Because our data here does not use the default manifest variable names of \code{Y1} and \code{Y2}, but rather \code{LeisureTime} and \code{Happiness}, we must include a \code{manifestNames} character vector in our model specification.  Because each manifest directly measures a latent process, we can use the same character vector for the \code{latentNames} argument, though one could specify any character vector of length 2 here, or rely on the defaults of \code{eta1} and \code{eta2}. 
 
 <<example1ctfit, include = TRUE, cache = TRUE, echo = TRUE, results = 'hide'>>=
 data("ctExample1")
 example1model <- ctModel(n.latent = 2, n.manifest = 2, Tpoints = 6, 
   manifestNames = c("LeisureTime", "Happiness"), 
   latentNames = c("LeisureTime", "Happiness"), LAMBDA = diag(2))
-example1fit <- ctFit(datawide = ctExample1, ctmodelobj = example1model)
+example1fit <- ctFit(dat = ctExample1, ctmodelobj = example1model)
 @
 
 The output of \code{summary} after fitting such a model includes the matrices representing the continuous time parameters (e.g., DRIFT), a list of estimates of only the free parameters, and fit information from the \code{OpenMx} summary function. Further information can be obtained using the argument \code{verbose=TRUE}, which will return the raw \pkg{OpenMx} parameter values and standard errors, as well as additional summary matrices of discrete time transformations for the time interval $\Delta t = 1$ (e.g., discreteDRIFT), and when appropriate, asymptotic values for the parameters as the time interval $\Delta t$ approaches $\infty $ (e.g., asymDIFFUSION may be taken to represent the total within subject variance of a process). When appropriate, standardised matrices are also output with the suffix `std'.\footnote{Standardisations are based on only the relevant variance, not the total. For instance, DRIFT parameters are standardised using only the within-subject variance, asymDIFFUSION, because DRIFT parameters are typically intended to represent individual, or average individual, temporal dynamics.}   
@@ -430,7 +433,7 @@ Suppose we wanted to test the model we fit above against a model where the effec
 <<example1testing, cache = TRUE, echo = TRUE>>=
 testmodel <- example1model
 testmodel$DRIFT[1, 2] <- 0
-testfit <- ctFit(datawide = ctExample1, ctmodelobj = testmodel)
+testfit <- ctFit(dat = ctExample1, ctmodelobj = testmodel)
 @
 
 The result may then be compared to the original model with a likelihood ratio test, using the \pkg{OpenMx} function \code{mxCompare}. To use this function a base model fit object and a comparison model fit object must be specified, with the latter being a constrained version of the former. Note that \pkg{ctsem} stores the original \pkg{OpenMx} fit object under a \code{$mxobj} sub-object, which must be referenced when using \pkg{OpenMx} functions directly.
@@ -461,7 +464,7 @@ data("ctExample1")
 traitmodel <- ctModel(n.manifest = 2, n.latent = 2, Tpoints = 6, 
   LAMBDA = diag(2), manifestNames = c("LeisureTime", "Happiness"), 
   latentNames = c("LeisureTime", "Happiness"), TRAITVAR = "auto")
-traitfit <- ctFit(datawide = ctExample1, ctmodelobj = traitmodel)
+traitfit <- ctFit(dat = ctExample1, ctmodelobj = traitmodel)
 @
 
 \begin{figure}[!h]
@@ -494,7 +497,7 @@ tipredmodel <- ctModel(n.manifest = 2, n.latent = 2, n.TIpred = 1,
   latentNames = c("LeisureTime", "Happiness"),
   TIpredNames = "NumFriends",
  Tpoints = 6, LAMBDA = diag(2), TRAITVAR = "auto")
-tipredfit <- ctFit(datawide = ctExample1TIpred, ctmodelobj = tipredmodel)
+tipredfit <- ctFit(dat = ctExample1TIpred, ctmodelobj = tipredmodel)
 
 summary(tipredfit, verbose = TRUE)["TIPREDEFFECT"]
 summary(tipredfit, verbose = TRUE)["discreteTIPREDEFFECT"]
@@ -583,7 +586,7 @@ tdpredmodel <- ctModel(n.manifest = 2, n.latent = 2, n.TDpred = 1,
   Tpoints = 8, manifestNames = c("LeisureTime", "Happiness"), 
   TDpredNames = "MoneyInt", latentNames = c("LeisureTime", "Happiness"),
   LAMBDA = diag(2), TRAITVAR = "auto")
-tdpredfit <- ctFit(datawide = ctExample2, ctmodelobj = tdpredmodel,
+tdpredfit <- ctFit(dat = ctExample2, ctmodelobj = tdpredmodel,
   stationary=c('T0VAR','T0TRAITEFFECT'))
 summary(tdpredfit, verbose = TRUE)["TDPREDEFFECT"]
 
@@ -615,7 +618,7 @@ tdpredlevelmodel$T0MEANS[3] <- 0
 tdpredlevelmodel$TDPREDEFFECT[1:3, ] <- c(0,0,1)
 tdpredlevelmodel$DRIFT[3, ] <- c(0,0,-.000001)
 
-tdpredlevelfit <- ctFit(datawide = ctExample2, 
+tdpredlevelfit <- ctFit(dat = ctExample2, 
   ctmodelobj = tdpredlevelmodel, 
   stationary=c('T0VAR','T0TRAITEFFECT'))
 
@@ -625,15 +628,13 @@ summary(tdpredlevelfit, verbose = TRUE)[c("DRIFT","TDPREDEFFECT")]
 Now, if we look at column 3 of the DRIFT matrix, we see that the monetary intervention process appears to cause long term increases in leisure time, but potentially reductions in happiness. 
 
 \subsection[N = 1 Time series with multiple indicators]{\textit{N} = 1 time series with multiple indicators} \label{sec:timeseries}
-In the examples so far, we have dealt with multiple individuals with relatively few measurement occasions, and latent processes have been estimated by a single indicator. However, \pkg{ctsem} may also be used for the analysis of time series data for single subjects observed at many measurement occasions, as well as the estimation of latent factors estimated from multiple indicators. With single-subject data, a Kalman filter implementation is typically far quicker than the matrix arrangement we use for multiple subjects, however \pkg{ctsem} allows either to be used.  To illustrate these features, we perform a dynamic factor analysis on a single individual, with three manifest indicators measured at 50 occasions. Because the model is fitted to a single individual, we cannot freely estimate both the latent variance and mean at the first measurement occasion, but we must fix the $1 \times 1$ \code{T0VAR} matrix to a reasonable value, or implement stationarity constraints as discussed in Section \ref{sec:datatimescale}. The precise fixed value becomes unimportant as the time series length increases \citep{durbin2012time}. Note that in this example the LAMBDA matrix specifies a loading of 1.00 for manifest Y1 (for identification), while loadings for Y2 and Y3 are freely estimated. Note also that although \pkg{ctsem} uses the Kalman filter by default when a single subject is specified, this can be overridden by specifying the \code{objective = "mxRAM"} argument to \code{ctFit}, if one wishes to use the slower RAM implementation. The Kalman filter may also be specified for multiple subjects. In this case, between subject trait or time independent predictor matrices are ignored -- one may need to account for consistent differences between subjects through pre-processing or thoughtful expansion of the state matrices.
+In the examples so far, we have dealt with multiple individuals with relatively few measurement occasions, and latent processes have been estimated by a single indicator. However, \pkg{ctsem} may also be used for the analysis of time series data for single subjects observed at many measurement occasions, as well as the estimation of latent factors estimated from multiple indicators. With single-subject data, a Kalman filter implementation is typically far quicker than the matrix arrangement we use for multiple subjects, however \pkg{ctsem} allows either to be used.  To illustrate these features, we perform a dynamic factor analysis on a single individual, with three manifest indicators measured at 100 occasions. Because the model is fitted to a single individual, we cannot freely estimate both the latent variance and mean at the first measurement occasion, but we must fix the $1 \times 1$ \code{T0VAR} matrix to a reasonable value, or implement stationarity constraints as discussed in Section \ref{sec:datatimescale}. The precise fixed value becomes unimportant as the time series length increases \citep{durbin2012time}. Note that in this example the LAMBDA matrix specifies a loading of 1.00 for manifest Y1 (for identification), while loadings for Y2 and Y3 are freely estimated. Note also that although \pkg{ctsem} uses the Kalman filter by default when a single subject is specified, this can be overridden by specifying the \code{objective = "mxRAM"} argument to \code{ctFit}, if one wishes to use the slower RAM implementation. The Kalman filter may also be specified for multiple subjects. In this case, between subject trait or time independent predictor matrices are ignored -- one may need to account for consistent differences between subjects through pre-processing or thoughtful expansion of the state matrices.
 
 <<timeseries, cache = TRUE, echo = TRUE>>=
 data("ctExample3")
 model <- ctModel(n.latent = 1, n.manifest = 3, Tpoints = 100, 
-  LAMBDA = matrix(c(1, "lambda2", "lambda3"), nrow = 3, ncol = 1), 
-  MANIFESTMEANS = matrix(c(0, "manifestmean2", "manifestmean3"), nrow = 3, 
-    ncol = 1))
-fit <- ctFit(data = ctExample3, ctmodelobj = model, objective = "Kalman",
+  LAMBDA = matrix(c(1, "lambda2", "lambda3"), nrow = 3, ncol = 1))
+fit <- ctFit(dat = ctExample3, ctmodelobj = model, objective = "Kalman",
   stationary = c("T0VAR"))
 @
 
@@ -650,7 +651,7 @@ freemodel <- basemodel
 freemodel$LAMBDA[3, 1] <- "groupfree"
 groups <- paste0("g", rep(1:2, each = 10))
 
-multif <- ctMultigroupFit(datawide = ctExample4, groupings = groups,
+multif <- ctMultigroupFit(dat = ctExample4, groupings = groups,
   ctmodelobj = basemodel, freemodel = freemodel)
 @
 
@@ -723,7 +724,7 @@ In the above, we focus on a model for a single subject, and specify with LAMBDA 
 <<osscilating, cache = TRUE, echo = TRUE, eval = TRUE, include = TRUE>>=
 data("Oscillating")
 
-inits <- c(-39, -.3, 1.01, 10.01, .1, 10.01, 0.05, .9, 0)
+inits <- c(-39, -.3, 1.01, 1.01, .1, 1.01, 0.05, .9, 0)
 names(inits) <- c("crosseffect","autoeffect", "diffusion",
   "T0var11", "T0var21", "T0var22","m1", "m2", 'manifestmean')
 
@@ -746,7 +747,7 @@ Given the complexity of parameter constraints, and that for some classes of mode
 <<inits, echo = TRUE>>=
 omxInits <- omxGetParameters(example1fit$mxobj)
 
-fitWithInits <- ctFit(data = ctExample1, ctmodelobj = example1model, 
+fitWithInits <- ctFit(dat = ctExample1, ctmodelobj = example1model, 
   omxStartValues = omxInits)
 @
 
@@ -790,7 +791,7 @@ data("ctExample1")
 traitmodel <- ctModel(n.manifest = 2, n.latent = 2, Tpoints = 6, 
   LAMBDA = diag(2), manifestNames = c("LeisureTime", "Happiness"), 
   latentNames = c("LeisureTime", "Happiness"), TRAITVAR = "auto")
-traitfit <- ctFit(datawide = ctExample1, ctmodelobj = traitmodel)
+traitfit <- ctFit(dat = ctExample1, ctmodelobj = traitmodel)
 traitfit <- ctCI(traitfit, confidenceintervals = 'DRIFT')
 
 discrete <- ctExample1

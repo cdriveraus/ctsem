@@ -10,7 +10,7 @@
 #' @export
 #'
 #' @examples
-#' ctStanParMatrices(ctstantestfit)
+#' ctStanParMatrices(ctstantestfit,rep(0,16))
 ctStanParMatrices <- function(model, parvalues, timeinterval=1){
   if(class(model)=='ctStanFit') model<- model$ctstanmodel
   if(class(model) !='ctStanModel') stop('not a ctStanModel')
@@ -73,14 +73,17 @@ sdcovchol2cov <- function(mat, cholesky){
   }
   
 DIFFUSION = sdcovchol2cov(DIFFUSION,0)
-DIFFUSIONcor = stats::cov2cor(DIFFUSION)
+DIFFUSIONcor = suppressWarnings(stats::cov2cor(DIFFUSION))
+DIFFUSIONcor[is.na(DIFFUSIONcor)] <- 0
 T0VAR=sdcovchol2cov(T0VAR,0)
-T0VARcor = stats::cov2cor(T0VAR)
+T0VARcor = suppressWarnings(stats::cov2cor(T0VAR))
+T0VARcor[is.na(T0VARcor)] <- 0
 MANIFESTVAR=MANIFESTVAR^2
 
 DRIFTHATCH<-DRIFT %x% diag(nrow(DRIFT)) + diag(nrow(DRIFT)) %x% DRIFT
 asymDIFFUSION<-matrix(-solve(DRIFTHATCH, c(DIFFUSION)), nrow=nrow(DRIFT))
-asymDIFFUSIONcor <- cov2cor(asymDIFFUSION)
+asymDIFFUSIONcor = suppressWarnings(stats::cov2cor(asymDIFFUSION))
+asymDIFFUSIONcor[is.na(asymDIFFUSIONcor)] <- 0
 
 ln=model$latentNames
 mn=model$manifestNames

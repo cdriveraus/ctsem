@@ -125,19 +125,7 @@ if(object$ctstanmodel$n.TIpred > 0) {
   out$tipreds= cbind(out$tipreds,z)[order(abs(z)),]
 }
 
-out$popsd=round(s$summary[c(grep('hsd_',rownames(s$summary))),
-  c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],digits=digits)
 
-out$popmeans=round(s$summary[c(grep('hmean_',rownames(s$summary))),
-  c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],digits=digits)
-
-out$popNote=paste0('popmeans and popsd are reported as specified in ctModel -- diagonals of covariance related matrices are std. deviations, ',
-'off-diagonals are unconstrained correlation square roots.')
-
-out$logprob=round(s$summary[c(grep('lp',rownames(s$summary))),
-  c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],digits=digits)
-
-  
 parmatlists <- apply(e$hypermeans,1,ctStanParMatrices,model=object,timeinterval=timeinterval)
 parmatarray <- array(unlist(parmatlists),dim=c(length(unlist(parmatlists[[1]])),length(parmatlists)))
 parmats <- matrix(0,nrow=0,ncol=7)
@@ -146,15 +134,15 @@ for(mati in 1:length(parmatlists[[1]])){
   for(rowi in 1:nrow(parmatlists[[1]][[mati]])){
     for(coli in 1:ncol(parmatlists[[1]][[mati]])){
       counter=counter+1
-        new <- matrix(c(
-          rowi,
-          coli,
-          mean(parmatarray[counter,]),
-          sd(parmatarray[counter,]),
-          quantile(parmatarray[counter,],probs=c(.025,.5,.975))),
-          nrow=1)
-        rownames(new) = names(parmatlists[[1]])[mati]
-        parmats<-rbind(parmats, new)
+      new <- matrix(c(
+        rowi,
+        coli,
+        mean(parmatarray[counter,]),
+        sd(parmatarray[counter,]),
+        quantile(parmatarray[counter,],probs=c(.025,.5,.975))),
+        nrow=1)
+      rownames(new) = names(parmatlists[[1]])[mati]
+      parmats<-rbind(parmats, new)
     }}}
 colnames(parmats) <- c('Row','Col', 'Mean','Sd','2.5%','50%','97.5%')
 
@@ -172,8 +160,22 @@ parmats <- parmats[-removeindices,]
 
 out$parmatrices=round(parmats,digits=digits)
 
-out$parmatNote=paste0('parmatrices calculated with time interval of ', timeinterval,' for discrete time (dt) matrices. ',
-'Covariance related matrices shown as covariance matrices, correlations have (cor) suffix. Asymptotic (asym) matrices based on infinitely large time interval.')
+out$parmatNote=paste0('Population mean parameter matrices calculated with time interval of ', timeinterval,' for discrete time (dt) matrices. ',
+  'Covariance related matrices shown as covariance matrices, correlations have (cor) suffix. Asymptotic (asym) matrices based on infinitely large time interval.')
+
+
+out$popsd=round(s$summary[c(grep('hsd_',rownames(s$summary))),
+  c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],digits=digits)
+
+out$popmeans=round(s$summary[c(grep('hmean_',rownames(s$summary))),
+  c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],digits=digits)
+
+out$popNote=paste0('popmeans and popsd are reported as specified in ctModel -- diagonals of covariance related matrices are std. deviations, ',
+'off-diagonals are unconstrained correlation square roots.')
+
+out$logprob=round(s$summary[c(grep('lp',rownames(s$summary))),
+  c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],digits=digits)
+
 
 
 # out$posteriorpredictive=round(s$summary[c(grep('stateppll',rownames(s$summary))),

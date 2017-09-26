@@ -148,7 +148,7 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   out<-aaply(probs,1,function(x) ctCollapse(effect,2,quantile,probs=x,na.rm=TRUE),.drop=FALSE)
   
   if(!parmatrices) dimnames(out)=list(Quantile=paste0('Quantile',probs),
-    popmean=spec$param,
+    popmean=spec_nofixed_noduplicates_indvarying$param,
     subject=tiorder #subjects reordered because tipreds were at top
   )
   if(parmatrices) dimnames(out)=list(Quantile=paste0('Quantile',probs),

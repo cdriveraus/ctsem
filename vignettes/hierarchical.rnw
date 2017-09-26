@@ -60,7 +60,7 @@ Manuel C. Voelkle \\ Humboldt University Berlin \\ Max Planck Institute for Huma
 \Shorttitle{Introduction to Hierarchical Continuous Time Dynamic Modelling with \pkg{ctsem}} %% a short title (if necessary)
 
 \Abstract{
-ctsem allows for specification and fitting of a range of continuous and discrete time dynamic models with stochastic system noise. The models may include multiple indicators (dynamic factor analysis), multiple, interrelated, potentially higher order processes, and time dependent (varying within subject) and time independent (not varying within subject) covariates. Classic longitudinal models like latent growth curves and latent change score models are also possible.  Version 1 of ctsem provided structural equation model based functionality by linking to the OpenMx software, allowing mixed effects models (random means but fixed regression and variance parameters) for multiple subjects. For version 2 of the \proglang{R} package \pkg{ctsem}, we include a Bayesian specification and fitting routine that uses the \pkg{Stan} probabilistic programming language, via the \pkg{rstan} package in R. This allows for all parameters of the dynamic model to individually vary, using an estimated population mean and variance, and any time independent covariate effects, as a prior. Frequentist approaches with ctsem are documented in a forthcoming JSS publication (Driver, Voelkle, Oud, in press), and in R vignette form at \url{https://cran.r-project.org/package=ctsem/vignettes/ctsem.pdf }. The Bayesian approach is discussed more fully and conceptually in a preprint article available at \url{https://www.researchgate.net/publication/310747801_Hierarchical_Bayesian_Continuous_Time_Dynamic_Modeling}, but here we provide more specifics on the software for getting started with the Bayesian approach included in version 2.
+ctsem allows for specification and fitting of a range of continuous and discrete time dynamic models with stochastic system noise. The models may include multiple indicators (dynamic factor analysis), multiple, interrelated, potentially higher order processes, and time dependent (varying within subject) and time independent (not varying within subject) covariates. Classic longitudinal models like latent growth curves and latent change score models are also possible.  Version 1 of ctsem provided structural equation model based functionality by linking to the OpenMx software, allowing mixed effects models (random means but fixed regression and variance parameters) for multiple subjects. For version 2 of the \proglang{R} package \pkg{ctsem}, we include a Bayesian specification and fitting routine that uses the \pkg{Stan} probabilistic programming language, via the \pkg{rstan} package in R. This allows for all parameters of the dynamic model to individually vary, using an estimated population mean and variance, and any time independent covariate effects, as a prior. Frequentist approaches with ctsem are documented in a JSS publication \citep{driver2017continuous}, and in R vignette form at \url{https://cran.r-project.org/package=ctsem/vignettes/ctsem.pdf }. The Bayesian approach is discussed more fully and conceptually in a preprint article \citep{driver2016hierarchical}available at \url{https://www.researchgate.net/publication/310747801_Hierarchical_Bayesian_Continuous_Time_Dynamic_Modeling}, but here we provide more specifics on the software for getting started with the software of the Bayesian approach.
 }
 
 \Keywords{hierarchical time series, Bayesian, longitudinal, panel data, state space, structural equation, continuous time, stochastic differential equation, dynamic models, Kalman filter, \proglang{R}}
@@ -155,7 +155,7 @@ options(width = 100, scipen = 12, digits = 3)
 
 
 \subsection{Subject Level Latent Dynamic model}
-This section describes the fundamental subject level model, and where appropriate, the name of the ctModel argument used to specify specific matrices. The description of the full model, including subject level likelihood and population model, is provided at the end of this document. Although we do not describe it explicitly, the corresponding discrete time autoregressive / moving average models can be specified and use the same set of parameter matrices we describe, although the meaning is of course somewhat different.
+This section describes the fundamental subject level model, and where appropriate, the name of the ctModel argument used to specify specific matrices. The description of the full model, including subject level likelihood and population model, is provided in \citet{driver2016hierarchical}, available at \url{https://www.researchgate.net/publication/310747801_Hierarchical_Bayesian_Continuous_Time_Dynamic_Modeling}. Although we do not describe it explicitly, the corresponding discrete time autoregressive / moving average models can be specified and use the same set of parameter matrices we describe, although the meaning is of course somewhat different.
 
 \subsection{Subject level latent dynamic model}
 The subject level dynamics are described by the following stochastic differential equation:
@@ -174,7 +174,7 @@ Vector $ \vect{\eta} (t)\in\mathbb{R}^{v}$ represents the state of the latent pr
 
 The continuous time intercept vector $ \vect{b} \in\mathbb{R}^{v}$ (CINT), in combination with $\vect{A}$, determines the long-term level at which the processes fluctuate around.
 
-Time dependent predictors $\vect{\chi}(t)$ represent inputs to the system that vary over time and are independent of fluctuations in the system. Equation \ref{eq:process1} shows a generalized form for time dependent predictors, that could be treated a variety of ways dependent on the assumed time course (or shape) of time dependent predictors. We use a simple impulse form shown in Equation \ref{eq:spike}, in which the predictors are treated as impacting the processes only at the instant of an observation occasion $u$. When necessary, the evolution over time can be modeled by extending the state matrices, for an example see \citet{driverinpresscontinuous}.
+Time dependent predictors $\vect{\chi}(t)$ represent inputs to the system that vary over time and are independent of fluctuations in the system. Equation \ref{eq:process1} shows a generalized form for time dependent predictors, that could be treated a variety of ways dependent on the assumed time course (or shape) of time dependent predictors. We use a simple impulse form shown in Equation \ref{eq:spike}, in which the predictors are treated as impacting the processes only at the instant of an observation occasion $u$. When necessary, the evolution over time can be modeled by extending the state matrices, for examples and discussion see \citet{driver2017understanding}.
 
 \begin{equation}
 \label{eq:spike}
@@ -267,13 +267,13 @@ One may modify the output model to either restrict between subject differences (
 
 <<transform, fig.width=8, fig.height=6>>=
 par(mfrow=c(1,2))
-plot(model,rows=11)
+plot(model,rows=11,hypersd=1)
 print(model$pars$transform[11])
 model$pars$transform[11]<- "(exp(param*2) +.0001)*.2"
-plot(model,rows=11)
+plot(model, rows=11, hypersd=1)
 @
 
-The plots show the prior distribution for the population mean of DIFFUSION[1,1] in black, as well as two possible priors for the subject level parameters. The blue prior results from assuming the population mean is one standard deviation lower than the mean of the prior, and marginalising over the prior for the standard deviation of the population distribution. This latter prior can be scaled using the sdscale column of the parameters subobject, but is by default a truncated normal distribution with mean 0 and SD 1.
+The plots show the prior distribution for the population mean of DIFFUSION[1,1] in black, as well as two possible priors for the subject level parameters, conditional on our specified population (hyper) standard deviation of 1. The blue prior results from assuming the population mean is one standard deviation lower than the mean of the prior, and the red one standard deviation higher. This latter prior can be scaled using the sdscale column of the parameters subobject.
 
 Restrict between subject effects as desired. Unnecessary between subject effects will slow sampling and hinder appropriate regularization, but be aware of the many parameter dependencies in these models -- restricting one parameter may lead to genuine variation in the restricted parameter expressing itself elsewhere. The prior scale for between subject variance may need to be restricted when limited data (in either the number of time points or number of subjects) is available, to ensure adequate regularisation. Here we restrict MANIFESTVAR effects between subjects, and set all prior scales for the standard deviation of the population distribution to 0.2, from the default of 1.0. A rough interpretation of this change in sdscale is simply that we expect lower values for the population standard deviation, but to better interpret the effect of this latter change, see the section on standard deviation transformations.
 
@@ -305,10 +305,10 @@ Additionally, summary outputs a range of matrices regarding correlations betweee
 To view the posterior median of the continuous time parameter matrices, the ctStanContinuousPars function can be used.
 
 <<output,eval=FALSE>>=
-summary(fit)
+summary(fit,timeinterval = 1)
 @
 
-In the summary output, the population parameters are returned in the same form that they are input to ctModel - that is, standard deviations and partial correlations, which can be more difficult to interpret when more than two processes are modeled. To return the full set of continuous time parameter matrices for a specified subject or collection of subjects, the ctStanContinuousPars function can be used, with the calcfunc argument set appropriately depending on whether one wants the median,mean, sd, or a specific quantile (which would require changing the probs argument also).
+In the summary output, the free population mean parameters under \$popmeans are likely one of the main points of interest. They are returned in the same form that they are input to ctModel - that is, covariance matrix related parameters are in the form of either standard deviations or a transformed correlation parameter. Because the latter is difficult to interpret, various parameter matrices are also returned in the \$parmatrices section of the summary. The discrete time matrices reported here (prefixed by `dt') are by default from a time interval of 1, but this can be changed.
 
 \subsection{Plotting}
 The plot function outputs a sequence of plots, all generated by specific functions. The name of the specific function appears in a message in the R console, checking the help for each specific function and running them separately will allow more customization. Some of the plots, such as the trace, density, and interval, are generated by the relevant rstan function and hopefully self explanatory. The plots specific to the heirarchical continuous time dynamic model are as follows:
@@ -322,21 +322,23 @@ The above plot shows the dynamic regression coefficients (between latent states 
 The relation between posteriors and priors for variables of interest can also be plotted as follows:
 
 <<outputposterior>>=
-ctStanPlotPost(ctstanfitobj = fit, rows=11)
+ctStanPlotPost(obj = fit, rows=11)
 @
 
 Shown are approximate density plots based on the post-warmup samples drawn. For each parameter four plots are shown -- the first displays the posterior distribution of subject level parameters, the subject level prior (generated from repeated sampling of the hyper parameters), and the prior for the population mean.
 
 
 \subsection{Stationarity}
-When it is reasonable to assume that the prior for long term expectation and variance of the latent states is the same as (or very similar to) the prior for initial expectations and variances, setting the argument stationary=TRUE to ctStanFit can reduce uncertainty and aid in fitting. This argument ignores any T0VAR and T0MEANS matrices in the input, instead replacing them with asymptotic expectations based on the DRIFT, DIFFUSION, and CINT matrices.
+When it is reasonable to assume that the prior for long term expectation and variance of the latent states is the same as (or very similar to) the prior for initial expectations and variances, setting some form of stationarity in advance may be beneficial. Three approaches to this are possible.
+The first approach is to name free parameters of the T0VAR or T0MEANS matrix \verb{'stationary'{, which can be useful if for instance only the initial variance should be stationary, or just one of the initial variances. Another approach is to set the argument stationary=TRUE to ctStanFit. Specifying this argument then ignores any T0VAR and T0MEANS matrices in the input, instead replacing them with asymptotic expectations based on the DRIFT, DIFFUSION, and CINT matrices.
 Alternatively, a prior can be placed on the stationarity of the dynamic models, calculated as the difference between the T0MEANS and the long run asymptotes of the expected value of the process, as well as the difference between the diagonals of the T0VAR covariance matrix and the long run asymptotes of the covariance of the processes. Such a prior encourages a minimisation of these differences, and can help to ensure that sensible, non-explosive models are estimated, and also help the sampler get past difficult regions of relative flatness in the parameter space due to colinearities between the within and between subject parameters. However if such a prior is too strong it can also induce difficult dependencies in model parameters, and there are a range of models where one may not wish to have such a prior. To place such a prior, the model\$stationarymeanprior and model\$stationaryvarprior slots can be changed from the default of NA to a numeric vector, representing the normal standard deviation of the deviations from stationarity. The number of elements in the vector correspond to the number of latent processes.
 
 \subsection{Individual level analyses}
 Individual level results can also be considered, as ctsem includes functionality to output prior (based on all prior observations), updated (based on all prior and current observations), and smoothed (based on all observations) expectations and covariances from the Kalman filter, based on specific subjects models. For ease of comparison, expected manifest indicator scores conditional on prior, updated and smoothed states are also included. This approach allows for: predictions regarding individuals states at any point in time, given any values on the time dependent predictors (external inputs such as interventions or events); residual analysis to check for unmodeled dependencies in the data; or simply as a means of visualization, for comprehension and model sanity checking purposes. An example of such is depicted below, where we see observed and estimated scores for a selected subject from our sample. If we wanted to predict unobserved states in the future, we would need only to specify the appropriate timerange (Prediction into earlier times is possible but makes little sense unless the model is restricted to stationarity).
 
 <<kalmanplot,echo=TRUE,fig.width=10,fig.height=7>>=
-ctKalman(fit, subjects=2, timerange=c(0,60), timestep=.1, plot=TRUE)
+ctKalman(fit, subjects=2, timerange=c(0,60), kalmanvec=c('y','ysmooth'), 
+  timestep=.1, plot=TRUE)
 @
 
 
@@ -348,7 +350,8 @@ The standard rstan output functions such as summary and extract are also availab
 
 
 \subsection{Oscillating, single subject example - sunspots data}
-In the following example we fit the sunspots data available within R, which has previously been fit by various authors including \citet{tomasson2013computational}. We have used the same CARMA(2,1) model and obtained similar estimates -- some differences are due to the contrast between Bayes and maximum likelihood, though if desired one could adjust the code to fit using maximum likelihood, as here we have only one subject. There are usually some divergent transitions (indicating a difficulty in the sampling chain and a potential threat to inference) generated in this fit -- alternate parameterisations or an increase in the adapt\_delta control argument to Stan (which defaults to 0.9 in ctsem, with a maximum of 1, though 1 is not recommended...) may help.
+In the following example we fit the sunspots data available within R, which has previously been fit by various authors including \citet{tomasson2013computational}. We have used the same CARMA(2,1) model and obtained similar estimates -- some differences are due to the contrast between Bayes and maximum likelihood, though if desired one could adjust the code to fit using maximum likelihood, as here we have only one subject. 
+% There are usually some divergent transitions (indicating a difficulty in the sampling chain and a potential threat to inference) generated in this fit -- alternate parameterisations or an increase in the adapt\_delta control argument to Stan (which defaults to 0.9 in ctsem, with a maximum of 1, though 1 is not recommended...) may help.
 <<sunspots,cache=TRUE>>=
 #get data
  sunspots<-sunspot.year
@@ -362,21 +365,18 @@ datalong <- cbind(id, time, sunspots)
   manifestNames='sunspots', 
   latentNames=c('ss_level', 'ss_velocity'),
    LAMBDA=matrix(c( 1, 'ma1' ), nrow=1, ncol=2),
-   DRIFT=matrix(c(0, 1,   'a21', 'a22'), nrow=2, ncol=2, byrow=TRUE),
+   DRIFT=matrix(c(0, 'a21', 1, 'a22'), nrow=2, ncol=2),
    MANIFESTMEANS=matrix(c('m1'), nrow=1, ncol=1),
-   # MANIFESTVAR=matrix(0, nrow=1, ncol=1),
    CINT=matrix(c(0, 0), nrow=2, ncol=1),
    T0VAR=matrix(c(0,0,0,1), nrow=2, ncol=2), #Because single subject
-   DIFFUSION=matrix(c(
-     0, 0,
-     0, "diffusion"), ncol=2, nrow=2, byrow=TRUE))
+   DIFFUSION=matrix(c(0, 0, 0, "diffusion"), ncol=2, nrow=2))
  
  model$pars$indvarying<-FALSE #Because single subject
  model$pars$transform[14]<- '(param)*5+44 ' #Because not mean centered
  model$pars$transform[4]<-'log(exp(-param*1.5)+1)' #To avoid multi modality 
 
 #fit
-fit <- ctStanFit(datalong, model, iter=400, chains=2)
+fit <- ctStanFit(datalong, model, iter=200, chains=2)
 
 #output
 summary(fit)$popmeans
@@ -384,7 +384,7 @@ summary(fit)$popmeans
 
 
 \subsection{Population standard deviations - understanding the transforms}
-Internally, we sample parameters that we will refer to here as the `raw' parameters -- these parameters have no bounds and are drawn from normal distributions. Both population mean (internally: hypermeans) and subject level (internally: indparamsbase) raw parameters are drawn from a normal(0, 1) distribution. Depending on the specific parameter, various transformations may be applied to set appropriate bounds and priors. The population standard deviation (hypersd) for these raw parameters is sampled (by default) from a truncated normal(0, 1) distribution. This distribution can be scaled on a per parameter basis by the sdscale multiplier in the model specification, which defaults to 1. The following script shows a didactic sequence of sampling and transformation for a model with a single parameter, the auto effect of the drift matrix, and 50 subjects. Although we sample the priors here, this is merely to reflect the prior and enable understanding and plotting.
+Internally, we sample parameters that we will refer to here as the `raw' parameters -- these parameters have no bounds and are drawn from normal distributions. Both population mean (internally: hypermeans) and subject level (internally: indparamsbase) raw parameters are drawn from a normal(0, 1) distribution. Depending on the specific parameter, various transformations may be applied to set appropriate bounds and priors. The population standard deviation (hypersd) for these raw parameters is sampled (by default) from a normal(0, 1) distribution called rawhypersd, which is by default transformed via an exponential function -- ensuring standard deviation parameters are positive and have a prior distribution that could be considered a regularised independence Jeffreys prior. This distribution can be scaled on a per parameter basis by the sdscale multiplier in the model specification, which defaults to 1. The following script shows a didactic sequence of sampling and transformation for a model with a single parameter, the auto effect of the drift matrix, and 50 subjects. Although we sample the priors here, this is merely to reflect the prior and enable understanding and plotting.
 <<sdtransforms>>=
 #population mean and subject level deviations (pre-transformation)
 
@@ -396,17 +396,14 @@ indparamsbase_post <- rnorm(50, 0, 1) #hypothetical sample
 
 #population standard deviation prior
 
-hypersd_prior <- rnorm(99999, 0, 1)
-hypersd_prior <- hypersd_prior[hypersd_prior > 0]
+rawhypersd_prior <- rnorm(99999, 0, 1)
+hypersd_prior <- exp(rawhypersd_prior * 2 )
 
 #population standard deviation posterior
 
 hypersd_post <- .4 #hypothetical
 
-#population cholesky correlation matrix
-#lower triangle sampled from uniform(-1, 1), 
-#upper triangle fixed to 0, 
-#diagonal calculated according to hypersd.
+#square root of population correlation matrix
 hypercorrchol_post <- 1 #because only 1 parameter here...
 
 #population cholesky covariance matrix 
@@ -430,232 +427,7 @@ hsd_ourparameter <- abs( #via delta approximation
 
 
 \section{The model}
-There are three main elements to our hierarchical continuous time dynamic model. There is a subject level latent dynamic model, a subject level measurement model, and a population level model for the subject level parameters. Note that while various elements in the model depend on time, the fundamental parameters of the model as described here are time-invariant. Note also that we ignore subject specific subscripts when discussing the subject level model.
-
-\subsection{Subject level latent dynamic model}
-The subject level dynamics are described by the following stochastic differential equation:
-\begin{equation}
-\label{eq:process1}
-\mathrm{d} \vect{\eta} (t) =
-\bigg( 
-\vect{A \eta} (t) +
-\vect{b} +
-\vect{M \chi} (t)  
-\bigg) \mathrm{d} t +
-\vect{G} \mathrm{d} \vect{W}(t)  
-\end{equation}
-
-Vector $ \vect{\eta} (t)\in\mathbb{R}^{v}$ represents the state of the latent processes at time $t$. The matrix $ \vect{A} \in \mathbb{R}^{v \times v}$ represents the so-called drift matrix, with auto effects on the diagonal and cross effects on the off-diagonals characterizing the temporal dynamics of the processes. 
-
-The continuous time intercept vector $ \vect{b} \in\mathbb{R}^{v}$, in combination with $\vect{A}$, determines the long-term level at which the processes fluctuate around.
-
-Time dependent predictors $\vect{\chi}(t)$ represent inputs to the system that vary over time and are independent of fluctuations in the system. Equation \ref{eq:process1} shows a generalized form for time dependent predictors, that could be treated a variety of ways dependent on the assumed time course (or shape) of time dependent predictors. We use a simple impulse form shown in Equation \ref{eq:spike}, in which the predictors are treated as impacting the processes only at the instant of an observation occasion $u$. When necessary, the evolution over time can be modeled by extending the state matrices, for an example see \citet{driverinpresscontinuous}.
-
-\begin{equation}
-\label{eq:spike}
-\vect{\chi} (t) = \sum_{ u \in \vect{U}}  \vect{x}_{u} \delta (t-t_u)     
-\end{equation}
-
-Here, time dependent predictors $\vect{x}_u \in \mathbb{R}^{l}$ are observed at measurement occasions $ u \in \vect{U}$, where $\vect{U}$ is the set of measurement occasions from 1 to the number of measurement occasions, with $u = 1$ treated as occurring at $t = 0$. The Dirac delta function $\delta(t-t_u)$ is a generalized function that is $\infty$ at 0 and 0 elsewhere, yet has an integral of 1 (when 0 is in the range of integration). It is useful to model an impulse to a system, and here is scaled by the vector of time dependent predictors $\vect{x}_u$.  The effect of these impulses on processes $\vect{\eta}(t)$ is then $\vect{M}\in \mathbb{R}^{v \times l}$. 
-
-$\vect{W}(t) \in \mathbb{R}^{v}$ represents independent Wiener processes, with a Wiener process being a random-walk in continuous time. $\textnormal{d}\vect{W}(t)$ is meaningful in the context of stochastic differential equations, and represents the stochastic error term, an infinitesimally small increment of the Wiener process. Lower triangular matrix $\vect{G} \in \mathbb{R}^{v \times v}$ represents the effect of this noise on the change in  $\vect{\eta}(t)$.  $\vect{Q}$, where $\vect{Q} = \vect{GG}^\top$, represents the variance-covariance matrix of the diffusion process in continuous time.
-
-\subsection{Subject level dynamic model --- discrete time solution}
-The stochastic differential Equation \ref{eq:process1} may be solved and translated to a discrete time representation, for any observation $u \in \vect{U}$:
-\begin{equation}
-	\label{eq:discreteprocess}
-	\vect{\eta}_{u} =
-	\vect{A}^*_u \vect{\eta}_{u-1} +
-	\vect{b}^*_u +
-	\vect{M} \vect{x}_u +
-	\vect{\zeta}^*_u \quad \vect{\zeta}^*_u \sim \mathrm{N}(\vect{0}_v, \vect{Q}^*_u)
-\end{equation}
-
-The $^*$ notation is used to indicate a term that is the discrete time equivalent of the original. $\vect{A}^*_u$ then contains the appropriate auto and cross regressions for the effect of latent processes $\vect{\eta}$ at measurement occasion $u-1$ on $\vect{\eta}$ at measurement occasion $u$. $\vect{b}^*_u$ represents the discrete time intercept for measurement occasion $u$. Since $\vect{M}$ is conceptualized as the effect of instantaneous impulses $\vect{x}$, (which only occur at occasions $\vect{U}$ and are not continuously present as for the processes $\vect{\eta}$), the discrete and continuous time forms are equivalent. $\vect{\zeta}_u$ is the zero mean random error term for the processes at occasion $u$. $\vect{Q}^*_u$ represents the multivariate normal disturbance at occasion $u$. The recursive nature of the solution means that at the first measurement occasion $u = 1$, the system must be initialized in some way, with $\vect{A}^*_u \vect{\eta}_{u-1}$ replaced by $\vect{\eta}_{1}$, and $\vect{Q}^*_u$ replaced by $\vect{Q}^*_{1}$. These initial states and covariances are later referred to as T0MEANS and T0VAR respectively.
-
-Unlike in a purely discrete time model, where the various effect matrices described above would be unchanging, in a continuous time model the discrete time matrices all depend on some function of the continuous time parameters and the time interval between observations $u$ and $u-1$, these functions look as follows:
-
-\begin{equation}
-	\vect{A}^*_u = \mathnormal{e}^{\vect{A} (t_u - t_{u-1} )}  
-\end{equation}
-
-\begin{equation}
-	\vect{b}^*_u = \vect{A}^{-1} (\vect{A}^*_u - \vect{I})\vect{b}  
-\end{equation}
-
-\begin{equation}
-\label{eq:newQstar}
-\vect{Q}^*_u = \vect{Q}_{\infty} - \vect{A}^*_u \vect{Q}_{\infty} (\vect{A}^*_u)^\top
-\end{equation}
-
-Where $\vect{A}_{\#} = \vect{A} \otimes \vect{I} + \vect{I} \otimes \vect{A} $, with $\otimes$ denoting the Kronecker-product, the asymptotic diffusion $\vect{Q}_{\infty} = \text{irow} \big( \vect{-A}_{\#}^{-1} \: \text{row} (\vect{Q}) \big)$, $\text{row}$ is an operation that takes elements of a matrix row wise and puts them in a column vector, and $\text{irow}$ is the inverse of the $\text{row}$ operation. The covariance update shown in Equation \ref{eq:newQstar} has not been described in the psychological literature so far as we are aware, but is a more computationally efficient form used in \citet{tomasson2013computational}.
-
-
-
-\subsection{Subject level measurement model}
-The latent process vector $\vect{\eta}(t)$ has measurement model:
-
-\begin{equation}
-	\label{eq:measurement}
-	\vect{y}(t) = \vect{\Lambda} \vect{\eta}(t) + \vect{\tau} + \vect{\epsilon}(t)  
-	\quad \text{where } \vect{\epsilon}(t) \sim  \mathrm{N} (\vect{0}_c, \vect{\Theta})
-\end{equation}
-
-$\vect{y} (t)\in\mathbb{R}^{c}$ is the vector of manifest variables, $\vect{\Lambda} \in \mathbb{R}^{c \times v}$ represents the factor loadings, and $\vect{\tau} \in\mathbb{R}^{c}$ the manifest intercepts. The residual vector $\vect{\epsilon} \in \mathbb{R}^{c}$ has covariance matrix $\vect{\Phi} \in\mathbb{R}^{c \times c}$.
-
-
-\subsection{Subject level likelihood}
-The subject level likelihood, conditional on time dependent predictors $\vect{x}$ and subject level parameters $\vect{\Phi}$, is as follows:
-
-\begin{equation}
-	p(\vect{y} | \vect{\Phi}, \vect{x}) = \prod^{\vect{U}} p(\vect{y}_u | \vect{y}_{\big(u-1,...,u-(u-1)\big)}, \vect{x}_u, \vect{\Phi})
-\end{equation}
-
-To avoid the large increase in parameters that comes with sampling or optimizing latent states, we use a continuous-discrete (or hybrid) Kalman filter \citep{kalman1961new} to analytically compute subject level likelihoods, conditional on subject parameters. For more on filtering see \citet{jazwinski2007stochastic} and \citet{sarkka2013Bayesian}. The filter operates with a prediction step, in which the expectation $\hat{\vect{\eta}}_{u|u-1}$ and covariance $\hat{\vect{P}}_{u|u-1}$ of the latent states are predicted by:
-
-\begin{equation}
-	\hat{\vect{\eta}}_{u|u-1} = \vect{A}^*_u \hat{\vect{\eta}}_{u-1|u-1} + \vect{b}^*_u + \vect{M}\vect{x}_u 
-\end{equation}
-
-\begin{equation}
-	\hat{\vect{P}}_{u|u-1} = \vect{A}^*_u \hat{\vect{P}}_{u-1|u-1} (\vect{A}^*_u)^{\top}+ \vect{Q}^*_u
-\end{equation}
-
-For the first measurement occasion $u = 1$, the priors $\hat{\vect{\eta}}_{u|u-1}$ and $\hat{\vect{P}}_{u|u-1}$ must be provided to the filter. These parameters may in some cases be freely estimated, but in other cases need to be fixed or constrained, either to specific values or by enforcing a dependency to other parameters in the model, such as an assumption of stationarity. 
-
-Prediction steps are followed by an update step, wherein rows and columns of matrices are filtered as necessary depending on missingness of the measurements $\vect{y}$:
-
-\begin{equation}
-\hat{\vect{y}}_{u|u-1} =  \vect{\Lambda} \hat{\vect{\eta}}_{u|u-1} + \vect{\tau}
-\end{equation}
-
-\begin{equation}
-\hat{\vect{V}}_{u} = \vect{\Lambda} \hat{\vect{P}}_{u|u-1} \vect{\Lambda}^\top + \vect{\Theta}
-\end{equation}      
-
-\begin{equation}
-\hat{\vect{K}}_u = \hat{\vect{P}}_{u|u-1} \vect{\Lambda}^\top  \hat{\vect{V}}_{u}^{-1}
-\end{equation}
-
-\begin{equation}
-\hat{\vect{\eta}}_{u|u} =  \hat{\vect{\eta}}_{u|u-1} + \hat{\vect{K}}_u ( \vect{y}_u -  \hat{\vect{y}}_{u|u-1}) 
-\end{equation}
-
-\begin{equation}
-\hat{\vect{P}}_{u|u}  = (\vect{I} - \hat{\vect{K}}_u \vect{\Lambda}) \hat{\vect{P}}_{u|u-1} 
-\end{equation}
-
-The log likelihood ($ll$) for each subject, conditional on subject level parameters, is typically\footnote{For computational reasons we use an alternate but equivalent form of the log likelihood. We scale the prediction errors across all variables to a standard normal distribution, drop constant terms, calculate the log likelihood of the transformed prediction error vector, and appropriately update the log likelihood for the change in scale, as follows: 
-
-\begin{equation}
-ll = \sum^{\vect{U}} \bigg(  \mathnormal{ln}\big(\mathnormal{tr}(\vect{V}^{-1/2}_{u})\big) + \sum{ 1/2 \big(\vect{V}^{-1/2}_{u} ( \hat{\vect{y}}_{(u|u-1)} - \vect{y}_u ) \big)} \bigg)
-\end{equation}
-
-Where $\mathnormal{tr}$ indicates the trace of a matrix, and $\vect{V}^{-1/2}$ is the inverse of the Cholesky decomposition of $\vect{V}$. The Stan software manual discusses such a \textit{change of variables} \citep{standevelopmentteam2016stan}.} then \citep{genz2009computation}:
-
-\begin{equation}
-\begin{split}
-ll=\sum^{\vect{U}} & \bigg(   -1/2 (n \ln (2 \pi) + \ln \big| \vect{V}_{u} \big| + \\
-& ( \hat{\vect{y}}_{(u|u-1)} - \vect{y}_u )  \vect{V}^{-1}_{u}   ( \hat{\vect{y}}_{u|u-1} - \vect{y}_u )^\top) \bigg)
-\end{split}
-\end{equation}
-
-Where $n$ is the number of non-missing observations at measurement occasion $u$. 
-
-\subsection{Population level model}
-Rather than assume complete independence or dependence across subjects, we assume subject level parameters are drawn from a population distribution, for which we also estimate parameters and apply some prior. This results in a joint-posterior distribution of:
-
-\begin{equation}
-p(\vect{\Phi},\vect{\mu},\vect{R},\vect{\beta} | \vect{Y}, \vect{Z}) =  \frac{ p(\vect{Y} | \vect{\Phi}) p(\vect{\Phi} | \vect{\mu},\vect{R},\vect{\beta}, \vect{Z}) p(\vect{\mu},\vect{R},\beta)}{p(\vect{Y})}
-\end{equation}
-
-Where subject specific parameters $\vect{\Phi}_i$ are determined in the following manner:
-
-\begin{equation}
-\label{eq:subjectparams}
-\vect{\Phi}_i = \text{tform} \bigg(\vect{\mu} + \vect{Rh}_i + \vect{\beta} \vect{z}_i \bigg)
-\end{equation}  
-\begin{equation}
-\vect{h}_i \sim \mathrm{N}(\vect{0,1})
-\end{equation}  
-\begin{equation}
-\vect{\mu} \sim \mathrm{N}(\vect{0,1})
-\end{equation}  
-\begin{equation}
-\vect{\beta} \sim \mathrm{N}(\vect{0,1})
-\end{equation}  
-
-$\vect{\Phi}_i \in\mathbb{R}^{s}$ represents all parameters for the dynamic and measurement models of subject $i$. 
-$\vect{\mu} \in\mathbb{R}^{s}$ parameterizes the population means of the distribution of subject level parameters. 
-$\vect{R} \in\mathbb{R}^{s \times s}$ is the Cholesky factor of the population covariance matrix, parameterizing the effect of subject specific deviations $\vect{h}_i \in\mathbb{R}^{s}$ on $\vect{\Phi}_i$.
-$\vect{\beta} \in\mathbb{R}^{s \times w}$ is the effect of time independent predictors $\vect{z}_i \in\mathbb{R}^{w}$  on $\vect{\Phi}_i$. 
-$\vect{Y}_i$ contains all the data for subject $i$ used in the dynamic model -- $\vect{y}$ (process related measurements) and $\vect{x}$ (time dependent predictors).  $\vect{Z}_i$ contains time independent predictors data for subject $i$. 
-$\text{tform}$ is an operator that applies a transform to each value of the vector it is applied to. The specific transform depends on which subject level parameter matrix the value belongs to, and the position in that matrix --- these transforms and rationale are described below, but are in general necessary because many parameters require some bounded distribution, making a purely linear approach untenable. 
-
-Besides the $\text{tform}$ operator, Equation \ref{eq:subjectparams} looks like a relatively standard hierarchical approach, with subject parameters dependent on a population mean and covariance, and observed covariates. Subject specific parameters $\vect{h}_i$ are in standardised deviation form to effect a non-centered parameterization, which appears to improve sampling efficiency in this model. See \citet{bernardo2003noncentered} and \citet{betancourt2013hamiltonian} for discussion of non-centered parameterizations.
-
-\subsection{Parameter transformations and priors}
-A range of considerations must be made when deciding how to parameterize the model. Such considerations include: parameter bounds, distributional assumptions, fixed parameters and ease of interpretation, and sampling efficiency.
-Boundaries apply to many subject level parameters, such as for instance standard deviations which must be greater than 0. These boundaries also imply that the subject level parameters are unlikely to be normally, or symmetrically, distributed, particularly as population means approach the boundaries. 
-There is a need to be able to fix parameters to specific, understandable values, as for instance with elements of the diffusion matrix $\vect{Q}$, which for higher order models will generally require a number of elements fixed to 0. This possibility can be lost under certain transformations.
-Sampling efficiency is reduced when parameters are correlated (with respect to the sampling procedure), because a random change in one parameter requires a corresponding non-random change in another to compensate, complicating efficient exploration of the parameter space. While the use of modern sampling approaches like Hamiltonian Monte Carlo \citep{betancourt2013hamiltonian} and the no U-turn sampler \citep{homan2014nouturn} mitigate these issues to some extent, minimizing correlations between parameters through transformations still substantially improves performance. A further efficiency consideration is the inclusion of sufficient prior information to guide the sampler away from regions where the likelihood of the data approaches zero.
-
-To account for the stated considerations, while allowing for straightforward estimation of the covariance between parameters, we first parameterize the population means according to the standard normal distribution. Subject specific deviations from each mean are distributed according to the $\vect{R}$ matrix. The $\vect{R}$ matrix accounts for parameter correlations such as would be found when, for example, subjects that typically score highly on measurements of one process are also likely to exhibit stronger auto-effects on another. The $\vect{R}$ matrix has a truncated standard normal distribution for the prior of standard deviations (diagonals), and a prior on the Cholesky factor covariance which is the result of multiplying a uniform prior on the space of correlation matrices, with the standard deviations on the diagonal.  Discussion of this approach may be found in the Stan software manual \citep{standevelopmentteam2016stan}, and full details in \cite{lewandowski2009generating}, but it in general has the virtue that the prior for correlations is independent of the scale.  At this point, all the subject level parameters have a multivariate-normal prior, but we then transform these parameters according to the necessary constraints and desired prior distribution. The precise forms and resulting prior densities are specified in Appendix \ref{app:transforms}, but are intuitively described along with implications below:
-
-Subject level standard deviation parameters are obtained by exponentiating a multiple of the unconstrained parameter, which results in a prior similar to the Jeffreys or reference scale prior \citep{bernardo1979Reference}, but is lightly regularized away from the low or high extremes to ensure a proper posterior. This form, wherein mass reduces to 0 at any boundaries, is used for all parameters where boundaries exist, because typically at such boundaries other parameters of the model become empirically non-identified. 
-
-Parameters for off-diagonals of covariance-related matrices are first transformed to a partial correlation parameter (between -1 and 1), and then combined with the relevant standard deviation parameters to determine the covariance parameter, as for the $\vect{R}$ matrix earlier. This approach ensures that the off-diagonal parameters are independent of the diagonals, in terms of both prior expectations and during sampling. 
-
-Because intercept and regression type parameters need not be bounded, for these we simply scale the standard normal to the desired range (i.e., level of informativeness) by multiplication. We could of course also add some value if we wanted a non-zero mean.
-
-Diagonals of the drift matrix $\vect{A}$  -- the temporal auto effects -- are transformed to be negative, with probability mass relatively uniformly distributed for discrete time autoregressive effects between 0 and 1, given a time interval of 1, but declining to 0 at the extremes.
-
-Off diagonals of the drift matrix $\vect{A}$ -- the temporal cross effects -- need to be specified in a problem dependent manner. For simple first order processes, they can all be left as multiplications of the standard normal distribution, but for higher order processes, the cross effects between a lower and higher order component will in general need to be parameterized similarly to the auto effects, ensuring negative values. This is so that optimization or sampling does not get stuck at a local minimum just above zero.
-
-\section{Parameter transformations and resulting priors}
-\label{app:transforms}
-
-Because all sampled parameters are drawn from a standard normal distribution, we need a variety of transformations that can be applied depending on what the parameter represents. The transformation serves to provide both the upper and lower bounds (if they exist) for the parameter of interest, as well as the prior density. While for many model parameters a simple multiplication of the standard normal is adequate, standard deviations and correlations require a bounded distribution, while we have opted to use a bounded distribution on the drift auto effects for pragmatic reasons -- values greater than 0 represent explosive, non-stationary processes that are in most cases not theoretically plausible and occur only due to model misspecification. Further, positive values can result in additional local minima, causing problems for optimization or sampling. While allowing for such values may point to misspecification more readily, the constrained form results in what we believe is a computationally simpler and sensible prior distribution for genuine effects. Estimated values close to 0 when using this constrained form may point to the need to consider the model specification, perhaps by including higher order terms. The transformations we use for the various parameter types are as follows:
-
-\begin{equation}
-\text{Standard deviation: } \mathnormal{e}^{4x} 
-\end{equation}
-
-\begin{equation}
- \text{Drift auto effect (diagonal): } -\mathnormal{log} (\mathnormal{e}^{-1.5x}+1)
-\end{equation}
-
-\begin{equation}
- \text{Partial correlation: } 2/(1+\mathnormal{e}^{-x})-1
-\end{equation}
-
-Covariance matrices are handled in a two step procedure, to ensure that priors on correlation parameters are independent of scale parameters -- a long recognised problem with various common parameterizations of covariance matrices, see for instance \citet{huang2013Simple} and \citet{gelman2006Prior}. Off-diagonals are first transformed via the inverse logit function and scaled to the range -1 to 1, and used in the lower triangle of a Cholesky decomposed correlation matrix. The diagonal of the Cholesky correlation matrix is determined based on both the standard deviations and correlations. Then, the covariance parameters are calculated by pre-multiplying the Cholesky correlation matrix by the scale matrix, which is simply the diagonal matrix containing the standard deviations. This approach ensures that the off-diagonal parameters are independent of the diagonals, in terms of both prior expectations and during sampling. Discussion of this general approach to handling covariance matrices may be found in the Stan software manual \citep{standevelopmentteam2016stan}, and full details in \cite{lewandowski2009generating}. 
-
-Figure \ref{fig:priorplots} plots the resulting densities when using the described transformations. Note that of course the density for a variance is directly related to the standard deviation, and the density plot for an autoregression assumes that the time interval is 1 with no cross effects involved. For the sake of completeness we include a prior density for all other parameters, such as the drift cross effects, intercepts, and regression type parameters. These use a simple multiplication of the standard normal.
-\newline
-
-\begin{figure}
-<<priorplots3,fig.height=12,fig.width=10,cache=FALSE,echo=FALSE, crop=FALSE>>=
-param<-rnorm(9999999)
-par(mfrow=c(3,2),mar=c(4,3,3,1),mgp=c(2,.5,0),cex=1)
-yy<-exp(4*param)
-yy<-yy[yy<10]
-plot(density(yy,from=-.1 ,bw=.01,n=5000),type='l', lwd=3, xlim=c(-.1,5),ylim=c(0,1),  xaxs='i', yaxs='i',xlab='Value',main='Std. deviation')
-grid()
-plot(density(yy^2,from=-.1 ,bw=.02,n=5000),type='l', lwd=3, xlim=c(-.5,25), ylim=c(0,.1), xaxs='i', yaxs='i',xlab='Value',main='Variance')
-grid()
-plot(density(-log(exp(-param*1.5)+1),bw=.02,n=5000),type='l',lwd=3,ylim=c(0,1),xlim=c(-5,0), xaxs='i', yaxs='i', xlab='Value', main='Auto effect')
-grid()
-plot(density(exp(-log(exp(-param*1.5)+1))),type='l',lwd=3,ylim=c(0,1.6), xaxs='i', yaxs='i', xlab='Value', main='Autoregression | $\\Delta t = 1$')
-grid()
-plot(density(2/(1+exp(param))-1,n=5000,bw=.03,from=-1,to=1), type='l', lwd=3, xlim=c(-1,1), xaxs='i', ylim=c(0,1), yaxs='i', xlab='Value',main='Partial correlation')
-grid()
-plot(density((param)),type='l',lwd=2,ylim=c(0,.5),xlim=c(-4,4),xaxs='i',yaxs='i', xlab='Value', main='Other parameters')
-grid()
-@
-\caption{Priors for population mean parameters.}
-\label{fig:priorplots}
-\end{figure}
+For a comprehensive description of the statistical model, see \url{http://www.researchgate.net/publication/310747801_Hierarchical_Bayesian_Continuous_Time_Dynamic_Modeling}.
 
 \bibliography{hierarchicalreferences}
 

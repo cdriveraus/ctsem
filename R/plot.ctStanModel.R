@@ -57,6 +57,7 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,samples=1e6, hypersd='margina
       xlow=eval(parse(text=paste0(m$transform[rowi])))
       lowxlims <- stats::quantile(xlow,probs=c(.1,.9))
       
+      
       #combined
       xlims=c(min(meanxlims[1],lowxlims[1],highxlims[1]),max(meanxlims[2],lowxlims[2],highxlims[2]))
       xdistance= ( (highxlims[1]-lowxlims[1]) + (highxlims[2]-lowxlims[2]) )/2
