@@ -1,13 +1,42 @@
 # R for travis: see documentation at https://docs.travis-ci.com/user/languages/r
 
-language: R
-sudo: false
-cache: packages
-r_build_args: --resave-data --compact-vignettes=gs+qpdf
-r_check_args: --resave-data --compact-vignettes=gs+qpdf
-script: 
-  - |
-    travis_wait 30 R CMD build .
-    travis_wait 30 R CMD check ctsem*tar.gz
+#language: R
+#sudo: false
+#cache: packages
+#r_build_args: --resave-data --compact-vignettes=gs+qpdf
+#r_check_args: --resave-data --compact-vignettes=gs+qpdf
+#script: 
+#  - |
+#    travis_wait 30 R CMD build .
+#    travis_wait 30 R CMD check ctsem*tar.gz
+#after_failure:
+#- find *Rcheck -name '*.fail' -print -exec cat '{}' \;
+
+
+
+language: c
+sudo: required
+
+before_install:
+  - curl -OL https://raw.githubusercontent.com/metacran/r-builder/master/pkg-build.sh
+  - chmod 755 pkg-build.sh
+  - ./pkg-build.sh bootstrap
+
+install:
+  - travis_wait 30 ./pkg-build.sh install_deps
+
+script:
+  - travis_wait 60 ./pkg-build.sh run_tests
+
 after_failure:
-- find *Rcheck -name '*.fail' -print -exec cat '{}' \;
+  - ./pkg-build.sh dump_logs
+
+notifications:
+  email:
+    on_success: change
+    on_failure: change
+
+env:
+  matrix:
+    - RVERSION=release
+- RVERSION=devel
