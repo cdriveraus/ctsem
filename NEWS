@@ -2,8 +2,23 @@ ctsem news:
 
 Known bugs / limitations:
 
+27/9/2017
+#### 2.5.0 ####
 Fixes: 
 - stanWplot function for trace plots while sampling with stan was not working on non windows platforms.
+- ctStan summary reports population standard deviations more accurately -- improved delta approach.
+- various minor plotting improvements
+
+Additions / Changes:
+- ctStanFit now handles correlation matrices differently -- little substantive impact.
+- ctKalman can now be used to plot individual trajectories from ctFit objects and ctStanFit objects (ctStanKalman function no longer exists).
+- ctStanFit now handles missing data on covariate effects -- time dependent predictors are set to zero, time independent predictors are imputed with a normal(0,10) prior (can adjust via the $tipredsimputedprior subobject of the ctStanModel).
+- ctStanFit default population standard deviation prior now changed to a regularised independence Jeffreys -- previous truncated normal approach still possible because...
+- ctStanFit now accepts custom specifications for the population standard deviation -- see the $rawhypersd , $rawhypersdlowerbound, and $hypersdtransform subobjects of the ctStanModel object. 
+- ctStan: Plotting covariate effects via ctStanTIpredeffects function now easier to use and more versatile -- can plot effects on discrete time matrices, for instance.
+- ctFit and ctMultigroupFit data argument changed to 'dat' instead of 'datawide', and now dataform="long" argument can be used to use long format data (as per ctStan) directly. 
+- additional parameter matrices shown for summary of ctStanFit objects.
+- ctStanParMatrices function to compute continuous time matrices for a given model and vector of free population means.
 
 
 16/5/2017
