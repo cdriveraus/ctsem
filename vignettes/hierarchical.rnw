@@ -337,7 +337,7 @@ Alternatively, a prior can be placed on the stationarity of the dynamic models, 
 Individual level results can also be considered, as ctsem includes functionality to output prior (based on all prior observations), updated (based on all prior and current observations), and smoothed (based on all observations) expectations and covariances from the Kalman filter, based on specific subjects models. For ease of comparison, expected manifest indicator scores conditional on prior, updated and smoothed states are also included. This approach allows for: predictions regarding individuals states at any point in time, given any values on the time dependent predictors (external inputs such as interventions or events); residual analysis to check for unmodeled dependencies in the data; or simply as a means of visualization, for comprehension and model sanity checking purposes. An example of such is depicted below, where we see observed and estimated scores for a selected subject from our sample. If we wanted to predict unobserved states in the future, we would need only to specify the appropriate timerange (Prediction into earlier times is possible but makes little sense unless the model is restricted to stationarity).
 
 <<kalmanplot,echo=TRUE,fig.width=10,fig.height=7>>=
-ctKalman(fit, subjects=2, timerange=c(0,60), kalmanvec=c('y','ysmooth'), 
+ctKalman(fit, subjects=2, timerange=c(0,60), kalmanvec=c('y', 'ysmooth'), 
   timestep=.1, plot=TRUE)
 @
 

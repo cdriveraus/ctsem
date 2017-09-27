@@ -29,6 +29,7 @@ Can be useful for determining quantiles or plotting multidimensional regions --
 for instance in case of colinearity of predictors.
 }
 \examples{
-temp<-stan_confidenceRegion(stanfit=ctstantestfit$stanfit, parstrings=c('drift_eta1_eta2','drift_eta2_eta1'))
+temp<-stan_confidenceRegion(stanfit=ctstantestfit$stanfit, 
+  parstrings=c('drift_eta1_eta2','drift_eta2_eta1'))
 t(apply(temp,2,quantile))
 }

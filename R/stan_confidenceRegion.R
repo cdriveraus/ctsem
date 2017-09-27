@@ -15,7 +15,8 @@
 #' @export
 #'
 #' @examples
-#' temp<-stan_confidenceRegion(stanfit=ctstantestfit$stanfit, parstrings=c('drift_eta1_eta2','drift_eta2_eta1'))
+#' temp<-stan_confidenceRegion(stanfit=ctstantestfit$stanfit, 
+#'   parstrings=c('drift_eta1_eta2','drift_eta2_eta1'))
 #' t(apply(temp,2,quantile))
 stan_confidenceRegion <-function(stanfit,parstrings,prefuncstring='(', joinfuncstring=' + ',postfuncstring=')'){
   mc=As.mcmc.list(stanfit)

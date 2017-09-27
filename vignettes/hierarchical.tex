@@ -440,7 +440,7 @@ Individual level results can also be considered, as ctsem includes functionality
 \begin{knitrout}\small
 \definecolor{shadecolor}{rgb}{0.969, 0.969, 0.969}\color{fgcolor}\begin{kframe}
 \begin{alltt}
-\hlkwd{ctKalman}\hlstd{(fit,} \hlkwc{subjects}\hlstd{=}\hlnum{2}\hlstd{,} \hlkwc{timerange}\hlstd{=}\hlkwd{c}\hlstd{(}\hlnum{0}\hlstd{,}\hlnum{60}\hlstd{),} \hlkwc{kalmanvec}\hlstd{=}\hlkwd{c}\hlstd{(}\hlstr{'y'}\hlstd{,}\hlstr{'ysmooth'}\hlstd{),}
+\hlkwd{ctKalman}\hlstd{(fit,} \hlkwc{subjects}\hlstd{=}\hlnum{2}\hlstd{,} \hlkwc{timerange}\hlstd{=}\hlkwd{c}\hlstd{(}\hlnum{0}\hlstd{,}\hlnum{60}\hlstd{),} \hlkwc{kalmanvec}\hlstd{=}\hlkwd{c}\hlstd{(}\hlstr{'y'}\hlstd{,} \hlstr{'ysmooth'}\hlstd{),}
   \hlkwc{timestep}\hlstd{=}\hlnum{.1}\hlstd{,} \hlkwc{plot}\hlstd{=}\hlnum{TRUE}\hlstd{)}
 \end{alltt}
 \end{kframe}
@@ -490,21 +490,21 @@ In the following example we fit the sunspots data available within R, which has 
  \hlstd{model}\hlopt{$}\hlstd{pars}\hlopt{$}\hlstd{transform[}\hlnum{4}\hlstd{]}\hlkwb{<-}\hlstr{'log(exp(-param*1.5)+1)'} \hlcom{#To avoid multi modality }
 
 \hlcom{#fit}
-\hlstd{fit} \hlkwb{<-} \hlkwd{ctStanFit}\hlstd{(datalong, model,} \hlkwc{iter}\hlstd{=}\hlnum{200}\hlstd{,} \hlkwc{chains}\hlstd{=}\hlnum{2}\hlstd{)}
+\hlstd{fit} \hlkwb{<-} \hlkwd{ctStanFit}\hlstd{(datalong, model,} \hlkwc{iter}\hlstd{=}\hlnum{300}\hlstd{,} \hlkwc{chains}\hlstd{=}\hlnum{2}\hlstd{)}
 
 \hlcom{#output}
 \hlkwd{summary}\hlstd{(fit)}\hlopt{$}\hlstd{popmeans}
 \end{alltt}
 \begin{verbatim}
                                       mean    sd   2.5%    50%  97.5% n_eff  Rhat
-hmean_T0mean_ss_level               23.246 6.512 11.315 23.437 34.142 109.6 0.995
-hmean_T0mean_ss_velocity            15.008 7.972 -1.850 15.607 29.550 121.4 0.998
-hmean_ma1                            0.653 0.210  0.228  0.648  1.072  69.2 1.023
-hmean_a21                           -0.355 0.048 -0.464 -0.354 -0.272  54.5 1.001
-hmean_a22                           -0.330 0.109 -0.597 -0.319 -0.132  85.4 1.008
-hmean_diffusion                     15.747 3.039 11.025 15.487 23.030  70.9 1.018
-hmean_manifestvar_sunspots_sunspots  1.297 1.126  0.151  0.931  4.377  86.3 1.025
-hmean_m1                            46.441 2.850 40.263 46.801 51.198 124.8 1.008
+hmean_T0mean_ss_level               24.122 6.148 10.298 24.728 34.545 119.5 1.019
+hmean_T0mean_ss_velocity            14.138 7.512 -0.449 13.991 27.612 175.6 1.004
+hmean_ma1                            0.659 0.204  0.257  0.653  1.094 112.0 0.997
+hmean_a21                           -0.354 0.043 -0.442 -0.353 -0.269 138.9 1.005
+hmean_a22                           -0.323 0.081 -0.492 -0.317 -0.183 108.1 1.009
+hmean_diffusion                     15.450 2.414 11.463 15.069 20.826  97.2 1.003
+hmean_manifestvar_sunspots_sunspots  1.487 1.222  0.127  1.122  4.515 119.1 1.008
+hmean_m1                            46.369 2.765 40.928 46.536 51.030 264.9 1.008
 \end{verbatim}
 \end{kframe}
 \end{knitrout}

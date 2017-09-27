@@ -47,7 +47,7 @@ sdcovchol2cov <- function(mat, cholesky){
       out=covchol2corchol(mat,invert); 
       out= diag(diag(mat)) %*% out
       }
-    if(nrow(mat)==1) out[1,1] = mat[1,1];
+    if(nrow(mat)==1) out = mat;
     
     if(cholesky==0) out = out %*% t(out);
     return(out);
@@ -106,7 +106,7 @@ dtDRIFT=expm(DRIFT * timeinterval)
 dtDIFFUSION = asymDIFFUSION - (dtDRIFT %*% asymDIFFUSION %*% t(dtDRIFT ))
 dtDIFFUSIONcor = cov2cor(dtDIFFUSION)
 
-dtCINT = (solve(DRIFT) %*%(dtDRIFT - diag(2)) %*% (CINT))
+dtCINT = (solve(DRIFT) %*%(dtDRIFT - diag(nrow(DRIFT))) %*% (CINT))
 
 asymCINT = -solve(DRIFT) %*% CINT
 
