@@ -1349,7 +1349,7 @@ target +=  detpenalty;
     #convert missings back to NA's for data output
     standataout<-unlist(standata)
     standataout[standataout==99999] <- NA
-    standataout <- relist(standataout,skeleton=standata)
+    standataout <- utils::relist(standataout,skeleton=standata)
     
     
     out <- list(args=args,stanmodeltext=stanmodeltext, data=standataout, ctstanmodel=ctstanmodel,stanfit=stanfit)
