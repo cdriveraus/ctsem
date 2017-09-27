@@ -14,29 +14,25 @@
 
 
 
+--- 
+after_failure: 
+  - "./pkg-build.sh dump_logs"
+before_install: 
+  - "curl -OL https://raw.githubusercontent.com/metacran/r-builder/master/pkg-build.sh"
+  - "chmod 755 pkg-build.sh"
+  - "./pkg-build.sh bootstrap"
+env: 
+  matrix: 
+    - RVERSION=devel
+    - RVERSION=release
+install: 
+  - "travis_wait 30 ./pkg-build.sh install_deps"
 language: c
+notifications: 
+  email: 
+    on_failure: change
+    on_success: change
+script: 
+  - "travis_wait 60 ./pkg-build.sh run_tests"
 sudo: required
 
-before_install:
-  - curl -OL https://raw.githubusercontent.com/metacran/r-builder/master/pkg-build.sh
-  - chmod 755 pkg-build.sh
-  - ./pkg-build.sh bootstrap
-
-install:
-  - travis_wait 30 ./pkg-build.sh install_deps
-
-script:
-  - travis_wait 60 ./pkg-build.sh run_tests
-
-after_failure:
-  - ./pkg-build.sh dump_logs
-
-notifications:
-  email:
-    on_success: change
-    on_failure: change
-
-env:
-  matrix:
-    - RVERSION=release
-- RVERSION=devel
