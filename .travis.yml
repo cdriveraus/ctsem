@@ -24,7 +24,6 @@ before_install:
 env: 
   matrix: 
     - RVERSION=devel
-    - RVERSION=release
 install: 
   - "travis_wait 30 ./pkg-build.sh install_deps"
 language: c
