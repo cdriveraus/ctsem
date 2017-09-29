@@ -42,7 +42,7 @@ stanplot<-function(chains,seed){
     if(class(samps) != "try-error") notyet<-FALSE
     }
     varnames<-colnames(samps);
-    require(shiny); 
+    # require(shiny); 
     shiny::runApp(appDir=list(server=function(input, output,session) {
     
     output$chainPlot <- renderPlot({
