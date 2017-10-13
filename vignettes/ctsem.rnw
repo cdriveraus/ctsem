@@ -164,43 +164,43 @@ The class of continuous time models implemented in \pkg{ctsem} is represented by
 
 \begin{equation}
 \label{eq:process1}
-\mathrm{  d \boldsymbol{\eta}_\mathnormal{i} \mathnormal{(t)} =
-\bigg( \textbf{A} \boldsymbol{\eta}_\mathnormal{i} ( \mathnormal{t} ) +
-\boldsymbol{\xi}_\mathnormal{i} +
-\mathbf{Bz}_\mathnormal{i} +
-\mathbf{M}\boldsymbol{\chi}_\mathnormal{i} ( \mathnormal{t} )  \bigg) d \mathnormal{t} +
-\textbf{G} d \textbf{W}_\mathnormal{i}(\mathnormal{t})  }
+\mathrm{  d \boldsymbol{\eta}_{\mathnormal{i}} \mathnormal{(t)} =
+\bigg( \textbf{A} \boldsymbol{\eta}_{\mathnormal{i}} ( \mathnormal{t} ) +
+\boldsymbol{\xi}_{\mathnormal{i}} +
+\mathbf{Bz}_{\mathnormal{i}} +
+\mathbf{M}\boldsymbol{\chi}_{\mathnormal{i}} ( \mathnormal{t} )  \bigg) d \mathnormal{t} +
+\textbf{G} d \textbf{W}_{\mathnormal{i}}(\mathnormal{t})  }
 \end{equation}
 
 
-Vector $\boldsymbol{\eta}_\mathnormal{i}(\mathnormal{t})\in\mathbb{R}^{v}$ is a \textit{v}-variable vector of the processes of interest at time $\mathnormal{t}$, for subject $\mathnormal{i}$. The matrix $\textbf{A}\in \mathbb{R}^{v \times v}$ represents the so-called drift matrix, with auto effects on the diagonal and cross effects on the off-diagonals characterising the temporal relationships of the processes. 
+Vector $\boldsymbol{\eta}_{\mathnormal{i}}(\mathnormal{t})\in\mathbb{R}^{v}$ is a \textit{v}-variable vector of the processes of interest at time $\mathnormal{t}$, for subject $\mathnormal{i}$. The matrix $\textbf{A}\in \mathbb{R}^{v \times v}$ represents the so-called drift matrix, with auto effects on the diagonal and cross effects on the off-diagonals characterising the temporal relationships of the processes. 
 
-The long term  level of processes $\boldsymbol{\eta}_\mathnormal{i}(\mathnormal{t})$ is determined by the \textit{v}-length vector of random variables $\boldsymbol{\xi}_\mathnormal{i}$, with $\boldsymbol{\xi}_\mathnormal{i}\sim \mathrm{N}(\boldsymbol{\kappa}, \boldsymbol{\phi_\xi}) \textnormal{ for every } \textit{i}$, where vector $\boldsymbol{\kappa}\in \mathbb{R}^{v}$ denotes the continuous time intercepts, and matrix $\boldsymbol{\phi_\xi}\in \mathbb{R}^{v \times v}$ the covariance across subjects. $\boldsymbol{\xi}_\mathnormal{i}$ sets the long-term level of the processes and the long-term differences between the processes of individual subjects -- without it the processes of a stable model would all trend towards zero in the long-run.
+The long term  level of processes $\boldsymbol{\eta}_{\mathnormal{i}}(\mathnormal{t})$ is determined by the \textit{v}-length vector of random variables $\boldsymbol{\xi}_{\mathnormal{i}}$, with $\boldsymbol{\xi}_{\mathnormal{i}}\sim \mathrm{N}(\boldsymbol{\kappa}, \boldsymbol{\phi_{\xi}}) \textnormal{ for every } \textit{i}$, where vector $\boldsymbol{\kappa}\in \mathbb{R}^{v}$ denotes the continuous time intercepts, and matrix $\boldsymbol{\phi_{\xi}}\in \mathbb{R}^{v \times v}$ the covariance across subjects. $\boldsymbol{\xi}_{\mathnormal{i}}$ sets the long-term level of the processes and the long-term differences between the processes of individual subjects -- without it the processes of a stable model would all trend towards zero in the long-run.
 
-The matrix $\textbf{B}\in \mathbb{R}^{v \times p}$ represents the effect of the $p$-length vector of (fixed) time independent predictors $\textbf{z}\in\mathbb{R}^{p}$ on processes $\boldsymbol{\eta}_\mathnormal{i}(\mathnormal{t})$. Time independent predictors would typically be variables that differs between subjects, but are constant within subjects for the time range in question.
+The matrix $\textbf{B}\in \mathbb{R}^{v \times p}$ represents the effect of the $p$-length vector of (fixed) time independent predictors $\textbf{z}\in\mathbb{R}^{p}$ on processes $\boldsymbol{\eta}_{\mathnormal{i}}(\mathnormal{t})$. Time independent predictors would typically be variables that differs between subjects, but are constant within subjects for the time range in question.
 
 Time dependent predictors $\boldsymbol{\chi}_i(t)$ represent inputs to the system that vary over time and are independent of fluctuations in the system. Equation \ref{eq:process1} shows a generalised form for time dependent predictors, that could be treated a variety of ways dependent on the assumed time course (or shape) of time dependent predictors. We use a simple impulse form, in which the predictors are treated as impacting the processes only at the instant of an observation. When necessary, the evolution over time can be modeled by extending the state matrices. This is demonstrated in the level change example in Section \ref{sec:tdpreds}, wherein a model containing only the basic impulse has a persistent level change effect added. To achieve the impulse form we replace part of Equation \ref{eq:process1} as follows:
 
 \begin{equation}
 \label{eq:spike}
-\mathrm{\boldsymbol{\chi}_\mathnormal{i} ( \mathnormal{t} ) =\sum_{\mathnormal{u} \in \mathnormal{U_i}}  \mathbf{x}_{\mathnormal{i,u}} \boldsymbol{\delta} ( \mathnormal{t-u} )     }
+\mathrm{\boldsymbol{\chi}_{\mathnormal{i}} ( \mathnormal{t} ) =\sum_{\mathnormal{u} \in \mathnormal{U_i}}  \mathbf{x}_{\mathnormal{i,u}} \boldsymbol{\delta} ( \mathnormal{t-u} )     }
 \end{equation}
 
-Here, time dependent predictors $\mathbf{x}_{i,u} \in \mathbb{R}^{l}$ are observed at times $u \in U_i \subset \mathbb{R}$. The Dirac delta function $\boldsymbol{\delta}(t-u)$ is a generalised function that is $\infty$ at 0 and 0 elsewhere, yet has an integral of 1 (when 0 is in the range of integration). It is useful to model an impulse to a system, and here is scaled by the vector of time dependent predictors $\mathbf{x}_{i,u}$.  The effect of these impulses on processes $\boldsymbol{\eta}_\mathnormal{i}(\mathnormal{t})$ is then $\textbf{M}\in \mathbb{R}^{v \times l}$.
+Here, time dependent predictors $\mathbf{x}_{i,u} \in \mathbb{R}^{l}$ are observed at times $u \in U_i \subset \mathbb{R}$. The Dirac delta function $\boldsymbol{\delta}(t-u)$ is a generalised function that is $\infty$ at 0 and 0 elsewhere, yet has an integral of 1 (when 0 is in the range of integration). It is useful to model an impulse to a system, and here is scaled by the vector of time dependent predictors $\mathbf{x}_{i,u}$.  The effect of these impulses on processes $\boldsymbol{\eta}_{\mathnormal{i}}(\mathnormal{t})$ is then $\textbf{M}\in \mathbb{R}^{v \times l}$.
 
-$\textbf{W}_\mathnormal{i}(\mathnormal{t}) \in \mathbb{R}^{v}$ represent independent Wiener processes, with a Wiener process being a random-walk in continuous time. $\textnormal{d}\textbf{W}_\mathnormal{i}(\mathnormal{t})$ is meaningful in the context of stochastic differential equations, and represents the stochastic error term, an infinitesimally
-small increment of the Wiener process. Lower triangular matrix $\mathbf{G}\in \mathbb{R}^{v \times v}$ represents the effect of this noise on the change in $\boldsymbol{\eta}_\mathnormal{i}(\mathnormal{t})$.  \textbf{Q}, where $\textbf{Q} = \textbf{GG}^\top $, represents the variance-covariance matrix of the diffusion process in continuous time.
+$\textbf{W}_{\mathnormal{i}}(\mathnormal{t}) \in \mathbb{R}^{v}$ represent independent Wiener processes, with a Wiener process being a random-walk in continuous time. $\textnormal{d}\textbf{W}_{\mathnormal{i}}(\mathnormal{t})$ is meaningful in the context of stochastic differential equations, and represents the stochastic error term, an infinitesimally
+small increment of the Wiener process. Lower triangular matrix $\mathbf{G}\in \mathbb{R}^{v \times v}$ represents the effect of this noise on the change in $\boldsymbol{\eta}_{\mathnormal{i}}(\mathnormal{t})$.  \textbf{Q}, where $\textbf{Q} = \textbf{GG}^\top $, represents the variance-covariance matrix of the diffusion process in continuous time.
 
 The solution of the stochastic differential Equation \ref{eq:process1} for any time interval $t-t_0$, with $t > t_0$ is:
 
 
 \begin{align*}
-\boldsymbol{\eta}_\mathnormal{i}(\textit{t}) = \: &
-\mathrm{e}^{ \textbf{A} (\mathnormal{t-t_0})  }  \boldsymbol{\eta}_\mathnormal{i}(\mathnormal{t_0}) \: + \\
-&\textbf{A}^{-1} [\mathrm{e}^{\textbf{A} \mathnormal{(t-t_0)} } - \textbf{I}] \boldsymbol{\xi}_\mathnormal{i} \: + \\
-&\textbf{A}^{-1} [\mathrm{e}^{\textbf{A} \mathnormal{(t-t_0)} } - \textbf{I}]\textbf{Bz}_\mathnormal{i} \: + \\
+\boldsymbol{\eta}_{\mathnormal{i}}(\textit{t}) = \: &
+\mathrm{e}^{ \textbf{A} (\mathnormal{t-t_0})  }  \boldsymbol{\eta}_{\mathnormal{i}}(\mathnormal{t_0}) \: + \\
+&\textbf{A}^{-1} [\mathrm{e}^{\textbf{A} \mathnormal{(t-t_0)} } - \textbf{I}] \boldsymbol{\xi}_{\mathnormal{i}} \: + \\
+&\textbf{A}^{-1} [\mathrm{e}^{\textbf{A} \mathnormal{(t-t_0)} } - \textbf{I}]\textbf{Bz}_{\mathnormal{i}} \: + \\
 &\mathbf{M} \mathrm{ \sum_{\mathnormal{u} \in \mathnormal{U_i}}  \mathbf{x}_{\mathnormal{i,u}} \boldsymbol{\delta} ( \mathnormal{t-u} )} \: + \\
-&\int_{\mathnormal{t_0}}^\mathnormal{t} \mathrm{e}^{\textbf{A} \mathnormal{(t-s)} } \textbf{G}\textrm{d}\textbf{W}_\mathnormal{i}\mathnormal{(s)} \numberthis 
+&\int_{\mathnormal{t_0}}^\mathnormal{t} \mathrm{e}^{\textbf{A} \mathnormal{(t-s)} } \textbf{G}\textrm{d}\textbf{W}_{\mathnormal{i}}\mathnormal{(s)} \numberthis 
 \label{eq:solution}
 \end{align*}
 
@@ -211,23 +211,23 @@ The last summand of Equation \ref{eq:solution}, the integral of the diffusion ov
 
 \begin{equation}
 \label{eq:dyncov}
-\mathrm{cov \Big[ \int_{\mathnormal{t_0}}^\mathnormal{t} \mathrm{e}^{\textbf{A}(\mathnormal{t-s})} \textbf{G}d\textbf{W}_\mathnormal{i}(\mathnormal{s})\Big] \: 
+\mathrm{cov \Big[ \int_{\mathnormal{t_0}}^\mathnormal{t} \mathrm{e}^{\textbf{A}(\mathnormal{t-s})} \textbf{G}d\textbf{W}_{\mathnormal{i}}(\mathnormal{s})\Big] \: 
 = \: \mathnormal{\int_{t_0}^t } \mathrm{e}^{\textbf{A} \mathnormal{(t-s)} }\textbf{Q} \mathrm{e}^{\textbf{A}^\top \mathnormal{(t-s)}} d\mathnormal{s} \: 
 = \: irow \big( \textbf{A}_{\#}^{-1} [\mathrm{e}^{\textbf{A}_{\#} \mathnormal{(t-t_0)} } - \textbf{I}] \: row (\textbf{Q}) \big) }
 \end{equation}
 
 Where $\textbf{A}_{\#} = \textbf{A} \otimes \textbf{I} + \textbf{I} \otimes \textbf{A} $, with $\otimes$ denoting the Kronecker-product, row is an operation that takes elements of a matrix rowwise and puts them in a column vector, and irow is the inverse of the row operation.
 
-The process vector $\boldsymbol{\eta}_\mathnormal{i}(\mathnormal{t})$ may be directly observed or latent with measurement model
+The process vector $\boldsymbol{\eta}_{\mathnormal{i}}(\mathnormal{t})$ may be directly observed or latent with measurement model
 
 \begin{equation}
 \label{eq:measurement}
-\mathrm{\textbf{y}_\mathnormal{i} \mathnormal{(t)} = \boldsymbol{\Gamma}_\mathnormal{i} + \boldsymbol{\Lambda} \boldsymbol{\eta}_\mathnormal{i} ( \mathnormal{t} ) + \boldsymbol{\zeta}_\mathnormal{i}\mathnormal{(t)},  
+\mathrm{\textbf{y}_{\mathnormal{i}} \mathnormal{(t)} = \boldsymbol{\Gamma}_{\mathnormal{i}} + \boldsymbol{\Lambda} \boldsymbol{\eta}_{\mathnormal{i}} ( \mathnormal{t} ) + \boldsymbol{\zeta}_{\mathnormal{i}}\mathnormal{(t)},  
 \quad \text{where } \boldsymbol{\zeta}\mathnormal{(t)} \sim  \mathrm{N} ( \textbf{0} , \boldsymbol{\Theta} ) ,
 \quad \text{and } \boldsymbol{\Gamma} \sim  \mathrm{N} ( \boldsymbol{\tau} , \Psi ) }
 \end{equation}
 
-where \textit{c}-length vector $\boldsymbol{\tau}$ is the expected value of $\boldsymbol{\Gamma}_\mathnormal{i}$, which is distributed across subjects according to covariance matrix $\boldsymbol{\Psi} \in \mathbb{R}^{\mathnormal{c \times c}}$ (referred to later as \textit{manifest traits} -- see Section \ref{sec:heterogeneity}). $\boldsymbol{\Lambda} \in \mathbb{R}^{c \times v}$ is a matrix of factor loadings, $\textbf{y}_\mathnormal{i} (\mathnormal{t})\in\mathbb{R}^{c}$ is a vector of manifest variables, and residual vector $\boldsymbol{\zeta}_i \in \mathbb{R}^{c}$ has covariance matrix $\boldsymbol{\Theta} \in\mathbb{R}^{c \times c}$.
+where \textit{c}-length vector $\boldsymbol{\tau}$ is the expected value of $\boldsymbol{\Gamma}_{\mathnormal{i}}$, which is distributed across subjects according to covariance matrix $\boldsymbol{\Psi} \in \mathbb{R}^{\mathnormal{c \times c}}$ (referred to later as \textit{manifest traits} -- see Section \ref{sec:heterogeneity}). $\boldsymbol{\Lambda} \in \mathbb{R}^{c \times v}$ is a matrix of factor loadings, $\textbf{y}_{\mathnormal{i}} (\mathnormal{t})\in\mathbb{R}^{c}$ is a vector of manifest variables, and residual vector $\boldsymbol{\zeta}_i \in \mathbb{R}^{c}$ has covariance matrix $\boldsymbol{\Theta} \in\mathbb{R}^{c \times c}$.
 
 \subsection{Continuous time and SEM}\nopagebreak
 Continuous time models have already been implemented as structural equation models, using either non-linear algebraic constraints \citep{oud2000continuous} or linear approximations of the matrix exponential \citep{oud2002continuous}. Our formulation uses either the SEM RAM (reticular action model) specification as per \citet{mcardle1984algebraic}, or the state space form recently added to \pkg{OpenMx} \citep{neale2015openmx, hunter2014state}. For details on the equivalence and differences between SEM and state space modelling techniques, see \citet{chow2010equivalence}. \pkg{ctsem} translates user specified input matrices and switches into an \pkg{OpenMx} model consisting of continuous time parameter matrices, algebraic transformations of these matrices to aid optimization (See Section \ref{sec:modelfit}), and algebraic transforms from the continuous time parameters to discrete time parameters for every unique time interval. Expectation matrices are then generated for each individual according to the specified inputs, constraints, and observed timing data. Optimization using either the Kalman filter or row-wise full information maximum likelihood (FIML) within \pkg{OpenMx} is used to estimate the parameters, typically with a first pass using a penalty term (or prior) to find a region of high probability without extreme parameters, and then a second FIML pass using the first as starting values.
@@ -254,10 +254,10 @@ semFit$mxobj$F$values
 % \label{eq:fiml}
 % \mathrm{
 % \mathnormal{-2LL = \sum_{i = 1}^\textit{N}} \mathrm{log (2\pi) \textbf{V}}\mathnormal{_i} +
-% log | \boldsymbol{\Sigma}_\mathnormal{i} | + 
-% (\textbf{y}_\mathnormal{i} - \textbf{M}_\mathnormal{i})
-% \boldsymbol{\Sigma}_\mathnormal{i}^{-1}
-% (\textbf{y}_\mathnormal{i} - \textbf{M}_\mathnormal{i})^\top
+% log | \boldsymbol{\Sigma}_{\mathnormal{i}} | + 
+% (\textbf{y}_{\mathnormal{i}} - \textbf{M}_{\mathnormal{i}})
+% \boldsymbol{\Sigma}_{\mathnormal{i}}^{-1}
+% (\textbf{y}_{\mathnormal{i}} - \textbf{M}_{\mathnormal{i}})^\top
 % }
 % \end{equation}
 % 
