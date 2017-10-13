@@ -6,7 +6,7 @@
 \usage{
 ctStanDiscreteParsPlot(x, indices = "all", add = FALSE, legend = TRUE,
   polygon = TRUE, quantiles = c(0.05, 0.5, 0.95), times = seq(0, 10, 0.1),
-  latentNames = "auto", ylim = "auto", lwdvec = "auto", colvec = "auto",
+  latentNames = "auto", lwdvec = "auto", colvec = "auto",
   ltyvec = "auto", plotcontrol = list(ylab = "Value", xlab =
   "Time interval", main = "Regression coefficients", type = "l"), grid = TRUE,
   legendcontrol = list(x = "topright", bg = "white"), polygonalpha = 0.3,
@@ -35,9 +35,6 @@ The default of c(.05,.5,.95) plots 95\% credible intervals and the posterior med
 
 \item{latentNames}{Vector of character strings denoting names for the latent variables. 
 'auto' just uses eta1 eta2 etc.}
-
-\item{ylim}{Either 'auto' to determine automatically, or vector of length 2 specifying
-upper and lower limits of y axis.}
 
 \item{lwdvec}{Either 'auto', or a vector of positive integers denoting line widths for each quantile.
 'auto' specifies c(1,3,1) if there are 3 quantiles to be plotted (default), otherwise simply 3.}

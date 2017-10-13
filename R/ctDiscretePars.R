@@ -336,8 +336,6 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
 #'@param times Numeric vector of positive values, discrete time parameters will be calculated for each.
 #'@param latentNames Vector of character strings denoting names for the latent variables. 
 #''auto' just uses eta1 eta2 etc.
-#'@param ylim Either 'auto' to determine automatically, or vector of length 2 specifying
-#'upper and lower limits of y axis.
 #'@param lwdvec Either 'auto', or a vector of positive integers denoting line widths for each quantile.
 #''auto' specifies c(1,3,1) if there are 3 quantiles to be plotted (default), otherwise simply 3.
 #'@param ltyvec Either 'auto', or a vector of line type integers (as for the lty parameter normally)
@@ -362,8 +360,8 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
 #'@export
 
 ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon=TRUE, 
-  quantiles=c(.05,.5,.95), times=seq(0,10,.1),latentNames='auto',
-  ylim='auto',lwdvec='auto',colvec='auto',ltyvec='auto',
+  quantiles=c(.025,.5,.975), times=seq(0,10,.1),latentNames='auto',
+  lwdvec='auto',colvec='auto',ltyvec='auto',
   plotcontrol=list(ylab='Value',xlab='Time interval',
     main='Regression coefficients',type='l'),grid=TRUE,
   legendcontrol=list(x='topright',bg='white'),
@@ -380,6 +378,7 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
   if(is.null(plotcontrol$xlab)) plotcontrol$xlab  <- 'Time interval'
   if(is.null(plotcontrol$main)) plotcontrol$main  <- 'Regression coefficients'
   if(is.null(plotcontrol$type)) plotcontrol$type  <- 'l'
+
   
   if(is.null(legendcontrol$x)) legendcontrol$x = 'topright'
   if(is.null(legendcontrol$bg)) legendcontrol$bg = 'white'
@@ -400,20 +399,23 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
   
   if(colvec[1]=='auto') colvec=grDevices::rainbow(nrow(indices),alpha=.8,v=.9)
   
-  if(ylim=='auto') ylim=range(plyr::aaply(input,c(3,4),function(x)
+  if(is.null(plotcontrol$ylim)) plotcontrol$ylim=range(plyr::aaply(input,c(3,4),function(x) 
     x[indices]),na.rm=TRUE) #range of diagonals
-  
 
   
  
   #blank plot
   blankargs=plotcontrol
-  blankargs$ylim=ylim
   blankargs$xlim=range(times)
   blankargs$y=NA
   blankargs$x=NA
   do.call(plot,blankargs)
-  if(grid) grid()
+  if(grid) {
+    grid()
+    par(new=TRUE)
+    do.call(plot,blankargs)
+    par(new=FALSE)
+  }
   
   ####plotting confidence region
   if(polygon) {
@@ -448,7 +450,6 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
       plotargs$lty=ltyvec[cc]
       plotargs$col=ifelse(qi!= 2,grDevices::adjustcolor(colvec[cc],alpha.f=.5) ,colvec[cc])
       plotargs$lwd=ifelse(qi!= 2,1, lwdvec[cc])
-      plotargs$ylim=ylim
       do.call(points,plotargs)
     }}
   

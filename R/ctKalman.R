@@ -184,7 +184,7 @@ ctKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
   errorvec='auto', errormultiply=1.96,
   ltyvec="auto",colvec='auto', lwdvec='auto', 
   subsetindices=NULL,pchvec='auto', typevec='auto',grid=TRUE,add=FALSE, 
-  plotcontrol=list(ylab='Value',xlab='Time'),
+  plotcontrol=list(ylab='Value',xlab='Time',xaxs='i'),
   polygoncontrol=list(border=NA),polygonalpha=.1,
   legend=TRUE, legendcontrol=list(x='topright',bg='white')){
   
@@ -285,7 +285,12 @@ ctKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
         
         if(subjecti == subjects[1] & kveci==1 && dimi == 1 && !add) {
           do.call(graphics::plot.default,plist) 
-          if(grid) grid()
+          if(grid) {
+            grid()
+            par(new=TRUE)
+            do.call(graphics::plot.default,plist) 
+            par(new=FALSE)
+          }
         } else do.call(graphics::points.default,plist) 
         
         if(!is.na(errorvec[kveci])){

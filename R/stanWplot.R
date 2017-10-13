@@ -30,6 +30,9 @@ windows= Sys.info()[1]=='Windows'
 
 stanplot<-function(chains,seed){
   wd<-  paste0("setwd('",tmpdir,"')")
+  
+  if(1==99) shiny::runApp(appDir = getwd(), {})
+  
   writeLines(text=paste0(wd,'
     seed<-',seed,';
     chains<-',chains,';

@@ -78,7 +78,12 @@ ctPlotArray <- function(yarray,x,
   blankargs$y=NA
   blankargs$x=NA
   do.call(plot,blankargs)
-  if(grid) grid()
+  if(grid) {
+    grid()
+    par(new=TRUE)
+    do.call(plot,blankargs)
+    par(new=FALSE)
+  }
   
   #confidence
   if(polygon) {

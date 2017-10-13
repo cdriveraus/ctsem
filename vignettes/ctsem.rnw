@@ -1,6 +1,6 @@
-  %\VignetteIndexEntry{Continuous time structural equation modelling with ctsem} 
-  %\VignetteKeyword{SEM, time series, panel data, dynamic models}
-  %\VignetteEngine{knitr::knitr} 
+%\VignetteIndexEntry{Continuous time structural equation modelling with ctsem} 
+%\VignetteKeyword{SEM, time series, panel data, dynamic models}
+%\VignetteEngine{knitr::knitr} 
 \documentclass[nojss]{jss}
 
 
@@ -69,47 +69,46 @@ URL: \url{http://www.mpib-berlin.mpg.de/en/staff/charles-driver}
 \newcommand\numberthis{\addtocounter{equation}{1}\tag{\theequation}} %for adding numbers to specific lines
 
 % Set lowercase greek letters to non-italicised
-% \usepackage{Sweavel}
-% \usepackage{Sweave}
-\usepackage[libertine]{newtxmath}
+
+% \usepackage[libertine]{newtxmath}
 \usepackage[pdftex]{thumbpdf}
 
 % \usepackage[bm]
 
-\makeatletter
-\re@DeclareMathSymbol{\alpha}{\mathord}{lettersA}{11}
-\re@DeclareMathSymbol{\beta}{\mathord}{lettersA}{12}
-\re@DeclareMathSymbol{\gamma}{\mathord}{lettersA}{13}
-\re@DeclareMathSymbol{\delta}{\mathord}{lettersA}{14}
-\re@DeclareMathSymbol{\epsilon}{\mathord}{lettersA}{15}
-\re@DeclareMathSymbol{\zeta}{\mathord}{lettersA}{16}
-\re@DeclareMathSymbol{\eta}{\mathord}{lettersA}{17}
-\re@DeclareMathSymbol{\theta}{\mathord}{lettersA}{18}
-\re@DeclareMathSymbol{\iota}{\mathord}{lettersA}{19}
-\re@DeclareMathSymbol{\kappa}{\mathord}{lettersA}{20}
-\re@DeclareMathSymbol{\lambda}{\mathord}{lettersA}{21}
-\re@DeclareMathSymbol{\mu}{\mathord}{lettersA}{22}
-\re@DeclareMathSymbol{\nu}{\mathord}{lettersA}{23}
-\iftx@altnu
-\re@DeclareMathSymbol{\nu}{\mathord}{lettersA}{40}
-\fi
-\re@DeclareMathSymbol{\xi}{\mathord}{lettersA}{24}
-\re@DeclareMathSymbol{\pi}{\mathord}{lettersA}{25}
-\re@DeclareMathSymbol{\rho}{\mathord}{lettersA}{26}
-\re@DeclareMathSymbol{\sigma}{\mathord}{lettersA}{27}
-\re@DeclareMathSymbol{\tau}{\mathord}{lettersA}{28}
-\re@DeclareMathSymbol{\upsilon}{\mathord}{lettersA}{29}
-\re@DeclareMathSymbol{\phi}{\mathord}{lettersA}{30}
-\re@DeclareMathSymbol{\chi}{\mathord}{lettersA}{31}
-\re@DeclareMathSymbol{\psi}{\mathord}{lettersA}{32}
-\re@DeclareMathSymbol{\omega}{\mathord}{lettersA}{33}
-\re@DeclareMathSymbol{\varepsilon}{\mathord}{lettersA}{34}
-\re@DeclareMathSymbol{\vartheta}{\mathord}{lettersA}{35}
-\re@DeclareMathSymbol{\varpi}{\mathord}{lettersA}{36}
-\re@DeclareMathSymbol{\varrho}{\mathord}{lettersA}{37}
-\re@DeclareMathSymbol{\varsigma}{\mathord}{lettersA}{38}
-\re@DeclareMathSymbol{\varphi}{\mathord}{lettersA}{39}
-\makeatother
+% \makeatletter
+% \re@DeclareMathSymbol{\alpha}{\mathord}{lettersA}{11}
+% \re@DeclareMathSymbol{\beta}{\mathord}{lettersA}{12}
+% \re@DeclareMathSymbol{\gamma}{\mathord}{lettersA}{13}
+% \re@DeclareMathSymbol{\delta}{\mathord}{lettersA}{14}
+% \re@DeclareMathSymbol{\epsilon}{\mathord}{lettersA}{15}
+% \re@DeclareMathSymbol{\zeta}{\mathord}{lettersA}{16}
+% \re@DeclareMathSymbol{\eta}{\mathord}{lettersA}{17}
+% \re@DeclareMathSymbol{\theta}{\mathord}{lettersA}{18}
+% \re@DeclareMathSymbol{\iota}{\mathord}{lettersA}{19}
+% \re@DeclareMathSymbol{\kappa}{\mathord}{lettersA}{20}
+% \re@DeclareMathSymbol{\lambda}{\mathord}{lettersA}{21}
+% \re@DeclareMathSymbol{\mu}{\mathord}{lettersA}{22}
+% \re@DeclareMathSymbol{\nu}{\mathord}{lettersA}{23}
+% \iftx@altnu
+% \re@DeclareMathSymbol{\nu}{\mathord}{lettersA}{40}
+% \fi
+% \re@DeclareMathSymbol{\xi}{\mathord}{lettersA}{24}
+% \re@DeclareMathSymbol{\pi}{\mathord}{lettersA}{25}
+% \re@DeclareMathSymbol{\rho}{\mathord}{lettersA}{26}
+% \re@DeclareMathSymbol{\sigma}{\mathord}{lettersA}{27}
+% \re@DeclareMathSymbol{\tau}{\mathord}{lettersA}{28}
+% \re@DeclareMathSymbol{\upsilon}{\mathord}{lettersA}{29}
+% \re@DeclareMathSymbol{\phi}{\mathord}{lettersA}{30}
+% \re@DeclareMathSymbol{\chi}{\mathord}{lettersA}{31}
+% \re@DeclareMathSymbol{\psi}{\mathord}{lettersA}{32}
+% \re@DeclareMathSymbol{\omega}{\mathord}{lettersA}{33}
+% \re@DeclareMathSymbol{\varepsilon}{\mathord}{lettersA}{34}
+% \re@DeclareMathSymbol{\vartheta}{\mathord}{lettersA}{35}
+% \re@DeclareMathSymbol{\varpi}{\mathord}{lettersA}{36}
+% \re@DeclareMathSymbol{\varrho}{\mathord}{lettersA}{37}
+% \re@DeclareMathSymbol{\varsigma}{\mathord}{lettersA}{38}
+% \re@DeclareMathSymbol{\varphi}{\mathord}{lettersA}{39}
+% \makeatother
 
 \begin{document}
 %  \SweaveOpts{concordance = TRUE} %% I GUESS THIS COMMAND NEEDS TO GO SOMEWHERE ELSE 

@@ -1,6 +1,6 @@
-  %\VignetteIndexEntry{Introduction to Hierarchical Continuous Time Dynamic Modelling with ctsem} 
-  %\VignetteKeyword{SEM, time series, panel data, dynamic models}
-  %\VignetteEngine{knitr::knitr} 
+%\VignetteIndexEntry{Introduction to Hierarchical Continuous Time Dynamic Modelling with ctsem} 
+%\VignetteKeyword{SEM, time series, panel data, dynamic models}
+%\VignetteEngine{knitr::knitr} 
 \documentclass[nojss]{jss}
 
 \usepackage{amsmath} %for multiple line equations

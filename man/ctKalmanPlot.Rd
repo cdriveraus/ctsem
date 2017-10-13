@@ -8,7 +8,7 @@ ctKalmanPlot(x, subjects, kalmanvec = c("y", "yprior"), errorvec = "auto",
   errormultiply = 1.96, ltyvec = "auto", colvec = "auto",
   lwdvec = "auto", subsetindices = NULL, pchvec = "auto",
   typevec = "auto", grid = TRUE, add = FALSE, plotcontrol = list(ylab =
-  "Value", xlab = "Time"), polygoncontrol = list(border = NA),
+  "Value", xlab = "Time", xaxs = "i"), polygoncontrol = list(border = NA),
   polygonalpha = 0.1, legend = TRUE, legendcontrol = list(x = "topright",
   bg = "white"))
 }
