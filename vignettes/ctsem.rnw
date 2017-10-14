@@ -70,10 +70,12 @@ URL: \url{http://www.mpib-berlin.mpg.de/en/staff/charles-driver}
 
 % Set lowercase greek letters to non-italicised
 
-% \usepackage[libertine]{newtxmath}
+ \usepackage[libertine]{newtxmath}
 \usepackage[pdftex]{thumbpdf}
 
-% \usepackage[bm]
+%\newcommand{\bmmax}{3}  
+%\newcommand{\hmmax}{0}
+%\usepackage[bm]
 
 % \makeatletter
 % \re@DeclareMathSymbol{\alpha}{\mathord}{lettersA}{11}
