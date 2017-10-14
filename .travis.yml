@@ -32,7 +32,6 @@ matrix:
     - os: linux
       r: devel
     - os: osx
-      osx_image: beta-xcode6.1
       disable_homebrew: true
 
 
