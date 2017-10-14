@@ -22,8 +22,8 @@ latex: true
 sudo: required
 r_build_args: --resave-data --compact-vignettes=gs+qpdf
 r_check_args: --resave-data --compact-vignettes=gs+qpdf
-before_install:
-- sudo apt-get -qq update && sudo apt-get install -y --no-install-recommends texlive-full
+#before_install:
+#- sudo apt-get -qq update && sudo apt-get install -y --no-install-recommends texlive-full
 
 matrix:
   include:

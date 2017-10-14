@@ -5,8 +5,8 @@
 \title{ctStanDiscreteParsPlot}
 \usage{
 ctStanDiscreteParsPlot(x, indices = "all", add = FALSE, legend = TRUE,
-  polygon = TRUE, quantiles = c(0.05, 0.5, 0.95), times = seq(0, 10, 0.1),
-  latentNames = "auto", lwdvec = "auto", colvec = "auto",
+  polygon = TRUE, quantiles = c(0.025, 0.5, 0.975), times = seq(0, 10,
+  0.1), latentNames = "auto", lwdvec = "auto", colvec = "auto",
   ltyvec = "auto", plotcontrol = list(ylab = "Value", xlab =
   "Time interval", main = "Regression coefficients", type = "l"), grid = TRUE,
   legendcontrol = list(x = "topright", bg = "white"), polygonalpha = 0.3,
