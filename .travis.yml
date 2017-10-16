@@ -28,17 +28,17 @@ latex: true
 
 matrix:
   include:
+     - os: osx
+      sudo: required
+      disable_homebrew: true
+      before_script: 
+      - sudo tlmgr install framed
     - os: linux
       sudo: required
       r: release
     - os: linux
       sudo: required
       r: devel
-    - os: osx
-      sudo: required
-      disable_homebrew: true
-      before_script: 
-      - sudo tlmgr install framed
 
 
 
