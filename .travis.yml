@@ -36,6 +36,7 @@ matrix:
       disable_homebrew: true
       before_script: 
       - sudo tlmgr install framed
+      sudo tlmgr install newtxmath
 
 
 

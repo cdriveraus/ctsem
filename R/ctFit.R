@@ -2163,8 +2163,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   
   if(fit == TRUE){ #but otherwise...  
     
-    if(useOptimizer==TRUE) {
-      if(1==99) mxobj <- mxTryHard(model, initialTolerance=1e-14,
+    if(useOptimizer==TRUE) mxobj <- mxTryHard(model, initialTolerance=1e-14,
       # finetuneGradient=FALSE,
       initialGradientIterations=1,
       #initialGradientStepSize = 1e-6,
@@ -2172,8 +2171,6 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
       iterationSummary=iterationSummary, bestInitsOutput=FALSE, verbose=verbose,
       extraTries=retryattempts, loc=.5, scale=0.2, paste=FALSE)
     
-    mxobj<-mxRun(model)
-    }
     if(useOptimizer==FALSE) mxobj <- OpenMx::mxRun(model,useOptimizer=useOptimizer)
   }
   
