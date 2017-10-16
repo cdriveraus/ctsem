@@ -2163,7 +2163,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   
   if(fit == TRUE){ #but otherwise...  
     
-    if(useOptimizer==TRUE) mxobj <- mxTryHardctsem(model, initialTolerance=1e-14,
+    if(useOptimizer==TRUE) mxobj <- mxTryHard(model, initialTolerance=1e-14,
       # finetuneGradient=FALSE,
       initialGradientIterations=1,
       #initialGradientStepSize = 1e-6,
