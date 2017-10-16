@@ -39,9 +39,7 @@ matrix:
     - os: linux
       sudo: required
       r: devel
-
-
-
+      
 script: 
   - |
     travis_wait 30 R CMD build --resave-data --no-build-vignettes .
