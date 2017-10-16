@@ -3,7 +3,7 @@
 %\VignetteEngine{knitr::knitr} 
 \documentclass[nojss]{jss}
 
-
+\usepackage[utf8]{inputenc}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% declarations for jss.cls %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

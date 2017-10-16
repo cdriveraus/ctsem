@@ -27,7 +27,7 @@
 #' ctIndplot(datawide = AnomAuth+rnorm(length(AnomAuth)),vars=1,n.subjects = 5,
 #' n.manifest = 2,Tpoints = 4)
 #' 
-ctGenerateFromFit<-function(fit,timestep=.1,n.subjects=100,timerange='asdata',
+ctGenerateFromFit<-function(fit,timestep='asdata',n.subjects=100,timerange='asdata',
   predictorSubjects='all',...){
 
 
@@ -46,8 +46,10 @@ if(predictorSubjects=='all') predictorSubjects=1:(nrow(dat))
 
 if(timerange=='asdata') timerange=c(0,max(apply(dat[,paste0('dT',1:(gm$Tpoints-1))],1,sum,na.rm=TRUE)))
 
-gm$Tpoints=length(seq(timerange[1],timerange[2],timestep))
-
+if(timestep!='asdata'){
+  if(is.na(as.numeric(timestep)) || as.numeric(timestep) <= 0) stop('timestep must be a positive value or "asdata"')
+  gm$Tpoints=length(seq(timerange[1],timerange[2],timestep))
+}
 
 
 out=c()
@@ -61,7 +63,7 @@ for(i in 1:n.subjects){
       manifestNames=gm$manifestNames,TDpredNames=gm$TDpredNames,TIpredNames=gm$TIpredNames))
     
     ndlong <- suppressMessages(ctDeintervalise(datalong=ndlong))
-    ndlong <- ctDiscretiseData(dlong=ndlong,timestep=timestep,
+    if(timestep !='asdata') ndlong <- ctDiscretiseData(dlong=ndlong,timestep=timestep,
       TDpredNames=gm$TDpredNames,TIpredNames=gm$TIpredNames)
     
   if(gm$n.TDpred > 0) {
@@ -75,8 +77,8 @@ for(i in 1:n.subjects){
     gm$TIPREDVAR = diag(0,gm$n.TIpred)
   }
   }
-  
-  new=suppressMessages(ctGenerate(ctmodelobj = gm,n.subjects = 1,dtmean=timestep,...))
+  if(timestep=='asdata') dtmat <- dat[,paste0('dT',1:(fit$ctmodelobj$Tpoints-1)),drop=FALSE] else dtmat <- NA
+  new=suppressMessages(ctGenerate(ctmodelobj = gm,n.subjects = 1,dtmean=timestep,dtmat=dtmat,...))
   # new[,'id']=i
    out=rbind(out,new)
    # if(i==1 & n.subjects > 1) out=rbind(out,matrix(NA,nrow=nrow(out)*(n.subjects-1),ncol=ncol(out))) #preallocate

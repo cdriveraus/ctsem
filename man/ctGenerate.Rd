@@ -5,7 +5,7 @@
 \title{ctGenerate}
 \usage{
 ctGenerate(ctmodelobj, n.subjects = 100, burnin = 0, dtmean = 1,
-  logdtsd = 0, wide = TRUE)
+  logdtsd = 0, dtmat = NA, wide = TRUE)
 }
 \arguments{
 \item{ctmodelobj}{ctsem model object from \code{\link{ctModel}}.}
@@ -17,6 +17,10 @@ ctGenerate(ctmodelobj, n.subjects = 100, burnin = 0, dtmean = 1,
 \item{dtmean}{Positive numeric. Average time interval (delta T) to use.}
 
 \item{logdtsd}{Numeric. Standard deviation for variability of the time interval.}
+
+\item{dtmat}{Either NA, or numeric matrix of n.subjects rows and Tpoints-1 columns, 
+containing positive numeric values for all time intervals between measurements. 
+If not NA, dtmean and logdtsd are ignored.}
 
 \item{wide}{Logical. Output in wide format?}
 }

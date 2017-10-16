@@ -4,7 +4,7 @@
 \alias{ctGenerateFromFit}
 \title{Generates data according to the model estimated in a ctsemFit object.#'}
 \usage{
-ctGenerateFromFit(fit, timestep = 0.1, n.subjects = 100,
+ctGenerateFromFit(fit, timestep = "asdata", n.subjects = 100,
   timerange = "asdata", predictorSubjects = "all", ...)
 }
 \arguments{

@@ -132,7 +132,7 @@ Kalman<-function(kpars,datalong,
     ypriorcov[[rowi]] <- kpars$LAMBDA[,diffusionindices,drop=FALSE] %*% etapriorcov[[rowi]] %*% 
       t(kpars$LAMBDA[,diffusionindices,drop=FALSE]) + kpars$MANIFESTVAR
 
-    if(imputeMissings) Y[rowi,] <- yprior[[rowi]] + t(chol(ypriorcov[[rowi]])) %*% rnorm(nmanifest,0,1)
+    if(imputeMissings) Y[rowi,] <- yprior[[rowi]] + t(qr.R(qr(ypriorcov[[rowi]],complete=FALSE))) %*% rnorm(nmanifest,0,1)
     
     y <- Y[rowi,,drop=FALSE][,nafilter,drop=FALSE]
     
