@@ -20,11 +20,11 @@ cache: packages
 latex: true
 r_build_args: --resave-data --no-build-vignettes
 r_check_args: --resave-data --compact-vignettes=gs+qpdf
-before_install:
-- sudo apt-get -qq update && sudo apt-get install -y --no-install-recommends texlive-full
-#- sudo tlmgr install framed
-install:
-  - if [ $TRAVIS_OS_NAME = osx ];  brew brew cask install mactex; fi
+#before_install:
+#- sudo apt-get -qq update && sudo apt-get install -y --no-install-recommends texlive-full
+
+#install:
+#  - if [ $TRAVIS_OS_NAME = osx ];  brew brew cask install mactex; fi
 
 matrix:
   include:
@@ -37,7 +37,8 @@ matrix:
     - os: osx
       sudo: required
       disable_homebrew: true
-      #before_script:
+      before_script: 
+      - tlmgr install framed
 
 
 
