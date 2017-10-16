@@ -23,6 +23,8 @@ r_check_args: --resave-data --compact-vignettes=gs+qpdf
 before_install:
 - sudo apt-get -qq update && sudo apt-get install -y --no-install-recommends texlive-full
 #- sudo tlmgr install framed
+install:
+  - if [ $TRAVIS_OS_NAME = osx ];  brew brew cask install mactex; fi
 
 matrix:
   include:

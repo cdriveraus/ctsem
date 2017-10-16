@@ -1,6 +1,6 @@
-  %\VignetteIndexEntry{Introduction to Hierarchical Continuous Time Dynamic Modelling with ctsem} 
-  %\VignetteKeyword{SEM, time series, panel data, dynamic models}
-  %\VignetteEngine{knitr::knitr} 
+%\VignetteIndexEntry{Introduction to Hierarchical Continuous Time Dynamic Modelling with ctsem} 
+%\VignetteKeyword{SEM, time series, panel data, dynamic models}
+%\VignetteEngine{knitr::knitr} 
 \documentclass[nojss]{jss}\usepackage[]{graphicx}\usepackage[]{color}
 %% maxwidth is the original width if it is less than linewidth
 %% otherwise use linewidth (to make sure the graphics do not exceed the margin)
@@ -53,45 +53,20 @@
 
 \usepackage{alltt}
 
+\usepackage[utf8]{inputenc}
+%
+%\usepackage{natbib}
 \usepackage{amsmath} %for multiple line equations
- \usepackage[libertine]{newtxmath}
+\usepackage[libertine]{newtxmath}
+%\usepackage{doi}
+%\usepackage{bm}
+%\usepackage[natbibapa]{apacite}
 
- \makeatletter
- \re@DeclareMathSymbol{\alpha}{\mathord}{lettersA}{11}
- \re@DeclareMathSymbol{\beta}{\mathord}{lettersA}{12}
- \re@DeclareMathSymbol{\gamma}{\mathord}{lettersA}{13}
- \re@DeclareMathSymbol{\delta}{\mathord}{lettersA}{14}
- \re@DeclareMathSymbol{\epsilon}{\mathord}{lettersA}{15}
- \re@DeclareMathSymbol{\zeta}{\mathord}{lettersA}{16}
- \re@DeclareMathSymbol{\eta}{\mathord}{lettersA}{17}
- \re@DeclareMathSymbol{\theta}{\mathord}{lettersA}{18}
- \re@DeclareMathSymbol{\iota}{\mathord}{lettersA}{19}
- \re@DeclareMathSymbol{\kappa}{\mathord}{lettersA}{20}
- \re@DeclareMathSymbol{\lambda}{\mathord}{lettersA}{21}
- \re@DeclareMathSymbol{\mu}{\mathord}{lettersA}{22}
- \re@DeclareMathSymbol{\nu}{\mathord}{lettersA}{23}
- \iftx@altnu
- \re@DeclareMathSymbol{\nu}{\mathord}{lettersA}{40}
- \fi
- \re@DeclareMathSymbol{\xi}{\mathord}{lettersA}{24}
- \re@DeclareMathSymbol{\pi}{\mathord}{lettersA}{25}
- \re@DeclareMathSymbol{\rho}{\mathord}{lettersA}{26}
- \re@DeclareMathSymbol{\sigma}{\mathord}{lettersA}{27}
- \re@DeclareMathSymbol{\tau}{\mathord}{lettersA}{28}
- \re@DeclareMathSymbol{\upsilon}{\mathord}{lettersA}{29}
- \re@DeclareMathSymbol{\phi}{\mathord}{lettersA}{30}
- \re@DeclareMathSymbol{\chi}{\mathord}{lettersA}{31}
- \re@DeclareMathSymbol{\psi}{\mathord}{lettersA}{32}
- \re@DeclareMathSymbol{\omega}{\mathord}{lettersA}{33}
- \re@DeclareMathSymbol{\varepsilon}{\mathord}{lettersA}{34}
- \re@DeclareMathSymbol{\vartheta}{\mathord}{lettersA}{35}
- \re@DeclareMathSymbol{\varpi}{\mathord}{lettersA}{36}
- \re@DeclareMathSymbol{\varrho}{\mathord}{lettersA}{37}
- \re@DeclareMathSymbol{\varsigma}{\mathord}{lettersA}{38}
- \re@DeclareMathSymbol{\varphi}{\mathord}{lettersA}{39}
- \makeatother
-
-\usepackage{bm}
+% %biber
+% \usepackage[style=apa,backend=biber,doi=true,natbib=true,url=true]{biblatex}
+% \usepackage[british]{babel}
+% \usepackage{csquotes}
+% \DeclareLanguageMapping{british}{british-apa}
 \newcommand{\vect}[1]{\boldsymbol{\mathbf{#1}}}
 
 
@@ -373,6 +348,21 @@ Once model specification is complete, the model is fit to the data using the ctS
 \hlstd{fit}\hlkwb{<-}\hlkwd{ctStanFit}\hlstd{(}\hlkwc{datalong} \hlstd{= ctstantestdat,} \hlkwc{ctstanmodel} \hlstd{= model,} \hlkwc{iter}\hlstd{=}\hlnum{200}\hlstd{,}
   \hlkwc{chains}\hlstd{=}\hlnum{2}\hlstd{,} \hlkwc{plot}\hlstd{=}\hlnum{FALSE}\hlstd{,} \hlkwc{control}\hlstd{=}\hlkwd{list}\hlstd{(}\hlkwc{max_treedepth} \hlstd{=} \hlnum{6}\hlstd{))}
 \end{alltt}
+\begin{verbatim}
+In file included from C:/Users/driver/Documents/R/win-library/3.4/BH/include/boost/config.hpp:39:0,
+                 from C:/Users/driver/Documents/R/win-library/3.4/BH/include/boost/math/tools/config.hpp:13,
+                 from C:/Users/driver/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core/var.hpp:7,
+                 from C:/Users/driver/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core/gevv_vvv_vari.hpp:5,
+                 from C:/Users/driver/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core.hpp:12,
+                 from C:/Users/driver/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/mat.hpp:4,
+                 from C:/Users/driver/Documents/R/win-library/3.4/StanHeaders/include/stan/math.hpp:4,
+                 from C:/Users/driver/Documents/R/win-library/3.4/StanHeaders/include/src/stan/model/model_header.hpp:4,
+                 from file180c322373c7.cpp:8:
+C:/Users/driver/Documents/R/win-library/3.4/BH/include/boost/config/compiler/gcc.hpp:186:0: warning: "BOOST_NO_CXX11_RVALUE_REFERENCES" redefined
+ #  define BOOST_NO_CXX11_RVALUE_REFERENCES
+ ^
+<command-line>:0:0: note: this is the location of the previous definition
+\end{verbatim}
 \end{kframe}
 \end{knitrout}
 
@@ -491,7 +481,23 @@ In the following example we fit the sunspots data available within R, which has 
 
 \hlcom{#fit}
 \hlstd{fit} \hlkwb{<-} \hlkwd{ctStanFit}\hlstd{(datalong, model,} \hlkwc{iter}\hlstd{=}\hlnum{300}\hlstd{,} \hlkwc{chains}\hlstd{=}\hlnum{2}\hlstd{)}
-
+\end{alltt}
+\begin{verbatim}
+In file included from C:/Users/driver/Documents/R/win-library/3.4/BH/include/boost/config.hpp:39:0,
+                 from C:/Users/driver/Documents/R/win-library/3.4/BH/include/boost/math/tools/config.hpp:13,
+                 from C:/Users/driver/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core/var.hpp:7,
+                 from C:/Users/driver/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core/gevv_vvv_vari.hpp:5,
+                 from C:/Users/driver/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core.hpp:12,
+                 from C:/Users/driver/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/mat.hpp:4,
+                 from C:/Users/driver/Documents/R/win-library/3.4/StanHeaders/include/stan/math.hpp:4,
+                 from C:/Users/driver/Documents/R/win-library/3.4/StanHeaders/include/src/stan/model/model_header.hpp:4,
+                 from file180c35bb1ce0.cpp:8:
+C:/Users/driver/Documents/R/win-library/3.4/BH/include/boost/config/compiler/gcc.hpp:186:0: warning: "BOOST_NO_CXX11_RVALUE_REFERENCES" redefined
+ #  define BOOST_NO_CXX11_RVALUE_REFERENCES
+ ^
+<command-line>:0:0: note: this is the location of the previous definition
+\end{verbatim}
+\begin{alltt}
 \hlcom{#output}
 \hlkwd{summary}\hlstd{(fit)}\hlopt{$}\hlstd{popmeans}
 \end{alltt}
