@@ -2173,7 +2173,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
       extraTries=retryattempts, loc=.5, scale=0.2, paste=FALSE)
     
     mxobj<-mxRun(model)
-    
+    }
     if(useOptimizer==FALSE) mxobj <- OpenMx::mxRun(model,useOptimizer=useOptimizer)
   }
   
