@@ -7,7 +7,7 @@
 %
 %\usepackage{natbib}
 \usepackage{amsmath} %for multiple line equations
-\usepackage[libertine]{newtxmath}
+% \usepackage[libertine]{newtxmath}
 %\usepackage{doi}
 %\usepackage{bm}
 %\usepackage[natbibapa]{apacite}
