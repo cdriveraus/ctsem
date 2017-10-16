@@ -17,22 +17,23 @@
 
 language: r
 cache: packages
-dist: trusty
 latex: true
-sudo: required
 r_build_args: --resave-data --compact-vignettes=gs+qpdf
 r_check_args: --resave-data --compact-vignettes=gs+qpdf
 before_install:
-#- sudo apt-get -qq update && sudo apt-get install -y --no-install-recommends texlive-full
-- sudo tlmgr install framed
+- sudo apt-get -qq update && sudo apt-get install -y --no-install-recommends texlive-full
+#- sudo tlmgr install framed
 
 matrix:
   include:
     - os: linux
+      sudo: required
       r: release
     - os: linux
+      sudo: required
       r: devel
     - os: osx
+      sudo: required
       disable_homebrew: true
 
 
