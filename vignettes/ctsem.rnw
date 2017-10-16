@@ -70,9 +70,9 @@ URL: \url{http://www.mpib-berlin.mpg.de/en/staff/charles-driver}
 
 % Set lowercase greek letters to non-italicised
 
-% \usepackage[libertine]{newtxmath}
+\usepackage[libertine]{newtxmath}
 \usepackage[pdftex]{thumbpdf}
-\usepackage{amsfonts}
+% \usepackage{amsfonts}
 %\newcommand{\bmmax}{3}  
 %\newcommand{\hmmax}{0}
 %\usepackage[bm]
