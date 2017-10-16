@@ -2166,7 +2166,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
     if(useOptimizer==TRUE) mxobj <- mxTryHardctsem(model, initialTolerance=1e-14,
       # finetuneGradient=FALSE,
       initialGradientIterations=1,
-      initialGradientStepSize = 1e-6,
+      #initialGradientStepSize = 1e-6,
       showInits=showInits, checkHess=TRUE, greenOK=FALSE, 
       iterationSummary=iterationSummary, bestInitsOutput=FALSE, verbose=verbose,
       extraTries=retryattempts, loc=.5, scale=0.2, paste=FALSE)
