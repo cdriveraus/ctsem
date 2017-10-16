@@ -38,7 +38,7 @@ matrix:
       sudo: required
       disable_homebrew: true
       before_script: 
-      - tlmgr install framed
+      - sudo tlmgr install framed
 
 
 
