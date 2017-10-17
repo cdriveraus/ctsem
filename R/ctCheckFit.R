@@ -19,16 +19,19 @@
 #' }
 ctCheckFit <- function(fit, niter=50,probs=c(.025,.5,.975)){
   if('Kalman' %in% fit$ctfitargs$objective) {
-    wdat <- ctLongToWide(fit$mxobj@data$observed,manifestNames = fit$ctmodelobj$manifestNames)[,paste0(fit$ctmodelobj$manifestNames,'_T',1),drop=FALSE]
-  } else  wdat <- fit$mxobj@data$observed[,paste0(fit$ctmodelobj$manifestNames,'_T',0:(fit$ctmodelobj$Tpoints-1)),drop=FALSE]
+    wdat <- ctLongToWide(fit$mxobj@data$observed,
+      manifestNames = fit$ctmodelobj$manifestNames)[,paste0(fit$ctmodelobj$manifestNames,'_T',1),drop=FALSE]
+  } else  wdat <- fit$mxobj@data$observed[,paste0(fit$ctmodelobj$manifestNames,'_T',
+    rep(0:(fit$ctmodelobj$Tpoints-1),times=fit$ctmodelobj$n.manifest)),drop=FALSE]
 ecov <- cov(wdat)
 covarray<-array(NA,dim = c(dim(ecov),niter))
 
 for(i in 1:niter){
   ndat <- ctGenerateFromFit(fit = fit,n.subjects = nrow(wdat))
-  covarray[,,i] <- cov(ndat[,paste0(fit$ctmodelobj$manifestNames,'_T',0:(fit$ctmodelobj$Tpoints-1)),drop=FALSE])
+  covarray[,,i] <- cov(ndat[,paste0(fit$ctmodelobj$manifestNames,'_T',
+    rep(0:(fit$ctmodelobj$Tpoints-1),times=fit$ctmodelobj$n.manifest)),drop=FALSE])
 }
-
+# browser()
 covql <- ctCollapse(covarray,collapsemargin = 3,quantile,probs=probs[1])
 covqm <- ctCollapse(covarray,collapsemargin = 3,quantile,probs=probs[2])
 covqh <- ctCollapse(covarray,collapsemargin = 3,quantile,probs=probs[3])
