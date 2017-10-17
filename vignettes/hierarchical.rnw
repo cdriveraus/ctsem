@@ -73,14 +73,11 @@ URL: \url{http://www.mpib-berlin.mpg.de/en/staff/charles-driver}
 %% end of declarations %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-\usepackage{amsmath} %for multiple line equations
 \newcommand\numberthis{\addtocounter{equation}{1}\tag{\theequation}} %for adding numbers to specific lines
 
 % Set lowercase greek letters to non-italicised
 % \usepackage{Sweavel}
 % \usepackage{Sweave}
-\usepackage[libertine]{newtxmath}
-\usepackage[pdftex]{thumbpdf}
 
 
 
