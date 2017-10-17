@@ -7,6 +7,7 @@
 %
 %\usepackage{natbib}
 \usepackage{amsmath} %for multiple line equations
+\usepackage{amsfonts} %for mathbb
 % \usepackage[libertine]{newtxmath}
 %\usepackage{doi}
 %\usepackage{bm}

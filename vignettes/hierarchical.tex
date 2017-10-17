@@ -57,7 +57,8 @@
 %
 %\usepackage{natbib}
 \usepackage{amsmath} %for multiple line equations
-\usepackage[libertine]{newtxmath}
+\usepackage{amsfonts} %for mathbb
+% \usepackage[libertine]{newtxmath}
 %\usepackage{doi}
 %\usepackage{bm}
 %\usepackage[natbibapa]{apacite}
@@ -123,14 +124,11 @@ URL: \url{http://www.mpib-berlin.mpg.de/en/staff/charles-driver}
 %% end of declarations %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-\usepackage{amsmath} %for multiple line equations
 \newcommand\numberthis{\addtocounter{equation}{1}\tag{\theequation}} %for adding numbers to specific lines
 
 % Set lowercase greek letters to non-italicised
 % \usepackage{Sweavel}
 % \usepackage{Sweave}
-\usepackage[libertine]{newtxmath}
-\usepackage[pdftex]{thumbpdf}
 \IfFileExists{upquote.sty}{\usepackage{upquote}}{}
 \begin{document}
 
@@ -349,19 +347,27 @@ Once model specification is complete, the model is fit to the data using the ctS
   \hlkwc{chains}\hlstd{=}\hlnum{2}\hlstd{,} \hlkwc{plot}\hlstd{=}\hlnum{FALSE}\hlstd{,} \hlkwc{control}\hlstd{=}\hlkwd{list}\hlstd{(}\hlkwc{max_treedepth} \hlstd{=} \hlnum{6}\hlstd{))}
 \end{alltt}
 \begin{verbatim}
-In file included from C:/Users/driver/Documents/R/win-library/3.4/BH/include/boost/config.hpp:39:0,
-                 from C:/Users/driver/Documents/R/win-library/3.4/BH/include/boost/math/tools/config.hpp:13,
-                 from C:/Users/driver/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core/var.hpp:7,
-                 from C:/Users/driver/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core/gevv_vvv_vari.hpp:5,
-                 from C:/Users/driver/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core.hpp:12,
-                 from C:/Users/driver/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/mat.hpp:4,
-                 from C:/Users/driver/Documents/R/win-library/3.4/StanHeaders/include/stan/math.hpp:4,
-                 from C:/Users/driver/Documents/R/win-library/3.4/StanHeaders/include/src/stan/model/model_header.hpp:4,
-                 from file180c322373c7.cpp:8:
-C:/Users/driver/Documents/R/win-library/3.4/BH/include/boost/config/compiler/gcc.hpp:186:0: warning: "BOOST_NO_CXX11_RVALUE_REFERENCES" redefined
+In file included from C:/Users/Charlie/Documents/R/win-library/3.4/BH/include/boost/config.hpp:39:0,
+                 from C:/Users/Charlie/Documents/R/win-library/3.4/BH/include/boost/math/tools/config.hpp:13,
+                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core/var.hpp:7,
+                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core/gevv_vvv_vari.hpp:5,
+                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core.hpp:12,
+                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/mat.hpp:4,
+                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math.hpp:4,
+                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/src/stan/model/model_header.hpp:4,
+                 from file16905af944ea.cpp:8:
+C:/Users/Charlie/Documents/R/win-library/3.4/BH/include/boost/config/compiler/gcc.hpp:186:0: warning: "BOOST_NO_CXX11_RVALUE_REFERENCES" redefined
  #  define BOOST_NO_CXX11_RVALUE_REFERENCES
  ^
 <command-line>:0:0: note: this is the location of the previous definition
+In file included from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core.hpp:42:0,
+                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/mat.hpp:4,
+                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math.hpp:4,
+                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/src/stan/model/model_header.hpp:4,
+                 from file16905af944ea.cpp:8:
+C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core/set_zero_all_adjoints.hpp:14:17: warning: 'void stan::math::set_zero_all_adjoints()' defined but not used [-Wunused-function]
+     static void set_zero_all_adjoints() {
+                 ^
 \end{verbatim}
 \end{kframe}
 \end{knitrout}
@@ -483,19 +489,27 @@ In the following example we fit the sunspots data available within R, which has 
 \hlstd{fit} \hlkwb{<-} \hlkwd{ctStanFit}\hlstd{(datalong, model,} \hlkwc{iter}\hlstd{=}\hlnum{300}\hlstd{,} \hlkwc{chains}\hlstd{=}\hlnum{2}\hlstd{)}
 \end{alltt}
 \begin{verbatim}
-In file included from C:/Users/driver/Documents/R/win-library/3.4/BH/include/boost/config.hpp:39:0,
-                 from C:/Users/driver/Documents/R/win-library/3.4/BH/include/boost/math/tools/config.hpp:13,
-                 from C:/Users/driver/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core/var.hpp:7,
-                 from C:/Users/driver/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core/gevv_vvv_vari.hpp:5,
-                 from C:/Users/driver/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core.hpp:12,
-                 from C:/Users/driver/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/mat.hpp:4,
-                 from C:/Users/driver/Documents/R/win-library/3.4/StanHeaders/include/stan/math.hpp:4,
-                 from C:/Users/driver/Documents/R/win-library/3.4/StanHeaders/include/src/stan/model/model_header.hpp:4,
-                 from file180c35bb1ce0.cpp:8:
-C:/Users/driver/Documents/R/win-library/3.4/BH/include/boost/config/compiler/gcc.hpp:186:0: warning: "BOOST_NO_CXX11_RVALUE_REFERENCES" redefined
+In file included from C:/Users/Charlie/Documents/R/win-library/3.4/BH/include/boost/config.hpp:39:0,
+                 from C:/Users/Charlie/Documents/R/win-library/3.4/BH/include/boost/math/tools/config.hpp:13,
+                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core/var.hpp:7,
+                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core/gevv_vvv_vari.hpp:5,
+                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core.hpp:12,
+                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/mat.hpp:4,
+                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math.hpp:4,
+                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/src/stan/model/model_header.hpp:4,
+                 from file169043134494.cpp:8:
+C:/Users/Charlie/Documents/R/win-library/3.4/BH/include/boost/config/compiler/gcc.hpp:186:0: warning: "BOOST_NO_CXX11_RVALUE_REFERENCES" redefined
  #  define BOOST_NO_CXX11_RVALUE_REFERENCES
  ^
 <command-line>:0:0: note: this is the location of the previous definition
+In file included from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core.hpp:42:0,
+                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/mat.hpp:4,
+                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math.hpp:4,
+                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/src/stan/model/model_header.hpp:4,
+                 from file169043134494.cpp:8:
+C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core/set_zero_all_adjoints.hpp:14:17: warning: 'void stan::math::set_zero_all_adjoints()' defined but not used [-Wunused-function]
+     static void set_zero_all_adjoints() {
+                 ^
 \end{verbatim}
 \begin{alltt}
 \hlcom{#output}
@@ -503,14 +517,14 @@ C:/Users/driver/Documents/R/win-library/3.4/BH/include/boost/config/compiler/gcc
 \end{alltt}
 \begin{verbatim}
                                       mean    sd   2.5%    50%  97.5% n_eff  Rhat
-hmean_T0mean_ss_level               24.122 6.148 10.298 24.728 34.545 119.5 1.019
-hmean_T0mean_ss_velocity            14.138 7.512 -0.449 13.991 27.612 175.6 1.004
-hmean_ma1                            0.659 0.204  0.257  0.653  1.094 112.0 0.997
-hmean_a21                           -0.354 0.043 -0.442 -0.353 -0.269 138.9 1.005
-hmean_a22                           -0.323 0.081 -0.492 -0.317 -0.183 108.1 1.009
-hmean_diffusion                     15.450 2.414 11.463 15.069 20.826  97.2 1.003
-hmean_manifestvar_sunspots_sunspots  1.487 1.222  0.127  1.122  4.515 119.1 1.008
-hmean_m1                            46.369 2.765 40.928 46.536 51.030 264.9 1.008
+hmean_T0mean_ss_level               22.580 5.696  9.915 22.481 32.037 104.2 1.002
+hmean_T0mean_ss_velocity            15.675 6.369  3.968 15.231 28.512 183.1 0.995
+hmean_ma1                            0.705 0.212  0.297  0.711  1.083  89.9 1.012
+hmean_a21                           -0.348 0.042 -0.443 -0.343 -0.266 150.3 1.013
+hmean_a22                           -0.310 0.092 -0.533 -0.297 -0.160 101.5 1.014
+hmean_diffusion                     14.930 2.688 10.798 14.546 20.890  87.2 1.015
+hmean_manifestvar_sunspots_sunspots  1.327 1.113  0.138  1.004  4.136 151.3 1.012
+hmean_m1                            46.336 2.641 41.481 46.377 51.620 273.7 0.994
 \end{verbatim}
 \end{kframe}
 \end{knitrout}
