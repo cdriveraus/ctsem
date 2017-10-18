@@ -265,11 +265,15 @@ model$pars[c(19,20),c('TI1_effect','TI2_effect','TI3_effect')]<-TRUE
 \subsection{Model fitting}
 Once model specification is complete, the model is fit to the data using the ctStanFit function as follows -- depending on the data, model, and number of iterations requested, this can take anywhere from a few minutes to days. Current experience suggests 300 iterations is often enough to get an idea of what is going on, but more may be necessary for robust inference. This will of course vary massively depending on model and data. For the sake of speed for this example we only sample for 200 iterations with a lowered max\_treedepth - this latter parameter controls the maximum number of steps the Hamiltonian sampler is allowed to take per iteration, with each increase of 1 doubling the maximum. With these settings the fit should take only a few minutes (but will not be adequate for inference!). Those that wish to try out the functions without waiting, can simply use the already existing ctstantestfit object instead of creating the fit object (and adjust the code in following sections as needed!).
 
-<<fitting,cache=TRUE>>=
+<<fitting,include=FALSE,cache=TRUE>>=
 fit<-ctStanFit(datalong = ctstantestdat, ctstanmodel = model, iter=200, 
   chains=2, plot=FALSE, control=list(max_treedepth = 6))
 @
 
+<<fittingshow,include=TRUE,eval=FALSE>>=
+fit<-ctStanFit(datalong = ctstantestdat, ctstanmodel = model, iter=200, 
+  chains=2, plot=FALSE, control=list(max_treedepth = 6))
+@
 The plot argument allows for plotting of sampling chains in real time, which is useful for slow models to ensure that sampling is proceeding in a functional manner. Models with many parameters (e.g., many subjects and all parameters varying over subject) may be too taxing for the function to handle smoothly - we have had succcess with up to around 4000 parameters.  
 
 \subsection{Summary}
@@ -325,7 +329,7 @@ The standard rstan output functions such as summary and extract are also availab
 \subsection{Oscillating, single subject example - sunspots data}
 In the following example we fit the sunspots data available within R, which has previously been fit by various authors including \citet{tomasson2013computational}. We have used the same CARMA(2,1) model and obtained similar estimates -- some differences are due to the contrast between Bayes and maximum likelihood, though if desired one could adjust the code to fit using maximum likelihood, as here we have only one subject. 
 % There are usually some divergent transitions (indicating a difficulty in the sampling chain and a potential threat to inference) generated in this fit -- alternate parameterisations or an increase in the adapt\_delta control argument to Stan (which defaults to 0.9 in ctsem, with a maximum of 1, though 1 is not recommended...) may help.
-<<sunspots,cache=TRUE>>=
+<<sunspots,include=FALSE, cache=TRUE>>=
 #get data
  sunspots<-sunspot.year
  sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
@@ -355,6 +359,36 @@ fit <- ctStanFit(datalong, model, iter=300, chains=2)
 summary(fit)$popmeans
 @
 
+
+<<sunspotsshow,include=TRUE,eval=FALSE>>=
+#get data
+ sunspots<-sunspot.year
+ sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
+ id <- 1
+ time <- 1749:1924
+datalong <- cbind(id, time, sunspots)
+
+#setup model
+ model <- ctModel(type='stanct', n.latent=2, n.manifest=1, 
+  manifestNames='sunspots', 
+  latentNames=c('ss_level', 'ss_velocity'),
+   LAMBDA=matrix(c( 1, 'ma1' ), nrow=1, ncol=2),
+   DRIFT=matrix(c(0, 'a21', 1, 'a22'), nrow=2, ncol=2),
+   MANIFESTMEANS=matrix(c('m1'), nrow=1, ncol=1),
+   CINT=matrix(c(0, 0), nrow=2, ncol=1),
+   T0VAR=matrix(c(0,0,0,1), nrow=2, ncol=2), #Because single subject
+   DIFFUSION=matrix(c(0, 0, 0, "diffusion"), ncol=2, nrow=2))
+ 
+ model$pars$indvarying<-FALSE #Because single subject
+ model$pars$transform[14]<- '(param)*5+44 ' #Because not mean centered
+ model$pars$transform[4]<-'log(exp(-param*1.5)+1)' #To avoid multi modality 
+
+#fit
+fit <- ctStanFit(datalong, model, iter=300, chains=2)
+
+#output
+summary(fit)$popmeans
+@
 
 \subsection{Population standard deviations - understanding the transforms}
 Internally, we sample parameters that we will refer to here as the `raw' parameters -- these parameters have no bounds and are drawn from normal distributions. Both population mean (internally: hypermeans) and subject level (internally: indparamsbase) raw parameters are drawn from a normal(0, 1) distribution. Depending on the specific parameter, various transformations may be applied to set appropriate bounds and priors. The population standard deviation (hypersd) for these raw parameters is sampled (by default) from a normal(0, 1) distribution called rawhypersd, which is by default transformed via an exponential function -- ensuring standard deviation parameters are positive and have a prior distribution that could be considered a regularised independence Jeffreys prior. This distribution can be scaled on a per parameter basis by the sdscale multiplier in the model specification, which defaults to 1. The following script shows a didactic sequence of sampling and transformation for a model with a single parameter, the auto effect of the drift matrix, and 50 subjects. Although we sample the priors here, this is merely to reflect the prior and enable understanding and plotting.

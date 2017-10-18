@@ -340,38 +340,16 @@ Also restrict which parameters to include time independent predictor effects for
 \subsection{Model fitting}
 Once model specification is complete, the model is fit to the data using the ctStanFit function as follows -- depending on the data, model, and number of iterations requested, this can take anywhere from a few minutes to days. Current experience suggests 300 iterations is often enough to get an idea of what is going on, but more may be necessary for robust inference. This will of course vary massively depending on model and data. For the sake of speed for this example we only sample for 200 iterations with a lowered max\_treedepth - this latter parameter controls the maximum number of steps the Hamiltonian sampler is allowed to take per iteration, with each increase of 1 doubling the maximum. With these settings the fit should take only a few minutes (but will not be adequate for inference!). Those that wish to try out the functions without waiting, can simply use the already existing ctstantestfit object instead of creating the fit object (and adjust the code in following sections as needed!).
 
+
+
 \begin{knitrout}\small
 \definecolor{shadecolor}{rgb}{0.969, 0.969, 0.969}\color{fgcolor}\begin{kframe}
 \begin{alltt}
 \hlstd{fit}\hlkwb{<-}\hlkwd{ctStanFit}\hlstd{(}\hlkwc{datalong} \hlstd{= ctstantestdat,} \hlkwc{ctstanmodel} \hlstd{= model,} \hlkwc{iter}\hlstd{=}\hlnum{200}\hlstd{,}
   \hlkwc{chains}\hlstd{=}\hlnum{2}\hlstd{,} \hlkwc{plot}\hlstd{=}\hlnum{FALSE}\hlstd{,} \hlkwc{control}\hlstd{=}\hlkwd{list}\hlstd{(}\hlkwc{max_treedepth} \hlstd{=} \hlnum{6}\hlstd{))}
 \end{alltt}
-\begin{verbatim}
-In file included from C:/Users/Charlie/Documents/R/win-library/3.4/BH/include/boost/config.hpp:39:0,
-                 from C:/Users/Charlie/Documents/R/win-library/3.4/BH/include/boost/math/tools/config.hpp:13,
-                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core/var.hpp:7,
-                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core/gevv_vvv_vari.hpp:5,
-                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core.hpp:12,
-                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/mat.hpp:4,
-                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math.hpp:4,
-                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/src/stan/model/model_header.hpp:4,
-                 from file16905af944ea.cpp:8:
-C:/Users/Charlie/Documents/R/win-library/3.4/BH/include/boost/config/compiler/gcc.hpp:186:0: warning: "BOOST_NO_CXX11_RVALUE_REFERENCES" redefined
- #  define BOOST_NO_CXX11_RVALUE_REFERENCES
- ^
-<command-line>:0:0: note: this is the location of the previous definition
-In file included from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core.hpp:42:0,
-                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/mat.hpp:4,
-                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math.hpp:4,
-                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/src/stan/model/model_header.hpp:4,
-                 from file16905af944ea.cpp:8:
-C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core/set_zero_all_adjoints.hpp:14:17: warning: 'void stan::math::set_zero_all_adjoints()' defined but not used [-Wunused-function]
-     static void set_zero_all_adjoints() {
-                 ^
-\end{verbatim}
 \end{kframe}
 \end{knitrout}
-
 The plot argument allows for plotting of sampling chains in real time, which is useful for slow models to ensure that sampling is proceeding in a functional manner. Models with many parameters (e.g., many subjects and all parameters varying over subject) may be too taxing for the function to handle smoothly - we have had succcess with up to around 4000 parameters.  
 
 \subsection{Summary}
@@ -460,6 +438,9 @@ The standard rstan output functions such as summary and extract are also availab
 \subsection{Oscillating, single subject example - sunspots data}
 In the following example we fit the sunspots data available within R, which has previously been fit by various authors including \citet{tomasson2013computational}. We have used the same CARMA(2,1) model and obtained similar estimates -- some differences are due to the contrast between Bayes and maximum likelihood, though if desired one could adjust the code to fit using maximum likelihood, as here we have only one subject. 
 % There are usually some divergent transitions (indicating a difficulty in the sampling chain and a potential threat to inference) generated in this fit -- alternate parameterisations or an increase in the adapt\_delta control argument to Stan (which defaults to 0.9 in ctsem, with a maximum of 1, though 1 is not recommended...) may help.
+
+
+
 \begin{knitrout}\small
 \definecolor{shadecolor}{rgb}{0.969, 0.969, 0.969}\color{fgcolor}\begin{kframe}
 \begin{alltt}
@@ -487,48 +468,12 @@ In the following example we fit the sunspots data available within R, which has 
 
 \hlcom{#fit}
 \hlstd{fit} \hlkwb{<-} \hlkwd{ctStanFit}\hlstd{(datalong, model,} \hlkwc{iter}\hlstd{=}\hlnum{300}\hlstd{,} \hlkwc{chains}\hlstd{=}\hlnum{2}\hlstd{)}
-\end{alltt}
-\begin{verbatim}
-In file included from C:/Users/Charlie/Documents/R/win-library/3.4/BH/include/boost/config.hpp:39:0,
-                 from C:/Users/Charlie/Documents/R/win-library/3.4/BH/include/boost/math/tools/config.hpp:13,
-                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core/var.hpp:7,
-                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core/gevv_vvv_vari.hpp:5,
-                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core.hpp:12,
-                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/mat.hpp:4,
-                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math.hpp:4,
-                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/src/stan/model/model_header.hpp:4,
-                 from file169043134494.cpp:8:
-C:/Users/Charlie/Documents/R/win-library/3.4/BH/include/boost/config/compiler/gcc.hpp:186:0: warning: "BOOST_NO_CXX11_RVALUE_REFERENCES" redefined
- #  define BOOST_NO_CXX11_RVALUE_REFERENCES
- ^
-<command-line>:0:0: note: this is the location of the previous definition
-In file included from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core.hpp:42:0,
-                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/mat.hpp:4,
-                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math.hpp:4,
-                 from C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/src/stan/model/model_header.hpp:4,
-                 from file169043134494.cpp:8:
-C:/Users/Charlie/Documents/R/win-library/3.4/StanHeaders/include/stan/math/rev/core/set_zero_all_adjoints.hpp:14:17: warning: 'void stan::math::set_zero_all_adjoints()' defined but not used [-Wunused-function]
-     static void set_zero_all_adjoints() {
-                 ^
-\end{verbatim}
-\begin{alltt}
+
 \hlcom{#output}
 \hlkwd{summary}\hlstd{(fit)}\hlopt{$}\hlstd{popmeans}
 \end{alltt}
-\begin{verbatim}
-                                      mean    sd   2.5%    50%  97.5% n_eff  Rhat
-hmean_T0mean_ss_level               22.580 5.696  9.915 22.481 32.037 104.2 1.002
-hmean_T0mean_ss_velocity            15.675 6.369  3.968 15.231 28.512 183.1 0.995
-hmean_ma1                            0.705 0.212  0.297  0.711  1.083  89.9 1.012
-hmean_a21                           -0.348 0.042 -0.443 -0.343 -0.266 150.3 1.013
-hmean_a22                           -0.310 0.092 -0.533 -0.297 -0.160 101.5 1.014
-hmean_diffusion                     14.930 2.688 10.798 14.546 20.890  87.2 1.015
-hmean_manifestvar_sunspots_sunspots  1.327 1.113  0.138  1.004  4.136 151.3 1.012
-hmean_m1                            46.336 2.641 41.481 46.377 51.620 273.7 0.994
-\end{verbatim}
 \end{kframe}
 \end{knitrout}
-
 
 \subsection{Population standard deviations - understanding the transforms}
 Internally, we sample parameters that we will refer to here as the `raw' parameters -- these parameters have no bounds and are drawn from normal distributions. Both population mean (internally: hypermeans) and subject level (internally: indparamsbase) raw parameters are drawn from a normal(0, 1) distribution. Depending on the specific parameter, various transformations may be applied to set appropriate bounds and priors. The population standard deviation (hypersd) for these raw parameters is sampled (by default) from a normal(0, 1) distribution called rawhypersd, which is by default transformed via an exponential function -- ensuring standard deviation parameters are positive and have a prior distribution that could be considered a regularised independence Jeffreys prior. This distribution can be scaled on a per parameter basis by the sdscale multiplier in the model specification, which defaults to 1. The following script shows a didactic sequence of sampling and transformation for a model with a single parameter, the auto effect of the drift matrix, and 50 subjects. Although we sample the priors here, this is merely to reflect the prior and enable understanding and plotting.
