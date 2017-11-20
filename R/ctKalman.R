@@ -58,6 +58,11 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
   out<-list()
   if(timerange[1] != 'asdata' & timestep[1] == 'asdata') stop('If timerange is not asdata, a timestep must be specified!')
   
+  if(!is.null(datalong)) { #adjust ids and colnames as needed
+    datalong <- makeNumericIDs(datalong, fit$ctstanmodel$subjectIDname,fit$ctstanmodel$timeName) #ensure id's are appropriate
+    colnames(datalong)[colnames(datalong)==fit$ctstanmodel$subjectIDname] <- 'subject'
+    colnames(datalong)[colnames(datalong)==fit$ctstanmodel$timeName] <- 'time'
+  }
   
   if(is.null(datalong)) { #get relevant data
     
@@ -104,7 +109,7 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
         if(timerange[1] > min(sdat[,'time']) || timerange[2] < max(sdat[,'time']) ) stop('Specified timerange must contain all subjects time ranges!')
       }
       snewtimes <- seq(stimerange[1],stimerange[2],timestep)
-      snewdat <- array(NA,dim=c(length(snewtimes),dim(sdat)[-1]),dimnames=dimnames(sdat)) 
+      snewdat <- array(NA,dim=c(length(snewtimes),dim(sdat)[-1]),dimnames=list(c(),dimnames(sdat)[[2]]))
       snewdat[,'time'] <- snewtimes
       snewdat[,TDpredNames] <- 0
       sdat <- rbind(sdat,snewdat)

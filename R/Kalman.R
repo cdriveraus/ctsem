@@ -19,7 +19,10 @@
 #' @param timecol name of time column in datalong. Note that time column must be an ascending sequence
 #' of numeric values from row 1 to row n. Ignored if continuoustime=FALSE.
 #' @param diffusionindices vector of integers denoting which latent variables are involved in covariance calcs.
-#' @return Returns a list containing matrix objects etaprior, etaupd, etasmooth, y, yprior, 
+#' @param optimize Set to TRUE when using for optimization.
+#' @param binary Set to TRUE when using binary data.
+#' @return When optimize=TRUE, returns log likelihood. Else, 
+#' returns a list containing matrix objects etaprior, etaupd, etasmooth, y, yprior, 
 #' yupd, ysmooth, prederror, time, loglik,  with values for each time point in each row. 
 #' eta refers to latent states and y to manifest indicators - y itself is thus just 
 #' the input data. 
@@ -53,7 +56,7 @@ Kalman<-function(kpars,datalong,
   manifestNames,latentNames,imputeMissings=FALSE,
   TDpredNames=NULL,
   continuoustime=TRUE,
-  timecol='time', diffusionindices='all'){
+  timecol='time', diffusionindices='all',optimize=FALSE,binary=FALSE){
   
   datalong=as.matrix(datalong)
   
@@ -98,6 +101,8 @@ Kalman<-function(kpars,datalong,
   discreteDIFFUSION <- list()
   
   for(rowi in 1:(nrow(datalong))){
+    
+    if(!binary){
     
     if(continuoustime){
       dt<-datalong[rowi,timecol]-datalong[max(c(1,rowi-1)),timecol]
@@ -173,13 +178,133 @@ Kalman<-function(kpars,datalong,
       yupd[[rowi]] <- kpars$MANIFESTMEANS + kpars$LAMBDA %*% etaupd[[rowi]]
       yupdcov[[rowi]] <- kpars$LAMBDA[,diffusionindices,drop=FALSE] %*% etaupdcov[[rowi]] %*% 
         t(kpars$LAMBDA[,diffusionindices,drop=FALSE]) + kpars$MANIFESTVAR
+      }
       
     }
+      if(binary){
+        # browser()
+        if(rowi==1) {
+          etaprior[[rowi]] <- list(sig1=etaprior[[rowi]],sig2=etaprior[[rowi]] )
+        yprior[[rowi]] <- etaprior[[rowi]]
+        } 
+        
+        if(rowi > 1) {
+          etaprior[[rowi]] <- list(sig1=etaprior[[rowi-1]],sig2=etaprior[[rowi-1]] )
+          yprior[[rowi]] <- etaprior[[rowi]]
+        } 
+        
+        if(continuoustime){
+          dt<-datalong[rowi,timecol]-datalong[max(c(1,rowi-1)),timecol]
+          discreteDRIFT[[rowi]] <- expm(kpars$DRIFT * dt)
+          discreteCINT[[rowi]] <- solve(kpars$DRIFT, (discreteDRIFT[[rowi]] - diag(nlatent))) %*% kpars$CINT
+          discreteDIFFUSION[[rowi]] <- asymDIFFUSION - (discreteDRIFT[[rowi]][diffusionindices,diffusionindices,drop=FALSE] %*% 
+              asymDIFFUSION %*% t(discreteDRIFT[[rowi]][diffusionindices,diffusionindices,drop=FALSE]))
+        }
+        if(!continuoustime){
+          discreteDRIFT[[rowi]] <-kpars$DRIFT
+          discreteCINT[[rowi]]<- kpars$CINT
+          discreteDIFFUSION[[rowi]] <- kpars$DIFFUSION[diffusionindices,diffusionindices,drop=FALSE]
+        }
+        
+        
+        if(rowi>1){
+          for(sigi in 1:2){
+            sigm <- ifelse(sigi==1,-1,1)
+          etaprior[[rowi]][[sigi]] <- discreteCINT[[rowi]]  + discreteDRIFT[[rowi]] %*% (etaupd[[rowi-1]] + sigm*t(chol(discreteDIFFUSION[[rowi]])))
+          }
+          etapriorcov[[rowi]] <-  discreteDRIFT[[rowi]][diffusionindices,diffusionindices,drop=FALSE] %*% 
+            etaupdcov[[rowi-1]] %*% t(discreteDRIFT[[rowi]][diffusionindices,diffusionindices,drop=FALSE])  + discreteDIFFUSION[[rowi]] #check transpose
+        }
+        
+        if(ntdpred > 0) stop('binary!') #etaprior[[rowi]] <- etaprior[[rowi]] + kpars$TDPREDEFFECT %*% t(datalong[rowi,TDpredNames,drop=FALSE])
+        
+        if(imputeMissings) Y[rowi,] <- 0 #etaprior[[rowi]] + t(chol(etapriorcov[[rowi]])) %*% rnorm(nmanifest,0,1)
+        
+        nafilter<-!is.na(Y[rowi,])
+        observed[[rowi]]<-nafilter
+        err[[rowi]]<-matrix(NA,nrow=nmanifest) #init prediction errors for this row
+        
+        # // one step ahead predictive distribution of y
+        for(sigi in 1:2){
+        yprior[[rowi]][[sigi]] <- kpars$MANIFESTMEANS + kpars$LAMBDA %*% etaprior[[rowi]][[sigi]]
+        }
+        ypriorcov[[rowi]] <- kpars$LAMBDA[,diffusionindices,drop=FALSE] %*% etapriorcov[[rowi]] %*% 
+          t(kpars$LAMBDA[,diffusionindices,drop=FALSE]) + kpars$MANIFESTVAR
+        
+        if(imputeMissings) Y[rowi,] <- yprior[[rowi]] + t(chol(ypriorcov[[rowi]])) %*% rnorm(nmanifest,0,1)
+        
+        y <- Y[rowi,,drop=FALSE][,nafilter,drop=FALSE]
+        
+        #if all missing...
+        if(all(!nafilter)){
+          etaupd[[rowi]] <- etaprior[[rowi]]
+          etaupdcov[[rowi]] <- etapriorcov[[rowi]]
+          yupd[[rowi]] <- mean(yprior[[rowi]][[1]],yprior[[rowi]][[2]])
+          yupdcov[[rowi]] <- ypriorcov[[rowi]]
+        }
+        
+        #if any not missing
+        if(any(nafilter)){
+          ypriorlinked <- list()
+          err[[rowi]] <- list(sig1=err[[rowi]],sig2=err[[rowi]])
+          for(sigi in 1:2){
+        ypriorlinked[[sigi]] <- 1 / (1+exp(-yprior[[rowi]][[sigi]][nafilter,]))
+          }
+        
+        # loglik[rowi] <- log( (1-(y*(1-ypriorlinked))) * ( ( 1- ypriorlinked) * y) )
+        loglik[rowi] <- mean(sum(log( y*(ypriorlinked[[1]]) + (1-y)*(1-ypriorlinked[[1]]))),
+          sum(log( y*(ypriorlinked[[2]]) + (1-y)*(1-ypriorlinked[[2]]))) )
+        # browser()
+        
+        for(sigi in 1:2){
+        err[[rowi]][[sigi]][nafilter] <- as.numeric(y - ypriorlinked[[sigi]])
+        }
+        # err[[rowi]][nafilter] <- log(err[[rowi]][nafilter] / (1-err[[rowi]][nafilter]))
+        
+        # // Kalman gain
+        # invypriorcov <- solve(ypriorcov[[rowi]][nafilter,nafilter,drop=FALSE])
+        K<-matrix(0,nrow=nlatent,ncol=nmanifest)
+        
+        K[diffusionindices,nafilter] <-  t(solve(t(ypriorcov[[rowi]][nafilter,nafilter,drop=FALSE]),
+          t(etapriorcov[[rowi]] %*%  t(kpars$LAMBDA[nafilter,diffusionindices,drop=FALSE]) ) ))
+        
+        # updated distribution 
+        # browser()
+
+        etaupd[[rowi]] <- ( (etaprior[[rowi]][[1]] +  (K[,nafilter,drop=FALSE] *1) %*% (err[[rowi]][[1]][nafilter,,drop=FALSE])) +
+          (etaprior[[rowi]][[2]] + (K[,nafilter,drop=FALSE] *1) %*% (err[[rowi]][[2]][nafilter,,drop=FALSE])) ) /2 
+        
+        # etaupdcov[[rowi + 1]] <- etapriorcov[[rowi]]
+        etaupdcov[[rowi]] <- (diag(ndiffusion) - K[diffusionindices,nafilter,drop=FALSE] %*% 
+            kpars$LAMBDA[nafilter,diffusionindices,drop=FALSE]) %*% etapriorcov[[rowi]]
+        
+        # // log likelihood
+        
+        
+        yupd[[rowi]] <- kpars$MANIFESTMEANS + kpars$LAMBDA %*% etaupd[[rowi]]
+        yupdcov[[rowi]] <- kpars$LAMBDA[,diffusionindices,drop=FALSE] %*% etaupdcov[[rowi]] %*% 
+          t(kpars$LAMBDA[,diffusionindices,drop=FALSE]) + kpars$MANIFESTVAR
+        
+ 
+      }
+      
+    }
+    
     # }
   }
+  if(binary){
+    # browser()
+  yprior2 <- array(unlist(yprior),dim=c(length(yprior[[1]][[1]]),2,nrow(Y)))
+  plot(1 / (1+exp(-yprior2[1,1,])),type='b',col='red',ylim=c(0,1))
+  points(1 / (1+exp(-yprior2[1,2,])),type='b',col='blue')
+  points(apply(Y,1,mean))
+  }
   
+  #extra output
+  if(!optimize){
   
   #smoother
+  
   etasmooth<-list()
   etasmoothcov<-list()
   ysmooth<-list()
@@ -281,6 +406,9 @@ Kalman<-function(kpars,datalong,
   
   if(ntdpred > 0) out$tdpreds=tdpreds
   if(continuoustime) out$time=datalong[,timecol]
+  }
+  
+  if(optimize) out <- sum(loglik,na.rm=TRUE)
   
   return(out)
 }
