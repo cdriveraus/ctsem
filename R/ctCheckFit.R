@@ -29,23 +29,24 @@ covarray<-array(NA,dim = c(dim(ecov),niter))
 for(i in 1:niter){
   ndat <- ctGenerateFromFit(fit = fit,n.subjects = nrow(wdat))
   covarray[,,i] <- cov(ndat[,paste0(fit$ctmodelobj$manifestNames,'_T',
-    rep(0:(fit$ctmodelobj$Tpoints-1),times=fit$ctmodelobj$n.manifest)),drop=FALSE])
+    rep(0:(fit$ctmodelobj$Tpoints-1),each=fit$ctmodelobj$n.manifest)),drop=FALSE])
 }
 # browser()
 covql <- ctCollapse(covarray,collapsemargin = 3,quantile,probs=probs[1])
 covqm <- ctCollapse(covarray,collapsemargin = 3,quantile,probs=probs[2])
 covqh <- ctCollapse(covarray,collapsemargin = 3,quantile,probs=probs[3])
+covmean <- ctCollapse(covarray,collapsemargin = 3,mean)
 
-test<-matrix(NA,ncol=7,nrow=(nrow(covql)^2+nrow(covql))/2)
+test<-matrix(NA,ncol=8,nrow=(nrow(covql)^2+nrow(covql))/2)
 counter=0
 for(i in 1:nrow(covql)){
   for(j in 1:nrow(covql)){
     if(j <=i){
       counter=counter+1
-      test[counter,] <- c(i,j,covql[i,j],covqm[i,j],covqh[i,j],ecov[i,j],
+      test[counter,] <- c(i,j,covmean[i,j],covql[i,j],covqm[i,j],covqh[i,j],ecov[i,j],
         ifelse((ecov[i,j] > covqh[i,j] || ecov[i,j] < covql[i,j]), TRUE,FALSE))
     }}}
-colnames(test) <- c('row','col',paste0(probs*100,'%'), 'observed', 'significant')
+colnames(test) <- c('row','col','mean',paste0(probs*100,'%'), 'observed', 'significant')
 
 return(test)
 }
