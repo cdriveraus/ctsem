@@ -215,7 +215,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, kalman=T
   latentNames<-ctstanmodel$latentNames
   TDpredNames<-ctstanmodel$TDpredNames
   TIpredNames<-ctstanmodel$TIpredNames
-  id<-ctstanmodel$subjectIDname
+  idName<-ctstanmodel$subjectIDname
   timeName<-ctstanmodel$timeName
   continuoustime<-ctstanmodel$continuoustime
   indvarying<-c(ctspec$indvarying,ctspecduplicates$indvarying)
@@ -224,19 +224,18 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, kalman=T
   
   
   #data checks
-  if (!(id %in% colnames(datalong))) stop(paste('id column', omxQuotes(id), "not found in data"))
-  if(any(is.na(as.numeric(datalong[,id])))) stop('id column may not contain NA\'s or character strings!')
+  if (!(idName %in% colnames(datalong))) stop(paste('id column', omxQuotes(idName), "not found in data"))
   
   #fit spec checks
   if(binomial & any(kalman)) stop('Binomial observations only possible with kalman=FALSE')
   
   
-  
-  
+  datalong <- makeNumericIDs(datalong,idName,timeName)
+ 
   
   T0check<-1
   for(i in 2:nrow(datalong)){
-    T0check<-c(T0check, ifelse(datalong[,'id'][i] != datalong[,'id'][i-1], 1, 0))
+    T0check<-c(T0check, ifelse(datalong[,idName][i] != datalong[,idName][i-1], 1, 0))
   }
   
   if (!(timeName %in% colnames(datalong))) stop(paste('time column', omxQuotes(timeName), "not found in data"))
@@ -250,7 +249,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, kalman=T
   dT<-rep(-1,length(datalong[,timeName]))
   # intervalChange<-dT
   for(rowi in 1:length(datalong[,timeName])) {
-    subi<-datalong[rowi,id]
+    subi<-datalong[rowi,idName]
     if(rowi==1 && subi!=1) stop('subject id column must ascend from 1 to total subjects without gaps')
     if(oldsubi!=subi && subi-oldsubi!=1) stop('subject id column must ascend from 1 to total subjects without gaps')
     if(subi - oldsubi == 1) {
@@ -297,7 +296,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, kalman=T
     tdpreds[is.na(tdpreds)] <-0 ## rough fix for missingness
   }
   if(n.TIpred > 0) {
-    tipreds <- datalong[match(unique(datalong[,id]),datalong[,id]),TIpredNames,drop=FALSE]
+    tipreds <- datalong[match(unique(datalong[,idName]),datalong[,idName]),TIpredNames,drop=FALSE]
     if(any(is.na(tipreds))) {
       message(paste0('Missingness in TIpreds - imputing ', sum(is.na(tipreds)),' values'))
       tipreds[is.na(tipreds)] = 99999
@@ -306,7 +305,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, kalman=T
   
   datalong[is.na(datalong)]<-99999 #missing data
   
-  nsubjects <- length(unique(datalong[, 'id'])) 
+  nsubjects <- length(unique(datalong[, idName])) 
   
   indvaryingindex = array( #used to select hypermeans appropriately when generating subject params
     c(which(ctspec$indvarying[is.na(ctspec$value)]))) #unique hypermeans
@@ -720,7 +719,7 @@ out[coli,rowi] = out[rowi,coli];
       vector[nparams] hypermeans',if(!esthyper) 'base','; // population level means \n','
       
       ',if(any(indvarying)) paste0(
-        'vector',if(!is.na(ctstanmodel$rawhypersdlowerbound)) paste0('<lower=',ctstanmodel$rawhypersdlowerbound[1],'>'),'[nindvarying] rawhypersd',if(!esthyper) 'base','; //population level std dev
+        'vector',if(!is.na(ctstanmodel$rawhypersdlowerbound)) paste0('<lower=',ctstanmodel$rawhypersdlowerbound[1],'>'),'[nindvarying] rawhypersd; //population level std dev
         //cholesky_factor_corr[nindvarying] hypercorrchol; // population level cholesky correlation
         //cov_matrix[nindvarying] wishmat;
         vector[nindvaryingoffdiagonals] sqrtpcov;
@@ -744,13 +743,14 @@ out[coli,rowi] = out[rowi,coli];
         real detpenalty;
 '),'
 
-      ',if(nindvarying > 0) paste0('vector[nindvarying] indparams[nsubjects]; 
-       vector[nindvarying] hypersd',if(!esthyper) 'base','; //population level std dev
+      ',if(nindvarying > 0) paste0('vector[nindvarying] indparams[nsubjects];
+        vector[nindvarying] hypersd; //population level std dev',
+          if(esthyper) paste0(' 
         matrix[nindvarying,nindvarying] sqrtpcovmat;
         matrix[nindvarying,nindvarying] hypercorrchol;
-        matrix[nindvarying,nindvarying] hypercovchol; 
+        matrix[nindvarying,nindvarying] hypercovchol; '),'
         ',if(!esthyper) paste0('matrix[nindvarying,nindvarying] mlcov;
-          vector[nindvarying] hypersd;')),'
+            vector[nindvarying] indparamsbasearray[nsubjects]; ')),'
       
       matrix[nlatent,nlatent] DIFFUSION',checkvarying('DIFFUSION','[nsubjects]','[1]'),'; //additive latent process variance
       matrix[nlatent,nlatent] T0VAR',checkvarying(if(!stationary & nt0varstationary ==0) 'T0VAR' else(c('T0VAR','DRIFT','DIFFUSION')),'[nsubjects]','[1]'),'; //initial latent process variance
@@ -803,12 +803,8 @@ if(n.TIpred > 0) paste0(unlist(lapply(1,function(x){ ## collects all the time in
       })),collapse=''),'
 
   
-
-      ',if(!esthyper) 'hypermeans = hypermeansbase; \n','
-      ',if(any(indvarying)) paste0('
+      ',if(any(indvarying) & esthyper) paste0('
         hypersd = ',ctstanmodel$hypersdtransform, ';
-
-',if(1==1) '
 if(nindvarying > 0){
 {
 int counter;
@@ -825,7 +821,6 @@ counter=counter+1;
 
 if(nindvarying > 1) hypercorrchol = covchol2corchol(sqrtpcovmat,0); //change int to change from partial to marginal prior
 }
-','
 
 ',if(1==99) '
 if(nindvarying >1)hypercorrchol = cholesky_decompose(quad_form_diag(wishmat, inv_sqrt( diagonal(wishmat))));
@@ -833,29 +828,32 @@ if(nindvarying >1)hypercorrchol = cholesky_decompose(quad_form_diag(wishmat, inv
 
 if(nindvarying ==1) hypercorrchol = diag_matrix(rep_vector(1,1));
 
-
-        hypercovchol= diag_pre_multiply(hypersd',if(!esthyper) 'base',
-        ', hypercorrchol);  
+        hypercovchol= diag_pre_multiply(hypersd, hypercorrchol);
         
         for(subi in 1:nsubjects) {
         indparams[subi]= 
-        hypercovchol * indparamsbase[(1+(subi-1)*nindvarying):(subi*nindvarying)] +',
-        'hypermeans',
-        if(!esthyper) 'base', 
-        '[indvaryingindex]',
+        hypercovchol * ','indparamsbase[(1+(subi-1)*nindvarying):(subi*nindvarying)] + ',
+        'hypermeans[indvaryingindex]',
         if(n.TIpred>0) ' + tipredeffect * tipreds[subi]\' ',
         ';  
         }
-        ',if(!esthyper) paste0('
-          mlcov = cov(indparams,nsubjects,nindvarying) + diag_matrix(rep_vector(.000001,nindvarying));
-          hypersd=sqrt(diagonal(mlcov));
-          hypermeans=hypermeansbase;
-          for(pari in 1:nindvarying){
-          hypermeans[indvaryingindex[pari]]=mean(indparams[,pari]);
-          }
-          '),'
-        '),'
+        '),
+
       
+if(!esthyper) paste0('
+hypermeans=hypermeansbase;
+for(subi in 1:nsubjects) {
+  indparamsbasearray[subi]= indparamsbase[(1+(subi-1)*nindvarying):(subi*nindvarying)];
+indparams[subi]= indparamsbasearray[subi]+hypermeans[indvaryingindex];
+  }
+  mlcov = cov(indparamsbasearray,nsubjects,nindvarying) + diag_matrix(rep_vector(.000001,nindvarying));
+  hypersd=sqrt(diagonal(mlcov));
+  for(pari in 1:nindvarying){
+  hypermeans[indvaryingindex[pari]]=mean(indparams[,pari]);
+  }
+  '),'
+
+
       {
       vector[ndiffusion*ndiffusion] asymDIFFUSIONvec',checkvarying(c('DIFFUSION','DRIFT'),'[nsubjects]','[1]'),';
       ',if(continuoustime & !asymdiffusion) paste0('matrix[ndiffusion*ndiffusion,ndiffusion*ndiffusion] DRIFTHATCH',checkvarying(c('DRIFT'),'[nsubjects]','[1]'),';'),'
@@ -1017,13 +1015,17 @@ detpenalty = sum(-log( 1-(inv_logit(-dets) .* (dets))+1)) / ',checkvarying(c('DR
         tipredsimputed ~ ',ctstanmodel$tipredsimputedprior,';\n '),' 
       
       ',if(any(ctspec$indvarying) & !nopriors) paste0(
-        '//hypercorrchol ~ lkj_corr_cholesky(.1); 
+        
+        if(esthyper) paste0('
+        //hypercorrchol ~ lkj_corr_cholesky(.1); 
         if(nindvarying >1) sqrtpcov ~ normal(0,1);
         //wishmat ~ inv_wishart(nindvarying,diag_matrix(rep_vector(1,nindvarying)));
         indparamsbase ~ normal(0,1); 
-        rawhypersd',if(!esthyper) 'base', ' ~ ',ctstanmodel$rawhypersd,';',
-        if(!esthyper) 'target += -log(determinant(mlcov)); // /2*nsubjects; 
-        // target += multi_normal_lpdf(indparams| hypermeans[indvaryingindex], mlcov);','
+        rawhypersd ~ ',ctstanmodel$rawhypersd,';'),
+        
+        if(!esthyper) '//target += -log(determinant(mlcov)); // /2*nsubjects; 
+//rawhypersd ~ normal(0,100);
+         target += multi_normal_lpdf(indparamsbasearray| rep_vector(0,nindvarying), mlcov);','
         '),'
       
       ',if(!kalman) 'etapostbase ~ normal(0,1); \n','
@@ -1151,7 +1153,7 @@ target +=  detpenalty;
   
   standata<-list(
     Y=cbind(as.matrix(datalong[,manifestNames])),
-    subject=datalong[,'id'],
+    subject=datalong[,idName],
     nsubjects=nsubjects,
     nmanifest=n.manifest,
     T0check=T0check,

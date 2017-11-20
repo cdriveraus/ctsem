@@ -15,6 +15,17 @@ indexMatrix<-function(dimension,symmetrical=FALSE,upper=FALSE,lowerTriangular=FA
   return(tempmatrix)
 }
 
+#convert id's to ascending numeric 
+makeNumericIDs <- function(datalong,idName='id',timeName='time'){
+  originalid <- unique(datalong[,idName])
+  datalong[,idName] <- match(datalong[,idName],originalid)
+  
+  datalong <- datalong[order(datalong[,idName],datalong[,timeName]),] #sort by id then time
+  
+  if(any(is.na(as.numeric(datalong[,idName])))) stop('id column may not contain NA\'s or character strings!')
+  return(datalong)
+}
+
 #' ctCollapse
 #' Easily collapse an array margin using a specified function.
 #' @param inarray Input array of more than one dimension.
