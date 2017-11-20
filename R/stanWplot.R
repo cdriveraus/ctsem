@@ -78,20 +78,20 @@ stanplot<-function(chains,seed){
     grid()
     
     })
-    },ui=fluidPage(
+    },ui=shiny::fluidPage(
     # Application title
-    titlePanel("stan mid-sampling plots..."),
-    sidebarLayout(
+    shiny::titlePanel("stan mid-sampling plots..."),
+    shiny::sidebarLayout(
     # Sidebar with a slider input for number of observations
-    sidebarPanel(
-    sliderInput("begin", "Start of range:", min = 1,max=iter,value = 1,step=1), 
-    selectInput("parameter", "Choose a parameter:", choices = varnames),
-    actionButton("refresh", "Refresh sample data")
+    shiny::sidebarPanel(
+    shiny::sliderInput("begin", "Start of range:", min = 1,max=iter,value = 1,step=1), 
+    shiny::selectInput("parameter", "Choose a parameter:", choices = varnames),
+    shiny::actionButton("refresh", "Refresh sample data")
     ),
     
     # Show a plot of the generated distribution
-    mainPanel(
-    plotOutput("chainPlot")
+    shiny::mainPanel(
+    shiny::plotOutput("chainPlot")
     )
     ))),
     launch.browser=TRUE)
