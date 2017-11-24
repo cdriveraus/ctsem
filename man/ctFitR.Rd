@@ -4,12 +4,15 @@
 \alias{ctFitR}
 \title{Fit ctsem models with Kalman filter R code -- slower!}
 \usage{
-ctFitR(datalong, ctmodel)
+ctFitR(datalong, ctmodel, binary = FALSE, carefulfit = FALSE,
+  regulariser = 1)
 }
 \arguments{
 \item{datalong}{long data}
 
 \item{ctmodel}{ctsem model of type 'omx'}
+
+\item{...}{arguments to pass to ctsem::Kalman}
 }
 \value{
 matrix of estimates and standard errors
