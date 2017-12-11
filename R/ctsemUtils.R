@@ -26,6 +26,19 @@ makeNumericIDs <- function(datalong,idName='id',timeName='time'){
   return(datalong)
 }
 
+crosscov <- function(a,b){
+da <- a-matrix(colMeans(a),nrow=nrow(a),ncol=ncol(a),byrow=TRUE)
+db <- b-matrix(colMeans(b),nrow=nrow(b),ncol=ncol(b),byrow=TRUE)
+t(da) %*% db / (nrow(a)-1)
+
+# cc <- matrix(NA,nrow=nrow(a))
+# for(i in 1:nrow(a)){
+#   cc[i,] <- da[i,] * db[i,]
+
+}
+
+
+
 #' ctCollapse
 #' Easily collapse an array margin using a specified function.
 #' @param inarray Input array of more than one dimension.

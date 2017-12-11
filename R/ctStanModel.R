@@ -151,6 +151,7 @@ if(type=='standt') continuoustime<-FALSE
   out$hypersdtransform <- 'exp(rawhypersd * 2 ) .* sdscale'
   out$stationarymeanprior <- NA
   out$stationaryvarprior <- NA
+  out$manifesttype <- rep(0,n.manifest)
   
  return(out)
 }

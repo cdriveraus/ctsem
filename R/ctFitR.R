@@ -45,13 +45,9 @@ ctFitR<-function(datalong, ctmodel,carefulfit=FALSE,regulariser=1,...){
 
   kparsfree <- which(suppressWarnings(is.na(as.numeric(kpars))))
   parnames <- unique(kpars[kparsfree])
-  
-  if(!is.null(ctmodel$calcs)) {
-    kparsskeleton$calcs <- ctmodel$calcs
-    for(i in 1:length(ctmodel$calcs)){
-      for(mati in c('DRIFT','DIFFUSION','MANIFESTVAR','CINT','T0VAR','T0MEANS','MANIFESTMEANS','LAMBDA','TDPREDEFFECT','PARMEANS','PARVAR')){
-        kparsskeleton$calcs[i]<- gsub(pattern = mati,replacement = paste0('kpars$',mati),x = kparsskeleton$calcs[i],fixed=TRUE)
-      }}}
+
+  if(!is.null(ctmodel$calcs)) kparsskeleton$calcs <- ctmodel$calcs
+  if(!is.null(ctmodel$manifesttype)) kparsskeleton$manifesttype <- ctmodel$manifesttype
   
   # update kpars with deterministic calcs
 # browser()
@@ -65,7 +61,6 @@ ctFitR<-function(datalong, ctmodel,carefulfit=FALSE,regulariser=1,...){
   npars <- length(parnames)
   parpositions <- unlist(lapply(kpars[kparsfree],function(x) which(parnames==x)))
   
-  
   optimfunc <- function(pars,...){
     kpars[kparsfree] <- pars[parpositions]
     # PARMEANS <- as.numeric(kpars[kparsfree][names(kpars[kparsfree])=='PARMEANS'])
@@ -73,25 +68,27 @@ ctFitR<-function(datalong, ctmodel,carefulfit=FALSE,regulariser=1,...){
     kpars <- relist(kpars,kparsskeleton)
     
     
-    if(runif(1) > .99)  print(matrix(c(parnames,pars),ncol=2))
+    if(runif(1) > .95)  print(matrix(c(parnames,pars),ncol=2))
     kpars[unlist(lapply(kpars,is.matrix))] <- lapply(kpars[unlist(lapply(kpars,is.matrix))],
       function(x) matrix(as.numeric(x),nrow=nrow(x),ncol=ncol(x)))
     kpars$DIFFUSION <- kpars$DIFFUSION %*% t(kpars$DIFFUSION)
     kpars$T0VAR <- kpars$T0VAR %*% t(kpars$T0VAR)
     kpars$MANIFESTVAR <- kpars$MANIFESTVAR %*% t(kpars$MANIFESTVAR)
     if(!is.null(kpars$PARVAR)) kpars$PARVAR <- kpars$PARVAR %*% t(kpars$PARVAR)
-    kpars$DRIFT[row(kpars$DRIFT) == col(kpars$DRIFT)] <- -log(exp(-diag(kpars$DRIFT))+1)
+    kpars$DRIFT[c(row(kpars$DRIFT) == col(kpars$DRIFT)) & suppressWarnings(is.na(as.numeric(kparsskeleton$DRIFT)))] <- 
+    -log(exp(-kpars$DRIFT)+1)[c(row(kpars$DRIFT) == col(kpars$DRIFT)) & suppressWarnings(is.na(as.numeric(kparsskeleton$DRIFT)))]
+  
 
-  lp=-try(Kalman(kpars=kpars,datalong=datalong,manifestNames=ctmodel$manifestNames,
+  lp=try(-Kalman(kpars=kpars,datalong=datalong,manifestNames=ctmodel$manifestNames,
     latentNames=ctmodel$latentNames,TDpredNames=ctmodel$TDpredNames,timecol='time',optimize=TRUE,...))
-  if(is.nan(lp) || is.infinite(lp)) lp <- -99999999999999
+  if(is.nan(lp) | is.infinite(lp) | class(lp)=='try-error') lp <- -99999999999999
   if(carefulfit) lp <- lp +abs(-1 -(sum(diag(kpars$DRIFT))))*regulariser +abs(1 -(sum(diag(kpars$DIFFUSION))))*regulariser*.01
   return(lp)
   }
   
   fit <- optim(par= rnorm(npars,0,.5),fn=optimfunc,hessian=TRUE,
     method = c("L-BFGS-B"),control=list(trace=3,REPORT=1,
-      ndeps=rep(1e-6,npars)),...)
+      ndeps=rep(1e-8,npars)),...)
 
   kpars[kparsfree] <- fit$par[parpositions]
   # PARMEANS <- as.numeric(kpars[kparsfree][names(kpars[kparsfree])=='PARMEANS'])
@@ -106,12 +103,12 @@ ctFitR<-function(datalong, ctmodel,carefulfit=FALSE,regulariser=1,...){
   kpars$T0VAR <- kpars$T0VAR %*% t(kpars$T0VAR)
   kpars$MANIFESTVAR <- kpars$MANIFESTVAR %*% t(kpars$MANIFESTVAR)
 
-  kpars$DRIFT[row(kpars$DRIFT) == col(kpars$DRIFT) && suppressWarnings(is.na(as.numeric(kparsskeleton$DRIFT)))] <- 
-    -log(exp(-kpars$DRIFT)+1)[row(kpars$DRIFT) == col(kpars$DRIFT) && suppressWarnings(is.na(as.numeric(kparsskeleton$DRIFT)))]
+  kpars$DRIFT[c(row(kpars$DRIFT) == col(kpars$DRIFT)) & suppressWarnings(is.na(as.numeric(kparsskeleton$DRIFT)))] <- 
+    -log(exp(-kpars$DRIFT)+1)[c(row(kpars$DRIFT) == col(kpars$DRIFT)) & suppressWarnings(is.na(as.numeric(kparsskeleton$DRIFT)))]
   
-  for(calci in kpars$calcs){
-    eval(parse(text=calci))
-  }
+  # for(calci in kpars$calcs){
+  #   eval(parse(text=calci))
+  # }
   
   est <- unlist(kpars)[kparsfree]
   est <- est[c(names(est)[!duplicated(parpositions)])]
