@@ -78,7 +78,7 @@ DIFFUSIONcor[is.na(DIFFUSIONcor)] <- 0
 T0VAR=sdcovchol2cov(T0VAR,0)
 T0VARcor = suppressWarnings(stats::cov2cor(T0VAR))
 T0VARcor[is.na(T0VARcor)] <- 0
-MANIFESTVAR=MANIFESTVAR^2
+
 
 DRIFTHATCH<-DRIFT %x% diag(nrow(DRIFT)) + diag(nrow(DRIFT)) %x% DRIFT
 asymDIFFUSION<-matrix(-solve(DRIFTHATCH, c(DIFFUSION)), nrow=nrow(DRIFT))
@@ -117,6 +117,7 @@ out<-list(DRIFT=DRIFT,dtDRIFT=dtDRIFT, T0VAR=T0VAR, T0VARcor=T0VARcor,
   MANIFESTMEANS=MANIFESTMEANS, LAMBDA=LAMBDA)
 
 if('MANIFESTVAR' %in% model$pars$matrix) {
+  MANIFESTVAR=MANIFESTVAR
   dimnames(MANIFESTVAR)=list(mn,mn)
   out$MANIFESTVAR=MANIFESTVAR
   
