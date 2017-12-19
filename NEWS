@@ -3,6 +3,8 @@ ctsem news:
 Known bugs / limitations:
 None.
 
+- Unscented Kalman filter for ctStanFit
+- Fix bug in summary preventing display when binary variables were used in fit.
 - More robust data import, character string id's and jumbled up order of rows now manageable.
 - stanWplot no longer requires shiny to be explicitly loaded.
 - Fix bug in ctKalman plotting function preventing interpolation.
