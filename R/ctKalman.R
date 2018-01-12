@@ -130,6 +130,7 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
       manifestNames=manifestNames,
       latentNames=latentNames,
       TDpredNames=TDpredNames,
+      idcol='subject',
       timecol='time',
       diffusionindices=diffusionindices)
   }

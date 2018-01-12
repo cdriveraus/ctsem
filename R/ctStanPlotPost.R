@@ -26,10 +26,10 @@ ctStanPlotPost<-function(obj, rows='all',mfrow='auto',
   
   if(dopost) sm<-obj$ctstanmodel else sm <- obj
   
-  #get unique parameters
-  m <- sm$par[match(unique(sm$par$param), sm$par$param),]
-  m <- m[!is.na(m$param),] #remove non free param
-  m <- m[!(m$param %in% 'stationary'),] #remove stationary params
+  #which rows to avoid plotting
+  skiplist <- match(unique(sm$par$param), sm$par$param)
+  skiplist <- c(skiplist,!is.na(sm$pars$param)) #remove non free param
+  skiplist <- c(skiplist,!(sm$pars$param %in% 'stationary')) #remove stationary params
   
   paroriginal<-graphics::par()[c('mfrow','mgp','mar')]
   
@@ -37,11 +37,11 @@ ctStanPlotPost<-function(obj, rows='all',mfrow='auto',
   
   if(dopost) s<-rstan::extract(obj$stanfit)
   
-  if(rows=='all') rows<-(1:nrow(m))[is.na(m$value)]  
+  if(rows=='all') rows<-(1:nrow(sm))[-skiplist] else rows <- rows[!(rows %in% skiplist)]
   if(!is.null(mfrow)){
     if(mfrow=='auto') {
-      graphics::par(mfrow=c(min(3,grDevices::n2mfrow( (length(rows)+sum(m$indvarying)*3))[2]), 
-        min(3,n2mfrow( (length(rows)+sum(m$indvarying)*3))[1])))
+      graphics::par(mfrow=c(min(3,grDevices::n2mfrow( (length(rows)+sum(sm$pars$indvarying)*3))[2]), 
+        min(3,n2mfrow( (length(rows)+sum(sm$pars$indvarying)*3))[1])))
     }
     if(mfrow!='auto') graphics::par(mfrow=mfrow)
   }
@@ -63,23 +63,23 @@ ctStanPlotPost<-function(obj, rows='all',mfrow='auto',
   
   indvaryingcount<-0
   hypermeancount<-0
-  # pmeans<-matrix(NA,nrow=nsubjects,ncol=sum(m$indvarying))
-  # pnames<-rep(NA,sum(m$indvarying))
+  # pmeans<-matrix(NA,nrow=nsubjects,ncol=sum(sm$pars$indvarying))
+  # pnames<-rep(NA,sum(sm$pars$indvarying))
   for(rowi in rows){
-    hypermeancount <- which(m$param[is.na(m$value)] %in% m$param[rowi])
+    hypermeancount <- which(sm$pars$param[is.na(sm$pars$value)] %in% sm$pars$param[rowi])
     
     p<-list(lwd=2, #plot pars
       x=NA,
       xaxs='i',
       yaxs='i',
       xlab='Value', 
-      main=paste0('Pop. mean ',m$param[rowi])) 
+      main=paste0('Pop. mean ',sm$pars$param[rowi])) 
     
     if(dopost){
     hypermean<- s$hypermeans[,hypermeancount]
     
     param<-hypermean
-    dhypermeanpost<-ctDensity(eval(parse(text=paste0(m$transform[rowi]))))
+    dhypermeanpost<-ctDensity(eval(parse(text=paste0(sm$pars$transform[rowi]))))
     
     p$xlim=dhypermeanpost$xlim
     p$ylim=c(0,dhypermeanpost$ylim[2])
@@ -87,7 +87,7 @@ ctStanPlotPost<-function(obj, rows='all',mfrow='auto',
     }
     
     param<-stats::rnorm(50000,0,1)
-    meanprior <- eval(parse(text=paste0(m$transform[rowi])))
+    meanprior <- eval(parse(text=paste0(sm$pars$transform[rowi])))
     dmeanprior<-ctDensity(meanprior)
     
     if(!dopost){
@@ -107,11 +107,11 @@ ctStanPlotPost<-function(obj, rows='all',mfrow='auto',
       text.col=legcol,bty='n')
     
     
-    if(m$indvarying[rowi]){ #then also plot sd and subject level pars
+    if(sm$pars$indvarying[rowi]){ #then also plot sd and subject level pars
       
-      indvaryingcount<-which(m$param[is.na(m$value) & m$indvarying] %in% m$param[rowi])
+      indvaryingcount<-which(sm$pars$param[is.na(sm$pars$value) & sm$pars$indvarying] %in% sm$pars$param[rowi])
       
-      sdscale <- m$sdscale[rowi]
+      sdscale <- sm$pars$sdscale[rowi]
       tform <- gsub('.*', '*',sm$hypersdtransform,fixed=TRUE)
       
       if(dopost) {
@@ -123,12 +123,12 @@ ctStanPlotPost<-function(obj, rows='all',mfrow='auto',
       indparams<-s[['indparams']][,1:nsubjects,indvaryingcount]
       
       param<-indparams
-      dindparams<-ctDensity(eval(parse(text=paste0(m$transform[rowi]))))
+      dindparams<-ctDensity(eval(parse(text=paste0(sm$pars$transform[rowi]))))
       param<-stats::rnorm(50000,hypermean,hypersd)
-      dsubjectprior<-ctDensity(eval(parse(text=paste0(m$transform[rowi]))))
+      dsubjectprior<-ctDensity(eval(parse(text=paste0(sm$pars$transform[rowi]))))
       param<-stats::rnorm(50000,0,1)
       
-      graphics::plot(dindparams$density,xlab='Value',main=m$param[rowi],lwd=2,yaxs='i',
+      graphics::plot(dindparams$density,xlab='Value',main=sm$pars$param[rowi],lwd=2,yaxs='i',
         ylim=c(0,max(dsubjectprior$ylim[2],dindparams$ylim[2])),
         xlim=c(min(dsubjectprior$xlim[1],dindparams$xlim[1]),max(dsubjectprior$xlim[2],dindparams$xlim[2])))
       graphics::points(dsubjectprior$density,col='red',lwd=2,lty=2,type='l')
@@ -146,7 +146,7 @@ ctStanPlotPost<-function(obj, rows='all',mfrow='auto',
         xaxs='i',
         yaxs='i',
         xlab='Value', 
-        main=paste0('Pre-tform pop. sd ',m$param[rowi])) 
+        main=paste0('Pre-tform pop. sd ',sm$pars$param[rowi])) 
       
       #posterior
       if(dopost) {
@@ -182,11 +182,11 @@ ctStanPlotPost<-function(obj, rows='all',mfrow='auto',
         xaxs='i',
         yaxs='i',
         xlab='Value', 
-        main=paste0('Pop. sd ',m$param[rowi])) 
+        main=paste0('Pop. sd ',sm$pars$param[rowi])) 
       
       #posterior
       if(dopost){
-      hsdpost <- s[[paste0('hsd_',m$param[rowi])]]
+      hsdpost <- s[[paste0('hsd_',sm$pars$param[rowi])]]
       dhsdpost<-ctDensity(hsdpost)
 
       p$x = dhsdpost$density
@@ -196,9 +196,9 @@ ctStanPlotPost<-function(obj, rows='all',mfrow='auto',
       
       if(!dopost) hypermean <- rnorm(length(hypersdprior),0,1) #otherwise the prior is plotted conditional on sampled hypermeans
       param<-suppressWarnings(hypermean+hypersdprior)
-      high<-eval(parse(text=paste0(m$transform[rowi])))
+      high<-eval(parse(text=paste0(sm$pars$transform[rowi])))
       param<-suppressWarnings(hypermean-hypersdprior)
-      low<-eval(parse(text=paste0(m$transform[rowi])))
+      low<-eval(parse(text=paste0(sm$pars$transform[rowi])))
       hsdprior<-abs(high - low)/2
       
       dhsdprior<-ctDensity(sample(hsdprior,50000,replace=TRUE))
@@ -222,11 +222,11 @@ ctStanPlotPost<-function(obj, rows='all',mfrow='auto',
       
       
       # pmeans[,indvaryingcount]<-sum$summary[sumnames %in% 
-      #     paste0(m$matrix[rowi],'[',1:nsubjects,',',m$row[rowi],
-      #       if(!(m$matrix[rowi] %in% c('T0MEANS','CINT','MANIFESTMEANS'))) paste0(',',m$col[rowi]),']'),
+      #     paste0(sm$pars$matrix[rowi],'[',1:nsubjects,',',sm$pars$row[rowi],
+      #       if(!(sm$pars$matrix[rowi] %in% c('T0MEANS','CINT','MANIFESTMEANS'))) paste0(',',sm$pars$col[rowi]),']'),
       #   1]
       # 
-      # pnames[indvaryingcount]<-paste0(m$matrix[rowi],'[',m$row[rowi],',',m$col[rowi],']')
+      # pnames[indvaryingcount]<-paste0(sm$pars$matrix[rowi],'[',sm$pars$row[rowi],',',sm$pars$col[rowi],']')
       
       
       if(wait==TRUE & rowi != utils::tail(rows,1)){

@@ -57,7 +57,7 @@
 Kalman<-function(kpars,datalong,
   manifestNames,latentNames,imputeMissings=FALSE,
   TDpredNames=NULL,
-  continuoustime=TRUE,
+  continuoustime=TRUE,idcol='id',
   timecol='time', diffusionindices='all',optimize=FALSE,ukf=FALSE, plotoptim=FALSE){
   
   datalong=as.matrix(datalong)
@@ -101,7 +101,7 @@ Kalman<-function(kpars,datalong,
   discreteCINT<- list()
   discreteDIFFUSION <- list()
   
-  t0check <- c(1,as.numeric(datalong[-1,'id']!=datalong[-nrow(datalong),'id']))
+  t0check <- c(1,as.numeric(datalong[-1,idcol]!=datalong[-nrow(datalong),idcol]))
   
   if(continuoustime) dt<-c(-9,datalong[-1,timecol]-datalong[-nrow(datalong),timecol])
   

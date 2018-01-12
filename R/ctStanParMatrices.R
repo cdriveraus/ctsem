@@ -16,7 +16,8 @@ ctStanParMatrices <- function(model, parvalues, timeinterval=1){
   if(class(model) !='ctStanModel') stop('not a ctStanModel')
   
   valuespec <- model$pars[is.na(model$pars$param),]
-  parspec <- model$pars[!is.na(model$pars$param),]
+  parspec <- model$pars[!is.na(model$pars$param) & !model$pars$param=='stationary',]
+  statspec <- model$pars[!is.na(model$pars$param) & model$pars$param=='stationary',]
   
   if(length(parvalues)!=nrow(parspec)) stop('length of parvalues != number of free params in model!')
   
@@ -71,13 +72,11 @@ sdcovchol2cov <- function(mat, cholesky){
     param <- parvalues[i]
     eval(parse(text=paste0(parspec$matrix[i], '[',parspec$row[i],' ,', parspec$col[i], '] <- ', parspec$transform[i])))
   }
-  
+
 DIFFUSION = sdcovchol2cov(DIFFUSION,0)
 DIFFUSIONcor = suppressWarnings(stats::cov2cor(DIFFUSION))
 DIFFUSIONcor[is.na(DIFFUSIONcor)] <- 0
-T0VAR=sdcovchol2cov(T0VAR,0)
-T0VARcor = suppressWarnings(stats::cov2cor(T0VAR))
-T0VARcor[is.na(T0VARcor)] <- 0
+
 
 
 DRIFTHATCH<-DRIFT %x% diag(nrow(DRIFT)) + diag(nrow(DRIFT)) %x% DRIFT
@@ -94,9 +93,9 @@ dimnames(DIFFUSION)=list(ln,ln)
 dimnames(asymDIFFUSION)=list(ln,ln)
 rownames(CINT)=ln
 rownames(MANIFESTMEANS)=mn
-rownames(T0MEANS)=ln
 
-dimnames(T0VAR)=list(ln,ln)
+
+
 dimnames(asymDIFFUSION)=list(ln,ln)
 dimnames(LAMBDA)=list(mn,ln)
 
@@ -109,6 +108,30 @@ dtDIFFUSIONcor = cov2cor(dtDIFFUSION)
 dtCINT = (solve(DRIFT) %*%(dtDRIFT - diag(nrow(DRIFT))) %*% (CINT))
 
 asymCINT = -solve(DRIFT) %*% CINT
+
+
+
+T0VAR=sdcovchol2cov(T0VAR,0)
+T0VARcor = suppressWarnings(stats::cov2cor(T0VAR))
+T0VARcor[is.na(T0VARcor)] <- 0
+dimnames(T0VAR)=list(ln,ln)
+
+rownames(T0MEANS)=ln
+
+for(i in 1:nrow(statspec)){
+  if(statspec$matrix[i] =='T0VAR') {
+    eval(parse(text=paste0(statspec$matrix[i], '[',statspec$row[i],' ,', statspec$col[i], '] <- ', 
+    'asymDIFFUSION[',statspec$row[i],' ,', statspec$col[i], ']')))
+    eval(parse(text=paste0(statspec$matrix[i], 'cor[',statspec$row[i],' ,', statspec$col[i], '] <- ', 
+      'asymDIFFUSIONcor[',statspec$row[i],' ,', statspec$col[i], ']')))
+  }
+  if(statspec$matrix[i] =='T0MEANS') eval(parse(text=paste0(statspec$matrix[i], '[',statspec$row[i],' ,', statspec$col[i], '] <- ', 
+    'asymCINT[',statspec$row[i],' ,', statspec$col[i], ']')))
+}
+
+T0VAR[upper.tri(T0VAR)] = t(T0VAR)[upper.tri(T0VAR)]
+T0VARcor[upper.tri(T0VAR)] = t(T0VARcor)[upper.tri(T0VAR)]
+
 
 out<-list(DRIFT=DRIFT,dtDRIFT=dtDRIFT, T0VAR=T0VAR, T0VARcor=T0VARcor, 
   DIFFUSION=DIFFUSION, DIFFUSIONcor=DIFFUSIONcor, dtDIFFUSION=dtDIFFUSION, dtDIFFUSIONcor=dtDIFFUSIONcor,
