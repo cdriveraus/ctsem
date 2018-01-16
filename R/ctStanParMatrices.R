@@ -16,7 +16,8 @@ ctStanParMatrices <- function(model, parvalues, timeinterval=1){
   if(class(model) !='ctStanModel') stop('not a ctStanModel')
   
   valuespec <- model$pars[is.na(model$pars$param),]
-  parspec <- model$pars[!is.na(model$pars$param) & !model$pars$param=='stationary',]
+  parspec <- model$pars[!is.na(model$pars$param) & !model$pars$param=='stationary' & !duplicated(model$pars$param),]
+  dupspec <- model$pars[!is.na(model$pars$param) & !model$pars$param=='stationary' & duplicated(model$pars$param),]
   statspec <- model$pars[!is.na(model$pars$param) & model$pars$param=='stationary',]
   
   if(length(parvalues)!=nrow(parspec)) stop('length of parvalues != number of free params in model!')
@@ -71,7 +72,11 @@ sdcovchol2cov <- function(mat, cholesky){
   for(i in 1:nrow(parspec)){
     param <- parvalues[i]
     eval(parse(text=paste0(parspec$matrix[i], '[',parspec$row[i],' ,', parspec$col[i], '] <- ', parspec$transform[i])))
+    for( dupi in which(dupspec$param == parspec$param[i])){
+      eval(parse(text=paste0(dupspec$matrix[dupi], '[',dupspec$row[dupi],' ,', dupspec$col[dupi], '] <- ', dupspec$transform[dupi])))
+    }
   }
+
 
 DIFFUSION = sdcovchol2cov(DIFFUSION,0)
 DIFFUSIONcor = suppressWarnings(stats::cov2cor(DIFFUSION))
@@ -118,7 +123,7 @@ dimnames(T0VAR)=list(ln,ln)
 
 rownames(T0MEANS)=ln
 
-for(i in 1:nrow(statspec)){
+for(i in row(statspec)){
   if(statspec$matrix[i] =='T0VAR') {
     eval(parse(text=paste0(statspec$matrix[i], '[',statspec$row[i],' ,', statspec$col[i], '] <- ', 
     'asymDIFFUSION[',statspec$row[i],' ,', statspec$col[i], ']')))

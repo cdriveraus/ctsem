@@ -29,9 +29,9 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,...){
     out=list()
     e=extract(object$stanfit)
     
-    iter=dim(e$hypercorrchol)[1]
+    iter=dim(e$hypercorrsqrt)[1]
     if(!is.null(iter)){ #then there is some individual variation so continue
-      npars=dim(e$hypercorrchol)[2]
+      npars=dim(e$hypercorrsqrt)[2]
       
       if(npars>1){
         
@@ -75,8 +75,8 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,...){
         
         #raw subject level params
         hypercorr=array(unlist(lapply(1:iter,function(x){ #get array of hypercorr samples
-          hypercorrchol=matrix(e$hypercorrchol[x,,],nrow=npars)
-          hypercorrchol%*% t(hypercorrchol)
+          hypercorrsqrt=matrix(e$hypercorrsqrt[x,,],nrow=npars)
+          hypercorrsqrt%*% t(hypercorrsqrt)
         })),dim=c(npars,npars,iter))
         
         
@@ -95,8 +95,8 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,...){
         
         popcorr <- popcorr[order(abs(popcorr[,'z'])),,drop=FALSE]
         
-        hypercorrmean= ctCollapse(array(apply(e$hypercorrchol,1,function(x) x%*% t(x)),dim = dim(e$hypercorrchol)[c(2,3,1)]),3,mean)
-        hypercorrsd= ctCollapse(array(apply(e$hypercorrchol,1,function(x) x%*% t(x)),dim = dim(e$hypercorrchol)[c(2,3,1)]),3,sd)
+        hypercorrmean= ctCollapse(array(apply(e$hypercorrsqrt,1,function(x) x%*% t(x)),dim = dim(e$hypercorrsqrt)[c(2,3,1)]),3,mean)
+        hypercorrsd= ctCollapse(array(apply(e$hypercorrsqrt,1,function(x) x%*% t(x)),dim = dim(e$hypercorrsqrt)[c(2,3,1)]),3,sd)
         
         dimnames(hypercorrmean)<-list(parnames,parnames)
         dimnames(hypercorrsd)<-list(parnames,parnames)
