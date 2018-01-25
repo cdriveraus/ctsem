@@ -19,10 +19,11 @@
 #' check what predictors are in the model, run \code{fit$ctstanmodel$TIpredNames}.
 #' @param parmatrices Logical. If TRUE (default), the \code{\link{ctStanParMatrices}} function
 #' is used to return an expanded range of possible matrices of interest.
-#' @param whichpars Integer vector specifying Which of the individually varying subject
-#' level parameters to compute effects on. Only used if \code{parmatrices=FALSE} .
-#' 'all' uses all available, which is equivalent to 
-#' \code{1:sum(fit$ctstanmodel$pars$indvarying)}.
+#' @param whichpars if parmatrices==TRUE, character vector specifying which matrices, and potentially which 
+#' indices of the matrices, to plot. c('dtDRIFT[2,1]', 'DRIFT') would output for row 2 and column 1 of 
+#' the discrete time drift matrix, as well as all indices of the continuous time drift matrix. 
+#' If parmatrices==FALSE, integer vector specifying which of the individually varying subject
+#' level parameters to compute effects on. In either case 'all' uses all available.
 #' The integer corresponding to specific parameters can be found as follows, replacing \code{fit} as appropriate:
 #' \code{fit$ctstanmodel$pars[fit$ctstanmodel$pars$indvarying,'param']}.
 #' @param nsamples Positive integer specifying the maximum number of samples to use. 
@@ -42,9 +43,6 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   whichTIpreds=1,parmatrices=TRUE, whichpars='all', nsamples=200,timeinterval=1,
   plot=FALSE,...){
   
-  if(parmatrices) whichpars <- 'all'
-  
-  
   #drop fixed and duplicated params
   spec_nofixed <- fit$ctstanmodel$pars[is.na(fit$ctstanmodel$pars$value),,drop=FALSE]
   spec_nofixed_noduplicates <- spec_nofixed[!duplicated(spec_nofixed$param),]
@@ -54,17 +52,22 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   hypermeans <- e$hypermeans
   hypermeansindvarying <- e$hypermeans[,spec_nofixed_noduplicates$indvarying,drop=FALSE] 
   
+  
+  tipreds<-fit$data$tipreds[,whichTIpreds,drop=FALSE]
+  tieffect<-e$tipredeffect[,,whichTIpreds,drop=FALSE]
+  
   #update ctspec to only indvarying and those in whichpars
+  if(!parmatrices){
   spec_nofixed_noduplicates_indvarying <- spec_nofixed_noduplicates[spec_nofixed_noduplicates$indvarying,]
   if(all(whichpars=='all')) whichpars=1:sum(spec_nofixed_noduplicates_indvarying$indvarying)
   spec_nofixed_noduplicates_indvarying <- spec_nofixed_noduplicates_indvarying[whichpars,,drop=FALSE]
   hypermeansindvarying <- hypermeansindvarying[,whichpars,drop=FALSE]  #then just the ones in whichpars
+  tieffect<-tieffect[,whichpars,,drop=FALSE] #updating...
+  npars<-length(whichpars)
+  }
   
-  tieffect<-e$tipredeffect[,whichpars,whichTIpreds,drop=FALSE]
-  tipreds<-fit$data$tipreds[,whichTIpreds,drop=FALSE]
   tiorder<-order(tipreds[,1])
   tipreds<-tipreds[tiorder,,drop=FALSE] #order tipreds according to first one
-  npars<-length(whichpars)
   niter<-dim(e$hypermeans)[1]
   nsubjects <- nrow(tipreds)
   
@@ -157,13 +160,16 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   )
   
   out <- aperm(out, c(3,2,1))
-  
+
   if(!plot) return(out) else {
+
+    selection <- unlist(lapply(whichpars,function(x) grep(paste0('^\\Q',x,'\\E'),dimnames(out)$param)))
+    out <- out[,selection,,drop=FALSE]
     dots <- list(...)
     dots$yarray=out
     dots$x=tipreds[,1]
     if(is.null(dots$plotcontrol)) dots$plotcontrol=list(
-      ylab='Effect',
+      ylab=ifelse(!returndifference,'Par. Value','Effect'),
       xlab=colnames(tipreds)[whichTIpreds[1]],
       xaxs='i')
     
