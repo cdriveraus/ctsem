@@ -27,9 +27,9 @@ ctStanPlotPost<-function(obj, rows='all',mfrow='auto',
   if(dopost) sm<-obj$ctstanmodel else sm <- obj
   
   #which rows to avoid plotting
-  skiplist <- match(unique(sm$par$param), sm$par$param)
-  skiplist <- c(skiplist,!is.na(sm$pars$param)) #remove non free param
-  skiplist <- c(skiplist,!(sm$pars$param %in% 'stationary')) #remove stationary params
+  skiplist <- which(duplicated(sm$par$param))
+  skiplist <- c(skiplist,which(is.na(sm$pars$param))) #remove non free param
+  skiplist <- c(skiplist,which(sm$pars$param %in% 'stationary')) #remove stationary params
   
   paroriginal<-graphics::par()[c('mfrow','mgp','mar')]
   
@@ -37,11 +37,10 @@ ctStanPlotPost<-function(obj, rows='all',mfrow='auto',
   
   if(dopost) s<-rstan::extract(obj$stanfit)
   
-  if(rows=='all') rows<-(1:nrow(sm))[-skiplist] else rows <- rows[!(rows %in% skiplist)]
+  if(rows[1]=='all') rows<-(1:nrow(sm$par))[-skiplist] else rows <- rows[!(rows %in% skiplist)]
   if(!is.null(mfrow)){
     if(mfrow=='auto') {
-      graphics::par(mfrow=c(min(3,grDevices::n2mfrow( (length(rows)+sum(sm$pars$indvarying)*3))[2]), 
-        min(3,n2mfrow( (length(rows)+sum(sm$pars$indvarying)*3))[1])))
+      graphics::par(mfrow=grDevices::n2mfrow( (length(rows)+sum(sm$pars$indvarying[rows])*2)))
     }
     if(mfrow!='auto') graphics::par(mfrow=mfrow)
   }
@@ -139,15 +138,15 @@ ctStanPlotPost<-function(obj, rows='all',mfrow='auto',
       }
       
       
-      
-      #pre-transform hyper std dev
-      p<-list(lwd=2, #plot pars
-        x=NA,
-        xaxs='i',
-        yaxs='i',
-        xlab='Value', 
-        main=paste0('Pre-tform pop. sd ',sm$pars$param[rowi])) 
-      
+      ### removed this plot for the moment
+    # #pre-transform hyper std dev
+    #   p<-list(lwd=2, #plot pars
+    #     x=NA,
+    #     xaxs='i',
+    #     yaxs='i',
+    #     xlab='Value', 
+    #     main=paste0('Pre-tform pop. sd ',sm$pars$param[rowi])) 
+    #   
       #posterior
       if(dopost) {
         dhypersdpost<-ctDensity(hypersd)
@@ -159,24 +158,24 @@ ctStanPlotPost<-function(obj, rows='all',mfrow='auto',
       rawhypersd<-  stats::rnorm(100000,0,1)
       hypersdprior <- eval(parse(text=tform)) #hypersd prior samples
       dhypersdprior<-ctDensity(hypersdprior)
-      
-      if(!dopost) {
-        p$xlim=c(0,dhypersdprior$xlim[2])
-        p$ylim=c(0,dhypersdprior$ylim[2])
-      }
-      
-      do.call(graphics::plot,p)
-      graphics::points(dhypersdprior$density,col=ifelse(dopost,'blue','black'),type='l',lty=ifelse(dopost,2,1),lwd=2)
-      
-      if(dopost) leg <- c('Pop. sd posterior','Pop. sd prior') else leg <- 'Pop. sd prior'
-      if(dopost) legcol <- c('black','blue') else legcol <- 'black'
-      
-      graphics::legend('topright',leg,text.col=legcol,bty='n')
-      
-      
+
+      # if(!dopost) {
+      #   p$xlim=c(0,dhypersdprior$xlim[2])
+      #   p$ylim=c(0,dhypersdprior$ylim[2])
+      # }
+    #   
+    #   do.call(graphics::plot,p)
+    #   graphics::points(dhypersdprior$density,col=ifelse(dopost,'blue','black'),type='l',lty=ifelse(dopost,2,1),lwd=2)
+    #   
+    #   if(dopost) leg <- c('Pop. sd posterior','Pop. sd prior') else leg <- 'Pop. sd prior'
+    #   if(dopost) legcol <- c('black','blue') else legcol <- 'black'
+    #   
+    #   graphics::legend('topright',leg,text.col=legcol,bty='n')
       
       
-      #post-transform hyper std dev
+      
+      
+    #post-transform hyper std dev
       p<-list(lwd=2, #plot pars
         x=NA,
         xaxs='i',
