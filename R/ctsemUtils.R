@@ -85,6 +85,7 @@ inv_logit<-function(x) {
 #' Used for ctsem density plots.
 #' 
 #' @param x numeric vector on which to compute density.
+#' @param plot logical to indicate whether or not to plot the output.
 #' 
 #' @examples
 #' y <- ctDensity(exp(rnorm(80)))
@@ -98,7 +99,7 @@ inv_logit<-function(x) {
 #' plot(density(y))
 #' @export
 
-ctDensity<-function(x){
+ctDensity<-function(x,plot=FALSE,...){
   xlims=stats::quantile(x,probs=c(.02,.98))
   mid=mean(c(xlims[2],xlims[1]))
   xlims[1] = xlims[1] - (mid-xlims[1])
@@ -113,6 +114,9 @@ ctDensity<-function(x){
   
   out1<-stats::density(x,bw=bw,n=5000)
   out3=c(0,max(out1$y)*1.1)
+  
+  if(plot) plot(out1$x, out1$y,type='l', xlim=xlims,ylim=out3,ylab='Density',xlab='Par. Value',...)
+  
   return(list(density=out1,xlim=xlims,ylim=out3))
 }
 
