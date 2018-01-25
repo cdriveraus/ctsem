@@ -100,6 +100,15 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, kalman=T
   nonexplosive=FALSE
   fixedkalman=FALSE
   
+  idName<-ctstanmodel$subjectIDname
+  timeName<-ctstanmodel$timeName
+  continuoustime<-ctstanmodel$continuoustime
+  
+  if(length(unique(datalong[,idName]))==1 & any(ctstanmodel$pars$indvarying==FALSE)) {
+    ctstanmodel$pars$indvarying <- FALSE
+    message('Individual variation not possible as only 1 subject! indvarying set to FALSE on all parameters')
+  }
+  
   checkvarying<-function(matrixnames,yesoutput,nooutput=''){#checks if a matrix is set to individually vary in ctspec
     check<-0
     out<-nooutput
@@ -211,9 +220,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, kalman=T
   latentNames<-ctstanmodel$latentNames
   TDpredNames<-ctstanmodel$TDpredNames
   TIpredNames<-ctstanmodel$TIpredNames
-  idName<-ctstanmodel$subjectIDname
-  timeName<-ctstanmodel$timeName
-  continuoustime<-ctstanmodel$continuoustime
   indvarying<-c(ctspec$indvarying,ctspecduplicates$indvarying)
   nindvarying<-sum(ctspec$indvarying)
   nparams<-sum(is.na(ctspec$value))
@@ -225,8 +231,10 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, kalman=T
   #fit spec checks
   if(binomial & any(kalman)) stop('Binomial observations only possible with kalman=FALSE')
   
+  original <- unique(datalong[,idName])
   datalong <- makeNumericIDs(datalong,idName,timeName)
- 
+  new <- unique(datalong[,idName])
+  idmap <- cbind(original, new)
   
   T0check<-rep(1,nrow(datalong))
   for(i in 2:nrow(datalong)){
@@ -1527,6 +1535,7 @@ if(!approxpop & !ukfpop) ifelse(ukf, ukfilterfunc(ppchecking=FALSE), filteringfu
   standata<-list(
     Y=cbind(as.matrix(datalong[,manifestNames])),
     subject=datalong[,idName],
+    idmap=idmap,
     nsubjects=nsubjects,
     nmanifest=n.manifest,
     T0check=T0check,
