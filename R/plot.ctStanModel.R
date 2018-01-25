@@ -72,13 +72,13 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,samples=1e6, hypersd='margina
       densxlow=stats::density(xlow,bw=bw,n=n)
       densxhigh=stats::density(xhigh,bw=bw,n=n)
 
-    ymax= max(c(densxmean$y),c(densxlow$y),c(densxhigh$y))
+    ymax= max(c(densxmean$y),c(densxlow$y),c(densxhigh$y))*1.2
     
-    graphics::plot(densxmean,main=m$param[rowi],lwd=2,xlim=c(xlims[1],xlims[2]),ylim=c(0,ymax),ylab='Par Value')
+    graphics::plot(densxmean,main=m$param[rowi],lwd=2,xlim=c(xlims[1],xlims[2]),ylim=c(0,ymax),xlab='Par Value',ylab='Density')
     graphics::points(densxhigh,lwd=2,type='l',col='red',lty=3)
     graphics::points(densxlow,lwd=2,type='l',col='blue',lty=3)
 
-    graphics::legend('topright',c('pop mean prior', '-1sd mean','+1sd mean'),text.col=c('black','blue','red'),bty='n')
+    graphics::legend('topright',c('Pop. mean prior', '-1sd mean, subject prior','+1sd mean, subject prior'),text.col=c('black','blue','red'),bty='n')
       if(wait==TRUE & rowi != utils::tail(rows,1)){
         message("Press [enter] to display next plot")
         readline()
