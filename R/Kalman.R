@@ -265,7 +265,6 @@ Kalman<-function(kpars,datalong,
       }
       
       if(t0check[rowi]==0){
-# if(runif(1)>.999) browser()
         paststates <- matrix(etaupd[[rowi-1]],nrow=nlatent*2+1,ncol=nlatent,byrow=TRUE)
         newstates <- paststates
         sigpoints <- t(chol(etaupdcov[[rowi-1]] *(nlatent + kappa)))

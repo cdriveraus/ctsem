@@ -4,8 +4,7 @@
 \alias{ctFitR}
 \title{Fit ctsem models with Kalman filter R code -- slower!}
 \usage{
-ctFitR(datalong, ctmodel, binary = FALSE, carefulfit = FALSE,
-  regulariser = 1)
+ctFitR(datalong, ctmodel, carefulfit = FALSE, regulariser = 1, ...)
 }
 \arguments{
 \item{datalong}{long data}

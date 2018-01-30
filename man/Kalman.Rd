@@ -5,9 +5,9 @@
 \title{Kalman}
 \usage{
 Kalman(kpars, datalong, manifestNames, latentNames, imputeMissings = FALSE,
-  TDpredNames = NULL, continuoustime = TRUE, timecol = "time",
-  diffusionindices = "all", optimize = FALSE, ekf = FALSE,
-  binary = FALSE)
+  TDpredNames = NULL, continuoustime = TRUE, idcol = "id",
+  timecol = "time", diffusionindices = "all", optimize = FALSE,
+  ukf = FALSE, plotoptim = FALSE)
 }
 \arguments{
 \item{kpars}{list object containing DRIFT,T0VAR,DIFFUSION,CINT,T0MEANS,TDPREDEFFECT,
@@ -37,9 +37,10 @@ of numeric values from row 1 to row n. Ignored if continuoustime=FALSE.}
 
 \item{optimize}{Set to TRUE when using for optimization.}
 
-\item{ekf}{set to TRUE to use the extended Kalman filter, for non-linear measurement models.}
+\item{ukf}{set to TRUE to use the unscented Kalman filter, only necessary for fitting non-linear models, 
+currently only for optimizing.}
 
-\item{binary}{Set to TRUE when using binary data.}
+\item{plotoptim}{set to TRUE to plot / print optimization steps.}
 }
 \value{
 When optimize=TRUE, returns log likelihood. Else, 

@@ -4,10 +4,12 @@
 \alias{ctDensity}
 \title{ctDensity}
 \usage{
-ctDensity(x)
+ctDensity(x, plot = FALSE, ...)
 }
 \arguments{
 \item{x}{numeric vector on which to compute density.}
+
+\item{plot}{logical to indicate whether or not to plot the output.}
 }
 \description{
 Wrapper for base R density function that removes outliers and computes 'reasonable' bandwidth and x and y limits.
