@@ -16,7 +16,7 @@
 #' in the high density region. This can make it difficult to determine the number of iterations needed a priori - in such cases 
 #' setting initwithoptim=TRUE may be helpful.
 #' @param binomial logical indicating the use of binomial rather than Gaussian data, as with IRT analyses.
-#' @param esthyper Logical indicating whether to explictly estimate distributions for any individually varying
+#' @param estpop Logical indicating whether to explictly estimate distributions for any individually varying
 #' parameters, or to fix the distributions to maximum likelihood estimates conditional on subject parameters.
 #' @param noncentered Logical. If TRUE, uses a noncentered parameterization. For longer (perhaps 100+ time points)
 #' time series, may need to be set to FALSE.
@@ -32,7 +32,7 @@
 #' higher order processes). The speed increases come about because the internal Kalman filter routine has many steps removed, and the
 #' asymptotic diffusion parameters are less dependent on the DRIFT matrix.
 #' @param optimize if TRUE, use Stan's optimizer for maximum a posteriori estimates. 
-#' Setting this also sets \code{esthyper=FALSE}
+#' Setting this also sets \code{estpop=FALSE}
 #' @param nopriors logical. If TRUE, any priors are disabled, can be desirable for optimization.
 #' @param vb if TRUE, use Stan's variational approximation. Rudimentary testing suggests it is not accurate 
 #' for many ctsem models at present.
@@ -84,7 +84,7 @@
 #' @importFrom Rcpp evalCpp
 #' @export
 ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, kalman=TRUE, binomial=FALSE,
-  esthyper=TRUE, noncentered=TRUE, fit=TRUE, ukfpop=FALSE, stationary=FALSE,plot=FALSE,  diffusionindices='all',
+  estpop=TRUE, noncentered=TRUE, fit=TRUE, ukfpop=FALSE, stationary=FALSE,plot=FALSE,  diffusionindices='all',
   asymdiffusion=FALSE,optimize=FALSE, nopriors=FALSE, vb=FALSE, chains=1,cores='maxneeded', inits=NULL,initwithoptim=FALSE,
   control=list(adapt_delta=.8, adapt_init_buffer=2, adapt_window=2,
     max_treedepth=8,stepsize=.001),verbose=FALSE,...){
@@ -197,16 +197,16 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, kalman=T
   
   #split ctspec into unique and non-unique components
   ctspecduplicates <- ctspec[duplicated(ctspec$param)&!is.na(ctspec$param),]
-  hypermeanduplicates<-c()
+  popmeanduplicates<-c()
   
   if(any(duplicated(ctspec$param)&!is.na(ctspec$param))){
     for(i in 1:nrow(ctspecduplicates)){
-      hypermeanduplicates[i] = paste0('hypermeans[',which(ctspecduplicates$param[i] %in% ctspec$param),']')
+      popmeanduplicates[i] = paste0('rawpopmeans[',which(ctspecduplicates$param[i] %in% ctspec$param),']')
     }
   }
   
   ctspec <- ctspec[!duplicated(ctspec$param) | is.na(ctspec$param),]
-  ctspecduplicates=cbind(ctspecduplicates,hypermeanduplicates)
+  ctspecduplicates=cbind(ctspecduplicates,popmeanduplicates)
   
   driftdiagonly <- ifelse(all(!is.na(ctspec$value[ctspec$matrix == 'DRIFT' & ctspec$row != ctspec$col]) &
      all(ctspec$value[ctspec$matrix == 'DRIFT' & ctspec$row != ctspec$col] == 0) ), 1, 0)
@@ -312,9 +312,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, kalman=T
   
   nsubjects <- length(unique(datalong[, idName])) 
   
-  indvaryingindex = array( #used to select hypermeans appropriately when generating subject params
-    c(which(ctspec$indvarying[is.na(ctspec$value)]))) #unique hypermeans
-      # match(ctspecduplicates$param[which(ctspecduplicates$indvarying[is.na(ctspecduplicates$value)])], ctspec$param[is.na(ctspec$value)] ) #duplicated hypermeans
+  indvaryingindex = array( #used to select rawpopmeans appropriately when generating subject params
+    c(which(ctspec$indvarying[is.na(ctspec$value)]))) #unique rawpopmeans
+      # match(ctspecduplicates$param[which(ctspecduplicates$indvarying[is.na(ctspecduplicates$value)])], ctspec$param[is.na(ctspec$value)] ) #duplicated rawpopmeans
       # )) 
 
   
@@ -607,11 +607,11 @@ Ypredcov_filt_sqrt=cholesky_decompose(Ypredcov_filt);
 
       ',if(ukfpop) '
       etapriorcov[rowi] = rep_matrix(0, nlatentfull,nlatentfull);
-      etapriorcov[rowi,nlatent+1:(nlatentfull),nlatent+1:(nlatentfull)] = hypercovsqrt * hypercovsqrt\';
+      etapriorcov[rowi,nlatent+1:(nlatentfull),nlatent+1:(nlatentfull)] = popcovsqrt * popcovsqrt\';
       //sigpointsdyn[(nlatent+1):(nlatentfull),(nlatent+1):(nlatentfull)] = cholesky_decompose(poppriorcov * (nlatentfull + l) )\';
-      //statesdyn[1:2,(nlatent+1):(nlatentfull)] = rep_matrix(hypermeans[indvaryingindex],2)\';
-      //statesdyn[3:(nlatentfull+2),(nlatent+1):(nlatentfull)] = rep_matrix(hypermeans[indvaryingindex],nlatentfull)\' + sigpointsdyn[,(nlatent+1):(nlatentfull)];
-      //statesdyn[(nlatentfull+3):(nlatentfull*2+2),(nlatent+1):(nlatentfull)] = rep_matrix(hypermeans[indvaryingindex],nlatentfull)\' - sigpointsdyn[,(nlatent+1):(nlatentfull)];
+      //statesdyn[1:2,(nlatent+1):(nlatentfull)] = rep_matrix(rawpopmeans[indvaryingindex],2)\';
+      //statesdyn[3:(nlatentfull+2),(nlatent+1):(nlatentfull)] = rep_matrix(rawpopmeans[indvaryingindex],nlatentfull)\' + sigpointsdyn[,(nlatent+1):(nlatentfull)];
+      //statesdyn[(nlatentfull+3):(nlatentfull*2+2),(nlatent+1):(nlatentfull)] = rep_matrix(rawpopmeans[indvaryingindex],nlatentfull)\' - sigpointsdyn[,(nlatent+1):(nlatentfull)];
       ','
 
       sDRIFT = DRIFT',checkvarying('DRIFT','[subject[rowi]]','[1]'),';
@@ -629,7 +629,7 @@ Ypredcov_filt_sqrt=cholesky_decompose(Ypredcov_filt);
       
       if(T0check[rowi]==0){
       etalarge[1:nlatent] = etapost[rowi-1];
-      ',if(ukfpop) 'etalarge[(nlatent+1):nlatentfull] = hypermeans[indvaryingindex];','
+      ',if(ukfpop) 'etalarge[(nlatent+1):nlatentfull] = rawpopmeans[indvaryingindex];','
         statesdyn[1:2,] = rep_matrix(etalarge,2)\';
 //print("etapostcov[rowi-1]",etapostcov[rowi-1]);
         sigpointsdyn = cholesky_decompose(etapostcov[rowi-1] * (nlatentfull +l));
@@ -666,7 +666,7 @@ Ypredcov_filt_sqrt=cholesky_decompose(Ypredcov_filt);
       if(continuoustime & !asymdiffusion) paste0('asymDIFFUSION',checkvarying(c('DIFFUSION','DRIFT'),'[subject[rowi]]','[1]'),' - 
         //quad_form_sym(asymDIFFUSION',checkvarying(c('DIFFUSION','DRIFT'),'[subject[rowi]]','[1]'),' , discreteDRIFT[diffusionindices,diffusionindices]\');'),'
 
-      state = colMeans(statesdyn);
+      state = colMeans(statesdyn); //use new mean estimate for uncertainty calcs
       ',paste0(dynamiccalcs,';',collapse=' '),'
 
       //sDRIFTDIFFUSION[1:nlatent,1:nlatent] = -sDRIFT;
@@ -675,8 +675,14 @@ Ypredcov_filt_sqrt=cholesky_decompose(Ypredcov_filt);
       //sDRIFTDIFFUSION = matrix_exp(sDRIFTDIFFUSION * dT[rowi]);
       //discreteDIFFUSION = sDRIFTDIFFUSION[(nlatent+1):(nlatent + nlatent), (nlatent+1):(nlatent + nlatent)]\' * sDRIFTDIFFUSION[1:nlatent, (nlatent+1):(nlatent + nlatent)];
 
+
+      discreteDRIFT = ',
+      if(!continuoustime) paste0('sDRIFT;'),
+      if(continuoustime & !driftdiagonly) paste0('matrix_exp(sDRIFT * dT[rowi]);'),
+      if(continuoustime & driftdiagonly) paste0('matrix_diagexp(sDRIFT * dT[rowi]);'),'
+
 discreteDIFFUSION = to_matrix( -(kron_prod(sDRIFT, IIlatent) + kron_prod(IIlatent,sDRIFT)) \\ to_vector(sDIFFUSION), nlatent,nlatent);
-discreteDIFFUSION = makesym(discreteDIFFUSION - quad_form(discreteDIFFUSION,matrix_exp(sDRIFT * dT[rowi])\'));
+discreteDIFFUSION = makesym(discreteDIFFUSION - quad_form(discreteDIFFUSION,discreteDRIFT\'));
 
     etapriorcov[rowi] =  cov_of_matrix(statesdyn,2*nlatentfull+2, nlatentfull) / a^2;
     etapriorcov[rowi,1:nlatent,1:nlatent] =  etapriorcov[rowi,1:nlatent,1:nlatent] + discreteDIFFUSION;
@@ -703,7 +709,7 @@ discreteDIFFUSION = makesym(discreteDIFFUSION - quad_form(discreteDIFFUSION,matr
         LAMBDA_filt = sLAMBDA[whichobs,]; // loading matrix
         etalarge[1:nlatent] = etaprior[rowi];
 //print("etalarge",etalarge);
-      ',if(ukfpop) 'etalarge[(nlatent+1):nlatentfull] = hypermeans[indvaryingindex];','
+      ',if(ukfpop) 'etalarge[(nlatent+1):nlatentfull] = rawpopmeans[indvaryingindex];','
 //print("etalarge",etalarge);
         statesmeasure[1:2,] = rep_matrix(etalarge,2)\';
 //print("etapriorcov[rowi]",etapriorcov[rowi]);
@@ -820,8 +826,8 @@ paste0('      matrix[nlatent,nlatent] DIFFUSION',checkvarying('DIFFUSION','[nsub
             'MANIFESTVAR', 'TDPREDEFFECT', 'T0VAR')) paste0(' , ', ctspec[rowi,'col']),
             ']') 
           
-          y<- paste0('(', #right side - using hypermean or indparam? and which?
-            if(is.na(ctspec[rowi,'value']) & (!ctspec$indvarying[rowi] | ukfpop)) paste0('hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),']'),
+          y<- paste0('(', #right side - using popmean or indparam? and which?
+            if(is.na(ctspec[rowi,'value']) & (!ctspec$indvarying[rowi] | ukfpop)) paste0('rawpopmeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),']'),
             if(ctspec[rowi,'indvarying'] & !ukfpop) paste0('indparams[subi,',which(ctspec[ctspec$indvarying,'param']==ctspec[rowi,'param']),']')
             ,')')
           
@@ -845,8 +851,8 @@ paste0('      matrix[nlatent,nlatent] DIFFUSION',checkvarying('DIFFUSION','[nsub
             'MANIFESTVAR', 'TDPREDEFFECT', 'T0VAR')) paste0(' , ', ctspecduplicates[rowi,'col']),
             ']') 
           
-          y<- paste0('(', #right side - using hypermean or indparam? and which?
-            if(is.na(ctspecduplicates[rowi,'value']) & (!ctspecduplicates$indvarying[rowi])) ctspecduplicates$hypermeanduplicates[rowi],
+          y<- paste0('(', #right side - using popmean or indparam? and which?
+            if(is.na(ctspecduplicates[rowi,'value']) & (!ctspecduplicates$indvarying[rowi])) ctspecduplicates$popmeanduplicates[rowi],
             if(ctspecduplicates[rowi,'indvarying']) paste0('indparams[subi,',
               which(
               ctspec[ctspec$indvarying,'param']==ctspecduplicates[rowi,'param'] ),
@@ -1167,7 +1173,7 @@ matrix crosscov(matrix a, matrix b){
       int T0check[ndatapoints]; // logical indicating which rows are the first for each subject
       int continuoustime; // logical indicating whether to incorporate timing information
       int nindvarying; // number of subject level parameters that are varying across subjects
-      int nindvaryingoffdiagonals; //number of off diagonal parameters needed for hypercov matrix
+      int nindvaryingoffdiagonals; //number of off diagonal parameters needed for popcov matrix
       int notindvaryingindex[nparams-nindvarying];
       ',if(nindvarying>0) paste0('int indvaryingindex[nindvarying];
         vector[nindvarying] sdscale;'),'
@@ -1203,14 +1209,14 @@ matrix crosscov(matrix a, matrix b){
       }
       
       parameters {
-      vector[nparams] hypermeans',if(!esthyper) 'base','; // population level means \n','
+      vector[nparams] rawpopmeans',if(!estpop) 'base','; // population level means \n','
       
       ',if(any(indvarying)) paste0(
-        'vector',if(!is.na(ctstanmodel$rawhypersdlowerbound)) paste0('<lower=',ctstanmodel$rawhypersdlowerbound[1],'>'),'[nindvarying] rawhypersd; //population level std dev
-        //cholesky_factor_corr[nindvarying] hypercorrsqrt; // population level correlation square root
+        'vector',if(!is.na(ctstanmodel$rawpopsdlowerbound)) paste0('<lower=',ctstanmodel$rawpopsdlowerbound[1],'>'),'[nindvarying] rawpopsd; //population level std dev
+        //cholesky_factor_corr[nindvarying] popcorrsqrt; // population level correlation square root
         //cov_matrix[nindvarying] wishmat;
         vector[nindvaryingoffdiagonals] sqrtpcov;
-        '),if(any(indvarying) & !ukfpop) 'vector[nindvarying*nsubjects] indparamsbase; //subject level parameters','
+        '),if(any(indvarying) & !ukfpop) 'vector[nindvarying*nsubjects] rawindparams; //subject level parameters','
       
       ',if(n.TIpred > 0) paste0('
         vector[',sum(unlist(ctspec[,paste0(TIpredNames,'_effect')])),'] tipredeffectparams; // effects of time independent covariates
@@ -1222,7 +1228,7 @@ matrix crosscov(matrix a, matrix b){
       }
       
       transformed parameters{
-      ',if(!esthyper) 'vector[nparams] hypermeans;','
+      ',if(!estpop) 'vector[nparams] rawpopmeans;','
 
 ',if(nonexplosive) paste0('
         vector[',checkvarying(c('DRIFT'),'nsubjects','1'),'] dets;
@@ -1231,13 +1237,13 @@ matrix crosscov(matrix a, matrix b){
 
       ',if(nindvarying > 0 & !ukfpop) 'vector[nindvarying] indparams[nsubjects];','
       ',if(nindvarying > 0) paste0('
-        vector[nindvarying] hypersd; //population level std dev',
-          if(esthyper) paste0(' 
+        vector[nindvarying] popsd; //population level std dev',
+          if(estpop) paste0(' 
         matrix[nindvarying,nindvarying] sqrtpcovmat;
-        matrix[nindvarying,nindvarying] hypercorrsqrt;
-        matrix[nindvarying,nindvarying] hypercovsqrt; '),'
-        ',if(!esthyper) paste0('matrix[nindvarying,nindvarying] mlcov;
-            vector[nindvarying] indparamsbasearray[nsubjects]; ')),'
+        matrix[nindvarying,nindvarying] popcorrsqrt;
+        matrix[nindvarying,nindvarying] popcovsqrt; '),'
+        ',if(!estpop) paste0('matrix[nindvarying,nindvarying] mlcov;
+            vector[nindvarying] rawindparamsarray[nsubjects]; ')),'
       
         ',if(!ukfpop) subjectparaminit(),'
       
@@ -1276,8 +1282,8 @@ if(n.TIpred > 0) paste0(unlist(lapply(1,function(x){ ## collects all the time in
       })),collapse=''),'
 
   
-      ',if(any(indvarying) & esthyper) paste0('
-        hypersd = ',ctstanmodel$hypersdtransform, ';
+      ',if(any(indvarying) & estpop) paste0('
+        popsd = ',ctstanmodel$popsdtransform, ';
 {
 int counter;
 sqrtpcovmat=diag_matrix(rep_vector(-99,nindvarying));
@@ -1291,37 +1297,37 @@ counter=counter+1;
 }
 }
 
-if(nindvarying > 1) hypercorrsqrt = covsqrt2corsqrt(sqrtpcovmat,0); //change int to change from partial to marginal prior
+if(nindvarying > 1) popcorrsqrt = covsqrt2corsqrt(sqrtpcovmat,0); //change int to change from partial to marginal prior
 
 
 ',if(1==99) '
-if(nindvarying >1)hypercorrsqrt = cholesky_decompose(quad_form_diag(wishmat, inv_sqrt( diagonal(wishmat))));
+if(nindvarying >1)popcorrsqrt = cholesky_decompose(quad_form_diag(wishmat, inv_sqrt( diagonal(wishmat))));
 ','
 
-if(nindvarying ==1) hypercorrsqrt = diag_matrix(rep_vector(1,1));
+if(nindvarying ==1) popcorrsqrt = diag_matrix(rep_vector(1,1));
 
-        hypercovsqrt= diag_pre_multiply(hypersd, hypercorrsqrt);
+        popcovsqrt= diag_pre_multiply(popsd, popcorrsqrt);
         
         ',if(!ukfpop) paste0('for(subi in 1:nsubjects) {
         indparams[subi]= 
-        ',if(noncentered) 'hypercovsqrt * ',
-          'indparamsbase[(1+(subi-1)*nindvarying):(subi*nindvarying)] + hypermeans[indvaryingindex] ',
+        ',if(noncentered) 'popcovsqrt * ',
+          'rawindparams[(1+(subi-1)*nindvarying):(subi*nindvarying)] + rawpopmeans[indvaryingindex] ',
         if(n.TIpred>0) ' + tipredeffect * tipreds[subi]\' ',
         ';  
         }'),'
         '),
 
       
-if(!esthyper) paste0('
-hypermeans=hypermeansbase;
+if(!estpop) paste0('
+rawpopmeans=rawpopmeansbase;
 for(subi in 1:nsubjects) {
-  indparamsbasearray[subi]= indparamsbase[(1+(subi-1)*nindvarying):(subi*nindvarying)];
-indparams[subi]= indparamsbasearray[subi]+hypermeans[indvaryingindex];
+  rawindparamsarray[subi]= rawindparams[(1+(subi-1)*nindvarying):(subi*nindvarying)];
+indparams[subi]= rawindparamsarray[subi]+rawpopmeans[indvaryingindex];
   }
-  mlcov = cov(indparamsbasearray,nsubjects,nindvarying) + diag_matrix(rep_vector(.000001,nindvarying));
-  hypersd=sqrt(diagonal(mlcov));
+  mlcov = cov(rawindparamsarray,nsubjects,nindvarying) + diag_matrix(rep_vector(.000001,nindvarying));
+  popsd=sqrt(diagonal(mlcov));
   for(pari in 1:nindvarying){
-  hypermeans[indvaryingindex[pari]]=mean(indparams[,pari]);
+  rawpopmeans[indvaryingindex[pari]]=mean(indparams[,pari]);
   }
   '),
 if(!ukfpop) subjectparamcalc(),'
@@ -1332,7 +1338,7 @@ if(!ukfpop) subjectparamcalc(),'
       
       model{
       real ll;
-      ',if(!nopriors) paste0('target += normal_lpdf(hypermeans|0,1);'),'
+      ',if(!nopriors) paste0('target += normal_lpdf(rawpopmeans|0,1);'),'
       
       ',if(n.TIpred > 0 & !nopriors) paste0('
         tipredeffectparams ~ ',ctstanmodel$tipredeffectprior, '; 
@@ -1340,17 +1346,17 @@ if(!ukfpop) subjectparamcalc(),'
       
       ',if(any(ctspec$indvarying) & !nopriors) paste0(
         
-        if(esthyper) paste0('
-        //hypercorrsqrt ~ lkj_corr_cholesky(.1); 
+        if(estpop) paste0('
+        //popcorrsqrt ~ lkj_corr_cholesky(.1); 
         if(nindvarying >1) sqrtpcov ~ normal(0,1);
         //wishmat ~ inv_wishart(nindvarying,diag_matrix(rep_vector(1,nindvarying)));
-        ',if(noncentered & !ukfpop) paste0('indparamsbase ~ normal(0,1);'),' 
-        ',if(!noncentered & !ukfpop) paste0('target += multi_normal_lpdf(indparams|hypermeans[indvaryingindex],hypercovsqrt * hypercovsqrt\');'),' 
-        rawhypersd ~ ',ctstanmodel$rawhypersd,';'),
+        ',if(noncentered & !ukfpop) paste0('rawindparams ~ normal(0,1);'),' 
+        ',if(!noncentered & !ukfpop) paste0('target += multi_normal_lpdf(indparams|rawpopmeans[indvaryingindex],popcovsqrt * popcovsqrt\');'),' 
+        rawpopsd ~ ',ctstanmodel$rawpopsd,';'),
         
-        if(!esthyper) '//target += -log(determinant(mlcov)); // /2*nsubjects; 
-//rawhypersd ~ normal(0,100);
-         target += multi_normal_lpdf(indparamsbasearray| rep_vector(0,nindvarying), mlcov);','
+        if(!estpop) '//target += -log(determinant(mlcov)); // /2*nsubjects; 
+//rawpopsd ~ normal(0,100);
+         target += multi_normal_lpdf(rawindparamsarray| rep_vector(0,nindvarying), mlcov);','
         '),'
       
       ',if(!kalman) 'etapostbase ~ normal(0,1); \n','
@@ -1367,7 +1373,7 @@ if(!ukfpop) subjectparamcalc(),'
         out<-''
         if(ctspec$matrix[rowi] %in% c('T0VAR','DIFFUSION') & ctspec$row[rowi] > ctspec$col[rowi] & is.na(ctspec$value[rowi])) {
           out=paste0('//target += beta_lpdf(inv_logit(',
-            'hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),']',
+            'rawpopmeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),']',
             ')| 1.5 + (inttoreal(nlatent)-1)/2 - .6 * ',ctspec$col[rowi],', 1.5 + (inttoreal(nlatent)-1)/2 - .6 * ',ctspec$col[rowi],'); \n ')
         }
         return(out)
@@ -1413,10 +1419,10 @@ nsubjectsisone = 1;
 ',gsub('nsubjects','nsubjectsisone',subjectparaminit(),fixed=TRUE),'
 
 
-parsigpoints = cholesky_decompose( (nindvarying + 0.5) * hypercovsqrt * hypercovsqrt\');
-indparamsmat[1:2] = rep_matrix(hypermeans[indvaryingindex],nindvarying)\';
-indparamsmat[3:(nindvarying+2),] = rep_matrix(hypermeans[indvaryingindex],nindvarying)\' + parsigpoints\';
-indparamsmat[(nindvarying+3):(nindvarying*2+2),] = rep_matrix(hypermeans[indvaryingindex],nindvarying)\' + parsigpoints\';
+parsigpoints = cholesky_decompose( (nindvarying + 0.5) * popcovsqrt * popcovsqrt\');
+indparamsmat[1:2] = rep_matrix(rawpopmeans[indvaryingindex],nindvarying)\';
+indparamsmat[3:(nindvarying+2),] = rep_matrix(rawpopmeans[indvaryingindex],nindvarying)\' + parsigpoints\';
+indparamsmat[(nindvarying+3):(nindvarying*2+2),] = rep_matrix(rawpopmeans[indvaryingindex],nindvarying)\' + parsigpoints\';
 //print("indparamsmat",indparamsmat);
 for(parseti in 2:(nindvarying*2+2)){
   indparams[1] = indparamsmat[parseti]\';
@@ -1430,13 +1436,13 @@ for(parseti in 2:(nindvarying*2+2)){
 }
 llvec[1]=llvec[2];
 llmean = mean((llvec));
-//hessian = -inverse(crosscov( (indparamsmat - rep_matrix(hypermeans[indvaryingindex],nindvarying*2+2)\'), to_matrix(exp(llvec))));
+//hessian = -inverse(crosscov( (indparamsmat - rep_matrix(rawpopmeans[indvaryingindex],nindvarying*2+2)\'), to_matrix(exp(llvec))));
 //print(hessian);
 //llcov = ((llvec - llmean)\' * (llvec - llmean) ) / (nindvarying*2+1);
-//ll = llmean + log(sqrt(determinant(2.0 * pi() * (hypercovsqrt * hypercovsqrt\'))));
-ll = llmean + (sqrt(determinant(2.0 * pi() * hypercovsqrt * hypercovsqrt\')));
+//ll = llmean + log(sqrt(determinant(2.0 * pi() * (popcovsqrt * popcovsqrt\'))));
+ll = llmean + (sqrt(determinant(2.0 * pi() * popcovsqrt * popcovsqrt\')));
 //ll = log( sqrt(determinant(hessian)) / (2.0 * pi())^(nlatent / 2.0)) + sum(-.5 * parsigpoints\' * hessian * parsigpoints); 
-//llmean + log(   (2.0 * pi())^(nlatent / 2.0) * sqrt(determinant(hypercovsqrt * hypercovsqrt\')) * nl));
+//llmean + log(   (2.0 * pi())^(nlatent / 2.0) * sqrt(determinant(popcovsqrt * popcovsqrt\')) * nl));
 }}'),
 
 
@@ -1462,7 +1468,7 @@ if(!approxpop & !ukfpop) ifelse(ukf, ukfilterfunc(ppchecking=FALSE), filteringfu
       
         }
       generated quantities{
-      ',if(nindvarying > 1 & esthyper) paste0('matrix[nindvarying,nindvarying] hypercorr;'),'
+      ',if(nindvarying > 1 & estpop) paste0('matrix[nindvarying,nindvarying] popcorr;'),'
       
       ',paste0('real hmean_',ctspec$param[is.na(ctspec$value)],'; \n',collapse=''),'
       
@@ -1482,26 +1488,26 @@ if(!approxpop & !ukfpop) ifelse(ukf, ukfilterfunc(ppchecking=FALSE), filteringfu
       ',paste0(unlist(lapply(1:nrow(ctspec),function(rowi){
         if(is.na(ctspec$value[rowi])) paste0('hmean_',ctspec$param[rowi],' = ',
           gsub('param',
-            paste0('hypermeans[',
+            paste0('rawpopmeans[',
               which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),
               ']'),
             ctspec$transform[rowi]),'; \n')
       })),collapse=''),'
 
-     ',if(nindvarying > 1 &esthyper) paste0(' hypercorr = hypercorrsqrt * hypercorrsqrt\';'),'
+     ',if(nindvarying > 1 &estpop) paste0(' popcorr = popcorrsqrt * popcorrsqrt\';'),'
       
       ',paste0(unlist(lapply(1:nrow(ctspec),function(rowi){
         if(ctspec$indvarying[rowi]) paste0('hsd_',ctspec$param[rowi],' = ',
-          'hypersd[',which(ctspec$param[ctspec$indvarying] == ctspec$param[rowi]),']; \n',
+          'popsd[',which(ctspec$param[ctspec$indvarying] == ctspec$param[rowi]),']; \n',
           if(!is.na(ctspec$transform[rowi])) paste0(
             'hsd_',ctspec$param[rowi],' = fabs
             ((', 
-            gsub('param', paste0('(hypermeans[',
+            gsub('param', paste0('(rawpopmeans[',
               which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),
               '] + hsd_',
               ctspec$param[rowi],')'),ctspec$transform[rowi]), ') - (',
             gsub('param', 
-              paste0('(hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),
+              paste0('(rawpopmeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),
                 '] -  hsd_',
                 ctspec$param[rowi],')'),ctspec$transform[rowi]),'))/2 ; \n')
             )
@@ -1515,11 +1521,11 @@ if(!approxpop & !ukfpop) ifelse(ukf, ukfilterfunc(ppchecking=FALSE), filteringfu
             'tipredeffect[',which(ctspec$param[ctspec$indvarying] == ctspec$param[rowi]),',',tip,']; \n',
             if(!is.na(ctspec$transform[rowi])) paste0('tipred_', TIpredNames[tip], '_on_', ctspec$param[rowi],' = ((', 
               gsub('param', 
-                paste0('hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),'] + tipredeffect[',which(ctspec$param[ctspec$indvarying] == ctspec$param[rowi]),',',tip,']'),
+                paste0('rawpopmeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),'] + tipredeffect[',which(ctspec$param[ctspec$indvarying] == ctspec$param[rowi]),',',tip,']'),
                 ctspec$transform[rowi]), 
               ') - (',
               gsub('param', 
-                paste0('hypermeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),'] - tipredeffect[',which(ctspec$param[ctspec$indvarying] == ctspec$param[rowi]),',',tip,']'),
+                paste0('rawpopmeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),'] - tipredeffect[',which(ctspec$param[ctspec$indvarying] == ctspec$param[rowi]),',',tip,']'),
                 ctspec$transform[rowi]),'))/2; \n')
           )
         })),collapse='')
@@ -1614,10 +1620,10 @@ if(!approxpop & !ukfpop) ifelse(ukf, ukfilterfunc(ppchecking=FALSE), filteringfu
       
       npars=get_num_upars(sm)
       
-      if(any(ctspec$indvarying)) hypersdindex=(nparams+1):(nparams+ sum(ctspec$indvarying)) else hypersdindex<-NULL
+      if(any(ctspec$indvarying)) popsdindex=(nparams+1):(nparams+ sum(ctspec$indvarying)) else popsdindex<-NULL
       
       lp<-function(parm) {
-        parm[hypersdindex]<-0
+        parm[popsdindex]<-0
         out<-try(log_prob(sm,upars=parm))
         if(class(out)=='try-error') {
           out=-1e20
@@ -1626,9 +1632,9 @@ if(!approxpop & !ukfpop) ifelse(ukf, ukfilterfunc(ppchecking=FALSE), filteringfu
       }
       
       grf<-function(parm) {
-        parm[hypersdindex]<-0
+        parm[popsdindex]<-0
         out=grad_log_prob(sm,upars=parm)
-        out[hypersdindex]=0
+        out[popsdindex]=0
         return(out)
       }
       
@@ -1637,7 +1643,7 @@ if(!approxpop & !ukfpop) ifelse(ukf, ukfilterfunc(ppchecking=FALSE), filteringfu
         control = list(fnscale = -1,trace=0,parscale=rep(.00001,npars),maxit=2000,factr=1e-12,lmm=100), 
         method='L-BFGS-B',hessian = FALSE)
       parsout=optimfit$par
-      parsout[hypersdindex]=0
+      parsout[popsdindex]=0
       
       inits=constrain_pars(sm,parsout)
       message('Got inits.')
@@ -1658,7 +1664,7 @@ if(!approxpop & !ukfpop) ifelse(ukf, ukfilterfunc(ppchecking=FALSE), filteringfu
       if(chains > 0){
         for(i in 1:(chains)){
           staninits[[i]]=list(etapost=array(stats::rnorm(nrow(datalong)*n.latent,0,.1),dim=c(nrow(datalong),n.latent)),
-            rawhypersd = array(exp(rnorm(nindvarying,-3,1)),dim=c(nindvarying)))
+            rawpopsd = array(exp(rnorm(nindvarying,-3,1)),dim=c(nindvarying)))
         }
       }
     }
@@ -1695,7 +1701,7 @@ if(!approxpop & !ukfpop) ifelse(ukf, ukfilterfunc(ppchecking=FALSE), filteringfu
       
       npars=get_num_upars(sm)
       
-      if(any(ctspec$indvarying)) hypersdindex=(nparams+1):(nparams+ sum(ctspec$indvarying)) else hypersdindex<-NULL
+      if(any(ctspec$indvarying)) popsdindex=(nparams+1):(nparams+ sum(ctspec$indvarying)) else popsdindex<-NULL
       
       lp<-function(parm) {
         out<-try(log_prob(sm,upars=parm))

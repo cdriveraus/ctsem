@@ -5,12 +5,13 @@
 \title{ctStanFit}
 \usage{
 ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 1000,
-  kalman = TRUE, binomial = FALSE, esthyper = TRUE, fit = TRUE,
-  stationary = FALSE, plot = FALSE, diffusionindices = "all",
-  asymdiffusion = FALSE, optimize = FALSE, nopriors = FALSE, vb = FALSE,
-  chains = 1, cores = "maxneeded", inits = NULL, initwithoptim = FALSE,
-  control = list(adapt_delta = 0.8, adapt_init_buffer = 2, adapt_window = 2,
-  max_treedepth = 8, stepsize = 0.001), verbose = FALSE, ...)
+  kalman = TRUE, binomial = FALSE, estpop = TRUE, noncentered = TRUE,
+  fit = TRUE, ukfpop = FALSE, stationary = FALSE, plot = FALSE,
+  diffusionindices = "all", asymdiffusion = FALSE, optimize = FALSE,
+  nopriors = FALSE, vb = FALSE, chains = 1, cores = "maxneeded",
+  inits = NULL, initwithoptim = FALSE, control = list(adapt_delta = 0.8,
+  adapt_init_buffer = 2, adapt_window = 2, max_treedepth = 8, stepsize = 0.001),
+  verbose = FALSE, ...)
 }
 \arguments{
 \item{datalong}{long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables, 
@@ -34,10 +35,15 @@ setting initwithoptim=TRUE may be helpful.}
 
 \item{binomial}{logical indicating the use of binomial rather than Gaussian data, as with IRT analyses.}
 
-\item{esthyper}{Logical indicating whether to explictly estimate distributions for any individually varying
+\item{estpop}{Logical indicating whether to explictly estimate distributions for any individually varying
 parameters, or to fix the distributions to maximum likelihood estimates conditional on subject parameters.}
 
+\item{noncentered}{Logical. If TRUE, uses a noncentered parameterization. For longer (perhaps 100+ time points)
+time series, may need to be set to FALSE.}
+
 \item{fit}{If TRUE, fit specified model using Stan, if FALSE, return stan model object without fitting.}
+
+\item{ukfpop}{if TRUE, uses an unscented approximation for population distributions rather than full sampling.}
 
 \item{stationary}{Logical. If TRUE, T0VAR and T0MEANS input matrices are ignored, 
 the parameters are instead fixed to long run expectations. More control over this can be achieved
@@ -57,7 +63,7 @@ higher order processes). The speed increases come about because the internal Kal
 asymptotic diffusion parameters are less dependent on the DRIFT matrix.}
 
 \item{optimize}{if TRUE, use Stan's optimizer for maximum a posteriori estimates. 
-Setting this also sets \code{esthyper=FALSE}}
+Setting this also sets \code{estpop=FALSE}}
 
 \item{nopriors}{logical. If TRUE, any priors are disabled, can be desirable for optimization.}
 

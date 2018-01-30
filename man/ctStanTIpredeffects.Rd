@@ -5,8 +5,9 @@
 \title{Get time independent predictor effect estimates}
 \usage{
 ctStanTIpredeffects(fit, returndifference = FALSE, probs = c(0.025, 0.5,
-  0.975), whichTIpreds = 1, parmatrices = TRUE, whichpars = "all",
-  nsamples = 200, timeinterval = 1, plot = FALSE, ...)
+  0.975), includeMeanUncertainty = FALSE, whichTIpreds = 1,
+  parmatrices = TRUE, whichpars = "all", nsamples = 200,
+  timeinterval = 1, plot = FALSE, ...)
 }
 \arguments{
 \item{fit}{fit object from \code{\link{ctStanFit}}}
@@ -20,6 +21,9 @@ Not used if \code{parmatrices=TRUE}.}
 values if plotting, the 2nd will be drawn as a line with uncertainty polygon
 based on 1st and 3rd.}
 
+\item{includeMeanUncertainty}{if TRUE, output includes sampling variation in the mean parameters. If FALSE,
+mean parameters are fixed at their median, only uncertainty in time independent predictor effects is included.}
+
 \item{whichTIpreds}{integer vector specifying which of the tipreds in the fit object you want to
 use to calculate effects. Unless quadratic / higher order versions of predictors have been 
 included, selecting more than one probably doesn't make sense. If for instance a squared
@@ -30,10 +34,11 @@ check what predictors are in the model, run \code{fit$ctstanmodel$TIpredNames}.}
 \item{parmatrices}{Logical. If TRUE (default), the \code{\link{ctStanParMatrices}} function
 is used to return an expanded range of possible matrices of interest.}
 
-\item{whichpars}{Integer vector specifying Which of the individually varying subject
-level parameters to compute effects on. Only used if \code{parmatrices=FALSE} .
-'all' uses all available, which is equivalent to 
-\code{1:sum(fit$ctstanmodel$pars$indvarying)}.
+\item{whichpars}{if parmatrices==TRUE, character vector specifying which matrices, and potentially which 
+indices of the matrices, to plot. c('dtDRIFT[2,1]', 'DRIFT') would output for row 2 and column 1 of 
+the discrete time drift matrix, as well as all indices of the continuous time drift matrix. 
+If parmatrices==FALSE, integer vector specifying which of the individually varying subject
+level parameters to compute effects on. In either case 'all' uses all available.
 The integer corresponding to specific parameters can be found as follows, replacing \code{fit} as appropriate:
 \code{fit$ctstanmodel$pars[fit$ctstanmodel$pars$indvarying,'param']}.}
 
@@ -57,5 +62,6 @@ Computes and plots combined effects and quantiles for effects of time independen
 on subject level parameters of a ctStanFit object.
 }
 \examples{
-ctStanTIpredeffects(ctstantestfit,plot=TRUE)
+#samples reduced here for speed
+ctStanTIpredeffects(ctstantestfit,plot=TRUE,whichpars='dtDRIFT',nsamples=10)
 }

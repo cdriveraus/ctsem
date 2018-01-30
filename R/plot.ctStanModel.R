@@ -7,7 +7,7 @@
 #' Character string 'all' plots all rows with parameters to be estimated.
 #' @param wait If true, user is prompted to continue before plotting next graph.
 #' @param samples Numeric. Higher values increase fidelity (smoothness / accuracy) of density plots, at cost of speed.
-#' @param hypersd Either 'marginalise' to sample from the specified (in the ctstanmodel) 
+#' @param popsd Either 'marginalise' to sample from the specified (in the ctstanmodel) 
 #' prior distribution for the population standard deviation, or a numeric value to use for the population standard deviation
 #' for all subject level prior plots - the plots in dotted blue or red.
 #' @param ... not used.
@@ -19,7 +19,7 @@
 #' @method plot ctStanModel
 #' @export
 
-plot.ctStanModel<-function(x,rows='all',wait=FALSE,samples=1e6, hypersd='marginalise',...){
+plot.ctStanModel<-function(x,rows='all',wait=FALSE,samples=1e6, popsd='marginalise',...){
   if(class(x)!='ctStanModel') stop('not a ctStanModel object!')
   m<-x$pars
   n<-5000
@@ -29,17 +29,17 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,samples=1e6, hypersd='margina
   for(rowi in rows){
     if(is.na(m$value[rowi])){
     
-    #hypersd
-      if(hypersd[1]=='marginalise'){
-    rawhypersd<-  stats::rnorm(samples)
-    if(!is.na(x$rawhypersdlowerbound)) rawhypersd <- rawhypersd[rawhypersd>x$rawhypersdlowerbound]
+    #popsd
+      if(popsd[1]=='marginalise'){
+    rawpopsd<-  stats::rnorm(samples)
+    if(!is.na(x$rawpopsdlowerbound)) rawpopsd <- rawpopsd[rawpopsd>x$rawpopsdlowerbound]
     sdscale <- m$sdscale[rowi]
-    tform <- gsub('.*', '*',x$hypersdtransform,fixed=TRUE)
-    hypersdprior<-eval(parse(text=tform))
+    tform <- gsub('.*', '*',x$popsdtransform,fixed=TRUE)
+    popsdprior<-eval(parse(text=tform))
     
-    samples<-length(hypersdprior) #adjust number of samples because of random n > 0
-      } else if(is.na(as.numeric(hypersd))) stop('hypersd argument is ill specified!') else {
-        hypersdprior <- rep(hypersd,samples)
+    samples<-length(popsdprior) #adjust number of samples because of random n > 0
+      } else if(is.na(as.numeric(popsd))) stop('popsd argument is ill specified!') else {
+        popsdprior <- rep(popsd,samples)
       }
     
 #mean
@@ -48,12 +48,12 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,samples=1e6, hypersd='margina
       meanxlims<-stats::quantile(xmean,probs=c(.1,.9))
       
       #high
-      param=stats::rnorm(samples,highmean,hypersdprior)
+      param=stats::rnorm(samples,highmean,popsdprior)
       xhigh=eval(parse(text=paste0(m$transform[rowi])))
       highxlims <- stats::quantile(xhigh,probs=c(.1,.9))
         
       #low
-      param=stats::rnorm(samples,lowmean,hypersdprior)
+      param=stats::rnorm(samples,lowmean,popsdprior)
       xlow=eval(parse(text=paste0(m$transform[rowi])))
       lowxlims <- stats::quantile(xlow,probs=c(.1,.9))
       

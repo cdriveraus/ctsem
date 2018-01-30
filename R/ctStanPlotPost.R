@@ -61,11 +61,11 @@ ctStanPlotPost<-function(obj, rows='all',mfrow='auto',
   
   
   indvaryingcount<-0
-  hypermeancount<-0
+  popmeancount<-0
   # pmeans<-matrix(NA,nrow=nsubjects,ncol=sum(sm$pars$indvarying))
   # pnames<-rep(NA,sum(sm$pars$indvarying))
   for(rowi in rows){
-    hypermeancount <- which(sm$pars$param[is.na(sm$pars$value)] %in% sm$pars$param[rowi])
+    popmeancount <- which(sm$pars$param[is.na(sm$pars$value)] %in% sm$pars$param[rowi])
     
     p<-list(lwd=2, #plot pars
       x=NA,
@@ -75,14 +75,14 @@ ctStanPlotPost<-function(obj, rows='all',mfrow='auto',
       main=paste0('Pop. mean ',sm$pars$param[rowi])) 
     
     if(dopost){
-    hypermean<- s$hypermeans[,hypermeancount]
+    popmean<- s$rawpopmeans[,popmeancount]
     
-    param<-hypermean
-    dhypermeanpost<-ctDensity(eval(parse(text=paste0(sm$pars$transform[rowi]))))
+    param<-popmean
+    dpopmeanpost<-ctDensity(eval(parse(text=paste0(sm$pars$transform[rowi]))))
     
-    p$xlim=dhypermeanpost$xlim
-    p$ylim=c(0,dhypermeanpost$ylim[2])
-    p$x = dhypermeanpost$density
+    p$xlim=dpopmeanpost$xlim
+    p$ylim=c(0,dpopmeanpost$ylim[2])
+    p$x = dpopmeanpost$density
     }
     
     param<-stats::rnorm(50000,0,1)
@@ -111,19 +111,19 @@ ctStanPlotPost<-function(obj, rows='all',mfrow='auto',
       indvaryingcount<-which(sm$pars$param[is.na(sm$pars$value) & sm$pars$indvarying] %in% sm$pars$param[rowi])
       
       sdscale <- sm$pars$sdscale[rowi]
-      tform <- gsub('.*', '*',sm$hypersdtransform,fixed=TRUE)
+      tform <- gsub('.*', '*',sm$popsdtransform,fixed=TRUE)
       
       if(dopost) {
-        rawhypersd<-s$rawhypersd[,indvaryingcount] 
+        rawpopsd<-s$rawpopsd[,indvaryingcount] 
       
-      hypersd <- eval(parse(text=tform))  #hypersd samples
+      popsd <- eval(parse(text=tform))  #popsd samples
 
       
       indparams<-s[['indparams']][,1:nsubjects,indvaryingcount]
       
       param<-indparams
       dindparams<-ctDensity(eval(parse(text=paste0(sm$pars$transform[rowi]))))
-      param<-stats::rnorm(50000,hypermean,hypersd)
+      param<-stats::rnorm(50000,popmean,popsd)
       dsubjectprior<-ctDensity(eval(parse(text=paste0(sm$pars$transform[rowi]))))
       param<-stats::rnorm(50000,0,1)
       
@@ -139,7 +139,7 @@ ctStanPlotPost<-function(obj, rows='all',mfrow='auto',
       
       
       ### removed this plot for the moment
-    # #pre-transform hyper std dev
+    # #pre-transform pop std dev
     #   p<-list(lwd=2, #plot pars
     #     x=NA,
     #     xaxs='i',
@@ -149,23 +149,23 @@ ctStanPlotPost<-function(obj, rows='all',mfrow='auto',
     #   
       #posterior
       if(dopost) {
-        dhypersdpost<-ctDensity(hypersd)
-        p$xlim=c(0,dhypersdpost$xlim[2])
-        p$ylim=c(0,dhypersdpost$ylim[2])
-        p$x=dhypersdpost$density
+        dpopsdpost<-ctDensity(popsd)
+        p$xlim=c(0,dpopsdpost$xlim[2])
+        p$ylim=c(0,dpopsdpost$ylim[2])
+        p$x=dpopsdpost$density
       }
       #prior
-      rawhypersd<-  stats::rnorm(100000,0,1)
-      hypersdprior <- eval(parse(text=tform)) #hypersd prior samples
-      dhypersdprior<-ctDensity(hypersdprior)
+      rawpopsd<-  stats::rnorm(100000,0,1)
+      popsdprior <- eval(parse(text=tform)) #popsd prior samples
+      dpopsdprior<-ctDensity(popsdprior)
 
       # if(!dopost) {
-      #   p$xlim=c(0,dhypersdprior$xlim[2])
-      #   p$ylim=c(0,dhypersdprior$ylim[2])
+      #   p$xlim=c(0,dpopsdprior$xlim[2])
+      #   p$ylim=c(0,dpopsdprior$ylim[2])
       # }
     #   
     #   do.call(graphics::plot,p)
-    #   graphics::points(dhypersdprior$density,col=ifelse(dopost,'blue','black'),type='l',lty=ifelse(dopost,2,1),lwd=2)
+    #   graphics::points(dpopsdprior$density,col=ifelse(dopost,'blue','black'),type='l',lty=ifelse(dopost,2,1),lwd=2)
     #   
     #   if(dopost) leg <- c('Pop. sd posterior','Pop. sd prior') else leg <- 'Pop. sd prior'
     #   if(dopost) legcol <- c('black','blue') else legcol <- 'black'
@@ -175,7 +175,7 @@ ctStanPlotPost<-function(obj, rows='all',mfrow='auto',
       
       
       
-    #post-transform hyper std dev
+    #post-transform pop std dev
       p<-list(lwd=2, #plot pars
         x=NA,
         xaxs='i',
@@ -193,10 +193,10 @@ ctStanPlotPost<-function(obj, rows='all',mfrow='auto',
       p$xlim=c(0, dhsdpost$xlim[2])
       }
       
-      if(!dopost) hypermean <- rnorm(length(hypersdprior),0,1) #otherwise the prior is plotted conditional on sampled hypermeans
-      param<-suppressWarnings(hypermean+hypersdprior)
+      if(!dopost) popmean <- rnorm(length(popsdprior),0,1) #otherwise the prior is plotted conditional on sampled rawpopmeans
+      param<-suppressWarnings(popmean+popsdprior)
       high<-eval(parse(text=paste0(sm$pars$transform[rowi])))
-      param<-suppressWarnings(hypermean-hypersdprior)
+      param<-suppressWarnings(popmean-popsdprior)
       low<-eval(parse(text=paste0(sm$pars$transform[rowi])))
       hsdprior<-abs(high - low)/2
       

@@ -145,10 +145,10 @@ if(type=='standt') continuoustime<-FALSE
     out$tipredeffectprior <- 'normal(0,1)'
     out$tipredsimputedprior <- 'normal(0,10)'
   }
-  # out$hypersdpriorscale <- 1
-  out$rawhypersd <- 'normal(0,1)'
-  out$rawhypersdlowerbound <- NA
-  out$hypersdtransform <- 'exp(rawhypersd * 2 -2) .* sdscale'
+  # out$popsdpriorscale <- 1
+  out$rawpopsd <- 'normal(0,1)'
+  out$rawpopsdlowerbound <- NA
+  out$popsdtransform <- 'exp(rawpopsd * 2 -2) .* sdscale'
   out$stationarymeanprior <- NA
   out$stationaryvarprior <- NA
   out$manifesttype <- rep(0,n.manifest)

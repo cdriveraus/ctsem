@@ -11,7 +11,7 @@ ctStanParnames(x, substrings = c("hmean_", "hsd_"))
 
 \item{substrings}{vector of character strings, parameter names of the stan model
 containing any of these strings will be returned. Useful strings may be 'hmean_' for 
-hyper (population) means, 'hsd_' for hyper standard deviations, 'tipred_' for time
+population means, 'hsd_' for pop standard deviations, 'tipred_' for time
 independent predictors, or specific combinations such as 'hmean_drift' for the population
 means of temporal dynamics parameters}
 }

@@ -11,6 +11,8 @@
 #' @param probs numeric vector of quantile probabilities from 0 to 1. Specify 3
 #' values if plotting, the 2nd will be drawn as a line with uncertainty polygon
 #' based on 1st and 3rd.
+#' @param includeMeanUncertainty if TRUE, output includes sampling variation in the mean parameters. If FALSE,
+#' mean parameters are fixed at their median, only uncertainty in time independent predictor effects is included.  
 #' @param whichTIpreds integer vector specifying which of the tipreds in the fit object you want to
 #' use to calculate effects. Unless quadratic / higher order versions of predictors have been 
 #' included, selecting more than one probably doesn't make sense. If for instance a squared
@@ -38,8 +40,10 @@
 #' @export
 #'
 #' @examples
-#' ctStanTIpredeffects(ctstantestfit,plot=TRUE)
+#' #samples reduced here for speed
+#' ctStanTIpredeffects(ctstantestfit,plot=TRUE,whichpars='dtDRIFT',nsamples=10)
 ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
+  includeMeanUncertainty=FALSE,
   whichTIpreds=1,parmatrices=TRUE, whichpars='all', nsamples=200,timeinterval=1,
   plot=FALSE,...){
   
@@ -47,28 +51,29 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   spec_nofixed <- fit$ctstanmodel$pars[is.na(fit$ctstanmodel$pars$value),,drop=FALSE]
   spec_nofixed_noduplicates <- spec_nofixed[!duplicated(spec_nofixed$param),]
   
-  #get indvarying hypermeans
+  #get indvarying rawpopmeans
   e<-extract(fit$stanfit)
-  hypermeans <- e$hypermeans
-  hypermeansindvarying <- e$hypermeans[,spec_nofixed_noduplicates$indvarying,drop=FALSE] 
+  rawpopmeans <- e$rawpopmeans
+  if(!includeMeanUncertainty) rawpopmeans <- matrix(apply(rawpopmeans,2,median),byrow=TRUE,nrow=nrow(rawpopmeans),ncol=ncol(rawpopmeans))
+  rawpopmeansindvarying <- rawpopmeans[,spec_nofixed_noduplicates$indvarying,drop=FALSE] 
   
   
   tipreds<-fit$data$tipreds[,whichTIpreds,drop=FALSE]
   tieffect<-e$tipredeffect[,,whichTIpreds,drop=FALSE]
   
-  #update ctspec to only indvarying and those in whichpars
-  if(!parmatrices){
-  spec_nofixed_noduplicates_indvarying <- spec_nofixed_noduplicates[spec_nofixed_noduplicates$indvarying,]
-  if(all(whichpars=='all')) whichpars=1:sum(spec_nofixed_noduplicates_indvarying$indvarying)
-  spec_nofixed_noduplicates_indvarying <- spec_nofixed_noduplicates_indvarying[whichpars,,drop=FALSE]
-  hypermeansindvarying <- hypermeansindvarying[,whichpars,drop=FALSE]  #then just the ones in whichpars
-  tieffect<-tieffect[,whichpars,,drop=FALSE] #updating...
-  npars<-length(whichpars)
+  
+  if(!parmatrices){ #update ctspec to only indvarying and those in whichpars
+    spec_nofixed_noduplicates_indvarying <- spec_nofixed_noduplicates[spec_nofixed_noduplicates$indvarying,]
+   if(all(whichpars=='all')) whichpars=1:sum(spec_nofixed_noduplicates_indvarying$indvarying)
+    spec_nofixed_noduplicates_indvarying <- spec_nofixed_noduplicates_indvarying[whichpars,,drop=FALSE]
+    rawpopmeansindvarying <- rawpopmeansindvarying[,whichpars,drop=FALSE]  #then just the ones in whichpars
+   tieffect<-tieffect[,whichpars,,drop=FALSE] #updating...
+    npars<-length(whichpars)
   }
   
   tiorder<-order(tipreds[,1])
   tipreds<-tipreds[tiorder,,drop=FALSE] #order tipreds according to first one
-  niter<-dim(e$hypermeans)[1]
+  niter<-dim(e$rawpopmeans)[1]
   nsubjects <- nrow(tipreds)
   
   if(nsamples > niter) nsamples <- niter
@@ -76,10 +81,10 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   samples <- sample(x = 1:niter, nsamples,replace = FALSE)
   
   message('Calculating time independent predictor effects...')
-  
+
   raweffect <- aaply(samples,1,function(iterx) { #for every iter
     aaply(tipreds,1,function(tix){ #and every distinct tipred vector
-      hypermeansindvarying[iterx,] + matrix(tieffect[iterx,,],nrow=dim(tieffect)[2]) %*% tix
+      rawpopmeansindvarying[iterx,] + matrix(tieffect[iterx,,],nrow=dim(tieffect)[2]) %*% tix
     },.drop=FALSE)
   })
   
@@ -92,7 +97,7 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
     })
     if(returndifference){ #if only returning differences from zero
       noeffect<-aaply(1:npars, 1,function(pari){ #for each param
-        param <- hypermeans[,pari]
+        param <- rawpopmeans[,pari]
         out=eval(parse(text=spec_nofixed_noduplicates_indvarying$transform[pari]))
         return(out)
       })
@@ -102,18 +107,18 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   
 
   if(parmatrices)  {
-    hypermeans <- hypermeans[rep(samples,each=nsubjects),] #match rows of hypermeans and raweffect
+    rawpopmeans <- rawpopmeans[rep(samples,each=nsubjects),] #match rows of rawpopmeans and raweffect
     raweffect <- matrix(raweffect,ncol=dim(raweffect)[3])
     
-    parmatlists<-lapply(1:nrow(hypermeans), function(x) { #for each param vector
-      parvec = hypermeans[x,]
+    parmatlists<-lapply(1:nrow(rawpopmeans), function(x) { #for each param vector
+      parvec = rawpopmeans[x,]
       parvec[spec_nofixed_noduplicates$indvarying] <- raweffect[x,]
       out = ctStanParMatrices(fit,parvec,timeinterval=timeinterval)
       return(out)
     })
     
     
-    # parmatlists <- apply(e$hypermeans,1,ctStanParMatrices,model=object,timeinterval=timeinterval)
+    # parmatlists <- apply(e$rawpopmeans,1,ctStanParMatrices,model=object,timeinterval=timeinterval)
     parmatarray <- array(unlist(parmatlists),dim=c(length(unlist(parmatlists[[1]])),length(parmatlists)))
     parmats <- matrix(0,nrow=0,ncol=2)
     counter=0
@@ -145,6 +150,11 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
     
     effect <- array(parmatarray,dim=c(nrow(parmatarray),nsamples,nsubjects))
     rownames(effect) <- rownames(parmatarray)
+    if(whichpars !='all') {
+      selection <- unlist(lapply(whichpars,function(x) grep(paste0('^\\Q',x,'\\E'),dimnames(effect)[[1]])))
+      effect <- effect[selection,,,drop=FALSE]
+    }
+    
   }    
 
   
@@ -163,8 +173,6 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
 
   if(!plot) return(out) else {
 
-    selection <- unlist(lapply(whichpars,function(x) grep(paste0('^\\Q',x,'\\E'),dimnames(out)$param)))
-    out <- out[,selection,,drop=FALSE]
     dots <- list(...)
     dots$yarray=out
     dots$x=tipreds[,1]
