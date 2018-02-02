@@ -195,7 +195,7 @@ ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
 #'@param ... additional plotting arguments to control \code{\link{ctStanDiscreteParsPlot}}
 #'@examples
 #'ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
-#'plot=TRUE,indices='all')
+#'  plot=TRUE,indices='all')
 #'@export
 ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=10,by=.1), 
   quantiles = c(.025, .5, .975),nsamples=500,plot=FALSE,...){
@@ -363,10 +363,10 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
   quantiles=c(.025,.5,.975), times=seq(0,10,.1),latentNames='auto',
   lwdvec='auto',colvec='auto',ltyvec='auto',
   plotcontrol=list(ylab='Value',xlab='Time interval',
-    main='Regression coefficients',type='l'),grid=TRUE,
+    main='Regression coefficients',type='l', xaxs='i'),grid=FALSE,
   legendcontrol=list(x='topright',bg='white'),
-  polygonalpha=.3,
-  polygoncontrol=list(border=NA, steps=20)){
+  polygonalpha=.1,
+  polygoncontrol=list(border=NA, steps=50)){
   
   input <- x[[1]] #ctStanDiscretePars(x,type='discreteDRIFT',times=times,quantiles=quantiles,...)[[1]]
   
@@ -399,9 +399,11 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
   
   if(colvec[1]=='auto') colvec=grDevices::rainbow(nrow(indices),alpha=.8,v=.9)
   
-  if(is.null(plotcontrol$ylim)) plotcontrol$ylim=range(plyr::aaply(input,c(3,4),function(x) 
+  if(is.null(plotcontrol$ylim)) {
+    plotcontrol$ylim=range(plyr::aaply(input,c(3,4),function(x) 
     x[indices]),na.rm=TRUE) #range of diagonals
-
+    if(legend) plotcontrol$ylim[2] <- plotcontrol$ylim[2] + sd(plotcontrol$ylim)/3
+}
   
  
   #blank plot
@@ -431,7 +433,7 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
       polygonargs$y=input[ri,ci,,2]
       polygonargs$ylow=input[ri,ci,,1]
       polygonargs$yhigh=input[ri,ci,,length(quantiles)]
-      polygonargs$col=grDevices::adjustcolor(colvec[cc],alpha.f=max(c(.004,polygonalpha/polygonargs$steps)))
+      polygonargs$col=grDevices::adjustcolor(colvec[cc],alpha.f=max(c(.004,polygonalpha/(2*sqrt(polygonargs$steps)))))
       do.call(ctPoly,polygonargs)
     }
   }

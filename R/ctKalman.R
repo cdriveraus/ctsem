@@ -173,7 +173,7 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
 #' though lty,col,lwd,x,y, will all be ignored.
 #' @param legend Logical, whether to include a legend if plotting.
 #' @param legendcontrol List of arguments to the \code{\link{legend}} function.
-#' @param polygoncontrol List of arguments to the \code{\link{polygon}} function for filling the uncertainty region.
+#' @param polygoncontrol List of arguments to the \code{\link{ctPoly}} function for filling the uncertainty region.
 #' @param polygonalpha Numeric for the opacity of the uncertainty region.
 #' @return Nothing. Generates plots.
 #' @export
@@ -189,9 +189,9 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
 ctKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
   errorvec='auto', errormultiply=1.96,
   ltyvec="auto",colvec='auto', lwdvec='auto', 
-  subsetindices=NULL,pchvec='auto', typevec='auto',grid=TRUE,add=FALSE, 
+  subsetindices=NULL,pchvec='auto', typevec='auto',grid=FALSE,add=FALSE, 
   plotcontrol=list(ylab='Value',xlab='Time',xaxs='i'),
-  polygoncontrol=list(border=NA),polygonalpha=.1,
+  polygoncontrol=list(border=NA, steps=20),polygonalpha=.3,
   legend=TRUE, legendcontrol=list(x='topright',bg='white')){
   
 
@@ -236,6 +236,7 @@ ctKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
             ret <- c(ret,esthigh,estlow)
         }
         return(ret)}})),na.rm=TRUE)
+    if(legend) plotcontrol$ylim[2] <- plotcontrol$ylim[2] + sd(plotcontrol$ylim)/4
   }
   
   
@@ -305,12 +306,30 @@ ctKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
           
           # if(is.null(polygoncontrol$angle)) 
           # polygoncontrol$angle=stats::runif(1,0,359)
-          polygonargs<-polygoncontrol
-          polygonargs$x=c(plist$x,plist$x[backwardstimesindex])
-          polygonargs$y=c(plist$y + errormultiply * sqrt(abs(out[[subiname]][[errorvec[kveci]]][kdimi,kdimi,])), 
-            (plist$y - errormultiply * sqrt(abs(out[[subiname]][[errorvec[kveci]]][kdimi,kdimi,])))[backwardstimesindex])
-          polygonargs$col=grDevices::adjustcolor(plist$col,alpha.f=polygonalpha)
-          do.call(graphics::polygon,polygonargs)
+          
+          # polygonargs<-polygoncontrol
+          # polygonargs$x=c(plist$x,plist$x[backwardstimesindex])
+          # polygonargs$y=c(plist$y + errormultiply * sqrt(abs(out[[subiname]][[errorvec[kveci]]][kdimi,kdimi,])), 
+          #   (plist$y - errormultiply * sqrt(abs(out[[subiname]][[errorvec[kveci]]][kdimi,kdimi,])))[backwardstimesindex])
+          # polygonargs$col=grDevices::adjustcolor(plist$col,alpha.f=polygonalpha)
+          # do.call(graphics::polygon,polygonargs)
+          
+          ctpolyargs<-polygoncontrol
+          ctpolyargs$x=c(plist$x)
+          ctpolyargs$ylow=c(plist$y - errormultiply * sqrt(abs(out[[subiname]][[errorvec[kveci]]][kdimi,kdimi,])))
+          ctpolyargs$y=c(plist$y)
+          ctpolyargs$yhigh=c(plist$y + errormultiply * sqrt(abs(out[[subiname]][[errorvec[kveci]]][kdimi,kdimi,])))
+          ctpolyargs$col=grDevices::adjustcolor(plist$col,alpha.f=polygonalpha)
+          ctpolyargs$col =grDevices::adjustcolor(ctpolyargs$col,alpha.f=max(c(.004,polygonalpha/sqrt(ctpolyargs$steps))))
+          do.call(ctPoly,ctpolyargs)
+          
+          #add quantile lines
+          plist$y <- ctpolyargs$ylow
+          plist$lwd <- 1
+          # plist$col <- grDevices::adjustcolor(plist$col,alpha.f=.5)
+          do.call(points,plist)
+          plist$y <- ctpolyargs$yhigh
+          do.call(points,plist)
         }
         
         #if changing lty then legend needs lty types

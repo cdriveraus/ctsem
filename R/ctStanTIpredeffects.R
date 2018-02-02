@@ -150,7 +150,7 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
     
     effect <- array(parmatarray,dim=c(nrow(parmatarray),nsamples,nsubjects))
     rownames(effect) <- rownames(parmatarray)
-    if(whichpars !='all') {
+    if(any(whichpars !='all')) {
       selection <- unlist(lapply(whichpars,function(x) grep(paste0('^\\Q',x,'\\E'),dimnames(effect)[[1]])))
       effect <- effect[selection,,,drop=FALSE]
     }
@@ -172,13 +172,12 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   out <- aperm(out, c(3,2,1))
 
   if(!plot) return(out) else {
-
     dots <- list(...)
     dots$yarray=out
     dots$x=tipreds[,1]
     if(is.null(dots$plotcontrol)) dots$plotcontrol=list(
       ylab=ifelse(!returndifference,'Par. Value','Effect'),
-      xlab=colnames(tipreds)[whichTIpreds[1]],
+      xlab=colnames(tipreds)[1],
       xaxs='i')
     
     do.call(ctPlotArray,dots)

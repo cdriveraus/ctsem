@@ -22,15 +22,15 @@
 #' @export
 #'
 #' @examples
-#' y <- ctStanTIpredeffects(ctstantestfit,plot=FALSE)
+#' y <- ctStanTIpredeffects(ctstantestfit,plot=FALSE,whichpars='dtDRIFT',nsamples=10)
 #' x<-ctstantestfit$data$tipreds[order(ctstantestfit$data$tipreds[,1]),1]
 #' ctPlotArray(y,x)
 ctPlotArray <- function(yarray,x,
-  grid=TRUE,
+  grid=FALSE,
   colvec='auto',lwdvec='auto',ltyvec='auto',typevec='auto',
   plotcontrol=list(ylab='Array values', xlab='X values',xaxs='i'),
   legend=TRUE,legendcontrol=list(x='topright'),
-  polygon=TRUE, polygonalpha=.1,polygoncontrol=list(border=NA,steps=50)){
+  polygon=TRUE, polygonalpha=.1,polygoncontrol=list(border=NA,steps=25)){
   
   # browser()
   separate=FALSE
@@ -88,7 +88,7 @@ ctPlotArray <- function(yarray,x,
   #confidence
   if(polygon) {
     for(pari in c(1:dim(yarray)[2],dim(yarray)[2]:1)){
-      ctpolyargs$col=adjustcolor(colvec[pari],alpha.f=max(c(.004,polygonalpha/ctpolyargs$steps)))
+      ctpolyargs$col=adjustcolor(colvec[pari],alpha.f=max(c(.004,polygonalpha/(4*sqrt(ctpolyargs$steps)))))
       ctpolyargs$x=plotargs$x[!is.na(plotargs$x) & !is.na(yarray[,pari,2])]
       ctpolyargs$y=yarray[,pari,2][!is.na(plotargs$x) & !is.na(yarray[,pari,2])] #predict(loess(yarray[,pari,2]~ctpolyargs$x))
       ctpolyargs$yhigh = yarray[,pari,3][!is.na(plotargs$x) & !is.na(yarray[,pari,2])] #predict(loess(yarray[,pari,3]~ctpolyargs$x))

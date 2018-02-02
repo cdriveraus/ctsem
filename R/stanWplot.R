@@ -51,6 +51,7 @@ stanplot<-function(chains,seed){
     output$chainPlot <- renderPlot({
     parameter<-input$parameter
     begin<-input$begin
+    refresh <- input$refresh
     colimport<-rep("NULL",length(varnames))
     colimport[which(varnames %in% parameter)]<-NA
     begin<-input$begin

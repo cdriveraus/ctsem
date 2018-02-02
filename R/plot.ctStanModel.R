@@ -6,20 +6,20 @@
 #' @param rows vector of integers denoting which rows of ctstanmodel$pars to plot priors for. 
 #' Character string 'all' plots all rows with parameters to be estimated.
 #' @param wait If true, user is prompted to continue before plotting next graph.
-#' @param samples Numeric. Higher values increase fidelity (smoothness / accuracy) of density plots, at cost of speed.
-#' @param popsd Either 'marginalise' to sample from the specified (in the ctstanmodel) 
-#' prior distribution for the population standard deviation, or a numeric value to use for the population standard deviation
+#' @param nsamples Numeric. Higher values increase fidelity (smoothness / accuracy) of density plots, at cost of speed.
+#' @param rawpopsd Either 'marginalise' to sample from the specified (in the ctstanmodel) 
+#' prior distribution for the raw population standard deviation, or a numeric value to use for the raw population standard deviation
 #' for all subject level prior plots - the plots in dotted blue or red.
 #' @param ... not used.
 #' @details Plotted in black is the prior for the population mean. In red and blue are the subject level priors that result
-#' given that the population mean is estimated at 1 std deviation above the mean of the prior, or 1 std deviation below. 
-#' The distributions around these two points are then obtained by marginalising over the prior for the population std deviation - 
+#' given that the population mean is estimated as 1 std deviation above the mean of the prior, or 1 std deviation below. 
+#' The distributions around these two points are then obtained by marginalising over the prior for the raw population std deviation - 
 #' so the red and blue distributions do not represent any specific subject level prior, but rather characterise the general amount
-#' and shape of possible subject level priors at the selected points of the population mean prior.
+#' and shape of possible subject level priors at the specific points of the population mean prior.
 #' @method plot ctStanModel
 #' @export
 
-plot.ctStanModel<-function(x,rows='all',wait=FALSE,samples=1e6, popsd='marginalise',...){
+plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='marginalise',...){
   if(class(x)!='ctStanModel') stop('not a ctStanModel object!')
   m<-x$pars
   n<-5000
@@ -29,31 +29,31 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,samples=1e6, popsd='marginali
   for(rowi in rows){
     if(is.na(m$value[rowi])){
     
-    #popsd
-      if(popsd[1]=='marginalise'){
-    rawpopsd<-  stats::rnorm(samples)
-    if(!is.na(x$rawpopsdlowerbound)) rawpopsd <- rawpopsd[rawpopsd>x$rawpopsdlowerbound]
+    #rawpopsd
+      if(rawpopsd[1]=='marginalise'){
+    rawpopsdbase<-  stats::rnorm(nsamples)
+    if(!is.na(x$rawpopsdbaselowerbound)) rawpopsdbase <- rawpopsdbase[rawpopsdbase>x$rawpopsdbaselowerbound]
     sdscale <- m$sdscale[rowi]
-    tform <- gsub('.*', '*',x$popsdtransform,fixed=TRUE)
-    popsdprior<-eval(parse(text=tform))
+    tform <- gsub('.*', '*',x$rawpopsdtransform,fixed=TRUE)
+    rawpopsdprior<-eval(parse(text=tform))
     
-    samples<-length(popsdprior) #adjust number of samples because of random n > 0
-      } else if(is.na(as.numeric(popsd))) stop('popsd argument is ill specified!') else {
-        popsdprior <- rep(popsd,samples)
+    nsamples<-length(rawpopsdprior) #adjust number of nsamples because of random n > 0
+      } else if(is.na(as.numeric(rawpopsd))) stop('rawpopsd argument is ill specified!') else {
+        rawpopsdprior <- rep(rawpopsd,nsamples)
       }
     
 #mean
-      param=stats::rnorm(samples)
+      param=stats::rnorm(nsamples)
       xmean=eval(parse(text=paste0(m$transform[rowi])))
       meanxlims<-stats::quantile(xmean,probs=c(.1,.9))
       
       #high
-      param=stats::rnorm(samples,highmean,popsdprior)
+      param=stats::rnorm(nsamples,highmean,rawpopsdprior)
       xhigh=eval(parse(text=paste0(m$transform[rowi])))
       highxlims <- stats::quantile(xhigh,probs=c(.1,.9))
         
       #low
-      param=stats::rnorm(samples,lowmean,popsdprior)
+      param=stats::rnorm(nsamples,lowmean,rawpopsdprior)
       xlow=eval(parse(text=paste0(m$transform[rowi])))
       lowxlims <- stats::quantile(xlow,probs=c(.1,.9))
       
