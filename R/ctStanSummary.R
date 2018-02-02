@@ -29,14 +29,14 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,...){
     out=list()
     e=extract(object$stanfit)
     
-    iter=dim(e$hypercorrsqrt)[1]
+    iter=dim(e$rawpopcorrsqrt)[1]
     if(!is.null(iter)){ #then there is some individual variation so continue
-      npars=dim(e$hypercorrsqrt)[2]
+      nindvarying=dim(e$rawpopcorrsqrt)[2]
       
-      if(npars>1){
+      if(nindvarying>1){
         
         getMean=function(myarray){
-          out=matrix(NA,nrow=npars,ncol=npars)
+          out=matrix(NA,nrow=nindvarying,ncol=nindvarying)
           for(i in 1:nrow(out)){
             for(j in 1:ncol(out)){
               out[i,j]<-round(mean(myarray[i,j,]),digits=digits)
@@ -45,7 +45,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,...){
         }
         
         getSd=function(myarray){
-          out=matrix(NA,nrow=npars,ncol=npars)
+          out=matrix(NA,nrow=nindvarying,ncol=nindvarying)
           for(i in 1:nrow(out)){
             for(j in 1:ncol(out)){
               out[i,j]<-round(sd(myarray[i,j,]),digits=digits)
@@ -53,66 +53,62 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,...){
           return(out)
         }
         
-        
+
         #transformed subject level params
-        hypercorr_transformed= array(sapply(1:iter, function(x) cor(e$indparams[x,,])),dim=c(npars,npars,iter))
-        hypercov_transformed= array(sapply(1:iter, function(x) cov(e$indparams[x,,])),dim=c(npars,npars,iter))
+        rawpopcorr_transformed= array(sapply(1:iter, function(x) cor(e$indparams[x,,])),dim=c(nindvarying,nindvarying,iter))
+        rawpopcov_transformed= array(sapply(1:iter, function(x) cov(e$indparams[x,,])),dim=c(nindvarying,nindvarying,iter))
         
-        hypercorr_transformedmean=getMean(hypercorr_transformed)
-        hypercorr_transformedsd=getSd(hypercorr_transformed)
+        rawpopcorr_transformedmean=getMean(rawpopcorr_transformed)
+        rawpopcorr_transformedsd=getSd(rawpopcorr_transformed)
         
-        hypercov_transformedmean=getMean(hypercov_transformed)
-        hypercov_transformedsd=getSd(hypercov_transformed)
+        rawpopcov_transformedmean=getMean(rawpopcov_transformed)
+        rawpopcov_transformedsd=getSd(rawpopcov_transformed)
         
-        hypercovcor_transformedmean=hypercov_transformedmean
-        hypercovcor_transformedmean[lower.tri(diag(npars))]=hypercorr_transformedmean[lower.tri(diag(npars))]
+        rawpopcovcor_transformedmean=rawpopcov_transformedmean
+        rawpopcovcor_transformedmean[lower.tri(diag(nindvarying))]=rawpopcorr_transformedmean[lower.tri(diag(nindvarying))]
         
-        hypercovcor_transformedsd=hypercov_transformedsd
-        hypercovcor_transformedsd[lower.tri(diag(npars))]=hypercorr_transformedsd[lower.tri(diag(npars))]
+        rawpopcovcor_transformedsd=rawpopcov_transformedsd
+        rawpopcovcor_transformedsd[lower.tri(diag(nindvarying))]=rawpopcorr_transformedsd[lower.tri(diag(nindvarying))]
         
-        dimnames(hypercovcor_transformedsd)<-list(parnames,parnames)
-        dimnames(hypercovcor_transformedmean)<-list(parnames,parnames)
+        dimnames(rawpopcovcor_transformedsd)<-list(parnames,parnames)
+        dimnames(rawpopcovcor_transformedmean)<-list(parnames,parnames)
         
         #raw subject level params
-        hypercorr=array(unlist(lapply(1:iter,function(x){ #get array of hypercorr samples
-          hypercorrsqrt=matrix(e$hypercorrsqrt[x,,],nrow=npars)
-          hypercorrsqrt%*% t(hypercorrsqrt)
-        })),dim=c(npars,npars,iter))
+        rawpopcorr= e$rawpopcorr 
+    
+        rawpopcorrout <- ctCollapse(rawpopcorr,1,mean)[lower.tri(diag(nindvarying))]
+        rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,sd)[lower.tri(diag(nindvarying))])
+        rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.025))[lower.tri(diag(nindvarying))])
+        rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.5))[lower.tri(diag(nindvarying))])
+        rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.975))[lower.tri(diag(nindvarying))])
+        colnames(rawpopcorrout) <- c('mean','sd','2.5%','50%','97.5%')
+        rownames(rawpopcorrout) <- matrix(paste0('corr_',parnames,'__',rep(parnames,each=length(parnames))),
+          length(parnames),length(parnames))[lower.tri(diag(nindvarying))]
+        rawpopcorrout <- round(rawpopcorrout,digits=digits)
         
+        rawpopcorrout <- cbind(rawpopcorrout,rawpopcorrout[,'mean'] / rawpopcorrout[,'sd'])
+        colnames(rawpopcorrout)[ncol(rawpopcorrout)] <- 'z'
         
-        popcorr <- ctCollapse(hypercorr_transformed,3,mean)[lower.tri(diag(dim(hypercorr_transformed)[1]))]
-        popcorr <- cbind(popcorr,ctCollapse(hypercorr_transformed,3,sd)[lower.tri(diag(dim(hypercorr_transformed)[1]))])
-        popcorr <- cbind(popcorr,ctCollapse(hypercorr_transformed,3,quantile,probs=c(.025))[lower.tri(diag(dim(hypercorr_transformed)[1]))])
-        popcorr <- cbind(popcorr,ctCollapse(hypercorr_transformed,3,quantile,probs=c(.5))[lower.tri(diag(dim(hypercorr_transformed)[1]))])
-        popcorr <- cbind(popcorr,ctCollapse(hypercorr_transformed,3,quantile,probs=c(.975))[lower.tri(diag(dim(hypercorr_transformed)[1]))])
-        colnames(popcorr) <- c('mean','sd','2.5%','50%','97.5%')
-        rownames(popcorr) <- matrix(paste0('corr_',parnames,'__',rep(parnames,each=length(parnames))),
-          length(parnames),length(parnames))[lower.tri(diag(dim(hypercorr)[1]))]
-        popcorr <- round(popcorr,digits=digits)
+        rawpopcorrout <- rawpopcorrout[order(abs(rawpopcorrout[,'z'])),,drop=FALSE]
         
-        popcorr <- cbind(popcorr,popcorr[,'mean'] / popcorr[,'sd'])
-        colnames(popcorr)[ncol(popcorr)] <- 'z'
+        rawpopcorrmean= ctCollapse(e$rawpopcorr,1,mean)
+        rawpopcorrsd= ctCollapse(e$rawpopcorr,1,sd)
         
-        popcorr <- popcorr[order(abs(popcorr[,'z'])),,drop=FALSE]
+        dimnames(rawpopcorrmean)<-list(parnames,parnames)
+        dimnames(rawpopcorrsd)<-list(parnames,parnames)
         
-        hypercorrmean= ctCollapse(array(apply(e$hypercorrsqrt,1,function(x) x%*% t(x)),dim = dim(e$hypercorrsqrt)[c(2,3,1)]),3,mean)
-        hypercorrsd= ctCollapse(array(apply(e$hypercorrsqrt,1,function(x) x%*% t(x)),dim = dim(e$hypercorrsqrt)[c(2,3,1)]),3,sd)
-        
-        dimnames(hypercorrmean)<-list(parnames,parnames)
-        dimnames(hypercorrsd)<-list(parnames,parnames)
-        
-        out=list(note1='The following matrix is the posterior means of the raw parameter population distribution correlation matrix',
-          hypercorr_mean=hypercorrmean,
-          note2='The following matrix is the posterior std dev. of the raw parameter population distribution correlation matrix',
-          hypercorr_sd=hypercorrsd,
+        out=list(note1='The following matrix contains the posterior means of the raw parameter population distribution correlation matrix',
+          rawpopcorr_mean=rawpopcorrmean,
+          note2='The following matrix contains the posterior std dev. of the raw parameter population distribution correlation matrix',
+          rawpopcorr_sd=rawpopcorrsd,
           note3=paste0('The following matrix is the posterior mean of the correlation and covariance matrix of subject level parameters,', 
             ' with correlations on the lower triangle'),
-          hypercovcor_transformedmean=hypercovcor_transformedmean,
+          rawpopcovcor_transformedmean=rawpopcovcor_transformedmean,
           note4=paste('The following matrix is the posterior std dev. of the correlation and covariance matrix of subject level parameters,', 
             'with correlations on the lower triangle'),
-          hypercovcor_transformedsd=hypercovcor_transformedsd)
+          rawpopcovcor_transformedsd=rawpopcovcor_transformedsd)
         
-        out$popcorr = popcorr
+        out$rawpopcorr_raw = rawpopcorrout
       }
     }
     
@@ -126,7 +122,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,...){
     }
     
   
-    parmatlists <- apply(e$hypermeans,1,ctStanParMatrices,model=object,timeinterval=timeinterval)
+    parmatlists <- apply(e$rawpopmeans,1,ctStanParMatrices,model=object,timeinterval=timeinterval)
     parmatarray <- array(unlist(parmatlists),dim=c(length(unlist(parmatlists[[1]])),length(parmatlists)))
     parmats <- matrix(0,nrow=0,ncol=7)
     counter=0

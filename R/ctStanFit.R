@@ -1212,8 +1212,8 @@ matrix crosscov(matrix a, matrix b){
       vector[nparams] rawpopmeans',if(!estpop) 'base','; // population level means \n','
       
       ',if(any(indvarying)) paste0(
-        'vector',if(!is.na(ctstanmodel$rawpopsdlowerbound)) paste0('<lower=',ctstanmodel$rawpopsdlowerbound[1],'>'),'[nindvarying] rawpopsd; //population level std dev
-        //cholesky_factor_corr[nindvarying] popcorrsqrt; // population level correlation square root
+        'vector',if(!is.na(ctstanmodel$rawpopsdbaselowerbound)) paste0('<lower=',ctstanmodel$rawpopsdbaselowerbound[1],'>'),'[nindvarying] rawpopsdbase; //population level std dev
+        //cholesky_factor_corr[nindvarying] rawpopcorrsqrt; // population level correlation square root
         //cov_matrix[nindvarying] wishmat;
         vector[nindvaryingoffdiagonals] sqrtpcov;
         '),if(any(indvarying) & !ukfpop) 'vector[nindvarying*nsubjects] rawindparams; //subject level parameters','
@@ -1237,10 +1237,10 @@ matrix crosscov(matrix a, matrix b){
 
       ',if(nindvarying > 0 & !ukfpop) 'vector[nindvarying] indparams[nsubjects];','
       ',if(nindvarying > 0) paste0('
-        vector[nindvarying] popsd; //population level std dev',
+        vector[nindvarying] rawpopsd; //population level std dev',
           if(estpop) paste0(' 
         matrix[nindvarying,nindvarying] sqrtpcovmat;
-        matrix[nindvarying,nindvarying] popcorrsqrt;
+        matrix[nindvarying,nindvarying] rawpopcorrsqrt;
         matrix[nindvarying,nindvarying] popcovsqrt; '),'
         ',if(!estpop) paste0('matrix[nindvarying,nindvarying] mlcov;
             vector[nindvarying] rawindparamsarray[nsubjects]; ')),'
@@ -1283,7 +1283,7 @@ if(n.TIpred > 0) paste0(unlist(lapply(1,function(x){ ## collects all the time in
 
   
       ',if(any(indvarying) & estpop) paste0('
-        popsd = ',ctstanmodel$popsdtransform, ';
+        rawpopsd = ',ctstanmodel$rawpopsdtransform, ';
 {
 int counter;
 sqrtpcovmat=diag_matrix(rep_vector(-99,nindvarying));
@@ -1297,16 +1297,16 @@ counter=counter+1;
 }
 }
 
-if(nindvarying > 1) popcorrsqrt = covsqrt2corsqrt(sqrtpcovmat,0); //change int to change from partial to marginal prior
+if(nindvarying > 1) rawpopcorrsqrt = covsqrt2corsqrt(sqrtpcovmat,0); //change int to change from partial to marginal prior
 
 
 ',if(1==99) '
-if(nindvarying >1)popcorrsqrt = cholesky_decompose(quad_form_diag(wishmat, inv_sqrt( diagonal(wishmat))));
+if(nindvarying >1)rawpopcorrsqrt = cholesky_decompose(quad_form_diag(wishmat, inv_sqrt( diagonal(wishmat))));
 ','
 
-if(nindvarying ==1) popcorrsqrt = diag_matrix(rep_vector(1,1));
+if(nindvarying ==1) rawpopcorrsqrt = diag_matrix(rep_vector(1,1));
 
-        popcovsqrt= diag_pre_multiply(popsd, popcorrsqrt);
+        popcovsqrt= diag_pre_multiply(rawpopsd, rawpopcorrsqrt);
         
         ',if(!ukfpop) paste0('for(subi in 1:nsubjects) {
         indparams[subi]= 
@@ -1325,7 +1325,7 @@ for(subi in 1:nsubjects) {
 indparams[subi]= rawindparamsarray[subi]+rawpopmeans[indvaryingindex];
   }
   mlcov = cov(rawindparamsarray,nsubjects,nindvarying) + diag_matrix(rep_vector(.000001,nindvarying));
-  popsd=sqrt(diagonal(mlcov));
+  rawpopsd=sqrt(diagonal(mlcov));
   for(pari in 1:nindvarying){
   rawpopmeans[indvaryingindex[pari]]=mean(indparams[,pari]);
   }
@@ -1347,16 +1347,14 @@ if(!ukfpop) subjectparamcalc(),'
       ',if(any(ctspec$indvarying) & !nopriors) paste0(
         
         if(estpop) paste0('
-        //popcorrsqrt ~ lkj_corr_cholesky(.1); 
+        //rawpopcorrsqrt ~ lkj_corr_cholesky(.1); 
         if(nindvarying >1) sqrtpcov ~ normal(0,1);
         //wishmat ~ inv_wishart(nindvarying,diag_matrix(rep_vector(1,nindvarying)));
         ',if(noncentered & !ukfpop) paste0('rawindparams ~ normal(0,1);'),' 
         ',if(!noncentered & !ukfpop) paste0('target += multi_normal_lpdf(indparams|rawpopmeans[indvaryingindex],popcovsqrt * popcovsqrt\');'),' 
-        rawpopsd ~ ',ctstanmodel$rawpopsd,';'),
+        rawpopsdbase ~ ',ctstanmodel$rawpopsdbase,';'),
         
-        if(!estpop) '//target += -log(determinant(mlcov)); // /2*nsubjects; 
-//rawpopsd ~ normal(0,100);
-         target += multi_normal_lpdf(rawindparamsarray| rep_vector(0,nindvarying), mlcov);','
+        if(!estpop) 'target += multi_normal_lpdf(rawindparamsarray| rep_vector(0,nindvarying), mlcov);','
         '),'
       
       ',if(!kalman) 'etapostbase ~ normal(0,1); \n','
@@ -1468,7 +1466,7 @@ if(!approxpop & !ukfpop) ifelse(ukf, ukfilterfunc(ppchecking=FALSE), filteringfu
       
         }
       generated quantities{
-      ',if(nindvarying > 1 & estpop) paste0('matrix[nindvarying,nindvarying] popcorr;'),'
+      ',if(nindvarying > 1 & estpop) paste0('matrix[nindvarying,nindvarying] rawpopcorr;'),'
       
       ',paste0('real hmean_',ctspec$param[is.na(ctspec$value)],'; \n',collapse=''),'
       
@@ -1494,13 +1492,13 @@ if(!approxpop & !ukfpop) ifelse(ukf, ukfilterfunc(ppchecking=FALSE), filteringfu
             ctspec$transform[rowi]),'; \n')
       })),collapse=''),'
 
-     ',if(nindvarying > 1 &estpop) paste0(' popcorr = popcorrsqrt * popcorrsqrt\';'),'
+     ',if(nindvarying > 1 &estpop) paste0(' rawpopcorr = rawpopcorrsqrt * rawpopcorrsqrt\';'),'
       
       ',paste0(unlist(lapply(1:nrow(ctspec),function(rowi){
         if(ctspec$indvarying[rowi]) paste0('hsd_',ctspec$param[rowi],' = ',
-          'popsd[',which(ctspec$param[ctspec$indvarying] == ctspec$param[rowi]),']; \n',
+          'rawpopsd[',which(ctspec$param[ctspec$indvarying] == ctspec$param[rowi]),']; \n',
           if(!is.na(ctspec$transform[rowi])) paste0(
-            'hsd_',ctspec$param[rowi],' = fabs
+            'hsd_',ctspec$param[rowi],' = ( (fabs
             ((', 
             gsub('param', paste0('(rawpopmeans[',
               which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),
@@ -1509,7 +1507,18 @@ if(!approxpop & !ukfpop) ifelse(ukf, ukfilterfunc(ppchecking=FALSE), filteringfu
             gsub('param', 
               paste0('(rawpopmeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),
                 '] -  hsd_',
-                ctspec$param[rowi],')'),ctspec$transform[rowi]),'))/2 ; \n')
+                ctspec$param[rowi],')'),ctspec$transform[rowi]),'))/2) +
+            (fabs
+            ((', 
+            gsub('param', paste0('(rawpopmeans[',
+              which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),
+              '] + 3 * hsd_',
+              ctspec$param[rowi],')'),ctspec$transform[rowi]), ') - (',
+            gsub('param', 
+              paste0('(rawpopmeans[',which(ctspec$param[is.na(ctspec$value)] == ctspec$param[rowi]),
+                '] - 3 * hsd_',
+                ctspec$param[rowi],')'),ctspec$transform[rowi]),'))/6) ) /2
+            ; \n')
             )
       })),collapse=''),'
 
@@ -1664,7 +1673,7 @@ if(!approxpop & !ukfpop) ifelse(ukf, ukfilterfunc(ppchecking=FALSE), filteringfu
       if(chains > 0){
         for(i in 1:(chains)){
           staninits[[i]]=list(etapost=array(stats::rnorm(nrow(datalong)*n.latent,0,.1),dim=c(nrow(datalong),n.latent)),
-            rawpopsd = array(exp(rnorm(nindvarying,-3,1)),dim=c(nindvarying)))
+            rawpopsdbase = array(exp(rnorm(nindvarying,-3,1)),dim=c(nindvarying)))
         }
       }
     }
