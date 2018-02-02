@@ -86,14 +86,14 @@ if(type=='standt') continuoustime<-FALSE
       freeparams & ctspec$row != ctspec$col] <- '(param)' #'inv_logit(param)*2-1'
   
   ctspec$transform[ctspec$matrix %in% c('MANIFESTVAR', 'T0VAR') & 
-      freeparams & ctspec$row == ctspec$col] <- 'exp(param)' #'1/(.1+exp(param*1.8))*10+.001'
+      freeparams & ctspec$row == ctspec$col] <- 'exp(param*4)' #'1/(.1+exp(param*1.8))*10+.001'
   
   ctspec$transform[ctspec$matrix %in% c('DIFFUSION') & 
-      freeparams & ctspec$row == ctspec$col] <- 'exp(param*2)' #'1/(.1+exp(param*1.8))*10+.001'
+      freeparams & ctspec$row == ctspec$col] <- 'exp(param*4)' #'1/(.1+exp(param*1.8))*10+.001'
   
   if(continuoustime==TRUE){
     ctspec$transform[ctspec$matrix %in% c('DRIFT') & 
-        freeparams & ctspec$row == ctspec$col] <- '-log(exp(-param*1.5)+1)-.00001' #'log(1/(1+(exp(param*-1.5))))'
+        freeparams & ctspec$row == ctspec$col] <- '-log(exp(-param*1.5)+1)' #'log(1/(1+(exp(param*-1.5))))'
     
     ctspec$transform[ctspec$matrix %in% c('DRIFT') & freeparams & 
         ctspec$row != ctspec$col] <- '(param)'
@@ -146,9 +146,9 @@ if(type=='standt') continuoustime<-FALSE
     out$tipredsimputedprior <- 'normal(0,10)'
   }
   # out$popsdpriorscale <- 1
-  out$rawpopsd <- 'normal(0,1)'
-  out$rawpopsdlowerbound <- NA
-  out$popsdtransform <- 'exp(rawpopsd * 2 -2) .* sdscale'
+  out$rawpopsdbase <- 'normal(0,1)'
+  out$rawpopsdbaselowerbound <- NA
+  out$rawpopsdtransform <- 'exp(rawpopsdbase * 2 -2) .* sdscale'
   out$stationarymeanprior <- NA
   out$stationaryvarprior <- NA
   out$manifesttype <- rep(0,n.manifest)
