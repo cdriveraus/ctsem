@@ -122,7 +122,8 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,...){
     }
     
   
-    parmatlists <- apply(e$rawpopmeans,1,ctStanParMatrices,model=object,timeinterval=timeinterval)
+    parmatlists <- try(apply(e$rawpopmeans,1,ctStanParMatrices,model=object,timeinterval=timeinterval))
+    if(class(parmatlists)!='try-error'){
     parmatarray <- array(unlist(parmatlists),dim=c(length(unlist(parmatlists[[1]])),length(parmatlists)))
     parmats <- matrix(0,nrow=0,ncol=7)
     counter=0
@@ -158,7 +159,8 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,...){
     
     out$parmatNote=paste0('Population mean parameter matrices calculated with time interval of ', timeinterval,' for discrete time (dt) matrices. ',
       'Covariance related matrices shown as covariance matrices, correlations have (cor) suffix. Asymptotic (asym) matrices based on infinitely large time interval.')
-    
+    }
+    if(class(parmatlists)=='try-error') out$parmatNote = 'Could not calculate parameter matrices'
     
     out$popsd=round(s$summary[c(grep('hsd_',rownames(s$summary))),
       c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],digits=digits)
