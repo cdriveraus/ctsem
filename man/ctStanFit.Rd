@@ -9,9 +9,9 @@ ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 1000,
   fit = TRUE, ukfpop = FALSE, stationary = FALSE, plot = FALSE,
   diffusionindices = "all", asymdiffusion = FALSE, optimize = FALSE,
   nopriors = FALSE, vb = FALSE, chains = 1, cores = "maxneeded",
-  inits = NULL, initwithoptim = FALSE, control = list(adapt_delta = 0.8,
-  adapt_init_buffer = 2, adapt_window = 2, max_treedepth = 8, stepsize = 0.001),
-  verbose = FALSE, ...)
+  inits = NULL, initwithoptim = FALSE, maxtimestep = 0.1,
+  control = list(adapt_delta = 0.8, adapt_init_buffer = 2, adapt_window = 2,
+  max_treedepth = 8, stepsize = 0.001), verbose = FALSE, ...)
 }
 \arguments{
 \item{datalong}{long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables, 
@@ -80,6 +80,9 @@ up to the number of chains, or an integer.}
 \item{initwithoptim}{Logical. If TRUE, the model, with population standard deviations fixed to 1 
 (so approx 65% of the population mean prior), is first fit with penalised maximum likelihood to determine starting values
 for the chains. This can help speed convergence and avoid problematic regions for certain problems.}
+
+\item{maxtimestep}{positive numeric, only used for models with non-linear dynamics, specifying the largest time
+step taken during integration. Smaller values are more accurate, but slower.}
 
 \item{control}{List of arguments sent to \code{\link[rstan]{stan}} control argument, 
 regarding warmup / sampling behaviour.}

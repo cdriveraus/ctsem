@@ -4,7 +4,7 @@
 \alias{ctDensity}
 \title{ctDensity}
 \usage{
-ctDensity(x, plot = FALSE, ...)
+ctDensity(x, bw = "auto", plot = FALSE, ...)
 }
 \arguments{
 \item{x}{numeric vector on which to compute density.}

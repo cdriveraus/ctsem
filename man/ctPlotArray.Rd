@@ -4,11 +4,11 @@
 \alias{ctPlotArray}
 \title{Plots a three dimensional array}
 \usage{
-ctPlotArray(yarray, x, grid = TRUE, colvec = "auto", lwdvec = "auto",
+ctPlotArray(yarray, x, grid = FALSE, colvec = "auto", lwdvec = "auto",
   ltyvec = "auto", typevec = "auto", plotcontrol = list(ylab =
   "Array values", xlab = "X values", xaxs = "i"), legend = TRUE,
   legendcontrol = list(x = "topright"), polygon = TRUE,
-  polygonalpha = 0.1, polygoncontrol = list(border = NA, steps = 50))
+  polygonalpha = 0.1, polygoncontrol = list(border = NA, steps = 25))
 }
 \arguments{
 \item{yarray}{3 dimensional array to use for Y values}
@@ -45,7 +45,7 @@ Nothing. Generates plots.
 1st margin sets line values, 2nd sets variables, 3rd quantiles.
 }
 \examples{
-y <- ctStanTIpredeffects(ctstantestfit,plot=FALSE)
+y <- ctStanTIpredeffects(ctstantestfit,plot=FALSE,whichpars='dtDRIFT',nsamples=10)
 x<-ctstantestfit$data$tipreds[order(ctstantestfit$data$tipreds[,1]),1]
 ctPlotArray(y,x)
 }

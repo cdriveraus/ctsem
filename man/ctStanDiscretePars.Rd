@@ -34,5 +34,5 @@ from ctStanFit, for specified subjects.
 }
 \examples{
 ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
-plot=TRUE,indices='all')
+ plot=TRUE,indices='all')
 }

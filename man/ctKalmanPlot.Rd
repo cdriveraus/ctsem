@@ -7,10 +7,10 @@
 ctKalmanPlot(x, subjects, kalmanvec = c("y", "yprior"), errorvec = "auto",
   errormultiply = 1.96, ltyvec = "auto", colvec = "auto",
   lwdvec = "auto", subsetindices = NULL, pchvec = "auto",
-  typevec = "auto", grid = TRUE, add = FALSE, plotcontrol = list(ylab =
-  "Value", xlab = "Time", xaxs = "i"), polygoncontrol = list(border = NA),
-  polygonalpha = 0.1, legend = TRUE, legendcontrol = list(x = "topright",
-  bg = "white"))
+  typevec = "auto", grid = FALSE, add = FALSE, plotcontrol = list(ylab =
+  "Value", xlab = "Time", xaxs = "i"), polygoncontrol = list(border = NA,
+  steps = 20), polygonalpha = 0.3, legend = TRUE, legendcontrol = list(x =
+  "topright", bg = "white"))
 }
 \arguments{
 \item{x}{Output from \code{\link{ctKalman}}. In general it is easier to call 
@@ -53,7 +53,7 @@ any  'prior', 'upd', or 'smooth' objects, and points otherwise.}
 \item{plotcontrol}{List of graphical arguments (see \code{\link{par}}), 
 though lty,col,lwd,x,y, will all be ignored.}
 
-\item{polygoncontrol}{List of arguments to the \code{\link{polygon}} function for filling the uncertainty region.}
+\item{polygoncontrol}{List of arguments to the \code{\link{ctPoly}} function for filling the uncertainty region.}
 
 \item{polygonalpha}{Numeric for the opacity of the uncertainty region.}
 
