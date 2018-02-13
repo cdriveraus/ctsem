@@ -26,6 +26,20 @@ makeNumericIDs <- function(datalong,idName='id',timeName='time'){
   return(datalong)
 }
 
+#' Right multiply a matrix by its transpose.
+#'
+#' @param x 
+#'
+#' @return
+#' @export
+#'
+#' @examples
+#' msquare(t(chol(diag(3,4)+1)))
+msquare <- function(x) {
+  x %*% t(x)
+}
+
+
 crosscov <- function(a,b){
   da <- a-matrix(colMeans(a),nrow=nrow(a),ncol=ncol(a),byrow=TRUE)
   db <- b-matrix(colMeans(b),nrow=nrow(b),ncol=ncol(b),byrow=TRUE)
