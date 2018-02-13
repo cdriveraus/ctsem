@@ -185,8 +185,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, kalman=T
       if(t0varstationary[i,1] != t0varstationary[i,2]) t0varstationary <- rbind(t0varstationary,t0varstationary[i,c(2,1)])
     }}
   
-  
-  t0meansstationary <- as.matrix(rbind(ctspec[ctspec$param[ctspec$matrix %in% 'T0MEANS'] %in% 'stationary',c('row','col')]))
+
+  t0meansstationary <- as.matrix(rbind(ctspec[which(ctspec$param[ctspec$matrix %in% 'T0MEANS'] %in% 'stationary'),c('row','col')]))
   ctspec$value[ctspec$param %in% 'stationary'] <- 0
   ctspec$indvarying[ctspec$param %in% 'stationary'] <- FALSE
   ctspec$transform[ctspec$param %in% 'stationary'] <- NA
