@@ -103,12 +103,12 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,...){
           rawpopcorr_sd=rawpopcorrsd,
           note3=paste0('The following matrix is the posterior mean of the correlation and covariance matrix of subject level parameters,', 
             ' with correlations on the lower triangle'),
-          rawpopcovcor_transformedmean=rawpopcovcor_transformedmean,
+          popcovcor_mean=rawpopcovcor_transformedmean,
           note4=paste('The following matrix is the posterior std dev. of the correlation and covariance matrix of subject level parameters,', 
             'with correlations on the lower triangle'),
-          rawpopcovcor_transformedsd=rawpopcovcor_transformedsd)
+          popcovcor_sd=rawpopcovcor_transformedsd)
         
-        out$rawpopcorr_raw = rawpopcorrout
+        out$rawpopcorr = rawpopcorrout
       }
     }
     
