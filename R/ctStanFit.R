@@ -179,7 +179,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, kalman=T
 
   
   #collect individual stationary elements and update ctspec
-  t0varstationary <- as.matrix(rbind(ctspec[ctspec$param %in% 'stationary' & ctspec$matrix %in% 'T0VAR',c('row','col')]))
+  t0varstationary <- as.matrix(rbind(ctspec[which(ctspec$param %in% 'stationary' & ctspec$matrix %in% 'T0VAR'),c('row','col')]))
   if(nrow(t0varstationary) > 0){ #ensure upper tri is consistent with lower
     for(i in 1:nrow(t0varstationary)){
       if(t0varstationary[i,1] != t0varstationary[i,2]) t0varstationary <- rbind(t0varstationary,t0varstationary[i,c(2,1)])
@@ -921,6 +921,8 @@ paste0('      matrix[nlatent,nlatent] DIFFUSION',checkvarying('DIFFUSION','[nsub
             'if(nt0varstationary > 0) for(rowi in 1:nt0varstationary){
               T0VAR[individual,t0varstationary[rowi,1],t0varstationary[rowi,2] ] = 
                 asymDIFFUSION[individual,t0varstationary[rowi,1],t0varstationary[rowi,2] ];
+              T0VAR[individual,t0varstationary[rowi,2],t0varstationary[rowi,1] ] = 
+                asymDIFFUSION[individual,t0varstationary[rowi,2],t0varstationary[rowi,1] ];
           }
           }
           
