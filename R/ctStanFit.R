@@ -54,6 +54,8 @@
 #' elements that should be fixed to stationarity.
 #' @param maxtimestep positive numeric, only used for models with non-linear dynamics, specifying the largest time
 #' step taken during integration. Smaller values are more accurate, but slower. 
+#' @param lineardynamics Logical. Set to TRUE to use linear dynamics -- faster but only accurate when dynamic
+#' parameters do not change over time.
 #' @param ... additional arguments to pass to \code{\link[rstan]{stan}} function.
 #' @examples
 #' \dontrun{
@@ -88,7 +90,7 @@
 ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, kalman=TRUE, binomial=FALSE,
   estpop=TRUE, noncentered=TRUE, fit=TRUE, ukfpop=FALSE, stationary=FALSE,plot=FALSE,  diffusionindices='all',
   asymdiffusion=FALSE,optimize=FALSE, nopriors=FALSE, vb=FALSE, chains=1,cores='maxneeded', inits=NULL,initwithoptim=FALSE,
-  maxtimestep = .1,
+  maxtimestep = .1, lineardynamics=FALSE,
   control=list(adapt_delta=.8, adapt_init_buffer=2, adapt_window=2,
     max_treedepth=8,stepsize=.001),verbose=FALSE,...){
   
@@ -556,9 +558,6 @@ print("etaprior[rowi]",etaprior[rowi]);
       {
       int subjecti;
       int counter;
-      //matrix[nlatent,nlatent] discreteDRIFT; 
-      //vector[nlatent] discreteCINT;
-      matrix[ndiffusion, ndiffusion] discreteDIFFUSION;
       vector[nlatentfull] etaprior[ndatapoints]; //prior for latent states
       matrix[nlatentfull, nlatentfull] etapriorcov[ndatapoints]; //prior for covariance of latent states
       vector[nlatentfull] etapost[ndatapoints]; //posterior for latent states
@@ -575,11 +574,23 @@ print("etaprior[rowi]",etaprior[rowi]);
       real k;
       real a;
       real l;
+    
+      ',if(!lineardynamics) paste0(
+      'matrix[nlatent, nlatent] discreteDIFFUSION;
+      vector[nlatent] rkstates[5]; //runge kutta integration steps
+      matrix[nlatent,nlatent] rkcovstates[5];
+      real dTsmall;
+      '),'
+  
+      ',if(lineardynamics) paste0(
+     'matrix[nlatent,nlatent] discreteDRIFT; 
+      vector[nlatent] discreteCINT;
+      matrix[nlatent, nlatent] discreteDIFFUSION;'),'
 
     // create simple, modifiable forms of the system matrices for easier use in the filter
       matrix[nlatent,nlatent] sDIFFUSION; 
       matrix[nlatent,nlatent] sDRIFT; 
-      vector[nlatent] sCINT;
+      matrix[nlatent,1] sCINT;
       vector[nmanifest] sMANIFESTVAR; 
       vector[nmanifest] sMANIFESTMEANS;
       matrix[nmanifest,nlatent] sLAMBDA;
@@ -619,7 +630,7 @@ print("etaprior[rowi]",etaprior[rowi]);
 
       sDRIFT = DRIFT',checkvarying('DRIFT','[subject[rowi]]','[1]'),';
       sDIFFUSION = DIFFUSION',checkvarying('DIFFUSION','[subject[rowi]]','[1]'),';
-      sCINT = CINT',checkvarying('CINT','[subject[rowi]]','[1]'),';
+      sCINT[,1] = CINT',checkvarying('CINT','[subject[rowi]]','[1]'),';
       sLAMBDA = LAMBDA',checkvarying('LAMBDA','[subject[rowi]]','[1]'),';
       sMANIFESTMEANS = MANIFESTMEANS',checkvarying('MANIFESTMEANS','[subject[rowi]]','[1]'),';
       sMANIFESTVAR = diagonal(MANIFESTVAR',checkvarying('MANIFESTVAR','[subject[rowi]]','[1]'),');
@@ -631,13 +642,10 @@ print("etaprior[rowi]",etaprior[rowi]);
       }
       
       if(T0check[rowi]==0){
-        sigpoints = cholesky_decompose(makesym(etapostcov[rowi-1] * (nlatentfull +l),.00001));
-      {
+        ',if(!lineardynamics) paste0('
+        {
         matrix[nlatentfull*2+2,nlatent] stepstates[integrationsteps[rowi]]; //higher level integration steps
-        vector[nlatent] rkstates[5]; //runge kutta integration steps
-        matrix[nlatent,nlatent] rkcovstates[5];
-        real dTsmall;
-
+        sigpoints = cholesky_decompose(makesym(etapostcov[rowi-1] * (nlatentfull +l),.00001));
         for(statei in 2:(nlatentfull*2+2)){ //for each ukf state sample
           for(stepi in 1:integrationsteps[rowi]){ //for each euler integration step
             if(stepi==1) {  //determine initial state for integration from ukf
@@ -652,11 +660,11 @@ print("etaprior[rowi]",etaprior[rowi]);
             for(ki in 1:4){ //runge kutta integration within euler scheme
               if(ki==2 || ki==3) state[1:nlatent]=rkstates[5] + dTsmall /2 * rkstates[ki-1];
               if(ki==4) state[1:nlatent] = rkstates[5] + dTsmall * rkstates[3];
-              ',if(n.TDpred > 0) 'if(ki==1) state[1:nlatent] = sTDPREDEFFECT * tdpreds[rowi] + state[1:nlatent];',' //tdpred effect only influences at observed time point
               ',paste0(dynamiccalcs,';',collapse=' '),'
-              rkstates[ki] = sDRIFT * state[1:nlatent] + sCINT;
+              rkstates[ki] = sDRIFT * state[1:nlatent] + sCINT[,1];
             }
             stepstates[stepi,statei,] = (rkstates[5] + dTsmall/6  *(rkstates[1]+2*rkstates[2]+2*rkstates[3]+rkstates[4]))\'; //integrate over rk steps
+            ',if(n.TDpred > 0) 'if(stepi == integrationsteps[rowi]) stepstates[stepi,statei] += (sTDPREDEFFECT * tdpreds[rowi])\';',' //tdpred effect only influences at observed time point
           }
         if(nlatentfull > nlatent) ukfstates[statei,(nlatent+1):nlatentfull] = state[(nlatent+1):nlatentfull]\'; // include non dynamic state variation
         }
@@ -689,6 +697,46 @@ print("etaprior[rowi]",etaprior[rowi]);
       etaprior[rowi,1:nlatent] = stepstates[integrationsteps[rowi],1,]\'; // store ukf state means from final integration step
       if(nlatentfull > nlatent) etaprior[rowi,(nlatent+1):nlatentfull] = etapost[rowi-1,(nlatent+1):nlatentfull]; // include non dynamic states
     }} // end integration section
+    '),'//end nonlinear dynamics
+
+
+ ',if(lineardynamics) paste0('
+        sigpoints = cholesky_decompose(makesym(etapostcov[rowi-1] * (nlatentfull +l),.00001));
+        for(statei in 2:(nlatentfull*2+2)){ //for each ukf state sample
+          if(statei==2) state = etapost[rowi-1]; //determine initial state for integration from ukf
+          if(statei > 2 && statei < nlatentfull +3) state = etapost[rowi-1] + sigpoints[,statei-2];
+          if(statei > nlatentfull +2) state = etapost[rowi-1] - sigpoints[,statei-(nlatentfull+2)];
+         ',paste0(dynamiccalcs,';',collapse=' '),'
+          discreteDRIFT = ',
+           if(!continuoustime) paste0('sDRIFT;'),
+           if(continuoustime & !driftdiagonly) paste0('matrix_exp(sDRIFT * dT[rowi]);'),
+           if(continuoustime & driftdiagonly) paste0('matrix_diagexp(sDRIFT * dT[rowi]);'),'
+
+          discreteCINT= ',
+            if(!continuoustime) paste0('sCINT[,1];'),
+            if(continuoustime) paste0('sDRIFT \\ (discreteDRIFT - IIlatent) * sCINT[,1];'),'
+
+          ukfstates[statei,1:nlatent] = (discreteCINT  + discreteDRIFT * state[1:nlatent])\'; //prior for latent state of this row
+          ',if(n.TDpred > 0) 'ukfstates[statei,1:nlatent]+= sTDPREDEFFECT * tdpreds[rowi];',' //tdpred effect influence
+          ',if(ukfpop) 'ukfstates[statei,(nlatent+1):nlatentfull] = state[(nlatent+1):nlatentfull]\'; // include non dynamic state variation \n','
+        }
+      ukfstates[1,] = ukfstates[2,];
+      
+      state = colMeans(ukfstates); //use new mean estimate for uncertainty calcs
+      etaprior[rowi] = state;
+      ',paste0(dynamiccalcs,';',collapse=' '),'
+
+      discreteDRIFT = ',
+      if(!continuoustime) paste0('sDRIFT;'),
+      if(continuoustime & !driftdiagonly) paste0('matrix_exp(sDRIFT * dT[rowi]);'),
+      if(continuoustime & driftdiagonly) paste0('matrix_diagexp(sDRIFT * dT[rowi]);'),'
+
+      discreteDIFFUSION = to_matrix( -(kron_prod(sDRIFT, IIlatent) + kron_prod(IIlatent,sDRIFT)) \\ to_vector(sDIFFUSION), nlatent,nlatent);
+      discreteDIFFUSION = makesym(discreteDIFFUSION - quad_form(discreteDIFFUSION,discreteDRIFT\'),.00001);
+
+     
+    '),'//end linear dynamics
+
 
 
     etapriorcov[rowi] =  cov_of_matrix(ukfstates,2*nlatentfull+2, nlatentfull) / a^2;
