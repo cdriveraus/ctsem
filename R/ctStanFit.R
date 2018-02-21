@@ -205,12 +205,13 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, kalman=T
   popmeanduplicates<-c()
   if(any(duplicated(ctspec$param)&!is.na(ctspec$param))){
     for(i in 1:nrow(ctspecduplicates)){
-      popmeanduplicates[i] = paste0('rawpopmeans[',match(ctspecduplicates$param[i], ctspec$param[!is.na(ctspec$param)]),']')
+      popmeanduplicates[i] = paste0('rawpopmeans[',match(ctspecduplicates$param[i], unique(ctspec$param[!is.na(ctspec$param)])),']')
     }
   }
-  
+
   ctspec <- ctspec[!duplicated(ctspec$param) | is.na(ctspec$param),]
   ctspecduplicates=cbind(ctspecduplicates,popmeanduplicates)
+  
   
   driftdiagonly <- ifelse(all(!is.na(ctspec$value[ctspec$matrix == 'DRIFT' & ctspec$row != ctspec$col]) &
      all(ctspec$value[ctspec$matrix == 'DRIFT' & ctspec$row != ctspec$col] == 0) ), 1, 0)
@@ -353,7 +354,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, kalman=T
     for(i in 1:nrow(ivtemp)){
       if(ivtemp$matrix[i] %in% dynamicmatrices){
        dynamiccalcs <- c(dynamiccalcs, paste0(ivtemp$matrix[i],'[',ivtemp$row[i],',',ivtemp$col[i],'] = ',
-        gsub('param',paste0('state[nlatent + ',i,']'),ivtemp$transform[i])))
+        gsub('param',paste0('state[nlatent*2 + ',i,']'),ivtemp$transform[i])))
       }
     }
   }
@@ -524,12 +525,6 @@ Ypredcov_filt_sqrt=cholesky_decompose(Ypredcov_filt);
         checkvarying('MANIFESTMEANS','[subjecti]','[1]'),
         '[whichobs] + LAMBDA_filt * etapost[rowi] ); // measurement error'),'
 
-if(T0check[rowi]==1){
-print("etaprior[rowi]",etaprior[rowi]);
-      print("Y_filt",Y_filt);
-      print("err",err);
-  }
-
 
       ',if(kalman) 'etapost[rowi,diffusionindices] = etaprior[rowi,diffusionindices] + K_filt * err;','
       
@@ -618,10 +613,11 @@ print("etaprior[rowi]",etaprior[rowi]);
       
       if(T0check[rowi] == 1) { // calculate initial matrices if this is first row for subjecti
 
-      ',if(ukfpop) '
+      
       etapriorcov[rowi] = rep_matrix(0, nlatentfull,nlatentfull);
-      etapriorcov[rowi,nlatent+1:(nlatentfull),nlatent+1:(nlatentfull)] = popcovsqrt * popcovsqrt\';
-      etaprior[rowi,nlatent+1:(nlatentfull)] = rawpopmeans[indvaryingindex];
+      ',if(ukfpop) '
+      etapriorcov[rowi,(nlatent*2)+1:(nlatentfull),(nlatent*2)+1:(nlatentfull)] = popcovsqrt * popcovsqrt\';
+      etaprior[rowi,(nlatent*2)+1:(nlatentfull)] = rawpopmeans[indvaryingindex];
       //sigpointsdyn[(nlatent+1):(nlatentfull),(nlatent+1):(nlatentfull)] = cholesky_decompose(poppriorcov * (nlatentfull + l) )\';
       //statesdyn[1:2,(nlatent+1):(nlatentfull)] = rep_matrix(rawpopmeans[indvaryingindex],2)\';
       //statesdyn[3:(nlatentfull+2),(nlatent+1):(nlatentfull)] = rep_matrix(rawpopmeans[indvaryingindex],nlatentfull)\' + sigpointsdyn[,(nlatent+1):(nlatentfull)];
@@ -637,8 +633,11 @@ print("etaprior[rowi]",etaprior[rowi]);
     ',if(n.TDpred > 0) paste0('sTDPREDEFFECT = TDPREDEFFECT',checkvarying('TDPREDEFFECT','[subject[rowi]]','[1]'),';'),'
       
       etaprior[rowi,1:nlatent] = T0MEANS',checkvarying('T0MEANS','[subjecti]','[1]'),'; //prior for initial latent state
-      ',if(n.TDpred > 0) paste0('etaprior[rowi] =TDPREDEFFECT',checkvarying('TDPREDEFFECT','[subjecti]','[1]'),' * tdpreds[rowi] + etaprior[rowi];'),'
-       etapriorcov[rowi,1:nlatent,1:nlatent] =  T0VAR',checkvarying('T0VAR','[subjecti]','[1]'),'[diffusionindices,diffusionindices];
+      ',if(n.TDpred > 0) paste0('etaprior[rowi,1:nlatent] =TDPREDEFFECT',checkvarying('TDPREDEFFECT','[subjecti]','[1]'),' * tdpreds[rowi] + etaprior[rowi,1:nlatent];'),'
+      etapriorcov[rowi,1:nlatent,1:nlatent] =  T0VAR',checkvarying('T0VAR','[subjecti]','[1]'),'[diffusionindices,diffusionindices];
+
+      etapriorcov[rowi,(nlatent+1):(nlatent*2),(nlatent+1):(nlatent*2)] = diag_matrix(rep_vector(1,nlatent)); //weiner covariance
+      etaprior[rowi,(nlatent+1):(nlatent*2)] = rep_vector(0,nlatent); //weiner mean
       }
       
       if(T0check[rowi]==0){
@@ -661,7 +660,7 @@ print("etaprior[rowi]",etaprior[rowi]);
               if(ki==2 || ki==3) state[1:nlatent]=rkstates[5] + dTsmall /2 * rkstates[ki-1];
               if(ki==4) state[1:nlatent] = rkstates[5] + dTsmall * rkstates[3];
               ',paste0(dynamiccalcs,';',collapse=' '),'
-              rkstates[ki] = sDRIFT * state[1:nlatent] + sCINT[,1];
+              rkstates[ki] = sDRIFT * state[1:nlatent] + sCINT[,1] + sDIFFUSION * state[(nlatent+1):(nlatent*2)];
             }
             stepstates[stepi,statei,] = (rkstates[5] + dTsmall/6  *(rkstates[1]+2*rkstates[2]+2*rkstates[3]+rkstates[4]))\'; //integrate over rk steps
             ',if(n.TDpred > 0) 'if(stepi == integrationsteps[rowi]) stepstates[stepi,statei] += (sTDPREDEFFECT * tdpreds[rowi])\';',' //tdpred effect only influences at observed time point
@@ -672,9 +671,11 @@ print("etaprior[rowi]",etaprior[rowi]);
       stepstates[,1,] = stepstates[,2,]; //because we need the mean in twice for weighting
       ukfstates[,1:nlatent] = stepstates[integrationsteps[rowi],,];
       ukfstates[1,] = ukfstates[2,];
+      etaprior[rowi] = colMeans(ukfstates);
       
 
       // integrate covariance based on mean of states
+      if(1==99){
       {
       vector[nlatent] rkstatechange;
       discreteDIFFUSION = rep_matrix(0,nlatent,nlatent); //initial additional covariance for integration
@@ -696,7 +697,9 @@ print("etaprior[rowi]",etaprior[rowi]);
       }
       etaprior[rowi,1:nlatent] = stepstates[integrationsteps[rowi],1,]\'; // store ukf state means from final integration step
       if(nlatentfull > nlatent) etaprior[rowi,(nlatent+1):nlatentfull] = etapost[rowi-1,(nlatent+1):nlatentfull]; // include non dynamic states
-    }} // end integration section
+      }}
+
+    } // end integration section
     '),'//end nonlinear dynamics
 
 
@@ -738,9 +741,8 @@ print("etaprior[rowi]",etaprior[rowi]);
     '),'//end linear dynamics
 
 
-
     etapriorcov[rowi] =  cov_of_matrix(ukfstates,2*nlatentfull+2, nlatentfull) / a^2;
-    etapriorcov[rowi,1:nlatent,1:nlatent] =  etapriorcov[rowi,1:nlatent,1:nlatent] + discreteDIFFUSION; 
+    //etapriorcov[rowi,1:nlatent,1:nlatent] =  etapriorcov[rowi,1:nlatent,1:nlatent] + discreteDIFFUSION; 
      
     } // end of if not t0 section
       
@@ -789,7 +791,7 @@ print("etaprior[rowi]",etaprior[rowi]);
         sMANIFESTVAR[whichbinary] = .5^2 - square(ypred_filt[whichbinary] - .5);
 
        Ypredcov_filt = cov_of_matrix(ukfmeasures,2*nlatentfull +2, nobsi) /a^2 + diag_matrix(sMANIFESTVAR[whichobs]);
-//print("ukfstates",ukfstates);
+
        K_filt = mdivide_right_spd(crosscov(ukfstates,ukfmeasures) /a^2, Ypredcov_filt); 
 
        etapostcov[rowi] = etapriorcov[rowi] - K_filt * Ypredcov_filt * K_filt\';
@@ -1246,7 +1248,7 @@ matrix crosscov(matrix a, matrix b){
       matrix[nlatent*nlatent,nlatent*nlatent] IIlatent2;
       int nlatentfull;
 
-      nlatentfull = ',ifelse(ukfpop,'nlatent + nindvarying;','nlatent;'),'
+      nlatentfull = ',ifelse(ukfpop,'nlatent*2 + nindvarying;','nlatent*2;'),'
       IIlatent = diag_matrix(rep_vector(1,nlatent));
       IIlatent2 = diag_matrix(rep_vector(1,nlatent*nlatent));
       }
@@ -1463,10 +1465,9 @@ parsigpoints = cholesky_decompose( (nindvarying + 0.5) * popcovsqrt * popcovsqrt
 indparamsmat[1:2] = rep_matrix(rawpopmeans[indvaryingindex],nindvarying)\';
 indparamsmat[3:(nindvarying+2),] = rep_matrix(rawpopmeans[indvaryingindex],nindvarying)\' + parsigpoints\';
 indparamsmat[(nindvarying+3):(nindvarying*2+2),] = rep_matrix(rawpopmeans[indvaryingindex],nindvarying)\' + parsigpoints\';
-//print("indparamsmat",indparamsmat);
+
 for(parseti in 2:(nindvarying*2+2)){
   indparams[1] = indparamsmat[parseti]\';
-//print("indparams",indparams);
   ',gsub('nsubjects','nsubjectsisone',subjectparamcalc(),fixed=TRUE),
 
   gsub('subject[rowi]','1',
