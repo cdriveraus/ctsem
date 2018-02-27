@@ -198,6 +198,9 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
       n.manifest = n.manifest,manifestNames = manifestNames,
       n.TDpred=n.TDpred,n.TIpred = n.TIpred,
       TDpredNames=TDpredNames,TIpredNames = TIpredNames))
+    
+    if(any(is.na(dat[,paste0(TDpredNames)])))  message ('Missing TD predictors found - replacing NAs with zeroes')
+      datawide[,paste0(TDpredNames,'_T',0:(Tpoints-1))][is.na(datawide[,paste0(TDpredNames,'_T',0:(Tpoints-1))])] <- 0
   }
   if(dataform == 'wide') datawide = dat
   
