@@ -182,6 +182,8 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   TDpredNames<-ctmodelobj$TDpredNames
   TIpredNames<-ctmodelobj$TIpredNames
   
+      
+  
   if(dataform != 'wide' & dataform !='long') stop('dataform must be either "wide" or "long"!')
   if(dataform == 'long'){
     idcol='id'
@@ -199,8 +201,10 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
       n.TDpred=n.TDpred,n.TIpred = n.TIpred,
       TDpredNames=TDpredNames,TIpredNames = TIpredNames))
     
+    if(n.TDpred > 0){
     if(any(is.na(dat[,paste0(TDpredNames)])))  message ('Missing TD predictors found - replacing NAs with zeroes')
-      datawide[,paste0(TDpredNames,'_T',0:(Tpoints-1))][is.na(datawide[,paste0(TDpredNames,'_T',0:(Tpoints-1))])] <- 0
+      datawide[,paste0(TDpredNames,'_T',rep(0:(Tpoints-1),each=n.TDpred))][is.na(datawide[,paste0(TDpredNames,'_T',rep(0:(Tpoints-1),each=n.TDpred))])] <- 0
+    }
   }
   if(dataform == 'wide') datawide = dat
   
@@ -266,7 +270,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
       ctmodelobj$TDPREDMEANS[,]=apply(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-1), each=n.TDpred))],2,mean)
       message('No missing time dependent predictors - TDPREDVAR and TDPREDMEANS fixed to observed moments for speed')
     }
-    
+
     #check for 0 variance predictors for random predictors implementation (not needed for Kalman because fixed predictors)
     ####0 variance predictor fix
     varCheck<-try(any(diag(stats::cov(datawide[, paste0(TDpredNames, '_T', rep(0:(Tpoints-1), each=n.TDpred))],
@@ -329,7 +333,6 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
     if(n.TIpred >0) message('Time independent predictors are not possible with single subject data, ignoring')  
     
     n.subjects<-nrow(datawide) 
-    
     datawide<-ctWideToLong(datawide, #if using Kalman, convert data to long format
       manifestNames=manifestNames, TDpredNames=TDpredNames, TIpredNames=TIpredNames, 
       n.manifest=n.manifest, 
@@ -676,13 +679,13 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
     #     rep(1:n.latent,each=Tpoints*n.manifest))]
     
     #trait loadings to latent
-    # browser()
+    # 
     if(!discreteTime) A$labels[cbind(rep(1:latentend,each=n.latent), (latentend+1):(latentend+n.latent))] <- paste0('discreteTRAIT_T',
       rep(0:(Tpoints-1),each=n.latent^2),'[',rep(1:n.latent,each=n.latent),',',1:n.latent,']')
     
     if(discreteTime) {
       for(i in 1:(Tpoints-1)){
-        # browser()
+        # 
         A$values[(i*n.latent+1):(i*n.latent+n.latent), (latentend+1):(latentend+n.latent)] <- diag(1,n.latent)
       }
     }
@@ -838,6 +841,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
       rep(predictorTDstart:predictorTDend, each=n.latent))] <- TDPREDEFFECT$ref #insert TDPREDEFFECT algebra references to A$labels    
     
     #add cov of time dependent predictors with T0
+    
     T0TDPREDCOV$ref <- paste0('T0TDPREDCOV[', 1:n.latent, ',', rep( 1:(n.TDpred*(Tpoints)), each=n.latent ), ']')
     S$values[1:n.latent, predictorTDstart:predictorTDend] <- T0TDPREDCOV$values #add starting values 
     S$values[predictorTDstart:predictorTDend, 1:n.latent] <- t(T0TDPREDCOV$values) #add starting values 
