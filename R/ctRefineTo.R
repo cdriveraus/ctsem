@@ -31,11 +31,11 @@ ctRefineTo<-function(datawide,ctmodelobj,modfunc=NULL,...){
   m$DRIFT[is.na(suppressWarnings(as.numeric(m$DRIFT)))]<-diag(-.3,m$n.latent)[is.na(suppressWarnings(as.numeric(m$DRIFT)))]
   m$LAMBDA[suppressWarnings(is.na(as.numeric(m$LAMBDA)))]<-1
   if(m$n.TDpred > 0) m$TDPREDEFFECT<-matrix(0,nrow=m$n.latent,ncol=m$n.TDpred)
-  if(m$n.TDpred > 0) m$T0TDPREDCOV<-matrix(0,nrow=m$n.latent,ncol=(m$n.TDpred*(m$Tpoints-1)))
+  if(m$n.TDpred > 0) m$T0TDPREDCOV<-matrix(0,nrow=m$n.latent,ncol=(m$n.TDpred*(m$Tpoints)))
   if(m$n.TIpred > 0) m$TIPREDEFFECT<-matrix(0,nrow=m$n.latent,ncol=m$n.TIpred)
   if(m$n.TIpred > 0) m$T0TIPREDEFFECT<-matrix(0,nrow=m$n.latent,ncol=m$n.TIpred)
-  if(m$n.TDpred > 0 & m$n.TIpred > 0) m$TDTIPREDCOV<-matrix(0,nrow=(m$n.TDpred*(m$Tpoints-1)),ncol=m$n.TIpred)
-  if(!is.null(m$TRAITTDPREDCOV)) m$TRAITTDPREDCOV<-matrix(0,nrow=m$n.latent,ncol=(m$n.TDpred*(m$Tpoints-1)))
+  if(m$n.TDpred > 0 & m$n.TIpred > 0) m$TDTIPREDCOV<-matrix(0,nrow=(m$n.TDpred*(m$Tpoints)),ncol=m$n.TIpred)
+  if(!is.null(m$TRAITTDPREDCOV)) m$TRAITTDPREDCOV<-matrix(0,nrow=m$n.latent,ncol=(m$n.TDpred*(m$Tpoints)))
   if(m$n.TDpred > 0) m$TDPREDVAR[lower.tri(m$TDPREDVAR)]<-0
   if(m$n.TIpred > 0) m$TIPREDVAR[lower.tri(m$TIPREDVAR)]<-0
   fit<-ctFit(datawide,m,nofit=TRUE,...)
