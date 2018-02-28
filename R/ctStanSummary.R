@@ -125,11 +125,12 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,...){
     parmatlists <- try(apply(e$rawpopmeans,1,ctStanParMatrices,model=object,timeinterval=timeinterval))
     if(class(parmatlists)!='try-error'){
     parmatarray <- array(unlist(parmatlists),dim=c(length(unlist(parmatlists[[1]])),length(parmatlists)))
-    parmats <- matrix(0,nrow=0,ncol=7)
+    parmats <- matrix(NA,nrow=length(unlist(parmatlists[[1]])),ncol=7)
+    rownames(parmats) <- paste0('r',1:nrow(parmats))
     counter=0
     for(mati in 1:length(parmatlists[[1]])){
-      for(coli in 1:nrow(parmatlists[[1]][[mati]])){
-        for(rowi in 1:ncol(parmatlists[[1]][[mati]])){
+        for(coli in 1:ncol(parmatlists[[1]][[mati]])){
+          for(rowi in 1:nrow(parmatlists[[1]][[mati]])){
           counter=counter+1
           new <- matrix(c(
             rowi,
@@ -138,8 +139,8 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,...){
             sd(parmatarray[counter,]),
             quantile(parmatarray[counter,],probs=c(.025,.5,.975))),
             nrow=1)
-          rownames(new) = names(parmatlists[[1]])[mati]
-          parmats<-rbind(parmats, new)
+          rownames(parmats)[counter] = names(parmatlists[[1]])[mati]
+          parmats[counter,]<-new
         }}}
     colnames(parmats) <- c('Row','Col', 'Mean','Sd','2.5%','50%','97.5%')
     
