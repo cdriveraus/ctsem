@@ -28,8 +28,10 @@
 #' level parameters to compute effects on. In either case 'all' uses all available.
 #' The integer corresponding to specific parameters can be found as follows, replacing \code{fit} as appropriate:
 #' \code{fit$ctstanmodel$pars[fit$ctstanmodel$pars$indvarying,'param']}.
-#' @param nsamples Positive integer specifying the maximum number of samples to use. 
+#' @param niterations Positive integer specifying the maximum number of saved iterations to use. 
 #' Character string 'all' can also be used.
+#' @param nsubjects Positive integer specifying the number of subjects to compute values for.
+#' Character string 'all' can also be used. Time taken is a function of nsubjects*niterations.
 #' @param plot Logical. If TRUE, nothing is returned but instead \code{\link{ctPlotArray}}
 #' is used to plot the output instead.
 #' @param timeinterval positive numeric indicating time interval to use for discrete time parameter matrices,
@@ -44,9 +46,10 @@
 #' ctStanTIpredeffects(ctstantestfit,plot=TRUE,whichpars='dtDRIFT',nsamples=10)
 ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   includeMeanUncertainty=FALSE,
-  whichTIpreds=1,parmatrices=TRUE, whichpars='all', nsamples=200,timeinterval=1,
+  whichTIpreds=1,parmatrices=TRUE, whichpars='all', nsamples=50, timeinterval=1,
+  nsubjects=50,
   plot=FALSE,...){
-  
+
   #drop fixed and duplicated params
   spec_nofixed <- fit$ctstanmodel$pars[is.na(fit$ctstanmodel$pars$value),,drop=FALSE]
   spec_nofixed_noduplicates <- spec_nofixed[!duplicated(spec_nofixed$param),]
@@ -54,11 +57,19 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   #get indvarying rawpopmeans
   e<-extract(fit$stanfit)
   rawpopmeans <- e$rawpopmeans
+  
+  niter<-dim(e$rawpopmeans)[1]
+  if(nsamples > niter) nsamples <- niter
+  rawpopmeans <- rawpopmeans[sample(x = 1:niter, nsamples,replace = FALSE),]
+  
   if(!includeMeanUncertainty) rawpopmeans <- matrix(apply(rawpopmeans,2,median),byrow=TRUE,nrow=nrow(rawpopmeans),ncol=ncol(rawpopmeans))
   rawpopmeansindvarying <- rawpopmeans[,spec_nofixed_noduplicates$indvarying,drop=FALSE] 
   
-  
   tipreds<-fit$data$tipreds[,whichTIpreds,drop=FALSE]
+  if(nsubjects=='all') nsubjects = nrow(tipreds)
+  if(nsubjects > nrow(tipreds)) nsubjects <- nrow(tipreds)
+  tipreds <- tipreds[sample(x = 1:nsubjects, nsubjects,replace = FALSE),]
+
   tieffect<-e$tipredeffect[,,whichTIpreds,drop=FALSE]
   
   
@@ -73,16 +84,10 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   
   tiorder<-order(tipreds[,1])
   tipreds<-tipreds[tiorder,,drop=FALSE] #order tipreds according to first one
-  niter<-dim(e$rawpopmeans)[1]
-  nsubjects <- nrow(tipreds)
-  
-  if(nsamples > niter) nsamples <- niter
-  
-  samples <- sample(x = 1:niter, nsamples,replace = FALSE)
   
   message('Calculating time independent predictor effects...')
 
-  raweffect <- aaply(samples,1,function(iterx) { #for every iter
+  raweffect <- aaply(1:nrow(rawpopmeans),1,function(iterx) { #for every iter
     aaply(tipreds,1,function(tix){ #and every distinct tipred vector
       rawpopmeansindvarying[iterx,] + matrix(tieffect[iterx,,],nrow=dim(tieffect)[2]) %*% tix
     },.drop=FALSE)
@@ -107,7 +112,7 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   
 
   if(parmatrices)  {
-    rawpopmeans <- rawpopmeans[rep(samples,each=nsubjects),] #match rows of rawpopmeans and raweffect
+    rawpopmeans <- rawpopmeans[rep(1:nrow(rawpopmeans),each=nsubjects),] #match rows of rawpopmeans and raweffect
     raweffect <- matrix(raweffect,ncol=dim(raweffect)[3])
     
     parmatlists<-lapply(1:nrow(rawpopmeans), function(x) { #for each param vector
@@ -123,14 +128,14 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
     parmats <- matrix(0,nrow=0,ncol=2)
     counter=0
     for(mati in 1:length(parmatlists[[1]])){
-      for(rowi in 1:nrow(parmatlists[[1]][[mati]])){
         for(coli in 1:ncol(parmatlists[[1]][[mati]])){
+          for(rowi in 1:nrow(parmatlists[[1]][[mati]])){
           counter=counter+1
           new <- matrix(c(
             rowi,
             coli),
             nrow=1)
-          rownames(new) = names(parmatlists[[1]])[mati]
+          rownames(new) = paste0(names(parmatlists[[1]])[[mati]])
           parmats<-rbind(parmats, new)
         }}}
     colnames(parmats) <- c('Row','Col') 
@@ -169,7 +174,7 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
     subject=tiorder #subjects reordered because tipreds were at top
   )
   
-  out <- aperm(out, c(3,2,1))
+  out <- list(y=aperm(out, c(3,2,1)), x=tipreds[,1])
 
   if(!plot) return(out) else {
     dots <- list(...)

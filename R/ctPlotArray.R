@@ -1,10 +1,10 @@
 
-#' Plots a three dimensional array
+#' Plots three dimensional y values for quantile plots
 #' 
-#' 1st margin sets line values, 2nd sets variables, 3rd quantiles.
+#' 1st margin of $Y sets line values, 2nd sets variables, 3rd quantiles.
 #'
-#' @param yarray 3 dimensional array to use for Y values
-#' @param x numeric vector specifying x axis
+#' @param input list containing 3 dimensional array to use for Y values, \code{$y}
+#' and vector of corresponding x values \code{$x}.
 #' @param grid Logical. Plot with a grid?
 #' @param colvec color vector of same length as 2nd margin.
 #' @param lwdvec lwd vector of same length as 2nd margin.
@@ -25,14 +25,19 @@
 #' y <- ctStanTIpredeffects(ctstantestfit,plot=FALSE,whichpars='dtDRIFT',nsamples=10)
 #' x<-ctstantestfit$data$tipreds[order(ctstantestfit$data$tipreds[,1]),1]
 #' ctPlotArray(y,x)
-ctPlotArray <- function(yarray,x,
+ctPlotArray <- function(input,
   grid=FALSE,
   colvec='auto',lwdvec='auto',ltyvec='auto',typevec='auto',
   plotcontrol=list(ylab='Array values', xlab='X values',xaxs='i'),
   legend=TRUE,legendcontrol=list(x='topright'),
   polygon=TRUE, polygonalpha=.1,polygoncontrol=list(border=NA,steps=25)){
   
-  # browser()
+  if(class(input)!='list') stop('Input must be a list containing y and x subobjects!')
+  yarray <- input$y
+  x <- input$x
+  if(length(dim(yarray))!=3) stop('$y subobject must have 3 dimensions!')
+  if(length(x) != length(yarray[,1,1])) stop ('Length of 1st margin of $y and $x must be the same!')
+  
   separate=FALSE
   nvars<-dim(yarray)[2]
   
