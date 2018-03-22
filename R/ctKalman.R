@@ -113,8 +113,8 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
       snewdat[,'time'] <- snewtimes
       snewdat[,TDpredNames] <- 0
       sdat <- rbind(sdat,snewdat)
-      sdat<-sdat[!duplicated(sdat[,'time']),]
-      sdat <- sdat[order(sdat[,'time']),]
+      sdat<-sdat[!duplicated(sdat[,'time']),,drop=FALSE]
+      sdat <- sdat[order(sdat[,'time']),,drop=FALSE]
       sdat[,c(manifestNames,TDpredNames)] [sdat[,c(manifestNames,TDpredNames)]==99999] <- NA
       sdat[,'subject'] <- subjecti
     }

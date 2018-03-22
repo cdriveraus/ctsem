@@ -6,6 +6,8 @@
 #' @param timeinterval positive numeric indicating time interval to use for discrete time parameter calculations
 #' reported in summary. 
 #' @param digits integer denoting number of digits to report.
+#' @param parmatrices if TRUE, also return additional parameter matrices -- can be slow to compute
+#' for large models with many samples.
 #' @param ... Unused at present.
 #' @return List containing summary items.
 #' @examples
@@ -13,11 +15,11 @@
 #' @method summary ctStanFit
 #' @export
 
-summary.ctStanFit<-function(object,timeinterval=1,digits=3,...){
+summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...){
   if(class(object) != 'ctStanFit') stop('Not a ctStanFit object!')
   
   if(class(object$stanfit)=='stanfit'){ #summary of samples
-    
+
     
     s<-getMethod('summary','stanfit')(object$stanfit)
     
@@ -121,7 +123,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,...){
       out$tipreds= cbind(out$tipreds,z)[order(abs(z)),]
     }
     
-  
+  if(parmatrices){
     parmatlists <- try(apply(e$rawpopmeans,1,ctStanParMatrices,model=object,timeinterval=timeinterval))
     if(class(parmatlists)!='try-error'){
     parmatarray <- array(unlist(parmatlists),dim=c(length(unlist(parmatlists[[1]])),length(parmatlists)))
@@ -135,12 +137,12 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,...){
           new <- matrix(c(
             rowi,
             coli,
-            mean(parmatarray[counter,]),
-            sd(parmatarray[counter,]),
-            quantile(parmatarray[counter,],probs=c(.025,.5,.975))),
+            mean(parmatarray[counter,],na.rm=TRUE),
+            sd(parmatarray[counter,],na.rm=TRUE),
+            quantile(parmatarray[counter,],probs=c(.025,.5,.975),na.rm=TRUE)),
             nrow=1)
-          rownames(parmats)[counter] = names(parmatlists[[1]])[mati]
-          parmats[counter,]<-new
+          try(rownames(parmats)[counter] <- names(parmatlists[[1]])[mati])
+          try(parmats[counter,]<-new)
         }}}
     colnames(parmats) <- c('Row','Col', 'Mean','Sd','2.5%','50%','97.5%')
     
@@ -162,6 +164,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,...){
       'Covariance related matrices shown as covariance matrices, correlations have (cor) suffix. Asymptotic (asym) matrices based on infinitely large time interval.')
     }
     if(class(parmatlists)=='try-error') out$parmatNote = 'Could not calculate parameter matrices'
+  }
     
     out$popsd=round(s$summary[c(grep('hsd_',rownames(s$summary))),
       c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],digits=digits)
@@ -174,6 +177,8 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,...){
     
     out$logprob=round(s$summary[c(grep('lp',rownames(s$summary))),
       c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],digits=digits)
+    
+    if(!parmatrices) out$parmatNote <- 'For additional summary matrices, use argument: parmatrices = TRUE'
     
     
     
@@ -188,6 +193,6 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,...){
     out$popsd=object$stanfit$transformedpars[grep('hsd_',rownames(object$stanfit$transformedpars)),]
     out$logprob=round(-object$stanfit$optimfit$value)
   }
-  
+
   return(out)
 }

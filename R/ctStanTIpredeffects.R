@@ -36,6 +36,9 @@
 #' is used to plot the output instead.
 #' @param timeinterval positive numeric indicating time interval to use for discrete time parameter matrices,
 #' if \code{parmatrices=TRUE}.
+#' @param filter either NA, or a length 3 vector, where the first element contains the time independent predictor index
+#' to filter by, and the second contains the comparison operator in string form (e.g. "< 3",
+#' to only calculate effects for subjects where the tipreds of the denoted index are less than 3).
 #' @param ... arguments to pass to \code{\link{ctPlotArray}} for plotting.
 #' @return Either a three dimensional array of predictor effects, or nothing with a plot
 #' generated.
@@ -47,12 +50,13 @@
 ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   includeMeanUncertainty=FALSE,
   whichTIpreds=1,parmatrices=TRUE, whichpars='all', nsamples=50, timeinterval=1,
-  nsubjects=50,
+  nsubjects=50,filter=NA,
   plot=FALSE,...){
 
-  #drop fixed and duplicated params
+  #drop fixed, stationary, duplicated params
   spec_nofixed <- fit$ctstanmodel$pars[is.na(fit$ctstanmodel$pars$value),,drop=FALSE]
-  spec_nofixed_noduplicates <- spec_nofixed[!duplicated(spec_nofixed$param),]
+  spec_nofixed_noduplicates <- spec_nofixed[!duplicated(spec_nofixed$param),,drop=FALSE]
+  spec_nofixed_noduplicates <- spec_nofixed_noduplicates[spec_nofixed_noduplicates$param !='stationary',,drop=FALSE]
   
   #get indvarying rawpopmeans
   e<-extract(fit$stanfit)
@@ -64,11 +68,13 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   
   if(!includeMeanUncertainty) rawpopmeans <- matrix(apply(rawpopmeans,2,median),byrow=TRUE,nrow=nrow(rawpopmeans),ncol=ncol(rawpopmeans))
   rawpopmeansindvarying <- rawpopmeans[,spec_nofixed_noduplicates$indvarying,drop=FALSE] 
-  
-  tipreds<-fit$data$tipreds[,whichTIpreds,drop=FALSE]
+
+  tipreds<-fit$data$tipreds
+  if(any(!is.na(filter))) tipreds <- eval(parse(text=paste0('tipreds[tipreds[,',filter[1],']',filter[2],',,drop=FALSE]')))
+  tipreds <- tipreds[,whichTIpreds,drop=FALSE]
   if(nsubjects=='all') nsubjects = nrow(tipreds)
   if(nsubjects > nrow(tipreds)) nsubjects <- nrow(tipreds)
-  tipreds <- tipreds[sample(x = 1:nsubjects, nsubjects,replace = FALSE),]
+  tipreds <- tipreds[sample(x = 1:nsubjects, nsubjects,replace = FALSE),,drop=FALSE]
 
   tieffect<-e$tipredeffect[,,whichTIpreds,drop=FALSE]
   
