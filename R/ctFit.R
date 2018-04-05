@@ -23,7 +23,7 @@
 #' Defaults to \code{c('T0TRAITEFFECT','T0TIPREDEFFECT')}, constraining only
 #' between person effects to stationarity. Use \code{NULL} for no constraints,
 #' or 'all' to constrain all T0 matrices.
-#' @param optimizer character string, defaults to the open-source 'SLSQP' optimizer that is distributed
+#' @param optimizer character string, defaults to the open-source 'CSOLNP' optimizer that is distributed
 #' in all versions of OpenMx. However, 'NPSOL' may sometimes perform better for these problems,
 #' though requires that you have installed OpenMx via the OpenMx web site, by running:
 #' \code{source('http://openmx.psyc.virginia.edu/getOpenMx.R')} 
@@ -986,7 +986,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
     
     uniqueintervals<-c(sort(unique(c(datawide[,paste0('dT', 1:(Tpoints-1))]))))
     
-    intervalsi <- matrix(apply(datawide[,paste0('dT', 1:(Tpoints-1)),drop=F], 2, 
+    intervalsi <- matrix(apply(datawide[,paste0('dT', 1:(Tpoints-1)),drop=FALSE], 2, 
       function(x) match(x, uniqueintervals)),ncol=(Tpoints-1))
     colnames(intervalsi)<-paste0('intervalID_T',1:(Tpoints-1))
     
@@ -1411,8 +1411,10 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   
   
   
-  
+
   model  <-  OpenMx::mxModel("ctsem", #type="RAM", #begin specifying the mxModel
+    latentVars = paste0(rep(latentNames, Tpoints), "_T", rep(0:(Tpoints-1), each=n.latent)),
+    manifestVars = FILTERnamesx,
     mxData(observed = datawide, type = "raw"), 
     
     mxMatrix(type = "Iden", nrow = n.latent, ncol = n.latent, free = FALSE, name = "II"), #identity matrix
@@ -1482,16 +1484,15 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   }
   if('T0MEANS' %in% stationary & asymptotes!=TRUE) model<-OpenMx::mxModel(model, asymCINTalg)
   
-  
   if(objective!='Kalman' & objective != 'Kalmanmx') model<-OpenMx::mxModel(model, #include RAM matrices
     
-    mxMatrix(values = A$values, free = F, labels = A$labels, dimnames = list(FILTERnamesy, FILTERnamesy), name = "A"),   #directed effect matrix   
+    mxMatrix(values = A$values, free = FALSE, labels = A$labels, dimnames = list(FILTERnamesy, FILTERnamesy), name = "A"),   #directed effect matrix   
     
-    mxMatrix(values = S$values, free = F, labels = S$labels, dimnames = list(FILTERnamesy, FILTERnamesy), name = "S"),   #symmetric effect matrix
+    mxMatrix(values = S$values, free = FALSE, labels = S$labels, dimnames = list(FILTERnamesy, FILTERnamesy), name = "S"),   #symmetric effect matrix
     
     mxMatrix(values = FILTER$values, free = FALSE, dimnames = list(FILTERnamesx, FILTERnamesy), name = "F"),  #filter matrix
     
-    mxMatrix(free = F, values = t(M$values), labels = t(M$labels), dimnames = list(1, FILTERnamesy), name = "M") #mean matrix
+    mxMatrix(free = FALSE, values = t(M$values), labels = t(M$labels), dimnames = list(1, FILTERnamesy), name = "M") #mean matrix
   )
   
   
@@ -1759,9 +1760,9 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   
   #   setobjective<-function(){
   ######### objective functions
-  
   if(objective == "mxRAM") {  
-    model <- OpenMx::mxModel(model, 
+    model <- OpenMx::mxModel(model, type='RAM',
+      mxMatrix(values = FILTER$values, free = FALSE, dimnames = list(FILTERnamesx, FILTERnamesy), name = "F"),
       #       mxAlgebra(F%*%solve(bigI - A)%*%S%*%t(solve(bigI - A))%*%t(F), name = "expCov"), 
       #       mxAlgebra(t(F%*%(solve(bigI - A))%*%t(M)), name = "expMean"), 
       #       mxMatrix(type = "Iden", nrow = nrow(A$labels), ncol = ncol(A$labels), name = "bigI"), 
