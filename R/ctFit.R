@@ -1412,9 +1412,11 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   
   
 
-  model  <-  OpenMx::mxModel("ctsem", #type="RAM", #begin specifying the mxModel
-    latentVars = paste0(rep(latentNames, Tpoints), "_T", rep(0:(Tpoints-1), each=n.latent)),
-    manifestVars = FILTERnamesx,
+  model  <-  OpenMx::mxModel("ctsem", #begin specifying the mxModel
+    # type="RAM",
+    # latentVars = paste0(rep(latentNames, Tpoints), "_T", rep(0:(Tpoints-1), each=n.latent)),
+      # manifestVars = FILTERnamesx, 
+      # latentVars = FILTERnamesy[!(FILTERnamesy %in% FILTERnamesx)],
     mxData(observed = datawide, type = "raw"), 
     
     mxMatrix(type = "Iden", nrow = n.latent, ncol = n.latent, free = FALSE, name = "II"), #identity matrix
@@ -1761,12 +1763,16 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   #   setobjective<-function(){
   ######### objective functions
   if(objective == "mxRAM") {  
-    model <- OpenMx::mxModel(model, type='RAM',
-      mxMatrix(values = FILTER$values, free = FALSE, dimnames = list(FILTERnamesx, FILTERnamesy), name = "F"),
+    # browser()
+    model <- OpenMx::mxModel(model, 
+      # type='RAM',
+      # manifestVars = FILTERnamesx,
+      # latentVars = FILTERnamesy[!(FILTERnamesy %in% FILTERnamesx)],
+      # mxMatrix(values = FILTER$values, free = FALSE, dimnames = list(FILTERnamesx, FILTERnamesy), name = "F"),
       #       mxAlgebra(F%*%solve(bigI - A)%*%S%*%t(solve(bigI - A))%*%t(F), name = "expCov"), 
       #       mxAlgebra(t(F%*%(solve(bigI - A))%*%t(M)), name = "expMean"), 
       #       mxMatrix(type = "Iden", nrow = nrow(A$labels), ncol = ncol(A$labels), name = "bigI"), 
-      mxExpectationRAM(M = "M"), 
+      mxExpectationRAM(M = "M",thresholds=ifelse(is.null(ctmodelobj$ordNames),NA,'thresh')),
       mxFitFunctionML(vector=FALSE)
     )
   }
@@ -1866,7 +1872,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
     #         mxMatrix(type = "Iden", nrow = nrow(A$labels, ncol = ncol(A$labels, name = "bigI"), 
     if(objective=='mxFIML'){
       model<-OpenMx::mxModel(model,
-        mxExpectationNormal(covariance = "expCov", means = "expMean", dimnames = FILTERnamesx), 
+        mxExpectationNormal(covariance = "expCov", means = "expMean", dimnames = FILTERnamesx,thresholds=ifelse(is.null(ctmodelobj$ordNames),NA,'thresh')), 
         mxFitFunctionML())
     }
     
@@ -1904,7 +1910,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
     
     meanData <- apply(datawide[,manifests,drop=FALSE],2,mean,na.rm=TRUE)
     model<-OpenMx::mxModel(model, mxData(covData, type='cov', means=meanData, numObs=nrow(datawide)),
-      mxExpectationRAM(M='M'),
+      mxExpectationRAM(M='M',thresholds=ifelse(is.null(ctmodelobj$ordNames),NA,'thresh')),
       mxFitFunctionML()
     )
   }
@@ -1999,7 +2005,8 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
       mxMatrix(name='firstObsDummy', free=FALSE, labels='data.firstObsDummy', nrow=1, ncol=1),
       
       mxExpectationStateSpace(A='discreteDRIFT', B='B', C='LAMBDA', 
-        D="D", Q='discreteDIFFUSIONwithdummy', R='MANIFESTVAR', x0='x0', P0='T0VAR', u="u"), 
+        D="D", Q='discreteDIFFUSIONwithdummy', R='MANIFESTVAR', x0='x0', P0='T0VAR', u="u",
+        thresholds=ifelse(is.null(ctmodelobj$ordNames),NA,'thresh')), 
       
       mxFitFunctionML()
       
@@ -2033,7 +2040,8 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
       mxMatrix('Full', 1, 1, name='time', labels='data.dT1'),
       
       mxExpectationSSCT(A='DRIFT', B='B', C='LAMBDA', 
-        D="D", Q='DIFFUSION', R='MANIFESTVAR', x0='T0MEANS', P0='T0VAR', u="u", t='time'), 
+        D="D", Q='DIFFUSION', R='MANIFESTVAR', x0='T0MEANS', P0='T0VAR', u="u", t='time',
+        thresholds=ifelse(is.null(ctmodelobj$ordNames),NA,'thresh')), 
       
       mxFitFunctionML(vector=FALSE)
     )
@@ -2129,6 +2137,56 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
     }
   }
   
+  
+  ###include ordinal thresholds
+  if(!is.null(ctmodelobj$ordNames[1])){
+    ordNames<-ctmodelobj$ordNames
+    ordLevels<-ctmodelobj$ordLevels
+    
+    nOrdinal <- length(ordNames)
+    ordvars <- ordNames
+    
+    if(objective!='Kalman' && objective != 'Kalmanmx') ordvars <- paste0(rep(ordNames,each=Tpoints),'_T',rep(0:(Tpoints-1),nOrdinal))
+    if(objective=='Kalman' || objective == 'Kalmanmx') Tpoints <- 1
+    maxthresholds <- max(unlist(lapply(ordLevels,length)))-1
+    nthresholds <- (unlist(lapply(ordLevels,length)))-1
+    tb <- matrix(NA,maxthresholds,length(ordvars))
+    colnames(tb) <- ordvars
+    tfree <- tb
+    tfree[,] <- FALSE
+    tvalues <- tb
+    tlabels <- tb
+    tlbound <- tb
+    tubound <- tb
+    
+    dat <- as.data.frame(model@data$observed)
+    
+    
+    for(vari in 1:length(ordNames)){
+      tfree[1:nthresholds[vari],(1+(Tpoints*(vari-1))):(Tpoints*vari)] <- TRUE
+      tvalues[1:nthresholds[vari],(1+(Tpoints*(vari-1))):(Tpoints*vari)] <- ordLevels[[vari]][-(1+nthresholds[vari])]+.001
+      tlabels[1:nthresholds[vari],(1+(Tpoints*(vari-1))):(Tpoints*vari)] <- paste0('thresh_',ordNames[vari],'_',1:nthresholds[vari])
+      tlbound[1:nthresholds[vari],(1+(Tpoints*(vari-1))):(Tpoints*vari)] <- ordLevels[[vari]][-(1+nthresholds[vari])]
+      tubound[1:nthresholds[vari],(1+(Tpoints*(vari-1))):(Tpoints*vari)] <- ordLevels[[vari]][-1]
+      dat[,ordvars[(1+(Tpoints*(vari-1))):(Tpoints*vari)]] <- mxFactor(dat[,ordvars[(1+(Tpoints*(vari-1))):(Tpoints*vari)]],levels = ordLevels[[vari]]) 
+    }
+    # browser()
+    thresh <- mxMatrix(name='thresh',
+      ncol=length(ordvars),
+      nrow=maxthresholds,
+      dimnames = list(paste0('row',1:maxthresholds),ordvars),
+      free = tfree,
+      values = tvalues,
+      labels = tlabels,
+      lbound = tlbound,
+      ubound= tubound)
+    
+    model<-mxModel(
+  model, 
+  thresh,
+  mxData(observed = dat, type = "raw"))
+    
+  }
   
   
   
