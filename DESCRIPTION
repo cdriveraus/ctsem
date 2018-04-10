@@ -33,7 +33,8 @@ Imports:
     grDevices,
     parallel,
     shiny,
-    numDeriv
+    numDeriv,
+    MASS
 LazyData: Yes
 Suggests:
     knitr,
