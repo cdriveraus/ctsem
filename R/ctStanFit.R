@@ -31,8 +31,7 @@
 #' asymptotic DIFFUSION matrix (Q*_inf in the vignette / paper) (making it difficult if not impossible to properly specify
 #' higher order processes). The speed increases come about because the internal Kalman filter routine has many steps removed, and the
 #' asymptotic diffusion parameters are less dependent on the DRIFT matrix.
-#' @param optimize if TRUE, use Stan's optimizer for maximum a posteriori estimates. 
-#' Setting this also sets \code{estpop=FALSE}
+#' @param optimize if TRUE, optimize instead of sample, giving maximum a posteriori estimates, or ML estimates with the \code{nopriors=TRUE} switch.
 #' @param nopriors logical. If TRUE, any priors are disabled, can be desirable for optimization.
 #' @param vb if TRUE, use Stan's variational approximation. Rudimentary testing suggests it is not accurate 
 #' for many ctsem models at present.
@@ -53,7 +52,10 @@
 #' by instead setting parameter names of T0MEANS and T0VAR matrices in the input model to 'stationary', for
 #' elements that should be fixed to stationarity.
 #' @param maxtimestep positive numeric, only used for models with non-linear dynamics, specifying the largest time
-#' step taken during integration. Smaller values are more accurate, but slower. 
+#' span covered by the Runge-Kutta 4 integration. The large default ensures that for each observation time interval, 
+#' only RK4 integration is used. When \code{maxtimestep} is smaller than the observation time interval, RK4 integration is used within an Euler loop. 
+#' Smaller values may offer greater accuracy, but are slower and often unnecessary. In case of initial value problems, reducing
+#' this is one thing to try.
 #' @param lineardynamics Logical. Set to TRUE to use linear dynamics -- faster but only accurate when dynamic
 #' parameters do not change over time.
 #' @param ... additional arguments to pass to \code{\link[rstan]{stan}} function.
@@ -90,7 +92,7 @@
 ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, kalman=TRUE, binomial=FALSE,
   estpop=TRUE, noncentered=TRUE, fit=TRUE, ukfpop=FALSE, stationary=FALSE,plot=FALSE,  diffusionindices='all',
   asymdiffusion=FALSE,optimize=FALSE, nopriors=FALSE, vb=FALSE, chains=1,cores='maxneeded', inits=NULL,initwithoptim=FALSE,
-  maxtimestep = .1, lineardynamics=FALSE,
+  maxtimestep = 9999, lineardynamics=FALSE,
   control=list(adapt_delta=.8, adapt_init_buffer=2, adapt_window=2,
     max_treedepth=8,stepsize=.001),verbose=FALSE,...){
   
@@ -472,6 +474,7 @@ integrationsteps <- sapply(dT,function(x)  ceiling(x / maxtimestep));
       ',if(kalman) paste0('etapriorcov[rowi] =  makesym(quad_form(etapostcov[rowi-1], discreteDRIFT[driftindex[rowi],diffusionindices,diffusionindices]\')  + discreteDIFFUSION[diffusionindex[rowi]],.00001);'),'
       ',if(!kalman) 'etapost[rowi] = etaprior[rowi] +  discreteDIFFUSIONsqrt[diffusionindex[rowi]] * etapostbase[(1+(rowi-1-subjecti)*nlatent):((rowi-subjecti)*nlatent)];','
       }
+
       
       ',if(kalman) 'etapost[rowi] = etaprior[rowi];
         etapostcov[rowi] = etapriorcov[rowi];','
@@ -495,8 +498,8 @@ integrationsteps <- sapply(dT,function(x)  ceiling(x / maxtimestep));
 
       ',if(kalman) paste0(
         'Ypredcov_filt = makesym(quad_form(etapriorcov[rowi], LAMBDA_filt[,diffusionindices]\'),.00001) + MANIFESTVAR',checkvarying('MANIFESTVAR','[subjecti]','[1]'),'[whichobs,whichobs];
-    
-Ypredcov_filt_sqrt=cholesky_decompose(Ypredcov_filt); 
+
+      Ypredcov_filt_sqrt=cholesky_decompose(Ypredcov_filt); 
 
        K_filt = mdivide_right_spd(etapriorcov[rowi] * LAMBDA_filt[,diffusionindices]\', Ypredcov_filt); 
 
@@ -524,7 +527,6 @@ Ypredcov_filt_sqrt=cholesky_decompose(Ypredcov_filt);
       if(!kalman & !binomial) paste0('err = Y_filt - ( MANIFESTMEANS',
         checkvarying('MANIFESTMEANS','[subjecti]','[1]'),
         '[whichobs] + LAMBDA_filt * etapost[rowi] ); // measurement error'),'
-
 
       ',if(kalman) 'etapost[rowi,diffusionindices] = etaprior[rowi,diffusionindices] + K_filt * err;','
       
@@ -636,71 +638,59 @@ Ypredcov_filt_sqrt=cholesky_decompose(Ypredcov_filt);
       ',if(n.TDpred > 0) paste0('etaprior[rowi,1:nlatent] =TDPREDEFFECT',checkvarying('TDPREDEFFECT','[subjecti]','[1]'),' * tdpreds[rowi] + etaprior[rowi,1:nlatent];'),'
       etapriorcov[rowi,1:nlatent,1:nlatent] =  T0VAR',checkvarying('T0VAR','[subjecti]','[1]'),'[diffusionindices,diffusionindices];
 
-      etapriorcov[rowi,(nlatent+1):(nlatent*2),(nlatent+1):(nlatent*2)] = diag_matrix(rep_vector(1,nlatent)); //weiner covariance
-      etaprior[rowi,(nlatent+1):(nlatent*2)] = rep_vector(0,nlatent); //weiner mean
+      //for first row, set Weiner process prior (does this ever cause non positive definite issues if done at every step?)
+      etapriorcov[rowi,(nlatent+1):(nlatent*2),(nlatent+1):(nlatent*2)] = diag_matrix(rep_vector(1,nlatent)); 
+      etaprior[rowi,(nlatent+1):(nlatent*2)] = rep_vector(0,nlatent); //weiner mean 
+        sigpoints = cholesky_decompose(makesym(etapriorcov[rowi] * (nlatentfull +l),.00001));
+        ukfstates[2,] = etaprior[rowi]\';
+        ukfstates[1,] = etaprior[rowi]\';
+        ukfstates[3:(nlatentfull+2),] = rep_matrix(etaprior[rowi],nlatentfull)\' + sigpoints;
+        ukfstates[(nlatentfull+3):(nlatentfull*2+2),] = rep_matrix(etaprior[rowi],nlatentfull)\' - sigpoints;
+//print("ukfstates t0",ukfstates);
       }
+   
+  
+
       
       if(T0check[rowi]==0){
         ',if(!lineardynamics) paste0('
-        {
-        matrix[nlatentfull*2+2,nlatent] stepstates[integrationsteps[rowi]]; //higher level integration steps
+      //for each row, set Weiner process prior (does this ever cause non positive definite issues if done at every step?)
+      etapostcov[rowi-1,(nlatent+1):(nlatent*2),] =  etapostcov[rowi-1,(nlatent+1):(nlatent*2),]*0;
+      etapostcov[rowi-1,,(nlatent+1):(nlatent*2)] = etapostcov[rowi-1,,(nlatent+1):(nlatent*2)] * 0;
+      etapostcov[rowi-1,(nlatent+1):(nlatent*2),(nlatent+1):(nlatent*2)] = diag_matrix(rep_vector(1,nlatent)); 
+      etapost[rowi-1,(nlatent+1):(nlatent*2)] = rep_vector(0,nlatent); //weiner mean 
+//print(etapostcov[rowi-1]);
         sigpoints = cholesky_decompose(makesym(etapostcov[rowi-1] * (nlatentfull +l),.00001));
+        dTsmall = dT[rowi] / integrationsteps[rowi];
+        ukfstates[2,] = etapost[rowi-1]\';
+        ukfstates[3:(nlatentfull+2),] = rep_matrix(etapost[rowi-1],nlatentfull)\' + sigpoints;
+        ukfstates[(nlatentfull+3):(nlatentfull*2+2),] = rep_matrix(etapost[rowi-1],nlatentfull)\' - sigpoints;
+//print("ukfstates mpud",ukfstates);
+//print("sDRIFT",sDRIFT);
+//print("sDIFFUSION",sDIFFUSION);
+//print("sCINT",sCINT);
         for(statei in 2:(nlatentfull*2+2)){ //for each ukf state sample
+          state = ukfstates[statei,]\';
           for(stepi in 1:integrationsteps[rowi]){ //for each euler integration step
-            if(stepi==1) {  //determine initial state for integration from ukf
-              if(statei==2) state = etapost[rowi-1];
-              if(statei > 2 && statei < nlatentfull +3) state = etapost[rowi-1] + sigpoints[,statei-2];
-              if(statei > nlatentfull +2) state = etapost[rowi-1] - sigpoints[,statei-(nlatentfull+2)];
-            }
-            if(stepi > 1) state[1:nlatent] = stepstates[stepi-1,statei,]\';
-            dTsmall = dT[rowi] / integrationsteps[rowi];
             rkstates[5] = state[1:nlatent]; //store initial states for this integration step
 
             for(ki in 1:4){ //runge kutta integration within euler scheme
               if(ki==2 || ki==3) state[1:nlatent]=rkstates[5] + dTsmall /2 * rkstates[ki-1];
               if(ki==4) state[1:nlatent] = rkstates[5] + dTsmall * rkstates[3];
               ',paste0(dynamiccalcs,';',collapse=' '),'
-              rkstates[ki] = sDRIFT * state[1:nlatent] + sCINT[,1] + sDIFFUSION * state[(nlatent+1):(nlatent*2)];
+              rkstates[ki] = sDRIFT * state[1:nlatent] + sCINT[,1] +  sDIFFUSION * state[(nlatent+1):(nlatent*2)] / sqrt(dT[rowi]);
             }
-            stepstates[stepi,statei,] = (rkstates[5] + dTsmall/6  *(rkstates[1]+2*rkstates[2]+2*rkstates[3]+rkstates[4]))\'; //integrate over rk steps
-            ',if(n.TDpred > 0) 'if(stepi == integrationsteps[rowi]) stepstates[stepi,statei] += (sTDPREDEFFECT * tdpreds[rowi])\';',' //tdpred effect only influences at observed time point
+            state[1:nlatent] = (rkstates[5] + dTsmall/6  *(rkstates[1]+2*rkstates[2]+2*rkstates[3]+rkstates[4])); //integrate over rk steps
+            ',if(n.TDpred > 0) 'if(stepi == integrationsteps[rowi]) state[1:nlatent] = state[1:nlatent] + (sTDPREDEFFECT * tdpreds[rowi]);',' //tdpred effect only influences at observed time point
           }
-        if(nlatentfull > nlatent) ukfstates[statei,(nlatent+1):nlatentfull] = state[(nlatent+1):nlatentfull]\'; // include non dynamic state variation
-        }
-
-      stepstates[,1,] = stepstates[,2,]; //because we need the mean in twice for weighting
-      ukfstates[,1:nlatent] = stepstates[integrationsteps[rowi],,];
-      ukfstates[1,] = ukfstates[2,];
-      etaprior[rowi] = colMeans(ukfstates);
-      
-
-      // integrate covariance based on mean of states
-      if(1==99){
-      {
-      vector[nlatent] rkstatechange;
-      discreteDIFFUSION = rep_matrix(0,nlatent,nlatent); //initial additional covariance for integration
-
-      for(stepi in 1:integrationsteps[rowi]){ //euler outer scheme
-        if(stepi==1) state = etapost[rowi-1];
-        stepstates[stepi,1,] = colMeans(stepstates[stepi,,])\'; //mean over ukf samples for covariance integration
-        rkstatechange = (stepstates[stepi,1,]\' - state[1:nlatent])/3; //change in state over this step for each rk increment
-        rkcovstates[5] = discreteDIFFUSION; //store initial cov for this integration step
-        for(ki in 1:4){ //runge kutta inner loop
-         if(ki==2 || ki==3) discreteDIFFUSION=rkcovstates[5] + dTsmall /2 * rkcovstates[ki-1];
-         if(ki==4) discreteDIFFUSION = rkcovstates[5] + dTsmall * rkcovstates[3];
-         if(ki>1) state[1:nlatent] = state[1:nlatent] + rkstatechange;
-         ',paste0(dynamiccalcs,';',collapse=' '),'
-         rkcovstates[ki] = sDRIFT * discreteDIFFUSION; // part of the gradient of the covariance
-         rkcovstates[ki] += rkcovstates[ki]\' + sDIFFUSION; //add the transpose of itself and new change
-        }
-        discreteDIFFUSION = (rkcovstates[5] + dTsmall/6  *(rkcovstates[1]+2*rkcovstates[2]+2*rkcovstates[3]+rkcovstates[4]));
+        ukfstates[statei,] = state\'; //now contains time updated state
       }
-      etaprior[rowi,1:nlatent] = stepstates[integrationsteps[rowi],1,]\'; // store ukf state means from final integration step
-      if(nlatentfull > nlatent) etaprior[rowi,(nlatent+1):nlatentfull] = etapost[rowi-1,(nlatent+1):nlatentfull]; // include non dynamic states
-      }}
 
-    } // end integration section
-    '),'//end nonlinear dynamics
+      ukfstates[1,] = ukfstates[2,];
+//print("ukfstates tupd",ukfstates);
+      etaprior[rowi] = colMeans(ukfstates);
+//print("etaprior[rowi]",etaprior[rowi]);  
+//end nonlinear dynamics'),'
 
 
  ',if(lineardynamics) paste0('
@@ -738,17 +728,19 @@ Ypredcov_filt_sqrt=cholesky_decompose(Ypredcov_filt);
       discreteDIFFUSION = makesym(discreteDIFFUSION - quad_form(discreteDIFFUSION,discreteDRIFT\'),.00001);
 
      
-    '),'//end linear dynamics
+//end linear dynamics   '),'
 
 
     etapriorcov[rowi] =  cov_of_matrix(ukfstates,2*nlatentfull+2, nlatentfull) / a^2;
     //etapriorcov[rowi,1:nlatent,1:nlatent] =  etapriorcov[rowi,1:nlatent,1:nlatent] + discreteDIFFUSION; 
-     
-    } // end of if not t0 section
+//print("etapriorcov[rowi]",etapriorcov[rowi]);
+    } // end of if not t0 section (time update)
       
       //store these now because missing values are not updated
       etapost[rowi] = etaprior[rowi];
       etapostcov[rowi] = etapriorcov[rowi];
+
+if(rowi==1 || rowi==2) print("ukfstates_tupd",ukfstates);
       
       if (nobsi > 0) {  // if some observations create right size matrices for missingness and calculate...
       
@@ -756,22 +748,21 @@ Ypredcov_filt_sqrt=cholesky_decompose(Ypredcov_filt);
         vector[nobsi] err;
         vector[nobsi] Y_filt;
         vector[nobsi] ypred_filt;
-
+        matrix[2*nlatentfull+2,nobsi] ukfmeasures; // expected measures based on sampled states
         matrix[nobsi, nobsi] Ypredcov_filt;
         matrix[nlatentfull, nobsi] K_filt; // kalman gain
         matrix[nobsi, nobsi] Ypredcov_filt_sqrt; 
-        matrix[2*nlatentfull+2,nobsi] ukfmeasures;
+
         LAMBDA_filt = sLAMBDA[whichobs,]; // loading matrix
 
-      ',if(ukfpop & 1==99) 'etalarge[(nlatent+1):nlatentfull] = rawpopmeans[indvaryingindex];','
-
-        sigpoints = cholesky_decompose(makesym(etapriorcov[rowi] * (nlatentfull +l),.00001));
+        //sigpoints = cholesky_decompose(makesym(etapriorcov[rowi] * (nlatentfull +l),.00001));
 
         for(statei in 2:(nlatentfull*2+2)){
-          if(statei==2) state = etaprior[rowi];
-          if(statei > 2 && statei < nlatentfull +3) state = etaprior[rowi] + sigpoints[,statei-2];
-          if(statei > nlatentfull +2) state = etaprior[rowi] - sigpoints[,statei-(nlatentfull+2)];
-          ukfstates[statei] = state\'; //store for crosscov calcs
+          state = ukfstates[statei,]\';
+          //if(statei==2) state = etaprior[rowi];
+          //if(statei > 2 && statei < nlatentfull +3) state = etaprior[rowi] + sigpoints[,statei-2];
+          //if(statei > nlatentfull +2) state = etaprior[rowi] - sigpoints[,statei-(nlatentfull+2)];
+          //ukfstates[statei] = state\'; //store for crosscov calcs
           ',paste(measurementcalcs,sep=';'),'
           {
             int mani;
@@ -782,7 +773,7 @@ Ypredcov_filt_sqrt=cholesky_decompose(Ypredcov_filt);
               }
           }
         } //end ukf update loop
-        ukfstates[1,]=ukfstates[2,];
+        //ukfstates[1,]=ukfstates[2,];
         ukfmeasures[1,] = ukfmeasures[2,]; // mean goes in twice for weighting
 
         ypred_filt = colMeans(ukfmeasures); // ukfmeasures\' * rep_vector(1.0 / (nlatentfull*2.0+2.0), nlatentfull*2+2); //state means
@@ -791,10 +782,11 @@ Ypredcov_filt_sqrt=cholesky_decompose(Ypredcov_filt);
         sMANIFESTVAR[whichbinary] = .5^2 - square(ypred_filt[whichbinary] - .5);
 
        Ypredcov_filt = cov_of_matrix(ukfmeasures,2*nlatentfull +2, nobsi) /a^2 + diag_matrix(sMANIFESTVAR[whichobs]);
-
+//print("Ypredcov_filt",Ypredcov_filt);
        K_filt = mdivide_right_spd(crosscov(ukfstates,ukfmeasures) /a^2, Ypredcov_filt); 
-
+//print("K_filt",K_filt);
        etapostcov[rowi] = etapriorcov[rowi] - K_filt * Ypredcov_filt * K_filt\';
+//print("K_filt * Ypredcov_filt * K_filt\'",K_filt * Ypredcov_filt * K_filt\');
 
       ',if(!ppchecking) 'Y_filt = Y[rowi,whichobs];','
       
@@ -806,7 +798,7 @@ Ypredcov_filt_sqrt=cholesky_decompose(Ypredcov_filt);
       
       err = Y_filt - ypred_filt; // prediction error
 
-
+if(rowi==1 || rowi==2) print("Ypredcov_filt",Ypredcov_filt, "K_filt", K_filt);
       etapost[rowi] = etaprior[rowi] + (K_filt * err);
 
       ',if(any(manifesttype==1)) 'll = ll+sum(log( Y_filt[whichbinary] .* (ypred_filt[whichbinary]) + (1-Y_filt[whichbinary]) .* (1-ypred_filt[whichbinary])));',' 
@@ -1465,9 +1457,10 @@ parsigpoints = cholesky_decompose( (nindvarying + 0.5) * popcovsqrt * popcovsqrt
 indparamsmat[1:2] = rep_matrix(rawpopmeans[indvaryingindex],nindvarying)\';
 indparamsmat[3:(nindvarying+2),] = rep_matrix(rawpopmeans[indvaryingindex],nindvarying)\' + parsigpoints\';
 indparamsmat[(nindvarying+3):(nindvarying*2+2),] = rep_matrix(rawpopmeans[indvaryingindex],nindvarying)\' + parsigpoints\';
-
+//print("indparamsmat",indparamsmat);
 for(parseti in 2:(nindvarying*2+2)){
   indparams[1] = indparamsmat[parseti]\';
+//print("indparams",indparams);
   ',gsub('nsubjects','nsubjectsisone',subjectparamcalc(),fixed=TRUE),
 
   gsub('subject[rowi]','1',
@@ -1732,8 +1725,8 @@ if(!approxpop & !ukfpop) ifelse(ukf, ukfilterfunc(ppchecking=FALSE), filteringfu
       
       stanargs <- list(fit = sm, 
         # enable_random_init=TRUE,
-        init_r=.05,
-        init=staninits,
+        init_r=0, #.05,
+        # init=staninits,
         refresh=20,
         iter=iter,
         data = standata, chains = ifelse(optimize==FALSE & vb==FALSE,chains,0), control=control,
