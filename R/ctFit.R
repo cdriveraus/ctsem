@@ -189,7 +189,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
     idcol='id'
     obsTpoints=max(unlist(lapply(unique(dat[,idcol]),function(x) 
       length(dat[dat[,idcol]==x, idcol]) )))
-    
+
     if(Tpoints != obsTpoints) stop(
       paste0('Tpoints in ctmodelobj = ',Tpoints,', not equal to ', obsTpoints, ', the maximum number of rows of any subject in dat'))
     
@@ -2164,7 +2164,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
     
     for(vari in 1:length(ordNames)){
       tfree[1:nthresholds[vari],(1+(Tpoints*(vari-1))):(Tpoints*vari)] <- TRUE
-      tvalues[1:nthresholds[vari],(1+(Tpoints*(vari-1))):(Tpoints*vari)] <- ordLevels[[vari]][-(1+nthresholds[vari])]+.001
+      tvalues[1:nthresholds[vari],(1+(Tpoints*(vari-1))):(Tpoints*vari)] <- ordLevels[[vari]][-(1+nthresholds[vari])]+.5
       tlabels[1:nthresholds[vari],(1+(Tpoints*(vari-1))):(Tpoints*vari)] <- paste0('thresh_',ordNames[vari],'_',1:nthresholds[vari])
       tlbound[1:nthresholds[vari],(1+(Tpoints*(vari-1))):(Tpoints*vari)] <- ordLevels[[vari]][-(1+nthresholds[vari])]
       tubound[1:nthresholds[vari],(1+(Tpoints*(vari-1))):(Tpoints*vari)] <- ordLevels[[vari]][-1]

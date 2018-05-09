@@ -23,38 +23,40 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='margi
   if(class(x)!='ctStanModel') stop('not a ctStanModel object!')
   m<-x$pars
   n<-5000
-   highmean=1
+  highmean=1
   lowmean=-1
   if(rows=='all') rows<-1:nrow(m)
   for(rowi in rows){
     if(is.na(m$value[rowi])){
-    
-    #rawpopsd
+      
+      #rawpopsd
       if(rawpopsd[1]=='marginalise'){
-    rawpopsdbase<-  stats::rnorm(nsamples)
-    if(!is.na(x$rawpopsdbaselowerbound)) rawpopsdbase <- rawpopsdbase[rawpopsdbase>x$rawpopsdbaselowerbound]
-    sdscale <- m$sdscale[rowi]
-    tform <- gsub('.*', '*',x$rawpopsdtransform,fixed=TRUE)
-    rawpopsdprior<-eval(parse(text=tform))
-    
-    nsamples<-length(rawpopsdprior) #adjust number of nsamples because of random n > 0
+        rawpopsdbase<-  stats::rnorm(nsamples)
+        if(!is.na(x$rawpopsdbaselowerbound)) rawpopsdbase <- rawpopsdbase[rawpopsdbase>x$rawpopsdbaselowerbound]
+        sdscale <- m$sdscale[rowi]
+        sdtform <- gsub('.*', '*',x$rawpopsdtransform,fixed=TRUE)
+        rawpopsdprior<-eval(parse(text=sdtform))
+        
+        nsamples<-length(rawpopsdprior) #adjust number of nsamples because of random n > 0
       } else if(is.na(as.numeric(rawpopsd))) stop('rawpopsd argument is ill specified!') else {
         rawpopsdprior <- rep(rawpopsd,nsamples)
       }
-    
-#mean
+      
+      #mean
+
       param=stats::rnorm(nsamples)
-      xmean=eval(parse(text=paste0(m$transform[rowi])))
+      # xmean=eval(parse(text=paste0(m$transform[rowi])))
+      xmean=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi])
       meanxlims<-stats::quantile(xmean,probs=c(.1,.9))
       
       #high
       param=stats::rnorm(nsamples,highmean,rawpopsdprior)
-      xhigh=eval(parse(text=paste0(m$transform[rowi])))
+      xhigh=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi])
       highxlims <- stats::quantile(xhigh,probs=c(.1,.9))
-        
+      
       #low
       param=stats::rnorm(nsamples,lowmean,rawpopsdprior)
-      xlow=eval(parse(text=paste0(m$transform[rowi])))
+      xlow=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi])
       lowxlims <- stats::quantile(xlow,probs=c(.1,.9))
       
       
@@ -62,23 +64,23 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='margi
       xlims=c(min(meanxlims[1],lowxlims[1],highxlims[1]),max(meanxlims[2],lowxlims[2],highxlims[2]))
       xdistance= ( (highxlims[1]-lowxlims[1]) + (highxlims[2]-lowxlims[2]) )/2
       
-       xmean=xmean[xmean>(xlims[1]-xdistance) & xmean < (xlims[2]+xdistance)]
-       xhigh=xhigh[xhigh>(xlims[1]-xdistance) & xhigh < (xlims[2]+xdistance)]
-       xlow=xlow[xlow>(xlims[1]-xdistance) & xlow < (xlims[2]+xdistance)]
-       
-       bw=(xlims[2]-xlims[1])/300
-       
+      xmean=xmean[xmean>(xlims[1]-xdistance) & xmean < (xlims[2]+xdistance)]
+      xhigh=xhigh[xhigh>(xlims[1]-xdistance) & xhigh < (xlims[2]+xdistance)]
+      xlow=xlow[xlow>(xlims[1]-xdistance) & xlow < (xlims[2]+xdistance)]
+      
+      bw=(xlims[2]-xlims[1])/300
+      
       densxmean=stats::density(xmean,bw=bw,n=n)
       densxlow=stats::density(xlow,bw=bw,n=n)
       densxhigh=stats::density(xhigh,bw=bw,n=n)
-
-    ymax= max(c(densxmean$y),c(densxlow$y),c(densxhigh$y))*1.2
-    
-    graphics::plot(densxmean,main=m$param[rowi],lwd=2,xlim=c(xlims[1],xlims[2]),ylim=c(0,ymax),xlab='Par Value',ylab='Density')
-    graphics::points(densxhigh,lwd=2,type='l',col='red',lty=3)
-    graphics::points(densxlow,lwd=2,type='l',col='blue',lty=3)
-
-    graphics::legend('topright',c('Pop. mean prior', '-1sd mean, subject prior','+1sd mean, subject prior'),text.col=c('black','blue','red'),bty='n')
+      
+      ymax= max(c(densxmean$y),c(densxlow$y),c(densxhigh$y))*1.2
+      
+      graphics::plot(densxmean,main=m$param[rowi],lwd=2,xlim=c(xlims[1],xlims[2]),ylim=c(0,ymax),xlab='Par Value',ylab='Density')
+      graphics::points(densxhigh,lwd=2,type='l',col='red',lty=3)
+      graphics::points(densxlow,lwd=2,type='l',col='blue',lty=3)
+      
+      graphics::legend('topright',c('Pop. mean prior', '-1sd mean, subject prior','+1sd mean, subject prior'),text.col=c('black','blue','red'),bty='n')
       if(wait==TRUE & rowi != utils::tail(rows,1)){
         message("Press [enter] to display next plot")
         readline()

@@ -5,13 +5,13 @@
 \title{ctStanFit}
 \usage{
 ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 1000,
-  kalman = TRUE, binomial = FALSE, estpop = TRUE, noncentered = TRUE,
-  fit = TRUE, ukfpop = FALSE, stationary = FALSE, plot = FALSE,
-  diffusionindices = "all", asymdiffusion = FALSE, optimize = FALSE,
-  nopriors = FALSE, vb = FALSE, chains = 1, cores = "maxneeded",
-  inits = NULL, initwithoptim = FALSE, maxtimestep = 0.1,
-  control = list(adapt_delta = 0.8, adapt_init_buffer = 2, adapt_window = 2,
-  max_treedepth = 8, stepsize = 0.001), verbose = FALSE, ...)
+  intoverstates = TRUE, binomial = FALSE, fit = TRUE, ukfpop = FALSE,
+  stationary = FALSE, plot = FALSE, derrind = "all", optimize = FALSE,
+  isloops = 10, isloopsize = 500, nopriors = FALSE, vb = FALSE,
+  chains = 1, cores = "maxneeded", inits = NULL, initwithoptim = FALSE,
+  maxtimestep = 9999, lineardynamics = "auto", control = list(adapt_delta
+  = 0.8, adapt_init_buffer = 2, adapt_window = 2, max_treedepth = 8, stepsize =
+  0.001), verbose = 0, ...)
 }
 \arguments{
 \item{datalong}{long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables, 
@@ -27,23 +27,19 @@ models respectively.}
 \item{iter}{number of iterations, half of which will be devoted to warmup by default when sampling.
 When optimizing, this is the maximum number of iterations to allow -- convergence hopefully occurs before this!}
 
-\item{kalman}{logical indicating whether or not to integrate over latent states using a Kalman filter. 
+\item{intoverstates}{logical indicating whether or not to integrate over latent states using a Kalman filter. 
 Generally recommended to set TRUE unless using non-gaussian measurement model. If not using Kalman filter, experience
 suggests that some models / datasets require a relatively high amount of very fast iterations before the sampler is
 in the high density region. This can make it difficult to determine the number of iterations needed a priori - in such cases 
 setting initwithoptim=TRUE may be helpful.}
 
-\item{binomial}{logical indicating the use of binomial rather than Gaussian data, as with IRT analyses.}
-
-\item{estpop}{Logical indicating whether to explictly estimate distributions for any individually varying
-parameters, or to fix the distributions to maximum likelihood estimates conditional on subject parameters.}
-
-\item{noncentered}{Logical. If TRUE, uses a noncentered parameterization. For longer (perhaps 100+ time points)
-time series, may need to be set to FALSE.}
+\item{binomial}{Deprecated. Logical indicating the use of binary rather than Gaussian data, as with IRT analyses.
+This now sets \code{intoverstates = FALSE} and the \code{manifesttype} of every indicator to 1, for binary.}
 
 \item{fit}{If TRUE, fit specified model using Stan, if FALSE, return stan model object without fitting.}
 
-\item{ukfpop}{if TRUE, uses an unscented approximation for population distributions rather than full sampling.}
+\item{ukfpop}{if TRUE, uses an unscented approximation for population distributions rather than full sampling.
+Allows for optimization of non-linearities and random effects.}
 
 \item{stationary}{Logical. If TRUE, T0VAR and T0MEANS input matrices are ignored, 
 the parameters are instead fixed to long run expectations. More control over this can be achieved
@@ -53,27 +49,28 @@ elements that should be fixed to stationarity.}
 \item{plot}{if TRUE, a Shiny program is launched upon fitting to interactively plot samples. 
 May struggle with many (e.g., > 5000) parameters, and may leave sample files in working directory if sampling is terminated.}
 
-\item{diffusionindices}{vector of integers denoting which latent variables are involved in covariance calculations.
-latents involved only in deterministic trends or input effects can be removed from matrices, speeding up calculations. 
-If unsure, leave default of 'all' ! Ignored if kalman=FALSE.}
+\item{derrind}{vector of integers denoting which latent variables are involved in dynamic error calculations.
+latents involved only in deterministic trends or input effects can be removed from matrices (ie, that
+obtain no additional stochastic inputs after first observation), speeding up calculations. 
+If unsure, leave default of 'all' ! Ignored if intoverstates=FALSE.}
 
-\item{asymdiffusion}{if TRUE, increases fitting speed at cost of model flexibility - T0VAR in the model specification is ignored, the DIFFUSION matrix specification is used as the 
-asymptotic DIFFUSION matrix (Q*_inf in the vignette / paper) (making it difficult if not impossible to properly specify
-higher order processes). The speed increases come about because the internal Kalman filter routine has many steps removed, and the
-asymptotic diffusion parameters are less dependent on the DRIFT matrix.}
+\item{optimize}{if TRUE, use Stan's optimizer for maximum a posteriori estimates.}
 
-\item{optimize}{if TRUE, use Stan's optimizer for maximum a posteriori estimates. 
-Setting this also sets \code{estpop=FALSE}}
+\item{isloops}{Only relevent if \code{optimize=TRUE}. 
+Number of iterations of adaptive importance sampling to perform after optimization.}
 
-\item{nopriors}{logical. If TRUE, any priors are disabled, can be desirable for optimization.}
+\item{isloopsize}{Only relevent if \code{optimize=TRUE}. 
+Number of samples per iteration of importance sampling.}
+
+\item{nopriors}{logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.}
 
 \item{vb}{if TRUE, use Stan's variational approximation. Rudimentary testing suggests it is not accurate 
 for many ctsem models at present.}
 
-\item{chains}{number of chains to sample.}
+\item{chains}{number of chains to sample, during HMC or post-optimization importance sampling.}
 
 \item{cores}{number of cpu cores to use. Either 'maxneeded' to use as many as available,
-up to the number of chains, or an integer.}
+up to the number of chains, or a positive integer.}
 
 \item{inits}{vector of parameter start values, as returned by the rstan function \code{\link{unconstrain_pars}} for instance.}
 
@@ -82,12 +79,18 @@ up to the number of chains, or an integer.}
 for the chains. This can help speed convergence and avoid problematic regions for certain problems.}
 
 \item{maxtimestep}{positive numeric, only used for models with non-linear dynamics, specifying the largest time
-step taken during integration. Smaller values are more accurate, but slower.}
+span covered by the Runge-Kutta 4 integration. The large default ensures that for each observation time interval, 
+only RK4 integration is used. When \code{maxtimestep} is smaller than the observation time interval, RK4 integration is used within an Euler loop. 
+Smaller values may offer greater accuracy, but are slower and often unnecessary. In case of initial value problems, reducing
+this is one thing to try.}
+
+\item{lineardynamics}{either character string "auto" or  a logical. Set to TRUE to force linear dynamics, 
+FALSE to use non-linear integration. "auto" attempts to select the appropriate choice.}
 
 \item{control}{List of arguments sent to \code{\link[rstan]{stan}} control argument, 
 regarding warmup / sampling behaviour.}
 
-\item{verbose}{Logical. If TRUE, prints log probability at each iteration.}
+\item{verbose}{Integer from 0 to 2. Higher values print more information during model fit -- for debugging.}
 
 \item{...}{additional arguments to pass to \code{\link[rstan]{stan}} function.}
 }

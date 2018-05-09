@@ -27,6 +27,7 @@ traitmodel <- ctModel(n.manifest=2, n.latent=2, Tpoints=6, LAMBDA=diag(2),
   latentNames=c('LeisureTime', 'Happiness'), TRAITVAR="auto")
 traitfit <- ctFit(datawide=ctExample1, ctmodelobj=traitmodel)
 
-print(ctCheckFit(traitfit))
+check <- ctCheckFit(traitfit,niter=5)
+plot(check)
 }
 }

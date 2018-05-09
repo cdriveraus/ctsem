@@ -16,46 +16,60 @@
 #' @export
 
 summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...){
+  
   if(class(object) != 'ctStanFit') stop('Not a ctStanFit object!')
   
-  if(class(object$stanfit)=='stanfit'){ #summary of samples
-
-    
+  out=list()
+  monvars <- c('mean','sd','2.5%','50%','97.5%')
+  
+  if(class(object$stanfit)=='stanfit'){ 
     s<-getMethod('summary','stanfit')(object$stanfit)
-    
     if('98%' %in% colnames(s$summary)) colnames(s$summary)[colnames(s$summary)=='98%'] <- '97.5%'
+    e <- extract.ctStanFit(object) 
+  }
+  
+  if(class(object$stanfit)!='stanfit')  e <- extract.ctStanFit(object) 
+  
+  parnames <- c()
+  parindices <- c()
+  for(m in names(object$matrixsetup)){
+    if(dim(object$matrixsetup[[m]])[1] > 0){
+      parnames <- c(parnames,rownames(object$matrixsetup[[m]]))
+      parindices <- c(parindices, object$matrixsetup[[m]][,'param'])
+    }
+  }
+  pars <- cbind(parnames,parindices)
+  parnames <- pars[as.numeric(pars[,2]) >0, 1]
+  parnames <- unique(parnames)
+  parnamesiv <- parnames[object$data$indvaryingindex]
+  
+  #### generate covcor matrices of raw and transformed subject level params
+  
+  iter=dim(e$rawpopcorr)[1]
+  if(!is.null(iter)){ #then there is some individual variation so continue
+    nindvarying=dim(e$rawpopcorr)[2]
     
-    parnames=gsub('hsd_','',object$stanfit@model_pars[grep('hsd',object$stanfit@model_pars)])
-    
-    #### generate covcor matrices of raw and transformed subject level params
-    out=list()
-    e=extract(object$stanfit)
-    
-    iter=dim(e$rawpopcorrsqrt)[1]
-    if(!is.null(iter)){ #then there is some individual variation so continue
-      nindvarying=dim(e$rawpopcorrsqrt)[2]
+    if(nindvarying>1){
       
-      if(nindvarying>1){
-        
-        getMean=function(myarray){
-          out=matrix(NA,nrow=nindvarying,ncol=nindvarying)
-          for(i in 1:nrow(out)){
-            for(j in 1:ncol(out)){
-              out[i,j]<-round(mean(myarray[i,j,]),digits=digits)
-            }}
-          return(out)
-        }
-        
-        getSd=function(myarray){
-          out=matrix(NA,nrow=nindvarying,ncol=nindvarying)
-          for(i in 1:nrow(out)){
-            for(j in 1:ncol(out)){
-              out[i,j]<-round(sd(myarray[i,j,]),digits=digits)
-            }}
-          return(out)
-        }
-        
-
+      getMean=function(myarray){
+        out=matrix(NA,nrow=nindvarying,ncol=nindvarying)
+        for(i in 1:nrow(out)){
+          for(j in 1:ncol(out)){
+            out[i,j]<-mean(myarray[i,j,])
+          }}
+        return(out)
+      }
+      
+      getSd=function(myarray){
+        out=matrix(NA,nrow=nindvarying,ncol=nindvarying)
+        for(i in 1:nrow(out)){
+          for(j in 1:ncol(out)){
+            out[i,j]<-sd(myarray[i,j,])
+          }}
+        return(out)
+      }
+      
+      if(1==99 & (is.null(object$data$ukfpop) || object$data$ukfpop==0)){    
         #transformed subject level params
         rawpopcorr_transformed= array(sapply(1:iter, function(x) cor(e$indparams[x,,])),dim=c(nindvarying,nindvarying,iter))
         rawpopcov_transformed= array(sapply(1:iter, function(x) cov(e$indparams[x,,])),dim=c(nindvarying,nindvarying,iter))
@@ -72,127 +86,170 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...
         rawpopcovcor_transformedsd=rawpopcov_transformedsd
         rawpopcovcor_transformedsd[lower.tri(diag(nindvarying))]=rawpopcorr_transformedsd[lower.tri(diag(nindvarying))]
         
-        dimnames(rawpopcovcor_transformedsd)<-list(parnames,parnames)
-        dimnames(rawpopcovcor_transformedmean)<-list(parnames,parnames)
+        dimnames(rawpopcovcor_transformedsd)<-list(parnamesiv,parnamesiv)
+        dimnames(rawpopcovcor_transformedmean)<-list(parnamesiv,parnamesiv)
         
-        #raw subject level params
-        rawpopcorr= e$rawpopcorr 
-    
-        rawpopcorrout <- ctCollapse(rawpopcorr,1,mean)[lower.tri(diag(nindvarying))]
-        rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,sd)[lower.tri(diag(nindvarying))])
-        rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.025))[lower.tri(diag(nindvarying))])
-        rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.5))[lower.tri(diag(nindvarying))])
-        rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.975))[lower.tri(diag(nindvarying))])
-        colnames(rawpopcorrout) <- c('mean','sd','2.5%','50%','97.5%')
-        rownames(rawpopcorrout) <- matrix(paste0('corr_',parnames,'__',rep(parnames,each=length(parnames))),
-          length(parnames),length(parnames))[lower.tri(diag(nindvarying))]
-        rawpopcorrout <- round(rawpopcorrout,digits=digits)
-        
-        rawpopcorrout <- cbind(rawpopcorrout,rawpopcorrout[,'mean'] / rawpopcorrout[,'sd'])
-        colnames(rawpopcorrout)[ncol(rawpopcorrout)] <- 'z'
-        
-        rawpopcorrout <- rawpopcorrout[order(abs(rawpopcorrout[,'z'])),,drop=FALSE]
-        
-        rawpopcorrmean= ctCollapse(e$rawpopcorr,1,mean)
-        rawpopcorrsd= ctCollapse(e$rawpopcorr,1,sd)
-        
-        dimnames(rawpopcorrmean)<-list(parnames,parnames)
-        dimnames(rawpopcorrsd)<-list(parnames,parnames)
-        
-        out=list(note1='The following matrix contains the posterior means of the raw parameter population distribution correlation matrix',
-          rawpopcorr_mean=rawpopcorrmean,
-          note2='The following matrix contains the posterior std dev. of the raw parameter population distribution correlation matrix',
-          rawpopcorr_sd=rawpopcorrsd,
-          note3=paste0('The following matrix is the posterior mean of the correlation and covariance matrix of subject level parameters,', 
-            ' with correlations on the lower triangle'),
-          popcovcor_mean=rawpopcovcor_transformedmean,
-          note4=paste('The following matrix is the posterior std dev. of the correlation and covariance matrix of subject level parameters,', 
+        out=list(paste0('The following matrix is the posterior mean of the correlation and covariance matrix of subject level parameters,', 
+          ' with correlations on the lower triangle'),
+          popcovcor_mean=round(rawpopcovcor_transformedmean,digits),
+          paste('The following matrix is the posterior std dev. of the correlation and covariance matrix of subject level parameters,', 
             'with correlations on the lower triangle'),
-          popcovcor_sd=rawpopcovcor_transformedsd)
-        
-        out$rawpopcorr = rawpopcorrout
+          popcovcor_sd=round(rawpopcovcor_transformedsd,digits))
       }
+      #raw subject level params
+      rawpopcorr= e$rawpopcorr 
+      
+      rawpopcorrout <- ctCollapse(rawpopcorr,1,mean)[lower.tri(diag(nindvarying))]
+      rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,sd)[lower.tri(diag(nindvarying))])
+      rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.025))[lower.tri(diag(nindvarying))])
+      rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.5))[lower.tri(diag(nindvarying))])
+      rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.975))[lower.tri(diag(nindvarying))])
+      colnames(rawpopcorrout) <- monvars
+      rownames(rawpopcorrout) <- matrix(paste0('',parnamesiv,'__',rep(parnamesiv,each=length(parnamesiv))),
+        length(parnamesiv),length(parnamesiv))[lower.tri(diag(nindvarying))]
+      rawpopcorrout <- round(rawpopcorrout,digits=digits)
+      
+      rawpopcorrout <- cbind(rawpopcorrout,rawpopcorrout[,'mean'] / rawpopcorrout[,'sd'])
+      colnames(rawpopcorrout)[ncol(rawpopcorrout)] <- 'z'
+      
+      rawpopcorrout <- rawpopcorrout[order(abs(rawpopcorrout[,'z'])),,drop=FALSE]
+      
+      rawpopcorrmean= ctCollapse(e$rawpopcorr,1,mean)
+      rawpopcorrsd= ctCollapse(e$rawpopcorr,1,sd)
+      rawpopcov_mean = ctCollapse(e$rawpopcov,1,mean)
+      rawpopcov_sd=ctCollapse(e$rawpopcov,1,sd)
+      
+      dimnames(rawpopcorrmean)<-list(parnamesiv,parnamesiv)
+      dimnames(rawpopcorrsd)<-list(parnamesiv,parnamesiv)
+      dimnames(rawpopcov_mean)<-list(parnamesiv,parnamesiv)
+      dimnames(rawpopcov_sd)<-list(parnamesiv,parnamesiv)
+      
+      out=list(note='Posterior means of the raw parameter population distribution correlation matrix:',
+        rawpopcorr_mean=round(rawpopcorrmean,digits),
+        note='Posterior std dev. of the raw parameter population distribution correlation matrix:',
+        rawpopcorr_sd=round(rawpopcorrsd,digits),
+        note='Posterior means of the raw parameter population distribution covariance matrix:',
+        rawpopcov_mean = round(rawpopcov_mean,digits),
+        note='Posterior std dev. of the raw parameter population distribution covariance matrix:',
+        rawpopcov_sd=round(rawpopcov_sd,digits)
+      )
+      
+      out$rawpopcorr = round(rawpopcorrout,digits)
     }
-    
-    
-    
-    if(object$ctstanmodel$n.TIpred > 0) {
-      out$tipreds=round(s$summary[c(grep('tipred_',rownames(s$summary))),
-        c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],digits=digits)
-      z = out$tipreds[,'mean'] / out$tipreds[,'sd'] 
-      out$tipreds= cbind(out$tipreds,z)[order(abs(z)),]
-    }
-    
+  }
+  
+  
+  
+  if(object$ctstanmodel$n.TIpred > 0) {
+    message('tipreds not working!')
+    tipreds = monitor(e$TIPREDEFFECT,warmup = 0,print = FALSE)[,monvars]
+    # out$tipreds=round(s$summary[c(grep('tipred_',rownames(s$summary))),
+    #   c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],digits=digits)
+    z = tipreds[,'mean'] / tipreds[,'sd'] 
+    out$tipreds= cbind(tipreds,z)[order(abs(z)),]
+  }
+  
   if(parmatrices){
     parmatlists <- try(apply(e$rawpopmeans,1,ctStanParMatrices,model=object,timeinterval=timeinterval))
     if(class(parmatlists)!='try-error'){
-    parmatarray <- array(unlist(parmatlists),dim=c(length(unlist(parmatlists[[1]])),length(parmatlists)))
-    parmats <- matrix(NA,nrow=length(unlist(parmatlists[[1]])),ncol=7)
-    rownames(parmats) <- paste0('r',1:nrow(parmats))
-    counter=0
-    for(mati in 1:length(parmatlists[[1]])){
+      parmatarray <- array(unlist(parmatlists),dim=c(length(unlist(parmatlists[[1]])),length(parmatlists)))
+      parmats <- matrix(NA,nrow=length(unlist(parmatlists[[1]])),ncol=7)
+      rownames(parmats) <- paste0('r',1:nrow(parmats))
+      counter=0
+      for(mati in 1:length(parmatlists[[1]])){
         for(coli in 1:ncol(parmatlists[[1]][[mati]])){
           for(rowi in 1:nrow(parmatlists[[1]][[mati]])){
-          counter=counter+1
-          new <- matrix(c(
-            rowi,
-            coli,
-            mean(parmatarray[counter,],na.rm=TRUE),
-            sd(parmatarray[counter,],na.rm=TRUE),
-            quantile(parmatarray[counter,],probs=c(.025,.5,.975),na.rm=TRUE)),
-            nrow=1)
-          try(rownames(parmats)[counter] <- names(parmatlists[[1]])[mati])
-          try(parmats[counter,]<-new)
-        }}}
-    colnames(parmats) <- c('Row','Col', 'Mean','Sd','2.5%','50%','97.5%')
-    
-    #remove certain parmatrices lines
-    removeindices <- which(rownames(parmats) == 'MANIFESTVAR' & parmats[,'Row'] != parmats[,'Col'])
-    
-    removeindices <- c(removeindices,which((rownames(parmats) %in% c('MANIFESTVAR','T0VAR','DIFFUSION','dtDIFFUSION','asymDIFFUSION',
-      'T0VARcor','DIFFUSIONcor','dtDIFFUSIONcor','asymDIFFUSIONcor') &  parmats[,'Row'] < parmats[,'Col'])))
-    
-    removeindices <- c(removeindices,which((rownames(parmats) %in% c('T0VARcor','DIFFUSIONcor','dtDIFFUSIONcor','asymDIFFUSIONcor') & 
-        parmats[,'Row'] == parmats[,'Col'])))
-    
-    parmats <- parmats[-removeindices,]
-    
-    
-    out$parmatrices=round(parmats,digits=digits)
-    
-    out$parmatNote=paste0('Population mean parameter matrices calculated with time interval of ', timeinterval,' for discrete time (dt) matrices. ',
-      'Covariance related matrices shown as covariance matrices, correlations have (cor) suffix. Asymptotic (asym) matrices based on infinitely large time interval.')
+            counter=counter+1
+            new <- matrix(c(
+              rowi,
+              coli,
+              mean(parmatarray[counter,],na.rm=TRUE),
+              sd(parmatarray[counter,],na.rm=TRUE),
+              quantile(parmatarray[counter,],probs=c(.025,.5,.975),na.rm=TRUE)),
+              nrow=1)
+            try(rownames(parmats)[counter] <- names(parmatlists[[1]])[mati])
+            try(parmats[counter,]<-new)
+          }}}
+      colnames(parmats) <- c('Row','Col', 'Mean','Sd','2.5%','50%','97.5%')
+      
+      #remove certain parmatrices lines
+      removeindices <- which(rownames(parmats) == 'MANIFESTVAR' & parmats[,'Row'] != parmats[,'Col'])
+      
+      removeindices <- c(removeindices,which((rownames(parmats) %in% c('MANIFESTVAR','T0VAR','DIFFUSION','dtDIFFUSION','asymDIFFUSION',
+        'T0VARcor','DIFFUSIONcor','dtDIFFUSIONcor','asymDIFFUSIONcor') &  parmats[,'Row'] < parmats[,'Col'])))
+      
+      removeindices <- c(removeindices,which((rownames(parmats) %in% c('T0VARcor','DIFFUSIONcor','dtDIFFUSIONcor','asymDIFFUSIONcor') & 
+          parmats[,'Row'] == parmats[,'Col'])))
+      
+      parmats <- parmats[-removeindices,]
+      
+      
+      out$parmatrices=round(parmats,digits=digits)
+      
+      out$parmatNote=paste0('Population mean parameter matrices calculated with time interval of ', timeinterval,' for discrete time (dt) matrices. ',
+        'Covariance related matrices shown as covariance matrices, correlations have (cor) suffix. Asymptotic (asym) matrices based on infinitely large time interval.')
     }
     if(class(parmatlists)=='try-error') out$parmatNote = 'Could not calculate parameter matrices'
   }
-    
-    out$popsd=round(s$summary[c(grep('hsd_',rownames(s$summary))),
-      c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],digits=digits)
-    
-    out$popmeans=round(s$summary[c(grep('hmean_',rownames(s$summary))),
-      c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],digits=digits)
-    
-    out$popNote=paste0('popmeans and popsd are reported as specified in ctModel -- diagonals of covariance related matrices are std. deviations, ',
-      'off-diagonals are unconstrained correlation square roots.')
-    
-    out$logprob=round(s$summary[c(grep('lp',rownames(s$summary))),
-      c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],digits=digits)
-    
-    if(!parmatrices) out$parmatNote <- 'For additional summary matrices, use argument: parmatrices = TRUE'
-    
-    
-    
-    # out$posteriorpredictive=round(s$summary[c(grep('stateppll',rownames(s$summary))),
-    #     c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],3)
-  }
   
   
-  if(class(object$stanfit)!='stanfit'){ #optimization summary
-    out=list()
-    out$popmeans=object$stanfit$transformedpars[grep('hmean_',rownames(object$stanfit$transformedpars)),]
-    out$popsd=object$stanfit$transformedpars[grep('hsd_',rownames(object$stanfit$transformedpars)),]
-    out$logprob=round(-object$stanfit$optimfit$value)
+  if(class(object$stanfit)=='stanfit'){
+    popsd=s$summary[c(grep('^popsd',rownames(s$summary),fixed=FALSE)),
+      c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE] [ object$data$indvaryingindex,]
+    rownames(popsd)=parnames[ object$data$indvaryingindex]
+    # popmeans=s$summary[c(grep('hmean_',rownames(s$summary))),
+    #   c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE]
+    popmeans=s$summary[c(grep('popmeans[', rownames(s$summary),fixed=TRUE)),
+      c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE]
+    popmeans=popmeans[(nrow(popmeans)/2+1):nrow(popmeans),]
+    rownames(popmeans) <- parnames
+    
+    
+    
+    logprob=s$summary[c(grep('lp',rownames(s$summary))),
+      c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE]
   }
+  
+  if(class(object$stanfit)!='stanfit'){ #if optimized / importance sampled
+    
+    if(!is.null(iter)){ popsd <- monitor(array(e$popsd,dim=c(dim(e$popsd)[1],1,dim(e$popsd)[2])),warmup=0,print=FALSE)
+    popsd=popsd[ object$data$indvaryingindex, monvars]
+    rownames(popsd)=parnamesiv
+    }
 
+    popmeans=monitor(array(e$popmeans,dim=c(dim(e$popmeans)[1],1,dim(e$popmeans)[2])),warmup=0,print=FALSE)
+    rownames(popmeans) = parnames #names(e)[grep('hmean_',names(e))]
+    popmeans = popmeans[,monvars]
+    
+    logprob = object$stanfit$optimfit$value
+    aic = 2*ncol(object$stanfit$rawposterior) - 2*logprob
+  }
+  
+  if(!is.null(iter)) out$popsd=round(popsd,digits=digits)
+  
+  out$popmeans=round(popmeans,digits=digits)
+  
+  out$popNote=paste0('popmeans are reported as specified in ctModel -- covariance related matrices are in sd / matrix square root form.')
+  
+  out$logprob=logprob
+  
+  if(class(object$stanfit)!='stanfit') out$aic = aic
+  
+  if(!parmatrices) out$parmatNote <- 'For additional summary matrices, use argument: parmatrices = TRUE'
+  
+  
+  
+  # out$posteriorpredictive=round(s$summary[c(grep('stateppll',rownames(s$summary))),
+  #     c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],3)
+  # }
+  
+  
+  # if(class(object$stanfit)!='stanfit'){ #optimization summary
+  #   out=list()
+  #   out$popmeans=object$stanfit$transformedpars[grep('hmean_',rownames(object$stanfit$transformedpars)),]
+  #   out$popsd=object$stanfit$transformedpars[grep('hsd_',rownames(object$stanfit$transformedpars)),]
+  #   out$logprob=round(-object$stanfit$optimfit$value)
+  # }
+  
   return(out)
 }

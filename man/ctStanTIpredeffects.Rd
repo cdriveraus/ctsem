@@ -6,8 +6,8 @@
 \usage{
 ctStanTIpredeffects(fit, returndifference = FALSE, probs = c(0.025, 0.5,
   0.975), includeMeanUncertainty = FALSE, whichTIpreds = 1,
-  parmatrices = TRUE, whichpars = "all", nsamples = 200,
-  timeinterval = 1, plot = FALSE, ...)
+  parmatrices = TRUE, whichpars = "all", nsamples = 50,
+  timeinterval = 1, nsubjects = 50, filter = NA, plot = FALSE, ...)
 }
 \arguments{
 \item{fit}{fit object from \code{\link{ctStanFit}}}
@@ -42,16 +42,23 @@ level parameters to compute effects on. In either case 'all' uses all available.
 The integer corresponding to specific parameters can be found as follows, replacing \code{fit} as appropriate:
 \code{fit$ctstanmodel$pars[fit$ctstanmodel$pars$indvarying,'param']}.}
 
-\item{nsamples}{Positive integer specifying the maximum number of samples to use. 
-Character string 'all' can also be used.}
-
 \item{timeinterval}{positive numeric indicating time interval to use for discrete time parameter matrices,
 if \code{parmatrices=TRUE}.}
+
+\item{nsubjects}{Positive integer specifying the number of subjects to compute values for.
+Character string 'all' can also be used. Time taken is a function of nsubjects*niterations.}
+
+\item{filter}{either NA, or a length 3 vector, where the first element contains the time independent predictor index
+to filter by, and the second contains the comparison operator in string form (e.g. "< 3",
+to only calculate effects for subjects where the tipreds of the denoted index are less than 3).}
 
 \item{plot}{Logical. If TRUE, nothing is returned but instead \code{\link{ctPlotArray}}
 is used to plot the output instead.}
 
 \item{...}{arguments to pass to \code{\link{ctPlotArray}} for plotting.}
+
+\item{niterations}{Positive integer specifying the maximum number of saved iterations to use. 
+Character string 'all' can also be used.}
 }
 \value{
 Either a three dimensional array of predictor effects, or nothing with a plot

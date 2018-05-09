@@ -59,7 +59,7 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   spec_nofixed_noduplicates <- spec_nofixed_noduplicates[spec_nofixed_noduplicates$param !='stationary',,drop=FALSE]
   
   #get indvarying rawpopmeans
-  e<-extract(fit$stanfit)
+  e<-extract.ctStanFit(fit)
   rawpopmeans <- e$rawpopmeans
   
   niter<-dim(e$rawpopmeans)[1]
@@ -76,7 +76,7 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   if(nsubjects > nrow(tipreds)) nsubjects <- nrow(tipreds)
   tipreds <- tipreds[sample(x = 1:nsubjects, nsubjects,replace = FALSE),,drop=FALSE]
 
-  tieffect<-e$tipredeffect[,,whichTIpreds,drop=FALSE]
+  tieffect<-e$TIPREDEFFECT[,,whichTIpreds,drop=FALSE]
   
   
   if(!parmatrices){ #update ctspec to only indvarying and those in whichpars
@@ -184,8 +184,8 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
 
   if(!plot) return(out) else {
     dots <- list(...)
-    dots$yarray=out
-    dots$x=tipreds[,1]
+    dots$input=out
+    # dots$x=tipreds[,1]
     if(is.null(dots$plotcontrol)) dots$plotcontrol=list(
       ylab=ifelse(!returndifference,'Par. Value','Effect'),
       xlab=colnames(tipreds)[1],

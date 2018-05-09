@@ -4,7 +4,8 @@
 \alias{summary.ctStanFit}
 \title{summary.ctStanFit}
 \usage{
-\method{summary}{ctStanFit}(object, timeinterval = 1, digits = 3, ...)
+\method{summary}{ctStanFit}(object, timeinterval = 1, digits = 3,
+  parmatrices = FALSE, ...)
 }
 \arguments{
 \item{object}{fit object from \code{\link{ctStanFit}}, of class ctStanFit.}
@@ -13,6 +14,9 @@
 reported in summary.}
 
 \item{digits}{integer denoting number of digits to report.}
+
+\item{parmatrices}{if TRUE, also return additional parameter matrices -- can be slow to compute
+for large models with many samples.}
 
 \item{...}{Unused at present.}
 }

@@ -34,7 +34,9 @@ Imports:
     parallel,
     shiny,
     numDeriv,
-    MASS
+    MASS,
+    mvtnorm,
+    parallel
 LazyData: Yes
 Suggests:
     knitr,

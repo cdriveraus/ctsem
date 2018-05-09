@@ -185,20 +185,7 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
   
   
   #####FUNCTIONS
-  
-  
-  isx<-function(x){ #if that returns FALSE for both FALSE and NA results
-    if(is.na(x)){
-      return(FALSE)
-      break()
-    }
-    if(x==FALSE){
-      return(FALSE)
-      break()
-    }
-    if(x==TRUE){
-      return(TRUE)
-    }}
+
   
   checkSymmetry<-function(x){  #this checks the symmetry of matrix x, if not symmetric it stops and outputs an error
     if(isSymmetric(x)==F){

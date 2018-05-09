@@ -25,71 +25,58 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
   parcontrol=list(mgp=c(1.3,.5,0),mar=c(3,2,2,1)+.2),wait=FALSE){
   
   if(!(class(obj) %in% c('ctStanFit','ctStanModel'))) stop('not a ctStanFit or ctStanModel object!')
-  if(class(obj)=='ctStanFit') dopost <- TRUE else dopost <- FALSE
   
   densiter <- 1e6
-  
-  if(dopost) sm<-obj$ctstanmodel else sm <- obj
-  
-  #which rows to avoid plotting
-  skiplist <- which(duplicated(sm$par$param))
-  skiplist <- c(skiplist,which(is.na(sm$pars$param))) #remove non free param
-  skiplist <- c(skiplist,which(sm$pars$param %in% 'stationary')) #remove stationary params
+  ctspec <- obj$ctstanmodel$pars
   
   paroriginal<-graphics::par()[c('mfrow','mgp','mar')]
   
   do.call(graphics::par,parcontrol)
   
-  if(dopost) s<-rstan::extract(obj$stanfit)
+  s<-extract.ctStanFit(obj)
   
-  if(rows[1]=='all') rows<-(1:nrow(sm$par))[-skiplist] else rows <- rows[!(rows %in% skiplist)]
+  if(rows[1]=='all') rows<-(1:nrow(obj$data$popsetup)) else rows <-  
+    which(rownames(obj$data$popsetup) %in% ctspec$param[rows])
+  
   if(all(mfrow=='auto')) {
-    mfrow <- grDevices::n2mfrow( (length(rows)+sum(sm$pars$indvarying[rows])*2))
+    mfrow <- grDevices::n2mfrow( (length(rows)+sum(obj$pars$indvarying[rows])*2))
     mfrow[mfrow > 3] <- 3
   }
   graphics::par(mfrow=mfrow)
   
   
-  if(dopost){
-    snames<-names(s)
-    hmeannames<-snames[grep('hmean_',snames)]
-    hsdnames<-snames[grep('hsd_',snames)]
-    tipnames<-snames[grep('tipred_',snames)]
-    sum<-getMethod('summary','stanfit')(obj$stanfit)
-    sumnames<-dimnames(sum$summary)[[1]]
-    nsubjects<-max(  as.numeric(unlist(lapply(grep('^indparams[[]',sumnames),function(x){
-      strsplit(gsub("[^0-9,]", "", sumnames[x]), ",")[[1]][1]
-    }))))
-    if(nsubjects < 1) nsubjects<-1
-  }
+  # snames<-names(s)
+  # hmeannames<-snames[grep('hmean_',snames)]
+  # hsdnames<-snames[grep('hsd_',snames)]
+  # tipnames<-snames[grep('tipred_',snames)]
+  # sum<-getMethod('summary','stanfit')(obj$stanfit)
+  # sumnames<-dimnames(sum$summary)[[1]]
+  nsubjects<-obj$data$nsubjects 
+  # max(  as.numeric(unlist(lapply(grep('^indparams[[]',sumnames),function(x){
+  # strsplit(gsub("[^0-9,]", "", sumnames[x]), ",")[[1]][1]
+  # }))))
+  # if(nsubjects < 1) nsubjects<-1
   
   
   indvaryingcount<-0
   popmeancount<-0
-  # pmeans<-matrix(NA,nrow=nsubjects,ncol=sum(sm$pars$indvarying))
-  # pnames<-rep(NA,sum(sm$pars$indvarying))
-  for(rowi in rows){
-    popmeancount <- which(sm$pars$param[is.na(sm$pars$value)] %in% sm$pars$param[rowi])
-    # p<-list(lwd=2, #plot pars
-    #   x=NA,
-    #   xaxs='i',
-    #   yaxs='i',
-    #   xlab='Value', 
-    #   main=paste0('Pop. mean ',sm$pars$param[rowi])) 
+  
+  for(ri in rows){
+    # popmeancount <- which(obj$pars$param[is.na(obj$pars$value)] %in% obj$pars$param[ri])
+    pname <- rownames(obj$data$popsetup[ri,,drop=FALSE])
+    rawpopmeans<- s$rawpopmeans[,ri]
+    param<-rawpopmeans
+    mi <- match(pname,table = ctspec$param)
+    rawpopmeanspost<-tform(param,ctspec$transform[mi],ctspec$multiplier[mi], ctspec$meanscale[mi],ctspec$offset[mi])
+    # , eval(parse(text=paste0(obj$pars$transform[ri])))
+    # drawpopmeanspost<-ctDensity(rawpopmeanspost)
     
-    if(dopost){
-      rawpopmeans<- s$rawpopmeans[,popmeancount]
-      param<-rawpopmeans
-      rawpopmeanspost<-eval(parse(text=paste0(sm$pars$transform[rowi])))
-      # drawpopmeanspost<-ctDensity(rawpopmeanspost)
-      
-      # p$xlim=drawpopmeanspost$xlim
-      # p$ylim=c(0,drawpopmeanspost$ylim[2])
-      # p$x = drawpopmeanspost$density
-    }
+    # p$xlim=drawpopmeanspost$xlim
+    # p$ylim=c(0,drawpopmeanspost$ylim[2])
+    # p$x = drawpopmeanspost$density
     
     param<-stats::rnorm(densiter,0,1)
-    meanprior <- eval(parse(text=paste0(sm$pars$transform[rowi])))
+    meanprior <- tform(param,ctspec$transform[mi],ctspec$multiplier[mi], ctspec$meanscale[mi],ctspec$offset[mi])
     # dmeanprior<-ctDensity(meanprior,bw=drawpopmeanspost$density$bw)
     
     # if(!dopost){
@@ -102,10 +89,10 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
     # do.call(graphics::plot,p) 
     
     # meanprior <- meanprior[meanprior > dsubjectprior$xlim[1]-5 & meanprior < dsubjectprior$xlim[2] + 5]
-    if(dopost) leg <- c('Pop. mean posterior','Pop. mean prior') else leg <- 'Pop. mean prior'
-    if(dopost) legcol <- c('black','blue') else legcol <- 'black'
+    leg <- c('Pop. mean posterior','Pop. mean prior') 
+    legcol <- c('black','blue') 
     
-    ctDensityList(list(rawpopmeanspost,meanprior),main=paste0('Pop. mean ',sm$pars$param[rowi]),
+    ctDensityList(list(rawpopmeanspost,meanprior),main=paste0('Pop. mean ',pname),
       xlimsindex=if(priorwidth) 1:2 else 1,
       xaxs='i',  yaxs='i', plot=TRUE,legend=leg,colvec=legcol,lwd=lwd)
     
@@ -114,43 +101,40 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
     #   text.col=legcol,bty='n')
     
     
-    if(sm$pars$indvarying[rowi]){ #then also plot sd and subject level pars
+    if(obj$data$popsetup[ri,'indvarying']==1){ #then also plot sd and subject level pars
       
-      indvaryingcount<-which(sm$pars$param[is.na(sm$pars$value) & sm$pars$indvarying] %in% sm$pars$param[rowi])
+      indvaryingcount<-indvaryingcount+1 #which(obj$pars$param[is.na(obj$pars$value) & obj$pars$indvarying] %in% obj$pars$param[ri])
+
+      sdscale <- obj$data$popvalues[ri,'sdscale']
+      sdtform <- gsub('.*', '*',obj$ctstanmodel$rawpopsdtransform,fixed=TRUE)
       
-      sdscale <- sm$pars$sdscale[rowi]
-      tform <- gsub('.*', '*',sm$rawpopsdtransform,fixed=TRUE)
+      rawpopsdbase<-s$rawpopsdbase[,indvaryingcount] 
       
-      if(dopost) {
-        rawpopsdbase<-s$rawpopsdbase[,indvaryingcount] 
-        
-        rawpopsd <- eval(parse(text=tform))  #rawpopsd samples
-        
-        
-        rawindparams<-s[['indparams']][,1:nsubjects,indvaryingcount]
-        
-        param<-stats::rnorm(densiter,rawpopmeans,rawpopsd)
-        subjectprior<-eval(parse(text=paste0(sm$pars$transform[rowi])))
-        # dsubjectprior<-ctDensity(subjectprior)
-        param<-stats::rnorm(densiter,0,1)
-        param<-rawindparams
-        indparams<-eval(parse(text=paste0(sm$pars$transform[rowi])))
-        # dindparams<-ctDensity(indparams,bw=dsubjectprior$density$bw)
-        
-        
-        # graphics::plot(dindparams$density,xlab='Value',main=sm$pars$param[rowi],lwd=2,yaxs='i',
-        #   ylim=c(0,max(dsubjectprior$ylim[2],dindparams$ylim[2])),
-        #   xlim=c(min(dsubjectprior$xlim[1],dindparams$xlim[1]),max(dsubjectprior$xlim[2],dindparams$xlim[2])))
-        # graphics::points(dsubjectprior$density,col='red',lwd=2,lty=2,type='l')
-        # graphics::points(dmeanprior$density,lwd=2,type='l',col='blue',lty=3)
-        # graphics::legend('topright',c('Subject param posterior','Subject param prior','Pop mean prior'),
-        #   text.col=c('black','red','blue'),bty='n')
-        
-        ctDensityList(list(indparams,subjectprior,meanprior),main=sm$pars$param[rowi],
-          colvec=c('black','red','blue'),plot=TRUE,lwd=lwd,xlimsindex=1:2,
-          xaxs='i',  yaxs='i',legend=c('Subject param posterior','Subject param prior','Pop mean prior'))
-        
-      }
+      rawpopsd <- eval(parse(text=sdtform))  #rawpopsd samples
+      
+      rawindparams<-s[['rawindparams']][,1:nsubjects,indvaryingcount]
+      
+      param<-stats::rnorm(densiter,rawpopmeans,rawpopsd)
+      subjectprior<-tform(param,ctspec$transform[mi],ctspec$multiplier[mi], ctspec$meanscale[mi],ctspec$offset[mi])
+      # dsubjectprior<-ctDensity(subjectprior)
+      param<-stats::rnorm(densiter,0,1)
+      param<-rawindparams
+      indparams<-tform(param,ctspec$transform[mi],ctspec$multiplier[mi], ctspec$meanscale[mi],ctspec$offset[mi])
+      # dindparams<-ctDensity(indparams,bw=dsubjectprior$density$bw)
+      
+      
+      # graphics::plot(dindparams$density,xlab='Value',main=obj$pars$param[ri],lwd=2,yaxs='i',
+      #   ylim=c(0,max(dsubjectprior$ylim[2],dindparams$ylim[2])),
+      #   xlim=c(min(dsubjectprior$xlim[1],dindparams$xlim[1]),max(dsubjectprior$xlim[2],dindparams$xlim[2])))
+      # graphics::points(dsubjectprior$density,col='red',lwd=2,lty=2,type='l')
+      # graphics::points(dmeanprior$density,lwd=2,type='l',col='blue',lty=3)
+      # graphics::legend('topright',c('Subject param posterior','Subject param prior','Pop mean prior'),
+      #   text.col=c('black','red','blue'),bty='n')
+      
+      ctDensityList(list(indparams,subjectprior,meanprior),main=obj$pars$param[ri],
+        colvec=c('black','red','blue'),plot=TRUE,lwd=lwd,xlimsindex=1:2,
+        xaxs='i',  yaxs='i',legend=c('Subject param posterior','Subject param prior','Pop mean prior'))
+      
       
       
       ### removed this plot for the moment
@@ -160,7 +144,7 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
       #     xaxs='i',
       #     yaxs='i',
       #     xlab='Value', 
-      #     main=paste0('Pre-tform pop. sd ',sm$pars$param[rowi])) 
+      #     main=paste0('Pre-tform pop. sd ',obj$pars$param[ri])) 
       #   
       #posterior sd
       
@@ -175,7 +159,7 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
       # }
       #prior
       rawpopsdbase<-  stats::rnorm(100000,0,1)
-      rawpopsdprior <- eval(parse(text=tform)) #rawpopsd prior samples
+      rawpopsdprior <- eval(parse(text=sdtform)) #rawpopsd prior samples
       # drawpopsdprior<-ctDensity(rawpopsdprior)
       
       
@@ -187,31 +171,28 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
       #   xlab='Par. value',
       #   type='l',
       #   ylab='Density',
-      #   main=paste0('Pop. sd ',sm$pars$param[rowi])) 
+      #   main=paste0('Pop. sd ',obj$pars$param[ri])) 
       
       #posterior
-      if(dopost){
-        hsdpost <- s[[paste0('hsd_',sm$pars$param[rowi])]]
-        # dhsdpost<-ctDensity(hsdpost)
-        # 
-        # p$x = dhsdpost$density
-        # p$ylim=c(0,dhsdpost$ylim[2])
-        # p$xlim=c(0, dhsdpost$xlim[2])
-        
-        # p$xlim=c(0, quantile(hsdpost,probs=.98))
-        # bw = p$xlim[2] / 100# drawpopsdpost$xlim[2])
-        # dhsdpost<-density(hsdpost,bw=bw,from= 0 - bw*3, to = p$xlim[2] + bw * 10)
-        # p$ylim=c(0,max(dhsdpost$y))
-        # p$x=dhsdpost$x
-        # p$y = dhsdpost$y
-        
-      }
       
-      if(!dopost) rawpopmeans <- rnorm(length(rawpopsdprior),0,1) #otherwise the prior is plotted conditional on sampled rawpopmeans
+      hsdpost <- s[['popsd']][,ri]
+      # dhsdpost<-ctDensity(hsdpost)
+      # 
+      # p$x = dhsdpost$density
+      # p$ylim=c(0,dhsdpost$ylim[2])
+      # p$xlim=c(0, dhsdpost$xlim[2])
+      
+      # p$xlim=c(0, quantile(hsdpost,probs=.98))
+      # bw = p$xlim[2] / 100# drawpopsdpost$xlim[2])
+      # dhsdpost<-density(hsdpost,bw=bw,from= 0 - bw*3, to = p$xlim[2] + bw * 10)
+      # p$ylim=c(0,max(dhsdpost$y))
+      # p$x=dhsdpost$x
+      # p$y = dhsdpost$y
+      
       param<-suppressWarnings(rawpopmeans+rawpopsdprior)
-      high<-eval(parse(text=paste0(sm$pars$transform[rowi])))
+      high<-tform(param,ctspec$transform[mi],ctspec$multiplier[mi], ctspec$meanscale[mi],ctspec$offset[mi])
       param<-suppressWarnings(rawpopmeans-rawpopsdprior)
-      low<-eval(parse(text=paste0(sm$pars$transform[rowi])))
+      low<-tform(param,ctspec$transform[mi],ctspec$multiplier[mi], ctspec$meanscale[mi],ctspec$offset[mi])
       hsdprior<-abs(high - low)/2
       
       # dhsdprior<-density(hsdprior,from=0-bw*3,to=p$xlim[2]+bw*5,bw=bw)
@@ -225,12 +206,12 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
       # do.call(graphics::plot,p)
       # graphics::points(dhsdprior$x,dhsdprior$y,col=ifelse(dopost,'blue','black'),type='l',lty=ifelse(dopost,2,1),lwd=2)
       
-      if(dopost) leg <- c('Pop. sd posterior','Pop. sd prior') else leg <- 'Pop. sd prior'
-      if(dopost) legcol <- c('black','blue') else legcol <- 'black'
+      leg <- c('Pop. sd posterior','Pop. sd prior') 
+      legcol <- c('black','blue')
       # 
       # graphics::legend('topright',leg, text.col=legcol, bty='n')
       
-      ctDensityList(list(hsdpost, hsdprior),main=paste0('Pop. sd ',sm$pars$param[rowi]),
+      ctDensityList(list(hsdpost, hsdprior),main=paste0('Pop. sd ',obj$pars$param[ri]),
         xlimsindex=1,
         xaxs='i',yaxs='i',plot = TRUE, colvec=legcol, legend=leg,lwd=lwd)
       
@@ -238,14 +219,14 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
       
       
       # pmeans[,indvaryingcount]<-sum$summary[sumnames %in% 
-      #     paste0(sm$pars$matrix[rowi],'[',1:nsubjects,',',sm$pars$row[rowi],
-      #       if(!(sm$pars$matrix[rowi] %in% c('T0MEANS','CINT','MANIFESTMEANS'))) paste0(',',sm$pars$col[rowi]),']'),
+      #     paste0(obj$pars$matrix[ri],'[',1:nsubjects,',',obj$pars$row[ri],
+      #       if(!(obj$pars$matrix[ri] %in% c('T0MEANS','CINT','MANIFESTMEANS'))) paste0(',',obj$pars$col[ri]),']'),
       #   1]
       # 
-      # pnames[indvaryingcount]<-paste0(sm$pars$matrix[rowi],'[',sm$pars$row[rowi],',',sm$pars$col[rowi],']')
+      # pnames[indvaryingcount]<-paste0(obj$pars$matrix[ri],'[',obj$pars$row[ri],',',obj$pars$col[ri],']')
       
       
-      if(wait==TRUE & rowi != utils::tail(rows,1)){
+      if(wait==TRUE & ri != utils::tail(rows,1)){
         message("Press [enter] to display next plot")
         readline()
       }

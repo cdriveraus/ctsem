@@ -38,7 +38,7 @@ Defaults to \code{c('T0TRAITEFFECT','T0TIPREDEFFECT')}, constraining only
 between person effects to stationarity. Use \code{NULL} for no constraints,
 or 'all' to constrain all T0 matrices.}
 
-\item{optimizer}{character string, defaults to the open-source 'SLSQP' optimizer that is distributed
+\item{optimizer}{character string, defaults to the open-source 'CSOLNP' optimizer that is distributed
 in all versions of OpenMx. However, 'NPSOL' may sometimes perform better for these problems,
 though requires that you have installed OpenMx via the OpenMx web site, by running:
 \code{source('http://openmx.psyc.virginia.edu/getOpenMx.R')}}

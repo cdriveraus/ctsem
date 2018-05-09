@@ -27,8 +27,8 @@
 #' 
 #' 
 ctStanModel<-function(ctmodelobj, type='stanct', indvarying='all'){
-if(type=='stanct') continuoustime<-TRUE
-if(type=='standt') continuoustime<-FALSE
+  if(type=='stanct') continuoustime<-TRUE
+  if(type=='standt') continuoustime<-FALSE
   
   if(!is.null(ctmodelobj$timeVarying)) stop('Time varying parameters not allowed for ctsem Stan model at present! Correct ctModel spec')
   
@@ -38,19 +38,19 @@ if(type=='standt') continuoustime<-FALSE
     objectlist<-c('T0MEANS','LAMBDA','DRIFT','DIFFUSION','MANIFESTVAR','MANIFESTMEANS', 'CINT', if(n.TDpred > 0) 'TDPREDEFFECT', 'T0VAR')
     for(obji in objectlist){
       if(!is.na(ctmodelobj[[obji]][1])){
-      for(rowi in 1:nrow(ctmodelobj[[obji]])){
-        for(coli in 1:ncol(ctmodelobj[[obji]])){
-          out<-rbind(out,data.frame(obji,rowi,coli,
-            ifelse(is.na(suppressWarnings(as.numeric(ctmodelobj[[obji]][rowi,coli]))), #ifelse element is character string
-              ctmodelobj[[obji]][rowi,coli],
-              NA),
-            ifelse(!is.na(suppressWarnings(as.numeric(ctmodelobj[[obji]][rowi,coli]))), #ifelse element is numeric
-              as.numeric(ctmodelobj[[obji]][rowi,coli]),
-              NA),
-            stringsAsFactors =FALSE
-          ))
+        for(rowi in 1:nrow(ctmodelobj[[obji]])){
+          for(coli in 1:ncol(ctmodelobj[[obji]])){
+            out<-rbind(out,data.frame(obji,rowi,coli,
+              ifelse(is.na(suppressWarnings(as.numeric(ctmodelobj[[obji]][rowi,coli]))), #ifelse element is character string
+                ctmodelobj[[obji]][rowi,coli],
+                NA),
+              ifelse(!is.na(suppressWarnings(as.numeric(ctmodelobj[[obji]][rowi,coli]))), #ifelse element is numeric
+                as.numeric(ctmodelobj[[obji]][rowi,coli]),
+                NA),
+              stringsAsFactors =FALSE
+            ))
+          }
         }
-      }
       }
     }
     colnames(out)<-c('matrix','row','col','param','value')
@@ -74,37 +74,63 @@ if(type=='standt') continuoustime<-FALSE
   
   freeparams<-is.na(ctspec[,'value'])
   
-  ctspec$transform<-NA
+  ctspec$transform<- NA
+  ctspec$multiplier <- 1
+  scale <- c()
+  shape <- c()
+  offset <- c()
   
   ######### STAN parameter transforms
-  ctspec$transform[ctspec$matrix %in% c('T0MEANS','MANIFESTMEANS','TDPREDEFFECT','CINT') & 
-      freeparams] <- '(param) * 10'
-  
-  ctspec$transform[ctspec$matrix %in% c('LAMBDA') &  freeparams] <- '(param+.5) * 10'
-  
-  ctspec$transform[ctspec$matrix %in% c('DIFFUSION','MANIFESTVAR', 'T0VAR') & 
-      freeparams & ctspec$row != ctspec$col] <- '(param)' #'inv_logit(param)*2-1'
-  
-  ctspec$transform[ctspec$matrix %in% c('MANIFESTVAR', 'T0VAR') & 
-      freeparams & ctspec$row == ctspec$col] <- 'exp(param*4)' #'1/(.1+exp(param*1.8))*10+.001'
-  
-  ctspec$transform[ctspec$matrix %in% c('DIFFUSION') & 
-      freeparams & ctspec$row == ctspec$col] <- 'exp(param*4)' #'1/(.1+exp(param*1.8))*10+.001'
-  
-  if(continuoustime==TRUE){
-    ctspec$transform[ctspec$matrix %in% c('DRIFT') & 
-        freeparams & ctspec$row == ctspec$col] <- '-log(exp(-param*1.5)+1)' #'log(1/(1+(exp(param*-1.5))))'
-    
-    ctspec$transform[ctspec$matrix %in% c('DRIFT') & freeparams & 
-        ctspec$row != ctspec$col] <- '(param)'
+  for(pi in 1:length(ctspec$matrix)){
+    if(freeparams[pi]){
+      if(ctspec$matrix[pi] %in% c('T0MEANS','MANIFESTMEANS','TDPREDEFFECT','CINT')) {
+        ctspec$transform[pi] <- 0
+        ctspec$transform[pi] <- 0
+        ctspec$meanscale[pi] <-10
+        ctspec$offset[pi] <- 0
+      }
+      if(ctspec$matrix[pi] %in% c('LAMBDA')) {
+        ctspec$transform[pi] <- 0
+        ctspec$meanscale[pi] <-10
+        ctspec$offset[pi] <- 0.5
+      }
+      if(ctspec$matrix[pi] %in% c('DIFFUSION','MANIFESTVAR', 'T0VAR')) {
+        if(ctspec$row[pi] != ctspec$col[pi]){
+          ctspec$transform[pi] <- 0
+          ctspec$meanscale[pi] <-10
+          ctspec$offset[pi] <- 0
+        }
+        if(ctspec$row[pi] == ctspec$col[pi]){
+          ctspec$transform[pi] <- 1
+          ctspec$meanscale[pi] <-10
+          ctspec$offset[pi] <- 0
+        }
+      }
+      if(ctspec$matrix[pi] %in% c('DRIFT')) {
+        if(ctspec$row[pi] == ctspec$col[pi]){
+          if(continuoustime==TRUE) {
+            ctspec$transform[pi] <- 2
+            ctspec$meanscale[pi] <- -2
+            ctspec$multiplier[pi] <- -1
+            ctspec$offset[pi] <- 0
+          }
+          if(continuoustime==FALSE) {
+            ctspec$transform[pi] <- 3
+            ctspec$meanscale[pi] <- 2
+            ctspec$offset[pi] <- 0
+          }
+        }
+        if(ctspec$row[pi] != ctspec$col[pi]){
+          ctspec$transform[pi] <- 0
+          ctspec$meanscale[pi] <- 1
+        }
+      }
+    }
   }
-  if(continuoustime==FALSE){
-    ctspec$transform[ctspec$matrix %in% c('DRIFT') & freeparams & 
-        ctspec$row == ctspec$col] <- '1/(1+exp((param)*-1.5))'
-    
-    ctspec$transform[ctspec$matrix %in% c('DRIFT') & freeparams & 
-        ctspec$row != ctspec$col] <- '(param)'
-  }
+  
+  ctspec$multiplier[!is.na(ctspec$value)] <- NA
+  ctspec$meanscale[!is.na(ctspec$value)] <- NA
+  ctspec$offset[!is.na(ctspec$value)] <- NA
   
   nparams<-sum(freeparams)
   
@@ -124,7 +150,7 @@ if(type=='standt') continuoustime<-FALSE
   ctspec$sdscale<-1
   
   
- 
+  
   if(n.TIpred > 0) {
     tipredspec<-matrix(TRUE,ncol=n.TIpred,nrow=1)
     colnames(tipredspec)<-paste0(TIpredNames,'_effect')
@@ -141,10 +167,9 @@ if(type=='standt') continuoustime<-FALSE
     continuoustime=continuoustime)
   class(out)<-'ctStanModel'
   
-  if(n.TIpred > 0) {
-    out$tipredeffectprior <- 'normal(0,1)'
-    out$tipredsimputedprior <- 'normal(0,10)'
-  }
+  out$tipredeffectprior <- 'normal(0,1)'
+  out$tipredsimputedprior <- 'normal(0,10)'
+  
   # out$popsdpriorscale <- 1
   out$rawpopsdbase <- 'normal(0,1)'
   out$rawpopsdbaselowerbound <- NA
@@ -153,5 +178,6 @@ if(type=='standt') continuoustime<-FALSE
   out$stationaryvarprior <- NA
   out$manifesttype <- rep(0,n.manifest)
   
- return(out)
+  return(out)
 }
+

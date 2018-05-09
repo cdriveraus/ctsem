@@ -111,8 +111,8 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
     
     skpars=kpars
     if(any(TRAITVARchol != 0)) {
-      traits = rnorm(n.latent,0,1)
-      skpars$CINT = skpars$CINT + TRAITVARchol %*% traits
+      traits = TRAITVARchol %*% rnorm(n.latent,0,1)
+      skpars$CINT = skpars$CINT +  traits
       skpars$T0MEANS = skpars$T0MEANS + T0TRAITEFFECT %*% traits
     }
     
