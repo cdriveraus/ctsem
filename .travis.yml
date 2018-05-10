@@ -1,49 +1,56 @@
-# R for travis: see documentation at https://docs.travis-ci.com/user/languages/r
-
-#language: R
-#sudo: false
-#cache: packages
-#r_build_args: --resave-data --compact-vignettes=gs+qpdf
-#r_check_args: --resave-data --compact-vignettes=gs+qpdf
-#script: 
-#  - |
-#    travis_wait 30 R CMD build .
-#    travis_wait 30 R CMD check ctsem*tar.gz
-#after_failure:
-#- find *Rcheck -name '*.fail' -print -exec cat '{}' \;
-
-
-
-
 language: r
+sudo: false
+r: devel
 cache: packages
 latex: true
-#r_build_args: --resave-data --no-build-vignettes
-#r_check_args: --resave-data --compact-vignettes=gs+qpdf
-#before_install:
-#- sudo apt-get -qq update && sudo apt-get install -y --no-install-recommends texlive-full
 
-#install:
-#  - if [ $TRAVIS_OS_NAME = osx ];  brew brew cask install mactex; fi
+
+env:
+  matrix: 
+    - CXX_OLEVEL=2 CXX=clang++
 
 matrix:
   include:
     - os: linux
-      sudo: required
-      r: devel
-    - os: osx
-      sudo: required
-      disable_homebrew: true
-      before_script: 
-      - sudo tlmgr install framed
+      compiler: clang
+      addons:
+        apt:
+          sources: [ 'ubuntu-toolchain-r-test', 'llvm-toolchain-precise-5.0' ]        
+          packages:
+            - llvm-5.0-dev
+      env:
+        - CXX_OLEVEL=2 CXX=clang++
+
+
+before_install:
+  - sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
+  - sudo apt-get update -q
+  - mkdir -p ~/.R/
+  - echo "CXX = `R CMD config CXX`" >> ~/.R/Makevars
+  - echo "CXXFLAGS = `R CMD config CXXFLAGS` -pedantic -g0 -flto -stdlib=libc++" >> ~/.R/Makevars
+  - echo "LDFLAGS += -flto -stdlib=libc++" >> ~/.R/Makevars
+  - export CLANG_EXTRA_ARG=""
+  - if [[ $CXX = "clang++" ]] ;  then export CLANG_EXTRA_ARG=" -Qunused-arguments -fcolor-diagnostics " ; fi
+  - sed -i.bak "s/ g++/ ${CXX}${CLANG_EXTRA_ARG}/" ~/.R/Makevars
+  - sed -i.bak "s/O[0-3]/O$CXX_OLEVEL/" ~/.R/Makevars
 
 script: 
   - |
-    travis_wait 30 R CMD build --resave-data --no-build-vignettes .
-    travis_wait 30 R CMD check --resave-data --compact-vignettes=gs+qpdf ctsem*tar.gz
+    travis_wait 42 R CMD build .
+    travis_wait 59 R CMD check ctsem*tar.gz
+
+after_script:
+  - tar -ztvf ctsem_*.tar.gz
+  - echo ${NOT_CRAN}
+
+after_success:
+  - travis_wait 40 tar -C .. -xf $PKG_TARBALL
+
+after_failure:
+  - cat ctsem.Rcheck/00*
+
 
 notifications:
   email:
     on_success: change
 on_failure: change
-

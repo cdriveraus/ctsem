@@ -109,7 +109,7 @@ stanseed<-floor(as.numeric(Sys.time()))
 
   stanplot(chains=chains,seed=stanseed)
   
-  out=stan(iter=iter,chains=chains,sample_file=sample_file,...)
+  out=sampling(iter=iter,chains=chains,sample_file=sample_file,...)
 
   for(chaini in 1:chains) system(paste0("rm ",tmpdir,'/',stanseed,"samples_",chaini,".csv"))
   system(paste0('rm ',tmpdir,'/stanplottemp.R'))

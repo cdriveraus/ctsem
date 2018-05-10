@@ -11,10 +11,7 @@
 #' @param stanmodeltext already specified Stan model character string, generally leave NA unless modifying Stan model directly.
 #' (Possible after modification of output from fit=FALSE)
 #' @param intoverstates logical indicating whether or not to integrate over latent states using a Kalman filter. 
-#' Generally recommended to set TRUE unless using non-gaussian measurement model. If not using Kalman filter, experience
-#' suggests that some models / datasets require a relatively high amount of very fast iterations before the sampler is
-#' in the high density region. This can make it difficult to determine the number of iterations needed a priori - in such cases 
-#' setting initwithoptim=TRUE may be helpful.
+#' Generally recommended to set TRUE unless using non-gaussian measurement model. 
 #' @param binomial Deprecated. Logical indicating the use of binary rather than Gaussian data, as with IRT analyses.
 #' This now sets \code{intoverstates = FALSE} and the \code{manifesttype} of every indicator to 1, for binary.
 #' @param fit If TRUE, fit specified model using Stan, if FALSE, return stan model object without fitting.
@@ -37,9 +34,6 @@
 #' @param iter number of iterations, half of which will be devoted to warmup by default when sampling.
 #' When optimizing, this is the maximum number of iterations to allow -- convergence hopefully occurs before this!
 #' @param inits vector of parameter start values, as returned by the rstan function \code{\link{unconstrain_pars}} for instance. 
-#' @param initwithoptim Logical. If TRUE, the model, with population standard deviations fixed to 1 
-#' (so approx 65% of the population mean prior), is first fit with penalised maximum likelihood to determine starting values
-#' for the chains. This can help speed convergence and avoid problematic regions for certain problems.
 #' @param chains number of chains to sample, during HMC or post-optimization importance sampling.
 #' @param cores number of cpu cores to use. Either 'maxneeded' to use as many as available,
 #' up to the number of chains, or a positive integer.
@@ -90,7 +84,7 @@
 #' @export
 ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intoverstates=TRUE, binomial=FALSE,
    fit=TRUE, ukfpop=FALSE, stationary=FALSE,plot=FALSE,  derrind='all',
-  optimize=FALSE, isloops=10, isloopsize=500, nopriors=FALSE, vb=FALSE, chains=1,cores='maxneeded', inits=NULL,initwithoptim=FALSE,
+  optimize=FALSE, isloops=10, isloopsize=500, nopriors=FALSE, vb=FALSE, chains=1,cores='maxneeded', inits=NULL,
   maxtimestep = 9999, lineardynamics='auto',
   control=list(adapt_delta=.8, adapt_init_buffer=2, adapt_window=2,
     max_treedepth=8,stepsize=1e-3),verbose=0,...){
@@ -99,6 +93,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   
   args=match.call()
   
+ 
   idName<-ctstanmodel$subjectIDname
   timeName<-ctstanmodel$timeName
   continuoustime<-ctstanmodel$continuoustime
@@ -115,6 +110,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   }
   
   ukf=FALSE
+  recompile <- FALSE
   if(optimize && !intoverstates) stop('intoverstates=TRUE required for optimization!')
   if(ukfpop & any(ctstanmodel$pars$indvarying)) ukf=TRUE else {
     if(ukfpop==TRUE) message('No individual variation -- disabling ukfpop switch'); ukfpop <- FALSE
@@ -125,7 +121,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     ukfpop | 
     !is.null(ctstanmodel$timeupdate) | 
       lineardynamics == FALSE | 
-    (1==1 & any(ctstanmodel$manifesttype==1) & intoverstates==TRUE)
+    (any(ctstanmodel$manifesttype==1) & intoverstates==TRUE)
   )   {message('Using unscented Kalman filter...'); ukf <- TRUE}
   
   
@@ -165,10 +161,10 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   
   if(!all(ctspec$transform[!is.na(suppressWarnings(as.integer(ctspec$transform)))] %in% c(0,1,2,3))) stop('Unknown transform specified -- integers should be 0 to 3')
   
-  if(binomial) {
-    ctspec<-ctspec[ctspec$matrix != 'MANIFESTVAR',]
-    message(paste0('MANIFESTVAR matrix is ignored when binomial=TRUE'))
-  }
+  # if(binomial) {
+  #   ctspec<-ctspec[ctspec$matrix != 'MANIFESTVAR',]
+  #   message(paste0('MANIFESTVAR matrix is ignored when binomial=TRUE'))
+  # }
   
   manifesttype=ctstanmodel$manifesttype
   
@@ -284,7 +280,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   if (!(idName %in% colnames(datalong))) stop(paste('id column', omxQuotes(idName), "not found in data"))
   
   #fit spec checks
-  if(binomial & any(intoverstates)) stop('Binomial observations only possible with intoverstates=FALSE')
+  # if(binomial & any(intoverstates)) stop('Binomial only possible with intoverstates=FALSE')
   
   #id mapping
   original <- unique(datalong[,idName])
@@ -399,7 +395,10 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   #configure user specified calculations
   if(is.null(ctstanmodel$timeupdate)) { 
     timeupdate <- 'DRIFT * state + CINT[,1] +  DIFFUSION * dynerror'
-  } else timeupdate <- ctstanmodel$timeupdate
+  } else {
+        recompile <- TRUE
+        timeupdate <- ctstanmodel$timeupdate
+  }
   
   dynamiccalcs <- ctstanmodel$calcs[
     unlist(lapply(
@@ -419,40 +418,79 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       function(z) any(z)))
     ]
   
-  if(ukfpop & any(ctspec$indvarying)){ #need to account for duplicates here too
-    ivtemp <- ctspec[ctspec$indvarying,]
-    for(i in 1:nrow(ivtemp)){
-      if(ivtemp$matrix[i] %in% dynamicmatrices){
-       dynamiccalcs <- c(dynamiccalcs, paste0(ivtemp$matrix[i],'[',ivtemp$row[i],',',ivtemp$col[i],'] = ',
-        ifelse(is.na(suppressWarnings(as.integer(ivtemp$transform[i]))), 
-          gsub('param', paste0('ukfstates[nlatent + ',i,', statei]'), ivtemp$transform[i]),
-          paste0('tform(', paste0('ukfstates[nlatent + ',i,', statei]'), ', ',ivtemp$transform[i], ', ', ivtemp$multiplier[i], ', ',ivtemp$meanscale[i], ', ',ivtemp$offset[i],');')
-        )))
-      }
-      if(ivtemp$matrix[i] %in% measurementmatrices){
-       measurementcalcs <- c(measurementcalcs, paste0(ivtemp$matrix[i],'[',ivtemp$row[i],',',ivtemp$col[i],'] = ',
-        ifelse(is.na(suppressWarnings(as.integer(ivtemp$transform[i]))), 
-          gsub('param', paste0('ukfstates[nlatent + ',i,', statei]'), ivtemp$transform[i]),
-          paste0('tform(', paste0('ukfstates[nlatent + ',i,', statei]'), ', ',ivtemp$transform[i], ', ', ivtemp$multiplier[i], ', ',ivtemp$meanscale[i], ', ',ivtemp$offset[i],');')
-        )))
-            
-      }
-      if(ivtemp$matrix[i] %in% t0matrices){
-       t0calcs <- c(t0calcs, paste0(ivtemp$matrix[i],'[',ivtemp$row[i],',',ivtemp$col[i],'] = ',
-        ifelse(is.na(suppressWarnings(as.integer(ivtemp$transform[i]))), 
-          gsub('param', paste0('ukfstates[nlatent + ',i,', statei]'), ivtemp$transform[i]),
-          paste0('tform(', paste0('ukfstates[nlatent + ',i,', statei]'), ', ',ivtemp$transform[i], ', ', ivtemp$multiplier[i], ', ',ivtemp$meanscale[i], ', ',ivtemp$offset[i],');')
-        )))
-      }
-    }
-  }
+  # if(ukfpop & any(ctspec$indvarying)){ #need to account for duplicates here too
+  #   ivtemp <- ctspec[ctspec$indvarying,]
+  #   for(i in 1:nrow(ivtemp)){
+  #     if(ivtemp$matrix[i] %in% dynamicmatrices){
+  #      dynamiccalcs <- c(dynamiccalcs, paste0(ivtemp$matrix[i],'[',ivtemp$row[i],',',ivtemp$col[i],'] = ',
+  #       ifelse(is.na(suppressWarnings(as.integer(ivtemp$transform[i]))), 
+  #         gsub('param', paste0('ukfstates[nlatent + ',i,', statei]'), ivtemp$transform[i]),
+  #         paste0('tform(', paste0('ukfstates[nlatent + ',i,', statei]'), ', ',ivtemp$transform[i], ', ', ivtemp$multiplier[i], ', ',ivtemp$meanscale[i], ', ',ivtemp$offset[i],');')
+  #       )))
+  #     }
+  #     if(ivtemp$matrix[i] %in% measurementmatrices){
+  #      measurementcalcs <- c(measurementcalcs, paste0(ivtemp$matrix[i],'[',ivtemp$row[i],',',ivtemp$col[i],'] = ',
+  #       ifelse(is.na(suppressWarnings(as.integer(ivtemp$transform[i]))), 
+  #         gsub('param', paste0('ukfstates[nlatent + ',i,', statei]'), ivtemp$transform[i]),
+  #         paste0('tform(', paste0('ukfstates[nlatent + ',i,', statei]'), ', ',ivtemp$transform[i], ', ', ivtemp$multiplier[i], ', ',ivtemp$meanscale[i], ', ',ivtemp$offset[i],');')
+  #       )))
+  #           
+  #     }
+  #     if(ivtemp$matrix[i] %in% t0matrices){
+  #      t0calcs <- c(t0calcs, paste0(ivtemp$matrix[i],'[',ivtemp$row[i],',',ivtemp$col[i],'] = ',
+  #       ifelse(is.na(suppressWarnings(as.integer(ivtemp$transform[i]))), 
+  #         gsub('param', paste0('ukfstates[nlatent + ',i,', statei]'), ivtemp$transform[i]),
+  #         paste0('tform(', paste0('ukfstates[nlatent + ',i,', statei]'), ', ',ivtemp$transform[i], ', ', ivtemp$multiplier[i], ', ',ivtemp$meanscale[i], ', ',ivtemp$offset[i],');')
+  #       )))
+  #     }
+  #   }
+  # }
   
-for(mati in c('DRIFT','DIFFUSION','CINT','TDPREDEFFECT','LAMBDA','MANIFESTMEANS','MANIFESTVAR','T0MEANS','T0VAR')){
-  dynamiccalcs <- gsub(mati,paste0('s',mati),dynamiccalcs)
-  measurementcalcs <- gsub(mati,paste0('s',mati),measurementcalcs)
-  t0calcs <- gsub(mati,paste0('s',mati),t0calcs)
-  timeupdate <- gsub(mati,paste0('s',mati),timeupdate)
-}
+    for(mati in c('DRIFT','DIFFUSION','CINT','TDPREDEFFECT','LAMBDA','MANIFESTMEANS','MANIFESTVAR','T0MEANS','T0VAR')){
+      dynamiccalcs <- gsub(mati,paste0('s',mati),dynamiccalcs)
+      measurementcalcs <- gsub(mati,paste0('s',mati),measurementcalcs)
+      t0calcs <- gsub(mati,paste0('s',mati),t0calcs)
+      timeupdate <- gsub(mati,paste0('s',mati),timeupdate)
+    }
+    
+    if(length(c(dynamiccalcs,measurementcalcs,t0calcs)) > 0) recompile <- TRUE
+    
+    #ukfpop calcs setup
+    dynamiccalcs <- paste0(dynamiccalcs, paste0('
+  if(ukfpop==1){',
+      unlist(lapply(dynamicmatrices, function(m){
+      paste0('
+    for(ri in 1:size(',m,'setup)){
+      if(',m,'setup[ ri,5] > 0){ 
+        s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = ',
+        'tform(ukfstates[nlatent +',m,'setup[ri,5], statei ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ); 
+      }
+    }')
+    })),'}',collapse='\n'),collapse='\n')
+    
+    measurementcalcs <- paste0(measurementcalcs, paste0(unlist(lapply(measurementmatrices, function(m){
+      paste0('
+    for(ri in 1:size(',m,'setup)){
+      if(',m,'setup[ ri,5] > 0){ 
+        s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = ',
+        'tform(ukfstates[nlatent +',m,'setup[ri,5], statei ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ); 
+      }
+    }')
+    })),collapse='\n'),collapse='\n')
+    
+    t0calcs <- paste0(t0calcs, paste0(unlist(lapply(t0matrices, function(m){
+      paste0('
+    for(ri in 1:size(',m,'setup)){
+      if(',m,'setup[ ri,5] > 0){ 
+        s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = ',
+        'tform(ukfstates[nlatent +',m,'setup[ri,5], statei ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ); 
+      }
+    }')
+    })),collapse='\n'),collapse='\n')
+    
+    #end ukfpop setup
+  
+
 
 #integration steps
 integrationsteps <- sapply(dT,function(x)  ceiling(x / maxtimestep));
@@ -898,6 +936,7 @@ matvalues <-list()
 freepar <- 0
 freeparcounter <- 0
 indvaryingindex <-array(0,dim=c(0))
+indvaryingcounter <- 0
 TIPREDEFFECTsetup <- matrix(0,nparams,n.TIpred)
 tipredcounter <- 1
 extratformcounter <- 0
@@ -908,11 +947,12 @@ for(m in basematrices){
   for(i in 1:nrow(ctspec)){ 
     if(ctspec$matrix[i] == m) {
       
-      if(!is.na(ctspec$param[i])){ #if a free parameter,
+      if(!is.na(ctspec$param[i]) & !grepl('[',ctspec$param[i],fixed=TRUE)){ #if a free parameter,
         if(i > 1 && any(ctspec$param[1:(i-1)] %in% ctspec$param[i])){ #and after row 1, check for duplication
           freepar <- match(ctspec$param[i], ctspec$param[1:i] [!is.na(ctspec$param[1:i])] ) #find which freepar corresponds to duplicate
         } else { #if not duplicated
           freeparcounter <- freeparcounter + 1
+          if(ctspec$indvarying[i]) indvaryingcounter <- indvaryingcounter + 1
           freepar <- freeparcounter
           if(is.na(suppressWarnings(as.integer(ctspec$transform[i])))) { #extra tform needed
             extratformcounter <- extratformcounter + 1
@@ -925,6 +965,9 @@ for(m in basematrices){
             tipredcounter<- tipredcounter + sum(as.integer(suppressWarnings(ctspec[i,paste0(TIpredNames,'_effect')])))
           }
         }
+        # if(ukfpop && ctspec$indvarying[i]) {
+        #   mdynadd <- 
+        # }
       }
       
       mdatnew <- matrix(c(
@@ -932,7 +975,7 @@ for(m in basematrices){
         ctspec$col[i],
         ifelse(!is.na(ctspec$param[i]),freepar, 0),
         ifelse(is.na(as.integer(ctspec$transform[i])), -1, as.integer(ctspec$transform[i])),
-        as.integer(ctspec$indvarying[i])),nrow=1)
+        ifelse(ctspec$indvarying[i],indvaryingcounter,0)),nrow=1)
       rownames(mdatnew) <- ctspec$param[i]
       
       mdat<-rbind(mdat,mdatnew)
@@ -954,12 +997,12 @@ for(m in basematrices){
   popvalues <- popvalues[popsetup[,'param'] !=0,,drop=FALSE]
   popsetup <- popsetup[popsetup[,'param'] !=0,,drop=FALSE]
   
-  sdscale <- array(popvalues[popsetup[,'indvarying']==1, 'sdscale'])
+  sdscale <- array(popvalues[popsetup[,'indvarying']>0, 'sdscale'])
 
+  if(any(popsetup[,'transform'] < -10)) recompile <- TRUE #if custom transforms needed
 
-
-  writemodel<-function(init=FALSE,nopriors=FALSE){
-    stanmodel <- paste0('
+  writemodel<-function(){
+    paste0('
 functions{
 
 matrix cholspd(matrix a){
@@ -1139,6 +1182,7 @@ data {
   int nmissingtipreds;
   int ntipredeffects;
   
+  vector[nmanifest] Y[ndatapoints];
   int nopriors;
   int lineardynamics;
   vector[ntdpred] tdpreds[ntdpred ? ndatapoints : 0];
@@ -1160,9 +1204,6 @@ data {
   int notindvaryingindex[nparams-nindvarying];
   int indvaryingindex[nindvarying];
   vector[nindvarying] sdscale;
-        
-  ',if(!binomial) 'vector[binomial ? 0 : nmanifest] Y[binomial ? 0 : ndatapoints];',
-  if(binomial) 'int Y[binomial ? ndatapoints : 0 , binomial ? nmanifest : 0]; ','
 
   int nt0varstationary;
   int nt0meansstationary;
@@ -1354,10 +1395,11 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
       ',collapse='\n')
     })),collapse='\n'),'
 
-  }')
-    }
+}
+')
+}
   
-  if(is.na(stanmodeltext)) stanmodeltext<-writemodel(init=initwithoptim,nopriors= nopriors)
+  if(is.na(stanmodeltext)) stanmodeltext<-writemodel()
 
   # out<-list(stanmodeltext=stanmodeltext)
   
@@ -1455,59 +1497,11 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
   
   if(fit){
     
-    if(!optimize){
-    message('Compiling model, ignore forthcoming warning re number of chains...')
-    # eval(stan_model(model_code = c(stanmodeltext), auto_write = TRUE),envir=globalenv())
+        
+    if(recompile) sm <- stan_model(model_name='ctsem', model_code = c(stanmodeltext))
+    if(!recompile) sm <- stanmodels$ctsm
     
-    sm <- stan(model_code = c(stanmodeltext),
-      data = standata, chains = 0, iter=1, control=list(max_treedepth=1))
-    
-    #control arguments for rstan
-    # if(is.null(control$adapt_term_buffer)) control$adapt_term_buffer <- min(c(iter/10,max(iter-20,75)))
-    if(is.null(control$adapt_delta)) control$adapt_delta <- .8
-    if(is.null(control$adapt_window)) control$adapt_window <- 2
-    if(is.null(control$max_treedepth)) control$max_treedepth <- 8
-    if(is.null(control$adapt_init_buffer)) control$adapt_init_buffer=2
-    if(is.null(control$adapt_init_buffer)) control$stepsize=.001
-    
-    
-    if(initwithoptim & chains > 0){#optimize with bfgs for initial values
-      
-      npars=get_num_upars(sm)
-      
-      if(any(ctspec$indvarying)) popsdindex=(nparams+1):(nparams+ sum(ctspec$indvarying)) else popsdindex<-NULL
-      
-      lp<-function(parm) {
-        parm[popsdindex]<-0
-        out<-try(log_prob(sm,upars=parm))
-        if(class(out)=='try-error') {
-          out=-1e20
-        }
-        return(out)
-      }
-      
-      grf<-function(parm) {
-        parm[popsdindex]<-0
-        out=try(grad_log_prob(sm,upars=parm))
-                if(class(out)=='try-error') {
-          out=rep(-1,length(parm))
-        }
-        out[popsdindex]=0
-        return(out)
-      }
-      
-      message('Optimizing to get inits...')
-      optimfit <- stats::optim(stats::rnorm(npars,0,.001), lp, gr=grf, 
-        control = list(fnscale = -1,trace=0,parscale=rep(.00001,npars),maxit=2000,factr=1e-12,lmm=100), 
-        method='L-BFGS-B',hessian = FALSE)
-      parsout=optimfit$par
-      parsout[popsdindex]=0
-      
-      inits=constrain_pars(sm,parsout)
-      message('Got inits.')
-    }
-    
-    if(!is.null(inits)){
+      if(!is.null(inits)){
       staninits=list(inits)
       if(chains > 0){
         for(i in 2:chains){
@@ -1527,20 +1521,35 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
       }
     }
     
+    if(!optimize){
+    # message('Compiling model, ignore forthcoming warning re number of chains...')
+    # eval(stan_model(model_code = c(stanmodeltext), auto_write = TRUE),envir=globalenv())
+
+    
+    #control arguments for rstan
+    # if(is.null(control$adapt_term_buffer)) control$adapt_term_buffer <- min(c(iter/10,max(iter-20,75)))
+    if(is.null(control$adapt_delta)) control$adapt_delta <- .8
+    if(is.null(control$adapt_window)) control$adapt_window <- 2
+    if(is.null(control$max_treedepth)) control$max_treedepth <- 8
+    if(is.null(control$adapt_init_buffer)) control$adapt_init_buffer=2
+    if(is.null(control$adapt_init_buffer)) control$stepsize=.001
+
+  
+    
       if(!optimize & !vb) {
       message('Sampling...')
       
-      stanargs <- list(fit = sm, 
+      stanargs <- list(object = sm, 
         # enable_random_init=TRUE,
         init_r=.05,
-        # init=staninits,
+        init=staninits,
         refresh=20,
         iter=iter,
-        data = standata, chains = ifelse(optimize==FALSE & vb==FALSE,chains,0), control=control,
+        data = standata, chains = chains, control=control,
         cores=cores,
         ...) 
       
-      if(plot==TRUE) stanfit <- do.call(stanWplot,stanargs) else stanfit <- do.call(stan,stanargs)
+      if(plot==TRUE) stanfit <- do.call(stanWplot,stanargs) else stanfit <- do.call(sampling,stanargs)
     }
     }
     
@@ -1548,28 +1557,27 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
 
       message('Optimizing...')
 
-      opt <- stan_model(model_code = stanmodeltext)
-      init <- 0
+      init <- staninits[[1]]
       
       if(nopriors){
         standata$nopriors <- 0
-        optimfit <- suppressWarnings(optimizing(opt,standata, hessian=FALSE, iter=400, init=0,as_vector=FALSE,
+        optimfit <- suppressWarnings(optimizing(sm,standata, hessian=FALSE, iter=400, init=0,as_vector=FALSE,
         tol_obj=1e-8, tol_rel_obj=0,init_alpha=.000001, tol_grad=0,tol_rel_grad=1e7,tol_param=1e-5,history_size=100))
         init=optimfit$par
         standata$nopriors <- 1
       }
 
-      optimfit <- suppressWarnings(optimizing(opt,standata, hessian=FALSE, iter=40000, init=init,as_vector=FALSE,
+      optimfit <- suppressWarnings(optimizing(sm,standata, hessian=FALSE, iter=40000, init=init,as_vector=FALSE,
         tol_obj=1e-12, tol_rel_obj=0,init_alpha=.000001, tol_grad=0,tol_rel_grad=1e1,tol_param=1e-9,history_size=100))
    
       est=optimfit$par
-      sm=suppressWarnings(suppressMessages(sampling(opt,iter=1,chains=1,data=standata,show_messages=FALSE)))
-      est=unconstrain_pars(sm,est)
+      smf=suppressWarnings(suppressMessages(sampling(sm,iter=1,chains=1,data=standata,show_messages=FALSE)))
+      est=unconstrain_pars(smf,est)
      
 
       
       lp<-function(parm) {
-        out<-try(log_prob(sm,upars=parm),silent = TRUE)
+        out<-try(log_prob(smf,upars=parm),silent = TRUE)
         if(class(out)=='try-error') {
           out=-Inf
         }
@@ -1577,10 +1585,10 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
       }
       
       grf<-function(parm,...) {
-        out=try(grad_log_prob(sm,upars=parm))
+        out=try(grad_log_prob(smf,upars=parm))
         if(class(out)=='try-error') {
           out=rnorm(parm)
-      print(constrain_pars(sm,parm))
+      print(constrain_pars(smf,parm))
         }
         return(out)
       }
@@ -1636,7 +1644,7 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
       qdiag<-0
 
       cl <- parallel::makeCluster(min(cores,chains), type = "PSOCK")
-      parallel::clusterExport(cl, c('lp',"opt",'standata'),environment())
+      parallel::clusterExport(cl, c('lp',"sm",'standata'),environment())
       
       if(isloops == 0) {
         resamples <- matrix(unlist(lapply(1:5000,function(x){
@@ -1665,10 +1673,10 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
             # target_dens <- c(target_dens,
             target_dens <- unlist(parallel::parLapply(cl, parallel::clusterSplit(cl,1:isloopsize), function(x){
               library(rstan)
-              sm=sampling(opt,iter=1,chains=1,data=standata)
+              smf=sampling(sm,iter=1,chains=1,data=standata)
               
               lp<-function(parm) {
-                out<-try(log_prob(sm,upars=parm),silent = TRUE)
+                out<-try(log_prob(smf,upars=parm),silent = TRUE)
                 if(class(out)=='try-error') {
                   out=-Inf
                 }
@@ -1677,7 +1685,7 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
               out <- apply(tail(samples,isloopsize)[x,],1,lp)
               
               #unload old rstan dlls
-              try(dyn.unload(file.path(tempdir(), paste0(sm@stanmodel@dso@dso_filename, .Platform$dynlib.ext))),silent = TRUE)
+              try(dyn.unload(file.path(tempdir(), paste0(smf@stanmodel@dso@dso_filename, .Platform$dynlib.ext))),silent = TRUE)
               
               # dso_filenames <- dir(tempdir(), pattern=.Platform$dynlib.ext)
               # filenames  <- dir(tempdir())
@@ -1747,7 +1755,7 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
   
       transformedpars <- list()
       for( li in 1:nresamples){
-        flesh = unlist(constrain_pars(resamples[li,],object = sm))
+        flesh = unlist(constrain_pars(resamples[li,],object = smf))
         names(flesh) <- c()
         skeleton=optimfit$par
         transformedpars[[li]] <-  relistarrays(flesh, skeleton)
@@ -1785,17 +1793,17 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
       lest= est - 1.96 * sds
       uest= est + 1.96 * sds
       
-      transformedpars_old=cbind(unlist(constrain_pars(sm,lest)),
-        unlist(constrain_pars(sm,est)),
-        unlist(constrain_pars(sm,uest)))
+      transformedpars_old=cbind(unlist(constrain_pars(smf,lest)),
+        unlist(constrain_pars(smf,est)),
+        unlist(constrain_pars(smf,uest)))
       colnames(transformedpars_old)=c('2.5%','mean','97.5%')
       
-      stanfit=list(optimfit=optimfit,stanmodel=sm, rawposterior = resamples, transformedpars=transformedpars,transformedpars_old=transformedpars_old,
+      stanfit=list(optimfit=optimfit,stanmodel=smf, rawposterior = resamples, transformedpars=transformedpars,transformedpars_old=transformedpars_old,
         isdiags=list(cov=mcovl,means=delta,ess=ess,qdiag=qdiag ))
     }
     
     if(vb==TRUE && fit==TRUE) {
-      stanfit <- vb(object = sm@stanmodel, 
+      stanfit <- vb(object = smf@stanmodel, 
         iter=iter,
         eta=1e-6,
         data = standata,...)
