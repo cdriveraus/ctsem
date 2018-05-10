@@ -30,8 +30,8 @@ before_install:
   - sudo apt-get update -q
   - mkdir -p ~/.R/
   - echo "CXX = `R CMD config CXX`" >> ~/.R/Makevars
-  - echo "CXXFLAGS = `R CMD config CXXFLAGS` -pedantic -g0 -flto -stdlib=libc++" >> ~/.R/Makevars
-  - echo "LDFLAGS += -flto -stdlib=libc++" >> ~/.R/Makevars
+  - echo "CXXFLAGS = `R CMD config CXXFLAGS` -pedantic -g0 -flto" >> ~/.R/Makevars
+  - echo "LDFLAGS += -flto" >> ~/.R/Makevars
   - export CLANG_EXTRA_ARG=""
   - if [[ $CXX = "clang++" ]] ;  then export CLANG_EXTRA_ARG=" -Qunused-arguments -fcolor-diagnostics " ; fi
   - sed -i.bak "s/ g++/ ${CXX}${CLANG_EXTRA_ARG}/" ~/.R/Makevars
