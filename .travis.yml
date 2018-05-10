@@ -13,8 +13,14 @@ matrix:
   include:
     - os: linux
       compiler: clang
+      addons:
+        apt:
+          sources: ['ubuntu-toolchain-r-test', 'llvm-toolchain-trusty-5.0']
+          packages: ['clang-5.0', 'g++-6']
       env:
-        - CXX_OLEVEL=2 CXX=clang++
+        COMPILER=clang++-5.0
+        #CPP_STD=c++11
+        CXX_OLEVEL=2 
 
 
 before_install:
