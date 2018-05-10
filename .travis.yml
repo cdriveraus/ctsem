@@ -15,10 +15,11 @@ matrix:
       compiler: clang
       addons:
         apt:
-          sources: [ 'ubuntu-toolchain-r-test', 'llvm-toolchain-precise-5.0' ]        
+          sources: [ 'ubuntu-toolchain-r-test', '- llvm-toolchain-trusty-5.0' ]        
           packages:
-            - llvm-5.0-dev
+            - clang-5.0
       env:
+        - MATRIX_EVAL="CC=clang-5.0 && CXX=clang++-5.0" 
         - CXX_OLEVEL=2 CXX=clang++
 
 
