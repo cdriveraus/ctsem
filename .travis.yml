@@ -12,9 +12,9 @@ env:
 matrix:
   include:
     - os: linux
-      compiler: clang
+      compiler: gcc
       env:
-        - CXX_OLEVEL=2 CXX=clang++
+        - CXX_OLEVEL=2 
 
 
 before_install:
