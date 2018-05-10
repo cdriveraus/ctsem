@@ -120,7 +120,7 @@ ctDensity<-function(x,bw='auto',plot=FALSE,...){
   xlims[2] = xlims[2] + sd
   # x=x[x>xlims[1]*1.2 & x<xlims[2]*1.2]
   # bw=(max(x)-min(x))^1.2 / length(x)^.4 *.4
-  if(bw=='auto') bw=sd/100
+  if(bw=='auto') bw=min(sd/100,1e-4)
   
   # xlims=stats::quantile(x,probs=c(.01,.99))
   # mid=mean(c(xlims[2],xlims[1]))
@@ -157,7 +157,7 @@ ctDensityList<-function(x,xlimsindex='all',plot=FALSE,ylab='Density',
   sd=sd(xlims)
   xlims[1] = xlims[1] - sd/2
   xlims[2] = xlims[2] + sd/2
-  bw=sd/50
+  bw=abs(max(sd/50,1e-5))
   
   if(all(colvec=='auto')) colvec=1:length(x)
   if(all(ltyvec=='auto')) ltyvec=1:length(x)

@@ -163,7 +163,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   #read in ctmodel values
   ctspec<-ctstanmodel$pars
   
-  if(!all(ctspec$transform[!is.na(as.integer(ctspec$transform))] %in% c(0,1,2,3))) stop('Unknown transform specified -- integers should be 0 to 3')
+  if(!all(ctspec$transform[!is.na(suppressWarnings(as.integer(ctspec$transform)))] %in% c(0,1,2,3))) stop('Unknown transform specified -- integers should be 0 to 3')
   
   if(binomial) {
     ctspec<-ctspec[ctspec$matrix != 'MANIFESTVAR',]
@@ -571,7 +571,8 @@ ukfilterfunc<-function(ppchecking){
         sigpoints = rep_matrix(0, nlatentpop,nlatentpop);
       
         if(ukfpop==1) {
-          etaprior[rowi, (nlatent+1):(nlatentpop)] = rawpopmeans[indvaryingindex] + TIPREDEFFECT[indvaryingindex] * tipreds[si]\';
+          if(ntipred ==0) etaprior[rowi, (nlatent+1):(nlatentpop)] = rawpopmeans[indvaryingindex];
+          if(ntipred >0) etaprior[rowi, (nlatent+1):(nlatentpop)] = rawpopmeans[indvaryingindex] + TIPREDEFFECT[indvaryingindex] * tipreds[si]\';
           sigpoints[(nlatent+1):(nlatentpop), (nlatent+1):(nlatentpop)] = rawpopcovsqrt * sqrtukfadjust;
         }
       }
@@ -899,6 +900,8 @@ freeparcounter <- 0
 indvaryingindex <-array(0,dim=c(0))
 TIPREDEFFECTsetup <- matrix(0,nparams,n.TIpred)
 tipredcounter <- 1
+extratformcounter <- 0
+extratforms <- c()
 for(m in basematrices){
   mdat<-matrix(0,0,5)
   mval<-matrix(0,0,5)
@@ -911,10 +914,15 @@ for(m in basematrices){
         } else { #if not duplicated
           freeparcounter <- freeparcounter + 1
           freepar <- freeparcounter
+          if(is.na(suppressWarnings(as.integer(ctspec$transform[i])))) { #extra tform needed
+            extratformcounter <- extratformcounter + 1
+            extratforms <- paste0(extratforms,'if(transform==',-10-extratformcounter,') out = ',ctspec$transform[i],';')
+            ctspec$transform[i] <- -10-extratformcounter
+          }
           if(n.TIpred > 0) {
             TIPREDEFFECTsetup[freepar,][ ctspec[i,paste0(TIpredNames,'_effect')]==TRUE ] <- 
-              tipredcounter: (tipredcounter + sum(as.integer(ctspec[i,paste0(TIpredNames,'_effect')])) -1)
-            tipredcounter<- tipredcounter + sum(as.integer(ctspec[i,paste0(TIpredNames,'_effect')]))
+              tipredcounter: (tipredcounter + sum(as.integer(suppressWarnings(ctspec[i,paste0(TIpredNames,'_effect')]))) -1)
+            tipredcounter<- tipredcounter + sum(as.integer(suppressWarnings(ctspec[i,paste0(TIpredNames,'_effect')])))
           }
         }
       }
@@ -940,6 +948,13 @@ for(m in basematrices){
   matsetup[[m]] = mdat
   matvalues[[m]] <- mval
 }
+
+  popsetup <- do.call(rbind,matsetup) 
+  popvalues <- do.call(rbind,matvalues) 
+  popvalues <- popvalues[popsetup[,'param'] !=0,,drop=FALSE]
+  popsetup <- popsetup[popsetup[,'param'] !=0,,drop=FALSE]
+  
+  sdscale <- array(popvalues[popsetup[,'indvarying']==1, 'sdscale'])
 
 
 
@@ -1104,7 +1119,8 @@ matrix cholspd(matrix a){
   real tform(real param, int transform, real multiplier, real meanscale, real offset){
     real out;
   
-    ',tformshapes(),'
+    ',tformshapes(),
+  if(extratformcounter > 0) extratforms,'
 
     return out;
   }
@@ -1431,13 +1447,11 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
     standata[[paste0(m,'values')]] <- matvalues[[m]]
   }
 
-  standata$popsetup <- do.call(rbind,matsetup) 
-  standata$popvalues <- do.call(rbind,matvalues) 
-  standata$popvalues <- standata$popvalues[standata$popsetup[,'param'] !=0,,drop=FALSE]
-  standata$popsetup <- standata$popsetup[standata$popsetup[,'param'] !=0,,drop=FALSE]
+  standata$popsetup <- popsetup
+  standata$popvalues <- popvalues
   
-  standata$sdscale <- array(standata$popvalues[standata$popsetup[,'indvarying']==1, 'sdscale'])
-
+  standata$sdscale <- sdscale
+  
   
   if(fit){
     
