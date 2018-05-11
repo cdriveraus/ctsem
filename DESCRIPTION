@@ -37,8 +37,7 @@ Imports:
     shiny,
     numDeriv,
     MASS,
-    mvtnorm,
-    parallel
+    mvtnorm
 Encoding: UTF-8
 LazyData: true
 ByteCompile: true
@@ -48,8 +47,6 @@ NeedsCompilation: yes
 Suggests:
     knitr,
     testthat,
-    cts,
-    yuima,
     shinystan
 VignetteBuilder: knitr
 RoxygenNote: 6.0.1
