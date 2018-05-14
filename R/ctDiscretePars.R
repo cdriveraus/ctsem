@@ -351,8 +351,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
 #'@param polygonalpha Numeric between 0 and 1 to multiply the alpha (transparency) of colvec by for 
 #'the fill polygon.
 #'@param polygoncontrol list of arguments to pass to ctPoly function (if polygon=TRUE).
-#'x,y, and col arguments will be ignored. Border is removed by default because quantile
-#'borders are differently, and steps specifies the number of polygons to overlay to 
+#'x,y, and col arguments will be ignored. Steps specifies the number of polygons to overlay to 
 #'create a graduated transparency. Set to 1 for a flat looking plot.
 #'@examples
 #'x <- ctStanDiscretePars(ctstantestfit)
@@ -367,7 +366,7 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
     main='Regression coefficients',type='l', xaxs='i'),grid=FALSE,
   legendcontrol=list(x='topright',bg='white'),
   polygonalpha=.1,
-  polygoncontrol=list(border=NA, steps=50)){
+  polygoncontrol=list(steps=20)){
   
   input <- x[[1]] #ctStanDiscretePars(x,type='discreteDRIFT',times=times,quantiles=quantiles,...)[[1]]
   

@@ -39,7 +39,7 @@ checkm<-ctModel(type='stanct',Tpoints=Tpoints,
   n.latent=n.latent,n.TDpred=n.TDpred,n.TIpred=n.TIpred,
   n.manifest=n.manifest,LAMBDA=diag(2))
 
-ctstantestfit<-ctStanFit(ctstantestdat,checkm,iter=200, warmup=180,chains=1)
+ctstantestfit<-ctStanFit(ctstantestdat,checkm,iter=200, warmup=180,chains=2)
 save(ctstantestfit,file='.\\\\data\\\\ctstantestfit.rda')
 }
 }

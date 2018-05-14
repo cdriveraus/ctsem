@@ -24,8 +24,8 @@ stan_files <- dir(file.path(MODELS_HOME, "stan_files"),
                   pattern = "stan$", full.names = TRUE)
 stanmodels <- lapply(stan_files, function(f) {
   model_cppname <- sub("\\.stan$", "", basename(f))
-  stanfit <- rstan::stanc(f, allow_undefined = TRUE, 
-                          obfuscate_model_name = FALSE)
+  stanfit <- suppressWarnings(rstan::stanc(f, allow_undefined = TRUE, 
+                          obfuscate_model_name = FALSE))
   stanfit$model_cpp <- list(model_cppname = stanfit$model_name, 
                             model_cppcode = stanfit$cppcode)
   return(do.call(methods::new, args = c(stanfit[-(1:3)], Class = "stanmodel", 

@@ -2,12 +2,12 @@
 % Please edit documentation in R/ctCheckFit.R
 \name{ctCheckFit}
 \alias{ctCheckFit}
-\title{Check absolute fit of ctFit object.}
+\title{Check absolute fit of ctFit or ctStanFit object.}
 \usage{
 ctCheckFit(fit, niter = 50, probs = c(0.025, 0.5, 0.975))
 }
 \arguments{
-\item{fit}{ctFit object.}
+\item{fit}{ctFit or ctStanFit object.}
 
 \item{niter}{number of data generation iterations to use to calculate quantiles.}
 
@@ -17,7 +17,7 @@ ctCheckFit(fit, niter = 50, probs = c(0.025, 0.5, 0.975))
 numeric matrix showing fit for each lower triangular index of the covariance matrix of data.
 }
 \description{
-Check absolute fit of ctFit object.
+Check absolute fit of ctFit or ctStanFit object.
 }
 \examples{
 \dontrun{

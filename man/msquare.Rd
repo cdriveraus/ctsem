@@ -7,7 +7,10 @@
 msquare(x)
 }
 \arguments{
-\item{x}{}
+\item{x}{matrix.}
+}
+\value{
+matrix.
 }
 \description{
 Right multiply a matrix by its transpose.

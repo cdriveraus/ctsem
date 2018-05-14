@@ -5,16 +5,30 @@
 \title{Misspecification plot using ctCheckFit output}
 \usage{
 \method{plot}{ctsemFitMeasure}(x, corrplotargs = list(method = "square",
-  is.corr = FALSE))
+  is.corr = FALSE), ...)
 }
 \arguments{
 \item{x}{Object output from ctsemFitMeasure function.}
 
 \item{corrplotargs}{Extra arguments to pass to corrplot function.}
+
+\item{...}{not used.}
 }
 \value{
 Nothing, just plots.
 }
 \description{
 Misspecification plot using ctCheckFit output
+}
+\examples{
+\dontrun{
+data(ctExample1)
+traitmodel <- ctModel(n.manifest=2, n.latent=2, Tpoints=6, LAMBDA=diag(2), 
+  manifestNames=c('LeisureTime', 'Happiness'), 
+  latentNames=c('LeisureTime', 'Happiness'), TRAITVAR="auto")
+traitfit <- ctFit(datawide=ctExample1, ctmodelobj=traitmodel)
+
+check <- ctCheckFit(traitfit,niter=5)
+plot(check)
+}
 }

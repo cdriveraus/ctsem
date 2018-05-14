@@ -9,7 +9,11 @@ ctDensity(x, bw = "auto", plot = FALSE, ...)
 \arguments{
 \item{x}{numeric vector on which to compute density.}
 
+\item{bw}{either 'auto' or a numeric indicating bandwidth.}
+
 \item{plot}{logical to indicate whether or not to plot the output.}
+
+\item{...}{Further args to density.}
 }
 \description{
 Wrapper for base R density function that removes outliers and computes 'reasonable' bandwidth and x and y limits.

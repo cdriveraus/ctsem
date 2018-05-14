@@ -39,9 +39,9 @@
 #' kpars <- ctStanContinuousPars(ctstantestfit)
 #' 
 #' #construct dummy data
-#' datalong <- cbind(0:9, matrix(rnorm(20,2,1),ncol=2))
-#' datalong[c(1:3,9:10),2:3]<-NA #missing data to pre/fore cast
-#' colnames(datalong) <- c('time', paste0('Y',1:2))
+#' datalong <- cbind(0:9, 1, matrix(rnorm(20,2,1),ncol=2))
+#' datalong[c(1:3,9:10),3:4]<-NA #missing data to pre/fore cast
+#' colnames(datalong) <- c('time', 'id', paste0('Y',1:2))
 #' print(datalong)
 #' 
 #' #obtain Kalman filtered estimates
@@ -52,7 +52,7 @@
 #' #print and plot smoothed estimates (conditional on all states) of indicators.
 #' print(kout$ysmooth)
 #' matplot(kout$time,kout$ysmooth,type='l')
-#' matplot(kout$time,datalong[,2:3],type='p',add=TRUE,pch=1)
+#' matplot(kout$time,datalong[,3:4],type='p',add=TRUE,pch=1)
 #' @export
 
 Kalman<-function(kpars,datalong,
@@ -340,13 +340,13 @@ Kalman<-function(kpars,datalong,
             
           }
           
-          if(!is.null(kpars$PARVAR)) {
-            dF <- numDeriv::jacobian(func = dynamicmodel, x= c(etaprior[[rowi]],PARMEANS),method='simple',
-              method.args=list(eps=sqrt(c(diag(discreteDIFFUSION[[rowi]]),diag(kpars$PARVAR)))),jacobian=TRUE)
-            etaupdcov <- cbind( rbind(etaupdcov[[rowi-1]],rep(0,nvarpar)), rbind(rep(0,nlatent),kpars$PARVAR))
-            discreteDIFF <- cbind( rbind(discreteDIFFUSION[[rowi]],rep(0,nvarpar)), matrix(0,nrow=nlatent+nvarpar))
-            etapriorcov[[rowi]] <- (dF %*% etaupdcov %*% t(dF)  + discreteDIFF )[1:nlatent,1:nlatent]
-          }
+          # if(!is.null(kpars$PARVAR)) {
+          #   dF <- numDeriv::jacobian(func = dynamicmodel, x= c(etaprior[[rowi]],PARMEANS),method='simple',
+          #     method.args=list(eps=sqrt(c(diag(discreteDIFFUSION[[rowi]]),diag(kpars$PARVAR)))),jacobian=TRUE)
+          #   etaupdcov <- cbind( rbind(etaupdcov[[rowi-1]],rep(0,nvarpar)), rbind(rep(0,nlatent),kpars$PARVAR))
+          #   discreteDIFF <- cbind( rbind(discreteDIFFUSION[[rowi]],rep(0,nvarpar)), matrix(0,nrow=nlatent+nvarpar))
+          #   etapriorcov[[rowi]] <- (dF %*% etaupdcov %*% t(dF)  + discreteDIFF )[1:nlatent,1:nlatent]
+          # }
       }
       
       if(imputeMissings) Y[rowi,] <- 0 #etaprior[[rowi]] + t(chol(etapriorcov[[rowi]])) %*% rnorm(nmanifest,0,1)

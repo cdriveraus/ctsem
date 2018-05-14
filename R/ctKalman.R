@@ -39,7 +39,7 @@
 #'   subsetindices=2, #Only plotting 2nd dimension of y and yprior
 #'   pchvec='auto', typevec='auto',grid=TRUE,legend=TRUE,
 #'   plotcontrol=list(xlim=c(0,55),main='Observations and priors'),
-#'   polygoncontrol=list(density=20))
+#'   polygoncontrol=list(steps=5))
 #' @export
 
 ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
@@ -191,7 +191,7 @@ ctKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
   ltyvec="auto",colvec='auto', lwdvec='auto', 
   subsetindices=NULL,pchvec='auto', typevec='auto',grid=FALSE,add=FALSE, 
   plotcontrol=list(ylab='Value',xlab='Time',xaxs='i'),
-  polygoncontrol=list(border=NA, steps=20),polygonalpha=.3,
+  polygoncontrol=list(steps=20),polygonalpha=.3,
   legend=TRUE, legendcontrol=list(x='topright',bg='white')){
   
 

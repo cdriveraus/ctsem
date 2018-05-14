@@ -20,8 +20,6 @@ License: GPL-3
 Depends:
     R (>= 3.4.0), 
     Rcpp (>= 0.12.16), 
-    methods,
-    utils,
     OpenMx (>= 2.3.0)
 URL: https://github.com/cdriveraus/ctsem
 Imports:
@@ -36,6 +34,9 @@ Imports:
     parallel,
     shiny,
     MASS,
+    methods,
+    utils,
+    corrplot,
     mvtnorm
 Encoding: UTF-8
 LazyData: true

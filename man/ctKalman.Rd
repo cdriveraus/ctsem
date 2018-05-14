@@ -57,5 +57,5 @@ ctKalman(ctstantestfit, timerange=c(0,60), timestep=.1, plot=TRUE,
   subsetindices=2, #Only plotting 2nd dimension of y and yprior
   pchvec='auto', typevec='auto',grid=TRUE,legend=TRUE,
   plotcontrol=list(xlim=c(0,55),main='Observations and priors'),
-  polygoncontrol=list(density=20))
+  polygoncontrol=list(steps=5))
 }

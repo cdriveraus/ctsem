@@ -364,8 +364,13 @@ matrix[ TDPREDEFFECTsetup_rowcount ? max(TDPREDEFFECTsetup[,1]) : 0, TDPREDEFFEC
 
   for(subi in 1:nsubjects){
     rawindparams[subi] = rawpopmeans;
-    if(nindvarying > 1 && ukfpop ==0) rawindparams[subi,indvaryingindex] = rawpopmeans[nindvarying] + rawpopcovsqrt * baseindparams[(1+(subi-1)*nindvarying):(subi*nindvarying)];
-    if(ntipred > 0) rawindparams[subi, indvaryingindex] = rawindparams[subi, indvaryingindex] + TIPREDEFFECT[indvaryingindex,] * tipreds[subi]';  
+
+    if(ntipred==0 && nindvarying > 1 && ukfpop ==0) rawindparams[subi,indvaryingindex] = 
+      rawpopmeans[nindvarying] + rawpopcovsqrt * baseindparams[(1+(subi-1)*nindvarying):(subi*nindvarying)];
+
+    if(ntipred > 0  && nindvarying > 1 && ukfpop ==0) rawindparams[subi, indvaryingindex] = 
+      rawpopmeans[nindvarying] + rawpopcovsqrt * baseindparams[(1+(subi-1)*nindvarying):(subi*nindvarying)] +
+      TIPREDEFFECT[indvaryingindex,] * tipreds[subi]';  
   }
 
   
@@ -657,8 +662,8 @@ model{
 
       etaprior[rowi] = discreteDRIFT * etaupd[rowi-1] + discreteCINT;
       if(intoverstates==1) {
-        etapriorcov[rowi] = quad_form(etaupdcov[rowi-1], discreteDRIFT');
-        if(ndiffusion > 0) etapriorcov[rowi,derrind,derrind] = etapriorcov[rowi,derrind,derrind] + discreteDIFFUSION[derrind,derrind];
+        if(ndiffusion ==0) etapriorcov[rowi] = quad_form(etaupdcov[rowi-1], discreteDRIFT');
+        if(ndiffusion > 0) etapriorcov[rowi,derrind,derrind] = quad_form(etaupdcov[rowi-1], discreteDRIFT') + discreteDIFFUSION[derrind,derrind];
       }
     }//end linear time update
 
@@ -913,7 +918,14 @@ model{
            // if(statei==2) merror[o1] = 2* fabs((ukfmeasures[o1 , statei] - 1) .* (ukfmeasures[o1 , statei] - 0));
            // if(statei>2) merror[o1] = merror[o1] + fabs((ukfmeasures[o1 , statei] - 1) .* (ukfmeasures[o1 , statei] - 0));
           }
-          if(statei==2) ukfmeasures[o,1] = ukfmeasures[o,2];
+          if(statei==2) { //temporary measure to get mean in twice
+          if(ncont_y[rowi] > 0) ukfmeasures[o0 , statei] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * state;
+          if(nbinary_y[rowi] > 0) {
+            ukfmeasures[o1 , statei] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * state)));
+           // if(statei==2) merror[o1] = 2* fabs((ukfmeasures[o1 , statei] - 1) .* (ukfmeasures[o1 , statei] - 0));
+           // if(statei>2) merror[o1] = merror[o1] + fabs((ukfmeasures[o1 , statei] - 1) .* (ukfmeasures[o1 , statei] - 0));
+          }
+          }
         } //end ukf measurement loop
     
         ypred = colMeans(ukfmeasures[o,]'); 
@@ -1123,8 +1135,8 @@ for(geni in 1:ngenerations){
 
       etaprior[rowi] = discreteDRIFT * etaupd[rowi-1] + discreteCINT;
       if(intoverstates==1) {
-        etapriorcov[rowi] = quad_form(etaupdcov[rowi-1], discreteDRIFT');
-        if(ndiffusion > 0) etapriorcov[rowi,derrind,derrind] = etapriorcov[rowi,derrind,derrind] + discreteDIFFUSION[derrind,derrind];
+        if(ndiffusion ==0) etapriorcov[rowi] = quad_form(etaupdcov[rowi-1], discreteDRIFT');
+        if(ndiffusion > 0) etapriorcov[rowi,derrind,derrind] = quad_form(etaupdcov[rowi-1], discreteDRIFT') + discreteDIFFUSION[derrind,derrind];
       }
     }//end linear time update
 
@@ -1379,7 +1391,14 @@ for(geni in 1:ngenerations){
            // if(statei==2) merror[o1] = 2* fabs((ukfmeasures[o1 , statei] - 1) .* (ukfmeasures[o1 , statei] - 0));
            // if(statei>2) merror[o1] = merror[o1] + fabs((ukfmeasures[o1 , statei] - 1) .* (ukfmeasures[o1 , statei] - 0));
           }
-          if(statei==2) ukfmeasures[o,1] = ukfmeasures[o,2];
+          if(statei==2) { //temporary measure to get mean in twice
+          if(ncont_y[rowi] > 0) ukfmeasures[o0 , statei] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * state;
+          if(nbinary_y[rowi] > 0) {
+            ukfmeasures[o1 , statei] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * state)));
+           // if(statei==2) merror[o1] = 2* fabs((ukfmeasures[o1 , statei] - 1) .* (ukfmeasures[o1 , statei] - 0));
+           // if(statei>2) merror[o1] = merror[o1] + fabs((ukfmeasures[o1 , statei] - 1) .* (ukfmeasures[o1 , statei] - 0));
+          }
+          }
         } //end ukf measurement loop
     
         ypred = colMeans(ukfmeasures[o,]'); 

@@ -7,7 +7,6 @@
 #' @examples
 #' \dontrun{
 #' #### example 1 
-#' library(rstan)
 #' scode <- "
 #' parameters {
 #'   real y[2]; 

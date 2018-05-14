@@ -19,7 +19,6 @@ Runs stan, and plots sampling information while sampling.
 \examples{
 \dontrun{
 #### example 1 
-library(rstan)
 scode <- "
 parameters {
   real y[2]; 

@@ -8,9 +8,9 @@ ctKalmanPlot(x, subjects, kalmanvec = c("y", "yprior"), errorvec = "auto",
   errormultiply = 1.96, ltyvec = "auto", colvec = "auto",
   lwdvec = "auto", subsetindices = NULL, pchvec = "auto",
   typevec = "auto", grid = FALSE, add = FALSE, plotcontrol = list(ylab =
-  "Value", xlab = "Time", xaxs = "i"), polygoncontrol = list(border = NA,
-  steps = 20), polygonalpha = 0.3, legend = TRUE, legendcontrol = list(x =
-  "topright", bg = "white"))
+  "Value", xlab = "Time", xaxs = "i"), polygoncontrol = list(steps = 20),
+  polygonalpha = 0.3, legend = TRUE, legendcontrol = list(x = "topright",
+  bg = "white"))
 }
 \arguments{
 \item{x}{Output from \code{\link{ctKalman}}. In general it is easier to call 

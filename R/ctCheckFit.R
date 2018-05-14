@@ -95,13 +95,25 @@ ctCheckFit <- function(fit, niter=50,probs=c(.025,.5,.975)){
 #'
 #' @param x Object output from ctsemFitMeasure function.
 #' @param corrplotargs Extra arguments to pass to corrplot function.
+#' @param ... not used.
 #'
 #' @return Nothing, just plots.
 #' @export
+#' @importFrom corrplot corrplot
 #' @method plot ctsemFitMeasure
 #'
 #' @examples
-plot.ctsemFitMeasure <- function(x,corrplotargs = list(method='square',is.corr=FALSE)){
+#' \dontrun{
+#' data(ctExample1)
+#' traitmodel <- ctModel(n.manifest=2, n.latent=2, Tpoints=6, LAMBDA=diag(2), 
+#'   manifestNames=c('LeisureTime', 'Happiness'), 
+#'   latentNames=c('LeisureTime', 'Happiness'), TRAITVAR="auto")
+#' traitfit <- ctFit(datawide=ctExample1, ctmodelobj=traitmodel)
+#' 
+#' check <- ctCheckFit(traitfit,niter=5)
+#' plot(check)
+#' }
+plot.ctsemFitMeasure <- function(x,corrplotargs = list(method='square',is.corr=FALSE),...){
   ratiomat <- matrix(NA,max(x[,'row']),max(x[,'row']))
   ratiomat[upper.tri(ratiomat,diag = TRUE)] = x[,'MisspecRatio']
   ratiomat[lower.tri(ratiomat)] = t(ratiomat)[lower.tri(ratiomat)]
@@ -110,5 +122,5 @@ plot.ctsemFitMeasure <- function(x,corrplotargs = list(method='square',is.corr=F
   rownames(ratiomat) <- unique(x[,'rowname'])
   
   corrplotargs$corr <- ratiomat
-  do.call(corrplot::corrplot,corrplotargs)
+  do.call(corrplot,corrplotargs)
 }

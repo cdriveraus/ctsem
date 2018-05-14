@@ -28,9 +28,9 @@ makeNumericIDs <- function(datalong,idName='id',timeName='time'){
 
 #' Right multiply a matrix by its transpose.
 #'
-#' @param x 
+#' @param x matrix.
 #'
-#' @return
+#' @return matrix.
 #' @export
 #'
 #' @examples
@@ -99,7 +99,9 @@ inv_logit<-function(x) {
 #' Used for ctsem density plots.
 #' 
 #' @param x numeric vector on which to compute density.
+#' @param bw either 'auto' or a numeric indicating bandwidth.
 #' @param plot logical to indicate whether or not to plot the output.
+#' @param ... Further args to density.
 #' 
 #' @examples
 #' y <- ctDensity(exp(rnorm(80)))
@@ -206,14 +208,14 @@ ctDensityList<-function(x,xlimsindex='all',plot=FALSE,ylab='Density',
 #' ctPoly(x=0:100, y=sqrt(0:100), 
 #' yhigh=sqrt(0:100) - runif(101), 
 #' ylow=sqrt(0:100) + runif(101),
-#' col=adjustcolor('red',alpha.f=.1),border=NA)
+#' col=adjustcolor('red',alpha.f=.1))
 ctPoly <- function(x,y,ylow,yhigh,steps=20,...){
   for(i in 1:steps){
     tylow= y + (ylow-y)*i/steps
     tyhigh= y + (yhigh-y)*i/steps
     xf <- c(x,x[length(x):1])
     yf <- c(tylow,tyhigh[length(tyhigh):1])
-    polygon(xf,yf,...)
+    polygon(xf,yf,border=NA,...)
   }
 }
 

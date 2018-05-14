@@ -30,7 +30,7 @@ ctPlotArray <- function(input,
   colvec='auto',lwdvec='auto',ltyvec='auto',typevec='auto',
   plotcontrol=list(ylab='Array values', xlab='X values',xaxs='i'),
   legend=TRUE,legendcontrol=list(x='topright'),
-  polygon=TRUE, polygonalpha=.1,polygoncontrol=list(border=NA,steps=25)){
+  polygon=TRUE, polygonalpha=.1,polygoncontrol=list(steps=25)){
   
   if(class(input)!='list') stop('Input must be a list containing y and x subobjects!')
   yarray <- input$y
@@ -53,11 +53,11 @@ ctPlotArray <- function(input,
     if(is.null(legendcontrol[[legendcontrolpars[i]]])) legendcontrol[[legendcontrolpars[i]]] <- legendcontroldefaults[i]
   }
   
-  polygoncontrolpars <- c('border')
-  polygoncontroldefaults <- c(NA)
-  for(i in 1:length(polygoncontrolpars)) {
-    if(is.null(polygoncontrol[[polygoncontrolpars[i]]])) polygoncontrol[[polygoncontrolpars[i]]] <- polygoncontroldefaults[i]
-  }
+  # polygoncontrolpars <- c('border')
+  # polygoncontroldefaults <- c(NA)
+  # for(i in 1:length(polygoncontrolpars)) {
+  #   if(is.null(polygoncontrol[[polygoncontrolpars[i]]])) polygoncontrol[[polygoncontrolpars[i]]] <- polygoncontroldefaults[i]
+  # }
   
   if(all(ltyvec=='auto')) ltyvec = 1:nvars
   if(all(lwdvec=='auto')) lwdvec = rep(3,nvars)
