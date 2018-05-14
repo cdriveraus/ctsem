@@ -27,6 +27,6 @@ cat(sm)
 sink()
 message('Compile?')
 compile <- readline()
-if(compile) eval(parse(text=paste0('devtools::install(local=FALSE),envir = globalenv())')))
+if(compile) eval(parse(text=paste0('eval(devtools::install(local=FALSE),envir = globalenv())')))
 }
 }

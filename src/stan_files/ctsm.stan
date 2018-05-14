@@ -180,8 +180,8 @@ data {
   matrix[ntipred ? nsubjects : 0, ntipred ? ntipred : 0] tipredsdata;
   int nmissingtipreds;
   int ntipredeffects;
-  vector[nmanifest] Y[ndatapoints];
   
+  vector[nmanifest] Y[ndatapoints];
   int nopriors;
   int lineardynamics;
   vector[ntdpred] tdpreds[ntdpred ? ndatapoints : 0];
@@ -863,6 +863,9 @@ model{
       int cindex[intoverstates ? nobsi : ncont_y[rowi]];
       vector[nmanifest] merror;
 
+      if(intoverstates==0) cindex = o0;
+      if(intoverstates==1) cindex = o; //treat all obs as continuous gaussian
+
       if(ukf==0){ //non ukf measurement
         if(intoverstates==1) { //classic kalman
           ypred[o] = sMANIFESTMEANS[o,1] + sLAMBDA[o,] * etaprior[rowi];
@@ -939,8 +942,6 @@ model{
         if(lineardynamics==1) print("discreteDRIFT ",discreteDRIFT,"  discreteCINT ", discreteCINT, "  discreteDIFFUSION ", discreteDIFFUSION)
       }
 
-      if(intoverstates==0) cindex = o0;
-      if(intoverstates==1) cindex = o; //treat all obs as continuous gaussian
       if(size(cindex) > 0){
          ypredcov_sqrt[cindex,cindex]=cholspd(ypredcov[cindex,cindex]);
          errtrans[(cobscount+1):(cobscount+size(cindex))] = mdivide_left_tri_low(ypredcov_sqrt[cindex,cindex], err[cindex]); //transform pred errors to standard normal dist and collect
@@ -1328,6 +1329,9 @@ for(geni in 1:ngenerations){
       int cindex[intoverstates ? nobsi : ncont_y[rowi]];
       vector[nmanifest] merror;
 
+      if(intoverstates==0) cindex = o0;
+      if(intoverstates==1) cindex = o; //treat all obs as continuous gaussian
+
       if(ukf==0){ //non ukf measurement
         if(intoverstates==1) { //classic kalman
           ypred[o] = sMANIFESTMEANS[o,1] + sLAMBDA[o,] * etaprior[rowi];
@@ -1389,7 +1393,8 @@ for(geni in 1:ngenerations){
 //print("  ukfmeasures[1,] ",ukfmeasures[1,], "  asquared ", asquared);
 
       
-          if(ncont_y[rowi] > 0) Ygen[geni, rowi, o0] = multi_normal_rng(ypred[o], ypredcov[o0,o0]);
+          ypredcov_sqrt[cindex,cindex]=cholspd(ypredcov[o0,o0]); //use o0, or cindex?
+          if(ncont_y[rowi] > 0) Ygen[geni, rowi, o0] = multi_normal_cholesky_rng(ypred[o], ypredcov_sqrt[o0,o0]);
           if(nbinary_y[rowi] > 0) for(obsi in 1:size(o1)) Ygen[geni, rowi, o1[obsi]] = bernoulli_rng(ypred[o1[obsi]]);
       
   

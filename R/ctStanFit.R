@@ -757,6 +757,9 @@ ukfilterfunc<-function(ppchecking){
       int cindex[intoverstates ? nobsi : ncont_y[rowi]];
       vector[nmanifest] merror;
 
+      if(intoverstates==0) cindex = o0;
+      if(intoverstates==1) cindex = o; //treat all obs as continuous gaussian
+
       if(ukf==0){ //non ukf measurement
         if(intoverstates==1) { //classic kalman
           ypred[o] = sMANIFESTMEANS[o,1] + sLAMBDA[o,] * etaprior[rowi];
@@ -800,7 +803,8 @@ ukfilterfunc<-function(ppchecking){
 //print("  ukfmeasures[1,] ",ukfmeasures[1,], "  asquared ", asquared);
 
       ',if(ppchecking) paste0('
-          if(ncont_y[rowi] > 0) Ygen[geni, rowi, o0] = multi_normal_rng(ypred[o], ypredcov[o0,o0]);
+          ypredcov_sqrt[cindex,cindex]=cholspd(ypredcov[o0,o0]); //use o0, or cindex?
+          if(ncont_y[rowi] > 0) Ygen[geni, rowi, o0] = multi_normal_cholesky_rng(ypred[o], ypredcov_sqrt[o0,o0]);
           if(nbinary_y[rowi] > 0) for(obsi in 1:size(o1)) Ygen[geni, rowi, o1[obsi]] = bernoulli_rng(ypred[o1[obsi]]);
       '),'
   
@@ -818,8 +822,6 @@ ukfilterfunc<-function(ppchecking){
         if(lineardynamics==1) print("discreteDRIFT ",discreteDRIFT,"  discreteCINT ", discreteCINT, "  discreteDIFFUSION ", discreteDIFFUSION)
       }
 
-      if(intoverstates==0) cindex = o0;
-      if(intoverstates==1) cindex = o; //treat all obs as continuous gaussian
       if(size(cindex) > 0){
          ypredcov_sqrt[cindex,cindex]=cholspd(ypredcov[cindex,cindex]);
          errtrans[(cobscount+1):(cobscount+size(cindex))] = mdivide_left_tri_low(ypredcov_sqrt[cindex,cindex], err[cindex]); //transform pred errors to standard normal dist and collect
@@ -1442,7 +1444,7 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
     ukfpop=as.integer(ukfpop),
     ukf=as.integer(ukf),
     nopriors=as.integer(nopriors),
-    ngenerations=0,
+    ngenerations=1,
     manifesttype=array(manifesttype,dim=length(manifesttype)),
     nobs_y=array(apply(datalong[,manifestNames,drop=FALSE],1,function(x) length(x[x!=99999])),dim=nrow(datalong)),
     whichobs_y=matrix(t(apply(datalong[,manifestNames,drop=FALSE],1,function(x) {
