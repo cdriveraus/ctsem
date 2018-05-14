@@ -1605,7 +1605,7 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
         return(gradout)
       }
       
-      hesscalc<-function(lp,gr,pars,step=1e-6){ #tested
+      hesscalc<-function(lp,gr,pars,step=1e-6){ 
         hess<-matrix(NA,length(pars),length(pars))
         hess<-grcalc(gr,pars,step)
         return(hess)

@@ -28,7 +28,7 @@
 #' level parameters to compute effects on. In either case 'all' uses all available.
 #' The integer corresponding to specific parameters can be found as follows, replacing \code{fit} as appropriate:
 #' \code{fit$ctstanmodel$pars[fit$ctstanmodel$pars$indvarying,'param']}.
-#' @param niterations Positive integer specifying the maximum number of saved iterations to use. 
+#' @param nsamples Positive integer specifying the maximum number of saved iterations to use. 
 #' Character string 'all' can also be used.
 #' @param nsubjects Positive integer specifying the number of subjects to compute values for.
 #' Character string 'all' can also be used. Time taken is a function of nsubjects*niterations.
@@ -49,7 +49,7 @@
 #' ctStanTIpredeffects(ctstantestfit,plot=TRUE,whichpars='dtDRIFT',nsamples=10)
 ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   includeMeanUncertainty=FALSE,
-  whichTIpreds=1,parmatrices=TRUE, whichpars='all', nsamples=50, timeinterval=1,
+  whichTIpreds=1,parmatrices=TRUE, whichpars='all', nsamples=100, timeinterval=1,
   nsubjects=50,filter=NA,
   plot=FALSE,...){
 
@@ -63,7 +63,7 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   rawpopmeans <- e$rawpopmeans
   
   niter<-dim(e$rawpopmeans)[1]
-  if(nsamples > niter) nsamples <- niter
+  if(nsamples=='all' || nsamples > niter) nsamples <- niter
   rawpopmeans <- rawpopmeans[sample(x = 1:niter, nsamples,replace = FALSE),]
   
   if(!includeMeanUncertainty) rawpopmeans <- matrix(apply(rawpopmeans,2,median),byrow=TRUE,nrow=nrow(rawpopmeans),ncol=ncol(rawpopmeans))

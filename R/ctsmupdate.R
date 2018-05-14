@@ -1,5 +1,5 @@
 ctsmupdate<-function(){
- sunspots<-sunspot.year
+ sunspots<-datasets::sunspot.year
  sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
  id <- 1
  time <- 1749:1924
@@ -27,6 +27,6 @@ cat(sm)
 sink()
 message('Compile?')
 compile <- readline()
-if(compile) eval(devtools::install(local=FALSE),envir = globalenv())
+if(compile) eval(parse(text=paste0('devtools::install(local=FALSE),envir = globalenv())')))
 }
 }

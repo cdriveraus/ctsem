@@ -14,6 +14,7 @@
 #' string vector of their names in the data.
 #' @param imputeMissings Logical. If TRUE, randomly generate any missing observations of 
 #' manifest variables according to model.
+#' @param idcol Character string giving name of subject identification column in data.
 #' @param continuoustime Logical, whether to use a continuous time Kalman filter or discrete time. 
 #' Refers only to latent states, observations are always at discrete time points.
 #' @param timecol name of time column in datalong. Note that time column must be an ascending sequence
@@ -197,7 +198,7 @@ Kalman<-function(kpars,datalong,
     
     kappa= 0.5 #accurate for gaussian
     
-    manifestype <- kpars$manifesttype
+    manifesttype <- kpars$manifesttype
     
     tvdrift <- any(grepl('DRIFT',kpars$calcs))
     tvcint <- any(c(grepl('CINT',kpars$calcs)))
@@ -455,10 +456,10 @@ Kalman<-function(kpars,datalong,
         
        etaupdcov[[rowi]] <- etapriorcov[[rowi]] - K %*% ypriorcov[[rowi]] %*% t(K)
         
-        if(!optimize){
-          yupd[[rowi]] <- kpars$MANIFESTMEANS + H %*% etaupd[[rowi]]
-          yupdcov[[rowi]] <- H %*% etaupdcov[[rowi]] %*% t(H) + kpars$MANIFESTVAR
-        }
+        # if(!optimize){
+        #   yupd[[rowi]] <- kpars$MANIFESTMEANS + H %*% etaupd[[rowi]]
+        #   yupdcov[[rowi]] <- H %*% etaupdcov[[rowi]] %*% t(H) + kpars$MANIFESTVAR
+        # }
         
       }
       

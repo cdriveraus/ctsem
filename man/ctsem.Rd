@@ -21,3 +21,11 @@ For examples, see either \code{\link{ctFit}} or \code{\link{ctStanFit}}.
 For more detailed information, see the frequentist vignette by running: \code{vignette('ctsem')} 
 For citation info, please run \code{citation('ctsem')} .
 }
+\references{
+https://www.jstatsoft.org/article/view/v077i05
+
+Driver, C. C., & Voelkle, M. C. (2018). Hierarchical Bayesian continuous time dynamic modeling. 
+Psychological Methods. Advance online publication.http://dx.doi.org/10.1037/met0000168
+
+Stan Development Team (2018). RStan: the R interface to Stan. R package version 2.17.3. http://mc-stan.org
+}

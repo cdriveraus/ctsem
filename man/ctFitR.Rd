@@ -4,7 +4,7 @@
 \alias{ctFitR}
 \title{Fit ctsem models with Kalman filter R code -- slower!}
 \usage{
-ctFitR(datalong, ctmodel, carefulfit = FALSE, regulariser = 1, ...)
+ctFitR(datalong, ctmodel, ...)
 }
 \arguments{
 \item{datalong}{long data}
@@ -23,7 +23,8 @@ Fit ctsem models with Kalman filter R code -- slower!
 \dontrun{
 Tpoints<-250
 n.manifest=5
-gm<-ctModel(type='omx',n.latent=1,n.manifest=n.manifest,Tpoints=Tpoints,LAMBDA=matrix(rep(1,n.manifest),ncol=1),
+gm<-ctModel(type='omx',n.latent=1,n.manifest=n.manifest,Tpoints=Tpoints,
+LAMBDA=matrix(rep(1,n.manifest),ncol=1),
   DRIFT=diag(-.3,1),
   T0VAR=diag(1),
   MANIFESTMEANS=matrix(0,nrow=n.manifest),

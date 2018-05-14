@@ -5,13 +5,13 @@
 #' @param ... arguments to pass to ctsem::Kalman
 #'
 #' @return matrix of estimates and standard errors
-#' @export
 #'
 #' @examples
 #' \dontrun{
 #' Tpoints<-250
 #' n.manifest=5
-#' gm<-ctModel(type='omx',n.latent=1,n.manifest=n.manifest,Tpoints=Tpoints,LAMBDA=matrix(rep(1,n.manifest),ncol=1),
+#' gm<-ctModel(type='omx',n.latent=1,n.manifest=n.manifest,Tpoints=Tpoints,
+#' LAMBDA=matrix(rep(1,n.manifest),ncol=1),
 #'   DRIFT=diag(-.3,1),
 #'   T0VAR=diag(1),
 #'   MANIFESTMEANS=matrix(0,nrow=n.manifest),
@@ -29,7 +29,10 @@
 #' rfit=ctFitR(datalong=cd,ctmodel=gm2)
 #' rfit
 #' }
-ctFitR<-function(datalong, ctmodel,carefulfit=FALSE,regulariser=1,...){
+ctFitR<-function(datalong, ctmodel,...){
+  
+  carefulfit=FALSE
+  regulariser=1
   
   # ctmodel <- list(ctmodel)
   kparsskeleton <- list(DRIFT=ctmodel$DRIFT,DIFFUSION=ctmodel$DIFFUSION,MANIFESTVAR=ctmodel$MANIFESTVAR,CINT=ctmodel$CINT,
@@ -41,7 +44,7 @@ ctFitR<-function(datalong, ctmodel,carefulfit=FALSE,regulariser=1,...){
   }
 
 
-  kpars <- unlist(as.relistable(kparsskeleton))
+  kpars <- unlist(utils::as.relistable(kparsskeleton))
 
   kparsfree <- which(suppressWarnings(is.na(as.numeric(kpars))))
   parnames <- unique(kpars[kparsfree])
@@ -56,7 +59,7 @@ ctFitR<-function(datalong, ctmodel,carefulfit=FALSE,regulariser=1,...){
 #   kparsskeleton$calcs <- unique(kpars[kparsskeleton$calcindices])
 #   kparsskeleton$calcmatrices <- unlist(lapply(kparsskeleton$calcs, function(x)
     
-  kpars <- unlist(as.relistable(kparsskeleton))
+  kpars <- unlist(utils::as.relistable(kparsskeleton))
 
   npars <- length(parnames)
   parpositions <- unlist(lapply(kpars[kparsfree],function(x) which(parnames==x)))
@@ -65,7 +68,7 @@ ctFitR<-function(datalong, ctmodel,carefulfit=FALSE,regulariser=1,...){
     kpars[kparsfree] <- pars[parpositions]
     # PARMEANS <- as.numeric(kpars[kparsfree][names(kpars[kparsfree])=='PARMEANS'])
     # kpars[kparsskeleton$calcindices] <- unlist(lapply(kparsskeleton$calcs,function(x) eval(parse(text=x))))
-    kpars <- relist(kpars,kparsskeleton)
+    kpars <- utils::relist(kpars,kparsskeleton)
     
     
     if(runif(1) > .95)  print(matrix(c(parnames,pars),ncol=2))
@@ -94,7 +97,7 @@ ctFitR<-function(datalong, ctmodel,carefulfit=FALSE,regulariser=1,...){
   # PARMEANS <- as.numeric(kpars[kparsfree][names(kpars[kparsfree])=='PARMEANS'])
   # kpars[kparsskeleton$calcindices] <- unlist(lapply(kparsskeleton$calcs,function(x) eval(parse(text=x))))
   
-  kpars <- relist(kpars)
+  kpars <- utils::relist(kpars)
 
   kpars[unlist(lapply(kpars,is.matrix))] <- lapply(kpars[unlist(lapply(kpars,is.matrix))],
     function(x) matrix(as.numeric(x),nrow=nrow(x),ncol=ncol(x)))

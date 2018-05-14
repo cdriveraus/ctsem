@@ -44,7 +44,7 @@
 
 ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
   subjects=1, plot=FALSE,...){
-  
+
   type=NA
   if(class(fit)=='ctStanFit') type='stan' 
   if(class(fit) =='ctsemFit') type ='omx'

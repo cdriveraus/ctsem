@@ -23,7 +23,8 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
   'A','M','testd',
   'T0VAR','T0MEANS', 'MANIFESTTRAITVAR',
   'TDpredNames', 'TIpredNames', 'Tpoints', 'extract', 'latentNames', 'manifestNames',
-  'plot', 'points','T0TRAITEFFECT'))
+  'plot', 'points','T0TRAITEFFECT',
+  'T0VARsubindex','DRIFTsubindex','DIFFUSIONsubindex','CINTsubindex'))
 
 #' ctsem
 #' 
@@ -43,5 +44,15 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
 #'  
 #' @docType package
 #' @name ctsem
-#' @import grDevices methods stats rstan OpenMx graphics plyr
+#' @import grDevices methods stats rstan OpenMx graphics plyr rstantools rstan rcpp
+#' @useDynLib ctsem, .registration = TRUE
+#' 
+#' @references 
+#' https://www.jstatsoft.org/article/view/v077i05
+#' 
+#' Driver, C. C., & Voelkle, M. C. (2018). Hierarchical Bayesian continuous time dynamic modeling. 
+#' Psychological Methods. Advance online publication.http://dx.doi.org/10.1037/met0000168
+#' 
+#' Stan Development Team (2018). RStan: the R interface to Stan. R package version 2.17.3. http://mc-stan.org
+#' 
 NULL

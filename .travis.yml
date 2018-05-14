@@ -1,5 +1,5 @@
 language: r
-sudo: false
+sudo: true
 r: devel
 cache: packages
 latex: true
@@ -22,7 +22,6 @@ before_install:
   - sudo apt-get update -q
   - mkdir -p ~/.R/
   - echo "CXX = `R CMD config CXX`" >> ~/.R/Makevars
-  - R -e install.packages('ctsem', dependencies=TRUE)
   #- echo "CXXFLAGS = `R CMD config CXXFLAGS` -pedantic -g0 -flto" >> ~/.R/Makevars
   #- echo "LDFLAGS += -flto" >> ~/.R/Makevars
   #- export CLANG_EXTRA_ARG=""

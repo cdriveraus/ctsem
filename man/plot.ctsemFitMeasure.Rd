@@ -4,13 +4,13 @@
 \alias{plot.ctsemFitMeasure}
 \title{Misspecification plot using ctCheckFit output}
 \usage{
-\method{plot}{ctsemFitMeasure}(fitmeasure, corrplotargs = list(method =
-  "square", is.corr = FALSE))
+\method{plot}{ctsemFitMeasure}(x, corrplotargs = list(method = "square",
+  is.corr = FALSE))
 }
 \arguments{
-\item{fitmeasure}{}
+\item{x}{Object output from ctsemFitMeasure function.}
 
-\item{corrplotargs}{}
+\item{corrplotargs}{Extra arguments to pass to corrplot function.}
 }
 \value{
 Nothing, just plots.

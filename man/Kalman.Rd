@@ -30,6 +30,8 @@ string vector of their names in the data.}
 \item{continuoustime}{Logical, whether to use a continuous time Kalman filter or discrete time. 
 Refers only to latent states, observations are always at discrete time points.}
 
+\item{idcol}{Character string giving name of subject identification column in data.}
+
 \item{timecol}{name of time column in datalong. Note that time column must be an ascending sequence
 of numeric values from row 1 to row n. Ignored if continuoustime=FALSE.}
 

@@ -19,17 +19,34 @@
 #' plot(check)
 #' }
 ctCheckFit <- function(fit, niter=50,probs=c(.025,.5,.975)){
+  
+  if(class(fit)=='ctsemFit'){
   if('Kalman' %in% fit$ctfitargs$objective) {
-    wdat <- ctLongToWide(fit$mxobj@data$observed,
+    wdat <- ctLongToWide(fit$mxobj@data$observed,id='id',time='time',
       manifestNames = fit$ctmodelobj$manifestNames)[,paste0(fit$ctmodelobj$manifestNames,'_T',1),drop=FALSE]
   } else  wdat <- fit$mxobj@data$observed[,paste0(fit$ctmodelobj$manifestNames,'_T',
     rep(0:(fit$ctmodelobj$Tpoints-1),each=fit$ctmodelobj$n.manifest)),drop=FALSE]
+  }
+  
+  if(class(fit)=='ctStanFit') {
+    ldat <- cbind(fit$data$subject,fit$data$time,fit$data$Y)
+    colnames(ldat)[1:2] <- c('subject','time')
+    wdat <- ctLongToWide(ldat,id='subject',time='time',
+      manifestNames = fit$ctstanmodel$manifestNames)[,paste0( fit$ctstanmodel$manifestNames,'_T',1),drop=FALSE]
+  }
 
 ecov <- cov(wdat,use = "pairwise.complete.obs")
 covarray<-array(NA,dim = c(dim(ecov),niter))
 
 for(i in 1:niter){
-  ndat <- ctGenerateFromFit(fit = fit,n.subjects = nrow(wdat))
+  if(class(fit)=='ctsemFit') ndat <- ctGenerateFromFit(fit = fit,n.subjects = nrow(wdat))
+  if(class(fit)=='ctStanFit') {
+    ndat <- cbind(fit$data$subject,fit$data$time,fit$data$Ygen)
+    colnames(ndat)[1:2] <- c('subject','time')
+    ndat <- ctLongToWide(ndat,id='subject',time='time',
+      manifestNames = fit$ctstanmodel$manifestNames)[,paste0( fit$ctstanmodel$manifestNames,'_T',1),drop=FALSE]
+  }
+
   ndat[is.na(wdat)] <- NA #match missingness
   covarray[,,i] <- cov(ndat[,paste0(fit$ctmodelobj$manifestNames,'_T',
     rep(0:(fit$ctmodelobj$Tpoints-1),each=fit$ctmodelobj$n.manifest)),drop=FALSE], use='pairwise.complete.obs')
@@ -63,21 +80,22 @@ return(test)
 
 #' Misspecification plot using ctCheckFit output
 #'
-#' @param fitmeasure 
-#' @param corrplotargs 
+#' @param x Object output from ctsemFitMeasure function.
+#' @param corrplotargs Extra arguments to pass to corrplot function.
 #'
 #' @return Nothing, just plots.
 #' @export
+#' @importFrom corrplot corrplot
 #' @method plot ctsemFitMeasure
 #'
 #' @examples
-plot.ctsemFitMeasure <- function(fitmeasure,corrplotargs = list(method='square',is.corr=FALSE)){
-  ratiomat <- matrix(NA,max(fitmeasure[,'row']),max(fitmeasure[,'row']))
-  ratiomat[upper.tri(ratiomat,diag = TRUE)] = fitmeasure[,'MisspecRatio']
+plot.ctsemFitMeasure <- function(x,corrplotargs = list(method='square',is.corr=FALSE)){
+  ratiomat <- matrix(NA,max(x[,'row']),max(x[,'row']))
+  ratiomat[upper.tri(ratiomat,diag = TRUE)] = x[,'MisspecRatio']
   ratiomat[lower.tri(ratiomat)] = t(ratiomat)[lower.tri(ratiomat)]
   
-  colnames(ratiomat) <- unique(fitmeasure[,'colname'])
-  rownames(ratiomat) <- unique(fitmeasure[,'rowname'])
+  colnames(ratiomat) <- unique(x[,'colname'])
+  rownames(ratiomat) <- unique(x[,'rowname'])
   
   corrplotargs$corr <- ratiomat
   do.call(corrplot::corrplot,corrplotargs)

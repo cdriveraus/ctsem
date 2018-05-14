@@ -6,7 +6,7 @@
 \usage{
 ctStanTIpredeffects(fit, returndifference = FALSE, probs = c(0.025, 0.5,
   0.975), includeMeanUncertainty = FALSE, whichTIpreds = 1,
-  parmatrices = TRUE, whichpars = "all", nsamples = 50,
+  parmatrices = TRUE, whichpars = "all", nsamples = 100,
   timeinterval = 1, nsubjects = 50, filter = NA, plot = FALSE, ...)
 }
 \arguments{
@@ -42,6 +42,9 @@ level parameters to compute effects on. In either case 'all' uses all available.
 The integer corresponding to specific parameters can be found as follows, replacing \code{fit} as appropriate:
 \code{fit$ctstanmodel$pars[fit$ctstanmodel$pars$indvarying,'param']}.}
 
+\item{nsamples}{Positive integer specifying the maximum number of saved iterations to use. 
+Character string 'all' can also be used.}
+
 \item{timeinterval}{positive numeric indicating time interval to use for discrete time parameter matrices,
 if \code{parmatrices=TRUE}.}
 
@@ -56,9 +59,6 @@ to only calculate effects for subjects where the tipreds of the denoted index ar
 is used to plot the output instead.}
 
 \item{...}{arguments to pass to \code{\link{ctPlotArray}} for plotting.}
-
-\item{niterations}{Positive integer specifying the maximum number of saved iterations to use. 
-Character string 'all' can also be used.}
 }
 \value{
 Either a three dimensional array of predictor effects, or nothing with a plot

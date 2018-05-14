@@ -8,10 +8,10 @@ ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 1000,
   intoverstates = TRUE, binomial = FALSE, fit = TRUE, ukfpop = FALSE,
   stationary = FALSE, plot = FALSE, derrind = "all", optimize = FALSE,
   isloops = 10, isloopsize = 500, nopriors = FALSE, vb = FALSE,
-  chains = 1, cores = "maxneeded", inits = NULL, initwithoptim = FALSE,
-  maxtimestep = 9999, lineardynamics = "auto", control = list(adapt_delta
-  = 0.8, adapt_init_buffer = 2, adapt_window = 2, max_treedepth = 8, stepsize =
-  0.001), verbose = 0, ...)
+  chains = 1, cores = "maxneeded", inits = NULL, maxtimestep = 9999,
+  lineardynamics = "auto", control = list(adapt_delta = 0.8,
+  adapt_init_buffer = 2, adapt_window = 2, max_treedepth = 8, stepsize = 0.001),
+  verbose = 0, ...)
 }
 \arguments{
 \item{datalong}{long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables, 
@@ -28,10 +28,7 @@ models respectively.}
 When optimizing, this is the maximum number of iterations to allow -- convergence hopefully occurs before this!}
 
 \item{intoverstates}{logical indicating whether or not to integrate over latent states using a Kalman filter. 
-Generally recommended to set TRUE unless using non-gaussian measurement model. If not using Kalman filter, experience
-suggests that some models / datasets require a relatively high amount of very fast iterations before the sampler is
-in the high density region. This can make it difficult to determine the number of iterations needed a priori - in such cases 
-setting initwithoptim=TRUE may be helpful.}
+Generally recommended to set TRUE unless using non-gaussian measurement model.}
 
 \item{binomial}{Deprecated. Logical indicating the use of binary rather than Gaussian data, as with IRT analyses.
 This now sets \code{intoverstates = FALSE} and the \code{manifesttype} of every indicator to 1, for binary.}
@@ -73,10 +70,6 @@ for many ctsem models at present.}
 up to the number of chains, or a positive integer.}
 
 \item{inits}{vector of parameter start values, as returned by the rstan function \code{\link{unconstrain_pars}} for instance.}
-
-\item{initwithoptim}{Logical. If TRUE, the model, with population standard deviations fixed to 1 
-(so approx 65% of the population mean prior), is first fit with penalised maximum likelihood to determine starting values
-for the chains. This can help speed convergence and avoid problematic regions for certain problems.}
 
 \item{maxtimestep}{positive numeric, only used for models with non-linear dynamics, specifying the largest time
 span covered by the Runge-Kutta 4 integration. The large default ensures that for each observation time interval, 
