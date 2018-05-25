@@ -32,10 +32,10 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...
   
   parnames <- c()
   parindices <- c()
-  for(m in names(object$matrixsetup)){
-    if(dim(object$matrixsetup[[m]])[1] > 0){
-      parnames <- c(parnames,rownames(object$matrixsetup[[m]]))
-      parindices <- c(parindices, object$matrixsetup[[m]][,'param'])
+  for(m in names(object$setup$matsetup)){
+    if(dim(object$setup$matsetup[[m]])[1] > 0){
+      parnames <- c(parnames,rownames(object$setup$matsetup[[m]]))
+      parindices <- c(parindices, object$setup$matsetup[[m]][,'param'])
     }
   }
   pars <- cbind(parnames,parindices)
@@ -141,8 +141,11 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...
   
   
   if(object$ctstanmodel$n.TIpred > 0) {
-    message('tipreds not working!')
-    tipreds = monitor(e$TIPREDEFFECT,warmup = 0,print = FALSE)[,monvars]
+    tieffect <- array(e$TIPREDEFFECT,dim=c(dim(e$TIPREDEFFECT)[1], 1, length(parnames) * dim(e$TIPREDEFFECT)[3]))
+    tieffectnames <- paste0('tip_',rep(object$ctstanmodel$TIpredNames,each=length(parnames)),'_',parnames)
+    dimnames(tieffect)<-list(c(),c(),tieffectnames)
+    tipreds = monitor(tieffect,warmup = 0,print = FALSE)[,monvars]
+    tipreds <- tipreds[c(object$data$TIPREDEFFECTsetup)>0,]
     # out$tipreds=round(s$summary[c(grep('tipred_',rownames(s$summary))),
     #   c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],digits=digits)
     z = tipreds[,'mean'] / tipreds[,'sd'] 
@@ -150,7 +153,20 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...
   }
   
   if(parmatrices){
-    parmatlists <- try(apply(e$rawpopmeans,1,ctStanParMatrices,model=object,timeinterval=timeinterval))
+    
+    #check if stanfit object can be used
+    sf <- object$stanfit
+    npars <- try(get_num_upars(sf),silent=TRUE) #$stanmodel)
+    
+    if(class(npars)=='try-error'){ #in case R has been restarted or similar
+      standataout <- object$data
+      standataout<-unlist(standataout)
+      standataout[is.na(standataout)] <- 99999
+      standataout <- utils::relist(standataout,skeleton=object$data)
+      suppressOutput(sf <- suppressWarnings(sampling(fit$stanmodel,data=standataout,iter=1,control=list(max_treedepth=1),chains=1)))
+    }
+
+    parmatlists <- try(apply(e$rawpopmeans,1,ctStanParMatrices,fit=object,timeinterval=timeinterval,sf=sf))
     if(class(parmatlists)!='try-error'){
       parmatarray <- array(unlist(parmatlists),dim=c(length(unlist(parmatlists[[1]])),length(parmatlists)))
       parmats <- matrix(NA,nrow=length(unlist(parmatlists[[1]])),ncol=7)
@@ -211,7 +227,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...
   }
   
   if(class(object$stanfit)!='stanfit'){ #if optimized / importance sampled
-    
+
     if(!is.null(iter)){ popsd <- monitor(array(e$popsd,dim=c(dim(e$popsd)[1],1,dim(e$popsd)[2])),warmup=0,print=FALSE)
     popsd=popsd[ object$data$indvaryingindex, monvars]
     rownames(popsd)=parnamesiv

@@ -75,8 +75,8 @@ if(plot==TRUE){
   
   
  for(i in 1:fit$ctmodelobj$n.manifest){
-  ctPlotArrayArgs$yarray = pcheck[,i,,drop=FALSE]
-  ctPlotArrayArgs$x = seq(0,timeupper,timestep)
+  ctPlotArrayArgs$input$y = pcheck[,i,,drop=FALSE]
+  ctPlotArrayArgs$input$x = seq(0,timeupper,timestep)
   ctPlotArrayArgs$plotcontrol=list(ylab='Values',xlab='Time', main=fit$ctmodelobj$manifestNames[i],
     ylim=range(c(ctPlotArrayArgs$yarray,data[,paste0(fit$ctmodelobj$manifestNames[i],'_T',0:(fit$ctmodelobj$Tpoints-1))]),na.rm=TRUE))
   do.call(ctPlotArray,ctPlotArrayArgs)

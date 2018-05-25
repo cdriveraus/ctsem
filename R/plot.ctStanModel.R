@@ -28,7 +28,6 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='margi
   if(rows=='all') rows<-1:nrow(m)
   for(rowi in rows){
     if(is.na(m$value[rowi])){
-      
       #rawpopsd
       if(rawpopsd[1]=='marginalise'){
         rawpopsdbase<-  stats::rnorm(nsamples)
@@ -36,51 +35,59 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='margi
         sdscale <- m$sdscale[rowi]
         sdtform <- gsub('.*', '*',x$rawpopsdtransform,fixed=TRUE)
         rawpopsdprior<-eval(parse(text=sdtform))
-        
-        nsamples<-length(rawpopsdprior) #adjust number of nsamples because of random n > 0
+
       } else if(is.na(as.numeric(rawpopsd))) stop('rawpopsd argument is ill specified!') else {
         rawpopsdprior <- rep(rawpopsd,nsamples)
       }
-      
+      denslist<-list()
       #mean
 
-      param=stats::rnorm(nsamples)
+      param=stats::rnorm(length(rawpopsdprior))
       # xmean=eval(parse(text=paste0(m$transform[rowi])))
-      xmean=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi])
-      meanxlims<-stats::quantile(xmean,probs=c(.1,.9))
+      denslist[[1]]=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi])
+      leg <- c('Pop. mean prior')
+      colvec <- c(1)
       
+      if(m$indvarying[rowi]){
       #high
-      param=stats::rnorm(nsamples,highmean,rawpopsdprior)
-      xhigh=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi])
-      highxlims <- stats::quantile(xhigh,probs=c(.1,.9))
+      param=stats::rnorm(length(rawpopsdprior),highmean,rawpopsdprior)
+      denslist[[2]]=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi])
       
       #low
-      param=stats::rnorm(nsamples,lowmean,rawpopsdprior)
-      xlow=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi])
-      lowxlims <- stats::quantile(xlow,probs=c(.1,.9))
-      
+      param=stats::rnorm(length(rawpopsdprior),lowmean,rawpopsdprior)
+      denslist[[3]]=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi])
+
+      leg <- c('Pop. mean prior', '-1sd mean, subject prior','+1sd mean, subject prior')
+      colvec <- c(1,2,4)
+      }
       
       #combined
-      xlims=c(min(meanxlims[1],lowxlims[1],highxlims[1]),max(meanxlims[2],lowxlims[2],highxlims[2]))
-      xdistance= ( (highxlims[1]-lowxlims[1]) + (highxlims[2]-lowxlims[2]) )/2
+      # xlims=c(min(meanxlims[1],lowxlims[1],highxlims[1]),max(meanxlims[2],lowxlims[2],highxlims[2]))
+      # xdistance= ( (highxlims[1]-lowxlims[1]) + (highxlims[2]-lowxlims[2]) )/2
+      # 
+      # xmean=xmean[xmean>(xlims[1]-xdistance) & xmean < (xlims[2]+xdistance)]
+      # xhigh=xhigh[xhigh>(xlims[1]-xdistance) & xhigh < (xlims[2]+xdistance)]
+      # xlow=xlow[xlow>(xlims[1]-xdistance) & xlow < (xlims[2]+xdistance)]
       
-      xmean=xmean[xmean>(xlims[1]-xdistance) & xmean < (xlims[2]+xdistance)]
-      xhigh=xhigh[xhigh>(xlims[1]-xdistance) & xhigh < (xlims[2]+xdistance)]
-      xlow=xlow[xlow>(xlims[1]-xdistance) & xlow < (xlims[2]+xdistance)]
+      # bw=(xlims[2]-xlims[1])/300
+      # 
+      # densxmean=stats::density(xmean,bw=bw,n=n)
+      # densxlow=stats::density(xlow,bw=bw,n=n)
+      # densxhigh=stats::density(xhigh,bw=bw,n=n)
+      # 
+      # ymax= max(c(densxmean$y),c(densxlow$y),c(densxhigh$y))*1.2
       
-      bw=(xlims[2]-xlims[1])/300
+      ctDensityList(denslist,plot = TRUE, lwd=2,probs=c(.05,.95),main=m$param[rowi],
+        cex=.8,cex.main=.8,cex.axis=.8,cex.lab=.8,cex.sub=.8,
+        legend = leg,
+        legendargs=list(cex=.8),
+        colvec = colvec)
       
-      densxmean=stats::density(xmean,bw=bw,n=n)
-      densxlow=stats::density(xlow,bw=bw,n=n)
-      densxhigh=stats::density(xhigh,bw=bw,n=n)
+      # graphics::plot(densxmean,main=m$param[rowi],lwd=2,xlim=c(xlims[1],xlims[2]),ylim=c(0,ymax),xlab='Par. value',ylab='Density')
+      # graphics::points(densxhigh,lwd=2,type='l',col='red',lty=3)
+      # graphics::points(densxlow,lwd=2,type='l',col='blue',lty=3)
       
-      ymax= max(c(densxmean$y),c(densxlow$y),c(densxhigh$y))*1.2
-      
-      graphics::plot(densxmean,main=m$param[rowi],lwd=2,xlim=c(xlims[1],xlims[2]),ylim=c(0,ymax),xlab='Par Value',ylab='Density')
-      graphics::points(densxhigh,lwd=2,type='l',col='red',lty=3)
-      graphics::points(densxlow,lwd=2,type='l',col='blue',lty=3)
-      
-      graphics::legend('topright',c('Pop. mean prior', '-1sd mean, subject prior','+1sd mean, subject prior'),text.col=c('black','blue','red'),bty='n')
+      # graphics::legend('topright',c('Pop. mean prior', '-1sd mean, subject prior','+1sd mean, subject prior'),text.col=c('black','blue','red'),bty='n')
       if(wait==TRUE & rowi != utils::tail(rows,1)){
         message("Press [enter] to display next plot")
         readline()

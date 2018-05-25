@@ -19,14 +19,17 @@ datalong <- cbind(id, time, sunspots)
 
 #fit
 sm <- ctStanFit(datalong, model,fit=FALSE)$stanmodeltext
+stanc(model_code = sm,verbose = TRUE)
 message(paste0('Updating from ',(getwd()),', continue T / F?'))
 continue <- readline()
 if(continue){
+  file.rename('./src/stan_files/ctsm.stan', './src/stan_files/ctsm.bak')
 sink(file='./src/stan_files/ctsm.stan')
 cat(sm)
 sink()
-message('Compile?')
-compile <- readline()
-if(compile) eval(parse(text=paste0('eval(devtools::install(local=FALSE),envir = globalenv())')))
+# 
+# message('All ok? finish this...')
+# compile <- readline()
+# if(compile) eval(parse(text=paste0('eval(devtools::install(local=FALSE),envir = globalenv())')))
 }
 }

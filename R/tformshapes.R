@@ -1,8 +1,9 @@
 tformshapes <- function(){
-paste0('  if(transform==0) out = param * meanscale * multiplier + offset;
-  if(transform==1) out = log(1+(exp(param * meanscale))) * multiplier + offset ;
-  if(transform==2) out = exp(param * meanscale) * multiplier + offset;
-  if(transform==3) out = inv_logit(param*meanscale) * multiplier + offset;
+paste0('  if(transform==0) out = param * meanscale * multiplier + offset; \n
+  if(transform==1) out = log(1+(exp(param * meanscale))) * multiplier + offset ; \n
+  if(transform==2) out = exp(param * meanscale) * multiplier + offset; \n
+  if(transform==3) out = inv_logit(param*meanscale) * multiplier + offset; \n
+  if(transform==4) out = ((param*meanscale)^3)*multiplier + offset; \n
 ')
   }
 

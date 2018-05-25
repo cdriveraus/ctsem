@@ -1,3 +1,7 @@
+suppressOutput <- function(...,verbose=0){
+  if(verbose > 0) return(eval(...)) else return(capture.output(eval(...)))
+}
+
 # helper function to generate an index matrix, or return unique elements of a matrix
 indexMatrix<-function(dimension,symmetrical=FALSE,upper=FALSE,lowerTriangular=FALSE, sep=NULL,starttext=NULL,endtext=NULL,
   unique=FALSE,rowoffset=0,coloffset=0,indices=FALSE,diagonal=TRUE,namesvector=NULL){
@@ -116,7 +120,7 @@ inv_logit<-function(x) {
 #' @export
 
 ctDensity<-function(x,bw='auto',plot=FALSE,...){
-  xlims=stats::quantile(x,probs=c(.02,.98))
+  xlims=stats::quantile(x,probs=c(.05,.95))
   sd=sd(xlims)
   xlims[1] = xlims[1] - sd
   xlims[2] = xlims[2] + sd
@@ -140,26 +144,24 @@ ctDensity<-function(x,bw='auto',plot=FALSE,...){
 
 
 ctDensityList<-function(x,xlimsindex='all',plot=FALSE,ylab='Density',
-  xlab='Par. Value',colvec='auto',ltyvec='auto',
-  legend=FALSE, legendargs=list(x='topright',bty='n'),...){
+  xlab='Par. Value',colvec='auto',ltyvec='auto',probs=c(.05,.95),
+  legend=FALSE, legendargs=list(),...){
   
   if(all(xlimsindex=='all')) xlimsindex <- 1:length(x)
   
   for(i in xlimsindex){
-    newxlims=stats::quantile(x[[i]],probs=c(.02,.98))
+    newxlims=stats::quantile(x[[i]],probs=probs)
     if(i==1) {
       xlims=newxlims
     } 
     else {
-      for(xi in 1:2){
-        if(newxlims[xi] < xlims[xi]) xlims[xi] = newxlims[xi]
-      }
+        newxlims <- range(c(xlims,newxlims))
     }
   }
   sd=sd(xlims)
   xlims[1] = xlims[1] - sd/2
   xlims[2] = xlims[2] + sd/2
-  bw=abs(max(sd/50,1e-5))
+  bw=abs(max((sd)/length(x[[1]])^.4,1e-5))
   
   if(all(colvec=='auto')) colvec=1:length(x)
   if(all(ltyvec=='auto')) ltyvec=1:length(x)
@@ -182,10 +184,13 @@ ctDensityList<-function(x,xlimsindex='all',plot=FALSE,ylab='Density',
       if(is.null(legendargs$col)) legendargs$col = colvec
       if(is.null(legendargs$text.col)) legendargs$text.col = colvec
       if(is.null(legendargs$lty)) legendargs$lty = ltyvec
+      if(is.null(legendargs$x)) legendargs$x='topright'
+      if(is.null(legendargs$bty)) legendargs$bty='n'
       legendargs$legend = legend
       do.call(graphics::legend,legendargs)
     }
   }
+
   return(list(density=denslist,xlim=xlims,ylim=ylims))
 }
 

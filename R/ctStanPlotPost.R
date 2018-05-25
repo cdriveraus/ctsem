@@ -62,6 +62,7 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
   popmeancount<-0
   
   for(ri in rows){
+    
     # popmeancount <- which(obj$pars$param[is.na(obj$pars$value)] %in% obj$pars$param[ri])
     pname <- rownames(obj$data$popsetup[ri,,drop=FALSE])
     rawpopmeans<- s$rawpopmeans[,ri]
@@ -104,7 +105,7 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
     if(obj$data$popsetup[ri,'indvarying']==1){ #then also plot sd and subject level pars
       
       indvaryingcount<-indvaryingcount+1 #which(obj$pars$param[is.na(obj$pars$value) & obj$pars$indvarying] %in% obj$pars$param[ri])
-
+      
       sdscale <- obj$data$popvalues[ri,'sdscale']
       sdtform <- gsub('.*', '*',obj$ctstanmodel$rawpopsdtransform,fixed=TRUE)
       
@@ -112,28 +113,35 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
       
       rawpopsd <- eval(parse(text=sdtform))  #rawpopsd samples
       
-      rawindparams<-s[['rawindparams']][,1:nsubjects,indvaryingcount]
-      
       param<-stats::rnorm(densiter,rawpopmeans,rawpopsd)
       subjectprior<-tform(param,ctspec$transform[mi],ctspec$multiplier[mi], ctspec$meanscale[mi],ctspec$offset[mi])
       # dsubjectprior<-ctDensity(subjectprior)
-      param<-stats::rnorm(densiter,0,1)
-      param<-rawindparams
-      indparams<-tform(param,ctspec$transform[mi],ctspec$multiplier[mi], ctspec$meanscale[mi],ctspec$offset[mi])
-      # dindparams<-ctDensity(indparams,bw=dsubjectprior$density$bw)
+      
+      if(!obj$data$ukfpop) {
+        rawindparams<-s$baseindparams[,seq(indvaryingcount,by=obj$data$nindvarying,length.out=obj$data$nsubjects)]
+        param<-stats::rnorm(densiter,0,1)
+        param<-rawindparams
+        indparams<-tform(param,ctspec$transform[mi],ctspec$multiplier[mi], ctspec$meanscale[mi],ctspec$offset[mi])
+        # dindparams<-ctDensity(indparams,bw=dsubjectprior$density$bw)
+        
+        
+        # graphics::plot(dindparams$density,xlab='Value',main=obj$pars$param[ri],lwd=2,yaxs='i',
+        #   ylim=c(0,max(dsubjectprior$ylim[2],dindparams$ylim[2])),
+        #   xlim=c(min(dsubjectprior$xlim[1],dindparams$xlim[1]),max(dsubjectprior$xlim[2],dindparams$xlim[2])))
+        # graphics::points(dsubjectprior$density,col='red',lwd=2,lty=2,type='l')
+        # graphics::points(dmeanprior$density,lwd=2,type='l',col='blue',lty=3)
+        # graphics::legend('topright',c('Subject param posterior','Subject param prior','Pop mean prior'),
+        #   text.col=c('black','red','blue'),bty='n')
+        ctDensityList(list(indparams,subjectprior,meanprior),main=pname,
+          colvec=c('black','red','blue'),plot=TRUE,lwd=lwd,xlimsindex=1:2,
+          xaxs='i',  yaxs='i',legend=c('Subject param posterior','Subject param prior','Pop mean prior'))
+      } else {
+        ctDensityList(list(subjectprior,meanprior),main=pname,
+          colvec=c('red','blue'),plot=TRUE,lwd=lwd,xlimsindex=1,
+          xaxs='i',  yaxs='i',legend=c('Subject param prior','Pop mean prior'))
+      }
       
       
-      # graphics::plot(dindparams$density,xlab='Value',main=obj$pars$param[ri],lwd=2,yaxs='i',
-      #   ylim=c(0,max(dsubjectprior$ylim[2],dindparams$ylim[2])),
-      #   xlim=c(min(dsubjectprior$xlim[1],dindparams$xlim[1]),max(dsubjectprior$xlim[2],dindparams$xlim[2])))
-      # graphics::points(dsubjectprior$density,col='red',lwd=2,lty=2,type='l')
-      # graphics::points(dmeanprior$density,lwd=2,type='l',col='blue',lty=3)
-      # graphics::legend('topright',c('Subject param posterior','Subject param prior','Pop mean prior'),
-      #   text.col=c('black','red','blue'),bty='n')
-      
-      ctDensityList(list(indparams,subjectprior,meanprior),main=pname,
-        colvec=c('black','red','blue'),plot=TRUE,lwd=lwd,xlimsindex=1:2,
-        xaxs='i',  yaxs='i',legend=c('Subject param posterior','Subject param prior','Pop mean prior'))
       
       
       
@@ -158,7 +166,7 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
       #   p$y = drawpopsdpost$y
       # }
       #prior
-      rawpopsdbase<-  stats::rnorm(100000,0,1)
+      rawpopsdbase<-  stats::rnorm(densiter,0,1)
       rawpopsdprior <- eval(parse(text=sdtform)) #rawpopsd prior samples
       # drawpopsdprior<-ctDensity(rawpopsdprior)
       

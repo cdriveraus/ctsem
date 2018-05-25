@@ -87,7 +87,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   optimize=FALSE, isloops=10, isloopsize=500, nopriors=FALSE, vb=FALSE, chains=1,cores='maxneeded', inits=NULL,
   maxtimestep = 9999, lineardynamics='auto',
   control=list(adapt_delta=.8, adapt_init_buffer=2, adapt_window=2,
-    max_treedepth=8,stepsize=1e-3),verbose=0,...){
+    max_treedepth=10,stepsize=1e-3),verbose=0,...){
   
   if(class(ctstanmodel) != 'ctStanModel') stop('not a ctStanModel object')
   
@@ -98,7 +98,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   timeName<-ctstanmodel$timeName
   continuoustime<-ctstanmodel$continuoustime
   
-  if(length(unique(datalong[,idName]))==1 & any(ctstanmodel$pars$indvarying==FALSE)) {
+  if(length(unique(datalong[,idName]))==1 & any(ctstanmodel$pars$indvarying[is.na(ctstanmodel$pars$value)]==TRUE)) {
     ctstanmodel$pars$indvarying <- FALSE
     message('Individual variation not possible as only 1 subject! indvarying set to FALSE on all parameters')
   }
@@ -112,7 +112,11 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   ukf=FALSE
   recompile <- FALSE
   if(optimize && !intoverstates) stop('intoverstates=TRUE required for optimization!')
-  if(ukfpop & any(ctstanmodel$pars$indvarying)) ukf=TRUE else {
+  if(optimize && !ukfpop && any(ctstanmodel$pars$indvarying[is.na(ctstanmodel$pars$value)]==TRUE)){
+    ukfpop <- TRUE
+    message('Setting ukfpop=TRUE to enable optimization of random effects...')
+  }
+  if(ukfpop & any(ctstanmodel$pars$indvarying[is.na(ctstanmodel$pars$value)])) ukf=TRUE else {
     if(ukfpop==TRUE) message('No individual variation -- disabling ukfpop switch'); ukfpop <- FALSE
     }
   
@@ -136,6 +140,11 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   
   if(!lineardynamics && !intoverstates) stop('intoverstates must be TRUE for nonlinear dynamics')
   
+  if(!is.na(ctstanmodel$rawpopsdbaselowerbound)) recompile <- TRUE
+  if(ctstanmodel$rawpopsdbase != 'normal(0,1)') recompile <- TRUE
+  if(ctstanmodel$rawpopsdtransform != 'exp(rawpopsdbase * 2 -2) .* sdscale') recompile <- TRUE
+  
+  
   if(cores=='maxneeded') cores=min(c(chains,parallel::detectCores()))
   
   checkvarying<-function(matrixnames,yesoutput,nooutput=''){#checks if a matrix is set to individually vary in ctspec
@@ -156,10 +165,12 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   basematrices <- unique(c(ctstanmodel$pars$matrix,'TDPREDEFFECT')) #c(dynamicmatrices,measurementmatrices,t0matrices)
   
   
+  
+  
   #read in ctmodel values
   ctspec<-ctstanmodel$pars
   
-  if(!all(ctspec$transform[!is.na(suppressWarnings(as.integer(ctspec$transform)))] %in% c(0,1,2,3))) stop('Unknown transform specified -- integers should be 0 to 3')
+  if(!all(ctspec$transform[!is.na(suppressWarnings(as.integer(ctspec$transform)))] %in% c(0,1,2,4))) stop('Unknown transform specified -- integers should be 0 to 4')
   
   # if(binomial) {
   #   ctspec<-ctspec[ctspec$matrix != 'MANIFESTVAR',]
@@ -203,11 +214,15 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   }
   
   #adjust transforms for optimization
-  if(1==99&& optimize) {
+
+  if(1==99 && optimize) {
     message('Adapting standard deviation transforms for optimization')
-    ctstanmodel$rawpopsdtransform <- 'log(1+exp(rawpopsdbase))*10'
-    ctspec$pars$transform[ctspec$matrix %in% c('DIFFUSION','MANIFESTVAR','T0VAR') && is.na(ctspec$pars$value) && ctspec$pars$row == ctspec$pars$col] <-
-      'log(1+exp(rawpopsdbase))*10'
+    # ctstanmodel$rawpopsdtransform <- 'log(1+exp(rawpopsdbase))*10'
+    indices <- ctspec$matrix %in% c('DIFFUSION','MANIFESTVAR','T0VAR') & is.na(ctspec$value) & ctspec$row == ctspec$col
+    ctspec$transform[indices] <- 1
+    ctspec$multiplier[indices] <- 1
+    ctspec$meanscale[indices] <- 10
+    ctspec$offset[indices] <- 0
   }
   
   ctstanmodel$pars <- ctspec #updating because we save the model later
@@ -276,9 +291,22 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   nparams<-length(unique(ctspec$param[!is.na(ctspec$param)]))
   
   
-  #data checks
+  ###data checks
   if (!(idName %in% colnames(datalong))) stop(paste('id column', omxQuotes(idName), "not found in data"))
   
+  #scale check
+  if(any(abs(colMeans(datalong[,c(ctstanmodel$manifestNames,ctstanmodel$TDpredNames),drop=FALSE],na.rm=TRUE)) > 5)){
+    message('Uncentered data noted -- default priors may not be appropriate')
+  }
+  
+  if(ctstanmodel$n.TIpred > 1 && any(abs(colMeans(datalong[,c(ctstanmodel$TIpredNames),drop=FALSE],na.rm=TRUE)) > .3)){
+    message('Uncentered TI predictors noted -- default priors may not be appropriate')
+  }
+  
+  if(any(abs(apply(datalong[,c(ctstanmodel$manifestNames,ctstanmodel$TDpredNames,ctstanmodel$TIpredNames),drop=FALSE],2,sd,na.rm=TRUE)) > 3)){
+    message('Unscaled data noted -- default priors may not be appropriate')
+  }
+
   #fit spec checks
   # if(binomial & any(intoverstates)) stop('Binomial only possible with intoverstates=FALSE')
   
@@ -348,6 +376,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   message('Unique discreteDIFFUSION calculations per step required = ', length(unique(diffusionindex))-1)
   }
   # datalong[sort(c(which(dT > 5),which(dT > 5)+1,which(dT > 5)-1)),1:2]
+  
+  if(mean(dT) > 3) message('Average time interval greater than 3 -- if using default priors, consider rescaling time data...')
+  
   
   if(n.TDpred > 0) {
     tdpreds <- datalong[,TDpredNames,drop=FALSE]
@@ -455,20 +486,23 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     if(length(c(dynamiccalcs,measurementcalcs,t0calcs)) > 0) recompile <- TRUE
     
+      # browser()
     #ukfpop calcs setup
-    dynamiccalcs <- paste0(dynamiccalcs, paste0('
-  if(ukfpop==1){',
+    dynamiccalcs <- paste0(dynamiccalcs, '  if(ukfpop==1){
+',paste0(
       unlist(lapply(dynamicmatrices, function(m){
       paste0('
     for(ri in 1:size(',m,'setup)){
       if(',m,'setup[ ri,5] > 0){ 
-        s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = ',
-        'tform(ukfstates[nlatent +',m,'setup[ri,5], statei ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ); 
+        s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = 
+          ','tform(ukfstates[nlatent +',m,'setup[ri,5], statei ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ); 
       }
     }')
-    })),'}',collapse='\n'),collapse='\n')
+    })),collapse='\n'),'}',collapse='\n')
     
-    measurementcalcs <- paste0(measurementcalcs, paste0(unlist(lapply(measurementmatrices, function(m){
+    measurementcalcs <- paste0(measurementcalcs, '
+      if(ukfpop==1){
+        ',paste0(unlist(lapply(measurementmatrices, function(m){
       paste0('
     for(ri in 1:size(',m,'setup)){
       if(',m,'setup[ ri,5] > 0){ 
@@ -476,9 +510,11 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         'tform(ukfstates[nlatent +',m,'setup[ri,5], statei ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ); 
       }
     }')
-    })),collapse='\n'),collapse='\n')
+    })),collapse='\n'),'}',collapse='\n')
     
-    t0calcs <- paste0(t0calcs, paste0(unlist(lapply(t0matrices, function(m){
+    t0calcs <- paste0(t0calcs, '
+      if(ukfpop==1){
+        ',paste0(unlist(lapply(t0matrices, function(m){
       paste0('
     for(ri in 1:size(',m,'setup)){
       if(',m,'setup[ ri,5] > 0){ 
@@ -486,10 +522,10 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         'tform(ukfstates[nlatent +',m,'setup[ri,5], statei ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ); 
       }
     }')
-    })),collapse='\n'),collapse='\n')
+    })),collapse='\n'),'}',collapse='\n')
     
     #end ukfpop setup
-  
+
 
 
 #integration steps
@@ -502,7 +538,6 @@ ukfilterfunc<-function(ppchecking){
   out<-paste0('
   int si;
   int counter;
-  int ppchecking;
   vector[nlatentpop] etaprior[ndatapoints]; //prior for latent states
   vector[nlatentpop] etaupd[ndatapoints]; //updated latent states
   matrix[nlatentpop, nlatentpop] etapriorcov[ndatapoints]; //prior for covariance of latent states
@@ -625,17 +660,30 @@ ukfilterfunc<-function(ppchecking){
 
     if(lineardynamics==1 && ukf==0 && T0check[rowi]==0){ //linear kf time update
     
-      if(continuoustime ==1 && (T0check[rowi-1]==1 || dT[rowi] != dT[rowi-1])){ 
-        if(driftdiagonly==1) discreteDRIFT = matrix_diagexp(sDRIFT * dT[rowi]);
-        if(driftdiagonly==0) discreteDRIFT = matrix_exp(sDRIFT * dT[rowi]);
-        discreteCINT = sDRIFT \\ (discreteDRIFT - IIlatent) * sCINT[,1];
+      if(continuoustime ==1){
+        int dtchange = 0;
+        if(si==1 && T0check[rowi -1] == 1) {
+          dtchange = 1;
+        } else if(T0check[rowi-1] == 1 && dT[rowi-2] != dT[rowi]){
+          dtchange = 1;
+        } else if(T0check[rowi-1] == 0 && dT[rowi-1] != dT[rowi]) dtchange = 1;
+        
+        if(dtchange==1 || (T0check[rowi-1]==1 && si <= DRIFTsubindex[si])){
+          if(driftdiagonly==1) discreteDRIFT = matrix_diagexp(sDRIFT * dT[rowi]);
+          if(driftdiagonly==0) discreteDRIFT = matrix_exp(sDRIFT * dT[rowi]);
+        }
+        if(dtchange==1 || (T0check[rowi-1]==1 && (si <= CINTsubindex[si] || si <= DRIFTsubindex[si]))){
+          discreteCINT = sDRIFT \\ (discreteDRIFT - IIlatent) * sCINT[,1];
+        }
     
-        //discreteDIFFUSION[derrind, derrind] = sasymDIFFUSION[derrind, derrind] - 
-          //quad_form( sasymDIFFUSION[derrind, derrind], discreteDRIFT[derrind, derrind]\' );
-        discreteDIFFUSION[derrind, derrind] = discreteDIFFUSIONcalc(DRIFT[ DRIFTsubindex[si], derrind, derrind], sDIFFUSION[derrind, derrind], dT[rowi]);
+        if(dtchange==1 || (T0check[rowi-1]==1 && (si <= DIFFUSIONsubindex[si]|| si <= DRIFTsubindex[si]))){
+          //discreteDIFFUSION[derrind, derrind] = sasymDIFFUSION[derrind, derrind] - 
+            //quad_form( sasymDIFFUSION[derrind, derrind], discreteDRIFT[derrind, derrind]\' );
+          discreteDIFFUSION[derrind, derrind] = discreteDIFFUSIONcalc(DRIFT[ DRIFTsubindex[si], derrind, derrind], sDIFFUSION[derrind, derrind], dT[rowi]);
+        }
       }
   
-      if(continuoustime==0){
+      if(continuoustime==0 && T0check[rowi-1] == 1){
         discreteDRIFT=sDRIFT;
         discreteCINT=sCINT[,1];
         discreteDIFFUSION=sDIFFUSION;
@@ -755,7 +803,6 @@ ukfilterfunc<-function(ppchecking){
     if (nobsi > 0) {  // if some observations create right size matrices for missingness and calculate...
   
       int cindex[intoverstates ? nobsi : ncont_y[rowi]];
-      vector[nmanifest] merror;
 
       if(intoverstates==0) cindex = o0;
       if(intoverstates==1) cindex = o; //treat all obs as continuous gaussian
@@ -786,20 +833,16 @@ ukfilterfunc<-function(ppchecking){
           if(ncont_y[rowi] > 0) ukfmeasures[o0 , statei] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * state;
           if(nbinary_y[rowi] > 0) {
             ukfmeasures[o1 , statei] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * state)));
-           // if(statei==2) merror[o1] = 2* fabs((ukfmeasures[o1 , statei] - 1) .* (ukfmeasures[o1 , statei] - 0));
-           // if(statei>2) merror[o1] = merror[o1] + fabs((ukfmeasures[o1 , statei] - 1) .* (ukfmeasures[o1 , statei] - 0));
           }
           if(statei==2) { //temporary measure to get mean in twice
-          if(ncont_y[rowi] > 0) ukfmeasures[o0 , statei] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * state;
+          if(ncont_y[rowi] > 0) ukfmeasures[o0 , 1] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * state;
           if(nbinary_y[rowi] > 0) {
-            ukfmeasures[o1 , statei] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * state)));
-           // if(statei==2) merror[o1] = 2* fabs((ukfmeasures[o1 , statei] - 1) .* (ukfmeasures[o1 , statei] - 0));
-           // if(statei>2) merror[o1] = merror[o1] + fabs((ukfmeasures[o1 , statei] - 1) .* (ukfmeasures[o1 , statei] - 0));
+            ukfmeasures[o1 , 1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * state)));
           }
           }
         } //end ukf measurement loop
     
-        ypred = colMeans(ukfmeasures[o,]\'); 
+        ypred[o] = colMeans(ukfmeasures[o,]\'); 
         ypredcov[o,o] = cov_of_matrix(ukfmeasures[o,]\') /asquared + sMANIFESTVAR[o,o];
         for(wi in 1:nmanifest){ 
           if(manifesttype[wi]==1 && Y[rowi,wi] != 99999) ypredcov[wi,wi] = ypredcov[wi,wi] + fabs((ypred[wi] - 1) .* (ypred[wi])); //sMANIFESTVAR[wi,wi] + (merror[wi] / cols(ukfmeasures) +1e-8);
@@ -807,9 +850,17 @@ ukfilterfunc<-function(ppchecking){
         K[,o] = mdivide_right(crosscov(ukfstates\', ukfmeasures[o,]\') /asquared, ypredcov[o,o]); 
         etaupdcov[rowi] = etapriorcov[rowi] - quad_form(ypredcov[o,o],  K[,o]\');
       }
-//print("  ukfmeasures[1,] ",ukfmeasures[1,], "  asquared ", asquared);
 
       ',if(ppchecking) paste0('
+if(verbose > 1) {
+print("rowi ",rowi, "  si ", si, "  etaprior[rowi] ",etaprior[rowi],"  etapriorcov[rowi] ",etapriorcov[rowi],
+          "  etaupd[rowi] ",etaupd[rowi],"  etaupdcov[rowi] ",etaupdcov[rowi],"  ypred ",ypred,"  ypredcov ",ypredcov, "  K ",K,
+          "  sDRIFT ", sDRIFT, " sDIFFUSION ", sDIFFUSION, " sCINT ", sCINT, "  sMANIFESTVAR ", sMANIFESTVAR, "  rawpopsd ", rawpopsd,
+          "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
+        if(lineardynamics==1) print("discreteDRIFT ",discreteDRIFT,"  discreteCINT ", discreteCINT, "  discreteDIFFUSION ", discreteDIFFUSION)
+}
+if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
+
           ypredcov_sqrt[cindex,cindex]=cholspd(ypredcov[o0,o0]); //use o0, or cindex?
           if(ncont_y[rowi] > 0) Ygen[geni, rowi, o0] = multi_normal_cholesky_rng(ypred[o], ypredcov_sqrt[o0,o0]);
           if(nbinary_y[rowi] > 0) for(obsi in 1:size(o1)) Ygen[geni, rowi, o1[obsi]] = bernoulli_rng(ypred[o1[obsi]]);
@@ -822,12 +873,14 @@ ukfilterfunc<-function(ppchecking){
       ',if(!ppchecking) paste0('
       if(intoverstates==0 && nbinary_y[rowi] > 0) ll += sum(log( Y[rowi,o1] .* (ypred[o1]) + (1-Y[rowi,o1]) .* (1-ypred[o1])));
 
-      if(verbose==2) {
+      if(verbose > 1) {
         print("rowi ",rowi, "  si ", si, "  etaprior[rowi] ",etaprior[rowi],"  etapriorcov[rowi] ",etapriorcov[rowi],
           "  etaupd[rowi] ",etaupd[rowi],"  etaupdcov[rowi] ",etaupdcov[rowi],"  ypred ",ypred,"  ypredcov ",ypredcov, "  K ",K,
-          "  sDRIFT ", sDRIFT, " sDIFFUSION ", sDIFFUSION, " sCINT ", sCINT, "  sMANIFESTVAR ", sMANIFESTVAR);
+          "  sDRIFT ", sDRIFT, " sDIFFUSION ", sDIFFUSION, " sCINT ", sCINT, "  sMANIFESTVAR ", sMANIFESTVAR, "  rawpopsd ", rawpopsd,
+          "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
         if(lineardynamics==1) print("discreteDRIFT ",discreteDRIFT,"  discreteCINT ", discreteCINT, "  discreteDIFFUSION ", discreteDIFFUSION)
       }
+      if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
 
       if(size(cindex) > 0){
          ypredcov_sqrt[cindex,cindex]=cholspd(ypredcov[cindex,cindex]);
@@ -855,77 +908,91 @@ subjectparaminit<- function(){
 }
 
 
-subjectparscalc <- function(pop=FALSE){
-  pre <- ifelse(pop,'pop','')
+subjectparscalc <- function(){
   out <- paste0(
+ '{
+  vector[nparams] rawindparams;
+  rawindparams = rawpopmeans;
+  for(si in 1:nsubjects){
+
+    if(ntipred==0 && nindvarying > 0 && ukfpop ==0) rawindparams[indvaryingindex] = 
+      rawpopmeans[indvaryingindex] + rawpopcovsqrt * baseindparams[(1+(si-1)*nindvarying):(si*nindvarying)];
+
+    if(ntipred > 0  && nindvarying > 0 && ukfpop ==0) rawindparams[indvaryingindex] = 
+      rawpopmeans[indvaryingindex] + rawpopcovsqrt * baseindparams[(1+(si-1)*nindvarying):(si*nindvarying)] +
+      TIPREDEFFECT[indvaryingindex,] * tipreds[si]\';
+',
     paste0(unlist(lapply(basematrices, function(m) {
       paste0('
-  for(si in 1:',m,'subindex[nsubjects]){
+  if(si <= ',m,'subindex[nsubjects]){
     for(ri in 1:size(',m,'setup)){
       ',m,'[si, ',m,'setup[ ri,1], ',m,'setup[ri,2]] = ',
         m,'setup[ri,3] ? ', 
-          'tform(rawindparams[si, ',m,'setup[ri,3] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ) : ',
+          'tform(rawindparams[ ',m,'setup[ri,3] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ) : ',
           m,'values[ri,1]; //either transformed, scaled and offset free par, or fixed value
     }
   }
       ',collapse='\n')
     })),collapse='\n'),'
 
+
   // perform any whole matrix transformations 
     
-  for(individual in 1:DIFFUSIONsubindex[nsubjects]) DIFFUSION[individual] = sdcovsqrt2cov(DIFFUSION[individual], lineardynamics * intoverstates ? 0 : 1);
+  if(si <= DIFFUSIONsubindex[nsubjects]) DIFFUSION[si] = sdcovsqrt2cov(DIFFUSION[si], lineardynamics * intoverstates ? 0 : 1);
 
   if(lineardynamics==1 && ndiffusion > 0){
-    for(individual in 1:asymDIFFUSIONsubindex[nsubjects]) {
-      if(ndiffusion < nlatent) asymDIFFUSION[individual] = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
+    if(si <= asymDIFFUSIONsubindex[nsubjects]) {
+      if(ndiffusion < nlatent) asymDIFFUSION[si] = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
 
-      if(continuoustime==1) asymDIFFUSION[individual, derrind, derrind] = to_matrix( 
-      -( kron_prod( DRIFT[DRIFTsubindex[individual], derrind, derrind ], IIlatent[ derrind, derrind ]) + 
-         kron_prod(IIlatent[ derrind, derrind ], DRIFT[ DRIFTsubindex[individual], derrind, derrind ]) ) \\ 
-      to_vector( DIFFUSION[ DIFFUSIONsubindex[individual], derrind, derrind ]), ndiffusion,ndiffusion);
+      if(continuoustime==1) asymDIFFUSION[si, derrind, derrind] = to_matrix( 
+      -( kron_prod( DRIFT[DRIFTsubindex[si], derrind, derrind ], IIlatent[ derrind, derrind ]) + 
+         kron_prod(IIlatent[ derrind, derrind ], DRIFT[ DRIFTsubindex[si], derrind, derrind ]) ) \\ 
+      to_vector( DIFFUSION[ DIFFUSIONsubindex[si], derrind, derrind ]), ndiffusion,ndiffusion);
 
-      if(continuoustime==0) asymDIFFUSION[individual, derrind, derrind] = to_matrix( (IIlatent2[ derrind, derrind ] - 
-        kron_prod(DRIFT[ DRIFTsubindex[individual], derrind, derrind  ], 
-          DRIFT[ DRIFTsubindex[individual], derrind, derrind  ])) * 
-        to_vector(DIFFUSION[ DIFFUSIONsubindex[individual], derrind, derrind  ]) , ndiffusion, ndiffusion);
+      if(continuoustime==0) asymDIFFUSION[si, derrind, derrind] = to_matrix( (IIlatent2[ derrind, derrind ] - 
+        kron_prod(DRIFT[ DRIFTsubindex[si], derrind, derrind  ], 
+          DRIFT[ DRIFTsubindex[si], derrind, derrind  ])) * 
+        to_vector(DIFFUSION[ DIFFUSIONsubindex[si], derrind, derrind  ]) , ndiffusion, ndiffusion);
     } //end asymdiffusion loops
   }
           
     if(nt0meansstationary > 0){
-      for(individual in 1:asymCINTsubindex[nsubjects]){
-        if(continuoustime==1) asymCINT[individual] =  -DRIFT[ DRIFTsubindex[individual] ] \\ CINT[ CINTsubindex[individual], ,1 ];
-        if(continuoustime==0) asymCINT[individual] =  (IIlatent - DRIFT[ DRIFTsubindex[individual] ]) \\ CINT[ CINTsubindex[individual], ,1 ];
+      if(si <= asymCINTsubindex[nsubjects]){
+        if(continuoustime==1) asymCINT[si] =  -DRIFT[ DRIFTsubindex[si] ] \\ CINT[ CINTsubindex[si], ,1 ];
+        if(continuoustime==0) asymCINT[si] =  (IIlatent - DRIFT[ DRIFTsubindex[si] ]) \\ CINT[ CINTsubindex[si], ,1 ];
       }
     }
 
           
     if(binomial==0){
-      for(individual in 1:MANIFESTVARsubindex[nsubjects]) {
-         for(ri in 1:nmanifest) MANIFESTVAR[individual,ri,ri] = square(MANIFESTVAR[individual,ri,ri]);
+      if(si <= MANIFESTVARsubindex[nsubjects]) {
+         for(ri in 1:nmanifest) MANIFESTVAR[si,ri,ri] = square(MANIFESTVAR[si,ri,ri]);
       }
     }
           
           
-    for(individual in 1:T0VARsubindex[nsubjects]) {
-      T0VAR[individual] = sdcovsqrt2cov(T0VAR[individual],lineardynamics * intoverstates ? 0 : 1);
+    if(si <= T0VARsubindex[nsubjects]) {
+      T0VAR[si] = sdcovsqrt2cov(T0VAR[si],lineardynamics * intoverstates ? 0 : 1);
 
       if(nt0varstationary > 0) for(rowi in 1:nt0varstationary){
-        T0VAR[individual,t0varstationary[rowi,1],t0varstationary[rowi,2] ] = 
-          asymDIFFUSION[individual,t0varstationary[rowi,1],t0varstationary[rowi,2] ];
-        T0VAR[individual,t0varstationary[rowi,2],t0varstationary[rowi,1] ] = 
-          asymDIFFUSION[individual,t0varstationary[rowi,2],t0varstationary[rowi,1] ];
+        T0VAR[si,t0varstationary[rowi,1],t0varstationary[rowi,2] ] = 
+          asymDIFFUSION[si,t0varstationary[rowi,1],t0varstationary[rowi,2] ];
+        T0VAR[si,t0varstationary[rowi,2],t0varstationary[rowi,1] ] = 
+          asymDIFFUSION[si,t0varstationary[rowi,2],t0varstationary[rowi,1] ];
       }
     }
 
     
     if(nt0meansstationary > 0){
-      for(individual in 1:T0MEANSsubindex[nsubjects]) {
+      if(si <= T0MEANSsubindex[nsubjects]) {
         for(rowi in 1:nt0meansstationary){
-          T0MEANS[individual,t0meansstationary[rowi,1] , 1] = 
-            asymCINT[ asymCINTsubindex[individual], t0meansstationary[rowi,1] ];
+          T0MEANS[si,t0meansstationary[rowi,1] , 1] = 
+            asymCINT[ asymCINTsubindex[si], t0meansstationary[rowi,1] ];
         }
       }
-    } 
+    }
+  }
+} //end subject loop
   ',collapse='\n')
   
   return(out)
@@ -965,7 +1032,9 @@ for(m in basematrices){
           freepar <- freeparcounter
           if(is.na(suppressWarnings(as.integer(ctspec$transform[i])))) { #extra tform needed
             extratformcounter <- extratformcounter + 1
-            extratforms <- paste0(extratforms,'if(transform==',-10-extratformcounter,') out = ',ctspec$transform[i],';')
+            extratforms <- paste0(extratforms,'if(transform==',-10-extratformcounter,') out = ',
+              ctspec$offset[i],' + ',ctspec$multiplier[i],' * (',
+              gsub('param', paste0('param * ',ctspec$meanscale[i]),ctspec$transform[i]),');')
             ctspec$transform[i] <- -10-extratformcounter
           }
           if(n.TIpred > 0) {
@@ -1009,10 +1078,37 @@ for(m in basematrices){
   sdscale <- array(popvalues[popsetup[,'indvarying']>0, 'sdscale'])
 
   if(any(popsetup[,'transform'] < -10)) recompile <- TRUE #if custom transforms needed
+  
+  notindvaryingindex<-array(c(1:nparams)[-indvaryingindex],dim=nparams-nindvarying)
+  if(all(is.na(notindvaryingindex))) notindvaryingindex<-array(c(1:nparams),dim=nparams)
 
   writemodel<-function(){
     paste0('
 functions{
+
+matrix covsqrt2corsqrt(matrix mat, int invert){ //converts from lower partial sd matrix to cor
+      matrix[rows(mat),cols(mat)] o;
+      vector[rows(mat)] s;
+    o=mat;
+
+    for(i in 1:rows(o)){ //set upper tri to lower
+for(j in min(i+1,rows(mat)):rows(mat)){
+o[j,i] = inv_logit(o[j,i])*2-1;  // can change cor prior here
+o[i,j] = o[j,i];
+}
+      o[i,i]=1; // change to adjust prior for correlations
+    }
+
+if(invert==1) o = inverse(o);
+
+
+  for(i in 1:rows(o)){
+      s[i] = inv_sqrt(o[i,] * o[,i]);
+    if(is_inf(s[i])) s[i]=0;
+    }
+      o= diag_pre_multiply(s,o);
+return o;
+ }
 
 matrix cholspd(matrix a){
     matrix[rows(a),rows(a)] l;
@@ -1033,17 +1129,6 @@ matrix cholspd(matrix a){
     return cholesky_decompose(l);
 }
 
-  matrix covsqrt2corsqrt(matrix in){
-    matrix[rows(in),cols(in)] o;
-    vector[rows(in)] s;
-    for(i in 1:rows(in)){
-        s[i] = inv_sqrt(in[i,] * in[,i]);
-      if(is_inf(s[i])) s[i]=0;
-      }
-        o= diag_pre_multiply(s,in);
-  return o;
-  }
-  
   matrix discreteDIFFUSIONcalc(matrix DR, matrix DI, real dt){
     matrix[rows(DR)+rows(DI),rows(DR)+rows(DI)]  DRDI;
     matrix[rows(DR),rows(DR)] out;
@@ -1079,12 +1164,12 @@ matrix cholspd(matrix a){
 
     for(k in 1:cols(mat)){
       for(j in 1:rows(mat)){
-        if(j > k) out[j,k] = mat[j,k] *100;
-        if(k > j) out[j,k] = mat[k,j] * 100;
+        if(j > k) out[j,k] = mat[j,k];
+        if(k > j) out[j,k] = mat[k,j];
         if(k==j) out[j,k] = mat[j,k];
       }
     }
-    if(cholesky==0) out = out * out\';
+    if(cholesky==0) out = tcrossprod(out);
     return(out);
   }
       
@@ -1175,6 +1260,15 @@ matrix cholspd(matrix a){
   if(extratformcounter > 0) extratforms,'
 
     return out;
+  }
+
+  matrix cov2cors(matrix M){
+    matrix[rows(M),cols(M)] o;
+    vector[rows(M)] isd;
+
+    isd = inv_sqrt(diagonal(M));
+    o = quad_form_diag(M,isd);
+    return(o);
   }
 
 
@@ -1273,11 +1367,11 @@ parameters {
 }
       
 transformed parameters{
-  vector[nparams] rawindparams[nsubjects];
   vector[nindvarying] rawpopsd; //population level std dev
-  //matrix[nindvarying,nindvarying] sqrtpcovmat;
-  //matrix[nindvarying,nindvarying] rawpopcorrsqrt;
+  //matrix[nindvarying,nindvarying] rawpopcov;
+  matrix[nindvarying,nindvarying] rawpopcorrsqrt;
   matrix[nindvarying,nindvarying] rawpopcovsqrt; 
+
   
   ',subjectparaminit(),'
   matrix[ntipred ? nsubjects : 0, ntipred ? ntipred : 0] tipreds; //tipred values to fill from data and, when needed, imputation vector
@@ -1310,10 +1404,9 @@ transformed parameters{
   if(nindvarying > 0){
     int counter;
     rawpopsd = ',ctstanmodel$rawpopsdtransform, ';
-    //rawpopcovsqrt=diag_matrix(rep_vector(-99,nindvarying));
     counter=0;
     for(j in 1:nindvarying){
-      rawpopcovsqrt[j,j] = rawpopsd[j];
+      rawpopcovsqrt[j,j] = 1;
       for(i in 1:nindvarying){
         if(i > j){
           counter=counter+1;
@@ -1322,21 +1415,11 @@ transformed parameters{
         }
       }
     }
-
+  rawpopcorrsqrt = covsqrt2corsqrt(rawpopcovsqrt,0);// cov2cors(tcrossprod(rawpopcovsqrt));
+  //rawpopcov=quad_form_diag(rawpopcorr,rawpopsd);
+  rawpopcovsqrt = diag_pre_multiply(rawpopsd, rawpopcorrsqrt); //chol(rawpopcov);
   }//end indvarying par setup
 
-  for(subi in 1:nsubjects){
-    rawindparams[subi] = rawpopmeans;
-
-    if(ntipred==0 && nindvarying > 1 && ukfpop ==0) rawindparams[subi,indvaryingindex] = 
-      rawpopmeans[nindvarying] + rawpopcovsqrt * baseindparams[(1+(subi-1)*nindvarying):(subi*nindvarying)];
-
-    if(ntipred > 0  && nindvarying > 1 && ukfpop ==0) rawindparams[subi, indvaryingindex] = 
-      rawpopmeans[nindvarying] + rawpopcovsqrt * baseindparams[(1+(subi-1)*nindvarying):(subi*nindvarying)] +
-      TIPREDEFFECT[indvaryingindex,] * tipreds[subi]\';  
-  }
-
-  
 ',subjectparscalc(),'
 
 }
@@ -1372,10 +1455,10 @@ ukfilterfunc(ppchecking=FALSE),'
   
 }
 generated quantities{
-  matrix[nindvarying,nindvarying] rawpopcorr;
-  matrix[nindvarying,nindvarying] rawpopcov;
   vector[nparams] popmeans;
   vector[nparams] popsd;
+  matrix[nindvarying,nindvarying] rawpopcov;
+  matrix[nindvarying,nindvarying] rawpopcorr;
   ',popify(subjectparaminit()),'
 
 vector[nmanifest] Ygen[ngenerations, ndatapoints];
@@ -1386,11 +1469,11 @@ for(geni in 1:ngenerations){
 
 ',popify(subjectparscalc()),'
 
+rawpopcorr = tcrossprod(rawpopcorrsqrt);
 rawpopcov = tcrossprod(rawpopcovsqrt);
-rawpopcorr = tcrossprod(covsqrt2corsqrt(rawpopcovsqrt)); //rawpopcorrsqrt * rawpopcorrsqrt\';
 
 popsd = rep_vector(0,nparams);
-popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
+popsd[indvaryingindex] = rawpopsd; //base to begin calculations
  ',paste0(unlist(lapply(basematrices, function(m) {
       paste0('
     for(ri in 1:size(',m,'setup)){
@@ -1401,7 +1484,7 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
 
         popsd[',m,'setup[ ri,3]] = ',m,'setup[ ri,5] ? 
           fabs(tform(
-            rawpopmeans[',m,'setup[ri,3] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] + popsd[',m,'setup[ ri,3]]) +
+            rawpopmeans[',m,'setup[ri,3] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] + popsd[',m,'setup[ ri,3]]) -
            tform(
             rawpopmeans[',m,'setup[ri,3] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] - popsd[',m,'setup[ ri,3]]) / 2) : 0; 
       }
@@ -1429,7 +1512,7 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
     T0check=T0check,
     verbose=as.integer(verbose),
     indvaryingindex=indvaryingindex,
-    notindvaryingindex=array(which(ctspec$indvarying[is.na(ctspec$value)] == FALSE),dim=nparams-nindvarying),
+    notindvaryingindex=notindvaryingindex, 
     continuoustime=sum(continuoustime),
     nlatent=n.latent,
     ntipred=n.TIpred,
@@ -1456,7 +1539,7 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
     ukfpop=as.integer(ukfpop),
     ukf=as.integer(ukf),
     nopriors=as.integer(nopriors),
-    ngenerations=1,
+    ngenerations=0,
     manifesttype=array(manifesttype,dim=length(manifesttype)),
     nobs_y=array(apply(datalong[,manifestNames,drop=FALSE],1,function(x) length(x[x!=99999])),dim=nrow(datalong)),
     whichobs_y=matrix(t(apply(datalong[,manifestNames,drop=FALSE],1,function(x) {
@@ -1467,16 +1550,16 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
     }) ),nrow=c(nrow(datalong),ncol=n.manifest)),
     nbinary_y=array(apply(datalong[,manifestNames,drop=FALSE],1,function(x) length(x[manifesttype==1 & x!=99999])),dim=nrow(datalong)),
     whichbinary_y=matrix(t(apply(datalong[,manifestNames,drop=FALSE],1,function(x) {
-      # out<-as.numeric(which(manifesttype[x!=99999]==1)) #conditional on whichobs_y
-      out<-as.numeric(which(manifesttype==1)) #not conditional on whichobs_y
+      out<-as.numeric(which(manifesttype==1 & x!=99999)) #conditional on whichobs_y
+      # out<-as.numeric(which(manifesttype==1)) #not conditional on whichobs_y
       if(length(out)==0) out<-rep(0,n.manifest)
       if(length(out)<n.manifest) out<-c(out,rep(0,n.manifest-length(out)))
       out
     }) ),nrow=c(nrow(datalong),ncol=n.manifest)),
     ncont_y=array(apply(datalong[,manifestNames,drop=FALSE],1,function(x) length(x[manifesttype==0 & x!=99999])),dim=nrow(datalong)),
     whichcont_y=matrix(t(apply(datalong[,manifestNames,drop=FALSE],1,function(x) {
-      # out<-as.numeric(which(manifesttype[x!=99999]==0)) #conditional on whichobs_y
-      out<-as.numeric(which(manifesttype==0)) #not conditional on whichobs_y
+      out<-as.numeric(which(manifesttype==0 & x!=99999)) #conditional on whichobs_y
+      # out<-as.numeric(which(manifesttype==0)) #not conditional on whichobs_y
       if(length(out)==0) out<-rep(0,n.manifest)
       if(length(out)<n.manifest) out<-c(out,rep(0,n.manifest-length(out)))
       out
@@ -1507,12 +1590,13 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
   standata$popvalues <- popvalues
   
   standata$sdscale <- sdscale
-  
-  
+
   if(fit){
-    
-        
-    if(recompile) sm <- stan_model(model_name='ctsem', model_code = c(stanmodeltext))
+
+    if(recompile) {
+     message('Compiling model...') 
+      sm <- stan_model(model_name='ctsem', model_code = c(stanmodeltext))
+    }
     if(!recompile) sm <- stanmodels$ctsm
     
       if(!is.null(inits)){
@@ -1529,66 +1613,65 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
       staninits=list()
       if(chains > 0){
         for(i in 1:(chains)){
-          staninits[[i]]=list(etaupd=array(stats::rnorm(nrow(datalong)*n.latent,0,.1),dim=c(nrow(datalong),n.latent)),
-            rawpopsdbase = array(exp(rnorm(nindvarying,-3,1)),dim=c(nindvarying)))
+          staninits[[i]]=list(etaupd=array(stats::rnorm(nrow(datalong)*n.latent,0,.1),dim=c(nrow(datalong),n.latent)))
         }
       }
     }
     
     if(!optimize){
-    # message('Compiling model, ignore forthcoming warning re number of chains...')
-    # eval(stan_model(model_code = c(stanmodeltext), auto_write = TRUE),envir=globalenv())
-
-    
-    #control arguments for rstan
-    # if(is.null(control$adapt_term_buffer)) control$adapt_term_buffer <- min(c(iter/10,max(iter-20,75)))
-    if(is.null(control$adapt_delta)) control$adapt_delta <- .8
-    if(is.null(control$adapt_window)) control$adapt_window <- 2
-    if(is.null(control$max_treedepth)) control$max_treedepth <- 8
-    if(is.null(control$adapt_init_buffer)) control$adapt_init_buffer=2
-    if(is.null(control$adapt_init_buffer)) control$stepsize=.001
-
-  
-    
+      # message('Compiling model, ignore forthcoming warning re number of chains...')
+      # eval(stan_model(model_code = c(stanmodeltext), auto_write = TRUE),envir=globalenv())
+      
+      
+      #control arguments for rstan
+      # if(is.null(control$adapt_term_buffer)) control$adapt_term_buffer <- min(c(iter/10,max(iter-20,75)))
+      if(is.null(control$adapt_delta)) control$adapt_delta <- .8
+      if(is.null(control$adapt_window)) control$adapt_window <- 2
+      if(is.null(control$max_treedepth)) control$max_treedepth <- 10
+      if(is.null(control$adapt_init_buffer)) control$adapt_init_buffer=2
+      if(is.null(control$adapt_init_buffer)) control$stepsize=.001
+      
+      
+      
       if(!optimize & !vb) {
-      message('Sampling...')
-      
-      stanargs <- list(object = sm, 
-        # enable_random_init=TRUE,
-        init_r=.05,
-        init=staninits,
-        refresh=20,
-        iter=iter,
-        data = standata, chains = chains, control=control,
-        cores=cores,
-        ...) 
-      
-      if(plot==TRUE) stanfit <- do.call(stanWplot,stanargs) else stanfit <- do.call(sampling,stanargs)
-    }
+        message('Sampling...')
+        
+        stanargs <- list(object = sm, 
+          # enable_random_init=TRUE,
+          init_r=.1,
+          init=staninits,
+          refresh=20,
+          iter=iter,
+          data = standata, chains = chains, control=control,
+          cores=cores,
+          ...) 
+        
+        if(plot==TRUE) stanfit <- do.call(stanWplot,stanargs) else stanfit <- do.call(sampling,stanargs)
+      }
     }
     
     if(optimize==TRUE && fit==TRUE) {
-
+      
       message('Optimizing...')
-
+      
       init <- staninits[[1]]
       
-      if(nopriors){
-        standata$nopriors <- 0
-        optimfit <- suppressWarnings(optimizing(sm,standata, hessian=FALSE, iter=400, init=0,as_vector=FALSE,
-        tol_obj=1e-8, tol_rel_obj=0,init_alpha=.000001, tol_grad=0,tol_rel_grad=1e7,tol_param=1e-5,history_size=100))
-        init=optimfit$par
-        standata$nopriors <- 1
-      }
-
-      optimfit <- suppressWarnings(optimizing(sm,standata, hessian=FALSE, iter=40000, init=init,as_vector=FALSE,
-        tol_obj=1e-12, tol_rel_obj=0,init_alpha=.000001, tol_grad=0,tol_rel_grad=1e1,tol_param=1e-9,history_size=100))
-   
+      # if(nopriors){
+      #   standata$nopriors <- 0
+      #   suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=400, init=0,as_vector=FALSE,
+      #     tol_obj=1e-8, tol_rel_obj=0,init_alpha=.000001, tol_grad=0,tol_rel_grad=1e7,tol_param=1e-5,history_size=100),verbose=verbose))
+      #   init=optimfit$par
+      #   standata$nopriors <- 1
+      # }
+      
+      suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=40000, init=init,as_vector=FALSE,
+        tol_obj=1e-12, tol_rel_obj=0,init_alpha=.001, tol_grad=0,tol_rel_grad=1e1,tol_param=1e-12,history_size=100),verbose=verbose))
+      
       est=optimfit$par
-      smf=suppressWarnings(suppressMessages(sampling(sm,iter=1,chains=1,data=standata,show_messages=FALSE)))
+      suppressWarnings(suppressOutput(smf<-sampling(sm,iter=1,chains=1,data=standata)))
       est=unconstrain_pars(smf,est)
-     
-
+      
+      
       
       lp<-function(parm) {
         out<-try(log_prob(smf,upars=parm),silent = TRUE)
@@ -1601,29 +1684,32 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
       grf<-function(parm,...) {
         out=try(grad_log_prob(smf,upars=parm))
         if(class(out)=='try-error') {
-          out=rnorm(parm)
-      print(constrain_pars(smf,parm))
+          out=rep(NA,length(parm))
         }
         return(out)
       }
       
-      grcalc<-function(func,pars,step=1e-8){
+      grmat<-function(func,pars,step=1e-6){
         gradout<-matrix(NA,nrow=length(pars),ncol=length(pars))
         for(i in 1:length(pars)){
-          uppars<-pars
-          downpars<-pars
-          uppars[i]<-pars[i]+step
-          downpars[i]<-pars[i]-step
-          gradout[i,]<-((func(uppars)) - (func(downpars)))/step/2
+          stepsize <- step * 10
+          while(any(is.na(gradout[i,])) && stepsize > 1e-14){
+            stepsize <- stepsize * .1
+            uppars<-pars
+            downpars<-pars
+            uppars[i]<-pars[i]+stepsize
+            downpars[i]<-pars[i]-stepsize
+            gradout[i,]<-((func(uppars)) - (func(downpars)))/stepsize/2
+          }
         }
         return(gradout)
       }
       
-      hesscalc<-function(lp,gr,pars,step=1e-6){ 
-        hess<-matrix(NA,length(pars),length(pars))
-        hess<-grcalc(gr,pars,step)
-        return(hess)
-      }
+      # hesscalc<-function(lp,gr,pars,step=1e-6){ #not really needed, just use grcalc
+      #   hess<-matrix(NA,length(pars),length(pars))
+      #   hess<-grcalc(gr,pars,step)
+      #   return(hess)
+      # }
       
       # A more numerically stable way of calculating log( sum( exp( x ))) Source:
       # http://r.789695.n4.nabble.com/logsumexp-function-in-R-td3310119.html
@@ -1632,18 +1718,16 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
         log1p(sum(exp(x[-xmax] - x[xmax]))) + x[xmax]
       }
       
-    
-      ### Laplace approximation
-      # nsamples=5000
-      # varmultiplier=1
-      hess=hesscalc(lp,grf,est)
+      
+      hess=grmat(func=grf,pars=est)
+      if(any(is.na(hess))) stop(paste0('Hessian could not be computed for pars ', which(apply(hess,1,function(x) any(is.na(x)))), ' -- consider reparameterising.'))
       hess = (hess/2) + t(hess/2)
       mchol=try(t(chol(solve(-hess))),silent=TRUE)
-      if(class(mchol)=='try-error') message('Hessian not positive-definite')
+      if(class(mchol)=='try-error') message('Hessian not positive-definite -- check importance sampling convergence with isdiag')
       # if(class(mchol)=='try-error') {
       mcov=MASS::ginv(-hess) #-optimfit$hessian)
       mcov=as.matrix(Matrix::nearPD(mcov)$mat)
-
+      
       mcovl <- list()
       mcovl[[1]]=mcov
       delta=list()
@@ -1656,95 +1740,99 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
       counter <- 0
       ess <- 0
       qdiag<-0
-
+      
       cl <- parallel::makeCluster(min(cores,chains), type = "PSOCK")
-      parallel::clusterExport(cl, c('lp',"sm",'standata'),environment())
+      parallel::clusterExport(cl, c('lp',"smf",'sm','standata','recompile'),environment())
       
       if(isloops == 0) {
         resamples <- matrix(unlist(lapply(1:5000,function(x){
           delta[[1]] + t(chol(mcovl[[1]])) %*% matrix(rnorm(length(delta[[1]])),nrow=1)
         } )),byrow=TRUE,ncol=length(delta[[1]]))
-        message('Importance sampling not done -- interval estimates based on Hessian only')
+        message('Importance sampling not done -- interval estimates via Hessian based sampling only')
       }
       
       if(isloops > 0){
         message('Adaptive importance sampling, loop:')
-          for(j in 1:isloops){
-            message(paste0('  ', j, ' / ', isloops, '...'))
-            if(j==1){
-              df=2
-              samples <- mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = df)
-            } else {
-              # if(j>5) df <- 3
-              delta[[j]]=colMeans(resamples)
-              mcovl[[j]] = cov(resamples)+diag(1e-6,ncol(samples))
-              samples <- rbind(samples,mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = df))
-            }
-            prop_dens <- mvtnorm::dmvt(tail(samples,isloopsize), delta[[j]], mcovl[[j]], df = df)
-            
-            parallel::clusterExport(cl, c('samples'),environment())
-            
-            # target_dens <- c(target_dens,
-            target_dens <- unlist(parallel::parLapply(cl, parallel::clusterSplit(cl,1:isloopsize), function(x){
-              eval(parse(text=paste0('library(rstan)')))
-              smf=sampling(sm,iter=1,chains=1,data=standata)
-              
-              lp<-function(parm) {
-                out<-try(log_prob(smf,upars=parm),silent = TRUE)
-                if(class(out)=='try-error') {
-                  out=-Inf
-                }
-                return(out)
-              }
-              out <- apply(tail(samples,isloopsize)[x,],1,lp)
-              
-              #unload old rstan dlls
-              try(dyn.unload(file.path(tempdir(), paste0(smf@stanmodel@dso@dso_filename, .Platform$dynlib.ext))),silent = TRUE)
-              
-              # dso_filenames <- dir(tempdir(), pattern=.Platform$dynlib.ext)
-              # filenames  <- dir(tempdir())
-              # for (i in seq(dso_filenames))
-              #   try(dyn.unload(file.path(tempdir(), dso_filenames[i])))
-              # for (i in seq(filenames))
-              #   if (file.exists(file.path(tempdir(), filenames[i])) & nchar(filenames[i]) < 42) # some files w/ long filenames that didn't like to be removeed
-              #     try(file.remove(file.path(tempdir(), filenames[i])))
-              
-              return(out)
-              
-            }))
-            # )
-            
-            nresamples = ifelse(j==isloops+1,nrow(samples) / 10,5000)
-            
-            #remove infinites
-            # samples <- samples[is.finite(target_dens),]
-            # prop_dens <- prop_dens[is.finite(target_dens)]
-            # target_dens <- target_dens[is.finite(target_dens)]
-            
-            target_dens2 <- target_dens + (0-max(target_dens)) #adjustment to get in decent range
-            target_dens2[!is.finite(target_dens)] <- -1e30
-            weighted_dens <- target_dens2 - prop_dens
-            
-            # psis_dens <- psis(weighted_dens)
-            # sample_prob <- weights(psis_dens,normalize = TRUE,log=FALSE)
-            
-            sample_prob <- c(sample_prob,exp((weighted_dens - log_sum_exp(weighted_dens)))) #sum to 1 for each iteration, normalise later
-            sample_prob[!is.finite(sample_prob)] <- 0
-            resample_i <- sample(1:nrow(samples), size = nresamples, replace = ifelse(j == isloops+1,FALSE,TRUE), 
-              prob = sample_prob / sum(sample_prob))
-            resamples <- samples[resample_i, , drop = FALSE]
-            # resamples=mcmc(resamples)
-            
-            ess[j] <- (sum(sample_prob[resample_i]))^2 / sum(sample_prob[resample_i]^2)
-            qdiag[j]<-mean(unlist(lapply(sample(x = 1:length(sample_prob),size = 500,replace = TRUE),function(i){
-              (max(sample_prob[resample_i][1:i])) / (sum(sample_prob[resample_i][1:i]) ) 
-            })))
-            
+        for(j in 1:isloops){
+          message(paste0('  ', j, ' / ', isloops, '...'))
+          if(j==1){
+            df=2
+            samples <- mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = df)
+          } else {
+            # if(j>5) df <- 3
+            delta[[j]]=colMeans(resamples)
+            mcovl[[j]] = cov(resamples)+diag(1e-6,ncol(samples))
+            samples <- rbind(samples,mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = df))
           }
-          parallel::stopCluster(cl)
+          prop_dens <- mvtnorm::dmvt(tail(samples,isloopsize), delta[[j]], mcovl[[j]], df = df)
+          
+          parallel::clusterExport(cl, c('samples'),environment())
+          
+          # target_dens <- c(target_dens,
+          target_dens <- unlist(parallel::parLapply(cl, parallel::clusterSplit(cl,1:isloopsize), function(x){
+            eval(parse(text=paste0('library(rstan)')))
+            # if(recompile) {
+            
+            smf=sampling(sm,iter=1,chains=1,data=standata)
+            # }
+            
+            lp<-function(parm) {
+              out<-try(log_prob(smf,upars=parm),silent = TRUE)
+              if(class(out)=='try-error') {
+                out=-Inf
+              }
+              return(out)
+            }
+            out <- apply(tail(samples,isloopsize)[x,],1,lp)
+            
+            #unload old rstan dlls
+            # if(recompile) 
+            try(dyn.unload(file.path(tempdir(), paste0(smf@stanmodel@dso@dso_filename, .Platform$dynlib.ext))),silent = TRUE)
+            
+            # dso_filenames <- dir(tempdir(), pattern=.Platform$dynlib.ext)
+            # filenames  <- dir(tempdir())
+            # for (i in seq(dso_filenames))
+            #   try(dyn.unload(file.path(tempdir(), dso_filenames[i])))
+            # for (i in seq(filenames))
+            #   if (file.exists(file.path(tempdir(), filenames[i])) & nchar(filenames[i]) < 42) # some files w/ long filenames that didn't like to be removeed
+            #     try(file.remove(file.path(tempdir(), filenames[i])))
+            
+            return(out)
+            
+          }))
+          # )
+          if(all(target_dens < -1e29)) stop('Could not sample from optimum! Try reparamaterizing?')
+          nresamples = ifelse(j==isloops+1,nrow(samples) / 10,5000)
+          
+          #remove infinites
+          # samples <- samples[is.finite(target_dens),]
+          # prop_dens <- prop_dens[is.finite(target_dens)]
+          # target_dens <- target_dens[is.finite(target_dens)]
+          
+          target_dens2 <- target_dens + (0-max(target_dens)) #adjustment to get in decent range
+          target_dens2[!is.finite(target_dens)] <- -1e30
+          weighted_dens <- target_dens2 - prop_dens
+          
+          # psis_dens <- psis(weighted_dens)
+          # sample_prob <- weights(psis_dens,normalize = TRUE,log=FALSE)
+          
+          sample_prob <- c(sample_prob,exp((weighted_dens - log_sum_exp(weighted_dens)))) #sum to 1 for each iteration, normalise later
+          sample_prob[!is.finite(sample_prob)] <- 0
+          resample_i <- sample(1:nrow(samples), size = nresamples, replace = ifelse(j == isloops+1,FALSE,TRUE), 
+            prob = sample_prob / sum(sample_prob))
+          resamples <- samples[resample_i, , drop = FALSE]
+          # resamples=mcmc(resamples)
+          
+          ess[j] <- (sum(sample_prob[resample_i]))^2 / sum(sample_prob[resample_i]^2)
+          qdiag[j]<-mean(unlist(lapply(sample(x = 1:length(sample_prob),size = 500,replace = TRUE),function(i){
+            (max(sample_prob[resample_i][1:i])) / (sum(sample_prob[resample_i][1:i]) ) 
+          })))
+          
+        }
       }
       
-
+      message('Computing quantities...')
+      
       relistarrays <- function(flesh, skeleton){
         skelnames <- names(skeleton)
         skelstruc <- lapply(skeleton,dim)
@@ -1763,19 +1851,24 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
         return(out)
       }
       
+      parallel::clusterExport(cl, c('relistarrays','resamples','sm','optimfit'),environment())
+
+      # target_dens <- c(target_dens,
+      transformedpars <- parallel::parLapply(cl, parallel::clusterSplit(cl,1:nresamples), function(x){
+        smf=sampling(sm,iter=1,chains=1,data=standata)
+        out <- list()
+        for(li in 1:length(x)){
+          flesh = unlist(constrain_pars(resamples[x[li],],object = smf))
+          names(flesh) <- c()
+          skeleton=optimfit$par
+          out[[li]] <-relistarrays(flesh, skeleton)
+        }
+        return(out)
+      })
       
-      # resamples=dirsamples 
-      #resamples=mcmc(laplacesamples)
-  
-      transformedpars <- list()
-      for( li in 1:nresamples){
-        flesh = unlist(constrain_pars(resamples[li,],object = smf))
-        names(flesh) <- c()
-        skeleton=optimfit$par
-        transformedpars[[li]] <-  relistarrays(flesh, skeleton)
-      }
-      
-      
+      transformedpars<-unlist(transformedpars,recursive = FALSE)
+
+      parallel::stopCluster(cl)
       
       tostanarray <- function(flesh, skeleton){
         skelnames <- names(skeleton)
@@ -1802,7 +1895,7 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
       # quantile(sapply(transformedpars, function(x) x$rawpopcorr[3,2]),probs=c(.025,.5,.975))
       # quantile(sapply(transformedpars, function(x) x$DRIFT[1,2,2]),probs=c(.025,.5,.975))
       
-       sds=try(suppressWarnings(sqrt(diag(mcov))))  #try(sqrt(diag(solve(optimfit$hessian))))
+      sds=try(suppressWarnings(sqrt(diag(mcov))))  #try(sqrt(diag(solve(optimfit$hessian))))
       if(class(sds)=='try-error') sds <- rep(NA,length(est))
       lest= est - 1.96 * sds
       uest= est + 1.96 * sds
@@ -1812,12 +1905,12 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
         unlist(constrain_pars(smf,uest)))
       colnames(transformedpars_old)=c('2.5%','mean','97.5%')
       
-      stanfit=list(optimfit=optimfit,stanmodel=smf, rawposterior = resamples, transformedpars=transformedpars,transformedpars_old=transformedpars_old,
+      stanfit=list(optimfit=optimfit,stanfit=smf, rawposterior = resamples, transformedpars=transformedpars,transformedpars_old=transformedpars_old,
         isdiags=list(cov=mcovl,means=delta,ess=ess,qdiag=qdiag ))
     }
     
     if(vb==TRUE && fit==TRUE) {
-      stanfit <- vb(object = smf@stanmodel, 
+      stanfit <- vb(object = sm, 
         iter=iter,
         eta=1e-6,
         data = standata,...)
@@ -1830,14 +1923,15 @@ popsd[indvaryingindex] = sqrt(diagonal(rawpopcov));
     standataout <- utils::relist(standataout,skeleton=standata)
     
     
-    out <- list(args=args,matrixsetup=matsetup, stanmodeltext=stanmodeltext, data=standataout, ctstanmodel=ctstanmodel,stanfit=stanfit)
+    out <- list(args=args,setup=list(recompile=recompile,matsetup=matsetup,basematrices=basematrices), stanmodeltext=stanmodeltext, data=standataout, ctstanmodel=ctstanmodel,stanmodel=sm, stanfit=stanfit)
     class(out) <- 'ctStanFit'
     
   } # end if fit==TRUE
-  
-  if(!fit) out=list(args=args,matrixsetup=matsetup,stanmodeltext=stanmodeltext,data=standata, ctstanmodel=ctstanmodel)
+  # matrixsetup <- list(matsetup,basematrices,dynamicmatrices,measurementmatrices,t0matrices)
+  # names(matrixsetup) <- c('matsetup','basematrices','dynamicmatrices','measurementmatrices','t0matrices')
+  if(!fit) out=list(args=args,setup=list(recompile=recompile,matsetup=matsetup,basematrices=basematrices),stanmodeltext=stanmodeltext,data=standata, ctstanmodel=ctstanmodel)
   
   
   return(out)
-  }
+}
 

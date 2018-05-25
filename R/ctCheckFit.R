@@ -20,6 +20,8 @@
 #' }
 ctCheckFit <- function(fit, niter=50,probs=c(.025,.5,.975)){
   
+  if(fit$data$nsubjects==1) stop('Only for nsubjects > 1!')
+  
   if(class(fit)=='ctsemFit'){
     if('Kalman' %in% fit$ctfitargs$objective) {
       wdat <- ctLongToWide(fit$mxobj@data$observed,id='id',time='time',
@@ -31,7 +33,7 @@ ctCheckFit <- function(fit, niter=50,probs=c(.025,.5,.975)){
   if(class(fit)=='ctStanFit') {
     ldat <- cbind(fit$data$subject,fit$data$time,fit$data$Y)
     tpoints <- max(unlist(lapply(unique(fit$data$subject),function(x) length(fit$data$subject[fit$data$subject==x]))))
-    colnames(ldat)[1:2] <- c('subject','time')
+    colnames(ldat) <- c('subject','time', fit$ctstanmodel$manifestNames)
     wdat <- ctLongToWide(ldat,id='subject',time='time',
       manifestNames = fit$ctstanmodel$manifestNames)[,paste0(fit$ctstanmodel$manifestNames,'_T',
         rep(0:(tpoints-1),each=fit$ctstanmodel$n.manifest)),drop=FALSE]

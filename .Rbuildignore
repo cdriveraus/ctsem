@@ -13,10 +13,11 @@
 ^vignettes/*.pdf
 ^vignettes/cache
 ^vignettes/figure
-^vignettes/*.bbl
+^vignettes/^.bbl
 ^vignettes/jss.cls
 ^vignettes/Sweave.sty
-^vignettes/*.log
+^vignettes/^.log
 ^vignettes/Sweave.sty
 ^\.travis\.yml$
 ^docs
+^src/stan_files/ctsm.bak
