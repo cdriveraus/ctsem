@@ -348,9 +348,9 @@ model$pars[model$pars$matrix == 'DRIFT',
 Once model specification is complete, the model is fit to the data using the \verb|ctStanFit| function as shown in the following example. Depending on the data, model, and number of iterations requested, this can take anywhere from a few minutes to days. Current experience suggests 300 iterations is often enough to get an idea of what is going on, but more may be necessary for robust inference, but this is highly dependent on the specifics. For the sake of speed for this example we only sample for 200 iterations. With these settings the fit should take only a minute or two (but may not be adequate for inference!). Those that wish to try out the functions without waiting, can simply use the already existing \verb|ctstantestfit| object instead of creating the fit object (the code for this is commented out). The dataset specified here is built-in to the ctsem package, and available whenever ctsem is loaded in R. 
 
 <<fitting,include=FALSE,cache=TRUE>>=
-fit<-ctStanFit(datalong = ctstantestdat, ctstanmodel = model, iter=200,
+suppressWarnings(fit<-ctStanFit(datalong = ctstantestdat, ctstanmodel = model, iter=200,
   # ukfpop=TRUE,optimize=TRUE,cores=2,isloops=10,verbose=1,
-  chains=2, plot=FALSE)
+  chains=2, plot=FALSE))
 # fit <- ctstantestfit
 @
 
