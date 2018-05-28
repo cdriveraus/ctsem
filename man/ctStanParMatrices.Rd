@@ -2,16 +2,18 @@
 % Please edit documentation in R/ctStanParMatrices.R
 \name{ctStanParMatrices}
 \alias{ctStanParMatrices}
-\title{Returns model equation matrices from a ctStanModel or ctStanFit, and vector of values for free parameters.}
+\title{Returns model equation and other matrices from a ctStanFit object, and vector of values for free parameters.}
 \usage{
-ctStanParMatrices(model, parvalues, timeinterval = 1)
+ctStanParMatrices(fit, parvalues, timeinterval = 1, sf = NA)
 }
 \arguments{
-\item{model}{either a ctStanFit or ctStanModel object.}
+\item{fit}{ctStanFit object.}
 
-\item{parvalues}{vector of parameter values to assign to any free parameters in the model}
+\item{parvalues}{vector of parameter values to assign to free parameters in the model}
 
 \item{timeinterval}{time interval to use for discrete time (dt) matrix calculations.}
+
+\item{sf}{stanfit object. Generally not necessary, but for repeated calls to this function, can speed things up.}
 }
 \value{
 A list containing various matrices related to a continuous time dynamic model. 
@@ -19,7 +21,7 @@ Matrices with "dt" in front refers to discrete time, "asym" refers to asymptotic
 and "cor" refers to correlations.
 }
 \description{
-Returns model equation matrices from a ctStanModel or ctStanFit, and vector of values for free parameters.
+Returns model equation and other matrices from a ctStanFit object, and vector of values for free parameters.
 }
 \examples{
 ctStanParMatrices(ctstantestfit,rep(0,16))

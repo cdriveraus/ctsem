@@ -908,14 +908,14 @@ subjectparaminit<- function(){
 }
 
 
-subjectparscalc <- function(){
+subjectparscalc <- function(pop=FALSE){
   out <- paste0(
  '{
   vector[nparams] rawindparams;
   rawindparams = rawpopmeans;
   for(si in 1:nsubjects){
 
-    if(ntipred==0 && nindvarying > 0 && ukfpop ==0) rawindparams[indvaryingindex] = 
+  ',if(!pop) '  if(ntipred==0 && nindvarying > 0 && ukfpop ==0) rawindparams[indvaryingindex] = 
       rawpopmeans[indvaryingindex] + rawpopcovsqrt * baseindparams[(1+(si-1)*nindvarying):(si*nindvarying)];
 
     if(ntipred > 0  && nindvarying > 0 && ukfpop ==0) rawindparams[indvaryingindex] = 
@@ -938,7 +938,7 @@ subjectparscalc <- function(){
 
   // perform any whole matrix transformations 
     
-  if(si <= DIFFUSIONsubindex[nsubjects]) DIFFUSION[si] = sdcovsqrt2cov(DIFFUSION[si], lineardynamics * intoverstates ? 0 : 1);
+  if(si <= DIFFUSIONsubindex[nsubjects] && lineardynamics * intoverstates !=0 ) DIFFUSION[si] = sdcovsqrt2cov(DIFFUSION[si], lineardynamics * intoverstates ? 0 : 1);
 
   if(lineardynamics==1 && ndiffusion > 0){
     if(si <= asymDIFFUSIONsubindex[nsubjects]) {
@@ -972,7 +972,7 @@ subjectparscalc <- function(){
           
           
     if(si <= T0VARsubindex[nsubjects]) {
-      T0VAR[si] = sdcovsqrt2cov(T0VAR[si],lineardynamics * intoverstates ? 0 : 1);
+      if(lineardynamics * intoverstates !=0) T0VAR[si] = sdcovsqrt2cov(T0VAR[si],lineardynamics * intoverstates ? 0 : 1);
 
       if(nt0varstationary > 0) for(rowi in 1:nt0varstationary){
         T0VAR[si,t0varstationary[rowi,1],t0varstationary[rowi,2] ] = 
@@ -1086,29 +1086,28 @@ for(m in basematrices){
     paste0('
 functions{
 
-matrix covsqrt2corsqrt(matrix mat, int invert){ //converts from lower partial sd matrix to cor
-      matrix[rows(mat),cols(mat)] o;
-      vector[rows(mat)] s;
+  matrix covsqrt2corsqrt(matrix mat, int invert){ //converts from lower partial sd matrix to cor
+    matrix[rows(mat),cols(mat)] o;
+    vector[rows(mat)] s;
     o=mat;
-
+  
     for(i in 1:rows(o)){ //set upper tri to lower
-for(j in min(i+1,rows(mat)):rows(mat)){
-o[j,i] = inv_logit(o[j,i])*2-1;  // can change cor prior here
-o[i,j] = o[j,i];
-}
+      for(j in min(i+1,rows(mat)):rows(mat)){
+        o[j,i] = inv_logit(o[j,i])*2-1;  // can change cor prior here
+        o[i,j] = o[j,i];
+      }
       o[i,i]=1; // change to adjust prior for correlations
     }
-
-if(invert==1) o = inverse(o);
-
-
-  for(i in 1:rows(o)){
+  
+    if(invert==1) o = inverse(o);
+  
+    for(i in 1:rows(o)){
       s[i] = inv_sqrt(o[i,] * o[,i]);
-    if(is_inf(s[i])) s[i]=0;
+      if(is_inf(s[i])) s[i]=0;
     }
-      o= diag_pre_multiply(s,o);
-return o;
- }
+    o= diag_pre_multiply(s,o);
+    return o;
+  }
 
 matrix cholspd(matrix a){
     matrix[rows(a),rows(a)] l;
@@ -1159,17 +1158,25 @@ matrix cholspd(matrix a){
 
 
 
-  matrix sdcovsqrt2cov(matrix mat, int cholesky){ //converts from lower partial sd and diag sd to cov or cholesky cov
+  matrix sdcovsqrt2cov(matrix mat, int msqrt){ //converts from lower partial sd and diag sd to cov or cholesky cov
     matrix[rows(mat),rows(mat)] out;
 
-    for(k in 1:cols(mat)){
-      for(j in 1:rows(mat)){
-        if(j > k) out[j,k] = mat[j,k];
-        if(k > j) out[j,k] = mat[k,j];
-        if(k==j) out[j,k] = mat[j,k];
+    if(msqrt==1){
+      for(k in 1:cols(mat)){
+        for(j in 1:rows(mat)){
+          if(j > k) out[j,k] = mat[j,k];
+          if(k > j) out[j,k] = mat[k,j];
+          if(k==j) out[j,k] = mat[j,k];
+        }
       }
     }
-    if(cholesky==0) out = tcrossprod(out);
+  
+    if(msqrt==0){
+      out = covsqrt2corsqrt(mat, 0);
+      out = diag_pre_multiply(diagonal(mat), out);
+    }
+
+    if(msqrt==0) out = tcrossprod(out);
     return(out);
   }
       
@@ -1467,7 +1474,7 @@ for(geni in 1:ngenerations){
 ',ukfilterfunc(ppchecking=TRUE),'
 }
 
-',popify(subjectparscalc()),'
+',popify(subjectparscalc(pop=TRUE)),'
 
 rawpopcorr = tcrossprod(rawpopcorrsqrt);
 rawpopcov = tcrossprod(rawpopcovsqrt);
@@ -1586,8 +1593,8 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
     standata[[paste0(m,'values')]] <- matvalues[[m]]
   }
 
-  standata$popsetup <- popsetup
-  standata$popvalues <- popvalues
+  # standata$popsetup <- popsetup
+  # standata$popvalues <- popvalues
   
   standata$sdscale <- sdscale
 
@@ -1923,7 +1930,9 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
     standataout <- utils::relist(standataout,skeleton=standata)
     
     
-    out <- list(args=args,setup=list(recompile=recompile,matsetup=matsetup,basematrices=basematrices), stanmodeltext=stanmodeltext, data=standataout, ctstanmodel=ctstanmodel,stanmodel=sm, stanfit=stanfit)
+    out <- list(args=args,
+      setup=list(recompile=recompile,popsetup=as.data.frame(popsetup),popvalues=data.frame(popvalues),basematrices=basematrices,extratforms=extratforms), 
+      stanmodeltext=stanmodeltext, data=standataout, ctstanmodel=ctstanmodel,stanmodel=sm, stanfit=stanfit)
     class(out) <- 'ctStanFit'
     
   } # end if fit==TRUE

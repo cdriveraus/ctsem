@@ -52,7 +52,7 @@ ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA){
 #     return(out);
 #   }
   
-  if(all(is.na(sf[1]))) sf <- fit$stanfit
+  if(class(sf)!='stanfit') sf <- fit$stanfit
   
 npars <- try(get_num_upars(sf),silent = TRUE) #$stanmodel)
 

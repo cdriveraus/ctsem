@@ -32,12 +32,14 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...
   
   parnames <- c()
   parindices <- c()
-  for(m in names(object$setup$matsetup)){
-    if(dim(object$setup$matsetup[[m]])[1] > 0){
-      parnames <- c(parnames,rownames(object$setup$matsetup[[m]]))
-      parindices <- c(parindices, object$setup$matsetup[[m]][,'param'])
-    }
-  }
+  # for(m in names(object$setup$matsetup)){
+  #   if(dim(object$setup$matsetup[[m]])[1] > 0){
+  #     parnames <- c(parnames,rownames(object$setup$matsetup[[m]]))
+  #     parindices <- c(parindices, object$setup$matsetup[[m]][,'param'])
+  #   }
+  # }
+  parnames <- rownames(object$setup$popsetup)
+  parindices <- object$setup$popsetup$param
   pars <- cbind(parnames,parindices)
   parnames <- pars[as.numeric(pars[,2]) >0, 1]
   parnames <- unique(parnames)
@@ -163,7 +165,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...
       standataout<-unlist(standataout)
       standataout[is.na(standataout)] <- 99999
       standataout <- utils::relist(standataout,skeleton=object$data)
-      suppressOutput(sf <- suppressWarnings(sampling(fit$stanmodel,data=standataout,iter=1,control=list(max_treedepth=1),chains=1)))
+      suppressOutput(sf <- suppressWarnings(sampling(object$stanmodel,data=standataout,iter=1,control=list(max_treedepth=1),chains=1)))
     }
 
     parmatlists <- try(apply(e$rawpopmeans,1,ctStanParMatrices,fit=object,timeinterval=timeinterval,sf=sf))

@@ -37,10 +37,9 @@ is used to return an expanded range of possible matrices of interest.}
 \item{whichpars}{if parmatrices==TRUE, character vector specifying which matrices, and potentially which 
 indices of the matrices, to plot. c('dtDRIFT[2,1]', 'DRIFT') would output for row 2 and column 1 of 
 the discrete time drift matrix, as well as all indices of the continuous time drift matrix. 
-If parmatrices==FALSE, integer vector specifying which of the individually varying subject
-level parameters to compute effects on. In either case 'all' uses all available.
-The integer corresponding to specific parameters can be found as follows, replacing \code{fit} as appropriate:
-\code{fit$ctstanmodel$pars[fit$ctstanmodel$pars$indvarying,'param']}.}
+If parmatrices==FALSE, integer vector specifying which of the subject
+level parameters to compute effects on. The integers corresponding to certain parameters can be found in the 
+\code{param} column of the \code{fit$setup$popsetup} object. In either case 'all' uses all available parameters.}
 
 \item{nsamples}{Positive integer specifying the maximum number of saved iterations to use. 
 Character string 'all' can also be used.}

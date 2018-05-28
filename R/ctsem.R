@@ -45,7 +45,7 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
 #' @docType package
 #' @name ctsem
 #' @import grDevices methods stats rstan OpenMx graphics plyr rstantools rstan Rcpp
-#' @importFrom utils relist as.relistable tail
+#' @importFrom utils relist as.relistable tail capture.output
 #' @useDynLib ctsem, .registration = TRUE
 #' 
 #' @references 

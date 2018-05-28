@@ -24,10 +24,9 @@
 #' @param whichpars if parmatrices==TRUE, character vector specifying which matrices, and potentially which 
 #' indices of the matrices, to plot. c('dtDRIFT[2,1]', 'DRIFT') would output for row 2 and column 1 of 
 #' the discrete time drift matrix, as well as all indices of the continuous time drift matrix. 
-#' If parmatrices==FALSE, integer vector specifying which of the individually varying subject
-#' level parameters to compute effects on. In either case 'all' uses all available.
-#' The integer corresponding to specific parameters can be found as follows, replacing \code{fit} as appropriate:
-#' \code{fit$ctstanmodel$pars[fit$ctstanmodel$pars$indvarying,'param']}.
+#' If parmatrices==FALSE, integer vector specifying which of the subject
+#' level parameters to compute effects on. The integers corresponding to certain parameters can be found in the 
+#' \code{param} column of the \code{fit$setup$popsetup} object. In either case 'all' uses all available parameters.
 #' @param nsamples Positive integer specifying the maximum number of saved iterations to use. 
 #' Character string 'all' can also be used.
 #' @param nsubjects Positive integer specifying the number of subjects to compute values for.
@@ -52,11 +51,13 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   whichTIpreds=1,parmatrices=TRUE, whichpars='all', nsamples=100, timeinterval=1,
   nsubjects=50,filter=NA,
   plot=FALSE,...){
-
-  #drop fixed, stationary, duplicated params
-  spec_nofixed <- fit$ctstanmodel$pars[is.na(fit$ctstanmodel$pars$value),,drop=FALSE]
-  spec_nofixed_noduplicates <- spec_nofixed[!duplicated(spec_nofixed$param),,drop=FALSE]
-  spec_nofixed_noduplicates <- spec_nofixed_noduplicates[spec_nofixed_noduplicates$param !='stationary',,drop=FALSE]
+  
+  # #drop fixed, stationary, duplicated params
+  # spec_nofixed <- fit$ctstanmodel$pars[is.na(fit$ctstanmodel$pars$value),,drop=FALSE]
+  # spec_nofixed_noduplicates <- spec_nofixed[!duplicated(spec_nofixed$param),,drop=FALSE]
+  # spec_nofixed_noduplicates <- spec_nofixed_noduplicates[spec_nofixed_noduplicates$param !='stationary',,drop=FALSE]
+  
+  ctspec <- fit$ctstanmodel$pars
   
   #get indvarying rawpopmeans
   e<-extract.ctStanFit(fit)
@@ -67,64 +68,87 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   rawpopmeans <- rawpopmeans[sample(x = 1:niter, nsamples,replace = FALSE),]
   
   if(!includeMeanUncertainty) rawpopmeans <- matrix(apply(rawpopmeans,2,median),byrow=TRUE,nrow=nrow(rawpopmeans),ncol=ncol(rawpopmeans))
-  rawpopmeansindvarying <- rawpopmeans[,spec_nofixed_noduplicates$indvarying,drop=FALSE] 
-
+  # rawpopmeansindvarying <- rawpopmeans[,fit$data$indvaryingindex,drop=FALSE] 
+  
   tipreds<-fit$data$tipreds
   if(any(!is.na(filter))) tipreds <- eval(parse(text=paste0('tipreds[tipreds[,',filter[1],']',filter[2],',,drop=FALSE]')))
   tipreds <- tipreds[,whichTIpreds,drop=FALSE]
   if(nsubjects=='all') nsubjects = nrow(tipreds)
   if(nsubjects > nrow(tipreds)) nsubjects <- nrow(tipreds)
   tipreds <- tipreds[sample(x = 1:nsubjects, nsubjects,replace = FALSE),,drop=FALSE]
-
+  
   tieffect<-e$TIPREDEFFECT[,,whichTIpreds,drop=FALSE]
   
-  
-  if(!parmatrices){ #update ctspec to only indvarying and those in whichpars
-    spec_nofixed_noduplicates_indvarying <- spec_nofixed_noduplicates[spec_nofixed_noduplicates$indvarying,]
-   if(all(whichpars=='all')) whichpars=1:sum(spec_nofixed_noduplicates_indvarying$indvarying)
-    spec_nofixed_noduplicates_indvarying <- spec_nofixed_noduplicates_indvarying[whichpars,,drop=FALSE]
-    rawpopmeansindvarying <- rawpopmeansindvarying[,whichpars,drop=FALSE]  #then just the ones in whichpars
-   tieffect<-tieffect[,whichpars,,drop=FALSE] #updating...
-    npars<-length(whichpars)
-  }
+  # 
+  # if(!parmatrices){ #update ctspec to only indvarying and those in whichpars
+  #   # spec_nofixed_noduplicates_indvarying <- spec_nofixed_noduplicates[spec_nofixed_noduplicates$indvarying,]
+  #  if(all(whichpars=='all')) whichpars=which(apply(tieffect,2,function(x) any(x!=0)))
+  #   # spec_nofixed_noduplicates_indvarying <- spec_nofixed_noduplicates_indvarying[whichpars,,drop=FALSE]
+  #   # rawpopmeansindvarying <- rawpopmeansindvarying[,whichpars,drop=FALSE]  #then just the ones in whichpars
+  #    }
+  # 
   
   tiorder<-order(tipreds[,1])
   tipreds<-tipreds[tiorder,,drop=FALSE] #order tipreds according to first one
   
   message('Calculating time independent predictor effects...')
-
+  
   raweffect <- aaply(1:nrow(rawpopmeans),1,function(iterx) { #for every iter
     aaply(tipreds,1,function(tix){ #and every distinct tipred vector
-      rawpopmeansindvarying[iterx,] + matrix(tieffect[iterx,,],nrow=dim(tieffect)[2]) %*% tix
+      rawpopmeans[iterx,,drop=FALSE] + t(matrix(tieffect[iterx,,,drop=FALSE],nrow=dim(tieffect)[2]) %*% tix)
     },.drop=FALSE)
   })
   
   
   if(!parmatrices) {
+    if(all(whichpars=='all')) whichpars=which(apply(tieffect,2,function(x) any(x!=0)))
+    raweffect <- raweffect[,,whichpars]
+    tieffect<-tieffect[,whichpars,,drop=FALSE] #updating...
+    npars<-length(whichpars)
     effect<-aaply(1:npars, 1,function(pari){ #for each param
       param=raweffect[,,pari]
-      out=eval(parse(text=spec_nofixed_noduplicates_indvarying$transform[pari]))
+      out=tform(param, 
+        fit$setup$popsetup$transform[whichpars[pari]], 
+        fit$setup$popvalues$multiplier[whichpars[pari]],
+        fit$setup$popvalues$meanscale[whichpars[pari]],
+        fit$setup$popvalues$offset[whichpars[pari]], fit$setup$extratforms) #eval(parse(text=spec_nofixed_noduplicates_indvarying$transform[pari]))
       return(out)
     })
     if(returndifference){ #if only returning differences from zero
       noeffect<-aaply(1:npars, 1,function(pari){ #for each param
         param <- rawpopmeans[,pari]
-        out=eval(parse(text=spec_nofixed_noduplicates_indvarying$transform[pari]))
+        out=tform(param, 
+        fit$setup$popsetup$transform[whichpars[pari]], 
+        fit$setup$popvalues$multiplier[whichpars[pari]],
+        fit$setup$popvalues$meanscale[whichpars[pari]],
+        fit$setup$popvalues$offset[whichpars[pari]], fit$setup$extratforms) 
         return(out)
       })
       effect<-effect-array(noeffect,dim=dim(effect))
     }
   }
   
-
+  
   if(parmatrices)  {
     rawpopmeans <- rawpopmeans[rep(1:nrow(rawpopmeans),each=nsubjects),] #match rows of rawpopmeans and raweffect
     raweffect <- matrix(raweffect,ncol=dim(raweffect)[3])
     
+    #check if stanfit object can be used
+    sf <- fit$stanfit
+    npars <- try(get_num_upars(sf),silent=TRUE) #$stanmodel)
+    
+    if(class(npars)=='try-error'){ #in case R has been restarted or similar
+      standataout <- fit$data
+      standataout<-unlist(standataout)
+      standataout[is.na(standataout)] <- 99999
+      standataout <- utils::relist(standataout,skeleton=fit$data)
+      suppressOutput(sf <- suppressWarnings(sampling(fit$stanmodel,data=standataout,iter=1,control=list(max_treedepth=1),chains=1)))
+    }
+    
     parmatlists<-lapply(1:nrow(rawpopmeans), function(x) { #for each param vector
-      parvec = rawpopmeans[x,]
-      parvec[spec_nofixed_noduplicates$indvarying] <- raweffect[x,]
-      out = ctStanParMatrices(fit,parvec,timeinterval=timeinterval)
+      parvec = rawpopmeans[x,] + raweffect[x,]
+      # parvec[spec_nofixed_noduplicates$indvarying] <- raweffect[x,]
+      out = ctStanParMatrices(fit,parvec,timeinterval=timeinterval,sf = sf)
       return(out)
     })
     
@@ -134,8 +158,8 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
     parmats <- matrix(0,nrow=0,ncol=2)
     counter=0
     for(mati in 1:length(parmatlists[[1]])){
-        for(coli in 1:ncol(parmatlists[[1]][[mati]])){
-          for(rowi in 1:nrow(parmatlists[[1]][[mati]])){
+      for(coli in 1:ncol(parmatlists[[1]][[mati]])){
+        for(rowi in 1:nrow(parmatlists[[1]][[mati]])){
           counter=counter+1
           new <- matrix(c(
             rowi,
@@ -145,7 +169,7 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
           parmats<-rbind(parmats, new)
         }}}
     colnames(parmats) <- c('Row','Col') 
-
+    
     rownames(parmatarray) <- paste0(rownames(parmats),'[',parmats[,'Row'],',',parmats[,'Col'],']')
     
     #remove certain parmatrices lines
@@ -167,12 +191,12 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
     }
     
   }    
-
+  
   
   out<-aaply(probs,1,function(x) ctCollapse(effect,2,quantile,probs=x,na.rm=TRUE),.drop=FALSE)
   
   if(!parmatrices) dimnames(out)=list(Quantile=paste0('Quantile',probs),
-    popmean=spec_nofixed_noduplicates_indvarying$param,
+    popmean=rownames(fit$setup$popsetup)[whichpars],
     subject=tiorder #subjects reordered because tipreds were at top
   )
   if(parmatrices) dimnames(out)=list(Quantile=paste0('Quantile',probs),
@@ -181,7 +205,7 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   )
   
   out <- list(y=aperm(out, c(3,2,1)), x=tipreds[,1])
-
+  
   if(!plot) return(out) else {
     dots <- list(...)
     dots$input=out

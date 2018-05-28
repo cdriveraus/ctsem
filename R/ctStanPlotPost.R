@@ -35,8 +35,8 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
   
   s<-extract.ctStanFit(obj)
   
-  if(rows[1]=='all') rows<-(1:nrow(obj$data$popsetup)) else rows <-  
-    which(rownames(obj$data$popsetup) %in% ctspec$param[rows])
+  if(rows[1]=='all') rows<-(1:nrow(obj$setup$popsetup)) else rows <-  
+    which(rownames(obj$setup$popsetup) %in% ctspec$param[rows])
   
   if(all(mfrow=='auto')) {
     mfrow <- grDevices::n2mfrow( (length(rows)+sum(obj$pars$indvarying[rows])*2))
@@ -64,7 +64,7 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
   for(ri in rows){
     
     # popmeancount <- which(obj$pars$param[is.na(obj$pars$value)] %in% obj$pars$param[ri])
-    pname <- rownames(obj$data$popsetup[ri,,drop=FALSE])
+    pname <- rownames(obj$setup$popsetup[ri,,drop=FALSE])
     rawpopmeans<- s$rawpopmeans[,ri]
     param<-rawpopmeans
     mi <- match(pname,table = ctspec$param)
@@ -102,11 +102,11 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
     #   text.col=legcol,bty='n')
     
     
-    if(obj$data$popsetup[ri,'indvarying']==1){ #then also plot sd and subject level pars
+    if(obj$setup$popsetup[ri,'indvarying']==1){ #then also plot sd and subject level pars
       
       indvaryingcount<-indvaryingcount+1 #which(obj$pars$param[is.na(obj$pars$value) & obj$pars$indvarying] %in% obj$pars$param[ri])
       
-      sdscale <- obj$data$popvalues[ri,'sdscale']
+      sdscale <- obj$setup$popvalues[ri,'sdscale']
       sdtform <- gsub('.*', '*',obj$ctstanmodel$rawpopsdtransform,fixed=TRUE)
       
       rawpopsdbase<-s$rawpopsdbase[,indvaryingcount] 

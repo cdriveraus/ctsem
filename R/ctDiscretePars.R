@@ -67,10 +67,10 @@ ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
     )
   }
   
-  nsubjects <- dim(e$indparams)[2]
-  if(is.null(nsubjects)) nsubjects=1
+  nsubjects <- ctstanfitobj$data$nsubjects #dim(e$indparams)[2]
+  # if(is.null(nsubjects)) nsubjects=1
   
-  if(subjects[1]=='all') subjects=1:nsubjects
+  # if(subjects[1]=='all') subjects=1:nsubjects
   
   collapsemargin<-c(1,2)
   # if(collapseIterations) collapsemargin=1
@@ -82,22 +82,23 @@ ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
     # if(dim(e[[matname]])[2] > 1) subselection <- subjects else subselection <- 1
     if(max(subindex) > 1) subselection <- subjects else subselection <- 1
     
-    vector <- FALSE
+    # vector <- FALSE
     
     # if(matname %in% c('T0MEANS','CINT', 'MANIFESTMEANS')) vector <- TRUE
     
     calcfuncargs$collapsemargin = collapsemargin
     calcfuncargs$collapsefunc=calcfunc
     
-    if(!vector) {
-      calcfuncargs$inarray = e[[matname]][,subselection,,,drop=FALSE]
-      assign(matname, array(do.call(ctCollapse,calcfuncargs),dim=dim(e[[matname]])[-c(1,2)]))
-    }
+    # if(!vector) {
+      calcfuncargs$inarray = e[[ifelse(subjects!='all', matname, paste0('pop_',matname))]]
+      if(subselection!='all') calcfuncargs$inarray  <- calcfuncargs$inarray[,subselection,,,drop=FALSE]
+      assign(matname, array(do.call(ctCollapse,calcfuncargs),dim=dim(e[[ifelse(subjects!='all', matname, paste0('pop_',matname))]])[-c(1,2)]))
+    # }
     
-    if(vector) {
-      calcfuncargs$inarray = e[[matname]][,subselection,,drop=FALSE]
-      assign(matname, array(do.call(ctCollapse,calcfuncargs),dim=c(dim(e[[matname]])[-c(1,2)],1)))
-    }
+    # if(vector) {
+    #   calcfuncargs$inarray = e[[matname]][,subselection,,drop=FALSE]
+    #   assign(matname, array(do.call(ctCollapse,calcfuncargs),dim=c(dim(e[[matname]])[-c(1,2)],1)))
+    # }
     
   }
   
