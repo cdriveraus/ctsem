@@ -29,7 +29,6 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...
   }
   
   if(class(object$stanfit)!='stanfit')  e <- extract.ctStanFit(object) 
-  
   parnames <- c()
   parindices <- c()
   # for(m in names(object$setup$matsetup)){
@@ -38,7 +37,8 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...
   #     parindices <- c(parindices, object$setup$matsetup[[m]][,'param'])
   #   }
   # }
-  parnames <- rownames(object$setup$popsetup)
+
+  parnames <- object$setup$popsetup$parname
   parindices <- object$setup$popsetup$param
   pars <- cbind(parnames,parindices)
   parnames <- pars[as.numeric(pars[,2]) >0, 1]

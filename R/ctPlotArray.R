@@ -22,9 +22,9 @@
 #' @export
 #'
 #' @examples
-#' y <- ctStanTIpredeffects(ctstantestfit,plot=FALSE,whichpars='dtDRIFT',nsamples=10)
-#' x<-ctstantestfit$data$tipreds[order(ctstantestfit$data$tipreds[,1]),1]
-#' ctPlotArray(y,x)
+#' input <- ctStanTIpredeffects(ctstantestfit,plot=FALSE,whichpars='dtDRIFT',nsamples=10)
+#' input$x<-ctstantestfit$data$tipreds[order(ctstantestfit$data$tipreds[,1]),1]
+#' ctPlotArray(input=input)
 ctPlotArray <- function(input,
   grid=FALSE,
   colvec='auto',lwdvec='auto',ltyvec='auto',typevec='auto',

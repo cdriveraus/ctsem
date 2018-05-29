@@ -98,6 +98,18 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   timeName<-ctstanmodel$timeName
   continuoustime<-ctstanmodel$continuoustime
   
+  #extract any calcs from model
+  calcindices <- grep('\\]|\\[',ctstanmodel$pars$param)
+  if(length(calcindices) > 0){
+    for(ci in calcindices){
+      ctstanmodel$calcs <- c(ctstanmodel$calcs,paste0(ctstanmodel$pars$matrix[ci],
+        '[',ctstanmodel$pars$row[ci], ', ', ctstanmodel$pars$col[ci],'] = ',
+        ctstanmodel$pars$param[ci]))
+    }
+    ctstanmodel$pars$value[calcindices] <- 99999
+    ctstanmodel$pars$param[calcindices] <- NA
+  }
+  
   if(length(unique(datalong[,idName]))==1 & any(ctstanmodel$pars$indvarying[is.na(ctstanmodel$pars$value)]==TRUE)) {
     ctstanmodel$pars$indvarying <- FALSE
     message('Individual variation not possible as only 1 subject! indvarying set to FALSE on all parameters')
@@ -159,10 +171,10 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     return(out)
   }
   
-  dynamicmatrices <- c('DRIFT','DIFFUSION','CINT','TDPREDEFFECT')
-  measurementmatrices <- c('LAMBDA','MANIFESTMEANS','MANIFESTVAR')
+  dynamicmatrices <- c('DRIFT','DIFFUSION','CINT','TDPREDEFFECT','PARS')
+  measurementmatrices <- c('LAMBDA','MANIFESTMEANS','MANIFESTVAR','PARS')
   t0matrices <- c('T0MEANS','T0VAR')
-  basematrices <- unique(c(ctstanmodel$pars$matrix,'TDPREDEFFECT')) #c(dynamicmatrices,measurementmatrices,t0matrices)
+  basematrices <- unique(c(ctstanmodel$pars$matrix,'TDPREDEFFECT','PARS')) #c(dynamicmatrices,measurementmatrices,t0matrices)
   
   
   
@@ -449,35 +461,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       function(z) any(z)))
     ]
   
-  # if(ukfpop & any(ctspec$indvarying)){ #need to account for duplicates here too
-  #   ivtemp <- ctspec[ctspec$indvarying,]
-  #   for(i in 1:nrow(ivtemp)){
-  #     if(ivtemp$matrix[i] %in% dynamicmatrices){
-  #      dynamiccalcs <- c(dynamiccalcs, paste0(ivtemp$matrix[i],'[',ivtemp$row[i],',',ivtemp$col[i],'] = ',
-  #       ifelse(is.na(suppressWarnings(as.integer(ivtemp$transform[i]))), 
-  #         gsub('param', paste0('ukfstates[nlatent + ',i,', statei]'), ivtemp$transform[i]),
-  #         paste0('tform(', paste0('ukfstates[nlatent + ',i,', statei]'), ', ',ivtemp$transform[i], ', ', ivtemp$multiplier[i], ', ',ivtemp$meanscale[i], ', ',ivtemp$offset[i],');')
-  #       )))
-  #     }
-  #     if(ivtemp$matrix[i] %in% measurementmatrices){
-  #      measurementcalcs <- c(measurementcalcs, paste0(ivtemp$matrix[i],'[',ivtemp$row[i],',',ivtemp$col[i],'] = ',
-  #       ifelse(is.na(suppressWarnings(as.integer(ivtemp$transform[i]))), 
-  #         gsub('param', paste0('ukfstates[nlatent + ',i,', statei]'), ivtemp$transform[i]),
-  #         paste0('tform(', paste0('ukfstates[nlatent + ',i,', statei]'), ', ',ivtemp$transform[i], ', ', ivtemp$multiplier[i], ', ',ivtemp$meanscale[i], ', ',ivtemp$offset[i],');')
-  #       )))
-  #           
-  #     }
-  #     if(ivtemp$matrix[i] %in% t0matrices){
-  #      t0calcs <- c(t0calcs, paste0(ivtemp$matrix[i],'[',ivtemp$row[i],',',ivtemp$col[i],'] = ',
-  #       ifelse(is.na(suppressWarnings(as.integer(ivtemp$transform[i]))), 
-  #         gsub('param', paste0('ukfstates[nlatent + ',i,', statei]'), ivtemp$transform[i]),
-  #         paste0('tform(', paste0('ukfstates[nlatent + ',i,', statei]'), ', ',ivtemp$transform[i], ', ', ivtemp$multiplier[i], ', ',ivtemp$meanscale[i], ', ',ivtemp$offset[i],');')
-  #       )))
-  #     }
-  #   }
-  # }
-  
-    for(mati in c('DRIFT','DIFFUSION','CINT','TDPREDEFFECT','LAMBDA','MANIFESTMEANS','MANIFESTVAR','T0MEANS','T0VAR')){
+     for(mati in c('DRIFT','DIFFUSION','CINT','TDPREDEFFECT','LAMBDA','MANIFESTMEANS','MANIFESTVAR','T0MEANS','T0VAR','PARS')){
       dynamiccalcs <- gsub(mati,paste0('s',mati),dynamiccalcs)
       measurementcalcs <- gsub(mati,paste0('s',mati),measurementcalcs)
       t0calcs <- gsub(mati,paste0('s',mati),t0calcs)
@@ -486,9 +470,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     if(length(c(dynamiccalcs,measurementcalcs,t0calcs)) > 0) recompile <- TRUE
     
-      # browser()
     #ukfpop calcs setup
-    dynamiccalcs <- paste0(dynamiccalcs, '  if(ukfpop==1){
+    dynamiccalcs <- paste0(dynamiccalcs, ';
+    if(ukfpop==1){
 ',paste0(
       unlist(lapply(dynamicmatrices, function(m){
       paste0('
@@ -500,7 +484,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     }')
     })),collapse='\n'),'}',collapse='\n')
     
-    measurementcalcs <- paste0(measurementcalcs, '
+    measurementcalcs <- paste0(measurementcalcs, ';
       if(ukfpop==1){
         ',paste0(unlist(lapply(measurementmatrices, function(m){
       paste0('
@@ -512,7 +496,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     }')
     })),collapse='\n'),'}',collapse='\n')
     
-    t0calcs <- paste0(t0calcs, '
+    t0calcs <- paste0(t0calcs, ';
       if(ukfpop==1){
         ',paste0(unlist(lapply(t0matrices, function(m){
       paste0('
@@ -585,6 +569,7 @@ ukfilterfunc<-function(ppchecking){
   matrix[nmanifest,1] sMANIFESTMEANS;
   matrix[nmanifest,nlatent] sLAMBDA;
   matrix[ntdpred ? nlatent : 0,ntdpred] sTDPREDEFFECT;
+  matrix[dims(PARS)[2] ,dims(PARS)[3]] sPARS;
 
   //ukf approximation parameters
   if(ukf==1) k = 0.5;
@@ -630,6 +615,7 @@ ukfilterfunc<-function(ppchecking){
         sMANIFESTMEANS = MANIFESTMEANS[ MANIFESTMEANSsubindex[si] ];
         sMANIFESTVAR = MANIFESTVAR[ MANIFESTVARsubindex[si] ];
         sTDPREDEFFECT = TDPREDEFFECT[ TDPREDEFFECTsubindex[si] ];
+        sPARS = PARS[PARSsubindex[si]];
         
         if(1==99 && lineardynamics==1 && (rowi==1 || asymDIFFUSIONsubindex[si] != asymDIFFUSIONsubindex[si-1])){ 
           sasymDIFFUSION[derrind,derrind] = to_matrix( 
@@ -912,15 +898,20 @@ subjectparscalc <- function(pop=FALSE){
   out <- paste0(
  '{
   vector[nparams] rawindparams;
+  vector[nparams] tipredaddition;
+  vector[nparams] indvaraddition;
   rawindparams = rawpopmeans;
+  tipredaddition = rep_vector(0,nparams);
+  indvaraddition = rep_vector(0,nparams);
+
   for(si in 1:nsubjects){
 
-  ',if(!pop) '  if(ntipred==0 && nindvarying > 0 && ukfpop ==0) rawindparams[indvaryingindex] = 
-      rawpopmeans[indvaryingindex] + rawpopcovsqrt * baseindparams[(1+(si-1)*nindvarying):(si*nindvarying)];
+  ',if(!pop) '  
+    if(nindvarying > 0) indvaraddition[indvaryingindex] = rawpopcovsqrt * baseindparams[(1+(si-1)*nindvarying):(si*nindvarying)];
 
-    if(ntipred > 0  && nindvarying > 0 && ukfpop ==0) rawindparams[indvaryingindex] = 
-      rawpopmeans[indvaryingindex] + rawpopcovsqrt * baseindparams[(1+(si-1)*nindvarying):(si*nindvarying)] +
-      TIPREDEFFECT[indvaryingindex,] * tipreds[si]\';
+    if(ntipred > 0) tipredaddition = TIPREDEFFECT[indvaryingindex,] * tipreds[si]\';
+
+    rawindparams = rawpopmeans + tipredaddition + indvaraddition;
 ',
     paste0(unlist(lapply(basematrices, function(m) {
       paste0('
@@ -1074,6 +1065,14 @@ for(m in basematrices){
   popvalues <- do.call(rbind,matvalues) 
   popvalues <- popvalues[popsetup[,'param'] !=0,,drop=FALSE]
   popsetup <- popsetup[popsetup[,'param'] !=0,,drop=FALSE]
+  
+  parname <-rownames(popsetup)
+  rownames(popsetup) <- NULL
+  rownames(popvalues) <- NULL
+  
+  popsetup <- data.frame(parname,popsetup,stringsAsFactors = FALSE)
+  popvalues <- data.frame(parname,popvalues,stringsAsFactors = FALSE)
+
   
   sdscale <- array(popvalues[popsetup[,'indvarying']>0, 'sdscale'])
 
@@ -1605,11 +1604,13 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
       sm <- stan_model(model_name='ctsem', model_code = c(stanmodeltext))
     }
     if(!recompile) sm <- stanmodels$ctsm
-    
-      if(!is.null(inits)){
-      staninits=list(inits)
+
+    if(!is.null(inits)){
+      suppressOutput(sf <- suppressWarnings(sampling(sm,data=standata,iter=1,control=list(max_treedepth=1),chains=1)))
+      inits <- constrain_pars(sf,inits)
+      staninits=list()
       if(chains > 0){
-        for(i in 2:chains){
+        for(i in 1:chains){
           staninits[[i]]<-inits
         }
       }
@@ -1652,7 +1653,7 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
           data = standata, chains = chains, control=control,
           cores=cores,
           ...) 
-        
+   
         if(plot==TRUE) stanfit <- do.call(stanWplot,stanargs) else stanfit <- do.call(sampling,stanargs)
       }
     }
@@ -1931,14 +1932,15 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
     
     
     out <- list(args=args,
-      setup=list(recompile=recompile,popsetup=as.data.frame(popsetup),popvalues=data.frame(popvalues),basematrices=basematrices,extratforms=extratforms), 
+      setup=list(recompile=recompile,popsetup=popsetup,popvalues=popvalues,basematrices=basematrices,extratforms=extratforms), 
       stanmodeltext=stanmodeltext, data=standataout, ctstanmodel=ctstanmodel,stanmodel=sm, stanfit=stanfit)
     class(out) <- 'ctStanFit'
     
   } # end if fit==TRUE
   # matrixsetup <- list(matsetup,basematrices,dynamicmatrices,measurementmatrices,t0matrices)
   # names(matrixsetup) <- c('matsetup','basematrices','dynamicmatrices','measurementmatrices','t0matrices')
-  if(!fit) out=list(args=args,setup=list(recompile=recompile,matsetup=matsetup,basematrices=basematrices),stanmodeltext=stanmodeltext,data=standata, ctstanmodel=ctstanmodel)
+  if(!fit) out=list(args=args,list(recompile=recompile,popsetup=popsetup,popvalues=popvalues,basematrices=basematrices,extratforms=extratforms),
+    stanmodeltext=stanmodeltext,data=standata, ctstanmodel=ctstanmodel)
   
   
   return(out)

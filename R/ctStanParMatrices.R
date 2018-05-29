@@ -11,7 +11,7 @@
 #' @export
 #'
 #' @examples
-#' ctStanParMatrices(ctstantestfit,rep(0,16))
+#' ctStanParMatrices(ctstantestfit,rep(0,17))
 ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA){
 
   if(class(fit) !='ctStanFit') stop('not a ctStanFit object')

@@ -199,49 +199,6 @@ NULL
 #' }
 NULL
 
-#' ctstantestfit
-#' 
-#' Minimal output from \code{\link{ctStanFit}} from ctsem package.
-#' @format stanfit class.
-#' @name ctstantestfit
-#' @examples 
-#' \dontrun{
-#' ### generator for ctstantestfit
-#' Tpoints=25
-#' n.manifest=2
-#' n.TDpred=1
-#' n.TIpred=3
-#' n.latent=2
-#' n.subjects=5
-#' gm<-ctModel(type='omx', Tpoints=Tpoints,n.latent=n.latent,
-#' n.TDpred=n.TDpred,n.TIpred=n.TIpred,n.manifest=n.manifest,
-#'   MANIFESTVAR=diag(0.5,2),
-#'   TIPREDEFFECT=matrix(c(2.5,0,0,-1.5,0,0),nrow=2),
-#'   TIPREDVAR=matrix(c(1,-.2,0, 0,1,0, 0,0,.5),nrow=3),
-#'   TDPREDEFFECT=matrix(c(1,-2),nrow=2),
-#'   TDPREDVAR=matrix(0,nrow=n.TDpred*(Tpoints),ncol=n.TDpred*(Tpoints)),
-#'   TDPREDMEANS=matrix(round(exp(rnorm(n.TDpred*(Tpoints),-1.9,1)),0),
-#'    nrow=n.TDpred*(Tpoints)),
-#'   LAMBDA=diag(1,2),
-#'   DRIFT=matrix(c(-.3,.2,-.1,-.2),nrow=2),
-#'   TRAITVAR=t(chol(matrix(c(.4,.3,.3,.4),nrow=2))),
-#'   DIFFUSION=matrix(c(2,1,0,2),2),CINT=matrix(c(0,0),nrow=2),
-#'   T0MEANS=matrix(0,ncol=1,nrow=2),
-#'   T0VAR=diag(100,2))
-#' 
-#' ctstantestdat<-ctGenerate(gm,n.subjects=n.subjects,burnin=30,
-#' wide=FALSE,logdtsd=.4)
-#' 
-#' checkm<-ctModel(type='stanct',Tpoints=Tpoints,
-#'   n.latent=n.latent,n.TDpred=n.TDpred,n.TIpred=n.TIpred,
-#'   n.manifest=n.manifest,LAMBDA=diag(2))
-#' 
-#' ctstantestfit<-ctStanFit(ctstantestdat,checkm,iter=200, warmup=180,chains=2)
-#' save(ctstantestfit,file='.\\data\\ctstantestfit.rda')
-#' }
-NULL
-
-
 
 
 #' ctstantestdat
@@ -256,29 +213,56 @@ NULL
 #' n.TDpred=1
 #' n.TIpred=3
 #' n.latent=2
-#' n.subjects=5
+#' n.subjects=50
 #' gm<-ctModel(type='omx', Tpoints=Tpoints,n.latent=n.latent,
 #' n.TDpred=n.TDpred,n.TIpred=n.TIpred,n.manifest=n.manifest,
 #'   MANIFESTVAR=diag(0.5,2),
 #'   TIPREDEFFECT=matrix(c(2.5,0,0,-1.5,0,0),nrow=2),
 #'   TIPREDVAR=matrix(c(1,-.2,0, 0,1,0, 0,0,.5),nrow=3),
-#'   TDPREDEFFECT=matrix(c(1,-2),nrow=2),
 #'   TDPREDVAR=matrix(0,nrow=n.TDpred*(Tpoints),ncol=n.TDpred*(Tpoints)),
 #'   TDPREDMEANS=matrix(round(exp(rnorm(n.TDpred*(Tpoints),-1.9,1)),0),
 #'    nrow=n.TDpred*(Tpoints)),
 #'   LAMBDA=diag(1,2),
 #'   DRIFT=matrix(c(-.3,.2,-.1,-.2),nrow=2),
-#'   TRAITVAR=t(chol(matrix(c(.4,.3,.3,.4),nrow=2))),
 #'   DIFFUSION=matrix(c(2,1,0,2),2),CINT=matrix(c(0,0),nrow=2),
 #'   T0MEANS=matrix(0,ncol=1,nrow=2),
 #'   T0VAR=diag(100,2))
 #' 
 #' ctstantestdat<-ctGenerate(gm,n.subjects=n.subjects,burnin=30,
 #' wide=FALSE,logdtsd=.4)
+#' 
+#' ctstantestdat[2,'Y1'] <- NA
+#' ctstantestdat[ctstantestdat[,'id']==2,'TI1'] <- NA
+#' ctstantestdat[2,'TD1'] <- NA
+#' 
 #' save(ctstantestdat,file='.\\data\\ctstantestdat.rda')
 #' paths <- sort(Sys.glob(c("data/*.rda", "data/*.RData")))
 #' library(tools)
 #' resaveRdaFiles(paths)
 #' }
 NULL
+
+
+#' ctstantestfit
+#' 
+#' Minimal output from \code{\link{ctStanFit}} from ctsem package.
+#' @format stanfit class.
+#' @name ctstantestfit
+#' @examples 
+#' \dontrun{#' 
+#' checkm<-ctModel(type='stanct',Tpoints=Tpoints,
+#'   n.latent=n.latent,n.TDpred=n.TDpred,n.TIpred=n.TIpred,
+#'   MANIFESTVAR=matrix(c('merror',0,0,'merror'),2,2),
+#'   n.manifest=n.manifest,LAMBDA=diag(2))
+#'   
+#'  checkm$pars$indvarying[-c(7,13)] <- FALSE
+#'  checkm$pars$sdscale <- .1
+#'  
+#'  checkm$pars[c(-7,-19,-20) ,c('TI1_effect','TI2_effect','TI3_effect')] <- FALSE
+#' 
+#' ctstantestfit<-ctStanFit(ctstantestdat,checkm,iter=400, warmup=380,chains=2,plot=TRUE)
+#' save(ctstantestfit,file='.\\data\\ctstantestfit.rda')
+#' }
+NULL
+
 

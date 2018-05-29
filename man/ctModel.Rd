@@ -13,7 +13,8 @@ ctModel(n.manifest, n.latent, LAMBDA, type = "omx", Tpoints = NULL,
   TDPREDMEANS = "auto", TDPREDEFFECT = "auto", T0TDPREDCOV = "auto",
   TDPREDVAR = "auto", TRAITTDPREDCOV = "auto", TDTIPREDCOV = "auto",
   TIPREDMEANS = "auto", TIPREDEFFECT = "auto", T0TIPREDEFFECT = "auto",
-  TIPREDVAR = "auto", startValues = NULL, timeVarying = NULL)
+  TIPREDVAR = "auto", PARS = NULL, startValues = NULL,
+  timeVarying = NULL)
 }
 \arguments{
 \item{n.manifest}{Number of manifest indicators per individual at each measurement occasion / time point.
@@ -138,6 +139,8 @@ the overall process parameters.}
 \item{TIPREDVAR}{For type='omx' only.lower triangular n.TIpred * n.TIpred Cholesky decomposed covariance
 matrix for all time independent predictors.
 "auto" (default) freely estimates all parameters.}
+
+\item{PARS}{for types 'stanct' and 'standt' only. May be of any structure, only needed to contain extra parameters for certain non-linear models.}
 
 \item{startValues}{For type='omx' only. A named vector, where the names of each value must match a parameter in the specified model,
 and the value sets the starting value for that parameter during optimization.

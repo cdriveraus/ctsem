@@ -35,9 +35,9 @@ ctStanModel<-function(ctmodelobj, type='stanct', indvarying='all'){
   unlistCtModel<-function(ctmodelobj){
     out<-matrix(NA,nrow=0,ncol=5)
     out<-as.data.frame(out,stringsAsFactors =FALSE)
-    objectlist<-c('T0MEANS','LAMBDA','DRIFT','DIFFUSION','MANIFESTVAR','MANIFESTMEANS', 'CINT', if(n.TDpred > 0) 'TDPREDEFFECT', 'T0VAR')
+    objectlist<-c('T0MEANS','LAMBDA','DRIFT','DIFFUSION','MANIFESTVAR','MANIFESTMEANS', 'CINT', if(n.TDpred > 0) 'TDPREDEFFECT', 'T0VAR','PARS')
     for(obji in objectlist){
-      if(!is.na(ctmodelobj[[obji]][1])){
+      if(!is.null(ctmodelobj[[obji]]) && !is.na(ctmodelobj[[obji]][1])){
         for(rowi in 1:nrow(ctmodelobj[[obji]])){
           for(coli in 1:ncol(ctmodelobj[[obji]])){
             out<-rbind(out,data.frame(obji,rowi,coli,
