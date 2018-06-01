@@ -25,5 +25,8 @@ ctstantestfit<-ctStanFit(ctstantestdat,checkm,iter=800, warmup=780,chains=2,
   control=list(max_treedepth=8,adapt_delta=.8))
 summary(ctstantestfit)
 save(ctstantestfit,file='.\\\\data\\\\ctstantestfit.rda')
+paths <- sort(Sys.glob(c("data/*.rda", "data/*.RData")))
+library(tools)
+resaveRdaFiles(paths)
 }
 }

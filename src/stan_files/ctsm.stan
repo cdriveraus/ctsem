@@ -253,7 +253,7 @@ data {
   int<lower = 0, upper = nmanifest> nbinary_y[ndatapoints];  // number of observed binary variables per observation
   int<lower = 0, upper = nmanifest> whichbinary_y[ndatapoints, nmanifest]; // index of which variables are observed and binary per observation
   int<lower = 0, upper = nmanifest> ncont_y[ndatapoints];  // number of observed continuous variables per observation
-  int<lower = 0, upper = nmanifest> whichcont_y[ndatapoints, nmanifest]; // index of which variables are observed and continuousper observation
+  int<lower = 0, upper = nmanifest> whichcont_y[ndatapoints, nmanifest]; // index of which variables are observed and continuous per observation
   
   int ukfpop;
   int ukf;
@@ -313,11 +313,6 @@ transformed data{
   matrix[nlatent,nlatent] IIlatent;
   matrix[nlatent*nlatent,nlatent*nlatent] IIlatent2;
   int nlatentpop;
-  //int ncont_y[ndatapoints];
-  //int whichcont_y[ndatapoints, nmanifest];
-
-  //ncont_y = nobs_y;
-  //whichcont_y = whichobs_y;
 
   nlatentpop = ukfpop ? nlatent + nindvarying : nlatent;
   IIlatent = diag_matrix(rep_vector(1,nlatent));
@@ -1569,7 +1564,7 @@ for(geni in 1:ngenerations){
 if(verbose > 1) {
 print("rowi ",rowi, "  si ", si, "  etaprior[rowi] ",etaprior[rowi],"  etapriorcov[rowi] ",etapriorcov[rowi],
           "  etaupd[rowi] ",etaupd[rowi],"  etaupdcov[rowi] ",etaupdcov[rowi],"  ypred ",ypred,"  ypredcov ",ypredcov, "  K ",K,
-          "  sDRIFT ", sDRIFT, " sDIFFUSION ", sDIFFUSION, " sCINT ", sCINT, "  sMANIFESTVAR ", sMANIFESTVAR, "  rawpopsd ", rawpopsd,
+          "  sDRIFT ", sDRIFT, " sDIFFUSION ", sDIFFUSION, " sCINT ", sCINT, "  sMANIFESTVAR ", sMANIFESTVAR, "  sMANIFESTMEANS ", sMANIFESTMEANS, "  rawpopsd ", rawpopsd,
           "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
         if(lineardynamics==1) print("discreteDRIFT ",discreteDRIFT,"  discreteCINT ", discreteCINT, "  discreteDIFFUSION ", discreteDIFFUSION)
 }

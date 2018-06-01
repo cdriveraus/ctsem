@@ -238,9 +238,6 @@ NULL
 #' ctstantestdat[2,'TD1'] <- NA
 #' 
 #' save(ctstantestdat,file='.\\data\\ctstantestdat.rda')
-#' paths <- sort(Sys.glob(c("data/*.rda", "data/*.RData")))
-#' library(tools)
-#' resaveRdaFiles(paths)
 #' }
 NULL
 
@@ -268,6 +265,9 @@ NULL
 #'   control=list(max_treedepth=8,adapt_delta=.8))
 #' summary(ctstantestfit)
 #' save(ctstantestfit,file='.\\data\\ctstantestfit.rda')
+#' paths <- sort(Sys.glob(c("data/*.rda", "data/*.RData")))
+#' library(tools)
+#' resaveRdaFiles(paths)
 #' }
 NULL
 

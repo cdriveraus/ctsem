@@ -39,8 +39,5 @@ ctstantestdat[ctstantestdat[,'id']==2,'TI1'] <- NA
 ctstantestdat[2,'TD1'] <- NA
 
 save(ctstantestdat,file='.\\\\data\\\\ctstantestdat.rda')
-paths <- sort(Sys.glob(c("data/*.rda", "data/*.RData")))
-library(tools)
-resaveRdaFiles(paths)
 }
 }

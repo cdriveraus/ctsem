@@ -30,7 +30,7 @@
 ctPlotArray <- function(input,
   grid=FALSE,
   colvec='auto',lwdvec='auto',ltyvec='auto',typevec='auto',
-  plotcontrol=list(ylab='Array values', xlab='X values',xaxs='i'),
+  plotcontrol=list(ylab='Array values',xaxs='i'),
   legend=TRUE,legendcontrol=list(x='topright'),
   polygon=TRUE, polygonalpha=.1,polygoncontrol=list(steps=25)){
   
@@ -42,9 +42,9 @@ ctPlotArray <- function(input,
   
   separate=FALSE
   nvars<-dim(yarray)[2]
-  
+
   plotcontrolpars <- c('ylab','xlab')
-  plotcontroldefaults <- c('Array values','X values')
+  plotcontroldefaults <- c('Array values',colnames(input$x))
   for(i in 1:length(plotcontrolpars)) {
     if(is.null(plotcontrol[[plotcontrolpars[i]]])) plotcontrol[[plotcontrolpars[i]]] <- plotcontroldefaults[i]
   }
@@ -68,7 +68,7 @@ ctPlotArray <- function(input,
   # if(all(mainvec=='auto')){
   #   if(separate) mainvec=dimnames(yarray)[[2]] else mainvec =rep(ifelse(is.null(plotcontrol$main),'',plotcontrol$main),nvars)
   # }
-  
+
   plotargs<-plotcontrol
   plotargs$x <- x
   if(!separate && is.null(plotcontrol$ylim)) plotargs$ylim = range(yarray,na.rm=TRUE)+ c(0,

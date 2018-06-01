@@ -18,7 +18,7 @@
 #' @param wait If true, user is prompted to continue before plotting next graph.  
 #' If false, graphs are plotted one after another without waiting.
 #' @examples
-#' ctStanPlotPost(ctstantestfit)
+#' ctStanPlotPost(ctstantestfit, rows=3:4)
 #' @export
 
 ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,

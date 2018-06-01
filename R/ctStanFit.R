@@ -842,7 +842,7 @@ ukfilterfunc<-function(ppchecking){
 if(verbose > 1) {
 print("rowi ",rowi, "  si ", si, "  etaprior[rowi] ",etaprior[rowi],"  etapriorcov[rowi] ",etapriorcov[rowi],
           "  etaupd[rowi] ",etaupd[rowi],"  etaupdcov[rowi] ",etaupdcov[rowi],"  ypred ",ypred,"  ypredcov ",ypredcov, "  K ",K,
-          "  sDRIFT ", sDRIFT, " sDIFFUSION ", sDIFFUSION, " sCINT ", sCINT, "  sMANIFESTVAR ", sMANIFESTVAR, "  rawpopsd ", rawpopsd,
+          "  sDRIFT ", sDRIFT, " sDIFFUSION ", sDIFFUSION, " sCINT ", sCINT, "  sMANIFESTVAR ", sMANIFESTVAR, "  sMANIFESTMEANS ", sMANIFESTMEANS, "  rawpopsd ", rawpopsd,
           "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
         if(lineardynamics==1) print("discreteDRIFT ",discreteDRIFT,"  discreteCINT ", discreteCINT, "  discreteDIFFUSION ", discreteDIFFUSION)
 }
@@ -1552,7 +1552,7 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
     ukfpop=as.integer(ukfpop),
     ukf=as.integer(ukf),
     nopriors=as.integer(nopriors),
-    ngenerations=as.integer(0),
+    ngenerations=as.integer(1),
     manifesttype=array(as.integer(manifesttype),dim=length(manifesttype)),
     nobs_y=array(as.integer(apply(datalong[,manifestNames,drop=FALSE],1,function(x) length(x[x!=99999]))),dim=nrow(datalong)),
     whichobs_y=matrix(as.integer(t(apply(datalong[,manifestNames,drop=FALSE],1,function(x) {
@@ -1684,15 +1684,14 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
         tol_obj=1e-12, tol_rel_obj=0,init_alpha=.001, tol_grad=0,tol_rel_grad=1e1,tol_param=1e-12,history_size=100),verbose=verbose))
       
       est=optimfit$par
-      # browser()
-      # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan:::grab_cxxfun(sm@dso))
-      suppressWarnings(suppressOutput(smf<-sampling(sm,iter=1,chains=1,data=standata,control=list(max_treedepth=0))))
-      est=unconstrain_pars(smf,est)
+      smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan:::grab_cxxfun(sm@dso))
+      # suppressWarnings(suppressOutput(smf<-sampling(sm,iter=1,chains=1,data=standata,control=list(max_treedepth=0))))
+      est=smf$unconstrain_pars(est)
       
       
       
       lp<-function(parm) {
-        out<-try(log_prob(smf,upars=parm),silent = TRUE)
+        out<-try(smf$log_prob(upars=parm,adjust_transform=TRUE,gradient=FALSE),silent = TRUE)
         if(class(out)=='try-error') {
           out=-Inf
         }
@@ -1700,7 +1699,7 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
       }
       
       grf<-function(parm,...) {
-        out=try(grad_log_prob(smf,upars=parm))
+        out=try(smf$grad_log_prob(upars=parm, adjust_transform = TRUE))
         if(class(out)=='try-error') {
           out=rep(NA,length(parm))
         }
@@ -1785,12 +1784,12 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
             eval(parse(text=paste0('library(rstan)')))
             # if(recompile) {
             
-            smf=sampling(sm,iter=1,chains=1,data=standata,control=list(max_treedepth=0))
-            # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan:::grab_cxxfun(sm@dso))
+            # smf<-sampling(sm,iter=1,chains=1,data=standata,control=list(max_treedepth=0))
+            smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan:::grab_cxxfun(sm@dso))
             # }
             
             lp<-function(parm) {
-              out<-try(log_prob(smf,upars=parm),silent = TRUE)
+              out<-try(smf$log_prob(upars=parm, adjust_transform = TRUE, gradient=FALSE),silent = TRUE)
               if(class(out)=='try-error') {
                 out=-Inf
               }
@@ -1868,11 +1867,11 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
 
       # target_dens <- c(target_dens,
       transformedpars <- parallel::parLapply(cl, parallel::clusterSplit(cl,1:nresamples), function(x){
-        smf=sampling(sm,iter=1,chains=1,data=standata,control=list(max_treedepth=0))
-        # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan:::grab_cxxfun(sm@dso))
+        # smf<-sampling(sm,iter=1,chains=1,data=standata,control=list(max_treedepth=0))
+        smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan:::grab_cxxfun(sm@dso))
         out <- list()
         for(li in 1:length(x)){
-          flesh = unlist(constrain_pars(resamples[x[li],],object = smf))
+          flesh = unlist(smf$constrain_pars(resamples[x[li],]))
           names(flesh) <- c()
           skeleton=optimfit$par
           out[[li]] <-relistarrays(flesh, skeleton)
@@ -1914,9 +1913,9 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
       lest= est - 1.96 * sds
       uest= est + 1.96 * sds
       
-      transformedpars_old=cbind(unlist(constrain_pars(smf,lest)),
-        unlist(constrain_pars(smf,est)),
-        unlist(constrain_pars(smf,uest)))
+      transformedpars_old=cbind(unlist(smf$constrain_pars(lest)),
+        unlist(smf$constrain_pars(est)),
+        unlist(smf$constrain_pars(uest)))
       colnames(transformedpars_old)=c('2.5%','mean','97.5%')
       
       stanfit=list(optimfit=optimfit,stanfit=smf, rawposterior = resamples, transformedpars=transformedpars,transformedpars_old=transformedpars_old,

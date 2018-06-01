@@ -191,7 +191,8 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
     subject=tiorder #subjects reordered because tipreds were at top
   )
   
-  out <- list(y=aperm(out, c(3,2,1)), x=tipreds[,1])
+  colnames(tipreds) <- colnames(fit$data$tipredsdata)[whichTIpreds]
+  out <- list(y=aperm(out, c(3,2,1)), x=tipreds[,1,drop=FALSE])
   
   if(!plot) return(out) else {
     dots <- list(...)

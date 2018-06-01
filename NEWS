@@ -3,9 +3,18 @@ ctsem news:
 Known bugs / limitations:
 None.
 
-- Unscented Kalman filter for ctStanFit
+1/6/2018
+#### 2.6.0 ####
+- Removed need for compilation of standard models.
+- Unscented Kalman filter for ctStanFit:
+  - Non-linear / time-varying / state dependent specifications now possible. 
+  - Optimization followed by importance sampling can be used instead of sampling via Stan.
+  - Most plotting functions still not working correctly for such models.
+- ctCheckFit function for plotting covariance of data generated from posterior against original.
+- Time independent predictors can now be used independent of random effects.
 - Fix bug in summary preventing display when binary variables were used in fit.
-- More robust data import, character string id's and jumbled up order of rows now manageable.
+- Allow data sets to contain both binary and continuous variables.
+- More robust data import, character string id's and jumbled order of rows now manageable.
 - stanWplot no longer requires shiny to be explicitly loaded.
 - Fix bug in ctKalman plotting function preventing interpolation.
 - Fix bug in additional summary matrices introduced in 2.5.0 -- some were transposed.
