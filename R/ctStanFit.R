@@ -265,7 +265,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   
   #create random effects indices for each matrix
   for(mati in basematrices){
-    if(!ukfpop && any(ctspec$indvarying[ctspec$matrix==mati])) subindex <- 1:nsubjects else subindex <- rep(1,nsubjects)
+    if( (!ukfpop && any(ctspec$indvarying[ctspec$matrix==mati])) || any(unlist(ctspec[ctspec$matrix==mati,paste0(ctstanmodel$TIpredNames,'_effect')]))) subindex <- 1:nsubjects else subindex <- rep(1,nsubjects)
     assign(paste0(mati,'subindex'), subindex)
   }
   if(stationary || nt0varstationary > 0) T0VARsubindex <- rep(1:max(c(T0VARsubindex,DRIFTsubindex,DIFFUSIONsubindex)), ifelse(max(c(T0VARsubindex,DRIFTsubindex,DIFFUSIONsubindex)) > 1, 1, nsubjects))
@@ -308,7 +308,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   
   #scale check
   if(any(abs(colMeans(datalong[,c(ctstanmodel$manifestNames,ctstanmodel$TDpredNames),drop=FALSE],na.rm=TRUE)) > 5)){
-    message('Uncentered data noted -- default priors may not be appropriate')
+    message('Uncentered data noted -- default priors *may* not be appropriate')
   }
   
   if(ctstanmodel$n.TIpred > 1 && any(abs(colMeans(datalong[,c(ctstanmodel$TIpredNames),drop=FALSE],na.rm=TRUE)) > .3)){
@@ -605,17 +605,17 @@ ukfilterfunc<-function(ppchecking){
 
     if(T0check[rowi] == 1) { // calculate initial matrices if this is first row for si
 
-      if( si ==1 || (ukfpop==0 && nindvarying > 0) ){ //whenever we need to get new subject parameters
-        sT0MEANS = T0MEANS[ T0MEANSsubindex[si]];
-        sT0VAR = T0VAR[ T0VARsubindex[si] ];
-        sDRIFT = DRIFT[ DRIFTsubindex[si] ];
-        sDIFFUSION = DIFFUSION[ DIFFUSIONsubindex[si] ];
-        sCINT = CINT[ CINTsubindex[si] ];
-        sLAMBDA = LAMBDA[ LAMBDAsubindex[si] ];
-        sMANIFESTMEANS = MANIFESTMEANS[ MANIFESTMEANSsubindex[si] ];
-        sMANIFESTVAR = MANIFESTVAR[ MANIFESTVARsubindex[si] ];
-        sTDPREDEFFECT = TDPREDEFFECT[ TDPREDEFFECTsubindex[si] ];
-        sPARS = PARS[PARSsubindex[si]];
+      if( si ==1 || (ukfpop==0 && nindvarying > 0) || ntipred > 0 ){ //whenever we need to get new subject parameters
+        if(si == T0MEANSsubindex[si]) sT0MEANS = T0MEANS[ T0MEANSsubindex[si]];
+        if(si == T0VARsubindex[si]) sT0VAR = T0VAR[ T0VARsubindex[si] ];
+        if(si == DRIFTsubindex[si]) sDRIFT = DRIFT[ DRIFTsubindex[si] ];
+        if(si == DIFFUSIONsubindex[si]) sDIFFUSION = DIFFUSION[ DIFFUSIONsubindex[si] ];
+        if(si == CINTsubindex[si]) sCINT = CINT[ CINTsubindex[si] ];
+        if(si == LAMBDAsubindex[si]) sLAMBDA = LAMBDA[ LAMBDAsubindex[si] ];
+        if(si == MANIFESTMEANSsubindex[si]) sMANIFESTMEANS = MANIFESTMEANS[ MANIFESTMEANSsubindex[si] ];
+        if(si == MANIFESTVARsubindex[si]) sMANIFESTVAR = MANIFESTVAR[ MANIFESTVARsubindex[si] ];
+        if(si == TDPREDEFFECTsubindex[si]) sTDPREDEFFECT = TDPREDEFFECT[ TDPREDEFFECTsubindex[si] ];
+        if(si == PARSsubindex[si]) sPARS = PARS[PARSsubindex[si]];
         
         if(1==99 && lineardynamics==1 && (rowi==1 || asymDIFFUSIONsubindex[si] != asymDIFFUSIONsubindex[si-1])){ 
           sasymDIFFUSION[derrind,derrind] = to_matrix( 
@@ -624,6 +624,7 @@ ukfilterfunc<-function(ppchecking){
             ndiffusion, ndiffusion);
         }
       }
+//print("si ", si, "sMANIFESTMEANS", sMANIFESTMEANS, " MANIFESTMEANS[si] ", MANIFESTMEANS[si]);
 
       if(ukf==1){
         etaprior[rowi,] = rep_vector(0,nlatentpop); // because some values stay zero
@@ -907,9 +908,9 @@ subjectparscalc <- function(pop=FALSE){
   for(si in 1:nsubjects){
 
   ',if(!pop) '  
-    if(nindvarying > 0) indvaraddition[indvaryingindex] = rawpopcovsqrt * baseindparams[(1+(si-1)*nindvarying):(si*nindvarying)];
+    if(nindvarying > 0 && ukfpop==0) indvaraddition[indvaryingindex] = rawpopcovsqrt * baseindparams[(1+(si-1)*nindvarying):(si*nindvarying)];
 
-    if(ntipred > 0) tipredaddition = TIPREDEFFECT[indvaryingindex,] * tipreds[si]\';
+    if(ntipred > 0) tipredaddition = TIPREDEFFECT * tipreds[si]\';
 
     rawindparams = rawpopmeans + tipredaddition + indvaraddition;
 ',
@@ -997,7 +998,6 @@ popify<-function(string){
   return(string)
 }
 
-
 matsetup <-list()
 matvalues <-list()
 freepar <- 0
@@ -1069,11 +1069,10 @@ for(m in basematrices){
   parname <-rownames(popsetup)
   rownames(popsetup) <- NULL
   rownames(popvalues) <- NULL
-  
+
   popsetup <- data.frame(parname,popsetup,stringsAsFactors = FALSE)
   popvalues <- data.frame(parname,popvalues,stringsAsFactors = FALSE)
 
-  
   sdscale <- array(popvalues[popsetup[,'indvarying']>0, 'sdscale'])
 
   if(any(popsetup[,'transform'] < -10)) recompile <- TRUE #if custom transforms needed
@@ -1328,7 +1327,7 @@ data {
   int<lower = 0, upper = nmanifest> nbinary_y[ndatapoints];  // number of observed binary variables per observation
   int<lower = 0, upper = nmanifest> whichbinary_y[ndatapoints, nmanifest]; // index of which variables are observed and binary per observation
   int<lower = 0, upper = nmanifest> ncont_y[ndatapoints];  // number of observed continuous variables per observation
-  int<lower = 0, upper = nmanifest> whichcont_y[ndatapoints, nmanifest]; // index of which variables are observed and continuousper observation
+  int<lower = 0, upper = nmanifest> whichcont_y[ndatapoints, nmanifest]; // index of which variables are observed and continuous per observation
   
   int ukfpop;
   int ukf;
@@ -1341,17 +1340,15 @@ data {
   ',paste0(unlist(lapply(basematrices,function(m) paste0('int ',m,'setup[',m,'setup_rowcount,5 ];',collapse='\n'))),collapse='\n'),'
   ',paste0(unlist(lapply(basematrices,function(m) paste0('matrix[',m,'setup_rowcount, 5] ',m,'values;'))),collapse='\n'),'
   int TIPREDEFFECTsetup[nparams, ntipred];
+  int nmatrixslots;
+  int popsetup[nmatrixslots,5];
+  real popvalues[nmatrixslots,5];
 }
       
 transformed data{
   matrix[nlatent,nlatent] IIlatent;
   matrix[nlatent*nlatent,nlatent*nlatent] IIlatent2;
   int nlatentpop;
-  //int ncont_y[ndatapoints];
-  //int whichcont_y[ndatapoints, nmanifest];
-
-  //ncont_y = nobs_y;
-  //whichcont_y = whichobs_y;
 
   nlatentpop = ukfpop ? nlatent + nindvarying : nlatent;
   IIlatent = diag_matrix(rep_vector(1,nlatent));
@@ -1465,6 +1462,7 @@ generated quantities{
   vector[nparams] popsd;
   matrix[nindvarying,nindvarying] rawpopcov;
   matrix[nindvarying,nindvarying] rawpopcorr;
+  matrix[nparams,ntipred] linearTIPREDEFFECT;
   ',popify(subjectparaminit()),'
 
 vector[nmanifest] Ygen[ngenerations, ndatapoints];
@@ -1480,24 +1478,33 @@ rawpopcov = tcrossprod(rawpopcovsqrt);
 
 popsd = rep_vector(0,nparams);
 popsd[indvaryingindex] = rawpopsd; //base to begin calculations
- ',paste0(unlist(lapply(basematrices, function(m) {
-      paste0('
-    for(ri in 1:size(',m,'setup)){
-      if(',m,'setup[ri,3] !=0) {
 
-        popmeans[',m,'setup[ ri,3]] = ',
-           'tform(rawpopmeans[',m,'setup[ri,3] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ); 
+    for(ri in 1:dims(popsetup)[1]){
+      if(popsetup[ri,3] !=0) {
 
-        popsd[',m,'setup[ ri,3]] = ',m,'setup[ ri,5] ? 
+        popmeans[popsetup[ ri,3]] = tform(rawpopmeans[popsetup[ri,3] ], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4] ); 
+
+        popsd[popsetup[ ri,3]] = popsetup[ ri,5] ? 
           fabs(tform(
-            rawpopmeans[',m,'setup[ri,3] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] + popsd[',m,'setup[ ri,3]]) -
+            rawpopmeans[popsetup[ri,3] ]  + popsd[popsetup[ ri,3]], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4]) -
            tform(
-            rawpopmeans[',m,'setup[ri,3] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] - popsd[',m,'setup[ ri,3]]) / 2) : 0; 
+            rawpopmeans[popsetup[ri,3] ]  - popsd[popsetup[ ri,3]], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4] - popsd[popsetup[ ri,3]]) ) /2 : 
+          0; 
+
+        if(ntipred > 0){
+          for(tij in 1:ntipred){
+            if(TIPREDEFFECTsetup[popsetup[ri,3],tij] ==0) {
+              linearTIPREDEFFECT[popsetup[ri,3],tij] = 0;
+            } else {
+            linearTIPREDEFFECT[popsetup[ri,3],tij] = (
+              tform(rawpopmeans[popsetup[ri,3] ] + TIPREDEFFECT[popsetup[ri,3],tij] * .01, popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4] ) -
+              tform(rawpopmeans[popsetup[ri,3] ] - TIPREDEFFECT[popsetup[ri,3],tij] * .01, popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4] )
+              ) /2 * 100;
+            }
+         }
+        }
       }
     }
-      ',collapse='\n')
-    })),collapse='\n'),'
-
 }
 ')
 }
@@ -1508,74 +1515,74 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
   
   standata<-list(
     Y=cbind(as.matrix(datalong[,manifestNames])),
-    subject=datalong[,idName],
+    subject=as.integer(datalong[,idName]),
     idmap=idmap,
-    nsubjects=nsubjects,
-    nmanifest=n.manifest,
+    nsubjects=as.integer(nsubjects),
+    nmanifest=as.integer(n.manifest),
     lineardynamics=as.integer(lineardynamics),
-    integrationsteps=integrationsteps,
-    intoverstates=intoverstates,
-    T0check=T0check,
+    integrationsteps=as.integer(integrationsteps),
+    intoverstates=as.integer(intoverstates),
+    T0check=as.integer(T0check),
     verbose=as.integer(verbose),
-    indvaryingindex=indvaryingindex,
-    notindvaryingindex=notindvaryingindex, 
-    continuoustime=sum(continuoustime),
-    nlatent=n.latent,
-    ntipred=n.TIpred,
-    ntdpred=n.TDpred,
-    binomial=binomial,
-    nparams=nparams,
-    nindvarying=nindvarying,
-    nindvaryingoffdiagonals = (nindvarying*nindvarying-nindvarying)/2,
-    IIparams = diag(nparams),
-    ndatapoints=nrow(datalong),
+    indvaryingindex=array(as.integer(indvaryingindex)),
+    notindvaryingindex=array(as.integer(notindvaryingindex)), 
+    continuoustime=as.integer(sum(continuoustime)),
+    nlatent=as.integer(n.latent),
+    ntipred=as.integer(n.TIpred),
+    ntdpred=as.integer(n.TDpred),
+    binomial=as.integer(binomial),
+    nparams=as.integer(nparams),
+    nindvarying=as.integer(nindvarying),
+    nindvaryingoffdiagonals = as.integer((nindvarying*nindvarying-nindvarying)/2),
+    IIparams = as.integer(diag(nparams)),
+    ndatapoints=as.integer(nrow(datalong)),
     dT=dT,
     dTsmall=dTsmall,
     time=datalong[,timeName],
-    driftindex=driftindex,
-    cintindex=cintindex,
-    nt0varstationary=nt0varstationary,
-    nt0meansstationary=nt0meansstationary,
-    t0varstationary=matrix(as.numeric(t0varstationary),ncol=2),
-    t0meansstationary=matrix(as.numeric(t0meansstationary),ncol=2),
-    diffusionindex=diffusionindex,
-    derrind=array(derrind,dim=ndiffusion),
-    ndiffusion=ndiffusion,
-    driftdiagonly = driftdiagonly,
+    driftindex=as.integer(driftindex),
+    cintindex=as.integer(cintindex),
+    nt0varstationary=as.integer(nt0varstationary),
+    nt0meansstationary=as.integer(nt0meansstationary),
+    t0varstationary=matrix(as.integer(t0varstationary),ncol=2),
+    t0meansstationary=matrix(as.integer(t0meansstationary),ncol=2),
+    diffusionindex=array(as.integer(diffusionindex)),
+    derrind=array(as.integer(derrind),dim=ndiffusion),
+    ndiffusion=as.integer(ndiffusion),
+    driftdiagonly = as.integer(driftdiagonly),
     ukfpop=as.integer(ukfpop),
     ukf=as.integer(ukf),
     nopriors=as.integer(nopriors),
-    ngenerations=0,
-    manifesttype=array(manifesttype,dim=length(manifesttype)),
-    nobs_y=array(apply(datalong[,manifestNames,drop=FALSE],1,function(x) length(x[x!=99999])),dim=nrow(datalong)),
-    whichobs_y=matrix(t(apply(datalong[,manifestNames,drop=FALSE],1,function(x) {
+    ngenerations=as.integer(0),
+    manifesttype=array(as.integer(manifesttype),dim=length(manifesttype)),
+    nobs_y=array(as.integer(apply(datalong[,manifestNames,drop=FALSE],1,function(x) length(x[x!=99999]))),dim=nrow(datalong)),
+    whichobs_y=matrix(as.integer(t(apply(datalong[,manifestNames,drop=FALSE],1,function(x) {
       out<-as.numeric(which(x!=99999))
       if(length(out)==0) out<-rep(0,n.manifest)
       if(length(out)<n.manifest) out<-c(out,rep(0,n.manifest-length(out)))
       out
-    }) ),nrow=c(nrow(datalong),ncol=n.manifest)),
-    nbinary_y=array(apply(datalong[,manifestNames,drop=FALSE],1,function(x) length(x[manifesttype==1 & x!=99999])),dim=nrow(datalong)),
-    whichbinary_y=matrix(t(apply(datalong[,manifestNames,drop=FALSE],1,function(x) {
+    }) )),nrow=c(nrow(datalong),ncol=n.manifest)),
+    nbinary_y=array(as.integer(apply(datalong[,manifestNames,drop=FALSE],1,function(x) length(x[manifesttype==1 & x!=99999]))),dim=nrow(datalong)),
+    whichbinary_y=matrix(as.integer(t(apply(datalong[,manifestNames,drop=FALSE],1,function(x) {
       out<-as.numeric(which(manifesttype==1 & x!=99999)) #conditional on whichobs_y
       # out<-as.numeric(which(manifesttype==1)) #not conditional on whichobs_y
       if(length(out)==0) out<-rep(0,n.manifest)
       if(length(out)<n.manifest) out<-c(out,rep(0,n.manifest-length(out)))
       out
-    }) ),nrow=c(nrow(datalong),ncol=n.manifest)),
-    ncont_y=array(apply(datalong[,manifestNames,drop=FALSE],1,function(x) length(x[manifesttype==0 & x!=99999])),dim=nrow(datalong)),
-    whichcont_y=matrix(t(apply(datalong[,manifestNames,drop=FALSE],1,function(x) {
+    }) )),nrow=c(nrow(datalong),ncol=n.manifest)),
+    ncont_y=array(as.integer(apply(datalong[,manifestNames,drop=FALSE],1,function(x) length(x[manifesttype==0 & x!=99999]))),dim=nrow(datalong)),
+    whichcont_y=matrix(as.integer(t(apply(datalong[,manifestNames,drop=FALSE],1,function(x) {
       out<-as.numeric(which(manifesttype==0 & x!=99999)) #conditional on whichobs_y
       # out<-as.numeric(which(manifesttype==0)) #not conditional on whichobs_y
       if(length(out)==0) out<-rep(0,n.manifest)
       if(length(out)<n.manifest) out<-c(out,rep(0,n.manifest-length(out)))
       out
-    }) ),nrow=c(nrow(datalong),ncol=n.manifest)))
+    }) )),nrow=c(nrow(datalong),ncol=n.manifest)))
 
   if(n.TIpred == 0) tipreds <- array(0,c(0,0))
   standata$tipredsdata <- tipreds
-  standata$nmissingtipreds <- length(tipreds[tipreds== 99999])
-  standata$ntipredeffects <- ifelse(n.TIpred > 0, sum(unlist(ctspec[,paste0(TIpredNames,'_effect')])), 0)
-  standata$TIPREDEFFECTsetup <- TIPREDEFFECTsetup
+  standata$nmissingtipreds <- as.integer(length(tipreds[tipreds== 99999]))
+  standata$ntipredeffects <- as.integer(ifelse(n.TIpred > 0, sum(unlist(ctspec[,paste0(TIpredNames,'_effect')])), 0))
+  standata$TIPREDEFFECTsetup <- apply(TIPREDEFFECTsetup,c(1,2),as.integer,.drop=FALSE)
   
   if(n.TDpred ==0) tdpreds <- matrix(0,0,0)
   standata$tdpreds=array(as.matrix(tdpreds),dim=c(nrow(tdpreds),ncol(tdpreds)))
@@ -1585,15 +1592,16 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
     sname <- paste0(mati,'subindex')
     standata[[sname]] <- array(as.integer(get(sname)),dim=length(get(sname)))
   }
-  
+
   for(m in basematrices){
-    standata[[paste0(m,'setup_rowcount')]] <- nrow(matsetup[[m]])
-    standata[[paste0(m,'setup')]] <- matsetup[[m]]
+    standata[[paste0(m,'setup_rowcount')]] <- as.integer(nrow(matsetup[[m]]))
+    standata[[paste0(m,'setup')]] <- apply(matsetup[[m]],c(1,2),as.integer,.drop=FALSE)
     standata[[paste0(m,'values')]] <- matvalues[[m]]
   }
 
-  # standata$popsetup <- popsetup
-  # standata$popvalues <- popvalues
+  standata$popsetup <- apply(popsetup[,-1],c(1,2),as.integer,.drop=FALSE) #with parname column removed
+  standata$popvalues <- apply(popvalues[,-1],c(1,2),as.numeric)
+  standata$nmatrixslots <- as.integer(nrow(popsetup))
   
   standata$sdscale <- sdscale
 
@@ -1606,7 +1614,7 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
     if(!recompile) sm <- stanmodels$ctsm
 
     if(!is.null(inits)){
-      suppressOutput(sf <- suppressWarnings(sampling(sm,data=standata,iter=1,control=list(max_treedepth=1),chains=1)))
+      suppressOutput(sf <- suppressWarnings(sampling(sm,data=standata,iter=1,control=list(max_treedepth=0),chains=1)))
       inits <- constrain_pars(sf,inits)
       staninits=list()
       if(chains > 0){
@@ -1676,7 +1684,9 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
         tol_obj=1e-12, tol_rel_obj=0,init_alpha=.001, tol_grad=0,tol_rel_grad=1e1,tol_param=1e-12,history_size=100),verbose=verbose))
       
       est=optimfit$par
-      suppressWarnings(suppressOutput(smf<-sampling(sm,iter=1,chains=1,data=standata)))
+      # browser()
+      # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan:::grab_cxxfun(sm@dso))
+      suppressWarnings(suppressOutput(smf<-sampling(sm,iter=1,chains=1,data=standata,control=list(max_treedepth=0))))
       est=unconstrain_pars(smf,est)
       
       
@@ -1713,12 +1723,6 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
         return(gradout)
       }
       
-      # hesscalc<-function(lp,gr,pars,step=1e-6){ #not really needed, just use grcalc
-      #   hess<-matrix(NA,length(pars),length(pars))
-      #   hess<-grcalc(gr,pars,step)
-      #   return(hess)
-      # }
-      
       # A more numerically stable way of calculating log( sum( exp( x ))) Source:
       # http://r.789695.n4.nabble.com/logsumexp-function-in-R-td3310119.html
       log_sum_exp <- function(x) {
@@ -1750,7 +1754,7 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
       qdiag<-0
       
       cl <- parallel::makeCluster(min(cores,chains), type = "PSOCK")
-      parallel::clusterExport(cl, c('lp',"smf",'sm','standata','recompile'),environment())
+      parallel::clusterExport(cl, c('sm','standata'),environment())
       
       if(isloops == 0) {
         resamples <- matrix(unlist(lapply(1:5000,function(x){
@@ -1781,7 +1785,8 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
             eval(parse(text=paste0('library(rstan)')))
             # if(recompile) {
             
-            smf=sampling(sm,iter=1,chains=1,data=standata)
+            smf=sampling(sm,iter=1,chains=1,data=standata,control=list(max_treedepth=0))
+            # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan:::grab_cxxfun(sm@dso))
             # }
             
             lp<-function(parm) {
@@ -1863,7 +1868,8 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
 
       # target_dens <- c(target_dens,
       transformedpars <- parallel::parLapply(cl, parallel::clusterSplit(cl,1:nresamples), function(x){
-        smf=sampling(sm,iter=1,chains=1,data=standata)
+        smf=sampling(sm,iter=1,chains=1,data=standata,control=list(max_treedepth=0))
+        # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan:::grab_cxxfun(sm@dso))
         out <- list()
         for(li in 1:length(x)){
           flesh = unlist(constrain_pars(resamples[x[li],],object = smf))

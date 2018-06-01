@@ -16,14 +16,14 @@
 #'
 #' @examples
 #' temp<-stan_confidenceRegion(stanfit=ctstantestfit$stanfit, 
-#'   parstrings=c('drift_eta1_eta2','drift_eta2_eta1'))
+#'   parstrings=c('pop_DRIFT[1,1,2]','pop_DRIFT[1,2,1]'))
 #' t(apply(temp,2,quantile))
 stan_confidenceRegion <-function(stanfit,parstrings,prefuncstring='(', joinfuncstring=' + ',postfuncstring=')'){
   mc=As.mcmc.list(stanfit)
   mc=do.call(rbind,mc)
   
-  pars <- lapply(parstrings,function(x) paste0(colnames(mc)[grep(x,colnames(mc))]))
-  parsref <- lapply(parstrings,function(x) paste0('mc[,"',colnames(mc)[grep(x,colnames(mc))],'"]'))
+  pars <- lapply(parstrings,function(x) paste0(colnames(mc)[grep(x,colnames(mc),fixed=TRUE)]))
+  parsref <- lapply(parstrings,function(x) paste0('mc[,"',colnames(mc)[grep(x,colnames(mc),fixed=TRUE)],'"]'))
   
   # if(length(parstrings) > 1 & matchingindices==TRUE & !all(lapply(pars,length)==length(pars[[1]]))) stop ('matchingindices=TRUE but unequal numbers of parameters found matching parstrings')
   

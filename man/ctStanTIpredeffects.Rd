@@ -50,7 +50,7 @@ if \code{parmatrices=TRUE}.}
 \item{nsubjects}{Positive integer specifying the number of subjects to compute values for.
 Character string 'all' can also be used. Time taken is a function of nsubjects*niterations.}
 
-\item{filter}{either NA, or a length 3 vector, where the first element contains the time independent predictor index
+\item{filter}{either NA, or a length 2 vector, where the first element contains the time independent predictor index
 to filter by, and the second contains the comparison operator in string form (e.g. "< 3",
 to only calculate effects for subjects where the tipreds of the denoted index are less than 3).}
 
@@ -69,5 +69,5 @@ on subject level parameters of a ctStanFit object.
 }
 \examples{
 #samples reduced here for speed
-ctStanTIpredeffects(ctstantestfit,plot=TRUE,whichpars='dtDRIFT',nsamples=10)
+ctStanTIpredeffects(ctstantestfit,plot=TRUE,whichpars='CINT',nsamples=10,nsubjects=10)
 }

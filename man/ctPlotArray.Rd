@@ -44,7 +44,9 @@ Nothing. Generates plots.
 1st margin of $Y sets line values, 2nd sets variables, 3rd quantiles.
 }
 \examples{
-input <- ctStanTIpredeffects(ctstantestfit,plot=FALSE,whichpars='dtDRIFT',nsamples=10)
-input$x<-ctstantestfit$data$tipreds[order(ctstantestfit$data$tipreds[,1]),1]
+input <- ctStanTIpredeffects(ctstantestfit, plot=FALSE, whichpars='CINT', 
+  nsamples=10,nsubjects=10)
+input$x<-seq(min(ctstantestfit$data$tipreds,na.rm=TRUE),
+  max(ctstantestfit$data$tipreds,na.rm=TRUE),length.out=dim(input$y)[1]) 
 ctPlotArray(input=input)
 }

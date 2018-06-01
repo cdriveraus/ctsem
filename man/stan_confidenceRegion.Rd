@@ -30,6 +30,6 @@ for instance in case of colinearity of predictors.
 }
 \examples{
 temp<-stan_confidenceRegion(stanfit=ctstantestfit$stanfit, 
-  parstrings=c('drift_eta1_eta2','drift_eta2_eta1'))
+  parstrings=c('pop_DRIFT[1,1,2]','pop_DRIFT[1,2,1]'))
 t(apply(temp,2,quantile))
 }

@@ -340,8 +340,7 @@ struct matrix_diagexp_functor__ {
 template <typename T0__>
 Eigen::Matrix<typename boost::math::tools::promote_args<T0__>::type, Eigen::Dynamic,Eigen::Dynamic>
 sdcovsqrt2cov(const Eigen::Matrix<T0__, Eigen::Dynamic,Eigen::Dynamic>& mat,
-                  const int& cholesky,
-                  const int& corrbased, std::ostream* pstream__) {
+                  const int& msqrt, std::ostream* pstream__) {
     typedef typename boost::math::tools::promote_args<T0__>::type fun_scalar_t__;
     typedef fun_scalar_t__ fun_return_scalar_t__;
     const static bool propto__ = true;
@@ -363,7 +362,7 @@ sdcovsqrt2cov(const Eigen::Matrix<T0__, Eigen::Dynamic,Eigen::Dynamic>& mat,
 
 
         current_statement_begin__ = 79;
-        if (as_bool(logical_eq(corrbased,0))) {
+        if (as_bool(logical_eq(msqrt,1))) {
 
             current_statement_begin__ = 80;
             for (int k = 1; k <= cols(mat); ++k) {
@@ -390,7 +389,7 @@ sdcovsqrt2cov(const Eigen::Matrix<T0__, Eigen::Dynamic,Eigen::Dynamic>& mat,
             }
         }
         current_statement_begin__ = 89;
-        if (as_bool(logical_eq(corrbased,1))) {
+        if (as_bool(logical_eq(msqrt,0))) {
 
             current_statement_begin__ = 90;
             stan::math::assign(out, covsqrt2corsqrt(mat,0, pstream__));
@@ -398,7 +397,7 @@ sdcovsqrt2cov(const Eigen::Matrix<T0__, Eigen::Dynamic,Eigen::Dynamic>& mat,
             stan::math::assign(out, diag_pre_multiply(diagonal(mat),out));
         }
         current_statement_begin__ = 94;
-        if (as_bool(logical_eq(cholesky,0))) {
+        if (as_bool(logical_eq(msqrt,0))) {
             current_statement_begin__ = 94;
             stan::math::assign(out, tcrossprod(out));
         }
@@ -417,9 +416,8 @@ struct sdcovsqrt2cov_functor__ {
     template <typename T0__>
         Eigen::Matrix<typename boost::math::tools::promote_args<T0__>::type, Eigen::Dynamic,Eigen::Dynamic>
     operator()(const Eigen::Matrix<T0__, Eigen::Dynamic,Eigen::Dynamic>& mat,
-                  const int& cholesky,
-                  const int& corrbased, std::ostream* pstream__) const {
-        return sdcovsqrt2cov(mat, cholesky, corrbased, pstream__);
+                  const int& msqrt, std::ostream* pstream__) const {
+        return sdcovsqrt2cov(mat, msqrt, pstream__);
     }
 };
 
@@ -980,6 +978,7 @@ private:
     vector<int> CINTsubindex;
     vector<int> T0VARsubindex;
     vector<int> TDPREDEFFECTsubindex;
+    vector<int> PARSsubindex;
     vector<int> asymCINTsubindex;
     vector<int> asymDIFFUSIONsubindex;
     int T0MEANSsetup_rowcount;
@@ -991,6 +990,7 @@ private:
     int CINTsetup_rowcount;
     int T0VARsetup_rowcount;
     int TDPREDEFFECTsetup_rowcount;
+    int PARSsetup_rowcount;
     vector<vector<int> > T0MEANSsetup;
     vector<vector<int> > LAMBDAsetup;
     vector<vector<int> > DRIFTsetup;
@@ -1000,6 +1000,7 @@ private:
     vector<vector<int> > CINTsetup;
     vector<vector<int> > T0VARsetup;
     vector<vector<int> > TDPREDEFFECTsetup;
+    vector<vector<int> > PARSsetup;
     matrix_d T0MEANSvalues;
     matrix_d LAMBDAvalues;
     matrix_d DRIFTvalues;
@@ -1009,7 +1010,11 @@ private:
     matrix_d CINTvalues;
     matrix_d T0VARvalues;
     matrix_d TDPREDEFFECTvalues;
+    matrix_d PARSvalues;
     vector<vector<int> > TIPREDEFFECTsetup;
+    int nmatrixslots;
+    vector<vector<int> > popsetup;
+    vector<vector<double> > popvalues;
     matrix_d IIlatent;
     matrix_d IIlatent2;
     int nlatentpop;
@@ -1595,6 +1600,17 @@ public:
                 TDPREDEFFECTsubindex[i_0__] = vals_i__[pos__++];
             }
             current_statement_begin__ = 273;
+            validate_non_negative_index("PARSsubindex", "nsubjects", nsubjects);
+            context__.validate_dims("data initialization", "PARSsubindex", "int", context__.to_vec(nsubjects));
+            validate_non_negative_index("PARSsubindex", "nsubjects", nsubjects);
+            PARSsubindex = std::vector<int>(nsubjects,int(0));
+            vals_i__ = context__.vals_i("PARSsubindex");
+            pos__ = 0;
+            size_t PARSsubindex_limit_0__ = nsubjects;
+            for (size_t i_0__ = 0; i_0__ < PARSsubindex_limit_0__; ++i_0__) {
+                PARSsubindex[i_0__] = vals_i__[pos__++];
+            }
+            current_statement_begin__ = 274;
             validate_non_negative_index("asymCINTsubindex", "nsubjects", nsubjects);
             context__.validate_dims("data initialization", "asymCINTsubindex", "int", context__.to_vec(nsubjects));
             validate_non_negative_index("asymCINTsubindex", "nsubjects", nsubjects);
@@ -1605,7 +1621,7 @@ public:
             for (size_t i_0__ = 0; i_0__ < asymCINTsubindex_limit_0__; ++i_0__) {
                 asymCINTsubindex[i_0__] = vals_i__[pos__++];
             }
-            current_statement_begin__ = 274;
+            current_statement_begin__ = 275;
             validate_non_negative_index("asymDIFFUSIONsubindex", "nsubjects", nsubjects);
             context__.validate_dims("data initialization", "asymDIFFUSIONsubindex", "int", context__.to_vec(nsubjects));
             validate_non_negative_index("asymDIFFUSIONsubindex", "nsubjects", nsubjects);
@@ -1616,61 +1632,67 @@ public:
             for (size_t i_0__ = 0; i_0__ < asymDIFFUSIONsubindex_limit_0__; ++i_0__) {
                 asymDIFFUSIONsubindex[i_0__] = vals_i__[pos__++];
             }
-            current_statement_begin__ = 275;
+            current_statement_begin__ = 276;
             context__.validate_dims("data initialization", "T0MEANSsetup_rowcount", "int", context__.to_vec());
             T0MEANSsetup_rowcount = int(0);
             vals_i__ = context__.vals_i("T0MEANSsetup_rowcount");
             pos__ = 0;
             T0MEANSsetup_rowcount = vals_i__[pos__++];
-            current_statement_begin__ = 276;
+            current_statement_begin__ = 277;
             context__.validate_dims("data initialization", "LAMBDAsetup_rowcount", "int", context__.to_vec());
             LAMBDAsetup_rowcount = int(0);
             vals_i__ = context__.vals_i("LAMBDAsetup_rowcount");
             pos__ = 0;
             LAMBDAsetup_rowcount = vals_i__[pos__++];
-            current_statement_begin__ = 277;
+            current_statement_begin__ = 278;
             context__.validate_dims("data initialization", "DRIFTsetup_rowcount", "int", context__.to_vec());
             DRIFTsetup_rowcount = int(0);
             vals_i__ = context__.vals_i("DRIFTsetup_rowcount");
             pos__ = 0;
             DRIFTsetup_rowcount = vals_i__[pos__++];
-            current_statement_begin__ = 278;
+            current_statement_begin__ = 279;
             context__.validate_dims("data initialization", "DIFFUSIONsetup_rowcount", "int", context__.to_vec());
             DIFFUSIONsetup_rowcount = int(0);
             vals_i__ = context__.vals_i("DIFFUSIONsetup_rowcount");
             pos__ = 0;
             DIFFUSIONsetup_rowcount = vals_i__[pos__++];
-            current_statement_begin__ = 279;
+            current_statement_begin__ = 280;
             context__.validate_dims("data initialization", "MANIFESTVARsetup_rowcount", "int", context__.to_vec());
             MANIFESTVARsetup_rowcount = int(0);
             vals_i__ = context__.vals_i("MANIFESTVARsetup_rowcount");
             pos__ = 0;
             MANIFESTVARsetup_rowcount = vals_i__[pos__++];
-            current_statement_begin__ = 280;
+            current_statement_begin__ = 281;
             context__.validate_dims("data initialization", "MANIFESTMEANSsetup_rowcount", "int", context__.to_vec());
             MANIFESTMEANSsetup_rowcount = int(0);
             vals_i__ = context__.vals_i("MANIFESTMEANSsetup_rowcount");
             pos__ = 0;
             MANIFESTMEANSsetup_rowcount = vals_i__[pos__++];
-            current_statement_begin__ = 281;
+            current_statement_begin__ = 282;
             context__.validate_dims("data initialization", "CINTsetup_rowcount", "int", context__.to_vec());
             CINTsetup_rowcount = int(0);
             vals_i__ = context__.vals_i("CINTsetup_rowcount");
             pos__ = 0;
             CINTsetup_rowcount = vals_i__[pos__++];
-            current_statement_begin__ = 282;
+            current_statement_begin__ = 283;
             context__.validate_dims("data initialization", "T0VARsetup_rowcount", "int", context__.to_vec());
             T0VARsetup_rowcount = int(0);
             vals_i__ = context__.vals_i("T0VARsetup_rowcount");
             pos__ = 0;
             T0VARsetup_rowcount = vals_i__[pos__++];
-            current_statement_begin__ = 283;
+            current_statement_begin__ = 284;
             context__.validate_dims("data initialization", "TDPREDEFFECTsetup_rowcount", "int", context__.to_vec());
             TDPREDEFFECTsetup_rowcount = int(0);
             vals_i__ = context__.vals_i("TDPREDEFFECTsetup_rowcount");
             pos__ = 0;
             TDPREDEFFECTsetup_rowcount = vals_i__[pos__++];
-            current_statement_begin__ = 284;
+            current_statement_begin__ = 285;
+            context__.validate_dims("data initialization", "PARSsetup_rowcount", "int", context__.to_vec());
+            PARSsetup_rowcount = int(0);
+            vals_i__ = context__.vals_i("PARSsetup_rowcount");
+            pos__ = 0;
+            PARSsetup_rowcount = vals_i__[pos__++];
+            current_statement_begin__ = 286;
             validate_non_negative_index("T0MEANSsetup", "T0MEANSsetup_rowcount", T0MEANSsetup_rowcount);
             validate_non_negative_index("T0MEANSsetup", "5", 5);
             context__.validate_dims("data initialization", "T0MEANSsetup", "int", context__.to_vec(T0MEANSsetup_rowcount,5));
@@ -1686,7 +1708,7 @@ public:
                     T0MEANSsetup[i_0__][i_1__] = vals_i__[pos__++];
                 }
             }
-            current_statement_begin__ = 285;
+            current_statement_begin__ = 287;
             validate_non_negative_index("LAMBDAsetup", "LAMBDAsetup_rowcount", LAMBDAsetup_rowcount);
             validate_non_negative_index("LAMBDAsetup", "5", 5);
             context__.validate_dims("data initialization", "LAMBDAsetup", "int", context__.to_vec(LAMBDAsetup_rowcount,5));
@@ -1702,7 +1724,7 @@ public:
                     LAMBDAsetup[i_0__][i_1__] = vals_i__[pos__++];
                 }
             }
-            current_statement_begin__ = 286;
+            current_statement_begin__ = 288;
             validate_non_negative_index("DRIFTsetup", "DRIFTsetup_rowcount", DRIFTsetup_rowcount);
             validate_non_negative_index("DRIFTsetup", "5", 5);
             context__.validate_dims("data initialization", "DRIFTsetup", "int", context__.to_vec(DRIFTsetup_rowcount,5));
@@ -1718,7 +1740,7 @@ public:
                     DRIFTsetup[i_0__][i_1__] = vals_i__[pos__++];
                 }
             }
-            current_statement_begin__ = 287;
+            current_statement_begin__ = 289;
             validate_non_negative_index("DIFFUSIONsetup", "DIFFUSIONsetup_rowcount", DIFFUSIONsetup_rowcount);
             validate_non_negative_index("DIFFUSIONsetup", "5", 5);
             context__.validate_dims("data initialization", "DIFFUSIONsetup", "int", context__.to_vec(DIFFUSIONsetup_rowcount,5));
@@ -1734,7 +1756,7 @@ public:
                     DIFFUSIONsetup[i_0__][i_1__] = vals_i__[pos__++];
                 }
             }
-            current_statement_begin__ = 288;
+            current_statement_begin__ = 290;
             validate_non_negative_index("MANIFESTVARsetup", "MANIFESTVARsetup_rowcount", MANIFESTVARsetup_rowcount);
             validate_non_negative_index("MANIFESTVARsetup", "5", 5);
             context__.validate_dims("data initialization", "MANIFESTVARsetup", "int", context__.to_vec(MANIFESTVARsetup_rowcount,5));
@@ -1750,7 +1772,7 @@ public:
                     MANIFESTVARsetup[i_0__][i_1__] = vals_i__[pos__++];
                 }
             }
-            current_statement_begin__ = 289;
+            current_statement_begin__ = 291;
             validate_non_negative_index("MANIFESTMEANSsetup", "MANIFESTMEANSsetup_rowcount", MANIFESTMEANSsetup_rowcount);
             validate_non_negative_index("MANIFESTMEANSsetup", "5", 5);
             context__.validate_dims("data initialization", "MANIFESTMEANSsetup", "int", context__.to_vec(MANIFESTMEANSsetup_rowcount,5));
@@ -1766,7 +1788,7 @@ public:
                     MANIFESTMEANSsetup[i_0__][i_1__] = vals_i__[pos__++];
                 }
             }
-            current_statement_begin__ = 290;
+            current_statement_begin__ = 292;
             validate_non_negative_index("CINTsetup", "CINTsetup_rowcount", CINTsetup_rowcount);
             validate_non_negative_index("CINTsetup", "5", 5);
             context__.validate_dims("data initialization", "CINTsetup", "int", context__.to_vec(CINTsetup_rowcount,5));
@@ -1782,7 +1804,7 @@ public:
                     CINTsetup[i_0__][i_1__] = vals_i__[pos__++];
                 }
             }
-            current_statement_begin__ = 291;
+            current_statement_begin__ = 293;
             validate_non_negative_index("T0VARsetup", "T0VARsetup_rowcount", T0VARsetup_rowcount);
             validate_non_negative_index("T0VARsetup", "5", 5);
             context__.validate_dims("data initialization", "T0VARsetup", "int", context__.to_vec(T0VARsetup_rowcount,5));
@@ -1798,7 +1820,7 @@ public:
                     T0VARsetup[i_0__][i_1__] = vals_i__[pos__++];
                 }
             }
-            current_statement_begin__ = 292;
+            current_statement_begin__ = 294;
             validate_non_negative_index("TDPREDEFFECTsetup", "TDPREDEFFECTsetup_rowcount", TDPREDEFFECTsetup_rowcount);
             validate_non_negative_index("TDPREDEFFECTsetup", "5", 5);
             context__.validate_dims("data initialization", "TDPREDEFFECTsetup", "int", context__.to_vec(TDPREDEFFECTsetup_rowcount,5));
@@ -1814,7 +1836,23 @@ public:
                     TDPREDEFFECTsetup[i_0__][i_1__] = vals_i__[pos__++];
                 }
             }
-            current_statement_begin__ = 293;
+            current_statement_begin__ = 295;
+            validate_non_negative_index("PARSsetup", "PARSsetup_rowcount", PARSsetup_rowcount);
+            validate_non_negative_index("PARSsetup", "5", 5);
+            context__.validate_dims("data initialization", "PARSsetup", "int", context__.to_vec(PARSsetup_rowcount,5));
+            validate_non_negative_index("PARSsetup", "PARSsetup_rowcount", PARSsetup_rowcount);
+            validate_non_negative_index("PARSsetup", "5", 5);
+            PARSsetup = std::vector<std::vector<int> >(PARSsetup_rowcount,std::vector<int>(5,int(0)));
+            vals_i__ = context__.vals_i("PARSsetup");
+            pos__ = 0;
+            size_t PARSsetup_limit_1__ = 5;
+            for (size_t i_1__ = 0; i_1__ < PARSsetup_limit_1__; ++i_1__) {
+                size_t PARSsetup_limit_0__ = PARSsetup_rowcount;
+                for (size_t i_0__ = 0; i_0__ < PARSsetup_limit_0__; ++i_0__) {
+                    PARSsetup[i_0__][i_1__] = vals_i__[pos__++];
+                }
+            }
+            current_statement_begin__ = 296;
             validate_non_negative_index("T0MEANSvalues", "T0MEANSsetup_rowcount", T0MEANSsetup_rowcount);
             validate_non_negative_index("T0MEANSvalues", "5", 5);
             context__.validate_dims("data initialization", "T0MEANSvalues", "matrix_d", context__.to_vec(T0MEANSsetup_rowcount,5));
@@ -1830,7 +1868,7 @@ public:
                     T0MEANSvalues(m_mat__,n_mat__) = vals_r__[pos__++];
                 }
             }
-            current_statement_begin__ = 294;
+            current_statement_begin__ = 297;
             validate_non_negative_index("LAMBDAvalues", "LAMBDAsetup_rowcount", LAMBDAsetup_rowcount);
             validate_non_negative_index("LAMBDAvalues", "5", 5);
             context__.validate_dims("data initialization", "LAMBDAvalues", "matrix_d", context__.to_vec(LAMBDAsetup_rowcount,5));
@@ -1846,7 +1884,7 @@ public:
                     LAMBDAvalues(m_mat__,n_mat__) = vals_r__[pos__++];
                 }
             }
-            current_statement_begin__ = 295;
+            current_statement_begin__ = 298;
             validate_non_negative_index("DRIFTvalues", "DRIFTsetup_rowcount", DRIFTsetup_rowcount);
             validate_non_negative_index("DRIFTvalues", "5", 5);
             context__.validate_dims("data initialization", "DRIFTvalues", "matrix_d", context__.to_vec(DRIFTsetup_rowcount,5));
@@ -1862,7 +1900,7 @@ public:
                     DRIFTvalues(m_mat__,n_mat__) = vals_r__[pos__++];
                 }
             }
-            current_statement_begin__ = 296;
+            current_statement_begin__ = 299;
             validate_non_negative_index("DIFFUSIONvalues", "DIFFUSIONsetup_rowcount", DIFFUSIONsetup_rowcount);
             validate_non_negative_index("DIFFUSIONvalues", "5", 5);
             context__.validate_dims("data initialization", "DIFFUSIONvalues", "matrix_d", context__.to_vec(DIFFUSIONsetup_rowcount,5));
@@ -1878,7 +1916,7 @@ public:
                     DIFFUSIONvalues(m_mat__,n_mat__) = vals_r__[pos__++];
                 }
             }
-            current_statement_begin__ = 297;
+            current_statement_begin__ = 300;
             validate_non_negative_index("MANIFESTVARvalues", "MANIFESTVARsetup_rowcount", MANIFESTVARsetup_rowcount);
             validate_non_negative_index("MANIFESTVARvalues", "5", 5);
             context__.validate_dims("data initialization", "MANIFESTVARvalues", "matrix_d", context__.to_vec(MANIFESTVARsetup_rowcount,5));
@@ -1894,7 +1932,7 @@ public:
                     MANIFESTVARvalues(m_mat__,n_mat__) = vals_r__[pos__++];
                 }
             }
-            current_statement_begin__ = 298;
+            current_statement_begin__ = 301;
             validate_non_negative_index("MANIFESTMEANSvalues", "MANIFESTMEANSsetup_rowcount", MANIFESTMEANSsetup_rowcount);
             validate_non_negative_index("MANIFESTMEANSvalues", "5", 5);
             context__.validate_dims("data initialization", "MANIFESTMEANSvalues", "matrix_d", context__.to_vec(MANIFESTMEANSsetup_rowcount,5));
@@ -1910,7 +1948,7 @@ public:
                     MANIFESTMEANSvalues(m_mat__,n_mat__) = vals_r__[pos__++];
                 }
             }
-            current_statement_begin__ = 299;
+            current_statement_begin__ = 302;
             validate_non_negative_index("CINTvalues", "CINTsetup_rowcount", CINTsetup_rowcount);
             validate_non_negative_index("CINTvalues", "5", 5);
             context__.validate_dims("data initialization", "CINTvalues", "matrix_d", context__.to_vec(CINTsetup_rowcount,5));
@@ -1926,7 +1964,7 @@ public:
                     CINTvalues(m_mat__,n_mat__) = vals_r__[pos__++];
                 }
             }
-            current_statement_begin__ = 300;
+            current_statement_begin__ = 303;
             validate_non_negative_index("T0VARvalues", "T0VARsetup_rowcount", T0VARsetup_rowcount);
             validate_non_negative_index("T0VARvalues", "5", 5);
             context__.validate_dims("data initialization", "T0VARvalues", "matrix_d", context__.to_vec(T0VARsetup_rowcount,5));
@@ -1942,7 +1980,7 @@ public:
                     T0VARvalues(m_mat__,n_mat__) = vals_r__[pos__++];
                 }
             }
-            current_statement_begin__ = 301;
+            current_statement_begin__ = 304;
             validate_non_negative_index("TDPREDEFFECTvalues", "TDPREDEFFECTsetup_rowcount", TDPREDEFFECTsetup_rowcount);
             validate_non_negative_index("TDPREDEFFECTvalues", "5", 5);
             context__.validate_dims("data initialization", "TDPREDEFFECTvalues", "matrix_d", context__.to_vec(TDPREDEFFECTsetup_rowcount,5));
@@ -1958,7 +1996,23 @@ public:
                     TDPREDEFFECTvalues(m_mat__,n_mat__) = vals_r__[pos__++];
                 }
             }
-            current_statement_begin__ = 302;
+            current_statement_begin__ = 305;
+            validate_non_negative_index("PARSvalues", "PARSsetup_rowcount", PARSsetup_rowcount);
+            validate_non_negative_index("PARSvalues", "5", 5);
+            context__.validate_dims("data initialization", "PARSvalues", "matrix_d", context__.to_vec(PARSsetup_rowcount,5));
+            validate_non_negative_index("PARSvalues", "PARSsetup_rowcount", PARSsetup_rowcount);
+            validate_non_negative_index("PARSvalues", "5", 5);
+            PARSvalues = matrix_d(static_cast<Eigen::VectorXd::Index>(PARSsetup_rowcount),static_cast<Eigen::VectorXd::Index>(5));
+            vals_r__ = context__.vals_r("PARSvalues");
+            pos__ = 0;
+            size_t PARSvalues_m_mat_lim__ = PARSsetup_rowcount;
+            size_t PARSvalues_n_mat_lim__ = 5;
+            for (size_t n_mat__ = 0; n_mat__ < PARSvalues_n_mat_lim__; ++n_mat__) {
+                for (size_t m_mat__ = 0; m_mat__ < PARSvalues_m_mat_lim__; ++m_mat__) {
+                    PARSvalues(m_mat__,n_mat__) = vals_r__[pos__++];
+                }
+            }
+            current_statement_begin__ = 306;
             validate_non_negative_index("TIPREDEFFECTsetup", "nparams", nparams);
             validate_non_negative_index("TIPREDEFFECTsetup", "ntipred", ntipred);
             context__.validate_dims("data initialization", "TIPREDEFFECTsetup", "int", context__.to_vec(nparams,ntipred));
@@ -1972,6 +2026,44 @@ public:
                 size_t TIPREDEFFECTsetup_limit_0__ = nparams;
                 for (size_t i_0__ = 0; i_0__ < TIPREDEFFECTsetup_limit_0__; ++i_0__) {
                     TIPREDEFFECTsetup[i_0__][i_1__] = vals_i__[pos__++];
+                }
+            }
+            current_statement_begin__ = 307;
+            context__.validate_dims("data initialization", "nmatrixslots", "int", context__.to_vec());
+            nmatrixslots = int(0);
+            vals_i__ = context__.vals_i("nmatrixslots");
+            pos__ = 0;
+            nmatrixslots = vals_i__[pos__++];
+            current_statement_begin__ = 308;
+            validate_non_negative_index("popsetup", "nmatrixslots", nmatrixslots);
+            validate_non_negative_index("popsetup", "5", 5);
+            context__.validate_dims("data initialization", "popsetup", "int", context__.to_vec(nmatrixslots,5));
+            validate_non_negative_index("popsetup", "nmatrixslots", nmatrixslots);
+            validate_non_negative_index("popsetup", "5", 5);
+            popsetup = std::vector<std::vector<int> >(nmatrixslots,std::vector<int>(5,int(0)));
+            vals_i__ = context__.vals_i("popsetup");
+            pos__ = 0;
+            size_t popsetup_limit_1__ = 5;
+            for (size_t i_1__ = 0; i_1__ < popsetup_limit_1__; ++i_1__) {
+                size_t popsetup_limit_0__ = nmatrixslots;
+                for (size_t i_0__ = 0; i_0__ < popsetup_limit_0__; ++i_0__) {
+                    popsetup[i_0__][i_1__] = vals_i__[pos__++];
+                }
+            }
+            current_statement_begin__ = 309;
+            validate_non_negative_index("popvalues", "nmatrixslots", nmatrixslots);
+            validate_non_negative_index("popvalues", "5", 5);
+            context__.validate_dims("data initialization", "popvalues", "double", context__.to_vec(nmatrixslots,5));
+            validate_non_negative_index("popvalues", "nmatrixslots", nmatrixslots);
+            validate_non_negative_index("popvalues", "5", 5);
+            popvalues = std::vector<std::vector<double> >(nmatrixslots,std::vector<double>(5,double(0)));
+            vals_r__ = context__.vals_r("popvalues");
+            pos__ = 0;
+            size_t popvalues_limit_1__ = 5;
+            for (size_t i_1__ = 0; i_1__ < popvalues_limit_1__; ++i_1__) {
+                size_t popvalues_limit_0__ = nmatrixslots;
+                for (size_t i_0__ = 0; i_0__ < popvalues_limit_0__; ++i_0__) {
+                    popvalues[i_0__][i_1__] = vals_r__[pos__++];
                 }
             }
 
@@ -2106,55 +2198,62 @@ public:
             current_statement_begin__ = 300;
             current_statement_begin__ = 301;
             current_statement_begin__ = 302;
-            // initialize data variables
+            current_statement_begin__ = 303;
+            current_statement_begin__ = 304;
+            current_statement_begin__ = 305;
             current_statement_begin__ = 306;
+            current_statement_begin__ = 307;
+            current_statement_begin__ = 308;
+            current_statement_begin__ = 309;
+            // initialize data variables
+            current_statement_begin__ = 313;
             validate_non_negative_index("IIlatent", "nlatent", nlatent);
             validate_non_negative_index("IIlatent", "nlatent", nlatent);
             IIlatent = matrix_d(static_cast<Eigen::VectorXd::Index>(nlatent),static_cast<Eigen::VectorXd::Index>(nlatent));
             stan::math::fill(IIlatent,DUMMY_VAR__);
-            current_statement_begin__ = 307;
+            current_statement_begin__ = 314;
             validate_non_negative_index("IIlatent2", "(nlatent * nlatent)", (nlatent * nlatent));
             validate_non_negative_index("IIlatent2", "(nlatent * nlatent)", (nlatent * nlatent));
             IIlatent2 = matrix_d(static_cast<Eigen::VectorXd::Index>((nlatent * nlatent)),static_cast<Eigen::VectorXd::Index>((nlatent * nlatent)));
             stan::math::fill(IIlatent2,DUMMY_VAR__);
-            current_statement_begin__ = 308;
+            current_statement_begin__ = 315;
             nlatentpop = int(0);
             stan::math::fill(nlatentpop, std::numeric_limits<int>::min());
 
-            current_statement_begin__ = 315;
+            current_statement_begin__ = 322;
             stan::math::assign(nlatentpop, (ukfpop ? (nlatent + nindvarying) : nlatent ));
-            current_statement_begin__ = 316;
+            current_statement_begin__ = 323;
             stan::math::assign(IIlatent, diag_matrix(rep_vector(1,nlatent)));
-            current_statement_begin__ = 317;
+            current_statement_begin__ = 324;
             stan::math::assign(IIlatent2, diag_matrix(rep_vector(1,(nlatent * nlatent))));
 
             // validate transformed data
-            current_statement_begin__ = 306;
-            current_statement_begin__ = 307;
-            current_statement_begin__ = 308;
+            current_statement_begin__ = 313;
+            current_statement_begin__ = 314;
+            current_statement_begin__ = 315;
 
             // validate, set parameter ranges
             num_params_r__ = 0U;
             param_ranges_i__.clear();
-            current_statement_begin__ = 321;
+            current_statement_begin__ = 328;
             validate_non_negative_index("rawpopmeans", "nparams", nparams);
             num_params_r__ += nparams;
-            current_statement_begin__ = 323;
+            current_statement_begin__ = 330;
             validate_non_negative_index("rawpopsdbase", "nindvarying", nindvarying);
             num_params_r__ += nindvarying;
-            current_statement_begin__ = 324;
+            current_statement_begin__ = 331;
             validate_non_negative_index("sqrtpcov", "nindvaryingoffdiagonals", nindvaryingoffdiagonals);
             num_params_r__ += nindvaryingoffdiagonals;
-            current_statement_begin__ = 325;
+            current_statement_begin__ = 332;
             validate_non_negative_index("baseindparams", "(ukfpop ? 0 : (nindvarying * nsubjects) )", (ukfpop ? 0 : (nindvarying * nsubjects) ));
             num_params_r__ += (ukfpop ? 0 : (nindvarying * nsubjects) );
-            current_statement_begin__ = 327;
+            current_statement_begin__ = 334;
             validate_non_negative_index("tipredeffectparams", "ntipredeffects", ntipredeffects);
             num_params_r__ += ntipredeffects;
-            current_statement_begin__ = 328;
+            current_statement_begin__ = 335;
             validate_non_negative_index("tipredsimputed", "nmissingtipreds", nmissingtipreds);
             num_params_r__ += nmissingtipreds;
-            current_statement_begin__ = 330;
+            current_statement_begin__ = 337;
             validate_non_negative_index("etaupdbasestates", "(intoverstates ? 0 : (nlatent * ndatapoints) )", (intoverstates ? 0 : (nlatent * ndatapoints) ));
             num_params_r__ += (intoverstates ? 0 : (nlatent * ndatapoints) );
         } catch (const std::exception& e) {
@@ -2364,14 +2463,14 @@ public:
 
 
             // transformed parameters
-            current_statement_begin__ = 336;
+            current_statement_begin__ = 343;
             validate_non_negative_index("rawpopsd", "nindvarying", nindvarying);
             Eigen::Matrix<T__,Eigen::Dynamic,1>  rawpopsd(static_cast<Eigen::VectorXd::Index>(nindvarying));
             (void) rawpopsd;  // dummy to suppress unused var warning
 
             stan::math::initialize(rawpopsd, DUMMY_VAR__);
             stan::math::fill(rawpopsd,DUMMY_VAR__);
-            current_statement_begin__ = 338;
+            current_statement_begin__ = 345;
             validate_non_negative_index("rawpopcorrsqrt", "nindvarying", nindvarying);
             validate_non_negative_index("rawpopcorrsqrt", "nindvarying", nindvarying);
             Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic>  rawpopcorrsqrt(static_cast<Eigen::VectorXd::Index>(nindvarying),static_cast<Eigen::VectorXd::Index>(nindvarying));
@@ -2379,7 +2478,7 @@ public:
 
             stan::math::initialize(rawpopcorrsqrt, DUMMY_VAR__);
             stan::math::fill(rawpopcorrsqrt,DUMMY_VAR__);
-            current_statement_begin__ = 339;
+            current_statement_begin__ = 346;
             validate_non_negative_index("rawpopcovsqrt", "nindvarying", nindvarying);
             validate_non_negative_index("rawpopcovsqrt", "nindvarying", nindvarying);
             Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic>  rawpopcovsqrt(static_cast<Eigen::VectorXd::Index>(nindvarying),static_cast<Eigen::VectorXd::Index>(nindvarying));
@@ -2387,83 +2486,90 @@ public:
 
             stan::math::initialize(rawpopcovsqrt, DUMMY_VAR__);
             stan::math::fill(rawpopcovsqrt,DUMMY_VAR__);
-            current_statement_begin__ = 342;
+            current_statement_begin__ = 349;
             validate_non_negative_index("T0MEANS", "(T0MEANSsetup_rowcount ? max(stan::model::rvalue(T0MEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"T0MEANSsetup\")) : 0 )", (T0MEANSsetup_rowcount ? max(stan::model::rvalue(T0MEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "T0MEANSsetup")) : 0 ));
             validate_non_negative_index("T0MEANS", "(T0MEANSsetup_rowcount ? max(stan::model::rvalue(T0MEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"T0MEANSsetup\")) : 0 )", (T0MEANSsetup_rowcount ? max(stan::model::rvalue(T0MEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "T0MEANSsetup")) : 0 ));
             validate_non_negative_index("T0MEANS", "get_base1(T0MEANSsubindex,nsubjects,\"T0MEANSsubindex\",1)", get_base1(T0MEANSsubindex,nsubjects,"T0MEANSsubindex",1));
             vector<Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> > T0MEANS(get_base1(T0MEANSsubindex,nsubjects,"T0MEANSsubindex",1), (Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> (static_cast<Eigen::VectorXd::Index>((T0MEANSsetup_rowcount ? max(stan::model::rvalue(T0MEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "T0MEANSsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((T0MEANSsetup_rowcount ? max(stan::model::rvalue(T0MEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "T0MEANSsetup")) : 0 )))));
             stan::math::initialize(T0MEANS, DUMMY_VAR__);
             stan::math::fill(T0MEANS,DUMMY_VAR__);
-            current_statement_begin__ = 343;
+            current_statement_begin__ = 350;
             validate_non_negative_index("LAMBDA", "(LAMBDAsetup_rowcount ? max(stan::model::rvalue(LAMBDAsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"LAMBDAsetup\")) : 0 )", (LAMBDAsetup_rowcount ? max(stan::model::rvalue(LAMBDAsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "LAMBDAsetup")) : 0 ));
             validate_non_negative_index("LAMBDA", "(LAMBDAsetup_rowcount ? max(stan::model::rvalue(LAMBDAsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"LAMBDAsetup\")) : 0 )", (LAMBDAsetup_rowcount ? max(stan::model::rvalue(LAMBDAsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "LAMBDAsetup")) : 0 ));
             validate_non_negative_index("LAMBDA", "get_base1(LAMBDAsubindex,nsubjects,\"LAMBDAsubindex\",1)", get_base1(LAMBDAsubindex,nsubjects,"LAMBDAsubindex",1));
             vector<Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> > LAMBDA(get_base1(LAMBDAsubindex,nsubjects,"LAMBDAsubindex",1), (Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> (static_cast<Eigen::VectorXd::Index>((LAMBDAsetup_rowcount ? max(stan::model::rvalue(LAMBDAsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "LAMBDAsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((LAMBDAsetup_rowcount ? max(stan::model::rvalue(LAMBDAsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "LAMBDAsetup")) : 0 )))));
             stan::math::initialize(LAMBDA, DUMMY_VAR__);
             stan::math::fill(LAMBDA,DUMMY_VAR__);
-            current_statement_begin__ = 344;
+            current_statement_begin__ = 351;
             validate_non_negative_index("DRIFT", "(DRIFTsetup_rowcount ? max(stan::model::rvalue(DRIFTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"DRIFTsetup\")) : 0 )", (DRIFTsetup_rowcount ? max(stan::model::rvalue(DRIFTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "DRIFTsetup")) : 0 ));
             validate_non_negative_index("DRIFT", "(DRIFTsetup_rowcount ? max(stan::model::rvalue(DRIFTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"DRIFTsetup\")) : 0 )", (DRIFTsetup_rowcount ? max(stan::model::rvalue(DRIFTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "DRIFTsetup")) : 0 ));
             validate_non_negative_index("DRIFT", "get_base1(DRIFTsubindex,nsubjects,\"DRIFTsubindex\",1)", get_base1(DRIFTsubindex,nsubjects,"DRIFTsubindex",1));
             vector<Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> > DRIFT(get_base1(DRIFTsubindex,nsubjects,"DRIFTsubindex",1), (Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> (static_cast<Eigen::VectorXd::Index>((DRIFTsetup_rowcount ? max(stan::model::rvalue(DRIFTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "DRIFTsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((DRIFTsetup_rowcount ? max(stan::model::rvalue(DRIFTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "DRIFTsetup")) : 0 )))));
             stan::math::initialize(DRIFT, DUMMY_VAR__);
             stan::math::fill(DRIFT,DUMMY_VAR__);
-            current_statement_begin__ = 345;
+            current_statement_begin__ = 352;
             validate_non_negative_index("DIFFUSION", "(DIFFUSIONsetup_rowcount ? max(stan::model::rvalue(DIFFUSIONsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"DIFFUSIONsetup\")) : 0 )", (DIFFUSIONsetup_rowcount ? max(stan::model::rvalue(DIFFUSIONsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "DIFFUSIONsetup")) : 0 ));
             validate_non_negative_index("DIFFUSION", "(DIFFUSIONsetup_rowcount ? max(stan::model::rvalue(DIFFUSIONsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"DIFFUSIONsetup\")) : 0 )", (DIFFUSIONsetup_rowcount ? max(stan::model::rvalue(DIFFUSIONsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "DIFFUSIONsetup")) : 0 ));
             validate_non_negative_index("DIFFUSION", "get_base1(DIFFUSIONsubindex,nsubjects,\"DIFFUSIONsubindex\",1)", get_base1(DIFFUSIONsubindex,nsubjects,"DIFFUSIONsubindex",1));
             vector<Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> > DIFFUSION(get_base1(DIFFUSIONsubindex,nsubjects,"DIFFUSIONsubindex",1), (Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> (static_cast<Eigen::VectorXd::Index>((DIFFUSIONsetup_rowcount ? max(stan::model::rvalue(DIFFUSIONsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "DIFFUSIONsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((DIFFUSIONsetup_rowcount ? max(stan::model::rvalue(DIFFUSIONsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "DIFFUSIONsetup")) : 0 )))));
             stan::math::initialize(DIFFUSION, DUMMY_VAR__);
             stan::math::fill(DIFFUSION,DUMMY_VAR__);
-            current_statement_begin__ = 346;
+            current_statement_begin__ = 353;
             validate_non_negative_index("MANIFESTVAR", "(MANIFESTVARsetup_rowcount ? max(stan::model::rvalue(MANIFESTVARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"MANIFESTVARsetup\")) : 0 )", (MANIFESTVARsetup_rowcount ? max(stan::model::rvalue(MANIFESTVARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "MANIFESTVARsetup")) : 0 ));
             validate_non_negative_index("MANIFESTVAR", "(MANIFESTVARsetup_rowcount ? max(stan::model::rvalue(MANIFESTVARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"MANIFESTVARsetup\")) : 0 )", (MANIFESTVARsetup_rowcount ? max(stan::model::rvalue(MANIFESTVARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "MANIFESTVARsetup")) : 0 ));
             validate_non_negative_index("MANIFESTVAR", "get_base1(MANIFESTVARsubindex,nsubjects,\"MANIFESTVARsubindex\",1)", get_base1(MANIFESTVARsubindex,nsubjects,"MANIFESTVARsubindex",1));
             vector<Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> > MANIFESTVAR(get_base1(MANIFESTVARsubindex,nsubjects,"MANIFESTVARsubindex",1), (Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> (static_cast<Eigen::VectorXd::Index>((MANIFESTVARsetup_rowcount ? max(stan::model::rvalue(MANIFESTVARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "MANIFESTVARsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((MANIFESTVARsetup_rowcount ? max(stan::model::rvalue(MANIFESTVARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "MANIFESTVARsetup")) : 0 )))));
             stan::math::initialize(MANIFESTVAR, DUMMY_VAR__);
             stan::math::fill(MANIFESTVAR,DUMMY_VAR__);
-            current_statement_begin__ = 347;
+            current_statement_begin__ = 354;
             validate_non_negative_index("MANIFESTMEANS", "(MANIFESTMEANSsetup_rowcount ? max(stan::model::rvalue(MANIFESTMEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"MANIFESTMEANSsetup\")) : 0 )", (MANIFESTMEANSsetup_rowcount ? max(stan::model::rvalue(MANIFESTMEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "MANIFESTMEANSsetup")) : 0 ));
             validate_non_negative_index("MANIFESTMEANS", "(MANIFESTMEANSsetup_rowcount ? max(stan::model::rvalue(MANIFESTMEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"MANIFESTMEANSsetup\")) : 0 )", (MANIFESTMEANSsetup_rowcount ? max(stan::model::rvalue(MANIFESTMEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "MANIFESTMEANSsetup")) : 0 ));
             validate_non_negative_index("MANIFESTMEANS", "get_base1(MANIFESTMEANSsubindex,nsubjects,\"MANIFESTMEANSsubindex\",1)", get_base1(MANIFESTMEANSsubindex,nsubjects,"MANIFESTMEANSsubindex",1));
             vector<Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> > MANIFESTMEANS(get_base1(MANIFESTMEANSsubindex,nsubjects,"MANIFESTMEANSsubindex",1), (Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> (static_cast<Eigen::VectorXd::Index>((MANIFESTMEANSsetup_rowcount ? max(stan::model::rvalue(MANIFESTMEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "MANIFESTMEANSsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((MANIFESTMEANSsetup_rowcount ? max(stan::model::rvalue(MANIFESTMEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "MANIFESTMEANSsetup")) : 0 )))));
             stan::math::initialize(MANIFESTMEANS, DUMMY_VAR__);
             stan::math::fill(MANIFESTMEANS,DUMMY_VAR__);
-            current_statement_begin__ = 348;
+            current_statement_begin__ = 355;
             validate_non_negative_index("CINT", "(CINTsetup_rowcount ? max(stan::model::rvalue(CINTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"CINTsetup\")) : 0 )", (CINTsetup_rowcount ? max(stan::model::rvalue(CINTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "CINTsetup")) : 0 ));
             validate_non_negative_index("CINT", "(CINTsetup_rowcount ? max(stan::model::rvalue(CINTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"CINTsetup\")) : 0 )", (CINTsetup_rowcount ? max(stan::model::rvalue(CINTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "CINTsetup")) : 0 ));
             validate_non_negative_index("CINT", "get_base1(CINTsubindex,nsubjects,\"CINTsubindex\",1)", get_base1(CINTsubindex,nsubjects,"CINTsubindex",1));
             vector<Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> > CINT(get_base1(CINTsubindex,nsubjects,"CINTsubindex",1), (Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> (static_cast<Eigen::VectorXd::Index>((CINTsetup_rowcount ? max(stan::model::rvalue(CINTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "CINTsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((CINTsetup_rowcount ? max(stan::model::rvalue(CINTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "CINTsetup")) : 0 )))));
             stan::math::initialize(CINT, DUMMY_VAR__);
             stan::math::fill(CINT,DUMMY_VAR__);
-            current_statement_begin__ = 349;
+            current_statement_begin__ = 356;
             validate_non_negative_index("T0VAR", "(T0VARsetup_rowcount ? max(stan::model::rvalue(T0VARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"T0VARsetup\")) : 0 )", (T0VARsetup_rowcount ? max(stan::model::rvalue(T0VARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "T0VARsetup")) : 0 ));
             validate_non_negative_index("T0VAR", "(T0VARsetup_rowcount ? max(stan::model::rvalue(T0VARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"T0VARsetup\")) : 0 )", (T0VARsetup_rowcount ? max(stan::model::rvalue(T0VARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "T0VARsetup")) : 0 ));
             validate_non_negative_index("T0VAR", "get_base1(T0VARsubindex,nsubjects,\"T0VARsubindex\",1)", get_base1(T0VARsubindex,nsubjects,"T0VARsubindex",1));
             vector<Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> > T0VAR(get_base1(T0VARsubindex,nsubjects,"T0VARsubindex",1), (Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> (static_cast<Eigen::VectorXd::Index>((T0VARsetup_rowcount ? max(stan::model::rvalue(T0VARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "T0VARsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((T0VARsetup_rowcount ? max(stan::model::rvalue(T0VARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "T0VARsetup")) : 0 )))));
             stan::math::initialize(T0VAR, DUMMY_VAR__);
             stan::math::fill(T0VAR,DUMMY_VAR__);
-            current_statement_begin__ = 350;
+            current_statement_begin__ = 357;
             validate_non_negative_index("TDPREDEFFECT", "(TDPREDEFFECTsetup_rowcount ? max(stan::model::rvalue(TDPREDEFFECTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"TDPREDEFFECTsetup\")) : 0 )", (TDPREDEFFECTsetup_rowcount ? max(stan::model::rvalue(TDPREDEFFECTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "TDPREDEFFECTsetup")) : 0 ));
             validate_non_negative_index("TDPREDEFFECT", "(TDPREDEFFECTsetup_rowcount ? max(stan::model::rvalue(TDPREDEFFECTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"TDPREDEFFECTsetup\")) : 0 )", (TDPREDEFFECTsetup_rowcount ? max(stan::model::rvalue(TDPREDEFFECTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "TDPREDEFFECTsetup")) : 0 ));
             validate_non_negative_index("TDPREDEFFECT", "get_base1(TDPREDEFFECTsubindex,nsubjects,\"TDPREDEFFECTsubindex\",1)", get_base1(TDPREDEFFECTsubindex,nsubjects,"TDPREDEFFECTsubindex",1));
             vector<Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> > TDPREDEFFECT(get_base1(TDPREDEFFECTsubindex,nsubjects,"TDPREDEFFECTsubindex",1), (Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> (static_cast<Eigen::VectorXd::Index>((TDPREDEFFECTsetup_rowcount ? max(stan::model::rvalue(TDPREDEFFECTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "TDPREDEFFECTsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((TDPREDEFFECTsetup_rowcount ? max(stan::model::rvalue(TDPREDEFFECTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "TDPREDEFFECTsetup")) : 0 )))));
             stan::math::initialize(TDPREDEFFECT, DUMMY_VAR__);
             stan::math::fill(TDPREDEFFECT,DUMMY_VAR__);
-            current_statement_begin__ = 352;
+            current_statement_begin__ = 358;
+            validate_non_negative_index("PARS", "(PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"PARSsetup\")) : 0 )", (PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "PARSsetup")) : 0 ));
+            validate_non_negative_index("PARS", "(PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"PARSsetup\")) : 0 )", (PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "PARSsetup")) : 0 ));
+            validate_non_negative_index("PARS", "get_base1(PARSsubindex,nsubjects,\"PARSsubindex\",1)", get_base1(PARSsubindex,nsubjects,"PARSsubindex",1));
+            vector<Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> > PARS(get_base1(PARSsubindex,nsubjects,"PARSsubindex",1), (Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> (static_cast<Eigen::VectorXd::Index>((PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "PARSsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "PARSsetup")) : 0 )))));
+            stan::math::initialize(PARS, DUMMY_VAR__);
+            stan::math::fill(PARS,DUMMY_VAR__);
+            current_statement_begin__ = 360;
             validate_non_negative_index("asymDIFFUSION", "nlatent", nlatent);
             validate_non_negative_index("asymDIFFUSION", "nlatent", nlatent);
             validate_non_negative_index("asymDIFFUSION", "(lineardynamics ? get_base1(asymDIFFUSIONsubindex,nsubjects,\"asymDIFFUSIONsubindex\",1) : 0 )", (lineardynamics ? get_base1(asymDIFFUSIONsubindex,nsubjects,"asymDIFFUSIONsubindex",1) : 0 ));
             vector<Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> > asymDIFFUSION((lineardynamics ? get_base1(asymDIFFUSIONsubindex,nsubjects,"asymDIFFUSIONsubindex",1) : 0 ), (Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> (static_cast<Eigen::VectorXd::Index>(nlatent),static_cast<Eigen::VectorXd::Index>(nlatent))));
             stan::math::initialize(asymDIFFUSION, DUMMY_VAR__);
             stan::math::fill(asymDIFFUSION,DUMMY_VAR__);
-            current_statement_begin__ = 353;
+            current_statement_begin__ = 361;
             validate_non_negative_index("asymCINT", "(nt0meansstationary ? nlatent : 0 )", (nt0meansstationary ? nlatent : 0 ));
             validate_non_negative_index("asymCINT", "(nt0meansstationary ? get_base1(asymCINTsubindex,nsubjects,\"asymCINTsubindex\",1) : 0 )", (nt0meansstationary ? get_base1(asymCINTsubindex,nsubjects,"asymCINTsubindex",1) : 0 ));
             vector<Eigen::Matrix<T__,Eigen::Dynamic,1> > asymCINT((nt0meansstationary ? get_base1(asymCINTsubindex,nsubjects,"asymCINTsubindex",1) : 0 ), (Eigen::Matrix<T__,Eigen::Dynamic,1> (static_cast<Eigen::VectorXd::Index>((nt0meansstationary ? nlatent : 0 )))));
             stan::math::initialize(asymCINT, DUMMY_VAR__);
             stan::math::fill(asymCINT,DUMMY_VAR__);
-            current_statement_begin__ = 355;
+            current_statement_begin__ = 363;
             validate_non_negative_index("tipreds", "(ntipred ? nsubjects : 0 )", (ntipred ? nsubjects : 0 ));
             validate_non_negative_index("tipreds", "(ntipred ? ntipred : 0 )", (ntipred ? ntipred : 0 ));
             Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic>  tipreds(static_cast<Eigen::VectorXd::Index>((ntipred ? nsubjects : 0 )),static_cast<Eigen::VectorXd::Index>((ntipred ? ntipred : 0 )));
@@ -2471,7 +2577,7 @@ public:
 
             stan::math::initialize(tipreds, DUMMY_VAR__);
             stan::math::fill(tipreds,DUMMY_VAR__);
-            current_statement_begin__ = 356;
+            current_statement_begin__ = 364;
             validate_non_negative_index("TIPREDEFFECT", "nparams", nparams);
             validate_non_negative_index("TIPREDEFFECT", "ntipred", ntipred);
             Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic>  TIPREDEFFECT(static_cast<Eigen::VectorXd::Index>(nparams),static_cast<Eigen::VectorXd::Index>(ntipred));
@@ -2481,246 +2587,273 @@ public:
             stan::math::fill(TIPREDEFFECT,DUMMY_VAR__);
 
 
-            current_statement_begin__ = 358;
+            current_statement_begin__ = 366;
             if (as_bool(logical_gt(ntipred,0))) {
 
                 {
-                current_statement_begin__ = 360;
+                current_statement_begin__ = 368;
                 int counter(0);
                 (void) counter;  // dummy to suppress unused var warning
 
                 stan::math::fill(counter, std::numeric_limits<int>::min());
 
 
-                current_statement_begin__ = 361;
+                current_statement_begin__ = 369;
                 stan::math::assign(counter, 0);
-                current_statement_begin__ = 362;
+                current_statement_begin__ = 370;
                 for (int coli = 1; coli <= cols(tipreds); ++coli) {
 
-                    current_statement_begin__ = 363;
+                    current_statement_begin__ = 371;
                     for (int rowi = 1; rowi <= rows(tipreds); ++rowi) {
 
-                        current_statement_begin__ = 364;
+                        current_statement_begin__ = 372;
                         if (as_bool(logical_eq(get_base1(tipredsdata,rowi,coli,"tipredsdata",1),99999))) {
 
-                            current_statement_begin__ = 365;
+                            current_statement_begin__ = 373;
                             stan::math::assign(counter, (counter + 1));
-                            current_statement_begin__ = 366;
+                            current_statement_begin__ = 374;
                             stan::math::assign(get_base1_lhs(tipreds,rowi,coli,"tipreds",1), get_base1(tipredsimputed,counter,"tipredsimputed",1));
                         } else {
-                            current_statement_begin__ = 367;
+                            current_statement_begin__ = 375;
                             stan::math::assign(get_base1_lhs(tipreds,rowi,coli,"tipreds",1), get_base1(tipredsdata,rowi,coli,"tipredsdata",1));
                         }
                     }
                 }
                 }
-                current_statement_begin__ = 371;
+                current_statement_begin__ = 379;
                 for (int ci = 1; ci <= ntipred; ++ci) {
 
-                    current_statement_begin__ = 372;
+                    current_statement_begin__ = 380;
                     for (int ri = 1; ri <= nparams; ++ri) {
 
-                        current_statement_begin__ = 373;
+                        current_statement_begin__ = 381;
                         if (as_bool(logical_gt(get_base1(get_base1(TIPREDEFFECTsetup,ri,"TIPREDEFFECTsetup",1),ci,"TIPREDEFFECTsetup",2),0))) {
 
-                            current_statement_begin__ = 374;
+                            current_statement_begin__ = 382;
                             stan::math::assign(get_base1_lhs(TIPREDEFFECT,ri,ci,"TIPREDEFFECT",1), get_base1(tipredeffectparams,get_base1(get_base1(TIPREDEFFECTsetup,ri,"TIPREDEFFECTsetup",1),ci,"TIPREDEFFECTsetup",2),"tipredeffectparams",1));
                         } else {
 
-                            current_statement_begin__ = 376;
+                            current_statement_begin__ = 384;
                             stan::math::assign(get_base1_lhs(TIPREDEFFECT,ri,ci,"TIPREDEFFECT",1), 0);
                         }
                     }
                 }
             }
-            current_statement_begin__ = 382;
+            current_statement_begin__ = 390;
             if (as_bool(logical_gt(nindvarying,0))) {
                 {
-                current_statement_begin__ = 383;
+                current_statement_begin__ = 391;
                 int counter(0);
                 (void) counter;  // dummy to suppress unused var warning
 
                 stan::math::fill(counter, std::numeric_limits<int>::min());
 
 
-                current_statement_begin__ = 384;
+                current_statement_begin__ = 392;
                 stan::math::assign(rawpopsd, elt_multiply(exp(subtract(multiply(rawpopsdbase,2),2)),sdscale));
-                current_statement_begin__ = 385;
+                current_statement_begin__ = 393;
                 stan::math::assign(counter, 0);
-                current_statement_begin__ = 386;
+                current_statement_begin__ = 394;
                 for (int j = 1; j <= nindvarying; ++j) {
 
-                    current_statement_begin__ = 387;
+                    current_statement_begin__ = 395;
                     stan::math::assign(get_base1_lhs(rawpopcovsqrt,j,j,"rawpopcovsqrt",1), 1);
-                    current_statement_begin__ = 388;
+                    current_statement_begin__ = 396;
                     for (int i = 1; i <= nindvarying; ++i) {
 
-                        current_statement_begin__ = 389;
+                        current_statement_begin__ = 397;
                         if (as_bool(logical_gt(i,j))) {
 
-                            current_statement_begin__ = 390;
+                            current_statement_begin__ = 398;
                             stan::math::assign(counter, (counter + 1));
-                            current_statement_begin__ = 391;
+                            current_statement_begin__ = 399;
                             stan::math::assign(get_base1_lhs(rawpopcovsqrt,i,j,"rawpopcovsqrt",1), get_base1(sqrtpcov,counter,"sqrtpcov",1));
-                            current_statement_begin__ = 392;
+                            current_statement_begin__ = 400;
                             stan::math::assign(get_base1_lhs(rawpopcovsqrt,j,i,"rawpopcovsqrt",1), get_base1(sqrtpcov,counter,"sqrtpcov",1));
                         }
                     }
                 }
-                current_statement_begin__ = 396;
+                current_statement_begin__ = 404;
                 stan::math::assign(rawpopcorrsqrt, covsqrt2corsqrt(rawpopcovsqrt,0, pstream__));
-                current_statement_begin__ = 398;
+                current_statement_begin__ = 406;
                 stan::math::assign(rawpopcovsqrt, diag_pre_multiply(rawpopsd,rawpopcorrsqrt));
                 }
             }
             {
-            current_statement_begin__ = 402;
+            current_statement_begin__ = 410;
             validate_non_negative_index("rawindparams", "nparams", nparams);
             Eigen::Matrix<T__,Eigen::Dynamic,1>  rawindparams(static_cast<Eigen::VectorXd::Index>(nparams));
             (void) rawindparams;  // dummy to suppress unused var warning
 
             stan::math::initialize(rawindparams, DUMMY_VAR__);
             stan::math::fill(rawindparams,DUMMY_VAR__);
+            current_statement_begin__ = 411;
+            validate_non_negative_index("tipredaddition", "nparams", nparams);
+            Eigen::Matrix<T__,Eigen::Dynamic,1>  tipredaddition(static_cast<Eigen::VectorXd::Index>(nparams));
+            (void) tipredaddition;  // dummy to suppress unused var warning
+
+            stan::math::initialize(tipredaddition, DUMMY_VAR__);
+            stan::math::fill(tipredaddition,DUMMY_VAR__);
+            current_statement_begin__ = 412;
+            validate_non_negative_index("indvaraddition", "nparams", nparams);
+            Eigen::Matrix<T__,Eigen::Dynamic,1>  indvaraddition(static_cast<Eigen::VectorXd::Index>(nparams));
+            (void) indvaraddition;  // dummy to suppress unused var warning
+
+            stan::math::initialize(indvaraddition, DUMMY_VAR__);
+            stan::math::fill(indvaraddition,DUMMY_VAR__);
 
 
-            current_statement_begin__ = 403;
+            current_statement_begin__ = 413;
             stan::math::assign(rawindparams, rawpopmeans);
-            current_statement_begin__ = 404;
+            current_statement_begin__ = 414;
+            stan::math::assign(tipredaddition, rep_vector(0,nparams));
+            current_statement_begin__ = 415;
+            stan::math::assign(indvaraddition, rep_vector(0,nparams));
+            current_statement_begin__ = 417;
             for (int si = 1; si <= nsubjects; ++si) {
 
-                current_statement_begin__ = 406;
-                if (as_bool((primitive_value((primitive_value(logical_eq(ntipred,0)) && primitive_value(logical_gt(nindvarying,0)))) && primitive_value(logical_eq(ukfpop,0))))) {
-                    current_statement_begin__ = 406;
-                    stan::model::assign(rawindparams, 
+                current_statement_begin__ = 420;
+                if (as_bool((primitive_value(logical_gt(nindvarying,0)) && primitive_value(logical_eq(ukfpop,0))))) {
+                    current_statement_begin__ = 420;
+                    stan::model::assign(indvaraddition, 
                                 stan::model::cons_list(stan::model::index_multi(indvaryingindex), stan::model::nil_index_list()), 
-                                add(stan::model::rvalue(rawpopmeans, stan::model::cons_list(stan::model::index_multi(indvaryingindex), stan::model::nil_index_list()), "rawpopmeans"),multiply(rawpopcovsqrt,stan::model::rvalue(baseindparams, stan::model::cons_list(stan::model::index_min_max((1 + ((si - 1) * nindvarying)), (si * nindvarying)), stan::model::nil_index_list()), "baseindparams"))), 
-                                "assigning variable rawindparams");
+                                multiply(rawpopcovsqrt,stan::model::rvalue(baseindparams, stan::model::cons_list(stan::model::index_min_max((1 + ((si - 1) * nindvarying)), (si * nindvarying)), stan::model::nil_index_list()), "baseindparams")), 
+                                "assigning variable indvaraddition");
                 }
-                current_statement_begin__ = 409;
-                if (as_bool((primitive_value((primitive_value(logical_gt(ntipred,0)) && primitive_value(logical_gt(nindvarying,0)))) && primitive_value(logical_eq(ukfpop,0))))) {
-                    current_statement_begin__ = 409;
-                    stan::model::assign(rawindparams, 
-                                stan::model::cons_list(stan::model::index_multi(indvaryingindex), stan::model::nil_index_list()), 
-                                add(add(stan::model::rvalue(rawpopmeans, stan::model::cons_list(stan::model::index_multi(indvaryingindex), stan::model::nil_index_list()), "rawpopmeans"),multiply(rawpopcovsqrt,stan::model::rvalue(baseindparams, stan::model::cons_list(stan::model::index_min_max((1 + ((si - 1) * nindvarying)), (si * nindvarying)), stan::model::nil_index_list()), "baseindparams"))),multiply(stan::model::rvalue(TIPREDEFFECT, stan::model::cons_list(stan::model::index_multi(indvaryingindex), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "TIPREDEFFECT"),transpose(get_base1(tipreds,si,"tipreds",1)))), 
-                                "assigning variable rawindparams");
+                current_statement_begin__ = 422;
+                if (as_bool(logical_gt(ntipred,0))) {
+                    current_statement_begin__ = 422;
+                    stan::math::assign(tipredaddition, multiply(TIPREDEFFECT,transpose(get_base1(tipreds,si,"tipreds",1))));
                 }
-                current_statement_begin__ = 413;
+                current_statement_begin__ = 424;
+                stan::math::assign(rawindparams, add(add(rawpopmeans,tipredaddition),indvaraddition));
+                current_statement_begin__ = 426;
                 if (as_bool(logical_lte(si,get_base1(T0MEANSsubindex,nsubjects,"T0MEANSsubindex",1)))) {
 
-                    current_statement_begin__ = 414;
+                    current_statement_begin__ = 427;
                     for (int ri = 1; ri <= size(T0MEANSsetup); ++ri) {
 
-                        current_statement_begin__ = 415;
+                        current_statement_begin__ = 428;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(T0MEANS,si,"T0MEANS",1),get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),1,"T0MEANSsetup",2),get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),2,"T0MEANSsetup",2),"T0MEANS",2), (get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),3,"T0MEANSsetup",2) ? stan::math::promote_scalar<T__>(tform(get_base1(rawindparams,get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),3,"T0MEANSsetup",2),"rawindparams",1),get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),4,"T0MEANSsetup",2),get_base1(T0MEANSvalues,ri,2,"T0MEANSvalues",1),get_base1(T0MEANSvalues,ri,3,"T0MEANSvalues",1),get_base1(T0MEANSvalues,ri,4,"T0MEANSvalues",1), pstream__)) : stan::math::promote_scalar<T__>(get_base1(T0MEANSvalues,ri,1,"T0MEANSvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 420;
+                current_statement_begin__ = 433;
                 if (as_bool(logical_lte(si,get_base1(LAMBDAsubindex,nsubjects,"LAMBDAsubindex",1)))) {
 
-                    current_statement_begin__ = 421;
+                    current_statement_begin__ = 434;
                     for (int ri = 1; ri <= size(LAMBDAsetup); ++ri) {
 
-                        current_statement_begin__ = 422;
+                        current_statement_begin__ = 435;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(LAMBDA,si,"LAMBDA",1),get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),1,"LAMBDAsetup",2),get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),2,"LAMBDAsetup",2),"LAMBDA",2), (get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),3,"LAMBDAsetup",2) ? stan::math::promote_scalar<T__>(tform(get_base1(rawindparams,get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),3,"LAMBDAsetup",2),"rawindparams",1),get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),4,"LAMBDAsetup",2),get_base1(LAMBDAvalues,ri,2,"LAMBDAvalues",1),get_base1(LAMBDAvalues,ri,3,"LAMBDAvalues",1),get_base1(LAMBDAvalues,ri,4,"LAMBDAvalues",1), pstream__)) : stan::math::promote_scalar<T__>(get_base1(LAMBDAvalues,ri,1,"LAMBDAvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 427;
+                current_statement_begin__ = 440;
                 if (as_bool(logical_lte(si,get_base1(DRIFTsubindex,nsubjects,"DRIFTsubindex",1)))) {
 
-                    current_statement_begin__ = 428;
+                    current_statement_begin__ = 441;
                     for (int ri = 1; ri <= size(DRIFTsetup); ++ri) {
 
-                        current_statement_begin__ = 429;
+                        current_statement_begin__ = 442;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(DRIFT,si,"DRIFT",1),get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),1,"DRIFTsetup",2),get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),2,"DRIFTsetup",2),"DRIFT",2), (get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),3,"DRIFTsetup",2) ? stan::math::promote_scalar<T__>(tform(get_base1(rawindparams,get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),3,"DRIFTsetup",2),"rawindparams",1),get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),4,"DRIFTsetup",2),get_base1(DRIFTvalues,ri,2,"DRIFTvalues",1),get_base1(DRIFTvalues,ri,3,"DRIFTvalues",1),get_base1(DRIFTvalues,ri,4,"DRIFTvalues",1), pstream__)) : stan::math::promote_scalar<T__>(get_base1(DRIFTvalues,ri,1,"DRIFTvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 434;
+                current_statement_begin__ = 447;
                 if (as_bool(logical_lte(si,get_base1(DIFFUSIONsubindex,nsubjects,"DIFFUSIONsubindex",1)))) {
 
-                    current_statement_begin__ = 435;
+                    current_statement_begin__ = 448;
                     for (int ri = 1; ri <= size(DIFFUSIONsetup); ++ri) {
 
-                        current_statement_begin__ = 436;
+                        current_statement_begin__ = 449;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(DIFFUSION,si,"DIFFUSION",1),get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),1,"DIFFUSIONsetup",2),get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),2,"DIFFUSIONsetup",2),"DIFFUSION",2), (get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),3,"DIFFUSIONsetup",2) ? stan::math::promote_scalar<T__>(tform(get_base1(rawindparams,get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),3,"DIFFUSIONsetup",2),"rawindparams",1),get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),4,"DIFFUSIONsetup",2),get_base1(DIFFUSIONvalues,ri,2,"DIFFUSIONvalues",1),get_base1(DIFFUSIONvalues,ri,3,"DIFFUSIONvalues",1),get_base1(DIFFUSIONvalues,ri,4,"DIFFUSIONvalues",1), pstream__)) : stan::math::promote_scalar<T__>(get_base1(DIFFUSIONvalues,ri,1,"DIFFUSIONvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 441;
+                current_statement_begin__ = 454;
                 if (as_bool(logical_lte(si,get_base1(MANIFESTVARsubindex,nsubjects,"MANIFESTVARsubindex",1)))) {
 
-                    current_statement_begin__ = 442;
+                    current_statement_begin__ = 455;
                     for (int ri = 1; ri <= size(MANIFESTVARsetup); ++ri) {
 
-                        current_statement_begin__ = 443;
+                        current_statement_begin__ = 456;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(MANIFESTVAR,si,"MANIFESTVAR",1),get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),1,"MANIFESTVARsetup",2),get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),2,"MANIFESTVARsetup",2),"MANIFESTVAR",2), (get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),3,"MANIFESTVARsetup",2) ? stan::math::promote_scalar<T__>(tform(get_base1(rawindparams,get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),3,"MANIFESTVARsetup",2),"rawindparams",1),get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),4,"MANIFESTVARsetup",2),get_base1(MANIFESTVARvalues,ri,2,"MANIFESTVARvalues",1),get_base1(MANIFESTVARvalues,ri,3,"MANIFESTVARvalues",1),get_base1(MANIFESTVARvalues,ri,4,"MANIFESTVARvalues",1), pstream__)) : stan::math::promote_scalar<T__>(get_base1(MANIFESTVARvalues,ri,1,"MANIFESTVARvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 448;
+                current_statement_begin__ = 461;
                 if (as_bool(logical_lte(si,get_base1(MANIFESTMEANSsubindex,nsubjects,"MANIFESTMEANSsubindex",1)))) {
 
-                    current_statement_begin__ = 449;
+                    current_statement_begin__ = 462;
                     for (int ri = 1; ri <= size(MANIFESTMEANSsetup); ++ri) {
 
-                        current_statement_begin__ = 450;
+                        current_statement_begin__ = 463;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(MANIFESTMEANS,si,"MANIFESTMEANS",1),get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),1,"MANIFESTMEANSsetup",2),get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),2,"MANIFESTMEANSsetup",2),"MANIFESTMEANS",2), (get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),3,"MANIFESTMEANSsetup",2) ? stan::math::promote_scalar<T__>(tform(get_base1(rawindparams,get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),3,"MANIFESTMEANSsetup",2),"rawindparams",1),get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),4,"MANIFESTMEANSsetup",2),get_base1(MANIFESTMEANSvalues,ri,2,"MANIFESTMEANSvalues",1),get_base1(MANIFESTMEANSvalues,ri,3,"MANIFESTMEANSvalues",1),get_base1(MANIFESTMEANSvalues,ri,4,"MANIFESTMEANSvalues",1), pstream__)) : stan::math::promote_scalar<T__>(get_base1(MANIFESTMEANSvalues,ri,1,"MANIFESTMEANSvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 455;
+                current_statement_begin__ = 468;
                 if (as_bool(logical_lte(si,get_base1(CINTsubindex,nsubjects,"CINTsubindex",1)))) {
 
-                    current_statement_begin__ = 456;
+                    current_statement_begin__ = 469;
                     for (int ri = 1; ri <= size(CINTsetup); ++ri) {
 
-                        current_statement_begin__ = 457;
+                        current_statement_begin__ = 470;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(CINT,si,"CINT",1),get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),1,"CINTsetup",2),get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),2,"CINTsetup",2),"CINT",2), (get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),3,"CINTsetup",2) ? stan::math::promote_scalar<T__>(tform(get_base1(rawindparams,get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),3,"CINTsetup",2),"rawindparams",1),get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),4,"CINTsetup",2),get_base1(CINTvalues,ri,2,"CINTvalues",1),get_base1(CINTvalues,ri,3,"CINTvalues",1),get_base1(CINTvalues,ri,4,"CINTvalues",1), pstream__)) : stan::math::promote_scalar<T__>(get_base1(CINTvalues,ri,1,"CINTvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 462;
+                current_statement_begin__ = 475;
                 if (as_bool(logical_lte(si,get_base1(T0VARsubindex,nsubjects,"T0VARsubindex",1)))) {
 
-                    current_statement_begin__ = 463;
+                    current_statement_begin__ = 476;
                     for (int ri = 1; ri <= size(T0VARsetup); ++ri) {
 
-                        current_statement_begin__ = 464;
+                        current_statement_begin__ = 477;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(T0VAR,si,"T0VAR",1),get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),1,"T0VARsetup",2),get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),2,"T0VARsetup",2),"T0VAR",2), (get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),3,"T0VARsetup",2) ? stan::math::promote_scalar<T__>(tform(get_base1(rawindparams,get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),3,"T0VARsetup",2),"rawindparams",1),get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),4,"T0VARsetup",2),get_base1(T0VARvalues,ri,2,"T0VARvalues",1),get_base1(T0VARvalues,ri,3,"T0VARvalues",1),get_base1(T0VARvalues,ri,4,"T0VARvalues",1), pstream__)) : stan::math::promote_scalar<T__>(get_base1(T0VARvalues,ri,1,"T0VARvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 469;
+                current_statement_begin__ = 482;
                 if (as_bool(logical_lte(si,get_base1(TDPREDEFFECTsubindex,nsubjects,"TDPREDEFFECTsubindex",1)))) {
 
-                    current_statement_begin__ = 470;
+                    current_statement_begin__ = 483;
                     for (int ri = 1; ri <= size(TDPREDEFFECTsetup); ++ri) {
 
-                        current_statement_begin__ = 471;
+                        current_statement_begin__ = 484;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(TDPREDEFFECT,si,"TDPREDEFFECT",1),get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),1,"TDPREDEFFECTsetup",2),get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),2,"TDPREDEFFECTsetup",2),"TDPREDEFFECT",2), (get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),3,"TDPREDEFFECTsetup",2) ? stan::math::promote_scalar<T__>(tform(get_base1(rawindparams,get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),3,"TDPREDEFFECTsetup",2),"rawindparams",1),get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),4,"TDPREDEFFECTsetup",2),get_base1(TDPREDEFFECTvalues,ri,2,"TDPREDEFFECTvalues",1),get_base1(TDPREDEFFECTvalues,ri,3,"TDPREDEFFECTvalues",1),get_base1(TDPREDEFFECTvalues,ri,4,"TDPREDEFFECTvalues",1), pstream__)) : stan::math::promote_scalar<T__>(get_base1(TDPREDEFFECTvalues,ri,1,"TDPREDEFFECTvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 479;
-                if (as_bool(logical_lte(si,get_base1(DIFFUSIONsubindex,nsubjects,"DIFFUSIONsubindex",1)))) {
-                    current_statement_begin__ = 479;
-                    stan::math::assign(get_base1_lhs(DIFFUSION,si,"DIFFUSION",1), sdcovsqrt2cov(get_base1(DIFFUSION,si,"DIFFUSION",1),((lineardynamics * intoverstates) ? 0 : 1 ),1, pstream__));
+                current_statement_begin__ = 489;
+                if (as_bool(logical_lte(si,get_base1(PARSsubindex,nsubjects,"PARSsubindex",1)))) {
+
+                    current_statement_begin__ = 490;
+                    for (int ri = 1; ri <= size(PARSsetup); ++ri) {
+
+                        current_statement_begin__ = 491;
+                        stan::math::assign(get_base1_lhs(get_base1_lhs(PARS,si,"PARS",1),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),1,"PARSsetup",2),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),2,"PARSsetup",2),"PARS",2), (get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),3,"PARSsetup",2) ? stan::math::promote_scalar<T__>(tform(get_base1(rawindparams,get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),3,"PARSsetup",2),"rawindparams",1),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),4,"PARSsetup",2),get_base1(PARSvalues,ri,2,"PARSvalues",1),get_base1(PARSvalues,ri,3,"PARSvalues",1),get_base1(PARSvalues,ri,4,"PARSvalues",1), pstream__)) : stan::math::promote_scalar<T__>(get_base1(PARSvalues,ri,1,"PARSvalues",1)) ));
+                    }
                 }
-                current_statement_begin__ = 481;
+                current_statement_begin__ = 499;
+                if (as_bool((primitive_value(logical_lte(si,get_base1(DIFFUSIONsubindex,nsubjects,"DIFFUSIONsubindex",1))) && primitive_value(logical_neq((lineardynamics * intoverstates),0))))) {
+                    current_statement_begin__ = 499;
+                    stan::math::assign(get_base1_lhs(DIFFUSION,si,"DIFFUSION",1), sdcovsqrt2cov(get_base1(DIFFUSION,si,"DIFFUSION",1),((lineardynamics * intoverstates) ? 0 : 1 ), pstream__));
+                }
+                current_statement_begin__ = 501;
                 if (as_bool((primitive_value(logical_eq(lineardynamics,1)) && primitive_value(logical_gt(ndiffusion,0))))) {
 
-                    current_statement_begin__ = 482;
+                    current_statement_begin__ = 502;
                     if (as_bool(logical_lte(si,get_base1(asymDIFFUSIONsubindex,nsubjects,"asymDIFFUSIONsubindex",1)))) {
 
-                        current_statement_begin__ = 483;
+                        current_statement_begin__ = 503;
                         if (as_bool(logical_lt(ndiffusion,nlatent))) {
-                            current_statement_begin__ = 483;
+                            current_statement_begin__ = 503;
                             stan::math::assign(get_base1_lhs(asymDIFFUSION,si,"asymDIFFUSION",1), to_matrix(rep_vector(0,(nlatent * nlatent)),nlatent,nlatent));
                         }
-                        current_statement_begin__ = 485;
+                        current_statement_begin__ = 505;
                         if (as_bool(logical_eq(continuoustime,1))) {
-                            current_statement_begin__ = 485;
+                            current_statement_begin__ = 505;
                             stan::model::assign(asymDIFFUSION, 
                                         stan::model::cons_list(stan::model::index_uni(si), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), 
                                         to_matrix(mdivide_left(minus(add(kron_prod(stan::model::rvalue(DRIFT, stan::model::cons_list(stan::model::index_uni(get_base1(DRIFTsubindex,si,"DRIFTsubindex",1)), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), "DRIFT"),stan::model::rvalue(IIlatent, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "IIlatent"), pstream__),kron_prod(stan::model::rvalue(IIlatent, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "IIlatent"),stan::model::rvalue(DRIFT, stan::model::cons_list(stan::model::index_uni(get_base1(DRIFTsubindex,si,"DRIFTsubindex",1)), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), "DRIFT"), pstream__))),to_vector(stan::model::rvalue(DIFFUSION, stan::model::cons_list(stan::model::index_uni(get_base1(DIFFUSIONsubindex,si,"DIFFUSIONsubindex",1)), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), "DIFFUSION"))),ndiffusion,ndiffusion), 
                                         "assigning variable asymDIFFUSION");
                         }
-                        current_statement_begin__ = 490;
+                        current_statement_begin__ = 510;
                         if (as_bool(logical_eq(continuoustime,0))) {
-                            current_statement_begin__ = 490;
+                            current_statement_begin__ = 510;
                             stan::model::assign(asymDIFFUSION, 
                                         stan::model::cons_list(stan::model::index_uni(si), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), 
                                         to_matrix(multiply(subtract(stan::model::rvalue(IIlatent2, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "IIlatent2"),kron_prod(stan::model::rvalue(DRIFT, stan::model::cons_list(stan::model::index_uni(get_base1(DRIFTsubindex,si,"DRIFTsubindex",1)), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), "DRIFT"),stan::model::rvalue(DRIFT, stan::model::cons_list(stan::model::index_uni(get_base1(DRIFTsubindex,si,"DRIFTsubindex",1)), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), "DRIFT"), pstream__)),to_vector(stan::model::rvalue(DIFFUSION, stan::model::cons_list(stan::model::index_uni(get_base1(DIFFUSIONsubindex,si,"DIFFUSIONsubindex",1)), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), "DIFFUSION"))),ndiffusion,ndiffusion), 
@@ -2728,64 +2861,67 @@ public:
                         }
                     }
                 }
-                current_statement_begin__ = 497;
+                current_statement_begin__ = 517;
                 if (as_bool(logical_gt(nt0meansstationary,0))) {
 
-                    current_statement_begin__ = 498;
+                    current_statement_begin__ = 518;
                     if (as_bool(logical_lte(si,get_base1(asymCINTsubindex,nsubjects,"asymCINTsubindex",1)))) {
 
-                        current_statement_begin__ = 499;
+                        current_statement_begin__ = 519;
                         if (as_bool(logical_eq(continuoustime,1))) {
-                            current_statement_begin__ = 499;
+                            current_statement_begin__ = 519;
                             stan::math::assign(get_base1_lhs(asymCINT,si,"asymCINT",1), mdivide_left(minus(get_base1(DRIFT,get_base1(DRIFTsubindex,si,"DRIFTsubindex",1),"DRIFT",1)),stan::model::rvalue(CINT, stan::model::cons_list(stan::model::index_uni(get_base1(CINTsubindex,si,"CINTsubindex",1)), stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list()))), "CINT")));
                         }
-                        current_statement_begin__ = 500;
+                        current_statement_begin__ = 520;
                         if (as_bool(logical_eq(continuoustime,0))) {
-                            current_statement_begin__ = 500;
+                            current_statement_begin__ = 520;
                             stan::math::assign(get_base1_lhs(asymCINT,si,"asymCINT",1), mdivide_left(subtract(IIlatent,get_base1(DRIFT,get_base1(DRIFTsubindex,si,"DRIFTsubindex",1),"DRIFT",1)),stan::model::rvalue(CINT, stan::model::cons_list(stan::model::index_uni(get_base1(CINTsubindex,si,"CINTsubindex",1)), stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list()))), "CINT")));
                         }
                     }
                 }
-                current_statement_begin__ = 505;
+                current_statement_begin__ = 525;
                 if (as_bool(logical_eq(binomial,0))) {
 
-                    current_statement_begin__ = 506;
+                    current_statement_begin__ = 526;
                     if (as_bool(logical_lte(si,get_base1(MANIFESTVARsubindex,nsubjects,"MANIFESTVARsubindex",1)))) {
 
-                        current_statement_begin__ = 507;
+                        current_statement_begin__ = 527;
                         for (int ri = 1; ri <= nmanifest; ++ri) {
-                            current_statement_begin__ = 507;
+                            current_statement_begin__ = 527;
                             stan::math::assign(get_base1_lhs(get_base1_lhs(MANIFESTVAR,si,"MANIFESTVAR",1),ri,ri,"MANIFESTVAR",2), square(get_base1(get_base1(MANIFESTVAR,si,"MANIFESTVAR",1),ri,ri,"MANIFESTVAR",2)));
                         }
                     }
                 }
-                current_statement_begin__ = 512;
+                current_statement_begin__ = 532;
                 if (as_bool(logical_lte(si,get_base1(T0VARsubindex,nsubjects,"T0VARsubindex",1)))) {
 
-                    current_statement_begin__ = 513;
-                    stan::math::assign(get_base1_lhs(T0VAR,si,"T0VAR",1), sdcovsqrt2cov(get_base1(T0VAR,si,"T0VAR",1),((lineardynamics * intoverstates) ? 0 : 1 ),1, pstream__));
-                    current_statement_begin__ = 515;
+                    current_statement_begin__ = 533;
+                    if (as_bool(logical_neq((lineardynamics * intoverstates),0))) {
+                        current_statement_begin__ = 533;
+                        stan::math::assign(get_base1_lhs(T0VAR,si,"T0VAR",1), sdcovsqrt2cov(get_base1(T0VAR,si,"T0VAR",1),((lineardynamics * intoverstates) ? 0 : 1 ), pstream__));
+                    }
+                    current_statement_begin__ = 535;
                     if (as_bool(logical_gt(nt0varstationary,0))) {
-                        current_statement_begin__ = 515;
+                        current_statement_begin__ = 535;
                         for (int rowi = 1; rowi <= nt0varstationary; ++rowi) {
 
-                            current_statement_begin__ = 516;
+                            current_statement_begin__ = 536;
                             stan::math::assign(get_base1_lhs(get_base1_lhs(T0VAR,si,"T0VAR",1),get_base1(get_base1(t0varstationary,rowi,"t0varstationary",1),1,"t0varstationary",2),get_base1(get_base1(t0varstationary,rowi,"t0varstationary",1),2,"t0varstationary",2),"T0VAR",2), get_base1(get_base1(asymDIFFUSION,si,"asymDIFFUSION",1),get_base1(get_base1(t0varstationary,rowi,"t0varstationary",1),1,"t0varstationary",2),get_base1(get_base1(t0varstationary,rowi,"t0varstationary",1),2,"t0varstationary",2),"asymDIFFUSION",2));
-                            current_statement_begin__ = 518;
+                            current_statement_begin__ = 538;
                             stan::math::assign(get_base1_lhs(get_base1_lhs(T0VAR,si,"T0VAR",1),get_base1(get_base1(t0varstationary,rowi,"t0varstationary",1),2,"t0varstationary",2),get_base1(get_base1(t0varstationary,rowi,"t0varstationary",1),1,"t0varstationary",2),"T0VAR",2), get_base1(get_base1(asymDIFFUSION,si,"asymDIFFUSION",1),get_base1(get_base1(t0varstationary,rowi,"t0varstationary",1),2,"t0varstationary",2),get_base1(get_base1(t0varstationary,rowi,"t0varstationary",1),1,"t0varstationary",2),"asymDIFFUSION",2));
                         }
                     }
                 }
-                current_statement_begin__ = 524;
+                current_statement_begin__ = 544;
                 if (as_bool(logical_gt(nt0meansstationary,0))) {
 
-                    current_statement_begin__ = 525;
+                    current_statement_begin__ = 545;
                     if (as_bool(logical_lte(si,get_base1(T0MEANSsubindex,nsubjects,"T0MEANSsubindex",1)))) {
 
-                        current_statement_begin__ = 526;
+                        current_statement_begin__ = 546;
                         for (int rowi = 1; rowi <= nt0meansstationary; ++rowi) {
 
-                            current_statement_begin__ = 527;
+                            current_statement_begin__ = 547;
                             stan::math::assign(get_base1_lhs(get_base1_lhs(T0MEANS,si,"T0MEANS",1),get_base1(get_base1(t0meansstationary,rowi,"t0meansstationary",1),1,"t0meansstationary",2),1,"T0MEANS",2), get_base1(get_base1(asymCINT,get_base1(asymCINTsubindex,si,"asymCINTsubindex",1),"asymCINT",1),get_base1(get_base1(t0meansstationary,rowi,"t0meansstationary",1),1,"t0meansstationary",2),"asymCINT",2));
                         }
                     }
@@ -2918,6 +3054,17 @@ public:
                     }
                 }
             }
+            for (int i0__ = 0; i0__ < get_base1(PARSsubindex,nsubjects,"PARSsubindex",1); ++i0__) {
+                for (int i1__ = 0; i1__ < (PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "PARSsetup")) : 0 ); ++i1__) {
+                    for (int i2__ = 0; i2__ < (PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "PARSsetup")) : 0 ); ++i2__) {
+                        if (stan::math::is_uninitialized(PARS[i0__](i1__,i2__))) {
+                            std::stringstream msg__;
+                            msg__ << "Undefined transformed parameter: PARS" << '[' << i0__ << ']' << '[' << i1__ << ']' << '[' << i2__ << ']';
+                            throw std::runtime_error(msg__.str());
+                        }
+                    }
+                }
+            }
             for (int i0__ = 0; i0__ < (lineardynamics ? get_base1(asymDIFFUSIONsubindex,nsubjects,"asymDIFFUSIONsubindex",1) : 0 ); ++i0__) {
                 for (int i1__ = 0; i1__ < nlatent; ++i1__) {
                     for (int i2__ = 0; i2__ < nlatent; ++i2__) {
@@ -2959,26 +3106,27 @@ public:
 
             const char* function__ = "validate transformed params";
             (void) function__;  // dummy to suppress unused var warning
-            current_statement_begin__ = 336;
-            current_statement_begin__ = 338;
-            current_statement_begin__ = 339;
-            current_statement_begin__ = 342;
             current_statement_begin__ = 343;
-            current_statement_begin__ = 344;
             current_statement_begin__ = 345;
             current_statement_begin__ = 346;
-            current_statement_begin__ = 347;
-            current_statement_begin__ = 348;
             current_statement_begin__ = 349;
             current_statement_begin__ = 350;
+            current_statement_begin__ = 351;
             current_statement_begin__ = 352;
             current_statement_begin__ = 353;
+            current_statement_begin__ = 354;
             current_statement_begin__ = 355;
             current_statement_begin__ = 356;
+            current_statement_begin__ = 357;
+            current_statement_begin__ = 358;
+            current_statement_begin__ = 360;
+            current_statement_begin__ = 361;
+            current_statement_begin__ = 363;
+            current_statement_begin__ = 364;
 
             // model body
             {
-            current_statement_begin__ = 539;
+            current_statement_begin__ = 559;
             T__ ll;
             (void) ll;  // dummy to suppress unused var warning
 
@@ -2986,102 +3134,102 @@ public:
             stan::math::fill(ll,DUMMY_VAR__);
 
 
-            current_statement_begin__ = 541;
+            current_statement_begin__ = 561;
             if (as_bool(logical_eq(nopriors,0))) {
 
-                current_statement_begin__ = 542;
+                current_statement_begin__ = 562;
                 lp_accum__.add(normal_log(rawpopmeans,0,1));
-                current_statement_begin__ = 544;
+                current_statement_begin__ = 564;
                 if (as_bool(logical_gt(ntipred,0))) {
 
-                    current_statement_begin__ = 545;
+                    current_statement_begin__ = 565;
                     lp_accum__.add(normal_log<propto__>(tipredeffectparams, 0, 1));
-                    current_statement_begin__ = 546;
+                    current_statement_begin__ = 566;
                     lp_accum__.add(normal_log<propto__>(tipredsimputed, 0, 10));
                 }
-                current_statement_begin__ = 549;
+                current_statement_begin__ = 569;
                 if (as_bool(logical_gt(nindvarying,0))) {
 
-                    current_statement_begin__ = 550;
+                    current_statement_begin__ = 570;
                     if (as_bool(logical_gt(nindvarying,1))) {
-                        current_statement_begin__ = 550;
+                        current_statement_begin__ = 570;
                         lp_accum__.add(normal_log<propto__>(sqrtpcov, 0, 1));
                     }
-                    current_statement_begin__ = 551;
+                    current_statement_begin__ = 571;
                     if (as_bool(logical_eq(ukfpop,0))) {
-                        current_statement_begin__ = 551;
+                        current_statement_begin__ = 571;
                         lp_accum__.add(normal_log<propto__>(baseindparams, 0, 1));
                     }
-                    current_statement_begin__ = 552;
+                    current_statement_begin__ = 572;
                     lp_accum__.add(normal_log<propto__>(rawpopsdbase, 0, 1));
                 }
             }
-            current_statement_begin__ = 557;
+            current_statement_begin__ = 577;
             if (as_bool(logical_eq(intoverstates,0))) {
-                current_statement_begin__ = 557;
+                current_statement_begin__ = 577;
                 lp_accum__.add(normal_log<propto__>(etaupdbasestates, 0, 1));
             }
-            current_statement_begin__ = 559;
+            current_statement_begin__ = 579;
             stan::math::assign(ll, 0);
             {
-            current_statement_begin__ = 560;
+            current_statement_begin__ = 580;
             int si(0);
             (void) si;  // dummy to suppress unused var warning
 
             stan::math::fill(si, std::numeric_limits<int>::min());
-            current_statement_begin__ = 561;
+            current_statement_begin__ = 581;
             int counter(0);
             (void) counter;  // dummy to suppress unused var warning
 
             stan::math::fill(counter, std::numeric_limits<int>::min());
-            current_statement_begin__ = 562;
+            current_statement_begin__ = 582;
             validate_non_negative_index("etaprior", "nlatentpop", nlatentpop);
             validate_non_negative_index("etaprior", "ndatapoints", ndatapoints);
             vector<Eigen::Matrix<T__,Eigen::Dynamic,1> > etaprior(ndatapoints, (Eigen::Matrix<T__,Eigen::Dynamic,1> (static_cast<Eigen::VectorXd::Index>(nlatentpop))));
             stan::math::initialize(etaprior, DUMMY_VAR__);
             stan::math::fill(etaprior,DUMMY_VAR__);
-            current_statement_begin__ = 563;
+            current_statement_begin__ = 583;
             validate_non_negative_index("etaupd", "nlatentpop", nlatentpop);
             validate_non_negative_index("etaupd", "ndatapoints", ndatapoints);
             vector<Eigen::Matrix<T__,Eigen::Dynamic,1> > etaupd(ndatapoints, (Eigen::Matrix<T__,Eigen::Dynamic,1> (static_cast<Eigen::VectorXd::Index>(nlatentpop))));
             stan::math::initialize(etaupd, DUMMY_VAR__);
             stan::math::fill(etaupd,DUMMY_VAR__);
-            current_statement_begin__ = 564;
+            current_statement_begin__ = 584;
             validate_non_negative_index("etapriorcov", "nlatentpop", nlatentpop);
             validate_non_negative_index("etapriorcov", "nlatentpop", nlatentpop);
             validate_non_negative_index("etapriorcov", "ndatapoints", ndatapoints);
             vector<Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> > etapriorcov(ndatapoints, (Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> (static_cast<Eigen::VectorXd::Index>(nlatentpop),static_cast<Eigen::VectorXd::Index>(nlatentpop))));
             stan::math::initialize(etapriorcov, DUMMY_VAR__);
             stan::math::fill(etapriorcov,DUMMY_VAR__);
-            current_statement_begin__ = 565;
+            current_statement_begin__ = 585;
             validate_non_negative_index("etaupdcov", "nlatentpop", nlatentpop);
             validate_non_negative_index("etaupdcov", "nlatentpop", nlatentpop);
             validate_non_negative_index("etaupdcov", "ndatapoints", ndatapoints);
             vector<Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> > etaupdcov(ndatapoints, (Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic> (static_cast<Eigen::VectorXd::Index>(nlatentpop),static_cast<Eigen::VectorXd::Index>(nlatentpop))));
             stan::math::initialize(etaupdcov, DUMMY_VAR__);
             stan::math::fill(etaupdcov,DUMMY_VAR__);
-            current_statement_begin__ = 568;
+            current_statement_begin__ = 588;
             validate_non_negative_index("err", "nmanifest", nmanifest);
             Eigen::Matrix<T__,Eigen::Dynamic,1>  err(static_cast<Eigen::VectorXd::Index>(nmanifest));
             (void) err;  // dummy to suppress unused var warning
 
             stan::math::initialize(err, DUMMY_VAR__);
             stan::math::fill(err,DUMMY_VAR__);
-            current_statement_begin__ = 569;
+            current_statement_begin__ = 589;
             validate_non_negative_index("ypred", "nmanifest", nmanifest);
             Eigen::Matrix<T__,Eigen::Dynamic,1>  ypred(static_cast<Eigen::VectorXd::Index>(nmanifest));
             (void) ypred;  // dummy to suppress unused var warning
 
             stan::math::initialize(ypred, DUMMY_VAR__);
             stan::math::fill(ypred,DUMMY_VAR__);
-            current_statement_begin__ = 570;
+            current_statement_begin__ = 590;
             validate_non_negative_index("ystate", "(ukf ? nmanifest : 0 )", (ukf ? nmanifest : 0 ));
             Eigen::Matrix<T__,Eigen::Dynamic,1>  ystate(static_cast<Eigen::VectorXd::Index>((ukf ? nmanifest : 0 )));
             (void) ystate;  // dummy to suppress unused var warning
 
             stan::math::initialize(ystate, DUMMY_VAR__);
             stan::math::fill(ystate,DUMMY_VAR__);
-            current_statement_begin__ = 571;
+            current_statement_begin__ = 591;
             validate_non_negative_index("ypredcov", "nmanifest", nmanifest);
             validate_non_negative_index("ypredcov", "nmanifest", nmanifest);
             Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic>  ypredcov(static_cast<Eigen::VectorXd::Index>(nmanifest),static_cast<Eigen::VectorXd::Index>(nmanifest));
@@ -3089,7 +3237,7 @@ public:
 
             stan::math::initialize(ypredcov, DUMMY_VAR__);
             stan::math::fill(ypredcov,DUMMY_VAR__);
-            current_statement_begin__ = 572;
+            current_statement_begin__ = 592;
             validate_non_negative_index("K", "nlatentpop", nlatentpop);
             validate_non_negative_index("K", "nmanifest", nmanifest);
             Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic>  K(static_cast<Eigen::VectorXd::Index>(nlatentpop),static_cast<Eigen::VectorXd::Index>(nmanifest));
@@ -3097,7 +3245,7 @@ public:
 
             stan::math::initialize(K, DUMMY_VAR__);
             stan::math::fill(K,DUMMY_VAR__);
-            current_statement_begin__ = 573;
+            current_statement_begin__ = 593;
             validate_non_negative_index("ypredcov_sqrt", "nmanifest", nmanifest);
             validate_non_negative_index("ypredcov_sqrt", "nmanifest", nmanifest);
             Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic>  ypredcov_sqrt(static_cast<Eigen::VectorXd::Index>(nmanifest),static_cast<Eigen::VectorXd::Index>(nmanifest));
@@ -3105,31 +3253,31 @@ public:
 
             stan::math::initialize(ypredcov_sqrt, DUMMY_VAR__);
             stan::math::fill(ypredcov_sqrt,DUMMY_VAR__);
-            current_statement_begin__ = 577;
+            current_statement_begin__ = 597;
             validate_non_negative_index("errtrans", "(intoverstates ? sum(nobs_y) : sum(ncont_y) )", (intoverstates ? sum(nobs_y) : sum(ncont_y) ));
             Eigen::Matrix<T__,Eigen::Dynamic,1>  errtrans(static_cast<Eigen::VectorXd::Index>((intoverstates ? sum(nobs_y) : sum(ncont_y) )));
             (void) errtrans;  // dummy to suppress unused var warning
 
             stan::math::initialize(errtrans, DUMMY_VAR__);
             stan::math::fill(errtrans,DUMMY_VAR__);
-            current_statement_begin__ = 578;
+            current_statement_begin__ = 598;
             validate_non_negative_index("errscales", "(intoverstates ? sum(nobs_y) : sum(ncont_y) )", (intoverstates ? sum(nobs_y) : sum(ncont_y) ));
             Eigen::Matrix<T__,Eigen::Dynamic,1>  errscales(static_cast<Eigen::VectorXd::Index>((intoverstates ? sum(nobs_y) : sum(ncont_y) )));
             (void) errscales;  // dummy to suppress unused var warning
 
             stan::math::initialize(errscales, DUMMY_VAR__);
             stan::math::fill(errscales,DUMMY_VAR__);
-            current_statement_begin__ = 579;
+            current_statement_begin__ = 599;
             int cobscount(0);
             (void) cobscount;  // dummy to suppress unused var warning
 
             stan::math::fill(cobscount, std::numeric_limits<int>::min());
-            current_statement_begin__ = 580;
+            current_statement_begin__ = 600;
             int nobsi(0);
             (void) nobsi;  // dummy to suppress unused var warning
 
             stan::math::fill(nobsi, std::numeric_limits<int>::min());
-            current_statement_begin__ = 583;
+            current_statement_begin__ = 603;
             validate_non_negative_index("sigpoints", "(ukf ? nlatentpop : 0 )", (ukf ? nlatentpop : 0 ));
             validate_non_negative_index("sigpoints", "(ukf ? nlatentpop : 0 )", (ukf ? nlatentpop : 0 ));
             Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic>  sigpoints(static_cast<Eigen::VectorXd::Index>((ukf ? nlatentpop : 0 )),static_cast<Eigen::VectorXd::Index>((ukf ? nlatentpop : 0 )));
@@ -3137,55 +3285,55 @@ public:
 
             stan::math::initialize(sigpoints, DUMMY_VAR__);
             stan::math::fill(sigpoints,DUMMY_VAR__);
-            current_statement_begin__ = 584;
+            current_statement_begin__ = 604;
             validate_non_negative_index("state", "(ukf ? nlatent : 0 )", (ukf ? nlatent : 0 ));
             Eigen::Matrix<T__,Eigen::Dynamic,1>  state(static_cast<Eigen::VectorXd::Index>((ukf ? nlatent : 0 )));
             (void) state;  // dummy to suppress unused var warning
 
             stan::math::initialize(state, DUMMY_VAR__);
             stan::math::fill(state,DUMMY_VAR__);
-            current_statement_begin__ = 585;
+            current_statement_begin__ = 605;
             T__ dynerror;
             (void) dynerror;  // dummy to suppress unused var warning
 
             stan::math::initialize(dynerror, DUMMY_VAR__);
             stan::math::fill(dynerror,DUMMY_VAR__);
-            current_statement_begin__ = 586;
+            current_statement_begin__ = 606;
             T__ k;
             (void) k;  // dummy to suppress unused var warning
 
             stan::math::initialize(k, DUMMY_VAR__);
             stan::math::fill(k,DUMMY_VAR__);
-            current_statement_begin__ = 587;
+            current_statement_begin__ = 607;
             T__ asquared;
             (void) asquared;  // dummy to suppress unused var warning
 
             stan::math::initialize(asquared, DUMMY_VAR__);
             stan::math::fill(asquared,DUMMY_VAR__);
-            current_statement_begin__ = 588;
+            current_statement_begin__ = 608;
             T__ l;
             (void) l;  // dummy to suppress unused var warning
 
             stan::math::initialize(l, DUMMY_VAR__);
             stan::math::fill(l,DUMMY_VAR__);
-            current_statement_begin__ = 589;
+            current_statement_begin__ = 609;
             T__ sqrtukfadjust;
             (void) sqrtukfadjust;  // dummy to suppress unused var warning
 
             stan::math::initialize(sqrtukfadjust, DUMMY_VAR__);
             stan::math::fill(sqrtukfadjust,DUMMY_VAR__);
-            current_statement_begin__ = 590;
+            current_statement_begin__ = 610;
             int ndynerror(0);
             (void) ndynerror;  // dummy to suppress unused var warning
 
             stan::math::fill(ndynerror, std::numeric_limits<int>::min());
-            current_statement_begin__ = 591;
+            current_statement_begin__ = 611;
             validate_non_negative_index("rkstates", "(lineardynamics ? 0 : nlatent )", (lineardynamics ? 0 : nlatent ));
             validate_non_negative_index("rkstates", "(lineardynamics ? 0 : 5 )", (lineardynamics ? 0 : 5 ));
             vector<Eigen::Matrix<T__,Eigen::Dynamic,1> > rkstates((lineardynamics ? 0 : 5 ), (Eigen::Matrix<T__,Eigen::Dynamic,1> (static_cast<Eigen::VectorXd::Index>((lineardynamics ? 0 : nlatent )))));
             stan::math::initialize(rkstates, DUMMY_VAR__);
             stan::math::fill(rkstates,DUMMY_VAR__);
-            current_statement_begin__ = 594;
+            current_statement_begin__ = 614;
             validate_non_negative_index("discreteDRIFT", "(lineardynamics ? nlatent : 0 )", (lineardynamics ? nlatent : 0 ));
             validate_non_negative_index("discreteDRIFT", "(lineardynamics ? nlatent : 0 )", (lineardynamics ? nlatent : 0 ));
             Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic>  discreteDRIFT(static_cast<Eigen::VectorXd::Index>((lineardynamics ? nlatent : 0 )),static_cast<Eigen::VectorXd::Index>((lineardynamics ? nlatent : 0 )));
@@ -3193,14 +3341,14 @@ public:
 
             stan::math::initialize(discreteDRIFT, DUMMY_VAR__);
             stan::math::fill(discreteDRIFT,DUMMY_VAR__);
-            current_statement_begin__ = 595;
+            current_statement_begin__ = 615;
             validate_non_negative_index("discreteCINT", "(lineardynamics ? nlatent : 0 )", (lineardynamics ? nlatent : 0 ));
             Eigen::Matrix<T__,Eigen::Dynamic,1>  discreteCINT(static_cast<Eigen::VectorXd::Index>((lineardynamics ? nlatent : 0 )));
             (void) discreteCINT;  // dummy to suppress unused var warning
 
             stan::math::initialize(discreteCINT, DUMMY_VAR__);
             stan::math::fill(discreteCINT,DUMMY_VAR__);
-            current_statement_begin__ = 596;
+            current_statement_begin__ = 616;
             validate_non_negative_index("discreteDIFFUSION", "(lineardynamics ? nlatent : 0 )", (lineardynamics ? nlatent : 0 ));
             validate_non_negative_index("discreteDIFFUSION", "(lineardynamics ? nlatent : 0 )", (lineardynamics ? nlatent : 0 ));
             Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic>  discreteDIFFUSION(static_cast<Eigen::VectorXd::Index>((lineardynamics ? nlatent : 0 )),static_cast<Eigen::VectorXd::Index>((lineardynamics ? nlatent : 0 )));
@@ -3208,7 +3356,7 @@ public:
 
             stan::math::initialize(discreteDIFFUSION, DUMMY_VAR__);
             stan::math::fill(discreteDIFFUSION,DUMMY_VAR__);
-            current_statement_begin__ = 599;
+            current_statement_begin__ = 619;
             validate_non_negative_index("sT0MEANS", "nlatent", nlatent);
             validate_non_negative_index("sT0MEANS", "1", 1);
             Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic>  sT0MEANS(static_cast<Eigen::VectorXd::Index>(nlatent),static_cast<Eigen::VectorXd::Index>(1));
@@ -3216,7 +3364,7 @@ public:
 
             stan::math::initialize(sT0MEANS, DUMMY_VAR__);
             stan::math::fill(sT0MEANS,DUMMY_VAR__);
-            current_statement_begin__ = 600;
+            current_statement_begin__ = 620;
             validate_non_negative_index("sT0VAR", "nlatent", nlatent);
             validate_non_negative_index("sT0VAR", "nlatent", nlatent);
             Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic>  sT0VAR(static_cast<Eigen::VectorXd::Index>(nlatent),static_cast<Eigen::VectorXd::Index>(nlatent));
@@ -3224,7 +3372,7 @@ public:
 
             stan::math::initialize(sT0VAR, DUMMY_VAR__);
             stan::math::fill(sT0VAR,DUMMY_VAR__);
-            current_statement_begin__ = 601;
+            current_statement_begin__ = 621;
             validate_non_negative_index("sDIFFUSION", "nlatent", nlatent);
             validate_non_negative_index("sDIFFUSION", "nlatent", nlatent);
             Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic>  sDIFFUSION(static_cast<Eigen::VectorXd::Index>(nlatent),static_cast<Eigen::VectorXd::Index>(nlatent));
@@ -3232,7 +3380,7 @@ public:
 
             stan::math::initialize(sDIFFUSION, DUMMY_VAR__);
             stan::math::fill(sDIFFUSION,DUMMY_VAR__);
-            current_statement_begin__ = 602;
+            current_statement_begin__ = 622;
             validate_non_negative_index("sasymDIFFUSION", "nlatent", nlatent);
             validate_non_negative_index("sasymDIFFUSION", "nlatent", nlatent);
             Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic>  sasymDIFFUSION(static_cast<Eigen::VectorXd::Index>(nlatent),static_cast<Eigen::VectorXd::Index>(nlatent));
@@ -3240,7 +3388,7 @@ public:
 
             stan::math::initialize(sasymDIFFUSION, DUMMY_VAR__);
             stan::math::fill(sasymDIFFUSION,DUMMY_VAR__);
-            current_statement_begin__ = 603;
+            current_statement_begin__ = 623;
             validate_non_negative_index("sDRIFT", "nlatent", nlatent);
             validate_non_negative_index("sDRIFT", "nlatent", nlatent);
             Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic>  sDRIFT(static_cast<Eigen::VectorXd::Index>(nlatent),static_cast<Eigen::VectorXd::Index>(nlatent));
@@ -3248,7 +3396,7 @@ public:
 
             stan::math::initialize(sDRIFT, DUMMY_VAR__);
             stan::math::fill(sDRIFT,DUMMY_VAR__);
-            current_statement_begin__ = 604;
+            current_statement_begin__ = 624;
             validate_non_negative_index("sCINT", "nlatent", nlatent);
             validate_non_negative_index("sCINT", "1", 1);
             Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic>  sCINT(static_cast<Eigen::VectorXd::Index>(nlatent),static_cast<Eigen::VectorXd::Index>(1));
@@ -3256,7 +3404,7 @@ public:
 
             stan::math::initialize(sCINT, DUMMY_VAR__);
             stan::math::fill(sCINT,DUMMY_VAR__);
-            current_statement_begin__ = 605;
+            current_statement_begin__ = 625;
             validate_non_negative_index("sMANIFESTVAR", "nmanifest", nmanifest);
             validate_non_negative_index("sMANIFESTVAR", "nmanifest", nmanifest);
             Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic>  sMANIFESTVAR(static_cast<Eigen::VectorXd::Index>(nmanifest),static_cast<Eigen::VectorXd::Index>(nmanifest));
@@ -3264,7 +3412,7 @@ public:
 
             stan::math::initialize(sMANIFESTVAR, DUMMY_VAR__);
             stan::math::fill(sMANIFESTVAR,DUMMY_VAR__);
-            current_statement_begin__ = 606;
+            current_statement_begin__ = 626;
             validate_non_negative_index("sMANIFESTMEANS", "nmanifest", nmanifest);
             validate_non_negative_index("sMANIFESTMEANS", "1", 1);
             Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic>  sMANIFESTMEANS(static_cast<Eigen::VectorXd::Index>(nmanifest),static_cast<Eigen::VectorXd::Index>(1));
@@ -3272,7 +3420,7 @@ public:
 
             stan::math::initialize(sMANIFESTMEANS, DUMMY_VAR__);
             stan::math::fill(sMANIFESTMEANS,DUMMY_VAR__);
-            current_statement_begin__ = 607;
+            current_statement_begin__ = 627;
             validate_non_negative_index("sLAMBDA", "nmanifest", nmanifest);
             validate_non_negative_index("sLAMBDA", "nlatent", nlatent);
             Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic>  sLAMBDA(static_cast<Eigen::VectorXd::Index>(nmanifest),static_cast<Eigen::VectorXd::Index>(nlatent));
@@ -3280,7 +3428,7 @@ public:
 
             stan::math::initialize(sLAMBDA, DUMMY_VAR__);
             stan::math::fill(sLAMBDA,DUMMY_VAR__);
-            current_statement_begin__ = 608;
+            current_statement_begin__ = 628;
             validate_non_negative_index("sTDPREDEFFECT", "(ntdpred ? nlatent : 0 )", (ntdpred ? nlatent : 0 ));
             validate_non_negative_index("sTDPREDEFFECT", "ntdpred", ntdpred);
             Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic>  sTDPREDEFFECT(static_cast<Eigen::VectorXd::Index>((ntdpred ? nlatent : 0 )),static_cast<Eigen::VectorXd::Index>(ntdpred));
@@ -3288,31 +3436,39 @@ public:
 
             stan::math::initialize(sTDPREDEFFECT, DUMMY_VAR__);
             stan::math::fill(sTDPREDEFFECT,DUMMY_VAR__);
+            current_statement_begin__ = 629;
+            validate_non_negative_index("sPARS", "get_base1(dims(PARS),2,\"dims(PARS)\",1)", get_base1(dims(PARS),2,"dims(PARS)",1));
+            validate_non_negative_index("sPARS", "get_base1(dims(PARS),3,\"dims(PARS)\",1)", get_base1(dims(PARS),3,"dims(PARS)",1));
+            Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic>  sPARS(static_cast<Eigen::VectorXd::Index>(get_base1(dims(PARS),2,"dims(PARS)",1)),static_cast<Eigen::VectorXd::Index>(get_base1(dims(PARS),3,"dims(PARS)",1)));
+            (void) sPARS;  // dummy to suppress unused var warning
+
+            stan::math::initialize(sPARS, DUMMY_VAR__);
+            stan::math::fill(sPARS,DUMMY_VAR__);
 
 
-            current_statement_begin__ = 611;
+            current_statement_begin__ = 632;
             if (as_bool(logical_eq(ukf,1))) {
-                current_statement_begin__ = 611;
+                current_statement_begin__ = 632;
                 stan::math::assign(k, 0.5);
             }
-            current_statement_begin__ = 613;
+            current_statement_begin__ = 634;
             stan::math::assign(cobscount, 0);
-            current_statement_begin__ = 615;
+            current_statement_begin__ = 636;
             for (int rowi = 1; rowi <= ndatapoints; ++rowi) {
                 {
-                current_statement_begin__ = 616;
+                current_statement_begin__ = 637;
                 validate_non_negative_index("o", "get_base1(nobs_y,rowi,\"nobs_y\",1)", get_base1(nobs_y,rowi,"nobs_y",1));
                 vector<int> o(get_base1(nobs_y,rowi,"nobs_y",1), 0);
                 stan::math::fill(o, std::numeric_limits<int>::min());
-                current_statement_begin__ = 617;
+                current_statement_begin__ = 638;
                 validate_non_negative_index("o1", "get_base1(nbinary_y,rowi,\"nbinary_y\",1)", get_base1(nbinary_y,rowi,"nbinary_y",1));
                 vector<int> o1(get_base1(nbinary_y,rowi,"nbinary_y",1), 0);
                 stan::math::fill(o1, std::numeric_limits<int>::min());
-                current_statement_begin__ = 618;
+                current_statement_begin__ = 639;
                 validate_non_negative_index("o0", "get_base1(ncont_y,rowi,\"ncont_y\",1)", get_base1(ncont_y,rowi,"ncont_y",1));
                 vector<int> o0(get_base1(ncont_y,rowi,"ncont_y",1), 0);
                 stan::math::fill(o0, std::numeric_limits<int>::min());
-                current_statement_begin__ = 620;
+                current_statement_begin__ = 641;
                 validate_non_negative_index("ukfstates", "(ukf ? nlatentpop : 0 )", (ukf ? nlatentpop : 0 ));
                 validate_non_negative_index("ukfstates", "((2 * (nlatentpop + (get_base1(T0check,rowi,\"T0check\",1) ? nlatent : ndiffusion ))) + 2)", ((2 * (nlatentpop + (get_base1(T0check,rowi,"T0check",1) ? nlatent : ndiffusion ))) + 2));
                 Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic>  ukfstates(static_cast<Eigen::VectorXd::Index>((ukf ? nlatentpop : 0 )),static_cast<Eigen::VectorXd::Index>(((2 * (nlatentpop + (get_base1(T0check,rowi,"T0check",1) ? nlatent : ndiffusion ))) + 2)));
@@ -3320,7 +3476,7 @@ public:
 
                 stan::math::initialize(ukfstates, DUMMY_VAR__);
                 stan::math::fill(ukfstates,DUMMY_VAR__);
-                current_statement_begin__ = 621;
+                current_statement_begin__ = 642;
                 validate_non_negative_index("ukfmeasures", "(ukf ? nmanifest : 0 )", (ukf ? nmanifest : 0 ));
                 validate_non_negative_index("ukfmeasures", "((2 * (nlatentpop + (get_base1(T0check,rowi,\"T0check\",1) ? nlatent : ndiffusion ))) + 2)", ((2 * (nlatentpop + (get_base1(T0check,rowi,"T0check",1) ? nlatent : ndiffusion ))) + 2));
                 Eigen::Matrix<T__,Eigen::Dynamic,Eigen::Dynamic>  ukfmeasures(static_cast<Eigen::VectorXd::Index>((ukf ? nmanifest : 0 )),static_cast<Eigen::VectorXd::Index>(((2 * (nlatentpop + (get_base1(T0check,rowi,"T0check",1) ? nlatent : ndiffusion ))) + 2)));
@@ -3330,143 +3486,175 @@ public:
                 stan::math::fill(ukfmeasures,DUMMY_VAR__);
 
 
-                current_statement_begin__ = 623;
+                current_statement_begin__ = 644;
                 stan::math::assign(o, stan::model::rvalue(whichobs_y, stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_min_max(1, get_base1(nobs_y,rowi,"nobs_y",1)), stan::model::nil_index_list())), "whichobs_y"));
-                current_statement_begin__ = 624;
+                current_statement_begin__ = 645;
                 stan::math::assign(si, get_base1(subject,rowi,"subject",1));
-                current_statement_begin__ = 625;
+                current_statement_begin__ = 646;
                 stan::math::assign(nobsi, get_base1(nobs_y,rowi,"nobs_y",1));
-                current_statement_begin__ = 627;
+                current_statement_begin__ = 648;
                 stan::math::assign(o1, stan::model::rvalue(whichbinary_y, stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_min_max(1, get_base1(nbinary_y,rowi,"nbinary_y",1)), stan::model::nil_index_list())), "whichbinary_y"));
-                current_statement_begin__ = 628;
+                current_statement_begin__ = 649;
                 stan::math::assign(o0, stan::model::rvalue(whichcont_y, stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_min_max(1, get_base1(ncont_y,rowi,"ncont_y",1)), stan::model::nil_index_list())), "whichcont_y"));
-                current_statement_begin__ = 630;
+                current_statement_begin__ = 651;
                 if (as_bool((primitive_value(logical_neq(rowi,1)) && primitive_value(logical_eq(intoverstates,1))))) {
-                    current_statement_begin__ = 630;
+                    current_statement_begin__ = 651;
                     stan::math::assign(cobscount, (cobscount + get_base1(nobs_y,(rowi - 1),"nobs_y",1)));
                 }
-                current_statement_begin__ = 631;
+                current_statement_begin__ = 652;
                 if (as_bool((primitive_value(logical_neq(rowi,1)) && primitive_value(logical_eq(intoverstates,0))))) {
-                    current_statement_begin__ = 631;
+                    current_statement_begin__ = 652;
                     stan::math::assign(cobscount, (cobscount + get_base1(ncont_y,(rowi - 1),"ncont_y",1)));
                 }
-                current_statement_begin__ = 633;
+                current_statement_begin__ = 654;
                 if (as_bool(logical_eq(ukf,1))) {
 
-                    current_statement_begin__ = 634;
+                    current_statement_begin__ = 655;
                     if (as_bool(logical_eq(get_base1(T0check,rowi,"T0check",1),1))) {
 
-                        current_statement_begin__ = 634;
+                        current_statement_begin__ = 655;
                         stan::math::assign(ndynerror, nlatent);
                     } else {
-                        current_statement_begin__ = 634;
+                        current_statement_begin__ = 655;
                         stan::math::assign(ndynerror, ndiffusion);
                     }
-                    current_statement_begin__ = 635;
+                    current_statement_begin__ = 656;
                     if (as_bool((primitive_value(logical_eq(get_base1(T0check,rowi,"T0check",1),1)) || primitive_value((primitive_value(logical_lt(ndiffusion,nlatent)) && primitive_value(logical_eq(get_base1(T0check,(rowi - 1),"T0check",1),1))))))) {
 
-                        current_statement_begin__ = 636;
+                        current_statement_begin__ = 657;
                         stan::math::assign(asquared, ((2.0 / sqrt((nlatentpop + ndynerror))) * 0.10000000000000001));
-                        current_statement_begin__ = 637;
+                        current_statement_begin__ = 658;
                         stan::math::assign(l, ((asquared * ((nlatentpop + ndynerror) + k)) - (nlatentpop + ndynerror)));
-                        current_statement_begin__ = 638;
+                        current_statement_begin__ = 659;
                         stan::math::assign(sqrtukfadjust, sqrt(((nlatentpop + ndynerror) + l)));
                     }
                 }
-                current_statement_begin__ = 642;
+                current_statement_begin__ = 663;
                 if (as_bool(logical_eq(get_base1(T0check,rowi,"T0check",1),1))) {
 
-                    current_statement_begin__ = 644;
-                    if (as_bool((primitive_value(logical_eq(si,1)) || primitive_value((primitive_value(logical_eq(ukfpop,0)) && primitive_value(logical_gt(nindvarying,0))))))) {
+                    current_statement_begin__ = 665;
+                    if (as_bool((primitive_value((primitive_value(logical_eq(si,1)) || primitive_value((primitive_value(logical_eq(ukfpop,0)) && primitive_value(logical_gt(nindvarying,0)))))) || primitive_value(logical_gt(ntipred,0))))) {
 
-                        current_statement_begin__ = 645;
-                        stan::math::assign(sT0MEANS, get_base1(T0MEANS,get_base1(T0MEANSsubindex,si,"T0MEANSsubindex",1),"T0MEANS",1));
-                        current_statement_begin__ = 646;
-                        stan::math::assign(sT0VAR, get_base1(T0VAR,get_base1(T0VARsubindex,si,"T0VARsubindex",1),"T0VAR",1));
-                        current_statement_begin__ = 647;
-                        stan::math::assign(sDRIFT, get_base1(DRIFT,get_base1(DRIFTsubindex,si,"DRIFTsubindex",1),"DRIFT",1));
-                        current_statement_begin__ = 648;
-                        stan::math::assign(sDIFFUSION, get_base1(DIFFUSION,get_base1(DIFFUSIONsubindex,si,"DIFFUSIONsubindex",1),"DIFFUSION",1));
-                        current_statement_begin__ = 649;
-                        stan::math::assign(sCINT, get_base1(CINT,get_base1(CINTsubindex,si,"CINTsubindex",1),"CINT",1));
-                        current_statement_begin__ = 650;
-                        stan::math::assign(sLAMBDA, get_base1(LAMBDA,get_base1(LAMBDAsubindex,si,"LAMBDAsubindex",1),"LAMBDA",1));
-                        current_statement_begin__ = 651;
-                        stan::math::assign(sMANIFESTMEANS, get_base1(MANIFESTMEANS,get_base1(MANIFESTMEANSsubindex,si,"MANIFESTMEANSsubindex",1),"MANIFESTMEANS",1));
-                        current_statement_begin__ = 652;
-                        stan::math::assign(sMANIFESTVAR, get_base1(MANIFESTVAR,get_base1(MANIFESTVARsubindex,si,"MANIFESTVARsubindex",1),"MANIFESTVAR",1));
-                        current_statement_begin__ = 653;
-                        stan::math::assign(sTDPREDEFFECT, get_base1(TDPREDEFFECT,get_base1(TDPREDEFFECTsubindex,si,"TDPREDEFFECTsubindex",1),"TDPREDEFFECT",1));
-                        current_statement_begin__ = 655;
+                        current_statement_begin__ = 666;
+                        if (as_bool(logical_eq(si,get_base1(T0MEANSsubindex,si,"T0MEANSsubindex",1)))) {
+                            current_statement_begin__ = 666;
+                            stan::math::assign(sT0MEANS, get_base1(T0MEANS,get_base1(T0MEANSsubindex,si,"T0MEANSsubindex",1),"T0MEANS",1));
+                        }
+                        current_statement_begin__ = 667;
+                        if (as_bool(logical_eq(si,get_base1(T0VARsubindex,si,"T0VARsubindex",1)))) {
+                            current_statement_begin__ = 667;
+                            stan::math::assign(sT0VAR, get_base1(T0VAR,get_base1(T0VARsubindex,si,"T0VARsubindex",1),"T0VAR",1));
+                        }
+                        current_statement_begin__ = 668;
+                        if (as_bool(logical_eq(si,get_base1(DRIFTsubindex,si,"DRIFTsubindex",1)))) {
+                            current_statement_begin__ = 668;
+                            stan::math::assign(sDRIFT, get_base1(DRIFT,get_base1(DRIFTsubindex,si,"DRIFTsubindex",1),"DRIFT",1));
+                        }
+                        current_statement_begin__ = 669;
+                        if (as_bool(logical_eq(si,get_base1(DIFFUSIONsubindex,si,"DIFFUSIONsubindex",1)))) {
+                            current_statement_begin__ = 669;
+                            stan::math::assign(sDIFFUSION, get_base1(DIFFUSION,get_base1(DIFFUSIONsubindex,si,"DIFFUSIONsubindex",1),"DIFFUSION",1));
+                        }
+                        current_statement_begin__ = 670;
+                        if (as_bool(logical_eq(si,get_base1(CINTsubindex,si,"CINTsubindex",1)))) {
+                            current_statement_begin__ = 670;
+                            stan::math::assign(sCINT, get_base1(CINT,get_base1(CINTsubindex,si,"CINTsubindex",1),"CINT",1));
+                        }
+                        current_statement_begin__ = 671;
+                        if (as_bool(logical_eq(si,get_base1(LAMBDAsubindex,si,"LAMBDAsubindex",1)))) {
+                            current_statement_begin__ = 671;
+                            stan::math::assign(sLAMBDA, get_base1(LAMBDA,get_base1(LAMBDAsubindex,si,"LAMBDAsubindex",1),"LAMBDA",1));
+                        }
+                        current_statement_begin__ = 672;
+                        if (as_bool(logical_eq(si,get_base1(MANIFESTMEANSsubindex,si,"MANIFESTMEANSsubindex",1)))) {
+                            current_statement_begin__ = 672;
+                            stan::math::assign(sMANIFESTMEANS, get_base1(MANIFESTMEANS,get_base1(MANIFESTMEANSsubindex,si,"MANIFESTMEANSsubindex",1),"MANIFESTMEANS",1));
+                        }
+                        current_statement_begin__ = 673;
+                        if (as_bool(logical_eq(si,get_base1(MANIFESTVARsubindex,si,"MANIFESTVARsubindex",1)))) {
+                            current_statement_begin__ = 673;
+                            stan::math::assign(sMANIFESTVAR, get_base1(MANIFESTVAR,get_base1(MANIFESTVARsubindex,si,"MANIFESTVARsubindex",1),"MANIFESTVAR",1));
+                        }
+                        current_statement_begin__ = 674;
+                        if (as_bool(logical_eq(si,get_base1(TDPREDEFFECTsubindex,si,"TDPREDEFFECTsubindex",1)))) {
+                            current_statement_begin__ = 674;
+                            stan::math::assign(sTDPREDEFFECT, get_base1(TDPREDEFFECT,get_base1(TDPREDEFFECTsubindex,si,"TDPREDEFFECTsubindex",1),"TDPREDEFFECT",1));
+                        }
+                        current_statement_begin__ = 675;
+                        if (as_bool(logical_eq(si,get_base1(PARSsubindex,si,"PARSsubindex",1)))) {
+                            current_statement_begin__ = 675;
+                            stan::math::assign(sPARS, get_base1(PARS,get_base1(PARSsubindex,si,"PARSsubindex",1),"PARS",1));
+                        }
+                        current_statement_begin__ = 677;
                         if (as_bool((primitive_value((primitive_value(logical_eq(1,99)) && primitive_value(logical_eq(lineardynamics,1)))) && primitive_value((primitive_value(logical_eq(rowi,1)) || primitive_value(logical_neq(get_base1(asymDIFFUSIONsubindex,si,"asymDIFFUSIONsubindex",1),get_base1(asymDIFFUSIONsubindex,(si - 1),"asymDIFFUSIONsubindex",1)))))))) {
 
-                            current_statement_begin__ = 656;
+                            current_statement_begin__ = 678;
                             stan::model::assign(sasymDIFFUSION, 
                                         stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), 
                                         to_matrix(mdivide_left(minus(add(kron_prod(stan::model::rvalue(sDRIFT, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "sDRIFT"),stan::model::rvalue(IIlatent, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "IIlatent"), pstream__),kron_prod(stan::model::rvalue(IIlatent, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "IIlatent"),stan::model::rvalue(sDRIFT, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "sDRIFT"), pstream__))),to_vector(stan::model::rvalue(sDIFFUSION, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "sDIFFUSION"))),ndiffusion,ndiffusion), 
                                         "assigning variable sasymDIFFUSION");
                         }
                     }
-                    current_statement_begin__ = 663;
+                    current_statement_begin__ = 686;
                     if (as_bool(logical_eq(ukf,1))) {
 
-                        current_statement_begin__ = 664;
+                        current_statement_begin__ = 687;
                         stan::model::assign(etaprior, 
                                     stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), 
                                     rep_vector(0,nlatentpop), 
                                     "assigning variable etaprior");
-                        current_statement_begin__ = 665;
+                        current_statement_begin__ = 688;
                         stan::math::assign(sigpoints, rep_matrix(0,nlatentpop,nlatentpop));
-                        current_statement_begin__ = 667;
+                        current_statement_begin__ = 690;
                         if (as_bool(logical_eq(ukfpop,1))) {
 
-                            current_statement_begin__ = 668;
+                            current_statement_begin__ = 691;
                             if (as_bool(logical_eq(ntipred,0))) {
-                                current_statement_begin__ = 668;
+                                current_statement_begin__ = 691;
                                 stan::model::assign(etaprior, 
                                             stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_min_max((nlatent + 1), nlatentpop), stan::model::nil_index_list())), 
                                             stan::model::rvalue(rawpopmeans, stan::model::cons_list(stan::model::index_multi(indvaryingindex), stan::model::nil_index_list()), "rawpopmeans"), 
                                             "assigning variable etaprior");
                             }
-                            current_statement_begin__ = 669;
+                            current_statement_begin__ = 692;
                             if (as_bool(logical_gt(ntipred,0))) {
-                                current_statement_begin__ = 669;
+                                current_statement_begin__ = 692;
                                 stan::model::assign(etaprior, 
                                             stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_min_max((nlatent + 1), nlatentpop), stan::model::nil_index_list())), 
                                             add(stan::model::rvalue(rawpopmeans, stan::model::cons_list(stan::model::index_multi(indvaryingindex), stan::model::nil_index_list()), "rawpopmeans"),multiply(stan::model::rvalue(TIPREDEFFECT, stan::model::cons_list(stan::model::index_multi(indvaryingindex), stan::model::nil_index_list()), "TIPREDEFFECT"),transpose(get_base1(tipreds,si,"tipreds",1)))), 
                                             "assigning variable etaprior");
                             }
-                            current_statement_begin__ = 670;
+                            current_statement_begin__ = 693;
                             stan::model::assign(sigpoints, 
                                         stan::model::cons_list(stan::model::index_min_max((nlatent + 1), nlatentpop), stan::model::cons_list(stan::model::index_min_max((nlatent + 1), nlatentpop), stan::model::nil_index_list())), 
                                         multiply(rawpopcovsqrt,sqrtukfadjust), 
                                         "assigning variable sigpoints");
                         }
                     }
-                    current_statement_begin__ = 674;
+                    current_statement_begin__ = 697;
                     if (as_bool(logical_eq(ukf,0))) {
 
-                        current_statement_begin__ = 675;
+                        current_statement_begin__ = 698;
                         if (as_bool(logical_eq(ntdpred,0))) {
-                            current_statement_begin__ = 675;
+                            current_statement_begin__ = 698;
                             stan::math::assign(get_base1_lhs(etaprior,rowi,"etaprior",1), stan::model::rvalue(sT0MEANS, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sT0MEANS"));
                         }
-                        current_statement_begin__ = 676;
+                        current_statement_begin__ = 699;
                         if (as_bool(logical_gt(ntdpred,0))) {
-                            current_statement_begin__ = 676;
+                            current_statement_begin__ = 699;
                             stan::math::assign(get_base1_lhs(etaprior,rowi,"etaprior",1), add(multiply(get_base1(TDPREDEFFECT,get_base1(TDPREDEFFECTsubindex,si,"TDPREDEFFECTsubindex",1),"TDPREDEFFECT",1),get_base1(tdpreds,rowi,"tdpreds",1)),stan::model::rvalue(sT0MEANS, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sT0MEANS")));
                         }
-                        current_statement_begin__ = 677;
+                        current_statement_begin__ = 700;
                         stan::math::assign(get_base1_lhs(etapriorcov,rowi,"etapriorcov",1), get_base1(T0VAR,get_base1(T0VARsubindex,si,"T0VARsubindex",1),"T0VAR",1));
                     }
                 }
-                current_statement_begin__ = 682;
+                current_statement_begin__ = 705;
                 if (as_bool((primitive_value((primitive_value(logical_eq(lineardynamics,1)) && primitive_value(logical_eq(ukf,0)))) && primitive_value(logical_eq(get_base1(T0check,rowi,"T0check",1),0))))) {
 
-                    current_statement_begin__ = 684;
+                    current_statement_begin__ = 707;
                     if (as_bool(logical_eq(continuoustime,1))) {
                         {
-                        current_statement_begin__ = 685;
+                        current_statement_begin__ = 708;
                         int dtchange(0);
                         (void) dtchange;  // dummy to suppress unused var warning
 
@@ -3474,43 +3662,43 @@ public:
                         stan::math::assign(dtchange,0);
 
 
-                        current_statement_begin__ = 686;
+                        current_statement_begin__ = 709;
                         if (as_bool((primitive_value(logical_eq(si,1)) && primitive_value(logical_eq(get_base1(T0check,(rowi - 1),"T0check",1),1))))) {
 
-                            current_statement_begin__ = 687;
+                            current_statement_begin__ = 710;
                             stan::math::assign(dtchange, 1);
                         } else if (as_bool((primitive_value(logical_eq(get_base1(T0check,(rowi - 1),"T0check",1),1)) && primitive_value(logical_neq(get_base1(dT,(rowi - 2),"dT",1),get_base1(dT,rowi,"dT",1)))))) {
 
-                            current_statement_begin__ = 689;
+                            current_statement_begin__ = 712;
                             stan::math::assign(dtchange, 1);
                         } else if (as_bool((primitive_value(logical_eq(get_base1(T0check,(rowi - 1),"T0check",1),0)) && primitive_value(logical_neq(get_base1(dT,(rowi - 1),"dT",1),get_base1(dT,rowi,"dT",1)))))) {
-                            current_statement_begin__ = 690;
+                            current_statement_begin__ = 713;
                             stan::math::assign(dtchange, 1);
                         }
-                        current_statement_begin__ = 692;
+                        current_statement_begin__ = 715;
                         if (as_bool((primitive_value(logical_eq(dtchange,1)) || primitive_value((primitive_value(logical_eq(get_base1(T0check,(rowi - 1),"T0check",1),1)) && primitive_value(logical_lte(si,get_base1(DRIFTsubindex,si,"DRIFTsubindex",1)))))))) {
 
-                            current_statement_begin__ = 693;
+                            current_statement_begin__ = 716;
                             if (as_bool(logical_eq(driftdiagonly,1))) {
-                                current_statement_begin__ = 693;
+                                current_statement_begin__ = 716;
                                 stan::math::assign(discreteDRIFT, matrix_diagexp(multiply(sDRIFT,get_base1(dT,rowi,"dT",1)), pstream__));
                             }
-                            current_statement_begin__ = 694;
+                            current_statement_begin__ = 717;
                             if (as_bool(logical_eq(driftdiagonly,0))) {
-                                current_statement_begin__ = 694;
+                                current_statement_begin__ = 717;
                                 stan::math::assign(discreteDRIFT, matrix_exp(multiply(sDRIFT,get_base1(dT,rowi,"dT",1))));
                             }
                         }
-                        current_statement_begin__ = 696;
+                        current_statement_begin__ = 719;
                         if (as_bool((primitive_value(logical_eq(dtchange,1)) || primitive_value((primitive_value(logical_eq(get_base1(T0check,(rowi - 1),"T0check",1),1)) && primitive_value((primitive_value(logical_lte(si,get_base1(CINTsubindex,si,"CINTsubindex",1))) || primitive_value(logical_lte(si,get_base1(DRIFTsubindex,si,"DRIFTsubindex",1)))))))))) {
 
-                            current_statement_begin__ = 697;
+                            current_statement_begin__ = 720;
                             stan::math::assign(discreteCINT, multiply(mdivide_left(sDRIFT,subtract(discreteDRIFT,IIlatent)),stan::model::rvalue(sCINT, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sCINT")));
                         }
-                        current_statement_begin__ = 700;
+                        current_statement_begin__ = 723;
                         if (as_bool((primitive_value(logical_eq(dtchange,1)) || primitive_value((primitive_value(logical_eq(get_base1(T0check,(rowi - 1),"T0check",1),1)) && primitive_value((primitive_value(logical_lte(si,get_base1(DIFFUSIONsubindex,si,"DIFFUSIONsubindex",1))) || primitive_value(logical_lte(si,get_base1(DRIFTsubindex,si,"DRIFTsubindex",1)))))))))) {
 
-                            current_statement_begin__ = 703;
+                            current_statement_begin__ = 726;
                             stan::model::assign(discreteDIFFUSION, 
                                         stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), 
                                         discreteDIFFUSIONcalc(stan::model::rvalue(DRIFT, stan::model::cons_list(stan::model::index_uni(get_base1(DRIFTsubindex,si,"DRIFTsubindex",1)), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), "DRIFT"),stan::model::rvalue(sDIFFUSION, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "sDIFFUSION"),get_base1(dT,rowi,"dT",1), pstream__), 
@@ -3518,29 +3706,29 @@ public:
                         }
                         }
                     }
-                    current_statement_begin__ = 707;
+                    current_statement_begin__ = 730;
                     if (as_bool((primitive_value(logical_eq(continuoustime,0)) && primitive_value(logical_eq(get_base1(T0check,(rowi - 1),"T0check",1),1))))) {
 
-                        current_statement_begin__ = 708;
+                        current_statement_begin__ = 731;
                         stan::math::assign(discreteDRIFT, sDRIFT);
-                        current_statement_begin__ = 709;
+                        current_statement_begin__ = 732;
                         stan::math::assign(discreteCINT, stan::model::rvalue(sCINT, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sCINT"));
-                        current_statement_begin__ = 710;
+                        current_statement_begin__ = 733;
                         stan::math::assign(discreteDIFFUSION, sDIFFUSION);
                     }
-                    current_statement_begin__ = 713;
+                    current_statement_begin__ = 736;
                     stan::math::assign(get_base1_lhs(etaprior,rowi,"etaprior",1), add(multiply(discreteDRIFT,get_base1(etaupd,(rowi - 1),"etaupd",1)),discreteCINT));
-                    current_statement_begin__ = 714;
+                    current_statement_begin__ = 737;
                     if (as_bool(logical_eq(intoverstates,1))) {
 
-                        current_statement_begin__ = 715;
+                        current_statement_begin__ = 738;
                         if (as_bool(logical_eq(ndiffusion,0))) {
-                            current_statement_begin__ = 715;
+                            current_statement_begin__ = 738;
                             stan::math::assign(get_base1_lhs(etapriorcov,rowi,"etapriorcov",1), quad_form(get_base1(etaupdcov,(rowi - 1),"etaupdcov",1),transpose(discreteDRIFT)));
                         }
-                        current_statement_begin__ = 716;
+                        current_statement_begin__ = 739;
                         if (as_bool(logical_gt(ndiffusion,0))) {
-                            current_statement_begin__ = 716;
+                            current_statement_begin__ = 739;
                             stan::model::assign(etapriorcov, 
                                         stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), 
                                         add(quad_form(get_base1(etaupdcov,(rowi - 1),"etaupdcov",1),transpose(discreteDRIFT)),stan::model::rvalue(discreteDIFFUSION, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "discreteDIFFUSION")), 
@@ -3548,528 +3736,568 @@ public:
                         }
                     }
                 }
-                current_statement_begin__ = 720;
+                current_statement_begin__ = 743;
                 if (as_bool(logical_eq(ukf,1))) {
 
-                    current_statement_begin__ = 722;
+                    current_statement_begin__ = 745;
                     if (as_bool(logical_eq(get_base1(T0check,rowi,"T0check",1),1))) {
-                        current_statement_begin__ = 722;
+                        current_statement_begin__ = 745;
                         stan::math::assign(dynerror, sqrtukfadjust);
                     }
-                    current_statement_begin__ = 723;
+                    current_statement_begin__ = 746;
                     if (as_bool((primitive_value(logical_eq(get_base1(T0check,rowi,"T0check",1),0)) && primitive_value(logical_eq(lineardynamics,0))))) {
-                        current_statement_begin__ = 723;
+                        current_statement_begin__ = 746;
                         stan::math::assign(dynerror, (sqrtukfadjust / sqrt(get_base1(dT,rowi,"dT",1))));
                     }
-                    current_statement_begin__ = 725;
+                    current_statement_begin__ = 748;
                     if (as_bool(logical_eq(get_base1(T0check,rowi,"T0check",1),0))) {
 
-                        current_statement_begin__ = 726;
+                        current_statement_begin__ = 749;
                         stan::math::assign(sigpoints, multiply(cholspd(stan::model::rvalue(etaupdcov, stan::model::cons_list(stan::model::index_uni((rowi - 1)), stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list()))), "etaupdcov"), pstream__),sqrtukfadjust));
-                        current_statement_begin__ = 727;
+                        current_statement_begin__ = 750;
                         stan::model::assign(etaprior, 
                                     stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), 
                                     stan::model::rvalue(etaupd, stan::model::cons_list(stan::model::index_uni((rowi - 1)), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "etaupd"), 
                                     "assigning variable etaprior");
                     }
-                    current_statement_begin__ = 731;
+                    current_statement_begin__ = 754;
                     for (int statei = 1; statei <= cols(ukfstates); ++statei) {
 
-                        current_statement_begin__ = 732;
+                        current_statement_begin__ = 755;
                         if (as_bool((primitive_value(logical_gt(statei,(2 + nlatentpop))) && primitive_value(logical_lte(statei,(2 + (2 * nlatentpop))))))) {
 
-                            current_statement_begin__ = 733;
+                            current_statement_begin__ = 756;
                             stan::model::assign(ukfstates, 
                                         stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(statei), stan::model::nil_index_list())), 
                                         subtract(stan::model::rvalue(etaprior, stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "etaprior"),stan::model::rvalue(sigpoints, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni((statei - (2 + nlatentpop))), stan::model::nil_index_list())), "sigpoints")), 
                                         "assigning variable ukfstates");
                         } else if (as_bool((primitive_value(logical_gt(statei,2)) && primitive_value(logical_lte(statei,(2 + (2 * nlatentpop))))))) {
 
-                            current_statement_begin__ = 736;
+                            current_statement_begin__ = 759;
                             stan::model::assign(ukfstates, 
                                         stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(statei), stan::model::nil_index_list())), 
                                         add(stan::model::rvalue(etaprior, stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "etaprior"),stan::model::rvalue(sigpoints, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni((statei - 2)), stan::model::nil_index_list())), "sigpoints")), 
                                         "assigning variable ukfstates");
                         } else {
-                            current_statement_begin__ = 738;
+                            current_statement_begin__ = 761;
                             stan::model::assign(ukfstates, 
                                         stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(statei), stan::model::nil_index_list())), 
                                         stan::model::rvalue(etaprior, stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "etaprior"), 
                                         "assigning variable ukfstates");
                         }
                     }
-                    current_statement_begin__ = 741;
+                    current_statement_begin__ = 764;
                     for (int statei = 2; statei <= cols(ukfstates); ++statei) {
 
-                        current_statement_begin__ = 743;
+                        current_statement_begin__ = 766;
                         if (as_bool(logical_eq(get_base1(T0check,rowi,"T0check",1),1))) {
 
-                            current_statement_begin__ = 745;
+                            current_statement_begin__ = 768;
                             if (as_bool(logical_lte(statei,((2 + (2 * nlatentpop)) + 1)))) {
 
-                                current_statement_begin__ = 747;
+                                current_statement_begin__ = 770;
                                 if (as_bool(logical_eq(ukfpop,1))) {
 
-                                    current_statement_begin__ = 749;
+                                    current_statement_begin__ = 772;
                                     for (int ri = 1; ri <= size(T0MEANSsetup); ++ri) {
 
-                                        current_statement_begin__ = 750;
+                                        current_statement_begin__ = 773;
                                         if (as_bool(logical_gt(get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),5,"T0MEANSsetup",2),0))) {
 
-                                            current_statement_begin__ = 751;
+                                            current_statement_begin__ = 774;
                                             stan::math::assign(get_base1_lhs(sT0MEANS,get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),1,"T0MEANSsetup",2),get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),2,"T0MEANSsetup",2),"sT0MEANS",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),5,"T0MEANSsetup",2)),statei,"ukfstates",1),get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),4,"T0MEANSsetup",2),get_base1(T0MEANSvalues,ri,2,"T0MEANSvalues",1),get_base1(T0MEANSvalues,ri,3,"T0MEANSvalues",1),get_base1(T0MEANSvalues,ri,4,"T0MEANSvalues",1), pstream__));
                                         }
                                     }
-                                    current_statement_begin__ = 755;
+                                    current_statement_begin__ = 778;
                                     for (int ri = 1; ri <= size(T0VARsetup); ++ri) {
 
-                                        current_statement_begin__ = 756;
+                                        current_statement_begin__ = 779;
                                         if (as_bool(logical_gt(get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),5,"T0VARsetup",2),0))) {
 
-                                            current_statement_begin__ = 757;
+                                            current_statement_begin__ = 780;
                                             stan::math::assign(get_base1_lhs(sT0VAR,get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),1,"T0VARsetup",2),get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),2,"T0VARsetup",2),"sT0VAR",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),5,"T0VARsetup",2)),statei,"ukfstates",1),get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),4,"T0VARsetup",2),get_base1(T0VARvalues,ri,2,"T0VARvalues",1),get_base1(T0VARvalues,ri,3,"T0VARvalues",1),get_base1(T0VARvalues,ri,4,"T0VARvalues",1), pstream__));
                                         }
                                     }
                                 }
                             }
-                            current_statement_begin__ = 762;
+                            current_statement_begin__ = 785;
                             stan::math::assign(state, stan::model::rvalue(sT0MEANS, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sT0MEANS"));
-                            current_statement_begin__ = 763;
+                            current_statement_begin__ = 786;
                             if (as_bool(logical_gt(statei,((2 + (2 * nlatentpop)) + ndynerror)))) {
 
-                                current_statement_begin__ = 764;
+                                current_statement_begin__ = 787;
                                 stan::math::assign(state, add(state, multiply(minus(stan::model::rvalue(sT0VAR, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni((statei - ((2 + (2 * nlatentpop)) + ndynerror))), stan::model::nil_index_list())), "sT0VAR")),dynerror)));
                             } else if (as_bool(logical_gt(statei,(2 + (2 * nlatentpop))))) {
-                                current_statement_begin__ = 766;
+                                current_statement_begin__ = 789;
                                 stan::math::assign(state, add(state, multiply(stan::model::rvalue(sT0VAR, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni((statei - (2 + (2 * nlatentpop)))), stan::model::nil_index_list())), "sT0VAR"),dynerror)));
                             }
                         }
-                        current_statement_begin__ = 770;
+                        current_statement_begin__ = 793;
                         if (as_bool(logical_eq(get_base1(T0check,rowi,"T0check",1),0))) {
 
-                            current_statement_begin__ = 771;
+                            current_statement_begin__ = 794;
                             stan::math::assign(state, stan::model::rvalue(ukfstates, stan::model::cons_list(stan::model::index_min_max(1, nlatent), stan::model::cons_list(stan::model::index_uni(statei), stan::model::nil_index_list())), "ukfstates"));
-                            current_statement_begin__ = 773;
+                            current_statement_begin__ = 796;
                             if (as_bool(logical_eq(lineardynamics,0))) {
 
-                                current_statement_begin__ = 774;
+                                current_statement_begin__ = 797;
                                 for (int stepi = 1; stepi <= get_base1(integrationsteps,rowi,"integrationsteps",1); ++stepi) {
 
-                                    current_statement_begin__ = 775;
+                                    current_statement_begin__ = 798;
                                     stan::math::assign(get_base1_lhs(rkstates,5,"rkstates",1), state);
-                                    current_statement_begin__ = 777;
+                                    current_statement_begin__ = 800;
                                     for (int ki = 1; ki <= 4; ++ki) {
 
-                                        current_statement_begin__ = 778;
+                                        current_statement_begin__ = 801;
                                         if (as_bool((primitive_value(logical_eq(ki,2)) || primitive_value(logical_eq(ki,3))))) {
-                                            current_statement_begin__ = 778;
+                                            current_statement_begin__ = 801;
                                             stan::math::assign(state, add(get_base1(rkstates,5,"rkstates",1),multiply((get_base1(dTsmall,rowi,"dTsmall",1) / 2),get_base1(rkstates,(ki - 1),"rkstates",1))));
                                         }
-                                        current_statement_begin__ = 779;
+                                        current_statement_begin__ = 802;
                                         if (as_bool(logical_eq(ki,4))) {
-                                            current_statement_begin__ = 779;
+                                            current_statement_begin__ = 802;
                                             stan::math::assign(state, add(get_base1(rkstates,5,"rkstates",1),multiply(get_base1(dTsmall,rowi,"dTsmall",1),get_base1(rkstates,3,"rkstates",1))));
                                         }
-                                        current_statement_begin__ = 780;
+                                        current_statement_begin__ = 804;
                                         if (as_bool(logical_eq(ukfpop,1))) {
 
-                                            current_statement_begin__ = 782;
+                                            current_statement_begin__ = 806;
                                             for (int ri = 1; ri <= size(DRIFTsetup); ++ri) {
 
-                                                current_statement_begin__ = 783;
+                                                current_statement_begin__ = 807;
                                                 if (as_bool(logical_gt(get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),5,"DRIFTsetup",2),0))) {
 
-                                                    current_statement_begin__ = 784;
+                                                    current_statement_begin__ = 808;
                                                     stan::math::assign(get_base1_lhs(sDRIFT,get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),1,"DRIFTsetup",2),get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),2,"DRIFTsetup",2),"sDRIFT",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),5,"DRIFTsetup",2)),statei,"ukfstates",1),get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),4,"DRIFTsetup",2),get_base1(DRIFTvalues,ri,2,"DRIFTvalues",1),get_base1(DRIFTvalues,ri,3,"DRIFTvalues",1),get_base1(DRIFTvalues,ri,4,"DRIFTvalues",1), pstream__));
                                                 }
                                             }
-                                            current_statement_begin__ = 789;
+                                            current_statement_begin__ = 813;
                                             for (int ri = 1; ri <= size(DIFFUSIONsetup); ++ri) {
 
-                                                current_statement_begin__ = 790;
+                                                current_statement_begin__ = 814;
                                                 if (as_bool(logical_gt(get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),5,"DIFFUSIONsetup",2),0))) {
 
-                                                    current_statement_begin__ = 791;
+                                                    current_statement_begin__ = 815;
                                                     stan::math::assign(get_base1_lhs(sDIFFUSION,get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),1,"DIFFUSIONsetup",2),get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),2,"DIFFUSIONsetup",2),"sDIFFUSION",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),5,"DIFFUSIONsetup",2)),statei,"ukfstates",1),get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),4,"DIFFUSIONsetup",2),get_base1(DIFFUSIONvalues,ri,2,"DIFFUSIONvalues",1),get_base1(DIFFUSIONvalues,ri,3,"DIFFUSIONvalues",1),get_base1(DIFFUSIONvalues,ri,4,"DIFFUSIONvalues",1), pstream__));
                                                 }
                                             }
-                                            current_statement_begin__ = 796;
+                                            current_statement_begin__ = 820;
                                             for (int ri = 1; ri <= size(CINTsetup); ++ri) {
 
-                                                current_statement_begin__ = 797;
+                                                current_statement_begin__ = 821;
                                                 if (as_bool(logical_gt(get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),5,"CINTsetup",2),0))) {
 
-                                                    current_statement_begin__ = 798;
+                                                    current_statement_begin__ = 822;
                                                     stan::math::assign(get_base1_lhs(sCINT,get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),1,"CINTsetup",2),get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),2,"CINTsetup",2),"sCINT",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),5,"CINTsetup",2)),statei,"ukfstates",1),get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),4,"CINTsetup",2),get_base1(CINTvalues,ri,2,"CINTvalues",1),get_base1(CINTvalues,ri,3,"CINTvalues",1),get_base1(CINTvalues,ri,4,"CINTvalues",1), pstream__));
                                                 }
                                             }
-                                            current_statement_begin__ = 803;
+                                            current_statement_begin__ = 827;
                                             for (int ri = 1; ri <= size(TDPREDEFFECTsetup); ++ri) {
 
-                                                current_statement_begin__ = 804;
+                                                current_statement_begin__ = 828;
                                                 if (as_bool(logical_gt(get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),5,"TDPREDEFFECTsetup",2),0))) {
 
-                                                    current_statement_begin__ = 805;
+                                                    current_statement_begin__ = 829;
                                                     stan::math::assign(get_base1_lhs(sTDPREDEFFECT,get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),1,"TDPREDEFFECTsetup",2),get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),2,"TDPREDEFFECTsetup",2),"sTDPREDEFFECT",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),5,"TDPREDEFFECTsetup",2)),statei,"ukfstates",1),get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),4,"TDPREDEFFECTsetup",2),get_base1(TDPREDEFFECTvalues,ri,2,"TDPREDEFFECTvalues",1),get_base1(TDPREDEFFECTvalues,ri,3,"TDPREDEFFECTvalues",1),get_base1(TDPREDEFFECTvalues,ri,4,"TDPREDEFFECTvalues",1), pstream__));
                                                 }
                                             }
+                                            current_statement_begin__ = 834;
+                                            for (int ri = 1; ri <= size(PARSsetup); ++ri) {
+
+                                                current_statement_begin__ = 835;
+                                                if (as_bool(logical_gt(get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),5,"PARSsetup",2),0))) {
+
+                                                    current_statement_begin__ = 836;
+                                                    stan::math::assign(get_base1_lhs(sPARS,get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),1,"PARSsetup",2),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),2,"PARSsetup",2),"sPARS",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),5,"PARSsetup",2)),statei,"ukfstates",1),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),4,"PARSsetup",2),get_base1(PARSvalues,ri,2,"PARSvalues",1),get_base1(PARSvalues,ri,3,"PARSvalues",1),get_base1(PARSvalues,ri,4,"PARSvalues",1), pstream__));
+                                                }
+                                            }
                                         }
-                                        current_statement_begin__ = 810;
+                                        current_statement_begin__ = 841;
                                         if (as_bool(logical_lte(statei,(2 + (2 * nlatentpop))))) {
 
-                                            current_statement_begin__ = 811;
+                                            current_statement_begin__ = 842;
                                             stan::math::assign(get_base1_lhs(rkstates,ki,"rkstates",1), add(multiply(sDRIFT,state),stan::model::rvalue(sCINT, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sCINT")));
                                         } else if (as_bool(logical_lte(statei,((2 + (2 * nlatentpop)) + ndynerror)))) {
 
-                                            current_statement_begin__ = 813;
+                                            current_statement_begin__ = 844;
                                             stan::math::assign(get_base1_lhs(rkstates,ki,"rkstates",1), add(add(multiply(sDRIFT,state),stan::model::rvalue(sCINT, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sCINT")),multiply(stan::model::rvalue(sDIFFUSION, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(get_base1(derrind,(statei - (2 + (2 * nlatentpop))),"derrind",1)), stan::model::nil_index_list())), "sDIFFUSION"),dynerror)));
                                         } else {
-                                            current_statement_begin__ = 814;
+                                            current_statement_begin__ = 845;
                                             stan::math::assign(get_base1_lhs(rkstates,ki,"rkstates",1), subtract(add(multiply(sDRIFT,state),stan::model::rvalue(sCINT, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sCINT")),multiply(stan::model::rvalue(sDIFFUSION, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(get_base1(derrind,(statei - ((2 + (2 * nlatentpop)) + ndynerror)),"derrind",1)), stan::model::nil_index_list())), "sDIFFUSION"),dynerror)));
                                         }
                                     }
-                                    current_statement_begin__ = 817;
+                                    current_statement_begin__ = 848;
                                     stan::math::assign(state, add(get_base1(rkstates,5,"rkstates",1),multiply((get_base1(dTsmall,rowi,"dTsmall",1) / 6),add(add(add(get_base1(rkstates,1,"rkstates",1),multiply(2,get_base1(rkstates,2,"rkstates",1))),multiply(2,get_base1(rkstates,3,"rkstates",1))),get_base1(rkstates,4,"rkstates",1)))));
                                 }
                             }
-                            current_statement_begin__ = 822;
+                            current_statement_begin__ = 853;
                             if (as_bool(logical_eq(lineardynamics,1))) {
 
-                                current_statement_begin__ = 823;
+                                current_statement_begin__ = 855;
                                 if (as_bool(logical_eq(ukfpop,1))) {
 
-                                    current_statement_begin__ = 825;
+                                    current_statement_begin__ = 857;
                                     for (int ri = 1; ri <= size(DRIFTsetup); ++ri) {
 
-                                        current_statement_begin__ = 826;
+                                        current_statement_begin__ = 858;
                                         if (as_bool(logical_gt(get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),5,"DRIFTsetup",2),0))) {
 
-                                            current_statement_begin__ = 827;
+                                            current_statement_begin__ = 859;
                                             stan::math::assign(get_base1_lhs(sDRIFT,get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),1,"DRIFTsetup",2),get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),2,"DRIFTsetup",2),"sDRIFT",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),5,"DRIFTsetup",2)),statei,"ukfstates",1),get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),4,"DRIFTsetup",2),get_base1(DRIFTvalues,ri,2,"DRIFTvalues",1),get_base1(DRIFTvalues,ri,3,"DRIFTvalues",1),get_base1(DRIFTvalues,ri,4,"DRIFTvalues",1), pstream__));
                                         }
                                     }
-                                    current_statement_begin__ = 832;
+                                    current_statement_begin__ = 864;
                                     for (int ri = 1; ri <= size(DIFFUSIONsetup); ++ri) {
 
-                                        current_statement_begin__ = 833;
+                                        current_statement_begin__ = 865;
                                         if (as_bool(logical_gt(get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),5,"DIFFUSIONsetup",2),0))) {
 
-                                            current_statement_begin__ = 834;
+                                            current_statement_begin__ = 866;
                                             stan::math::assign(get_base1_lhs(sDIFFUSION,get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),1,"DIFFUSIONsetup",2),get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),2,"DIFFUSIONsetup",2),"sDIFFUSION",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),5,"DIFFUSIONsetup",2)),statei,"ukfstates",1),get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),4,"DIFFUSIONsetup",2),get_base1(DIFFUSIONvalues,ri,2,"DIFFUSIONvalues",1),get_base1(DIFFUSIONvalues,ri,3,"DIFFUSIONvalues",1),get_base1(DIFFUSIONvalues,ri,4,"DIFFUSIONvalues",1), pstream__));
                                         }
                                     }
-                                    current_statement_begin__ = 839;
+                                    current_statement_begin__ = 871;
                                     for (int ri = 1; ri <= size(CINTsetup); ++ri) {
 
-                                        current_statement_begin__ = 840;
+                                        current_statement_begin__ = 872;
                                         if (as_bool(logical_gt(get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),5,"CINTsetup",2),0))) {
 
-                                            current_statement_begin__ = 841;
+                                            current_statement_begin__ = 873;
                                             stan::math::assign(get_base1_lhs(sCINT,get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),1,"CINTsetup",2),get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),2,"CINTsetup",2),"sCINT",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),5,"CINTsetup",2)),statei,"ukfstates",1),get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),4,"CINTsetup",2),get_base1(CINTvalues,ri,2,"CINTvalues",1),get_base1(CINTvalues,ri,3,"CINTvalues",1),get_base1(CINTvalues,ri,4,"CINTvalues",1), pstream__));
                                         }
                                     }
-                                    current_statement_begin__ = 846;
+                                    current_statement_begin__ = 878;
                                     for (int ri = 1; ri <= size(TDPREDEFFECTsetup); ++ri) {
 
-                                        current_statement_begin__ = 847;
+                                        current_statement_begin__ = 879;
                                         if (as_bool(logical_gt(get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),5,"TDPREDEFFECTsetup",2),0))) {
 
-                                            current_statement_begin__ = 848;
+                                            current_statement_begin__ = 880;
                                             stan::math::assign(get_base1_lhs(sTDPREDEFFECT,get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),1,"TDPREDEFFECTsetup",2),get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),2,"TDPREDEFFECTsetup",2),"sTDPREDEFFECT",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),5,"TDPREDEFFECTsetup",2)),statei,"ukfstates",1),get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),4,"TDPREDEFFECTsetup",2),get_base1(TDPREDEFFECTvalues,ri,2,"TDPREDEFFECTvalues",1),get_base1(TDPREDEFFECTvalues,ri,3,"TDPREDEFFECTvalues",1),get_base1(TDPREDEFFECTvalues,ri,4,"TDPREDEFFECTvalues",1), pstream__));
                                         }
                                     }
+                                    current_statement_begin__ = 885;
+                                    for (int ri = 1; ri <= size(PARSsetup); ++ri) {
+
+                                        current_statement_begin__ = 886;
+                                        if (as_bool(logical_gt(get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),5,"PARSsetup",2),0))) {
+
+                                            current_statement_begin__ = 887;
+                                            stan::math::assign(get_base1_lhs(sPARS,get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),1,"PARSsetup",2),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),2,"PARSsetup",2),"sPARS",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),5,"PARSsetup",2)),statei,"ukfstates",1),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),4,"PARSsetup",2),get_base1(PARSvalues,ri,2,"PARSvalues",1),get_base1(PARSvalues,ri,3,"PARSvalues",1),get_base1(PARSvalues,ri,4,"PARSvalues",1), pstream__));
+                                        }
+                                    }
                                 }
-                                current_statement_begin__ = 852;
+                                current_statement_begin__ = 891;
                                 if (as_bool(logical_lte(statei,((2 + (2 * nlatentpop)) + 1)))) {
 
-                                    current_statement_begin__ = 853;
+                                    current_statement_begin__ = 892;
                                     if (as_bool(logical_eq(continuoustime,1))) {
 
-                                        current_statement_begin__ = 854;
+                                        current_statement_begin__ = 893;
                                         if (as_bool(logical_eq(driftdiagonly,1))) {
-                                            current_statement_begin__ = 854;
+                                            current_statement_begin__ = 893;
                                             stan::math::assign(discreteDRIFT, matrix_diagexp(multiply(sDRIFT,get_base1(dT,rowi,"dT",1)), pstream__));
                                         }
-                                        current_statement_begin__ = 855;
+                                        current_statement_begin__ = 894;
                                         if (as_bool(logical_eq(driftdiagonly,0))) {
-                                            current_statement_begin__ = 855;
+                                            current_statement_begin__ = 894;
                                             stan::math::assign(discreteDRIFT, matrix_exp(multiply(sDRIFT,get_base1(dT,rowi,"dT",1))));
                                         }
-                                        current_statement_begin__ = 856;
+                                        current_statement_begin__ = 895;
                                         stan::math::assign(discreteCINT, multiply(mdivide_left(sDRIFT,subtract(discreteDRIFT,IIlatent)),stan::model::rvalue(sCINT, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sCINT")));
-                                        current_statement_begin__ = 859;
+                                        current_statement_begin__ = 898;
                                         stan::model::assign(discreteDIFFUSION, 
                                                     stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), 
                                                     discreteDIFFUSIONcalc(stan::model::rvalue(sDRIFT, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "sDRIFT"),stan::model::rvalue(sDIFFUSION, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "sDIFFUSION"),get_base1(dT,rowi,"dT",1), pstream__), 
                                                     "assigning variable discreteDIFFUSION");
                                     }
-                                    current_statement_begin__ = 861;
+                                    current_statement_begin__ = 900;
                                     if (as_bool(logical_eq(continuoustime,0))) {
 
-                                        current_statement_begin__ = 862;
+                                        current_statement_begin__ = 901;
                                         stan::math::assign(discreteDRIFT, sDRIFT);
-                                        current_statement_begin__ = 863;
+                                        current_statement_begin__ = 902;
                                         stan::math::assign(discreteCINT, stan::model::rvalue(sCINT, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sCINT"));
-                                        current_statement_begin__ = 864;
+                                        current_statement_begin__ = 903;
                                         stan::math::assign(discreteDIFFUSION, sDIFFUSION);
                                     }
                                 }
-                                current_statement_begin__ = 867;
+                                current_statement_begin__ = 906;
                                 stan::math::assign(state, add(multiply(discreteDRIFT,state),discreteCINT));
-                                current_statement_begin__ = 868;
+                                current_statement_begin__ = 907;
                                 if (as_bool((primitive_value(logical_gt(statei,(2 + (2 * nlatentpop)))) && primitive_value(logical_lte(statei,((2 + (2 * nlatentpop)) + ndynerror)))))) {
-                                    current_statement_begin__ = 868;
+                                    current_statement_begin__ = 907;
                                     stan::math::assign(state, add(state, multiply(stan::model::rvalue(discreteDIFFUSION, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(get_base1(derrind,(statei - (2 + (2 * nlatentpop))),"derrind",1)), stan::model::nil_index_list())), "discreteDIFFUSION"),dynerror)));
                                 }
-                                current_statement_begin__ = 869;
+                                current_statement_begin__ = 908;
                                 if (as_bool(logical_gt(statei,((2 + (2 * nlatentpop)) + ndynerror)))) {
-                                    current_statement_begin__ = 869;
+                                    current_statement_begin__ = 908;
                                     stan::math::assign(state, add(state, multiply(minus(stan::model::rvalue(discreteDIFFUSION, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(get_base1(derrind,(statei - ((2 + (2 * nlatentpop)) + ndynerror)),"derrind",1)), stan::model::nil_index_list())), "discreteDIFFUSION")),dynerror)));
                                 }
                             }
                         }
-                        current_statement_begin__ = 873;
+                        current_statement_begin__ = 913;
                         if (as_bool(logical_eq(ukfpop,1))) {
 
-                            current_statement_begin__ = 875;
+                            current_statement_begin__ = 915;
                             for (int ri = 1; ri <= size(DRIFTsetup); ++ri) {
 
-                                current_statement_begin__ = 876;
+                                current_statement_begin__ = 916;
                                 if (as_bool(logical_gt(get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),5,"DRIFTsetup",2),0))) {
 
-                                    current_statement_begin__ = 877;
+                                    current_statement_begin__ = 917;
                                     stan::math::assign(get_base1_lhs(sDRIFT,get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),1,"DRIFTsetup",2),get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),2,"DRIFTsetup",2),"sDRIFT",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),5,"DRIFTsetup",2)),statei,"ukfstates",1),get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),4,"DRIFTsetup",2),get_base1(DRIFTvalues,ri,2,"DRIFTvalues",1),get_base1(DRIFTvalues,ri,3,"DRIFTvalues",1),get_base1(DRIFTvalues,ri,4,"DRIFTvalues",1), pstream__));
                                 }
                             }
-                            current_statement_begin__ = 882;
+                            current_statement_begin__ = 922;
                             for (int ri = 1; ri <= size(DIFFUSIONsetup); ++ri) {
 
-                                current_statement_begin__ = 883;
+                                current_statement_begin__ = 923;
                                 if (as_bool(logical_gt(get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),5,"DIFFUSIONsetup",2),0))) {
 
-                                    current_statement_begin__ = 884;
+                                    current_statement_begin__ = 924;
                                     stan::math::assign(get_base1_lhs(sDIFFUSION,get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),1,"DIFFUSIONsetup",2),get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),2,"DIFFUSIONsetup",2),"sDIFFUSION",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),5,"DIFFUSIONsetup",2)),statei,"ukfstates",1),get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),4,"DIFFUSIONsetup",2),get_base1(DIFFUSIONvalues,ri,2,"DIFFUSIONvalues",1),get_base1(DIFFUSIONvalues,ri,3,"DIFFUSIONvalues",1),get_base1(DIFFUSIONvalues,ri,4,"DIFFUSIONvalues",1), pstream__));
                                 }
                             }
-                            current_statement_begin__ = 889;
+                            current_statement_begin__ = 929;
                             for (int ri = 1; ri <= size(CINTsetup); ++ri) {
 
-                                current_statement_begin__ = 890;
+                                current_statement_begin__ = 930;
                                 if (as_bool(logical_gt(get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),5,"CINTsetup",2),0))) {
 
-                                    current_statement_begin__ = 891;
+                                    current_statement_begin__ = 931;
                                     stan::math::assign(get_base1_lhs(sCINT,get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),1,"CINTsetup",2),get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),2,"CINTsetup",2),"sCINT",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),5,"CINTsetup",2)),statei,"ukfstates",1),get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),4,"CINTsetup",2),get_base1(CINTvalues,ri,2,"CINTvalues",1),get_base1(CINTvalues,ri,3,"CINTvalues",1),get_base1(CINTvalues,ri,4,"CINTvalues",1), pstream__));
                                 }
                             }
-                            current_statement_begin__ = 896;
+                            current_statement_begin__ = 936;
                             for (int ri = 1; ri <= size(TDPREDEFFECTsetup); ++ri) {
 
-                                current_statement_begin__ = 897;
+                                current_statement_begin__ = 937;
                                 if (as_bool(logical_gt(get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),5,"TDPREDEFFECTsetup",2),0))) {
 
-                                    current_statement_begin__ = 898;
+                                    current_statement_begin__ = 938;
                                     stan::math::assign(get_base1_lhs(sTDPREDEFFECT,get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),1,"TDPREDEFFECTsetup",2),get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),2,"TDPREDEFFECTsetup",2),"sTDPREDEFFECT",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),5,"TDPREDEFFECTsetup",2)),statei,"ukfstates",1),get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),4,"TDPREDEFFECTsetup",2),get_base1(TDPREDEFFECTvalues,ri,2,"TDPREDEFFECTvalues",1),get_base1(TDPREDEFFECTvalues,ri,3,"TDPREDEFFECTvalues",1),get_base1(TDPREDEFFECTvalues,ri,4,"TDPREDEFFECTvalues",1), pstream__));
                                 }
                             }
+                            current_statement_begin__ = 943;
+                            for (int ri = 1; ri <= size(PARSsetup); ++ri) {
+
+                                current_statement_begin__ = 944;
+                                if (as_bool(logical_gt(get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),5,"PARSsetup",2),0))) {
+
+                                    current_statement_begin__ = 945;
+                                    stan::math::assign(get_base1_lhs(sPARS,get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),1,"PARSsetup",2),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),2,"PARSsetup",2),"sPARS",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),5,"PARSsetup",2)),statei,"ukfstates",1),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),4,"PARSsetup",2),get_base1(PARSvalues,ri,2,"PARSvalues",1),get_base1(PARSvalues,ri,3,"PARSvalues",1),get_base1(PARSvalues,ri,4,"PARSvalues",1), pstream__));
+                                }
+                            }
                         }
-                        current_statement_begin__ = 902;
+                        current_statement_begin__ = 949;
                         if (as_bool(logical_gt(ntdpred,0))) {
-                            current_statement_begin__ = 902;
+                            current_statement_begin__ = 949;
                             stan::math::assign(state, add(state, multiply(sTDPREDEFFECT,get_base1(tdpreds,rowi,"tdpreds",1))));
                         }
-                        current_statement_begin__ = 903;
+                        current_statement_begin__ = 950;
                         stan::model::assign(ukfstates, 
                                     stan::model::cons_list(stan::model::index_min_max(1, nlatent), stan::model::cons_list(stan::model::index_uni(statei), stan::model::nil_index_list())), 
                                     state, 
                                     "assigning variable ukfstates");
-                        current_statement_begin__ = 904;
+                        current_statement_begin__ = 951;
                         if (as_bool(logical_eq(statei,2))) {
-                            current_statement_begin__ = 904;
+                            current_statement_begin__ = 951;
                             stan::model::assign(ukfstates, 
                                         stan::model::cons_list(stan::model::index_min_max(1, nlatent), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), 
                                         state, 
                                         "assigning variable ukfstates");
                         }
                     }
-                    current_statement_begin__ = 907;
+                    current_statement_begin__ = 954;
                     stan::math::assign(get_base1_lhs(etaprior,rowi,"etaprior",1), colMeans(transpose(ukfstates), pstream__));
-                    current_statement_begin__ = 908;
+                    current_statement_begin__ = 955;
                     stan::math::assign(get_base1_lhs(etapriorcov,rowi,"etapriorcov",1), divide(cov_of_matrix(transpose(ukfstates), pstream__),asquared));
                 }
-                current_statement_begin__ = 911;
+                current_statement_begin__ = 958;
                 if (as_bool((primitive_value(logical_eq(intoverstates,0)) && primitive_value(logical_eq(lineardynamics,1))))) {
 
-                    current_statement_begin__ = 912;
+                    current_statement_begin__ = 959;
                     if (as_bool(logical_eq(get_base1(T0check,rowi,"T0check",1),1))) {
-                        current_statement_begin__ = 912;
+                        current_statement_begin__ = 959;
                         stan::math::assign(get_base1_lhs(etaupd,rowi,"etaupd",1), add(get_base1(etaprior,rowi,"etaprior",1),multiply(sT0VAR,stan::model::rvalue(etaupdbasestates, stan::model::cons_list(stan::model::index_min_max((1 + ((rowi - 1) * nlatent)), (rowi * nlatent)), stan::model::nil_index_list()), "etaupdbasestates"))));
                     }
-                    current_statement_begin__ = 913;
+                    current_statement_begin__ = 960;
                     if (as_bool(logical_eq(get_base1(T0check,rowi,"T0check",1),0))) {
-                        current_statement_begin__ = 913;
+                        current_statement_begin__ = 960;
                         stan::math::assign(get_base1_lhs(etaupd,rowi,"etaupd",1), add(get_base1(etaprior,rowi,"etaprior",1),multiply(sDIFFUSION,stan::model::rvalue(etaupdbasestates, stan::model::cons_list(stan::model::index_min_max((1 + ((rowi - 1) * nlatent)), (rowi * nlatent)), stan::model::nil_index_list()), "etaupdbasestates"))));
                     }
                 }
-                current_statement_begin__ = 916;
+                current_statement_begin__ = 963;
                 if (as_bool((primitive_value(logical_eq(nobsi,0)) && primitive_value(logical_eq(intoverstates,1))))) {
 
-                    current_statement_begin__ = 917;
+                    current_statement_begin__ = 964;
                     stan::math::assign(get_base1_lhs(etaupdcov,rowi,"etaupdcov",1), get_base1(etapriorcov,rowi,"etapriorcov",1));
-                    current_statement_begin__ = 918;
+                    current_statement_begin__ = 965;
                     stan::math::assign(get_base1_lhs(etaupd,rowi,"etaupd",1), get_base1(etaprior,rowi,"etaprior",1));
                 }
-                current_statement_begin__ = 921;
+                current_statement_begin__ = 968;
                 if (as_bool(logical_gt(nobsi,0))) {
                     {
-                    current_statement_begin__ = 923;
+                    current_statement_begin__ = 970;
                     validate_non_negative_index("cindex", "(intoverstates ? nobsi : get_base1(ncont_y,rowi,\"ncont_y\",1) )", (intoverstates ? nobsi : get_base1(ncont_y,rowi,"ncont_y",1) ));
                     vector<int> cindex((intoverstates ? nobsi : get_base1(ncont_y,rowi,"ncont_y",1) ), 0);
                     stan::math::fill(cindex, std::numeric_limits<int>::min());
 
 
-                    current_statement_begin__ = 925;
+                    current_statement_begin__ = 972;
                     if (as_bool(logical_eq(intoverstates,0))) {
-                        current_statement_begin__ = 925;
+                        current_statement_begin__ = 972;
                         stan::math::assign(cindex, o0);
                     }
-                    current_statement_begin__ = 926;
+                    current_statement_begin__ = 973;
                     if (as_bool(logical_eq(intoverstates,1))) {
-                        current_statement_begin__ = 926;
+                        current_statement_begin__ = 973;
                         stan::math::assign(cindex, o);
                     }
-                    current_statement_begin__ = 928;
+                    current_statement_begin__ = 975;
                     if (as_bool(logical_eq(ukf,0))) {
 
-                        current_statement_begin__ = 929;
+                        current_statement_begin__ = 976;
                         if (as_bool(logical_eq(intoverstates,1))) {
 
-                            current_statement_begin__ = 930;
+                            current_statement_begin__ = 977;
                             stan::model::assign(ypred, 
                                         stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list()), 
                                         add(stan::model::rvalue(sMANIFESTMEANS, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sMANIFESTMEANS"),multiply(stan::model::rvalue(sLAMBDA, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "sLAMBDA"),get_base1(etaprior,rowi,"etaprior",1))), 
                                         "assigning variable ypred");
-                            current_statement_begin__ = 931;
+                            current_statement_begin__ = 978;
                             stan::model::assign(ypredcov, 
                                         stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), 
                                         add(quad_form(get_base1(etapriorcov,rowi,"etapriorcov",1),transpose(stan::model::rvalue(sLAMBDA, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "sLAMBDA"))),stan::model::rvalue(sMANIFESTVAR, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), "sMANIFESTVAR")), 
                                         "assigning variable ypredcov");
-                            current_statement_begin__ = 932;
+                            current_statement_begin__ = 979;
                             for (int wi = 1; wi <= nmanifest; ++wi) {
 
-                                current_statement_begin__ = 933;
+                                current_statement_begin__ = 980;
                                 if (as_bool((primitive_value(logical_eq(get_base1(manifesttype,wi,"manifesttype",1),1)) && primitive_value(logical_neq(get_base1(get_base1(Y,rowi,"Y",1),wi,"Y",2),99999))))) {
-                                    current_statement_begin__ = 933;
+                                    current_statement_begin__ = 980;
                                     stan::math::assign(get_base1_lhs(ypredcov,wi,wi,"ypredcov",1), (get_base1(ypredcov,wi,wi,"ypredcov",1) + fabs(((get_base1(ypred,wi,"ypred",1) - 1) * get_base1(ypred,wi,"ypred",1)))));
                                 }
                             }
-                            current_statement_begin__ = 935;
+                            current_statement_begin__ = 982;
                             stan::model::assign(K, 
                                         stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), 
                                         mdivide_right(multiply(get_base1(etapriorcov,rowi,"etapriorcov",1),transpose(stan::model::rvalue(sLAMBDA, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "sLAMBDA"))),stan::model::rvalue(ypredcov, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), "ypredcov")), 
                                         "assigning variable K");
-                            current_statement_begin__ = 936;
+                            current_statement_begin__ = 983;
                             stan::math::assign(get_base1_lhs(etaupdcov,rowi,"etaupdcov",1), multiply(subtract(IIlatent,multiply(stan::model::rvalue(K, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), "K"),stan::model::rvalue(sLAMBDA, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "sLAMBDA"))),get_base1(etapriorcov,rowi,"etapriorcov",1)));
                         }
-                        current_statement_begin__ = 938;
+                        current_statement_begin__ = 985;
                         if (as_bool(logical_eq(intoverstates,0))) {
 
-                            current_statement_begin__ = 939;
+                            current_statement_begin__ = 986;
                             if (as_bool(logical_gt(get_base1(ncont_y,rowi,"ncont_y",1),0))) {
-                                current_statement_begin__ = 939;
+                                current_statement_begin__ = 986;
                                 stan::model::assign(ypred, 
                                             stan::model::cons_list(stan::model::index_multi(o0), stan::model::nil_index_list()), 
                                             add(stan::model::rvalue(sMANIFESTMEANS, stan::model::cons_list(stan::model::index_multi(o0), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sMANIFESTMEANS"),multiply(stan::model::rvalue(sLAMBDA, stan::model::cons_list(stan::model::index_multi(o0), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "sLAMBDA"),get_base1(etaupd,rowi,"etaupd",1))), 
                                             "assigning variable ypred");
                             }
-                            current_statement_begin__ = 940;
+                            current_statement_begin__ = 987;
                             if (as_bool(logical_gt(get_base1(nbinary_y,rowi,"nbinary_y",1),0))) {
-                                current_statement_begin__ = 940;
+                                current_statement_begin__ = 987;
                                 stan::model::assign(ypred, 
                                             stan::model::cons_list(stan::model::index_multi(o1), stan::model::nil_index_list()), 
                                             to_vector(inv_logit(to_array_1d(add(stan::model::rvalue(sMANIFESTMEANS, stan::model::cons_list(stan::model::index_multi(o1), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sMANIFESTMEANS"),multiply(stan::model::rvalue(sLAMBDA, stan::model::cons_list(stan::model::index_multi(o1), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "sLAMBDA"),get_base1(etaupd,rowi,"etaupd",1)))))), 
                                             "assigning variable ypred");
                             }
-                            current_statement_begin__ = 941;
+                            current_statement_begin__ = 988;
                             stan::model::assign(ypredcov, 
                                         stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), 
                                         stan::model::rvalue(sMANIFESTVAR, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), "sMANIFESTVAR"), 
                                         "assigning variable ypredcov");
                         }
                     }
-                    current_statement_begin__ = 946;
+                    current_statement_begin__ = 993;
                     if (as_bool(logical_eq(ukf,1))) {
 
-                        current_statement_begin__ = 947;
+                        current_statement_begin__ = 994;
                         for (int statei = 2; statei <= cols(ukfmeasures); ++statei) {
 
-                            current_statement_begin__ = 948;
+                            current_statement_begin__ = 995;
                             stan::math::assign(state, stan::model::rvalue(ukfstates, stan::model::cons_list(stan::model::index_min_max(1, nlatent), stan::model::cons_list(stan::model::index_uni(statei), stan::model::nil_index_list())), "ukfstates"));
-                            current_statement_begin__ = 950;
+                            current_statement_begin__ = 997;
                             if (as_bool(logical_eq(ukfpop,1))) {
 
-                                current_statement_begin__ = 952;
+                                current_statement_begin__ = 999;
                                 for (int ri = 1; ri <= size(LAMBDAsetup); ++ri) {
 
-                                    current_statement_begin__ = 953;
+                                    current_statement_begin__ = 1000;
                                     if (as_bool(logical_gt(get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),5,"LAMBDAsetup",2),0))) {
 
-                                        current_statement_begin__ = 954;
+                                        current_statement_begin__ = 1001;
                                         stan::math::assign(get_base1_lhs(sLAMBDA,get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),1,"LAMBDAsetup",2),get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),2,"LAMBDAsetup",2),"sLAMBDA",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),5,"LAMBDAsetup",2)),statei,"ukfstates",1),get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),4,"LAMBDAsetup",2),get_base1(LAMBDAvalues,ri,2,"LAMBDAvalues",1),get_base1(LAMBDAvalues,ri,3,"LAMBDAvalues",1),get_base1(LAMBDAvalues,ri,4,"LAMBDAvalues",1), pstream__));
                                     }
                                 }
-                                current_statement_begin__ = 958;
+                                current_statement_begin__ = 1005;
                                 for (int ri = 1; ri <= size(MANIFESTMEANSsetup); ++ri) {
 
-                                    current_statement_begin__ = 959;
+                                    current_statement_begin__ = 1006;
                                     if (as_bool(logical_gt(get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),5,"MANIFESTMEANSsetup",2),0))) {
 
-                                        current_statement_begin__ = 960;
+                                        current_statement_begin__ = 1007;
                                         stan::math::assign(get_base1_lhs(sMANIFESTMEANS,get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),1,"MANIFESTMEANSsetup",2),get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),2,"MANIFESTMEANSsetup",2),"sMANIFESTMEANS",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),5,"MANIFESTMEANSsetup",2)),statei,"ukfstates",1),get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),4,"MANIFESTMEANSsetup",2),get_base1(MANIFESTMEANSvalues,ri,2,"MANIFESTMEANSvalues",1),get_base1(MANIFESTMEANSvalues,ri,3,"MANIFESTMEANSvalues",1),get_base1(MANIFESTMEANSvalues,ri,4,"MANIFESTMEANSvalues",1), pstream__));
                                     }
                                 }
-                                current_statement_begin__ = 964;
+                                current_statement_begin__ = 1011;
                                 for (int ri = 1; ri <= size(MANIFESTVARsetup); ++ri) {
 
-                                    current_statement_begin__ = 965;
+                                    current_statement_begin__ = 1012;
                                     if (as_bool(logical_gt(get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),5,"MANIFESTVARsetup",2),0))) {
 
-                                        current_statement_begin__ = 966;
+                                        current_statement_begin__ = 1013;
                                         stan::math::assign(get_base1_lhs(sMANIFESTVAR,get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),1,"MANIFESTVARsetup",2),get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),2,"MANIFESTVARsetup",2),"sMANIFESTVAR",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),5,"MANIFESTVARsetup",2)),statei,"ukfstates",1),get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),4,"MANIFESTVARsetup",2),get_base1(MANIFESTVARvalues,ri,2,"MANIFESTVARvalues",1),get_base1(MANIFESTVARvalues,ri,3,"MANIFESTVARvalues",1),get_base1(MANIFESTVARvalues,ri,4,"MANIFESTVARvalues",1), pstream__));
                                     }
                                 }
+                                current_statement_begin__ = 1017;
+                                for (int ri = 1; ri <= size(PARSsetup); ++ri) {
+
+                                    current_statement_begin__ = 1018;
+                                    if (as_bool(logical_gt(get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),5,"PARSsetup",2),0))) {
+
+                                        current_statement_begin__ = 1019;
+                                        stan::math::assign(get_base1_lhs(sPARS,get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),1,"PARSsetup",2),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),2,"PARSsetup",2),"sPARS",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),5,"PARSsetup",2)),statei,"ukfstates",1),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),4,"PARSsetup",2),get_base1(PARSvalues,ri,2,"PARSvalues",1),get_base1(PARSvalues,ri,3,"PARSvalues",1),get_base1(PARSvalues,ri,4,"PARSvalues",1), pstream__));
+                                    }
+                                }
                             }
-                            current_statement_begin__ = 971;
+                            current_statement_begin__ = 1024;
                             if (as_bool(logical_gt(get_base1(ncont_y,rowi,"ncont_y",1),0))) {
-                                current_statement_begin__ = 971;
+                                current_statement_begin__ = 1024;
                                 stan::model::assign(ukfmeasures, 
                                             stan::model::cons_list(stan::model::index_multi(o0), stan::model::cons_list(stan::model::index_uni(statei), stan::model::nil_index_list())), 
                                             add(stan::model::rvalue(sMANIFESTMEANS, stan::model::cons_list(stan::model::index_multi(o0), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sMANIFESTMEANS"),multiply(stan::model::rvalue(sLAMBDA, stan::model::cons_list(stan::model::index_multi(o0), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "sLAMBDA"),state)), 
                                             "assigning variable ukfmeasures");
                             }
-                            current_statement_begin__ = 972;
+                            current_statement_begin__ = 1025;
                             if (as_bool(logical_gt(get_base1(nbinary_y,rowi,"nbinary_y",1),0))) {
 
-                                current_statement_begin__ = 973;
+                                current_statement_begin__ = 1026;
                                 stan::model::assign(ukfmeasures, 
                                             stan::model::cons_list(stan::model::index_multi(o1), stan::model::cons_list(stan::model::index_uni(statei), stan::model::nil_index_list())), 
                                             to_vector(inv_logit(to_array_1d(add(stan::model::rvalue(sMANIFESTMEANS, stan::model::cons_list(stan::model::index_multi(o1), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sMANIFESTMEANS"),multiply(stan::model::rvalue(sLAMBDA, stan::model::cons_list(stan::model::index_multi(o1), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "sLAMBDA"),state))))), 
                                             "assigning variable ukfmeasures");
                             }
-                            current_statement_begin__ = 975;
+                            current_statement_begin__ = 1028;
                             if (as_bool(logical_eq(statei,2))) {
 
-                                current_statement_begin__ = 976;
+                                current_statement_begin__ = 1029;
                                 if (as_bool(logical_gt(get_base1(ncont_y,rowi,"ncont_y",1),0))) {
-                                    current_statement_begin__ = 976;
+                                    current_statement_begin__ = 1029;
                                     stan::model::assign(ukfmeasures, 
                                                 stan::model::cons_list(stan::model::index_multi(o0), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), 
                                                 add(stan::model::rvalue(sMANIFESTMEANS, stan::model::cons_list(stan::model::index_multi(o0), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sMANIFESTMEANS"),multiply(stan::model::rvalue(sLAMBDA, stan::model::cons_list(stan::model::index_multi(o0), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "sLAMBDA"),state)), 
                                                 "assigning variable ukfmeasures");
                                 }
-                                current_statement_begin__ = 977;
+                                current_statement_begin__ = 1030;
                                 if (as_bool(logical_gt(get_base1(nbinary_y,rowi,"nbinary_y",1),0))) {
 
-                                    current_statement_begin__ = 978;
+                                    current_statement_begin__ = 1031;
                                     stan::model::assign(ukfmeasures, 
                                                 stan::model::cons_list(stan::model::index_multi(o1), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), 
                                                 to_vector(inv_logit(to_array_1d(add(stan::model::rvalue(sMANIFESTMEANS, stan::model::cons_list(stan::model::index_multi(o1), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sMANIFESTMEANS"),multiply(stan::model::rvalue(sLAMBDA, stan::model::cons_list(stan::model::index_multi(o1), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "sLAMBDA"),state))))), 
@@ -4077,55 +4305,55 @@ public:
                                 }
                             }
                         }
-                        current_statement_begin__ = 983;
+                        current_statement_begin__ = 1036;
                         stan::model::assign(ypred, 
                                     stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list()), 
                                     colMeans(transpose(stan::model::rvalue(ukfmeasures, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "ukfmeasures")), pstream__), 
                                     "assigning variable ypred");
-                        current_statement_begin__ = 984;
+                        current_statement_begin__ = 1037;
                         stan::model::assign(ypredcov, 
                                     stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), 
                                     add(divide(cov_of_matrix(transpose(stan::model::rvalue(ukfmeasures, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "ukfmeasures")), pstream__),asquared),stan::model::rvalue(sMANIFESTVAR, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), "sMANIFESTVAR")), 
                                     "assigning variable ypredcov");
-                        current_statement_begin__ = 985;
+                        current_statement_begin__ = 1038;
                         for (int wi = 1; wi <= nmanifest; ++wi) {
 
-                            current_statement_begin__ = 986;
+                            current_statement_begin__ = 1039;
                             if (as_bool((primitive_value(logical_eq(get_base1(manifesttype,wi,"manifesttype",1),1)) && primitive_value(logical_neq(get_base1(get_base1(Y,rowi,"Y",1),wi,"Y",2),99999))))) {
-                                current_statement_begin__ = 986;
+                                current_statement_begin__ = 1039;
                                 stan::math::assign(get_base1_lhs(ypredcov,wi,wi,"ypredcov",1), (get_base1(ypredcov,wi,wi,"ypredcov",1) + fabs(((get_base1(ypred,wi,"ypred",1) - 1) * get_base1(ypred,wi,"ypred",1)))));
                             }
                         }
-                        current_statement_begin__ = 988;
+                        current_statement_begin__ = 1041;
                         stan::model::assign(K, 
                                     stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), 
                                     mdivide_right(divide(crosscov(transpose(ukfstates),transpose(stan::model::rvalue(ukfmeasures, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "ukfmeasures")), pstream__),asquared),stan::model::rvalue(ypredcov, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), "ypredcov")), 
                                     "assigning variable K");
-                        current_statement_begin__ = 989;
+                        current_statement_begin__ = 1042;
                         stan::math::assign(get_base1_lhs(etaupdcov,rowi,"etaupdcov",1), subtract(get_base1(etapriorcov,rowi,"etapriorcov",1),quad_form(stan::model::rvalue(ypredcov, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), "ypredcov"),transpose(stan::model::rvalue(K, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), "K")))));
                     }
-                    current_statement_begin__ = 994;
+                    current_statement_begin__ = 1047;
                     stan::model::assign(err, 
                                 stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list()), 
                                 subtract(stan::model::rvalue(Y, stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), "Y"),stan::model::rvalue(ypred, stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list()), "ypred")), 
                                 "assigning variable err");
-                    current_statement_begin__ = 995;
+                    current_statement_begin__ = 1048;
                     if (as_bool(logical_eq(intoverstates,1))) {
-                        current_statement_begin__ = 995;
+                        current_statement_begin__ = 1048;
                         stan::model::assign(etaupd, 
                                     stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), 
                                     add(stan::model::rvalue(etaprior, stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "etaprior"),multiply(stan::model::rvalue(K, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), "K"),stan::model::rvalue(err, stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list()), "err"))), 
                                     "assigning variable etaupd");
                     }
-                    current_statement_begin__ = 999;
+                    current_statement_begin__ = 1052;
                     if (as_bool((primitive_value(logical_eq(intoverstates,0)) && primitive_value(logical_gt(get_base1(nbinary_y,rowi,"nbinary_y",1),0))))) {
-                        current_statement_begin__ = 999;
+                        current_statement_begin__ = 1052;
                         stan::math::assign(ll, (ll + sum(log(add(elt_multiply(stan::model::rvalue(Y, stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_multi(o1), stan::model::nil_index_list())), "Y"),stan::model::rvalue(ypred, stan::model::cons_list(stan::model::index_multi(o1), stan::model::nil_index_list()), "ypred")),elt_multiply(subtract(1,stan::model::rvalue(Y, stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_multi(o1), stan::model::nil_index_list())), "Y")),subtract(1,stan::model::rvalue(ypred, stan::model::cons_list(stan::model::index_multi(o1), stan::model::nil_index_list()), "ypred"))))))));
                     }
-                    current_statement_begin__ = 1001;
+                    current_statement_begin__ = 1054;
                     if (as_bool(logical_gt(verbose,1))) {
 
-                        current_statement_begin__ = 1002;
+                        current_statement_begin__ = 1055;
                         if (pstream__) {
                             stan_print(pstream__,"rowi ");
                             stan_print(pstream__,rowi);
@@ -4161,9 +4389,9 @@ public:
                             stan_print(pstream__,rawpopmeans);
                             *pstream__ << std::endl;
                         }
-                        current_statement_begin__ = 1006;
+                        current_statement_begin__ = 1059;
                         if (as_bool(logical_eq(lineardynamics,1))) {
-                            current_statement_begin__ = 1006;
+                            current_statement_begin__ = 1059;
                             if (pstream__) {
                                 stan_print(pstream__,"discreteDRIFT ");
                                 stan_print(pstream__,discreteDRIFT);
@@ -4175,9 +4403,9 @@ public:
                             }
                         }
                     }
-                    current_statement_begin__ = 1008;
+                    current_statement_begin__ = 1061;
                     if (as_bool(logical_gt(verbose,2))) {
-                        current_statement_begin__ = 1008;
+                        current_statement_begin__ = 1061;
                         if (pstream__) {
                             stan_print(pstream__,"ukfstates ");
                             stan_print(pstream__,ukfstates);
@@ -4186,20 +4414,20 @@ public:
                             *pstream__ << std::endl;
                         }
                     }
-                    current_statement_begin__ = 1010;
+                    current_statement_begin__ = 1063;
                     if (as_bool(logical_gt(size(cindex),0))) {
 
-                        current_statement_begin__ = 1011;
+                        current_statement_begin__ = 1064;
                         stan::model::assign(ypredcov_sqrt, 
                                     stan::model::cons_list(stan::model::index_multi(cindex), stan::model::cons_list(stan::model::index_multi(cindex), stan::model::nil_index_list())), 
                                     cholspd(stan::model::rvalue(ypredcov, stan::model::cons_list(stan::model::index_multi(cindex), stan::model::cons_list(stan::model::index_multi(cindex), stan::model::nil_index_list())), "ypredcov"), pstream__), 
                                     "assigning variable ypredcov_sqrt");
-                        current_statement_begin__ = 1012;
+                        current_statement_begin__ = 1065;
                         stan::model::assign(errtrans, 
                                     stan::model::cons_list(stan::model::index_min_max((cobscount + 1), (cobscount + size(cindex))), stan::model::nil_index_list()), 
                                     mdivide_left_tri_low(stan::model::rvalue(ypredcov_sqrt, stan::model::cons_list(stan::model::index_multi(cindex), stan::model::cons_list(stan::model::index_multi(cindex), stan::model::nil_index_list())), "ypredcov_sqrt"),stan::model::rvalue(err, stan::model::cons_list(stan::model::index_multi(cindex), stan::model::nil_index_list()), "err")), 
                                     "assigning variable errtrans");
-                        current_statement_begin__ = 1013;
+                        current_statement_begin__ = 1066;
                         stan::model::assign(errscales, 
                                     stan::model::cons_list(stan::model::index_min_max((cobscount + 1), (cobscount + size(cindex))), stan::model::nil_index_list()), 
                                     log(diagonal(stan::model::rvalue(ypredcov_sqrt, stan::model::cons_list(stan::model::index_multi(cindex), stan::model::cons_list(stan::model::index_multi(cindex), stan::model::nil_index_list())), "ypredcov_sqrt"))), 
@@ -4209,17 +4437,17 @@ public:
                 }
                 }
             }
-            current_statement_begin__ = 1018;
+            current_statement_begin__ = 1071;
             if (as_bool((primitive_value(logical_eq(intoverstates,1)) || primitive_value(logical_gt(sum(ncont_y),0))))) {
-                current_statement_begin__ = 1018;
+                current_statement_begin__ = 1071;
                 stan::math::assign(ll, ((ll + normal_log(errtrans,0,1)) - sum(errscales)));
             }
             }
-            current_statement_begin__ = 1020;
+            current_statement_begin__ = 1073;
             lp_accum__.add(ll);
-            current_statement_begin__ = 1022;
+            current_statement_begin__ = 1075;
             if (as_bool(logical_gt(verbose,0))) {
-                current_statement_begin__ = 1022;
+                current_statement_begin__ = 1075;
                 if (pstream__) {
                     stan_print(pstream__,"lp = ");
                     stan_print(pstream__,get_lp(lp__, lp_accum__));
@@ -4272,6 +4500,7 @@ public:
         names__.push_back("CINT");
         names__.push_back("T0VAR");
         names__.push_back("TDPREDEFFECT");
+        names__.push_back("PARS");
         names__.push_back("asymDIFFUSION");
         names__.push_back("asymCINT");
         names__.push_back("tipreds");
@@ -4280,6 +4509,7 @@ public:
         names__.push_back("popsd");
         names__.push_back("rawpopcov");
         names__.push_back("rawpopcorr");
+        names__.push_back("linearTIPREDEFFECT");
         names__.push_back("pop_T0MEANS");
         names__.push_back("pop_LAMBDA");
         names__.push_back("pop_DRIFT");
@@ -4289,6 +4519,7 @@ public:
         names__.push_back("pop_CINT");
         names__.push_back("pop_T0VAR");
         names__.push_back("pop_TDPREDEFFECT");
+        names__.push_back("pop_PARS");
         names__.push_back("asympop_DIFFUSION");
         names__.push_back("asympop_CINT");
         names__.push_back("Ygen");
@@ -4376,6 +4607,11 @@ public:
         dims__.push_back((TDPREDEFFECTsetup_rowcount ? max(stan::model::rvalue(TDPREDEFFECTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "TDPREDEFFECTsetup")) : 0 ));
         dimss__.push_back(dims__);
         dims__.resize(0);
+        dims__.push_back(get_base1(PARSsubindex,nsubjects,"PARSsubindex",1));
+        dims__.push_back((PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "PARSsetup")) : 0 ));
+        dims__.push_back((PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "PARSsetup")) : 0 ));
+        dimss__.push_back(dims__);
+        dims__.resize(0);
         dims__.push_back((lineardynamics ? get_base1(asymDIFFUSIONsubindex,nsubjects,"asymDIFFUSIONsubindex",1) : 0 ));
         dims__.push_back(nlatent);
         dims__.push_back(nlatent);
@@ -4405,6 +4641,10 @@ public:
         dims__.resize(0);
         dims__.push_back(nindvarying);
         dims__.push_back(nindvarying);
+        dimss__.push_back(dims__);
+        dims__.resize(0);
+        dims__.push_back(nparams);
+        dims__.push_back(ntipred);
         dimss__.push_back(dims__);
         dims__.resize(0);
         dims__.push_back(get_base1(T0MEANSsubindex,1,"T0MEANSsubindex",1));
@@ -4450,6 +4690,11 @@ public:
         dims__.push_back(get_base1(TDPREDEFFECTsubindex,1,"TDPREDEFFECTsubindex",1));
         dims__.push_back((TDPREDEFFECTsetup_rowcount ? max(stan::model::rvalue(TDPREDEFFECTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "TDPREDEFFECTsetup")) : 0 ));
         dims__.push_back((TDPREDEFFECTsetup_rowcount ? max(stan::model::rvalue(TDPREDEFFECTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "TDPREDEFFECTsetup")) : 0 ));
+        dimss__.push_back(dims__);
+        dims__.resize(0);
+        dims__.push_back(get_base1(PARSsubindex,1,"PARSsubindex",1));
+        dims__.push_back((PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "PARSsetup")) : 0 ));
+        dims__.push_back((PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "PARSsetup")) : 0 ));
         dimss__.push_back(dims__);
         dims__.resize(0);
         dims__.push_back((lineardynamics ? get_base1(asymDIFFUSIONsubindex,1,"asymDIFFUSIONsubindex",1) : 0 ));
@@ -4519,14 +4764,14 @@ public:
         (void) DUMMY_VAR__;  // suppress unused var warning
 
         try {
-            current_statement_begin__ = 336;
+            current_statement_begin__ = 343;
             validate_non_negative_index("rawpopsd", "nindvarying", nindvarying);
             vector_d rawpopsd(static_cast<Eigen::VectorXd::Index>(nindvarying));
             (void) rawpopsd;  // dummy to suppress unused var warning
 
             stan::math::initialize(rawpopsd, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(rawpopsd,DUMMY_VAR__);
-            current_statement_begin__ = 338;
+            current_statement_begin__ = 345;
             validate_non_negative_index("rawpopcorrsqrt", "nindvarying", nindvarying);
             validate_non_negative_index("rawpopcorrsqrt", "nindvarying", nindvarying);
             matrix_d rawpopcorrsqrt(static_cast<Eigen::VectorXd::Index>(nindvarying),static_cast<Eigen::VectorXd::Index>(nindvarying));
@@ -4534,7 +4779,7 @@ public:
 
             stan::math::initialize(rawpopcorrsqrt, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(rawpopcorrsqrt,DUMMY_VAR__);
-            current_statement_begin__ = 339;
+            current_statement_begin__ = 346;
             validate_non_negative_index("rawpopcovsqrt", "nindvarying", nindvarying);
             validate_non_negative_index("rawpopcovsqrt", "nindvarying", nindvarying);
             matrix_d rawpopcovsqrt(static_cast<Eigen::VectorXd::Index>(nindvarying),static_cast<Eigen::VectorXd::Index>(nindvarying));
@@ -4542,83 +4787,90 @@ public:
 
             stan::math::initialize(rawpopcovsqrt, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(rawpopcovsqrt,DUMMY_VAR__);
-            current_statement_begin__ = 342;
+            current_statement_begin__ = 349;
             validate_non_negative_index("T0MEANS", "(T0MEANSsetup_rowcount ? max(stan::model::rvalue(T0MEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"T0MEANSsetup\")) : 0 )", (T0MEANSsetup_rowcount ? max(stan::model::rvalue(T0MEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "T0MEANSsetup")) : 0 ));
             validate_non_negative_index("T0MEANS", "(T0MEANSsetup_rowcount ? max(stan::model::rvalue(T0MEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"T0MEANSsetup\")) : 0 )", (T0MEANSsetup_rowcount ? max(stan::model::rvalue(T0MEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "T0MEANSsetup")) : 0 ));
             validate_non_negative_index("T0MEANS", "get_base1(T0MEANSsubindex,nsubjects,\"T0MEANSsubindex\",1)", get_base1(T0MEANSsubindex,nsubjects,"T0MEANSsubindex",1));
             vector<matrix_d> T0MEANS(get_base1(T0MEANSsubindex,nsubjects,"T0MEANSsubindex",1), (matrix_d(static_cast<Eigen::VectorXd::Index>((T0MEANSsetup_rowcount ? max(stan::model::rvalue(T0MEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "T0MEANSsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((T0MEANSsetup_rowcount ? max(stan::model::rvalue(T0MEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "T0MEANSsetup")) : 0 )))));
             stan::math::initialize(T0MEANS, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(T0MEANS,DUMMY_VAR__);
-            current_statement_begin__ = 343;
+            current_statement_begin__ = 350;
             validate_non_negative_index("LAMBDA", "(LAMBDAsetup_rowcount ? max(stan::model::rvalue(LAMBDAsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"LAMBDAsetup\")) : 0 )", (LAMBDAsetup_rowcount ? max(stan::model::rvalue(LAMBDAsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "LAMBDAsetup")) : 0 ));
             validate_non_negative_index("LAMBDA", "(LAMBDAsetup_rowcount ? max(stan::model::rvalue(LAMBDAsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"LAMBDAsetup\")) : 0 )", (LAMBDAsetup_rowcount ? max(stan::model::rvalue(LAMBDAsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "LAMBDAsetup")) : 0 ));
             validate_non_negative_index("LAMBDA", "get_base1(LAMBDAsubindex,nsubjects,\"LAMBDAsubindex\",1)", get_base1(LAMBDAsubindex,nsubjects,"LAMBDAsubindex",1));
             vector<matrix_d> LAMBDA(get_base1(LAMBDAsubindex,nsubjects,"LAMBDAsubindex",1), (matrix_d(static_cast<Eigen::VectorXd::Index>((LAMBDAsetup_rowcount ? max(stan::model::rvalue(LAMBDAsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "LAMBDAsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((LAMBDAsetup_rowcount ? max(stan::model::rvalue(LAMBDAsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "LAMBDAsetup")) : 0 )))));
             stan::math::initialize(LAMBDA, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(LAMBDA,DUMMY_VAR__);
-            current_statement_begin__ = 344;
+            current_statement_begin__ = 351;
             validate_non_negative_index("DRIFT", "(DRIFTsetup_rowcount ? max(stan::model::rvalue(DRIFTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"DRIFTsetup\")) : 0 )", (DRIFTsetup_rowcount ? max(stan::model::rvalue(DRIFTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "DRIFTsetup")) : 0 ));
             validate_non_negative_index("DRIFT", "(DRIFTsetup_rowcount ? max(stan::model::rvalue(DRIFTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"DRIFTsetup\")) : 0 )", (DRIFTsetup_rowcount ? max(stan::model::rvalue(DRIFTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "DRIFTsetup")) : 0 ));
             validate_non_negative_index("DRIFT", "get_base1(DRIFTsubindex,nsubjects,\"DRIFTsubindex\",1)", get_base1(DRIFTsubindex,nsubjects,"DRIFTsubindex",1));
             vector<matrix_d> DRIFT(get_base1(DRIFTsubindex,nsubjects,"DRIFTsubindex",1), (matrix_d(static_cast<Eigen::VectorXd::Index>((DRIFTsetup_rowcount ? max(stan::model::rvalue(DRIFTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "DRIFTsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((DRIFTsetup_rowcount ? max(stan::model::rvalue(DRIFTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "DRIFTsetup")) : 0 )))));
             stan::math::initialize(DRIFT, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(DRIFT,DUMMY_VAR__);
-            current_statement_begin__ = 345;
+            current_statement_begin__ = 352;
             validate_non_negative_index("DIFFUSION", "(DIFFUSIONsetup_rowcount ? max(stan::model::rvalue(DIFFUSIONsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"DIFFUSIONsetup\")) : 0 )", (DIFFUSIONsetup_rowcount ? max(stan::model::rvalue(DIFFUSIONsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "DIFFUSIONsetup")) : 0 ));
             validate_non_negative_index("DIFFUSION", "(DIFFUSIONsetup_rowcount ? max(stan::model::rvalue(DIFFUSIONsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"DIFFUSIONsetup\")) : 0 )", (DIFFUSIONsetup_rowcount ? max(stan::model::rvalue(DIFFUSIONsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "DIFFUSIONsetup")) : 0 ));
             validate_non_negative_index("DIFFUSION", "get_base1(DIFFUSIONsubindex,nsubjects,\"DIFFUSIONsubindex\",1)", get_base1(DIFFUSIONsubindex,nsubjects,"DIFFUSIONsubindex",1));
             vector<matrix_d> DIFFUSION(get_base1(DIFFUSIONsubindex,nsubjects,"DIFFUSIONsubindex",1), (matrix_d(static_cast<Eigen::VectorXd::Index>((DIFFUSIONsetup_rowcount ? max(stan::model::rvalue(DIFFUSIONsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "DIFFUSIONsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((DIFFUSIONsetup_rowcount ? max(stan::model::rvalue(DIFFUSIONsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "DIFFUSIONsetup")) : 0 )))));
             stan::math::initialize(DIFFUSION, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(DIFFUSION,DUMMY_VAR__);
-            current_statement_begin__ = 346;
+            current_statement_begin__ = 353;
             validate_non_negative_index("MANIFESTVAR", "(MANIFESTVARsetup_rowcount ? max(stan::model::rvalue(MANIFESTVARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"MANIFESTVARsetup\")) : 0 )", (MANIFESTVARsetup_rowcount ? max(stan::model::rvalue(MANIFESTVARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "MANIFESTVARsetup")) : 0 ));
             validate_non_negative_index("MANIFESTVAR", "(MANIFESTVARsetup_rowcount ? max(stan::model::rvalue(MANIFESTVARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"MANIFESTVARsetup\")) : 0 )", (MANIFESTVARsetup_rowcount ? max(stan::model::rvalue(MANIFESTVARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "MANIFESTVARsetup")) : 0 ));
             validate_non_negative_index("MANIFESTVAR", "get_base1(MANIFESTVARsubindex,nsubjects,\"MANIFESTVARsubindex\",1)", get_base1(MANIFESTVARsubindex,nsubjects,"MANIFESTVARsubindex",1));
             vector<matrix_d> MANIFESTVAR(get_base1(MANIFESTVARsubindex,nsubjects,"MANIFESTVARsubindex",1), (matrix_d(static_cast<Eigen::VectorXd::Index>((MANIFESTVARsetup_rowcount ? max(stan::model::rvalue(MANIFESTVARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "MANIFESTVARsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((MANIFESTVARsetup_rowcount ? max(stan::model::rvalue(MANIFESTVARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "MANIFESTVARsetup")) : 0 )))));
             stan::math::initialize(MANIFESTVAR, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(MANIFESTVAR,DUMMY_VAR__);
-            current_statement_begin__ = 347;
+            current_statement_begin__ = 354;
             validate_non_negative_index("MANIFESTMEANS", "(MANIFESTMEANSsetup_rowcount ? max(stan::model::rvalue(MANIFESTMEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"MANIFESTMEANSsetup\")) : 0 )", (MANIFESTMEANSsetup_rowcount ? max(stan::model::rvalue(MANIFESTMEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "MANIFESTMEANSsetup")) : 0 ));
             validate_non_negative_index("MANIFESTMEANS", "(MANIFESTMEANSsetup_rowcount ? max(stan::model::rvalue(MANIFESTMEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"MANIFESTMEANSsetup\")) : 0 )", (MANIFESTMEANSsetup_rowcount ? max(stan::model::rvalue(MANIFESTMEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "MANIFESTMEANSsetup")) : 0 ));
             validate_non_negative_index("MANIFESTMEANS", "get_base1(MANIFESTMEANSsubindex,nsubjects,\"MANIFESTMEANSsubindex\",1)", get_base1(MANIFESTMEANSsubindex,nsubjects,"MANIFESTMEANSsubindex",1));
             vector<matrix_d> MANIFESTMEANS(get_base1(MANIFESTMEANSsubindex,nsubjects,"MANIFESTMEANSsubindex",1), (matrix_d(static_cast<Eigen::VectorXd::Index>((MANIFESTMEANSsetup_rowcount ? max(stan::model::rvalue(MANIFESTMEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "MANIFESTMEANSsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((MANIFESTMEANSsetup_rowcount ? max(stan::model::rvalue(MANIFESTMEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "MANIFESTMEANSsetup")) : 0 )))));
             stan::math::initialize(MANIFESTMEANS, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(MANIFESTMEANS,DUMMY_VAR__);
-            current_statement_begin__ = 348;
+            current_statement_begin__ = 355;
             validate_non_negative_index("CINT", "(CINTsetup_rowcount ? max(stan::model::rvalue(CINTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"CINTsetup\")) : 0 )", (CINTsetup_rowcount ? max(stan::model::rvalue(CINTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "CINTsetup")) : 0 ));
             validate_non_negative_index("CINT", "(CINTsetup_rowcount ? max(stan::model::rvalue(CINTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"CINTsetup\")) : 0 )", (CINTsetup_rowcount ? max(stan::model::rvalue(CINTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "CINTsetup")) : 0 ));
             validate_non_negative_index("CINT", "get_base1(CINTsubindex,nsubjects,\"CINTsubindex\",1)", get_base1(CINTsubindex,nsubjects,"CINTsubindex",1));
             vector<matrix_d> CINT(get_base1(CINTsubindex,nsubjects,"CINTsubindex",1), (matrix_d(static_cast<Eigen::VectorXd::Index>((CINTsetup_rowcount ? max(stan::model::rvalue(CINTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "CINTsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((CINTsetup_rowcount ? max(stan::model::rvalue(CINTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "CINTsetup")) : 0 )))));
             stan::math::initialize(CINT, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(CINT,DUMMY_VAR__);
-            current_statement_begin__ = 349;
+            current_statement_begin__ = 356;
             validate_non_negative_index("T0VAR", "(T0VARsetup_rowcount ? max(stan::model::rvalue(T0VARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"T0VARsetup\")) : 0 )", (T0VARsetup_rowcount ? max(stan::model::rvalue(T0VARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "T0VARsetup")) : 0 ));
             validate_non_negative_index("T0VAR", "(T0VARsetup_rowcount ? max(stan::model::rvalue(T0VARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"T0VARsetup\")) : 0 )", (T0VARsetup_rowcount ? max(stan::model::rvalue(T0VARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "T0VARsetup")) : 0 ));
             validate_non_negative_index("T0VAR", "get_base1(T0VARsubindex,nsubjects,\"T0VARsubindex\",1)", get_base1(T0VARsubindex,nsubjects,"T0VARsubindex",1));
             vector<matrix_d> T0VAR(get_base1(T0VARsubindex,nsubjects,"T0VARsubindex",1), (matrix_d(static_cast<Eigen::VectorXd::Index>((T0VARsetup_rowcount ? max(stan::model::rvalue(T0VARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "T0VARsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((T0VARsetup_rowcount ? max(stan::model::rvalue(T0VARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "T0VARsetup")) : 0 )))));
             stan::math::initialize(T0VAR, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(T0VAR,DUMMY_VAR__);
-            current_statement_begin__ = 350;
+            current_statement_begin__ = 357;
             validate_non_negative_index("TDPREDEFFECT", "(TDPREDEFFECTsetup_rowcount ? max(stan::model::rvalue(TDPREDEFFECTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"TDPREDEFFECTsetup\")) : 0 )", (TDPREDEFFECTsetup_rowcount ? max(stan::model::rvalue(TDPREDEFFECTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "TDPREDEFFECTsetup")) : 0 ));
             validate_non_negative_index("TDPREDEFFECT", "(TDPREDEFFECTsetup_rowcount ? max(stan::model::rvalue(TDPREDEFFECTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"TDPREDEFFECTsetup\")) : 0 )", (TDPREDEFFECTsetup_rowcount ? max(stan::model::rvalue(TDPREDEFFECTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "TDPREDEFFECTsetup")) : 0 ));
             validate_non_negative_index("TDPREDEFFECT", "get_base1(TDPREDEFFECTsubindex,nsubjects,\"TDPREDEFFECTsubindex\",1)", get_base1(TDPREDEFFECTsubindex,nsubjects,"TDPREDEFFECTsubindex",1));
             vector<matrix_d> TDPREDEFFECT(get_base1(TDPREDEFFECTsubindex,nsubjects,"TDPREDEFFECTsubindex",1), (matrix_d(static_cast<Eigen::VectorXd::Index>((TDPREDEFFECTsetup_rowcount ? max(stan::model::rvalue(TDPREDEFFECTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "TDPREDEFFECTsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((TDPREDEFFECTsetup_rowcount ? max(stan::model::rvalue(TDPREDEFFECTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "TDPREDEFFECTsetup")) : 0 )))));
             stan::math::initialize(TDPREDEFFECT, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(TDPREDEFFECT,DUMMY_VAR__);
-            current_statement_begin__ = 352;
+            current_statement_begin__ = 358;
+            validate_non_negative_index("PARS", "(PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"PARSsetup\")) : 0 )", (PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "PARSsetup")) : 0 ));
+            validate_non_negative_index("PARS", "(PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"PARSsetup\")) : 0 )", (PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "PARSsetup")) : 0 ));
+            validate_non_negative_index("PARS", "get_base1(PARSsubindex,nsubjects,\"PARSsubindex\",1)", get_base1(PARSsubindex,nsubjects,"PARSsubindex",1));
+            vector<matrix_d> PARS(get_base1(PARSsubindex,nsubjects,"PARSsubindex",1), (matrix_d(static_cast<Eigen::VectorXd::Index>((PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "PARSsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "PARSsetup")) : 0 )))));
+            stan::math::initialize(PARS, std::numeric_limits<double>::quiet_NaN());
+            stan::math::fill(PARS,DUMMY_VAR__);
+            current_statement_begin__ = 360;
             validate_non_negative_index("asymDIFFUSION", "nlatent", nlatent);
             validate_non_negative_index("asymDIFFUSION", "nlatent", nlatent);
             validate_non_negative_index("asymDIFFUSION", "(lineardynamics ? get_base1(asymDIFFUSIONsubindex,nsubjects,\"asymDIFFUSIONsubindex\",1) : 0 )", (lineardynamics ? get_base1(asymDIFFUSIONsubindex,nsubjects,"asymDIFFUSIONsubindex",1) : 0 ));
             vector<matrix_d> asymDIFFUSION((lineardynamics ? get_base1(asymDIFFUSIONsubindex,nsubjects,"asymDIFFUSIONsubindex",1) : 0 ), (matrix_d(static_cast<Eigen::VectorXd::Index>(nlatent),static_cast<Eigen::VectorXd::Index>(nlatent))));
             stan::math::initialize(asymDIFFUSION, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(asymDIFFUSION,DUMMY_VAR__);
-            current_statement_begin__ = 353;
+            current_statement_begin__ = 361;
             validate_non_negative_index("asymCINT", "(nt0meansstationary ? nlatent : 0 )", (nt0meansstationary ? nlatent : 0 ));
             validate_non_negative_index("asymCINT", "(nt0meansstationary ? get_base1(asymCINTsubindex,nsubjects,\"asymCINTsubindex\",1) : 0 )", (nt0meansstationary ? get_base1(asymCINTsubindex,nsubjects,"asymCINTsubindex",1) : 0 ));
             vector<vector_d> asymCINT((nt0meansstationary ? get_base1(asymCINTsubindex,nsubjects,"asymCINTsubindex",1) : 0 ), (vector_d(static_cast<Eigen::VectorXd::Index>((nt0meansstationary ? nlatent : 0 )))));
             stan::math::initialize(asymCINT, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(asymCINT,DUMMY_VAR__);
-            current_statement_begin__ = 355;
+            current_statement_begin__ = 363;
             validate_non_negative_index("tipreds", "(ntipred ? nsubjects : 0 )", (ntipred ? nsubjects : 0 ));
             validate_non_negative_index("tipreds", "(ntipred ? ntipred : 0 )", (ntipred ? ntipred : 0 ));
             matrix_d tipreds(static_cast<Eigen::VectorXd::Index>((ntipred ? nsubjects : 0 )),static_cast<Eigen::VectorXd::Index>((ntipred ? ntipred : 0 )));
@@ -4626,7 +4878,7 @@ public:
 
             stan::math::initialize(tipreds, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(tipreds,DUMMY_VAR__);
-            current_statement_begin__ = 356;
+            current_statement_begin__ = 364;
             validate_non_negative_index("TIPREDEFFECT", "nparams", nparams);
             validate_non_negative_index("TIPREDEFFECT", "ntipred", ntipred);
             matrix_d TIPREDEFFECT(static_cast<Eigen::VectorXd::Index>(nparams),static_cast<Eigen::VectorXd::Index>(ntipred));
@@ -4636,246 +4888,273 @@ public:
             stan::math::fill(TIPREDEFFECT,DUMMY_VAR__);
 
 
-            current_statement_begin__ = 358;
+            current_statement_begin__ = 366;
             if (as_bool(logical_gt(ntipred,0))) {
 
                 {
-                current_statement_begin__ = 360;
+                current_statement_begin__ = 368;
                 int counter(0);
                 (void) counter;  // dummy to suppress unused var warning
 
                 stan::math::fill(counter, std::numeric_limits<int>::min());
 
 
-                current_statement_begin__ = 361;
+                current_statement_begin__ = 369;
                 stan::math::assign(counter, 0);
-                current_statement_begin__ = 362;
+                current_statement_begin__ = 370;
                 for (int coli = 1; coli <= cols(tipreds); ++coli) {
 
-                    current_statement_begin__ = 363;
+                    current_statement_begin__ = 371;
                     for (int rowi = 1; rowi <= rows(tipreds); ++rowi) {
 
-                        current_statement_begin__ = 364;
+                        current_statement_begin__ = 372;
                         if (as_bool(logical_eq(get_base1(tipredsdata,rowi,coli,"tipredsdata",1),99999))) {
 
-                            current_statement_begin__ = 365;
+                            current_statement_begin__ = 373;
                             stan::math::assign(counter, (counter + 1));
-                            current_statement_begin__ = 366;
+                            current_statement_begin__ = 374;
                             stan::math::assign(get_base1_lhs(tipreds,rowi,coli,"tipreds",1), get_base1(tipredsimputed,counter,"tipredsimputed",1));
                         } else {
-                            current_statement_begin__ = 367;
+                            current_statement_begin__ = 375;
                             stan::math::assign(get_base1_lhs(tipreds,rowi,coli,"tipreds",1), get_base1(tipredsdata,rowi,coli,"tipredsdata",1));
                         }
                     }
                 }
                 }
-                current_statement_begin__ = 371;
+                current_statement_begin__ = 379;
                 for (int ci = 1; ci <= ntipred; ++ci) {
 
-                    current_statement_begin__ = 372;
+                    current_statement_begin__ = 380;
                     for (int ri = 1; ri <= nparams; ++ri) {
 
-                        current_statement_begin__ = 373;
+                        current_statement_begin__ = 381;
                         if (as_bool(logical_gt(get_base1(get_base1(TIPREDEFFECTsetup,ri,"TIPREDEFFECTsetup",1),ci,"TIPREDEFFECTsetup",2),0))) {
 
-                            current_statement_begin__ = 374;
+                            current_statement_begin__ = 382;
                             stan::math::assign(get_base1_lhs(TIPREDEFFECT,ri,ci,"TIPREDEFFECT",1), get_base1(tipredeffectparams,get_base1(get_base1(TIPREDEFFECTsetup,ri,"TIPREDEFFECTsetup",1),ci,"TIPREDEFFECTsetup",2),"tipredeffectparams",1));
                         } else {
 
-                            current_statement_begin__ = 376;
+                            current_statement_begin__ = 384;
                             stan::math::assign(get_base1_lhs(TIPREDEFFECT,ri,ci,"TIPREDEFFECT",1), 0);
                         }
                     }
                 }
             }
-            current_statement_begin__ = 382;
+            current_statement_begin__ = 390;
             if (as_bool(logical_gt(nindvarying,0))) {
                 {
-                current_statement_begin__ = 383;
+                current_statement_begin__ = 391;
                 int counter(0);
                 (void) counter;  // dummy to suppress unused var warning
 
                 stan::math::fill(counter, std::numeric_limits<int>::min());
 
 
-                current_statement_begin__ = 384;
+                current_statement_begin__ = 392;
                 stan::math::assign(rawpopsd, elt_multiply(exp(subtract(multiply(rawpopsdbase,2),2)),sdscale));
-                current_statement_begin__ = 385;
+                current_statement_begin__ = 393;
                 stan::math::assign(counter, 0);
-                current_statement_begin__ = 386;
+                current_statement_begin__ = 394;
                 for (int j = 1; j <= nindvarying; ++j) {
 
-                    current_statement_begin__ = 387;
+                    current_statement_begin__ = 395;
                     stan::math::assign(get_base1_lhs(rawpopcovsqrt,j,j,"rawpopcovsqrt",1), 1);
-                    current_statement_begin__ = 388;
+                    current_statement_begin__ = 396;
                     for (int i = 1; i <= nindvarying; ++i) {
 
-                        current_statement_begin__ = 389;
+                        current_statement_begin__ = 397;
                         if (as_bool(logical_gt(i,j))) {
 
-                            current_statement_begin__ = 390;
+                            current_statement_begin__ = 398;
                             stan::math::assign(counter, (counter + 1));
-                            current_statement_begin__ = 391;
+                            current_statement_begin__ = 399;
                             stan::math::assign(get_base1_lhs(rawpopcovsqrt,i,j,"rawpopcovsqrt",1), get_base1(sqrtpcov,counter,"sqrtpcov",1));
-                            current_statement_begin__ = 392;
+                            current_statement_begin__ = 400;
                             stan::math::assign(get_base1_lhs(rawpopcovsqrt,j,i,"rawpopcovsqrt",1), get_base1(sqrtpcov,counter,"sqrtpcov",1));
                         }
                     }
                 }
-                current_statement_begin__ = 396;
+                current_statement_begin__ = 404;
                 stan::math::assign(rawpopcorrsqrt, covsqrt2corsqrt(rawpopcovsqrt,0, pstream__));
-                current_statement_begin__ = 398;
+                current_statement_begin__ = 406;
                 stan::math::assign(rawpopcovsqrt, diag_pre_multiply(rawpopsd,rawpopcorrsqrt));
                 }
             }
             {
-            current_statement_begin__ = 402;
+            current_statement_begin__ = 410;
             validate_non_negative_index("rawindparams", "nparams", nparams);
             vector_d rawindparams(static_cast<Eigen::VectorXd::Index>(nparams));
             (void) rawindparams;  // dummy to suppress unused var warning
 
             stan::math::initialize(rawindparams, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(rawindparams,DUMMY_VAR__);
+            current_statement_begin__ = 411;
+            validate_non_negative_index("tipredaddition", "nparams", nparams);
+            vector_d tipredaddition(static_cast<Eigen::VectorXd::Index>(nparams));
+            (void) tipredaddition;  // dummy to suppress unused var warning
+
+            stan::math::initialize(tipredaddition, std::numeric_limits<double>::quiet_NaN());
+            stan::math::fill(tipredaddition,DUMMY_VAR__);
+            current_statement_begin__ = 412;
+            validate_non_negative_index("indvaraddition", "nparams", nparams);
+            vector_d indvaraddition(static_cast<Eigen::VectorXd::Index>(nparams));
+            (void) indvaraddition;  // dummy to suppress unused var warning
+
+            stan::math::initialize(indvaraddition, std::numeric_limits<double>::quiet_NaN());
+            stan::math::fill(indvaraddition,DUMMY_VAR__);
 
 
-            current_statement_begin__ = 403;
+            current_statement_begin__ = 413;
             stan::math::assign(rawindparams, rawpopmeans);
-            current_statement_begin__ = 404;
+            current_statement_begin__ = 414;
+            stan::math::assign(tipredaddition, rep_vector(0,nparams));
+            current_statement_begin__ = 415;
+            stan::math::assign(indvaraddition, rep_vector(0,nparams));
+            current_statement_begin__ = 417;
             for (int si = 1; si <= nsubjects; ++si) {
 
-                current_statement_begin__ = 406;
-                if (as_bool((primitive_value((primitive_value(logical_eq(ntipred,0)) && primitive_value(logical_gt(nindvarying,0)))) && primitive_value(logical_eq(ukfpop,0))))) {
-                    current_statement_begin__ = 406;
-                    stan::model::assign(rawindparams, 
+                current_statement_begin__ = 420;
+                if (as_bool((primitive_value(logical_gt(nindvarying,0)) && primitive_value(logical_eq(ukfpop,0))))) {
+                    current_statement_begin__ = 420;
+                    stan::model::assign(indvaraddition, 
                                 stan::model::cons_list(stan::model::index_multi(indvaryingindex), stan::model::nil_index_list()), 
-                                add(stan::model::rvalue(rawpopmeans, stan::model::cons_list(stan::model::index_multi(indvaryingindex), stan::model::nil_index_list()), "rawpopmeans"),multiply(rawpopcovsqrt,stan::model::rvalue(baseindparams, stan::model::cons_list(stan::model::index_min_max((1 + ((si - 1) * nindvarying)), (si * nindvarying)), stan::model::nil_index_list()), "baseindparams"))), 
-                                "assigning variable rawindparams");
+                                multiply(rawpopcovsqrt,stan::model::rvalue(baseindparams, stan::model::cons_list(stan::model::index_min_max((1 + ((si - 1) * nindvarying)), (si * nindvarying)), stan::model::nil_index_list()), "baseindparams")), 
+                                "assigning variable indvaraddition");
                 }
-                current_statement_begin__ = 409;
-                if (as_bool((primitive_value((primitive_value(logical_gt(ntipred,0)) && primitive_value(logical_gt(nindvarying,0)))) && primitive_value(logical_eq(ukfpop,0))))) {
-                    current_statement_begin__ = 409;
-                    stan::model::assign(rawindparams, 
-                                stan::model::cons_list(stan::model::index_multi(indvaryingindex), stan::model::nil_index_list()), 
-                                add(add(stan::model::rvalue(rawpopmeans, stan::model::cons_list(stan::model::index_multi(indvaryingindex), stan::model::nil_index_list()), "rawpopmeans"),multiply(rawpopcovsqrt,stan::model::rvalue(baseindparams, stan::model::cons_list(stan::model::index_min_max((1 + ((si - 1) * nindvarying)), (si * nindvarying)), stan::model::nil_index_list()), "baseindparams"))),multiply(stan::model::rvalue(TIPREDEFFECT, stan::model::cons_list(stan::model::index_multi(indvaryingindex), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "TIPREDEFFECT"),transpose(get_base1(tipreds,si,"tipreds",1)))), 
-                                "assigning variable rawindparams");
+                current_statement_begin__ = 422;
+                if (as_bool(logical_gt(ntipred,0))) {
+                    current_statement_begin__ = 422;
+                    stan::math::assign(tipredaddition, multiply(TIPREDEFFECT,transpose(get_base1(tipreds,si,"tipreds",1))));
                 }
-                current_statement_begin__ = 413;
+                current_statement_begin__ = 424;
+                stan::math::assign(rawindparams, add(add(rawpopmeans,tipredaddition),indvaraddition));
+                current_statement_begin__ = 426;
                 if (as_bool(logical_lte(si,get_base1(T0MEANSsubindex,nsubjects,"T0MEANSsubindex",1)))) {
 
-                    current_statement_begin__ = 414;
+                    current_statement_begin__ = 427;
                     for (int ri = 1; ri <= size(T0MEANSsetup); ++ri) {
 
-                        current_statement_begin__ = 415;
+                        current_statement_begin__ = 428;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(T0MEANS,si,"T0MEANS",1),get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),1,"T0MEANSsetup",2),get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),2,"T0MEANSsetup",2),"T0MEANS",2), (get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),3,"T0MEANSsetup",2) ? stan::math::promote_scalar<double>(tform(get_base1(rawindparams,get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),3,"T0MEANSsetup",2),"rawindparams",1),get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),4,"T0MEANSsetup",2),get_base1(T0MEANSvalues,ri,2,"T0MEANSvalues",1),get_base1(T0MEANSvalues,ri,3,"T0MEANSvalues",1),get_base1(T0MEANSvalues,ri,4,"T0MEANSvalues",1), pstream__)) : stan::math::promote_scalar<double>(get_base1(T0MEANSvalues,ri,1,"T0MEANSvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 420;
+                current_statement_begin__ = 433;
                 if (as_bool(logical_lte(si,get_base1(LAMBDAsubindex,nsubjects,"LAMBDAsubindex",1)))) {
 
-                    current_statement_begin__ = 421;
+                    current_statement_begin__ = 434;
                     for (int ri = 1; ri <= size(LAMBDAsetup); ++ri) {
 
-                        current_statement_begin__ = 422;
+                        current_statement_begin__ = 435;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(LAMBDA,si,"LAMBDA",1),get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),1,"LAMBDAsetup",2),get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),2,"LAMBDAsetup",2),"LAMBDA",2), (get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),3,"LAMBDAsetup",2) ? stan::math::promote_scalar<double>(tform(get_base1(rawindparams,get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),3,"LAMBDAsetup",2),"rawindparams",1),get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),4,"LAMBDAsetup",2),get_base1(LAMBDAvalues,ri,2,"LAMBDAvalues",1),get_base1(LAMBDAvalues,ri,3,"LAMBDAvalues",1),get_base1(LAMBDAvalues,ri,4,"LAMBDAvalues",1), pstream__)) : stan::math::promote_scalar<double>(get_base1(LAMBDAvalues,ri,1,"LAMBDAvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 427;
+                current_statement_begin__ = 440;
                 if (as_bool(logical_lte(si,get_base1(DRIFTsubindex,nsubjects,"DRIFTsubindex",1)))) {
 
-                    current_statement_begin__ = 428;
+                    current_statement_begin__ = 441;
                     for (int ri = 1; ri <= size(DRIFTsetup); ++ri) {
 
-                        current_statement_begin__ = 429;
+                        current_statement_begin__ = 442;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(DRIFT,si,"DRIFT",1),get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),1,"DRIFTsetup",2),get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),2,"DRIFTsetup",2),"DRIFT",2), (get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),3,"DRIFTsetup",2) ? stan::math::promote_scalar<double>(tform(get_base1(rawindparams,get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),3,"DRIFTsetup",2),"rawindparams",1),get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),4,"DRIFTsetup",2),get_base1(DRIFTvalues,ri,2,"DRIFTvalues",1),get_base1(DRIFTvalues,ri,3,"DRIFTvalues",1),get_base1(DRIFTvalues,ri,4,"DRIFTvalues",1), pstream__)) : stan::math::promote_scalar<double>(get_base1(DRIFTvalues,ri,1,"DRIFTvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 434;
+                current_statement_begin__ = 447;
                 if (as_bool(logical_lte(si,get_base1(DIFFUSIONsubindex,nsubjects,"DIFFUSIONsubindex",1)))) {
 
-                    current_statement_begin__ = 435;
+                    current_statement_begin__ = 448;
                     for (int ri = 1; ri <= size(DIFFUSIONsetup); ++ri) {
 
-                        current_statement_begin__ = 436;
+                        current_statement_begin__ = 449;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(DIFFUSION,si,"DIFFUSION",1),get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),1,"DIFFUSIONsetup",2),get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),2,"DIFFUSIONsetup",2),"DIFFUSION",2), (get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),3,"DIFFUSIONsetup",2) ? stan::math::promote_scalar<double>(tform(get_base1(rawindparams,get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),3,"DIFFUSIONsetup",2),"rawindparams",1),get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),4,"DIFFUSIONsetup",2),get_base1(DIFFUSIONvalues,ri,2,"DIFFUSIONvalues",1),get_base1(DIFFUSIONvalues,ri,3,"DIFFUSIONvalues",1),get_base1(DIFFUSIONvalues,ri,4,"DIFFUSIONvalues",1), pstream__)) : stan::math::promote_scalar<double>(get_base1(DIFFUSIONvalues,ri,1,"DIFFUSIONvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 441;
+                current_statement_begin__ = 454;
                 if (as_bool(logical_lte(si,get_base1(MANIFESTVARsubindex,nsubjects,"MANIFESTVARsubindex",1)))) {
 
-                    current_statement_begin__ = 442;
+                    current_statement_begin__ = 455;
                     for (int ri = 1; ri <= size(MANIFESTVARsetup); ++ri) {
 
-                        current_statement_begin__ = 443;
+                        current_statement_begin__ = 456;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(MANIFESTVAR,si,"MANIFESTVAR",1),get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),1,"MANIFESTVARsetup",2),get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),2,"MANIFESTVARsetup",2),"MANIFESTVAR",2), (get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),3,"MANIFESTVARsetup",2) ? stan::math::promote_scalar<double>(tform(get_base1(rawindparams,get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),3,"MANIFESTVARsetup",2),"rawindparams",1),get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),4,"MANIFESTVARsetup",2),get_base1(MANIFESTVARvalues,ri,2,"MANIFESTVARvalues",1),get_base1(MANIFESTVARvalues,ri,3,"MANIFESTVARvalues",1),get_base1(MANIFESTVARvalues,ri,4,"MANIFESTVARvalues",1), pstream__)) : stan::math::promote_scalar<double>(get_base1(MANIFESTVARvalues,ri,1,"MANIFESTVARvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 448;
+                current_statement_begin__ = 461;
                 if (as_bool(logical_lte(si,get_base1(MANIFESTMEANSsubindex,nsubjects,"MANIFESTMEANSsubindex",1)))) {
 
-                    current_statement_begin__ = 449;
+                    current_statement_begin__ = 462;
                     for (int ri = 1; ri <= size(MANIFESTMEANSsetup); ++ri) {
 
-                        current_statement_begin__ = 450;
+                        current_statement_begin__ = 463;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(MANIFESTMEANS,si,"MANIFESTMEANS",1),get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),1,"MANIFESTMEANSsetup",2),get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),2,"MANIFESTMEANSsetup",2),"MANIFESTMEANS",2), (get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),3,"MANIFESTMEANSsetup",2) ? stan::math::promote_scalar<double>(tform(get_base1(rawindparams,get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),3,"MANIFESTMEANSsetup",2),"rawindparams",1),get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),4,"MANIFESTMEANSsetup",2),get_base1(MANIFESTMEANSvalues,ri,2,"MANIFESTMEANSvalues",1),get_base1(MANIFESTMEANSvalues,ri,3,"MANIFESTMEANSvalues",1),get_base1(MANIFESTMEANSvalues,ri,4,"MANIFESTMEANSvalues",1), pstream__)) : stan::math::promote_scalar<double>(get_base1(MANIFESTMEANSvalues,ri,1,"MANIFESTMEANSvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 455;
+                current_statement_begin__ = 468;
                 if (as_bool(logical_lte(si,get_base1(CINTsubindex,nsubjects,"CINTsubindex",1)))) {
 
-                    current_statement_begin__ = 456;
+                    current_statement_begin__ = 469;
                     for (int ri = 1; ri <= size(CINTsetup); ++ri) {
 
-                        current_statement_begin__ = 457;
+                        current_statement_begin__ = 470;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(CINT,si,"CINT",1),get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),1,"CINTsetup",2),get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),2,"CINTsetup",2),"CINT",2), (get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),3,"CINTsetup",2) ? stan::math::promote_scalar<double>(tform(get_base1(rawindparams,get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),3,"CINTsetup",2),"rawindparams",1),get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),4,"CINTsetup",2),get_base1(CINTvalues,ri,2,"CINTvalues",1),get_base1(CINTvalues,ri,3,"CINTvalues",1),get_base1(CINTvalues,ri,4,"CINTvalues",1), pstream__)) : stan::math::promote_scalar<double>(get_base1(CINTvalues,ri,1,"CINTvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 462;
+                current_statement_begin__ = 475;
                 if (as_bool(logical_lte(si,get_base1(T0VARsubindex,nsubjects,"T0VARsubindex",1)))) {
 
-                    current_statement_begin__ = 463;
+                    current_statement_begin__ = 476;
                     for (int ri = 1; ri <= size(T0VARsetup); ++ri) {
 
-                        current_statement_begin__ = 464;
+                        current_statement_begin__ = 477;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(T0VAR,si,"T0VAR",1),get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),1,"T0VARsetup",2),get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),2,"T0VARsetup",2),"T0VAR",2), (get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),3,"T0VARsetup",2) ? stan::math::promote_scalar<double>(tform(get_base1(rawindparams,get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),3,"T0VARsetup",2),"rawindparams",1),get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),4,"T0VARsetup",2),get_base1(T0VARvalues,ri,2,"T0VARvalues",1),get_base1(T0VARvalues,ri,3,"T0VARvalues",1),get_base1(T0VARvalues,ri,4,"T0VARvalues",1), pstream__)) : stan::math::promote_scalar<double>(get_base1(T0VARvalues,ri,1,"T0VARvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 469;
+                current_statement_begin__ = 482;
                 if (as_bool(logical_lte(si,get_base1(TDPREDEFFECTsubindex,nsubjects,"TDPREDEFFECTsubindex",1)))) {
 
-                    current_statement_begin__ = 470;
+                    current_statement_begin__ = 483;
                     for (int ri = 1; ri <= size(TDPREDEFFECTsetup); ++ri) {
 
-                        current_statement_begin__ = 471;
+                        current_statement_begin__ = 484;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(TDPREDEFFECT,si,"TDPREDEFFECT",1),get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),1,"TDPREDEFFECTsetup",2),get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),2,"TDPREDEFFECTsetup",2),"TDPREDEFFECT",2), (get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),3,"TDPREDEFFECTsetup",2) ? stan::math::promote_scalar<double>(tform(get_base1(rawindparams,get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),3,"TDPREDEFFECTsetup",2),"rawindparams",1),get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),4,"TDPREDEFFECTsetup",2),get_base1(TDPREDEFFECTvalues,ri,2,"TDPREDEFFECTvalues",1),get_base1(TDPREDEFFECTvalues,ri,3,"TDPREDEFFECTvalues",1),get_base1(TDPREDEFFECTvalues,ri,4,"TDPREDEFFECTvalues",1), pstream__)) : stan::math::promote_scalar<double>(get_base1(TDPREDEFFECTvalues,ri,1,"TDPREDEFFECTvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 479;
-                if (as_bool(logical_lte(si,get_base1(DIFFUSIONsubindex,nsubjects,"DIFFUSIONsubindex",1)))) {
-                    current_statement_begin__ = 479;
-                    stan::math::assign(get_base1_lhs(DIFFUSION,si,"DIFFUSION",1), sdcovsqrt2cov(get_base1(DIFFUSION,si,"DIFFUSION",1),((lineardynamics * intoverstates) ? 0 : 1 ),1, pstream__));
+                current_statement_begin__ = 489;
+                if (as_bool(logical_lte(si,get_base1(PARSsubindex,nsubjects,"PARSsubindex",1)))) {
+
+                    current_statement_begin__ = 490;
+                    for (int ri = 1; ri <= size(PARSsetup); ++ri) {
+
+                        current_statement_begin__ = 491;
+                        stan::math::assign(get_base1_lhs(get_base1_lhs(PARS,si,"PARS",1),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),1,"PARSsetup",2),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),2,"PARSsetup",2),"PARS",2), (get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),3,"PARSsetup",2) ? stan::math::promote_scalar<double>(tform(get_base1(rawindparams,get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),3,"PARSsetup",2),"rawindparams",1),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),4,"PARSsetup",2),get_base1(PARSvalues,ri,2,"PARSvalues",1),get_base1(PARSvalues,ri,3,"PARSvalues",1),get_base1(PARSvalues,ri,4,"PARSvalues",1), pstream__)) : stan::math::promote_scalar<double>(get_base1(PARSvalues,ri,1,"PARSvalues",1)) ));
+                    }
                 }
-                current_statement_begin__ = 481;
+                current_statement_begin__ = 499;
+                if (as_bool((primitive_value(logical_lte(si,get_base1(DIFFUSIONsubindex,nsubjects,"DIFFUSIONsubindex",1))) && primitive_value(logical_neq((lineardynamics * intoverstates),0))))) {
+                    current_statement_begin__ = 499;
+                    stan::math::assign(get_base1_lhs(DIFFUSION,si,"DIFFUSION",1), sdcovsqrt2cov(get_base1(DIFFUSION,si,"DIFFUSION",1),((lineardynamics * intoverstates) ? 0 : 1 ), pstream__));
+                }
+                current_statement_begin__ = 501;
                 if (as_bool((primitive_value(logical_eq(lineardynamics,1)) && primitive_value(logical_gt(ndiffusion,0))))) {
 
-                    current_statement_begin__ = 482;
+                    current_statement_begin__ = 502;
                     if (as_bool(logical_lte(si,get_base1(asymDIFFUSIONsubindex,nsubjects,"asymDIFFUSIONsubindex",1)))) {
 
-                        current_statement_begin__ = 483;
+                        current_statement_begin__ = 503;
                         if (as_bool(logical_lt(ndiffusion,nlatent))) {
-                            current_statement_begin__ = 483;
+                            current_statement_begin__ = 503;
                             stan::math::assign(get_base1_lhs(asymDIFFUSION,si,"asymDIFFUSION",1), to_matrix(rep_vector(0,(nlatent * nlatent)),nlatent,nlatent));
                         }
-                        current_statement_begin__ = 485;
+                        current_statement_begin__ = 505;
                         if (as_bool(logical_eq(continuoustime,1))) {
-                            current_statement_begin__ = 485;
+                            current_statement_begin__ = 505;
                             stan::model::assign(asymDIFFUSION, 
                                         stan::model::cons_list(stan::model::index_uni(si), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), 
                                         to_matrix(mdivide_left(minus(add(kron_prod(stan::model::rvalue(DRIFT, stan::model::cons_list(stan::model::index_uni(get_base1(DRIFTsubindex,si,"DRIFTsubindex",1)), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), "DRIFT"),stan::model::rvalue(IIlatent, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "IIlatent"), pstream__),kron_prod(stan::model::rvalue(IIlatent, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "IIlatent"),stan::model::rvalue(DRIFT, stan::model::cons_list(stan::model::index_uni(get_base1(DRIFTsubindex,si,"DRIFTsubindex",1)), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), "DRIFT"), pstream__))),to_vector(stan::model::rvalue(DIFFUSION, stan::model::cons_list(stan::model::index_uni(get_base1(DIFFUSIONsubindex,si,"DIFFUSIONsubindex",1)), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), "DIFFUSION"))),ndiffusion,ndiffusion), 
                                         "assigning variable asymDIFFUSION");
                         }
-                        current_statement_begin__ = 490;
+                        current_statement_begin__ = 510;
                         if (as_bool(logical_eq(continuoustime,0))) {
-                            current_statement_begin__ = 490;
+                            current_statement_begin__ = 510;
                             stan::model::assign(asymDIFFUSION, 
                                         stan::model::cons_list(stan::model::index_uni(si), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), 
                                         to_matrix(multiply(subtract(stan::model::rvalue(IIlatent2, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "IIlatent2"),kron_prod(stan::model::rvalue(DRIFT, stan::model::cons_list(stan::model::index_uni(get_base1(DRIFTsubindex,si,"DRIFTsubindex",1)), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), "DRIFT"),stan::model::rvalue(DRIFT, stan::model::cons_list(stan::model::index_uni(get_base1(DRIFTsubindex,si,"DRIFTsubindex",1)), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), "DRIFT"), pstream__)),to_vector(stan::model::rvalue(DIFFUSION, stan::model::cons_list(stan::model::index_uni(get_base1(DIFFUSIONsubindex,si,"DIFFUSIONsubindex",1)), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), "DIFFUSION"))),ndiffusion,ndiffusion), 
@@ -4883,64 +5162,67 @@ public:
                         }
                     }
                 }
-                current_statement_begin__ = 497;
+                current_statement_begin__ = 517;
                 if (as_bool(logical_gt(nt0meansstationary,0))) {
 
-                    current_statement_begin__ = 498;
+                    current_statement_begin__ = 518;
                     if (as_bool(logical_lte(si,get_base1(asymCINTsubindex,nsubjects,"asymCINTsubindex",1)))) {
 
-                        current_statement_begin__ = 499;
+                        current_statement_begin__ = 519;
                         if (as_bool(logical_eq(continuoustime,1))) {
-                            current_statement_begin__ = 499;
+                            current_statement_begin__ = 519;
                             stan::math::assign(get_base1_lhs(asymCINT,si,"asymCINT",1), mdivide_left(minus(get_base1(DRIFT,get_base1(DRIFTsubindex,si,"DRIFTsubindex",1),"DRIFT",1)),stan::model::rvalue(CINT, stan::model::cons_list(stan::model::index_uni(get_base1(CINTsubindex,si,"CINTsubindex",1)), stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list()))), "CINT")));
                         }
-                        current_statement_begin__ = 500;
+                        current_statement_begin__ = 520;
                         if (as_bool(logical_eq(continuoustime,0))) {
-                            current_statement_begin__ = 500;
+                            current_statement_begin__ = 520;
                             stan::math::assign(get_base1_lhs(asymCINT,si,"asymCINT",1), mdivide_left(subtract(IIlatent,get_base1(DRIFT,get_base1(DRIFTsubindex,si,"DRIFTsubindex",1),"DRIFT",1)),stan::model::rvalue(CINT, stan::model::cons_list(stan::model::index_uni(get_base1(CINTsubindex,si,"CINTsubindex",1)), stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list()))), "CINT")));
                         }
                     }
                 }
-                current_statement_begin__ = 505;
+                current_statement_begin__ = 525;
                 if (as_bool(logical_eq(binomial,0))) {
 
-                    current_statement_begin__ = 506;
+                    current_statement_begin__ = 526;
                     if (as_bool(logical_lte(si,get_base1(MANIFESTVARsubindex,nsubjects,"MANIFESTVARsubindex",1)))) {
 
-                        current_statement_begin__ = 507;
+                        current_statement_begin__ = 527;
                         for (int ri = 1; ri <= nmanifest; ++ri) {
-                            current_statement_begin__ = 507;
+                            current_statement_begin__ = 527;
                             stan::math::assign(get_base1_lhs(get_base1_lhs(MANIFESTVAR,si,"MANIFESTVAR",1),ri,ri,"MANIFESTVAR",2), square(get_base1(get_base1(MANIFESTVAR,si,"MANIFESTVAR",1),ri,ri,"MANIFESTVAR",2)));
                         }
                     }
                 }
-                current_statement_begin__ = 512;
+                current_statement_begin__ = 532;
                 if (as_bool(logical_lte(si,get_base1(T0VARsubindex,nsubjects,"T0VARsubindex",1)))) {
 
-                    current_statement_begin__ = 513;
-                    stan::math::assign(get_base1_lhs(T0VAR,si,"T0VAR",1), sdcovsqrt2cov(get_base1(T0VAR,si,"T0VAR",1),((lineardynamics * intoverstates) ? 0 : 1 ),1, pstream__));
-                    current_statement_begin__ = 515;
+                    current_statement_begin__ = 533;
+                    if (as_bool(logical_neq((lineardynamics * intoverstates),0))) {
+                        current_statement_begin__ = 533;
+                        stan::math::assign(get_base1_lhs(T0VAR,si,"T0VAR",1), sdcovsqrt2cov(get_base1(T0VAR,si,"T0VAR",1),((lineardynamics * intoverstates) ? 0 : 1 ), pstream__));
+                    }
+                    current_statement_begin__ = 535;
                     if (as_bool(logical_gt(nt0varstationary,0))) {
-                        current_statement_begin__ = 515;
+                        current_statement_begin__ = 535;
                         for (int rowi = 1; rowi <= nt0varstationary; ++rowi) {
 
-                            current_statement_begin__ = 516;
+                            current_statement_begin__ = 536;
                             stan::math::assign(get_base1_lhs(get_base1_lhs(T0VAR,si,"T0VAR",1),get_base1(get_base1(t0varstationary,rowi,"t0varstationary",1),1,"t0varstationary",2),get_base1(get_base1(t0varstationary,rowi,"t0varstationary",1),2,"t0varstationary",2),"T0VAR",2), get_base1(get_base1(asymDIFFUSION,si,"asymDIFFUSION",1),get_base1(get_base1(t0varstationary,rowi,"t0varstationary",1),1,"t0varstationary",2),get_base1(get_base1(t0varstationary,rowi,"t0varstationary",1),2,"t0varstationary",2),"asymDIFFUSION",2));
-                            current_statement_begin__ = 518;
+                            current_statement_begin__ = 538;
                             stan::math::assign(get_base1_lhs(get_base1_lhs(T0VAR,si,"T0VAR",1),get_base1(get_base1(t0varstationary,rowi,"t0varstationary",1),2,"t0varstationary",2),get_base1(get_base1(t0varstationary,rowi,"t0varstationary",1),1,"t0varstationary",2),"T0VAR",2), get_base1(get_base1(asymDIFFUSION,si,"asymDIFFUSION",1),get_base1(get_base1(t0varstationary,rowi,"t0varstationary",1),2,"t0varstationary",2),get_base1(get_base1(t0varstationary,rowi,"t0varstationary",1),1,"t0varstationary",2),"asymDIFFUSION",2));
                         }
                     }
                 }
-                current_statement_begin__ = 524;
+                current_statement_begin__ = 544;
                 if (as_bool(logical_gt(nt0meansstationary,0))) {
 
-                    current_statement_begin__ = 525;
+                    current_statement_begin__ = 545;
                     if (as_bool(logical_lte(si,get_base1(T0MEANSsubindex,nsubjects,"T0MEANSsubindex",1)))) {
 
-                        current_statement_begin__ = 526;
+                        current_statement_begin__ = 546;
                         for (int rowi = 1; rowi <= nt0meansstationary; ++rowi) {
 
-                            current_statement_begin__ = 527;
+                            current_statement_begin__ = 547;
                             stan::math::assign(get_base1_lhs(get_base1_lhs(T0MEANS,si,"T0MEANS",1),get_base1(get_base1(t0meansstationary,rowi,"t0meansstationary",1),1,"t0meansstationary",2),1,"T0MEANS",2), get_base1(get_base1(asymCINT,get_base1(asymCINTsubindex,si,"asymCINTsubindex",1),"asymCINT",1),get_base1(get_base1(t0meansstationary,rowi,"t0meansstationary",1),1,"t0meansstationary",2),"asymCINT",2));
                         }
                     }
@@ -4949,22 +5231,23 @@ public:
             }
 
             // validate transformed parameters
-            current_statement_begin__ = 336;
-            current_statement_begin__ = 338;
-            current_statement_begin__ = 339;
-            current_statement_begin__ = 342;
             current_statement_begin__ = 343;
-            current_statement_begin__ = 344;
             current_statement_begin__ = 345;
             current_statement_begin__ = 346;
-            current_statement_begin__ = 347;
-            current_statement_begin__ = 348;
             current_statement_begin__ = 349;
             current_statement_begin__ = 350;
+            current_statement_begin__ = 351;
             current_statement_begin__ = 352;
             current_statement_begin__ = 353;
+            current_statement_begin__ = 354;
             current_statement_begin__ = 355;
             current_statement_begin__ = 356;
+            current_statement_begin__ = 357;
+            current_statement_begin__ = 358;
+            current_statement_begin__ = 360;
+            current_statement_begin__ = 361;
+            current_statement_begin__ = 363;
+            current_statement_begin__ = 364;
 
             // write transformed parameters
             for (int k_0__ = 0; k_0__ < nindvarying; ++k_0__) {
@@ -5043,6 +5326,13 @@ public:
                     }
                 }
             }
+            for (int k_2__ = 0; k_2__ < (PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "PARSsetup")) : 0 ); ++k_2__) {
+                for (int k_1__ = 0; k_1__ < (PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "PARSsetup")) : 0 ); ++k_1__) {
+                    for (int k_0__ = 0; k_0__ < get_base1(PARSsubindex,nsubjects,"PARSsubindex",1); ++k_0__) {
+                    vars__.push_back(PARS[k_0__](k_1__, k_2__));
+                    }
+                }
+            }
             for (int k_2__ = 0; k_2__ < nlatent; ++k_2__) {
                 for (int k_1__ = 0; k_1__ < nlatent; ++k_1__) {
                     for (int k_0__ = 0; k_0__ < (lineardynamics ? get_base1(asymDIFFUSIONsubindex,nsubjects,"asymDIFFUSIONsubindex",1) : 0 ); ++k_0__) {
@@ -5068,21 +5358,21 @@ public:
 
             if (!include_gqs__) return;
             // declare and define generated quantities
-            current_statement_begin__ = 1026;
+            current_statement_begin__ = 1079;
             validate_non_negative_index("popmeans", "nparams", nparams);
             vector_d popmeans(static_cast<Eigen::VectorXd::Index>(nparams));
             (void) popmeans;  // dummy to suppress unused var warning
 
             stan::math::initialize(popmeans, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(popmeans,DUMMY_VAR__);
-            current_statement_begin__ = 1027;
+            current_statement_begin__ = 1080;
             validate_non_negative_index("popsd", "nparams", nparams);
             vector_d popsd(static_cast<Eigen::VectorXd::Index>(nparams));
             (void) popsd;  // dummy to suppress unused var warning
 
             stan::math::initialize(popsd, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(popsd,DUMMY_VAR__);
-            current_statement_begin__ = 1028;
+            current_statement_begin__ = 1081;
             validate_non_negative_index("rawpopcov", "nindvarying", nindvarying);
             validate_non_negative_index("rawpopcov", "nindvarying", nindvarying);
             matrix_d rawpopcov(static_cast<Eigen::VectorXd::Index>(nindvarying),static_cast<Eigen::VectorXd::Index>(nindvarying));
@@ -5090,7 +5380,7 @@ public:
 
             stan::math::initialize(rawpopcov, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(rawpopcov,DUMMY_VAR__);
-            current_statement_begin__ = 1029;
+            current_statement_begin__ = 1082;
             validate_non_negative_index("rawpopcorr", "nindvarying", nindvarying);
             validate_non_negative_index("rawpopcorr", "nindvarying", nindvarying);
             matrix_d rawpopcorr(static_cast<Eigen::VectorXd::Index>(nindvarying),static_cast<Eigen::VectorXd::Index>(nindvarying));
@@ -5098,83 +5388,98 @@ public:
 
             stan::math::initialize(rawpopcorr, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(rawpopcorr,DUMMY_VAR__);
-            current_statement_begin__ = 1030;
+            current_statement_begin__ = 1083;
+            validate_non_negative_index("linearTIPREDEFFECT", "nparams", nparams);
+            validate_non_negative_index("linearTIPREDEFFECT", "ntipred", ntipred);
+            matrix_d linearTIPREDEFFECT(static_cast<Eigen::VectorXd::Index>(nparams),static_cast<Eigen::VectorXd::Index>(ntipred));
+            (void) linearTIPREDEFFECT;  // dummy to suppress unused var warning
+
+            stan::math::initialize(linearTIPREDEFFECT, std::numeric_limits<double>::quiet_NaN());
+            stan::math::fill(linearTIPREDEFFECT,DUMMY_VAR__);
+            current_statement_begin__ = 1084;
             validate_non_negative_index("pop_T0MEANS", "(T0MEANSsetup_rowcount ? max(stan::model::rvalue(T0MEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"T0MEANSsetup\")) : 0 )", (T0MEANSsetup_rowcount ? max(stan::model::rvalue(T0MEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "T0MEANSsetup")) : 0 ));
             validate_non_negative_index("pop_T0MEANS", "(T0MEANSsetup_rowcount ? max(stan::model::rvalue(T0MEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"T0MEANSsetup\")) : 0 )", (T0MEANSsetup_rowcount ? max(stan::model::rvalue(T0MEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "T0MEANSsetup")) : 0 ));
             validate_non_negative_index("pop_T0MEANS", "get_base1(T0MEANSsubindex,1,\"T0MEANSsubindex\",1)", get_base1(T0MEANSsubindex,1,"T0MEANSsubindex",1));
             vector<matrix_d> pop_T0MEANS(get_base1(T0MEANSsubindex,1,"T0MEANSsubindex",1), (matrix_d(static_cast<Eigen::VectorXd::Index>((T0MEANSsetup_rowcount ? max(stan::model::rvalue(T0MEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "T0MEANSsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((T0MEANSsetup_rowcount ? max(stan::model::rvalue(T0MEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "T0MEANSsetup")) : 0 )))));
             stan::math::initialize(pop_T0MEANS, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(pop_T0MEANS,DUMMY_VAR__);
-            current_statement_begin__ = 1031;
+            current_statement_begin__ = 1085;
             validate_non_negative_index("pop_LAMBDA", "(LAMBDAsetup_rowcount ? max(stan::model::rvalue(LAMBDAsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"LAMBDAsetup\")) : 0 )", (LAMBDAsetup_rowcount ? max(stan::model::rvalue(LAMBDAsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "LAMBDAsetup")) : 0 ));
             validate_non_negative_index("pop_LAMBDA", "(LAMBDAsetup_rowcount ? max(stan::model::rvalue(LAMBDAsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"LAMBDAsetup\")) : 0 )", (LAMBDAsetup_rowcount ? max(stan::model::rvalue(LAMBDAsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "LAMBDAsetup")) : 0 ));
             validate_non_negative_index("pop_LAMBDA", "get_base1(LAMBDAsubindex,1,\"LAMBDAsubindex\",1)", get_base1(LAMBDAsubindex,1,"LAMBDAsubindex",1));
             vector<matrix_d> pop_LAMBDA(get_base1(LAMBDAsubindex,1,"LAMBDAsubindex",1), (matrix_d(static_cast<Eigen::VectorXd::Index>((LAMBDAsetup_rowcount ? max(stan::model::rvalue(LAMBDAsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "LAMBDAsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((LAMBDAsetup_rowcount ? max(stan::model::rvalue(LAMBDAsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "LAMBDAsetup")) : 0 )))));
             stan::math::initialize(pop_LAMBDA, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(pop_LAMBDA,DUMMY_VAR__);
-            current_statement_begin__ = 1032;
+            current_statement_begin__ = 1086;
             validate_non_negative_index("pop_DRIFT", "(DRIFTsetup_rowcount ? max(stan::model::rvalue(DRIFTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"DRIFTsetup\")) : 0 )", (DRIFTsetup_rowcount ? max(stan::model::rvalue(DRIFTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "DRIFTsetup")) : 0 ));
             validate_non_negative_index("pop_DRIFT", "(DRIFTsetup_rowcount ? max(stan::model::rvalue(DRIFTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"DRIFTsetup\")) : 0 )", (DRIFTsetup_rowcount ? max(stan::model::rvalue(DRIFTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "DRIFTsetup")) : 0 ));
             validate_non_negative_index("pop_DRIFT", "get_base1(DRIFTsubindex,1,\"DRIFTsubindex\",1)", get_base1(DRIFTsubindex,1,"DRIFTsubindex",1));
             vector<matrix_d> pop_DRIFT(get_base1(DRIFTsubindex,1,"DRIFTsubindex",1), (matrix_d(static_cast<Eigen::VectorXd::Index>((DRIFTsetup_rowcount ? max(stan::model::rvalue(DRIFTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "DRIFTsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((DRIFTsetup_rowcount ? max(stan::model::rvalue(DRIFTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "DRIFTsetup")) : 0 )))));
             stan::math::initialize(pop_DRIFT, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(pop_DRIFT,DUMMY_VAR__);
-            current_statement_begin__ = 1033;
+            current_statement_begin__ = 1087;
             validate_non_negative_index("pop_DIFFUSION", "(DIFFUSIONsetup_rowcount ? max(stan::model::rvalue(DIFFUSIONsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"DIFFUSIONsetup\")) : 0 )", (DIFFUSIONsetup_rowcount ? max(stan::model::rvalue(DIFFUSIONsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "DIFFUSIONsetup")) : 0 ));
             validate_non_negative_index("pop_DIFFUSION", "(DIFFUSIONsetup_rowcount ? max(stan::model::rvalue(DIFFUSIONsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"DIFFUSIONsetup\")) : 0 )", (DIFFUSIONsetup_rowcount ? max(stan::model::rvalue(DIFFUSIONsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "DIFFUSIONsetup")) : 0 ));
             validate_non_negative_index("pop_DIFFUSION", "get_base1(DIFFUSIONsubindex,1,\"DIFFUSIONsubindex\",1)", get_base1(DIFFUSIONsubindex,1,"DIFFUSIONsubindex",1));
             vector<matrix_d> pop_DIFFUSION(get_base1(DIFFUSIONsubindex,1,"DIFFUSIONsubindex",1), (matrix_d(static_cast<Eigen::VectorXd::Index>((DIFFUSIONsetup_rowcount ? max(stan::model::rvalue(DIFFUSIONsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "DIFFUSIONsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((DIFFUSIONsetup_rowcount ? max(stan::model::rvalue(DIFFUSIONsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "DIFFUSIONsetup")) : 0 )))));
             stan::math::initialize(pop_DIFFUSION, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(pop_DIFFUSION,DUMMY_VAR__);
-            current_statement_begin__ = 1034;
+            current_statement_begin__ = 1088;
             validate_non_negative_index("pop_MANIFESTVAR", "(MANIFESTVARsetup_rowcount ? max(stan::model::rvalue(MANIFESTVARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"MANIFESTVARsetup\")) : 0 )", (MANIFESTVARsetup_rowcount ? max(stan::model::rvalue(MANIFESTVARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "MANIFESTVARsetup")) : 0 ));
             validate_non_negative_index("pop_MANIFESTVAR", "(MANIFESTVARsetup_rowcount ? max(stan::model::rvalue(MANIFESTVARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"MANIFESTVARsetup\")) : 0 )", (MANIFESTVARsetup_rowcount ? max(stan::model::rvalue(MANIFESTVARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "MANIFESTVARsetup")) : 0 ));
             validate_non_negative_index("pop_MANIFESTVAR", "get_base1(MANIFESTVARsubindex,1,\"MANIFESTVARsubindex\",1)", get_base1(MANIFESTVARsubindex,1,"MANIFESTVARsubindex",1));
             vector<matrix_d> pop_MANIFESTVAR(get_base1(MANIFESTVARsubindex,1,"MANIFESTVARsubindex",1), (matrix_d(static_cast<Eigen::VectorXd::Index>((MANIFESTVARsetup_rowcount ? max(stan::model::rvalue(MANIFESTVARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "MANIFESTVARsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((MANIFESTVARsetup_rowcount ? max(stan::model::rvalue(MANIFESTVARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "MANIFESTVARsetup")) : 0 )))));
             stan::math::initialize(pop_MANIFESTVAR, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(pop_MANIFESTVAR,DUMMY_VAR__);
-            current_statement_begin__ = 1035;
+            current_statement_begin__ = 1089;
             validate_non_negative_index("pop_MANIFESTMEANS", "(MANIFESTMEANSsetup_rowcount ? max(stan::model::rvalue(MANIFESTMEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"MANIFESTMEANSsetup\")) : 0 )", (MANIFESTMEANSsetup_rowcount ? max(stan::model::rvalue(MANIFESTMEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "MANIFESTMEANSsetup")) : 0 ));
             validate_non_negative_index("pop_MANIFESTMEANS", "(MANIFESTMEANSsetup_rowcount ? max(stan::model::rvalue(MANIFESTMEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"MANIFESTMEANSsetup\")) : 0 )", (MANIFESTMEANSsetup_rowcount ? max(stan::model::rvalue(MANIFESTMEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "MANIFESTMEANSsetup")) : 0 ));
             validate_non_negative_index("pop_MANIFESTMEANS", "get_base1(MANIFESTMEANSsubindex,1,\"MANIFESTMEANSsubindex\",1)", get_base1(MANIFESTMEANSsubindex,1,"MANIFESTMEANSsubindex",1));
             vector<matrix_d> pop_MANIFESTMEANS(get_base1(MANIFESTMEANSsubindex,1,"MANIFESTMEANSsubindex",1), (matrix_d(static_cast<Eigen::VectorXd::Index>((MANIFESTMEANSsetup_rowcount ? max(stan::model::rvalue(MANIFESTMEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "MANIFESTMEANSsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((MANIFESTMEANSsetup_rowcount ? max(stan::model::rvalue(MANIFESTMEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "MANIFESTMEANSsetup")) : 0 )))));
             stan::math::initialize(pop_MANIFESTMEANS, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(pop_MANIFESTMEANS,DUMMY_VAR__);
-            current_statement_begin__ = 1036;
+            current_statement_begin__ = 1090;
             validate_non_negative_index("pop_CINT", "(CINTsetup_rowcount ? max(stan::model::rvalue(CINTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"CINTsetup\")) : 0 )", (CINTsetup_rowcount ? max(stan::model::rvalue(CINTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "CINTsetup")) : 0 ));
             validate_non_negative_index("pop_CINT", "(CINTsetup_rowcount ? max(stan::model::rvalue(CINTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"CINTsetup\")) : 0 )", (CINTsetup_rowcount ? max(stan::model::rvalue(CINTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "CINTsetup")) : 0 ));
             validate_non_negative_index("pop_CINT", "get_base1(CINTsubindex,1,\"CINTsubindex\",1)", get_base1(CINTsubindex,1,"CINTsubindex",1));
             vector<matrix_d> pop_CINT(get_base1(CINTsubindex,1,"CINTsubindex",1), (matrix_d(static_cast<Eigen::VectorXd::Index>((CINTsetup_rowcount ? max(stan::model::rvalue(CINTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "CINTsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((CINTsetup_rowcount ? max(stan::model::rvalue(CINTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "CINTsetup")) : 0 )))));
             stan::math::initialize(pop_CINT, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(pop_CINT,DUMMY_VAR__);
-            current_statement_begin__ = 1037;
+            current_statement_begin__ = 1091;
             validate_non_negative_index("pop_T0VAR", "(T0VARsetup_rowcount ? max(stan::model::rvalue(T0VARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"T0VARsetup\")) : 0 )", (T0VARsetup_rowcount ? max(stan::model::rvalue(T0VARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "T0VARsetup")) : 0 ));
             validate_non_negative_index("pop_T0VAR", "(T0VARsetup_rowcount ? max(stan::model::rvalue(T0VARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"T0VARsetup\")) : 0 )", (T0VARsetup_rowcount ? max(stan::model::rvalue(T0VARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "T0VARsetup")) : 0 ));
             validate_non_negative_index("pop_T0VAR", "get_base1(T0VARsubindex,1,\"T0VARsubindex\",1)", get_base1(T0VARsubindex,1,"T0VARsubindex",1));
             vector<matrix_d> pop_T0VAR(get_base1(T0VARsubindex,1,"T0VARsubindex",1), (matrix_d(static_cast<Eigen::VectorXd::Index>((T0VARsetup_rowcount ? max(stan::model::rvalue(T0VARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "T0VARsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((T0VARsetup_rowcount ? max(stan::model::rvalue(T0VARsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "T0VARsetup")) : 0 )))));
             stan::math::initialize(pop_T0VAR, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(pop_T0VAR,DUMMY_VAR__);
-            current_statement_begin__ = 1038;
+            current_statement_begin__ = 1092;
             validate_non_negative_index("pop_TDPREDEFFECT", "(TDPREDEFFECTsetup_rowcount ? max(stan::model::rvalue(TDPREDEFFECTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"TDPREDEFFECTsetup\")) : 0 )", (TDPREDEFFECTsetup_rowcount ? max(stan::model::rvalue(TDPREDEFFECTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "TDPREDEFFECTsetup")) : 0 ));
             validate_non_negative_index("pop_TDPREDEFFECT", "(TDPREDEFFECTsetup_rowcount ? max(stan::model::rvalue(TDPREDEFFECTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"TDPREDEFFECTsetup\")) : 0 )", (TDPREDEFFECTsetup_rowcount ? max(stan::model::rvalue(TDPREDEFFECTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "TDPREDEFFECTsetup")) : 0 ));
             validate_non_negative_index("pop_TDPREDEFFECT", "get_base1(TDPREDEFFECTsubindex,1,\"TDPREDEFFECTsubindex\",1)", get_base1(TDPREDEFFECTsubindex,1,"TDPREDEFFECTsubindex",1));
             vector<matrix_d> pop_TDPREDEFFECT(get_base1(TDPREDEFFECTsubindex,1,"TDPREDEFFECTsubindex",1), (matrix_d(static_cast<Eigen::VectorXd::Index>((TDPREDEFFECTsetup_rowcount ? max(stan::model::rvalue(TDPREDEFFECTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "TDPREDEFFECTsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((TDPREDEFFECTsetup_rowcount ? max(stan::model::rvalue(TDPREDEFFECTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "TDPREDEFFECTsetup")) : 0 )))));
             stan::math::initialize(pop_TDPREDEFFECT, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(pop_TDPREDEFFECT,DUMMY_VAR__);
-            current_statement_begin__ = 1040;
+            current_statement_begin__ = 1093;
+            validate_non_negative_index("pop_PARS", "(PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), \"PARSsetup\")) : 0 )", (PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "PARSsetup")) : 0 ));
+            validate_non_negative_index("pop_PARS", "(PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), \"PARSsetup\")) : 0 )", (PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "PARSsetup")) : 0 ));
+            validate_non_negative_index("pop_PARS", "get_base1(PARSsubindex,1,\"PARSsubindex\",1)", get_base1(PARSsubindex,1,"PARSsubindex",1));
+            vector<matrix_d> pop_PARS(get_base1(PARSsubindex,1,"PARSsubindex",1), (matrix_d(static_cast<Eigen::VectorXd::Index>((PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "PARSsetup")) : 0 )),static_cast<Eigen::VectorXd::Index>((PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "PARSsetup")) : 0 )))));
+            stan::math::initialize(pop_PARS, std::numeric_limits<double>::quiet_NaN());
+            stan::math::fill(pop_PARS,DUMMY_VAR__);
+            current_statement_begin__ = 1095;
             validate_non_negative_index("asympop_DIFFUSION", "nlatent", nlatent);
             validate_non_negative_index("asympop_DIFFUSION", "nlatent", nlatent);
             validate_non_negative_index("asympop_DIFFUSION", "(lineardynamics ? get_base1(asymDIFFUSIONsubindex,1,\"asymDIFFUSIONsubindex\",1) : 0 )", (lineardynamics ? get_base1(asymDIFFUSIONsubindex,1,"asymDIFFUSIONsubindex",1) : 0 ));
             vector<matrix_d> asympop_DIFFUSION((lineardynamics ? get_base1(asymDIFFUSIONsubindex,1,"asymDIFFUSIONsubindex",1) : 0 ), (matrix_d(static_cast<Eigen::VectorXd::Index>(nlatent),static_cast<Eigen::VectorXd::Index>(nlatent))));
             stan::math::initialize(asympop_DIFFUSION, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(asympop_DIFFUSION,DUMMY_VAR__);
-            current_statement_begin__ = 1041;
+            current_statement_begin__ = 1096;
             validate_non_negative_index("asympop_CINT", "(nt0meansstationary ? nlatent : 0 )", (nt0meansstationary ? nlatent : 0 ));
             validate_non_negative_index("asympop_CINT", "(nt0meansstationary ? get_base1(asymCINTsubindex,1,\"asymCINTsubindex\",1) : 0 )", (nt0meansstationary ? get_base1(asymCINTsubindex,1,"asymCINTsubindex",1) : 0 ));
             vector<vector_d> asympop_CINT((nt0meansstationary ? get_base1(asymCINTsubindex,1,"asymCINTsubindex",1) : 0 ), (vector_d(static_cast<Eigen::VectorXd::Index>((nt0meansstationary ? nlatent : 0 )))));
             stan::math::initialize(asympop_CINT, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(asympop_CINT,DUMMY_VAR__);
-            current_statement_begin__ = 1044;
+            current_statement_begin__ = 1099;
             validate_non_negative_index("Ygen", "nmanifest", nmanifest);
             validate_non_negative_index("Ygen", "ngenerations", ngenerations);
             validate_non_negative_index("Ygen", "ndatapoints", ndatapoints);
@@ -5183,75 +5488,75 @@ public:
             stan::math::fill(Ygen,DUMMY_VAR__);
 
 
-            current_statement_begin__ = 1045;
+            current_statement_begin__ = 1100;
             for (int geni = 1; geni <= ngenerations; ++geni) {
-                current_statement_begin__ = 1045;
+                current_statement_begin__ = 1100;
                 stan::model::assign(Ygen, 
                             stan::model::cons_list(stan::model::index_uni(geni), stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list()))), 
                             rep_array(rep_vector(0,nmanifest),ndatapoints), 
                             "assigning variable Ygen");
             }
-            current_statement_begin__ = 1046;
+            current_statement_begin__ = 1101;
             for (int geni = 1; geni <= ngenerations; ++geni) {
                 {
-                current_statement_begin__ = 1048;
+                current_statement_begin__ = 1103;
                 int si(0);
                 (void) si;  // dummy to suppress unused var warning
 
                 stan::math::fill(si, std::numeric_limits<int>::min());
-                current_statement_begin__ = 1049;
+                current_statement_begin__ = 1104;
                 int counter(0);
                 (void) counter;  // dummy to suppress unused var warning
 
                 stan::math::fill(counter, std::numeric_limits<int>::min());
-                current_statement_begin__ = 1050;
+                current_statement_begin__ = 1105;
                 validate_non_negative_index("etaprior", "nlatentpop", nlatentpop);
                 validate_non_negative_index("etaprior", "ndatapoints", ndatapoints);
                 vector<vector_d> etaprior(ndatapoints, (vector_d(static_cast<Eigen::VectorXd::Index>(nlatentpop))));
                 stan::math::initialize(etaprior, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(etaprior,DUMMY_VAR__);
-                current_statement_begin__ = 1051;
+                current_statement_begin__ = 1106;
                 validate_non_negative_index("etaupd", "nlatentpop", nlatentpop);
                 validate_non_negative_index("etaupd", "ndatapoints", ndatapoints);
                 vector<vector_d> etaupd(ndatapoints, (vector_d(static_cast<Eigen::VectorXd::Index>(nlatentpop))));
                 stan::math::initialize(etaupd, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(etaupd,DUMMY_VAR__);
-                current_statement_begin__ = 1052;
+                current_statement_begin__ = 1107;
                 validate_non_negative_index("etapriorcov", "nlatentpop", nlatentpop);
                 validate_non_negative_index("etapriorcov", "nlatentpop", nlatentpop);
                 validate_non_negative_index("etapriorcov", "ndatapoints", ndatapoints);
                 vector<matrix_d> etapriorcov(ndatapoints, (matrix_d(static_cast<Eigen::VectorXd::Index>(nlatentpop),static_cast<Eigen::VectorXd::Index>(nlatentpop))));
                 stan::math::initialize(etapriorcov, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(etapriorcov,DUMMY_VAR__);
-                current_statement_begin__ = 1053;
+                current_statement_begin__ = 1108;
                 validate_non_negative_index("etaupdcov", "nlatentpop", nlatentpop);
                 validate_non_negative_index("etaupdcov", "nlatentpop", nlatentpop);
                 validate_non_negative_index("etaupdcov", "ndatapoints", ndatapoints);
                 vector<matrix_d> etaupdcov(ndatapoints, (matrix_d(static_cast<Eigen::VectorXd::Index>(nlatentpop),static_cast<Eigen::VectorXd::Index>(nlatentpop))));
                 stan::math::initialize(etaupdcov, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(etaupdcov,DUMMY_VAR__);
-                current_statement_begin__ = 1056;
+                current_statement_begin__ = 1111;
                 validate_non_negative_index("err", "nmanifest", nmanifest);
                 vector_d err(static_cast<Eigen::VectorXd::Index>(nmanifest));
                 (void) err;  // dummy to suppress unused var warning
 
                 stan::math::initialize(err, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(err,DUMMY_VAR__);
-                current_statement_begin__ = 1057;
+                current_statement_begin__ = 1112;
                 validate_non_negative_index("ypred", "nmanifest", nmanifest);
                 vector_d ypred(static_cast<Eigen::VectorXd::Index>(nmanifest));
                 (void) ypred;  // dummy to suppress unused var warning
 
                 stan::math::initialize(ypred, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(ypred,DUMMY_VAR__);
-                current_statement_begin__ = 1058;
+                current_statement_begin__ = 1113;
                 validate_non_negative_index("ystate", "(ukf ? nmanifest : 0 )", (ukf ? nmanifest : 0 ));
                 vector_d ystate(static_cast<Eigen::VectorXd::Index>((ukf ? nmanifest : 0 )));
                 (void) ystate;  // dummy to suppress unused var warning
 
                 stan::math::initialize(ystate, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(ystate,DUMMY_VAR__);
-                current_statement_begin__ = 1059;
+                current_statement_begin__ = 1114;
                 validate_non_negative_index("ypredcov", "nmanifest", nmanifest);
                 validate_non_negative_index("ypredcov", "nmanifest", nmanifest);
                 matrix_d ypredcov(static_cast<Eigen::VectorXd::Index>(nmanifest),static_cast<Eigen::VectorXd::Index>(nmanifest));
@@ -5259,7 +5564,7 @@ public:
 
                 stan::math::initialize(ypredcov, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(ypredcov,DUMMY_VAR__);
-                current_statement_begin__ = 1060;
+                current_statement_begin__ = 1115;
                 validate_non_negative_index("K", "nlatentpop", nlatentpop);
                 validate_non_negative_index("K", "nmanifest", nmanifest);
                 matrix_d K(static_cast<Eigen::VectorXd::Index>(nlatentpop),static_cast<Eigen::VectorXd::Index>(nmanifest));
@@ -5267,7 +5572,7 @@ public:
 
                 stan::math::initialize(K, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(K,DUMMY_VAR__);
-                current_statement_begin__ = 1061;
+                current_statement_begin__ = 1116;
                 validate_non_negative_index("ypredcov_sqrt", "nmanifest", nmanifest);
                 validate_non_negative_index("ypredcov_sqrt", "nmanifest", nmanifest);
                 matrix_d ypredcov_sqrt(static_cast<Eigen::VectorXd::Index>(nmanifest),static_cast<Eigen::VectorXd::Index>(nmanifest));
@@ -5275,31 +5580,31 @@ public:
 
                 stan::math::initialize(ypredcov_sqrt, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(ypredcov_sqrt,DUMMY_VAR__);
-                current_statement_begin__ = 1065;
+                current_statement_begin__ = 1120;
                 validate_non_negative_index("errtrans", "(intoverstates ? sum(nobs_y) : sum(ncont_y) )", (intoverstates ? sum(nobs_y) : sum(ncont_y) ));
                 vector_d errtrans(static_cast<Eigen::VectorXd::Index>((intoverstates ? sum(nobs_y) : sum(ncont_y) )));
                 (void) errtrans;  // dummy to suppress unused var warning
 
                 stan::math::initialize(errtrans, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(errtrans,DUMMY_VAR__);
-                current_statement_begin__ = 1066;
+                current_statement_begin__ = 1121;
                 validate_non_negative_index("errscales", "(intoverstates ? sum(nobs_y) : sum(ncont_y) )", (intoverstates ? sum(nobs_y) : sum(ncont_y) ));
                 vector_d errscales(static_cast<Eigen::VectorXd::Index>((intoverstates ? sum(nobs_y) : sum(ncont_y) )));
                 (void) errscales;  // dummy to suppress unused var warning
 
                 stan::math::initialize(errscales, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(errscales,DUMMY_VAR__);
-                current_statement_begin__ = 1067;
+                current_statement_begin__ = 1122;
                 int cobscount(0);
                 (void) cobscount;  // dummy to suppress unused var warning
 
                 stan::math::fill(cobscount, std::numeric_limits<int>::min());
-                current_statement_begin__ = 1068;
+                current_statement_begin__ = 1123;
                 int nobsi(0);
                 (void) nobsi;  // dummy to suppress unused var warning
 
                 stan::math::fill(nobsi, std::numeric_limits<int>::min());
-                current_statement_begin__ = 1071;
+                current_statement_begin__ = 1126;
                 validate_non_negative_index("sigpoints", "(ukf ? nlatentpop : 0 )", (ukf ? nlatentpop : 0 ));
                 validate_non_negative_index("sigpoints", "(ukf ? nlatentpop : 0 )", (ukf ? nlatentpop : 0 ));
                 matrix_d sigpoints(static_cast<Eigen::VectorXd::Index>((ukf ? nlatentpop : 0 )),static_cast<Eigen::VectorXd::Index>((ukf ? nlatentpop : 0 )));
@@ -5307,55 +5612,55 @@ public:
 
                 stan::math::initialize(sigpoints, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(sigpoints,DUMMY_VAR__);
-                current_statement_begin__ = 1072;
+                current_statement_begin__ = 1127;
                 validate_non_negative_index("state", "(ukf ? nlatent : 0 )", (ukf ? nlatent : 0 ));
                 vector_d state(static_cast<Eigen::VectorXd::Index>((ukf ? nlatent : 0 )));
                 (void) state;  // dummy to suppress unused var warning
 
                 stan::math::initialize(state, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(state,DUMMY_VAR__);
-                current_statement_begin__ = 1073;
+                current_statement_begin__ = 1128;
                 double dynerror(0.0);
                 (void) dynerror;  // dummy to suppress unused var warning
 
                 stan::math::initialize(dynerror, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(dynerror,DUMMY_VAR__);
-                current_statement_begin__ = 1074;
+                current_statement_begin__ = 1129;
                 double k(0.0);
                 (void) k;  // dummy to suppress unused var warning
 
                 stan::math::initialize(k, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(k,DUMMY_VAR__);
-                current_statement_begin__ = 1075;
+                current_statement_begin__ = 1130;
                 double asquared(0.0);
                 (void) asquared;  // dummy to suppress unused var warning
 
                 stan::math::initialize(asquared, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(asquared,DUMMY_VAR__);
-                current_statement_begin__ = 1076;
+                current_statement_begin__ = 1131;
                 double l(0.0);
                 (void) l;  // dummy to suppress unused var warning
 
                 stan::math::initialize(l, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(l,DUMMY_VAR__);
-                current_statement_begin__ = 1077;
+                current_statement_begin__ = 1132;
                 double sqrtukfadjust(0.0);
                 (void) sqrtukfadjust;  // dummy to suppress unused var warning
 
                 stan::math::initialize(sqrtukfadjust, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(sqrtukfadjust,DUMMY_VAR__);
-                current_statement_begin__ = 1078;
+                current_statement_begin__ = 1133;
                 int ndynerror(0);
                 (void) ndynerror;  // dummy to suppress unused var warning
 
                 stan::math::fill(ndynerror, std::numeric_limits<int>::min());
-                current_statement_begin__ = 1079;
+                current_statement_begin__ = 1134;
                 validate_non_negative_index("rkstates", "(lineardynamics ? 0 : nlatent )", (lineardynamics ? 0 : nlatent ));
                 validate_non_negative_index("rkstates", "(lineardynamics ? 0 : 5 )", (lineardynamics ? 0 : 5 ));
                 vector<vector_d> rkstates((lineardynamics ? 0 : 5 ), (vector_d(static_cast<Eigen::VectorXd::Index>((lineardynamics ? 0 : nlatent )))));
                 stan::math::initialize(rkstates, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(rkstates,DUMMY_VAR__);
-                current_statement_begin__ = 1082;
+                current_statement_begin__ = 1137;
                 validate_non_negative_index("discreteDRIFT", "(lineardynamics ? nlatent : 0 )", (lineardynamics ? nlatent : 0 ));
                 validate_non_negative_index("discreteDRIFT", "(lineardynamics ? nlatent : 0 )", (lineardynamics ? nlatent : 0 ));
                 matrix_d discreteDRIFT(static_cast<Eigen::VectorXd::Index>((lineardynamics ? nlatent : 0 )),static_cast<Eigen::VectorXd::Index>((lineardynamics ? nlatent : 0 )));
@@ -5363,14 +5668,14 @@ public:
 
                 stan::math::initialize(discreteDRIFT, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(discreteDRIFT,DUMMY_VAR__);
-                current_statement_begin__ = 1083;
+                current_statement_begin__ = 1138;
                 validate_non_negative_index("discreteCINT", "(lineardynamics ? nlatent : 0 )", (lineardynamics ? nlatent : 0 ));
                 vector_d discreteCINT(static_cast<Eigen::VectorXd::Index>((lineardynamics ? nlatent : 0 )));
                 (void) discreteCINT;  // dummy to suppress unused var warning
 
                 stan::math::initialize(discreteCINT, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(discreteCINT,DUMMY_VAR__);
-                current_statement_begin__ = 1084;
+                current_statement_begin__ = 1139;
                 validate_non_negative_index("discreteDIFFUSION", "(lineardynamics ? nlatent : 0 )", (lineardynamics ? nlatent : 0 ));
                 validate_non_negative_index("discreteDIFFUSION", "(lineardynamics ? nlatent : 0 )", (lineardynamics ? nlatent : 0 ));
                 matrix_d discreteDIFFUSION(static_cast<Eigen::VectorXd::Index>((lineardynamics ? nlatent : 0 )),static_cast<Eigen::VectorXd::Index>((lineardynamics ? nlatent : 0 )));
@@ -5378,7 +5683,7 @@ public:
 
                 stan::math::initialize(discreteDIFFUSION, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(discreteDIFFUSION,DUMMY_VAR__);
-                current_statement_begin__ = 1087;
+                current_statement_begin__ = 1142;
                 validate_non_negative_index("sT0MEANS", "nlatent", nlatent);
                 validate_non_negative_index("sT0MEANS", "1", 1);
                 matrix_d sT0MEANS(static_cast<Eigen::VectorXd::Index>(nlatent),static_cast<Eigen::VectorXd::Index>(1));
@@ -5386,7 +5691,7 @@ public:
 
                 stan::math::initialize(sT0MEANS, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(sT0MEANS,DUMMY_VAR__);
-                current_statement_begin__ = 1088;
+                current_statement_begin__ = 1143;
                 validate_non_negative_index("sT0VAR", "nlatent", nlatent);
                 validate_non_negative_index("sT0VAR", "nlatent", nlatent);
                 matrix_d sT0VAR(static_cast<Eigen::VectorXd::Index>(nlatent),static_cast<Eigen::VectorXd::Index>(nlatent));
@@ -5394,7 +5699,7 @@ public:
 
                 stan::math::initialize(sT0VAR, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(sT0VAR,DUMMY_VAR__);
-                current_statement_begin__ = 1089;
+                current_statement_begin__ = 1144;
                 validate_non_negative_index("sDIFFUSION", "nlatent", nlatent);
                 validate_non_negative_index("sDIFFUSION", "nlatent", nlatent);
                 matrix_d sDIFFUSION(static_cast<Eigen::VectorXd::Index>(nlatent),static_cast<Eigen::VectorXd::Index>(nlatent));
@@ -5402,7 +5707,7 @@ public:
 
                 stan::math::initialize(sDIFFUSION, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(sDIFFUSION,DUMMY_VAR__);
-                current_statement_begin__ = 1090;
+                current_statement_begin__ = 1145;
                 validate_non_negative_index("sasymDIFFUSION", "nlatent", nlatent);
                 validate_non_negative_index("sasymDIFFUSION", "nlatent", nlatent);
                 matrix_d sasymDIFFUSION(static_cast<Eigen::VectorXd::Index>(nlatent),static_cast<Eigen::VectorXd::Index>(nlatent));
@@ -5410,7 +5715,7 @@ public:
 
                 stan::math::initialize(sasymDIFFUSION, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(sasymDIFFUSION,DUMMY_VAR__);
-                current_statement_begin__ = 1091;
+                current_statement_begin__ = 1146;
                 validate_non_negative_index("sDRIFT", "nlatent", nlatent);
                 validate_non_negative_index("sDRIFT", "nlatent", nlatent);
                 matrix_d sDRIFT(static_cast<Eigen::VectorXd::Index>(nlatent),static_cast<Eigen::VectorXd::Index>(nlatent));
@@ -5418,7 +5723,7 @@ public:
 
                 stan::math::initialize(sDRIFT, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(sDRIFT,DUMMY_VAR__);
-                current_statement_begin__ = 1092;
+                current_statement_begin__ = 1147;
                 validate_non_negative_index("sCINT", "nlatent", nlatent);
                 validate_non_negative_index("sCINT", "1", 1);
                 matrix_d sCINT(static_cast<Eigen::VectorXd::Index>(nlatent),static_cast<Eigen::VectorXd::Index>(1));
@@ -5426,7 +5731,7 @@ public:
 
                 stan::math::initialize(sCINT, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(sCINT,DUMMY_VAR__);
-                current_statement_begin__ = 1093;
+                current_statement_begin__ = 1148;
                 validate_non_negative_index("sMANIFESTVAR", "nmanifest", nmanifest);
                 validate_non_negative_index("sMANIFESTVAR", "nmanifest", nmanifest);
                 matrix_d sMANIFESTVAR(static_cast<Eigen::VectorXd::Index>(nmanifest),static_cast<Eigen::VectorXd::Index>(nmanifest));
@@ -5434,7 +5739,7 @@ public:
 
                 stan::math::initialize(sMANIFESTVAR, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(sMANIFESTVAR,DUMMY_VAR__);
-                current_statement_begin__ = 1094;
+                current_statement_begin__ = 1149;
                 validate_non_negative_index("sMANIFESTMEANS", "nmanifest", nmanifest);
                 validate_non_negative_index("sMANIFESTMEANS", "1", 1);
                 matrix_d sMANIFESTMEANS(static_cast<Eigen::VectorXd::Index>(nmanifest),static_cast<Eigen::VectorXd::Index>(1));
@@ -5442,7 +5747,7 @@ public:
 
                 stan::math::initialize(sMANIFESTMEANS, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(sMANIFESTMEANS,DUMMY_VAR__);
-                current_statement_begin__ = 1095;
+                current_statement_begin__ = 1150;
                 validate_non_negative_index("sLAMBDA", "nmanifest", nmanifest);
                 validate_non_negative_index("sLAMBDA", "nlatent", nlatent);
                 matrix_d sLAMBDA(static_cast<Eigen::VectorXd::Index>(nmanifest),static_cast<Eigen::VectorXd::Index>(nlatent));
@@ -5450,7 +5755,7 @@ public:
 
                 stan::math::initialize(sLAMBDA, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(sLAMBDA,DUMMY_VAR__);
-                current_statement_begin__ = 1096;
+                current_statement_begin__ = 1151;
                 validate_non_negative_index("sTDPREDEFFECT", "(ntdpred ? nlatent : 0 )", (ntdpred ? nlatent : 0 ));
                 validate_non_negative_index("sTDPREDEFFECT", "ntdpred", ntdpred);
                 matrix_d sTDPREDEFFECT(static_cast<Eigen::VectorXd::Index>((ntdpred ? nlatent : 0 )),static_cast<Eigen::VectorXd::Index>(ntdpred));
@@ -5458,31 +5763,39 @@ public:
 
                 stan::math::initialize(sTDPREDEFFECT, std::numeric_limits<double>::quiet_NaN());
                 stan::math::fill(sTDPREDEFFECT,DUMMY_VAR__);
+                current_statement_begin__ = 1152;
+                validate_non_negative_index("sPARS", "get_base1(dims(PARS),2,\"dims(PARS)\",1)", get_base1(dims(PARS),2,"dims(PARS)",1));
+                validate_non_negative_index("sPARS", "get_base1(dims(PARS),3,\"dims(PARS)\",1)", get_base1(dims(PARS),3,"dims(PARS)",1));
+                matrix_d sPARS(static_cast<Eigen::VectorXd::Index>(get_base1(dims(PARS),2,"dims(PARS)",1)),static_cast<Eigen::VectorXd::Index>(get_base1(dims(PARS),3,"dims(PARS)",1)));
+                (void) sPARS;  // dummy to suppress unused var warning
+
+                stan::math::initialize(sPARS, std::numeric_limits<double>::quiet_NaN());
+                stan::math::fill(sPARS,DUMMY_VAR__);
 
 
-                current_statement_begin__ = 1099;
+                current_statement_begin__ = 1155;
                 if (as_bool(logical_eq(ukf,1))) {
-                    current_statement_begin__ = 1099;
+                    current_statement_begin__ = 1155;
                     stan::math::assign(k, 0.5);
                 }
-                current_statement_begin__ = 1101;
+                current_statement_begin__ = 1157;
                 stan::math::assign(cobscount, 0);
-                current_statement_begin__ = 1103;
+                current_statement_begin__ = 1159;
                 for (int rowi = 1; rowi <= ndatapoints; ++rowi) {
                     {
-                    current_statement_begin__ = 1104;
+                    current_statement_begin__ = 1160;
                     validate_non_negative_index("o", "get_base1(nobs_y,rowi,\"nobs_y\",1)", get_base1(nobs_y,rowi,"nobs_y",1));
                     vector<int> o(get_base1(nobs_y,rowi,"nobs_y",1), 0);
                     stan::math::fill(o, std::numeric_limits<int>::min());
-                    current_statement_begin__ = 1105;
+                    current_statement_begin__ = 1161;
                     validate_non_negative_index("o1", "get_base1(nbinary_y,rowi,\"nbinary_y\",1)", get_base1(nbinary_y,rowi,"nbinary_y",1));
                     vector<int> o1(get_base1(nbinary_y,rowi,"nbinary_y",1), 0);
                     stan::math::fill(o1, std::numeric_limits<int>::min());
-                    current_statement_begin__ = 1106;
+                    current_statement_begin__ = 1162;
                     validate_non_negative_index("o0", "get_base1(ncont_y,rowi,\"ncont_y\",1)", get_base1(ncont_y,rowi,"ncont_y",1));
                     vector<int> o0(get_base1(ncont_y,rowi,"ncont_y",1), 0);
                     stan::math::fill(o0, std::numeric_limits<int>::min());
-                    current_statement_begin__ = 1108;
+                    current_statement_begin__ = 1164;
                     validate_non_negative_index("ukfstates", "(ukf ? nlatentpop : 0 )", (ukf ? nlatentpop : 0 ));
                     validate_non_negative_index("ukfstates", "((2 * (nlatentpop + (get_base1(T0check,rowi,\"T0check\",1) ? nlatent : ndiffusion ))) + 2)", ((2 * (nlatentpop + (get_base1(T0check,rowi,"T0check",1) ? nlatent : ndiffusion ))) + 2));
                     matrix_d ukfstates(static_cast<Eigen::VectorXd::Index>((ukf ? nlatentpop : 0 )),static_cast<Eigen::VectorXd::Index>(((2 * (nlatentpop + (get_base1(T0check,rowi,"T0check",1) ? nlatent : ndiffusion ))) + 2)));
@@ -5490,7 +5803,7 @@ public:
 
                     stan::math::initialize(ukfstates, std::numeric_limits<double>::quiet_NaN());
                     stan::math::fill(ukfstates,DUMMY_VAR__);
-                    current_statement_begin__ = 1109;
+                    current_statement_begin__ = 1165;
                     validate_non_negative_index("ukfmeasures", "(ukf ? nmanifest : 0 )", (ukf ? nmanifest : 0 ));
                     validate_non_negative_index("ukfmeasures", "((2 * (nlatentpop + (get_base1(T0check,rowi,\"T0check\",1) ? nlatent : ndiffusion ))) + 2)", ((2 * (nlatentpop + (get_base1(T0check,rowi,"T0check",1) ? nlatent : ndiffusion ))) + 2));
                     matrix_d ukfmeasures(static_cast<Eigen::VectorXd::Index>((ukf ? nmanifest : 0 )),static_cast<Eigen::VectorXd::Index>(((2 * (nlatentpop + (get_base1(T0check,rowi,"T0check",1) ? nlatent : ndiffusion ))) + 2)));
@@ -5500,143 +5813,175 @@ public:
                     stan::math::fill(ukfmeasures,DUMMY_VAR__);
 
 
-                    current_statement_begin__ = 1111;
+                    current_statement_begin__ = 1167;
                     stan::math::assign(o, stan::model::rvalue(whichobs_y, stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_min_max(1, get_base1(nobs_y,rowi,"nobs_y",1)), stan::model::nil_index_list())), "whichobs_y"));
-                    current_statement_begin__ = 1112;
+                    current_statement_begin__ = 1168;
                     stan::math::assign(si, get_base1(subject,rowi,"subject",1));
-                    current_statement_begin__ = 1113;
+                    current_statement_begin__ = 1169;
                     stan::math::assign(nobsi, get_base1(nobs_y,rowi,"nobs_y",1));
-                    current_statement_begin__ = 1115;
+                    current_statement_begin__ = 1171;
                     stan::math::assign(o1, stan::model::rvalue(whichbinary_y, stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_min_max(1, get_base1(nbinary_y,rowi,"nbinary_y",1)), stan::model::nil_index_list())), "whichbinary_y"));
-                    current_statement_begin__ = 1116;
+                    current_statement_begin__ = 1172;
                     stan::math::assign(o0, stan::model::rvalue(whichcont_y, stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_min_max(1, get_base1(ncont_y,rowi,"ncont_y",1)), stan::model::nil_index_list())), "whichcont_y"));
-                    current_statement_begin__ = 1118;
+                    current_statement_begin__ = 1174;
                     if (as_bool((primitive_value(logical_neq(rowi,1)) && primitive_value(logical_eq(intoverstates,1))))) {
-                        current_statement_begin__ = 1118;
+                        current_statement_begin__ = 1174;
                         stan::math::assign(cobscount, (cobscount + get_base1(nobs_y,(rowi - 1),"nobs_y",1)));
                     }
-                    current_statement_begin__ = 1119;
+                    current_statement_begin__ = 1175;
                     if (as_bool((primitive_value(logical_neq(rowi,1)) && primitive_value(logical_eq(intoverstates,0))))) {
-                        current_statement_begin__ = 1119;
+                        current_statement_begin__ = 1175;
                         stan::math::assign(cobscount, (cobscount + get_base1(ncont_y,(rowi - 1),"ncont_y",1)));
                     }
-                    current_statement_begin__ = 1121;
+                    current_statement_begin__ = 1177;
                     if (as_bool(logical_eq(ukf,1))) {
 
-                        current_statement_begin__ = 1122;
+                        current_statement_begin__ = 1178;
                         if (as_bool(logical_eq(get_base1(T0check,rowi,"T0check",1),1))) {
 
-                            current_statement_begin__ = 1122;
+                            current_statement_begin__ = 1178;
                             stan::math::assign(ndynerror, nlatent);
                         } else {
-                            current_statement_begin__ = 1122;
+                            current_statement_begin__ = 1178;
                             stan::math::assign(ndynerror, ndiffusion);
                         }
-                        current_statement_begin__ = 1123;
+                        current_statement_begin__ = 1179;
                         if (as_bool((primitive_value(logical_eq(get_base1(T0check,rowi,"T0check",1),1)) || primitive_value((primitive_value(logical_lt(ndiffusion,nlatent)) && primitive_value(logical_eq(get_base1(T0check,(rowi - 1),"T0check",1),1))))))) {
 
-                            current_statement_begin__ = 1124;
+                            current_statement_begin__ = 1180;
                             stan::math::assign(asquared, ((2.0 / sqrt((nlatentpop + ndynerror))) * 0.10000000000000001));
-                            current_statement_begin__ = 1125;
+                            current_statement_begin__ = 1181;
                             stan::math::assign(l, ((asquared * ((nlatentpop + ndynerror) + k)) - (nlatentpop + ndynerror)));
-                            current_statement_begin__ = 1126;
+                            current_statement_begin__ = 1182;
                             stan::math::assign(sqrtukfadjust, sqrt(((nlatentpop + ndynerror) + l)));
                         }
                     }
-                    current_statement_begin__ = 1130;
+                    current_statement_begin__ = 1186;
                     if (as_bool(logical_eq(get_base1(T0check,rowi,"T0check",1),1))) {
 
-                        current_statement_begin__ = 1132;
-                        if (as_bool((primitive_value(logical_eq(si,1)) || primitive_value((primitive_value(logical_eq(ukfpop,0)) && primitive_value(logical_gt(nindvarying,0))))))) {
+                        current_statement_begin__ = 1188;
+                        if (as_bool((primitive_value((primitive_value(logical_eq(si,1)) || primitive_value((primitive_value(logical_eq(ukfpop,0)) && primitive_value(logical_gt(nindvarying,0)))))) || primitive_value(logical_gt(ntipred,0))))) {
 
-                            current_statement_begin__ = 1133;
-                            stan::math::assign(sT0MEANS, get_base1(T0MEANS,get_base1(T0MEANSsubindex,si,"T0MEANSsubindex",1),"T0MEANS",1));
-                            current_statement_begin__ = 1134;
-                            stan::math::assign(sT0VAR, get_base1(T0VAR,get_base1(T0VARsubindex,si,"T0VARsubindex",1),"T0VAR",1));
-                            current_statement_begin__ = 1135;
-                            stan::math::assign(sDRIFT, get_base1(DRIFT,get_base1(DRIFTsubindex,si,"DRIFTsubindex",1),"DRIFT",1));
-                            current_statement_begin__ = 1136;
-                            stan::math::assign(sDIFFUSION, get_base1(DIFFUSION,get_base1(DIFFUSIONsubindex,si,"DIFFUSIONsubindex",1),"DIFFUSION",1));
-                            current_statement_begin__ = 1137;
-                            stan::math::assign(sCINT, get_base1(CINT,get_base1(CINTsubindex,si,"CINTsubindex",1),"CINT",1));
-                            current_statement_begin__ = 1138;
-                            stan::math::assign(sLAMBDA, get_base1(LAMBDA,get_base1(LAMBDAsubindex,si,"LAMBDAsubindex",1),"LAMBDA",1));
-                            current_statement_begin__ = 1139;
-                            stan::math::assign(sMANIFESTMEANS, get_base1(MANIFESTMEANS,get_base1(MANIFESTMEANSsubindex,si,"MANIFESTMEANSsubindex",1),"MANIFESTMEANS",1));
-                            current_statement_begin__ = 1140;
-                            stan::math::assign(sMANIFESTVAR, get_base1(MANIFESTVAR,get_base1(MANIFESTVARsubindex,si,"MANIFESTVARsubindex",1),"MANIFESTVAR",1));
-                            current_statement_begin__ = 1141;
-                            stan::math::assign(sTDPREDEFFECT, get_base1(TDPREDEFFECT,get_base1(TDPREDEFFECTsubindex,si,"TDPREDEFFECTsubindex",1),"TDPREDEFFECT",1));
-                            current_statement_begin__ = 1143;
+                            current_statement_begin__ = 1189;
+                            if (as_bool(logical_eq(si,get_base1(T0MEANSsubindex,si,"T0MEANSsubindex",1)))) {
+                                current_statement_begin__ = 1189;
+                                stan::math::assign(sT0MEANS, get_base1(T0MEANS,get_base1(T0MEANSsubindex,si,"T0MEANSsubindex",1),"T0MEANS",1));
+                            }
+                            current_statement_begin__ = 1190;
+                            if (as_bool(logical_eq(si,get_base1(T0VARsubindex,si,"T0VARsubindex",1)))) {
+                                current_statement_begin__ = 1190;
+                                stan::math::assign(sT0VAR, get_base1(T0VAR,get_base1(T0VARsubindex,si,"T0VARsubindex",1),"T0VAR",1));
+                            }
+                            current_statement_begin__ = 1191;
+                            if (as_bool(logical_eq(si,get_base1(DRIFTsubindex,si,"DRIFTsubindex",1)))) {
+                                current_statement_begin__ = 1191;
+                                stan::math::assign(sDRIFT, get_base1(DRIFT,get_base1(DRIFTsubindex,si,"DRIFTsubindex",1),"DRIFT",1));
+                            }
+                            current_statement_begin__ = 1192;
+                            if (as_bool(logical_eq(si,get_base1(DIFFUSIONsubindex,si,"DIFFUSIONsubindex",1)))) {
+                                current_statement_begin__ = 1192;
+                                stan::math::assign(sDIFFUSION, get_base1(DIFFUSION,get_base1(DIFFUSIONsubindex,si,"DIFFUSIONsubindex",1),"DIFFUSION",1));
+                            }
+                            current_statement_begin__ = 1193;
+                            if (as_bool(logical_eq(si,get_base1(CINTsubindex,si,"CINTsubindex",1)))) {
+                                current_statement_begin__ = 1193;
+                                stan::math::assign(sCINT, get_base1(CINT,get_base1(CINTsubindex,si,"CINTsubindex",1),"CINT",1));
+                            }
+                            current_statement_begin__ = 1194;
+                            if (as_bool(logical_eq(si,get_base1(LAMBDAsubindex,si,"LAMBDAsubindex",1)))) {
+                                current_statement_begin__ = 1194;
+                                stan::math::assign(sLAMBDA, get_base1(LAMBDA,get_base1(LAMBDAsubindex,si,"LAMBDAsubindex",1),"LAMBDA",1));
+                            }
+                            current_statement_begin__ = 1195;
+                            if (as_bool(logical_eq(si,get_base1(MANIFESTMEANSsubindex,si,"MANIFESTMEANSsubindex",1)))) {
+                                current_statement_begin__ = 1195;
+                                stan::math::assign(sMANIFESTMEANS, get_base1(MANIFESTMEANS,get_base1(MANIFESTMEANSsubindex,si,"MANIFESTMEANSsubindex",1),"MANIFESTMEANS",1));
+                            }
+                            current_statement_begin__ = 1196;
+                            if (as_bool(logical_eq(si,get_base1(MANIFESTVARsubindex,si,"MANIFESTVARsubindex",1)))) {
+                                current_statement_begin__ = 1196;
+                                stan::math::assign(sMANIFESTVAR, get_base1(MANIFESTVAR,get_base1(MANIFESTVARsubindex,si,"MANIFESTVARsubindex",1),"MANIFESTVAR",1));
+                            }
+                            current_statement_begin__ = 1197;
+                            if (as_bool(logical_eq(si,get_base1(TDPREDEFFECTsubindex,si,"TDPREDEFFECTsubindex",1)))) {
+                                current_statement_begin__ = 1197;
+                                stan::math::assign(sTDPREDEFFECT, get_base1(TDPREDEFFECT,get_base1(TDPREDEFFECTsubindex,si,"TDPREDEFFECTsubindex",1),"TDPREDEFFECT",1));
+                            }
+                            current_statement_begin__ = 1198;
+                            if (as_bool(logical_eq(si,get_base1(PARSsubindex,si,"PARSsubindex",1)))) {
+                                current_statement_begin__ = 1198;
+                                stan::math::assign(sPARS, get_base1(PARS,get_base1(PARSsubindex,si,"PARSsubindex",1),"PARS",1));
+                            }
+                            current_statement_begin__ = 1200;
                             if (as_bool((primitive_value((primitive_value(logical_eq(1,99)) && primitive_value(logical_eq(lineardynamics,1)))) && primitive_value((primitive_value(logical_eq(rowi,1)) || primitive_value(logical_neq(get_base1(asymDIFFUSIONsubindex,si,"asymDIFFUSIONsubindex",1),get_base1(asymDIFFUSIONsubindex,(si - 1),"asymDIFFUSIONsubindex",1)))))))) {
 
-                                current_statement_begin__ = 1144;
+                                current_statement_begin__ = 1201;
                                 stan::model::assign(sasymDIFFUSION, 
                                             stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), 
                                             to_matrix(mdivide_left(minus(add(kron_prod(stan::model::rvalue(sDRIFT, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "sDRIFT"),stan::model::rvalue(IIlatent, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "IIlatent"), pstream__),kron_prod(stan::model::rvalue(IIlatent, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "IIlatent"),stan::model::rvalue(sDRIFT, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "sDRIFT"), pstream__))),to_vector(stan::model::rvalue(sDIFFUSION, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "sDIFFUSION"))),ndiffusion,ndiffusion), 
                                             "assigning variable sasymDIFFUSION");
                             }
                         }
-                        current_statement_begin__ = 1151;
+                        current_statement_begin__ = 1209;
                         if (as_bool(logical_eq(ukf,1))) {
 
-                            current_statement_begin__ = 1152;
+                            current_statement_begin__ = 1210;
                             stan::model::assign(etaprior, 
                                         stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), 
                                         rep_vector(0,nlatentpop), 
                                         "assigning variable etaprior");
-                            current_statement_begin__ = 1153;
+                            current_statement_begin__ = 1211;
                             stan::math::assign(sigpoints, rep_matrix(0,nlatentpop,nlatentpop));
-                            current_statement_begin__ = 1155;
+                            current_statement_begin__ = 1213;
                             if (as_bool(logical_eq(ukfpop,1))) {
 
-                                current_statement_begin__ = 1156;
+                                current_statement_begin__ = 1214;
                                 if (as_bool(logical_eq(ntipred,0))) {
-                                    current_statement_begin__ = 1156;
+                                    current_statement_begin__ = 1214;
                                     stan::model::assign(etaprior, 
                                                 stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_min_max((nlatent + 1), nlatentpop), stan::model::nil_index_list())), 
                                                 stan::model::rvalue(rawpopmeans, stan::model::cons_list(stan::model::index_multi(indvaryingindex), stan::model::nil_index_list()), "rawpopmeans"), 
                                                 "assigning variable etaprior");
                                 }
-                                current_statement_begin__ = 1157;
+                                current_statement_begin__ = 1215;
                                 if (as_bool(logical_gt(ntipred,0))) {
-                                    current_statement_begin__ = 1157;
+                                    current_statement_begin__ = 1215;
                                     stan::model::assign(etaprior, 
                                                 stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_min_max((nlatent + 1), nlatentpop), stan::model::nil_index_list())), 
                                                 add(stan::model::rvalue(rawpopmeans, stan::model::cons_list(stan::model::index_multi(indvaryingindex), stan::model::nil_index_list()), "rawpopmeans"),multiply(stan::model::rvalue(TIPREDEFFECT, stan::model::cons_list(stan::model::index_multi(indvaryingindex), stan::model::nil_index_list()), "TIPREDEFFECT"),transpose(get_base1(tipreds,si,"tipreds",1)))), 
                                                 "assigning variable etaprior");
                                 }
-                                current_statement_begin__ = 1158;
+                                current_statement_begin__ = 1216;
                                 stan::model::assign(sigpoints, 
                                             stan::model::cons_list(stan::model::index_min_max((nlatent + 1), nlatentpop), stan::model::cons_list(stan::model::index_min_max((nlatent + 1), nlatentpop), stan::model::nil_index_list())), 
                                             multiply(rawpopcovsqrt,sqrtukfadjust), 
                                             "assigning variable sigpoints");
                             }
                         }
-                        current_statement_begin__ = 1162;
+                        current_statement_begin__ = 1220;
                         if (as_bool(logical_eq(ukf,0))) {
 
-                            current_statement_begin__ = 1163;
+                            current_statement_begin__ = 1221;
                             if (as_bool(logical_eq(ntdpred,0))) {
-                                current_statement_begin__ = 1163;
+                                current_statement_begin__ = 1221;
                                 stan::math::assign(get_base1_lhs(etaprior,rowi,"etaprior",1), stan::model::rvalue(sT0MEANS, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sT0MEANS"));
                             }
-                            current_statement_begin__ = 1164;
+                            current_statement_begin__ = 1222;
                             if (as_bool(logical_gt(ntdpred,0))) {
-                                current_statement_begin__ = 1164;
+                                current_statement_begin__ = 1222;
                                 stan::math::assign(get_base1_lhs(etaprior,rowi,"etaprior",1), add(multiply(get_base1(TDPREDEFFECT,get_base1(TDPREDEFFECTsubindex,si,"TDPREDEFFECTsubindex",1),"TDPREDEFFECT",1),get_base1(tdpreds,rowi,"tdpreds",1)),stan::model::rvalue(sT0MEANS, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sT0MEANS")));
                             }
-                            current_statement_begin__ = 1165;
+                            current_statement_begin__ = 1223;
                             stan::math::assign(get_base1_lhs(etapriorcov,rowi,"etapriorcov",1), get_base1(T0VAR,get_base1(T0VARsubindex,si,"T0VARsubindex",1),"T0VAR",1));
                         }
                     }
-                    current_statement_begin__ = 1170;
+                    current_statement_begin__ = 1228;
                     if (as_bool((primitive_value((primitive_value(logical_eq(lineardynamics,1)) && primitive_value(logical_eq(ukf,0)))) && primitive_value(logical_eq(get_base1(T0check,rowi,"T0check",1),0))))) {
 
-                        current_statement_begin__ = 1172;
+                        current_statement_begin__ = 1230;
                         if (as_bool(logical_eq(continuoustime,1))) {
                             {
-                            current_statement_begin__ = 1173;
+                            current_statement_begin__ = 1231;
                             int dtchange(0);
                             (void) dtchange;  // dummy to suppress unused var warning
 
@@ -5644,43 +5989,43 @@ public:
                             stan::math::assign(dtchange,0);
 
 
-                            current_statement_begin__ = 1174;
+                            current_statement_begin__ = 1232;
                             if (as_bool((primitive_value(logical_eq(si,1)) && primitive_value(logical_eq(get_base1(T0check,(rowi - 1),"T0check",1),1))))) {
 
-                                current_statement_begin__ = 1175;
+                                current_statement_begin__ = 1233;
                                 stan::math::assign(dtchange, 1);
                             } else if (as_bool((primitive_value(logical_eq(get_base1(T0check,(rowi - 1),"T0check",1),1)) && primitive_value(logical_neq(get_base1(dT,(rowi - 2),"dT",1),get_base1(dT,rowi,"dT",1)))))) {
 
-                                current_statement_begin__ = 1177;
+                                current_statement_begin__ = 1235;
                                 stan::math::assign(dtchange, 1);
                             } else if (as_bool((primitive_value(logical_eq(get_base1(T0check,(rowi - 1),"T0check",1),0)) && primitive_value(logical_neq(get_base1(dT,(rowi - 1),"dT",1),get_base1(dT,rowi,"dT",1)))))) {
-                                current_statement_begin__ = 1178;
+                                current_statement_begin__ = 1236;
                                 stan::math::assign(dtchange, 1);
                             }
-                            current_statement_begin__ = 1180;
+                            current_statement_begin__ = 1238;
                             if (as_bool((primitive_value(logical_eq(dtchange,1)) || primitive_value((primitive_value(logical_eq(get_base1(T0check,(rowi - 1),"T0check",1),1)) && primitive_value(logical_lte(si,get_base1(DRIFTsubindex,si,"DRIFTsubindex",1)))))))) {
 
-                                current_statement_begin__ = 1181;
+                                current_statement_begin__ = 1239;
                                 if (as_bool(logical_eq(driftdiagonly,1))) {
-                                    current_statement_begin__ = 1181;
+                                    current_statement_begin__ = 1239;
                                     stan::math::assign(discreteDRIFT, matrix_diagexp(multiply(sDRIFT,get_base1(dT,rowi,"dT",1)), pstream__));
                                 }
-                                current_statement_begin__ = 1182;
+                                current_statement_begin__ = 1240;
                                 if (as_bool(logical_eq(driftdiagonly,0))) {
-                                    current_statement_begin__ = 1182;
+                                    current_statement_begin__ = 1240;
                                     stan::math::assign(discreteDRIFT, matrix_exp(multiply(sDRIFT,get_base1(dT,rowi,"dT",1))));
                                 }
                             }
-                            current_statement_begin__ = 1184;
+                            current_statement_begin__ = 1242;
                             if (as_bool((primitive_value(logical_eq(dtchange,1)) || primitive_value((primitive_value(logical_eq(get_base1(T0check,(rowi - 1),"T0check",1),1)) && primitive_value((primitive_value(logical_lte(si,get_base1(CINTsubindex,si,"CINTsubindex",1))) || primitive_value(logical_lte(si,get_base1(DRIFTsubindex,si,"DRIFTsubindex",1)))))))))) {
 
-                                current_statement_begin__ = 1185;
+                                current_statement_begin__ = 1243;
                                 stan::math::assign(discreteCINT, multiply(mdivide_left(sDRIFT,subtract(discreteDRIFT,IIlatent)),stan::model::rvalue(sCINT, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sCINT")));
                             }
-                            current_statement_begin__ = 1188;
+                            current_statement_begin__ = 1246;
                             if (as_bool((primitive_value(logical_eq(dtchange,1)) || primitive_value((primitive_value(logical_eq(get_base1(T0check,(rowi - 1),"T0check",1),1)) && primitive_value((primitive_value(logical_lte(si,get_base1(DIFFUSIONsubindex,si,"DIFFUSIONsubindex",1))) || primitive_value(logical_lte(si,get_base1(DRIFTsubindex,si,"DRIFTsubindex",1)))))))))) {
 
-                                current_statement_begin__ = 1191;
+                                current_statement_begin__ = 1249;
                                 stan::model::assign(discreteDIFFUSION, 
                                             stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), 
                                             discreteDIFFUSIONcalc(stan::model::rvalue(DRIFT, stan::model::cons_list(stan::model::index_uni(get_base1(DRIFTsubindex,si,"DRIFTsubindex",1)), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), "DRIFT"),stan::model::rvalue(sDIFFUSION, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "sDIFFUSION"),get_base1(dT,rowi,"dT",1), pstream__), 
@@ -5688,29 +6033,29 @@ public:
                             }
                             }
                         }
-                        current_statement_begin__ = 1195;
+                        current_statement_begin__ = 1253;
                         if (as_bool((primitive_value(logical_eq(continuoustime,0)) && primitive_value(logical_eq(get_base1(T0check,(rowi - 1),"T0check",1),1))))) {
 
-                            current_statement_begin__ = 1196;
+                            current_statement_begin__ = 1254;
                             stan::math::assign(discreteDRIFT, sDRIFT);
-                            current_statement_begin__ = 1197;
+                            current_statement_begin__ = 1255;
                             stan::math::assign(discreteCINT, stan::model::rvalue(sCINT, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sCINT"));
-                            current_statement_begin__ = 1198;
+                            current_statement_begin__ = 1256;
                             stan::math::assign(discreteDIFFUSION, sDIFFUSION);
                         }
-                        current_statement_begin__ = 1201;
+                        current_statement_begin__ = 1259;
                         stan::math::assign(get_base1_lhs(etaprior,rowi,"etaprior",1), add(multiply(discreteDRIFT,get_base1(etaupd,(rowi - 1),"etaupd",1)),discreteCINT));
-                        current_statement_begin__ = 1202;
+                        current_statement_begin__ = 1260;
                         if (as_bool(logical_eq(intoverstates,1))) {
 
-                            current_statement_begin__ = 1203;
+                            current_statement_begin__ = 1261;
                             if (as_bool(logical_eq(ndiffusion,0))) {
-                                current_statement_begin__ = 1203;
+                                current_statement_begin__ = 1261;
                                 stan::math::assign(get_base1_lhs(etapriorcov,rowi,"etapriorcov",1), quad_form(get_base1(etaupdcov,(rowi - 1),"etaupdcov",1),transpose(discreteDRIFT)));
                             }
-                            current_statement_begin__ = 1204;
+                            current_statement_begin__ = 1262;
                             if (as_bool(logical_gt(ndiffusion,0))) {
-                                current_statement_begin__ = 1204;
+                                current_statement_begin__ = 1262;
                                 stan::model::assign(etapriorcov, 
                                             stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), 
                                             add(quad_form(get_base1(etaupdcov,(rowi - 1),"etaupdcov",1),transpose(discreteDRIFT)),stan::model::rvalue(discreteDIFFUSION, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "discreteDIFFUSION")), 
@@ -5718,528 +6063,568 @@ public:
                             }
                         }
                     }
-                    current_statement_begin__ = 1208;
+                    current_statement_begin__ = 1266;
                     if (as_bool(logical_eq(ukf,1))) {
 
-                        current_statement_begin__ = 1210;
+                        current_statement_begin__ = 1268;
                         if (as_bool(logical_eq(get_base1(T0check,rowi,"T0check",1),1))) {
-                            current_statement_begin__ = 1210;
+                            current_statement_begin__ = 1268;
                             stan::math::assign(dynerror, sqrtukfadjust);
                         }
-                        current_statement_begin__ = 1211;
+                        current_statement_begin__ = 1269;
                         if (as_bool((primitive_value(logical_eq(get_base1(T0check,rowi,"T0check",1),0)) && primitive_value(logical_eq(lineardynamics,0))))) {
-                            current_statement_begin__ = 1211;
+                            current_statement_begin__ = 1269;
                             stan::math::assign(dynerror, (sqrtukfadjust / sqrt(get_base1(dT,rowi,"dT",1))));
                         }
-                        current_statement_begin__ = 1213;
+                        current_statement_begin__ = 1271;
                         if (as_bool(logical_eq(get_base1(T0check,rowi,"T0check",1),0))) {
 
-                            current_statement_begin__ = 1214;
+                            current_statement_begin__ = 1272;
                             stan::math::assign(sigpoints, multiply(cholspd(stan::model::rvalue(etaupdcov, stan::model::cons_list(stan::model::index_uni((rowi - 1)), stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list()))), "etaupdcov"), pstream__),sqrtukfadjust));
-                            current_statement_begin__ = 1215;
+                            current_statement_begin__ = 1273;
                             stan::model::assign(etaprior, 
                                         stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), 
                                         stan::model::rvalue(etaupd, stan::model::cons_list(stan::model::index_uni((rowi - 1)), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "etaupd"), 
                                         "assigning variable etaprior");
                         }
-                        current_statement_begin__ = 1219;
+                        current_statement_begin__ = 1277;
                         for (int statei = 1; statei <= cols(ukfstates); ++statei) {
 
-                            current_statement_begin__ = 1220;
+                            current_statement_begin__ = 1278;
                             if (as_bool((primitive_value(logical_gt(statei,(2 + nlatentpop))) && primitive_value(logical_lte(statei,(2 + (2 * nlatentpop))))))) {
 
-                                current_statement_begin__ = 1221;
+                                current_statement_begin__ = 1279;
                                 stan::model::assign(ukfstates, 
                                             stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(statei), stan::model::nil_index_list())), 
                                             subtract(stan::model::rvalue(etaprior, stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "etaprior"),stan::model::rvalue(sigpoints, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni((statei - (2 + nlatentpop))), stan::model::nil_index_list())), "sigpoints")), 
                                             "assigning variable ukfstates");
                             } else if (as_bool((primitive_value(logical_gt(statei,2)) && primitive_value(logical_lte(statei,(2 + (2 * nlatentpop))))))) {
 
-                                current_statement_begin__ = 1224;
+                                current_statement_begin__ = 1282;
                                 stan::model::assign(ukfstates, 
                                             stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(statei), stan::model::nil_index_list())), 
                                             add(stan::model::rvalue(etaprior, stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "etaprior"),stan::model::rvalue(sigpoints, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni((statei - 2)), stan::model::nil_index_list())), "sigpoints")), 
                                             "assigning variable ukfstates");
                             } else {
-                                current_statement_begin__ = 1226;
+                                current_statement_begin__ = 1284;
                                 stan::model::assign(ukfstates, 
                                             stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(statei), stan::model::nil_index_list())), 
                                             stan::model::rvalue(etaprior, stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "etaprior"), 
                                             "assigning variable ukfstates");
                             }
                         }
-                        current_statement_begin__ = 1229;
+                        current_statement_begin__ = 1287;
                         for (int statei = 2; statei <= cols(ukfstates); ++statei) {
 
-                            current_statement_begin__ = 1231;
+                            current_statement_begin__ = 1289;
                             if (as_bool(logical_eq(get_base1(T0check,rowi,"T0check",1),1))) {
 
-                                current_statement_begin__ = 1233;
+                                current_statement_begin__ = 1291;
                                 if (as_bool(logical_lte(statei,((2 + (2 * nlatentpop)) + 1)))) {
 
-                                    current_statement_begin__ = 1235;
+                                    current_statement_begin__ = 1293;
                                     if (as_bool(logical_eq(ukfpop,1))) {
 
-                                        current_statement_begin__ = 1237;
+                                        current_statement_begin__ = 1295;
                                         for (int ri = 1; ri <= size(T0MEANSsetup); ++ri) {
 
-                                            current_statement_begin__ = 1238;
+                                            current_statement_begin__ = 1296;
                                             if (as_bool(logical_gt(get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),5,"T0MEANSsetup",2),0))) {
 
-                                                current_statement_begin__ = 1239;
+                                                current_statement_begin__ = 1297;
                                                 stan::math::assign(get_base1_lhs(sT0MEANS,get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),1,"T0MEANSsetup",2),get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),2,"T0MEANSsetup",2),"sT0MEANS",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),5,"T0MEANSsetup",2)),statei,"ukfstates",1),get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),4,"T0MEANSsetup",2),get_base1(T0MEANSvalues,ri,2,"T0MEANSvalues",1),get_base1(T0MEANSvalues,ri,3,"T0MEANSvalues",1),get_base1(T0MEANSvalues,ri,4,"T0MEANSvalues",1), pstream__));
                                             }
                                         }
-                                        current_statement_begin__ = 1243;
+                                        current_statement_begin__ = 1301;
                                         for (int ri = 1; ri <= size(T0VARsetup); ++ri) {
 
-                                            current_statement_begin__ = 1244;
+                                            current_statement_begin__ = 1302;
                                             if (as_bool(logical_gt(get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),5,"T0VARsetup",2),0))) {
 
-                                                current_statement_begin__ = 1245;
+                                                current_statement_begin__ = 1303;
                                                 stan::math::assign(get_base1_lhs(sT0VAR,get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),1,"T0VARsetup",2),get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),2,"T0VARsetup",2),"sT0VAR",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),5,"T0VARsetup",2)),statei,"ukfstates",1),get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),4,"T0VARsetup",2),get_base1(T0VARvalues,ri,2,"T0VARvalues",1),get_base1(T0VARvalues,ri,3,"T0VARvalues",1),get_base1(T0VARvalues,ri,4,"T0VARvalues",1), pstream__));
                                             }
                                         }
                                     }
                                 }
-                                current_statement_begin__ = 1250;
+                                current_statement_begin__ = 1308;
                                 stan::math::assign(state, stan::model::rvalue(sT0MEANS, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sT0MEANS"));
-                                current_statement_begin__ = 1251;
+                                current_statement_begin__ = 1309;
                                 if (as_bool(logical_gt(statei,((2 + (2 * nlatentpop)) + ndynerror)))) {
 
-                                    current_statement_begin__ = 1252;
+                                    current_statement_begin__ = 1310;
                                     stan::math::assign(state, add(state, multiply(minus(stan::model::rvalue(sT0VAR, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni((statei - ((2 + (2 * nlatentpop)) + ndynerror))), stan::model::nil_index_list())), "sT0VAR")),dynerror)));
                                 } else if (as_bool(logical_gt(statei,(2 + (2 * nlatentpop))))) {
-                                    current_statement_begin__ = 1254;
+                                    current_statement_begin__ = 1312;
                                     stan::math::assign(state, add(state, multiply(stan::model::rvalue(sT0VAR, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni((statei - (2 + (2 * nlatentpop)))), stan::model::nil_index_list())), "sT0VAR"),dynerror)));
                                 }
                             }
-                            current_statement_begin__ = 1258;
+                            current_statement_begin__ = 1316;
                             if (as_bool(logical_eq(get_base1(T0check,rowi,"T0check",1),0))) {
 
-                                current_statement_begin__ = 1259;
+                                current_statement_begin__ = 1317;
                                 stan::math::assign(state, stan::model::rvalue(ukfstates, stan::model::cons_list(stan::model::index_min_max(1, nlatent), stan::model::cons_list(stan::model::index_uni(statei), stan::model::nil_index_list())), "ukfstates"));
-                                current_statement_begin__ = 1261;
+                                current_statement_begin__ = 1319;
                                 if (as_bool(logical_eq(lineardynamics,0))) {
 
-                                    current_statement_begin__ = 1262;
+                                    current_statement_begin__ = 1320;
                                     for (int stepi = 1; stepi <= get_base1(integrationsteps,rowi,"integrationsteps",1); ++stepi) {
 
-                                        current_statement_begin__ = 1263;
+                                        current_statement_begin__ = 1321;
                                         stan::math::assign(get_base1_lhs(rkstates,5,"rkstates",1), state);
-                                        current_statement_begin__ = 1265;
+                                        current_statement_begin__ = 1323;
                                         for (int ki = 1; ki <= 4; ++ki) {
 
-                                            current_statement_begin__ = 1266;
+                                            current_statement_begin__ = 1324;
                                             if (as_bool((primitive_value(logical_eq(ki,2)) || primitive_value(logical_eq(ki,3))))) {
-                                                current_statement_begin__ = 1266;
+                                                current_statement_begin__ = 1324;
                                                 stan::math::assign(state, add(get_base1(rkstates,5,"rkstates",1),multiply((get_base1(dTsmall,rowi,"dTsmall",1) / 2),get_base1(rkstates,(ki - 1),"rkstates",1))));
                                             }
-                                            current_statement_begin__ = 1267;
+                                            current_statement_begin__ = 1325;
                                             if (as_bool(logical_eq(ki,4))) {
-                                                current_statement_begin__ = 1267;
+                                                current_statement_begin__ = 1325;
                                                 stan::math::assign(state, add(get_base1(rkstates,5,"rkstates",1),multiply(get_base1(dTsmall,rowi,"dTsmall",1),get_base1(rkstates,3,"rkstates",1))));
                                             }
-                                            current_statement_begin__ = 1268;
+                                            current_statement_begin__ = 1327;
                                             if (as_bool(logical_eq(ukfpop,1))) {
 
-                                                current_statement_begin__ = 1270;
+                                                current_statement_begin__ = 1329;
                                                 for (int ri = 1; ri <= size(DRIFTsetup); ++ri) {
 
-                                                    current_statement_begin__ = 1271;
+                                                    current_statement_begin__ = 1330;
                                                     if (as_bool(logical_gt(get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),5,"DRIFTsetup",2),0))) {
 
-                                                        current_statement_begin__ = 1272;
+                                                        current_statement_begin__ = 1331;
                                                         stan::math::assign(get_base1_lhs(sDRIFT,get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),1,"DRIFTsetup",2),get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),2,"DRIFTsetup",2),"sDRIFT",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),5,"DRIFTsetup",2)),statei,"ukfstates",1),get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),4,"DRIFTsetup",2),get_base1(DRIFTvalues,ri,2,"DRIFTvalues",1),get_base1(DRIFTvalues,ri,3,"DRIFTvalues",1),get_base1(DRIFTvalues,ri,4,"DRIFTvalues",1), pstream__));
                                                     }
                                                 }
-                                                current_statement_begin__ = 1277;
+                                                current_statement_begin__ = 1336;
                                                 for (int ri = 1; ri <= size(DIFFUSIONsetup); ++ri) {
 
-                                                    current_statement_begin__ = 1278;
+                                                    current_statement_begin__ = 1337;
                                                     if (as_bool(logical_gt(get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),5,"DIFFUSIONsetup",2),0))) {
 
-                                                        current_statement_begin__ = 1279;
+                                                        current_statement_begin__ = 1338;
                                                         stan::math::assign(get_base1_lhs(sDIFFUSION,get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),1,"DIFFUSIONsetup",2),get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),2,"DIFFUSIONsetup",2),"sDIFFUSION",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),5,"DIFFUSIONsetup",2)),statei,"ukfstates",1),get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),4,"DIFFUSIONsetup",2),get_base1(DIFFUSIONvalues,ri,2,"DIFFUSIONvalues",1),get_base1(DIFFUSIONvalues,ri,3,"DIFFUSIONvalues",1),get_base1(DIFFUSIONvalues,ri,4,"DIFFUSIONvalues",1), pstream__));
                                                     }
                                                 }
-                                                current_statement_begin__ = 1284;
+                                                current_statement_begin__ = 1343;
                                                 for (int ri = 1; ri <= size(CINTsetup); ++ri) {
 
-                                                    current_statement_begin__ = 1285;
+                                                    current_statement_begin__ = 1344;
                                                     if (as_bool(logical_gt(get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),5,"CINTsetup",2),0))) {
 
-                                                        current_statement_begin__ = 1286;
+                                                        current_statement_begin__ = 1345;
                                                         stan::math::assign(get_base1_lhs(sCINT,get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),1,"CINTsetup",2),get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),2,"CINTsetup",2),"sCINT",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),5,"CINTsetup",2)),statei,"ukfstates",1),get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),4,"CINTsetup",2),get_base1(CINTvalues,ri,2,"CINTvalues",1),get_base1(CINTvalues,ri,3,"CINTvalues",1),get_base1(CINTvalues,ri,4,"CINTvalues",1), pstream__));
                                                     }
                                                 }
-                                                current_statement_begin__ = 1291;
+                                                current_statement_begin__ = 1350;
                                                 for (int ri = 1; ri <= size(TDPREDEFFECTsetup); ++ri) {
 
-                                                    current_statement_begin__ = 1292;
+                                                    current_statement_begin__ = 1351;
                                                     if (as_bool(logical_gt(get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),5,"TDPREDEFFECTsetup",2),0))) {
 
-                                                        current_statement_begin__ = 1293;
+                                                        current_statement_begin__ = 1352;
                                                         stan::math::assign(get_base1_lhs(sTDPREDEFFECT,get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),1,"TDPREDEFFECTsetup",2),get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),2,"TDPREDEFFECTsetup",2),"sTDPREDEFFECT",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),5,"TDPREDEFFECTsetup",2)),statei,"ukfstates",1),get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),4,"TDPREDEFFECTsetup",2),get_base1(TDPREDEFFECTvalues,ri,2,"TDPREDEFFECTvalues",1),get_base1(TDPREDEFFECTvalues,ri,3,"TDPREDEFFECTvalues",1),get_base1(TDPREDEFFECTvalues,ri,4,"TDPREDEFFECTvalues",1), pstream__));
                                                     }
                                                 }
+                                                current_statement_begin__ = 1357;
+                                                for (int ri = 1; ri <= size(PARSsetup); ++ri) {
+
+                                                    current_statement_begin__ = 1358;
+                                                    if (as_bool(logical_gt(get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),5,"PARSsetup",2),0))) {
+
+                                                        current_statement_begin__ = 1359;
+                                                        stan::math::assign(get_base1_lhs(sPARS,get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),1,"PARSsetup",2),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),2,"PARSsetup",2),"sPARS",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),5,"PARSsetup",2)),statei,"ukfstates",1),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),4,"PARSsetup",2),get_base1(PARSvalues,ri,2,"PARSvalues",1),get_base1(PARSvalues,ri,3,"PARSvalues",1),get_base1(PARSvalues,ri,4,"PARSvalues",1), pstream__));
+                                                    }
+                                                }
                                             }
-                                            current_statement_begin__ = 1298;
+                                            current_statement_begin__ = 1364;
                                             if (as_bool(logical_lte(statei,(2 + (2 * nlatentpop))))) {
 
-                                                current_statement_begin__ = 1299;
+                                                current_statement_begin__ = 1365;
                                                 stan::math::assign(get_base1_lhs(rkstates,ki,"rkstates",1), add(multiply(sDRIFT,state),stan::model::rvalue(sCINT, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sCINT")));
                                             } else if (as_bool(logical_lte(statei,((2 + (2 * nlatentpop)) + ndynerror)))) {
 
-                                                current_statement_begin__ = 1301;
+                                                current_statement_begin__ = 1367;
                                                 stan::math::assign(get_base1_lhs(rkstates,ki,"rkstates",1), add(add(multiply(sDRIFT,state),stan::model::rvalue(sCINT, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sCINT")),multiply(stan::model::rvalue(sDIFFUSION, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(get_base1(derrind,(statei - (2 + (2 * nlatentpop))),"derrind",1)), stan::model::nil_index_list())), "sDIFFUSION"),dynerror)));
                                             } else {
-                                                current_statement_begin__ = 1302;
+                                                current_statement_begin__ = 1368;
                                                 stan::math::assign(get_base1_lhs(rkstates,ki,"rkstates",1), subtract(add(multiply(sDRIFT,state),stan::model::rvalue(sCINT, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sCINT")),multiply(stan::model::rvalue(sDIFFUSION, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(get_base1(derrind,(statei - ((2 + (2 * nlatentpop)) + ndynerror)),"derrind",1)), stan::model::nil_index_list())), "sDIFFUSION"),dynerror)));
                                             }
                                         }
-                                        current_statement_begin__ = 1305;
+                                        current_statement_begin__ = 1371;
                                         stan::math::assign(state, add(get_base1(rkstates,5,"rkstates",1),multiply((get_base1(dTsmall,rowi,"dTsmall",1) / 6),add(add(add(get_base1(rkstates,1,"rkstates",1),multiply(2,get_base1(rkstates,2,"rkstates",1))),multiply(2,get_base1(rkstates,3,"rkstates",1))),get_base1(rkstates,4,"rkstates",1)))));
                                     }
                                 }
-                                current_statement_begin__ = 1310;
+                                current_statement_begin__ = 1376;
                                 if (as_bool(logical_eq(lineardynamics,1))) {
 
-                                    current_statement_begin__ = 1311;
+                                    current_statement_begin__ = 1378;
                                     if (as_bool(logical_eq(ukfpop,1))) {
 
-                                        current_statement_begin__ = 1313;
+                                        current_statement_begin__ = 1380;
                                         for (int ri = 1; ri <= size(DRIFTsetup); ++ri) {
 
-                                            current_statement_begin__ = 1314;
+                                            current_statement_begin__ = 1381;
                                             if (as_bool(logical_gt(get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),5,"DRIFTsetup",2),0))) {
 
-                                                current_statement_begin__ = 1315;
+                                                current_statement_begin__ = 1382;
                                                 stan::math::assign(get_base1_lhs(sDRIFT,get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),1,"DRIFTsetup",2),get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),2,"DRIFTsetup",2),"sDRIFT",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),5,"DRIFTsetup",2)),statei,"ukfstates",1),get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),4,"DRIFTsetup",2),get_base1(DRIFTvalues,ri,2,"DRIFTvalues",1),get_base1(DRIFTvalues,ri,3,"DRIFTvalues",1),get_base1(DRIFTvalues,ri,4,"DRIFTvalues",1), pstream__));
                                             }
                                         }
-                                        current_statement_begin__ = 1320;
+                                        current_statement_begin__ = 1387;
                                         for (int ri = 1; ri <= size(DIFFUSIONsetup); ++ri) {
 
-                                            current_statement_begin__ = 1321;
+                                            current_statement_begin__ = 1388;
                                             if (as_bool(logical_gt(get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),5,"DIFFUSIONsetup",2),0))) {
 
-                                                current_statement_begin__ = 1322;
+                                                current_statement_begin__ = 1389;
                                                 stan::math::assign(get_base1_lhs(sDIFFUSION,get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),1,"DIFFUSIONsetup",2),get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),2,"DIFFUSIONsetup",2),"sDIFFUSION",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),5,"DIFFUSIONsetup",2)),statei,"ukfstates",1),get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),4,"DIFFUSIONsetup",2),get_base1(DIFFUSIONvalues,ri,2,"DIFFUSIONvalues",1),get_base1(DIFFUSIONvalues,ri,3,"DIFFUSIONvalues",1),get_base1(DIFFUSIONvalues,ri,4,"DIFFUSIONvalues",1), pstream__));
                                             }
                                         }
-                                        current_statement_begin__ = 1327;
+                                        current_statement_begin__ = 1394;
                                         for (int ri = 1; ri <= size(CINTsetup); ++ri) {
 
-                                            current_statement_begin__ = 1328;
+                                            current_statement_begin__ = 1395;
                                             if (as_bool(logical_gt(get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),5,"CINTsetup",2),0))) {
 
-                                                current_statement_begin__ = 1329;
+                                                current_statement_begin__ = 1396;
                                                 stan::math::assign(get_base1_lhs(sCINT,get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),1,"CINTsetup",2),get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),2,"CINTsetup",2),"sCINT",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),5,"CINTsetup",2)),statei,"ukfstates",1),get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),4,"CINTsetup",2),get_base1(CINTvalues,ri,2,"CINTvalues",1),get_base1(CINTvalues,ri,3,"CINTvalues",1),get_base1(CINTvalues,ri,4,"CINTvalues",1), pstream__));
                                             }
                                         }
-                                        current_statement_begin__ = 1334;
+                                        current_statement_begin__ = 1401;
                                         for (int ri = 1; ri <= size(TDPREDEFFECTsetup); ++ri) {
 
-                                            current_statement_begin__ = 1335;
+                                            current_statement_begin__ = 1402;
                                             if (as_bool(logical_gt(get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),5,"TDPREDEFFECTsetup",2),0))) {
 
-                                                current_statement_begin__ = 1336;
+                                                current_statement_begin__ = 1403;
                                                 stan::math::assign(get_base1_lhs(sTDPREDEFFECT,get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),1,"TDPREDEFFECTsetup",2),get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),2,"TDPREDEFFECTsetup",2),"sTDPREDEFFECT",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),5,"TDPREDEFFECTsetup",2)),statei,"ukfstates",1),get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),4,"TDPREDEFFECTsetup",2),get_base1(TDPREDEFFECTvalues,ri,2,"TDPREDEFFECTvalues",1),get_base1(TDPREDEFFECTvalues,ri,3,"TDPREDEFFECTvalues",1),get_base1(TDPREDEFFECTvalues,ri,4,"TDPREDEFFECTvalues",1), pstream__));
                                             }
                                         }
+                                        current_statement_begin__ = 1408;
+                                        for (int ri = 1; ri <= size(PARSsetup); ++ri) {
+
+                                            current_statement_begin__ = 1409;
+                                            if (as_bool(logical_gt(get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),5,"PARSsetup",2),0))) {
+
+                                                current_statement_begin__ = 1410;
+                                                stan::math::assign(get_base1_lhs(sPARS,get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),1,"PARSsetup",2),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),2,"PARSsetup",2),"sPARS",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),5,"PARSsetup",2)),statei,"ukfstates",1),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),4,"PARSsetup",2),get_base1(PARSvalues,ri,2,"PARSvalues",1),get_base1(PARSvalues,ri,3,"PARSvalues",1),get_base1(PARSvalues,ri,4,"PARSvalues",1), pstream__));
+                                            }
+                                        }
                                     }
-                                    current_statement_begin__ = 1340;
+                                    current_statement_begin__ = 1414;
                                     if (as_bool(logical_lte(statei,((2 + (2 * nlatentpop)) + 1)))) {
 
-                                        current_statement_begin__ = 1341;
+                                        current_statement_begin__ = 1415;
                                         if (as_bool(logical_eq(continuoustime,1))) {
 
-                                            current_statement_begin__ = 1342;
+                                            current_statement_begin__ = 1416;
                                             if (as_bool(logical_eq(driftdiagonly,1))) {
-                                                current_statement_begin__ = 1342;
+                                                current_statement_begin__ = 1416;
                                                 stan::math::assign(discreteDRIFT, matrix_diagexp(multiply(sDRIFT,get_base1(dT,rowi,"dT",1)), pstream__));
                                             }
-                                            current_statement_begin__ = 1343;
+                                            current_statement_begin__ = 1417;
                                             if (as_bool(logical_eq(driftdiagonly,0))) {
-                                                current_statement_begin__ = 1343;
+                                                current_statement_begin__ = 1417;
                                                 stan::math::assign(discreteDRIFT, matrix_exp(multiply(sDRIFT,get_base1(dT,rowi,"dT",1))));
                                             }
-                                            current_statement_begin__ = 1344;
+                                            current_statement_begin__ = 1418;
                                             stan::math::assign(discreteCINT, multiply(mdivide_left(sDRIFT,subtract(discreteDRIFT,IIlatent)),stan::model::rvalue(sCINT, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sCINT")));
-                                            current_statement_begin__ = 1347;
+                                            current_statement_begin__ = 1421;
                                             stan::model::assign(discreteDIFFUSION, 
                                                         stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), 
                                                         discreteDIFFUSIONcalc(stan::model::rvalue(sDRIFT, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "sDRIFT"),stan::model::rvalue(sDIFFUSION, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "sDIFFUSION"),get_base1(dT,rowi,"dT",1), pstream__), 
                                                         "assigning variable discreteDIFFUSION");
                                         }
-                                        current_statement_begin__ = 1349;
+                                        current_statement_begin__ = 1423;
                                         if (as_bool(logical_eq(continuoustime,0))) {
 
-                                            current_statement_begin__ = 1350;
+                                            current_statement_begin__ = 1424;
                                             stan::math::assign(discreteDRIFT, sDRIFT);
-                                            current_statement_begin__ = 1351;
+                                            current_statement_begin__ = 1425;
                                             stan::math::assign(discreteCINT, stan::model::rvalue(sCINT, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sCINT"));
-                                            current_statement_begin__ = 1352;
+                                            current_statement_begin__ = 1426;
                                             stan::math::assign(discreteDIFFUSION, sDIFFUSION);
                                         }
                                     }
-                                    current_statement_begin__ = 1355;
+                                    current_statement_begin__ = 1429;
                                     stan::math::assign(state, add(multiply(discreteDRIFT,state),discreteCINT));
-                                    current_statement_begin__ = 1356;
+                                    current_statement_begin__ = 1430;
                                     if (as_bool((primitive_value(logical_gt(statei,(2 + (2 * nlatentpop)))) && primitive_value(logical_lte(statei,((2 + (2 * nlatentpop)) + ndynerror)))))) {
-                                        current_statement_begin__ = 1356;
+                                        current_statement_begin__ = 1430;
                                         stan::math::assign(state, add(state, multiply(stan::model::rvalue(discreteDIFFUSION, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(get_base1(derrind,(statei - (2 + (2 * nlatentpop))),"derrind",1)), stan::model::nil_index_list())), "discreteDIFFUSION"),dynerror)));
                                     }
-                                    current_statement_begin__ = 1357;
+                                    current_statement_begin__ = 1431;
                                     if (as_bool(logical_gt(statei,((2 + (2 * nlatentpop)) + ndynerror)))) {
-                                        current_statement_begin__ = 1357;
+                                        current_statement_begin__ = 1431;
                                         stan::math::assign(state, add(state, multiply(minus(stan::model::rvalue(discreteDIFFUSION, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(get_base1(derrind,(statei - ((2 + (2 * nlatentpop)) + ndynerror)),"derrind",1)), stan::model::nil_index_list())), "discreteDIFFUSION")),dynerror)));
                                     }
                                 }
                             }
-                            current_statement_begin__ = 1361;
+                            current_statement_begin__ = 1436;
                             if (as_bool(logical_eq(ukfpop,1))) {
 
-                                current_statement_begin__ = 1363;
+                                current_statement_begin__ = 1438;
                                 for (int ri = 1; ri <= size(DRIFTsetup); ++ri) {
 
-                                    current_statement_begin__ = 1364;
+                                    current_statement_begin__ = 1439;
                                     if (as_bool(logical_gt(get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),5,"DRIFTsetup",2),0))) {
 
-                                        current_statement_begin__ = 1365;
+                                        current_statement_begin__ = 1440;
                                         stan::math::assign(get_base1_lhs(sDRIFT,get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),1,"DRIFTsetup",2),get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),2,"DRIFTsetup",2),"sDRIFT",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),5,"DRIFTsetup",2)),statei,"ukfstates",1),get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),4,"DRIFTsetup",2),get_base1(DRIFTvalues,ri,2,"DRIFTvalues",1),get_base1(DRIFTvalues,ri,3,"DRIFTvalues",1),get_base1(DRIFTvalues,ri,4,"DRIFTvalues",1), pstream__));
                                     }
                                 }
-                                current_statement_begin__ = 1370;
+                                current_statement_begin__ = 1445;
                                 for (int ri = 1; ri <= size(DIFFUSIONsetup); ++ri) {
 
-                                    current_statement_begin__ = 1371;
+                                    current_statement_begin__ = 1446;
                                     if (as_bool(logical_gt(get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),5,"DIFFUSIONsetup",2),0))) {
 
-                                        current_statement_begin__ = 1372;
+                                        current_statement_begin__ = 1447;
                                         stan::math::assign(get_base1_lhs(sDIFFUSION,get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),1,"DIFFUSIONsetup",2),get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),2,"DIFFUSIONsetup",2),"sDIFFUSION",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),5,"DIFFUSIONsetup",2)),statei,"ukfstates",1),get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),4,"DIFFUSIONsetup",2),get_base1(DIFFUSIONvalues,ri,2,"DIFFUSIONvalues",1),get_base1(DIFFUSIONvalues,ri,3,"DIFFUSIONvalues",1),get_base1(DIFFUSIONvalues,ri,4,"DIFFUSIONvalues",1), pstream__));
                                     }
                                 }
-                                current_statement_begin__ = 1377;
+                                current_statement_begin__ = 1452;
                                 for (int ri = 1; ri <= size(CINTsetup); ++ri) {
 
-                                    current_statement_begin__ = 1378;
+                                    current_statement_begin__ = 1453;
                                     if (as_bool(logical_gt(get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),5,"CINTsetup",2),0))) {
 
-                                        current_statement_begin__ = 1379;
+                                        current_statement_begin__ = 1454;
                                         stan::math::assign(get_base1_lhs(sCINT,get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),1,"CINTsetup",2),get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),2,"CINTsetup",2),"sCINT",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),5,"CINTsetup",2)),statei,"ukfstates",1),get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),4,"CINTsetup",2),get_base1(CINTvalues,ri,2,"CINTvalues",1),get_base1(CINTvalues,ri,3,"CINTvalues",1),get_base1(CINTvalues,ri,4,"CINTvalues",1), pstream__));
                                     }
                                 }
-                                current_statement_begin__ = 1384;
+                                current_statement_begin__ = 1459;
                                 for (int ri = 1; ri <= size(TDPREDEFFECTsetup); ++ri) {
 
-                                    current_statement_begin__ = 1385;
+                                    current_statement_begin__ = 1460;
                                     if (as_bool(logical_gt(get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),5,"TDPREDEFFECTsetup",2),0))) {
 
-                                        current_statement_begin__ = 1386;
+                                        current_statement_begin__ = 1461;
                                         stan::math::assign(get_base1_lhs(sTDPREDEFFECT,get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),1,"TDPREDEFFECTsetup",2),get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),2,"TDPREDEFFECTsetup",2),"sTDPREDEFFECT",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),5,"TDPREDEFFECTsetup",2)),statei,"ukfstates",1),get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),4,"TDPREDEFFECTsetup",2),get_base1(TDPREDEFFECTvalues,ri,2,"TDPREDEFFECTvalues",1),get_base1(TDPREDEFFECTvalues,ri,3,"TDPREDEFFECTvalues",1),get_base1(TDPREDEFFECTvalues,ri,4,"TDPREDEFFECTvalues",1), pstream__));
                                     }
                                 }
+                                current_statement_begin__ = 1466;
+                                for (int ri = 1; ri <= size(PARSsetup); ++ri) {
+
+                                    current_statement_begin__ = 1467;
+                                    if (as_bool(logical_gt(get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),5,"PARSsetup",2),0))) {
+
+                                        current_statement_begin__ = 1468;
+                                        stan::math::assign(get_base1_lhs(sPARS,get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),1,"PARSsetup",2),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),2,"PARSsetup",2),"sPARS",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),5,"PARSsetup",2)),statei,"ukfstates",1),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),4,"PARSsetup",2),get_base1(PARSvalues,ri,2,"PARSvalues",1),get_base1(PARSvalues,ri,3,"PARSvalues",1),get_base1(PARSvalues,ri,4,"PARSvalues",1), pstream__));
+                                    }
+                                }
                             }
-                            current_statement_begin__ = 1390;
+                            current_statement_begin__ = 1472;
                             if (as_bool(logical_gt(ntdpred,0))) {
-                                current_statement_begin__ = 1390;
+                                current_statement_begin__ = 1472;
                                 stan::math::assign(state, add(state, multiply(sTDPREDEFFECT,get_base1(tdpreds,rowi,"tdpreds",1))));
                             }
-                            current_statement_begin__ = 1391;
+                            current_statement_begin__ = 1473;
                             stan::model::assign(ukfstates, 
                                         stan::model::cons_list(stan::model::index_min_max(1, nlatent), stan::model::cons_list(stan::model::index_uni(statei), stan::model::nil_index_list())), 
                                         state, 
                                         "assigning variable ukfstates");
-                            current_statement_begin__ = 1392;
+                            current_statement_begin__ = 1474;
                             if (as_bool(logical_eq(statei,2))) {
-                                current_statement_begin__ = 1392;
+                                current_statement_begin__ = 1474;
                                 stan::model::assign(ukfstates, 
                                             stan::model::cons_list(stan::model::index_min_max(1, nlatent), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), 
                                             state, 
                                             "assigning variable ukfstates");
                             }
                         }
-                        current_statement_begin__ = 1395;
+                        current_statement_begin__ = 1477;
                         stan::math::assign(get_base1_lhs(etaprior,rowi,"etaprior",1), colMeans(transpose(ukfstates), pstream__));
-                        current_statement_begin__ = 1396;
+                        current_statement_begin__ = 1478;
                         stan::math::assign(get_base1_lhs(etapriorcov,rowi,"etapriorcov",1), divide(cov_of_matrix(transpose(ukfstates), pstream__),asquared));
                     }
-                    current_statement_begin__ = 1399;
+                    current_statement_begin__ = 1481;
                     if (as_bool((primitive_value(logical_eq(intoverstates,0)) && primitive_value(logical_eq(lineardynamics,1))))) {
 
-                        current_statement_begin__ = 1400;
+                        current_statement_begin__ = 1482;
                         if (as_bool(logical_eq(get_base1(T0check,rowi,"T0check",1),1))) {
-                            current_statement_begin__ = 1400;
+                            current_statement_begin__ = 1482;
                             stan::math::assign(get_base1_lhs(etaupd,rowi,"etaupd",1), add(get_base1(etaprior,rowi,"etaprior",1),multiply(sT0VAR,stan::model::rvalue(etaupdbasestates, stan::model::cons_list(stan::model::index_min_max((1 + ((rowi - 1) * nlatent)), (rowi * nlatent)), stan::model::nil_index_list()), "etaupdbasestates"))));
                         }
-                        current_statement_begin__ = 1401;
+                        current_statement_begin__ = 1483;
                         if (as_bool(logical_eq(get_base1(T0check,rowi,"T0check",1),0))) {
-                            current_statement_begin__ = 1401;
+                            current_statement_begin__ = 1483;
                             stan::math::assign(get_base1_lhs(etaupd,rowi,"etaupd",1), add(get_base1(etaprior,rowi,"etaprior",1),multiply(sDIFFUSION,stan::model::rvalue(etaupdbasestates, stan::model::cons_list(stan::model::index_min_max((1 + ((rowi - 1) * nlatent)), (rowi * nlatent)), stan::model::nil_index_list()), "etaupdbasestates"))));
                         }
                     }
-                    current_statement_begin__ = 1404;
+                    current_statement_begin__ = 1486;
                     if (as_bool((primitive_value(logical_eq(nobsi,0)) && primitive_value(logical_eq(intoverstates,1))))) {
 
-                        current_statement_begin__ = 1405;
+                        current_statement_begin__ = 1487;
                         stan::math::assign(get_base1_lhs(etaupdcov,rowi,"etaupdcov",1), get_base1(etapriorcov,rowi,"etapriorcov",1));
-                        current_statement_begin__ = 1406;
+                        current_statement_begin__ = 1488;
                         stan::math::assign(get_base1_lhs(etaupd,rowi,"etaupd",1), get_base1(etaprior,rowi,"etaprior",1));
                     }
-                    current_statement_begin__ = 1409;
+                    current_statement_begin__ = 1491;
                     if (as_bool(logical_gt(nobsi,0))) {
                         {
-                        current_statement_begin__ = 1411;
+                        current_statement_begin__ = 1493;
                         validate_non_negative_index("cindex", "(intoverstates ? nobsi : get_base1(ncont_y,rowi,\"ncont_y\",1) )", (intoverstates ? nobsi : get_base1(ncont_y,rowi,"ncont_y",1) ));
                         vector<int> cindex((intoverstates ? nobsi : get_base1(ncont_y,rowi,"ncont_y",1) ), 0);
                         stan::math::fill(cindex, std::numeric_limits<int>::min());
 
 
-                        current_statement_begin__ = 1413;
+                        current_statement_begin__ = 1495;
                         if (as_bool(logical_eq(intoverstates,0))) {
-                            current_statement_begin__ = 1413;
+                            current_statement_begin__ = 1495;
                             stan::math::assign(cindex, o0);
                         }
-                        current_statement_begin__ = 1414;
+                        current_statement_begin__ = 1496;
                         if (as_bool(logical_eq(intoverstates,1))) {
-                            current_statement_begin__ = 1414;
+                            current_statement_begin__ = 1496;
                             stan::math::assign(cindex, o);
                         }
-                        current_statement_begin__ = 1416;
+                        current_statement_begin__ = 1498;
                         if (as_bool(logical_eq(ukf,0))) {
 
-                            current_statement_begin__ = 1417;
+                            current_statement_begin__ = 1499;
                             if (as_bool(logical_eq(intoverstates,1))) {
 
-                                current_statement_begin__ = 1418;
+                                current_statement_begin__ = 1500;
                                 stan::model::assign(ypred, 
                                             stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list()), 
                                             add(stan::model::rvalue(sMANIFESTMEANS, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sMANIFESTMEANS"),multiply(stan::model::rvalue(sLAMBDA, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "sLAMBDA"),get_base1(etaprior,rowi,"etaprior",1))), 
                                             "assigning variable ypred");
-                                current_statement_begin__ = 1419;
+                                current_statement_begin__ = 1501;
                                 stan::model::assign(ypredcov, 
                                             stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), 
                                             add(quad_form(get_base1(etapriorcov,rowi,"etapriorcov",1),transpose(stan::model::rvalue(sLAMBDA, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "sLAMBDA"))),stan::model::rvalue(sMANIFESTVAR, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), "sMANIFESTVAR")), 
                                             "assigning variable ypredcov");
-                                current_statement_begin__ = 1420;
+                                current_statement_begin__ = 1502;
                                 for (int wi = 1; wi <= nmanifest; ++wi) {
 
-                                    current_statement_begin__ = 1421;
+                                    current_statement_begin__ = 1503;
                                     if (as_bool((primitive_value(logical_eq(get_base1(manifesttype,wi,"manifesttype",1),1)) && primitive_value(logical_neq(get_base1(get_base1(Y,rowi,"Y",1),wi,"Y",2),99999))))) {
-                                        current_statement_begin__ = 1421;
+                                        current_statement_begin__ = 1503;
                                         stan::math::assign(get_base1_lhs(ypredcov,wi,wi,"ypredcov",1), (get_base1(ypredcov,wi,wi,"ypredcov",1) + fabs(((get_base1(ypred,wi,"ypred",1) - 1) * get_base1(ypred,wi,"ypred",1)))));
                                     }
                                 }
-                                current_statement_begin__ = 1423;
+                                current_statement_begin__ = 1505;
                                 stan::model::assign(K, 
                                             stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), 
                                             mdivide_right(multiply(get_base1(etapriorcov,rowi,"etapriorcov",1),transpose(stan::model::rvalue(sLAMBDA, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "sLAMBDA"))),stan::model::rvalue(ypredcov, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), "ypredcov")), 
                                             "assigning variable K");
-                                current_statement_begin__ = 1424;
+                                current_statement_begin__ = 1506;
                                 stan::math::assign(get_base1_lhs(etaupdcov,rowi,"etaupdcov",1), multiply(subtract(IIlatent,multiply(stan::model::rvalue(K, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), "K"),stan::model::rvalue(sLAMBDA, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "sLAMBDA"))),get_base1(etapriorcov,rowi,"etapriorcov",1)));
                             }
-                            current_statement_begin__ = 1426;
+                            current_statement_begin__ = 1508;
                             if (as_bool(logical_eq(intoverstates,0))) {
 
-                                current_statement_begin__ = 1427;
+                                current_statement_begin__ = 1509;
                                 if (as_bool(logical_gt(get_base1(ncont_y,rowi,"ncont_y",1),0))) {
-                                    current_statement_begin__ = 1427;
+                                    current_statement_begin__ = 1509;
                                     stan::model::assign(ypred, 
                                                 stan::model::cons_list(stan::model::index_multi(o0), stan::model::nil_index_list()), 
                                                 add(stan::model::rvalue(sMANIFESTMEANS, stan::model::cons_list(stan::model::index_multi(o0), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sMANIFESTMEANS"),multiply(stan::model::rvalue(sLAMBDA, stan::model::cons_list(stan::model::index_multi(o0), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "sLAMBDA"),get_base1(etaupd,rowi,"etaupd",1))), 
                                                 "assigning variable ypred");
                                 }
-                                current_statement_begin__ = 1428;
+                                current_statement_begin__ = 1510;
                                 if (as_bool(logical_gt(get_base1(nbinary_y,rowi,"nbinary_y",1),0))) {
-                                    current_statement_begin__ = 1428;
+                                    current_statement_begin__ = 1510;
                                     stan::model::assign(ypred, 
                                                 stan::model::cons_list(stan::model::index_multi(o1), stan::model::nil_index_list()), 
                                                 to_vector(inv_logit(to_array_1d(add(stan::model::rvalue(sMANIFESTMEANS, stan::model::cons_list(stan::model::index_multi(o1), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sMANIFESTMEANS"),multiply(stan::model::rvalue(sLAMBDA, stan::model::cons_list(stan::model::index_multi(o1), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "sLAMBDA"),get_base1(etaupd,rowi,"etaupd",1)))))), 
                                                 "assigning variable ypred");
                                 }
-                                current_statement_begin__ = 1429;
+                                current_statement_begin__ = 1511;
                                 stan::model::assign(ypredcov, 
                                             stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), 
                                             stan::model::rvalue(sMANIFESTVAR, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), "sMANIFESTVAR"), 
                                             "assigning variable ypredcov");
                             }
                         }
-                        current_statement_begin__ = 1434;
+                        current_statement_begin__ = 1516;
                         if (as_bool(logical_eq(ukf,1))) {
 
-                            current_statement_begin__ = 1435;
+                            current_statement_begin__ = 1517;
                             for (int statei = 2; statei <= cols(ukfmeasures); ++statei) {
 
-                                current_statement_begin__ = 1436;
+                                current_statement_begin__ = 1518;
                                 stan::math::assign(state, stan::model::rvalue(ukfstates, stan::model::cons_list(stan::model::index_min_max(1, nlatent), stan::model::cons_list(stan::model::index_uni(statei), stan::model::nil_index_list())), "ukfstates"));
-                                current_statement_begin__ = 1438;
+                                current_statement_begin__ = 1520;
                                 if (as_bool(logical_eq(ukfpop,1))) {
 
-                                    current_statement_begin__ = 1440;
+                                    current_statement_begin__ = 1522;
                                     for (int ri = 1; ri <= size(LAMBDAsetup); ++ri) {
 
-                                        current_statement_begin__ = 1441;
+                                        current_statement_begin__ = 1523;
                                         if (as_bool(logical_gt(get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),5,"LAMBDAsetup",2),0))) {
 
-                                            current_statement_begin__ = 1442;
+                                            current_statement_begin__ = 1524;
                                             stan::math::assign(get_base1_lhs(sLAMBDA,get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),1,"LAMBDAsetup",2),get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),2,"LAMBDAsetup",2),"sLAMBDA",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),5,"LAMBDAsetup",2)),statei,"ukfstates",1),get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),4,"LAMBDAsetup",2),get_base1(LAMBDAvalues,ri,2,"LAMBDAvalues",1),get_base1(LAMBDAvalues,ri,3,"LAMBDAvalues",1),get_base1(LAMBDAvalues,ri,4,"LAMBDAvalues",1), pstream__));
                                         }
                                     }
-                                    current_statement_begin__ = 1446;
+                                    current_statement_begin__ = 1528;
                                     for (int ri = 1; ri <= size(MANIFESTMEANSsetup); ++ri) {
 
-                                        current_statement_begin__ = 1447;
+                                        current_statement_begin__ = 1529;
                                         if (as_bool(logical_gt(get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),5,"MANIFESTMEANSsetup",2),0))) {
 
-                                            current_statement_begin__ = 1448;
+                                            current_statement_begin__ = 1530;
                                             stan::math::assign(get_base1_lhs(sMANIFESTMEANS,get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),1,"MANIFESTMEANSsetup",2),get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),2,"MANIFESTMEANSsetup",2),"sMANIFESTMEANS",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),5,"MANIFESTMEANSsetup",2)),statei,"ukfstates",1),get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),4,"MANIFESTMEANSsetup",2),get_base1(MANIFESTMEANSvalues,ri,2,"MANIFESTMEANSvalues",1),get_base1(MANIFESTMEANSvalues,ri,3,"MANIFESTMEANSvalues",1),get_base1(MANIFESTMEANSvalues,ri,4,"MANIFESTMEANSvalues",1), pstream__));
                                         }
                                     }
-                                    current_statement_begin__ = 1452;
+                                    current_statement_begin__ = 1534;
                                     for (int ri = 1; ri <= size(MANIFESTVARsetup); ++ri) {
 
-                                        current_statement_begin__ = 1453;
+                                        current_statement_begin__ = 1535;
                                         if (as_bool(logical_gt(get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),5,"MANIFESTVARsetup",2),0))) {
 
-                                            current_statement_begin__ = 1454;
+                                            current_statement_begin__ = 1536;
                                             stan::math::assign(get_base1_lhs(sMANIFESTVAR,get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),1,"MANIFESTVARsetup",2),get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),2,"MANIFESTVARsetup",2),"sMANIFESTVAR",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),5,"MANIFESTVARsetup",2)),statei,"ukfstates",1),get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),4,"MANIFESTVARsetup",2),get_base1(MANIFESTVARvalues,ri,2,"MANIFESTVARvalues",1),get_base1(MANIFESTVARvalues,ri,3,"MANIFESTVARvalues",1),get_base1(MANIFESTVARvalues,ri,4,"MANIFESTVARvalues",1), pstream__));
                                         }
                                     }
+                                    current_statement_begin__ = 1540;
+                                    for (int ri = 1; ri <= size(PARSsetup); ++ri) {
+
+                                        current_statement_begin__ = 1541;
+                                        if (as_bool(logical_gt(get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),5,"PARSsetup",2),0))) {
+
+                                            current_statement_begin__ = 1542;
+                                            stan::math::assign(get_base1_lhs(sPARS,get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),1,"PARSsetup",2),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),2,"PARSsetup",2),"sPARS",1), tform(get_base1(ukfstates,(nlatent + get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),5,"PARSsetup",2)),statei,"ukfstates",1),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),4,"PARSsetup",2),get_base1(PARSvalues,ri,2,"PARSvalues",1),get_base1(PARSvalues,ri,3,"PARSvalues",1),get_base1(PARSvalues,ri,4,"PARSvalues",1), pstream__));
+                                        }
+                                    }
                                 }
-                                current_statement_begin__ = 1459;
+                                current_statement_begin__ = 1547;
                                 if (as_bool(logical_gt(get_base1(ncont_y,rowi,"ncont_y",1),0))) {
-                                    current_statement_begin__ = 1459;
+                                    current_statement_begin__ = 1547;
                                     stan::model::assign(ukfmeasures, 
                                                 stan::model::cons_list(stan::model::index_multi(o0), stan::model::cons_list(stan::model::index_uni(statei), stan::model::nil_index_list())), 
                                                 add(stan::model::rvalue(sMANIFESTMEANS, stan::model::cons_list(stan::model::index_multi(o0), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sMANIFESTMEANS"),multiply(stan::model::rvalue(sLAMBDA, stan::model::cons_list(stan::model::index_multi(o0), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "sLAMBDA"),state)), 
                                                 "assigning variable ukfmeasures");
                                 }
-                                current_statement_begin__ = 1460;
+                                current_statement_begin__ = 1548;
                                 if (as_bool(logical_gt(get_base1(nbinary_y,rowi,"nbinary_y",1),0))) {
 
-                                    current_statement_begin__ = 1461;
+                                    current_statement_begin__ = 1549;
                                     stan::model::assign(ukfmeasures, 
                                                 stan::model::cons_list(stan::model::index_multi(o1), stan::model::cons_list(stan::model::index_uni(statei), stan::model::nil_index_list())), 
                                                 to_vector(inv_logit(to_array_1d(add(stan::model::rvalue(sMANIFESTMEANS, stan::model::cons_list(stan::model::index_multi(o1), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sMANIFESTMEANS"),multiply(stan::model::rvalue(sLAMBDA, stan::model::cons_list(stan::model::index_multi(o1), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "sLAMBDA"),state))))), 
                                                 "assigning variable ukfmeasures");
                                 }
-                                current_statement_begin__ = 1463;
+                                current_statement_begin__ = 1551;
                                 if (as_bool(logical_eq(statei,2))) {
 
-                                    current_statement_begin__ = 1464;
+                                    current_statement_begin__ = 1552;
                                     if (as_bool(logical_gt(get_base1(ncont_y,rowi,"ncont_y",1),0))) {
-                                        current_statement_begin__ = 1464;
+                                        current_statement_begin__ = 1552;
                                         stan::model::assign(ukfmeasures, 
                                                     stan::model::cons_list(stan::model::index_multi(o0), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), 
                                                     add(stan::model::rvalue(sMANIFESTMEANS, stan::model::cons_list(stan::model::index_multi(o0), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sMANIFESTMEANS"),multiply(stan::model::rvalue(sLAMBDA, stan::model::cons_list(stan::model::index_multi(o0), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "sLAMBDA"),state)), 
                                                     "assigning variable ukfmeasures");
                                     }
-                                    current_statement_begin__ = 1465;
+                                    current_statement_begin__ = 1553;
                                     if (as_bool(logical_gt(get_base1(nbinary_y,rowi,"nbinary_y",1),0))) {
 
-                                        current_statement_begin__ = 1466;
+                                        current_statement_begin__ = 1554;
                                         stan::model::assign(ukfmeasures, 
                                                     stan::model::cons_list(stan::model::index_multi(o1), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), 
                                                     to_vector(inv_logit(to_array_1d(add(stan::model::rvalue(sMANIFESTMEANS, stan::model::cons_list(stan::model::index_multi(o1), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "sMANIFESTMEANS"),multiply(stan::model::rvalue(sLAMBDA, stan::model::cons_list(stan::model::index_multi(o1), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "sLAMBDA"),state))))), 
@@ -6247,37 +6632,37 @@ public:
                                     }
                                 }
                             }
-                            current_statement_begin__ = 1471;
+                            current_statement_begin__ = 1559;
                             stan::model::assign(ypred, 
                                         stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list()), 
                                         colMeans(transpose(stan::model::rvalue(ukfmeasures, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "ukfmeasures")), pstream__), 
                                         "assigning variable ypred");
-                            current_statement_begin__ = 1472;
+                            current_statement_begin__ = 1560;
                             stan::model::assign(ypredcov, 
                                         stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), 
                                         add(divide(cov_of_matrix(transpose(stan::model::rvalue(ukfmeasures, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "ukfmeasures")), pstream__),asquared),stan::model::rvalue(sMANIFESTVAR, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), "sMANIFESTVAR")), 
                                         "assigning variable ypredcov");
-                            current_statement_begin__ = 1473;
+                            current_statement_begin__ = 1561;
                             for (int wi = 1; wi <= nmanifest; ++wi) {
 
-                                current_statement_begin__ = 1474;
+                                current_statement_begin__ = 1562;
                                 if (as_bool((primitive_value(logical_eq(get_base1(manifesttype,wi,"manifesttype",1),1)) && primitive_value(logical_neq(get_base1(get_base1(Y,rowi,"Y",1),wi,"Y",2),99999))))) {
-                                    current_statement_begin__ = 1474;
+                                    current_statement_begin__ = 1562;
                                     stan::math::assign(get_base1_lhs(ypredcov,wi,wi,"ypredcov",1), (get_base1(ypredcov,wi,wi,"ypredcov",1) + fabs(((get_base1(ypred,wi,"ypred",1) - 1) * get_base1(ypred,wi,"ypred",1)))));
                                 }
                             }
-                            current_statement_begin__ = 1476;
+                            current_statement_begin__ = 1564;
                             stan::model::assign(K, 
                                         stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), 
                                         mdivide_right(divide(crosscov(transpose(ukfstates),transpose(stan::model::rvalue(ukfmeasures, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "ukfmeasures")), pstream__),asquared),stan::model::rvalue(ypredcov, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), "ypredcov")), 
                                         "assigning variable K");
-                            current_statement_begin__ = 1477;
+                            current_statement_begin__ = 1565;
                             stan::math::assign(get_base1_lhs(etaupdcov,rowi,"etaupdcov",1), subtract(get_base1(etapriorcov,rowi,"etapriorcov",1),quad_form(stan::model::rvalue(ypredcov, stan::model::cons_list(stan::model::index_multi(o), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), "ypredcov"),transpose(stan::model::rvalue(K, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), "K")))));
                         }
-                        current_statement_begin__ = 1481;
+                        current_statement_begin__ = 1569;
                         if (as_bool(logical_gt(verbose,1))) {
 
-                            current_statement_begin__ = 1482;
+                            current_statement_begin__ = 1570;
                             if (pstream__) {
                                 stan_print(pstream__,"rowi ");
                                 stan_print(pstream__,rowi);
@@ -6313,9 +6698,9 @@ public:
                                 stan_print(pstream__,rawpopmeans);
                                 *pstream__ << std::endl;
                             }
-                            current_statement_begin__ = 1486;
+                            current_statement_begin__ = 1574;
                             if (as_bool(logical_eq(lineardynamics,1))) {
-                                current_statement_begin__ = 1486;
+                                current_statement_begin__ = 1574;
                                 if (pstream__) {
                                     stan_print(pstream__,"discreteDRIFT ");
                                     stan_print(pstream__,discreteDRIFT);
@@ -6327,9 +6712,9 @@ public:
                                 }
                             }
                         }
-                        current_statement_begin__ = 1488;
+                        current_statement_begin__ = 1576;
                         if (as_bool(logical_gt(verbose,2))) {
-                            current_statement_begin__ = 1488;
+                            current_statement_begin__ = 1576;
                             if (pstream__) {
                                 stan_print(pstream__,"ukfstates ");
                                 stan_print(pstream__,ukfstates);
@@ -6338,35 +6723,35 @@ public:
                                 *pstream__ << std::endl;
                             }
                         }
-                        current_statement_begin__ = 1490;
+                        current_statement_begin__ = 1578;
                         stan::model::assign(ypredcov_sqrt, 
                                     stan::model::cons_list(stan::model::index_multi(cindex), stan::model::cons_list(stan::model::index_multi(cindex), stan::model::nil_index_list())), 
                                     cholspd(stan::model::rvalue(ypredcov, stan::model::cons_list(stan::model::index_multi(o0), stan::model::cons_list(stan::model::index_multi(o0), stan::model::nil_index_list())), "ypredcov"), pstream__), 
                                     "assigning variable ypredcov_sqrt");
-                        current_statement_begin__ = 1491;
+                        current_statement_begin__ = 1579;
                         if (as_bool(logical_gt(get_base1(ncont_y,rowi,"ncont_y",1),0))) {
-                            current_statement_begin__ = 1491;
+                            current_statement_begin__ = 1579;
                             stan::model::assign(Ygen, 
                                         stan::model::cons_list(stan::model::index_uni(geni), stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_multi(o0), stan::model::nil_index_list()))), 
                                         multi_normal_cholesky_rng(stan::model::rvalue(ypred, stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list()), "ypred"),stan::model::rvalue(ypredcov_sqrt, stan::model::cons_list(stan::model::index_multi(o0), stan::model::cons_list(stan::model::index_multi(o0), stan::model::nil_index_list())), "ypredcov_sqrt"), base_rng__), 
                                         "assigning variable Ygen");
                         }
-                        current_statement_begin__ = 1492;
+                        current_statement_begin__ = 1580;
                         if (as_bool(logical_gt(get_base1(nbinary_y,rowi,"nbinary_y",1),0))) {
-                            current_statement_begin__ = 1492;
+                            current_statement_begin__ = 1580;
                             for (int obsi = 1; obsi <= size(o1); ++obsi) {
-                                current_statement_begin__ = 1492;
+                                current_statement_begin__ = 1580;
                                 stan::math::assign(get_base1_lhs(get_base1_lhs(get_base1_lhs(Ygen,geni,"Ygen",1),rowi,"Ygen",2),get_base1(o1,obsi,"o1",1),"Ygen",3), bernoulli_rng(get_base1(ypred,get_base1(o1,obsi,"o1",1),"ypred",1), base_rng__));
                             }
                         }
-                        current_statement_begin__ = 1495;
+                        current_statement_begin__ = 1583;
                         stan::model::assign(err, 
                                     stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list()), 
                                     subtract(stan::model::rvalue(Y, stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), "Y"),stan::model::rvalue(ypred, stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list()), "ypred")), 
                                     "assigning variable err");
-                        current_statement_begin__ = 1496;
+                        current_statement_begin__ = 1584;
                         if (as_bool(logical_eq(intoverstates,1))) {
-                            current_statement_begin__ = 1496;
+                            current_statement_begin__ = 1584;
                             stan::model::assign(etaupd, 
                                         stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), 
                                         add(stan::model::rvalue(etaprior, stan::model::cons_list(stan::model::index_uni(rowi), stan::model::cons_list(stan::model::index_omni(), stan::model::nil_index_list())), "etaprior"),multiply(stan::model::rvalue(K, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list())), "K"),stan::model::rvalue(err, stan::model::cons_list(stan::model::index_multi(o), stan::model::nil_index_list()), "err"))), 
@@ -6379,137 +6764,165 @@ public:
                 }
             }
             {
-            current_statement_begin__ = 1507;
+            current_statement_begin__ = 1595;
             validate_non_negative_index("rawindparams", "nparams", nparams);
             vector_d rawindparams(static_cast<Eigen::VectorXd::Index>(nparams));
             (void) rawindparams;  // dummy to suppress unused var warning
 
             stan::math::initialize(rawindparams, std::numeric_limits<double>::quiet_NaN());
             stan::math::fill(rawindparams,DUMMY_VAR__);
+            current_statement_begin__ = 1596;
+            validate_non_negative_index("tipredaddition", "nparams", nparams);
+            vector_d tipredaddition(static_cast<Eigen::VectorXd::Index>(nparams));
+            (void) tipredaddition;  // dummy to suppress unused var warning
+
+            stan::math::initialize(tipredaddition, std::numeric_limits<double>::quiet_NaN());
+            stan::math::fill(tipredaddition,DUMMY_VAR__);
+            current_statement_begin__ = 1597;
+            validate_non_negative_index("indvaraddition", "nparams", nparams);
+            vector_d indvaraddition(static_cast<Eigen::VectorXd::Index>(nparams));
+            (void) indvaraddition;  // dummy to suppress unused var warning
+
+            stan::math::initialize(indvaraddition, std::numeric_limits<double>::quiet_NaN());
+            stan::math::fill(indvaraddition,DUMMY_VAR__);
 
 
-            current_statement_begin__ = 1508;
+            current_statement_begin__ = 1598;
             stan::math::assign(rawindparams, rawpopmeans);
-            current_statement_begin__ = 1509;
+            current_statement_begin__ = 1599;
+            stan::math::assign(tipredaddition, rep_vector(0,nparams));
+            current_statement_begin__ = 1600;
+            stan::math::assign(indvaraddition, rep_vector(0,nparams));
+            current_statement_begin__ = 1602;
             for (int si = 1; si <= 1; ++si) {
 
-                current_statement_begin__ = 1512;
+                current_statement_begin__ = 1605;
                 if (as_bool(logical_lte(si,get_base1(T0MEANSsubindex,1,"T0MEANSsubindex",1)))) {
 
-                    current_statement_begin__ = 1513;
+                    current_statement_begin__ = 1606;
                     for (int ri = 1; ri <= size(T0MEANSsetup); ++ri) {
 
-                        current_statement_begin__ = 1514;
+                        current_statement_begin__ = 1607;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(pop_T0MEANS,si,"pop_T0MEANS",1),get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),1,"T0MEANSsetup",2),get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),2,"T0MEANSsetup",2),"pop_T0MEANS",2), (get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),3,"T0MEANSsetup",2) ? stan::math::promote_scalar<double>(tform(get_base1(rawindparams,get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),3,"T0MEANSsetup",2),"rawindparams",1),get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),4,"T0MEANSsetup",2),get_base1(T0MEANSvalues,ri,2,"T0MEANSvalues",1),get_base1(T0MEANSvalues,ri,3,"T0MEANSvalues",1),get_base1(T0MEANSvalues,ri,4,"T0MEANSvalues",1), pstream__)) : stan::math::promote_scalar<double>(get_base1(T0MEANSvalues,ri,1,"T0MEANSvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 1519;
+                current_statement_begin__ = 1612;
                 if (as_bool(logical_lte(si,get_base1(LAMBDAsubindex,1,"LAMBDAsubindex",1)))) {
 
-                    current_statement_begin__ = 1520;
+                    current_statement_begin__ = 1613;
                     for (int ri = 1; ri <= size(LAMBDAsetup); ++ri) {
 
-                        current_statement_begin__ = 1521;
+                        current_statement_begin__ = 1614;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(pop_LAMBDA,si,"pop_LAMBDA",1),get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),1,"LAMBDAsetup",2),get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),2,"LAMBDAsetup",2),"pop_LAMBDA",2), (get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),3,"LAMBDAsetup",2) ? stan::math::promote_scalar<double>(tform(get_base1(rawindparams,get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),3,"LAMBDAsetup",2),"rawindparams",1),get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),4,"LAMBDAsetup",2),get_base1(LAMBDAvalues,ri,2,"LAMBDAvalues",1),get_base1(LAMBDAvalues,ri,3,"LAMBDAvalues",1),get_base1(LAMBDAvalues,ri,4,"LAMBDAvalues",1), pstream__)) : stan::math::promote_scalar<double>(get_base1(LAMBDAvalues,ri,1,"LAMBDAvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 1526;
+                current_statement_begin__ = 1619;
                 if (as_bool(logical_lte(si,get_base1(DRIFTsubindex,1,"DRIFTsubindex",1)))) {
 
-                    current_statement_begin__ = 1527;
+                    current_statement_begin__ = 1620;
                     for (int ri = 1; ri <= size(DRIFTsetup); ++ri) {
 
-                        current_statement_begin__ = 1528;
+                        current_statement_begin__ = 1621;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(pop_DRIFT,si,"pop_DRIFT",1),get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),1,"DRIFTsetup",2),get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),2,"DRIFTsetup",2),"pop_DRIFT",2), (get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),3,"DRIFTsetup",2) ? stan::math::promote_scalar<double>(tform(get_base1(rawindparams,get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),3,"DRIFTsetup",2),"rawindparams",1),get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),4,"DRIFTsetup",2),get_base1(DRIFTvalues,ri,2,"DRIFTvalues",1),get_base1(DRIFTvalues,ri,3,"DRIFTvalues",1),get_base1(DRIFTvalues,ri,4,"DRIFTvalues",1), pstream__)) : stan::math::promote_scalar<double>(get_base1(DRIFTvalues,ri,1,"DRIFTvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 1533;
+                current_statement_begin__ = 1626;
                 if (as_bool(logical_lte(si,get_base1(DIFFUSIONsubindex,1,"DIFFUSIONsubindex",1)))) {
 
-                    current_statement_begin__ = 1534;
+                    current_statement_begin__ = 1627;
                     for (int ri = 1; ri <= size(DIFFUSIONsetup); ++ri) {
 
-                        current_statement_begin__ = 1535;
+                        current_statement_begin__ = 1628;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(pop_DIFFUSION,si,"pop_DIFFUSION",1),get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),1,"DIFFUSIONsetup",2),get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),2,"DIFFUSIONsetup",2),"pop_DIFFUSION",2), (get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),3,"DIFFUSIONsetup",2) ? stan::math::promote_scalar<double>(tform(get_base1(rawindparams,get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),3,"DIFFUSIONsetup",2),"rawindparams",1),get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),4,"DIFFUSIONsetup",2),get_base1(DIFFUSIONvalues,ri,2,"DIFFUSIONvalues",1),get_base1(DIFFUSIONvalues,ri,3,"DIFFUSIONvalues",1),get_base1(DIFFUSIONvalues,ri,4,"DIFFUSIONvalues",1), pstream__)) : stan::math::promote_scalar<double>(get_base1(DIFFUSIONvalues,ri,1,"DIFFUSIONvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 1540;
+                current_statement_begin__ = 1633;
                 if (as_bool(logical_lte(si,get_base1(MANIFESTVARsubindex,1,"MANIFESTVARsubindex",1)))) {
 
-                    current_statement_begin__ = 1541;
+                    current_statement_begin__ = 1634;
                     for (int ri = 1; ri <= size(MANIFESTVARsetup); ++ri) {
 
-                        current_statement_begin__ = 1542;
+                        current_statement_begin__ = 1635;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(pop_MANIFESTVAR,si,"pop_MANIFESTVAR",1),get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),1,"MANIFESTVARsetup",2),get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),2,"MANIFESTVARsetup",2),"pop_MANIFESTVAR",2), (get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),3,"MANIFESTVARsetup",2) ? stan::math::promote_scalar<double>(tform(get_base1(rawindparams,get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),3,"MANIFESTVARsetup",2),"rawindparams",1),get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),4,"MANIFESTVARsetup",2),get_base1(MANIFESTVARvalues,ri,2,"MANIFESTVARvalues",1),get_base1(MANIFESTVARvalues,ri,3,"MANIFESTVARvalues",1),get_base1(MANIFESTVARvalues,ri,4,"MANIFESTVARvalues",1), pstream__)) : stan::math::promote_scalar<double>(get_base1(MANIFESTVARvalues,ri,1,"MANIFESTVARvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 1547;
+                current_statement_begin__ = 1640;
                 if (as_bool(logical_lte(si,get_base1(MANIFESTMEANSsubindex,1,"MANIFESTMEANSsubindex",1)))) {
 
-                    current_statement_begin__ = 1548;
+                    current_statement_begin__ = 1641;
                     for (int ri = 1; ri <= size(MANIFESTMEANSsetup); ++ri) {
 
-                        current_statement_begin__ = 1549;
+                        current_statement_begin__ = 1642;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(pop_MANIFESTMEANS,si,"pop_MANIFESTMEANS",1),get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),1,"MANIFESTMEANSsetup",2),get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),2,"MANIFESTMEANSsetup",2),"pop_MANIFESTMEANS",2), (get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),3,"MANIFESTMEANSsetup",2) ? stan::math::promote_scalar<double>(tform(get_base1(rawindparams,get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),3,"MANIFESTMEANSsetup",2),"rawindparams",1),get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),4,"MANIFESTMEANSsetup",2),get_base1(MANIFESTMEANSvalues,ri,2,"MANIFESTMEANSvalues",1),get_base1(MANIFESTMEANSvalues,ri,3,"MANIFESTMEANSvalues",1),get_base1(MANIFESTMEANSvalues,ri,4,"MANIFESTMEANSvalues",1), pstream__)) : stan::math::promote_scalar<double>(get_base1(MANIFESTMEANSvalues,ri,1,"MANIFESTMEANSvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 1554;
+                current_statement_begin__ = 1647;
                 if (as_bool(logical_lte(si,get_base1(CINTsubindex,1,"CINTsubindex",1)))) {
 
-                    current_statement_begin__ = 1555;
+                    current_statement_begin__ = 1648;
                     for (int ri = 1; ri <= size(CINTsetup); ++ri) {
 
-                        current_statement_begin__ = 1556;
+                        current_statement_begin__ = 1649;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(pop_CINT,si,"pop_CINT",1),get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),1,"CINTsetup",2),get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),2,"CINTsetup",2),"pop_CINT",2), (get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),3,"CINTsetup",2) ? stan::math::promote_scalar<double>(tform(get_base1(rawindparams,get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),3,"CINTsetup",2),"rawindparams",1),get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),4,"CINTsetup",2),get_base1(CINTvalues,ri,2,"CINTvalues",1),get_base1(CINTvalues,ri,3,"CINTvalues",1),get_base1(CINTvalues,ri,4,"CINTvalues",1), pstream__)) : stan::math::promote_scalar<double>(get_base1(CINTvalues,ri,1,"CINTvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 1561;
+                current_statement_begin__ = 1654;
                 if (as_bool(logical_lte(si,get_base1(T0VARsubindex,1,"T0VARsubindex",1)))) {
 
-                    current_statement_begin__ = 1562;
+                    current_statement_begin__ = 1655;
                     for (int ri = 1; ri <= size(T0VARsetup); ++ri) {
 
-                        current_statement_begin__ = 1563;
+                        current_statement_begin__ = 1656;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(pop_T0VAR,si,"pop_T0VAR",1),get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),1,"T0VARsetup",2),get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),2,"T0VARsetup",2),"pop_T0VAR",2), (get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),3,"T0VARsetup",2) ? stan::math::promote_scalar<double>(tform(get_base1(rawindparams,get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),3,"T0VARsetup",2),"rawindparams",1),get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),4,"T0VARsetup",2),get_base1(T0VARvalues,ri,2,"T0VARvalues",1),get_base1(T0VARvalues,ri,3,"T0VARvalues",1),get_base1(T0VARvalues,ri,4,"T0VARvalues",1), pstream__)) : stan::math::promote_scalar<double>(get_base1(T0VARvalues,ri,1,"T0VARvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 1568;
+                current_statement_begin__ = 1661;
                 if (as_bool(logical_lte(si,get_base1(TDPREDEFFECTsubindex,1,"TDPREDEFFECTsubindex",1)))) {
 
-                    current_statement_begin__ = 1569;
+                    current_statement_begin__ = 1662;
                     for (int ri = 1; ri <= size(TDPREDEFFECTsetup); ++ri) {
 
-                        current_statement_begin__ = 1570;
+                        current_statement_begin__ = 1663;
                         stan::math::assign(get_base1_lhs(get_base1_lhs(pop_TDPREDEFFECT,si,"pop_TDPREDEFFECT",1),get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),1,"TDPREDEFFECTsetup",2),get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),2,"TDPREDEFFECTsetup",2),"pop_TDPREDEFFECT",2), (get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),3,"TDPREDEFFECTsetup",2) ? stan::math::promote_scalar<double>(tform(get_base1(rawindparams,get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),3,"TDPREDEFFECTsetup",2),"rawindparams",1),get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),4,"TDPREDEFFECTsetup",2),get_base1(TDPREDEFFECTvalues,ri,2,"TDPREDEFFECTvalues",1),get_base1(TDPREDEFFECTvalues,ri,3,"TDPREDEFFECTvalues",1),get_base1(TDPREDEFFECTvalues,ri,4,"TDPREDEFFECTvalues",1), pstream__)) : stan::math::promote_scalar<double>(get_base1(TDPREDEFFECTvalues,ri,1,"TDPREDEFFECTvalues",1)) ));
                     }
                 }
-                current_statement_begin__ = 1578;
-                if (as_bool(logical_lte(si,get_base1(DIFFUSIONsubindex,1,"DIFFUSIONsubindex",1)))) {
-                    current_statement_begin__ = 1578;
-                    stan::math::assign(get_base1_lhs(pop_DIFFUSION,si,"pop_DIFFUSION",1), sdcovsqrt2cov(get_base1(pop_DIFFUSION,si,"pop_DIFFUSION",1),((lineardynamics * intoverstates) ? 0 : 1 ),1, pstream__));
+                current_statement_begin__ = 1668;
+                if (as_bool(logical_lte(si,get_base1(PARSsubindex,1,"PARSsubindex",1)))) {
+
+                    current_statement_begin__ = 1669;
+                    for (int ri = 1; ri <= size(PARSsetup); ++ri) {
+
+                        current_statement_begin__ = 1670;
+                        stan::math::assign(get_base1_lhs(get_base1_lhs(pop_PARS,si,"pop_PARS",1),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),1,"PARSsetup",2),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),2,"PARSsetup",2),"pop_PARS",2), (get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),3,"PARSsetup",2) ? stan::math::promote_scalar<double>(tform(get_base1(rawindparams,get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),3,"PARSsetup",2),"rawindparams",1),get_base1(get_base1(PARSsetup,ri,"PARSsetup",1),4,"PARSsetup",2),get_base1(PARSvalues,ri,2,"PARSvalues",1),get_base1(PARSvalues,ri,3,"PARSvalues",1),get_base1(PARSvalues,ri,4,"PARSvalues",1), pstream__)) : stan::math::promote_scalar<double>(get_base1(PARSvalues,ri,1,"PARSvalues",1)) ));
+                    }
                 }
-                current_statement_begin__ = 1580;
+                current_statement_begin__ = 1678;
+                if (as_bool((primitive_value(logical_lte(si,get_base1(DIFFUSIONsubindex,1,"DIFFUSIONsubindex",1))) && primitive_value(logical_neq((lineardynamics * intoverstates),0))))) {
+                    current_statement_begin__ = 1678;
+                    stan::math::assign(get_base1_lhs(pop_DIFFUSION,si,"pop_DIFFUSION",1), sdcovsqrt2cov(get_base1(pop_DIFFUSION,si,"pop_DIFFUSION",1),((lineardynamics * intoverstates) ? 0 : 1 ), pstream__));
+                }
+                current_statement_begin__ = 1680;
                 if (as_bool((primitive_value(logical_eq(lineardynamics,1)) && primitive_value(logical_gt(ndiffusion,0))))) {
 
-                    current_statement_begin__ = 1581;
+                    current_statement_begin__ = 1681;
                     if (as_bool(logical_lte(si,get_base1(asymDIFFUSIONsubindex,1,"asymDIFFUSIONsubindex",1)))) {
 
-                        current_statement_begin__ = 1582;
+                        current_statement_begin__ = 1682;
                         if (as_bool(logical_lt(ndiffusion,nlatent))) {
-                            current_statement_begin__ = 1582;
+                            current_statement_begin__ = 1682;
                             stan::math::assign(get_base1_lhs(asympop_DIFFUSION,si,"asympop_DIFFUSION",1), to_matrix(rep_vector(0,(nlatent * nlatent)),nlatent,nlatent));
                         }
-                        current_statement_begin__ = 1584;
+                        current_statement_begin__ = 1684;
                         if (as_bool(logical_eq(continuoustime,1))) {
-                            current_statement_begin__ = 1584;
+                            current_statement_begin__ = 1684;
                             stan::model::assign(asympop_DIFFUSION, 
                                         stan::model::cons_list(stan::model::index_uni(si), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), 
                                         to_matrix(mdivide_left(minus(add(kron_prod(stan::model::rvalue(pop_DRIFT, stan::model::cons_list(stan::model::index_uni(get_base1(DRIFTsubindex,si,"DRIFTsubindex",1)), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), "pop_DRIFT"),stan::model::rvalue(IIlatent, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "IIlatent"), pstream__),kron_prod(stan::model::rvalue(IIlatent, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "IIlatent"),stan::model::rvalue(pop_DRIFT, stan::model::cons_list(stan::model::index_uni(get_base1(DRIFTsubindex,si,"DRIFTsubindex",1)), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), "pop_DRIFT"), pstream__))),to_vector(stan::model::rvalue(pop_DIFFUSION, stan::model::cons_list(stan::model::index_uni(get_base1(DIFFUSIONsubindex,si,"DIFFUSIONsubindex",1)), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), "pop_DIFFUSION"))),ndiffusion,ndiffusion), 
                                         "assigning variable asympop_DIFFUSION");
                         }
-                        current_statement_begin__ = 1589;
+                        current_statement_begin__ = 1689;
                         if (as_bool(logical_eq(continuoustime,0))) {
-                            current_statement_begin__ = 1589;
+                            current_statement_begin__ = 1689;
                             stan::model::assign(asympop_DIFFUSION, 
                                         stan::model::cons_list(stan::model::index_uni(si), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), 
                                         to_matrix(multiply(subtract(stan::model::rvalue(IIlatent2, stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list())), "IIlatent2"),kron_prod(stan::model::rvalue(pop_DRIFT, stan::model::cons_list(stan::model::index_uni(get_base1(DRIFTsubindex,si,"DRIFTsubindex",1)), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), "pop_DRIFT"),stan::model::rvalue(pop_DRIFT, stan::model::cons_list(stan::model::index_uni(get_base1(DRIFTsubindex,si,"DRIFTsubindex",1)), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), "pop_DRIFT"), pstream__)),to_vector(stan::model::rvalue(pop_DIFFUSION, stan::model::cons_list(stan::model::index_uni(get_base1(DIFFUSIONsubindex,si,"DIFFUSIONsubindex",1)), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::cons_list(stan::model::index_multi(derrind), stan::model::nil_index_list()))), "pop_DIFFUSION"))),ndiffusion,ndiffusion), 
@@ -6517,207 +6930,134 @@ public:
                         }
                     }
                 }
-                current_statement_begin__ = 1596;
+                current_statement_begin__ = 1696;
                 if (as_bool(logical_gt(nt0meansstationary,0))) {
 
-                    current_statement_begin__ = 1597;
+                    current_statement_begin__ = 1697;
                     if (as_bool(logical_lte(si,get_base1(asymCINTsubindex,1,"asymCINTsubindex",1)))) {
 
-                        current_statement_begin__ = 1598;
+                        current_statement_begin__ = 1698;
                         if (as_bool(logical_eq(continuoustime,1))) {
-                            current_statement_begin__ = 1598;
+                            current_statement_begin__ = 1698;
                             stan::math::assign(get_base1_lhs(asympop_CINT,si,"asympop_CINT",1), mdivide_left(minus(get_base1(pop_DRIFT,get_base1(DRIFTsubindex,si,"DRIFTsubindex",1),"pop_DRIFT",1)),stan::model::rvalue(pop_CINT, stan::model::cons_list(stan::model::index_uni(get_base1(CINTsubindex,si,"CINTsubindex",1)), stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list()))), "pop_CINT")));
                         }
-                        current_statement_begin__ = 1599;
+                        current_statement_begin__ = 1699;
                         if (as_bool(logical_eq(continuoustime,0))) {
-                            current_statement_begin__ = 1599;
+                            current_statement_begin__ = 1699;
                             stan::math::assign(get_base1_lhs(asympop_CINT,si,"asympop_CINT",1), mdivide_left(subtract(IIlatent,get_base1(pop_DRIFT,get_base1(DRIFTsubindex,si,"DRIFTsubindex",1),"pop_DRIFT",1)),stan::model::rvalue(pop_CINT, stan::model::cons_list(stan::model::index_uni(get_base1(CINTsubindex,si,"CINTsubindex",1)), stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list()))), "pop_CINT")));
                         }
                     }
                 }
-                current_statement_begin__ = 1604;
+                current_statement_begin__ = 1704;
                 if (as_bool(logical_eq(binomial,0))) {
 
-                    current_statement_begin__ = 1605;
+                    current_statement_begin__ = 1705;
                     if (as_bool(logical_lte(si,get_base1(MANIFESTVARsubindex,1,"MANIFESTVARsubindex",1)))) {
 
-                        current_statement_begin__ = 1606;
+                        current_statement_begin__ = 1706;
                         for (int ri = 1; ri <= nmanifest; ++ri) {
-                            current_statement_begin__ = 1606;
+                            current_statement_begin__ = 1706;
                             stan::math::assign(get_base1_lhs(get_base1_lhs(pop_MANIFESTVAR,si,"pop_MANIFESTVAR",1),ri,ri,"pop_MANIFESTVAR",2), square(get_base1(get_base1(pop_MANIFESTVAR,si,"pop_MANIFESTVAR",1),ri,ri,"pop_MANIFESTVAR",2)));
                         }
                     }
                 }
-                current_statement_begin__ = 1611;
+                current_statement_begin__ = 1711;
                 if (as_bool(logical_lte(si,get_base1(T0VARsubindex,1,"T0VARsubindex",1)))) {
 
-                    current_statement_begin__ = 1612;
-                    stan::math::assign(get_base1_lhs(pop_T0VAR,si,"pop_T0VAR",1), sdcovsqrt2cov(get_base1(pop_T0VAR,si,"pop_T0VAR",1),((lineardynamics * intoverstates) ? 0 : 1 ),1, pstream__));
-                    current_statement_begin__ = 1614;
+                    current_statement_begin__ = 1712;
+                    if (as_bool(logical_neq((lineardynamics * intoverstates),0))) {
+                        current_statement_begin__ = 1712;
+                        stan::math::assign(get_base1_lhs(pop_T0VAR,si,"pop_T0VAR",1), sdcovsqrt2cov(get_base1(pop_T0VAR,si,"pop_T0VAR",1),((lineardynamics * intoverstates) ? 0 : 1 ), pstream__));
+                    }
+                    current_statement_begin__ = 1714;
                     if (as_bool(logical_gt(nt0varstationary,0))) {
-                        current_statement_begin__ = 1614;
+                        current_statement_begin__ = 1714;
                         for (int rowi = 1; rowi <= nt0varstationary; ++rowi) {
 
-                            current_statement_begin__ = 1615;
+                            current_statement_begin__ = 1715;
                             stan::math::assign(get_base1_lhs(get_base1_lhs(pop_T0VAR,si,"pop_T0VAR",1),get_base1(get_base1(t0varstationary,rowi,"t0varstationary",1),1,"t0varstationary",2),get_base1(get_base1(t0varstationary,rowi,"t0varstationary",1),2,"t0varstationary",2),"pop_T0VAR",2), get_base1(get_base1(asympop_DIFFUSION,si,"asympop_DIFFUSION",1),get_base1(get_base1(t0varstationary,rowi,"t0varstationary",1),1,"t0varstationary",2),get_base1(get_base1(t0varstationary,rowi,"t0varstationary",1),2,"t0varstationary",2),"asympop_DIFFUSION",2));
-                            current_statement_begin__ = 1617;
+                            current_statement_begin__ = 1717;
                             stan::math::assign(get_base1_lhs(get_base1_lhs(pop_T0VAR,si,"pop_T0VAR",1),get_base1(get_base1(t0varstationary,rowi,"t0varstationary",1),2,"t0varstationary",2),get_base1(get_base1(t0varstationary,rowi,"t0varstationary",1),1,"t0varstationary",2),"pop_T0VAR",2), get_base1(get_base1(asympop_DIFFUSION,si,"asympop_DIFFUSION",1),get_base1(get_base1(t0varstationary,rowi,"t0varstationary",1),2,"t0varstationary",2),get_base1(get_base1(t0varstationary,rowi,"t0varstationary",1),1,"t0varstationary",2),"asympop_DIFFUSION",2));
                         }
                     }
                 }
-                current_statement_begin__ = 1623;
+                current_statement_begin__ = 1723;
                 if (as_bool(logical_gt(nt0meansstationary,0))) {
 
-                    current_statement_begin__ = 1624;
+                    current_statement_begin__ = 1724;
                     if (as_bool(logical_lte(si,get_base1(T0MEANSsubindex,1,"T0MEANSsubindex",1)))) {
 
-                        current_statement_begin__ = 1625;
+                        current_statement_begin__ = 1725;
                         for (int rowi = 1; rowi <= nt0meansstationary; ++rowi) {
 
-                            current_statement_begin__ = 1626;
+                            current_statement_begin__ = 1726;
                             stan::math::assign(get_base1_lhs(get_base1_lhs(pop_T0MEANS,si,"pop_T0MEANS",1),get_base1(get_base1(t0meansstationary,rowi,"t0meansstationary",1),1,"t0meansstationary",2),1,"pop_T0MEANS",2), get_base1(get_base1(asympop_CINT,get_base1(asymCINTsubindex,si,"asymCINTsubindex",1),"asympop_CINT",1),get_base1(get_base1(t0meansstationary,rowi,"t0meansstationary",1),1,"t0meansstationary",2),"asympop_CINT",2));
                         }
                     }
                 }
             }
             }
-            current_statement_begin__ = 1635;
+            current_statement_begin__ = 1735;
             stan::math::assign(rawpopcorr, tcrossprod(rawpopcorrsqrt));
-            current_statement_begin__ = 1636;
+            current_statement_begin__ = 1736;
             stan::math::assign(rawpopcov, tcrossprod(rawpopcovsqrt));
-            current_statement_begin__ = 1638;
+            current_statement_begin__ = 1738;
             stan::math::assign(popsd, rep_vector(0,nparams));
-            current_statement_begin__ = 1639;
+            current_statement_begin__ = 1739;
             stan::model::assign(popsd, 
                         stan::model::cons_list(stan::model::index_multi(indvaryingindex), stan::model::nil_index_list()), 
                         rawpopsd, 
                         "assigning variable popsd");
-            current_statement_begin__ = 1641;
-            for (int ri = 1; ri <= size(T0MEANSsetup); ++ri) {
+            current_statement_begin__ = 1741;
+            for (int ri = 1; ri <= get_base1(dims(popsetup),1,"dims(popsetup)",1); ++ri) {
 
-                current_statement_begin__ = 1642;
-                if (as_bool(logical_neq(get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),3,"T0MEANSsetup",2),0))) {
+                current_statement_begin__ = 1742;
+                if (as_bool(logical_neq(get_base1(get_base1(popsetup,ri,"popsetup",1),3,"popsetup",2),0))) {
 
-                    current_statement_begin__ = 1644;
-                    stan::math::assign(get_base1_lhs(popmeans,get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),3,"T0MEANSsetup",2),"popmeans",1), tform(get_base1(rawpopmeans,get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),3,"T0MEANSsetup",2),"rawpopmeans",1),get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),4,"T0MEANSsetup",2),get_base1(T0MEANSvalues,ri,2,"T0MEANSvalues",1),get_base1(T0MEANSvalues,ri,3,"T0MEANSvalues",1),get_base1(T0MEANSvalues,ri,4,"T0MEANSvalues",1), pstream__));
-                    current_statement_begin__ = 1646;
-                    stan::math::assign(get_base1_lhs(popsd,get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),3,"T0MEANSsetup",2),"popsd",1), (get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),5,"T0MEANSsetup",2) ? stan::math::promote_scalar<double>(fabs((tform(get_base1(rawpopmeans,get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),3,"T0MEANSsetup",2),"rawpopmeans",1),get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),4,"T0MEANSsetup",2),get_base1(T0MEANSvalues,ri,2,"T0MEANSvalues",1),get_base1(T0MEANSvalues,ri,3,"T0MEANSvalues",1),(get_base1(T0MEANSvalues,ri,4,"T0MEANSvalues",1) + get_base1(popsd,get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),3,"T0MEANSsetup",2),"popsd",1)), pstream__) - (tform(get_base1(rawpopmeans,get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),3,"T0MEANSsetup",2),"rawpopmeans",1),get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),4,"T0MEANSsetup",2),get_base1(T0MEANSvalues,ri,2,"T0MEANSvalues",1),get_base1(T0MEANSvalues,ri,3,"T0MEANSvalues",1),(get_base1(T0MEANSvalues,ri,4,"T0MEANSvalues",1) - get_base1(popsd,get_base1(get_base1(T0MEANSsetup,ri,"T0MEANSsetup",1),3,"T0MEANSsetup",2),"popsd",1)), pstream__) / 2)))) : stan::math::promote_scalar<double>(0) ));
-                }
-            }
-            current_statement_begin__ = 1655;
-            for (int ri = 1; ri <= size(LAMBDAsetup); ++ri) {
-
-                current_statement_begin__ = 1656;
-                if (as_bool(logical_neq(get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),3,"LAMBDAsetup",2),0))) {
-
-                    current_statement_begin__ = 1658;
-                    stan::math::assign(get_base1_lhs(popmeans,get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),3,"LAMBDAsetup",2),"popmeans",1), tform(get_base1(rawpopmeans,get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),3,"LAMBDAsetup",2),"rawpopmeans",1),get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),4,"LAMBDAsetup",2),get_base1(LAMBDAvalues,ri,2,"LAMBDAvalues",1),get_base1(LAMBDAvalues,ri,3,"LAMBDAvalues",1),get_base1(LAMBDAvalues,ri,4,"LAMBDAvalues",1), pstream__));
-                    current_statement_begin__ = 1660;
-                    stan::math::assign(get_base1_lhs(popsd,get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),3,"LAMBDAsetup",2),"popsd",1), (get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),5,"LAMBDAsetup",2) ? stan::math::promote_scalar<double>(fabs((tform(get_base1(rawpopmeans,get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),3,"LAMBDAsetup",2),"rawpopmeans",1),get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),4,"LAMBDAsetup",2),get_base1(LAMBDAvalues,ri,2,"LAMBDAvalues",1),get_base1(LAMBDAvalues,ri,3,"LAMBDAvalues",1),(get_base1(LAMBDAvalues,ri,4,"LAMBDAvalues",1) + get_base1(popsd,get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),3,"LAMBDAsetup",2),"popsd",1)), pstream__) - (tform(get_base1(rawpopmeans,get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),3,"LAMBDAsetup",2),"rawpopmeans",1),get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),4,"LAMBDAsetup",2),get_base1(LAMBDAvalues,ri,2,"LAMBDAvalues",1),get_base1(LAMBDAvalues,ri,3,"LAMBDAvalues",1),(get_base1(LAMBDAvalues,ri,4,"LAMBDAvalues",1) - get_base1(popsd,get_base1(get_base1(LAMBDAsetup,ri,"LAMBDAsetup",1),3,"LAMBDAsetup",2),"popsd",1)), pstream__) / 2)))) : stan::math::promote_scalar<double>(0) ));
-                }
-            }
-            current_statement_begin__ = 1669;
-            for (int ri = 1; ri <= size(DRIFTsetup); ++ri) {
-
-                current_statement_begin__ = 1670;
-                if (as_bool(logical_neq(get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),3,"DRIFTsetup",2),0))) {
-
-                    current_statement_begin__ = 1672;
-                    stan::math::assign(get_base1_lhs(popmeans,get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),3,"DRIFTsetup",2),"popmeans",1), tform(get_base1(rawpopmeans,get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),3,"DRIFTsetup",2),"rawpopmeans",1),get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),4,"DRIFTsetup",2),get_base1(DRIFTvalues,ri,2,"DRIFTvalues",1),get_base1(DRIFTvalues,ri,3,"DRIFTvalues",1),get_base1(DRIFTvalues,ri,4,"DRIFTvalues",1), pstream__));
-                    current_statement_begin__ = 1674;
-                    stan::math::assign(get_base1_lhs(popsd,get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),3,"DRIFTsetup",2),"popsd",1), (get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),5,"DRIFTsetup",2) ? stan::math::promote_scalar<double>(fabs((tform(get_base1(rawpopmeans,get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),3,"DRIFTsetup",2),"rawpopmeans",1),get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),4,"DRIFTsetup",2),get_base1(DRIFTvalues,ri,2,"DRIFTvalues",1),get_base1(DRIFTvalues,ri,3,"DRIFTvalues",1),(get_base1(DRIFTvalues,ri,4,"DRIFTvalues",1) + get_base1(popsd,get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),3,"DRIFTsetup",2),"popsd",1)), pstream__) - (tform(get_base1(rawpopmeans,get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),3,"DRIFTsetup",2),"rawpopmeans",1),get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),4,"DRIFTsetup",2),get_base1(DRIFTvalues,ri,2,"DRIFTvalues",1),get_base1(DRIFTvalues,ri,3,"DRIFTvalues",1),(get_base1(DRIFTvalues,ri,4,"DRIFTvalues",1) - get_base1(popsd,get_base1(get_base1(DRIFTsetup,ri,"DRIFTsetup",1),3,"DRIFTsetup",2),"popsd",1)), pstream__) / 2)))) : stan::math::promote_scalar<double>(0) ));
-                }
-            }
-            current_statement_begin__ = 1683;
-            for (int ri = 1; ri <= size(DIFFUSIONsetup); ++ri) {
-
-                current_statement_begin__ = 1684;
-                if (as_bool(logical_neq(get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),3,"DIFFUSIONsetup",2),0))) {
-
-                    current_statement_begin__ = 1686;
-                    stan::math::assign(get_base1_lhs(popmeans,get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),3,"DIFFUSIONsetup",2),"popmeans",1), tform(get_base1(rawpopmeans,get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),3,"DIFFUSIONsetup",2),"rawpopmeans",1),get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),4,"DIFFUSIONsetup",2),get_base1(DIFFUSIONvalues,ri,2,"DIFFUSIONvalues",1),get_base1(DIFFUSIONvalues,ri,3,"DIFFUSIONvalues",1),get_base1(DIFFUSIONvalues,ri,4,"DIFFUSIONvalues",1), pstream__));
-                    current_statement_begin__ = 1688;
-                    stan::math::assign(get_base1_lhs(popsd,get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),3,"DIFFUSIONsetup",2),"popsd",1), (get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),5,"DIFFUSIONsetup",2) ? stan::math::promote_scalar<double>(fabs((tform(get_base1(rawpopmeans,get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),3,"DIFFUSIONsetup",2),"rawpopmeans",1),get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),4,"DIFFUSIONsetup",2),get_base1(DIFFUSIONvalues,ri,2,"DIFFUSIONvalues",1),get_base1(DIFFUSIONvalues,ri,3,"DIFFUSIONvalues",1),(get_base1(DIFFUSIONvalues,ri,4,"DIFFUSIONvalues",1) + get_base1(popsd,get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),3,"DIFFUSIONsetup",2),"popsd",1)), pstream__) - (tform(get_base1(rawpopmeans,get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),3,"DIFFUSIONsetup",2),"rawpopmeans",1),get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),4,"DIFFUSIONsetup",2),get_base1(DIFFUSIONvalues,ri,2,"DIFFUSIONvalues",1),get_base1(DIFFUSIONvalues,ri,3,"DIFFUSIONvalues",1),(get_base1(DIFFUSIONvalues,ri,4,"DIFFUSIONvalues",1) - get_base1(popsd,get_base1(get_base1(DIFFUSIONsetup,ri,"DIFFUSIONsetup",1),3,"DIFFUSIONsetup",2),"popsd",1)), pstream__) / 2)))) : stan::math::promote_scalar<double>(0) ));
-                }
-            }
-            current_statement_begin__ = 1697;
-            for (int ri = 1; ri <= size(MANIFESTVARsetup); ++ri) {
-
-                current_statement_begin__ = 1698;
-                if (as_bool(logical_neq(get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),3,"MANIFESTVARsetup",2),0))) {
-
-                    current_statement_begin__ = 1700;
-                    stan::math::assign(get_base1_lhs(popmeans,get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),3,"MANIFESTVARsetup",2),"popmeans",1), tform(get_base1(rawpopmeans,get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),3,"MANIFESTVARsetup",2),"rawpopmeans",1),get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),4,"MANIFESTVARsetup",2),get_base1(MANIFESTVARvalues,ri,2,"MANIFESTVARvalues",1),get_base1(MANIFESTVARvalues,ri,3,"MANIFESTVARvalues",1),get_base1(MANIFESTVARvalues,ri,4,"MANIFESTVARvalues",1), pstream__));
-                    current_statement_begin__ = 1702;
-                    stan::math::assign(get_base1_lhs(popsd,get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),3,"MANIFESTVARsetup",2),"popsd",1), (get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),5,"MANIFESTVARsetup",2) ? stan::math::promote_scalar<double>(fabs((tform(get_base1(rawpopmeans,get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),3,"MANIFESTVARsetup",2),"rawpopmeans",1),get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),4,"MANIFESTVARsetup",2),get_base1(MANIFESTVARvalues,ri,2,"MANIFESTVARvalues",1),get_base1(MANIFESTVARvalues,ri,3,"MANIFESTVARvalues",1),(get_base1(MANIFESTVARvalues,ri,4,"MANIFESTVARvalues",1) + get_base1(popsd,get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),3,"MANIFESTVARsetup",2),"popsd",1)), pstream__) - (tform(get_base1(rawpopmeans,get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),3,"MANIFESTVARsetup",2),"rawpopmeans",1),get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),4,"MANIFESTVARsetup",2),get_base1(MANIFESTVARvalues,ri,2,"MANIFESTVARvalues",1),get_base1(MANIFESTVARvalues,ri,3,"MANIFESTVARvalues",1),(get_base1(MANIFESTVARvalues,ri,4,"MANIFESTVARvalues",1) - get_base1(popsd,get_base1(get_base1(MANIFESTVARsetup,ri,"MANIFESTVARsetup",1),3,"MANIFESTVARsetup",2),"popsd",1)), pstream__) / 2)))) : stan::math::promote_scalar<double>(0) ));
-                }
-            }
-            current_statement_begin__ = 1711;
-            for (int ri = 1; ri <= size(MANIFESTMEANSsetup); ++ri) {
-
-                current_statement_begin__ = 1712;
-                if (as_bool(logical_neq(get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),3,"MANIFESTMEANSsetup",2),0))) {
-
-                    current_statement_begin__ = 1714;
-                    stan::math::assign(get_base1_lhs(popmeans,get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),3,"MANIFESTMEANSsetup",2),"popmeans",1), tform(get_base1(rawpopmeans,get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),3,"MANIFESTMEANSsetup",2),"rawpopmeans",1),get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),4,"MANIFESTMEANSsetup",2),get_base1(MANIFESTMEANSvalues,ri,2,"MANIFESTMEANSvalues",1),get_base1(MANIFESTMEANSvalues,ri,3,"MANIFESTMEANSvalues",1),get_base1(MANIFESTMEANSvalues,ri,4,"MANIFESTMEANSvalues",1), pstream__));
-                    current_statement_begin__ = 1716;
-                    stan::math::assign(get_base1_lhs(popsd,get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),3,"MANIFESTMEANSsetup",2),"popsd",1), (get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),5,"MANIFESTMEANSsetup",2) ? stan::math::promote_scalar<double>(fabs((tform(get_base1(rawpopmeans,get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),3,"MANIFESTMEANSsetup",2),"rawpopmeans",1),get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),4,"MANIFESTMEANSsetup",2),get_base1(MANIFESTMEANSvalues,ri,2,"MANIFESTMEANSvalues",1),get_base1(MANIFESTMEANSvalues,ri,3,"MANIFESTMEANSvalues",1),(get_base1(MANIFESTMEANSvalues,ri,4,"MANIFESTMEANSvalues",1) + get_base1(popsd,get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),3,"MANIFESTMEANSsetup",2),"popsd",1)), pstream__) - (tform(get_base1(rawpopmeans,get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),3,"MANIFESTMEANSsetup",2),"rawpopmeans",1),get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),4,"MANIFESTMEANSsetup",2),get_base1(MANIFESTMEANSvalues,ri,2,"MANIFESTMEANSvalues",1),get_base1(MANIFESTMEANSvalues,ri,3,"MANIFESTMEANSvalues",1),(get_base1(MANIFESTMEANSvalues,ri,4,"MANIFESTMEANSvalues",1) - get_base1(popsd,get_base1(get_base1(MANIFESTMEANSsetup,ri,"MANIFESTMEANSsetup",1),3,"MANIFESTMEANSsetup",2),"popsd",1)), pstream__) / 2)))) : stan::math::promote_scalar<double>(0) ));
-                }
-            }
-            current_statement_begin__ = 1725;
-            for (int ri = 1; ri <= size(CINTsetup); ++ri) {
-
-                current_statement_begin__ = 1726;
-                if (as_bool(logical_neq(get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),3,"CINTsetup",2),0))) {
-
-                    current_statement_begin__ = 1728;
-                    stan::math::assign(get_base1_lhs(popmeans,get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),3,"CINTsetup",2),"popmeans",1), tform(get_base1(rawpopmeans,get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),3,"CINTsetup",2),"rawpopmeans",1),get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),4,"CINTsetup",2),get_base1(CINTvalues,ri,2,"CINTvalues",1),get_base1(CINTvalues,ri,3,"CINTvalues",1),get_base1(CINTvalues,ri,4,"CINTvalues",1), pstream__));
-                    current_statement_begin__ = 1730;
-                    stan::math::assign(get_base1_lhs(popsd,get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),3,"CINTsetup",2),"popsd",1), (get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),5,"CINTsetup",2) ? stan::math::promote_scalar<double>(fabs((tform(get_base1(rawpopmeans,get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),3,"CINTsetup",2),"rawpopmeans",1),get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),4,"CINTsetup",2),get_base1(CINTvalues,ri,2,"CINTvalues",1),get_base1(CINTvalues,ri,3,"CINTvalues",1),(get_base1(CINTvalues,ri,4,"CINTvalues",1) + get_base1(popsd,get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),3,"CINTsetup",2),"popsd",1)), pstream__) - (tform(get_base1(rawpopmeans,get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),3,"CINTsetup",2),"rawpopmeans",1),get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),4,"CINTsetup",2),get_base1(CINTvalues,ri,2,"CINTvalues",1),get_base1(CINTvalues,ri,3,"CINTvalues",1),(get_base1(CINTvalues,ri,4,"CINTvalues",1) - get_base1(popsd,get_base1(get_base1(CINTsetup,ri,"CINTsetup",1),3,"CINTsetup",2),"popsd",1)), pstream__) / 2)))) : stan::math::promote_scalar<double>(0) ));
-                }
-            }
-            current_statement_begin__ = 1739;
-            for (int ri = 1; ri <= size(T0VARsetup); ++ri) {
-
-                current_statement_begin__ = 1740;
-                if (as_bool(logical_neq(get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),3,"T0VARsetup",2),0))) {
-
-                    current_statement_begin__ = 1742;
-                    stan::math::assign(get_base1_lhs(popmeans,get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),3,"T0VARsetup",2),"popmeans",1), tform(get_base1(rawpopmeans,get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),3,"T0VARsetup",2),"rawpopmeans",1),get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),4,"T0VARsetup",2),get_base1(T0VARvalues,ri,2,"T0VARvalues",1),get_base1(T0VARvalues,ri,3,"T0VARvalues",1),get_base1(T0VARvalues,ri,4,"T0VARvalues",1), pstream__));
                     current_statement_begin__ = 1744;
-                    stan::math::assign(get_base1_lhs(popsd,get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),3,"T0VARsetup",2),"popsd",1), (get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),5,"T0VARsetup",2) ? stan::math::promote_scalar<double>(fabs((tform(get_base1(rawpopmeans,get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),3,"T0VARsetup",2),"rawpopmeans",1),get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),4,"T0VARsetup",2),get_base1(T0VARvalues,ri,2,"T0VARvalues",1),get_base1(T0VARvalues,ri,3,"T0VARvalues",1),(get_base1(T0VARvalues,ri,4,"T0VARvalues",1) + get_base1(popsd,get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),3,"T0VARsetup",2),"popsd",1)), pstream__) - (tform(get_base1(rawpopmeans,get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),3,"T0VARsetup",2),"rawpopmeans",1),get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),4,"T0VARsetup",2),get_base1(T0VARvalues,ri,2,"T0VARvalues",1),get_base1(T0VARvalues,ri,3,"T0VARvalues",1),(get_base1(T0VARvalues,ri,4,"T0VARvalues",1) - get_base1(popsd,get_base1(get_base1(T0VARsetup,ri,"T0VARsetup",1),3,"T0VARsetup",2),"popsd",1)), pstream__) / 2)))) : stan::math::promote_scalar<double>(0) ));
-                }
-            }
-            current_statement_begin__ = 1753;
-            for (int ri = 1; ri <= size(TDPREDEFFECTsetup); ++ri) {
+                    stan::math::assign(get_base1_lhs(popmeans,get_base1(get_base1(popsetup,ri,"popsetup",1),3,"popsetup",2),"popmeans",1), tform(get_base1(rawpopmeans,get_base1(get_base1(popsetup,ri,"popsetup",1),3,"popsetup",2),"rawpopmeans",1),get_base1(get_base1(popsetup,ri,"popsetup",1),4,"popsetup",2),get_base1(get_base1(popvalues,ri,"popvalues",1),2,"popvalues",2),get_base1(get_base1(popvalues,ri,"popvalues",1),3,"popvalues",2),get_base1(get_base1(popvalues,ri,"popvalues",1),4,"popvalues",2), pstream__));
+                    current_statement_begin__ = 1746;
+                    stan::math::assign(get_base1_lhs(popsd,get_base1(get_base1(popsetup,ri,"popsetup",1),3,"popsetup",2),"popsd",1), (get_base1(get_base1(popsetup,ri,"popsetup",1),5,"popsetup",2) ? stan::math::promote_scalar<double>((fabs((tform((get_base1(rawpopmeans,get_base1(get_base1(popsetup,ri,"popsetup",1),3,"popsetup",2),"rawpopmeans",1) + get_base1(popsd,get_base1(get_base1(popsetup,ri,"popsetup",1),3,"popsetup",2),"popsd",1)),get_base1(get_base1(popsetup,ri,"popsetup",1),4,"popsetup",2),get_base1(get_base1(popvalues,ri,"popvalues",1),2,"popvalues",2),get_base1(get_base1(popvalues,ri,"popvalues",1),3,"popvalues",2),get_base1(get_base1(popvalues,ri,"popvalues",1),4,"popvalues",2), pstream__) - tform((get_base1(rawpopmeans,get_base1(get_base1(popsetup,ri,"popsetup",1),3,"popsetup",2),"rawpopmeans",1) - get_base1(popsd,get_base1(get_base1(popsetup,ri,"popsetup",1),3,"popsetup",2),"popsd",1)),get_base1(get_base1(popsetup,ri,"popsetup",1),4,"popsetup",2),get_base1(get_base1(popvalues,ri,"popvalues",1),2,"popvalues",2),get_base1(get_base1(popvalues,ri,"popvalues",1),3,"popvalues",2),(get_base1(get_base1(popvalues,ri,"popvalues",1),4,"popvalues",2) - get_base1(popsd,get_base1(get_base1(popsetup,ri,"popsetup",1),3,"popsetup",2),"popsd",1)), pstream__))) / 2)) : stan::math::promote_scalar<double>(0) ));
+                    current_statement_begin__ = 1753;
+                    if (as_bool(logical_gt(ntipred,0))) {
 
-                current_statement_begin__ = 1754;
-                if (as_bool(logical_neq(get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),3,"TDPREDEFFECTsetup",2),0))) {
+                        current_statement_begin__ = 1754;
+                        for (int tij = 1; tij <= ntipred; ++tij) {
 
-                    current_statement_begin__ = 1756;
-                    stan::math::assign(get_base1_lhs(popmeans,get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),3,"TDPREDEFFECTsetup",2),"popmeans",1), tform(get_base1(rawpopmeans,get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),3,"TDPREDEFFECTsetup",2),"rawpopmeans",1),get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),4,"TDPREDEFFECTsetup",2),get_base1(TDPREDEFFECTvalues,ri,2,"TDPREDEFFECTvalues",1),get_base1(TDPREDEFFECTvalues,ri,3,"TDPREDEFFECTvalues",1),get_base1(TDPREDEFFECTvalues,ri,4,"TDPREDEFFECTvalues",1), pstream__));
-                    current_statement_begin__ = 1758;
-                    stan::math::assign(get_base1_lhs(popsd,get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),3,"TDPREDEFFECTsetup",2),"popsd",1), (get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),5,"TDPREDEFFECTsetup",2) ? stan::math::promote_scalar<double>(fabs((tform(get_base1(rawpopmeans,get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),3,"TDPREDEFFECTsetup",2),"rawpopmeans",1),get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),4,"TDPREDEFFECTsetup",2),get_base1(TDPREDEFFECTvalues,ri,2,"TDPREDEFFECTvalues",1),get_base1(TDPREDEFFECTvalues,ri,3,"TDPREDEFFECTvalues",1),(get_base1(TDPREDEFFECTvalues,ri,4,"TDPREDEFFECTvalues",1) + get_base1(popsd,get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),3,"TDPREDEFFECTsetup",2),"popsd",1)), pstream__) - (tform(get_base1(rawpopmeans,get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),3,"TDPREDEFFECTsetup",2),"rawpopmeans",1),get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),4,"TDPREDEFFECTsetup",2),get_base1(TDPREDEFFECTvalues,ri,2,"TDPREDEFFECTvalues",1),get_base1(TDPREDEFFECTvalues,ri,3,"TDPREDEFFECTvalues",1),(get_base1(TDPREDEFFECTvalues,ri,4,"TDPREDEFFECTvalues",1) - get_base1(popsd,get_base1(get_base1(TDPREDEFFECTsetup,ri,"TDPREDEFFECTsetup",1),3,"TDPREDEFFECTsetup",2),"popsd",1)), pstream__) / 2)))) : stan::math::promote_scalar<double>(0) ));
+                            current_statement_begin__ = 1755;
+                            if (as_bool(logical_eq(get_base1(get_base1(TIPREDEFFECTsetup,get_base1(get_base1(popsetup,ri,"popsetup",1),3,"popsetup",2),"TIPREDEFFECTsetup",1),tij,"TIPREDEFFECTsetup",2),0))) {
+
+                                current_statement_begin__ = 1756;
+                                stan::math::assign(get_base1_lhs(linearTIPREDEFFECT,get_base1(get_base1(popsetup,ri,"popsetup",1),3,"popsetup",2),tij,"linearTIPREDEFFECT",1), 0);
+                            } else {
+
+                                current_statement_begin__ = 1758;
+                                stan::math::assign(get_base1_lhs(linearTIPREDEFFECT,get_base1(get_base1(popsetup,ri,"popsetup",1),3,"popsetup",2),tij,"linearTIPREDEFFECT",1), (((tform((get_base1(rawpopmeans,get_base1(get_base1(popsetup,ri,"popsetup",1),3,"popsetup",2),"rawpopmeans",1) + (get_base1(TIPREDEFFECT,get_base1(get_base1(popsetup,ri,"popsetup",1),3,"popsetup",2),tij,"TIPREDEFFECT",1) * 0.01)),get_base1(get_base1(popsetup,ri,"popsetup",1),4,"popsetup",2),get_base1(get_base1(popvalues,ri,"popvalues",1),2,"popvalues",2),get_base1(get_base1(popvalues,ri,"popvalues",1),3,"popvalues",2),get_base1(get_base1(popvalues,ri,"popvalues",1),4,"popvalues",2), pstream__) - tform((get_base1(rawpopmeans,get_base1(get_base1(popsetup,ri,"popsetup",1),3,"popsetup",2),"rawpopmeans",1) - (get_base1(TIPREDEFFECT,get_base1(get_base1(popsetup,ri,"popsetup",1),3,"popsetup",2),tij,"TIPREDEFFECT",1) * 0.01)),get_base1(get_base1(popsetup,ri,"popsetup",1),4,"popsetup",2),get_base1(get_base1(popvalues,ri,"popvalues",1),2,"popvalues",2),get_base1(get_base1(popvalues,ri,"popvalues",1),3,"popvalues",2),get_base1(get_base1(popvalues,ri,"popvalues",1),4,"popvalues",2), pstream__)) / 2) * 100));
+                            }
+                        }
+                    }
                 }
             }
 
             // validate generated quantities
-            current_statement_begin__ = 1026;
-            current_statement_begin__ = 1027;
-            current_statement_begin__ = 1028;
-            current_statement_begin__ = 1029;
-            current_statement_begin__ = 1030;
-            current_statement_begin__ = 1031;
-            current_statement_begin__ = 1032;
-            current_statement_begin__ = 1033;
-            current_statement_begin__ = 1034;
-            current_statement_begin__ = 1035;
-            current_statement_begin__ = 1036;
-            current_statement_begin__ = 1037;
-            current_statement_begin__ = 1038;
-            current_statement_begin__ = 1040;
-            current_statement_begin__ = 1041;
-            current_statement_begin__ = 1044;
+            current_statement_begin__ = 1079;
+            current_statement_begin__ = 1080;
+            current_statement_begin__ = 1081;
+            current_statement_begin__ = 1082;
+            current_statement_begin__ = 1083;
+            current_statement_begin__ = 1084;
+            current_statement_begin__ = 1085;
+            current_statement_begin__ = 1086;
+            current_statement_begin__ = 1087;
+            current_statement_begin__ = 1088;
+            current_statement_begin__ = 1089;
+            current_statement_begin__ = 1090;
+            current_statement_begin__ = 1091;
+            current_statement_begin__ = 1092;
+            current_statement_begin__ = 1093;
+            current_statement_begin__ = 1095;
+            current_statement_begin__ = 1096;
+            current_statement_begin__ = 1099;
 
             // write generated quantities
             for (int k_0__ = 0; k_0__ < nparams; ++k_0__) {
@@ -6734,6 +7074,11 @@ public:
             for (int k_1__ = 0; k_1__ < nindvarying; ++k_1__) {
                 for (int k_0__ = 0; k_0__ < nindvarying; ++k_0__) {
                 vars__.push_back(rawpopcorr(k_0__, k_1__));
+                }
+            }
+            for (int k_1__ = 0; k_1__ < ntipred; ++k_1__) {
+                for (int k_0__ = 0; k_0__ < nparams; ++k_0__) {
+                vars__.push_back(linearTIPREDEFFECT(k_0__, k_1__));
                 }
             }
             for (int k_2__ = 0; k_2__ < (T0MEANSsetup_rowcount ? max(stan::model::rvalue(T0MEANSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "T0MEANSsetup")) : 0 ); ++k_2__) {
@@ -6796,6 +7141,13 @@ public:
                 for (int k_1__ = 0; k_1__ < (TDPREDEFFECTsetup_rowcount ? max(stan::model::rvalue(TDPREDEFFECTsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "TDPREDEFFECTsetup")) : 0 ); ++k_1__) {
                     for (int k_0__ = 0; k_0__ < get_base1(TDPREDEFFECTsubindex,1,"TDPREDEFFECTsubindex",1); ++k_0__) {
                     vars__.push_back(pop_TDPREDEFFECT[k_0__](k_1__, k_2__));
+                    }
+                }
+            }
+            for (int k_2__ = 0; k_2__ < (PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "PARSsetup")) : 0 ); ++k_2__) {
+                for (int k_1__ = 0; k_1__ < (PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "PARSsetup")) : 0 ); ++k_1__) {
+                    for (int k_0__ = 0; k_0__ < get_base1(PARSsubindex,1,"PARSsubindex",1); ++k_0__) {
+                    vars__.push_back(pop_PARS[k_0__](k_1__, k_2__));
                     }
                 }
             }
@@ -6990,6 +7342,15 @@ public:
                 }
             }
         }
+        for (int k_2__ = 1; k_2__ <= (PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "PARSsetup")) : 0 ); ++k_2__) {
+            for (int k_1__ = 1; k_1__ <= (PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "PARSsetup")) : 0 ); ++k_1__) {
+                for (int k_0__ = 1; k_0__ <= get_base1(PARSsubindex,nsubjects,"PARSsubindex",1); ++k_0__) {
+                    param_name_stream__.str(std::string());
+                    param_name_stream__ << "PARS" << '.' << k_0__ << '.' << k_1__ << '.' << k_2__;
+                    param_names__.push_back(param_name_stream__.str());
+                }
+            }
+        }
         for (int k_2__ = 1; k_2__ <= nlatent; ++k_2__) {
             for (int k_1__ = 1; k_1__ <= nlatent; ++k_1__) {
                 for (int k_0__ = 1; k_0__ <= (lineardynamics ? get_base1(asymDIFFUSIONsubindex,nsubjects,"asymDIFFUSIONsubindex",1) : 0 ); ++k_0__) {
@@ -7043,6 +7404,13 @@ public:
             for (int k_0__ = 1; k_0__ <= nindvarying; ++k_0__) {
                 param_name_stream__.str(std::string());
                 param_name_stream__ << "rawpopcorr" << '.' << k_0__ << '.' << k_1__;
+                param_names__.push_back(param_name_stream__.str());
+            }
+        }
+        for (int k_1__ = 1; k_1__ <= ntipred; ++k_1__) {
+            for (int k_0__ = 1; k_0__ <= nparams; ++k_0__) {
+                param_name_stream__.str(std::string());
+                param_name_stream__ << "linearTIPREDEFFECT" << '.' << k_0__ << '.' << k_1__;
                 param_names__.push_back(param_name_stream__.str());
             }
         }
@@ -7123,6 +7491,15 @@ public:
                 for (int k_0__ = 1; k_0__ <= get_base1(TDPREDEFFECTsubindex,1,"TDPREDEFFECTsubindex",1); ++k_0__) {
                     param_name_stream__.str(std::string());
                     param_name_stream__ << "pop_TDPREDEFFECT" << '.' << k_0__ << '.' << k_1__ << '.' << k_2__;
+                    param_names__.push_back(param_name_stream__.str());
+                }
+            }
+        }
+        for (int k_2__ = 1; k_2__ <= (PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "PARSsetup")) : 0 ); ++k_2__) {
+            for (int k_1__ = 1; k_1__ <= (PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "PARSsetup")) : 0 ); ++k_1__) {
+                for (int k_0__ = 1; k_0__ <= get_base1(PARSsubindex,1,"PARSsubindex",1); ++k_0__) {
+                    param_name_stream__.str(std::string());
+                    param_name_stream__ << "pop_PARS" << '.' << k_0__ << '.' << k_1__ << '.' << k_2__;
                     param_names__.push_back(param_name_stream__.str());
                 }
             }
@@ -7296,6 +7673,15 @@ public:
                 }
             }
         }
+        for (int k_2__ = 1; k_2__ <= (PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "PARSsetup")) : 0 ); ++k_2__) {
+            for (int k_1__ = 1; k_1__ <= (PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "PARSsetup")) : 0 ); ++k_1__) {
+                for (int k_0__ = 1; k_0__ <= get_base1(PARSsubindex,nsubjects,"PARSsubindex",1); ++k_0__) {
+                    param_name_stream__.str(std::string());
+                    param_name_stream__ << "PARS" << '.' << k_0__ << '.' << k_1__ << '.' << k_2__;
+                    param_names__.push_back(param_name_stream__.str());
+                }
+            }
+        }
         for (int k_2__ = 1; k_2__ <= nlatent; ++k_2__) {
             for (int k_1__ = 1; k_1__ <= nlatent; ++k_1__) {
                 for (int k_0__ = 1; k_0__ <= (lineardynamics ? get_base1(asymDIFFUSIONsubindex,nsubjects,"asymDIFFUSIONsubindex",1) : 0 ); ++k_0__) {
@@ -7349,6 +7735,13 @@ public:
             for (int k_0__ = 1; k_0__ <= nindvarying; ++k_0__) {
                 param_name_stream__.str(std::string());
                 param_name_stream__ << "rawpopcorr" << '.' << k_0__ << '.' << k_1__;
+                param_names__.push_back(param_name_stream__.str());
+            }
+        }
+        for (int k_1__ = 1; k_1__ <= ntipred; ++k_1__) {
+            for (int k_0__ = 1; k_0__ <= nparams; ++k_0__) {
+                param_name_stream__.str(std::string());
+                param_name_stream__ << "linearTIPREDEFFECT" << '.' << k_0__ << '.' << k_1__;
                 param_names__.push_back(param_name_stream__.str());
             }
         }
@@ -7429,6 +7822,15 @@ public:
                 for (int k_0__ = 1; k_0__ <= get_base1(TDPREDEFFECTsubindex,1,"TDPREDEFFECTsubindex",1); ++k_0__) {
                     param_name_stream__.str(std::string());
                     param_name_stream__ << "pop_TDPREDEFFECT" << '.' << k_0__ << '.' << k_1__ << '.' << k_2__;
+                    param_names__.push_back(param_name_stream__.str());
+                }
+            }
+        }
+        for (int k_2__ = 1; k_2__ <= (PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(2), stan::model::nil_index_list())), "PARSsetup")) : 0 ); ++k_2__) {
+            for (int k_1__ = 1; k_1__ <= (PARSsetup_rowcount ? max(stan::model::rvalue(PARSsetup, stan::model::cons_list(stan::model::index_omni(), stan::model::cons_list(stan::model::index_uni(1), stan::model::nil_index_list())), "PARSsetup")) : 0 ); ++k_1__) {
+                for (int k_0__ = 1; k_0__ <= get_base1(PARSsubindex,1,"PARSsubindex",1); ++k_0__) {
+                    param_name_stream__.str(std::string());
+                    param_name_stream__ << "pop_PARS" << '.' << k_0__ << '.' << k_1__ << '.' << k_2__;
                     param_names__.push_back(param_name_stream__.str());
                 }
             }

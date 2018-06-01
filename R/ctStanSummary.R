@@ -101,20 +101,20 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...
       #raw subject level params
       rawpopcorr= e$rawpopcorr 
       
-      rawpopcorrout <- ctCollapse(rawpopcorr,1,mean)[lower.tri(diag(nindvarying))]
-      rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,sd)[lower.tri(diag(nindvarying))])
-      rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.025))[lower.tri(diag(nindvarying))])
-      rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.5))[lower.tri(diag(nindvarying))])
-      rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.975))[lower.tri(diag(nindvarying))])
+      rawpopcorrout <- ctCollapse(rawpopcorr,1,mean)[lower.tri(diag(nindvarying)),drop=FALSE]
+      rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,sd)[lower.tri(diag(nindvarying)),drop=FALSE])
+      rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.025))[lower.tri(diag(nindvarying)),drop=FALSE])
+      rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.5))[lower.tri(diag(nindvarying)),drop=FALSE])
+      rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.975))[lower.tri(diag(nindvarying)),drop=FALSE])
       colnames(rawpopcorrout) <- monvars
       rownames(rawpopcorrout) <- matrix(paste0('',parnamesiv,'__',rep(parnamesiv,each=length(parnamesiv))),
-        length(parnamesiv),length(parnamesiv))[lower.tri(diag(nindvarying))]
+        length(parnamesiv),length(parnamesiv))[lower.tri(diag(nindvarying)),drop=FALSE]
       rawpopcorrout <- round(rawpopcorrout,digits=digits)
       
       rawpopcorrout <- cbind(rawpopcorrout,rawpopcorrout[,'mean'] / rawpopcorrout[,'sd'])
       colnames(rawpopcorrout)[ncol(rawpopcorrout)] <- 'z'
       
-      rawpopcorrout <- rawpopcorrout[order(abs(rawpopcorrout[,'z'])),,drop=FALSE]
+      # rawpopcorrout <- rawpopcorrout[order(abs(rawpopcorrout[,'z'])),,drop=FALSE]
       
       rawpopcorrmean= ctCollapse(e$rawpopcorr,1,mean)
       rawpopcorrsd= ctCollapse(e$rawpopcorr,1,sd)
@@ -143,7 +143,33 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...
   
   
   if(object$ctstanmodel$n.TIpred > 0) {
-    tieffect <- array(e$TIPREDEFFECT,dim=c(dim(e$TIPREDEFFECT)[1], 1, length(parnames) * dim(e$TIPREDEFFECT)[3]))
+
+    # linearTIPREDEFFECT <- e$TIPREDEFFECT
+    # for(iteri in 1:dim(linearTIPREDEFFECT)[1]){
+    #   for(coli in 1:dim(linearTIPREDEFFECT)[3]){
+    #     for(rowi in 1:dim(linearTIPREDEFFECT)[2]){
+    #       linearTIPREDEFFECT[iteri, rowi,coli] <- (
+    #         tform(
+    #           e$rawpopmeans[iteri,rowi] + e$TIPREDEFFECT[iteri,rowi,coli] * .01, 
+    #           object$setup$popsetup$transform[rowi],
+    #           object$setup$popvalues$multiplier[rowi],
+    #           object$setup$popvalues$meanscale[rowi],
+    #           object$setup$popvalues$offset[rowi],
+    #           extratforms = object$setup$extratforms) -  
+    #         tform(
+    #           e$rawpopmeans[iteri,rowi] - e$TIPREDEFFECT[iteri,rowi,coli] * .01, 
+    #           object$setup$popsetup$transform[rowi],
+    #           object$setup$popvalues$multiplier[rowi],
+    #           object$setup$popvalues$meanscale[rowi],
+    #           object$setup$popvalues$offset[rowi],
+    #           extratforms = object$setup$extratforms)
+    #       ) / 2 * 100
+    #     }
+    #   }
+    # }
+          
+    
+    tieffect <- array(e$linearTIPREDEFFECT,dim=c(dim(e$linearTIPREDEFFECT)[1], 1, length(parnames) * dim(e$linearTIPREDEFFECT)[3]))
     tieffectnames <- paste0('tip_',rep(object$ctstanmodel$TIpredNames,each=length(parnames)),'_',parnames)
     dimnames(tieffect)<-list(c(),c(),tieffectnames)
     tipreds = monitor(tieffect,warmup = 0,print = FALSE)[,monvars]
@@ -151,7 +177,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...
     # out$tipreds=round(s$summary[c(grep('tipred_',rownames(s$summary))),
     #   c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],digits=digits)
     z = tipreds[,'mean'] / tipreds[,'sd'] 
-    out$tipreds= cbind(tipreds,z)[order(abs(z)),]
+    out$tipreds= cbind(tipreds,z) #[order(abs(z)),]
   }
   
   if(parmatrices){
@@ -213,13 +239,13 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...
   
   if(class(object$stanfit)=='stanfit'){
     popsd=s$summary[c(grep('^popsd',rownames(s$summary),fixed=FALSE)),
-      c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE] [ object$data$indvaryingindex,]
+      c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE] [ object$data$indvaryingindex,,drop=FALSE]
     rownames(popsd)=parnames[ object$data$indvaryingindex]
     # popmeans=s$summary[c(grep('hmean_',rownames(s$summary))),
     #   c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE]
     popmeans=s$summary[c(grep('popmeans[', rownames(s$summary),fixed=TRUE)),
       c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE]
-    popmeans=popmeans[(nrow(popmeans)/2+1):nrow(popmeans),]
+    popmeans=popmeans[(nrow(popmeans)/2+1):nrow(popmeans),,drop=FALSE]
     rownames(popmeans) <- parnames
     
     
@@ -231,13 +257,13 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...
   if(class(object$stanfit)!='stanfit'){ #if optimized / importance sampled
 
     if(!is.null(iter)){ popsd <- monitor(array(e$popsd,dim=c(dim(e$popsd)[1],1,dim(e$popsd)[2])),warmup=0,print=FALSE)
-    popsd=popsd[ object$data$indvaryingindex, monvars]
+    popsd=popsd[ object$data$indvaryingindex, monvars,drop=FALSE]
     rownames(popsd)=parnamesiv
     }
 
     popmeans=monitor(array(e$popmeans,dim=c(dim(e$popmeans)[1],1,dim(e$popmeans)[2])),warmup=0,print=FALSE)
     rownames(popmeans) = parnames #names(e)[grep('hmean_',names(e))]
-    popmeans = popmeans[,monvars]
+    popmeans = popmeans[,monvars,drop=FALSE]
     
     logprob = object$stanfit$optimfit$value
     aic = 2*ncol(object$stanfit$rawposterior) - 2*logprob

@@ -35,7 +35,7 @@
 #' is used to plot the output instead.
 #' @param timeinterval positive numeric indicating time interval to use for discrete time parameter matrices,
 #' if \code{parmatrices=TRUE}.
-#' @param filter either NA, or a length 3 vector, where the first element contains the time independent predictor index
+#' @param filter either NA, or a length 2 vector, where the first element contains the time independent predictor index
 #' to filter by, and the second contains the comparison operator in string form (e.g. "< 3",
 #' to only calculate effects for subjects where the tipreds of the denoted index are less than 3).
 #' @param ... arguments to pass to \code{\link{ctPlotArray}} for plotting.
@@ -45,18 +45,13 @@
 #'
 #' @examples
 #' #samples reduced here for speed
-#' ctStanTIpredeffects(ctstantestfit,plot=TRUE,whichpars='dtDRIFT',nsamples=10)
+#' ctStanTIpredeffects(ctstantestfit,plot=TRUE,whichpars='CINT',nsamples=10,nsubjects=10)
 ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   includeMeanUncertainty=FALSE,
   whichTIpreds=1,parmatrices=TRUE, whichpars='all', nsamples=100, timeinterval=1,
   nsubjects=50,filter=NA,
   plot=FALSE,...){
-  
-  # #drop fixed, stationary, duplicated params
-  # spec_nofixed <- fit$ctstanmodel$pars[is.na(fit$ctstanmodel$pars$value),,drop=FALSE]
-  # spec_nofixed_noduplicates <- spec_nofixed[!duplicated(spec_nofixed$param),,drop=FALSE]
-  # spec_nofixed_noduplicates <- spec_nofixed_noduplicates[spec_nofixed_noduplicates$param !='stationary',,drop=FALSE]
-  
+
   ctspec <- fit$ctstanmodel$pars
   
   e<-extract.ctStanFit(fit)
@@ -67,13 +62,18 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   rawpopmeans <- rawpopmeans[sample(x = 1:niter, nsamples,replace = FALSE),]
   
   if(!includeMeanUncertainty) rawpopmeans <- matrix(apply(rawpopmeans,2,median),byrow=TRUE,nrow=nrow(rawpopmeans),ncol=ncol(rawpopmeans))
-
-  tipreds<-fit$data$tipreds
+  
+  tipreds<-ctCollapse(e$tipreds,1,mean) #maybe collapsing over sampled tipred values is not ideal?
+  
   if(any(!is.na(filter))) tipreds <- eval(parse(text=paste0('tipreds[tipreds[,',filter[1],']',filter[2],',,drop=FALSE]')))
   tipreds <- tipreds[,whichTIpreds,drop=FALSE]
   if(nsubjects=='all') nsubjects = nrow(tipreds)
-  if(nsubjects > nrow(tipreds)) nsubjects <- nrow(tipreds)
-  tipreds <- tipreds[sample(x = 1:nsubjects, nsubjects,replace = FALSE),,drop=FALSE]
+  if(nsubjects > nrow(tipreds) && length(whichTIpreds)>1) nsubjects <- nrow(tipreds) #if we need to use real tipred data, no point using more subjects
+  
+  #use tipred data or generated points? latter is smoother but can't use in case of interactions.
+  if(length(whichTIpreds)>1) tipreds <- tipreds[sample(x = 1:nsubjects, nsubjects,replace = FALSE),,drop=FALSE]
+  if(length(whichTIpreds)==1) tipreds<-cbind(seq(from=min(tipreds), to = max(tipreds,na.rm=TRUE), length.out=nsubjects))
+  
   
   tieffect<-e$TIPREDEFFECT[,,whichTIpreds,drop=FALSE]
 
@@ -133,10 +133,9 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
       standataout <- utils::relist(standataout,skeleton=fit$data)
       suppressOutput(sf <- suppressWarnings(sampling(fit$stanmodel,data=standataout,iter=1,control=list(max_treedepth=1),chains=1)))
     }
-    
+
     parmatlists<-lapply(1:nrow(rawpopmeans), function(x) { #for each param vector
-      parvec = rawpopmeans[x,] + raweffect[x,]
-      out = ctStanParMatrices(fit,parvec,timeinterval=timeinterval,sf = sf)
+      out = ctStanParMatrices(fit, rawpopmeans[x,] + raweffect[x,], timeinterval=timeinterval,sf = sf)
       return(out)
     })
     

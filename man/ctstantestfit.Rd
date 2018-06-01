@@ -12,14 +12,18 @@ Minimal output from \code{\link{ctStanFit}} from ctsem package.
 checkm<-ctModel(type='stanct',Tpoints=Tpoints,
   n.latent=n.latent,n.TDpred=n.TDpred,n.TIpred=n.TIpred,
   MANIFESTVAR=matrix(c('merror',0,0,'merror'),2,2),
+  MANIFESTMEANS=matrix(0,nrow=n.manifest),
+  CINT=matrix(c('cint1','cint2'),ncol=1),
   n.manifest=n.manifest,LAMBDA=diag(2))
   
- checkm$pars$indvarying[-c(7,13)] <- FALSE
- checkm$pars$sdscale <- .1
+checkm$pars$indvarying[-c(7,13)] <- FALSE
+checkm$pars$sdscale <- .1
  
- checkm$pars[c(-7,-19,-20) ,c('TI1_effect','TI2_effect','TI3_effect')] <- FALSE
+checkm$pars[c(-1,-2, -21,-22) ,c('TI1_effect','TI2_effect','TI3_effect')] <- FALSE
 
-ctstantestfit<-ctStanFit(ctstantestdat,checkm,iter=400, warmup=380,chains=2,plot=TRUE)
+ctstantestfit<-ctStanFit(ctstantestdat,checkm,iter=800, warmup=780,chains=2, 
+  control=list(max_treedepth=8,adapt_delta=.8))
+summary(ctstantestfit)
 save(ctstantestfit,file='.\\\\data\\\\ctstantestfit.rda')
 }
 }

@@ -39,7 +39,7 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
   if(rows[1]=='all') rows<-which(!duplicated(obj$setup$popsetup$parname))
   
   if(all(mfrow=='auto')) {
-    mfrow <- grDevices::n2mfrow( (length(rows)+sum(obj$pars$indvarying[rows])*2))
+    mfrow <- grDevices::n2mfrow( (length(rows)+sum(as.logical(obj$setup$popsetup$indvarying[rows]))*2))
     mfrow[mfrow > 3] <- 3
   }
   graphics::par(mfrow=mfrow)
@@ -54,7 +54,7 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
     pari <- obj$setup$popsetup[ri,'param']
     rawpopmeans<- e$rawpopmeans[,pari]
     param<-rawpopmeans
-    rawpopmeanspost<-tform(param,popsetup$transform[pari],popvalues$multiplier[pari], popvalues$meanscale[pari],popvalues$offset[pari])
+    popmeanspost<-tform(param,popsetup$transform[pari],popvalues$multiplier[pari], popvalues$meanscale[pari],popvalues$offset[pari])
    
     param<-stats::rnorm(densiter,0,1)
     meanprior <- tform(param,popsetup$transform[pari],popvalues$multiplier[pari], popvalues$meanscale[pari],popvalues$offset[pari])
@@ -62,11 +62,11 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
     leg <- c('Pop. mean posterior','Pop. mean prior') 
     legcol <- c('black','blue') 
     
-    ctDensityList(list(rawpopmeanspost,meanprior),main=paste0('Pop. mean ',pname),
+    ctDensityList(list(popmeanspost,meanprior),main=paste0(pname),
       xlimsindex=if(priorwidth) 1:2 else 1,
       xaxs='i',  yaxs='i', plot=TRUE,legend=leg,colvec=legcol,lwd=lwd)
 
-    if(obj$setup$popsetup[ri,'indvarying']==1){ #then also plot sd and subject level pars
+    if(obj$setup$popsetup[ri,'indvarying']>0){ #then also plot sd and subject level pars
 
       sdscale <- obj$setup$popvalues[ri,'sdscale']
       sdtform <- gsub('.*', '*',obj$ctstanmodel$rawpopsdtransform,fixed=TRUE)
@@ -79,8 +79,8 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
       subjectprior<-tform(param,popsetup$transform[pari],popvalues$multiplier[pari], popvalues$meanscale[pari],popvalues$offset[pari])
 
       if(!obj$data$ukfpop) {
-        rawindparams<-e$baseindparams[,seq(indvaryingcount,by=obj$data$nindvarying,length.out=obj$data$nsubjects)]
-        param<-stats::rnorm(densiter,0,1)
+        rawindparams<-e$baseindparams[,seq(popsetup$indvarying[pari],by=obj$data$nindvarying,length.out=obj$data$nsubjects)] *
+          rawpopsd + rawpopmeans
         param<-rawindparams
         indparams<-tform(param,popsetup$transform[pari],popvalues$multiplier[pari], popvalues$meanscale[pari],popvalues$offset[pari])
 

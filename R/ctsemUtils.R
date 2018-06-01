@@ -161,7 +161,9 @@ ctDensityList<-function(x,xlimsindex='all',plot=FALSE,ylab='Density',
   sd=sd(xlims)
   xlims[1] = xlims[1] - sd/2
   xlims[2] = xlims[2] + sd/2
-  bw=abs(max((sd)/length(x[[1]])^.4,1e-5))
+  bw=abs(max( 
+    min( (sd)/length(x[[1]])^.3,sd/30),
+      1e-5))
   
   if(all(colvec=='auto')) colvec=1:length(x)
   if(all(ltyvec=='auto')) ltyvec=1:length(x)
