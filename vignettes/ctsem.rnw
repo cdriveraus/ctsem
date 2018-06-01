@@ -2,6 +2,7 @@
 %\VignetteIndexEntry{Continuous time structural equation modelling with ctsem} 
 %\VignetteKeyword{SEM, time series, panel data, dynamic models}
 %\VignetteEngine{knitr::knitr} 
+%\usepackage[utf8]{inputenc}
 \usepackage[utf8]{inputenc}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% declarations for jss.cls %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

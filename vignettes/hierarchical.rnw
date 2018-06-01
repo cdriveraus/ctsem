@@ -2,6 +2,7 @@
 %\VignetteIndexEntry{Introduction to Hierarchical Continuous Time Dynamic Modelling with ctsem}
 %\VignetteKeyword{SEM, time series, panel data, dynamic models}
 %\VignetteEngine{knitr::knitr}
+%\usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc} 
 \usepackage{lmodern}
 \usepackage[utf8]{inputenc}

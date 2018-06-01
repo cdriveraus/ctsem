@@ -235,7 +235,6 @@ data {
   int continuoustime; // logical indicating whether to incorporate timing information
   int nindvarying; // number of subject level parameters that are varying across subjects
   int nindvaryingoffdiagonals; //number of off diagonal parameters needed for popcov matrix
-  int notindvaryingindex[nparams-nindvarying];
   int indvaryingindex[nindvarying];
   vector[nindvarying] sdscale;
 
@@ -352,8 +351,8 @@ matrix[ T0VARsetup_rowcount ? max(T0VARsetup[,1]) : 0, T0VARsetup_rowcount ? max
 matrix[ TDPREDEFFECTsetup_rowcount ? max(TDPREDEFFECTsetup[,1]) : 0, TDPREDEFFECTsetup_rowcount ? max(TDPREDEFFECTsetup[,2]) : 0 ] TDPREDEFFECT[TDPREDEFFECTsubindex[nsubjects]];
 matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PARSsetup[,2]) : 0 ] PARS[PARSsubindex[nsubjects]];
 
-  matrix[nlatent,nlatent] asymDIFFUSION[ lineardynamics ? asymDIFFUSIONsubindex[nsubjects] : 0]; //stationary latent process variance
-  vector[nt0meansstationary ? nlatent : 0] asymCINT[nt0meansstationary ? asymCINTsubindex[nsubjects] : 0]; // latent process asymptotic level
+  matrix[nlatent,nlatent] asymDIFFUSION[asymDIFFUSIONsubindex[nsubjects]]; //stationary latent process variance
+  vector[nt0meansstationary ? nlatent : 0] asymCINT[asymCINTsubindex[nsubjects]]; // latent process asymptotic level
   
   matrix[ntipred ? nsubjects : 0, ntipred ? ntipred : 0] tipreds; //tipred values to fill from data and, when needed, imputation vector
   matrix[nparams, ntipred] TIPREDEFFECT; //design matrix of individual time independent predictor effects
@@ -493,7 +492,6 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
     
   if(si <= DIFFUSIONsubindex[nsubjects] && lineardynamics * intoverstates !=0 ) DIFFUSION[si] = sdcovsqrt2cov(DIFFUSION[si], lineardynamics * intoverstates ? 0 : 1);
 
-  if(lineardynamics==1 && ndiffusion > 0){
     if(si <= asymDIFFUSIONsubindex[nsubjects]) {
       if(ndiffusion < nlatent) asymDIFFUSION[si] = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
 
@@ -507,7 +505,6 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
           DRIFT[ DRIFTsubindex[si], derrind, derrind  ])) * 
         to_vector(DIFFUSION[ DIFFUSIONsubindex[si], derrind, derrind  ]) , ndiffusion, ndiffusion);
     } //end asymdiffusion loops
-  }
           
     if(nt0meansstationary > 0){
       if(si <= asymCINTsubindex[nsubjects]){
@@ -1087,8 +1084,8 @@ matrix[ T0VARsetup_rowcount ? max(T0VARsetup[,1]) : 0, T0VARsetup_rowcount ? max
 matrix[ TDPREDEFFECTsetup_rowcount ? max(TDPREDEFFECTsetup[,1]) : 0, TDPREDEFFECTsetup_rowcount ? max(TDPREDEFFECTsetup[,2]) : 0 ] pop_TDPREDEFFECT[TDPREDEFFECTsubindex[1]];
 matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PARSsetup[,2]) : 0 ] pop_PARS[PARSsubindex[1]];
 
-  matrix[nlatent,nlatent] asympop_DIFFUSION[ lineardynamics ? asymDIFFUSIONsubindex[1] : 0]; //stationary latent process variance
-  vector[nt0meansstationary ? nlatent : 0] asympop_CINT[nt0meansstationary ? asymCINTsubindex[1] : 0]; // latent process asymptotic level
+  matrix[nlatent,nlatent] asympop_DIFFUSION[asymDIFFUSIONsubindex[1]]; //stationary latent process variance
+  vector[nt0meansstationary ? nlatent : 0] asympop_CINT[asymCINTsubindex[1]]; // latent process asymptotic level
   
 
 vector[nmanifest] Ygen[ngenerations, ndatapoints];
@@ -1564,8 +1561,9 @@ for(geni in 1:ngenerations){
 if(verbose > 1) {
 print("rowi ",rowi, "  si ", si, "  etaprior[rowi] ",etaprior[rowi],"  etapriorcov[rowi] ",etapriorcov[rowi],
           "  etaupd[rowi] ",etaupd[rowi],"  etaupdcov[rowi] ",etaupdcov[rowi],"  ypred ",ypred,"  ypredcov ",ypredcov, "  K ",K,
-          "  sDRIFT ", sDRIFT, " sDIFFUSION ", sDIFFUSION, " sCINT ", sCINT, "  sMANIFESTVAR ", sMANIFESTVAR, "  sMANIFESTMEANS ", sMANIFESTMEANS, "  rawpopsd ", rawpopsd,
-          "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
+          "  sDRIFT ", sDRIFT, " sDIFFUSION ", sDIFFUSION, " sCINT ", sCINT, "  sMANIFESTVAR ", diagonal(sMANIFESTVAR), "  sMANIFESTMEANS ", sMANIFESTMEANS, 
+          "  sT0VAR", sT0VAR,
+          "  rawpopsd ", rawpopsd, "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
         if(lineardynamics==1) print("discreteDRIFT ",discreteDRIFT,"  discreteCINT ", discreteCINT, "  discreteDIFFUSION ", discreteDIFFUSION)
 }
 if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
@@ -1672,7 +1670,6 @@ if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
     
   if(si <= DIFFUSIONsubindex[1] && lineardynamics * intoverstates !=0 ) pop_DIFFUSION[si] = sdcovsqrt2cov(pop_DIFFUSION[si], lineardynamics * intoverstates ? 0 : 1);
 
-  if(lineardynamics==1 && ndiffusion > 0){
     if(si <= asymDIFFUSIONsubindex[1]) {
       if(ndiffusion < nlatent) asympop_DIFFUSION[si] = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
 
@@ -1686,7 +1683,6 @@ if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
           pop_DRIFT[ DRIFTsubindex[si], derrind, derrind  ])) * 
         to_vector(pop_DIFFUSION[ DIFFUSIONsubindex[si], derrind, derrind  ]) , ndiffusion, ndiffusion);
     } //end asymdiffusion loops
-  }
           
     if(nt0meansstationary > 0){
       if(si <= asymCINTsubindex[1]){

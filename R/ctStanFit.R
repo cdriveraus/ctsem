@@ -272,7 +272,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   if(stationary || nt0meansstationary > 0) T0MEANSsubindex <- rep(1:max(c(T0MEANSsubindex,DRIFTsubindex,CINTsubindex)), ifelse(max(c(T0MEANSsubindex,DRIFTsubindex,CINTsubindex)) > 1, 1, nsubjects))
   asymCINTsubindex <- rep(1:max(c(CINTsubindex,DRIFTsubindex)), ifelse(max(c(CINTsubindex,DRIFTsubindex)) > 1, 1, nsubjects))
   asymDIFFUSIONsubindex <- rep(1:max(c(DIFFUSIONsubindex,DRIFTsubindex)), ifelse(max(c(DIFFUSIONsubindex,DRIFTsubindex)) > 1, 1, nsubjects))
-  if(ukf) asymDIFFUSIONsubindex <- rep(0,nsubjects)
+
+  # if(ukf) asymDIFFUSIONsubindex <- rep(1,nsubjects)
   
   #simply exponential?
   driftdiagonly <- ifelse(all(!is.na(ctspec$value[ctspec$matrix == 'DRIFT' & ctspec$row != ctspec$col]) &
@@ -400,7 +401,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   if(n.TIpred > 0) {
     tipreds <- datalong[match(unique(datalong[,idName]),datalong[,idName]),TIpredNames,drop=FALSE]
     if(any(is.na(tipreds))) {
-      message(paste0('Missingness in TIpreds - imputing ', sum(is.na(tipreds)),' values'))
+      message(paste0('Missingness in TIpreds - sampling ', sum(is.na(tipreds)),' values'))
       tipreds[is.na(tipreds)] = 99999
     }
   }
@@ -842,8 +843,9 @@ ukfilterfunc<-function(ppchecking){
 if(verbose > 1) {
 print("rowi ",rowi, "  si ", si, "  etaprior[rowi] ",etaprior[rowi],"  etapriorcov[rowi] ",etapriorcov[rowi],
           "  etaupd[rowi] ",etaupd[rowi],"  etaupdcov[rowi] ",etaupdcov[rowi],"  ypred ",ypred,"  ypredcov ",ypredcov, "  K ",K,
-          "  sDRIFT ", sDRIFT, " sDIFFUSION ", sDIFFUSION, " sCINT ", sCINT, "  sMANIFESTVAR ", sMANIFESTVAR, "  sMANIFESTMEANS ", sMANIFESTMEANS, "  rawpopsd ", rawpopsd,
-          "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
+          "  sDRIFT ", sDRIFT, " sDIFFUSION ", sDIFFUSION, " sCINT ", sCINT, "  sMANIFESTVAR ", diagonal(sMANIFESTVAR), "  sMANIFESTMEANS ", sMANIFESTMEANS, 
+          "  sT0VAR", sT0VAR,
+          "  rawpopsd ", rawpopsd, "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
         if(lineardynamics==1) print("discreteDRIFT ",discreteDRIFT,"  discreteCINT ", discreteCINT, "  discreteDIFFUSION ", discreteDIFFUSION)
 }
 if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
@@ -863,8 +865,9 @@ if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
       if(verbose > 1) {
         print("rowi ",rowi, "  si ", si, "  etaprior[rowi] ",etaprior[rowi],"  etapriorcov[rowi] ",etapriorcov[rowi],
           "  etaupd[rowi] ",etaupd[rowi],"  etaupdcov[rowi] ",etaupdcov[rowi],"  ypred ",ypred,"  ypredcov ",ypredcov, "  K ",K,
-          "  sDRIFT ", sDRIFT, " sDIFFUSION ", sDIFFUSION, " sCINT ", sCINT, "  sMANIFESTVAR ", sMANIFESTVAR, "  rawpopsd ", rawpopsd,
-          "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
+          "  sDRIFT ", sDRIFT, " sDIFFUSION ", sDIFFUSION, " sCINT ", sCINT, "  sMANIFESTVAR ", diagonal(sMANIFESTVAR), "  sMANIFESTMEANS ", sMANIFESTMEANS, 
+          "  sT0VAR", sT0VAR, 
+          "  rawpopsd ", rawpopsd,  "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
         if(lineardynamics==1) print("discreteDRIFT ",discreteDRIFT,"  discreteCINT ", discreteCINT, "  discreteDIFFUSION ", discreteDIFFUSION)
       }
       if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
@@ -889,8 +892,8 @@ subjectparaminit<- function(){
       paste0('matrix[ ',m,'setup_rowcount ? max(',m,'setup[,1]) : 0, ',m,'setup_rowcount ? max(',m,'setup[,2]) : 0 ] ',m,'[',m,'subindex[nsubjects]];',collapse='\n')
     })),collapse='\n'),'
 
-  matrix[nlatent,nlatent] asymDIFFUSION[ lineardynamics ? asymDIFFUSIONsubindex[nsubjects] : 0]; //stationary latent process variance
-  vector[nt0meansstationary ? nlatent : 0] asymCINT[nt0meansstationary ? asymCINTsubindex[nsubjects] : 0]; // latent process asymptotic level
+  matrix[nlatent,nlatent] asymDIFFUSION[asymDIFFUSIONsubindex[nsubjects]]; //stationary latent process variance
+  vector[nt0meansstationary ? nlatent : 0] asymCINT[asymCINTsubindex[nsubjects]]; // latent process asymptotic level
   ',collapse='\n')
 }
 
@@ -932,7 +935,6 @@ subjectparscalc <- function(pop=FALSE){
     
   if(si <= DIFFUSIONsubindex[nsubjects] && lineardynamics * intoverstates !=0 ) DIFFUSION[si] = sdcovsqrt2cov(DIFFUSION[si], lineardynamics * intoverstates ? 0 : 1);
 
-  if(lineardynamics==1 && ndiffusion > 0){
     if(si <= asymDIFFUSIONsubindex[nsubjects]) {
       if(ndiffusion < nlatent) asymDIFFUSION[si] = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
 
@@ -946,7 +948,6 @@ subjectparscalc <- function(pop=FALSE){
           DRIFT[ DRIFTsubindex[si], derrind, derrind  ])) * 
         to_vector(DIFFUSION[ DIFFUSIONsubindex[si], derrind, derrind  ]) , ndiffusion, ndiffusion);
     } //end asymdiffusion loops
-  }
           
     if(nt0meansstationary > 0){
       if(si <= asymCINTsubindex[nsubjects]){
@@ -1016,7 +1017,7 @@ for(m in basematrices){
       
       if(!is.na(ctspec$param[i]) & !grepl('[',ctspec$param[i],fixed=TRUE)){ #if a free parameter,
         if(i > 1 && any(ctspec$param[1:(i-1)] %in% ctspec$param[i])){ #and after row 1, check for duplication
-          freepar <- match(ctspec$param[i], ctspec$param[1:i] [!is.na(ctspec$param[1:i])] ) #find which freepar corresponds to duplicate
+          freepar <- mdat[,'param'][ match(ctspec$param[i], rownames(mdat)) ] #find which freepar corresponds to duplicate
         } else { #if not duplicated
           freeparcounter <- freeparcounter + 1
           if(ctspec$indvarying[i]) indvaryingcounter <- indvaryingcounter + 1
@@ -1052,11 +1053,12 @@ for(m in basematrices){
       if(ctspec$indvarying[i]) indvaryingindex <- c(indvaryingindex, freepar)
       
       mval<-rbind(mval, matrix(c(ctspec$value[i], ctspec$multiplier[i], ctspec$meanscale[i],ctspec$offset[i], ctspec$sdscale[i]),ncol=5))
+      colnames(mdat) <- c('row','col','param','transform', 'indvarying')
+      colnames(mval) <- c('value','multiplier','meanscale','offset','sdscale')
     }
   }
   if(!is.null(mval)) mval[is.na(mval)] <- 99999 else mval<-array(0,dim=c(0,4))
-  colnames(mdat) <- c('row','col','param','transform', 'indvarying')
-  colnames(mval) <- c('value','multiplier','meanscale','offset','sdscale')
+
   matsetup[[m]] = mdat
   matvalues[[m]] <- mval
 }
@@ -1076,9 +1078,6 @@ for(m in basematrices){
   sdscale <- array(popvalues[popsetup[,'indvarying']>0, 'sdscale'])
 
   if(any(popsetup[,'transform'] < -10)) recompile <- TRUE #if custom transforms needed
-  
-  notindvaryingindex<-array(c(1:nparams)[-indvaryingindex],dim=nparams-nindvarying)
-  if(all(is.na(notindvaryingindex))) notindvaryingindex<-array(c(1:nparams),dim=nparams)
 
   writemodel<-function(){
     paste0('
@@ -1309,7 +1308,6 @@ data {
   int continuoustime; // logical indicating whether to incorporate timing information
   int nindvarying; // number of subject level parameters that are varying across subjects
   int nindvaryingoffdiagonals; //number of off diagonal parameters needed for popcov matrix
-  int notindvaryingindex[nparams-nindvarying];
   int indvaryingindex[nindvarying];
   vector[nindvarying] sdscale;
 
@@ -1525,7 +1523,6 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
     T0check=as.integer(T0check),
     verbose=as.integer(verbose),
     indvaryingindex=array(as.integer(indvaryingindex)),
-    notindvaryingindex=array(as.integer(notindvaryingindex)), 
     continuoustime=as.integer(sum(continuoustime)),
     nlatent=as.integer(n.latent),
     ntipred=as.integer(n.TIpred),
@@ -1684,14 +1681,14 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
         tol_obj=1e-12, tol_rel_obj=0,init_alpha=.001, tol_grad=0,tol_rel_grad=1e1,tol_param=1e-12,history_size=100),verbose=verbose))
       
       est=optimfit$par
-      smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan:::grab_cxxfun(sm@dso))
-      # suppressWarnings(suppressOutput(smf<-sampling(sm,iter=1,chains=1,data=standata,control=list(max_treedepth=0))))
-      est=smf$unconstrain_pars(est)
+      # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan::grab_cxxfun(sm@dso))
+      suppressWarnings(suppressOutput(smf<-sampling(sm,iter=1,chains=1,data=standata,check_data=FALSE, control=list(max_treedepth=0))))
+      est=unconstrain_pars(smf, est)
       
       
       
       lp<-function(parm) {
-        out<-try(smf$log_prob(upars=parm,adjust_transform=TRUE,gradient=FALSE),silent = TRUE)
+        out<-try(log_prob(smf, upars=parm,adjust_transform=TRUE,gradient=FALSE),silent = TRUE)
         if(class(out)=='try-error') {
           out=-Inf
         }
@@ -1699,7 +1696,7 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
       }
       
       grf<-function(parm,...) {
-        out=try(smf$grad_log_prob(upars=parm, adjust_transform = TRUE))
+        out=try(grad_log_prob(smf, upars=parm, adjust_transform = TRUE))
         if(class(out)=='try-error') {
           out=rep(NA,length(parm))
         }
@@ -1784,12 +1781,12 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
             eval(parse(text=paste0('library(rstan)')))
             # if(recompile) {
             
-            # smf<-sampling(sm,iter=1,chains=1,data=standata,control=list(max_treedepth=0))
-            smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan:::grab_cxxfun(sm@dso))
+            smf<-sampling(sm,iter=1,chains=1,data=standata,check_data=FALSE,control=list(max_treedepth=0))
+            # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan::grab_cxxfun(sm@dso))
             # }
             
             lp<-function(parm) {
-              out<-try(smf$log_prob(upars=parm, adjust_transform = TRUE, gradient=FALSE),silent = TRUE)
+              out<-try(log_prob(smf, upars=parm, adjust_transform = TRUE, gradient=FALSE),silent = TRUE)
               if(class(out)=='try-error') {
                 out=-Inf
               }
@@ -1867,11 +1864,11 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
 
       # target_dens <- c(target_dens,
       transformedpars <- parallel::parLapply(cl, parallel::clusterSplit(cl,1:nresamples), function(x){
-        # smf<-sampling(sm,iter=1,chains=1,data=standata,control=list(max_treedepth=0))
-        smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan:::grab_cxxfun(sm@dso))
+        smf<-sampling(sm,iter=1,chains=1,data=standata,check_data=FALSE,control=list(max_treedepth=0))
+        # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan::grab_cxxfun(sm@dso))
         out <- list()
         for(li in 1:length(x)){
-          flesh = unlist(smf$constrain_pars(resamples[x[li],]))
+          flesh = unlist(constrain_pars(smf, resamples[x[li],]))
           names(flesh) <- c()
           skeleton=optimfit$par
           out[[li]] <-relistarrays(flesh, skeleton)
@@ -1913,9 +1910,9 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
       lest= est - 1.96 * sds
       uest= est + 1.96 * sds
       
-      transformedpars_old=cbind(unlist(smf$constrain_pars(lest)),
-        unlist(smf$constrain_pars(est)),
-        unlist(smf$constrain_pars(uest)))
+      transformedpars_old=cbind(unlist(constrain_pars(smf, lest)),
+        unlist(constrain_pars(smf, est)),
+        unlist(constrain_pars(smf, uest)))
       colnames(transformedpars_old)=c('2.5%','mean','97.5%')
       
       stanfit=list(optimfit=optimfit,stanfit=smf, rawposterior = resamples, transformedpars=transformedpars,transformedpars_old=transformedpars_old,
