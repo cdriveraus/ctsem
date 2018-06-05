@@ -33,9 +33,9 @@ m=ctModel(Tpoints=10,n.latent=2,n.manifest=3,LAMBDA=matrix(c(1,0,0,0,1,.5),ncol=
   MANIFESTMEANS=matrix(c(0,0,0),ncol=1),
   n.TDpred=2)
 
-f1=ctFit(datawide = gd,m,retryattempts = 3,objective='Kalman',stationary=c('T0MEANS','T0VAR'))
+f1=ctRefineTo(dat = gd,m,retryattempts = 3,objective='Kalman',stationary=c('T0MEANS','T0VAR'),carefulFit=TRUE)
 # f1$mxobj=mxRun(f1$mxobj)
-f2=ctFit(datawide = gd,m,retryattempts = 3,objective='mxRAM',stationary=c('T0MEANS','T0VAR'))
+f2=ctRefineTo(dat = gd,m,retryattempts = 3,objective='mxRAM',stationary=c('T0MEANS','T0VAR'),carefulFit=TRUE)
 
 expect_equal(f1$mxobj$output$estimate,f2$mxobj$output$estimate,tolerance=.001)
 

@@ -2,12 +2,12 @@ Package: ctsem
 Type: Package
 Title: Continuous Time Structural Equation Modelling
 Version: 2.6.0
-Date: 2017-6-1
+Date: 2018-6-1
 Authors@R: c(person("Charles", "Driver", role =
     c("aut","cre","cph"),email="driver@mpib-berlin.mpg.de"),
     person("Manuel", "Voelkle", role = c("aut","cph")),
     person("Han", "Oud", role = c("aut","cph") ))
-Description: A multivariate continuous (and discrete) time dynamic modelling
+Description: A hierarchical, multivariate, continuous (and discrete) time dynamic modelling
     package for panel and time series data, using stochastic differential
     equations. Contains a faster frequentist set of functions using OpenMx for
     single subject and mixed-effects (random intercepts only) structural

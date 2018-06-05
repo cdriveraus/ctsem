@@ -51,6 +51,8 @@
 #' this is one thing to try.
 #' @param lineardynamics either character string "auto" or  a logical. Set to TRUE to force linear dynamics, 
 #' FALSE to use non-linear integration. "auto" attempts to select the appropriate choice.
+#' @param forcerecompile logical. For development purposes. 
+#' If TRUE, stan model is recompiled, regardless of apparent need for compilation.
 #' @param ... additional arguments to pass to \code{\link[rstan]{stan}} function.
 #' @examples
 #' \dontrun{
@@ -85,7 +87,7 @@
 ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intoverstates=TRUE, binomial=FALSE,
    fit=TRUE, ukfpop=FALSE, stationary=FALSE,plot=FALSE,  derrind='all',
   optimize=FALSE, isloops=10, isloopsize=500, nopriors=FALSE, vb=FALSE, chains=1,cores='maxneeded', inits=NULL,
-  maxtimestep = 9999, lineardynamics='auto',
+  maxtimestep = 9999, lineardynamics='auto', forcerecompile=FALSE,
   control=list(adapt_delta=.8, adapt_init_buffer=2, adapt_window=2,
     max_treedepth=10,stepsize=1e-3),verbose=0,...){
   
@@ -299,9 +301,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   latentNames<-ctstanmodel$latentNames
   TDpredNames<-ctstanmodel$TDpredNames
   TIpredNames<-ctstanmodel$TIpredNames
-  indvarying<-ctspec$indvarying #c(ctspec$indvarying,ctspecduplicates$indvarying)
-  nindvarying<-sum(ctspec$indvarying)
-  nparams<-length(unique(ctspec$param[!is.na(ctspec$param)]))
+  # indvarying<-ctspec$indvarying #c(ctspec$indvarying,ctspecduplicates$indvarying)
+  # nindvarying<-sum(ctspec$indvarying)
+  # nparams<-length(unique(ctspec$param[!is.na(ctspec$param)]))
   
   
   ###data checks
@@ -408,21 +410,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   
   datalong[,c(manifestNames,TIpredNames)][is.na(datalong[,c(manifestNames,TIpredNames)])]<-99999 #missing data
   
-  
-  
-  # indvaryingindex = array( #used to select rawpopmeans appropriately when generating subject params
-    # c(which(ctspec$indvarying[is.na(ctspec$value)]))) #unique rawpopmeans
-      # match(ctspecduplicates$param[which(ctspecduplicates$indvarying[is.na(ctspecduplicates$value)])], ctspec$param[is.na(ctspec$value)] ) #duplicated rawpopmeans
-      # )) 
-
-  
-  #
-  # indvaryingcorindex= which(ctspec$param[ctspec$indvarying] %in% ctspec$param[is.na(ctspec$value) & 
-  #     ctspec$indvarying & ctspec$row != ctspec$col & ctspec$matrix %in% c('T0VAR','DIFFUSION')])
-  
-  # DIFFUSION<-matrix(1,n.latent,n.latent)
-  # for(rowi in ctspec$row[ctspec$matrix=='DIFFUSION' ]){
-  #  DIFFUSION[
   
   #check diffusion indices input by user - which latents are involved in covariance
   if(intoverstates==FALSE || all(derrind=='all') ) derrind = 1:n.latent
@@ -574,6 +561,8 @@ ukfilterfunc<-function(ppchecking){
 
   //ukf approximation parameters
   if(ukf==1) k = 0.5;
+
+  if(lineardynamics) discreteDIFFUSION = rep_matrix(0,nlatent,nlatent); //in case some elements remain zero due to derrind
   
   cobscount=0; //running total of observed indicators treated as continuous
 
@@ -618,14 +607,10 @@ ukfilterfunc<-function(ppchecking){
         if(si == TDPREDEFFECTsubindex[si]) sTDPREDEFFECT = TDPREDEFFECT[ TDPREDEFFECTsubindex[si] ];
         if(si == PARSsubindex[si]) sPARS = PARS[PARSsubindex[si]];
         
-        if(1==99 && lineardynamics==1 && (rowi==1 || asymDIFFUSIONsubindex[si] != asymDIFFUSIONsubindex[si-1])){ 
-          sasymDIFFUSION[derrind,derrind] = to_matrix( 
-            -( kron_prod(sDRIFT[derrind,derrind], IIlatent[derrind,derrind]) + kron_prod(IIlatent[derrind,derrind], sDRIFT[derrind,derrind]) ) \\ 
-            to_vector(sDIFFUSION[derrind,derrind] ), 
-            ndiffusion, ndiffusion);
+        if(1==1 && lineardynamics==1 && (rowi==1 || asymDIFFUSIONsubindex[si] != asymDIFFUSIONsubindex[si-1])){ 
+          sasymDIFFUSION = asymDIFFUSION[asymDIFFUSIONsubindex[si]];
         }
       }
-//print("si ", si, "sMANIFESTMEANS", sMANIFESTMEANS, " MANIFESTMEANS[si] ", MANIFESTMEANS[si]);
 
       if(ukf==1){
         etaprior[rowi,] = rep_vector(0,nlatentpop); // because some values stay zero
@@ -665,9 +650,9 @@ ukfilterfunc<-function(ppchecking){
         }
     
         if(dtchange==1 || (T0check[rowi-1]==1 && (si <= DIFFUSIONsubindex[si]|| si <= DRIFTsubindex[si]))){
-          //discreteDIFFUSION[derrind, derrind] = sasymDIFFUSION[derrind, derrind] - 
-            //quad_form( sasymDIFFUSION[derrind, derrind], discreteDRIFT[derrind, derrind]\' );
-          discreteDIFFUSION[derrind, derrind] = discreteDIFFUSIONcalc(DRIFT[ DRIFTsubindex[si], derrind, derrind], sDIFFUSION[derrind, derrind], dT[rowi]);
+          discreteDIFFUSION[derrind, derrind] = sasymDIFFUSION[derrind, derrind] - 
+            quad_form( sasymDIFFUSION[derrind, derrind], discreteDRIFT[derrind, derrind]\' );
+          //discreteDIFFUSION[derrind, derrind] = discreteDIFFUSIONcalc(DRIFT[ DRIFTsubindex[si], derrind, derrind], sDIFFUSION[derrind, derrind], dT[rowi]);
         }
       }
   
@@ -680,7 +665,7 @@ ukfilterfunc<-function(ppchecking){
       etaprior[rowi] = discreteDRIFT * etaupd[rowi-1] + discreteCINT;
       if(intoverstates==1) {
         if(ndiffusion ==0) etapriorcov[rowi] = quad_form(etaupdcov[rowi-1], discreteDRIFT\');
-        if(ndiffusion > 0) etapriorcov[rowi,derrind,derrind] = quad_form(etaupdcov[rowi-1], discreteDRIFT\') + discreteDIFFUSION[derrind,derrind];
+        if(ndiffusion > 0) etapriorcov[rowi] = quad_form(etaupdcov[rowi-1], discreteDRIFT\') + discreteDIFFUSION;
       }
     }//end linear time update
 
@@ -690,7 +675,8 @@ ukfilterfunc<-function(ppchecking){
       if(T0check[rowi]==0 && lineardynamics==0) dynerror = sqrtukfadjust / sqrt(dT[rowi]); //Weiner process variance adjustment
   
       if(T0check[rowi]==0){ //compute updated sigpoints
-        sigpoints = cholspd(etaupdcov[rowi-1,,]) * sqrtukfadjust;
+      ',if(!ppchecking) 'sigpoints = cholesky_decompose(makesym(etaupdcov[rowi-1,,] * sqrtukfadjust));','
+      ',if(ppchecking) 'sigpoints = chol(etaupdcov[rowi-1,,]) * sqrtukfadjust;','
         etaprior[rowi,] = etaupd[rowi-1,];
       }
   
@@ -783,7 +769,7 @@ ukfilterfunc<-function(ppchecking){
       if(T0check[rowi]==0) etaupd[rowi] = etaprior[rowi] +  sDIFFUSION * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
     }
   
-    if(nobsi==0 && intoverstates==1) {
+    if(nobsi==0 && intoverstates==1 ) {
       etaupdcov[rowi] = etapriorcov[rowi];
       etaupd[rowi] = etaprior[rowi];
     }
@@ -849,13 +835,28 @@ print("rowi ",rowi, "  si ", si, "  etaprior[rowi] ",etaprior[rowi],"  etapriorc
         if(lineardynamics==1) print("discreteDRIFT ",discreteDRIFT,"  discreteCINT ", discreteCINT, "  discreteDIFFUSION ", discreteDIFFUSION)
 }
 if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
-
-          ypredcov_sqrt[cindex,cindex]=cholspd(ypredcov[o0,o0]); //use o0, or cindex?
+//{
+//vector[nmanifest] eigvals;
+//int pd;
+//eigvals[cindex] = eigenvalues_sym(ypredcov[cindex, cindex]);
+//pd = 1;
+//for(ei in 1:nobsi) if(eigvals[cindex[ei]] <=0) pd =0;
+  //if(pd==1)        
+ypredcov_sqrt[cindex,cindex]=chol(ypredcov[cindex, cindex]); //use o0, or cindex?
+for(vi in 1:nmanifest){
+if(fabs(ypred[vi]) > 1e10 ) ypred[vi] =-99999;
+if(is_nan(ypred[vi]) ) ypred[vi] =-99999;
+if(is_inf(ypred[vi]) ) ypred[vi] =-99999;
+//if(pd==0) ypredcov_sqrt = diag_matrix(rep_vector(1,nmanifest));
+}
           if(ncont_y[rowi] > 0) Ygen[geni, rowi, o0] = multi_normal_cholesky_rng(ypred[o], ypredcov_sqrt[o0,o0]);
           if(nbinary_y[rowi] > 0) for(obsi in 1:size(o1)) Ygen[geni, rowi, o1[obsi]] = bernoulli_rng(ypred[o1[obsi]]);
+for(vi in 1:nmanifest) if(is_nan(Ygen[geni,rowi,vi])) Ygen[geni,rowi,vi] = -99999;
+//}
       '),'
   
-      err[o] = Y[rowi,o] - ypred[o]; // prediction error
+      ',if(!ppchecking) 'err[o] = Y[rowi,o] - ypred[o]; // prediction error','
+     ',if(ppchecking) 'err[o] = Ygen[geni,rowi,o] - ypred[o]; // prediction error','
       if(intoverstates==1) etaupd[rowi,] = etaprior[rowi,] + (K[,o] * err[o]);
 
   
@@ -873,7 +874,7 @@ if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
       if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
 
       if(size(cindex) > 0){
-         ypredcov_sqrt[cindex,cindex]=cholspd(ypredcov[cindex,cindex]);
+         ypredcov_sqrt[cindex,cindex]=cholesky_decompose(makesym(ypredcov[cindex,cindex]));
          errtrans[(cobscount+1):(cobscount+size(cindex))] = mdivide_left_tri_low(ypredcov_sqrt[cindex,cindex], err[cindex]); //transform pred errors to standard normal dist and collect
          errscales[(cobscount+1):(cobscount+size(cindex))] = log(diagonal(ypredcov_sqrt[cindex,cindex])); //account for transformation of scale in loglik
       }'),'
@@ -933,7 +934,7 @@ subjectparscalc <- function(pop=FALSE){
 
   // perform any whole matrix transformations 
     
-  if(si <= DIFFUSIONsubindex[nsubjects] && lineardynamics * intoverstates !=0 ) DIFFUSION[si] = sdcovsqrt2cov(DIFFUSION[si], lineardynamics * intoverstates ? 0 : 1);
+  if(si <= DIFFUSIONsubindex[nsubjects] && lineardynamics * intoverstates !=0 ) DIFFUSION[si] = sdcovsqrt2cov(DIFFUSION[si], 0);
 
     if(si <= asymDIFFUSIONsubindex[nsubjects]) {
       if(ndiffusion < nlatent) asymDIFFUSION[si] = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
@@ -965,8 +966,7 @@ subjectparscalc <- function(pop=FALSE){
           
           
     if(si <= T0VARsubindex[nsubjects]) {
-      if(lineardynamics * intoverstates !=0) T0VAR[si] = sdcovsqrt2cov(T0VAR[si],lineardynamics * intoverstates ? 0 : 1);
-
+      if(lineardynamics * intoverstates !=0) T0VAR[si] = sdcovsqrt2cov(T0VAR[si],0);
       if(nt0varstationary > 0) for(rowi in 1:nt0varstationary){
         T0VAR[si,t0varstationary[rowi,1],t0varstationary[rowi,2] ] = 
           asymDIFFUSION[si,t0varstationary[rowi,1],t0varstationary[rowi,2] ];
@@ -1005,8 +1005,9 @@ freepar <- 0
 freeparcounter <- 0
 indvaryingindex <-array(0,dim=c(0))
 indvaryingcounter <- 0
-TIPREDEFFECTsetup <- matrix(0,nparams,n.TIpred)
+TIPREDEFFECTsetup <- matrix(0,0,n.TIpred)
 tipredcounter <- 1
+indvar <- 0
 extratformcounter <- 0
 extratforms <- c()
 for(m in basematrices){
@@ -1018,9 +1019,15 @@ for(m in basematrices){
       if(!is.na(ctspec$param[i]) & !grepl('[',ctspec$param[i],fixed=TRUE)){ #if a free parameter,
         if(i > 1 && any(ctspec$param[1:(i-1)] %in% ctspec$param[i])){ #and after row 1, check for duplication
           freepar <- mdat[,'param'][ match(ctspec$param[i], rownames(mdat)) ] #find which freepar corresponds to duplicate
+          indvar <- ifelse(ctspec$indvarying[i],  mdat[,'indvarying'][ match(ctspec$param[i], rownames(mdat)) ],0)#and which indvar corresponds to duplicate
         } else { #if not duplicated
           freeparcounter <- freeparcounter + 1
-          if(ctspec$indvarying[i]) indvaryingcounter <- indvaryingcounter + 1
+          TIPREDEFFECTsetup <- rbind(TIPREDEFFECTsetup,rep(0,ncol(TIPREDEFFECTsetup))) #add an extra row...
+          if(ctspec$indvarying[i]) {
+            indvaryingcounter <- indvaryingcounter + 1
+            indvar <- indvaryingcounter
+          }
+          if(!ctspec$indvarying[i]) indvar <- 0
           freepar <- freeparcounter
           if(is.na(suppressWarnings(as.integer(ctspec$transform[i])))) { #extra tform needed
             extratformcounter <- extratformcounter + 1
@@ -1045,12 +1052,13 @@ for(m in basematrices){
         ctspec$col[i],
         ifelse(!is.na(ctspec$param[i]),freepar, 0),
         ifelse(is.na(as.integer(ctspec$transform[i])), -1, as.integer(ctspec$transform[i])),
-        ifelse(ctspec$indvarying[i],indvaryingcounter,0)),nrow=1)
+        ifelse(!is.na(ctspec$param[i]),indvar,0) 
+        ),nrow=1)
       rownames(mdatnew) <- ctspec$param[i]
       
       mdat<-rbind(mdat,mdatnew)
       
-      if(ctspec$indvarying[i]) indvaryingindex <- c(indvaryingindex, freepar)
+      # if(ctspec$indvarying[i]) indvaryingindex <- c(indvaryingindex, freepar)
       
       mval<-rbind(mval, matrix(c(ctspec$value[i], ctspec$multiplier[i], ctspec$meanscale[i],ctspec$offset[i], ctspec$sdscale[i]),ncol=5))
       colnames(mdat) <- c('row','col','param','transform', 'indvarying')
@@ -1075,7 +1083,13 @@ for(m in basematrices){
   popsetup <- data.frame(parname,popsetup,stringsAsFactors = FALSE)
   popvalues <- data.frame(parname,popvalues,stringsAsFactors = FALSE)
 
-  sdscale <- array(popvalues[popsetup[,'indvarying']>0, 'sdscale'])
+  nindvarying <- max(popsetup$indvarying)
+  nparams <- max(popsetup$param)
+
+  indvaryingindex <- popsetup$param[which(popsetup$indvarying > 0)]
+  indvaryingindex <- array(indvaryingindex[!duplicated(indvaryingindex)])
+  sdscale <- array(popvalues$sdscale[match(indvaryingindex,popsetup$param)])
+
 
   if(any(popsetup[,'transform'] < -10)) recompile <- TRUE #if custom transforms needed
 
@@ -1107,22 +1121,21 @@ functions{
   }
 
 matrix cholspd(matrix a){
-    matrix[rows(a),rows(a)] l;
-    for(j in 1:cols(a)){
-      for(i in j:rows(a)){
-        if(i != j) {
-          l[i,j] = a[i,j];
-          l[j,i] = a[i,j];
-        }
-        if(j == i)  l[j,j] = a[j,j] + 1e-10;
-         // if(a[j,j] <=1e-10){
-         //   l[j,j] = 1e-10; 
-        //  } else 
-        //    l[j,j] = a[j,j]; //print("Negative variance of ", l[j,j], " at row ", j);
-        //}
+  matrix[rows(a),rows(a)] l;
+  for(j in 1:cols(a)){
+    for(i in j:rows(a)){
+      if(i != j) {
+        l[i,j] = (a[i,j] + a[j,i])/2;
+        l[j,i] = l[i,j];
+      }
+      if(j == i){
+        l[j,j] = a[j,j] + 1e-3;
+        if(l[j,j] <=1e-3) l[j,j] = 1e-3; 
+        if(l[j,j] > 1e10) l[j,j] = -99999;
       }
     }
-    return cholesky_decompose(l);
+  }
+  return cholesky_decompose(l);
 }
 
   matrix discreteDIFFUSIONcalc(matrix DR, matrix DI, real dt){
@@ -1255,6 +1268,21 @@ matrix cholspd(matrix a){
       }
     }
     return l;
+  }
+
+  matrix makesym(matrix mat){
+    matrix[rows(mat),cols(mat)] out;
+
+    for(coli in 1:cols(mat)){
+      for(rowi in coli:rows(mat)){
+        if(rowi > coli) {
+          out[rowi,coli] = mat[rowi,coli]; //(mat[coli,rowi] + ) *.5;
+          out[coli,rowi] = mat[rowi,coli];
+        }
+        if(rowi==coli) out[rowi,coli] = mat[rowi,coli] + 1e-5;
+      }
+    }
+    return out;
   }
 
   real tform(real param, int transform, real multiplier, real meanscale, real offset){
@@ -1464,7 +1492,7 @@ generated quantities{
   ',popify(subjectparaminit()),'
 
 vector[nmanifest] Ygen[ngenerations, ndatapoints];
-for(geni in 1:ngenerations) Ygen[geni,,] = rep_array(rep_vector(0,nmanifest), ndatapoints);
+for(geni in 1:ngenerations) Ygen[geni,,] = rep_array(rep_vector(99999,nmanifest), ndatapoints);
 for(geni in 1:ngenerations){
 ',ukfilterfunc(ppchecking=TRUE),'
 }
@@ -1507,7 +1535,7 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
 ')
 }
   
-  if(is.na(stanmodeltext)) stanmodeltext<-writemodel()
+  if(is.na(stanmodeltext)) stanmodeltext<-writemodel() else recompile<-TRUE
 
   # out<-list(stanmodeltext=stanmodeltext)
   
@@ -1604,11 +1632,11 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
 
   if(fit){
 
-    if(recompile) {
+    if(recompile || forcerecompile) {
      message('Compiling model...') 
       sm <- stan_model(model_name='ctsem', model_code = c(stanmodeltext))
     }
-    if(!recompile) sm <- stanmodels$ctsm
+    if(!recompile && !forcerecompile) sm <- stanmodels$ctsm
 
     if(!is.null(inits)){
       suppressOutput(sf <- suppressWarnings(sampling(sm,data=standata,iter=1,control=list(max_treedepth=0),chains=1)))
@@ -1667,7 +1695,7 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
       
       message('Optimizing...')
       
-      init <- staninits[[1]]
+      init <- 0 # staninits[[1]]
       
       # if(nopriors){
       #   standata$nopriors <- 0
@@ -1840,6 +1868,7 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
         }
       }
       
+      parallel::stopCluster(cl)
       message('Computing quantities...')
       
       relistarrays <- function(flesh, skeleton){
@@ -1860,14 +1889,20 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
         return(out)
       }
       
-      parallel::clusterExport(cl, c('relistarrays','resamples','sm','optimfit'),environment())
+      
+      
+      cl <- parallel::makeCluster(min(cores,chains), type = "PSOCK")
+      parallel::clusterExport(cl, c('relistarrays','resamples','sm','standata','optimfit'),environment())
 
       # target_dens <- c(target_dens,
       transformedpars <- parallel::parLapply(cl, parallel::clusterSplit(cl,1:nresamples), function(x){
+        Sys.sleep(.1)
         smf<-sampling(sm,iter=1,chains=1,data=standata,check_data=FALSE,control=list(max_treedepth=0))
+        Sys.sleep(.1)
         # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan::grab_cxxfun(sm@dso))
         out <- list()
         for(li in 1:length(x)){
+          Sys.sleep(.01)
           flesh = unlist(constrain_pars(smf, resamples[x[li],]))
           names(flesh) <- c()
           skeleton=optimfit$par
@@ -1875,10 +1910,10 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
         }
         return(out)
       })
-      
+      parallel::stopCluster(cl)
       transformedpars<-unlist(transformedpars,recursive = FALSE)
 
-      parallel::stopCluster(cl)
+      
       
       tostanarray <- function(flesh, skeleton){
         skelnames <- names(skeleton)
@@ -1941,7 +1976,7 @@ popsd[indvaryingindex] = rawpopsd; //base to begin calculations
   } # end if fit==TRUE
   # matrixsetup <- list(matsetup,basematrices,dynamicmatrices,measurementmatrices,t0matrices)
   # names(matrixsetup) <- c('matsetup','basematrices','dynamicmatrices','measurementmatrices','t0matrices')
-  if(!fit) out=list(args=args,list(recompile=recompile,popsetup=popsetup,popvalues=popvalues,basematrices=basematrices,extratforms=extratforms),
+  if(!fit) out=list(args=args,setup=list(recompile=recompile,popsetup=popsetup,popvalues=popvalues,basematrices=basematrices,extratforms=extratforms),
     stanmodeltext=stanmodeltext,data=standata, ctstanmodel=ctstanmodel)
   
   

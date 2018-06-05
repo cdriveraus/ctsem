@@ -35,8 +35,8 @@ may be simpler in many cases to access those directly. They are:
  one must simply call the relevant rstan function, listed here:
  \code{\link[rstan]{rstan-plotting-functions}}. Use \code{x$stanfit} as the stan fit object
  (where x is the name of your ctStanFit object). Because a ctStanFit object has many 
- parameters, the additional argument \code{pars=ctStanParnames(x,'hmean')} is recommended.
- 'hmean' denotes population means, but see \code{\link{ctStanParnames}} for
+ parameters, the additional argument \code{pars=ctStanParnames(x,'pop_')} is recommended.
+ This denotes population means, but see \code{\link{ctStanParnames}} for
  other options.
 }
 \examples{
@@ -48,6 +48,6 @@ plot(ctstantestfit)
 
 #### example plot using rstan functions
 rstan::stan_trace(ctstantestfit$stanfit, 
-pars=ctStanParnames(ctstantestfit,'hmean_'))
+pars=ctStanParnames(ctstantestfit,'pop_DRIFT'))
 }
 }

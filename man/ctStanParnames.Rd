@@ -4,15 +4,15 @@
 \alias{ctStanParnames}
 \title{ctStanParnames}
 \usage{
-ctStanParnames(x, substrings = c("hmean_", "hsd_"))
+ctStanParnames(x, substrings = c("pop_", "popsd"))
 }
 \arguments{
 \item{x}{ctStanFit object}
 
 \item{substrings}{vector of character strings, parameter names of the stan model
-containing any of these strings will be returned. Useful strings may be 'hmean_' for 
-population means, 'hsd_' for pop standard deviations, 'tipred_' for time
-independent predictors, or specific combinations such as 'hmean_drift' for the population
+containing any of these strings will be returned. Useful strings may be 'pop_' for 
+population means, 'popsd' for population standard deviations,
+ or specific combinations such as 'pop_DRIFT' for the population
 means of temporal dynamics parameters}
 }
 \value{
@@ -22,5 +22,5 @@ vector of character strings.
 Gets internal stan parameter names of a ctStanFit object based on specified substrings.
 }
 \examples{
-ctStanParnames(ctstantestfit,substrings=c('hmean_','hsd_'))
+ctStanParnames(ctstantestfit,substrings=c('pop_','popsd'))
 }

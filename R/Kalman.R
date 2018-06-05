@@ -8,7 +8,7 @@
 #' Such a list is returned by \code{\link{ctStanContinuousPars}}.
 #' @param datalong long format data object as used by \code{\link{ctStanFit}}, 
 #' but must contain only a single subjects' data and does not need an id column.
-#' @param manifestNames String vector of names of manifest variables to use from datalong.
+#' @param manifestNames String vector of names of manifest varifables to use from datalong.
 #' @param latentNames String vector of names of latent variables.
 #' @param TDpredNames If model contains time dependent predictors, 
 #' string vector of their names in the data.

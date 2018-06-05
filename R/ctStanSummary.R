@@ -41,8 +41,9 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...
   parnames <- object$setup$popsetup$parname
   parindices <- object$setup$popsetup$param
   pars <- cbind(parnames,parindices)
+  pars<-pars[!duplicated(pars[,1]),]
   parnames <- pars[as.numeric(pars[,2]) >0, 1]
-  parnames <- unique(parnames)
+  # parnames <- unique(parnames)
   parnamesiv <- parnames[object$data$indvaryingindex]
   
   #### generate covcor matrices of raw and transformed subject level params

@@ -36,8 +36,8 @@ test_that("time calc", {
     timeVarying='MANIFESTMEANS',
     Tpoints=5)
   
-  AnomAuthfit1<-ctFit(AnomAuth, AnomAuthmodel,asymptotes=FALSE, objective='mxFIML',verbose=2,retryattempts=1)
-  AnomAuthfit2<-ctFit(AnomAuth, AnomAuthmodel,asymptotes=TRUE, verbose=2,retryattempts=1)
+  AnomAuthfit1<-ctRefineTo(AnomAuth, AnomAuthmodel,asymptotes=FALSE, verbose=0,retryattempts=1)
+  AnomAuthfit2<-ctRefineTo(AnomAuth, AnomAuthmodel,asymptotes=TRUE, verbose=0,retryattempts=1)
   
   
   expect_equal(AnomAuthfit2$mxobj$output$Minus2LogLikelihood,AnomAuthfit1$mxobj$output$Minus2LogLikelihood)
@@ -67,7 +67,7 @@ oscillatingm <- ctModel(n.latent = 2, n.manifest = 1, Tpoints = 11,
   DIFFUSION = matrix(c(0, 0, 0, "diffusion"), nrow = 2, ncol = 2),
   startValues = inits)
 
-oscillatingf <- ctFit(Oscillating, oscillatingm, objective='mxFIML',carefulFit = FALSE)
+oscillatingf <- ctFit(Oscillating, oscillatingm, carefulFit = FALSE,retryattempts = 3)
 
 expect_equal(-3461.936,oscillatingf$mxobj$output$Minus2LogLikelihood,tolerance=.001)
 

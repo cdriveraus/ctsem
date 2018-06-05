@@ -93,8 +93,8 @@ ctStanModel<-function(ctmodelobj, type='stanct', indvarying='all'){
 
       if(ctspec$matrix[pi] %in% c('DIFFUSION','MANIFESTVAR', 'T0VAR')) {
         if(ctspec$row[pi] != ctspec$col[pi]){
-          ctspec$transform[pi] <- 4
-         if(ctspec$matrix[pi] %in% c('DIFFUSION')) ctspec$meanscale[pi] <-2
+          ctspec$transform[pi] <- 0
+         # if(ctspec$matrix[pi] %in% c('DIFFUSION')) ctspec$meanscale[pi] <-2
         }
         if(ctspec$row[pi] == ctspec$col[pi]){
           ctspec$transform[pi] <- 1
@@ -107,7 +107,7 @@ ctStanModel<-function(ctmodelobj, type='stanct', indvarying='all'){
         if(ctspec$row[pi] == ctspec$col[pi]){
           if(continuoustime==TRUE) {
             ctspec$transform[pi] <- 2
-            ctspec$meanscale[pi] <- 2
+            ctspec$meanscale[pi] <- 1.5
             ctspec$multiplier[pi] <- -1
              ctspec$offset[pi] <- 0
           }
@@ -118,7 +118,7 @@ ctStanModel<-function(ctmodelobj, type='stanct', indvarying='all'){
           }
         }
         if(ctspec$row[pi] != ctspec$col[pi]){
-          ctspec$transform[pi] <- 4
+          ctspec$transform[pi] <- 0
           ctspec$meanscale[pi] <- 1
         }
       }

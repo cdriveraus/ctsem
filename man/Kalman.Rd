@@ -17,7 +17,7 @@ Such a list is returned by \code{\link{ctStanContinuousPars}}.}
 \item{datalong}{long format data object as used by \code{\link{ctStanFit}}, 
 but must contain only a single subjects' data and does not need an id column.}
 
-\item{manifestNames}{String vector of names of manifest variables to use from datalong.}
+\item{manifestNames}{String vector of names of manifest varifables to use from datalong.}
 
 \item{latentNames}{String vector of names of latent variables.}
 

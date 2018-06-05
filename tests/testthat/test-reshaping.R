@@ -20,12 +20,12 @@ test_that("time calc", {
     DRIFT=matrix(c(-.23,.1,.0,-.4),n.latent),
     DIFFUSION=matrix(c(8.3,-5.1,0,8.4),n.latent,n.latent),
     CINT=matrix(c(0,.4),n.latent,1),
-    TRAITTDPREDCOV = matrix(c(.6,-.3,.4,.4),nrow=n.latent,ncol=n.TDpred*(Tpoints-1)),
+    TRAITTDPREDCOV = matrix(c(.6,-.3,.4,.4),nrow=n.latent,ncol=n.TDpred*(Tpoints)),
     TDPREDEFFECT=matrix(c(1.2,-.4, 0,.3),nrow=n.latent,ncol=n.TDpred),
     TIPREDEFFECT=matrix(c(.32,.08,.4,-.6,-.3,0),nrow=n.latent,ncol=n.TIpred),
     # TDPREDMEANS=matrix(c(0,0,1,rep(0, (Tpoints-1-3)*n.TDpred)),nrow=n.TDpred*(Tpoints-1)),
     TIPREDMEANS=matrix(0,nrow=n.TIpred),
-    TDPREDVAR=diag(1,n.TDpred*(Tpoints-1)),
+    TDPREDVAR=diag(1,n.TDpred*(Tpoints)),
     TIPREDVAR=diag(.5,n.TIpred),
     T0MEANS=matrix(0,ncol=1,nrow=n.latent))
   

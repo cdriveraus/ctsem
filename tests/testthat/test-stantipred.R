@@ -4,7 +4,7 @@ set.seed(1)
 
 context("tipredcheck")
 
-test_that("simpleTIpredcheck_stanoptimize", {
+test_that("simpleTIpredcheck", {
 Tpoints=100
 n.manifest=1
 n.TDpred=0
@@ -50,9 +50,9 @@ tfit<-ctStanFit(tdat,checkm,iter=400, warmup=380,chains=2,plot=TRUE,optimize=T,i
 s=summary(tfit)
 
 expect_equal(s$tipreds[2,'mean'],5,tolerance=.1)
-})
-
-test_that("simpleTIpredcheck_stansampling", {
+# })
+# 
+# test_that("simpleTIpredcheck_stansampling", {
 
 tfit<-ctStanFit(tdat,checkm,iter=400,chains=2,control=list(adapt_delta=.8,max_treedepth=6))
 s=summary(tfit)

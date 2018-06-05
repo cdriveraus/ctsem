@@ -18,8 +18,8 @@
 #'  one must simply call the relevant rstan function, listed here:
 #'  \code{\link[rstan]{rstan-plotting-functions}}. Use \code{x$stanfit} as the stan fit object
 #'  (where x is the name of your ctStanFit object). Because a ctStanFit object has many 
-#'  parameters, the additional argument \code{pars=ctStanParnames(x,'hmean')} is recommended.
-#'  'hmean' denotes population means, but see \code{\link{ctStanParnames}} for
+#'  parameters, the additional argument \code{pars=ctStanParnames(x,'pop_')} is recommended.
+#'  This denotes population means, but see \code{\link{ctStanParnames}} for
 #'  other options.
 #' @return Nothing. Generates plots.
 #' @aliases ctStanPlot plot.ctStanFit
@@ -33,7 +33,7 @@
 #' 
 #' #### example plot using rstan functions
 #' rstan::stan_trace(ctstantestfit$stanfit, 
-#' pars=ctStanParnames(ctstantestfit,'hmean_'))
+#' pars=ctStanParnames(ctstantestfit,'pop_DRIFT'))
 #' }
 #' @export
 plot.ctStanFit <- function(x, types='all',wait=TRUE,...){
@@ -78,10 +78,10 @@ plot.ctStanFit <- function(x, types='all',wait=TRUE,...){
   
   if('trace' %in% types && continue){
     message('Plotting sampling traces using stan_trace')
-    print(rstan::stan_trace(x$stanfit,ctStanParnames(x,'hmean_'),...))
+    print(rstan::stan_trace(x$stanfit,ctStanParnames(x,'pop_'),...))
     continue<-waitf()
     
-    if(continue) p<-try(rstan::stan_trace(x$stanfit,ctStanParnames(x,'hsd_'),...),silent=TRUE)
+    if(continue) p<-try(rstan::stan_trace(x$stanfit,ctStanParnames(x,'popsd'),...),silent=TRUE)
      if(class(p)[1]!='try-error') {
        print(p)
        continue<-waitf()
@@ -99,44 +99,44 @@ plot.ctStanFit <- function(x, types='all',wait=TRUE,...){
   
   if('density' %in% types && continue){
     message('Plotting posterior density estimates using stan_dens')
-    print(rstan::stan_dens(x$stanfit,ctStanParnames(x,'hmean_'),...))
+    print(rstan::stan_dens(x$stanfit,ctStanParnames(x,'pop_'),...))
     continue<-waitf()
     
-    if(continue)  p=try(rstan::stan_dens(x$stanfit,ctStanParnames(x,'hsd_'),...),silent=TRUE)
+    if(continue)  p=try(rstan::stan_dens(x$stanfit,ctStanParnames(x,'popsd'),...),silent=TRUE)
     if(class(p)[1]!='try-error') {
       print(p)
       continue<-waitf()
     }
     
-    if(continue)  {
-      p= try(rstan::stan_dens(x$stanfit,ctStanParnames(x,'tipred_'),...),silent=TRUE)
-      types=types[types!='density']
-    }
-    if(class(p)[1]!='try-error') {
-      print(p)
-      continue<-waitf()
-    }
+    # if(continue)  {
+    #   p= try(rstan::stan_dens(x$stanfit,ctStanParnames(x,'tipred_'),...),silent=TRUE)
+    #   types=types[types!='density']
+    # }
+    # if(class(p)[1]!='try-error') {
+    #   print(p)
+    #   continue<-waitf()
+    # }
   }
   
   if('intervals' %in% types && continue){
     message('Plotting posterior intervals and point estimates using stan_plot')
-    print(rstan::stan_plot(x$stanfit,ctStanParnames(x,'hmean_'),...))
+    print(rstan::stan_plot(x$stanfit,ctStanParnames(x,'pop_'),...))
     continue<-waitf()
     
-    if(continue)  p=try(rstan::stan_plot(x$stanfit,ctStanParnames(x,'hsd_'),...),silent=TRUE)
+    if(continue)  p=try(rstan::stan_plot(x$stanfit,ctStanParnames(x,'popsd'),...),silent=TRUE)
     if(class(p)[1]!='try-error') {
       print(p)
       continue<-waitf()
     }
-    
-    if(continue)  {
-      p=try(rstan::stan_plot(x$stanfit,ctStanParnames(x,'tipred_'),...),silent=TRUE)
-      types=types[types!='intervals']
-    }
-    if(class(p)[1]!='try-error') {
-      print(p)
-      continue<-waitf()
-    }
+    # 
+    # if(continue)  {
+    #   p=try(rstan::stan_plot(x$stanfit,ctStanParnames(x,'tipred_'),...),silent=TRUE)
+    #   types=types[types!='intervals']
+    # }
+    # if(class(p)[1]!='try-error') {
+    #   print(p)
+    #   continue<-waitf()
+    # }
   }
 }
 

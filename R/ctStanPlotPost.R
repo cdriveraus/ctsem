@@ -26,7 +26,7 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
   
   if(!(class(obj) %in% c('ctStanFit','ctStanModel'))) stop('not a ctStanFit or ctStanModel object!')
   
-  densiter <- 1e6
+  densiter <- 1e5
   popsetup <- obj$setup$popsetup
   popvalues<- obj$setup$popvalues
   

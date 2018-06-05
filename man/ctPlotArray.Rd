@@ -6,9 +6,8 @@
 \usage{
 ctPlotArray(input, grid = FALSE, colvec = "auto", lwdvec = "auto",
   ltyvec = "auto", typevec = "auto", plotcontrol = list(ylab =
-  "Array values", xaxs = "i"), legend = TRUE, legendcontrol = list(x =
-  "topright"), polygon = TRUE, polygonalpha = 0.1,
-  polygoncontrol = list(steps = 25))
+  "Array values", xaxs = "i"), legend = TRUE, legendcontrol = list(),
+  polygon = TRUE, polygonalpha = 0.1, polygoncontrol = list(steps = 25))
 }
 \arguments{
 \item{input}{list containing 3 dimensional array to use for Y values, \code{$y}
@@ -44,9 +43,11 @@ Nothing. Generates plots.
 1st margin of $Y sets line values, 2nd sets variables, 3rd quantiles.
 }
 \examples{
-input <- ctStanTIpredeffects(ctstantestfit, plot=FALSE, whichpars='CINT', 
-  nsamples=10,nsubjects=10)
-input$x<-seq(min(ctstantestfit$data$tipreds,na.rm=TRUE),
-  max(ctstantestfit$data$tipreds,na.rm=TRUE),length.out=dim(input$y)[1]) 
+input<-list(
+  y=ctStanTIpredeffects(ctstantestfit, plot=FALSE, whichpars='CINT', 
+    nsamples=10,nsubjects=10),
+  x=seq(min(ctstantestfit$data$tipreds,na.rm=TRUE),
+    max(ctstantestfit$data$tipreds,na.rm=TRUE),length.out=dim(input$y)[1]))
+    
 ctPlotArray(input=input)
 }

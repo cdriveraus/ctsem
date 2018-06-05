@@ -18,11 +18,26 @@
 #' and shape of possible subject level priors at the specific points of the population mean prior.
 #' @method plot ctStanModel
 #' @export
+#' @examples
+#' model <- ctModel(type='omx', Tpoints=50,
+#' n.latent=2, n.manifest=1, 
+#' manifestNames='sunspots', 
+#' latentNames=c('ss_level', 'ss_velocity'),
+#' LAMBDA=matrix(c( 1, 'ma1' ), nrow=1, ncol=2),
+#' DRIFT=matrix(c(0, 1,   'a21', 'a22'), nrow=2, ncol=2, byrow=TRUE),
+#' MANIFESTMEANS=matrix(c('m1'), nrow=1, ncol=1),
+#' # MANIFESTVAR=matrix(0, nrow=1, ncol=1),
+#' CINT=matrix(c(0, 0), nrow=2, ncol=1),
+#' DIFFUSION=matrix(c(
+#'   0, 0,
+#'   0, "diffusion"), ncol=2, nrow=2, byrow=TRUE))
+#' 
+#' stanmodel=ctStanModel(model)
+#' plot(stanmodel,rows=8)
 
 plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='marginalise',...){
   if(class(x)!='ctStanModel') stop('not a ctStanModel object!')
   m<-x$pars
-  n<-5000
   highmean=1
   lowmean=-1
   if(rows=='all') rows<-1:nrow(m)
@@ -61,33 +76,12 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='margi
       colvec <- c(1,2,4)
       }
       
-      #combined
-      # xlims=c(min(meanxlims[1],lowxlims[1],highxlims[1]),max(meanxlims[2],lowxlims[2],highxlims[2]))
-      # xdistance= ( (highxlims[1]-lowxlims[1]) + (highxlims[2]-lowxlims[2]) )/2
-      # 
-      # xmean=xmean[xmean>(xlims[1]-xdistance) & xmean < (xlims[2]+xdistance)]
-      # xhigh=xhigh[xhigh>(xlims[1]-xdistance) & xhigh < (xlims[2]+xdistance)]
-      # xlow=xlow[xlow>(xlims[1]-xdistance) & xlow < (xlims[2]+xdistance)]
-      
-      # bw=(xlims[2]-xlims[1])/300
-      # 
-      # densxmean=stats::density(xmean,bw=bw,n=n)
-      # densxlow=stats::density(xlow,bw=bw,n=n)
-      # densxhigh=stats::density(xhigh,bw=bw,n=n)
-      # 
-      # ymax= max(c(densxmean$y),c(densxlow$y),c(densxhigh$y))*1.2
-      
-      ctDensityList(denslist,plot = TRUE, lwd=2,probs=c(.05,.95),main=m$param[rowi],
+        ctDensityList(denslist,plot = TRUE, lwd=2,probs=c(.05,.95),main=m$param[rowi],
         cex=.8,cex.main=.8,cex.axis=.8,cex.lab=.8,cex.sub=.8,
         legend = leg,
         legendargs=list(cex=.8),
         colvec = colvec)
-      
-      # graphics::plot(densxmean,main=m$param[rowi],lwd=2,xlim=c(xlims[1],xlims[2]),ylim=c(0,ymax),xlab='Par. value',ylab='Density')
-      # graphics::points(densxhigh,lwd=2,type='l',col='red',lty=3)
-      # graphics::points(densxlow,lwd=2,type='l',col='blue',lty=3)
-      
-      # graphics::legend('topright',c('Pop. mean prior', '-1sd mean, subject prior','+1sd mean, subject prior'),text.col=c('black','blue','red'),bty='n')
+
       if(wait==TRUE & rowi != utils::tail(rows,1)){
         message("Press [enter] to display next plot")
         readline()

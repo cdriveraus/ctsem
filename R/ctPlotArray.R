@@ -22,26 +22,28 @@
 #' @export
 #'
 #' @examples
-#' input <- ctStanTIpredeffects(ctstantestfit, plot=FALSE, whichpars='CINT', 
-#'   nsamples=10,nsubjects=10)
-#' input$x<-seq(min(ctstantestfit$data$tipreds,na.rm=TRUE),
-#'   max(ctstantestfit$data$tipreds,na.rm=TRUE),length.out=dim(input$y)[1]) 
+#' input<-list(
+#'   y=ctStanTIpredeffects(ctstantestfit, plot=FALSE, whichpars='CINT', 
+#'     nsamples=10,nsubjects=10),
+#'   x=seq(min(ctstantestfit$data$tipreds,na.rm=TRUE),
+#'     max(ctstantestfit$data$tipreds,na.rm=TRUE),length.out=dim(input$y)[1]))
+#'     
 #' ctPlotArray(input=input)
 ctPlotArray <- function(input,
   grid=FALSE,
   colvec='auto',lwdvec='auto',ltyvec='auto',typevec='auto',
   plotcontrol=list(ylab='Array values',xaxs='i'),
-  legend=TRUE,legendcontrol=list(x='topright'),
+  legend=TRUE,legendcontrol=list(),
   polygon=TRUE, polygonalpha=.1,polygoncontrol=list(steps=25)){
   
   if(class(input)!='list') stop('Input must be a list containing y and x subobjects!')
-  yarray <- input$y
+
   x <- input$x
-  if(length(dim(yarray))!=3) stop('$y subobject must have 3 dimensions!')
-  if(length(x) != length(yarray[,1,1])) stop ('Length of 1st margin of $y and $x must be the same!')
+  if(length(dim(input$y))!=3) stop('$y subobject must have 3 dimensions!')
+  if(length(x) != length(input$y[,1,1])) stop ('Length of 1st margin of $y and $x must be the same!')
   
   separate=FALSE
-  nvars<-dim(yarray)[2]
+  nvars<-dim(input$y)[2]
 
   plotcontrolpars <- c('ylab','xlab')
   plotcontroldefaults <- c('Array values',colnames(input$x))
@@ -55,6 +57,12 @@ ctPlotArray <- function(input,
     if(is.null(legendcontrol[[legendcontrolpars[i]]])) legendcontrol[[legendcontrolpars[i]]] <- legendcontroldefaults[i]
   }
   
+  if(is.null(legendcontrol$legend)){
+   if(!is.null(dimnames(input$y)[2])) {
+     legendcontrol$legend <- dimnames(input$y)[2] 
+   } else  legend <- FALSE
+  }
+  
   # polygoncontrolpars <- c('border')
   # polygoncontroldefaults <- c(NA)
   # for(i in 1:length(polygoncontrolpars)) {
@@ -66,13 +74,13 @@ ctPlotArray <- function(input,
   if(all(colvec=='auto')) colvec = rainbow(nvars,v=.9)
   if(all(typevec=='auto')) typevec = rep('l',nvars)
   # if(all(mainvec=='auto')){
-  #   if(separate) mainvec=dimnames(yarray)[[2]] else mainvec =rep(ifelse(is.null(plotcontrol$main),'',plotcontrol$main),nvars)
+  #   if(separate) mainvec=dimnames(input$y)[[2]] else mainvec =rep(ifelse(is.null(plotcontrol$main),'',plotcontrol$main),nvars)
   # }
 
   plotargs<-plotcontrol
   plotargs$x <- x
-  if(!separate && is.null(plotcontrol$ylim)) plotargs$ylim = range(yarray,na.rm=TRUE)+ c(0,
-    (max(yarray,na.rm=TRUE) - min(yarray,na.rm=TRUE)) /3)
+  if(!separate && is.null(plotcontrol$ylim)) plotargs$ylim = range(input$y,na.rm=TRUE)+ c(0,
+    (max(input$y,na.rm=TRUE) - min(input$y,na.rm=TRUE)) /3)
   plotargs$xlim = range(x,na.rm=TRUE)
   
   ctpolyargs<-polygoncontrol
@@ -94,20 +102,20 @@ ctPlotArray <- function(input,
   
   #confidence
   if(polygon) {
-    for(pari in c(1:dim(yarray)[2],dim(yarray)[2]:1)){
+    for(pari in c(1:dim(input$y)[2],dim(input$y)[2]:1)){
       ctpolyargs$col=adjustcolor(colvec[pari],alpha.f=max(c(.004,polygonalpha/(4*sqrt(ctpolyargs$steps)))))
-      ctpolyargs$x=plotargs$x[!is.na(plotargs$x) & !is.na(yarray[,pari,2])]
-      ctpolyargs$y=yarray[,pari,2][!is.na(plotargs$x) & !is.na(yarray[,pari,2])] #predict(loess(yarray[,pari,2]~ctpolyargs$x))
-      ctpolyargs$yhigh = yarray[,pari,3][!is.na(plotargs$x) & !is.na(yarray[,pari,2])] #predict(loess(yarray[,pari,3]~ctpolyargs$x))
-      ctpolyargs$ylow = yarray[,pari,1][!is.na(plotargs$x) & !is.na(yarray[,pari,2])]#predict(loess(yarray[,pari,1]~ctpolyargs$x))
+      ctpolyargs$x=plotargs$x[!is.na(plotargs$x) & !is.na(input$y[,pari,2])]
+      ctpolyargs$y=input$y[,pari,2][!is.na(plotargs$x) & !is.na(input$y[,pari,2])] #predict(loess(input$y[,pari,2]~ctpolyargs$x))
+      ctpolyargs$yhigh = input$y[,pari,3][!is.na(plotargs$x) & !is.na(input$y[,pari,2])] #predict(loess(input$y[,pari,3]~ctpolyargs$x))
+      ctpolyargs$ylow = input$y[,pari,1][!is.na(plotargs$x) & !is.na(input$y[,pari,2])]#predict(loess(input$y[,pari,1]~ctpolyargs$x))
       
       do.call(ctPoly,ctpolyargs) 
     }
   }
   
-  for(pari in c(1:dim(yarray)[2],dim(yarray)[2]:1)){
+  for(pari in c(1:dim(input$y)[2],dim(input$y)[2]:1)){
     for(qi in 1:3){
-      plotargs$y = yarray[,pari,qi]#predict(loess(yarray[,pari,qi]~plotargs$x))
+      plotargs$y = input$y[,pari,qi]#predict(loess(input$y[,pari,qi]~plotargs$x))
       plotargs$col=colvec[pari]
       plotargs$lwd=ifelse(qi==2,lwdvec[pari],1)
       plotargs$lty=ltyvec[pari]
@@ -117,8 +125,8 @@ ctPlotArray <- function(input,
       do.call(points,plotargs)
     }
     
-    if(separate & legend) {
-      legargs$legend=dimnames(yarray)[[2]][pari]
+    if(separate && legend) {
+      legargs$legend=dimnames(input$y)[[2]][pari]
       legargs$col = plotargs$col
       legargs$lty = plotargs$lty
       legargs$text.col = plotargs$col
@@ -128,7 +136,7 @@ ctPlotArray <- function(input,
   }
   
   if(!separate & legend) {
-    legargs$legend=dimnames(yarray)[[2]]
+    legargs$legend=dimnames(input$y)[[2]]
     legargs$col = colvec
     legargs$lty = ltyvec
     legargs$text.col = colvec

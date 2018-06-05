@@ -4,18 +4,18 @@
 #'
 #' @param x ctStanFit object
 #' @param substrings vector of character strings, parameter names of the stan model
-#' containing any of these strings will be returned. Useful strings may be 'hmean_' for 
-#' population means, 'hsd_' for pop standard deviations, 'tipred_' for time
-#' independent predictors, or specific combinations such as 'hmean_drift' for the population
+#' containing any of these strings will be returned. Useful strings may be 'pop_' for 
+#' population means, 'popsd' for population standard deviations,
+#'  or specific combinations such as 'pop_DRIFT' for the population
 #' means of temporal dynamics parameters
 #' @return vector of character strings.
 #' @examples
-#' ctStanParnames(ctstantestfit,substrings=c('hmean_','hsd_'))
+#' ctStanParnames(ctstantestfit,substrings=c('pop_','popsd'))
 #' @export
-ctStanParnames <- function(x,substrings=c('hmean_','hsd_')){
+ctStanParnames <- function(x,substrings=c('pop_','popsd')){
   out<-c()
   for(subsi in substrings){
-    out<- c(out, x$stanfit@model_pars[grep(subsi,x$stanfit@model_pars)])
+    out<- c(out, x$stanfit@model_pars[grep(paste0('^',subsi),x$stanfit@model_pars)])
   }
   return(out)
 }

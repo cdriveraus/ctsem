@@ -2,6 +2,11 @@ suppressOutput <- function(...,verbose=0){
   if(verbose > 0) return(eval(...)) else return(capture.output(eval(...)))
 }
 
+naf <-function(x){
+  x[is.na(x)] <- FALSE
+  return(x)
+}
+
 # helper function to generate an index matrix, or return unique elements of a matrix
 indexMatrix<-function(dimension,symmetrical=FALSE,upper=FALSE,lowerTriangular=FALSE, sep=NULL,starttext=NULL,endtext=NULL,
   unique=FALSE,rowoffset=0,coloffset=0,indices=FALSE,diagonal=TRUE,namesvector=NULL){
@@ -120,7 +125,7 @@ inv_logit<-function(x) {
 #' @export
 
 ctDensity<-function(x,bw='auto',plot=FALSE,...){
-  xlims=stats::quantile(x,probs=c(.05,.95))
+  xlims=stats::quantile(x,probs=c(.05,.95),na.rm=TRUE)
   sd=sd(xlims)
   xlims[1] = xlims[1] - sd
   xlims[2] = xlims[2] + sd
@@ -150,7 +155,7 @@ ctDensityList<-function(x,xlimsindex='all',plot=FALSE,ylab='Density',
   if(all(xlimsindex=='all')) xlimsindex <- 1:length(x)
   
   for(i in xlimsindex){
-    newxlims=stats::quantile(x[[i]],probs=probs)
+    newxlims=stats::quantile(x[[i]],probs=probs,na.rm=TRUE)
     if(i==1) {
       xlims=newxlims
     } 
@@ -161,8 +166,9 @@ ctDensityList<-function(x,xlimsindex='all',plot=FALSE,ylab='Density',
   sd=sd(xlims)
   xlims[1] = xlims[1] - sd/2
   xlims[2] = xlims[2] + sd/2
+
   bw=abs(max( 
-    min( (sd)/length(x[[1]])^.3,sd/30),
+    min( (sd)/length(x[[1]])^.4,sd/30),
       1e-5))
   
   if(all(colvec=='auto')) colvec=1:length(x)
@@ -172,7 +178,7 @@ ctDensityList<-function(x,xlimsindex='all',plot=FALSE,ylab='Density',
   # mid=mean(c(xlims[2],xlims[1]))
   # xlims[1] = xlims[1] - (mid-xlims[1])/8
   # xlims[2] = xlims[2] + (xlims[2]-mid)/8
-  denslist<-lapply(1:length(x),function(xi) stats::density(x[[xi]],bw=bw,n=5000,from=xlims[1]-sd/2,to=xlims[2]+sd/2))
+  denslist<-lapply(1:length(x),function(xi) stats::density(x[[xi]],bw=bw,n=5000,from=xlims[1]-sd/2,to=xlims[2]+sd/2,na.rm=TRUE))
   ylims=c(0,max(unlist(lapply(denslist,function(li) max(li$y))))*1.1) * ifelse(legend[1]!=FALSE, 1.2,1)
   
   if(plot) {
