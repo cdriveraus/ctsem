@@ -7,9 +7,9 @@
 ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 1000,
   intoverstates = TRUE, binomial = FALSE, fit = TRUE, ukfpop = FALSE,
   stationary = FALSE, plot = FALSE, derrind = "all", optimize = FALSE,
-  isloops = 10, isloopsize = 500, nopriors = FALSE, vb = FALSE,
-  chains = 1, cores = "maxneeded", inits = NULL, maxtimestep = 9999,
-  lineardynamics = "auto", forcerecompile = FALSE,
+  isloops = 10, isloopsize = 500, issamples = 5000, nopriors = FALSE,
+  vb = FALSE, chains = 1, cores = "maxneeded", inits = NULL,
+  maxtimestep = 9999, lineardynamics = "auto", forcerecompile = FALSE,
   control = list(adapt_delta = 0.8, adapt_init_buffer = 2, adapt_window = 2,
   max_treedepth = 10, stepsize = 0.001), verbose = 0, ...)
 }
@@ -58,6 +58,8 @@ Number of iterations of adaptive importance sampling to perform after optimizati
 
 \item{isloopsize}{Only relevent if \code{optimize=TRUE}. 
 Number of samples per iteration of importance sampling.}
+
+\item{issamples}{Number of samples to use for final results of importance sampling.}
 
 \item{nopriors}{logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.}
 

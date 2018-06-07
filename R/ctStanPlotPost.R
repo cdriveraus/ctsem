@@ -46,9 +46,6 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
 
   nsubjects<-obj$data$nsubjects 
 
-  indvaryingcount<-0
-  popmeancount<-0
-  
   for(ri in rows){
     pname <- obj$setup$popsetup$parname[ri]
     pari <- obj$setup$popsetup[ri,'param']
@@ -71,7 +68,7 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
       sdscale <- obj$setup$popvalues[ri,'sdscale']
       sdtform <- gsub('.*', '*',obj$ctstanmodel$rawpopsdtransform,fixed=TRUE)
       
-      rawpopsdbase<-e$rawpopsdbase[,popsetup$indvarying[pari]] 
+      rawpopsdbase<-e$rawpopsdbase[,popsetup$indvarying[ri]] 
       
       rawpopsd <- eval(parse(text=sdtform)) 
       
@@ -97,7 +94,7 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
       rawpopsdbase<-  stats::rnorm(densiter,0,1)
       rawpopsdprior <- eval(parse(text=sdtform)) #rawpopsd prior samples
 
-      hsdpost <- e[['popsd']][,ri]
+      hsdpost <- e$popsd[,popsetup$indvarying[ri]]
 
       param<-suppressWarnings(rawpopmeans+rawpopsdprior)
       high<-tform(param,popsetup$transform[pari],popvalues$multiplier[pari], popvalues$meanscale[pari],popvalues$offset[pari])

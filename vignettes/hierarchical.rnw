@@ -312,7 +312,6 @@ By default, all free model parameters are set to individually varying, except fo
 <<transform, fig.width=8, fig.height=5,fig.cap="Prior distribution density plots." >>=
 par(mfrow=c(1,2))
 plot(model,rows=7,rawpopsd=1)
-print(model$pars[7,])
 model$pars$transform[7]<- 0
 model$pars$meanscale[7] <- 2
 model$pars$multiplier[7] <- 1
@@ -455,13 +454,12 @@ datalong <- cbind(id, time, sunspots)
    DRIFT=matrix(c(0, 'a21', 1, 'a22'), nrow=2, ncol=2),
    MANIFESTMEANS=matrix(c('m1'), nrow=1, ncol=1),
    CINT=matrix(c(0, 0), nrow=2, ncol=1),
-   # MANIFESTVAR=diag(0,1),
    T0VAR=matrix(c(1,0,0,1), nrow=2, ncol=2), #Because single subject
    DIFFUSION=matrix(c(0, 0, 0, "diffusion"), ncol=2, nrow=2))
  
  ssmodel$pars$indvarying<-FALSE #Because single subject
  ssmodel$pars$offset[14]<- 44 #Because not mean centered
- ssmodel$pars$transform[4]<- 1 #To avoid multi modality 
+ ssmodel$pars[4,c('transform','offset')]<- c(1,0) #To avoid multi modality 
 
 #fit
 ssfit <- ctStanFit(datalong, ssmodel, iter=300, chains=2)
@@ -492,7 +490,7 @@ datalong <- cbind(id, time, sunspots)
  
  ssmodel$pars$indvarying<-FALSE #Because single subject
  ssmodel$pars$offset[14]<- 44 #Because not mean centered
- ssmodel$pars$transform[4]<-1 #To avoid multi modality 
+ ssmodel$pars[4,c('transform','offset')]<- c(1,0) #To avoid multi modality 
 
 #fit
 ssfit <- ctStanFit(datalong, ssmodel, iter=300, chains=2)

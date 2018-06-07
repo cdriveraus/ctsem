@@ -1,6 +1,3 @@
-%\VignetteIndexEntry{Introduction to Hierarchical Continuous Time Dynamic Modelling with ctsem}
-%\VignetteKeyword{SEM, time series, panel data, dynamic models}
-%\VignetteEngine{knitr::knitr}
 \documentclass[11pt]{article}\usepackage[]{graphicx}\usepackage[]{color}
 %% maxwidth is the original width if it is less than linewidth
 %% otherwise use linewidth (to make sure the graphics do not exceed the margin)
@@ -52,6 +49,10 @@
 \newenvironment{knitrout}{}{} % an empty environment to be redefined in TeX
 
 \usepackage{alltt}
+%\VignetteIndexEntry{Introduction to Hierarchical Continuous Time Dynamic Modelling with ctsem}
+%\VignetteKeyword{SEM, time series, panel data, dynamic models}
+%\VignetteEngine{knitr::knitr}
+%\usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc} 
 \usepackage{lmodern}
 \usepackage[utf8]{inputenc}
@@ -341,13 +342,13 @@ The \verb|pars| subobject of the created model object (in this case, \verb|model
 \end{alltt}
 \begin{verbatim}
    matrix row col           param value transform multiplier meanscale offset indvarying sdscale
-1 T0MEANS   1   1     T0mean_eta1    NA         0          1         5      0       TRUE       1
-2 T0MEANS   2   1     T0mean_eta2    NA         0          1         5      0       TRUE       1
+1 T0MEANS   1   1     T0mean_eta1    NA         0          1       5.0      0       TRUE       1
+2 T0MEANS   2   1     T0mean_eta2    NA         0          1       5.0      0       TRUE       1
 3  LAMBDA   1   1            <NA>     1         0         NA        NA     NA      FALSE       1
 4  LAMBDA   1   2            <NA>     0         0         NA        NA     NA      FALSE       1
 5  LAMBDA   2   1            <NA>     0         0         NA        NA     NA      FALSE       1
 6  LAMBDA   2   2            <NA>     1         0         NA        NA     NA      FALSE       1
-7   DRIFT   1   1 drift_eta1_eta1    NA         2         -1         2      0       TRUE       1
+7   DRIFT   1   1 drift_eta1_eta1    NA         2         -1       1.5      0       TRUE       1
   TI1_effect TI2_effect TI3_effect
 1       TRUE       TRUE       TRUE
 2       TRUE       TRUE       TRUE
@@ -370,15 +371,6 @@ By default, all free model parameters are set to individually varying, except fo
 \begin{alltt}
 \hlkwd{par}\hlstd{(}\hlkwc{mfrow}\hlstd{=}\hlkwd{c}\hlstd{(}\hlnum{1}\hlstd{,}\hlnum{2}\hlstd{))}
 \hlkwd{plot}\hlstd{(model,}\hlkwc{rows}\hlstd{=}\hlnum{7}\hlstd{,}\hlkwc{rawpopsd}\hlstd{=}\hlnum{1}\hlstd{)}
-\hlkwd{print}\hlstd{(model}\hlopt{$}\hlstd{pars[}\hlnum{7}\hlstd{,])}
-\end{alltt}
-\begin{verbatim}
-  matrix row col           param value transform multiplier meanscale offset indvarying sdscale
-7  DRIFT   1   1 drift_eta1_eta1    NA         2         -1         2      0       TRUE       1
-  TI1_effect TI2_effect TI3_effect
-7       TRUE       TRUE       TRUE
-\end{verbatim}
-\begin{alltt}
 \hlstd{model}\hlopt{$}\hlstd{pars}\hlopt{$}\hlstd{transform[}\hlnum{7}\hlstd{]}\hlkwb{<-} \hlnum{0}
 \hlstd{model}\hlopt{$}\hlstd{pars}\hlopt{$}\hlstd{meanscale[}\hlnum{7}\hlstd{]} \hlkwb{<-} \hlnum{2}
 \hlstd{model}\hlopt{$}\hlstd{pars}\hlopt{$}\hlstd{multiplier[}\hlnum{7}\hlstd{]} \hlkwb{<-} \hlnum{1}
@@ -589,7 +581,8 @@ Alternatively, a prior can be placed on the stationarity of the dynamic models, 
 For diagnosing problems or modifying the model in ways not achievable via the ctsem model specification, one can use ctsem to generate the Stan code and then work directly with that, simply by specifying the argument \verb|fit=FALSE| to the \verb|ctStanFit| function, and accessing the \verb|$stanmodeltext| subobject. Any altered code can be passed back into \verb|ctStanFit| by using the \verb|stanmodeltext| argument, which can be convenient for setting up the data in particular.
 
 \subsection{Using Rstan functions}
-The standard rstan output functions such as summary and extract are also available, and the shinystan package provides an excellent browser based interface. The stan fit object is stored under the \verb|$stanfit| subobject of the \verb|ctStanFit| output. The parameters which are likely to be of most interest in the output are prefixed by \verb|hmean_| for pop (population) mean, \verb|hsd_| for pop standard deviation, and \verb|tipred_| for time independent predictor. Any \verb|hmean| parameters are returned in the form used for input - so correlations and standard deviations for any of the covariance related parameters. Subject specific parameters are denoted by the matrix they are from, then the first index represents the subject id, followed by standard matrix notation. For example, the 2nd row and 1st column of the DRIFT matrix for subject 8 is \verb|DRIFT[8,2,1]|. Parameters in such matrices are returned in the form used for internal calculations -- that is, variance covariance matrices are returned as such, rather than the lower-triangular standard deviation and correlation matrices required for input. The exception to this are the time independent predictor effects, prefixed with \verb|tipred_|, for which a linear effect of a change of 1 on the predictor is approximated. So although \verb|tipred_TI1| is only truly linear with respect to internal parameterisations, we approximate the linear effect (for the sake of output summaries only) by averaging the effect of a score of +1 or -1 on the predictor, on the population mean. 
+The standard rstan output functions such as summary and extract are also available, and the shinystan package provides an excellent browser based interface. The stan fit object is stored under the \verb|$stanfit| subobject of the \verb|ctStanFit| output. The parameters which are likely to be of most interest in the output are prefixed by \verb|pop_| for pop (population) mean, and \verb|popsd| for pop standard deviation. Any \verb|pop| parameters are returned in the form of the continuous time matrix equations. Subject specific parameters are denoted by the matrix they are from, then the first index represents the subject id, followed by standard matrix notation. For example, the 2nd row and 1st column of the DRIFT matrix for subject 8 is \verb|DRIFT[8,2,1]|. Parameters in such matrices are returned in the form used for internal calculations -- that is, variance covariance matrices are returned as such, rather than the lower-triangular standard deviation and correlation matrices required for input. 
+% The exception to this are the time independent predictor effects, prefixed with \verb|tipred_|, for which a linear effect of a change of 1 on the predictor is approximated. So although \verb|tipred_TI1| is only truly linear with respect to internal parameterisations, we approximate the linear effect (for the sake of output summaries only) by averaging the effect of a score of +1 or -1 on the predictor, on the population mean. 
 
 
 \subsection{Oscillating, single subject example - sunspots data}
@@ -621,7 +614,7 @@ In the following example we fit the sunspots data available within R, which has 
 
  \hlstd{ssmodel}\hlopt{$}\hlstd{pars}\hlopt{$}\hlstd{indvarying}\hlkwb{<-}\hlnum{FALSE} \hlcom{#Because single subject}
  \hlstd{ssmodel}\hlopt{$}\hlstd{pars}\hlopt{$}\hlstd{offset[}\hlnum{14}\hlstd{]}\hlkwb{<-} \hlnum{44} \hlcom{#Because not mean centered}
- \hlstd{ssmodel}\hlopt{$}\hlstd{pars}\hlopt{$}\hlstd{transform[}\hlnum{4}\hlstd{]}\hlkwb{<-}\hlnum{1} \hlcom{#To avoid multi modality }
+ \hlstd{ssmodel}\hlopt{$}\hlstd{pars[}\hlnum{4}\hlstd{,}\hlkwd{c}\hlstd{(}\hlstr{'transform'}\hlstd{,}\hlstr{'offset'}\hlstd{)]}\hlkwb{<-} \hlkwd{c}\hlstd{(}\hlnum{1}\hlstd{,}\hlnum{0}\hlstd{)} \hlcom{#To avoid multi modality }
 
 \hlcom{#fit}
 \hlstd{ssfit} \hlkwb{<-} \hlkwd{ctStanFit}\hlstd{(datalong, ssmodel,} \hlkwc{iter}\hlstd{=}\hlnum{300}\hlstd{,} \hlkwc{chains}\hlstd{=}\hlnum{2}\hlstd{)}
