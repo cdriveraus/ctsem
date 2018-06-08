@@ -320,6 +320,7 @@ matrix[PARSsetup_rowcount, 5] PARSvalues;
   int nmatrixslots;
   int popsetup[nmatrixslots,5];
   real popvalues[nmatrixslots,5];
+  int ls;
 }
       
 transformed data{
@@ -507,9 +508,9 @@ model{
     if(ukf==1){ //ukf approximation parameters
       if(T0check[rowi] == 1) { ndynerror = nlatent; } else ndynerror = ndiffusion;
       if(T0check[rowi]==1 || ( ndiffusion < nlatent && T0check[rowi-1]==1)) {
-        asquared =  2.0/sqrt(nlatentpop+ndynerror) * 1e-1;
+        asquared =  2.0/sqrt(0.0+nlatentpop+ndynerror) * 1e-1;
         l = asquared * (nlatentpop + ndynerror + k) - (nlatentpop+ndynerror); 
-        sqrtukfadjust = sqrt(nlatentpop + ndynerror +l);
+        sqrtukfadjust = sqrt(0.0+nlatentpop + ndynerror +l);
       }
     }
 
@@ -1047,7 +1048,6 @@ model{
       
   
       err[o] = Y[rowi,o] - ypred[o]; // prediction error
-     
       if(intoverstates==1) etaupd[rowi,] = etaprior[rowi,] + (K[,o] * err[o]);
 
   
@@ -1069,10 +1069,12 @@ model{
          errtrans[(cobscount+1):(cobscount+size(cindex))] = mdivide_left_tri_low(ypredcov_sqrt[cindex,cindex], err[cindex]); //transform pred errors to standard normal dist and collect
          errscales[(cobscount+1):(cobscount+size(cindex))] = log(diagonal(ypredcov_sqrt[cindex,cindex])); //account for transformation of scale in loglik
       }
+  
+
     }//end nobs > 0 section
   }//end rowi
 
-  if(intoverstates==1 || sum(ncont_y) > 0) ll = ll + normal_lpdf(errtrans|0,1) - sum(errscales);
+  if((intoverstates==1 || sum(ncont_y) > 0)) ll = ll + normal_lpdf(errtrans|0,1) - sum(errscales);
 }
   target += ll;
   
@@ -1199,9 +1201,9 @@ for(geni in 1:ngenerations){
     if(ukf==1){ //ukf approximation parameters
       if(T0check[rowi] == 1) { ndynerror = nlatent; } else ndynerror = ndiffusion;
       if(T0check[rowi]==1 || ( ndiffusion < nlatent && T0check[rowi-1]==1)) {
-        asquared =  2.0/sqrt(nlatentpop+ndynerror) * 1e-1;
+        asquared =  2.0/sqrt(0.0+nlatentpop+ndynerror) * 1e-1;
         l = asquared * (nlatentpop + ndynerror + k) - (nlatentpop+ndynerror); 
-        sqrtukfadjust = sqrt(nlatentpop + ndynerror +l);
+        sqrtukfadjust = sqrt(0.0+nlatentpop + ndynerror +l);
       }
     }
 
@@ -1449,7 +1451,7 @@ asymCINT[asymCINTsubindex[si]] = sasymCINT;
   
       if(T0check[rowi]==0){ //compute updated sigpoints
       
-      sigpoints = chol(etaupdcov[rowi-1,,]) * sqrtukfadjust;
+      sigpoints = chol(makesym(etaupdcov[rowi-1,,] * sqrtukfadjust));
         etaprior[rowi,] = etaupd[rowi-1,];
       }
   
@@ -1758,32 +1760,31 @@ print("rowi ",rowi, "  si ", si, "  etaprior[rowi] ",etaprior[rowi],"  etapriorc
         if(lineardynamics==1) print("discreteDRIFT ",discreteDRIFT,"  discreteCINT ", discreteCINT, "  discreteDIFFUSION ", discreteDIFFUSION)
 }
 if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
-//{
-//vector[nmanifest] eigvals;
-//int pd;
-//eigvals[cindex] = eigenvalues_sym(ypredcov[cindex, cindex]);
-//pd = 1;
-//for(ei in 1:nobsi) if(eigvals[cindex[ei]] <=0) pd =0;
-  //if(pd==1)        
-ypredcov_sqrt[cindex,cindex]=chol(ypredcov[cindex, cindex]); //use o0, or cindex?
-for(vi in 1:nmanifest){
-if(fabs(ypred[vi]) > 1e10 ) ypred[vi] =-99999;
-if(is_nan(ypred[vi]) ) ypred[vi] =-99999;
-if(is_inf(ypred[vi]) ) ypred[vi] =-99999;
-//if(pd==0) ypredcov_sqrt = diag_matrix(rep_vector(1,nmanifest));
-}
-          if(ncont_y[rowi] > 0) Ygen[geni, rowi, o0] = multi_normal_cholesky_rng(ypred[o], ypredcov_sqrt[o0,o0]);
+        
+        ypredcov_sqrt[cindex,cindex]=chol(ypredcov[cindex, cindex]); //use o0, or cindex?
+        for(vi in 1:nmanifest){
+          if(fabs(ypred[vi]) > 1e10 || is_nan(ypred[vi]) || is_inf(ypred[vi])) {
+            ypred[vi] =99999;
+            nobsi = 0; //set nobsi to 0 to skip update steps
+          }
+        }
+        if(nobsi > 0){ //check nobsi again in case of problems
+          if(ncont_y[rowi] > 0) Ygen[geni, rowi, cindex] = multi_normal_cholesky_rng(ypred[cindex], ypredcov_sqrt[cindex,cindex]);
           if(nbinary_y[rowi] > 0) for(obsi in 1:size(o1)) Ygen[geni, rowi, o1[obsi]] = bernoulli_rng(ypred[o1[obsi]]);
-for(vi in 1:nmanifest) if(is_nan(Ygen[geni,rowi,vi])) Ygen[geni,rowi,vi] = -99999;
-//}
+          for(vi in 1:nmanifest) if(is_nan(Ygen[geni,rowi,vi])) {
+            Ygen[geni,rowi,vi] = 99999;
+            nobsi = 1;
+          }
+          err[o] = Ygen[geni,rowi,o] - ypred[o]; // prediction error
+        }
       
   
       
-     err[o] = Ygen[geni,rowi,o] - ypred[o]; // prediction error
       if(intoverstates==1) etaupd[rowi,] = etaprior[rowi,] + (K[,o] * err[o]);
 
   
       
+
     }//end nobs > 0 section
   }//end rowi
 

@@ -15,6 +15,7 @@ ctStanPostPredict <- function(fit,legend=TRUE,wait=FALSE){
   e<-extract.ctStanFit(fit)
   probs=c(.025,.5,.975)
   Ygen <- e$Ygen
+  # Ygen[Ygen==99999] <- NA
   ctDensityList(x=list(fit$data$Y,Ygen),plot=T,main='All variables',lwd=2,legend = c('Observed','Model implied'),xlab='Value')
   
   y<-aaply(Ygen,c(2,3,4),quantile,na.rm=TRUE,probs=probs,.drop=FALSE)

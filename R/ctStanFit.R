@@ -140,7 +140,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     ukfpop | 
     !is.null(ctstanmodel$timeupdate) | 
       lineardynamics == FALSE | 
-    (any(ctstanmodel$manifesttype==1) & intoverstates==TRUE)
+    (any(ctstanmodel$manifesttype==99) & intoverstates==TRUE)
   )   {message('Using unscented Kalman filter...'); ukf <- TRUE}
   
   
@@ -195,12 +195,12 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   manifesttype=ctstanmodel$manifesttype
   
   #fix binary manifestvariance
-  if(any(manifesttype!=0)){ #if any non continuous variables, (with free parameters)...
-    if(any(is.na(as.numeric(c(ctspec$value[ctspec$matrix=='MANIFESTVAR'][ctspec$row[ctspec$matrix=='MANIFESTVAR'] %in% which(manifesttype!=0)],
+  if(any(manifesttype==1)){ #if any non continuous variables, (with free parameters)...
+    if(any(is.na(as.numeric(c(ctspec$value[ctspec$matrix=='MANIFESTVAR'][ctspec$row[ctspec$matrix=='MANIFESTVAR'] %in% which(manifesttype==1)],
       ctspec$value[ctspec$matrix=='MANIFESTVAR'][ctspec$col[ctspec$matrix=='MANIFESTVAR'] %in% which(manifesttype!=0)]))))){
     message('Fixing any free MANIFESTVAR parameters for binary indicators to deterministic calculation')
-    ctspec$value[ctspec$matrix=='MANIFESTVAR'][ctspec$row[ctspec$matrix=='MANIFESTVAR'] %in% which(manifesttype!=0)] <- 0
-    ctspec$value[ctspec$matrix=='MANIFESTVAR'][ctspec$col[ctspec$matrix=='MANIFESTVAR'] %in% which(manifesttype!=0)] <- 0
+    ctspec$value[ctspec$matrix=='MANIFESTVAR'][ctspec$row[ctspec$matrix=='MANIFESTVAR'] %in% which(manifesttype==1)] <- 0
+    ctspec$value[ctspec$matrix=='MANIFESTVAR'][ctspec$col[ctspec$matrix=='MANIFESTVAR'] %in% which(manifesttype==1)] <- 0
   }}
   
   #clean ctspec structure
@@ -589,9 +589,9 @@ ukfilterfunc<-function(ppchecking){
     if(ukf==1){ //ukf approximation parameters
       if(T0check[rowi] == 1) { ndynerror = nlatent; } else ndynerror = ndiffusion;
       if(T0check[rowi]==1 || ( ndiffusion < nlatent && T0check[rowi-1]==1)) {
-        asquared =  2.0/sqrt(nlatentpop+ndynerror) * 1e-1;
+        asquared =  2.0/sqrt(0.0+nlatentpop+ndynerror) * 1e-1;
         l = asquared * (nlatentpop + ndynerror + k) - (nlatentpop+ndynerror); 
-        sqrtukfadjust = sqrt(nlatentpop + ndynerror +l);
+        sqrtukfadjust = sqrt(0.0+nlatentpop + ndynerror +l);
       }
     }
 
@@ -666,7 +666,7 @@ ukfilterfunc<-function(ppchecking){
   
       if(T0check[rowi]==0){ //compute updated sigpoints
       ',if(!ppchecking) 'sigpoints = cholesky_decompose(makesym(etaupdcov[rowi-1,,] * sqrtukfadjust));','
-      ',if(ppchecking) 'sigpoints = chol(etaupdcov[rowi-1,,]) * sqrtukfadjust;','
+      ',if(ppchecking) 'sigpoints = chol(makesym(etaupdcov[rowi-1,,] * sqrtukfadjust));','
         etaprior[rowi,] = etaupd[rowi-1,];
       }
   
@@ -828,28 +828,26 @@ print("rowi ",rowi, "  si ", si, "  etaprior[rowi] ",etaprior[rowi],"  etapriorc
         if(lineardynamics==1) print("discreteDRIFT ",discreteDRIFT,"  discreteCINT ", discreteCINT, "  discreteDIFFUSION ", discreteDIFFUSION)
 }
 if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
-//{
-//vector[nmanifest] eigvals;
-//int pd;
-//eigvals[cindex] = eigenvalues_sym(ypredcov[cindex, cindex]);
-//pd = 1;
-//for(ei in 1:nobsi) if(eigvals[cindex[ei]] <=0) pd =0;
-  //if(pd==1)        
-ypredcov_sqrt[cindex,cindex]=chol(ypredcov[cindex, cindex]); //use o0, or cindex?
-for(vi in 1:nmanifest){
-if(fabs(ypred[vi]) > 1e10 ) ypred[vi] =-99999;
-if(is_nan(ypred[vi]) ) ypred[vi] =-99999;
-if(is_inf(ypred[vi]) ) ypred[vi] =-99999;
-//if(pd==0) ypredcov_sqrt = diag_matrix(rep_vector(1,nmanifest));
-}
-          if(ncont_y[rowi] > 0) Ygen[geni, rowi, o0] = multi_normal_cholesky_rng(ypred[o], ypredcov_sqrt[o0,o0]);
+        
+        ypredcov_sqrt[cindex,cindex]=chol(ypredcov[cindex, cindex]); //use o0, or cindex?
+        for(vi in 1:nmanifest){
+          if(fabs(ypred[vi]) > 1e10 || is_nan(ypred[vi]) || is_inf(ypred[vi])) {
+            ypred[vi] =99999;
+            nobsi = 0; //set nobsi to 0 to skip update steps
+          }
+        }
+        if(nobsi > 0){ //check nobsi again in case of problems
+          if(ncont_y[rowi] > 0) Ygen[geni, rowi, cindex] = multi_normal_cholesky_rng(ypred[cindex], ypredcov_sqrt[cindex,cindex]);
           if(nbinary_y[rowi] > 0) for(obsi in 1:size(o1)) Ygen[geni, rowi, o1[obsi]] = bernoulli_rng(ypred[o1[obsi]]);
-for(vi in 1:nmanifest) if(is_nan(Ygen[geni,rowi,vi])) Ygen[geni,rowi,vi] = -99999;
-//}
+          for(vi in 1:nmanifest) if(is_nan(Ygen[geni,rowi,vi])) {
+            Ygen[geni,rowi,vi] = 99999;
+            nobsi = 1;
+          }
+          err[o] = Ygen[geni,rowi,o] - ypred[o]; // prediction error
+        }
       '),'
   
       ',if(!ppchecking) 'err[o] = Y[rowi,o] - ypred[o]; // prediction error','
-     ',if(ppchecking) 'err[o] = Ygen[geni,rowi,o] - ypred[o]; // prediction error','
       if(intoverstates==1) etaupd[rowi,] = etaprior[rowi,] + (K[,o] * err[o]);
 
   
@@ -870,11 +868,13 @@ for(vi in 1:nmanifest) if(is_nan(Ygen[geni,rowi,vi])) Ygen[geni,rowi,vi] = -9999
          ypredcov_sqrt[cindex,cindex]=cholesky_decompose(makesym(ypredcov[cindex,cindex]));
          errtrans[(cobscount+1):(cobscount+size(cindex))] = mdivide_left_tri_low(ypredcov_sqrt[cindex,cindex], err[cindex]); //transform pred errors to standard normal dist and collect
          errscales[(cobscount+1):(cobscount+size(cindex))] = log(diagonal(ypredcov_sqrt[cindex,cindex])); //account for transformation of scale in loglik
-      }'),'
+      }
+  '),'
+
     }//end nobs > 0 section
   }//end rowi
 
-  ',if(!ppchecking) paste0('if(intoverstates==1 || sum(ncont_y) > 0) ll = ll + normal_lpdf(errtrans|0,1) - sum(errscales);')
+  ',if(!ppchecking) paste0('if((intoverstates==1 || sum(ncont_y) > 0)) ll = ll + normal_lpdf(errtrans|0,1) - sum(errscales);')
     )
   return(out)
 }
@@ -1477,6 +1477,7 @@ data {
   int nmatrixslots;
   int popsetup[nmatrixslots,5];
   real popvalues[nmatrixslots,5];
+  int ls;
 }
       
 transformed data{
@@ -1699,22 +1700,25 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
       if(length(out)<n.manifest) out<-c(out,rep(0,n.manifest-length(out)))
       out
     }) )),nrow=c(nrow(datalong),ncol=n.manifest)),
-    nbinary_y=array(as.integer(apply(datalong[,manifestNames,drop=FALSE],1,function(x) length(x[manifesttype==1 & x!=99999]))),dim=nrow(datalong)),
+    nbinary_y=array(as.integer(apply(datalong[,manifestNames,drop=FALSE],1,function(x) 
+      ifelse(ukf==TRUE || intoverstates==FALSE, length(x[manifesttype==1 & x!=99999]), 0))),dim=nrow(datalong)),
     whichbinary_y=matrix(as.integer(t(apply(datalong[,manifestNames,drop=FALSE],1,function(x) {
       # out<-as.numeric(which(manifesttype==1 & x!=99999)) #conditional on whichobs_y
-      out<-as.numeric(which(manifesttype==1)) #not conditional on whichobs_y
+      if(ukf==TRUE || intoverstates==FALSE) out<- as.numeric(which(manifesttype==1)) else out<- rep(0,n.manifest) #not conditional on whichobs_y
       if(length(out)==0) out<-rep(0,n.manifest)
       if(length(out)<n.manifest) out<-c(out,rep(0,n.manifest-length(out)))
       out
     }) )),nrow=c(nrow(datalong),ncol=n.manifest)),
-    ncont_y=array(as.integer(apply(datalong[,manifestNames,drop=FALSE],1,function(x) length(x[manifesttype==0 & x!=99999]))),dim=nrow(datalong)),
+    ncont_y=array(as.integer(apply(datalong[,manifestNames,drop=FALSE],1,function(x) 
+      ifelse(ukf==TRUE || intoverstates==FALSE,length(x[manifesttype==0 & x!=99999]), n.manifest))),dim=nrow(datalong)),
     whichcont_y=matrix(as.integer(t(apply(datalong[,manifestNames,drop=FALSE],1,function(x) {
       # out<-as.numeric(which( (manifesttype==0 | manifesttype==2) & x!=99999)) #conditional on whichobs_y
-      out<-as.numeric(which(manifesttype==0 | manifesttype==2)) #not conditional on whichobs_y
+      if(ukf==TRUE || intoverstates==FALSE) out<- as.numeric(which(manifesttype==0 | manifesttype==2)) else out<-  rep(1,n.manifest) #not conditional on whichobs_y
       if(length(out)==0) out<-rep(0,n.manifest)
       if(length(out)<n.manifest) out<-c(out,rep(0,n.manifest-length(out)))
       out
-    }) )),nrow=c(nrow(datalong),ncol=n.manifest)))
+    }) )),nrow=c(nrow(datalong),ncol=n.manifest))
+    )
 
   if(n.TIpred == 0) tipreds <- array(0,c(0,0))
   standata$tipredsdata <- tipreds
