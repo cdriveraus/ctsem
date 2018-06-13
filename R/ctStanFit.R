@@ -1005,7 +1005,6 @@ subjectparscalc2 <- function(pop=FALSE){
   vector[nparams] indvaraddition;
   
   if(si==1 || (si > 1 && (nindvarying >0 || ntipred > 0))){
-    rawindparams = rawpopmeans;
     tipredaddition = rep_vector(0,nparams);
     indvaraddition = rep_vector(0,nparams);
 
@@ -1020,7 +1019,7 @@ subjectparscalc2 <- function(pop=FALSE){
       paste0('
   if(si <= ',m,'subindex[nsubjects]){
     for(ri in 1:size(',m,'setup)){
-      if(si==1 || ',m,'setup[ri,5] > 0){
+      if(si==1 || ',m,'setup[ri,5] > 0 || ',m,'setup[ri,6] > 0){
         s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = ',
           m,'setup[ri,3] ? ', 
             'tform(rawindparams[ ',m,'setup[ri,3] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ) : ',
@@ -1042,7 +1041,7 @@ subjectparscalc2 <- function(pop=FALSE){
       if(continuoustime==1) sasymDIFFUSION[ derrind, derrind] = to_matrix( 
       -( kron_prod( sDRIFT[ derrind, derrind ], IIlatent[ derrind, derrind ]) + 
          kron_prod(IIlatent[ derrind, derrind ], sDRIFT[ derrind, derrind ]) ) \\ 
-      to_vector( sDIFFUSION[ derrind, derrind ]), ndiffusion,ndiffusion);
+      to_vector( sDIFFUSION[ derrind, derrind ] + IIlatent[ derrind, derrind ] * 1e-5), ndiffusion,ndiffusion);
 
       if(continuoustime==0) sasymDIFFUSION[derrind, derrind] = to_matrix( (IIlatent2[ derrind, derrind ] - 
         kron_prod(sDRIFT[derrind, derrind  ], 
@@ -1119,7 +1118,7 @@ indvar <- 0
 extratformcounter <- 0
 extratforms <- c()
 for(m in basematrices){
-  mdat<-matrix(0,0,5)
+  mdat<-matrix(0,0,6)
   mval<-matrix(0,0,5)
   for(i in 1:nrow(ctspec)){ 
     if(ctspec$matrix[i] == m) {
@@ -1160,7 +1159,8 @@ for(m in basematrices){
         ctspec$col[i],
         ifelse(!is.na(ctspec$param[i]),freepar, 0),
         ifelse(is.na(as.integer(ctspec$transform[i])), -1, as.integer(ctspec$transform[i])),
-        ifelse(!is.na(ctspec$param[i]),indvar,0) 
+        ifelse(!is.na(ctspec$param[i]),indvar,0),
+        ifelse(any(TIPREDEFFECTsetup[freepar,] > 0), 1, 0)
         ),nrow=1)
       rownames(mdatnew) <- ctspec$param[i]
       
@@ -1169,7 +1169,7 @@ for(m in basematrices){
       # if(ctspec$indvarying[i]) indvaryingindex <- c(indvaryingindex, freepar)
       
       mval<-rbind(mval, matrix(c(ctspec$value[i], ctspec$multiplier[i], ctspec$meanscale[i],ctspec$offset[i], ctspec$sdscale[i]),ncol=5))
-      colnames(mdat) <- c('row','col','param','transform', 'indvarying')
+      colnames(mdat) <- c('row','col','param','transform', 'indvarying','tipred')
       colnames(mval) <- c('value','multiplier','meanscale','offset','sdscale')
     }
   }
@@ -1424,6 +1424,9 @@ data {
   matrix[ntipred ? nsubjects : 0, ntipred ? ntipred : 0] tipredsdata;
   int nmissingtipreds;
   int ntipredeffects;
+  real<lower=0> tipredsimputedscale;
+  real<lower=0> tipredeffectscale;
+  
   
   vector[nmanifest] Y[ndatapoints];
   int nopriors;
@@ -1471,13 +1474,12 @@ data {
 
   ',paste0(unlist(lapply(c(basematrices,'asymCINT','asymDIFFUSION'),function(mati) paste0('int ',mati,'subindex[nsubjects];',collapse='\n'))),collapse='\n'),'
   ',paste0(unlist(lapply(basematrices,function(m) paste0('int ',m,'setup_rowcount;',collapse='\n'))),collapse='\n'),'
-  ',paste0(unlist(lapply(basematrices,function(m) paste0('int ',m,'setup[',m,'setup_rowcount,5 ];',collapse='\n'))),collapse='\n'),'
+  ',paste0(unlist(lapply(basematrices,function(m) paste0('int ',m,'setup[',m,'setup_rowcount,6 ];',collapse='\n'))),collapse='\n'),'
   ',paste0(unlist(lapply(basematrices,function(m) paste0('matrix[',m,'setup_rowcount, 5] ',m,'values;'))),collapse='\n'),'
   int TIPREDEFFECTsetup[nparams, ntipred];
   int nmatrixslots;
-  int popsetup[nmatrixslots,5];
+  int popsetup[nmatrixslots,6];
   real popvalues[nmatrixslots,5];
-  int ls;
 }
       
 transformed data{
@@ -1569,8 +1571,8 @@ model{
     target += normal_lpdf(rawpopmeans|0,1);
   
     if(ntipred > 0){ 
-     tipredeffectparams ~ ',ctstanmodel$tipredeffectprior, '; 
-     tipredsimputed ~ ',ctstanmodel$tipredsimputedprior,';
+     tipredeffectparams ~ normal(0,tipredeffectscale);
+     tipredsimputed ~ normal(0,tipredsimputedscale);
     }
     
     if(nindvarying > 0){
@@ -1721,10 +1723,12 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
     )
 
   if(n.TIpred == 0) tipreds <- array(0,c(0,0))
-  standata$tipredsdata <- tipreds
+  standata$tipredsdata <- as.matrix(tipreds)
   standata$nmissingtipreds <- as.integer(length(tipreds[tipreds== 99999]))
   standata$ntipredeffects <- as.integer(ifelse(n.TIpred > 0, sum(unlist(ctspec[,paste0(TIpredNames,'_effect')])), 0))
   standata$TIPREDEFFECTsetup <- apply(TIPREDEFFECTsetup,c(1,2),as.integer,.drop=FALSE)
+  standata$tipredsimputedscale <- ctstanmodel$tipredsimputedscale
+  standata$tipredeffectscale <- ctstanmodel$tipredeffectscale
   
   if(n.TDpred ==0) tdpreds <- matrix(0,0,0)
   standata$tdpreds=array(as.matrix(tdpreds),dim=c(nrow(tdpreds),ncol(tdpreds)))
@@ -1773,10 +1777,13 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
         for(i in 1:(chains)){
           staninits[[i]]=list(
             rawpopmeans=array(rnorm(nparams,0,.1)),
-            rawpopsd=array(rnorm(nindvarying,0,.1)),
-            baseindparams=array(rnorm(ifelse(ukfpop,0,nsubjects*nindvarying))),
-            etaupd=array(stats::rnorm(nrow(datalong)*n.latent,0,.1),dim=c(nrow(datalong),n.latent))
+            rawpopsdbase=array(rnorm(nindvarying,-2,.1)),
+            sqrtpcov=array(rnorm(standata$nindvaryingoffdiagonals,0,.1)),
+            baseindparams=array(rnorm(ifelse(ukfpop,0,nsubjects*nindvarying),0,.1)),
+            etaupd=array(stats::rnorm(nrow(datalong)*n.latent,0,.1),dim=c(nrow(datalong),n.latent)),
+            tipredeffectparams=array(rnorm(standata$ntipredeffects,0,.01))
             )
+          if(!is.na(ctstanmodel$rawpopsdbaselowerbound)) staninits[[i]]$rawpopsdbase=exp(staninits[[i]]$rawpopsdbase)
         }
       }
     }
@@ -1830,7 +1837,7 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
       
       suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=40000, init=init,as_vector=FALSE,
         tol_obj=1e-12, tol_rel_obj=0,init_alpha=.001, tol_grad=0,tol_rel_grad=1e1,tol_param=1e-12,history_size=100),verbose=verbose))
-      
+
       est=optimfit$par
       # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan::grab_cxxfun(sm@dso))
       suppressWarnings(suppressOutput(smf<-sampling(sm,iter=1,chains=1,data=standata,check_data=FALSE, control=list(max_treedepth=0))))
