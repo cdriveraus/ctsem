@@ -86,16 +86,16 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
     aaply(tipreds,1,function(tix){ #and every distinct tipred vector
       rawpopmeans[iterx,,drop=FALSE] + t(matrix(tieffect[iterx,,,drop=FALSE],nrow=dim(tieffect)[2]) %*% tix)
     },.drop=FALSE)
-  })
+  },.drop=FALSE)
   
   
   if(!parmatrices) {
     if(all(whichpars=='all')) whichpars=which(apply(tieffect,2,function(x) any(x!=0)))
-    raweffect <- raweffect[,,whichpars]
+    raweffect <- raweffect[,,,whichpars,drop=FALSE]
     tieffect<-tieffect[,whichpars,,drop=FALSE] #updating...
     npars<-length(whichpars)
     effect<-aaply(1:npars, 1,function(pari){ #for each param
-      param=raweffect[,,pari]
+      param=raweffect[,,,pari]
       out=tform(param, 
         fit$setup$popsetup$transform[whichpars[pari]], 
         fit$setup$popvalues$multiplier[whichpars[pari]],
@@ -120,7 +120,7 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   
   if(parmatrices)  {
     rawpopmeans <- rawpopmeans[rep(1:nrow(rawpopmeans),each=nsubjects),] #match rows of rawpopmeans and raweffect
-    raweffect <- matrix(raweffect,ncol=dim(raweffect)[3])
+    raweffect <- matrix(raweffect,ncol=dim(raweffect)[4])
     
     #check if stanfit object can be used
     sf <- fit$stanfit
