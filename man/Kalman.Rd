@@ -6,8 +6,8 @@
 \usage{
 Kalman(kpars, datalong, manifestNames, latentNames, imputeMissings = FALSE,
   TDpredNames = NULL, continuoustime = TRUE, idcol = "id",
-  timecol = "time", diffusionindices = "all", optimize = FALSE,
-  ukf = FALSE, plotoptim = FALSE)
+  timecol = "time", derrind = "all", optimize = FALSE, ukf = FALSE,
+  plotoptim = FALSE)
 }
 \arguments{
 \item{kpars}{list object containing DRIFT,T0VAR,DIFFUSION,CINT,T0MEANS,TDPREDEFFECT,
@@ -35,7 +35,7 @@ Refers only to latent states, observations are always at discrete time points.}
 \item{timecol}{name of time column in datalong. Note that time column must be an ascending sequence
 of numeric values from row 1 to row n. Ignored if continuoustime=FALSE.}
 
-\item{diffusionindices}{vector of integers denoting which latent variables are involved in covariance calcs.}
+\item{derrind}{vector of integers denoting which latent variables are involved in covariance calcs.}
 
 \item{optimize}{Set to TRUE when using for optimization.}
 
