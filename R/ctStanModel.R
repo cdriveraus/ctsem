@@ -106,9 +106,9 @@ ctStanModel<-function(ctmodelobj, type='stanct', indvarying='all'){
       if(ctspec$matrix[pi] %in% c('DRIFT')) {
         if(ctspec$row[pi] == ctspec$col[pi]){
           if(continuoustime==TRUE) {
-            ctspec$transform[pi] <- 2
-            ctspec$meanscale[pi] <- 1.5
-            ctspec$multiplier[pi] <- -1
+            ctspec$transform[pi] <- 1
+            ctspec$meanscale[pi] <- 2
+            ctspec$multiplier[pi] <- -2
              ctspec$offset[pi] <- 0
           }
           if(continuoustime==FALSE) {
@@ -164,13 +164,13 @@ ctStanModel<-function(ctmodelobj, type='stanct', indvarying='all'){
     continuoustime=continuoustime)
   class(out)<-'ctStanModel'
   
-  out$tipredeffectprior <- 'normal(0,1)'
-  out$tipredsimputedprior <- 'normal(0,10)'
+  out$tipredeffectscale <- 1
+  out$tipredsimputedscale <- 1
   
   # out$popsdpriorscale <- 1
-  out$rawpopsdbase <- 'normal(0,1)'
-  out$rawpopsdbaselowerbound <- NA #0
-  out$rawpopsdtransform <- 'exp(rawpopsdbase * 2 -2) .* sdscale' # 'rawpopsdbase .* sdscale' #
+  out$rawpopsdbase <- 'cauchy(0,1)'
+  out$rawpopsdbaselowerbound <- 0 #NA
+  out$rawpopsdtransform <- 'rawpopsdbase .* sdscale' #'exp(rawpopsdbase * 2 -2) .* sdscale' # 'rawpopsdbase .* sdscale' #
   out$stationarymeanprior <- NA
   out$stationaryvarprior <- NA
   out$manifesttype <- rep(0,n.manifest)
