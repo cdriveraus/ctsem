@@ -98,7 +98,7 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
   
   if(!all(subjects %in% datalong[,'subject'])) stop('Invalid subjects specified!')
   
-  if(type=='stan') diffusionindices<-fit$data$diffusionindices else diffusionindices<-c()
+  if(type=='stan') derrind<-fit$data$derrind else derrind<-c()
   
   for(subjecti in subjects){
     #setup subjects data, interpolating and extending as necessary
@@ -132,7 +132,7 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
       TDpredNames=TDpredNames,
       idcol='subject',
       timecol='time',
-      diffusionindices=diffusionindices)
+      derrind=derrind)
   }
   
   if(plot) {

@@ -19,7 +19,7 @@
 #' Refers only to latent states, observations are always at discrete time points.
 #' @param timecol name of time column in datalong. Note that time column must be an ascending sequence
 #' of numeric values from row 1 to row n. Ignored if continuoustime=FALSE.
-#' @param diffusionindices vector of integers denoting which latent variables are involved in covariance calcs.
+#' @param derrind vector of integers denoting which latent variables are involved in covariance calcs.
 #' @param optimize Set to TRUE when using for optimization.
 #' @param ukf set to TRUE to use the unscented Kalman filter, only necessary for fitting non-linear models, 
 #' currently only for optimizing.
@@ -59,7 +59,7 @@ Kalman<-function(kpars,datalong,
   manifestNames,latentNames,imputeMissings=FALSE,
   TDpredNames=NULL,
   continuoustime=TRUE,idcol='id',
-  timecol='time', diffusionindices='all',optimize=FALSE,ukf=FALSE, plotoptim=FALSE){
+  timecol='time', derrind='all',optimize=FALSE,ukf=FALSE, plotoptim=FALSE){
   
   datalong=as.matrix(datalong)
   
@@ -68,8 +68,8 @@ Kalman<-function(kpars,datalong,
   ntdpred=length(TDpredNames)
   
   if(any(c(nmanifest,nlatent) < 1)) stop('Length of manifestNames and latentNames must be greater than 0!')
-  if(all(diffusionindices=='all')) diffusionindices=1:nlatent
-  ndiffusion=length(diffusionindices)
+  if(all(derrind=='all')) derrind=1:nlatent
+  ndiffusion=length(derrind)
   
   Y<-datalong[,manifestNames,drop=FALSE]
   if(ntdpred > 0) {
@@ -79,9 +79,10 @@ Kalman<-function(kpars,datalong,
   }
   
   if(continuoustime) {
-    DRIFTHATCH <- (kpars$DRIFT[diffusionindices,diffusionindices] %x% diag(ndiffusion) + 
-        diag(ndiffusion) %x% kpars$DRIFT[diffusionindices,diffusionindices,drop=FALSE]) 
-    asymDIFFUSION <- matrix(-solve(DRIFTHATCH, c(kpars$DIFFUSION[diffusionindices,diffusionindices,drop=FALSE])), nrow=ndiffusion)
+    DRIFTHATCH <- (kpars$DRIFT[derrind,derrind] %x% diag(ndiffusion) + 
+        diag(ndiffusion) %x% kpars$DRIFT[derrind,derrind,drop=FALSE]) 
+    asymDIFFUSION <- matrix(-solve(DRIFTHATCH, c(kpars$DIFFUSION[derrind,derrind,drop=FALSE] + 
+        diag(1e-5,nlatent)[derrind,derrind,drop=FALSE])), nrow=ndiffusion)
   }
   
   etaprior<-list()
@@ -100,7 +101,7 @@ Kalman<-function(kpars,datalong,
   
   discreteDRIFT<- list()
   discreteCINT<- list()
-  discreteDIFFUSION <- list()
+  discreteDIFFUSION <- array(0,dim=c(nlatent,nlatent,nrow(datalong)))
   
   t0check <- c(1,as.numeric(datalong[-1,idcol]!=datalong[-nrow(datalong),idcol]))
   
@@ -112,25 +113,25 @@ Kalman<-function(kpars,datalong,
       if(continuoustime){
         discreteDRIFT[[rowi]] <- expm(kpars$DRIFT * dt[rowi])
         discreteCINT[[rowi]] <- solve(kpars$DRIFT, (discreteDRIFT[[rowi]] - diag(nlatent))) %*% kpars$CINT
-        discreteDIFFUSION[[rowi]] <- asymDIFFUSION - (discreteDRIFT[[rowi]][diffusionindices,diffusionindices,drop=FALSE] %*% 
-            asymDIFFUSION %*% t(discreteDRIFT[[rowi]][diffusionindices,diffusionindices,drop=FALSE]))
+        discreteDIFFUSION[,,rowi] <- asymDIFFUSION - (discreteDRIFT[[rowi]][derrind,derrind,drop=FALSE] %*% 
+            asymDIFFUSION %*% t(discreteDRIFT[[rowi]][derrind,derrind,drop=FALSE]))
       }
       if(!continuoustime){
         discreteDRIFT[[rowi]] <-kpars$DRIFT
         discreteCINT[[rowi]]<- kpars$CINT
-        discreteDIFFUSION[[rowi]] <- kpars$DIFFUSION[diffusionindices,diffusionindices,drop=FALSE]
+        discreteDIFFUSION[derrind,derrind,rowi] <- kpars$DIFFUSION[derrind,derrind,drop=FALSE]
       }
       
       if(t0check[rowi]==1){
         etaprior[[rowi]]<-kpars$T0MEANS #tdpreds added below
-        etapriorcov[[rowi]]<-kpars$T0VAR[diffusionindices,diffusionindices,drop=FALSE]
+        etapriorcov[[rowi]]<-kpars$T0VAR
       }
       
       
       if(t0check[rowi]==0){
         etaprior[[rowi]] <- discreteCINT[[rowi]]  + discreteDRIFT[[rowi]] %*% etaupd[[rowi-1]]
-        etapriorcov[[rowi]] <-  discreteDRIFT[[rowi]][diffusionindices,diffusionindices,drop=FALSE] %*% 
-          etaupdcov[[rowi-1]] %*% t(discreteDRIFT[[rowi]][diffusionindices,diffusionindices,drop=FALSE])  + discreteDIFFUSION[[rowi]] #check transpose
+        etapriorcov[[rowi]] <-  discreteDRIFT[[rowi]] %*% 
+          etaupdcov[[rowi-1]] %*% t(discreteDRIFT[[rowi]])  + discreteDIFFUSION[derrind,derrind,rowi] #check transpose
       }
       
       if(ntdpred > 0) etaprior[[rowi]] <- etaprior[[rowi]] + kpars$TDPREDEFFECT %*% t(datalong[rowi,TDpredNames,drop=FALSE])
@@ -143,8 +144,8 @@ Kalman<-function(kpars,datalong,
       
       # // one step ahead predictive distribution of y
       yprior[[rowi]] <- kpars$MANIFESTMEANS + kpars$LAMBDA %*% etaprior[[rowi]]
-      ypriorcov[[rowi]] <- kpars$LAMBDA[,diffusionindices,drop=FALSE] %*% etapriorcov[[rowi]] %*% 
-        t(kpars$LAMBDA[,diffusionindices,drop=FALSE]) + kpars$MANIFESTVAR
+      ypriorcov[[rowi]] <- kpars$LAMBDA %*% etapriorcov[[rowi]] %*% 
+        t(kpars$LAMBDA) + kpars$MANIFESTVAR
       
       if(imputeMissings) Y[rowi,] <- yprior[[rowi]] + t(chol(ypriorcov[[rowi]])) %*% rnorm(nmanifest,0,1)
       
@@ -168,25 +169,25 @@ Kalman<-function(kpars,datalong,
         # invypriorcov <- solve(ypriorcov[[rowi]][nafilter,nafilter,drop=FALSE])
         K<-matrix(0,nrow=nlatent,ncol=nmanifest)
         
-        K[diffusionindices,nafilter] <-  t(solve(t(ypriorcov[[rowi]][nafilter,nafilter,drop=FALSE]),
-          t(etapriorcov[[rowi]] %*%  t(kpars$LAMBDA[nafilter,diffusionindices,drop=FALSE]) ) ))
+        K[,nafilter] <-  t(solve(t(ypriorcov[[rowi]][nafilter,nafilter,drop=FALSE]),
+          t(etapriorcov[[rowi]] %*%  t(kpars$LAMBDA[nafilter,,drop=FALSE]) ) ))
         
         # updated distribution 
         etaupd[[rowi]] <- etaprior[[rowi]] + K[,nafilter,drop=FALSE] %*% (err[[rowi]][nafilter,,drop=FALSE])
         
         # etaupdcov[[rowi + 1]] <- etapriorcov[[rowi]]
-        etaupdcov[[rowi]] <- (diag(ndiffusion) - K[diffusionindices,nafilter,drop=FALSE] %*% 
-            kpars$LAMBDA[nafilter,diffusionindices,drop=FALSE]) %*% etapriorcov[[rowi]]
+        etaupdcov[[rowi]] <- (diag(ndiffusion) - K[,nafilter,drop=FALSE] %*% 
+            kpars$LAMBDA[nafilter,,drop=FALSE]) %*% etapriorcov[[rowi]]
         
         # // log likelihood
-        loglik[rowi] <- - 0.5 * (nrow(kpars$LAMBDA[nafilter,diffusionindices,drop=FALSE]) * log(2 * pi)  + 
+        loglik[rowi] <- - 0.5 * (nrow(kpars$LAMBDA[nafilter,,drop=FALSE]) * log(2 * pi)  + 
             log(det(ypriorcov[[rowi]][nafilter,nafilter,drop=FALSE]))    + 
             t(err[[rowi]][nafilter,,drop=FALSE]) %*% 
             solve(ypriorcov[[rowi]][nafilter,nafilter,drop=FALSE],err[[rowi]][nafilter,,drop=FALSE]))
         
         yupd[[rowi]] <- kpars$MANIFESTMEANS + kpars$LAMBDA %*% etaupd[[rowi]]
-        yupdcov[[rowi]] <- kpars$LAMBDA[,diffusionindices,drop=FALSE] %*% etaupdcov[[rowi]] %*% 
-          t(kpars$LAMBDA[,diffusionindices,drop=FALSE]) + kpars$MANIFESTVAR
+        yupdcov[[rowi]] <- kpars$LAMBDA[,,drop=FALSE] %*% etaupdcov[[rowi]] %*% 
+          t(kpars$LAMBDA[,,drop=FALSE]) + kpars$MANIFESTVAR
       }
       
     }
@@ -244,8 +245,8 @@ Kalman<-function(kpars,datalong,
         # if(t0check[rowi]==1 || dt[rowi]!=dt[rowi-1]){
         #   discreteDRIFT[[rowi]] <- expm(DRIFT * dt[rowi])
         #   discreteCINT[[rowi]] <- solve(DRIFT, (discreteDRIFT[[rowi]] - diag(nlatent))) %*% CINT
-        #   discreteDIFFUSION[[rowi]] <- asymDIFFUSION - (discreteDRIFT[[rowi]][diffusionindices,diffusionindices,drop=FALSE] %*%
-        #       asymDIFFUSION %*% t(discreteDRIFT[[rowi]][diffusionindices,diffusionindices,drop=FALSE]))
+        #   discreteDIFFUSION[[rowi]] <- asymDIFFUSION - (discreteDRIFT[[rowi]][derrind,derrind,drop=FALSE] %*%
+        #       asymDIFFUSION %*% t(discreteDRIFT[[rowi]][derrind,derrind,drop=FALSE]))
         # } else {
         #   discreteDRIFT[[rowi]] <-  discreteDRIFT[[rowi-1]]
         #   discreteCINT[[rowi]] <- discreteCINT[[rowi-1]]
@@ -256,13 +257,13 @@ Kalman<-function(kpars,datalong,
       if(!continuoustime){
         discreteDRIFT[[rowi]] <-DRIFT
         discreteCINT[[rowi]]<- CINT
-        discreteDIFFUSION[[rowi]] <- DIFFUSION[diffusionindices,diffusionindices,drop=FALSE]
+        discreteDIFFUSION[[rowi]] <- DIFFUSION[derrind,derrind,drop=FALSE]
       }
       
       if(t0check[rowi]==1){
         etaprior[[rowi]]<-T0MEANS 
         if(ntdpred > 0) etaprior[[rowi]] <- etaprior[[rowi]] + TDPREDEFFECT %*% t(datalong[rowi,TDpredNames,drop=FALSE])
-        etapriorcov[[rowi]]<-T0VAR[diffusionindices,diffusionindices,drop=FALSE]
+        etapriorcov[[rowi]]<-T0VAR[derrind,derrind,drop=FALSE]
       }
       
       if(t0check[rowi]==0){
@@ -330,7 +331,7 @@ Kalman<-function(kpars,datalong,
         discreteDRIFT[[rowi]] <- ctCollapse(discreteDRIFTbits,3,mean)
         if(tvdrift | tvdiffusion) discreteDIFFUSION[[rowi]] <- 
             ctCollapse(discreteDIFFUSIONbits,3,mean) else discreteDIFFUSION[[rowi]] <- asymDIFFUSION - 
-            (discreteDRIFT[[rowi]][diffusionindices,diffusionindices,drop=FALSE] %&% asymDIFFUSION)
+            (discreteDRIFT[[rowi]][derrind,derrind,drop=FALSE] %&% asymDIFFUSION)
           
           if(is.null(kpars$PARVAR)) {
             # dF <- numDeriv::jacobian(func = dynamicmodel, x= c(etaupd[[rowi-1]]),method='simple',
@@ -385,7 +386,7 @@ Kalman<-function(kpars,datalong,
       # H <- numDeriv::jacobian(func = measurementmodel, etaprior[[rowi]] ,
       #   method='simple',method.args=list(eps= sqrt(diag(kpars$DIFFUSION))))
       # 
-      # LAMBDA <- kpars$LAMBDA[nafilter,diffusionindices,drop=FALSE]
+      # LAMBDA <- kpars$LAMBDA[nafilter,derrind,drop=FALSE]
       
       # // one step ahead predictive distribution of y
       # yprior[[rowi]] <- kpars$MANIFESTMEANS + measurementmodel(etaprior[[rowi]])
@@ -421,7 +422,7 @@ Kalman<-function(kpars,datalong,
         if(length(binaryindicators) > 0) loglik[rowi] <-  loglik[rowi] + sum(log( y[binaryindicators]*(yprior[[rowi]][binaryindicators]) + 
             (1-y[binaryindicators])*(1-yprior[[rowi]][binaryindicators]))) 
         #continuous loglik
-         if(length(contindicators) > 0) loglik[rowi] <- loglik[rowi]  - 0.5 * (nrow(kpars$LAMBDA[contindicators,diffusionindices,drop=FALSE]) * log(2 * pi)  +
+         if(length(contindicators) > 0) loglik[rowi] <- loglik[rowi]  - 0.5 * (nrow(kpars$LAMBDA[contindicators,derrind,drop=FALSE]) * log(2 * pi)  +
             log(det(ypriorcov[[rowi]][contindicators,contindicators,drop=FALSE]))    +
             t(err[[rowi]][contindicators,,drop=FALSE]) %*%
             solve(ypriorcov[[rowi]][contindicators,contindicators,drop=FALSE],err[[rowi]][contindicators,,drop=FALSE]))
@@ -431,16 +432,16 @@ Kalman<-function(kpars,datalong,
         
         K<-matrix(0,nrow=nlatent,ncol=nmanifest)
         # 
-        # K[diffusionindices,nafilter] <-  t(solve(t(ypriorcov[[rowi]][nafilter,nafilter,drop=FALSE]),
+        # K[derrind,nafilter] <-  t(solve(t(ypriorcov[[rowi]][nafilter,nafilter,drop=FALSE]),
         #   t(etapriorcov[[rowi]] %*%  t(H) ) ))
         
         
-        # K[diffusionindices,nafilter] <-  t(solve(t(ypriorcov[[rowi]][nafilter,nafilter,drop=FALSE]),
-          # t(etapriorcov[[rowi]] %*%  t(kpars$LAMBDA[nafilter,diffusionindices,drop=FALSE]) ) ))
+        # K[derrind,nafilter] <-  t(solve(t(ypriorcov[[rowi]][nafilter,nafilter,drop=FALSE]),
+          # t(etapriorcov[[rowi]] %*%  t(kpars$LAMBDA[nafilter,derrind,drop=FALSE]) ) ))
 
      
-        K[diffusionindices,nafilter] <-  t(solve(t(ypriorcov[[rowi]][nafilter,nafilter,drop=FALSE]),
-        t(crosscov(newstatesy[,diffusionindices,drop=FALSE],newypred[,nafilter,drop=FALSE]))))
+        K[derrind,nafilter] <-  t(solve(t(ypriorcov[[rowi]][nafilter,nafilter,drop=FALSE]),
+        t(crosscov(newstatesy[,derrind,drop=FALSE],newypred[,nafilter,drop=FALSE]))))
         
         #  print(paste0('yprior[[rowi]]'))
         # print(yprior[[rowi]])
@@ -490,16 +491,16 @@ Kalman<-function(kpars,datalong,
         etasmoothcov[[rowi]]<-etaupdcov[[rowi]]
       } else{
         smoother<-diag(0,nlatent)
-        smoother[diffusionindices,diffusionindices]<- t(solve(t(etapriorcov[[rowi+1]]), t( etaupdcov[[rowi]] %*% 
-            t(discreteDRIFT[[rowi+1]][diffusionindices,diffusionindices,drop=FALSE]) ) )) #is the rowi+1 correct?
+        smoother[derrind,derrind]<- t(solve(t(etapriorcov[[rowi+1]]), t( etaupdcov[[rowi]] %*% 
+            t(discreteDRIFT[[rowi+1]][derrind,derrind,drop=FALSE]) ) )) #is the rowi+1 correct?
         
         etasmooth[[rowi]]<-etaupd[[rowi]]+smoother %*% (etasmooth[[rowi+1]] - etaprior[[rowi+1]])
-        etasmoothcov[[rowi]]<-etaupdcov[[rowi]] + smoother[diffusionindices,diffusionindices,drop=FALSE] %*% 
+        etasmoothcov[[rowi]]<-etaupdcov[[rowi]] + smoother[derrind,derrind,drop=FALSE] %*% 
           ( etasmoothcov[[rowi+1]] - etapriorcov[[rowi+1]])
       }
       ysmooth[[rowi]] <- kpars$MANIFESTMEANS + kpars$LAMBDA %*% etasmooth[[rowi]]
-      ysmoothcov[[rowi]] <- kpars$LAMBDA[,diffusionindices,drop=FALSE] %*% etasmoothcov[[rowi]] %*% 
-        t(kpars$LAMBDA[,diffusionindices,drop=FALSE]) + kpars$MANIFESTVAR
+      ysmoothcov[[rowi]] <- kpars$LAMBDA[,derrind,drop=FALSE] %*% etasmoothcov[[rowi]] %*% 
+        t(kpars$LAMBDA[,derrind,drop=FALSE]) + kpars$MANIFESTVAR
     }
     
     timedims=paste0('t',datalong[,timecol])
@@ -536,7 +537,7 @@ Kalman<-function(kpars,datalong,
     
     insertdiffusionzeros <- function(x){
       y <- array(0,c(nlatent,nlatent,length(timedims)))
-      y[diffusionindices,diffusionindices,] <- x
+      y[derrind,derrind,] <- x
       dimnames(y) <- list(latentNames,latentNames,timedims)
       return(y)
     }
@@ -558,13 +559,13 @@ Kalman<-function(kpars,datalong,
       dimnames=list(manifestNames,manifestNames,timedims))
     
     etapriorcov <- insertdiffusionzeros(array(unlist(etapriorcov),
-      dim=c(length(diffusionindices),length(diffusionindices),length(timedims))))
+      dim=c(length(derrind),length(derrind),length(timedims))))
     
     etaupdcov <- insertdiffusionzeros(array(unlist(etaupdcov),
-      dim=c(length(diffusionindices),length(diffusionindices),length(timedims))))
+      dim=c(length(derrind),length(derrind),length(timedims))))
     
     etasmoothcov <- insertdiffusionzeros(array(unlist(etasmoothcov),
-      dim=c(length(diffusionindices),length(diffusionindices),length(timedims))))
+      dim=c(length(derrind),length(derrind),length(timedims))))
     
     names(loglik) = timedims
     
