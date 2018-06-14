@@ -97,6 +97,7 @@ ctCheckFit <- function(fit, niter=50,probs=c(.025,.5,.975)){
 #'
 #' @param x Object output from ctsemFitMeasure function.
 #' @param corrplotargs Extra arguments to pass to corrplot function.
+#' @param labels Logical. Plot labels for each row / colummn?
 #' @param ... not used.
 #'
 #' @return Nothing, just plots.
@@ -115,13 +116,15 @@ ctCheckFit <- function(fit, niter=50,probs=c(.025,.5,.975)){
 #' check <- ctCheckFit(traitfit,niter=5)
 #' plot(check)
 #' }
-plot.ctsemFitMeasure <- function(x,corrplotargs = list(method='square',is.corr=FALSE),...){
+plot.ctsemFitMeasure <- function(x,corrplotargs = list(method='square',is.corr=FALSE,addgrid.col=NA),labels=TRUE,...){
   ratiomat <- matrix(NA,max(x[,'row']),max(x[,'row']))
   ratiomat[upper.tri(ratiomat,diag = TRUE)] = x[,'MisspecRatio']
   ratiomat[lower.tri(ratiomat)] = t(ratiomat)[lower.tri(ratiomat)]
-  
+ 
+  if(labels){ 
   colnames(ratiomat) <- unique(x[,'colname'])
   rownames(ratiomat) <- unique(x[,'rowname'])
+  } else dimnames(ratiomat) <- NULL
   
   corrplotargs$corr <- ratiomat
   do.call(corrplot,corrplotargs)

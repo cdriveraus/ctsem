@@ -155,9 +155,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   
   if(!lineardynamics && !intoverstates) stop('intoverstates must be TRUE for nonlinear dynamics')
   
-  if(!is.na(ctstanmodel$rawpopsdbaselowerbound)) recompile <- TRUE
-  if(ctstanmodel$rawpopsdbase != 'normal(0,1)') recompile <- TRUE
-  if(ctstanmodel$rawpopsdtransform != 'exp(rawpopsdbase * 2 -2) .* sdscale') recompile <- TRUE
+  if(ctstanmodel$rawpopsdbaselowerbound!=0) recompile <- TRUE
+  if(ctstanmodel$rawpopsdbase != 'cauchy(0,1)') recompile <- TRUE
+  if(ctstanmodel$rawpopsdtransform != 'rawpopsdbase .* sdscale') recompile <- TRUE
   
   
   if(cores=='maxneeded') cores=min(c(chains,parallel::detectCores()))
@@ -185,7 +185,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   #read in ctmodel values
   ctspec<-ctstanmodel$pars
   
-  if(!all(ctspec$transform[!is.na(suppressWarnings(as.integer(ctspec$transform)))] %in% c(0,1,2,4))) stop('Unknown transform specified -- integers should be 0 to 4')
+  if(!all(ctspec$transform[!is.na(suppressWarnings(as.integer(ctspec$transform)))] %in% c(0,1,2,3,4))) stop('Unknown transform specified -- integers should be 0 to 4')
   
   # if(binomial) {
   #   ctspec<-ctspec[ctspec$matrix != 'MANIFESTVAR',]
@@ -209,12 +209,12 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   ctspec$value=as.numeric(ctspec$value)
   ctspec$transform=as.character(ctspec$transform)
   ctspec$param=as.character(ctspec$param)
-  comparison=c(NA,NA,'FALSE')
+  comparison=c(NA,NA,FALSE)
   replacement=c(NA,NA,FALSE)
   # names(comparison)=c('param','transform','indvarying')
   for(rowi in 1:nrow(ctspec)){
     if( !is.na(ctspec$value[rowi])) {
-      if(!identical(as.character(unlist(ctspec[rowi,c('param','transform','indvarying')])),comparison)) {
+      if(any(c(!is.na(ctspec[rowi,'param']),!is.na(ctspec[rowi,'transform']),ctspec[rowi,'indvarying']))){
         found<-TRUE
         ctspec[rowi,c('param','transform','indvarying')]=replacement
       }
@@ -814,6 +814,7 @@ ukfilterfunc<-function(ppchecking){
           if(manifesttype[wi]==2 && Y[rowi,wi] != 99999) ypredcov[wi,wi] = ypredcov[wi,wi] + square(fabs((ypred[wi] - round(ypred[wi])))); 
         
         }
+print("ukfmeasures[o,] ", ukfmeasures[o,]\', " crosscov ", crosscov(ukfstates\', ukfmeasures[o,]\') /asquared, " ypredcov[o,o] ", ypredcov[o,o]);
         K[,o] = mdivide_right(crosscov(ukfstates\', ukfmeasures[o,]\') /asquared, ypredcov[o,o]); 
         etaupdcov[rowi] = etapriorcov[rowi] - quad_form(ypredcov[o,o],  K[,o]\');
       }
@@ -1835,7 +1836,7 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
       # }
       # browser()
       
-      suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=40000, init=init,as_vector=FALSE,
+      suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=40000, init=0,as_vector=FALSE,
         tol_obj=1e-12, tol_rel_obj=0,init_alpha=.001, tol_grad=0,tol_rel_grad=1e1,tol_param=1e-12,history_size=100),verbose=verbose))
 
       est=optimfit$par

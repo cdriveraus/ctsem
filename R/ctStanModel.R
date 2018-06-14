@@ -125,9 +125,7 @@ ctStanModel<-function(ctmodelobj, type='stanct', indvarying='all'){
     }
   }
   
-  ctspec$multiplier[!is.na(ctspec$value)] <- NA
-  ctspec$meanscale[!is.na(ctspec$value)] <- NA
-  ctspec$offset[!is.na(ctspec$value)] <- NA
+  ctspec[!is.na(ctspec$value),c('transform','multiplier','meanscale','offset')] <- NA
   
   nparams<-sum(freeparams)
   
