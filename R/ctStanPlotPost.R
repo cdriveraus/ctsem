@@ -90,11 +90,10 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
           xaxs='i',  yaxs='i',legend=c('Subject param prior','Pop mean prior'))
       }
       
-      
       rawpopsdbase<-  stats::rnorm(densiter,0,1)
       rawpopsdprior <- eval(parse(text=sdtform)) #rawpopsd prior samples
 
-      hsdpost <- e$popsd[,popsetup$indvarying[ri]]
+      hsdpost <- e$popsd[,popsetup$param[ri]]
 
       param<-suppressWarnings(rawpopmeans+rawpopsdprior)
       high<-tform(param,popsetup$transform[pari],popvalues$multiplier[pari], popvalues$meanscale[pari],popvalues$offset[pari])
