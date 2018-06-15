@@ -48,8 +48,7 @@
 #' @param maxtimestep positive numeric, only used for models with non-linear dynamics, specifying the largest time
 #' span covered by the Runge-Kutta 4 integration. The large default ensures that for each observation time interval, 
 #' only RK4 integration is used. When \code{maxtimestep} is smaller than the observation time interval, RK4 integration is used within an Euler loop. 
-#' Smaller values may offer greater accuracy, but are slower and often unnecessary. In case of initial value problems, reducing
-#' this is one thing to try.
+#' Smaller values may offer greater accuracy, but are slower and not always necessary. 
 #' @param lineardynamics either character string "auto" or  a logical. Set to TRUE to force linear dynamics, 
 #' FALSE to use non-linear integration. "auto" attempts to select the appropriate choice.
 #' @param forcerecompile logical. For development purposes. 
@@ -155,9 +154,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   
   if(!lineardynamics && !intoverstates) stop('intoverstates must be TRUE for nonlinear dynamics')
   
-  if(ctstanmodel$rawpopsdbaselowerbound!=0) recompile <- TRUE
-  if(ctstanmodel$rawpopsdbase != 'cauchy(0,1)') recompile <- TRUE
-  if(ctstanmodel$rawpopsdtransform != 'rawpopsdbase .* sdscale') recompile <- TRUE
+  if(naf(!is.na(ctstanmodel$rawpopsdbaselowerbound))) recompile <- TRUE
+  if(ctstanmodel$rawpopsdbase != 'normal(0,1)') recompile <- TRUE
+  if(ctstanmodel$rawpopsdtransform != 'log(1+exp(2*rawpopsdbase)) .* sdscale') recompile <- TRUE
   
   
   if(cores=='maxneeded') cores=min(c(chains,parallel::detectCores()))
@@ -311,7 +310,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   if (!(idName %in% colnames(datalong))) stop(paste('id column', omxQuotes(idName), "not found in data"))
   
   #scale check
-  if(any(abs(colMeans(datalong[,c(ctstanmodel$manifestNames,ctstanmodel$TDpredNames),drop=FALSE],na.rm=TRUE)) > 5)){
+  if(naf(any(abs(colMeans(datalong[,c(ctstanmodel$manifestNames,ctstanmodel$TDpredNames),drop=FALSE],na.rm=TRUE)) > 5))){
     message('Uncentered data noted -- default priors *may* not be appropriate')
   }
   
@@ -319,7 +318,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     message('Uncentered TI predictors noted -- default priors may not be appropriate')
   }
   
-  if(any(abs(apply(datalong[,c(ctstanmodel$manifestNames,ctstanmodel$TDpredNames,ctstanmodel$TIpredNames),drop=FALSE],2,sd,na.rm=TRUE)) > 3)){
+  if(naf(any(abs(apply(datalong[,c(ctstanmodel$manifestNames,ctstanmodel$TDpredNames,ctstanmodel$TIpredNames),drop=FALSE],2,sd,na.rm=TRUE)) > 3))){
     message('Unscaled data noted -- default priors may not be appropriate')
   }
 
@@ -814,7 +813,6 @@ ukfilterfunc<-function(ppchecking){
           if(manifesttype[wi]==2 && Y[rowi,wi] != 99999) ypredcov[wi,wi] = ypredcov[wi,wi] + square(fabs((ypred[wi] - round(ypred[wi])))); 
         
         }
-print("ukfmeasures[o,] ", ukfmeasures[o,]\', " crosscov ", crosscov(ukfstates\', ukfmeasures[o,]\') /asquared, " ypredcov[o,o] ", ypredcov[o,o]);
         K[,o] = mdivide_right(crosscov(ukfstates\', ukfmeasures[o,]\') /asquared, ypredcov[o,o]); 
         etaupdcov[rowi] = etapriorcov[rowi] - quad_form(ypredcov[o,o],  K[,o]\');
       }
@@ -1334,7 +1332,7 @@ matrix cholspd(matrix a){
     }
     covm = crossprod(centered) / (rows(mat)-1);
     for(j in 1:rows(covm)){
-      covm[j,j] = covm[j,j] + 1e-8;
+      covm[j,j] = covm[j,j] + 1e-6;
     }
     return covm; 
   }
@@ -1706,8 +1704,8 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
     nbinary_y=array(as.integer(apply(datalong[,manifestNames,drop=FALSE],1,function(x) 
       ifelse(ukf==TRUE || intoverstates==FALSE, length(x[manifesttype==1 & x!=99999]), 0))),dim=nrow(datalong)),
     whichbinary_y=matrix(as.integer(t(apply(datalong[,manifestNames,drop=FALSE],1,function(x) {
-      # out<-as.numeric(which(manifesttype==1 & x!=99999)) #conditional on whichobs_y
-      if(ukf==TRUE || intoverstates==FALSE) out<- as.numeric(which(manifesttype==1)) else out<- rep(0,n.manifest) #not conditional on whichobs_y
+      out<-as.numeric(which(manifesttype==1 & x!=99999)) #conditional on whichobs_y
+      # if(ukf==TRUE || intoverstates==FALSE) out<- as.numeric(which(manifesttype==1)) else out<- rep(0,n.manifest) #not conditional on whichobs_y
       if(length(out)==0) out<-rep(0,n.manifest)
       if(length(out)<n.manifest) out<-c(out,rep(0,n.manifest-length(out)))
       out
@@ -1715,8 +1713,8 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
     ncont_y=array(as.integer(apply(datalong[,manifestNames,drop=FALSE],1,function(x) 
       ifelse(ukf==TRUE || intoverstates==FALSE,length(x[manifesttype==0 & x!=99999]), n.manifest))),dim=nrow(datalong)),
     whichcont_y=matrix(as.integer(t(apply(datalong[,manifestNames,drop=FALSE],1,function(x) {
-      # out<-as.numeric(which( (manifesttype==0 | manifesttype==2) & x!=99999)) #conditional on whichobs_y
-      if(ukf==TRUE || intoverstates==FALSE) out<- as.numeric(which(manifesttype==0 | manifesttype==2)) else out<-  rep(1,n.manifest) #not conditional on whichobs_y
+      out<-as.numeric(which( (manifesttype==0 | manifesttype==2) & x!=99999)) #conditional on whichobs_y
+      # if(ukf==TRUE || intoverstates==FALSE) out<- as.numeric(which(manifesttype==0 | manifesttype==2)) else out<-  rep(1,n.manifest) #not conditional on whichobs_y
       if(length(out)==0) out<-rep(0,n.manifest)
       if(length(out)<n.manifest) out<-c(out,rep(0,n.manifest-length(out)))
       out
@@ -1824,9 +1822,10 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
     if(optimize==TRUE && fit==TRUE) {
       
       message('Optimizing...')
-      
-      init <- staninits[[1]]
-      
+      betterfit<-TRUE
+      init <- 0 #staninits[[1]]
+      while(betterfit){
+      betterfit <- FALSE
       # if(nopriors){
       #   standata$nopriors <- 0
       #   suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=400, init=0,as_vector=FALSE,
@@ -1839,10 +1838,11 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
       suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=40000, init=0,as_vector=FALSE,
         tol_obj=1e-12, tol_rel_obj=0,init_alpha=.001, tol_grad=0,tol_rel_grad=1e1,tol_param=1e-12,history_size=100),verbose=verbose))
 
-      est=optimfit$par
+      est1=optimfit$par
+      bestfit <-optimfit$value
       # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan::grab_cxxfun(sm@dso))
       suppressWarnings(suppressOutput(smf<-sampling(sm,iter=1,chains=1,data=standata,check_data=FALSE, control=list(max_treedepth=0))))
-      est=unconstrain_pars(smf, est)
+      est2=unconstrain_pars(smf, est1)
       
       
       
@@ -1862,7 +1862,7 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
         return(out)
       }
       
-      grmat<-function(func,pars,step=1e-6){
+      grmat<-function(func,pars,step=1e-8){
         gradout<-matrix(NA,nrow=length(pars),ncol=length(pars))
         for(i in 1:length(pars)){
           stepsize <- step * 10
@@ -1886,7 +1886,7 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
       }
       
       
-      hess=grmat(func=grf,pars=est)
+      hess=grmat(func=grf,pars=est2)
       if(any(is.na(hess))) stop(paste0('Hessian could not be computed for pars ', which(apply(hess,1,function(x) any(is.na(x)))), ' -- consider reparameterising.'))
       hess = (hess/2) + t(hess/2)
       mchol=try(t(chol(solve(-hess))),silent=TRUE)
@@ -1898,7 +1898,7 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
       mcovl <- list()
       mcovl[[1]]=mcov
       delta=list()
-      delta[[1]]=est
+      delta[[1]]=est2
       samples <-c()
       resamples <- c()
       prop_dens <-c()
@@ -1934,9 +1934,8 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
           prop_dens <- mvtnorm::dmvt(tail(samples,isloopsize), delta[[j]], mcovl[[j]], df = df)
           
           parallel::clusterExport(cl, c('samples'),environment())
-          
-          # target_dens <- c(target_dens,
-          target_dens <- unlist(parallel::parLapply(cl, parallel::clusterSplit(cl,1:isloopsize), function(x){
+
+          target_dens[[j]] <- unlist(parallel::parLapply(cl, parallel::clusterSplit(cl,1:isloopsize), function(x){
             eval(parse(text=paste0('library(rstan)')))
             # if(recompile) {
             
@@ -1969,7 +1968,14 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
             
           }))
           # )
-          if(all(target_dens < -1e29)) stop('Could not sample from optimum! Try reparamaterizing?')
+          if(all(target_dens[[j]] < -1e29)) stop('Could not sample from optimum! Try reparamaterizing?')
+          if(any(target_dens[[j]] > bestfit)){
+            bestfit<-max(target_dens[[j]],na.rm=TRUE)
+            betterfit<-TRUE
+            init = list(rstan::constrain_pars(object = smf, samples[which(unlist(target_dens) == bestfit),]))
+            message('Improved fit found - restarting optimization')
+            break
+          }
           nresamples = ifelse(j==isloops,issamples,5000)
           
           #remove infinites
@@ -1977,8 +1983,8 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
           # prop_dens <- prop_dens[is.finite(target_dens)]
           # target_dens <- target_dens[is.finite(target_dens)]
           
-          target_dens2 <- target_dens + (0-max(target_dens)) #adjustment to get in decent range
-          target_dens2[!is.finite(target_dens)] <- -1e30
+          target_dens2 <- target_dens[[j]] + (0-max(target_dens[[j]])) #adjustment to get in decent range
+          target_dens2[!is.finite(target_dens[[j]])] <- -1e30
           weighted_dens <- target_dens2 - prop_dens
           
           # psis_dens <- psis(weighted_dens)
@@ -1998,6 +2004,9 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
           
         }
       }
+      }#end while no better fit
+
+      lpsamples <- unlist(target_dens)[resample_i]
       
       parallel::stopCluster(cl)
       message('Computing quantities...')
@@ -2072,17 +2081,17 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
       # quantile(sapply(transformedpars, function(x) x$DRIFT[1,2,2]),probs=c(.025,.5,.975))
       
       sds=try(suppressWarnings(sqrt(diag(mcov))))  #try(sqrt(diag(solve(optimfit$hessian))))
-      if(class(sds)=='try-error') sds <- rep(NA,length(est))
-      lest= est - 1.96 * sds
-      uest= est + 1.96 * sds
+      if(class(sds)=='try-error') sds <- rep(NA,length(est2))
+      lest= est2 - 1.96 * sds
+      uest= est2 + 1.96 * sds
       
       transformedpars_old=cbind(unlist(constrain_pars(smf, lest)),
-        unlist(constrain_pars(smf, est)),
+        unlist(constrain_pars(smf, est2)),
         unlist(constrain_pars(smf, uest)))
       colnames(transformedpars_old)=c('2.5%','mean','97.5%')
       
       stanfit=list(optimfit=optimfit,stanfit=smf, rawposterior = resamples, transformedpars=transformedpars,transformedpars_old=transformedpars_old,
-        isdiags=list(cov=mcovl,means=delta,ess=ess,qdiag=qdiag ))
+        isdiags=list(cov=mcovl,means=delta,ess=ess,qdiag=qdiag,lpsamples=lpsamples ))
     }
     
     if(vb==TRUE && fit==TRUE) {
