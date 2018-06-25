@@ -25,10 +25,12 @@ ctStanPostPredict <- function(fit,legend=TRUE,wait=FALSE){
   dimnames(y) <- list(NULL,fit$ctstanmodel$manifestNames,paste0(probs*100,'%'))
   x=1:fit$data$ndatapoints
   if(wait) readline("Press [return] for next plot.")
+  
   for(i in 1:dim(Ygen)[4]){
-    ctPlotArray(list(y=y[,i,,drop=FALSE],x=x),legend=FALSE,plotcontrol=list(main=dimnames(y)[[2]][i]))
+    notmissing <- !is.na(c(y[,i,1]))
+    ctPlotArray(list(y=y[notmissing,i,,drop=FALSE],x=x[notmissing]),legend=FALSE,plotcontrol=list(xlab='Observation',main=dimnames(y)[[2]][i]))
     ocol <- rgb(0,0,.7,.7)
-    points(x,fit$data$Y[,i],type='l',lwd=1,col=ocol)
+    points(x[notmissing],fit$data$Y[,i][notmissing],type='l',lwd=1,col=ocol)
     if(legend) legend('topright',c('Model implied','Observed'),text.col=c('red',ocol))
     if(i < dim(Ygen)[4])  if(wait) readline("Press [return] for next plot.")
   }
