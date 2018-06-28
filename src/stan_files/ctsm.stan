@@ -1073,6 +1073,7 @@ model{
   
 
     }//end nobs > 0 section
+  
   }//end rowi
 
   if((intoverstates==1 || sum(ncont_y) > 0)) ll = ll + normal_lpdf(errtrans|0,1) - sum(errscales);
@@ -1120,7 +1121,7 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
 
 vector[nmanifest] Ygen[ngenerations, ndatapoints];
 for(geni in 1:ngenerations) Ygen[geni,,] = rep_array(rep_vector(99999,nmanifest), ndatapoints);
-for(geni in 1:ngenerations){
+for(geni in 0:ngenerations){
 
   int si;
   int counter;
@@ -1384,7 +1385,7 @@ TDPREDEFFECT[TDPREDEFFECTsubindex[si]] = sTDPREDEFFECT;
 PARS[PARSsubindex[si]] = sPARS; 
 asymDIFFUSION[asymDIFFUSIONsubindex[si]] = sasymDIFFUSION; 
 asymCINT[asymCINTsubindex[si]] = sasymCINT; 
-
+if(geni > 0){
 
       if(ukf==1){
         etaprior[rowi,] = rep_vector(0,nlatentpop); // because some values stay zero
@@ -1786,6 +1787,7 @@ if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
       
 
     }//end nobs > 0 section
+  } //end if geni >0 section
   }//end rowi
 
   

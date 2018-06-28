@@ -602,7 +602,8 @@ ukfilterfunc<-function(ppchecking){
 
     ',subjectparscalc2(),'
 
-    ',if(ppchecking) collectsubmats(),'
+    ',if(ppchecking) collectsubmats(),
+    if(ppchecking) 'if(geni > 0){','
 
       if(ukf==1){
         etaprior[rowi,] = rep_vector(0,nlatentpop); // because some values stay zero
@@ -875,6 +876,7 @@ if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
   '),'
 
     }//end nobs > 0 section
+  ',if(ppchecking) '} //end if geni >0 section','
   }//end rowi
 
   ',if(!ppchecking) paste0('if((intoverstates==1 || sum(ncont_y) > 0)) ll = ll + normal_lpdf(errtrans|0,1) - sum(errscales);')
@@ -1609,7 +1611,7 @@ generated quantities{
 
 vector[nmanifest] Ygen[ngenerations, ndatapoints];
 for(geni in 1:ngenerations) Ygen[geni,,] = rep_array(rep_vector(99999,nmanifest), ndatapoints);
-for(geni in 1:ngenerations){
+for(geni in 0:ngenerations){
 ',ukfilterfunc(ppchecking=TRUE),'
 }
 
