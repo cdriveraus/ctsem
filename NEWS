@@ -1,7 +1,9 @@
 ctsem news:
 
-Known bugs / limitations:
-None.
+25/6/2018
+#### 2.6.5 ####
+- Fixed bug in ctStanFit introduced in previous release leading to errors in handling of missing data.
+- ctStanTIpredMarginal function for plotting marginal relationships between predictors and parameters.
 
 1/6/2018
 #### 2.6.0 ####

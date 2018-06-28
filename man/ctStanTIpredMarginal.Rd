@@ -5,7 +5,7 @@
 \title{Plot marginal relationships between covariates and parameters for a ctStanFit object.}
 \usage{
 ctStanTIpredMarginal(fit, tipred, pars, probs = c(0.025, 0.5, 0.975),
-  useimputed = TRUE, plot = TRUE, ...)
+  useimputed = TRUE, plot = TRUE)
 }
 \arguments{
 \item{fit}{ctStanFit object.}
@@ -20,8 +20,6 @@ outer two as shaded regions.}
 \item{useimputed}{Logical, include imputed tipreds or only observed?}
 
 \item{plot}{Logical, whether to plot.}
-
-\item{...}{}
 }
 \value{
 If \code{plot=TRUE}, nothing, otherwise an array that can be used with ctPlotArray.
@@ -30,5 +28,5 @@ If \code{plot=TRUE}, nothing, otherwise an array that can be used with ctPlotArr
 Plot marginal relationships between covariates and parameters for a ctStanFit object.
 }
 \examples{
-ctStanTIpredMarginal(ctstantestfit,pars='MANIFESTMEANS',tipred=1)
+ctStanTIpredMarginal(ctstantestfit,pars='CINT',tipred=3)
 }

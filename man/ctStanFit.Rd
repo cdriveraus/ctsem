@@ -76,8 +76,7 @@ up to the number of chains, or a positive integer.}
 \item{maxtimestep}{positive numeric, only used for models with non-linear dynamics, specifying the largest time
 span covered by the Runge-Kutta 4 integration. The large default ensures that for each observation time interval, 
 only RK4 integration is used. When \code{maxtimestep} is smaller than the observation time interval, RK4 integration is used within an Euler loop. 
-Smaller values may offer greater accuracy, but are slower and often unnecessary. In case of initial value problems, reducing
-this is one thing to try.}
+Smaller values may offer greater accuracy, but are slower and not always necessary.}
 
 \item{lineardynamics}{either character string "auto" or  a logical. Set to TRUE to force linear dynamics, 
 FALSE to use non-linear integration. "auto" attempts to select the appropriate choice.}

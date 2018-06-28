@@ -5,12 +5,14 @@
 \title{Misspecification plot using ctCheckFit output}
 \usage{
 \method{plot}{ctsemFitMeasure}(x, corrplotargs = list(method = "square",
-  is.corr = FALSE), ...)
+  is.corr = FALSE, addgrid.col = NA), labels = TRUE, ...)
 }
 \arguments{
 \item{x}{Object output from ctsemFitMeasure function.}
 
 \item{corrplotargs}{Extra arguments to pass to corrplot function.}
+
+\item{labels}{Logical. Plot labels for each row / colummn?}
 
 \item{...}{not used.}
 }

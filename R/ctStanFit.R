@@ -53,6 +53,7 @@
 #' FALSE to use non-linear integration. "auto" attempts to select the appropriate choice.
 #' @param forcerecompile logical. For development purposes. 
 #' If TRUE, stan model is recompiled, regardless of apparent need for compilation.
+#' @param ngen Number of random data sets to generate per sample -- for later plotting / model checking.
 #' @param ... additional arguments to pass to \code{\link[rstan]{stan}} function.
 #' @examples
 #' \dontrun{
@@ -87,7 +88,7 @@
 ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intoverstates=TRUE, binomial=FALSE,
    fit=TRUE, ukfpop=FALSE, stationary=FALSE,plot=FALSE,  derrind='all',
   optimize=FALSE, isloops=10, isloopsize=500, issamples=5000, nopriors=FALSE, vb=FALSE, chains=1,cores='maxneeded', inits=NULL,
-  maxtimestep = 9999, lineardynamics='auto', forcerecompile=FALSE,
+  maxtimestep = 9999, lineardynamics='auto', forcerecompile=FALSE,ngen=1,
   control=list(adapt_delta=.8, adapt_init_buffer=2, adapt_window=2,
     max_treedepth=10,stepsize=1e-3),verbose=0,...){
   
@@ -191,6 +192,13 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   #   message(paste0('MANIFESTVAR matrix is ignored when binomial=TRUE'))
   # }
   
+    
+  if(stationary) {
+    ctspec$param[ctspec$matrix %in% c('T0VAR','T0MEANS')] <- 'stationary'
+    ctspec$value[ctspec$matrix %in% c('T0VAR','T0MEANS')] <- NA
+    ctspec$indvarying[ctspec$matrix %in% c('T0VAR','T0MEANS')] <- FALSE
+  }
+  
   manifesttype=ctstanmodel$manifesttype
   
   #fix binary manifestvariance
@@ -220,12 +228,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     }
   }
   if(found) message('Minor inconsistencies in model found - removing param name, transform and indvarying from any parameters with a value specified')
-  
-  #remove T0VAR and T0MEANS if stationary argument
-  if(stationary) {
-    ctspec=ctspec[ctspec$matrix %in% c('T0VAR','T0MEANS')==FALSE,,drop=FALSE]
-    message('removing T0VAR and T0MEANS from parameter matrices because stationary=TRUE')
-  }
+
+
   
   #adjust transforms for optimization
 
@@ -1692,7 +1696,7 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
     ukfpop=as.integer(ukfpop),
     ukf=as.integer(ukf),
     nopriors=as.integer(nopriors),
-    ngenerations=as.integer(1),
+    ngenerations=as.integer(ngen),
     manifesttype=array(as.integer(manifesttype),dim=length(manifesttype)),
     nobs_y=array(as.integer(apply(datalong[,manifestNames,drop=FALSE],1,function(x) length(x[x!=99999]))),dim=nrow(datalong)),
     whichobs_y=matrix(as.integer(t(apply(datalong[,manifestNames,drop=FALSE],1,function(x) {
@@ -1776,7 +1780,7 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
         for(i in 1:(chains)){
           staninits[[i]]=list(
             rawpopmeans=array(rnorm(nparams,0,.1)),
-            rawpopsdbase=array(rnorm(nindvarying,-2,.1)),
+            rawpopsdbase=array(rnorm(nindvarying,0,.1)),
             sqrtpcov=array(rnorm(standata$nindvaryingoffdiagonals,0,.1)),
             baseindparams=array(rnorm(ifelse(ukfpop,0,nsubjects*nindvarying),0,.1)),
             etaupd=array(stats::rnorm(nrow(datalong)*n.latent,0,.1),dim=c(nrow(datalong),n.latent)),

@@ -7,14 +7,13 @@
 #' outer two as shaded regions.
 #' @param useimputed Logical, include imputed tipreds or only observed?
 #' @param plot Logical, whether to plot.
-#' @param ... 
 #'
 #' @return If \code{plot=TRUE}, nothing, otherwise an array that can be used with ctPlotArray.
 #' @export
 #'
 #' @examples
 #' ctStanTIpredMarginal(ctstantestfit,pars='CINT',tipred=3)
-ctStanTIpredMarginal<-function(fit,tipred,pars,probs=c(.025,.5,.975),useimputed=TRUE, plot=TRUE,...){
+ctStanTIpredMarginal<-function(fit,tipred,pars,probs=c(.025,.5,.975),useimputed=TRUE, plot=TRUE){
   e<-extract.ctStanFit(fit)
   p<- e[[pars]]
   if(useimputed) tipreds <- ctCollapse(e$tipreds,1,mean) else tipreds <- fit$data$tipredsdata
