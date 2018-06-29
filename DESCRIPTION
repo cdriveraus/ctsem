@@ -1,8 +1,8 @@
 Package: ctsem
 Type: Package
 Title: Continuous Time Structural Equation Modelling
-Version: 2.6.5
-Date: 2018-6-25
+Version: 2.6.6
+Date: 2018-6-30
 Authors@R: c(person("Charles", "Driver", role =
     c("aut","cre","cph"),email="driver@mpib-berlin.mpg.de"),
     person("Manuel", "Voelkle", role = c("aut","cph")),
@@ -18,7 +18,7 @@ Description: A hierarchical, multivariate, continuous (and discrete) time dynami
     covariates used to predict the parameters.
 License: GPL-3
 Depends:
-    R (>= 3.4.0), 
+    R (>= 3.3.0), 
     Rcpp (>= 0.12.16), 
     OpenMx (>= 2.3.0)
 URL: https://github.com/cdriveraus/ctsem
