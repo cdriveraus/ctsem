@@ -160,7 +160,7 @@ ctDensityList<-function(x,xlimsindex='all',plot=FALSE,ylab='Density',
       xlims=newxlims
     } 
     else {
-        newxlims <- range(c(xlims,newxlims))
+        xlims <- range(c(xlims,newxlims))
     }
   }
   sd=sd(xlims)

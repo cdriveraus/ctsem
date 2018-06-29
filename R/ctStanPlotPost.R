@@ -58,7 +58,7 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
   
     leg <- c('Pop. mean posterior','Pop. mean prior') 
     legcol <- c('black','blue') 
-    
+
     ctDensityList(list(popmeanspost,meanprior),main=paste0(pname),
       xlimsindex=if(priorwidth) 1:2 else 1,
       xaxs='i',  yaxs='i', plot=TRUE,legend=leg,colvec=legcol,lwd=lwd)
@@ -107,7 +107,7 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
       # graphics::legend('topright',leg, text.col=legcol, bty='n')
       
       ctDensityList(list(hsdpost, hsdprior),main=paste0('Pop. sd ',pname),
-        xlimsindex=1,
+        xlimsindex=if(priorwidth) 1:2 else 1,
         xaxs='i',yaxs='i',plot = TRUE, colvec=legcol, legend=leg,lwd=lwd)
       
       
