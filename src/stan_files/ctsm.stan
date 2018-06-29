@@ -627,7 +627,7 @@ model{
 
   // perform any whole matrix transformations 
     
-  if(si <= DIFFUSIONsubindex[nsubjects] && lineardynamics * intoverstates !=0 ) sDIFFUSION = sdcovsqrt2cov(sDIFFUSION, 0);
+  if(si <= DIFFUSIONsubindex[nsubjects] && lineardynamics) sDIFFUSION = sdcovsqrt2cov(sDIFFUSION, 0);
 
     if(si <= asymDIFFUSIONsubindex[nsubjects]) {
       if(ndiffusion < nlatent) sasymDIFFUSION = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
@@ -1324,7 +1324,7 @@ for(geni in 0:ngenerations){
 
   // perform any whole matrix transformations 
     
-  if(si <= DIFFUSIONsubindex[nsubjects] && lineardynamics * intoverstates !=0 ) sDIFFUSION = sdcovsqrt2cov(sDIFFUSION, 0);
+  if(si <= DIFFUSIONsubindex[nsubjects] && lineardynamics) sDIFFUSION = sdcovsqrt2cov(sDIFFUSION, 0);
 
     if(si <= asymDIFFUSIONsubindex[nsubjects]) {
       if(ndiffusion < nlatent) sasymDIFFUSION = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
