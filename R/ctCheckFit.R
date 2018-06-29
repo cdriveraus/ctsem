@@ -24,8 +24,8 @@ ctCheckFit <- function(fit, niter=50,probs=c(.025,.5,.975)){
   
   if(class(fit)=='ctsemFit'){
     if('Kalman' %in% fit$ctfitargs$objective) {
-      wdat <- ctLongToWide(fit$mxobj@data$observed,id='id',time='time',
-        manifestNames = fit$ctmodelobj$manifestNames)[,paste0(fit$ctmodelobj$manifestNames,'_T',1),drop=FALSE]
+      suppressMessages(wdat <- ctLongToWide(fit$mxobj@data$observed,id='id',time='time',
+        manifestNames = fit$ctmodelobj$manifestNames)[,paste0(fit$ctmodelobj$manifestNames,'_T',1),drop=FALSE])
     } else  wdat <- fit$mxobj@data$observed[,paste0(fit$ctmodelobj$manifestNames,'_T',
       rep(0:(fit$ctmodelobj$Tpoints-1),each=fit$ctmodelobj$n.manifest)),drop=FALSE]
   }
@@ -34,11 +34,11 @@ ctCheckFit <- function(fit, niter=50,probs=c(.025,.5,.975)){
     ldat <- cbind(fit$data$subject,fit$data$time,fit$data$Y)
     tpoints <- max(unlist(lapply(unique(fit$data$subject),function(x) length(fit$data$subject[fit$data$subject==x]))))
     colnames(ldat) <- c('subject','time', fit$ctstanmodel$manifestNames)
-    wdat <- ctLongToWide(ldat,id='subject',time='time',
+    suppressMessages(wdat <- ctLongToWide(ldat,id='subject',time='time',
       manifestNames = fit$ctstanmodel$manifestNames)[,paste0(fit$ctstanmodel$manifestNames,'_T',
-        rep(0:(tpoints-1),each=fit$ctstanmodel$n.manifest)),drop=FALSE]
+        rep(0:(tpoints-1),each=fit$ctstanmodel$n.manifest)),drop=FALSE])
   }
-  
+
   ecov <- cov(wdat,use = "pairwise.complete.obs")
   
   if(class(fit)=='ctStanFit'){

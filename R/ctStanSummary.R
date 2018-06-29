@@ -178,7 +178,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...
     # out$tipreds=round(s$summary[c(grep('tipred_',rownames(s$summary))),
     #   c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],digits=digits)
     z = tipreds[,'mean'] / tipreds[,'sd'] 
-    out$tipreds= cbind(tipreds,z) #[order(abs(z)),]
+    out$tipreds= round(cbind(tipreds,z),digits) #[order(abs(z)),]
   }
   
   if(parmatrices){
