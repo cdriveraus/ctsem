@@ -701,6 +701,8 @@ model{
 
     } //end T0 matrices
 
+
+
     if(lineardynamics==1 && ukf==0 && T0check[rowi]==0){ //linear kf time update
     
       if(continuoustime ==1){
@@ -723,6 +725,7 @@ model{
           discreteDIFFUSION[derrind, derrind] = sasymDIFFUSION[derrind, derrind] - 
             quad_form( sasymDIFFUSION[derrind, derrind], discreteDRIFT[derrind, derrind]' );
           //discreteDIFFUSION[derrind, derrind] = discreteDIFFUSIONcalc(DRIFT[ DRIFTsubindex[si], derrind, derrind], sDIFFUSION[derrind, derrind], dT[rowi]);
+          if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
         }
       }
   
@@ -730,6 +733,7 @@ model{
         discreteDRIFT=sDRIFT;
         discreteCINT=sCINT[,1];
         discreteDIFFUSION=sDIFFUSION;
+        if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
       }
 
       if(ntdpred == 0) etaprior[rowi] = discreteDRIFT * etaupd[rowi-1] + discreteCINT;
@@ -958,7 +962,7 @@ model{
 
     if(intoverstates==0 && lineardynamics == 1) {
       if(T0check[rowi]==1) etaupd[rowi] = etaprior[rowi] +  sT0VAR * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
-      if(T0check[rowi]==0) etaupd[rowi] = etaprior[rowi] +  sDIFFUSION * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
+      if(T0check[rowi]==0) etaupd[rowi] = etaprior[rowi] +  discreteDIFFUSION * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
     }
   
     if(nobsi==0 && intoverstates==1 ) {
@@ -1385,7 +1389,7 @@ TDPREDEFFECT[TDPREDEFFECTsubindex[si]] = sTDPREDEFFECT;
 PARS[PARSsubindex[si]] = sPARS; 
 asymDIFFUSION[asymDIFFUSIONsubindex[si]] = sasymDIFFUSION; 
 asymCINT[asymCINTsubindex[si]] = sasymCINT; 
-if(geni > 0){
+
 
       if(ukf==1){
         etaprior[rowi,] = rep_vector(0,nlatentpop); // because some values stay zero
@@ -1405,6 +1409,8 @@ if(geni > 0){
       }
 
     } //end T0 matrices
+
+if(geni > 0){
 
     if(lineardynamics==1 && ukf==0 && T0check[rowi]==0){ //linear kf time update
     
@@ -1428,6 +1434,7 @@ if(geni > 0){
           discreteDIFFUSION[derrind, derrind] = sasymDIFFUSION[derrind, derrind] - 
             quad_form( sasymDIFFUSION[derrind, derrind], discreteDRIFT[derrind, derrind]' );
           //discreteDIFFUSION[derrind, derrind] = discreteDIFFUSIONcalc(DRIFT[ DRIFTsubindex[si], derrind, derrind], sDIFFUSION[derrind, derrind], dT[rowi]);
+          if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
         }
       }
   
@@ -1435,6 +1442,7 @@ if(geni > 0){
         discreteDRIFT=sDRIFT;
         discreteCINT=sCINT[,1];
         discreteDIFFUSION=sDIFFUSION;
+        if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
       }
 
       if(ntdpred == 0) etaprior[rowi] = discreteDRIFT * etaupd[rowi-1] + discreteCINT;
@@ -1663,7 +1671,7 @@ if(geni > 0){
 
     if(intoverstates==0 && lineardynamics == 1) {
       if(T0check[rowi]==1) etaupd[rowi] = etaprior[rowi] +  sT0VAR * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
-      if(T0check[rowi]==0) etaupd[rowi] = etaprior[rowi] +  sDIFFUSION * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
+      if(T0check[rowi]==0) etaupd[rowi] = etaprior[rowi] +  discreteDIFFUSION * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
     }
   
     if(nobsi==0 && intoverstates==1 ) {
@@ -1763,18 +1771,19 @@ print("rowi ",rowi, "  si ", si, "  etaprior[rowi] ",etaprior[rowi],"  etapriorc
 if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
         
         ypredcov_sqrt[cindex,cindex]=chol(ypredcov[cindex, cindex]); //use o0, or cindex?
-        for(vi in 1:nmanifest){
-          if(fabs(ypred[vi]) > 1e10 || is_nan(ypred[vi]) || is_inf(ypred[vi])) {
-            ypred[vi] =99999;
+        for(vi in 1:nobsi){
+          if(fabs(ypred[o[vi]]) > 1e10 || is_nan(ypred[o[vi]]) || is_inf(ypred[o[vi]])) {
             nobsi = 0; //set nobsi to 0 to skip update steps
+            ypred[o[vi]] =99999;
           }
         }
         if(nobsi > 0){ //check nobsi again in case of problems
           if(ncont_y[rowi] > 0) Ygen[geni, rowi, cindex] = multi_normal_cholesky_rng(ypred[cindex], ypredcov_sqrt[cindex,cindex]);
           if(nbinary_y[rowi] > 0) for(obsi in 1:size(o1)) Ygen[geni, rowi, o1[obsi]] = bernoulli_rng(ypred[o1[obsi]]);
-          for(vi in 1:nmanifest) if(is_nan(Ygen[geni,rowi,vi])) {
-            Ygen[geni,rowi,vi] = 99999;
-            nobsi = 1;
+          for(vi in 1:nobsi) if(is_nan(Ygen[geni,rowi,o[vi]])) {
+            Ygen[geni,rowi,o[vi]] = 99999;
+            nobsi = 0;
+print("pp problem2! row ", rowi);
           }
           err[o] = Ygen[geni,rowi,o] - ypred[o]; // prediction error
         }
@@ -1877,7 +1886,7 @@ if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
 
   // perform any whole matrix transformations 
     
-  if(si <= DIFFUSIONsubindex[1] && lineardynamics * intoverstates !=0 ) pop_DIFFUSION[si] = sdcovsqrt2cov(pop_DIFFUSION[si], 0);
+  if(si <= DIFFUSIONsubindex[1] && lineardynamics !=0 ) pop_DIFFUSION[si] = sdcovsqrt2cov(pop_DIFFUSION[si], 0);
 
     if(si <= asymDIFFUSIONsubindex[1]) {
       if(ndiffusion < nlatent) asympop_DIFFUSION[si] = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
