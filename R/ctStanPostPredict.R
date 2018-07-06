@@ -16,6 +16,7 @@ ctStanPostPredict <- function(fit,legend=TRUE,wait=TRUE,plot=TRUE, datarows='all
   e<-extract.ctStanFit(fit)
   probs=c(.025,.5,.975)
   Ygen <- e$Ygen
+  if(datarows[1]=='all') datarows <- 1:nrow(fit$data$Y)
   # Ygen[Ygen==99999] <- NA
   if(plot) ctDensityList(x=list(fit$data$Y[datarows,,drop=FALSE],Ygen[,,datarows,,drop=FALSE]),plot=T,main='All variables',lwd=2,legend = c('Observed','Model implied'),xlab='Value')
   
@@ -25,7 +26,6 @@ ctStanPostPredict <- function(fit,legend=TRUE,wait=TRUE,plot=TRUE, datarows='all
   # y<-aperm(y,c(2,3,1))
   dimnames(y) <- list(NULL,fit$ctstanmodel$manifestNames,paste0(probs*100,'%'))
   x=1:fit$data$ndatapoints
-  if(datarows[1]=='all') datarows <- 1:nrow(fit$data$Y)
   
   if(plot){
     if(wait) readline("Press [return] for next plot.")

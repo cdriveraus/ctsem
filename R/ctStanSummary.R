@@ -149,7 +149,6 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...
   
   if(object$ctstanmodel$n.TIpred > 0) {
 
-
     if(class(object$stanfit)=='stanfit'){
       rawtieffect <- rstan::extract(object$stanfit,permuted=FALSE,pars='TIPREDEFFECT')
       tidiags <- monitor(rawtieffect,warmup=0,digits_summary = digits,print = FALSE)
@@ -159,7 +158,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...
     dimnames(tieffect)<-list(c(),c(),tieffectnames)
     tipreds = monitor(tieffect,warmup = 0,print = FALSE)[,monvars]
     if(class(object$stanfit)=='stanfit') tipreds <- cbind(tipreds,tidiags[,c('n_eff','Rhat')])
-    tipreds <- tipreds[c(object$data$TIPREDEFFECTsetup)>0,]
+    tipreds <- tipreds[c(object$data$TIPREDEFFECTsetup)>0,,drop=FALSE]
     z = tipreds[,'mean'] / tipreds[,'sd'] 
     out$tipreds= round(cbind(tipreds,z),digits) #[order(abs(z)),]
   }

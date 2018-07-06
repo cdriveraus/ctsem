@@ -19,7 +19,7 @@
 #' check <- ctCheckFit(traitfit,niter=5)
 #' plot(check)
 #' }
-ctCheckFit <- function(fit, niter=50,probs=c(.025,.5,.975)){
+ctCheckFit <- function(fit, niter=200,probs=c(.025,.5,.975)){
   
   if(fit$data$nsubjects==1) stop('Only for nsubjects > 1!')
   
