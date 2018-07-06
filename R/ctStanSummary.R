@@ -100,12 +100,11 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...
           popcovcor_sd=round(rawpopcovcor_transformedsd,digits))
       }
       #raw pop distribution params
-
       dimrawpopcorr <- dim(e$rawpopcorr)
       if(class(object$stanfit)!='stanfit') rawpopcorr= array(e$rawpopcorr,dim=c(dimrawpopcorr[1],1,dimrawpopcorr[2] * dimrawpopcorr[3]))
-      if(class(object$stanfit)=='stanfit') rawpopcorr= rstan::extract(object$stanfit,pars='rawpopcorr')
+      if(class(object$stanfit)=='stanfit') rawpopcorr= rstan::extract(object$stanfit,pars='rawpopcorr',permuted=FALSE)
       
-      rawpopcorrout <- monitor(rawpopcorr, digits=digits)[lower.tri(diag(nindvarying)),c(monvars,'n_eff','Rhat'),drop=FALSE]
+      rawpopcorrout <- monitor(rawpopcorr, digits=digits,warmup=0)[lower.tri(diag(nindvarying)),c(monvars,'n_eff','Rhat'),drop=FALSE]
       
       # rawpopcorrout <- ctCollapse(rawpopcorr,1,mean)
       # rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,sd)[lower.tri(diag(nindvarying)),drop=FALSE])
@@ -113,8 +112,8 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...
       # rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.5))[lower.tri(diag(nindvarying)),drop=FALSE])
       # rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.975))[lower.tri(diag(nindvarying)),drop=FALSE])
       # colnames(rawpopcorrout) <- monvars
-      # rownames(rawpopcorrout) <- matrix(paste0('',parnamesiv,'__',rep(parnamesiv,each=length(parnamesiv))),
-      #   length(parnamesiv),length(parnamesiv))[lower.tri(diag(nindvarying)),drop=FALSE]
+      rownames(rawpopcorrout) <- matrix(paste0('',parnamesiv,'__',rep(parnamesiv,each=length(parnamesiv))),
+        length(parnamesiv),length(parnamesiv))[lower.tri(diag(nindvarying)),drop=FALSE]
       # rawpopcorrout <- round(rawpopcorrout,digits=digits)
       
       rawpopcorrout <- cbind(rawpopcorrout,rawpopcorrout[,'mean'] / rawpopcorrout[,'sd'])
