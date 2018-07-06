@@ -99,18 +99,23 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...
             'with correlations on the lower triangle'),
           popcovcor_sd=round(rawpopcovcor_transformedsd,digits))
       }
-      #raw subject level params
-      rawpopcorr= e$rawpopcorr 
+      #raw pop distribution params
+
+      dimrawpopcorr <- dim(e$rawpopcorr)
+      if(class(object$stanfit)!='stanfit') rawpopcorr= array(e$rawpopcorr,dim=c(dimrawpopcorr[1],1,dimrawpopcorr[2] * dimrawpopcorr[3]))
+      if(class(object$stanfit)=='stanfit') rawpopcorr= rstan::extract(object$stanfit,pars='rawpopcorr')
       
-      rawpopcorrout <- ctCollapse(rawpopcorr,1,mean)[lower.tri(diag(nindvarying)),drop=FALSE]
-      rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,sd)[lower.tri(diag(nindvarying)),drop=FALSE])
-      rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.025))[lower.tri(diag(nindvarying)),drop=FALSE])
-      rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.5))[lower.tri(diag(nindvarying)),drop=FALSE])
-      rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.975))[lower.tri(diag(nindvarying)),drop=FALSE])
-      colnames(rawpopcorrout) <- monvars
-      rownames(rawpopcorrout) <- matrix(paste0('',parnamesiv,'__',rep(parnamesiv,each=length(parnamesiv))),
-        length(parnamesiv),length(parnamesiv))[lower.tri(diag(nindvarying)),drop=FALSE]
-      rawpopcorrout <- round(rawpopcorrout,digits=digits)
+      rawpopcorrout <- monitor(rawpopcorr, digits=digits)[lower.tri(diag(nindvarying)),c(monvars,'n_eff','Rhat'),drop=FALSE]
+      
+      # rawpopcorrout <- ctCollapse(rawpopcorr,1,mean)
+      # rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,sd)[lower.tri(diag(nindvarying)),drop=FALSE])
+      # rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.025))[lower.tri(diag(nindvarying)),drop=FALSE])
+      # rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.5))[lower.tri(diag(nindvarying)),drop=FALSE])
+      # rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.975))[lower.tri(diag(nindvarying)),drop=FALSE])
+      # colnames(rawpopcorrout) <- monvars
+      # rownames(rawpopcorrout) <- matrix(paste0('',parnamesiv,'__',rep(parnamesiv,each=length(parnamesiv))),
+      #   length(parnamesiv),length(parnamesiv))[lower.tri(diag(nindvarying)),drop=FALSE]
+      # rawpopcorrout <- round(rawpopcorrout,digits=digits)
       
       rawpopcorrout <- cbind(rawpopcorrout,rawpopcorrout[,'mean'] / rawpopcorrout[,'sd'])
       colnames(rawpopcorrout)[ncol(rawpopcorrout)] <- 'z'
@@ -145,38 +150,17 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...
   
   if(object$ctstanmodel$n.TIpred > 0) {
 
-    # linearTIPREDEFFECT <- e$TIPREDEFFECT
-    # for(iteri in 1:dim(linearTIPREDEFFECT)[1]){
-    #   for(coli in 1:dim(linearTIPREDEFFECT)[3]){
-    #     for(rowi in 1:dim(linearTIPREDEFFECT)[2]){
-    #       linearTIPREDEFFECT[iteri, rowi,coli] <- (
-    #         tform(
-    #           e$rawpopmeans[iteri,rowi] + e$TIPREDEFFECT[iteri,rowi,coli] * .01, 
-    #           object$setup$popsetup$transform[rowi],
-    #           object$setup$popvalues$multiplier[rowi],
-    #           object$setup$popvalues$meanscale[rowi],
-    #           object$setup$popvalues$offset[rowi],
-    #           extratforms = object$setup$extratforms) -  
-    #         tform(
-    #           e$rawpopmeans[iteri,rowi] - e$TIPREDEFFECT[iteri,rowi,coli] * .01, 
-    #           object$setup$popsetup$transform[rowi],
-    #           object$setup$popvalues$multiplier[rowi],
-    #           object$setup$popvalues$meanscale[rowi],
-    #           object$setup$popvalues$offset[rowi],
-    #           extratforms = object$setup$extratforms)
-    #       ) / 2 * 100
-    #     }
-    #   }
-    # }
-          
-    
+
+    if(class(object$stanfit)=='stanfit'){
+      rawtieffect <- rstan::extract(object$stanfit,permuted=FALSE,pars='TIPREDEFFECT')
+      tidiags <- monitor(rawtieffect,warmup=0,digits_summary = digits)
+    }
     tieffect <- array(e$linearTIPREDEFFECT,dim=c(dim(e$linearTIPREDEFFECT)[1], 1, length(parnames) * dim(e$linearTIPREDEFFECT)[3]))
     tieffectnames <- paste0('tip_',rep(object$ctstanmodel$TIpredNames,each=length(parnames)),'_',parnames)
     dimnames(tieffect)<-list(c(),c(),tieffectnames)
     tipreds = monitor(tieffect,warmup = 0,print = FALSE)[,monvars]
+    if(class(object$stanfit)=='stanfit') tipreds <- cbind(tipreds,tidiags[,c('n_eff','Rhat')])
     tipreds <- tipreds[c(object$data$TIPREDEFFECTsetup)>0,]
-    # out$tipreds=round(s$summary[c(grep('tipred_',rownames(s$summary))),
-    #   c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],digits=digits)
     z = tipreds[,'mean'] / tipreds[,'sd'] 
     out$tipreds= round(cbind(tipreds,z),digits) #[order(abs(z)),]
   }
