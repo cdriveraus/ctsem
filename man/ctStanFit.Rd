@@ -10,8 +10,8 @@ ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 1000,
   isloops = 10, isloopsize = 500, issamples = 5000, nopriors = FALSE,
   vb = FALSE, chains = 1, cores = "maxneeded", inits = NULL,
   maxtimestep = 9999, lineardynamics = "auto", forcerecompile = FALSE,
-  control = list(adapt_delta = 0.8, adapt_init_buffer = 2, adapt_window = 2,
-  max_treedepth = 10, stepsize = 0.001), verbose = 0, ...)
+  ngen = 1, control = list(adapt_delta = 0.8, adapt_init_buffer = 2,
+  adapt_window = 2, max_treedepth = 10, stepsize = 0.001), verbose = 0, ...)
 }
 \arguments{
 \item{datalong}{long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables, 
@@ -83,6 +83,8 @@ FALSE to use non-linear integration. "auto" attempts to select the appropriate c
 
 \item{forcerecompile}{logical. For development purposes. 
 If TRUE, stan model is recompiled, regardless of apparent need for compilation.}
+
+\item{ngen}{Number of random data sets to generate per sample -- for later plotting / model checking.}
 
 \item{control}{List of arguments sent to \code{\link[rstan]{stan}} control argument, 
 regarding warmup / sampling behaviour.}

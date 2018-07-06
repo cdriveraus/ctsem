@@ -4,11 +4,15 @@
 \alias{plot.ctsemFitMeasure}
 \title{Misspecification plot using ctCheckFit output}
 \usage{
-\method{plot}{ctsemFitMeasure}(x, corrplotargs = list(method = "square",
-  is.corr = FALSE, addgrid.col = NA), labels = TRUE, ...)
+\method{plot}{ctsemFitMeasure}(x, indices = "all",
+  corrplotargs = list(method = "square", is.corr = FALSE, addgrid.col = NA),
+  labels = TRUE, ...)
 }
 \arguments{
 \item{x}{Object output from ctsemFitMeasure function.}
+
+\item{indices}{Either 'all' or a vector of integers denoting which observations to 
+include (from 1 to maximum time points).}
 
 \item{corrplotargs}{Extra arguments to pass to corrplot function.}
 

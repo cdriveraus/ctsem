@@ -4,7 +4,7 @@
 \alias{ctCheckFit}
 \title{Check absolute fit of ctFit or ctStanFit object.}
 \usage{
-ctCheckFit(fit, niter = 50, probs = c(0.025, 0.5, 0.975))
+ctCheckFit(fit, niter = 200, probs = c(0.025, 0.5, 0.975))
 }
 \arguments{
 \item{fit}{ctFit or ctStanFit object.}
@@ -14,7 +14,8 @@ ctCheckFit(fit, niter = 50, probs = c(0.025, 0.5, 0.975))
 \item{probs}{3 digit vector of quantiles to return and to test significance.}
 }
 \value{
-numeric matrix showing fit for each lower triangular index of the covariance matrix of data.
+numeric matrix showing Z score difference for each lower triangular index of the covariance matrix of data --
+observed covariance minus mean of generated, weighted by sd of generated covariance.
 }
 \description{
 Check absolute fit of ctFit or ctStanFit object.

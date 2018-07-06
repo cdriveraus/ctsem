@@ -4,7 +4,8 @@
 \alias{ctStanPostPredict}
 \title{Compares model implied density and values to observed, for a ctStanFit object.}
 \usage{
-ctStanPostPredict(fit, legend = TRUE, wait = FALSE)
+ctStanPostPredict(fit, legend = TRUE, wait = TRUE, plot = TRUE,
+  datarows = "all")
 }
 \arguments{
 \item{fit}{ctStanFit object.}
@@ -12,9 +13,11 @@ ctStanPostPredict(fit, legend = TRUE, wait = FALSE)
 \item{legend}{Logical, whether to plot a legend.}
 
 \item{wait}{Logical, if TRUE, waits for input before plotting next plot.}
+
+\item{datarows}{integer vector specifying rows of data to plot. Otherwise 'all' uses all data.}
 }
 \value{
-Nothing, only plots.
+If plot=FALSE, an array containing quantiles of generated data. If plot=TRUE, nothing, only plots.
 }
 \description{
 Compares model implied density and values to observed, for a ctStanFit object.
