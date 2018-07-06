@@ -4,7 +4,8 @@
 #' @param niter number of data generation iterations to use to calculate quantiles.
 #' @param probs 3 digit vector of quantiles to return and to test significance.
 #'
-#' @return numeric matrix showing fit for each lower triangular index of the covariance matrix of data.
+#' @return numeric matrix showing Z score difference for each lower triangular index of the covariance matrix of data --
+#' observed covariance minus mean of generated, weighted by sd of generated covariance.
 #' @export
 #'
 #' @examples
@@ -71,11 +72,13 @@ ctCheckFit <- function(fit, niter=50,probs=c(.025,.5,.975)){
   covqm <- ctCollapse(covarray,collapsemargin = 3,quantile,probs=probs[2],na.rm=TRUE)
   covqh <- ctCollapse(covarray,collapsemargin = 3,quantile,probs=probs[3],na.rm=TRUE)
   covmean <- ctCollapse(covarray,collapsemargin = 3,mean,na.rm=TRUE)
+  covsd <- ctCollapse(covarray,collapsemargin = 3,sd,na.rm=TRUE)
   
   test<-matrix(NA,ncol=8,nrow=(nrow(covql)^2+nrow(covql))/2)
   counter=0
   rowname <- c()
   colname <- c()
+
   for(i in 1:nrow(covql)){
     for(j in 1:nrow(covql)){
       if(j <=i){
@@ -87,8 +90,9 @@ ctCheckFit <- function(fit, niter=50,probs=c(.025,.5,.975)){
       }}}
   
   colnames(test) <- c('row','col','mean',paste0(probs*100,'%'), 'observed', 'significant')
-  MisspecRatio <- (test[,'observed'] - test[,'50%']) / (test[,'97.5%'] - test[,'2.5%'])
-  test<- cbind(rowname,colname,as.data.frame(test),MisspecRatio)
+  MisspecRatio <- (test[,'observed'] - test[,'mean']) / covsd[lower.tri(diag(nrow(covql)),diag = TRUE)] #((test[,'97.5%'] - test[,'2.5%']))^2
+  sd <- covsd[lower.tri(diag(nrow(covql)),diag = TRUE)]
+  test<- cbind(rowname,colname,as.data.frame(cbind(test,sd)),MisspecRatio)
   class(test) <- c('ctsemFitMeasure',class(test))
   return(test)
 }
@@ -98,6 +102,8 @@ ctCheckFit <- function(fit, niter=50,probs=c(.025,.5,.975)){
 #' @param x Object output from ctsemFitMeasure function.
 #' @param corrplotargs Extra arguments to pass to corrplot function.
 #' @param labels Logical. Plot labels for each row / colummn?
+#' @indices Either 'all' or a vector of integers denoting which observations to 
+#' include (from 1 to maximum time points).
 #' @param ... not used.
 #'
 #' @return Nothing, just plots.
@@ -116,16 +122,21 @@ ctCheckFit <- function(fit, niter=50,probs=c(.025,.5,.975)){
 #' check <- ctCheckFit(traitfit,niter=5)
 #' plot(check)
 #' }
-plot.ctsemFitMeasure <- function(x,corrplotargs = list(method='square',is.corr=FALSE,addgrid.col=NA),labels=TRUE,...){
+plot.ctsemFitMeasure <- function(x,indices='all', 
+  corrplotargs = list(method='square',is.corr=FALSE,addgrid.col=NA),labels=TRUE,...){
   ratiomat <- matrix(NA,max(x[,'row']),max(x[,'row']))
   ratiomat[upper.tri(ratiomat,diag = TRUE)] = x[,'MisspecRatio']
   ratiomat[lower.tri(ratiomat)] = t(ratiomat)[lower.tri(ratiomat)]
+  
+  if(indices[1]=='all') indices <-1:nrow(ratiomat)
  
   if(labels){ 
   colnames(ratiomat) <- unique(x[,'colname'])
   rownames(ratiomat) <- unique(x[,'rowname'])
   } else dimnames(ratiomat) <- NULL
   
-  corrplotargs$corr <- ratiomat
+  corrplotargs$corr <- ratiomat[indices,indices,drop=FALSE]
+  corrplotargs$mar <- c(0,0,1,0)
+  corrplotargs$main <- '(Observed - implied) / sd(implied)'
   do.call(corrplot,corrplotargs)
 }
