@@ -356,6 +356,9 @@ transformed parameters{
   //matrix[nindvarying,nindvarying] rawpopcov;
   matrix[nindvarying,nindvarying] rawpopcorrsqrt;
   matrix[nindvarying,nindvarying] rawpopcovsqrt; 
+  real ll;
+  vector[savescores ? nlatentpop : 0] etaprior_out[savescores ? ndatapoints : 0];
+  vector[savescores ? nlatentpop : 0] etaupd_out[savescores ? ndatapoints : 0];
 
   
   
@@ -407,29 +410,6 @@ transformed parameters{
 
 
 
-}
-      
-model{
-  real ll;
-
-  if(nopriors==0){
-    target += normal_lpdf(rawpopmeans|0,1);
-  
-    if(ntipred > 0){ 
-     tipredeffectparams ~ normal(0,tipredeffectscale);
-     tipredsimputed ~ normal(0,tipredsimputedscale);
-    }
-    
-    if(nindvarying > 0){
-      if(nindvarying >1) sqrtpcov ~ normal(0,1);
-      if(ukfpop==0) baseindparams ~ normal(0,1);
-      rawpopsdbase ~ normal(0,1);
-    }
-
-  } //end pop priors section
-  
-  if(intoverstates==0)etaupdbasestates ~ normal(0,1);
-  
   ll = 0;{
   int si;
   int counter;
@@ -1080,10 +1060,36 @@ model{
     }//end nobs > 0 section
   
   }//end rowi
-
+if(savescores==1) {
+  etaprior_out=etaprior;
+  etaupd_out = etaupd;
+}
 
   if((intoverstates==1 || sum(ncont_y) > 0)) ll = ll + normal_lpdf(errtrans|0,1) - sum(errscales);
 }
+
+}
+      
+model{
+
+  if(nopriors==0){
+    target += normal_lpdf(rawpopmeans|0,1);
+  
+    if(ntipred > 0){ 
+     tipredeffectparams ~ normal(0,tipredeffectscale);
+     tipredsimputed ~ normal(0,tipredsimputedscale);
+    }
+    
+    if(nindvarying > 0){
+      if(nindvarying >1) sqrtpcov ~ normal(0,1);
+      if(ukfpop==0) baseindparams ~ normal(0,1);
+      rawpopsdbase ~ normal(0,1);
+    }
+
+  } //end pop priors section
+  
+  if(intoverstates==0)etaupdbasestates ~ normal(0,1);
+  
   target += ll;
   
   if(verbose > 0) print("lp = ", target());
@@ -1095,8 +1101,6 @@ generated quantities{
   matrix[nindvarying,nindvarying] rawpopcov;
   matrix[nindvarying,nindvarying] rawpopcorr;
   matrix[nparams,ntipred] linearTIPREDEFFECT;
-  vector[savescores ? nlatentpop : 0] etaprior_out[savescores ? ndatapoints : 0];
-  vector[savescores ? nlatentpop : 0] etaupd_out[savescores ? ndatapoints : 0];
 
   matrix[ T0MEANSsetup_rowcount ? max(T0MEANSsetup[,1]) : 0, T0MEANSsetup_rowcount ? max(T0MEANSsetup[,2]) : 0 ] pop_T0MEANS[T0MEANSsubindex[1]];
 matrix[ LAMBDAsetup_rowcount ? max(LAMBDAsetup[,1]) : 0, LAMBDAsetup_rowcount ? max(LAMBDAsetup[,2]) : 0 ] pop_LAMBDA[LAMBDAsubindex[1]];
@@ -1803,10 +1807,7 @@ print("pp problem2! row ", rowi);
     }//end nobs > 0 section
   } //end if geni >0 section
   }//end rowi
-if(savescores==1) {
-  etaprior_out=etaprior;
-  etaupd_out = etaupd;
-}
+
 
   
 }

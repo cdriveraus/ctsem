@@ -886,7 +886,7 @@ print("pp problem2! row ", rowi);
     }//end nobs > 0 section
   ',if(ppchecking) '} //end if geni >0 section','
   }//end rowi
-',if(ppchecking) 'if(savescores==1) {
+',if(!ppchecking) 'if(savescores==1) {
   etaprior_out=etaprior;
   etaupd_out = etaupd;
 }','
@@ -1529,6 +1529,9 @@ transformed parameters{
   //matrix[nindvarying,nindvarying] rawpopcov;
   matrix[nindvarying,nindvarying] rawpopcorrsqrt;
   matrix[nindvarying,nindvarying] rawpopcovsqrt; 
+  real ll;
+  vector[savescores ? nlatentpop : 0] etaprior_out[savescores ? ndatapoints : 0];
+  vector[savescores ? nlatentpop : 0] etaupd_out[savescores ? ndatapoints : 0];
 
   
   ',if(1==99) subjectparaminit(),'
@@ -1580,10 +1583,14 @@ transformed parameters{
 
 ',if(1==99) subjectparscalc(),'
 
+  ll = 0;',
+'{',
+ukfilterfunc(ppchecking=FALSE),'
+}
+
 }
       
 model{
-  real ll;
 
   if(nopriors==0){
     target += normal_lpdf(rawpopmeans|0,1);
@@ -1603,10 +1610,6 @@ model{
   
   if(intoverstates==0)etaupdbasestates ~ normal(0,1);
   
-  ll = 0;',
-'{',
-ukfilterfunc(ppchecking=FALSE),'
-}
   target += ll;
   
   if(verbose > 0) print("lp = ", target());
@@ -1618,8 +1621,6 @@ generated quantities{
   matrix[nindvarying,nindvarying] rawpopcov;
   matrix[nindvarying,nindvarying] rawpopcorr;
   matrix[nparams,ntipred] linearTIPREDEFFECT;
-  vector[savescores ? nlatentpop : 0] etaprior_out[savescores ? ndatapoints : 0];
-  vector[savescores ? nlatentpop : 0] etaupd_out[savescores ? ndatapoints : 0];
 
   ',popify(subjectparaminit()),'
 
