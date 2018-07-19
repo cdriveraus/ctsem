@@ -102,7 +102,7 @@ ctCheckFit <- function(fit, niter=200,probs=c(.025,.5,.975)){
 #' @param x Object output from ctsemFitMeasure function.
 #' @param corrplotargs Extra arguments to pass to corrplot function.
 #' @param labels Logical. Plot labels for each row / colummn?
-#' @indices Either 'all' or a vector of integers denoting which observations to 
+#' @param indices Either 'all' or a vector of integers denoting which observations to 
 #' include (from 1 to maximum time points).
 #' @param ... not used.
 #'

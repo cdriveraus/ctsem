@@ -54,6 +54,9 @@
 #' @param forcerecompile logical. For development purposes. 
 #' If TRUE, stan model is recompiled, regardless of apparent need for compilation.
 #' @param ngen Number of random data sets to generate per sample -- for later plotting / model checking.
+#' For datasets with many manifest variables or time points, greater than zero will increase file size substantially.
+#' @param savescores Logical. If TRUE, latent process values are saved in output. For datasets with many latent processes 
+#' or time points, will increase file size substantially.
 #' @param ... additional arguments to pass to \code{\link[rstan]{stan}} function.
 #' @examples
 #' \dontrun{
@@ -88,7 +91,7 @@
 ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intoverstates=TRUE, binomial=FALSE,
    fit=TRUE, ukfpop=FALSE, stationary=FALSE,plot=FALSE,  derrind='all',
   optimize=FALSE, isloops=10, isloopsize=500, issamples=5000, nopriors=FALSE, vb=FALSE, chains=1,cores='maxneeded', inits=NULL,
-  maxtimestep = 9999, lineardynamics='auto', forcerecompile=FALSE,ngen=1,
+  maxtimestep = 9999, lineardynamics='auto', forcerecompile=FALSE,ngen=1,savescores=TRUE,
   control=list(adapt_delta=.8, adapt_init_buffer=2, adapt_window=2,
     max_treedepth=10,stepsize=1e-3),verbose=0,...){
   
@@ -857,8 +860,8 @@ print("pp problem2! row ", rowi);
       '),'
   
       ',if(!ppchecking) 'err[o] = Y[rowi,o] - ypred[o]; // prediction error','
-      if(intoverstates==1) etaupd[rowi,] = etaprior[rowi,] + (K[,o] * err[o]);
 
+      if(intoverstates==1) etaupd[rowi,] = etaprior[rowi,] + (K[,o] * err[o]);
   
       ',if(!ppchecking) paste0('
       if(intoverstates==0 && nbinary_y[rowi] > 0) ll += sum(log( Y[rowi,o1] .* (ypred[o1]) + (1-Y[rowi,o1]) .* (1-ypred[o1])));
@@ -883,6 +886,10 @@ print("pp problem2! row ", rowi);
     }//end nobs > 0 section
   ',if(ppchecking) '} //end if geni >0 section','
   }//end rowi
+',if(ppchecking) 'if(savescores==1) {
+  etaprior_out=etaprior;
+  etaupd_out = etaupd;
+}','
 
   ',if(!ppchecking) paste0('if((intoverstates==1 || sum(ncont_y) > 0)) ll = ll + normal_lpdf(errtrans|0,1) - sum(errscales);')
     )
@@ -1490,6 +1497,7 @@ data {
   int nmatrixslots;
   int popsetup[nmatrixslots,6];
   real popvalues[nmatrixslots,5];
+  int savescores;
 }
       
 transformed data{
@@ -1610,6 +1618,9 @@ generated quantities{
   matrix[nindvarying,nindvarying] rawpopcov;
   matrix[nindvarying,nindvarying] rawpopcorr;
   matrix[nparams,ntipred] linearTIPREDEFFECT;
+  vector[savescores ? nlatentpop : 0] etaprior_out[savescores ? ndatapoints : 0];
+  vector[savescores ? nlatentpop : 0] etaupd_out[savescores ? ndatapoints : 0];
+
   ',popify(subjectparaminit()),'
 
   ',subjectparaminit(),'
@@ -1704,6 +1715,7 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
     ukf=as.integer(ukf),
     nopriors=as.integer(nopriors),
     ngenerations=as.integer(ngen),
+    savescores=as.integer(savescores),
     manifesttype=array(as.integer(manifesttype),dim=length(manifesttype)),
     nobs_y=array(as.integer(apply(datalong[,manifestNames,drop=FALSE],1,function(x) length(x[x!=99999]))),dim=nrow(datalong)),
     whichobs_y=matrix(as.integer(t(apply(datalong[,manifestNames,drop=FALSE],1,function(x) {
@@ -1846,13 +1858,34 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
       # }
       # browser()
       
-      suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=40000, init=0,as_vector=FALSE,
+      suppressWarnings(suppressOutput(smf<-sampling(sm,iter=1,chains=1,data=standata,check_data=FALSE, control=list(max_treedepth=0))))
+      npars=get_num_upars(smf)
+     
+      #init with DE
+      require(DEoptim)
+      np=min(c(40,10*npars))
+      
+      lp2 = function(parm) {
+        out<-try(log_prob(smf, upars=parm,adjust_transform=TRUE,gradient=FALSE),silent = TRUE)
+        if(class(out)=='try-error') {
+          out=-1e20
+        }
+        return(-out)
+      }
+      
+      deinit <- matrix(rnorm(npars*np),nrow = np)
+      optimfitde <- DEoptim(fn = lp2,lower = rep(-1e10, npars), upper=rep(1e10, npars),
+        control = DEoptim.control(NP=np,initialpop=deinit, CR=.9,steptol=2,reltol=1e-4,trace=ifelse(verbose>0,1,0)))
+      init=constrain_pars(object = smf,optimfitde$optim$bestmem)
+      
+      suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=40000, init=init,as_vector=FALSE,
         tol_obj=1e-12, tol_rel_obj=0,init_alpha=.001, tol_grad=0,tol_rel_grad=1e1,tol_param=1e-12,history_size=100),verbose=verbose))
+      
 
       est1=optimfit$par
       bestfit <-optimfit$value
       # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan::grab_cxxfun(sm@dso))
-      suppressWarnings(suppressOutput(smf<-sampling(sm,iter=1,chains=1,data=standata,check_data=FALSE, control=list(max_treedepth=0))))
+     
       est2=unconstrain_pars(smf, est1)
       
       

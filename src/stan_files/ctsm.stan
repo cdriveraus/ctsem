@@ -323,6 +323,7 @@ matrix[PARSsetup_rowcount, 5] PARSvalues;
   int nmatrixslots;
   int popsetup[nmatrixslots,6];
   real popvalues[nmatrixslots,5];
+  int savescores;
 }
       
 transformed data{
@@ -1053,8 +1054,8 @@ model{
       
   
       err[o] = Y[rowi,o] - ypred[o]; // prediction error
-      if(intoverstates==1) etaupd[rowi,] = etaprior[rowi,] + (K[,o] * err[o]);
 
+      if(intoverstates==1) etaupd[rowi,] = etaprior[rowi,] + (K[,o] * err[o]);
   
       
       if(intoverstates==0 && nbinary_y[rowi] > 0) ll += sum(log( Y[rowi,o1] .* (ypred[o1]) + (1-Y[rowi,o1]) .* (1-ypred[o1])));
@@ -1080,6 +1081,7 @@ model{
   
   }//end rowi
 
+
   if((intoverstates==1 || sum(ncont_y) > 0)) ll = ll + normal_lpdf(errtrans|0,1) - sum(errscales);
 }
   target += ll;
@@ -1093,6 +1095,9 @@ generated quantities{
   matrix[nindvarying,nindvarying] rawpopcov;
   matrix[nindvarying,nindvarying] rawpopcorr;
   matrix[nparams,ntipred] linearTIPREDEFFECT;
+  vector[savescores ? nlatentpop : 0] etaprior_out[savescores ? ndatapoints : 0];
+  vector[savescores ? nlatentpop : 0] etaupd_out[savescores ? ndatapoints : 0];
+
   matrix[ T0MEANSsetup_rowcount ? max(T0MEANSsetup[,1]) : 0, T0MEANSsetup_rowcount ? max(T0MEANSsetup[,2]) : 0 ] pop_T0MEANS[T0MEANSsubindex[1]];
 matrix[ LAMBDAsetup_rowcount ? max(LAMBDAsetup[,1]) : 0, LAMBDAsetup_rowcount ? max(LAMBDAsetup[,2]) : 0 ] pop_LAMBDA[LAMBDAsubindex[1]];
 matrix[ DRIFTsetup_rowcount ? max(DRIFTsetup[,1]) : 0, DRIFTsetup_rowcount ? max(DRIFTsetup[,2]) : 0 ] pop_DRIFT[DRIFTsubindex[1]];
@@ -1790,14 +1795,18 @@ print("pp problem2! row ", rowi);
       
   
       
-      if(intoverstates==1) etaupd[rowi,] = etaprior[rowi,] + (K[,o] * err[o]);
 
+      if(intoverstates==1) etaupd[rowi,] = etaprior[rowi,] + (K[,o] * err[o]);
   
       
 
     }//end nobs > 0 section
   } //end if geni >0 section
   }//end rowi
+if(savescores==1) {
+  etaprior_out=etaprior;
+  etaupd_out = etaupd;
+}
 
   
 }
