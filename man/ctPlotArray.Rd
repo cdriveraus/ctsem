@@ -4,16 +4,19 @@
 \alias{ctPlotArray}
 \title{Plots three dimensional y values for quantile plots}
 \usage{
-ctPlotArray(input, grid = FALSE, colvec = "auto", lwdvec = "auto",
-  ltyvec = "auto", typevec = "auto", plotcontrol = list(ylab =
-  "Array values", xaxs = "i"), legend = TRUE, legendcontrol = list(),
-  polygon = TRUE, polygonalpha = 0.1, polygoncontrol = list(steps = 25))
+ctPlotArray(input, grid = FALSE, add = FALSE, colvec = "auto",
+  lwdvec = "auto", ltyvec = "auto", typevec = "auto",
+  plotcontrol = list(ylab = "Array values", xaxs = "i"), legend = TRUE,
+  legendcontrol = list(), polygon = TRUE, polygonalpha = 0.1,
+  polygoncontrol = list(steps = 25))
 }
 \arguments{
 \item{input}{list containing 3 dimensional array to use for Y values, \code{$y}
 and vector of corresponding x values \code{$x}.}
 
 \item{grid}{Logical. Plot with a grid?}
+
+\item{add}{Logical. If TRUE, plotting is overlayed on current plot, without creating new plot.}
 
 \item{colvec}{color vector of same length as 2nd margin.}
 

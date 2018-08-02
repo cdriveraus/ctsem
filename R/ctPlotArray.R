@@ -6,6 +6,7 @@
 #' @param input list containing 3 dimensional array to use for Y values, \code{$y}
 #' and vector of corresponding x values \code{$x}.
 #' @param grid Logical. Plot with a grid?
+#' @param add Logical. If TRUE, plotting is overlayed on current plot, without creating new plot.
 #' @param colvec color vector of same length as 2nd margin.
 #' @param lwdvec lwd vector of same length as 2nd margin.
 #' @param ltyvec lty vector of same length as 2nd margin.
@@ -27,7 +28,7 @@
 #'     
 #' ctPlotArray(input=input)
 ctPlotArray <- function(input,
-  grid=FALSE,
+  grid=FALSE,add=FALSE,
   colvec='auto',lwdvec='auto',ltyvec='auto',typevec='auto',
   plotcontrol=list(ylab='Array values',xaxs='i'),
   legend=TRUE,legendcontrol=list(),
@@ -86,15 +87,17 @@ ctPlotArray <- function(input,
   
   
   #blank plot
-  blankargs=plotargs
-  blankargs$y=NA
-  blankargs$x=NA
-  do.call(plot,blankargs)
-  if(grid) {
-    grid()
-    par(new=TRUE)
+  if(add==FALSE){
+    blankargs=plotargs
+    blankargs$y=NA
+    blankargs$x=NA
     do.call(plot,blankargs)
-    par(new=FALSE)
+    if(grid) {
+      grid()
+      par(new=TRUE)
+      do.call(plot,blankargs)
+      par(new=FALSE)
+    }
   }
   
   #confidence
