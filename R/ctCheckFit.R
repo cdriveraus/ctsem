@@ -19,10 +19,9 @@
 #' check <- ctCheckFit(traitfit,niter=5)
 #' plot(check)
 #' }
-ctCheckFit <- function(fit, niter=200,probs=c(.025,.5,.975)){
+ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
   
   if(fit$data$nsubjects==1) stop('Only for nsubjects > 1!')
-  
   if(class(fit)=='ctsemFit'){
     if('Kalman' %in% fit$ctfitargs$objective) {
       suppressMessages(wdat <- ctLongToWide(fit$mxobj@data$observed,id='id',time='time',
@@ -48,8 +47,9 @@ ctCheckFit <- function(fit, niter=200,probs=c(.025,.5,.975)){
     ygen <- array(e$Ygen,dim=c(ygendim[1] * ygendim[2],ygendim[-1:-2]))
     covarray<-array(NA,dim = c(dim(ecov),dim(ygen)[1]))
 
-    for(i in 1:dim(ygen)[1]){
-    ndat <- cbind(fit$data$subject,fit$data$time,ygen[i,,])
+    itervec <- sample(1:dim(ygen)[1],niter)
+    for(i in 1:niter){
+    ndat <- cbind(fit$data$subject,fit$data$time,ygen[itervec[i],,])
     colnames(ndat) <- c('subject','time',fit$ctstanmodel$manifestNames)
     ndat <- suppressMessages(ctLongToWide(ndat,id='subject',time='time',
       manifestNames = fit$ctstanmodel$manifestNames)) #[,paste0( fit$ctstanmodel$manifestNames,'_T',1),drop=FALSE]
@@ -129,7 +129,7 @@ plot.ctsemFitMeasure <- function(x,indices='all',
   ratiomat[lower.tri(ratiomat)] = t(ratiomat)[lower.tri(ratiomat)]
   
   if(indices[1]=='all') indices <-1:nrow(ratiomat)
- 
+
   if(labels){ 
   colnames(ratiomat) <- unique(x[,'colname'])
   rownames(ratiomat) <- unique(x[,'rowname'])

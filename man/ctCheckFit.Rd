@@ -4,7 +4,7 @@
 \alias{ctCheckFit}
 \title{Check absolute fit of ctFit or ctStanFit object.}
 \usage{
-ctCheckFit(fit, niter = 200, probs = c(0.025, 0.5, 0.975))
+ctCheckFit(fit, niter = 500, probs = c(0.025, 0.5, 0.975))
 }
 \arguments{
 \item{fit}{ctFit or ctStanFit object.}

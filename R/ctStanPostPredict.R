@@ -7,6 +7,7 @@
 #' @param samples Logical -- plot all generated data points? Otherwise, plot shaded polygon based on quantile estimate. 
 #' @param probs Vector of length 3 containing quantiles to plot -- should be rising numeric values between 0 and 1. 
 #' @param wait Logical, if TRUE, waits for input before plotting next plot.
+#' @param jitter Positive numeric between 0 and 1, if TRUE, jitters empirical data by specified proportion of std dev.
 #' @param datarows integer vector specifying rows of data to plot. Otherwise 'all' uses all data.
 #' @return If plot=FALSE, an array containing quantiles of generated data. If plot=TRUE, nothing, only plots.
 #' @export
@@ -15,7 +16,7 @@
 #'
 #' @examples
 #' ctStanPostPredict(ctstantestfit)
-ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,wait=TRUE,plot=TRUE,probs=c(.025,.5,.975),samples=TRUE, datarows='all'){
+ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.05, wait=TRUE,plot=TRUE,probs=c(.025,.5,.975),samples=TRUE, datarows='all'){
   e<-extract.ctStanFit(fit)
   
   if(datarows[1]=='all') datarows <- 1:nrow(fit$data$Y)
@@ -80,8 +81,9 @@ ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,wait=TRUE,plot=TRUE,pro
             dygendt <- dygen / diff(fit$data$time,lag = cdiffsize)
             dygendt<-dygendt[-diffindex,,drop=FALSE]
             
-            dydt<-diff(fit$data$Y[,i],lag = cdiffsize)/diff(fit$data$time,lag = cdiffsize)
+            dydt<-diff(fit$data$Y[,i], lag = cdiffsize)/diff(fit$data$time,lag = cdiffsize)
             dydt <- dydt[-diffindex]
+            dydt <- dydt +  rnorm(length(dydt),0, jitter * sd(fit$data$Y[,i],na.rm=TRUE)) #add jitter
             time <- fit$data$time[-diffindex]
             # smoothScatter(matrix(yp[-fit$data$ndatapoints,i,,,drop=FALSE],ncol=1),
             #   matrix(dygendt[,,,,drop=FALSE],ncol=1),
