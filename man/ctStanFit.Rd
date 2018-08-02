@@ -10,7 +10,7 @@ ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 1000,
   isloops = 10, isloopsize = 500, issamples = 5000, nopriors = FALSE,
   vb = FALSE, chains = 1, cores = "maxneeded", inits = NULL,
   maxtimestep = 9999, lineardynamics = "auto", forcerecompile = FALSE,
-  ngen = 1, savescores = FALSE, control = list(adapt_delta = 0.8,
+  ngen = 1, savescores = TRUE, control = list(adapt_delta = 0.8,
   adapt_init_buffer = 2, adapt_window = 2, max_treedepth = 10, stepsize =
   0.001), verbose = 0, ...)
 }

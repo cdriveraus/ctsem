@@ -4,7 +4,8 @@
 \alias{ctStanPostPredict}
 \title{Compares model implied density and values to observed, for a ctStanFit object.}
 \usage{
-ctStanPostPredict(fit, legend = TRUE, wait = TRUE, plot = TRUE,
+ctStanPostPredict(fit, legend = TRUE, diffsize = 1, wait = TRUE,
+  plot = TRUE, probs = c(0.025, 0.5, 0.975), samples = TRUE,
   datarows = "all")
 }
 \arguments{
@@ -12,7 +13,13 @@ ctStanPostPredict(fit, legend = TRUE, wait = TRUE, plot = TRUE,
 
 \item{legend}{Logical, whether to plot a legend.}
 
+\item{diffsize}{Integer > 0. Number of discrete time lags to use for data viz.}
+
 \item{wait}{Logical, if TRUE, waits for input before plotting next plot.}
+
+\item{probs}{Vector of length 3 containing quantiles to plot -- should be rising numeric values between 0 and 1.}
+
+\item{samples}{Logical -- plot all generated data points? Otherwise, plot shaded polygon based on quantile estimate.}
 
 \item{datarows}{integer vector specifying rows of data to plot. Otherwise 'all' uses all data.}
 }

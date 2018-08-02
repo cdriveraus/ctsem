@@ -3,6 +3,9 @@
 #'
 #' @param fit ctStanFit object.
 #' @param legend Logical, whether to plot a legend.
+#' @param diffsize Integer > 0. Number of discrete time lags to use for data viz.
+#' @param samples Logical -- plot all generated data points? Otherwise, plot shaded polygon based on quantile estimate. 
+#' @param probs Vector of length 3 containing quantiles to plot -- should be rising numeric values between 0 and 1. 
 #' @param wait Logical, if TRUE, waits for input before plotting next plot.
 #' @param datarows integer vector specifying rows of data to plot. Otherwise 'all' uses all data.
 #' @return If plot=FALSE, an array containing quantiles of generated data. If plot=TRUE, nothing, only plots.
@@ -12,31 +15,103 @@
 #'
 #' @examples
 #' ctStanPostPredict(ctstantestfit)
-ctStanPostPredict <- function(fit,legend=TRUE,wait=TRUE,plot=TRUE, datarows='all'){
+ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,wait=TRUE,plot=TRUE,probs=c(.025,.5,.975),samples=TRUE, datarows='all'){
   e<-extract.ctStanFit(fit)
-  probs=c(.025,.5,.975)
-  Ygen <- e$Ygen
-  if(datarows[1]=='all') datarows <- 1:nrow(fit$data$Y)
-  # Ygen[Ygen==99999] <- NA
-  if(plot) ctDensityList(x=list(fit$data$Y[datarows,,drop=FALSE],Ygen[,,datarows,,drop=FALSE]),plot=T,main='All variables',lwd=2,legend = c('Observed','Model implied'),xlab='Value')
   
-  y<-aaply(Ygen,c(2,3,4),quantile,na.rm=TRUE,probs=probs,.drop=FALSE)
-  # y<-array(unlist(lapply(c(.025,.5,.975),function(p) ctCollapse(Ygen,1,quantile,probs=p,na.rm=TRUE))),dim = c(3,dim(Ygen)[3],dim(Ygen)[4]))
-  y<-array(y,dim=dim(y)[-1])  
-  # y<-aperm(y,c(2,3,1))
-  dimnames(y) <- list(NULL,fit$ctstanmodel$manifestNames,paste0(probs*100,'%'))
+  if(datarows[1]=='all') datarows <- 1:nrow(fit$data$Y)
+  if(plot) ctDensityList(x=list(fit$data$Y[datarows,,drop=FALSE],e$Ygen[,,datarows,,drop=FALSE]),plot=TRUE,
+    main='All variables',lwd=2,legend = c('Observed','Model implied'),xlab='Value')
+  
   x=1:fit$data$ndatapoints
   
   if(plot){
-    if(wait) readline("Press [return] for next plot.")
     
-    for(i in 1:dim(Ygen)[4]){
-      notmissing <- which(!is.na(c(y[datarows,i,1])))
-      ctPlotArray(list(y=y[notmissing,i,,drop=FALSE],x=x[notmissing]),legend=FALSE,plotcontrol=list(xlab='Observation',main=dimnames(y)[[2]][i]))
-      ocol <- rgb(0,0,.7,.7)
-      points(x[notmissing],fit$data$Y[,i][notmissing],type='l',lwd=1,col=ocol)
-      if(legend) legend('topright',c('Model implied','Observed'),text.col=c('red',ocol))
-      if(i < dim(Ygen)[4])  if(wait) readline("Press [return] for next plot.")
+    Ygen <- e$Ygen
+    for(typei in c('obs','change')){
+      for(i in 1:dim(Ygen)[4]){
+        if(wait) readline("Press [return] for next plot.")
+        xs=rep(x,each=dim(Ygen)[1])
+        ycut=quantile(Ygen,c(.005,.995),na.rm=TRUE)
+        ys=e$Ygen
+        xs=xs[ys>ycut[1] & ys<ycut[2]]
+        ys[ys<ycut[1] | ys>ycut[2]] <- NA
+        
+        
+        
+        if(typei=='obs'){
+          
+          y<-aaply(Ygen,c(2,3,4),quantile,na.rm=TRUE,probs=probs,.drop=FALSE)
+          y<-array(y,dim=dim(y)[-1])  
+          dimnames(y) <- list(NULL,fit$ctstanmodel$manifestNames,paste0(probs*100,'%'))
+          
+          notmissing <- which(!is.na(c(y[datarows,i,1])))
+          
+          if(samples) {
+            xs=rep(x,each=dim(Ygen)[1])
+            ycut=quantile(Ygen,c(.005,.995),na.rm=TRUE)
+            ys=e$Ygen
+            xs=xs[ys>ycut[1] & ys<ycut[2]]
+            ys=ys[ys>ycut[1] & ys<ycut[2]]
+            smoothScatter(xs,ys,nbin=256,colramp=colorRampPalette(colors=c('white',rgb(1,0,0,.6))),nrpoints=0,
+              transformation=function(x) x,ylim=range(c(y[,i,],quantile(Ygen[,,,i],probs = c(.01,.99),na.rm=TRUE)),na.rm=TRUE),
+              xlab='Observation',ylab=dimnames(y)[[2]][i])
+          }
+          
+          ctPlotArray(list(y=y[notmissing,i,,drop=FALSE],x=x[notmissing]),legend=FALSE,add=samples,polygon=!samples,
+            plotcontrol=list(xlab='Observation',main=dimnames(y)[[2]][i]))
+          ocol <- rgb(0,0,.7,.7)
+          points(x[notmissing],fit$data$Y[,i][notmissing],type='l',lwd=2,lty=1,col=ocol)
+          if(legend) legend('topright',c('Model implied','Observed'),text.col=c('red',ocol))
+          if(i < dim(Ygen)[4])  if(wait) readline("Press [return] for next plot.")
+        }
+        
+        
+        if(typei=='change'){
+          for(cdiffsize in diffsize){
+            diffindex <- c() 
+            for(diffi in 1:cdiffsize){
+              diffindex <- c(diffindex,which(as.logical(fit$data$T0check[-1]))-(diffi-1),
+                fit$data$ndatapoints-(diffi-1))
+            }
+            
+            yp<-aperm(ys,c(3,4,1,2))
+            dygen<-diff(yp[,1,,,drop=TRUE],lag = cdiffsize) #drop true set here if looking for problems!
+            # yp[-1,i,,,drop=FALSE] - yp[-fit$data$ndatapoints,i,,,drop=FALSE]
+            dygendt <- dygen / diff(fit$data$time,lag = cdiffsize)
+            dygendt<-dygendt[-diffindex,,drop=FALSE]
+            
+            dydt<-diff(fit$data$Y[,i],lag = cdiffsize)/diff(fit$data$time,lag = cdiffsize)
+            dydt <- dydt[-diffindex]
+            time <- fit$data$time[-diffindex]
+            # smoothScatter(matrix(yp[-fit$data$ndatapoints,i,,,drop=FALSE],ncol=1),
+            #   matrix(dygendt[,,,,drop=FALSE],ncol=1),
+            #   nbin=512,colramp=colorRampPalette(colors=c('white',rgb(1,0,0,1))),nrpoints=0,
+            #   # transformation=function(x) x,
+            #   ylim=range(c(quantile(c(dygendt),probs = c(.01,.99),na.rm=TRUE)),na.rm=TRUE),
+            #   xlab='Observation',ylab=dimnames(y)[[2]][i])
+            samps<-sample(1:length(dygendt),size=50000,replace=TRUE)
+            plot(matrix(yp[-diffindex,i,,,drop=FALSE][samps],ncol=1),
+              matrix(dygendt[,,drop=FALSE][samps],ncol=1),
+              ylab=paste0('dy/dt, diff=',cdiffsize),xlab='y', main=dimnames(y)[[2]][i],
+              pch=16,cex=.1,col=rgb(1,0,0,.1))
+            points( fit$data$Y[-diffindex,i],
+              dydt,
+              col=rgb(0,0,1,.5),pch=17)
+            
+            if(wait) readline("Press [return] for next plot.")  
+            
+            plot(
+              rep(time,each=(dim(dygendt)[2]))[samps],
+              matrix(dygendt[,,drop=FALSE],ncol=1)[samps],
+              ylab=paste0('dy/dt, diff=',cdiffsize),xlab='time', main=dimnames(y)[[2]][i],
+              pch=16,cex=.1,col=rgb(1,0,0,.3))
+            points(time,
+              dydt,
+              col=rgb(0,0,1,.5),pch=17)
+            
+          }
+        }
+      }
     }
   }
   
