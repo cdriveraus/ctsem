@@ -794,9 +794,10 @@ ukfilterfunc<-function(ppchecking){
           etaupdcov[rowi] = (IIlatent - K[,o] * sLAMBDA[o,]) * etapriorcov[rowi];
         }
         if(intoverstates==0) { //sampled states
-          if(ncont_y[rowi] > 0) ypred[o0] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * etaupd[rowi];
+          //if(ncont_y[rowi] > 0) 
+          ypred[cindex] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * etaupd[rowi];
           if(nbinary_y[rowi] > 0) ypred[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * etaupd[rowi])));
-          ypredcov[o,o] = sMANIFESTVAR[o,o];
+          ypredcov[cindex,cindex] = sMANIFESTVAR[cindex,cindex];
         }
       }
   
@@ -1875,8 +1876,10 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
       }
       
       deinit <- matrix(rnorm(npars*np),nrow = np)
+      deinit[2,] <- 0
+      if(length(init)>1) deinit[1,] <- unconstrain_pars(smf,init)
       optimfitde <- DEoptim(fn = lp2,lower = rep(-1e10, npars), upper=rep(1e10, npars),
-        control = DEoptim.control(NP=np,initialpop=deinit, CR=.9,steptol=2,reltol=1e-4,trace=ifelse(verbose>0,1,0)))
+        control = DEoptim.control(NP=np,initialpop=deinit, CR=.9,steptol=8,reltol=1e-4,trace=ifelse(verbose>0,1,0)))
       init=constrain_pars(object = smf,optimfitde$optim$bestmem)
       
       suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=40000, init=init,as_vector=FALSE,
@@ -1984,7 +1987,7 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
             eval(parse(text=paste0('library(rstan)')))
             # if(recompile) {
             
-            smf<-sampling(sm,iter=1,chains=1,data=standata,check_data=FALSE,control=list(max_treedepth=0))
+            smf<-sampling(sm,iter=1,chains=1,data=standata,check_data=FALSE,control=list(max_treedepth=0,adapt_engaged=FALSE))
             # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan::grab_cxxfun(sm@dso))
             # }
             
@@ -2053,7 +2056,7 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
 
       lpsamples <- unlist(target_dens)[resample_i]
       
-      parallel::stopCluster(cl)
+      # parallel::stopCluster(cl)
       message('Computing quantities...')
       
       relistarrays <- function(flesh, skeleton){
@@ -2075,20 +2078,19 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
       }
       
       
-      
-      cl <- parallel::makeCluster(min(cores,chains), type = "PSOCK")
+      # cl <- parallel::makeCluster(min(cores,chains), type = "PSOCK")
       parallel::clusterExport(cl, c('relistarrays','resamples','sm','standata','optimfit'),environment())
 
       # target_dens <- c(target_dens,
       transformedpars <- parallel::parLapply(cl, parallel::clusterSplit(cl,1:nresamples), function(x){
         Sys.sleep(.1)
-        smf<-sampling(sm,iter=1,chains=1,data=standata,check_data=FALSE,control=list(max_treedepth=0))
+        smf<-sampling(sm,iter=1,chains=1,data=standata,check_data=FALSE,control=list(max_treedepth=0,adapt_engaged=FALSE))
         Sys.sleep(.1)
         # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan::grab_cxxfun(sm@dso))
         out <- list()
         for(li in 1:length(x)){
           Sys.sleep(.01)
-          flesh = unlist(constrain_pars(smf, resamples[x[li],]))
+          flesh = unlist(rstan::constrain_pars(smf, resamples[x[li],]))
           names(flesh) <- c()
           skeleton=optimfit$par
           out[[li]] <-relistarrays(flesh, skeleton)
