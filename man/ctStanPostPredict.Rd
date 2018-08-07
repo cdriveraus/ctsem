@@ -4,7 +4,7 @@
 \alias{ctStanPostPredict}
 \title{Compares model implied density and values to observed, for a ctStanFit object.}
 \usage{
-ctStanPostPredict(fit, legend = TRUE, diffsize = 1, jitter = 0.05,
+ctStanPostPredict(fit, legend = TRUE, diffsize = 1, jitter = 0.02,
   wait = TRUE, plot = TRUE, probs = c(0.025, 0.5, 0.975),
   samples = TRUE, datarows = "all")
 }
