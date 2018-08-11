@@ -1,51 +1,9 @@
 language: r
-sudo: true
 r: devel
+sudo: FALSE
 cache: packages
-latex: true
 
-matrix:
-  include:
-    - os: linux
-      compiler: clang
-      addons:
-        apt:
-          sources: ['ubuntu-toolchain-r-test', 'llvm-toolchain-trusty-5.0']
-          packages: ['clang-5.0', 'g++-6']
-      env:
-        COMPILER=clang++-5.0
-        #CPP_STD=c++11
-        CXX_OLEVEL=2 
+warnings_are_errors: TRUE
 
-before_install:
-  - sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
-  - sudo apt-get update -q
-  - mkdir -p ~/.R/
-  - echo "CXX = `R CMD config CXX`" >> ~/.R/Makevars
-  #- echo "CXXFLAGS = `R CMD config CXXFLAGS` -pedantic -g0 -flto" >> ~/.R/Makevars
-  #- echo "LDFLAGS += -flto" >> ~/.R/Makevars
-  #- export CLANG_EXTRA_ARG=""
-  #- if [[ $CXX = "clang++" ]] ;  then export CLANG_EXTRA_ARG=" -Qunused-arguments -fcolor-diagnostics " ; fi
-  #- sed -i.bak "s/ g++/ ${CXX}${CLANG_EXTRA_ARG}/" ~/.R/Makevars
-  #- sed -i.bak "s/O[0-3]/O$CXX_OLEVEL/" ~/.R/Makevars
-
-script: 
-  - |
-    travis_wait 42 R CMD build .
-    travis_wait 59 R CMD check ctsem*tar.gz
-
-after_script:
-  - tar -ztvf ctsem_*.tar.gz
-  - echo ${NOT_CRAN}
-
-after_success:
-  - travis_wait 40 tar -C .. -xf $PKG_TARBALL
-
-after_failure:
-  - cat ctsem.Rcheck/00*
-
-
-notifications:
-  email:
-    on_success: change
-on_failure: change
+r_build_args: '--no-build-vignettes'
+r_check_args: '--ignore-vignettes'
