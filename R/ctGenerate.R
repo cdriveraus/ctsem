@@ -7,7 +7,7 @@
 #' @param burnin Number of initial time points to discard (to simulate stationary data)
 #' @param dtmean Positive numeric. Average time interval (delta T) to use.
 #' @param logdtsd Numeric. Standard deviation for variability of the time interval.
-#' @param dtmat Either NA, or numeric matrix of n.subjects rows and Tpoints-1 columns, 
+#' @param dtmat Either NA, or numeric matrix of n.subjects rows and burnin+Tpoints-1 columns, 
 #' containing positive numeric values for all time intervals between measurements. 
 #' If not NA, dtmean and logdtsd are ignored.
 #' @param wide Logical. Output in wide format?
@@ -98,7 +98,7 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
   for(si in 1:n.subjects){
     
     if(is.na(dtmat[1])) dtvec<- exp(rnorm(fullTpoints,log(dtmean),logdtsd))
-    if(!is.na(dtmat[1])) dtvec <- dtmat[si,]
+    if(!is.na(dtmat[1])) dtvec <- dtmat[si,,drop=FALSE]
     time=rep(0,fullTpoints)
     for(t in 2:fullTpoints) time[t] = round(time[t-1] + dtvec[t-1],3)
     
