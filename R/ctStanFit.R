@@ -382,10 +382,10 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         ukfpop | 
         !is.null(ctstanmodel$timeupdate) | 
         lineardynamics == FALSE 
-    ) { message('Using unscented Kalman filter'); ukf <- TRUE}
+    ) { message('Using unscented Kalman filter for dynamics'); ukf <- TRUE}
     
     ukfmeasurement <- FALSE
-    if(length(measurementcalcs) > 0) { message('Using unscented Kalman filte'); ukf <- TRUE}
+    if(length(measurementcalcs) > 0 || ukfpop && any(ctstanmodel$pars$indvarying[ctstanmodel$pars$matrix %in% measurementmatrices])) { message('Using unscented Kalman filter for measurement'); ukfmeasurement <- TRUE}
     
     
     if(ukf==FALSE && lineardynamics=="auto") {
@@ -408,7 +408,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       paste0('
     for(ri in 1:size(',m,'setup)){ //for each row of matrix setup
       if(',m,'setup[ ri,5] > 0){ // if individually varying
-        if(statei > 2 && ukfstates[nlatent +',m,'setup[ri,5], statei ] != ukfstates[nlatent +',m,'setup[ri,5], statei-1 ]){ //only recalculate if state changed
+        if(statei==2 || (statei > 2 && ukfstates[nlatent +',m,'setup[ri,5], statei ] != ukfstates[nlatent +',m,'setup[ri,5], statei-1 ])){ //only recalculate if state changed
           s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = 
             ','tform(ukfstates[nlatent +',m,'setup[ri,5], statei ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ); 
         }
@@ -422,7 +422,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       paste0('
     for(ri in 1:size(',m,'setup)){
       if(',m,'setup[ ri,5] > 0){ 
-        if(statei > 2 && ukfstates[nlatent +',m,'setup[ri,5], statei ] != ukfstates[nlatent +',m,'setup[ri,5], statei-1 ]){ //only recalculate if state changed
+        if(statei==2 || (statei > 2 && ukfstates[nlatent +',m,'setup[ri,5], statei ] != ukfstates[nlatent +',m,'setup[ri,5], statei-1 ])){ //only recalculate if state changed
          s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = ',
          'tform(ukfstates[nlatent +',m,'setup[ri,5], statei ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ); 
         }
@@ -436,7 +436,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       paste0('
     for(ri in 1:size(',m,'setup)){
       if(',m,'setup[ ri,5] > 0){ 
-        if(statei > 2 && ukfstates[nlatent +',m,'setup[ri,5], statei ] != ukfstates[nlatent +',m,'setup[ri,5], statei-1 ]){ //only recalculate if state changed
+        if(statei==2 || (statei > 2 && ukfstates[nlatent +',m,'setup[ri,5], statei ] != ukfstates[nlatent +',m,'setup[ri,5], statei-1 ])){ //only recalculate if state changed
          s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = ',
           'tform(ukfstates[nlatent +',m,'setup[ri,5], statei ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ); 
         }
@@ -531,7 +531,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
 integrationsteps <- sapply(dT,function(x)  ceiling(x / maxtimestep));
 dTsmall <- dT / integrationsteps
 dTsmall[is.na(dTsmall)] = 0
-  
+
 
 ukfilterfunc<-function(ppchecking){
   out<-paste0('
@@ -714,9 +714,9 @@ ukfilterfunc<-function(ppchecking){
     
         if(T0check[rowi]==1){
      
-          //if(statei <= 2+2*nlatentpop+1){
+          if(statei <= 2+2*nlatentpop+1){ //only dynamic noise after this
           ',paste0(t0calcs,';',collapse=' '),'
-          //}
+          }
   
           state = sT0MEANS[,1];
           if(statei > (2+2*nlatentpop+ndynerror)) {
@@ -729,9 +729,9 @@ ukfilterfunc<-function(ppchecking){
         if(T0check[rowi]==0){
           state = ukfstates[1:nlatent, statei];
 
-         // if(statei <= 2+2*nlatentpop+1){ //only dynamic noise effects beyond this
+          if(statei <= 2+2*nlatentpop+1){ //only dynamic noise effects beyond this
           ',paste0(ukfpopdynamiccalcs,';',collapse=' '),'
-          //}
+          }
     
           if(continuoustime==1 && lineardynamics==0){
             ',nlstateupdate(),'
@@ -791,7 +791,7 @@ ukfilterfunc<-function(ppchecking){
       if(intoverstates==0) cindex = o0;
       if(intoverstates==1) cindex = o; //treat all obs as continuous gaussian
 
-      if(ukf==0){ //non ukf measurement
+      if(ukfmeasurement==0){ //non ukf measurement
         if(intoverstates==1) { //classic kalman
           ypred[o] = sMANIFESTMEANS[o,1] + sLAMBDA[o,1:nlatent] * etaprior[1:nlatent];
           ypredcov[o,o] = quad_form(etapriorcov[1:nlatent,1:nlatent], sLAMBDA[o,]\') + sMANIFESTVAR[o,o];
@@ -811,7 +811,7 @@ ukfilterfunc<-function(ppchecking){
       }
   
 
-      if(ukf==1){ //ukf measurement
+      if(ukfmeasurement==1){ //ukf measurement
 
         for(statei in 2:cols(ukfmeasures)){
           state = ukfstates[ 1:nlatent, statei];
@@ -1047,11 +1047,11 @@ subjectparscalc2 <- function(pop=FALSE){
       paste0('
   if(si <= ',m,'subindex[nsubjects]){
     for(ri in 1:size(',m,'setup)){
-      if(si==1 || ',m,'setup[ri,5] > 0 || ',m,'setup[ri,6] > 0){
-        s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = ',
-          m,'setup[ri,3] ? ', 
-            'tform(rawindparams[ ',m,'setup[ri,3] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ) : ',
-            m,'values[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(si==1 || ',m,'setup[ri,5] > 0 || ',m,'setup[ri,6] > 0){ // if first subject, indvarying, and or tipred effects
+          s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = ',
+            m,'setup[ri,3] ? ', 
+              'tform(rawindparams[ ',m,'setup[ri,3] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ) : ',
+              m,'values[ri,1]; //either transformed, scaled and offset free par, or fixed value
       }
     }
   }
@@ -2002,8 +2002,9 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
       parallel::clusterExport(cl, c('sm','standata'),environment())
       
       if(isloops == 0) {
+        nresamples = issamples
         resamples <- matrix(unlist(lapply(1:5000,function(x){
-          delta[[1]] + t(chol(mcovl[[1]])) %*% matrix(rnorm(length(delta[[1]])),nrow=1)
+          delta[[1]] + t(chol(mcovl[[1]])) %*% t(matrix(rnorm(length(delta[[1]])),nrow=1))
         } )),byrow=TRUE,ncol=length(delta[[1]]))
         message('Importance sampling not done -- interval estimates via Hessian based sampling only')
       }
@@ -2096,7 +2097,7 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
       }
       }#end while no better fit
 
-      lpsamples <- unlist(target_dens)[resample_i]
+      if(isloops==0) lpsamples <- NA else lpsamples <- unlist(target_dens)[resample_i]
       
       # parallel::stopCluster(cl)
       message('Computing quantities...')
