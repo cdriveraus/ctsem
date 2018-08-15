@@ -448,9 +448,9 @@ transformed parameters{
   int ndynerror; // number of variance elements to include
 
   //linear continuous time calcs
-  matrix[lineardynamics + ( 1-continuoustime) ? nlatent : 0,lineardynamics ? nlatent : 0] discreteDRIFT;
+  matrix[lineardynamics + ( 1-continuoustime) ? nlatent : 0, lineardynamics + ( 1-continuoustime) ? nlatent : 0] discreteDRIFT;
   vector[lineardynamics + ( 1-continuoustime)  ? nlatent : 0] discreteCINT;
-  matrix[lineardynamics + ( 1-continuoustime)  ? nlatent : 0, lineardynamics ? nlatent : 0] discreteDIFFUSION;
+  matrix[lineardynamics + ( 1-continuoustime)  ? nlatent : 0, lineardynamics + ( 1-continuoustime) ? nlatent : 0] discreteDIFFUSION;
 
   // create simple, modifiable forms of the system matrices for easier use in the filter
   matrix[nlatent,1] sT0MEANS;
@@ -1133,9 +1133,9 @@ for(geni in 0:ngenerations){
   int ndynerror; // number of variance elements to include
 
   //linear continuous time calcs
-  matrix[lineardynamics + ( 1-continuoustime) ? nlatent : 0,lineardynamics ? nlatent : 0] discreteDRIFT;
+  matrix[lineardynamics + ( 1-continuoustime) ? nlatent : 0, lineardynamics + ( 1-continuoustime) ? nlatent : 0] discreteDRIFT;
   vector[lineardynamics + ( 1-continuoustime)  ? nlatent : 0] discreteCINT;
-  matrix[lineardynamics + ( 1-continuoustime)  ? nlatent : 0, lineardynamics ? nlatent : 0] discreteDIFFUSION;
+  matrix[lineardynamics + ( 1-continuoustime)  ? nlatent : 0, lineardynamics + ( 1-continuoustime) ? nlatent : 0] discreteDIFFUSION;
 
   // create simple, modifiable forms of the system matrices for easier use in the filter
   matrix[nlatent,1] sT0MEANS;
