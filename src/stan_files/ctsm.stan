@@ -621,10 +621,8 @@ transformed parameters{
          kron_prod(IIlatent[ derrind, derrind ], sDRIFT[ derrind, derrind ]) ) \ 
       to_vector( sDIFFUSION[ derrind, derrind ] + IIlatent[ derrind, derrind ] * 1e-5), ndiffusion,ndiffusion);
 
-      if(continuoustime==0) sasymDIFFUSION[derrind, derrind] = to_matrix( (IIlatent2[ derrind, derrind ] - 
-        kron_prod(sDRIFT[derrind, derrind  ], 
-          sDRIFT[derrind, derrind  ])) * 
-        to_vector(sDIFFUSION[derrind, derrind  ]) , ndiffusion, ndiffusion);
+      if(continuoustime==0) sasymDIFFUSION = to_matrix( (IIlatent2 - 
+        kron_prod(sDRIFT, sDRIFT)) *  to_vector(sDIFFUSION) , ndiffusion, ndiffusion);
     } //end asymdiffusion loops
           
     if(nt0meansstationary > 0){
@@ -919,8 +917,8 @@ transformed parameters{
             if(manifesttype[wi]==1 && Y[rowi,wi] != 99999) ypredcov[wi,wi] = ypredcov[wi,wi] + fabs((ypred[wi] - 1) .* (ypred[wi]));
             if(manifesttype[wi]==2 && Y[rowi,wi] != 99999) ypredcov[wi,wi] = ypredcov[wi,wi] + square(fabs((ypred[wi] - round(ypred[wi])))); 
           }
-          K[,o] = mdivide_right(etapriorcov * append_row(sLAMBDA[o,]',rep_matrix(0,nlatentpop-nlatent,nmanifest)), ypredcov[o,o]); 
-          etaupdcov += - K[,o] * append_col(sLAMBDA[o,],rep_matrix(0,nmanifest,nlatentpop-nlatent)) * etapriorcov;
+          K[,o] = mdivide_right(etapriorcov * append_row(sLAMBDA[o,]',rep_matrix(0,nlatentpop-nlatent,nmanifest)[,o]), ypredcov[o,o]); 
+          etaupdcov += - K[,o] * append_col(sLAMBDA[o,],rep_matrix(0,nmanifest,nlatentpop-nlatent)[o,]) * etapriorcov;
         }
         if(intoverstates==0) { //sampled states
           //if(ncont_y[rowi] > 0) 
@@ -1306,10 +1304,8 @@ for(geni in 0:ngenerations){
          kron_prod(IIlatent[ derrind, derrind ], sDRIFT[ derrind, derrind ]) ) \ 
       to_vector( sDIFFUSION[ derrind, derrind ] + IIlatent[ derrind, derrind ] * 1e-5), ndiffusion,ndiffusion);
 
-      if(continuoustime==0) sasymDIFFUSION[derrind, derrind] = to_matrix( (IIlatent2[ derrind, derrind ] - 
-        kron_prod(sDRIFT[derrind, derrind  ], 
-          sDRIFT[derrind, derrind  ])) * 
-        to_vector(sDIFFUSION[derrind, derrind  ]) , ndiffusion, ndiffusion);
+      if(continuoustime==0) sasymDIFFUSION = to_matrix( (IIlatent2 - 
+        kron_prod(sDRIFT, sDRIFT)) *  to_vector(sDIFFUSION) , ndiffusion, ndiffusion);
     } //end asymdiffusion loops
           
     if(nt0meansstationary > 0){
@@ -1616,8 +1612,8 @@ if(geni > 0){
             if(manifesttype[wi]==1 && Y[rowi,wi] != 99999) ypredcov[wi,wi] = ypredcov[wi,wi] + fabs((ypred[wi] - 1) .* (ypred[wi]));
             if(manifesttype[wi]==2 && Y[rowi,wi] != 99999) ypredcov[wi,wi] = ypredcov[wi,wi] + square(fabs((ypred[wi] - round(ypred[wi])))); 
           }
-          K[,o] = mdivide_right(etapriorcov * append_row(sLAMBDA[o,]',rep_matrix(0,nlatentpop-nlatent,nmanifest)), ypredcov[o,o]); 
-          etaupdcov += - K[,o] * append_col(sLAMBDA[o,],rep_matrix(0,nmanifest,nlatentpop-nlatent)) * etapriorcov;
+          K[,o] = mdivide_right(etapriorcov * append_row(sLAMBDA[o,]',rep_matrix(0,nlatentpop-nlatent,nmanifest)[,o]), ypredcov[o,o]); 
+          etaupdcov += - K[,o] * append_col(sLAMBDA[o,],rep_matrix(0,nmanifest,nlatentpop-nlatent)[o,]) * etapriorcov;
         }
         if(intoverstates==0) { //sampled states
           //if(ncont_y[rowi] > 0) 
