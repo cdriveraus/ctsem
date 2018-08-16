@@ -29,6 +29,8 @@
 #' @param isloopsize Only relevent if \code{optimize=TRUE}. 
 #' Number of samples per iteration of importance sampling.
 #' @param issamples Number of samples to use for final results of importance sampling.
+#' @param ukfspread Numeric governing the spread of sigma points when using the unscented Kalman filter. Smaller values (e.g. 1e-2)
+#' are apparently typical, but this doesn't seem sensible to me. 
 #' @param nopriors logical. If TRUE, any priors are disabled -- sometimes desirable for optimization. 
 #' @param vb if TRUE, use Stan's variational approximation. Rudimentary testing suggests it is not accurate 
 #' for many ctsem models at present.
@@ -92,7 +94,7 @@
 #' @export
 ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intoverstates=TRUE, binomial=FALSE,
    fit=TRUE, ukfpop=FALSE, stationary=FALSE,plot=FALSE,  derrind='all',
-  optimize=FALSE, deoptim=TRUE, isloops=10, isloopsize=500, issamples=5000, nopriors=FALSE, vb=FALSE, chains=1,cores='maxneeded', inits=NULL,
+  optimize=FALSE, deoptim=TRUE, isloops=10, isloopsize=500, issamples=5000, ukfspread=1, nopriors=FALSE, vb=FALSE, chains=1,cores='maxneeded', inits=NULL,
   maxtimestep = 9999, lineardynamics='auto', forcerecompile=FALSE,ngen=1,savescores=TRUE,
   control=list(adapt_delta=.8, adapt_init_buffer=2, adapt_window=2,
     max_treedepth=10,stepsize=1e-3),verbose=0,...){
@@ -408,10 +410,10 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       paste0('
     for(ri in 1:size(',m,'setup)){ //for each row of matrix setup
       if(',m,'setup[ ri,5] > 0){ // if individually varying
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +',m,'setup[ri,5], statei ] != ukfstates[nlatent +',m,'setup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +',m,'setup[ri,5], statei ] != ukfstates[nlatent +',m,'setup[ri,5], statei-1 ])){ //only recalculate if state changed
           s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = 
             ','tform(ukfstates[nlatent +',m,'setup[ri,5], statei ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ); 
-        }
+        //}
       }
     }')
     })),collapse='\n'),'}',collapse='\n')
@@ -422,10 +424,10 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       paste0('
     for(ri in 1:size(',m,'setup)){
       if(',m,'setup[ ri,5] > 0){ 
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +',m,'setup[ri,5], statei ] != ukfstates[nlatent +',m,'setup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +',m,'setup[ri,5], statei ] != ukfstates[nlatent +',m,'setup[ri,5], statei-1 ])){ //only recalculate if state changed
          s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = ',
          'tform(ukfstates[nlatent +',m,'setup[ri,5], statei ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ); 
-        }
+        //}
       }
     }')
     })),collapse='\n'),'}',collapse='\n')
@@ -436,10 +438,10 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       paste0('
     for(ri in 1:size(',m,'setup)){
       if(',m,'setup[ ri,5] > 0){ 
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +',m,'setup[ri,5], statei ] != ukfstates[nlatent +',m,'setup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +',m,'setup[ri,5], statei ] != ukfstates[nlatent +',m,'setup[ri,5], statei-1 ])){ //only recalculate if state changed
          s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = ',
           'tform(ukfstates[nlatent +',m,'setup[ri,5], statei ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ); 
-        }
+        //}
       }
     }')
     })),collapse='\n'),'}',collapse='\n')
@@ -615,7 +617,7 @@ ukfilterfunc<-function(ppchecking){
     if(ukf==1){ //ukf approximation parameters
       if(T0check[rowi] == 1) { ndynerror = nlatent; } else ndynerror = ndiffusion;
       if(T0check[rowi]==1 || ( ndiffusion < nlatent && T0check[rowi-1]==1)) {
-        asquared =  square(2.0/sqrt(0.0+nlatentpop+ndynerror) * 1e-1);
+        asquared =  square(2.0/sqrt(0.0+nlatentpop+ndynerror) * ukfspread);
         l = asquared * (nlatentpop + ndynerror + k) - (nlatentpop+ndynerror); 
         sqrtukfadjust = sqrt(0.0+nlatentpop + ndynerror +l);
       }
@@ -632,8 +634,8 @@ ukfilterfunc<-function(ppchecking){
         sigpoints = rep_matrix(0, nlatentpop,nlatentpop);
       
         if(ukfpop==1) {
-          if(ntipred ==0) etaprior[ (nlatent+1):(nlatentpop)] = rawpopmeans[indvaryingindex];
-          if(ntipred >0) etaprior[ (nlatent+1):(nlatentpop)] = rawpopmeans[indvaryingindex] + TIPREDEFFECT[indvaryingindex] * tipreds[si]\';
+          if(ntipred ==0) etaupd[ (nlatent+1):(nlatentpop)] = rawpopmeans[indvaryingindex];
+          if(ntipred >0) etaupd[ (nlatent+1):(nlatentpop)] = rawpopmeans[indvaryingindex] + TIPREDEFFECT[indvaryingindex] * tipreds[si]\';
           sigpoints[(nlatent+1):(nlatentpop), (nlatent+1):(nlatentpop)] = rawpopcovsqrt * sqrtukfadjust;
         }
       }
@@ -714,9 +716,9 @@ ukfilterfunc<-function(ppchecking){
     
         if(T0check[rowi]==1){
      
-          if(statei <= 2+2*nlatentpop+1){ //only dynamic noise after this
+          //if(statei <= 2+2*nlatentpop+1){ //only dynamic noise after this
           ',paste0(t0calcs,';',collapse=' '),'
-          }
+          //}
   
           state = sT0MEANS[,1];
           if(statei > (2+2*nlatentpop+ndynerror)) {
@@ -729,9 +731,9 @@ ukfilterfunc<-function(ppchecking){
         if(T0check[rowi]==0){
           state = ukfstates[1:nlatent, statei];
 
-          if(statei <= 2+2*nlatentpop+1){ //only dynamic noise effects beyond this
+          //if(statei <= 2+2*nlatentpop+1){ //only dynamic noise effects beyond this
           ',paste0(ukfpopdynamiccalcs,';',collapse=' '),'
-          }
+          //}
     
           if(continuoustime==1 && lineardynamics==0){
             ',nlstateupdate(),'
@@ -1251,7 +1253,7 @@ for(m in basematrices){
 
   if(any(popsetup[,'transform'] < -10)) recompile <- TRUE #if custom transforms needed
   
-  # ukf <- TRUE
+  # ukfmeasurement <- TRUE
   # message('ukf true!!!')
 
   writemodel<-function(){
@@ -1521,6 +1523,7 @@ data {
   
   int ukfpop;
   int ukf;
+  real ukfspread;
   int ukfmeasurement;
   int intoverstates;
   int ngenerations; //number of samples of random data to generate
@@ -1753,6 +1756,7 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
     driftdiagonly = as.integer(driftdiagonly),
     ukfpop=as.integer(ukfpop),
     ukf=as.integer(ukf),
+    ukfspread = ukfspread,
     ukfmeasurement=as.integer(ukfmeasurement),
     nopriors=as.integer(nopriors),
     ngenerations=as.integer(ngen),

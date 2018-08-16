@@ -273,6 +273,7 @@ data {
   
   int ukfpop;
   int ukf;
+  real ukfspread;
   int ukfmeasurement;
   int intoverstates;
   int ngenerations; //number of samples of random data to generate
@@ -494,7 +495,7 @@ transformed parameters{
     if(ukf==1){ //ukf approximation parameters
       if(T0check[rowi] == 1) { ndynerror = nlatent; } else ndynerror = ndiffusion;
       if(T0check[rowi]==1 || ( ndiffusion < nlatent && T0check[rowi-1]==1)) {
-        asquared =  square(2.0/sqrt(0.0+nlatentpop+ndynerror) * 1e-1);
+        asquared =  square(2.0/sqrt(0.0+nlatentpop+ndynerror) * ukfspread);
         l = asquared * (nlatentpop + ndynerror + k) - (nlatentpop+ndynerror); 
         sqrtukfadjust = sqrt(0.0+nlatentpop + ndynerror +l);
       }
@@ -669,8 +670,8 @@ transformed parameters{
         sigpoints = rep_matrix(0, nlatentpop,nlatentpop);
       
         if(ukfpop==1) {
-          if(ntipred ==0) etaprior[ (nlatent+1):(nlatentpop)] = rawpopmeans[indvaryingindex];
-          if(ntipred >0) etaprior[ (nlatent+1):(nlatentpop)] = rawpopmeans[indvaryingindex] + TIPREDEFFECT[indvaryingindex] * tipreds[si]';
+          if(ntipred ==0) etaupd[ (nlatent+1):(nlatentpop)] = rawpopmeans[indvaryingindex];
+          if(ntipred >0) etaupd[ (nlatent+1):(nlatentpop)] = rawpopmeans[indvaryingindex] + TIPREDEFFECT[indvaryingindex] * tipreds[si]';
           sigpoints[(nlatent+1):(nlatentpop), (nlatent+1):(nlatentpop)] = rawpopcovsqrt * sqrtukfadjust;
         }
       }
@@ -751,26 +752,26 @@ transformed parameters{
     
         if(T0check[rowi]==1){
      
-          if(statei <= 2+2*nlatentpop+1){ //only dynamic noise after this
+          //if(statei <= 2+2*nlatentpop+1){ //only dynamic noise after this
           ;
       if(ukfpop==1){
         
     for(ri in 1:size(T0MEANSsetup)){
       if(T0MEANSsetup[ ri,5] > 0){ 
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +T0MEANSsetup[ri,5], statei ] != ukfstates[nlatent +T0MEANSsetup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +T0MEANSsetup[ri,5], statei ] != ukfstates[nlatent +T0MEANSsetup[ri,5], statei-1 ])){ //only recalculate if state changed
          sT0MEANS[T0MEANSsetup[ ri,1], T0MEANSsetup[ri,2]] = tform(ukfstates[nlatent +T0MEANSsetup[ri,5], statei ], T0MEANSsetup[ri,4], T0MEANSvalues[ri,2], T0MEANSvalues[ri,3], T0MEANSvalues[ri,4] ); 
-        }
+        //}
       }
     }
 
     for(ri in 1:size(T0VARsetup)){
       if(T0VARsetup[ ri,5] > 0){ 
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +T0VARsetup[ri,5], statei ] != ukfstates[nlatent +T0VARsetup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +T0VARsetup[ri,5], statei ] != ukfstates[nlatent +T0VARsetup[ri,5], statei-1 ])){ //only recalculate if state changed
          sT0VAR[T0VARsetup[ ri,1], T0VARsetup[ri,2]] = tform(ukfstates[nlatent +T0VARsetup[ri,5], statei ], T0VARsetup[ri,4], T0VARvalues[ri,2], T0VARvalues[ri,3], T0VARvalues[ri,4] ); 
-        }
+        //}
       }
     }};
-          }
+          //}
   
           state = sT0MEANS[,1];
           if(statei > (2+2*nlatentpop+ndynerror)) {
@@ -783,55 +784,55 @@ transformed parameters{
         if(T0check[rowi]==0){
           state = ukfstates[1:nlatent, statei];
 
-          if(statei <= 2+2*nlatentpop+1){ //only dynamic noise effects beyond this
+          //if(statei <= 2+2*nlatentpop+1){ //only dynamic noise effects beyond this
           
     if(ukfpop==1){
 
     for(ri in 1:size(DRIFTsetup)){ //for each row of matrix setup
       if(DRIFTsetup[ ri,5] > 0){ // if individually varying
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +DRIFTsetup[ri,5], statei ] != ukfstates[nlatent +DRIFTsetup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +DRIFTsetup[ri,5], statei ] != ukfstates[nlatent +DRIFTsetup[ri,5], statei-1 ])){ //only recalculate if state changed
           sDRIFT[DRIFTsetup[ ri,1], DRIFTsetup[ri,2]] = 
             tform(ukfstates[nlatent +DRIFTsetup[ri,5], statei ], DRIFTsetup[ri,4], DRIFTvalues[ri,2], DRIFTvalues[ri,3], DRIFTvalues[ri,4] ); 
-        }
+        //}
       }
     }
 
     for(ri in 1:size(DIFFUSIONsetup)){ //for each row of matrix setup
       if(DIFFUSIONsetup[ ri,5] > 0){ // if individually varying
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +DIFFUSIONsetup[ri,5], statei ] != ukfstates[nlatent +DIFFUSIONsetup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +DIFFUSIONsetup[ri,5], statei ] != ukfstates[nlatent +DIFFUSIONsetup[ri,5], statei-1 ])){ //only recalculate if state changed
           sDIFFUSION[DIFFUSIONsetup[ ri,1], DIFFUSIONsetup[ri,2]] = 
             tform(ukfstates[nlatent +DIFFUSIONsetup[ri,5], statei ], DIFFUSIONsetup[ri,4], DIFFUSIONvalues[ri,2], DIFFUSIONvalues[ri,3], DIFFUSIONvalues[ri,4] ); 
-        }
+        //}
       }
     }
 
     for(ri in 1:size(CINTsetup)){ //for each row of matrix setup
       if(CINTsetup[ ri,5] > 0){ // if individually varying
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +CINTsetup[ri,5], statei ] != ukfstates[nlatent +CINTsetup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +CINTsetup[ri,5], statei ] != ukfstates[nlatent +CINTsetup[ri,5], statei-1 ])){ //only recalculate if state changed
           sCINT[CINTsetup[ ri,1], CINTsetup[ri,2]] = 
             tform(ukfstates[nlatent +CINTsetup[ri,5], statei ], CINTsetup[ri,4], CINTvalues[ri,2], CINTvalues[ri,3], CINTvalues[ri,4] ); 
-        }
+        //}
       }
     }
 
     for(ri in 1:size(PARSsetup)){ //for each row of matrix setup
       if(PARSsetup[ ri,5] > 0){ // if individually varying
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +PARSsetup[ri,5], statei ] != ukfstates[nlatent +PARSsetup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +PARSsetup[ri,5], statei ] != ukfstates[nlatent +PARSsetup[ri,5], statei-1 ])){ //only recalculate if state changed
           sPARS[PARSsetup[ ri,1], PARSsetup[ri,2]] = 
             tform(ukfstates[nlatent +PARSsetup[ri,5], statei ], PARSsetup[ri,4], PARSvalues[ri,2], PARSvalues[ri,3], PARSvalues[ri,4] ); 
-        }
+        //}
       }
     }
 
     for(ri in 1:size(TDPREDEFFECTsetup)){ //for each row of matrix setup
       if(TDPREDEFFECTsetup[ ri,5] > 0){ // if individually varying
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +TDPREDEFFECTsetup[ri,5], statei ] != ukfstates[nlatent +TDPREDEFFECTsetup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +TDPREDEFFECTsetup[ri,5], statei ] != ukfstates[nlatent +TDPREDEFFECTsetup[ri,5], statei-1 ])){ //only recalculate if state changed
           sTDPREDEFFECT[TDPREDEFFECTsetup[ ri,1], TDPREDEFFECTsetup[ri,2]] = 
             tform(ukfstates[nlatent +TDPREDEFFECTsetup[ri,5], statei ], TDPREDEFFECTsetup[ri,4], TDPREDEFFECTvalues[ri,2], TDPREDEFFECTvalues[ri,3], TDPREDEFFECTvalues[ri,4] ); 
-        }
+        //}
       }
     }};
-          }
+          //}
     
           if(continuoustime==1 && lineardynamics==0){
             
@@ -938,33 +939,33 @@ transformed parameters{
         
     for(ri in 1:size(LAMBDAsetup)){
       if(LAMBDAsetup[ ri,5] > 0){ 
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +LAMBDAsetup[ri,5], statei ] != ukfstates[nlatent +LAMBDAsetup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +LAMBDAsetup[ri,5], statei ] != ukfstates[nlatent +LAMBDAsetup[ri,5], statei-1 ])){ //only recalculate if state changed
          sLAMBDA[LAMBDAsetup[ ri,1], LAMBDAsetup[ri,2]] = tform(ukfstates[nlatent +LAMBDAsetup[ri,5], statei ], LAMBDAsetup[ri,4], LAMBDAvalues[ri,2], LAMBDAvalues[ri,3], LAMBDAvalues[ri,4] ); 
-        }
+        //}
       }
     }
 
     for(ri in 1:size(MANIFESTMEANSsetup)){
       if(MANIFESTMEANSsetup[ ri,5] > 0){ 
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +MANIFESTMEANSsetup[ri,5], statei ] != ukfstates[nlatent +MANIFESTMEANSsetup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +MANIFESTMEANSsetup[ri,5], statei ] != ukfstates[nlatent +MANIFESTMEANSsetup[ri,5], statei-1 ])){ //only recalculate if state changed
          sMANIFESTMEANS[MANIFESTMEANSsetup[ ri,1], MANIFESTMEANSsetup[ri,2]] = tform(ukfstates[nlatent +MANIFESTMEANSsetup[ri,5], statei ], MANIFESTMEANSsetup[ri,4], MANIFESTMEANSvalues[ri,2], MANIFESTMEANSvalues[ri,3], MANIFESTMEANSvalues[ri,4] ); 
-        }
+        //}
       }
     }
 
     for(ri in 1:size(MANIFESTVARsetup)){
       if(MANIFESTVARsetup[ ri,5] > 0){ 
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +MANIFESTVARsetup[ri,5], statei ] != ukfstates[nlatent +MANIFESTVARsetup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +MANIFESTVARsetup[ri,5], statei ] != ukfstates[nlatent +MANIFESTVARsetup[ri,5], statei-1 ])){ //only recalculate if state changed
          sMANIFESTVAR[MANIFESTVARsetup[ ri,1], MANIFESTVARsetup[ri,2]] = tform(ukfstates[nlatent +MANIFESTVARsetup[ri,5], statei ], MANIFESTVARsetup[ri,4], MANIFESTVARvalues[ri,2], MANIFESTVARvalues[ri,3], MANIFESTVARvalues[ri,4] ); 
-        }
+        //}
       }
     }
 
     for(ri in 1:size(PARSsetup)){
       if(PARSsetup[ ri,5] > 0){ 
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +PARSsetup[ri,5], statei ] != ukfstates[nlatent +PARSsetup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +PARSsetup[ri,5], statei ] != ukfstates[nlatent +PARSsetup[ri,5], statei-1 ])){ //only recalculate if state changed
          sPARS[PARSsetup[ ri,1], PARSsetup[ri,2]] = tform(ukfstates[nlatent +PARSsetup[ri,5], statei ], PARSsetup[ri,4], PARSvalues[ri,2], PARSvalues[ri,3], PARSvalues[ri,4] ); 
-        }
+        //}
       }
     }};
 
@@ -1177,7 +1178,7 @@ for(geni in 0:ngenerations){
     if(ukf==1){ //ukf approximation parameters
       if(T0check[rowi] == 1) { ndynerror = nlatent; } else ndynerror = ndiffusion;
       if(T0check[rowi]==1 || ( ndiffusion < nlatent && T0check[rowi-1]==1)) {
-        asquared =  square(2.0/sqrt(0.0+nlatentpop+ndynerror) * 1e-1);
+        asquared =  square(2.0/sqrt(0.0+nlatentpop+ndynerror) * ukfspread);
         l = asquared * (nlatentpop + ndynerror + k) - (nlatentpop+ndynerror); 
         sqrtukfadjust = sqrt(0.0+nlatentpop + ndynerror +l);
       }
@@ -1364,8 +1365,8 @@ asymCINT[asymCINTsubindex[si]] = sasymCINT;
         sigpoints = rep_matrix(0, nlatentpop,nlatentpop);
       
         if(ukfpop==1) {
-          if(ntipred ==0) etaprior[ (nlatent+1):(nlatentpop)] = rawpopmeans[indvaryingindex];
-          if(ntipred >0) etaprior[ (nlatent+1):(nlatentpop)] = rawpopmeans[indvaryingindex] + TIPREDEFFECT[indvaryingindex] * tipreds[si]';
+          if(ntipred ==0) etaupd[ (nlatent+1):(nlatentpop)] = rawpopmeans[indvaryingindex];
+          if(ntipred >0) etaupd[ (nlatent+1):(nlatentpop)] = rawpopmeans[indvaryingindex] + TIPREDEFFECT[indvaryingindex] * tipreds[si]';
           sigpoints[(nlatent+1):(nlatentpop), (nlatent+1):(nlatentpop)] = rawpopcovsqrt * sqrtukfadjust;
         }
       }
@@ -1446,26 +1447,26 @@ if(geni > 0){
     
         if(T0check[rowi]==1){
      
-          if(statei <= 2+2*nlatentpop+1){ //only dynamic noise after this
+          //if(statei <= 2+2*nlatentpop+1){ //only dynamic noise after this
           ;
       if(ukfpop==1){
         
     for(ri in 1:size(T0MEANSsetup)){
       if(T0MEANSsetup[ ri,5] > 0){ 
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +T0MEANSsetup[ri,5], statei ] != ukfstates[nlatent +T0MEANSsetup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +T0MEANSsetup[ri,5], statei ] != ukfstates[nlatent +T0MEANSsetup[ri,5], statei-1 ])){ //only recalculate if state changed
          sT0MEANS[T0MEANSsetup[ ri,1], T0MEANSsetup[ri,2]] = tform(ukfstates[nlatent +T0MEANSsetup[ri,5], statei ], T0MEANSsetup[ri,4], T0MEANSvalues[ri,2], T0MEANSvalues[ri,3], T0MEANSvalues[ri,4] ); 
-        }
+        //}
       }
     }
 
     for(ri in 1:size(T0VARsetup)){
       if(T0VARsetup[ ri,5] > 0){ 
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +T0VARsetup[ri,5], statei ] != ukfstates[nlatent +T0VARsetup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +T0VARsetup[ri,5], statei ] != ukfstates[nlatent +T0VARsetup[ri,5], statei-1 ])){ //only recalculate if state changed
          sT0VAR[T0VARsetup[ ri,1], T0VARsetup[ri,2]] = tform(ukfstates[nlatent +T0VARsetup[ri,5], statei ], T0VARsetup[ri,4], T0VARvalues[ri,2], T0VARvalues[ri,3], T0VARvalues[ri,4] ); 
-        }
+        //}
       }
     }};
-          }
+          //}
   
           state = sT0MEANS[,1];
           if(statei > (2+2*nlatentpop+ndynerror)) {
@@ -1478,55 +1479,55 @@ if(geni > 0){
         if(T0check[rowi]==0){
           state = ukfstates[1:nlatent, statei];
 
-          if(statei <= 2+2*nlatentpop+1){ //only dynamic noise effects beyond this
+          //if(statei <= 2+2*nlatentpop+1){ //only dynamic noise effects beyond this
           
     if(ukfpop==1){
 
     for(ri in 1:size(DRIFTsetup)){ //for each row of matrix setup
       if(DRIFTsetup[ ri,5] > 0){ // if individually varying
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +DRIFTsetup[ri,5], statei ] != ukfstates[nlatent +DRIFTsetup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +DRIFTsetup[ri,5], statei ] != ukfstates[nlatent +DRIFTsetup[ri,5], statei-1 ])){ //only recalculate if state changed
           sDRIFT[DRIFTsetup[ ri,1], DRIFTsetup[ri,2]] = 
             tform(ukfstates[nlatent +DRIFTsetup[ri,5], statei ], DRIFTsetup[ri,4], DRIFTvalues[ri,2], DRIFTvalues[ri,3], DRIFTvalues[ri,4] ); 
-        }
+        //}
       }
     }
 
     for(ri in 1:size(DIFFUSIONsetup)){ //for each row of matrix setup
       if(DIFFUSIONsetup[ ri,5] > 0){ // if individually varying
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +DIFFUSIONsetup[ri,5], statei ] != ukfstates[nlatent +DIFFUSIONsetup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +DIFFUSIONsetup[ri,5], statei ] != ukfstates[nlatent +DIFFUSIONsetup[ri,5], statei-1 ])){ //only recalculate if state changed
           sDIFFUSION[DIFFUSIONsetup[ ri,1], DIFFUSIONsetup[ri,2]] = 
             tform(ukfstates[nlatent +DIFFUSIONsetup[ri,5], statei ], DIFFUSIONsetup[ri,4], DIFFUSIONvalues[ri,2], DIFFUSIONvalues[ri,3], DIFFUSIONvalues[ri,4] ); 
-        }
+        //}
       }
     }
 
     for(ri in 1:size(CINTsetup)){ //for each row of matrix setup
       if(CINTsetup[ ri,5] > 0){ // if individually varying
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +CINTsetup[ri,5], statei ] != ukfstates[nlatent +CINTsetup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +CINTsetup[ri,5], statei ] != ukfstates[nlatent +CINTsetup[ri,5], statei-1 ])){ //only recalculate if state changed
           sCINT[CINTsetup[ ri,1], CINTsetup[ri,2]] = 
             tform(ukfstates[nlatent +CINTsetup[ri,5], statei ], CINTsetup[ri,4], CINTvalues[ri,2], CINTvalues[ri,3], CINTvalues[ri,4] ); 
-        }
+        //}
       }
     }
 
     for(ri in 1:size(PARSsetup)){ //for each row of matrix setup
       if(PARSsetup[ ri,5] > 0){ // if individually varying
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +PARSsetup[ri,5], statei ] != ukfstates[nlatent +PARSsetup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +PARSsetup[ri,5], statei ] != ukfstates[nlatent +PARSsetup[ri,5], statei-1 ])){ //only recalculate if state changed
           sPARS[PARSsetup[ ri,1], PARSsetup[ri,2]] = 
             tform(ukfstates[nlatent +PARSsetup[ri,5], statei ], PARSsetup[ri,4], PARSvalues[ri,2], PARSvalues[ri,3], PARSvalues[ri,4] ); 
-        }
+        //}
       }
     }
 
     for(ri in 1:size(TDPREDEFFECTsetup)){ //for each row of matrix setup
       if(TDPREDEFFECTsetup[ ri,5] > 0){ // if individually varying
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +TDPREDEFFECTsetup[ri,5], statei ] != ukfstates[nlatent +TDPREDEFFECTsetup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +TDPREDEFFECTsetup[ri,5], statei ] != ukfstates[nlatent +TDPREDEFFECTsetup[ri,5], statei-1 ])){ //only recalculate if state changed
           sTDPREDEFFECT[TDPREDEFFECTsetup[ ri,1], TDPREDEFFECTsetup[ri,2]] = 
             tform(ukfstates[nlatent +TDPREDEFFECTsetup[ri,5], statei ], TDPREDEFFECTsetup[ri,4], TDPREDEFFECTvalues[ri,2], TDPREDEFFECTvalues[ri,3], TDPREDEFFECTvalues[ri,4] ); 
-        }
+        //}
       }
     }};
-          }
+          //}
     
           if(continuoustime==1 && lineardynamics==0){
             
@@ -1633,33 +1634,33 @@ if(geni > 0){
         
     for(ri in 1:size(LAMBDAsetup)){
       if(LAMBDAsetup[ ri,5] > 0){ 
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +LAMBDAsetup[ri,5], statei ] != ukfstates[nlatent +LAMBDAsetup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +LAMBDAsetup[ri,5], statei ] != ukfstates[nlatent +LAMBDAsetup[ri,5], statei-1 ])){ //only recalculate if state changed
          sLAMBDA[LAMBDAsetup[ ri,1], LAMBDAsetup[ri,2]] = tform(ukfstates[nlatent +LAMBDAsetup[ri,5], statei ], LAMBDAsetup[ri,4], LAMBDAvalues[ri,2], LAMBDAvalues[ri,3], LAMBDAvalues[ri,4] ); 
-        }
+        //}
       }
     }
 
     for(ri in 1:size(MANIFESTMEANSsetup)){
       if(MANIFESTMEANSsetup[ ri,5] > 0){ 
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +MANIFESTMEANSsetup[ri,5], statei ] != ukfstates[nlatent +MANIFESTMEANSsetup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +MANIFESTMEANSsetup[ri,5], statei ] != ukfstates[nlatent +MANIFESTMEANSsetup[ri,5], statei-1 ])){ //only recalculate if state changed
          sMANIFESTMEANS[MANIFESTMEANSsetup[ ri,1], MANIFESTMEANSsetup[ri,2]] = tform(ukfstates[nlatent +MANIFESTMEANSsetup[ri,5], statei ], MANIFESTMEANSsetup[ri,4], MANIFESTMEANSvalues[ri,2], MANIFESTMEANSvalues[ri,3], MANIFESTMEANSvalues[ri,4] ); 
-        }
+        //}
       }
     }
 
     for(ri in 1:size(MANIFESTVARsetup)){
       if(MANIFESTVARsetup[ ri,5] > 0){ 
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +MANIFESTVARsetup[ri,5], statei ] != ukfstates[nlatent +MANIFESTVARsetup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +MANIFESTVARsetup[ri,5], statei ] != ukfstates[nlatent +MANIFESTVARsetup[ri,5], statei-1 ])){ //only recalculate if state changed
          sMANIFESTVAR[MANIFESTVARsetup[ ri,1], MANIFESTVARsetup[ri,2]] = tform(ukfstates[nlatent +MANIFESTVARsetup[ri,5], statei ], MANIFESTVARsetup[ri,4], MANIFESTVARvalues[ri,2], MANIFESTVARvalues[ri,3], MANIFESTVARvalues[ri,4] ); 
-        }
+        //}
       }
     }
 
     for(ri in 1:size(PARSsetup)){
       if(PARSsetup[ ri,5] > 0){ 
-        if(statei==2 || (statei > 2 && ukfstates[nlatent +PARSsetup[ri,5], statei ] != ukfstates[nlatent +PARSsetup[ri,5], statei-1 ])){ //only recalculate if state changed
+        //if(statei==2 || (statei > 2 && ukfstates[nlatent +PARSsetup[ri,5], statei ] != ukfstates[nlatent +PARSsetup[ri,5], statei-1 ])){ //only recalculate if state changed
          sPARS[PARSsetup[ ri,1], PARSsetup[ri,2]] = tform(ukfstates[nlatent +PARSsetup[ri,5], statei ], PARSsetup[ri,4], PARSvalues[ri,2], PARSvalues[ri,3], PARSvalues[ri,4] ); 
-        }
+        //}
       }
     }};
 
