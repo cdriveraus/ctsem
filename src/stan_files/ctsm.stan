@@ -440,7 +440,7 @@ transformed parameters{
   //ukf
   matrix[ukf ? nlatentpop :0,ukf ? nlatentpop :0] sigpoints;
   vector[ukf ? nlatent :0] state; //dynamic portion of current states
-  vector[nlatent] rkstates[5]; //runge kutta integration steps
+  vector[nlatent] rk[5]; //runge kutta integration steps
   real dynerror; //dynamic error variable
   real k;
   real asquared;
@@ -837,21 +837,21 @@ transformed parameters{
           if(continuoustime==1 && lineardynamics==0){
             
       for(stepi in 1:integrationsteps[rowi]){ //for each euler integration step
-        rkstates[5] = state; //store initial states for this integration step
+        rk[5] = state; //store initial states for this integration step
 
         for(ki in 1:4){ //runge kutta integration within euler scheme
-          if(ki==2 || ki==3) state=rkstates[5] + dTsmall[rowi] /2 * rkstates[ki-1];
-          if(ki==4) state = rkstates[5] + dTsmall[rowi] * rkstates[3];
+          if(ki==2 || ki==3) state=rk[5] + dTsmall[rowi] /2 * rk[ki-1];
+          if(ki==4) state = rk[5] + dTsmall[rowi] * rk[3];
           ;
 
           if(statei <= (2+2*nlatentpop) ) {
-            rkstates[ki] = sDRIFT * state + sCINT[,1];
+            rk[ki] = sDRIFT * state + sCINT[,1];
           } else if(statei <= (2+2*nlatentpop + ndynerror) ){
-            rkstates[ki] = sDRIFT * state + sCINT[,1] + sDIFFUSION[ , derrind[statei - (2+2*nlatentpop)] ] * dynerror; 
-          } else rkstates[ki] = sDRIFT * state + sCINT[,1] - sDIFFUSION[ , derrind[statei - (2+2*nlatentpop + ndynerror)] ] * dynerror;
+            rk[ki] = sDRIFT * state + sCINT[,1] + sDIFFUSION[ , derrind[statei - (2+2*nlatentpop)] ] * dynerror; 
+          } else rk[ki] = sDRIFT * state + sCINT[,1] - sDIFFUSION[ , derrind[statei - (2+2*nlatentpop + ndynerror)] ] * dynerror;
 
         }
-        state = (rkstates[5] + dTsmall[rowi]/6  *(rkstates[1]+2*rkstates[2]+2*rkstates[3]+rkstates[4])); //integrate over rk steps
+        state = (rk[5] + dTsmall[rowi]/6  *(rk[1]+2*rk[2]+2*rk[3]+rk[4])); //integrate over rk steps
       }
 
            } 
@@ -1123,7 +1123,7 @@ for(geni in 0:ngenerations){
   //ukf
   matrix[ukf ? nlatentpop :0,ukf ? nlatentpop :0] sigpoints;
   vector[ukf ? nlatent :0] state; //dynamic portion of current states
-  vector[nlatent] rkstates[5]; //runge kutta integration steps
+  vector[nlatent] rk[5]; //runge kutta integration steps
   real dynerror; //dynamic error variable
   real k;
   real asquared;
@@ -1532,21 +1532,21 @@ if(geni > 0){
           if(continuoustime==1 && lineardynamics==0){
             
       for(stepi in 1:integrationsteps[rowi]){ //for each euler integration step
-        rkstates[5] = state; //store initial states for this integration step
+        rk[5] = state; //store initial states for this integration step
 
         for(ki in 1:4){ //runge kutta integration within euler scheme
-          if(ki==2 || ki==3) state=rkstates[5] + dTsmall[rowi] /2 * rkstates[ki-1];
-          if(ki==4) state = rkstates[5] + dTsmall[rowi] * rkstates[3];
+          if(ki==2 || ki==3) state=rk[5] + dTsmall[rowi] /2 * rk[ki-1];
+          if(ki==4) state = rk[5] + dTsmall[rowi] * rk[3];
           ;
 
           if(statei <= (2+2*nlatentpop) ) {
-            rkstates[ki] = sDRIFT * state + sCINT[,1];
+            rk[ki] = sDRIFT * state + sCINT[,1];
           } else if(statei <= (2+2*nlatentpop + ndynerror) ){
-            rkstates[ki] = sDRIFT * state + sCINT[,1] + sDIFFUSION[ , derrind[statei - (2+2*nlatentpop)] ] * dynerror; 
-          } else rkstates[ki] = sDRIFT * state + sCINT[,1] - sDIFFUSION[ , derrind[statei - (2+2*nlatentpop + ndynerror)] ] * dynerror;
+            rk[ki] = sDRIFT * state + sCINT[,1] + sDIFFUSION[ , derrind[statei - (2+2*nlatentpop)] ] * dynerror; 
+          } else rk[ki] = sDRIFT * state + sCINT[,1] - sDIFFUSION[ , derrind[statei - (2+2*nlatentpop + ndynerror)] ] * dynerror;
 
         }
-        state = (rkstates[5] + dTsmall[rowi]/6  *(rkstates[1]+2*rkstates[2]+2*rkstates[3]+rkstates[4])); //integrate over rk steps
+        state = (rk[5] + dTsmall[rowi]/6  *(rk[1]+2*rk[2]+2*rk[3]+rk[4])); //integrate over rk steps
       }
 
            } 
