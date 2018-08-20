@@ -333,6 +333,8 @@ transformed data{
   matrix[nlatent*nlatent,nlatent*nlatent] IIlatent2;
   matrix[ukfpop ? nlatent + nindvarying : nlatent, ukfpop ? nlatent + nindvarying : nlatent] IIlatentpop;
   int nlatentpop;
+  real rk45tol = 1e8;
+  int rk45maxstep = 20;
 
   nlatentpop = ukfpop ? nlatent + nindvarying : nlatent;
   IIlatent = diag_matrix(rep_vector(1,nlatent));
@@ -440,7 +442,7 @@ transformed parameters{
   //ukf
   matrix[ukf ? nlatentpop :0,ukf ? nlatentpop :0] sigpoints;
   vector[ukf ? nlatent :0] state; //dynamic portion of current states
-  vector[nlatent] rk[5]; //runge kutta integration steps
+  vector[nlatent] rk[8]; //runge kutta integration steps
   real dynerror; //dynamic error variable
   real k;
   real asquared;
@@ -473,6 +475,8 @@ transformed parameters{
   if(lineardynamics) discreteDIFFUSION = rep_matrix(0,nlatent,nlatent); //in case some elements remain zero due to derrind
   
   cobscount=0; //running total of observed indicators treated as continuous
+
+// for efficiency consider turning ukfstates, ukfmeasures, merrorstates, into arrays of vectors.
 
   for(rowi in 1:ndatapoints){
     int o[nobs_y[rowi]]; //which indicators are observed
@@ -728,6 +732,7 @@ transformed parameters{
     }//end linear time update
 
     if(ukf==1){ //ukf time update
+      real h=dT[rowi]; //rk45 time step
 
       if(T0check[rowi]==1) dynerror = sqrtukfadjust;
       if(T0check[rowi]==0 && lineardynamics==0) dynerror = sqrtukfadjust / sqrt(dT[rowi]); //Weiner process variance adjustment
@@ -836,24 +841,30 @@ transformed parameters{
     
           if(continuoustime==1 && lineardynamics==0){
             
-      for(stepi in 1:integrationsteps[rowi]){ //for each euler integration step
-        rk[5] = state; //store initial states for this integration step
+    real t=0;
+    int stepi=0;
+    vector [nlatent] gradient;
+    rk[8,] = state[1:nlatent]; //store initial states for this integration stepi
+    for(ki in 1 :7){  //rk5 integration
+    if(ki==2) state[1:nlatent]= rk[8,] + h*( rk[1,]/5.0);
+    if(ki==3) state[1:nlatent]= rk[8,] + h*( 3.0/40.0*rk[1,] +9.0/40.0*rk[2,]);
+    if(ki==4) state[1:nlatent]= rk[8,] + h*( 44.0/45.0*rk[1,] -56.0/15.0*rk[2,]+32.0/9*rk[3,]);
+    if(ki==5) state[1:nlatent]= rk[8,] + h*( 19372.0/6561.0*rk[1,] -25360.0/2187.0*rk[2,]+64448.0/6561*rk[3,]-212.0/729*rk[4,]);
+    if(ki==6) state[1:nlatent]= rk[8,] + h*( 9017.0/3168*rk[1,] -355.0/33*rk[2,]+46732.0/5247*rk[3,]+49.0/176*rk[4,]-5103.0/18656*rk[5,]);
+    if(ki==7) state[1:nlatent]= rk[8,] + h*(35.0/384*rk[1,] + 500.0/1113*rk[3,] + 125.0/192*rk[4,] -2187.0/6784*rk[5,] + 11.0/84*rk[6,]);
+    ;
+ 
+    gradient = sDRIFT * state + sCINT[,1];;
+    if(statei > (2+2*nlatentpop) && statei <= (2+2*nlatentpop + ndynerror) ) {
+      gradient+= sDIFFUSION[ , derrind[statei - (2+2*nlatentpop)] ] * dynerror; 
+    }
+    if(statei > 2+2*nlatentpop + ndynerror) {
+      gradient+= sDIFFUSION[ , derrind[statei - (2+2*nlatentpop+ndynerror)] ] * (-dynerror);
+    }
+    rk[ki]=gradient;
+    }
 
-        for(ki in 1:4){ //runge kutta integration within euler scheme
-          if(ki==2 || ki==3) state=rk[5] + dTsmall[rowi] /2 * rk[ki-1];
-          if(ki==4) state = rk[5] + dTsmall[rowi] * rk[3];
-          ;
-
-          if(statei <= (2+2*nlatentpop) ) {
-            rk[ki] = sDRIFT * state + sCINT[,1];
-          } else if(statei <= (2+2*nlatentpop + ndynerror) ){
-            rk[ki] = sDRIFT * state + sCINT[,1] + sDIFFUSION[ , derrind[statei - (2+2*nlatentpop)] ] * dynerror; 
-          } else rk[ki] = sDRIFT * state + sCINT[,1] - sDIFFUSION[ , derrind[statei - (2+2*nlatentpop + ndynerror)] ] * dynerror;
-
-        }
-        state = (rk[5] + dTsmall[rowi]/6  *(rk[1]+2*rk[2]+2*rk[3]+rk[4])); //integrate over rk steps
-      }
-
+    
            } 
     
           if(continuoustime==0 || lineardynamics==1){ 
@@ -931,6 +942,7 @@ transformed parameters{
   
 
       if(ukfmeasurement==1){ //ukf measurement
+        matrix[nmanifest,cols(ukfmeasures)] merrorstates;
 
         for(statei in 2:cols(ukfmeasures)){
           state = ukfstates[ 1:nlatent, statei];
@@ -974,21 +986,21 @@ transformed parameters{
           if(nbinary_y[rowi] > 0) {
             ukfmeasures[o1 , statei] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * state)));
           }
+        
+        merrorstates[,statei] = diagonal(sMANIFESTVAR);
+        for(wi in 1:nmanifest){ 
+          if(manifesttype[wi]==1 && Y[rowi,wi] != 99999) merrorstates[wi,statei] = sMANIFESTVAR[wi,wi] + fabs((ypred[wi] - 1) .* (ypred[wi])); //sMANIFESTVAR[wi,wi] + (merror[wi] / cols(ukfmeasures) +1e-8);
+          if(manifesttype[wi]==2 && Y[rowi,wi] != 99999) merrorstates[wi,statei] = sMANIFESTVAR[wi,wi] + square(fabs((ypred[wi] - round(ypred[wi])))); 
+        }
+          
           if(statei==2) { //temporary measure to get mean in twice -- remove when possible
-          if(ncont_y[rowi] > 0) ukfmeasures[o0 , 1] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * state;
-          if(nbinary_y[rowi] > 0) {
-            ukfmeasures[o1 , 1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * state)));
-          }
+            merrorstates[,1] = merrorstates[,2];
+            ukfmeasures[ , 1] = ukfmeasures [,2];
           }
         } 
     
         ypred[o] = colMeans(ukfmeasures[o,]'); 
-        ypredcov[o,o] = cov_of_matrix(ukfmeasures[o,]') /asquared + sMANIFESTVAR[o,o];
-        for(wi in 1:nmanifest){ 
-          if(manifesttype[wi]==1 && Y[rowi,wi] != 99999) ypredcov[wi,wi] = ypredcov[wi,wi] + fabs((ypred[wi] - 1) .* (ypred[wi])); //sMANIFESTVAR[wi,wi] + (merror[wi] / cols(ukfmeasures) +1e-8);
-          if(manifesttype[wi]==2 && Y[rowi,wi] != 99999) ypredcov[wi,wi] = ypredcov[wi,wi] + square(fabs((ypred[wi] - round(ypred[wi])))); 
-        
-        }
+        ypredcov[o,o] = cov_of_matrix(ukfmeasures[o,]') /asquared + diag_matrix(colMeans(merrorstates[o,]')); //
         K[,o] = mdivide_right(crosscov(ukfstates', ukfmeasures[o,]') /asquared, ypredcov[o,o]); 
         etaupdcov +=  - quad_form(ypredcov[o,o],  K[,o]');
       } //end ukf measurement
@@ -1123,7 +1135,7 @@ for(geni in 0:ngenerations){
   //ukf
   matrix[ukf ? nlatentpop :0,ukf ? nlatentpop :0] sigpoints;
   vector[ukf ? nlatent :0] state; //dynamic portion of current states
-  vector[nlatent] rk[5]; //runge kutta integration steps
+  vector[nlatent] rk[8]; //runge kutta integration steps
   real dynerror; //dynamic error variable
   real k;
   real asquared;
@@ -1156,6 +1168,8 @@ for(geni in 0:ngenerations){
   if(lineardynamics) discreteDIFFUSION = rep_matrix(0,nlatent,nlatent); //in case some elements remain zero due to derrind
   
   cobscount=0; //running total of observed indicators treated as continuous
+
+// for efficiency consider turning ukfstates, ukfmeasures, merrorstates, into arrays of vectors.
 
   for(rowi in 1:ndatapoints){
     int o[nobs_y[rowi]]; //which indicators are observed
@@ -1423,6 +1437,7 @@ if(geni > 0){
     }//end linear time update
 
     if(ukf==1){ //ukf time update
+      real h=dT[rowi]; //rk45 time step
 
       if(T0check[rowi]==1) dynerror = sqrtukfadjust;
       if(T0check[rowi]==0 && lineardynamics==0) dynerror = sqrtukfadjust / sqrt(dT[rowi]); //Weiner process variance adjustment
@@ -1531,24 +1546,30 @@ if(geni > 0){
     
           if(continuoustime==1 && lineardynamics==0){
             
-      for(stepi in 1:integrationsteps[rowi]){ //for each euler integration step
-        rk[5] = state; //store initial states for this integration step
+    real t=0;
+    int stepi=0;
+    vector [nlatent] gradient;
+    rk[8,] = state[1:nlatent]; //store initial states for this integration stepi
+    for(ki in 1 :7){  //rk5 integration
+    if(ki==2) state[1:nlatent]= rk[8,] + h*( rk[1,]/5.0);
+    if(ki==3) state[1:nlatent]= rk[8,] + h*( 3.0/40.0*rk[1,] +9.0/40.0*rk[2,]);
+    if(ki==4) state[1:nlatent]= rk[8,] + h*( 44.0/45.0*rk[1,] -56.0/15.0*rk[2,]+32.0/9*rk[3,]);
+    if(ki==5) state[1:nlatent]= rk[8,] + h*( 19372.0/6561.0*rk[1,] -25360.0/2187.0*rk[2,]+64448.0/6561*rk[3,]-212.0/729*rk[4,]);
+    if(ki==6) state[1:nlatent]= rk[8,] + h*( 9017.0/3168*rk[1,] -355.0/33*rk[2,]+46732.0/5247*rk[3,]+49.0/176*rk[4,]-5103.0/18656*rk[5,]);
+    if(ki==7) state[1:nlatent]= rk[8,] + h*(35.0/384*rk[1,] + 500.0/1113*rk[3,] + 125.0/192*rk[4,] -2187.0/6784*rk[5,] + 11.0/84*rk[6,]);
+    ;
+ 
+    gradient = sDRIFT * state + sCINT[,1];;
+    if(statei > (2+2*nlatentpop) && statei <= (2+2*nlatentpop + ndynerror) ) {
+      gradient+= sDIFFUSION[ , derrind[statei - (2+2*nlatentpop)] ] * dynerror; 
+    }
+    if(statei > 2+2*nlatentpop + ndynerror) {
+      gradient+= sDIFFUSION[ , derrind[statei - (2+2*nlatentpop+ndynerror)] ] * (-dynerror);
+    }
+    rk[ki]=gradient;
+    }
 
-        for(ki in 1:4){ //runge kutta integration within euler scheme
-          if(ki==2 || ki==3) state=rk[5] + dTsmall[rowi] /2 * rk[ki-1];
-          if(ki==4) state = rk[5] + dTsmall[rowi] * rk[3];
-          ;
-
-          if(statei <= (2+2*nlatentpop) ) {
-            rk[ki] = sDRIFT * state + sCINT[,1];
-          } else if(statei <= (2+2*nlatentpop + ndynerror) ){
-            rk[ki] = sDRIFT * state + sCINT[,1] + sDIFFUSION[ , derrind[statei - (2+2*nlatentpop)] ] * dynerror; 
-          } else rk[ki] = sDRIFT * state + sCINT[,1] - sDIFFUSION[ , derrind[statei - (2+2*nlatentpop + ndynerror)] ] * dynerror;
-
-        }
-        state = (rk[5] + dTsmall[rowi]/6  *(rk[1]+2*rk[2]+2*rk[3]+rk[4])); //integrate over rk steps
-      }
-
+    
            } 
     
           if(continuoustime==0 || lineardynamics==1){ 
@@ -1626,6 +1647,7 @@ if(geni > 0){
   
 
       if(ukfmeasurement==1){ //ukf measurement
+        matrix[nmanifest,cols(ukfmeasures)] merrorstates;
 
         for(statei in 2:cols(ukfmeasures)){
           state = ukfstates[ 1:nlatent, statei];
@@ -1669,21 +1691,21 @@ if(geni > 0){
           if(nbinary_y[rowi] > 0) {
             ukfmeasures[o1 , statei] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * state)));
           }
+        
+        merrorstates[,statei] = diagonal(sMANIFESTVAR);
+        for(wi in 1:nmanifest){ 
+          if(manifesttype[wi]==1 && Y[rowi,wi] != 99999) merrorstates[wi,statei] = sMANIFESTVAR[wi,wi] + fabs((ypred[wi] - 1) .* (ypred[wi])); //sMANIFESTVAR[wi,wi] + (merror[wi] / cols(ukfmeasures) +1e-8);
+          if(manifesttype[wi]==2 && Y[rowi,wi] != 99999) merrorstates[wi,statei] = sMANIFESTVAR[wi,wi] + square(fabs((ypred[wi] - round(ypred[wi])))); 
+        }
+          
           if(statei==2) { //temporary measure to get mean in twice -- remove when possible
-          if(ncont_y[rowi] > 0) ukfmeasures[o0 , 1] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * state;
-          if(nbinary_y[rowi] > 0) {
-            ukfmeasures[o1 , 1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * state)));
-          }
+            merrorstates[,1] = merrorstates[,2];
+            ukfmeasures[ , 1] = ukfmeasures [,2];
           }
         } 
     
         ypred[o] = colMeans(ukfmeasures[o,]'); 
-        ypredcov[o,o] = cov_of_matrix(ukfmeasures[o,]') /asquared + sMANIFESTVAR[o,o];
-        for(wi in 1:nmanifest){ 
-          if(manifesttype[wi]==1 && Y[rowi,wi] != 99999) ypredcov[wi,wi] = ypredcov[wi,wi] + fabs((ypred[wi] - 1) .* (ypred[wi])); //sMANIFESTVAR[wi,wi] + (merror[wi] / cols(ukfmeasures) +1e-8);
-          if(manifesttype[wi]==2 && Y[rowi,wi] != 99999) ypredcov[wi,wi] = ypredcov[wi,wi] + square(fabs((ypred[wi] - round(ypred[wi])))); 
-        
-        }
+        ypredcov[o,o] = cov_of_matrix(ukfmeasures[o,]') /asquared + diag_matrix(colMeans(merrorstates[o,]')); //
         K[,o] = mdivide_right(crosscov(ukfstates', ukfmeasures[o,]') /asquared, ypredcov[o,o]); 
         etaupdcov +=  - quad_form(ypredcov[o,o],  K[,o]');
       } //end ukf measurement

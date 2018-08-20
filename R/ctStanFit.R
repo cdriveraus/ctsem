@@ -23,27 +23,17 @@
 #' latents involved only in deterministic trends or input effects can be removed from matrices (ie, that
 #' obtain no additional stochastic inputs after first observation), speeding up calculations. 
 #' If unsure, leave default of 'all' ! Ignored if intoverstates=FALSE.
-#' @param optimize if TRUE, use Stan's optimizer for maximum a posteriori estimates. 
-#' @param isloops Only relevent if \code{optimize=TRUE}. 
-#' Number of iterations of adaptive importance sampling to perform after optimization.
-#' @param isloopsize Only relevent if \code{optimize=TRUE}. 
-#' Number of samples per iteration of importance sampling.
-#' @param issamples Number of samples to use for final results of importance sampling.
-#' @param ukfspread Numeric governing the spread of sigma points when using the unscented Kalman filter. Smaller values (e.g. 1e-2)
-#' are apparently typical, but this doesn't seem sensible to me. 
+#' @param optimize if TRUE, use \code{\link{stanoptim}} function for maximum a posteriori estimates. 
+#' @param optimcontrol list of parameters sent to \code{\link{optimstan}} governing optimization / importance sampling.
 #' @param nopriors logical. If TRUE, any priors are disabled -- sometimes desirable for optimization. 
-#' @param vb if TRUE, use Stan's variational approximation. Rudimentary testing suggests it is not accurate 
-#' for many ctsem models at present.
 #' @param iter number of iterations, half of which will be devoted to warmup by default when sampling.
 #' When optimizing, this is the maximum number of iterations to allow -- convergence hopefully occurs before this!
-#' @param inits vector of parameter start values, as returned by the rstan function \code{\link{unconstrain_pars}} for instance. 
+#' @param inits vector of parameter start values, as returned by the rstan function \code{\link[rstan]{unconstrain_pars}} for instance. 
 #' @param chains number of chains to sample, during HMC or post-optimization importance sampling.
 #' @param cores number of cpu cores to use. Either 'maxneeded' to use as many as available,
 #' up to the number of chains, or a positive integer.
 #' @param control List of arguments sent to \code{\link[rstan]{stan}} control argument, 
 #' regarding warmup / sampling behaviour.
-#' @param deoptim Do first pass optimization using differential evolution? Slower, but better for cases with multiple 
-#' minima / difficult optimization.
 #' @param verbose Integer from 0 to 2. Higher values print more information during model fit -- for debugging.
 #' @param stationary Logical. If TRUE, T0VAR and T0MEANS input matrices are ignored, 
 #' the parameters are instead fixed to long run expectations. More control over this can be achieved
@@ -94,7 +84,7 @@
 #' @export
 ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intoverstates=TRUE, binomial=FALSE,
    fit=TRUE, ukfpop=FALSE, stationary=FALSE,plot=FALSE,  derrind='all',
-  optimize=FALSE, deoptim=TRUE, isloops=10, isloopsize=500, issamples=5000, ukfspread=1, nopriors=FALSE, vb=FALSE, chains=1,cores='maxneeded', inits=NULL,
+  optimize=FALSE,  optimcontrol=list(),ukfspread=1e-1, nopriors=FALSE, chains=1,cores='maxneeded', inits=NULL,
   maxtimestep = 9999, lineardynamics='auto', forcerecompile=FALSE,ngen=1,savescores=TRUE,
   control=list(adapt_delta=.8, adapt_init_buffer=2, adapt_window=2,
     max_treedepth=10,stepsize=1e-3),verbose=0,...){
@@ -338,12 +328,11 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   
   
    #configure user specified calculations
-  if(is.null(ctstanmodel$timeupdate)) { 
-    timeupdate <- 'DRIFT * state + CINT[,1] +  DIFFUSION * dynerror'
-  } else {
-        recompile <- TRUE
-        timeupdate <- ctstanmodel$timeupdate
+  if(ctstanmodel$gradient != 'gradient = DRIFT * state + CINT[,1];') {
+    recompile <- TRUE
+    lineardynamics <- FALSE
   }
+  gradient <- ctstanmodel$gradient
   
   dynamiccalcs <- ctstanmodel$calcs[
     unlist(lapply(
@@ -374,17 +363,18 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       measurementcalcs <- gsub(mati,paste0('s',mati),measurementcalcs)
       t0calcs <- gsub(mati,paste0('s',mati),t0calcs)
       tdpredcalcs <- gsub(mati,paste0('s',mati),tdpredcalcs)
-      timeupdate <- gsub(mati,paste0('s',mati),timeupdate)
+      gradient <- gsub(mati,paste0('s',mati),gradient)
     }
+    
+    
     
     if(length(c(dynamiccalcs,measurementcalcs,t0calcs,tdpredcalcs)) > 0) recompile <- TRUE
     
     if(
       length(c(dynamiccalcs,tdpredcalcs)) > 0 | 
-        ukfpop | 
-        !is.null(ctstanmodel$timeupdate) | 
-        lineardynamics == FALSE 
+        ukfpop | lineardynamics == FALSE 
     ) { message('Using unscented Kalman filter for dynamics'); ukf <- TRUE}
+    
     
     ukfmeasurement <- FALSE
     if(length(measurementcalcs) > 0 || ukfpop && any(ctstanmodel$pars$indvarying[ctstanmodel$pars$matrix %in% measurementmatrices])) { message('Using unscented Kalman filter for measurement'); ukfmeasurement <- TRUE}
@@ -562,7 +552,7 @@ ukfilterfunc<-function(ppchecking){
   //ukf
   matrix[ukf ? nlatentpop :0,ukf ? nlatentpop :0] sigpoints;
   vector[ukf ? nlatent :0] state; //dynamic portion of current states
-  vector[nlatent] rk[5]; //runge kutta integration steps
+  vector[nlatent] rk[8]; //runge kutta integration steps
   real dynerror; //dynamic error variable
   real k;
   real asquared;
@@ -595,6 +585,8 @@ ukfilterfunc<-function(ppchecking){
   if(lineardynamics) discreteDIFFUSION = rep_matrix(0,nlatent,nlatent); //in case some elements remain zero due to derrind
   
   cobscount=0; //running total of observed indicators treated as continuous
+
+// for efficiency consider turning ukfstates, ukfmeasures, merrorstates, into arrays of vectors.
 
   for(rowi in 1:ndatapoints){
     int o[nobs_y[rowi]]; //which indicators are observed
@@ -692,6 +684,7 @@ ukfilterfunc<-function(ppchecking){
     }//end linear time update
 
     if(ukf==1){ //ukf time update
+      real h=dT[rowi]; //rk45 time step
 
       if(T0check[rowi]==1) dynerror = sqrtukfadjust;
       if(T0check[rowi]==0 && lineardynamics==0) dynerror = sqrtukfadjust / sqrt(dT[rowi]); //Weiner process variance adjustment
@@ -814,6 +807,7 @@ ukfilterfunc<-function(ppchecking){
   
 
       if(ukfmeasurement==1){ //ukf measurement
+        matrix[nmanifest,cols(ukfmeasures)] merrorstates;
 
         for(statei in 2:cols(ukfmeasures)){
           state = ukfstates[ 1:nlatent, statei];
@@ -823,21 +817,21 @@ ukfilterfunc<-function(ppchecking){
           if(nbinary_y[rowi] > 0) {
             ukfmeasures[o1 , statei] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * state)));
           }
+        
+        merrorstates[,statei] = diagonal(sMANIFESTVAR);
+        for(wi in 1:nmanifest){ 
+          if(manifesttype[wi]==1 && Y[rowi,wi] != 99999) merrorstates[wi,statei] = sMANIFESTVAR[wi,wi] + fabs((ypred[wi] - 1) .* (ypred[wi])); //sMANIFESTVAR[wi,wi] + (merror[wi] / cols(ukfmeasures) +1e-8);
+          if(manifesttype[wi]==2 && Y[rowi,wi] != 99999) merrorstates[wi,statei] = sMANIFESTVAR[wi,wi] + square(fabs((ypred[wi] - round(ypred[wi])))); 
+        }
+          
           if(statei==2) { //temporary measure to get mean in twice -- remove when possible
-          if(ncont_y[rowi] > 0) ukfmeasures[o0 , 1] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * state;
-          if(nbinary_y[rowi] > 0) {
-            ukfmeasures[o1 , 1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * state)));
-          }
+            merrorstates[,1] = merrorstates[,2];
+            ukfmeasures[ , 1] = ukfmeasures [,2];
           }
         } 
     
         ypred[o] = colMeans(ukfmeasures[o,]\'); 
-        ypredcov[o,o] = cov_of_matrix(ukfmeasures[o,]\') /asquared + sMANIFESTVAR[o,o];
-        for(wi in 1:nmanifest){ 
-          if(manifesttype[wi]==1 && Y[rowi,wi] != 99999) ypredcov[wi,wi] = ypredcov[wi,wi] + fabs((ypred[wi] - 1) .* (ypred[wi])); //sMANIFESTVAR[wi,wi] + (merror[wi] / cols(ukfmeasures) +1e-8);
-          if(manifesttype[wi]==2 && Y[rowi,wi] != 99999) ypredcov[wi,wi] = ypredcov[wi,wi] + square(fabs((ypred[wi] - round(ypred[wi])))); 
-        
-        }
+        ypredcov[o,o] = cov_of_matrix(ukfmeasures[o,]\') /asquared + diag_matrix(colMeans(merrorstates[o,]\')); //
         K[,o] = mdivide_right(crosscov(ukfstates\', ukfmeasures[o,]\') /asquared, ypredcov[o,o]); 
         etaupdcov +=  - quad_form(ypredcov[o,o],  K[,o]\');
       } //end ukf measurement
@@ -1117,7 +1111,75 @@ subjectparscalc2 <- function(pop=FALSE){
   return(out)
 }
 
+nlstateupdateadaptive<-function(){
+  return(paste0('
+          real t=0;
+          int stepi=0;
+          real rk45err;
+          while(t < dT[rowi]){
+            if(t+h > dT[rowi]) h=dT[rowi]-t; //dont integrate past total interval size
+            rk[8,] = state[1:nlatent]; //store initial states for this integration stepi
+            for(ki in (stepi ? 2 : 1) :7){  //rk45 adaptive integration
+              if(ki==2) state[1:nlatent]= rk[8,] + h*( rk[1,]/5.0);
+              if(ki==3) state[1:nlatent]= rk[8,] + h*( 3.0/40.0*rk[1,] +9.0/40.0*rk[2,]);
+              if(ki==4) state[1:nlatent]= rk[8,] + h*( 44.0/45.0*rk[1,] -56.0/15.0*rk[2,]+32.0/9*rk[3,]);
+              if(ki==5) state[1:nlatent]= rk[8,] + h*( 19372.0/6561.0*rk[1,] -25360.0/2187.0*rk[2,]+64448.0/6561*rk[3,]-212.0/729*rk[4,]);
+              if(ki==6) state[1:nlatent]= rk[8,] + h*( 9017.0/3168*rk[1,] -355.0/33*rk[2,]+46732.0/5247*rk[3,]+49.0/176*rk[4,]-5103.0/18656*rk[5,]);
+              if(ki==7) state[1:nlatent]= rk[8,] + h*(35.0/384*rk[1,] + 500.0/1113*rk[3,] + 125.0/192*rk[4,] -2187.0/6784*rk[5,] + 11.0/84*rk[6,]);
+              ',paste0(dynamiccalcs,';',collapse=' '),'
+
+              if(statei <= (2+2*nlatentpop) ) {
+                rk[ki] = sDRIFT * state + sCINT[,1];
+              } else if(statei <= (2+2*nlatentpop + ndynerror) ){
+                rk[ki] = sDRIFT * state + sCINT[,1] + sDIFFUSION[ , derrind[statei - (2+2*nlatentpop)] ] * dynerror; 
+              } else rk[ki] = sDRIFT * state + sCINT[,1] - sDIFFUSION[ , derrind[statei - (2+2*nlatentpop + ndynerror)] ] * dynerror;
+            }
+            rk45err = sqrt(dot_self(h*(71.0/57600*rk[1,]-71.0/16695*rk[3,]+71.0/1920*rk[4,]-17253.0/339200*rk[5,]+22.0/525*rk[6,]-1.0/40*rk[7,])));
+            
+            if(rk45err < rk45tol || stepi == rk45maxstep){ //accept stepi
+              t=t+h;
+              if(t < dT[rowi]){ // prep next step
+                rk[1,]=rk[7,];
+                stepi=stepi+1;
+                h=.9*(rk45tol/(rk45err+1e-10))^(1.0/5)*h;
+              }
+            } else { //reject step and reduce time interval
+              state=rk[8,];
+              h=.9*(rk45tol/(rk45err+1e-10))^(1.0/5)*h;
+            }
+          }
+',collapse=''))
+}
+
 nlstateupdate<-function(){
+  return(paste0('
+    real t=0;
+    int stepi=0;
+    vector [nlatent] gradient;
+    rk[8,] = state[1:nlatent]; //store initial states for this integration stepi
+    for(ki in 1 :7){  //rk5 integration
+    if(ki==2) state[1:nlatent]= rk[8,] + h*( rk[1,]/5.0);
+    if(ki==3) state[1:nlatent]= rk[8,] + h*( 3.0/40.0*rk[1,] +9.0/40.0*rk[2,]);
+    if(ki==4) state[1:nlatent]= rk[8,] + h*( 44.0/45.0*rk[1,] -56.0/15.0*rk[2,]+32.0/9*rk[3,]);
+    if(ki==5) state[1:nlatent]= rk[8,] + h*( 19372.0/6561.0*rk[1,] -25360.0/2187.0*rk[2,]+64448.0/6561*rk[3,]-212.0/729*rk[4,]);
+    if(ki==6) state[1:nlatent]= rk[8,] + h*( 9017.0/3168*rk[1,] -355.0/33*rk[2,]+46732.0/5247*rk[3,]+49.0/176*rk[4,]-5103.0/18656*rk[5,]);
+    if(ki==7) state[1:nlatent]= rk[8,] + h*(35.0/384*rk[1,] + 500.0/1113*rk[3,] + 125.0/192*rk[4,] -2187.0/6784*rk[5,] + 11.0/84*rk[6,]);
+    ',paste0(dynamiccalcs,';',collapse=' '),'
+ 
+    ',paste0(gradient,';',collapse=''),'
+    if(statei > (2+2*nlatentpop) && statei <= (2+2*nlatentpop + ndynerror) ) {
+      gradient+= sDIFFUSION[ , derrind[statei - (2+2*nlatentpop)] ] * dynerror; 
+    }
+    if(statei > 2+2*nlatentpop + ndynerror) {
+      gradient+= sDIFFUSION[ , derrind[statei - (2+2*nlatentpop+ndynerror)] ] * (-dynerror);
+    }
+    rk[ki]=gradient;
+    }
+
+    ',collapse=''))
+}
+
+rk4update<-function(){
   return(paste0('
       for(stepi in 1:integrationsteps[rowi]){ //for each euler integration step
         rk[5] = state; //store initial states for this integration step
@@ -1545,6 +1607,8 @@ transformed data{
   matrix[nlatent*nlatent,nlatent*nlatent] IIlatent2;
   matrix[ukfpop ? nlatent + nindvarying : nlatent, ukfpop ? nlatent + nindvarying : nlatent] IIlatentpop;
   int nlatentpop;
+  real rk45tol = 1e8;
+  int rk45maxstep = 20;
 
   nlatentpop = ukfpop ? nlatent + nindvarying : nlatent;
   IIlatent = diag_matrix(rep_vector(1,nlatent));
@@ -1870,7 +1934,7 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
       
       
       
-      if(!optimize & !vb) {
+      if(!optimize) {
         message('Sampling...')
         
         stanargs <- list(object = sm, 
@@ -1887,329 +1951,28 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
       }
     }
     
-    if(optimize==TRUE && fit==TRUE) {
-      
-      message('Optimizing...')
-      betterfit<-TRUE
-      init <- 0 #staninits[[1]]
-      while(betterfit){
-      betterfit <- FALSE
-      # if(nopriors){
-      #   standata$nopriors <- 0
-      #   suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=400, init=0,as_vector=FALSE,
-      #     tol_obj=1e-8, tol_rel_obj=0,init_alpha=.000001, tol_grad=0,tol_rel_grad=1e7,tol_param=1e-5,history_size=100),verbose=verbose))
-      #   init=optimfit$par
-      #   standata$nopriors <- 1
-      # }
-      # browser()
-      
-      suppressWarnings(suppressOutput(smf<-sampling(sm,iter=1,chains=1,data=standata,check_data=FALSE, control=list(max_treedepth=0))))
-      npars=get_num_upars(smf)
-     
-      if(deoptim){ #init with DE
-        require(DEoptim)
-        np=min(c(40,10*npars))
-        
-        lp2 = function(parm) {
-          out<-try(log_prob(smf, upars=parm,adjust_transform=TRUE,gradient=FALSE),silent = TRUE)
-          if(class(out)=='try-error') {
-            out=-1e20
-          }
-          return(-out)
-        }
-        
-        deinit <- matrix(rnorm(npars*np),nrow = np)
-        deinit[2,] <- 0
-        if(length(init)>1) deinit[1,] <- unconstrain_pars(smf,init)
-        optimfitde <- suppressWarnings(DEoptim(fn = lp2,lower = rep(-1e10, npars), upper=rep(1e10, npars),
-          control = DEoptim.control(NP=np,initialpop=deinit, CR=.9,steptol=8,reltol=1e-4,trace=ifelse(verbose>0,1,0))))
-        init=constrain_pars(object = smf,optimfitde$optim$bestmem)
-      }
-      
-      suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=40000, init=init,as_vector=FALSE,
-        tol_obj=1e-12, tol_rel_obj=0,init_alpha=.001, tol_grad=0,tol_rel_grad=1e1,tol_param=1e-12,history_size=100),verbose=verbose))
-      
-
-      est1=optimfit$par
-      bestfit <-optimfit$value
-      # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan::grab_cxxfun(sm@dso))
-     
-      est2=unconstrain_pars(smf, est1)
-      
-      
-      
-      lp<-function(parm) {
-        out<-try(log_prob(smf, upars=parm,adjust_transform=TRUE,gradient=FALSE),silent = TRUE)
-        if(class(out)=='try-error') {
-          out=-Inf
-        }
-        return(out)
-      }
-      
-      grf<-function(parm,...) {
-        out=try(grad_log_prob(smf, upars=parm, adjust_transform = TRUE))
-        if(class(out)=='try-error') {
-          out=rep(NA,length(parm))
-        }
-        return(out)
-      }
-      
-      grmat<-function(func,pars,step=1e-8){
-        gradout<-matrix(NA,nrow=length(pars),ncol=length(pars))
-        for(i in 1:length(pars)){
-          stepsize <- step * 10
-          while(any(is.na(gradout[i,])) && stepsize > 1e-14){
-            stepsize <- stepsize * .1
-            uppars<-pars
-            downpars<-pars
-            uppars[i]<-pars[i]+stepsize
-            downpars[i]<-pars[i]-stepsize
-            gradout[i,]<-((func(uppars)) - (func(downpars)))/stepsize/2
-          }
-        }
-        return(gradout)
-      }
-      
-      # A more numerically stable way of calculating log( sum( exp( x ))) Source:
-      # http://r.789695.n4.nabble.com/logsumexp-function-in-R-td3310119.html
-      log_sum_exp <- function(x) {
-        xmax <- which.max(x)
-        log1p(sum(exp(x[-xmax] - x[xmax]))) + x[xmax]
-      }
-      
-      
-      hess=grmat(func=grf,pars=est2)
-      if(any(is.na(hess))) stop(paste0('Hessian could not be computed for pars ', which(apply(hess,1,function(x) any(is.na(x)))), ' -- consider reparameterising.'))
-      hess = (hess/2) + t(hess/2)
-      mchol=try(t(chol(solve(-hess))),silent=TRUE)
-      if(class(mchol)=='try-error') message('Hessian not positive-definite -- check importance sampling convergence with isdiag')
-      # if(class(mchol)=='try-error') {
-      mcov=MASS::ginv(-hess) #-optimfit$hessian)
-      mcov=as.matrix(Matrix::nearPD(mcov)$mat)
-      
-      mcovl <- list()
-      mcovl[[1]]=mcov
-      delta=list()
-      delta[[1]]=est2
-      samples <-c()
-      resamples <- c()
-      prop_dens <-c()
-      target_dens<-c()
-      sample_prob<-c()
-      counter <- 0
-      ess <- 0
-      qdiag<-0
-      
-      cl <- parallel::makeCluster(min(cores,chains), type = "PSOCK")
-      parallel::clusterExport(cl, c('sm','standata'),environment())
-      
-      if(isloops == 0) {
-        nresamples = issamples
-        resamples <- matrix(unlist(lapply(1:5000,function(x){
-          delta[[1]] + t(chol(mcovl[[1]])) %*% t(matrix(rnorm(length(delta[[1]])),nrow=1))
-        } )),byrow=TRUE,ncol=length(delta[[1]]))
-        message('Importance sampling not done -- interval estimates via Hessian based sampling only')
-      }
-      
-      if(isloops > 0){
-        message('Adaptive importance sampling, loop:')
-        for(j in 1:isloops){
-          message(paste0('  ', j, ' / ', isloops, '...'))
-          if(j==1){
-            df=2
-            samples <- mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = df)
-          } else {
-            # if(j>5) df <- 3
-            delta[[j]]=colMeans(resamples)
-            mcovl[[j]] = cov(resamples)+diag(1e-6,ncol(samples))
-            samples <- rbind(samples,mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = df))
-          }
-          prop_dens <- mvtnorm::dmvt(tail(samples,isloopsize), delta[[j]], mcovl[[j]], df = df)
-          
-          parallel::clusterExport(cl, c('samples'),environment())
-
-          target_dens[[j]] <- unlist(parallel::parLapply(cl, parallel::clusterSplit(cl,1:isloopsize), function(x){
-            eval(parse(text=paste0('library(rstan)')))
-            # if(recompile) {
-            
-            smf<-sampling(sm,iter=1,chains=1,data=standata,check_data=FALSE,control=list(max_treedepth=0,adapt_engaged=FALSE))
-            # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan::grab_cxxfun(sm@dso))
-            # }
-            
-            lp<-function(parm) {
-              out<-try(log_prob(smf, upars=parm, adjust_transform = TRUE, gradient=FALSE),silent = TRUE)
-              if(class(out)=='try-error') {
-                out=-Inf
-              }
-              return(out)
-            }
-            out <- apply(tail(samples,isloopsize)[x,],1,lp)
-            
-            #unload old rstan dlls
-            # if(recompile) 
-            try(dyn.unload(file.path(tempdir(), paste0(smf@stanmodel@dso@dso_filename, .Platform$dynlib.ext))),silent = TRUE)
-            
-            # dso_filenames <- dir(tempdir(), pattern=.Platform$dynlib.ext)
-            # filenames  <- dir(tempdir())
-            # for (i in seq(dso_filenames))
-            #   try(dyn.unload(file.path(tempdir(), dso_filenames[i])))
-            # for (i in seq(filenames))
-            #   if (file.exists(file.path(tempdir(), filenames[i])) & nchar(filenames[i]) < 42) # some files w/ long filenames that didn't like to be removeed
-            #     try(file.remove(file.path(tempdir(), filenames[i])))
-            
-            return(out)
-            
-          }))
-          # )
-          if(all(target_dens[[j]] < -1e29)) stop('Could not sample from optimum! Try reparamaterizing?')
-          if(any(target_dens[[j]] > bestfit)){
-            bestfit<-max(target_dens[[j]],na.rm=TRUE)
-            betterfit<-TRUE
-            init = list(rstan::constrain_pars(object = smf, samples[which(unlist(target_dens) == bestfit),]))
-            message('Improved fit found - restarting optimization')
-            break
-          }
-          nresamples = ifelse(j==isloops,issamples,5000)
-          
-          #remove infinites
-          # samples <- samples[is.finite(target_dens),]
-          # prop_dens <- prop_dens[is.finite(target_dens)]
-          # target_dens <- target_dens[is.finite(target_dens)]
-          
-          target_dens2 <- target_dens[[j]] + (0-max(target_dens[[j]])) #adjustment to get in decent range
-          target_dens2[!is.finite(target_dens[[j]])] <- -1e30
-          weighted_dens <- target_dens2 - prop_dens
-          
-          # psis_dens <- psis(weighted_dens)
-          # sample_prob <- weights(psis_dens,normalize = TRUE,log=FALSE)
-          
-          sample_prob <- c(sample_prob,exp((weighted_dens - log_sum_exp(weighted_dens)))) #sum to 1 for each iteration, normalise later
-          sample_prob[!is.finite(sample_prob)] <- 0
-          resample_i <- sample(1:nrow(samples), size = nresamples, replace = ifelse(j == isloops+1,FALSE,TRUE), 
-            prob = sample_prob / sum(sample_prob))
-          resamples <- samples[resample_i, , drop = FALSE]
-          # resamples=mcmc(resamples)
-          
-          ess[j] <- (sum(sample_prob[resample_i]))^2 / sum(sample_prob[resample_i]^2)
-          qdiag[j]<-mean(unlist(lapply(sample(x = 1:length(sample_prob),size = 500,replace = TRUE),function(i){
-            (max(sample_prob[resample_i][1:i])) / (sum(sample_prob[resample_i][1:i]) ) 
-          })))
-          
-        }
-      }
-      }#end while no better fit
-
-      if(isloops==0) lpsamples <- NA else lpsamples <- unlist(target_dens)[resample_i]
-      
-      # parallel::stopCluster(cl)
-      message('Computing quantities...')
-      
-      relistarrays <- function(flesh, skeleton){
-        skelnames <- names(skeleton)
-        skelstruc <- lapply(skeleton,dim)
-        count=1
-        npars <- length(flesh)
-        out <- list()
-        for(ni in skelnames){
-          if(!is.null(skelstruc[[ni]])){
-            out[[ni]] <- array(flesh[count:(count+prod(skelstruc[[ni]]))],dim = skelstruc[[ni]])
-            count <- count + prod(skelstruc[[ni]])
-          } else {
-            out[[ni]] <- flesh[count]
-            count <- count + 1
-          }
-        }
-        return(out)
-      }
-      
-      
-      # cl <- parallel::makeCluster(min(cores,chains), type = "PSOCK")
-      parallel::clusterExport(cl, c('relistarrays','resamples','sm','standata','optimfit'),environment())
-
-      # target_dens <- c(target_dens,
-      transformedpars <- parallel::parLapply(cl, parallel::clusterSplit(cl,1:nresamples), function(x){
-        Sys.sleep(.1)
-        smf<-sampling(sm,iter=1,chains=1,data=standata,check_data=FALSE,control=list(max_treedepth=0,adapt_engaged=FALSE))
-        Sys.sleep(.1)
-        # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan::grab_cxxfun(sm@dso))
-        out <- list()
-        for(li in 1:length(x)){
-          Sys.sleep(.01)
-          flesh = unlist(rstan::constrain_pars(smf, resamples[x[li],]))
-          names(flesh) <- c()
-          skeleton=optimfit$par
-          out[[li]] <-relistarrays(flesh, skeleton)
-        }
-        return(out)
-      })
-      parallel::stopCluster(cl)
-      transformedpars<-unlist(transformedpars,recursive = FALSE)
-
-      
-      
-      tostanarray <- function(flesh, skeleton){
-        skelnames <- names(skeleton)
-        skelstruc <- lapply(skeleton,dim)
-        count=1
-        npars <- ncol(flesh)
-        niter=nrow(flesh)
-        out <- list()
-        for(ni in skelnames){
-          if(prod(skelstruc[[ni]])>0){
-            if(!is.null(skelstruc[[ni]])){
-              out[[ni]] <- array(flesh[,count:(count+prod(skelstruc[[ni]])-1)],dim = c(niter,skelstruc[[ni]]))
-              count <- count + prod(skelstruc[[ni]])
-            } else {
-              out[[ni]] <- array(flesh[,count],dim = c(niter))
-              count <- count + 1
-            }
-          }
-        }
-        return(out)
-      }
-      
-      transformedpars=tostanarray(flesh = matrix(unlist(transformedpars),byrow=TRUE, nrow=nresamples), skeleton = optimfit$par)
-      # quantile(sapply(transformedpars, function(x) x$rawpopcorr[3,2]),probs=c(.025,.5,.975))
-      # quantile(sapply(transformedpars, function(x) x$DRIFT[1,2,2]),probs=c(.025,.5,.975))
-      
-      sds=try(suppressWarnings(sqrt(diag(mcov))))  #try(sqrt(diag(solve(optimfit$hessian))))
-      if(class(sds)=='try-error') sds <- rep(NA,length(est2))
-      lest= est2 - 1.96 * sds
-      uest= est2 + 1.96 * sds
-      
-      transformedpars_old=cbind(unlist(constrain_pars(smf, lest)),
-        unlist(constrain_pars(smf, est2)),
-        unlist(constrain_pars(smf, uest)))
-      colnames(transformedpars_old)=c('2.5%','mean','97.5%')
-      
-      stanfit=list(optimfit=optimfit,stanfit=smf, rawposterior = resamples, transformedpars=transformedpars,transformedpars_old=transformedpars_old,
-        isdiags=list(cov=mcovl,means=delta,ess=ess,qdiag=qdiag,lpsamples=lpsamples ))
+    if(optimize==TRUE) {
+      opargs <- c(list(standata = standata,sm = sm,init = 0, cores=cores, verbose=verbose, ukfspread=ukfspread),optimcontrol)
+      stanfit <- do.call(optimstan,opargs)
     }
-    
-    if(vb==TRUE && fit==TRUE) {
-      stanfit <- vb(object = sm, 
-        iter=iter,
-        eta=1e-6,
-        data = standata,...)
-      
-    }
-    
-    #convert missings back to NA's for data output
-    standataout<-unlist(standata)
-    standataout[standataout==99999] <- NA
-    standataout <- utils::relist(standataout,skeleton=standata)
-    
-    
-    out <- list(args=args,
-      setup=list(recompile=recompile,popsetup=popsetup,popvalues=popvalues,basematrices=basematrices,extratforms=extratforms), 
-      stanmodeltext=stanmodeltext, data=standataout, ctstanmodel=ctstanmodel,stanmodel=sm, stanfit=stanfit)
-    class(out) <- 'ctStanFit'
     
   } # end if fit==TRUE
+  #convert missings back to NA's for data output
+  standataout<-unlist(standata)
+  standataout[standataout==99999] <- NA
+  standataout <- utils::relist(standataout,skeleton=standata)
+  
+  if(fit) {
+    out <- list(args=args,
+    setup=list(recompile=recompile,popsetup=popsetup,popvalues=popvalues,basematrices=basematrices,extratforms=extratforms), 
+    stanmodeltext=stanmodeltext, data=standataout, standata=standata, ctstanmodel=ctstanmodel,stanmodel=sm, stanfit=stanfit)
+  class(out) <- 'ctStanFit'
+  }
+  
   # matrixsetup <- list(matsetup,basematrices,dynamicmatrices,measurementmatrices,t0matrices)
   # names(matrixsetup) <- c('matsetup','basematrices','dynamicmatrices','measurementmatrices','t0matrices')
   if(!fit) out=list(args=args,setup=list(recompile=recompile,popsetup=popsetup,popvalues=popvalues,basematrices=basematrices,extratforms=extratforms),
-    stanmodeltext=stanmodeltext,data=standata, ctstanmodel=ctstanmodel)
+    stanmodeltext=stanmodeltext,data=standataout, standata=standata, ctstanmodel=ctstanmodel)
   
   
   return(out)

@@ -18,7 +18,7 @@ ctGenerate(ctmodelobj, n.subjects = 100, burnin = 0, dtmean = 1,
 
 \item{logdtsd}{Numeric. Standard deviation for variability of the time interval.}
 
-\item{dtmat}{Either NA, or numeric matrix of n.subjects rows and Tpoints-1 columns, 
+\item{dtmat}{Either NA, or numeric matrix of n.subjects rows and burnin+Tpoints-1 columns, 
 containing positive numeric values for all time intervals between measurements. 
 If not NA, dtmean and logdtsd are ignored.}
 

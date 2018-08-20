@@ -172,6 +172,7 @@ ctStanModel<-function(ctmodelobj, type='stanct', indvarying='all'){
   out$stationarymeanprior <- NA
   out$stationaryvarprior <- NA
   out$manifesttype <- rep(0,n.manifest)
+  out$gradient <- 'gradient = DRIFT * state + CINT[,1];'
   
   return(out)
 }

@@ -7,12 +7,12 @@
 ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 1000,
   intoverstates = TRUE, binomial = FALSE, fit = TRUE, ukfpop = FALSE,
   stationary = FALSE, plot = FALSE, derrind = "all", optimize = FALSE,
-  isloops = 10, isloopsize = 500, issamples = 5000, nopriors = FALSE,
-  vb = FALSE, chains = 1, cores = "maxneeded", inits = NULL,
-  maxtimestep = 9999, lineardynamics = "auto", forcerecompile = FALSE,
-  ngen = 1, savescores = TRUE, control = list(adapt_delta = 0.8,
-  adapt_init_buffer = 2, adapt_window = 2, max_treedepth = 10, stepsize =
-  0.001), verbose = 0, ...)
+  optimcontrol = list(), ukfspread = 0.1, nopriors = FALSE, chains = 1,
+  cores = "maxneeded", inits = NULL, maxtimestep = 9999,
+  lineardynamics = "auto", forcerecompile = FALSE, ngen = 1,
+  savescores = TRUE, control = list(adapt_delta = 0.8, adapt_init_buffer =
+  2, adapt_window = 2, max_treedepth = 10, stepsize = 0.001), verbose = 0,
+  ...)
 }
 \arguments{
 \item{datalong}{long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables, 
@@ -52,27 +52,18 @@ latents involved only in deterministic trends or input effects can be removed fr
 obtain no additional stochastic inputs after first observation), speeding up calculations. 
 If unsure, leave default of 'all' ! Ignored if intoverstates=FALSE.}
 
-\item{optimize}{if TRUE, use Stan's optimizer for maximum a posteriori estimates.}
+\item{optimize}{if TRUE, use \code{\link{stanoptim}} function for maximum a posteriori estimates.}
 
-\item{isloops}{Only relevent if \code{optimize=TRUE}. 
-Number of iterations of adaptive importance sampling to perform after optimization.}
-
-\item{isloopsize}{Only relevent if \code{optimize=TRUE}. 
-Number of samples per iteration of importance sampling.}
-
-\item{issamples}{Number of samples to use for final results of importance sampling.}
+\item{optimcontrol}{list of parameters sent to \code{\link{optimstan}} governing optimization / importance sampling.}
 
 \item{nopriors}{logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.}
-
-\item{vb}{if TRUE, use Stan's variational approximation. Rudimentary testing suggests it is not accurate 
-for many ctsem models at present.}
 
 \item{chains}{number of chains to sample, during HMC or post-optimization importance sampling.}
 
 \item{cores}{number of cpu cores to use. Either 'maxneeded' to use as many as available,
 up to the number of chains, or a positive integer.}
 
-\item{inits}{vector of parameter start values, as returned by the rstan function \code{\link{unconstrain_pars}} for instance.}
+\item{inits}{vector of parameter start values, as returned by the rstan function \code{\link[rstan]{unconstrain_pars}} for instance.}
 
 \item{maxtimestep}{positive numeric, only used for models with non-linear dynamics, specifying the largest time
 span covered by the Runge-Kutta 4 integration. The large default ensures that for each observation time interval, 

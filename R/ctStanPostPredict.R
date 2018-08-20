@@ -125,9 +125,9 @@ ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,p
               col=rgb(0,0,1,.5),pch=17)
             
             if(wait) readline("Press [return] for next plot.")  
-            
+ 
             plot(
-              rep(time,each=(dim(dygendt)[2]))[samps],
+              rep(time,(dim(dygendt)[2]))[samps],
               matrix(dygendt[,,drop=FALSE],ncol=1)[samps],
               ylab=paste0('dy/dt, diff=',cdiffsize),xlab='time', main=dimnames(y)[[2]][i],
               pch=16,cex=.1,col=rgb(1,0,0,.3))

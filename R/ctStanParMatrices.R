@@ -71,7 +71,7 @@ if(class(npars)=='try-error'){ #in case R has been restarted or similar
 }
 
 for(m in fit$setup$basematrices){
-  assign(m,ctCollapse(sf[[paste0('pop_',m)]],1,mean))
+  assign(m,ctCollapse(sf[[paste0('pop_',m)]],1,mean)) 
 }
 
 choltrue <- !as.logical(fit$data$lineardynamics * fit$data$intoverstates)
