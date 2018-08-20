@@ -8,6 +8,7 @@
 #' @param digits integer denoting number of digits to report.
 #' @param parmatrices if TRUE, also return additional parameter matrices -- can be slow to compute
 #' for large models with many samples.
+#' @param parmatsamples Number of samples to use for parmatrices calculations. More is slower, but more precise.
 #' @param ... Unused at present.
 #' @return List containing summary items.
 #' @examples
@@ -15,7 +16,7 @@
 #' @method summary ctStanFit
 #' @export
 
-summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...){
+summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,parmatsamples=200,...){
   
   if(class(object) != 'ctStanFit') stop('Not a ctStanFit object!')
   
@@ -177,7 +178,12 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,...
       suppressOutput(sf <- suppressWarnings(sampling(object$stanmodel,data=standataout,iter=1,control=list(max_treedepth=1),chains=1)))
     }
 
-    parmatlists <- try(apply(e$rawpopmeans,1,ctStanParMatrices,fit=object,timeinterval=timeinterval,sf=sf))
+    parmatlists <- try(apply(e$rawpopmeans[
+      sample(x = 1:dim(e$rawpopmeans)[1],
+        size = min(parmatsamples,dim(e$rawpopmeans)[1]), 
+        replace = FALSE),],
+      1,ctStanParMatrices,fit=object,timeinterval=timeinterval,sf=sf))
+      
     if(class(parmatlists)!='try-error'){
       parmatarray <- array(unlist(parmatlists),dim=c(length(unlist(parmatlists[[1]])),length(parmatlists)))
       parmats <- matrix(NA,nrow=length(unlist(parmatlists[[1]])),ncol=7)
