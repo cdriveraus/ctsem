@@ -7,7 +7,7 @@
 isdiag(fit)
 }
 \arguments{
-\item{fit}{Output from ctStanFit when optimize=TRUE}
+\item{fit}{Output from ctStanFit when optimize=TRUE and isloops > 0}
 }
 \value{
 Nothing. Plots convergence of parameter mean estimates from initial Hessian based distribution to final sampling distribution.
@@ -40,7 +40,7 @@ model$pars$transform[14]<- '(param)*5+44 ' #Because not mean centered
 model$pars$transform[4]<-'-log(exp(-param*1.5)+1)' #To avoid multi modality
 
 #fit and plot importance sampling diagnostic
-fit <- ctStanFit_ukfupdate(datalong, model, chains=1,isloops=5,optimize=TRUE)
+fit <- ctStanFit(datalong, model, chains=1,optimcontrol=list(isloops=5,issamples=500),optimize=TRUE)
 isdiag(fit)
 }
 }

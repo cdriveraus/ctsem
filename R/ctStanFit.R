@@ -771,13 +771,16 @@ ukfilterfunc<-function(ppchecking){
       etapriorcov = cov_of_matrix(ukfstates\') / asquared;
     } //end ukf time update
 
+    if(intoverstates==1){
+      etaupdcov = etapriorcov;
+      etaupd = etaprior;
+    }
+    
     if(intoverstates==0 && lineardynamics == 1) {
-      if(T0check[rowi]==1) etaupd = etaprior +  sT0VAR * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
+      if(T0check[rowi]==1) etaupd = etaprior +  cholesky_decompose(sT0VAR) * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
       if(T0check[rowi]==0) etaupd = etaprior +  discreteDIFFUSION * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
     }
 
-    etaupdcov = etapriorcov;
-    etaupd = etaprior;
 
     if (nobsi > 0) {  // if some observations create right size matrices for missingness and calculate...
   
@@ -799,9 +802,9 @@ ukfilterfunc<-function(ppchecking){
         }
         if(intoverstates==0) { //sampled states
           //if(ncont_y[rowi] > 0) 
-          ypred[cindex] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * etaupd[1:nlatent];
+          if(ncont_y[rowi] > 0) ypred[cindex] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * etaupd[1:nlatent];
           if(nbinary_y[rowi] > 0) ypred[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * etaupd[1:nlatent])));
-          ypredcov[cindex,cindex] = sMANIFESTVAR[cindex,cindex];
+          if(ncont_y[rowi] > 0) ypredcov[cindex,cindex] = sMANIFESTVAR[cindex,cindex];
         }
       }
   
@@ -847,7 +850,7 @@ print("rowi ",rowi, "  si ", si, "  etaprior ",etaprior,"  etapriorcov ",etaprio
 }
 if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
         
-        ypredcov_sqrt[cindex,cindex]=chol(ypredcov[cindex, cindex]); //use o0, or cindex?
+        if(ncont_y[rowi] > 0) ypredcov_sqrt[cindex,cindex]=chol(ypredcov[cindex, cindex]); //use o0, or cindex?
         for(vi in 1:nobsi){
           if(fabs(ypred[o[vi]]) > 1e10 || is_nan(ypred[o[vi]]) || is_inf(ypred[o[vi]])) {
             nobsi = 0; //set nobsi to 0 to skip update steps
@@ -951,7 +954,7 @@ subjectparscalc <- function(pop=FALSE){
 
   // perform any whole matrix transformations 
     
-  if(si <= DIFFUSIONsubindex[nsubjects] && (1-ukf) * intoverstates !=0 ) DIFFUSION[si] = sdcovsqrt2cov(DIFFUSION[si], 0);
+  if(si <= DIFFUSIONsubindex[nsubjects] && ukf == 0) DIFFUSION[si] = sdcovsqrt2cov(DIFFUSION[si], 0);
 
     if(si <= asymDIFFUSIONsubindex[nsubjects]) {
       if(ndiffusion < nlatent) asymDIFFUSION[si] = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
@@ -983,7 +986,7 @@ subjectparscalc <- function(pop=FALSE){
           
           
     if(si <= T0VARsubindex[nsubjects]) {
-      if((1-ukf) * intoverstates !=0) T0VAR[si] = sdcovsqrt2cov(T0VAR[si],0);
+      if(ukf==0) T0VAR[si] = sdcovsqrt2cov(T0VAR[si],0);
       if(nt0varstationary > 0) for(ri in 1:nt0varstationary){
         T0VAR[si,t0varstationary[ri,1],t0varstationary[ri,2] ] = 
           asymDIFFUSION[si,t0varstationary[ri,1],t0varstationary[ri,2] ];
@@ -1057,7 +1060,7 @@ subjectparscalc2 <- function(pop=FALSE){
 
   // perform any whole matrix transformations 
     
-  if(si <= DIFFUSIONsubindex[nsubjects] && (1-ukf) * intoverstates !=0) sDIFFUSION = sdcovsqrt2cov(sDIFFUSION, 0);
+  if(si <= DIFFUSIONsubindex[nsubjects] && ukf==0) sDIFFUSION = sdcovsqrt2cov(sDIFFUSION, 0);
 
     if(si <= asymDIFFUSIONsubindex[nsubjects]) {
       if(ndiffusion < nlatent) sasymDIFFUSION = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
@@ -1087,7 +1090,7 @@ subjectparscalc2 <- function(pop=FALSE){
           
           
     if(si <= T0VARsubindex[nsubjects]) {
-      if((1-ukf) * intoverstates !=0) sT0VAR = sdcovsqrt2cov(sT0VAR,0);
+      if(ukf==0) sT0VAR = sdcovsqrt2cov(sT0VAR,0);
       if(nt0varstationary > 0) for(ri in 1:nt0varstationary){
         sT0VAR[t0varstationary[ri,1],t0varstationary[ri,2] ] = 
           sasymDIFFUSION[t0varstationary[ri,1],t0varstationary[ri,2] ];
@@ -1714,7 +1717,7 @@ model{
 
   } //end pop priors section
   
-  if(intoverstates==0)etaupdbasestates ~ normal(0,1);
+  if(intoverstates==0) etaupdbasestates ~ normal(0,1);
   
   target += ll;
   
@@ -1843,7 +1846,7 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
       out
     }) )),nrow=c(nrow(datalong),ncol=n.manifest)),
     ncont_y=array(as.integer(apply(datalong[,manifestNames,drop=FALSE],1,function(x) 
-      ifelse(ukf==TRUE || intoverstates==FALSE,length(x[manifesttype==0 & x!=99999]), n.manifest))),dim=nrow(datalong)),
+      ifelse(ukf==TRUE || intoverstates==FALSE,length(x[(manifesttype==0 || manifesttype==2) & x!=99999]), n.manifest))),dim=nrow(datalong)),
     whichcont_y=matrix(as.integer(t(apply(datalong[,manifestNames,drop=FALSE],1,function(x) {
       out<-as.numeric(which( (manifesttype==0 | manifesttype==2) & x!=99999)) #conditional on whichobs_y
       # if(ukf==TRUE || intoverstates==FALSE) out<- as.numeric(which(manifesttype==0 | manifesttype==2)) else out<-  rep(1,n.manifest) #not conditional on whichobs_y

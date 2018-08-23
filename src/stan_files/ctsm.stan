@@ -616,7 +616,7 @@ transformed parameters{
 
   // perform any whole matrix transformations 
     
-  if(si <= DIFFUSIONsubindex[nsubjects] && (1-ukf) * intoverstates !=0) sDIFFUSION = sdcovsqrt2cov(sDIFFUSION, 0);
+  if(si <= DIFFUSIONsubindex[nsubjects] && ukf==0) sDIFFUSION = sdcovsqrt2cov(sDIFFUSION, 0);
 
     if(si <= asymDIFFUSIONsubindex[nsubjects]) {
       if(ndiffusion < nlatent) sasymDIFFUSION = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
@@ -646,7 +646,7 @@ transformed parameters{
           
           
     if(si <= T0VARsubindex[nsubjects]) {
-      if((1-ukf) * intoverstates !=0) sT0VAR = sdcovsqrt2cov(sT0VAR,0);
+      if(ukf==0) sT0VAR = sdcovsqrt2cov(sT0VAR,0);
       if(nt0varstationary > 0) for(ri in 1:nt0varstationary){
         sT0VAR[t0varstationary[ri,1],t0varstationary[ri,2] ] = 
           sasymDIFFUSION[t0varstationary[ri,1],t0varstationary[ri,2] ];
@@ -906,13 +906,16 @@ transformed parameters{
       etapriorcov = cov_of_matrix(ukfstates') / asquared;
     } //end ukf time update
 
+    if(intoverstates==1){
+      etaupdcov = etapriorcov;
+      etaupd = etaprior;
+    }
+    
     if(intoverstates==0 && lineardynamics == 1) {
-      if(T0check[rowi]==1) etaupd = etaprior +  sT0VAR * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
+      if(T0check[rowi]==1) etaupd = etaprior +  cholesky_decompose(sT0VAR) * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
       if(T0check[rowi]==0) etaupd = etaprior +  discreteDIFFUSION * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
     }
 
-    etaupdcov = etapriorcov;
-    etaupd = etaprior;
 
     if (nobsi > 0) {  // if some observations create right size matrices for missingness and calculate...
   
@@ -934,9 +937,9 @@ transformed parameters{
         }
         if(intoverstates==0) { //sampled states
           //if(ncont_y[rowi] > 0) 
-          ypred[cindex] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * etaupd[1:nlatent];
+          if(ncont_y[rowi] > 0) ypred[cindex] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * etaupd[1:nlatent];
           if(nbinary_y[rowi] > 0) ypred[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * etaupd[1:nlatent])));
-          ypredcov[cindex,cindex] = sMANIFESTVAR[cindex,cindex];
+          if(ncont_y[rowi] > 0) ypredcov[cindex,cindex] = sMANIFESTVAR[cindex,cindex];
         }
       }
   
@@ -1062,7 +1065,7 @@ model{
 
   } //end pop priors section
   
-  if(intoverstates==0)etaupdbasestates ~ normal(0,1);
+  if(intoverstates==0) etaupdbasestates ~ normal(0,1);
   
   target += ll;
   
@@ -1309,7 +1312,7 @@ for(geni in 0:ngenerations){
 
   // perform any whole matrix transformations 
     
-  if(si <= DIFFUSIONsubindex[nsubjects] && (1-ukf) * intoverstates !=0) sDIFFUSION = sdcovsqrt2cov(sDIFFUSION, 0);
+  if(si <= DIFFUSIONsubindex[nsubjects] && ukf==0) sDIFFUSION = sdcovsqrt2cov(sDIFFUSION, 0);
 
     if(si <= asymDIFFUSIONsubindex[nsubjects]) {
       if(ndiffusion < nlatent) sasymDIFFUSION = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
@@ -1339,7 +1342,7 @@ for(geni in 0:ngenerations){
           
           
     if(si <= T0VARsubindex[nsubjects]) {
-      if((1-ukf) * intoverstates !=0) sT0VAR = sdcovsqrt2cov(sT0VAR,0);
+      if(ukf==0) sT0VAR = sdcovsqrt2cov(sT0VAR,0);
       if(nt0varstationary > 0) for(ri in 1:nt0varstationary){
         sT0VAR[t0varstationary[ri,1],t0varstationary[ri,2] ] = 
           sasymDIFFUSION[t0varstationary[ri,1],t0varstationary[ri,2] ];
@@ -1611,13 +1614,16 @@ if(geni > 0){
       etapriorcov = cov_of_matrix(ukfstates') / asquared;
     } //end ukf time update
 
+    if(intoverstates==1){
+      etaupdcov = etapriorcov;
+      etaupd = etaprior;
+    }
+    
     if(intoverstates==0 && lineardynamics == 1) {
-      if(T0check[rowi]==1) etaupd = etaprior +  sT0VAR * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
+      if(T0check[rowi]==1) etaupd = etaprior +  cholesky_decompose(sT0VAR) * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
       if(T0check[rowi]==0) etaupd = etaprior +  discreteDIFFUSION * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
     }
 
-    etaupdcov = etapriorcov;
-    etaupd = etaprior;
 
     if (nobsi > 0) {  // if some observations create right size matrices for missingness and calculate...
   
@@ -1639,9 +1645,9 @@ if(geni > 0){
         }
         if(intoverstates==0) { //sampled states
           //if(ncont_y[rowi] > 0) 
-          ypred[cindex] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * etaupd[1:nlatent];
+          if(ncont_y[rowi] > 0) ypred[cindex] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * etaupd[1:nlatent];
           if(nbinary_y[rowi] > 0) ypred[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * etaupd[1:nlatent])));
-          ypredcov[cindex,cindex] = sMANIFESTVAR[cindex,cindex];
+          if(ncont_y[rowi] > 0) ypredcov[cindex,cindex] = sMANIFESTVAR[cindex,cindex];
         }
       }
   
@@ -1721,7 +1727,7 @@ print("rowi ",rowi, "  si ", si, "  etaprior ",etaprior,"  etapriorcov ",etaprio
 }
 if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
         
-        ypredcov_sqrt[cindex,cindex]=chol(ypredcov[cindex, cindex]); //use o0, or cindex?
+        if(ncont_y[rowi] > 0) ypredcov_sqrt[cindex,cindex]=chol(ypredcov[cindex, cindex]); //use o0, or cindex?
         for(vi in 1:nobsi){
           if(fabs(ypred[o[vi]]) > 1e10 || is_nan(ypred[o[vi]]) || is_inf(ypred[o[vi]])) {
             nobsi = 0; //set nobsi to 0 to skip update steps
@@ -1838,7 +1844,7 @@ print("pp problem2! row ", rowi);
 
   // perform any whole matrix transformations 
     
-  if(si <= DIFFUSIONsubindex[1] && (1-ukf) * intoverstates !=0 ) pop_DIFFUSION[si] = sdcovsqrt2cov(pop_DIFFUSION[si], 0);
+  if(si <= DIFFUSIONsubindex[1] && ukf == 0) pop_DIFFUSION[si] = sdcovsqrt2cov(pop_DIFFUSION[si], 0);
 
     if(si <= asymDIFFUSIONsubindex[1]) {
       if(ndiffusion < nlatent) asympop_DIFFUSION[si] = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
@@ -1870,7 +1876,7 @@ print("pp problem2! row ", rowi);
           
           
     if(si <= T0VARsubindex[1]) {
-      if((1-ukf) * intoverstates !=0) pop_T0VAR[si] = sdcovsqrt2cov(pop_T0VAR[si],0);
+      if(ukf==0) pop_T0VAR[si] = sdcovsqrt2cov(pop_T0VAR[si],0);
       if(nt0varstationary > 0) for(ri in 1:nt0varstationary){
         pop_T0VAR[si,t0varstationary[ri,1],t0varstationary[ri,2] ] = 
           asympop_DIFFUSION[si,t0varstationary[ri,1],t0varstationary[ri,2] ];
