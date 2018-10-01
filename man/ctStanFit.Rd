@@ -7,12 +7,12 @@
 ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 1000,
   intoverstates = TRUE, binomial = FALSE, fit = TRUE, ukfpop = FALSE,
   stationary = FALSE, plot = FALSE, derrind = "all", optimize = FALSE,
-  optimcontrol = list(), ukfspread = 0.1, nopriors = FALSE, chains = 1,
-  cores = "maxneeded", inits = NULL, maxtimestep = 9999,
-  lineardynamics = "auto", forcerecompile = FALSE, ngen = 1,
-  savescores = TRUE, control = list(adapt_delta = 0.8, adapt_init_buffer =
-  2, adapt_window = 2, max_treedepth = 10, stepsize = 0.001), verbose = 0,
-  ...)
+  optimcontrol = list(), ukfspread = 0.1, ukffull = FALSE,
+  nopriors = FALSE, chains = 1, cores = "maxneeded", inits = NULL,
+  maxtimestep = 9999, lineardynamics = "auto", forcerecompile = FALSE,
+  ngen = 1, savescores = TRUE, control = list(adapt_delta = 0.8,
+  adapt_init_buffer = 2, adapt_window = 2, max_treedepth = 10, stepsize =
+  0.001), verbose = 0, ...)
 }
 \arguments{
 \item{datalong}{long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables, 
@@ -55,6 +55,9 @@ If unsure, leave default of 'all' ! Ignored if intoverstates=FALSE.}
 \item{optimize}{if TRUE, use \code{\link{stanoptim}} function for maximum a posteriori estimates.}
 
 \item{optimcontrol}{list of parameters sent to \code{\link{optimstan}} governing optimization / importance sampling.}
+
+\item{ukffull}{0 or 1. If 0, nonlinear filtering via the unscented filter uses a minimal number of sigma points,
+that does not capture skew in the resulting distribution.}
 
 \item{nopriors}{logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.}
 
