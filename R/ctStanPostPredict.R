@@ -9,6 +9,7 @@
 #' @param wait Logical, if TRUE, waits for input before plotting next plot.
 #' @param jitter Positive numeric between 0 and 1, if TRUE, jitters empirical data by specified proportion of std dev.
 #' @param datarows integer vector specifying rows of data to plot. Otherwise 'all' uses all data.
+#' @param ... extra arguments to pass to plot function.
 #' @return If plot=FALSE, an array containing quantiles of generated data. If plot=TRUE, nothing, only plots.
 #' @export
 #' @details This function relies on the data generated during each iteration of fitting to approximate the
@@ -16,7 +17,7 @@
 #'
 #' @examples
 #' ctStanPostPredict(ctstantestfit)
-ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,plot=TRUE,probs=c(.025,.5,.975),samples=TRUE, datarows='all'){
+ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,plot=TRUE,probs=c(.025,.5,.975),samples=TRUE, datarows='all',...){
   e<-extract.ctStanFit(fit)
   
   if(datarows[1]=='all') datarows <- 1:nrow(fit$data$Y)
@@ -29,7 +30,7 @@ ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,p
     xtime=fit$data$time
     
     ctDensityList(x=list(fit$data$Y[datarows,,drop=FALSE],e$Ygen[,,datarows,,drop=FALSE]),plot=TRUE,
-      main='All variables',lwd=2,legend = c('Observed','Model implied'),xlab='Value')
+      main='All variables',lwd=2,legend = c('Observed','Model implied'),xlab='Value',...)
     
     
     Ygen <- e$Ygen
@@ -54,7 +55,7 @@ ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,p
         if(typei=='obs'){
           
           ctDensityList(x=list(fit$data$Y[datarows,i,drop=FALSE],e$Ygen[,,datarows,i,drop=FALSE]),plot=TRUE,
-            main=fit$ctstanmodel$manifestNames[i],lwd=2,legend = c('Observed','Model implied'),xlab='Value')
+            main=fit$ctstanmodel$manifestNames[i],lwd=2,legend = c('Observed','Model implied'),xlab='Value',...)
           
           if(wait) readline("Press [return] for next plot.")
           
@@ -77,7 +78,7 @@ ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,p
             }
             
             if(subtypei=='Observation') ctPlotArray(list(y=y[notmissing,i,,drop=FALSE],x=x[notmissing]),legend=FALSE,add=samples,polygon=!samples,
-              plotcontrol=list(xlab=subtypei,main=dimnames(y)[[2]][i]))
+              plotcontrol=list(xlab=subtypei,main=dimnames(y)[[2]][i],...))
             
             # if(subtypei=='Time')
             
@@ -119,10 +120,10 @@ ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,p
             plot(matrix(yp[-diffindex,i,,,drop=FALSE][samps],ncol=1),
               matrix(dygendt[,,drop=FALSE][samps],ncol=1),
               ylab=paste0('dy/dt, diff=',cdiffsize),xlab='y', main=dimnames(y)[[2]][i],
-              pch=16,cex=.2,col=rgb(1,0,0,.1))
+              pch=16,cex=.2,col=rgb(1,0,0,.1),...)
             points( fit$data$Y[-diffindex,i],
               dydt,
-              col=rgb(0,0,1,.5),pch=17)
+              col=rgb(0,0,1,.5),pch=17,...)
             
             if(wait) readline("Press [return] for next plot.")  
  
@@ -130,10 +131,10 @@ ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,p
               rep(time,(dim(dygendt)[2]))[samps],
               matrix(dygendt[,,drop=FALSE],ncol=1)[samps],
               ylab=paste0('dy/dt, diff=',cdiffsize),xlab='time', main=dimnames(y)[[2]][i],
-              pch=16,cex=.1,col=rgb(1,0,0,.3))
+              pch=16,cex=.1,col=rgb(1,0,0,.3),...)
             points(time,
               dydt,
-              col=rgb(0,0,1,.5),pch=17)
+              col=rgb(0,0,1,.5),pch=17,...)
             
           }
         }

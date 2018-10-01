@@ -77,7 +77,7 @@ oscillatingm <- ctModel(n.latent = 2, n.manifest = 1, Tpoints = 11,
   DIFFUSION = matrix(c(0, 0, 0, "diffusion"), nrow = 2, ncol = 2),
   startValues = inits)
 
-oscillatingf <- ctFit(Oscillating, oscillatingm, objective='mxFIML',carefulFit = FALSE)
+oscillatingf <- ctFit(Oscillating, oscillatingm, carefulFit = TRUE)
 mxs <- summary(oscillatingf)
 
 sm <- ctStanModel(oscillatingm)
@@ -86,7 +86,8 @@ sm$pars$indvarying <- FALSE
 ld <- ctWideToLong(Oscillating,Tpoints = 11,n.manifest = 1,n.TDpred = 0,n.TIpred = 0)
 ld <- ctDeintervalise(ld)
 
-sf <- ctStanFit(datalong = ld, ctstanmodel = sm,optimize=TRUE,verbose=1,isloops=3)
+sf <- ctStanFit(datalong = ld, ctstanmodel = sm,optimize=TRUE,verbose=1,optimcontrol=list(isloops=0,deoptim=FALSE),
+  lineardynamics = F,nopriors = T)
 s=summary(sf)
 
 expect_equal(-3461.936,oscillatingf$mxobj$output$Minus2LogLikelihood,tolerance=.001)

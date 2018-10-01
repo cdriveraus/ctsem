@@ -123,7 +123,7 @@ optimstan <- function(standata, sm, init=0,
           gradout[i,]<-((func(uppars)) - (func(downpars)))/stepsize/2
         }
       }
-      return(gradout)
+      return(t(gradout))
     }
     
     # A more numerically stable way of calculating log( sum( exp( x ))) Source:

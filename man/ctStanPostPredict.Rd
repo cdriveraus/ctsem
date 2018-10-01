@@ -6,7 +6,7 @@
 \usage{
 ctStanPostPredict(fit, legend = TRUE, diffsize = 1, jitter = 0.02,
   wait = TRUE, plot = TRUE, probs = c(0.025, 0.5, 0.975),
-  samples = TRUE, datarows = "all")
+  samples = TRUE, datarows = "all", ...)
 }
 \arguments{
 \item{fit}{ctStanFit object.}
@@ -24,6 +24,8 @@ ctStanPostPredict(fit, legend = TRUE, diffsize = 1, jitter = 0.02,
 \item{samples}{Logical -- plot all generated data points? Otherwise, plot shaded polygon based on quantile estimate.}
 
 \item{datarows}{integer vector specifying rows of data to plot. Otherwise 'all' uses all data.}
+
+\item{...}{extra arguments to pass to plot function.}
 }
 \value{
 If plot=FALSE, an array containing quantiles of generated data. If plot=TRUE, nothing, only plots.
