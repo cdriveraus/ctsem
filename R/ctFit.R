@@ -166,9 +166,9 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   largeAlgebras<-TRUE
   if(nofit) fit <- FALSE
   if(fit == FALSE) carefulFit <- FALSE
-  
-  if(all(stationary %in% 'all')) stationary<-c('T0VAR','T0MEANS','T0TIPREDEFFECT','T0TRAITEFFECT')
+
   if(is.null(stationary)) stationary <- c('')
+  if(all(stationary %in% 'all')) stationary<-c('T0VAR','T0MEANS','T0TIPREDEFFECT','T0TRAITEFFECT')
   
   n.latent<-ctmodelobj$n.latent
   n.manifest<-ctmodelobj$n.manifest
