@@ -73,7 +73,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,par
         return(out)
       }
       
-      if(1==99 & (is.null(object$data$ukfpop) || object$data$ukfpop==0)){    
+      if(1==99 & (is.null(object$data$intoverpop) || object$data$intoverpop==0)){    
         #transformed subject level params
         rawpopcorr_transformed= array(sapply(1:iter, function(x) cor(e$indparams[x,,])),dim=c(nindvarying,nindvarying,iter))
         rawpopcov_transformed= array(sapply(1:iter, function(x) cov(e$indparams[x,,])),dim=c(nindvarying,nindvarying,iter))

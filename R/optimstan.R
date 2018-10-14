@@ -40,6 +40,7 @@ optimstan <- function(standata, sm, init=0,
 
   
   message('Optimizing...')
+  # browser()
   betterfit<-TRUE
   try2 <- FALSE
   while(betterfit){ #repeat loop if importance sampling improves on optimized max
@@ -52,7 +53,8 @@ optimstan <- function(standata, sm, init=0,
     #   standata$nopriors <- 1
     # }
     
-    suppressWarnings(suppressOutput(smf<-sampling(sm,iter=1,chains=1,data=standata,check_data=FALSE, control=list(max_treedepth=0))))
+    suppressWarnings(suppressOutput(smf<-sampling(sm,iter=0,chains=0,init=0,data=standata,check_data=FALSE, 
+      control=list(max_treedepth=0),save_warmup=FALSE,test_grad=FALSE)))
     npars=get_num_upars(smf)
   
     if(deoptim){ #init with DE
@@ -82,7 +84,7 @@ optimstan <- function(standata, sm, init=0,
       init=constrain_pars(object = smf,optimfitde$optim$bestmem)
     }
     
-    suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=40000, init=init,as_vector=FALSE,
+    suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=1e6, init=init,as_vector=FALSE,
       tol_obj=1e-12, tol_rel_obj=0,init_alpha=.001, tol_grad=0,tol_rel_grad=1e1,tol_param=1e-12,history_size=100),verbose=verbose))
     
     

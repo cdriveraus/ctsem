@@ -5,12 +5,13 @@
 \title{ctStanFit}
 \usage{
 ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 1000,
-  intoverstates = TRUE, binomial = FALSE, fit = TRUE, ukfpop = FALSE,
-  stationary = FALSE, plot = FALSE, derrind = "all", optimize = FALSE,
-  optimcontrol = list(), ukfspread = 0.1, ukffull = FALSE,
-  nopriors = FALSE, chains = 1, cores = "maxneeded", inits = NULL,
-  maxtimestep = 9999, lineardynamics = "auto", forcerecompile = FALSE,
-  ngen = 1, savescores = TRUE, control = list(adapt_delta = 0.8,
+  intoverstates = TRUE, binomial = FALSE, fit = TRUE,
+  intoverpop = FALSE, stationary = FALSE, plot = FALSE,
+  derrind = "all", optimize = FALSE, optimcontrol = list(),
+  ukfspread = 0.1, ukffull = FALSE, nopriors = FALSE, chains = 1,
+  cores = "maxneeded", inits = NULL, maxtimestep = 9999,
+  lineardynamics = "auto", forcerecompile = FALSE, ngen = 1,
+  savescores = TRUE, control = list(adapt_delta = 0.8,
   adapt_init_buffer = 2, adapt_window = 2, max_treedepth = 10, stepsize =
   0.001), verbose = 0, ...)
 }
@@ -36,7 +37,7 @@ This now sets \code{intoverstates = FALSE} and the \code{manifesttype} of every 
 
 \item{fit}{If TRUE, fit specified model using Stan, if FALSE, return stan model object without fitting.}
 
-\item{ukfpop}{if TRUE, uses an unscented approximation for population distributions rather than full sampling.
+\item{intoverpop}{if TRUE, integrates over population distribution of parameters rather than full sampling.
 Allows for optimization of non-linearities and random effects.}
 
 \item{stationary}{Logical. If TRUE, T0VAR and T0MEANS input matrices are ignored, 
