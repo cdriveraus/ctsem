@@ -75,7 +75,7 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,
       param<-stats::rnorm(densiter,rawpopmeans,rawpopsd)
       subjectprior<-tform(param,popsetup$transform[pari],popvalues$multiplier[pari], popvalues$meanscale[pari],popvalues$offset[pari])
 
-      if(!obj$data$ukfpop) {
+      if(!obj$data$intoverpop) {
         rawindparams<-e$baseindparams[,seq(popsetup$indvarying[pari],by=obj$data$nindvarying,length.out=obj$data$nsubjects)] *
           rawpopsd + rawpopmeans
         param<-rawindparams
