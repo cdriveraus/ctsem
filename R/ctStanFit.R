@@ -644,7 +644,7 @@ ukfilterfunc<-function(ppchecking){
           discreteDIFFUSION[derrind, derrind] = sasymDIFFUSION[derrind, derrind] - 
             quad_form( sasymDIFFUSION[derrind, derrind], discreteDRIFT[derrind, derrind]\' );
           //discreteDIFFUSION[derrind, derrind] = discreteDIFFUSIONcalc(sDRIFT[derrind, derrind], sDIFFUSION[derrind, derrind], dT[rowi]);
-          if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
+          //if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
         }
       }
   
@@ -653,7 +653,7 @@ ukfilterfunc<-function(ppchecking){
         discreteDRIFT[nlatent+1,nlatent+1] = 1;
         //discreteCINT=sCINT[,1];
         discreteDIFFUSION=sDIFFUSION;
-        if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
+        //if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
       }
 
       eta = (discreteDRIFT * append_row(eta,1.0))[1:nlatent];
@@ -729,7 +729,7 @@ ukfilterfunc<-function(ppchecking){
           discreteDRIFT[nlatent+1,nlatent+1] = 1;
           etacov = quad_form(etacov, J\');
           etacov[1:nlatent,1:nlatent] = etacov[1:nlatent,1:nlatent] + sDIFFUSION;
-          if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
+          //if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
           eta[1:nlatent] = (discreteDRIFT * append_row(eta[1:nlatent],1.0))[1:nlatent];
         }
 
@@ -780,13 +780,18 @@ ukfilterfunc<-function(ppchecking){
     } //end ukf if necessary time update
   } // end non linear time update
 
-    
-    if(intoverstates==0 && lineardynamics == 1) {
-      if(T0check[rowi]==1) eta += cholesky_decompose(sT0VAR) * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
-      if(T0check[rowi]==0) eta +=  discreteDIFFUSION * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
-    }
+
 ',if(!ppchecking) 'if(savescores==1) etaprior_out[rowi] = eta;','
 if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
+    if(intoverstates==0 && lineardynamics == 1) {
+      //if(T0check[rowi]==1) eta += cholesky_decompose(sT0VAR) * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
+      //if(T0check[rowi]==0) eta +=  discreteDIFFUSION * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
+',if(!ppchecking) '
+      if(T0check[rowi]==1) ll +=  multi_normal_lpdf(etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)] |eta, sT0VAR);
+      if(T0check[rowi]==0) ll +=  multi_normal_lpdf(etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)] |eta, discreteDIFFUSION);
+','
+      eta = etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
+    }
 
     if (nobsi > 0) {  // if some observations create right size matrices for missingness and calculate...
   
@@ -810,7 +815,7 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
           //if(ncont_y[rowi] > 0) 
           if(ncont_y[rowi] > 0) ypred[cindex] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * eta[1:nlatent];
           if(nbinary_y[rowi] > 0) ypred[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * eta[1:nlatent])));
-          if(ncont_y[rowi] > 0) ypredcov[cindex,cindex] = sMANIFESTVAR[cindex,cindex];
+          if(ncont_y[rowi] > 0) ypredcov_sqrt[cindex,cindex] = sMANIFESTVAR[cindex,cindex];
         }
       }
   
@@ -889,7 +894,7 @@ print("pp problem2! row ", rowi);
       if(intoverstates==1) eta +=  (K[,o] * err[o]);
   
       ',if(!ppchecking) paste0('
-      if(intoverstates==0 && nbinary_y[rowi] > 0) ll = sum(log( Y[rowi,o1] .* (ypred[o1]) + (1-Y[rowi,o1]) .* (1-ypred[o1])));
+      if(intoverstates==0 && nbinary_y[rowi] > 0) ll += sum(log( Y[rowi,o1] .* (ypred[o1]) + (1-Y[rowi,o1]) .* (1-ypred[o1])));
 
       if(verbose > 1) {
         print("rowi ",rowi, "  si ", si, "  eta ",eta,"  etacov ",etacov,
@@ -902,7 +907,7 @@ print("pp problem2! row ", rowi);
       if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
 
       if(size(cindex) > 0){
-         ypredcov_sqrt[cindex,cindex]=cholesky_decompose(makesym(ypredcov[cindex,cindex]));
+         if(intoverstates==1) ypredcov_sqrt[cindex,cindex]=cholesky_decompose(makesym(ypredcov[cindex,cindex]));
          errtrans[(cobscount+1):(cobscount+size(cindex))] = mdivide_left_tri_low(ypredcov_sqrt[cindex,cindex], err[cindex]); //transform pred errors to standard normal dist and collect
          errscales[(cobscount+1):(cobscount+size(cindex))] = log(diagonal(ypredcov_sqrt[cindex,cindex])); //account for transformation of scale in loglik
       }
@@ -913,7 +918,7 @@ print("pp problem2! row ", rowi);
 ',if(!ppchecking) 'if(savescores==1) etaupd_out[rowi] = eta;','
  }//end rowi
 
-  ',if(!ppchecking) paste0('if((intoverstates==1 || sum(ncont_y) > 0)) ll = normal_lpdf(errtrans|0,1) - sum(errscales);')
+  ',if(!ppchecking) paste0('if(( sum(ncont_y) > 0)) ll += normal_lpdf(errtrans|0,1) - sum(errscales);')
     )
   return(out)
 }
@@ -990,7 +995,7 @@ subjectparscalc <- function(pop=FALSE){
     }
 
           
-    if(binomial==0){
+    if(intoverstates == 1){
       if(si <= MANIFESTVARsubindex[nsubjects]) {
          for(ri in 1:nmanifest) MANIFESTVAR[si,ri,ri] = square(MANIFESTVAR[si,ri,ri]);
       }
@@ -1801,7 +1806,7 @@ model{
 
   } //end pop priors section
   
-  if(intoverstates==0) etaupdbasestates ~ normal(0,1);
+  //if(intoverstates==0) etaupdbasestates ~ normal(0,1);
   
   target += ll;
   
