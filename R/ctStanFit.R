@@ -95,6 +95,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   
   args=match.call()
   
+  ncstates=TRUE
+  
  
   idName<-ctstanmodel$subjectIDname
   timeName<-ctstanmodel$timeName
@@ -644,7 +646,7 @@ ukfilterfunc<-function(ppchecking){
           discreteDIFFUSION[derrind, derrind] = sasymDIFFUSION[derrind, derrind] - 
             quad_form( sasymDIFFUSION[derrind, derrind], discreteDRIFT[derrind, derrind]\' );
           //discreteDIFFUSION[derrind, derrind] = discreteDIFFUSIONcalc(sDRIFT[derrind, derrind], sDIFFUSION[derrind, derrind], dT[rowi]);
-          //if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
+          if(intoverstates==0 && ncstates==1) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
         }
       }
   
@@ -653,7 +655,7 @@ ukfilterfunc<-function(ppchecking){
         discreteDRIFT[nlatent+1,nlatent+1] = 1;
         //discreteCINT=sCINT[,1];
         discreteDIFFUSION=sDIFFUSION;
-        //if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
+        if(intoverstates==0 && ncstates==1) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
       }
 
       eta = (discreteDRIFT * append_row(eta,1.0))[1:nlatent];
@@ -729,7 +731,7 @@ ukfilterfunc<-function(ppchecking){
           discreteDRIFT[nlatent+1,nlatent+1] = 1;
           etacov = quad_form(etacov, J\');
           etacov[1:nlatent,1:nlatent] = etacov[1:nlatent,1:nlatent] + sDIFFUSION;
-          //if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
+          if(intoverstates==0 && ncstates==1) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
           eta[1:nlatent] = (discreteDRIFT * append_row(eta[1:nlatent],1.0))[1:nlatent];
         }
 
@@ -784,13 +786,17 @@ ukfilterfunc<-function(ppchecking){
 ',if(!ppchecking) 'if(savescores==1) etaprior_out[rowi] = eta;','
 if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
     if(intoverstates==0 && lineardynamics == 1) {
-      //if(T0check[rowi]==1) eta += cholesky_decompose(sT0VAR) * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
-      //if(T0check[rowi]==0) eta +=  discreteDIFFUSION * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
+      if(ncstates ==1) {
+        if(T0check[rowi]==1) eta += cholesky_decompose(sT0VAR) * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
+        if(T0check[rowi]==0) eta +=  discreteDIFFUSION * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
+      }
 ',if(!ppchecking) '
-      if(T0check[rowi]==1) ll +=  multi_normal_lpdf(etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)] |eta, sT0VAR);
-      if(T0check[rowi]==0) ll +=  multi_normal_lpdf(etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)] |eta, discreteDIFFUSION);
+      if(ncstates==0){
+       if(T0check[rowi]==1) ll +=  multi_normal_lpdf(etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)] |eta, sT0VAR);
+       if(T0check[rowi]==0) ll +=  multi_normal_lpdf(etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)] |eta, discreteDIFFUSION);
+      }
 ','
-      eta = etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
+      if(ncstates==0) eta = etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
     }
 
     if (nobsi > 0) {  // if some observations create right size matrices for missingness and calculate...
@@ -1684,6 +1690,7 @@ data {
   int popsetup[nmatrixslots,6];
   real popvalues[nmatrixslots,5];
   int savescores;
+  int ncstates;
 }
       
 transformed data{
@@ -1806,7 +1813,7 @@ model{
 
   } //end pop priors section
   
-  //if(intoverstates==0) etaupdbasestates ~ normal(0,1);
+  if(intoverstates==0 && ncstates==1) etaupdbasestates ~ normal(0,1);
   
   target += ll;
   
@@ -1974,6 +1981,7 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
   standata$nmatrixslots <- as.integer(nrow(popsetup))
   
   standata$sdscale <- sdscale
+  standata$ncstates <- as.integer(ncstates)
 
   if(fit){
 
