@@ -865,6 +865,10 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
         etacov +=  - quad_form(ypredcov[o,o],  K[,o]\');
       } //end ukf measurement
 
+      ',if(!ppchecking) 'err[o] = Y[rowi,o] - ypred[o]; // prediction error','
+
+      if(intoverstates==1) eta +=  (K[,o] * err[o]);
+
       ',if(ppchecking) paste0('
 if(verbose > 1) {
 print("rowi ",rowi, "  si ", si, "  eta ",eta,"  etacov ",etacov,
@@ -895,9 +899,6 @@ print("pp problem2! row ", rowi);
         }
       '),'
   
-      ',if(!ppchecking) 'err[o] = Y[rowi,o] - ypred[o]; // prediction error','
-
-      if(intoverstates==1) eta +=  (K[,o] * err[o]);
   
       ',if(!ppchecking) paste0('
       if(intoverstates==0 && nbinary_y[rowi] > 0) ll += sum(log( Y[rowi,o1] .* (ypred[o1]) + (1-Y[rowi,o1]) .* (1-ypred[o1])));
