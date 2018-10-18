@@ -7,6 +7,7 @@
 #' @param ctstanmodel model as normally passed to \code{\link{ctStanFit}}
 #' @param ... extra args for \code{\link{ctStanFit}}
 #' @examples
+#' \dontrun{
 #'  newm<-ctModel(type='stanct',
 #'   n.latent=ctstantestfit$ctstanmodel$n.latent,
 #'   n.TDpred=ctstantestfit$ctstanmodel$n.TDpred,
@@ -20,6 +21,7 @@
 #'  newdat <- ctstantestdat
 #'  newdat <- newdat[newdat[,'id']!=1,]
 #'  newfit <- ctStanUpdModel(ctstantestfit, newdat, newm)
+#'  }
 
 ctStanUpdModel <- function(fit, datalong, ctstanmodel,...){
   
