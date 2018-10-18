@@ -78,24 +78,11 @@ functions{
     return out;
   }
       
-  matrix sdcovsqrt2cov(matrix mat, int msqrt){ //converts from lower partial sd and diag sd to cov or cholesky cov
+  matrix sdcovsqrt2cov(matrix mat){ //converts from lower partial sd and diag sd to cov or cholesky cov
     matrix[rows(mat),rows(mat)] out;
-
-    if(msqrt==1){
-      for(k in 1:cols(mat)){
-        for(j in 1:rows(mat)){
-          if(j > k) out[j,k] = mat[j,k];
-          if(k > j) out[j,k] = mat[k,j];
-          if(k==j) out[j,k] = mat[j,k];
-        }
-      }
-    }
   
-    if(msqrt==0){
-      out = diag_pre_multiply(diagonal(mat),covsqrt2corsqrt(mat, 0));
-    }
+    out = tcrossprod(diag_pre_multiply(diagonal(mat),covsqrt2corsqrt(mat, 0)));
 
-    if(msqrt==0) out = tcrossprod(out);
     return(out);
   }
       
@@ -249,7 +236,7 @@ data {
   int ukf;
   real ukfspread;
   int ukffull;
-  int ukfmeasurement;
+  int nlmeasurement;
   int intoverstates;
   int verbose; //level of printing during model fit
 
@@ -462,10 +449,6 @@ transformed parameters{
 
     o1 = whichbinary_y[rowi,1:nbinary_y[rowi]];
     o0 = whichcont_y[rowi,1:ncont_y[rowi]];
-    
-    if(rowi!=1 && intoverstates==1) cobscount += nobs_y[rowi-1]; // number of non missing observations, treated as gaussian, until now
-    if(rowi!=1 && intoverstates==0) cobscount += ncont_y[rowi-1]; // number of non missing observations, treated as gaussian, until now
-
 
     if(T0check[rowi] == 1) { // calculate initial matrices if this is first row for si
 
@@ -578,7 +561,7 @@ transformed parameters{
 
   // perform any whole matrix transformations 
     
-  if(si <= DIFFUSIONsubindex[nsubjects] && ukf==0) sDIFFUSION = sdcovsqrt2cov(sDIFFUSION, 0);
+  if(si <= DIFFUSIONsubindex[nsubjects] && ukf==0) sDIFFUSION = sdcovsqrt2cov(sDIFFUSION);
 
     if(si <= asymDIFFUSIONsubindex[nsubjects]) {
       if(ndiffusion < nlatent) sasymDIFFUSION = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
@@ -608,7 +591,7 @@ transformed parameters{
           
           
     if(si <= T0VARsubindex[nsubjects]) {
-      if(ukf==0) sT0VAR = sdcovsqrt2cov(sT0VAR,0);
+      if(ukf==0) sT0VAR = sdcovsqrt2cov(sT0VAR);
       if(nt0varstationary > 0) for(ri in 1:nt0varstationary){
         sT0VAR[t0varstationary[ri,1],t0varstationary[ri,2] ] = 
           sasymDIFFUSION[t0varstationary[ri,1],t0varstationary[ri,2] ];
@@ -868,7 +851,7 @@ transformed parameters{
       } // end of non t0 time update
   
   
-    if(ukfmeasurement==1 || ntdpred > 0 || T0check[rowi]==1){ //ukf time update
+    if(nlmeasurement==1 || ntdpred > 0 || T0check[rowi]==1){ //ukf time update
   
       if(T0check[rowi]==1) {
         if(intoverpop==1) sigpoints[(nlatent+1):(nlatentpop), (nlatent+1):(nlatentpop)] = rawpopcovsqrt * sqrtukfadjust;
@@ -942,15 +925,11 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
     }
 
     if (nobsi > 0) {  // if some observations create right size matrices for missingness and calculate...
-  
-      int cindex[intoverstates ? nobsi : ncont_y[rowi]];
 
-      if(intoverstates==0) cindex = o0;
-      if(intoverstates==1) cindex = o; //treat all obs as continuous gaussian
-
-      if(ukfmeasurement==0){ //non ukf measurement
+      if(nlmeasurement==0){ //non ukf measurement
         if(intoverstates==1) { //classic kalman
           ypred[o] = sMANIFESTMEANS[o,1] + sLAMBDA[o,] * eta[1:nlatent];
+          if(nbinary_y[rowi] > 0) ypred[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * eta[1:nlatent])));
           ypredcov[o,o] = quad_form(etacov[1:nlatent,1:nlatent], sLAMBDA[o,]') + sMANIFESTVAR[o,o];
           for(wi in 1:nmanifest){ 
             if(manifesttype[wi]==1 && Y[rowi,wi] != 99999) ypredcov[wi,wi] += fabs((ypred[wi] - 1) .* (ypred[wi]));
@@ -961,15 +940,15 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
         }
         if(intoverstates==0) { //sampled states
           if(ncont_y[rowi] > 0) {
-            ypred[cindex] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * eta[1:nlatent];
-            if(ncont_y[rowi] > 0) ypredcov_sqrt[cindex,cindex] = sMANIFESTVAR[cindex,cindex];
+            ypred[o0] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * eta[1:nlatent];
+            if(ncont_y[rowi] > 0) ypredcov_sqrt[o0,o0] = sMANIFESTVAR[o0,o0];
           }
           if(nbinary_y[rowi] > 0) ypred[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * eta[1:nlatent])));
         }
       } 
   
 
-      if(ukfmeasurement==1){ //ukf measurement
+      if(nlmeasurement==1){ //ukf measurement
         vector[nlatentpop] state; //dynamic portion of current states
         matrix[nmanifest,cols(ukfmeasures)] merrorstates;
 
@@ -1050,10 +1029,10 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
       if(intoverstates==1) eta +=  (K[,o] * err[o]);
   
       
-      if(intoverstates==0 && nbinary_y[rowi] > 0) ll += sum(log( Y[rowi,o1] .* (ypred[o1]) + (1-Y[rowi,o1]) .* (1-ypred[o1])));
+      if(nbinary_y[rowi] > 0) ll += sum(log( Y[rowi,o1] .* (ypred[o1]) + (1-Y[rowi,o1]) .* (1-ypred[o1]))); //intoverstates==0 && 
 
       if(verbose > 1) {
-        print("rowi ",rowi, "  si ", si, "  eta ",eta,"  etacov ",etacov,
+        print("rowi ",rowi, "  si ", si, " ll = ", ll, "  eta ",eta,"  etacov ",etacov,
           "  eta ",eta,"  etacov ",etacov,"  ypred ",ypred,"  ypredcov ",ypredcov, "  K ",K,
           "  sDRIFT ", sDRIFT, " sDIFFUSION ", sDIFFUSION, " sCINT ", sCINT, "  sMANIFESTVAR ", diagonal(sMANIFESTVAR), "  sMANIFESTMEANS ", sMANIFESTMEANS, 
           "  sT0VAR", sT0VAR,  " sT0MEANS ", sT0MEANS,
@@ -1062,13 +1041,14 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
       }
       if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
 
-      if(size(cindex) > 0){
-         if(intoverstates==1) ypredcov_sqrt[cindex,cindex]=cholesky_decompose(makesym(ypredcov[cindex,cindex]));
-         errtrans[(cobscount+1):(cobscount+size(cindex))] = mdivide_left_tri_low(ypredcov_sqrt[cindex,cindex], err[cindex]); //transform pred errors to standard normal dist and collect
-         errscales[(cobscount+1):(cobscount+size(cindex))] = log(diagonal(ypredcov_sqrt[cindex,cindex])); //account for transformation of scale in loglik
+      if(size(o0) > 0){
+         if(intoverstates==1) ypredcov_sqrt[o0,o0]=cholesky_decompose(makesym(ypredcov[o0,o0]));
+         errtrans[(cobscount+1):(cobscount+size(o0))] = mdivide_left_tri_low(ypredcov_sqrt[o0,o0], err[o0]); //transform pred errors to standard normal dist and collect
+         errscales[(cobscount+1):(cobscount+size(o0))] = log(diagonal(ypredcov_sqrt[o0,o0])); //account for transformation of scale in loglik
       }
   
-
+    
+    cobscount += size(o0); // number of non missing observations, treated as gaussian, until now
     }//end nobs > 0 section
   
 if(savescores==1) etaupd_out[rowi] = eta;
@@ -1208,10 +1188,6 @@ for(geni in 0:ngen){
 
     o1 = whichbinary_y[rowi,1:nbinary_y[rowi]];
     o0 = whichcont_y[rowi,1:ncont_y[rowi]];
-    
-    if(rowi!=1 && intoverstates==1) cobscount += nobs_y[rowi-1]; // number of non missing observations, treated as gaussian, until now
-    if(rowi!=1 && intoverstates==0) cobscount += ncont_y[rowi-1]; // number of non missing observations, treated as gaussian, until now
-
 
     if(T0check[rowi] == 1) { // calculate initial matrices if this is first row for si
 
@@ -1324,7 +1300,7 @@ for(geni in 0:ngen){
 
   // perform any whole matrix transformations 
     
-  if(si <= DIFFUSIONsubindex[nsubjects] && ukf==0) sDIFFUSION = sdcovsqrt2cov(sDIFFUSION, 0);
+  if(si <= DIFFUSIONsubindex[nsubjects] && ukf==0) sDIFFUSION = sdcovsqrt2cov(sDIFFUSION);
 
     if(si <= asymDIFFUSIONsubindex[nsubjects]) {
       if(ndiffusion < nlatent) sasymDIFFUSION = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
@@ -1354,7 +1330,7 @@ for(geni in 0:ngen){
           
           
     if(si <= T0VARsubindex[nsubjects]) {
-      if(ukf==0) sT0VAR = sdcovsqrt2cov(sT0VAR,0);
+      if(ukf==0) sT0VAR = sdcovsqrt2cov(sT0VAR);
       if(nt0varstationary > 0) for(ri in 1:nt0varstationary){
         sT0VAR[t0varstationary[ri,1],t0varstationary[ri,2] ] = 
           sasymDIFFUSION[t0varstationary[ri,1],t0varstationary[ri,2] ];
@@ -1626,7 +1602,7 @@ if(geni > 0){
       } // end of non t0 time update
   
   
-    if(ukfmeasurement==1 || ntdpred > 0 || T0check[rowi]==1){ //ukf time update
+    if(nlmeasurement==1 || ntdpred > 0 || T0check[rowi]==1){ //ukf time update
   
       if(T0check[rowi]==1) {
         if(intoverpop==1) sigpoints[(nlatent+1):(nlatentpop), (nlatent+1):(nlatentpop)] = rawpopcovsqrt * sqrtukfadjust;
@@ -1695,15 +1671,11 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
     }
 
     if (nobsi > 0) {  // if some observations create right size matrices for missingness and calculate...
-  
-      int cindex[intoverstates ? nobsi : ncont_y[rowi]];
 
-      if(intoverstates==0) cindex = o0;
-      if(intoverstates==1) cindex = o; //treat all obs as continuous gaussian
-
-      if(ukfmeasurement==0){ //non ukf measurement
+      if(nlmeasurement==0){ //non ukf measurement
         if(intoverstates==1) { //classic kalman
           ypred[o] = sMANIFESTMEANS[o,1] + sLAMBDA[o,] * eta[1:nlatent];
+          if(nbinary_y[rowi] > 0) ypred[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * eta[1:nlatent])));
           ypredcov[o,o] = quad_form(etacov[1:nlatent,1:nlatent], sLAMBDA[o,]') + sMANIFESTVAR[o,o];
           for(wi in 1:nmanifest){ 
             if(manifesttype[wi]==1 && Y[rowi,wi] != 99999) ypredcov[wi,wi] += fabs((ypred[wi] - 1) .* (ypred[wi]));
@@ -1714,15 +1686,15 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
         }
         if(intoverstates==0) { //sampled states
           if(ncont_y[rowi] > 0) {
-            ypred[cindex] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * eta[1:nlatent];
-            if(ncont_y[rowi] > 0) ypredcov_sqrt[cindex,cindex] = sMANIFESTVAR[cindex,cindex];
+            ypred[o0] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * eta[1:nlatent];
+            if(ncont_y[rowi] > 0) ypredcov_sqrt[o0,o0] = sMANIFESTVAR[o0,o0];
           }
           if(nbinary_y[rowi] > 0) ypred[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * eta[1:nlatent])));
         }
       } 
   
 
-      if(ukfmeasurement==1){ //ukf measurement
+      if(nlmeasurement==1){ //ukf measurement
         vector[nlatentpop] state; //dynamic portion of current states
         matrix[nmanifest,cols(ukfmeasures)] merrorstates;
 
@@ -1797,8 +1769,8 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
 
 
       
-        if(ncont_y[rowi] > 0) ypredcov_sqrt[cindex,cindex]=cholesky_decompose(makesym(ypredcov[cindex, cindex])); //use o0, or cindex?
-        if(ncont_y[rowi] > 0) Ygen[geni, rowi, cindex] = multi_normal_cholesky_rng(ypred[cindex], ypredcov_sqrt[cindex,cindex]);
+        if(ncont_y[rowi] > 0) ypredcov_sqrt[o0,o0]=cholesky_decompose(makesym(ypredcov[o0, o0])); //use o0, or o0?
+        if(ncont_y[rowi] > 0) Ygen[geni, rowi, o0] = multi_normal_cholesky_rng(ypred[o0], ypredcov_sqrt[o0,o0]);
         if(nbinary_y[rowi] > 0) for(obsi in 1:size(o1)) Ygen[geni, rowi, o1[obsi]] = bernoulli_rng(ypred[o1[obsi]]);
         err[o] = Ygen[geni,rowi,o] - ypred[o]; // prediction error
       
@@ -1808,7 +1780,8 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
       if(intoverstates==1) eta +=  (K[,o] * err[o]);
   
       
-
+    
+    cobscount += size(o0); // number of non missing observations, treated as gaussian, until now
     }//end nobs > 0 section
   } //end if geni >0 section
 
@@ -1901,7 +1874,7 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
 
   // perform any whole matrix transformations 
     
-  if(si <= DIFFUSIONsubindex[1] && ukf == 0) pop_DIFFUSION[si] = sdcovsqrt2cov(pop_DIFFUSION[si], 0);
+  if(si <= DIFFUSIONsubindex[1] && ukf == 0) pop_DIFFUSION[si] = sdcovsqrt2cov(pop_DIFFUSION[si]);
 
     if(si <= asymDIFFUSIONsubindex[1]) {
       if(ndiffusion < nlatent) asympop_DIFFUSION[si] = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
@@ -1933,7 +1906,7 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
           
           
     if(si <= T0VARsubindex[1]) {
-      if(ukf==0) pop_T0VAR[si] = sdcovsqrt2cov(pop_T0VAR[si],0);
+      if(ukf==0) pop_T0VAR[si] = sdcovsqrt2cov(pop_T0VAR[si]);
       if(nt0varstationary > 0) for(ri in 1:nt0varstationary){
         pop_T0VAR[si,t0varstationary[ri,1],t0varstationary[ri,2] ] = 
           asympop_DIFFUSION[si,t0varstationary[ri,1],t0varstationary[ri,2] ];

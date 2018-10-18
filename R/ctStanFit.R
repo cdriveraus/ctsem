@@ -36,8 +36,11 @@
 #' regarding warmup / sampling behaviour. Unless specified, values used are:
 #' list(adapt_delta = .8, adapt_window=2, max_treedepth=10, adapt_init_buffer=2, stepsize = .001)
 #' @param nlcontrol List of non-linear control parameters. 
-#' \code{lineardynamics} defaults to "auto", but may also be a logical. Set to TRUE to force linear dynamics, 
+#' \code{lineardynamics} defaults to "auto", but may also be a logical. Set to TRUE to use estimator that assumes linear dynamics, 
 #' FALSE to use non-linear integration. "auto" attempts to select the appropriate choice.
+#' \code{nlmeasurement} defaults to "auto", but may also be a logical. Set to TRUE to use non linear measurement model estimator, 
+#' FALSE to use linear model. "auto" attempts to select the appropriate choice. Non-linear methods are slower but applicable to both linear
+#' and non linear cases.
 #' \code{ukffull} may be TRUE or FALSE. If FALSE, nonlinear filtering via the unscented filter uses a minimal number of sigma points,
 #' that does not capture skew in the resulting distribution. 
 #' \code{maxtimestep} must be a positive numeric,  specifying the largest time
@@ -104,6 +107,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   if(is.null(nlcontrol$maxtimestep)) nlcontrol$maxtimestep = 999999
   if(is.null(nlcontrol$lineardynamics)) nlcontrol$lineardynamics = 'auto'
   if(is.null(nlcontrol$ukffull)) nlcontrol$ukffull = FALSE
+  if(is.null(nlcontrol$nlmeasurement)) nlcontrol$nlmeasurement = 'auto'
   lineardynamics <- nlcontrol$lineardynamics
   
   args=match.call()
@@ -392,9 +396,17 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         intoverpop | lineardynamics == FALSE 
     ) { message('Using unscented Kalman filter for dynamics'); ukf <- TRUE}
     
+
+    nlmeasurement <- nlcontrol$nlmeasurement
+    if(nlmeasurement == 'auto') {
+      nlmeasurement <- FALSE
+      if(length(measurementcalcs) > 0 || intoverpop && any(ctstanmodel$pars$indvarying[ctstanmodel$pars$matrix %in% measurementmatrices])) { 
+        nlmeasurement <- TRUE
+      }
+    }
+    if(nlmeasurement) message('Using unscented Kalman filter for measurement update');
+    if(!nlmeasurement) message('Using classic Kalman filter for measurement update');
     
-    ukfmeasurement <- FALSE
-    if(length(measurementcalcs) > 0 || intoverpop && any(ctstanmodel$pars$indvarying[ctstanmodel$pars$matrix %in% measurementmatrices])) { message('Using unscented Kalman filter for measurement'); ukfmeasurement <- TRUE}
     
     
     if(ukf==FALSE && lineardynamics=="auto") {
@@ -608,10 +620,6 @@ ukfilterfunc<-function(ppchecking){
 
     o1 = whichbinary_y[rowi,1:nbinary_y[rowi]];
     o0 = whichcont_y[rowi,1:ncont_y[rowi]];
-    
-    if(rowi!=1 && intoverstates==1) cobscount += nobs_y[rowi-1]; // number of non missing observations, treated as gaussian, until now
-    if(rowi!=1 && intoverstates==0) cobscount += ncont_y[rowi-1]; // number of non missing observations, treated as gaussian, until now
-
 
     if(T0check[rowi] == 1) { // calculate initial matrices if this is first row for si
 
@@ -748,7 +756,7 @@ ukfilterfunc<-function(ppchecking){
       } // end of non t0 time update
   
   
-    if(ukfmeasurement==1 || ntdpred > 0 || T0check[rowi]==1){ //ukf time update
+    if(nlmeasurement==1 || ntdpred > 0 || T0check[rowi]==1){ //ukf time update
   
       if(T0check[rowi]==1) {
         if(intoverpop==1) sigpoints[(nlatent+1):(nlatentpop), (nlatent+1):(nlatentpop)] = rawpopcovsqrt * sqrtukfadjust;
@@ -805,15 +813,11 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
     }
 
     if (nobsi > 0) {  // if some observations create right size matrices for missingness and calculate...
-  
-      int cindex[intoverstates ? nobsi : ncont_y[rowi]];
 
-      if(intoverstates==0) cindex = o0;
-      if(intoverstates==1) cindex = o; //treat all obs as continuous gaussian
-
-      if(ukfmeasurement==0){ //non ukf measurement
+      if(nlmeasurement==0){ //non ukf measurement
         if(intoverstates==1) { //classic kalman
           ypred[o] = sMANIFESTMEANS[o,1] + sLAMBDA[o,] * eta[1:nlatent];
+          if(nbinary_y[rowi] > 0) ypred[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * eta[1:nlatent])));
           ypredcov[o,o] = quad_form(etacov[1:nlatent,1:nlatent], sLAMBDA[o,]\') + sMANIFESTVAR[o,o];
           for(wi in 1:nmanifest){ 
             if(manifesttype[wi]==1 && Y[rowi,wi] != 99999) ypredcov[wi,wi] += fabs((ypred[wi] - 1) .* (ypred[wi]));
@@ -824,15 +828,15 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
         }
         if(intoverstates==0) { //sampled states
           if(ncont_y[rowi] > 0) {
-            ypred[cindex] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * eta[1:nlatent];
-            if(ncont_y[rowi] > 0) ypredcov_sqrt[cindex,cindex] = sMANIFESTVAR[cindex,cindex];
+            ypred[o0] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * eta[1:nlatent];
+            if(ncont_y[rowi] > 0) ypredcov_sqrt[o0,o0] = sMANIFESTVAR[o0,o0];
           }
           if(nbinary_y[rowi] > 0) ypred[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * eta[1:nlatent])));
         }
       } 
   
 
-      if(ukfmeasurement==1){ //ukf measurement
+      if(nlmeasurement==1){ //ukf measurement
         vector[nlatentpop] state; //dynamic portion of current states
         matrix[nmanifest,cols(ukfmeasures)] merrorstates;
 
@@ -873,8 +877,8 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
 
 
       ',if(ppchecking) paste0('
-        if(ncont_y[rowi] > 0) ypredcov_sqrt[cindex,cindex]=cholesky_decompose(makesym(ypredcov[cindex, cindex])); //use o0, or cindex?
-        if(ncont_y[rowi] > 0) Ygen[geni, rowi, cindex] = multi_normal_cholesky_rng(ypred[cindex], ypredcov_sqrt[cindex,cindex]);
+        if(ncont_y[rowi] > 0) ypredcov_sqrt[o0,o0]=cholesky_decompose(makesym(ypredcov[o0, o0])); //use o0, or o0?
+        if(ncont_y[rowi] > 0) Ygen[geni, rowi, o0] = multi_normal_cholesky_rng(ypred[o0], ypredcov_sqrt[o0,o0]);
         if(nbinary_y[rowi] > 0) for(obsi in 1:size(o1)) Ygen[geni, rowi, o1[obsi]] = bernoulli_rng(ypred[o1[obsi]]);
         err[o] = Ygen[geni,rowi,o] - ypred[o]; // prediction error
       '),'
@@ -884,10 +888,10 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
       if(intoverstates==1) eta +=  (K[,o] * err[o]);
   
       ',if(!ppchecking) paste0('
-      if(intoverstates==0 && nbinary_y[rowi] > 0) ll += sum(log( Y[rowi,o1] .* (ypred[o1]) + (1-Y[rowi,o1]) .* (1-ypred[o1])));
+      if(nbinary_y[rowi] > 0) ll += sum(log( Y[rowi,o1] .* (ypred[o1]) + (1-Y[rowi,o1]) .* (1-ypred[o1]))); //intoverstates==0 && 
 
       if(verbose > 1) {
-        print("rowi ",rowi, "  si ", si, "  eta ",eta,"  etacov ",etacov,
+        print("rowi ",rowi, "  si ", si, " ll = ", ll, "  eta ",eta,"  etacov ",etacov,
           "  eta ",eta,"  etacov ",etacov,"  ypred ",ypred,"  ypredcov ",ypredcov, "  K ",K,
           "  sDRIFT ", sDRIFT, " sDIFFUSION ", sDIFFUSION, " sCINT ", sCINT, "  sMANIFESTVAR ", diagonal(sMANIFESTVAR), "  sMANIFESTMEANS ", sMANIFESTMEANS, 
           "  sT0VAR", sT0VAR,  " sT0MEANS ", sT0MEANS,
@@ -896,13 +900,14 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
       }
       if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
 
-      if(size(cindex) > 0){
-         if(intoverstates==1) ypredcov_sqrt[cindex,cindex]=cholesky_decompose(makesym(ypredcov[cindex,cindex]));
-         errtrans[(cobscount+1):(cobscount+size(cindex))] = mdivide_left_tri_low(ypredcov_sqrt[cindex,cindex], err[cindex]); //transform pred errors to standard normal dist and collect
-         errscales[(cobscount+1):(cobscount+size(cindex))] = log(diagonal(ypredcov_sqrt[cindex,cindex])); //account for transformation of scale in loglik
+      if(size(o0) > 0){
+         if(intoverstates==1) ypredcov_sqrt[o0,o0]=cholesky_decompose(makesym(ypredcov[o0,o0]));
+         errtrans[(cobscount+1):(cobscount+size(o0))] = mdivide_left_tri_low(ypredcov_sqrt[o0,o0], err[o0]); //transform pred errors to standard normal dist and collect
+         errscales[(cobscount+1):(cobscount+size(o0))] = log(diagonal(ypredcov_sqrt[o0,o0])); //account for transformation of scale in loglik
       }
   '),'
-
+    
+    cobscount += size(o0); // number of non missing observations, treated as gaussian, until now
     }//end nobs > 0 section
   ',if(ppchecking) '} //end if geni >0 section','
 ',if(!ppchecking) 'if(savescores==1) etaupd_out[rowi] = eta;','
@@ -1335,7 +1340,7 @@ for(m in basematrices){
 
   if(any(popsetup[,'transform'] < -10)) recompile <- TRUE #if custom transforms needed
   
-  # ukfmeasurement <- TRUE
+  # nlmeasurement <- TRUE
   # message('ukf measurement true!!!')
 
   writemodel<-function(){
@@ -1568,7 +1573,7 @@ data {
   int ukf;
   real ukfspread;
   int ukffull;
-  int ukfmeasurement;
+  int nlmeasurement;
   int intoverstates;
   int verbose; //level of printing during model fit
 
@@ -1836,7 +1841,7 @@ for(geni in 0:ngen){
     ukf=as.integer(ukf),
     ukfspread = nlcontrol$ukfspread,
     ukffull = as.integer(nlcontrol$ukffull),
-    ukfmeasurement=as.integer(ukfmeasurement),
+    nlmeasurement=as.integer(nlmeasurement),
     nopriors=as.integer(nopriors),
     savescores=as.integer(savescores),
     manifesttype=array(as.integer(manifesttype),dim=length(manifesttype)),

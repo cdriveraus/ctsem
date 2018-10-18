@@ -62,7 +62,7 @@ optimstan <- function(standata, sm, init=0,
 
   
   message('Optimizing...')
-  # browser()
+
   betterfit<-TRUE
   try2 <- FALSE
   while(betterfit){ #repeat loop if importance sampling improves on optimized max
@@ -96,7 +96,7 @@ optimstan <- function(standata, sm, init=0,
       }
       deinit <- matrix(rnorm(npars*NP,0,2),nrow = NP)
       deinit[2,] <- 0
-      if(length(init)>1) {
+      if(length(init)>1 & try2) {
         deinit[1,] <- unconstrain_pars(smf,init)
         if(NP > 10) deinit[3:9,] =  matrix( rnorm(npars*(7),rep(deinit[1,],each=7),.1), nrow = 7)
       }
@@ -106,15 +106,14 @@ optimstan <- function(standata, sm, init=0,
         control = decontrollist))
       init=constrain_pars(object = smf,optimfitde$optim$bestmem)
     }
-    
-    suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=1e6, init=init,as_vector=FALSE,
-      tol_obj=1e-12, tol_rel_obj=0,init_alpha=.001, tol_grad=0,tol_rel_grad=1e1,tol_param=1e-12,history_size=100),verbose=verbose))
+    suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=1e6, init=init,as_vector=FALSE,draws=0,constrained=FALSE,
+      tol_obj=1e-12, tol_rel_obj=0,init_alpha=.001, tol_grad=0,tol_rel_grad=1e1,tol_param=1e-12,history_size=100,verbose=verbose),verbose=verbose))
     
     
     est1=optimfit$par
     bestfit <-optimfit$value
     # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan::grab_cxxfun(sm@dso))
-    
+
     est2=unconstrain_pars(smf, est1)
     
     

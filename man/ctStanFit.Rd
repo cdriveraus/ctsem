@@ -55,8 +55,11 @@ If unsure, leave default of 'all' ! Ignored if intoverstates=FALSE.}
 \item{optimcontrol}{list of parameters sent to \code{\link{optimstan}} governing optimization / importance sampling.}
 
 \item{nlcontrol}{List of non-linear control parameters. 
-\code{lineardynamics} defaults to "auto", but may also be a logical. Set to TRUE to force linear dynamics, 
+\code{lineardynamics} defaults to "auto", but may also be a logical. Set to TRUE to use estimator that assumes linear dynamics, 
 FALSE to use non-linear integration. "auto" attempts to select the appropriate choice.
+\code{nlmeasurement} defaults to "auto", but may also be a logical. Set to TRUE to use non linear measurement model estimator, 
+FALSE to use linear model. "auto" attempts to select the appropriate choice. Non-linear methods are slower but applicable to both linear
+and non linear cases.
 \code{ukffull} may be TRUE or FALSE. If FALSE, nonlinear filtering via the unscented filter uses a minimal number of sigma points,
 that does not capture skew in the resulting distribution. 
 \code{maxtimestep} must be a positive numeric,  specifying the largest time
