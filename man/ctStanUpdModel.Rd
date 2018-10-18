@@ -19,6 +19,7 @@ ctStanUpdModel(fit, datalong, ctstanmodel, ...)
 Allows one to change data and or model elements that don't require recompiling, then re fit.
 }
 \examples{
+\dontrun{
  newm<-ctModel(type='stanct',
   n.latent=ctstantestfit$ctstanmodel$n.latent,
   n.TDpred=ctstantestfit$ctstanmodel$n.TDpred,
@@ -32,4 +33,5 @@ Allows one to change data and or model elements that don't require recompiling, 
  newdat <- ctstantestdat
  newdat <- newdat[newdat[,'id']!=1,]
  newfit <- ctStanUpdModel(ctstantestfit, newdat, newm)
+ }
 }
