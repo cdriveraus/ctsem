@@ -404,7 +404,6 @@ transformed parameters{
   vector[intoverstates ? sum(nobs_y): sum(ncont_y)] errtrans; // collection of prediction errors transformed to standard normal
   vector[intoverstates ? sum(nobs_y): sum(ncont_y)] errscales; // collection of prediction error scaling factors
   int cobscount; // counter summing over number of non missing observations in each row
-  int nobsi; 
 
   //ukf
   matrix[ukf ? nlatentpop :0,ukf ? nlatentpop :0] sigpoints;
@@ -436,20 +435,13 @@ transformed parameters{
 // for efficiency consider turning ukfstates, ukfmeasures, merrorstates, into arrays of vectors.
 
   for(rowi in 1:ndatapoints){
-    int o[nobs_y[rowi]]; //which indicators are observed
-    int o1[nbinary_y[rowi]]; //which indicators are observed and binary
-    int o0[ncont_y[rowi]]; //which indicators are observed and continuous
+
 
     matrix[ukf ? nlatentpop : 0, ukffull ? 2*nlatentpop +2 : nlatentpop + 2 ] ukfstates; //sampled states relevant for dynamics
     matrix[ukf ? nmanifest : 0 , ukffull ? 2*nlatentpop +2 : nlatentpop + 2] ukfmeasures; // expected measures based on sampled states
 
-    o = whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
     si=subject[rowi];
-    nobsi = nobs_y[rowi]; //number of obs this row
-
-    o1 = whichbinary_y[rowi,1:nbinary_y[rowi]];
-    o0 = whichcont_y[rowi,1:ncont_y[rowi]];
-
+    
     if(T0check[rowi] == 1) { // calculate initial matrices if this is first row for si
 
     {
@@ -924,7 +916,14 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
       if(ncstates==0) eta = etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
     }
 
-    if (nobsi > 0) {  // if some observations create right size matrices for missingness and calculate...
+    if (nobs_y[rowi] > 0) {  // if some observations create right size matrices for missingness and calculate...
+    
+      int o[nobs_y[rowi]]; //which indicators are observed
+      int o1[nbinary_y[rowi]]; //which indicators are observed and binary
+      int o0[ncont_y[rowi]]; //which indicators are observed and continuous
+      o = whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
+      o1 = whichbinary_y[rowi,1:nbinary_y[rowi]];
+      o0 = whichcont_y[rowi,1:ncont_y[rowi]];
 
       if(nlmeasurement==0){ //non ukf measurement
         if(intoverstates==1) { //classic kalman
@@ -1143,7 +1142,6 @@ for(geni in 0:ngen){
   vector[intoverstates ? sum(nobs_y): sum(ncont_y)] errtrans; // collection of prediction errors transformed to standard normal
   vector[intoverstates ? sum(nobs_y): sum(ncont_y)] errscales; // collection of prediction error scaling factors
   int cobscount; // counter summing over number of non missing observations in each row
-  int nobsi; 
 
   //ukf
   matrix[ukf ? nlatentpop :0,ukf ? nlatentpop :0] sigpoints;
@@ -1175,20 +1173,13 @@ for(geni in 0:ngen){
 // for efficiency consider turning ukfstates, ukfmeasures, merrorstates, into arrays of vectors.
 
   for(rowi in 1:ndatapoints){
-    int o[nobs_y[rowi]]; //which indicators are observed
-    int o1[nbinary_y[rowi]]; //which indicators are observed and binary
-    int o0[ncont_y[rowi]]; //which indicators are observed and continuous
+
 
     matrix[ukf ? nlatentpop : 0, ukffull ? 2*nlatentpop +2 : nlatentpop + 2 ] ukfstates; //sampled states relevant for dynamics
     matrix[ukf ? nmanifest : 0 , ukffull ? 2*nlatentpop +2 : nlatentpop + 2] ukfmeasures; // expected measures based on sampled states
 
-    o = whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
     si=subject[rowi];
-    nobsi = nobs_y[rowi]; //number of obs this row
-
-    o1 = whichbinary_y[rowi,1:nbinary_y[rowi]];
-    o0 = whichcont_y[rowi,1:ncont_y[rowi]];
-
+    
     if(T0check[rowi] == 1) { // calculate initial matrices if this is first row for si
 
     {
@@ -1670,7 +1661,14 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
       if(ncstates==0) eta = etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
     }
 
-    if (nobsi > 0) {  // if some observations create right size matrices for missingness and calculate...
+    if (nobs_y[rowi] > 0) {  // if some observations create right size matrices for missingness and calculate...
+    
+      int o[nobs_y[rowi]]; //which indicators are observed
+      int o1[nbinary_y[rowi]]; //which indicators are observed and binary
+      int o0[ncont_y[rowi]]; //which indicators are observed and continuous
+      o = whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
+      o1 = whichbinary_y[rowi,1:nbinary_y[rowi]];
+      o0 = whichcont_y[rowi,1:ncont_y[rowi]];
 
       if(nlmeasurement==0){ //non ukf measurement
         if(intoverstates==1) { //classic kalman
