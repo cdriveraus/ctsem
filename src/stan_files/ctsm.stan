@@ -2,15 +2,16 @@
 functions{
 
 
-   matrix covsqrt2corsqrt(matrix mat, int invert){ //converts from lower partial sd matrix to cor
+   matrix covsqrt2corsqrt(matrix mat, int invert){ //converts from unconstrained lower tri matrix to cor
     matrix[rows(mat),cols(mat)] o;
     vector[rows(mat)] s;
     o=mat;
   
     for(i in 1:rows(o)){ //set upper tri to lower
       for(j in min(i+1,rows(mat)):rows(mat)){
-        o[j,i] = inv_logit(o[j,i])*2-1;  // can change cor prior here
-        o[i,j] = o[j,i];
+        real tmp = inv_logit(mat[j,i])*2-1;  // can change cor prior here
+        o[j,i] = tmp;
+        o[i,j] = tmp;
       }
       o[i,i]=1; // change to adjust prior for correlations
     }
@@ -25,50 +26,7 @@ functions{
     return o;
   }
 
-matrix cholspd(matrix a){
-  matrix[rows(a),rows(a)] l;
-  for(j in 1:cols(a)){
-    for(i in j:rows(a)){
-      if(i != j) {
-        l[i,j] = (a[i,j] + a[j,i])/2;
-        l[j,i] = l[i,j];
-      }
-      if(j == i){
-        l[j,j] = a[j,j] + 1e-3;
-        if(l[j,j] <=1e-3) l[j,j] = 1e-3; 
-        if(l[j,j] > 1e10) l[j,j] = -99999;
-      }
-    }
-  }
-  return cholesky_decompose(l);
-}
 
-  matrix discreteDIFFUSIONcalc(matrix DR, matrix DI, real dt){
-    matrix[rows(DR)+rows(DI),rows(DR)+rows(DI)]  DRDI;
-    matrix[rows(DR),rows(DR)] out;
-    int d;
-    
-    d=rows(DR);
-    DRDI[1:d,1:d] = -DR;
-    DRDI[1:d,(d+1):(d*2)] = DI;
-    DRDI[(d+1):(d*2), (d+1):(d*2)] = DR';
-    DRDI[(d+1):(d*2), 1:d] = rep_matrix(0,d,d);
-    DRDI = matrix_exp(DRDI * dt);
-    out = DRDI[(d+1):(d*2), (d+1):(d*2)]' * DRDI[1:d, (d+1):(d*2)];
-    return out;
-  }
-        
-
-  matrix matrix_diagexp(matrix M){
-    matrix[rows(M),rows(M)] out;
-    for(i in 1:rows(M)){
-      for(j in 1:rows(M)){
-        if(i==j) out[i,i] = exp(M[i,i]);
-        if(i!=j) out[i,j] = 0;
-      }
-    }
-  return out;
-  }
 
   int[] checkoffdiagzero(matrix M){
     int z[rows(M)];
@@ -106,11 +64,11 @@ matrix cholspd(matrix a){
     for(i in 1:rows(M)){
       if(z[i] == 1){
         z1[cz1] = i;
-        cz1= cz1+1;
+        cz1 += 1;
       }
       if(z[i] == 0){
         z0[cz0] = i;
-        cz0= cz0+1;
+        cz0 += 1;
       }
     }
     if(size(z1) > 0) out[z1,z1] = matrix_exp(M[z1,z1]);
@@ -120,11 +78,6 @@ matrix cholspd(matrix a){
     return out;
   }
       
-  
-
-
-
-
   matrix sdcovsqrt2cov(matrix mat, int msqrt){ //converts from lower partial sd and diag sd to cov or cholesky cov
     matrix[rows(mat),rows(mat)] out;
 
@@ -139,8 +92,7 @@ matrix cholspd(matrix a){
     }
   
     if(msqrt==0){
-      out = covsqrt2corsqrt(mat, 0);
-      out = diag_pre_multiply(diagonal(mat), out);
+      out = diag_pre_multiply(diagonal(mat),covsqrt2corsqrt(mat, 0));
     }
 
     if(msqrt==0) out = tcrossprod(out);
@@ -182,7 +134,7 @@ matrix cholspd(matrix a){
     }
     covm = crossprod(centered) / (rows(mat)-1);
     for(j in 1:rows(covm)){
-      covm[j,j] = covm[j,j] + 1e-6;
+      covm[j,j] +=  1e-6;
     }
     return covm; 
   }
@@ -206,43 +158,22 @@ matrix cholspd(matrix a){
     return out;
   }
 
-  matrix chol(matrix a){
-    matrix[rows(a),rows(a)] l;
-    for(j in 1:cols(a)){
-      for(i in 1:rows(a)){
-        if(j==i) {
-          if(j == 1){ 
-            if(a[j,j] <=0) { 
-              l[j,j] = 1e-8;
-              print("Negative variance ", a[j,j], " set to 1e-8 for Cholesky decomp");
-            }
-            if(a[j,j] > 0) l[j,j] = sqrt(a[j,j]);
-          }
-          if(j > 1) l[j,j] = sqrt(a[j,j] - dot_self(l[i, 1 : j-1]));
-        }
-        if(i > j) l[i,j] = ( a[i,j] - dot_product( l[ i, 1:(j-1) ], l[j, 1:(j-1)]) ) / l[j,j];
-        if(j > i) l[i,j] = 0;
-      }
-    }
-    return l;
-  }
-
   matrix makesym(matrix mat){
     matrix[rows(mat),cols(mat)] out;
 
     for(coli in 1:cols(mat)){
+      out[coli,coli] = mat[coli,coli] + 1e-5;
       for(rowi in coli:rows(mat)){
         if(rowi > coli) {
           out[rowi,coli] = mat[rowi,coli]; //(mat[coli,rowi] + ) *.5;
           out[coli,rowi] = mat[rowi,coli];
         }
-        if(rowi==coli) out[rowi,coli] = mat[rowi,coli] + 1e-5;
       }
     }
     return out;
   }
 
-  real tform(real param, int transform, real multiplier, real meanscale, real offset){
+  real tform(real param, int transform, data real multiplier, data real meanscale, data real offset){
     real out;
   
       if(transform==0) out = param * meanscale * multiplier + offset; 
@@ -259,16 +190,6 @@ matrix cholspd(matrix a){
 
     return out;
   }
-
-  matrix cov2cors(matrix M){
-    matrix[rows(M),cols(M)] o;
-    vector[rows(M)] isd;
-
-    isd = inv_sqrt(diagonal(M));
-    o = quad_form_diag(M,isd);
-    return(o);
-  }
-
 
 }
 data {
@@ -330,7 +251,6 @@ data {
   int ukffull;
   int ukfmeasurement;
   int intoverstates;
-  int ngenerations; //number of samples of random data to generate
   int verbose; //level of printing during model fit
 
   int T0MEANSsubindex[nsubjects];
@@ -381,6 +301,7 @@ matrix[PARSsetup_rowcount, 5] PARSvalues;
   real popvalues[nmatrixslots,5];
   int savescores;
   int ncstates;
+  int ngen;
 }
       
 transformed data{
@@ -441,7 +362,7 @@ transformed parameters{
       for(coli in 1:cols(tipreds)){ //insert missing ti predictors
         for(rowi in 1:rows(tipreds)){
           if(tipredsdata[rowi,coli]==99999) {
-            counter = counter + 1;
+            counter += 1;
             tipreds[rowi,coli] = tipredsimputed[counter];
           } else tipreds[rowi,coli] = tipredsdata[rowi,coli];
         }
@@ -466,7 +387,7 @@ transformed parameters{
       rawpopcovsqrt[j,j] = 1;
       for(i in 1:nindvarying){
         if(i > j){
-          counter=counter+1;
+          counter += 1;
           rawpopcovsqrt[i,j]=sqrtpcov[counter];
           rawpopcovsqrt[j,i]=sqrtpcov[counter];
         }
@@ -476,8 +397,6 @@ transformed parameters{
   //rawpopcov=quad_form_diag(rawpopcorr,rawpopsd);
   rawpopcovsqrt = diag_pre_multiply(rawpopsd, rawpopcorrsqrt); //chol(rawpopcov);
   }//end indvarying par setup
-
-
 
   ll=0;{
   int si;
@@ -521,7 +440,6 @@ transformed parameters{
   matrix[nmanifest,nlatent] sLAMBDA;
   matrix[ntdpred ? nlatent : 0,ntdpred] sTDPREDEFFECT;
   matrix[PARSsetup_rowcount ? max(PARSsetup[,1]) : 0 ,PARSsetup_rowcount ? max(PARSsetup[,2]) : 0] sPARS;
-  matrix[nlatent*2,nlatent*2] DRDICI;
 
 
   if(lineardynamics) discreteDIFFUSION = rep_matrix(0,nlatent,nlatent); //in case some elements remain zero due to derrind
@@ -710,7 +628,6 @@ transformed parameters{
     }
   }
   
-
     
 
       if(ukf==1){
@@ -867,7 +784,7 @@ transformed parameters{
             //discreteDIFFUSION = discreteDIFFUSIONcalc(-J[1:nlatent,1:nlatent], tcrossprod(sDIFFUSION), dTsmall[rowi]);
             discreteDIFFUSION =  sasymDIFFUSION - quad_form( sasymDIFFUSION, Je[1:nlatent,1:nlatent]' );
             etacov = quad_form(etacov, Je');
-            etacov[1:nlatent,1:nlatent] = etacov[1:nlatent,1:nlatent] + discreteDIFFUSION;
+            etacov[1:nlatent,1:nlatent] += discreteDIFFUSION;
             eta[1:nlatent] = (discreteDRIFT * append_row(eta[1:nlatent],1.0))[1:nlatent];
           }
         }
@@ -944,12 +861,10 @@ transformed parameters{
           discreteDRIFT=append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1));
           discreteDRIFT[nlatent+1,nlatent+1] = 1;
           etacov = quad_form(etacov, J');
-          etacov[1:nlatent,1:nlatent] = etacov[1:nlatent,1:nlatent] + sDIFFUSION;
+          etacov[1:nlatent,1:nlatent] += sDIFFUSION;
           if(intoverstates==0 && ncstates==1) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
           eta[1:nlatent] = (discreteDRIFT * append_row(eta[1:nlatent],1.0))[1:nlatent];
         }
-
-        
       } // end of non t0 time update
   
   
@@ -960,13 +875,9 @@ transformed parameters{
         sigpoints[1:nlatent,1:nlatent] = sT0VAR * sqrtukfadjust;
       }
       
-      if(T0check[rowi]==0){ //compute updated sigpoints
-        sigpoints = cholesky_decompose(makesym(etacov)) * sqrtukfadjust;
-        
-      }
+      if(T0check[rowi]==0)  sigpoints = cholesky_decompose(makesym(etacov)) * sqrtukfadjust;
     
       //configure ukf states
-  
       for(statei in 2:cols(ukfstates) ){ //for each ukf state sample
   
           state = eta; 
@@ -994,10 +905,10 @@ transformed parameters{
         //}
       }
     }};
-          state[1:nlatent] = state[1:nlatent] + sT0MEANS[,1];
+          state[1:nlatent] += sT0MEANS[,1];
         } 
         ;
-        if(ntdpred > 0) state[1:nlatent] =  state[1:nlatent] + (sTDPREDEFFECT * tdpreds[rowi]); //tdpred effect only influences at observed time point
+        if(ntdpred > 0) state[1:nlatent] +=   (sTDPREDEFFECT * tdpreds[rowi]); //tdpred effect only influences at observed time point
         ukfstates[, statei] = state; //now contains time updated state
         if(statei==2 && ukffull==1) ukfstates[, 1] = state; //mean goes in twice for weighting
       }
@@ -1042,19 +953,20 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
           ypred[o] = sMANIFESTMEANS[o,1] + sLAMBDA[o,] * eta[1:nlatent];
           ypredcov[o,o] = quad_form(etacov[1:nlatent,1:nlatent], sLAMBDA[o,]') + sMANIFESTVAR[o,o];
           for(wi in 1:nmanifest){ 
-            if(manifesttype[wi]==1 && Y[rowi,wi] != 99999) ypredcov[wi,wi] = ypredcov[wi,wi] + fabs((ypred[wi] - 1) .* (ypred[wi]));
-            if(manifesttype[wi]==2 && Y[rowi,wi] != 99999) ypredcov[wi,wi] = ypredcov[wi,wi] + square(fabs((ypred[wi] - round(ypred[wi])))); 
+            if(manifesttype[wi]==1 && Y[rowi,wi] != 99999) ypredcov[wi,wi] += fabs((ypred[wi] - 1) .* (ypred[wi]));
+            if(manifesttype[wi]==2 && Y[rowi,wi] != 99999) ypredcov[wi,wi] += square(fabs((ypred[wi] - round(ypred[wi])))); 
           }
           K[,o] = mdivide_right(etacov * append_row(sLAMBDA[o,]',rep_matrix(0,nlatentpop-nlatent,nmanifest)[,o]), ypredcov[o,o]); 
           etacov += -K[,o] * append_col(sLAMBDA[o,],rep_matrix(0,nmanifest,nlatentpop-nlatent)[o,]) * etacov;
         }
         if(intoverstates==0) { //sampled states
-          //if(ncont_y[rowi] > 0) 
-          if(ncont_y[rowi] > 0) ypred[cindex] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * eta[1:nlatent];
+          if(ncont_y[rowi] > 0) {
+            ypred[cindex] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * eta[1:nlatent];
+            if(ncont_y[rowi] > 0) ypredcov_sqrt[cindex,cindex] = sMANIFESTVAR[cindex,cindex];
+          }
           if(nbinary_y[rowi] > 0) ypred[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * eta[1:nlatent])));
-          if(ncont_y[rowi] > 0) ypredcov_sqrt[cindex,cindex] = sMANIFESTVAR[cindex,cindex];
         }
-      }
+      } 
   
 
       if(ukfmeasurement==1){ //ukf measurement
@@ -1110,7 +1022,7 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
           if(manifesttype[wi]==2 && Y[rowi,wi] != 99999) merrorstates[wi,statei] = sMANIFESTVAR[wi,wi] + square(fabs((ukfmeasures[wi,statei]- round(ukfmeasures[wi,statei])))); 
         }
           
-          if(statei==2 && ukffull == 1) { //temporary measure to get mean in twice -- remove when possible
+          if(statei==2 && ukffull == 1) { 
             merrorstates[,1] = merrorstates[,2];
             ukfmeasures[ , 1] = ukfmeasures [,2];
           }
@@ -1122,13 +1034,14 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
         }
         if(ukffull == 0){
           ypred[o] = ukfmeasures[o,2];
-          for(ci in 3:cols(ukfmeasures)) ukfmeasures[o,ci] = ukfmeasures[o,ci] - ukfmeasures[o,2];
-          for(ci in 3:cols(ukfstates)) ukfstates[,ci] = ukfstates[,ci] - ukfstates[,2];
+          for(ci in 3:cols(ukfmeasures)) ukfmeasures[o,ci] += -ukfmeasures[o,2];
+          for(ci in 3:cols(ukfstates)) ukfstates[,ci] += -ukfstates[,2];
           ypredcov[o,o] = tcrossprod(ukfmeasures[o,3:(nlatentpop+2)]) /asquared / (nlatentpop*2+1) + diag_matrix(merrorstates[o,2]);
           K[,o] = mdivide_right(ukfstates[,3:cols(ukfstates)] * ukfmeasures[o,3:cols(ukfmeasures)]' /asquared / (nlatentpop*2+1), ypredcov[o,o]); 
         }
         etacov +=  - quad_form(ypredcov[o,o],  K[,o]');
       } //end ukf measurement
+
 
       
   
@@ -1228,9 +1141,9 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
   vector[nt0meansstationary ? nlatent : 0] asymCINT[asymCINTsubindex[nsubjects]]; // latent process asymptotic level
   
 
-vector[nmanifest] Ygen[ngenerations, ndatapoints];
-for(geni in 1:ngenerations) Ygen[geni,,] = rep_array(rep_vector(99999,nmanifest), ndatapoints);
-for(geni in 0:ngenerations){
+vector[nmanifest] Ygen[ngen, ndatapoints];
+for(geni in 1:ngen) Ygen[geni,,] = rep_array(rep_vector(99999,nmanifest), ndatapoints);
+for(geni in 0:ngen){
 
   int si;
   int counter;
@@ -1273,7 +1186,6 @@ for(geni in 0:ngenerations){
   matrix[nmanifest,nlatent] sLAMBDA;
   matrix[ntdpred ? nlatent : 0,ntdpred] sTDPREDEFFECT;
   matrix[PARSsetup_rowcount ? max(PARSsetup[,1]) : 0 ,PARSsetup_rowcount ? max(PARSsetup[,2]) : 0] sPARS;
-  matrix[nlatent*2,nlatent*2] DRDICI;
 
 
   if(lineardynamics) discreteDIFFUSION = rep_matrix(0,nlatent,nlatent); //in case some elements remain zero due to derrind
@@ -1462,7 +1374,6 @@ for(geni in 0:ngenerations){
     }
   }
   
-
     T0MEANS[T0MEANSsubindex[si]] = sT0MEANS; 
 LAMBDA[LAMBDAsubindex[si]] = sLAMBDA; 
 DRIFT[DRIFTsubindex[si]] = sDRIFT; 
@@ -1631,7 +1542,7 @@ if(geni > 0){
             //discreteDIFFUSION = discreteDIFFUSIONcalc(-J[1:nlatent,1:nlatent], tcrossprod(sDIFFUSION), dTsmall[rowi]);
             discreteDIFFUSION =  sasymDIFFUSION - quad_form( sasymDIFFUSION, Je[1:nlatent,1:nlatent]' );
             etacov = quad_form(etacov, Je');
-            etacov[1:nlatent,1:nlatent] = etacov[1:nlatent,1:nlatent] + discreteDIFFUSION;
+            etacov[1:nlatent,1:nlatent] += discreteDIFFUSION;
             eta[1:nlatent] = (discreteDRIFT * append_row(eta[1:nlatent],1.0))[1:nlatent];
           }
         }
@@ -1708,12 +1619,10 @@ if(geni > 0){
           discreteDRIFT=append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1));
           discreteDRIFT[nlatent+1,nlatent+1] = 1;
           etacov = quad_form(etacov, J');
-          etacov[1:nlatent,1:nlatent] = etacov[1:nlatent,1:nlatent] + sDIFFUSION;
+          etacov[1:nlatent,1:nlatent] += sDIFFUSION;
           if(intoverstates==0 && ncstates==1) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
           eta[1:nlatent] = (discreteDRIFT * append_row(eta[1:nlatent],1.0))[1:nlatent];
         }
-
-        
       } // end of non t0 time update
   
   
@@ -1724,13 +1633,9 @@ if(geni > 0){
         sigpoints[1:nlatent,1:nlatent] = sT0VAR * sqrtukfadjust;
       }
       
-      if(T0check[rowi]==0){ //compute updated sigpoints
-        
-        sigpoints = chol(makesym(etacov)) * sqrtukfadjust;
-      }
+      if(T0check[rowi]==0)  sigpoints = cholesky_decompose(makesym(etacov)) * sqrtukfadjust;
     
       //configure ukf states
-  
       for(statei in 2:cols(ukfstates) ){ //for each ukf state sample
   
           state = eta; 
@@ -1758,10 +1663,10 @@ if(geni > 0){
         //}
       }
     }};
-          state[1:nlatent] = state[1:nlatent] + sT0MEANS[,1];
+          state[1:nlatent] += sT0MEANS[,1];
         } 
         ;
-        if(ntdpred > 0) state[1:nlatent] =  state[1:nlatent] + (sTDPREDEFFECT * tdpreds[rowi]); //tdpred effect only influences at observed time point
+        if(ntdpred > 0) state[1:nlatent] +=   (sTDPREDEFFECT * tdpreds[rowi]); //tdpred effect only influences at observed time point
         ukfstates[, statei] = state; //now contains time updated state
         if(statei==2 && ukffull==1) ukfstates[, 1] = state; //mean goes in twice for weighting
       }
@@ -1801,19 +1706,20 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
           ypred[o] = sMANIFESTMEANS[o,1] + sLAMBDA[o,] * eta[1:nlatent];
           ypredcov[o,o] = quad_form(etacov[1:nlatent,1:nlatent], sLAMBDA[o,]') + sMANIFESTVAR[o,o];
           for(wi in 1:nmanifest){ 
-            if(manifesttype[wi]==1 && Y[rowi,wi] != 99999) ypredcov[wi,wi] = ypredcov[wi,wi] + fabs((ypred[wi] - 1) .* (ypred[wi]));
-            if(manifesttype[wi]==2 && Y[rowi,wi] != 99999) ypredcov[wi,wi] = ypredcov[wi,wi] + square(fabs((ypred[wi] - round(ypred[wi])))); 
+            if(manifesttype[wi]==1 && Y[rowi,wi] != 99999) ypredcov[wi,wi] += fabs((ypred[wi] - 1) .* (ypred[wi]));
+            if(manifesttype[wi]==2 && Y[rowi,wi] != 99999) ypredcov[wi,wi] += square(fabs((ypred[wi] - round(ypred[wi])))); 
           }
           K[,o] = mdivide_right(etacov * append_row(sLAMBDA[o,]',rep_matrix(0,nlatentpop-nlatent,nmanifest)[,o]), ypredcov[o,o]); 
           etacov += -K[,o] * append_col(sLAMBDA[o,],rep_matrix(0,nmanifest,nlatentpop-nlatent)[o,]) * etacov;
         }
         if(intoverstates==0) { //sampled states
-          //if(ncont_y[rowi] > 0) 
-          if(ncont_y[rowi] > 0) ypred[cindex] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * eta[1:nlatent];
+          if(ncont_y[rowi] > 0) {
+            ypred[cindex] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * eta[1:nlatent];
+            if(ncont_y[rowi] > 0) ypredcov_sqrt[cindex,cindex] = sMANIFESTVAR[cindex,cindex];
+          }
           if(nbinary_y[rowi] > 0) ypred[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * eta[1:nlatent])));
-          if(ncont_y[rowi] > 0) ypredcov_sqrt[cindex,cindex] = sMANIFESTVAR[cindex,cindex];
         }
-      }
+      } 
   
 
       if(ukfmeasurement==1){ //ukf measurement
@@ -1869,7 +1775,7 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
           if(manifesttype[wi]==2 && Y[rowi,wi] != 99999) merrorstates[wi,statei] = sMANIFESTVAR[wi,wi] + square(fabs((ukfmeasures[wi,statei]- round(ukfmeasures[wi,statei])))); 
         }
           
-          if(statei==2 && ukffull == 1) { //temporary measure to get mean in twice -- remove when possible
+          if(statei==2 && ukffull == 1) { 
             merrorstates[,1] = merrorstates[,2];
             ukfmeasures[ , 1] = ukfmeasures [,2];
           }
@@ -1881,42 +1787,20 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
         }
         if(ukffull == 0){
           ypred[o] = ukfmeasures[o,2];
-          for(ci in 3:cols(ukfmeasures)) ukfmeasures[o,ci] = ukfmeasures[o,ci] - ukfmeasures[o,2];
-          for(ci in 3:cols(ukfstates)) ukfstates[,ci] = ukfstates[,ci] - ukfstates[,2];
+          for(ci in 3:cols(ukfmeasures)) ukfmeasures[o,ci] += -ukfmeasures[o,2];
+          for(ci in 3:cols(ukfstates)) ukfstates[,ci] += -ukfstates[,2];
           ypredcov[o,o] = tcrossprod(ukfmeasures[o,3:(nlatentpop+2)]) /asquared / (nlatentpop*2+1) + diag_matrix(merrorstates[o,2]);
           K[,o] = mdivide_right(ukfstates[,3:cols(ukfstates)] * ukfmeasures[o,3:cols(ukfmeasures)]' /asquared / (nlatentpop*2+1), ypredcov[o,o]); 
         }
         etacov +=  - quad_form(ypredcov[o,o],  K[,o]');
       } //end ukf measurement
 
+
       
-if(verbose > 1) {
-print("rowi ",rowi, "  si ", si, "  eta ",eta,"  etacov ",etacov,
-          "  eta ",eta,"  etacov ",etacov,"  ypred ",ypred,"  ypredcov ",ypredcov, "  K ",K,
-          "  sDRIFT ", sDRIFT, " sDIFFUSION ", sDIFFUSION, " sCINT ", sCINT, "  sMANIFESTVAR ", diagonal(sMANIFESTVAR), "  sMANIFESTMEANS ", sMANIFESTMEANS, 
-          "  sT0VAR", sT0VAR, " sT0MEANS ", sT0MEANS,
-          "  rawpopsd ", rawpopsd, "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
-        if(lineardynamics==1) print("discreteDRIFT ",discreteDRIFT,"  discreteCINT ", discreteCINT, "  discreteDIFFUSION ", discreteDIFFUSION)
-}
-if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
-        
-        if(ncont_y[rowi] > 0) ypredcov_sqrt[cindex,cindex]=chol(ypredcov[cindex, cindex]); //use o0, or cindex?
-        for(vi in 1:nobsi){
-          if(fabs(ypred[o[vi]]) > 1e10 || is_nan(ypred[o[vi]]) || is_inf(ypred[o[vi]])) {
-            nobsi = 0; //set nobsi to 0 to skip update steps
-            ypred[o[vi]] =99999;
-          }
-        }
-        if(nobsi > 0){ //check nobsi again in case of problems
-          if(ncont_y[rowi] > 0) Ygen[geni, rowi, cindex] = multi_normal_cholesky_rng(ypred[cindex], ypredcov_sqrt[cindex,cindex]);
-          if(nbinary_y[rowi] > 0) for(obsi in 1:size(o1)) Ygen[geni, rowi, o1[obsi]] = bernoulli_rng(ypred[o1[obsi]]);
-          for(vi in 1:nobsi) if(is_nan(Ygen[geni,rowi,o[vi]])) {
-            Ygen[geni,rowi,o[vi]] = 99999;
-            nobsi = 0;
-print("pp problem2! row ", rowi);
-          }
-          err[o] = Ygen[geni,rowi,o] - ypred[o]; // prediction error
-        }
+        if(ncont_y[rowi] > 0) ypredcov_sqrt[cindex,cindex]=cholesky_decompose(makesym(ypredcov[cindex, cindex])); //use o0, or cindex?
+        if(ncont_y[rowi] > 0) Ygen[geni, rowi, cindex] = multi_normal_cholesky_rng(ypred[cindex], ypredcov_sqrt[cindex,cindex]);
+        if(nbinary_y[rowi] > 0) for(obsi in 1:size(o1)) Ygen[geni, rowi, o1[obsi]] = bernoulli_rng(ypred[o1[obsi]]);
+        err[o] = Ygen[geni,rowi,o] - ypred[o]; // prediction error
       
   
       
@@ -2088,7 +1972,7 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
           fabs(tform(
             rawpopmeans[popsetup[ri,3] ]  + rawpopsdfull[popsetup[ ri,3]], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4]) -
            tform(
-            rawpopmeans[popsetup[ri,3] ]  - rawpopsdfull[popsetup[ ri,3]], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4] - popsd[popsetup[ ri,3]]) ) /2 : 
+            rawpopmeans[popsetup[ri,3] ]  - rawpopsdfull[popsetup[ ri,3]], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4]) ) /2 : 
           0; 
 
         if(ntipred > 0){

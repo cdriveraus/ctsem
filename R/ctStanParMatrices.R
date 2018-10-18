@@ -57,11 +57,7 @@ ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA){
 npars <- try(get_num_upars(sf),silent = TRUE) #$stanmodel)
 
 if(class(npars)=='try-error'){ #in case R has been restarted or similar
-  standataout <- fit$data
-  standataout<-unlist(standataout)
-  standataout[is.na(standataout)] <- 99999
-  standataout <- utils::relist(standataout,skeleton=fit$data)
-  suppressOutput(sf <- suppressWarnings(sampling(fit$stanmodel,data=standataout,iter=1,control=list(max_treedepth=1),chains=1)))
+  sf <- stan_reinitsf(fit$stanmodel,data=fit$standata) #suppressOutput(sf <- suppressWarnings(sampling(,iter=1,control=list(max_treedepth=1),chains=1)))
   npars <- get_num_upars(sf)
   pars <- c(parvalues,rep(0,npars - fit$data$nparams))
   sf <- constrain_pars(sf, pars)

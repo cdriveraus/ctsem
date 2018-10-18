@@ -7,30 +7,52 @@
 #' minima / difficult optimization.
 #' @param verbose Integer from 0 to 2. Higher values print more information during model fit -- for debugging.
 #' @param decontrol List of control parameters for differential evolution step, to pass to \code{\link[DEoptim]{DEoptim.control}}.
-#' @param nopriors logical. If TRUE, any priors are disabled -- sometimes desirable for optimization. 
+#' @param nopriors logical.f If TRUE, any priors are disabled -- sometimes desirable for optimization. 
 #' @param cores Number of cpu cores to use.
-#' @param isloops Only relevent if \code{optimize=TRUE}. 
-#' Number of iterations of adaptive importance sampling to perform after optimization.
-#' @param isloopsize Only relevent if \code{optimize=TRUE}. 
-#' Number of samples per iteration of importance sampling.
+#' @param isloops Number of iterations of adaptive importance sampling to perform after optimization.
+#' @param isloopsize Number of samples per iteration of importance sampling.
 #' @param issamples Number of samples to use for final results of importance sampling.
-#' @param ukfspread Numeric governing the spread of sigma points when using the unscented Kalman filter. Smaller values (e.g. 1e-2)
-#' are apparently typical, but this doesn't seem sensible to me.
 #'
-#' @return
+#' @return ctStanFit object
 #' @export
 #'
 #' @examples
+#'  sunspots<-sunspot.year
+#'  sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
+#'  id <- 1
+#'  time <- 1749:1924
+#' datalong <- cbind(id, time, sunspots)
+#' 
+#' #setup model
+#'  ssmodel <- ctModel(type='stanct', n.latent=2, n.manifest=1,
+#'   manifestNames='sunspots',
+#'   latentNames=c('ss_level', 'ss_velocity'),
+#'    LAMBDA=matrix(c( 1, 'ma1' ), nrow=1, ncol=2),
+#'    DRIFT=matrix(c(0, 'a21', 1, 'a22'), nrow=2, ncol=2),
+#'    MANIFESTMEANS=matrix(c('m1'), nrow=1, ncol=1),
+#'    MANIFESTVAR=diag(0,1),
+#'    CINT=matrix(c(0, 0), nrow=2, ncol=1),
+#'    T0VAR=matrix(c(1,0,0,1), nrow=2, ncol=2), #Because single subject
+#'    DIFFUSION=matrix(c(0, 0, 0, "diffusion"), ncol=2, nrow=2))
+#' 
+#'  ssmodel$pars$indvarying<-FALSE #Because single subject
+#'  ssmodel$pars$offset[14]<- 44 #Because not mean centered
+#'  ssmodel$pars[4,c('transform','offset')]<- c(1,0) #To avoid multi modality
+#' 
+#' #fit using optimization without importance sampling
+#' ssfit <- ctStanFit(datalong[1:50,], #limited data for example
+#'   ssmodel, optimize=TRUE,optimcontrol=list(deoptim=FALSE,isloops=0,issamples=50))
+#' 
+#' #output
+#' summary(ssfit)
 optimstan <- function(standata, sm, init=0,
   deoptim=TRUE, 
   decontrol=list(),
   isloops=5, isloopsize=500, issamples=500, 
-  ukfspread=1,
   verbose=0,nopriors=FALSE,cores=1){
   
   standata$verbose=as.integer(verbose)
   standata$nopriors=as.integer(nopriors)
-  standata$ukfpread = ukfspread
   
   if(is.null(decontrol$steptol)) decontrol$steptol=5 
   if(is.null(decontrol$reltol)) decontrol$reltol=1e-4
@@ -53,8 +75,9 @@ optimstan <- function(standata, sm, init=0,
     #   standata$nopriors <- 1
     # }
     
-    suppressWarnings(suppressOutput(smf<-sampling(sm,iter=0,chains=0,init=0,data=standata,check_data=FALSE, 
-      control=list(max_treedepth=0),save_warmup=FALSE,test_grad=FALSE)))
+    # suppressMessages(suppressWarnings(suppressOutput(smf<-sampling(sm,iter=0,chains=0,init=0,data=standata,check_data=FALSE, 
+      # control=list(max_treedepth=0),save_warmup=FALSE,test_grad=FALSE))))
+    smf <- stan_reinitsf(sm,standata)
     npars=get_num_upars(smf)
   
     if(deoptim){ #init with DE
@@ -189,8 +212,8 @@ optimstan <- function(standata, sm, init=0,
         target_dens[[j]] <- unlist(parallel::parLapply(cl, parallel::clusterSplit(cl,1:isloopsize), function(x){
           eval(parse(text=paste0('library(rstan)')))
           # if(recompile) {
-          
-          smf<-sampling(sm,iter=1,chains=1,data=standata,check_data=FALSE,control=list(max_treedepth=0,adapt_engaged=FALSE))
+
+          smf <- stan_reinitsf(sm,standata)
           # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan::grab_cxxfun(sm@dso))
           # }
           
@@ -288,9 +311,9 @@ optimstan <- function(standata, sm, init=0,
   
   # target_dens <- c(target_dens,
   transformedpars <- parallel::parLapply(cl, parallel::clusterSplit(cl,1:nresamples), function(x){
-    Sys.sleep(.1)
-    smf<-sampling(sm,iter=1,chains=1,data=standata,check_data=FALSE,control=list(max_treedepth=0,adapt_engaged=FALSE))
-    Sys.sleep(.1)
+    Sys.sleep(.01)
+    smf <- stan_reinitsf(sm,standata)
+    Sys.sleep(.01)
     # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan::grab_cxxfun(sm@dso))
     out <- list()
     for(li in 1:length(x)){

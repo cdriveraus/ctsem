@@ -5,8 +5,8 @@
 \title{Misspecification plot using ctCheckFit output}
 \usage{
 \method{plot}{ctsemFitMeasure}(x, indices = "all",
-  corrplotargs = list(method = "square", is.corr = FALSE, addgrid.col = NA),
-  labels = TRUE, ...)
+  corrplotargs = list(method = "square", is.corr = FALSE, addgrid.col =
+  NA), labels = TRUE, ...)
 }
 \arguments{
 \item{x}{Object output from ctsemFitMeasure function.}

@@ -12,9 +12,9 @@ ctModel(n.manifest, n.latent, LAMBDA, type = "omx", Tpoints = NULL,
   TRAITVAR = NULL, T0TRAITEFFECT = NULL, MANIFESTTRAITVAR = NULL,
   TDPREDMEANS = "auto", TDPREDEFFECT = "auto", T0TDPREDCOV = "auto",
   TDPREDVAR = "auto", TRAITTDPREDCOV = "auto", TDTIPREDCOV = "auto",
-  TIPREDMEANS = "auto", TIPREDEFFECT = "auto", T0TIPREDEFFECT = "auto",
-  TIPREDVAR = "auto", PARS = NULL, startValues = NULL,
-  timeVarying = NULL)
+  TIPREDMEANS = "auto", TIPREDEFFECT = "auto",
+  T0TIPREDEFFECT = "auto", TIPREDVAR = "auto", PARS = NULL,
+  startValues = NULL, timeVarying = NULL)
 }
 \arguments{
 \item{n.manifest}{Number of manifest indicators per individual at each measurement occasion / time point.

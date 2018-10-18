@@ -5,8 +5,8 @@
 \title{Compares model implied density and values to observed, for a ctStanFit object.}
 \usage{
 ctStanPostPredict(fit, legend = TRUE, diffsize = 1, jitter = 0.02,
-  wait = TRUE, plot = TRUE, probs = c(0.025, 0.5, 0.975),
-  samples = TRUE, datarows = "all", ...)
+  wait = TRUE, probs = c(0.025, 0.5, 0.975), samples = TRUE,
+  datarows = "all", ...)
 }
 \arguments{
 \item{fit}{ctStanFit object.}
@@ -38,5 +38,5 @@ This function relies on the data generated during each iteration of fitting to a
 model implied distributions -- thus, when limited iterations are available, the approximation will be worse.
 }
 \examples{
-ctStanPostPredict(ctstantestfit)
+ctStanPostPredict(ctstantestfit,wait=FALSE)
 }

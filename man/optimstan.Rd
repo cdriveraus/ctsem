@@ -5,8 +5,8 @@
 \title{Optimize / importance sample a stan or ctStan model.}
 \usage{
 optimstan(standata, sm, init = 0, deoptim = TRUE, decontrol = list(),
-  isloops = 5, isloopsize = 500, issamples = 500, ukfspread = 1,
-  verbose = 0, nopriors = FALSE, cores = 1)
+  isloops = 5, isloopsize = 500, issamples = 500, verbose = 0,
+  nopriors = FALSE, cores = 1)
 }
 \arguments{
 \item{standata}{list object conforming to rstan data standards.}
@@ -20,23 +20,51 @@ minima / difficult optimization.}
 
 \item{decontrol}{List of control parameters for differential evolution step, to pass to \code{\link[DEoptim]{DEoptim.control}}.}
 
-\item{isloops}{Only relevent if \code{optimize=TRUE}. 
-Number of iterations of adaptive importance sampling to perform after optimization.}
+\item{isloops}{Number of iterations of adaptive importance sampling to perform after optimization.}
 
-\item{isloopsize}{Only relevent if \code{optimize=TRUE}. 
-Number of samples per iteration of importance sampling.}
+\item{isloopsize}{Number of samples per iteration of importance sampling.}
 
 \item{issamples}{Number of samples to use for final results of importance sampling.}
 
-\item{ukfspread}{Numeric governing the spread of sigma points when using the unscented Kalman filter. Smaller values (e.g. 1e-2)
-are apparently typical, but this doesn't seem sensible to me.}
-
 \item{verbose}{Integer from 0 to 2. Higher values print more information during model fit -- for debugging.}
 
-\item{nopriors}{logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.}
+\item{nopriors}{logical.f If TRUE, any priors are disabled -- sometimes desirable for optimization.}
 
 \item{cores}{Number of cpu cores to use.}
 }
+\value{
+ctStanFit object
+}
 \description{
 Optimize / importance sample a stan or ctStan model.
+}
+\examples{
+ sunspots<-sunspot.year
+ sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
+ id <- 1
+ time <- 1749:1924
+datalong <- cbind(id, time, sunspots)
+
+#setup model
+ ssmodel <- ctModel(type='stanct', n.latent=2, n.manifest=1,
+  manifestNames='sunspots',
+  latentNames=c('ss_level', 'ss_velocity'),
+   LAMBDA=matrix(c( 1, 'ma1' ), nrow=1, ncol=2),
+   DRIFT=matrix(c(0, 'a21', 1, 'a22'), nrow=2, ncol=2),
+   MANIFESTMEANS=matrix(c('m1'), nrow=1, ncol=1),
+   MANIFESTVAR=diag(0,1),
+   CINT=matrix(c(0, 0), nrow=2, ncol=1),
+   T0VAR=matrix(c(1,0,0,1), nrow=2, ncol=2), #Because single subject
+   DIFFUSION=matrix(c(0, 0, 0, "diffusion"), ncol=2, nrow=2))
+
+ ssmodel$pars$indvarying<-FALSE #Because single subject
+ ssmodel$pars$offset[14]<- 44 #Because not mean centered
+ ssmodel$pars[4,c('transform','offset')]<- c(1,0) #To avoid multi modality
+
+#fit using optimization without importance sampling
+ssfit <- ctStanFit(datalong[1:50,], #limited data for example
+  ssmodel, optimize=TRUE,optimcontrol=list(deoptim=FALSE,isloops=0,issamples=50))
+
+#output
+summary(ssfit)
 }

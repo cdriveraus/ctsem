@@ -105,7 +105,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,par
       if(class(object$stanfit)!='stanfit') rawpopcorr= array(e$rawpopcorr,dim=c(dimrawpopcorr[1],1,dimrawpopcorr[2] * dimrawpopcorr[3]))
       if(class(object$stanfit)=='stanfit') rawpopcorr= rstan::extract(object$stanfit,pars='rawpopcorr',permuted=FALSE)
       
-      rawpopcorrout <- monitor(rawpopcorr, digits=digits,warmup=0,print = FALSE)[lower.tri(diag(nindvarying)),c(monvars,'n_eff','Rhat'),drop=FALSE]
+      rawpopcorrout <- monitor(rawpopcorr, digits_summary=digits,warmup=0,print = FALSE)[lower.tri(diag(nindvarying)),c(monvars,'n_eff','Rhat'),drop=FALSE]
       
       # rawpopcorrout <- ctCollapse(rawpopcorr,1,mean)
       # rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,sd)[lower.tri(diag(nindvarying)),drop=FALSE])
@@ -175,7 +175,8 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,par
       standataout<-unlist(standataout)
       standataout[is.na(standataout)] <- 99999
       standataout <- utils::relist(standataout,skeleton=object$data)
-      suppressOutput(sf <- suppressWarnings(sampling(object$stanmodel,data=standataout,iter=1,control=list(max_treedepth=1),chains=1)))
+      # suppressOutput(sf <- suppressWarnings(sampling(object$stanmodel,data=standataout,iter=1,control=list(max_treedepth=1),chains=1)))
+      smf <- stan_reinitsf(object$stanmodel,standataout)
     }
 
     parmatlists <- try(apply(e$rawpopmeans[

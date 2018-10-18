@@ -16,131 +16,127 @@
 #' model implied distributions -- thus, when limited iterations are available, the approximation will be worse.
 #'
 #' @examples
-#' ctStanPostPredict(ctstantestfit)
-ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,plot=TRUE,probs=c(.025,.5,.975),samples=TRUE, datarows='all',...){
+#' ctStanPostPredict(ctstantestfit,wait=FALSE)
+ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,.5,.975),samples=TRUE, datarows='all',...){
   e<-extract.ctStanFit(fit)
   
   if(datarows[1]=='all') datarows <- 1:nrow(fit$data$Y)
   
   
   
-  if(plot){
-    
-    xmeasure=1:fit$data$ndatapoints
-    xtime=fit$data$time
-    
-    ctDensityList(x=list(fit$data$Y[datarows,,drop=FALSE],e$Ygen[,,datarows,,drop=FALSE]),plot=TRUE,
-      main='All variables',lwd=2,legend = c('Observed','Model implied'),xlab='Value',...)
-    
-    
-    Ygen <- e$Ygen
-    
-    y<-aaply(Ygen,c(2,3,4),quantile,na.rm=TRUE,probs=probs,.drop=FALSE)
-    y<-array(y,dim=dim(y)[-1])  
-    dimnames(y) <- list(NULL,fit$ctstanmodel$manifestNames,paste0(probs*100,'%'))
-    
-    for(typei in c('obs','change')){
-      for(i in 1:dim(Ygen)[4]){
+  xmeasure=1:fit$data$ndatapoints
+  xtime=fit$data$time
+  
+  ctDensityList(x=list(fit$data$Y[datarows,,drop=FALSE],e$Ygen[,,datarows,,drop=FALSE]),plot=TRUE,
+    main='All variables',lwd=2,legend = c('Observed','Model implied'),xlab='Value',...)
+  
+  
+  Ygen <- e$Ygen
+  
+  y<-aaply(Ygen,c(2,3,4),quantile,na.rm=TRUE,probs=probs,.drop=FALSE)
+  y<-array(y,dim=dim(y)[-1])  
+  dimnames(y) <- list(NULL,fit$ctstanmodel$manifestNames,paste0(probs*100,'%'))
+  
+  for(typei in c('obs','change')){
+    for(i in 1:dim(Ygen)[4]){
+      if(wait) readline("Press [return] for next plot.")
+      xsmeasure=rep(xmeasure,each=dim(Ygen)[1])
+      xstime=rep(xtime,each=dim(Ygen)[1])
+      ycut=quantile(Ygen,c(.005,.995),na.rm=TRUE)
+      ys=e$Ygen
+      xsmeasure=xsmeasure[ys>ycut[1] & ys<ycut[2]]
+      xstime=xstime[ys>ycut[1] & ys<ycut[2]]
+      ys[ys<ycut[1] | ys>ycut[2]] <- NA
+      
+      
+      
+      if(typei=='obs'){
+        
+        ctDensityList(x=list(fit$data$Y[datarows,i,drop=FALSE],e$Ygen[,,datarows,i,drop=FALSE]),plot=TRUE,
+          main=fit$ctstanmodel$manifestNames[i],lwd=2,legend = c('Observed','Model implied'),xlab='Value',...)
+        
         if(wait) readline("Press [return] for next plot.")
-        xsmeasure=rep(xmeasure,each=dim(Ygen)[1])
-        xstime=rep(xtime,each=dim(Ygen)[1])
-        ycut=quantile(Ygen,c(.005,.995),na.rm=TRUE)
-        ys=e$Ygen
-        xsmeasure=xsmeasure[ys>ycut[1] & ys<ycut[2]]
-        xstime=xstime[ys>ycut[1] & ys<ycut[2]]
-        ys[ys<ycut[1] | ys>ycut[2]] <- NA
         
-        
-        
-        if(typei=='obs'){
+        for(subtypei in c('Time','Observation')){
+          if(subtypei=='Observation') x <- xmeasure
+          if(subtypei=='Time') x <- xtime
           
-          ctDensityList(x=list(fit$data$Y[datarows,i,drop=FALSE],e$Ygen[,,datarows,i,drop=FALSE]),plot=TRUE,
-            main=fit$ctstanmodel$manifestNames[i],lwd=2,legend = c('Observed','Model implied'),xlab='Value',...)
+          notmissing <- which(!is.na(c(y[datarows,i,1])))
           
-          if(wait) readline("Press [return] for next plot.")
-          
-          for(subtypei in c('Time','Observation')){
-            if(subtypei=='Observation') x <- xmeasure
-            if(subtypei=='Time') x <- xtime
-     
-            notmissing <- which(!is.na(c(y[datarows,i,1])))
+          if(samples) {
             
-            if(samples) {
-              
-              xs=rep(x,each=dim(Ygen)[1])
-              ycut=quantile(Ygen[,,,i],c(.005,.995),na.rm=TRUE)
-              ysamps=e$Ygen[,,,i]
-              xs=xs[ysamps>ycut[1] & ysamps<ycut[2]]
-              ysamps=ysamps[ysamps>ycut[1] & ysamps<ycut[2]]
-              smoothScatter(xs,ysamps,nbin=256,colramp=colorRampPalette(colors=c(rgb(1,1,1,0),rgb(1,.4,.4,.3))),nrpoints=0,
-                transformation=function(x) x,ylim=range(c(y[,i,],quantile(ysamps,probs = c(.01,.99),na.rm=TRUE)),na.rm=TRUE),
-                xlab=subtypei,ylab=dimnames(y)[[2]][i])
-            }
-            
-            if(subtypei=='Observation') ctPlotArray(list(y=y[notmissing,i,,drop=FALSE],x=x[notmissing]),legend=FALSE,add=samples,polygon=!samples,
-              plotcontrol=list(xlab=subtypei,main=dimnames(y)[[2]][i],...))
-            
-            # if(subtypei=='Time')
-            
-            ocol <- rgb(0,0,.7,.7)
-            points(x[notmissing],
-              fit$data$Y[,i][notmissing] +  rnorm(length(fit$data$Y[,i][notmissing]),0, jitter * sd(fit$data$Y[,i][notmissing],na.rm=TRUE)),
-              type=ifelse(subtypei=='Time','p','l'),lwd=2,lty=1,pch=17, col=ocol)
-            if(legend) legend('topright',c('Model implied','Observed'),text.col=c('red',ocol))
-            if(i < dim(Ygen)[4])  if(wait) readline("Press [return] for next plot.")
+            xs=rep(x,each=dim(Ygen)[1])
+            ycut=quantile(Ygen[,,,i],c(.005,.995),na.rm=TRUE)
+            ysamps=e$Ygen[,,,i]
+            xs=xs[ysamps>ycut[1] & ysamps<ycut[2]]
+            ysamps=ysamps[ysamps>ycut[1] & ysamps<ycut[2]]
+            graphics::smoothScatter(xs,ysamps,nbin=256,colramp=grDevices::colorRampPalette(colors=c(rgb(1,1,1,0),rgb(1,.4,.4,.3))),nrpoints=0,
+              transformation=function(x) x,ylim=range(c(y[,i,],quantile(ysamps,probs = c(.01,.99),na.rm=TRUE)),na.rm=TRUE),
+              xlab=subtypei,ylab=dimnames(y)[[2]][i])
           }
+          
+          if(subtypei=='Observation') ctPlotArray(list(y=y[notmissing,i,,drop=FALSE],x=x[notmissing]),legend=FALSE,add=samples,polygon=!samples,
+            plotcontrol=list(xlab=subtypei,main=dimnames(y)[[2]][i],...))
+          
+          # if(subtypei=='Time')
+          
+          ocol <- rgb(0,0,.7,.7)
+          points(x[notmissing],
+            fit$data$Y[,i][notmissing] +  rnorm(length(fit$data$Y[,i][notmissing]),0, jitter * sd(fit$data$Y[,i][notmissing],na.rm=TRUE)),
+            type=ifelse(subtypei=='Time','p','l'),lwd=2,lty=1,pch=17, col=ocol)
+          if(legend) legend('topright',c('Model implied','Observed'),text.col=c('red',ocol))
+          if(i < dim(Ygen)[4])  if(wait) readline("Press [return] for next plot.")
         }
-        
-        
-        if(typei=='change'){
-          for(cdiffsize in diffsize){
-            diffindex <- c() 
-            for(diffi in 1:cdiffsize){
-              diffindex <- c(diffindex,which(as.logical(fit$data$T0check[-1]))-(diffi-1),
-                fit$data$ndatapoints-(diffi-1))
-            }
-            
-            yp<-aperm(ys,c(3,4,1,2))
-            dygen<-diff(yp[,i,,,drop=TRUE],lag = cdiffsize) #drop true set here if looking for problems!
-            # yp[-1,i,,,drop=FALSE] - yp[-fit$data$ndatapoints,i,,,drop=FALSE]
-            dygendt <- dygen / diff(fit$data$time,lag = cdiffsize)
-            dygendt<-dygendt[-diffindex,,drop=FALSE]
-            
-            dydt<-diff(fit$data$Y[,i], lag = cdiffsize)/diff(fit$data$time,lag = cdiffsize)
-            dydt <- dydt[-diffindex]
-            dydt <- dydt +  rnorm(length(dydt),0, jitter * sd(fit$data$Y[,i],na.rm=TRUE)) #add jitter
-            time <- fit$data$time[-diffindex]
-            # smoothScatter(matrix(yp[-fit$data$ndatapoints,i,,,drop=FALSE],ncol=1),
-            #   matrix(dygendt[,,,,drop=FALSE],ncol=1),
-            #   nbin=512,colramp=colorRampPalette(colors=c('white',rgb(1,0,0,1))),nrpoints=0,
-            #   # transformation=function(x) x,
-            #   ylim=range(c(quantile(c(dygendt),probs = c(.01,.99),na.rm=TRUE)),na.rm=TRUE),
-            #   xlab='Observation',ylab=dimnames(y)[[2]][i])
-            samps<-sample(1:length(dygendt),size=50000,replace=TRUE)
-            plot(matrix(yp[-diffindex,i,,,drop=FALSE][samps],ncol=1),
-              matrix(dygendt[,,drop=FALSE][samps],ncol=1),
-              ylab=paste0('dy/dt, diff=',cdiffsize),xlab='y', main=dimnames(y)[[2]][i],
-              pch=16,cex=.2,col=rgb(1,0,0,.1),...)
-            points( fit$data$Y[-diffindex,i],
-              dydt,
-              col=rgb(0,0,1,.5),pch=17,...)
-            
-            if(wait) readline("Press [return] for next plot.")  
- 
-            plot(
-              rep(time,(dim(dygendt)[2]))[samps],
-              matrix(dygendt[,,drop=FALSE],ncol=1)[samps],
-              ylab=paste0('dy/dt, diff=',cdiffsize),xlab='time', main=dimnames(y)[[2]][i],
-              pch=16,cex=.1,col=rgb(1,0,0,.3),...)
-            points(time,
-              dydt,
-              col=rgb(0,0,1,.5),pch=17,...)
-            
+      }
+      
+      
+      if(typei=='change'){
+        for(cdiffsize in diffsize){
+          diffindex <- c() 
+          for(diffi in 1:cdiffsize){
+            diffindex <- c(diffindex,which(as.logical(fit$data$T0check[-1]))-(diffi-1),
+              fit$data$ndatapoints-(diffi-1))
           }
+          
+          yp<-aperm(ys,c(3,4,1,2))
+          dygen<-diff(yp[,i,,,drop=TRUE],lag = cdiffsize) #drop true set here if looking for problems!
+          # yp[-1,i,,,drop=FALSE] - yp[-fit$data$ndatapoints,i,,,drop=FALSE]
+          dygendt <- dygen / diff(fit$data$time,lag = cdiffsize)
+          dygendt<-dygendt[-diffindex,,drop=FALSE]
+          
+          dydt<-diff(fit$data$Y[,i], lag = cdiffsize)/diff(fit$data$time,lag = cdiffsize)
+          dydt <- dydt[-diffindex]
+          dydt <- dydt +  rnorm(length(dydt),0, jitter * sd(fit$data$Y[,i],na.rm=TRUE)) #add jitter
+          time <- fit$data$time[-diffindex]
+          # smoothScatter(matrix(yp[-fit$data$ndatapoints,i,,,drop=FALSE],ncol=1),
+          #   matrix(dygendt[,,,,drop=FALSE],ncol=1),
+          #   nbin=512,colramp=colorRampPalette(colors=c('white',rgb(1,0,0,1))),nrpoints=0,
+          #   # transformation=function(x) x,
+          #   ylim=range(c(quantile(c(dygendt),probs = c(.01,.99),na.rm=TRUE)),na.rm=TRUE),
+          #   xlab='Observation',ylab=dimnames(y)[[2]][i])
+          samps<-sample(1:length(dygendt),size=50000,replace=TRUE)
+          plot(matrix(yp[-diffindex,i,,,drop=FALSE][samps],ncol=1),
+            matrix(dygendt[,,drop=FALSE][samps],ncol=1),
+            ylab=paste0('dy/dt, diff=',cdiffsize),xlab='y', main=dimnames(y)[[2]][i],
+            pch=16,cex=.2,col=rgb(1,0,0,.1),...)
+          points( fit$data$Y[-diffindex,i],
+            dydt,
+            col=rgb(0,0,1,.5),pch=17,...)
+          
+          if(wait) readline("Press [return] for next plot.")  
+          
+          plot(
+            rep(time,(dim(dygendt)[2]))[samps],
+            matrix(dygendt[,,drop=FALSE],ncol=1)[samps],
+            ylab=paste0('dy/dt, diff=',cdiffsize),xlab='time', main=dimnames(y)[[2]][i],
+            pch=16,cex=.1,col=rgb(1,0,0,.3),...)
+          points(time,
+            dydt,
+            col=rgb(0,0,1,.5),pch=17,...)
+          
         }
       }
     }
   }
   
-  if(!plot) return(y)
 }

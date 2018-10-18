@@ -8,12 +8,9 @@ ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 1000,
   intoverstates = TRUE, binomial = FALSE, fit = TRUE,
   intoverpop = FALSE, stationary = FALSE, plot = FALSE,
   derrind = "all", optimize = FALSE, optimcontrol = list(),
-  ukfspread = 0.1, ukffull = FALSE, nopriors = FALSE, chains = 1,
-  cores = "maxneeded", inits = NULL, maxtimestep = 9999,
-  lineardynamics = "auto", forcerecompile = FALSE, ngen = 1,
-  savescores = TRUE, control = list(adapt_delta = 0.8,
-  adapt_init_buffer = 2, adapt_window = 2, max_treedepth = 10, stepsize =
-  0.001), verbose = 0, ...)
+  nlcontrol = list(), nopriors = FALSE, chains = 1,
+  cores = "maxneeded", inits = NULL, forcerecompile = FALSE,
+  savescores = TRUE, ngen = 1, control = list(), verbose = 0, ...)
 }
 \arguments{
 \item{datalong}{long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables, 
@@ -53,12 +50,24 @@ latents involved only in deterministic trends or input effects can be removed fr
 obtain no additional stochastic inputs after first observation), speeding up calculations. 
 If unsure, leave default of 'all' ! Ignored if intoverstates=FALSE.}
 
-\item{optimize}{if TRUE, use \code{\link{stanoptim}} function for maximum a posteriori estimates.}
+\item{optimize}{if TRUE, use \code{\link{optimstan}} function for maximum a posteriori estimates.}
 
 \item{optimcontrol}{list of parameters sent to \code{\link{optimstan}} governing optimization / importance sampling.}
 
-\item{ukffull}{0 or 1. If 0, nonlinear filtering via the unscented filter uses a minimal number of sigma points,
-that does not capture skew in the resulting distribution.}
+\item{nlcontrol}{List of non-linear control parameters. 
+\code{lineardynamics} defaults to "auto", but may also be a logical. Set to TRUE to force linear dynamics, 
+FALSE to use non-linear integration. "auto" attempts to select the appropriate choice.
+\code{ukffull} may be TRUE or FALSE. If FALSE, nonlinear filtering via the unscented filter uses a minimal number of sigma points,
+that does not capture skew in the resulting distribution. 
+\code{maxtimestep} must be a positive numeric,  specifying the largest time
+span covered by the numerical integration. The large default ensures that for each observation time interval, 
+only a single step of exponential integration is used. When \code{maxtimestep} is smaller than the observation time interval, 
+the integration is nested within an Euler like loop. 
+Smaller values may offer greater accuracy, but are slower and not always necessary. Given the exponential integration,
+linear model elements are fit exactly with only a single step. 
+\code{ukfspread} should be a small positive numeric value, indicating what fraction of a standard deviation to 
+use for unscented sigma points. Values between 1e-6 and 2 have tended to be reasonable, in our experience. 
+In general, larger values may not make sense when using the default of \code{ukffull=FALSE}.}
 
 \item{nopriors}{logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.}
 
@@ -69,25 +78,18 @@ up to the number of chains, or a positive integer.}
 
 \item{inits}{vector of parameter start values, as returned by the rstan function \code{\link[rstan]{unconstrain_pars}} for instance.}
 
-\item{maxtimestep}{positive numeric, only used for models with non-linear dynamics, specifying the largest time
-span covered by the Runge-Kutta 4 integration. The large default ensures that for each observation time interval, 
-only RK4 integration is used. When \code{maxtimestep} is smaller than the observation time interval, RK4 integration is used within an Euler loop. 
-Smaller values may offer greater accuracy, but are slower and not always necessary.}
-
-\item{lineardynamics}{either character string "auto" or  a logical. Set to TRUE to force linear dynamics, 
-FALSE to use non-linear integration. "auto" attempts to select the appropriate choice.}
-
 \item{forcerecompile}{logical. For development purposes. 
 If TRUE, stan model is recompiled, regardless of apparent need for compilation.}
-
-\item{ngen}{Number of random data sets to generate per sample -- for later plotting / model checking.
-For datasets with many manifest variables or time points, greater than zero will increase file size substantially.}
 
 \item{savescores}{Logical. If TRUE, latent process values are saved in output. For datasets with many latent processes 
 or time points, will increase file size substantially.}
 
+\item{ngen}{Number of random data sets to generate per sample -- for later plotting / model checking.
+For datasets with many manifest variables or time points, greater than zero will increase file size substantially.}
+
 \item{control}{List of arguments sent to \code{\link[rstan]{stan}} control argument, 
-regarding warmup / sampling behaviour.}
+regarding warmup / sampling behaviour. Unless specified, values used are:
+list(adapt_delta = .8, adapt_window=2, max_treedepth=10, adapt_init_buffer=2, stepsize = .001)}
 
 \item{verbose}{Integer from 0 to 2. Higher values print more information during model fit -- for debugging.}
 

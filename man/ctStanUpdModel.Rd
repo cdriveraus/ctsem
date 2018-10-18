@@ -7,14 +7,29 @@
 ctStanUpdModel(fit, datalong, ctstanmodel, ...)
 }
 \arguments{
-\item{fit}{}
+\item{fit}{ctStanFit object}
 
-\item{datalong}{}
+\item{datalong}{data as normally passed to \code{\link{ctStanFit}}}
 
-\item{ctstanmodel}{}
+\item{ctstanmodel}{model as normally passed to \code{\link{ctStanFit}}}
 
-\item{...}{}
+\item{...}{extra args for \code{\link{ctStanFit}}}
 }
 \description{
-Allows one to change model elements that don't require recompiling, then re fit.
+Allows one to change data and or model elements that don't require recompiling, then re fit.
+}
+\examples{
+ newm<-ctModel(type='stanct',
+  n.latent=ctstantestfit$ctstanmodel$n.latent,
+  n.TDpred=ctstantestfit$ctstanmodel$n.TDpred,
+  n.TIpred=ctstantestfit$ctstanmodel$n.TIpred,
+  MANIFESTVAR=matrix(c('merror',0,0,'merror'),2,2),
+  MANIFESTMEANS=matrix(0,nrow=ctstantestfit$ctstanmodel$n.manifest),
+  CINT=matrix(c(0,'cint2'),ncol=1),
+  n.manifest=ctstantestfit$ctstanmodel$n.manifest,
+  LAMBDA=diag(2))
+  
+ newdat <- ctstantestdat
+ newdat <- newdat[newdat[,'id']!=1,]
+ newfit <- ctStanUpdModel(ctstantestfit, newdat, newm)
 }
