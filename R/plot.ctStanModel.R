@@ -10,6 +10,7 @@
 #' @param rawpopsd Either 'marginalise' to sample from the specified (in the ctstanmodel) 
 #' prior distribution for the raw population standard deviation, or a numeric value to use for the raw population standard deviation
 #' for all subject level prior plots - the plots in dotted blue or red.
+#' @param inddifdevs numeric vector of length 2, setting the means for the individual differences distributions.
 #' @param ... not used.
 #' @details Plotted in black is the prior for the population mean. In red and blue are the subject level priors that result
 #' given that the population mean is estimated as 1 std deviation above the mean of the prior, or 1 std deviation below. 
@@ -35,11 +36,11 @@
 #' stanmodel=ctStanModel(model)
 #' plot(stanmodel,rows=8)
 
-plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='marginalise',...){
+plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='marginalise',inddifdevs=c(-1,1),...){
   if(class(x)!='ctStanModel') stop('not a ctStanModel object!')
   m<-x$pars
-  highmean=1
-  lowmean=-1
+  highmean=inddifdevs[2]
+  lowmean= inddifdevs[1]
   if(rows=='all') rows<-1:nrow(m)
   for(rowi in rows){
     if(is.na(m$value[rowi])){
@@ -72,7 +73,7 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='margi
       param=stats::rnorm(length(rawpopsdprior),lowmean,rawpopsdprior)
       denslist[[3]]=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi])
 
-      leg <- c('Pop. mean prior', '-1sd mean, subject prior','+1sd mean, subject prior')
+      leg <- c('Pop. mean prior', paste0('Subject prior | mean = ',lowmean),paste0('Subject prior | mean = ',highmean))
       colvec <- c(1,2,4)
       }
       
