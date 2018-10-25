@@ -1493,10 +1493,6 @@ generated quantities{
 {
 ',ukfilterfunc(ppchecking=TRUE),'
 
-for(rowi in 1:ndatapoints){
-  for(oi in 1:nmanifest) Ygen[rowi,oi] = 99999;
-}
- 
 }}
 ',collapse=";\n"),'
 

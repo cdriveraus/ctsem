@@ -27,11 +27,10 @@ ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,p
   xmeasure=1:fit$data$ndatapoints
   xtime=fit$data$time
   
-  ctDensityList(x=list(fit$data$Y[datarows,,drop=FALSE],e$Ygen[,,datarows,,drop=FALSE]),plot=TRUE,
+  Ygen <- array(e$Ygen,dim=c(dim(e$Ygen)[1],1,dim(e$Ygen)[-1]))
+  
+  ctDensityList(x=list(fit$data$Y[datarows,,drop=FALSE],Ygen[,,datarows,,drop=FALSE]),plot=TRUE,
     main='All variables',lwd=2,legend = c('Observed','Model implied'),xlab='Value',...)
-  
-  
-  Ygen <- e$Ygen
   
   y<-aaply(Ygen,c(2,3,4),quantile,na.rm=TRUE,probs=probs,.drop=FALSE)
   y<-array(y,dim=dim(y)[-1])  
@@ -43,7 +42,7 @@ ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,p
       xsmeasure=rep(xmeasure,each=dim(Ygen)[1])
       xstime=rep(xtime,each=dim(Ygen)[1])
       ycut=quantile(Ygen,c(.005,.995),na.rm=TRUE)
-      ys=e$Ygen
+      ys=Ygen
       xsmeasure=xsmeasure[ys>ycut[1] & ys<ycut[2]]
       xstime=xstime[ys>ycut[1] & ys<ycut[2]]
       ys[ys<ycut[1] | ys>ycut[2]] <- NA
@@ -52,7 +51,7 @@ ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,p
       
       if(typei=='obs'){
         
-        ctDensityList(x=list(fit$data$Y[datarows,i,drop=FALSE],e$Ygen[,,datarows,i,drop=FALSE]),plot=TRUE,
+        ctDensityList(x=list(fit$data$Y[datarows,i,drop=FALSE],Ygen[,,datarows,i,drop=FALSE]),plot=TRUE,
           main=fit$ctstanmodel$manifestNames[i],lwd=2,legend = c('Observed','Model implied'),xlab='Value',...)
         
         if(wait) readline("Press [return] for next plot.")
@@ -67,7 +66,7 @@ ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,p
             
             xs=rep(x,each=dim(Ygen)[1])
             ycut=quantile(Ygen[,,,i],c(.005,.995),na.rm=TRUE)
-            ysamps=e$Ygen[,,,i]
+            ysamps=Ygen[,,,i]
             xs=xs[ysamps>ycut[1] & ysamps<ycut[2]]
             ysamps=ysamps[ysamps>ycut[1] & ysamps<ycut[2]]
             graphics::smoothScatter(xs,ysamps,nbin=256,colramp=grDevices::colorRampPalette(colors=c(rgb(1,1,1,0),rgb(1,.4,.4,.3))),nrpoints=0,

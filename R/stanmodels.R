@@ -20,7 +20,7 @@
 MODELS_HOME <- "src"
 if (!file.exists(MODELS_HOME)) MODELS_HOME <- sub("R$", "src", getwd())
 
-# w32 <- .Machine$sizeof.pointer == 4
+w32 <- .Machine$sizeof.pointer == 4
 # 
 # # stan_files <- file.path(MODELS_HOME, 
 # #   ifelse(w32, "stan_files/ctsmW32.stan", "stan_files/ctsm.stan" ))
@@ -34,7 +34,7 @@ if (!file.exists(MODELS_HOME)) MODELS_HOME <- sub("R$", "src", getwd())
 # file.copy(paste0('./src/stan_files/ctsm',ifelse(w32,'W32',''),'.prep'),
 #   paste0('./src/stan_files/ctsm',ifelse(w32,'W32',''),'.stan'),overwrite=TRUE,copy.date=TRUE) #rename unused .stan file to avoid errors
 
-stan_files <- dir(file.path(MODELS_HOME, "stan_files"),
+stan_files <- dir(file.path(MODELS_HOME, paste0('stan_files',ifelse(w32,'32',''))),
                   pattern = "stan$", full.names = TRUE)
 stanmodels <- lapply(stan_files, function(f) {
   model_cppname <- sub("\\.stan$", "", basename(f))
