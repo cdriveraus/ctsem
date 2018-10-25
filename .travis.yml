@@ -1,9 +1,6 @@
 language: r
 sudo: FALSE
 cache: packages
-os:
-  - linux
-  - osx
 
 warnings_are_errors: TRUE
 
