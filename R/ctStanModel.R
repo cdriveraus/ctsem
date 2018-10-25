@@ -87,9 +87,12 @@ ctStanModel<-function(ctmodelobj, type='stanct', indvarying='all'){
   for(pi in 1:length(ctspec$matrix)){
     if(freeparams[pi]){
       if(ctspec$matrix[pi] %in% c('T0MEANS','MANIFESTMEANS','TDPREDEFFECT','CINT')) {
-        ctspec$meanscale[pi] <-5
+        ctspec$meanscale[pi] <-10
       }
-      if(ctspec$matrix[pi] %in% c('LAMBDA')) ctspec$offset[pi] <- 0.5
+      if(ctspec$matrix[pi] %in% c('LAMBDA')) {
+        ctspec$offset[pi] <- 0.5
+        ctspec$meanscale[pi] <- 5
+      }
 
       if(ctspec$matrix[pi] %in% c('DIFFUSION','MANIFESTVAR', 'T0VAR')) {
         if(ctspec$row[pi] != ctspec$col[pi]){
