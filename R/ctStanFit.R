@@ -1254,7 +1254,7 @@ functions{
   matrix makesym(matrix mat){
     matrix[rows(mat),cols(mat)] out;
     for(coli in 1:cols(mat)){
-      out[coli,coli] = mat[coli,coli] + 1e-5;
+      out[coli,coli] = mat[coli,coli]*1.00001 + 1e-5;
       for(rowi in coli:rows(mat)){
         if(rowi > coli) {
           out[rowi,coli] = mat[rowi,coli]; //(mat[coli,rowi] + ) *.5;

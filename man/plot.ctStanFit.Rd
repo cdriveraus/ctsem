@@ -29,11 +29,10 @@ Plots for ctStanFit objects
 This function is just a wrapper calling the necessary functions for plotting - it 
 may be simpler in many cases to access those directly. They are:
  \code{\link{ctStanDiscretePars}},\code{\link{ctKalman}},
- \code{\link{ctStanPlotPost}},\code{\link[rstan]{stan_trace}},
- \code{\link[rstan]{stan_dens}},\code{\link[rstan]{stan_plot}}
+ \code{\link{ctStanPlotPost}},\code{stan_trace},
+ \code{stan_dens},\code{stan_plot}
  rstan offers many plotting possibilities not available here, to use that functionality
- one must simply call the relevant rstan function, listed here:
- \code{\link[rstan]{rstan-plotting-functions}}. Use \code{x$stanfit} as the stan fit object
+ one must simply call the relevant rstan plotting function. Use \code{x$stanfit} as the stan fit object
  (where x is the name of your ctStanFit object). Because a ctStanFit object has many 
  parameters, the additional argument \code{pars=ctStanParnames(x,'pop_')} is recommended.
  This denotes population means, but see \code{\link{ctStanParnames}} for
