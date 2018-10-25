@@ -10,7 +10,8 @@ ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 1000,
   derrind = "all", optimize = FALSE, optimcontrol = list(),
   nlcontrol = list(), nopriors = FALSE, chains = 1,
   cores = "maxneeded", inits = NULL, forcerecompile = FALSE,
-  savescores = TRUE, ngen = 1, control = list(), verbose = 0, ...)
+  savescores = TRUE, gendata = TRUE, control = list(), verbose = 0,
+  ...)
 }
 \arguments{
 \item{datalong}{long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables, 
@@ -87,8 +88,8 @@ If TRUE, stan model is recompiled, regardless of apparent need for compilation.}
 \item{savescores}{Logical. If TRUE, latent process values are saved in output. For datasets with many latent processes 
 or time points, will increase file size substantially.}
 
-\item{ngen}{Number of random data sets to generate per sample -- for later plotting / model checking.
-For datasets with many manifest variables or time points, greater than zero will increase file size substantially.}
+\item{gendata}{Logical -- generate random data sets per sample? For later plotting / model checking.
+For datasets with many manifest variables or time points, may increase file size substantially. Needs to be set FALSE for win32.}
 
 \item{control}{List of arguments sent to \code{\link[rstan]{stan}} control argument, 
 regarding warmup / sampling behaviour. Unless specified, values used are:
