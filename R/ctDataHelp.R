@@ -262,7 +262,7 @@ NULL
 #' checkm$pars[c(-1,-2, -21,-22) ,c('TI1_effect','TI2_effect','TI3_effect')] <- FALSE
 #' 
 #' ctstantestfit<-ctStanFit(ctstantestdat,checkm,iter=500, warmup=460,thin=2,chains=2,
-#'   control=list(max_treedepth=3,adapt_delta=.8),save_warmup=FALSE)
+#'   control=list(max_treedepth=5,adapt_delta=.8),save_warmup=FALSE)
 #' summary(ctstantestfit)
 #' save(ctstantestfit,file='.\\data\\ctstantestfit.rda')
 #' paths <- sort(Sys.glob(c("data/*.rda", "data/*.RData")))
