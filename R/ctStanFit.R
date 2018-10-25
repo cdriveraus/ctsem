@@ -431,11 +431,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       unlist(lapply(c(dynamicmatrices), function(m){
       paste0('
     for(ri in 1:size(',m,'setup)){ //for each row of matrix setup
-      if(',m,'setup[ ri,5] > 0){ // if individually varying
-        if(statei == 0 || statei == nlatent+ ',m,'setup[ ri,5]){
-          s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = 
-            ','tform(state[nlatent +',m,'setup[ri,5] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ); 
-        }
+      if(',m,'setup[ ri,5] > 0 && ( statei == 0 || statei == nlatent + ',m,'setup[ ri,5])){ // if individually varying
+        s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = 
+          ','tform(state[nlatent +',m,'setup[ri,5] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ); 
       }
     }')
     })),collapse='\n'),'}',collapse='\n')
@@ -904,11 +902,11 @@ subjectparaminit<- function(pop=FALSE,smats=TRUE){
   paste0(
    paste0( unlist(lapply(basematrices,function(m){
       paste0('matrix[ ',m,'setup_rowcount ? max(',m,'setup[,1]) : 0, ',m,'setup_rowcount ? max(',m,'setup[,2]) : 0 ] ',
-        ifelse(smats,'s',''),ifelse(pop,'pop_',''),m,if(!smats && !pop) paste0('[',m,'subindex[nsubjects]]'),';',collapse='\n')
+        ifelse(smats,'s',''),ifelse(pop,'pop_',''),m,if(!smats && !pop) paste0('[nsubjects]'),';',collapse='\n')
     })),collapse='\n'),'
 
-  matrix[nlatent,nlatent] ',ifelse(smats,'s',''),ifelse(pop,'pop_',''),'asymDIFFUSION',if(!smats && !pop) '[asymDIFFUSIONsubindex[nsubjects]]','; //stationary latent process variance
-  vector[nt0meansstationary ? nlatent : 0] ',ifelse(smats,'s',''),ifelse(pop,'pop_',''),'asymCINT',if(!smats && !pop) '[asymCINTsubindex[nsubjects]]','; // latent process asymptotic level
+  matrix[nlatent,nlatent] ',ifelse(smats,'s',''),ifelse(pop,'pop_',''),'asymDIFFUSION',if(!smats && !pop) '[nsubjects]','; //stationary latent process variance
+  vector[nt0meansstationary ? nlatent : 0] ',ifelse(smats,'s',''),ifelse(pop,'pop_',''),'asymCINT',if(!smats && !pop) '[nsubjects]','; // latent process asymptotic level
   ',collapse='\n')
 }
 
@@ -936,12 +934,10 @@ subjectparscalc2 <- function(pop=FALSE,smats=TRUE){
       paste0('
   if(si <= ',m,'subindex[nsubjects]){
     for(ri in 1:size(',m,'setup)){
-      if(si==1 || ',m,'setup[ri,5] > 0 || ',m,'setup[ri,6] > 0){ // if first subject, indvarying, and or tipred effects
-          s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = ',
-            m,'setup[ri,3] ? ', 
-              'tform(rawindparams[ ',m,'setup[ri,3] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ) : ',
-              m,'values[ri,1]; //either transformed, scaled and offset free par, or fixed value
-      }
+      s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = ',
+        m,'setup[ri,3] ? ', 
+          'tform(rawindparams[ ',m,'setup[ri,3] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ) : ',
+          m,'values[ri,1]; //either transformed, scaled and offset free par, or fixed value
     }
   }
       ',collapse='\n')
@@ -996,9 +992,16 @@ subjectparscalc2 <- function(pop=FALSE,smats=TRUE){
         }
       }
     }
-  ',if(!smats) collectsubmats(pop=FALSE),
-    if(pop) collectsubmats(pop=TRUE),'
- }
+  ',if(!smats) paste0('
+  if(si > 0){
+',collectsubmats(pop=FALSE),'
+  }',collapse=''),'
+',if(pop) paste0('
+  if(si == 0){
+',collectsubmats(pop=TRUE),'
+  }
+',collapse=''),'
+}
   ',collapse='\n')
   
   return(out)
@@ -1007,7 +1010,7 @@ subjectparscalc2 <- function(pop=FALSE,smats=TRUE){
 collectsubmats <- function(pop=FALSE,matrices=c(basematrices,'asymDIFFUSION','asymCINT')){
   out<-''
   for(m in matrices){
-    if(!pop) out <- paste0(out, m,'[',m,'subindex[si]] = s',m,'; \n')
+    if(!pop) out <- paste0(out, m,'[si] = s',m,'; \n')
     if(pop) out <- paste0(out, 'pop_',m,' = s',m,'; \n')
   }
   return(out)
@@ -1470,12 +1473,9 @@ generated quantities{
   {
   ',subjectparaminit(pop=FALSE,smats=TRUE),'
 
-  for(rowi in 1:ndatapoints){
-    if(T0check[rowi]==1){
-    int si = subject[rowi];
+  for(si in 0:subject[ndatapoints]){
     ',subjectparscalc2(pop=TRUE,smats=FALSE),'
     }
-  }
   }
 
 ',if(gendata) paste0('

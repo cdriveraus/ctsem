@@ -60,14 +60,15 @@ if(class(npars)=='try-error'){ #in case R has been restarted or similar
   sf <- stan_reinitsf(fit$stanmodel,data=fit$standata) #suppressOutput(sf <- suppressWarnings(sampling(,iter=1,control=list(max_treedepth=1),chains=1)))
   npars <- get_num_upars(sf)
   pars <- c(parvalues,rep(0,npars - fit$data$nparams))
-  sf <- constrain_pars(sf, pars)
+  sfc <- constrain_pars(sf, pars)
 } else { #if no problem getting npars...
   pars <- c(parvalues,rep(0,npars - fit$data$nparams))
-  sf <- try(constrain_pars(sf, pars))
+  sfc <- try(constrain_pars(sf, pars))
 }
 
 for(m in fit$setup$basematrices){
-  assign(m,ctCollapse(sf[[paste0('pop_',m)]],1,mean)) 
+  # assign(m,ctCollapse(sfc[[paste0('pop_',m)]],1,mean)) 
+  assign(m,sfc[[paste0('pop_',m)]]) 
 }
 
 choltrue <- !as.logical(fit$data$lineardynamics * fit$data$intoverstates)

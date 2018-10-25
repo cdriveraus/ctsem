@@ -20,11 +20,22 @@
 MODELS_HOME <- "src"
 if (!file.exists(MODELS_HOME)) MODELS_HOME <- sub("R$", "src", getwd())
 
-  stan_files <- file.path(MODELS_HOME, 
-    ifelse(.Machine$sizeof.pointer == 4, "stan_files/ctsmW32.stan", "stan_files/ctsm.stan" ))
+# w32 <- .Machine$sizeof.pointer == 4
+# 
+# # stan_files <- file.path(MODELS_HOME, 
+# #   ifelse(w32, "stan_files/ctsmW32.stan", "stan_files/ctsm.stan" ))
+# # 
+# # if(!file.exists(paste0('./src/stan_files/ctsm',ifelse(w32,'W32',''),'.stan')) {
+# #   file.rename(paste0('./src/stan_files/ctsm',ifelse(w32,'W32',''),'.bak'), 
+# #   paste0('./src/stan_files/ctsm',ifelse(w32,'W32',''),'.stan')) #rename backup .stan file to use
+# # }
+# 
+# # suppressMessages(try(file.rename('./src/stan_files/ctsm.stan','./src/stan_files/ctsm.del'),silent = TRUE))
+# file.copy(paste0('./src/stan_files/ctsm',ifelse(w32,'W32',''),'.prep'),
+#   paste0('./src/stan_files/ctsm',ifelse(w32,'W32',''),'.stan'),overwrite=TRUE,copy.date=TRUE) #rename unused .stan file to avoid errors
 
-# stan_files <- dir(file.path(MODELS_HOME, "stan_files"),
-#                   pattern = ifelse("stan$", full.names = TRUE)
+stan_files <- dir(file.path(MODELS_HOME, "stan_files"),
+                  pattern = "stan$", full.names = TRUE)
 stanmodels <- lapply(stan_files, function(f) {
   model_cppname <- sub("\\.stan$", "", basename(f))
   stanfit <- suppressWarnings(rstan::stanc(f, allow_undefined = TRUE, 
@@ -37,4 +48,5 @@ stanmodels <- lapply(stan_files, function(f) {
 )
 names(stanmodels) <- sub("\\.stan$", "", basename(stan_files))
 rm(MODELS_HOME)
+rm(w32)
 # nocov end
