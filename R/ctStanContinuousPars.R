@@ -48,11 +48,12 @@ ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
   
   # if(subjects[1]=='all') subjects=1:nsubjects
   
-  collapsemargin<-c(1,2)
+  if(subjects=='all') collapsemargin <- 1 else collapsemargin<-c(1,2)
   # if(collapseIterations) collapsemargin=1
   
   for(matname in c('DRIFT','DIFFUSION','asymDIFFUSION','CINT','T0MEANS', 
     'T0VAR','MANIFESTMEANS',if(!is.null(e$pop_MANIFESTVAR)) 'MANIFESTVAR','LAMBDA', if(!is.null(e$pop_TDPREDEFFECT)) 'TDPREDEFFECT')){
+
     subindex <- ctstanfitobj$data[[paste0(matname,'subindex')]]
     # if(dim(e[[matname]])[2] > 1) subselection <- subjects else subselection <- 1
     if(max(subindex) > 1 || subjects =='all') subselection <- subjects else subselection <- 1
