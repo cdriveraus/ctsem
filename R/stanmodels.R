@@ -20,8 +20,11 @@
 MODELS_HOME <- "src"
 if (!file.exists(MODELS_HOME)) MODELS_HOME <- sub("R$", "src", getwd())
 
-stan_files <- dir(file.path(MODELS_HOME, "stan_files"),
-                  pattern = "stan$", full.names = TRUE)
+  stan_files <- file.path(MODELS_HOME, 
+    ifelse(.Machine$sizeof.pointer == 4, "stan_files/ctsmW32.stan", "stan_files/ctsm.stan" ))
+
+# stan_files <- dir(file.path(MODELS_HOME, "stan_files"),
+#                   pattern = ifelse("stan$", full.names = TRUE)
 stanmodels <- lapply(stan_files, function(f) {
   model_cppname <- sub("\\.stan$", "", basename(f))
   stanfit <- suppressWarnings(rstan::stanc(f, allow_undefined = TRUE, 
