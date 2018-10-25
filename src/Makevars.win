@@ -4,7 +4,6 @@ PKG_CPPFLAGS = -I"../inst/include" -I"$(STANHEADERS_SRC)" -I"$(BOOST_NOT_IN_BH_S
 CXX_STD = CXX14
 
 ifeq "$(WIN)" "64" 
-#	CP -rf stan_files/ctsm.prep stan_files/ctsm.stan
 SOURCES = $(wildcard stan_files/*.stan)
 else
 SOURCES = $(wildcard stan_files32/*.stan)

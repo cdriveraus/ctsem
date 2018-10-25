@@ -16,7 +16,7 @@
 #'
 #' @examples
 #' temp<-stan_confidenceRegion(stanfit=ctstantestfit$stanfit, 
-#'   parstrings=c('pop_DRIFT[1,1,2]','pop_DRIFT[1,2,1]'))
+#'   parstrings=c('pop_DRIFT[1,2]','pop_DRIFT[2,1]'))
 #' t(apply(temp,2,quantile))
 stan_confidenceRegion <-function(stanfit,parstrings,prefuncstring='(', joinfuncstring=' + ',postfuncstring=')'){
   mc=As.mcmc.list(stanfit)
