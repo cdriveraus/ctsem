@@ -2,7 +2,6 @@ language: r
 sudo: FALSE
 cache: packages
 os:
-  - windows
   - linux
   - osx
 

@@ -23,7 +23,6 @@
 #'@export
 ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
   calcfunc=quantile,calcfuncargs=list(probs=0.5)){
-  
   if(subjects[1] != 'all' && !is.integer(as.integer(subjects))) stop('
     subjects argument must be either "all" or an integer denoting specific subjects')
   
@@ -52,11 +51,11 @@ ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
   collapsemargin<-c(1,2)
   # if(collapseIterations) collapsemargin=1
   
-  for(matname in c('DRIFT','DIFFUSION','CINT','T0MEANS', 
+  for(matname in c('DRIFT','DIFFUSION','asymDIFFUSION','CINT','T0MEANS', 
     'T0VAR','MANIFESTMEANS',if(!is.null(e$pop_MANIFESTVAR)) 'MANIFESTVAR','LAMBDA', if(!is.null(e$pop_TDPREDEFFECT)) 'TDPREDEFFECT')){
     subindex <- ctstanfitobj$data[[paste0(matname,'subindex')]]
     # if(dim(e[[matname]])[2] > 1) subselection <- subjects else subselection <- 1
-    if(max(subindex) > 1) subselection <- subjects else subselection <- 1
+    if(max(subindex) > 1 || subjects =='all') subselection <- subjects else subselection <- 1
     
     # vector <- FALSE
     
@@ -64,11 +63,12 @@ ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
     
     calcfuncargs$collapsemargin = collapsemargin
     calcfuncargs$collapsefunc=calcfunc
-    
+
     # if(!vector) {
       calcfuncargs$inarray = e[[ifelse(subjects!='all', matname, paste0('pop_',matname))]]
       if(subselection!='all') calcfuncargs$inarray  <- calcfuncargs$inarray[,subselection,,,drop=FALSE]
-      assign(matname, array(do.call(ctCollapse,calcfuncargs),dim=dim(e[[ifelse(subjects!='all', matname, paste0('pop_',matname))]])[-c(1,2)]))
+      assign(matname, array(do.call(ctCollapse,calcfuncargs),
+        dim=dim(e[[ifelse(subjects!='all', matname, paste0('pop_',matname))]])[-c(1,if(subselection!='all') 2)]))
     # }
     
     # if(vector) {
@@ -78,8 +78,8 @@ ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
     
   }
   
-  DRIFTHATCH<-DRIFT %x% diag(nrow(DRIFT)) + diag(nrow(DRIFT)) %x% DRIFT
-  asymDIFFUSION<-matrix(-solve(DRIFTHATCH) %*% c(DIFFUSION), nrow=nrow(DRIFT)) 
+  # DRIFTHATCH<-DRIFT %x% diag(nrow(DRIFT)) + diag(nrow(DRIFT)) %x% DRIFT
+  # asymDIFFUSION<-matrix(-solve(DRIFTHATCH) %*% c(DIFFUSION), nrow=nrow(DRIFT)) 
   
   ln=ctstanfitobj$ctstanmodel$latentNames
   mn=ctstanfitobj$ctstanmodel$manifestNames
