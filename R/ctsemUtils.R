@@ -148,7 +148,7 @@ ctDensity<-function(x,bw='auto',plot=FALSE,...){
 
 
 
-ctDensityList<-function(x,xlimsindex='all',plot=FALSE,ylab='Density',
+ctDensityList<-function(x,xlimsindex='all',plot=FALSE,smoothness=1,ylab='Density',
   xlab='Par. Value',colvec='auto',ltyvec='auto',probs=c(.05,.95),
   legend=FALSE, legendargs=list(),...){
   
@@ -169,7 +169,7 @@ ctDensityList<-function(x,xlimsindex='all',plot=FALSE,ylab='Density',
 
   bw=abs(max( 
     min( (sd)/length(x[[1]])^.4,sd/50),
-      1e-5))
+      1e-5)) * smoothness
   
   if(all(colvec=='auto')) colvec=1:length(x)
   if(all(ltyvec=='auto')) ltyvec=1:length(x)

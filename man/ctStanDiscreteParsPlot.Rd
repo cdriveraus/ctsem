@@ -40,7 +40,7 @@ The default of c(.05,.5,.95) plots 95\% credible intervals and the posterior med
 'auto' specifies c(1,3,1) if there are 3 quantiles to be plotted (default), otherwise simply 3.}
 
 \item{colvec}{Either 'auto', or a vector of color values denoting colors for each index to be plotted.
-'auto' generates colors using the \code{\link[grDevices]{rainbow}} function.}
+'auto' generates colors using the \code{grDevices::rainbow} function.}
 
 \item{ltyvec}{Either 'auto', or a vector of line type integers (as for the lty parameter normally)
 denoting line types for each quantile.

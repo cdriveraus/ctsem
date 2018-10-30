@@ -66,21 +66,21 @@ if(class(npars)=='try-error'){ #in case R has been restarted or similar
   sfc <- try(constrain_pars(sf, pars))
 }
 
-for(m in fit$setup$basematrices){
+for(m in c(fit$setup$basematrices,'asymDIFFUSION')){
   # assign(m,ctCollapse(sfc[[paste0('pop_',m)]],1,mean)) 
   assign(m,sfc[[paste0('pop_',m)]]) 
 }
 
-choltrue <- !as.logical(fit$data$lineardynamics * fit$data$intoverstates)
+choltrue <- FALSE #!as.logical(fit$data$lineardynamics)
 
-if(choltrue) DIFFUSION = msquare(DIFFUSION) #sdcovchol2cov(DIFFUSION,0)
+# if(choltrue) DIFFUSION = msquare(DIFFUSION) #sdcovchol2cov(DIFFUSION,0)
 DIFFUSIONcor = suppressWarnings(stats::cov2cor(DIFFUSION))
 DIFFUSIONcor[is.na(DIFFUSIONcor)] <- 0
 
 
 
-DRIFTHATCH<-DRIFT %x% diag(nrow(DRIFT)) + diag(nrow(DRIFT)) %x% DRIFT
-asymDIFFUSION<-matrix(-solve(DRIFTHATCH, c(DIFFUSION)), nrow=nrow(DRIFT))
+# DRIFTHATCH<-DRIFT %x% diag(nrow(DRIFT)) + diag(nrow(DRIFT)) %x% DRIFT
+# asymDIFFUSION<-matrix(-solve(DRIFTHATCH, c(DIFFUSION)), nrow=nrow(DRIFT))
 asymDIFFUSIONcor = suppressWarnings(stats::cov2cor(asymDIFFUSION))
 asymDIFFUSIONcor[is.na(asymDIFFUSIONcor)] <- 0
 
@@ -111,7 +111,7 @@ asymCINT = -solve(DRIFT) %*% CINT
 
 
 
-if(choltrue) T0VAR=msquare(T0VAR)
+# if(choltrue) T0VAR=msquare(T0VAR)
 T0VARcor = suppressWarnings(stats::cov2cor(T0VAR))
 T0VARcor[is.na(T0VARcor)] <- 0
 dimnames(T0VAR)=list(ln,ln)

@@ -1,11 +1,12 @@
-STANHEADERS_SRC = `"$(R_HOME)/bin$(R_ARCH_BIN)/Rscript" --vanilla -e "cat(system.file('include', 'src', package = 'StanHeaders'))"`
-BOOST_NOT_IN_BH_SRC = `"$(R_HOME)/bin$(R_ARCH_BIN)/Rscript" --vanilla -e "cat(system.file('include', 'boost_not_in_BH', package = 'rstan'))"`
-PKG_CPPFLAGS = -I"../inst/include" -I"$(STANHEADERS_SRC)" -I"$(BOOST_NOT_IN_BH_SRC)" -DBOOST_RESULT_OF_USE_TR1 -DBOOST_NO_DECLTYPE -DBOOST_DISABLE_ASSERTS -DEIGEN_NO_DEBUG -DBOOST_NO_CXX11_RVALUE_REFERENCES
+STANHEADERS_SRC = $(shell "$(R_HOME)/bin$(R_ARCH_BIN)/Rscript" -e "cat(' ', sep = '\n')" -e "cat(system.file('include', 'src', package = 'StanHeaders', mustWork = TRUE), sep = '\n')" | grep "StanHeaders")
+#BOOST_NOT_IN_BH_SRC = `"$(R_HOME)/bin$(R_ARCH_BIN)/Rscript" --vanilla -e "cat(system.file('include', 'boost_not_in_BH', package = 'rstan'))"`
+PKG_CPPFLAGS = -I"../inst/include" -I"$(STANHEADERS_SRC)" -DBOOST_DISABLE_ASSERTS -DEIGEN_NO_DEBUG -DBOOST_MATH_OVERFLOW_ERROR_POLICY=errno_on_error
 CXX_STD = CXX14
 
 ifeq "$(WIN)" "64" 
 SOURCES = $(wildcard stan_files/*.stan)
 else
+PKG_CPPFLAGS +=  -large-address-aware 
 SOURCES = $(wildcard stan_files32/*.stan)
 endif
 
@@ -18,6 +19,9 @@ clean:
 		RM -rf *.so *.o
 		RM -rf stan_files/*.cc
 		RM -rf stan_files/*.hpp
+		RM -rf stan_files32/*.o
+		RM -rf stan_files32/*.cc
+		RM -rf stan_files32/*.hpp
 
 %.cc: %.stan
 				"$(R_HOME)/bin$(R_ARCH_BIN)/Rscript" -e "source(file.path('..', 'tools', 'make_cc.R')); make_cc(commandArgs(TRUE))" $<

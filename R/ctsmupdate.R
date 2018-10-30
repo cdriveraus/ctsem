@@ -26,7 +26,7 @@ message(paste0('Updating from ',(getwd()),', continue T / F?'))
 continue <- readline()
 if(continue){
   file.rename('./src/stan_files/ctsm.stan', './src/stan_files/ctsm.bak')
-  file.rename('./src/stan_files32/ctsm.stan', './src/stan_files/ctsmW32.bak')
+  file.rename('./src/stan_files32/ctsm.stan', './src/stan_files32/ctsm.bak')
 sink(file='./src/stan_files/ctsm.stan')
 cat(sm)
 sink()

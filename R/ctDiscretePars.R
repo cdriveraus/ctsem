@@ -229,7 +229,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
 #' denoting line types for each quantile.
 #' 'auto' specifies c(3, 1, 3) if there are 3 quantiles to be plotted (default), otherwise simply 1.
 #'@param colvec Either 'auto', or a vector of color values denoting colors for each index to be plotted.
-#''auto' generates colors using the \code{\link[grDevices]{rainbow}} function.
+#''auto' generates colors using the \code{grDevices::rainbow} function.
 #'@param plotcontrol list of arguments to pass to plot function. 
 #'The following arguments are ignored: ylim,lwd,lty,col,x,y.
 #'@param legendcontrol list of arguments to pass to legend function. 'legend=' and 'text.col=' arguments

@@ -1,17 +1,14 @@
 
 functions{
 
-
    matrix covsqrt2corsqrt(matrix mat, int invert){ //converts from unconstrained lower tri matrix to cor
     matrix[rows(mat),cols(mat)] o;
     vector[rows(mat)] s;
-    o=mat;
   
     for(i in 1:rows(o)){ //set upper tri to lower
       for(j in min(i+1,rows(mat)):rows(mat)){
-        real tmp = inv_logit(mat[j,i])*2-1;  // can change cor prior here
-        o[j,i] = tmp;
-        o[i,j] = tmp;
+        o[j,i] = inv_logit(mat[j,i])*2-1;  // can change cor prior here
+        o[i,j] = o[j,i];
       }
       o[i,i]=1; // change to adjust prior for correlations
     }
@@ -22,11 +19,8 @@ functions{
       s[i] = inv_sqrt(o[i,] * o[,i]);
       if(is_inf(s[i])) s[i]=0;
     }
-    o= diag_pre_multiply(s,o);
-    return o;
+    return diag_pre_multiply(s,o);
   }
-
-
 
   int[] checkoffdiagzero(matrix M){
     int z[rows(M)];
@@ -78,12 +72,13 @@ functions{
     return out;
   }
       
-  matrix sdcovsqrt2cov(matrix mat){ //converts from lower partial sd and diag sd to cov or cholesky cov
-    return(tcrossprod(diag_pre_multiply(diagonal(mat),covsqrt2corsqrt(mat, 0))));
+  matrix sdcovsqrt2cov(matrix mat, int cholbasis){ //converts from lower partial sd and diag sd to cov or cholesky cov
+    if(cholbasis==0)  {
+      return(tcrossprod(diag_pre_multiply(diagonal(mat),covsqrt2corsqrt(mat, 0))));
+    } else return(tcrossprod(mat));
   }
-      
 
-  matrix kron_prod(matrix mata, matrix matb){
+  matrix sqkron_prod(matrix mata, matrix matb){
     int m=rows(mata);
     int p=rows(matb);
     int n=cols(mata);
@@ -101,21 +96,9 @@ functions{
     return out;
   }
 
-  matrix cov_of_matrix(matrix mat){
-    vector[cols(mat)] means;
-    matrix[rows(mat), cols(mat)] centered;
-    matrix[cols(mat), cols(mat)] covm;
-    for (coli in 1:cols(mat)){
-      means[coli] = mean(mat[,coli]);
-      for (ri in 1:rows(mat))  {
-        centered[ri,coli] = mat[ri,coli] - means[coli];
-      }
-    }
-    covm = crossprod(centered) / (rows(mat)-1);
-    for(j in 1:rows(covm)){
-      covm[j,j] +=  1e-6;
-    }
-    return covm; 
+  matrix kronsum(matrix mata){
+    matrix[rows(mata),rows(mata)] II = diag_matrix(rep_vector(1,rows(mata)));
+    return sqkron_prod(mata, II) + sqkron_prod(II, mata );
   }
 
   vector colMeans(matrix mat){
@@ -124,6 +107,19 @@ functions{
       out[i] = mean(mat[,i]);
     }
     return out;
+  }
+
+  matrix cov_of_matrix(matrix mat){
+    vector[cols(mat)] means = colMeans(mat);
+    matrix[rows(mat), cols(mat)] centered;
+    matrix[cols(mat), cols(mat)] covm;
+    for (coli in 1:cols(mat)){
+      for (ri in 1:rows(mat)){
+        centered[ri,coli] = mat[ri,coli] - means[coli];
+      }
+    }
+    covm = crossprod(centered) / (rows(mat)-1);
+    return covm; 
   }
 
   matrix crosscov(matrix a, matrix b){
@@ -137,14 +133,25 @@ functions{
     return out;
   }
 
-  matrix makesym(matrix mat){
+  matrix makesym(matrix mat, int verbose){
     matrix[rows(mat),cols(mat)] out;
     for(coli in 1:cols(mat)){
-      out[coli,coli] = mat[coli,coli]*1.00001 + 1e-5;
+      if(mat[coli,coli] < 1e-5){
+        if(verbose > 0) print("diagonal too low (",mat[coli,coli],") during makesym row ", coli, " col ", coli);
+        out[coli,coli] = 1e-5;
+      } else out[coli,coli] = mat[coli,coli]; 
       for(rowi in coli:rows(mat)){
         if(rowi > coli) {
           out[rowi,coli] = mat[rowi,coli]; //(mat[coli,rowi] + ) *.5;
           out[coli,rowi] = mat[rowi,coli];
+        }
+        if(is_nan(out[rowi,coli])){
+          if(verbose > 0) print("nan during makesym row ", rowi, " col ", coli);
+          if(rowi==coli) out[rowi,coli] = 99999;
+          if(rowi!=coli) {
+            out[rowi,coli] = 0;
+            out[coli,rowi] = 0;
+          }
         }
       }
     }
@@ -187,7 +194,7 @@ data {
   
   vector[nmanifest] Y[ndatapoints];
   int nopriors;
-  int lineardynamics;
+  int nldynamics;
   vector[ntdpred] tdpreds[ntdpred ? ndatapoints : 0];
   
   real dT[ndatapoints]; // time intervals
@@ -227,18 +234,18 @@ data {
   int intoverstates;
   int verbose; //level of printing during model fit
 
-  int T0MEANSsubindex[nsubjects];
-int LAMBDAsubindex[nsubjects];
-int DRIFTsubindex[nsubjects];
-int DIFFUSIONsubindex[nsubjects];
-int MANIFESTVARsubindex[nsubjects];
-int MANIFESTMEANSsubindex[nsubjects];
-int CINTsubindex[nsubjects];
-int T0VARsubindex[nsubjects];
-int TDPREDEFFECTsubindex[nsubjects];
-int PARSsubindex[nsubjects];
-int asymCINTsubindex[nsubjects];
-int asymDIFFUSIONsubindex[nsubjects];
+  int T0MEANSsubindex;
+int LAMBDAsubindex;
+int DRIFTsubindex;
+int DIFFUSIONsubindex;
+int MANIFESTVARsubindex;
+int MANIFESTMEANSsubindex;
+int CINTsubindex;
+int T0VARsubindex;
+int TDPREDEFFECTsubindex;
+int PARSsubindex;
+int asymCINTsubindex;
+int asymDIFFUSIONsubindex;
   int T0MEANSsetup_rowcount;
 int LAMBDAsetup_rowcount;
 int DRIFTsetup_rowcount;
@@ -275,6 +282,7 @@ matrix[PARSsetup_rowcount, 5] PARSvalues;
   real popvalues[nmatrixslots,5];
   int savescores;
   int gendata;
+  int regvar;
 }
       
 transformed data{
@@ -308,6 +316,8 @@ parameters {
   
   vector[ntipredeffects] tipredeffectparams; // effects of time independent covariates
   vector[nmissingtipreds] tipredsimputed;
+
+  real globalvarregbase[(regvar==1 && nindvarying > 0) ? 1 : 0];
   
   vector[intoverstates ? 0 : nlatent*ndatapoints] etaupdbasestates; //sampled latent states posterior
   //real<lower=1e-5,upper=5> ukfscale;
@@ -318,9 +328,13 @@ transformed parameters{
   vector[nindvarying] rawpopsd; //population level std dev
   matrix[nindvarying,nindvarying] rawpopcovsqrt; 
   real ll;
+  vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatent*2 : 0)] kalman[savescores ? ndatapoints : 0];
+  real globalvarreg;
 
   matrix[ntipred ? nsubjects : 0, ntipred ? ntipred : 0] tipreds; //tipred values to fill from data and, when needed, imputation vector
   matrix[nparams, ntipred] TIPREDEFFECT; //design matrix of individual time independent predictor effects
+
+  if(regvar==1) globalvarreg= log(1.0+exp(globalvarregbase[1])); else globalvarreg= 1.0;
 
   if(ntipred > 0){ 
     int counter = 0;
@@ -345,7 +359,7 @@ transformed parameters{
 
   if(nindvarying > 0){
     int counter =0;
-    rawpopsd = log(1+exp(2*rawpopsdbase)) .* sdscale;
+    rawpopsd = log(1+exp(2*rawpopsdbase)) .* sdscale * globalvarreg;
     for(j in 1:nindvarying){
       rawpopcovsqrt[j,j] = 1;
       for(i in 1:nindvarying){
@@ -376,12 +390,10 @@ transformed parameters{
 
   vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatent*2 : 0)] kout[ndatapoints];
 
-  //ukf
   matrix[ukf ? nlatentpop :0,ukf ? nlatentpop :0] sigpoints;
 
   //linear continuous time calcs
   matrix[nlatent+1,nlatent+1] discreteDRIFT;
-  vector[lineardynamics + ( 1-continuoustime)  ? nlatent : 0] discreteCINT;
   matrix[nlatent,nlatent] discreteDIFFUSION;
 
   //dynamic system matrices
@@ -400,14 +412,14 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
   vector[nt0meansstationary ? nlatent : 0] sasymCINT; // latent process asymptotic level
   
 
-  if(lineardynamics) discreteDIFFUSION = rep_matrix(0,nlatent,nlatent); //in case some elements remain zero due to derrind
+  if(nldynamics==0) discreteDIFFUSION = rep_matrix(0,nlatent,nlatent); //in case some elements remain zero due to derrind
+
+  if(savescores) kout = rep_array(rep_vector(99999,rows(kout[1])),ndatapoints);
 
   for(rowi in 1:ndatapoints){
 
-
     matrix[ukf ? nlatentpop : 0, ukffull ? 2*nlatentpop +2 : nlatentpop + 2 ] ukfstates; //sampled states relevant for dynamics
     matrix[ukf ? nmanifest : 0 , ukffull ? 2*nlatentpop +2 : nlatentpop + 2] ukfmeasures; // expected measures based on sampled states
-
     si=subject[rowi];
     
     if(T0check[rowi] == 1) { // calculate initial matrices if this is first row for si
@@ -416,6 +428,7 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
   vector[nparams] rawindparams;
   vector[nparams] tipredaddition;
   vector[nparams] indvaraddition;
+  int output = 0;
   
   if(si < 2 || (si > 1 && (nindvarying >0 || ntipred > 0))){ //si of 0 used
     tipredaddition = rep_vector(0,nparams);
@@ -428,94 +441,118 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
     rawindparams = rawpopmeans + tipredaddition + indvaraddition;
   }
 
-  if(si <= T0MEANSsubindex[nsubjects]){
+  if(si <= T0MEANSsubindex){
     for(ri in 1:size(T0MEANSsetup)){
-      sT0MEANS[T0MEANSsetup[ ri,1], T0MEANSsetup[ri,2]] = T0MEANSsetup[ri,3] ? tform(rawindparams[ T0MEANSsetup[ri,3] ], T0MEANSsetup[ri,4], T0MEANSvalues[ri,2], T0MEANSvalues[ri,3], T0MEANSvalues[ri,4] ) : T0MEANSvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(T0MEANSsetup[ ri,5] > 0 || T0MEANSsetup[ ri,6] > 0 || si < 2){
+        sT0MEANS[T0MEANSsetup[ ri,1], T0MEANSsetup[ri,2]] = T0MEANSsetup[ri,3] ? tform(rawindparams[ T0MEANSsetup[ri,3] ], T0MEANSsetup[ri,4], T0MEANSvalues[ri,2], T0MEANSvalues[ri,3], T0MEANSvalues[ri,4] ) : T0MEANSvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= LAMBDAsubindex[nsubjects]){
+  if(si <= LAMBDAsubindex){
     for(ri in 1:size(LAMBDAsetup)){
-      sLAMBDA[LAMBDAsetup[ ri,1], LAMBDAsetup[ri,2]] = LAMBDAsetup[ri,3] ? tform(rawindparams[ LAMBDAsetup[ri,3] ], LAMBDAsetup[ri,4], LAMBDAvalues[ri,2], LAMBDAvalues[ri,3], LAMBDAvalues[ri,4] ) : LAMBDAvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(LAMBDAsetup[ ri,5] > 0 || LAMBDAsetup[ ri,6] > 0 || si < 2){
+        sLAMBDA[LAMBDAsetup[ ri,1], LAMBDAsetup[ri,2]] = LAMBDAsetup[ri,3] ? tform(rawindparams[ LAMBDAsetup[ri,3] ], LAMBDAsetup[ri,4], LAMBDAvalues[ri,2], LAMBDAvalues[ri,3], LAMBDAvalues[ri,4] ) : LAMBDAvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= DRIFTsubindex[nsubjects]){
+  if(si <= DRIFTsubindex){
     for(ri in 1:size(DRIFTsetup)){
-      sDRIFT[DRIFTsetup[ ri,1], DRIFTsetup[ri,2]] = DRIFTsetup[ri,3] ? tform(rawindparams[ DRIFTsetup[ri,3] ], DRIFTsetup[ri,4], DRIFTvalues[ri,2], DRIFTvalues[ri,3], DRIFTvalues[ri,4] ) : DRIFTvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(DRIFTsetup[ ri,5] > 0 || DRIFTsetup[ ri,6] > 0 || si < 2){
+        sDRIFT[DRIFTsetup[ ri,1], DRIFTsetup[ri,2]] = DRIFTsetup[ri,3] ? tform(rawindparams[ DRIFTsetup[ri,3] ], DRIFTsetup[ri,4], DRIFTvalues[ri,2], DRIFTvalues[ri,3], DRIFTvalues[ri,4] ) : DRIFTvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= DIFFUSIONsubindex[nsubjects]){
+  if(si <= DIFFUSIONsubindex){
     for(ri in 1:size(DIFFUSIONsetup)){
-      sDIFFUSION[DIFFUSIONsetup[ ri,1], DIFFUSIONsetup[ri,2]] = DIFFUSIONsetup[ri,3] ? tform(rawindparams[ DIFFUSIONsetup[ri,3] ], DIFFUSIONsetup[ri,4], DIFFUSIONvalues[ri,2], DIFFUSIONvalues[ri,3], DIFFUSIONvalues[ri,4] ) : DIFFUSIONvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(DIFFUSIONsetup[ ri,5] > 0 || DIFFUSIONsetup[ ri,6] > 0 || si < 2){
+        sDIFFUSION[DIFFUSIONsetup[ ri,1], DIFFUSIONsetup[ri,2]] = DIFFUSIONsetup[ri,3] ? tform(rawindparams[ DIFFUSIONsetup[ri,3] ], DIFFUSIONsetup[ri,4], DIFFUSIONvalues[ri,2], DIFFUSIONvalues[ri,3], DIFFUSIONvalues[ri,4] ) : DIFFUSIONvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= MANIFESTVARsubindex[nsubjects]){
+  if(si <= MANIFESTVARsubindex){
     for(ri in 1:size(MANIFESTVARsetup)){
-      sMANIFESTVAR[MANIFESTVARsetup[ ri,1], MANIFESTVARsetup[ri,2]] = MANIFESTVARsetup[ri,3] ? tform(rawindparams[ MANIFESTVARsetup[ri,3] ], MANIFESTVARsetup[ri,4], MANIFESTVARvalues[ri,2], MANIFESTVARvalues[ri,3], MANIFESTVARvalues[ri,4] ) : MANIFESTVARvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(MANIFESTVARsetup[ ri,5] > 0 || MANIFESTVARsetup[ ri,6] > 0 || si < 2){
+        sMANIFESTVAR[MANIFESTVARsetup[ ri,1], MANIFESTVARsetup[ri,2]] = MANIFESTVARsetup[ri,3] ? tform(rawindparams[ MANIFESTVARsetup[ri,3] ], MANIFESTVARsetup[ri,4], MANIFESTVARvalues[ri,2], MANIFESTVARvalues[ri,3], MANIFESTVARvalues[ri,4] ) : MANIFESTVARvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= MANIFESTMEANSsubindex[nsubjects]){
+  if(si <= MANIFESTMEANSsubindex){
     for(ri in 1:size(MANIFESTMEANSsetup)){
-      sMANIFESTMEANS[MANIFESTMEANSsetup[ ri,1], MANIFESTMEANSsetup[ri,2]] = MANIFESTMEANSsetup[ri,3] ? tform(rawindparams[ MANIFESTMEANSsetup[ri,3] ], MANIFESTMEANSsetup[ri,4], MANIFESTMEANSvalues[ri,2], MANIFESTMEANSvalues[ri,3], MANIFESTMEANSvalues[ri,4] ) : MANIFESTMEANSvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(MANIFESTMEANSsetup[ ri,5] > 0 || MANIFESTMEANSsetup[ ri,6] > 0 || si < 2){
+        sMANIFESTMEANS[MANIFESTMEANSsetup[ ri,1], MANIFESTMEANSsetup[ri,2]] = MANIFESTMEANSsetup[ri,3] ? tform(rawindparams[ MANIFESTMEANSsetup[ri,3] ], MANIFESTMEANSsetup[ri,4], MANIFESTMEANSvalues[ri,2], MANIFESTMEANSvalues[ri,3], MANIFESTMEANSvalues[ri,4] ) : MANIFESTMEANSvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= CINTsubindex[nsubjects]){
+  if(si <= CINTsubindex){
     for(ri in 1:size(CINTsetup)){
-      sCINT[CINTsetup[ ri,1], CINTsetup[ri,2]] = CINTsetup[ri,3] ? tform(rawindparams[ CINTsetup[ri,3] ], CINTsetup[ri,4], CINTvalues[ri,2], CINTvalues[ri,3], CINTvalues[ri,4] ) : CINTvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(CINTsetup[ ri,5] > 0 || CINTsetup[ ri,6] > 0 || si < 2){
+        sCINT[CINTsetup[ ri,1], CINTsetup[ri,2]] = CINTsetup[ri,3] ? tform(rawindparams[ CINTsetup[ri,3] ], CINTsetup[ri,4], CINTvalues[ri,2], CINTvalues[ri,3], CINTvalues[ri,4] ) : CINTvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= T0VARsubindex[nsubjects]){
+  if(si <= T0VARsubindex){
     for(ri in 1:size(T0VARsetup)){
-      sT0VAR[T0VARsetup[ ri,1], T0VARsetup[ri,2]] = T0VARsetup[ri,3] ? tform(rawindparams[ T0VARsetup[ri,3] ], T0VARsetup[ri,4], T0VARvalues[ri,2], T0VARvalues[ri,3], T0VARvalues[ri,4] ) : T0VARvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(T0VARsetup[ ri,5] > 0 || T0VARsetup[ ri,6] > 0 || si < 2){
+        sT0VAR[T0VARsetup[ ri,1], T0VARsetup[ri,2]] = T0VARsetup[ri,3] ? tform(rawindparams[ T0VARsetup[ri,3] ], T0VARsetup[ri,4], T0VARvalues[ri,2], T0VARvalues[ri,3], T0VARvalues[ri,4] ) : T0VARvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= TDPREDEFFECTsubindex[nsubjects]){
+  if(si <= TDPREDEFFECTsubindex){
     for(ri in 1:size(TDPREDEFFECTsetup)){
-      sTDPREDEFFECT[TDPREDEFFECTsetup[ ri,1], TDPREDEFFECTsetup[ri,2]] = TDPREDEFFECTsetup[ri,3] ? tform(rawindparams[ TDPREDEFFECTsetup[ri,3] ], TDPREDEFFECTsetup[ri,4], TDPREDEFFECTvalues[ri,2], TDPREDEFFECTvalues[ri,3], TDPREDEFFECTvalues[ri,4] ) : TDPREDEFFECTvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(TDPREDEFFECTsetup[ ri,5] > 0 || TDPREDEFFECTsetup[ ri,6] > 0 || si < 2){
+        sTDPREDEFFECT[TDPREDEFFECTsetup[ ri,1], TDPREDEFFECTsetup[ri,2]] = TDPREDEFFECTsetup[ri,3] ? tform(rawindparams[ TDPREDEFFECTsetup[ri,3] ], TDPREDEFFECTsetup[ri,4], TDPREDEFFECTvalues[ri,2], TDPREDEFFECTvalues[ri,3], TDPREDEFFECTvalues[ri,4] ) : TDPREDEFFECTvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= PARSsubindex[nsubjects]){
+  if(si <= PARSsubindex){
     for(ri in 1:size(PARSsetup)){
-      sPARS[PARSsetup[ ri,1], PARSsetup[ri,2]] = PARSsetup[ri,3] ? tform(rawindparams[ PARSsetup[ri,3] ], PARSsetup[ri,4], PARSvalues[ri,2], PARSvalues[ri,3], PARSvalues[ri,4] ) : PARSvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(PARSsetup[ ri,5] > 0 || PARSsetup[ ri,6] > 0 || si < 2){
+        sPARS[PARSsetup[ ri,1], PARSsetup[ri,2]] = PARSsetup[ri,3] ? tform(rawindparams[ PARSsetup[ri,3] ], PARSsetup[ri,4], PARSvalues[ri,2], PARSvalues[ri,3], PARSvalues[ri,4] ) : PARSvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
   // perform any whole matrix transformations 
     
-  if(si <= DIFFUSIONsubindex[nsubjects] && ukf==0) sDIFFUSION = sdcovsqrt2cov(sDIFFUSION);
 
-    if(si <= asymDIFFUSIONsubindex[nsubjects]) {
+  if(si <= DIFFUSIONsubindex &&(output==1|| ukf==0)) sDIFFUSION = sdcovsqrt2cov(sDIFFUSION,ukf);
+  if(ukf==0 || output ==1 || nt0varstationary > 0){
+    if(si <= asymDIFFUSIONsubindex) {
       if(ndiffusion < nlatent) sasymDIFFUSION = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
 
-      if(continuoustime==1 && ukf==0) sasymDIFFUSION[ derrind, derrind] = to_matrix( 
-      -( kron_prod( sDRIFT[ derrind, derrind ], IIlatent[ derrind, derrind ]) + 
-         kron_prod(IIlatent[ derrind, derrind ], sDRIFT[ derrind, derrind ]) ) \ 
-      to_vector( sDIFFUSION[ derrind, derrind ] + IIlatent[ derrind, derrind ] * 1e-5), ndiffusion,ndiffusion);
+      if(continuoustime==1) sasymDIFFUSION[ derrind, derrind] = to_matrix( 
+      -kronsum(sDRIFT[ derrind, derrind ]) \  to_vector( 
+          ( (output==0 && ukf==1) ? tcrossprod(sDIFFUSION[ derrind, derrind ]) : sDIFFUSION[ derrind, derrind ] ) + 
+          IIlatent[ derrind, derrind ] * 1e-5), ndiffusion,ndiffusion);
 
       if(continuoustime==0) sasymDIFFUSION = to_matrix( (IIlatent2 - 
-        kron_prod(sDRIFT, sDRIFT)) *  to_vector(sDIFFUSION) , ndiffusion, ndiffusion);
+        sqkron_prod(sDRIFT, sDRIFT)) *  to_vector(
+          (output==0 && ukf==1) ? tcrossprod(sDIFFUSION[ derrind, derrind ]) : sDIFFUSION[ derrind, derrind ])
+        ,ndiffusion, ndiffusion);
     } //end asymdiffusion loops
+  }
           
     if(nt0meansstationary > 0){
-      if(si <= asymCINTsubindex[nsubjects]){
+      if(si <= asymCINTsubindex){
         if(continuoustime==1) sasymCINT =  -sDRIFT \ sCINT[ ,1 ];
         if(continuoustime==0) sasymCINT =  (IIlatent - sDRIFT) \ sCINT[,1 ];
       }
@@ -523,24 +560,27 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
 
           
     if(binomial==0){
-      if(si <= MANIFESTVARsubindex[nsubjects]) {
+      if(si <= MANIFESTVARsubindex) {
          for(ri in 1:nmanifest) sMANIFESTVAR[ri,ri] = square(sMANIFESTVAR[ri,ri]);
       }
     }
           
           
-    if(si <= T0VARsubindex[nsubjects]) {
-      if(ukf==0) sT0VAR = sdcovsqrt2cov(sT0VAR);
-      if(nt0varstationary > 0) for(ri in 1:nt0varstationary){
-        sT0VAR[t0varstationary[ri,1],t0varstationary[ri,2] ] = 
-          sasymDIFFUSION[t0varstationary[ri,1],t0varstationary[ri,2] ];
-        sT0VAR[t0varstationary[ri,2],t0varstationary[ri,1] ] = 
-          sasymDIFFUSION[t0varstationary[ri,2],t0varstationary[ri,1] ];
+    if(si <= T0VARsubindex) {
+      if(ukf==0 || output==1) sT0VAR = sdcovsqrt2cov(sT0VAR,ukf);
+      if(nt0varstationary > 0) {
+        if(ukf==1 && output ==0) sasymDIFFUSION = cholesky_decompose(makesym(sasymDIFFUSION,verbose));
+          for(ri in 1:nt0varstationary){ // in case of negative variances
+          sT0VAR[t0varstationary[ri,1],t0varstationary[ri,2] ] = 
+           t0varstationary[ri,1] == t0varstationary[ri,2] ? 
+            sqrt(square(sasymDIFFUSION[t0varstationary[ri,1],t0varstationary[ri,2] ])) : 
+            sasymDIFFUSION[t0varstationary[ri,1],t0varstationary[ri,2] ];
+        }
       }
     }
     
     if(nt0meansstationary > 0){
-      if(si <= T0MEANSsubindex[nsubjects]) {
+      if(si <= T0MEANSsubindex) {
         for(ri in 1:nt0meansstationary){
           sT0MEANS[t0meansstationary[ri,1] , 1] = 
             sasymCINT[t0meansstationary[ri,1] ];
@@ -555,23 +595,21 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
       if(ukf==1){
         eta = rep_vector(0,nlatentpop); // because some values stay zero
         sigpoints = rep_matrix(0, nlatentpop,nlatentpop);
-      
         if(intoverpop==1) {
           if(ntipred ==0) eta[ (nlatent+1):(nlatentpop)] = rawpopmeans[indvaryingindex];
           if(ntipred >0) eta[ (nlatent+1):(nlatentpop)] = rawpopmeans[indvaryingindex] + TIPREDEFFECT[indvaryingindex] * tipreds[si]';
         }
       }
 
-
       if(ukf==0){
-      eta = sT0MEANS[,1]; //prior for initial latent state
-      if(ntdpred > 0) eta += sTDPREDEFFECT * tdpreds[rowi];
-      etacov =  sT0VAR;
+        eta = sT0MEANS[,1]; //prior for initial latent state
+        if(ntdpred > 0) eta += sTDPREDEFFECT * tdpreds[rowi];
+        etacov =  sT0VAR;
       }
 
     } //end T0 matrices
 
-    if(lineardynamics==1 && ukf==0 && T0check[rowi]==0){ //linear kf time update
+    if(nldynamics==0 && ukf==0 && T0check[rowi]==0){ //linear kf time update
     
       if(continuoustime ==1){
         int dtchange = 0;
@@ -581,14 +619,13 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
           dtchange = 1;
         } else if(T0check[rowi-1] == 0 && dT[rowi-1] != dT[rowi]) dtchange = 1;
         
-        if(dtchange==1 || (T0check[rowi-1]==1 && si <= DRIFTsubindex[si] && si <= CINTsubindex[si])){
+        if(dtchange==1 || (T0check[rowi-1]==1 && (si <= DRIFTsubindex || si <= CINTsubindex))){
           discreteDRIFT = expm2(append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1)) * dT[rowi]);
         }
     
-        if(dtchange==1 || (T0check[rowi-1]==1 && (si <= DIFFUSIONsubindex[si]|| si <= DRIFTsubindex[si]))){
+        if(dtchange==1 || (T0check[rowi-1]==1 && (si <= DIFFUSIONsubindex|| si <= DRIFTsubindex))){
           discreteDIFFUSION[derrind, derrind] = sasymDIFFUSION[derrind, derrind] - 
             quad_form( sasymDIFFUSION[derrind, derrind], discreteDRIFT[derrind, derrind]' );
-          //discreteDIFFUSION[derrind, derrind] = discreteDIFFUSIONcalc(sDRIFT[derrind, derrind], sDIFFUSION[derrind, derrind], dT[rowi]);
           if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
         }
       }
@@ -596,7 +633,6 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
       if(continuoustime==0 && T0check[rowi-1] == 1){
         discreteDRIFT=append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1));
         discreteDRIFT[nlatent+1,nlatent+1] = 1;
-        //discreteCINT=sCINT[,1];
         discreteDIFFUSION=sDIFFUSION;
         if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
       }
@@ -665,11 +701,10 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
               if(statei > 0) J[1:nlatent,statei] = (( sDRIFT * state[1:nlatent] + sCINT[,1]) - base)/1e-6;
             }
             ;
-
+ //find a way to remove this repeat
             Je= expm2(J * dTsmall[rowi]) ;
             discreteDRIFT = expm2(append_row(append_col(sDRIFT,sCINT),rep_vector(0,nlatent+1)') * dTsmall[rowi]);
-            sasymDIFFUSION = to_matrix(  -( kron_prod( J[1:nlatent,1:nlatent], IIlatent) +  
-              kron_prod(IIlatent, J[1:nlatent,1:nlatent]) ) \ to_vector(tcrossprod(sDIFFUSION)), nlatent,nlatent);
+            sasymDIFFUSION = to_matrix(  -kronsum(J[1:nlatent,1:nlatent]) \ to_vector(tcrossprod(sDIFFUSION)), nlatent,nlatent);
             discreteDIFFUSION =  sasymDIFFUSION - quad_form( sasymDIFFUSION, Je[1:nlatent,1:nlatent]' );
             etacov = quad_form(etacov, Je');
             etacov[1:nlatent,1:nlatent] += discreteDIFFUSION;
@@ -741,7 +776,7 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
         sigpoints[1:nlatent,1:nlatent] = sT0VAR * sqrtukfadjust;
       }
       
-      if(T0check[rowi]==0)  sigpoints = cholesky_decompose(makesym(etacov)) * sqrtukfadjust;
+      if(T0check[rowi]==0)  sigpoints = cholesky_decompose(makesym(etacov,verbose)) * sqrtukfadjust;
     
       //configure ukf states
       for(statei in 2:cols(ukfstates) ){ //for each ukf state sample
@@ -781,28 +816,25 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
       }
       if(ukffull == 0){
         eta = ukfstates[,2];
-        etacov = tcrossprod(ukfstates[,3:(nlatentpop+2)] - rep_matrix(ukfstates[,2],nlatentpop)) /asquared / (nlatentpop*2+1);
+        etacov = tcrossprod(ukfstates[,3:(nlatentpop+2)] - rep_matrix(ukfstates[,2],nlatentpop)) /asquared / (nlatentpop+.5);
       }
     } //end ukf if necessary time update
   } // end non linear time update
 
 
-  if(savescores==1) kout[rowi,(nmanifest*2+1):(nmanifest*2+nlatent)] = eta;
+  if(savescores==1) kout[rowi,(nmanifest*4+1):(nmanifest*4+nlatent)] = eta;
 if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
 
-    if(intoverstates==0 && lineardynamics == 1) {
+    if(intoverstates==0 && nldynamics == 0) {
       if(T0check[rowi]==1) eta += cholesky_decompose(sT0VAR) * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
       if(T0check[rowi]==0) eta +=  discreteDIFFUSION * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
     }
 
     if (nobs_y[rowi] > 0) {  // if some observations create right size matrices for missingness and calculate...
     
-      int o[nobs_y[rowi]]; //which indicators are observed
-      int o1[nbinary_y[rowi]]; //which indicators are observed and binary
-      int o0[ncont_y[rowi]]; //which indicators are observed and continuous
-      o = whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
-      o1 = whichbinary_y[rowi,1:nbinary_y[rowi]];
-      o0 = whichcont_y[rowi,1:ncont_y[rowi]];
+      int o[nobs_y[rowi]]= whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
+      int o1[nbinary_y[rowi]]= whichbinary_y[rowi,1:nbinary_y[rowi]];
+      int o0[ncont_y[rowi]]= whichcont_y[rowi,1:ncont_y[rowi]];
 
       if(nlmeasurement==0){ //non ukf measurement
         if(intoverstates==1) { //classic kalman
@@ -819,7 +851,7 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
         if(intoverstates==0) { //sampled states
           if(ncont_y[rowi] > 0) {
             ypred[o0] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * eta[1:nlatent];
-            if(ncont_y[rowi] > 0) ypredcov_sqrt[o0,o0] = sMANIFESTVAR[o0,o0];
+            ypredcov_sqrt[o0,o0] = sMANIFESTVAR[o0,o0];
           }
           if(nbinary_y[rowi] > 0) ypred[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * eta[1:nlatent])));
         }
@@ -885,39 +917,46 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
           ypred[o] = ukfmeasures[o,2];
           for(ci in 3:cols(ukfmeasures)) ukfmeasures[o,ci] += -ukfmeasures[o,2];
           for(ci in 3:cols(ukfstates)) ukfstates[,ci] += -ukfstates[,2];
-          ypredcov[o,o] = tcrossprod(ukfmeasures[o,3:(nlatentpop+2)]) /asquared / (nlatentpop*2+1) + diag_matrix(merrorstates[o,2]);
-          K[,o] = mdivide_right(ukfstates[,3:cols(ukfstates)] * ukfmeasures[o,3:cols(ukfmeasures)]' /asquared / (nlatentpop*2+1), ypredcov[o,o]); 
+          ypredcov[o,o] = tcrossprod(ukfmeasures[o,3:(nlatentpop+2)]) /asquared / (nlatentpop +.5) + diag_matrix(merrorstates[o,2]);
+          K[,o] = mdivide_right(ukfstates[,3:cols(ukfstates)] * ukfmeasures[o,3:cols(ukfmeasures)]' /asquared / (nlatentpop+.5), ypredcov[o,o]); 
         }
         etacov +=  - quad_form(ypredcov[o,o],  K[,o]');
       } //end ukf measurement
 
 
-      err[o] = Y[rowi,o] - ypred[o]; // prediction error
-
+err[o] = Y[rowi,o] - ypred[o]; // prediction error
+    
+      if(savescores==1) {
+        int tmpindex[nobs_y[rowi]] = o;
+        for(oi in 1:ncont_y[rowi]) tmpindex[oi] +=  nmanifest*2;
+        kout[rowi,tmpindex] = err[o];
+        for(oi in 1:ncont_y[rowi]) tmpindex[oi] +=  nmanifest;
+        kout[rowi,tmpindex] = ypred[o];
+      }
       if(intoverstates==1) eta +=  (K[,o] * err[o]);
   
       if(nbinary_y[rowi] > 0) kout[rowi,o1] =  Y[rowi,o1] .* (ypred[o1]) + (1-Y[rowi,o1]) .* (1-ypred[o1]); //intoverstates==0 && 
   
         if(verbose > 1) {
           print("rowi ",rowi, "  si ", si, "  eta ",eta,"  etacov ",etacov,
-            "  eta ",eta,"  etacov ",etacov,"  ypred ",ypred,"  ypredcov ",ypredcov, "  K ",K,
+            "  ypred ",ypred,"  ypredcov ",ypredcov, "  K ",K,
             "  sDRIFT ", sDRIFT, " sDIFFUSION ", sDIFFUSION, " sCINT ", sCINT, "  sMANIFESTVAR ", diagonal(sMANIFESTVAR), "  sMANIFESTMEANS ", sMANIFESTMEANS, 
             "  sT0VAR", sT0VAR,  " sT0MEANS ", sT0MEANS,
+            "discreteDRIFT ", discreteDRIFT, "  discreteDIFFUSION ", discreteDIFFUSION, "  sasymDIFFUSION ", sasymDIFFUSION, 
             "  rawpopsd ", rawpopsd,  "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
-          if(lineardynamics==1) print("discreteDRIFT ",discreteDRIFT,"  discreteCINT ", discreteCINT, "  discreteDIFFUSION ", discreteDIFFUSION)
         }
         if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
   
         if(size(o0) > 0){
           int tmpindex[ncont_y[rowi]] = o0;
           for(oi in 1:ncont_y[rowi]) tmpindex[oi] +=  nmanifest;
-           if(intoverstates==1) ypredcov_sqrt[o0,o0]=cholesky_decompose(makesym(ypredcov[o0,o0]));
+           if(intoverstates==1) ypredcov_sqrt[o0,o0]=cholesky_decompose(makesym(ypredcov[o0,o0],verbose));
            kout[rowi,o0] = mdivide_left_tri_low(ypredcov_sqrt[o0,o0], err[o0]); //transform pred errors to standard normal dist and collect
            kout[rowi,tmpindex] = log(diagonal(ypredcov_sqrt[o0,o0])); //account for transformation of scale in loglik
         }
       
     }//end nobs > 0 section
-  if(savescores==1) kout[rowi,(nmanifest*2+nlatent+1):(nmanifest*2++nlatent+nlatent)] = eta;
+  if(savescores==1) kout[rowi,(nmanifest*4+nlatent+1):(nmanifest*4+nlatent+nlatent)] = eta;
 }//end rowi
 
   if(sum(nbinary_y) > 0) {
@@ -944,6 +983,7 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
     ll += normal_lpdf(errtrans[1]|0,1) - sum(errtrans[2]);
     }
 
+if(savescores) kalman = kout;
 }
 
 }
@@ -963,15 +1003,14 @@ model{
       if(intoverpop==0) baseindparams ~ normal(0,1);
       rawpopsdbase ~ normal(0,1);
     }
+  if(regvar ==1 && (nindvarying + ntipred) > 0) globalvarregbase ~ normal(0,2);
 
   } //end pop priors section
   
   if(intoverstates==0) etaupdbasestates ~ normal(0,1);
   
   target += ll;
-  
   if(verbose > 0) print("lp = ", target());
-  
 }
 generated quantities{
   vector[nparams] popmeans;
@@ -1032,6 +1071,7 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
   vector[nparams] rawindparams;
   vector[nparams] tipredaddition;
   vector[nparams] indvaraddition;
+  int output = 1;
   
   if(si < 2 || (si > 1 && (nindvarying >0 || ntipred > 0))){ //si of 0 used
     tipredaddition = rep_vector(0,nparams);
@@ -1044,94 +1084,118 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
     rawindparams = rawpopmeans + tipredaddition + indvaraddition;
   }
 
-  if(si <= T0MEANSsubindex[nsubjects]){
+  if(si <= T0MEANSsubindex){
     for(ri in 1:size(T0MEANSsetup)){
-      sT0MEANS[T0MEANSsetup[ ri,1], T0MEANSsetup[ri,2]] = T0MEANSsetup[ri,3] ? tform(rawindparams[ T0MEANSsetup[ri,3] ], T0MEANSsetup[ri,4], T0MEANSvalues[ri,2], T0MEANSvalues[ri,3], T0MEANSvalues[ri,4] ) : T0MEANSvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(T0MEANSsetup[ ri,5] > 0 || T0MEANSsetup[ ri,6] > 0 || si < 2){
+        sT0MEANS[T0MEANSsetup[ ri,1], T0MEANSsetup[ri,2]] = T0MEANSsetup[ri,3] ? tform(rawindparams[ T0MEANSsetup[ri,3] ], T0MEANSsetup[ri,4], T0MEANSvalues[ri,2], T0MEANSvalues[ri,3], T0MEANSvalues[ri,4] ) : T0MEANSvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= LAMBDAsubindex[nsubjects]){
+  if(si <= LAMBDAsubindex){
     for(ri in 1:size(LAMBDAsetup)){
-      sLAMBDA[LAMBDAsetup[ ri,1], LAMBDAsetup[ri,2]] = LAMBDAsetup[ri,3] ? tform(rawindparams[ LAMBDAsetup[ri,3] ], LAMBDAsetup[ri,4], LAMBDAvalues[ri,2], LAMBDAvalues[ri,3], LAMBDAvalues[ri,4] ) : LAMBDAvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(LAMBDAsetup[ ri,5] > 0 || LAMBDAsetup[ ri,6] > 0 || si < 2){
+        sLAMBDA[LAMBDAsetup[ ri,1], LAMBDAsetup[ri,2]] = LAMBDAsetup[ri,3] ? tform(rawindparams[ LAMBDAsetup[ri,3] ], LAMBDAsetup[ri,4], LAMBDAvalues[ri,2], LAMBDAvalues[ri,3], LAMBDAvalues[ri,4] ) : LAMBDAvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= DRIFTsubindex[nsubjects]){
+  if(si <= DRIFTsubindex){
     for(ri in 1:size(DRIFTsetup)){
-      sDRIFT[DRIFTsetup[ ri,1], DRIFTsetup[ri,2]] = DRIFTsetup[ri,3] ? tform(rawindparams[ DRIFTsetup[ri,3] ], DRIFTsetup[ri,4], DRIFTvalues[ri,2], DRIFTvalues[ri,3], DRIFTvalues[ri,4] ) : DRIFTvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(DRIFTsetup[ ri,5] > 0 || DRIFTsetup[ ri,6] > 0 || si < 2){
+        sDRIFT[DRIFTsetup[ ri,1], DRIFTsetup[ri,2]] = DRIFTsetup[ri,3] ? tform(rawindparams[ DRIFTsetup[ri,3] ], DRIFTsetup[ri,4], DRIFTvalues[ri,2], DRIFTvalues[ri,3], DRIFTvalues[ri,4] ) : DRIFTvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= DIFFUSIONsubindex[nsubjects]){
+  if(si <= DIFFUSIONsubindex){
     for(ri in 1:size(DIFFUSIONsetup)){
-      sDIFFUSION[DIFFUSIONsetup[ ri,1], DIFFUSIONsetup[ri,2]] = DIFFUSIONsetup[ri,3] ? tform(rawindparams[ DIFFUSIONsetup[ri,3] ], DIFFUSIONsetup[ri,4], DIFFUSIONvalues[ri,2], DIFFUSIONvalues[ri,3], DIFFUSIONvalues[ri,4] ) : DIFFUSIONvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(DIFFUSIONsetup[ ri,5] > 0 || DIFFUSIONsetup[ ri,6] > 0 || si < 2){
+        sDIFFUSION[DIFFUSIONsetup[ ri,1], DIFFUSIONsetup[ri,2]] = DIFFUSIONsetup[ri,3] ? tform(rawindparams[ DIFFUSIONsetup[ri,3] ], DIFFUSIONsetup[ri,4], DIFFUSIONvalues[ri,2], DIFFUSIONvalues[ri,3], DIFFUSIONvalues[ri,4] ) : DIFFUSIONvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= MANIFESTVARsubindex[nsubjects]){
+  if(si <= MANIFESTVARsubindex){
     for(ri in 1:size(MANIFESTVARsetup)){
-      sMANIFESTVAR[MANIFESTVARsetup[ ri,1], MANIFESTVARsetup[ri,2]] = MANIFESTVARsetup[ri,3] ? tform(rawindparams[ MANIFESTVARsetup[ri,3] ], MANIFESTVARsetup[ri,4], MANIFESTVARvalues[ri,2], MANIFESTVARvalues[ri,3], MANIFESTVARvalues[ri,4] ) : MANIFESTVARvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(MANIFESTVARsetup[ ri,5] > 0 || MANIFESTVARsetup[ ri,6] > 0 || si < 2){
+        sMANIFESTVAR[MANIFESTVARsetup[ ri,1], MANIFESTVARsetup[ri,2]] = MANIFESTVARsetup[ri,3] ? tform(rawindparams[ MANIFESTVARsetup[ri,3] ], MANIFESTVARsetup[ri,4], MANIFESTVARvalues[ri,2], MANIFESTVARvalues[ri,3], MANIFESTVARvalues[ri,4] ) : MANIFESTVARvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= MANIFESTMEANSsubindex[nsubjects]){
+  if(si <= MANIFESTMEANSsubindex){
     for(ri in 1:size(MANIFESTMEANSsetup)){
-      sMANIFESTMEANS[MANIFESTMEANSsetup[ ri,1], MANIFESTMEANSsetup[ri,2]] = MANIFESTMEANSsetup[ri,3] ? tform(rawindparams[ MANIFESTMEANSsetup[ri,3] ], MANIFESTMEANSsetup[ri,4], MANIFESTMEANSvalues[ri,2], MANIFESTMEANSvalues[ri,3], MANIFESTMEANSvalues[ri,4] ) : MANIFESTMEANSvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(MANIFESTMEANSsetup[ ri,5] > 0 || MANIFESTMEANSsetup[ ri,6] > 0 || si < 2){
+        sMANIFESTMEANS[MANIFESTMEANSsetup[ ri,1], MANIFESTMEANSsetup[ri,2]] = MANIFESTMEANSsetup[ri,3] ? tform(rawindparams[ MANIFESTMEANSsetup[ri,3] ], MANIFESTMEANSsetup[ri,4], MANIFESTMEANSvalues[ri,2], MANIFESTMEANSvalues[ri,3], MANIFESTMEANSvalues[ri,4] ) : MANIFESTMEANSvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= CINTsubindex[nsubjects]){
+  if(si <= CINTsubindex){
     for(ri in 1:size(CINTsetup)){
-      sCINT[CINTsetup[ ri,1], CINTsetup[ri,2]] = CINTsetup[ri,3] ? tform(rawindparams[ CINTsetup[ri,3] ], CINTsetup[ri,4], CINTvalues[ri,2], CINTvalues[ri,3], CINTvalues[ri,4] ) : CINTvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(CINTsetup[ ri,5] > 0 || CINTsetup[ ri,6] > 0 || si < 2){
+        sCINT[CINTsetup[ ri,1], CINTsetup[ri,2]] = CINTsetup[ri,3] ? tform(rawindparams[ CINTsetup[ri,3] ], CINTsetup[ri,4], CINTvalues[ri,2], CINTvalues[ri,3], CINTvalues[ri,4] ) : CINTvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= T0VARsubindex[nsubjects]){
+  if(si <= T0VARsubindex){
     for(ri in 1:size(T0VARsetup)){
-      sT0VAR[T0VARsetup[ ri,1], T0VARsetup[ri,2]] = T0VARsetup[ri,3] ? tform(rawindparams[ T0VARsetup[ri,3] ], T0VARsetup[ri,4], T0VARvalues[ri,2], T0VARvalues[ri,3], T0VARvalues[ri,4] ) : T0VARvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(T0VARsetup[ ri,5] > 0 || T0VARsetup[ ri,6] > 0 || si < 2){
+        sT0VAR[T0VARsetup[ ri,1], T0VARsetup[ri,2]] = T0VARsetup[ri,3] ? tform(rawindparams[ T0VARsetup[ri,3] ], T0VARsetup[ri,4], T0VARvalues[ri,2], T0VARvalues[ri,3], T0VARvalues[ri,4] ) : T0VARvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= TDPREDEFFECTsubindex[nsubjects]){
+  if(si <= TDPREDEFFECTsubindex){
     for(ri in 1:size(TDPREDEFFECTsetup)){
-      sTDPREDEFFECT[TDPREDEFFECTsetup[ ri,1], TDPREDEFFECTsetup[ri,2]] = TDPREDEFFECTsetup[ri,3] ? tform(rawindparams[ TDPREDEFFECTsetup[ri,3] ], TDPREDEFFECTsetup[ri,4], TDPREDEFFECTvalues[ri,2], TDPREDEFFECTvalues[ri,3], TDPREDEFFECTvalues[ri,4] ) : TDPREDEFFECTvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(TDPREDEFFECTsetup[ ri,5] > 0 || TDPREDEFFECTsetup[ ri,6] > 0 || si < 2){
+        sTDPREDEFFECT[TDPREDEFFECTsetup[ ri,1], TDPREDEFFECTsetup[ri,2]] = TDPREDEFFECTsetup[ri,3] ? tform(rawindparams[ TDPREDEFFECTsetup[ri,3] ], TDPREDEFFECTsetup[ri,4], TDPREDEFFECTvalues[ri,2], TDPREDEFFECTvalues[ri,3], TDPREDEFFECTvalues[ri,4] ) : TDPREDEFFECTvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= PARSsubindex[nsubjects]){
+  if(si <= PARSsubindex){
     for(ri in 1:size(PARSsetup)){
-      sPARS[PARSsetup[ ri,1], PARSsetup[ri,2]] = PARSsetup[ri,3] ? tform(rawindparams[ PARSsetup[ri,3] ], PARSsetup[ri,4], PARSvalues[ri,2], PARSvalues[ri,3], PARSvalues[ri,4] ) : PARSvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(PARSsetup[ ri,5] > 0 || PARSsetup[ ri,6] > 0 || si < 2){
+        sPARS[PARSsetup[ ri,1], PARSsetup[ri,2]] = PARSsetup[ri,3] ? tform(rawindparams[ PARSsetup[ri,3] ], PARSsetup[ri,4], PARSvalues[ri,2], PARSvalues[ri,3], PARSvalues[ri,4] ) : PARSvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
   // perform any whole matrix transformations 
     
-  if(si <= DIFFUSIONsubindex[nsubjects] && ukf==0) sDIFFUSION = sdcovsqrt2cov(sDIFFUSION);
 
-    if(si <= asymDIFFUSIONsubindex[nsubjects]) {
+  if(si <= DIFFUSIONsubindex &&(output==1|| ukf==0)) sDIFFUSION = sdcovsqrt2cov(sDIFFUSION,ukf);
+  if(ukf==0 || output ==1 || nt0varstationary > 0){
+    if(si <= asymDIFFUSIONsubindex) {
       if(ndiffusion < nlatent) sasymDIFFUSION = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
 
-      if(continuoustime==1 && ukf==0) sasymDIFFUSION[ derrind, derrind] = to_matrix( 
-      -( kron_prod( sDRIFT[ derrind, derrind ], IIlatent[ derrind, derrind ]) + 
-         kron_prod(IIlatent[ derrind, derrind ], sDRIFT[ derrind, derrind ]) ) \ 
-      to_vector( sDIFFUSION[ derrind, derrind ] + IIlatent[ derrind, derrind ] * 1e-5), ndiffusion,ndiffusion);
+      if(continuoustime==1) sasymDIFFUSION[ derrind, derrind] = to_matrix( 
+      -kronsum(sDRIFT[ derrind, derrind ]) \  to_vector( 
+          ( (output==0 && ukf==1) ? tcrossprod(sDIFFUSION[ derrind, derrind ]) : sDIFFUSION[ derrind, derrind ] ) + 
+          IIlatent[ derrind, derrind ] * 1e-5), ndiffusion,ndiffusion);
 
       if(continuoustime==0) sasymDIFFUSION = to_matrix( (IIlatent2 - 
-        kron_prod(sDRIFT, sDRIFT)) *  to_vector(sDIFFUSION) , ndiffusion, ndiffusion);
+        sqkron_prod(sDRIFT, sDRIFT)) *  to_vector(
+          (output==0 && ukf==1) ? tcrossprod(sDIFFUSION[ derrind, derrind ]) : sDIFFUSION[ derrind, derrind ])
+        ,ndiffusion, ndiffusion);
     } //end asymdiffusion loops
+  }
           
     if(nt0meansstationary > 0){
-      if(si <= asymCINTsubindex[nsubjects]){
+      if(si <= asymCINTsubindex){
         if(continuoustime==1) sasymCINT =  -sDRIFT \ sCINT[ ,1 ];
         if(continuoustime==0) sasymCINT =  (IIlatent - sDRIFT) \ sCINT[,1 ];
       }
@@ -1139,24 +1203,27 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
 
           
     if(binomial==0){
-      if(si <= MANIFESTVARsubindex[nsubjects]) {
+      if(si <= MANIFESTVARsubindex) {
          for(ri in 1:nmanifest) sMANIFESTVAR[ri,ri] = square(sMANIFESTVAR[ri,ri]);
       }
     }
           
           
-    if(si <= T0VARsubindex[nsubjects]) {
-      if(ukf==0) sT0VAR = sdcovsqrt2cov(sT0VAR);
-      if(nt0varstationary > 0) for(ri in 1:nt0varstationary){
-        sT0VAR[t0varstationary[ri,1],t0varstationary[ri,2] ] = 
-          sasymDIFFUSION[t0varstationary[ri,1],t0varstationary[ri,2] ];
-        sT0VAR[t0varstationary[ri,2],t0varstationary[ri,1] ] = 
-          sasymDIFFUSION[t0varstationary[ri,2],t0varstationary[ri,1] ];
+    if(si <= T0VARsubindex) {
+      if(ukf==0 || output==1) sT0VAR = sdcovsqrt2cov(sT0VAR,ukf);
+      if(nt0varstationary > 0) {
+        if(ukf==1 && output ==0) sasymDIFFUSION = cholesky_decompose(makesym(sasymDIFFUSION,verbose));
+          for(ri in 1:nt0varstationary){ // in case of negative variances
+          sT0VAR[t0varstationary[ri,1],t0varstationary[ri,2] ] = 
+           t0varstationary[ri,1] == t0varstationary[ri,2] ? 
+            sqrt(square(sasymDIFFUSION[t0varstationary[ri,1],t0varstationary[ri,2] ])) : 
+            sasymDIFFUSION[t0varstationary[ri,1],t0varstationary[ri,2] ];
+        }
       }
     }
     
     if(nt0meansstationary > 0){
-      if(si <= T0MEANSsubindex[nsubjects]) {
+      if(si <= T0MEANSsubindex) {
         for(ri in 1:nt0meansstationary){
           sT0MEANS[t0meansstationary[ri,1] , 1] = 
             sasymCINT[t0meansstationary[ri,1] ];
@@ -1230,12 +1297,10 @@ pop_asymCINT = sasymCINT;
 
   vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatent*2 : 0)] kout[ndatapoints];
 
-  //ukf
   matrix[ukf ? nlatentpop :0,ukf ? nlatentpop :0] sigpoints;
 
   //linear continuous time calcs
   matrix[nlatent+1,nlatent+1] discreteDRIFT;
-  vector[lineardynamics + ( 1-continuoustime)  ? nlatent : 0] discreteCINT;
   matrix[nlatent,nlatent] discreteDIFFUSION;
 
   //dynamic system matrices
@@ -1254,14 +1319,14 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
   vector[nt0meansstationary ? nlatent : 0] sasymCINT; // latent process asymptotic level
   
 
-  if(lineardynamics) discreteDIFFUSION = rep_matrix(0,nlatent,nlatent); //in case some elements remain zero due to derrind
+  if(nldynamics==0) discreteDIFFUSION = rep_matrix(0,nlatent,nlatent); //in case some elements remain zero due to derrind
+
+  if(savescores) kout = rep_array(rep_vector(99999,rows(kout[1])),ndatapoints);
 
   for(rowi in 1:ndatapoints){
 
-
     matrix[ukf ? nlatentpop : 0, ukffull ? 2*nlatentpop +2 : nlatentpop + 2 ] ukfstates; //sampled states relevant for dynamics
     matrix[ukf ? nmanifest : 0 , ukffull ? 2*nlatentpop +2 : nlatentpop + 2] ukfmeasures; // expected measures based on sampled states
-
     si=subject[rowi];
     
     if(T0check[rowi] == 1) { // calculate initial matrices if this is first row for si
@@ -1270,6 +1335,7 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
   vector[nparams] rawindparams;
   vector[nparams] tipredaddition;
   vector[nparams] indvaraddition;
+  int output = 0;
   
   if(si < 2 || (si > 1 && (nindvarying >0 || ntipred > 0))){ //si of 0 used
     tipredaddition = rep_vector(0,nparams);
@@ -1282,94 +1348,118 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
     rawindparams = rawpopmeans + tipredaddition + indvaraddition;
   }
 
-  if(si <= T0MEANSsubindex[nsubjects]){
+  if(si <= T0MEANSsubindex){
     for(ri in 1:size(T0MEANSsetup)){
-      sT0MEANS[T0MEANSsetup[ ri,1], T0MEANSsetup[ri,2]] = T0MEANSsetup[ri,3] ? tform(rawindparams[ T0MEANSsetup[ri,3] ], T0MEANSsetup[ri,4], T0MEANSvalues[ri,2], T0MEANSvalues[ri,3], T0MEANSvalues[ri,4] ) : T0MEANSvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(T0MEANSsetup[ ri,5] > 0 || T0MEANSsetup[ ri,6] > 0 || si < 2){
+        sT0MEANS[T0MEANSsetup[ ri,1], T0MEANSsetup[ri,2]] = T0MEANSsetup[ri,3] ? tform(rawindparams[ T0MEANSsetup[ri,3] ], T0MEANSsetup[ri,4], T0MEANSvalues[ri,2], T0MEANSvalues[ri,3], T0MEANSvalues[ri,4] ) : T0MEANSvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= LAMBDAsubindex[nsubjects]){
+  if(si <= LAMBDAsubindex){
     for(ri in 1:size(LAMBDAsetup)){
-      sLAMBDA[LAMBDAsetup[ ri,1], LAMBDAsetup[ri,2]] = LAMBDAsetup[ri,3] ? tform(rawindparams[ LAMBDAsetup[ri,3] ], LAMBDAsetup[ri,4], LAMBDAvalues[ri,2], LAMBDAvalues[ri,3], LAMBDAvalues[ri,4] ) : LAMBDAvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(LAMBDAsetup[ ri,5] > 0 || LAMBDAsetup[ ri,6] > 0 || si < 2){
+        sLAMBDA[LAMBDAsetup[ ri,1], LAMBDAsetup[ri,2]] = LAMBDAsetup[ri,3] ? tform(rawindparams[ LAMBDAsetup[ri,3] ], LAMBDAsetup[ri,4], LAMBDAvalues[ri,2], LAMBDAvalues[ri,3], LAMBDAvalues[ri,4] ) : LAMBDAvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= DRIFTsubindex[nsubjects]){
+  if(si <= DRIFTsubindex){
     for(ri in 1:size(DRIFTsetup)){
-      sDRIFT[DRIFTsetup[ ri,1], DRIFTsetup[ri,2]] = DRIFTsetup[ri,3] ? tform(rawindparams[ DRIFTsetup[ri,3] ], DRIFTsetup[ri,4], DRIFTvalues[ri,2], DRIFTvalues[ri,3], DRIFTvalues[ri,4] ) : DRIFTvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(DRIFTsetup[ ri,5] > 0 || DRIFTsetup[ ri,6] > 0 || si < 2){
+        sDRIFT[DRIFTsetup[ ri,1], DRIFTsetup[ri,2]] = DRIFTsetup[ri,3] ? tform(rawindparams[ DRIFTsetup[ri,3] ], DRIFTsetup[ri,4], DRIFTvalues[ri,2], DRIFTvalues[ri,3], DRIFTvalues[ri,4] ) : DRIFTvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= DIFFUSIONsubindex[nsubjects]){
+  if(si <= DIFFUSIONsubindex){
     for(ri in 1:size(DIFFUSIONsetup)){
-      sDIFFUSION[DIFFUSIONsetup[ ri,1], DIFFUSIONsetup[ri,2]] = DIFFUSIONsetup[ri,3] ? tform(rawindparams[ DIFFUSIONsetup[ri,3] ], DIFFUSIONsetup[ri,4], DIFFUSIONvalues[ri,2], DIFFUSIONvalues[ri,3], DIFFUSIONvalues[ri,4] ) : DIFFUSIONvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(DIFFUSIONsetup[ ri,5] > 0 || DIFFUSIONsetup[ ri,6] > 0 || si < 2){
+        sDIFFUSION[DIFFUSIONsetup[ ri,1], DIFFUSIONsetup[ri,2]] = DIFFUSIONsetup[ri,3] ? tform(rawindparams[ DIFFUSIONsetup[ri,3] ], DIFFUSIONsetup[ri,4], DIFFUSIONvalues[ri,2], DIFFUSIONvalues[ri,3], DIFFUSIONvalues[ri,4] ) : DIFFUSIONvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= MANIFESTVARsubindex[nsubjects]){
+  if(si <= MANIFESTVARsubindex){
     for(ri in 1:size(MANIFESTVARsetup)){
-      sMANIFESTVAR[MANIFESTVARsetup[ ri,1], MANIFESTVARsetup[ri,2]] = MANIFESTVARsetup[ri,3] ? tform(rawindparams[ MANIFESTVARsetup[ri,3] ], MANIFESTVARsetup[ri,4], MANIFESTVARvalues[ri,2], MANIFESTVARvalues[ri,3], MANIFESTVARvalues[ri,4] ) : MANIFESTVARvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(MANIFESTVARsetup[ ri,5] > 0 || MANIFESTVARsetup[ ri,6] > 0 || si < 2){
+        sMANIFESTVAR[MANIFESTVARsetup[ ri,1], MANIFESTVARsetup[ri,2]] = MANIFESTVARsetup[ri,3] ? tform(rawindparams[ MANIFESTVARsetup[ri,3] ], MANIFESTVARsetup[ri,4], MANIFESTVARvalues[ri,2], MANIFESTVARvalues[ri,3], MANIFESTVARvalues[ri,4] ) : MANIFESTVARvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= MANIFESTMEANSsubindex[nsubjects]){
+  if(si <= MANIFESTMEANSsubindex){
     for(ri in 1:size(MANIFESTMEANSsetup)){
-      sMANIFESTMEANS[MANIFESTMEANSsetup[ ri,1], MANIFESTMEANSsetup[ri,2]] = MANIFESTMEANSsetup[ri,3] ? tform(rawindparams[ MANIFESTMEANSsetup[ri,3] ], MANIFESTMEANSsetup[ri,4], MANIFESTMEANSvalues[ri,2], MANIFESTMEANSvalues[ri,3], MANIFESTMEANSvalues[ri,4] ) : MANIFESTMEANSvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(MANIFESTMEANSsetup[ ri,5] > 0 || MANIFESTMEANSsetup[ ri,6] > 0 || si < 2){
+        sMANIFESTMEANS[MANIFESTMEANSsetup[ ri,1], MANIFESTMEANSsetup[ri,2]] = MANIFESTMEANSsetup[ri,3] ? tform(rawindparams[ MANIFESTMEANSsetup[ri,3] ], MANIFESTMEANSsetup[ri,4], MANIFESTMEANSvalues[ri,2], MANIFESTMEANSvalues[ri,3], MANIFESTMEANSvalues[ri,4] ) : MANIFESTMEANSvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= CINTsubindex[nsubjects]){
+  if(si <= CINTsubindex){
     for(ri in 1:size(CINTsetup)){
-      sCINT[CINTsetup[ ri,1], CINTsetup[ri,2]] = CINTsetup[ri,3] ? tform(rawindparams[ CINTsetup[ri,3] ], CINTsetup[ri,4], CINTvalues[ri,2], CINTvalues[ri,3], CINTvalues[ri,4] ) : CINTvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(CINTsetup[ ri,5] > 0 || CINTsetup[ ri,6] > 0 || si < 2){
+        sCINT[CINTsetup[ ri,1], CINTsetup[ri,2]] = CINTsetup[ri,3] ? tform(rawindparams[ CINTsetup[ri,3] ], CINTsetup[ri,4], CINTvalues[ri,2], CINTvalues[ri,3], CINTvalues[ri,4] ) : CINTvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= T0VARsubindex[nsubjects]){
+  if(si <= T0VARsubindex){
     for(ri in 1:size(T0VARsetup)){
-      sT0VAR[T0VARsetup[ ri,1], T0VARsetup[ri,2]] = T0VARsetup[ri,3] ? tform(rawindparams[ T0VARsetup[ri,3] ], T0VARsetup[ri,4], T0VARvalues[ri,2], T0VARvalues[ri,3], T0VARvalues[ri,4] ) : T0VARvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(T0VARsetup[ ri,5] > 0 || T0VARsetup[ ri,6] > 0 || si < 2){
+        sT0VAR[T0VARsetup[ ri,1], T0VARsetup[ri,2]] = T0VARsetup[ri,3] ? tform(rawindparams[ T0VARsetup[ri,3] ], T0VARsetup[ri,4], T0VARvalues[ri,2], T0VARvalues[ri,3], T0VARvalues[ri,4] ) : T0VARvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= TDPREDEFFECTsubindex[nsubjects]){
+  if(si <= TDPREDEFFECTsubindex){
     for(ri in 1:size(TDPREDEFFECTsetup)){
-      sTDPREDEFFECT[TDPREDEFFECTsetup[ ri,1], TDPREDEFFECTsetup[ri,2]] = TDPREDEFFECTsetup[ri,3] ? tform(rawindparams[ TDPREDEFFECTsetup[ri,3] ], TDPREDEFFECTsetup[ri,4], TDPREDEFFECTvalues[ri,2], TDPREDEFFECTvalues[ri,3], TDPREDEFFECTvalues[ri,4] ) : TDPREDEFFECTvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(TDPREDEFFECTsetup[ ri,5] > 0 || TDPREDEFFECTsetup[ ri,6] > 0 || si < 2){
+        sTDPREDEFFECT[TDPREDEFFECTsetup[ ri,1], TDPREDEFFECTsetup[ri,2]] = TDPREDEFFECTsetup[ri,3] ? tform(rawindparams[ TDPREDEFFECTsetup[ri,3] ], TDPREDEFFECTsetup[ri,4], TDPREDEFFECTvalues[ri,2], TDPREDEFFECTvalues[ri,3], TDPREDEFFECTvalues[ri,4] ) : TDPREDEFFECTvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
-  if(si <= PARSsubindex[nsubjects]){
+  if(si <= PARSsubindex){
     for(ri in 1:size(PARSsetup)){
-      sPARS[PARSsetup[ ri,1], PARSsetup[ri,2]] = PARSsetup[ri,3] ? tform(rawindparams[ PARSsetup[ri,3] ], PARSsetup[ri,4], PARSvalues[ri,2], PARSvalues[ri,3], PARSvalues[ri,4] ) : PARSvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      if(PARSsetup[ ri,5] > 0 || PARSsetup[ ri,6] > 0 || si < 2){
+        sPARS[PARSsetup[ ri,1], PARSsetup[ri,2]] = PARSsetup[ri,3] ? tform(rawindparams[ PARSsetup[ri,3] ], PARSsetup[ri,4], PARSvalues[ri,2], PARSvalues[ri,3], PARSvalues[ri,4] ) : PARSvalues[ri,1]; //either transformed, scaled and offset free par, or fixed value
+      }
     }
   }
       
 
   // perform any whole matrix transformations 
     
-  if(si <= DIFFUSIONsubindex[nsubjects] && ukf==0) sDIFFUSION = sdcovsqrt2cov(sDIFFUSION);
 
-    if(si <= asymDIFFUSIONsubindex[nsubjects]) {
+  if(si <= DIFFUSIONsubindex &&(output==1|| ukf==0)) sDIFFUSION = sdcovsqrt2cov(sDIFFUSION,ukf);
+  if(ukf==0 || output ==1 || nt0varstationary > 0){
+    if(si <= asymDIFFUSIONsubindex) {
       if(ndiffusion < nlatent) sasymDIFFUSION = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
 
-      if(continuoustime==1 && ukf==0) sasymDIFFUSION[ derrind, derrind] = to_matrix( 
-      -( kron_prod( sDRIFT[ derrind, derrind ], IIlatent[ derrind, derrind ]) + 
-         kron_prod(IIlatent[ derrind, derrind ], sDRIFT[ derrind, derrind ]) ) \ 
-      to_vector( sDIFFUSION[ derrind, derrind ] + IIlatent[ derrind, derrind ] * 1e-5), ndiffusion,ndiffusion);
+      if(continuoustime==1) sasymDIFFUSION[ derrind, derrind] = to_matrix( 
+      -kronsum(sDRIFT[ derrind, derrind ]) \  to_vector( 
+          ( (output==0 && ukf==1) ? tcrossprod(sDIFFUSION[ derrind, derrind ]) : sDIFFUSION[ derrind, derrind ] ) + 
+          IIlatent[ derrind, derrind ] * 1e-5), ndiffusion,ndiffusion);
 
       if(continuoustime==0) sasymDIFFUSION = to_matrix( (IIlatent2 - 
-        kron_prod(sDRIFT, sDRIFT)) *  to_vector(sDIFFUSION) , ndiffusion, ndiffusion);
+        sqkron_prod(sDRIFT, sDRIFT)) *  to_vector(
+          (output==0 && ukf==1) ? tcrossprod(sDIFFUSION[ derrind, derrind ]) : sDIFFUSION[ derrind, derrind ])
+        ,ndiffusion, ndiffusion);
     } //end asymdiffusion loops
+  }
           
     if(nt0meansstationary > 0){
-      if(si <= asymCINTsubindex[nsubjects]){
+      if(si <= asymCINTsubindex){
         if(continuoustime==1) sasymCINT =  -sDRIFT \ sCINT[ ,1 ];
         if(continuoustime==0) sasymCINT =  (IIlatent - sDRIFT) \ sCINT[,1 ];
       }
@@ -1377,24 +1467,27 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
 
           
     if(binomial==0){
-      if(si <= MANIFESTVARsubindex[nsubjects]) {
+      if(si <= MANIFESTVARsubindex) {
          for(ri in 1:nmanifest) sMANIFESTVAR[ri,ri] = square(sMANIFESTVAR[ri,ri]);
       }
     }
           
           
-    if(si <= T0VARsubindex[nsubjects]) {
-      if(ukf==0) sT0VAR = sdcovsqrt2cov(sT0VAR);
-      if(nt0varstationary > 0) for(ri in 1:nt0varstationary){
-        sT0VAR[t0varstationary[ri,1],t0varstationary[ri,2] ] = 
-          sasymDIFFUSION[t0varstationary[ri,1],t0varstationary[ri,2] ];
-        sT0VAR[t0varstationary[ri,2],t0varstationary[ri,1] ] = 
-          sasymDIFFUSION[t0varstationary[ri,2],t0varstationary[ri,1] ];
+    if(si <= T0VARsubindex) {
+      if(ukf==0 || output==1) sT0VAR = sdcovsqrt2cov(sT0VAR,ukf);
+      if(nt0varstationary > 0) {
+        if(ukf==1 && output ==0) sasymDIFFUSION = cholesky_decompose(makesym(sasymDIFFUSION,verbose));
+          for(ri in 1:nt0varstationary){ // in case of negative variances
+          sT0VAR[t0varstationary[ri,1],t0varstationary[ri,2] ] = 
+           t0varstationary[ri,1] == t0varstationary[ri,2] ? 
+            sqrt(square(sasymDIFFUSION[t0varstationary[ri,1],t0varstationary[ri,2] ])) : 
+            sasymDIFFUSION[t0varstationary[ri,1],t0varstationary[ri,2] ];
+        }
       }
     }
     
     if(nt0meansstationary > 0){
-      if(si <= T0MEANSsubindex[nsubjects]) {
+      if(si <= T0MEANSsubindex) {
         for(ri in 1:nt0meansstationary){
           sT0MEANS[t0meansstationary[ri,1] , 1] = 
             sasymCINT[t0meansstationary[ri,1] ];
@@ -1409,23 +1502,21 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
       if(ukf==1){
         eta = rep_vector(0,nlatentpop); // because some values stay zero
         sigpoints = rep_matrix(0, nlatentpop,nlatentpop);
-      
         if(intoverpop==1) {
           if(ntipred ==0) eta[ (nlatent+1):(nlatentpop)] = rawpopmeans[indvaryingindex];
           if(ntipred >0) eta[ (nlatent+1):(nlatentpop)] = rawpopmeans[indvaryingindex] + TIPREDEFFECT[indvaryingindex] * tipreds[si]';
         }
       }
 
-
       if(ukf==0){
-      eta = sT0MEANS[,1]; //prior for initial latent state
-      if(ntdpred > 0) eta += sTDPREDEFFECT * tdpreds[rowi];
-      etacov =  sT0VAR;
+        eta = sT0MEANS[,1]; //prior for initial latent state
+        if(ntdpred > 0) eta += sTDPREDEFFECT * tdpreds[rowi];
+        etacov =  sT0VAR;
       }
 
     } //end T0 matrices
 
-    if(lineardynamics==1 && ukf==0 && T0check[rowi]==0){ //linear kf time update
+    if(nldynamics==0 && ukf==0 && T0check[rowi]==0){ //linear kf time update
     
       if(continuoustime ==1){
         int dtchange = 0;
@@ -1435,14 +1526,13 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
           dtchange = 1;
         } else if(T0check[rowi-1] == 0 && dT[rowi-1] != dT[rowi]) dtchange = 1;
         
-        if(dtchange==1 || (T0check[rowi-1]==1 && si <= DRIFTsubindex[si] && si <= CINTsubindex[si])){
+        if(dtchange==1 || (T0check[rowi-1]==1 && (si <= DRIFTsubindex || si <= CINTsubindex))){
           discreteDRIFT = expm2(append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1)) * dT[rowi]);
         }
     
-        if(dtchange==1 || (T0check[rowi-1]==1 && (si <= DIFFUSIONsubindex[si]|| si <= DRIFTsubindex[si]))){
+        if(dtchange==1 || (T0check[rowi-1]==1 && (si <= DIFFUSIONsubindex|| si <= DRIFTsubindex))){
           discreteDIFFUSION[derrind, derrind] = sasymDIFFUSION[derrind, derrind] - 
             quad_form( sasymDIFFUSION[derrind, derrind], discreteDRIFT[derrind, derrind]' );
-          //discreteDIFFUSION[derrind, derrind] = discreteDIFFUSIONcalc(sDRIFT[derrind, derrind], sDIFFUSION[derrind, derrind], dT[rowi]);
           if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
         }
       }
@@ -1450,7 +1540,6 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
       if(continuoustime==0 && T0check[rowi-1] == 1){
         discreteDRIFT=append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1));
         discreteDRIFT[nlatent+1,nlatent+1] = 1;
-        //discreteCINT=sCINT[,1];
         discreteDIFFUSION=sDIFFUSION;
         if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
       }
@@ -1519,11 +1608,10 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
               if(statei > 0) J[1:nlatent,statei] = (( sDRIFT * state[1:nlatent] + sCINT[,1]) - base)/1e-6;
             }
             ;
-
+ //find a way to remove this repeat
             Je= expm2(J * dTsmall[rowi]) ;
             discreteDRIFT = expm2(append_row(append_col(sDRIFT,sCINT),rep_vector(0,nlatent+1)') * dTsmall[rowi]);
-            sasymDIFFUSION = to_matrix(  -( kron_prod( J[1:nlatent,1:nlatent], IIlatent) +  
-              kron_prod(IIlatent, J[1:nlatent,1:nlatent]) ) \ to_vector(tcrossprod(sDIFFUSION)), nlatent,nlatent);
+            sasymDIFFUSION = to_matrix(  -kronsum(J[1:nlatent,1:nlatent]) \ to_vector(tcrossprod(sDIFFUSION)), nlatent,nlatent);
             discreteDIFFUSION =  sasymDIFFUSION - quad_form( sasymDIFFUSION, Je[1:nlatent,1:nlatent]' );
             etacov = quad_form(etacov, Je');
             etacov[1:nlatent,1:nlatent] += discreteDIFFUSION;
@@ -1595,7 +1683,7 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
         sigpoints[1:nlatent,1:nlatent] = sT0VAR * sqrtukfadjust;
       }
       
-      if(T0check[rowi]==0)  sigpoints = cholesky_decompose(makesym(etacov)) * sqrtukfadjust;
+      if(T0check[rowi]==0)  sigpoints = cholesky_decompose(makesym(etacov,verbose)) * sqrtukfadjust;
     
       //configure ukf states
       for(statei in 2:cols(ukfstates) ){ //for each ukf state sample
@@ -1635,28 +1723,25 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
       }
       if(ukffull == 0){
         eta = ukfstates[,2];
-        etacov = tcrossprod(ukfstates[,3:(nlatentpop+2)] - rep_matrix(ukfstates[,2],nlatentpop)) /asquared / (nlatentpop*2+1);
+        etacov = tcrossprod(ukfstates[,3:(nlatentpop+2)] - rep_matrix(ukfstates[,2],nlatentpop)) /asquared / (nlatentpop+.5);
       }
     } //end ukf if necessary time update
   } // end non linear time update
 
 
-  if(savescores==1) kout[rowi,(nmanifest*2+1):(nmanifest*2+nlatent)] = eta;
+  if(savescores==1) kout[rowi,(nmanifest*4+1):(nmanifest*4+nlatent)] = eta;
 if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
 
-    if(intoverstates==0 && lineardynamics == 1) {
+    if(intoverstates==0 && nldynamics == 0) {
       if(T0check[rowi]==1) eta += cholesky_decompose(sT0VAR) * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
       if(T0check[rowi]==0) eta +=  discreteDIFFUSION * etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
     }
 
     if (nobs_y[rowi] > 0) {  // if some observations create right size matrices for missingness and calculate...
     
-      int o[nobs_y[rowi]]; //which indicators are observed
-      int o1[nbinary_y[rowi]]; //which indicators are observed and binary
-      int o0[ncont_y[rowi]]; //which indicators are observed and continuous
-      o = whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
-      o1 = whichbinary_y[rowi,1:nbinary_y[rowi]];
-      o0 = whichcont_y[rowi,1:ncont_y[rowi]];
+      int o[nobs_y[rowi]]= whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
+      int o1[nbinary_y[rowi]]= whichbinary_y[rowi,1:nbinary_y[rowi]];
+      int o0[ncont_y[rowi]]= whichcont_y[rowi,1:ncont_y[rowi]];
 
       if(nlmeasurement==0){ //non ukf measurement
         if(intoverstates==1) { //classic kalman
@@ -1673,7 +1758,7 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
         if(intoverstates==0) { //sampled states
           if(ncont_y[rowi] > 0) {
             ypred[o0] = sMANIFESTMEANS[o0,1] + sLAMBDA[o0,] * eta[1:nlatent];
-            if(ncont_y[rowi] > 0) ypredcov_sqrt[o0,o0] = sMANIFESTVAR[o0,o0];
+            ypredcov_sqrt[o0,o0] = sMANIFESTVAR[o0,o0];
           }
           if(nbinary_y[rowi] > 0) ypred[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * eta[1:nlatent])));
         }
@@ -1739,24 +1824,57 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
           ypred[o] = ukfmeasures[o,2];
           for(ci in 3:cols(ukfmeasures)) ukfmeasures[o,ci] += -ukfmeasures[o,2];
           for(ci in 3:cols(ukfstates)) ukfstates[,ci] += -ukfstates[,2];
-          ypredcov[o,o] = tcrossprod(ukfmeasures[o,3:(nlatentpop+2)]) /asquared / (nlatentpop*2+1) + diag_matrix(merrorstates[o,2]);
-          K[,o] = mdivide_right(ukfstates[,3:cols(ukfstates)] * ukfmeasures[o,3:cols(ukfmeasures)]' /asquared / (nlatentpop*2+1), ypredcov[o,o]); 
+          ypredcov[o,o] = tcrossprod(ukfmeasures[o,3:(nlatentpop+2)]) /asquared / (nlatentpop +.5) + diag_matrix(merrorstates[o,2]);
+          K[,o] = mdivide_right(ukfstates[,3:cols(ukfstates)] * ukfmeasures[o,3:cols(ukfmeasures)]' /asquared / (nlatentpop+.5), ypredcov[o,o]); 
         }
         etacov +=  - quad_form(ypredcov[o,o],  K[,o]');
       } //end ukf measurement
 
 
-      if(ncont_y[rowi] > 0) ypredcov_sqrt[o0,o0]=cholesky_decompose(makesym(ypredcov[o0, o0])); //use o0, or o0?
-        if(ncont_y[rowi] > 0) Ygen[ rowi, o0] = ypred[o0] + ypredcov_sqrt[o0,o0] * Ygenbase[rowi,o0]; //multi_normal_cholesky_rng(ypred[o0], ypredcov_sqrt[o0,o0]);
-        if(nbinary_y[rowi] > 0) for(obsi in 1:size(o1)) Ygen[rowi, o1[obsi]] = ypred[o1[obsi]] > Ygenbase[rowi,o1[obsi]] ? 1 : 0; //bernoulli_rng(ypred[o1[obsi]]);
-        err[o] = Ygen[rowi,o] - ypred[o]; // prediction error
-      
 
+{
+int skipupd = 0;
+        for(vi in 1:nobs_y[rowi]){
+          if(fabs(ypred[o[vi]]) > 1e10 || is_nan(ypred[o[vi]]) || is_inf(ypred[o[vi]])) {
+            skipupd = 1; 
+            ypred[o[vi]] =99999;
+if(verbose > 1) print("pp ypred problem! row ", rowi);
+          }
+        }
+        if(skipupd==0){ 
+          if(ncont_y[rowi] > 0) ypredcov_sqrt[o0,o0]=cholesky_decompose(makesym(ypredcov[o0, o0],verbose)); 
+          if(ncont_y[rowi] > 0) Ygen[ rowi, o0] = ypred[o0] + ypredcov_sqrt[o0,o0] * Ygenbase[rowi,o0]; 
+          if(nbinary_y[rowi] > 0) for(obsi in 1:size(o1)) Ygen[rowi, o1[obsi]] = ypred[o1[obsi]] > Ygenbase[rowi,o1[obsi]] ? 1 : 0; 
+          for(vi in 1:nobs_y[rowi]) if(is_nan(Ygen[rowi,o[vi]])) {
+            Ygen[rowi,o[vi]] = 99999;
+print("pp ygen problem! row ", rowi);
+          }
+        err[o] = Ygen[rowi,o] - ypred[o]; // prediction error
+        }
+if(verbose > 1) {
+print("rowi ",rowi, "  si ", si, 
+          "  eta ",eta,"  etacov ",etacov,"  ypred ",ypred,"  ypredcov ",ypredcov, "  K ",K,
+          "  sDRIFT ", sDRIFT, " sDIFFUSION ", sDIFFUSION, " sCINT ", sCINT, "  sMANIFESTVAR ", diagonal(sMANIFESTVAR), "  sMANIFESTMEANS ", sMANIFESTMEANS, 
+          "  sT0VAR", sT0VAR, " sT0MEANS ", sT0MEANS,
+          "  rawpopsd ", rawpopsd, "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
+        print("discreteDRIFT ",discreteDRIFT,  "  discreteDIFFUSION ", discreteDIFFUSION)
+}
+if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
+}
+      
+    
+      if(savescores==1) {
+        int tmpindex[nobs_y[rowi]] = o;
+        for(oi in 1:ncont_y[rowi]) tmpindex[oi] +=  nmanifest*2;
+        kout[rowi,tmpindex] = err[o];
+        for(oi in 1:ncont_y[rowi]) tmpindex[oi] +=  nmanifest;
+        kout[rowi,tmpindex] = ypred[o];
+      }
       if(intoverstates==1) eta +=  (K[,o] * err[o]);
   
       
     }//end nobs > 0 section
-  if(savescores==1) kout[rowi,(nmanifest*2+nlatent+1):(nmanifest*2++nlatent+nlatent)] = eta;
+  if(savescores==1) kout[rowi,(nmanifest*4+nlatent+1):(nmanifest*4+nlatent+nlatent)] = eta;
 }//end rowi
 
 

@@ -56,10 +56,11 @@ If unsure, leave default of 'all' ! Ignored if intoverstates=FALSE.}
 \item{optimcontrol}{list of parameters sent to \code{\link{optimstan}} governing optimization / importance sampling.}
 
 \item{nlcontrol}{List of non-linear control parameters. 
-\code{lineardynamics} defaults to "auto", but may also be a logical. Set to TRUE to use estimator that assumes linear dynamics, 
-FALSE to use non-linear integration. "auto" attempts to select the appropriate choice.
+\code{nldynamics} defaults to "auto", but may also be a logical. Set to FALSE to use estimator that assumes linear dynamics, 
+TRUE to use non-linear estimator. "auto" selects linear when the model is obviously linear, 
+otherwise nonlinear -- nonlinear is slower.
 \code{nlmeasurement} defaults to "auto", but may also be a logical. Set to TRUE to use non linear measurement model estimator, 
-FALSE to use linear model. "auto" attempts to select the appropriate choice. Non-linear methods are slower but applicable to both linear
+FALSE to use linear model. "auto" selects linear if appropriate, otherwise nonlinear. Non-linear methods are slower but applicable to both linear
 and non linear cases.
 \code{ukffull} may be TRUE or FALSE. If FALSE, nonlinear filtering via the unscented filter uses a minimal number of sigma points,
 that does not capture skew in the resulting distribution. 
@@ -70,7 +71,7 @@ the integration is nested within an Euler like loop.
 Smaller values may offer greater accuracy, but are slower and not always necessary. Given the exponential integration,
 linear model elements are fit exactly with only a single step. 
 \code{ukfspread} should be a small positive numeric value, indicating what fraction of a standard deviation to 
-use for unscented sigma points. Values between 1e-6 and 2 have tended to be reasonable, in our experience. 
+use for unscented sigma points. Values between 1e-4 and 2 have tended to be reasonable, in our experience. 
 In general, larger values may not make sense when using the default of \code{ukffull=FALSE}.}
 
 \item{nopriors}{logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.}
@@ -80,12 +81,12 @@ In general, larger values may not make sense when using the default of \code{ukf
 \item{cores}{number of cpu cores to use. Either 'maxneeded' to use as many as available,
 up to the number of chains, or a positive integer.}
 
-\item{inits}{vector of parameter start values, as returned by the rstan function \code{\link[rstan]{unconstrain_pars}} for instance.}
+\item{inits}{vector of parameter start values, as returned by the rstan function \code{rstan::unconstrain_pars} for instance.}
 
 \item{forcerecompile}{logical. For development purposes. 
 If TRUE, stan model is recompiled, regardless of apparent need for compilation.}
 
-\item{savescores}{Logical. If TRUE, latent process values are saved in output. For datasets with many latent processes 
+\item{savescores}{Logical. If TRUE, output from the Kalman filter is saved in output. For datasets with many variables
 or time points, will increase file size substantially.}
 
 \item{gendata}{Logical -- generate random data sets per sample? For later plotting / model checking.
