@@ -58,23 +58,32 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='margi
       denslist<-list()
       #mean
 
-      param=stats::rnorm(length(rawpopsdprior))
+      rawpopmeans=stats::rnorm(length(rawpopsdprior))
       # xmean=eval(parse(text=paste0(m$transform[rowi])))
-      denslist[[1]]=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi])
+      denslist[[1]]=tform(rawpopmeans,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi])
       leg <- c('Pop. mean prior')
       colvec <- c(1)
       
       if(m$indvarying[rowi]){
-      #high
-      param=stats::rnorm(length(rawpopsdprior),highmean,rawpopsdprior)
-      denslist[[2]]=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi])
-      
-      #low
-      param=stats::rnorm(length(rawpopsdprior),lowmean,rawpopsdprior)
-      denslist[[3]]=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi])
-
-      leg <- c('Pop. mean prior', paste0('Subject prior | mean = ',lowmean),paste0('Subject prior | mean = ',highmean))
-      colvec <- c(1,2,4)
+        
+        if(inddifdevs[1]=='marginalise'){
+          param=stats::rnorm(length(rawpopsdprior),rawpopmeans,rawpopsdprior)
+          denslist[[2]]=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi])
+          leg <- c('Pop. mean prior', paste0('Subject prior',lowmean))
+          colvec <- c(1,2)
+        }
+        if(inddifdevs[1]!='marginalise'){
+        #high
+        param=stats::rnorm(length(rawpopsdprior),highmean,rawpopsdprior)
+        denslist[[2]]=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi])
+        
+        #low
+        param=stats::rnorm(length(rawpopsdprior),lowmean,rawpopsdprior)
+        denslist[[3]]=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi])
+  
+        leg <- c('Pop. mean prior', paste0('Subject prior | mean = ',lowmean),paste0('Subject prior | mean = ',highmean))
+        colvec <- c(1,2,4)
+        }
       }
       
         ctDensityList(denslist,plot = TRUE, lwd=2,probs=c(.05,.95),main=m$param[rowi],

@@ -37,11 +37,14 @@ stanplot<-function(chains,seed){
     chains<-',chains,';
     iter<-',iter,';
     
-    notyet<-TRUE
-    while(notyet==TRUE){
-    Sys.sleep(1);
-    samps<-try(read.csv(file=paste0(seed,"samples_1.csv"),comment.char="#"),silent=TRUE)
-    if(class(samps) != "try-error") notyet<-FALSE
+    notyet<-rep(TRUE,chains)
+    while(any(notyet==TRUE)){
+      Sys.sleep(1);
+      # samps<-try(read.csv(file=paste0(seed,"samples_1.csv"),comment.char="#"),silent=TRUE)
+      for(chaini in 1:chains) {
+        samps<-try(data.table::fread(file=paste0(seed,"samples_1.csv"),skip="rawpop"),silent=TRUE)
+        if(class(samps)[1] != "try-error") notyet[chaini]<-FALSE
+      }
     }
     varnames<-colnames(samps);
     # require(shiny); 
@@ -56,7 +59,8 @@ stanplot<-function(chains,seed){
     begin<-input$begin
     samps<-list()
     for(chaini in 1:chains) {
-    samps[[chaini]]<-try(read.csv(file=paste0(seed,"samples_",chaini,".csv"),comment.char="#",colClasses = colimport),silent=TRUE)
+    # samps[[chaini]]<-try(read.csv(file=paste0(seed,"samples_",chaini,".csv"),comment.char="#",colClasses = colimport),silent=TRUE)
+    samps[[chaini]]<-try(as.matrix(data.table::fread(file=paste0(seed,"samples_",chaini,".csv"),select = parameter,skip="rawpop")),silent=TRUE)
     if(class(samps[[chaini]])=="try-error") samps[[chaini]]=samps[[1]][1,,drop=FALSE]
 }
     

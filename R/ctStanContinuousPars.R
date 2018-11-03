@@ -57,6 +57,7 @@ ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
     subindex <- ctstanfitobj$data[[paste0(matname,'subindex')]]
     # if(dim(e[[matname]])[2] > 1) subselection <- subjects else subselection <- 1
     if(max(subindex) > 1 || subjects =='all') subselection <- subjects else subselection <- 1
+    subselection=ctstanfitobj$standata[[paste0(matname,'subindex')]][subselection]
     
     # vector <- FALSE
     

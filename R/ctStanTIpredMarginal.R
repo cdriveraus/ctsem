@@ -23,7 +23,7 @@ ctStanTIpredMarginal<-function(fit,tipred,pars,probs=c(.025,.5,.975),useimputed=
   for(dimi in 2:(length(pdim)-1)){
     if(dimi==2) pnames <- 1:pdim[dimi] else pnames <- paste0(pnames,', ',rep(1:pdim[dimi],each=length(pnames)))
   }
-  dimnames(p) <- list(fit$data$idmap[,'original'],
+  dimnames(p) <- list(fit$setup$idmap[,'original'],
     paste0(pars,'[',pnames,']'),
     paste0('Q',probs*100,'%'))
   
