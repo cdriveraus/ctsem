@@ -72,7 +72,7 @@ stanplot<-function(chains,seed){
     c(samps[[1]][-1:-begin,parameter],rep(NA,lengthi-length(samps[[1]][-1:-begin,parameter]))),
     type="l",xlab="",ylab="",main=parameter,
     log=ifelse(parameter %in% c("stepsize__"),"y",""),
-    xlim=c(begin,lengthi),
+    xlim=c(begin,lengthi+begin-1),
     ylim=c(mini,maxi)
     )
     
