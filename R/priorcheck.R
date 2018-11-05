@@ -8,15 +8,15 @@ rownames(out)=do.call(c,c(lapply(pars, function(obji) paste0(obji,'_',1:ncol(e[[
 out=data.frame(out,do.call(c,c(lapply(pars, function(obji) 1:ncol(e[[obji]])))))
 out=data.frame(out,do.call(c,c(lapply(pars, function(obji) rep(obji, ncol(e[[obji]]))))),stringsAsFactors = FALSE)
 colnames(out)=c('mean','sd', 'param', 'object')
-rownames(out) = getparnamesfromraw(priorcheck=out,popsetup=sf$setup$popsetup)
+rownames(out) = getparnamesfromraw(priorcheck=out,sf=sf)
 return(out)
 }
 
-getparnamesfromraw <- function(priorcheck, popsetup){
+getparnamesfromraw <- function(priorcheck, sf){
   newnames=rownames(priorcheck)
   for(ni in 1:nrow(priorcheck)){
     if(priorcheck$object[ni] %in% 'rawpopmeans'){
-      newnames[ni]=paste0('rawpop_',popsetup$parname[popsetup$param %in% priorcheck$param[ni]])
+      newnames[ni]=paste0('rawpop_',sf$standata$popsetup$parname[sf$standata$popsetup$param %in% priorcheck$param[ni]])
     }
     if(priorcheck$object[ni] %in% 'tipredeffectparams'){
        newnames[ni]=paste0('rawtipredeffect_',paste0(

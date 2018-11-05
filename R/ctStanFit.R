@@ -1588,6 +1588,7 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
   standata<-list(
     Y=cbind(as.matrix(datalong[,manifestNames])),
     subject=as.integer(datalong[,idName]),
+    time=datalong[,ctstanmodel$timeName], #not used in model but used elsewhere
     nsubjects=as.integer(nsubjects),
     nmanifest=as.integer(n.manifest),
     nldynamics=as.integer(nldynamics),

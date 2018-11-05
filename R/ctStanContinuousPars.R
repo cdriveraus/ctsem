@@ -56,7 +56,7 @@ ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
 
     subindex <- ctstanfitobj$data[[paste0(matname,'subindex')]]
     # if(dim(e[[matname]])[2] > 1) subselection <- subjects else subselection <- 1
-    if(max(subindex) > 1 || subjects =='all') subselection <- subjects else subselection <- 1
+    if(max(subindex) > 1 || subjects =='all') subselection <- 1:max(subindex) else subselection <- 1
     subselection=ctstanfitobj$standata[[paste0(matname,'subindex')]][subselection]
     
     # vector <- FALSE
@@ -68,9 +68,9 @@ ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
 
     # if(!vector) {
       calcfuncargs$inarray = e[[ifelse(subjects!='all', matname, paste0('pop_',matname))]]
-      if(subselection!='all') calcfuncargs$inarray  <- calcfuncargs$inarray[,subselection,,,drop=FALSE]
+      if(subjects!='all') calcfuncargs$inarray  <- calcfuncargs$inarray[,subselection,,,drop=FALSE]
       assign(matname, array(do.call(ctCollapse,calcfuncargs),
-        dim=dim(e[[ifelse(subjects!='all', matname, paste0('pop_',matname))]])[-c(1,if(subselection!='all') 2)]))
+        dim=dim(e[[ifelse(subjects!='all', matname, paste0('pop_',matname))]])[-c(1,if(subjects!='all') 2)]))
     # }
     
     # if(vector) {
