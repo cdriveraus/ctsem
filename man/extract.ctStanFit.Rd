@@ -4,10 +4,12 @@
 \alias{extract.ctStanFit}
 \title{Extract samples from a ctStanFit object}
 \usage{
-extract.ctStanFit(object)
+extract.ctStanFit(object, ...)
 }
 \arguments{
 \item{object}{ctStanFit object, samples may be from Stan's HMC, or the importance sampling approach of ctsem.}
+
+\item{...}{additional arguments to pass to \code{rstan::extract}.}
 }
 \value{
 Array of posterior samples.

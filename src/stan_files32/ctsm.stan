@@ -313,7 +313,7 @@ parameters {
   vector[nparams] rawpopmeans; // population level means 
 
   vector[nindvarying ? 1 : 0] rawpopsdbase; //population level std dev
-  simplex[nindvarying] rawpopsdprops;
+  simplex[nindvarying] rawpopsdprops[nindvarying ? 1 : 0];
   vector[nindvaryingoffdiagonals] sqrtpcov; // unconstrained basis of correlation parameters
   vector[intoverpop ? 0 : nindvarying*nsubjects] baseindparams; //vector of subject level deviations, on the raw scale
   
@@ -355,7 +355,7 @@ transformed parameters{
 
   if(nindvarying > 0){
     int counter =0;
-    rawpopsd = sqrt(rawpopsdprops * square(exp(2*rawpopsdbase-1))[1]) .*sdscale; // sqrts of proportions of total variance
+    rawpopsd = sqrt(rawpopsdprops[1] * square(exp(2*rawpopsdbase-1))[1]) .*sdscale; // sqrts of proportions of total variance
     for(j in 1:nindvarying){
       rawpopcovsqrt[j,j] = 1;
       for(i in 1:nindvarying){

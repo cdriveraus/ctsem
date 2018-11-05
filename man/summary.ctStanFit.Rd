@@ -5,7 +5,7 @@
 \title{summary.ctStanFit}
 \usage{
 \method{summary}{ctStanFit}(object, timeinterval = 1, digits = 3,
-  parmatrices = FALSE, parmatsamples = 200, ...)
+  parmatrices = FALSE, parmatsamples = 200, priorcheck = TRUE, ...)
 }
 \arguments{
 \item{object}{fit object from \code{\link{ctStanFit}}, of class ctStanFit.}
@@ -20,7 +20,9 @@ for large models with many samples.}
 
 \item{parmatsamples}{Number of samples to use for parmatrices calculations. More is slower, but more precise.}
 
-\item{...}{Unused at present.}
+\item{priorcheck}{Whether or not to use \code{ctsem:::priorchecking} to compare posterior mean and sd to prior mean and sd.}
+
+\item{...}{Additional arguments to pass to \code{ctsem:::priorcheckreport}, such as \code{meanlim}, or \code{sdlim}.}
 }
 \value{
 List containing summary items.
