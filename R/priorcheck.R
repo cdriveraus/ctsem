@@ -4,23 +4,23 @@ priorchecker <- function(sf,pars=c('rawpopmeans','rawpopsdbase','tipredeffectpar
   pars=unlist(lapply(pars,function(x) if(!is.null(dim(e[[x]]))) x))
   out=round(do.call(cbind,lapply(funcs, function(fn) do.call(c,
     lapply(pars, function(obji) apply(e[[obji]],2,fn,na.rm=TRUE)) ))),digits)
-rownames(out)=do.call(c,c(lapply(pars, function(obji) paste0(obji,'_',1:ncol(e[[obji]])))))
-out=data.frame(out,do.call(c,c(lapply(pars, function(obji) 1:ncol(e[[obji]])))))
-out=data.frame(out,do.call(c,c(lapply(pars, function(obji) rep(obji, ncol(e[[obji]]))))),stringsAsFactors = FALSE)
-colnames(out)=c('mean','sd', 'param', 'object')
-rownames(out) = getparnamesfromraw(priorcheck=out,sf=sf)
-return(out)
+  rownames(out)=do.call(c,c(lapply(pars, function(obji) paste0(obji,'_',1:ncol(e[[obji]])))))
+  out=data.frame(out,do.call(c,c(lapply(pars, function(obji) 1:ncol(e[[obji]])))))
+  out=data.frame(out,do.call(c,c(lapply(pars, function(obji) rep(obji, ncol(e[[obji]]))))),stringsAsFactors = FALSE)
+  colnames(out)=c('mean','sd', 'param', 'object')
+  rownames(out) = getparnamesfromraw(priorcheck=out,sf=sf)
+  return(out)
 }
 
 getparnamesfromraw <- function(priorcheck, sf){
   newnames=rownames(priorcheck)
   for(ni in 1:nrow(priorcheck)){
     if(priorcheck$object[ni] %in% 'rawpopmeans'){
-      newnames[ni]=paste0('rawpop_',sf$standata$popsetup$parname[sf$standata$popsetup$param %in% priorcheck$param[ni]])
+      newnames[ni]=paste0('rawpop_',sf$setup$popsetup$parname[sf$setup$popsetup$param %in% priorcheck$param[ni]][1])
     }
     if(priorcheck$object[ni] %in% 'tipredeffectparams'){
-       newnames[ni]=paste0('rawtipredeffect_',paste0(
-         which(sf$standata$TIPREDEFFECTsetup == priorcheck$param[ni],arr.ind = TRUE),collapse='_'))
+      newnames[ni]=paste0('rawtipredeffect_',paste0(
+        which(sf$standata$TIPREDEFFECTsetup == priorcheck$param[ni],arr.ind = TRUE),collapse='_'))
     }
   }
   return(newnames)
@@ -30,7 +30,7 @@ priorcheckreport <- function(sf, meanlim = 2, sdlim= .2,digits=2){
   p=priorchecker(sf)
   ps=sf$setup$popsetup
   p=p[abs(p$mean) > meanlim | p$sd > sdlim,]
-  out<-list(priorcheck_note='These posteriors exceeded arbitrary limits re normal(0,1) -- priors / transforms are likely somewhat informative. Not necessarily a problem.')
+  out<-list(priorcheck_note='The following posteriors exceeded arbitrary limits re normal(0,1) -- priors / transforms are likely somewhat informative. Not necessarily a problem.')
   out$priorcheck=p[,c('mean','sd')]
   
   if(any(p$object %in% 'rawpopsdbase')){
@@ -42,4 +42,4 @@ priorcheckreport <- function(sf, meanlim = 2, sdlim= .2,digits=2){
   }
   return(out)
 }
-    
+
