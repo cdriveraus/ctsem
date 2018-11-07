@@ -72,7 +72,7 @@ groups<-paste0('g',rep(1:2, each=10),'_')
 
 multif<-ctMultigroupFit(dat=ctExample4, groupings=groups,
                        ctmodelobj=basemodel, freemodel=freemodel)
-summary(multif)
+summary(multif,group=1)
 
 
 

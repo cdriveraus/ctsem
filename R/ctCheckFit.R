@@ -14,14 +14,13 @@
 #' traitmodel <- ctModel(n.manifest=2, n.latent=2, Tpoints=6, LAMBDA=diag(2), 
 #'   manifestNames=c('LeisureTime', 'Happiness'), 
 #'   latentNames=c('LeisureTime', 'Happiness'), TRAITVAR="auto")
-#' traitfit <- ctFit(datawide=ctExample1, ctmodelobj=traitmodel)
+#' traitfit <- ctFit(dat=ctExample1, ctmodelobj=traitmodel)
 #' 
 #' check <- ctCheckFit(traitfit,niter=5)
 #' plot(check)
 #' }
 ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
-  
-  if(fit$data$nsubjects==1) stop('Only for nsubjects > 1!')
+
   if(class(fit)=='ctsemFit'){
     if('Kalman' %in% fit$ctfitargs$objective) {
       suppressMessages(wdat <- ctLongToWide(fit$mxobj@data$observed,id='id',time='time',
@@ -31,6 +30,7 @@ ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
   }
   
   if(class(fit)=='ctStanFit') {
+    if(fit$data$nsubjects==1) stop('Only for nsubjects > 1!')
     ldat <- cbind(fit$data$subject,fit$data$time,fit$data$Y)
     tpoints <- max(unlist(lapply(unique(fit$data$subject),function(x) length(fit$data$subject[fit$data$subject==x]))))
     colnames(ldat) <- c('subject','time', fit$ctstanmodel$manifestNames)

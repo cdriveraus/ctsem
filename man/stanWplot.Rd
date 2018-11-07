@@ -4,9 +4,11 @@
 \alias{stanWplot}
 \title{Runs stan, and plots sampling information while sampling.}
 \usage{
-stanWplot(iter = 2000, chains = 4, ...)
+stanWplot(object, iter = 2000, chains = 4, ...)
 }
 \arguments{
+\item{object}{stan model object}
+
 \item{iter}{Number of iterations}
 
 \item{chains}{Number of chains}
@@ -28,6 +30,7 @@ model {
   y[2] ~ double_exponential(0, 2);
 } 
 "
-fit1 <- stanWplot(iter = 100000,chains=2,cores=1, model_code = scode)
+sm <- stan_model(model_code = scode)
+fit1 <- stanWplot(object = sm,iter = 100000,chains=2,cores=1)
 }
 }

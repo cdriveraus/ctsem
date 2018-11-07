@@ -65,6 +65,8 @@
 #' @param gendata Logical -- generate random data sets per sample? For later plotting / model checking.
 #' For datasets with many manifest variables or time points, may increase file size substantially. Needs to be set FALSE for win32.
 #' @param ... additional arguments to pass to \code{\link[rstan]{stan}} function.
+#' @importFrom Rcpp evalCpp
+#' @export
 #' @examples
 #' \dontrun{
 #' #test data with 2 manifest indicators measuring 1 latent process each, 
@@ -92,9 +94,306 @@
 #' 
 #' plot(fit)
 #' 
+#' 
+#' 
+#' ###### EXTENDED EXAMPLES #######
+#' 
+#' 
+#' 
+#' library(ctsem)
+#' set.seed(3)
+#' 
+#' #recommended to adjust these to appropriate number of cores on machine / 
+#' # chains desired. (min 3 chains recommended, but not necessary here)
+#' setcores <- 3
+#' setchains <- 3
+#' 
+#' #### Data generation (this section needs to be run, but not necessary to understand!)
+#' Tpoints <- 20
+#' nmanifest <- 4
+#' nlatent <- 2
+#' nsubjects<-20
+#' 
+#' #random effects
+#' age <- rnorm(nsubjects) #standardised
+#' cint1<-rnorm(nsubjects,2,.3)+age*.5
+#' cint2 <- cint1*.5+rnorm(nsubjects,1,.2)+age*.5
+#' tdpredeffect <- rnorm(nsubjects,5,.3)+age*.5
+#' 
+#' for(i in 1:nsubjects){
+#'   #generating model
+#'   gm<-ctModel(Tpoints=Tpoints,n.manifest = nmanifest,n.latent = nlatent,n.TDpred = 1,
+#'     LAMBDA = matrix(c(1,0,0,0, 0,1,.8,1.3),nrow=nmanifest,ncol=nlatent),
+#'     DRIFT=matrix(c(-.3, .1, 0, -.5),nlatent,nlatent),
+#'     TDPREDEFFECT=matrix(c(tdpredeffect[i],0),nrow=nlatent),
+#'     TDPREDMEANS=matrix(c(rep(0,Tpoints-10),1,rep(0,9)),ncol=1),
+#'     DIFFUSION = matrix(c(.5, 0, 0, .5),2,2),
+#'     CINT = matrix(c(cint1[i],cint2[i]),ncol=1),
+#'     T0VAR=diag(2,nlatent,nlatent),
+#'     MANIFESTVAR = diag(.5, nmanifest))
+#'   
+#'   #generate data
+#'   newdat <- ctGenerate(ctmodelobj = gm,n.subjects = 1,burnin = 2,
+#'     dtmat<-rbind(c(rep(.5,8),3,rep(.5,Tpoints-9))),
+#'       wide = FALSE)
+#'   newdat[,'id'] <- i #set id for each subject
+#'   newdat <- cbind(newdat,age[i]) #include time independent predictor
+#'   if(i ==1) {
+#'     dat <- newdat[1:(Tpoints-10),] #pre intervention data
+#'     dat2 <- newdat #including post intervention data
+#'   }
+#'   if(i > 1) {
+#'     dat <- rbind(dat, newdat[1:(Tpoints-10),])
+#'     dat2 <- rbind(dat2,newdat)
+#'   }
 #' }
-#' @importFrom Rcpp evalCpp
-#' @export
+#' colnames(dat)[ncol(dat)] <- 'age'
+#' colnames(dat2)[ncol(dat)] <- 'age'
+#' 
+#' 
+#' #plot generated data for sanity
+#' plot(age)
+#' matplot(dat[,gm$manifestNames],type='l',pch=1)
+#' plotvar <- 'Y1'
+#' plot(dat[dat[,'id']==1,'time'],dat[dat[,'id']==1,plotvar],type='l',
+#'   ylim=range(dat[,plotvar],na.rm=TRUE))
+#' for(i in 2:nsubjects){
+#'   points(dat[dat[,'id']==i,'time'],dat[dat[,'id']==i,plotvar],type='l',col=i)
+#' }
+#' 
+#' 
+#' 
+#' 
+#' 
+#' #### Model fitting (from here it is good to understand!)
+#' 
+#' #Specify univariate linear growth curve
+#' #page 5 of https://cran.r-project.org/web/packages/ctsem/vignettes/hierarchical.pdf 
+#' # documents these arguments (or use ?ctModel )
+#' 
+#' m1 <- ctModel(n.manifest = 1,n.latent = 1,n.TIpred = 1, type = 'stanct',
+#'   manifestNames = c('Y1'), latentNames=c('L1'),TIpredNames = 'age',
+#'   DRIFT=matrix(-1e-5,nrow=1,ncol=1),
+#'   DIFFUSION=matrix(0,nrow=1,ncol=1),
+#'   CINT=matrix(c('cint1'),ncol=1),
+#'   T0MEANS=matrix(c('t0m1'),ncol=1),
+#'   T0VAR=matrix(0,nrow=1,ncol=1),
+#'   LAMBDA = diag(1),
+#'   MANIFESTMEANS=matrix(0,ncol=1),
+#'   MANIFESTVAR=matrix(c('merror1'),nrow=1,ncol=1))
+#' 
+#' #modify between subject aspects -- alternatively, run: edit(m1$pars)
+#' m1$pars$indvarying[-which(m1$pars$matrix %in% c('T0MEANS','CINT'))] <- FALSE
+#' m1$pars$age_effect[-which(m1$pars$matrix %in% c('T0MEANS','CINT'))] <- FALSE
+#' 
+#' 
+#' plot(m1) #plot prior distributions
+#' 
+#' #fit
+#' f1 <- ctStanFit(datalong = dat, ctstanmodel = m1, 
+#'   cores = setcores,chains = setchains,plot=TRUE,
+#'   control=list(max_treedepth=7),iter=150)
+#' 
+#' summary(f1)
+#' 
+#' #plots of individual subject models v data
+#' ctKalman(f1,timestep=.01,plot=TRUE,subjects=1:4,kalmanvec=c('y','etasmooth'))
+#' ctKalman(f1,timestep=.01,plot=TRUE,subjects=1,kalmanvec=c('y','ysmooth'))
+#' 
+#' ctStanPlotPost(f1) #compare prior to posterior distributions 
+#' ctStanPlotPost(f1, priorwidth = FALSE) #rescale to width of posterior 
+#' 
+#' ctStanPostPredict(f1) #compare randomly generated data from posterior to observed data
+#' 
+#' cf<-ctCheckFit(f1) #compare covariance of randomly generated data to observed cov
+#' plot(cf)
+#' 
+#' #accessing the stan object directly 
+#' library(rstan)
+#' postsamples <- extract(f1$stanfit,pars='Ygen') #extract data generated from posterior
+#' plot( f1$data$time, 
+#'   postsamples$Ygen[1,1, ,1]) #iteration 1 (already shuffled), chain 1, all occasions, var 1.
+#' points(f1$data$time, f1$data$Y[,1],col='red') #1st manifest variable
+#' 
+#' 
+#' 
+#' 
+#' 
+#' #Specify model including dynamics
+#' m2 <- ctModel(n.manifest = 1,n.latent = 1,n.TIpred = 1, type = 'stanct',
+#'   manifestNames = c('Y1'), latentNames=c('L1'),TIpredNames = 'age',
+#'   DRIFT=matrix('drift11',nrow=1,ncol=1),
+#'   DIFFUSION=matrix('diffusion11',nrow=1,ncol=1),
+#'   CINT=matrix(c('cint1'),ncol=1),
+#'   T0MEANS=matrix(c('t0m1'),ncol=1),
+#'   T0VAR=matrix('t0var11',nrow=1,ncol=1),
+#'   LAMBDA = diag(1),
+#'   MANIFESTMEANS=matrix(0,ncol=1),
+#'   MANIFESTVAR=matrix(c('merror1'),nrow=1,ncol=1))
+#' 
+#' m2$pars$indvarying[-which(m2$pars$matrix %in% c('T0MEANS','CINT'))] <- FALSE
+#' m2$pars$age_effect[-which(m2$pars$matrix %in% c('T0MEANS','CINT'))] <- FALSE
+#' 
+#' 
+#' f2 <- ctStanFit(datalong = dat, ctstanmodel = m2, cores = setcores,
+#'   chains = setchains,plot=TRUE,
+#'   control=list(max_treedepth=7),iter=150)
+#' 
+#' summary(f2,parmatrices=TRUE,timeinterval=1)
+#' 
+#' ctKalman(f2,timestep=.01,plot=TRUE,subjects=1,kalmanvec=c('y','etaprior'))
+#' ctKalman(f2,timestep=.01,plot=TRUE,subjects=1:4,kalmanvec=c('y','etasmooth'))
+#' ctKalman(f2,timestep=.01,plot=TRUE,subjects=1:2,kalmanvec=c('y','ysmooth'))
+#' 
+#' ctStanPlotPost(f2)
+#' 
+#' ctStanPostPredict(f2)
+#' 
+#' 
+#' 
+#' 
+#' 
+#' #Include intervention
+#' m3 <- ctModel(n.manifest = 1,n.latent = 1,n.TIpred = 1, type = 'stanct',
+#'   manifestNames = c('Y1'), latentNames=c('L1'),TIpredNames = 'age',
+#'   n.TDpred=1,TDpredNames = 'TD1', #this line includes the intervention
+#'   TDPREDEFFECT=matrix(c('tdpredeffect'),nrow=1,ncol=1), #intervention effect
+#'   DRIFT=matrix('drift11',nrow=1,ncol=1),
+#'   DIFFUSION=matrix('diffusion11',nrow=1,ncol=1),
+#'   CINT=matrix(c('cint1'),ncol=1),
+#'   T0MEANS=matrix(c('t0m1'),ncol=1),
+#'   T0VAR=matrix('t0var11',nrow=1,ncol=1),
+#'   LAMBDA = diag(1),
+#'   MANIFESTMEANS=matrix(0,ncol=1),
+#'   MANIFESTVAR=matrix(c('merror1'),nrow=1,ncol=1))
+#' 
+#' m3$pars$indvarying[-which(m3$pars$matrix %in% 
+#'   c('T0MEANS','CINT','TDPREDEFFECT'))] <- FALSE
+#'   
+#' m3$pars$age_effect[-which(m3$pars$matrix %in% 
+#'   c('T0MEANS','CINT','TDPREDEFFECT'))] <- FALSE
+#' 
+#' f3 <- ctStanFit(datalong = dat2, ctstanmodel = m3, cores = setcores,
+#'   chains = setchains,plot=TRUE,
+#'   control=list(max_treedepth=7),iter=150)
+#' 
+#' summary(f3,parmatrices=TRUE)
+#' 
+#' ctKalman(f3,timestep=.01,plot=TRUE,subjects=1,kalmanvec=c('y','etaprior'))
+#' ctKalman(f3,timestep=.01,plot=TRUE,subjects=1:4,kalmanvec=c('y','etasmooth'))
+#' ctKalman(f3,timestep=.01,plot=TRUE,subjects=1:2,kalmanvec=c('y','ysmooth'))
+#' 
+#' ctStanPlotPost(f3)
+#' 
+#' ctStanPostPredict(f3, datarows=0:100)
+#' 
+#' 
+#' 
+#' 
+#' 
+#' 
+#' #include 2nd latent process
+#' 
+#' #use either full explicit specification
+#' m4 <- ctModel(n.manifest = 2,n.latent = 2,n.TIpred = 1, type = 'stanct', #no of vars updated
+#'   manifestNames = c('Y1','Y2'), latentNames=c('L1','L2'),TIpredNames = 'age', 
+#'   n.TDpred=1,TDpredNames = 'TD1', 
+#'   TDPREDEFFECT=matrix(c('tdpredeffect1','tdpredeffect2'),nrow=2,ncol=1), 
+#'   DRIFT=matrix(c('drift11','drift21','drift12','drift22'),nrow=2,ncol=2),
+#'   DIFFUSION=matrix(c('diffusion11','diffusion21',0,'diffusion22'),nrow=2,ncol=2),
+#'   CINT=matrix(c('cint1','cint2'),nrow=2,ncol=1),
+#'   T0MEANS=matrix(c('t0m1','t0m2'),nrow=2,ncol=1),
+#'   T0VAR=matrix(c('t0var11','t0var21',0,'t0var22'),nrow=2,ncol=2),
+#'   LAMBDA = matrix(c(1,0,0,1),nrow=2,ncol=2),
+#'   MANIFESTMEANS=matrix(c(0,0),nrow=2,ncol=1),
+#'   MANIFESTVAR=matrix(c('merror1',0,0,'merror2'),nrow=2,ncol=2))
+#' 
+#' #restrict between subjects variation / covariate effects
+#' m4$pars$indvarying[-which(m4$pars$matrix %in% c('T0MEANS','CINT','TDPREDEFFECT'))] <- FALSE
+#' m4$pars$age_effect[-which(m4$pars$matrix %in% c('T0MEANS','CINT','TDPREDEFFECT'))] <- FALSE
+#' 
+#' #or rely on defaults (MANIFESTMEANS now free instead of CINT -- 
+#' #  no substantive difference for one indicator factors)
+#' m4 <- ctModel(n.manifest = 2,n.latent = 2,n.TIpred = 1, type = 'stanct', 
+#'   manifestNames = c('Y1','Y2'), latentNames=c('L1','L2'),TIpredNames = 'age',
+#'   n.TDpred=1,TDpredNames = 'TD1',
+#'   LAMBDA = matrix(c(1,0,0,1),nrow=2,ncol=2))
+#' 
+#' #restrict between subjects variation / covariate effects
+#' m4$pars$indvarying[-which(m4$pars$matrix %in% c('T0MEANS','MANIFESTMEANS','TDPREDEFFECT'))] <- FALSE
+#' m4$pars$age_effect[-which(m4$pars$matrix %in% c('T0MEANS','MANIFESTMEANS','TDPREDEFFECT'))] <- FALSE
+#' 
+#' f4 <- ctStanFit(datalong = dat2, ctstanmodel = m4, cores = setcores,chains = setchains,plot=TRUE,
+#'   optimize=T,verbose=1,
+#'   control=list(max_treedepth=7),iter=150)
+#' 
+#' summary(f4,parmatrices=TRUE)
+#' 
+#' ctStanDiscretePars(f4,plot=TRUE) #auto and cross regressive plots over time
+#' 
+#' ctKalman(f4,timestep=.01,plot=TRUE,subjects=1,kalmanvec=c('y','etaprior'))
+#' ctKalman(f4,timestep=.01,plot=TRUE,subjects=1:2,kalmanvec=c('y','etasmooth'))
+#' ctKalman(f4,timestep=.01,plot=TRUE,subjects=1:2,kalmanvec=c('y','ysmooth'))
+#' 
+#' ctStanPlotPost(f4)
+#' 
+#' ctStanPostPredict(f4,wait=F)
+#' 
+#' 
+#' 
+#' #non-linear dedpendencies - based on m3 model (including intervention)
+#' #specify intervention as dependent on extra parameter in PARS matrix, and latent process 1
+#' 
+#' m3nl <- ctModel(n.manifest = 1,n.latent = 1,n.TIpred = 1, type = 'stanct',
+#'   manifestNames = c('Y1'), latentNames=c('L1'),TIpredNames = 'age',
+#'   n.TDpred=1,TDpredNames = 'TD1', 
+#'   TDPREDEFFECT=matrix(c('PARS[1,1] * state[1]'),nrow=1,ncol=1), 
+#'   PARS=matrix(c('tdpredeffect'),1,1),
+#'   DRIFT=matrix('drift11',nrow=1,ncol=1),
+#'   DIFFUSION=matrix('diffusion11',nrow=1,ncol=1),
+#'   CINT=matrix(c('cint1'),ncol=1),
+#'   T0MEANS=matrix(c('t0m1'),ncol=1),
+#'   T0VAR=matrix('t0var11',nrow=1,ncol=1),
+#'   LAMBDA = diag(1),
+#'   MANIFESTMEANS=matrix(0,ncol=1),
+#'   MANIFESTVAR=matrix(c('merror1'),nrow=1,ncol=1))
+#' 
+#' m3nl$pars$indvarying[-which(m3nl$pars$matrix %in% 
+#'   c('T0MEANS','CINT','TDPREDEFFECT'))] <- FALSE
+#'   
+#' m3nl$pars$age_effect[-which(m3nl$pars$matrix %in% 
+#'   c('T0MEANS','CINT','TDPREDEFFECT'))] <- FALSE
+#' 
+#' #here fit using optimization instead of sampling -- not appropriate in all cases!
+#' f3nl <- ctStanFit(datalong = dat2, ctstanmodel = m3nl, 
+#'   cores = setcores, chains = setchains,
+#'   optimize=TRUE)
+#' 
+#' summary(f3nl)
+#' 
+#' #plot functions need updating for non-linearities! (as of ctsem v 2.7.3)
+#' #extract.ctStanFit can be used to extract samples and create own plots.
+#' #last index of kalaman subobject denotes element of Kalman output.
+#' # 1 = ll on std scale, 2= ll scale, 3=error, 4=prediction, 
+#' # 5= eta prior, 6= eta upd
+#' 
+#' ctStanPostPredict(f3nl, datarows=1:100)
+#' 
+#' e=extract.ctStanFit(f3nl)
+#' subindex = which(f3nl$data$subject ==3) #specify subject
+#'  
+#'  matplot(f3nl$data$time[subindex], # Y predictions given earlier Y
+#'    t(e$kalman[,subindex,4]), 
+#'    type='l',lty=1,col=rgb(0,0,0,.1))
+#'  
+#'  points(f3nl$data$time[subindex], #actual Y
+#'    f3nl$data$Y[subindex,1],type='p',col='red')
+#'    
+#'   matplot(f3nl$data$time[subindex], add = TRUE, #Generated Y from model
+#'     t(e$Ygen[,subindex,1]), 
+#'     type='l',lty=1,col=rgb(0,0,1,.05))
+#' }
+
 ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intoverstates=TRUE, binomial=FALSE,
    fit=TRUE, intoverpop=FALSE, stationary=FALSE,plot=FALSE,  derrind='all',
   optimize=FALSE,  optimcontrol=list(),
@@ -571,7 +870,7 @@ ukfilterfunc<-function(ppchecking){
   matrix[nlatentpop, nmanifest] K; // kalman gain
   matrix[nmanifest, nmanifest] ypredcov_sqrt; 
 
-  vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatent*2 : 0)] kout[ndatapoints];
+  vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatentpop*2 : 0)] kout[ndatapoints];
 
   matrix[ukf ? nlatentpop :0,ukf ? nlatentpop :0] sigpoints;
 
@@ -749,7 +1048,7 @@ ukfilterfunc<-function(ppchecking){
   } // end non linear time update
 
 
-  if(savescores==1) kout[rowi,(nmanifest*4+1):(nmanifest*4+nlatent)] = eta;
+  if(savescores==1) kout[rowi,(nmanifest*4+1):(nmanifest*4+nlatentpop)] = eta;
 if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
 
     if(intoverstates==0 && nldynamics == 0) {
@@ -891,7 +1190,7 @@ if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
         }
       '},'
     }//end nobs > 0 section
-  if(savescores==1) kout[rowi,(nmanifest*4+nlatent+1):(nmanifest*4+nlatent+nlatent)] = eta;','
+  if(savescores==1) kout[rowi,(nmanifest*4+nlatentpop+1):(nmanifest*4+nlatentpop+nlatentpop)] = eta;','
 }//end rowi
 ')}
 
@@ -1344,6 +1643,7 @@ data {
   int<lower=0> nparams;
   int continuoustime; // logical indicating whether to incorporate timing information
   int nindvarying; // number of subject level parameters that are varying across subjects
+  int nindvaryingoffdiagonals; //number of off diagonal parameters needed for popcov matrix
   vector[nindvarying] sdscale;
 
   int nt0varstationary;
@@ -1389,7 +1689,6 @@ transformed data{
   real asquared;
   real sqrtukfadjust;
   int T0check[ndatapoints] = rep_array(1,ndatapoints); // logical indicating which rows are the first for each subject
-  int nindvaryingoffdiagonals = (nindvarying * nindvarying-nindvarying)/2; //number of off diagonal parameters needed for popcov matrix
   int indvaryingindex[nindvarying];
   nlatentpop = intoverpop ? nlatent + nindvarying : nlatent;
   IIlatent = diag_matrix(rep_vector(1,nlatent));
@@ -1428,7 +1727,7 @@ transformed parameters{
   vector[nindvarying] rawpopsd; //population level std dev
   matrix[nindvarying,nindvarying] rawpopcovsqrt; 
   real ll;
-  vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatent*2 : 0)] kalman[savescores ? ndatapoints : 0];
+  vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatentpop*2 : 0)] kalman[savescores ? ndatapoints : 0];
 
   matrix[ntipred ? nsubjects : 0, ntipred ? ntipred : 0] tipreds; //tipred values to fill from data and, when needed, imputation vector
   matrix[nparams, ntipred] TIPREDEFFECT; //design matrix of individual time independent predictor effects
@@ -1604,6 +1903,7 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
     nparams=as.integer(nparams),
     gendata=as.integer(gendata),
     nindvarying=as.integer(nindvarying),
+    nindvaryingoffdiagonals=as.integer((nindvarying^2-nindvarying)/2),
     ndatapoints=as.integer(nrow(datalong)),
     dT=dT,
     dTsmall=dTsmall,

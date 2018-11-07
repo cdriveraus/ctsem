@@ -125,6 +125,8 @@ and for the plot function, \code{\link{plot.ctsemFit}}.
 Multigroup models may be specified using \code{\link{ctMultigroupFit}}.
 Confidence intervals for any matrices and or parameters 
 may be estimated using \code{\link{ctCI}}.
+Difficulties during estimation can sometimes be alleviated using \code{\link{ctRefineTo}} instead of \code{\link{ctFit}} -- 
+this uses a multistep fit procedure.
 }
 \examples{
 ## Examples set to 'dontrun' because they take longer than 5s.
@@ -138,7 +140,7 @@ data(ctExample1)
 traitmodel <- ctModel(n.manifest=2, n.latent=2, Tpoints=6, LAMBDA=diag(2), 
   manifestNames=c('LeisureTime', 'Happiness'), 
   latentNames=c('LeisureTime', 'Happiness'), TRAITVAR="auto")
-traitfit <- ctFit(datawide=ctExample1, ctmodelobj=traitmodel)
+traitfit <- ctFit(dat=ctExample1, ctmodelobj=traitmodel)
 summary(traitfit)
 plot(traitfit, wait=FALSE)
 
@@ -155,9 +157,10 @@ summary(AnomAuthfit)
 data('ctExample3')
 model <- ctModel(n.latent = 1, n.manifest = 3, Tpoints = 100, 
   LAMBDA = matrix(c(1, 'lambda2', 'lambda3'), nrow = 3, ncol = 1), 
+  CINT= matrix('cint'),
   MANIFESTMEANS = matrix(c(0, 'manifestmean2', 'manifestmean3'), nrow = 3, 
     ncol = 1))
-fit <- ctFit(data = ctExample3, ctmodelobj = model, objective = 'Kalman', 
+fit <- ctFit(dat = ctExample3, ctmodelobj = model, objective = 'Kalman', 
   stationary = c('T0VAR'))
 
 

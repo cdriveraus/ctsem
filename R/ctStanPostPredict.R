@@ -16,7 +16,7 @@
 #' model implied distributions -- thus, when limited iterations are available, the approximation will be worse.
 #'
 #' @examples
-#' ctStanPostPredict(ctstantestfit,wait=FALSE)
+#' ctStanPostPredict(ctstantestfit,wait=FALSE, samples=FALSE, datarows=1:10)
 ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,.5,.975),samples=TRUE, datarows='all',...){
   e<-extract.ctStanFit(fit)
   

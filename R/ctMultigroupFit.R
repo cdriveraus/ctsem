@@ -48,7 +48,7 @@
 #' 
 #' multif<-ctMultigroupFit(dat=ctExample4, groupings=groups,
 #'                        ctmodelobj=basemodel, freemodel=freemodel)
-#' summary(multif)
+#' summary(multif,group=1)
 #' 
 #' 
 #' 

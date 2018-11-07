@@ -487,8 +487,8 @@ plot.ctsemFit<-function(x,resolution=50,wait=TRUE,max.time="auto",mean=TRUE,
 #' traitmodel <- ctModel(n.manifest=2, n.latent=2, Tpoints=6, LAMBDA=diag(2), 
 #'   manifestNames=c('LeisureTime', 'Happiness'), 
 #'   latentNames=c('LeisureTime', 'Happiness'), TRAITVAR="auto")
-#' traitfit <- ctFit(datawide=ctExample1, ctmodelobj=traitmodel)
-#' ctPlot(traitfit, type='CR', xlim=c(0,5),ylim=c(-1,1))
+#' traitfit <- ctFit(dat=ctExample1, ctmodelobj=traitmodel)
+#' ctPlot(traitfit, plotType='CR', xlim=c(0,5),ylim=c(-1,1))
 #' }
 #' @export
 

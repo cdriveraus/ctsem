@@ -18,7 +18,7 @@
 #'  LAMBDA = matrix(c(1, "lambda2", "lambda3"), nrow = 3, ncol = 1), 
 #'  MANIFESTMEANS = matrix(c(0, "manifestmean2", "manifestmean3"), nrow = 3, 
 #'    ncol = 1))
-#' fit <- ctFit(data = ctExample3, ctmodelobj = model, objective = "Kalman",
+#' fit <- ctFit(dat = ctExample3, ctmodelobj = model, objective = "Kalman",
 #'  stationary = c("T0VAR"))
 #' 
 #' fit <- ctCI(fit, confidenceintervals = 'DRIFT')

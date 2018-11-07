@@ -1,34 +1,4 @@
-#' Fit ctsem models with Kalman filter R code -- slower!
-#'
-#' @param datalong long data
-#' @param ctmodel ctsem model of type 'omx'
-#' @param ... arguments to pass to ctsem::Kalman
-#'
-#' @return matrix of estimates and standard errors
-#'
-#' @examples
-#' \dontrun{
-#' Tpoints<-250
-#' n.manifest=5
-#' gm<-ctModel(type='omx',n.latent=1,n.manifest=n.manifest,Tpoints=Tpoints,
-#' LAMBDA=matrix(rep(1,n.manifest),ncol=1),
-#'   DRIFT=diag(-.3,1),
-#'   T0VAR=diag(1),
-#'   MANIFESTMEANS=matrix(0,nrow=n.manifest),
-#'   MANIFESTVAR=t(chol(diag(.001,n.manifest))),
-#'   DIFFUSION=t(chol(diag(1,1))))
-#' 
-#' cd<-ctGenerate(gm,n.subjects=1,burnin=300,wide=FALSE)
-#' 
-#' gm2=gm
-#' gm2$DRIFT[1]='drift11'
-#' 
-#' cfit=ctFit(dat=cd,ctmodelobj=gm2,dataform='long')
-#' cfit$mxobj$DRIFT$values
-#' 
-#' rfit=ctFitR(datalong=cd,ctmodel=gm2)
-#' rfit
-#' }
+
 ctFitR<-function(datalong, ctmodel,...){
   
   carefulfit=FALSE

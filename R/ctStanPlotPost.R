@@ -69,9 +69,9 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,sm
       sdscale <- obj$setup$popvalues[ri,'sdscale']
       sdtform <- gsub('.*', '*',obj$ctstanmodel$rawpopsdtransform,fixed=TRUE)
       
-      rawpopsdbase<-e$rawpopsdbase[,popsetup$indvarying[ri]] 
+      # rawpopsdbase<-e$rawpopsdbase[,popsetup$indvarying[ri]] 
       # browser()
-      rawpopsd <- c(eval(parse(text=sdtform)) * ifelse(!is.null(obj$standata$varreg),exp(e$varregbase),1))
+      rawpopsd <- e$rawpopsd[,popsetup$indvarying[ri]] #c(eval(parse(text=sdtform)) * ifelse(!is.null(obj$standata$varreg),exp(e$varregbase),1))
       
       param<-stats::rnorm(densiter,rawpopmeans,rawpopsd)
       subjectprior<-tform(param,popsetup$transform[pari],popvalues$multiplier[pari], popvalues$meanscale[pari],popvalues$offset[pari])
@@ -92,8 +92,7 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,sm
       }
       
       rawpopsdbase<-  stats::rnorm(densiter,0,1)
-      if(obj$standata$regvar==1) globalvarregprior <- log(1+exp(rnorm(densiter,0,2))) else globalvarregprior <- 1
-      rawpopsdprior <- c(eval(parse(text=sdtform))  * globalvarregprior)#rawpopsd prior samples
+      rawpopsdprior <- c(eval(parse(text=sdtform))  * sdscale)#rawpopsd prior samples
 
       hsdpost <- e$popsd[,popsetup$param[ri]]
 
