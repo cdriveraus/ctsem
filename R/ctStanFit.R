@@ -1015,7 +1015,7 @@ ukfilterfunc<-function(ppchecking){
         sigpoints[1:nlatent,1:nlatent] = sT0VAR * sqrtukfadjust;
       }
       
-      if(T0check[rowi]==0)  sigpoints = cholesky_decompose(makesym(etacov,verbose,0)) * sqrtukfadjust;
+      if(T0check[rowi]==0)  sigpoints = cholesky_decompose(makesym(etacov,verbose,1)) * sqrtukfadjust;
     
       //configure ukf states
       for(statei in 2:cols(ukfstates) ){ //for each ukf state sample
