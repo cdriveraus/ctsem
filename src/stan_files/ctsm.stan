@@ -204,6 +204,7 @@ data {
   int<lower=0> nparams;
   int continuoustime; // logical indicating whether to incorporate timing information
   int nindvarying; // number of subject level parameters that are varying across subjects
+  int nindvaryingoffdiagonals; //number of off diagonal parameters needed for popcov matrix
   vector[nindvarying] sdscale;
 
   int nt0varstationary;
@@ -287,7 +288,6 @@ transformed data{
   real asquared;
   real sqrtukfadjust;
   int T0check[ndatapoints] = rep_array(1,ndatapoints); // logical indicating which rows are the first for each subject
-  int nindvaryingoffdiagonals = (nindvarying * nindvarying-nindvarying)/2; //number of off diagonal parameters needed for popcov matrix
   int indvaryingindex[nindvarying];
   nlatentpop = intoverpop ? nlatent + nindvarying : nlatent;
   IIlatent = diag_matrix(rep_vector(1,nlatent));
@@ -327,7 +327,7 @@ transformed parameters{
   vector[nindvarying] rawpopsd; //population level std dev
   matrix[nindvarying,nindvarying] rawpopcovsqrt; 
   real ll;
-  vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatent*2 : 0)] kalman[savescores ? ndatapoints : 0];
+  vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatentpop*2 : 0)] kalman[savescores ? ndatapoints : 0];
 
   matrix[ntipred ? nsubjects : 0, ntipred ? ntipred : 0] tipreds; //tipred values to fill from data and, when needed, imputation vector
   matrix[nparams, ntipred] TIPREDEFFECT; //design matrix of individual time independent predictor effects
@@ -385,7 +385,7 @@ transformed parameters{
   matrix[nlatentpop, nmanifest] K; // kalman gain
   matrix[nmanifest, nmanifest] ypredcov_sqrt; 
 
-  vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatent*2 : 0)] kout[ndatapoints];
+  vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatentpop*2 : 0)] kout[ndatapoints];
 
   matrix[ukf ? nlatentpop :0,ukf ? nlatentpop :0] sigpoints;
 
@@ -773,7 +773,7 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
         sigpoints[1:nlatent,1:nlatent] = sT0VAR * sqrtukfadjust;
       }
       
-      if(T0check[rowi]==0)  sigpoints = cholesky_decompose(makesym(etacov,verbose,0)) * sqrtukfadjust;
+      if(T0check[rowi]==0)  sigpoints = cholesky_decompose(makesym(etacov,verbose,1)) * sqrtukfadjust;
     
       //configure ukf states
       for(statei in 2:cols(ukfstates) ){ //for each ukf state sample
@@ -819,7 +819,7 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
   } // end non linear time update
 
 
-  if(savescores==1) kout[rowi,(nmanifest*4+1):(nmanifest*4+nlatent)] = eta;
+  if(savescores==1) kout[rowi,(nmanifest*4+1):(nmanifest*4+nlatentpop)] = eta;
 if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
 
     if(intoverstates==0 && nldynamics == 0) {
@@ -953,7 +953,7 @@ err[o] = Y[rowi,o] - ypred[o]; // prediction error
         }
       
     }//end nobs > 0 section
-  if(savescores==1) kout[rowi,(nmanifest*4+nlatent+1):(nmanifest*4+nlatent+nlatent)] = eta;
+  if(savescores==1) kout[rowi,(nmanifest*4+nlatentpop+1):(nmanifest*4+nlatentpop+nlatentpop)] = eta;
 }//end rowi
 
   if(sum(nbinary_y) > 0) {
@@ -1290,7 +1290,7 @@ pop_asymCINT = sasymCINT;
   matrix[nlatentpop, nmanifest] K; // kalman gain
   matrix[nmanifest, nmanifest] ypredcov_sqrt; 
 
-  vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatent*2 : 0)] kout[ndatapoints];
+  vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatentpop*2 : 0)] kout[ndatapoints];
 
   matrix[ukf ? nlatentpop :0,ukf ? nlatentpop :0] sigpoints;
 
@@ -1678,7 +1678,7 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
         sigpoints[1:nlatent,1:nlatent] = sT0VAR * sqrtukfadjust;
       }
       
-      if(T0check[rowi]==0)  sigpoints = cholesky_decompose(makesym(etacov,verbose,0)) * sqrtukfadjust;
+      if(T0check[rowi]==0)  sigpoints = cholesky_decompose(makesym(etacov,verbose,1)) * sqrtukfadjust;
     
       //configure ukf states
       for(statei in 2:cols(ukfstates) ){ //for each ukf state sample
@@ -1724,7 +1724,7 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
   } // end non linear time update
 
 
-  if(savescores==1) kout[rowi,(nmanifest*4+1):(nmanifest*4+nlatent)] = eta;
+  if(savescores==1) kout[rowi,(nmanifest*4+1):(nmanifest*4+nlatentpop)] = eta;
 if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
 
     if(intoverstates==0 && nldynamics == 0) {
@@ -1869,7 +1869,7 @@ if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
   
       
     }//end nobs > 0 section
-  if(savescores==1) kout[rowi,(nmanifest*4+nlatent+1):(nmanifest*4+nlatent+nlatent)] = eta;
+  if(savescores==1) kout[rowi,(nmanifest*4+nlatentpop+1):(nmanifest*4+nlatentpop+nlatentpop)] = eta;
 }//end rowi
 
 

@@ -50,7 +50,7 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='margi
         if(!is.na(x$rawpopsdbaselowerbound)) rawpopsdbase <- rawpopsdbase[rawpopsdbase>x$rawpopsdbaselowerbound]
         sdscale <- m$sdscale[rowi]
         sdtform <- gsub('.*', '*',x$rawpopsdtransform,fixed=TRUE)
-        rawpopsdprior<-eval(parse(text=sdtform))
+        rawpopsdprior<-eval(parse(text=sdtform)) * sdscale
 
       } else if(is.na(as.numeric(rawpopsd))) stop('rawpopsd argument is ill specified!') else {
         rawpopsdprior <- rep(rawpopsd,nsamples)

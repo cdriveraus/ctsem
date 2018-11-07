@@ -5,6 +5,7 @@
 #' @param chains Number of chains
 #' @param ... All the other regular arguments to stan()
 #' @export
+#' @importFrom shiny runApp 
 #' @examples
 #' \dontrun{
 #' #### example 1 
@@ -107,7 +108,7 @@ sample_file<-paste0(tmpdir,'/',stanseed,'samples', ifelse(chains==1,'_1',''),'.c
 
 stanplot(chains=chains,seed=stanseed)
 
-out=sampling(object=object,iter=iter,chains=chains,sample_file=sample_file,,...)
+out=rstan::sampling(object=object,iter=iter,chains=chains,sample_file=sample_file,,...)
 
 for(chaini in 1:chains) system(paste0("rm ",tmpdir,'/',stanseed,"samples_",chaini,".csv"))
 system(paste0('rm ',tmpdir,'/stanplottemp.R'))
