@@ -185,6 +185,7 @@ data {
   int<lower=0> ntipred; // number of time independent covariates
   int<lower=0> ntdpred; // number of time dependent covariates
 
+  int T0check[ndatapoints]; // logical indicating which rows are the first for each subject
   matrix[ntipred ? nsubjects : 0, ntipred ? ntipred : 0] tipredsdata;
   int nmissingtipreds;
   int ntipredeffects;
@@ -206,6 +207,7 @@ data {
   int nindvarying; // number of subject level parameters that are varying across subjects
   int nindvaryingoffdiagonals; //number of off diagonal parameters needed for popcov matrix
   vector[nindvarying] sdscale;
+  int indvaryingindex[nindvarying];
 
   int nt0varstationary;
   int nt0meansstationary;
@@ -287,22 +289,9 @@ transformed data{
   int nlatentpop;
   real asquared;
   real sqrtukfadjust;
-  int T0check[ndatapoints] = rep_array(1,ndatapoints); // logical indicating which rows are the first for each subject
-  int indvaryingindex[nindvarying];
   nlatentpop = intoverpop ? nlatent + nindvarying : nlatent;
   IIlatent = diag_matrix(rep_vector(1,nlatent));
   IIlatent2 = diag_matrix(rep_vector(1,nlatent*nlatent));
-
-  for(rowi in 2:ndatapoints) if(subject[rowi] == subject[rowi-1]) T0check[rowi] = 0;
-{
- int counter=1;
-  for(pi in 1:nmatrixslots){
-    if(popsetup[pi,5] > 0){
-      indvaryingindex[counter] = popsetup[pi,3];
-      counter+=1;
-    }
-  }
-}
 
   //ukf approximation parameters
   asquared =  square(2.0/sqrt(0.0+nlatentpop) * ukfspread); 
@@ -623,7 +612,7 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
         if(dtchange==1 || (T0check[rowi-1]==1 && (si <= DIFFUSIONsubindex[nsubjects]|| si <= DRIFTsubindex[nsubjects]))){
           discreteDIFFUSION[derrind, derrind] = sasymDIFFUSION[derrind, derrind] - 
             quad_form( sasymDIFFUSION[derrind, derrind], discreteDRIFT[derrind, derrind]' );
-          if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
+          if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(makesym(discreteDIFFUSION,verbose,1));
         }
       }
   
@@ -631,7 +620,7 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
         discreteDRIFT=append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1));
         discreteDRIFT[nlatent+1,nlatent+1] = 1;
         discreteDIFFUSION=sDIFFUSION;
-        if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
+        if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(makesym(discreteDIFFUSION,verbose,1));
       }
 
       eta = (discreteDRIFT * append_row(eta,1.0))[1:nlatent];
@@ -760,7 +749,7 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
           discreteDRIFT[nlatent+1,nlatent+1] = 1;
           etacov = quad_form(etacov, J');
           etacov[1:nlatent,1:nlatent] += sDIFFUSION;
-          if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
+          if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(makesym(discreteDIFFUSION,verbose,1));
           eta[1:nlatent] = (discreteDRIFT * append_row(eta[1:nlatent],1.0))[1:nlatent];
         }
       } // end of non t0 time update
@@ -1263,6 +1252,42 @@ pop_asymCINT = sasymCINT;
     }
   }
 
+rawpopcov = tcrossprod(rawpopcovsqrt);
+rawpopcorr = quad_form_diag(rawpopcov,inv_sqrt(diagonal(rawpopcov)));
+
+popsd = rep_vector(0,nparams);
+{
+vector[nparams] rawpopsdfull;
+rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
+
+    for(ri in 1:dims(popsetup)[1]){
+      if(popsetup[ri,3] !=0) {
+
+        popmeans[popsetup[ ri,3]] = tform(rawpopmeans[popsetup[ri,3] ], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4] ); 
+
+        popsd[popsetup[ ri,3]] = popsetup[ ri,5] ? 
+          fabs(tform(
+            rawpopmeans[popsetup[ri,3] ]  + rawpopsdfull[popsetup[ ri,3]], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4]) -
+           tform(
+            rawpopmeans[popsetup[ri,3] ]  - rawpopsdfull[popsetup[ ri,3]], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4]) ) /2 : 
+          0; 
+
+        if(ntipred > 0){
+          for(tij in 1:ntipred){
+            if(TIPREDEFFECTsetup[popsetup[ri,3],tij] ==0) {
+              linearTIPREDEFFECT[popsetup[ri,3],tij] = 0;
+            } else {
+            linearTIPREDEFFECT[popsetup[ri,3],tij] = (
+              tform(rawpopmeans[popsetup[ri,3] ] + TIPREDEFFECT[popsetup[ri,3],tij] * .01, popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4] ) -
+              tform(rawpopmeans[popsetup[ri,3] ] - TIPREDEFFECT[popsetup[ri,3],tij] * .01, popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4] )
+              ) /2 * 100;
+            }
+         }
+        }
+      }
+    }
+}
+
 
   if(gendata > 0){
   vector[nmanifest] Ygenbase[ndatapoints];
@@ -1528,7 +1553,7 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
         if(dtchange==1 || (T0check[rowi-1]==1 && (si <= DIFFUSIONsubindex[nsubjects]|| si <= DRIFTsubindex[nsubjects]))){
           discreteDIFFUSION[derrind, derrind] = sasymDIFFUSION[derrind, derrind] - 
             quad_form( sasymDIFFUSION[derrind, derrind], discreteDRIFT[derrind, derrind]' );
-          if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
+          if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(makesym(discreteDIFFUSION,verbose,1));
         }
       }
   
@@ -1536,7 +1561,7 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
         discreteDRIFT=append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1));
         discreteDRIFT[nlatent+1,nlatent+1] = 1;
         discreteDIFFUSION=sDIFFUSION;
-        if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
+        if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(makesym(discreteDIFFUSION,verbose,1));
       }
 
       eta = (discreteDRIFT * append_row(eta,1.0))[1:nlatent];
@@ -1665,7 +1690,7 @@ matrix[ PARSsetup_rowcount ? max(PARSsetup[,1]) : 0, PARSsetup_rowcount ? max(PA
           discreteDRIFT[nlatent+1,nlatent+1] = 1;
           etacov = quad_form(etacov, J');
           etacov[1:nlatent,1:nlatent] += sDIFFUSION;
-          if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
+          if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(makesym(discreteDIFFUSION,verbose,1));
           eta[1:nlatent] = (discreteDRIFT * append_row(eta[1:nlatent],1.0))[1:nlatent];
         }
       } // end of non t0 time update
@@ -1876,39 +1901,4 @@ if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
 }}
 
 
-rawpopcov = tcrossprod(rawpopcovsqrt);
-rawpopcorr = quad_form_diag(rawpopcov,inv_sqrt(diagonal(rawpopcov)));
-
-popsd = rep_vector(0,nparams);
-{
-vector[nparams] rawpopsdfull;
-rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
-
-    for(ri in 1:dims(popsetup)[1]){
-      if(popsetup[ri,3] !=0) {
-
-        popmeans[popsetup[ ri,3]] = tform(rawpopmeans[popsetup[ri,3] ], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4] ); 
-
-        popsd[popsetup[ ri,3]] = popsetup[ ri,5] ? 
-          fabs(tform(
-            rawpopmeans[popsetup[ri,3] ]  + rawpopsdfull[popsetup[ ri,3]], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4]) -
-           tform(
-            rawpopmeans[popsetup[ri,3] ]  - rawpopsdfull[popsetup[ ri,3]], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4]) ) /2 : 
-          0; 
-
-        if(ntipred > 0){
-          for(tij in 1:ntipred){
-            if(TIPREDEFFECTsetup[popsetup[ri,3],tij] ==0) {
-              linearTIPREDEFFECT[popsetup[ri,3],tij] = 0;
-            } else {
-            linearTIPREDEFFECT[popsetup[ri,3],tij] = (
-              tform(rawpopmeans[popsetup[ri,3] ] + TIPREDEFFECT[popsetup[ri,3],tij] * .01, popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4] ) -
-              tform(rawpopmeans[popsetup[ri,3] ] - TIPREDEFFECT[popsetup[ri,3],tij] * .01, popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4] )
-              ) /2 * 100;
-            }
-         }
-        }
-      }
-    }
-}
 }

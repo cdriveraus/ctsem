@@ -929,7 +929,7 @@ ukfilterfunc<-function(ppchecking){
         if(dtchange==1 || (T0check[rowi-1]==1 && (si <= DIFFUSIONsubindex[nsubjects]|| si <= DRIFTsubindex[nsubjects]))){
           discreteDIFFUSION[derrind, derrind] = sasymDIFFUSION[derrind, derrind] - 
             quad_form( sasymDIFFUSION[derrind, derrind], discreteDRIFT[derrind, derrind]\' );
-          if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
+          if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(makesym(discreteDIFFUSION,verbose,1));
         }
       }
   
@@ -937,7 +937,7 @@ ukfilterfunc<-function(ppchecking){
         discreteDRIFT=append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1));
         discreteDRIFT[nlatent+1,nlatent+1] = 1;
         discreteDIFFUSION=sDIFFUSION;
-        if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
+        if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(makesym(discreteDIFFUSION,verbose,1));
       }
 
       eta = (discreteDRIFT * append_row(eta,1.0))[1:nlatent];
@@ -1002,7 +1002,7 @@ ukfilterfunc<-function(ppchecking){
           discreteDRIFT[nlatent+1,nlatent+1] = 1;
           etacov = quad_form(etacov, J\');
           etacov[1:nlatent,1:nlatent] += sDIFFUSION;
-          if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(discreteDIFFUSION);
+          if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(makesym(discreteDIFFUSION,verbose,1));
           eta[1:nlatent] = (discreteDRIFT * append_row(eta[1:nlatent],1.0))[1:nlatent];
         }
       } // end of non t0 time update
@@ -1624,6 +1624,7 @@ data {
   int<lower=0> ntipred; // number of time independent covariates
   int<lower=0> ntdpred; // number of time dependent covariates
 
+  int T0check[ndatapoints]; // logical indicating which rows are the first for each subject
   matrix[ntipred ? nsubjects : 0, ntipred ? ntipred : 0] tipredsdata;
   int nmissingtipreds;
   int ntipredeffects;
@@ -1645,6 +1646,7 @@ data {
   int nindvarying; // number of subject level parameters that are varying across subjects
   int nindvaryingoffdiagonals; //number of off diagonal parameters needed for popcov matrix
   vector[nindvarying] sdscale;
+  int indvaryingindex[nindvarying];
 
   int nt0varstationary;
   int nt0meansstationary;
@@ -1688,22 +1690,9 @@ transformed data{
   int nlatentpop;
   real asquared;
   real sqrtukfadjust;
-  int T0check[ndatapoints] = rep_array(1,ndatapoints); // logical indicating which rows are the first for each subject
-  int indvaryingindex[nindvarying];
   nlatentpop = intoverpop ? nlatent + nindvarying : nlatent;
   IIlatent = diag_matrix(rep_vector(1,nlatent));
   IIlatent2 = diag_matrix(rep_vector(1,nlatent*nlatent));
-
-  for(rowi in 2:ndatapoints) if(subject[rowi] == subject[rowi-1]) T0check[rowi] = 0;
-{
- int counter=1;
-  for(pi in 1:nmatrixslots){
-    if(popsetup[pi,5] > 0){
-      indvaryingindex[counter] = popsetup[pi,3];
-      counter+=1;
-    }
-  }
-}
 
   //ukf approximation parameters
   asquared =  square(2.0/sqrt(0.0+nlatentpop) * ukfspread); 
@@ -1821,24 +1810,6 @@ generated quantities{
     }
   }
 
-',if(gendata) paste0('
-  if(gendata > 0){
-  vector[nmanifest] Ygenbase[ndatapoints];
-  Ygen = rep_array(rep_vector(99999,nmanifest),ndatapoints);
-  for(mi in 1:nmanifest){
-    if(manifesttype[mi]==0 || manifesttype[mi]==2) {
-      Ygenbase[1:ndatapoints,mi] = normal_rng(rep_vector(0,gendata*ndatapoints),rep_vector(1,gendata*ndatapoints));
-    }
-    if(manifesttype[mi]==1){
-      Ygenbase[1:ndatapoints,mi] =  uniform_rng(rep_vector(0,gendata*ndatapoints),rep_vector(1,gendata*ndatapoints));
-    }
-  }
-{
-',ukfilterfunc(ppchecking=TRUE),'
-
-}}
-',collapse=";\n"),'
-
 rawpopcov = tcrossprod(rawpopcovsqrt);
 rawpopcorr = quad_form_diag(rawpopcov,inv_sqrt(diagonal(rawpopcov)));
 
@@ -1874,6 +1845,25 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
       }
     }
 }
+
+',if(gendata) paste0('
+  if(gendata > 0){
+  vector[nmanifest] Ygenbase[ndatapoints];
+  Ygen = rep_array(rep_vector(99999,nmanifest),ndatapoints);
+  for(mi in 1:nmanifest){
+    if(manifesttype[mi]==0 || manifesttype[mi]==2) {
+      Ygenbase[1:ndatapoints,mi] = normal_rng(rep_vector(0,gendata*ndatapoints),rep_vector(1,gendata*ndatapoints));
+    }
+    if(manifesttype[mi]==1){
+      Ygenbase[1:ndatapoints,mi] =  uniform_rng(rep_vector(0,gendata*ndatapoints),rep_vector(1,gendata*ndatapoints));
+    }
+  }
+{
+',ukfilterfunc(ppchecking=TRUE),'
+
+}}
+',collapse=";\n"),'
+
 }
 ')
 }
@@ -1906,6 +1896,7 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
     nindvaryingoffdiagonals=as.integer((nindvarying^2-nindvarying)/2),
     ndatapoints=as.integer(nrow(datalong)),
     dT=dT,
+    T0check=as.integer(T0check),
     dTsmall=dTsmall,
     nt0varstationary=as.integer(nt0varstationary),
     nt0meansstationary=as.integer(nt0meansstationary),
@@ -1952,7 +1943,7 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
   if(n.TIpred == 0) tipreds <- array(0,c(0,0))
   standata$tipredsdata <- as.matrix(tipreds)
   standata$nmissingtipreds <- as.integer(length(tipreds[tipreds== 99999]))
-  standata$ntipredeffects <- as.integer(ifelse(n.TIpred > 0, sum(unlist(ctspec[,paste0(TIpredNames,'_effect')])), 0))
+  standata$ntipredeffects <- as.integer(ifelse(n.TIpred > 0, as.integer(max(TIPREDEFFECTsetup)), 0))
   standata$TIPREDEFFECTsetup <- apply(TIPREDEFFECTsetup,c(1,2),as.integer,.drop=FALSE)
   standata$tipredsimputedscale <- ctstanmodel$tipredsimputedscale
   standata$tipredeffectscale <- ctstanmodel$tipredeffectscale

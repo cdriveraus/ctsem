@@ -90,14 +90,14 @@ ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,p
       
       
       if(typei=='change'){
+        yp<-aperm(ys,c(3,4,1,2))
+        
         for(cdiffsize in diffsize){
           diffindex <- c() 
           for(diffi in 1:cdiffsize){
             diffindex <- c(diffindex,which(as.logical(fit$data$T0check[-1]))-(diffi-1),
               fit$data$ndatapoints-(diffi-1))
           }
-          
-          yp<-aperm(ys,c(3,4,1,2))
           dygen<-diff(yp[,i,,,drop=TRUE],lag = cdiffsize) #drop true set here if looking for problems!
           # yp[-1,i,,,drop=FALSE] - yp[-fit$data$ndatapoints,i,,,drop=FALSE]
           dygendt <- dygen / diff(fit$data$time,lag = cdiffsize)

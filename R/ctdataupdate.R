@@ -1,4 +1,4 @@
-ctdataupdate<-function(){
+ctdataupdate<-function(forcerecompile=FALSE){
   Tpoints=20
   n.manifest=2
   n.TDpred=1
@@ -34,6 +34,7 @@ ctdataupdate<-function(){
   checkm$pars[c(-1,-2, -21,-22) ,c('TI1_effect','TI2_effect','TI3_effect')] <- FALSE
   
   ctstantestfit<-ctStanFit(ctstantestdat,checkm,iter=500, warmup=460,thin=2,chains=2,
+    forcerecompile=forcerecompile,
     control=list(max_treedepth=8,adapt_delta=.8),save_warmup=FALSE)
   summary(ctstantestfit)
   message(paste0('Updating from ',(getwd()),', continue T / F?'))
