@@ -1,9 +1,12 @@
 ctsem news:
 
-18/10/2018
-#### 2.7.1 ####
+6/11/2018
+#### 2.7.3 ####
 - Updated for rstan 2.18.1 compatibility
 - Non-linear dynamics now handled using mixture of extended and unscented filters for improved speed.
+- Priors for hierarchical variance modified so prior for total variance has consistent shape regardless of dimension.
+- Optimization / importance sampling works well for many cases, see arguments using ?ctStanFit.
+- ctStanPostPredict produces a range of posterior predictive plots.
 - Various small non-critical bug fixes / updates. (see github for details)
 
 25/6/2018

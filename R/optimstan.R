@@ -317,8 +317,6 @@ optimstan <- function(standata, sm, init=0,
   
   # target_dens <- c(target_dens,
   transformedpars <- parallel::parLapply(cl, parallel::clusterSplit(cl,1:nresamples), function(x){
-    setwd("C:/Users/driver/Dropbox/MPIB/CT-SEM")
-    sink(file='optimprob.txt')
     Sys.sleep(.01)
     smf <- stan_reinitsf(sm,standata)
     Sys.sleep(.01)
