@@ -37,8 +37,8 @@ f1=ctRefineTo(dat = gd,m,retryattempts = 3,objective='Kalman',stationary=c('T0ME
 # f1$mxobj=mxRun(f1$mxobj)
 f2=ctRefineTo(dat = gd,m,retryattempts = 3,objective='mxRAM',stationary=c('T0MEANS','T0VAR'),carefulFit=TRUE)
 
-expect_equal(f1$mxobj$output$estimate,f2$mxobj$output$estimate,tolerance=.001)
+expect_equal(f1$mxobj$output$estimate[-1],f2$mxobj$output$estimate[-1],tolerance=.001)
 
 ctPostPredict(f1,timestep=.1,n.subjects=200)
 
-}
+})

@@ -100,8 +100,7 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
     if(is.na(dtmat[1])) dtvec<- exp(rnorm(fullTpoints,log(dtmean),logdtsd))
     if(!is.na(dtmat[1])) dtvec <- dtmat[si,,drop=FALSE]
     time=rep(0,fullTpoints)
-    for(t in 2:fullTpoints) time[t] = round(time[t-1] + dtvec[t-1],3)
-    
+    for(t in 2:fullTpoints) time[t] = round(time[t-1] + dtvec[t-1],6)
     
     if(n.TDpred > 0) {
      

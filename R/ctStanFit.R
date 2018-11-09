@@ -698,8 +698,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     if(
       length(c(dynamiccalcs,tdpredcalcs)) > 0 | 
         intoverpop | nldynamics==TRUE
-    ) { message('Using unscented Kalman filter for dynamics'); ukf <- TRUE}
-    
+    ) { message('Using nonlinear Kalman filter for dynamics'); ukf <- TRUE}
 
     nlmeasurement <- nlcontrol$nlmeasurement
     if(nlmeasurement == 'auto') {
@@ -708,8 +707,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         nlmeasurement <- TRUE
       }
     }
-    if(nlmeasurement) message('Using unscented Kalman filter for measurement update');
-    if(!nlmeasurement) message('Using classic Kalman filter for measurement update');
+    if(nlmeasurement) message('Using nonlinear Kalman filter for measurement update');
+    if(!nlmeasurement) message('Using linear Kalman filter for measurement update');
     
     
     
@@ -723,7 +722,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     }
   
   if(nldynamics && !intoverstates) stop('intoverstates must be TRUE for nonlinear dynamics')
-    
+  if(!nldynamics) message('Using linear Kalman filter for dynamics')
     
     #intoverpop calcs setup
     intoverpopdynamiccalcs <- paste0('

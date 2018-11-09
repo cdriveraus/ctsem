@@ -106,6 +106,15 @@ optimstan <- function(standata, sm, init=0,
         control = decontrollist))
       init=constrain_pars(object = smf,optimfitde$optim$bestmem)
     }
+    
+    if(!deoptim & standata$nopriors==TRUE ){ #init using priors
+      standata$nopriors <- as.integer(0)
+      suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=1e6, init=init,as_vector=FALSE,draws=0,constrained=FALSE,
+      tol_obj=1e-12, tol_rel_obj=0,init_alpha=.001, tol_grad=0,tol_rel_grad=1e1,tol_param=1e-12,history_size=100,verbose=verbose),verbose=verbose))
+      standata$nopriors <- as.integer(1)
+      init = optimfit$par #rstan::constrain_pars(object = smf, optimfit$par)
+    }
+    
     suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=1e6, init=init,as_vector=FALSE,draws=0,constrained=FALSE,
       tol_obj=1e-12, tol_rel_obj=0,init_alpha=.001, tol_grad=0,tol_rel_grad=1e1,tol_param=1e-12,history_size=100,verbose=verbose),verbose=verbose))
     
@@ -115,7 +124,6 @@ optimstan <- function(standata, sm, init=0,
     # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan::grab_cxxfun(sm@dso))
 
     est2=unconstrain_pars(smf, est1)
-    
     
     
     lp<-function(parm) {
@@ -304,12 +312,13 @@ optimstan <- function(standata, sm, init=0,
     return(out)
   }
   
-  
   # cl <- parallel::makeCluster(min(cores,chains), type = "PSOCK")
   parallel::clusterExport(cl, c('relistarrays','resamples','sm','standata','optimfit'),environment())
   
   # target_dens <- c(target_dens,
   transformedpars <- parallel::parLapply(cl, parallel::clusterSplit(cl,1:nresamples), function(x){
+    setwd("C:/Users/driver/Dropbox/MPIB/CT-SEM")
+    sink(file='optimprob.txt')
     Sys.sleep(.01)
     smf <- stan_reinitsf(sm,standata)
     Sys.sleep(.01)
@@ -322,6 +331,7 @@ optimstan <- function(standata, sm, init=0,
       skeleton=optimfit$par
       out[[li]] <-relistarrays(flesh, skeleton)
     }
+    sink()
     return(out)
   })
   parallel::stopCluster(cl)

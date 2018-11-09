@@ -21,7 +21,7 @@ genm=ctModel(Tpoints=Tpoints,
   TRAITVAR=matrix(c(1,.5,0,.8),n.latent,n.latent))
 
 cd=ctGenerate(ctmodelobj=genm, n.subjects=nsubjects, burnin=51, dtmean=1, 
-  logdtsd=0,simultdpredeffect=TRUE,wide=TRUE)
+  logdtsd=0,wide=TRUE)
 
 wide=cd
 
@@ -55,18 +55,19 @@ mptrait<-ctModel(Tpoints=Tpoints,n.latent=4,n.manifest=n.manifest,
     0,0,0,.0001),byrow=TRUE,4,4),
   T0MEANS=matrix(c('t1','t2',0,0),ncol=1))
 
-fmlstrait=ctFit(datawide = wide,ctmodelobj = mltrait,retryattempts = 5,stationary='T0TRAITEFFECT')
-fmltrait=ctFit(datawide = wide,ctmodelobj = mltrait,retryattempts = 5,stationary='')
+fmlstrait=ctFit(dat = wide,ctmodelobj = mltrait,retryattempts = 5,stationary='T0TRAITEFFECT')
+fmltrait=ctRefineTo(dat = wide,ctmodelobj = mltrait,retryattempts = 5,stationary='')
 
-dfmlstrait=ctFit(datawide = wide,ctmodelobj = mltrait,retryattempts = 5,discreteTime=TRUE,stationary='T0TRAITEFFECT')
-dfmltrait=ctFit(datawide = wide,ctmodelobj = mltrait,retryattempts = 5,discreteTime=TRUE,stationary='')
+dfmlstrait=ctFit(dat= wide,ctmodelobj = mltrait,retryattempts = 5,discreteTime=TRUE,stationary='T0TRAITEFFECT')
+dfmltrait=ctFit(dat = wide,ctmodelobj = mltrait,retryattempts = 5,discreteTime=TRUE,stationary='')
 
-fmmtrait=ctFit(datawide = wide,ctmodelobj = mmtrait,retryattempts = 5)
-fmptrait=ctFit(datawide = wide,ctmodelobj = mptrait,retryattempts = 5)
+fmmtrait=ctFit(dat = wide,ctmodelobj = mmtrait,retryattempts = 5)
+fmptrait=ctFit(dat = wide,ctmodelobj = mptrait,retryattempts = 5,stationary='')
 
 summary(fmlstrait,verbose=TRUE)
 summary(fmmtrait)
 summary(fmptrait)
+summary(fmltrait)
 
 #check traits using different fit approaches
 expect_equal(rep(0,4),c(fmlstrait$mxobj$DRIFT$values-fmmtrait$mxobj$DRIFT$values),tolerance=1e-2)

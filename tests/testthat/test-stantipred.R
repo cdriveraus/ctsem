@@ -50,9 +50,12 @@ tfit<-ctStanFit(tdat,checkm,iter=400, warmup=380,chains=2,plot=TRUE,optimize=T,i
 s=summary(tfit)
 
 expect_equal(s$tipreds[2,'mean'],5,tolerance=.1)
-# })
-# 
-# test_that("simpleTIpredcheck_stansampling", {
+
+tfit<-ctStanFit(tdat,checkm,iter=400, warmup=380,chains=2,plot=TRUE,optimize=T,isloops=3,nopriors=F,verbose=0,
+  nlcontrol=list(nldynamics=TRUE,nlmeasurement=TRUE))
+s=summary(tfit)
+
+expect_equal(s$tipreds[2,'mean'],5,tolerance=.1)
 
 tfit<-ctStanFit(tdat,checkm,iter=400,chains=2,control=list(adapt_delta=.8,max_treedepth=6))
 s=summary(tfit)
