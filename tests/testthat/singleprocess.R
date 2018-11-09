@@ -47,9 +47,9 @@ sm$pars$indvarying[!(sm$pars$matrix %in% c('T0MEANS','CINT'))]=FALSE
 
 # sm$pars$transform[5]='exp(param*10) +.00001'
 
-sf=ctStanFit(datalong=long,ctstanmodel=sm,
+sf=ctStanFit(datalong=long,ctstanmodel=sm,nopriors=TRUE,
   control=list(max_treedepth=8),
-  iter=300,chains=3,plot=FALSE,fit=TRUE,optimize=FALSE)
+  iter=300,chains=3,plot=FALSE,fit=TRUE,optimize=TRUE)
 sfsum <- summary(sf)
 
 
