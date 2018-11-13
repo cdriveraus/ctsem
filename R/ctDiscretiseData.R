@@ -33,7 +33,7 @@ ctDiscretiseData <- function(dlong,timestep,timecol='time',idcol='id',TDpredName
   out<-matrix(NA,nrow=0,ncol=ncol(dlong))
   for(idi in unique(dlong[,idcol])){
     odat<-dlong[dlong[,idcol]==idi,]
-    odat[,timecol]<-round_any(odat[,timecol],timestep)
+    odat[,timecol]<-plyr::round_any(odat[,timecol],timestep)
     trange<-range(odat[,timecol])
     time<-seq(trange[1],trange[2],timestep)
     ndat<-matrix(NA,nrow=length(time),ncol=ncol(dlong),dimnames=dimnames(dlong))

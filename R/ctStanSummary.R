@@ -25,7 +25,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,par
   monvars <- c('mean','sd','2.5%','50%','97.5%')
   
   if(class(object$stanfit)=='stanfit'){ 
-    s<-getMethod('summary','stanfit')(object$stanfit)
+    s<-suppressWarnings(getMethod('summary','stanfit')(object$stanfit))
     if('98%' %in% colnames(s$summary)) colnames(s$summary)[colnames(s$summary)=='98%'] <- '97.5%'
     e <- extract.ctStanFit(object) 
   }
@@ -106,7 +106,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,par
       if(class(object$stanfit)!='stanfit') rawpopcorr= array(e$rawpopcorr,dim=c(dimrawpopcorr[1],1,dimrawpopcorr[2] * dimrawpopcorr[3]))
       if(class(object$stanfit)=='stanfit') rawpopcorr= rstan::extract(object$stanfit,pars='rawpopcorr',permuted=FALSE)
       
-      rawpopcorrout <- monitor(rawpopcorr, digits_summary=digits,warmup=0,print = FALSE)[lower.tri(diag(nindvarying)),c(monvars,'n_eff','Rhat'),drop=FALSE]
+      rawpopcorrout <- suppressWarnings(monitor(rawpopcorr, digits_summary=digits,warmup=0,print = FALSE)[lower.tri(diag(nindvarying)),c(monvars,'n_eff','Rhat'),drop=FALSE])
       
       # rawpopcorrout <- ctCollapse(rawpopcorr,1,mean)
       # rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,sd)[lower.tri(diag(nindvarying)),drop=FALSE])
@@ -153,12 +153,12 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,par
 
     if(class(object$stanfit)=='stanfit'){
       rawtieffect <- rstan::extract(object$stanfit,permuted=FALSE,pars='TIPREDEFFECT')
-      tidiags <- monitor(rawtieffect,warmup=0,digits_summary = digits,print = FALSE)
+      tidiags <- suppressWarnings(monitor(rawtieffect,warmup=0,digits_summary = digits,print = FALSE))
     }
     tieffect <- array(e$linearTIPREDEFFECT,dim=c(dim(e$linearTIPREDEFFECT)[1], 1, length(parnames) * dim(e$linearTIPREDEFFECT)[3]))
     tieffectnames <- paste0('tip_',rep(object$ctstanmodel$TIpredNames,each=length(parnames)),'_',parnames)
     dimnames(tieffect)<-list(c(),c(),tieffectnames)
-    tipreds = monitor(tieffect,warmup = 0,print = FALSE)[,monvars]
+    tipreds = suppressWarnings(monitor(tieffect,warmup = 0,print = FALSE)[,monvars])
     if(class(object$stanfit)=='stanfit') tipreds <- cbind(tipreds,tidiags[,c('n_eff','Rhat')])
     tipreds <- tipreds[c(object$data$TIPREDEFFECTsetup)>0,,drop=FALSE]
     z = tipreds[,'mean'] / tipreds[,'sd'] 
@@ -243,12 +243,12 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,par
   
   if(class(object$stanfit)!='stanfit'){ #if optimized / importance sampled
 
-    if(!is.null(iter)){ popsd <- monitor(array(e$popsd,dim=c(dim(e$popsd)[1],1,dim(e$popsd)[2])),warmup=0,print=FALSE)
+    if(!is.null(iter)){ popsd <- suppressWarnings(monitor(array(e$popsd,dim=c(dim(e$popsd)[1],1,dim(e$popsd)[2])),warmup=0,print=FALSE))
     popsd=popsd[ object$data$indvaryingindex, monvars,drop=FALSE]
     rownames(popsd)=parnamesiv
     }
 
-    popmeans=monitor(array(e$popmeans,dim=c(dim(e$popmeans)[1],1,dim(e$popmeans)[2])),warmup=0,print=FALSE)
+    popmeans=suppressWarnings(monitor(array(e$popmeans,dim=c(dim(e$popmeans)[1],1,dim(e$popmeans)[2])),warmup=0,print=FALSE))
     rownames(popmeans) = parnames #names(e)[grep('hmean_',names(e))]
     popmeans = popmeans[,monvars,drop=FALSE]
     
