@@ -172,11 +172,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,par
     npars <- try(get_num_upars(sf),silent=TRUE) #$stanmodel)
     
     if(class(npars)=='try-error'){ #in case R has been restarted or similar
-      standataout <- object$data
-      standataout<-unlist(standataout)
-      standataout[is.na(standataout)] <- 99999
-      standataout <- utils::relist(standataout,skeleton=object$data)
-      # suppressOutput(sf <- suppressWarnings(sampling(object$stanmodel,data=standataout,iter=1,control=list(max_treedepth=1),chains=1)))
+      standataout <- object$standata
       smf <- stan_reinitsf(object$stanmodel,standataout)
     }
 

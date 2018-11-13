@@ -616,19 +616,21 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   
   
   ###data checks
-  if (!(idName %in% colnames(datalong))) stop(paste('id column', omxQuotes(idName), "not found in data"))
-  
-  #scale check
-  if(naf(any(abs(colMeans(datalong[,c(ctstanmodel$manifestNames,ctstanmodel$TDpredNames),drop=FALSE],na.rm=TRUE)) > 5))){
-    message('Uncentered data noted -- default priors *may* not be appropriate')
-  }
-  
   if(ctstanmodel$n.TIpred > 1 && any(abs(colMeans(datalong[,c(ctstanmodel$TIpredNames),drop=FALSE],na.rm=TRUE)) > .3)){
-    message('Uncentered TI predictors noted -- default priors may not be appropriate')
+    message('Uncentered TI predictors noted -- interpretability may be hindered and default priors may not be appropriate')
   }
-  
-  if(naf(any(abs(apply(datalong[,c(ctstanmodel$manifestNames,ctstanmodel$TDpredNames,ctstanmodel$TIpredNames),drop=FALSE],2,sd,na.rm=TRUE)) > 3))){
-    message('Unscaled data noted -- default priors may not be appropriate')
+  if(nopriors==FALSE){
+    if (!(idName %in% colnames(datalong))) stop(paste('id column', omxQuotes(idName), "not found in data"))
+    
+    #scale check
+    if(naf(any(abs(colMeans(datalong[,c(ctstanmodel$manifestNames,ctstanmodel$TDpredNames),drop=FALSE],na.rm=TRUE)) > 5))){
+      message('Uncentered data noted -- default priors *may* not be appropriate')
+    }
+    
+    
+    if(naf(any(abs(apply(datalong[,c(ctstanmodel$manifestNames,ctstanmodel$TDpredNames,ctstanmodel$TIpredNames),drop=FALSE],2,sd,na.rm=TRUE)) > 3))){
+      message('Unscaled data noted -- default priors may not be appropriate')
+    }
   }
 
   #fit spec checks
