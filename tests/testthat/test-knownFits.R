@@ -6,7 +6,7 @@ context("knownFits")
 
 
 #anomauth
-test_that("time calc", {
+test_that("anomauth", {
 
   data(AnomAuth)
   AnomAuthmodel<-ctModel(LAMBDA=matrix(c(1, 0, 0, 1), nrow=2, ncol=2),  
@@ -50,10 +50,10 @@ test_that("time calc", {
 })
 
 
-test_that("time calc", {
+test_that("oscillator", {
 data("Oscillating")
 
-inits <- c(-38, -.5, 1, 1, .1, 1, 0, .9)
+inits <- c(-38, -.5, 10, 10, .1, 100, 0, .9)
 names(inits) <- c("crosseffect","autoeffect", "diffusion",
   "T0var11", "T0var21", "T0var22","m1", "m2")
 
@@ -69,6 +69,8 @@ oscillatingm <- ctModel(n.latent = 2, n.manifest = 1, Tpoints = 11,
 
 oscillatingf <- ctFit(Oscillating, oscillatingm, carefulFit = FALSE,retryattempts = 3)
 
+skip_on_cran()
+skip_on_travis()
 expect_equal(-3461.936,oscillatingf$mxobj$output$Minus2LogLikelihood,tolerance=.001)
 
 

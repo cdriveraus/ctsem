@@ -1,3 +1,4 @@
+if(1==0){
 library(ctsem)
 
 sunspot<-sunspot.year
@@ -46,6 +47,9 @@ largs[[1]]<-list(datalong=datalong, ctstanmodel=sm, stationary=FALSE,iter=2, con
 for( condi in 1:length(largs)){
 
 ssfit <- do.call(ctStanFit,largs[[condi]])
+
+}
+}
 # (ssfit$stanfit)
 # s=ssfit$stanfit$transformedpars_old
 # s[grep('pop_DRIFT',rownames(s)),2]

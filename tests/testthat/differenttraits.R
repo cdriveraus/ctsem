@@ -64,10 +64,10 @@ dfmltrait=ctFit(dat = wide,ctmodelobj = mltrait,retryattempts = 5,discreteTime=T
 fmmtrait=ctFit(dat = wide,ctmodelobj = mmtrait,retryattempts = 5)
 fmptrait=ctFit(dat = wide,ctmodelobj = mptrait,retryattempts = 5,stationary='')
 
-summary(fmlstrait,verbose=TRUE)
-summary(fmmtrait)
-summary(fmptrait)
-summary(fmltrait)
+# summary(fmlstrait)
+# summary(fmmtrait)
+# summary(fmptrait)
+# summary(fmltrait)
 
 #check traits using different fit approaches
 expect_equal(rep(0,4),c(fmlstrait$mxobj$DRIFT$values-fmmtrait$mxobj$DRIFT$values),tolerance=1e-2)

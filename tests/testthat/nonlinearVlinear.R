@@ -2,7 +2,7 @@ library(ctsem)
 library(testthat)
 set.seed(1)
 
-context("nonlinearcheck") #still needs finalizing
+context("nonlinearcheck") 
 
 test_that("simplenonlinearcheck", { 
 sunspots<-sunspot.year
@@ -32,9 +32,9 @@ datalong <- cbind(id, time, sunspots)
  datalong <- cbind(datalong,TD1)
  datalong[seq(10,150,10),'TD1'] = 1
  
-ssfitnl <- ctStanFit(datalong, ssmodel, iter=300, chains=2,optimize=T,verbose=1,maxtimestep = 2,
+ssfitnl <- ctStanFit(datalong, ssmodel, iter=300, chains=2,optimize=T,verbose=0,maxtimestep = 2,
   nlcontrol=list(nldynamics=TRUE,ukffull=1),optimcontrol = list(issamples=500),nopriors=TRUE,deoptim=TRUE)
-ssfitl <- ctStanFit(datalong, ssmodel, iter=300, chains=2,optimize=T,verbose=1,maxtimestep = 2,
+ssfitl <- ctStanFit(datalong, ssmodel, iter=300, chains=2,optimize=T,verbose=0,maxtimestep = 2,
   nlcontrol=list(nldynamics=FALSE),optimcontrol = list(issamples=500,deoptim=TRUE),nopriors=TRUE)
 
 #output

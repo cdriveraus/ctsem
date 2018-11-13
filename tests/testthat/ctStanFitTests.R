@@ -87,7 +87,7 @@ ld <- ctWideToLong(Oscillating,Tpoints = 11,n.manifest = 1,n.TDpred = 0,n.TIpred
 ld <- ctDeintervalise(ld)
 
 sf <- ctStanFit(datalong = ld, ctstanmodel = sm,optimize=TRUE,verbose=1,optimcontrol=list(isloops=0,deoptim=FALSE),
-  nlcontrol=list(nldynamics=FALSE),nopriors = T,chains = 1,cores=1)
+  nlcontrol=list(nldynamics=FALSE),nopriors = T,chains = 2,cores=2)
 s=summary(sf)
 
 expect_equal(-3461.936,oscillatingf$mxobj$output$Minus2LogLikelihood,tolerance=.001)

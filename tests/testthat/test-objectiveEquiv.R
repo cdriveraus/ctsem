@@ -76,7 +76,7 @@ test_that("time calc", {
   data[1:(ceiling(nrow(data/2))),'dT3']<-3
   
   fit1<-ctFit(data,generatingModel)
-  fit2<-ctFit(data,generatingModel,objective='Kalman',omxStartValues=omxGetParameters(fit1$mxobj),carefulFit=F)
+  fit2<-ctFit(data,generatingModel,objective='Kalman',omxStartValues=omxGetParameters(fit1$mxobj),carefulFit=FALSE)
   
   
   expect_equal(fit1$mxobj$output$Minus2LogLikelihood,fit2$mxobj$output$Minus2LogLikelihood)

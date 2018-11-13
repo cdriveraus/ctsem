@@ -21,7 +21,6 @@ gm=ctModel(Tpoints=10,n.latent=2,n.manifest=3,LAMBDA=matrix(c(1,0,0,0,1,.5),ncol
   TDPREDMEANS=matrix(rep(c(1,rep(0,4),0,rep(0,4)),2),ncol=1))
 
 gd=ctGenerate(gm,nsubjects,burnin=50)
-ctIndplot(datawide = gd,n.manifest = 3,Tpoints = 10)
 
 m=ctModel(Tpoints=10,n.latent=2,n.manifest=3,LAMBDA=matrix(c(1,0,0,0,1,.5),ncol=2),
   DRIFT=matrix(c(-.3,0,0,-.05),2,2),
