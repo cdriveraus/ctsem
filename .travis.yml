@@ -10,6 +10,10 @@ matrix:
     - os: linux
       dist: trusty
       r: release
+      compiler: clang
+    - os: linux
+      dist: trusty
+      r: release
       addons:
         apt:
           sources:
@@ -29,20 +33,6 @@ matrix:
             - g++-7
       env:
         - MATRIX_EVAL="CC=gcc-7 && CXX=g++-7"
-        
-    - os: linux
-      dist: trusty
-      r: release
-      addons:
-        apt:
-          sources:
-            - ubuntu-toolchain-r-test
-            - sourceline: 'deb https://apt.llvm.org/trusty/ llvm-toolchain-trusty-7 main'
-              key_url: 'https://apt.llvm.org/llvm-snapshot.gpg.key'
-          packages:
-            - clang-7
-      env:
-        - MATRIX_EVAL="CC=clang-7 CXX=clang++-7"
     - os: osx
       osx_image: xcode10
       r: release
@@ -56,4 +46,3 @@ before_install:
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then echo "CXX14 = clang++ -arch x86_64 -ftemplate-depth-256" >> ~/.R/Makevars; fi
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then echo "CXX14FLAGS = -O3 -mtune=native -march=native -Wno-unused-variable -Wno-unused-function  -Wno-unknown-pragmas" >> ~/.R/Makevars; fi
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then echo "CC = clang" >> ~/.R/Makevars; fi
-  - eval "${MATRIX_EVAL}"
