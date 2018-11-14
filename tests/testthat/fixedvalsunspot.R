@@ -50,16 +50,4 @@ ssfit <- do.call(ctStanFit,largs[[condi]])
 
 }
 }
-# (ssfit$stanfit)
-# s=ssfit$stanfit$transformedpars_old
-# s[grep('pop_DRIFT',rownames(s)),2]
-# s[grep('pop_LAMBDA',rownames(s)),2]
-# s[grep('pop_DIFFUSION',rownames(s)),2]
-}
-
-# e=extract.ctStanFit(ssfit)
-# # dim(e$kalman)
-# k=e$kalman[1,,]
-# # 
-# sum(dnorm(k[,1],mean = 0,sd = 1,log = TRUE)) - sum(k[,2])
 
