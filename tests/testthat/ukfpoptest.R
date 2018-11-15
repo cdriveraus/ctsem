@@ -1,3 +1,5 @@
+if(Sys.getenv("NOT_CRAN")==TRUE){
+
 library(ctsem)
 library(testthat)
 set.seed(1)
@@ -102,3 +104,4 @@ s2=sf2$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf2$stanfit$transfo
 
 expect_equivalent(s1,s2,tol=1e-3)
 })
+}

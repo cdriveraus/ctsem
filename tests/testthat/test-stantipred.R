@@ -1,3 +1,5 @@
+if(Sys.getenv("NOT_CRAN")==TRUE){
+
 library(ctsem)
 library(testthat)
 set.seed(1)
@@ -62,3 +64,4 @@ s=summary(tfit)
 
 expect_equal(s$tipreds[2,'mean'],5,tolerance=.1)
 })
+}
