@@ -92,7 +92,8 @@ or time points, will increase file size substantially.}
 \item{gendata}{Logical -- If TRUE, uses provided data as a time and missingness structure only, and 
 generates random data according to the specified model / priors. 
 Generated data is in the $Ygen subobject after running \code{extract} on the fit object.
-For datasets with many manifest variables or time points, file size may be large.}
+For datasets with many manifest variables or time points, file size may be large.
+To generate data based on the posterior of a fitted model, see \code{\link{ctStanGenerateData}}.}
 
 \item{control}{List of arguments sent to \code{\link[rstan]{stan}} control argument, 
 regarding warmup / sampling behaviour. Unless specified, values used are:

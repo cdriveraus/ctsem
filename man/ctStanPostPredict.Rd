@@ -38,5 +38,5 @@ This function relies on the data generated during each iteration of fitting to a
 model implied distributions -- thus, when limited iterations are available, the approximation will be worse.
 }
 \examples{
-ctStanPostPredict(ctstantestfit,wait=FALSE, samples=FALSE, datarows=1:10)
+ctStanPostPredict(ctstantestfit,wait=FALSE, samples=TRUE, datarows=1:25,diffsize=2)
 }

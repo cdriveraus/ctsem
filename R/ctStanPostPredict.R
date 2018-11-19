@@ -16,12 +16,12 @@
 #' model implied distributions -- thus, when limited iterations are available, the approximation will be worse.
 #'
 #' @examples
-#' ctStanPostPredict(ctstantestfit,wait=FALSE, samples=FALSE, datarows=1:50,diffsize=2)
+#' ctStanPostPredict(ctstantestfit,wait=FALSE, samples=TRUE, datarows=1:25,diffsize=2)
 ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,.5,.975),samples=TRUE, datarows='all',...){
  
   if(datarows[1]=='all') datarows <- 1:nrow(fit$data$Y)
 
-  xmeasure=1:fit$data$ndatapoints
+  xmeasure=datarows
   if(is.null(fit$generated$Y)) Ygen <- ctStanGenerateData(fit)$generated$Y else Ygen <- fit$generated$Y
   Ygen<-aperm(Ygen,c(2,1,3))
   Ygen <- Ygen[,datarows,,drop=FALSE]
@@ -61,7 +61,6 @@ ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,p
           notmissing <- which(!is.na(c(y[datarows,i,1])))
           
           if(samples) {
-            
             xs=rep(x,each=dim(Ygen)[1])
             ycut=quantile(Ygen[,,i],c(.005,.995),na.rm=TRUE)
             ysamps=Ygen[,,i]
