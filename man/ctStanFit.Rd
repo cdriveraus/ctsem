@@ -10,8 +10,8 @@ ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 1000,
   derrind = "all", optimize = FALSE, optimcontrol = list(),
   nlcontrol = list(), nopriors = FALSE, chains = 1,
   cores = "maxneeded", inits = NULL, forcerecompile = FALSE,
-  savescores = TRUE, gendata = TRUE, control = list(), verbose = 0,
-  ...)
+  savescores = TRUE, gendata = FALSE, control = list(),
+  verbose = 0, ...)
 }
 \arguments{
 \item{datalong}{long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables, 
@@ -89,8 +89,10 @@ If TRUE, stan model is recompiled, regardless of apparent need for compilation.}
 \item{savescores}{Logical. If TRUE, output from the Kalman filter is saved in output. For datasets with many variables
 or time points, will increase file size substantially.}
 
-\item{gendata}{Logical -- generate random data sets per sample? For later plotting / model checking.
-For datasets with many manifest variables or time points, may increase file size substantially. Needs to be set FALSE for win32.}
+\item{gendata}{Logical -- If TRUE, uses provided data as a time and missingness structure only, and 
+generates random data according to the specified model / priors. 
+Generated data is in the $Ygen subobject after running \code{extract} on the fit object.
+For datasets with many manifest variables or time points, file size may be large.}
 
 \item{control}{List of arguments sent to \code{\link[rstan]{stan}} control argument, 
 regarding warmup / sampling behaviour. Unless specified, values used are:

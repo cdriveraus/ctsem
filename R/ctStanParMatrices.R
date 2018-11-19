@@ -66,7 +66,7 @@ if(class(npars)=='try-error'){ #in case R has been restarted or similar
   sfc <- try(constrain_pars(sf, pars))
 }
 
-for(m in c(fit$setup$basematrices,'asymDIFFUSION')){
+for(m in c(fit$setup$matrices$base,'asymDIFFUSION')){
   # assign(m,ctCollapse(sfc[[paste0('pop_',m)]],1,mean)) 
   assign(m,sfc[[paste0('pop_',m)]]) 
 }

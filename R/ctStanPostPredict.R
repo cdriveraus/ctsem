@@ -1,7 +1,7 @@
 
 #' Compares model implied density and values to observed, for a ctStanFit object.
 #'
-#' @param fit ctStanFit object.
+#' @param fit ctStanFit object. 
 #' @param legend Logical, whether to plot a legend.
 #' @param diffsize Integer > 0. Number of discrete time lags to use for data viz.
 #' @param samples Logical -- plot all generated data points? Otherwise, plot shaded polygon based on quantile estimate. 
@@ -16,57 +16,55 @@
 #' model implied distributions -- thus, when limited iterations are available, the approximation will be worse.
 #'
 #' @examples
-#' ctStanPostPredict(ctstantestfit,wait=FALSE, samples=FALSE, datarows=1:10)
+#' ctStanPostPredict(ctstantestfit,wait=FALSE, samples=FALSE, datarows=1:50,diffsize=2)
 ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,.5,.975),samples=TRUE, datarows='all',...){
-  e<-extract.ctStanFit(fit)
-  
+ 
   if(datarows[1]=='all') datarows <- 1:nrow(fit$data$Y)
-  
-  
-  
+
   xmeasure=1:fit$data$ndatapoints
-  xtime=fit$data$time
-  
-  Ygen <- array(e$Ygen,dim=c(dim(e$Ygen)[1],1,dim(e$Ygen)[-1]))
-  
-  ctDensityList(x=list(fit$data$Y[datarows,,drop=FALSE],Ygen[,,datarows,,drop=FALSE]),plot=TRUE,
+  if(is.null(fit$generated$Y)) Ygen <- ctStanGenerateData(fit)$generated$Y else Ygen <- fit$generated$Y
+  Ygen<-aperm(Ygen,c(2,1,3))
+  Ygen <- Ygen[,datarows,,drop=FALSE]
+  time <- fit$standata$time[datarows]
+  Ydat <- fit$data$Y[datarows,,drop=FALSE]
+  ctDensityList(x=list(Ydat[datarows,,drop=FALSE],Ygen[,,,drop=FALSE]),plot=TRUE,
     main='All variables',lwd=2,legend = c('Observed','Model implied'),xlab='Value',...)
   
-  y<-aaply(Ygen,c(2,3,4),quantile,na.rm=TRUE,probs=probs,.drop=FALSE)
-  y<-array(y,dim=dim(y)[-1])  
+  y<-aaply(Ygen,c(2,3),quantile,na.rm=TRUE,probs=probs,.drop=FALSE)
+  # y<-array(y,dim=dim(y)[-1])  
   dimnames(y) <- list(NULL,fit$ctstanmodel$manifestNames,paste0(probs*100,'%'))
   
+  ycut=quantile(Ygen,c(.005,.995),na.rm=TRUE)
+  ys=Ygen
+  ys[ys<ycut[1] | ys>ycut[2]] <- NA 
+  
   for(typei in c('obs','change')){
-    for(i in 1:dim(Ygen)[4]){
+    for(i in 1:dim(Ygen)[3]){ #dim 3 is indicator, dim 2 is datarows, dim 1 iterations
       if(wait) readline("Press [return] for next plot.")
-      xsmeasure=rep(xmeasure,each=dim(Ygen)[1])
-      xstime=rep(xtime,each=dim(Ygen)[1])
-      ycut=quantile(Ygen,c(.005,.995),na.rm=TRUE)
-      ys=Ygen
-      xsmeasure=xsmeasure[ys>ycut[1] & ys<ycut[2]]
-      xstime=xstime[ys>ycut[1] & ys<ycut[2]]
-      ys[ys<ycut[1] | ys>ycut[2]] <- NA
-      
-      
+      # xsmeasure=rep(xmeasure,each=dim(Ygen)[1])
+      # xstime=rep(xtime,each=dim(Ygen)[1])
+      # xsmeasure=xsmeasure[ys>ycut[1] & ys<ycut[2]]
+      # xstime=xstime[ys>ycut[1] & ys<ycut[2]]
+      # 
       
       if(typei=='obs'){
         
-        ctDensityList(x=list(fit$data$Y[datarows,i,drop=FALSE],Ygen[,,datarows,i,drop=FALSE]),plot=TRUE,
+        ctDensityList(x=list(Ydat[,i,drop=FALSE],Ygen[,datarows,i,drop=FALSE]),plot=TRUE,
           main=fit$ctstanmodel$manifestNames[i],lwd=2,legend = c('Observed','Model implied'),xlab='Value',...)
         
         if(wait) readline("Press [return] for next plot.")
         
         for(subtypei in c('Time','Observation')){
           if(subtypei=='Observation') x <- xmeasure
-          if(subtypei=='Time') x <- xtime
+          if(subtypei=='Time') x <- time
           
           notmissing <- which(!is.na(c(y[datarows,i,1])))
           
           if(samples) {
             
             xs=rep(x,each=dim(Ygen)[1])
-            ycut=quantile(Ygen[,,,i],c(.005,.995),na.rm=TRUE)
-            ysamps=Ygen[,,,i]
+            ycut=quantile(Ygen[,,i],c(.005,.995),na.rm=TRUE)
+            ysamps=Ygen[,,i]
             xs=xs[ysamps>ycut[1] & ysamps<ycut[2]]
             ysamps=ysamps[ysamps>ycut[1] & ysamps<ycut[2]]
             graphics::smoothScatter(xs,ysamps,nbin=256,colramp=grDevices::colorRampPalette(colors=c(rgb(1,1,1,0),rgb(1,.4,.4,.3))),nrpoints=0,
@@ -81,32 +79,36 @@ ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,p
           
           ocol <- rgb(0,0,.7,.7)
           points(x[notmissing],
-            fit$data$Y[,i][notmissing] +  rnorm(length(fit$data$Y[,i][notmissing]),0, jitter * sd(fit$data$Y[,i][notmissing],na.rm=TRUE)),
+            Ydat[,i][notmissing] +  rnorm(length(Ydat[,i][notmissing]),0, jitter * sd(Ydat[,i][notmissing],na.rm=TRUE)),
             type=ifelse(subtypei=='Time','p','l'),lwd=2,lty=1,pch=17, col=ocol)
           if(legend) legend('topright',c('Model implied','Observed'),text.col=c('red',ocol))
-          if(i < dim(Ygen)[4])  if(wait) readline("Press [return] for next plot.")
+          if(i < dim(Ygen)[3])  if(wait) readline("Press [return] for next plot.")
         }
       }
       
       
       if(typei=='change'){
-        yp<-aperm(ys,c(3,4,1,2))
+
+        yp<-aperm(ys[,,i,drop=TRUE],c(2,1))#drop true set here if looking for problems!
         
         for(cdiffsize in diffsize){
-          diffindex <- c() 
-          for(diffi in 1:cdiffsize){
-            diffindex <- c(diffindex,which(as.logical(fit$data$T0check[-1]))-(diffi-1),
-              fit$data$ndatapoints-(diffi-1))
-          }
-          dygen<-diff(yp[,i,,,drop=TRUE],lag = cdiffsize) #drop true set here if looking for problems!
-          # yp[-1,i,,,drop=FALSE] - yp[-fit$data$ndatapoints,i,,,drop=FALSE]
-          dygendt <- dygen / diff(fit$data$time,lag = cdiffsize)
-          dygendt<-dygendt[-diffindex,,drop=FALSE]
+          # diffindex <- c() 
+          # for(diffi in 1:cdiffsize){
+          #   diffindex <- c(diffindex,which(as.logical(fit$data$T0check[datarows][-1]))-(diffi-1))
+          # }
           
-          dydt<-diff(fit$data$Y[,i], lag = cdiffsize)/diff(fit$data$time,lag = cdiffsize)
-          dydt <- dydt[-diffindex]
-          dydt <- dydt +  rnorm(length(dydt),0, jitter * sd(fit$data$Y[,i],na.rm=TRUE)) #add jitter
-          time <- fit$data$time[-diffindex]
+          subdiff <- c( which(diff(fit$data$subject[datarows],cdiffsize) != 0), datarows[length(datarows):1][1:cdiffsize])
+          
+          dygen<-diff(yp,lag = cdiffsize) 
+          # yp[-1,i,,,drop=FALSE] - yp[-fit$data$ndatapoints,i,,,drop=FALSE]
+          dygendt <- dygen / diff(time,lag = cdiffsize)
+          dygendt<-dygendt[-subdiff,,drop=FALSE]
+
+          # dydt<-diff(Ydat[,i], lag = cdiffsize)/diff(time,lag = cdiffsize)
+          dydt <- diff(Ydat[,i],lag=cdiffsize)
+          dydt <- dydt[-subdiff]
+          dydt <- dydt +  rnorm(length(dydt),0, jitter * sd(Ydat[,i],na.rm=TRUE)) #add jitter
+          xtime <- time[-subdiff]
           # smoothScatter(matrix(yp[-fit$data$ndatapoints,i,,,drop=FALSE],ncol=1),
           #   matrix(dygendt[,,,,drop=FALSE],ncol=1),
           #   nbin=512,colramp=colorRampPalette(colors=c('white',rgb(1,0,0,1))),nrpoints=0,
@@ -114,22 +116,22 @@ ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,p
           #   ylim=range(c(quantile(c(dygendt),probs = c(.01,.99),na.rm=TRUE)),na.rm=TRUE),
           #   xlab='Observation',ylab=dimnames(y)[[2]][i])
           samps<-sample(1:length(dygendt),size=50000,replace=TRUE)
-          plot(matrix(yp[-diffindex,i,,,drop=FALSE][samps],ncol=1),
+          plot(matrix(yp[-subdiff,,drop=FALSE][samps],ncol=1),
             matrix(dygendt[,,drop=FALSE][samps],ncol=1),
             ylab=paste0('dy/dt, diff=',cdiffsize),xlab='y', main=dimnames(y)[[2]][i],
             pch=16,cex=.2,col=rgb(1,0,0,.1),...)
-          points( fit$data$Y[-diffindex,i],
+          points( Ydat[-subdiff,i],
             dydt,
             col=rgb(0,0,1,.5),pch=17,...)
           
           if(wait) readline("Press [return] for next plot.")  
           
           plot(
-            rep(time,(dim(dygendt)[2]))[samps],
+            rep(xtime,(dim(dygendt)[2]))[samps],
             matrix(dygendt[,,drop=FALSE],ncol=1)[samps],
             ylab=paste0('dy/dt, diff=',cdiffsize),xlab='time', main=dimnames(y)[[2]][i],
             pch=16,cex=.1,col=rgb(1,0,0,.3),...)
-          points(time,
+          points(xtime,
             dydt,
             col=rgb(0,0,1,.5),pch=17,...)
           

@@ -294,23 +294,7 @@ optimstan <- function(standata, sm, init=0,
   # parallel::stopCluster(cl)
   message('Computing quantities...')
   
-  relistarrays <- function(flesh, skeleton){
-    skelnames <- names(skeleton)
-    skelstruc <- lapply(skeleton,dim)
-    count=1
-    npars <- length(flesh)
-    out <- list()
-    for(ni in skelnames){
-      if(!is.null(skelstruc[[ni]])){
-        out[[ni]] <- array(flesh[count:(count+prod(skelstruc[[ni]]))],dim = skelstruc[[ni]])
-        count <- count + prod(skelstruc[[ni]])
-      } else {
-        out[[ni]] <- flesh[count]
-        count <- count + 1
-      }
-    }
-    return(out)
-  }
+
   
   # cl <- parallel::makeCluster(min(cores,chains), type = "PSOCK")
   parallel::clusterExport(cl, c('relistarrays','resamples','sm','standata','optimfit'),environment())
@@ -329,10 +313,9 @@ optimstan <- function(standata, sm, init=0,
       skeleton=optimfit$par
       out[[li]] <-relistarrays(flesh, skeleton)
     }
-    sink()
     return(out)
   })
-  parallel::stopCluster(cl)
+ 
   transformedpars<-unlist(transformedpars,recursive = FALSE)
   
   
@@ -373,6 +356,8 @@ optimstan <- function(standata, sm, init=0,
     unlist(constrain_pars(smf, uest))),silent=TRUE)
   try(colnames(transformedpars_old)<-c('2.5%','mean','97.5%'),silent=TRUE)
   
+   parallel::stopCluster(cl)
+   
   stanfit=list(optimfit=optimfit,stanfit=smf, rawposterior = resamples, transformedpars=transformedpars,transformedpars_old=transformedpars_old,
     isdiags=list(cov=mcovl,means=delta,ess=ess,qdiag=qdiag,lpsamples=lpsamples ))
   return(stanfit)

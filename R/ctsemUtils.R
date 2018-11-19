@@ -24,6 +24,25 @@ indexMatrix<-function(dimension,symmetrical=FALSE,upper=FALSE,lowerTriangular=FA
   return(tempmatrix)
 }
 
+
+relistarrays <- function(flesh, skeleton){
+  skelnames <- names(skeleton)
+  skelstruc <- lapply(skeleton,dim)
+  count=1
+  npars <- length(flesh)
+  out <- list()
+  for(ni in skelnames){
+    if(!is.null(skelstruc[[ni]])){
+      out[[ni]] <- array(flesh[count:(count+prod(skelstruc[[ni]]))],dim = skelstruc[[ni]])
+      count <- count + prod(skelstruc[[ni]])
+    } else {
+      out[[ni]] <- flesh[count]
+      count <- count + 1
+    }
+  }
+  return(out)
+}
+
 #convert id's to ascending numeric 
 makeNumericIDs <- function(datalong,idName='id',timeName='time'){
   originalid <- unique(datalong[,idName])
@@ -160,16 +179,16 @@ ctDensityList<-function(x,xlimsindex='all',plot=FALSE,smoothness=1,ylab='Density
       xlims=newxlims
     } 
     else {
-        xlims <- range(c(xlims,newxlims))
+      xlims <- range(c(xlims,newxlims))
     }
   }
   sd=sd(xlims)
   xlims[1] = xlims[1] - sd/2
   xlims[2] = xlims[2] + sd/2
-
+  
   bw=abs(max( 
     min( (sd)/length(x[[1]])^.4,sd/50),
-      1e-5)) * smoothness
+    1e-5)) * smoothness
   
   if(all(colvec=='auto')) colvec=1:length(x)
   if(all(ltyvec=='auto')) ltyvec=1:length(x)
@@ -182,7 +201,7 @@ ctDensityList<-function(x,xlimsindex='all',plot=FALSE,smoothness=1,ylab='Density
     d=stats::density(x[[xi]],bw=bw,n=5000,from=xlims[1]-sd/2,to=xlims[2]+sd/2,na.rm=TRUE)
     d$y=d$y/ sum(d$y)/range(d$x)[2]*length(d$y)
     return(d)
-    })
+  })
   ylims=c(0,max(unlist(lapply(denslist,function(li) max(li$y))))*1.1) * ifelse(legend[1]!=FALSE, 1.2,1)
   
   if(plot) {
@@ -202,7 +221,7 @@ ctDensityList<-function(x,xlimsindex='all',plot=FALSE,smoothness=1,ylab='Density
       do.call(graphics::legend,legendargs)
     }
   }
-
+  
   return(list(density=denslist,xlim=xlims,ylim=ylims))
 }
 
