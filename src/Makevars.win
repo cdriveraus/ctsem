@@ -12,9 +12,6 @@ clean:
 		RM -rf *.so *.o
 		RM -rf stan_files/*.cc
 		RM -rf stan_files/*.hpp
-		RM -rf stan_files32/*.o
-		RM -rf stan_files32/*.cc
-		RM -rf stan_files32/*.hpp
 
 %.cc: %.stan
 				"$(R_HOME)/bin$(R_ARCH_BIN)/Rscript" -e "source(file.path('..', 'tools', 'make_cc.R')); make_cc(commandArgs(TRUE))" $<
