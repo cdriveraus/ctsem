@@ -57,3 +57,10 @@ before_install:
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then echo "CXX14FLAGS = -O3 -mtune=native -march=native -Wno-unused-variable -Wno-unused-function  -Wno-unknown-pragmas" >> ~/.R/Makevars; fi
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then echo "CC = clang" >> ~/.R/Makevars; fi
   - eval "${MATRIX_EVAL}"
+  
+install:
+  - R -e 'devtools::install_deps(dep = T)'
+
+script:
+  - travis_wait 30 R CMD build .
+  - travis_wait 30 R CMD check *tar.gz
