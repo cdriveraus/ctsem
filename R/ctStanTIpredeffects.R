@@ -100,7 +100,8 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
         fit$setup$popsetup$transform[whichpars[pari]], 
         fit$setup$popvalues$multiplier[whichpars[pari]],
         fit$setup$popvalues$meanscale[whichpars[pari]],
-        fit$setup$popvalues$offset[whichpars[pari]], fit$setup$extratforms) 
+        fit$setup$popvalues$offset[whichpars[pari]], 
+        fit$setup$popvalues$inneroffset[whichpars[pari]], fit$setup$extratforms) 
       return(out)
     })
     if(returndifference){ #if only returning differences from zero
@@ -110,7 +111,8 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
         fit$setup$popsetup$transform[whichpars[pari]], 
         fit$setup$popvalues$multiplier[whichpars[pari]],
         fit$setup$popvalues$meanscale[whichpars[pari]],
-        fit$setup$popvalues$offset[whichpars[pari]], fit$setup$extratforms) 
+        fit$setup$popvalues$offset[whichpars[pari]], 
+        fit$setup$popvalues$inneroffset[whichpars[pari]], fit$setup$extratforms) 
         return(out)
       })
       effect<-effect-array(noeffect,dim=dim(effect))

@@ -53,10 +53,10 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,sm
     pari <- obj$setup$popsetup[ri,'param']
     rawpopmeans<- e$rawpopmeans[,pari]
     param<-rawpopmeans
-    popmeanspost<-tform(param,popsetup$transform[pari],popvalues$multiplier[pari], popvalues$meanscale[pari],popvalues$offset[pari])
+    popmeanspost<-tform(param,popsetup$transform[pari],popvalues$multiplier[pari], popvalues$meanscale[pari],popvalues$offset[pari], popvalues$inneroffset[pari])
    
     param<-stats::rnorm(densiter,0,1)
-    meanprior <- tform(param,popsetup$transform[pari],popvalues$multiplier[pari], popvalues$meanscale[pari],popvalues$offset[pari])
+    meanprior <- tform(param,popsetup$transform[pari],popvalues$multiplier[pari], popvalues$meanscale[pari],popvalues$offset[pari], popvalues$inneroffset[pari])
   
     leg <- c('Pop. mean posterior','Pop. mean prior') 
     legcol <- c('black','blue') 
@@ -74,13 +74,13 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,sm
       rawpopsd <- e$rawpopsd[,popsetup$indvarying[ri]] #c(eval(parse(text=sdtform)) * ifelse(!is.null(obj$standata$varreg),exp(e$varregbase),1))
       
       param<-stats::rnorm(densiter,rawpopmeans,rawpopsd)
-      subjectprior<-tform(param,popsetup$transform[pari],popvalues$multiplier[pari], popvalues$meanscale[pari],popvalues$offset[pari])
+      subjectprior<-tform(param,popsetup$transform[pari],popvalues$multiplier[pari], popvalues$meanscale[pari],popvalues$offset[pari], popvalues$inneroffset[pari])
 
       if(!obj$data$intoverpop) {
-        rawindparams<-e$baseindparams[,seq(popsetup$indvarying[pari],by=obj$data$nindvarying,length.out=obj$data$nsubjects)] *
+        rawindparams<-e$baseindparams[,popsetup$indvarying[ri],,drop=FALSE] *
           rawpopsd + rawpopmeans
         param<-rawindparams
-        indparams<-tform(param,popsetup$transform[pari],popvalues$multiplier[pari], popvalues$meanscale[pari],popvalues$offset[pari])
+        indparams<-tform(param,popsetup$transform[pari],popvalues$multiplier[pari], popvalues$meanscale[pari],popvalues$offset[pari], popvalues$inneroffset[pari])
 
         ctDensityList(list(indparams,subjectprior,meanprior),main=pname,smoothness=smoothness,
           colvec=c('black','red','blue'),plot=TRUE,lwd=lwd,xlimsindex=1:2,
@@ -97,9 +97,9 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,sm
       hsdpost <- e$popsd[,popsetup$param[ri]]
 
       param<-suppressWarnings(rawpopmeans+rawpopsdprior)
-      high<-tform(param,popsetup$transform[pari],popvalues$multiplier[pari], popvalues$meanscale[pari],popvalues$offset[pari])
+      high<-tform(param,popsetup$transform[pari],popvalues$multiplier[pari], popvalues$meanscale[pari],popvalues$offset[pari], popvalues$inneroffset[pari])
       param<-suppressWarnings(rawpopmeans-rawpopsdprior)
-      low<-tform(param,popsetup$transform[pari],popvalues$multiplier[pari], popvalues$meanscale[pari],popvalues$offset[pari])
+      low<-tform(param,popsetup$transform[pari],popvalues$multiplier[pari], popvalues$meanscale[pari],popvalues$offset[pari], popvalues$inneroffset[pari])
       hsdprior<-abs(high - low)/2
 
       leg <- c('Pop. sd posterior','Pop. sd prior') 
