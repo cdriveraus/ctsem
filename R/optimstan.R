@@ -3,6 +3,7 @@
 #' @param standata list object conforming to rstan data standards.
 #' @param sm compiled stan model object.
 #' @param init init argument conforming to rstan init standards.
+#' @param sampleinit either NA, or an niterations * nparams matrix of samples to initialise importance sampling.
 #' @param deoptim Do first pass optimization using differential evolution? Slower, but better for cases with multiple 
 #' minima / difficult optimization.
 #' @param estonly if TRUE,just return point estimates under $rawest subobject.
@@ -47,7 +48,7 @@
 #' 
 #' #output
 #' summary(ssfit)
-optimstan <- function(standata, sm, init=0,
+optimstan <- function(standata, sm, init=0,sampleinit=NA,
   deoptim=TRUE, estonly=FALSE,tol=1e-12,
   decontrol=list(),
   isloops=5, isloopsize=500, issamples=500, 
@@ -82,59 +83,60 @@ optimstan <- function(standata, sm, init=0,
     smf <- stan_reinitsf(sm,standata)
     npars=get_num_upars(smf)
     
-    
-    
-    if(deoptim){ #init with DE
-      # require(DEoptim)
-      if(decontrol$NP=='auto') NP=min(c(40,10*npars)) else NP = decontrol$NP
+    if(is.na(sampleinit[1])){
       
-      decontrollist <- c(decontrol,DEoptim.control())
-      decontrollist <- decontrollist[unique(names(decontrollist))]
-      
-      lp2 = function(parm) {
-        out<-try(log_prob(smf, upars=parm,adjust_transform=TRUE,gradient=FALSE),silent = TRUE)
-        if(class(out)=='try-error') {
-          out=-1e20
+      if(deoptim){ #init with DE
+        # require(DEoptim)
+        if(decontrol$NP=='auto') NP=min(c(40,10*npars)) else NP = decontrol$NP
+        
+        decontrollist <- c(decontrol,DEoptim.control())
+        decontrollist <- decontrollist[unique(names(decontrollist))]
+        
+        lp2 = function(parm) {
+          out<-try(log_prob(smf, upars=parm,adjust_transform=TRUE,gradient=FALSE),silent = TRUE)
+          if(class(out)=='try-error') {
+            out=-1e20
+          }
+          return(-out)
         }
-        return(-out)
+        
+        deinit <- matrix(rnorm(npars*NP,0,2),nrow = NP)
+        deinit[2,] <- rnorm(npars,0,.0002)
+        if(length(init)>1 & try2) {
+          deinit[1,] <- unconstrain_pars(smf,init)
+          if(NP > 10) deinit[3:9,] =  matrix( rnorm(npars*(7),rep(deinit[1,],each=7),.1), nrow = 7)
+        }
+        decontrollist$initialpop=deinit
+        decontrollist$NP = NP
+        optimfitde <- suppressWarnings(DEoptim(fn = lp2,lower = rep(-1e10, npars), upper=rep(1e10, npars),
+          control = decontrollist))
+        init=constrain_pars(object = smf,optimfitde$optim$bestmem)
       }
       
-      deinit <- matrix(rnorm(npars*NP,0,2),nrow = NP)
-      deinit[2,] <- rnorm(npars,0,.0002)
-      if(length(init)>1 & try2) {
-        deinit[1,] <- unconstrain_pars(smf,init)
-        if(NP > 10) deinit[3:9,] =  matrix( rnorm(npars*(7),rep(deinit[1,],each=7),.1), nrow = 7)
+      
+      
+      # if(!deoptim & standata$nopriors == 0 ) init='random'
+      if(!deoptim & standata$nopriors == 1 ){ #init using priors
+        standata$nopriors <- as.integer(0)
+        suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=1e6, init=0,as_vector=FALSE,draws=0,constrained=FALSE,
+          tol_obj=tol, tol_rel_obj=0,init_alpha=.001, tol_grad=0,tol_rel_grad=0,tol_param=1e-12,history_size=100,verbose=verbose),verbose=verbose))
+        standata$nopriors <- as.integer(1)
+        init = optimfit$par #rstan::constrain_pars(object = smf, optimfit$par)
       }
-      decontrollist$initialpop=deinit
-      decontrollist$NP = NP
-      optimfitde <- suppressWarnings(DEoptim(fn = lp2,lower = rep(-1e10, npars), upper=rep(1e10, npars),
-        control = decontrollist))
-      init=constrain_pars(object = smf,optimfitde$optim$bestmem)
+      
+      
+      
+      suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=1e6, init=init,as_vector=FALSE,draws=0,constrained=FALSE,
+        tol_obj=tol, tol_rel_obj=0,init_alpha=.00001, tol_grad=0,tol_rel_grad=0,tol_param=0,history_size=50,verbose=verbose),verbose=verbose))
+      
+      
+      est1=optimfit$par
+      bestfit <-optimfit$value
+      # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan::grab_cxxfun(sm@dso))
+      
+      est2=unconstrain_pars(smf, est1)
     }
     
-    
-    
-    # if(!deoptim & standata$nopriors == 0 ) init='random'
-    
-    if(!deoptim & standata$nopriors == 1 ){ #init using priors
-      standata$nopriors <- as.integer(0)
-      suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=1e6, init=0,as_vector=FALSE,draws=0,constrained=FALSE,
-        tol_obj=1e-12, tol_rel_obj=0,init_alpha=.001, tol_grad=0,tol_rel_grad=0,tol_param=1e-12,history_size=100,verbose=verbose),verbose=verbose))
-      standata$nopriors <- as.integer(1)
-      init = optimfit$par #rstan::constrain_pars(object = smf, optimfit$par)
-    }
-    
-    
-    
-    suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=1e6, init=init,as_vector=FALSE,draws=0,constrained=FALSE,
-      tol_obj=tol, tol_rel_obj=0,init_alpha=.00001, tol_grad=0,tol_rel_grad=0,tol_param=0,history_size=50,verbose=verbose),verbose=verbose))
-    
-    
-    est1=optimfit$par
-    bestfit <-optimfit$value
-    # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan::grab_cxxfun(sm@dso))
-
-    est2=unconstrain_pars(smf, est1)
     if(!estonly){
       lp<-function(parm) {
         out<-try(log_prob(smf, upars=parm,adjust_transform=TRUE,gradient=FALSE),silent = TRUE)
@@ -176,15 +178,26 @@ optimstan <- function(standata, sm, init=0,
       }
       
       
-      hess=grmat(func=grf,pars=est2)
-      if(any(is.na(hess))) stop(paste0('Hessian could not be computed for pars ', paste0(which(apply(hess,1,function(x) any(is.na(x))))), ' -- consider reparameterising.',collapse=''))
-      hess = (hess/2) + t(hess/2)
-      mchol=try(t(chol(solve(-hess))),silent=TRUE)
-      if(class(mchol)=='try-error') message('Hessian not positive-definite -- check importance sampling convergence with isdiag')
-      # if(class(mchol)=='try-error') {
-      mcov=MASS::ginv(-hess) #-optimfit$hessian)
-      mcov=as.matrix(Matrix::nearPD(mcov)$mat)
+      if(is.na(sampleinit[1])){
+        
+        hess=grmat(func=grf,pars=est2)
+        if(any(is.na(hess))) stop(paste0('Hessian could not be computed for pars ', paste0(which(apply(hess,1,function(x) any(is.na(x))))), ' -- consider reparameterising.',collapse=''))
+        hess = (hess/2) + t(hess/2)
+        mchol=try(t(chol(solve(-hess))),silent=TRUE)
+        if(class(mchol)=='try-error') message('Hessian not positive-definite -- check importance sampling convergence with isdiag')
+        # if(class(mchol)=='try-error') {
+        mcov=MASS::ginv(-hess) #-optimfit$hessian)
+        mcov=as.matrix(Matrix::nearPD(mcov)$mat)
+      }
       
+      if(!is.na(sampleinit[1])){
+        mcov = cov(sampleinit)*1.5+diag(1e-6,ncol(sampleinit))
+        est2 = apply(sampleinit,2,mean)
+        bestfit = 9e100
+        # browser()
+        optimfit <- suppressWarnings(list(par=sampling(sm,standata,iter=2,control=list(max_treedepth=1),chains=1,show_messages = FALSE,refresh=0)@inits[[1]]))
+      }
+      # browser()
       mcovl <- list()
       mcovl[[1]]=mcov
       delta=list()
@@ -228,11 +241,8 @@ optimstan <- function(standata, sm, init=0,
           
           target_dens[[j]] <- unlist(parallel::parLapply(cl, parallel::clusterSplit(cl,1:isloopsize), function(x){
             eval(parse(text=paste0('library(rstan)')))
-            # if(recompile) {
             
             smf <- stan_reinitsf(sm,standata)
-            # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan::grab_cxxfun(sm@dso))
-            # }
             
             lp<-function(parm) {
               out<-try(log_prob(smf, upars=parm, adjust_transform = TRUE, gradient=FALSE),silent = TRUE)
@@ -298,15 +308,13 @@ optimstan <- function(standata, sm, init=0,
           
         }
       }
-    }#end while no better fit
-  }
+    }
+  }#end while no better fit
   if(!estonly){
     if(isloops==0) lpsamples <- NA else lpsamples <- unlist(target_dens)[resample_i]
     
     # parallel::stopCluster(cl)
     message('Computing quantities...')
-    
-    
     
     # cl <- parallel::makeCluster(min(cores,chains), type = "PSOCK")
     parallel::clusterExport(cl, c('relistarrays','resamples','sm','standata','optimfit'),environment())

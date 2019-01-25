@@ -60,7 +60,7 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='margi
 
       rawpopmeans=stats::rnorm(length(rawpopsdprior))
       # xmean=eval(parse(text=paste0(m$transform[rowi])))
-      denslist[[1]]=tform(rawpopmeans,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi])
+      denslist[[1]]=tform(rawpopmeans,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi],m$inneroffset[rowi])
       leg <- c('Pop. mean prior')
       colvec <- c(1)
       
@@ -68,25 +68,25 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='margi
         
         if(inddifdevs[1]=='marginalise'){
           param=stats::rnorm(length(rawpopsdprior),rawpopmeans,rawpopsdprior)
-          denslist[[2]]=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi])
+          denslist[[2]]=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi],m$inneroffset[rowi])
           leg <- c('Pop. mean prior', paste0('Subject prior',lowmean))
           colvec <- c(1,2)
         }
         if(inddifdevs[1]!='marginalise'){
         #high
         param=stats::rnorm(length(rawpopsdprior),highmean,rawpopsdprior)
-        denslist[[2]]=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi])
+        denslist[[2]]=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi],m$inneroffset[rowi])
         
         #low
         param=stats::rnorm(length(rawpopsdprior),lowmean,rawpopsdprior)
-        denslist[[3]]=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi])
+        denslist[[3]]=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi],m$inneroffset[rowi])
   
         leg <- c('Pop. mean prior', paste0('Subject prior | mean = ',lowmean),paste0('Subject prior | mean = ',highmean))
         colvec <- c(1,2,4)
         }
       }
-      
-        ctDensityList(denslist,plot = TRUE, lwd=2,probs=c(.05,.95),main=m$param[rowi],
+
+        ctDensityList(denslist,plot = TRUE, lwd=2,probs=c(.01,.99),main=m$param[rowi],
         cex=.8,cex.main=.8,cex.axis=.8,cex.lab=.8,cex.sub=.8,
         legend = leg,
         legendargs=list(cex=.8),

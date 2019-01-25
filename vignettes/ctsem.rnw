@@ -119,7 +119,7 @@ URL: \url{http://www.mpib-berlin.mpg.de/en/staff/charles-driver}
 
 <<setup, include = FALSE, cache = FALSE, echo = FALSE>>=
 library('ctsem')
-library(knitr)
+library('knitr')
 render_sweave()
 set.seed(22)
 knit_hooks$set(crop = hook_pdfcrop)
@@ -809,103 +809,6 @@ summary(discretefit)$omxsummary$CI
 
 In this case, the log likelihood of the fit is worse, parameter estimates do not look very sensible, and there can be difficulties estimating confidence intervals for some parameters.
 
-\newpage
-\section{Package comparisons} \label{app:appendixA}\nopagebreak
-The following script loops over a sequence in which data is generated from a very simple model (to facilitate comparison), then various packages are used to fit the data, and the distribution of parameter estimates is then plotted. \pkg{ctsem} is used to generate 500 time points of data for a single individual, for a single perfectly measured, stationary process with a drift value of -0.3. The different packages at times use different transformations of the parameters, but for ease of comparison these are transformed to the drift parameter in \pkg{ctsem}. This comparison is not intended as a critique of any package, differences in intended use and estimation routines may result in the observed differences, and it is hoped the provided code  may help others to explore alternatives when necessary.
-
-<<packagecomparison, eval=FALSE, cache=TRUE>>=
-   if (!requireNamespace("cts", quietly = TRUE)) {
-    stop("cts package needed for this function to work. Please install it.",
-      call. = FALSE)
-  }
-  if (!requireNamespace("yuima", quietly = TRUE)) {
-    stop("yuima package needed for this function to work. Please install it.",
-      call. = FALSE)
-  }
-Tpoints<-500
-output <- matrix(NA, 100, 6)
-colnames(output) <- c('True', 'ctsem', 'cts', 'yuima', 'arima', 'OpenMx')
-for(i in 1:nrow(output)){
-generatingModel <- ctModel(n.latent = 1, n.manifest = 1, 
-  Tpoints = Tpoints,
-  LAMBDA = diag(1), DRIFT = matrix(-.3, nrow = 1),
-  CINT = matrix(3, 1, 1),
-  MANIFESTVAR = diag(0.00001, 1),
-  DIFFUSION = t(chol(diag(5, 1))))
-
-output[i, 1] <- generatingModel$DRIFT #true value
-
-ctsemData <- ctGenerate(generatingModel, n.subjects=1, burnin=30)
-longData <- ctWideToLong(ctsemData, Tpoints=500, n.manifest=1)
-longData <- ctDeintervalise(longData)
-
-### ctsem package
-ctsemModel <- ctModel(n.latent=1, n.manifest = 1, 
-  Tpoints = Tpoints,
-  MANIFESTVAR = diag(0.0001, 1),
-  LAMBDA = diag(1))
-ctsemFit <- ctFit(ctsemData, ctsemModel, stationary = c('T0VAR'))
-output[i,2] <- mxEval(DRIFT, ctsemFit$mxobj)
-
-### CTS package
-ctsData <- longData[, c('time', 'Y1')]
-library(cts)
-ctsFit <- car(ctsData, order = 1, scale = 1)
-output[i, 3] <- -1 * (1 + ctsFit$phi) / (1 - ctsFit$phi) 
-
-### yuima package (not plotted - potential issues due to dT=1)
-library(yuima)
-mod <- setModel(drift="drift * x + cint", diffusion = "diffusion")
-ou <- setYuima(model = mod, data = setData(longData[,'Y1'], delta = 1))
-mlout <- qmle(ou,start = list(drift = -.3, diffusion = 1, cint = 1))
-output[i, 4] <- mlout@coef[2]
-
-### arima (from stats package, discrete time analysis only)
-arfit <- arima(longData[, 'Y1'], order = c(1, 0, 0))
-log(arfit$coef[1]) #transform ar1 parameter to drift parameter
-output[i, 5]<-log(arfit$coef[1])
-
-### OpenMx state space function
-ctsemModel <- ctModel(n.latent=1, n.manifest = 1, 
-  Tpoints = Tpoints,
-  MANIFESTVAR = diag(0.0001, 1), T0VAR=diag(1), LAMBDA = diag(1))
-cdim <- list('Y1', c('eta1'))
-
-amat <- mxMatrix('Full', 1, 1, TRUE, .3,
-	name='A', lbound=-10)
-bmat <- mxMatrix('Full', 1, 1, FALSE, 0, name='B')
-cmat <- mxMatrix('Full', 1, 1, FALSE, 1, name='C', dimnames=cdim)
-dmat <- mxMatrix('Full', 1, 1, TRUE, 1, name='D')
-qmat <- mxMatrix('Full', 1, 1, TRUE, 1, name='Q')
-rmat <- mxMatrix('Diag', 1, 1, FALSE, .0001, name='R')
-xmat <- mxMatrix('Full', 1, 1, TRUE, 7, name='x0', lbound=-10, ubound=10)
-pmat <- mxMatrix('Diag', 1, 1, FALSE, 1, name='P0')
-umat <- mxMatrix('Full', 1, 1, FALSE, 1, name='u')
-tmat <- mxMatrix('Full', 1, 1, name='time', labels='data.time')
-
-osc <- mxModel("AR1", 
-	amat, bmat, cmat, dmat, qmat, rmat, xmat, pmat, umat, tmat,
-	mxExpectationStateSpace('A', 'B', 'C', 'D', 'Q', 'R', 'x0', 'P0', 'u'),
-	mxFitFunctionML(),
-	mxData(longData, 'raw'))
-
-oscr <- mxRun(osc)
-
-output[i,6] <-  log(mxEval(A, oscr))
-
-} #end for loop
-
-### plot output
-plot(density(output[1:i, 2]), xlim = c(-.4, -.1), lty = 2, lwd = 2, 
-  ylab='Density',
-  main = 'Density of estimates of drift parameter (true value -0.3)')
-points(density(output[1:i, 3]), col='red', type='l', lty=3, lwd=3)
-points(density(output[1:i, 5]), col='blue', type='l', lwd=2, lty=2)
-points(density(output[1:i, 6]), col='green', type='l', lwd=4, lty=5)
-legend('topleft', bty='n', 
-  text.col = c('black','red','blue', 'green'),
-  legend = c('ctsem', 'cts', 'arima', 'OpenMx'))
-@
 
 \end{document}
 

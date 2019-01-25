@@ -5,7 +5,7 @@
 \title{Compares model implied density and values to observed, for a ctStanFit object.}
 \usage{
 ctStanPostPredict(fit, legend = TRUE, diffsize = 1, jitter = 0.02,
-  wait = TRUE, probs = c(0.025, 0.5, 0.975), samples = TRUE,
+  wait = TRUE, probs = c(0.025, 0.5, 0.975), shading = TRUE,
   datarows = "all", ...)
 }
 \arguments{
@@ -21,7 +21,8 @@ ctStanPostPredict(fit, legend = TRUE, diffsize = 1, jitter = 0.02,
 
 \item{probs}{Vector of length 3 containing quantiles to plot -- should be rising numeric values between 0 and 1.}
 
-\item{samples}{Logical -- plot all generated data points? Otherwise, plot shaded polygon based on quantile estimate.}
+\item{shading}{Logical -- show smoothed shading over generated data points? Otherwise, plot shaded polygon based on quantile estimate. 
+Shading is better for non-linearities.}
 
 \item{datarows}{integer vector specifying rows of data to plot. Otherwise 'all' uses all data.}
 
@@ -38,5 +39,5 @@ This function relies on the data generated during each iteration of fitting to a
 model implied distributions -- thus, when limited iterations are available, the approximation will be worse.
 }
 \examples{
-ctStanPostPredict(ctstantestfit,wait=FALSE, samples=TRUE, datarows=1:25,diffsize=2)
+ctStanPostPredict(ctstantestfit,wait=FALSE, shading=FALSE, datarows=1:25,diffsize=2)
 }

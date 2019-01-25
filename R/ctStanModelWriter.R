@@ -58,7 +58,7 @@ for(mlist in names(mats[-1])){
     for(ri in 1:size(',m,'setup)){ //for each row of matrix setup
       if(',m,'setup[ ri,5] > 0 && ( statei == 0 || statei == nlatent + ',m,'setup[ ri,5])){ // if individually varying
         s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = 
-          ','tform(state[nlatent +',m,'setup[ri,5] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ); 
+          ','tform(state[nlatent +',m,'setup[ri,5] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4], ',m,'values[ri,6] ); 
       }
     }')
     })),collapse='\n'),'}',collapse='\n')
@@ -70,7 +70,7 @@ for(mlist in names(mats[-1])){
     for(ri in 1:size(',m,'setup)){
       if(',m,'setup[ ri,5] > 0){ 
          s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = ',
-          'tform(state[nlatent +',m,'setup[ri,5] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ); 
+          'tform(state[nlatent +',m,'setup[ri,5] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4], ',m,'values[ri,6] ); 
       }
     }')
     })),collapse='\n'),'}',collapse='\n')
@@ -82,7 +82,8 @@ for(mlist in names(mats[-1])){
     for(ri in 1:size(',m,'setup)){
       if(',m,'setup[ ri,5] > 0){ 
          s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = ',
-         'tform(ukfstates[nlatent +',m,'setup[ri,5], statei ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ); 
+         'tform(ukfstates[nlatent +',m,'setup[ri,5], statei ], ',m,'setup[ri,4], ',
+            m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4], ',m,'values[ri,6] ); 
       }
     }')
     })),collapse='\n'),'}',collapse='\n')
@@ -94,7 +95,7 @@ for(mlist in names(mats[-1])){
     for(ri in 1:size(',m,'setup)){
       if(',m,'setup[ ri,5] > 0){ 
          s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = ',
-          'tform(state[nlatent +',m,'setup[ri,5] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ); 
+          'tform(state[nlatent +',m,'setup[ri,5] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4], ',m,'values[ri,6] ); 
       }
     }')
     })),collapse='\n'),'}',collapse='\n')
@@ -218,7 +219,9 @@ ukfilterfunc<-function(ppchecking){
               if(statei== 0) {
                 base = sDRIFT * state[1:nlatent] + sCINT[,1];
               }
-              if(statei > 0) J[1:nlatent,statei] = (( sDRIFT * state[1:nlatent] + sCINT[,1]) - base)/1e-6;
+              if(statei > 0) {
+                J[1:nlatent,statei] = (( sDRIFT * state[1:nlatent] + sCINT[,1]) - base)/1e-6;
+              }
             }
             ',paste0(ctstanmodel$calcs$dynamic,';\n',collapse=' '),' //find a way to remove this repeat
             Je= expm2(J * dTsmall[rowi]) ;
@@ -338,7 +341,7 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
 
         for(statei in 2:cols(ukfmeasures)){
           state = ukfstates[, statei];
-          ',paste0(ctstanmodel$calcs$dynamic,';\n',collapse=''),'
+          ',paste0(ctstanmodel$calcs$measurement,';\n',collapse=''),'
   
           ukfmeasures[, statei] = sMANIFESTMEANS[,1] + sLAMBDA * state[1:nlatent];
           if(nbinary_y[rowi] > 0) {
@@ -496,11 +499,15 @@ subjectparscalc2 <- function(pop=FALSE,smats=TRUE){
     tipredaddition = rep_vector(0,nparams);
     indvaraddition = rep_vector(0,nparams);
 
-    if(si > 0 && nindvarying > 0 && intoverpop==0) indvaraddition[indvaryingindex] = rawpopcovsqrt * baseindparams[(1+(si-1)*nindvarying):(si*nindvarying)];
+    if(si > 0 && nindvarying > 0 && intoverpop==0) {
+      if(fixedsubpars==0) indvaraddition[indvaryingindex] = rawpopcovsqrt * baseindparams[si];
+      if(fixedsubpars==1) indvaraddition[indvaryingindex] = rawpopcovsqrt * fixedindparams[si];
+    }
   
     if(si > 0 &&  ntipred > 0) tipredaddition = TIPREDEFFECT * tipreds[si]\';
   
     rawindparams = rawpopmeans + tipredaddition + indvaraddition;
+
   }
 ',
 
@@ -511,7 +518,7 @@ subjectparscalc2 <- function(pop=FALSE,smats=TRUE){
       if(',m,'setup[ ri,5] > 0 || ',m,'setup[ ri,6] > 0 || si < 2){
         s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = ',
           m,'setup[ri,3] ? ', 
-            'tform(rawindparams[ ',m,'setup[ri,3] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4] ) : ',
+            'tform(rawindparams[ ',m,'setup[ri,3] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4], ',m,'values[ri,6] ) : ',
             m,'values[ri,1]; //either transformed, scaled and offset free par, or fixed value
       }
     }
@@ -557,7 +564,7 @@ subjectparscalc2 <- function(pop=FALSE,smats=TRUE){
     if(si <= T0VARsubindex[nsubjects]) {
       if(ukf==0 || output==1) sT0VAR = sdcovsqrt2cov(sT0VAR,ukf);
       if(nt0varstationary > 0) {
-        if(ukf==1 && output ==0) sasymDIFFUSION = cholesky_decompose(makesym(sasymDIFFUSION,verbose,0));
+        if(ukf==1 && output ==0) sasymDIFFUSION = cholesky_decompose(makesym(sasymDIFFUSION,verbose,1));
           for(ri in 1:nt0varstationary){ // in case of negative variances
           sT0VAR[t0varstationary[ri,1],t0varstationary[ri,2] ] = 
            t0varstationary[ri,1] == t0varstationary[ri,2] ? 
@@ -685,16 +692,13 @@ functions{
   }
 
   matrix sqkron_prod(matrix mata, matrix matb){
-    int m=rows(mata);
-    int p=rows(matb);
-    int n=cols(mata);
-    int q=cols(matb);
+    int d=rows(mata);
     matrix[rows(mata)*rows(matb),cols(mata)*cols(matb)] out;
-    for (k in 1:p){
-      for (l in 1:q){
-        for (i in 1:m){
-          for (j in 1:n){
-            out[ p*(i-1)+k, q*(j-1)+l ] = mata[i, j] * matb[k, l];
+    for (k in 1:d){
+      for (l in 1:d){
+        for (i in 1:d){
+          for (j in 1:d){
+            out[ d*(i-1)+k, d*(j-1)+l ] = mata[i, j] * matb[k, l];
           }
         }
       }
@@ -739,32 +743,53 @@ functions{
     return out;
   }
 
+  matrix chol(matrix a, int verbose){
+    matrix[rows(a),rows(a)] l;
+    for(j in 1:cols(a)){
+      for(i in 1:rows(a)){
+        if(j==i) {
+          if(j == 1){ 
+            if(a[j,j] <=0) { 
+              l[j,j] = 1e-5;
+              if(verbose > 0) print("Negative variance ", a[j,j], " set to 1e-5 for Cholesky decomp");
+            }
+            if(a[j,j] > 0) l[j,j] = sqrt(a[j,j]);
+          }
+          if(j > 1) l[j,j] = sqrt(a[j,j] - dot_self(l[i, 1 : j-1]));
+        }
+        if(i > j) l[i,j] = ( a[i,j] - dot_product( l[ i, 1:(j-1) ], l[j, 1:(j-1)]) ) / l[j,j];
+        if(j > i) l[i,j] = 0;
+      }
+    }
+    return l;
+  }
+
   matrix makesym(matrix mat, int verbose, int pd){
     matrix[rows(mat),cols(mat)] out;
     for(coli in 1:cols(mat)){
-      if(pd ==1 && mat[coli,coli] < 1e-5){
-        if(verbose > 0) print("diagonal too low (",mat[coli,coli],") during makesym row ", coli, " col ", coli);
-        out[coli,coli] = 1e-5;
+      if(pd ==1){ // && mat[coli,coli] < 1e-5
+        //if(verbose > 0) print("diagonal too low (",mat[coli,coli],") during makesym row ", coli, " col ", coli);
+        out[coli,coli] = mat[coli,coli] + 1e-5;
       } else out[coli,coli] = mat[coli,coli]; 
       for(rowi in coli:rows(mat)){
         if(rowi > coli) {
           out[rowi,coli] = mat[rowi,coli]; //(mat[coli,rowi] + ) *.5;
           out[coli,rowi] = mat[rowi,coli];
         }
-        if(is_nan(out[rowi,coli])){
+        ',if(gendata) paste0('if(is_nan(out[rowi,coli])){
           if(verbose > 0) print("nan during makesym row ", rowi, " col ", coli);
           if(rowi==coli) out[rowi,coli] = 99999;
           if(rowi!=coli) {
             out[rowi,coli] = 0;
             out[coli,rowi] = 0;
           }
-        }
+        }'),'
       }
     }
     return out;
   }
 
-  real tform(real param, int transform, data real multiplier, data real meanscale, data real offset){
+  real tform(real param, int transform, data real multiplier, data real meanscale, data real offset, data real inneroffset){
     real out;
   
     ',tformshapes(),
@@ -805,6 +830,7 @@ data {
   int nindvaryingoffdiagonals; //number of off diagonal parameters needed for popcov matrix
   vector[nindvarying] sdscale;
   int indvaryingindex[nindvarying];
+  int notindvaryingindex[nparams-nindvarying];
 
   int nt0varstationary;
   int nt0meansstationary;
@@ -833,35 +859,35 @@ data {
   ',paste0(unlist(lapply(c(mats$base,'asymCINT','asymDIFFUSION'),function(mati) paste0('int ',mati,'subindex[nsubjects];',collapse='\n'))),collapse='\n'),'
   ',paste0(unlist(lapply(mats$base,function(m) paste0('int ',m,'setup_rowcount;',collapse='\n'))),collapse='\n'),'
   ',paste0(unlist(lapply(mats$base,function(m) paste0('int ',m,'setup[',m,'setup_rowcount,6 ];',collapse='\n'))),collapse='\n'),'
-  ',paste0(unlist(lapply(mats$base,function(m) paste0('matrix[',m,'setup_rowcount, 5] ',m,'values;'))),collapse='\n'),'
+  ',paste0(unlist(lapply(mats$base,function(m) paste0('matrix[',m,'setup_rowcount, 6] ',m,'values;'))),collapse='\n'),'
   int TIPREDEFFECTsetup[nparams, ntipred];
   int nmatrixslots;
   int popsetup[nmatrixslots,6];
-  real popvalues[nmatrixslots,5];
+  real popvalues[nmatrixslots,6];
   int savescores;
+  int nlatentpop;
+  int fixedhyper;
+  int fixedsubpars;
+  vector[fixedhyper ? nindvarying : 0] fixedrawpopmeans;
+  matrix[fixedhyper ? nindvarying : 0, fixedhyper ? nindvarying : 0] fixedrawpopchol;
+  vector[fixedsubpars ? nindvarying : 0] fixedindparams[fixedsubpars ? nsubjects : 0];
+  int dokalman;
 }
       
 transformed data{
-  matrix[nlatent,nlatent] IIlatent;
-  matrix[nlatent*nlatent,nlatent*nlatent] IIlatent2;
-  int nlatentpop;
-  real asquared;
-  real sqrtukfadjust;
-  nlatentpop = intoverpop ? nlatent + nindvarying : nlatent;
-  IIlatent = diag_matrix(rep_vector(1,nlatent));
-  IIlatent2 = diag_matrix(rep_vector(1,nlatent*nlatent));
-
-  //ukf approximation parameters
-  asquared =  square(2.0/sqrt(0.0+nlatentpop) * ukfspread); 
-  sqrtukfadjust = sqrt(0.0+nlatentpop +( asquared * (nlatentpop  + 0.5) - (nlatentpop) ) );
+  matrix[nlatent,nlatent] IIlatent= diag_matrix(rep_vector(1,nlatent));
+  matrix[nlatent*nlatent,nlatent*nlatent] IIlatent2 = diag_matrix(rep_vector(1,nlatent*nlatent));
+  matrix[nindvarying,nindvarying] IIindvar = diag_matrix(rep_vector(1,nindvarying));
+  real asquared =  square(2.0/sqrt(0.0+nlatentpop) * ukfspread);
+  real sqrtukfadjust = sqrt(0.0+nlatentpop +( asquared * (nlatentpop  + 0.5) - (nlatentpop) ) );
 }
       
 parameters {
-  vector[nparams] rawpopmeans; // population level means \n','
-  vector',if(!is.na(ctstanmodel$rawpopsdbaselowerbound)) paste0('<lower=',ctstanmodel$rawpopsdbaselowerbound[1],'>'),'[nindvarying ? 1 : 0] rawpopsdbase; //population level std dev
-  simplex[nindvarying] rawpopsdprops[nindvarying ? 1 : 0];
-  vector[nindvaryingoffdiagonals] sqrtpcov; // unconstrained basis of correlation parameters
-  vector[intoverpop ? 0 : nindvarying*nsubjects] baseindparams; //vector of subject level deviations, on the raw scale
+  vector[fixedhyper ? nparams-nindvarying : nparams] rawpopmeansbase; // population level means \n','
+  vector',if(!is.na(ctstanmodel$rawpopsdbaselowerbound)) paste0('<lower=',ctstanmodel$rawpopsdbaselowerbound[1],'>'),'[(nindvarying * (1-fixedhyper))? 1 : 0] rawpopsdbase; //population level std dev
+  simplex[(nindvarying * (1-fixedhyper)) ? nindvarying : 0] rawpopsdprops[(nindvarying * (1-fixedhyper)) ? 1 : 0];
+  vector[fixedhyper ? 0 : nindvaryingoffdiagonals] sqrtpcov; // unconstrained basis of correlation parameters
+  vector[fixedsubpars ? 0 : (intoverpop ? 0 : nindvarying)] baseindparams[fixedsubpars ? 0 : (intoverpop ? 0 : nsubjects)]; //vector of subject level deviations, on the raw scale
   
   vector[ntipredeffects] tipredeffectparams; // effects of time independent covariates
   vector[nmissingtipreds] tipredsimputed;
@@ -870,13 +896,20 @@ parameters {
 }
       
 transformed parameters{
-  vector[nindvarying] rawpopsd; //population level std dev
+  vector[nparams] rawpopmeans; // population level means \n','
+  vector[fixedhyper ? 0 : nindvarying] rawpopsd; //population level std dev
   matrix[nindvarying,nindvarying] rawpopcovsqrt; 
   real ll;
   vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatentpop*2 : 0)] kalman[savescores ? ndatapoints : 0];
 
   matrix[ntipred ? nsubjects : 0, ntipred ? ntipred : 0] tipreds; //tipred values to fill from data and, when needed, imputation vector
   matrix[nparams, ntipred] TIPREDEFFECT; //design matrix of individual time independent predictor effects
+
+  if(fixedhyper==1) {
+    rawpopmeans[indvaryingindex] = fixedrawpopmeans;
+    rawpopmeans[notindvaryingindex]=rawpopmeansbase;
+}
+  if(fixedhyper==0) rawpopmeans = rawpopmeansbase;
 
   if(ntipred > 0){ 
     int counter = 0;
@@ -899,7 +932,7 @@ transformed parameters{
     }
   }
 
-  if(nindvarying > 0){
+  if(nindvarying > 0 &&fixedhyper ==0){
     int counter =0;
     rawpopsd = sqrt(rawpopsdprops[1] * square(',ctstanmodel$rawpopsdtransform, ')[1]) .*sdscale; // sqrts of proportions of total variance
     for(j in 1:nindvarying){
@@ -912,12 +945,14 @@ transformed parameters{
         }
       }
     }
-    rawpopcovsqrt = diag_pre_multiply(rawpopsd, 
-      covsqrt2corsqrt(rawpopcovsqrt,0)); 
+ rawpopcovsqrt = cholesky_decompose(makesym(tcrossprod(diag_pre_multiply(rawpopsd, 
+      covsqrt2corsqrt(rawpopcovsqrt,0))),verbose,1)); 
   }//end indvarying par setup
 
+  if(nindvarying > 0 &&fixedhyper ==1) rawpopcovsqrt = fixedrawpopchol; 
+
   ll=0;
-{',
+if(dokalman==1){',
 if(!gendata) ukfilterfunc(ppchecking=FALSE),
 if(!gendata) kalmanll(),'
 }
@@ -926,8 +961,11 @@ if(!gendata) kalmanll(),'
       
 model{
 
+  if(fixedhyper==1) baseindparams ~ multi_normal_cholesky(rep_vector(0,nindvarying),IIindvar);
+  if(intoverpop==0 && fixedhyper==0 && fixedsubpars == 1) fixedindparams ~ multi_normal_cholesky(rep_vector(0,nindvarying),IIindvar);
+
   if(nopriors==0){
-    target += normal_lpdf(rawpopmeans|0,1);
+   target += normal_lpdf(rawpopmeansbase|0,1);
   
     if(ntipred > 0){ 
       tipredeffectparams ~ normal(0,tipredeffectscale);
@@ -935,9 +973,9 @@ model{
     }
     
     if(nindvarying > 0){
-      if(nindvarying >1) sqrtpcov ~ normal(0,1);
-      if(intoverpop==0) baseindparams ~ normal(0,1);
-      rawpopsdbase ~ ',ctstanmodel$rawpopsdbase,';
+      if(nindvarying >1 && fixedhyper==0) sqrtpcov ~ normal(0,1);
+      if(intoverpop==0 && fixedhyper==0 && fixedsubpars == 0) baseindparams ~ multi_normal_cholesky(rep_vector(0,nindvarying),IIindvar);
+      if(fixedhyper==0) rawpopsdbase ~ ',ctstanmodel$rawpopsdbase,';
     }
   } //end pop priors section
   
@@ -972,18 +1010,18 @@ rawpopcorr = quad_form_diag(rawpopcov,inv_sqrt(diagonal(rawpopcov)));
 popsd = rep_vector(0,nparams);
 {
 vector[nparams] rawpopsdfull;
-rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
+rawpopsdfull[indvaryingindex] = sqrt(diagonal(rawpopcov)); //base for calculations
 
     for(ri in 1:dims(popsetup)[1]){
       if(popsetup[ri,3] !=0) {
 
-        popmeans[popsetup[ ri,3]] = tform(rawpopmeans[popsetup[ri,3] ], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4] ); 
+        popmeans[popsetup[ ri,3]] = tform(rawpopmeans[popsetup[ri,3] ], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4], popvalues[ri,6] ); 
 
         popsd[popsetup[ ri,3]] = popsetup[ ri,5] ? 
           fabs(tform(
-            rawpopmeans[popsetup[ri,3] ]  + rawpopsdfull[popsetup[ ri,3]], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4]) -
+            rawpopmeans[popsetup[ri,3] ]  + rawpopsdfull[popsetup[ ri,3]], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4], popvalues[ri,6]) -
            tform(
-            rawpopmeans[popsetup[ri,3] ]  - rawpopsdfull[popsetup[ ri,3]], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4]) ) /2 : 
+            rawpopmeans[popsetup[ri,3] ]  - rawpopsdfull[popsetup[ ri,3]], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4], popvalues[ri,6]) ) /2 : 
           0; 
 
         if(ntipred > 0){
@@ -992,8 +1030,8 @@ rawpopsdfull[indvaryingindex] = rawpopsd; //base for calculations
               linearTIPREDEFFECT[popsetup[ri,3],tij] = 0;
             } else {
             linearTIPREDEFFECT[popsetup[ri,3],tij] = (
-              tform(rawpopmeans[popsetup[ri,3] ] + TIPREDEFFECT[popsetup[ri,3],tij] * .01, popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4] ) -
-              tform(rawpopmeans[popsetup[ri,3] ] - TIPREDEFFECT[popsetup[ri,3],tij] * .01, popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4] )
+              tform(rawpopmeans[popsetup[ri,3] ] + TIPREDEFFECT[popsetup[ri,3],tij] * .01, popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4], popvalues[ri,6] ) -
+              tform(rawpopmeans[popsetup[ri,3] ] - TIPREDEFFECT[popsetup[ri,3],tij] * .01, popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4], popvalues[ri,6] )
               ) /2 * 100;
             }
          }

@@ -112,7 +112,7 @@ Manuel C. Voelkle \\ Humboldt University Berlin \\ Max Planck Institute for Huma
 
 <<setup, include = FALSE, cache = FALSE, echo = FALSE>>=
 library('ctsem')
-#library(knitr)
+library(knitr)
 set.seed(22)
 knit_hooks$set(crop = hook_pdfcrop)
 opts_chunk$set(warning = FALSE, fig.align = 'center', width.cutoff = 100, fig.show = 'hold', eval = TRUE, echo = TRUE, message = FALSE, comment = NA, tidy = FALSE, autodep=TRUE, out.truncate = 100, size='small', crop=TRUE, fig.pos="htbp")
@@ -453,6 +453,7 @@ datalong <- cbind(id, time, sunspots)
    LAMBDA=matrix(c( 1, 'ma1' ), nrow=1, ncol=2),
    DRIFT=matrix(c(0, 'a21', 1, 'a22'), nrow=2, ncol=2),
    MANIFESTMEANS=matrix(c('m1'), nrow=1, ncol=1),
+   MANIFESTVAR=diag(0,1), #As per original spec
    CINT=matrix(c(0, 0), nrow=2, ncol=1),
    T0VAR=matrix(c(1,0,0,1), nrow=2, ncol=2), #Because single subject
    DIFFUSION=matrix(c(0, 0, 0, "diffusion"), ncol=2, nrow=2))
@@ -484,6 +485,7 @@ datalong <- cbind(id, time, sunspots)
    LAMBDA=matrix(c( 1, 'ma1' ), nrow=1, ncol=2),
    DRIFT=matrix(c(0, 'a21', 1, 'a22'), nrow=2, ncol=2),
    MANIFESTMEANS=matrix(c('m1'), nrow=1, ncol=1),
+   MANIFESTVAR=diag(0,1), #As per original spec
    CINT=matrix(c(0, 0), nrow=2, ncol=1),
    T0VAR=matrix(c(1,0,0,1), nrow=2, ncol=2), #Because single subject
    DIFFUSION=matrix(c(0, 0, 0, "diffusion"), ncol=2, nrow=2))

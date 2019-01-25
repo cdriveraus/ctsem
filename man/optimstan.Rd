@@ -4,9 +4,10 @@
 \alias{optimstan}
 \title{Optimize / importance sample a stan or ctStan model.}
 \usage{
-optimstan(standata, sm, init = 0, deoptim = TRUE, decontrol = list(),
-  isloops = 5, isloopsize = 500, issamples = 500, verbose = 0,
-  nopriors = FALSE, cores = 1)
+optimstan(standata, sm, init = 0, sampleinit = NA, deoptim = TRUE,
+  estonly = FALSE, tol = 1e-12, decontrol = list(), isloops = 5,
+  isloopsize = 500, issamples = 500, verbose = 0, nopriors = FALSE,
+  cores = 1)
 }
 \arguments{
 \item{standata}{list object conforming to rstan data standards.}
@@ -15,8 +16,14 @@ optimstan(standata, sm, init = 0, deoptim = TRUE, decontrol = list(),
 
 \item{init}{init argument conforming to rstan init standards.}
 
+\item{sampleinit}{either NA, or an niterations * nparams matrix of samples to initialise importance sampling.}
+
 \item{deoptim}{Do first pass optimization using differential evolution? Slower, but better for cases with multiple 
 minima / difficult optimization.}
+
+\item{estonly}{if TRUE,just return point estimates under $rawest subobject.}
+
+\item{tol}{absolute object tolerance}
 
 \item{decontrol}{List of control parameters for differential evolution step, to pass to \code{\link[DEoptim]{DEoptim.control}}.}
 

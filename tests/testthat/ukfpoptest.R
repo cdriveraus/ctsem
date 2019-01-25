@@ -35,12 +35,13 @@ cd[,gm$manifestNames]<-(cd[,gm$manifestNames]) + rnorm(length(cd[,gm$manifestNam
 m1<-ctModel(type='omx',n.latent=2,n.manifest=1,Tpoints=Tpoints,
   LAMBDA=matrix(c(1,1),nrow=n.manifest,ncol=2),
   MANIFESTMEANS=matrix(0,nrow=n.manifest),
+  # CINT=matrix(c('cint1',0),2,1),
   # T0MEANS=matrix(c(0,0),2),
-  # T0VAR=matrix(c(1.5,0, 0,0.6932),2,2),
+  # T0VAR=matrix(c('t0var11',0, 0,'t0var22'),2,2),
   DIFFUSION=matrix(c('diff11',0,0,1e-5),2,2),
-  DRIFT=matrix(c('dr11',0,0,-1e-5),2,2)
+  DRIFT=matrix(c('dr11',0,1,-1e-5),2,2)
 )
-m1$T0VAR[2,1]=0
+# m1$T0VAR[2,1]=0
 
 #model for ukf ctsem
 m2<-ctModel(type='omx',n.latent=1,n.manifest=n.manifest,Tpoints=Tpoints,
@@ -56,7 +57,7 @@ m2<-ctModel(type='omx',n.latent=1,n.manifest=n.manifest,Tpoints=Tpoints,
 
 
 # #original ctsem
-cfit1 <- ctRefineTo(dat = cd,dataform = 'long',ctmodelobj = m1,retryattempts = 0)
+cfit1 <- ctRefineTo(dat = cd,dataform = 'long',ctmodelobj = m1,retryattempts = 1)
 cfit1$mxobj$DRIFT$values
 cfit1$mxobj$DIFFUSION$result
 cfit1$mxobj$T0VAR$result
@@ -74,7 +75,7 @@ sm1 <- ctStanModel(m1)
 sm1$pars$indvarying <- FALSE
 # sm1$pars$indvarying[!sm1$pars$matrix %in% c('MANIFESTMEANS')] <- FALSE
 
-# sink(file='sf1.txt')
+# sink(file='../sf1.txt')
 sf1 <- ctStanFit(cd,sm1,iter=200,chains=4,cores=4,
   optimize=TRUE,verbose=1,nopriors = TRUE,
   optimcontrol=list(deoptim = FALSE,isloops=0,isloopsize=50,issamples=100),
@@ -91,13 +92,13 @@ s1=sf1$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf1$stanfit$transfo
 sm2 <- ctStanModel(m2)
 sm2$pars$indvarying[!(sm2$pars$matrix %in% c('MANIFESTMEANS'))] <- FALSE
 
+# sink(file='../sinkout.txt')
 sf2 <- ctStanFit(cd,sm2,iter=200,chains=4,cores=4,
   optimize=TRUE,verbose=1,nopriors = TRUE,intoverpop = TRUE,
   optimcontrol=list(deoptim = FALSE,isloops=0,isloopsize=50,issamples=100),
   derrind=1,
-  maxtimestep = .2,
-  nlcontrol=list(nldynamics=FALSE))
-
+  maxtimestep = .2)
+# sink()
 
 summary(sf2)$popmeans
 s2=sf2$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf2$stanfit$transformedpars_old)),'mean']

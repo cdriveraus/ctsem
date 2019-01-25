@@ -422,8 +422,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   
   #get extra calculations and adjust model spec as needed
   ctstanmodel <- ctStanCalcsList(ctstanmodel)
-  
-  if(length(unique(datalong[,idName]))==1 & any(ctstanmodel$pars$indvarying[is.na(ctstanmodel$pars$value)]==TRUE)) {
+  if(length(unique(datalong[,idName]))==1 & any(ctstanmodel$pars$indvarying[is.na(ctstanmodel$pars$value)]==TRUE) & 
+      is.null(ctstanmodel$fixedrawpopmeans) & is.null(ctstanmodel$fixedsubpars) & is.null(ctstanmodel$forcemultisubject)) {
     ctstanmodel$pars$indvarying <- FALSE
     message('Individual variation not possible as only 1 subject! indvarying set to FALSE on all parameters')
   }
@@ -437,7 +437,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   ukf=FALSE
   recompile <- FALSE
   if(optimize && !intoverstates) stop('intoverstates=TRUE required for optimization!')
-  if(optimize && !intoverpop && any(ctstanmodel$pars$indvarying[is.na(ctstanmodel$pars$value)]==TRUE && nldynamics != FALSE)){
+  if(optimize && !intoverpop && any(ctstanmodel$pars$indvarying[is.na(ctstanmodel$pars$value)]==TRUE & 
+      is.null(ctstanmodel$fixedrawpopchol) & is.null(ctstanmodel$fixedsubpars))){
     intoverpop <- TRUE
     message('Setting intoverpop=TRUE to enable optimization of random effects...')
   }
@@ -630,7 +631,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   for(i in 2:nrow(datalong)){
     T0check[i]<- ifelse(datalong[i,idName] != datalong[i-1,idName], 1, 0)
   }
-  
+
   if (!(timeName %in% colnames(datalong))) stop(paste('time column', omxQuotes(timeName), "not found in data"))
   if(any(is.na(datalong[,timeName]))) stop('Missing "time" column!')
   
@@ -776,7 +777,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   extratforms <- c()
   for(m in mats$base){
     mdat<-matrix(0,0,6)
-    mval<-matrix(0,0,5)
+    mval<-matrix(0,0,6)
     for(i in 1:nrow(ctspec)){ 
       if(ctspec$matrix[i] == m) {
         
@@ -796,7 +797,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
             if(is.na(suppressWarnings(as.integer(ctspec$transform[i])))) { #extra tform needed
               extratformcounter <- extratformcounter + 1
               extratforms <- paste0(extratforms,'if(transform==',-10-extratformcounter,') out = ',
-                ctspec$offset[i],' + ',ctspec$multiplier[i],' * (',
+                ctspec$offset[i],' + ',ctspec$multiplier[i],' * (inneroffset + ',
                 gsub('param', paste0('param * ',ctspec$meanscale[i]),ctspec$transform[i]),');')
               ctspec$transform[i] <- -10-extratformcounter
             }
@@ -825,12 +826,12 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         
         # if(ctspec$indvarying[i]) indvaryingindex <- c(indvaryingindex, freepar)
         
-        mval<-rbind(mval, matrix(c(ctspec$value[i], ctspec$multiplier[i], ctspec$meanscale[i],ctspec$offset[i], ctspec$sdscale[i]),ncol=5))
+        mval<-rbind(mval, matrix(c(ctspec$value[i], ctspec$multiplier[i], ctspec$meanscale[i],ctspec$offset[i], ctspec$sdscale[i],ctspec$inneroffset[i]),ncol=6))
         colnames(mdat) <- c('row','col','param','transform', 'indvarying','tipred')
-        colnames(mval) <- c('value','multiplier','meanscale','offset','sdscale')
+        colnames(mval) <- c('value','multiplier','meanscale','offset','sdscale','inneroffset')
       }
     }
-    if(!is.null(mval)) mval[is.na(mval)] <- 99999 else mval<-array(0,dim=c(0,4))
+    if(!is.null(mval)) mval[is.na(mval)] <- 99999 else mval<-array(0,dim=c(0,6))
     
     matsetup[[m]] = mdat
     matvalues[[m]] <- mval
@@ -866,6 +867,11 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     stanmodeltext<- ctStanModelWriter(ctstanmodel, gendata, extratforms)
   }  else recompile<-TRUE
   
+  # message('using ols!!!!!!!!!')
+  #  stanmodeltext<- ctolsStanModelWriter(ctstanmodel, gendata, extratforms)
+  # recompile=TRUE
+  
+  
   # out<-list(stanmodeltext=stanmodeltext)
   
   standata<-list(
@@ -874,11 +880,14 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     time=datalong[,ctstanmodel$timeName], #not used in model but used elsewhere
     nsubjects=as.integer(nsubjects),
     nmanifest=as.integer(n.manifest),
+    nlatentpop = as.integer(ifelse(intoverpop ==1, n.latent + nindvarying,  n.latent)),
     nldynamics=as.integer(nldynamics),
+    dokalman=as.integer(is.null(ctstanmodel$dokalman)),
     integrationsteps=as.integer(integrationsteps),
     intoverstates=as.integer(intoverstates),
     verbose=as.integer(verbose),
     indvaryingindex=array(as.integer(indvaryingindex)),
+    notindvaryingindex=array(as.integer(which(!(1:nparams) %in% indvaryingindex))),
     continuoustime=as.integer(sum(continuoustime)),
     nlatent=as.integer(n.latent),
     ntipred=as.integer(n.TIpred),
@@ -964,6 +973,19 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   
   standata$sdscale <- sdscale
   
+  #fixed hyper pars
+  if(!is.null(ctstanmodel$fixedrawpopchol)) {
+    standata$fixedrawpopmeans = array(ctstanmodel$fixedrawpopmeans)
+    standata$fixedrawpopchol= ctstanmodel$fixedrawpopchol
+  }
+  standata$fixedhyper <- as.integer(ifelse(is.null(ctstanmodel$fixedrawpopchol),0,1))
+  if(is.null(ctstanmodel$fixedrawpopchol)) {
+    standata$fixedrawpopmeans = array(0,dim = 0)
+    standata$fixedrawpopchol = matrix(0,0,0)
+  }
+  standata$fixedsubpars <- as.integer(!is.null(ctstanmodel$fixedsubpars))
+  if(!is.null(ctstanmodel$fixedsubpars)) standata$fixedindparams <- ctstanmodel$fixedsubpars else standata$fixedindparams <-array(0,dim=c(0,0))
+  
   if(fit){
     # browser()
     # if(gendata && stanmodels$ctsmgen@model_code != stanmodeltext) recompile <- TRUE
@@ -977,7 +999,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       if(!gendata) sm <- stanmodels$ctsm else sm <- stanmodels$ctsmgen
     }
     
-    if(!is.null(inits)&& inits!=0){
+    if(!is.null(inits) & all(inits!=0)){
       sf <- stan_reinitsf(sm,standata)
       inits <- constrain_pars(sf,inits)
       staninits=list()
@@ -988,22 +1010,22 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       }
     }
     
-    if(!is.null(inits)&& inits==0) staninits=0
-    
-    
+    if(!is.null(inits) & class(inits) !='list') staninits=inits
     if(is.null(inits)){
       staninits=list()
       if(chains > 0){
         for(i in 1:(chains)){
           staninits[[i]]=list(
-            rawpopmeans=array(rnorm(nparams,0,.1)),
-            rawpopsdbase=array(rnorm(ifelse(nindvarying >0,1,0),0,.1)),
-            sqrtpcov=array(rnorm((nindvarying^2-nindvarying)/2,0,.1)),
-            baseindparams=array(rnorm(ifelse(intoverpop,0,nsubjects*nindvarying),0,.1)),
+            baseindparams=array(rnorm(ifelse(intoverpop,0,nsubjects*nindvarying),0,.1),dim = c(ifelse(intoverpop,0,nsubjects),ifelse(intoverpop,0,nindvarying))),
             eta=array(stats::rnorm(nrow(datalong)*n.latent,0,.1),dim=c(nrow(datalong),n.latent)),
-            tipredeffectparams=array(rnorm(standata$ntipredeffects,0,.1))
-          )
-          if(!is.na(ctstanmodel$rawpopsdbaselowerbound)) staninits[[i]]$rawpopsdbase=exp(staninits[[i]]$rawpopsdbase)
+            tipredeffectparams=array(rnorm(standata$ntipredeffects,0,.1)) )
+            
+            if(standata$fixedhyper==0){
+              staninits[[i]]$rawpopmeans=array(rnorm(nparams,0,.1))
+              staninits[[i]]$rawpopsdbase=array(rnorm(ifelse(nindvarying >0,1,0),0,.1))
+              staninits[[i]]$sqrtpcov=array(rnorm((nindvarying^2-nindvarying)/2,0,.1))
+            }
+          if(!is.na(ctstanmodel$rawpopsdbaselowerbound) & standata$fixedhyper==0) staninits[[i]]$rawpopsdbase=exp(staninits[[i]]$rawpopsdbase)
         }
       }
     }

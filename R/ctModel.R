@@ -481,7 +481,7 @@ ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL,
     assign('tempmat',get(tempmatname))
     if(is.null(tempmat)) next
     if(all(suppressWarnings(as.numeric(tempmat[upper.tri(tempmat)])) %in% 0)) next
-    stop(paste0(tempmatname,' is not lower triangular! Covariance type matrices must be specified in the appropriate lower-triangular form.'))
+    warning(paste0(tempmatname,' is not lower triangular! Covariance type matrices should be specified in the appropriate lower-triangular form.'))
   }
   
  

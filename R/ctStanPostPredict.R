@@ -4,7 +4,8 @@
 #' @param fit ctStanFit object. 
 #' @param legend Logical, whether to plot a legend.
 #' @param diffsize Integer > 0. Number of discrete time lags to use for data viz.
-#' @param samples Logical -- plot all generated data points? Otherwise, plot shaded polygon based on quantile estimate. 
+#' @param shading Logical -- show smoothed shading over generated data points? Otherwise, plot shaded polygon based on quantile estimate. 
+#' Shading is better for non-linearities.
 #' @param probs Vector of length 3 containing quantiles to plot -- should be rising numeric values between 0 and 1. 
 #' @param wait Logical, if TRUE, waits for input before plotting next plot.
 #' @param jitter Positive numeric between 0 and 1, if TRUE, jitters empirical data by specified proportion of std dev.
@@ -16,8 +17,8 @@
 #' model implied distributions -- thus, when limited iterations are available, the approximation will be worse.
 #'
 #' @examples
-#' ctStanPostPredict(ctstantestfit,wait=FALSE, samples=TRUE, datarows=1:25,diffsize=2)
-ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,.5,.975),samples=TRUE, datarows='all',...){
+#' ctStanPostPredict(ctstantestfit,wait=FALSE, shading=FALSE, datarows=1:25,diffsize=2)
+ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,.5,.975),shading=TRUE, datarows='all',...){
  
   if(datarows[1]=='all') datarows <- 1:nrow(fit$data$Y)
 
@@ -60,7 +61,7 @@ ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,p
           
           notmissing <- which(!is.na(c(y[datarows,i,1])))
           
-          if(samples) {
+          if(shading) {
             xs=rep(x,each=dim(Ygen)[1])
             ycut=quantile(Ygen[,,i],c(.005,.995),na.rm=TRUE)
             ysamps=Ygen[,,i]
@@ -71,7 +72,7 @@ ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,p
               xlab=subtypei,ylab=dimnames(y)[[2]][i])
           }
           
-          if(subtypei=='Observation') ctPlotArray(list(y=y[notmissing,i,,drop=FALSE],x=x[notmissing]),legend=FALSE,add=samples,polygon=!samples,
+          if(subtypei=='Observation') ctPlotArray(list(y=y[notmissing,i,,drop=FALSE],x=x[notmissing]),legend=FALSE,add=shading,polygon=!shading,
             plotcontrol=list(xlab=subtypei,main=dimnames(y)[[2]][i],...))
           
           # if(subtypei=='Time')

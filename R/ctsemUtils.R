@@ -197,9 +197,10 @@ ctDensityList<-function(x,xlimsindex='all',plot=FALSE,smoothness=1,ylab='Density
   # mid=mean(c(xlims[2],xlims[1]))
   # xlims[1] = xlims[1] - (mid-xlims[1])/8
   # xlims[2] = xlims[2] + (xlims[2]-mid)/8
+  # browser()
   denslist<-lapply(1:length(x),function(xi) {
     d=stats::density(x[[xi]],bw=bw,n=5000,from=xlims[1]-sd/2,to=xlims[2]+sd/2,na.rm=TRUE)
-    d$y=d$y/ sum(d$y)/range(d$x)[2]*length(d$y)
+    # d$y=d$y/ sum(d$y)/range(d$x)[2]*length(d$y)
     return(d)
   })
   ylims=c(0,max(unlist(lapply(denslist,function(li) max(li$y))))*1.1) * ifelse(legend[1]!=FALSE, 1.2,1)

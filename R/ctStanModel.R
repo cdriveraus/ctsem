@@ -79,6 +79,7 @@ ctStanModel<-function(ctmodelobj, type='stanct', indvarying='all'){
   ctspec$meanscale <- 1
   ctspec$transform <- 0
   ctspec$offset <- 0
+  ctspec$inneroffset <- 0
   scale <- c()
   shape <- c()
   offset <- c()
@@ -128,7 +129,7 @@ ctStanModel<-function(ctmodelobj, type='stanct', indvarying='all'){
     }
   }
   
-  ctspec[!is.na(ctspec$value),c('transform','multiplier','meanscale','offset')] <- NA
+  ctspec[!is.na(ctspec$value),c('transform','multiplier','meanscale','offset','inneroffset')] <- NA
   
   nparams<-sum(freeparams)
   

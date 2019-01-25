@@ -43,8 +43,8 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,par
   parnames <- object$setup$popsetup$parname
   parindices <- object$setup$popsetup$param
   pars <- cbind(parnames,parindices)
-  pars<-pars[!duplicated(pars[,1]),]
-  parnames <- pars[as.numeric(pars[,2]) >0, 1]
+  pars<-pars[!duplicated(pars[,1,drop=FALSE]),,drop=FALSE]
+  parnames <- pars[as.numeric(pars[,2,drop=FALSE]) >0, 1]
   # parnames <- unique(parnames)
   parnamesiv <- parnames[object$data$indvaryingindex]
   
