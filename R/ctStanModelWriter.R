@@ -884,8 +884,8 @@ transformed data{
       
 parameters {
   vector[fixedhyper ? nparams-nindvarying : nparams] rawpopmeansbase; // population level means \n','
-  vector',if(!is.na(ctstanmodel$rawpopsdbaselowerbound)) paste0('<lower=',ctstanmodel$rawpopsdbaselowerbound[1],'>'),'[(nindvarying * (1-fixedhyper))? 1 : 0] rawpopsdbase; //population level std dev
-  simplex[(nindvarying * (1-fixedhyper)) ? nindvarying : 0] rawpopsdprops[(nindvarying * (1-fixedhyper)) ? 1 : 0];
+  vector',if(!is.na(ctstanmodel$rawpopsdbaselowerbound)) paste0('<lower=',ctstanmodel$rawpopsdbaselowerbound[1],'>'),'[(nindvarying * (1-fixedhyper))? nindvarying : 0] rawpopsdbase; //population level std dev
+  //vector[(nindvarying * (1-fixedhyper)) ? nindvarying : 0] rawpopsdpropsbase; //[(nindvarying * (1-fixedhyper)) ? 1 : 0];
   vector[fixedhyper ? 0 : nindvaryingoffdiagonals] sqrtpcov; // unconstrained basis of correlation parameters
   vector[fixedsubpars ? 0 : (intoverpop ? 0 : nindvarying)] baseindparams[fixedsubpars ? 0 : (intoverpop ? 0 : nsubjects)]; //vector of subject level deviations, on the raw scale
   
@@ -934,7 +934,7 @@ transformed parameters{
 
   if(nindvarying > 0 &&fixedhyper ==0){
     int counter =0;
-    rawpopsd = sqrt(rawpopsdprops[1] * square(',ctstanmodel$rawpopsdtransform, ')[1]) .*sdscale; // sqrts of proportions of total variance
+    rawpopsd = ',ctstanmodel$rawpopsdtransform, '; // sqrts of proportions of total variance
     for(j in 1:nindvarying){
       rawpopcovsqrt[j,j] = 1;
       for(i in 1:nindvarying){
@@ -973,7 +973,9 @@ model{
     }
     
     if(nindvarying > 0){
-      if(nindvarying >1 && fixedhyper==0) sqrtpcov ~ normal(0,1);
+      if(nindvarying >1 && fixedhyper==0) {
+        sqrtpcov ~ normal(0,1);
+      }
       if(intoverpop==0 && fixedhyper==0 && fixedsubpars == 0) baseindparams ~ multi_normal_cholesky(rep_vector(0,nindvarying),IIindvar);
       if(fixedhyper==0) rawpopsdbase ~ ',ctstanmodel$rawpopsdbase,';
     }

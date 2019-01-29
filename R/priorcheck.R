@@ -33,13 +33,13 @@ priorcheckreport <- function(sf, meanlim = 2, sdlim= .2,digits=2){
   out<-list(priorcheck_note='The following posteriors exceeded arbitrary limits re normal(0,1) -- priors / transforms are likely somewhat informative. Not necessarily a problem.')
   out$priorcheck=p[,c('mean','sd')]
   
-  if(any(p$object %in% 'rawpopsdbase')){
-    e=apply(extract.ctStanFit(sf,pars='rawpopsdprops')$rawpopsdprops,2,mean,na.rm=TRUE)
-    names(e) = ps$parname[match(x = 1:length(e),ps$param)]
-    e=e[e> 1/length(e) | e==max(e)]
-    out$priorcheck_sd_note = 'Population posterior variance exceeded check limits. Not necessarily a problem, but these parameters contribute most variance: '
-    out$priorcheck_sd = round(e,digits)
-  }
+  # if(any(p$object %in% 'rawpopsdbase')){
+  #   e=apply(extract.ctStanFit(sf,pars='rawpopsdprops')$rawpopsdprops,2,mean,na.rm=TRUE)
+  #   names(e) = ps$parname[match(x = 1:length(e),ps$param)]
+  #   e=e[e> 1/length(e) | e==max(e)]
+  #   out$priorcheck_sd_note = 'Population posterior variance exceeded check limits. Not necessarily a problem, but these parameters contribute most variance: '
+  #   out$priorcheck_sd = round(e,digits)
+  # }
   return(out)
 }
 
