@@ -20,8 +20,8 @@
 MODELS_HOME <- "src"
 if (!file.exists(MODELS_HOME)) MODELS_HOME <- sub("R$", "src", getwd())
 
-# w32 <-  .Machine$sizeof.pointer == 4 #.Platform$OS.type == "windows" &&
-w32 <- FALSE
+w32 <-  .Machine$sizeof.pointer == 4 #.Platform$OS.type == "windows" &&
+# w32 <- FALSE
 # 
 # # stan_files <- file.path(MODELS_HOME, 
 # #   ifelse(w32, "stan_files/ctsmW32.stan", "stan_files/ctsm.stan" ))

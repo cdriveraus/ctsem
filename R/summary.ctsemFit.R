@@ -20,7 +20,7 @@ summary.ctsemMultigroupFit<-function(object,group='show chooser',...){
     selection<-object$groups[[selection]]
   }
   
-  if(group != 'show chooser') selection <- group
+  if(group != 'show chooser') selection <- object$groups[[group]]
   
   #create ctFit object containing only single group
   tempctobj<-list(ctfitargs=object$ctfitargs, ctmodelobj=object$ctmodelobj, mxobj=object$mxobj[[selection]])
@@ -34,7 +34,7 @@ summary.ctsemMultigroupFit<-function(object,group='show chooser',...){
   
   out$ctParameters<-ctParamsSummary(object=tempctobj,ctSummaryMatrices=out)
   out$ctparammessage<-'Note: Continuous time parameter estimates above are of the full variance-covariance matrices, not cholesky decompositions as used by ctModel.'
-  if(tempctobj$ctfitargs$transformedParams==TRUE) out$ctparammessage<- c(out$ctparammessage, 'Note: Some standard errors are approximated with delta method..')
+  if(tempctobj$ctfitargs$transformedParams==TRUE) out$ctparammessage<- c(out$ctparammessage, 'Note: Covariance related standard errors are approximated with delta method..')
   
   out$omxsummary<-omxSummary(tempctobj,verbose=TRUE)
   return(out)
@@ -62,7 +62,7 @@ summary.ctsemMultigroupFit<-function(object,group='show chooser',...){
 #' the summary function displays the full variance-covariance matrices. These can be cholesky decomposed for comparison purposes using
 #' \code{t(chol(summary(ctfitobject)$covariancematrix))}.
 #' Standard errors are displayed in the $ctparameters section, however if \code{\link{ctFit}} was used with transformedParams=TRUE (the default, and recommended) 
-#' many standard errors will have been approximated using the delta method, which makes them even less trustworthy than usual. In either case, for 
+#' covariance matrix standard errors will have been approximated using the delta method. For 
 #' inferential purposes, maximum likelihood confidence intervals may be estimated using the \code{\link{ctCI}} function.
 #' @examples 
 #' ## Examples set to 'dontrun' because they take longer than 5s. 

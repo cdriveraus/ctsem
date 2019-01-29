@@ -24,8 +24,8 @@ make_cc <- function(file) {
   cppcode <- sub("(class[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*: public prob_grad \\{)",
                  paste("#include <meta_header.hpp>\n", "\\1"), cppcode)
 # 
-#   w32 <- .Machine$sizeof.pointer == 4
-  stan_files<-'stan_files'
+  # w32 <- .Machine$sizeof.pointer == 4
+  stan_files<-paste0('stan_files',ifelse(.Machine$sizeof.pointer == 4,'32',''))
   
   cat(readLines(dir(stan_files, pattern = "license.stan", recursive = TRUE, full.names = TRUE)),
       "#ifndef MODELS_HPP", "#define MODELS_HPP", "#define STAN__SERVICES__COMMAND_HPP",

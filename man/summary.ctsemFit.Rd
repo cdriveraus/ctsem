@@ -36,7 +36,7 @@ Important: Although \code{\link{ctModel}} takes cholesky decomposed variance-cov
 the summary function displays the full variance-covariance matrices. These can be cholesky decomposed for comparison purposes using
 \code{t(chol(summary(ctfitobject)$covariancematrix))}.
 Standard errors are displayed in the $ctparameters section, however if \code{\link{ctFit}} was used with transformedParams=TRUE (the default, and recommended) 
-many standard errors will have been approximated using the delta method, which makes them even less trustworthy than usual. In either case, for 
+covariance matrix standard errors will have been approximated using the delta method. For 
 inferential purposes, maximum likelihood confidence intervals may be estimated using the \code{\link{ctCI}} function.
 }
 \examples{

@@ -7,6 +7,19 @@ naf <-function(x){
   return(x)
 }
 
+gridplot <- function(m, maxdim=c(3,3),...){
+  d=n2mfrow(dim(m)[length(dim(m))])
+  d[d>maxdim] <-maxdim[d>maxdim]
+  oldpar<-par()
+  par(mfrow=d,mar=c(1.1,1.1,1.1,0),mgp=c(.1,.1,0))
+  for(i in 1:dim(m)[length(dim(m))]){
+    n=colnames(m)[i]
+    if(class(m)=='matrix') plot(m[,i],main=ifelse(is.null(n),i,n),col='red',xlab='',ylab='',...)
+    if(class(m)=='array') matplot(m[,,i],main=ifelse(is.null(n),i,n),type='l',xlab='',ylab='',...)
+  }
+  suppressWarnings(do.call(par,oldpar))
+}
+
 # helper function to generate an index matrix, or return unique elements of a matrix
 indexMatrix<-function(dimension,symmetrical=FALSE,upper=FALSE,lowerTriangular=FALSE, sep=NULL,starttext=NULL,endtext=NULL,
   unique=FALSE,rowoffset=0,coloffset=0,indices=FALSE,diagonal=TRUE,namesvector=NULL){
