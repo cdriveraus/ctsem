@@ -25,6 +25,7 @@
 #' are returned in a row * column * time array. 
 #' If plot=TRUE, nothing is returned but a plot is generated.
 #' @examples
+#' \dontrun{
 #' #Basic
 #' ctKalman(ctstantestfit, timerange=c(0,60), timestep=.5, plot=TRUE)
 #' 
@@ -40,6 +41,7 @@
 #'   pchvec='auto', typevec='auto',grid=TRUE,legend=TRUE,
 #'   plotcontrol=list(xlim=c(0,55),main='Observations and priors'),
 #'   polygoncontrol=list(steps=5))
+#'   }
 #' @export
 
 ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',

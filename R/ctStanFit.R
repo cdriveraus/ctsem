@@ -403,7 +403,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   nlcontrol = list(), nopriors=FALSE, chains=1,cores='maxneeded', inits=NULL,
   forcerecompile=FALSE,savescores=TRUE,gendata=FALSE,
   control=list(),verbose=0,...){
-  
+if(.Machine$sizeof.pointer == 4) message('Bayesian functions not available on 32 bit systems') else{
   if(class(ctstanmodel) != 'ctStanModel') stop('not a ctStanModel object')
   
   if(is.null(nlcontrol$ukfspread)) nlcontrol$ukfspread = 1e-1
@@ -1080,5 +1080,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   
   
   return(out)
+}
 }
 

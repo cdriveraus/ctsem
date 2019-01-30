@@ -19,5 +19,7 @@ Matrix containing columns of unconstrained parameters for each post-warmup itera
 Convert samples from a stanfit object to the unconstrained scale
 }
 \examples{
+\dontrun{
 umat <- stan_unconstrainsamples(ctstantestfit$stanfit, ctstantestfit$standata)
+}
 }

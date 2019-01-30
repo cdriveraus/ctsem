@@ -1,3 +1,4 @@
+if(.Machine$sizeof.pointer != 4){
 library(ctsem)
 library(testthat)
 
@@ -96,3 +97,4 @@ expect_equivalent(s$popmeans[order(rownames(s$popmeans)),'mean'],
 
 
 })
+}

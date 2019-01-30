@@ -24,5 +24,7 @@ and "cor" refers to correlations.
 Returns model equation and other matrices from a ctStanFit object, and vector of values for free parameters.
 }
 \examples{
+\dontrun{
 ctStanParMatrices(ctstantestfit,rnorm(17,0,.1))
+}
 }

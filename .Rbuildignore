@@ -15,6 +15,7 @@
 ^vignettes/figure
 ^vignettes/^.bbl
 ^vignettes/jss.cls
+^vignettes/hierarchical.rnw
 ^vignettes/Sweave.sty
 ^vignettes/^.log
 ^vignettes/Sweave.sty
@@ -22,3 +23,4 @@
 ^\.travis\.yml$
 ^docs
 ^src/stan_files/ctsm.bak
+^\.rda

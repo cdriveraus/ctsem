@@ -23,17 +23,19 @@
 #' @export
 #'
 #' @examples
+#' \dontrun{
 #' input<-ctStanTIpredeffects(ctstantestfit, plot=FALSE, whichpars='CINT', 
 #'  nsamples=10,nsubjects=10)
 #'     
 #' ctPlotArray(input=input)
+#' }
 ctPlotArray <- function(input,
   grid=FALSE,add=FALSE,
   colvec='auto',lwdvec='auto',ltyvec='auto',typevec='auto',
   plotcontrol=list(ylab='Array values',xaxs='i'),
   legend=TRUE,legendcontrol=list(),
   polygon=TRUE, polygonalpha=.1,polygoncontrol=list(steps=25)){
-  
+if(.Machine$sizeof.pointer == 4) message('Bayesian functions not available on 32 bit systems') else{  
   if(class(input)!='list') stop('Input must be a list containing y and x subobjects!')
 
   x <- input$x
@@ -144,5 +146,5 @@ ctPlotArray <- function(input,
     do.call(graphics::legend,legargs) 
   }
   
-  
+} 
 }

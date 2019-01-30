@@ -43,6 +43,7 @@ with covariances, for specific subjects from data fit with \code{\link{ctStanFit
 based on medians of parameter distribution.
 }
 \examples{
+\dontrun{
 #Basic
 ctKalman(ctstantestfit, timerange=c(0,60), timestep=.5, plot=TRUE)
 
@@ -58,4 +59,5 @@ ctKalman(ctstantestfit, timerange=c(0,60), timestep=.1, plot=TRUE,
   pchvec='auto', typevec='auto',grid=TRUE,legend=TRUE,
   plotcontrol=list(xlim=c(0,55),main='Observations and priors'),
   polygoncontrol=list(steps=5))
+  }
 }

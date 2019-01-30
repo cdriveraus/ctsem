@@ -68,6 +68,8 @@ Computes and plots combined effects and quantiles for effects of time independen
 on subject level parameters of a ctStanFit object.
 }
 \examples{
+\dontrun{
 #samples reduced here for speed
 ctStanTIpredeffects(ctstantestfit,plot=TRUE,whichpars='CINT',nsamples=10,nsubjects=10)
+}
 }

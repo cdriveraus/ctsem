@@ -28,10 +28,12 @@ the probs argument is needed to ensure only a single value is returned.}
 Returns the continuous time parameter matrices for specified subjects of a ctStanFit fit object
 }
 \examples{
+\dontrun{
 #posterior median over all subjects (also reflects mean of unconstrained pars)
 ctStanContinuousPars(ctstantestfit)
 
 #posterior 97.5\% quantiles for subject 2
 ctStanContinuousPars(ctstantestfit, subjects=2, calcfunc=quantile, 
 calcfuncargs=list(probs=0.975))
+}
 }

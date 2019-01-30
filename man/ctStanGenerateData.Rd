@@ -16,6 +16,8 @@ Matrix of generated data -- one dataset per iteration, according to original tim
 Add a $generated object to ctstanfit object, with random data generated from posterior of ctstanfit object
 }
 \examples{
+\dontrun{
 gen <- ctStanGenerateData(ctstantestfit)
 plot(gen$generated$Y[3,,2],type='l') #Third random data sample, 2nd manifest var, all time points. 
+}
 }

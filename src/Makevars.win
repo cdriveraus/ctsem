@@ -7,7 +7,7 @@ ifeq   "$(WIN)" "64" #"$(R_HOME)/bin$(R_ARCH_BIN)/Rscript -e Sys.getenv('R_ARCH'
 #PKG_CPPFLAGS +=  -large-address-aware 
 	SOURCES = $(wildcard stan_files/*.stan)
 else
-	SOURCES = $(wildcard stan_files32/*.stan)
+	SOURCES = $(wildcard)
 endif
 
 OBJECTS = $(SOURCES:.stan=.o) init.o

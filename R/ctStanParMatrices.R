@@ -11,7 +11,9 @@
 #' @export
 #'
 #' @examples
+#' \dontrun{
 #' ctStanParMatrices(ctstantestfit,rnorm(17,0,.1))
+#' }
 ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA){
 
   if(class(fit) !='ctStanFit') stop('not a ctStanFit object')

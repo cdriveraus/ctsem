@@ -6,8 +6,10 @@
 #' @export
 #'
 #' @examples
+#' \dontrun{
 #' gen <- ctStanGenerateData(ctstantestfit)
 #' plot(gen$generated$Y[3,,2],type='l') #Third random data sample, 2nd manifest var, all time points. 
+#' }
 ctStanGenerateData<-function(fit){
   if(class(fit)!='ctStanFit') stop('Not a ctStanFit object!')
   if(class(fit$stanfit)!='stanfit') {

@@ -8,7 +8,9 @@
 #' @export
 #'
 #' @examples
+#' \dontrun{
 #' umat <- stan_unconstrainsamples(ctstantestfit$stanfit, ctstantestfit$standata)
+#' }
 stan_unconstrainsamples <- function(fit, standata=NA){
   if(class(fit)!='stanfit') stop('not a stanfit object')
   npars <- try(get_num_upars(fit),silent=TRUE) #$stanmodel)

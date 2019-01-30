@@ -1,3 +1,4 @@
+if(.Machine$sizeof.pointer != 4){
 require(ctsem)
 require(testthat)
 
@@ -70,3 +71,5 @@ stantraitvar <- (-1/(sfsum$popmeans[2,1])) %*% sfsum$popsd[2,1]^2 %*% (-1/(sfsum
 expect_equal(sfsum$popmeans[2,1],summary(f)$ctparameters[2,1],tolerance=1e-1)
 
 })
+
+}

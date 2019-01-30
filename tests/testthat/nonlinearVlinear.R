@@ -1,3 +1,4 @@
+if( .Machine$sizeof.pointer != 4){
 library(ctsem)
 library(testthat)
 set.seed(1)
@@ -45,3 +46,4 @@ sl=summary(ssfitl)
 expect_equal(round(ssfitnl$stanfit$transformedpars_old[grep('pop_',rownames(ssfitnl$stanfit$transformedpars_old)),'mean'],3),
 round(ssfitl$stanfit$transformedpars_old[grep('pop_',rownames(ssfitnl$stanfit$transformedpars_old)),'mean'],3),tol=.01)
 })
+}
