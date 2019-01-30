@@ -1015,18 +1015,31 @@ if(.Machine$sizeof.pointer == 4) message('Bayesian functions not available on 32
     if(is.null(inits)){
       staninits=list()
       if(chains > 0){
+        init=0
+        message('Finding good start values...')
+        if(is.null(ctstanmodel$fixedsubpars)) freesubpars <- TRUE else freesubpars <- FALSE
+        ctstanmodel$fixedsubpars <- matrix( rnorm(nindvarying*nsubjects,0,.1),ncol=nindvarying)
         for(i in 1:(chains)){
-          staninits[[i]]=list(
-            baseindparams=array(rnorm(ifelse(intoverpop,0,nsubjects*nindvarying),0,.1),dim = c(ifelse(intoverpop,0,nsubjects),ifelse(intoverpop,0,nindvarying))),
-            eta=array(stats::rnorm(nrow(datalong)*n.latent,0,.1),dim=c(nrow(datalong),n.latent)),
-            tipredeffectparams=array(rnorm(standata$ntipredeffects,0,.1)) )
-            
-            if(standata$fixedhyper==0){
-              staninits[[i]]$rawpopmeans=array(rnorm(nparams,0,.1))
-              staninits[[i]]$rawpopsdbase=array(rnorm(nindvarying,0,.1))
-              staninits[[i]]$sqrtpcov=array(rnorm((nindvarying^2-nindvarying)/2,0,.1))
-            }
-          if(!is.na(ctstanmodel$rawpopsdbaselowerbound) & standata$fixedhyper==0) staninits[[i]]$rawpopsdbase=exp(staninits[[i]]$rawpopsdbase)
+          # if(!intoverpop and nindvarying > 0){
+          sf <- stan_reinitsf(sm,standata)
+          fitb=ctStanFit(datalong = datalong,ctstanmodel = ctstanmodel,optimize=T,fit=T,init=init,
+            savescores=FALSE,gendata = FALSE,
+            optimcontrol = list(estonly=T,deoptim=FALSE,isloops=0,issamples=2,tol=1e-4),verbose=0,...)
+          init <- c(fitb$stanfit$rawest)
+          staninits[[i]] <- constrain_pars(sf,c(init,ctm$fixedsubpars))
+          if(i==chains & freesubpars) ctstanmodel$fixedsubpars <- NULL
+          
+          # staninits[[i]]=list(
+          #   baseindparams=array(rnorm(ifelse(intoverpop,0,nsubjects*nindvarying),0,.1),dim = c(ifelse(intoverpop,0,nsubjects),ifelse(intoverpop,0,nindvarying))),
+          #   eta=array(stats::rnorm(nrow(datalong)*n.latent,0,.1),dim=c(nrow(datalong),n.latent)),
+          #   tipredeffectparams=array(rnorm(standata$ntipredeffects,0,.1)) )
+          #   
+          #   if(standata$fixedhyper==0){
+          #     staninits[[i]]$rawpopmeans=array(rnorm(nparams,0,.1))
+          #     staninits[[i]]$rawpopsdbase=array(rnorm(nindvarying,0,.1))
+          #     staninits[[i]]$sqrtpcov=array(rnorm((nindvarying^2-nindvarying)/2,0,.1))
+          #   }
+          # if(!is.na(ctstanmodel$rawpopsdbaselowerbound) & standata$fixedhyper==0) staninits[[i]]$rawpopsdbase=exp(staninits[[i]]$rawpopsdbase)
         }
       }
     }
