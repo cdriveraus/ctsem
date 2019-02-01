@@ -668,7 +668,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     
     if(ukf==FALSE && nldynamics=="auto") {
-      message('Linear model specified -- setting nldynamics = FALSE'); 
+      # message('Linear model specified -- setting nldynamics = FALSE'); 
       nldynamics <- FALSE
     }
     if(ukf==TRUE && nldynamics=="auto") {
@@ -1021,11 +1021,13 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
           for(i in 1:(chains)){
             if(nindvarying > 0 && !intoverpop & !optimize) {
               ctstanmodel$fixedsubpars <- matrix( rnorm(nindvarying*nsubjects,0,.1),ncol=nindvarying)
+              if(i==1){
               sf <- stan_reinitsf(sm,standata)
-              fitb=suppressMessages(ctStanFit(datalong = datalong,ctstanmodel = ctstanmodel,optimize=TRUE,fit=TRUE,init=init,
+              fitb=suppressMessages(ctStanFit(datalong = datalong,ctstanmodel = ctstanmodel,optimize=TRUE,fit=TRUE,inits=init,
                 savescores=FALSE,gendata = FALSE,
                 optimcontrol = list(estonly=TRUE,deoptim=FALSE,isloops=0,issamples=2,tol=1e-4),verbose=0,...))
-              init <- c(fitb$stanfit$rawest)
+              init <- c(fitb$stanfit$rawest)+ rnorm(length(init),0,.05)
+              } else init = init + rnorm(length(init),0,.05)
               staninits[[i]] <- constrain_pars(sf,c(init,ctstanmodel$fixedsubpars))
               if(i==chains & freesubpars) ctstanmodel$fixedsubpars <- NULL
             } else {

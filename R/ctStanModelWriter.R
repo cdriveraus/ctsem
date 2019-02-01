@@ -595,7 +595,7 @@ functions{
   
     for(i in 1:rows(o)){ //set upper tri to lower
       for(j in min(i+1,rows(mat)):rows(mat)){
-        o[j,i] = inv_logit(mat[j,i])*2-1;  // can change cor prior here
+        o[j,i] =  inv_logit(mat[j,i])*2-1;  // can change cor prior here
         o[i,j] = o[j,i];
       }
       o[i,i]=1; // change to adjust prior for correlations
