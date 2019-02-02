@@ -25,25 +25,27 @@ stanc(model_code = smgen,verbose = TRUE)
 sm <- ctStanFit(datalong, model,fit=FALSE,gendata=FALSE)$stanmodeltext
 stanc(model_code = sm,verbose = TRUE)
 
-model$w32 <- TRUE
-smgen32 <- ctStanFit(datalong, model,fit=FALSE,gendata=TRUE)$stanmodeltext
-stanc(model_code = smgen32,verbose = TRUE)
-
-sm32 <- ctStanFit(datalong, model,fit=FALSE,gendata=FALSE)$stanmodeltext
-stanc(model_code = sm32,verbose = TRUE)
+# model$w32 <- TRUE
+# smgen32 <- ctStanFit(datalong, model,fit=FALSE,gendata=TRUE)$stanmodeltext
+# stanc(model_code = smgen32,verbose = TRUE)
+# 
+# sm32 <- ctStanFit(datalong, model,fit=FALSE,gendata=FALSE)$stanmodeltext
+# stanc(model_code = sm32,verbose = TRUE)
 
 message(paste0('Updating from ',(getwd()),', continue T / F?'))
 continue <- readline()
 if(continue){
-  for(wi in 1:2){
+  for(wi in 2){
     stan_files<-ifelse(wi==1,'stan_files32','stan_files')
   file.rename(paste0('./src/',stan_files,'/ctsm.stan'), paste0('./src/',stan_files,'/ctsm.bak'))
   file.rename(paste0('./src/',stan_files,'/ctsmgen.stan'), paste0('./src/',stan_files,'/ctsmgen.bak'))
 sink(file=paste0('./src/',stan_files,'/ctsm.stan'))
-if(wi==1) cat(sm32) else cat(sm)
+# if(wi==1) cat(sm32) else 
+cat(sm)
 sink()
 sink(file=paste0('./src/',stan_files,'/ctsmgen.stan'))
-if(wi==1) cat(smgen32) else cat(smgen)
+# if(wi==1) cat(smgen32) else 
+cat(smgen)
 sink()
 }
 # 

@@ -2,7 +2,7 @@ Package: ctsem
 Type: Package
 Title: Continuous Time Structural Equation Modelling
 Version: 2.8.2
-Date: 2019-1-26
+Date: 2019-1-31
 Authors@R: c(person("Charles", "Driver", role =
     c("aut","cre","cph"),email="driver@mpib-berlin.mpg.de"),
     person("Manuel", "Voelkle", role = c("aut","cph")),
@@ -15,7 +15,8 @@ Description: A hierarchical, multivariate, continuous (and discrete) time dynami
     allows for random effects and non-linearity over all model parameters. 
     Allows for modelling of multiple noisy measurements of multiple stochastic 
     processes, time varying input / event covariates, and time invariant 
-    covariates used to predict the parameters.
+    covariates used to predict the parameters. Bayesian formulation not available on 
+    32 bit Windows systems.
 License: GPL-3
 Depends:
     R (>= 3.4.0), 

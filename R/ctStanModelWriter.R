@@ -176,7 +176,7 @@ ukfilterfunc<-function(ppchecking){
         } else if(T0check[rowi-1] == 0 && dT[rowi-1] != dT[rowi]) dtchange = 1;
         
         if(dtchange==1 || (T0check[rowi-1]==1 && (si <= DRIFTsubindex[nsubjects] || si <= CINTsubindex[nsubjects]))){
-          discreteDRIFT = matrix_exp(append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1)) * dT[rowi]);
+          discreteDRIFT = expm2(append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1)) * dT[rowi]);
         }
     
         if(dtchange==1 || (T0check[rowi-1]==1 && (si <= DIFFUSIONsubindex[nsubjects]|| si <= DRIFTsubindex[nsubjects]))){
@@ -228,8 +228,8 @@ ukfilterfunc<-function(ppchecking){
               }
             }
             ',paste0(ctstanmodel$calcs$dynamic,';\n',collapse=' '),' //find a way to remove this repeat
-            Je= matrix_exp(J * dTsmall[rowi]) ;
-            discreteDRIFT = matrix_exp(append_row(append_col(sDRIFT,sCINT),rep_vector(0,nlatent+1)\') * dTsmall[rowi]);
+            Je= expm2(J * dTsmall[rowi]) ;
+            discreteDRIFT = expm2(append_row(append_col(sDRIFT,sCINT),rep_vector(0,nlatent+1)\') * dTsmall[rowi]);
             sasymDIFFUSION = to_matrix(  -kronsum(J[1:nlatent,1:nlatent]) \\ to_vector(tcrossprod(sDIFFUSIONsqrt)), nlatent,nlatent);
             discreteDIFFUSION =  sasymDIFFUSION - quad_form( sasymDIFFUSION, Je[1:nlatent,1:nlatent]\' );
             etacov = quad_form(etacov, Je\');
@@ -588,6 +588,55 @@ collectsubmats <- function(popmats=FALSE,matrices=c(mats$base,'asymDIFFUSION','a
   writemodel<-function(){
     paste0('
 functions{
+ int[] checkoffdiagzero(matrix M){
+    int z[rows(M)];
+    for(i in 1:rows(M)){
+      z[i] = 0;
+      for(j in 1:cols(M)){
+        if(i!=j){
+          if(M[i,j] != 0.0){
+            z[i] = 1;
+            break;
+          }
+        }
+      }
+      if(z[i]==0){ //check rows
+        for(j in 1:rows(M)){
+          if(i!=j){
+            if(M[j,i] != 0.0){
+              z[i] = 1;
+              break;
+            }
+          }
+        }
+      }
+    }
+  return z;
+  }
+
+  matrix expm2(matrix M){
+    matrix[rows(M),rows(M)] out;
+    int z[rows(out)] = checkoffdiagzero(M);
+    int z1[sum(z)];
+    int z0[rows(M)-sum(z)];
+    int cz1 = 1;
+    int cz0 = 1;
+    for(i in 1:rows(M)){
+      if(z[i] == 1){
+        z1[cz1] = i;
+        cz1 += 1;
+      }
+      if(z[i] == 0){
+        z0[cz0] = i;
+        cz0 += 1;
+      }
+    }
+    if(size(z1) > 0) out[z1,z1] = matrix_exp(M[z1,z1]);
+    out[z0,] = rep_matrix(0,size(z0),rows(M));
+    out[,z0] = rep_matrix(0,rows(M),size(z0));
+    for(i in 1:size(z0)) out[z0[i],z0[i]] = exp(M[z0[i],z0[i]]);
+    return out;
+  }
 
    matrix constraincorsqrt(matrix mat){ //converts from unconstrained lower tri matrix to cor
     matrix[rows(mat),cols(mat)] o;

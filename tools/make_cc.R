@@ -21,8 +21,9 @@ make_cc <- function(file) {
   file <- sub("\\.cc$", ".stan", file)
   cppcode <- rstan::stanc(file, allow_undefined = TRUE,
                           obfuscate_model_name = FALSE)$cppcode
-  cppcode <- sub("(class[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*: public prob_grad \\{)",
-                 paste("#include <meta_header.hpp>\n", "\\1"), cppcode)
+  #disabled include meta header
+  # cppcode <- sub("(class[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*: public prob_grad \\{)",
+                 # paste("#include <meta_header.hpp>\n", "\\1"), cppcode)
 # 
   # w32 <- .Machine$sizeof.pointer == 4
   stan_files<-paste0('stan_files',ifelse(.Machine$sizeof.pointer == 4,'32',''))

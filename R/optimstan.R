@@ -315,19 +315,18 @@ optimstan <- function(standata, sm, init=0,sampleinit=NA,
     
     # parallel::stopCluster(cl)
     message('Computing quantities...')
-    
+    # browser()
     # cl <- parallel::makeCluster(min(cores,chains), type = "PSOCK")
     parallel::clusterExport(cl, c('relistarrays','resamples','sm','standata','optimfit'),environment())
     
     # target_dens <- c(target_dens,
     transformedpars <- try(parallel::parLapply(cl, parallel::clusterSplit(cl,1:nresamples), function(x){
-      Sys.sleep(.01)
+      Sys.sleep(.1)
       smf <- stan_reinitsf(sm,standata)
-      Sys.sleep(.01)
+      Sys.sleep(.1)
       # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan::grab_cxxfun(sm@dso))
       out <- list()
       for(li in 1:length(x)){
-        Sys.sleep(.01)
         flesh = unlist(rstan::constrain_pars(smf, resamples[x[li],]))
         names(flesh) <- c()
         skeleton=optimfit$par
