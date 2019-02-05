@@ -596,9 +596,14 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     # indvarying<-ctspec$indvarying #c(ctspec$indvarying,ctspecduplicates$indvarying)
     # nindvarying<-sum(ctspec$indvarying)
     # nparams<-length(unique(ctspec$param[!is.na(ctspec$param)]))
-    
-    
+
     ###data checks
+    
+    if(any(!c(ctstanmodel$manifestNames,ctstanmodel$TDpredNames,ctstanmodel$TIpredNames) %in% colnames(datalong))) stop(paste0('
+      variables: ', paste0(c(ctstanmodel$manifestNames,ctstanmodel$TDpredNames,ctstanmodel$TIpredNames)[
+        which(!c(ctstanmodel$manifestNames,ctstanmodel$TDpredNames,ctstanmodel$TIpredNames) %in% colnames(datalong))], ', '),' not in data'))
+    
+    
     if(ctstanmodel$n.TIpred > 1 && any(abs(colMeans(datalong[,c(ctstanmodel$TIpredNames),drop=FALSE],na.rm=TRUE)) > .3)){
       message('Uncentered TI predictors noted -- interpretability may be hindered and default priors may not be appropriate')
     }
@@ -649,10 +654,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     if(sum(unlist(lapply(ctstanmodel$calcs,length) > 0))) recompile <- TRUE
     if( (nt0varstationary + nt0meansstationary) >0 && 
         length(ctstanmodel$calcs$dynamic > 0)) message('Stationarity assumptions based on initial states when using non-linear dynamics')
-    
     if(
       length(c(ctstanmodel$calcs$dynamic,ctstanmodel$calcs$tdpred)) > 0 | 
-        intoverpop | nldynamics==TRUE
+        intoverpop | nldynamics==TRUE #any intoverpop random effects require initialisation via nldynamics -- this could be improved
     ) { message('Using nonlinear Kalman filter for dynamics'); ukf <- TRUE}
     
     nlmeasurement <- nlcontrol$nlmeasurement
@@ -934,7 +938,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         out
       }) )),nrow=c(nrow(datalong),ncol=n.manifest)),
       ncont_y=array(as.integer(apply(datalong[,manifestNames,drop=FALSE],1,function(x) 
-        length(x[(manifesttype==0 || manifesttype==2) & x!=99999]))),dim=nrow(datalong)),
+        length(x[(manifesttype==0 | manifesttype==2) & x!=99999]))),dim=nrow(datalong)),
       whichcont_y=matrix(as.integer(t(apply(datalong[,manifestNames,drop=FALSE],1,function(x) {
         out<-as.numeric(which( (manifesttype==0 | manifesttype==2) & x!=99999)) #conditional on whichobs_y
         # if(ukf==TRUE || intoverstates==FALSE) out<- as.numeric(which(manifesttype==0 | manifesttype==2)) else out<-  rep(1,n.manifest) #not conditional on whichobs_y
@@ -943,7 +947,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         out
       }) )),nrow=c(nrow(datalong),ncol=n.manifest))
     )
-    
     if(n.TIpred == 0) tipreds <- array(0,c(0,0))
     standata$tipredsdata <- as.matrix(tipreds)
     standata$nmissingtipreds <- as.integer(length(tipreds[tipreds== 99999]))
@@ -1014,23 +1017,23 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       if(!is.null(inits) & class(inits) !='list') staninits=inits
       if(is.null(inits)){
         staninits=list()
-        if(chains > 0){
-          init=0
-          message('Finding good start values...')
-          if(is.null(ctstanmodel$fixedsubpars)) freesubpars <- TRUE else freesubpars <- FALSE
+        # if(chains > 0){
+          # init=0
+          # message('Finding good start values...')
+          # if(is.null(ctstanmodel$fixedsubpars)) freesubpars <- TRUE else freesubpars <- FALSE
           for(i in 1:(chains)){
-            if(nindvarying > 0 && !intoverpop & !optimize) {
-              ctstanmodel$fixedsubpars <- matrix( rnorm(nindvarying*nsubjects,0,.1),ncol=nindvarying)
-              if(i==1){
-              sf <- stan_reinitsf(sm,standata)
-              fitb=suppressMessages(ctStanFit(datalong = datalong,ctstanmodel = ctstanmodel,optimize=TRUE,fit=TRUE,inits=init,
-                savescores=FALSE,gendata = FALSE,
-                optimcontrol = list(estonly=TRUE,deoptim=FALSE,isloops=0,issamples=2,tol=1e-4),verbose=0,...))
-              init <- c(fitb$stanfit$rawest)+ rnorm(length(init),0,.05)
-              } else init = init + rnorm(length(init),0,.05)
-              staninits[[i]] <- constrain_pars(sf,c(init,ctstanmodel$fixedsubpars))
-              if(i==chains & freesubpars) ctstanmodel$fixedsubpars <- NULL
-            } else {
+          #   if(nindvarying > 0 && !intoverpop & !optimize) {
+          #     ctstanmodel$fixedsubpars <- matrix( rnorm(nindvarying*nsubjects,0,.1),ncol=nindvarying)
+          #     if(i==1){
+          #     sf <- stan_reinitsf(sm,standata)
+          #     fitb=suppressMessages(ctStanFit(datalong = datalong,ctstanmodel = ctstanmodel,optimize=TRUE,fit=TRUE,inits=init,
+          #       savescores=FALSE,gendata = FALSE,
+          #       optimcontrol = list(estonly=TRUE,deoptim=FALSE,isloops=0,issamples=2,tol=1e-4),verbose=0,...))
+          #     init <- c(fitb$stanfit$rawest)+ rnorm(length(init),0,.05)
+          #     } else init = init + rnorm(length(init),0,.05)
+          #     staninits[[i]] <- constrain_pars(sf,c(init,ctstanmodel$fixedsubpars))
+          #     if(i==chains & freesubpars) ctstanmodel$fixedsubpars <- NULL
+          #   } else {
               staninits[[i]]=list(
                 baseindparams=array(rnorm(ifelse(intoverpop,0,nsubjects*nindvarying),0,.1),dim = c(ifelse(intoverpop,0,nsubjects),ifelse(intoverpop,0,nindvarying))),
                 eta=array(stats::rnorm(nrow(datalong)*n.latent,0,.1),dim=c(nrow(datalong),n.latent)),
@@ -1042,8 +1045,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
                 staninits[[i]]$sqrtpcov=array(rnorm((nindvarying^2-nindvarying)/2,0,.1))
               }
               if(!is.na(ctstanmodel$rawpopsdbaselowerbound) & standata$fixedhyper==0) staninits[[i]]$rawpopsdbase=exp(staninits[[i]]$rawpopsdbase)
-            }
-          }
+            # }
+          # }
         }
       }
       
