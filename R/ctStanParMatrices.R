@@ -1,4 +1,4 @@
-#' Returns model equation and other matrices from a ctStanFit object, and vector of values for free parameters.
+#' Returns population system matrices from a ctStanFit object, and vector of values for free parameters.
 #'
 #' @param fit ctStanFit object.
 #' @param parvalues vector of parameter values to assign to free parameters in the model
@@ -14,143 +14,123 @@
 #' \dontrun{
 #' ctStanParMatrices(ctstantestfit,rnorm(17,0,.1))
 #' }
-ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA){
-
+ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA, whichmatrices='all'){
+  
   if(class(fit) !='ctStanFit') stop('not a ctStanFit object')
   model <- fit$ctstanmodel
-
+  fit$standata$savescores <- 0L
+  fit$standata$gendata <- 0L
+  fit$standata$dokalman <- 0L
+  # browser()
   if(length(parvalues)!=fit$data$nparams) stop('length of parvalues != number of free params (',fit$data$nparams,') in model!')
-  
-#   covchol2corchol<-function(mat, invert){ 
-# s=c()
-#     o=mat;
-#     
-#     for(i in 1:nrow(o)){ 
-#       for(j in min(i+1,nrow(mat)):nrow(mat)){
-#         o[j,i] = inv_logit(o[j,i])*2-1;  # can change cor prior here
-#         o[i,j] = o[j,i];
-#       }
-#       o[i,i]=1; #change to adjust prior for correlations
-#     }
-#     if(invert==1) o = solve(o);
-#     
-#     for(i in 1:nrow(o)){
-#       s[i] = 1/sqrt(o[i,,drop=FALSE] %*% o[,i,drop=FALSE]);
-#       if(is.infinite(s[i])) s[i]=0;
-#     }
-#     o= diag(s) %*% o;
-#     return(o);
-#   }
-#   
-# sdcovchol2cov <- function(mat, cholesky){ 
-#     invert = 0; 
-#     if(nrow(mat) > 1){
-#       out=covchol2corchol(mat,invert); 
-#       out= diag(diag(mat)) %*% out
-#       }
-#     if(nrow(mat)==1) out = mat;
-#     
-#     if(cholesky==0) out = out %*% t(out);
-#     return(out);
-#   }
-  
-  if(class(sf)!='stanfit') sf <- fit$stanfit
-  
-npars <- try(get_num_upars(sf),silent = TRUE) #$stanmodel)
-
-if(class(npars)=='try-error'){ #in case R has been restarted or similar
-  sf <- stan_reinitsf(fit$stanmodel,data=fit$standata) #suppressOutput(sf <- suppressWarnings(sampling(,iter=1,control=list(max_treedepth=1),chains=1)))
+  if(suppressWarnings(is.na(sf))) sf <- stan_reinitsf(fit$stanmodel,data=fit$standata) #suppressOutput(sf <- suppressWarnings(sampling(,iter=1,control=list(max_treedepth=1),chains=1)))
   npars <- get_num_upars(sf)
   pars <- c(parvalues,rep(0,npars - fit$data$nparams))
   sfc <- constrain_pars(sf, pars)
-} else { #if no problem getting npars...
-  pars <- c(parvalues,rep(0,npars - fit$data$nparams))
-  sfc <- try(constrain_pars(sf, pars))
-}
-
-for(m in c(fit$setup$matrices$base,'asymDIFFUSION')){
-  # assign(m,ctCollapse(sfc[[paste0('pop_',m)]],1,mean)) 
-  assign(m,sfc[[paste0('pop_',m)]]) 
-}
-
-choltrue <- FALSE #!as.logical(fit$data$lineardynamics)
-
-# if(choltrue) DIFFUSION = msquare(DIFFUSION) #sdcovchol2cov(DIFFUSION,0)
-DIFFUSIONcor = suppressWarnings(stats::cov2cor(DIFFUSION))
-DIFFUSIONcor[is.na(DIFFUSIONcor)] <- 0
-
-
-
-# DRIFTHATCH<-DRIFT %x% diag(nrow(DRIFT)) + diag(nrow(DRIFT)) %x% DRIFT
-# asymDIFFUSION<-matrix(-solve(DRIFTHATCH, c(DIFFUSION)), nrow=nrow(DRIFT))
-asymDIFFUSIONcor = suppressWarnings(stats::cov2cor(asymDIFFUSION))
-asymDIFFUSIONcor[is.na(asymDIFFUSIONcor)] <- 0
-
-ln=model$latentNames
-mn=model$manifestNames
-tdn=model$TDpredNames
-
-dimnames(DRIFT)=list(ln,ln)
-dimnames(DIFFUSION)=list(ln,ln)
-dimnames(asymDIFFUSION)=list(ln,ln)
-rownames(CINT)=ln
-rownames(MANIFESTMEANS)=mn
-
-
-
-dimnames(asymDIFFUSION)=list(ln,ln)
-dimnames(LAMBDA)=list(mn,ln)
-
-
-dtDRIFT=expm(DRIFT * timeinterval)
-
-dtDIFFUSION = asymDIFFUSION - (dtDRIFT %*% asymDIFFUSION %*% t(dtDRIFT ))
-dtDIFFUSIONcor = cov2cor(dtDIFFUSION)
-
-dtCINT = (solve(DRIFT) %*%(dtDRIFT - diag(nrow(DRIFT))) %*% (CINT))
-
-asymCINT = -solve(DRIFT) %*% CINT
-
-
-
-# if(choltrue) T0VAR=msquare(T0VAR)
-T0VARcor = suppressWarnings(stats::cov2cor(T0VAR))
-T0VARcor[is.na(T0VARcor)] <- 0
-dimnames(T0VAR)=list(ln,ln)
-
-rownames(T0MEANS)=ln
-
-# for(i in row(statspec)){
-#   if(statspec$matrix[i] =='T0VAR') {
-#     eval(parse(text=paste0(statspec$matrix[i], '[',statspec$row[i],' ,', statspec$col[i], '] <- ', 
-#     'asymDIFFUSION[',statspec$row[i],' ,', statspec$col[i], ']')))
-#     eval(parse(text=paste0(statspec$matrix[i], 'cor[',statspec$row[i],' ,', statspec$col[i], '] <- ', 
-#       'asymDIFFUSIONcor[',statspec$row[i],' ,', statspec$col[i], ']')))
-#   }
-#   if(statspec$matrix[i] =='T0MEANS') eval(parse(text=paste0(statspec$matrix[i], '[',statspec$row[i],' ,', statspec$col[i], '] <- ', 
-#     'asymCINT[',statspec$row[i],' ,', statspec$col[i], ']')))
-# }
-
-T0VAR[upper.tri(T0VAR)] = t(T0VAR)[upper.tri(T0VAR)]
-T0VARcor[upper.tri(T0VAR)] = t(T0VARcor)[upper.tri(T0VAR)]
-
-
-out<-list(DRIFT=DRIFT,dtDRIFT=dtDRIFT, T0VAR=T0VAR, T0VARcor=T0VARcor, 
-  DIFFUSION=DIFFUSION, DIFFUSIONcor=DIFFUSIONcor, dtDIFFUSION=dtDIFFUSION, dtDIFFUSIONcor=dtDIFFUSIONcor,
-  asymDIFFUSION=asymDIFFUSION, asymDIFFUSIONcor=asymDIFFUSIONcor, 
-  CINT=CINT,dtCINT=dtCINT, asymCINT=asymCINT, T0MEANS=T0MEANS,
-  MANIFESTMEANS=MANIFESTMEANS, LAMBDA=LAMBDA)
-
-
- if(choltrue) MANIFESTVAR=msquare(MANIFESTVAR)
-  dimnames(MANIFESTVAR)=list(mn,mn)
-  out$MANIFESTVAR=MANIFESTVAR
-
-
-if('TDPREDEFFECT' %in% model$pars$matrix) {
-  dimnames(TDPREDEFFECT)=list(ln,tdn)
-  out$TDPREDEFFECT<-TDPREDEFFECT
-}
   
-return(out)
+  
+  if(whichmatrices[1] == 'all') {
+    whichmatrices <- c(fit$setup$matrices$base,
+      'asymDIFFUSION','dtDRIFT','dtDIFFUSION','dtCINT','DIFFUSIONcor','asymDIFFUSIONcor','T0VARcor','asymCINT')
+  } else whichmatrices <- unique(c(whichmatrices, fit$setup$matrices$base)) #need base matrices for computations
+  
+  stanmats <- c(fit$setup$matrices$base,'asymDIFFUSION')[c(fit$setup$matrices$base,'asymDIFFUSION') %in% whichmatrices]
+  
+  out <- list()
+  for(m in c(stanmats)){
+    # assign(m,ctCollapse(sfc[[paste0('pop_',m)]],1,mean)) 
+    out[[m]] <- sfc[[paste0('pop_',m)]]
+  }
+  
+  #dimension naming (latent row object, manifest column object, etc
+  for(lro in c('DRIFT','DIFFUSION','CINT','T0VAR','T0MEANS','asymDIFFUSION',if('TDPREDEFFECT' %in% model$pars$matrix) 'TDPREDEFFECT')){
+    if(lro %in% whichmatrices) rownames(out[[lro]]) <- model$latentNames
+  }
+  for(lco in c('DRIFT','DIFFUSION','T0VAR','asymDIFFUSION','LAMBDA')){
+    if(lco %in% whichmatrices) colnames(out[[lco]]) <- model$latentNames
+  }
+  for(mro in c('LAMBDA','MANIFESTVAR','MANIFESTMEANS')){
+    if(mro %in% whichmatrices) rownames(out[[mro]]) <- model$manifestNames
+  }
+  for(mco in c('MANIFESTVAR')){
+    if(mco %in% whichmatrices) colnames(out[[mco]]) <- model$manifestNames
+  }
+  
+  if('TDPREDEFFECT' %in% model$pars$matrix)  colnames(out$TDPREDEFFECT) <- model$TDpredNames
+  
+  
+  choltrue <- FALSE #!as.logical(fit$data$lineardynamics)
+  
+  # if(choltrue) DIFFUSION = msquare(DIFFUSION) #sdcovchol2cov(DIFFUSION,0)
+  if('DIFFUSIONcor' %in% whichmatrices){
+    out$DIFFUSIONcor = suppressWarnings(stats::cov2cor(out$DIFFUSION))
+    out$DIFFUSIONcor[is.na(out$DIFFUSIONcor)] <- 0
+  }
+  
+  
+  # DRIFTHATCH<-DRIFT %x% diag(nrow(DRIFT)) + diag(nrow(DRIFT)) %x% DRIFT
+  # asymDIFFUSION<-matrix(-solve(DRIFTHATCH, c(DIFFUSION)), nrow=nrow(DRIFT))
+  if('asymDIFFUSIONcor' %in% whichmatrices){
+    out$asymDIFFUSIONcor = suppressWarnings(stats::cov2cor(out$asymDIFFUSION))
+    out$asymDIFFUSIONcor[is.na(out$asymDIFFUSIONcor)] <- 0
+  }
+  
+  
+  
+  # dimnames(DRIFT)=list(ln,ln)
+  # dimnames(DIFFUSION)=list(ln,ln)
+  # dimnames(asymDIFFUSION)=list(ln,ln)
+  # rownames(CINT)=ln
+  # rownames(MANIFESTMEANS)=mn
+  # dimnames(T0VAR)=list(ln,ln)
+  # rownames(T0MEANS)=ln
+  # dimnames(asymDIFFUSION)=list(ln,ln)
+  # dimnames(LAMBDA)=list(mn,ln)
+  # dimnames(MANIFESTVAR)=list(mn,mn)
+  # out$MANIFESTVAR=MANIFESTVAR
+  
+  out$dtDRIFT=expm(out$DRIFT * timeinterval)
+  if('dtDIFFUSION' %in% whichmatrices) out$dtDIFFUSION = out$asymDIFFUSION - (out$dtDRIFT %*% out$asymDIFFUSION %*% t(out$dtDRIFT ))
+  if('dtDIFFUSIONcor' %in% whichmatrices) out$dtDIFFUSIONcor = cov2cor(out$dtDIFFUSION)
+  if('dtCINT' %in% whichmatrices) out$dtCINT = (solve(out$DRIFT) %*%(out$dtDRIFT - diag(nrow(out$DRIFT))) %*% (out$CINT))
+  if('asymCINT' %in% whichmatrices) out$asymCINT = -solve(out$DRIFT) %*% out$CINT
+  
+  if('asymDIFFUSIONcor' %in% whichmatrices) {
+    out$T0VARcor = suppressWarnings(stats::cov2cor(out$T0VAR))
+    out$T0VARcor[is.na(out$T0VARcor)] <- 0
+  }
+  
+  
+  # for(i in row(statspec)){
+  #   if(statspec$matrix[i] =='T0VAR') {
+  #     eval(parse(text=paste0(statspec$matrix[i], '[',statspec$row[i],' ,', statspec$col[i], '] <- ', 
+  #     'asymDIFFUSION[',statspec$row[i],' ,', statspec$col[i], ']')))
+  #     eval(parse(text=paste0(statspec$matrix[i], 'cor[',statspec$row[i],' ,', statspec$col[i], '] <- ', 
+  #       'asymDIFFUSIONcor[',statspec$row[i],' ,', statspec$col[i], ']')))
+  #   }
+  #   if(statspec$matrix[i] =='T0MEANS') eval(parse(text=paste0(statspec$matrix[i], '[',statspec$row[i],' ,', statspec$col[i], '] <- ', 
+  #     'asymCINT[',statspec$row[i],' ,', statspec$col[i], ']')))
+  # }
+  
+  # T0VAR[upper.tri(T0VAR)] = t(T0VAR)[upper.tri(T0VAR)]
+  # T0VARcor[upper.tri(T0VAR)] = t(T0VARcor)[upper.tri(T0VAR)]
+  
+  
+  # out<-list(DRIFT=DRIFT,dtDRIFT=dtDRIFT, T0VAR=T0VAR, T0VARcor=T0VARcor, 
+  #   DIFFUSION=DIFFUSION, DIFFUSIONcor=DIFFUSIONcor, dtDIFFUSION=dtDIFFUSION, dtDIFFUSIONcor=dtDIFFUSIONcor,
+  #   asymDIFFUSION=asymDIFFUSION, asymDIFFUSIONcor=asymDIFFUSIONcor, 
+  #   CINT=CINT,dtCINT=dtCINT, asymCINT=asymCINT, T0MEANS=T0MEANS,
+  #   MANIFESTMEANS=MANIFESTMEANS, LAMBDA=LAMBDA)
+  # 
+  # 
+  # if(choltrue) MANIFESTVAR=msquare(MANIFESTVAR)
+  # 
+  # 
+  # 
+  # if('TDPREDEFFECT' %in% model$pars$matrix) {
+  #   dimnames(TDPREDEFFECT)=list(ln,tdn)
+  #   out$TDPREDEFFECT<-TDPREDEFFECT
+  # }
+  
+  return(out)
 }
