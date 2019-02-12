@@ -128,13 +128,13 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
     rawpopmeans <- rawpopmeans[rep(1:nrow(rawpopmeans),each=nsubjects),] #match rows of rawpopmeans and raweffect
     raweffect <- matrix(raweffect,ncol=dim(raweffect)[4])
     
-    #check if stanfit object can be used
-    sf <- fit$stanfit
-    npars <- try(get_num_upars(sf),silent=TRUE) #$stanmodel)
-    
-    if(class(npars)=='try-error'){ #in case R has been restarted or similar
-      sf <- stan_reinitsf(fit$stanmodel,fit$standata)
-    }
+    # #check if stanfit object can be used
+    # sf <- fit$stanfit
+    # npars <- try(get_num_upars(sf),silent=TRUE) #$stanmodel)
+    # 
+    # if(class(npars)=='try-error'){ #in case R has been restarted or similar
+    #   sf <- stan_reinitsf(fit$stanmodel,fit$standata)
+    # }
 
 #adjust for speed
   fit$standata$savescores <- 0L
@@ -148,10 +148,10 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
     x=gsub(pattern = ',','',x,fixed=TRUE)
   })
     parmatlists<-lapply(1:nrow(rawpopmeans), function(x) { #for each param vector
-      out = ctStanParMatrices(fit, rawpopmeans[x,] + raweffect[x,], timeinterval=timeinterval,sf = sf,whichmatrices = )
+      out = ctStanParMatrices(fit,  raweffect[x,], timeinterval=timeinterval,sf = sf)#rawpopmeans[x,] +
       return(out)
     })
-    
+    # browser()
     
     # parmatlists <- apply(e$rawpopmeans,1,ctStanParMatrices,model=object,timeinterval=timeinterval)
     parmatarray <- array(unlist(parmatlists),dim=c(length(unlist(parmatlists[[1]])),length(parmatlists)))
