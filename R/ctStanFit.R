@@ -375,14 +375,14 @@
 #' summary(f3nl)
 #' 
 #' #plot functions need updating for non-linearities! (as of ctsem v 2.7.3)
-#' #extract.ctStanFit can be used to extract samples and create own plots.
+#' #extract can be used to extract samples and create own plots.
 #' #last index of kalaman subobject denotes element of Kalman output.
 #' # 1 = ll on std scale, 2= ll scale, 3=error, 4=prediction, 
 #' # 5= eta prior, 6= eta upd
 #' 
 #' ctStanPostPredict(f3nl, datarows=1:100)
 #' 
-#' e=extract.ctStanFit(f3nl)
+#' e=extract(f3nl)
 #' subindex = which(f3nl$data$subject ==3) #specify subject
 #'  
 #'  matplot(f3nl$data$time[subindex], # Y predictions given earlier Y
@@ -674,8 +674,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       if(nldynamics) message('Using nonlinear Kalman filter for dynamics')
       if(!nldynamics) message('Using linear Kalman filter for dynamics')
       
-      
-      
       #check id and calculate intervals, discrete matrix indices
       # driftindex<-rep(0,nrow(datalong))
       # diffusionindex<-driftindex
@@ -733,8 +731,14 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       if(n.TIpred > 0) {
         tipreds <- datalong[match(unique(datalong[,idName]),datalong[,idName]),TIpredNames,drop=FALSE]
         if(any(is.na(tipreds))) {
+          if(!optimize){
           message(paste0('Missingness in TIpreds - sampling ', sum(is.na(tipreds)),' values'))
           tipreds[is.na(tipreds)] = 99999
+          }
+          if(optimize){
+             message(paste0('Missingness in TIpreds - setting ', sum(is.na(tipreds)),'  NA\'s to 0 to allow optimization'))
+          tipreds[is.na(tipreds)] = 0
+          }
         }
       }
       
@@ -965,6 +969,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       
       standata$sdscale <- sdscale
       
+      standata$basepriorscale <- ifelse(is.null(ctstanmodel$basepriorscale),0,ctstanmodel$basepriorscale)
+      
       #fixed hyper pars
       if(!is.null(ctstanmodel$fixedrawpopchol)) {
         standata$fixedrawpopmeans = array(ctstanmodel$fixedrawpopmeans)
@@ -1023,7 +1029,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
             #     if(i==chains & freesubpars) ctstanmodel$fixedsubpars <- NULL
             #   } else {
             staninits[[i]]=list(
-              baseindparams=array(rnorm(ifelse(intoverpop,0,nsubjects*nindvarying),0,.1),dim = c(ifelse(intoverpop,0,nsubjects),ifelse(intoverpop,0,nindvarying))),
+              # baseindparams=array(rnorm(ifelse(intoverpop,0,nsubjects*nindvarying),0,.1),dim = c(ifelse(intoverpop,0,nsubjects),ifelse(intoverpop,0,nindvarying))),
               eta=array(stats::rnorm(nrow(datalong)*n.latent,0,.1),dim=c(nrow(datalong),n.latent)),
               tipredeffectparams=array(rnorm(standata$ntipredeffects,0,.1)) )
             

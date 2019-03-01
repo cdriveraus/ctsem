@@ -2,9 +2,10 @@
 % Please edit documentation in R/ctStanParMatrices.R
 \name{ctStanParMatrices}
 \alias{ctStanParMatrices}
-\title{Returns model equation and other matrices from a ctStanFit object, and vector of values for free parameters.}
+\title{Returns population system matrices from a ctStanFit object, and vector of values for free parameters.}
 \usage{
-ctStanParMatrices(fit, parvalues, timeinterval = 1, sf = NA)
+ctStanParMatrices(fit, parvalues, timeinterval = 1, sf = NA,
+  whichmatrices = "all")
 }
 \arguments{
 \item{fit}{ctStanFit object.}
@@ -21,7 +22,7 @@ Matrices with "dt" in front refers to discrete time, "asym" refers to asymptotic
 and "cor" refers to correlations.
 }
 \description{
-Returns model equation and other matrices from a ctStanFit object, and vector of values for free parameters.
+Returns population system matrices from a ctStanFit object, and vector of values for free parameters.
 }
 \examples{
 \dontrun{

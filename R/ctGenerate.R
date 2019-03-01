@@ -45,13 +45,13 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
      
     if(any(is.na(suppressWarnings(as.numeric(get(names(ctmodelobj[i]))))))){ #if it contains character labels
       
-      if(!names(ctmodelobj[i]) %in% c('T0VAR','MANIFESTVAR','TRAITVAR','MANIFESTTRAITVAR','TDPREDVAR','TIPREDVAR')) {
+      if(!names(ctmodelobj[i]) %in% c('T0VAR','MANIFESTVAR')) { #,'TRAITVAR','MANIFESTTRAITVAR','TDPREDVAR','TIPREDVAR'
       assign(names(ctmodelobj[i]),matrix(0,nrow=nrow(get(names(ctmodelobj[i]))), #set the values to 0 instead
                                       ncol=ncol(get(names(ctmodelobj[i])))))
       message(paste0(names(ctmodelobj[i])," contained character labels - setting matrix to 0"))
     }
       
-      if(names(ctmodelobj[i]) %in% c('T0VAR','MANIFESTVAR','TRAITVAR','MANIFESTTRAITVAR','TDPREDVAR','TIPREDVAR')) {
+      if(names(ctmodelobj[i]) %in% c('T0VAR','MANIFESTVAR')) { #,,'TRAITVAR','MANIFESTTRAITVAR','TIPREDVAR','TDPREDVAR',
         assign(names(ctmodelobj[i]),diag(0.00001,nrow(get(names(ctmodelobj[i])))))
         message(paste0(names(ctmodelobj[i])," contained character labels - setting matrix to diagonal 0.00001"))
       }
@@ -65,7 +65,6 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
     }
   }
 
-  
   #lower triangular transform to full and keep cholesky (named appropriately) 
   for(tempmatname in c('T0VAR','MANIFESTVAR', 'DIFFUSION', 'TRAITVAR','MANIFESTTRAITVAR','TDPREDVAR','TIPREDVAR')){
 
@@ -103,7 +102,7 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
     for(t in 2:fullTpoints) time[t] = round(time[t-1] + dtvec[t-1],6)
     
     if(n.TDpred > 0) {
-     
+     # browser()
       tdpreds <- rbind(matrix(0,nrow=1+(burnin),ncol=n.TDpred)[-1,,drop=FALSE], #additional row added then removed in case no burnin
         matrix(TDPREDMEANS + TDPREDVARchol %*% rnorm(nrow(TDPREDVARchol),0,1),ncol=n.TDpred))
 }

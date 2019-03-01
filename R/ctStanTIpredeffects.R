@@ -56,7 +56,7 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
 
   ctspec <- fit$ctstanmodel$pars
   
-  e<-extract.ctStanFit(fit)
+  e<-extract(fit)
   rawpopmeans <- e$rawpopmeans
   
   niter<-dim(e$rawpopmeans)[1]

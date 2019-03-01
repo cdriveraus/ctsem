@@ -8,7 +8,6 @@
 #' @param digits integer denoting number of digits to report.
 #' @param parmatrices if TRUE, also return additional parameter matrices -- can be slow to compute
 #' for large models with many samples.
-#' @param parmatsamples Number of samples to use for parmatrices calculations. More is slower, but more precise.
 #' @param priorcheck Whether or not to use \code{ctsem:::priorchecking} to compare posterior mean and sd to prior mean and sd.
 #' @param ... Additional arguments to pass to \code{ctsem:::priorcheckreport}, such as \code{meanlim}, or \code{sdlim}.
 #' @return List containing summary items.
@@ -17,7 +16,7 @@
 #' @method summary ctStanFit
 #' @export
 
-summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,parmatsamples=200,priorcheck=TRUE,...){
+summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,priorcheck=TRUE,...){
   
   if(class(object) != 'ctStanFit') stop('Not a ctStanFit object!')
   
@@ -27,10 +26,10 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,par
   if(class(object$stanfit)=='stanfit'){ 
     s<-suppressWarnings(getMethod('summary','stanfit')(object$stanfit))
     if('98%' %in% colnames(s$summary)) colnames(s$summary)[colnames(s$summary)=='98%'] <- '97.5%'
-    e <- extract.ctStanFit(object) 
+    e <- extract(object) 
   }
   
-  if(class(object$stanfit)!='stanfit')  e <- extract.ctStanFit(object) 
+  if(class(object$stanfit)!='stanfit')  e <- extract(object) 
   parnames <- c()
   parindices <- c()
   # for(m in names(object$setup$matsetup)){
@@ -182,7 +181,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=FALSE,par
 
     parmatlists <- try(apply(e$rawpopmeans[
       sample(x = 1:dim(e$rawpopmeans)[1],
-        size = min(parmatsamples,dim(e$rawpopmeans)[1]), 
+        size = dim(e$rawpopmeans)[1],  #min(parmatsamples,
         replace = FALSE),],
       1,ctStanParMatrices,fit=object,timeinterval=timeinterval,sf=sf))
       

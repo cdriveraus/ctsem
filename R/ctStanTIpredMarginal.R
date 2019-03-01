@@ -16,7 +16,7 @@
 #' ctStanTIpredMarginal(ctstantestfit,pars='CINT',tipred=3)
 #' }
 ctStanTIpredMarginal<-function(fit,tipred,pars,probs=c(.025,.5,.975),useimputed=TRUE, plot=TRUE){
-  e<-extract.ctStanFit(fit)
+  e<-extract(fit)
   p<- e[[pars]]
   if(useimputed) tipreds <- ctCollapse(e$tipreds,1,mean) else tipreds <- fit$data$tipredsdata
   p<-plyr::aaply(p,2:length(dim(p)),quantile,probs=probs,.drop=FALSE)

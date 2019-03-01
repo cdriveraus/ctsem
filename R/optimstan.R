@@ -51,7 +51,7 @@
 optimstan <- function(standata, sm, init=0,sampleinit=NA,
   deoptim=TRUE, estonly=FALSE,tol=1e-12,
   decontrol=list(),
-  isloops=5, isloopsize=500, issamples=500, 
+  isloops=5, isloopsize=1000, issamples=1000, 
   verbose=0,nopriors=FALSE,cores=1){
   
   standata$verbose=as.integer(verbose)
@@ -180,7 +180,7 @@ optimstan <- function(standata, sm, init=0,sampleinit=NA,
       
       if(is.na(sampleinit[1])){
         
-        hess=grmat(func=grf,pars=est2)
+        hess=grmat(func=grf,pars=est2,step=1e-4)
         if(any(is.na(hess))) stop(paste0('Hessian could not be computed for pars ', paste0(which(apply(hess,1,function(x) any(is.na(x))))), ' -- consider reparameterising.',collapse=''))
         hess = (hess/2) + t(hess/2)
         mchol=try(t(chol(solve(-hess))),silent=TRUE)
@@ -214,6 +214,45 @@ optimstan <- function(standata, sm, init=0,sampleinit=NA,
       cl <- parallel::makeCluster(cores, type = "PSOCK")
       parallel::clusterExport(cl, c('sm','standata'),environment())
       
+    #   parlp <- function(samples,log=TRUE){
+    #     samples <- t(samples)
+    #     # browser()
+    #     parallel::clusterExport(cl, c('samples'),environment())
+    #     # browser()
+    #     target_dens <- unlist(parallel::parLapply(cl, parallel::clusterSplit(cl,1:ncol(samples)), function(x){
+    #     #   target_dens <- unlist(lapply(list(e=1:nrow(samples)), function(x){
+    #       eval(parse(text=paste0('library(rstan)')))
+    #       
+    #       smf <- stan_reinitsf(sm,standata)
+    #       
+    #       lp<-function(parm) {
+    #         out<-try(log_prob(smf, upars=parm, adjust_transform = TRUE, gradient=FALSE),silent = TRUE)
+    #         if(class(out)=='try-error') {
+    #           out=-1e99
+    #         }
+    #         return(out)
+    #       }
+    #       # browser()
+    #       out <- apply(samples[,x,drop=FALSE],2,lp)
+    #       try(dyn.unload(file.path(tempdir(), paste0(smf@stanmodel@dso@dso_filename, .Platform$dynlib.ext))),silent = TRUE)
+    #       return(out)
+    #     }))
+    #     print(target_dens)
+    #     # print(t(samples)-delta[[1]])
+    #     # browser()
+    #     if(!log) return(exp(c(target_dens))) else return((c(target_dens)))
+    #   }
+    #   
+    #   
+    #   fn.isSingular <- function(A, tol=1e250)  {
+    # tmp <- abs(det(A))
+    # as.logical(tmp>=tol | tmp<=1/tol)
+    #   }
+    #   browser()
+    #   assignInNamespace('fn.isSingular',fn.isSingular,'AdMit')
+    # 
+    #   am=AdMit(parlp,mu0 = delta[[1]],Sigma0 = mcovl[[1]],control=list(Ns=5e3,Np=1e3,df=3,IS=F))
+      
       if(isloops == 0) {
         nresamples = issamples
         resamples <- matrix(unlist(lapply(1:5000,function(x){
@@ -224,10 +263,12 @@ optimstan <- function(standata, sm, init=0,sampleinit=NA,
       
       if(isloops > 0){
         message('Adaptive importance sampling, loop:')
-        for(j in 1:isloops){
+        j <- 0
+        while(j < isloops){
+          j<- j+1
           message(paste0('  ', j, ' / ', isloops, '...'))
           if(j==1){
-            df=2
+            df=5
             samples <- mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = df)
           } else {
             # if(j>5) df <- 3
@@ -292,12 +333,19 @@ optimstan <- function(standata, sm, init=0,sampleinit=NA,
           
           # psis_dens <- psis(weighted_dens)
           # sample_prob <- weights(psis_dens,normalize = TRUE,log=FALSE)
-          
+          # browser()
           sample_prob <- c(sample_prob,exp((weighted_dens - log_sum_exp(weighted_dens)))) #sum to 1 for each iteration, normalise later
           sample_prob[!is.finite(sample_prob)] <- 0
           sample_prob[is.na(sample_prob)] <- 0
           resample_i <- sample(1:nrow(samples), size = nresamples, replace = ifelse(j == isloops+1,FALSE,TRUE), 
             prob = sample_prob / sum(sample_prob))
+          if(j < isloops){
+            message(paste0(length(unique(resample_i)), ' accepted samples from ', nrow(samples),', acceptance ratio = ', length(unique(resample_i)) / isloopsize))
+            if(length(unique(resample_i)) < 100) {
+              message('Sampling ineffective, unique samples < 100 -- try increasing samples per step (isloopsize), or decreasing optimizer tolerance (tol) if non-positive definite hessian.')
+              # return(est)
+            }
+          }
           resamples <- samples[resample_i, , drop = FALSE]
           # resamples=mcmc(resamples)
           
@@ -383,3 +431,4 @@ optimstan <- function(standata, sm, init=0,sampleinit=NA,
   if(estonly) stanfit=list(optimfit=optimfit,stanfit=smf, rawest=est2)
   return(stanfit)
 }
+

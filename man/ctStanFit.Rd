@@ -412,14 +412,14 @@ f3nl <- ctStanFit(datalong = dat2, ctstanmodel = m3nl,
 summary(f3nl)
 
 #plot functions need updating for non-linearities! (as of ctsem v 2.7.3)
-#extract.ctStanFit can be used to extract samples and create own plots.
+#extract can be used to extract samples and create own plots.
 #last index of kalaman subobject denotes element of Kalman output.
 # 1 = ll on std scale, 2= ll scale, 3=error, 4=prediction, 
 # 5= eta prior, 6= eta upd
 
 ctStanPostPredict(f3nl, datarows=1:100)
 
-e=extract.ctStanFit(f3nl)
+e=extract(f3nl)
 subindex = which(f3nl$data$subject ==3) #specify subject
  
  matplot(f3nl$data$time[subindex], # Y predictions given earlier Y

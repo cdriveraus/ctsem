@@ -3,14 +3,17 @@
 #' @param object ctStanFit object, samples may be from Stan's HMC, or the importance sampling approach of ctsem.
 #' @param ... additional arguments to pass to \code{rstan::extract}.
 #' @return Array of posterior samples.
-#' @export
+#' @aliases extract
 #' @examples
-#' e = extract.ctStanFit(ctstantestfit)
+#' e = extract(ctstantestfit)
 #' head(e)
-extract.ctStanFit <- function(object,...){
-  if(class(object)!='ctStanFit') stop('Not a ctStanFit object')
+#' @export
+extract <- function(object,...){
+  if(!class(object) %in% c('ctStanFit', 'stanfit')) stop('Not a ctStanFit or stanfit object')
+  if(class(object)=='stanfit') out <- rstan::extract(object,...) else{
   if(class(object$stanfit)=='stanfit') out <- rstan::extract(object$stanfit,...)
   if(class(object$stanfit)!='stanfit') out <- object$stanfit$transformedpars
   out$Ygen[out$Ygen==99999] <- NA
+  }
   return(out)
 }

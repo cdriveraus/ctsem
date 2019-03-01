@@ -6,8 +6,8 @@
 #' or long format (one time point of one individual per row). See details. 
 #' @param dataform either "wide" or "long" depending on which input format you wish to use for the data. See details and or vignette.
 #' @param ctmodelobj the ctsem model object you wish to use, specified via the \code{\link{ctModel}} function.
-#' @param fit if TRUE, output only openmx model without fitting
-#' @param nofit Deprecated. If FALSE, output only openmx model without fitting
+#' @param fit if FALSE, output only openmx model without fitting
+#' @param nofit Deprecated. If TRUE, output only openmx model without fitting
 #' @param objective 'auto' selects either 'Kalman', if fitting to single subject data, 
 #' or 'mxRAM' for multiple subjects. For single subject data, 'Kalman' uses the \code{mxExpectationStateSpace }
 #' function from OpenMx to implement the Kalman filter. 

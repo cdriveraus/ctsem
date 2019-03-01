@@ -1,5 +1,5 @@
 newkalman <- function(fit){
-    k=extract.ctStanFit(fit)$kalman
+    k=extract(fit)$kalman
     k[k==99999] <- NA #for missingness
     nlatent <- fit$standata$nlatentpop
     nmanifest <- fit$standata$nmanifest

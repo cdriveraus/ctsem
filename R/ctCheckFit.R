@@ -42,7 +42,7 @@ ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
   ecov <- cov(wdat,use = "pairwise.complete.obs")
   
   if(class(fit)=='ctStanFit'){
-    e <- extract.ctStanFit(fit)
+    e <- extract(fit)
     ygendim <- dim(e$Ygen)
     niter <- min(niter,ygendim[1])
     ygen <- array(e$Ygen,dim=c(ygendim[1] * ygendim[2],ygendim[-1:-2]))

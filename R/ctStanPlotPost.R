@@ -36,7 +36,7 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,sm
   
   do.call(graphics::par,parcontrol)
   
-  e<-extract.ctStanFit(obj)
+  e<-extract(obj)
   
   if(rows[1]=='all') rows<-which(!duplicated(obj$setup$popsetup$parname))
   
