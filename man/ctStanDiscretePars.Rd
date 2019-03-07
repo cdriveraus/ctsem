@@ -6,7 +6,8 @@
 \usage{
 ctStanDiscretePars(ctstanfitobj, subjects = "all", times = seq(from =
   0, to = 10, by = 0.1), quantiles = c(0.025, 0.5, 0.975),
-  nsamples = 500, plot = FALSE, ...)
+  nsamples = 500, observational = FALSE, standardise = FALSE,
+  plot = FALSE, ...)
 }
 \arguments{
 \item{ctstanfitobj}{Continuous time model fit from \code{\link{ctStanFit}}}
@@ -22,6 +23,13 @@ the 2nd will be plotted as a line with 1 and 3 as uncertainty bounds.}
 \item{nsamples}{Number of samples from the stanfit to use for plotting. Higher values will
 increase smoothness / accuracy, at cost of plotting speed. Values greater than the total
 number of samples will be set to total samples.}
+
+\item{observational}{Logical. If TRUE, outputs expected change in processes *conditional on observing* a 1 unit change in each -- 
+this change is correlated according to the DIFFUSION matrix. If FALSE, outputs expected regression values -- also interpretable as
+an independent 1 unit change on each process, giving the expected response under a 1 unit experimental impulse.}
+
+\item{standardise}{Logical. If TRUE, output is standardised according to expected total within subject variance, given by the 
+asymDIFFUSION matrix.}
 
 \item{plot}{Logical. If TRUE, plots output using \code{\link{ctStanDiscreteParsPlot}}
 instead of returning output.}

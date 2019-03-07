@@ -78,6 +78,11 @@ ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
 #'@param nsamples Number of samples from the stanfit to use for plotting. Higher values will
 #'increase smoothness / accuracy, at cost of plotting speed. Values greater than the total
 #'number of samples will be set to total samples.
+#'@param observational Logical. If TRUE, outputs expected change in processes *conditional on observing* a 1 unit change in each -- 
+#'this change is correlated according to the DIFFUSION matrix. If FALSE, outputs expected regression values -- also interpretable as
+#'an independent 1 unit change on each process, giving the expected response under a 1 unit experimental impulse.
+#'@param standardise Logical. If TRUE, output is standardised according to expected total within subject variance, given by the 
+#'asymDIFFUSION matrix.
 #'@param plot Logical. If TRUE, plots output using \code{\link{ctStanDiscreteParsPlot}}
 #'instead of returning output. 
 #'@param ... additional plotting arguments to control \code{\link{ctStanDiscreteParsPlot}}
@@ -86,7 +91,7 @@ ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
 #'  plot=TRUE,indices='all')
 #'@export
 ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=10,by=.1), 
-  quantiles = c(.025, .5, .975),nsamples=500,plot=FALSE,...){
+  quantiles = c(.025, .5, .975),nsamples=500,observational=FALSE,standardise=FALSE, plot=FALSE,...){
   
   type='discreteDRIFT'
   collapseSubjects=TRUE #consider this for a switch
@@ -117,7 +122,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   
   #get all ctparameter matrices at once and remove unneeded subjects
   ctpars <- list()
-  for(matname in c('DRIFT')){ #,'DIFFUSION','CINT','T0MEANS', 'T0VAR','MANIFESTMEANS',if(!is.null(e$MANIFESTVAR)) 'MANIFESTVAR','LAMBDA', if(!is.null(e$TDPREDEFFECT)) 'TDPREDEFFECT')){
+  for(matname in c('DRIFT','DIFFUSION','asymDIFFUSION')){ #,'CINT','T0MEANS', 'T0VAR','MANIFESTMEANS',if(!is.null(e$MANIFESTVAR)) 'MANIFESTVAR','LAMBDA', if(!is.null(e$TDPREDEFFECT)) 'TDPREDEFFECT')){
     
     if('all' %in% subjects){
       ctpars[[matname]] <- e[[paste0('pop_',matname)]]
@@ -125,8 +130,9 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
       ctpars[[matname]] <- e[[matname]][,subjects,,,drop=FALSE]
       ctpars[[matname]]<-  array(ctpars[[matname]],dim=c(prod(dim(ctpars[[matname]])[1:2]),dim(ctpars[[matname]])[-1:-2]))
     }
+    ctpars[[matname]] <- ctpars[[matname]][samples,,,drop=FALSE]
   }
-  ctpars[[matname]] <- ctpars[[matname]][samples,,,drop=FALSE]
+  
   
   #   
   #   xdims=dim(e[[matname]])
@@ -146,12 +152,25 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   for(typei in 1:length(type)){ #for all types of discrete parameter requested, compute pars
     message('Computing ', type[typei],' for ', nsamples,' samples, may take a moment...')
     matrixtype=ifelse(type[typei] %in% c('discreteDRIFT'),TRUE, FALSE) #include any matrix type outputs
-    discreteDRIFT <- aaply(ctpars$DRIFT,1,function(d) sapply(times, function(ti) 
-      expm(d*ti),simplify = 'array') )
+    discreteDRIFT <- sapply(1:(dim(ctpars$DRIFT)[1]),function(d){
+      nl=dim(ctpars$DRIFT)[2]
+      asymDIFFUSION <- matrix(ctpars$asymDIFFUSION[d,,],nl,nl)
+      DRIFT <- matrix(ctpars$DRIFT[d,,],nl,nl)
+      if(observational) {
+        g <- cov2cor(matrix(ctpars$DIFFUSION[d,,],nl,nl))^2
+      }
+      sapply(times, function(ti){ 
+        out <-expm(DRIFT *ti) 
+        if(standardise) out <- out * matrix(rep(sqrt(diag(asymDIFFUSION)),each=nl) / 
+            rep(diag(sqrt(asymDIFFUSION)),times=nl),nl)
+        if(observational) out <- out %*% g
+        return(out)
+      },simplify = 'array')
+    },simplify = 'array')
     
     nr=dim(discreteDRIFT)[2]
- 
-    out[[typei]] <- apply(get(type[typei]),c(2,3,4),quantile,probs=quantiles)
+    
+    out[[typei]] <- apply(get(type[typei]),c(1,2,3),quantile,probs=quantiles)
     
     # out[[typei]] <- plyr::aaply(1:nsamples,1,function(iterx){ #for every iteration
     #   if(collapseSubjects) subjectvec=1 else subjectvec=1:nsubjects #average over subjects before computing? much faster but answers dif question.
