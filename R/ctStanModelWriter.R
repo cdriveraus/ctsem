@@ -49,57 +49,37 @@ for(mlist in names(mats[-1])){
 }
 
 
-   #intoverpop calcs setup
+    #intoverpop calcs setup
     intoverpopdynamiccalcs <- paste0('
-    if(intoverpop==1){
-',paste0(
-      unlist(lapply(c(mats$dynamic), function(m){
-      paste0('
-    for(ri in 1:size(',m,'setup)){ //for each row of matrix setup
-      if(',m,'setup[ ri,5] > 0 && ( statei == 0 || statei == nlatent + ',m,'setup[ ri,5])){ // if individually varying
-        s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = 
-          ','tform(state[nlatent +',m,'setup[ri,5] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4], ',m,'values[ri,6] ); 
+    if(intoverpop==1){ 
+      for(ri in 1:size(matsetup)){ //for each row of matrix setup
+        if(matsetup[ ri,5] > 0 && ( statei == 0 || statei == nlatent + matsetup[ ri,5])){ // if individually varying
+          if(',paste0('matsetup[ri, 7] == ', which(mats$base %in% mats$dynamic), collapse = ' || '),'){ 
+          real newval;
+          newval = tform(state[nlatent + matsetup[ri,5] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
+          ',paste0('if(matsetup[ri, 7] == ', which(mats$base %in% mats$dynamic),') s',
+            mats$base[which(mats$base %in% mats$dynamic)],'[matsetup[ ri,1], matsetup[ri,2]] = newval;', collapse = ' \n          '),'
+          }
+        }
       }
     }')
-    })),collapse='\n'),'}',collapse='\n')
     
-    ctstanmodel$calcs$tdpred <- paste0(ctstanmodel$calcs$tdpred,';
-      if(intoverpop==1){
-        ',paste0(unlist(lapply('TDPREDEFFECT', function(m){
-      paste0('
-    for(ri in 1:size(',m,'setup)){
-      if(',m,'setup[ ri,5] > 0){ 
-         s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = ',
-          'tform(state[nlatent +',m,'setup[ri,5] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4], ',m,'values[ri,6] ); 
+    for(matlisti in c('tdpred','t0','measurement')){
+    ctstanmodel$calcs[[matlisti]] <- paste0(ctstanmodel$calcs[[matlisti]],';
+    if(intoverpop==1){ 
+      for(ri in 1:size(matsetup)){ //for each row of matrix setup
+        if(matsetup[ ri,5] > 0 && ( statei == 0 || statei == nlatent + matsetup[ ri,5])){ // if individually varying
+          if(',paste0('matsetup[ri, 7] == ', which(mats$base %in% mats[[matlisti]]), collapse = ' || '),'){ 
+          real newval;
+          newval = tform(state[nlatent + matsetup[ri,5] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
+          ',paste0('if(matsetup[ri, 7] == ', which(mats$base %in% mats[[matlisti]]),') s',
+            mats$base[which(mats$base %in% mats[[matlisti]])],'[matsetup[ ri,1], matsetup[ri,2]] = newval;', collapse = ' \n          '),'
+          }
+        }
       }
     }')
-    })),collapse='\n'),'}',collapse='\n')
-    
-    ctstanmodel$calcs$measurement <- paste0(ctstanmodel$calcs$measurement,';
-      if(intoverpop==1){
-        ',paste0(unlist(lapply(mats$measurement, function(m){
-      paste0('
-    for(ri in 1:size(',m,'setup)){
-      if(',m,'setup[ ri,5] > 0){ 
-         s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = ',
-         'tform(ukfstates[nlatent +',m,'setup[ri,5], statei ], ',m,'setup[ri,4], ',
-            m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4], ',m,'values[ri,6] ); 
-      }
-    }')
-    })),collapse='\n'),'}',collapse='\n')
-    
-    ctstanmodel$calcs$t0 <- paste0(ctstanmodel$calcs$t0,';
-      if(intoverpop==1){
-        ',paste0(unlist(lapply(mats$t0, function(m){
-      paste0('
-    for(ri in 1:size(',m,'setup)){
-      if(',m,'setup[ ri,5] > 0){ 
-         s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = ',
-          'tform(state[nlatent +',m,'setup[ri,5] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4], ',m,'values[ri,6] ); 
-      }
-    }')
-    })),collapse='\n'),'}',collapse='\n')
-    
+    }
+
     #end intoverpop setup
     
     
@@ -126,6 +106,7 @@ ukfilterfunc<-function(ppchecking){
   vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatentpop*2 : 0)] kout[ndatapoints];
 
   matrix[nldynamics ? nlatentpop :0,nldynamics ? nlatentpop :0] sigpoints;
+  vector[nlatentpop] state;
 
   //linear continuous time calcs
   matrix[nlatent+1,nlatent+1] discreteDRIFT;
@@ -203,7 +184,6 @@ ukfilterfunc<-function(ppchecking){
 
 
     if(nldynamics==1){ //nldynamics time update
-      vector[nlatentpop] state;
       if(T0check[rowi]==0){
         matrix[nlatentpop,nlatentpop] J;
         vector[nlatent] base;
@@ -219,7 +199,7 @@ ukfilterfunc<-function(ppchecking){
               } else {
                 state = eta;
               }
-              ',paste0(ctstanmodel$calcs$dynamic,';\n',collapse=' '),';\n', intoverpopdynamiccalcs,' //remove diffusion calcs and do elsewhere
+              ',paste0(ctstanmodel$calcs$dynamic,';\n',collapse=' '),';\n', intoverpopdynamiccalcs,' //do we need intoverpop calcs here? and remove diffusion calcs and do elsewhere
               if(statei== 0) {
                 base = sDRIFT * state[1:nlatent] + sCINT[,1];
               }
@@ -320,7 +300,6 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
   
 
       if(nlmeasurement==1){ //ukf measurement
-        vector[nlatentpop] state; //dynamic portion of current states
         matrix[nmanifest,cols(ukfmeasures)] merrorstates;
 
         for(statei in 2:cols(ukfmeasures)){
@@ -464,10 +443,8 @@ if(savescores) kalman = kout;
 subjectparaminit<- function(popmats=FALSE,smats=TRUE){
   if(smats && popmats) stop('smats and popmats cannot both be TRUE!')
   paste0(
-   paste0( unlist(lapply(mats$base,function(m){
-      paste0('matrix[ ',m,'setup_rowcount ? max(',m,'setup[,1]) : 0, ',m,'setup_rowcount ? max(',m,'setup[,2]) : 0 ] ',
-        ifelse(smats,'s',''),ifelse(popmats,'pop_',''),m,if(!smats && !popmats) paste0('[',m,'subindex[nsubjects]]'),';',collapse='\n')
-    })),collapse='\n'),'
+    paste0('   matrix[matrixdims[',1:length(mats$base),', 1], matrixdims[',1:length(mats$base),', 2] ] ',
+        ifelse(smats,'s',''),ifelse(popmats,'pop_',''),mats$base,if(!smats && !popmats) paste0('[',mats$base,'subindex[nsubjects]]'),';',collapse=' \n   '),'
 
   matrix[nlatent,nlatent] ',ifelse(smats,'s',''),ifelse(popmats,'pop_',''),'asymDIFFUSION',if(!smats && !popmats) '[asymDIFFUSIONsubindex[nsubjects]]','; //stationary latent process variance
   vector[nt0meansstationary ? nlatent : 0] ',ifelse(smats,'s',''),ifelse(popmats,'pop_',''),'asymCINT',if(!smats && !popmats) '[asymCINTsubindex[nsubjects]]','; // latent process asymptotic level
@@ -478,41 +455,29 @@ subjectparaminit<- function(popmats=FALSE,smats=TRUE){
 
 subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
   out <- paste0(
- 'for(subi in (1-rowi ? si : 0):si){
+ 'for(subi in (1-rowi ? si : 0) : si){
   vector[nparams] rawindparams;
-  vector[nparams] tipredaddition;
-  vector[nparams] indvaraddition;
-  
-  if(subi < 2 || (subi > 1 && (nindvarying >0 || ntipred > 0))){ //subi of 0 used
-    tipredaddition = rep_vector(0,nparams);
-    indvaraddition = rep_vector(0,nparams);
+  vector[nparams] tipredaddition = rep_vector(0,nparams);
+  vector[nparams] indvaraddition = rep_vector(0,nparams);
 
-    if(subi > 0 && nindvarying > 0 && intoverpop==0) {
-      if(fixedsubpars==0) indvaraddition[indvaryingindex] = rawpopcovsqrt * baseindparams[subi];
-      if(fixedsubpars==1) indvaraddition[indvaryingindex] = rawpopcovsqrt * fixedindparams[subi];
-    }
-  
-    if(subi > 0 &&  ntipred > 0) tipredaddition = TIPREDEFFECT * tipreds[subi]\';
-  
-    rawindparams = rawpopmeans + tipredaddition + indvaraddition;
-
+  if(subi > 0 && nindvarying > 0 && intoverpop==0) {
+    if(fixedsubpars==0) indvaraddition[indvaryingindex] = rawpopcovsqrt * baseindparams[subi];
+    if(fixedsubpars==1) indvaraddition[indvaryingindex] = rawpopcovsqrt * fixedindparams[subi];
   }
+  
+  if(subi > 0 &&  ntipred > 0) tipredaddition = TIPREDEFFECT * tipreds[subi]\';
+
+  rawindparams = rawpopmeans + tipredaddition + indvaraddition;
 ',
 
-    paste0(unlist(lapply(mats$base, function(m) {
-      paste0('
-  if(subi <= ',m,'subindex[nsubjects]){
-    for(ri in 1:size(',m,'setup)){
-      if(',m,'setup[ ri,5] > 0 || ',m,'setup[ ri,6] > 0 || subi < 2){
-        s',m,'[',m,'setup[ ri,1], ',m,'setup[ri,2]] = ',
-          m,'setup[ri,3] ? ', 
-            'tform(rawindparams[ ',m,'setup[ri,3] ], ',m,'setup[ri,4], ',m,'values[ri,2], ',m,'values[ri,3], ',m,'values[ri,4], ',m,'values[ri,6] ) : ',
-            m,'values[ri,1]; //either transformed, scaled and offset free par, or fixed value
-      }
-    }
-  }
-      ',collapse='\n')
-    })),collapse='\n'),'
+paste0('
+    for(ri in 1:size(matsetup)){ //for each row of matrix setup
+      real newval;
+      if(matsetup[ri,3] > 0) newval = tform(rawindparams[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
+      if(matsetup[ri,3] < 1) newval = matvalues[ri, 1];
+      ',paste0('if(matsetup[ri, 7] == ', 1:length(mats$base),') s',
+        mats$base,'[matsetup[ ri,1], matsetup[ri,2]] = newval;', collapse = ' \n      '),'
+    }',collapse='\n    '),'
 
   // perform any whole matrix transformations 
     
@@ -566,7 +531,7 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
 ',collectsubmats(popmats=TRUE),'
   }
 ',collapse=''),'
-}
+} // end subject matrix creation
   ',collapse='\n')
   
   return(out)
@@ -807,13 +772,14 @@ data {
   int verbose; //level of printing during model fit
 
   ',paste0(unlist(lapply(c(mats$base,'asymCINT','asymDIFFUSION'),function(mati) paste0('int ',mati,'subindex[nsubjects];',collapse='\n'))),collapse='\n'),'
-  ',paste0(unlist(lapply(mats$base,function(m) paste0('int ',m,'setup_rowcount;',collapse='\n'))),collapse='\n'),'
-  ',paste0(unlist(lapply(mats$base,function(m) paste0('int ',m,'setup[',m,'setup_rowcount,6 ];',collapse='\n'))),collapse='\n'),'
-  ',paste0(unlist(lapply(mats$base,function(m) paste0('matrix[',m,'setup_rowcount, 6] ',m,'values;'))),collapse='\n'),'
   int TIPREDEFFECTsetup[nparams, ntipred];
-  int nmatrixslots;
-  int popsetup[nmatrixslots,6];
-  real popvalues[nmatrixslots,6];
+  int nrowpopsetup;
+  int nrowmatsetup;
+  int popsetup[nrowpopsetup,7];
+  int matsetup[nrowmatsetup,7];
+  real popvalues[nrowpopsetup,6];
+  real matvalues[nrowmatsetup,6];
+  int matrixdims[',length(mats$base),',2];
   int savescores;
   int nlatentpop;
   int fixedsubpars;

@@ -32,18 +32,19 @@ stanc(model_code = sm,verbose = TRUE)
 # sm32 <- ctStanFit(datalong, model,fit=FALSE,gendata=FALSE)$stanmodeltext
 # stanc(model_code = sm32,verbose = TRUE)
 
-message(paste0('Updating from ',(getwd()),', continue T / F?'))
+message(paste0('Update files? T / F?'))
 continue <- readline()
 if(continue){
+  pathbase <- '~/../dropbox/MPIB/CT-SEM/ctsem/src/'
   for(wi in 2){
     stan_files<-ifelse(wi==1,'stan_files32','stan_files')
-  file.rename(paste0('./src/',stan_files,'/ctsm.stan'), paste0('./src/',stan_files,'/ctsm.bak'))
-  file.rename(paste0('./src/',stan_files,'/ctsmgen.stan'), paste0('./src/',stan_files,'/ctsmgen.bak'))
-sink(file=paste0('./src/',stan_files,'/ctsm.stan'))
+  file.rename(paste0(pathbase,stan_files,'/ctsm.stan'), paste0('./src/',stan_files,'/ctsm.bak'))
+  file.rename(paste0(pathbase,stan_files,'/ctsmgen.stan'), paste0('./src/',stan_files,'/ctsmgen.bak'))
+sink(file=paste0(pathbase,stan_files,'/ctsm.stan'))
 # if(wi==1) cat(sm32) else 
 cat(sm)
 sink()
-sink(file=paste0('./src/',stan_files,'/ctsmgen.stan'))
+sink(file=paste0(pathbase,stan_files,'/ctsmgen.stan'))
 # if(wi==1) cat(smgen32) else 
 cat(smgen)
 sink()

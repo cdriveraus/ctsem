@@ -761,9 +761,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       dTsmall <- dT / integrationsteps
       dTsmall[is.na(dTsmall)] = 0
       
-      
-      
-      
+
       matsetup <-list()
       matvalues <-list()
       freepar <- 0
@@ -776,7 +774,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       extratformcounter <- 0
       extratforms <- c()
       for(m in mats$base){
-        mdat<-matrix(0,0,6)
+        mdat<-matrix(0,0,7)
         mval<-matrix(0,0,6)
         for(i in 1:nrow(ctspec)){ 
           if(ctspec$matrix[i] == m) {
@@ -818,7 +816,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
               ifelse(!is.na(ctspec$param[i]),freepar, 0),
               ifelse(is.na(as.integer(ctspec$transform[i])), -1, as.integer(ctspec$transform[i])),
               ifelse(!is.na(ctspec$param[i]),indvar,0),
-              ifelse(any(TIPREDEFFECTsetup[freepar,] > 0), 1, 0)
+              ifelse(any(TIPREDEFFECTsetup[freepar,] > 0), 1, 0), 
+              which(mats$base==m)
             ),nrow=1)
             rownames(mdatnew) <- ctspec$param[i]
             
@@ -827,7 +826,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
             # if(ctspec$indvarying[i]) indvaryingindex <- c(indvaryingindex, freepar)
             
             mval<-rbind(mval, matrix(c(ctspec$value[i], ctspec$multiplier[i], ctspec$meanscale[i],ctspec$offset[i], ctspec$sdscale[i],ctspec$inneroffset[i]),ncol=6))
-            colnames(mdat) <- c('row','col','param','transform', 'indvarying','tipred')
+            colnames(mdat) <- c('row','col','param','transform', 'indvarying','tipred', 'matrix')
             colnames(mval) <- c('value','multiplier','meanscale','offset','sdscale','inneroffset')
           }
         }
@@ -836,21 +835,22 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         matsetup[[m]] = mdat
         matvalues[[m]] <- mval
       }
-      
-      popsetup <- do.call(rbind,matsetup) 
-      popvalues <- do.call(rbind,matvalues) 
-      popvalues <- popvalues[popsetup[,'param'] !=0,,drop=FALSE]
-      popsetup <- popsetup[popsetup[,'param'] !=0,,drop=FALSE]
+      matrixdims <- t(sapply(matsetup, function(m) c(max(c(0,m[,1])),max(c(0,m[,2])))))
+      matsetup <- do.call(rbind,matsetup) 
+      matvalues <- do.call(rbind,matvalues) 
+      popvalues <- matvalues[matsetup[,'param'] !=0,,drop=FALSE]
+      popsetup <- matsetup[matsetup[,'param'] !=0,,drop=FALSE]
       
       parname <-rownames(popsetup)
       rownames(popsetup) <- NULL
       rownames(popvalues) <- NULL
-      
       popsetup <- data.frame(parname,popsetup,stringsAsFactors = FALSE)
       popvalues <- data.frame(parname,popvalues,stringsAsFactors = FALSE)
       
       nindvarying <- max(popsetup$indvarying)
       nparams <- max(popsetup$param)
+      nmatrices <- length(mats$base)
+      
       
       indvaryingindex <- popsetup$param[which(popsetup$indvarying > 0)]
       indvaryingindex <- array(indvaryingindex[!duplicated(indvaryingindex)])
@@ -957,19 +957,22 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       }
       
       
-      for(m in mats$base){
-        standata[[paste0(m,'setup_rowcount')]] <- as.integer(nrow(matsetup[[m]]))
-        standata[[paste0(m,'setup')]] <- apply(matsetup[[m]],c(1,2),as.integer,.drop=FALSE)
-        standata[[paste0(m,'values')]] <- matvalues[[m]]
-      }
+      # for(m in mats$base){
+      #   standata[[paste0(m,'setup_rowcount')]] <- as.integer(nrow(matsetup[[m]]))
+      #   standata[[paste0(m,'setup')]] <- apply(matsetup[[m]],c(1,2),as.integer,.drop=FALSE)
+      #   standata[[paste0(m,'values')]] <- matvalues[[m]]
+      # }
+      standata$matsetup <- apply(matsetup,c(1,2),as.integer,.drop=FALSE)
+      standata$matvalues <- apply(matvalues,c(1,2),as.numeric)
+      standata$nmatrices <- as.integer(nmatrices)
+      standata$matrixdims <- apply(matrixdims,c(1,2),as.integer,.drop=FALSE)
       
       standata$popsetup <- apply(popsetup[,-1],c(1,2),as.integer,.drop=FALSE) #with parname column removed
       standata$popvalues <- apply(popvalues[,-1],c(1,2),as.numeric)
-      standata$nmatrixslots <- as.integer(nrow(popsetup))
+      standata$nrowpopsetup <- as.integer(nrow(popsetup))
+      standata$nrowmatsetup <- as.integer(nrow(matsetup))
       
       standata$sdscale <- sdscale
-      
-      standata$basepriorscale <- ifelse(is.null(ctstanmodel$basepriorscale),0,ctstanmodel$basepriorscale)
       
       #fixed hyper pars
       if(!is.null(ctstanmodel$fixedrawpopchol)) {
@@ -985,9 +988,11 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       if(!is.null(ctstanmodel$fixedsubpars)) standata$fixedindparams <- ctstanmodel$fixedsubpars else standata$fixedindparams <-array(0,dim=c(0,0))
       
       if(fit){
-        # browser()
         # if(gendata && stanmodels$ctsmgen@model_code != stanmodeltext) recompile <- TRUE
         # if(!gendata && paste0(stanmodels$ctsm@model_code) != paste0(stanmodeltext)) recompile <- TRUE
+        
+        STAN_NUM_THREADS <- Sys.getenv('STAN_NUM_THREADS',unset=NA)
+        Sys.setenv(STAN_NUM_THREADS=cores)
         
         if(recompile || forcerecompile) {
           message('Compiling model...') 
@@ -996,8 +1001,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         if(!recompile && !forcerecompile) {
           if(!gendata) sm <- stanmodels$ctsm else sm <- stanmodels$ctsmgen
         }
-        
-        if(!is.null(inits) & all(inits!=0)){
+        if(!is.null(inits) & any(inits!=0)){
           sf <- stan_reinitsf(sm,standata)
           inits <- constrain_pars(sf,inits)
           staninits=list()
@@ -1030,8 +1034,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
             #   } else {
             staninits[[i]]=list(
               # baseindparams=array(rnorm(ifelse(intoverpop,0,nsubjects*nindvarying),0,.1),dim = c(ifelse(intoverpop,0,nsubjects),ifelse(intoverpop,0,nindvarying))),
-              eta=array(stats::rnorm(nrow(datalong)*n.latent,0,.1),dim=c(nrow(datalong),n.latent)),
-              tipredeffectparams=array(rnorm(standata$ntipredeffects,0,.1)) )
+              # eta=array(stats::rnorm(nrow(datalong)*n.latent,0,.1),dim=c(nrow(datalong),n.latent)),
+              # tipredeffectparams=array(rnorm(standata$ntipredeffects,0,.1)) 
+              )
             
             if(standata$fixedhyper==0){
               staninits[[i]]$rawpopmeans=array(rnorm(nparams,0,.1))
@@ -1073,6 +1078,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
           stanfit <- do.call(optimstan,opargs)
         }
         
+      if(is.na(STAN_NUM_THREADS)) Sys.unsetenv('STAN_NUM_THREADS') else Sys.setenv(STAN_NUM_THREADS = STAN_NUM_THREADS) #reset sys env
       } # end if fit==TRUE
       #convert missings back to NA's for data output
       standataout<-unlist(standata)
@@ -1090,7 +1096,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       # names(matrixsetup) <- c('matsetup','mats$base','mats$dynamic','mats$measurement','mats$t0')
       if(!fit) out=list(args=args,setup=list(recompile=recompile,idmap=idmap,popsetup=popsetup,popvalues=popvalues,matrices=mats,extratforms=extratforms),
         stanmodeltext=stanmodeltext,data=standataout, standata=standata, ctstanmodel=ctstanmodel)
-      
       
       return(out)
     }
