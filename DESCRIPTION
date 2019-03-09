@@ -42,7 +42,8 @@ Imports:
     corrplot,
     mvtnorm,
     DEoptim,
-    KernSmooth
+    KernSmooth,
+    ucminf
 Encoding: UTF-8
 LazyData: true
 ByteCompile: true

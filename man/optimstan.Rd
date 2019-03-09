@@ -4,17 +4,18 @@
 \alias{optimstan}
 \title{Optimize / importance sample a stan or ctStan model.}
 \usage{
-optimstan(standata, sm, init = 0, sampleinit = NA, deoptim = TRUE,
-  estonly = FALSE, tol = 1e-12, decontrol = list(), isloops = 5,
-  isloopsize = 500, issamples = 500, verbose = 0, nopriors = FALSE,
-  cores = 1)
+optimstan(standata, sm, init = "random", sampleinit = NA,
+  deoptim = TRUE, estonly = FALSE, tol = 1e-12, decontrol = list(),
+  isloops = 0, isloopsize = 1000, issamples = 1000, verbose = 0,
+  nopriors = FALSE, cores = 1)
 }
 \arguments{
 \item{standata}{list object conforming to rstan data standards.}
 
 \item{sm}{compiled stan model object.}
 
-\item{init}{init argument conforming to rstan init standards.}
+\item{init}{vector of unconstrained parameter values, or character string 'random' to initialise with 
+random values very close to zero.}
 
 \item{sampleinit}{either NA, or an niterations * nparams matrix of samples to initialise importance sampling.}
 

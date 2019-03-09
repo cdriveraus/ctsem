@@ -80,9 +80,9 @@ initialisation of higher order models, while the FALSE setting is useful when on
 and wishes to begin optimization from those values by using the omxStartValues switch.
 are re-transformed into regular continuous time parameter matrices, and may be interpreted as normal.}
 
-\item{fit}{if TRUE, output only openmx model without fitting}
+\item{fit}{if FALSE, output only openmx model without fitting}
 
-\item{nofit}{Deprecated. If FALSE, output only openmx model without fitting}
+\item{nofit}{Deprecated. If TRUE, output only openmx model without fitting}
 
 \item{discreteTime}{Estimate a discrete time model - ignores timing information, parameter
 estimates will correspond to those of classical vector autoregression models, 

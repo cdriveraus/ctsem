@@ -1003,16 +1003,16 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         }
         if(!is.null(inits) & any(inits!=0)){
           sf <- stan_reinitsf(sm,standata)
-          inits <- constrain_pars(sf,inits)
-          staninits=list()
-          if(chains > 0){
-            for(i in 1:chains){
-              staninits[[i]]<-inits
+          staninits <- list(stan1=constrain_pars(sf,inits))
+          # staninits=list()
+          if(chains > 1){
+            for(i in 2:chains){
+              staninits[[i]]<-staninits[[1]]
             }
           }
         }
         
-        if(!is.null(inits) & class(inits) !='list') staninits=inits
+        if(!is.null(inits) & class(inits) !='list') staninits=inits #if 0 init
         if(is.null(inits)){
           staninits=list()
           # if(chains > 0){
@@ -1074,7 +1074,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         }
         
         if(optimize==TRUE) {
-          opargs <- c(list(standata = standata,sm = sm,init = staninits[[1]], cores=cores, verbose=verbose,nopriors=as.logical(nopriors)),optimcontrol)
+          opargs <- c(list(standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors)),optimcontrol)
           stanfit <- do.call(optimstan,opargs)
         }
         

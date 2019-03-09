@@ -2,7 +2,8 @@
 #'
 #' @param standata list object conforming to rstan data standards.
 #' @param sm compiled stan model object.
-#' @param init init argument conforming to rstan init standards.
+#' @param init vector of unconstrained parameter values, or character string 'random' to initialise with 
+#' random values very close to zero.
 #' @param sampleinit either NA, or an niterations * nparams matrix of samples to initialise importance sampling.
 #' @param deoptim Do first pass optimization using differential evolution? Slower, but better for cases with multiple 
 #' minima / difficult optimization.
@@ -17,6 +18,7 @@
 #' @param issamples Number of samples to use for final results of importance sampling.
 #'
 #' @return ctStanFit object
+#' @importFrom ucminf ucminf
 #' @export
 #'
 #' @examples
@@ -48,10 +50,10 @@
 #' 
 #' #output
 #' summary(ssfit)
-optimstan <- function(standata, sm, init=0,sampleinit=NA,
-  deoptim=TRUE, estonly=FALSE,tol=1e-12,
+optimstan <- function(standata, sm, init='random',sampleinit=NA,
+  deoptim=FALSE, estonly=FALSE,tol=1e-12,
   decontrol=list(),
-  isloops=5, isloopsize=1000, issamples=1000, 
+  isloops=0, isloopsize=1000, issamples=500, 
   verbose=0,nopriors=FALSE,cores=1){
   
   standata$verbose=as.integer(verbose)
@@ -82,6 +84,7 @@ optimstan <- function(standata, sm, init=0,sampleinit=NA,
     # control=list(max_treedepth=0),save_warmup=FALSE,test_grad=FALSE))))
     smf <- stan_reinitsf(sm,standata)
     npars=get_num_upars(smf)
+    if(all(init %in% 'random')) init <- rnorm(npars, 0, .001)
     
     if(is.na(sampleinit[1])){
       
@@ -95,7 +98,7 @@ optimstan <- function(standata, sm, init=0,sampleinit=NA,
         lp2 = function(parm) {
           out<-try(log_prob(smf, upars=parm,adjust_transform=TRUE,gradient=FALSE),silent = TRUE)
           if(class(out)=='try-error') {
-            out=-1e20
+            out=-1e200
           }
           return(-out)
         }
@@ -110,31 +113,62 @@ optimstan <- function(standata, sm, init=0,sampleinit=NA,
         decontrollist$NP = NP
         optimfitde <- suppressWarnings(DEoptim(fn = lp2,lower = rep(-1e10, npars), upper=rep(1e10, npars),
           control = decontrollist))
-        init=constrain_pars(object = smf,optimfitde$optim$bestmem)
+        # init=constrain_pars(object = smf,optimfitde$optim$bestmem)
+        init=optimfitde$optim$bestmem
       }
       
       
+      # suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=1e6, init=init,as_vector=FALSE,draws=0,constrained=FALSE,
+      #   tol_obj=tol, tol_rel_obj=0,init_alpha=.001, tol_grad=0,tol_rel_grad=0,tol_param=0,history_size=50,verbose=verbose),verbose=verbose))
+      
+      gradout <- c()
+      bestlp <- -Inf
+      
+      lp<-function(parm) {
+        # print((parm))
+        out<-try(log_prob(smf, upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = TRUE)
+        if(class(out)=='try-error') {
+          out=-Inf
+          gradout <<- rep(NaN,length(parm))
+        } else if(out[1] > bestlp) {
+          bestlp <<- out[1]
+          gradout <<- attributes(out)$gradient
+        }
+        return(-out[1])
+      }
+      
+      grf<-function(parm) {
+        # print((parm))
+        # out=try(grad_log_prob(smf, upars=parm, adjust_transform = TRUE))
+        # if(class(out)=='try-error') {
+        #   out=rep(NaN,length(parm))
+        # }
+        return(-gradout)
+      }
+      
+      # browser()
       
       # if(!deoptim & standata$nopriors == 0 ) init='random'
       if(!deoptim & standata$nopriors == 1 ){ #init using priors
         standata$nopriors <- as.integer(0)
-        suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=1e6, init=0,as_vector=FALSE,draws=0,constrained=FALSE,
-          tol_obj=tol, tol_rel_obj=0,init_alpha=.001, tol_grad=0,tol_rel_grad=0,tol_param=1e-12,history_size=100,verbose=verbose),verbose=verbose))
+        optimfit <- ucminf(init,fn = lp,gr = grf,control=list(grtol=1e-4,xtol=tol*1e4,maxeval=10000))
+        # suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=1e6, init=0,as_vector=FALSE,draws=0,constrained=FALSE,
+          # tol_obj=tol, tol_rel_obj=0,init_alpha=.01, tol_grad=0,tol_rel_grad=0,tol_param=1e-12,history_size=10,verbose=verbose),verbose=verbose))
         standata$nopriors <- as.integer(1)
         init = optimfit$par #rstan::constrain_pars(object = smf, optimfit$par)
       }
       
       
+      optimfit <- ucminf(init,fn = lp,gr = grf,control=list(grtol=1e-8,xtol=tol,maxeval=10000))
+      # optimfit2 <- nloptr(rnorm(npars,0,.001),lp,grf,
+      #   opts=list(algorithm='NLOPT_LD_LBFGS',xtol_rel=1e-12,ftol_abs=1e-10,maxeval=10000))
       
-      suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=1e6, init=init,as_vector=FALSE,draws=0,constrained=FALSE,
-        tol_obj=tol, tol_rel_obj=0,init_alpha=.00001, tol_grad=0,tol_rel_grad=0,tol_param=0,history_size=50,verbose=verbose),verbose=verbose))
       
-      
-      est1=optimfit$par
+      est1=constrain_pars(smf,optimfit$par)
       bestfit <-optimfit$value
       # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan::grab_cxxfun(sm@dso))
       
-      est2=unconstrain_pars(smf, est1)
+      est2=optimfit$par #unconstrain_pars(smf, est1)
     }
     
     if(!estonly){
@@ -154,7 +188,7 @@ optimstan <- function(standata, sm, init=0,sampleinit=NA,
         return(out)
       }
       
-      grmat<-function(func,pars,step=1e-8){
+      grmat<-function(func,pars,step=1e-6){
         gradout<-matrix(NA,nrow=length(pars),ncol=length(pars))
         for(i in 1:length(pars)){
           stepsize <- step * 10
@@ -214,44 +248,44 @@ optimstan <- function(standata, sm, init=0,sampleinit=NA,
       cl <- parallel::makeCluster(cores, type = "PSOCK")
       parallel::clusterExport(cl, c('sm','standata'),environment())
       
-    #   parlp <- function(samples,log=TRUE){
-    #     samples <- t(samples)
-    #     # browser()
-    #     parallel::clusterExport(cl, c('samples'),environment())
-    #     # browser()
-    #     target_dens <- unlist(parallel::parLapply(cl, parallel::clusterSplit(cl,1:ncol(samples)), function(x){
-    #     #   target_dens <- unlist(lapply(list(e=1:nrow(samples)), function(x){
-    #       eval(parse(text=paste0('library(rstan)')))
-    #       
-    #       smf <- stan_reinitsf(sm,standata)
-    #       
-    #       lp<-function(parm) {
-    #         out<-try(log_prob(smf, upars=parm, adjust_transform = TRUE, gradient=FALSE),silent = TRUE)
-    #         if(class(out)=='try-error') {
-    #           out=-1e99
-    #         }
-    #         return(out)
-    #       }
-    #       # browser()
-    #       out <- apply(samples[,x,drop=FALSE],2,lp)
-    #       try(dyn.unload(file.path(tempdir(), paste0(smf@stanmodel@dso@dso_filename, .Platform$dynlib.ext))),silent = TRUE)
-    #       return(out)
-    #     }))
-    #     print(target_dens)
-    #     # print(t(samples)-delta[[1]])
-    #     # browser()
-    #     if(!log) return(exp(c(target_dens))) else return((c(target_dens)))
-    #   }
-    #   
-    #   
-    #   fn.isSingular <- function(A, tol=1e250)  {
-    # tmp <- abs(det(A))
-    # as.logical(tmp>=tol | tmp<=1/tol)
-    #   }
-    #   browser()
-    #   assignInNamespace('fn.isSingular',fn.isSingular,'AdMit')
-    # 
-    #   am=AdMit(parlp,mu0 = delta[[1]],Sigma0 = mcovl[[1]],control=list(Ns=5e3,Np=1e3,df=3,IS=F))
+      #   parlp <- function(samples,log=TRUE){
+      #     samples <- t(samples)
+      #     # browser()
+      #     parallel::clusterExport(cl, c('samples'),environment())
+      #     # browser()
+      #     target_dens <- unlist(parallel::parLapply(cl, parallel::clusterSplit(cl,1:ncol(samples)), function(x){
+      #     #   target_dens <- unlist(lapply(list(e=1:nrow(samples)), function(x){
+      #       eval(parse(text=paste0('library(rstan)')))
+      #       
+      #       smf <- stan_reinitsf(sm,standata)
+      #       
+      #       lp<-function(parm) {
+      #         out<-try(log_prob(smf, upars=parm, adjust_transform = TRUE, gradient=FALSE),silent = TRUE)
+      #         if(class(out)=='try-error') {
+      #           out=-1e99
+      #         }
+      #         return(out)
+      #       }
+      #       # browser()
+      #       out <- apply(samples[,x,drop=FALSE],2,lp)
+      #       try(dyn.unload(file.path(tempdir(), paste0(smf@stanmodel@dso@dso_filename, .Platform$dynlib.ext))),silent = TRUE)
+      #       return(out)
+      #     }))
+      #     print(target_dens)
+      #     # print(t(samples)-delta[[1]])
+      #     # browser()
+      #     if(!log) return(exp(c(target_dens))) else return((c(target_dens)))
+      #   }
+      #   
+      #   
+      #   fn.isSingular <- function(A, tol=1e250)  {
+      # tmp <- abs(det(A))
+      # as.logical(tmp>=tol | tmp<=1/tol)
+      #   }
+      #   browser()
+      #   assignInNamespace('fn.isSingular',fn.isSingular,'AdMit')
+      # 
+      #   am=AdMit(parlp,mu0 = delta[[1]],Sigma0 = mcovl[[1]],control=list(Ns=5e3,Np=1e3,df=3,IS=F))
       
       if(isloops == 0) {
         nresamples = issamples
@@ -377,7 +411,7 @@ optimstan <- function(standata, sm, init=0,sampleinit=NA,
       for(li in 1:length(x)){
         flesh = unlist(rstan::constrain_pars(smf, resamples[x[li],]))
         names(flesh) <- c()
-        skeleton=optimfit$par
+        skeleton=est1
         out[[li]] <-relistarrays(flesh, skeleton)
       }
       return(out)
@@ -408,7 +442,7 @@ optimstan <- function(standata, sm, init=0,sampleinit=NA,
       return(out)
     }
     
-    transformedpars=try(tostanarray(flesh = matrix(unlist(transformedpars),byrow=TRUE, nrow=nresamples), skeleton = optimfit$par))
+    transformedpars=try(tostanarray(flesh = matrix(unlist(transformedpars),byrow=TRUE, nrow=nresamples), skeleton = est1))
     # quantile(sapply(transformedpars, function(x) x$rawpopcorr[3,2]),probs=c(.025,.5,.975))
     # quantile(sapply(transformedpars, function(x) x$DRIFT[1,2,2]),probs=c(.025,.5,.975))
     
