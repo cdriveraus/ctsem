@@ -14,7 +14,7 @@
 #' \dontrun{
 #' ctStanParMatrices(ctstantestfit,rnorm(17,0,.1))
 #' }
-ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA, whichmatrices='all'){
+ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA){
   
   if(class(fit) !='ctStanFit') stop('not a ctStanFit object')
   model <- fit$ctstanmodel
@@ -28,6 +28,8 @@ ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA, whichmatric
   pars <- c(parvalues,rep(0,npars - fit$data$nparams))
   sfc <- constrain_pars(sf, pars)
   
+  
+   whichmatrices='all'
   
   if(whichmatrices[1] == 'all') {
     whichmatrices <- c(fit$setup$matrices$base,

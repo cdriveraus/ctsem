@@ -1,13 +1,12 @@
 #' Get Kalman filter estimates from a ctStanFit object
 #'
-#' @param fit 
+#' @param fit fit object from \link{\code{ctStanFit}}.
 #'
 #' @return list containing Kalman filter elements, each element in array of
 #' iterations, data row, variables.
 #' @export
 #'
-#' @examples
-#' 
+#' @examples 
 #' ctStanKalman(ctstantestfit)
 #' 
 ctStanKalman <- function(fit){

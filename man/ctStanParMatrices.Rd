@@ -4,8 +4,7 @@
 \alias{ctStanParMatrices}
 \title{Returns population system matrices from a ctStanFit object, and vector of values for free parameters.}
 \usage{
-ctStanParMatrices(fit, parvalues, timeinterval = 1, sf = NA,
-  whichmatrices = "all")
+ctStanParMatrices(fit, parvalues, timeinterval = 1, sf = NA)
 }
 \arguments{
 \item{fit}{ctStanFit object.}

@@ -139,19 +139,14 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
         return(-out[1])
       }
       
-      grf<-function(parm) {
-        # print((parm))
-        # out=try(grad_log_prob(smf, upars=parm, adjust_transform = TRUE))
-        # if(class(out)=='try-error') {
-        #   out=rep(NaN,length(parm))
-        # }
+      grffromlp<-function(parm) {
         return(-gradout)
       }
 
       # if(!deoptim & standata$nopriors == 0 ) init='random'
       if(!deoptim & standata$nopriors == 1 ){ #init using priors
         standata$nopriors <- as.integer(0)
-        optimfit <- ucminf(init,fn = lp,gr = grf,control=list(grtol=1e-4,xtol=tol*1e4,maxeval=10000))
+        optimfit <- ucminf(init,fn = lp,gr = grffromlp,control=list(grtol=1e-4,xtol=tol*1e4,maxeval=10000))
         # suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=1e6, init=0,as_vector=FALSE,draws=0,constrained=FALSE,
           # tol_obj=tol, tol_rel_obj=0,init_alpha=.01, tol_grad=0,tol_rel_grad=0,tol_param=1e-12,history_size=10,verbose=verbose),verbose=verbose))
         standata$nopriors <- as.integer(1)
@@ -159,7 +154,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
       }
       
       
-      optimfit <- ucminf(init,fn = lp,gr = grf,control=list(grtol=1e-8,xtol=tol,maxeval=10000),hessian=2)
+      optimfit <- ucminf(init,fn = lp,gr = grffromlp,control=list(grtol=1e-8,xtol=tol,maxeval=10000),hessian=2)
       # optimfit2 <- nloptr(rnorm(npars,0,.001),lp,grf,
       #   opts=list(algorithm='NLOPT_LD_LBFGS',xtol_rel=1e-12,ftol_abs=1e-10,maxeval=10000))
       
