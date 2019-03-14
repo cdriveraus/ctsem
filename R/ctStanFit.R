@@ -1026,7 +1026,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
             #     sf <- stan_reinitsf(sm,standata)
             #     fitb=suppressMessages(ctStanFit(datalong = datalong,ctstanmodel = ctstanmodel,optimize=TRUE,fit=TRUE,inits=init,
             #       savescores=FALSE,gendata = FALSE,
-            #       optimcontrol = list(estonly=TRUE,deoptim=FALSE,isloops=0,issamples=2,tol=1e-4),verbose=0,...))
+            #       optimcontrol = list(estonly=TRUE,deoptim=FALSE,isloops=0,finishsamples=2,tol=1e-4),verbose=0,...))
             #     init <- c(fitb$stanfit$rawest)+ rnorm(length(init),0,.05)
             #     } else init = init + rnorm(length(init),0,.05)
             #     staninits[[i]] <- constrain_pars(sf,c(init,ctstanmodel$fixedsubpars))

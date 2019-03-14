@@ -17,7 +17,7 @@
 #' @param cores Number of cpu cores to use.
 #' @param isloops Number of iterations of adaptive importance sampling to perform after optimization.
 #' @param isloopsize Number of samples per iteration of importance sampling.
-#' @param issamples Number of samples to use for final results of importance sampling.
+#' @param finishsamples Number of samples to use for final results of importance sampling.
 #'
 #' @return ctStanFit object
 #' @importFrom ucminf ucminf
@@ -48,14 +48,14 @@
 #' 
 #' #fit using optimization without importance sampling
 #' ssfit <- ctStanFit(datalong[1:50,], #limited data for example
-#'   ssmodel, optimize=TRUE,optimcontrol=list(deoptim=FALSE,isloops=0,issamples=50))
+#'   ssmodel, optimize=TRUE,optimcontrol=list(deoptim=FALSE,isloops=0,finishsamples=50))
 #' 
 #' #output
 #' summary(ssfit)
 optimstan <- function(standata, sm, init='random',sampleinit=NA,
   deoptim=FALSE, estonly=FALSE,tol=1e-12,fasthessian=FALSE, 
   decontrol=list(),
-  isloops=0, isloopsize=1000, issamples=500, 
+  isloops=0, isloopsize=1000, finishsamples=500, 
   verbose=0,nopriors=FALSE,cores=1){
   
   standata$verbose=as.integer(verbose)
@@ -251,7 +251,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
       parallel::clusterExport(cl, c('sm','standata'),environment())
 
       if(isloops == 0) {
-        nresamples = issamples
+        nresamples = finishsamples
         resamples <- matrix(unlist(lapply(1:5000,function(x){
           delta[[1]] + t(chol(mcovl[[1]])) %*% t(matrix(rnorm(length(delta[[1]])),nrow=1))
         } )),byrow=TRUE,ncol=length(delta[[1]]))
@@ -317,7 +317,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
             message('Improved fit found - ', bestfit,' vs ', oldfit,' - restarting optimization')
             break
           }
-          nresamples = ifelse(j==isloops,issamples,5000)
+          nresamples = ifelse(j==isloops,finishsamples,5000)
           
           #remove infinites
           # samples <- samples[is.finite(target_dens),]
@@ -337,7 +337,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
           resample_i <- sample(1:nrow(samples), size = nresamples, replace = ifelse(j == isloops+1,FALSE,TRUE), 
             prob = sample_prob / sum(sample_prob))
           if(j < isloops){
-            message(paste0(length(unique(resample_i)), ' accepted samples from ', nrow(samples),', acceptance ratio = ', length(unique(resample_i)) / isloopsize))
+            message(paste0(length(unique(resample_i)), ' unique samples drawn, from ', nresamples,' resamples of ', nrow(samples),' actual, probability sd = ', sd(sample_prob)))
             if(length(unique(resample_i)) < 100) {
               message('Sampling ineffective, unique samples < 100 -- try increasing samples per step (isloopsize), or decreasing optimizer tolerance (tol) if non-positive definite hessian.')
               # return(est)
