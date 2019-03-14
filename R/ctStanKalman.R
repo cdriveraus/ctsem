@@ -1,4 +1,16 @@
-newkalman <- function(fit){
+#' Get Kalman filter estimates from a ctStanFit object
+#'
+#' @param fit 
+#'
+#' @return list containing Kalman filter elements, each element in array of
+#' iterations, data row, variables.
+#' @export
+#'
+#' @examples
+#' 
+#' ctStanKalman(ctstantestfit)
+#' 
+ctStanKalman <- function(fit){
     k=extract(fit)$kalman
     k[k==99999] <- NA #for missingness
     nlatent <- fit$standata$nlatentpop

@@ -7,7 +7,7 @@
 optimstan(standata, sm, init = "random", sampleinit = NA,
   deoptim = FALSE, estonly = FALSE, tol = 1e-12,
   fasthessian = FALSE, decontrol = list(), isloops = 0,
-  isloopsize = 1000, issamples = 500, verbose = 0,
+  isloopsize = 1000, finishsamples = 500, verbose = 0,
   nopriors = FALSE, cores = 1)
 }
 \arguments{
@@ -36,7 +36,7 @@ a numerical approximation is used.}
 
 \item{isloopsize}{Number of samples per iteration of importance sampling.}
 
-\item{issamples}{Number of samples to use for final results of importance sampling.}
+\item{finishsamples}{Number of samples to use for final results of importance sampling.}
 
 \item{verbose}{Integer from 0 to 2. Higher values print more information during model fit -- for debugging.}
 
@@ -75,7 +75,7 @@ datalong <- cbind(id, time, sunspots)
 
 #fit using optimization without importance sampling
 ssfit <- ctStanFit(datalong[1:50,], #limited data for example
-  ssmodel, optimize=TRUE,optimcontrol=list(deoptim=FALSE,isloops=0,issamples=50))
+  ssmodel, optimize=TRUE,optimcontrol=list(deoptim=FALSE,isloops=0,finishsamples=50))
 
 #output
 summary(ssfit)

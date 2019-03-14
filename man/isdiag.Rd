@@ -40,7 +40,7 @@ model$pars$transform[14]<- '(param)*5+44 ' #Because not mean centered
 model$pars$transform[4]<-'-log(exp(-param*1.5)+1)' #To avoid multi modality
 
 #fit and plot importance sampling diagnostic
-fit <- ctStanFit(datalong, model, chains=1,optimcontrol=list(isloops=5,issamples=500),optimize=TRUE)
+fit <- ctStanFit(datalong, model, chains=1,optimcontrol=list(isloops=5,finishsamples=500),optimize=TRUE)
 isdiag(fit)
 }
 }
