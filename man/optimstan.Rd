@@ -5,8 +5,9 @@
 \title{Optimize / importance sample a stan or ctStan model.}
 \usage{
 optimstan(standata, sm, init = "random", sampleinit = NA,
-  deoptim = TRUE, estonly = FALSE, tol = 1e-12, decontrol = list(),
-  isloops = 0, isloopsize = 1000, issamples = 1000, verbose = 0,
+  deoptim = FALSE, estonly = FALSE, tol = 1e-12,
+  fasthessian = FALSE, decontrol = list(), isloops = 0,
+  isloopsize = 1000, issamples = 500, verbose = 0,
   nopriors = FALSE, cores = 1)
 }
 \arguments{
@@ -25,6 +26,9 @@ minima / difficult optimization.}
 \item{estonly}{if TRUE,just return point estimates under $rawest subobject.}
 
 \item{tol}{absolute object tolerance}
+
+\item{fasthessian}{if TRUE, uses the approximation of the hessian from BFGS optimization steps to compute the covariance matrix of parameters. Otherwise,
+a numerical approximation is used.}
 
 \item{decontrol}{List of control parameters for differential evolution step, to pass to \code{\link[DEoptim]{DEoptim.control}}.}
 

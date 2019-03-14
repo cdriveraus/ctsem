@@ -35,7 +35,7 @@ stanc(model_code = sm,verbose = TRUE)
 message(paste0('Update files? T / F?'))
 continue <- readline()
 if(continue){
-  pathbase <- '~/../dropbox/MPIB/CT-SEM/ctsem/src/'
+  pathbase <- '~/../Dropbox/MPIB/CT-SEM/ctsem/src/'
   for(wi in 2){
     stan_files<-ifelse(wi==1,'stan_files32','stan_files')
   file.rename(paste0(pathbase,stan_files,'/ctsm.stan'), paste0('./src/',stan_files,'/ctsm.bak'))

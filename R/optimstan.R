@@ -12,6 +12,8 @@
 #' @param decontrol List of control parameters for differential evolution step, to pass to \code{\link[DEoptim]{DEoptim.control}}.
 #' @param nopriors logical.f If TRUE, any priors are disabled -- sometimes desirable for optimization. 
 #' @param tol absolute object tolerance
+#' @param fasthessian if TRUE, uses the approximation of the hessian from BFGS optimization steps to compute the covariance matrix of parameters. Otherwise,
+#' a numerical approximation is used. 
 #' @param cores Number of cpu cores to use.
 #' @param isloops Number of iterations of adaptive importance sampling to perform after optimization.
 #' @param isloopsize Number of samples per iteration of importance sampling.
@@ -51,7 +53,7 @@
 #' #output
 #' summary(ssfit)
 optimstan <- function(standata, sm, init='random',sampleinit=NA,
-  deoptim=FALSE, estonly=FALSE,tol=1e-12,
+  deoptim=FALSE, estonly=FALSE,tol=1e-12,fasthessian=FALSE, 
   decontrol=list(),
   isloops=0, isloopsize=1000, issamples=500, 
   verbose=0,nopriors=FALSE,cores=1){
@@ -145,9 +147,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
         # }
         return(-gradout)
       }
-      
-      # browser()
-      
+
       # if(!deoptim & standata$nopriors == 0 ) init='random'
       if(!deoptim & standata$nopriors == 1 ){ #init using priors
         standata$nopriors <- as.integer(0)
@@ -159,10 +159,9 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
       }
       
       
-      optimfit <- ucminf(init,fn = lp,gr = grf,control=list(grtol=1e-8,xtol=tol,maxeval=10000))
+      optimfit <- ucminf(init,fn = lp,gr = grf,control=list(grtol=1e-8,xtol=tol,maxeval=10000),hessian=2)
       # optimfit2 <- nloptr(rnorm(npars,0,.001),lp,grf,
       #   opts=list(algorithm='NLOPT_LD_LBFGS',xtol_rel=1e-12,ftol_abs=1e-10,maxeval=10000))
-      
       
       est1=constrain_pars(smf,optimfit$par)
       bestfit <-optimfit$value
@@ -213,25 +212,28 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
       
       
       if(is.na(sampleinit[1])){
-        
-        hess=grmat(func=grf,pars=est2,step=1e-4)
-        if(any(is.na(hess))) stop(paste0('Hessian could not be computed for pars ', paste0(which(apply(hess,1,function(x) any(is.na(x))))), ' -- consider reparameterising.',collapse=''))
-        hess = (hess/2) + t(hess/2)
-        mchol=try(t(chol(solve(-hess))),silent=TRUE)
-        if(class(mchol)=='try-error') message('Hessian not positive-definite -- check importance sampling convergence with isdiag')
-        # if(class(mchol)=='try-error') {
-        mcov=MASS::ginv(-hess) #-optimfit$hessian)
-        mcov=as.matrix(Matrix::nearPD(mcov)$mat)
+        if(!fasthessian){
+          hess=grmat(func=grf,pars=est2,step=1e-8)
+          if(any(is.na(hess))) stop(paste0('Hessian could not be computed for pars ', paste0(which(apply(hess,1,function(x) any(is.na(x))))), ' -- consider reparameterising.',collapse=''))
+          hess = (hess/2) + t(hess/2)
+          mchol=try(t(chol(solve(-hess))),silent=TRUE)
+          if(class(mchol)=='try-error') message('Hessian not positive-definite -- check importance sampling convergence with isdiag')
+          # if(class(mchol)=='try-error') {
+          mcov=MASS::ginv(-hess) #-optimfit$hessian)
+          mcov=as.matrix(Matrix::nearPD(mcov)$mat)
+        } else {
+          message('fasthessian=TRUE -- convergence checks based on hessian not possible')
+          mcov = optimfit$invhessian
+        }
       }
       
       if(!is.na(sampleinit[1])){
         mcov = cov(sampleinit)*1.5+diag(1e-6,ncol(sampleinit))
         est2 = apply(sampleinit,2,mean)
         bestfit = 9e100
-        # browser()
         optimfit <- suppressWarnings(list(par=sampling(sm,standata,iter=2,control=list(max_treedepth=1),chains=1,show_messages = FALSE,refresh=0)@inits[[1]]))
       }
-      # browser()
+      
       mcovl <- list()
       mcovl[[1]]=mcov
       delta=list()
@@ -247,46 +249,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
       
       cl <- parallel::makeCluster(cores, type = "PSOCK")
       parallel::clusterExport(cl, c('sm','standata'),environment())
-      
-      #   parlp <- function(samples,log=TRUE){
-      #     samples <- t(samples)
-      #     # browser()
-      #     parallel::clusterExport(cl, c('samples'),environment())
-      #     # browser()
-      #     target_dens <- unlist(parallel::parLapply(cl, parallel::clusterSplit(cl,1:ncol(samples)), function(x){
-      #     #   target_dens <- unlist(lapply(list(e=1:nrow(samples)), function(x){
-      #       eval(parse(text=paste0('library(rstan)')))
-      #       
-      #       smf <- stan_reinitsf(sm,standata)
-      #       
-      #       lp<-function(parm) {
-      #         out<-try(log_prob(smf, upars=parm, adjust_transform = TRUE, gradient=FALSE),silent = TRUE)
-      #         if(class(out)=='try-error') {
-      #           out=-1e99
-      #         }
-      #         return(out)
-      #       }
-      #       # browser()
-      #       out <- apply(samples[,x,drop=FALSE],2,lp)
-      #       try(dyn.unload(file.path(tempdir(), paste0(smf@stanmodel@dso@dso_filename, .Platform$dynlib.ext))),silent = TRUE)
-      #       return(out)
-      #     }))
-      #     print(target_dens)
-      #     # print(t(samples)-delta[[1]])
-      #     # browser()
-      #     if(!log) return(exp(c(target_dens))) else return((c(target_dens)))
-      #   }
-      #   
-      #   
-      #   fn.isSingular <- function(A, tol=1e250)  {
-      # tmp <- abs(det(A))
-      # as.logical(tmp>=tol | tmp<=1/tol)
-      #   }
-      #   browser()
-      #   assignInNamespace('fn.isSingular',fn.isSingular,'AdMit')
-      # 
-      #   am=AdMit(parlp,mu0 = delta[[1]],Sigma0 = mcovl[[1]],control=list(Ns=5e3,Np=1e3,df=3,IS=F))
-      
+
       if(isloops == 0) {
         nresamples = issamples
         resamples <- matrix(unlist(lapply(1:5000,function(x){
@@ -367,7 +330,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
           
           # psis_dens <- psis(weighted_dens)
           # sample_prob <- weights(psis_dens,normalize = TRUE,log=FALSE)
-          # browser()
+
           sample_prob <- c(sample_prob,exp((weighted_dens - log_sum_exp(weighted_dens)))) #sum to 1 for each iteration, normalise later
           sample_prob[!is.finite(sample_prob)] <- 0
           sample_prob[is.na(sample_prob)] <- 0
@@ -397,12 +360,13 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
     
     # parallel::stopCluster(cl)
     message('Computing quantities...')
-    # browser()
+
     # cl <- parallel::makeCluster(min(cores,chains), type = "PSOCK")
     parallel::clusterExport(cl, c('relistarrays','resamples','sm','standata','optimfit'),environment())
     
     # target_dens <- c(target_dens,
     transformedpars <- try(parallel::parLapply(cl, parallel::clusterSplit(cl,1:nresamples), function(x){
+      require(ctsem)
       Sys.sleep(.1)
       smf <- stan_reinitsf(sm,standata)
       Sys.sleep(.1)
