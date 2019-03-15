@@ -367,14 +367,21 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
       Sys.sleep(.1)
       # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan::grab_cxxfun(sm@dso))
       out <- list()
+      skeleton=est1
       for(li in 1:length(x)){
-        flesh = unlist(rstan::constrain_pars(smf, resamples[x[li],]))
+        flesh = try(unlist(rstan::constrain_pars(smf, resamples[x[li],])))
+        if(class(flesh) == 'try-error') {
+          flesh <- unlist(skeleton)
+          flesh[] <- NA
+        }
         names(flesh) <- c()
-        skeleton=est1
         out[[li]] <-relistarrays(flesh, skeleton)
       }
       return(out)
     }))
+    
+    nasampscount <- sum(sapply(transformedpars, function(x) any(is.na(unlist(x))))) 
+    if(nasampscount > 0) message(paste0(nasampscount,' NAs generated during final sampling of ', finishsamples, '. Biased estimates may result -- consider importance sampling, respecification, or full HMC sampling'))
     
     transformedpars<-unlist(transformedpars,recursive = FALSE)
     
