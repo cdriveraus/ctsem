@@ -7,7 +7,7 @@
 ctStanKalman(fit)
 }
 \arguments{
-\item{fit}{fit object from \link{\code{ctStanFit}}.}
+\item{fit}{fit object from \code{\link{ctStanFit}}.}
 }
 \value{
 list containing Kalman filter elements, each element in array of

@@ -1,6 +1,6 @@
 #' Get Kalman filter estimates from a ctStanFit object
 #'
-#' @param fit fit object from \link{\code{ctStanFit}}.
+#' @param fit fit object from \code{\link{ctStanFit}}.
 #'
 #' @return list containing Kalman filter elements, each element in array of
 #' iterations, data row, variables.
