@@ -20,6 +20,8 @@
 #' @param isloops Number of iterations of adaptive importance sampling to perform after optimization.
 #' @param isloopsize Number of samples per iteration of importance sampling.
 #' @param finishsamples Number of samples to use for final results of importance sampling.
+#' @param tdf degrees of freedom of multivariate t distribution. Higher (more normal) generally gives more efficent 
+#' importance sampling, at risk of truncating tails.
 #'
 #' @return ctStanFit object
 #' @importFrom ucminf ucminf
@@ -58,7 +60,8 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
   deoptim=FALSE, estonly=FALSE,tol=1e-12,fasthessian=FALSE, 
   decontrol=list(),
   stochastic = 'auto',
-  isloops=0, isloopsize=1000, finishsamples=500, 
+  plotsgd=FALSE,
+  isloops=0, isloopsize=1000, finishsamples=500, tdf=10,
   verbose=0,nopriors=FALSE,cores=1){
   
   standata$verbose=as.integer(verbose)
@@ -253,7 +256,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
       if(stochastic=='auto' && npars > 50){
         message('> 50 parameters and stochastic="auto" so stochastic gradient descent used')
         stochastic <- TRUE
-      }
+      } else if(stochastic=='auto') stochastic <- FALSE
       
       if(!deoptim & standata$nopriors == 1 ){ #init using priors
         standata$nopriors <- as.integer(0)
@@ -378,13 +381,11 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
           j<- j+1
           message(paste0('  ', j, ' / ', isloops, '...'))
           if(j==1){
-            df=10
-            samples <- mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = df)
+            samples <- mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = tdf)
           } else {
-            # if(j>5) df <- 3
             delta[[j]]=colMeans(resamples)
             mcovl[[j]] = cov(resamples) #+diag(1e-12,ncol(samples))
-            samples <- rbind(samples,mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = df))
+            samples <- rbind(samples,mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = tdf))
           }
           prop_dens <- mvtnorm::dmvt(tail(samples,isloopsize), delta[[j]], mcovl[[j]], df = df,log = TRUE)
           

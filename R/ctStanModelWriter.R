@@ -1,7 +1,7 @@
 ctStanMatricesList <- function(ctstanmodel){
   m <- list()
   m$base <- c("T0MEANS","LAMBDA","DRIFT","DIFFUSION","MANIFESTVAR","MANIFESTMEANS", "CINT","T0VAR","TDPREDEFFECT")
-  if('PARS' %in% ctstanmodel$matrix) m$base <- c(m$base,'PARS')
+  if('PARS' %in% ctstanmodel$pars$matrix) m$base <- c(m$base,'PARS')
   m$dynamic <- c('DRIFT','DIFFUSION','CINT')
   m$tdpred <- 'TDPREDEFFECT'
   m$measurement <- c('LAMBDA','MANIFESTMEANS','MANIFESTVAR')
@@ -48,7 +48,6 @@ mats <- ctStanMatricesList(ctstanmodel)
 for(mlist in names(mats[-1])){
   if(any(unlist(lapply(ctstanmodel$calcs[[mlist]], function(m) grepl('sPARS',m))))) mats[[mlist]]=c(mats[[mlist]],'PARS')
 }
-
 
     #intoverpop calcs setup
     intoverpopdynamiccalcs <- paste0('
