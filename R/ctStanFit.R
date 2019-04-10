@@ -528,7 +528,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       
       
       #adjust transforms for optimization
-      
       if(1==99 && optimize) {
         message('Adapting standard deviation transforms for optimization')
         # ctstanmodel$rawpopsdtransform <- 'log(1+exp(rawpopsdbase))*10'
@@ -567,7 +566,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       
       #create random effects indices for each matrix
       for(mati in mats$base){
-        if( (!intoverpop && any(ctspec$indvarying[ctspec$matrix==mati])) || any(unlist(ctspec[ctspec$matrix==mati,paste0(ctstanmodel$TIpredNames,'_effect')]))) subindex <- 1:nsubjects else subindex <- rep(1,nsubjects)
+        if( (!intoverpop && any(ctspec$indvarying[ctspec$matrix==mati])) || 
+            (ctstanmodel$n.TIpred >0 && any(unlist(ctspec[ctspec$matrix==mati,paste0(ctstanmodel$TIpredNames,'_effect')])))) subindex <- 1:nsubjects else subindex <- rep(1,nsubjects)
         assign(paste0(mati,'subindex'), subindex)
       }
       if(stationary || nt0varstationary > 0) T0VARsubindex <- rep(1:max(c(T0VARsubindex,DRIFTsubindex,DIFFUSIONsubindex)), ifelse(max(c(T0VARsubindex,DRIFTsubindex,DIFFUSIONsubindex)) > 1, 1, nsubjects))
@@ -761,7 +761,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       dTsmall <- dT / integrationsteps
       dTsmall[is.na(dTsmall)] = 0
       
-
       matsetup <-list()
       matvalues <-list()
       freepar <- 0
@@ -985,7 +984,13 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         standata$fixedrawpopchol = matrix(0,0,0)
       }
       standata$fixedsubpars <- as.integer(!is.null(ctstanmodel$fixedsubpars))
-      if(!is.null(ctstanmodel$fixedsubpars)) standata$fixedindparams <- ctstanmodel$fixedsubpars else standata$fixedindparams <-array(0,dim=c(0,0))
+      if(!is.null(ctstanmodel$fixedsubpars)) standata$fixedindparams <- 
+        ctstanmodel$fixedsubpars else standata$fixedindparams <-array(0,dim=c(0,0))
+      
+          #subset selection
+      if(is.null(ctstanmodel$dokalmanrows)) standata$dokalmanrows <- 
+        rep(1L, standata$ndatapoints) else standata$dokalmanrows <- as.integer(ctstanmodel$dokalmanrows)
+      standata$dokalmanpriormodifier <- sum(standata$dokalmanrows) / standata$ndatapoints
       
       if(fit){
         # if(gendata && stanmodels$ctsmgen@model_code != stanmodeltext) recompile <- TRUE
