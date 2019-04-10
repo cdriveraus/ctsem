@@ -4,10 +4,14 @@
 \alias{ctStanGenerateData}
 \title{Add a $generated object to ctstanfit object, with random data generated from posterior of ctstanfit object}
 \usage{
-ctStanGenerateData(fit)
+ctStanGenerateData(fit, nsamples = 1, fullposterior = FALSE)
 }
 \arguments{
 \item{fit}{ctstanfit object}
+
+\item{nsamples}{Positive integer specifying number of datasets to generate.}
+
+\item{fullposterior}{Logical indicating whether to sample from the full posterior (original nsamples) or the posterior mean.}
 }
 \value{
 Matrix of generated data -- one dataset per iteration, according to original time and missingness structure.
@@ -17,7 +21,7 @@ Add a $generated object to ctstanfit object, with random data generated from pos
 }
 \examples{
 \dontrun{
-gen <- ctStanGenerateData(ctstantestfit)
-plot(gen$generated$Y[3,,2],type='l') #Third random data sample, 2nd manifest var, all time points. 
+gen <- ctStanGenerateData(ctstantestfit, nsamples=3,fullposterior=TRUE)
+plot(gen$generated$Y[,3,2],type='l') #Third random data sample, 2nd manifest var, all time points. 
 }
 }
