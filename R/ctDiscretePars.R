@@ -98,8 +98,6 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   
   e<-extract(ctstanfitobj)
   
-  
-  
   if(type=='all') type=c('discreteDRIFT','latentMeans') #must match with ctDiscretePars
   
   if(subjects[1] != 'all' && !is.integer(as.integer(subjects))) stop('
@@ -155,21 +153,23 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
     discreteDRIFT <- sapply(1:(dim(ctpars$DRIFT)[1]),function(d){
       nl=dim(ctpars$DRIFT)[2]
       asymDIFFUSION <- matrix(ctpars$asymDIFFUSION[d,,],nl,nl)
+      asymDIFFUSIONdiag <- diag(asymDIFFUSION)
+      asymDIFFUSIONdiag[rl(asymDIFFUSIONdiag <= 0) ] <- 1
       DRIFT <- matrix(ctpars$DRIFT[d,,],nl,nl)
       if(observational) {
         g <- cov2cor(matrix(ctpars$DIFFUSION[d,,],nl,nl))^2
+        g[is.nan(g)] <- 0
       }
       sapply(times, function(ti){ 
         out <-expm(DRIFT *ti) 
-        if(standardise) out <- out * matrix(rep(sqrt(diag(asymDIFFUSION)),each=nl) / 
-            rep(diag(sqrt(asymDIFFUSION)),times=nl),nl)
+        if(standardise) out <- out * matrix(rep(sqrt((asymDIFFUSIONdiag)),each=nl) / 
+            rep((sqrt(asymDIFFUSIONdiag)),times=nl),nl)
         if(observational) out <- out %*% g
         return(out)
       },simplify = 'array')
     },simplify = 'array')
     
     nr=dim(discreteDRIFT)[2]
-    
     out[[typei]] <- apply(get(type[typei]),c(1,2,3),quantile,probs=quantiles)
     
     # out[[typei]] <- plyr::aaply(1:nsamples,1,function(iterx){ #for every iteration
