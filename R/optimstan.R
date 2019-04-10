@@ -7,6 +7,8 @@
 #' @param sampleinit either NA, or an niterations * nparams matrix of samples to initialise importance sampling.
 #' @param deoptim Do first pass optimization using differential evolution? Slower, but better for cases with multiple 
 #' minima / difficult optimization.
+#' @param stochastic Logical. Use stochastic gradient descent instead of ucminf (bfgs with trust region) optimizer.
+#' @param plotsgd Logical. If TRUE, plot iteration details when using stochastic optimizer.
 #' @param estonly if TRUE,just return point estimates under $rawest subobject.
 #' @param verbose Integer from 0 to 2. Higher values print more information during model fit -- for debugging.
 #' @param decontrol List of control parameters for differential evolution step, to pass to \code{\link[DEoptim]{DEoptim.control}}.
@@ -55,6 +57,7 @@
 optimstan <- function(standata, sm, init='random',sampleinit=NA,
   deoptim=FALSE, estonly=FALSE,tol=1e-12,fasthessian=FALSE, 
   decontrol=list(),
+  stochastic = 'auto',
   isloops=0, isloopsize=1000, finishsamples=500, 
   verbose=0,nopriors=FALSE,cores=1){
   
@@ -87,6 +90,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
     smf <- stan_reinitsf(sm,standata)
     npars=get_num_upars(smf)
     if(all(init %in% 'random')) init <- rnorm(npars, 0, .001)
+    if(all(init == 0)) init <- rep(0,npars)
     
     if(is.na(sampleinit[1])){
       
@@ -129,12 +133,14 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
       lp<-function(parm) {
         # print((parm))
         out<-try(log_prob(smf, upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = TRUE)
-        if(class(out)=='try-error') {
+        if(class(out)=='try-error' || is.nan(out)) {
           out=-Inf
           gradout <<- rep(NaN,length(parm))
-        } else if(out[1] > bestlp) {
+        } else {
+          if(out[1] > bestlp) {
           bestlp <<- out[1]
           gradout <<- attributes(out)$gradient
+          }
         }
         return(-out[1])
       }
@@ -142,22 +148,132 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
       grffromlp<-function(parm) {
         return(-gradout)
       }
+      
+      sgd <- function(init,stepbase=1e-4,nsubjects=1,gmeminit=0,gmemmax=.9,maxparchange = .1,
+        minparchange=1e-16,maxiter=5000,perturbpercent=0,nconvergeiter=20, itertol=1e-3, deltatol=1e-5){
+        pars=init
+        bestpars = pars
+        step=rep(stepbase,length(init))
+        g=rnorm(length(init),0,.001)
+        gsmooth=g
+        gpersist=g
+        signg=sign(g)
+        oldsigng = g
+        gmemory <- gmeminit
+        oldgmemory <- gmemory
+        oldlpdif <- 0
+        lpdif <- 0
+        maxlp <- -Inf
+        i=0
+        lp<-c()
+        oldlp <- -Inf
+        converged <- FALSE
+        while(!converged && i < maxiter){
+          i = i + 1
+          accepted <- FALSE
+          while(!accepted){
+            whichpars = sample(1:length(pars), ceiling(length(pars)*perturbpercent))
+            newpars = bestpars #* .5 + bestpars * .5
+            parupdate =  exp(rnorm(length(step),0,step)) * step  * gsmooth #(sign(g) +  sign(g)*(abs(gsmooth) / mean(abs(gsmooth)))) #
+            if(i %% 28 == 0) step[whichpars] = step[whichpars] * 10
+            newpars = newpars + parupdate
+            # subjects <- sample(unique(standata$subject),nsubjects)
+            # standata$dokalmanrows <- as.integer(standata$subject %in% subjects) #rep(1L,standata$ndatapoints) #
+            # smf<-stan_reinitsf(sm,standata)
+            lpg = try(log_prob(smf, upars=newpars,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
+            if(class(lpg) !='try-error' && !is.nan(lpg[1])) accepted <- TRUE else step <- step * .1
+            if(i < 20 && i > 1 && lpg[1] < lp[i-1]) {
+              accepted <- FALSE
+              step = step * .1
+            }
+          }
+          lp=c(lp,lpg[1])
+          pars <- newpars
+          oldsigng=signg
+          # gpersist <- gpersist * .99 + .01 * abs(attributes(lpg)$gradient -g) / (abs(attributes(lpg)$gradient)+abs(g)/2)
+          # print(gpersist[1:10])
+          g=attributes(lpg)$gradient
+          oldgsmooth = gsmooth
+          gsmooth= gsmooth*gmemory + (1-gmemory)*g
+          signg=sign(gsmooth)
+          # step=exp(mean(log(step))+(.99*(log(step)-mean(log(step)))))
+          step[oldsigng == signg] = step[oldsigng == signg] * 1.1 #exp((1-gmemory)/2)
+          step[oldsigng != signg] = step[oldsigng != signg] / 1.2 #exp((1-gmemory)/2)
+          if(lp[i] >= maxlp) {
+            step = step * exp((1-gmemory)/8)
+            bestpars <- pars
+            maxlp <- lp[i]
+          } 
+          if(i > 1 && lp[i] < lp[i-1]) {
+            # signg <- oldsigng
+            # gsmooth = oldgsmooth
+            # pars <- bestpars
+            step = step  / max( exp((1-gmemory)/4), (-10*(lp[i] - lp[i-1]) / sd(head(tail(lp,20),10))))
+          }
+          # if(i %%10 ==0) gmemory = min(gmemory+.1,gmemmax)# * exp(mean(sign(diff(tail(lp,20)))))
+          if(i %%20 ==0) gmemory =  max(gmeminit, min(gmemmax, 1.6*(1-(log(sd(tail(lp,20)) ) -log(itertol)) / (log(sd(head(lp,20)))-log(itertol)))* (1-gmeminit) + gmeminit))
 
+          # if(i > 30 && i %% 10 == 0) {
+          #   lpdif <- sum(diff(tail(lp,10)))
+          #   oldlpdif <- sum(diff(head(tail(lp,10),20)))
+          #   if(oldlpdif >= lpdif) gmemory <- oldgmemory
+          #   proposal = gmemory*2-oldgmemory
+          #   gmemory <- min(gmemmax, max(0, proposal + runif(1,-.2,.2)))
+          #   oldgmemory <- gmemory
+          #   if(i < 50 && sign(lpdif)==-1 & sign(oldlpdif)==-1) {
+          #     message('diverging')
+          #     # gmemory=gmemory*.8
+          #   }
+          #   oldgmemory <- gmemory
+          # }
+          
+          step[step > maxparchange] <- maxparchange
+          step[step < minparchange] <- minparchange
+          
+          if(plotsgd){
+          par(mfrow=c(3,1))
+          plot(pars)
+          plot(log(step))
+          plot(tail(log(abs(lp)),500),type='l')
+          print(i)
+          message(paste0('Iter = ',i, '   Best LP = ', maxlp,'   grad = ', sqrt(sum(g^2)), '   gmem = ', gmemory))
+          }
+          
+          #check convergence
+          if(i > 30){
+          if(max(tail(lp,nconvergeiter)) - min(tail(lp,nconvergeiter)) < itertol) converged <- TRUE
+          if(max(diff(tail(lp,nconvergeiter))) < deltatol) converged <- TRUE
+          }
+        }
+        return(list(itervalues = lp, value = maxlp,par=bestpars) )
+      }
+# browser()
       # if(!deoptim & standata$nopriors == 0 ) init='random'
+      
+      if(stochastic=='auto' && npars > 50){
+        message('> 50 parameters and stochastic="auto" so stochastic gradient descent used')
+        stochastic <- TRUE
+      }
+      
       if(!deoptim & standata$nopriors == 1 ){ #init using priors
         standata$nopriors <- as.integer(0)
-        optimfit <- ucminf(init,fn = lp,gr = grffromlp,control=list(grtol=1e-4,xtol=tol*1e4,maxeval=10000))
-        # suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=1e6, init=0,as_vector=FALSE,draws=0,constrained=FALSE,
-          # tol_obj=tol, tol_rel_obj=0,init_alpha=.01, tol_grad=0,tol_rel_grad=0,tol_param=1e-12,history_size=10,verbose=verbose),verbose=verbose))
+        if(!stochastic) optimfit <- ucminf(init,fn = lp,gr = grffromlp,control=list(grtol=1e-4,xtol=tol*1e4,maxeval=10000))
+        if(stochastic) optimfit <- sgd(init, stepbase=1e-4,nsubjects=standata$nsubjects, gmemmax=ifelse(npars > 50, .95, .9)) 
         standata$nopriors <- as.integer(1)
         init = optimfit$par #rstan::constrain_pars(object = smf, optimfit$par)
       }
       
       
-      optimfit <- ucminf(init,fn = lp,gr = grffromlp,control=list(grtol=1e-8,xtol=tol,maxeval=10000),hessian=2)
-      # optimfit2 <- nloptr(rnorm(npars,0,.001),lp,grf,
-      #   opts=list(algorithm='NLOPT_LD_LBFGS',xtol_rel=1e-12,ftol_abs=1e-10,maxeval=10000))
-      
+      if(!stochastic) {
+        optimfit <- ucminf(init,fn = lp,gr = grffromlp,control=list(grtol=1e-8,xtol=tol*ifelse(stochastic,1e4,1),maxeval=10000),hessian=2)
+        init = optimfit$par
+        ucminfcov <- optimfit$invhessian
+      }
+      # sink('fail.txt')
+      optimfit <- sgd(init, nsubjects=standata$nsubjects) 
+      # sink()
+      # browser()
+      # optimizing(object = sm, standata)
       est1=constrain_pars(smf,optimfit$par)
       bestfit <-optimfit$value
       # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan::grab_cxxfun(sm@dso))
@@ -182,11 +298,12 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
         return(out)
       }
       
-      grmat<-function(func,pars,step=1e-6){
+      grmat<-function(func,pars,step=1e-12){
         gradout<-matrix(NA,nrow=length(pars),ncol=length(pars))
+        
         for(i in 1:length(pars)){
-          stepsize <- step * 10
-          while(any(is.na(gradout[i,])) && stepsize > 1e-14){
+          stepsize <- step *10
+          while((any(is.na(gradout[i,])) || gradout[i,i] >=0)  && stepsize > 1e-12){
             stepsize <- stepsize * .1
             uppars<-pars
             downpars<-pars
@@ -208,6 +325,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
       
       if(is.na(sampleinit[1])){
         if(!fasthessian){
+          # browser()
           hess=grmat(func=grf,pars=est2,step=1e-8)
           if(any(is.na(hess))) stop(paste0('Hessian could not be computed for pars ', paste0(which(apply(hess,1,function(x) any(is.na(x))))), ' -- consider reparameterising.',collapse=''))
           hess = (hess/2) + t(hess/2)
@@ -218,7 +336,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
           mcov=as.matrix(Matrix::nearPD(mcov)$mat)
         } else {
           message('fasthessian=TRUE -- convergence checks based on hessian not possible')
-          mcov = optimfit$invhessian
+          mcov = ucminfcov
         }
       }
       
@@ -244,10 +362,10 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
       
       cl <- parallel::makeCluster(cores, type = "PSOCK")
       parallel::clusterExport(cl, c('sm','standata'),environment())
-
+      
       if(isloops == 0) {
         nresamples = finishsamples
-        resamples <- matrix(unlist(lapply(1:5000,function(x){
+        resamples <- matrix(unlist(lapply(1:nresamples,function(x){
           delta[[1]] + t(chol(mcovl[[1]])) %*% t(matrix(rnorm(length(delta[[1]])),nrow=1))
         } )),byrow=TRUE,ncol=length(delta[[1]]))
         message('Importance sampling not done -- interval estimates via Hessian based sampling only')
@@ -260,15 +378,15 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
           j<- j+1
           message(paste0('  ', j, ' / ', isloops, '...'))
           if(j==1){
-            df=5
+            df=10
             samples <- mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = df)
           } else {
             # if(j>5) df <- 3
             delta[[j]]=colMeans(resamples)
-            mcovl[[j]] = cov(resamples)+diag(1e-6,ncol(samples))
+            mcovl[[j]] = cov(resamples) #+diag(1e-12,ncol(samples))
             samples <- rbind(samples,mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = df))
           }
-          prop_dens <- mvtnorm::dmvt(tail(samples,isloopsize), delta[[j]], mcovl[[j]], df = df)
+          prop_dens <- mvtnorm::dmvt(tail(samples,isloopsize), delta[[j]], mcovl[[j]], df = df,log = TRUE)
           
           parallel::clusterExport(cl, c('samples'),environment())
           
@@ -285,24 +403,13 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
               return(out)
             }
             out <- apply(tail(samples,isloopsize)[x,],1,lp)
-            
-            #unload old rstan dlls
-            # if(recompile) 
+
             try(dyn.unload(file.path(tempdir(), paste0(smf@stanmodel@dso@dso_filename, .Platform$dynlib.ext))),silent = TRUE)
-            
-            # dso_filenames <- dir(tempdir(), pattern=.Platform$dynlib.ext)
-            # filenames  <- dir(tempdir())
-            # for (i in seq(dso_filenames))
-            #   try(dyn.unload(file.path(tempdir(), dso_filenames[i])))
-            # for (i in seq(filenames))
-            #   if (file.exists(file.path(tempdir(), filenames[i])) & nchar(filenames[i]) < 42) # some files w/ long filenames that didn't like to be removeed
-            #     try(file.remove(file.path(tempdir(), filenames[i])))
-            
             return(out)
             
           }))
-          # )
-          if(all(target_dens[[j]] < -1e29)) stop('Could not sample from optimum! Try reparamaterizing?')
+
+          if(all(target_dens[[j]] < -1e100)) stop('Could not sample from optimum! Try reparamaterizing?')
           if(any(target_dens[[j]] > bestfit && (j < isloops && !try2))){
             oldfit <- bestfit
             try2 <- TRUE
@@ -314,18 +421,13 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
           }
           nresamples = ifelse(j==isloops,finishsamples,5000)
           
-          #remove infinites
-          # samples <- samples[is.finite(target_dens),]
-          # prop_dens <- prop_dens[is.finite(target_dens)]
-          # target_dens <- target_dens[is.finite(target_dens)]
-          
-          target_dens2 <- target_dens[[j]] + (0-max(target_dens[[j]],na.rm=TRUE)) #adjustment to get in decent range
+          target_dens2 <- target_dens[[j]] -max(target_dens[[j]],na.rm=TRUE) + max(prop_dens) #adjustment to get in decent range
           target_dens2[!is.finite(target_dens[[j]])] <- -1e30
           weighted_dens <- target_dens2 - prop_dens
-          
-          # psis_dens <- psis(weighted_dens)
+          # browser()
+          # psis_dens <- psis(matrix(target_dens2,ncol=length(target_dens2)),r_eff=NA)
           # sample_prob <- weights(psis_dens,normalize = TRUE,log=FALSE)
-
+          
           sample_prob <- c(sample_prob,exp((weighted_dens - log_sum_exp(weighted_dens)))) #sum to 1 for each iteration, normalise later
           sample_prob[!is.finite(sample_prob)] <- 0
           sample_prob[is.na(sample_prob)] <- 0
@@ -355,7 +457,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
     
     # parallel::stopCluster(cl)
     message('Computing quantities...')
-
+    
     # cl <- parallel::makeCluster(min(cores,chains), type = "PSOCK")
     parallel::clusterExport(cl, c('relistarrays','resamples','sm','standata','optimfit'),environment())
     
@@ -380,7 +482,11 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
       return(out)
     }))
     
-    nasampscount <- sum(sapply(transformedpars, function(x) any(is.na(unlist(x))))) 
+    missingsamps <-sapply(1:length(transformedpars[[1]]), function(x) any(is.na(unlist(transformedpars[[1]][[x]]))))
+    nasampscount <- sum(missingsamps) 
+    
+    transformedpars[[1]] <- transformedpars[[1]][!missingsamps]
+    nresamples <- nresamples - nasampscount
     if(nasampscount > 0) message(paste0(nasampscount,' NAs generated during final sampling of ', finishsamples, '. Biased estimates may result -- consider importance sampling, respecification, or full HMC sampling'))
     
     transformedpars<-unlist(transformedpars,recursive = FALSE)

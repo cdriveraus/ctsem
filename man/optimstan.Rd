@@ -6,8 +6,8 @@
 \usage{
 optimstan(standata, sm, init = "random", sampleinit = NA,
   deoptim = FALSE, estonly = FALSE, tol = 1e-12,
-  fasthessian = FALSE, decontrol = list(), isloops = 0,
-  isloopsize = 1000, finishsamples = 500, verbose = 0,
+  fasthessian = FALSE, decontrol = list(), stochastic = "auto",
+  isloops = 0, isloopsize = 1000, finishsamples = 500, verbose = 0,
   nopriors = FALSE, cores = 1)
 }
 \arguments{
@@ -32,6 +32,8 @@ a numerical approximation is used.}
 
 \item{decontrol}{List of control parameters for differential evolution step, to pass to \code{\link[DEoptim]{DEoptim.control}}.}
 
+\item{stochastic}{Logical. Use stochastic gradient descent instead of ucminf (bfgs with trust region) optimizer.}
+
 \item{isloops}{Number of iterations of adaptive importance sampling to perform after optimization.}
 
 \item{isloopsize}{Number of samples per iteration of importance sampling.}
@@ -43,6 +45,8 @@ a numerical approximation is used.}
 \item{nopriors}{logical.f If TRUE, any priors are disabled -- sometimes desirable for optimization.}
 
 \item{cores}{Number of cpu cores to use.}
+
+\item{plotsgd}{Logical. If TRUE, plot iteration details when using stochastic optimizer.}
 }
 \value{
 ctStanFit object
