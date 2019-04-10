@@ -11,7 +11,7 @@ ctStanKalman(fit)
 }
 \value{
 list containing Kalman filter elements, each element in array of
-iterations, data row, variables.
+iterations, data row, variables. llrow is the log likelihood for each row of data.
 }
 \description{
 Get Kalman filter estimates from a ctStanFit object
