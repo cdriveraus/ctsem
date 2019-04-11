@@ -25,6 +25,7 @@
 #'
 #' @return ctStanFit object
 #' @importFrom ucminf ucminf
+#' @importFrom Matrix bdiag
 #' @export
 #'
 #' @examples
@@ -61,7 +62,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
   decontrol=list(),
   stochastic = 'auto',
   plotsgd=FALSE,
-  isloops=0, isloopsize=1000, finishsamples=500, tdf=10,
+  isloops=0, isloopsize=1000, finishsamples=500, tdf=50,
   verbose=0,nopriors=FALSE,cores=1){
   
   standata$verbose=as.integer(verbose)
@@ -141,8 +142,8 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
           gradout <<- rep(NaN,length(parm))
         } else {
           if(out[1] > bestlp) {
-          bestlp <<- out[1]
-          gradout <<- attributes(out)$gradient
+            bestlp <<- out[1]
+            gradout <<- attributes(out)$gradient
           }
         }
         return(-out[1])
@@ -215,7 +216,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
           }
           # if(i %%10 ==0) gmemory = min(gmemory+.1,gmemmax)# * exp(mean(sign(diff(tail(lp,20)))))
           if(i %%20 ==0) gmemory =  max(gmeminit, min(gmemmax, 1.6*(1-(log(sd(tail(lp,20)) ) -log(itertol)) / (log(sd(head(lp,20)))-log(itertol)))* (1-gmeminit) + gmeminit))
-
+          
           # if(i > 30 && i %% 10 == 0) {
           #   lpdif <- sum(diff(tail(lp,10)))
           #   oldlpdif <- sum(diff(head(tail(lp,10),20)))
@@ -234,23 +235,23 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
           step[step < minparchange] <- minparchange
           
           if(plotsgd){
-          par(mfrow=c(3,1))
-          plot(pars)
-          plot(log(step))
-          plot(tail(log(abs(lp)),500),type='l')
-          print(i)
-          message(paste0('Iter = ',i, '   Best LP = ', maxlp,'   grad = ', sqrt(sum(g^2)), '   gmem = ', gmemory))
+            par(mfrow=c(3,1))
+            plot(pars)
+            plot(log(step))
+            plot(tail(log(abs(lp)),500),type='l')
+            print(i)
+            message(paste0('Iter = ',i, '   Best LP = ', maxlp,'   grad = ', sqrt(sum(g^2)), '   gmem = ', gmemory))
           }
           
           #check convergence
           if(i > 30){
-          if(max(tail(lp,nconvergeiter)) - min(tail(lp,nconvergeiter)) < itertol) converged <- TRUE
-          if(max(diff(tail(lp,nconvergeiter))) < deltatol) converged <- TRUE
+            if(max(tail(lp,nconvergeiter)) - min(tail(lp,nconvergeiter)) < itertol) converged <- TRUE
+            if(max(diff(tail(lp,nconvergeiter))) < deltatol) converged <- TRUE
           }
         }
         return(list(itervalues = lp, value = maxlp,par=bestpars) )
       }
-# browser()
+      # browser()
       # if(!deoptim & standata$nopriors == 0 ) init='random'
       
       if(stochastic=='auto' && npars > 50){
@@ -328,12 +329,15 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
       
       if(is.na(sampleinit[1])){
         if(!fasthessian){
-          # browser()
+          
           hess=grmat(func=grf,pars=est2,step=1e-8)
           if(any(is.na(hess))) stop(paste0('Hessian could not be computed for pars ', paste0(which(apply(hess,1,function(x) any(is.na(x))))), ' -- consider reparameterising.',collapse=''))
           hess = (hess/2) + t(hess/2)
           mchol=try(t(chol(solve(-hess))),silent=TRUE)
-          if(class(mchol)=='try-error') message('Hessian not positive-definite -- check importance sampling convergence with isdiag')
+          if(class(mchol)=='try-error') {
+            message('Hessian not positive-definite -- check importance sampling convergence with isdiag')
+            npd <- TRUE
+          } else npd <- FALSE
           # if(class(mchol)=='try-error') {
           mcov=MASS::ginv(-hess) #-optimfit$hessian)
           mcov=as.matrix(Matrix::nearPD(mcov)$mat)
@@ -381,13 +385,39 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
           j<- j+1
           message(paste0('  ', j, ' / ', isloops, '...'))
           if(j==1){
+            # if(!npd) 
+            # browser()
             samples <- mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = tdf)
+            # 
+            # gensigstates <- function(t0means, t0chol,steps){
+            #   out <- NA
+            #   nlatent=nrow(t0chol)
+            #   t0states <- matrix(t0means,byrow=TRUE,nlatent*2,nlatent)
+            #   t0base <- matrix(t0means,byrow=TRUE,nlatent,nlatent)
+            #   for(sqrtukfadjust in steps){
+            #     sigpoints <- t(chol(as.matrix(Matrix::bdiag((t0chol%*%t(t0chol))))))*sqrtukfadjust
+            #     t0states[1:(nlatent),] =  t0base + t(sigpoints)
+            #     t0states[(1+nlatent):(nlatent*2),] = t0base - t(sigpoints)
+            #     if(is.na(out[1])) out <- t0states else out <- rbind(out,t0states)
+            #   }
+            #   return(out)
+            # }
+            # samples=gensigstates(delta[[j]],mcovl[[j]],5000*(.1^(exp(seq(0,1,length.out=ceiling(isloopsize/npars/2))))))
+            # samples=samples[sample(1:nrow(samples),isloopsize),]
+            # 
+            # if(npd){
+            #   samples <- mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = tdf)
+            #   prop_dens <- mvtnorm::dmvt(tail(samples,isloopsize*10), delta[[j]], mcovl[[j]], df = tdf,log = TRUE)
+            #   samples <- samples[prop_dens > quantile(prop_dens,probs = .9),]
+            #   prop_dens <- prop_dens[prop_dens > quantile(prop_dens,probs = .9)]
+            # }
           } else {
             delta[[j]]=colMeans(resamples)
             mcovl[[j]] = cov(resamples) #+diag(1e-12,ncol(samples))
             samples <- rbind(samples,mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = tdf))
           }
-          prop_dens <- mvtnorm::dmvt(tail(samples,isloopsize), delta[[j]], mcovl[[j]], df = df,log = TRUE)
+          # if(j > 1 || !npd) 
+          prop_dens <- mvtnorm::dmvt(tail(samples,isloopsize), delta[[j]], mcovl[[j]], df = tdf,log = TRUE)
           
           parallel::clusterExport(cl, c('samples'),environment())
           
@@ -404,12 +434,12 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
               return(out)
             }
             out <- apply(tail(samples,isloopsize)[x,],1,lp)
-
+            
             try(dyn.unload(file.path(tempdir(), paste0(smf@stanmodel@dso@dso_filename, .Platform$dynlib.ext))),silent = TRUE)
             return(out)
             
           }))
-
+          
           if(all(target_dens[[j]] < -1e100)) stop('Could not sample from optimum! Try reparamaterizing?')
           if(any(target_dens[[j]] > bestfit && (j < isloops && !try2))){
             oldfit <- bestfit
@@ -422,26 +452,33 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
           }
           nresamples = ifelse(j==isloops,finishsamples,5000)
           
-          target_dens2 <- target_dens[[j]] -max(target_dens[[j]],na.rm=TRUE) + max(prop_dens) #adjustment to get in decent range
+          
+          target_dens2 <- target_dens[[j]] -max(target_dens[[j]],na.rm=TRUE) + max(prop_dens) #adjustment to get in decent range, doesnt change to prob
           target_dens2[!is.finite(target_dens[[j]])] <- -1e30
           weighted_dens <- target_dens2 - prop_dens
           # browser()
           # psis_dens <- psis(matrix(target_dens2,ncol=length(target_dens2)),r_eff=NA)
           # sample_prob <- weights(psis_dens,normalize = TRUE,log=FALSE)
+          # plot(target_dens2,prop_dens)
           
           sample_prob <- c(sample_prob,exp((weighted_dens - log_sum_exp(weighted_dens)))) #sum to 1 for each iteration, normalise later
+          if(j==isloops) isloopsize = length(sample_prob) #on last loop use all samples for resampling
           sample_prob[!is.finite(sample_prob)] <- 0
           sample_prob[is.na(sample_prob)] <- 0
-          resample_i <- sample(1:nrow(samples), size = nresamples, replace = ifelse(j == isloops+1,FALSE,TRUE), 
-            prob = sample_prob / sum(sample_prob))
+          # points(target_dens2[sample_prob> (1/isloopsize * 10)], prop_dens[sample_prob> (1/isloopsize * 10)],col='red')
+          # resample_i <- sample(1:nrow(samples), size = nresamples, replace = ifelse(j == isloops+1,FALSE,TRUE), 
+          #   prob = sample_prob / sum(sample_prob))
+          resample_i <- sample(tail(1:nrow(samples),isloopsize), size = nresamples, replace = ifelse(j == isloops+1,FALSE,TRUE), 
+            prob = tail(sample_prob,isloopsize) / sum(tail(sample_prob,isloopsize) ))
           if(j < isloops){
             message(paste0(length(unique(resample_i)), ' unique samples drawn, from ', nresamples,' resamples of ', nrow(samples),' actual, probability sd = ', sd(sample_prob)))
             if(length(unique(resample_i)) < 100) {
-              message('Sampling ineffective, unique samples < 100 -- try increasing samples per step (isloopsize), or decreasing optimizer tolerance (tol) if non-positive definite hessian.')
+              message('Sampling ineffective, unique samples < 100 -- try increasing samples per step (isloopsize), or use HMC (non optimizing) approach.')
               # return(est)
             }
           }
-          resamples <- samples[resample_i, , drop = FALSE]
+          resamples <- tail(samples,isloopsize)[resample_i, , drop = FALSE]
+          # points(target_dens2[resample_i],prop_dens[resample_i],col='blue')
           # resamples=mcmc(resamples)
           
           ess[j] <- (sum(sample_prob[resample_i]))^2 / sum(sample_prob[resample_i]^2)

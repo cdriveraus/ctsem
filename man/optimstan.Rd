@@ -7,8 +7,9 @@
 optimstan(standata, sm, init = "random", sampleinit = NA,
   deoptim = FALSE, estonly = FALSE, tol = 1e-12,
   fasthessian = FALSE, decontrol = list(), stochastic = "auto",
-  isloops = 0, isloopsize = 1000, finishsamples = 500, verbose = 0,
-  nopriors = FALSE, cores = 1)
+  plotsgd = FALSE, isloops = 0, isloopsize = 1000,
+  finishsamples = 500, tdf = 50, verbose = 0, nopriors = FALSE,
+  cores = 1)
 }
 \arguments{
 \item{standata}{list object conforming to rstan data standards.}
@@ -34,19 +35,22 @@ a numerical approximation is used.}
 
 \item{stochastic}{Logical. Use stochastic gradient descent instead of ucminf (bfgs with trust region) optimizer.}
 
+\item{plotsgd}{Logical. If TRUE, plot iteration details when using stochastic optimizer.}
+
 \item{isloops}{Number of iterations of adaptive importance sampling to perform after optimization.}
 
 \item{isloopsize}{Number of samples per iteration of importance sampling.}
 
 \item{finishsamples}{Number of samples to use for final results of importance sampling.}
 
+\item{tdf}{degrees of freedom of multivariate t distribution. Higher (more normal) generally gives more efficent 
+importance sampling, at risk of truncating tails.}
+
 \item{verbose}{Integer from 0 to 2. Higher values print more information during model fit -- for debugging.}
 
 \item{nopriors}{logical.f If TRUE, any priors are disabled -- sometimes desirable for optimization.}
 
 \item{cores}{Number of cpu cores to use.}
-
-\item{plotsgd}{Logical. If TRUE, plot iteration details when using stochastic optimizer.}
 }
 \value{
 ctStanFit object
