@@ -26,6 +26,7 @@
 #' @return ctStanFit object
 #' @importFrom ucminf ucminf
 #' @importFrom Matrix bdiag
+#' @importFrom utils head tail
 #' @export
 #'
 #' @examples
@@ -153,6 +154,8 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
         return(-gradout)
       }
       
+      parbase=par()
+      
       sgd <- function(init,stepbase=1e-4,nsubjects=1,gmeminit=0,gmemmax=.9,maxparchange = .1,
         minparchange=1e-16,maxiter=5000,perturbpercent=0,nconvergeiter=20, itertol=1e-3, deltatol=1e-5){
         pars=init
@@ -204,7 +207,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
           step[oldsigng == signg] = step[oldsigng == signg] * 1.1 #exp((1-gmemory)/2)
           step[oldsigng != signg] = step[oldsigng != signg] / 1.2 #exp((1-gmemory)/2)
           if(lp[i] >= maxlp) {
-            step = step * exp((1-gmemory)/8)
+            step = step * 1.05 #exp((1-gmemory)/8)
             bestpars <- pars
             maxlp <- lp[i]
           } 
@@ -212,7 +215,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
             # signg <- oldsigng
             # gsmooth = oldgsmooth
             # pars <- bestpars
-            step = step  / max( exp((1-gmemory)/4), (-10*(lp[i] - lp[i-1]) / sd(head(tail(lp,20),10))))
+            step = step  / max( 1.5, (-10*(lp[i] - lp[i-1]) / sd(head(tail(lp,20),10)))) #exp((1-gmemory)/4)
           }
           # if(i %%10 ==0) gmemory = min(gmemory+.1,gmemmax)# * exp(mean(sign(diff(tail(lp,20)))))
           if(i %%20 ==0) gmemory =  max(gmeminit, min(gmemmax, 1.6*(1-(log(sd(tail(lp,20)) ) -log(itertol)) / (log(sd(head(lp,20)))-log(itertol)))* (1-gmeminit) + gmeminit))
@@ -274,7 +277,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
         ucminfcov <- optimfit$invhessian
       }
       # sink('fail.txt')
-      optimfit <- sgd(init, nsubjects=standata$nsubjects) 
+      optimfit <- sgd(init, nsubjects=standata$nsubjects,perturbpercent = .1) 
       # sink()
       # browser()
       # optimizing(object = sm, standata)
@@ -446,7 +449,8 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
             try2 <- TRUE
             bestfit<-max(target_dens[[j]],na.rm=TRUE)
             betterfit<-TRUE
-            init = rstan::constrain_pars(object = smf, samples[which(unlist(target_dens) == bestfit),])
+            # init = rstan::constrain_pars(object = smf, samples[which(unlist(target_dens) == bestfit),])
+            init = samples[which(unlist(target_dens) == bestfit),]
             message('Improved fit found - ', bestfit,' vs ', oldfit,' - restarting optimization')
             break
           }
@@ -462,14 +466,14 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
           # plot(target_dens2,prop_dens)
           
           sample_prob <- c(sample_prob,exp((weighted_dens - log_sum_exp(weighted_dens)))) #sum to 1 for each iteration, normalise later
-          if(j==isloops) isloopsize = length(sample_prob) #on last loop use all samples for resampling
+          # if(j==isloops) isloopsize = length(sample_prob) #on last loop use all samples for resampling
           sample_prob[!is.finite(sample_prob)] <- 0
           sample_prob[is.na(sample_prob)] <- 0
           # points(target_dens2[sample_prob> (1/isloopsize * 10)], prop_dens[sample_prob> (1/isloopsize * 10)],col='red')
-          # resample_i <- sample(1:nrow(samples), size = nresamples, replace = ifelse(j == isloops+1,FALSE,TRUE), 
-          #   prob = sample_prob / sum(sample_prob))
-          resample_i <- sample(tail(1:nrow(samples),isloopsize), size = nresamples, replace = ifelse(j == isloops+1,FALSE,TRUE), 
-            prob = tail(sample_prob,isloopsize) / sum(tail(sample_prob,isloopsize) ))
+          resample_i <- sample(1:nrow(samples), size = nresamples, replace = ifelse(j == isloops+1,FALSE,TRUE),
+            prob = sample_prob / sum(sample_prob))
+          # resample_i <- sample(tail(1:nrow(samples),isloopsize), size = nresamples, replace = ifelse(j == isloops+1,FALSE,TRUE), 
+          #   prob = tail(sample_prob,isloopsize) / sum(tail(sample_prob,isloopsize) ))
           if(j < isloops){
             message(paste0(length(unique(resample_i)), ' unique samples drawn, from ', nresamples,' resamples of ', nrow(samples),' actual, probability sd = ', sd(sample_prob)))
             if(length(unique(resample_i)) < 100) {
@@ -477,7 +481,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
               # return(est)
             }
           }
-          resamples <- tail(samples,isloopsize)[resample_i, , drop = FALSE]
+          resamples <- samples[resample_i, , drop = FALSE]
           # points(target_dens2[resample_i],prop_dens[resample_i],col='blue')
           # resamples=mcmc(resamples)
           
@@ -495,7 +499,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
     
     # parallel::stopCluster(cl)
     message('Computing quantities...')
-    
+ 
     # cl <- parallel::makeCluster(min(cores,chains), type = "PSOCK")
     parallel::clusterExport(cl, c('relistarrays','resamples','sm','standata','optimfit'),environment())
     
@@ -573,6 +577,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
       isdiags=list(cov=mcovl,means=delta,ess=ess,qdiag=qdiag,lpsamples=lpsamples ))
   }
   if(estonly) stanfit=list(optimfit=optimfit,stanfit=smf, rawest=est2)
+  suppressWarnings(do.call(par,parbase)) #reset par in case plots done
   return(stanfit)
 }
 

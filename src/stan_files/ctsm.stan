@@ -440,6 +440,9 @@ matrix[nlatent, nlatent] sDIFFUSIONsqrt;
     }
 
   // perform any whole matrix transformations 
+  state[1:nlatent]=sT0MEANS[,1];
+  ;
+;
   
   if(subi <= DIFFUSIONsubindex[nsubjects]) {
     if(nldynamics==1) sDIFFUSIONsqrt = sDIFFUSION;
@@ -525,6 +528,8 @@ pop_asymCINT = sasymCINT;
       }
 
       if(nldynamics==0){
+        state[1:nlatent] = sT0MEANS[,1];
+        ;
         eta = sT0MEANS[,1]; //prior for initial latent state
         if(ntdpred > 0) eta += sTDPREDEFFECT * tdpreds[rowi];
         etacov =  sT0VAR;
@@ -533,6 +538,7 @@ pop_asymCINT = sasymCINT;
     } //end T0 matrices
 
     if(nldynamics==0 && T0check[rowi]==0){ //linear kf time update
+    state[1:nlatent] = eta[1:nlatent];
     
       if(continuoustime ==1){
         int dtchange = 0;
@@ -541,6 +547,7 @@ pop_asymCINT = sasymCINT;
         } else if(T0check[rowi-1] == 1 && dT[rowi-2] != dT[rowi]){
           dtchange = 1;
         } else if(T0check[rowi-1] == 0 && dT[rowi-1] != dT[rowi]) dtchange = 1;
+        
         
         if(dtchange==1 || (T0check[rowi-1]==1 && (si <= DRIFTsubindex[nsubjects] || si <= CINTsubindex[nsubjects]))){
           discreteDRIFT = expm2(append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1)) * dT[rowi]);
@@ -561,6 +568,8 @@ pop_asymCINT = sasymCINT;
       }
 
       eta = (discreteDRIFT * append_row(eta,1.0))[1:nlatent];
+      state[1:nlatent] = eta[1:nlatent];
+      ;
       if(ntdpred > 0) eta += sTDPREDEFFECT * tdpreds[rowi];
       if(intoverstates==1) {
         etacov = quad_form(etacov, discreteDRIFT[1:nlatent,1:nlatent]');
@@ -705,6 +714,8 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
       int o0[ncont_y[rowi]]= whichcont_y[rowi,1:ncont_y[rowi]];
 
       if(nlmeasurement==0){ //linear measurement
+      ;
+
         if(intoverstates==1) { //classic kalman
           ypred[o] = sMANIFESTMEANS[o,1] + sLAMBDA[o,] * eta[1:nlatent];
           if(nbinary_y[rowi] > 0) ypred[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * eta[1:nlatent])));
