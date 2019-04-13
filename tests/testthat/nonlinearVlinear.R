@@ -34,16 +34,23 @@ datalong <- cbind(id, time, sunspots)
  datalong[seq(10,150,10),'TD1'] = 1
  
 ssfitnl <- ctStanFit(datalong, ssmodel, iter=300, chains=2,optimize=T,verbose=0,maxtimestep = 2,
-  nlcontrol=list(nldynamics=TRUE,ukffull=1),optimcontrol = list(issamples=500),nopriors=TRUE,deoptim=TRUE)
+  nlcontrol=list(nldynamics=TRUE,ukffull=1),optimcontrol = list(finishsamples=50),nopriors=TRUE,deoptim=FALSE)
 ssfitl <- ctStanFit(datalong, ssmodel, iter=300, chains=2,optimize=T,verbose=0,maxtimestep = 2,
-  nlcontrol=list(nldynamics=FALSE),optimcontrol = list(issamples=500,deoptim=TRUE),nopriors=TRUE)
+  nlcontrol=list(nldynamics=FALSE),optimcontrol = list(finishsamples=50,deoptim=FALSE),nopriors=TRUE)
+
+ssfitnlm <- ctStanFit(datalong, ssmodel, iter=300, chains=2,optimize=T,verbose=0,maxtimestep = 2,
+  nlcontrol=list(nldynamics=TRUE,ukffull=1,nlmeasurement=TRUE),optimcontrol = list(finishsamples=50),nopriors=TRUE,deoptim=FALSE)
 
 #output
 snl=summary(ssfitnl)
+snlm=summary(ssfitnlm)
 sl=summary(ssfitl)
 
 # expect_equal(snl$popmeans[,'mean'], sl$popmeans[,'mean'])
 expect_equal(round(ssfitnl$stanfit$transformedpars_old[grep('pop_',rownames(ssfitnl$stanfit$transformedpars_old)),'mean'],3),
+round(ssfitl$stanfit$transformedpars_old[grep('pop_',rownames(ssfitnl$stanfit$transformedpars_old)),'mean'],3),tol=.01)
+
+expect_equal(round(ssfitnlm$stanfit$transformedpars_old[grep('pop_',rownames(ssfitnl$stanfit$transformedpars_old)),'mean'],3),
 round(ssfitl$stanfit$transformedpars_old[grep('pop_',rownames(ssfitnl$stanfit$transformedpars_old)),'mean'],3),tol=.01)
 })
 }

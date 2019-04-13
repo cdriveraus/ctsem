@@ -8,14 +8,13 @@
 #' @param deoptim Do first pass optimization using differential evolution? Slower, but better for cases with multiple 
 #' minima / difficult optimization.
 #' @param stochastic Logical. Use stochastic gradient descent instead of ucminf (bfgs with trust region) optimizer.
+#' Generally more robust, a little slower with few parameters, faster with many.
 #' @param plotsgd Logical. If TRUE, plot iteration details when using stochastic optimizer.
 #' @param estonly if TRUE,just return point estimates under $rawest subobject.
 #' @param verbose Integer from 0 to 2. Higher values print more information during model fit -- for debugging.
 #' @param decontrol List of control parameters for differential evolution step, to pass to \code{\link[DEoptim]{DEoptim.control}}.
 #' @param nopriors logical.f If TRUE, any priors are disabled -- sometimes desirable for optimization. 
 #' @param tol absolute object tolerance
-#' @param fasthessian if TRUE, uses the approximation of the hessian from BFGS optimization steps to compute the covariance matrix of parameters. Otherwise,
-#' a numerical approximation is used. 
 #' @param cores Number of cpu cores to use.
 #' @param isloops Number of iterations of adaptive importance sampling to perform after optimization.
 #' @param isloopsize Number of samples per iteration of importance sampling.
@@ -59,9 +58,9 @@
 #' #output
 #' summary(ssfit)
 optimstan <- function(standata, sm, init='random',sampleinit=NA,
-  deoptim=FALSE, estonly=FALSE,tol=1e-12,fasthessian=FALSE, 
+  deoptim=FALSE, estonly=FALSE,tol=1e-12,
   decontrol=list(),
-  stochastic = 'auto',
+  stochastic = TRUE,
   plotsgd=FALSE,
   isloops=0, isloopsize=1000, finishsamples=500, tdf=50,
   verbose=0,nopriors=FALSE,cores=1){
@@ -264,20 +263,22 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
       
       if(!deoptim & standata$nopriors == 1 ){ #init using priors
         standata$nopriors <- as.integer(0)
+        smf <- stan_reinitsf(sm,standata)
         if(!stochastic) optimfit <- ucminf(init,fn = lp,gr = grffromlp,control=list(grtol=1e-4,xtol=tol*1e4,maxeval=10000))
         if(stochastic) optimfit <- sgd(init, stepbase=1e-4,nsubjects=standata$nsubjects, gmemmax=ifelse(npars > 50, .95, .9)) 
         standata$nopriors <- as.integer(1)
+        smf <- stan_reinitsf(sm,standata)
         init = optimfit$par #rstan::constrain_pars(object = smf, optimfit$par)
       }
       
       
       if(!stochastic) {
-        optimfit <- ucminf(init,fn = lp,gr = grffromlp,control=list(grtol=1e-8,xtol=tol*ifelse(stochastic,1e4,1),maxeval=10000),hessian=2)
+        optimfit <- ucminf(init,fn = lp,gr = grffromlp,control=list(grtol=1e-8,xtol=tol,maxeval=10000),hessian=2)
         init = optimfit$par
         ucminfcov <- optimfit$invhessian
       }
       # sink('fail.txt')
-      optimfit <- sgd(init, nsubjects=standata$nsubjects,perturbpercent = .1) 
+      optimfit <- sgd(init, nsubjects=standata$nsubjects,perturbpercent = .0) 
       # sink()
       # browser()
       # optimizing(object = sm, standata)
@@ -331,7 +332,6 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
       
       
       if(is.na(sampleinit[1])){
-        if(!fasthessian){
           
           hess=grmat(func=grf,pars=est2,step=1e-8)
           if(any(is.na(hess))) stop(paste0('Hessian could not be computed for pars ', paste0(which(apply(hess,1,function(x) any(is.na(x))))), ' -- consider reparameterising.',collapse=''))
@@ -344,10 +344,6 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
           # if(class(mchol)=='try-error') {
           mcov=MASS::ginv(-hess) #-optimfit$hessian)
           mcov=as.matrix(Matrix::nearPD(mcov)$mat)
-        } else {
-          message('fasthessian=TRUE -- convergence checks based on hessian not possible')
-          mcov = ucminfcov
-        }
       }
       
       if(!is.na(sampleinit[1])){

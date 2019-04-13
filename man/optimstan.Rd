@@ -6,10 +6,9 @@
 \usage{
 optimstan(standata, sm, init = "random", sampleinit = NA,
   deoptim = FALSE, estonly = FALSE, tol = 1e-12,
-  fasthessian = FALSE, decontrol = list(), stochastic = "auto",
-  plotsgd = FALSE, isloops = 0, isloopsize = 1000,
-  finishsamples = 500, tdf = 50, verbose = 0, nopriors = FALSE,
-  cores = 1)
+  decontrol = list(), stochastic = TRUE, plotsgd = FALSE,
+  isloops = 0, isloopsize = 1000, finishsamples = 500, tdf = 50,
+  verbose = 0, nopriors = FALSE, cores = 1)
 }
 \arguments{
 \item{standata}{list object conforming to rstan data standards.}
@@ -28,12 +27,10 @@ minima / difficult optimization.}
 
 \item{tol}{absolute object tolerance}
 
-\item{fasthessian}{if TRUE, uses the approximation of the hessian from BFGS optimization steps to compute the covariance matrix of parameters. Otherwise,
-a numerical approximation is used.}
-
 \item{decontrol}{List of control parameters for differential evolution step, to pass to \code{\link[DEoptim]{DEoptim.control}}.}
 
-\item{stochastic}{Logical. Use stochastic gradient descent instead of ucminf (bfgs with trust region) optimizer.}
+\item{stochastic}{Logical. Use stochastic gradient descent instead of ucminf (bfgs with trust region) optimizer.
+Generally more robust, a little slower with few parameters, faster with many.}
 
 \item{plotsgd}{Logical. If TRUE, plot iteration details when using stochastic optimizer.}
 

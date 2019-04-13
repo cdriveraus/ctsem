@@ -1,5 +1,13 @@
 ctsem news:
 
+12/4/2019
+#### 2.9.0 ####
+- Improved optimizer using stochastic gradient descent.
+- fixed bug introduced re finding start values when binary variables are used.
+- custom calculations can be specified and estimated using both linear and nonlinear dynamics approach.
+- ctStanFit is no longer available for win32 systems.
+- ctStanKalman function extracts system state over time.
+
 6/11/2018
 #### 2.7.3 ####
 - Updated for rstan 2.18.1 compatibility

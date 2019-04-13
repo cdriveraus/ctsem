@@ -23,4 +23,6 @@
 ^\.travis\.yml$
 ^docs
 ^src/stan_files/ctsm.bak
+^src/stan_files/ctsmgen.bak
 ^\.rda
+^R\modelchecking.R
