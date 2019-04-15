@@ -2,11 +2,10 @@
 #'
 #' @param ctmodelobj ctsem model object of type 'omx' (default)
 #' @param type either 'stanct' for continuous time, or 'standt' for discrete time.
-#' @param indvarying either 'all' or a logical vector of the same length as the number of
-#' free parameters in the model. Generally it is much simpler to set 'all' and then restrict this
-#' by modififying the output model object afterwards.
 #'
-#' @return List object of class ctStanModel
+#' @return List object of class ctStanModel, with random effects specified for any intercept type parameters
+#' (T0MEANS, MANIFESTMEANS, and or CINT), and time independent predictor effects for all parameters. Adjust these
+#' after initial specification by directly editing the \code{pars} subobject, so \code{model$pars} . 
 #' @export
 #'
 #' @examples
@@ -26,7 +25,7 @@
 #' stanmodel=ctStanModel(model)
 #' 
 #' 
-ctStanModel<-function(ctmodelobj, type='stanct', indvarying='all'){
+ctStanModel<-function(ctmodelobj, type='stanct'){
   if(type=='stanct') continuoustime<-TRUE
   if(type=='standt') continuoustime<-FALSE
   
@@ -133,15 +132,18 @@ ctStanModel<-function(ctmodelobj, type='stanct', indvarying='all'){
   
   nparams<-sum(freeparams)
   
+  indvarying <- 'all'
   if(all(indvarying=='all'))  {
     indvarying<-rep(TRUE,nparams)
-    indvarying[ctspec$matrix[is.na(ctspec$value)] %in% 'T0VAR'] <- FALSE
+    # indvarying[ctspec$matrix[is.na(ctspec$value)] %in% 'T0VAR'] <- FALSE
   }
-  
+
   if(length(indvarying) != nparams) stop('indvarying must be ', nparams,' long!')
   nindvarying <- sum(indvarying)
   
-  
+    
+    
+  indvarying[!ctspec$matrix[is.na(ctspec$value)] %in% c('T0MEANS','MANIFESTMEANS','CINT')] <- FALSE # tipred decisions are dependent on this so do this after
   ctspec$indvarying<-NA
   ctspec$indvarying[is.na(ctspec$value)]<-indvarying
   ctspec$indvarying[!is.na(ctspec$value)]<-FALSE
@@ -154,12 +156,14 @@ ctStanModel<-function(ctmodelobj, type='stanct', indvarying='all'){
     tipredspec<-matrix(TRUE,ncol=n.TIpred,nrow=1)
     colnames(tipredspec)<-paste0(TIpredNames,'_effect')
     ctspec<-cbind(ctspec,tipredspec,stringsAsFactors=FALSE)
-    ctspec[!ctspec$indvarying,paste0(TIpredNames,'_effect')]<-FALSE
+    ctspec[!is.na(ctspec$value),paste0(TIpredNames,'_effect')]<-FALSE
     for(predi in TIpredNames){
       class(ctspec[,paste0(predi,'_effect')])<-'logical'
     }
     if(sum(unlist(ctspec[,paste0(TIpredNames,'_effect')]))==0) stop('TI predictors included but no effects specified!')
   }
+
+  
   out<-list(pars=ctspec,n.latent=n.latent,n.manifest=n.manifest,n.TIpred=n.TIpred,n.TDpred=n.TDpred,
     latentNames=latentNames,manifestNames=manifestNames,TIpredNames=TIpredNames,TDpredNames=TDpredNames,subjectIDname='id',
     timeName='time',

@@ -56,7 +56,7 @@ nlcalcs <- ctstanmodel$calcs
     intoverpopdynamiccalcs <- paste0('
     if(intoverpop==1){ 
       for(ri in 1:size(matsetup)){ //for each row of matrix setup
-        if(matsetup[ ri,5] > 0 && ( statei == 0 || statei == nlatent + matsetup[ ri,5])){ // if individually varying
+        if(matsetup[ ri,5] > 0){ // && ( statei == 0 || statei == nlatent + matsetup[ ri,5])){ // if individually varying -- consider reimplementing extra check
           if(',paste0('matsetup[ri, 7] == ', which(mats$base %in% mats$dynamic), collapse = ' || '),'){ 
           real newval;
           newval = tform(state[nlatent + matsetup[ri,5] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
@@ -71,7 +71,7 @@ nlcalcs <- ctstanmodel$calcs
     ctstanmodel$calcs[[matlisti]] <- paste0(ctstanmodel$calcs[[matlisti]],';
     if(intoverpop==1){ 
       for(ri in 1:size(matsetup)){ //for each row of matrix setup
-        if(matsetup[ ri,5] > 0 && ( statei == 0 || statei == nlatent + matsetup[ ri,5])){ // if individually varying
+        if(matsetup[ ri,5] > 0){ // // if individually varying
           if(',paste0('matsetup[ri, 7] == ', which(mats$base %in% mats[[matlisti]]), collapse = ' || '),'){ 
           real newval;
           newval = tform(state[nlatent + matsetup[ri,5] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
@@ -89,7 +89,7 @@ nlcalcs <- ctstanmodel$calcs
     #adjust diffusion calcs to diffusionsqrt
     ctstanmodel$calcs$dynamic <- gsub('sDIFFUSION','sDIFFUSIONsqrt',ctstanmodel$calcs$dynamic)
     intoverpopdynamiccalcs <- gsub('sDIFFUSION','sDIFFUSIONsqrt',intoverpopdynamiccalcs)
-
+    
 
 ukfilterfunc<-function(ppchecking){
   out<-paste0('
@@ -146,9 +146,9 @@ ukfilterfunc<-function(ppchecking){
       if(nldynamics==0){
         state[1:nlatent] = sT0MEANS[,1];
         ',paste0(nlcalcs$t0,';',collapse=' '),'
-        eta = sT0MEANS[,1]; //prior for initial latent state
-        if(ntdpred > 0) eta += sTDPREDEFFECT * tdpreds[rowi];
-        etacov =  sT0VAR;
+        eta[1:nlatent] = sT0MEANS[,1]; //prior for initial latent state
+        if(ntdpred > 0) eta[1:nlatent] += sTDPREDEFFECT * tdpreds[rowi];
+        etacov[1:nlatent,1:nlatent] =  sT0VAR;
       }
 
     } //end T0 matrices
@@ -200,29 +200,27 @@ ukfilterfunc<-function(ppchecking){
         matrix[nlatentpop,nlatentpop] J;
         vector[nlatent] base;
         J = rep_matrix(0,nlatentpop,nlatentpop); //dont necessarily need to loop over tdpreds here...
-        if(continuoustime==1){
-          matrix[nlatentpop,nlatentpop] Je;
-          matrix[nlatent*2,nlatent*2] dQi;
-          for(stepi in 1:integrationsteps[rowi]){
-            for(statei in 0:nlatentpop){
-              if(statei>0){
-                J[statei,statei] = 1e-6;
-                state = eta + J[,statei];
-              } else {
-                state = eta;
-              }
-              ',paste0(ctstanmodel$calcs$dynamic,';\n',collapse=' '),';\n', intoverpopdynamiccalcs,' //do we need intoverpop calcs here? and remove diffusion calcs and do elsewhere
-              if(statei== 0) {
-                base = sDRIFT * state[1:nlatent] + sCINT[,1];
-              }
-              if(statei > 0) {
-                J[1:nlatent,statei] = (( sDRIFT * state[1:nlatent] + sCINT[,1]) - base)/1e-6;
-              }
+        for(stepi in 1:integrationsteps[rowi]){
+          for(statei in 0:nlatentpop){
+            if(statei>0){
+              J[statei,statei] = 1e-6;
+              state = eta + J[,statei];
+            } else {
+              state = eta;
             }
-            ',paste0(ctstanmodel$calcs$dynamic,';\n',collapse=' '),' //find a way to remove this repeat
+            ',paste0(ctstanmodel$calcs$dynamic,';\n',collapse=' '),';\n', intoverpopdynamiccalcs,' //do we need intoverpop calcs here? and remove diffusion calcs and do elsewhere
+            if(statei== 0) {
+              base = sDRIFT * state[1:nlatent] + sCINT[,1];
+            }
+            if(statei > 0) {
+              J[1:nlatent,statei] = (( sDRIFT * state[1:nlatent] + sCINT[,1]) - base)/1e-6;
+            }
+          }
+          ',paste0(ctstanmodel$calcs$dynamic,';\n',collapse=' '),' //find a way to remove this repeat
+          if(continuoustime==1){
+            matrix[nlatentpop,nlatentpop] Je;
+            matrix[nlatent*2,nlatent*2] dQi;
             Je= expm2(J * dTsmall[rowi]) ;
-
-        //print("Je = ", Je,"  J = ", J, "  sDRIFT = ", sDRIFT, "  state  = ", state, "  sDIFFUSION = ", sDIFFUSION, "  sasymDIFFUSION = ", sasymDIFFUSION);
             discreteDRIFT = expm2(append_row(append_col(sDRIFT,sCINT),rep_vector(0,nlatent+1)\') * dTsmall[rowi]);
             sasymDIFFUSION = to_matrix(  -kronsum(J[1:nlatent,1:nlatent]) \\ to_vector(tcrossprod(sDIFFUSIONsqrt)), nlatent,nlatent);
             discreteDIFFUSION =  sasymDIFFUSION - quad_form( sasymDIFFUSION, Je[1:nlatent,1:nlatent]\' );
@@ -230,10 +228,12 @@ ukfilterfunc<-function(ppchecking){
             etacov[1:nlatent,1:nlatent] += discreteDIFFUSION;
             eta[1:nlatent] = (discreteDRIFT * append_row(eta[1:nlatent],1.0))[1:nlatent];
           }
+        if(continuoustime==0){ //test this
+          etacov = quad_form(etacov, J\') + sDIFFUSION; //needs improving re sDIFFUSION
+          eta[1:nlatent] = (append_row(append_col(sDRIFT,sCINT),rep_vector(0,nlatent+1)\') * append_row(eta[1:nlatent],1.0))[1:nlatent];
+        }
         }
 
-        if(continuoustime==0){ //need covariance in here
-        }
       } // end of non t0 time update
   
   
@@ -258,6 +258,7 @@ ukfilterfunc<-function(ppchecking){
         if(T0check[rowi]==1){
           ',paste0(ctstanmodel$calcs$t0,';',collapse=' '),'
           state[1:nlatent] += sT0MEANS[,1];
+          //print("st0means = ", sT0MEANS[,1]);
         } 
         ',paste0(ctstanmodel$calcs$tdpred,';',collapse=' '),'
         if(ntdpred > 0) state[1:nlatent] +=   (sTDPREDEFFECT * tdpreds[rowi]); //tdpred effect only influences at observed time point','
