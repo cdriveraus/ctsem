@@ -31,7 +31,7 @@
 #' cat(l)
 ctModelLatex<- function(ctmodel,textsize='normalsize',folder='./',filename='ctsemTex',tex=TRUE, compile=TRUE, open=TRUE){
   
-  if(class(ctmodel) == 'ctStanModel') ctmodel <- c(ctmodel,listOfMatrices(ctmodel$pars)) else if(class(model) != 'ctsemInit') stop('not a ctsem model!')
+  if(class(ctmodel) == 'ctStanModel') ctmodel <- c(ctmodel,listOfMatrices(ctmodel$pars)) else if(class(ctmodel) != 'ctsemInit') stop('not a ctsem model!')
   
   bmatrix = function(x, digits=NULL,nottext=FALSE, ...) {
     if(!is.null(x)){
