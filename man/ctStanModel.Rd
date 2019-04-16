@@ -4,19 +4,17 @@
 \alias{ctStanModel}
 \title{Convert a frequentist (omx) ctsem model specification to Bayesian (Stan).}
 \usage{
-ctStanModel(ctmodelobj, type = "stanct", indvarying = "all")
+ctStanModel(ctmodelobj, type = "stanct")
 }
 \arguments{
 \item{ctmodelobj}{ctsem model object of type 'omx' (default)}
 
 \item{type}{either 'stanct' for continuous time, or 'standt' for discrete time.}
-
-\item{indvarying}{either 'all' or a logical vector of the same length as the number of
-free parameters in the model. Generally it is much simpler to set 'all' and then restrict this
-by modififying the output model object afterwards.}
 }
 \value{
-List object of class ctStanModel
+List object of class ctStanModel, with random effects specified for any intercept type parameters
+(T0MEANS, MANIFESTMEANS, and or CINT), and time independent predictor effects for all parameters. Adjust these
+after initial specification by directly editing the \code{pars} subobject, so \code{model$pars} .
 }
 \description{
 Convert a frequentist (omx) ctsem model specification to Bayesian (Stan).
