@@ -5,7 +5,7 @@
 \title{Generate and optionally compile latex equation of subject level ctsem model.}
 \usage{
 ctModelLatex(ctmodel, textsize = "normalsize", folder = "./",
-  filename = "ctsemTex", compile = TRUE, open = TRUE)
+  filename = "ctsemTex", tex = TRUE, compile = TRUE, open = TRUE)
 }
 \arguments{
 \item{ctmodel}{ctsem model object}
@@ -18,11 +18,11 @@ Useful if output overflows page.}
 
 \item{filename}{filename, without suffix, to output .tex and .pdf files too.}
 
+\item{tex}{Save .tex file? Otherwise latex is simply returned within R as a string.}
+
 \item{compile}{Compile to .pdf? (Depends on \code{tex = TRUE})}
 
 \item{open}{Open after compiling? (Depends on \code{compile = TRUE})}
-
-\item{tex}{Save .tex file? Otherwise latex is simply returned within R as a string.}
 }
 \value{
 character string of latex code. Side effects include saving a .tex, .pdf, and displaying the pdf.
