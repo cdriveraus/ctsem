@@ -69,13 +69,15 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
   if(is.null(datalong)) { #get relevant data
     
     if(type=='stan') {
-      time<-fit$data$time
-      datalong<-cbind(fit$data$subject,time,fit$data$Y)
-      datalong[,-1:-2][datalong[,-1:-2] == 99999] <- NA #because stan can't handle NA's
-      if(n.TDpred > 0) datalong <- cbind(datalong,fit$data$tdpreds)
+      time<-fit$standata$time
+      datalong<-cbind(fit$standata$subject,time,fit$standata$Y)
+      # datalong[,-1:-2][datalong[,-1:-2] == 99999] <- NA #because stan can't handle NA's
+      if(n.TDpred > 0) datalong <- cbind(datalong,fit$standata$tdpreds)
+      if(fit$ctstanmodel$n.TIpred > 0) datalong <- merge(datalong,cbind(unique(fit$standata$subject),fit$standata$tipredsdata))
       colnames(datalong)<-c('subject','time',
         fit$ctstanmodel$manifestNames,
-        fit$ctstanmodel$TDpredNames)
+        fit$ctstanmodel$TDpredNames,
+        fit$ctstanmodel$TIpredNames)
     }
     
     
@@ -115,11 +117,34 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
       snewdat[,'time'] <- snewtimes
       snewdat[,TDpredNames] <- 0
       sdat <- rbind(sdat,snewdat)
+      sdat[,'time'] <- round(sdat[,'time'],10)
       sdat<-sdat[!duplicated(sdat[,'time']),,drop=FALSE]
       sdat <- sdat[order(sdat[,'time']),,drop=FALSE]
       sdat[,c(manifestNames,TDpredNames)] [sdat[,c(manifestNames,TDpredNames)]==99999] <- NA
       sdat[,'subject'] <- subjecti
     }
+    
+    
+    if(1==99 & type=='stan') { #work on using stan code instead of R code
+      colnames(sdat)[1:2] <- c(fit$ctstanmodel$subjectIDname,fit$ctstanmodel$timeName)
+      sdat[,c(manifestNames,TDpredNames)] [is.na(sdat[,c(manifestNames,TDpredNames)])] <- 99999
+      # browser()
+      sfsd <- stansubjectdata(ctsmodel = fit$ctstanmodel, datalong = sdat, 
+        maxtimestep = ifelse(!is.null(as.list(fit$args)$nlcontrol$maxtimestep), as.list(fit$args)$nlcontrol$maxtimestep, 9999), 
+        optimize = ifelse(!is.null(as.list(fit$args)$optimize), as.list(fit$args)$optimize, FALSE) )
+      sfd <- fit$standata
+      sfd[names(sfsd)] <- sfsd
+      sf <- stan_reinitsf(fit$stanmodel,sfd)
+      if(class(fit$stanfit)!='stanfit') {
+        umat=t(fit$stanfit$rawposterior)
+      } else  {
+        umat <- stan_unconstrainsamples(fit$stanfit,fit$standata)
+      }
+      K <- apply(umat, 2, function(x) rstan::constrain_pars(sf,x)$K)
+#       ,dim=c(nrow(fit$standata$K),fit$ctstanmodel$n.manifest,ncol(umat)))
+# array(
+    }
+    
     
     #get parameter matrices
     if(type=='stan') model<-ctStanContinuousPars(fit, subjects=subjecti)
@@ -136,6 +161,7 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
       timecol='time',
       derrind=derrind)
   }
+
   
   if(plot) {
     ctKalmanPlot(x=out,subjects=subjects,...)

@@ -1,3 +1,120 @@
+stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
+  #t0 index
+  T0check<-rep(1,nrow(datalong))
+  for(i in 2:nrow(datalong)){
+    T0check[i]<- ifelse(datalong[i,ctsmodel$subjectIDname] != datalong[i-1,ctsmodel$subjectIDname], 1, 0)
+  }
+  
+  if (!(ctsmodel$timeName %in% colnames(datalong))) stop(paste('time column', omxQuotes(ctsmodel$timeName), "not found in data"))
+  if(any(is.na(datalong[,ctsmodel$timeName]))) stop('Missing "time" column!')
+  #check id and calculate intervals, discrete matrix indices
+  # driftindex<-rep(0,nrow(datalong))
+  # diffusionindex<-driftindex
+  # cintindex<-driftindex
+  # browser()
+  oldsubi<-datalong[1,ctsmodel$subjectIDname]-1
+  dT<-rep(-1,length(datalong[,ctsmodel$timeName]))
+  
+  for(rowi in 1:length(datalong[,ctsmodel$timeName])) {
+    subi<-datalong[rowi,ctsmodel$subjectIDname]
+    # if(rowi==1 && subi!=1) stop('subject id column must ascend from 1 to total subjects without gaps')
+    # if(oldsubi!=subi && subi-oldsubi!=1) stop('subject id column must ascend from 1 to total subjects without gaps')
+    if(subi - oldsubi == 1) {
+      dT[rowi]<-0
+      subistartrow<-rowi
+    }
+    if(subi - oldsubi == 0) {
+      dT[rowi]<-round(datalong[rowi,ctsmodel$timeName] - datalong[rowi-1,ctsmodel$timeName],8)
+      if(dT[rowi] <=0) stop(paste0('A time interval of ', dT[rowi],' was found at row ',rowi))
+      # if(subi!=oldsubi) intervalChange[rowi] <-  0
+      # if(subi==oldsubi && dT[rowi] != dT[rowi-1]) intervalChange[rowi] <- 1
+      # if(subi==oldsubi && dT[rowi] == dT[rowi-1]) intervalChange[rowi] <- 0
+      
+      # if(!ukf){
+      #   if(dT[rowi] %in% dT[1:(rowi-1)]) dTinwhole<-TRUE else dTinwhole<-FALSE
+      #   if(dT[rowi] %in% dT[subistartrow:(rowi-1)]) dTinsub<-TRUE else dTinsub<-FALSE
+      #   
+      #   if(checkvarying('DRIFT',1,0)==0 & dTinwhole==FALSE) driftindex[rowi] <- max(driftindex)+1
+      #   if(checkvarying('DRIFT',1,0)==1 & dTinsub==FALSE) driftindex[rowi] <- max(driftindex)+1
+      #   if(checkvarying('DRIFT',1,0)==0 & dTinwhole==TRUE) driftindex[rowi] <- driftindex[match(dT[rowi],dT)]
+      #   if(checkvarying('DRIFT',1,0)==1 & dTinsub==TRUE) driftindex[rowi] <- driftindex[subistartrow:rowi][match(dT[rowi],dT[subistartrow:rowi])]
+      #   
+      #   if(checkvarying(c('DIFFUSION','DRIFT'),1,0)==0 & dTinwhole==FALSE) diffusionindex[rowi] <- max(diffusionindex)+1
+      #   if(checkvarying(c('DIFFUSION','DRIFT'),1,0)==1 & dTinsub==FALSE) diffusionindex[rowi] <- max(diffusionindex)+1
+      #   if(checkvarying(c('DIFFUSION','DRIFT'),1,0)==0 & dTinwhole==TRUE) diffusionindex[rowi] <- diffusionindex[match(dT[rowi],dT)]
+      #   if(checkvarying(c('DIFFUSION','DRIFT'),1,0)==1 & dTinsub==TRUE) diffusionindex[rowi] <- diffusionindex[subistartrow:rowi][match(dT[rowi],dT[subistartrow:rowi])]
+      #   
+      #   if(checkvarying(c('CINT','DRIFT'),1,0)==0 & dTinwhole==FALSE) cintindex[rowi] <- max(cintindex)+1
+      #   if(checkvarying(c('CINT','DRIFT'),1,0)==1 & dTinsub==FALSE) cintindex[rowi] <- max(cintindex)+1
+      #   if(checkvarying(c('CINT','DRIFT'),1,0)==0 & dTinwhole==TRUE) cintindex[rowi] <- cintindex[match(dT[rowi],dT)]
+      #   if(checkvarying(c('CINT','DRIFT'),1,0)==1 & dTinsub==TRUE) cintindex[rowi] <- cintindex[subistartrow:rowi][match(dT[rowi],dT[subistartrow:rowi])]
+      # }
+    }
+    oldsubi<-subi
+  }
+  
+  if(mean(dT) > 3) message('Average time interval greater than 3 -- if using default priors, consider rescaling time data...')
+  
+  
+  if(ctsmodel$n.TDpred > 0) {
+    tdpreds <- datalong[,ctsmodel$TDpredNames,drop=FALSE]
+    if(any(is.na(tdpreds))) message('Missingness in TDpreds! Replaced by zeroes...')
+    tdpreds[is.na(tdpreds)] <-0 ## rough fix for missingness
+  }
+  
+  
+  #integration steps
+  integrationsteps <- sapply(dT,function(x)  ceiling(x / maxtimestep));
+  dTsmall <- dT / integrationsteps
+  dTsmall[is.na(dTsmall)] = 0
+  
+  subdata <- list(
+    Y=cbind(as.matrix(datalong[,ctsmodel$manifestNames])),
+    subject=as.integer(datalong[,ctsmodel$subjectIDname]),
+    time=datalong[,ctsmodel$timeName], #not used in model but used elsewhere
+    integrationsteps=as.integer(integrationsteps),
+    ndatapoints=as.integer(nrow(datalong)),
+    dT=dT,
+    T0check=as.integer(T0check),
+    dTsmall=dTsmall,
+    nobs_y=array(as.integer(apply(datalong[,ctsmodel$manifestNames,drop=FALSE],1,function(x) length(x[x!=99999]))),dim=nrow(datalong)),
+    whichobs_y=matrix(as.integer(t(apply(datalong[,ctsmodel$manifestNames,drop=FALSE],1,function(x) {
+      out<-as.numeric(which(x!=99999))
+      if(length(out)==0) out<-rep(0,ctsmodel$n.manifest)
+      if(length(out)<ctsmodel$n.manifest) out<-c(out,rep(0,ctsmodel$n.manifest-length(out)))
+      out
+    }) )),nrow=c(nrow(datalong),ncol=ctsmodel$n.manifest)),
+    nbinary_y=array(as.integer(apply(datalong[,ctsmodel$manifestNames,drop=FALSE],1,function(x) 
+      length(x[ctsmodel$manifesttype==1 & x!=99999]))),dim=nrow(datalong)),
+    whichbinary_y=matrix(as.integer(t(apply(datalong[,ctsmodel$manifestNames,drop=FALSE],1,function(x) {
+      out<-as.numeric(which(ctsmodel$manifesttype==1 & x!=99999)) #conditional on whichobs_y
+      if(length(out)==0) out<-rep(0,ctsmodel$n.manifest)
+      if(length(out)<ctsmodel$n.manifest) out<-c(out,rep(0,ctsmodel$n.manifest-length(out)))
+      out
+    }) )),nrow=c(nrow(datalong),ncol=ctsmodel$n.manifest)),
+    ncont_y=array(as.integer(apply(datalong[,ctsmodel$manifestNames,drop=FALSE],1,function(x) 
+      length(x[(ctsmodel$manifesttype==0 | ctsmodel$manifesttype==2) & x!=99999]))),dim=nrow(datalong)),
+    whichcont_y=matrix(as.integer(t(apply(datalong[,ctsmodel$manifestNames,drop=FALSE],1,function(x) {
+      out<-as.numeric(which( (ctsmodel$manifesttype==0 | ctsmodel$manifesttype==2) & x!=99999)) #conditional on whichobs_y
+      if(length(out)==0) out<-rep(0,ctsmodel$n.manifest)
+      if(length(out)<ctsmodel$n.manifest) out<-c(out,rep(0,ctsmodel$n.manifest-length(out)))
+      out
+    }) )),nrow=c(nrow(datalong),ncol=ctsmodel$n.manifest))
+  )
+  
+  if(ctsmodel$n.TDpred ==0) tdpreds <- matrix(0,0,0)
+  subdata$tdpreds=array(as.matrix(tdpreds),dim=c(nrow(tdpreds),ncol(tdpreds)))
+  
+  #subset selection
+  if(is.null(ctsmodel$dokalmanrows)) subdata$dokalmanrows <- 
+    rep(1L, subdata$ndatapoints) else subdata$dokalmanrows <- as.integer(ctsmodel$dokalmanrows)
+  subdata$dokalmanpriormodifier <- sum(subdata$dokalmanrows) / subdata$ndatapoints
+  
+  return(subdata)
+}
+
+
+
 #' ctStanFit
 #'
 #' Fits a ctsem model specified via \code{\link{ctModel}} with type either 'stanct' or 'standt', using Bayseian inference software
@@ -639,14 +756,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     idmap <- cbind(original, new)
     
     
-    #t0 index
-    T0check<-rep(1,nrow(datalong))
-    for(i in 2:nrow(datalong)){
-      T0check[i]<- ifelse(datalong[i,idName] != datalong[i-1,idName], 1, 0)
-    }
     
-    if (!(timeName %in% colnames(datalong))) stop(paste('time column', omxQuotes(timeName), "not found in data"))
-    if(any(is.na(datalong[,timeName]))) stop('Missing "time" column!')
     
     
     #configure user specified calculations
@@ -676,75 +786,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     if(nldynamics) message('Using nonlinear Kalman filter for dynamics')
     if(!nldynamics) message('Using linear Kalman filter for dynamics')
     
-    #check id and calculate intervals, discrete matrix indices
-    # driftindex<-rep(0,nrow(datalong))
-    # diffusionindex<-driftindex
-    # cintindex<-driftindex
-    oldsubi<-0
-    dT<-rep(-1,length(datalong[,timeName]))
     
-    for(rowi in 1:length(datalong[,timeName])) {
-      subi<-datalong[rowi,idName]
-      if(rowi==1 && subi!=1) stop('subject id column must ascend from 1 to total subjects without gaps')
-      if(oldsubi!=subi && subi-oldsubi!=1) stop('subject id column must ascend from 1 to total subjects without gaps')
-      if(subi - oldsubi == 1) {
-        dT[rowi]<-0
-        subistartrow<-rowi
-      }
-      if(subi - oldsubi == 0) {
-        if(continuoustime) dT[rowi]<-round(datalong[rowi,timeName] - datalong[rowi-1,timeName],8)
-        if(!continuoustime) dT[rowi]<-1
-        if(dT[rowi] <=0) stop(paste0('A time interval of ', dT[rowi],' was found at row ',rowi))
-        # if(subi!=oldsubi) intervalChange[rowi] <-  0
-        # if(subi==oldsubi && dT[rowi] != dT[rowi-1]) intervalChange[rowi] <- 1
-        # if(subi==oldsubi && dT[rowi] == dT[rowi-1]) intervalChange[rowi] <- 0
-        
-        # if(!ukf){
-        #   if(dT[rowi] %in% dT[1:(rowi-1)]) dTinwhole<-TRUE else dTinwhole<-FALSE
-        #   if(dT[rowi] %in% dT[subistartrow:(rowi-1)]) dTinsub<-TRUE else dTinsub<-FALSE
-        #   
-        #   if(checkvarying('DRIFT',1,0)==0 & dTinwhole==FALSE) driftindex[rowi] <- max(driftindex)+1
-        #   if(checkvarying('DRIFT',1,0)==1 & dTinsub==FALSE) driftindex[rowi] <- max(driftindex)+1
-        #   if(checkvarying('DRIFT',1,0)==0 & dTinwhole==TRUE) driftindex[rowi] <- driftindex[match(dT[rowi],dT)]
-        #   if(checkvarying('DRIFT',1,0)==1 & dTinsub==TRUE) driftindex[rowi] <- driftindex[subistartrow:rowi][match(dT[rowi],dT[subistartrow:rowi])]
-        #   
-        #   if(checkvarying(c('DIFFUSION','DRIFT'),1,0)==0 & dTinwhole==FALSE) diffusionindex[rowi] <- max(diffusionindex)+1
-        #   if(checkvarying(c('DIFFUSION','DRIFT'),1,0)==1 & dTinsub==FALSE) diffusionindex[rowi] <- max(diffusionindex)+1
-        #   if(checkvarying(c('DIFFUSION','DRIFT'),1,0)==0 & dTinwhole==TRUE) diffusionindex[rowi] <- diffusionindex[match(dT[rowi],dT)]
-        #   if(checkvarying(c('DIFFUSION','DRIFT'),1,0)==1 & dTinsub==TRUE) diffusionindex[rowi] <- diffusionindex[subistartrow:rowi][match(dT[rowi],dT[subistartrow:rowi])]
-        #   
-        #   if(checkvarying(c('CINT','DRIFT'),1,0)==0 & dTinwhole==FALSE) cintindex[rowi] <- max(cintindex)+1
-        #   if(checkvarying(c('CINT','DRIFT'),1,0)==1 & dTinsub==FALSE) cintindex[rowi] <- max(cintindex)+1
-        #   if(checkvarying(c('CINT','DRIFT'),1,0)==0 & dTinwhole==TRUE) cintindex[rowi] <- cintindex[match(dT[rowi],dT)]
-        #   if(checkvarying(c('CINT','DRIFT'),1,0)==1 & dTinsub==TRUE) cintindex[rowi] <- cintindex[subistartrow:rowi][match(dT[rowi],dT[subistartrow:rowi])]
-        # }
-      }
-      oldsubi<-subi
-    }
-    
-    if(mean(dT) > 3) message('Average time interval greater than 3 -- if using default priors, consider rescaling time data...')
-    
-    
-    if(n.TDpred > 0) {
-      tdpreds <- datalong[,TDpredNames,drop=FALSE]
-      if(any(is.na(tdpreds))) message('Missingness in TDpreds! Replaced by zeroes...')
-      tdpreds[is.na(tdpreds)] <-0 ## rough fix for missingness
-    }
-    if(n.TIpred > 0) {
-      tipreds <- datalong[match(unique(datalong[,idName]),datalong[,idName]),TIpredNames,drop=FALSE]
-      if(any(is.na(tipreds))) {
-        if(!optimize){
-          message(paste0('Missingness in TIpreds - sampling ', sum(is.na(tipreds)),' values'))
-          tipreds[is.na(tipreds)] = 99999
-        }
-        if(optimize){
-          message(paste0('Missingness in TIpreds - setting ', sum(is.na(tipreds)),'  NA\'s to 0 to allow optimization'))
-          tipreds[is.na(tipreds)] = 0
-        }
-      }
-    }
-    
-    datalong[,c(manifestNames,TIpredNames)][is.na(datalong[,c(manifestNames,TIpredNames)])]<-99999 #missing data
     
     
     #check diffusion indices input by user - which latents are involved in covariance
@@ -757,11 +799,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     if(length(unique(derrind)) < length(derrind)) stop('derrind vector cannot contain duplicates or!')
     ndiffusion=length(derrind)
     # message(paste(ndiffusion ,'/',n.latent,'latent variables needed for covariance calculations'))
-    
-    #integration steps
-    integrationsteps <- sapply(dT,function(x)  ceiling(x / nlcontrol$maxtimestep));
-    dTsmall <- dT / integrationsteps
-    dTsmall[is.na(dTsmall)] = 0
     
     matsetup <-list()
     matvalues <-list()
@@ -875,81 +912,73 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     # out<-list(stanmodeltext=stanmodeltext)
     
-    standata<-list(
-      Y=cbind(as.matrix(datalong[,manifestNames])),
-      subject=as.integer(datalong[,idName]),
-      time=datalong[,ctstanmodel$timeName], #not used in model but used elsewhere
-      nsubjects=as.integer(nsubjects),
-      nmanifest=as.integer(n.manifest),
-      nlatentpop = as.integer(ifelse(intoverpop ==1, n.latent + nindvarying,  n.latent)),
-      nldynamics=as.integer(nldynamics),
-      dokalman=as.integer(is.null(ctstanmodel$dokalman)),
-      integrationsteps=as.integer(integrationsteps),
-      intoverstates=as.integer(intoverstates),
-      verbose=as.integer(verbose),
-      indvaryingindex=array(as.integer(indvaryingindex)),
-      notindvaryingindex=array(as.integer(which(!(1:nparams) %in% indvaryingindex))),
-      continuoustime=as.integer(sum(continuoustime)),
-      nlatent=as.integer(n.latent),
-      ntipred=as.integer(n.TIpred),
-      ntdpred=as.integer(n.TDpred),
-      binomial=as.integer(binomial),
-      nparams=as.integer(nparams),
-      gendata=as.integer(gendata),
-      nindvarying=as.integer(nindvarying),
-      nindvaryingoffdiagonals=as.integer((nindvarying^2-nindvarying)/2),
-      ndatapoints=as.integer(nrow(datalong)),
-      dT=dT,
-      T0check=as.integer(T0check),
-      dTsmall=dTsmall,
-      nt0varstationary=as.integer(nt0varstationary),
-      nt0meansstationary=as.integer(nt0meansstationary),
-      t0varstationary=matrix(as.integer(t0varstationary),ncol=2),
-      t0meansstationary=matrix(as.integer(t0meansstationary),ncol=2),
-      derrind=array(as.integer(derrind),dim=ndiffusion),
-      ndiffusion=as.integer(ndiffusion),
-      driftdiagonly = as.integer(driftdiagonly),
-      intoverpop=as.integer(intoverpop),
-      ukfspread = nlcontrol$ukfspread,
-      ukffull = as.integer(nlcontrol$ukffull),
-      nlmeasurement=as.integer(nlmeasurement),
-      nopriors=as.integer(nopriors),
-      savescores=as.integer(savescores),
-      manifesttype=array(as.integer(manifesttype),dim=length(manifesttype)),
-      nobs_y=array(as.integer(apply(datalong[,manifestNames,drop=FALSE],1,function(x) length(x[x!=99999]))),dim=nrow(datalong)),
-      whichobs_y=matrix(as.integer(t(apply(datalong[,manifestNames,drop=FALSE],1,function(x) {
-        out<-as.numeric(which(x!=99999))
-        if(length(out)==0) out<-rep(0,n.manifest)
-        if(length(out)<n.manifest) out<-c(out,rep(0,n.manifest-length(out)))
-        out
-      }) )),nrow=c(nrow(datalong),ncol=n.manifest)),
-      nbinary_y=array(as.integer(apply(datalong[,manifestNames,drop=FALSE],1,function(x) 
-        length(x[manifesttype==1 & x!=99999]))),dim=nrow(datalong)),
-      whichbinary_y=matrix(as.integer(t(apply(datalong[,manifestNames,drop=FALSE],1,function(x) {
-        out<-as.numeric(which(manifesttype==1 & x!=99999)) #conditional on whichobs_y
-        if(length(out)==0) out<-rep(0,n.manifest)
-        if(length(out)<n.manifest) out<-c(out,rep(0,n.manifest-length(out)))
-        out
-      }) )),nrow=c(nrow(datalong),ncol=n.manifest)),
-      ncont_y=array(as.integer(apply(datalong[,manifestNames,drop=FALSE],1,function(x) 
-        length(x[(manifesttype==0 | manifesttype==2) & x!=99999]))),dim=nrow(datalong)),
-      whichcont_y=matrix(as.integer(t(apply(datalong[,manifestNames,drop=FALSE],1,function(x) {
-        out<-as.numeric(which( (manifesttype==0 | manifesttype==2) & x!=99999)) #conditional on whichobs_y
-        if(length(out)==0) out<-rep(0,n.manifest)
-        if(length(out)<n.manifest) out<-c(out,rep(0,n.manifest-length(out)))
-        out
-      }) )),nrow=c(nrow(datalong),ncol=n.manifest))
-    )
-    if(n.TIpred == 0) tipreds <- array(0,c(0,0))
+    #tipred data
+    if(ctstanmodel$n.TIpred > 0) {
+      tipreds <- datalong[match(unique(datalong[,ctstanmodel$subjectIDname]),datalong[,ctstanmodel$subjectIDname]),ctstanmodel$TIpredNames,drop=FALSE]
+      if(any(is.na(tipreds))) {
+        if(!optimize){
+          message(paste0('Missingness in TIpreds - sampling ', sum(is.na(tipreds)),' values'))
+          tipreds[is.na(tipreds)] = 99999
+        }
+        if(optimize){
+          message(paste0('Missingness in TIpreds - setting ', sum(is.na(tipreds)),'  NA\'s to 0 to allow optimization'))
+          tipreds[is.na(tipreds)] = 0
+        }
+      }
+    }
+    
+    datalong[,c(ctstanmodel$manifestNames,ctstanmodel$TIpredNames)][is.na(datalong[,c(ctstanmodel$manifestNames,ctstanmodel$TIpredNames)])]<-99999 #missing data
+    
+    
+    
+    
+    standata<-c(stansubjectdata(ctsmodel = ctstanmodel,datalong = datalong,optimize = optimize, maxtimestep = nlcontrol$maxtimestep), 
+      list(
+        nsubjects=as.integer(nsubjects),
+        nmanifest=as.integer(n.manifest),
+        nlatentpop = as.integer(ifelse(intoverpop ==1, n.latent + nindvarying,  n.latent)),
+        nldynamics=as.integer(nldynamics),
+        dokalman=as.integer(is.null(ctstanmodel$dokalman)),
+        intoverstates=as.integer(intoverstates),
+        verbose=as.integer(verbose),
+        manifesttype=array(as.integer(manifesttype),dim=length(manifesttype)),
+        indvaryingindex=array(as.integer(indvaryingindex)),
+        notindvaryingindex=array(as.integer(which(!(1:nparams) %in% indvaryingindex))),
+        continuoustime=as.integer(sum(continuoustime)),
+        nlatent=as.integer(n.latent),
+        ntipred=as.integer(n.TIpred),
+        ntdpred=as.integer(n.TDpred),
+        binomial=as.integer(binomial),
+        nparams=as.integer(nparams),
+        gendata=as.integer(gendata),
+        nindvarying=as.integer(nindvarying),
+        nindvaryingoffdiagonals=as.integer((nindvarying^2-nindvarying)/2),
+        nt0varstationary=as.integer(nt0varstationary),
+        nt0meansstationary=as.integer(nt0meansstationary),
+        t0varstationary=matrix(as.integer(t0varstationary),ncol=2),
+        t0meansstationary=matrix(as.integer(t0meansstationary),ncol=2),
+        derrind=array(as.integer(derrind),dim=ndiffusion),
+        ndiffusion=as.integer(ndiffusion),
+        driftdiagonly = as.integer(driftdiagonly),
+        intoverpop=as.integer(intoverpop),
+        ukfspread = nlcontrol$ukfspread,
+        ukffull = as.integer(nlcontrol$ukffull),
+        nlmeasurement=as.integer(nlmeasurement),
+        nopriors=as.integer(nopriors),
+        savescores=as.integer(savescores)
+      ))
+    
+    
+    if(ctstanmodel$n.TIpred == 0) tipreds <- array(0,c(0,0))
     standata$tipredsdata <- as.matrix(tipreds)
     standata$nmissingtipreds <- as.integer(length(tipreds[tipreds== 99999]))
+    
     standata$ntipredeffects <- as.integer(ifelse(n.TIpred > 0, as.integer(max(TIPREDEFFECTsetup)), 0))
     standata$TIPREDEFFECTsetup <- apply(TIPREDEFFECTsetup,c(1,2),as.integer,.drop=FALSE)
     standata$tipredsimputedscale <- ctstanmodel$tipredsimputedscale
     standata$tipredeffectscale <- ctstanmodel$tipredeffectscale
     
-    if(n.TDpred ==0) tdpreds <- matrix(0,0,0)
-    standata$tdpreds=array(as.matrix(tdpreds),dim=c(nrow(tdpreds),ncol(tdpreds)))
+    
     
     #add subject variability indices to data
     for(mati in c(mats$base,'asymCINT','asymDIFFUSION')){
@@ -957,12 +986,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       standata[[sname]] <- array(as.integer((get(sname))),dim=nsubjects)
     }
     
-    
-    # for(m in mats$base){
-    #   standata[[paste0(m,'setup_rowcount')]] <- as.integer(nrow(matsetup[[m]]))
-    #   standata[[paste0(m,'setup')]] <- apply(matsetup[[m]],c(1,2),as.integer,.drop=FALSE)
-    #   standata[[paste0(m,'values')]] <- matvalues[[m]]
-    # }
     standata$matsetup <- apply(matsetup,c(1,2),as.integer,.drop=FALSE)
     standata$matvalues <- apply(matvalues,c(1,2),as.numeric)
     standata$nmatrices <- as.integer(nmatrices)
@@ -988,11 +1011,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     standata$fixedsubpars <- as.integer(!is.null(ctstanmodel$fixedsubpars))
     if(!is.null(ctstanmodel$fixedsubpars)) standata$fixedindparams <- 
       ctstanmodel$fixedsubpars else standata$fixedindparams <-array(0,dim=c(0,0))
-    
-    #subset selection
-    if(is.null(ctstanmodel$dokalmanrows)) standata$dokalmanrows <- 
-      rep(1L, standata$ndatapoints) else standata$dokalmanrows <- as.integer(ctstanmodel$dokalmanrows)
-    standata$dokalmanpriormodifier <- sum(standata$dokalmanrows) / standata$ndatapoints
     
     if(fit){
       # if(gendata && stanmodels$ctsmgen@model_code != stanmodeltext) recompile <- TRUE

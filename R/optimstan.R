@@ -353,6 +353,17 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
         optimfit <- suppressWarnings(list(par=sampling(sm,standata,iter=2,control=list(max_treedepth=1),chains=1,show_messages = FALSE,refresh=0)@inits[[1]]))
       }
       
+      ctdmvnorm <- function(samples, mu, sigma){
+        sigi <- solve(sigma)
+        sigdet <- det(sigma)
+        d <- 
+          log(1/(sqrt((2*pi)^length(mu)*sigdet))) + apply(samples,1, function(x) {
+            (-1/2*( c(x-mu) %*% sigi %*% c(x-mu)))
+          })
+        return(d)
+      }
+          
+      
       mcovl <- list()
       mcovl[[1]]=mcov
       delta=list()
@@ -374,7 +385,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
         resamples <- matrix(unlist(lapply(1:nresamples,function(x){
           delta[[1]] + t(chol(mcovl[[1]])) %*% t(matrix(rnorm(length(delta[[1]])),nrow=1))
         } )),byrow=TRUE,ncol=length(delta[[1]]))
-        message('Importance sampling not done -- interval estimates via Hessian based sampling only')
+        message('Importance sampling not done -- interval estimates via hessian based sampling only')
       }
       
       if(isloops > 0){
@@ -387,6 +398,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
             # if(!npd) 
             # browser()
             samples <- mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = tdf)
+            # samples <- mvtnorm::rmvnorm(isloopsize, delta[[j]], sigma = mcovl[[j]])
             # 
             # gensigstates <- function(t0means, t0chol,steps){
             #   out <- NA
@@ -412,11 +424,14 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
             # }
           } else {
             delta[[j]]=colMeans(resamples)
-            mcovl[[j]] = cov(resamples) #+diag(1e-12,ncol(samples))
+            mcovl[[j]] = as.matrix(Matrix::nearPD(cov(resamples))$mat) #+diag(1e-12,ncol(samples))
             samples <- rbind(samples,mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = tdf))
+            # samples <- rbind(samples, MASS::mvrnorm(isloopsize, delta[[j]],mcovl[[j]]))
           }
           # if(j > 1 || !npd) 
           prop_dens <- mvtnorm::dmvt(tail(samples,isloopsize), delta[[j]], mcovl[[j]], df = tdf,log = TRUE)
+          # prop_dens <- mvtnorm::dmvnorm(tail(samples,isloopsize), delta[[j]], mcovl[[j]],log = TRUE)
+          # prop_dens <- ctdmvnorm(tail(samples,isloopsize), delta[[j]], mcovl[[j]])
           
           parallel::clusterExport(cl, c('samples'),environment())
           
@@ -466,7 +481,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
           sample_prob[!is.finite(sample_prob)] <- 0
           sample_prob[is.na(sample_prob)] <- 0
           # points(target_dens2[sample_prob> (1/isloopsize * 10)], prop_dens[sample_prob> (1/isloopsize * 10)],col='red')
-          resample_i <- sample(1:nrow(samples), size = nresamples, replace = ifelse(j == isloops+1,FALSE,TRUE),
+          resample_i <- sample(1:nrow(samples), size = nresamples, replace = ifelse(j == isloops,FALSE,TRUE),
             prob = sample_prob / sum(sample_prob))
           # resample_i <- sample(tail(1:nrow(samples),isloopsize), size = nresamples, replace = ifelse(j == isloops+1,FALSE,TRUE), 
           #   prob = tail(sample_prob,isloopsize) / sum(tail(sample_prob,isloopsize) ))
