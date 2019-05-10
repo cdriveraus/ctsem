@@ -36,7 +36,7 @@ ctdataupdate<-function(forcerecompile=FALSE){
   ctstantestfit<-ctStanFit(ctstantestdat,checkm,iter=500, warmup=460,thin=2,chains=2,
     forcerecompile=forcerecompile,
     control=list(max_treedepth=8,adapt_delta=.8),save_warmup=FALSE)
-  ctstantestfit <- ctStanGenerateData(ctstantestfit)
+  ctstantestfit <- ctStanGenerateFromFit(ctstantestfit)
   summary(ctstantestfit)
   message(paste0('Updating from ',(getwd()),', continue T / F?'))
 continue <- readline()

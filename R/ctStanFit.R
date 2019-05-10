@@ -183,7 +183,7 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
 #' generates random data according to the specified model / priors. 
 #' Generated data is in the $Ygen subobject after running \code{extract} on the fit object.
 #' For datasets with many manifest variables or time points, file size may be large.
-#' To generate data based on the posterior of a fitted model, see \code{\link{ctStanGenerateData}}.
+#' To generate data based on the posterior of a fitted model, see \code{\link{ctStanGenerateFromFit}}.
 #' @param ... additional arguments to pass to \code{\link[rstan]{stan}} function.
 #' @importFrom Rcpp evalCpp
 #' @export

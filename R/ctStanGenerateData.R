@@ -9,7 +9,7 @@
 #'
 #' @examples
 #' \dontrun{
-#' gen <- ctStanGenerateData(ctstantestfit, nsamples=3,fullposterior=TRUE)
+#' gen <- ctStanGenerateFromFit(ctstantestfit, nsamples=3,fullposterior=TRUE)
 #' plot(gen$generated$Y[,3,2],type='l') #Third random data sample, 2nd manifest var, all time points. 
 #' }
 ctStanGenerateFromFit<-function(fit,nsamples=1,fullposterior=FALSE){

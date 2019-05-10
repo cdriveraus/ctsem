@@ -26,7 +26,7 @@ ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,p
   if(datarows[1]=='all') datarows <- 1:nrow(fit$data$Y)
 
   xmeasure=datarows
-  if(is.null(fit$generated$Y)) Ygen <- ctStanGenerateData(fit,fullposterior=TRUE,nsamples=nsamples)$generated$Y else Ygen <- fit$generated$Y
+  if(is.null(fit$generated$Y)) Ygen <- ctStanGenerateFromFit(fit,fullposterior=TRUE,nsamples=nsamples)$generated$Y else Ygen <- fit$generated$Y
   Ygen<-aperm(Ygen,c(2,1,3))
   Ygen <- Ygen[,datarows,,drop=FALSE]
   time <- fit$standata$time[datarows]
