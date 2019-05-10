@@ -377,7 +377,7 @@ ctKalman(f4,timestep=.01,plot=TRUE,subjects=1:2,kalmanvec=c('y','ysmooth'))
 
 ctStanPlotPost(f4)
 
-ctStanPostPredict(f4,wait=F)
+ctStanPostPredict(f4,wait=FALSE)
 
 
 
@@ -411,11 +411,16 @@ f3nl <- ctStanFit(datalong = dat2, ctstanmodel = m3nl,
 
 summary(f3nl)
 
+#generate data from fitted model and add to $generated subobject
+f3nl <- ctStanGenerateFromFit(f3nl)
+
 #plot functions need updating for non-linearities! (as of ctsem v 2.7.3)
 #extract can be used to extract samples and create own plots.
-#last index of kalaman subobject denotes element of Kalman output.
+#last index of kalman subobject denotes element of Kalman output.
 # 1 = ll on std scale, 2= ll scale, 3=error, 4=prediction, 
 # 5= eta prior, 6= eta upd
+
+
 
 ctStanPostPredict(f3nl, datarows=1:100)
 
@@ -430,7 +435,7 @@ subindex = which(f3nl$data$subject ==3) #specify subject
    f3nl$data$Y[subindex,1],type='p',col='red')
    
   matplot(f3nl$data$time[subindex], add = TRUE, #Generated Y from model
-    t(e$Ygen[,subindex,1]), 
+    t(f3nl$generated$Y[,subindex,1]), 
     type='l',lty=1,col=rgb(0,0,1,.05))
 }
 }

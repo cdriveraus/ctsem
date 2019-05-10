@@ -42,10 +42,11 @@ ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
   ecov <- cov(wdat,use = "pairwise.complete.obs")
   
   if(class(fit)=='ctStanFit'){
-    e <- extract(fit)
-    ygendim <- dim(e$Ygen)
-    niter <- min(niter,ygendim[1])
-    ygen <- array(e$Ygen,dim=c(ygendim[1] * ygendim[2],ygendim[-1:-2]))
+    # browser()
+    # e <- extract(fit)
+    # ygendim <- dim(e$Ygen)
+    # niter <- min(niter,ygendim[1])
+    ygen <- aperm(ctStanGenerateData(fit,fullposterior=TRUE,nsamples=niter)$generated$Y,c(2,1,3)) #array(e$Ygen,dim=c(ygendim[1] * ygendim[2],ygendim[-1:-2]))
     covarray<-array(NA,dim = c(dim(ecov),dim(ygen)[1]))
 
     itervec <- sample(1:dim(ygen)[1],niter)

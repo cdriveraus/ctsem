@@ -71,7 +71,7 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
     if(type=='stan') {
       time<-fit$standata$time
       datalong<-cbind(fit$standata$subject,time,fit$standata$Y)
-      # datalong[,-1:-2][datalong[,-1:-2] == 99999] <- NA #because stan can't handle NA's
+      datalong[,-1:-2][datalong[,-1:-2] == 99999] <- NA #because stan can't handle NA's
       if(n.TDpred > 0) datalong <- cbind(datalong,fit$standata$tdpreds)
       if(fit$ctstanmodel$n.TIpred > 0) datalong <- merge(datalong,cbind(unique(fit$standata$subject),fit$standata$tipredsdata))
       colnames(datalong)<-c('subject','time',

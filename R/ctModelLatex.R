@@ -56,23 +56,26 @@ ctModelLatex<- function(ctmodel,textsize='normalsize',folder='./',filename='ctse
         }
       }
       
-      return(paste0("\\begin{bmatrix}\n",
+      out = paste0("\\begin{bmatrix}\n",
         paste0(out,collapse=''),
-        "\\end{bmatrix}",collapse=''))
-    } else ""
+        "\\end{bmatrix}",collapse='')
+    } else out=""
+    return(out)
   }
+
   
   W <- diag(0,ctmodel$n.latent)
   diag(W) <- 'u'
   
   out <- paste0(" 
-\\documentclass[a4paper]{report}
+\\documentclass[a4paper,landscape]{report}
 \\usepackage[margin=1cm]{geometry}
 \\usepackage{amsmath} %for multiple line equations
 \\usepackage{bm}
 \\newcommand{\\vect}[1]{\\boldsymbol{\\mathbf{#1}}}
 
 \\begin{document}
+\\setcounter{MaxMatrixCols}{200}
  \\begin{",textsize,"}
   \\begin{align*}
   &\\underbrace{\\mathrm{d}
@@ -90,44 +93,44 @@ ctModelLatex<- function(ctmodel,textsize='normalsize',folder='./',filename='ctse
         ",bmatrix(ctmodel$TDPREDEFFECT),"
       }_{\\underbrace{\\vect{M}}_\\textrm{TDPREDEFFECT}}
       \\underbrace{
-        ",bmatrix(matrix(paste0('\\chi_',1:ncol(ctmodel$TDPREDEFFECT))))," 
+        ",bmatrix(matrix(paste0('\\chi_{',1:ncol(ctmodel$TDPREDEFFECT),'}')))," 
       }_{\\vect{\\chi} (t)}"),
     "\\right) \\mathrm{d}t \\quad + \\nonumber \\\\ \\\\
     & \\qquad \\qquad \\quad \\underbrace{
       ",bmatrix(ctmodel$DIFFUSION),"
     }_{\\underbrace{\\vect{G}}_\\textrm{DIFFUSION}}
     \\underbrace{\\mathrm{d}
-      ",bmatrix(matrix(paste0('W_',1:ncol(ctmodel$DIFFUSION))),nottext=TRUE)," 
+      ",bmatrix(matrix(paste0('W_{',1:ctmodel$n.latent,'}')),nottext=TRUE)," 
       (t)}_{\\mathrm{d} \\vect{W}(t)} \\\\ \\\\
           &\\underbrace{
-            ",bmatrix(matrix(paste0('W_',1:ctmodel$n.latent)),nottext=TRUE),"  
-            (t)}_{\\vect{W}(t+u)} -  \\underbrace{",bmatrix(matrix(paste0('W_',1:ctmodel$n.latent)),nottext=TRUE),"  
+            ",bmatrix(matrix(paste0('W_{',1:ctmodel$n.latent,'}')),nottext=TRUE),"  
+            (t+u)}_{\\vect{W}(t+u)} -  \\underbrace{",bmatrix(matrix(paste0('W_{',1:ctmodel$n.latent,'}')),nottext=TRUE),"  
             (t)}_{\\vect{W}(t)} \\sim  \\mathrm{N} \\left(
-              ",bmatrix(matrix(0,ctmodel$n.latent,1)),", ",bmatrix(W)," \\right) 
-\\end{align*}
-\\begin{align*}
-    &\\underbrace{
+              ",bmatrix(matrix(0,ctmodel$n.latent,1)),", ",bmatrix(W)," \\right) \\\\ \\\\
+&\\underbrace{
       ",bmatrix(matrix(ctmodel$manifestNames),nottext=FALSE),"  
       (t)}_{\\vect{Y}(t)} = 
         \\underbrace{
           ",bmatrix(ctmodel$LAMBDA)," 
         }_{\\underbrace{\\vect{\\Lambda}}_\\textrm{LAMBDA}} \\underbrace{
-          ",bmatrix(matrix(paste0('\\eta_',1:nrow(ctmodel$DRIFT))))," 
+          ",bmatrix(matrix(ctmodel$latentNames))," 
           (t)}_{\\vect{\\eta}(t)} +
         \\underbrace{
           ",bmatrix(ctmodel$MANIFESTMEANS)," 
         }_{\\underbrace{\\vect{\\tau}}_\\textrm{MANIFESTMEANS}} + 
         \\underbrace{
-          ",bmatrix(matrix(paste0('\\epsilon_',1:ctmodel$n.manifest))),"  
+          ",bmatrix(matrix(paste0('\\epsilon_{',1:ctmodel$n.manifest,'}')))," 
           (t)}_{\\vect{\\epsilon}(t)} \\\\ \\\\
           &\\underbrace{
-            ",bmatrix(matrix(paste0('\\epsilon_',1:ctmodel$n.manifest))),"  
+            ",bmatrix(matrix(paste0('\\epsilon_{',1:ctmodel$n.manifest,'}')))," 
             (t)}_{\\vect{\\epsilon}(t)} \\sim  \\mathrm{N} \\left(
               ",bmatrix(matrix(0,ctmodel$n.manifest,1)),"
               ,
               \\underbrace{
                 ",bmatrix(ctmodel$MANIFESTVAR),"  
-              }_{\\underbrace{\\vect{\\Theta}}_\\textrm{MANIFESTVAR}} \\right) 
+              }_{\\underbrace{\\vect{\\Theta}}_\\textrm{MANIFESTVAR}} \\right) ", 
+    ifelse(is.null(ctmodel$PARS),"", paste0("\\\\ \\\\
+              &\\underbrace{",bmatrix(ctmodel$PARS),"}_\\textrm{PARS}")),"
       \\end{align*}
       \\end{",textsize,"}
    \\end{document}")

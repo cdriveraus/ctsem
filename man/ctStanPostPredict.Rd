@@ -6,7 +6,7 @@
 \usage{
 ctStanPostPredict(fit, legend = TRUE, diffsize = 1, jitter = 0.02,
   wait = TRUE, probs = c(0.025, 0.5, 0.975), shading = TRUE,
-  datarows = "all", ...)
+  datarows = "all", nsamples = 500, ...)
 }
 \arguments{
 \item{fit}{ctStanFit object.}
@@ -25,6 +25,8 @@ ctStanPostPredict(fit, legend = TRUE, diffsize = 1, jitter = 0.02,
 Shading is better for non-linearities.}
 
 \item{datarows}{integer vector specifying rows of data to plot. Otherwise 'all' uses all data.}
+
+\item{nsamples}{Number of datasets to generate for comparisons.}
 
 \item{...}{extra arguments to pass to plot function.}
 }

@@ -1,4 +1,4 @@
-#' Generates data according to the model estimated in a ctsemFit object.#' 
+#' Generates data according to the model estimated in a ctsemFit object.
 #'
 #' @param fit object of class ctsemFit as returned from \code{\link{ctFit}}
 #' @param timestep positive numeric value indicating the time interval to use for

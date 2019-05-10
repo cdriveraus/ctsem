@@ -10,6 +10,7 @@
 #' @param wait Logical, if TRUE, waits for input before plotting next plot.
 #' @param jitter Positive numeric between 0 and 1, if TRUE, jitters empirical data by specified proportion of std dev.
 #' @param datarows integer vector specifying rows of data to plot. Otherwise 'all' uses all data.
+#' @param nsamples Number of datasets to generate for comparisons.
 #' @param ... extra arguments to pass to plot function.
 #' @return If plot=FALSE, an array containing quantiles of generated data. If plot=TRUE, nothing, only plots.
 #' @export
@@ -20,12 +21,12 @@
 #' \dontrun{
 #' ctStanPostPredict(ctstantestfit,wait=FALSE, shading=FALSE, datarows=1:25,diffsize=2)
 #' }
-ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,.5,.975),shading=TRUE, datarows='all',...){
- 
+ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,.5,.975),shading=TRUE, datarows='all',nsamples=500,...){
+
   if(datarows[1]=='all') datarows <- 1:nrow(fit$data$Y)
 
   xmeasure=datarows
-  if(is.null(fit$generated$Y)) Ygen <- ctStanGenerateData(fit)$generated$Y else Ygen <- fit$generated$Y
+  if(is.null(fit$generated$Y)) Ygen <- ctStanGenerateData(fit,fullposterior=TRUE,nsamples=nsamples)$generated$Y else Ygen <- fit$generated$Y
   Ygen<-aperm(Ygen,c(2,1,3))
   Ygen <- Ygen[,datarows,,drop=FALSE]
   time <- fit$standata$time[datarows]
@@ -91,7 +92,7 @@ ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,p
       
       if(typei=='change'){
 
-        yp<-aperm(ys[,,i,drop=TRUE],c(2,1))#drop true set here if looking for problems!
+        yp<-aperm(matrix(ys[,,i,drop=TRUE],nrow=dim(ys)[1],ncol=dim(ys)[2]),c(2,1))#drop true set here if looking for problems!
         
         for(cdiffsize in diffsize){
           # diffindex <- c() 
