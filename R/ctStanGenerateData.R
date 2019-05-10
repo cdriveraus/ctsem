@@ -12,7 +12,7 @@
 #' gen <- ctStanGenerateData(ctstantestfit, nsamples=3,fullposterior=TRUE)
 #' plot(gen$generated$Y[,3,2],type='l') #Third random data sample, 2nd manifest var, all time points. 
 #' }
-ctStanGenerateData<-function(fit,nsamples=1,fullposterior=FALSE){
+ctStanGenerateFromFit<-function(fit,nsamples=1,fullposterior=FALSE){
   if(class(fit)!='ctStanFit') stop('Not a ctStanFit object!')
   if(class(fit$stanfit)!='stanfit') {
     umat=t(fit$stanfit$rawposterior)
