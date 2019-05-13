@@ -63,7 +63,7 @@ plot.ctsemMultigroupFit<-function(x,group='show chooser',...){
 #' traitmodel <- ctModel(n.manifest=2, n.latent=2, Tpoints=6, LAMBDA=diag(2), 
 #'   manifestNames=c('LeisureTime', 'Happiness'), 
 #'   latentNames=c('LeisureTime', 'Happiness'), TRAITVAR="auto")
-#' traitfit <- ctFit(datawide=ctExample1, ctmodelobj=traitmodel)
+#' traitfit <- ctFit(dat=ctExample1, ctmodelobj=traitmodel)
 #' plot(traitfit, wait=FALSE)
 #' }
 #' @export

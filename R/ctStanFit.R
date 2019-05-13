@@ -212,7 +212,7 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
 #' #output functions
 #' summary(fit) 
 #' 
-#' plot(fit)
+#' plot(fit,wait=FALSE)
 #' 
 #' 
 #' 
@@ -307,7 +307,7 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
 #' m1$pars$age_effect[-which(m1$pars$matrix %in% c('T0MEANS','CINT'))] <- FALSE
 #' 
 #' 
-#' plot(m1) #plot prior distributions
+#' plot(m1,wait=FALSE) #plot prior distributions
 #' 
 #' #fit
 #' f1 <- ctStanFit(datalong = dat, ctstanmodel = m1, 
@@ -320,21 +320,13 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
 #' ctKalman(f1,timestep=.01,plot=TRUE,subjects=1:4,kalmanvec=c('y','etasmooth'))
 #' ctKalman(f1,timestep=.01,plot=TRUE,subjects=1,kalmanvec=c('y','ysmooth'))
 #' 
-#' ctStanPlotPost(f1) #compare prior to posterior distributions 
-#' ctStanPlotPost(f1, priorwidth = FALSE) #rescale to width of posterior 
+#' ctStanPlotPost(f1, wait=FALSE) #compare prior to posterior distributions 
+#' ctStanPlotPost(f1, priorwidth = FALSE, wait=FALSE) #rescale to width of posterior 
 #' 
-#' ctStanPostPredict(f1) #compare randomly generated data from posterior to observed data
+#' ctStanPostPredict(f1, wait=FALSE) #compare randomly generated data from posterior to observed data
 #' 
 #' cf<-ctCheckFit(f1) #compare covariance of randomly generated data to observed cov
 #' plot(cf)
-#' 
-#' #accessing the stan object directly 
-#' library(rstan)
-#' postsamples <- extract(f1$stanfit,pars='Ygen') #extract data generated from posterior
-#' plot( f1$data$time, 
-#'   postsamples$Ygen[1,1, ,1]) #iteration 1 (already shuffled), chain 1, all occasions, var 1.
-#' points(f1$data$time, f1$data$Y[,1],col='red') #1st manifest variable
-#' 
 #' 
 #' 
 #' 
@@ -367,7 +359,7 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
 #' 
 #' ctStanPlotPost(f2)
 #' 
-#' ctStanPostPredict(f2)
+#' ctStanPostPredict(f2,wait=FALSE)
 #' 
 #' 
 #' 
@@ -403,9 +395,9 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
 #' ctKalman(f3,timestep=.01,plot=TRUE,subjects=1:4,kalmanvec=c('y','etasmooth'))
 #' ctKalman(f3,timestep=.01,plot=TRUE,subjects=1:2,kalmanvec=c('y','ysmooth'))
 #' 
-#' ctStanPlotPost(f3)
+#' ctStanPlotPost(f3,wait=FALSE)
 #' 
-#' ctStanPostPredict(f3, datarows=0:100)
+#' ctStanPostPredict(f3, datarows=1:100, wait=FALSE)
 #' 
 #' 
 #' 
@@ -455,9 +447,9 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
 #' ctKalman(f4,timestep=.01,plot=TRUE,subjects=1:2,kalmanvec=c('y','etasmooth'))
 #' ctKalman(f4,timestep=.01,plot=TRUE,subjects=1:2,kalmanvec=c('y','ysmooth'))
 #' 
-#' ctStanPlotPost(f4)
+#' ctStanPlotPost(f4, wait=FALSE)
 #' 
-#' ctStanPostPredict(f4,wait=FALSE)
+#' ctStanPostPredict(f4, wait=FALSE)
 #' 
 #' 
 #' 
@@ -498,7 +490,7 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
 #' #extract can be used to extract samples and create own plots.
 #' #ctStanKalman can be used to obtain predictions, errors, updated states etc
 #' 
-#' ctStanPostPredict(f3nl, datarows=1:100)
+#' ctStanPostPredict(f3nl, datarows=1:100, wait=FALSE)
 #' 
 #' e=extract(f3nl)
 #' subindex = which(f3nl$data$subject ==3) #specify subject

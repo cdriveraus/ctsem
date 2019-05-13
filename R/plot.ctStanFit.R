@@ -25,14 +25,11 @@
 #' @method plot ctStanFit
 #' @examples
 #' \dontrun{
-#' plot(ctstantestfit,types=c('regression','kalman','priorcheck'))
-#' 
-#' ### complete example
-#' plot(ctstantestfit)
+#' plot(ctstantestfit,types=c('regression','kalman','priorcheck'), wait=FALSE)
 #' 
 #' #### example plot using rstan functions
 #' rstan::stan_trace(ctstantestfit$stanfit, 
-#' pars=ctStanParnames(ctstantestfit,'pop_DRIFT'))
+#'   pars=ctStanParnames(ctstantestfit,'pop_DRIFT'))
 #' }
 #' @export
 plot.ctStanFit <- function(x, types='all',wait=TRUE,...){

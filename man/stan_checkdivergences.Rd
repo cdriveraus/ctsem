@@ -4,7 +4,7 @@
 \alias{stan_checkdivergences}
 \title{Analyse divergences in a stanfit object}
 \usage{
-stan_checkdivergences(sf, nupars = "all")
+stan_checkdivergences(sf, nupars = "all", standata = NULL)
 }
 \arguments{
 \item{sf}{stanfit object.}
@@ -22,6 +22,17 @@ Analyse divergences in a stanfit object
 }
 \examples{
 \dontrun{
-stan_checkdivergences(myfitobj)
+library(rstan)
+scode <- "
+parameters {
+  real y[2]; 
+} 
+model {
+  y[1] ~ normal(0, 1);
+  y[2] ~ double_exponential(0, y[1]);
+} 
+"
+fit1 <- stan(model_code = scode, iter = 10) 
+stan_checkdivergences(fit1)
 }
 }

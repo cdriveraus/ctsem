@@ -6,6 +6,7 @@
 #' @param datalong data as normally passed to \code{\link{ctStanFit}}
 #' @param ctstanmodel model as normally passed to \code{\link{ctStanFit}}
 #' @param ... extra args for \code{\link{ctStanFit}}
+#' @export
 #' @examples
 #' \dontrun{
 #'  newm<-ctModel(type='stanct',

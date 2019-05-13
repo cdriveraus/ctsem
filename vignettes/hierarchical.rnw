@@ -119,6 +119,9 @@ opts_chunk$set(warning = FALSE, fig.align = 'center', width.cutoff = 100, fig.sh
 options(width = 100, scipen = 12, digits = 3)
 
 set.seed(1)
+
+
+
 # Tpoints=50
 # n.manifest=2
 # n.TDpred=1
@@ -151,15 +154,12 @@ set.seed(1)
 @
 
 \section{Overview}
-In this work, we describe the basic usage of the hierarchical Bayesian formulation of the ctsem \citep{driver2017continuous} software for continuous-time dynamic modelling in R \citep{rcoreteam2014r}. This formulation, described in detail in \citet{driver2016hierarchical}, offers advantages over what could be considered more typical dynamic modelling approaches, such as vector autoregressive models or latent change score models. The two main advantages relate to the handling of time, and the treatment of individual differences. Time information is explicitly incorporated into the model, such that predictions from one measurement to another relate exactly to the amount of time that has passed, rather than simply the number of measurements, as is typical in discrete-time models. When the time interval between all measurements are equal, there is an exact relationship between the discrete and continuous time form, but when they differ, the continuous-time form is typically more appropriate. For more on continuous-time models, see \citet{singer1993continuoustime, oud2000continuous, voelkle2013continuous}. With respect to individual differences, the hierarchical Bayesian approach allows for individual variation across all model parameters, while still making full use of the data from all subjects. This has the result that individual specific parameter estimates may be obtained with far fewer time points than would be required by single-subject time-series type modelling approaches. For more on hierarchical Bayesian models, see \citet{gelman2014bayesian}.
+In this work, we describe the basic usage of the hierarchical formulation of the ctsem \citep{driver2017continuous} software for continuous-time dynamic modelling in R \citep{rcoreteam2014r}. This formulation was described in detail in \citet{driver2016hierarchical}, though since then the scope has been expanded to include nonlinear models (such as parameters that vary over time), and optimization with optional importance sampling -- this latter enhancement means that the approach described herein largely supersedes the initial mixed effects approach based upon OpenMx \citep{neale2016openmx}, as estimation options now include maximum likelihood, maximum a posteriori, and fully Bayesian with the Stan software's \citep{carpenter2017stan} Hamiltonian Monte Carlo sampler. This approach offers some advantages over what could be considered more typical dynamic modelling approaches, such as vector autoregressive models or latent change score models. Two important advantages relate to the handling of time, and the treatment of individual differences. Time information is explicitly incorporated into the model, such that predictions from one measurement to another relate exactly to the amount of time that has passed, rather than simply the number of measurements, as is typical in discrete-time models. When the time interval between all measurements are equal, there is an exact relationship between the discrete and continuous time form (in many cases), but when they differ, the continuous-time form is typically more appropriate. For more on continuous-time models, see \citet{singer1993continuoustime, oud2000continuous, voelkle2013continuous}. With respect to individual differences, the hierarchical Bayesian approach allows for individual variation across all model parameters, while making full use of the data from all subjects to enhance estimation. This has the result that reasonable individual specific parameter estimates may be obtained with far fewer time points than would be required by single-subject time-series type modelling approaches. For more on hierarchical Bayesian models, see \citet{gelman2014bayesian}.
 
-This document is structured such that we first briefly describe the continuous time dynamic model governing within subject dynamics, and the hierarchical model governing the distribution of subject level parameters. These aspects are covered in detail in \citet{driver2016hierarchical}. Following, we walk through installing the ctsem software, setting up a data structure, specifying and fitting the model, followed by summary and plotting functions. Some details on additional complexity are then provided, including an example model with a more complex dynamic structure, a discussion of the various options for incorporating stationarity assumptions into the model, and a walk-through of the various transformations involved in the model. 
-
-\subsection{Subject Level Latent Dynamic model}
-This section describes the subject level model characterising the system dynamics and measurement properties.  Although we do not describe it explicitly, the corresponding discrete time autoregressive / moving average models can be specified and use the same set of parameter matrices we describe.
+This document is structured such that we briefly describe the continuous time dynamic model governing within subject dynamics, and the hierarchical model governing the distribution of subject level parameters. These aspects are covered in detail in \citet{driver2016hierarchical}. Following, we walk through installing the ctsem software, setting up a data structure, specifying and fitting the model, followed by summary and plotting functions. Some details on additional complexity are then provided, including an example model with a more complex dynamic structure, a discussion of the various options for incorporating stationarity assumptions into the model, and a walk-through of the various transformations involved in the model. 
 
 \subsection{Subject level latent dynamic model}
-The subject level dynamics are described by the following stochastic differential equation:
+This section describes the subject level model characterising the system dynamics and measurement properties.  Although we do not describe it explicitly, the corresponding discrete time autoregressive / moving average models can be specified and use the same set of parameter matrices we describe. The subject level dynamics are described by the following stochastic differential equation:
 \begin{equation}
 \label{eq:process1}
 \mathrm{d} \vect{\eta} (t) =
@@ -198,7 +198,7 @@ The latent process vector $\vect{\eta}(t)$ has measurement model:
 $\vect{y} (t)\in\mathbb{R}^{c}$ is the vector of manifest variables, $\vect{\Lambda} \in \mathbb{R}^{c \times v}$ (LAMBDA) represents the factor loadings, and $\vect{\tau} \in\mathbb{R}^{c}$ (MANIFESTMEANS) the manifest intercepts. The residual vector $\vect{\epsilon} \in \mathbb{R}^{c}$ has covariance matrix $\vect{\Theta} \in\mathbb{R}^{c \times c}$ (MANIFESTVAR).
 
 \subsection{Overview of hierarchical model}
-Parameters for each subject are first drawn from a simultaneously estimated higher level distribution over an unconstrained space, then a set of parameter specific transformations are applied so that a) each parameter conforms to necessary bounds and b) is subject to the desired prior. Following this, in some cases matrix transformations are applied to generate the continuous time matrices described. The higher level distribution has a multivariate normal prior. We provide a brief description here, and an R code example later in this work, but for the full details, one should again see \citet{driver2016hierarchical}.
+Parameters for each subject are first drawn from a simultaneously estimated higher level distribution over an unconstrained space, then a set of parameter specific transformations are applied so that a) each parameter conforms to necessary bounds and b) is subject to the desired prior. Following this, in some cases matrix transformations are applied to generate the continuous time matrices described. The higher level distribution has a multivariate normal prior (though priors may be switched off as desired). We provide a brief description here, and an R code example later in this work, but for the full details see \citet{driver2016hierarchical}.
 
 The joint-posterior distribution of the model parameters given the data is as follows:
 
@@ -245,7 +245,9 @@ Prepare data in long format, each row containing one time point of data for one 
 ctstantestdat[c(3:5,17:22),]
 @
 
-Priors for the model are set up to be 'weakly informative' (in that extreme parameter values are deemed less likely) for typical applications in the social sciences, on data that is centered and scaled. Because of this, we recommend grand mean centering and scaling each variable in the data, with the exception of time dependent predictors, which should be scaled as normal, but centered such that a value of zero implies no effect. Similarly, we expect a time interval of 1.00 to reflect some `moderate change' in the underlying process. If we wished to model daily hormonal fluctuations, with a number of measurements each day, a time scale of hours, days, or weeks could be sensible -- minutes or years would likely be problematic. If the data are not adjusted according to these considerations, the priors themselves should be adjusted, or at least their impact carefully considered. 
+Priors are included by default but for those who prefer maximum likelihood, they can be switched off during model fitting using the \verb|nopriors=TRUE| argument. For such cases the information in this text regarding priors is obviously less relevant, however some awareness may be useful as a) priors are always used during an initial rough estimation, and b) although the prior probability is not relevant, some parameters (such as standard deviations) rely on transformations to ensure they stay within a particular range. 
+
+Priors for the model are set up to be 'weakly informative' (in that extreme parameter values are deemed less likely) for typical applications in the social sciences, on data that is centered and scaled. Because of this, we recommend grand mean centering and scaling each variable in the data, with the exception of time dependent predictors, which should be scaled, but centered such that a value of zero implies no effect. Similarly, we expect a time interval of 1.00 to reflect some `moderate change' in the underlying process. If we wished to model daily hormonal fluctuations, with a number of measurements each day, a time scale of hours, days, or weeks could be sensible -- minutes or years would likely be problematic. If the data are not adjusted according to these considerations, the priors themselves should be adjusted, or at least their impact carefully considered -- though note also that an inappropriate scaling of time can also result in numerical difficulties, regardless of priors.
 
 <<scaling,echo=TRUE>>=
 ctstantestdat[,c('Y1','Y2','TI1','TI2','TI3')] <- 
@@ -255,10 +257,10 @@ ctstantestdat[,c('Y1','Y2','TI1','TI2','TI3')] <-
 Functions to convert between wide and long formats used by ctsem are available, these are \verb}ctWideToLong}, \verb}ctDeintervalise}, \verb}ctLongToWide}, \verb}ctIntervalise}. For details see the relevant help in R.
 
 \subsection{Missing values}
-Missingness in the manifest variables is handled using the typical filtering / full information maximum likelihood approach, missing values on time dependent predictors are replaced with zeros, and missing values on time independent predictors are sampled as part of the model, with a default prior of normal(0,10) (this is specified via a slot in the model object).
+Missingness in the manifest variables is handled using the typical filtering / full information maximum likelihood approach, missing values on time dependent predictors are replaced with zeros, and missing values on time independent predictors are sampled as part of the model, with a default prior of normal(0,1) (this is specified via the \verb|$tipredsimputedscale| slot in the model object). If \verb|optimize=TRUE| is specified when fitting, missing time independent predictors cannot be sampled and are fixed to zero -- this latter approach is not ideal and inferences regarding predictor effects should be considered suspect in such a case. 
 
 \subsection{Model specification}
-Specify model using \verb}ctModel(type="stanct",...)}. \verb|"stanct"| specifies a continuous time model in Stan format, \verb|"standt"| specifies discrete time, while \verb|"omx"| is the classic ctsem behaviour and prepares an OpenMx model. Other arguments to \verb|ctModel| proceed as normal, although some matrices used for type \verb|"omx"| are not relevant for the Stan formats, either because the between subject matrices are handled differently, or because time dependent and independent predictors are now treated as fixed regressors and only require effect (or design) matrices. These differences are documented in the help for \verb|ctModel|, available in R via \verb}?ctModel}.
+Specify model using \verb}ctModel(type="stanct",...)}. \verb|"stanct"| specifies a continuous time model in Stan format, \verb|"standt"| specifies discrete time, while \verb|"omx"| is the original ctsem behaviour and prepares an OpenMx model \citet[discussed in]{driver2017continuous}. Other arguments to \verb|ctModel| proceed as normal, although some matrices used for type \verb|"omx"| are not relevant for the Stan formats, either because the between subject matrices are handled differently, or because time dependent and independent predictors are now treated as fixed regressors and only require effect (or design) matrices. These differences are documented in the help for \verb|ctModel|, available in R via \verb}?ctModel}.
 
 <<model>>=
 model<-ctModel(type='stanct',
@@ -269,7 +271,13 @@ model<-ctModel(type='stanct',
   LAMBDA=diag(2))
 @
 
-This specifies a first order bivariate latent process model, with each process measured by a single, potentially noisy, manifest variable. A single time dependent predictor is included in the model, and three time independent predictors. Additional complexity or restrictions may be added, the Table \ref{tab:ctmodel} shows the basic arguments one may consider and their link to the dynamic model parameters. Note that for the Stan implementation, ctModel requires variance covariance matrices (DIFFUSION, T0VAR, MANIFESTVAR) to be specified with standard deviations on the diagonal, covariance related parameters on the lower off diagonal, and zeroes on the upper off diagonal. While it is possible to fix the lower off diagonals to non-zero values, in general this is difficult to interpret because of the necessary matrix transformations, thus we recommend either to fix to zero, or leave free.
+This specifies a first order bivariate latent process model, with each process measured by a single, potentially noisy, manifest variable. A single time dependent predictor is included in the model, and three time independent predictors. To see the subject level model equation, the \verb|ctModelLatex| function can be used on the model object, generating output like so:
+
+<<texout,results='asis',echo=FALSE>>=
+cat(ctModelLatex(model,textsize = 'footnotesize',compile = FALSE,equationonly = TRUE))
+@
+
+Additional complexity or restrictions may be added to the model, the Table \ref{tab:ctmodel} shows the basic arguments one may consider and their link to the dynamic model parameters. Note that for the Stan implementation, ctModel requires variance covariance matrices (DIFFUSION, T0VAR, MANIFESTVAR) to be specified with standard deviations on the diagonal, covariance related parameters on the lower off diagonal (excluding MANIFESTVAR which should be diagonal only), and zeroes on the upper off diagonal. While it is possible to fix the lower off diagonals of covariance matrices to non-zero values, in general this is difficult to interpret because of the necessary matrix transformations, thus we recommend either to fix to zero, or leave free.
 
 \begin{table}\footnotesize
 \caption{ctModel arguments} \label{tab:ctmodel}
@@ -283,7 +291,7 @@ This specifies a first order bivariate latent process model, with each process m
  latentNames & & eta1, eta2, etc & n.latent length character vector of latent names.\\
  T0VAR & $Q^*_1$ & free & lower tri n.latent $\times$ n.latent matrix of latent process initial covariance, specified with standard deviations on diagonal and covariance related parameters on lower triangle.\\
  T0MEANS & $\eta_1$ & free & n.latent $\times$ 1 matrix of latent process means at first time point, T0.\\
- MANIFESTMEANS & $\tau$ & free & n.manifest $\times$ 1 matrix of manifest means.\\
+ MANIFESTMEANS & $\tau$ & free & n.manifest $\times$ 1 matrix of manifest intercepts.\\
  MANIFESTVAR & $\Theta$ & free & diagonal matrix of var / cov between manifests, specified with standard deviations on diagonal and zeroes elsewhere.\\
  DRIFT & $A$ & free & n.latent $\times$ n.latent matrix of continuous auto and cross effects.\\
  CINT & $b$ & 0 & n.latent $\times$ 1 matrix of continuous intercepts.\\
@@ -304,80 +312,46 @@ The \verb|pars| subobject of the created model object (in this case, \verb|model
 head(model$pars,7)
 @
 
-By default, all free model parameters are set to individually varying, except for the T0VAR parameters used to initialise the latent processes. One may modify the output model to either restrict between subject differences (set some parameters to not vary over individuals), alter the transformation used to set the prior / bounds, or restrict which effects of time independent predictors to estimate. Plotting the original prior, making a change to the transform, and plotting the resulting prior, are shown here -- in this case we will adjust the prior for the auto effect of our first latent process, captured by row 1 and column 1 of the DRIFT matrix, to also allow positive values, implying an explosive process wherein a change in one direction promotes further change in that direction. To achieve this, we change from built in transform 2, denoting an exponential, to 0, denoting no transformation. built-in transforms can be viewed at any point via inputting \verb{ctsem:::tformshapes{. It is beneficial to use these in general to eliminate compilation time, but one can also specify a character string containing custom transformations of the `param' -- for example \verb{'log(1+exp(param))'{ could be used for a positive distribution, though this is also built-in transform number 1. In addition to the transformation field, multiplier, meanscale, and offset can all be used to adjust the transform.  In this case we also set a negative offset because we still believe negative values are more likely for the drift auto-effect.One consideration when altering priors in this manner is that the starting values for sampling are taken from around the middle of the distribution normal. 
-% Rather than simply scaling by 0.2 as shown here, one could also construct a new form of prior, so long as the resulting distribution was within the bounds required for the specific parameter. Note that the resulting distribution is a result of applying the specified transformation to a standard normal distribution, with mean of 0 and standard deviation of 1. To change the underlying standard normal, one would need to edit the resulting Stan code directly.
+By default, intercept related model parameters (T0MEANS, MANIFESTMEANS, CINT) are set to individually varying using a correlated random effects formulation, while other parameters are fixed across subjects. In contrast to this, when time independent predictors are included (time invariant covariates), the default is that they affect all subject level parameters. One may modify the output model to further restrict, or allow, between subject differences (set some parameters to not vary over individuals), alter the transformation used to set the prior / bounds, or restrict which effects of time independent predictors to estimate -- see the section on adjusting model specification for details on this.  
 
-%  of auto effects, based on default transform (left) and user-specified form (right)
 
-<<transform, fig.width=8, fig.height=5,fig.cap="Prior distribution density plots." >>=
-par(mfrow=c(1,2))
-plot(model,rows=7,rawpopsd=1)
-model$pars$transform[7]<- 0
-model$pars$meanscale[7] <- 2
-model$pars$multiplier[7] <- 1
-model$pars$offset[7] <- -1
-plot(model, rows=7,rawpopsd=1)
-@
-
-Figure \ref{fig:transform} shows the prior distribution for the population mean of DRIFT[1,1] in black, as well as two possible priors for the subject level parameters, conditional on our specified raw population standard deviation of $1$. The blue prior results from assuming the population mean is one standard deviation lower than the mean of its prior, and the red one standard deviation higher. 
-
-In addition to adjusting the prior for the population mean, the prior for the extent of individual variation around that mean can also be adjusted. Amongst other circumstances, this prior may need to be reduced when limited time points are available, to ensure adequate regularisation. Here we change the scaling factor of the individual variation for all parameters, from 1.0 to 0.1, and demonstrate the effect of this using the previously adjusted auto effect. In this case, we do not fix the \verb|popsd| when plotting, which now gives the distribution of individual variation over all possible values for the population (pop) sd parameter -- the marginal distribution of Figure \ref{fig:transform2} has a very different shape to the conditional distribution of Figure \ref{fig:transform}, but the effect of the change in \verb|sdscale| parameter could be seen in both cases.
-
-<<transform2, fig.width=8, fig.height=5,fig.cap="Prior distribution density plots of auto-effects, with default (left) and adjusted (right) scale parameter for population standard deviation.">>=
-par(mfrow=c(1,2))
-plot(model,rows=7)
-model$pars$sdscale<- .1
-plot(model, rows=7)
-@
-
-It can be helpful to completely eliminate individual variation in some parameters, particularly since unnecessary between subject effects will slow sampling and hinder appropriate regularization, but be aware of the many parameter dependencies in these models -- restricting one parameter may lead to genuine variation in the restricted parameter expressing itself elsewhere. Here we only allow for individual variation in the DRIFT and MANIFESTMEANS parameters.
-
-<<restrictbetween>>=
-model$pars$indvarying[!(model$pars$matrix %in% c('DRIFT','MANIFESTMEANS'))] <- FALSE
-@
-
-Also similarly restrict which parameters to include time independent predictor effects for. In this case, the only adverse effects of such restrictions are that the relationship between the predictor and variables will not be estimated, but the subject level parameters themselves should not be very different, as they are still freely estimated. Note that such effects can only be estimated for parameters specified as individually varying -- in case one particularly wished to model a covariate effect without allowing for residual variation, this could be approximated by setting the parameter to \verb|indvarying|, but putting a very small \verb|sdscale| value for the parameter. Here, we first restrict the tipredeffects on all parameters, and free them only for the drift parameters.
-
-<<restricttipred>>=
-model$pars[,c('TI1_effect','TI2_effect','TI3_effect')] <- FALSE
-model$pars[model$pars$matrix == 'DRIFT', 
-  c('TI1_effect','TI2_effect','TI3_effect')] <- TRUE
-@
 
 \subsection{Model fitting}
-Once model specification is complete, the model is fit to the data using the \verb|ctStanFit| function as shown in the following example. Depending on the data, model, and number of iterations requested, this can take anywhere from a few minutes to days. Current experience suggests 300 iterations is often enough to get an idea of what is going on, but more may be necessary for robust inference, but this is highly dependent on the specifics. For the sake of speed for this example we only sample for 300 iterations, with a max treedepth of the Hamiltonian sampler reduced from the default of 10 to 6. With these settings the fit should take only a minute or two, but is unlikely adequate for inference!. Those that wish to try out the functions without waiting, can simply use the already existing \verb|ctstantestfit| object with the relevant functions (the code for this is commented out). The dataset specified here is built-in to the ctsem package, and available whenever ctsem is loaded in R. 
+Once model specification is complete, the model is fit to the data using the \verb|ctStanFit| function as shown in the following example. Various options are available for fitting, from a maximum likelihood approach using optimization, to a fully Bayesian approach via Stan's Hamiltonian Monte Carlo sampler. For these examples we will use optimization, though for cases with random effects on non-intercept parameters, or missing time independent predictors, optimization may not always provide appropriate results and should be interpreted with care. 
+
+For a classic maximum likelihood approach, optimization may be used with the argument \verb|nopriors=TRUE| to disable the priors. By default, when optimization concludes, samples are drawn from the parameter covariance matrix implied by the hessian to allow for inference and uncertainty plotting on all aspects of the model (e.g. parameter interactions such as the implied regression effect for a given time interval). Improvements on this maximum a posteriori, hessian based sampling approach can be made by requesting importance sampling (see the \verb|optimfit| argument of the \verb|?ctStanFit| help, which is somewhat slower but generally still much faster than the default sampling approach -- the caveats mentioned above still apply however, and importance sampling may not work well with many parameters. When importance sampling is ineffective, this will be indicated during sampling.  
+
+When \verb|optimize=FALSE| or it is not specified, Stan's Hamiltonian Monte Carlo sampler is used. Depending on the data, model, and number of iterations requested, this can take anywhere from a few minutes to days. Important arguments when using this approach are \verb|chains| and \verb|iterations|, to specify the number of sampling chains and iterations per chain. Three chains is a reasonable minimum to support convergence checking, and current experience suggests 300 iterations is often enough to get an idea of what is going on -- more is very likely necessary for robust inference, but this is highly dependent on the data and model. To examine progress while sampling, the \verb|plot=TRUE| argument may be used.  
+%For the sake of speed for this example we only sample for 300 iterations, with a max treedepth of the Hamiltonian sampler reduced from the default of 10 to 6. With these settings the fit should take only a minute or two, but is unlikely adequate for inference!. Those that wish to try out the functions without waiting, can simply use the already existing \verb|ctstantestfit| object with the relevant functions (the code for this is commented out). The dataset specified here is built-in to the ctsem package, and available whenever ctsem is loaded in R. 
 
 <<fitting,include=FALSE,cache=TRUE>>=
-suppressWarnings(fit<-ctStanFit(datalong = ctstantestdat, ctstanmodel = model, iter=300,
-  control=list(max_treedepth=8),
-  chains=2, plot=FALSE))
-# fit <- ctstantestfit
+suppressWarnings(fit<-ctStanFit(datalong = ctstantestdat, ctstanmodel = model,optimize=TRUE, optimcontrol=list(isloops=5)))
 @
 
 <<fittingshow,include=TRUE,eval=FALSE>>=
-fit<-ctStanFit(datalong = ctstantestdat, ctstanmodel = model, iter=200, 
-  control=list(max_treedepth=6), chains=2, plot=FALSE)
+fit<-ctStanFit(datalong = ctstantestdat, ctstanmodel = model, 
+  optimize=TRUE, optimcontrol=list(isloops=5))
 # fit <- ctstantestfit
 @
-The plot argument allows for plotting of sampling chains in real time, which is useful for slow models to ensure that sampling is proceeding in a functional manner. Models with many parameters (e.g., many subjects and all parameters varying over subject) may be too taxing for the plotting function to handle smoothly - we have had success with up to around 4000 parameters.  
+%The plot argument allows for plotting of sampling chains in real time, which is useful for slow models to ensure that sampling is proceeding in a functional manner. Models with many parameters (e.g., many subjects and all parameters varying over subject) may be too taxing for the plotting function to handle smoothly - we have had success with up to around 4000 parameters.  
 
 \subsection{Summary}
 After fitting, the summary function may be used on the fit object, which returns details regarding the population mean parameters, population standard deviation parameters, population correlations, and the effect parameters of time independent predictors. 
 Additionally, summary outputs a range of matrices regarding correlations between subject level parameters. \verb|rawpopcorr_means| reports the posterior mean of the correlation between raw (not yet transformed from the standard normal scale) parameters. \verb|rawpopcorr_sd| reports the standard deviation of these parameters.  
 
 <<output,eval=FALSE>>=
-summary(fit,timeinterval = 1)
+summary(fit,parmatrices=TRUE, timeinterval = 1)
 @
 
-In the summary output, the free population mean parameters under \verb|$popmeans| are likely one of the main points of interest. They are returned in the same form that they are input to \verb|ctModel| - that is, covariance matrix related parameters are in the form of either standard deviations or a transformed correlation parameter. Because the latter is difficult to interpret, various parameter matrices are also returned in the \verb|$parmatrices| section of the summary. The discrete time matrices reported here (prefixed by \verb|dt|) are by default from a time interval of 1, but this can be changed. Asymptotic matrices -- those for a time interval of infinity -- are also output in some cases, and prefixed by \verb|asym|. Covariance related matrices are reported in covariance form, except where the suffix \verb|cor| is added to indicate correlations. 
+In the summary output, the free population mean parameters under \verb|$popmeans| are likely one of the main points of interest. They are returned in the same form that they are input to \verb|ctModel| - that is, covariance matrix related parameters are in the form of either standard deviations or a transformed correlation parameter. Because the latter is difficult to interpret, various parameter matrices are also returned in the \verb|$parmatrices| section of the summary (when that is requested). The discrete time matrices reported here (prefixed by \verb|dt|) are by default from a time interval of 1, but this can be changed. Asymptotic matrices -- those for a time interval of infinity -- are also output in some cases, and prefixed by \verb|asym|. Covariance related matrices are reported in covariance form, except where the suffix \verb|cor| is added to indicate correlations. 
 
-The function \verb}ctStanContinuousPars} can be used to return the continuous time parameter matrices in actual matrix form, for specific subjects, or groups of subjects. By default the median is calculated, but the function that aggregates over samples can be changed as desired. In the following code, the 97.5\% quantile is returned, for subject 3. 
+The function \verb}ctStanContinuousPars} can be used to return the continuous time parameter matrices in actual matrix form, for specific subjects, groups of subjects, or for the estimated population means. In the following code, the 97.5\% quantile is returned, for subject 3 (leaving the additional arguments out would instead give the population means).
 
 <<ctStanContinuousPars,eval=FALSE>>=
 ctStanContinuousPars(fit,subjects = 3, calcfunc = quantile, calcfuncargs = list(probs=.975))
 @
 
-Note that subject 3 refers to the third subject in the data, not any particular identifier specified in the subject id column. The mapping of subject id to the internal sequential integer representation can be found via \verb|fit$setup$idmap| . If a vector of subjects is specified, or the string \verb|'all'| is used, multiple subjects are aggregated over.
+Note that subject 3 refers to the third subject in the data, not any particular identifier specified in the subject id column. The mapping of subject id to the internal sequential integer representation can be found via \verb|fit$setup$idmap| . If a vector of subjects is specified, or the string \verb|'all'| is used, multiple subjects are aggregated over or the population estimate is returned.
 
 \subsection{Plotting}
 The plot function outputs a sequence of plots, all generated by specific functions. The name of the specific function appears in a message in the R console, checking the help for each specific function and running them separately will allow more customization of plots. Some of the plots, such as the trace, density, and interval, are generated by the relevant rstan function and are hopefully self explanatory. The plots specific to the hierarchical continuous time dynamic model are as follows:
@@ -422,6 +396,48 @@ ctStanTIpredeffects(fit, plot = TRUE, whichpars=c('dtDRIFT','MANIFESTVAR[2,2]'),
 Figure \ref{fig:tipredeffects} shows how the expectation for an individuals parameter value is likely to change depending on the value they have for the time independent predictor specified. In this example, the discrete time drift effects for a time interval of 0.2, as well as the manifest error variance from row 2 column 2 of the MANIFESTVAR matrix, are shown. Of course, the plot for the error variance parameter is simply a flat line, since we did not allow it to vary across subjects. Multiple predictors can be specified, and the combined effect based on observed predictor combinations will be shown, but this will likely make no sense unless there is a deterministic relation between the two -- this can be useful for including linear and quadratic effects, for instance, wherein the first predictor is linear, and the second quadratic. The nsamples and nsubjects parameters specify how many different parameter samples, and predictor values, are used -- higher values take longer to compute, but give smoother / more accurate plots.
 
 \section{Additional details}
+\subsection{Detailed model specification}
+While the defaults are hopefully useful in many cases, they should not be blindly relied upon. 
+Plotting the original prior implied by the model, making a change to the transform, and plotting the resulting prior, are shown here -- in this case we will adjust the prior for the auto effect of our first latent process, captured by row 1 and column 1 of the DRIFT matrix, to also allow positive values, implying an explosive process wherein a change in one direction promotes further change in that direction. To achieve this, we change from built in transform 1, denoting \verb|log(1+(exp(param)))| (which gives a boundary at zero, to 0, denoting no transformation. built-in transforms can be viewed at any point via inputting \verb{ctsem:::tformshapes{. It is beneficial to use these in general to eliminate compilation time, but one can also specify a character string containing custom transformations of the `param' -- for example \verb{'log(1+exp(param))'{ could be used for a positive distribution, though this is also built-in transform number 1. In addition to the transformation field, multiplier, meanscale, and offset can all be used to adjust the transform.  In this case we also set a negative offset because we still believe negative values are more likely for the drift auto-effect.One consideration when altering priors in this manner is that the starting values for sampling are taken from around the middle of the distribution normal. 
+% Rather than simply scaling by 0.2 as shown here, one could also construct a new form of prior, so long as the resulting distribution was within the bounds required for the specific parameter. Note that the resulting distribution is a result of applying the specified transformation to a standard normal distribution, with mean of 0 and standard deviation of 1. To change the underlying standard normal, one would need to edit the resulting Stan code directly.
+
+%  of auto effects, based on default transform (left) and user-specified form (right)
+
+<<transform, fig.width=8, fig.height=5,fig.cap="Prior distribution density plots." >>=
+par(mfrow=c(1,2))
+plot(model,rows=7,rawpopsd=1)
+model$pars$transform[7]<- 0
+model$pars$meanscale[7] <- 2
+model$pars$multiplier[7] <- 1
+model$pars$offset[7] <- -1
+plot(model, rows=7,rawpopsd=1)
+@
+
+Figure \ref{fig:transform} shows the prior distribution for the population mean of DRIFT[1,1] in black, as well as two possible priors for the subject level parameters, conditional on our specified raw population standard deviation of $1$. The blue prior results from assuming the population mean is one standard deviation lower than the mean of its prior, and the red one standard deviation higher. 
+
+In addition to adjusting the prior for the population mean, the prior for the extent of individual variation around that mean can also be adjusted. Amongst other circumstances, this prior may need to be reduced when limited time points are available, to ensure adequate regularisation. Here we change the scaling factor of the individual variation for all parameters, from 1.0 to 0.1, and demonstrate the effect of this using the previously adjusted auto effect. In this case, we do not fix the \verb|popsd| when plotting, which now gives the distribution of individual variation over all possible values for the population (pop) sd parameter -- the marginal distribution of Figure \ref{fig:transform2} has a very different shape to the conditional distribution of Figure \ref{fig:transform}, but the effect of the change in \verb|sdscale| parameter could be seen in both cases.
+
+<<transform2, fig.width=8, fig.height=5,fig.cap="Prior distribution density plots of auto-effects, with default (left) and adjusted (right) scale parameter for population standard deviation.">>=
+par(mfrow=c(1,2))
+plot(model,rows=7)
+model$pars$sdscale<- .1
+plot(model, rows=7)
+@
+
+It can be helpful to completely eliminate individual variation in some parameters, particularly since unnecessary between subject effects will slow sampling and hinder appropriate regularization, but be aware of the many parameter dependencies in these models -- restricting one parameter may lead to genuine variation in the restricted parameter expressing itself elsewhere. Here we only allow for individual variation in the DRIFT and MANIFESTMEANS parameters.
+
+<<restrictbetween>>=
+model$pars$indvarying[!(model$pars$matrix %in% c('DRIFT','MANIFESTMEANS'))] <- FALSE
+@
+
+Also similarly restrict which parameters to include time independent predictor effects for. In this case, the only adverse effects of such restrictions are that the relationship between the predictor and variables will not be estimated, but the subject level parameters themselves should not be very different, as they are still freely estimated. Note that such effects can only be estimated for parameters specified as individually varying -- in case one particularly wished to model a covariate effect without allowing for residual variation, this could be approximated by setting the parameter to \verb|indvarying|, but putting a very small \verb|sdscale| value for the parameter. Here, we first restrict the tipredeffects on all parameters, and free them only for the drift parameters.
+
+<<restricttipred>>=
+model$pars[,c('TI1_effect','TI2_effect','TI3_effect')] <- FALSE
+model$pars[model$pars$matrix == 'DRIFT', 
+  c('TI1_effect','TI2_effect','TI3_effect')] <- TRUE
+@
+
 \subsection{Stationarity}
 When it is reasonable to assume that the prior for long term expectation and variance of the latent states is the same as (or very similar to) the prior for initial expectations and variances, setting some form of stationarity in advance may be beneficial. Three approaches to this are possible.
 The first approach is to give free parameters of the T0VAR or T0MEANS matrix the name \verb{'stationary'{, which can be useful if for instance only the initial variance should be stationary, or just one of the initial variances. Another approach is to set the argument stationary=TRUE to ctStanFit. Specifying this argument then ignores any T0VAR and T0MEANS matrices in the input, instead replacing them with asymptotic expectations based on the DRIFT, DIFFUSION, and CINT matrices.

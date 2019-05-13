@@ -9,6 +9,12 @@ Minimal output from \code{\link{ctStanFit}} from ctsem package.
 }
 \examples{
 \dontrun{#' 
+Tpoints=20
+n.manifest=2
+n.TDpred=1
+n.TIpred=3
+n.latent=2
+n.subjects=5
 checkm<-ctModel(type='stanct',
   n.latent=n.latent,n.TDpred=n.TDpred,n.TIpred=n.TIpred,
   MANIFESTVAR=matrix(c('merror',0,0,'merror'),2,2),

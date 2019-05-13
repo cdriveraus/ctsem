@@ -11,34 +11,36 @@
 #'
 #' @examples
 #' \dontrun{
-#' stan_checkdivergences(myfitobj)
+#' library(rstan)
+#' scode <- "
+#' parameters {
+#'   real y[2]; 
+#' } 
+#' model {
+#'   y[1] ~ normal(0, 1);
+#'   y[2] ~ double_exponential(0, y[1]);
+#' } 
+#' "
+#' fit1 <- stan(model_code = scode, iter = 10) 
+#' stan_checkdivergences(fit1)
 #' }
-stan_checkdivergences <- function(sf,nupars = 'all'){
+stan_checkdivergences <- function(sf,nupars = 'all', standata=NULL){
 
 samplerps <- get_sampler_params(sf)
-skeleton <- get_inits(sf)[[1L]]
 if('all' %in% nupars) nupars <- get_num_upars(sf)
 e <- extract(sf)
 ea <- as.array(sf) #[,,1:nupars]
 
 ucsnames <- dimnames(ea)$parameters[1:nupars]
 
-#unconstrain pars into iter * chain * par array
-ucs <- array(NA,dim=c(dim(ea)[c(1,2)],nupars))
-for(i in 1:dim(ea)[1]){
-  for(j in 1:dim(ea)[2]){
-    ucs[i,j,] <-  unconstrain_pars(sf,  utils::relist(ea[i,j,],skeleton))[1:nupars]
-  }}
-
-#forget chains
-ucs2 <- matrix(ucs,nrow=prod(dim(ucs)[c(1,2)]), ncol=dim(ucs)[3])
+ucs2 <- aperm(stan_unconstrainsamples(sf),c(2,1))
 
 #get divergences
 dvg <- unlist(lapply(samplerps, function(x) x[(nrow(x)-dim(ea)[1]+1):nrow(x),'divergent__'])) 
 
 #seperate samples into diverging and not
-ucsbad <- ucs2[dvg==1,]
-ucsgood <- ucs2[dvg==0,]
+ucsbad <- ucs2[dvg==1,,drop=FALSE]
+ucsgood <- ucs2[dvg==0,,drop=FALSE]
 
 #calculate bivariate summary stats
 ints <- matrix(NA,nrow=6, ncol= (ncol(ucs2)^2-ncol(ucs2))/2)

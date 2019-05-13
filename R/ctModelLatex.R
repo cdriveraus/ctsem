@@ -5,12 +5,13 @@
 #' tiny scriptsize footnotesize small normalsize large Large LARGE huge Huge. 
 #' Useful if output overflows page. 
 #' @param filename filename, without suffix, to output .tex and .pdf files too.
-#' @param folder Character string specifying folder to save to, defaults to working directory.
+#' @param folder Character string specifying folder to save to, defaults to temporary directory, use "./" for working directory.
 #' @param tex Save .tex file? Otherwise latex is simply returned within R as a string.
+#' @param equationOnly Logical. If TRUE, output is only the latex relevant to the equation, not a compileable document.
 #' @param compile Compile to .pdf? (Depends on \code{tex = TRUE}) 
 #' @param open Open after compiling? (Depends on \code{compile = TRUE})
 #'
-#' @return character string of latex code. Side effects include saving a .tex, .pdf, and displaying the pdf.
+#' @return character string of latex code. Side effects include saving a .tex, .pdf, and displaying the pdf. 
 #' @export
 #' @importFrom tools texi2pdf
 #'
@@ -29,10 +30,10 @@
 #'   
 #' l=ctModelLatex(ctmodel,folder=tempdir(),filename="ctsemTex")
 #' cat(l)
-ctModelLatex<- function(ctmodel,textsize='normalsize',folder='./',filename='ctsemTex',tex=TRUE, compile=TRUE, open=TRUE){
+ctModelLatex<- function(ctmodel,textsize='normalsize',folder=tempdir(),filename='ctsemTex',tex=TRUE, equationonly=FALSE, compile=TRUE, open=TRUE){
   
   if(class(ctmodel) == 'ctStanModel') ctmodel <- c(ctmodel,listOfMatrices(ctmodel$pars)) else if(class(ctmodel) != 'ctsemInit') stop('not a ctsem model!')
-  
+  if(equationonly) compile <- FALSE
   bmatrix = function(x, digits=NULL,nottext=FALSE, ...) {
     if(!is.null(x)){
       if(!nottext){
@@ -67,14 +68,16 @@ ctModelLatex<- function(ctmodel,textsize='normalsize',folder='./',filename='ctse
   W <- diag(0,ctmodel$n.latent)
   diag(W) <- 'u'
   
-  out <- paste0(" 
+  out <- ifelse(equationonly,"","
 \\documentclass[a4paper,landscape]{report}
 \\usepackage[margin=1cm]{geometry}
 \\usepackage{amsmath} %for multiple line equations
 \\usepackage{bm}
 \\newcommand{\\vect}[1]{\\boldsymbol{\\mathbf{#1}}}
 
-\\begin{document}
+\\begin{document}")
+  
+  out <- paste0(out, "
 \\setcounter{MaxMatrixCols}{200}
  \\begin{",textsize,"}
   \\begin{align*}
@@ -133,7 +136,9 @@ ctModelLatex<- function(ctmodel,textsize='normalsize',folder='./',filename='ctse
               &\\underbrace{",bmatrix(ctmodel$PARS),"}_\\textrm{PARS}")),"
       \\end{align*}
       \\end{",textsize,"}
-   \\end{document}")
+      ")
+  
+  if(!equationonly) out <- paste0(out, "\\end{document}")
   
   openPDF <- function(f) {
     os <- .Platform$OS.type

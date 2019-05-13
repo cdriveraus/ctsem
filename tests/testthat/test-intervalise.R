@@ -16,7 +16,8 @@ test_that("intervals", {
                         n.TDpred = 1, n.TIpred = 2, manifestNames = c("Y1", "Y2", "Y3"),
                         TDpredNames = "TD1", TIpredNames = c("TI1", "TI2") )
   
-  dt <- matrix(c(.89, .53, .001, .210), nrow=2,ncol=2,
-            ,dimnames = list(c("1", "2"), c("dT1", "dT2")))
+  dt <- matrix(t(diff(t(wideexample[,paste0('T',0:2)]))), nrow=2,ncol=2,
+            dimnames = list(c("1", "2"), c("dT1", "dT2")))
+  dt[1,2] = .001
   expect_equal(wide[,c('dT1','dT2')], dt)
 })

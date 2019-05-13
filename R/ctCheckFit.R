@@ -119,7 +119,7 @@ ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
 #' traitmodel <- ctModel(n.manifest=2, n.latent=2, Tpoints=6, LAMBDA=diag(2), 
 #'   manifestNames=c('LeisureTime', 'Happiness'), 
 #'   latentNames=c('LeisureTime', 'Happiness'), TRAITVAR="auto")
-#' traitfit <- ctFit(datawide=ctExample1, ctmodelobj=traitmodel)
+#' traitfit <- ctFit(dat=ctExample1, ctmodelobj=traitmodel)
 #' 
 #' check <- ctCheckFit(traitfit,niter=5)
 #' plot(check)

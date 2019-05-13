@@ -4,8 +4,9 @@
 \alias{ctModelLatex}
 \title{Generate and optionally compile latex equation of subject level ctsem model.}
 \usage{
-ctModelLatex(ctmodel, textsize = "normalsize", folder = "./",
-  filename = "ctsemTex", tex = TRUE, compile = TRUE, open = TRUE)
+ctModelLatex(ctmodel, textsize = "normalsize", folder = tempdir(),
+  filename = "ctsemTex", tex = TRUE, equationonly = FALSE,
+  compile = TRUE, open = TRUE)
 }
 \arguments{
 \item{ctmodel}{ctsem model object}
@@ -14,7 +15,7 @@ ctModelLatex(ctmodel, textsize = "normalsize", folder = "./",
 tiny scriptsize footnotesize small normalsize large Large LARGE huge Huge. 
 Useful if output overflows page.}
 
-\item{folder}{Character string specifying folder to save to, defaults to working directory.}
+\item{folder}{Character string specifying folder to save to, defaults to temporary directory, use "./" for working directory.}
 
 \item{filename}{filename, without suffix, to output .tex and .pdf files too.}
 
@@ -23,6 +24,8 @@ Useful if output overflows page.}
 \item{compile}{Compile to .pdf? (Depends on \code{tex = TRUE})}
 
 \item{open}{Open after compiling? (Depends on \code{compile = TRUE})}
+
+\item{equationOnly}{Logical. If TRUE, output is only the latex relevant to the equation, not a compileable document.}
 }
 \value{
 character string of latex code. Side effects include saving a .tex, .pdf, and displaying the pdf.
