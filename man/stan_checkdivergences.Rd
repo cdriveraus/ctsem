@@ -4,7 +4,7 @@
 \alias{stan_checkdivergences}
 \title{Analyse divergences in a stanfit object}
 \usage{
-stan_checkdivergences(sf, nupars = "all", standata = NULL)
+stan_checkdivergences(sf, nupars = "all")
 }
 \arguments{
 \item{sf}{stanfit object.}

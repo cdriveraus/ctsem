@@ -7,7 +7,7 @@
 #' @param filename filename, without suffix, to output .tex and .pdf files too.
 #' @param folder Character string specifying folder to save to, defaults to temporary directory, use "./" for working directory.
 #' @param tex Save .tex file? Otherwise latex is simply returned within R as a string.
-#' @param equationOnly Logical. If TRUE, output is only the latex relevant to the equation, not a compileable document.
+#' @param equationonly Logical. If TRUE, output is only the latex relevant to the equation, not a compileable document.
 #' @param compile Compile to .pdf? (Depends on \code{tex = TRUE}) 
 #' @param open Open after compiling? (Depends on \code{compile = TRUE})
 #'

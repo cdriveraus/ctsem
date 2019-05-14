@@ -21,11 +21,11 @@ Useful if output overflows page.}
 
 \item{tex}{Save .tex file? Otherwise latex is simply returned within R as a string.}
 
+\item{equationonly}{Logical. If TRUE, output is only the latex relevant to the equation, not a compileable document.}
+
 \item{compile}{Compile to .pdf? (Depends on \code{tex = TRUE})}
 
 \item{open}{Open after compiling? (Depends on \code{compile = TRUE})}
-
-\item{equationOnly}{Logical. If TRUE, output is only the latex relevant to the equation, not a compileable document.}
 }
 \value{
 character string of latex code. Side effects include saving a .tex, .pdf, and displaying the pdf.

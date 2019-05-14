@@ -29,6 +29,7 @@
 #' @export
 #'
 #' @examples
+#' \dontrun{
 #'  sunspots<-sunspot.year
 #'  sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
 #'  id <- 1
@@ -57,6 +58,7 @@
 #' 
 #' #output
 #' summary(ssfit)
+#' }
 optimstan <- function(standata, sm, init='random',sampleinit=NA,
   deoptim=FALSE, estonly=FALSE,tol=1e-12,
   decontrol=list(),

@@ -24,7 +24,7 @@
 #' fit1 <- stan(model_code = scode, iter = 10) 
 #' stan_checkdivergences(fit1)
 #' }
-stan_checkdivergences <- function(sf,nupars = 'all', standata=NULL){
+stan_checkdivergences <- function(sf,nupars = 'all'){
 
 samplerps <- get_sampler_params(sf)
 if('all' %in% nupars) nupars <- get_num_upars(sf)
