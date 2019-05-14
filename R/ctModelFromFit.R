@@ -14,7 +14,7 @@
 #' 
 #' fitmodel <- ctModelFromFit(AnomAuthfit)
 ctModelFromFit <- function(fit){
-  
+  if(class(fit)!='ctsemFit') stop('not a ctsemFit object')
   s=summary(fit,verbose=TRUE)
   gm=fit$ctmodelobj
   

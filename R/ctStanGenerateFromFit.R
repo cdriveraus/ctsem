@@ -1,12 +1,10 @@
-#' Add a $generated object to ctstanfit object, with random data generated from posterior of ctstanfit object
+#' Add a \code{$generated} object to ctstanfit object, with random data generated from posterior of ctstanfit object
 #'
 #' @param fit ctstanfit object
 #' @param nsamples Positive integer specifying number of datasets to generate. 
 #' @param fullposterior Logical indicating whether to sample from the full posterior (original nsamples) or the posterior mean.
-#'
 #' @return Matrix of generated data -- one dataset per iteration, according to original time and missingness structure.
 #' @export
-#'
 #' @examples
 #' \dontrun{
 #' gen <- ctStanGenerateFromFit(ctstantestfit, nsamples=3,fullposterior=TRUE)
