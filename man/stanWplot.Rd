@@ -19,7 +19,7 @@ stanWplot(object, iter = 2000, chains = 4, ...)
 Runs stan, and plots sampling information while sampling.
 }
 \examples{
-\dontrun{
+\donttest{
 #### example 1 
 scode <- "
 parameters {

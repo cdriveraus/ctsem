@@ -39,7 +39,7 @@ may be simpler in many cases to access those directly. They are:
  other options.
 }
 \examples{
-\dontrun{
+\donttest{
 plot(ctstantestfit,types=c('regression','kalman','priorcheck'), wait=FALSE)
 
 #### example plot using rstan functions

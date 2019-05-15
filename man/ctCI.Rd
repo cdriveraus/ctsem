@@ -30,8 +30,8 @@ If estimating for a multigroup model, specify confidence intervals as normal, e.
 The necessary group prefixes are added internally.
 }
 \examples{
-## Examples set to 'dontrun' because they take longer than 5s.
-\dontrun{
+## Examples set to 'donttest' because they take longer than 5s.
+\donttest{
 data("ctExample3")
 model <- ctModel(n.latent = 1, n.manifest = 3, Tpoints = 100, 
  LAMBDA = matrix(c(1, "lambda2", "lambda3"), nrow = 3, ncol = 1), 

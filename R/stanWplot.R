@@ -7,7 +7,7 @@
 #' @export
 #' @importFrom shiny runApp 
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' #### example 1 
 #' scode <- "
 #' parameters {

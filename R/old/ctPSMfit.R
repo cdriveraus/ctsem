@@ -9,9 +9,9 @@
 #' @param ... Additional parameters to pass to PSM.#'
 #' @return PSM fit data
 #' @examples
-#' ## Examples set to 'dontrun' because they take longer than 5s. 
+#' ## Examples set to 'donttest' because they take longer than 5s. 
 #' 
-#' \dontrun{
+#' \donttest{
 #' generatingModel <- ctModel(n.latent = 1, n.manifest = 1, Tpoints = 10,
 #' LAMBDA = diag(1), DRIFT = matrix(-.3, nrow = 1),
 #' MANIFESTVAR = diag(1),

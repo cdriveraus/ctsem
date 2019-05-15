@@ -8,7 +8,7 @@
 #' @export
 #'
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' umat <- stan_unconstrainsamples(ctstantestfit$stanfit, ctstantestfit$standata)
 #' }
 stan_unconstrainsamples <- function(fit, standata=NA){

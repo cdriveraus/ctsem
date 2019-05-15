@@ -11,7 +11,7 @@ and absolute timing information Time.}
 Simulated example dataset for the ctsem package
 }
 \examples{
-\dontrun{
+\donttest{
 #long example (using datastructure base)
 Tpoints=30
 testm<-ctModel(Tpoints=Tpoints,n.latent=1,n.TDpred=1,n.TIpred=2,n.manifest=3,    

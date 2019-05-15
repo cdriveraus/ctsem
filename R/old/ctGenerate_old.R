@@ -29,9 +29,9 @@
 #'
 #' data<-ctGenerate(generatingModel,n.subjects=150,burnin=500)
 #'
-#' ## Further examples set to 'dontrun' because they take longer than 5s. 
+#' ## Further examples set to 'donttest' because they take longer than 5s. 
 #' 
-#' \dontrun{
+#' \donttest{
 #' ctIndplot(data,n.manifest=2,Tpoints=4,n.subjects=10)
 #'
 #' model<-ctModel(Tpoints=8, TRAITVAR='auto', n.latent=2,

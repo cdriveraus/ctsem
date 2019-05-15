@@ -29,7 +29,7 @@ List containing summary items.
 Summarise a ctStanFit object that was fit using \code{\link{ctStanFit}}.
 }
 \examples{
-\dontrun{
+\donttest{
 summary(ctstantestfit)
 }
 }

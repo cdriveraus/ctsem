@@ -28,7 +28,7 @@ If \code{plot=TRUE}, nothing, otherwise an array that can be used with ctPlotArr
 Plot marginal relationships between covariates and parameters for a ctStanFit object.
 }
 \examples{
-\dontrun{
+\donttest{
 ctStanTIpredMarginal(ctstantestfit,pars='CINT',tipred=3)
 }
 }

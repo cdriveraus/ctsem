@@ -8,7 +8,7 @@
 Generated dataset for testing \code{\link{ctStanFit}} from ctsem package.
 }
 \examples{
-\dontrun{
+\donttest{
 Tpoints=20
 n.manifest=2
 n.TDpred=1

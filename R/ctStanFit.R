@@ -188,7 +188,7 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
 #' @importFrom Rcpp evalCpp
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' #test data with 2 manifest indicators measuring 1 latent process each, 
 #' # 1 time dependent predictor, 3 time independent predictors
 #' head(ctstantestdat) 
@@ -214,8 +214,8 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
 #' 
 #' plot(fit,wait=FALSE)
 #' 
-#' 
-#' 
+#' }
+#' \dontrun{
 #' ###### EXTENDED EXAMPLES #######
 #' 
 #' 

@@ -40,9 +40,9 @@ covariance matrix standard errors will have been approximated using the delta me
 inferential purposes, maximum likelihood confidence intervals may be estimated using the \code{\link{ctCI}} function.
 }
 \examples{
-## Examples set to 'dontrun' because they take longer than 5s. 
+## Examples set to 'donttest' because they take longer than 5s. 
 
-\dontrun{
+\donttest{
 ### example from Driver, Oud, Voelkle (2015), 
 ### simulated happiness and leisure time with unobserved heterogeneity.
 data(ctExample1)

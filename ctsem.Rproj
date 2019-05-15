@@ -15,9 +15,9 @@ LaTeX: pdfLaTeX
 AutoAppendNewline: Yes
 
 BuildType: Package
-PackageUseDevtools: Yes
 PackageInstallArgs: --no-multiarch --with-keep.source
-PackageBuildArgs: --resave-data --compact-vignettes=gs+qpdf --no-build-vignettes
-PackageBuildBinaryArgs: --no-multiarch
-PackageCheckArgs: --no-multiarch
+PackageBuildArgs: --compact-vignettes="gs+qpdf"
+PackageCheckArgs: --as-cran --compact-vignettes="gs+qpdf" --no-build-vignettes
 PackageRoxygenize: rd,collate,namespace
+
+QuitChildProcessesOnExit: Yes

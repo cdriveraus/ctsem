@@ -24,7 +24,7 @@ and "cor" refers to correlations.
 Returns population system matrices from a ctStanFit object, and vector of values for free parameters.
 }
 \examples{
-\dontrun{
+\donttest{
 ctStanParMatrices(ctstantestfit,rnorm(17,0,.1))
 }
 }

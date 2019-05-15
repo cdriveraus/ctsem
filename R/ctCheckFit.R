@@ -9,7 +9,7 @@
 #' @export
 #'
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' data(ctExample1)
 #' traitmodel <- ctModel(n.manifest=2, n.latent=2, Tpoints=6, LAMBDA=diag(2), 
 #'   manifestNames=c('LeisureTime', 'Happiness'), 
@@ -114,7 +114,7 @@ ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
 #' @method plot ctsemFitMeasure
 #'
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' data(ctExample1)
 #' traitmodel <- ctModel(n.manifest=2, n.latent=2, Tpoints=6, LAMBDA=diag(2), 
 #'   manifestNames=c('LeisureTime', 'Happiness'), 

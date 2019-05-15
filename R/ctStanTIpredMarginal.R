@@ -12,7 +12,7 @@
 #' @export
 #'
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctStanTIpredMarginal(ctstantestfit,pars='CINT',tipred=3)
 #' }
 ctStanTIpredMarginal<-function(fit,tipred,pars,probs=c(.025,.5,.975),useimputed=TRUE, plot=TRUE){

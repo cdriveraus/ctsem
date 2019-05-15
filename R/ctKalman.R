@@ -25,7 +25,7 @@
 #' are returned in a row * column * time array. 
 #' If plot=TRUE, nothing is returned but a plot is generated.
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' #Basic
 #' ctKalman(ctstantestfit, timerange=c(0,60), timestep=.5, plot=TRUE)
 #' 

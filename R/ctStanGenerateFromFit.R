@@ -6,7 +6,7 @@
 #' @return Matrix of generated data -- one dataset per iteration, according to original time and missingness structure.
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' gen <- ctStanGenerateFromFit(ctstantestfit, nsamples=3,fullposterior=TRUE)
 #' plot(gen$generated$Y[,3,2],type='l') #Third random data sample, 2nd manifest var, all time points. 
 #' }

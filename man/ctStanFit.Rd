@@ -108,7 +108,7 @@ Fits a ctsem model specified via \code{\link{ctModel}} with type either 'stanct'
 Stan.
 }
 \examples{
-\dontrun{
+\donttest{
 #test data with 2 manifest indicators measuring 1 latent process each, 
 # 1 time dependent predictor, 3 time independent predictors
 head(ctstantestdat) 
@@ -134,8 +134,8 @@ summary(fit)
 
 plot(fit,wait=FALSE)
 
-
-
+}
+\dontrun{
 ###### EXTENDED EXAMPLES #######
 
 

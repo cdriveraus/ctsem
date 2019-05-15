@@ -27,7 +27,7 @@
 #' may be estimated afer fitting using \code{\link{ctCI}}.
 #' 
 #' @examples 
-#' \dontrun{
+#' \donttest{
 #' 
 #' #Two group model, all parameters except LAMBDA[3,1] constrained across groups.
 #' data(ctExample4)

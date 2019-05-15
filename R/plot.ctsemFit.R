@@ -54,11 +54,11 @@ plot.ctsemMultigroupFit<-function(x,group='show chooser',...){
 #' @return Nothing. Side-effect: plots graphs.
 #' @method plot ctsemFit
 #' @examples 
-#' ## Examples set to 'dontrun' because they take longer than 5s.
+#' ## Examples set to 'donttest' because they take longer than 5s.
 #' 
 #' ### example from Driver, Oud, Voelkle (2015), 
 #' ### simulated happiness and leisure time with unobserved heterogeneity.
-#' \dontrun{
+#' \donttest{
 #' data(ctExample1)
 #' traitmodel <- ctModel(n.manifest=2, n.latent=2, Tpoints=6, LAMBDA=diag(2), 
 #'   manifestNames=c('LeisureTime', 'Happiness'), 
@@ -478,11 +478,11 @@ plot.ctsemFit<-function(x,resolution=50,wait=TRUE,max.time="auto",mean=TRUE,
 #' @param ... Other options passed to \code{plot()}. ylim is required.
 #' @return Character vector of labels from the DRIFT matrix in order plotted - useful for legends. Side-effect: plots graphs.
 #' @examples 
-#' ## Examples set to 'dontrun' because they take longer than 5s.
+#' ## Examples set to 'donttest' because they take longer than 5s.
 #' 
 #' ### example from Driver, Oud, Voelkle (2016), 
 #' ### simulated happiness and leisure time with unobserved heterogeneity.
-#' \dontrun{
+#' \donttest{
 #' data(ctExample1)
 #' traitmodel <- ctModel(n.manifest=2, n.latent=2, Tpoints=6, LAMBDA=diag(2), 
 #'   manifestNames=c('LeisureTime', 'Happiness'), 

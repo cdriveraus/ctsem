@@ -27,7 +27,7 @@ Nothing, just plots.
 Misspecification plot using ctCheckFit output
 }
 \examples{
-\dontrun{
+\donttest{
 data(ctExample1)
 traitmodel <- ctModel(n.manifest=2, n.latent=2, Tpoints=6, LAMBDA=diag(2), 
   manifestNames=c('LeisureTime', 'Happiness'), 

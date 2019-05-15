@@ -6,7 +6,7 @@
 #' @export
 #'
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' #get data
 #' sunspots<-sunspot.year
 #' sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]

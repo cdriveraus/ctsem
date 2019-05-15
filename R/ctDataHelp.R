@@ -37,7 +37,7 @@ NULL
 #' and 7 measurement intervals for each of 50 individuals.
 #' @name ctExample2
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' #two process, one time dependent predictor example
 #' Tpoints=20
 #' manifestNames<-c('LeisureTime','Happiness')
@@ -85,7 +85,7 @@ NULL
 #' Y1, Y2, Y3, and 19 measurement intervals dTx, for each of 20 individuals.
 #' @name ctExample4
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' Tpoints=20
 #' subjects=20
 #' full<-c()
@@ -141,7 +141,7 @@ NULL
 #' TI1 and TI2, for 2 individuals.
 #' @name datastructure
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' Tpoints=30
 #' testm<-ctModel(Tpoints=Tpoints,n.latent=1,n.TDpred=1,n.TIpred=2,n.manifest=3,    
 #'   LAMBDA=matrix(1,ncol=1,nrow=3),
@@ -177,7 +177,7 @@ NULL
 #' and absolute timing information Time.
 #' @name longexample
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' #long example (using datastructure base)
 #' Tpoints=30
 #' testm<-ctModel(Tpoints=Tpoints,n.latent=1,n.TDpred=1,n.TIpred=2,n.manifest=3,    
@@ -207,7 +207,7 @@ NULL
 #' @format matrix
 #' @name ctstantestdat
 #' @examples 
-#' \dontrun{
+#' \donttest{
 #' Tpoints=20
 #' n.manifest=2
 #' n.TDpred=1
@@ -248,7 +248,7 @@ NULL
 #' @format stanfit class.
 #' @name ctstantestfit
 #' @examples 
-#' \dontrun{#' 
+#' \donttest{#' 
 #' Tpoints=20
 #' n.manifest=2
 #' n.TDpred=1

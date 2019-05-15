@@ -12,7 +12,7 @@ TI1 and TI2, for 2 individuals.}
 Simulated example dataset for the ctsem package
 }
 \examples{
-\dontrun{
+\donttest{
 Tpoints=30
 testm<-ctModel(Tpoints=Tpoints,n.latent=1,n.TDpred=1,n.TIpred=2,n.manifest=3,    
   LAMBDA=matrix(1,ncol=1,nrow=3),

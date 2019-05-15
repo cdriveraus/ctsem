@@ -23,7 +23,7 @@
 #' @export
 #'
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' input<-ctStanTIpredeffects(ctstantestfit, plot=FALSE, whichpars='CINT', 
 #'  nsamples=10,nsubjects=10)
 #'     

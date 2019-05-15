@@ -43,7 +43,7 @@ with covariances, for specific subjects from data fit with \code{\link{ctStanFit
 based on medians of parameter distribution.
 }
 \examples{
-\dontrun{
+\donttest{
 #Basic
 ctKalman(ctstantestfit, timerange=c(0,60), timestep=.5, plot=TRUE)
 

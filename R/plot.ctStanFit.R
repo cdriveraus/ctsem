@@ -24,7 +24,7 @@
 #' @aliases ctStanPlot plot.ctStanFit
 #' @method plot ctStanFit
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' plot(ctstantestfit,types=c('regression','kalman','priorcheck'), wait=FALSE)
 #' 
 #' #### example plot using rstan functions

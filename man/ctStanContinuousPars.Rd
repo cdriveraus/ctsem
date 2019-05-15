@@ -28,7 +28,7 @@ the probs argument is needed to ensure only a single value is returned.}
 Returns the continuous time parameter matrices for specified subjects of a ctStanFit fit object
 }
 \examples{
-\dontrun{
+\donttest{
 #posterior median over all subjects (also reflects mean of unconstrained pars)
 ctStanContinuousPars(ctstantestfit)
 

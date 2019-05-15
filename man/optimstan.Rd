@@ -56,7 +56,7 @@ ctStanFit object
 Optimize / importance sample a stan or ctStan model.
 }
 \examples{
-\dontrun{
+\donttest{
  sunspots<-sunspot.year
  sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
  id <- 1

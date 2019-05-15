@@ -21,7 +21,7 @@ $locationmeans and $sdmeans collapse across the bivariate interactions to return
 Analyse divergences in a stanfit object
 }
 \examples{
-\dontrun{
+\donttest{
 library(rstan)
 scode <- "
 parameters {

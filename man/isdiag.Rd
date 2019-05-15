@@ -16,7 +16,7 @@ Nothing. Plots convergence of parameter mean estimates from initial Hessian base
 Diagnostics for ctsem importance sampling
 }
 \examples{
-\dontrun{
+\donttest{
 #get data
 sunspots<-sunspot.year
 sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]

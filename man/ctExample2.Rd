@@ -11,7 +11,7 @@ and 7 measurement intervals for each of 50 individuals.}
 Simulated example dataset for the ctsem package
 }
 \examples{
-\dontrun{
+\donttest{
 #two process, one time dependent predictor example
 Tpoints=20
 manifestNames<-c('LeisureTime','Happiness')

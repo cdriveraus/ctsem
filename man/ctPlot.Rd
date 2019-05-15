@@ -44,11 +44,11 @@ Plots mean trajectories, autoregression, and crossregression plots, for ctsemFit
 More customizeable than basic plot.ctsemFit function.
 }
 \examples{
-## Examples set to 'dontrun' because they take longer than 5s.
+## Examples set to 'donttest' because they take longer than 5s.
 
 ### example from Driver, Oud, Voelkle (2016), 
 ### simulated happiness and leisure time with unobserved heterogeneity.
-\dontrun{
+\donttest{
 data(ctExample1)
 traitmodel <- ctModel(n.manifest=2, n.latent=2, Tpoints=6, LAMBDA=diag(2), 
   manifestNames=c('LeisureTime', 'Happiness'), 
