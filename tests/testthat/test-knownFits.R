@@ -1,9 +1,10 @@
+if(Sys.getenv("NOT_CRAN")==TRUE & .Machine$sizeof.pointer != 4){
 library(ctsem)
 library(testthat)
 
 context("knownFits")
 
-
+message(Sys.getenv("NOT_CRAN"))
 
 #anomauth
 test_that("anomauth", {
@@ -93,3 +94,5 @@ if( .Machine$sizeof.pointer != 4){
 }
 
 })
+
+}

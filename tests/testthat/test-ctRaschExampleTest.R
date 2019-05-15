@@ -1,3 +1,4 @@
+if(Sys.getenv("NOT_CRAN")==TRUE & .Machine$sizeof.pointer != 4){
 library(ctsem)
 library(testthat)
 
@@ -51,3 +52,5 @@ print( runtime <- Sys.time() - start )
 summary( r )
 
 })
+
+}

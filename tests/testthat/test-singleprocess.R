@@ -8,7 +8,7 @@ test_that("time calc", {
 set.seed(4)
 Tpoints<-10
 n.manifest=1
-nsubjects=60
+nsubjects=20
 n.latent=1
 burnin=4
 

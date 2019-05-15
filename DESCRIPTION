@@ -7,16 +7,21 @@ Authors@R: c(person("Charles", "Driver", role =
     c("aut","cre","cph"),email="driver@mpib-berlin.mpg.de"),
     person("Manuel", "Voelkle", role = c("aut","cph")),
     person("Han", "Oud", role = c("aut","cph") ))
-Description: A hierarchical, multivariate, continuous (and discrete) time dynamic modelling
-    package for panel and time series data, using stochastic differential
-    equations. Contains a faster frequentist set of functions using OpenMx for
-    single subject and mixed-effects (random intercepts only) structural
-    equation models, or a hierarchical Bayesian implementation using Stan that
-    allows for random effects and non-linearity over all model parameters. 
-    Allows for modelling of multiple noisy measurements of multiple stochastic 
-    processes, time varying input / event covariates, and time invariant 
-    covariates used to predict the parameters. Bayesian formulation not available on 
-    32 bit Windows systems.
+Description: Hierarchical continuous time state space modelling, for linear
+    and nonlinear systems measured by  continuous variables, with limited support for 
+    binary data. The subject specific dynamic system is modelled as a stochastic 
+    differential equation (SDE), measurement models are typically multivariate normal factor models. 
+    Using the original ctsem formulation based on OpenMx, described in the JSS paper 
+    "Continuous Time Structural Equation Modeling with R Package ctsem", with updated version
+    as CRAN vignette <https://cran.r-project.org/web/packages/ctsem/vignettes/ctsem.pdf> ,
+    linear mixed effects SDE's estimated via maximum likelihood and optimization are possible.
+    Using the Stan based formulation, described in <https://www.researchgate.net/publication/310747987_Introduction_to_Hierarchical_Continuous_Time_Dynamic_Modelling_With_ctsem> , 
+    nonlinearity (state dependent parameters) and random effects on all parameters
+    are possible, using either optimization (with optional importance sampling) or
+    Stan's Hamiltonian Monte Carlo sampling. Priors may be used. For the conceptual
+    overview of the hierarchical Bayesian linear SDE approach, see <https://www.researchgate.net/publication/324093594_Hierarchical_Bayesian_Continuous_Time_Dynamic_Modeling>.
+    Exogenous inputs may also be included, for an overview of such possibilities see <https://www.researchgate.net/publication/328221807_Understanding_the_Time_Course_of_Interventions_with_Continuous_Time_Dynamic_Models> .
+    Stan based functions are not available on 32 bit Windows systems at present.
 License: GPL-3
 Depends:
     R (>= 3.5.0), 
@@ -52,6 +57,7 @@ SystemRequirements: GNU make
 NeedsCompilation: yes
 Suggests:
     knitr,
-    testthat
+    testthat,
+    devtools
 VignetteBuilder: knitr
 RoxygenNote: 6.1.1

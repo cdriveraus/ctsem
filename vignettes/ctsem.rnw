@@ -20,7 +20,7 @@ Manuel C. Voelkle \\ Humboldt University Berlin \\ Max Planck Institute for Huma
 \Shorttitle{Continuous Time Structural Equation Modelling With \pkg{ctsem}} %% a short title (if necessary)
 
 \Abstract{
-Note: This paper introduces the frequentist, maximum likelihood based form of ctsem. For the Bayesian implementation, see \href{http://www.researchgate.net/publication/310747801_Hierarchical_Bayesian_Continuous_Time_Dynamic_Modeling}{Hierarchical Bayesian Continuous Time Dynamic Modelling} and \href{http://cran.r-project.org/web/packages/ctsem/vignettes/hierarchical.pdf}{Introduction to Hierarchical Continuous Time Dynamic Modelling With ctsem}. 
+Note: This paper introduces version 1 of ctsem, for mixed effects maximum likelihood based inference of linear continuous time dynamic systems, using OpenMx in the background. For discussion of the newer Stan based implementation, allowing for full random effects, Bayesian and frequentist estimation, and nonlinearities, see \href{http://www.researchgate.net/publication/310747801_Hierarchical_Bayesian_Continuous_Time_Dynamic_Modeling}{Hierarchical Bayesian Continuous Time Dynamic Modelling} for the conceptual overview and \href{https://www.researchgate.net/publication/310747987_Introduction_to_Hierarchical_Continuous_Time_Dynamic_Modelling_With_ctsem}{Introduction to Hierarchical Continuous Time Dynamic Modelling With ctsem} for the software details. Discussion within this current paper may still be helpful in either case.
 
 We introduce \pkg{ctsem} \citep{driver2017continuous}, an \proglang{R} package for continuous time structural equation modelling of panel (\textit{N} > 1) and time series (\textit{N} = 1) data using full information maximum likelihood. Most dynamic models (e.g., cross-lagged panel models) in the social and behavioural sciences are discrete time models. An assumption of discrete time models is that time intervals between measurements are equal, and that all subjects were assessed at the same intervals. Violations of this assumption are often ignored due to the difficulty of accounting for varying time intervals, therefore parameter estimates can be biased and the time course of effects becomes ambiguous. By using stochastic differential equations to estimate an underlying continuous process, continuous time models allow for any pattern of measurement occasions. By interfacing to \pkg{OpenMx}, \pkg{ctsem} combines the flexible specification of structural equation models with the enhanced data gathering opportunities and improved estimation of continuous time models. \pkg{ctsem} can estimate relationships over time for multiple latent processes, measured by multiple noisy indicators with varying time intervals between observations. Within and between effects are estimated simultaneously by modelling both observed covariates and unobserved heterogeneity. Exogenous shocks with different shapes, group differences, higher order diffusion effects and oscillating processes can all be simply modeled. We first introduce and define continuous time models, then show how to specify and estimate a range of continuous time models using \pkg{ctsem}.     
 }
@@ -737,7 +737,7 @@ oscillatingm <- ctModel(n.latent = 2, n.manifest = 1, Tpoints = 11,
   DRIFT = matrix(c(0, "crosseffect", 1, "autoeffect"), nrow = 2, ncol = 2),
   MANIFESTMEANS = matrix('manifestmean', nrow = 1, ncol = 1),
   DIFFUSION = matrix(c(0, 0, 0, "diffusion"), nrow = 2, ncol = 2),
- startValues=inits)
+  startValues=inits)
 
 oscillatingf <- ctFit(Oscillating, oscillatingm, carefulFit = FALSE)
 @

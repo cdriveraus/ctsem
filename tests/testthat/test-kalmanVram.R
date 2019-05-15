@@ -38,6 +38,6 @@ f2=ctRefineTo(dat = gd,m,retryattempts = 3,objective='mxRAM',stationary=c('T0MEA
 
 expect_equal(f1$mxobj$output$estimate[-1],f2$mxobj$output$estimate[-1],tolerance=.001)
 
-ctPostPredict(f1,timestep=.1,n.subjects=200)
+#ctPostPredict(f1,timestep=.1,n.subjects=200)
 
 })

@@ -149,7 +149,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   objective='auto', 
   stationary=c('T0TRAITEFFECT','T0TIPREDEFFECT'), 
   optimizer='CSOLNP', 
-  retryattempts=15, iterationSummary=FALSE, carefulFit=TRUE,  
+  retryattempts=5, iterationSummary=FALSE, carefulFit=TRUE,  
   carefulFitWeight=100,
   showInits=FALSE, asymptotes=FALSE,
   meanIntervals=FALSE, plotOptimization=FALSE, 
@@ -168,7 +168,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   # transformedParams<-TRUE
   largeAlgebras<-TRUE
   if(nofit) fit <- FALSE
-  if(fit == FALSE) carefulFit <- FALSE
+  if(fit == FALSE || !is.null(omxStartValues)) carefulFit <- FALSE
 
   if(is.null(stationary)) stationary <- c('')
   if(all(stationary %in% 'all')) stationary<-c('T0VAR','T0MEANS','T0TIPREDEFFECT','T0TRAITEFFECT')

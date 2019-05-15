@@ -1,3 +1,4 @@
+if(Sys.getenv("NOT_CRAN")==TRUE & .Machine$sizeof.pointer != 4){
 require(ctsem)
 require(testthat)
 
@@ -5,9 +6,9 @@ context("differenttraits")
 
 test_that("time calc", {
 set.seed(4)
-Tpoints<-30
+Tpoints<-10
 n.manifest=2
-nsubjects=1000
+nsubjects=50
 n.latent=2
 
 DRIFT=matrix(c(-.3, .2, 0, -0.5), byrow=TRUE, nrow=n.latent, ncol=n.latent)
@@ -30,7 +31,7 @@ long=ctDeintervalise(datalong = long)
 long=long[-seq(3,length(long),3),]
 wide=ctLongToWide(datalong = long,id='id',time='time',manifestNames= genm$manifestNames)
 
-Tpoints=20
+Tpoints=7 #updated
 wide=ctIntervalise(datawide = wide,Tpoints = Tpoints,n.manifest = n.manifest)
 
 mltrait<-ctModel(Tpoints=Tpoints,n.latent=n.latent,n.manifest=n.manifest,
@@ -79,3 +80,5 @@ expect_equal(rep(0,4),c(fmltrait$mxobj$DRIFT$values-fmptrait$mxobj$DRIFT$values[
 expect_equal(rep(0,4),c(fmltrait$mxobj$DRIFT$values-DRIFT),tolerance=.1)
 
 })
+
+}
