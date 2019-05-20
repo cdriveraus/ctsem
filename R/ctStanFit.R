@@ -543,6 +543,18 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       message('Individual variation not possible as only 1 subject! indvarying set to FALSE on all parameters')
     }
     
+    if(length(unique(datalong[,idName]))==1 & any(!is.na(ctstanmodel$pars$value[ctstanmodel$pars$matrix %in% 'T0VAR'])) & 
+        is.null(ctstanmodel$fixedrawpopmeans) & is.null(ctstanmodel$fixedsubpars) & is.null(ctstanmodel$forcemultisubject)) {
+      
+      for(ri in 1:nrow(ctstanmodel$pars)){
+        if(is.na(ctstanmodel$pars$value[ri]) && ctstanmodel$pars$matrix[ri] %in% 'T0VAR'){
+          ctstanmodel$pars$value[ri] <- ifelse(ctstanmodel$pars$row == ctstanmodel$pars$col, 1, 0)
+        }
+      }
+      message('Free T0VAR parameters fixed to diagonal matrix of 1\'s as only 1 subject!')
+    }
+    
+    
     if(binomial){
       message('Binomial argument deprecated -- in future set manifesttype in the model object to 1 for binary indicators')
       intoverstates <- FALSE
