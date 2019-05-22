@@ -4,19 +4,21 @@
 \alias{plot.ctsemFitMeasure}
 \title{Misspecification plot using ctCheckFit output}
 \usage{
-\method{plot}{ctsemFitMeasure}(x, indices = "all",
-  corrplotargs = list(method = "square", is.corr = FALSE, addgrid.col =
-  NA), labels = TRUE, ...)
+\method{plot}{ctsemFitMeasure}(x, indices = "all", means = TRUE,
+  separatemeans = TRUE, cov = TRUE, covtype = "MisspecRatio",
+  cov2cor = FALSE, ggcorrArgs = list(data = NULL, cor_matrix =
+  get(covtype), limits = limits, geom = "circle", max_size = 13, name =
+  covtype), ...)
 }
 \arguments{
 \item{x}{Object output from ctsemFitMeasure function.}
 
 \item{indices}{Either 'all' or a vector of integers denoting which observations to 
-include (from 1 to maximum time points).}
+include (from 1 to n.manifest * maximum number of obs for a subject, blocked by manifest).}
 
-\item{corrplotargs}{Extra arguments to pass to corrplot function.}
+\item{covtype}{}
 
-\item{labels}{Logical. Plot labels for each row / colummn?}
+\item{ggcorrArgs}{List of arguments to GGally::ggcorr .}
 
 \item{...}{not used.}
 }
@@ -34,7 +36,12 @@ traitmodel <- ctModel(n.manifest=2, n.latent=2, Tpoints=6, LAMBDA=diag(2),
   latentNames=c('LeisureTime', 'Happiness'), TRAITVAR="auto")
 traitfit <- ctFit(dat=ctExample1, ctmodelobj=traitmodel)
 
-check <- ctCheckFit(traitfit,niter=5)
+check <- ctCheckFit(traitfit,niter=50)
 plot(check)
+
+
+scheck <- ctCheckFit(ctstantestfit,niter=500)
+plot(scheck)
+
 }
 }

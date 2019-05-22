@@ -4,9 +4,13 @@
 #' @param niter number of data generation iterations to use to calculate quantiles.
 #' @param probs 3 digit vector of quantiles to return and to test significance.
 #'
-#' @return numeric matrix showing Z score difference for each lower triangular index of the covariance matrix of data --
+#' @return List containing a means and cov object, computed by sorting data into discrete time points.
+#' cov is a numeric matrix containing measures of the covariance matrices for observed and simulated data. 
+#' The MisspecRatio column shows Z score difference for each lower triangular index of the covariance matrix of data --
 #' observed covariance minus mean of generated, weighted by sd of generated covariance.
+#' means contains the empirical and generated data means.
 #' @export
+#' @importFrom data.table dcast
 #'
 #' @examples
 #' \donttest{
@@ -20,56 +24,75 @@
 #' plot(check)
 #' }
 ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
-
+  
+  if(!class(fit) %in% c('ctStanFit','ctsemFit')) stop('not a ctsemFit or ctStanFit object!')
+  
+  
   if(class(fit)=='ctsemFit'){
+    manifestNames = fit$ctmodelobj$manifestNames
+    nmanifest=fit$ctmodelobj$n.manifest
+    maxtp=fit$ctmodelobj$Tpoints
     if('Kalman' %in% fit$ctfitargs$objective) {
       suppressMessages(wdat <- ctLongToWide(fit$mxobj@data$observed,id='id',time='time',
-        manifestNames = fit$ctmodelobj$manifestNames)[,paste0(fit$ctmodelobj$manifestNames,'_T',1),drop=FALSE])
-    } else  wdat <- fit$mxobj@data$observed[,paste0(fit$ctmodelobj$manifestNames,'_T',
-      rep(0:(fit$ctmodelobj$Tpoints-1),each=fit$ctmodelobj$n.manifest)),drop=FALSE]
+        manifestNames = manifestNames)[,paste0(manifestNames,'_T',1),drop=FALSE])
+    } else  wdat <- fit$mxobj@data$observed[,paste0(rep(manifestNames,each=fit$ctmodelobj$Tpoints),'_T',
+      0:(maxtp-1)),drop=FALSE]
   }
   
   if(class(fit)=='ctStanFit') {
     if(fit$data$nsubjects==1) stop('Only for nsubjects > 1!')
+    # browser()
+    manifestNames=fit$ctstanmodel$manifestNames
+    nmanifest=fit$ctstanmodel$n.manifest
     ldat <- cbind(fit$data$subject,fit$data$time,fit$data$Y)
     tpoints <- max(unlist(lapply(unique(fit$data$subject),function(x) length(fit$data$subject[fit$data$subject==x]))))
-    colnames(ldat) <- c('subject','time', fit$ctstanmodel$manifestNames)
-    suppressMessages(wdat <- ctLongToWide(ldat,id='subject',time='time',
-      manifestNames = fit$ctstanmodel$manifestNames)[,paste0(fit$ctstanmodel$manifestNames,'_T',
-        rep(0:(tpoints-1),each=fit$ctstanmodel$n.manifest)),drop=FALSE])
+    colnames(ldat) <- c('id','time', manifestNames)
+    dt = cbind(data.table(id=fit$data$subject),data.table(fit$data$Y))[ ,.(discrete.time.point=1:.N),by=id]
+    maxtp=max(dt[,discrete.time.point])
+    suppressMessages(wdat <- ctLongToWide(ldat,id='id',time='time',
+      manifestNames = manifestNames)[,paste0(manifestNames,'_T',
+        rep(0:(tpoints-1),each=nmanifest)),drop=FALSE][,paste0(rep(manifestNames,each=maxtp),'_T',
+          0:(maxtp-1))])
   }
-
+  
   ecov <- cov(wdat,use = "pairwise.complete.obs")
+  emeans <- (matrix(apply(wdat,2,mean,na.rm=TRUE),ncol=nmanifest))
+  colnames(emeans) = manifestNames
+  rownames(emeans) = paste0('T',0:(maxtp-1))
+  
+  covarray<-array(NA,dim = c(dim(ecov),niter))
+  means <- array(NA,dim=c(maxtp,nmanifest,niter))
   
   if(class(fit)=='ctStanFit'){
-    # browser()
-    # e <- extract(fit)
-    # ygendim <- dim(e$Ygen)
-    # niter <- min(niter,ygendim[1])
-    ygen <- aperm(ctStanGenerateFromFit(fit,fullposterior=TRUE,nsamples=niter)$generated$Y,c(2,1,3)) #array(e$Ygen,dim=c(ygendim[1] * ygendim[2],ygendim[-1:-2]))
-    covarray<-array(NA,dim = c(dim(ecov),dim(ygen)[1]))
-
+    if(is.null(fit$generated) || dim(fit$generated$Y)[2] < niter){
+      ygen <- aperm(ctStanGenerateFromFit(fit,fullposterior=TRUE,nsamples=niter)$generated$Y,c(2,1,3)) #array(e$Ygen,dim=c(ygendim[1] * ygendim[2],ygendim[-1:-2]))
+    } else ygen <- aperm(fit$generated$Y,c(2,1,3))
+    wide <- matrix(NA, nrow=length(unique(fit$data$subject)),ncol=dim(ygen)[3]*maxtp)
     itervec <- sample(1:dim(ygen)[1],niter)
+    dimnames(ygen)<-list(iter=1:dim(ygen)[1],row=1:dim(ygen)[2],manifestNames)
     for(i in 1:niter){
-    ndat <- cbind(fit$data$subject,fit$data$time,ygen[itervec[i],,])
-    colnames(ndat) <- c('subject','time',fit$ctstanmodel$manifestNames)
-    ndat <- suppressMessages(ctLongToWide(ndat,id='subject',time='time',
-      manifestNames = fit$ctstanmodel$manifestNames)) #[,paste0( fit$ctstanmodel$manifestNames,'_T',1),drop=FALSE]
-     covarray[,,i] <- cov(ndat[,paste0(fit$ctstanmodel$manifestNames,'_T',
-        rep(0:(tpoints-1),each=fit$ctstanmodel$n.manifest)),drop=FALSE], use='pairwise.complete.obs')
+      idat <- data.table(ygen[i,,,drop=TRUE])
+      colnames(idat) = manifestNames
+      w <- dcast(data = cbind(dt,idat),
+        formula= id ~ discrete.time.point,value.var=manifestNames)
+      w=w[,-1]
+      covarray[,,i] <- cov(w, use='pairwise.complete.obs')
+      means[,,i] <- t(matrix(apply(w,2,mean,na.rm=TRUE),byrow=TRUE,ncol=nmanifest))
     }
+    
   }
   
   if(class(fit)=='ctsemFit'){
-    covarray<-array(NA,dim = c(dim(ecov),niter))
     for(i in 1:niter){
       ndat <- ctGenerateFromFit(fit = fit,n.subjects = nrow(wdat))
       ndat[is.na(wdat)] <- NA #match missingness
-      covarray[,,i] <- cov(ndat[,paste0(fit$ctmodelobj$manifestNames,'_T',
-        rep(0:(fit$ctmodelobj$Tpoints-1),each=fit$ctmodelobj$n.manifest)),drop=FALSE], use='pairwise.complete.obs')
+      covarray[,,i] <- cov(ndat[,paste0(rep(manifestNames,each=fit$ctmodelobj$Tpoints),'_T',
+        0:(fit$ctmodelobj$Tpoints-1)),drop=FALSE], use='pairwise.complete.obs')
+      means[,,i] <- t(matrix(apply(ndat[,paste0(rep(manifestNames,each=fit$ctmodelobj$Tpoints),'_T',
+        0:(fit$ctmodelobj$Tpoints-1)),drop=FALSE],2,mean,na.rm=TRUE),byrow=TRUE,ncol=nmanifest))
     }
   }
-  
+  # browser()
   covql <- ctCollapse(covarray,collapsemargin = 3,quantile,probs=probs[1],na.rm=TRUE)
   covqm <- ctCollapse(covarray,collapsemargin = 3,quantile,probs=probs[2],na.rm=TRUE)
   covqh <- ctCollapse(covarray,collapsemargin = 3,quantile,probs=probs[3],na.rm=TRUE)
@@ -80,7 +103,7 @@ ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
   counter=0
   rowname <- c()
   colname <- c()
-
+  
   for(i in 1:nrow(covql)){
     for(j in 1:nrow(covql)){
       if(j <=i){
@@ -95,22 +118,23 @@ ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
   MisspecRatio <- (test[,'observed'] - test[,'mean']) / covsd[lower.tri(diag(nrow(covql)),diag = TRUE)] #((test[,'97.5%'] - test[,'2.5%']))^2
   sd <- covsd[lower.tri(diag(nrow(covql)),diag = TRUE)]
   test<- cbind(rowname,colname,as.data.frame(cbind(test,sd)),MisspecRatio)
-  class(test) <- c('ctsemFitMeasure',class(test))
-  return(test)
+  check <- list(cov=test,means=list(empirical=emeans, simulated=means))
+  class(check) <- c('ctsemFitMeasure',class(check))
+  return(check)
 }
 
 #' Misspecification plot using ctCheckFit output
 #'
 #' @param x Object output from ctsemFitMeasure function.
-#' @param corrplotargs Extra arguments to pass to corrplot function.
-#' @param labels Logical. Plot labels for each row / colummn?
 #' @param indices Either 'all' or a vector of integers denoting which observations to 
-#' include (from 1 to maximum time points).
+#' include (from 1 to n.manifest * maximum number of obs for a subject, blocked by manifest).
+#' @param covtype 
+#' @param ggcorrArgs List of arguments to GGally::ggcorr .
 #' @param ... not used.
 #'
 #' @return Nothing, just plots.
 #' @export
-#' @importFrom corrplot corrplot
+#' @importFrom GGally ggcorr
 #' @method plot ctsemFitMeasure
 #'
 #' @examples
@@ -121,24 +145,48 @@ ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
 #'   latentNames=c('LeisureTime', 'Happiness'), TRAITVAR="auto")
 #' traitfit <- ctFit(dat=ctExample1, ctmodelobj=traitmodel)
 #' 
-#' check <- ctCheckFit(traitfit,niter=5)
+#' check <- ctCheckFit(traitfit,niter=50)
 #' plot(check)
+#' 
+#' 
+#' scheck <- ctCheckFit(ctstantestfit,niter=500)
+#' plot(scheck)
+#' 
 #' }
-plot.ctsemFitMeasure <- function(x,indices='all', 
-  corrplotargs = list(method='square',is.corr=FALSE,addgrid.col=NA),labels=TRUE,...){
-  ratiomat <- matrix(NA,max(x[,'row']),max(x[,'row']))
-  ratiomat[upper.tri(ratiomat,diag = TRUE)] = x[,'MisspecRatio']
-  ratiomat[lower.tri(ratiomat)] = t(ratiomat)[lower.tri(ratiomat)]
+plot.ctsemFitMeasure <- function(x,indices='all', means=TRUE,separatemeans=TRUE, cov=TRUE,covtype='MisspecRatio',cov2cor=FALSE,
+  ggcorrArgs=list(data=NULL, cor_matrix =  get(covtype),limits=limits, geom = 'circle',max_size = 13,name=covtype),...){
   
-  if(indices[1]=='all') indices <-1:nrow(ratiomat)
+  if(!covtype %in% colnames(x$cov)) stop('covtype not in column names of x!')
+  
+  if(means){
+    if(separatemeans) manifests <- 1:dim(x$means$empirical)[2] else manifests <- 'all'
+    for(mani in manifests){
+      if(mani == 'all') mani <- 1:dim(x$means$empirical)[2]
+      simd <- matrix(x$means$simulated[,mani,], nrow=dim(x$means$simulated)[1])
+      if(length(mani)>1) vpar=mani else vpar=1
+      matplot(simd,type='l',xlab='Time point',ylab='Variable',
+        col=adjustcolor(rep(vpar, dim(x$means$simulated)[3]),alpha.f = .1),
+        lty = vpar)
+      matplot(x$means$empirical[,mani,drop=FALSE],type='l',col=vpar,lwd=2,add=TRUE,lty=vpar)
+      legend('topright',colnames(x$means$empirical)[mani], col=vpar,text.col=vpar,bty='n',lty=vpar)
+    }
+  }
+  
+  if(cov){
+    n=x$cov$rowname[match(x = unique(1:max(x$cov$row)),x$cov$row)]
+    for(xi in covtype){
+      mat <- matrix(NA,max(x$cov[,'row']),max(x$cov[,'row']))
+      mat[upper.tri(mat,diag = TRUE)] = x$cov[,'MisspecRatio']
+      mat[lower.tri(mat)] = t(mat)[lower.tri(mat)]
+      dimnames(mat) <- dimnames(mat) <- list(n,n)
+      if(indices[1]=='all') indices <-1:nrow(mat)
+      if(cov2cor) mat <- cov2cor(mat)
+      assign(x = xi, mat[indices,indices,drop=FALSE])
+    }
 
-  if(labels){ 
-  colnames(ratiomat) <- unique(x[,'colname'])
-  rownames(ratiomat) <- unique(x[,'rowname'])
-  } else dimnames(ratiomat) <- NULL
+    # main <- '(Observed - implied) / sd(implied)'
+    if(cov2cor) limits <-c(-1,1) else limits <- range(get(covtype))
+    do.call(ggcorr,ggcorrArgs) #(data=NULL,cor_matrix =  get(covtype),limits=limits, geom = 'circle',max_size = 13,name=covtype,...)
+  }
   
-  corrplotargs$corr <- ratiomat[indices,indices,drop=FALSE]
-  corrplotargs$mar <- c(0,0,1,0)
-  corrplotargs$main <- '(Observed - implied) / sd(implied)'
-  do.call(corrplot,corrplotargs)
 }

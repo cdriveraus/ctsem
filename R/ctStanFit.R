@@ -179,7 +179,7 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
 #' If TRUE, stan model is recompiled, regardless of apparent need for compilation.
 #' @param savescores Logical. If TRUE, output from the Kalman filter is saved in output. For datasets with many variables
 #' or time points, will increase file size substantially.
-#' @param gendata Logical -- If TRUE, uses provided data as a time and missingness structure only, and 
+#' @param gendata Logical -- If TRUE, uses provided data for only covariates and a time and missingness structure, and 
 #' generates random data according to the specified model / priors. 
 #' Generated data is in the $Ygen subobject after running \code{extract} on the fit object.
 #' For datasets with many manifest variables or time points, file size may be large.

@@ -44,11 +44,12 @@ Imports:
     MASS,
     methods,
     utils,
-    corrplot,
+    ggplot2,
     mvtnorm,
     DEoptim,
     KernSmooth,
-    ucminf
+    ucminf,
+    GGally
 Encoding: UTF-8
 LazyData: true
 ByteCompile: true

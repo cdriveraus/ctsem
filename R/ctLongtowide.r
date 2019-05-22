@@ -11,6 +11,7 @@
 #' @param TIpredNames vector of character strings giving column names of time independent predictor variables
 #' @details Time column must be numeric
 #' @export 
+#' @importFrom data.table data.table
 #' @seealso \code{\link{ctIntervalise}}
 #' @examples
 #' #First load the long format data with absolute times
@@ -18,47 +19,40 @@
 #' 
 #' #Then convert to wide format
 #' wideexample <- ctLongToWide(datalong = longexample, id = "id", 
-#' time = "time", manifestNames = c("Y1", "Y2", "Y3"), 
-#' TDpredNames = "TD1", TIpredNames = c("TI1", "TI2"))
+#'   time = "time", manifestNames = c("Y1", "Y2", "Y3"), 
+#'   TDpredNames = "TD1", TIpredNames = c("TI1", "TI2"))
 #' 
 #' #Then convert the absolute times to intervals, using the Tpoints reported from the prior step.
 #' wide <- ctIntervalise(datawide = wideexample, Tpoints = 4, n.manifest = 3, 
-#' n.TDpred = 1, n.TIpred = 2, manifestNames = c("Y1", "Y2", "Y3"), 
-#' TDpredNames = "TD1", TIpredNames = c("TI1", "TI2") )
+#'   n.TDpred = 1, n.TIpred = 2, manifestNames = c("Y1", "Y2", "Y3"), 
+#'   TDpredNames = "TD1", TIpredNames = c("TI1", "TI2") )
 #' 
 
 
 ctLongToWide <- function(datalong, id, time, manifestNames, TDpredNames=NULL, TIpredNames=NULL){
 
-  data_long 			<- as.data.frame(datalong)[c(id, 
+  data_long 			<- data.table(datalong[,c(id, 
     manifestNames, 
     TDpredNames, 
     time, 
-    TIpredNames)]
-  names(data_long) 	<- c("id", 
-    manifestNames, 
-    TDpredNames, 
-    "time",
-    TIpredNames)
+    TIpredNames),drop=FALSE])
+  # names(data_long) 	<- c("id", 
+  #   manifestNames, 
+  #   TDpredNames, 
+  #   "time",
+  #   TIpredNames)
   
   if(any(is.na(data_long[,'time']))){
     message(paste0('Observations with missing time information found - removing ', sum(is.na(data_long[,'time'])), ' rows'))
-    data_long<-data_long[!is.na(data_long[,'time']),]
+    data_long<-data_long[!is.na(time)]
   }
 
-  data_long <- data_long[order(data_long[,'id'],data_long[,'time']),]  # order by id
+  data_long <- data_long[order(data_long[,id],data_long[,time]),]  # order by id
 
-  discrete.time.point<-rep(1,nrow(data_long))
+  data_long[ , `:=` (discrete.time.point=1:.N),by=id] #':='( COUNT = .N , IDX = 1:.N ) , by = VAL ]
+  
+  data_long=as.data.frame(data_long)
 
-  for(i in 2:nrow(data_long)){ #number discrete time points
-    if(data_long[i,"id"]==data_long[(i-1),"id"]) {
-      discrete.time.point[i] <- discrete.time.point[i-1] + 1
-    }
-  }
-  
-  data_long<-cbind(data_long,discrete.time.point) #add discrete time point column  
-  
-  
   manifestNames_wide<-stats::reshape(data_long,  #create wide format manifestNames
     v.names = manifestNames, 
     idvar = "id", 
@@ -117,7 +111,7 @@ ctLongToWide <- function(datalong, id, time, manifestNames, TDpredNames=NULL, TI
     idvar = "id",  #create time variables block
     timevar = "discrete.time.point", 
     direction = "wide",
-    drop=c(manifestNames,TDpredNames,TIpredNames)) [,-1,drop=F]
+    drop=c(manifestNames,TDpredNames,TIpredNames)) [,-1,drop=FALSE]
   if(is.list(time_wide)) time_wide<-as.matrix(time_wide,nrow=1) #because reshape outputs lists when only one row!
   colnames(time_wide) <- paste0('T',0:(ncol(time_wide)-1))
 

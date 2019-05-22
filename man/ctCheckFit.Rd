@@ -14,8 +14,11 @@ ctCheckFit(fit, niter = 500, probs = c(0.025, 0.5, 0.975))
 \item{probs}{3 digit vector of quantiles to return and to test significance.}
 }
 \value{
-numeric matrix showing Z score difference for each lower triangular index of the covariance matrix of data --
+List containing a means and cov object, computed by sorting data into discrete time points.
+cov is a numeric matrix containing measures of the covariance matrices for observed and simulated data. 
+The MisspecRatio column shows Z score difference for each lower triangular index of the covariance matrix of data --
 observed covariance minus mean of generated, weighted by sd of generated covariance.
+means contains the empirical and generated data means.
 }
 \description{
 Check absolute fit of ctFit or ctStanFit object.

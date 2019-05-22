@@ -85,7 +85,7 @@ compareCor <- function(fit,maxlag,N,...){
   vars=fit$ctstanmodel$manifestNames
   newdat=data.table(ctStanDataOut(fit))
   dl2=data.table(newdat,new=0)
-  gendat=ctStanGenerateFromFit(fit,nsamples = N)$generate
+  if(is.null(fit$generate)) gendat=ctStanGenerateFromFit(fit,nsamples = N)$generate else gendat=fit$generate
   for(n in 1:N){
     ny=gendat$Y[,n,]
     newdat[,(vars) := data.table(ny)]
