@@ -774,11 +774,11 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     if(sum(unlist(lapply(ctstanmodel$calcs,length) > 0))) recompile <- TRUE
     if( (nt0varstationary + nt0meansstationary) >0 && 
-        length(ctstanmodel$calcs$dynamic > 0)) message('Stationarity assumptions based on initial states when using non-linear dynamics')
+        length(c(ctstanmodel$calcs$driftcintpars, ctstanmodel$calcs$diffusion)) > 0) message('Stationarity assumptions based on initial states when using non-linear dynamics')
     
     nlmeasurement <- nlcontrol$nlmeasurement
     if(length(ctstanmodel$calcs$measurement) > 0 || (intoverpop && any(ctstanmodel$pars$indvarying[ctstanmodel$pars$matrix %in% mats$measurement]))) { 
-      if(nlmeasurement == FALSE) stop('Linear measurement model requested but nonlinear measurement specified!') else nlmeasurement <- TRUE
+      if(nlmeasurement == FALSE) warning('Linear measurement model requested but nonlinear measurement specified!') else nlmeasurement <- TRUE
     }
     
     if(nldynamics==TRUE && !intoverstates) stop('intoverstates must be TRUE for nonlinear dynamics')

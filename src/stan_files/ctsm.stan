@@ -597,16 +597,15 @@ pop_asymCINT = sasymCINT;
     if(intoverpop==1){ 
       for(ri in 1:size(matsetup)){ //for each row of matrix setup
         if(matsetup[ ri,5] > 0){ // && ( statei == 0 || statei == nlatent + matsetup[ ri,5])){ // if individually varying -- consider reimplementing extra check
-          if(matsetup[ri, 7] == 3 || matsetup[ri, 7] == 4 || matsetup[ri, 7] == 7){ 
+          if(matsetup[ri, 7] == 3 || matsetup[ri, 7] == 7){ 
           real newval;
           newval = tform(state[nlatent + matsetup[ri,5] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
           if(matsetup[ri, 7] == 3) sDRIFT[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-          if(matsetup[ri, 7] == 4) sDIFFUSIONsqrt[matsetup[ ri,1], matsetup[ri,2]] = newval; 
           if(matsetup[ri, 7] == 7) sCINT[matsetup[ ri,1], matsetup[ri,2]] = newval;
           }
         }
       }
-    } //do we need intoverpop calcs here? and remove diffusion calcs and do elsewhere
+    } 
             if(statei== 0) {
               base = sDRIFT * state[1:nlatent] + sCINT[,1];
             }
@@ -615,7 +614,7 @@ pop_asymCINT = sasymCINT;
             }
           }
           ;
- //find a way to remove this repeat
+ //not repeating other calcs because 1e-6 is small
           if(continuoustime==1){
             matrix[nlatentpop,nlatentpop] Je;
             matrix[nlatent*2,nlatent*2] dQi;
@@ -624,12 +623,15 @@ pop_asymCINT = sasymCINT;
             sasymDIFFUSION = to_matrix(  -kronsum(J[1:nlatent,1:nlatent]) \ to_vector(tcrossprod(sDIFFUSIONsqrt)), nlatent,nlatent);
             discreteDIFFUSION =  sasymDIFFUSION - quad_form( sasymDIFFUSION, Je[1:nlatent,1:nlatent]' );
             etacov = quad_form(etacov, Je');
-            etacov[1:nlatent,1:nlatent] += discreteDIFFUSION;
+            etacov[1:nlatent,1:nlatent] += discreteDIFFUSION; //may need improving
             eta[1:nlatent] = (discreteDRIFT * append_row(eta[1:nlatent],1.0))[1:nlatent];
           }
         if(continuoustime==0){ //test this
-          etacov = quad_form(etacov, J') + sDIFFUSION; //needs improving re sDIFFUSION
-          eta[1:nlatent] = (append_row(append_col(sDRIFT,sCINT),rep_vector(0,nlatent+1)') * append_row(eta[1:nlatent],1.0))[1:nlatent];
+          etacov = quad_form(etacov, J');
+          etacov[1:nlatent,1:nlatent] += sDIFFUSION; //may need improving re sDIFFUSION
+          discreteDRIFT=append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1));
+          discreteDRIFT[nlatent+1,nlatent+1] = 1;
+          eta[1:nlatent] = (discreteDRIFT * append_row(eta[1:nlatent],1.0))[1:nlatent];
         }
         }
 
@@ -669,7 +671,6 @@ pop_asymCINT = sasymCINT;
       }
     };
           state[1:nlatent] += sT0MEANS[,1];
-          //print("st0means = ", sT0MEANS[,1]);
         } 
         ;
     if(intoverpop==1){ 

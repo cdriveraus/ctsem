@@ -115,9 +115,9 @@ ctStanModel<-function(ctmodelobj, type='stanct'){
              ctspec$offset[pi] <- 0
           }
           if(continuoustime==FALSE) {
-            ctspec$transform[pi] <- 3
-            ctspec$meanscale[pi] <- -2
-            ctspec$offset[pi] <- 0
+            ctspec$transform[pi] <- 0
+            ctspec$meanscale[pi] <- 2
+            ctspec$offset[pi] <- .5
           }
         }
         if(ctspec$row[pi] != ctspec$col[pi]){
