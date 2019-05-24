@@ -109,7 +109,7 @@ ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,p
 
           # dydt<-diff(Ydat[,i], lag = cdiffsize)/diff(time,lag = cdiffsize)
           dydt <- diff(Ydat[,i],lag=cdiffsize)
-          dydt <- dydt[-subdiff]
+          dydt <- (dydt/ diff(time,lag = cdiffsize))[-subdiff]
           dydt <- dydt +  rnorm(length(dydt),0, jitter * sd(Ydat[,i],na.rm=TRUE)) #add jitter
           xtime <- time[-subdiff]
           # smoothScatter(matrix(yp[-fit$data$ndatapoints,i,,,drop=FALSE],ncol=1),

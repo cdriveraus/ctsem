@@ -4,7 +4,7 @@ require(testthat)
 
 context("singleprocess")
 
-test_that("time calc", {
+test_that("singleprocess + reshape", {
 set.seed(4)
 Tpoints<-10
 n.manifest=1
@@ -50,8 +50,8 @@ sm$pars$indvarying[!(sm$pars$matrix %in% c('T0MEANS','CINT'))]=FALSE
 
 sf=ctStanFit(datalong=long,ctstanmodel=sm,nopriors=TRUE,
   control=list(max_treedepth=8),
-  iter=300,chains=3,plot=FALSE,fit=TRUE,optimize=TRUE)
-sfsum <- summary(sf)
+  iter=300,chains=2,plot=FALSE,fit=TRUE,optimize=TRUE)
+# sfsum <- summary(sf)
 
 
 m<-ctModel(Tpoints=Tpoints,type='omx',
@@ -63,12 +63,12 @@ m<-ctModel(Tpoints=Tpoints,type='omx',
   LAMBDA=diag(1,n.manifest))
 
 f=ctFit(dat=wide,ctmodelobj=m)
-summary(f)$ctparameters
+# summary(f)$ctparameters
 
-stantraitvar <- (-1/(sfsum$popmeans[2,1])) %*% sfsum$popsd[2,1]^2 %*% (-1/(sfsum$popmeans[2,1]))
+# stantraitvar <- (-1/(sfsum$popmeans[2,1])) %*% sfsum$popsd[2,1]^2 %*% (-1/(sfsum$popmeans[2,1]))
 
 #check drift using different fit approaches
-expect_equal(sfsum$popmeans[2,1],summary(f)$ctparameters[2,1],tolerance=1e-1)
+expect_equal(mean(sf$stanfit$transformedpars$DRIFT),summary(f)$ctparameters[2,1],tolerance=1e-1)
 
 })
 

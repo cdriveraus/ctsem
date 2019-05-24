@@ -46,6 +46,6 @@ DIFFUSION=matrix(c(
   0, 0,
   0, "diffusion"), ncol=2, nrow=2, byrow=TRUE))
   
-l=ctModelLatex(ctmodel,folder=tempdir(),filename="ctsemTex")
+l=ctModelLatex(ctmodel,compile=FALSE, open=FALSE)
 cat(l)
 }

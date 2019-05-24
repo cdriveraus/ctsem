@@ -5,6 +5,7 @@
 #' @param chains Number of chains
 #' @param ... All the other regular arguments to stan()
 #' @export
+#' @details On windows, requires Rtools installed and able to be found by pkgbuild::rtools_path()
 #' @importFrom shiny runApp 
 #' @examples
 #' \donttest{
@@ -37,12 +38,12 @@ stanWplot <- function(object,iter=2000,chains=4,...){
     seed<-',seed,';
     chains<-',chains,';
     iter<-',iter,';
-    
+    # addtopath=ifelse(windows,paste0(pkgbuild::rtools_path(),"/"),"")
     notyet<-TRUE
     while(any(notyet==TRUE)){
       Sys.sleep(1);
       samps<-try(data.table::fread(skip="lp__",
-      cmd=paste0("grep -v ^# ",seed,"samples_1.csv")),silent=TRUE)
+      file=paste0(seed,"samples_1.csv")),silent=TRUE)
       if(class(samps)[1] != "try-error" && length(samps) > 0) notyet<-FALSE
     }
     varnames<-colnames(samps);
@@ -55,7 +56,7 @@ stanWplot <- function(object,iter=2000,chains=4,...){
     samps<-list()
     for(chaini in 1:chains) {
       samps[[chaini]]<-try(as.matrix(data.table::fread(select = parameter,skip="lp__",
-        cmd=paste0("grep -v ^# ",seed,"samples_",chaini,".csv"))),silent=TRUE)
+        file=paste0(seed,"samples_",chaini,".csv"))),silent=TRUE)
       if(class(samps[[chaini]])[1]=="try-error" || length(samps[[chaini]]) ==0) samps[[chaini]]=samps[[1]][1,,drop=FALSE]
     }
     
@@ -108,7 +109,8 @@ sample_file<-paste0(tmpdir,'/',stanseed,'samples', ifelse(chains==1,'_1',''),'.c
 
 stanplot(chains=chains,seed=stanseed)
 
-out=rstan::sampling(object=object,iter=iter,chains=chains,sample_file=sample_file,,...)
+# out=rstan::sampling(object=object,iter=iter,chains=chains,sample_file=sample_file)
+out=rstan::sampling(object=object,iter=iter,chains=chains,sample_file=sample_file,...)
 
 for(chaini in 1:chains) system(paste0("rm ",tmpdir,'/',stanseed,"samples_",chaini,".csv"))
 system(paste0('rm ',tmpdir,'/stanplottemp.R'))

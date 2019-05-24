@@ -28,7 +28,7 @@
 #'   0, 0,
 #'   0, "diffusion"), ncol=2, nrow=2, byrow=TRUE))
 #'   
-#' l=ctModelLatex(ctmodel,folder=tempdir(),filename="ctsemTex")
+#' l=ctModelLatex(ctmodel,compile=FALSE, open=FALSE)
 #' cat(l)
 ctModelLatex<- function(ctmodel,textsize='normalsize',folder=tempdir(),filename='ctsemTex',tex=TRUE, equationonly=FALSE, compile=TRUE, open=TRUE){
   
