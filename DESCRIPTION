@@ -1,8 +1,8 @@
 Package: ctsem
 Type: Package
 Title: Continuous Time Structural Equation Modelling
-Version: 2.9.4
-Date: 2019-5-8
+Version: 2.9.5
+Date: 2019-5-18
 Authors@R: c(person("Charles", "Driver", role =
     c("aut","cre","cph"),email="driver@mpib-berlin.mpg.de"),
     person("Manuel", "Voelkle", role = c("aut","cph")),
@@ -46,7 +46,6 @@ Imports:
     utils,
     ggplot2,
     mvtnorm,
-    DEoptim,
     KernSmooth,
     ucminf,
     GGally,
@@ -60,6 +59,7 @@ NeedsCompilation: yes
 Suggests:
     knitr,
     testthat,
-    devtools
+    devtools,
+    DEoptim
 VignetteBuilder: knitr
 RoxygenNote: 6.1.1

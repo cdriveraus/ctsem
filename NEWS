@@ -1,9 +1,10 @@
 ctsem news:
 14/5/2019
-#### 2.9.3 ####
+#### 2.9.5 ####
 - corrected optimization of random effects using ctStanFit
 - ctModelLatex function to display within subject model equation
 - custom calculations allowed in ctModel for linear and nonlinear approaches
+- Nonlinearity possible for discrete time now also
 - Use stochastic optimizer by default for ctStanFit -- more robust
 
 12/4/2019

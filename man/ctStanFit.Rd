@@ -8,7 +8,7 @@ ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 1000,
   intoverstates = TRUE, binomial = FALSE, fit = TRUE,
   intoverpop = FALSE, stationary = FALSE, plot = FALSE,
   derrind = "all", optimize = FALSE, optimcontrol = list(),
-  nlcontrol = list(), nopriors = FALSE, chains = 1,
+  nlcontrol = list(), nopriors = FALSE, chains = 2,
   cores = "maxneeded", inits = NULL, forcerecompile = FALSE,
   savescores = TRUE, gendata = FALSE, control = list(),
   verbose = 0, ...)
@@ -76,9 +76,11 @@ In general, larger values may not make sense when using the default of \code{ukf
 
 \item{nopriors}{logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.}
 
-\item{chains}{number of chains to sample, during HMC or post-optimization importance sampling.}
+\item{chains}{number of chains to sample, during HMC or post-optimization importance sampling. Unless the cores
+argument is also set, the number of chains determines the number of cpu cores used, up to 
+the maximum available minus one.}
 
-\item{cores}{number of cpu cores to use. Either 'maxneeded' to use as many as available,
+\item{cores}{number of cpu cores to use. Either 'maxneeded' to use as many as available minus one,
 up to the number of chains, or a positive integer.}
 
 \item{inits}{vector of parameter start values, as returned by the rstan function \code{rstan::unconstrain_pars} for instance.}

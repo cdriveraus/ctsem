@@ -146,8 +146,10 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
 #' @param iter number of iterations, half of which will be devoted to warmup by default when sampling.
 #' When optimizing, this is the maximum number of iterations to allow -- convergence hopefully occurs before this!
 #' @param inits vector of parameter start values, as returned by the rstan function \code{rstan::unconstrain_pars} for instance. 
-#' @param chains number of chains to sample, during HMC or post-optimization importance sampling.
-#' @param cores number of cpu cores to use. Either 'maxneeded' to use as many as available,
+#' @param chains number of chains to sample, during HMC or post-optimization importance sampling. Unless the cores
+#' argument is also set, the number of chains determines the number of cpu cores used, up to 
+#' the maximum available minus one. 
+#' @param cores number of cpu cores to use. Either 'maxneeded' to use as many as available minus one,
 #' up to the number of chains, or a positive integer.
 #' @param control List of arguments sent to \code{\link[rstan]{stan}} control argument, 
 #' regarding warmup / sampling behaviour. Unless specified, values used are:
@@ -511,7 +513,7 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
 ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intoverstates=TRUE, binomial=FALSE,
   fit=TRUE, intoverpop=FALSE, stationary=FALSE,plot=FALSE,  derrind='all',
   optimize=FALSE,  optimcontrol=list(),
-  nlcontrol = list(), nopriors=FALSE, chains=1,cores='maxneeded', inits=NULL,
+  nlcontrol = list(), nopriors=FALSE, chains=2,cores='maxneeded', inits=NULL,
   forcerecompile=FALSE,savescores=TRUE,gendata=FALSE,
   control=list(),verbose=0,...){
   if(.Machine$sizeof.pointer == 4) message('Bayesian functions not available on 32 bit systems') else{
@@ -584,7 +586,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     if(ctstanmodel$rawpopsdtransform != 'exp(2*rawpopsdbase-1) .* sdscale') recompile <- TRUE
     
     
-    if(cores=='maxneeded') cores=min(c(chains,parallel::detectCores()))
+    if(cores=='maxneeded') cores=min(c(chains,parallel::detectCores()-1))
     
     checkvarying<-function(matrixnames,yesoutput,nooutput=''){#checks if a matrix is set to individually vary in ctspec
       check<-0
