@@ -170,7 +170,7 @@
 #' 
 #' @export
 
-ctModel<-function(n.manifest, n.latent, LAMBDA, type='omx', Tpoints=NULL, 
+ctModel<-function(LAMBDA, n.manifest = nrow(LAMBDA), n.latent=ncol(LAMBDA), type='omx', Tpoints=NULL, 
   manifestNames='auto', latentNames='auto', 
   T0VAR="auto", T0MEANS="auto", MANIFESTMEANS="auto", MANIFESTVAR="auto", 
   DRIFT="auto", CINT="auto", DIFFUSION="auto",
