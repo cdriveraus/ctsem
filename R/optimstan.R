@@ -4,6 +4,8 @@
 #' @param sm compiled stan model object.
 #' @param init vector of unconstrained parameter values, or character string 'random' to initialise with 
 #' random values very close to zero.
+#' @param initsd positive numeric specifying sd of normal distribution governing random sample of init parameters, 
+#' if init='random' .
 #' @param sampleinit either NA, or an niterations * nparams matrix of samples to initialise importance sampling.
 #' @param deoptim Do first pass optimization using differential evolution? Slower, but better for cases with multiple 
 #' minima / difficult optimization.
@@ -12,7 +14,7 @@
 #' @param plotsgd Logical. If TRUE, plot iteration details when using stochastic optimizer.
 #' @param estonly if TRUE,just return point estimates under $rawest subobject.
 #' @param verbose Integer from 0 to 2. Higher values print more information during model fit -- for debugging.
-#' @param decontrol List of control parameters for differential evolution step, to pass to \code{\link[DEoptim]{DEoptim.control}}.
+#' @param decontrol List of control parameters for differential evolution step, to pass to \code{DEoptim.control}.
 #' @param nopriors logical.f If TRUE, any priors are disabled -- sometimes desirable for optimization. 
 #' @param tol absolute object tolerance
 #' @param cores Number of cpu cores to use.
@@ -54,12 +56,12 @@
 #' 
 #' #fit using optimization without importance sampling
 #' ssfit <- ctStanFit(datalong[1:50,], #limited data for example
-#'   ssmodel, optimize=TRUE,optimcontrol=list(deoptim=FALSE,isloops=0,finishsamples=50))
+#'   ssmodel, optimize=TRUE,optimcontrol=list(isloops=0,finishsamples=50))
 #' 
 #' #output
 #' summary(ssfit)
 #' }
-optimstan <- function(standata, sm, init='random',sampleinit=NA,
+optimstan <- function(standata, sm, init='random',initsd=.1,sampleinit=NA,
   deoptim=FALSE, estonly=FALSE,tol=1e-12,
   decontrol=list(),
   stochastic = TRUE,
@@ -95,16 +97,16 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
     # control=list(max_treedepth=0),save_warmup=FALSE,test_grad=FALSE))))
     smf <- stan_reinitsf(sm,standata)
     npars=get_num_upars(smf)
-    if(all(init %in% 'random')) init <- rnorm(npars, 0, .001)
+    if(all(init %in% 'random')) init <- rnorm(npars, 0, initsd)
     if(all(init == 0)) init <- rep(0,npars)
     
     if(is.na(sampleinit[1])){
       
       if(deoptim){ #init with DE
-        # require(DEoptim)
+        if(requireNamespace('DEoptim',quietly = TRUE)) {
         if(decontrol$NP=='auto') NP=min(c(40,10*npars)) else NP = decontrol$NP
         
-        decontrollist <- c(decontrol,DEoptim.control())
+        decontrollist <- c(decontrol,DEoptim::DEoptim.control())
         decontrollist <- decontrollist[unique(names(decontrollist))]
         
         lp2 = function(parm) {
@@ -123,11 +125,12 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
         }
         decontrollist$initialpop=deinit
         decontrollist$NP = NP
-        optimfitde <- suppressWarnings(DEoptim(fn = lp2,lower = rep(-1e10, npars), upper=rep(1e10, npars),
+        optimfitde <- suppressWarnings(DEoptim::DEoptim(fn = lp2,lower = rep(-1e10, npars), upper=rep(1e10, npars),
           control = decontrollist))
         # init=constrain_pars(object = smf,optimfitde$optim$bestmem)
         init=optimfitde$optim$bestmem
-      }
+      } else stop(paste0('use install.packages(\"DEoptim\") to use deoptim')) #end require deoptim
+    }
       
       
       # suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=1e6, init=init,as_vector=FALSE,draws=0,constrained=FALSE,
@@ -158,7 +161,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
       parbase=par()
       
       sgd <- function(init,stepbase=1e-4,nsubjects=1,gmeminit=0,gmemmax=.9,maxparchange = .1,
-        minparchange=1e-16,maxiter=5000,perturbpercent=0,nconvergeiter=20, itertol=1e-3, deltatol=1e-5){
+        minparchange=1e-16,maxiter=50000,perturbpercent=0,nconvergeiter=20, itertol=1e-3, deltatol=1e-5){
         pars=init
         bestpars = pars
         step=rep(stepbase,length(init))
@@ -189,7 +192,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
             # standata$dokalmanrows <- as.integer(standata$subject %in% subjects) #rep(1L,standata$ndatapoints) #
             # smf<-stan_reinitsf(sm,standata)
             lpg = try(log_prob(smf, upars=newpars,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
-            if(class(lpg) !='try-error' && !is.nan(lpg[1])) accepted <- TRUE else step <- step * .1
+            if(class(lpg) !='try-error' && !is.nan(lpg[1]) && all(!is.nan(attributes(lpg)$gradient))) accepted <- TRUE else step <- step * .1
             if(i < 20 && i > 1 && lpg[1] < lp[i-1]) {
               accepted <- FALSE
               step = step * .1
@@ -205,8 +208,8 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
           gsmooth= gsmooth*gmemory + (1-gmemory)*g
           signg=sign(gsmooth)
           # step=exp(mean(log(step))+(.99*(log(step)-mean(log(step)))))
-          step[oldsigng == signg] = step[oldsigng == signg] * 1.1 #exp((1-gmemory)/2)
-          step[oldsigng != signg] = step[oldsigng != signg] / 1.2 #exp((1-gmemory)/2)
+          step[oldsigng == signg] = step[which(oldsigng == signg)] * 1.1 #exp((1-gmemory)/2)
+          step[oldsigng != signg] = step[which(oldsigng != signg)] / 1.2 #exp((1-gmemory)/2)
           if(lp[i] >= maxlp) {
             step = step * 1.05 #exp((1-gmemory)/8)
             bestpars <- pars
@@ -219,21 +222,16 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
             step = step  / max( 1.5, (-10*(lp[i] - lp[i-1]) / sd(head(tail(lp,20),10)))) #exp((1-gmemory)/4)
           }
           # if(i %%10 ==0) gmemory = min(gmemory+.1,gmemmax)# * exp(mean(sign(diff(tail(lp,20)))))
-          if(i %%20 ==0) gmemory =  max(gmeminit, min(gmemmax, 1.6*(1-(log(sd(tail(lp,20)) ) -log(itertol)) / (log(sd(head(lp,20)))-log(itertol)))* (1-gmeminit) + gmeminit))
+          # if(i %%20 ==0) gmemory =  max(gmeminit, min(gmemmax, 1.6*(1-(log(sd(tail(lp,20)) ) -log(itertol)) / (log(sd(head(lp,20)))-log(itertol)))* (1-gmeminit) + gmeminit))
           
-          # if(i > 30 && i %% 10 == 0) {
-          #   lpdif <- sum(diff(tail(lp,10)))
-          #   oldlpdif <- sum(diff(head(tail(lp,10),20)))
-          #   if(oldlpdif >= lpdif) gmemory <- oldgmemory
-          #   proposal = gmemory*2-oldgmemory
-          #   gmemory <- min(gmemmax, max(0, proposal + runif(1,-.2,.2)))
-          #   oldgmemory <- gmemory
-          #   if(i < 50 && sign(lpdif)==-1 & sign(oldlpdif)==-1) {
-          #     message('diverging')
-          #     # gmemory=gmemory*.8
-          #   }
-          #   oldgmemory <- gmemory
-          # }
+          if(i > 30 && i %% 10 == 0) {
+            lpdif <- sum(diff(tail(lp,10)))
+            oldlpdif <- sum(diff(head(tail(lp,10),20)))
+            if(oldlpdif >= lpdif) gmemory <- oldgmemory
+            proposal = gmemory*2-oldgmemory
+            gmemory <- min(gmemmax, max(0, proposal + runif(1,-.05,.1)))
+            oldgmemory <- gmemory
+          }
           
           step[step > maxparchange] <- maxparchange
           step[step < minparchange] <- minparchange
@@ -267,7 +265,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
         standata$nopriors <- as.integer(0)
         smf <- stan_reinitsf(sm,standata)
         if(!stochastic) optimfit <- ucminf(init,fn = lp,gr = grffromlp,control=list(grtol=1e-4,xtol=tol*1e4,maxeval=10000))
-        if(stochastic) optimfit <- sgd(init, stepbase=1e-4,nsubjects=standata$nsubjects, gmemmax=ifelse(npars > 50, .95, .9)) 
+        if(stochastic) optimfit <- sgd(init, itertol=1e-1) 
         standata$nopriors <- as.integer(1)
         smf <- stan_reinitsf(sm,standata)
         init = optimfit$par #rstan::constrain_pars(object = smf, optimfit$par)
@@ -517,6 +515,7 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
     parallel::clusterExport(cl, c('relistarrays','resamples','sm','standata','optimfit'),environment())
     
     # target_dens <- c(target_dens,
+
     transformedpars <- try(parallel::parLapply(cl, parallel::clusterSplit(cl,1:nresamples), function(x){
       require(ctsem)
       Sys.sleep(.1)
@@ -526,25 +525,20 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
       out <- list()
       skeleton=est1
       for(li in 1:length(x)){
-        flesh = try(unlist(rstan::constrain_pars(smf, resamples[x[li],])))
-        if(class(flesh) == 'try-error') {
-          flesh <- unlist(skeleton)
-          flesh[] <- NA
-        }
-        names(flesh) <- c()
-        out[[li]] <-relistarrays(flesh, skeleton)
+        out[[li]] <- try(rstan::constrain_pars(smf, resamples[x[li],]))
+        if(any(sapply(out[[li]], function(x) any(c(is.nan(x),is.infinite(x),is.na(x)))))) class(out[[li]]) <- c(class(out[[li]]),'try-error')
       }
       return(out)
     }))
-    
-    missingsamps <-sapply(1:length(transformedpars[[1]]), function(x) any(is.na(unlist(transformedpars[[1]][[x]]))))
+    transformedpars=unlist(transformedpars,recursive = FALSE)
+    missingsamps <-sapply(transformedpars, function(x) 'try-error' %in% class(x))
     nasampscount <- sum(missingsamps) 
     
-    transformedpars[[1]] <- transformedpars[[1]][!missingsamps]
+    transformedpars <- transformedpars[!missingsamps]
     nresamples <- nresamples - nasampscount
-    if(nasampscount > 0) message(paste0(nasampscount,' NAs generated during final sampling of ', finishsamples, '. Biased estimates may result -- consider importance sampling, respecification, or full HMC sampling'))
-    
-    transformedpars<-unlist(transformedpars,recursive = FALSE)
+    if(nasampscount > 0) {
+      message(paste0(nasampscount,' NAs generated during final sampling of ', finishsamples, '. Biased estimates may result -- consider importance sampling, respecification, or full HMC sampling'))
+    }
     
     
     
@@ -568,8 +562,10 @@ optimstan <- function(standata, sm, init='random',sampleinit=NA,
       }
       return(out)
     }
+
+
+    transformedpars=try(tostanarray(flesh=matrix(unlist(transformedpars),byrow=TRUE, nrow=nresamples), skeleton = est1))
     
-    transformedpars=try(tostanarray(flesh = matrix(unlist(transformedpars),byrow=TRUE, nrow=nresamples), skeleton = est1))
     # quantile(sapply(transformedpars, function(x) x$rawpopcorr[3,2]),probs=c(.025,.5,.975))
     # quantile(sapply(transformedpars, function(x) x$DRIFT[1,2,2]),probs=c(.025,.5,.975))
     

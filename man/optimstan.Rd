@@ -4,8 +4,8 @@
 \alias{optimstan}
 \title{Optimize / importance sample a stan or ctStan model.}
 \usage{
-optimstan(standata, sm, init = "random", sampleinit = NA,
-  deoptim = FALSE, estonly = FALSE, tol = 1e-12,
+optimstan(standata, sm, init = "random", initsd = 0.1,
+  sampleinit = NA, deoptim = FALSE, estonly = FALSE, tol = 1e-12,
   decontrol = list(), stochastic = TRUE, plotsgd = FALSE,
   isloops = 0, isloopsize = 1000, finishsamples = 500, tdf = 50,
   verbose = 0, nopriors = FALSE, cores = 1)
@@ -18,6 +18,9 @@ optimstan(standata, sm, init = "random", sampleinit = NA,
 \item{init}{vector of unconstrained parameter values, or character string 'random' to initialise with 
 random values very close to zero.}
 
+\item{initsd}{positive numeric specifying sd of normal distribution governing random sample of init parameters, 
+if init='random' .}
+
 \item{sampleinit}{either NA, or an niterations * nparams matrix of samples to initialise importance sampling.}
 
 \item{deoptim}{Do first pass optimization using differential evolution? Slower, but better for cases with multiple 
@@ -27,7 +30,7 @@ minima / difficult optimization.}
 
 \item{tol}{absolute object tolerance}
 
-\item{decontrol}{List of control parameters for differential evolution step, to pass to \code{\link[DEoptim]{DEoptim.control}}.}
+\item{decontrol}{List of control parameters for differential evolution step, to pass to \code{DEoptim.control}.}
 
 \item{stochastic}{Logical. Use stochastic gradient descent instead of ucminf (bfgs with trust region) optimizer.
 Generally more robust, a little slower with few parameters, faster with many.}
@@ -81,7 +84,7 @@ datalong <- cbind(id, time, sunspots)
 
 #fit using optimization without importance sampling
 ssfit <- ctStanFit(datalong[1:50,], #limited data for example
-  ssmodel, optimize=TRUE,optimcontrol=list(deoptim=FALSE,isloops=0,finishsamples=50))
+  ssmodel, optimize=TRUE,optimcontrol=list(isloops=0,finishsamples=50))
 
 #output
 summary(ssfit)
