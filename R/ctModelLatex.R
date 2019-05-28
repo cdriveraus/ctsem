@@ -30,7 +30,8 @@
 #'   
 #' l=ctModelLatex(ctmodel,compile=FALSE, open=FALSE)
 #' cat(l)
-ctModelLatex<- function(ctmodel,textsize='normalsize',folder=tempdir(),filename='ctsemTex',tex=TRUE, equationonly=FALSE, compile=TRUE, open=TRUE){
+ctModelLatex<- function(ctmodel,textsize='normalsize',folder=tempdir(),
+  filename='ctsemTex',tex=TRUE, equationonly=FALSE, compile=TRUE, open=TRUE){
   
   if(class(ctmodel) == 'ctStanModel') ctmodel <- c(ctmodel,listOfMatrices(ctmodel$pars)) else if(class(ctmodel) != 'ctsemInit') stop('not a ctsem model!')
   if(equationonly) compile <- FALSE
@@ -155,12 +156,13 @@ ctModelLatex<- function(ctmodel,textsize='normalsize',folder=tempdir(),filename=
   if(tex) {
     oldwd <- getwd()
     setwd(dir = folder)
+    on.exit(setwd(oldwd))
     write(x = out,file = paste0(filename,'.tex'))
     if(compile){
     try(tools::texi2pdf(file=paste0(filename,'.tex'),clean=TRUE))
     if(open) try(openPDF(paste0(filename,'.pdf')))
     }
-    setwd(oldwd)
+    
   }
   return(out)
 }

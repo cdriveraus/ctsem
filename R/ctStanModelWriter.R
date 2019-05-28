@@ -175,7 +175,7 @@ ukfilterfunc<-function(ppchecking){
         ',paste0(c(nlcalcs$driftcintpars,nlcalcs$diffusion),';\n',collapse=' '),';\n'),'
         
         if(dtchange==1 || (T0check[rowi-1]==1 && (si <= DRIFTsubindex[nsubjects] || si <= CINTsubindex[nsubjects]))){
-          discreteDRIFT = expm2(append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1)) * dT[rowi]);
+          discreteDRIFT = matrix_exp(append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1)) * dT[rowi]);
         }
     
         if(dtchange==1 || (T0check[rowi-1]==1 && (si <= DIFFUSIONsubindex[nsubjects]|| si <= DRIFTsubindex[nsubjects]))){
@@ -207,8 +207,8 @@ ukfilterfunc<-function(ppchecking){
       if(T0check[rowi]==0){
         matrix[nlatentpop,nlatentpop] J;
         vector[nlatent] base;
-        J = rep_matrix(0,nlatentpop,nlatentpop); //dont necessarily need to loop over tdpreds here...
         for(stepi in 1:integrationsteps[rowi]){
+        J = rep_matrix(0,nlatentpop,nlatentpop); //dont necessarily need to loop over tdpreds here...
           for(statei in 0:nlatentpop){
             if(statei>0){
               J[statei,statei] = 1e-6;
@@ -228,8 +228,8 @@ ukfilterfunc<-function(ppchecking){
           if(continuoustime==1){
             matrix[nlatentpop,nlatentpop] Je;
             matrix[nlatent*2,nlatent*2] dQi;
-            Je= expm2(J * dTsmall[rowi]) ;
-            discreteDRIFT = expm2(append_row(append_col(sDRIFT,sCINT),rep_vector(0,nlatent+1)\') * dTsmall[rowi]);
+            Je= matrix_exp(J * dTsmall[rowi]) ;
+            discreteDRIFT = matrix_exp(append_row(append_col(sDRIFT,sCINT),rep_vector(0,nlatent+1)\') * dTsmall[rowi]);
             sasymDIFFUSION = to_matrix(  -kronsum(J[1:nlatent,1:nlatent]) \\ to_vector(tcrossprod(sDIFFUSIONsqrt)), nlatent,nlatent);
             discreteDIFFUSION =  sasymDIFFUSION - quad_form( sasymDIFFUSION, Je[1:nlatent,1:nlatent]\' );
             etacov = quad_form(etacov, Je\');
@@ -627,8 +627,9 @@ functions{
       }
     }
   return z;
-  }
-
+ }
+  
+   
   matrix expm2(matrix M){
     matrix[rows(M),rows(M)] out;
     int z[rows(out)] = checkoffdiagzero(M);

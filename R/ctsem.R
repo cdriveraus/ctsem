@@ -26,6 +26,11 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
   'plot', 'points','T0TRAITEFFECT',
   'T0VARsubindex','DRIFTsubindex','DIFFUSIONsubindex','CINTsubindex'))
 
+`:=` = function(...) NULL
+`.` = function(...) NULL
+.N = id = grp = NULL # due to NSE notes in R CMD check
+
+
 #' ctsem
 #' 
 #' ctsem is an R package for continuous time structural equation modelling of panel (N > 1) 
@@ -44,11 +49,10 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
 #'  
 #' @docType package
 #' @name ctsem
-#' @import grDevices methods stats rstan OpenMx graphics rstantools rstan Rcpp DEoptim
+#' @import grDevices methods stats rstan OpenMx graphics rstantools Rcpp data.table
 #' @importFrom plyr aaply alply round_any
 #' @importFrom utils relist as.relistable tail capture.output
 #' @importFrom KernSmooth bkde2D
-#' @importFrom data.table fread
 #' @useDynLib ctsem, .registration = TRUE
 #' 
 #' @references 

@@ -48,6 +48,7 @@ ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
     tpoints <- max(unlist(lapply(unique(fit$data$subject),function(x) length(fit$data$subject[fit$data$subject==x]))))
     colnames(ldat) <- c('id','time', manifestNames)
     dt = cbind(data.table(id=fit$data$subject),data.table(fit$data$Y))[ ,.(discrete.time.point=1:.N),by=id]
+    discrete.time.point=NULL #global variable complaint
     maxtp=max(dt[,discrete.time.point])
     suppressMessages(wdat <- ctLongToWide(ldat,id='id',time='time',
       manifestNames = manifestNames)[,paste0(manifestNames,'_T',
@@ -128,7 +129,11 @@ ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
 #' @param x Object output from ctsemFitMeasure function.
 #' @param indices Either 'all' or a vector of integers denoting which observations to 
 #' include (from 1 to n.manifest * maximum number of obs for a subject, blocked by manifest).
-#' @param covtype 
+#' @param covtype Column name of cstemFitMeasure object
+#' @param cov Logical -- plot simulated cov vs observed?
+#' @param means Logical -- plot simulated means vs observed?
+#' @param cov2cor Logical -- convert covariances to correlations?
+#' @param separatemeans Logical -- means from different variables on same or different plots?
 #' @param ggcorrArgs List of arguments to GGally::ggcorr .
 #' @param ... not used.
 #'
@@ -153,8 +158,10 @@ ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
 #' plot(scheck)
 #' 
 #' }
-plot.ctsemFitMeasure <- function(x,indices='all', means=TRUE,separatemeans=TRUE, cov=TRUE,covtype='MisspecRatio',cov2cor=FALSE,
-  ggcorrArgs=list(data=NULL, cor_matrix =  get(covtype),limits=limits, geom = 'circle',max_size = 13,name=covtype),...){
+plot.ctsemFitMeasure <- function(x,indices='all', means=TRUE,separatemeans=TRUE, 
+  cov=TRUE,covtype='MisspecRatio',cov2cor=FALSE,
+  ggcorrArgs=list(data=NULL, cor_matrix =  get(covtype),
+    limits=limits, geom = 'circle',max_size = 10,name=covtype),...){
   
   if(!covtype %in% colnames(x$cov)) stop('covtype not in column names of x!')
   

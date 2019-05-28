@@ -7,7 +7,7 @@
 \method{plot}{ctsemFitMeasure}(x, indices = "all", means = TRUE,
   separatemeans = TRUE, cov = TRUE, covtype = "MisspecRatio",
   cov2cor = FALSE, ggcorrArgs = list(data = NULL, cor_matrix =
-  get(covtype), limits = limits, geom = "circle", max_size = 13, name =
+  get(covtype), limits = limits, geom = "circle", max_size = 10, name =
   covtype), ...)
 }
 \arguments{
@@ -16,7 +16,15 @@
 \item{indices}{Either 'all' or a vector of integers denoting which observations to 
 include (from 1 to n.manifest * maximum number of obs for a subject, blocked by manifest).}
 
-\item{covtype}{}
+\item{means}{Logical -- plot simulated means vs observed?}
+
+\item{separatemeans}{Logical -- means from different variables on same or different plots?}
+
+\item{cov}{Logical -- plot simulated cov vs observed?}
+
+\item{covtype}{Column name of cstemFitMeasure object}
+
+\item{cov2cor}{Logical -- convert covariances to correlations?}
 
 \item{ggcorrArgs}{List of arguments to GGally::ggcorr .}
 
