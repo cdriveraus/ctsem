@@ -4,7 +4,7 @@
 \alias{optimstan}
 \title{Optimize / importance sample a stan or ctStan model.}
 \usage{
-optimstan(standata, sm, init = "random", initsd = 0.1,
+optimstan(standata, sm, init = "random", initsd = 0.01,
   sampleinit = NA, deoptim = FALSE, estonly = FALSE, tol = 1e-12,
   decontrol = list(), stochastic = TRUE, plotsgd = FALSE,
   isloops = 0, isloopsize = 1000, finishsamples = 500, tdf = 50,

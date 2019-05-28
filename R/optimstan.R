@@ -61,7 +61,7 @@
 #' #output
 #' summary(ssfit)
 #' }
-optimstan <- function(standata, sm, init='random',initsd=.1,sampleinit=NA,
+optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   deoptim=FALSE, estonly=FALSE,tol=1e-12,
   decontrol=list(),
   stochastic = TRUE,

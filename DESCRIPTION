@@ -1,12 +1,13 @@
 Package: ctsem
 Type: Package
 Title: Continuous Time Structural Equation Modelling
-Version: 2.9.5
-Date: 2019-5-18
+Version: 2.9.6
+Date: 2019-5-28
 Authors@R: c(person("Charles", "Driver", role =
     c("aut","cre","cph"),email="driver@mpib-berlin.mpg.de"),
     person("Manuel", "Voelkle", role = c("aut","cph")),
-    person("Han", "Oud", role = c("aut","cph") ))
+    person("Han", "Oud", role = c("aut","cph") ),
+    person("Trustees of Columbia University",role='cph'))
 Description: Hierarchical continuous time state space modelling, for linear
     and nonlinear systems measured by  continuous variables, with limited support for 
     binary data. The subject specific dynamic system is modelled as a stochastic 
