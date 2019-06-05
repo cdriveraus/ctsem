@@ -6,9 +6,10 @@
 \usage{
 optimstan(standata, sm, init = "random", initsd = 0.01,
   sampleinit = NA, deoptim = FALSE, estonly = FALSE, tol = 1e-12,
-  decontrol = list(), stochastic = TRUE, plotsgd = FALSE,
-  isloops = 0, isloopsize = 1000, finishsamples = 500, tdf = 50,
-  verbose = 0, nopriors = FALSE, cores = 1)
+  decontrol = list(), stochastic = TRUE, startnsubjects = NA,
+  plotsgd = FALSE, isloops = 0, isloopsize = 1000,
+  finishsamples = 500, tdf = 50, verbose = 0, nopriors = FALSE,
+  cores = 1)
 }
 \arguments{
 \item{standata}{list object conforming to rstan data standards.}
@@ -34,6 +35,9 @@ minima / difficult optimization.}
 
 \item{stochastic}{Logical. Use stochastic gradient descent instead of ucminf (bfgs with trust region) optimizer.
 Generally more robust, a little slower with few parameters, faster with many.}
+
+\item{startnsubjects}{Either NA to ignore, or an integer specifying the number of subjects to start the
+stochastic optimization with. This will be increased to the full amount by convergence time.}
 
 \item{plotsgd}{Logical. If TRUE, plot iteration details when using stochastic optimizer.}
 

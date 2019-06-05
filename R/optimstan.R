@@ -16,6 +16,8 @@
 #' @param verbose Integer from 0 to 2. Higher values print more information during model fit -- for debugging.
 #' @param decontrol List of control parameters for differential evolution step, to pass to \code{DEoptim.control}.
 #' @param nopriors logical.f If TRUE, any priors are disabled -- sometimes desirable for optimization. 
+#' @param startnsubjects Either NA to ignore, or an integer specifying the number of subjects to start the
+#' stochastic optimization with. This will be increased to the full amount by convergence time.
 #' @param tol absolute object tolerance
 #' @param cores Number of cpu cores to use.
 #' @param isloops Number of iterations of adaptive importance sampling to perform after optimization.
@@ -64,7 +66,8 @@
 optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   deoptim=FALSE, estonly=FALSE,tol=1e-12,
   decontrol=list(),
-  stochastic = TRUE,
+  stochastic = 'auto',
+  startnsubjects=NA,
   plotsgd=FALSE,
   isloops=0, isloopsize=1000, finishsamples=500, tdf=50,
   verbose=0,nopriors=FALSE,cores=1){
@@ -104,33 +107,33 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       if(deoptim){ #init with DE
         if(requireNamespace('DEoptim',quietly = TRUE)) {
-        if(decontrol$NP=='auto') NP=min(c(40,10*npars)) else NP = decontrol$NP
-        
-        decontrollist <- c(decontrol,DEoptim::DEoptim.control())
-        decontrollist <- decontrollist[unique(names(decontrollist))]
-        
-        lp2 = function(parm) {
-          out<-try(log_prob(smf, upars=parm,adjust_transform=TRUE,gradient=FALSE),silent = TRUE)
-          if(class(out)=='try-error') {
-            out=-1e200
+          if(decontrol$NP=='auto') NP=min(c(40,10*npars)) else NP = decontrol$NP
+          
+          decontrollist <- c(decontrol,DEoptim::DEoptim.control())
+          decontrollist <- decontrollist[unique(names(decontrollist))]
+          
+          lp2 = function(parm) {
+            out<-try(log_prob(smf, upars=parm,adjust_transform=TRUE,gradient=FALSE),silent = TRUE)
+            if(class(out)=='try-error') {
+              out=-1e200
+            }
+            return(-out)
           }
-          return(-out)
-        }
-        
-        deinit <- matrix(rnorm(npars*NP,0,2),nrow = NP)
-        deinit[2,] <- rnorm(npars,0,.0002)
-        if(length(init)>1 & try2) {
-          deinit[1,] <- unconstrain_pars(smf,init)
-          if(NP > 10) deinit[3:9,] =  matrix( rnorm(npars*(7),rep(deinit[1,],each=7),.1), nrow = 7)
-        }
-        decontrollist$initialpop=deinit
-        decontrollist$NP = NP
-        optimfitde <- suppressWarnings(DEoptim::DEoptim(fn = lp2,lower = rep(-1e10, npars), upper=rep(1e10, npars),
-          control = decontrollist))
-        # init=constrain_pars(object = smf,optimfitde$optim$bestmem)
-        init=optimfitde$optim$bestmem
-      } else stop(paste0('use install.packages(\"DEoptim\") to use deoptim')) #end require deoptim
-    }
+          
+          deinit <- matrix(rnorm(npars*NP,0,2),nrow = NP)
+          deinit[2,] <- rnorm(npars,0,.0002)
+          if(length(init)>1 & try2) {
+            deinit[1,] <- unconstrain_pars(smf,init)
+            if(NP > 10) deinit[3:9,] =  matrix( rnorm(npars*(7),rep(deinit[1,],each=7),.1), nrow = 7)
+          }
+          decontrollist$initialpop=deinit
+          decontrollist$NP = NP
+          optimfitde <- suppressWarnings(DEoptim::DEoptim(fn = lp2,lower = rep(-1e10, npars), upper=rep(1e10, npars),
+            control = decontrollist))
+          # init=constrain_pars(object = smf,optimfitde$optim$bestmem)
+          init=optimfitde$optim$bestmem
+        } else stop(paste0('use install.packages(\"DEoptim\") to use deoptim')) #end require deoptim
+      }
       
       
       # suppressWarnings(suppressOutput(optimfit <- optimizing(sm,standata, hessian=FALSE, iter=1e6, init=init,as_vector=FALSE,draws=0,constrained=FALSE,
@@ -140,7 +143,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       bestlp <- -Inf
       
       lp<-function(parm) {
-        # print((parm))
+        # print((parm)
         out<-try(log_prob(smf, upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = TRUE)
         if(class(out)=='try-error' || is.nan(out)) {
           out=-Inf
@@ -160,8 +163,10 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       parbase=par()
       
-      sgd <- function(init,stepbase=1e-4,nsubjects=1,gmeminit=0,gmemmax=.9,maxparchange = .1,
+      sgd <- function(init,stepbase=1e-4,nsubjects=1,gmeminit=ifelse(is.na(startnsubjects),.7,.9),gmemmax=.9,maxparchange = .1,
+        startnsubjects=NA,
         minparchange=1e-16,maxiter=50000,perturbpercent=0,nconvergeiter=20, itertol=1e-3, deltatol=1e-5){
+        
         pars=init
         bestpars = pars
         step=rep(stepbase,length(init))
@@ -179,6 +184,8 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         lp<-c()
         oldlp <- -Inf
         converged <- FALSE
+        nsubjects <- ifelse(is.na(startnsubjects),standata$nsubjects, min(standata$nsubjects, startnsubjects))
+        
         while(!converged && i < maxiter){
           i = i + 1
           accepted <- FALSE
@@ -187,39 +194,46 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             newpars = bestpars #* .5 + bestpars * .5
             parupdate =  exp(rnorm(length(step),0,step)) * step  * gsmooth #(sign(g) +  sign(g)*(abs(gsmooth) / mean(abs(gsmooth)))) #
             if(i %% 28 == 0) step[whichpars] = step[whichpars] * 10
+            parupdate[abs(parupdate) > maxparchange] <- maxparchange*sign(parupdate[abs(parupdate) > maxparchange])
             newpars = newpars + parupdate
-            # subjects <- sample(unique(standata$subject),nsubjects)
-            # standata$dokalmanrows <- as.integer(standata$subject %in% subjects) #rep(1L,standata$ndatapoints) #
-            # smf<-stan_reinitsf(sm,standata)
+            
+            #sub sampling
+            if(!is.na(startnsubjects) || (nsubjects==standata$nsubjects && i > 2)){
+              subjects <- sample(unique(standata$subject),nsubjects,replace = FALSE)
+              standata$dokalmanrows <- as.integer(standata$subject %in% subjects) #rep(1L,standata$ndatapoints) #
+              smf<-stan_reinitsf(sm,standata)
+            }
+            
             lpg = try(log_prob(smf, upars=newpars,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
             if(class(lpg) !='try-error' && !is.nan(lpg[1]) && all(!is.nan(attributes(lpg)$gradient))) accepted <- TRUE else step <- step * .1
-            if(i < 20 && i > 1 && lpg[1] < lp[i-1]) {
+            if(is.na(startnsubjects) && i < 20 && i > 1 && lpg[1] < lp[i-1]) {
               accepted <- FALSE
-              step = step * .1
+              step = step * .5
             }
           }
-          lp=c(lp,lpg[1])
+          lp[i]=lpg[1]
           pars <- newpars
           oldsigng=signg
-          # gpersist <- gpersist * .99 + .01 * abs(attributes(lpg)$gradient -g) / (abs(attributes(lpg)$gradient)+abs(g)/2)
-          # print(gpersist[1:10])
           g=attributes(lpg)$gradient
           oldgsmooth = gsmooth
           gsmooth= gsmooth*gmemory + (1-gmemory)*g
           signg=sign(gsmooth)
           # step=exp(mean(log(step))+(.99*(log(step)-mean(log(step)))))
           step[oldsigng == signg] = step[which(oldsigng == signg)] * 1.1 #exp((1-gmemory)/2)
-          step[oldsigng != signg] = step[which(oldsigng != signg)] / 1.2 #exp((1-gmemory)/2)
-          if(lp[i] >= maxlp) {
+          step[oldsigng != signg] = step[which(oldsigng != signg)] / ifelse(nsubjects == standata$nsubjects, 1.2,1.2) #1.2 #exp((1-gmemory)/2)
+          if(lp[i] >= max(lp)) {
             step = step * 1.05 #exp((1-gmemory)/8)
             bestpars <- pars
-            maxlp <- lp[i]
           } 
           if(i > 1 && lp[i] < lp[i-1]) {
             # signg <- oldsigng
             # gsmooth = oldgsmooth
             # pars <- bestpars
-            step = step  / max( 1.5, (-10*(lp[i] - lp[i-1]) / sd(head(tail(lp,20),10)))) #exp((1-gmemory)/4)
+            if(nsubjects == standata$nsubjects) {
+              step = step  / max( 1.5, (-10*(lp[i] - lp[i-1]) / sd(head(tail(lp,20),10)))) #exp((1-gmemory)/4)
+            } else {
+              step = step / 1.06
+            }
           }
           # if(i %%10 ==0) gmemory = min(gmemory+.1,gmemmax)# * exp(mean(sign(diff(tail(lp,20)))))
           # if(i %%20 ==0) gmemory =  max(gmeminit, min(gmemmax, 1.6*(1-(log(sd(tail(lp,20)) ) -log(itertol)) / (log(sd(head(lp,20)))-log(itertol)))* (1-gmeminit) + gmeminit))
@@ -240,62 +254,73 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             par(mfrow=c(3,1))
             plot(pars)
             plot(log(step))
-            plot(tail(log(abs(lp)),500),type='l')
+            plot(tail(log((lp-min(lp)+10)),500),type='l')
             print(i)
-            message(paste0('Iter = ',i, '   Best LP = ', maxlp,'   grad = ', sqrt(sum(g^2)), '   gmem = ', gmemory))
+            message(paste0('Iter = ',i, '   Best LP = ', max(lp),'   grad = ', sqrt(sum(g^2)), '   gmem = ', gmemory))
           }
           
           #check convergence
           if(i > 30){
             if(max(tail(lp,nconvergeiter)) - min(tail(lp,nconvergeiter)) < itertol) converged <- TRUE
+            # print(max(tail(lp,nconvergeiter)) - min(tail(lp,nconvergeiter)))
             if(max(diff(tail(lp,nconvergeiter))) < deltatol) converged <- TRUE
+            if(nsubjects < standata$nsubjects && (length(lp) - match(min(lp),lp)) > nconvergeiter) converged <- TRUE
+          }
+          if(converged & nsubjects != standata$nsubjects){
+            converged <- FALSE
+            nsubjects <- min(standata$nsubjects, nsubjects * 2)
+            if(nsubjects > standata$nsubjects/2) nsubjects <- standata$nsubjects
+            message(paste0('nsubjects now ',nsubjects, ' out of ',standata$nsubjects),' total')
+            i=0
+            lp=c()
           }
         }
-        return(list(itervalues = lp, value = maxlp,par=bestpars) )
+        return(list(itervalues = lp, value = max(lp),par=bestpars) )
       }
       # browser()
       # if(!deoptim & standata$nopriors == 0 ) init='random'
       
       if(stochastic=='auto' && npars > 50){
-        message('> 50 parameters and stochastic="auto" so stochastic gradient descent used')
+        message('> 20 parameters and stochastic="auto" so stochastic gradient descent used')
         stochastic <- TRUE
       } else if(stochastic=='auto') stochastic <- FALSE
       
       if(!deoptim & standata$nopriors == 1 ){ #init using priors
         standata$nopriors <- as.integer(0)
         smf <- stan_reinitsf(sm,standata)
-        if(!stochastic) optimfit <- ucminf(init,fn = lp,gr = grffromlp,control=list(grtol=1e-4,xtol=tol*1e4,maxeval=10000))
-        if(stochastic) optimfit <- sgd(init, itertol=1e-1) 
+        if(!stochastic) optimfit <- ucminf(init,fn = lp,gr = grffromlp,control=list(xtol=tol*1e6,maxeval=10000))
+        if(stochastic) optimfit <- sgd(init, itertol=1,startnsubjects=startnsubjects)
         standata$nopriors <- as.integer(1)
         smf <- stan_reinitsf(sm,standata)
         init = optimfit$par #rstan::constrain_pars(object = smf, optimfit$par)
       }
       
-      
       if(!stochastic) {
-        optimfit <- ucminf(init,fn = lp,gr = grffromlp,control=list(grtol=1e-8,xtol=tol,maxeval=10000),hessian=2)
+        optimfit <- ucminf(init,fn = lp,gr = grffromlp,control=list(grtol=1e-99,xtol=tol,maxeval=10000),hessian=2)
         init = optimfit$par
         ucminfcov <- optimfit$invhessian
       }
-      # sink('fail.txt')
-      optimfit <- sgd(init, nsubjects=standata$nsubjects,perturbpercent = .0) 
-      # sink()
-      # browser()
-      # optimizing(object = sm, standata)
+
+      if(stochastic){
+      optimfit <- sgd(init, nsubjects=standata$nsubjects,startnsubjects=startnsubjects, perturbpercent = .0) 
+      }
+   
       est1=constrain_pars(smf,optimfit$par)
       bestfit <-optimfit$value
-      # smf<-new(sm@mk_cppmodule(sm),standata,0L,rstan::grab_cxxfun(sm@dso))
       
       est2=optimfit$par #unconstrain_pars(smf, est1)
     }
     
     if(!estonly){
-      lp<-function(parm) {
-        out<-try(log_prob(smf, upars=parm,adjust_transform=TRUE,gradient=FALSE),silent = TRUE)
-        if(class(out)=='try-error') {
-          out=-Inf
+      lpg<-function(parm) {
+        out<-try(log_prob(smf, upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = TRUE)
+        if(class(out)=='try-error' || is.nan(out)) {
+          out=Inf
+          gradout <<- rep(NaN,length(parm))
+        } else {
+          gradout <<- attributes(out)$gradient
         }
-        return(out)
+        return(out[1])
       }
       
       grf<-function(parm,...) {
@@ -305,22 +330,56 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         }
         return(out)
       }
-      
-      grmat<-function(func,pars,step=1e-12){
-        gradout<-matrix(NA,nrow=length(pars),ncol=length(pars))
-        
+
+      grmat<-function(pars,step=1e-8,lpdifmin=1e-8, lpdifmax=1e-1){
+        hessout<-matrix(NA,nrow=length(pars),ncol=length(pars))
         for(i in 1:length(pars)){
-          stepsize <- step *10
-          while((any(is.na(gradout[i,])) || gradout[i,i] >=0)  && stepsize > 1e-12){
-            stepsize <- stepsize * .1
-            uppars<-pars
-            downpars<-pars
-            uppars[i]<-pars[i]+stepsize
-            downpars[i]<-pars[i]-stepsize
-            gradout[i,]<-((func(uppars)) - (func(downpars)))/stepsize/2
-          }
+          stepsize <- step #*10
+          # while((any(is.na(hessout[i,])) || hessout[i,i] >=0)  && stepsize > 1e-12){
+            # stepsize <- step * .1
+            lpdifok<-FALSE
+            lpdifcount <- 0
+            lpdifdirection <- 0
+            lpdifmultiplier <- 1
+            while(!lpdifok & lpdifcount < 15){
+              lpdifok <- TRUE
+              lpdifcount <- lpdifcount + 1
+              print(lpdifcount)
+              uppars<-pars
+              downpars<-pars
+              uppars[i]<-pars[i]+stepsize
+              downpars[i]<-pars[i]-stepsize
+              uplp=lpg(uppars)
+              upgrad=gradout
+              downlp = lpg(downpars)
+              downgrad = gradout
+              # print(abs(uplp-downlp))
+              # print(upgrad)
+              # print(downgrad)
+              if(abs(uplp-downlp) > lpdifmax) {
+                # message(paste0('decreasing step for ', i))
+                lpdifok <- FALSE
+                if(lpdifdirection== 1) {
+                  lpdifmultiplier = lpdifmultiplier * .5
+                }
+                stepsize = stepsize * 1e-2 * lpdifmultiplier
+                lpdifdirection <- -1
+              }
+              if(abs(uplp-downlp) < lpdifmin) {
+                # message(paste0('increasing step for ', i))
+                lpdifok <- FALSE
+                if(lpdifdirection== -1) {
+                  lpdifmultiplier = lpdifmultiplier * .5
+                }
+                stepsize = stepsize * 100 * lpdifmultiplier
+                lpdifdirection <- 1
+              }
+              hessout[i,]<- (upgrad-downgrad) /stepsize/2
+            }
+            
+          # }
         }
-        return(t(gradout))
+        return(t(hessout))
       }
       
       # A more numerically stable way of calculating log( sum( exp( x ))) Source:
@@ -332,18 +391,20 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       
       if(is.na(sampleinit[1])){
-          
-          hess=grmat(func=grf,pars=est2,step=1e-8)
-          if(any(is.na(hess))) stop(paste0('Hessian could not be computed for pars ', paste0(which(apply(hess,1,function(x) any(is.na(x))))), ' -- consider reparameterising.',collapse=''))
-          hess = (hess/2) + t(hess/2)
-          mchol=try(t(chol(solve(-hess))),silent=TRUE)
-          if(class(mchol)=='try-error') {
-            message('Hessian not positive-definite -- check importance sampling convergence with isdiag')
-            npd <- TRUE
-          } else npd <- FALSE
-          # if(class(mchol)=='try-error') {
-          mcov=MASS::ginv(-hess) #-optimfit$hessian)
-          mcov=as.matrix(Matrix::nearPD(mcov)$mat)
+        
+        hess=grmat(pars=est2,step=1e-4)
+        if(any(is.na(hess))) stop(paste0('Hessian could not be computed for pars ', paste0(which(apply(hess,1,function(x) any(is.na(x))))), ' -- consider reparameterising.',collapse=''))
+        hess = (hess/2) + t(hess/2)
+        # neghesschol = try(chol(-hess),silent=TRUE)
+        
+        mchol=try(t(chol(solve(-hess))),silent=TRUE)
+        if(class(mchol)=='try-error') {
+          message('Hessian not positive-definite -- check importance sampling convergence with isdiag')
+          npd <- TRUE
+        } else npd <- FALSE
+        # if(class(mchol)=='try-error') {
+        mcov=MASS::ginv(-hess) #-optimfit$hessian)
+        mcov=as.matrix(Matrix::nearPD(mcov)$mat)
       }
       
       if(!is.na(sampleinit[1])){
@@ -362,7 +423,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           })
         return(d)
       }
-          
+      
       
       mcovl <- list()
       mcovl[[1]]=mcov
@@ -510,12 +571,12 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     
     # parallel::stopCluster(cl)
     message('Computing quantities...')
- 
+    
     # cl <- parallel::makeCluster(min(cores,chains), type = "PSOCK")
     parallel::clusterExport(cl, c('relistarrays','resamples','sm','standata','optimfit'),environment())
     
     # target_dens <- c(target_dens,
-
+    
     transformedpars <- try(parallel::parLapply(cl, parallel::clusterSplit(cl,1:nresamples), function(x){
       require(ctsem)
       Sys.sleep(.1)
@@ -562,8 +623,8 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       }
       return(out)
     }
-
-
+    
+    
     transformedpars=try(tostanarray(flesh=matrix(unlist(transformedpars),byrow=TRUE, nrow=nresamples), skeleton = est1))
     
     # quantile(sapply(transformedpars, function(x) x$rawpopcorr[3,2]),probs=c(.025,.5,.975))

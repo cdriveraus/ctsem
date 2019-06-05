@@ -211,20 +211,21 @@ ukfilterfunc<-function(ppchecking){
         J = rep_matrix(0,nlatentpop,nlatentpop); //dont necessarily need to loop over tdpreds here...
           for(statei in 0:nlatentpop){
             if(statei>0){
-              J[statei,statei] = 1e-6;
+              J[statei,statei] = Jstep;
               state = eta + J[,statei];
             } else {
               state = eta;
             }
+
             ',paste0(ctstanmodel$calcs$driftcintpars,';\n',collapse=' '),';\n', intoverpopdriftcintparscalcs,' 
             if(statei== 0) {
               base = sDRIFT * state[1:nlatent] + sCINT[,1];
             }
             if(statei > 0) {
-              J[1:nlatent,statei] = (( sDRIFT * state[1:nlatent] + sCINT[,1]) - base)/1e-6;
+              J[1:nlatent,statei] = (( sDRIFT * state[1:nlatent] + sCINT[,1]) - base)/Jstep;
             }
           }
-          ',paste0(ctstanmodel$calcs$diffusion,';\n',collapse=' '),' //not repeating other calcs because 1e-6 is small
+          ',paste0(ctstanmodel$calcs$diffusion,';\n',collapse=' '),' //not repeating other calcs because Jstep is small
           if(continuoustime==1){
             matrix[nlatentpop,nlatentpop] Je;
             matrix[nlatent*2,nlatent*2] dQi;
@@ -237,6 +238,12 @@ ukfilterfunc<-function(ppchecking){
             eta[1:nlatent] = (discreteDRIFT * append_row(eta[1:nlatent],1.0))[1:nlatent];
           }
         if(continuoustime==0){ //test this
+//if(rowi < 4){
+//print(rowi);
+//print("J = ", J);
+//print("sDRIFT = ",sDRIFT);
+//}
+for(nli in nlatent+1:nlatentpop) J[nli,nli] = 1;
           etacov = quad_form(etacov, J\');
           etacov[1:nlatent,1:nlatent] += sDIFFUSION; //may need improving re sDIFFUSION
           discreteDRIFT=append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1));
@@ -837,7 +844,7 @@ data {
   vector[fixedsubpars ? nindvarying : 0] fixedindparams[fixedsubpars ? nsubjects : 0];
   int dokalman;
   int dokalmanrows[ndatapoints];
-  real dokalmanpriormodifier;
+  real Jstep;
 }
       
 transformed data{
@@ -846,6 +853,7 @@ transformed data{
   matrix[nindvarying,nindvarying] IIindvar = diag_matrix(rep_vector(1,nindvarying));
   real asquared =  square(2.0/sqrt(0.0+nlatentpop) * ukfspread);
   real sqrtukfadjust = sqrt(0.0+nlatentpop +( asquared * (nlatentpop  + 0.5) - (nlatentpop) ) );
+  real dokalmanpriormodifier = sum(dokalmanrows)/ndatapoints;
 }
       
 parameters {

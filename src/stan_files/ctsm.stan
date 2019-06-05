@@ -24,8 +24,9 @@ functions{
       }
     }
   return z;
-  }
-
+ }
+  
+   
   matrix expm2(matrix M){
     matrix[rows(M),rows(M)] out;
     int z[rows(out)] = checkoffdiagzero(M);
@@ -246,7 +247,7 @@ int asymDIFFUSIONsubindex[nsubjects];
   vector[fixedsubpars ? nindvarying : 0] fixedindparams[fixedsubpars ? nsubjects : 0];
   int dokalman;
   int dokalmanrows[ndatapoints];
-  real dokalmanpriormodifier;
+  real Jstep;
 }
       
 transformed data{
@@ -255,6 +256,7 @@ transformed data{
   matrix[nindvarying,nindvarying] IIindvar = diag_matrix(rep_vector(1,nindvarying));
   real asquared =  square(2.0/sqrt(0.0+nlatentpop) * ukfspread);
   real sqrtukfadjust = sqrt(0.0+nlatentpop +( asquared * (nlatentpop  + 0.5) - (nlatentpop) ) );
+  real dokalmanpriormodifier = sum(dokalmanrows)/ndatapoints;
 }
       
 parameters {
@@ -550,7 +552,7 @@ pop_asymCINT = sasymCINT;
         
         
         if(dtchange==1 || (T0check[rowi-1]==1 && (si <= DRIFTsubindex[nsubjects] || si <= CINTsubindex[nsubjects]))){
-          discreteDRIFT = expm2(append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1)) * dT[rowi]);
+          discreteDRIFT = matrix_exp(append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1)) * dT[rowi]);
         }
     
         if(dtchange==1 || (T0check[rowi-1]==1 && (si <= DIFFUSIONsubindex[nsubjects]|| si <= DRIFTsubindex[nsubjects]))){
@@ -582,15 +584,16 @@ pop_asymCINT = sasymCINT;
       if(T0check[rowi]==0){
         matrix[nlatentpop,nlatentpop] J;
         vector[nlatent] base;
-        J = rep_matrix(0,nlatentpop,nlatentpop); //dont necessarily need to loop over tdpreds here...
         for(stepi in 1:integrationsteps[rowi]){
+        J = rep_matrix(0,nlatentpop,nlatentpop); //dont necessarily need to loop over tdpreds here...
           for(statei in 0:nlatentpop){
             if(statei>0){
-              J[statei,statei] = 1e-6;
+              J[statei,statei] = Jstep;
               state = eta + J[,statei];
             } else {
               state = eta;
             }
+
             ;
 ;
 
@@ -610,16 +613,16 @@ pop_asymCINT = sasymCINT;
               base = sDRIFT * state[1:nlatent] + sCINT[,1];
             }
             if(statei > 0) {
-              J[1:nlatent,statei] = (( sDRIFT * state[1:nlatent] + sCINT[,1]) - base)/1e-6;
+              J[1:nlatent,statei] = (( sDRIFT * state[1:nlatent] + sCINT[,1]) - base)/Jstep;
             }
           }
           ;
- //not repeating other calcs because 1e-6 is small
+ //not repeating other calcs because Jstep is small
           if(continuoustime==1){
             matrix[nlatentpop,nlatentpop] Je;
             matrix[nlatent*2,nlatent*2] dQi;
-            Je= expm2(J * dTsmall[rowi]) ;
-            discreteDRIFT = expm2(append_row(append_col(sDRIFT,sCINT),rep_vector(0,nlatent+1)') * dTsmall[rowi]);
+            Je= matrix_exp(J * dTsmall[rowi]) ;
+            discreteDRIFT = matrix_exp(append_row(append_col(sDRIFT,sCINT),rep_vector(0,nlatent+1)') * dTsmall[rowi]);
             sasymDIFFUSION = to_matrix(  -kronsum(J[1:nlatent,1:nlatent]) \ to_vector(tcrossprod(sDIFFUSIONsqrt)), nlatent,nlatent);
             discreteDIFFUSION =  sasymDIFFUSION - quad_form( sasymDIFFUSION, Je[1:nlatent,1:nlatent]' );
             etacov = quad_form(etacov, Je');
@@ -627,6 +630,12 @@ pop_asymCINT = sasymCINT;
             eta[1:nlatent] = (discreteDRIFT * append_row(eta[1:nlatent],1.0))[1:nlatent];
           }
         if(continuoustime==0){ //test this
+//if(rowi < 4){
+//print(rowi);
+//print("J = ", J);
+//print("sDRIFT = ",sDRIFT);
+//}
+for(nli in nlatent+1:nlatentpop) J[nli,nli] = 1;
           etacov = quad_form(etacov, J');
           etacov[1:nlatent,1:nlatent] += sDIFFUSION; //may need improving re sDIFFUSION
           discreteDRIFT=append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1));

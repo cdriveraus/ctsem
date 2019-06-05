@@ -20,6 +20,7 @@ gm<-ctModel(type='omx',n.latent=2,n.manifest=n.manifest,Tpoints=Tpoints,LAMBDA=m
   DRIFT=diag(-.4,2),
   CINT=matrix(c(par1[i],par2[i]),2),
   T0VAR=diag(.1,2),
+  T0MEANS=matrix(c(3,5),n.latent),
   # MANIFESTMEANS=diag(par1[i],1), #matrix(mmeans,nrow=n.manifest),
   MANIFESTVAR=t(chol(diag(.0001,n.manifest))),
   DIFFUSION=t(chol(diag(3,2))))
@@ -34,7 +35,7 @@ cd[,gm$manifestNames]<-(cd[,gm$manifestNames]) + rnorm(length(cd[,gm$manifestNam
 
 
 m1<-ctModel(type='omx',n.latent=4,n.manifest=3,Tpoints=Tpoints,
-  LAMBDA=cbind(gm$LAMBDA,gm$LAMBDA),
+  LAMBDA=cbind(gm$LAMBDA,0,0),
   MANIFESTMEANS=matrix(0,nrow=n.manifest),
   # CINT=matrix(c('cint1',0),2,1),
   # T0MEANS=matrix(c('t0m1',0),2),
@@ -45,9 +46,11 @@ m1<-ctModel(type='omx',n.latent=4,n.manifest=3,Tpoints=Tpoints,
 m1$DRIFT[3:4,] <- 0
 m1$DRIFT[,3:4] <- 0
 diag(m1$DRIFT)[3:4] <- -1e-5
+m1$DRIFT[1,3] = 1
+m1$DRIFT[2,4] = 1
 m1$DIFFUSION[3:4,] <- 0
 m1$DIFFUSION[,3:4] <- 0
-m1$T0VAR[3:4,1:2] <- 0
+# m1$T0VAR[3:4,1:2] <- 0
 
 #model for ukf ctsem
 m2<-ctModel(type='omx',n.latent=2,n.manifest=n.manifest,Tpoints=Tpoints,
@@ -70,14 +73,14 @@ cfit1$mxobj$DIFFUSION$result
 cfit1$mxobj$T0VAR$result
 ctll1=cfit1$mxobj$output$fit *-.5
 
-cfit2 <- ctRefineTo(dat = cd,dataform = 'long',ctmodelobj = m2,retryattempts = 0,carefulFit=T) #stationary='',
+cfit2 <- ctRefineTo(dat = cd,dataform = 'long',ctmodelobj = m2,retryattempts = 0,carefulFit=T,stationary='')
 ct2d=cfit2$mxobj$DRIFT$values
 cfit2$mxobj$DIFFUSION$result
 cfit2$mxobj$T0VAR$result
 ctll2=cfit2$mxobj$output$fit *-.5
 
-summary(cfit1)$ctparameters
-summary(cfit2)$ctparameters
+# summary(cfit1)$ctparameters
+# summary(cfit2)$ctparameters
 
 #bayesian / ukf ctsem
 sm1 <- ctStanModel(m1)
@@ -91,7 +94,8 @@ sf1 <- ctStanFit(cd,sm1,iter=200,chains=4,cores=4,
   derrind=1:4,
   nlcontrol=list(nldynamics=FALSE))
 # sink()
-# summary(sf1)$popmeans
+# summary(sf1,parmatrices=T)
+
 sf1d=matrix(sf1$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf1$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
 sf1ll=sf1$stanfit$optimfit$value
 
@@ -150,6 +154,10 @@ sf2ll=sf2$stanfit$optimfit$value
 
 dvec=c('ct1d','ct2d','sf1d','sf2d','sf1nl_derrindd','sf1nld_derrindd')
 llvec=c('ctll1','ctll2','sf1ll','sf1nldll','sf1nld_derrindll','sf1nl_derrindll')
+
+sapply(dvec,get)
+sapply(llvec,get)
+
 for(di in 2:length(dvec)){
   expect_equivalent(get(dvec[di]),get(dvec[di-1]),tol=1e-1)
   expect_equivalent(get(llvec[di]),get(llvec[di-1]),tol=1e-3)

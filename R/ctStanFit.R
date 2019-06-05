@@ -11,7 +11,6 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
   # driftindex<-rep(0,nrow(datalong))
   # diffusionindex<-driftindex
   # cintindex<-driftindex
-  # browser()
   oldsubi<-datalong[1,ctsmodel$subjectIDname]-1
   dT<-rep(-1,length(datalong[,ctsmodel$timeName]))
   
@@ -24,7 +23,7 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
       subistartrow<-rowi
     }
     if(subi - oldsubi == 0) {
-      dT[rowi]<-round(datalong[rowi,ctsmodel$timeName] - datalong[rowi-1,ctsmodel$timeName],8)
+      dT[rowi]<-datalong[rowi,ctsmodel$timeName] - datalong[rowi-1,ctsmodel$timeName]
       if(dT[rowi] <=0) stop(paste0('A time interval of ', dT[rowi],' was found at row ',rowi))
       # if(subi!=oldsubi) intervalChange[rowi] <-  0
       # if(subi==oldsubi && dT[rowi] != dT[rowi-1]) intervalChange[rowi] <- 1
@@ -65,6 +64,7 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
   
   #integration steps
   integrationsteps <- sapply(dT,function(x)  ceiling(x / maxtimestep));
+  if(ctsmodel$continuoustime != TRUE) integrationsteps = rep(1,length(integrationsteps))
   dTsmall <- dT / integrationsteps
   dTsmall[is.na(dTsmall)] = 0
   
@@ -108,7 +108,6 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
   #subset selection
   if(is.null(ctsmodel$dokalmanrows)) subdata$dokalmanrows <- 
     rep(1L, subdata$ndatapoints) else subdata$dokalmanrows <- as.integer(ctsmodel$dokalmanrows)
-  subdata$dokalmanpriormodifier <- sum(subdata$dokalmanrows) / subdata$ndatapoints
   
   return(subdata)
 }
@@ -524,6 +523,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     if(is.null(nlcontrol$nldynamics)) nlcontrol$nldynamics = 'auto'
     if(is.null(nlcontrol$ukffull)) nlcontrol$ukffull = FALSE
     if(is.null(nlcontrol$nlmeasurement)) nlcontrol$nlmeasurement = 'auto'
+    if(is.null(nlcontrol$Jstep)) nlcontrol$Jstep = 1e-6
     nldynamics <- nlcontrol$nldynamics
     
     args=match.call()
@@ -554,6 +554,15 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         }
       }
       message('Free T0VAR parameters fixed to diagonal matrix of 1\'s as only 1 subject!')
+    }
+    
+    whichT0VAR_T0MEANSindvarying <- ctstanmodel$pars$matrix %in% 'T0VAR'  &  
+      (ctstanmodel$pars$row %in% ctstanmodel$pars$row[ctstanmodel$pars$matrix %in% 'T0MEANS' & ctstanmodel$pars$indvarying] |
+      ctstanmodel$pars$col %in% ctstanmodel$pars$row[ctstanmodel$pars$matrix %in% 'T0MEANS' & ctstanmodel$pars$indvarying])
+    if(any(whichT0VAR_T0MEANSindvarying)){
+      message('Free T0VAR parameters as well as indvarying T0MEANS -- fixing T0VAR pars to diag matrix 1e-5')
+      ctstanmodel$pars$value[whichT0VAR_T0MEANSindvarying & ctstanmodel$pars$col == ctstanmodel$pars$row ] <- 1e-3
+      ctstanmodel$pars$value[whichT0VAR_T0MEANSindvarying & ctstanmodel$pars$col != ctstanmodel$pars$row ] <- 0
     }
     
     
@@ -946,6 +955,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         nmanifest=as.integer(n.manifest),
         nlatentpop = as.integer(ifelse(intoverpop ==1, n.latent + nindvarying,  n.latent)),
         nldynamics=as.integer(nldynamics),
+        Jstep = nlcontrol$Jstep,
         dokalman=as.integer(is.null(ctstanmodel$dokalman)),
         intoverstates=as.integer(intoverstates),
         verbose=as.integer(verbose),
@@ -1029,7 +1039,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       
       if(recompile || forcerecompile) {
         message('Compiling model...') 
-        sm <- stan_model(model_name='ctsem', model_code = c(stanmodeltext))
+        sm <- stan_model(model_name='ctsem', model_code = c(stanmodeltext),auto_write=TRUE)
       }
       if(!recompile && !forcerecompile) {
         if(!gendata) sm <- stanmodels$ctsm else sm <- stanmodels$ctsmgen

@@ -32,8 +32,9 @@ ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA){
    whichmatrices='all'
   
   if(whichmatrices[1] == 'all') {
-    whichmatrices <- c(fit$setup$matrices$base,
-      'asymDIFFUSION','dtDRIFT','dtDIFFUSION','dtCINT','DIFFUSIONcor','asymDIFFUSIONcor','T0VARcor','asymCINT')
+    whichmatrices <- c(fit$setup$matrices$base,'DIFFUSIONcor','asymDIFFUSION','asymDIFFUSIONcor','T0VARcor','asymCINT')
+    if(fit$ctstanmodel$continuoustime) whichmatrices <- c(whichmatrices, 
+      'dtDRIFT','dtDIFFUSION','dtCINT')
   } else whichmatrices <- unique(c(whichmatrices, fit$setup$matrices$base)) #need base matrices for computations
   
   stanmats <- c(fit$setup$matrices$base,'asymDIFFUSION')[c(fit$setup$matrices$base,'asymDIFFUSION') %in% whichmatrices]
@@ -97,7 +98,7 @@ ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA){
   if('dtCINT' %in% whichmatrices) out$dtCINT = (solve(out$DRIFT) %*%(out$dtDRIFT - diag(nrow(out$DRIFT))) %*% (out$CINT))
   if('asymCINT' %in% whichmatrices) out$asymCINT = -solve(out$DRIFT) %*% out$CINT
   
-  if('asymDIFFUSIONcor' %in% whichmatrices) {
+  if('T0VARcor' %in% whichmatrices) {
     out$T0VARcor = suppressWarnings(stats::cov2cor(out$T0VAR))
     out$T0VARcor[is.na(out$T0VARcor)] <- 0
   }
