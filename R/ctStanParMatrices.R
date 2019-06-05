@@ -92,7 +92,7 @@ ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA){
   # dimnames(MANIFESTVAR)=list(mn,mn)
   # out$MANIFESTVAR=MANIFESTVAR
   
-  out$dtDRIFT=expm(out$DRIFT * timeinterval)
+  if(fit$ctstanmodel$continuoustime) out$dtDRIFT=expm(out$DRIFT * timeinterval)
   if('dtDIFFUSION' %in% whichmatrices) out$dtDIFFUSION = out$asymDIFFUSION - (out$dtDRIFT %*% out$asymDIFFUSION %*% t(out$dtDRIFT ))
   if('dtDIFFUSIONcor' %in% whichmatrices) out$dtDIFFUSIONcor = cov2cor(out$dtDIFFUSION)
   if('dtCINT' %in% whichmatrices) out$dtCINT = (solve(out$DRIFT) %*%(out$dtDRIFT - diag(nrow(out$DRIFT))) %*% (out$CINT))
