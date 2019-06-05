@@ -33,7 +33,14 @@
 ctModelLatex<- function(ctmodel,textsize='normalsize',folder=tempdir(),
   filename='ctsemTex',tex=TRUE, equationonly=FALSE, compile=TRUE, open=TRUE){
   
-  if(class(ctmodel) == 'ctStanModel') ctmodel <- c(ctmodel,listOfMatrices(ctmodel$pars)) else if(class(ctmodel) != 'ctsemInit') stop('not a ctsem model!')
+  if(class(ctmodel) == 'ctStanModel') {
+    ctmodel <- c(ctmodel,listOfMatrices(ctmodel$pars)) 
+    continuoustime <- ctmodel$continuoustime
+    } else {
+      if(class(ctmodel) != 'ctsemInit') stop('not a ctsem model!')
+      continuoustime <- TRUE
+    }
+
   if(equationonly) compile <- FALSE
   bmatrix = function(x, digits=NULL,nottext=FALSE, ...) {
     if(!is.null(x)){
@@ -66,8 +73,8 @@ ctModelLatex<- function(ctmodel,textsize='normalsize',folder=tempdir(),
   }
 
   
-  W <- diag(0,ctmodel$n.latent)
-  diag(W) <- 'u'
+  W <- diag(1,ctmodel$n.latent)
+  if(continuoustime) diag(W) <- 'u'
   
   out <- ifelse(equationonly,"","
 \\documentclass[a4paper,landscape]{report}
@@ -82,15 +89,15 @@ ctModelLatex<- function(ctmodel,textsize='normalsize',folder=tempdir(),
 \\setcounter{MaxMatrixCols}{200}
  \\begin{",textsize,"}
   \\begin{align*}
-  &\\underbrace{\\mathrm{d}
+  &\\underbrace{",ifelse(continuoustime,"\\mathrm{d}",""),"
     ",bmatrix(matrix(paste0(ctmodel$latentNames)))," 
-    \\big{(}t\\big{)}}_{\\mathrm{d} \\vect{\\eta} (t)}	=  \\left(
+    \\big{(}t\\big{)}}_{",ifelse(continuoustime,"\\mathrm{d}","")," \\vect{\\eta} (t)}	=  \\left(
       \\underbrace{
         ",bmatrix(ctmodel$DRIFT),"
       }_{\\underbrace{\\vect{A}}_\\textrm{DRIFT}} \\underbrace{
         ",bmatrix(matrix(paste0(ctmodel$latentNames)))," 
         \\big{(}t\\big{)}
-      }_{\\vect{\\eta} (t)}	+ \\underbrace{
+      }_{\\vect{\\eta} (t",ifelse(continuoustime,"","-1"),")}	+ \\underbrace{
         ",bmatrix(ctmodel$CINT),"
       }_{\\underbrace{\\vect{b}}_\\textrm{CINT}} ",
     if(ctmodel$n.TDpred > 0) paste0( "+ \\underbrace{
@@ -99,16 +106,16 @@ ctModelLatex<- function(ctmodel,textsize='normalsize',folder=tempdir(),
       \\underbrace{
         ",bmatrix(matrix(paste0('\\chi_{',1:ncol(ctmodel$TDPREDEFFECT),'}')))," 
       }_{\\vect{\\chi} (t)}"),
-    "\\right) \\mathrm{d}t \\quad + \\nonumber \\\\ \\\\
+    "\\right) ",ifelse(continuoustime,"\\mathrm{d}t","")," \\quad + \\nonumber \\\\ \\\\
     & \\qquad \\qquad \\quad \\underbrace{
       ",bmatrix(ctmodel$DIFFUSION),"
     }_{\\underbrace{\\vect{G}}_\\textrm{DIFFUSION}}
-    \\underbrace{\\mathrm{d}
+    \\underbrace{",ifelse(continuoustime,"\\mathrm{d}",""),"
       ",bmatrix(matrix(paste0('W_{',1:ctmodel$n.latent,'}')),nottext=TRUE)," 
-      (t)}_{\\mathrm{d} \\vect{W}(t)} \\\\ \\\\
-          &\\underbrace{
+      (t)}_{",ifelse(continuoustime,"\\mathrm{d}","")," \\vect{W}(t)} \\\\ \\\\
+          &",if(continuoustime) paste0("\\underbrace{
             ",bmatrix(matrix(paste0('W_{',1:ctmodel$n.latent,'}')),nottext=TRUE),"  
-            (t+u)}_{\\vect{W}(t+u)} -  \\underbrace{",bmatrix(matrix(paste0('W_{',1:ctmodel$n.latent,'}')),nottext=TRUE),"  
+            (t+u)}_{\\vect{W}(t+u)} - "),"  \\underbrace{",bmatrix(matrix(paste0('W_{',1:ctmodel$n.latent,'}')),nottext=TRUE),"  
             (t)}_{\\vect{W}(t)} \\sim  \\mathrm{N} \\left(
               ",bmatrix(matrix(0,ctmodel$n.latent,1)),", ",bmatrix(W)," \\right) \\\\ \\\\
 &\\underbrace{
