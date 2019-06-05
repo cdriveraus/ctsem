@@ -331,7 +331,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         return(out)
       }
 
-      grmat<-function(pars,step=1e-8,lpdifmin=1e-8, lpdifmax=1e-1){
+      grmat<-function(pars,step=1e-5,lpdifmin=1e-8, lpdifmax=1e-3){
         hessout<-matrix(NA,nrow=length(pars),ncol=length(pars))
         for(i in 1:length(pars)){
           stepsize <- step #*10
@@ -344,7 +344,6 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             while(!lpdifok & lpdifcount < 15){
               lpdifok <- TRUE
               lpdifcount <- lpdifcount + 1
-              print(lpdifcount)
               uppars<-pars
               downpars<-pars
               uppars[i]<-pars[i]+stepsize
@@ -382,6 +381,51 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         return(t(hessout))
       }
       
+      
+       hess1s<-function(pars,direction=1,step=1e-5,lpdifmin=1e-6, lpdifmax=1e-1){
+        hessout<-matrix(NA,nrow=length(pars),ncol=length(pars))
+        bestlp=lpg(pars)
+        basegrad=gradout
+        for(i in 1:length(pars)){
+          stepsize <- step 
+            lpdifok<-FALSE
+            lpdifcount <- 0
+            lpdifdirection <- 0
+            lpdifmultiplier <- 1
+            while(!lpdifok & lpdifcount < 15){
+              lpdifok <- TRUE
+              lpdifcount <- lpdifcount + 1
+              uppars<-pars
+              uppars[i]<-pars[i]+stepsize*direction
+              uplp=lpg(uppars)
+              upgrad=gradout
+              if(abs(uplp-bestlp) > lpdifmax) {
+                # message(paste0('decreasing step for ', i))
+                lpdifok <- FALSE
+                if(lpdifdirection== 1) {
+                  lpdifmultiplier = lpdifmultiplier * .5
+                }
+                stepsize = stepsize * 1e-2 * lpdifmultiplier
+                lpdifdirection <- -1
+              }
+              if(abs(uplp-bestlp) < lpdifmin) {
+                # message(paste0('increasing step for ', i))
+                lpdifok <- FALSE
+                if(lpdifdirection== -1) {
+                  lpdifmultiplier = lpdifmultiplier * .5
+                }
+                stepsize = stepsize * 100 * lpdifmultiplier
+                lpdifdirection <- 1
+              }
+              hessout[i,]<- (upgrad-basegrad) /stepsize*direction
+            }
+            
+          # }
+        }
+        return(t(hessout))
+      }
+      
+      
       # A more numerically stable way of calculating log( sum( exp( x ))) Source:
       # http://r.789695.n4.nabble.com/logsumexp-function-in-R-td3310119.html
       log_sum_exp <- function(x) {
@@ -391,7 +435,10 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       
       if(is.na(sampleinit[1])){
-        
+        # browser()
+        # hessup=hess1s(pars = est2,direction = 1,step = 1e-4,lpdifmin = 1e-4,lpdifmax = 1e-3)
+        # hessdown=hess1s(pars = est2,direction = -1,step = 1e-4,lpdifmin = 1e-4,lpdifmax = 1e-3)
+        # hess=(hessup+hessdown)/2
         hess=grmat(pars=est2,step=1e-4)
         if(any(is.na(hess))) stop(paste0('Hessian could not be computed for pars ', paste0(which(apply(hess,1,function(x) any(is.na(x))))), ' -- consider reparameterising.',collapse=''))
         hess = (hess/2) + t(hess/2)
