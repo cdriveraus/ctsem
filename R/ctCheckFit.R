@@ -135,6 +135,7 @@ ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
 #' @param cov2cor Logical -- convert covariances to correlations?
 #' @param separatemeans Logical -- means from different variables on same or different plots?
 #' @param ggcorrArgs List of arguments to GGally::ggcorr .
+#' @param wait Logical -- wait for input before new plot?
 #' @param ... not used.
 #'
 #' @return Nothing, just plots.
@@ -155,11 +156,11 @@ ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
 #' 
 #' 
 #' scheck <- ctCheckFit(ctstantestfit,niter=500)
-#' plot(scheck)
+#' plot(scheck,wait=FALSE)
 #' 
 #' }
 plot.ctsemFitMeasure <- function(x,indices='all', means=TRUE,separatemeans=TRUE, 
-  cov=TRUE,covtype='MisspecRatio',cov2cor=FALSE,
+  cov=TRUE,covtype='MisspecRatio',cov2cor=FALSE,wait=TRUE,
   ggcorrArgs=list(data=NULL, cor_matrix =  get(covtype),
     limits=limits, geom = 'circle',max_size = 10,name=covtype),...){
   
@@ -168,10 +169,11 @@ plot.ctsemFitMeasure <- function(x,indices='all', means=TRUE,separatemeans=TRUE,
   if(means){
     if(separatemeans) manifests <- 1:dim(x$means$empirical)[2] else manifests <- 'all'
     for(mani in manifests){
+      if(mani[1] > 1 && wait) readline('Press enter to continue')
       if(mani == 'all') mani <- 1:dim(x$means$empirical)[2]
       simd <- matrix(x$means$simulated[,mani,], nrow=dim(x$means$simulated)[1])
       if(length(mani)>1) vpar=mani else vpar=1
-      matplot(simd,type='l',xlab='Time point',ylab='Variable',
+      matplot(simd,type='l',xlab='Time point',ylab='Mean',
         col=adjustcolor(rep(vpar, dim(x$means$simulated)[3]),alpha.f = .1),
         lty = vpar)
       matplot(x$means$empirical[,mani,drop=FALSE],type='l',col=vpar,lwd=2,add=TRUE,lty=vpar)
@@ -180,6 +182,7 @@ plot.ctsemFitMeasure <- function(x,indices='all', means=TRUE,separatemeans=TRUE,
   }
   
   if(cov){
+    if(means && wait) readline('Press enter to continue')
     n=x$cov$rowname[match(x = unique(1:max(x$cov$row)),x$cov$row)]
     for(xi in covtype){
       mat <- matrix(NA,max(x$cov[,'row']),max(x$cov[,'row']))

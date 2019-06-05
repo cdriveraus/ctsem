@@ -6,9 +6,9 @@
 \usage{
 \method{plot}{ctsemFitMeasure}(x, indices = "all", means = TRUE,
   separatemeans = TRUE, cov = TRUE, covtype = "MisspecRatio",
-  cov2cor = FALSE, ggcorrArgs = list(data = NULL, cor_matrix =
-  get(covtype), limits = limits, geom = "circle", max_size = 10, name =
-  covtype), ...)
+  cov2cor = FALSE, wait = TRUE, ggcorrArgs = list(data = NULL,
+  cor_matrix = get(covtype), limits = limits, geom = "circle", max_size =
+  10, name = covtype), ...)
 }
 \arguments{
 \item{x}{Object output from ctsemFitMeasure function.}
@@ -25,6 +25,8 @@ include (from 1 to n.manifest * maximum number of obs for a subject, blocked by 
 \item{covtype}{Column name of cstemFitMeasure object}
 
 \item{cov2cor}{Logical -- convert covariances to correlations?}
+
+\item{wait}{Logical -- wait for input before new plot?}
 
 \item{ggcorrArgs}{List of arguments to GGally::ggcorr .}
 
@@ -49,7 +51,7 @@ plot(check)
 
 
 scheck <- ctCheckFit(ctstantestfit,niter=500)
-plot(scheck)
+plot(scheck,wait=FALSE)
 
 }
 }
