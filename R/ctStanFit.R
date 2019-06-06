@@ -550,7 +550,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       
       for(ri in 1:nrow(ctstanmodel$pars)){
         if(is.na(ctstanmodel$pars$value[ri]) && ctstanmodel$pars$matrix[ri] %in% 'T0VAR'){
-          ctstanmodel$pars$value[ri] <- ifelse(ctstanmodel$pars$row == ctstanmodel$pars$col, 1, 0)
+          ctstanmodel$pars$value[ri] <- ifelse(ctstanmodel$pars$row[ri] == ctstanmodel$pars$col[ri], 1, 0)
         }
       }
       message('Free T0VAR parameters fixed to diagonal matrix of 1\'s as only 1 subject!')

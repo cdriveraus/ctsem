@@ -11,7 +11,7 @@
   10, name = covtype), ...)
 }
 \arguments{
-\item{x}{Object output from ctsemFitMeasure function.}
+\item{x}{Object output from ctCheckFit function.}
 
 \item{indices}{Either 'all' or a vector of integers denoting which observations to 
 include (from 1 to n.manifest * maximum number of obs for a subject, blocked by manifest).}

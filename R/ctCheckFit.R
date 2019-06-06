@@ -11,6 +11,8 @@
 #' means contains the empirical and generated data means.
 #' @export
 #' @importFrom data.table dcast
+#' 
+#' @details for plotting help see \code{\link{plot.ctsemFitMeasure}}
 #'
 #' @examples
 #' \donttest{
@@ -126,10 +128,10 @@ ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
 
 #' Misspecification plot using ctCheckFit output
 #'
-#' @param x Object output from ctsemFitMeasure function.
+#' @param x Object output from ctCheckFit function.
 #' @param indices Either 'all' or a vector of integers denoting which observations to 
 #' include (from 1 to n.manifest * maximum number of obs for a subject, blocked by manifest).
-#' @param covtype Column name of cstemFitMeasure object
+#' @param covtype Column name of \code{$cov} sub object
 #' @param cov Logical -- plot simulated cov vs observed?
 #' @param means Logical -- plot simulated means vs observed?
 #' @param cov2cor Logical -- convert covariances to correlations?

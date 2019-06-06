@@ -23,6 +23,9 @@ means contains the empirical and generated data means.
 \description{
 Check absolute fit of ctFit or ctStanFit object.
 }
+\details{
+for plotting help see \code{\link{plot.ctsemFitMeasure}}
+}
 \examples{
 \donttest{
 data(ctExample1)

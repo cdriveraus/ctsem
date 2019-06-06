@@ -60,6 +60,8 @@ before_install:
   
 install:
   #- R -e 'devtools::install_deps(dep = T)'
+  - sudo apt-get install -yq --allow-unauthenticated --no-install-suggests --no-install-recommends r-cran-OpenMx
+  - sudo apt-get install -yq --allow-unauthenticated --no-install-suggests --no-install-recommends r-cran-rstan
 
 script:
   - travis_wait 30 R CMD build --no-build-vignettes .
