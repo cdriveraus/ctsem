@@ -359,14 +359,14 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
         } 
         if(ukffull == 1) {
           ypred[o] = colMeans(ukfmeasures[o,]\'); 
-          ypredcov[o,o] = cov_of_matrix(ukfmeasures[o,]\') /asquared + diag_matrix(colMeans(merrorstates[o,]\')); //
+          ypredcov[o,o] = cov_of_matrix(ukfmeasures[o,]\') /asquared + diag_matrix(square(colMeans(merrorstates[o,]\'))); //
           K[,o] = mdivide_right(crosscov(ukfstates\', ukfmeasures[o,]\') /asquared, ypredcov[o,o]); 
         }
         if(ukffull == 0){
           ypred[o] = ukfmeasures[o,2];
           for(ci in 3:cols(ukfmeasures)) ukfmeasures[o,ci] += -ukfmeasures[o,2];
           for(ci in 3:cols(ukfstates)) ukfstates[,ci] += -ukfstates[,2];
-          ypredcov[o,o] = tcrossprod(ukfmeasures[o,3:(nlatentpop+2)]) /asquared / (nlatentpop +.5) + diag_matrix(merrorstates[o,2]);
+          ypredcov[o,o] = tcrossprod(ukfmeasures[o,3:(nlatentpop+2)]) /asquared / (nlatentpop +.5) + diag_matrix(square(merrorstates[o,2]));
           K[,o] = mdivide_right(ukfstates[,3:cols(ukfstates)] * ukfmeasures[o,3:cols(ukfmeasures)]\' /asquared / (nlatentpop+.5), ypredcov[o,o]); 
         }
         etacov +=  - quad_form(ypredcov[o,o],  K[,o]\');
