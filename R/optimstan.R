@@ -170,11 +170,12 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         pars=init
         bestpars = pars
         step=rep(stepbase,length(init))
-        g=rnorm(length(init),0,.001)
+        g=try(grad_log_prob(smf, upars=init,adjust_transform=TRUE),silent = TRUE) #rnorm(length(init),0,.001)
         gsmooth=g
         gpersist=g
         signg=sign(g)
         oldsigng = g
+        oldg=g
         gmemory <- gmeminit
         oldgmemory <- gmemory
         oldlpdif <- 0
@@ -206,34 +207,45 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             
             lpg = try(log_prob(smf, upars=newpars,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
             if(class(lpg) !='try-error' && !is.nan(lpg[1]) && all(!is.nan(attributes(lpg)$gradient))) accepted <- TRUE else step <- step * .1
-            if(is.na(startnsubjects) && i < 20 && i > 1 && lpg[1] < lp[i-1]) {
+            if(is.na(startnsubjects) && i < 20 && i > 1 && lpg[1] < lp[1]) {
               accepted <- FALSE
+              if(plotsgd) print('not accepted!')
               step = step * .5
+              gsmooth=gsmooth*.5
             }
           }
           lp[i]=lpg[1]
           pars <- newpars
           oldsigng=signg
+          oldg=g
           g=attributes(lpg)$gradient
           oldgsmooth = gsmooth
-          gsmooth= gsmooth*gmemory + (1-gmemory)*g
-          signg=sign(gsmooth)
+          gmemory2 = gmemory * min(i/20,1)
+          gsmooth= gsmooth*gmemory2 + (1-gmemory2)*g
+          signg=sign(g) #or gsmooth?
+          stdgdif = (g-oldg) * step
+          # print(stdgdif)
           # step=exp(mean(log(step))+(.99*(log(step)-mean(log(step)))))
-          step[oldsigng == signg] = step[which(oldsigng == signg)] * 1.1 #exp((1-gmemory)/2)
-          step[oldsigng != signg] = step[which(oldsigng != signg)] / ifelse(nsubjects == standata$nsubjects, 1.2,1.2) #1.2 #exp((1-gmemory)/2)
+          # step[oldsigng == signg] = step[which(oldsigng == signg)] * sqrt(2-gmemory) #exp((1-gmemory)/2)
+          # step[oldsigng != signg] = step[which(oldsigng != signg)] / sqrt(2-gmemory) #ifelse(nsubjects == standata$nsubjects, (2-gmemory),1.1) #1.2 #exp((1-gmemory)/2)
+          
+          step[oldsigng == signg] = step[oldsigng == signg] * 1.1 #(.5+inv_logit(abs(stdgdif[oldsigng == signg])))
+          step[oldsigng != signg]  = step[oldsigng != signg] * (1.5-inv_logit(abs(stdgdif[oldsigng != signg])))^2
+          
           if(lp[i] >= max(lp)) {
-            step = step * 1.05 #exp((1-gmemory)/8)
+            step = step * sqrt(2-gmemory) #exp((1-gmemory)/8)
             bestpars <- pars
           } 
           if(i > 1 && lp[i] < lp[i-1]) {
             # signg <- oldsigng
             # gsmooth = oldgsmooth
             # pars <- bestpars
-            if(nsubjects == standata$nsubjects) {
-              step = step  / max( 1.5, (-10*(lp[i] - lp[i-1]) / sd(head(tail(lp,20),10)))) #exp((1-gmemory)/4)
-            } else {
-              step = step / 1.06
-            }
+            # if(nsubjects == standata$nsubjects) {
+              # gsmooth=gsmooth*.9
+              step = step/ (2-gmemory)#step  / max( 1.5, (-10*(lp[i] - lp[i-1]) / sd(head(tail(lp,20),10)))) #exp((1-gmemory)/4)
+            # } else {
+            #   step = step / 1.06
+            # }
           }
           # if(i %%10 ==0) gmemory = min(gmemory+.1,gmemmax)# * exp(mean(sign(diff(tail(lp,20)))))
           # if(i %%20 ==0) gmemory =  max(gmeminit, min(gmemmax, 1.6*(1-(log(sd(tail(lp,20)) ) -log(itertol)) / (log(sd(head(lp,20)))-log(itertol)))* (1-gmeminit) + gmeminit))
@@ -254,8 +266,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             par(mfrow=c(3,1))
             plot(pars)
             plot(log(step))
-            plot(tail(log((lp-min(lp)+10)),500),type='l')
-            print(i)
+            plot(tail(log(-(lp-max(lp)-1)),500),type='l')
             message(paste0('Iter = ',i, '   Best LP = ', max(lp),'   grad = ', sqrt(sum(g^2)), '   gmem = ', gmemory))
           }
           
@@ -298,6 +309,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       if(!stochastic) {
         optimfit <- ucminf(init,fn = lp,gr = grffromlp,control=list(grtol=1e-99,xtol=tol,maxeval=10000),hessian=2)
         init = optimfit$par
+        optimfit$value <- -optimfit$value
         ucminfcov <- optimfit$invhessian
       }
 

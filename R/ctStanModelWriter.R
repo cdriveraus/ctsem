@@ -9,10 +9,12 @@ ctStanMatricesList <- function(ctstanmodel){
   m$t0 <- c('T0MEANS','T0VAR')
   if('PARS' %in% ctstanmodel$pars$matrix) {
     m$base <- c(m$base, 'PARS')
-    # m <- lapply(m, function(mi) { #if state reference made in any PARS param, include PARS in 
-    #   if(any(grepl('state[',ctstanmodel$pars$param[ctstanmodel$pars$matrix %in% 'PARS'],fixed=TRUE))) mi <- c(mi,'PARS')
-    #   return(mi)
-    # })
+    if(any(sapply(ctstanmodel$pars$param[ctstanmodel$pars$matrix %in% 'PARS'], function(x) grepl('state[', x,fixed=TRUE) ))){
+      stop('PARS matrix cannot contain further dependencies, simple parameters only!')
+      # m$driftcintpars <- c(m$driftcintpars,'PARS')
+      # m$measurement <- c(m$measurement,'PARS')
+    }
+
   }
   return(m)
 }
@@ -38,7 +40,7 @@ ctStanCalcsList <- function(ctstanmodel){
     temp <- gsub(mati,paste0('s',mati),temp)
   }
   calcs <- lapply(mats[-1], function(mlist) { #add custom calculations to correct list of matrices
-    out <- temp[unlist(sapply(temp, function(y) any(sapply(mlist[!mlist %in% 'PARS'], function(mli) grepl(mli,y)))))]
+    out <- temp[unlist(sapply(temp, function(y) any(sapply(mlist, function(mli) grepl(mli,y)))))]
     return(out)
   })
 
@@ -52,10 +54,10 @@ ctStanModelWriter <- function(ctstanmodel, gendata, extratforms){
   
 mats <- ctStanMatricesList(ctstanmodel)
 
-#check when / if PARS needs to be computed
-for(mlist in names(mats[-1])){
-  if(any(unlist(lapply(ctstanmodel$calcs[[mlist]], function(m) grepl('sPARS',m))))) mats[[mlist]]=c(mats[[mlist]],'PARS')
-}
+# #check when / if PARS needs to be computed
+# for(mlist in names(mats[-1])){
+#   if(any(unlist(lapply(ctstanmodel$calcs[[mlist]], function(m) grepl('sPARS',m))))) mats[[mlist]]=c(mats[[mlist]],'PARS')
+# }
 
 
     #adjust diffusion calcs to diffusionsqrt
@@ -168,7 +170,7 @@ ukfilterfunc<-function(ppchecking){
         int dtchange = 0;
         if(si==1 && T0check[rowi -1] == 1) {
           dtchange = 1;
-        } else if(T0check[rowi-1] == 1 && dT[rowi-2] != dT[rowi]){
+        } else if( (T0check[rowi-1] == 1 && dT[rowi-2] != dT[rowi] ) ||dokalmanrows[rowi-2] == 0){
           dtchange = 1;
         } else if(T0check[rowi-1] == 0 && dT[rowi-1] != dT[rowi]) dtchange = 1;
         ',if(length(c(nlcalcs$driftcintpars,nlcalcs$diffusion)) > 0) paste0('dtchange =1; // because calcs provided
@@ -401,13 +403,13 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
 //        }
 if(verbose > 1) {
 print("rowi ",rowi, "  si ", si, 
-          "  eta ",eta,"  etacov ",etacov,"  ypred ",ypred,"  ypredcov ",ypredcov, "  K ",K,
-          "  sDRIFT ", sDRIFT, " sDIFFUSION ", sDIFFUSION, " sCINT ", sCINT, "  sMANIFESTVAR ", diagonal(sMANIFESTVAR), "  sMANIFESTMEANS ", sMANIFESTMEANS, 
-          "  sT0VAR", sT0VAR, " sT0MEANS ", sT0MEANS, 
+          "  eta =",eta,"  etacov =",etacov,"  ypred = ",ypred,"  ypredcov = ",ypredcov, "  K =",K,
+          "  sDRIFT =", sDRIFT, " sDIFFUSION =", sDIFFUSION, " sCINT =", sCINT, "  sMANIFESTVAR =", diagonal(sMANIFESTVAR), "  sMANIFESTMEANS =", sMANIFESTMEANS, 
+          "  sT0VAR =", sT0VAR, " sT0MEANS =", sT0MEANS, "  sLAMBDA = ", sLAMBDA,
           "  rawpopsd ", rawpopsd, "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
-        print("discreteDRIFT ",discreteDRIFT,  "  discreteDIFFUSION ", discreteDIFFUSION)
+        print("discreteDRIFT =",discreteDRIFT,  "  discreteDIFFUSION =", discreteDIFFUSION)
 }
-if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
+if(verbose > 2) print("ukfstates =", ukfstates, "  ukfmeasures =", ukfmeasures);
 }
       '),
   
@@ -426,10 +428,10 @@ if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
         'if(nbinary_y[rowi] > 0) kout[rowi,o1] =  Y[rowi,o1] .* (ypred[o1]) + (1-Y[rowi,o1]) .* (1-ypred[o1]); //intoverstates==0 && 
   
         if(verbose > 1) {
-          print("rowi ",rowi, "  si ", si, "  eta ",eta,"  etacov ",etacov,
-            "  ypred ",ypred,"  ypredcov ",ypredcov, "  K ",K,
-            "  sDRIFT ", sDRIFT, " sDIFFUSION ", sDIFFUSION, " sCINT ", sCINT, "  sMANIFESTVAR ", diagonal(sMANIFESTVAR), "  sMANIFESTMEANS ", sMANIFESTMEANS, 
-            "  sT0VAR", sT0VAR,  " sT0MEANS ", sT0MEANS,
+          print("rowi =",rowi, "  si =", si, "  eta =",eta,"  etacov ",etacov,
+            "  ypred =",ypred,"  ypredcov ",ypredcov, "  K ",K,
+            "  sDRIFT =", sDRIFT, " sDIFFUSION ", sDIFFUSION, " sCINT =", sCINT, "  sMANIFESTVAR ", diagonal(sMANIFESTVAR), "  sMANIFESTMEANS ", sMANIFESTMEANS, 
+            "  sT0VAR", sT0VAR,  " sT0MEANS ", sT0MEANS, "sLAMBDA = ", sLAMBDA, 
             "discreteDRIFT ", discreteDRIFT, "  discreteDIFFUSION ", discreteDIFFUSION, "  sasymDIFFUSION ", sasymDIFFUSION, 
             "  rawpopsd ", rawpopsd,  "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
         }
@@ -439,6 +441,8 @@ if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
           int tmpindex[ncont_y[rowi]] = o0;
           for(oi in 1:ncont_y[rowi]) tmpindex[oi] +=  nmanifest;
            if(intoverstates==1) ypredcov_sqrt[o0,o0]=cholesky_decompose(makesym(ypredcov[o0,o0],verbose,1));
+           //print("ypredcov = ", ypredcov, " err = ", err);
+           //ll+=  multi_normal_cholesky_lpdf(Y[rowi] | ypred, ypredcov_sqrt);
            kout[rowi,o0] = mdivide_left_tri_low(ypredcov_sqrt[o0,o0], err[o0]); //transform pred errors to standard normal dist and collect
            kout[rowi,tmpindex] = log(diagonal(ypredcov_sqrt[o0,o0])); //account for transformation of scale in loglik
         }

@@ -608,7 +608,7 @@ matrix[nlatent, nlatent] sDIFFUSIONsqrt;
         int dtchange = 0;
         if(si==1 && T0check[rowi -1] == 1) {
           dtchange = 1;
-        } else if(T0check[rowi-1] == 1 && dT[rowi-2] != dT[rowi]){
+        } else if( (T0check[rowi-1] == 1 && dT[rowi-2] != dT[rowi] ) ||dokalmanrows[rowi-2] == 0){
           dtchange = 1;
         } else if(T0check[rowi-1] == 0 && dT[rowi-1] != dT[rowi]) dtchange = 1;
         
@@ -892,13 +892,13 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
 //        }
 if(verbose > 1) {
 print("rowi ",rowi, "  si ", si, 
-          "  eta ",eta,"  etacov ",etacov,"  ypred ",ypred,"  ypredcov ",ypredcov, "  K ",K,
-          "  sDRIFT ", sDRIFT, " sDIFFUSION ", sDIFFUSION, " sCINT ", sCINT, "  sMANIFESTVAR ", diagonal(sMANIFESTVAR), "  sMANIFESTMEANS ", sMANIFESTMEANS, 
-          "  sT0VAR", sT0VAR, " sT0MEANS ", sT0MEANS, 
+          "  eta =",eta,"  etacov =",etacov,"  ypred = ",ypred,"  ypredcov = ",ypredcov, "  K =",K,
+          "  sDRIFT =", sDRIFT, " sDIFFUSION =", sDIFFUSION, " sCINT =", sCINT, "  sMANIFESTVAR =", diagonal(sMANIFESTVAR), "  sMANIFESTMEANS =", sMANIFESTMEANS, 
+          "  sT0VAR =", sT0VAR, " sT0MEANS =", sT0MEANS, "  sLAMBDA = ", sLAMBDA,
           "  rawpopsd ", rawpopsd, "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
-        print("discreteDRIFT ",discreteDRIFT,  "  discreteDIFFUSION ", discreteDIFFUSION)
+        print("discreteDRIFT =",discreteDRIFT,  "  discreteDIFFUSION =", discreteDIFFUSION)
 }
-if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
+if(verbose > 2) print("ukfstates =", ukfstates, "  ukfmeasures =", ukfmeasures);
 }
       
     

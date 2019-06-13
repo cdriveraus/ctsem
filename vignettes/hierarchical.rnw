@@ -154,7 +154,9 @@ set.seed(1)
 @
 
 \section{Overview}
-In this work, we describe the basic usage of the hierarchical formulation of the ctsem \citep{driver2017continuous} software for continuous-time dynamic modelling in R \citep{rcoreteam2014r}. This formulation was described in detail in \citet{driver2016hierarchical}, though since then the scope has been expanded to include nonlinear models (such as parameters that vary over time), and optimization with optional importance sampling -- this latter enhancement means that the approach described herein largely supersedes the initial mixed effects approach based upon OpenMx \citep{neale2016openmx}, as estimation options now include maximum likelihood, maximum a posteriori, and fully Bayesian with the Stan software's \citep{carpenter2017stan} Hamiltonian Monte Carlo sampler. This approach offers some advantages over what could be considered more typical dynamic modelling approaches, such as vector autoregressive models or latent change score models. Two important advantages relate to the handling of time, and the treatment of individual differences. Time information is explicitly incorporated into the model, such that predictions from one measurement to another relate exactly to the amount of time that has passed, rather than simply the number of measurements, as is typical in discrete-time models. When the time interval between all measurements are equal, there is an exact relationship between the discrete and continuous time form (in many cases), but when they differ, the continuous-time form is typically more appropriate. For more on continuous-time models, see \citet{singer1993continuoustime, oud2000continuous, voelkle2013continuous}. With respect to individual differences, the hierarchical Bayesian approach allows for individual variation across all model parameters, while making full use of the data from all subjects to enhance estimation. This has the result that reasonable individual specific parameter estimates may be obtained with far fewer time points than would be required by single-subject time-series type modelling approaches. For more on hierarchical Bayesian models, see \citet{gelman2014bayesian}.
+In this work, we describe the basic usage of the hierarchical formulation of the ctsem software for continuous-time dynamic modelling in R \citep{rcoreteam2014r}. This formulation was described in detail in \citet{driver2016hierarchical}, though since then the scope has been expanded to include nonlinear models (such as parameters that vary over time), and optimization with optional importance sampling -- this latter enhancement means that the approach described herein largely supersedes the initial mixed effects approach based upon OpenMx \citep{neale2016openmx}, as estimation options now include maximum likelihood, maximum a posteriori, and fully Bayesian with the Stan software's \citep{carpenter2017stan} Hamiltonian Monte Carlo sampler. The OpenMx based formulation is discussed in detail in \citep{driver2017continuous} -- while some of the R commands and functionality are now different, the general concepts discussed are still relevant background. 
+
+ctsem allows for specification and fitting of a range of continuous and discrete time models to study dynamics and processes within a subject, as well as individual differences in these dynamics. The models may include multiple indicators (dynamic factor analysis), multiple, interrelated, potentially higher order processes, and both time dependent and time independent covariates. Classic longitudinal models like latent growth curve and latent change score models are also possible.This approach offers some advantages over what could be considered more typical dynamic modelling approaches, such as vector autoregressive models or latent change score models. Two important advantages relate to the handling of time, and the treatment of individual differences. Time information is explicitly incorporated into the model, such that predictions from one measurement to another relate exactly to the amount of time that has passed, rather than simply the number of measurements, as is typical in discrete-time models. When the time interval between all measurements are equal, there is an exact relationship between the discrete and continuous time form (in many cases), but when they differ, the continuous-time form is typically more appropriate. For more on continuous-time models, see \citet{singer1993continuoustime, oud2000continuous, voelkle2013continuous}. With respect to individual differences, the hierarchical Bayesian approach allows for individual variation across all model parameters, while making full use of the data from all subjects to enhance estimation. This has the result that reasonable individual specific parameter estimates may be obtained with far fewer time points than would be required by single-subject time-series type modelling approaches. For more on hierarchical Bayesian models, see \citet{gelman2014bayesian}.
 
 This document is structured such that we briefly describe the continuous time dynamic model governing within subject dynamics, and the hierarchical model governing the distribution of subject level parameters. These aspects are covered in detail in \citet{driver2016hierarchical}. Following, we walk through installing the ctsem software, setting up a data structure, specifying and fitting the model, followed by summary and plotting functions. Some details on additional complexity are then provided, including an example model with a more complex dynamic structure, a discussion of the various options for incorporating stationarity assumptions into the model, and a walk-through of the various transformations involved in the model. 
 
@@ -260,7 +262,7 @@ Functions to convert between wide and long formats used by ctsem are available, 
 Missingness in the manifest variables is handled using the typical filtering / full information maximum likelihood approach, missing values on time dependent predictors are replaced with zeros, and missing values on time independent predictors are sampled as part of the model, with a default prior of normal(0,1) (this is specified via the \verb|$tipredsimputedscale| slot in the model object). If \verb|optimize=TRUE| is specified when fitting, missing time independent predictors cannot be sampled and are fixed to zero -- this latter approach is not ideal and inferences regarding predictor effects should be considered suspect in such a case. 
 
 \subsection{Model specification}
-Specify model using \verb}ctModel(type="stanct",...)}. \verb|"stanct"| specifies a continuous time model in Stan format, \verb|"standt"| specifies discrete time, while \verb|"omx"| is the original ctsem behaviour and prepares an OpenMx model \citet[discussed in]{driver2017continuous}. Other arguments to \verb|ctModel| proceed as normal, although some matrices used for type \verb|"omx"| are not relevant for the Stan formats, either because the between subject matrices are handled differently, or because time dependent and independent predictors are now treated as fixed regressors and only require effect (or design) matrices. These differences are documented in the help for \verb|ctModel|, available in R via \verb}?ctModel}.
+Specify model using \verb}ctModel(type="stanct",...)}. \verb|"stanct"| specifies a continuous time model in Stan format, \verb|"standt"| specifies discrete time, while \verb|"omx"| is the original ctsem behaviour and prepares an OpenMx model \citet[discussed in]{driver2017continuous}. Other arguments to \verb|ctModel| include the list of within-subject parameter matrices, with LAMBDA, the factor loading matrix, the only one that must be specified. All other matrices are set to the system dimensions implied by LAMBDA (number of columns representing latent processes, rows representing manifest indicators), and in general filled with free parameters. The CINT matrix is the only exception to this, it is filled with zero's for identification purposes. Such parameter matrices can be manually specified using either numeric values when an element of the model should be fixed, a character string when it should be estimated, or a character string containing at least one square bracket for deterministic relations between parameter matrices. See the help for \verb|ctModel|, available in R via \verb}?ctModel}, for more details.
 
 <<model>>=
 model<-ctModel(type='stanct',
@@ -277,16 +279,16 @@ This specifies a first order bivariate latent process model, with each process m
 cat(ctModelLatex(model,textsize = 'footnotesize',compile = FALSE,equationonly = TRUE))
 @
 
-Additional complexity or restrictions may be added to the model, the Table \ref{tab:ctmodel} shows the basic arguments one may consider and their link to the dynamic model parameters. Note that for the Stan implementation, ctModel requires variance covariance matrices (DIFFUSION, T0VAR, MANIFESTVAR) to be specified with standard deviations on the diagonal, covariance related parameters on the lower off diagonal (excluding MANIFESTVAR which should be diagonal only), and zeroes on the upper off diagonal. While it is possible to fix the lower off diagonals of covariance matrices to non-zero values, in general this is difficult to interpret because of the necessary matrix transformations, thus we recommend either to fix to zero, or leave free.
+Additional complexity or restrictions may be added to the model, the Table \ref{tab:ctmodel} shows the basic arguments one may consider and their link to the dynamic model parameters. Note that ctModel requires variance covariance matrices (DIFFUSION, T0VAR, MANIFESTVAR) to be specified with standard deviations on the diagonal, covariance related parameters on the lower off diagonal (excluding MANIFESTVAR which should be diagonal only), and zeroes on the upper off diagonal. While it is possible to fix the lower off diagonals of covariance matrices to non-zero values, in general this is difficult to interpret because of the necessary matrix transformations, thus we recommend either to fix to zero, or leave free. \footnote{If nonlinear estimation is used, DIFFUSION and T0VAR matrices are treated simply as Cholesky factors of covariance matrices -- this simplifies usage but may require more care with respect to prior specification / checking.}
 
 \begin{table}\footnotesize
 \caption{ctModel arguments} \label{tab:ctmodel}
 \begin{tabular}{l|l|l p{8cm} }
 \textbf{Argument} & \textbf{Sign} & \textbf{Default} & \textbf{Meaning}\\
 \hline
+ LAMBDA & $\Lambda$& & n.manifest $\times$ n.latent loading matrix relating latent to manifest variables.\\
  n.manifest & \textit{c} & & Number of manifest indicators per individual at each measurement occasion.\\
  n.latent & \textit{v} & & Number of latent processes.\\
- LAMBDA & $\Lambda$& & n.manifest $\times$ n.latent loading matrix relating latent to manifest variables.\\
  manifestNames & & Y1, Y2, etc & n.manifest length character vector of manifest names.\\
  latentNames & & eta1, eta2, etc & n.latent length character vector of latent names.\\
  T0VAR & $Q^*_1$ & free & lower tri n.latent $\times$ n.latent matrix of latent process initial covariance, specified with standard deviations on diagonal and covariance related parameters on lower triangle.\\
@@ -301,12 +303,11 @@ Additional complexity or restrictions may be added to the model, the Table \ref{
  TDPREDEFFECT & $M$ & free & n.latent $\times$ n.TDpred matrix of effects from time dependent predictors to latent processes.\\
  n.TIpred & \textit{p} & 0 & Number of time independent predictors.\\
  TIpredNames & & TI1, TI2, etc & n.TIpred length character vector of time independent predictor names.\\
+ PARS &  & free &  $0 \times 0$ Matrix containing additional parameters to be used, for instance in nonlinear models.\\
 \end{tabular}
 \end{table}
 
-These matrices may all be specified using a combination of character strings to name free parameters, or numeric values to represent fixed parameters. 
-
-The \verb|pars| subobject of the created model object (in this case, \verb|model$pars| ) shows the parameter specification that will go into Stan, including both fixed and free parameters, whether the parameters vary across individuals, how the parameter is transformed from a standard normal distribution (thus setting both priors and bounds), and whether that parameter is regressed on the time independent predictors.
+The \verb|pars| subobject of the created model object (in this case, \verb|model$pars| ) shows the parameter specification, including both fixed and free parameters, whether the parameters vary across individuals, how the parameter is transformed from a standard normal distribution (thus setting both priors and bounds), and whether that parameter is regressed on the time independent predictors.
 
 <<modelpars,size='footnotesize'>>=
 head(model$pars,7)
@@ -317,11 +318,11 @@ By default, intercept related model parameters (T0MEANS, MANIFESTMEANS, CINT) ar
 
 
 \subsection{Model fitting}
-Once model specification is complete, the model is fit to the data using the \verb|ctStanFit| function as shown in the following example. Various options are available for fitting, from a maximum likelihood approach using optimization, to a fully Bayesian approach via Stan's Hamiltonian Monte Carlo sampler. For these examples we will use optimization, though for cases with random effects on non-intercept parameters, or missing time independent predictors, optimization may not always provide appropriate results and should be interpreted with care. 
+Once model specification is complete, the model is fit to the data using the \verb|ctStanFit| function as shown in the following example. Various options are available for fitting, from a maximum likelihood approach using optimization, to a fully Bayesian approach via Stan's Hamiltonian Monte Carlo sampler. For these examples we will use optimization, though for cases with many random effects on non-intercept parameters, or missing time independent predictors, optimization may not always provide the most appropriate results and should be interpreted with care. 
 
-For a classic maximum likelihood approach, optimization may be used with the argument \verb|nopriors=TRUE| to disable the priors. By default, when optimization concludes, samples are drawn from the parameter covariance matrix implied by the hessian to allow for inference and uncertainty plotting on all aspects of the model (e.g. parameter interactions such as the implied regression effect for a given time interval). Improvements on this maximum a posteriori, hessian based sampling approach can be made by requesting importance sampling (see the \verb|optimfit| argument of the \verb|?ctStanFit| help, which is somewhat slower but generally still much faster than the default sampling approach -- the caveats mentioned above still apply however, and importance sampling may not work well with many parameters. When importance sampling is ineffective, this will be indicated during sampling.  
+For a classic maximum likelihood approach, optimization may be used with the argument \verb|nopriors=TRUE| to disable the priors. By default, when optimization concludes, samples are drawn from the parameter covariance matrix implied by the Hessian to allow for inference and uncertainty plotting on all aspects of the model (e.g. parameter interactions such as the implied regression effect for a given time interval). Improvements on this maximum a posteriori, Hessian based sampling approach can be made by requesting importance sampling (see the \verb|optimfit| argument of the \verb|?ctStanFit| help, which is somewhat slower but generally still much faster than full sampling using Stan's Hamiltonian Monte Carlo (HMC) -- the caveats mentioned above still apply however, and importance sampling may not work well with many parameters. When importance sampling is ineffective, this will generally be indicated during sampling, though Stan's HMC is in general the most robust solution.
 
-When \verb|optimize=FALSE| or it is not specified, Stan's Hamiltonian Monte Carlo sampler is used. Depending on the data, model, and number of iterations requested, this can take anywhere from a few minutes to days. Important arguments when using this approach are \verb|chains| and \verb|iterations|, to specify the number of sampling chains and iterations per chain. Three chains is a reasonable minimum to support convergence checking, and current experience suggests 300 iterations is often enough to get an idea of what is going on -- more is very likely necessary for robust inference, but this is highly dependent on the data and model. To examine progress while sampling, the \verb|plot=TRUE| argument may be used.  
+When \verb|optimize=FALSE| or it is not specified, Stan's Hamiltonian Monte Carlo sampler is used. Depending on the data, model, and number of iterations requested, this can take anywhere from a few minutes to days. Important arguments when using this approach are \verb|chains| and \verb|iterations|, to specify the number of sampling chains and iterations per chain. Three chains is a reasonable minimum to support convergence checking, and current experience suggests 300 iterations is often enough to get an idea of what is going on -- more is very likely necessary for robust inference, but how much more is highly dependent on the data and model. To examine progress while sampling, the \verb|plot=TRUE| argument may be used. In some cases, extended warmup / adaptation times can be avoided by reducing the maximum treedepth using the \verb|control| argument. 
 %For the sake of speed for this example we only sample for 300 iterations, with a max treedepth of the Hamiltonian sampler reduced from the default of 10 to 6. With these settings the fit should take only a minute or two, but is unlikely adequate for inference!. Those that wish to try out the functions without waiting, can simply use the already existing \verb|ctstantestfit| object with the relevant functions (the code for this is commented out). The dataset specified here is built-in to the ctsem package, and available whenever ctsem is loaded in R. 
 
 <<fitting,include=FALSE,cache=TRUE>>=
@@ -331,7 +332,6 @@ suppressWarnings(fit<-ctStanFit(datalong = ctstantestdat, ctstanmodel = model,op
 <<fittingshow,include=TRUE,eval=FALSE>>=
 fit<-ctStanFit(datalong = ctstantestdat, ctstanmodel = model, 
   optimize=TRUE, optimcontrol=list(isloops=5))
-# fit <- ctstantestfit
 @
 %The plot argument allows for plotting of sampling chains in real time, which is useful for slow models to ensure that sampling is proceeding in a functional manner. Models with many parameters (e.g., many subjects and all parameters varying over subject) may be too taxing for the plotting function to handle smoothly - we have had success with up to around 4000 parameters.  
 
@@ -343,7 +343,7 @@ Additionally, summary outputs a range of matrices regarding correlations between
 summary(fit,parmatrices=TRUE, timeinterval = 1)
 @
 
-In the summary output, the free population mean parameters under \verb|$popmeans| are likely one of the main points of interest. They are returned in the same form that they are input to \verb|ctModel| - that is, covariance matrix related parameters are in the form of either standard deviations or a transformed correlation parameter. Because the latter is difficult to interpret, various parameter matrices are also returned in the \verb|$parmatrices| section of the summary (when that is requested). The discrete time matrices reported here (prefixed by \verb|dt|) are by default from a time interval of 1, but this can be changed. Asymptotic matrices -- those for a time interval of infinity -- are also output in some cases, and prefixed by \verb|asym|. Covariance related matrices are reported in covariance form, except where the suffix \verb|cor| is added to indicate correlations. 
+In the summary output, the free population mean parameters under \verb|$popmeans| are likely one of the main points of interest. They are returned in the same form that they are input to \verb|ctModel| - that is, covariance matrix related parameters are in the form of either standard deviations or a transformed correlation parameter. Because the latter is difficult to interpret, various parameter matrices are also returned in the \verb|$parmatrices| section of the summary. The discrete time matrices reported here (prefixed by \verb|dt|, unless a discrete time model was estimated in the first place) are by default from a time interval of 1, but this can be changed. Asymptotic matrices -- those for a time interval of infinity -- are also output in some cases, and prefixed by \verb|asym|. Covariance related matrices are reported in covariance form, except where the suffix \verb|cor| is added to indicate correlations. 
 
 The function \verb}ctStanContinuousPars} can be used to return the continuous time parameter matrices in actual matrix form, for specific subjects, groups of subjects, or for the estimated population means. In the following code, the 97.5\% quantile is returned, for subject 3 (leaving the additional arguments out would instead give the population means).
 
@@ -438,21 +438,24 @@ model$pars[model$pars$matrix == 'DRIFT',
   c('TI1_effect','TI2_effect','TI3_effect')] <- TRUE
 @
 
+
+
+
+
 \subsection{Stationarity}
-When it is reasonable to assume that the prior for long term expectation and variance of the latent states is the same as (or very similar to) the prior for initial expectations and variances, setting some form of stationarity in advance may be beneficial. Three approaches to this are possible.
-The first approach is to give free parameters of the T0VAR or T0MEANS matrix the name \verb{'stationary'{, which can be useful if for instance only the initial variance should be stationary, or just one of the initial variances. Another approach is to set the argument stationary=TRUE to ctStanFit. Specifying this argument then ignores any T0VAR and T0MEANS matrices in the input, instead replacing them with asymptotic expectations based on the DRIFT, DIFFUSION, and CINT matrices.
-Alternatively, a prior can be placed on the stationarity of the dynamic models, calculated as the difference between the T0MEANS and the long run asymptotes of the expected value of the process, as well as the difference between the diagonals of the T0VAR covariance matrix and the long run asymptotes of the covariance of the processes. Such a prior encourages a minimisation of these differences, and can help to ensure that sensible, non-explosive models are estimated, and also help the sampler get past difficult regions of relative flatness in the parameter space due to colinearities between the within and between subject parameters. However if such a prior is too strong it can also induce difficult dependencies in model parameters, and there are a range of models where one may not wish to have such a prior. To place such a prior, the model\$stationarymeanprior and model\$stationaryvarprior slots can be changed from the default of NA to a numeric vector, representing the normal standard deviation of the deviations from stationarity. The number of elements in the vector correspond to the number of latent processes.
+When it is reasonable to assume that the prior for long term expectation and variance of the latent states is the same as (or very similar to) the prior for initial expectations and variances, setting some form of stationarity in advance may be beneficial. Two approaches to this are possible.
+The first approach is to give free parameters of the T0VAR or T0MEANS matrix the name \verb{'stationary'{, which can be useful if for instance only the initial variance should be stationary, or just one of the initial variances. Another approach is to set the argument stationary=TRUE to ctStanFit. Specifying this argument then ignores any T0VAR and T0MEANS matrices in the input, instead replacing them with asymptotic expectations based on the DRIFT, DIFFUSION, and CINT matrices. When stationarity is requested and nonlinearities are specified in the model, the computations are based on the starting DRIFT, DIFFUSION, and CINT matrices. 
 
 \subsection{Accessing Stan model code}
 For diagnosing problems or modifying the model in ways not achievable via the ctsem model specification, one can use ctsem to generate the Stan code and then work directly with that, simply by specifying the argument \verb|fit=FALSE| to the \verb|ctStanFit| function, and accessing the \verb|$stanmodeltext| subobject. Any altered code can be passed back into \verb|ctStanFit| by using the \verb|stanmodeltext| argument, which can be convenient for setting up the data in particular.
 
 \subsection{Using Rstan functions}
-The standard rstan output functions such as summary and extract are also available, and the shinystan package provides an excellent browser based interface. The stan fit object is stored under the \verb|$stanfit| subobject of the \verb|ctStanFit| output. The parameters which are likely to be of most interest in the output are prefixed by \verb|pop_| for pop (population) mean, and \verb|popsd| for pop standard deviation. Any \verb|pop| parameters are returned in the form of the continuous time matrix equations. Subject specific parameters are denoted by the matrix they are from, then the first index represents the subject id, followed by standard matrix notation. For example, the 2nd row and 1st column of the DRIFT matrix for subject 8 is \verb|DRIFT[8,2,1]|. Parameters in such matrices are returned in the form used for internal calculations -- that is, variance covariance matrices are returned as such, rather than the lower-triangular standard deviation and correlation matrices required for input. 
+The standard rstan output functions such as summary and extract are also available whenever Stan's sampler is used, and the shinystan package provides an excellent browser based interface. The stan fit object is stored under the \verb|$stanfit| subobject of the \verb|ctStanFit| output. The parameters which are likely to be of most interest in the output are prefixed by \verb|pop_| for pop (population) mean, and \verb|popsd| for pop standard deviation. Any \verb|pop| parameters are returned in the form of the continuous time matrix equations (or discrete time when estimated as such). Subject specific parameters are denoted by the matrix they are from, then the first index represents the subject id, followed by standard matrix notation. For example, the 2nd row and 1st column of the DRIFT matrix for subject 8 is \verb|DRIFT[8,2,1]|. Parameters in such matrices are returned in the form used for internal calculations -- that is, variance covariance matrices are returned as such, rather than the lower-triangular standard deviation and correlation matrices required for input. 
 % The exception to this are the time independent predictor effects, prefixed with \verb|tipred_|, for which a linear effect of a change of 1 on the predictor is approximated. So although \verb|tipred_TI1| is only truly linear with respect to internal parameterisations, we approximate the linear effect (for the sake of output summaries only) by averaging the effect of a score of +1 or -1 on the predictor, on the population mean. 
 
 
 \subsection{Oscillating, single subject example - sunspots data}
-In the following example we fit the sunspots data available within R, which has previously been fit by various authors including \citet{tomasson2013computational}. We have used the same CARMA(2,1) model and obtained similar estimates -- some differences are due to the contrast between Bayes and maximum likelihood, though if desired one could adjust the code to fit using maximum likelihood, as here we have only one subject. 
+In the following example we fit the sunspots data available within R, which has previously been fit by various authors including \citet{tomasson2013computational}. We have used the same CARMA(2,1) model and obtained similar estimates. 
 % There are usually some divergent transitions (indicating a difficulty in the sampling chain and a potential threat to inference) generated in this fit -- alternate parameterisations or an increase in the adapt\_delta control argument to Stan (which defaults to 0.9 in ctsem, with a maximum of 1, though 1 is not recommended...) may help.
 <<sunspots,include=FALSE, cache=TRUE>>=
 #get data
@@ -511,11 +514,53 @@ datalong <- cbind(id, time, sunspots)
  ssmodel$pars[4,c('transform','offset')]<- c(1,0) #To avoid multi modality 
 
 #fit
-ssfit <- ctStanFit(datalong, ssmodel, iter=300, chains=2)
+ssfit <- ctStanFit(datalong, ssmodel, iter=300, chains=2,
+  optimize=T,optimcontrol=list(isloops=5))
 
 #output
 summary(ssfit)$popmeans
 @
+
+\subsection{Non-linearities}
+The dynamic model that arises normally out of a typical ctsem model specification is linear, as the dynamic system and measurement matrices (DRIFT, MANIFESTVAR, etc) do not vary over time. This can be changed by making certain elements of the matrices depend on the current state of the system. This is done by setting the element to a character string containing the reference to `state', and the specific state. In a simple univariate, first order linear system, the DRIFT matrix would be $1 \times 1$ and contain a character string such as `drift11', indicating we want to estimate the parameter called `drift11' for the DRIFT matrix. This parameter could however be made state dependent, by adding an additional latent process to the system governing the behaviour of the `drift11' parameter over time, as well as an additional matrix called PARS that contains any additional parameters needed. Careful thought regarding the required model structure and restrictions is necessary, but we provide an example here of one possible formulation. it is possible to reference the current state of the process by using the term \verb|state|, followed by a square bracket reference to the particular latent state, for example \verb|state[2]| for the 2nd latent process. Whenever a square bracket is used in a ctsem parameter, ctsem recognises this as a nonlinear element, and additional formulas that are valid in the Stan language are also possible to use -- \verb|"exp(state[2])"| would ensure positivity of the result, for instance. 
+
+<<nl,eval=FALSE>>=
+ sunspots<-sunspot.year
+ sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
+ id <- 1
+ time <- 1749:1924
+datalong <- cbind(id, time, sunspots)
+
+m <- ctModel(n.latent=2, n.manifest=1, type='stanct', manifestNames = 'sunspots',
+  LAMBDA=matrix(c('1 + PARS[1,3] * (state[1] + PARS[1,4])',0),nrow=1, ncol=2),
+  DRIFT = matrix(c(0, '1|-2|drift21', 'PARS[1,2] + PARS[1,1] *  (state[1] + PARS[1,4])', 'drift22'), 2, 2),
+  DIFFUSION = matrix(c('diff11',0,0, 0), 2, 2),
+  MANIFESTVAR=diag(.01,1),
+  PARS=matrix(c('driftcrossbystate','1|driftcrossintercept','lambdabystate','state1adjust'), 1,4) ) #
+sink('../testout.txt')
+ssfitnl <- ctStanFit(datalong, m, iter=300, chains=2, optimize=T,verbose=3)
+sink()
+ssfitnl <- ctStanGenerateFromFit(ssfit,100,F)
+e=extract(ssfitnl)
+
+
+
+summary(ssfitnl)
+
+k=ctStanKalman(ssfitnl)
+
+dim(k$ypred)
+plot(datalong[,'sunspots'],type='l',col='red')
+matplot((k$ypred[1,,1]),type='l',ylim=c(-5,60),col=1,add=T)
+matplot((k$err[1,,1]),type='l',col=1)
+matplot(t(k$etaprior[1:50,,2]),type='l',col=1)
+
+matplot(ssfitnl$generated$Y[,1:5,1],ylim=c(-10,200),type='l')
+
+
+@
+
+In this example we also made use of a faster form of parameter specification, in which parameter labels can be preceded by a sequence of numbers followed by \verb{|{ symbols as a separator, representing how the parameter should be transformed from an unbounded standard normal. The separate numbers specify the elements of the \verb|pars| subobject of the model, i.e. transform, multiplier, meanscale, offset, inneroffset. So the \verb{'1|ma1'{ label specifies a softplus ( \code|log(1+exp(param)| ) transform for the ma1 parameter, with defaults used for latter arguments when only some are specified.
 
 \subsection{Population standard deviations - understanding the transforms}
 This section is intended as a helper to those trying to work through the various transformations found in the model. Internally, we sample parameters that we refer to as the `raw' parameters -- these parameters have no bounds and are typically drawn from normal distributions. Both raw population mean and subject specific deviation parameters are drawn from normal(0, 1) distributions. Depending on the specific parameter, various transformations may be applied to set appropriate bounds and priors. The raw population standard deviation for these raw parameters is sampled (by default) from a normal(0, 1) distribution called \verb|rawpopsdbase|, which is by default transformed via an exponential function -- this ensures the parameters are positive and the prior for the standard deviation is a lognormal distribution. This distribution can be altered via the model subobjects \verb|rawpopsdbase|, \verb|rawpopsdbaselowerbound|, and \verb|rawpopsdtransform|. This distribution can also be scaled on a per parameter basis by the \verb|sdscale| multiplier in the model specification, which defaults to 1. The following script shows a didactic sequence of sampling and transformation for a model with a single parameter, the auto effect of the drift matrix, and 3 subjects. Although we sample the priors themselves here, this is merely to reflect the prior and enable understanding and plotting. Note also that because we are only displaying the procedure for a single parameter here, we simplify things somewhat by avoiding calculations to determine the square root of the population covariance matrix -- with only one individually varying parameter, it is simply the standard deviation. 

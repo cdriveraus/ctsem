@@ -546,7 +546,7 @@ pop_asymCINT = sasymCINT;
         int dtchange = 0;
         if(si==1 && T0check[rowi -1] == 1) {
           dtchange = 1;
-        } else if(T0check[rowi-1] == 1 && dT[rowi-2] != dT[rowi]){
+        } else if( (T0check[rowi-1] == 1 && dT[rowi-2] != dT[rowi] ) ||dokalmanrows[rowi-2] == 0){
           dtchange = 1;
         } else if(T0check[rowi-1] == 0 && dT[rowi-1] != dT[rowi]) dtchange = 1;
         
@@ -815,10 +815,10 @@ err[o] = Y[rowi,o] - ypred[o]; // prediction error
       if(nbinary_y[rowi] > 0) kout[rowi,o1] =  Y[rowi,o1] .* (ypred[o1]) + (1-Y[rowi,o1]) .* (1-ypred[o1]); //intoverstates==0 && 
   
         if(verbose > 1) {
-          print("rowi ",rowi, "  si ", si, "  eta ",eta,"  etacov ",etacov,
-            "  ypred ",ypred,"  ypredcov ",ypredcov, "  K ",K,
-            "  sDRIFT ", sDRIFT, " sDIFFUSION ", sDIFFUSION, " sCINT ", sCINT, "  sMANIFESTVAR ", diagonal(sMANIFESTVAR), "  sMANIFESTMEANS ", sMANIFESTMEANS, 
-            "  sT0VAR", sT0VAR,  " sT0MEANS ", sT0MEANS,
+          print("rowi =",rowi, "  si =", si, "  eta =",eta,"  etacov ",etacov,
+            "  ypred =",ypred,"  ypredcov ",ypredcov, "  K ",K,
+            "  sDRIFT =", sDRIFT, " sDIFFUSION ", sDIFFUSION, " sCINT =", sCINT, "  sMANIFESTVAR ", diagonal(sMANIFESTVAR), "  sMANIFESTMEANS ", sMANIFESTMEANS, 
+            "  sT0VAR", sT0VAR,  " sT0MEANS ", sT0MEANS, "sLAMBDA = ", sLAMBDA, 
             "discreteDRIFT ", discreteDRIFT, "  discreteDIFFUSION ", discreteDIFFUSION, "  sasymDIFFUSION ", sasymDIFFUSION, 
             "  rawpopsd ", rawpopsd,  "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
         }

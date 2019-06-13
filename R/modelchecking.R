@@ -1,5 +1,6 @@
 #current disabled in ctsem
 if(1==0){
+  require(data.table)
 ctcorplots <- function(dlong, vars, maxlag, splitvar=NA, splitpoints=NA,varsPerPlot=Inf,splitAlpha=.3){
   dlong <- data.table(dlong)
   for(lead in 0:maxlag){

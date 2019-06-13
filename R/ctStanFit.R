@@ -1014,7 +1014,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     standata$nrowpopsetup <- as.integer(nrow(popsetup))
     standata$nrowmatsetup <- as.integer(nrow(matsetup))
     
-    standata$sdscale <- sdscale
+    standata$sdscale <- as.numeric(sdscale)
     
     #fixed hyper pars
     if(!is.null(ctstanmodel$fixedrawpopchol)) {
