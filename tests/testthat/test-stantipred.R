@@ -1,4 +1,4 @@
-if(Sys.getenv("NOT_CRAN")==TRUE & .Machine$sizeof.pointer != 4){
+if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
 
 library(ctsem)
 library(testthat)

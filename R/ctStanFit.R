@@ -62,21 +62,11 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
   }
   
   
-  #integration steps
-  integrationsteps <- sapply(dT,function(x)  ceiling(x / maxtimestep));
-  if(ctsmodel$continuoustime != TRUE) integrationsteps = rep(1,length(integrationsteps))
-  dTsmall <- dT / integrationsteps
-  dTsmall[is.na(dTsmall)] = 0
-  
   subdata <- list(
     Y=cbind(as.matrix(datalong[,ctsmodel$manifestNames])),
     subject=as.integer(datalong[,ctsmodel$subjectIDname]),
     time=datalong[,ctsmodel$timeName], #not used in model but used elsewhere
-    integrationsteps=as.integer(integrationsteps),
     ndatapoints=as.integer(nrow(datalong)),
-    dT=dT,
-    T0check=as.integer(T0check),
-    dTsmall=dTsmall,
     nobs_y=array(as.integer(apply(datalong[,ctsmodel$manifestNames,drop=FALSE],1,function(x) length(x[x!=99999]))),dim=nrow(datalong)),
     whichobs_y=matrix(as.integer(t(apply(datalong[,ctsmodel$manifestNames,drop=FALSE],1,function(x) {
       out<-as.numeric(which(x!=99999))
@@ -438,10 +428,10 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
 #' m4$pars$age_effect[-which(m4$pars$matrix %in% c('T0MEANS','MANIFESTMEANS','TDPREDEFFECT'))] <- FALSE
 #' 
 #' f4 <- ctStanFit(datalong = dat2, ctstanmodel = m4, cores = setcores,chains = setchains,plot=TRUE,
-#'   optimize=TRUE,verbose=1,
+#'   optimize=TRUE,verbose=0,
 #'   control=list(max_treedepth=7),iter=150)
 #' 
-#' summary(f4,parmatrices=TRUE)
+#' summary(f4)
 #' 
 #' ctStanDiscretePars(f4,plot=TRUE) #auto and cross regressive plots over time
 #' 
@@ -957,6 +947,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         nlatentpop = as.integer(ifelse(intoverpop ==1, n.latent + nindvarying,  n.latent)),
         nldynamics=as.integer(nldynamics),
         Jstep = nlcontrol$Jstep,
+        maxtimestep = nlcontrol$maxtimestep,
         dokalman=as.integer(is.null(ctstanmodel$dokalman)),
         intoverstates=as.integer(intoverstates),
         verbose=as.integer(verbose),
@@ -1092,7 +1083,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
           # }
         }
       }
-      
+
       if(!optimize){
         
         #control arguments for rstan

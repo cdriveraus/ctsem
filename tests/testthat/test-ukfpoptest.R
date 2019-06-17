@@ -1,4 +1,4 @@
-if(Sys.getenv("NOT_CRAN")==TRUE & .Machine$sizeof.pointer != 4){
+if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
 
 library(ctsem)
 library(testthat)
@@ -155,8 +155,8 @@ sf2ll=sf2$stanfit$optimfit$value
 dvec=c('ct1d','ct2d','sf1d','sf2d','sf1nl_derrindd','sf1nld_derrindd')
 llvec=c('ctll1','ctll2','sf1ll','sf1nldll','sf1nld_derrindll','sf1nl_derrindll')
 
-sapply(dvec,get)
-sapply(llvec,get)
+sapply(dvec,get,envir=sys.frame(sys.parent(0)))
+sapply(llvec,get,envir=sys.frame(sys.parent(0)))
 
 for(di in 2:length(dvec)){
   expect_equivalent(get(dvec[di]),get(dvec[di-1]),tol=1e-1)

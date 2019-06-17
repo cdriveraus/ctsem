@@ -3,7 +3,7 @@ library(testthat)
 
 context("reshaping")
 
-test_that("time calc", {
+test_that("reshaping1", {
 
   Tpoints=3
   n.latent=2

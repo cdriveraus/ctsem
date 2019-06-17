@@ -6,7 +6,6 @@
 #' @aliases extract
 #' @examples
 #' e = extract(ctstantestfit)
-#' head(e)
 #' @export
 extract <- function(object,...){
   if(!class(object) %in% c('ctStanFit', 'stanfit')) stop('Not a ctStanFit or stanfit object')

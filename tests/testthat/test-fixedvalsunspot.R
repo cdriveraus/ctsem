@@ -39,7 +39,7 @@ sm <- ctStanModel(model1,indvarying = rep(F,0))
 largs=list()
 largs[[1]]<-list(datalong=datalong, ctstanmodel=sm, stationary=FALSE,iter=2, control=list(max_treedepth=1),
   # optimcontrol=list(isloops=0,issamples=10,isloopsize=10),
-  verbose=1,
+  verbose=0,
   # nlcontrol=list(nldynamics=F, nlmeasurement=F,ukffull=1,ukfspread=1e-1),
   savescores = T,gendata=F,
   chains=1,nopriors=1)

@@ -116,40 +116,12 @@ library(knitr)
 set.seed(22)
 knit_hooks$set(crop = hook_pdfcrop)
 opts_chunk$set(warning = FALSE, fig.align = 'center', width.cutoff = 100, fig.show = 'hold', eval = TRUE, echo = TRUE, message = FALSE, comment = NA, tidy = FALSE, autodep=TRUE, out.truncate = 100, size='small', crop=TRUE, fig.pos="htbp")
+#opts_knit$set(global.par = TRUE)
 options(width = 100, scipen = 12, digits = 3)
-
+par(mgp=c(1.3,.5,0),mar=c(3,2,2,1)+.2, cex=.8)
 set.seed(1)
 
 
-
-# Tpoints=50
-# n.manifest=2
-# n.TDpred=1
-# n.TIpred=3
-# n.latent=2
-# n.subjects=20
-# gm<-ctModel(type='omx', Tpoints=Tpoints,n.latent=n.latent,n.TDpred=n.TDpred,n.TIpred=n.TIpred,n.manifest=n.manifest,
-#   MANIFESTVAR=diag(0.5,2),
-#   TIPREDEFFECT=matrix(c(.5,0,0,-.5,0,0),nrow=2),
-#   TIPREDVAR=matrix(c(1,-.2,0, 0,1,0, 0,0,.5),nrow=3),
-#   TDPREDEFFECT=matrix(c(.1,-.2),nrow=2),
-#   TDPREDVAR=matrix(0,nrow=n.TDpred*(Tpoints-1),ncol=n.TDpred*(Tpoints-1)),
-#   TDPREDMEANS=matrix(rnorm(n.TDpred*(Tpoints-1),0,1),nrow=n.TDpred*(Tpoints-1)),
-#   LAMBDA=diag(1,2), 
-#   # DRIFT=matrix(c(-.6+rnorm(1,0,.15),-.2+rnorm(1,0,.1),.12+rnorm(1,0,.1),-.3+rnorm(1,0,.05)),nrow=2),
-#   DRIFT=matrix(c(-.3,.2,-.1,-.2),nrow=2),
-#   TRAITVAR=t(chol(matrix(c(4,3,3,4),nrow=2))),
-#   # T0TRAITEFFECT=diag(3,n.latent),
-#   DIFFUSION=matrix(c(.3,.1,0,.2),2),CINT=matrix(c(0,0),nrow=2),T0MEANS=matrix(0,ncol=1,nrow=2),
-#   T0VAR=diag(100,2))
-# 
-# cd<-ctGenerate(gm,n.subjects=n.subjects,burnin=300, dT=1,asymptotes=F,simulTDpredeffect = T)
-# model<-ctModel(type='stanct',n.latent=n.latent,n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,LAMBDA=diag(n.latent))
-# long<-ctWideToLong(cd,Tpoints,n.manifest=model$n.manifest,manifestNames = model$manifestNames, 
-#   n.TDpred=n.TDpred,n.TIpred=n.TIpred,TDpredNames = model$TDpredNames,TIpredNames = model$TIpredNames)
-# long<-ctDeintervalise(long)
-# long[is.na(long)]<-0
-# ctstantestdat <- long
 
 @
 
@@ -373,14 +345,15 @@ Shown in Figure \ref{fig:outputposterior} are approximate density plots based on
 \subsection{Model prediction plots}
 One means of assessing model performance is to view plots of the observed time series alongside the model predicted time series. ctsem includes functionality to output prior (based on all prior observations), updated (based on all prior and current observations), and smoothed (based on all observations) expectations and covariances from the Kalman filter, based on specific subjects models. For ease of comparison, expected manifest indicator scores conditional on prior, updated and smoothed states are also included. This approach allows for: predictions regarding individuals states at any point in time, given any values on the time dependent predictors (external inputs such as interventions or events); residual analysis to check for unmodeled dependencies in the data; or simply as a means of visualization, for comprehension and model sanity checking purposes. Examples of such are depicted in Figure \ref{fig:kalmanplot}, where we see observed and smoothed scores for a selected subject from our sample. If we wanted to predict unobserved states in the future, we would need only to specify the appropriate timerange (Prediction into earlier times is possible but makes little sense unless the model is restricted to stationarity). For help with these plots, see \verb|?ctKalman| and \verb|?ctKalmanPlot| (arguments for the latter are passed via \verb|ctKalman|, as below).
 
-<<kalmanplot,echo=TRUE, fig.width=8, fig.height=5, fig.cap='Predicted and smoothed estimates for one subject with two processes. Uncertainty shown is a 95\\% credible interval comprising both process and measurement error.'>>=
-par(mfrow=c(1,2))
- 
+<<kalmanplot,echo=2:4, fig.width=8, fig.height=5, fig.cap='Predicted and smoothed estimates for one subject with two processes. Uncertainty shown is a 95\\% credible interval comprising both process and measurement error.'>>=
+par(mfrow=c(1,2),mgp=c(1.3,.5,0),mar=c(3,2,2,1)+.2),cex=.8) 
 ctKalman(fit, subjects=2, timerange=c(0,30), kalmanvec=c('y', 'yprior'), timestep=.01, 
 plot=TRUE, plotcontrol=list(xaxs='i', main = 'Predicted'))
  
 ctKalman(fit, subjects=2, timerange=c(0,30), kalmanvec=c('y', 'ysmooth'), timestep=.01, 
 plot=TRUE, plotcontrol=list(xaxs='i',main = 'Smoothed'))
+par(mfrow=c(1,1))
+par(mgp=c(1.3,.5,0),mar=c(3,2,2,1)+.2,cex=.8)
 @
 
 \subsection{Time independent predictor effect plots}
@@ -522,45 +495,34 @@ summary(ssfit)$popmeans
 @
 
 \subsection{Non-linearities}
-The dynamic model that arises normally out of a typical ctsem model specification is linear, as the dynamic system and measurement matrices (DRIFT, MANIFESTVAR, etc) do not vary over time. This can be changed by making certain elements of the matrices depend on the current state of the system. This is done by setting the element to a character string containing the reference to `state', and the specific state. In a simple univariate, first order linear system, the DRIFT matrix would be $1 \times 1$ and contain a character string such as `drift11', indicating we want to estimate the parameter called `drift11' for the DRIFT matrix. This parameter could however be made state dependent, by adding an additional latent process to the system governing the behaviour of the `drift11' parameter over time, as well as an additional matrix called PARS that contains any additional parameters needed. Careful thought regarding the required model structure and restrictions is necessary, but we provide an example here of one possible formulation. it is possible to reference the current state of the process by using the term \verb|state|, followed by a square bracket reference to the particular latent state, for example \verb|state[2]| for the 2nd latent process. Whenever a square bracket is used in a ctsem parameter, ctsem recognises this as a nonlinear element, and additional formulas that are valid in the Stan language are also possible to use -- \verb|"exp(state[2])"| would ensure positivity of the result, for instance. 
+The dynamic model that arises normally out of a typical ctsem model specification is linear, as the dynamic system and measurement matrices (DRIFT, MANIFESTVAR, etc) do not vary over time. This can be changed by making certain elements of the matrices depend on the current state of the system. This is done by setting the element to a character string containing the reference to `state', and the specific state. In a simple univariate, first order linear system, the DRIFT matrix would be $1 \times 1$ and contain a character string such as `drift11', indicating we want to estimate the parameter called `drift11' for the DRIFT matrix. This parameter could however be made state dependent, by adding an additional latent process to the system governing the behaviour of the `drift11' parameter over time, as well as an additional matrix called PARS that contains any additional parameters needed. Careful thought regarding the required model structure and restrictions is necessary. Here, we modify the oscillatory, sunpots example from earlier, such that the oscillation damping factor is no longer constant but depends on the current level of sunspot activity. It is possible to reference the current state of the process by using the term \verb|state|, followed by a square bracket reference to the particular latent state, for example \verb|state[2]| for the 2nd latent process. Whenever a square bracket is used in a ctsem parameter, ctsem recognises this as a nonlinear element, and additional formulas that are valid in the Stan language are also possible to use -- \verb|"exp(state[2])"| would ensure positivity of the result, for instance. 
 
-<<nl,eval=FALSE>>=
- sunspots<-sunspot.year
- sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
- id <- 1
- time <- 1749:1924
-datalong <- cbind(id, time, sunspots)
+<<nl,eval=TRUE,cache=TRUE, fig.width=8, fig.height=4>>=
+sunspots<-sunspot.year
+sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
+id <- 1
+time <- 1749:1924
+datalong <- data.frame(id, time, sunspots)
 
 m <- ctModel(n.latent=2, n.manifest=1, type='stanct', manifestNames = 'sunspots',
-  LAMBDA=matrix(c('1 + PARS[1,3] * (state[1] + PARS[1,4])',0),nrow=1, ncol=2),
-  DRIFT = matrix(c(0, '1|-2|drift21', 'PARS[1,2] + PARS[1,1] *  (state[1] + PARS[1,4])', 'drift22'), 2, 2),
-  DIFFUSION = matrix(c('diff11',0,0, 0), 2, 2),
-  MANIFESTVAR=diag(.01,1),
-  PARS=matrix(c('driftcrossbystate','1|driftcrossintercept','lambdabystate','state1adjust'), 1,4) ) #
-sink('../testout.txt')
-ssfitnl <- ctStanFit(datalong, m, iter=300, chains=2, optimize=T,verbose=3)
-sink()
-ssfitnl <- ctStanGenerateFromFit(ssfit,100,F)
-e=extract(ssfitnl)
+  LAMBDA=matrix(c(1,'1|ma1'),nrow=1, ncol=2),
+  DRIFT = matrix(c(0,'drift21',1,  'PARS[1,2] + PARS[1,1] *  state[1]'), 2, 2),
+  DIFFUSION = matrix(c(0,0, 0,'diff11'), 2, 2),
+  MANIFESTVAR=diag(0,1),
+  PARS=matrix(c('driftbystate','0|1|1|-1|0|driftintercept'), 1,2) )
+
+ssfitnl <- ctStanFit(datalong, m, chains=2, optimize=TRUE)
+
+k <- ctStanKalman(ssfitnl) #extract state predictions
 
 
-
-summary(ssfitnl)
-
-k=ctStanKalman(ssfitnl)
-
-dim(k$ypred)
-plot(datalong[,'sunspots'],type='l',col='red')
-matplot((k$ypred[1,,1]),type='l',ylim=c(-5,60),col=1,add=T)
-matplot((k$err[1,,1]),type='l',col=1)
-matplot(t(k$etaprior[1:50,,2]),type='l',col=1)
-
-matplot(ssfitnl$generated$Y[,1:5,1],ylim=c(-10,200),type='l')
-
-
+matplot(datalong$time,t(k$ypred[,,1]),type='l',
+  col=rgb(1,0,0,.1),xlab='Year',ylab='Sunspots') 
+points(datalong$time,datalong$sunspots,type='l')
+legend('topright',c('Observed','Predicted'),text.col=c('black','red'),bty='n')
 @
 
-In this example we also made use of a faster form of parameter specification, in which parameter labels can be preceded by a sequence of numbers followed by \verb{|{ symbols as a separator, representing how the parameter should be transformed from an unbounded standard normal. The separate numbers specify the elements of the \verb|pars| subobject of the model, i.e. transform, multiplier, meanscale, offset, inneroffset. So the \verb{'1|ma1'{ label specifies a softplus ( \code|log(1+exp(param)| ) transform for the ma1 parameter, with defaults used for latter arguments when only some are specified.
+In this example we also made use of a faster form of parameter specification, in which parameter labels can be preceded by a sequence of numbers followed by \verb{|{ symbols as a separator, representing how the parameter should be transformed from an unbounded standard normal. The separate numbers specify the elements of the \verb|pars| subobject of the model, i.e. transform, multiplier, meanscale, offset, inneroffset. So the \verb{'1|ma1'{ label specifies a softplus ( \verb|log(1+exp(param)| ) transform for the ma1 parameter, with defaults used for latter arguments when only some are specified.
 
 \subsection{Population standard deviations - understanding the transforms}
 This section is intended as a helper to those trying to work through the various transformations found in the model. Internally, we sample parameters that we refer to as the `raw' parameters -- these parameters have no bounds and are typically drawn from normal distributions. Both raw population mean and subject specific deviation parameters are drawn from normal(0, 1) distributions. Depending on the specific parameter, various transformations may be applied to set appropriate bounds and priors. The raw population standard deviation for these raw parameters is sampled (by default) from a normal(0, 1) distribution called \verb|rawpopsdbase|, which is by default transformed via an exponential function -- this ensures the parameters are positive and the prior for the standard deviation is a lognormal distribution. This distribution can be altered via the model subobjects \verb|rawpopsdbase|, \verb|rawpopsdbaselowerbound|, and \verb|rawpopsdtransform|. This distribution can also be scaled on a per parameter basis by the \verb|sdscale| multiplier in the model specification, which defaults to 1. The following script shows a didactic sequence of sampling and transformation for a model with a single parameter, the auto effect of the drift matrix, and 3 subjects. Although we sample the priors themselves here, this is merely to reflect the prior and enable understanding and plotting. Note also that because we are only displaying the procedure for a single parameter here, we simplify things somewhat by avoiding calculations to determine the square root of the population covariance matrix -- with only one individually varying parameter, it is simply the standard deviation. 

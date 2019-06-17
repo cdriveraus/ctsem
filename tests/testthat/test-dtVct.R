@@ -1,4 +1,4 @@
-if(Sys.getenv("NOT_CRAN")==TRUE & .Machine$sizeof.pointer != 4){
+if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
   
   library(ctsem)
   library(testthat)
@@ -47,7 +47,7 @@ if(Sys.getenv("NOT_CRAN")==TRUE & .Machine$sizeof.pointer != 4){
     for(m in c('cm','dm')){
       argslist <- list(
         ml=list(datalong = dat,ctstanmodel = get(m),optimize=TRUE, nlcontrol=list(),
-        verbose=0,optimcontrol=list(plotsgd=F,estonly=F,stochastic=F),savescores = F,nopriors=T)
+        verbose=0,optimcontrol=list(plotsgd=F,estonly=F,stochastic=F),savescores = F,nopriors=F)
         #, mlis=list(datalong = dat,ctstanmodel = get(m),optimize=TRUE, nlcontrol=list(Jstep=1e-6), 
         #   verbose=0,optimcontrol=list(plotsgd=F,estonly=F,isloops=1,stochastic=F),savescores = F,nopriors=T)
         # ,mapis=list(datalong = dat,ctstanmodel = get(m),optimize=TRUE, nlcontrol=list(Jstep=1e-6),
@@ -66,30 +66,32 @@ if(Sys.getenv("NOT_CRAN")==TRUE & .Machine$sizeof.pointer != 4){
       }
     }
     
-    
      dtpars=lapply(s, function(argi) {
-        ct=argi$cm$parmatrices[grep('dt',rownames(argi$cm$parmatrices)),c('Mean','Sd')]
-        dt=argi$dm$parmatrices[rownames(argi$dm$parmatrices) %in% c('DRIFT','CINT','DIFFUSION'),c('Mean','Sd')]
-        rownames(dt) <- paste0('dt',rownames(dt))
-        list(ct=ct,dt=dt)
-      }
-      )
-      
-      for(ri in 1:nrow(dtpars[[1]]$ct)){
-        for(ci in 1:ncol(dtpars[[1]]$ct)){
-          par=sapply(dtpars, function(x) sapply(x, function(y) y[ri,ci]))
-          for(dimi in 2:length(par)){
-            expect_equivalent(par[dimi],par[dimi-1],tol=1e-1)
-          }
-        }}
-      
-      
-      ll=unlist(lapply(s, function(argi) lapply(argi, function(m) m$logprob)))
-      
-      for(dimi in 2:length(ll)){
-        expect_equivalent(ll[dimi],ll[dimi-1],tol=1e-3)
-      }
-
+       ct=argi$cm$parmatrices[c(grep('dt',rownames(argi$cm$parmatrices)),
+         which(rownames(argi$cm$parmatrices) %in% c('MANIFESTVAR','LAMBDA','T0MEANS','T0VAR'))),c('Mean','Sd')]
+       dt=argi$dm$parmatrices[rownames(argi$dm$parmatrices) %in% c('DRIFT','CINT','DIFFUSION','MANIFESTVAR','LAMBDA','T0MEANS','T0VAR'),c('Mean','Sd')]
+       rownames(dt)[rownames(dt) %in% c('DRIFT','CINT','DIFFUSION')] <- paste0('dt',rownames(dt)[rownames(dt) %in% c('DRIFT','CINT','DIFFUSION')])
+       list(ct=ct,dt=dt)
+     }
+     )
+     dtpars=unlist(dtpars,recursive = FALSE)
+     dtpars=lapply(dtpars,function(x) x[order(rownames(x)),])
+     
+     for(ri in 1:nrow(dtpars$ml.ct)){
+       for(ci in 1:ncol(dtpars$ml.ct)){
+         par=sapply(dtpars, function(y) y[ri,ci])
+         for(dimi in 2:length(par)){
+           expect_equivalent(par[dimi],par[dimi-1],tol=ifelse(ci==1,1e-1,5e-1))
+         }
+       }}
+     
+     
+     ll=unlist(lapply(s, function(argi) lapply(argi, function(m) m$logprob)))
+     
+     for(dimi in 2:length(ll)){
+       expect_equivalent(ll[dimi],ll[dimi-1],tol=1e-3)
+     }
+     
       
     
   }) #end cint heterogeneity
@@ -109,7 +111,7 @@ if(Sys.getenv("NOT_CRAN")==TRUE & .Machine$sizeof.pointer != 4){
       for(subi in 1:nsubjects){
         gm=ctModel(LAMBDA=diag(1), Tpoints=Tpoints, DRIFT=matrix(-.5),T0MEANS = matrix(4), 
           CINT=matrix(par[subi]),DIFFUSION=matrix(2),
-          T0VAR=matrix(2), MANIFESTVAR=matrix(1))
+          T0VAR=matrix(2), MANIFESTVAR=matrix(2))
         d=suppressMessages(ctGenerate(gm,n.subjects = 1,burnin = 10,wide = FALSE,dtmean = dt))
         if(subi==1) dat=cbind(subi,d) else dat=rbind(dat,cbind(subi,d))
       }
@@ -144,16 +146,19 @@ if(Sys.getenv("NOT_CRAN")==TRUE & .Machine$sizeof.pointer != 4){
       }
       
       dtpars=lapply(s, function(argi) {
-        ct=argi$cm$parmatrices[grep('dt',rownames(argi$cm$parmatrices)),c('Mean','Sd')]
-        dt=argi$dm$parmatrices[rownames(argi$dm$parmatrices) %in% c('DRIFT','CINT','DIFFUSION'),c('Mean','Sd')]
-        rownames(dt) <- paste0('dt',rownames(dt))
+        ct=argi$cm$parmatrices[c(grep('dt',rownames(argi$cm$parmatrices)),
+          which(rownames(argi$cm$parmatrices) %in% c('MANIFESTVAR','LAMBDA','T0MEANS','T0VAR'))),c('Mean','Sd')]
+        dt=argi$dm$parmatrices[rownames(argi$dm$parmatrices) %in% c('DRIFT','CINT','DIFFUSION','MANIFESTVAR','LAMBDA','T0MEANS','T0VAR'),c('Mean','Sd')]
+        rownames(dt)[rownames(dt) %in% c('DRIFT','CINT','DIFFUSION')] <- paste0('dt',rownames(dt)[rownames(dt) %in% c('DRIFT','CINT','DIFFUSION')])
         list(ct=ct,dt=dt)
       }
       )
+      dtpars=unlist(dtpars,recursive = FALSE)
+      dtpars=lapply(dtpars,function(x) x[order(rownames(x)),])
       
-      for(ri in 1:nrow(dtpars[[1]]$ct)){
-        for(ci in 1:ncol(dtpars[[1]]$ct)){
-          par=sapply(dtpars, function(x) sapply(x, function(y) y[ri,ci]))
+      for(ri in 1:nrow(dtpars$ml.ct)){
+        for(ci in 1:ncol(dtpars$ml.ct)){
+          par=sapply(dtpars, function(y) y[ri,ci])
           for(dimi in 2:length(par)){
             expect_equivalent(par[dimi],par[dimi-1],tol=1e-1)
           }
