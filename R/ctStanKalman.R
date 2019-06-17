@@ -7,7 +7,7 @@
 #' @export
 #'
 #' @examples 
-#' ctStanKalman(ctstantestfit)
+#' k=ctStanKalman(ctstantestfit)
 #' 
 ctStanKalman <- function(fit){
   k=extract(fit)$kalman

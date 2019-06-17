@@ -22,7 +22,7 @@ include (from 1 to n.manifest * maximum number of obs for a subject, blocked by 
 
 \item{cov}{Logical -- plot simulated cov vs observed?}
 
-\item{covtype}{Column name of cstemFitMeasure object}
+\item{covtype}{Column name of \code{$cov} sub object}
 
 \item{cov2cor}{Logical -- convert covariances to correlations?}
 

@@ -248,6 +248,7 @@ int asymDIFFUSIONsubindex[nsubjects];
   int dokalman;
   int dokalmanrows[ndatapoints];
   real Jstep;
+  real dokalmanpriormodifier;
 }
       
 transformed data{
@@ -256,7 +257,6 @@ transformed data{
   matrix[nindvarying,nindvarying] IIindvar = diag_matrix(rep_vector(1,nindvarying));
   real asquared =  square(2.0/sqrt(0.0+nlatentpop) * ukfspread);
   real sqrtukfadjust = sqrt(0.0+nlatentpop +( asquared * (nlatentpop  + 0.5) - (nlatentpop) ) );
-  real dokalmanpriormodifier = sum(dokalmanrows)/ndatapoints;
 }
       
 parameters {
@@ -787,14 +787,14 @@ if(verbose > 1) print("etaprior = ", eta, " etapriorcov = ",etacov);
         } 
         if(ukffull == 1) {
           ypred[o] = colMeans(ukfmeasures[o,]'); 
-          ypredcov[o,o] = cov_of_matrix(ukfmeasures[o,]') /asquared + diag_matrix(colMeans(merrorstates[o,]')); //
+          ypredcov[o,o] = cov_of_matrix(ukfmeasures[o,]') /asquared + diag_matrix(square(colMeans(merrorstates[o,]'))); //
           K[,o] = mdivide_right(crosscov(ukfstates', ukfmeasures[o,]') /asquared, ypredcov[o,o]); 
         }
         if(ukffull == 0){
           ypred[o] = ukfmeasures[o,2];
           for(ci in 3:cols(ukfmeasures)) ukfmeasures[o,ci] += -ukfmeasures[o,2];
           for(ci in 3:cols(ukfstates)) ukfstates[,ci] += -ukfstates[,2];
-          ypredcov[o,o] = tcrossprod(ukfmeasures[o,3:(nlatentpop+2)]) /asquared / (nlatentpop +.5) + diag_matrix(merrorstates[o,2]);
+          ypredcov[o,o] = tcrossprod(ukfmeasures[o,3:(nlatentpop+2)]) /asquared / (nlatentpop +.5) + diag_matrix(square(merrorstates[o,2]));
           K[,o] = mdivide_right(ukfstates[,3:cols(ukfstates)] * ukfmeasures[o,3:cols(ukfmeasures)]' /asquared / (nlatentpop+.5), ypredcov[o,o]); 
         }
         etacov +=  - quad_form(ypredcov[o,o],  K[,o]');
@@ -828,6 +828,8 @@ err[o] = Y[rowi,o] - ypred[o]; // prediction error
           int tmpindex[ncont_y[rowi]] = o0;
           for(oi in 1:ncont_y[rowi]) tmpindex[oi] +=  nmanifest;
            if(intoverstates==1) ypredcov_sqrt[o0,o0]=cholesky_decompose(makesym(ypredcov[o0,o0],verbose,1));
+           //print("ypredcov = ", ypredcov, " err = ", err);
+           //ll+=  multi_normal_cholesky_lpdf(Y[rowi] | ypred, ypredcov_sqrt);
            kout[rowi,o0] = mdivide_left_tri_low(ypredcov_sqrt[o0,o0], err[o0]); //transform pred errors to standard normal dist and collect
            kout[rowi,tmpindex] = log(diagonal(ypredcov_sqrt[o0,o0])); //account for transformation of scale in loglik
         }

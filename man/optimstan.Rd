@@ -5,7 +5,7 @@
 \title{Optimize / importance sample a stan or ctStan model.}
 \usage{
 optimstan(standata, sm, init = "random", initsd = 0.01,
-  sampleinit = NA, deoptim = FALSE, estonly = FALSE, tol = 1e-12,
+  sampleinit = NA, deoptim = FALSE, estonly = FALSE, tol = 1e-14,
   decontrol = list(), stochastic = "auto", startnsubjects = NA,
   plotsgd = FALSE, isloops = 0, isloopsize = 1000,
   finishsamples = 500, tdf = 50, verbose = 0, nopriors = FALSE,

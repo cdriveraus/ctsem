@@ -108,6 +108,7 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
   #subset selection
   if(is.null(ctsmodel$dokalmanrows)) subdata$dokalmanrows <- 
     rep(1L, subdata$ndatapoints) else subdata$dokalmanrows <- as.integer(ctsmodel$dokalmanrows)
+  subdata$dokalmanpriormodifier = sum(subdata$dokalmanrows)/subdata$ndatapoints
   
   return(subdata)
 }

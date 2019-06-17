@@ -129,7 +129,7 @@ ctStanModel<-function(ctmodelobj, type='stanct'){
         split = strsplit(ctspec$param[pi],split = '|',fixed=TRUE)[[1]]
         ctspec$param[pi] = split[length(split)]
         ctspec[pi,c('transform','multiplier','meanscale','offset','inneroffset')[1:(length(split)-1)]] <- split[1:(length(split)-1)]
-        ctspec[pi,c('transform','multiplier','meanscale','offset','inneroffset')[length(split):5]] <- c(0,1,1,0,0)[length(split):5]
+        ctspec[pi,c('transform','multiplier','meanscale','offset','inneroffset')[min(5,length(split)):5]] <- c(0,1,1,0,0)[min(5,length(split)):5]
         message('Custom par ',ctspec$param[pi],' found, set as: ',paste0(
           colnames(ctspec[pi,c('transform','multiplier','meanscale','offset','inneroffset'),drop=FALSE]),' = ',
           ctspec[pi,c('transform','multiplier','meanscale','offset','inneroffset'),drop=FALSE],'; '))

@@ -849,6 +849,7 @@ data {
   int dokalman;
   int dokalmanrows[ndatapoints];
   real Jstep;
+  real dokalmanpriormodifier;
 }
       
 transformed data{
@@ -857,7 +858,6 @@ transformed data{
   matrix[nindvarying,nindvarying] IIindvar = diag_matrix(rep_vector(1,nindvarying));
   real asquared =  square(2.0/sqrt(0.0+nlatentpop) * ukfspread);
   real sqrtukfadjust = sqrt(0.0+nlatentpop +( asquared * (nlatentpop  + 0.5) - (nlatentpop) ) );
-  real dokalmanpriormodifier = sum(dokalmanrows)/ndatapoints;
 }
       
 parameters {

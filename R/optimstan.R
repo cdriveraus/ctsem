@@ -64,7 +64,7 @@
 #' summary(ssfit)
 #' }
 optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
-  deoptim=FALSE, estonly=FALSE,tol=1e-12,
+  deoptim=FALSE, estonly=FALSE,tol=1e-14,
   decontrol=list(),
   stochastic = 'auto',
   startnsubjects=NA,
@@ -85,6 +85,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   message('Optimizing...')
   
   betterfit<-TRUE
+  bestfit <- -9999999999
   try2 <- FALSE
   while(betterfit){ #repeat loop if importance sampling improves on optimized max
     betterfit <- FALSE
@@ -132,6 +133,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             control = decontrollist))
           # init=constrain_pars(object = smf,optimfitde$optim$bestmem)
           init=optimfitde$optim$bestmem
+          bestfit = -optimfitde$optim$bestval
         } else stop(paste0('use install.packages(\"DEoptim\") to use deoptim')) #end require deoptim
       }
       
@@ -163,7 +165,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       parbase=par()
       
-      sgd <- function(init,stepbase=1e-4,nsubjects=1,gmeminit=ifelse(is.na(startnsubjects),.7,.9),gmemmax=.9,maxparchange = .1,
+      sgd <- function(init,stepbase=1e-4,nsubjects=1,gmeminit=ifelse(is.na(startnsubjects),.6,.9),gmemmax=.95,maxparchange = .1,
         startnsubjects=NA,
         minparchange=1e-16,maxiter=50000,perturbpercent=0,nconvergeiter=20, itertol=1e-3, deltatol=1e-5){
         
@@ -171,11 +173,26 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         bestpars = pars
         step=rep(stepbase,length(init))
         g=try(grad_log_prob(smf, upars=init,adjust_transform=TRUE),silent = TRUE) #rnorm(length(init),0,.001)
+        if(class(g)=='try-error') {
+          i = 0
+          message('Problems initialising, trying random values...')
+          while(i < 50 && class(g)=='try-error'){
+            if(i %%5 == 0) init = rep(0,length(init))
+            init=init+rnorm(length(init),0,abs(init)+ .1)
+            g=try(grad_log_prob(smf, upars=init,adjust_transform=TRUE),silent = TRUE)
+            i = i + 1
+          }
+        }
         gsmooth=g
         gpersist=g
         signg=sign(g)
         oldsigng = g
         oldg=g
+        roughness = rep(0.5,length(g))
+        roughnesstarget = .2
+        lproughnesstarget = ifelse(is.na(startnsubjects),.05,.49)
+        lproughness=lproughnesstarget
+        roughnessmemory = .99
         gmemory <- gmeminit
         oldgmemory <- gmemory
         oldlpdif <- 0
@@ -190,6 +207,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         while(!converged && i < maxiter){
           i = i + 1
           accepted <- FALSE
+          lproughnesstarget = ifelse(nsubjects==standata$nsubjects,.05,.49)
           while(!accepted){
             whichpars = sample(1:length(pars), ceiling(length(pars)*perturbpercent))
             newpars = bestpars #* .5 + bestpars * .5
@@ -223,17 +241,30 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           gmemory2 = gmemory * min(i/20,1)
           gsmooth= gsmooth*gmemory2 + (1-gmemory2)*g
           signg=sign(g) #or gsmooth?
-          stdgdif = (g-oldg) * step
+          stdgdifold = (g-oldg) * step
+          stdgdifsmooth = (g-gsmooth) * step
+          roughness = roughness * (roughnessmemory) + (1-(roughnessmemory)) * as.numeric(signg!=oldsigng)
+          if(i > 1) lproughness = lproughness * (roughnessmemory) + (1-(roughnessmemory)) * as.numeric(lp[i-1] >= lp[i])
+
           # print(stdgdif)
           # step=exp(mean(log(step))+(.99*(log(step)-mean(log(step)))))
           # step[oldsigng == signg] = step[which(oldsigng == signg)] * sqrt(2-gmemory) #exp((1-gmemory)/2)
           # step[oldsigng != signg] = step[which(oldsigng != signg)] / sqrt(2-gmemory) #ifelse(nsubjects == standata$nsubjects, (2-gmemory),1.1) #1.2 #exp((1-gmemory)/2)
           
-          step[oldsigng == signg] = step[oldsigng == signg] * 1.1 #(.5+inv_logit(abs(stdgdif[oldsigng == signg])))
-          step[oldsigng != signg]  = step[oldsigng != signg] * (1.5-inv_logit(abs(stdgdif[oldsigng != signg])))^2
+          step[oldsigng == signg] = step[oldsigng == signg] * 1.2 #/ (1.5-inv_logit(abs(stdgdif[oldsigng == signg])))^4 #* (1/ ( ( (roughness*.05+.95)^2) )) 
+          step[oldsigng != signg]  = step[oldsigng != signg] * (1.5-inv_logit(abs(stdgdifold[oldsigng != signg])))^4 #* ( ( (roughness*.05+.95)^2) )
+
+          # step[sign(gsmooth) == signg]  = step[sign(gsmooth) == signg] * 1.2 #( ( (roughness*.05+.95)^2) )
+          # step[sign(gsmooth) != signg]  = step[sign(gsmooth) != signg] * (1.5-inv_logit(abs(stdgdifsmooth[sign(gsmooth) != signg])))^4
+            # (1.5-inv_logit(abs(( (g-gsmooth) * step)[sign(gsmooth) != signg])))^4 # ( ( (roughness*.5+.5)^2) )
+          
+          # print((1.5-inv_logit(abs(stdgdif[oldsigng != signg])))^2)
+           step = step * ( (1/(-lproughness-lproughnesstarget)) / (1/-lproughnesstarget) + .5)
+
+           # print((((1+roughnesstarget)-mean(roughness))^6))
           
           if(lp[i] >= max(lp)) {
-            step = step * sqrt(2-gmemory) #exp((1-gmemory)/8)
+            # step = step * sqrt(2-gmemory) #exp((1-gmemory)/8)
             bestpars <- pars
           } 
           if(i > 1 && lp[i] < lp[i-1]) {
@@ -241,7 +272,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             # gsmooth = oldgsmooth
             # pars <- bestpars
             # if(nsubjects == standata$nsubjects) {
-              # gsmooth=gsmooth*.9
+              gsmooth[sign(gsmooth) != signg] = gsmooth[sign(gsmooth) != signg] #* .5 + g[sign(gsmooth) != signg] * .5
               step = step/ (2-gmemory)#step  / max( 1.5, (-10*(lp[i] - lp[i-1]) / sd(head(tail(lp,20),10)))) #exp((1-gmemory)/4)
             # } else {
             #   step = step / 1.06
@@ -263,9 +294,12 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           step[step < minparchange] <- minparchange
           
           if(plotsgd){
-            par(mfrow=c(3,1))
+            par(mfrow=c(4,1))
             plot(pars)
             plot(log(step))
+            plot(roughness)
+            abline(h=mean(roughness),col='red',type=2)
+            abline(h=roughnesstarget)
             plot(tail(log(-(lp-max(lp)-1)),500),type='l')
             message(paste0('Iter = ',i, '   Best LP = ', max(lp),'   grad = ', sqrt(sum(g^2)), '   gmem = ', gmemory))
           }
@@ -279,7 +313,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           }
           if(converged & nsubjects != standata$nsubjects){
             converged <- FALSE
-            nsubjects <- min(standata$nsubjects, nsubjects * 2)
+            nsubjects <- min(standata$nsubjects, nsubjects * 4)
             if(nsubjects > standata$nsubjects/2) nsubjects <- standata$nsubjects
             message(paste0('nsubjects now ',nsubjects, ' out of ',standata$nsubjects),' total')
             i=0
@@ -292,7 +326,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       # if(!deoptim & standata$nopriors == 0 ) init='random'
       
       if(stochastic=='auto' && npars > 50){
-        message('> 20 parameters and stochastic="auto" so stochastic gradient descent used')
+        message('> 50 parameters and stochastic="auto" so stochastic gradient descent used')
         stochastic <- TRUE
       } else if(stochastic=='auto') stochastic <- FALSE
       
@@ -303,22 +337,25 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(stochastic) optimfit <- sgd(init, itertol=1,startnsubjects=startnsubjects)
         standata$nopriors <- as.integer(1)
         smf <- stan_reinitsf(sm,standata)
-        init = optimfit$par #rstan::constrain_pars(object = smf, optimfit$par)
+        init = optimfit$par + rnorm(length(optimfit$par),0,abs(init/8)+1e-3)#rstan::constrain_pars(object = smf, optimfit$par)
       }
       
       if(!stochastic) {
         optimfit <- ucminf(init,fn = lp,gr = grffromlp,control=list(grtol=1e-99,xtol=tol,maxeval=10000),hessian=2)
         init = optimfit$par
+        bestfit <- -optimfit$value
         optimfit$value <- -optimfit$value
         ucminfcov <- optimfit$invhessian
       }
 
-      if(stochastic){
-      optimfit <- sgd(init, nsubjects=standata$nsubjects,startnsubjects=startnsubjects, perturbpercent = .0) 
-      }
-   
-      est1=constrain_pars(smf,optimfit$par)
+      if(stochastic || is.infinite(bestfit)){
+        if(is.infinite(bestfit)) {
+          message('Switching to stochastic optimizer -- failed initialisation with ucminf')
+        }
+      optimfit <- sgd(init, nsubjects=standata$nsubjects,startnsubjects=startnsubjects, perturbpercent = 0)
       bestfit <-optimfit$value
+      }
+      
       
       est2=optimfit$par #unconstrain_pars(smf, est1)
     }
@@ -458,7 +495,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         
         mchol=try(t(chol(solve(-hess))),silent=TRUE)
         if(class(mchol)=='try-error') {
-          message('Hessian not positive-definite -- check importance sampling convergence with isdiag')
+          message('Hessian not positive-definite so approximating, treat SE\'s with caution, consider respecification / priors.')
           npd <- TRUE
         } else npd <- FALSE
         # if(class(mchol)=='try-error') {
@@ -631,8 +668,18 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     # parallel::stopCluster(cl)
     message('Computing quantities...')
     
+    est1=NA
+    class(est1)<-'try-error'
+    i=0
+    while(class(est1)=='try-error'){
+      i=i+1
+      est1=try(constrain_pars(smf,resamples[i,]),silent=TRUE)
+    }
+    if(class(est1)=='try-error') stop('All samples generated errors! Respecify, try stochastic optimizer, try again?')
+    
+    
     # cl <- parallel::makeCluster(min(cores,chains), type = "PSOCK")
-    parallel::clusterExport(cl, c('relistarrays','resamples','sm','standata','optimfit'),environment())
+    parallel::clusterExport(cl, c('relistarrays','resamples','sm','standata','optimfit','est1'),environment())
     
     # target_dens <- c(target_dens,
     
@@ -653,6 +700,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     transformedpars=unlist(transformedpars,recursive = FALSE)
     missingsamps <-sapply(transformedpars, function(x) 'try-error' %in% class(x))
     nasampscount <- sum(missingsamps) 
+    # if(nasampscount > 0) browser()
     
     transformedpars <- transformedpars[!missingsamps]
     nresamples <- nresamples - nasampscount
