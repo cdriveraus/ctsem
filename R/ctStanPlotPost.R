@@ -44,7 +44,8 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,sm
     mfrow <- grDevices::n2mfrow( (length(rows)+sum(as.logical(obj$setup$popsetup$indvarying[rows]))*2))
     mfrow[mfrow > 3] <- 3
   }
-  graphics::par(mfrow=mfrow)
+
+  if(any(mfrow!=par()$mfrow)) graphics::par(mfrow=mfrow)
 
   nsubjects<-obj$data$nsubjects 
 
