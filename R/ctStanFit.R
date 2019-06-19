@@ -92,7 +92,7 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
     }) )),nrow=c(nrow(datalong),ncol=ctsmodel$n.manifest))
   )
   
-  if(ctsmodel$n.TDpred ==0) tdpreds <- matrix(0,0,0)
+  if(ctsmodel$n.TDpred ==0) tdpreds <- matrix(0,0,0) #subdata$ndatapoints,
   subdata$tdpreds=array(as.matrix(tdpreds),dim=c(nrow(tdpreds),ncol(tdpreds)))
   
   #subset selection
@@ -504,7 +504,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   fit=TRUE, intoverpop=FALSE, stationary=FALSE,plot=FALSE,  derrind='all',
   optimize=FALSE,  optimcontrol=list(),
   nlcontrol = list(), nopriors=FALSE, chains=2,cores='maxneeded', inits=NULL,
-  forcerecompile=FALSE,savescores=TRUE,gendata=FALSE,
+  forcerecompile=FALSE,savescores=FALSE,gendata=FALSE,
   control=list(),verbose=0,...){
   if(.Machine$sizeof.pointer == 4) message('Bayesian functions not available on 32 bit systems') else{
     if(class(ctstanmodel) != 'ctStanModel') stop('not a ctStanModel object')
@@ -530,8 +530,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       if(nldynamics == FALSE) warning('Linear model requested but nonlinear model specified! May be a poor approximation') else nldynamics <- TRUE 
     }
     
-    if(length(unique(datalong[,idName]))==1 & any(ctstanmodel$pars$indvarying[is.na(ctstanmodel$pars$value)]==TRUE) & 
-        is.null(ctstanmodel$fixedrawpopmeans) & is.null(ctstanmodel$fixedsubpars) & is.null(ctstanmodel$forcemultisubject)) {
+    if(length(unique(datalong[,idName]))==1 && any(ctstanmodel$pars$indvarying[is.na(ctstanmodel$pars$value)]==TRUE) & 
+        is.null(ctstanmodel$fixedrawpopmeans) && is.null(ctstanmodel$fixedsubpars) & is.null(ctstanmodel$forcemultisubject)) {
       ctstanmodel$pars$indvarying <- FALSE
       message('Individual variation not possible as only 1 subject! indvarying set to FALSE on all parameters')
     }
@@ -544,16 +544,19 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
           ctstanmodel$pars$value[ri] <- ifelse(ctstanmodel$pars$row[ri] == ctstanmodel$pars$col[ri], 1, 0)
         }
       }
-      message('Free T0VAR parameters fixed to diagonal matrix of 1\'s as only 1 subject!')
+      message('Free T0VAR parameters fixed to diagonal matrix of 1\'s as only 1 subject - consider appropriateness!')
     }
     
     whichT0VAR_T0MEANSindvarying <- ctstanmodel$pars$matrix %in% 'T0VAR'  &  
       (ctstanmodel$pars$row %in% ctstanmodel$pars$row[ctstanmodel$pars$matrix %in% 'T0MEANS' & ctstanmodel$pars$indvarying] |
       ctstanmodel$pars$col %in% ctstanmodel$pars$row[ctstanmodel$pars$matrix %in% 'T0MEANS' & ctstanmodel$pars$indvarying])
     if(any(whichT0VAR_T0MEANSindvarying)){
-      message('Free T0VAR parameters as well as indvarying T0MEANS -- fixing T0VAR pars to diag matrix 1e-5')
+      message('Free T0VAR parameters as well as indvarying T0MEANS -- fixing T0VAR pars to diag matrix 1e-3')
       ctstanmodel$pars$value[whichT0VAR_T0MEANSindvarying & ctstanmodel$pars$col == ctstanmodel$pars$row ] <- 1e-3
       ctstanmodel$pars$value[whichT0VAR_T0MEANSindvarying & ctstanmodel$pars$col != ctstanmodel$pars$row ] <- 0
+      ctstanmodel$param[whichT0VAR_T0MEANSindvarying] <- NA
+      ctstanmodel$transform[whichT0VAR_T0MEANSindvarying] <- NA
+      ctstanmodel$indvarying[whichT0VAR_T0MEANSindvarying] <- FALSE
     }
     
     
@@ -565,7 +568,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     recompile <- FALSE
     if(optimize && !intoverstates) stop('intoverstates=TRUE required for optimization!')
-    if(optimize && !intoverpop && any(ctstanmodel$pars$indvarying[is.na(ctstanmodel$pars$value)]==TRUE & 
+    if(optimize && !intoverpop && any(ctstanmodel$pars$indvarying[is.na(ctstanmodel$pars$value)]==TRUE && 
         is.null(ctstanmodel$fixedrawpopchol) & is.null(ctstanmodel$fixedsubpars))){
       intoverpop <- TRUE
       message('Setting intoverpop=TRUE to enable optimization of random effects...')
@@ -647,6 +650,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
           ctspec[rowi,c('param','transform','indvarying')]=replacement
         }
       }
+      if(all(is.na(c(ctspec[rowi,c('value','param')])))) stop('Parameters specified as NA ! Needs a value or character label.')
     }
     if(found) message('Minor inconsistencies in model found - removing param name, transform and indvarying from any parameters with a value specified')
     
@@ -692,13 +696,13 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     #create random effects indices for each matrix
     for(mati in mats$base){
       if( (!intoverpop && any(ctspec$indvarying[ctspec$matrix==mati])) || 
-          (ctstanmodel$n.TIpred >0 && any(unlist(ctspec[ctspec$matrix==mati,paste0(ctstanmodel$TIpredNames,'_effect')])))) subindex <- 1:nsubjects else subindex <- rep(1,nsubjects)
+          (ctstanmodel$n.TIpred >0 && any(unlist(ctspec[ctspec$matrix==mati,paste0(ctstanmodel$TIpredNames,'_effect')])))) subindex <- 1 else subindex <- 0
           assign(paste0(mati,'subindex'), subindex)
     }
-    if(stationary || nt0varstationary > 0) T0VARsubindex <- rep(1:max(c(T0VARsubindex,DRIFTsubindex,DIFFUSIONsubindex)), ifelse(max(c(T0VARsubindex,DRIFTsubindex,DIFFUSIONsubindex)) > 1, 1, nsubjects))
-    if(stationary || nt0meansstationary > 0) T0MEANSsubindex <- rep(1:max(c(T0MEANSsubindex,DRIFTsubindex,CINTsubindex)), ifelse(max(c(T0MEANSsubindex,DRIFTsubindex,CINTsubindex)) > 1, 1, nsubjects))
-    asymCINTsubindex <- rep(1:max(c(CINTsubindex,DRIFTsubindex)), ifelse(max(c(CINTsubindex,DRIFTsubindex)) > 1, 1, nsubjects))
-    asymDIFFUSIONsubindex <- rep(1:max(c(DIFFUSIONsubindex,DRIFTsubindex)), ifelse(max(c(DIFFUSIONsubindex,DRIFTsubindex)) > 1, 1, nsubjects))
+    if(stationary || nt0varstationary > 0) T0VARsubindex <- max(c(T0VARsubindex,DRIFTsubindex,DIFFUSIONsubindex))
+    if(stationary || nt0meansstationary > 0) T0MEANSsubindex <- max(c(T0MEANSsubindex,DRIFTsubindex,CINTsubindex))
+    asymCINTsubindex <- max(c(CINTsubindex,DRIFTsubindex))
+    asymDIFFUSIONsubindex <- max(c(DIFFUSIONsubindex,DRIFTsubindex))
     
     #simply exponential?
     driftdiagonly <- ifelse(all(!is.na(ctspec$value[ctspec$matrix == 'DRIFT' & ctspec$row != ctspec$col]) &
@@ -993,7 +997,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     #add subject variability indices to data
     for(mati in c(mats$base,'asymCINT','asymDIFFUSION')){
       sname <- paste0(mati,'subindex')
-      standata[[sname]] <- array(as.integer((get(sname))),dim=nsubjects)
+      standata[[sname]] <- as.integer((get(sname)))
     }
     
     standata$matsetup <- apply(matsetup,c(1,2),as.integer,.drop=FALSE)
@@ -1109,8 +1113,11 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       }
       
       if(optimize==TRUE) {
-        opargs <- c(list(standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors)),optimcontrol)
-        stanfit <- do.call(optimstan,opargs)
+        # opargs <- list(standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors),optimcontrol)
+        # stanfit <- do.call(optimstan,opargs)
+
+        stanfit <- rlang::exec(optimstan,!!!optimcontrol,standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors))
+        # stanfit <- optimstan(standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors))
       }
       
       if(is.na(STAN_NUM_THREADS)) Sys.unsetenv('STAN_NUM_THREADS') else Sys.setenv(STAN_NUM_THREADS = STAN_NUM_THREADS) #reset sys env

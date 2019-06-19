@@ -10,7 +10,7 @@ ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 1000,
   derrind = "all", optimize = FALSE, optimcontrol = list(),
   nlcontrol = list(), nopriors = FALSE, chains = 2,
   cores = "maxneeded", inits = NULL, forcerecompile = FALSE,
-  savescores = TRUE, gendata = FALSE, control = list(),
+  savescores = FALSE, gendata = FALSE, control = list(),
   verbose = 0, ...)
 }
 \arguments{
@@ -358,10 +358,10 @@ m4$pars$indvarying[-which(m4$pars$matrix \%in\% c('T0MEANS','MANIFESTMEANS','TDP
 m4$pars$age_effect[-which(m4$pars$matrix \%in\% c('T0MEANS','MANIFESTMEANS','TDPREDEFFECT'))] <- FALSE
 
 f4 <- ctStanFit(datalong = dat2, ctstanmodel = m4, cores = setcores,chains = setchains,plot=TRUE,
-  optimize=TRUE,verbose=1,
+  optimize=TRUE,verbose=0,
   control=list(max_treedepth=7),iter=150)
 
-summary(f4,parmatrices=TRUE)
+summary(f4)
 
 ctStanDiscretePars(f4,plot=TRUE) #auto and cross regressive plots over time
 

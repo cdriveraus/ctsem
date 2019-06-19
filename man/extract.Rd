@@ -19,5 +19,4 @@ Extract samples from a ctStanFit object
 }
 \examples{
 e = extract(ctstantestfit)
-head(e)
 }
