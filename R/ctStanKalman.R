@@ -1,6 +1,8 @@
 #' Get Kalman filter estimates from a ctStanFit object
 #'
 #' @param fit fit object from \code{\link{ctStanFit}}.
+#' @param nsamples either NA (to extract all) or a positive integer from 1 to maximum samples in the fit.
+#' @param cores Integer number of cpu cores to use. Only needed if savescores was set to FALSE when fitting.
 #'
 #' @return list containing Kalman filter elements, each element in array of
 #' iterations, data row, variables. llrow is the log likelihood for each row of data.
@@ -9,8 +11,24 @@
 #' @examples 
 #' k=ctStanKalman(ctstantestfit)
 #' 
-ctStanKalman <- function(fit){
+ctStanKalman <- function(fit,nsamples=NA,cores=2){
+  if(class(fit)!='ctStanFit') stop('Not a ctStanFit object')
   k=extract(fit)$kalman
+  
+  if(length(dim(k))==0){
+    message('State estimates not saved, computing...')
+    standata <- fit$standata
+    standata$savescores <- 1L
+    # smf <- stan_reinitsf(fit$stanmodel, standata)
+    if(!class(fit$stanfit) %in% 'stanfit') {
+      samples = fit$stanfit$rawposterior
+    } else {
+      samples = t(stan_unconstrainsamples(fit$stanfit))
+    }
+    if(!is.na(nsamples)) samples <- samples[sample(1:nrow(samples),nsamples),,drop=FALSE]
+    k=stan_constrainsamples(sm = fit$stanmodel,standata = standata,samples = samples,cores=cores)$kalman
+  }
+  
   k[k==99999] <- NA #for missingness
   nlatent <- fit$standata$nlatentpop
   nmanifest <- fit$standata$nmanifest
