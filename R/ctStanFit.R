@@ -1115,8 +1115,11 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       if(optimize==TRUE) {
         # opargs <- list(standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors),optimcontrol)
         # stanfit <- do.call(optimstan,opargs)
-
-        stanfit <- rlang::exec(optimstan,!!!optimcontrol,standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors))
+        
+        opcall <- paste0('optimstan(standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors),',
+          paste0(gsub('list(','',paste0(deparse(optimcontrol),collapse=''),fixed=TRUE)))
+        stanfit <- eval(parse(text=opcall))
+        # stanfit <- rlang::exec(optimstan,!!!optimcontrol,standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors))
         # stanfit <- optimstan(standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors))
       }
       

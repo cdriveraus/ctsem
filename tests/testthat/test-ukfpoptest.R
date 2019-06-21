@@ -7,10 +7,10 @@ set.seed(1)
 context("ukfpopcheck") 
 
 test_that("ukfpopcheck1", {
-Tpoints<-20
+Tpoints<-10
 n.latent=2
 n.manifest=3
-nsubjects=30
+nsubjects=60
 burnin=30
 dtmat = matrix(exp(rnorm(burnin+Tpoints-1,-.3,.5)),1)
 par1<-rnorm(nsubjects,-.3,.8)
@@ -69,14 +69,14 @@ m2<-ctModel(type='omx',n.latent=2,n.manifest=n.manifest,Tpoints=Tpoints,
 # #original ctsem
 cfit1 <- ctRefineTo(dat = cd,dataform = 'long',ctmodelobj = m1,retryattempts = 1)
 ct1d=cfit1$mxobj$DRIFT$values[1:2,1:2]
-cfit1$mxobj$DIFFUSION$result
-cfit1$mxobj$T0VAR$result
+# cfit1$mxobj$DIFFUSION$result
+# cfit1$mxobj$T0VAR$result
 ctll1=cfit1$mxobj$output$fit *-.5
 
 cfit2 <- ctRefineTo(dat = cd,dataform = 'long',ctmodelobj = m2,retryattempts = 0,carefulFit=T,stationary='')
 ct2d=cfit2$mxobj$DRIFT$values
-cfit2$mxobj$DIFFUSION$result
-cfit2$mxobj$T0VAR$result
+# cfit2$mxobj$DIFFUSION$result
+# cfit2$mxobj$T0VAR$result
 ctll2=cfit2$mxobj$output$fit *-.5
 
 # summary(cfit1)$ctparameters
@@ -88,9 +88,9 @@ sm1$pars$indvarying <- FALSE
 # sm1$pars$indvarying[!sm1$pars$matrix %in% c('MANIFESTMEANS')] <- FALSE
 
 # sink(file='../sf1.txt')
-sf1 <- ctStanFit(cd,sm1,iter=200,chains=4,cores=4,
+sf1 <- ctStanFit(cd,sm1,iter=200,
   optimize=TRUE,verbose=0,nopriors = TRUE,
-  optimcontrol=list(deoptim = FALSE,isloops=0,isloopsize=50,finishsamples=50),
+  optimcontrol=list(deoptim = F,isloops=0,isloopsize=50,finishsamples=50),
   derrind=1:4,
   nlcontrol=list(nldynamics=FALSE))
 # sink()
@@ -99,7 +99,7 @@ sf1 <- ctStanFit(cd,sm1,iter=200,chains=4,cores=4,
 sf1d=matrix(sf1$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf1$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
 sf1ll=sf1$stanfit$optimfit$value
 
-sf1_derrind<- ctStanFit(cd,sm1,iter=200,chains=4,cores=4,
+sf1_derrind<- ctStanFit(cd,sm1,iter=200,
   optimize=TRUE,verbose=0,nopriors = TRUE,
   optimcontrol=list(deoptim = FALSE,isloops=0,isloopsize=50,finishsamples=50),
   derrind=1:2,
@@ -107,7 +107,7 @@ sf1_derrind<- ctStanFit(cd,sm1,iter=200,chains=4,cores=4,
 sf1_derrindd=matrix(sf1_derrind$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf1_derrind$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
 sf1_derrindll=sf1_derrind$stanfit$optimfit$value
 
-sf1nld<- ctStanFit(cd,sm1,iter=200,chains=4,cores=4,
+sf1nld<- ctStanFit(cd,sm1,iter=200,
   optimize=TRUE,verbose=0,nopriors = TRUE,
   optimcontrol=list(deoptim = FALSE,isloops=0,isloopsize=50,finishsamples=50),
   derrind=1:4,
@@ -116,7 +116,7 @@ sf1nldd=matrix(sf1nld$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf1n
 sf1nldll=sf1nld$stanfit$optimfit$value
 
 # sink(file='../sinkoutg.txt')
-sf1nld_derrind<- ctStanFit(cd,sm1,iter=200,chains=4,cores=4,
+sf1nld_derrind<- ctStanFit(cd,sm1,iter=200,
   optimize=TRUE,verbose=0,nopriors = TRUE,
   init=0,
   optimcontrol=list(deoptim = FALSE,isloops=0,isloopsize=50,finishsamples=50),
@@ -127,7 +127,7 @@ sf1nld_derrindd=matrix(sf1nld_derrind$stanfit$transformedpars_old[grep('pop_DRIF
 sf1nld_derrindll=sf1nld_derrind$stanfit$optimfit$value
 
 
-sf1nl_derrind<- ctStanFit(cd,sm1,iter=200,chains=4,cores=4,
+sf1nl_derrind<- ctStanFit(cd,sm1,iter=200,
   optimize=TRUE,verbose=0,nopriors = TRUE,
   optimcontrol=list(deoptim = FALSE,isloops=0,isloopsize=50,finishsamples=50),
   derrind=1:2,
@@ -142,7 +142,7 @@ sm2 <- ctStanModel(m2)
 sm2$pars$indvarying[!(sm2$pars$matrix %in% c('CINT','T0MEANS'))] <- FALSE
 
 # sink(file='../sinkout.txt')
-sf2 <- ctStanFit(cd,sm2,iter=200,chains=4,cores=4,
+sf2 <- ctStanFit(cd,sm2,iter=200,
   optimize=TRUE,verbose=0,nopriors = TRUE,intoverpop = TRUE,
   init=0,
   optimcontrol=list(deoptim = FALSE,isloops=0,isloopsize=50,finishsamples=50),

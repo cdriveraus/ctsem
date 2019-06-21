@@ -6,7 +6,7 @@
 \usage{
 optimstan(standata, sm, init = "random", initsd = 0.01,
   sampleinit = NA, deoptim = FALSE, estonly = FALSE, tol = 1e-14,
-  decontrol = list(), stochastic = "auto", startnrows = NA,
+  decontrol = list(), stochastic = TRUE, startnrows = NA,
   plotsgd = FALSE, isloops = 0, isloopsize = 1000,
   finishsamples = 500, tdf = 50, carefulfit = FALSE, verbose = 0,
   nopriors = FALSE, cores = 2)

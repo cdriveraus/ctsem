@@ -160,7 +160,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
         for(ci in 1:ncol(dtpars$ml.ct)){
           par=sapply(dtpars, function(y) y[ri,ci])
           for(dimi in 2:length(par)){
-            expect_equivalent(par[dimi],par[dimi-1],tol=1e-1)
+            expect_equivalent(par[dimi],par[dimi-1],tol=ifelse(ci==1,1e-1,5e-1))
           }
         }}
       

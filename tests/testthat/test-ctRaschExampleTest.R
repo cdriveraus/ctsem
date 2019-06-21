@@ -4,9 +4,6 @@ library(testthat)
 
 context("ctRasch") #develop some expectations here!
 
-
-
-#anomauth
 test_that("ctRasch1", {
 
 invlog=function (x) exp(x)/(1 + exp(x))
@@ -43,13 +40,12 @@ set.seed( 1234 )
 start <- Sys.time()
 r <- ctStanFit( datalong = d,
                 ctstanmodel = m,
-                iter = 1000,
+                iter = 100,
                 chains = 1,
                 cores = 1,
                 intoverstates = FALSE,
                 stationary = FALSE )
-print( runtime <- Sys.time() - start )
-summary( r )
+
 
 })
 

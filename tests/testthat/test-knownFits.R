@@ -4,8 +4,6 @@ library(testthat)
 
 context("knownFits")
 
-message(Sys.getenv("NOT_CRAN"))
-
 #anomauth
 test_that("anomauth", {
 
@@ -36,7 +34,7 @@ test_that("anomauth", {
 })
 
 #anomauth with trait asymptotic vs standard param comparisons
-test_that("time calc", {
+test_that("AnomAuth_traitasymptoticcheck", {
   
   data(AnomAuth)
   AnomAuthmodel<-ctModel(LAMBDA=matrix(c(1, 0, 0, 1), nrow=2, ncol=2),  

@@ -190,7 +190,7 @@ data {
   vector[nmanifest] Y[ndatapoints];
   int nopriors;
   int nldynamics;
-  vector[ntdpred] tdpreds[ntdpred ? ndatapoints : 0];
+  vector[ntdpred] tdpreds[ndatapoints];
   
   real maxtimestep;
   real time[ndatapoints];
