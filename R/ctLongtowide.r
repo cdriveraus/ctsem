@@ -36,11 +36,11 @@ ctLongToWide <- function(datalong, id, time, manifestNames, TDpredNames=NULL, TI
     TDpredNames, 
     time, 
     TIpredNames),drop=FALSE])
-  # names(data_long) 	<- c("id", 
-  #   manifestNames, 
-  #   TDpredNames, 
-  #   "time",
-  #   TIpredNames)
+  names(data_long) 	<- c("id",
+    manifestNames,
+    TDpredNames,
+    'time',
+    TIpredNames)
   
   if(any(is.na(data_long[,'time']))){
     message(paste0('Observations with missing time information found - removing ', sum(is.na(data_long[,'time'])), ' rows'))
