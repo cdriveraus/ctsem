@@ -21,7 +21,7 @@ parlp <- function(parm,subjects=NA){
 
 stan_constrainsamples<-function(sm,standata, samples,cores=2){
   smfull <- stan_reinitsf(model = sm,data = standata)
-  message('Computing quantities for ', samples,' samples...')
+  message('Computing quantities for ', nrow(samples),' samples...')
   est1=NA
   class(est1)<-'try-error'
   i=0
