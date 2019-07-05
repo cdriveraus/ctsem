@@ -935,28 +935,26 @@ if(!gendata) kalmanll(),'
 }
       
 model{
- real llp=0;
-
-  if(intoverpop==0 && fixedsubpars == 1) llp+= multi_normal_cholesky_lpdf(fixedindparams | rep_vector(0,nindvarying),IIindvar);
+  if(intoverpop==0 && fixedsubpars == 1) target+= multi_normal_cholesky_lpdf(fixedindparams | rep_vector(0,nindvarying),IIindvar);
 
   if(nopriors==0){
-   llp+= dokalmanpriormodifier * normal_lpdf(rawpopmeans|0,1);
+   target+= dokalmanpriormodifier * normal_lpdf(rawpopmeans|0,1);
   
     if(ntipred > 0){ 
-      llp+= dokalmanpriormodifier * double_exponential_lpdf(tipredeffectparams| 0, tipredeffectscale);
-      llp+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
-      //llp+= dokalmanpriormodifier * normal_lpdf(tipredglobalscalepar | 0-log(ntipred),log(square(ntipred)));
+      target+= dokalmanpriormodifier * normal_lpdf(tipredeffectparams| 0, tipredeffectscale);
+      target+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
+      //target+= dokalmanpriormodifier * normal_lpdf(tipredglobalscalepar | 0-log(ntipred),log(square(ntipred)));
     }
     
     if(nindvarying > 0){
-      if(nindvarying >1) llp+= dokalmanpriormodifier * normal_lpdf(sqrtpcov | 0, 1);
-      if(intoverpop==0 && fixedsubpars == 0) llp+= multi_normal_cholesky_lpdf(baseindparams | rep_vector(0,nindvarying), IIindvar);
-      llp+= dokalmanpriormodifier * normal_lpdf(rawpopsdbase | ',gsub('normal(','',ctstanmodel$rawpopsdbase,fixed=TRUE),';
+      if(nindvarying >1) target+= dokalmanpriormodifier * normal_lpdf(sqrtpcov | 0, 1);
+      if(intoverpop==0 && fixedsubpars == 0) target+= multi_normal_cholesky_lpdf(baseindparams | rep_vector(0,nindvarying), IIindvar);
+      target+= dokalmanpriormodifier * normal_lpdf(rawpopsdbase | ',gsub('normal(','',ctstanmodel$rawpopsdbase,fixed=TRUE),';
     }
     //llp +=  log(dokalmanpriormodifier);
   } //end pop priors section
   
-  if(intoverstates==0) llp+= normal_lpdf(etaupdbasestates|0,1);
+  if(intoverstates==0) target+= normal_lpdf(etaupdbasestates|0,1);
   
   ',if(!gendata) 'target+= ll; \n','
   if(verbose > 0) print("lp = ", target());
