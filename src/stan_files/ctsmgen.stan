@@ -272,6 +272,7 @@ parameters {
   
   vector[ntipredeffects] tipredeffectparams; // effects of time independent covariates
   vector[nmissingtipreds] tipredsimputed;
+  //vector[ (( (ntipredeffects-1) * (1-nopriors) ) > 0) ? 1 : 0] tipredglobalscalepar;
   
   vector[intoverstates ? 0 : nlatent*ndatapoints] etaupdbasestates; //sampled latent states posterior
 }
@@ -279,39 +280,13 @@ parameters {
 transformed parameters{
   vector[nindvarying] rawpopsd; //population level std dev
   matrix[nindvarying,nindvarying] rawpopcovsqrt; 
-  real ll;
-  vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatentpop*2 : 0)] kalman[savescores ? ndatapoints : 0];
-     matrix[matrixdims[1, 1], matrixdims[1, 2] ] T0MEANS[T0MEANSsubindex  ? nsubjects : 1]; 
-      matrix[matrixdims[2, 1], matrixdims[2, 2] ] LAMBDA[LAMBDAsubindex  ? nsubjects : 1]; 
-      matrix[matrixdims[3, 1], matrixdims[3, 2] ] DRIFT[DRIFTsubindex  ? nsubjects : 1]; 
-      matrix[matrixdims[4, 1], matrixdims[4, 2] ] DIFFUSION[DIFFUSIONsubindex  ? nsubjects : 1]; 
-      matrix[matrixdims[5, 1], matrixdims[5, 2] ] MANIFESTVAR[MANIFESTVARsubindex  ? nsubjects : 1]; 
-      matrix[matrixdims[6, 1], matrixdims[6, 2] ] MANIFESTMEANS[MANIFESTMEANSsubindex  ? nsubjects : 1]; 
-      matrix[matrixdims[7, 1], matrixdims[7, 2] ] CINT[CINTsubindex  ? nsubjects : 1]; 
-      matrix[matrixdims[8, 1], matrixdims[8, 2] ] T0VAR[T0VARsubindex  ? nsubjects : 1]; 
-      matrix[matrixdims[9, 1], matrixdims[9, 2] ] TDPREDEFFECT[TDPREDEFFECTsubindex  ? nsubjects : 1];
 
-  matrix[nlatent,nlatent] asymDIFFUSION[asymDIFFUSIONsubindex ? nsubjects : 1]; //stationary latent process variance
-  vector[nt0meansstationary ? nlatent : 0] asymCINT[asymCINTsubindex ? nsubjects : 1]; // latent process asymptotic level
-
-  
-     matrix[matrixdims[1, 1], matrixdims[1, 2] ] pop_T0MEANS; 
-      matrix[matrixdims[2, 1], matrixdims[2, 2] ] pop_LAMBDA; 
-      matrix[matrixdims[3, 1], matrixdims[3, 2] ] pop_DRIFT; 
-      matrix[matrixdims[4, 1], matrixdims[4, 2] ] pop_DIFFUSION; 
-      matrix[matrixdims[5, 1], matrixdims[5, 2] ] pop_MANIFESTVAR; 
-      matrix[matrixdims[6, 1], matrixdims[6, 2] ] pop_MANIFESTMEANS; 
-      matrix[matrixdims[7, 1], matrixdims[7, 2] ] pop_CINT; 
-      matrix[matrixdims[8, 1], matrixdims[8, 2] ] pop_T0VAR; 
-      matrix[matrixdims[9, 1], matrixdims[9, 2] ] pop_TDPREDEFFECT;
-
-  matrix[nlatent,nlatent] pop_asymDIFFUSION; //stationary latent process variance
-  vector[nt0meansstationary ? nlatent : 0] pop_asymCINT; // latent process asymptotic level
-
-  
 
   matrix[ntipred ? nsubjects : 0, ntipred ? ntipred : 0] tipreds; //tipred values to fill from data and, when needed, imputation vector
   matrix[nparams, ntipred] TIPREDEFFECT; //design matrix of individual time independent predictor effects
+  //real tipredglobalscale = 1.0;
+  
+  //if( ((ntipredeffects-1) * (1-nopriors))  > 0)  tipredglobalscale = exp(tipredglobalscalepar[1]);
 
   if(ntipred > 0){ 
     int counter = 0;
@@ -351,35 +326,36 @@ transformed parameters{
       constraincorsqrt(rawpopcovsqrt))),verbose,1)); 
   }//end indvarying par setup
 
-  ll=0;
 {if(dokalman==1){
 }}
 
 }
       
 model{
+ real llp=0;
 
-  if(intoverpop==0 && fixedsubpars == 1) fixedindparams ~ multi_normal_cholesky(rep_vector(0,nindvarying),IIindvar);
+  if(intoverpop==0 && fixedsubpars == 1) llp+= multi_normal_cholesky_lpdf(fixedindparams | rep_vector(0,nindvarying),IIindvar);
 
   if(nopriors==0){
-   target += dokalmanpriormodifier * normal_lpdf(rawpopmeans|0,1);
+   llp+= dokalmanpriormodifier * normal_lpdf(rawpopmeans|0,1);
   
     if(ntipred > 0){ 
-      target+= dokalmanpriormodifier * normal_lpdf(tipredeffectparams| 0, tipredeffectscale);
-      target+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
+      llp+= dokalmanpriormodifier * double_exponential_lpdf(tipredeffectparams| 0, tipredeffectscale);
+      llp+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
+      //llp+= dokalmanpriormodifier * normal_lpdf(tipredglobalscalepar | 0-log(ntipred),log(square(ntipred)));
     }
     
     if(nindvarying > 0){
-      if(nindvarying >1) target+= dokalmanpriormodifier * normal_lpdf(sqrtpcov | 0, 1);
-      if(intoverpop==0 && fixedsubpars == 0) target+= multi_normal_cholesky_lpdf(baseindparams | rep_vector(0,nindvarying), IIindvar);
-      target+= dokalmanpriormodifier * normal_lpdf(rawpopsdbase | 0,1);
+      if(nindvarying >1) llp+= dokalmanpriormodifier * normal_lpdf(sqrtpcov | 0, 1);
+      if(intoverpop==0 && fixedsubpars == 0) llp+= multi_normal_cholesky_lpdf(baseindparams | rep_vector(0,nindvarying), IIindvar);
+      llp+= dokalmanpriormodifier * normal_lpdf(rawpopsdbase | 0,1);
     }
-    //target +=  log(dokalmanpriormodifier);
+    //llp +=  log(dokalmanpriormodifier);
   } //end pop priors section
   
-  if(intoverstates==0) etaupdbasestates ~ normal(0,1);
+  if(intoverstates==0) llp+= normal_lpdf(etaupdbasestates|0,1);
   
-  target += ll;
+  
   if(verbose > 0) print("lp = ", target());
 }
 generated quantities{
@@ -388,7 +364,38 @@ generated quantities{
   matrix[nindvarying,nindvarying] rawpopcov = tcrossprod(rawpopcovsqrt);
   matrix[nindvarying,nindvarying] rawpopcorr = quad_form_diag(rawpopcov,inv_sqrt(diagonal(rawpopcov)));
   matrix[nparams,ntipred] linearTIPREDEFFECT;
+
+  real ll = 0;
+  vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatentpop*2 : 0)] kalman[savescores ? ndatapoints : 0];
   vector[nmanifest] Ygen[ndatapoints];
+     matrix[matrixdims[1, 1], matrixdims[1, 2] ] T0MEANS[T0MEANSsubindex  ? nsubjects : 1]; 
+      matrix[matrixdims[2, 1], matrixdims[2, 2] ] LAMBDA[LAMBDAsubindex  ? nsubjects : 1]; 
+      matrix[matrixdims[3, 1], matrixdims[3, 2] ] DRIFT[DRIFTsubindex  ? nsubjects : 1]; 
+      matrix[matrixdims[4, 1], matrixdims[4, 2] ] DIFFUSION[DIFFUSIONsubindex  ? nsubjects : 1]; 
+      matrix[matrixdims[5, 1], matrixdims[5, 2] ] MANIFESTVAR[MANIFESTVARsubindex  ? nsubjects : 1]; 
+      matrix[matrixdims[6, 1], matrixdims[6, 2] ] MANIFESTMEANS[MANIFESTMEANSsubindex  ? nsubjects : 1]; 
+      matrix[matrixdims[7, 1], matrixdims[7, 2] ] CINT[CINTsubindex  ? nsubjects : 1]; 
+      matrix[matrixdims[8, 1], matrixdims[8, 2] ] T0VAR[T0VARsubindex  ? nsubjects : 1]; 
+      matrix[matrixdims[9, 1], matrixdims[9, 2] ] TDPREDEFFECT[TDPREDEFFECTsubindex  ? nsubjects : 1];
+
+  matrix[nlatent,nlatent] asymDIFFUSION[asymDIFFUSIONsubindex ? nsubjects : 1]; //stationary latent process variance
+  vector[nt0meansstationary ? nlatent : 0] asymCINT[asymCINTsubindex ? nsubjects : 1]; // latent process asymptotic level
+
+  
+     matrix[matrixdims[1, 1], matrixdims[1, 2] ] pop_T0MEANS; 
+      matrix[matrixdims[2, 1], matrixdims[2, 2] ] pop_LAMBDA; 
+      matrix[matrixdims[3, 1], matrixdims[3, 2] ] pop_DRIFT; 
+      matrix[matrixdims[4, 1], matrixdims[4, 2] ] pop_DIFFUSION; 
+      matrix[matrixdims[5, 1], matrixdims[5, 2] ] pop_MANIFESTVAR; 
+      matrix[matrixdims[6, 1], matrixdims[6, 2] ] pop_MANIFESTMEANS; 
+      matrix[matrixdims[7, 1], matrixdims[7, 2] ] pop_CINT; 
+      matrix[matrixdims[8, 1], matrixdims[8, 2] ] pop_T0VAR; 
+      matrix[matrixdims[9, 1], matrixdims[9, 2] ] pop_TDPREDEFFECT;
+
+  matrix[nlatent,nlatent] pop_asymDIFFUSION; //stationary latent process variance
+  vector[nt0meansstationary ? nlatent : 0] pop_asymCINT; // latent process asymptotic level
+
+  
 
 {
 vector[nparams] rawpopsdfull;
@@ -582,7 +589,33 @@ matrix[nlatent, nlatent] sDIFFUSIONsqrt;
         }
       }
     }
-  
+  if( (T0MEANSsubindex > 0 && subi > 0) || (T0MEANSsubindex == 0 && subi==0) ) T0MEANS[T0MEANSsubindex ? subi : 1] = sT0MEANS; 
+if( (LAMBDAsubindex > 0 && subi > 0) || (LAMBDAsubindex == 0 && subi==0) ) LAMBDA[LAMBDAsubindex ? subi : 1] = sLAMBDA; 
+if( (DRIFTsubindex > 0 && subi > 0) || (DRIFTsubindex == 0 && subi==0) ) DRIFT[DRIFTsubindex ? subi : 1] = sDRIFT; 
+if( (DIFFUSIONsubindex > 0 && subi > 0) || (DIFFUSIONsubindex == 0 && subi==0) ) DIFFUSION[DIFFUSIONsubindex ? subi : 1] = sDIFFUSION; 
+if( (MANIFESTVARsubindex > 0 && subi > 0) || (MANIFESTVARsubindex == 0 && subi==0) ) MANIFESTVAR[MANIFESTVARsubindex ? subi : 1] = sMANIFESTVAR; 
+if( (MANIFESTMEANSsubindex > 0 && subi > 0) || (MANIFESTMEANSsubindex == 0 && subi==0) ) MANIFESTMEANS[MANIFESTMEANSsubindex ? subi : 1] = sMANIFESTMEANS; 
+if( (CINTsubindex > 0 && subi > 0) || (CINTsubindex == 0 && subi==0) ) CINT[CINTsubindex ? subi : 1] = sCINT; 
+if( (T0VARsubindex > 0 && subi > 0) || (T0VARsubindex == 0 && subi==0) ) T0VAR[T0VARsubindex ? subi : 1] = sT0VAR; 
+if( (TDPREDEFFECTsubindex > 0 && subi > 0) || (TDPREDEFFECTsubindex == 0 && subi==0) ) TDPREDEFFECT[TDPREDEFFECTsubindex ? subi : 1] = sTDPREDEFFECT; 
+if( (asymDIFFUSIONsubindex > 0 && subi > 0) || (asymDIFFUSIONsubindex == 0 && subi==0) ) asymDIFFUSION[asymDIFFUSIONsubindex ? subi : 1] = sasymDIFFUSION; 
+if( (asymCINTsubindex > 0 && subi > 0) || (asymCINTsubindex == 0 && subi==0) ) asymCINT[asymCINTsubindex ? subi : 1] = sasymCINT; 
+
+  if(subi == 0){
+pop_T0MEANS = sT0MEANS; 
+pop_LAMBDA = sLAMBDA; 
+pop_DRIFT = sDRIFT; 
+pop_DIFFUSION = sDIFFUSION; 
+pop_MANIFESTVAR = sMANIFESTVAR; 
+pop_MANIFESTMEANS = sMANIFESTMEANS; 
+pop_CINT = sCINT; 
+pop_T0VAR = sT0VAR; 
+pop_TDPREDEFFECT = sTDPREDEFFECT; 
+pop_asymDIFFUSION = sasymDIFFUSION; 
+pop_asymCINT = sasymCINT; 
+
+  }
+
 } // end subject matrix creation
   
 
@@ -876,7 +909,7 @@ matrix[nlatent, nlatent] sDIFFUSIONsqrt;
 //        if(skipupd==0){ 
           if(ncont_y[rowi] > 0) ypredcov_sqrt[o0,o0]=cholesky_decompose(makesym(ypredcov[o0, o0],verbose,1)); 
           if(ncont_y[rowi] > 0) Ygen[ rowi, o0] = ypred[o0] + ypredcov_sqrt[o0,o0] * Ygenbase[rowi,o0]; 
-          if(nbinary_y[rowi] > 0) for(obsi in 1:size(o1)) Ygen[rowi, o1[obsi]] = ypred[o1[obsi]] > Ygenbase[rowi,o1[obsi]] ? 1 : 0; 
+          if(nbinary_y[rowi] > 0) for(obsi in 1:size(o1)) Ygen[rowi, o1[obsi]] = (ypred[o1[obsi]] > Ygenbase[rowi,o1[obsi]]) ? 1 : 0; 
 //          for(vi in 1:nobs_y[rowi]) if(is_nan(Ygen[rowi,o[vi]])) {
 //            Ygen[rowi,o[vi]] = 99999;
 //print("pp ygen problem! row ", rowi);
@@ -916,7 +949,37 @@ if(verbose > 2) print("ukfstates =", ukfstates, "  ukfmeasures =", ukfmeasures);
   if(savescores==1) kout[rowi,(nmanifest*4+nlatentpop+1):(nmanifest*4+nlatentpop+nlatentpop)] = eta;
     } // end dokalmanrows subset selection
 }//end rowi
+if(dokalman==1){
+  if(sum(nbinary_y) > 0) {
+    vector[sum(nbinary_y)] binaryll;
+    counter = 1;
+    for(ri in 1:ndatapoints){
+    if(dokalmanrows[ri]==1){
+      int o1[nbinary_y[ri]] = whichbinary_y[ri,1:nbinary_y[ri]]; //which indicators are observed and binary
+      binaryll[counter:(counter + nbinary_y[ri]-1)] = kout[ri,o1];
+      counter+= nbinary_y[ri];
+    }
+    }
+    ll+= sum(log(binaryll[1:(counter-1)]));
+  }
 
+  if(( sum(ncont_y) > 0)) {
+    vector[sum(ncont_y)] errtrans[2];
+    counter = 1;
+    for(ri in 1:ndatapoints){
+    if(dokalmanrows[ri]==1){
+      int o0[ncont_y[ri]] = whichcont_y[ri,1:ncont_y[ri]]; //which indicators are observed and continuous
+      errtrans[1,counter:(counter + ncont_y[ri]-1)] = kout[ri, o0];
+      for(oi in 1:ncont_y[ri]) o0[oi] +=  nmanifest; //modify o0 index
+      errtrans[2,counter:(counter + ncont_y[ri]-1)] = kout[ri, o0];
+      counter+= ncont_y[ri];
+    }
+    }
+    ll += normal_lpdf(errtrans[1,1:(counter-1)]|0,1) - sum(errtrans[2,1:(counter-1)]);
+  }
+if(savescores) kalman = kout;
+
+}
 
 }}
 

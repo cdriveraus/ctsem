@@ -92,7 +92,7 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
     }) )),nrow=c(nrow(datalong),ncol=ctsmodel$n.manifest))
   )
   
-  if(ctsmodel$n.TDpred ==0) tdpreds <- matrix(0,0,0) #subdata$ndatapoints,
+  if(ctsmodel$n.TDpred ==0) tdpreds <- matrix(0,subdata$ndatapoints,0) #subdata$ndatapoints,
   subdata$tdpreds=array(as.matrix(tdpreds),dim=c(nrow(tdpreds),ncol(tdpreds)))
   
   #subset selection
@@ -881,21 +881,22 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         }
       }
       if(!is.null(mval)) mval[is.na(mval)] <- 99999 else mval<-array(0,dim=c(0,6))
-      
       matsetup[[m]] = mdat
       matvalues[[m]] <- mval
     }
     matrixdims <- t(sapply(matsetup, function(m) c(max(c(0,m[,1])),max(c(0,m[,2])))))
     matsetup <- do.call(rbind,matsetup) 
     matvalues <- do.call(rbind,matvalues) 
-    popvalues <- matvalues[matsetup[,'param'] !=0,,drop=FALSE]
+    popvalues <- data.frame(matvalues[matsetup[,'param'] !=0,,drop=FALSE])
     popsetup <- matsetup[matsetup[,'param'] !=0,,drop=FALSE]
-    
     parname <-rownames(popsetup)
+    popsetup <- data.frame(popsetup)
+    
     rownames(popsetup) <- NULL
     rownames(popvalues) <- NULL
-    popsetup <- data.frame(parname,popsetup,stringsAsFactors = FALSE)
-    popvalues <- data.frame(parname,popvalues,stringsAsFactors = FALSE)
+    popsetup <- data.frame(parname,lapply(popsetup,as.integer),stringsAsFactors = FALSE)
+    popvalues <- data.frame(parname,lapply(popvalues,as.numeric),stringsAsFactors = FALSE)
+  
     
     nindvarying <- max(popsetup$indvarying)
     nparams <- max(popsetup$param)
@@ -1004,9 +1005,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     standata$matvalues <- apply(matvalues,c(1,2),as.numeric)
     standata$nmatrices <- as.integer(nmatrices)
     standata$matrixdims <- apply(matrixdims,c(1,2),as.integer,.drop=FALSE)
-    
-    standata$popsetup <- apply(popsetup[,-1],c(1,2),as.integer,.drop=FALSE) #with parname column removed
-    standata$popvalues <- apply(popvalues[,-1],c(1,2),as.numeric)
+
+    standata$popsetup <- sapply(popsetup[,-1],function(x) as.integer(x)) #with parname column removed
+    standata$popvalues <- sapply(popvalues[,-1],as.numeric)
     standata$nrowpopsetup <- as.integer(nrow(popsetup))
     standata$nrowmatsetup <- as.integer(nrow(matsetup))
     
@@ -1132,7 +1133,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     if(fit) {
       out <- list(args=args,
-        setup=list(recompile=recompile,popsetup=popsetup,idmap=idmap,popsetup=popsetup,popvalues=popvalues,matrices=mats,extratforms=extratforms), 
+        setup=list(recompile=recompile,idmap=idmap,popsetup=popsetup,popvalues=popvalues,matrices=mats,extratforms=extratforms), 
         stanmodeltext=stanmodeltext, data=standataout, standata=standata, ctstanmodel=ctstanmodel,stanmodel=sm, stanfit=stanfit)
       class(out) <- 'ctStanFit'
     }

@@ -265,6 +265,7 @@ parameters {
   
   vector[ntipredeffects] tipredeffectparams; // effects of time independent covariates
   vector[nmissingtipreds] tipredsimputed;
+  //vector[ (( (ntipredeffects-1) * (1-nopriors) ) > 0) ? 1 : 0] tipredglobalscalepar;
   
   vector[intoverstates ? 0 : nlatent*ndatapoints] etaupdbasestates; //sampled latent states posterior
 }
@@ -272,7 +273,8 @@ parameters {
 transformed parameters{
   vector[nindvarying] rawpopsd; //population level std dev
   matrix[nindvarying,nindvarying] rawpopcovsqrt; 
-  real ll;
+
+  real ll = 0;
   vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatentpop*2 : 0)] kalman[savescores ? ndatapoints : 0];
      matrix[matrixdims[1, 1], matrixdims[1, 2] ] T0MEANS[T0MEANSsubindex  ? nsubjects : 1]; 
       matrix[matrixdims[2, 1], matrixdims[2, 2] ] LAMBDA[LAMBDAsubindex  ? nsubjects : 1]; 
@@ -305,6 +307,9 @@ transformed parameters{
 
   matrix[ntipred ? nsubjects : 0, ntipred ? ntipred : 0] tipreds; //tipred values to fill from data and, when needed, imputation vector
   matrix[nparams, ntipred] TIPREDEFFECT; //design matrix of individual time independent predictor effects
+  //real tipredglobalscale = 1.0;
+  
+  //if( ((ntipredeffects-1) * (1-nopriors))  > 0)  tipredglobalscale = exp(tipredglobalscalepar[1]);
 
   if(ntipred > 0){ 
     int counter = 0;
@@ -344,7 +349,6 @@ transformed parameters{
       constraincorsqrt(rawpopcovsqrt))),verbose,1)); 
   }//end indvarying par setup
 
-  ll=0;
 {
   int si = 0;
   int subjectcount = 0;
@@ -871,28 +875,31 @@ if(savescores) kalman = kout;
 }
       
 model{
+ real llp=0;
 
-  if(intoverpop==0 && fixedsubpars == 1) fixedindparams ~ multi_normal_cholesky(rep_vector(0,nindvarying),IIindvar);
+  if(intoverpop==0 && fixedsubpars == 1) llp+= multi_normal_cholesky_lpdf(fixedindparams | rep_vector(0,nindvarying),IIindvar);
 
   if(nopriors==0){
-   target += dokalmanpriormodifier * normal_lpdf(rawpopmeans|0,1);
+   llp+= dokalmanpriormodifier * normal_lpdf(rawpopmeans|0,1);
   
     if(ntipred > 0){ 
-      target+= dokalmanpriormodifier * normal_lpdf(tipredeffectparams| 0, tipredeffectscale);
-      target+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
+      llp+= dokalmanpriormodifier * double_exponential_lpdf(tipredeffectparams| 0, tipredeffectscale);
+      llp+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
+      //llp+= dokalmanpriormodifier * normal_lpdf(tipredglobalscalepar | 0-log(ntipred),log(square(ntipred)));
     }
     
     if(nindvarying > 0){
-      if(nindvarying >1) target+= dokalmanpriormodifier * normal_lpdf(sqrtpcov | 0, 1);
-      if(intoverpop==0 && fixedsubpars == 0) target+= multi_normal_cholesky_lpdf(baseindparams | rep_vector(0,nindvarying), IIindvar);
-      target+= dokalmanpriormodifier * normal_lpdf(rawpopsdbase | 0,1);
+      if(nindvarying >1) llp+= dokalmanpriormodifier * normal_lpdf(sqrtpcov | 0, 1);
+      if(intoverpop==0 && fixedsubpars == 0) llp+= multi_normal_cholesky_lpdf(baseindparams | rep_vector(0,nindvarying), IIindvar);
+      llp+= dokalmanpriormodifier * normal_lpdf(rawpopsdbase | 0,1);
     }
-    //target +=  log(dokalmanpriormodifier);
+    //llp +=  log(dokalmanpriormodifier);
   } //end pop priors section
   
-  if(intoverstates==0) etaupdbasestates ~ normal(0,1);
+  if(intoverstates==0) llp+= normal_lpdf(etaupdbasestates|0,1);
   
-  target += ll;
+  target+= ll; 
+
   if(verbose > 0) print("lp = ", target());
 }
 generated quantities{
@@ -901,7 +908,7 @@ generated quantities{
   matrix[nindvarying,nindvarying] rawpopcov = tcrossprod(rawpopcovsqrt);
   matrix[nindvarying,nindvarying] rawpopcorr = quad_form_diag(rawpopcov,inv_sqrt(diagonal(rawpopcov)));
   matrix[nparams,ntipred] linearTIPREDEFFECT;
-  
+
 
 {
 vector[nparams] rawpopsdfull;

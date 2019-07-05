@@ -21,7 +21,7 @@ parlp <- function(parm,subjects=NA){
 
 stan_constrainsamples<-function(sm,standata, samples,cores=2){
   smfull <- stan_reinitsf(model = sm,data = standata)
-  message('Computing quantities...')
+  message('Computing quantities for ', samples,' samples...')
   est1=NA
   class(est1)<-'try-error'
   i=0
@@ -39,7 +39,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2){
   
   transformedpars <- try(parallel::parLapply(cl2, parallel::clusterSplit(cl2,1:nrow(samples)), function(x){ #could pass smaller samples
     # Sys.sleep(.1)
-    if(!standata$savescores) standata$dokalmanrows <- as.integer(c(1,standata$subject[-1] - standata$subject[-standata$ndatapoints]))
+    if(!is.null(standata$savescores) && !standata$savescores) standata$dokalmanrows <- as.integer(c(1,standata$subject[-1] - standata$subject[-standata$ndatapoints]))
     smfull <- stan_reinitsf(sm,standata)
     # Sys.sleep(.1)
     out <- list()
@@ -106,7 +106,7 @@ tostanarray <- function(flesh, skeleton){
 #' @param deoptim Do first pass optimization using differential evolution? Slower, but better for cases with multiple 
 #' minima / difficult optimization.
 #' @param stochastic Logical. Use stochastic gradient descent instead of mize (bfgs) optimizer.
-#' Generally more robust, a little slower with few parameters, faster with many.
+#' Still experimental, worth trying for either robustness checks or problematic, high dimensional, nonlinear, problems.
 #' @param plotsgd Logical. If TRUE, plot iteration details when using stochastic optimizer.
 #' @param estonly if TRUE,just return point estimates under $rawest subobject.
 #' @param verbose Integer from 0 to 2. Higher values print more information during model fit -- for debugging.
@@ -164,10 +164,10 @@ tostanarray <- function(flesh, skeleton){
 optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   deoptim=FALSE, estonly=FALSE,tol=1e-14,
   decontrol=list(),
-  stochastic = TRUE, #'auto',
+  stochastic = FALSE, #'auto',
   startnrows=NA,
   plotsgd=FALSE,
-  isloops=0, isloopsize=1000, finishsamples=500, tdf=50,carefulfit=FALSE,
+  isloops=0, isloopsize=1000, finishsamples=500, tdf=50,carefulfit=TRUE,
   verbose=0,nopriors=FALSE,cores=2){
   
   standata$verbose=as.integer(verbose)
@@ -364,7 +364,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         points(groughnessmod,col='red')
         abline(h=lproughnessmod,col='green')
         
-        message(paste0('Iter = ',i, '   Best LP = ', max(lp),'   grad = ', sqrt(sum(g^2)), '   gmem = ', gmemory))
+        # message(paste0('Iter = ',i, '   Best LP = ', max(lp),'   grad = ', sqrt(sum(g^2)), '   gmem = ', gmemory))
       }
       
       #check convergence
@@ -397,7 +397,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   
   
   message('Optimizing...')
-  
+
   betterfit<-TRUE
   bestfit <- -9999999999
   try2 <- FALSE
@@ -514,6 +514,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         smf<-stan_reinitsf(sm,standata,fast=TRUE)
         parallel::clusterExport(cl = cl, varlist = c('smf','standata'),envir = environment())
         if(!stochastic) {
+          
           # optimfit <- ucminf(init,fn = neglpgf,gr = grffromlp,control=list(xtol=tol*1e8,maxeval=300))
           optimfit <- mize(init, fg=mizelpg, max_iter=99999,
             method="L-BFGS",memory=100,
@@ -528,7 +529,6 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         init = optimfit$par #+ rnorm(length(optimfit$par),0,abs(init/8)+1e-3)#rstan::constrain_pars(object = smf, optimfit$par)
       }
 
-      
       if(!stochastic) {
         # optimfit <- ucminf(init,fn = neglpgf,gr = grffromlp,control=list(grtol=1e-99,xtol=tol,maxeval=10000),hessian=2)
         
@@ -539,7 +539,6 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',
           abs_tol=tol,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)
         optimfit$value = optimfit$f
-        
         init = optimfit$par
         bestfit <- -optimfit$value
         optimfit$value <- -optimfit$value
@@ -573,18 +572,19 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       grmat<-function(pars,step=1e-5,lpdifmin=1e-8, lpdifmax=1e-3){
         
-        hessout <- parallel::parSapply(cl=cl, X = 1:length(pars), function(i) {
+        # hessout <- parallel::parSapply(cl=cl, X = 1:length(pars), function(i) {
+          hessout <- sapply(X = 1:length(pars), function(i) {
           smf <- stan_reinitsf(sm,standata,fast=TRUE)
           # for(i in 1:length(pars)){
           stepsize <- step #*10
           colout <- NA
-          while(any(is.na(colout)) && stepsize > 1e-14){
-          # stepsize <- step * .1
+          while(any(is.na(colout)) && stepsize > 1e-14 && stepsize < 1e8){
           lpdifok<-FALSE
           lpdifcount <- 0
           lpdifdirection <- 0
           lpdifmultiplier <- 1
           while(!lpdifok & lpdifcount < 15){
+            # message(paste(i,'  col=',colout,'  lpdifmultiplier=',lpdifmultiplier, '  stepsize=',stepsize))
             lpdifok <- TRUE
             lpdifcount <- lpdifcount + 1
             uppars<-pars
@@ -607,6 +607,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               lpdifdirection <- -1
             }
             if(abs(uplp-downlp) < lpdifmin) {
+              # browser()
               # message(paste0('increasing step for ', i))
               lpdifok <- FALSE
               if(lpdifdirection== -1) {
@@ -679,7 +680,6 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       
       if(is.na(sampleinit[1])){
-        # browser()
         # hessup=hess1s(pars = est2,direction = 1,step = 1e-4,lpdifmin = 1e-4,lpdifmax = 1e-3)
         # hessdown=hess1s(pars = est2,direction = -1,step = 1e-4,lpdifmin = 1e-4,lpdifmax = 1e-3)
         # hess=(hessup+hessdown)/2
@@ -734,7 +734,6 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           message(paste0('  ', j, ' / ', isloops, '...'))
           if(j==1){
             # if(!npd) 
-            # browser()
             samples <- mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = tdf)
             # samples <- mvtnorm::rmvnorm(isloopsize, delta[[j]], sigma = mcovl[[j]])
             # 
@@ -808,7 +807,6 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           target_dens2 <- target_dens[[j]] -max(target_dens[[j]],na.rm=TRUE) + max(prop_dens) #adjustment to get in decent range, doesnt change to prob
           target_dens2[!is.finite(target_dens[[j]])] <- -1e30
           weighted_dens <- target_dens2 - prop_dens
-          # browser()
           # psis_dens <- psis(matrix(target_dens2,ncol=length(target_dens2)),r_eff=NA)
           # sample_prob <- weights(psis_dens,normalize = TRUE,log=FALSE)
           # plot(target_dens2,prop_dens)
@@ -846,7 +844,6 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     if(isloops==0) lpsamples <- NA else lpsamples <- unlist(target_dens)[resample_i]
     
     # parallel::stopCluster(cl)
-
     transformedpars=stan_constrainsamples(sm = sm,standata = standata,samples=resamples,cores=cores)
     
     # quantile(sapply(transformedpars, function(x) x$rawpopcorr[3,2]),probs=c(.025,.5,.975))

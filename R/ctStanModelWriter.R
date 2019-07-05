@@ -153,7 +153,7 @@ ukfilterfunc<-function(ppchecking){
     
     if(T0check == 0) { // calculate initial matrices if this is first row for si
   
-    ',subjectparscalc2(popmats=ifelse(gendata,FALSE,TRUE),subjmats=ifelse(gendata,FALSE,TRUE)),'
+    ',subjectparscalc2(popmats=ifelse(gendata,TRUE,TRUE),subjmats=ifelse(gendata,TRUE,TRUE)),'
 
       if(nldynamics==1){
         eta = rep_vector(0,nlatentpop); // because some values stay zero
@@ -394,7 +394,7 @@ ukfilterfunc<-function(ppchecking){
 //        if(skipupd==0){ 
           if(ncont_y[rowi] > 0) ypredcov_sqrt[o0,o0]=cholesky_decompose(makesym(ypredcov[o0, o0],verbose,1)); 
           if(ncont_y[rowi] > 0) Ygen[ rowi, o0] = ypred[o0] + ypredcov_sqrt[o0,o0] * Ygenbase[rowi,o0]; 
-          if(nbinary_y[rowi] > 0) for(obsi in 1:size(o1)) Ygen[rowi, o1[obsi]] = ypred[o1[obsi]] > Ygenbase[rowi,o1[obsi]] ? 1 : 0; 
+          if(nbinary_y[rowi] > 0) for(obsi in 1:size(o1)) Ygen[rowi, o1[obsi]] = (ypred[o1[obsi]] > Ygenbase[rowi,o1[obsi]]) ? 1 : 0; 
 //          for(vi in 1:nobs_y[rowi]) if(is_nan(Ygen[rowi,o[vi]])) {
 //            Ygen[rowi,o[vi]] = 99999;
 //print("pp ygen problem! row ", rowi);
@@ -867,6 +867,7 @@ parameters {
   
   vector[ntipredeffects] tipredeffectparams; // effects of time independent covariates
   vector[nmissingtipreds] tipredsimputed;
+  //vector[ (( (ntipredeffects-1) * (1-nopriors) ) > 0) ? 1 : 0] tipredglobalscalepar;
   
   vector[intoverstates ? 0 : nlatent*ndatapoints] etaupdbasestates; //sampled latent states posterior
 }
@@ -874,13 +875,18 @@ parameters {
 transformed parameters{
   vector[nindvarying] rawpopsd; //population level std dev
   matrix[nindvarying,nindvarying] rawpopcovsqrt; 
-  real ll;
+',if(!gendata) paste0('
+  real ll = 0;
   vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatentpop*2 : 0)] kalman[savescores ? ndatapoints : 0];
   ',subjectparaminit(pop=FALSE,smats=FALSE),'
-  ',subjectparaminit(pop=TRUE,smats=FALSE),'
+  ',subjectparaminit(pop=TRUE,smats=FALSE)
+,collapse=''),'
 
   matrix[ntipred ? nsubjects : 0, ntipred ? ntipred : 0] tipreds; //tipred values to fill from data and, when needed, imputation vector
   matrix[nparams, ntipred] TIPREDEFFECT; //design matrix of individual time independent predictor effects
+  //real tipredglobalscale = 1.0;
+  
+  //if( ((ntipredeffects-1) * (1-nopriors))  > 0)  tipredglobalscale = exp(tipredglobalscalepar[1]);
 
   if(ntipred > 0){ 
     int counter = 0;
@@ -920,7 +926,6 @@ transformed parameters{
       constraincorsqrt(rawpopcovsqrt))),verbose,1)); 
   }//end indvarying par setup
 
-  ll=0;
 {',
 if(!gendata) ukfilterfunc(ppchecking=FALSE),
 'if(dokalman==1){',
@@ -930,28 +935,30 @@ if(!gendata) kalmanll(),'
 }
       
 model{
+ real llp=0;
 
-  if(intoverpop==0 && fixedsubpars == 1) fixedindparams ~ multi_normal_cholesky(rep_vector(0,nindvarying),IIindvar);
+  if(intoverpop==0 && fixedsubpars == 1) llp+= multi_normal_cholesky_lpdf(fixedindparams | rep_vector(0,nindvarying),IIindvar);
 
   if(nopriors==0){
-   target += dokalmanpriormodifier * normal_lpdf(rawpopmeans|0,1);
+   llp+= dokalmanpriormodifier * normal_lpdf(rawpopmeans|0,1);
   
     if(ntipred > 0){ 
-      target+= dokalmanpriormodifier * normal_lpdf(tipredeffectparams| 0, tipredeffectscale);
-      target+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
+      llp+= dokalmanpriormodifier * double_exponential_lpdf(tipredeffectparams| 0, tipredeffectscale);
+      llp+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
+      //llp+= dokalmanpriormodifier * normal_lpdf(tipredglobalscalepar | 0-log(ntipred),log(square(ntipred)));
     }
     
     if(nindvarying > 0){
-      if(nindvarying >1) target+= dokalmanpriormodifier * normal_lpdf(sqrtpcov | 0, 1);
-      if(intoverpop==0 && fixedsubpars == 0) target+= multi_normal_cholesky_lpdf(baseindparams | rep_vector(0,nindvarying), IIindvar);
-      target+= dokalmanpriormodifier * normal_lpdf(rawpopsdbase | ',gsub('normal(','',ctstanmodel$rawpopsdbase,fixed=TRUE),';
+      if(nindvarying >1) llp+= dokalmanpriormodifier * normal_lpdf(sqrtpcov | 0, 1);
+      if(intoverpop==0 && fixedsubpars == 0) llp+= multi_normal_cholesky_lpdf(baseindparams | rep_vector(0,nindvarying), IIindvar);
+      llp+= dokalmanpriormodifier * normal_lpdf(rawpopsdbase | ',gsub('normal(','',ctstanmodel$rawpopsdbase,fixed=TRUE),';
     }
-    //target +=  log(dokalmanpriormodifier);
+    //llp +=  log(dokalmanpriormodifier);
   } //end pop priors section
   
-  if(intoverstates==0) etaupdbasestates ~ normal(0,1);
+  if(intoverstates==0) llp+= normal_lpdf(etaupdbasestates|0,1);
   
-  target += ll;
+  ',if(!gendata) 'target+= ll; \n','
   if(verbose > 0) print("lp = ", target());
 }
 generated quantities{
@@ -960,7 +967,13 @@ generated quantities{
   matrix[nindvarying,nindvarying] rawpopcov = tcrossprod(rawpopcovsqrt);
   matrix[nindvarying,nindvarying] rawpopcorr = quad_form_diag(rawpopcov,inv_sqrt(diagonal(rawpopcov)));
   matrix[nparams,ntipred] linearTIPREDEFFECT;
-  ',if(gendata) 'vector[nmanifest] Ygen[ndatapoints];','
+',if(gendata) paste0('
+  real ll = 0;
+  vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatentpop*2 : 0)] kalman[savescores ? ndatapoints : 0];
+  vector[nmanifest] Ygen[ndatapoints];
+  ',subjectparaminit(pop=FALSE,smats=FALSE),'
+  ',subjectparaminit(pop=TRUE,smats=FALSE)
+,collapse=''),'
 
 {
 vector[nparams] rawpopsdfull;
@@ -1007,7 +1020,10 @@ rawpopsdfull[indvaryingindex] = sqrt(diagonal(rawpopcov)); //base for calculatio
     }
   }
 {
-',ukfilterfunc(ppchecking=TRUE),'
+',if(gendata) ukfilterfunc(ppchecking=TRUE),
+'if(dokalman==1){',
+if(gendata) kalmanll(),'
+}
 
 }}
 ',collapse=";\n"),'

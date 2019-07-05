@@ -45,7 +45,12 @@ plot.ctStanFit <- function(x, types='all',wait=TRUE,...){
     return(out)
   }
   
-  if(types[1]=='all') types <- c('trace','regression', 'kalman', 'priorcheck','trace','density','intervals')
+  types <- c()
+  if(types[1]=='all') {
+    if( (x$standata$nldynamics + x$standata$nlmeasurement) ==0 & x$standata$continuoustime == 1) types <- c('regression', 'kalman')
+    types=c(types, 'priorcheck')
+    if('stanfit' %in% class(x$stanfit)) types <- c('trace','regression','density','intervals')
+  }
   
   if('regression' %in% types && continue){
     message('Plotting model implied regression coeffcients conditional on time interval using ctStanDiscretePars')

@@ -33,7 +33,7 @@ minima / difficult optimization.}
 
 \item{decontrol}{List of control parameters for differential evolution step, to pass to \code{DEoptim.control}.}
 
-\item{stochastic}{Logical. Use stochastic gradient descent instead of ucminf (bfgs with trust region) optimizer.
+\item{stochastic}{Logical. Use stochastic gradient descent instead of mize (bfgs) optimizer.
 Generally more robust, a little slower with few parameters, faster with many.}
 
 \item{startnrows}{Either NA to ignore, or an integer specifying the number of subjects to start the
