@@ -2,6 +2,18 @@ suppressOutput <- function(...,verbose=0){
   if(verbose > 0) return(eval(...)) else return(capture.output(eval(...)))
 }
 
+  openPDF <- function(f) {
+    os <- .Platform$OS.type
+    if (os=="windows")
+      shell.exec(normalizePath(f))
+    else {
+      pdf <- getOption("pdfviewer", default='')
+      if (nchar(pdf)==0)
+        stop("The 'pdfviewer' option is not set. Use options(pdfviewer=...)")
+      system2(pdf, args=c(f))
+    }
+  }
+
 naf <-function(x){
   x[is.na(x)] <- FALSE
   return(x)

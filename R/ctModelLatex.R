@@ -148,17 +148,7 @@ ctModelLatex<- function(ctmodel,textsize='normalsize',folder=tempdir(),
   
   if(!equationonly) out <- paste0(out, "\\end{document}")
   
-  openPDF <- function(f) {
-    os <- .Platform$OS.type
-    if (os=="windows")
-      shell.exec(normalizePath(f))
-    else {
-      pdf <- getOption("pdfviewer", default='')
-      if (nchar(pdf)==0)
-        stop("The 'pdfviewer' option is not set. Use options(pdfviewer=...)")
-      system2(pdf, args=c(f))
-    }
-  }
+
   
   if(tex) {
     oldwd <- getwd()

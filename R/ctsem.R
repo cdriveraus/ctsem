@@ -64,3 +64,17 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
 #' Stan Development Team (2018). RStan: the R interface to Stan. R package version 2.17.3. http://mc-stan.org
 #' 
 NULL
+
+.onAttach <- function(libname, pkgname) {
+  # to show a startup message
+  packageStartupMessage("ctsem has undergone many changes over time, not all vignettes are available from CRAN, for up to date documentation run function ctDocs()")
+}
+
+ctDocs <- function(){
+  r=runif(1,0,9999999)
+  pdfpath=paste0(tempdir(),'\\ctsemManual_',r,'.pdf')
+  download.file(url="https://github.com/cdriveraus/ctsem/raw/master/vignettes/hierarchicalmanual.pdf",
+    destfile=pdfpath,mode='wb')
+  try(ctsem:::openPDF(pdfpath))
+}
+  
