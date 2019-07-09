@@ -13,3 +13,33 @@ ctsem allows for easy specification and fitting of a range of continuous and dis
 To install the github version, use:
 remotes::install_github('cdriveraus/ctsem', INSTALL_opts = "--no-multiarch", dependencies = c("Depends", "Imports"))
 
+
+Troubleshooting Rstan / Rtools install for Windows:
+
+Ensure recent version of R and Rtools is installed.
+
+try including these lines in home/.R/makevars. :
+
+CXX14 = g++ -std=c++1y
+
+CXX14FLAGS = -O3 -Wno-unused-variable -Wno-unused-function
+
+
+If makevars does not exist, run this code within R:
+
+dotR <- file.path(Sys.getenv("HOME"), ".R")
+
+if (!file.exists(dotR)) dir.create(dotR)
+
+M <- file.path(dotR, ifelse(.Platform$OS.type == "windows", "Makevars.win", "Makevars"))
+
+if (!file.exists(M)) file.create(M)
+
+cat("\nCXX14FLAGS=-O3 -march=native -mtune=native",
+    if( grepl("^darwin", R.version$os)) "CXX14FLAGS += -arch x86_64 -ftemplate-depth-256" else 
+    if (.Platform$OS.type == "windows") "CXX11FLAGS=-O3 -march=native -mtune=native" else
+    "CXX14FLAGS += -fPIC",
+    file = M, sep = "\n", append = TRUE)
+    
+    
+

@@ -31,10 +31,12 @@ ctStanModelIntOverPop <- function(m){ #improve this function by avoiding additio
   for(ivi in ivnames){
     m$pars$param[m$pars$param %in% ivi] <- paste0( 'state[',m$n.latent+match(ivi,ivnames),']')
     m$pars$indvarying[m$pars$param %in% ivi] <- FALSE
-    m$pars[m$pars$param %in% ivi,paste0(m$TIpredNames,'_effect')] <- FALSE
+    m$pars[m$pars$param %in% ivi,paste0(m$TIpredNames,rep('_effect',m$n.TIpred))] <- FALSE
   }
   
   m$pars$indvarying<-FALSE
+  
+  m$pars <- rbind(m$pars, t0m,t0v,drift)
   
 }
 
@@ -104,9 +106,9 @@ ctStanModelMatrices <-function(ctm){
               ctspec$transform[i] <- -10-extratformcounter
             }
             if(n.TIpred > 0) {
-              TIPREDEFFECTsetup[freepar,][ ctspec[i,paste0(TIpredNames,'_effect')]==TRUE ] <- 
-                tipredcounter: (tipredcounter + sum(as.integer(suppressWarnings(ctspec[i,paste0(TIpredNames,'_effect')]))) -1)
-              tipredcounter<- tipredcounter + sum(as.integer(suppressWarnings(ctspec[i,paste0(TIpredNames,'_effect')])))
+              TIPREDEFFECTsetup[freepar,][ ctspec[i,paste0(ctm$TIpredNames,'_effect')]==TRUE ] <- 
+                tipredcounter: (tipredcounter + sum(as.integer(suppressWarnings(ctspec[i,paste0(ctm$TIpredNames,'_effect')]))) -1)
+              tipredcounter<- tipredcounter + sum(as.integer(suppressWarnings(ctspec[i,paste0(ctm$TIpredNames,'_effect')])))
             }
           }
         }
