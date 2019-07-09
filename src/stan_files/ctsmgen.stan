@@ -947,37 +947,7 @@ if(verbose > 2) print("ukfstates =", ukfstates, "  ukfmeasures =", ukfmeasures);
   if(savescores==1) kout[rowi,(nmanifest*4+nlatentpop+1):(nmanifest*4+nlatentpop+nlatentpop)] = eta;
     } // end dokalmanrows subset selection
 }//end rowi
-if(dokalman==1){
-  if(sum(nbinary_y) > 0) {
-    vector[sum(nbinary_y)] binaryll;
-    counter = 1;
-    for(ri in 1:ndatapoints){
-    if(dokalmanrows[ri]==1){
-      int o1[nbinary_y[ri]] = whichbinary_y[ri,1:nbinary_y[ri]]; //which indicators are observed and binary
-      binaryll[counter:(counter + nbinary_y[ri]-1)] = kout[ri,o1];
-      counter+= nbinary_y[ri];
-    }
-    }
-    ll+= sum(log(binaryll[1:(counter-1)]));
-  }
 
-  if(( sum(ncont_y) > 0)) {
-    vector[sum(ncont_y)] errtrans[2];
-    counter = 1;
-    for(ri in 1:ndatapoints){
-    if(dokalmanrows[ri]==1){
-      int o0[ncont_y[ri]] = whichcont_y[ri,1:ncont_y[ri]]; //which indicators are observed and continuous
-      errtrans[1,counter:(counter + ncont_y[ri]-1)] = kout[ri, o0];
-      for(oi in 1:ncont_y[ri]) o0[oi] +=  nmanifest; //modify o0 index
-      errtrans[2,counter:(counter + ncont_y[ri]-1)] = kout[ri, o0];
-      counter+= ncont_y[ri];
-    }
-    }
-    ll += normal_lpdf(errtrans[1,1:(counter-1)]|0,1) - sum(errtrans[2,1:(counter-1)]);
-  }
-if(savescores) kalman = kout;
-
-}
 
 }}
 

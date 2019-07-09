@@ -474,7 +474,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         }
         
         if(class(out)=='try-error' || is.nan(out)) {
-          out[1]=-Inf
+          out=-Inf
           gradout <<- rep(NaN,length(parm))
         } else {
           if(out[1] > bestlp) {
@@ -496,7 +496,8 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       mizelpg=list(
         fg=function(pars){
           r=neglpgf(pars)
-          r=list(fn=r[1],gr= -attributes(r)$gradient)
+          r=list(fn=r[1],gr= try(-attributes(r)$gradient,silent=TRUE))
+          if(class(r$gr) == 'try-error') r$gr <- NA
           return(r)
         },
         fn=neglpgf,

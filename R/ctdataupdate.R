@@ -141,7 +141,7 @@ ctdataupdate<-function(forcerecompile=FALSE){
     T0MEANS=matrix(0,ncol=1,nrow=2),
     T0VAR=diag(100,2))
 
-  ctstantestdat<-ctGenerate(gm,n.subjects=n.subjects,burnin=4,
+  ctstantestdat<-ctGenerate(gm,n.subjects=n.subjects,burnin=10,
   wide=FALSE,logdtsd=.4,dtmean = 2)
 
   ctstantestdat[2,'Y1'] <- NA
@@ -157,10 +157,10 @@ ctdataupdate<-function(forcerecompile=FALSE){
     CINT=matrix(c('cint1','cint2'),ncol=1),
     n.manifest=n.manifest,LAMBDA=diag(2))
   
-  checkm$pars$indvarying[-c(7,13)] <- FALSE
-  checkm$pars$sdscale <- .1
-  
-  checkm$pars[c(-1,-2, -21,-22) ,c('TI1_effect','TI2_effect','TI3_effect')] <- FALSE
+  # checkm$pars$indvarying[-c(7,13)] <- FALSE
+  # checkm$pars$sdscale <- .1
+  # 
+  # checkm$pars[c(-1,-2, -21,-22) ,c('TI1_effect','TI2_effect','TI3_effect')] <- FALSE
   
   ctstantestfit<-ctStanFit(ctstantestdat,checkm,iter=500, warmup=460,thin=2,chains=2,
     forcerecompile=forcerecompile,

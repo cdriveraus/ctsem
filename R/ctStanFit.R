@@ -811,91 +811,15 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     if(length(unique(derrind)) < length(derrind)) stop('derrind vector cannot contain duplicates or!')
     ndiffusion=length(derrind)
     # message(paste(ndiffusion ,'/',n.latent,'latent variables needed for covariance calculations'))
-    
-    matsetup <-list()
-    matvalues <-list()
-    freepar <- 0
-    freeparcounter <- 0
-    indvaryingindex <-array(0,dim=c(0))
-    indvaryingcounter <- 0
-    TIPREDEFFECTsetup <- matrix(0,0,n.TIpred)
-    tipredcounter <- 1
-    indvar <- 0
-    extratformcounter <- 0
-    extratforms <- c()
-    for(m in mats$base){
-      mdat<-matrix(0,0,7)
-      mval<-matrix(0,0,6)
-      for(i in 1:nrow(ctspec)){ 
-        if(ctspec$matrix[i] == m) {
-          
-          if(!is.na(ctspec$param[i]) & !grepl('[',ctspec$param[i],fixed=TRUE)){ #if a free parameter,
-            if(i > 1 && any(ctspec$param[1:(i-1)] %in% ctspec$param[i])){ #and after row 1, check for duplication
-              freepar <- mdat[,'param'][ match(ctspec$param[i], rownames(mdat)) ] #find which freepar corresponds to duplicate
-              indvar <- ifelse(ctspec$indvarying[i],  mdat[,'indvarying'][ match(ctspec$param[i], rownames(mdat)) ],0)#and which indvar corresponds to duplicate
-            } else { #if not duplicated
-              freeparcounter <- freeparcounter + 1
-              TIPREDEFFECTsetup <- rbind(TIPREDEFFECTsetup,rep(0,ncol(TIPREDEFFECTsetup))) #add an extra row...
-              if(ctspec$indvarying[i]) {
-                indvaryingcounter <- indvaryingcounter + 1
-                indvar <- indvaryingcounter
-              }
-              if(!ctspec$indvarying[i]) indvar <- 0
-              freepar <- freeparcounter
-              if(is.na(suppressWarnings(as.integer(ctspec$transform[i])))) { #extra tform needed
-                extratformcounter <- extratformcounter + 1
-                extratforms <- paste0(extratforms,'if(transform==',-10-extratformcounter,') out = ',
-                  ctspec$offset[i],' + ',ctspec$multiplier[i],' * (inneroffset + ',
-                  gsub('param', paste0('param * ',ctspec$meanscale[i]),ctspec$transform[i]),');')
-                ctspec$transform[i] <- -10-extratformcounter
-              }
-              if(n.TIpred > 0) {
-                TIPREDEFFECTsetup[freepar,][ ctspec[i,paste0(TIpredNames,'_effect')]==TRUE ] <- 
-                  tipredcounter: (tipredcounter + sum(as.integer(suppressWarnings(ctspec[i,paste0(TIpredNames,'_effect')]))) -1)
-                tipredcounter<- tipredcounter + sum(as.integer(suppressWarnings(ctspec[i,paste0(TIpredNames,'_effect')])))
-              }
-            }
-            # if(intoverpop && ctspec$indvarying[i]) {
-            #   mdynadd <- 
-            # }
-          }
-          
-          mdatnew <- matrix(c(
-            ctspec$row[i],
-            ctspec$col[i],
-            ifelse(!is.na(ctspec$param[i]),freepar, 0),
-            ifelse(is.na(as.integer(ctspec$transform[i])), -1, as.integer(ctspec$transform[i])),
-            ifelse(!is.na(ctspec$param[i]),indvar,0),
-            ifelse(any(TIPREDEFFECTsetup[freepar,] > 0), 1, 0), 
-            which(mats$base==m)
-          ),nrow=1)
-          rownames(mdatnew) <- ctspec$param[i]
-          
-          mdat<-rbind(mdat,mdatnew)
-          
-          # if(ctspec$indvarying[i]) indvaryingindex <- c(indvaryingindex, freepar)
-          
-          mval<-rbind(mval, matrix(c(ctspec$value[i], ctspec$multiplier[i], ctspec$meanscale[i],ctspec$offset[i], ctspec$sdscale[i],ctspec$inneroffset[i]),ncol=6))
-          colnames(mdat) <- c('row','col','param','transform', 'indvarying','tipred', 'matrix')
-          colnames(mval) <- c('value','multiplier','meanscale','offset','sdscale','inneroffset')
-        }
-      }
-      if(!is.null(mval)) mval[is.na(mval)] <- 99999 else mval<-array(0,dim=c(0,6))
-      matsetup[[m]] = mdat
-      matvalues[[m]] <- mval
-    }
-    matrixdims <- t(sapply(matsetup, function(m) c(max(c(0,m[,1])),max(c(0,m[,2])))))
-    matsetup <- do.call(rbind,matsetup) 
-    matvalues <- do.call(rbind,matvalues) 
-    popvalues <- data.frame(matvalues[matsetup[,'param'] !=0,,drop=FALSE])
-    popsetup <- matsetup[matsetup[,'param'] !=0,,drop=FALSE]
-    parname <-rownames(popsetup)
-    popsetup <- data.frame(popsetup)
-    
-    rownames(popsetup) <- NULL
-    rownames(popvalues) <- NULL
-    popsetup <- data.frame(parname,lapply(popsetup,as.integer),stringsAsFactors = FALSE)
-    popvalues <- data.frame(parname,lapply(popvalues,as.numeric),stringsAsFactors = FALSE)
+
+    ctsmodelmats <- ctStanModelMatrices(ctstanmodel)
+    popsetup <- ctsmodelmats$popsetup
+    popvalues <- ctsmodelmats$popvalues
+    matsetup <- ctsmodelmats$matsetup
+    matvalues <- ctsmodelmats$matvalues
+    extratforms <- ctsmodelmats$extratforms
+    TIPREDEFFECTsetup=ctsmodelmats$TIPREDEFFECTsetup
+    matrixdims <- ctsmodelmats$matrixdims
   
     
     nindvarying <- max(popsetup$indvarying)
@@ -1004,7 +928,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     standata$matsetup <- apply(matsetup,c(1,2),as.integer,.drop=FALSE)
     standata$matvalues <- apply(matvalues,c(1,2),as.numeric)
     standata$nmatrices <- as.integer(nmatrices)
-    standata$matrixdims <- apply(matrixdims,c(1,2),as.integer,.drop=FALSE)
+
+    standata$matrixdims <- matrixdims
 
     standata$popsetup <- sapply(popsetup[,-1],function(x) as.integer(x)) #with parname column removed
     standata$popvalues <- sapply(popvalues[,-1],as.numeric)

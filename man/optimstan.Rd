@@ -6,9 +6,9 @@
 \usage{
 optimstan(standata, sm, init = "random", initsd = 0.01,
   sampleinit = NA, deoptim = FALSE, estonly = FALSE, tol = 1e-14,
-  decontrol = list(), stochastic = TRUE, startnrows = NA,
+  decontrol = list(), stochastic = FALSE, startnrows = NA,
   plotsgd = FALSE, isloops = 0, isloopsize = 1000,
-  finishsamples = 500, tdf = 50, carefulfit = FALSE, verbose = 0,
+  finishsamples = 500, tdf = 50, carefulfit = TRUE, verbose = 0,
   nopriors = FALSE, cores = 2)
 }
 \arguments{
@@ -34,7 +34,7 @@ minima / difficult optimization.}
 \item{decontrol}{List of control parameters for differential evolution step, to pass to \code{DEoptim.control}.}
 
 \item{stochastic}{Logical. Use stochastic gradient descent instead of mize (bfgs) optimizer.
-Generally more robust, a little slower with few parameters, faster with many.}
+Still experimental, worth trying for either robustness checks or problematic, high dimensional, nonlinear, problems.}
 
 \item{startnrows}{Either NA to ignore, or an integer specifying the number of subjects to start the
 stochastic optimization with. This will be increased to the full amount by convergence time.}

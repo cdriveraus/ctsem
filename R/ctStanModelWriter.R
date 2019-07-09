@@ -1,7 +1,49 @@
-ctStanMatricesList <- function(ctstanmodel){
+ctStanModelIntOverPop <- function(m){ #improve this function by avoiding additional states for t0means
+  ivnames <- unique(m$pars$param[m$pars$indvarying])
+  nindvarying <- length(ivnames)
+  
+  #new t0means
+  t0m <- m$pars[m$pars$param %in% ivnames,]
+  t0m$matrix <- 'T0MEANS'
+  t0m$col <- 1
+  t0m$row <- (m$n.latent+1):(m$n.latent+nindvarying)
+  t0m$indvarying <- FALSE
+  
+  #new t0var
+  t0v <- m$pars[m$pars$matrix %in% 'T0VAR' & m$pars$row==1 & m$pars$col==1,]
+  for(ri in 1:(m$n.latent+nindvarying)){
+    for(ci in 1:(m$n.latent+nindvarying)){
+      t0v <- rbind(t0v,c('T0VAR',ri,ci,ifelse(ci > ri, NA, paste0('t0var_',ri,'_',ci)),ifelse(ci > ri,0, NA),0,1,10,0,0,FALSE,1,rep(FALSE,m$n.TIpred)))
+    }}
+  t0v=t0v[-1,,drop=FALSE]
+  t0v=t0v[!(t0v$row <= m$n.latent & t0v$col <= m$n.latent),,drop=FALSE]
+  
+  #new drift
+  drift <- m$pars[m$pars$matrix %in% 'DRIFT' & m$pars$row==1 & m$pars$col==1,]
+  for(ri in 1:(m$n.latent+nindvarying)){
+    for(ci in 1:(m$n.latent+nindvarying)){
+      drift <- rbind(drift,c('DRIFT',ri,ci,NA,0,0,1,1,0,0,FALSE,1,rep(FALSE,m$n.TIpred)))
+    }}
+  drift=drift[-1,,drop=FALSE]
+  drift=drift[!(drift$row <= m$n.latent & drift$col <= m$n.latent),,drop=FALSE]
+  
+  #reference new states
+  for(ivi in ivnames){
+    m$pars$param[m$pars$param %in% ivi] <- paste0( 'state[',m$n.latent+match(ivi,ivnames),']')
+    m$pars$indvarying[m$pars$param %in% ivi] <- FALSE
+    m$pars[m$pars$param %in% ivi,paste0(m$TIpredNames,'_effect')] <- FALSE
+  }
+  
+  m$pars$indvarying<-FALSE
+  
+}
+
+
+
+ctStanMatricesList <- function(ctstanmodel,unsafe=FALSE){
   m <- list()
   m$base <- c("T0MEANS","LAMBDA","DRIFT","DIFFUSION","MANIFESTVAR","MANIFESTMEANS", "CINT","T0VAR","TDPREDEFFECT")
-
+  
   m$driftcintpars <- c('DRIFT','CINT')
   m$diffusion <- 'DIFFUSION'
   m$tdpred <- 'TDPREDEFFECT'
@@ -9,15 +51,112 @@ ctStanMatricesList <- function(ctstanmodel){
   m$t0 <- c('T0MEANS','T0VAR')
   if('PARS' %in% ctstanmodel$pars$matrix) {
     m$base <- c(m$base, 'PARS')
-    if(any(sapply(ctstanmodel$pars$param[ctstanmodel$pars$matrix %in% 'PARS'], function(x) grepl('state[', x,fixed=TRUE) ))){
+    if(!unsafe && any(sapply(ctstanmodel$pars$param[ctstanmodel$pars$matrix %in% 'PARS'], function(x) grepl('state[', x,fixed=TRUE) ))){
       stop('PARS matrix cannot contain further dependencies, simple parameters only!')
       # m$driftcintpars <- c(m$driftcintpars,'PARS')
       # m$measurement <- c(m$measurement,'PARS')
     }
-
+    
   }
   return(m)
 }
+
+
+ctStanModelMatrices <-function(ctm){
+  mats <- ctStanMatricesList(ctm,unsafe=TRUE)
+  ctspec <- ctm$pars
+  n.TIpred <- ctm$n.TIpred
+  matsetup <-list()
+  matvalues <-list()
+  freepar <- 0
+  freeparcounter <- 0
+  indvaryingindex <-array(0,dim=c(0))
+  indvaryingcounter <- 0
+  TIPREDEFFECTsetup <- matrix(0,0,n.TIpred)
+  tipredcounter <- 1
+  indvar <- 0
+  extratformcounter <- 0
+  extratforms <- c()
+  for(m in mats$base){
+    mdat<-matrix(0,0,7)
+    mval<-matrix(0,0,6)
+    for(i in 1:nrow(ctspec)){ 
+      if(ctspec$matrix[i] == m) {
+        
+        if(!is.na(ctspec$param[i]) & !grepl('[',ctspec$param[i],fixed=TRUE)){ #if a free parameter,
+          if(i > 1 && any(ctspec$param[1:(i-1)] %in% ctspec$param[i])){ #and after row 1, check for duplication
+            freepar <- mdat[,'param'][ match(ctspec$param[i], rownames(mdat)) ] #find which freepar corresponds to duplicate
+            indvar <- ifelse(ctspec$indvarying[i],  mdat[,'indvarying'][ match(ctspec$param[i], rownames(mdat)) ],0)#and which indvar corresponds to duplicate
+          } else { #if not duplicated
+            freeparcounter <- freeparcounter + 1
+            TIPREDEFFECTsetup <- rbind(TIPREDEFFECTsetup,rep(0,ncol(TIPREDEFFECTsetup))) #add an extra row...
+            if(ctspec$indvarying[i]) {
+              indvaryingcounter <- indvaryingcounter + 1
+              indvar <- indvaryingcounter
+            }
+            if(!ctspec$indvarying[i]) indvar <- 0
+            freepar <- freeparcounter
+            if(is.na(suppressWarnings(as.integer(ctspec$transform[i])))) { #extra tform needed
+              extratformcounter <- extratformcounter + 1
+              extratforms <- paste0(extratforms,'if(transform==',-10-extratformcounter,') out = ',
+                ctspec$offset[i],' + ',ctspec$multiplier[i],' * (inneroffset + ',
+                gsub('param', paste0('param * ',ctspec$meanscale[i]),ctspec$transform[i]),');')
+              ctspec$transform[i] <- -10-extratformcounter
+            }
+            if(n.TIpred > 0) {
+              TIPREDEFFECTsetup[freepar,][ ctspec[i,paste0(TIpredNames,'_effect')]==TRUE ] <- 
+                tipredcounter: (tipredcounter + sum(as.integer(suppressWarnings(ctspec[i,paste0(TIpredNames,'_effect')]))) -1)
+              tipredcounter<- tipredcounter + sum(as.integer(suppressWarnings(ctspec[i,paste0(TIpredNames,'_effect')])))
+            }
+          }
+        }
+        
+        mdatnew <- matrix(c(
+          ctspec$row[i],
+          ctspec$col[i],
+          ifelse(!is.na(ctspec$param[i]) && !grepl('[',ctspec$param[i],fixed=TRUE),freepar, 0),
+          ifelse(is.na(as.integer(ctspec$transform[i])), -1, as.integer(ctspec$transform[i])),
+          ifelse(!is.na(ctspec$param[i]),indvar,0),
+          ifelse(any(TIPREDEFFECTsetup[freepar,] > 0), 1, 0), 
+          which(mats$base==m)
+        ),nrow=1)
+        rownames(mdatnew) <- ctspec$param[i]
+        
+        mdat<-rbind(mdat,mdatnew)
+        
+        # if(ctspec$indvarying[i]) indvaryingindex <- c(indvaryingindex, freepar)
+        
+        mval<-rbind(mval, matrix(c(ctspec$value[i], ctspec$multiplier[i], ctspec$meanscale[i],ctspec$offset[i], ctspec$sdscale[i],ctspec$inneroffset[i]),ncol=6))
+        colnames(mdat) <- c('row','col','param','transform', 'indvarying','tipred', 'matrix')
+        colnames(mval) <- c('value','multiplier','meanscale','offset','sdscale','inneroffset')
+      }
+    }
+    if(!is.null(mval)) mval[is.na(mval)] <- 99999 else mval<-array(0,dim=c(0,6))
+    matsetup[[m]] = mdat
+    matvalues[[m]] <- mval
+  }
+  
+  matrixdims <- t(sapply(matsetup, function(m) as.integer(c(max(c(0,m[,1])),max(c(0,m[,2]))))))
+  matsetup <- do.call(rbind,matsetup) 
+  matvalues <- do.call(rbind,matvalues) 
+  popvalues <- data.frame(matvalues[matsetup[,'param'] !=0,,drop=FALSE])
+  popsetup <- matsetup[matsetup[,'param'] !=0,,drop=FALSE]
+  parname <-rownames(popsetup)
+  popsetup <- data.frame(popsetup)
+  
+  rownames(popsetup) <- NULL
+  rownames(popvalues) <- NULL
+  popsetup <- data.frame(parname,lapply(popsetup,as.integer),stringsAsFactors = FALSE)
+  popvalues <- data.frame(parname,lapply(popvalues,as.numeric),stringsAsFactors = FALSE)
+  
+  return(list(popsetup=popsetup,popvalues=popvalues, 
+    matsetup=matsetup,   matvalues=matvalues, 
+    extratforms=extratforms,
+    TIPREDEFFECTsetup=TIPREDEFFECTsetup,
+    matrixdims=matrixdims))
+}
+
+
 
 ctStanCalcsList <- function(ctstanmodel){
   #extract any calcs from model and ensure spec is correct
@@ -43,32 +182,32 @@ ctStanCalcsList <- function(ctstanmodel){
     out <- temp[unlist(sapply(temp, function(y) any(sapply(mlist, function(mli) grepl(mli,y)))))]
     return(out)
   })
-
+  
   ctstanmodel$calcs <- calcs
   return(ctstanmodel)
 }
 
 
 ctStanModelWriter <- function(ctstanmodel, gendata, extratforms){
-#if arguments change make sure to change ctStanFit !
+  #if arguments change make sure to change ctStanFit !
   
-mats <- ctStanMatricesList(ctstanmodel)
-
-# #check when / if PARS needs to be computed
-# for(mlist in names(mats[-1])){
-#   if(any(unlist(lapply(ctstanmodel$calcs[[mlist]], function(m) grepl('sPARS',m))))) mats[[mlist]]=c(mats[[mlist]],'PARS')
-# }
-
-
-    #adjust diffusion calcs to diffusionsqrt
-    ctstanmodel$calcs$diffusion <- gsub('sDIFFUSION','sDIFFUSIONsqrt',ctstanmodel$calcs$diffusion)
-    # intoverpopdynamiccalcs <- gsub('sDIFFUSION','sDIFFUSIONsqrt',intoverpopdynamiccalcs)
-
-#save calcs without intoverpop for param intitialisation
-nlcalcs <- ctstanmodel$calcs
-
-    #intoverpop calcs setup
-    intoverpopdriftcintparscalcs <- paste0('
+  mats <- ctStanMatricesList(ctstanmodel)
+  
+  # #check when / if PARS needs to be computed
+  # for(mlist in names(mats[-1])){
+  #   if(any(unlist(lapply(ctstanmodel$calcs[[mlist]], function(m) grepl('sPARS',m))))) mats[[mlist]]=c(mats[[mlist]],'PARS')
+  # }
+  
+  
+  #adjust diffusion calcs to diffusionsqrt
+  ctstanmodel$calcs$diffusion <- gsub('sDIFFUSION','sDIFFUSIONsqrt',ctstanmodel$calcs$diffusion)
+  # intoverpopdynamiccalcs <- gsub('sDIFFUSION','sDIFFUSIONsqrt',intoverpopdynamiccalcs)
+  
+  #save calcs without intoverpop for param intitialisation
+  nlcalcs <- ctstanmodel$calcs
+  
+  #intoverpop calcs setup
+  intoverpopdriftcintparscalcs <- paste0('
     if(intoverpop==1){ 
       for(ri in 1:size(matsetup)){ //for each row of matrix setup
         if(matsetup[ ri,5] > 0){ // && ( statei == 0 || statei == nlatent + matsetup[ ri,5])){ // if individually varying -- consider reimplementing extra check
@@ -81,8 +220,8 @@ nlcalcs <- ctstanmodel$calcs
         }
       }
     }')
-    
-    for(matlisti in c('tdpred','t0','measurement')){
+  
+  for(matlisti in c('tdpred','t0','measurement')){
     ctstanmodel$calcs[[matlisti]] <- paste0(ctstanmodel$calcs[[matlisti]],';
     if(intoverpop==1){ 
       for(ri in 1:size(matsetup)){ //for each row of matrix setup
@@ -96,13 +235,13 @@ nlcalcs <- ctstanmodel$calcs
         }
       }
     }')
-    }
-    #end intoverpop setup
-    
-
-
-ukfilterfunc<-function(ppchecking){
-  out<-paste0('
+  }
+  #end intoverpop setup
+  
+  
+  
+  ukfilterfunc<-function(ppchecking){
+    out<-paste0('
   int si = 0;
   int subjectcount = 0;
   int counter = 0;
@@ -381,7 +520,7 @@ ukfilterfunc<-function(ppchecking){
 
 
 '    
-,if(ppchecking) paste0('
+      ,if(ppchecking) paste0('
 {
 //int skipupd = 0;
 //        for(vi in 1:nobs_y[rowi]){
@@ -419,7 +558,7 @@ print("rowi ",rowi, "  si ", si,
 if(verbose > 2) print("ukfstates =", ukfstates, "  ukfmeasures =", ukfmeasures);
 }
       '),
-  
+      
       if(!ppchecking) 'err[o] = Y[rowi,o] - ypred[o]; // prediction error','
     
       if(savescores==1) {
@@ -459,10 +598,10 @@ if(verbose > 2) print("ukfstates =", ukfstates, "  ukfmeasures =", ukfmeasures);
     } // end dokalmanrows subset selection
 }//end rowi
 ')
-if(!is.null(ctstanmodel$w32)) out <- ''
-return(out)}
+    if(!is.null(ctstanmodel$w32)) out <- ''
+    return(out)}
 
-  kalmanll <- function(){ out <-'
+kalmanll <- function(){ out <-'
   if(sum(nbinary_y) > 0) {
     vector[sum(nbinary_y)] binaryll;
     counter = 1;
@@ -492,15 +631,15 @@ return(out)}
   }
 if(savescores) kalman = kout;
 '
-  if(!is.null(ctstanmodel$w32)) out <- ''
-  return(out)}
+if(!is.null(ctstanmodel$w32)) out <- ''
+return(out)}
 
 
 subjectparaminit<- function(popmats=FALSE,smats=TRUE){
   if(smats && popmats) stop('smats and popmats cannot both be TRUE!')
   paste0(
     paste0('   matrix[matrixdims[',1:length(mats$base),', 1], matrixdims[',1:length(mats$base),', 2] ] ',
-        ifelse(smats,'s',''),ifelse(popmats,'pop_',''),mats$base,if(!smats && !popmats) paste0('[',mats$base,'subindex  ? nsubjects : 1]'),';',collapse=' \n   '),'
+      ifelse(smats,'s',''),ifelse(popmats,'pop_',''),mats$base,if(!smats && !popmats) paste0('[',mats$base,'subindex  ? nsubjects : 1]'),';',collapse=' \n   '),'
 
   matrix[nlatent,nlatent] ',ifelse(smats,'s',''),ifelse(popmats,'pop_',''),'asymDIFFUSION',if(!smats && !popmats) '[asymDIFFUSIONsubindex ? nsubjects : 1]','; //stationary latent process variance
   vector[nt0meansstationary ? nlatent : 0] ',ifelse(smats,'s',''),ifelse(popmats,'pop_',''),'asymCINT',if(!smats && !popmats) '[asymCINTsubindex ? nsubjects : 1]','; // latent process asymptotic level
@@ -511,7 +650,7 @@ subjectparaminit<- function(popmats=FALSE,smats=TRUE){
 
 subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
   out <- paste0(
- '
+    '
  int subjectvec[subjectcount ? 1 : 2];
  subjectvec[size(subjectvec)] = si;
  if(subjectcount == 0)  subjectvec[1] = 0; // only needed for subject 0 (pop pars)
@@ -531,8 +670,8 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
 
   rawindparams = rawpopmeans + tipredaddition + indvaraddition;
 ',
-
-paste0('
+    
+    paste0('
     for(ri in 1:size(matsetup)){ //for each row of matrix setup
       if(subi ==0 || (matsetup[ri,3] > 0 && (matsetup[ri,5] > 0 || matsetup[ri,6] > 0))){ //otherwise repeated values
         real newval;
@@ -589,7 +728,7 @@ paste0('
       }
     }
   ',if(subjmats) collectsubmats(popmats=FALSE),
-if(popmats) paste0('
+    if(popmats) paste0('
   if(subi == 0){
 ',collectsubmats(popmats=TRUE),'
   }
@@ -613,8 +752,8 @@ collectsubmats <- function(popmats=FALSE,matrices=c(mats$base,'asymDIFFUSION','a
 
 
 
-  writemodel<-function(){
-    paste0('
+writemodel<-function(){
+  paste0('
 functions{
  int[] checkoffdiagzero(matrix M){
     int z[rows(M)];
@@ -774,7 +913,7 @@ functions{
     real out;
   
     ',tformshapes(),
-  if(length(extratforms) > 0) paste0(extratforms,collapse=" \n"),'
+    if(length(extratforms) > 0) paste0(extratforms,collapse=" \n"),'
 
     return out;
   }
@@ -880,7 +1019,7 @@ transformed parameters{
   vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatentpop*2 : 0)] kalman[savescores ? ndatapoints : 0];
   ',subjectparaminit(pop=FALSE,smats=FALSE),'
   ',subjectparaminit(pop=TRUE,smats=FALSE)
-,collapse=''),'
+  ,collapse=''),'
 
   matrix[ntipred ? nsubjects : 0, ntipred ? ntipred : 0] tipreds; //tipred values to fill from data and, when needed, imputation vector
   matrix[nparams, ntipred] TIPREDEFFECT; //design matrix of individual time independent predictor effects
@@ -971,7 +1110,7 @@ generated quantities{
   vector[nmanifest] Ygen[ndatapoints];
   ',subjectparaminit(pop=FALSE,smats=FALSE),'
   ',subjectparaminit(pop=TRUE,smats=FALSE)
-,collapse=''),'
+  ,collapse=''),'
 
 {
 vector[nparams] rawpopsdfull;
@@ -1019,16 +1158,14 @@ rawpopsdfull[indvaryingindex] = sqrt(diagonal(rawpopcov)); //base for calculatio
   }
 {
 ',if(gendata) ukfilterfunc(ppchecking=TRUE),
-'if(dokalman==1){',
-if(gendata) kalmanll(),'
-}
+  '
 
 }}
 ',collapse=";\n"),'
 
 }
 ')
-  }
-m <- writemodel()
-return(m)
+}
+  m <- writemodel()
+  return(m)
 }
