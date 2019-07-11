@@ -49,6 +49,7 @@ ctModelLatex<- function(ctmodel,textsize='normalsize',folder=tempdir(),
           if(is.na(suppressWarnings(as.numeric(x[i]))) & #if x[i] cannot be numeric and 
               grepl('\\',x[i],fixed=TRUE) == FALSE) {
             x[i]=gsub('_', '\\_',x[i],fixed=TRUE)
+            x[i]=gsub('^', '\\textasciicircum',x[i],fixed=TRUE)
             x[i] = paste0('\\text{',x[i],'}')
           }
         }
