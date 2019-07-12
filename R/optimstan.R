@@ -30,7 +30,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2){
     est1=try(constrain_pars(smfull, upars=samples[i,]),silent=TRUE)
   }
   if(class(est1)=='try-error') stop('All samples generated errors! Respecify, try stochastic optimizer, try again?')
-
+  
   cl2 <- parallel::makeCluster(cores, type = "PSOCK")
   on.exit(parallel::stopCluster(cl2))
   parallel::clusterExport(cl2, c('sm','standata','samples','est1'),environment())
@@ -276,7 +276,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       signdifmod[sign(oldg) == sign(g)] =  .1 #/ (1.5-inv_logit(abs(stdgdif[oldsigng == signg])))^4 #* (1/ ( ( (roughness*.05+.95)^2) ))
       signdifmod[sign(oldg) != sign(g)]  = -.1 #10* ((1.5-inv_logit(abs(stdgdifold[sign(oldg) != sign(g)])))-1) #* ( ( (roughness*.05+.95)^2) )
       signdifmod[is.nan(signdifmod)] <- .5 #oldstep[is.nan(step)] #because of overflow in some cases
-       
+      
       deltasmoothsq = deltasmoothsq * gmemory + (1-gmemory)*delta^2
       lproughnessmod= 2 * ( ( (1/(-lproughness-lproughnesstarget2)) / (1/-lproughnesstarget2) + .5) -1) #balanced eq for any centre / target
       gmemoryupd = min(gmemmax,max(.1,gmemory /  ( (1/(-mean(groughness)-groughnesstarget)) / (1/-groughnesstarget) + .5) ))
@@ -397,7 +397,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   
   
   message('Optimizing...')
-
+  
   betterfit<-TRUE
   bestfit <- -9999999999
   try2 <- FALSE
@@ -461,7 +461,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       }
       
       neglpgf<-function(parm) {
-
+        
         if(cores > 1 && evaltime > .1){
           
           out2 <- parallel::clusterApply(cl, 
@@ -496,12 +496,16 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       mizelpg=list(
         fg=function(pars){
           r=neglpgf(pars)
-          r=list(fn=r[1],gr= try(-attributes(r)$gradient,silent=TRUE))
+          r=list(fn=r[1],gr= try(-attributes(r)$gradient))
           if(class(r$gr) == 'try-error') r$gr <- NA
           return(r)
         },
         fn=neglpgf,
-        gr=function(pars) -attributes(neglpgf(pars))$gradient
+        gr=function(pars) {
+          out=try(-attributes(neglpgf(pars))$gradient)
+          if(class(out)=='try-error') out <- NA
+          return(out)
+        }
       )
       
       
@@ -509,7 +513,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         message('> 100 parameters and stochastic="auto" so stochastic gradient descent used -- try disabling if slow!')
         stochastic <- TRUE
       } else if(stochastic=='auto') stochastic <- FALSE
-      
+
       if(carefulfit && !deoptim & standata$nopriors == 1 ){ #init using priors
         standata$nopriors <- as.integer(0)
         smf<-stan_reinitsf(sm,standata,fast=TRUE)
@@ -519,9 +523,10 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           # optimfit <- ucminf(init,fn = neglpgf,gr = grffromlp,control=list(xtol=tol*1e8,maxeval=300))
           optimfit <- mize(init, fg=mizelpg, max_iter=99999,
             method="L-BFGS",memory=100,
-            line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',
+            # line_search='Rasmussen',step0='Rasmussen',
+            line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
             abs_tol=tol*1e8,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)
-        optimfit$value = optimfit$f
+          optimfit$value = optimfit$f
         }
         if(stochastic) optimfit <- sgd(init, itertol=1,startnrows=startnrows,maxiter=300)
         standata$nopriors <- as.integer(1)
@@ -529,7 +534,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         parallel::clusterExport(cl = cl, varlist = c('smf','standata'),envir = environment())
         init = optimfit$par #+ rnorm(length(optimfit$par),0,abs(init/8)+1e-3)#rstan::constrain_pars(object = smf, optimfit$par)
       }
-
+      
       if(!stochastic) {
         # optimfit <- ucminf(init,fn = neglpgf,gr = grffromlp,control=list(grtol=1e-99,xtol=tol,maxeval=10000),hessian=2)
         
@@ -537,13 +542,13 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           # method = 'NAG', nest_q = .01, #nest_convex_approx=TRUE,
           method="L-BFGS",memory=100,
           # method='SR1',
-          line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',
+          line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
           abs_tol=tol,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)
         optimfit$value = optimfit$f
         init = optimfit$par
         bestfit <- -optimfit$value
         optimfit$value <- -optimfit$value
-       
+        
       }
       
       if(stochastic || is.infinite(bestfit)){
@@ -573,54 +578,68 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       grmat<-function(pars,step=1e-5,lpdifmin=1e-8, lpdifmax=1e-3){
         
-        # hessout <- parallel::parSapply(cl=cl, X = 1:length(pars), function(i) {
-          hessout <- sapply(X = 1:length(pars), function(i) {
+        hessout <- parallel::parSapply(cl=cl, X = 1:length(pars), function(i) {
+        # hessout <- sapply(X = 1:length(pars), function(i) {
           smf <- stan_reinitsf(sm,standata,fast=TRUE)
           # for(i in 1:length(pars)){
-          stepsize <- step #*10
+          stepsize <- step *10
           colout <- NA
-          while(any(is.na(colout)) && stepsize > 1e-14 && stepsize < 1e8){
-          lpdifok<-FALSE
-          lpdifcount <- 0
-          lpdifdirection <- 0
-          lpdifmultiplier <- 1
-          while(!lpdifok & lpdifcount < 15){
-            # message(paste(i,'  col=',colout,'  lpdifmultiplier=',lpdifmultiplier, '  stepsize=',stepsize))
-            lpdifok <- TRUE
-            lpdifcount <- lpdifcount + 1
-            uppars<-pars
-            downpars<-pars
-            uppars[i]<-pars[i]+stepsize
-            downpars[i]<-pars[i]-stepsize
-            uplp= smf$log_prob(upars=uppars,adjust_transform=TRUE,gradient=TRUE) #lpg(uppars)
-            upgrad= attributes(uplp)$gradient #gradout
-            downlp = smf$log_prob(upars=downpars,adjust_transform=TRUE,gradient=TRUE) #lpg(downpars)
-            downgrad = attributes(downlp)$gradient #gradout
-            
-            
-            if(abs(uplp-downlp) > lpdifmax) {
-              # message(paste0('decreasing step for ', i))
-              lpdifok <- FALSE
-              if(lpdifdirection== 1) {
-                lpdifmultiplier = lpdifmultiplier * .5
+          dolpchecks <- FALSE #set to true to try the log prob checks again...
+          while(any(is.na(colout)) && stepsize > 1e-16){
+            stepsize <- stepsize * .1
+            lpdifok<-FALSE
+            lpdifcount <- 0
+            lpdifdirection <- 0
+            lpdifmultiplier <- 1
+            message('par',i)
+            while(!lpdifok & lpdifcount < 15){
+              message(stepsize)
+              # message(paste(i,'  col=',colout,'  lpdifmultiplier=',lpdifmultiplier, '  stepsize=',stepsize))
+              lpdifok <- TRUE
+              lpdifcount <- lpdifcount + 1
+              uppars<-pars
+              downpars<-pars
+              uppars[i]<-pars[i]+stepsize
+              downpars[i]<-pars[i]-stepsize
+              uplp= try(smf$log_prob(upars=uppars,adjust_transform=TRUE,gradient=TRUE)) #lpg(uppars)
+              downlp = try(smf$log_prob(upars=downpars,adjust_transform=TRUE,gradient=TRUE)) #lpg(downpars)
+              if(class(uplp)=='try-error' || class(downlp)=='try-error'){
+                lpdifok <- TRUE
+                upgrad <- rep(NA,length(pars))
+                downgrad <- rep(NA,length(pars))
+                dolpchecks <- FALSE
+                # if(stepsize < 1e-12) browser()
+              } else{
+                upgrad= attributes(uplp)$gradient 
+                downgrad = attributes(downlp)$gradient 
+                
+                if(dolpchecks){
+                  if(abs(uplp-downlp) > lpdifmax) {
+                    # message(paste0('decreasing step for ', i))
+                    lpdifok <- FALSE
+                    if(lpdifdirection== 1) {
+                      lpdifmultiplier = lpdifmultiplier * .5
+                    }
+                    stepsize = stepsize * 1e-2 * lpdifmultiplier
+                    lpdifdirection <- -1
+                  }
+                  if(abs(uplp-downlp) < lpdifmin) {
+                    # browser()
+                    # message(paste0('increasing step for ', i))
+                    lpdifok <- FALSE
+                    if(lpdifdirection== -1) {
+                      lpdifmultiplier = lpdifmultiplier * .5
+                    }
+                    stepsize = stepsize * 100 * lpdifmultiplier
+                    lpdifdirection <- 1
+                  }
+                  if(any(is.na(c(uplp,downlp)))) stepsize = stepsize * .1
+                }
               }
-              stepsize = stepsize * 1e-2 * lpdifmultiplier
-              lpdifdirection <- -1
             }
-            if(abs(uplp-downlp) < lpdifmin) {
-              # browser()
-              # message(paste0('increasing step for ', i))
-              lpdifok <- FALSE
-              if(lpdifdirection== -1) {
-                lpdifmultiplier = lpdifmultiplier * .5
-              }
-              stepsize = stepsize * 100 * lpdifmultiplier
-              lpdifdirection <- 1
-            }
-            if(any(is.na(c(uplp,downlp)))) stepsize = stepsize * .1
-          }
             # hessout[i,]<- (upgrad-downgrad) /stepsize/2
             colout<- (upgrad-downgrad) /stepsize/2
+            print(colout)
           }
           return(colout)
         })
@@ -684,8 +703,10 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # hessup=hess1s(pars = est2,direction = 1,step = 1e-4,lpdifmin = 1e-4,lpdifmax = 1e-3)
         # hessdown=hess1s(pars = est2,direction = -1,step = 1e-4,lpdifmin = 1e-4,lpdifmax = 1e-3)
         # hess=(hessup+hessdown)/2
-        hess=grmat(pars=est2,step=1e-4)
-        if(any(is.na(hess))) stop(paste0('Hessian could not be computed for pars ', paste0(which(apply(hess,1,function(x) any(is.na(x))))), ' -- consider reparameterising.',collapse=''))
+        hess=grmat(pars=est2,step=1e-6)
+        if(any(is.na(hess))) warning(paste0('Hessian could not be computed for pars ', paste0(which(apply(hess,1,function(x) any(is.na(x)))),collapse=', '), ' -- standard errors will be nonsense, model adjustment may be needed.',collapse=''))
+        diag(hess)[is.na(diag(hess))]<- -1
+        hess[is.na(hess)] <- 0
         hess = (hess/2) + t(hess/2)
         # neghesschol = try(chol(-hess),silent=TRUE)
         
