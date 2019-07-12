@@ -15,7 +15,8 @@ standatact_specificsubjects <- function(standata, subjects){
 parlp <- function(parm,subjects=NA){
   if(!is.na(subjects[1])) standata <- standatact_specificsubjects(standata,subjects) 
   smf<-stan_reinitsf(sm,standata,fast=TRUE) #list[[corei]]
-  try(smf$log_prob(upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = TRUE)
+  out <- try(smf$log_prob(upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
+  if(class(out)=='try-error') out[1] <- -99999999
 }
 
 
@@ -470,7 +471,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           if(standata$verbose > 0) print(out)
           attributes(out)$gradient <- try(apply(sapply(out2,function(x) attributes(x)$gradient,simplify='matrix'),1,sum))
         } else {
-          out<-try(smf$log_prob(upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = TRUE)
+          out<-try(smf$log_prob(upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
         }
         
         if(class(out)=='try-error' || is.nan(out)) {
@@ -566,7 +567,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     
     if(!estonly){
       lpg<-function(parm) {
-        out<-try(smf$log_prob(upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = TRUE)
+        out<-try(smf$log_prob(upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
         if(class(out)=='try-error' || is.nan(out)) {
           out=Inf
           gradout <<- rep(NaN,length(parm))
