@@ -599,9 +599,9 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             lpdifcount <- 0
             lpdifdirection <- 0
             lpdifmultiplier <- 1
-            message('par',i)
+            # message('par',i)
             while(!lpdifok & lpdifcount < 15){
-              message(stepsize)
+              # message(stepsize)
               # message(paste(i,'  col=',colout,'  lpdifmultiplier=',lpdifmultiplier, '  stepsize=',stepsize))
               lpdifok <- TRUE
               lpdifcount <- lpdifcount + 1
@@ -647,7 +647,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             }
             # hessout[i,]<- (upgrad-downgrad) /stepsize/2
             colout<- (upgrad-downgrad) /stepsize/2
-            print(colout)
+            # print(colout)
           }
           return(rbind(colout))
         },cores=cores)

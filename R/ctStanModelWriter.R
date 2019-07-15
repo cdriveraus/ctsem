@@ -675,11 +675,11 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
     
     paste0('
     for(ri in 1:size(matsetup)){ //for each row of matrix setup
-      if(subi ==0 || (matsetup[ri,3] > 0 && (matsetup[ri,5] > 0 || matsetup[ri,6] > 0))){ //otherwise repeated values
+      if(subi ==0 ||  matsetup[ri,7]==8 || matsetup[ri,7] == 4 ||(matsetup[ri,3] > 0 && (matsetup[ri,5] > 0 || matsetup[ri,6] > 0))){ //otherwise repeated values
         real newval;
         if(matsetup[ri,3] > 0) newval = 
           tform(rawindparams[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
-        if(matsetup[ri,3] < 1) newval = matvalues[ri, 1]; //doing this once over all subjects
+        if(matsetup[ri,3] < 1) newval = matvalues[ri, 1]; //doing this once over all subjects unless covariance matrix
         ',paste0('if(matsetup[ri, 7] == ', 1:length(mats$base),') s',
           mats$base,'[matsetup[ ri,1], matsetup[ri,2]] = newval;', collapse = ' \n      '),'
       }
@@ -689,11 +689,11 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
   state[1:nlatent]=sT0MEANS[,1];
   ',paste0(unlist(nlcalcs),';\n',collapse=' '),';
   
-  if(subi <= DIFFUSIONsubindex ? nsubjects : 0) {
+  if(subi <= (DIFFUSIONsubindex ? nsubjects : 0)) {
     if(nldynamics==1) sDIFFUSIONsqrt = sDIFFUSION;
     sDIFFUSION = sdcovsqrt2cov(sDIFFUSION,nldynamics);
   }
-  if(subi <= asymDIFFUSIONsubindex ? nsubjects : 0) {
+  if(subi <= (asymDIFFUSIONsubindex ? nsubjects : 0)) {
       if(ndiffusion < nlatent) sasymDIFFUSION = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
 
       if(continuoustime==1) sasymDIFFUSION[ derrind, derrind] = to_matrix( 
@@ -704,11 +704,11 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
         sqkron_prod(sDRIFT, sDRIFT)) *  to_vector(sDIFFUSION[ derrind, derrind ]), ndiffusion, ndiffusion);
     } //end asymdiffusion loops
 
-      if(subi <= MANIFESTVARsubindex ? nsubjects : 0) {
+      if(subi <= (MANIFESTVARsubindex ? nsubjects : 0)) {
          for(ri in 1:nmanifest) sMANIFESTVAR[ri,ri] = square(sMANIFESTVAR[ri,ri]);
       }
          
-    if(subi <= T0VARsubindex ? nsubjects : 0) {
+    if(subi <= (T0VARsubindex ? nsubjects : 0)) {
       sT0VAR = makesym(sdcovsqrt2cov(sT0VAR,nldynamics),verbose,1);
       if(nt0varstationary > 0) {
         for(ri in 1:nt0varstationary){ 
@@ -718,11 +718,11 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
     }
     
     if(nt0meansstationary > 0){
-      if(subi <= asymCINTsubindex ? nsubjects : 0){
+      if(subi <= (asymCINTsubindex ? nsubjects : 0)){
         if(continuoustime==1) sasymCINT =  -sDRIFT \\ sCINT[ ,1 ];
         if(continuoustime==0) sasymCINT =  (IIlatent - sDRIFT) \\ sCINT[,1 ];
       }
-      if(subi <= T0MEANSsubindex ? nsubjects : 0) {
+      if(subi <= (T0MEANSsubindex ? nsubjects : 0)) {
         for(ri in 1:nt0meansstationary){
           sT0MEANS[t0meansstationary[ri,1] , 1] = 
             sasymCINT[t0meansstationary[ri,1] ];

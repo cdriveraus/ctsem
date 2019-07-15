@@ -771,12 +771,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     
     
-    #configure user specified calculations
-    if(ctstanmodel$gradient != 'gradient = DRIFT * state + CINT[,1];') {
-      recompile <- TRUE
-      nldynamics <- TRUE
-    }
-    gradient <- ctstanmodel$gradient
+
     
     if(sum(unlist(lapply(ctstanmodel$calcs,length) > 0))) recompile <- TRUE
     if( (nt0varstationary + nt0meansstationary) >0 && 
