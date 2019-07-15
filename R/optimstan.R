@@ -1,3 +1,7 @@
+flexsapply <- function(cl, X, fn,cores=1){
+  if(cores > 1) parallel::parSapply(cl,X,fn) else sapply(X, fn)
+}
+
 standatact_specificsubjects <- function(standata, subjects){
   standata$dokalmanrows <- as.integer(standata$dokalmanrows * (standata$subject %in% subjects))
   standata2=standata
@@ -16,7 +20,10 @@ parlp <- function(parm,subjects=NA){
   if(!is.na(subjects[1])) standata <- standatact_specificsubjects(standata,subjects) 
   smf<-stan_reinitsf(sm,standata,fast=TRUE) #list[[corei]]
   out <- try(smf$log_prob(upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
-  if(class(out)=='try-error') out[1] <- -99999999
+  if(class(out)=='try-error') {
+    out[1] <- -999999999999
+    attributes(out)$gradient <- rep(0,length(parm))
+  }
 }
 
 
@@ -38,7 +45,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2){
   parallel::clusterApply(cl2,1:cores,function(x) require(ctsem))
   # target_dens <- c(target_dens,
   
-  transformedpars <- try(parallel::parLapply(cl2, parallel::clusterSplit(cl2,1:nrow(samples)), function(x){ #could pass smaller samples
+  transformedpars <- try(flexsapply(cl2, parallel::clusterSplit(cl2,1:nrow(samples)), function(x){ #could pass smaller samples
     # Sys.sleep(.1)
     if(!is.null(standata$savescores) && !standata$savescores) standata$dokalmanrows <- as.integer(c(1,standata$subject[-1] - standata$subject[-standata$ndatapoints]))
     smfull <- stan_reinitsf(sm,standata)
@@ -50,7 +57,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2){
       if(any(sapply(out[[li]], function(x) any(c(is.nan(x),is.infinite(x),is.na(x)))))) class(out[[li]]) <- c(class(out[[li]]),'try-error')
     }
     return(out)
-  }))
+  },cores=cores))
   transformedpars=unlist(transformedpars,recursive = FALSE)
   missingsamps <-sapply(transformedpars, function(x) 'try-error' %in% class(x))
   nasampscount <- sum(missingsamps) 
@@ -463,7 +470,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       neglpgf<-function(parm) {
         
-        if(cores > 1 && evaltime > .1){
+        if(cores > 1 && evaltime > .2){
           
           out2 <- parallel::clusterApply(cl, 
             split(1:standata$nsubjects,sort(1:standata$nsubjects %% min(standata$nsubjects,cores))), function(subjects) parlp(parm,subjects))
@@ -518,7 +525,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       if(carefulfit && !deoptim & standata$nopriors == 1 ){ #init using priors
         standata$nopriors <- as.integer(0)
         smf<-stan_reinitsf(sm,standata,fast=TRUE)
-        parallel::clusterExport(cl = cl, varlist = c('smf','standata'),envir = environment())
+        if(cores > 1) parallel::clusterExport(cl = cl, varlist = c('smf','standata'),envir = environment())
         if(!stochastic) {
           
           # optimfit <- ucminf(init,fn = neglpgf,gr = grffromlp,control=list(xtol=tol*1e8,maxeval=300))
@@ -532,7 +539,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(stochastic) optimfit <- sgd(init, itertol=1,startnrows=startnrows,maxiter=300)
         standata$nopriors <- as.integer(1)
         smf<-stan_reinitsf(sm,standata,fast=TRUE)
-        parallel::clusterExport(cl = cl, varlist = c('smf','standata'),envir = environment())
+        if(cores > 1) parallel::clusterExport(cl = cl, varlist = c('smf','standata'),envir = environment())
         init = optimfit$par #+ rnorm(length(optimfit$par),0,abs(init/8)+1e-3)#rstan::constrain_pars(object = smf, optimfit$par)
       }
       
@@ -579,7 +586,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       grmat<-function(pars,step=1e-5,lpdifmin=1e-8, lpdifmax=1e-3){
         
-        hessout <- parallel::parSapply(cl=cl, X = 1:length(pars), function(i) {
+        hessout <- flexsapply(cl=cl, X = 1:length(pars), function(i) {
         # hessout <- sapply(X = 1:length(pars), function(i) {
           smf <- stan_reinitsf(sm,standata,fast=TRUE)
           # for(i in 1:length(pars)){
@@ -642,8 +649,8 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             colout<- (upgrad-downgrad) /stepsize/2
             print(colout)
           }
-          return(colout)
-        })
+          return(rbind(colout))
+        },cores=cores)
         return(t(hessout))
       }
       
@@ -795,7 +802,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           
           parallel::clusterExport(cl, c('samples'),environment())
           
-          target_dens[[j]] <- unlist(parallel::parLapply(cl, parallel::clusterSplit(cl,1:isloopsize), function(x){
+          target_dens[[j]] <- unlist(flexsapply(cl, parallel::clusterSplit(cl,1:isloopsize), function(x){
             # eval(parse(text=paste0('library(rstan)')))
             
             smf <- stan_reinitsf(sm,standata, fast=TRUE)
@@ -812,7 +819,7 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             try(dyn.unload(file.path(tempdir(), paste0(smf@stanmodel@dso@dso_filename, .Platform$dynlib.ext))),silent = TRUE)
             return(out)
             
-          }))
+          },cores=cores))
           
           if(all(target_dens[[j]] < -1e100)) stop('Could not sample from optimum! Try reparamaterizing?')
           if(any(target_dens[[j]] > bestfit && (j < isloops && !try2))){

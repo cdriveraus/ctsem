@@ -67,7 +67,7 @@ NULL
 
 .onAttach <- function(libname, pkgname) {
   # to show a startup message
-  packageStartupMessage("ctsem has undergone many changes over time, not all vignettes are available from CRAN, for up to date documentation run function ctDocs()")
+  packageStartupMessage("ctsem also changes in time, for an up to date manual run function ctDocs()")
 }
 
 ctDocs <- function(){

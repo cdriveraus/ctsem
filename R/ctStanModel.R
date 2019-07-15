@@ -186,10 +186,9 @@ ctStanModel<-function(ctmodelobj, type='stanct'){
   out$rawpopsdbase <- 'normal(0,1)' #'cauchy(0,1)'
   out$rawpopsdbaselowerbound <- NA
   out$rawpopsdtransform <- 'exp(2*rawpopsdbase-1) .* sdscale' #'log(1+exp(2*rawpopsdbase)) .* sdscale' #'exp(rawpopsdbase * 2 -2) .* sdscale' # 'rawpopsdbase .* sdscale' #
-  out$stationarymeanprior <- NA
-  out$stationaryvarprior <- NA
+  # out$stationarymeanprior <- NA
+  # out$stationaryvarprior <- NA
   out$manifesttype <- rep(0,n.manifest)
-  out$gradient <- 'gradient = DRIFT * state + CINT[,1];'
   
   return(out)
 }
