@@ -1,5 +1,5 @@
 ctStanProfileCI <- function(fit, cipars){
-  
+  browser()
   ll=fit$stanfit$optimfit$value
   cores=1
   # fit$standata$profilelltarget=fit$stanfit$optimfit$value
@@ -56,10 +56,8 @@ ctStanProfileCI <- function(fit, cipars){
       
       mizelpgouter_fn <- function(parx){
         message('parx = ',parx)
-        # browser()
         parsouter <<-fit$stanfit$rawest #ml inits
         parsouter[which( rownames(fit$stanfit$transformedpars_old[1:np,]) %in% cipars[pi])] <<- parx #parx replaces ml init and stays fixed for inner loop
-       # browser() 
         pll=abs( (fit$stanfit$optimfit$value - 1.96) - (-mize(parsouter[-which( rownames(fit$stanfit$transformedpars_old[1:np,]) %in% cipars[pi])],
           fg=mizelpginner,
           max_iter=99999,

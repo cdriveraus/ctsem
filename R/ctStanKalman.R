@@ -30,7 +30,7 @@ ctStanKalman <- function(fit,nsamples=NA,cores=2){
   }
   
   k[k==99999] <- NA #for missingness
-  nlatent <- fit$standata$nlatentpop
+  nlatent <- fit$standata$nlatent
   nmanifest <- fit$standata$nmanifest
   dimnames(k) = list(iter=1:dim(k)[1],drow=1:dim(k)[2],
     kalman=paste0(c(rep('lln',nmanifest),

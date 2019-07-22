@@ -21,10 +21,10 @@
 summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,priorcheck=TRUE,...){
   
   if(class(object) != 'ctStanFit') stop('Not a ctStanFit object!')
-  
+
   out=list()
   monvars <- c('mean','sd','2.5%','50%','97.5%')
-  
+
   if(class(object$stanfit)=='stanfit'){ 
     s<-suppressWarnings(getMethod('summary','stanfit')(object$stanfit))
     if('98%' %in% colnames(s$summary)) colnames(s$summary)[colnames(s$summary)=='98%'] <- '97.5%'
@@ -41,8 +41,8 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   #   }
   # }
 
-  parnames <- object$setup$popsetup$parname
-  parindices <- object$setup$popsetup$param
+  parnames <- object$setup$popsetup$parname[object$setup$popsetup$when==0]
+  parindices <- object$setup$popsetup$param[object$setup$popsetup$when==0]
   pars <- cbind(parnames,parindices)
   pars<-pars[!duplicated(pars[,1,drop=FALSE]),,drop=FALSE]
   parnames <- pars[as.numeric(pars[,2,drop=FALSE]) >0, 1]
@@ -228,7 +228,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
     }
     if(class(parmatlists)=='try-error') out$parmatNote = 'Could not calculate parameter matrices'
   }
-  
+
   
   if(class(object$stanfit)=='stanfit'){
     popsd=s$summary[c(grep('^popsd',rownames(s$summary),fixed=FALSE)),

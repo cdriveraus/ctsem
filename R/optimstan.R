@@ -22,8 +22,11 @@ parlp <- function(parm,subjects=NA){
   out <- try(smf$log_prob(upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
   if(class(out)=='try-error') {
     out[1] <- -999999999999
-    attributes(out)$gradient <- rep(0,length(parm))
+    attributes(out)$gradient <- rep(NaN, length(pars))
   }
+  if(is.null(attributes(out)$gradient)) attributes(out)$gradient <- rep(NaN, length(pars))
+  attributes(out)$gradient[is.nan(attributes(out)$gradient)] <- 
+    rnorm(length(attributes(out)$gradient[is.nan(attributes(out)$gradient)]),0,100)
 }
 
 
@@ -61,7 +64,6 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2){
   transformedpars=unlist(transformedpars,recursive = FALSE)
   missingsamps <-sapply(transformedpars, function(x) 'try-error' %in% class(x))
   nasampscount <- sum(missingsamps) 
-  
   
   transformedpars <- transformedpars[!missingsamps]
   nresamples <- nrow(samples) - nasampscount
@@ -482,8 +484,9 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         }
         
         if(class(out)=='try-error' || is.nan(out)) {
-          out=-Inf
+          out=-99999999
           gradout <<- rep(NaN,length(parm))
+          attributes(out) <- list(gradient=rep(0,length(parm)))
         } else {
           if(out[1] > bestlp) {
             bestlp <<- out[1]
@@ -504,16 +507,11 @@ optimstan <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       mizelpg=list(
         fg=function(pars){
           r=neglpgf(pars)
-          r=list(fn=r[1],gr= try(-attributes(r)$gradient))
-          if(class(r$gr) == 'try-error') r$gr <- NA
+          r=list(fn=r[1],gr= -attributes(r)$gradient)
           return(r)
         },
         fn=neglpgf,
-        gr=function(pars) {
-          out=try(-attributes(neglpgf(pars))$gradient)
-          if(class(out)=='try-error') out <- NA
-          return(out)
-        }
+        gr=function(pars) -attributes(neglpgf(pars))$gradient
       )
       
       

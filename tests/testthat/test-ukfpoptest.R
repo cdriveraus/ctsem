@@ -2,11 +2,11 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
 
 library(ctsem)
 library(testthat)
-set.seed(1)
 
 context("ukfpopcheck") 
 
 test_that("ukfpopcheck1", {
+set.seed(1)
 Tpoints<-10
 n.latent=2
 n.manifest=3
@@ -94,7 +94,7 @@ sf1 <- ctStanFit(cd,sm1,iter=200,
   derrind=1:4,
   nlcontrol=list(nldynamics=FALSE))
 # sink()
-# summary(sf1,parmatrices=T)
+# summary(sf1)
 
 sf1d=matrix(sf1$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf1$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
 sf1ll=sf1$stanfit$optimfit$value
@@ -136,19 +136,22 @@ sf1nl_derrindd=matrix(sf1nl_derrind$stanfit$transformedpars_old[grep('pop_DRIFT'
 sf1nl_derrindll=sf1nl_derrind$stanfit$optimfit$value
 
 
-m2$T0VAR[,]=0
+# m2$T0VAR[,]=0
 # m2$T0MEANS[,]=2.588
 sm2 <- ctStanModel(m2)
 sm2$pars$indvarying[!(sm2$pars$matrix %in% c('CINT','T0MEANS'))] <- FALSE
+# sm2$pars$multiplier[(sm2$pars$matrix %in% c('CINT','T0MEANS'))] =1
+# sm2$pars$meanscale[(sm2$pars$matrix %in% c('CINT','T0MEANS'))] =1
 
 # sink(file='../sinkout.txt')
-sf2 <- ctStanFit(cd,sm2,iter=200,
+sf2 <- ctStanFit(cd,sm2,iter=200,fit=T,
   optimize=TRUE,verbose=0,nopriors = TRUE,intoverpop = TRUE,
-  init=0,
+  # init=0,
   optimcontrol=list(deoptim = FALSE,isloops=0,isloopsize=50,finishsamples=50),
   derrind=1:2)
 # sink()
 sf2d=matrix(sf2$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf2$stanfit$transformedpars_old)),'mean'],2,2)
+matrix(sf2$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf2$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
 sf2ll=sf2$stanfit$optimfit$value
 # summary(sf2)$popmeans
 
