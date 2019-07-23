@@ -150,8 +150,7 @@ sf2 <- ctStanFit(cd,sm2,iter=200,fit=T,
   optimcontrol=list(deoptim = FALSE,isloops=0,isloopsize=50,finishsamples=50),
   derrind=1:2)
 # sink()
-sf2d=matrix(sf2$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf2$stanfit$transformedpars_old)),'mean'],2,2)
-matrix(sf2$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf2$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
+sf2d=matrix(sf2$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf2$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
 sf2ll=sf2$stanfit$optimfit$value
 # summary(sf2)$popmeans
 

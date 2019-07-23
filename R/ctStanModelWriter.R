@@ -104,7 +104,6 @@ ctStanModelIntOverPop <- function(m){ #improve this function by avoiding additio
 
 
 
-
 simplifystanfunction<-function(bcalc){ #input text of list of computations, output simplified form
   
   # bcalcs=paste0(paste0(c(ctm$calcs$driftcint,ctm$calcs$diffusion),';\n',collapse=' '),

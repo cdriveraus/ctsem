@@ -13,9 +13,9 @@
 #' 
 ctStanKalman <- function(fit,nsamples=NA,cores=2){
   if(class(fit)!='ctStanFit') stop('Not a ctStanFit object')
-  k=extract(fit)$kalman
-  
-  if(length(dim(k))==0){
+  e=extract(fit)
+
+  if(length(dim(e$k))==0){
     message('State estimates not saved, computing...')
     standata <- fit$standata
     standata$savescores <- 1L
@@ -26,8 +26,10 @@ ctStanKalman <- function(fit,nsamples=NA,cores=2){
       samples = t(stan_unconstrainsamples(fit$stanfit))
     }
     if(!is.na(nsamples)) samples <- samples[sample(1:nrow(samples),nsamples),,drop=FALSE]
-    k=stan_constrainsamples(sm = fit$stanmodel,standata = standata,samples = samples,cores=cores)$kalman
+    e=stan_constrainsamples(sm = fit$stanmodel,standata = standata,samples = samples,cores=cores)
   }
+  
+  k=e$kalman
   
   k[k==99999] <- NA #for missingness
   nlatent <- fit$standata$nlatent
@@ -53,8 +55,17 @@ ctStanKalman <- function(fit,nsamples=NA,cores=2){
     sum(dnorm(x[!is.na(x)],log = TRUE))
   })
   llrow = llvec - apply(llscale, 1:2, function(x) sum(x,na.rm=TRUE))
+  
+  #covariance
+  etapriorcov <- e$etapriorcov
+  etaupdcov <- e$etaupdcov
+  etapriorcov[etapriorcov==99999] <- NA
+  etaupdcov[etaupdcov==99999] <- NA
 
-    return(list(lln=lln,llscale=llscale,err=err,ypred=ypred,etaprior=etaprior,etaupd=etaupd,llrow=llrow))
+    return(list(lln=lln,llscale=llscale,err=err,ypred=ypred,
+      etaprior=etaprior, etapriorcov=etapriorcov,
+      etaupd=etaupd,etaupdcov=etaupdcov,
+      llrow=llrow))
 }
 
 

@@ -52,7 +52,8 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
 #' @import grDevices methods stats rstan OpenMx graphics rstantools Rcpp data.table ggplot2
 #' @importFrom plyr aaply alply round_any
 #' @importFrom utils relist as.relistable tail capture.output
-#' @importFrom KernSmooth bkde2D
+#' @importFrom Deriv Simplify 
+#' @importFrom cOde jacobianSymb prodSymb
 #' @useDynLib ctsem, .registration = TRUE
 #' 
 #' @references 

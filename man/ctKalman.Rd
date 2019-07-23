@@ -14,12 +14,12 @@ ctKalman(fit, datalong = NULL, timerange = "asdata",
 If not included, data from fit will used.}
 
 \item{timerange}{Either 'asdata' to just use the observed data range, or a numeric vector of length 2 denoting start and end of time range, 
-allowing for estimates outside the range of observed data.}
+allowing for estimates outside the range of observed data. Currently unused for ctStan fits.}
 
 \item{timestep}{Either 'asdata' to just use the observed data 
 (which also requires 'asdata' for timerange) or a positive numeric value
 indicating the time step to use for interpolating values. Lower values give a more accurate / smooth representation,
-but take a little more time to calculate.}
+but take a little more time to calculate. Currently unavailable for ctStan fits.}
 
 \item{subjects}{vector of integers denoting which subjects (from 1 to N) to plot predictions for.}
 
@@ -35,6 +35,7 @@ eta refers to latent states and y to manifest indicators - y itself is thus just
 the input data. 
 Covariance matrices etapriorcov, etaupdcov, etasmoothcov, ypriorcov, yupdcov, ysmoothcov,  
 are returned in a row * column * time array. 
+Some outputs are unavailable for ctStan fits at present.
 If plot=TRUE, nothing is returned but a plot is generated.
 }
 \description{

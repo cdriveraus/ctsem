@@ -1,8 +1,8 @@
 Package: ctsem
 Type: Package
 Title: Continuous Time Structural Equation Modelling
-Version: 2.9.6
-Date: 2019-5-28
+Version: 2.10.0
+Date: 2019-7-28
 Authors@R: c(person("Charles", "Driver", role =
     c("aut","cre","cph"),email="driver@mpib-berlin.mpg.de"),
     person("Manuel", "Voelkle", role = c("aut","cph")),
@@ -30,7 +30,7 @@ Depends:
     OpenMx (>= 2.9.0)
 URL: https://github.com/cdriveraus/ctsem
 Imports:
-    rstan (>= 2.17.1),
+    rstan (>= 2.18.0),
     rstantools (>= 1.5.0),
     plyr,
     tools,
@@ -41,16 +41,15 @@ Imports:
     graphics,
     grDevices,
     parallel,
-    shiny,
     MASS,
     methods,
     utils,
     ggplot2,
     mvtnorm,
-    KernSmooth,
     mize,
-    GGally,
-    pkgbuild
+    pkgbuild,
+    cOde,
+    Deriv
 Encoding: UTF-8
 LazyData: true
 ByteCompile: true

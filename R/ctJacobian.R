@@ -1,12 +1,10 @@
 # ctm=ctModel(LAMBDA=cbind(diag(2),0), DRIFT=matrix(c('d11','state[3]',0, 'd12','d22',0,0,0,0),3,3),type='stanct')
 # ctm2=ctModel(LAMBDA=cbind(diag(2),0), DRIFT=matrix(c('d11','PARS[1,1]',0, 'd12','d22',0,0,0,0),3,3),PARS=matrix('state[3]'),type='stanct')
-#'@import Deriv Simplify prodSymb
-#'@import cOde jacobianSymb
 
 ctJacobian <- function(m,types=c('J0','JAx','Jtd') ){
   
-  require(cOde)
-  require(Deriv)
+  # require(cOde)
+  # require(Deriv)
   
   
   # get system dimension

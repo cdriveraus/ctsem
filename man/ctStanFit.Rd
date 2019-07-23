@@ -207,6 +207,7 @@ for(i in 2:nsubjects){
 
 
 
+
 #### Model fitting (from here it is good to understand!)
 
 #Specify univariate linear growth curve
@@ -225,6 +226,7 @@ m1 <- ctModel(n.manifest = 1,n.latent = 1,n.TIpred = 1, type = 'stanct',
   MANIFESTVAR=matrix(c('merror1'),nrow=1,ncol=1))
 
 #modify between subject aspects -- alternatively, run: edit(m1$pars)
+m1$pars$indvarying <- TRUE
 m1$pars$indvarying[-which(m1$pars$matrix \%in\% c('T0MEANS','CINT'))] <- FALSE
 m1$pars$age_effect[-which(m1$pars$matrix \%in\% c('T0MEANS','CINT'))] <- FALSE
 
@@ -265,6 +267,7 @@ m2 <- ctModel(n.manifest = 1,n.latent = 1,n.TIpred = 1, type = 'stanct',
   MANIFESTMEANS=matrix(0,ncol=1),
   MANIFESTVAR=matrix(c('merror1'),nrow=1,ncol=1))
 
+m2$pars$indvarying <- TRUE
 m2$pars$indvarying[-which(m2$pars$matrix \%in\% c('T0MEANS','CINT'))] <- FALSE
 m2$pars$age_effect[-which(m2$pars$matrix \%in\% c('T0MEANS','CINT'))] <- FALSE
 
@@ -301,6 +304,7 @@ m3 <- ctModel(n.manifest = 1,n.latent = 1,n.TIpred = 1, type = 'stanct',
   MANIFESTMEANS=matrix(0,ncol=1),
   MANIFESTVAR=matrix(c('merror1'),nrow=1,ncol=1))
 
+m3$pars$indvarying <- TRUE
 m3$pars$indvarying[-which(m3$pars$matrix \%in\% 
   c('T0MEANS','CINT','TDPREDEFFECT'))] <- FALSE
   
@@ -343,6 +347,7 @@ m4 <- ctModel(n.manifest = 2,n.latent = 2,n.TIpred = 1, type = 'stanct', #no of 
   MANIFESTVAR=matrix(c('merror1',0,0,'merror2'),nrow=2,ncol=2))
 
 #restrict between subjects variation / covariate effects
+m4$pars$indvarying <- TRUE
 m4$pars$indvarying[-which(m4$pars$matrix \%in\% c('T0MEANS','CINT','TDPREDEFFECT'))] <- FALSE
 m4$pars$age_effect[-which(m4$pars$matrix \%in\% c('T0MEANS','CINT','TDPREDEFFECT'))] <- FALSE
 
@@ -354,6 +359,7 @@ m4 <- ctModel(n.manifest = 2,n.latent = 2,n.TIpred = 1, type = 'stanct',
   LAMBDA = matrix(c(1,0,0,1),nrow=2,ncol=2))
 
 #restrict between subjects variation / covariate effects
+m4$pars$indvarying <- TRUE
 m4$pars$indvarying[-which(m4$pars$matrix \%in\% c('T0MEANS','MANIFESTMEANS','TDPREDEFFECT'))] <- FALSE
 m4$pars$age_effect[-which(m4$pars$matrix \%in\% c('T0MEANS','MANIFESTMEANS','TDPREDEFFECT'))] <- FALSE
 
@@ -392,6 +398,7 @@ m3nl <- ctModel(n.manifest = 1,n.latent = 1,n.TIpred = 1, type = 'stanct',
   MANIFESTMEANS=matrix(0,ncol=1),
   MANIFESTVAR=matrix(c('merror1'),nrow=1,ncol=1))
 
+m3nl$pars$indvarying <- TRUE
 m3nl$pars$indvarying[-which(m3nl$pars$matrix \%in\% 
   c('T0MEANS','CINT','TDPREDEFFECT'))] <- FALSE
   

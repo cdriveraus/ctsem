@@ -6,7 +6,6 @@
 #' @param ... All the other regular arguments to stan()
 #' @export
 #' @details On windows, requires Rtools installed and able to be found by pkgbuild::rtools_path()
-#' @importFrom shiny runApp 
 #' @examples
 #' \donttest{
 #' #### example 1 
@@ -24,17 +23,15 @@
 #' }
 
 stanWplot <- function(object,iter=2000,chains=4,...){
+    
+    tmpdir=tempdir()
+    tmpdir=gsub('\\','/',tmpdir,fixed=TRUE)
+    windows= Sys.info()[1]=='Windows'
   
-  
-  tmpdir=tempdir()
-  tmpdir=gsub('\\','/',tmpdir,fixed=TRUE)
-  
-  windows= Sys.info()[1]=='Windows'
-  
-  stanplot<-function(chains,seed){
-    wd<-  paste0("setwd('",tmpdir,"')")
-
-    writeLines(text=paste0(wd,'
+    stanplot<-function(chains,seed){
+      wd<-  paste0("setwd('",tmpdir,"')")
+      
+      writeLines(text=paste0(wd,'
     seed<-',seed,';
     chains<-',chains,';
     iter<-',iter,';
@@ -97,22 +94,23 @@ stanWplot <- function(object,iter=2000,chains=4,...){
     ))),
     launch.browser=TRUE)
     quit(save="no")'),con=paste0(tmpdir,"/stanplottemp.R"))
+      
+      if(windows) system(paste0("Rscript --slave --no-restore -e source(\'",tmpdir,"/stanplottemp.R\')"),wait=FALSE) else
+        system(paste0(R.home(component = "home"),"/Rscript --slave --no-restore -e source\\(\\\'",tmpdir,"\\/stanplottemp.R\\\'\\)"),wait=FALSE)
+      
+    }
     
-    if(windows) system(paste0("Rscript --slave --no-restore -e source(\'",tmpdir,"/stanplottemp.R\')"),wait=FALSE) else
-      system(paste0(R.home(component = "home"),"/Rscript --slave --no-restore -e source\\(\\\'",tmpdir,"\\/stanplottemp.R\\\'\\)"),wait=FALSE)
+    stanseed<-floor(as.numeric(Sys.time()))
     
-  }
-
-stanseed<-floor(as.numeric(Sys.time()))
-
-sample_file<-paste0(tmpdir,'/',stanseed,'samples', ifelse(chains==1,'_1',''),'.csv')
-
-stanplot(chains=chains,seed=stanseed)
-
-# out=rstan::sampling(object=object,iter=iter,chains=chains,sample_file=sample_file)
-out=rstan::sampling(object=object,iter=iter,chains=chains,sample_file=sample_file,...)
-
-for(chaini in 1:chains) system(paste0("rm ",tmpdir,'/',stanseed,"samples_",chaini,".csv"))
-system(paste0('rm ',tmpdir,'/stanplottemp.R'))
-return(out)
+    sample_file<-paste0(tmpdir,'/',stanseed,'samples', ifelse(chains==1,'_1',''),'.csv')
+    
+    if(requireNamespace('shiny'))  stanplot(chains=chains,seed=stanseed)
+    
+    # out=rstan::sampling(object=object,iter=iter,chains=chains,sample_file=sample_file)
+    out=rstan::sampling(object=object,iter=iter,chains=chains,sample_file=sample_file,...)
+    
+    for(chaini in 1:chains) system(paste0("rm ",tmpdir,'/',stanseed,"samples_",chaini,".csv"))
+    system(paste0('rm ',tmpdir,'/stanplottemp.R'))
+    return(out)
+  
 }

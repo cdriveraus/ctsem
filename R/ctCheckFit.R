@@ -142,7 +142,6 @@ ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
 #'
 #' @return Nothing, just plots.
 #' @export
-#' @importFrom GGally ggcorr
 #' @method plot ctsemFitMeasure
 #'
 #' @examples
@@ -184,21 +183,23 @@ plot.ctsemFitMeasure <- function(x,indices='all', means=TRUE,separatemeans=TRUE,
   }
   
   if(cov){
-    if(means && wait) readline('Press enter to continue')
-    n=x$cov$rowname[match(x = unique(1:max(x$cov$row)),x$cov$row)]
-    for(xi in covtype){
-      mat <- matrix(NA,max(x$cov[,'row']),max(x$cov[,'row']))
-      mat[upper.tri(mat,diag = TRUE)] = x$cov[,'MisspecRatio']
-      mat[lower.tri(mat)] = t(mat)[lower.tri(mat)]
-      dimnames(mat) <- dimnames(mat) <- list(n,n)
-      if(indices[1]=='all') indices <-1:nrow(mat)
-      if(cov2cor) mat <- cov2cor(mat)
-      assign(x = xi, mat[indices,indices,drop=FALSE])
+    if(requireNamespace('GGally')){ 
+      if(means && wait) readline('Press enter to continue')
+      n=x$cov$rowname[match(x = unique(1:max(x$cov$row)),x$cov$row)]
+      for(xi in covtype){
+        mat <- matrix(NA,max(x$cov[,'row']),max(x$cov[,'row']))
+        mat[upper.tri(mat,diag = TRUE)] = x$cov[,'MisspecRatio']
+        mat[lower.tri(mat)] = t(mat)[lower.tri(mat)]
+        dimnames(mat) <- dimnames(mat) <- list(n,n)
+        if(indices[1]=='all') indices <-1:nrow(mat)
+        if(cov2cor) mat <- cov2cor(mat)
+        assign(x = xi, mat[indices,indices,drop=FALSE])
+      }
+      
+      # main <- '(Observed - implied) / sd(implied)'
+      if(cov2cor) limits <-c(-1,1) else limits <- range(get(covtype))
+      do.call(ggcorr,ggcorrArgs) #(data=NULL,cor_matrix =  get(covtype),limits=limits, geom = 'circle',max_size = 13,name=covtype,...)
     }
-
-    # main <- '(Observed - implied) / sd(implied)'
-    if(cov2cor) limits <-c(-1,1) else limits <- range(get(covtype))
-    do.call(ggcorr,ggcorrArgs) #(data=NULL,cor_matrix =  get(covtype),limits=limits, geom = 'circle',max_size = 13,name=covtype,...)
   }
   
 }
