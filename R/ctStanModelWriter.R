@@ -31,7 +31,7 @@ ctStanModelIntOverPop <- function(m){ #improve this function by avoiding additio
     for(ri in 1:(m$n.latent+nindvaryingsmall)){
       for(ci in 1:(m$n.latent+nindvaryingsmall)){
         if(!(ri %in% t0mnotvarying && ci %in% t0mnotvarying)){
-
+          
           t0v <- rbind(t0v,c('T0VAR',ri,ci,
             NA, #ifelse(ci > ri, NA, paste0('popcov_',ivnamesfull[ri],'_',ivnamesfull[ci])), #param
             99999, #ifelse(ci > ri,0, NA), #value
@@ -69,7 +69,7 @@ ctStanModelIntOverPop <- function(m){ #improve this function by avoiding additio
     
     # JAx <- drift
     # JAx$matrix <- 'JAx'
-
+    
     #reference new states
     for(ivi in ivnames){
       #jacobian pre compute
@@ -106,69 +106,70 @@ ctStanModelIntOverPop <- function(m){ #improve this function by avoiding additio
 
 
 simplifystanfunction<-function(bcalc){ #input text of list of computations, output simplified form
-
-# bcalcs=paste0(paste0(c(ctm$calcs$driftcint,ctm$calcs$diffusion),';\n',collapse=' '),
-#           jacobianelements(ctm$jacobian$JAx,ntdpred=ctm$n.TDpred,matsetup=matsetup,
-#              textadd=paste0('    sJAx[',rep(1:nlatentpop,nlatentpop),', ',rep(1:nlatentpop,each=nlatentpop),'] = '),
-#              when = 2,remove = c('fixed','simplestate','drift')),collapse=';\n')
-
-bcalcs=strsplit(bcalc,';')[[1]]
-bcalcs=gsub('\n','',bcalcs)
-bcalcs = bcalcs[!nchar(bcalcs)==0]
-bcalcs1=gsub('=.*','',bcalcs)
-bcalcs2=gsub('.*=','',bcalcs)
-bcalcs2 = gsub(",", "___comma___", bcalcs2, fixed = TRUE)
-bcalcs2 = gsub("[", "___leftsquarebracket___", bcalcs2, fixed = TRUE)
-bcalcs2 = gsub("]", "___rightsquarebracket___", bcalcs2, fixed = TRUE)
-
-bcalcs2c=paste0('c(',paste0(bcalcs2,collapse=', '),')')
-
-# scalcs2=gsub(' ','',Simplify(bcalcs2c))
-
-# scalcs2=Deriv(bcalcs2c,nderiv=0) #to simplify
-scalcs2=bcalcs2c #or not to simplify
-
-if(scalcs2 == 'NULL') return('') else{
-
-names(scalcs2)=NULL
-scalcs2=gsub(' ','',scalcs2)
-
-scalcs2 = gsub(",", "; =", scalcs2, fixed = TRUE)
-scalcs2 = gsub("___rightsquarebracket___", "]", scalcs2, fixed = TRUE)
-scalcs2 = gsub("___leftsquarebracket___", "[", scalcs2, fixed = TRUE)
-scalcs2 = gsub("___comma___", ",", scalcs2, fixed = TRUE)
+  
+  # bcalcs=paste0(paste0(c(ctm$calcs$driftcint,ctm$calcs$diffusion),';\n',collapse=' '),
+  #           jacobianelements(ctm$jacobian$JAx,ntdpred=ctm$n.TDpred,matsetup=matsetup,
+  #              textadd=paste0('    sJAx[',rep(1:nlatentpop,nlatentpop),', ',rep(1:nlatentpop,each=nlatentpop),'] = '),
+  #              when = 2,remove = c('fixed','simplestate','drift')),collapse=';\n')
+  
+  bcalcs=strsplit(bcalc,';')[[1]]
+  bcalcs=gsub('\n','',bcalcs)
+  bcalcs = bcalcs[!nchar(bcalcs)==0]
+  bcalcs1=gsub('=.*','',bcalcs)
+  bcalcs2=gsub('.*=','',bcalcs)
+  bcalcs2 = gsub(",", "___comma___", bcalcs2, fixed = TRUE)
+  bcalcs2 = gsub("[", "___leftsquarebracket___", bcalcs2, fixed = TRUE)
+  bcalcs2 = gsub("]", "___rightsquarebracket___", bcalcs2, fixed = TRUE)
+  
+  bcalcs2c=paste0('c(',paste0(bcalcs2,collapse=', '),')')
+  
+  # scalcs2=gsub(' ','',Simplify(bcalcs2c))
+  
+  # scalcs2=Deriv(bcalcs2c,nderiv=0) #to simplify
+  scalcs2=bcalcs2c #or not to simplify
+  
+  if(scalcs2 == 'NULL') return('') else{
     
-ec=gsub('\\b(c)\\b\\(.*','',scalcs2)
-ec=gsub(';',';  \n',ec)
-scalcs2=gsub('.*\\b(c)\\b\\(','',scalcs2)
-ec=gsub(';','; ',ec)
-scalcs2=gsub(';',';',scalcs2)
-
-ec=gsub('\\{.e','real e',ec)
-ec=gsub('\\{','',ec)
-ec= gsub('\n\\.','\n  real ',ec[1])
-ec=gsub('\\.','',ec)
-
-ec=gsub('<-','= ',ec)
-ec=gsub('\n','\n  ',ec)
-# cat(ec)
-scalcs2=gsub('\\}','',scalcs2)
-scalcs2=gsub('\\)$','',scalcs2)
-scalcs2=gsub('\\.','',scalcs2)
-
-scalcs2[1] = gsub('^\\s*(\\S{1})',' = \\1',scalcs2[1])
-scalcs2 = strsplit(scalcs2,';')[[1]]
-scalcs = paste0(bcalcs1,scalcs2,';  \n  ')
-# cat(scalcs)
-out = paste0('    {\n  ',paste0(ec,collapse=''),paste0(scalcs,collapse=''),'\n  } \n  ',collapse='')
-cat(out)
-return(out)
-}
+    names(scalcs2)=NULL
+    scalcs2=gsub(' ','',scalcs2)
+    
+    scalcs2 = gsub(",", "; =", scalcs2, fixed = TRUE)
+    scalcs2 = gsub("___rightsquarebracket___", "]", scalcs2, fixed = TRUE)
+    scalcs2 = gsub("___leftsquarebracket___", "[", scalcs2, fixed = TRUE)
+    scalcs2 = gsub("___comma___", ",", scalcs2, fixed = TRUE)
+    
+    ec=gsub('\\b(c)\\b\\(.*','',scalcs2)
+    ec=gsub(';',';  \n',ec)
+    scalcs2=gsub('.*\\b(c)\\b\\(','',scalcs2)
+    ec=gsub(';','; ',ec)
+    scalcs2=gsub(';',';',scalcs2)
+    
+    ec=gsub('\\{.e','real e',ec)
+    ec=gsub('\\{','',ec)
+    ec= gsub('\n\\.','\n  real ',ec[1])
+    ec=gsub('\\.','',ec)
+    
+    ec=gsub('<-','= ',ec)
+    ec=gsub('\n','\n  ',ec)
+    # cat(ec)
+    scalcs2=gsub('\\}','',scalcs2)
+    scalcs2=gsub('\\)$','',scalcs2)
+    scalcs2=gsub('\\.','',scalcs2)
+    
+    scalcs2[1] = gsub('^\\s*(\\S{1})',' = \\1',scalcs2[1])
+    scalcs2 = strsplit(scalcs2,';')[[1]]
+    scalcs = paste0(bcalcs1,scalcs2,';  \n  ')
+    # cat(scalcs)
+    out = paste0('    {\n  ',paste0(ec,collapse=''),paste0(scalcs,collapse=''),'\n  } \n  ',collapse='')
+    cat(out)
+    return(out)
+  }
 }
 
 
 
 ctStanModelCleanctspec <-  function(ctspec){ #clean ctspec structure
+  tieffects <- colnames(ctspec)[grep('_effect',colnames(ctspec),fixed=TRUE)]
   found=FALSE
   ctspec$indvarying=as.logical(ctspec$indvarying)
   if(any(ctspec$indvarying[ctspec$matrix %in% 'T0VAR'])){
@@ -176,20 +177,30 @@ ctStanModelCleanctspec <-  function(ctspec){ #clean ctspec structure
     message('Individual variation in T0VAR parameters not possible, removed')
   }
   ctspec$value=as.numeric(ctspec$value)
-  ctspec$transform=as.character(ctspec$transform)
-  ctspec$param=gsub(' ','',as.character(ctspec$param))
+  ctspec$transform=as.character(ctspec$transform) #ensure consistent type in case custom tforms used
+  ctspec$param=gsub(' ','',as.character(ctspec$param)) #remove spces
   comparison=list(NA,NA,FALSE)
   replacement=list(NA,NA,FALSE)
   # names(comparison)=c('param','transform','indvarying')
-  for(rowi in 1:nrow(ctspec)){
-    if( !is.na(ctspec$value[rowi])) {
+  for(rowi in 1:nrow(ctspec)){ 
+    if( !is.na(ctspec$value[rowi])) {#fixed value replacement
       if(any(c(!is.na(ctspec[rowi,'param']),!is.na(ctspec[rowi,'transform']),ctspec[rowi,'indvarying']))){
         if(ctspec[rowi,'value']!=99999) found<-TRUE
         ctspec[rowi,c('param','transform','indvarying')]=replacement
       }
     }
+    if(grepl('[', ctspec$value[rowi],fixed=TRUE)){
+      if(ctspec$indvarying[rowi]){
+        message('Individual variation requested on deterministic parameter ', ctspec$param[rowi],' , setting to FALSE')
+        ctspec$indvarying[rowi] <- FALSE
+      }
+      if(any(ctspec[rowi,tieffects])){
+        message('TI predictor effects requested on deterministic parameter ', ctspec$param[rowi],' , setting to FALSE')
+        ctspec[rowi,tieffects] <- FALSE
+      }
+    } #end deterministic relations check
     if(all(is.na(c(ctspec[rowi,c('value','param')])))) stop('Parameters specified as NA ! Needs a value or character label.')
-  }
+  } #end row loop
   # if(found) message('Minor inconsistencies in model found - removing param name, transform and indvarying from any parameters with a value specified')
   return(ctspec)
 }
@@ -318,29 +329,29 @@ ctStanModelMatrices <-function(ctm){
       }
     }
     if(!is.null(mval)) mval[is.na(mval)] <- 99999 else mval<-array(0,dim=c(0,6))
-
+    
     # matsetup[[m]] = mdat
     # matvalues[[m]] <- mval
   }
-
+  
   # matrixdims <- t(sapply(matsetup, function(m) as.integer(c(max(c(0,m[,1])),max(c(0,m[,2]))))))
   matrixdims <- t(sapply(mats$base, function(m) {
     as.integer(c(max(c(0,mdat[mdat[,'matrix'] %in% m,'row'])),
       max(c(0,mdat[mdat[,'matrix'] %in% m,'col']))))
-    }))
+  }))
   matsetup <- data.frame(mdat,stringsAsFactors = FALSE)
   matsetup[,] <- lapply(matsetup,as.integer)
   matvalues <- data.frame(apply(mval,2,as.numeric,.drop=FALSE),stringsAsFactors = FALSE  )
   # matsetup <- data.frame(apply(do.call(rbind,matsetup),c(1,2),as.integer,.drop=FALSE),stringsAsFactors = FALSE )
   # matvalues <- data.frame(apply(do.call(rbind,matvalues),c(1,2),as.numeric,.drop=FALSE),stringsAsFactors = FALSE  )
   
-
+  
   
   
   #add jacobian fixed values
-
+  
   if(!is.null(ctm$jacobian)){
-
+    
     Jvalues=data.frame(matrix(0,sum(!is.na(suppressWarnings(as.numeric(unlist(ctm$jacobian))))),
       ncol(matvalues),dimnames=list(NULL,colnames(matvalues))))
     Jsetup=data.frame(matrix(0,sum(!is.na(suppressWarnings(as.numeric(unlist(ctm$jacobian))))),
@@ -355,40 +366,40 @@ ctStanModelMatrices <-function(ctm){
               Jsetup[counter,c('row','col','param','transform','matrix')] <- list(ri,ci,0,-1,50+jmati)
               counter <- counter + 1
             }
-            if(grepl('Jtform___',ctm$jacobian[[jmati]][ri,ci])){ #if jacobian has a simple state reference form
-              # Jvalues[counter,'value'] <- ctm$jacobian[[jmati]][ri,ci]
-              browser()
-
-              matsetrow = which(rownames(matsetup) %in% gsub(']','.',gsub('[','.',gsub('Jtform___','',ctm$jacobian[[jmati]][ri,ci]),fixed=TRUE),fixed=TRUE))
-              if(length(matsetrow) > 1) warning('matsetrow duplicates!')
-              Jsetup[counter,c('param','transform')] <- matsetup[matsetrow,c('param','transform')]
-              Jsetup[counter,c('row','col','when')] <- c(ri,ci,-1)
-              Jvalues[counter, c('multiplier','meanscale','offset','inneroffset')] <- matvalues[matsetrow, c('multiplier','meanscale','offset','inneroffset')]
-              counter <- counter + 1
-            }
+            # if(grepl('Jtform___',ctm$jacobian[[jmati]][ri,ci])){ #if jacobian has a simple state reference form
+            #   # Jvalues[counter,'value'] <- ctm$jacobian[[jmati]][ri,ci]
+            #   browser()
+            #   
+            #   matsetrow = which(rownames(matsetup) %in% gsub(']','.',gsub('[','.',gsub('Jtform___','',ctm$jacobian[[jmati]][ri,ci]),fixed=TRUE),fixed=TRUE))
+            #   if(length(matsetrow) > 1) warning('matsetrow duplicates!')
+            #   Jsetup[counter,c('param','transform')] <- matsetup[matsetrow,c('param','transform')]
+            #   Jsetup[counter,c('row','col','when')] <- c(ri,ci,-1)
+            #   Jvalues[counter, c('multiplier','meanscale','offset','inneroffset')] <- matvalues[matsetrow, c('multiplier','meanscale','offset','inneroffset')]
+            #   counter <- counter + 1
+            # }
             
           }
         }
       }
     }
-
-    for(ri in which(matsetup$when > 0 & #for nonlinear rows with a simple state reference (but not measurement related)
-        # matsetup$transform > 0 & #even 0 transforms relevant due to multiplier
-        matsetup$when != 4 & #no measurement jacobian yet
-        matsetup$matrix != 4)){ #no diffusion matrix jacobian yet
-      ms=matsetup[ri,] #ensure that the jacobian transform is also applied
-      mv=matvalues[ri,]
-      message('problem section, recompilation maybe needed!')
-      newJrow <- list(row=ms$row,col=ms$param,param=ms$param,transform=ms$transform+50,
-        indvarying=0,tipred=0,matrix=50+ms$when,when=ms$when)
-      Jsetup[nrow(Jsetup)+1,] <- newJrow
-      Jvalues[nrow(Jvalues)+1,] <- mv
-    }
-      
+    
+    # for(ri in which(matsetup$when > 0 & #for nonlinear rows with a simple state reference (but not measurement related)
+    #     # matsetup$transform > 0 & #even 0 transforms relevant due to multiplier
+    #     matsetup$when != 4 & #no measurement jacobian yet
+    #     matsetup$matrix != 4)){ #no diffusion matrix jacobian yet
+    #   ms=matsetup[ri,] #ensure that the jacobian transform is also applied
+    #   mv=matvalues[ri,]
+    #   message('problem section, recompilation maybe needed!')
+    #   newJrow <- list(row=ms$row,col=ms$param,param=ms$param,transform=ms$transform+50,
+    #     indvarying=0,tipred=0,matrix=50+ms$when,when=ms$when)
+    #   Jsetup[nrow(Jsetup)+1,] <- newJrow
+    #   Jvalues[nrow(Jvalues)+1,] <- mv
+    # }
+    
     
     # Jsetup$when <- rep(-1,nrow(Jsetup))
     if(nrow(Jsetup) > 0) rownames(Jsetup) <- paste0('J',Jsetup$matrix,'__',Jsetup$row,'_',Jsetup$col)
- 
+    
     matsetup <- rbind(matsetup,Jsetup)
     matvalues <- rbind(matvalues,Jvalues)
     
@@ -440,49 +451,53 @@ ctStanCalcsList <- function(ctm){
   })
   
   ctm$calcs <- calcs
- 
+  
   return(ctm)
 }
 
 
-  jacobianelements <- function(J, when, ntdpred,matsetup,mats,textadd=NA, 
-    remove=c('drift','simplestate', 'state','fixed'),returndriftonly=FALSE){ 
-    out=c()
-    if(!(when == 3 && ntdpred ==0)){
-      d=nrow(J) 
-      driftonly <-   simplestatesonly <- c()
-        for(ci in 1:ncol(J)){
-          for(ri in 1:nrow(J)){ #check for standard drift reference
-          if(J[ri,ci] == paste0('sDRIFT[',ri,',',ci,']')) {
+jacobianelements <- function(J, when, ntdpred,matsetup,mats,textadd=NA, 
+  remove=c('drift','simplestate', 'state','fixed'),returndriftonly=FALSE){ 
+  out=c()
+  if(!(when == 3 && ntdpred ==0)){
+    d=nrow(J) 
+    driftonly <-   simplestatesonly <- c()
+    for(ci in 1:ncol(J)){
+      for(ri in 1:nrow(J)){ #check for standard drift reference
+        if(J[ri,ci] == paste0('sDRIFT[',ri,',',ci,']')) {
+          chk=TRUE
+        } else {
+          if(J[ri,ci] == mats$DRIFT[ri,ci] && is.na(suppressWarnings(as.numeric(J[ri,ci])))){
             chk=TRUE
-          } else {
-            if(J[ri,ci] == mats$DRIFT[ri,ci] && is.na(suppressWarnings(as.numeric(J[ri,ci])))){
-              chk=TRUE
           } else chk <- FALSE
-          }
-          driftonly <- c(driftonly, chk) 
-          simplestatesonly <- c(simplestatesonly, grepl('^\\b(state)\\b\\[\\d+\\]$',J[ri,ci]))
-            # apply(matsetup[matsetup$when > 0 & matsetup$matrix == when,c('row','col'),drop=FALSE],
-            #   1, function(x) all(c(ri,ci)==x)) )
         }
+        driftonly <- c(driftonly, chk) 
+        simplestatesonly <- c(simplestatesonly, grepl('^\\b(state)\\b\\[\\d+\\]$',J[ri,ci]))
+        # apply(matsetup[matsetup$when > 0 & matsetup$matrix == when,c('row','col'),drop=FALSE],
+        #   1, function(x) all(c(ri,ci)==x)) )
       }
-      if(all(!is.na(textadd))) out=paste0(textadd, J,';\n') else out = J
-      drop<-as.integer(c())
-      if('drift' %in% remove) drop = which(driftonly)
-      if('simplestate' %in% remove && length(simplestatesonly) > 0) drop = unique(c(drop,which(simplestatesonly)))
-      
-      if(length(drop) > 0) out=out[-drop] #dropping selected terms
-      if('fixed' %in% remove) out=out[is.na(suppressWarnings(as.numeric(out)))] #dropping single values
-      if('state' %in% remove) out = out[!grepl('state[',out,fixed=TRUE)] else out = out[(grepl('state[',out,fixed=TRUE))]
-      
-      if(all(!is.na(textadd))) out=paste0(out,collapse='')
-      if(when==3 && ntdpred) out <- c() #no need for extra jacobian lines if no predictors!
-      if(returndriftonly) out <- matrix(as.integer(as.logical(driftonly)),d,d)
     }
-    return(out)
+    
+    out = J
+    drop<-as.integer(c())
+    if('fixed' %in% remove) drop=which(!is.na(suppressWarnings(as.numeric(out)))) #dropping single values
+    if('drift' %in% remove) drop = unique(c(drop,which(driftonly)))
+    if('simplestate' %in% remove && length(simplestatesonly) > 0) drop = unique(c(drop,which(simplestatesonly)))
+    
+    if(all(!is.na(textadd))) out=paste0(textadd, J,';\n')
+    if(length(drop) > 0) out=out[-drop] #dropping selected terms
+    
+    if('state' %in% remove) out = out[!grepl('state[',out,fixed=TRUE)] #else out = out[(grepl('state[',out,fixed=TRUE))]
+    
+    if(all(!is.na(textadd))) out=paste0(out,collapse='')
+    if(when==3 && ntdpred==0) out <- c() #no need for extra jacobian lines if no predictors!
+    if(returndriftonly) out <- matrix(as.integer(as.logical(driftonly)),d,d)
   }
-  
-  
+  print(out)
+  return(out)
+}
+
+
 
 
 ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup){
@@ -502,32 +517,11 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup){
   # intoverpopdynamiccalcs <- gsub('sDIFFUSION','sDIFFUSIONsqrt',intoverpopdynamiccalcs)
   
   #save calcs without intoverpop for param intitialisation
-
   
-  finiteJ<-function(){
-    paste0('
-    for(statei in 0:nlatentpop){
-            if(statei>0){
-              sJAx[statei,statei] = Jstep;
-              state = eta + sJAx[,statei];
-            } else {
-              state = eta;
-            }
-
-            ',paste0(ctm$calcs$driftcint,';\n',collapse=' '),';\n',' 
-            if(statei== 0) {
-              base = sDRIFT[1:nlatent, 1:nlatent] * state[1:nlatent] + sCINT[,1];
-            }
-            if(statei > 0) {
-              sJAx[1:nlatent,statei] = (( sDRIFT[1:nlatent, 1:nlatent] * state[1:nlatent] + sCINT[,1]) - base)/Jstep;
-            }
-          }
-          ',paste0(ctm$calcs$diffusion,';\n',collapse=' '),' //not repeating other calcs because Jstep is small
-          ')
-  }
- 
+  
+  
   simplestatedependencies <- function(when, mlist) {
-  paste0('
+    paste0('
           for(ri in 1:size(matsetup)){ //for each row of matrix setup
             if(matsetup[ri,3] > 0 && matsetup[ri,8] == ',when,'){ //perform calcs appropriate to this section
             real newval;
@@ -535,8 +529,34 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup){
             ',paste0('if(matsetup[ri, 7] == ', (mats$all)[(mats$all) %in% mlist],') s', names(mats$all)[(mats$all) %in% mlist],'[matsetup[ ri,1], matsetup[ri,2]] = newval;', collapse = ' \n      '),'
             }
           }')
+  }
+  
+  
+  finiteJ<-function(){
+    paste0('
+    {
+    int zeroint[1];
+    eta = state;
+    for(statei in append_array(sJAxfinite,zeroint)){ //if some finite differences to do, compute these first
+      state = eta;
+      if(statei>0)  state[statei] += Jstep;
+      ',simplestatedependencies(when=2,mlist=c(mats$driftcint,mats$diffusion,mats$jacobian[2])),'
+      ',simplifystanfunction(paste0(paste0(c(ctm$calcs$driftcint,ctm$calcs$diffusion),';\n',collapse=' '))),' 
+      if(statei > 0) {
+        sJAx[sJAxfinite,statei] =  sDRIFT[sJAxfinite, ] * state + sCINT[sJAxfinite,1]; //compute new change
+      }
+      if(statei== 0 && size(sJAxfinite) > 0) { //only need these calcs if there are finite differences to do -- otherwise loop just performs system calcs.
+        base[sJAxfinite] = sDRIFT[sJAxfinite, ] * state + sCINT[sJAxfinite,1];
+        for(fi in sJAxfinite){
+          sJAx[sJAxfinite,fi] = (sJAx[sJAxfinite,fi] - base[sJAxfinite]) / Jstep; //new - baseline change divided by stepsize
+        }
+      }
     }
-
+    state = eta; // reset state to pre jacobian form
+    }
+    ')
+  }
+  
   ukfilterfunc<-function(ppchecking){
     out<-paste0('
   int si = 0;
@@ -617,13 +637,15 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup){
         while(intstepi < dt){
           intstepi = intstepi + dtsmall;
           
-          ',simplestatedependencies(when=2,mlist=c(mats$driftcint,mats$diffusion,mats$jacobian[2])),'
-          ',simplifystanfunction(paste0(
-             paste0(c(ctm$calcs$driftcint,ctm$calcs$diffusion),';\n',collapse=' '),
-             jacobianelements(ctm$jacobian$JAx,ntdpred=ctm$n.TDpred,matsetup=matsetup,mats=mx,
-             textadd=paste0('    sJAx[',rep(1:nlatentpop,nlatentpop),', ',rep(1:nlatentpop,each=nlatentpop),'] = '),
-             when = 2,remove = c('fixed','simplestate','drift'))
-             ,collapse=';')),'
+          ',#simplestatedependencies(when=2,mlist=c(mats$driftcint,mats$diffusion,mats$jacobian[2])),' #now done inside finite diff loop
+      finiteJ(),
+      simplifystanfunction(paste0(
+        paste0(ctm$calcs$diffusion,';\n',collapse=' '), 
+        # paste0(c(ctm$calcs$driftcint,ctm$calcs$diffusion),';\n',collapse=' '), #removed because driftcint added during finite diff loop
+        jacobianelements(ctm$jacobian$JAx,ntdpred=ctm$n.TDpred,matsetup=matsetup,mats=mx,
+          textadd=paste0('    sJAx[',rep(1:nlatentpop,nlatentpop),', ',rep(1:nlatentpop,each=nlatentpop),'] = '),
+          when = 2,remove = c('fixed','drift'))
+        ,collapse=';')),'
              
       for(ri in 1:nlatentpop){ 
         for(ci in 1:nlatentpop){
@@ -665,8 +687,8 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup){
     ',simplestatedependencies(when=1,mlist=c(mats$t0,mats$jacobian[1])),'
     ',paste0(ctm$calcs$t0,';',collapse=' '),'
     ',jacobianelements(ctm$jacobian$J0,ntdpred=ctm$n.TDpred,matsetup=matsetup,mats=mx,
-        textadd=paste0('    sJ0[',rep(1:nlatentpop,nlatentpop),', ',rep(1:nlatentpop,each=nlatentpop),'] = '),
-        when = 1,remove = c('fixed','simplestate')),'
+      textadd=paste0('    sJ0[',rep(1:nlatentpop,nlatentpop),', ',rep(1:nlatentpop,each=nlatentpop),'] = '),
+      when = 1,remove = c('fixed')),'
       state = sT0MEANS[,1];
       etacov= quad_form_sym(sT0VAR, sJ0\');
     if(verbose > 1) print("rowi = ",rowi,"  state = ",sT0MEANS);
@@ -679,7 +701,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup){
     ',paste0(ctm$calcs$tdpred,';',collapse=' '),
       jacobianelements(ctm$jacobian$Jtd,ntdpred=ctm$n.TDpred,matsetup=matsetup,mats=mx,
         textadd=paste0('    sJtd[',rep(1:nlatentpop,nlatentpop),', ',rep(1:nlatentpop,each=nlatentpop),'] = '),
-        when = 3,remove = c('fixed','simplestate')),'
+        when = 3,remove = c('fixed')),'
       state[1:nlatent] +=   (sTDPREDEFFECT * tdpreds[rowi]); //tdpred effect only influences at observed time point','
       if(verbose > 1)  print("state = ", state);
       if(verbose > 1)  print("etacov = ",etacov);
@@ -901,7 +923,7 @@ subjectparaminit<- function(popmats=FALSE,smats=TRUE){
   matrix[nlatent,nlatent] ',ifelse(smats,'s',''),ifelse(popmats,'pop_',''),'asymDIFFUSION',if(!smats && !popmats) '[asymDIFFUSIONsubindex ? nsubjects : 1]','; //stationary latent process variance
   vector[nt0meansstationary ? nlatent : 0] ',ifelse(smats,'s',''),ifelse(popmats,'pop_',''),'asymCINT',if(!smats && !popmats) '[asymCINTsubindex ? nsubjects : 1]','; // latent process asymptotic level
 ','matrix[nlatent, nlatent] ',ifelse(smats,'s',''),ifelse(popmats,'pop_',''), 'DIFFUSIONcov',if(!smats && !popmats) '[DIFFUSIONcovsubindex ? nsubjects : 1]',';',
-  collapse='\n')
+    collapse='\n')
 }
 
 stateparscalc <- function(){
@@ -1164,7 +1186,7 @@ functions{
 
   real tform(real param, int transform, data real multiplier, data real meanscale, data real offset, data real inneroffset){
     real out;
-    ',tformshapes(),tformshapes(jacobian=TRUE),tformshapes(jacobian=TRUE, driftdiag=TRUE),
+    ',tformshapes(),tformshapes(jacobian=TRUE),
     if(length(extratforms) > 0) paste0(extratforms,collapse=" \n"),'
     return out;
   }
@@ -1250,6 +1272,8 @@ data {
   real dokalmanpriormodifier;
   int intoverpopindvaryingindex[nindvarying];
   int sJAxdrift[nlatentpop,nlatentpop];
+  int nsJAxfinite;
+  int sJAxfinite[nsJAxfinite];
 }
       
 transformed data{
@@ -1330,9 +1354,9 @@ transformed parameters{
   }//end indvarying par setup
 
   {',
-  if(!gendata) ukfilterfunc(ppchecking=FALSE),
-    'if(dokalman==1){',
-     if(!gendata) kalmanll(),'
+if(!gendata) ukfilterfunc(ppchecking=FALSE),
+'if(dokalman==1){',
+if(!gendata) kalmanll(),'
     }
   }
 }
@@ -1384,24 +1408,32 @@ rawpopsdfull[indvaryingindex] = sqrt(diagonal(rawpopcov)); //base for calculatio
 
     for(ri in 1:dims(popsetup)[1]){
       if(popsetup[ri,3] && popsetup[ri,8]==0) { //if a free parameter //or state dependent parameter maybe?
+        real rawpoppar = rawpopmeans[popsetup[ri,3] ];
+        int pr = ri; // unless intoverpop, pop matrix row reference is simply current row
+        
+        if(intoverpop && popsetup[ri,5]) { //removed ri transform of rawpop because t0means only transforms once -- if non identity state tform in future, change this!
+          for(ri2 in 1:dims(popsetup)[1]){ //check when state reference param of popsetup corresponds to row of t0means in current popsetup row
+            if(popsetup[ri2,8] > 0 && popsetup[ri2,3] == popsetup[ri,1]) pr = ri2;
+          }
+        }
+        
+        popmeans[popsetup[ ri,3]] = tform(rawpoppar, popsetup[pr,4], popvalues[pr,2], popvalues[pr,3], popvalues[pr,4], popvalues[pr,6] ); 
 
-        popmeans[popsetup[ ri,3]] = tform(rawpopmeans[popsetup[ri,3] ], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4], popvalues[ri,6] ); 
-
-        popsd[popsetup[ ri,3]] = popsetup[ ri,5] ? 
-          fabs(tform(
-            rawpopmeans[popsetup[ri,3] ]  + rawpopsdfull[popsetup[ ri,3]], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4], popvalues[ri,6]) -
+        popsd[popsetup[ ri,3]] = popsetup[ ri,5] ? //if individually varying
+          fabs(tform( //compute sd
+            rawpoppar  + rawpopsdfull[popsetup[ ri,3]], popsetup[pr,4], popvalues[pr,2], popvalues[pr,3], popvalues[pr,4], popvalues[pr,6]) -
            tform(
-            rawpopmeans[popsetup[ri,3] ]  - rawpopsdfull[popsetup[ ri,3]], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4], popvalues[ri,6]) ) /2 : 
-          0; 
+            rawpoppar  - rawpopsdfull[popsetup[ ri,3]], popsetup[pr,4], popvalues[pr,2], popvalues[pr,3], popvalues[pr,4], popvalues[pr,6]) ) /2 : 
+          0; //else zero
 
         if(ntipred > 0){
           for(tij in 1:ntipred){
             if(TIPREDEFFECTsetup[popsetup[ri,3],tij] ==0) {
               linearTIPREDEFFECT[popsetup[ri,3],tij] = 0;
             } else {
-            linearTIPREDEFFECT[popsetup[ri,3],tij] = (
-              tform(rawpopmeans[popsetup[ri,3] ] + TIPREDEFFECT[popsetup[ri,3],tij] * .01, popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4], popvalues[ri,6] ) -
-              tform(rawpopmeans[popsetup[ri,3] ] - TIPREDEFFECT[popsetup[ri,3],tij] * .01, popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4], popvalues[ri,6] )
+            linearTIPREDEFFECT[popsetup[ri,3],tij] = ( //tipred reference is from row ri, tform reference from row pr in case of intoverpop
+              tform(rawpoppar + TIPREDEFFECT[popsetup[ri,3],tij] * .01, popsetup[pr,4], popvalues[pr,2], popvalues[pr,3], popvalues[pr,4], popvalues[pr,6] ) -
+              tform(rawpoppar - TIPREDEFFECT[popsetup[ri,3],tij] * .01, popsetup[pr,4], popvalues[pr,2], popvalues[pr,3], popvalues[pr,4], popvalues[pr,6] )
               ) /2 * 100;
             }
          }

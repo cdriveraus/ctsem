@@ -78,7 +78,9 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd') ){
         Jout[[typei]] <- c()
         next
       }
-      fn = sapply(paste0('state[',1:length(fn),'] + ',prodSymb(mats$TDPREDEFFECT, cbind(rep(1,m$n.TDpred)))),Simplify)
+      tdrows=nrow(mats$TDPREDEFFECT)
+      fn = paste0('state[',1:ndim,']')
+      fn[1:tdrows] = paste0(fn[1:tdrows],' + ', prodSymb(mats$TDPREDEFFECT, cbind(rep(1,m$n.TDpred))))
       # # create fn by multiplying drift matrix with state vector
       # for (row in 1:nrow(mats$TDPREDEFFECT)) {
       #   for (col in 1:(ncol(mats$TDPREDEFFECT))) {

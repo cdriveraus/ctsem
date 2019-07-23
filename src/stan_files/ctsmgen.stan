@@ -239,6 +239,8 @@ int DIFFUSIONcovsubindex;
   real dokalmanpriormodifier;
   int intoverpopindvaryingindex[nindvarying];
   int sJAxdrift[nlatentpop,nlatentpop];
+  int nsJAxfinite;
+  int sJAxfinite[nsJAxfinite];
 }
       
 transformed data{
@@ -391,6 +393,14 @@ rawpopsdfull[indvaryingindex] = sqrt(diagonal(rawpopcov)); //base for calculatio
       if(popsetup[ri,3] && popsetup[ri,8]==0) { //if a free parameter //or state dependent parameter maybe?
 
         popmeans[popsetup[ ri,3]] = tform(rawpopmeans[popsetup[ri,3] ], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4], popvalues[ri,6] ); 
+        if(intoverpop && popsetup[ri,5]) {
+          int sr = intoverpopindvaryingindex[popsetup[ri,5]]; // detect state reference
+          int pr; //population matrix row reference where original system matrix parameter makes state reference
+          for(ri2 in 1:dims(popsetup)[1]){ //check when state reference param of popsetup corresponds to row of t0means in current popsetup row
+            if(popsetup[ri2,3] == popsetup[ri,1] && popsetup[ri2,8] > 0) pr = ri2;
+          }
+          popmeans[popsetup[ ri,3]] = tform(popmeans[popsetup[ ri,3]], popsetup[pr,4], popvalues[pr,2], popvalues[pr,3], popvalues[pr,4], popvalues[pr,6] ); 
+        }
 
         popsd[popsetup[ ri,3]] = popsetup[ ri,5] ? 
           fabs(tform(
@@ -658,6 +668,13 @@ pop_asymCINT = sasymCINT;
           intstepi = intstepi + dtsmall;
           
           
+    {
+    int zeroint[1];
+    eta = state;
+    for(statei in append_array(sJAxfinite,zeroint)){ //if some finite differences to do, compute these first
+      state = eta;
+      if(statei>0)  state[statei] += Jstep;
+      
           for(ri in 1:size(matsetup)){ //for each row of matrix setup
             if(matsetup[ri,3] > 0 && matsetup[ri,8] == 2){ //perform calcs appropriate to this section
             real newval;
@@ -668,7 +685,28 @@ pop_asymCINT = sasymCINT;
       if(matsetup[ri, 7] == 52) sJAx[matsetup[ ri,1], matsetup[ri,2]] = newval;
             }
           }
-          
+          {
+  ;  
+  
+  } 
+   
+      if(statei > 0) {
+        sJAx[sJAxfinite,statei] =  sDRIFT[sJAxfinite, ] * state + sCINT[sJAxfinite,1]; //compute new change
+      }
+      if(statei== 0 && size(sJAxfinite) > 0) { //only need these calcs if there are finite differences to do -- otherwise loop just performs system calcs.
+        base[sJAxfinite] = sDRIFT[sJAxfinite, ] * state + sCINT[sJAxfinite,1];
+        for(fi in sJAxfinite){
+          sJAx[sJAxfinite,fi] = (sJAx[sJAxfinite,fi] - base[sJAxfinite]) / Jstep; //new - baseline change divided by stepsize
+        }
+      }
+    }
+    state = eta; // reset state to pre jacobian form
+    }
+        {
+  ;  
+  
+  } 
+  
              
       for(ri in 1:nlatentpop){ 
         for(ci in 1:nlatentpop){

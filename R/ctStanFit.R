@@ -35,8 +35,11 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
   
   if(ctsmodel$n.TDpred > 0) {
     tdpreds <- datalong[,ctsmodel$TDpredNames,drop=FALSE]
-    if(any(is.na(tdpreds))) message('Missingness in TDpreds! Replaced by zeroes...')
+    if(any(is.na(tdpreds))) {
+      # if(NAtdpreds == 'error'
+      message('Missingness in TDpreds! Replaced by zeroes...')
     tdpreds[is.na(tdpreds)] <-0 ## rough fix for missingness
+    }
   }
   
   
@@ -262,6 +265,7 @@ verbosify<-function(sf,verbose=2){
 #' 
 #' 
 #' 
+#' 
 #' #### Model fitting (from here it is good to understand!)
 #' 
 #' #Specify univariate linear growth curve
@@ -280,6 +284,7 @@ verbosify<-function(sf,verbose=2){
 #'   MANIFESTVAR=matrix(c('merror1'),nrow=1,ncol=1))
 #' 
 #' #modify between subject aspects -- alternatively, run: edit(m1$pars)
+#' m1$pars$indvarying <- TRUE
 #' m1$pars$indvarying[-which(m1$pars$matrix %in% c('T0MEANS','CINT'))] <- FALSE
 #' m1$pars$age_effect[-which(m1$pars$matrix %in% c('T0MEANS','CINT'))] <- FALSE
 #' 
@@ -320,6 +325,7 @@ verbosify<-function(sf,verbose=2){
 #'   MANIFESTMEANS=matrix(0,ncol=1),
 #'   MANIFESTVAR=matrix(c('merror1'),nrow=1,ncol=1))
 #' 
+#' m2$pars$indvarying <- TRUE
 #' m2$pars$indvarying[-which(m2$pars$matrix %in% c('T0MEANS','CINT'))] <- FALSE
 #' m2$pars$age_effect[-which(m2$pars$matrix %in% c('T0MEANS','CINT'))] <- FALSE
 #' 
@@ -356,6 +362,7 @@ verbosify<-function(sf,verbose=2){
 #'   MANIFESTMEANS=matrix(0,ncol=1),
 #'   MANIFESTVAR=matrix(c('merror1'),nrow=1,ncol=1))
 #' 
+#' m3$pars$indvarying <- TRUE
 #' m3$pars$indvarying[-which(m3$pars$matrix %in% 
 #'   c('T0MEANS','CINT','TDPREDEFFECT'))] <- FALSE
 #'   
@@ -398,6 +405,7 @@ verbosify<-function(sf,verbose=2){
 #'   MANIFESTVAR=matrix(c('merror1',0,0,'merror2'),nrow=2,ncol=2))
 #' 
 #' #restrict between subjects variation / covariate effects
+#' m4$pars$indvarying <- TRUE
 #' m4$pars$indvarying[-which(m4$pars$matrix %in% c('T0MEANS','CINT','TDPREDEFFECT'))] <- FALSE
 #' m4$pars$age_effect[-which(m4$pars$matrix %in% c('T0MEANS','CINT','TDPREDEFFECT'))] <- FALSE
 #' 
@@ -409,6 +417,7 @@ verbosify<-function(sf,verbose=2){
 #'   LAMBDA = matrix(c(1,0,0,1),nrow=2,ncol=2))
 #' 
 #' #restrict between subjects variation / covariate effects
+#' m4$pars$indvarying <- TRUE
 #' m4$pars$indvarying[-which(m4$pars$matrix %in% c('T0MEANS','MANIFESTMEANS','TDPREDEFFECT'))] <- FALSE
 #' m4$pars$age_effect[-which(m4$pars$matrix %in% c('T0MEANS','MANIFESTMEANS','TDPREDEFFECT'))] <- FALSE
 #' 
@@ -447,6 +456,7 @@ verbosify<-function(sf,verbose=2){
 #'   MANIFESTMEANS=matrix(0,ncol=1),
 #'   MANIFESTVAR=matrix(c('merror1'),nrow=1,ncol=1))
 #' 
+#' m3nl$pars$indvarying <- TRUE
 #' m3nl$pars$indvarying[-which(m3nl$pars$matrix %in% 
 #'   c('T0MEANS','CINT','TDPREDEFFECT'))] <- FALSE
 #'   
@@ -890,6 +900,18 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     standata$sJAxdrift <- array(jacobianelements(ctstanmodel$jacobian$JAx,mats=mx,
       ntdpred=ctstanmodel$n.TDpred,when=2,matsetup=matsetup,returndriftonly=TRUE),
       dim=c(standata$nlatentpop,standata$nlatentpop))
+    
+    if(!recompile){ #then use finite diffs for some elements
+      standata$sJAxfinite <- array(as.integer(unique(which(matrix(ctstanmodel$jacobian$JAx %in% #which rows of jacobian are not simply drift / fixed / state refs
+      jacobianelements(ctstanmodel$jacobian$JAx,mats=mx,remove=c('drift','simplestate','fixed'),
+        ntdpred=ctstanmodel$n.TDpred,when=2,matsetup=matsetup),standata$nlatentpop,standata$nlatentpop), 
+      arr.ind = TRUE)[,'row'])))
+    standata$nsJAxfinite <- length(standata$sJAxfinite)
+    }
+    if(recompile){
+      standata$sJAxfinite <- array(as.integer(c()))
+      standata$nsJAxfinite <- 0L
+    }
 
     #add subject variability indices to data
     for(mati in c(names(mats$base),'asymCINT','asymDIFFUSION','DIFFUSIONcov')){

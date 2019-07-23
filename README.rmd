@@ -41,5 +41,15 @@ cat("\nCXX14FLAGS=-O3 -march=native -mtune=native",
     "CXX14FLAGS += -fPIC",
     file = M, sep = "\n", append = TRUE)
     
-    
+
+In case of compile errors like 'g++ not found', ensure the devtools package is installed:
+install.packages('devtools')
+and include the following in your .Rprofile
+
+library(devtools)
+Sys.setenv(PATH = paste("C:/Rtools/bin", Sys.getenv("PATH"), sep=";"))
+Sys.setenv(PATH = paste("C:\\Rtools\\mingw_64\\bin", Sys.getenv("PATH"), sep=";"))
+Sys.setenv(BINPREF = "C:/Rtools/mingw_$(WIN)/bin/")
+
+
 
