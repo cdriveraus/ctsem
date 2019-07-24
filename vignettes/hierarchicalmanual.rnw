@@ -231,7 +231,7 @@ ctstantestdat[,c('Y1','Y2','TI1','TI2','TI3')] <-
 Functions to convert between wide and long formats used by ctsem are available, these are \verb}ctWideToLong}, \verb}ctDeintervalise}, \verb}ctLongToWide}, \verb}ctIntervalise}. For details see the relevant help in R.
 
 \subsection{Missing values}
-Missingness in the manifest variables is handled using the typical filtering / full information maximum likelihood approach, missing values on time dependent predictors are replaced with zeros, and missing values on time independent predictors are sampled as part of the model, with a default prior of normal(0,1) (this is specified via the \verb|$tipredsimputedscale| slot in the model object). If \verb|optimize=TRUE| is specified when fitting, missing time independent predictors cannot be sampled and are fixed to zero -- this latter approach is not ideal and inferences regarding predictor effects should be considered suspect in such a case. 
+Missingness in the manifest variables is handled using the typical filtering / full information maximum likelihood approach. Missing values on the covariates -- either time dependent or independent -- are somewhat more problematic, and will cause an error by default. Various alternative approaches are available: In certain cases it may be reasonable to replace missing values with zeros, or to sample them as part of the model. See the ctStanFit help for more details.  
 
 \subsection{Model specification}
 Specify model using \verb}ctModel(type="stanct",...)}. \verb|"stanct"| specifies a continuous time model in Stan format, \verb|"standt"| specifies discrete time, while \verb|"omx"| is the original ctsem behaviour and prepares an OpenMx model \citet[discussed in][]{driver2017continuous}. Other arguments to \verb|ctModel| include the list of within-subject parameter matrices, with LAMBDA, the factor loading matrix, the only one that must be specified. All other matrices are set to the system dimensions implied by LAMBDA (number of columns representing latent processes, rows representing manifest indicators), and in general filled with free parameters. The CINT matrix is the only exception to this, it is filled with zero's for identification purposes. Such parameter matrices can be manually specified using either numeric values when an element of the model should be fixed, a character string when it should be estimated, or a character string containing at least one square bracket for deterministic relations between parameter matrices. See the help for \verb|ctModel|, available in R via \verb}?ctModel}, for more details.
@@ -343,15 +343,11 @@ ctStanPlotPost(obj = fit, rows=3, mfrow=c(1,1), parcontrol = list() )
 Shown in Figure \ref{fig:outputposterior} are approximate density plots based on the post-warmup samples drawn. For each parameter that has individual variation specified, three plots are shown. These are the population mean posterior compared to the prior, the posterior versus prior distribution of subject level parameters along with the population mean prior, and then the population standard deviation posterior compared to the prior. 
 
 \subsection{Model prediction plots}
-One means of assessing model performance is to view plots of the observed time series alongside the model predicted time series. ctsem includes functionality to output prior (based on all prior observations), updated (based on all prior and current observations), and smoothed (based on all observations) expectations and covariances from the Kalman filter, based on specific subjects models. For ease of comparison, expected manifest indicator scores conditional on prior, updated and smoothed states are also included. This approach allows for: predictions regarding individuals states at any point in time, given any values on the time dependent predictors (external inputs such as interventions or events); residual analysis to check for unmodeled dependencies in the data; or simply as a means of visualization, for comprehension and model sanity checking purposes. Examples of such are depicted in Figure \ref{fig:kalmanplot}, where we see observed, predicted, and smoothed scores for a selected subject from our sample. If we wanted to predict unobserved states in the future, we would need only to specify the appropriate timerange (prediction into earlier times is possible but makes little sense unless the model is restricted to stationarity). For help with these plots, see \verb|?ctKalman| and \verb|?ctKalmanPlot| (arguments for the latter are passed via \verb|ctKalman|, as below).
+One means of assessing model performance is to view plots of the observed time series alongside the model predicted time series. ctsem includes functionality to output prior (based on all prior observations) and updated (based on all prior and current observations) expectations and covariances from the Kalman filter, based on specific subjects models. Examples of such are depicted in Figure \ref{fig:kalmanplot}, where we see observed, predicted, and smoothed scores for a selected subject from our sample. If we wanted to predict unobserved states in the future, we would need only to specify the appropriate timerange (prediction into earlier times is possible but makes little sense unless the model is restricted to stationarity). For help with these plots, see \verb|?ctKalman| and \verb|?ctKalmanPlot| (arguments for the latter are passed via \verb|ctKalman|, as below).
 
 <<kalmanplot,echo=2:4, fig.width=8, fig.height=5, fig.cap='Predicted and smoothed estimates for one subject with two processes. Uncertainty shown is a 95\\% credible interval comprising both process and measurement error.'>>=
-par(mfrow=c(1,2),mgp=c(1.3,.5,0),mar=c(3,2,2,1)+.2,cex=.8) 
-ctKalman(fit, subjects=2, timerange=c(0,30), kalmanvec=c('y', 'yprior'), timestep=.01, 
+ctKalman(fit, subjects=2,  kalmanvec=c('y', 'yprior'), 
 plot=TRUE, plotcontrol=list(xaxs='i', main = 'Predicted'))
- 
-ctKalman(fit, subjects=2, timerange=c(0,30), kalmanvec=c('y', 'ysmooth'), timestep=.01, 
-plot=TRUE, plotcontrol=list(xaxs='i',main = 'Smoothed'))
 
 @
 
@@ -507,12 +503,12 @@ datalong <- data.frame(id, time, sunspots)
 
 m <- ctModel(n.latent=2, n.manifest=1, type='stanct', manifestNames = 'sunspots',
   LAMBDA=matrix(c(1,'1|ma1'),nrow=1, ncol=2),
-  DRIFT = matrix(c(0,'drift21',1,  'PARS[1,2] + PARS[1,1] *  state[1]'), 2, 2),
+  DRIFT = matrix(c(0,'drift21',1,  '-log1p(exp(PARS[1,2] + PARS[1,1] *  state[1]))'), 2, 2),
   DIFFUSION = matrix(c(0,0, 0,'diff11'), 2, 2),
   MANIFESTVAR=diag(0,1),
   PARS=matrix(c('driftbystate','0|1|1|-1|0|driftintercept'), 1,2) )
 
-ssfitnl <- ctStanFit(datalong, m, chains=2, optimize=TRUE)
+ssfitnl <- ctStanFit(datalong, m, optimize=T)
 
 k <- ctStanKalman(ssfitnl) #extract state predictions
 

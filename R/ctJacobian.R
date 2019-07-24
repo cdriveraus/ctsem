@@ -1,7 +1,7 @@
 # ctm=ctModel(LAMBDA=cbind(diag(2),0), DRIFT=matrix(c('d11','state[3]',0, 'd12','d22',0,0,0,0),3,3),type='stanct')
 # ctm2=ctModel(LAMBDA=cbind(diag(2),0), DRIFT=matrix(c('d11','PARS[1,1]',0, 'd12','d22',0,0,0,0),3,3),PARS=matrix('state[3]'),type='stanct')
 
-ctJacobian <- function(m,types=c('J0','JAx','Jtd') ){
+ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
   
   # require(cOde)
   # require(Deriv)
@@ -66,10 +66,7 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd') ){
       }
       # 
     }
-    
-    # if(typei=='JJAx'){
-    #   fn=Jout$JAx
-    # }
+
     
     if(typei=='Jtd'){
       if(m$n.TDpred ==0) {
@@ -79,12 +76,6 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd') ){
       tdrows=nrow(mats$TDPREDEFFECT)
       fn = paste0('state[',1:ndim,']')
       fn[1:tdrows] = paste0(fn[1:tdrows],' + ', prodSymb(mats$TDPREDEFFECT, cbind(rep(1,m$n.TDpred))))
-      # # create fn by multiplying drift matrix with state vector
-      # for (row in 1:nrow(mats$TDPREDEFFECT)) {
-      #   for (col in 1:(ncol(mats$TDPREDEFFECT))) {
-      #     fn[row] = paste0(ifelse(col > 1, paste0(fn[row],' + '),''), "(", mats$TDPREDEFFECT[row, col], ")")
-      #   }
-      # }
     }
     
     if(typei=='J0') {
@@ -94,9 +85,11 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd') ){
           paste0('state[',xi,']') else out <- t0func[xi]
           return(out)
       })
-              
       fn = sapply(prodSymb(diag(nrow(mats$T0MEANS)), matrix(t0func,ncol=1)),Simplify)
-      
+    }
+    if(typei=='Jy') {
+      fn = paste0(mats$MANIFESTMEANS,' + ',mats$LAMBDA,' * state[',1:ndim,']')
+      # fn = sapply(prodSymb(diag(nrow(mats$T0MEANS)), matrix(t0func,ncol=1)),Simplify)
     }
     
     fn = gsub(" ", "", fn, fixed = TRUE) #remove spaces
@@ -133,12 +126,12 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd') ){
     
     mm=ctStanModelMatrices(m)
     Js=J #replace parameter labels with matrix references
-    for(x in 1:nrow(mm$popsetup)){
+    for(x in 1:nrow(mm$matsetup)){
       Js=gsub(
-        pattern = paste0("\\b",mm$popsetup$parname[x],"\\b"),
-        replacement = paste0('s',matnames[mm$popsetup$matrix[x]],'[',
-          mm$popsetup$row[x],',',
-          mm$popsetup$col[x],']'),
+        pattern = paste0("\\b",mm$matsetup$parname[x],"\\b"),
+        replacement = paste0('s',matnames[mm$matsetup$matrix[x]],'[',
+          mm$matsetup$row[x],',',
+          mm$matsetup$col[x],']'),
         x = Js)
       
       for(mati in matnames) { #append s to system matrices
@@ -147,7 +140,7 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd') ){
     }
     Jout[[typei]] <- matrix(Js,ndim,ndim)
   }#end type loop
-  print(Jout)
+  # print(Jout)
   return(Jout)
 }
 

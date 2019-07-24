@@ -145,7 +145,7 @@ sm2$pars$indvarying[!(sm2$pars$matrix %in% c('CINT','T0MEANS'))] <- FALSE
 
 # sink(file='../sinkout.txt')
 sf2 <- ctStanFit(cd,sm2,iter=200,fit=T,
-  optimize=TRUE,verbose=0,nopriors = TRUE,intoverpop = TRUE,
+  optimize=TRUE,verbose=1,nopriors = TRUE,intoverpop = TRUE,
   # init=0,
   optimcontrol=list(deoptim = FALSE,isloops=0,isloopsize=50,finishsamples=50),
   derrind=1:2)

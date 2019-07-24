@@ -39,7 +39,7 @@ indices of the matrices, to plot. c('dtDRIFT[2,1]', 'DRIFT') would output for ro
 the discrete time drift matrix, as well as all indices of the continuous time drift matrix. 
 If parmatrices==FALSE, integer vector specifying which of the subject
 level parameters to compute effects on. The integers corresponding to certain parameters can be found in the 
-\code{param} column of the \code{fit$setup$popsetup} object. In either case 'all' uses all available parameters.}
+\code{param} column of the \code{fit$setup$matsetup} object. In either case 'all' uses all available parameters.}
 
 \item{nsamples}{Positive integer specifying the maximum number of saved iterations to use. 
 Character string 'all' can also be used.}

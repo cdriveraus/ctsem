@@ -23,7 +23,7 @@ ctStanKalman <- function(fit,nsamples=NA,cores=2){
     if(!class(fit$stanfit) %in% 'stanfit') {
       samples = fit$stanfit$rawposterior
     } else {
-      samples = t(stan_unconstrainsamples(fit$stanfit))
+      samples = t(stan_unconstrainsamples(fit$stanfit,fit$standata))
     }
     if(!is.na(nsamples)) samples <- samples[sample(1:nrow(samples),nsamples),,drop=FALSE]
     e=stan_constrainsamples(sm = fit$stanmodel,standata = standata,samples = samples,cores=cores)

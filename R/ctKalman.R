@@ -59,7 +59,6 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
     out$time <- array(fit$data$time)
     niter <- dim(out$etaprior)[1]
     out <- lapply(subjects, function(s) lapply(out, function(m) {
-      print(dim(m))
       if(dim(m)[1] == niter) m=ctCollapse(inarray = m,collapsemargin = 1,collapsefunc = mean)
       if(length(dim(m)) ==1) m=m[fit$standata$subject %in% s, drop=FALSE]
       if(length(dim(m)) ==2) m=m[fit$standata$subject %in% s, ,drop=FALSE]
@@ -220,7 +219,7 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
 #' 
 #' ###Single step procedure:
 #' ctKalman(ctstantestfit,subjects=2,plot=TRUE)
-ctKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
+ctKalmanPlot<-function(x, subjects, kalmanvec=c('y','etaprior'),
   errorvec='auto', errormultiply=1.96,
   ltyvec="auto",colvec='auto', lwdvec='auto', 
   subsetindices=NULL,pchvec='auto', typevec='auto',grid=FALSE,add=FALSE, 
@@ -229,7 +228,6 @@ ctKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
   legend=TRUE, legendcontrol=list(x='topright',bg='white')){
   
   out<-x
-
   if(length(subjects) > 1 & colvec[1] =='auto') colvec = rainbow(length(subjects),v=.9)
   
   if(lwdvec[1] %in% 'auto') lwdvec=rep(2,length(kalmanvec))

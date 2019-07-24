@@ -23,7 +23,7 @@ ctStanGenerateFromFit<-function(fit,nsamples=1,fullposterior=FALSE){
   
   if(fit$setup$recompile) {
     message('Compilation needed -- compiling (usually ~ 1 min)')
-    genm <- rstan::stan_model(model_code = ctStanModelWriter(ctstanmodel = fit$ctstanmodel,gendata = TRUE,extratforms = fit$setup$extratforms))
+    genm <- rstan::stan_model(model_code = ctStanModelWriter(ctm = fit$ctstanmodel,gendata = TRUE,extratforms = fit$setup$extratforms))
   } else {
     genm <- stanmodels$ctsmgen
   }

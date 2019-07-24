@@ -42,7 +42,7 @@ ctdataupdate<-function(forcerecompile=FALSE){
   full<-c()
   for(i in 1:20){
     LAMBDA<-matrix(c(1,.7,ifelse(i >(subjects/2),.2,1.4)))
-    print(LAMBDA)
+    # print(LAMBDA)
     testm<-ctModel(Tpoints=Tpoints,n.latent=1,n.TDpred=0,n.TIpred=0,n.manifest=3,
       MANIFESTVAR=diag(.2,3),
       # TRAITVAR=diag(.2,1),
@@ -162,15 +162,13 @@ ctdataupdate<-function(forcerecompile=FALSE){
   # 
   # checkm$pars[c(-1,-2, -21,-22) ,c('TI1_effect','TI2_effect','TI3_effect')] <- FALSE
   
-  ctstantestfit<-ctStanFit(ctstantestdat,checkm,iter=500, warmup=460,thin=2,chains=2,
+  ctstantestfit<-ctStanFit(ctstantestdat,checkm,iter=200, warmup=140,thin=2,chains=2,
     forcerecompile=forcerecompile,
     control=list(max_treedepth=8,adapt_delta=.8),save_warmup=FALSE)
   ctstantestfit <- ctStanGenerateFromFit(ctstantestfit,nsamples = 20,fullposterior = TRUE)
   summary(ctstantestfit)
-  
 
   save(ctstantestfit,file='.\\data\\ctstantestfit.rda')
-  
   
   paths <- sort(Sys.glob(c("data/*.rda", "data/*.RData")))
   tools::resaveRdaFiles(paths)

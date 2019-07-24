@@ -27,7 +27,8 @@ test_that("anomauth", {
    sm <- ctStanModel(AnomAuthmodel)
   sm$pars$indvarying<- FALSE
   sf=ctStanFit(ctDeintervalise(ctWideToLong(AnomAuth,Tpoints = AnomAuthmodel$Tpoints,n.manifest = 2)),
-    ctstanmodel = sm, optimize=TRUE,verbose=0,savescores = FALSE,nopriors=TRUE,optimcontrol=list(finishsamples=10))
+    ctstanmodel = sm, optimize=TRUE,verbose=1,savescores = FALSE,cores=2,nopriors=TRUE,
+    optimcontrol=list(finishsamples=10))
   expect_equal(23415.929,-2*sf$stanfit$optimfit$value,tolerance=.01)
  }
 
@@ -86,7 +87,8 @@ if( .Machine$sizeof.pointer != 4){
  sm <- ctStanModel(oscillatingm)
   sm$pars$indvarying<- FALSE
   sf=ctStanFit(ctDeintervalise(ctWideToLong(Oscillating,Tpoints = oscillatingm$Tpoints,n.manifest = 1)),
-    ctstanmodel = sm, optimize=TRUE,verbose=0,savescores = FALSE,nopriors=TRUE,optimcontrol=list(finishsamples=10))
+    cores=1,verbose=1,
+    ctstanmodel = sm, optimize=TRUE,savescores = FALSE,nopriors=TRUE,optimcontrol=list(finishsamples=10))
   expect_equal(-3461.936,-2*sf$stanfit$optimfit$value,tolerance=.01)
   
 }

@@ -118,8 +118,8 @@ verbosify<-function(sf,verbose=2){
 #' latents involved only in deterministic trends or input effects can be removed from matrices (ie, that
 #' obtain no additional stochastic inputs after first observation), speeding up calculations. 
 #' If unsure, leave default of 'all' ! Ignored if intoverstates=FALSE.
-#' @param optimize if TRUE, use \code{\link{optimstan}} function for maximum a posteriori estimates. 
-#' @param optimcontrol list of parameters sent to \code{\link{optimstan}} governing optimization / importance sampling.
+#' @param optimize if TRUE, use \code{\link{stanoptimis}} function for maximum a posteriori estimates. 
+#' @param optimcontrol list of parameters sent to \code{\link{stanoptimis}} governing optimization / importance sampling.
 #' @param nopriors logical. If TRUE, any priors are disabled -- sometimes desirable for optimization. 
 #' @param iter number of iterations, half of which will be devoted to warmup by default when sampling.
 #' When optimizing, this is the maximum number of iterations to allow -- convergence hopefully occurs before this!
@@ -299,9 +299,7 @@ verbosify<-function(sf,verbose=2){
 #' summary(f1)
 #' 
 #' #plots of individual subject models v data
-#' ctKalman(f1,timestep=.01,plot=TRUE,subjects=1:4,kalmanvec=c('y','etasmooth'))
-#' ctKalman(f1,timestep=.01,plot=TRUE,subjects=1,kalmanvec=c('y','ysmooth'))
-#' 
+#' ctKalman(f1,timestep=.01,plot=TRUE,subjects=1:4,kalmanvec=c('y','etaprior'))
 #' ctStanPlotPost(f1, wait=FALSE) #compare prior to posterior distributions 
 #' ctStanPlotPost(f1, priorwidth = FALSE, wait=FALSE) #rescale to width of posterior 
 #' 
@@ -337,8 +335,6 @@ verbosify<-function(sf,verbose=2){
 #' summary(f2,parmatrices=TRUE,timeinterval=1)
 #' 
 #' ctKalman(f2,timestep=.01,plot=TRUE,subjects=1,kalmanvec=c('y','etaprior'))
-#' ctKalman(f2,timestep=.01,plot=TRUE,subjects=1:4,kalmanvec=c('y','etasmooth'))
-#' ctKalman(f2,timestep=.01,plot=TRUE,subjects=1:2,kalmanvec=c('y','ysmooth'))
 #' 
 #' ctStanPlotPost(f2)
 #' 
@@ -376,8 +372,6 @@ verbosify<-function(sf,verbose=2){
 #' summary(f3,parmatrices=TRUE)
 #' 
 #' ctKalman(f3,timestep=.01,plot=TRUE,subjects=1,kalmanvec=c('y','etaprior'))
-#' ctKalman(f3,timestep=.01,plot=TRUE,subjects=1:4,kalmanvec=c('y','etasmooth'))
-#' ctKalman(f3,timestep=.01,plot=TRUE,subjects=1:2,kalmanvec=c('y','ysmooth'))
 #' 
 #' ctStanPlotPost(f3,wait=FALSE)
 #' 
@@ -430,8 +424,7 @@ verbosify<-function(sf,verbose=2){
 #' ctStanDiscretePars(f4,plot=TRUE) #auto and cross regressive plots over time
 #' 
 #' ctKalman(f4,timestep=.01,plot=TRUE,subjects=1,kalmanvec=c('y','etaprior'))
-#' ctKalman(f4,timestep=.01,plot=TRUE,subjects=1:2,kalmanvec=c('y','etasmooth'))
-#' ctKalman(f4,timestep=.01,plot=TRUE,subjects=1:2,kalmanvec=c('y','ysmooth'))
+#' ctKalman(f4,timestep=.01,plot=TRUE,subjects=1:2,kalmanvec=c('y','etaprior'))
 #' 
 #' ctStanPlotPost(f4, wait=FALSE)
 #' 
@@ -740,8 +733,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     #generate model matrix lists for stan
 
     ctsmodelmats <- ctStanModelMatrices(ctstanmodel)
-    popsetup <- ctsmodelmats$popsetup
-    popvalues <- ctsmodelmats$popvalues
     matsetup <- ctsmodelmats$matsetup
     matvalues <- ctsmodelmats$matvalues
     extratforms <- ctsmodelmats$extratforms
@@ -790,17 +781,17 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     
     
-    nindvarying <- max(popsetup$indvarying)
-    nparams <- max(popsetup$param)
+    nindvarying <- max(matsetup$indvarying)
+    nparams <- max(matsetup$param[matsetup$when==0])
     nmatrices <- length(mats$base)
     
     
-    indvaryingindex <- popsetup$param[which(popsetup$indvarying > 0)]
+    indvaryingindex <- matsetup$param[which(matsetup$indvarying > 0)]
     indvaryingindex <- array(indvaryingindex[!duplicated(indvaryingindex)])
-    sdscale <- array(popvalues$sdscale[match(indvaryingindex,popsetup$param)])
+    sdscale <- array(matvalues$sdscale[match(indvaryingindex,matsetup$param)])
     
-    
-    if(any(popsetup[,'transform'] < -10)) recompile <- TRUE #if custom transforms needed
+   
+    if(any(matsetup[,'transform'] < -10)) recompile <- TRUE #if custom transforms needed
     
     
     
@@ -912,6 +903,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       standata$sJAxfinite <- array(as.integer(c()))
       standata$nsJAxfinite <- 0L
     }
+    
+
 
     #add subject variability indices to data
     for(mati in c(names(mats$base),'asymCINT','asymDIFFUSION','DIFFUSIONcov')){
@@ -919,18 +912,25 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       standata[[sname]] <- as.integer((get(sname)))
     }
     
-    standata$matsetup <- apply(matsetup,c(1,2),as.integer,.drop=FALSE)
+    #state dependence
+    statedependence=rep(0L,4)
+    if(any(matsetup$when == 2) ||
+        any(grepl('state[',ctstanmodel$jacobian$JAx,fixed=TRUE)) ||
+        any(grepl('state[',ctstanmodel$calcs$driftcint,fixed=TRUE)) ||
+        any(grepl('state[',ctstanmodel$calcs$diffusion,fixed=TRUE)) 
+      ) statedependence[2] = 1L
+    
+    standata$statedependence <- statedependence
+    
+    standata$matsetup <- apply(matsetup[,-1],c(1,2),as.integer,.drop=FALSE) #remove parname and convert to int
     standata$matvalues <- apply(matvalues,c(1,2),as.numeric)
     standata$nmatrices <- as.integer(nmatrices)
-    
     standata$matrixdims <- matrixdims
-    
-    standata$popsetup <- sapply(popsetup[,-1],function(x) as.integer(x)) #with parname column removed
-    standata$popvalues <- sapply(popvalues[,-1],as.numeric)
-    standata$nrowpopsetup <- as.integer(nrow(popsetup))
     standata$nrowmatsetup <- as.integer(nrow(matsetup))
 
     standata$sdscale <- array(as.numeric(sdscale),dim=length(sdscale))
+    
+
     
     #fixed hyper pars
     if(!is.null(ctstanmodel$fixedrawpopchol)) {
@@ -945,7 +945,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     standata$fixedsubpars <- as.integer(!is.null(ctstanmodel$fixedsubpars))
     if(!is.null(ctstanmodel$fixedsubpars)) standata$fixedindparams <- 
       ctstanmodel$fixedsubpars else standata$fixedindparams <-array(0,dim=c(0,0))
-    
+
     if(fit){
       # if(gendata && stanmodels$ctsmgen@model_code != stanmodeltext) recompile <- TRUE
       # if(!gendata && paste0(stanmodels$ctsm@model_code) != paste0(stanmodeltext)) recompile <- TRUE
@@ -1035,14 +1035,12 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       }
       
       if(optimize==TRUE) {
-        # opargs <- list(standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors),optimcontrol)
-        # stanfit <- do.call(optimstan,opargs)
-        
-        opcall <- paste0('optimstan(standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors),',
+
+        opcall <- paste0('stanoptimis(standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors),',
           paste0(gsub('list(','',paste0(deparse(optimcontrol),collapse=''),fixed=TRUE)))
         stanfit <- eval(parse(text=opcall))
-        # stanfit <- rlang::exec(optimstan,!!!optimcontrol,standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors))
-        # stanfit <- optimstan(standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors))
+        # stanfit <- rlang::exec(stanoptimis,!!!optimcontrol,standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors))
+        # stanfit <- stanoptimis(standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors))
       }
       
       if(is.na(STAN_NUM_THREADS)) Sys.unsetenv('STAN_NUM_THREADS') else Sys.setenv(STAN_NUM_THREADS = STAN_NUM_THREADS) #reset sys env
@@ -1052,16 +1050,18 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     standataout[standataout==99999] <- NA
     standataout <- utils::relist(standataout,skeleton=standata)
     
+    setup=list(recompile=recompile,idmap=idmap,matsetup=matsetup,matvalues=matvalues,
+      popsetup=matsetup[matsetup$when==0 & matsetup$param > 0,],
+      popvalues=matvalues[matvalues$when==0 & matvalues$param > 0,],
+      extratforms=extratforms)
     if(fit) {
       out <- list(args=args,
-        setup=list(recompile=recompile,idmap=idmap,popsetup=popsetup,popvalues=popvalues,extratforms=extratforms), 
+        setup=setup, 
         stanmodeltext=stanmodeltext, data=standataout, standata=standata, ctstanmodel=ctstanmodel,stanmodel=sm, stanfit=stanfit)
       class(out) <- 'ctStanFit'
     }
-    
-    # matrixsetup <- list(matsetup,mats$base,mats$dynamic,mats$measurement,mats$t0)
-    # names(matrixsetup) <- c('matsetup','mats$base','mats$dynamic','mats$measurement','mats$t0')
-    if(!fit) out=list(args=args,setup=list(recompile=recompile,idmap=idmap,popsetup=popsetup,popvalues=popvalues,extratforms=extratforms),
+
+    if(!fit) out=list(args=args,setup=setup,
       stanmodeltext=stanmodeltext,data=standataout, standata=standata, ctstanmodel=ctstanmodel)
     
     return(out)

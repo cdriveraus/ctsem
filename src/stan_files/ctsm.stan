@@ -196,6 +196,7 @@ data {
   int whichcont_y[ndatapoints, nmanifest]; // index of which variables are observed and continuous per observation
   
   int intoverpop;
+  int statedependence[4];
   real ukfspread;
   int ukffull;
   int nlmeasurement;
@@ -216,11 +217,8 @@ int asymCINTsubindex;
 int asymDIFFUSIONsubindex;
 int DIFFUSIONcovsubindex;
   int TIPREDEFFECTsetup[nparams, ntipred];
-  int nrowpopsetup;
   int nrowmatsetup;
-  int popsetup[nrowpopsetup,8];
   int matsetup[nrowmatsetup,8];
-  real popvalues[nrowpopsetup,6];
   real matvalues[nrowmatsetup,6];
   int matrixdims[10,2];
   int savescores;
@@ -230,7 +228,7 @@ int DIFFUSIONcovsubindex;
   int dokalmanrows[ndatapoints];
   real Jstep;
   real dokalmanpriormodifier;
-  int intoverpopindvaryingindex[nindvarying];
+  int intoverpopindvaryingindex[intoverpop ? nindvarying : 0];
   int sJAxdrift[nlatentpop,nlatentpop];
   int nsJAxfinite;
   int sJAxfinite[nsJAxfinite];
@@ -347,6 +345,7 @@ matrix[nlatent, nlatent] pop_DIFFUSIONcov;
   matrix[nlatentpop, nlatentpop] etacov; //covariance of latent states
   real timei = 0;
   real dt = 0;
+  int dtchange;
   real integrationsteps;
   real dtsmall;
   real prevdt = 0;
@@ -549,13 +548,47 @@ pop_asymCINT = sasymCINT;
 
       if(nldynamics==0){ //initialize most parts for nl later!
         eta = sT0MEANS[,1]; //could use state instead of eta if ukf is dropped
-        ;
         if(ntdpred > 0) eta[1:nlatent] += sTDPREDEFFECT * tdpreds[rowi];
       }
 
     } //end T0 matrices
-
+if(verbose > 1) print ("below t0 row ", rowi);
    
+    if(T0check >0)  dtchange = ( (prevdt-dt) == 0.0) ? 0 : 1;
+      
+    if(nldynamics==0 && T0check>0){ //linear kf time update
+    if(verbose > 1) print ("linear update row ", rowi);
+    state = eta;
+    
+      if(continuoustime ==1){
+        if(dtchange==1 || (T0check == 1 && (DRIFTsubindex + CINTsubindex > 0))){ //if dtchanged or if subject variability
+          discreteDRIFT = matrix_exp(append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1)) * dt);
+        }
+    
+        if(dtchange==1 || (T0check == 1 && (DIFFUSIONsubindex + DRIFTsubindex > 0))){ //if dtchanged or if subject variability
+          discreteDIFFUSION[derrind, derrind] = sasymDIFFUSION[derrind, derrind] - 
+            quad_form( sasymDIFFUSION[derrind, derrind], discreteDRIFT[derrind, derrind]' );
+          if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(makesym(discreteDIFFUSION,verbose,1));
+        }
+      }
+  
+      if(continuoustime==0 && T0check == 1){
+        if(subjectcount == 1 || DIFFUSIONsubindex + DRIFTsubindex + CINTsubindex > 0){ //if first subject or variability
+          discreteDRIFT=append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1));
+          discreteDRIFT[nlatent+1,nlatent+1] = 1;
+          discreteDIFFUSION=sDIFFUSIONcov;
+          if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(makesym(discreteDIFFUSION,verbose,1));
+        }
+      }
+
+      eta = (discreteDRIFT * append_row(eta,1.0))[1:nlatent];
+      state[1:nlatent] = eta[1:nlatent];
+      if(ntdpred > 0) eta += sTDPREDEFFECT * tdpreds[rowi];
+      if(intoverstates==1) {
+        etacov = quad_form(etacov, discreteDRIFT[1:nlatent,1:nlatent]');
+        if(ndiffusion > 0) etacov += discreteDIFFUSION;
+      }
+    }//end linear time update
 
 
     if(nldynamics==1){ //nldynamics time update
@@ -619,13 +652,18 @@ pop_asymCINT = sasymCINT;
           if(continuoustime==1){
             matrix[nlatentpop,nlatentpop] Je;
             matrix[nlatent*2,nlatent*2] dQi;
-            Je= matrix_exp(sJAx * dtsmall) ;
-            discreteDRIFT = expm2(append_row(append_col(sDRIFT[1:nlatent, 1:nlatent],sCINT),rep_vector(0,nlatent+1)') * dtsmall,drcintoffdiag);
-            sasymDIFFUSION = to_matrix(  -kronsum(sJAx[1:nlatent,1:nlatent]) \ to_vector(tcrossprod(sDIFFUSION)), nlatent,nlatent);
-            discreteDIFFUSION =  sasymDIFFUSION - quad_form( sasymDIFFUSION, Je[1:nlatent,1:nlatent]' );
-                  if(verbose > 1) print("rowi = ",rowi, "state = ", state);
-      if(verbose > 1)  print("etacov = ",etacov," sasymDIFFUSION = ",sasymDIFFUSION," sDIFFUSION = ",sDIFFUSION);
- if(verbose > 1) print("sJAx = ",sJAx);
+            
+            if(dtchange==1 || statedependence[2] || (T0check == 1 && (DRIFTsubindex + CINTsubindex > 0))){
+              Je= matrix_exp(sJAx * dtsmall);
+              discreteDRIFT = expm2(append_row(append_col(sDRIFT[1:nlatent, 1:nlatent],sCINT),rep_vector(0,nlatent+1)') * dtsmall,drcintoffdiag);
+            }
+            if(dtchange==1 || statedependence[2] || (T0check == 1 && (DRIFTsubindex + DIFFUSIONsubindex + CINTsubindex) > 0)){
+              sasymDIFFUSION = to_matrix(  -kronsum(sJAx[1:nlatent,1:nlatent]) \ to_vector(tcrossprod(sDIFFUSION)), nlatent,nlatent);
+              discreteDIFFUSION =  sasymDIFFUSION - quad_form( sasymDIFFUSION, Je[1:nlatent,1:nlatent]' );
+            }
+            if(verbose > 1) print("rowi = ",rowi, "state = ", state);
+            if(verbose > 1)  print("etacov = ",etacov," sasymDIFFUSION = ",sasymDIFFUSION," sDIFFUSION = ",sDIFFUSION);
+            if(verbose > 1) print("sJAx = ",sJAx);
             etacov = quad_form(etacov, Je');
             etacov[1:nlatent,1:nlatent] += discreteDIFFUSION; //may need improving
             state[1:nlatent] = (discreteDRIFT * append_row(state[1:nlatent],1.0))[1:nlatent];
@@ -659,7 +697,7 @@ pop_asymCINT = sasymCINT;
     ;
     
       state = sT0MEANS[,1];
-      etacov= quad_form_sym(sT0VAR, sJ0');
+      etacov= quad_form(sT0VAR, sJ0');
     if(verbose > 1) print("rowi = ",rowi,"  state = ",sT0MEANS);
     if(verbose > 1) print("sJ0 = ",sJ0);
     if(verbose > 1) print("etacov = ",etacov);
@@ -680,7 +718,7 @@ pop_asymCINT = sasymCINT;
       if(verbose > 1)  print("state = ", state);
       if(verbose > 1)  print("etacov = ",etacov);
  if(verbose > 1) print("sJtd = ",sJtd);
-      etacov = quad_form_sym(etacov,sJtd');
+      etacov = quad_form(etacov,sJtd');
      }
      eta=state;
   } // end non linear time update
@@ -893,34 +931,35 @@ generated quantities{
 vector[nparams] rawpopsdfull;
 rawpopsdfull[indvaryingindex] = sqrt(diagonal(rawpopcov)); //base for calculations
 
-    for(ri in 1:dims(popsetup)[1]){
-      if(popsetup[ri,3] && popsetup[ri,8]==0) { //if a free parameter //or state dependent parameter maybe?
-
-        popmeans[popsetup[ ri,3]] = tform(rawpopmeans[popsetup[ri,3] ], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4], popvalues[ri,6] ); 
-        if(intoverpop && popsetup[ri,5]) {
-          int sr = intoverpopindvaryingindex[popsetup[ri,5]]; // detect state reference
-          int pr; //population matrix row reference where original system matrix parameter makes state reference
-          for(ri2 in 1:dims(popsetup)[1]){ //check when state reference param of popsetup corresponds to row of t0means in current popsetup row
-            if(popsetup[ri2,3] == popsetup[ri,1] && popsetup[ri2,8] > 0) pr = ri2;
+    for(ri in 1:size(matsetup)){
+      if(matsetup[ri,3] && matsetup[ri,8]==0) { //if a free parameter 
+        real rawpoppar = rawpopmeans[matsetup[ri,3] ];
+        int pr = ri; // unless intoverpop, pop matrix row reference is simply current row
+        
+        if(intoverpop && matsetup[ri,5]) { //removed ri transform of rawpop because t0means only transforms once -- if non identity state tform in future, change this!
+          for(ri2 in 1:size(matsetup)){ //check when state reference param of matsetup corresponds to row of t0means in current matsetup row
+            if(matsetup[ri2,8] > 0 && matsetup[ri2,3] == matsetup[ri,1]) pr = ri2;
+            print("ri = ",ri, " pr = ",pr, " ri2 = ",ri2);
           }
-          popmeans[popsetup[ ri,3]] = tform(popmeans[popsetup[ ri,3]], popsetup[pr,4], popvalues[pr,2], popvalues[pr,3], popvalues[pr,4], popvalues[pr,6] ); 
         }
+        
+        popmeans[matsetup[ ri,3]] = tform(rawpoppar, matsetup[pr,4], matvalues[pr,2], matvalues[pr,3], matvalues[pr,4], matvalues[pr,6] ); 
 
-        popsd[popsetup[ ri,3]] = popsetup[ ri,5] ? 
-          fabs(tform(
-            rawpopmeans[popsetup[ri,3] ]  + rawpopsdfull[popsetup[ ri,3]], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4], popvalues[ri,6]) -
+        popsd[matsetup[ ri,3]] = matsetup[ ri,5] ? //if individually varying
+          fabs(tform( //compute sd
+            rawpoppar  + rawpopsdfull[matsetup[ ri,3]], matsetup[pr,4], matvalues[pr,2], matvalues[pr,3], matvalues[pr,4], matvalues[pr,6]) -
            tform(
-            rawpopmeans[popsetup[ri,3] ]  - rawpopsdfull[popsetup[ ri,3]], popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4], popvalues[ri,6]) ) /2 : 
-          0; 
+            rawpoppar  - rawpopsdfull[matsetup[ ri,3]], matsetup[pr,4], matvalues[pr,2], matvalues[pr,3], matvalues[pr,4], matvalues[pr,6]) ) /2 : 
+          0; //else zero
 
         if(ntipred > 0){
           for(tij in 1:ntipred){
-            if(TIPREDEFFECTsetup[popsetup[ri,3],tij] ==0) {
-              linearTIPREDEFFECT[popsetup[ri,3],tij] = 0;
+            if(TIPREDEFFECTsetup[matsetup[ri,3],tij] ==0) {
+              linearTIPREDEFFECT[matsetup[ri,3],tij] = 0;
             } else {
-            linearTIPREDEFFECT[popsetup[ri,3],tij] = (
-              tform(rawpopmeans[popsetup[ri,3] ] + TIPREDEFFECT[popsetup[ri,3],tij] * .01, popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4], popvalues[ri,6] ) -
-              tform(rawpopmeans[popsetup[ri,3] ] - TIPREDEFFECT[popsetup[ri,3],tij] * .01, popsetup[ri,4], popvalues[ri,2], popvalues[ri,3], popvalues[ri,4], popvalues[ri,6] )
+            linearTIPREDEFFECT[matsetup[ri,3],tij] = ( //tipred reference is from row ri, tform reference from row pr in case of intoverpop
+              tform(rawpoppar + TIPREDEFFECT[matsetup[ri,3],tij] * .01, matsetup[pr,4], matvalues[pr,2], matvalues[pr,3], matvalues[pr,4], matvalues[pr,6] ) -
+              tform(rawpoppar - TIPREDEFFECT[matsetup[ri,3],tij] * .01, matsetup[pr,4], matvalues[pr,2], matvalues[pr,3], matvalues[pr,4], matvalues[pr,6] )
               ) /2 * 100;
             }
          }

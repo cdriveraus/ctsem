@@ -32,16 +32,9 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   }
   
   if(class(object$stanfit)!='stanfit')  e <- extract(object) 
-  parnames <- c()
-  parindices <- c()
-  # for(m in names(object$setup$matsetup)){
-  #   if(dim(object$setup$matsetup[[m]])[1] > 0){
-  #     parnames <- c(parnames,rownames(object$setup$matsetup[[m]]))
-  #     parindices <- c(parindices, object$setup$matsetup[[m]][,'param'])
-  #   }
-  # }
-  parnames <- object$setup$popsetup$parname[object$setup$popsetup$when==0]
-  parindices <- object$setup$popsetup$param[object$setup$popsetup$when==0]
+
+  parnames <- object$setup$matsetup$parname[object$setup$matsetup$when==0 & object$setup$matsetup$param > 0]
+  parindices <- object$setup$matsetup$param[object$setup$matsetup$when==0 & object$setup$matsetup$param > 0]
   pars <- cbind(parnames,parindices)
   pars<-pars[!duplicated(pars[,1,drop=FALSE]),,drop=FALSE]
   parnames <- pars[as.numeric(pars[,2,drop=FALSE]) >0, 1]
@@ -160,7 +153,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
     tieffectnames <- paste0('tip_',rep(object$ctstanmodel$TIpredNames,each=length(parnames)),'_',parnames)
     dimnames(tieffect)<-list(c(),c(),tieffectnames)
     tipreds = suppressWarnings(monitor(tieffect,warmup = 0,print = FALSE)[,monvars,drop=FALSE])
-    if(class(object$stanfit)=='stanfit') tipreds <- cbind(tipreds,tidiags[,c('n_eff','Rhat')])
+    if(class(object$stanfit)=='stanfit') tipreds <- cbind(tipreds,tidiags[,c('n_eff','Rhat'),drop=FALSE])
     tipreds <- tipreds[c(object$data$TIPREDEFFECTsetup)>0,,drop=FALSE]
     z = tipreds[,'mean'] / tipreds[,'sd'] 
     out$tipreds= round(cbind(tipreds,z),digits) #[order(abs(z)),]
@@ -207,13 +200,14 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
             try(rownames(parmats)[counter] <- names(parmatlists[[1]])[mati])
             try(parmats[counter,]<-new)
           }}}}
+      
       colnames(parmats) <- c('Row','Col', 'Mean','Sd','2.5%','50%','97.5%')
       
       #remove certain parmatrices lines
       removeindices <- which(rownames(parmats) == 'MANIFESTVAR' & parmats[,'Row'] != parmats[,'Col'])
       
       removeindices <- c(removeindices,which((rownames(parmats) %in% c('MANIFESTVAR','T0VAR','DIFFUSION','dtDIFFUSION','asymDIFFUSION',
-        'T0VARcor','DIFFUSIONcor','dtDIFFUSIONcor','asymDIFFUSIONcor') &  parmats[,'Row'] < parmats[,'Col'])))
+        'T0VARcor','DIFFUSIONcor','DIFFUSIONcov','dtDIFFUSIONcor','asymDIFFUSIONcor') &  parmats[,'Row'] < parmats[,'Col'])))
       
       removeindices <- c(removeindices,which((rownames(parmats) %in% c('T0VARcor','DIFFUSIONcor','dtDIFFUSIONcor','asymDIFFUSIONcor') & 
           parmats[,'Row'] == parmats[,'Col'])))

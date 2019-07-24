@@ -51,9 +51,9 @@ latents involved only in deterministic trends or input effects can be removed fr
 obtain no additional stochastic inputs after first observation), speeding up calculations. 
 If unsure, leave default of 'all' ! Ignored if intoverstates=FALSE.}
 
-\item{optimize}{if TRUE, use \code{\link{optimstan}} function for maximum a posteriori estimates.}
+\item{optimize}{if TRUE, use \code{\link{stanoptimis}} function for maximum a posteriori estimates.}
 
-\item{optimcontrol}{list of parameters sent to \code{\link{optimstan}} governing optimization / importance sampling.}
+\item{optimcontrol}{list of parameters sent to \code{\link{stanoptimis}} governing optimization / importance sampling.}
 
 \item{nlcontrol}{List of non-linear control parameters. 
 \code{nldynamics} defaults to "auto", but may also be a logical. Set to FALSE to use estimator that assumes linear dynamics, 
@@ -241,9 +241,7 @@ f1 <- ctStanFit(datalong = dat, ctstanmodel = m1,
 summary(f1)
 
 #plots of individual subject models v data
-ctKalman(f1,timestep=.01,plot=TRUE,subjects=1:4,kalmanvec=c('y','etasmooth'))
-ctKalman(f1,timestep=.01,plot=TRUE,subjects=1,kalmanvec=c('y','ysmooth'))
-
+ctKalman(f1,timestep=.01,plot=TRUE,subjects=1:4,kalmanvec=c('y','etaprior'))
 ctStanPlotPost(f1, wait=FALSE) #compare prior to posterior distributions 
 ctStanPlotPost(f1, priorwidth = FALSE, wait=FALSE) #rescale to width of posterior 
 
@@ -279,8 +277,6 @@ f2 <- ctStanFit(datalong = dat, ctstanmodel = m2, cores = setcores,
 summary(f2,parmatrices=TRUE,timeinterval=1)
 
 ctKalman(f2,timestep=.01,plot=TRUE,subjects=1,kalmanvec=c('y','etaprior'))
-ctKalman(f2,timestep=.01,plot=TRUE,subjects=1:4,kalmanvec=c('y','etasmooth'))
-ctKalman(f2,timestep=.01,plot=TRUE,subjects=1:2,kalmanvec=c('y','ysmooth'))
 
 ctStanPlotPost(f2)
 
@@ -318,8 +314,6 @@ f3 <- ctStanFit(datalong = dat2, ctstanmodel = m3, cores = setcores,
 summary(f3,parmatrices=TRUE)
 
 ctKalman(f3,timestep=.01,plot=TRUE,subjects=1,kalmanvec=c('y','etaprior'))
-ctKalman(f3,timestep=.01,plot=TRUE,subjects=1:4,kalmanvec=c('y','etasmooth'))
-ctKalman(f3,timestep=.01,plot=TRUE,subjects=1:2,kalmanvec=c('y','ysmooth'))
 
 ctStanPlotPost(f3,wait=FALSE)
 
@@ -372,8 +366,7 @@ summary(f4)
 ctStanDiscretePars(f4,plot=TRUE) #auto and cross regressive plots over time
 
 ctKalman(f4,timestep=.01,plot=TRUE,subjects=1,kalmanvec=c('y','etaprior'))
-ctKalman(f4,timestep=.01,plot=TRUE,subjects=1:2,kalmanvec=c('y','etasmooth'))
-ctKalman(f4,timestep=.01,plot=TRUE,subjects=1:2,kalmanvec=c('y','ysmooth'))
+ctKalman(f4,timestep=.01,plot=TRUE,subjects=1:2,kalmanvec=c('y','etaprior'))
 
 ctStanPlotPost(f4, wait=FALSE)
 
