@@ -198,7 +198,7 @@ plot.ctsemFitMeasure <- function(x,indices='all', means=TRUE,separatemeans=TRUE,
       
       # main <- '(Observed - implied) / sd(implied)'
       if(cov2cor) limits <-c(-1,1) else limits <- range(get(covtype))
-      do.call(ggcorr,ggcorrArgs) #(data=NULL,cor_matrix =  get(covtype),limits=limits, geom = 'circle',max_size = 13,name=covtype,...)
+      do.call(GGally::ggcorr,ggcorrArgs) #(data=NULL,cor_matrix =  get(covtype),limits=limits, geom = 'circle',max_size = 13,name=covtype,...)
     }
   }
   

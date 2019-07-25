@@ -107,7 +107,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   if(is.null(nsubjects)) nsubjects=1
   if('all' %in% subjects) subjects='all' 
   
-  outdims=dim(e$DRIFT)
+  outdims=dim(e$DIFFUSION)
   niter=outdims[1]
   nlatent=outdims[3]
   latentNames=ctstanfitobj$ctstanmodel$latentNames
@@ -120,8 +120,8 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   
   #get all ctparameter matrices at once and remove unneeded subjects
   ctpars <- list()
-  for(matname in c('DRIFT','DIFFUSION','asymDIFFUSION')){ #,'CINT','T0MEANS', 'T0VAR','MANIFESTMEANS',if(!is.null(e$MANIFESTVAR)) 'MANIFESTVAR','LAMBDA', if(!is.null(e$TDPREDEFFECT)) 'TDPREDEFFECT')){
-    
+  for(matname in c('DRIFT','DIFFUSIONcov','asymDIFFUSION')){ #,'CINT','T0MEANS', 'T0VAR','MANIFESTMEANS',if(!is.null(e$MANIFESTVAR)) 'MANIFESTVAR','LAMBDA', if(!is.null(e$TDPREDEFFECT)) 'TDPREDEFFECT')){
+
     if('all' %in% subjects){
       ctpars[[matname]] <- e[[paste0('pop_',matname)]]
     } else {
@@ -131,19 +131,11 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
     ctpars[[matname]] <- ctpars[[matname]][samples,,,drop=FALSE]
   }
   
+  # 
+nlatent <- dim(ctpars$asymDIFFUSION)[2]
+
+ctpars$DRIFT <- ctpars$DRIFT[,1:nlatent,1:nlatent,drop=FALSE] #intoverpop
   
-  #   
-  #   xdims=dim(e[[matname]])
-  #   dimout=xdims
-  #   dimout[2]=min(length(subjects),xdims[2])
-  #   
-  #   ctpars[[matname]] <- array(eval(parse(text=
-  #       paste0('e[[matname]][, ',
-  #         ifelse(xdims[2] > 1, 'subjects',1),if(length(xdims)>1) paste0(rep(', ',length(xdims)-2),collapse=''),']')
-  #   )),dim=dimout)
-  #   
-  #   ctpars[[matname]] <-aperm(ctpars[[matname]],c(3,if(length(dim(ctpars[[matname]]))>3) 4, 1, 2))
-  # }
   nsubjects <- length(subjects)
   
   

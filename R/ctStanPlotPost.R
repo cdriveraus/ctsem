@@ -30,7 +30,7 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,sm
   
   densiter <- 1e5
   popsetup <- obj$setup$popsetup
-  popvalues<- obj$setup$popvalues
+  popvalues<- obj$setup$matvalues[obj$setup$matsetup$when==0 & obj$setup$matsetup$param > 0,]
   
   paroriginal<-graphics::par()[c('mfrow','mgp','mar')]
   
@@ -67,7 +67,7 @@ ctStanPlotPost<-function(obj, rows='all', priorwidth=TRUE, mfrow='auto',lwd=2,sm
       xaxs='i',  yaxs='i', plot=TRUE,legend=leg,colvec=legcol,lwd=lwd)
 
     if(obj$setup$popsetup[ri,'indvarying']>0){ #then also plot sd and subject level pars
-      sdscale <- obj$setup$popvalues[ri,'sdscale']
+      sdscale <- popvalues[ri,'sdscale']
       sdtform <- gsub('.*', '*',obj$ctstanmodel$rawpopsdtransform,fixed=TRUE)
       
       # rawpopsdbase<-e$rawpopsdbase[,popsetup$indvarying[ri]] 

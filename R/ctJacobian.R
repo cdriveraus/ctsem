@@ -6,7 +6,6 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
   # require(cOde)
   # require(Deriv)
   
-  
   # get system dimension
   ndim = max(m$pars$row[m$pars$matrix%in% 'T0MEANS'])
   
@@ -33,7 +32,7 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
         meanscale = m$pars$meanscale[ri],
         offset = m$pars$offset[ri],
         inneroffset = m$pars$inneroffset[ri],singletext=TRUE)
-      # browser()
+      # 
       # m$pars$param[ri] <- paste0('Jtform___',m$pars$param[ri],' * ',m$pars$param[ri])
     }
     while(counter < 10 && grepl(paste0('\\b(',paste0(names(matlist),collapse='|'),')\\b\\['), m$pars$param[ri])){ #if system matrix referenced, unfold
@@ -54,10 +53,8 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
   mats<-listOfMatrices(m$pars)
   Jout <- list()
   for(typei in types){
-    
     if(typei=='JAx'){
-      # create fn by multiplying drift matrix with state vector
-      # fn = Simplify(prodSymb(mats$DRIFT, cbind(state)))
+      Jrows = nrow(mats$T0MEANS)
       for (row in 1:ndim) {
         for (col in 1:(ndim)) {
           fn[row] = paste0(ifelse(col > 1, paste0(fn[row],' + '),''), "(", mats$DRIFT[row, col], ") * state[", as.character(col), "]")
@@ -70,15 +67,18 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
     
     if(typei=='Jtd'){
       if(m$n.TDpred ==0) {
-        Jout[[typei]] <- c()
+        Jout[[typei]] <- c('')
         next
       }
+      Jrows = nrow(mats$T0MEANS)
       tdrows=nrow(mats$TDPREDEFFECT)
       fn = paste0('state[',1:ndim,']')
       fn[1:tdrows] = paste0(fn[1:tdrows],' + ', prodSymb(mats$TDPREDEFFECT, cbind(rep(1,m$n.TDpred))))
     }
     
     if(typei=='J0') {
+      
+      Jrows = nrow(mats$T0MEANS)
       t0func <- mats$T0MEANS[,1]
       t0func <- sapply(1:length(t0func), function(xi){
         if(is.na(suppressWarnings(as.numeric(t0func[xi]))) && !grepl('[',t0func[xi],fixed=TRUE)) out <- 
@@ -88,10 +88,12 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
       fn = sapply(prodSymb(diag(nrow(mats$T0MEANS)), matrix(t0func,ncol=1)),Simplify)
     }
     if(typei=='Jy') {
-      fn = paste0(mats$MANIFESTMEANS,' + ',mats$LAMBDA,' * state[',1:ndim,']')
+      Jrows = nrow(mats$MANIFESTMEANS)
+      Jybase <- mats$LAMBDA
+      Jybase <- cbind(Jybase,matrix(0,nrow(Jybase),ncol=nrow(mats$T0MEANS)-ncol(Jybase)))
+      fn = paste0(mats$MANIFESTMEANS,' + ',prodSymb(Jybase,cbind(paste0('state[',1:ndim,']'))))
       # fn = sapply(prodSymb(diag(nrow(mats$T0MEANS)), matrix(t0func,ncol=1)),Simplify)
     }
-    
     fn = gsub(" ", "", fn, fixed = TRUE) #remove spaces
     # replace state[~] by state~ for cOde Jacobian and make fn and state a named list
     names(fn) = paste0("fn", 1:length(fn))
@@ -138,7 +140,7 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
         Js=gsub(pattern = paste0("\\b",mati,"\\b"), replacement = paste0('s',mati),  x = Js)
       }
     }
-    Jout[[typei]] <- matrix(Js,ndim,ndim)
+    Jout[[typei]] <- matrix(Js,Jrows,ndim)
   }#end type loop
   # print(Jout)
   return(Jout)

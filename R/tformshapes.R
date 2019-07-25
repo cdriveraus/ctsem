@@ -13,7 +13,7 @@ tformshapes <- function(singletext=FALSE,transform=NA,jacobian=FALSE,driftdiag=F
   names(out)=paste0('fn',1:length(out))
   if(jacobian) out = jacobianSymb(out,variables='param')
   if(!is.na(transform)) out = out[transform+1] else transform = 0:4
-  if(!singletext) out = paste0('if(transform==',transform+ifelse(jacobian,ifelse(driftdiag,60,50),0),') out = ',out,';\n',collapse='')
+  if(!singletext)   out = paste0('if(transform==',transform+ifelse(jacobian,ifelse(driftdiag,60,50),0),') out = ',out,';\n',collapse='')
   out=gsub('  ','',out,fixed=TRUE)
   return(out)
 }

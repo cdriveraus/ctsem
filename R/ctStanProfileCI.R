@@ -36,7 +36,7 @@ ctStanProfileCI <- function(fit, cipars){
         
         if(class(out)=='try-error' || is.nan(out)) {
           out[1]=-Inf
-          gradout <<- rep(NaN,length(parm))
+          # gradout <<- rep(NaN,length(parm))
         } 
         # print(-out)
         # print(pars)

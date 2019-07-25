@@ -90,7 +90,7 @@ sm1$pars$indvarying <- FALSE
 # sink(file='../sf1.txt')
 sf1 <- ctStanFit(cd,sm1,iter=200,
   optimize=TRUE,verbose=0,nopriors = TRUE,
-  optimcontrol=list(deoptim = F,isloops=0,isloopsize=50,finishsamples=50),
+  optimcontrol=list(deoptim = F,is=FALSE,isloopsize=50,finishsamples=50),
   derrind=1:4,
   nlcontrol=list(nldynamics=FALSE))
 # sink()
@@ -101,7 +101,7 @@ sf1ll=sf1$stanfit$optimfit$value
 
 sf1_derrind<- ctStanFit(cd,sm1,iter=200,
   optimize=TRUE,verbose=0,nopriors = TRUE,
-  optimcontrol=list(deoptim = FALSE,isloops=0,isloopsize=50,finishsamples=50),
+  optimcontrol=list(deoptim = FALSE,is=FALSE,isloopsize=50,finishsamples=50),
   derrind=1:2,
   nlcontrol=list(nldynamics=FALSE))
 sf1_derrindd=matrix(sf1_derrind$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf1_derrind$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
@@ -109,7 +109,7 @@ sf1_derrindll=sf1_derrind$stanfit$optimfit$value
 
 sf1nld<- ctStanFit(cd,sm1,iter=200,
   optimize=TRUE,verbose=0,nopriors = TRUE,
-  optimcontrol=list(deoptim = FALSE,isloops=0,isloopsize=50,finishsamples=50),
+  optimcontrol=list(deoptim = FALSE,is=FALSE,isloopsize=50,finishsamples=50),
   derrind=1:4,
   nlcontrol=list(nldynamics=TRUE))
 sf1nldd=matrix(sf1nld$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf1nld$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
@@ -119,7 +119,7 @@ sf1nldll=sf1nld$stanfit$optimfit$value
 sf1nld_derrind<- ctStanFit(cd,sm1,iter=200,
   optimize=TRUE,verbose=0,nopriors = TRUE,
   init=0,
-  optimcontrol=list(deoptim = FALSE,isloops=0,isloopsize=50,finishsamples=50),
+  optimcontrol=list(deoptim = FALSE,is=FALSE,isloopsize=50,finishsamples=50),
   derrind=1:2,
   nlcontrol=list(nldynamics=TRUE))
 # sink()
@@ -129,7 +129,7 @@ sf1nld_derrindll=sf1nld_derrind$stanfit$optimfit$value
 
 sf1nl_derrind<- ctStanFit(cd,sm1,iter=200,
   optimize=TRUE,verbose=0,nopriors = TRUE,
-  optimcontrol=list(deoptim = FALSE,isloops=0,isloopsize=50,finishsamples=50),
+  optimcontrol=list(deoptim = FALSE,is=FALSE,isloopsize=50,finishsamples=50),
   derrind=1:2,
   nlcontrol=list(nldynamics=TRUE,nlmeasurement=TRUE))
 sf1nl_derrindd=matrix(sf1nl_derrind$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf1nl_derrind$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
@@ -145,9 +145,9 @@ sm2$pars$indvarying[!(sm2$pars$matrix %in% c('CINT','T0MEANS'))] <- FALSE
 
 # sink(file='../sinkout.txt')
 sf2 <- ctStanFit(cd,sm2,iter=200,fit=T,
-  optimize=TRUE,verbose=1,nopriors = TRUE,intoverpop = TRUE,
+  optimize=TRUE,verbose=0,nopriors = TRUE,intoverpop = TRUE,
   # init=0,
-  optimcontrol=list(deoptim = FALSE,isloops=0,isloopsize=50,finishsamples=50),
+  optimcontrol=list(deoptim = FALSE,is=FALSE,isloopsize=50,finishsamples=50),
   derrind=1:2)
 # sink()
 sf2d=matrix(sf2$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf2$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]

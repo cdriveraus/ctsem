@@ -33,6 +33,7 @@ Imports:
     rstan (>= 2.19.0),
     rstantools (>= 1.5.0),
     plyr,
+    dplyr,
     tools,
     data.table,
     Matrix,
@@ -60,6 +61,8 @@ Suggests:
     knitr,
     testthat,
     devtools,
-    DEoptim
+    DEoptim,
+    GGally,
+    shiny
 VignetteBuilder: knitr
 RoxygenNote: 6.1.1

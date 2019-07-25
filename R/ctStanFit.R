@@ -785,7 +785,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     nparams <- max(matsetup$param[matsetup$when==0])
     nmatrices <- length(mats$base)
     
-    
+    matsetup[which(matsetup$indvarying > 0),]
     indvaryingindex <- matsetup$param[which(matsetup$indvarying > 0)]
     indvaryingindex <- array(indvaryingindex[!duplicated(indvaryingindex)])
     sdscale <- array(matvalues$sdscale[match(indvaryingindex,matsetup$param)])
@@ -889,8 +889,14 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     # #jacobians
     standata$sJAxdrift <- array(jacobianelements(ctstanmodel$jacobian$JAx,mats=mx,
+      remove='drift',
       ntdpred=ctstanmodel$n.TDpred,when=2,matsetup=matsetup,returndriftonly=TRUE),
       dim=c(standata$nlatentpop,standata$nlatentpop))
+
+    standata$sJylambda <- array(jacobianelements(ctstanmodel$jacobian$Jy,mats=mx,
+      remove='lambda',
+      ntdpred=ctstanmodel$n.TDpred,when=4,matsetup=matsetup,returnlambdaonly=TRUE),
+      dim=c(standata$nmanifest,standata$nlatentpop))
     
     if(!recompile){ #then use finite diffs for some elements
       standata$sJAxfinite <- array(as.integer(unique(which(matrix(ctstanmodel$jacobian$JAx %in% #which rows of jacobian are not simply drift / fixed / state refs

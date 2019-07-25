@@ -1,4 +1,5 @@
 if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
+  # Sys.setenv(NOT_CRAN = 'true')
   
   library(ctsem)
   library(testthat)
@@ -61,28 +62,34 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     }
     
     
-     dtpars=lapply(s, function(argi) {
-        ct=argi$cm$parmatrices[grep('dt',rownames(argi$cm$parmatrices)),c('Mean','Sd')]
-        dt=argi$dm$parmatrices[rownames(argi$dm$parmatrices) %in% c('DRIFT','CINT','DIFFUSION'),c('Mean','Sd')]
-        rownames(dt) <- paste0('dt',rownames(dt))
-        list(ct=ct,dt=dt)
-      }
-      )
-      
-      for(ri in 1:nrow(dtpars[[1]]$ct)){
-        for(ci in 1:ncol(dtpars[[1]]$ct)){
-          par=sapply(dtpars, function(x) sapply(x, function(y) y[ri,ci]))
-          for(dimi in 2:length(par)){
-            expect_equivalent(par[dimi],par[dimi-1],tol=1e-1)
-          }
-        }}
-      
-      
-      ll=unlist(lapply(s, function(argi) lapply(argi, function(m) m$logprob)))
-      
-      for(dimi in 2:length(ll)){
-        expect_equivalent(ll[dimi],ll[dimi-1],tol=1e-3)
-      }
+    dtpars=lapply(s, function(argi) {
+      ct=argi$cm$parmatrices[c(grep('(^dt|^asym)',rownames(argi$cm$parmatrices)),
+        which(rownames(argi$cm$parmatrices) %in% c('MANIFESTVAR','LAMBDA','T0MEANS','T0VAR'))),c('Mean','Sd')]
+      dt=argi$dm$parmatrices[c(grep('(^asym)',rownames(argi$dm$parmatrices)),
+        which(rownames(argi$dm$parmatrices) %in% c('DRIFT','CINT','DIFFUSIONcov','MANIFESTVAR','LAMBDA','T0MEANS','T0VAR'))),c('Mean','Sd')]
+      rownames(dt)[rownames(dt) %in% c('DRIFT','CINT','DIFFUSIONcov')] <- paste0('dt',rownames(dt)[rownames(dt) %in% c('DRIFT','CINT','DIFFUSIONcov')])
+      rownames(dt)[rownames(dt) %in% c('dtDIFFUSIONcov')] <- 'dtDIFFUSION'
+      list(ct=ct,dt=dt)
+    }
+    )
+    dtpars=unlist(dtpars,recursive = FALSE)
+    dtpars=lapply(dtpars,function(x) x[order(rownames(x)),])
+    
+    for(ri in 1:nrow(dtpars$ml.ct)){
+      for(ci in 1:ncol(dtpars$ml.ct)){
+        par=sapply(dtpars, function(y) y[ri,ci])
+        for(dimi in 2:length(par)){
+          expect_equivalent(par[dimi],par[dimi-1],tol=ifelse(ci==1,1e-1,5e-1))
+        }
+      }}
+    
+    
+    ll=unlist(lapply(s, function(argi) lapply(argi, function(m) m$logprob)))
+    
+    for(dimi in 2:length(ll)){
+      expect_equivalent(ll[dimi],ll[dimi-1],tol=1e-3)
+    }
+    
       
       #check time varying lambda estimation
       sapply(s$ml,function(x) expect_equivalent(lambdafactor,x$popmeans[rownames(x$popmeans) %in% 'lbystate','mean'],tol=1e-1))

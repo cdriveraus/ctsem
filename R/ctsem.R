@@ -49,7 +49,7 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
 #'  
 #' @docType package
 #' @name ctsem
-#' @import grDevices methods stats rstan OpenMx graphics rstantools Rcpp data.table ggplot2
+#' @import grDevices methods stats rstan OpenMx graphics rstantools Rcpp data.table ggplot2 dplyr
 #' @importFrom plyr aaply alply round_any
 #' @importFrom utils relist as.relistable tail capture.output
 #' @importFrom Deriv Simplify 
@@ -74,8 +74,8 @@ NULL
 ctDocs <- function(){
   r=runif(1,0,9999999)
   pdfpath=paste0(tempdir(),'\\ctsemManual_',r,'.pdf')
-  download.file(url="https://github.com/cdriveraus/ctsem/raw/master/vignettes/hierarchicalmanual.pdf",
+  utils::download.file(url="https://github.com/cdriveraus/ctsem/raw/master/vignettes/hierarchicalmanual.pdf",
     destfile=pdfpath,mode='wb')
-  try(ctsem:::openPDF(pdfpath))
+  try(openPDF(pdfpath))
 }
   

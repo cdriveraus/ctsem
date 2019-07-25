@@ -53,7 +53,7 @@ ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
   if(subjects=='all') collapsemargin <- 1 else collapsemargin<-c(1,2)
   # if(collapseIterations) collapsemargin=1
   
-  for(matname in c('DRIFT','DIFFUSION','asymDIFFUSION','CINT','T0MEANS', 
+  for(matname in c('DRIFT','DIFFUSIONcov','asymDIFFUSION','CINT','T0MEANS', 
     'T0VAR','MANIFESTMEANS',if(!is.null(e$pop_MANIFESTVAR)) 'MANIFESTVAR','LAMBDA', if(!is.null(e$pop_TDPREDEFFECT)) 'TDPREDEFFECT')){
 
     subindex <- ctstanfitobj$data[[paste0(matname,'subindex')]]
@@ -85,11 +85,18 @@ ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
   # DRIFTHATCH<-DRIFT %x% diag(nrow(DRIFT)) + diag(nrow(DRIFT)) %x% DRIFT
   # asymDIFFUSION<-matrix(-solve(DRIFTHATCH) %*% c(DIFFUSION), nrow=nrow(DRIFT)) 
   
+  if(nrow(T0MEANS) > nrow(CINT)){ #then intoverpop used...
+    nlatent <- nrow(CINT)
+    T0MEANS <- T0MEANS[1:nlatent,1,drop=FALSE]
+    DRIFT <- DRIFT[1:nlatent,1:nlatent,drop=FALSE]
+    T0VAR <- T0VAR[1:nlatent,1:nlatent,drop=FALSE]
+  }
+  
   ln=ctstanfitobj$ctstanmodel$latentNames
   mn=ctstanfitobj$ctstanmodel$manifestNames
   tdn=ctstanfitobj$ctstanmodel$TDpredNames
   dimnames(DRIFT)=list(ln,ln)
-  dimnames(DIFFUSION)=list(ln,ln)
+  dimnames(DIFFUSIONcov)=list(ln,ln)
   dimnames(asymDIFFUSION)=list(ln,ln)
   rownames(CINT)=ln
   rownames(MANIFESTMEANS)=mn
@@ -99,7 +106,7 @@ ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
   dimnames(asymDIFFUSION)=list(ln,ln)
   dimnames(LAMBDA)=list(mn,ln)
   
-  model<-list(DRIFT=DRIFT,T0VAR=T0VAR,DIFFUSION=DIFFUSION,asymDIFFUSION=asymDIFFUSION,CINT=CINT,T0MEANS=T0MEANS,
+  model<-list(DRIFT=DRIFT,T0VAR=T0VAR,DIFFUSIONcov=DIFFUSIONcov,asymDIFFUSION=asymDIFFUSION,CINT=CINT,T0MEANS=T0MEANS,
     MANIFESTMEANS=MANIFESTMEANS, LAMBDA=LAMBDA)
   
   if(!is.null(e$pop_MANIFESTVAR)) {

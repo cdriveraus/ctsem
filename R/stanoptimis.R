@@ -37,6 +37,7 @@ standatact_specificsubjects <- function(standata, subjects){
 }  
 
 parlp <- function(parm,subjects=NA){
+  sm<-NULL
   if(!is.na(subjects[1])) standata <- standatact_specificsubjects(standata,subjects) 
   smf<-stan_reinitsf(sm,standata,fast=TRUE) #list[[corei]]
   out <- try(smf$log_prob(upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
@@ -163,7 +164,7 @@ tostanarray <- function(flesh, skeleton){
 #' @import rstan
 #' @export
 #' @examples
-#' #' \donttest{
+#' \donttest{
 #'
 #' library(rstan)
 #' scode <- "
@@ -188,7 +189,7 @@ tostanarray <- function(flesh, skeleton){
 #' optimis$optimfit
 #'
 #' #for posterior distributions
-#' optimis <- stanoptimis(standata = list(),sm = sm,finishsamples = 3000,cores=6,tdf=5)
+#' optimis <- stanoptimis(standata = list(),sm = sm,finishsamples = 3000,cores=2,tdf=5)
 #'
 #' apply(optimis$rawposterior,2,mean)
 #' apply(optimis$rawposterior,2,sd)
@@ -203,7 +204,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   stochastic = FALSE, #'auto',
   nopriors=FALSE,carefulfit=TRUE,
   plotsgd=FALSE,
-  is=FALSE, isloopsize=1000, finishsamples=500, tdf=2,chancethreshold=100,finishmultiply=5,
+  is=FALSE, isloopsize=1000, finishsamples=500, tdf=10,chancethreshold=100,finishmultiply=5,
   verbose=0,cores=2){
 
   if(!is.null(standata$verbose)) standata$verbose=as.integer(verbose)
@@ -487,12 +488,12 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           out<-try(smf$log_prob(upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
         if(class(out)=='try-error' || is.nan(out)) {
           out=-99999999
-          gradout <<- rep(NaN,length(parm))
+          # gradout <<- rep(NaN,length(parm))
           attributes(out) <- list(gradient=rep(0,length(parm)))
         } else {
           if(out[1] > bestlp) {
             bestlp <<- out[1]
-            gradout <<- attributes(out)$gradient
+            # gradout <<- attributes(out)$gradient
           }
         }
           if(verbose > 0 && is.null(standata$verbose)) message('target = ', out)
@@ -575,8 +576,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       cl <- parallel::makeCluster(cores, type = "PSOCK") #should vary this depending on os for memory management
       parallel::clusterExport(cl = cl, varlist = c('sm','smf','standata'),envir = environment())
       parallel::clusterApply(cl,1:cores,function(x) {
-        library(Rcpp)
-        library(stanoptimis)
+        library(ctsem)
         })
       on.exit(parallel::stopCluster(cl))
 
@@ -584,9 +584,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         out<-try(smf$log_prob(upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
         if(class(out)=='try-error' || is.nan(out)) {
           out=Inf
-          gradout <<- rep(NaN,length(parm))
+          # gradout <<- rep(NaN,length(parm))
         } else {
-          gradout <<- attributes(out)$gradient
+          # gradout <<- attributes(out)$gradient
         }
         return(out)
       }
@@ -829,7 +829,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           counter <- 1
           while(counter < 30 &&
               length(unique(sample(x=1:length(newsampleprob),size=length(newsampleprob),prob=newsampleprob,replace=TRUE))
-                ) < 50) {
+                ) < 20) {
            if(counter==1) message ('Sampling problematic -- trying to recover... ')
             counter = counter + 1
             if(counter == 30) stop('Importance sampling failed -- either posterior mode not found, or mode is inadequate starting point for sampling')
@@ -859,6 +859,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           #check max resample probability and drop earlier samples if too high
           dropuntil <- ceiling(max(c(0,which(sample_prob > (chancethreshold / isloopsize)) / isloopsize),na.rm=TRUE))*isloopsize
           if((isloopsize - dropuntil) > isloopsize) dropuntil <- dropuntil -isloopsize
+          # browser()
+          if(length(unique(resample_i)) < 200) dropuntil <- 0 
+          if(nrow(samples) < isloopsize *2) dropuntil <- 0
 
           if(dropuntil > 0){
             resamples <- resamples[-(0:dropuntil),,drop=FALSE]

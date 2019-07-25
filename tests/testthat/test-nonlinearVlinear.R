@@ -13,11 +13,12 @@ sunspots<-sunspot.year
 datalong <- cbind(id, time, sunspots)
 
 #setup model
- ssmodel <- ctModel(type='stanct', n.latent=2, n.manifest=1, n.TDpred = 1,
+ ssmodel <- ctModel(type='stanct', n.latent=2, n.manifest=1, 
+    # n.TDpred = 1,
   manifestNames='sunspots', 
   latentNames=c('ss_level', 'ss_velocity'),
    LAMBDA=matrix(c( 1, 'ma1'), nrow=1, ncol=2),
-   DRIFT=matrix(c(0, 'a21', 1, 'a22'), nrow=2, ncol=2),
+   DRIFT=matrix(c(0, '1|-1|a21', 1, 'a22'), nrow=2, ncol=2),
    TDPREDEFFECT=matrix(c('tdeffect',0),2),
    MANIFESTMEANS=matrix(c('mm'), nrow=1, ncol=1),
    MANIFESTVAR=diag(0,1),
@@ -34,12 +35,13 @@ datalong <- cbind(id, time, sunspots)
  datalong[seq(10,150,10),'TD1'] = 1
 
 ssfitnl <- ctStanFit(datalong, ssmodel, iter=300, chains=1,optimize=T,verbose=0,maxtimestep = .3,
-  nlcontrol=list(nldynamics=F,ukffull=1),optimcontrol = list(finishsamples=10),nopriors=TRUE,deoptim=FALSE)
+  nlcontrol=list(nldynamics=TRUE),optimcontrol = list(finishsamples=10),nopriors=TRUE,deoptim=FALSE)
 ssfitl <- ctStanFit(datalong, ssmodel, iter=300, chains=1,optimize=T,verbose=0,
   nlcontrol=list(nldynamics=FALSE),optimcontrol = list(finishsamples=10,deoptim=FALSE),nopriors=TRUE)
 
-ssfitnlm <- ctStanFit(datalong, ssmodel, iter=300, chains=1,optimize=T,verbose=2,maxtimestep = 2,
-  nlcontrol=list(nldynamics=TRUE,ukffull=1,nlmeasurement=TRUE),optimcontrol = list(finishsamples=10),nopriors=TRUE,deoptim=FALSE)
+ssfitnlm <- ctStanFit(datalong, ssmodel, iter=300, chains=1,optimize=T,verbose=0,maxtimestep = 2,fit=T,
+   # forcerecompile=T,
+  nlcontrol=list(nldynamics=T,nlmeasurement=T),optimcontrol = list(finishsamples=10),nopriors=TRUE,deoptim=FALSE)
 
 #output
 # snl=summary(ssfitnl)

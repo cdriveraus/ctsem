@@ -68,7 +68,7 @@ f=ctFit(dat=wide,ctmodelobj=m)
 # stantraitvar <- (-1/(sfsum$popmeans[2,1])) %*% sfsum$popsd[2,1]^2 %*% (-1/(sfsum$popmeans[2,1]))
 
 #check drift using different fit approaches
-expect_equal(mean(sf$stanfit$transformedpars$DRIFT),summary(f)$ctparameters[2,1],tolerance=1e-1)
+expect_equal(mean(sf$stanfit$transformedpars$DRIFT[,,1,1]),summary(f)$ctparameters[2,1],tolerance=1e-1)
 
 })
 

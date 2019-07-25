@@ -36,18 +36,18 @@ ctStanKalman <- function(fit,nsamples=NA,cores=2){
   nmanifest <- fit$standata$nmanifest
   dimnames(k) = list(iter=1:dim(k)[1],drow=1:dim(k)[2],
     kalman=paste0(c(rep('lln',nmanifest),
-      rep('llscale',nmanifest),rep('err',nmanifest),rep('ypred',nmanifest),rep('etaprior',nlatent),rep('etaupd',nlatent)),
+      rep('llscale',nmanifest),rep('err',nmanifest),rep('yprior',nmanifest),rep('etaprior',nlatent),rep('etaupd',nlatent)),
       c(1:nmanifest,1:nmanifest,1:nmanifest,1:nmanifest,1:nlatent,1:nlatent)))
   
   
   
-  obj <- c('lln','llscale','err','ypred','etaprior','etaupd')
+  obj <- c('lln','llscale','err','yprior','etaprior','etaupd')
   
   
   lln=k[,,1:nmanifest,drop=FALSE]
   llscale=k[,,(nmanifest*1+1):(nmanifest*1+nmanifest),drop=FALSE]
   err=k[,,(nmanifest*2+1):(nmanifest*2+nmanifest),drop=FALSE]
-  ypred=k[,,(nmanifest*3+1):(nmanifest*3+nmanifest),drop=FALSE]
+  yprior=k[,,(nmanifest*3+1):(nmanifest*3+nmanifest),drop=FALSE]
   etaprior=k[,,(nmanifest*4+1):(nmanifest*4+nlatent),drop=FALSE]
   etaupd=k[,,(nmanifest*4+nlatent+1):(nmanifest*4+nlatent*2),drop=FALSE]
   
@@ -61,8 +61,11 @@ ctStanKalman <- function(fit,nsamples=NA,cores=2){
   etaupdcov <- e$etaupdcov
   etapriorcov[etapriorcov==99999] <- NA
   etaupdcov[etaupdcov==99999] <- NA
+  ypriorcov <- e$ypriorcov
+  ypriorcov[ypriorcov==99999] <- NA
 
-    return(list(lln=lln,llscale=llscale,err=err,ypred=ypred,
+    return(list(lln=lln,llscale=llscale,err=err,
+      yprior=yprior,ypriorcov=ypriorcov,
       etaprior=etaprior, etapriorcov=etapriorcov,
       etaupd=etaupd,etaupdcov=etaupdcov,
       llrow=llrow))
