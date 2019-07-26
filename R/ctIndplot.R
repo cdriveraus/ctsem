@@ -32,7 +32,7 @@ ctIndplot<-function(datawide,n.manifest,Tpoints,n.subjects='all',colourby="varia
 
   if(n.subjects=='all') n.subjects=nrow(datawide)
   
-  if(length(vars)==1 && vars=='all') vars<-1:n.manifest
+  if(length(vars)==1 && vars[1]=='all') vars<-1:n.manifest
   
   if(colourby=="variable") colourvector <- grDevices::rainbow(length(vars),alpha=opacity)
   if(colourby=="subject") colourvector <- grDevices::rainbow(n.subjects,alpha=opacity)

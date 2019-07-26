@@ -248,7 +248,7 @@ ctStanPlotPost(f1, priorwidth = FALSE, wait=FALSE) #rescale to width of posterio
 ctStanPostPredict(f1, wait=FALSE) #compare randomly generated data from posterior to observed data
 
 cf<-ctCheckFit(f1) #compare covariance of randomly generated data to observed cov
-plot(cf)
+plot(cf,wait=FALSE)
 
 
 
@@ -414,19 +414,6 @@ f3nl <- ctStanGenerateFromFit(f3nl,nsamples=100,fullposterior=TRUE)
 
 ctStanPostPredict(f3nl, datarows=1:100, wait=FALSE)
 
-e=extract(f3nl)
-subindex = which(f3nl$data$subject ==3) #specify subject
- 
-matplot(f3nl$data$time[subindex], # Y predictions given earlier Y
-   t(e$kalman[,subindex,4]), 
-   ctStanKalman(fit = f3nl)$ypred[,subindex,1], #predicted y for variable 1
-   type='l',lty=1,col=rgb(0,0,0,.1))
- 
-points(f3nl$data$time[subindex], #actual Y
-   f3nl$data$Y[subindex,1],type='p',col='red')
-   
-matplot(f3nl$data$time[subindex], add = TRUE, #Generated Y from model
-    f3nl$generated$Y[subindex,,1], 
-    type='l',lty=1,col=rgb(0,0,1,.05))
+ctKalman(f3nl,plot=TRUE)
 }
 }

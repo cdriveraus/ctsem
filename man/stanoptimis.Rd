@@ -8,7 +8,7 @@ stanoptimis(standata, sm, init = "random", initsd = 0.01,
   sampleinit = NA, deoptim = FALSE, estonly = FALSE, tol = 1e-14,
   decontrol = list(), stochastic = FALSE, nopriors = FALSE,
   carefulfit = TRUE, plotsgd = FALSE, is = FALSE,
-  isloopsize = 1000, finishsamples = 500, tdf = 2,
+  isloopsize = 1000, finishsamples = 500, tdf = 10,
   chancethreshold = 100, finishmultiply = 5, verbose = 0,
   cores = 2)
 }

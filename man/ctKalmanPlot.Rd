@@ -68,6 +68,7 @@ Nothing. Generates plots.
 Plots Kalman filter output from ctKalman.
 }
 \examples{
+\donttest{
 ### Get output from ctKalman
 x<-ctKalman(ctstantestfit,subjects=2)
 
@@ -76,4 +77,5 @@ ctKalmanPlot(x, subjects=2)
 
 ###Single step procedure:
 ctKalman(ctstantestfit,subjects=2,plot=TRUE)
+}
 }

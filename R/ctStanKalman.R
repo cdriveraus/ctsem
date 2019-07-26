@@ -9,8 +9,9 @@
 #' @export
 #'
 #' @examples 
+#' \donttest{
 #' k=ctStanKalman(ctstantestfit)
-#' 
+#' }
 ctStanKalman <- function(fit,nsamples=NA,cores=2){
   if(class(fit)!='ctStanFit') stop('Not a ctStanFit object')
   e=extract(fit)

@@ -211,6 +211,7 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
 #' @return Nothing. Generates plots.
 #' @export
 #' @examples
+#' \donttest{
 #' ### Get output from ctKalman
 #' x<-ctKalman(ctstantestfit,subjects=2)
 #' 
@@ -219,6 +220,7 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
 #' 
 #' ###Single step procedure:
 #' ctKalman(ctstantestfit,subjects=2,plot=TRUE)
+#' }
 ctKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
   errorvec='auto', errormultiply=1.96,
   ltyvec="auto",colvec='auto', lwdvec='auto', 

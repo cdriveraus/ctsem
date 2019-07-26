@@ -25,7 +25,7 @@
 #'@export
 ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
   calcfunc=quantile,calcfuncargs=list(probs=0.5)){
-  if(subjects[1] != 'all' && !is.integer(as.integer(subjects))) stop('
+  if(subjects[1] != 'all' && any(!is.integer(as.integer(subjects)))) stop('
     subjects argument must be either "all" or an integer denoting specific subjects')
   
   if(class(ctstanfitobj)!='ctStanFit') stop('Not an object of class ctStanFit')

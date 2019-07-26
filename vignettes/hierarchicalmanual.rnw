@@ -241,11 +241,11 @@ model<-ctModel(type='stanct',
   n.latent=2, latentNames=c('eta1','eta2'),
   n.manifest=2, manifestNames=c('Y1','Y2'),
   n.TDpred=1, TDpredNames='TD1', 
-  n.TIpred=3, TIpredNames=c('TI1','TI2','TI3'),
+  n.TIpred=1, TIpredNames=c('TI1'),
   LAMBDA=diag(2))
 @
 
-The code above specifies a first order bivariate latent process model, with each process measured by a single, potentially noisy, manifest variable. A single time dependent predictor is included in the model, and three time independent predictors. To see the subject level model equation, the \verb|ctModelLatex| function can be used on the model object, generating output like so:
+The code above specifies a first order bivariate latent process model, with each process measured by a single, potentially noisy, manifest variable. A single time dependent predictor is included in the model, and a time independent predictor. To see the subject level model equation, the \verb|ctModelLatex| function can be used on the model object, generating output like so:
 
 <<texout,results='asis',echo=FALSE>>=
 cat(ctModelLatex(model,textsize = 'footnotesize',compile = FALSE,equationonly = TRUE))
@@ -335,11 +335,11 @@ Figure \ref{fig:plots1} shows the dynamic regression coefficients (between laten
 
 The relation between posteriors and priors for variables of interest can also be plotted as follows -- note that the \verb}rows} argument of the shown code is not necessary, but if only particular parameter plots are desired the rows corresponding to specific parameters of \verb}fit$setup$popsetup} can be specified.
 
-<<outputposterior, fig.width=5, fig.height=4, fig.cap='Prior and posterior densities relevant to the second process auto effect.' >>=
-ctStanPlotPost(obj = fit, rows=3, mfrow=c(1,1), parcontrol = list() ) 
+<<outputposterior, fig.width=6, fig.height=3, fig.cap='Prior and posterior densities relevant to the first variables manifest intercept.' >>=
+ctStanPlotPost(obj = fit, rows=3, mfrow=c(1,3), parcontrol = list() ) 
 @
 
-Shown in Figure \ref{fig:outputposterior} are approximate density plots based on the post-warmup samples drawn. For each parameter that has individual variation specified, three plots are shown. These are the population mean posterior compared to the prior, the posterior versus prior distribution of subject level parameters along with the population mean prior, and then the population standard deviation posterior compared to the prior. 
+Shown in Figure \ref{fig:outputposterior} are approximate density plots based on the post-warmup samples drawn. For each parameter that has individual variation specified, three plots are shown. These are: 1) the population mean posterior compared to the prior; 2) the posterior (available only with sampling) versus prior distribution of subject level parameters along with the population mean prior; 3) and then the population standard deviation posterior compared to the prior. 
 
 \subsection{Model prediction plots}
 One means of assessing model performance is to view plots of the observed time series alongside the model predicted time series. ctsem includes functionality to output prior (based on all prior observations) and updated (based on all prior and current observations) expectations and covariances from the Kalman filter, based on specific subjects models. Examples of such are depicted in Figure \ref{fig:kalmanplot}, where we see observed, predicted, and smoothed scores for a selected subject from our sample. If we wanted to predict unobserved states in the future, we would need only to specify the appropriate timerange (prediction into earlier times is possible but makes little sense unless the model is restricted to stationarity). For help with these plots, see \verb|?ctKalman| and \verb|?ctKalmanPlot| (arguments for the latter are passed via \verb|ctKalman|, as below).
@@ -359,7 +359,7 @@ ctStanTIpredeffects(fit, plot = TRUE, whichpars=c('dtDRIFT[2,1]','MANIFESTMEANS'
  timeinterval = .5, whichTIpreds = 1, includeMeanUncertainty = TRUE)
 @
 
-Figure \ref{fig:tipredeffects} shows how the expectation for an individuals parameter value is likely to change depending on the value they have for the time independent predictor specified. In this example, the discrete time drift effects for a time interval of 0.2, as well as the manifest error variance from row 2 column 2 of the MANIFESTVAR matrix, are shown. Of course, the plot for the error variance parameter is simply a flat line, since we did not allow it to vary across subjects. Multiple predictors can be specified, and the combined effect based on observed predictor combinations will be shown, but this will likely make no sense unless there is a deterministic relation between the two -- this can be useful for including linear and quadratic effects, for instance, wherein the first predictor is linear, and the second quadratic. The nsamples and nsubjects parameters specify how many different parameter samples, and predictor values, are used -- higher values take longer to compute, but give smoother / more accurate plots.
+Figure \ref{fig:tipredeffects} shows how the expectation for an individuals parameter value is likely to change depending on the value they have for the time independent predictor specified. In this example, the discrete time drift effects for a time interval of 0.2, as well as the manifest mean parameters, are shown. Multiple predictors can be specified, and the combined effect based on observed predictor combinations will be shown, but this will likely make no sense unless there is a deterministic relation between the two -- this can be useful for including linear and quadratic effects, for instance, wherein the first predictor is linear, and the second quadratic. The nsamples and nsubjects parameters specify how many different parameter samples, and predictor values, are used -- higher values take longer to compute, but give smoother / more accurate plots.
 
 \section{Additional details}
 \subsection{Detailed model specification}
@@ -511,8 +511,7 @@ ssfitnl <- ctStanFit(datalong, m, optimize=T)
 
 k <- ctStanKalman(ssfitnl) #extract state predictions
 
-
-matplot(datalong$time,t(k$ypred[,,1]),type='l',
+matplot(datalong$time,t(k$yprior[,,1]),type='l',
   col=rgb(1,0,0,.1),xlab='Year',ylab='Sunspots') 
 points(datalong$time,datalong$sunspots,type='l')
 legend('topright',c('Observed','Predicted'),text.col=c('black','red'),bty='n')

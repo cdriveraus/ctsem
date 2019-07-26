@@ -100,7 +100,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   
   if(type=='all') type=c('discreteDRIFT','latentMeans') #must match with ctDiscretePars
   
-  if(subjects[1] != 'all' && !is.integer(as.integer(subjects))) stop('
+  if(subjects[1] != 'all' && any(!is.integer(as.integer(subjects)))) stop('
   subjects argument must be either "all" or an integer denoting specific subjects')
   
   nsubjects <- dim(e$indparams)[2]

@@ -306,7 +306,7 @@ verbosify<-function(sf,verbose=2){
 #' ctStanPostPredict(f1, wait=FALSE) #compare randomly generated data from posterior to observed data
 #' 
 #' cf<-ctCheckFit(f1) #compare covariance of randomly generated data to observed cov
-#' plot(cf)
+#' plot(cf,wait=FALSE)
 #' 
 #' 
 #' 
@@ -472,20 +472,7 @@ verbosify<-function(sf,verbose=2){
 #' 
 #' ctStanPostPredict(f3nl, datarows=1:100, wait=FALSE)
 #' 
-#' e=extract(f3nl)
-#' subindex = which(f3nl$data$subject ==3) #specify subject
-#'  
-#' matplot(f3nl$data$time[subindex], # Y predictions given earlier Y
-#'    t(e$kalman[,subindex,4]), 
-#'    ctStanKalman(fit = f3nl)$ypred[,subindex,1], #predicted y for variable 1
-#'    type='l',lty=1,col=rgb(0,0,0,.1))
-#'  
-#' points(f3nl$data$time[subindex], #actual Y
-#'    f3nl$data$Y[subindex,1],type='p',col='red')
-#'    
-#' matplot(f3nl$data$time[subindex], add = TRUE, #Generated Y from model
-#'     f3nl$generated$Y[subindex,,1], 
-#'     type='l',lty=1,col=rgb(0,0,1,.05))
+#' ctKalman(f3nl,plot=TRUE)
 #' }
 
 ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intoverstates=TRUE, binomial=FALSE,
@@ -517,7 +504,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     
     
-    if(length(unique(datalong[,idName]))==1 && any(ctstanmodel$pars$indvarying[is.na(ctstanmodel$pars$value)]==TRUE) & 
+    if(length(unique(datalong[,idName]))==1 && any(ctstanmodel$pars$indvarying[is.na(ctstanmodel$pars$value)]==TRUE) && 
         is.null(ctstanmodel$fixedrawpopmeans) && is.null(ctstanmodel$fixedsubpars) & is.null(ctstanmodel$forcemultisubject)) {
       ctstanmodel$pars$indvarying <- FALSE
       message('Individual variation not possible as only 1 subject! indvarying set to FALSE on all parameters')
@@ -542,8 +529,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     recompile <- FALSE
     if(optimize && !intoverstates) stop('intoverstates=TRUE required for optimization!')
-    if(optimize && !intoverpop && any(ctstanmodel$pars$indvarying[is.na(ctstanmodel$pars$value)]==TRUE && 
-        is.null(ctstanmodel$fixedrawpopchol) & is.null(ctstanmodel$fixedsubpars))){
+    if(optimize && !intoverpop && any(ctstanmodel$pars$indvarying[is.na(ctstanmodel$pars$value)]) && 
+        is.null(ctstanmodel$fixedrawpopchol) && is.null(ctstanmodel$fixedsubpars)){
       intoverpop <- TRUE
       message('Setting intoverpop=TRUE to enable optimization of random effects...')
     }
