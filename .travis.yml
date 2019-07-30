@@ -1,13 +1,13 @@
 language: r
-sudo: true
-cache: packages
+sudo: false
+#cache: packages
   
 r_check_args: "--no-vignettes"
 r_build_args: '--no-build-vignettes'
 
-repos:
-  CRAN: https://cloud.r-project.org
-  ropensci: http://packages.ropensci.org
+#repos:
+#  CRAN: https://cloud.r-project.org
+#  ropensci: http://packages.ropensci.org
   
 env:
 global:
@@ -22,12 +22,10 @@ matrix:
       dist: trusty
       r: release
       r_binary_packages:
-        - rstan
         - rstantools
         - data.table
         - jsonlite
         - Rcpp
-        - OpenMx
         - cOde
         - remotes
         - Deriv
@@ -40,7 +38,6 @@ matrix:
         - shiny
         - mize
         - StanHeaders
-        - rstan
       addons:
         apt:
           sources:
@@ -53,13 +50,11 @@ matrix:
       dist: trusty
       r: devel
       r_binary_packages:
-        - rstan
         - remotes
         - rstantools
         - data.table
         - jsonlite
         - Rcpp
-        - OpenMx
         - cOde
         - Deriv
         - mvtnorm
@@ -71,7 +66,6 @@ matrix:
         - shiny
         - mize
         - StanHeaders
-        - rstan
       addons:
         apt:
           sources:
@@ -98,7 +92,6 @@ matrix:
       osx_image: xcode10
       r: release
       r_binary_packages:
-        - rstan
         - rstantools
         - data.table
         - jsonlite
@@ -116,7 +109,6 @@ matrix:
         - shiny
         - mize
         - StanHeaders
-        - rstan
       fortran: false
 
      
@@ -131,8 +123,8 @@ before_install:
   - eval "${MATRIX_EVAL}"
   
 install:
-  #- if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo apt-get install -yq --allow-unauthenticated --no-install-suggests --no-install-recommends r-cran-openmx; fi
-  #- if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo apt-get install -yq --allow-unauthenticated --no-install-suggests --no-install-recommends r-cran-rstan; fi
+  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo apt-get install -yq --allow-unauthenticated --no-install-suggests --no-install-recommends r-cran-openmx; fi
+  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo apt-get install -yq --allow-unauthenticated --no-install-suggests --no-install-recommends r-cran-rstan; fi
 
 script:
   - travis_wait 30 R CMD build --no-build-vignettes .
