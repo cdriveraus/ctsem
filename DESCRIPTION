@@ -1,7 +1,7 @@
 Package: ctsem
 Type: Package
 Title: Continuous Time Structural Equation Modelling
-Version: 2.10.0
+Version: 3.0.0
 Date: 2019-7-28
 Authors@R: c(person("Charles", "Driver", role =
     c("aut","cre","cph"),email="driver@mpib-berlin.mpg.de"),
@@ -16,7 +16,7 @@ Description: Hierarchical continuous time state space modelling, for linear
     "Continuous Time Structural Equation Modeling with R Package ctsem", with updated version
     as CRAN vignette <https://cran.r-project.org/web/packages/ctsem/vignettes/ctsem.pdf> ,
     linear mixed effects SDE's estimated via maximum likelihood and optimization are possible.
-    Using the Stan based formulation, described in <https://www.researchgate.net/publication/310747987_Introduction_to_Hierarchical_Continuous_Time_Dynamic_Modelling_With_ctsem> , 
+    Using the Stan based formulation, described in <https://github.com/cdriveraus/ctsem/raw/master/vignettes/hierarchicalmanual.pdf> , 
     nonlinearity (state dependent parameters) and random effects on all parameters
     are possible, using either optimization (with optional importance sampling) or
     Stan's Hamiltonian Monte Carlo sampling. Priors may be used. For the conceptual
@@ -33,7 +33,6 @@ Imports:
     rstan (>= 2.19.0),
     rstantools (>= 1.5.0),
     plyr,
-    dplyr,
     tools,
     data.table,
     Matrix,

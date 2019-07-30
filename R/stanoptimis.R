@@ -68,7 +68,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2){
   parallel::clusterExport(cl2, c('sm','standata','samples','est1'),environment())
   parallel::clusterApply(cl2,1:cores,function(x) require(ctsem))
   # target_dens <- c(target_dens,
-  
+
   transformedpars <- try(flexsapply(cl2, parallel::clusterSplit(cl2,1:nrow(samples)), function(x){ #could pass smaller samples
     # Sys.sleep(.1)
     if(!is.null(standata$savescores) && !standata$savescores) standata$dokalmanrows <- as.integer(c(1,standata$subject[-1] - standata$subject[-standata$ndatapoints]))
@@ -623,7 +623,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                 upgrad <- rep(NA,length(pars))
                 downgrad <- rep(NA,length(pars))
                 dolpchecks <- FALSE
-                # if(stepsize < 1e-12) browser()
+                # if(stepsize < 1e-12) 
               } else{
                 upgrad= attributes(uplp)$gradient
                 downgrad = attributes(downlp)$gradient
@@ -639,7 +639,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                     lpdifdirection <- -1
                   }
                   if(abs(uplp-downlp) < lpdifmin) {
-                    # browser()
+                    # 
                     # message(paste0('increasing step for ', i))
                     lpdifok <- FALSE
                     if(lpdifdirection== -1) {
@@ -718,11 +718,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # hessup=hess1s(pars = est2,direction = 1,step = 1e-4,lpdifmin = 1e-4,lpdifmax = 1e-3)
         # hessdown=hess1s(pars = est2,direction = -1,step = 1e-4,lpdifmin = 1e-4,lpdifmax = 1e-3)
         # hess=(hessup+hessdown)/2
-        hess=grmat(pars=est2,step=1e-6)
+        hess=grmat(pars=est2,step=1e-12)
         if(any(is.na(hess))) warning(paste0('Hessian could not be computed for pars ', paste0(which(apply(hess,1,function(x) any(is.na(x)))),collapse=', '), ' -- standard errors will be nonsense, model adjustment may be needed.',collapse=''))
         diag(hess)[is.na(diag(hess))]<- -1
         hess[is.na(hess)] <- 0
-        hess = (hess/2) + t(hess/2)
+        hess = ((hess) + t(hess))/2
         # neghesschol = try(chol(-hess),silent=TRUE)
 
         mchol=try(t(chol(solve(-hess))),silent=TRUE)
@@ -732,7 +732,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         } else npd <- FALSE
         # if(class(mchol)=='try-error') {
         mcov=MASS::ginv(-hess) #-optimfit$hessian)
-        mcov=as.matrix(Matrix::nearPD(mcov)$mat)
+        mcov=as.matrix(Matrix::nearPD(mcov,conv.norm.type = 'F')$mat)
       }
 
       if(!is.na(sampleinit[1])){
@@ -859,7 +859,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           #check max resample probability and drop earlier samples if too high
           dropuntil <- ceiling(max(c(0,which(sample_prob > (chancethreshold / isloopsize)) / isloopsize),na.rm=TRUE))*isloopsize
           if((isloopsize - dropuntil) > isloopsize) dropuntil <- dropuntil -isloopsize
-          # browser()
+          # 
           if(length(unique(resample_i)) < 200) dropuntil <- 0 
           if(nrow(samples) < isloopsize *2) dropuntil <- 0
 

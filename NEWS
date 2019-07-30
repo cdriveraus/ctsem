@@ -1,4 +1,11 @@
 ctsem news:
+28/7/2019
+#### 3.0.0 ####
+- parameter transformations can be specified naturally without recompilation
+- analytic Jacobian's used for extended Kalman filter where possible
+- improved optimizer performance
+- generally improved performance, particularly for nonlinear systems.
+
 14/5/2019
 #### 2.9.5 ####
 - corrected optimization of random effects using ctStanFit

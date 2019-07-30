@@ -46,7 +46,6 @@ MANIFESTVAR=diag(0.5,1),
  checkm$pars$indvarying <- FALSE
 
  checkm$pars[c(-1,-7) ,c('TI1_effect')] <- FALSE
- checkm$pars$meanscale[c(1,7)] <- 1
 
 tfit<-ctStanFit(tdat,checkm,chains=2,optimize=T,optimcontrol=list(is=TRUE,finishsamples=200),nopriors=F,verbose=0)
 s=summary(tfit)

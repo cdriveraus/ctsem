@@ -15,7 +15,7 @@
 ^vignettes/figure
 ^vignettes/^.bbl
 ^vignettes/jss.cls
-^vignettes/hierarchical.*
+^vignettes/hierarchicalmanual.*
 ^vignettes/Sweave.sty
 ^vignettes/^.log
 ^vignettes/Sweave.sty

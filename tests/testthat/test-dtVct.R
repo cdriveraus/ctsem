@@ -99,6 +99,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
     
     
     test_that("dtVct_noheterogeneity", {
+      set.seed(1)
       s=list()
       nsubjects=100
       Tpoints=10

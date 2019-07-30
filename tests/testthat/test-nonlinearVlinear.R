@@ -18,16 +18,12 @@ datalong <- cbind(id, time, sunspots)
   manifestNames='sunspots', 
   latentNames=c('ss_level', 'ss_velocity'),
    LAMBDA=matrix(c( 1, 'ma1'), nrow=1, ncol=2),
-   DRIFT=matrix(c(0, '1|-1|a21', 1, 'a22'), nrow=2, ncol=2),
+   DRIFT=matrix(c(0, 'a21|-log1p(exp(param))', 1, 'a22'), nrow=2, ncol=2),
    TDPREDEFFECT=matrix(c('tdeffect',0),2),
-   MANIFESTMEANS=matrix(c('mm'), nrow=1, ncol=1),
+   MANIFESTMEANS=matrix(c('mm|param*10+44'), nrow=1, ncol=1),
    MANIFESTVAR=diag(0,1),
    T0VAR=matrix(c(1,0,0,1), nrow=2, ncol=2), #Because single subject
    DIFFUSION=matrix(c(0, 0, 0, 'diff'), ncol=2, nrow=2))
- 
- ssmodel$pars$indvarying<-FALSE #Because single subject
- ssmodel$pars$offset[14]<- 44 #Because not mean centered
- ssmodel$pars[4,c('transform','offset')]<- c(1,0) #To avoid multi modality 
 
  #td preds for testing only -- no real effect
  TD1 <- 0

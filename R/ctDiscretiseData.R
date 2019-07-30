@@ -26,10 +26,9 @@
 
 ctDiscretiseData <- function(dlong,timestep,timecol='time',idcol='id',TDpredNames=NULL,
   TIpredNames=NULL){
-  
   if(any(is.na(dlong[,timecol]))) stop('Cannot discretise with missing time data!')
   if(any(is.na(dlong[,idcol]))) stop('Cannot discretise with missing id data!')
-  
+ 
   out<-matrix(NA,nrow=0,ncol=ncol(dlong))
   for(idi in unique(dlong[,idcol])){
     odat<-dlong[dlong[,idcol]==idi,]
@@ -43,7 +42,6 @@ ctDiscretiseData <- function(dlong,timestep,timecol='time',idcol='id',TDpredName
     out<-rbind(out,ndat)
   }
   colnames(out) <- colnames(dlong)
-  
   l1 <- sum(!is.na(dlong[,-which(colnames(dlong) %in% c(timecol,idcol))])) 
    l2 <-   sum(!is.na(out[,-which(colnames(out) %in% c(timecol,idcol))])) 
 

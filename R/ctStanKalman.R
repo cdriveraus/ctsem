@@ -3,6 +3,8 @@
 #' @param fit fit object from \code{\link{ctStanFit}}.
 #' @param nsamples either NA (to extract all) or a positive integer from 1 to maximum samples in the fit.
 #' @param cores Integer number of cpu cores to use. Only needed if savescores was set to FALSE when fitting.
+#' @param collapsefunc function to apply over samples, such as \code{mean}
+#' @param ... additional arguments to collpsefunc.
 #'
 #' @return list containing Kalman filter elements, each element in array of
 #' iterations, data row, variables. llrow is the log likelihood for each row of data.
@@ -12,11 +14,11 @@
 #' \donttest{
 #' k=ctStanKalman(ctstantestfit)
 #' }
-ctStanKalman <- function(fit,nsamples=NA,cores=2){
+ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
   if(class(fit)!='ctStanFit') stop('Not a ctStanFit object')
-  e=extract(fit)
+ if(class(collapsefunc) %in% 'function' ) e=extract(fit)
 
-  if(length(dim(e$k))==0){
+  if(!class(collapsefunc) %in% 'function' || length(dim(e$k))==0){
     message('State estimates not saved, computing...')
     standata <- fit$standata
     standata$savescores <- 1L
@@ -27,6 +29,7 @@ ctStanKalman <- function(fit,nsamples=NA,cores=2){
       samples = t(stan_unconstrainsamples(fit$stanfit,fit$standata))
     }
     if(!is.na(nsamples)) samples <- samples[sample(1:nrow(samples),nsamples),,drop=FALSE]
+    if(class(collapsefunc) %in% 'function') samples = matrix(apply(samples,2,collapsefunc,...),ncol=ncol(samples))
     e=stan_constrainsamples(sm = fit$stanmodel,standata = standata,samples = samples,cores=cores)
   }
   
@@ -65,8 +68,8 @@ ctStanKalman <- function(fit,nsamples=NA,cores=2){
   ypriorcov <- e$ypriorcov
   ypriorcov[ypriorcov==99999] <- NA
 
-    return(list(lln=lln,llscale=llscale,err=err,
-      yprior=yprior,ypriorcov=ypriorcov,
+    return(list(time=cbind(fit$standata$time), lln=lln,llscale=llscale,err=err,
+      y=matrix(fit$data$Y,ncol=ncol(fit$data$Y)), yprior=yprior,ypriorcov=ypriorcov,
       etaprior=etaprior, etapriorcov=etapriorcov,
       etaupd=etaupd,etaupdcov=etaupdcov,
       llrow=llrow))

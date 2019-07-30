@@ -38,6 +38,7 @@
 
 plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='marginalise',inddifdevs=c(-1,1),...){
   if(class(x)!='ctStanModel') stop('not a ctStanModel object!')
+  x <- ctModelTransformsToNum(x)
   m<-x$pars
   highmean=inddifdevs[2]
   lowmean= inddifdevs[1]
@@ -48,7 +49,7 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='margi
       if(rawpopsd[1]=='marginalise'){
         rawpopsdbase<-  stats::rnorm(nsamples)
         if(!is.na(x$rawpopsdbaselowerbound)) rawpopsdbase <- rawpopsdbase[rawpopsdbase>x$rawpopsdbaselowerbound]
-        sdscale <- m$sdscale[rowi]
+        sdscale <- as.numeric(m$sdscale[rowi])
         sdtform <- gsub('.*', '*',x$rawpopsdtransform,fixed=TRUE)
         rawpopsdprior<-eval(parse(text=sdtform)) * sdscale
 

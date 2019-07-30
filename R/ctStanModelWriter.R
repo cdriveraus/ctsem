@@ -1,3 +1,126 @@
+ctModelTransformsToNum<-function(ctm){
+  
+  
+  fit.eqs = function(e) {
+    # print(e)
+    # List the types of formulas we might encounter.
+    types=c(tformshapes(singletext = TRUE))
+    formula.types = data.frame(
+      type =0:(length(types)-1),
+      formula = types,
+      offset = 0,
+      inneroffset = -.3, #c(0, rep(0,length(types)-1)),
+      multiplier = 1,
+      meanscale = 1, #c(1, rep(1,length(types)-1)),
+      lsfit = NA,
+      stringsAsFactors = FALSE
+    )
+    # Get some param values over multiplier wide range, and compute the corresponding y
+    # values.
+    param = c(seq(-2, 2, .1),seq(-10,10,.5),c(rnorm(10)))
+    y = eval(parse(text=e)) #eval(substitute(substitute(e, list(param = param)), list(e = as.quoted(e)[[1]]))))
+    param <- param[abs(y) < 1e5]; 
+    y <- y[abs(y) < 1e5]
+    
+    # Try to fit each formula to the data.
+    for(i in 1:nrow(formula.types)) {
+      start.params = list(multiplier = 1.0, offset = 0)
+      if(!is.na(formula.types$meanscale[i])) {
+        start.params[["meanscale"]] = 1.0
+      }
+      if(!is.na(formula.types$inneroffset[i])) {
+        start.params[["inneroffset"]] = 0
+      }
+      
+      ff <- function(pars){
+        multiplier=pars[1];
+        offset=pars[2];
+        if(i > 1) {
+          meanscale=pars[3];
+          inneroffset=pars[4]
+        } else{
+          meanscale=1;inneroffset=0
+        }
+        yest<- eval(parse(text=formula.types$formula[i]))
+        res <- (sum( ((y-yest)^2)/(abs(y)+.01)))
+        if(is.na(res)) res <- 1e100
+        return(res)
+      }
+      
+      ffg <- function(pars){
+        b=ff(pars)
+        # g=try(numDeriv::grad(ff,pars,method='simple',
+        #   method.args=list(eps=1e-8,inneroffset=1e-10,r=2)
+        # ),silent=TRUE)
+        g=try(sapply(1:length(pars),function(x) {
+          parx=pars;parx[x]<-pars[x]+1e-8;
+          (b-ff(parx))/1e-8
+        }))
+        if(class(g)=='try-error') g <- rnorm(pars)
+        if(any(is.na(g))) g[is.na(g)] <- rnorm(sum(is.na(g)))
+        return(-g)
+      }
+      # 
+      fit = try(mize(par = unlist(start.params),
+        fg = list(fn=ff,gr=ffg),
+        max_iter=100,abs_tol=1e-3,rel_tol=1e-5,
+        method='BFGS'))
+      
+      if(fit$f < .1 && fit$f > 1e-5) {
+        # message('close, ', round(fit$f,3))
+        fit = try(mize(par = unlist(start.params), #if close, refine estimate
+          fg = list(fn=ff,gr=ffg),
+          max_iter=500,abs_tol=1e-5,rel_tol=1e-6,
+          method='BFGS'))
+      }
+
+      formula.types$offset[i] = fit$par[2] #round(coef(fit)[["offset"]])
+      formula.types$multiplier[i] = fit$par[1] #round(coef(fit)[["multiplier"]])
+      if(!is.na(formula.types$meanscale[i])) {
+        formula.types$meanscale[i] = fit$par[3] #round(coef(fit)[["meanscale"]])
+      }
+      if(!is.na(formula.types$inneroffset[i])) {
+        formula.types$inneroffset[i] = fit$par[4] #round(coef(fit)[["inneroffset"]])
+      }
+      formula.types$lsfit[i] = fit$f #AIC(fit)
+    }
+    # Return the values we found.
+    # print(formula.types)
+    # return(formula.types %>%
+    #     filter(lsfit == min(lsfit)) %>%
+    #     mutate(inneroffset = coalesce(inneroffset, 0),
+    #       meanscale = coalesce(meanscale, 1)) %>%
+    #     select(type, offset, inneroffset, multiplier, meanscale,lsfit))
+    return(formula.types[which(formula.types$lsfit %in% min(formula.types$lsfit)),])
+  }
+  
+  newrows <- which(!is.na(ctm$pars$transform))
+  eqs <- ctm$pars$transform[newrows]
+    
+  l=lapply(eqs,fit.eqs)
+  df=data.frame(do.call(rbind,l))
+  df[,] <- lapply(df,function(x) if(is.numeric(x)) return(round(x,2)) else return(x))
+  df$formula <- eqs
+  df[df$lsfit > .1,c('offset','inneroffset','multiplier','meanscale')]<-NA
+  colnames(df)[1] <- 'transform'
+  df$transform[df$lsfit > .1] <- eqs[df$lsfit > .1]
+  df$lsfit <- NULL
+  rownames(df) <- newrows
+  
+  ctm$pars$transform <- NULL
+   # nctspec <- cbind(ctm$pars[newrows,,drop=FALSE],df)
+   # nctspec <- 
+     nctspec <- merge(ctm$pars,df,by=0,all=TRUE,no.dups = FALSE)
+     nctspec <- nctspec[order(as.numeric(nctspec$Row.names)),]
+     nctspec <- nctspec[,c('matrix','row','col','param','value','transform','multiplier',
+     'offset','meanscale','inneroffset','indvarying','sdscale',
+     colnames(ctm$pars)[grep('_effect',colnames(ctm$pars),fixed=TRUE)]) ]
+   ctm$pars <- nctspec
+  return(ctm)
+  
+}
+
+
 ctStanModelIntOverPop <- function(m){ #improve this function by avoiding additional states for t0means
   if(sum(m$pars$indvarying) < 1) {
     message('No individual variation for ctStanModelIntOverPop to work with!')
@@ -391,7 +514,7 @@ ctStanModelMatrices <-function(ctm){
     #   Jvalues[nrow(Jvalues)+1,] <- mv
     # }
     
-
+    
     # Jsetup$when <- rep(-1,nrow(Jsetup))
     if(nrow(Jsetup) > 0) Jsetup$parname <- paste0('J',Jsetup$matrix,'__',Jsetup$row,'_',Jsetup$col)
     

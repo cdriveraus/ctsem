@@ -46,7 +46,7 @@
 #' @export
 
 ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
-  subjects=1, plot=FALSE,...){
+  subjects=1, plot=FALSE, ...){
   
   type=NA
   if(class(fit)=='ctStanFit') type='stan' 
@@ -54,19 +54,49 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
   if(is.na(type)) stop('fit object is not from ctFit or ctStanFit!')
   
   if(type=='stan'){
-    out <- ctStanKalman(fit) #extract state predictions
-    out$y <- fit$data$Y #,dim=c(1,dim(fit$data$Y)))
-    out$time <- array(fit$data$time)
+    # if(timestep != 'asdata'){
+    #   Y<-fit$standata$Y
+    #   colnames(Y)=fit$ctstanmodel$manifestNames
+    #   td<-fit$standata$tdpreds
+    #   colnames(td)<-fit$ctstanmodel$TDpredNames
+    #   dlong<-data.frame(id=fit$standata$subject,time=fit$standata$time,Y,td,
+    #     matrix(0,nrow=nrow(td),ncol=fit$ctstanmodelbase$n.TIpred,dimnames = list(NULL,fit$ctstanmodelbase$TIpredNames)))
+    #   dlong <- ctDiscretiseData(as.matrix(dlong),timestep=timestep,
+    #     TDpredNames = fit$ctstanmodelbase$TDpredNames,TIpredNames = fit$ctstanmodelbase$TIpredNames)
+    #   # browser()
+    #   fit$standata$Y <- dlong[,fit$ctstanmodel$manifestNames,drop=FALSE]
+    #   fit$standata$tdpreds <- dlong[,fit$ctstanmodel$TDpredNames,drop=FALSE]
+    #   fit$standata$subject <- dlong[,'id']
+    #   fit$standata$time <- dlong[,'time']
+    #   fit$standata$savescores <- 0L
+    #   nfargs <- fit$args
+    #   nfargs=lapply(nfargs,as.character)
+    #   colnames(dlong)[1] <- fit$ctstanmodelbase$subjectIDname
+    #   colnames(dlong)[2] <- fit$ctstanmodelbase$timeName
+    #   nfargs$datalong='dlong'
+    #   nfargs$ctstanmodel = 'fit$ctstanmodelbase'
+    #   nfargs[[1]] <- NULL
+    #   nfargs$fit=FALSE
+    #   nfb=lapply(nfargs,function(x) eval(parse(text=x)))
+    #   nf=suppressMessages(do.call(ctStanFit,nfb))
+    #   fit$standata <- nf$standata
+    #   fit$data<-lapply(fit$standata,function(x){ x[x==99999] <- NA; x})
+    #   
+    # }
+
+    out <- ctStanKalman(fit,collapsefunc=mean) #extract state predictions
+    # out$y <- fit$data$Y #,dim=c(1,dim(fit$data$Y)))
+    # out$time <- array(fit$data$time)
     niter <- dim(out$etaprior)[1]
-    out <- lapply(subjects, function(s) lapply(out, function(m) {
-      if(dim(m)[1] == niter) m=ctCollapse(inarray = m,collapsemargin = 1,collapsefunc = mean)
-      if(length(dim(m)) ==1) m=m[fit$standata$subject %in% s, drop=FALSE]
-      if(length(dim(m)) ==2) m=m[fit$standata$subject %in% s, ,drop=FALSE]
-      if(length(dim(m)) ==3) m=m[fit$standata$subject %in% s, , ,drop=FALSE]
+    if(length(dim(out$llrow)) < 3) out$llrow <- array(out$llrow,dim=c(dim(out$llrow),1))
+    out <- lapply(subjects, function(si) lapply(out, function(m) {
+      if(length(dim(m)) > 2) m=ctCollapse(inarray = m,collapsemargin = 1,collapsefunc = mean)
+      if(length(dim(m)) ==1) m=m[fit$standata$subject %in% si, drop=FALSE]
+      if(length(dim(m)) ==2) m=m[fit$standata$subject %in% si, ,drop=FALSE]
+      if(length(dim(m)) ==3) m=m[fit$standata$subject %in% si, , ,drop=FALSE]
  
       return(m)
     }))
-
 # matplot(datalong$time,t(k$ypred[,,1]),type='l',
 #   col=rgb(1,0,0,.1),xlab='Year',ylab='Sunspots')
 # points(datalong$time,datalong$sunspots,type='l')
@@ -221,14 +251,14 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
 #' ###Single step procedure:
 #' ctKalman(ctstantestfit,subjects=2,plot=TRUE)
 #' }
-ctKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
+ctKalmanPlot<-function(x, subjects, kalmanvec=c('y','etaprior'),
   errorvec='auto', errormultiply=1.96,
   ltyvec="auto",colvec='auto', lwdvec='auto', 
   subsetindices=NULL,pchvec='auto', typevec='auto',grid=FALSE,add=FALSE, 
   plotcontrol=list(ylab='Value',xlab='Time',xaxs='i'),
   polygoncontrol=list(steps=20),polygonalpha=.3,
   legend=TRUE, legendcontrol=list(x='topright',bg='white')){
-  
+
   out<-x
   if(length(subjects) > 1 & colvec[1] =='auto') colvec = rainbow(length(subjects),v=.9)
   
@@ -246,12 +276,10 @@ ctKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
   }
   
   if(is.null(plotcontrol$xlim)) plotcontrol$xlim <- range(sapply(out,function(x) x$time))
-
   if(is.null(plotcontrol$ylim)) {
     plotcontrol$ylim <- range(unlist(lapply(out,function(x) { #for every subject
       if(!is.null(x)){
         ret<-c()
-        
         for(kveci in 1:length(kalmanvec)){
           est<-x[[kalmanvec[kveci]]] [,
             if(is.null(subsetindices)) 1:dim(x[[kalmanvec[kveci]]])[2] else subsetindices]
@@ -294,7 +322,6 @@ ctKalmanPlot<-function(x, subjects, kalmanvec=c('y','yprior'),
       plist$col = colvec[si] #set colour based on subject if multiple subjects
     }
 
-    
     for(kveci in 1:length(kalmanvec)){ #kalman output types
       kvecdims=1:dim(out[[subiname]][[kalmanvec[kveci]]])[-1]
       if(length(subjects) == 1 & colvec[1] =='auto') colvecnew = rainbow(length(kvecdims),v=.9)

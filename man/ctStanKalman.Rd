@@ -4,14 +4,18 @@
 \alias{ctStanKalman}
 \title{Get Kalman filter estimates from a ctStanFit object}
 \usage{
-ctStanKalman(fit, nsamples = NA, cores = 2)
+ctStanKalman(fit, nsamples = NA, collapsefunc = NA, cores = 2, ...)
 }
 \arguments{
 \item{fit}{fit object from \code{\link{ctStanFit}}.}
 
 \item{nsamples}{either NA (to extract all) or a positive integer from 1 to maximum samples in the fit.}
 
+\item{collapsefunc}{function to apply over samples, such as \code{mean}}
+
 \item{cores}{Integer number of cpu cores to use. Only needed if savescores was set to FALSE when fitting.}
+
+\item{...}{additional arguments to collpsefunc.}
 }
 \value{
 list containing Kalman filter elements, each element in array of

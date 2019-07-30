@@ -234,14 +234,14 @@ m1$pars$age_effect[-which(m1$pars$matrix \%in\% c('T0MEANS','CINT'))] <- FALSE
 plot(m1,wait=FALSE) #plot prior distributions
 
 #fit
-f1 <- ctStanFit(datalong = dat, ctstanmodel = m1, 
-  cores = setcores,chains = setchains,plot=TRUE,
+f1 <- ctStanFit(datalong = dat, ctstanmodel = m1, optimize=TRUE,
+#cores = setcores,chains = setchains,plot=TRUE,
   control=list(max_treedepth=7),iter=150)
 
 summary(f1)
 
 #plots of individual subject models v data
-ctKalman(f1,timestep=.01,plot=TRUE,subjects=1:4,kalmanvec=c('y','etaprior'))
+ctKalman(f1,timestep=.01,plot=TRUE,subjects=1:2,kalmanvec=c('y','yprior'))
 ctStanPlotPost(f1, wait=FALSE) #compare prior to posterior distributions 
 ctStanPlotPost(f1, priorwidth = FALSE, wait=FALSE) #rescale to width of posterior 
 
@@ -270,8 +270,9 @@ m2$pars$indvarying[-which(m2$pars$matrix \%in\% c('T0MEANS','CINT'))] <- FALSE
 m2$pars$age_effect[-which(m2$pars$matrix \%in\% c('T0MEANS','CINT'))] <- FALSE
 
 
-f2 <- ctStanFit(datalong = dat, ctstanmodel = m2, cores = setcores,
-  chains = setchains,plot=TRUE,
+f2 <- ctStanFit(datalong = dat, ctstanmodel = m2, optimize=TRUE,
+  cores = setcores,
+  #chains = setchains,plot=TRUE,
   control=list(max_treedepth=7),iter=150)
 
 summary(f2,parmatrices=TRUE,timeinterval=1)
@@ -307,7 +308,8 @@ m3$pars$indvarying[-which(m3$pars$matrix \%in\%
 m3$pars$age_effect[-which(m3$pars$matrix \%in\% 
   c('T0MEANS','CINT','TDPREDEFFECT'))] <- FALSE
 
-f3 <- ctStanFit(datalong = dat2, ctstanmodel = m3, cores = setcores,
+f3 <- ctStanFit(datalong = dat2, ctstanmodel = m3, optimize=TRUE,
+  cores = setcores,
   chains = setchains,plot=TRUE,
   control=list(max_treedepth=7),iter=150)
 
@@ -357,7 +359,8 @@ m4$pars$indvarying <- TRUE
 m4$pars$indvarying[-which(m4$pars$matrix \%in\% c('T0MEANS','MANIFESTMEANS','TDPREDEFFECT'))] <- FALSE
 m4$pars$age_effect[-which(m4$pars$matrix \%in\% c('T0MEANS','MANIFESTMEANS','TDPREDEFFECT'))] <- FALSE
 
-f4 <- ctStanFit(datalong = dat2, ctstanmodel = m4, cores = setcores,chains = setchains,plot=TRUE,
+f4 <- ctStanFit(datalong = dat2, ctstanmodel = m4, cores = setcores,
+  chains = setchains,plot=TRUE,
   optimize=TRUE,verbose=0,
   control=list(max_treedepth=7),iter=150)
 

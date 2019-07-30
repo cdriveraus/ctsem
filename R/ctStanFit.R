@@ -6,7 +6,7 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
   }
   
   if (!(ctsmodel$timeName %in% colnames(datalong))) stop(paste('time column', omxQuotes(ctsmodel$timeName), "not found in data"))
-  if(any(is.na(datalong[,ctsmodel$timeName]))) stop('Missing "time" column!')
+  if(any(is.na(datalong[,ctsmodel$timeName]))) stop('Missings in time column!')
   #check id and calculate intervals, discrete matrix indices
   # driftindex<-rep(0,nrow(datalong))
   # diffusionindex<-driftindex
@@ -24,7 +24,8 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
     }
     if(subi - oldsubi == 0) {
       dT[rowi]<-datalong[rowi,ctsmodel$timeName] - datalong[rowi-1,ctsmodel$timeName]
-      if(dT[rowi] <=0) stop(paste0('A time interval of ', dT[rowi],' was found at row ',rowi))
+      if(dT[rowi] < 0) stop(paste0('A time interval of ', dT[rowi],' was found at row ',rowi))
+      if(dT[rowi] == 0) warning(paste0('A time interval of ', dT[rowi],' was found at row ',rowi))
       
     }
     oldsubi<-subi
@@ -292,14 +293,14 @@ verbosify<-function(sf,verbose=2){
 #' plot(m1,wait=FALSE) #plot prior distributions
 #' 
 #' #fit
-#' f1 <- ctStanFit(datalong = dat, ctstanmodel = m1, 
-#'   cores = setcores,chains = setchains,plot=TRUE,
+#' f1 <- ctStanFit(datalong = dat, ctstanmodel = m1, optimize=TRUE,
+#' #cores = setcores,chains = setchains,plot=TRUE,
 #'   control=list(max_treedepth=7),iter=150)
 #' 
 #' summary(f1)
 #' 
 #' #plots of individual subject models v data
-#' ctKalman(f1,timestep=.01,plot=TRUE,subjects=1:4,kalmanvec=c('y','etaprior'))
+#' ctKalman(f1,timestep=.01,plot=TRUE,subjects=1:2,kalmanvec=c('y','yprior'))
 #' ctStanPlotPost(f1, wait=FALSE) #compare prior to posterior distributions 
 #' ctStanPlotPost(f1, priorwidth = FALSE, wait=FALSE) #rescale to width of posterior 
 #' 
@@ -328,8 +329,9 @@ verbosify<-function(sf,verbose=2){
 #' m2$pars$age_effect[-which(m2$pars$matrix %in% c('T0MEANS','CINT'))] <- FALSE
 #' 
 #' 
-#' f2 <- ctStanFit(datalong = dat, ctstanmodel = m2, cores = setcores,
-#'   chains = setchains,plot=TRUE,
+#' f2 <- ctStanFit(datalong = dat, ctstanmodel = m2, optimize=TRUE,
+#'   cores = setcores,
+#'   #chains = setchains,plot=TRUE,
 #'   control=list(max_treedepth=7),iter=150)
 #' 
 #' summary(f2,parmatrices=TRUE,timeinterval=1)
@@ -365,7 +367,8 @@ verbosify<-function(sf,verbose=2){
 #' m3$pars$age_effect[-which(m3$pars$matrix %in% 
 #'   c('T0MEANS','CINT','TDPREDEFFECT'))] <- FALSE
 #' 
-#' f3 <- ctStanFit(datalong = dat2, ctstanmodel = m3, cores = setcores,
+#' f3 <- ctStanFit(datalong = dat2, ctstanmodel = m3, optimize=TRUE,
+#'   cores = setcores,
 #'   chains = setchains,plot=TRUE,
 #'   control=list(max_treedepth=7),iter=150)
 #' 
@@ -415,7 +418,8 @@ verbosify<-function(sf,verbose=2){
 #' m4$pars$indvarying[-which(m4$pars$matrix %in% c('T0MEANS','MANIFESTMEANS','TDPREDEFFECT'))] <- FALSE
 #' m4$pars$age_effect[-which(m4$pars$matrix %in% c('T0MEANS','MANIFESTMEANS','TDPREDEFFECT'))] <- FALSE
 #' 
-#' f4 <- ctStanFit(datalong = dat2, ctstanmodel = m4, cores = setcores,chains = setchains,plot=TRUE,
+#' f4 <- ctStanFit(datalong = dat2, ctstanmodel = m4, cores = setcores,
+#'   chains = setchains,plot=TRUE,
 #'   optimize=TRUE,verbose=0,
 #'   control=list(max_treedepth=7),iter=150)
 #' 
@@ -498,8 +502,12 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     timeName<-ctstanmodel$timeName
     continuoustime<-ctstanmodel$continuoustime
 
+    ctstanmodelbase <- ctstanmodel
+    ctstanmodel <- ctModelTransformsToNum(ctstanmodel)
     ctstanmodel$pars <- ctStanModelCleanctspec(ctstanmodel$pars)
     # ctstanmodel <- ctStanModelIntOverPop(ctstanmodel)
+    
+    if('data.table' %in% class(datalong)) datalong <- data.frame(datalong)
     
     
     
@@ -1050,12 +1058,12 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     if(fit) {
       out <- list(args=args,
         setup=setup, 
-        stanmodeltext=stanmodeltext, data=standataout, standata=standata, ctstanmodel=ctstanmodel,stanmodel=sm, stanfit=stanfit)
+        stanmodeltext=stanmodeltext, data=standataout, standata=standata, ctstanmodelbase=ctstanmodelbase, ctstanmodel=ctstanmodel,stanmodel=sm, stanfit=stanfit)
       class(out) <- 'ctStanFit'
     }
 
     if(!fit) out=list(args=args,setup=setup,
-      stanmodeltext=stanmodeltext,data=standataout, standata=standata, ctstanmodel=ctstanmodel)
+      stanmodeltext=stanmodeltext,data=standataout, standata=standata, ctstanmodelbase=ctstanmodelbase,  ctstanmodel=ctstanmodel)
     
     return(out)
   }

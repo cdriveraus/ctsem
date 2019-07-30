@@ -21,7 +21,7 @@ tformshapes <- function(singletext=FALSE,transform=NA,jacobian=FALSE,driftdiag=F
 tform <- function(param, transform, multiplier, meanscale, offset, inneroffset, extratforms='',singletext=FALSE,jacobian=FALSE,driftdiag=FALSE){
   
   if(!is.na(suppressWarnings(as.integer(transform)))) {
-    out <- tformshapes(singletext=singletext,transform=transform,jacobian=jacobian)
+    out <- tformshapes(singletext=singletext,transform=as.integer(transform),jacobian=jacobian)
     if(!singletext) paste0(out,extratforms)
     if(singletext) {
       for(i in c('param','multiplier', 'meanscale',  'inneroffset','offset')){

@@ -34,8 +34,7 @@ m$pars$indvarying[ m$pars$matrix %in% 'CINT' ] <- TRUE
 m$pars$indvarying[ m$pars$matrix %in% 'T0MEANS' ] <- TRUE
 m$manifesttype[]=1
 row.number <- which( m$pars$matrix %in% "MANIFESTMEANS" )[3]
-m$pars$offset[ row.number ] <- 1
-m$pars$meanscale[ row.number ] <- 2
+m$pars$transform[ m$pars$matrix %in% "MANIFESTMEANS"] <- 'param * 2 +1'
 set.seed( 1234 )
 start <- Sys.time()
 r <- ctStanFit( datalong = d,
