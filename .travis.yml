@@ -122,6 +122,7 @@ matrix:
      
 before_install:
   - mkdir -p ~/.R/
+  - R -e 'install.packages("remotes");library(remotes);remotes::install_deps(dependencies = TRUE,upgrade="always")'
   - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then echo "CXX14 = g++-7 -fPIC" >> ~/.R/Makevars; fi
   - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then echo "CXX14FLAGS = -mtune=native -march=native -Wno-unused-variable -Wno-unused-function -Wno-unused-local-typedefs -Wno-ignored-attributes -Wno-deprecated-declarations -Wno-attributes -O3" >> ~/.R/Makevars; fi
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then echo "CXX14 = clang++ -arch x86_64 -ftemplate-depth-256" >> ~/.R/Makevars; fi
@@ -130,7 +131,6 @@ before_install:
   - eval "${MATRIX_EVAL}"
   
 install:
-  - R -e 'install.packages("remotes");library(remotes);remotes::install_deps(dependencies = TRUE,upgrade="always")'
   - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo apt-get install -yq --allow-unauthenticated --no-install-suggests --no-install-recommends r-cran-openmx; fi
   - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo apt-get install -yq --allow-unauthenticated --no-install-suggests --no-install-recommends r-cran-rstan; fi
 
