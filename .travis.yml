@@ -114,12 +114,12 @@ matrix:
      
 before_install:
   - mkdir -p ~/.R/
-  - R -e 'install.packages("remotes");library(remotes);remotes::install_deps(dependencies = TRUE,upgrade="always")'
-  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then echo "CXX14 = g++-7 -fPIC" >> ~/.R/Makevars; fi
+  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then echo "CXX14 += g++-7 -fPIC -std=c++1y" >> ~/.R/Makevars; fi
   - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then echo "CXX14FLAGS = -mtune=native -march=native -Wno-unused-variable -Wno-unused-function -Wno-unused-local-typedefs -Wno-ignored-attributes -Wno-deprecated-declarations -Wno-attributes -O3" >> ~/.R/Makevars; fi
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then echo "CXX14 = clang++ -arch x86_64 -ftemplate-depth-256" >> ~/.R/Makevars; fi
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then echo "CXX14FLAGS = -O3 -mtune=native -march=native -Wno-unused-variable -Wno-unused-function  -Wno-unknown-pragmas" >> ~/.R/Makevars; fi
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then echo "CC = clang" >> ~/.R/Makevars; fi
+  - R -e 'install.packages("remotes");library(remotes);remotes::install_deps(dependencies = TRUE,upgrade="always")'
   - eval "${MATRIX_EVAL}"
   
 install:
