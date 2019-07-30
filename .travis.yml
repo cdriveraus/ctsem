@@ -119,7 +119,7 @@ before_install:
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then echo "CXX14 = clang++ -arch x86_64 -ftemplate-depth-256" >> ~/.R/Makevars; fi
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then echo "CXX14FLAGS = -O3 -mtune=native -march=native -Wno-unused-variable -Wno-unused-function  -Wno-unknown-pragmas" >> ~/.R/Makevars; fi
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then echo "CC = clang" >> ~/.R/Makevars; fi
-  - R -e 'install.packages("remotes");library(remotes);remotes::install_deps(dependencies = TRUE,upgrade="always")'
+  #- R -e 'install.packages("remotes");library(remotes);remotes::install_deps(dependencies = TRUE,upgrade="always")'
   - eval "${MATRIX_EVAL}"
   
 install:
