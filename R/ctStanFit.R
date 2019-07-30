@@ -564,6 +564,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     if(cores=='maxneeded') cores=min(c(chains,parallel::detectCores()-1))
     whichT0VAR_T0MEANSindvarying <- ctstanmodel$pars$matrix %in% 'T0VAR'  &  
+      is.na(ctstanmodel$pars$value) &
       (ctstanmodel$pars$row %in% ctstanmodel$pars$row[ctstanmodel$pars$matrix %in% 'T0MEANS' & ctstanmodel$pars$indvarying] |
           ctstanmodel$pars$col %in% ctstanmodel$pars$row[ctstanmodel$pars$matrix %in% 'T0MEANS' & ctstanmodel$pars$indvarying])
     if(any(whichT0VAR_T0MEANSindvarying)){
@@ -893,10 +894,10 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       dim=c(standata$nmanifest,standata$nlatentpop))
     
     if(!recompile){ #then use finite diffs for some elements
-      standata$sJAxfinite <- array(as.integer(unique(which(matrix(ctstanmodel$jacobian$JAx %in% #which rows of jacobian are not simply drift / fixed / state refs
-      jacobianelements(ctstanmodel$jacobian$JAx,mats=mx,remove=c('drift','simplestate','fixed'),
+      standata$sJAxfinite <- array(as.integer(unique(c(which(matrix(ctstanmodel$jacobian$JAx %in% #which rows of jacobian are not simply drift / fixed / state refs
+      jacobianelements(ctstanmodel$jacobian$JAx,mats=mx,remove=c('drift','fixed'),
         ntdpred=ctstanmodel$n.TDpred,when=2,matsetup=matsetup),standata$nlatentpop,standata$nlatentpop), 
-      arr.ind = TRUE)))) #[,'col'] maybe split up into row / column?
+      arr.ind = TRUE))))) #[,'col'] maybe split up into row / column?
     standata$nsJAxfinite <- length(standata$sJAxfinite)
     }
     if(recompile){

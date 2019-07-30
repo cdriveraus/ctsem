@@ -130,7 +130,7 @@ ctStanModelIntOverPop <- function(m){ #improve this function by avoiding additio
     
     t0mvaryingsimple <- m$pars$row[m$pars$indvarying & m$pars$matrix %in% 'T0MEANS' & m$pars$transform==0] #which t0means are indvarying and not transformed
     t0mvaryingnames <- m$pars$param[m$pars$indvarying & m$pars$matrix %in% 'T0MEANS'& m$pars$transform==0] #which t0means are indvarying
-    t0mnotvarying <- m$pars$param[!m$pars$indvarying & m$pars$matrix %in% 'T0MEANS']
+    t0mnotvarying <- m$pars$row[!m$pars$indvarying & m$pars$matrix %in% 'T0MEANS']
     # m$pars$indvarying[m$pars$matrix %in% 'T0MEANS'] <- FALSE 
     
     ivnames <- unique(m$pars$param[m$pars$indvarying & !m$pars$param %in% t0mvaryingnames]) #don't need new states for t0means
@@ -214,6 +214,7 @@ ctStanModelIntOverPop <- function(m){ #improve this function by avoiding additio
     }
     
     # m$pars$indvarying  <-FALSE
+    
     m$pars <- rbind(m$pars, t0m,t0v,drift) #
     m$pars[] <- lapply(m$pars, utils::type.convert, as.is = TRUE)
     
@@ -848,7 +849,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
           }
 
         if(continuoustime==0){ 
-          for(nli in (nlatent+1):nlatentpop) sJAx[nli,nli] = 1;
+          //for(nli in (nlatent+1):nlatentpop) sJAx[nli,nli] = 1;
             etacov = quad_form(etacov, sJAx\');
             sasymDIFFUSION[ derrind, derrind ] = to_matrix( (IIlatent2 - 
               sqkron_prod(sDRIFT[ derrind, derrind ], sDRIFT[ derrind, derrind ])) \\  to_vector(tcrossprod(sDIFFUSION[ derrind, derrind ])), ndiffusion, ndiffusion);
