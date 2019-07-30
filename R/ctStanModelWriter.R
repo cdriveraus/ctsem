@@ -679,10 +679,10 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup){
       ',simplestatedependencies(when=2,mlist=c(mats$driftcint,mats$diffusion,mats$jacobian[2])),'
       ',simplifystanfunction(paste0(paste0(c(ctm$calcs$driftcint,ctm$calcs$diffusion),';\n',collapse=' '))),' 
       if(statei > 0) {
-        sJAx[sJAxfinite,statei] =  sDRIFT[sJAxfinite, ] * state + sCINT[sJAxfinite,1]; //compute new change
+        sJAx[sJAxfinite,statei] =  sDRIFT[sJAxfinite, ] * state + append_row(sCINT[,1],rep_vector(0,nlatentpop-nlatent))[sJAxfinite]; //compute new change
       }
       if(statei== 0 && size(sJAxfinite) > 0) { //only need these calcs if there are finite differences to do -- otherwise loop just performs system calcs.
-        base[sJAxfinite] = sDRIFT[sJAxfinite, ] * state + sCINT[sJAxfinite,1];
+        base[sJAxfinite] = sDRIFT[sJAxfinite, ] * state + append_row(sCINT[,1],rep_vector(0,nlatentpop-nlatent))[sJAxfinite];
         for(fi in sJAxfinite){
           sJAx[sJAxfinite,fi] = (sJAx[sJAxfinite,fi] - base[sJAxfinite]) / Jstep; //new - baseline change divided by stepsize
         }
@@ -1166,12 +1166,12 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
       sT0VAR = makesym(sdcovsqrt2cov(sT0VAR,nldynamics),verbose,1);
     if(intoverpop){ //adjust cov matrix for transforms
       for(ri in 1:size(matsetup)){
-        if(matsetup[ri,7]==1){ //if t0means
+        //if(matsetup[ri,7]==1){ //if t0means
           if(matsetup[ri,5]) { //and indvarying
             sT0VAR[matsetup[ri,1], ] = sT0VAR[matsetup[ri,1], ] * matvalues[ri,2] * matvalues[ri,3]* matvalues[ri,5]; //multiplier meanscale sdscale
             sT0VAR[, matsetup[ri,1] ] = sT0VAR[, matsetup[ri,1] ] * matvalues[ri,2] * matvalues[ri,3]* matvalues[ri,5]; //multiplier meanscale sdscale
           }
-        }
+        //}
       }
     }
       if(nt0varstationary > 0) {

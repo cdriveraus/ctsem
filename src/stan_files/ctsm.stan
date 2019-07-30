@@ -603,10 +603,10 @@ if(verbose > 1) print ("below t0 row ", rowi);
   } 
    
       if(statei > 0) {
-        sJAx[sJAxfinite,statei] =  sDRIFT[sJAxfinite, ] * state + sCINT[sJAxfinite,1]; //compute new change
+        sJAx[sJAxfinite,statei] =  sDRIFT[sJAxfinite, ] * state + append_row(sCINT[,1],rep_vector(0,nlatentpop-nlatent))[sJAxfinite]; //compute new change
       }
       if(statei== 0 && size(sJAxfinite) > 0) { //only need these calcs if there are finite differences to do -- otherwise loop just performs system calcs.
-        base[sJAxfinite] = sDRIFT[sJAxfinite, ] * state + sCINT[sJAxfinite,1];
+        base[sJAxfinite] = sDRIFT[sJAxfinite, ] * state + append_row(sCINT[,1],rep_vector(0,nlatentpop-nlatent))[sJAxfinite];
         for(fi in sJAxfinite){
           sJAx[sJAxfinite,fi] = (sJAx[sJAxfinite,fi] - base[sJAxfinite]) / Jstep; //new - baseline change divided by stepsize
         }
