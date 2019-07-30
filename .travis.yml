@@ -29,6 +29,7 @@ matrix:
         - Rcpp
         - OpenMx
         - cOde
+        - remotes
         - Deriv
         - mvtnorm
         - knitr
@@ -53,6 +54,7 @@ matrix:
       r: devel
       r_binary_packages:
         - rstan
+        - remotes
         - rstantools
         - data.table
         - jsonlite
@@ -95,6 +97,26 @@ matrix:
     - os: osx
       osx_image: xcode10
       r: release
+      r_binary_packages:
+        - rstan
+        - rstantools
+        - data.table
+        - jsonlite
+        - Rcpp
+        - OpenMx
+        - cOde
+        - remotes
+        - Deriv
+        - mvtnorm
+        - knitr
+        - testthat
+        - devtools
+        - DEoptim
+        - GGally
+        - shiny
+        - mize
+        - StanHeaders
+        - rstan
       fortran: false
 
      
