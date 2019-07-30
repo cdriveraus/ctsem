@@ -1166,12 +1166,12 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
       sT0VAR = makesym(sdcovsqrt2cov(sT0VAR,nldynamics),verbose,1);
     if(intoverpop){ //adjust cov matrix for transforms
       for(ri in 1:size(matsetup)){
-        //if(matsetup[ri,7]==1){ //if t0means
+        if(matsetup[ri,7]==1){ //if t0means
           if(matsetup[ri,5]) { //and indvarying
             sT0VAR[matsetup[ri,1], ] = sT0VAR[matsetup[ri,1], ] * matvalues[ri,2] * matvalues[ri,3]* matvalues[ri,5]; //multiplier meanscale sdscale
             sT0VAR[, matsetup[ri,1] ] = sT0VAR[, matsetup[ri,1] ] * matvalues[ri,2] * matvalues[ri,3]* matvalues[ri,5]; //multiplier meanscale sdscale
           }
-        //}
+        }
       }
     }
       if(nt0varstationary > 0) {
@@ -1544,7 +1544,7 @@ rawpopsdfull[indvaryingindex] = sqrt(diagonal(rawpopcov)); //base for calculatio
         
         if(intoverpop && matsetup[ri,5]) { //removed ri transform of rawpop because t0means only transforms once -- if non identity state tform in future, change this!
           for(ri2 in 1:size(matsetup)){ //check when state reference param of matsetup corresponds to row of t0means in current matsetup row
-            if(matsetup[ri2,8] > 0 && matsetup[ri2,3] == matsetup[ri,1]) pr = ri2;
+            if(matsetup[ri2,8]  && matsetup[ri2,3] == matsetup[ri,1]) pr = ri2;
             //print("ri = ",ri, " pr = ",pr, " ri2 = ",ri2);
           }
         }
