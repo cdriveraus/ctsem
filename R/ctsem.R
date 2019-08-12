@@ -71,6 +71,15 @@ NULL
   packageStartupMessage("ctsem also changes in time, for an up to date manual run function ctDocs()")
 }
 
+#' Get documentation pdf for ctsem
+#'
+#' @return Nothing. Opens a pdf.
+#' @export
+#'
+#' @examples
+#' \dontrun{
+#' ctDocs()
+#' }
 ctDocs <- function(){
   r=runif(1,0,9999999)
   pdfpath=paste0(tempdir(),'\\ctsemManual_',r,'.pdf')

@@ -51,13 +51,13 @@
 ctIntervalise<-function(datawide,Tpoints,n.manifest,n.TDpred=0,n.TIpred=0,imputedefs=F,
   manifestNames='auto', TDpredNames='auto',TIpredNames='auto',
   digits=5,mininterval=.001,individualRelativeTime=TRUE,startoffset=0){
-
- 
+  
+  
   #names
   if(all(manifestNames=='auto')) manifestNames=paste0('Y',1:n.manifest)
   if(length(manifestNames) != n.manifest) stop("Length of manifestNames does not equal n.manifest!") 
   
-
+  
   if(n.TDpred > 0 | any(TDpredNames != 'auto')){
     if(all(TDpredNames=='auto')) TDpredNames=paste0('TD',1:n.TDpred)
     if(length(TDpredNames) != n.TDpred) stop("Length of TDpredNames does not equal n.TDpred!") 
@@ -90,22 +90,26 @@ ctIntervalise<-function(datawide,Tpoints,n.manifest,n.TDpred=0,n.TIpred=0,impute
   if(imputedefs==FALSE) { #set missing variable values to NA
     message("imputedefs==FALSE (default, recommended) so setting observations with no time value to NA")
     
-    if (Tpoints > 1) for(i in 1:(Tpoints-1)){ #for every time, 
-      tempwide[which(is.na(tempwide[, timeindex[i]])), #rows that contain missings on time i
-        seq(i, #columns that begin with first tdpred at time i 
+    if (Tpoints > 1){
+      for(i in 1:(Tpoints-1)){ #for every time, 
+        # if(any(is.na(tempwide[, timeindex[i]]))) browser()
+        manifestindices <- cseq((1+(i-1)*n.manifest):(i*(n.manifest)), #columns that begin with first tdpred at time i 
           n.manifest*Tpoints, #up to last manifest
-          Tpoints)] <-  #by tpoints
-        NA #if NA, set corresponding manifests to NA
-      
-      if(n.TDpred>0) {
-        tempwide[which(is.na(tempwide[, timeindex[i]])), #rows that contain missings on time i
-          seq(n.manifest*Tpoints+i, #columns that begin with first tdpred at time i 
+          Tpoints)
+        tempwide[rep(which(is.na(tempwide[, timeindex[i]])),each=n.manifest), #rows that contain missings on time i
+          manifestindices] <-  #by tpoints
+          NA #if NA, set corresponding manifests to NA
+        
+        if(n.TDpred>0) {
+          tdindices <- cseq( (n.manifest*Tpoints+((i-1)*n.TDpred+1)):(n.manifest*Tpoints+n.TDpred*i), #columns that begin with first tdpred at time i 
             n.manifest*Tpoints+n.TDpred*Tpoints, #up to last tdpred
-            Tpoints)] <-  #by tpoints
-          NA #if NA, set corresponding TDpreds to NA
+            Tpoints) #columns that begin with first tdpred at time i 
+          tempwide[rep(which(is.na(tempwide[, timeindex[i]])),each=n.TDpred), #rows that contain missings on time i
+            tdindices] <-  #by tpoints
+            NA #if NA, set corresponding TDpreds to NA
+        }
       }
     }
-    
     tempwide[which(is.na( #in rows of tempwide where
       tempwide[,timeindex[1]] #the first time points are NA
     )),
@@ -238,7 +242,7 @@ ctIntervalise<-function(datawide,Tpoints,n.manifest,n.TDpred=0,n.TIpred=0,impute
   
   if(n.TIpred>0) temp <- cbind(temp, datawide[,(ncol(datawide)-n.TIpred+1) :  ncol(datawide),drop=FALSE]) #add TI predictors back  
   
-
+  
   colnames(temp)<-ctWideNames(n.manifest=n.manifest, n.TDpred = n.TDpred,
     Tpoints=Tpoints, manifestNames=manifestNames,TDpredNames=TDpredNames,TIpredNames=TIpredNames, n.TIpred=n.TIpred)
   
