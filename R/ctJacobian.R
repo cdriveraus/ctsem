@@ -101,13 +101,13 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
       fn=gsub(paste0('\\b(state)\\[(',statei,')?\\]'),paste0('state__',statei,'__'),fn,perl = TRUE)
     }
     
-    fn=sapply(fn,Simplify)
+    fn=gsub(' ','',sapply(fn,Simplify),fixed=TRUE)
     #probably redundant now but maybe useful at some point?
     # replace remaining commas and square brackets for cOde Jacobian
     fn = gsub(",", "___comma___", fn, fixed = TRUE)
     fn = gsub("[", "___leftsquarebracket___", fn, fixed = TRUE)
     fn = gsub("]", "___rightsquarebracket___", fn, fixed = TRUE)
-    # 
+    fn=sapply(fn,Simplify)
 
     # 3): calculate Jacobian of fn symbolically
     J  = jacobianSymb(fn, state)
