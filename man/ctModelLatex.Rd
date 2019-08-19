@@ -4,12 +4,14 @@
 \alias{ctModelLatex}
 \title{Generate and optionally compile latex equation of subject level ctsem model.}
 \usage{
-ctModelLatex(ctmodel, textsize = "normalsize", folder = tempdir(),
-  filename = "ctsemTex", tex = TRUE, equationonly = FALSE,
-  compile = TRUE, open = TRUE)
+ctModelLatex(ctmodel, matrixnames = TRUE, textsize = "normalsize",
+  folder = tempdir(), filename = "ctsemTex", tex = TRUE,
+  equationonly = FALSE, compile = TRUE, open = TRUE)
 }
 \arguments{
 \item{ctmodel}{ctsem model object}
+
+\item{matrixnames}{Logical. If TRUE, includes ctsem matrix names such as DRIFT and DIFFUSION under the matrices.}
 
 \item{textsize}{Standard latex text sizes -- 
 tiny scriptsize footnotesize small normalsize large Large LARGE huge Huge. 

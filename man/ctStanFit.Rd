@@ -411,7 +411,6 @@ summary(f3nl)
 #generate data from fitted model and add to $generated subobject
 f3nl <- ctStanGenerateFromFit(f3nl,nsamples=100,fullposterior=TRUE)
 
-#plot functions need updating for non-linearities! (as of ctsem v 2.7.3)
 #extract can be used to extract samples and create own plots.
 #ctStanKalman can be used to obtain predictions, errors, updated states etc
 
