@@ -164,12 +164,12 @@ ctStanModelIntOverPop <- function(m){
           
           t0v <- rbind(t0v,c('T0VAR',ri,ci,
             NA, #ifelse(ci > ri, NA, paste0('popcov_',ivnamesfull[ri],'_',ivnamesfull[ci])), #param
-            99999, #ifelse(ci > ri,0, NA), #value
-            0, #ifelse(ci == ri,1, 0), #transform,
-            99999, #ifelse(ri > m$n.latent || ci > m$n.latent, 1,m$pars$sdscale[(m$pars$matrix %in% 'T0VAR' & m$pars$row==ri & m$pars$col==ci)]), #multiplier (sdscale)
-            99999,#2,
-            99999,#ifelse(ci == ri,0, 0), #offset
-            99999,#0
+            0, #ifelse(ci > ri,0, NA), #value
+            NA, #ifelse(ci == ri,1, 0), #transform,
+            NA, #ifelse(ri > m$n.latent || ci > m$n.latent, 1,m$pars$sdscale[(m$pars$matrix %in% 'T0VAR' & m$pars$row==ri & m$pars$col==ci)]), #multiplier (sdscale)
+            NA,#2,
+            NA,#ifelse(ci == ri,0, 0), #offset
+            NA,#0
             FALSE,1,rep(FALSE,m$n.TIpred)))
           m$pars <- m$pars[!(m$pars$matrix %in% 'T0VAR' & m$pars$row==ri & m$pars$col==ci),,drop=FALSE] #remove old t0var line
         }
