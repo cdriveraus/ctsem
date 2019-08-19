@@ -470,7 +470,6 @@ verbosify<-function(sf,verbose=2){
 #' #generate data from fitted model and add to $generated subobject
 #' f3nl <- ctStanGenerateFromFit(f3nl,nsamples=100,fullposterior=TRUE)
 #' 
-#' #plot functions need updating for non-linearities! (as of ctsem v 2.7.3)
 #' #extract can be used to extract samples and create own plots.
 #' #ctStanKalman can be used to obtain predictions, errors, updated states etc
 #' 
@@ -537,6 +536,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     recompile <- FALSE
     if(optimize && !intoverstates) stop('intoverstates=TRUE required for optimization!')
+    
     if(optimize && !intoverpop && any(ctstanmodel$pars$indvarying[is.na(ctstanmodel$pars$value)]) && 
         is.null(ctstanmodel$fixedrawpopchol) && is.null(ctstanmodel$fixedsubpars)){
       intoverpop <- TRUE
@@ -564,6 +564,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     if(cores=='maxneeded') cores=min(c(chains,parallel::detectCores()-1))
     whichT0VAR_T0MEANSindvarying <- ctstanmodel$pars$matrix %in% 'T0VAR'  &  
+      is.na(ctstanmodel$pars$value) &
       (ctstanmodel$pars$row %in% ctstanmodel$pars$row[ctstanmodel$pars$matrix %in% 'T0MEANS' & ctstanmodel$pars$indvarying] |
           ctstanmodel$pars$col %in% ctstanmodel$pars$row[ctstanmodel$pars$matrix %in% 'T0MEANS' & ctstanmodel$pars$indvarying])
     if(any(whichT0VAR_T0MEANSindvarying)){
@@ -782,6 +783,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     matsetup[which(matsetup$indvarying > 0),]
     indvaryingindex <- matsetup$param[which(matsetup$indvarying > 0)]
     indvaryingindex <- array(indvaryingindex[!duplicated(indvaryingindex)])
+    
     sdscale <- array(matvalues$sdscale[match(indvaryingindex,matsetup$param)])
     
    
@@ -893,10 +895,10 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       dim=c(standata$nmanifest,standata$nlatentpop))
     
     if(!recompile){ #then use finite diffs for some elements
-      standata$sJAxfinite <- array(as.integer(unique(which(matrix(ctstanmodel$jacobian$JAx %in% #which rows of jacobian are not simply drift / fixed / state refs
-      jacobianelements(ctstanmodel$jacobian$JAx,mats=mx,remove=c('drift','simplestate','fixed'),
+      standata$sJAxfinite <- array(as.integer(unique(c(which(matrix(ctstanmodel$jacobian$JAx %in% #which rows of jacobian are not simply drift / fixed / state refs
+      jacobianelements(ctstanmodel$jacobian$JAx,mats=mx,remove=c('drift','fixed'),
         ntdpred=ctstanmodel$n.TDpred,when=2,matsetup=matsetup),standata$nlatentpop,standata$nlatentpop), 
-      arr.ind = TRUE)))) #[,'col'] maybe split up into row / column?
+      arr.ind = TRUE))))) #[,'col'] maybe split up into row / column?
     standata$nsJAxfinite <- length(standata$sJAxfinite)
     }
     if(recompile){

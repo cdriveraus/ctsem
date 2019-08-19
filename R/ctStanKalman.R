@@ -67,11 +67,16 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
   etaupdcov[etaupdcov==99999] <- NA
   ypriorcov <- e$ypriorcov
   ypriorcov[ypriorcov==99999] <- NA
-
+  etasmoothcov <- e$etasmoothcov[,,1:nlatent,1:nlatent,drop=FALSE]
+  etasmoothcov[etasmoothcov==99999] <- NA
+  etasmooth <- e$etasmooth[,,1:nlatent,drop=FALSE]
+  etasmooth[etasmooth==99999] <- NA
+  
     return(list(time=cbind(fit$standata$time), lln=lln,llscale=llscale,err=err,
       y=matrix(fit$data$Y,ncol=ncol(fit$data$Y)), yprior=yprior,ypriorcov=ypriorcov,
       etaprior=etaprior, etapriorcov=etapriorcov,
       etaupd=etaupd,etaupdcov=etaupdcov,
+      etasmooth=etasmooth,etasmoothcov=etasmoothcov,
       llrow=llrow))
 }
 

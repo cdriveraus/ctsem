@@ -16,6 +16,7 @@
 #' @param subjects vector of integers denoting which subjects (from 1 to N) to plot predictions for. 
 #' @param plot Logical. If TRUE, plots output instead of returning it. 
 #' See \code{\link{ctKalmanPlot}} for the possible arguments.
+#' @param oldstyle Logical. If TRUE, use Kalman filter written in R rather than Stan based.
 #' @param ... additional arguments to pass to \code{\link{ctKalmanPlot}}.
 #' @return Returns a list containing matrix objects etaprior, etaupd, etasmooth, y, yprior, 
 #' yupd, ysmooth, prederror, time, loglik,  with values for each time point in each row. 
@@ -46,14 +47,14 @@
 #' @export
 
 ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
-  subjects=1, plot=FALSE, ...){
+  subjects=1, plot=FALSE,oldstyle=FALSE, ...){
   
   type=NA
   if(class(fit)=='ctStanFit') type='stan' 
   if(class(fit) =='ctsemFit') type ='omx'
   if(is.na(type)) stop('fit object is not from ctFit or ctStanFit!')
   
-  if(type=='stan'){
+  if(!oldstyle && type=='stan'){
     # if(timestep != 'asdata'){
     #   Y<-fit$standata$Y
     #   colnames(Y)=fit$ctstanmodel$manifestNames
@@ -104,7 +105,7 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
 
   }
   
-  if(type !='stan'){
+  if(oldstyle || type !='stan'){
     
     if(type=='stan') n.TDpred <-  fit$ctstanmodel$n.TDpred else n.TDpred <- fit$ctmodelobj$n.TDpred
     if(type=='stan') TDpredNames <- fit$ctstanmodel$TDpredNames else TDpredNames <- fit$ctmodelobj$TDpredNames

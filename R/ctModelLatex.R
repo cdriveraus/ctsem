@@ -1,6 +1,7 @@
 #' Generate and optionally compile latex equation of subject level ctsem model.
 #'
 #' @param ctmodel ctsem model object
+#' @param matrixnames Logical. If TRUE, includes ctsem matrix names such as DRIFT and DIFFUSION under the matrices.
 #' @param textsize Standard latex text sizes -- 
 #' tiny scriptsize footnotesize small normalsize large Large LARGE huge Huge. 
 #' Useful if output overflows page. 
@@ -30,7 +31,7 @@
 #'   
 #' l=ctModelLatex(ctmodel,compile=FALSE, open=FALSE)
 #' cat(l)
-ctModelLatex<- function(ctmodel,textsize='normalsize',folder=tempdir(),
+ctModelLatex<- function(ctmodel,matrixnames=TRUE,textsize='normalsize',folder=tempdir(),
   filename='ctsemTex',tex=TRUE, equationonly=FALSE, compile=TRUE, open=TRUE){
   
   if(class(ctmodel) == 'ctStanModel') {
@@ -85,7 +86,6 @@ ctModelLatex<- function(ctmodel,textsize='normalsize',folder=tempdir(),
 \\newcommand{\\vect}[1]{\\boldsymbol{\\mathbf{#1}}}
 
 \\begin{document}")
-  
   out <- paste0(out, "
 \\setcounter{MaxMatrixCols}{200}
  \\begin{",textsize,"}
@@ -95,22 +95,22 @@ ctModelLatex<- function(ctmodel,textsize='normalsize',folder=tempdir(),
     \\big{(}t\\big{)}}_{",ifelse(continuoustime,"\\mathrm{d}","")," \\vect{\\eta} (t)}	=  \\left(
       \\underbrace{
         ",bmatrix(ctmodel$DRIFT),"
-      }_{\\underbrace{\\vect{A}}_\\textrm{DRIFT}} \\underbrace{
+      ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{A}}",ifelse(!matrixnames,"}","_\\textrm{DRIFT}}")," \\underbrace{
         ",bmatrix(matrix(paste0(ctmodel$latentNames)))," 
         \\big{(}t\\big{)}
       }_{\\vect{\\eta} (t",ifelse(continuoustime,"","-1"),")}	+ \\underbrace{
         ",bmatrix(ctmodel$CINT),"
-      }_{\\underbrace{\\vect{b}}_\\textrm{CINT}} ",
+      ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{b}}",ifelse(!matrixnames,"}","_\\textrm{CINT}}"),
     if(ctmodel$n.TDpred > 0) paste0( "+ \\underbrace{
         ",bmatrix(ctmodel$TDPREDEFFECT),"
-      }_{\\underbrace{\\vect{M}}_\\textrm{TDPREDEFFECT}}
+      ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{M}}",ifelse(!matrixnames,"}","_\\textrm{TDPREDEFFECT}}"),"
       \\underbrace{
         ",bmatrix(matrix(paste0('\\chi_{',1:ncol(ctmodel$TDPREDEFFECT),'}')))," 
       }_{\\vect{\\chi} (t)}"),
     "\\right) ",ifelse(continuoustime,"\\mathrm{d}t","")," \\quad + \\nonumber \\\\ \\\\
     & \\qquad \\qquad \\quad \\underbrace{
       ",bmatrix(ctmodel$DIFFUSION),"
-    }_{\\underbrace{\\vect{G}}_\\textrm{DIFFUSION}}
+    ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{G}}",ifelse(!matrixnames,"}","_\\textrm{DIFFUSION}}"),"
     \\underbrace{",ifelse(continuoustime,"\\mathrm{d}",""),"
       ",bmatrix(matrix(paste0('W_{',1:ctmodel$n.latent,'}')),nottext=TRUE)," 
       (t)}_{",ifelse(continuoustime,"\\mathrm{d}","")," \\vect{W}(t)} \\\\ \\\\
@@ -124,12 +124,12 @@ ctModelLatex<- function(ctmodel,textsize='normalsize',folder=tempdir(),
       (t)}_{\\vect{Y}(t)} = 
         \\underbrace{
           ",bmatrix(ctmodel$LAMBDA)," 
-        }_{\\underbrace{\\vect{\\Lambda}}_\\textrm{LAMBDA}} \\underbrace{
+        ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\Lambda}}",ifelse(!matrixnames,"}","_\\textrm{LAMBDA}}")," \\underbrace{
           ",bmatrix(matrix(ctmodel$latentNames))," 
           (t)}_{\\vect{\\eta}(t)} +
         \\underbrace{
           ",bmatrix(ctmodel$MANIFESTMEANS)," 
-        }_{\\underbrace{\\vect{\\tau}}_\\textrm{MANIFESTMEANS}} + 
+        ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\tau}}",ifelse(!matrixnames,"}","_\\textrm{MANIFESTMEANS}}")," + 
         \\underbrace{
           ",bmatrix(matrix(paste0('\\epsilon_{',1:ctmodel$n.manifest,'}')))," 
           (t)}_{\\vect{\\epsilon}(t)} \\\\ \\\\
@@ -140,9 +140,9 @@ ctModelLatex<- function(ctmodel,textsize='normalsize',folder=tempdir(),
               ,
               \\underbrace{
                 ",bmatrix(ctmodel$MANIFESTVAR),"  
-              }_{\\underbrace{\\vect{\\Theta}}_\\textrm{MANIFESTVAR}} \\right) ", 
+              ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\Theta}}",ifelse(!matrixnames,"}","_\\textrm{MANIFESTVAR}}")," \\right) ", 
     ifelse(is.null(ctmodel$PARS),"", paste0("\\\\ \\\\
-              &\\underbrace{",bmatrix(ctmodel$PARS),"}_\\textrm{PARS}")),"
+              &\\underbrace{",bmatrix(ctmodel$PARS),"}",ifelse(!matrixnames,"}","_\\textrm{PARS}"),"")),"
       \\end{align*}
       \\end{",textsize,"}
       ")
