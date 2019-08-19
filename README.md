@@ -4,7 +4,7 @@
 [![Build
 Status](https://travis-ci.org/cdriveraus/ctsem.svg?branch=master)](https://travis-ci.org/cdriveraus/ctsem)
 
-See the NEWS file for recent updates\!
+**See the NEWS file for recent updates\!**
 
 ctsem allows for easy specification and fitting of a range of continuous
 and discrete time dynamic models, including multiple indicators (dynamic
@@ -26,43 +26,50 @@ vignette form at
 Bayesian approach is outlined in Introduction to Hierarchical Continuous
 Time Dynamic Modelling with ctsem, at
 <https://github.com/cdriveraus/ctsem/raw/master/vignettes/hierarchicalmanual.pdf>
-. To cite ctsem please use the citation(“ctsem”) command in R.
+. To cite ctsem please use the citation(“ctsem”) command in
+R.
 
-To install the github version, use:
-remotes::install\_github(‘cdriveraus/ctsem’, INSTALL\_opts =
-“–no-multiarch”, dependencies = c(“Depends”, “Imports”))
+### To install the github version, use:
 
-Troubleshooting Rstan / Rtools install for Windows:
+``` r
+remotes::install_github('cdriveraus/ctsem', INSTALL_opts = "--no-multiarch", dependencies = c("Depends", "Imports"))
+```
+
+### Troubleshooting Rstan / Rtools install for Windows:
 
 Ensure recent version of R and Rtools is installed.
 
 try including these lines in home/.R/makevars. :
 
-CXX14 = g++ -std=c++1y
-
-CXX14FLAGS = -O3 -Wno-unused-variable -Wno-unused-function
+    CXX14 = g++ -std=c++1y
+    CXX14FLAGS = -O3 -Wno-unused-variable -Wno-unused-function
 
 If makevars does not exist, run this code within R:
 
-dotR \<- file.path(Sys.getenv(“HOME”), “.R”)
+``` r
+dotR <- file.path(Sys.getenv("HOME"), ".R")
+if (!file.exists(dotR)) dir.create(dotR)
+M <- file.path(dotR, ifelse(.Platform$OS.type == "windows", "Makevars.win", "Makevars"))
+if (!file.exists(M)) file.create(M)
+cat("\nCXX14FLAGS=-O3 -march=native -mtune=native",
+    if( grepl("^darwin", R.version$os)) "CXX14FLAGS += -arch x86_64 -ftemplate-depth-256" else
+    if (.Platform$OS.type == "windows") "CXX11FLAGS=-O3 -march=native -mtune=native" else
+    "CXX14FLAGS += -fPIC",
+    file = M, sep = "\n", append = TRUE)
+```
 
-if (\!file.exists(dotR)) dir.create(dotR)
+In case of compile errors like `g++ not found`, ensure the devtools
+package is installed:
 
-M \<- file.path(dotR, ifelse(.Platform$OS.type == “windows”,
-“Makevars.win”, “Makevars”))
+``` r
+install.packages('devtools')
+```
 
-if (\!file.exists(M)) file.create(M)
+and include the following in your .Rprofile
 
-cat(“14FLAGS=-O3 -march=native -mtune=native”, if( grepl(“^darwin”,
-R.version\(os)) "CXX14FLAGS += -arch x86_64 -ftemplate-depth-256" else  if (.Platform\)OS.type
-== “windows”) “CXX11FLAGS=-O3 -march=native -mtune=native” else
-“CXX14FLAGS += -fPIC”, file = M, sep = “”, append = TRUE)
-
-In case of compile errors like ‘g++ not found’, ensure the devtools
-package is installed: install.packages(‘devtools’) and include the
-following in your .Rprofile
-
-library(devtools) Sys.setenv(PATH = paste(“C:/Rtools/bin”,
-Sys.getenv(“PATH”), sep=“;”)) Sys.setenv(PATH =
-paste(“C:\\Rtools\\mingw\_64\\bin”, Sys.getenv(“PATH”), sep=“;”))
-Sys.setenv(BINPREF = “C:/Rtools/mingw\_$(WIN)/bin/”)
+``` r
+library(devtools)
+Sys.setenv(PATH = paste("C:/Rtools/bin", Sys.getenv("PATH"), sep=";"))
+Sys.setenv(PATH = paste("C:\\Rtools\\mingw_64\\bin", Sys.getenv("PATH"), sep=";"))
+Sys.setenv(BINPREF = "C:/Rtools/mingw_$(WIN)/bin/")
+```
