@@ -1,4 +1,9 @@
 ctsem news:
+
+20/8/2019
+#### 3.0.1 ####
+- fixed a few minor / error generating bugs introduced in previous release related to random effects optimization.
+
 28/7/2019
 #### 3.0.0 ####
 - parameter transformations can be specified naturally without recompilation

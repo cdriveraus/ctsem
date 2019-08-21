@@ -756,6 +756,8 @@ if(verbose > 1) print ("below t0 row ", rowi);
       if(T0check>0) state +=  discreteDIFFUSION * etaupdbasestates[(1+(rowi-1)*nlatentpop):(rowi*nlatentpop)];
     }
 
+
+    if(nlmeasurement==0 && T0check == 0) sJy[ ,1:nlatent] = sLAMBDA;
     if (nobs_y[rowi] > 0 || savescores) {  // if some observations create right size matrices for missingness and calculate...
     
       int o[savescores ? nmanifest : nobs_y[rowi]]; //which obs are not missing in this row
@@ -797,9 +799,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
             if(sJylambda[ri,ci]) sJy[ ri,ci]=sLAMBDA[ri,ci]; //set jacobian to lambda where appropriate
           }
         }
-        if(rowi < ndatapoints) sJy[rowi+1] = sJy[rowi]; //inefficient to do all this copying...
       }
-      if(nlmeasurement==0) sJy[ ,1:nlatent] = sLAMBDA;
           
         if(intoverstates==1) { //classic kalman
           yprior[o] = sMANIFESTMEANS[o,1] + sLAMBDA[o,] * state[1:nlatent];

@@ -589,7 +589,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     #   message(paste0('MANIFESTVAR matrix is ignored when binomial=TRUE'))
     # }
     
-    
+    if(any(ctspec$param %in% 'stationary') || stationary) stop('stationarity incompatible with random effects integration')
     if(stationary) {
       ctspec$param[ctspec$matrix %in% c('T0VAR','T0MEANS')] <- 'stationary'
       ctspec$value[ctspec$matrix %in% c('T0VAR','T0MEANS')] <- NA
