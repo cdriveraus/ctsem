@@ -64,7 +64,7 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
     #     matrix(0,nrow=nrow(td),ncol=fit$ctstanmodelbase$n.TIpred,dimnames = list(NULL,fit$ctstanmodelbase$TIpredNames)))
     #   dlong <- ctDiscretiseData(as.matrix(dlong),timestep=timestep,
     #     TDpredNames = fit$ctstanmodelbase$TDpredNames,TIpredNames = fit$ctstanmodelbase$TIpredNames)
-    #   # browser()
+    #   # 
     #   fit$standata$Y <- dlong[,fit$ctstanmodel$manifestNames,drop=FALSE]
     #   fit$standata$tdpreds <- dlong[,fit$ctstanmodel$TDpredNames,drop=FALSE]
     #   fit$standata$subject <- dlong[,'id']
@@ -84,7 +84,7 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
     #   fit$data<-lapply(fit$standata,function(x){ x[x==99999] <- NA; x})
     #   
     # }
-
+    
     out <- ctStanKalman(fit,collapsefunc=mean) #extract state predictions
     # out$y <- fit$data$Y #,dim=c(1,dim(fit$data$Y)))
     # out$time <- array(fit$data$time)
@@ -95,14 +95,25 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
       if(length(dim(m)) ==1) m=m[fit$standata$subject %in% si, drop=FALSE]
       if(length(dim(m)) ==2) m=m[fit$standata$subject %in% si, ,drop=FALSE]
       if(length(dim(m)) ==3) m=m[fit$standata$subject %in% si, , ,drop=FALSE]
- 
+      
       return(m)
     }))
-# matplot(datalong$time,t(k$ypred[,,1]),type='l',
-#   col=rgb(1,0,0,.1),xlab='Year',ylab='Sunspots')
-# points(datalong$time,datalong$sunspots,type='l')
-# legend('topright',c('Observed','Predicted'),text.col=c('black','red'),bty='n')
-
+    
+    # 
+    for(si in subjects){
+      for(basei in c('y','eta')){
+        for(covtypei in c('prior','upd','smooth')){
+          out[[si]][[paste0(basei,covtypei,'cov')]] <- aperm(out[[si]][[paste0(basei,covtypei,'cov')]],c(2,3,1))
+        }
+      }
+    }
+    
+    
+    # matplot(datalong$time,t(k$ypred[,,1]),type='l',
+    #   col=rgb(1,0,0,.1),xlab='Year',ylab='Sunspots')
+    # points(datalong$time,datalong$sunspots,type='l')
+    # legend('topright',c('Observed','Predicted'),text.col=c('black','red'),bty='n')
+    
   }
   
   if(oldstyle || type !='stan'){
@@ -178,7 +189,7 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
         sdat[,c(manifestNames,TDpredNames)] [sdat[,c(manifestNames,TDpredNames)]==99999] <- NA
         sdat[,'subject'] <- subjecti
       }
- 
+      
       
       #get parameter matrices
       if(type=='stan') model<-ctStanContinuousPars(fit, subjects=subjecti)
@@ -259,7 +270,7 @@ ctKalmanPlot<-function(x, subjects, kalmanvec=c('y','etaprior'),
   plotcontrol=list(ylab='Value',xlab='Time',xaxs='i'),
   polygoncontrol=list(steps=20),polygonalpha=.3,
   legend=TRUE, legendcontrol=list(x='topright',bg='white')){
-
+  
   out<-x
   if(length(subjects) > 1 & colvec[1] =='auto') colvec = rainbow(length(subjects),v=.9)
   
@@ -322,7 +333,7 @@ ctKalmanPlot<-function(x, subjects, kalmanvec=c('y','etaprior'),
     if(length(subjects) > 1) {
       plist$col = colvec[si] #set colour based on subject if multiple subjects
     }
-
+    
     for(kveci in 1:length(kalmanvec)){ #kalman output types
       kvecdims=1:dim(out[[subiname]][[kalmanvec[kveci]]])[-1]
       if(length(subjects) == 1 & colvec[1] =='auto') colvecnew = rainbow(length(kvecdims),v=.9)

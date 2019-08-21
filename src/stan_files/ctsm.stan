@@ -667,13 +667,12 @@ if(verbose > 1) print ("below t0 row ", rowi);
           
           
           if(continuoustime==1){
-            Je[rowi] = Je[rowi-1]; //temporary hack to avoid nans
             if(dtchange==1 || statedependence[2] || (T0check == 1 && (DRIFTsubindex + CINTsubindex > 0))){
               Je[rowi]= matrix_exp(sJAx * dtsmall);
               if(verbose > 1) print("Je = ", Je[rowi]);
               discreteDRIFT = expm2(append_row(append_col(sDRIFT[1:nlatent, 1:nlatent],sCINT),rep_vector(0,nlatent+1)') * dtsmall,drcintoffdiag);
               if(verbose > 1) print("discreteDRIFT = ", discreteDRIFT);
-            }
+            } else Je[rowi] = Je[rowi-1]; //temporary hack to avoid nans
             if(dtchange==1 || statedependence[2] || (T0check == 1 && (DRIFTsubindex + DIFFUSIONsubindex + CINTsubindex) > 0)){
               sasymDIFFUSION = to_matrix(  -kronsum(sJAx[1:nlatent,1:nlatent]) \ to_vector(tcrossprod(sDIFFUSION)), nlatent,nlatent);
               discreteDIFFUSION =  sasymDIFFUSION - quad_form( sasymDIFFUSION, Je[rowi, 1:nlatent,1:nlatent]' );
@@ -879,10 +878,10 @@ err[o] = Y[rowi,o] - yprior[o]; // prediction error
         etasmoothcov[sri]=etaupdcov[sri];
       } else{
         matrix[nlatentpop,nlatentpop] smoother;
-        smoother=diag_matrix(rep_vector(0,nlatentpop));
-        smoother = etaupdcov[sri] * Je[sri+1,1:nlatentpop,1:nlatentpop]' / etapriorcov[sri+1];
+        smoother = etaupdcov[sri] * Je[sri+1]' / makesym(etapriorcov[sri+1],verbose,1);
         etasmooth[sri]= etaupd[sri] + smoother * (etasmooth[sri+1] - etaprior[sri+1]);
         etasmoothcov[sri]= etaupdcov[sri] + smoother * ( etasmoothcov[sri+1] - etapriorcov[sri+1]) * smoother';
+
       }
       ysmoothcov[sri] += quad_form(etasmoothcov[sri], Jy[sri]'); //already added manifestvar
       ysmooth[sri] += tLAMBDA[sri] * etasmooth[sri,1:nlatent];

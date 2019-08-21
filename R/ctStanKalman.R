@@ -79,7 +79,13 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
   etasmoothcov[etasmoothcov==99999] <- NA
   etasmooth <- e$etasmooth[,,1:nlatent,drop=FALSE]
   etasmooth[etasmooth==99999] <- NA
-  
+  # 
+  # for(basei in c('y','eta')){
+  #   for(covtypei in c('prior','upd','smooth')){
+  #     assign(paste0(basei,covtypei,'cov'), aperm(get(paste0(basei,covtypei,'cov')),c(1,3,4,2)))
+  #   }
+  # }
+  # 
     return(list(time=cbind(fit$standata$time), lln=lln,llscale=llscale,err=err,
       y=matrix(fit$data$Y,ncol=ncol(fit$data$Y)), 
       yprior=yprior,ypriorcov=ypriorcov,
