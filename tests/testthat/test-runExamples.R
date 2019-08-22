@@ -3,6 +3,6 @@ library(devtools)
   context("allexamples")
   
   test_that("allexamples1", {
-    run_examples(pkg = '../../ctsem/.')
+    if (file.exists('../../ctsem/')) run_examples(pkg = '../../ctsem/.') else run_examples(pkg = '../../.')
   })
 }

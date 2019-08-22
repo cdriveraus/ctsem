@@ -16,8 +16,8 @@
 #' }
 ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
   if(class(fit)!='ctStanFit') stop('Not a ctStanFit object')
- if(class(collapsefunc) %in% 'function' ) e=extract(fit)
-
+  if(class(collapsefunc) %in% 'function' ) e=extract(fit)
+  
   if(!class(collapsefunc) %in% 'function' || length(dim(e$k))==0){
     message('State estimates not saved, computing...')
     standata <- fit$standata
@@ -31,6 +31,7 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
     if(!is.na(nsamples)) samples <- samples[sample(1:nrow(samples),nsamples),,drop=FALSE]
     if(class(collapsefunc) %in% 'function') samples = matrix(apply(samples,2,collapsefunc,...),ncol=ncol(samples))
     e=stan_constrainsamples(sm = fit$stanmodel,standata = standata,samples = samples,cores=cores)
+    
   }
   
   k=e$kalman
@@ -44,16 +45,12 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
       c(1:nmanifest,1:nmanifest,1:nmanifest,1:nmanifest,1:nlatent,1:nlatent)))
   
   
-  
-  obj <- c('lln','llscale','err','yprior','etaprior','etaupd')
-  
-  
   lln=k[,,1:nmanifest,drop=FALSE]
   llscale=k[,,(nmanifest*1+1):(nmanifest*1+nmanifest),drop=FALSE]
   err=k[,,(nmanifest*2+1):(nmanifest*2+nmanifest),drop=FALSE]
-  yprior=k[,,(nmanifest*3+1):(nmanifest*3+nmanifest),drop=FALSE]
-  etaprior=k[,,(nmanifest*4+1):(nmanifest*4+nlatent),drop=FALSE]
-  etaupd=k[,,(nmanifest*4+nlatent+1):(nmanifest*4+nlatent*2),drop=FALSE]
+  e$yprior=k[,,(nmanifest*3+1):(nmanifest*3+nmanifest),drop=FALSE]
+  # etaprior=k[,,(nmanifest*4+1):(nmanifest*4+nlatent),drop=FALSE]
+  # etaupd=k[,,(nmanifest*4+nlatent+1):(nmanifest*4+nlatent*2),drop=FALSE]
   
   llvec = apply(lln,1:2,function(x) {
     sum(dnorm(x[!is.na(x)],log = TRUE))
@@ -61,24 +58,27 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
   llrow = llvec - apply(llscale, 1:2, function(x) sum(x,na.rm=TRUE))
   
   #covariance
-  etapriorcov <- e$etapriorcov
-  etaupdcov <- e$etaupdcov
-  etapriorcov[etapriorcov==99999] <- NA
-  etaupdcov[etaupdcov==99999] <- NA
-  ypriorcov <- e$ypriorcov
-  ypriorcov[ypriorcov==99999] <- NA
-  yupdcov <- e$ypriorcov
-  yupdcov[ypriorcov==99999] <- NA
-  ysmoothcov <- e$ypriorcov
-  ysmoothcov[ypriorcov==99999] <- NA
-  yupd <- e$yupd
-  yupd[yupd==99999] <- NA
-  ysmooth <- e$ysmooth
-  ysmooth[ysmooth==99999] <- NA
-  etasmoothcov <- e$etasmoothcov[,,1:nlatent,1:nlatent,drop=FALSE]
-  etasmoothcov[etasmoothcov==99999] <- NA
-  etasmooth <- e$etasmooth[,,1:nlatent,drop=FALSE]
-  etasmooth[etasmooth==99999] <- NA
+  # etapriorcov <- e$etapriorcov
+  # etaupdcov <- e$etaupdcov
+  # etapriorcov[etapriorcov==99999] <- NA
+  # etaupdcov[etaupdcov==99999] <- NA
+  # ypriorcov <- e$ypriorcov
+  # ypriorcov[ypriorcov==99999] <- NA
+  # yupdcov <- e$ypriorcov
+  # yupdcov[ypriorcov==99999] <- NA
+  # ysmoothcov <- e$ypriorcov
+  # ysmoothcov[ypriorcov==99999] <- NA
+  # yupd <- e$yupd
+  # yupd[yupd==99999] <- NA
+  # ysmooth <- e$ysmooth
+  # ysmooth[ysmooth==99999] <- NA
+  # etasmoothcov <- e$etasmoothcov#[,,1:nlatent,1:nlatent,drop=FALSE]
+  # etasmoothcov[etasmoothcov==99999] <- NA
+  # etasmooth <- e$etasmooth#[,,1:nlatent,drop=FALSE]
+  # etasmooth[etasmooth==99999] <- NA
+  
+  
+  
   # 
   # for(basei in c('y','eta')){
   #   for(covtypei in c('prior','upd','smooth')){
@@ -86,15 +86,41 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
   #   }
   # }
   # 
-    return(list(time=cbind(fit$standata$time), lln=lln,llscale=llscale,err=err,
-      y=matrix(fit$data$Y,ncol=ncol(fit$data$Y)), 
-      yprior=yprior,ypriorcov=ypriorcov,
-      yupd=yupd,yupdcov=yupdcov,
-      ysmooth=ysmooth,ysmoothcov=ysmoothcov,
-      etaprior=etaprior, etapriorcov=etapriorcov,
-      etaupd=etaupd,etaupdcov=etaupdcov,
-      etasmooth=etasmooth,etasmoothcov=etasmoothcov,
-      llrow=llrow))
+  
+  
+  
+  out=list(time=cbind(fit$standata$time), lln=lln,llscale=llscale,err=err,
+    y=matrix(fit$data$Y,ncol=ncol(fit$data$Y)), 
+    # yprior=yprior,ypriorcov=ypriorcov,
+    # yupd=yupd,yupdcov=yupdcov,
+    # ysmooth=ysmooth,ysmoothcov=ysmoothcov,
+    # etaprior=etaprior, etapriorcov=etapriorcov,
+    # etaupd=etaupd,etaupdcov=etaupdcov,
+    # etasmooth=etasmooth,etasmoothcov=etasmoothcov,
+    llrow=llrow)
+  
+  for(basei in c('y','eta')){
+    for(typei in c('prior','upd','smooth')){
+      for(typex in c('','cov')){
+        ref=paste0(basei,typei,typex)
+        out[[ref]] <- e[[ref]]
+        out[[ref]][out[[ref]] == 99999] <- NA
+        if(basei=='y') {
+          dimnames(out[[ref]]) <- list(NULL, NULL, fit$ctstanmodel$manifestNames) 
+        } 
+        if(basei=='eta'){
+          if(typex=='') {
+            out[[ref]] <- out[[ref]][,,1:nlatent,drop=FALSE] 
+            dimnames(out[[ref]]) <- list(NULL, NULL, fit$ctstanmodel$latentNames[1:nlatent])
+          } else { #for cov
+            out[[ref]] <- out[[ref]][,,,1:nlatent,drop=FALSE]
+          }
+        }
+      }
+    }
+  }
+
+return(out)
 }
 
 

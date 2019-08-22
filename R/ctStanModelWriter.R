@@ -141,6 +141,7 @@ ctStanModelIntOverPop <- function(m){
     # m$pars$indvarying[m$pars$matrix %in% 'T0MEANS'] <- FALSE 
     
     ivnames <- unique(m$pars$param[m$pars$indvarying & !m$pars$param %in% t0mvaryingnames]) #don't need new states for t0means
+    m$latentPopNames=ivnames
     ivnamesfull <- c(t0mvaryingnames,ivnames) #for t0var naming
     nindvaryingsmall <- length(ivnames)
     
@@ -807,7 +808,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
         }
       }
 
-      Je[rowi] = discreteDRIFT;
+      Je[rowi] = discreteDRIFT[1:nlatent,1:nlatent];
       state[1:nlatent] = (discreteDRIFT * append_row(state,1.0))[1:nlatent];
       if(ntdpred > 0) state[1:nlatent] += sTDPREDEFFECT * tdpreds[rowi];
       if(intoverstates==1) {
@@ -1523,9 +1524,9 @@ transformed parameters{
   matrix[nmanifest,nmanifest] ypriorcov[savescores ? ndatapoints : 0];
   matrix[nmanifest,nmanifest] yupdcov[savescores ? ndatapoints : 0];
   matrix[nmanifest,nmanifest] ysmoothcov[savescores ? ndatapoints : 0];
-  vector[nlatent] etaprior[savescores ? ndatapoints : 0];
-  vector[nlatent] etaupd[savescores ? ndatapoints : 0];
-  vector[nlatent] etasmooth[savescores ? ndatapoints : 0];
+  vector[nlatentpop] etaprior[savescores ? ndatapoints : 0];
+  vector[nlatentpop] etaupd[savescores ? ndatapoints : 0];
+  vector[nlatentpop] etasmooth[savescores ? ndatapoints : 0];
   vector[nmanifest] yupd[savescores ? ndatapoints : 0];
   vector[nmanifest] ysmooth[savescores ? ndatapoints : 0];
   ',subjectparaminit(pop=FALSE,smats=FALSE),'
@@ -1624,9 +1625,9 @@ generated quantities{
   matrix[nmanifest,nmanifest] ypriorcov[savescores ? ndatapoints : 0];
   matrix[nmanifest,nmanifest] yupdcov[savescores ? ndatapoints : 0];
   matrix[nmanifest,nmanifest] ysmoothcov[savescores ? ndatapoints : 0];
-  vector[nlatent] etaprior[savescores ? ndatapoints : 0];
-  vector[nlatent] etaupd[savescores ? ndatapoints : 0];
-  vector[nlatent] etasmooth[savescores ? ndatapoints : 0];
+  vector[nlatentpop] etaprior[savescores ? ndatapoints : 0];
+  vector[nlatentpop] etaupd[savescores ? ndatapoints : 0];
+  vector[nlatentpop] etasmooth[savescores ? ndatapoints : 0];
   vector[nmanifest] yupd[savescores ? ndatapoints : 0];
   vector[nmanifest] ysmooth[savescores ? ndatapoints : 0];
   vector[nmanifest] Ygen[ndatapoints];

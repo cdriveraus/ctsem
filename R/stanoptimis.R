@@ -22,7 +22,7 @@ flexsapply <- function(cl, X, fn,cores=1){
   if(cores > 1) parallel::parSapply(cl,X,fn) else sapply(X, fn)
 }
 
-standatact_specificsubjects <- function(standata, subjects){
+standatact_specificsubjects <- function(standata, subjects,timestep=NA){
   standata$dokalmanrows <- as.integer(standata$dokalmanrows * (standata$subject %in% subjects))
   standata2=standata
   standata2$dokalmanpriormodifier <- sum(standata$dokalmanrows)/standata$ndatapoints
@@ -32,9 +32,27 @@ standatact_specificsubjects <- function(standata, subjects){
   for(pi in c('whichcont_y','Y','whichbinary_y','whichobs_y','tdpreds')){
     standata2[[pi]] <- standata2[[pi]][standata$dokalmanrows == 1,,drop=FALSE]
   }
+
   standata2$ndatapoints=as.integer(nrow(standata2$Y))
   return(standata2)
 }  
+
+
+standatalongobjects <- function() longobjects <- c('subject','time','dokalmanrows','nobs_y','ncont_y','nbinary_y','Y','tdpreds')
+
+standatatolong <- function(standata){
+  long <- data.frame(lapply(standatalongobjects(),function(x) standata[[x]])) #,simplify=data.frame(subject=standata$subject, time=standata$time
+  colnames(long)[colnames(long) %in% 'Y'] <- 'Y.1'
+  colnames(long)[colnames(long) %in% 'tdpreds'] <- 'tdpreds.1'
+  return(long)
+}
+
+stanlongtostandata <- function(long){
+  standata <- lapply( standatalongobjects(), function(x) long[,grep(paste0('^',x),colnames(long)),drop=FALSE])
+  names(standata) <- standatalongobjects()
+  return(standata)
+}
+  
 
 parlp <- function(parm,subjects=NA){
   sm<-NULL
@@ -52,14 +70,15 @@ parlp <- function(parm,subjects=NA){
 
 
 stan_constrainsamples<-function(sm,standata, samples,cores=2){
+  # browser
   smfull <- stan_reinitsf(model = sm,data = standata)
   message('Computing quantities for ', nrow(samples),' samples...')
   est1=NA
   class(est1)<-'try-error'
   i=0
-  while(class(est1)=='try-error'){
+  while(i < nrow(samples) && class(est1)=='try-error'){
     i=i+1
-    est1=try(constrain_pars(smfull, upars=samples[i,]),silent=TRUE)
+    est1=try(constrain_pars(smfull, upars=samples[i,]))
   }
   if(class(est1)=='try-error') stop('All samples generated errors! Respecify, try stochastic optimizer, try again?')
   

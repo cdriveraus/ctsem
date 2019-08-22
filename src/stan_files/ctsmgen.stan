@@ -349,9 +349,9 @@ generated quantities{
   matrix[nmanifest,nmanifest] ypriorcov[savescores ? ndatapoints : 0];
   matrix[nmanifest,nmanifest] yupdcov[savescores ? ndatapoints : 0];
   matrix[nmanifest,nmanifest] ysmoothcov[savescores ? ndatapoints : 0];
-  vector[nlatent] etaprior[savescores ? ndatapoints : 0];
-  vector[nlatent] etaupd[savescores ? ndatapoints : 0];
-  vector[nlatent] etasmooth[savescores ? ndatapoints : 0];
+  vector[nlatentpop] etaprior[savescores ? ndatapoints : 0];
+  vector[nlatentpop] etaupd[savescores ? ndatapoints : 0];
+  vector[nlatentpop] etasmooth[savescores ? ndatapoints : 0];
   vector[nmanifest] yupd[savescores ? ndatapoints : 0];
   vector[nmanifest] ysmooth[savescores ? ndatapoints : 0];
   vector[nmanifest] Ygen[ndatapoints];
@@ -693,7 +693,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
         }
       }
 
-      Je[rowi] = discreteDRIFT;
+      Je[rowi] = discreteDRIFT[1:nlatent,1:nlatent];
       state[1:nlatent] = (discreteDRIFT * append_row(state,1.0))[1:nlatent];
       if(ntdpred > 0) state[1:nlatent] += sTDPREDEFFECT * tdpreds[rowi];
       if(intoverstates==1) {

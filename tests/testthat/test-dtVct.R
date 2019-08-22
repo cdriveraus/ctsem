@@ -1,7 +1,6 @@
 if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
   # Sys.setenv(NOT_CRAN='true')
-  library(ctsem)
-  library(testthat)
+
   set.seed(1)
   
   context("dtVct_lVnl")
