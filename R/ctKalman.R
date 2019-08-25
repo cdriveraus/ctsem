@@ -98,9 +98,10 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
       
       return(m)
     }))
+    names(out)<-paste0(subjects)
     
-    # 
-    for(si in subjects){
+    # browser()
+    for(si in paste0(subjects)){
       for(basei in c('y','eta')){
         for(covtypei in c('prior','upd','smooth')){
           out[[si]][[paste0(basei,covtypei,'cov')]] <- aperm(out[[si]][[paste0(basei,covtypei,'cov')]],c(2,3,1))

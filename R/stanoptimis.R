@@ -22,6 +22,11 @@ flexsapply <- function(cl, X, fn,cores=1){
   if(cores > 1) parallel::parSapply(cl,X,fn) else sapply(X, fn)
 }
 
+flexlapply <- function(cl, X, fn,cores=1){
+  if(cores > 1) parallel::parLapply(cl,X,fn) else lapply(X, fn)
+}
+
+
 standatact_specificsubjects <- function(standata, subjects,timestep=NA){
   standata$dokalmanrows <- as.integer(standata$dokalmanrows * (standata$subject %in% subjects))
   standata2=standata
@@ -54,19 +59,6 @@ stanlongtostandata <- function(long){
 }
   
 
-parlp <- function(parm,subjects=NA){
-  sm<-NULL
-  if(!is.na(subjects[1])) standata <- standatact_specificsubjects(standata,subjects) 
-  smf<-stan_reinitsf(sm,standata,fast=TRUE) #list[[corei]]
-  out <- try(smf$log_prob(upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
-  if(class(out)=='try-error') {
-    out[1] <- -999999999999
-    attributes(out)$gradient <- rep(NaN, length(parm))
-  }
-  if(is.null(attributes(out)$gradient)) attributes(out)$gradient <- rep(NaN, length(parm))
-  attributes(out)$gradient[is.nan(attributes(out)$gradient)] <- 
-    rnorm(length(attributes(out)$gradient[is.nan(attributes(out)$gradient)]),0,100)
-}
 
 
 stan_constrainsamples<-function(sm,standata, samples,cores=2){
@@ -142,6 +134,11 @@ tostanarray <- function(flesh, skeleton){
 
 
 
+
+parlpbase <- function(parm,cores,cl,parlp){
+  flexlapply(cl,
+    1:cores,function(i) parlp(parm,workerid=i),cores=cores)
+}
 
 
 
@@ -235,7 +232,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   if(is.null(decontrol$CR)) decontrol$CR=.9
   if(is.null(decontrol$trace)) decontrol$trace =ifelse(verbose>0,1,0)
 
-
+  
+  
+ 
+  
 
 
   sgd <- function(init,stepbase=1e-4,gmeminit=ifelse(is.na(startnrows),.9,.9),gmemmax=.95,maxparchange = .5,
@@ -502,22 +502,116 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
 
       gradout <- c()
       bestlp <- -Inf
+      
+      
+      
+      stansubjectindices <- split(1:standata$nsubjects,sort(1:standata$nsubjects %% min(standata$nsubjects,cores)))
+      standatalist <- lapply(stansubjectindices,function(x) standatact_specificsubjects(standata,x))
+      
+      
+      cl <- parallel::makeCluster(cores, type = "PSOCK") #should vary this depending on os for memory management
+      
+      
+      
+      parlp <- function(parm, workerid){
+        # sm<-NULL
+        # 
+       #standatact_specificsubjects(get('standata',pos = parent.frame()),subjects)
+        standata <- standatalist[[workerid]] 
+        smf<-stan_reinitsf(sm,standata,fast=TRUE) #list[[corei]]
+        out <- try(smf$log_prob(upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
+        if(class(out)=='try-error') {
+          out[1] <- -1e100
+          attributes(out)$gradient <- rep(NaN, length(parm))
+        }
+        if(is.null(attributes(out)$gradient)) attributes(out)$gradient <- rep(NaN, length(parm))
+        attributes(out)$gradient[is.nan(attributes(out)$gradient)] <- 
+          rnorm(length(attributes(out)$gradient[is.nan(attributes(out)$gradient)]),0,100)
+        return(out)
+      }
+      #parallel optimize via split
 
+      parallel::clusterExport(cl = cl, varlist = c('sm','parlp','standatalist'),envir = environment())
+      parallel::clusterApply(cl,1:cores,function(x){
+        library(ctsem);library(rstan);library(Rcpp)
+      })
+      on.exit(parallel::stopCluster(cl))
+      
+      if(cores > 1){
+        a=Sys.time()
+        evaltime <- smf$log_prob(upars=init, adjust_transform=TRUE, gradient=TRUE)
+        b=Sys.time()
+        evaltime <- b-a
+        # print(evaltime)
+      }
+      
+   
+     #  
+     # library(future)
+     #  plan(multiprocess,workers=cores)
+      
+      
+     
+      
+      
       neglpgf<-function(parm) {
+        a=Sys.time()
+        if(1==1|| (cores > 1 && evaltime > .2)){
+          # environment(parlpbase) <- environment()
+          # 
+          out2 <- parlpbase(parm,cores,cl,parlp)
+          # 
+          #,globals=c('parlp','sm','standata','parm','stansubjectindices'))
+          # out2=list()
+          # # for(i in 1:length(stansubjectindices)){
+          # #   out2[[i]] <- value(future({  parlp(parm,stansubjectindices[[i]]) },
+          # #     globals=c('parlp','i','sm','standata','parm','stansubjectindices')))
+          # # }
+          # 
+          # out2 <- lapply(1:length(stansubjectindices),function(subjectlist){
+          #   future({  parlp(parm,stansubjectindices[[subjectlist]]) },
+          #   globals=c('parlp','sm','standata','parm','subjectlist','stansubjectindices'))
+          # })
+          # out2 <- lapply(out2,value)
+          out <- try(sum(unlist(out2)),silent=TRUE)
+          if(standata$verbose > 0) print(out)
+          attributes(out)$gradient <- try(apply(sapply(out2,function(x) attributes(x)$gradient,simplify='matrix'),1,sum))
+        } else {
           out<-try(smf$log_prob(upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
+        }
+        
         if(class(out)=='try-error' || is.nan(out)) {
-          out=-99999999
-          # gradout <<- rep(NaN,length(parm))
+          out=-1e100
           attributes(out) <- list(gradient=rep(0,length(parm)))
         } else {
           if(out[1] > bestlp) {
             bestlp <<- out[1]
-            # gradout <<- attributes(out)$gradient
           }
         }
-          if(verbose > 0 && is.null(standata$verbose)) message('target = ', out)
+        b=Sys.time()
+        evaltime <- b-a
+        if(verbose > 0) print(evaltime)
         return(-out)
       }
+      # 
+      # 
+      # 
+      # 
+      # neglpgf<-function(parm) {
+      #     out<-try(smf$log_prob(upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
+      #   if(class(out)=='try-error' || is.nan(out)) {
+      #     out=-99999999
+      #     # gradout <<- rep(NaN,length(parm))
+      #     attributes(out) <- list(gradient=rep(0,length(parm)))
+      #   } else {
+      #     if(out[1] > bestlp) {
+      #       bestlp <<- out[1]
+      #       # gradout <<- attributes(out)$gradient
+      #     }
+      #   }
+      #     if(verbose > 0 && is.null(standata$verbose)) message('target = ', out)
+      #   return(-out)
+      # }
 
 
       parbase=par()
@@ -614,6 +708,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
 
         hessout <- flexsapply(cl=cl, X = 1:length(pars), function(i) {
         # hessout <- sapply(X = 1:length(pars), function(i) {
+          # browser()
           smf <- stan_reinitsf(sm,standata,fast=TRUE)
           # for(i in 1:length(pars)){
           stepsize <- step *10
@@ -737,8 +832,13 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # hessup=hess1s(pars = est2,direction = 1,step = 1e-4,lpdifmin = 1e-4,lpdifmax = 1e-3)
         # hessdown=hess1s(pars = est2,direction = -1,step = 1e-4,lpdifmin = 1e-4,lpdifmax = 1e-3)
         # hess=(hessup+hessdown)/2
+        
         hess=grmat(pars=est2,step=1e-12)
-        if(any(is.na(hess))) warning(paste0('Hessian could not be computed for pars ', paste0(which(apply(hess,1,function(x) any(is.na(x)))),collapse=', '), ' -- standard errors will be nonsense, model adjustment may be needed.',collapse=''))
+        for(ri in 1:nrow(hess)){
+          for(ci in 1:ncol(hess)){
+            if(is.na(hess[ri,ci])) hess[ri,ci] <- hess[ci,ri]
+          }}
+        if(any(is.na(hess))) warning(paste0('Hessian could not be computed for pars: ', paste0(which(apply(hess,1,function(x) any(is.na(x)))),collapse=', '), ' -- standard errors will be nonsense, model adjustment may be needed.',collapse=''))
         diag(hess)[is.na(diag(hess))]<- -1
         hess[is.na(hess)] <- 0
         hess = ((hess) + t(hess))/2

@@ -24,11 +24,11 @@ ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA){
   fit$standata$dokalman <- 0L
   nlatent = fit$standata$nlatent
   # browser()
-  if(length(parvalues)!=fit$data$nparams) stop('length of parvalues != number of free params (',fit$data$nparams,') in model!')
+  # if(length(parvalues)!=fit$data$nparams) stop('length of parvalues != number of free params (',fit$data$nparams,') in model!')
   if(suppressWarnings(is.na(sf))) sf <- stan_reinitsf(fit$stanmodel,data=fit$standata) #suppressOutput(sf <- suppressWarnings(sampling(,iter=1,control=list(max_treedepth=1),chains=1)))
-  npars <- get_num_upars(sf)
-  pars <- c(parvalues,rep(0,npars - fit$data$nparams))
-  sfc <- constrain_pars(sf, pars)
+  # npars <- get_num_upars(sf)
+  # pars <- c(parvalues,rep(0,npars - fit$data$nparams))
+  sfc <- constrain_pars(sf, parvalues)
   
   
    whichmatrices='all'

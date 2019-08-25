@@ -103,9 +103,13 @@ ctModelTransformsToNum<-function(ctm){
   
   newrows <- which(!is.na(ctm$pars$transform))
   eqs <- ctm$pars$transform[newrows]
+  uniqueeqs <- unique(eqs)
+  
     
-  l=lapply(eqs,fit.eqs)
+  l=lapply(uniqueeqs,fit.eqs)
+  eqmatch <- match(eqs, uniqueeqs)
   df=data.frame(do.call(rbind,l))
+  df[1:length(eqmatch),] <- df[eqmatch,]
   df[,] <- lapply(df,function(x) if(is.numeric(x)) return(round(x,2)) else return(x))
   df$formula <- eqs
   df[df$lsfit > .1,c('offset','inneroffset','multiplier','meanscale')]<-NA
@@ -1180,7 +1184,7 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
     for(ri in 1:size(matsetup)){ //for each row of matrix setup
     for(statecalcs in 0:1){
         if(subi ==0 ||  //if population parameter
-          (matsetup[ri,7]==8 && DIFFUSIONsubindex) ||( matsetup[ri,7] == 4 && T0VARsubindex) || //or a covariance parameter in an individually varying matrix
+          (matsetup[ri,7]==4 && DIFFUSIONsubindex) ||( matsetup[ri,7] == 8 && T0VARsubindex) || //or a covariance parameter in an individually varying matrix
           (matsetup[ri,3] > 0 && (matsetup[ri,5] > 0 || matsetup[ri,6] > 0)) //or there is individual variation
           ){ //otherwise repeated values
             if( (statecalcs && matsetup[ri,8]>0) || (!statecalcs && matsetup[ri,8]==0) ){ //if doing statecalcs do them, if doing static calcs do them

@@ -1,3 +1,12 @@
+ctStanRawSamples<-function(fit){
+  if(!class(fit$stanfit) %in% 'stanfit') {
+    samples = fit$stanfit$rawposterior
+  } else {
+    samples = t(stan_unconstrainsamples(fit$stanfit,fit$standata))
+  }
+  return(samples)
+}
+
 #' summary.ctStanFit
 #'
 #' Summarise a ctStanFit object that was fit using \code{\link{ctStanFit}}. 
@@ -21,10 +30,10 @@
 summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,priorcheck=TRUE,...){
   
   if(class(object) != 'ctStanFit') stop('Not a ctStanFit object!')
-
+  
   out=list()
   monvars <- c('mean','sd','2.5%','50%','97.5%')
-
+  
   if(class(object$stanfit)=='stanfit'){ 
     s<-suppressWarnings(getMethod('summary','stanfit')(object$stanfit))
     if('98%' %in% colnames(s$summary)) colnames(s$summary)[colnames(s$summary)=='98%'] <- '97.5%'
@@ -32,7 +41,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   }
   
   if(class(object$stanfit)!='stanfit')  e <- extract(object) 
-
+  
   parnames <- object$setup$matsetup$parname[object$setup$matsetup$when==0 & object$setup$matsetup$param > 0]
   parindices <- object$setup$matsetup$param[object$setup$matsetup$when==0 & object$setup$matsetup$param > 0]
   pars <- cbind(parnames,parindices)
@@ -143,12 +152,12 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   if(priorcheck & object$standata$nopriors==0) out = c(out,priorcheckreport(object,...))
   
   if(object$ctstanmodel$n.TIpred > 0) {
-
+    
     if(class(object$stanfit)=='stanfit'){
       rawtieffect <- rstan::extract(object$stanfit,permuted=FALSE,pars='TIPREDEFFECT')
       tidiags <- suppressWarnings(monitor(rawtieffect,warmup=0,digits_summary = digits,print = FALSE))
     }
-
+    
     tieffect <- array(e$linearTIPREDEFFECT,dim=c(dim(e$linearTIPREDEFFECT)[1], 1, length(parnames) * dim(e$linearTIPREDEFFECT)[3]))
     tieffectnames <- paste0('tip_',rep(object$ctstanmodel$TIpredNames,each=length(parnames)),'_',parnames)
     dimnames(tieffect)<-list(c(),c(),tieffectnames)
@@ -169,17 +178,16 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
     #   standataout <- object$standata
     #   smf <- stan_reinitsf(object$stanmodel,standataout)
     # }
-  object$standata$savescores <- 0L
-  object$standata$gendata <- 0L
-  object$standata$dokalman <- 0L
-  sf <- stan_reinitsf(object$stanmodel,data=object$standata)
-
-    parmatlists <- try(apply(e$rawpopmeans[
-      sample(x = 1:dim(e$rawpopmeans)[1],
-        size = dim(e$rawpopmeans)[1],  #min(parmatsamples,
-        replace = FALSE),],
+    object$standata$savescores <- 0L
+    object$standata$gendata <- 0L
+    object$standata$dokalman <- 0L
+    sf <- stan_reinitsf(object$stanmodel,data=object$standata)
+    parmatlists <- try(apply(ctStanRawSamples(object),
+      # sample(x = 1:dim(e$rawpopmeans)[1],
+      #   size = dim(e$rawpopmeans)[1],  #min(parmatsamples,
+      #   replace = FALSE),],
       1,ctStanParMatrices,fit=object,timeinterval=timeinterval,sf=sf))
-      
+    
     if(class(parmatlists)!='try-error'){
       parmatarray <- array(unlist(parmatlists),dim=c(length(unlist(parmatlists[[1]])),length(parmatlists)))
       parmats <- matrix(NA,nrow=length(unlist(parmatlists[[1]])),ncol=7)
@@ -187,19 +195,19 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
       counter=0
       for(mati in 1:length(parmatlists[[1]])){
         if(all(dim(parmatlists[[1]][[mati]]) > 0)){
-        for(coli in 1:ncol(parmatlists[[1]][[mati]])){
-          for(rowi in 1:nrow(parmatlists[[1]][[mati]])){
-            counter=counter+1
-            new <- matrix(c(
-              rowi,
-              coli,
-              mean(parmatarray[counter,],na.rm=TRUE),
-              sd(parmatarray[counter,],na.rm=TRUE),
-              quantile(parmatarray[counter,],probs=c(.025,.5,.975),na.rm=TRUE)),
-              nrow=1)
-            try(rownames(parmats)[counter] <- names(parmatlists[[1]])[mati])
-            try(parmats[counter,]<-new)
-          }}}}
+          for(coli in 1:ncol(parmatlists[[1]][[mati]])){
+            for(rowi in 1:nrow(parmatlists[[1]][[mati]])){
+              counter=counter+1
+              new <- matrix(c(
+                rowi,
+                coli,
+                mean(parmatarray[counter,],na.rm=TRUE),
+                sd(parmatarray[counter,],na.rm=TRUE),
+                quantile(parmatarray[counter,],probs=c(.025,.5,.975),na.rm=TRUE)),
+                nrow=1)
+              try(rownames(parmats)[counter] <- names(parmatlists[[1]])[mati])
+              try(parmats[counter,]<-new)
+            }}}}
       
       colnames(parmats) <- c('Row','Col', 'Mean','Sd','2.5%','50%','97.5%')
       
@@ -222,7 +230,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
     }
     if(class(parmatlists)=='try-error') out$parmatNote = 'Could not calculate parameter matrices'
   }
-
+  
   
   if(class(object$stanfit)=='stanfit'){
     popsd=s$summary[c(grep('^popsd',rownames(s$summary),fixed=FALSE)),
@@ -242,12 +250,12 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   }
   
   if(class(object$stanfit)!='stanfit'){ #if optimized / importance sampled
-
+    
     if(!is.null(iter)){ popsd <- suppressWarnings(monitor(array(e$popsd,dim=c(dim(e$popsd)[1],1,dim(e$popsd)[2])),warmup=0,print=FALSE))
     popsd=popsd[ object$data$indvaryingindex, monvars,drop=FALSE]
     rownames(popsd)=parnamesiv
     }
-
+    
     popmeans=suppressWarnings(monitor(array(e$popmeans,dim=c(dim(e$popmeans)[1],1,dim(e$popmeans)[2])),warmup=0,print=FALSE))
     rownames(popmeans) = parnames #names(e)[grep('hmean_',names(e))]
     popmeans = popmeans[,monvars,drop=FALSE]
@@ -264,8 +272,8 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   out$popNote=paste0('popmeans are reported as specified in ctModel -- covariance related matrices are in sd / matrix square root form.')
   
   out$df = 
-  
-  out$logprob=logprob
+    
+    out$logprob=logprob
   
   if(class(object$stanfit)!='stanfit') {
     out$df = df
