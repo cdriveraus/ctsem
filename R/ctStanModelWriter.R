@@ -1205,6 +1205,7 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
   state=sT0MEANS[,1];
   ',paste0(ctm$calcs$tdpred,';\n',collapse=' '),';
   ',paste0(ctm$calcs$driftcint,';\n',collapse=' '),';
+  ',paste0(ctm$calcs$diffusion,';\n',collapse=' '),';
   ',paste0(ctm$calcs$measurement,';\n',collapse=' '),';
   
   if(subi <= (DIFFUSIONsubindex ? nsubjects : 0)) {

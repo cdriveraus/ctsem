@@ -432,7 +432,7 @@ matrix[nlatent, nlatent] sDIFFUSIONcov;
     for(ri in 1:size(matsetup)){ //for each row of matrix setup
     for(statecalcs in 0:1){
         if(subi ==0 ||  //if population parameter
-          (matsetup[ri,7]==8 && DIFFUSIONsubindex) ||( matsetup[ri,7] == 4 && T0VARsubindex) || //or a covariance parameter in an individually varying matrix
+          (matsetup[ri,7]==4 && DIFFUSIONsubindex) ||( matsetup[ri,7] == 8 && T0VARsubindex) || //or a covariance parameter in an individually varying matrix
           (matsetup[ri,3] > 0 && (matsetup[ri,5] > 0 || matsetup[ri,6] > 0)) //or there is individual variation
           ){ //otherwise repeated values
             if( (statecalcs && matsetup[ri,8]>0) || (!statecalcs && matsetup[ri,8]==0) ){ //if doing statecalcs do them, if doing static calcs do them
@@ -464,6 +464,8 @@ matrix[nlatent, nlatent] sDIFFUSIONcov;
   ;
 ; 
   state=sT0MEANS[,1];
+  ;
+;
   ;
 ;
   ;
