@@ -116,9 +116,11 @@ crosscov <- function(a,b){
 #' testarray <- array(rnorm(900,2,1),dim=c(100,3,3))
 #' ctCollapse(testarray,1,mean)
 #' @export
-ctCollapse<-function(inarray,collapsemargin,collapsefunc,...){
+ctCollapse<-function(inarray,collapsemargin,collapsefunc,plyr=TRUE,...){
   indims<-dim(inarray)
-  out<-array(plyr::aaply(inarray,(1:length(indims))[-collapsemargin],collapsefunc,...,
+  if(plyr) out<-array(plyr::aaply(inarray,(1:length(indims))[-collapsemargin],collapsefunc,...,
+    .drop=TRUE),dim=indims[-collapsemargin])
+  if(!plyr) out<-array(apply(inarray,(1:length(indims))[-collapsemargin],collapsefunc,...,
     .drop=TRUE),dim=indims[-collapsemargin])
   dimnames(out)=dimnames(inarray)[-collapsemargin]
   return(out)

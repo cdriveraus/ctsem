@@ -84,14 +84,15 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
     #   fit$data<-lapply(fit$standata,function(x){ x[x==99999] <- NA; x})
     #   
     # }
-    
+    fit$standata$dokalmanrows <- as.integer(fit$standata$subject %in% subjects)
     out <- ctStanKalman(fit,collapsefunc=mean) #extract state predictions
+    # browser()
     # out$y <- fit$data$Y #,dim=c(1,dim(fit$data$Y)))
     # out$time <- array(fit$data$time)
     niter <- dim(out$etaprior)[1]
     if(length(dim(out$llrow)) < 3) out$llrow <- array(out$llrow,dim=c(dim(out$llrow),1))
     out <- lapply(subjects, function(si) lapply(out, function(m) {
-      if(length(dim(m)) > 2) m=ctCollapse(inarray = m,collapsemargin = 1,collapsefunc = mean)
+      if(length(dim(m)) > 2) m=array(m,dim=dim(m)[-1]) #ctCollapse(inarray = m,collapsemargin = 1,collapsefunc = mean,plyr=FALSE)
       if(length(dim(m)) ==1) m=m[fit$standata$subject %in% si, drop=FALSE]
       if(length(dim(m)) ==2) m=m[fit$standata$subject %in% si, ,drop=FALSE]
       if(length(dim(m)) ==3) m=m[fit$standata$subject %in% si, , ,drop=FALSE]
@@ -264,7 +265,7 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
 #' ###Single step procedure:
 #' ctKalman(ctstantestfit,subjects=2,plot=TRUE)
 #' }
-ctKalmanPlot<-function(x, subjects, kalmanvec=c('y','etaprior'),
+ctKalmanPlot<-function(x, subjects, kalmanvec=c('y','ysmooth'),
   errorvec='auto', errormultiply=1.96,
   ltyvec="auto",colvec='auto', lwdvec='auto', 
   subsetindices=NULL,pchvec='auto', typevec='auto',grid=FALSE,add=FALSE, 

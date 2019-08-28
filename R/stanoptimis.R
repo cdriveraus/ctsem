@@ -556,9 +556,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       neglpgf<-function(parm) {
         a=Sys.time()
-        if(1==1|| (cores > 1 && evaltime > .2)){
+        if(cores > 1 && evaltime > .3){
           # environment(parlpbase) <- environment()
-          # 
           out2 <- parlpbase(parm,cores,cl,parlp)
           # 
           #,globals=c('parlp','sm','standata','parm','stansubjectindices'))
@@ -708,7 +707,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
 
         hessout <- flexsapply(cl=cl, X = 1:length(pars), function(i) {
         # hessout <- sapply(X = 1:length(pars), function(i) {
-          # browser()
+          # 
           smf <- stan_reinitsf(sm,standata,fast=TRUE)
           # for(i in 1:length(pars)){
           stepsize <- step *10
