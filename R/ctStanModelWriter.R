@@ -643,7 +643,8 @@ jacobianelements <- function(J, when, ntdpred,matsetup,mats,textadd=NA,
     if(when==3 && ntdpred==0) out <- c() #no need for extra jacobian lines if no predictors!
     if(returndriftonly) out <- matrix(as.integer(as.logical(driftonly)),nrow(J),ncol(J))
     if(returnlambdaonly) {
-      out <- matrix(as.integer(as.logical(lambdaonly)),nrow(J),ncol(J))
+      out <- matrix(as.integer(as.logical(lambdaonly)),nrow(mats$LAMBDA),ncol(mats$LAMBDA))
+      
     }
   }
   return(out)
