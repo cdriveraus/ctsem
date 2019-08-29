@@ -613,12 +613,14 @@ jacobianelements <- function(J, when, ntdpred,matsetup,mats,textadd=NA,
     }
     chk <- c()
     if('lambda' %in% remove && !returndriftonly){
-      for(ci in 1:ncol(mats$LAMBDA)){
+      for(ci in 1:nrow(mats$T0MEANS)){
         for(ri in 1:nrow(mats$LAMBDA)){ #check for standard lambda reference
-          if(J[ri,ci] == paste0('sLAMBDA[',ri,',',ci,']')) {
+          if(ci <= ncol(mats$LAMBDA) && J[ri,ci] == paste0('sLAMBDA[',ri,',',ci,']')) {
             chk=TRUE
           } else {
-            if(J[ri,ci] == mats$LAMBDA[ri,ci] && is.na(suppressWarnings(as.numeric(J[ri,ci])))){
+            if(ci <= ncol(mats$LAMBDA) && 
+                J[ri,ci] == mats$LAMBDA[ri,ci] && 
+                is.na(suppressWarnings(as.numeric(J[ri,ci])))){
               chk=TRUE
             } else chk <- FALSE
           }
@@ -643,7 +645,7 @@ jacobianelements <- function(J, when, ntdpred,matsetup,mats,textadd=NA,
     if(when==3 && ntdpred==0) out <- c() #no need for extra jacobian lines if no predictors!
     if(returndriftonly) out <- matrix(as.integer(as.logical(driftonly)),nrow(J),ncol(J))
     if(returnlambdaonly) {
-      out <- matrix(as.integer(as.logical(lambdaonly)),nrow(mats$LAMBDA),ncol(mats$LAMBDA))
+      out <- matrix(as.integer(as.logical(lambdaonly)),nrow(mats$LAMBDA),nrow(mats$T0MEANS))
       
     }
   }
@@ -712,7 +714,6 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup){
     }
     ')
   }
-  
   
   
   
