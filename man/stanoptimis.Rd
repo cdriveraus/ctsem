@@ -60,7 +60,7 @@ without replacement from this set.}
 
 \item{verbose}{Integer from 0 to 2. Higher values print more information during model fit -- for debugging.}
 
-\item{cores}{Number of cpu cores to use.}
+\item{cores}{Number of cpu cores to use, should be at least 2.}
 }
 \value{
 list containing fit elements

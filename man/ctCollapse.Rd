@@ -5,7 +5,7 @@
 \title{ctCollapse
 Easily collapse an array margin using a specified function.}
 \usage{
-ctCollapse(inarray, collapsemargin, collapsefunc, ...)
+ctCollapse(inarray, collapsemargin, collapsefunc, plyr = TRUE, ...)
 }
 \arguments{
 \item{inarray}{Input array of more than one dimension.}

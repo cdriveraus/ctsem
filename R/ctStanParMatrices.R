@@ -85,7 +85,7 @@ ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA){
   if(fit$ctstanmodel$continuoustime) out$dtDRIFT=expm(out$DRIFT * timeinterval)
   if('dtDIFFUSION' %in% whichmatrices) out$dtDIFFUSION = out$asymDIFFUSION - (out$dtDRIFT %*% out$asymDIFFUSION %*% t(out$dtDRIFT ))
   if('dtDIFFUSIONcor' %in% whichmatrices) out$dtDIFFUSIONcor = cov2cor(out$dtDIFFUSION)
-  if('dtCINT' %in% whichmatrices) out$dtCINT = (solve(out$DRIFT) %*%(out$dtDRIFT - diag(nrow(out$DRIFT))) %*% (out$CINT))
+  if('dtCINT' %in% whichmatrices) out$dtCINT = (solve(out$DRIFT, out$dtDRIFT - diag(nrow(out$DRIFT))) %*% (out$CINT))
   if('asymCINT' %in% whichmatrices) out$asymCINT = matrix(out$asymCINT,ncol=1)#-solve(out$DRIFT) %*% out$CINT
   
   if('T0VARcor' %in% whichmatrices) {

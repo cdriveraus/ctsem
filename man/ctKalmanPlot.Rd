@@ -4,7 +4,7 @@
 \alias{ctKalmanPlot}
 \title{ctKalmanPlot}
 \usage{
-ctKalmanPlot(x, subjects, kalmanvec = c("y", "etaprior"),
+ctKalmanPlot(x, subjects, kalmanvec = c("y", "ysmooth"),
   errorvec = "auto", errormultiply = 1.96, ltyvec = "auto",
   colvec = "auto", lwdvec = "auto", subsetindices = NULL,
   pchvec = "auto", typevec = "auto", grid = FALSE, add = FALSE,

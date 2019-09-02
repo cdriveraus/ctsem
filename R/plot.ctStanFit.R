@@ -44,8 +44,7 @@ plot.ctStanFit <- function(x, types='all',wait=TRUE,...){
     }
     return(out)
   }
-  
-  types <- c()
+
   if(types[1]=='all') {
     if( (x$standata$nldynamics + x$standata$nlmeasurement) ==0 & x$standata$continuoustime == 1) types <- c('regression', 'kalman')
     types=c(types, 'priorcheck')
