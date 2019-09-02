@@ -95,7 +95,6 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   
   type='discreteDRIFT'
   collapseSubjects=TRUE #consider this for a switch
-  
   e<-extract(ctstanfitobj)
   
   if(type=='all') type=c('discreteDRIFT','latentMeans') #must match with ctDiscretePars
@@ -142,7 +141,7 @@ ctpars$DRIFT <- ctpars$DRIFT[,1:nlatent,1:nlatent,drop=FALSE] #intoverpop
   for(typei in 1:length(type)){ #for all types of discrete parameter requested, compute pars
     message('Computing ', type[typei],' for ', nsamples,' samples, may take a moment...')
     matrixtype=ifelse(type[typei] %in% c('discreteDRIFT'),TRUE, FALSE) #include any matrix type outputs
-    discreteDRIFT <- sapply(1:(dim(ctpars$DRIFT)[1]),function(d){
+    discreteDRIFT <- array(sapply(1:(dim(ctpars$DRIFT)[1]),function(d){
       nl=dim(ctpars$DRIFT)[2]
       asymDIFFUSION <- matrix(ctpars$asymDIFFUSION[d,,],nl,nl)
       asymDIFFUSIONdiag <- diag(asymDIFFUSION)
@@ -157,11 +156,12 @@ ctpars$DRIFT <- ctpars$DRIFT[,1:nlatent,1:nlatent,drop=FALSE] #intoverpop
         if(standardise) out <- out * matrix(rep(sqrt((asymDIFFUSIONdiag)),each=nl) / 
             rep((sqrt(asymDIFFUSIONdiag)),times=nl),nl)
         if(observational) out <- out %*% g
-        return(out)
+        return(matrix(out,ncol(out),ncol(out)))
       },simplify = 'array')
-    },simplify = 'array')
+    },simplify = 'array'),dim=c(nlatent,nlatent,length(times),nsamples))
     
     nr=dim(discreteDRIFT)[2]
+
     out[[typei]] <- apply(get(type[typei]),c(1,2,3),quantile,probs=quantiles)
     
     # out[[typei]] <- plyr::aaply(1:nsamples,1,function(iterx){ #for every iteration
