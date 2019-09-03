@@ -11,11 +11,10 @@ parallelStanSetup <- function(cores, sm, standata,split=TRUE){
     }
   
   lf=lapply(stansubjectindices,function(subindices) {
-    if(split) smalldat <- standatact_specificsubjects(standata,subindices) else smalldat <- standata
-    future(globals = c('sm','subindices','smalldat'),
+    if(split) standata <- standatact_specificsubjects(standata,subindices)
+    future(globals = c('sm','subindices','standata'),
       packages=c('ctsem','rstan'),
     gc=FALSE,expr = {
-      standata <- smalldat
       smf<-stan_reinitsf(sm,standata,fast=FALSE)
       
       parlp <- function(parm){
@@ -229,7 +228,7 @@ tostanarray <- function(flesh, skeleton){
 }
 
 
-sgd <- function(init,fitfunc,standata,sm,cores,plotsgd=FALSE,stepbase=1e-4,gmeminit=ifelse(is.na(startnrows),.9,.9),gmemmax=.95,maxparchange = .5,
+sgd <- function(init,fitfunc,ndatapoints,plotsgd=FALSE,stepbase=1e-4,gmeminit=ifelse(is.na(startnrows),.9,.9),gmemmax=.95,maxparchange = .5,
   startnrows=NA,gsmoothness = 1,roughnessmemory=.95,groughnesstarget=.5,lproughnesstarget=.1,
   gsmoothroughnesstarget=.2,
   warmuplength=50,
@@ -240,14 +239,16 @@ sgd <- function(init,fitfunc,standata,sm,cores,plotsgd=FALSE,stepbase=1e-4,gmemi
   minpars=pars
   changepars=pars
   step=rep(stepbase,length(init))
-  g=-fitfunc(init) # try(smf$grad_log_prob(upars=init,adjust_transform=TRUE),silent = TRUE) #rnorm(length(init),0,.001)
+  # parallelStanSetup(cores,sm,standata)
+
+  g= -fitfunc(init) # try(smf$grad_log_prob(upars=init,adjust_transform=TRUE),silent = TRUE) #rnorm(length(init),0,.001)
   if(class(g)=='try-error') {
     i = 0
     message('Problems initialising, trying random values...')
     while(i < 50 && class(g)=='try-error'){
       if(i %%5 == 0) init = rep(0,length(init))
       init=init+rnorm(length(init),0,abs(init)+ .1)
-      g=-fitfunc(init) #try(smf$grad_log_prob(upars=init,adjust_transform=TRUE),silent = TRUE)
+      g= -fitfunc(init) #try(smf$grad_log_prob(upars=init,adjust_transform=TRUE),silent = TRUE)
       i = i + 1
     }
   }
@@ -267,13 +268,13 @@ sgd <- function(init,fitfunc,standata,sm,cores,plotsgd=FALSE,stepbase=1e-4,gmemi
   lp<-c()
   oldlp <- -Inf
   converged <- FALSE
-  nrows <- ifelse(is.na(startnrows),standata$ndatapoints, min(standata$ndatapoints, startnrows))
+  nrows <- ifelse(is.na(startnrows),ndatapoints, min(ndatapoints, startnrows))
   
   while(!converged && i < maxiter){
     print
     i = i + 1
     accepted <- FALSE
-    lproughnesstarget2 = ifelse(nrows==standata$ndatapoints,lproughnesstarget,.49)
+    lproughnesstarget2 = ifelse(nrows==ndatapoints,lproughnesstarget,.49)
     while(!accepted){
       newpars = bestpars
       delta =   step  * (gsmooth*(gsmoothness) + g*(1-(gsmoothness))) * exp((rnorm(length(g),0,.01)))
@@ -281,16 +282,22 @@ sgd <- function(init,fitfunc,standata,sm,cores,plotsgd=FALSE,stepbase=1e-4,gmemi
       newpars = newpars + delta
       
       #sub sampling
-      if(!is.na(startnrows) || (nrows!=standata$ndatapoints)){
-        subjects <- sample(1:standata$ndatapoints,nrows,replace = FALSE)
-        standata$dokalmanrows <- as.integer(standata$subject %in% subjects) #rep(1L,standata$ndatapoints) #
-        parallelStanSetup(cores = cores,sm = sm,standata = standata) #could be improved for subsampling
-        # smf<-stan_reinitsf(sm,standata,fast=TRUE)
-      }
+      # if(!is.na(startnrows) || (nrows!=ndatapoints)){
+      #   subjects <- sample(1:ndatapoints,nrows,replace = FALSE)
+      #   standata$dokalmanrows <- as.integer(standata$subject %in% subjects) #rep(1L,ndatapoints) #
+      #   parallelStanSetup(cores = cores,sm = sm,standata = standata) #could be improved for subsampling
+      # }
       
       # lpg = try(smf$log_prob(upars=newpars,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
       lpg= -fitfunc(newpars)
-      if(class(lpg) !='try-error' && !is.nan(lpg[1]) && all(!is.nan(attributes(lpg)$gradient))) accepted <- TRUE else step <- step * .1
+      
+      if(lpg > -1e99 && class(lpg) !='try-error' && !is.nan(lpg[1]) && all(!is.nan(attributes(lpg)$gradient))){
+        accepted <- TRUE
+      } 
+      else {
+        step <- step * .1
+      }
+      
       if(is.na(startnrows) && i < warmuplength && i > 1 && lpg[1] < lp[1]) {
         accepted <- FALSE
         if(plotsgd) print('not accepted!')
@@ -318,7 +325,7 @@ sgd <- function(init,fitfunc,standata,sm,cores,plotsgd=FALSE,stepbase=1e-4,gmemi
     # print(stdgdif)
     # step=exp(mean(log(step))+(.99*(log(step)-mean(log(step)))))
     # step[oldsigng == signg] = step[which(oldsigng == signg)] * sqrt(2-gmemory) #exp((1-gmemory)/2)
-    # step[oldsigng != signg] = step[which(oldsigng != signg)] / sqrt(2-gmemory) #ifelse(nrows == standata$ndatapoints, (2-gmemory),1.1) #1.2 #exp((1-gmemory)/2)
+    # step[oldsigng != signg] = step[which(oldsigng != signg)] / sqrt(2-gmemory) #ifelse(nrows == ndatapoints, (2-gmemory),1.1) #1.2 #exp((1-gmemory)/2)
     
     signdifmod = step
     signdifmod[sign(oldg) == sign(g)] =  .1 #/ (1.5-inv_logit(abs(stdgdif[oldsigng == signg])))^4 #* (1/ ( ( (roughness*.05+.95)^2) ))
@@ -348,7 +355,7 @@ sgd <- function(init,fitfunc,standata,sm,cores,plotsgd=FALSE,stepbase=1e-4,gmemi
       # step = step * sqrt(2-gmemory) #exp((1-gmemory)/8)
       if(i > warmuplength/2) {
         gsmooth[pars>maxpars | pars < minpars] <- gsmooth[pars>maxpars | pars < minpars]  + .2*delta[pars>maxpars | pars < minpars] /step[pars>maxpars | pars < minpars]
-        step[pars>maxpars | pars < minpars] <- step[pars>maxpars | pars < minpars] * 1.5  #+ pars[pars>maxpars | pars < minpars]
+        step[pars>maxpars | pars < minpars] <- step[pars>maxpars | pars < minpars] * 2  #+ pars[pars>maxpars | pars < minpars]
         changepars=pars
         changepars[!(pars>maxpars | pars < minpars)] <- NA
         lproughness = lproughness * .9
@@ -358,6 +365,10 @@ sgd <- function(init,fitfunc,standata,sm,cores,plotsgd=FALSE,stepbase=1e-4,gmemi
       
       maxpars[pars>maxpars] <-pars[pars>maxpars]
       minpars[pars<minpars] <-pars[pars<minpars]
+      
+      #slowly forget old max and mins, allow fast re exploration of space
+      maxpars <- maxpars - (maxpars-minpars)*.01
+      minpars <- minpars + (maxpars-minpars)*.01
     }
     if(i > 1 && lp[i] < lp[i-1]) {
       # step[sign(oldgsmooth) != signg] = .5 * step[sign(oldgsmooth) != signg]
@@ -366,7 +377,7 @@ sgd <- function(init,fitfunc,standata,sm,cores,plotsgd=FALSE,stepbase=1e-4,gmemi
       # signg <- oldsigng
       # gsmooth = oldgsmooth
       # pars <- bestpars
-      # if(nrows == standata$ndatapoints) {
+      # if(nrows == ndatapoints) {
       # gsmooth[sign(gsmooth) != signg] = gsmooth[sign(gsmooth) != signg] #* .5 + g[sign(gsmooth) != signg] * .5
       # step = step/ (2-gmemory)#step  / max( 1.5, (-10*(lp[i] - lp[i-1]) / sd(head(tail(lp,20),10)))) #exp((1-gmemory)/4)
       # } else {
@@ -420,17 +431,17 @@ sgd <- function(init,fitfunc,standata,sm,cores,plotsgd=FALSE,stepbase=1e-4,gmemi
       if(max(tail(lp,nconvergeiter)) - min(tail(lp,nconvergeiter)) < itertol) converged <- TRUE
       # print(max(tail(lp,nconvergeiter)) - min(tail(lp,nconvergeiter)))
       if(max(diff(tail(lp,nconvergeiter))) < deltatol) converged <- TRUE
-      if(nrows < standata$ndatapoints && (length(lp) - match(min(lp),lp)) > nconvergeiter) converged <- TRUE
+      if(nrows < ndatapoints && (length(lp) - match(min(lp),lp)) > nconvergeiter) converged <- TRUE
     }
-    if(converged & nrows != standata$ndatapoints){
+    if(converged & nrows != ndatapoints){
       converged <- FALSE
-      nrows <- min(standata$ndatapoints, nrows * 4)
-      if(nrows > standata$ndatapoints/2){
-        nrows <- standata$ndatapoints
+      nrows <- min(ndatapoints, nrows * 4)
+      if(nrows > ndatapoints/2){
+        nrows <- ndatapoints
         i=0
         lp=c()
       }
-      message(paste0('nrows now ',nrows, ' out of ',standata$ndatapoints),' total')
+      message(paste0('nrows now ',nrows, ' out of ',ndatapoints),' total')
       
     }
   }
@@ -520,7 +531,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   verbose=0,cores=2){
   
   if(!is.null(standata$verbose)) {
-    if(standata$verbose > 1) standata$verbose=as.integer(verbose) else standata$verbose=0L
+    # if(standata$verbose > 1) standata$verbose=as.integer(verbose) else standata$verbose=0L
   }
   standata$nopriors=as.integer(nopriors)
   
@@ -599,7 +610,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       bestlp <- -Inf
       
       
-      parallelStanSetup(cores = optimcores,sm = sm,standata = standata)
+      
       
       
       fitfuncs <- parallelStanFunctionCreator(cores = optimcores,verbose = verbose)   
@@ -613,6 +624,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       if(carefulfit && !deoptim & standata$nopriors == 1 ){ #init using priors
         standata$nopriors <- as.integer(0)
+        parallelStanSetup(cores = optimcores,sm = sm,standata = standata)
         smf<-stan_reinitsf(sm,standata,fast=TRUE)
         
         if(!stochastic) {
@@ -623,13 +635,15 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           optimfit$value = optimfit$f
           
         }
-        if(stochastic) optimfit <- sgd(init, fitfunc = neglpgf,standata = standata,sm = sm,cores = optimcores,plotsgd=plotsgd,itertol=1,maxiter=300)
+        if(stochastic) optimfit <- sgd(init, fitfunc = neglpgf,ndatapoints=standata$ndatapoints,plotsgd=plotsgd,itertol=1,maxiter=300)
         standata$nopriors <- as.integer(1)
         smf<-stan_reinitsf(sm,standata,fast=TRUE)
         init = optimfit$par #+ rnorm(length(optimfit$par),0,abs(init/8)+1e-3)#rstan::constrain_pars(object = smf, optimfit$par)
-      }
+      } #end carefulfit
       
+      parallelStanSetup(cores = optimcores,sm = sm,standata = standata)
       if(!stochastic) {
+        
         optimfit <- mize(init, fg=mizelpg, max_iter=99999,
           method="L-BFGS",memory=100,
           line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
@@ -644,7 +658,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(is.infinite(bestfit)) {
           message('Switching to stochastic optimizer -- failed initialisation with bfgs')
         }
-        optimfit <- sgd(init, fitfunc = neglpgf,standata = standata,sm = sm,cores = optimcores,plotsgd=plotsgd,)
+        optimfit <- sgd(init, fitfunc = neglpgf,ndatapoints=standata$ndatapoints,plotsgd=plotsgd)
         bestfit <-optimfit$value
       }
       
