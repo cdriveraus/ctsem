@@ -844,10 +844,8 @@ err[o] = Y[rowi,o] - yprior[o]; // prediction error
         tLAMBDA[rowi] = sLAMBDA;
       }
       
-  
-      if(nbinary_y[rowi] > 0) kout[rowi,o1d] =  Y[rowi,o1d] .* (yprior[o1d]) + (1-Y[rowi,o1d]) .* (1-yprior[o1d]); 
-  
-        if(verbose > 1) {
+      
+      if(verbose > 1) {
           print("rowi =",rowi, "  si =", si, "  state =",state,"  etacov ",etacov,
             "  yprior =",yprior,"  ycov ",ycov, "  K ",K,
             "  sDRIFT =", sDRIFT, " sDIFFUSION =", sDIFFUSION, " sCINT =", sCINT, "  sMANIFESTVAR ", diagonal(sMANIFESTVAR), "  sMANIFESTMEANS ", sMANIFESTMEANS, 
@@ -855,7 +853,8 @@ err[o] = Y[rowi,o] - yprior[o]; // prediction error
             " discreteDRIFT = ", discreteDRIFT, "  discreteDIFFUSION ", discreteDIFFUSION, "  sasymDIFFUSION ", sasymDIFFUSION, 
             "  rawpopsd ", rawpopsd,  "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
         }
-        if(verbose > 2) print("ukfstates ", ukfstates, "  ukfmeasures ", ukfmeasures);
+  
+      if(nbinary_y[rowi] > 0) kout[rowi,o1d] =  Y[rowi,o1d] .* (yprior[o1d]) + (1-Y[rowi,o1d]) .* (1-yprior[o1d]); 
   
         if(size(o0) > 0){
           int tmpindex[ncont_y[rowi]] = o0d;

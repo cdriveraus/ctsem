@@ -366,11 +366,13 @@ sgd <- function(init,fitfunc,ndatapoints,plotsgd=FALSE,stepbase=1e-4,gmeminit=if
       maxpars[pars>maxpars] <-pars[pars>maxpars]
       minpars[pars<minpars] <-pars[pars<minpars]
       
+
+    }
+    if(i > 1 && lp[i] < lp[i-1]) {
       #slowly forget old max and mins, allow fast re exploration of space
       maxpars <- maxpars - (maxpars-minpars)*.01
       minpars <- minpars + (maxpars-minpars)*.01
-    }
-    if(i > 1 && lp[i] < lp[i-1]) {
+      
       # step[sign(oldgsmooth) != signg] = .5 * step[sign(oldgsmooth) != signg]
       # gsmooth[sign(oldgsmooth) != signg] = .05 * g[sign(oldgsmooth) != signg]
       # gmemory=min(.8,gmemory)
@@ -531,7 +533,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   verbose=0,cores=2){
   
   if(!is.null(standata$verbose)) {
-    # if(standata$verbose > 1) standata$verbose=as.integer(verbose) else standata$verbose=0L
+    if(standata$verbose > 1) standata$verbose=as.integer(verbose) else standata$verbose=0L
   }
   standata$nopriors=as.integer(nopriors)
   
@@ -541,11 +543,12 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   if(is.null(decontrol$CR)) decontrol$CR=.9
   if(is.null(decontrol$trace)) decontrol$trace =ifelse(verbose>0,1,0)
   
-  
+  if(is.null(init)) init <- 'random'
+  if(init[1] !='random') carefulfit <- FALSE
   parbase=par()
-  if(cores < 2) {
-    stop('Cores must be >=2 for optimization')
-  }
+  # if(cores < 2) {
+  #   stop('Cores must be >=2 for optimization')
+  # }
   
   
   # Preserve execution plan
@@ -613,9 +616,40 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       
       
-      fitfuncs <- parallelStanFunctionCreator(cores = optimcores,verbose = verbose)   
-      mizelpg <- fitfuncs$mizelpg
-      neglpgf=fitfuncs$neglpgf
+      if(optimcores > 1) {
+        fitfuncs <- parallelStanFunctionCreator(cores = optimcores,verbose = verbose)  
+        mizelpg <- fitfuncs$mizelpg
+        neglpgf=fitfuncs$neglpgf
+      }
+      if(optimcores == 1) {
+        neglpgf<-function(parm) {
+          a=Sys.time()
+          out<- try(log_prob(smfull,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
+
+          if(class(out)=='try-error' || is.nan(out)) {
+            out=-1e100
+            attributes(out) <- list(gradient=rep(0,length(parm)))
+          }
+          b=Sys.time()
+          evaltime <- b-a
+          if(verbose > 0) print(paste('lp= ',out,' ,    iter time = ',round(evaltime,2)))
+          return(-out)
+        }
+        
+        mizelpg=list( #list also created in parallel function creator
+          fg=function(pars){
+            r=neglpgf(pars)
+            r=list(fn=r[1],gr= -attributes(r)$gradient)
+            return(r)
+          },
+          fn=neglpgf,
+          gr=function(pars) -attributes(neglpgf(pars))$gradient
+        )
+        
+      }
+        
+        
+
       
       if(stochastic=='auto' && npars > 100){
         message('> 100 parameters and stochastic="auto" so stochastic gradient descent used -- try disabling if slow!')
@@ -624,8 +658,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       if(carefulfit && !deoptim & standata$nopriors == 1 ){ #init using priors
         standata$nopriors <- as.integer(0)
-        parallelStanSetup(cores = optimcores,sm = sm,standata = standata)
-        smf<-stan_reinitsf(sm,standata,fast=TRUE)
+        if(optimcores > 1) parallelStanSetup(cores = optimcores,sm = sm,standata = standata)
+        smfull<-stan_reinitsf(sm,standata,fast=FALSE)
         
         if(!stochastic) {
           optimfit <- mize(init, fg=mizelpg, max_iter=99999,
@@ -637,7 +671,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         }
         if(stochastic) optimfit <- sgd(init, fitfunc = neglpgf,ndatapoints=standata$ndatapoints,plotsgd=plotsgd,itertol=1,maxiter=300)
         standata$nopriors <- as.integer(1)
-        smf<-stan_reinitsf(sm,standata,fast=TRUE)
+        smfull<-stan_reinitsf(sm,standata,fast=FALSE)
         init = optimfit$par #+ rnorm(length(optimfit$par),0,abs(init/8)+1e-3)#rstan::constrain_pars(object = smf, optimfit$par)
       } #end carefulfit
       
@@ -654,10 +688,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         optimfit$value <- -optimfit$value
       }
       
-      if(stochastic || is.infinite(bestfit)){
+      if(stochastic || is.infinite(bestfit) || carefulfit){
         if(is.infinite(bestfit)) {
           message('Switching to stochastic optimizer -- failed initialisation with bfgs')
         }
+        if(!stochastic && carefulfit) message('carefulfit = TRUE , so checking for improvements with stochastic optimizer')
         optimfit <- sgd(init, fitfunc = neglpgf,ndatapoints=standata$ndatapoints,plotsgd=plotsgd)
         bestfit <-optimfit$value
       }

@@ -926,23 +926,25 @@ if(verbose > 1) print ("below t0 row ", rowi);
         
      
 
-{
-//int skipupd = 0;
-//        for(vi in 1:nobs_y[rowi]){
-//          if(fabs(yprior[o[vi]]) > 1e10 || is_nan(yprior[o[vi]]) || is_inf(yprior[o[vi]])) {
-//            skipupd = 1; 
-//            yprior[o[vi]] =99999;
-//if(verbose > 1) print("pp yprior problem! row ", rowi);
-//          }
-//        }
-//        if(skipupd==0){ 
-          if(ncont_y[rowi] > 0) ypriorcov_sqrt[o0,o0]=cholesky_decompose(makesym(ycov[o0, o0],verbose,1)); 
-          if(ncont_y[rowi] > 0) Ygen[ rowi, o0] = yprior[o0] + ypriorcov_sqrt[o0,o0] * Ygenbase[rowi,o0]; 
+  {
+  int skipupd = 0;
+        for(vi in 1:nobs_y[rowi]){
+            if(fabs(yprior[o[vi]]) > 1e10 || is_nan(yprior[o[vi]]) || is_inf(yprior[o[vi]])) {
+              skipupd = 1; 
+              yprior[o[vi]] =99999;
+  if(verbose > 1) print("pp yprior problem! row ", rowi);
+            }
+          }
+        if(skipupd==0){ 
+          if(ncont_y[rowi] > 0){
+            ypriorcov_sqrt[o0,o0]=cholesky_decompose(makesym(ycov[o0, o0],verbose,1)); 
+            Ygen[ rowi, o0] = yprior[o0] + ypriorcov_sqrt[o0,o0] * Ygenbase[rowi,o0];
+          }
           if(nbinary_y[rowi] > 0) for(obsi in 1:size(o1)) Ygen[rowi, o1[obsi]] = (yprior[o1[obsi]] > Ygenbase[rowi,o1[obsi]]) ? 1 : 0; 
-//          for(vi in 1:nobs_y[rowi]) if(is_nan(Ygen[rowi,o[vi]])) {
-//            Ygen[rowi,o[vi]] = 99999;
-//print("pp ygen problem! row ", rowi);
-//          }
+          for(vi in 1:nobs_y[rowi]) if(is_nan(Ygen[rowi,o[vi]])) {
+            Ygen[rowi,o[vi]] = 99999;
+print("pp ygen problem! row ", rowi);
+          }
         if(nlmeasurement==0){ //linear measurement
           if(intoverstates==1) { //classic kalman
             for(wi in 1:nmanifest){ 
@@ -951,16 +953,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
           }
         }
         err[o] = Ygen[rowi,o] - yprior[o]; // prediction error
-//        }
-if(verbose > 1) {
-print("rowi ",rowi, "  si ", si, 
-          "  state =",state,"  etacov =",etacov,"  yprior = ",yprior,"  ypriorcov = ",ypriorcov, "  K =",K,
-          "  sDRIFT =", sDRIFT, " sDIFFUSION =", sDIFFUSION, " sCINT =", sCINT, "  sMANIFESTVAR =", diagonal(sMANIFESTVAR), "  sMANIFESTMEANS =", sMANIFESTMEANS, 
-          "  sT0VAR =", sT0VAR, " sT0MEANS =", sT0MEANS, "  sLAMBDA = ", sLAMBDA,
-          "  rawpopsd ", rawpopsd, "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
-        print("discreteDRIFT =",discreteDRIFT,  "  discreteDIFFUSION =", discreteDIFFUSION)
-}
-if(verbose > 2) print("ukfstates =", ukfstates, "  ukfmeasures =", ukfmeasures);
+        }
 }
       
     
@@ -981,6 +974,15 @@ if(verbose > 2) print("ukfstates =", ukfstates, "  ukfmeasures =", ukfmeasures);
         tLAMBDA[rowi] = sLAMBDA;
       }
       
+      
+      if(verbose > 1) {
+          print("rowi =",rowi, "  si =", si, "  state =",state,"  etacov ",etacov,
+            "  yprior =",yprior,"  ycov ",ycov, "  K ",K,
+            "  sDRIFT =", sDRIFT, " sDIFFUSION =", sDIFFUSION, " sCINT =", sCINT, "  sMANIFESTVAR ", diagonal(sMANIFESTVAR), "  sMANIFESTMEANS ", sMANIFESTMEANS, 
+            "  sT0VAR", sT0VAR,  " sT0MEANS ", sT0MEANS, "sLAMBDA = ", sLAMBDA, "  sJy = ",sJy,
+            " discreteDRIFT = ", discreteDRIFT, "  discreteDIFFUSION ", discreteDIFFUSION, "  sasymDIFFUSION ", sasymDIFFUSION, 
+            "  rawpopsd ", rawpopsd,  "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
+        }
   
       
     }//end nobs > 0 section
