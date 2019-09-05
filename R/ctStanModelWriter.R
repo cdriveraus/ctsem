@@ -994,20 +994,20 @@ if(verbose > 1) print ("below t0 row ", rowi);
   {
   int skipupd = 0;
         for(vi in 1:nobs_y[rowi]){
-            if(fabs(yprior[o[vi]]) > 1e10 || is_nan(yprior[o[vi]]) || is_inf(yprior[o[vi]])) {
+            if(fabs(yprior[od[vi]]) > 1e10 || is_nan(yprior[od[vi]]) || is_inf(yprior[od[vi]])) {
               skipupd = 1; 
-              yprior[o[vi]] =99999;
+              yprior[od[vi]] =99999;
   if(verbose > 1) print("pp yprior problem! row ", rowi);
             }
           }
         if(skipupd==0){ 
           if(ncont_y[rowi] > 0){
-            ypriorcov_sqrt[o0,o0]=cholesky_decompose(makesym(ycov[o0, o0],verbose,1)); 
-            Ygen[ rowi, o0] = yprior[o0] + ypriorcov_sqrt[o0,o0] * Ygenbase[rowi,o0];
+            ypriorcov_sqrt[o0d,o0d]=cholesky_decompose(makesym(ycov[o0d, o0d],verbose,1)); 
+            Ygen[ rowi, o0d] = yprior[o0d] + ypriorcov_sqrt[o0d,o0d] * Ygenbase[rowi,o0d];
           }
-          if(nbinary_y[rowi] > 0) for(obsi in 1:size(o1)) Ygen[rowi, o1[obsi]] = (yprior[o1[obsi]] > Ygenbase[rowi,o1[obsi]]) ? 1 : 0; 
-          for(vi in 1:nobs_y[rowi]) if(is_nan(Ygen[rowi,o[vi]])) {
-            Ygen[rowi,o[vi]] = 99999;
+          if(nbinary_y[rowi] > 0) for(obsi in 1:size(o1d)) Ygen[rowi, o1d[obsi]] = (yprior[o1d[obsi]] > Ygenbase[rowi,o1d[obsi]]) ? 1 : 0; 
+          for(vi in 1:nobs_y[rowi]) if(is_nan(Ygen[rowi,od[vi]])) {
+            Ygen[rowi,od[vi]] = 99999;
 print("pp ygen problem! row ", rowi);
           }
         if(nlmeasurement==0){ //linear measurement
@@ -1017,20 +1017,21 @@ print("pp ygen problem! row ", rowi);
             }
           }
         }
-        err[o] = Ygen[rowi,o] - yprior[o]; // prediction error
+        err[od] = Ygen[rowi,od] - yprior[od]; // prediction error
         }
 }
       '), 
       
-      if(!ppchecking) 'err[o] = Y[rowi,o] - yprior[o]; // prediction error','
+      if(!ppchecking) 'err[od] = Y[rowi,od] - yprior[od]; // prediction error','
     
-      if(intoverstates==1) state +=  (K[,o] * err[o]);
+      if(intoverstates==1 && size(od) > 0) state +=  (K[,od] * err[od]);
       if(savescores==1) {
         int tmpindex[nmanifest] = o;
         for(oi in 1:nmanifest) tmpindex[oi] +=  nmanifest*2;
         kout[rowi,tmpindex] = err[o];
         for(oi in 1:nmanifest) tmpindex[oi] +=  nmanifest;
         kout[rowi,tmpindex] = yprior[o];
+        etaupd[rowi] = state;
         ypriorcov[rowi] = ycov;
         etaupdcov[rowi] = etacov;
         yupdcov[rowi] = quad_form(etacov, sJy\') + sMANIFESTVAR;
@@ -1054,7 +1055,7 @@ print("pp ygen problem! row ", rowi);
       ',if(!ppchecking){
         'if(nbinary_y[rowi] > 0) kout[rowi,o1d] =  Y[rowi,o1d] .* (yprior[o1d]) + (1-Y[rowi,o1d]) .* (1-yprior[o1d]); 
   
-        if(size(o0) > 0){
+        if(size(o0d) > 0){
           int tmpindex[ncont_y[rowi]] = o0d;
           for(oi in 1:ncont_y[rowi]) tmpindex[oi] +=  nmanifest;
            if(intoverstates==1) ypriorcov_sqrt[o0d,o0d]=cholesky_decompose(makesym(ycov[o0d,o0d],verbose,1));
@@ -1066,7 +1067,6 @@ print("pp ygen problem! row ", rowi);
     }//end nobs > 0 section
   if(savescores==1) {
     kout[rowi,(nmanifest*4+nlatent+1):(nmanifest*4+nlatent+nlatent)] = state[1:nlatent];
-    etaupd[rowi] = state;
   }','
   
   if(savescores && (rowi==ndatapoints || subject[rowi+1] != subject[rowi])){ //at subjects last datapoint, smooth

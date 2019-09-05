@@ -28,7 +28,9 @@ ctStanGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE){
     genm <- stanmodels$ctsmgen
   }
   message('Generating data from posterior')
-  genf <- stan_reinitsf(genm,fit$standata) 
+  standata <- fit$standata
+  standata$savescores <- 0L #have to disable for data generation in same structure as original
+  genf <- stan_reinitsf(genm,standata) 
   fit$generated$Y <- array(apply(umat, 2, function(x) rstan::constrain_pars(genf,x)$Y),dim=c(nrow(fit$standata$Y),fit$ctstanmodel$n.manifest,ncol(umat)))
   fit$generated$Y <- aperm(fit$generated$Y,c(1,3,2))
   fit$generated$Y[fit$generated$Y==99999] <- NA

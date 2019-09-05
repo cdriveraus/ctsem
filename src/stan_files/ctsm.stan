@@ -825,15 +825,16 @@ if(verbose > 1) print ("below t0 row ", rowi);
         }
         
      
-err[o] = Y[rowi,o] - yprior[o]; // prediction error
+err[od] = Y[rowi,od] - yprior[od]; // prediction error
     
-      if(intoverstates==1) state +=  (K[,o] * err[o]);
+      if(intoverstates==1 && size(od) > 0) state +=  (K[,od] * err[od]);
       if(savescores==1) {
         int tmpindex[nmanifest] = o;
         for(oi in 1:nmanifest) tmpindex[oi] +=  nmanifest*2;
         kout[rowi,tmpindex] = err[o];
         for(oi in 1:nmanifest) tmpindex[oi] +=  nmanifest;
         kout[rowi,tmpindex] = yprior[o];
+        etaupd[rowi] = state;
         ypriorcov[rowi] = ycov;
         etaupdcov[rowi] = etacov;
         yupdcov[rowi] = quad_form(etacov, sJy') + sMANIFESTVAR;
@@ -856,7 +857,7 @@ err[o] = Y[rowi,o] - yprior[o]; // prediction error
   
       if(nbinary_y[rowi] > 0) kout[rowi,o1d] =  Y[rowi,o1d] .* (yprior[o1d]) + (1-Y[rowi,o1d]) .* (1-yprior[o1d]); 
   
-        if(size(o0) > 0){
+        if(size(o0d) > 0){
           int tmpindex[ncont_y[rowi]] = o0d;
           for(oi in 1:ncont_y[rowi]) tmpindex[oi] +=  nmanifest;
            if(intoverstates==1) ypriorcov_sqrt[o0d,o0d]=cholesky_decompose(makesym(ycov[o0d,o0d],verbose,1));
@@ -868,7 +869,6 @@ err[o] = Y[rowi,o] - yprior[o]; // prediction error
     }//end nobs > 0 section
   if(savescores==1) {
     kout[rowi,(nmanifest*4+nlatent+1):(nmanifest*4+nlatent+nlatent)] = state[1:nlatent];
-    etaupd[rowi] = state;
   }
   
   if(savescores && (rowi==ndatapoints || subject[rowi+1] != subject[rowi])){ //at subjects last datapoint, smooth

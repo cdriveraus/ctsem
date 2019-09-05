@@ -52,6 +52,7 @@ parallelStanFunctionCreator <- function(cores, verbose){
       attributes(out) <- list(gradient=rep(0,length(parm)))
     }
     b=Sys.time()
+    storedPars <<- parm
     evaltime <- b-a
     if(verbose > 0) print(paste('lp= ',out,' ,    iter time = ',evaltime))
     return(-out)
@@ -158,7 +159,6 @@ stanlongtostandata <- function(long){
 
 
 stan_constrainsamples<-function(sm,standata, samples,cores=2){
-  
   smfull <- stan_reinitsf(model = sm,data = standata)
   message('Computing quantities for ', nrow(samples),' samples...')
   est1=NA
@@ -608,13 +608,22 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           bestfit = -optimfitde$optim$bestval
         } else stop(paste0('use install.packages(\"DEoptim\") to use deoptim')) #end require deoptim
       }
+
+    if(optimcores > 1){ #check if parallel helps optimizing
+      a <- Sys.time()
+    log_prob(smfull,init)
+    if( (Sys.time() - a) < .2) optimcores <- 1
+    }
       
-      gradout <- c()
-      bestlp <- -Inf
       
       
-      
-      
+   storedPars <- c()
+   optimfinished <- FALSE
+   on.exit({
+     if(!optimfinished){
+     message('Optimization cancelled -- restart from current point by including this argument:')
+     message((paste0(c('init = c(',   paste0(storedPars,collapse=', '), ')'    ))))
+     }},add=TRUE)
       
       if(optimcores > 1) {
         fitfuncs <- parallelStanFunctionCreator(cores = optimcores,verbose = verbose)  
@@ -630,6 +639,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             out=-1e100
             attributes(out) <- list(gradient=rep(0,length(parm)))
           }
+          storedPars <<- parm
           b=Sys.time()
           evaltime <- b-a
           if(verbose > 0) print(paste('lp= ',out,' ,    iter time = ',round(evaltime,2)))
@@ -699,6 +709,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       est2=optimfit$par #unconstrain_pars(smf, est1)
     }
+    
     
     if(!estonly){
       
@@ -1011,6 +1022,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   }
   if(estonly) stanfit=list(optimfit=optimfit,stanfit=smf, rawest=est2)
   suppressWarnings(do.call(par,parbase)) #reset par in case plots done
+  optimfinished <- TRUE #disable exit message re pars
   return(stanfit)
 }
 
