@@ -1595,7 +1595,7 @@ if(!gendata) kalmanll(),'
 model{
   if(intoverpop==0 && fixedsubpars == 1) target+= multi_normal_cholesky_lpdf(fixedindparams | rep_vector(0,nindvarying),IIindvar);
 
-  if(nopriors==0){
+  if(nopriors==0 && subject[1]==1){ //if split files over subjects, just compute priors once
    target+= dokalmanpriormodifier * normal_lpdf(rawpopmeans|0,1);
   
     if(ntipred > 0){ 

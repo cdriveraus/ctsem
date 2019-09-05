@@ -54,11 +54,13 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   nsubjects=50,filter=NA,
   plot=FALSE,...){
 
+  #get objects
   ctspec <- fit$ctstanmodel$pars
-  
   e<-extract(fit)
   rawpopmeans <- e$rawpopmeans
+  tipreds<-ctCollapse(e$tipreds,1,mean) #maybe collapsing over sampled tipred values is not ideal?
   
+  #sample
   niter<-dim(e$rawpopmeans)[1]
   if(nsamples=='all' || nsamples > niter) nsamples <- niter
   rawpopmeans <- rawpopmeans[sample(x = 1:niter, nsamples,replace = FALSE),]
@@ -66,9 +68,7 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   message(sprintf('Getting %s samples by %s subjects for %s total samples', nsamples,nsubjects, nsamples*nsubjects))
   
   if(!includeMeanUncertainty) rawpopmeans <- matrix(apply(rawpopmeans,2,median),byrow=TRUE,nrow=nrow(rawpopmeans),ncol=ncol(rawpopmeans))
-  
-  tipreds<-ctCollapse(e$tipreds,1,mean) #maybe collapsing over sampled tipred values is not ideal?
-  
+ 
   if(any(!is.na(filter))) tipreds <- eval(parse(text=paste0('tipreds[tipreds[,',filter[1],']',filter[2],',,drop=FALSE]')))
   tipreds <- tipreds[,whichTIpreds,drop=FALSE]
   if(nsubjects=='all') nsubjects = nrow(tipreds)
@@ -91,7 +91,7 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
       rawpopmeans[iterx,,drop=FALSE] + t(matrix(tieffect[iterx,,,drop=FALSE],nrow=dim(tieffect)[2]) %*% tix)
     },.drop=FALSE)
   },.drop=FALSE)
-  
+
   
   if(!parmatrices) {
     if(all(whichpars=='all')) whichpars=which(apply(tieffect,2,function(x) any(x!=0)))
@@ -127,14 +127,6 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   if(parmatrices)  {
     rawpopmeans <- rawpopmeans[rep(1:nrow(rawpopmeans),each=nsubjects),] #match rows of rawpopmeans and raweffect
     raweffect <- matrix(raweffect,ncol=dim(raweffect)[4])
-    
-    # #check if stanfit object can be used
-    # sf <- fit$stanfit
-    # npars <- try(get_num_upars(sf),silent=TRUE) #$stanmodel)
-    # 
-    # if(class(npars)=='try-error'){ #in case R has been restarted or similar
-    #   sf <- stan_reinitsf(fit$stanmodel,fit$standata)
-    # }
 
 #adjust for speed
   fit$standata$savescores <- 0L
@@ -147,8 +139,10 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
     x=gsub(pattern = '[0-9]','',x)
     x=gsub(pattern = ',','',x,fixed=TRUE)
   })
+  
+  parmeans=apply(ctStanRawSamples(fit),2,mean)
     parmatlists<-lapply(1:nrow(rawpopmeans), function(x) { #for each param vector
-      out = ctStanParMatrices(fit,  raweffect[x,], timeinterval=timeinterval,sf = sf)#rawpopmeans[x,] +
+      out = ctStanParMatrices(fit,  c(raweffect[x,],parmeans[-1:-ncol(raweffect)]), timeinterval=timeinterval,sf = sf)#rawpopmeans[x,] +
       return(out)
     })
     # browser()

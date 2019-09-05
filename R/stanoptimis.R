@@ -52,7 +52,7 @@ parallelStanFunctionCreator <- function(cores, verbose){
       attributes(out) <- list(gradient=rep(0,length(parm)))
     }
     b=Sys.time()
-    storedPars <<- parm
+    assign('storedPars', parm,pos= sys.frame(4))
     evaltime <- b-a
     if(verbose > 0) print(paste('lp= ',out,' ,    iter time = ',evaltime))
     return(-out)
@@ -125,18 +125,11 @@ flexlapply <- function(cl, X, fn,cores=1){
 #' @examples
 #' standatact_specificsubjects(ctstantestfit$standata, 1:2)
 standatact_specificsubjects <- function(standata, subjects,timestep=NA){
-  standata$dokalmanrows <- as.integer(standata$dokalmanrows * (standata$subject %in% subjects))
-  standata2=standata
-  standata2$dokalmanpriormodifier <- sum(standata$dokalmanrows)/standata$ndatapoints
-  for(pi in c('time','subject','dokalmanrows','nobs_y','nbinary_y','ncont_y')){
-    standata2[[pi]] <- standata2[[pi]][standata$dokalmanrows == 1]
-  }
-  for(pi in c('whichcont_y','Y','whichbinary_y','whichobs_y','tdpreds')){
-    standata2[[pi]] <- standata2[[pi]][standata$dokalmanrows == 1,,drop=FALSE]
-  }
-  
-  standata2$ndatapoints=as.integer(nrow(standata2$Y))
-  return(standata2)
+  long <- standatatolong(standata)
+  long <- long[long$subject %in% subjects,]
+  standatamerged <- standatalongremerge(long=long, standata=standata)
+  standatamerged$ndatapoints <- as.integer(nrow(long))
+  return(standatamerged)
 }  
 
 
@@ -238,6 +231,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2){
   if(nasampscount > 0) {
     message(paste0(nasampscount,' NAs generated during final sampling of ', nrow(samples), '. Biased estimates may result -- consider importance sampling, respecification, or full HMC sampling'))
   }
+
   #this seems inefficient and messy, should be a better way...  
   transformedpars=try(tostanarray(flesh=matrix(unlist(transformedpars),byrow=TRUE, nrow=nresamples), skeleton = est1))
   
@@ -663,7 +657,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
    on.exit({
      if(!optimfinished){
      message('Optimization cancelled -- restart from current point by including this argument:')
-     message((paste0(c('init = c(',   paste0(storedPars,collapse=', '), ')'    ))))
+     message((paste0(c('init = c(',   paste0(round(storedPars,5),collapse=', '), ')'    ))))
      }},add=TRUE)
       
       if(optimcores > 1) {
@@ -709,6 +703,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       if(carefulfit && !deoptim & standata$nopriors == 1 ){ #init using priors
         standata$nopriors <- as.integer(0)
+        tipredscale <- standata$tipredscale
+          standata$tipredscale <- .0001
         if(optimcores > 1) parallelStanSetup(cores = optimcores,sm = sm,standata = standata)
         smfull<-stan_reinitsf(sm,standata,fast=FALSE)
         
@@ -724,7 +720,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         standata$nopriors <- as.integer(1)
         smfull<-stan_reinitsf(sm,standata,fast=FALSE)
         init = optimfit$par #+ rnorm(length(optimfit$par),0,abs(init/8)+1e-3)#rstan::constrain_pars(object = smf, optimfit$par)
+        standata$tipredscale <- tipredscale
       } #end carefulfit
+   
+      
       
       parallelStanSetup(cores = optimcores,sm = sm,standata = standata)
       if(!stochastic) {
