@@ -140,19 +140,60 @@ standatact_specificsubjects <- function(standata, subjects,timestep=NA){
 }  
 
 
-standatalongobjects <- function() longobjects <- c('subject','time','dokalmanrows','nobs_y','ncont_y','nbinary_y','Y','tdpreds')
+standatalongobjects <- function() {
+  longobjects <- c('subject','time','dokalmanrows','nobs_y','ncont_y','nbinary_y','Y','tdpreds', 'whichobs_y','whichbinary_y','whichcont_y')
+  return(longobjects)
+}
 
 standatatolong <- function(standata){
-  long <- data.frame(lapply(standatalongobjects(),function(x) standata[[x]])) #,simplify=data.frame(subject=standata$subject, time=standata$time
+  long <- lapply(standatalongobjects(),function(x) standata[[x]])
+  names(long) <- standatalongobjects()
+  long <- data.frame(long) #,simplify=data.frame(subject=standata$subject, time=standata$time
   colnames(long)[colnames(long) %in% 'Y'] <- 'Y.1'
   colnames(long)[colnames(long) %in% 'tdpreds'] <- 'tdpreds.1'
   return(long)
 }
 
-stanlongtostandata <- function(long){
-  standata <- lapply( standatalongobjects(), function(x) long[,grep(paste0('^',x),colnames(long)),drop=FALSE])
-  names(standata) <- standatalongobjects()
-  return(standata)
+# stanlongtostandatasml <- function(long){
+#   standatasml <- sapply( standatalongobjects(), function(x) long[,grep(paste0('^',x),colnames(long)),drop=FALSE])
+#   names(standatasml) <- standatalongobjects()
+#   return(standatasml)
+# }
+
+standatalongremerge <- function(long, standata){ #merge an updated long portion of standata into original standata
+  n = names(standata)
+  standatamerged <- lapply(names(standata), function(x) {
+    if(x %in% standatalongobjects()){
+      objdims <- dim(standata[[x]])
+      if(is.null(objdims)) objdims <- c()
+      objdims[1] <- nrow(long)
+      xdat <- unlist(long[,grep(paste0('^',x),colnames(long)),drop=FALSE])
+      if(is.null(xdat)) xdat <- NA
+      return(array(xdat, dim=objdims))
+        } else return(standata[[x]])
+  })
+  names(standatamerged) <- n
+  return(standatamerged)
+}
+
+standataFillTime <- function(standata, times){
+  long <- standatatolong(standata)
+  nlong <- do.call(rbind,
+    lapply(1:max(long$subject), function(si){
+      stimes <- times[!times %in% long$time[long$subject==si]]
+      nadata <- matrix(99999, nrow=length(stimes),ncol=standata$nmanifest)
+      nadata <- cbind(nadata,matrix(0, nrow=length(stimes),ncol=standata$ntdpred))
+      colnames(nadata) <- c(paste0('Y.',1:standata$nmanifest),paste0(rep('tdpreds.',standata$ntdpred),seq_len(standata$ntdpred)))
+      subjdata <- data.frame(subject=si,time=stimes, 
+        dokalmanrows=1L,nobs_y=0L,ncont_y=0L,nbinary_y=0L,whichobs_y=0L,whichbinary_y=0L,whichcont_y=0L,
+        nadata)
+    })
+  )
+  mlong <- rbind(long,nlong)
+  mlong <- mlong[order(mlong$subject,mlong$time),]
+  standatamerged <- standatalongremerge(long=mlong, standata=standata)
+  standatamerged$ndatapoints <- as.integer(nrow(mlong))
+  return(standatamerged)
 }
 
 

@@ -725,6 +725,9 @@ if(verbose > 1) print ("below t0 row ", rowi);
     
     } 
     if(ntdpred > 0) {
+    int nonzerotdpred = 0;
+    for(tdi in 1:ntdpred) if(tdpreds[rowi,tdi] != 0.0) nonzerotdpred = 1;
+    if(nonzerotdpred){
     
           for(ri in 1:size(matsetup)){ //for each row of matrix setup
             if(matsetup[ri,3] > 0 && matsetup[ri,8] == 3){ //perform calcs appropriate to this section
@@ -740,7 +743,8 @@ if(verbose > 1) print ("below t0 row ", rowi);
       if(verbose > 1)  print("etacov = ",etacov);
  if(verbose > 1) print("sJtd = ",sJtd);
       etacov = quad_form(etacov,sJtd');
-     }
+    }
+    }
   } // end non linear time update
 
 
@@ -813,9 +817,8 @@ if(verbose > 1) print ("below t0 row ", rowi);
             if(manifesttype[wi]==1 && Y[rowi,wi] != 99999) ycov[wi,wi] += fabs((yprior[wi] - 1) .* (yprior[wi]));
             if(manifesttype[wi]==2 && Y[rowi,wi] != 99999) ycov[wi,wi] += square(fabs((yprior[wi] - round(yprior[wi])))); 
           }
-          K[,o] = mdivide_right(etacov * sJy[o,]', ycov[o,o]); 
-          etacov += -K[,o] * sJy[o,] * etacov;
         }
+        
         if(intoverstates==0) { //sampled states
           if(ncont_y[rowi] > 0) {
             yprior[o0] = sMANIFESTMEANS[o0,1] + sJy[o0,] * state;
@@ -827,7 +830,12 @@ if(verbose > 1) print ("below t0 row ", rowi);
      
 err[od] = Y[rowi,od] - yprior[od]; // prediction error
     
-      if(intoverstates==1 && size(od) > 0) state +=  (K[,od] * err[od]);
+      if(intoverstates==1 && size(od) > 0) {
+        K[,od] = mdivide_right(etacov * sJy[od,]', ycov[od,od]); 
+        etacov += -K[,od] * sJy[od,] * etacov;
+        state +=  (K[,od] * err[od]);
+      }
+      
       if(savescores==1) {
         int tmpindex[nmanifest] = o;
         for(oi in 1:nmanifest) tmpindex[oi] +=  nmanifest*2;

@@ -55,42 +55,17 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
   if(is.na(type)) stop('fit object is not from ctFit or ctStanFit!')
   
   if(!oldstyle && type=='stan'){
-    # if(timestep != 'asdata'){
-    #   Y<-fit$standata$Y
-    #   colnames(Y)=fit$ctstanmodel$manifestNames
-    #   td<-fit$standata$tdpreds
-    #   colnames(td)<-fit$ctstanmodel$TDpredNames
-    #   dlong<-data.frame(id=fit$standata$subject,time=fit$standata$time,Y,td,
-    #     matrix(0,nrow=nrow(td),ncol=fit$ctstanmodelbase$n.TIpred,dimnames = list(NULL,fit$ctstanmodelbase$TIpredNames)))
-    #   dlong <- ctDiscretiseData(as.matrix(dlong),timestep=timestep,
-    #     TDpredNames = fit$ctstanmodelbase$TDpredNames,TIpredNames = fit$ctstanmodelbase$TIpredNames)
-    #   # 
-    #   fit$standata$Y <- dlong[,fit$ctstanmodel$manifestNames,drop=FALSE]
-    #   fit$standata$tdpreds <- dlong[,fit$ctstanmodel$TDpredNames,drop=FALSE]
-    #   fit$standata$subject <- dlong[,'id']
-    #   fit$standata$time <- dlong[,'time']
-    #   fit$standata$savescores <- 0L
-    #   nfargs <- fit$args
-    #   nfargs=lapply(nfargs,as.character)
-    #   colnames(dlong)[1] <- fit$ctstanmodelbase$subjectIDname
-    #   colnames(dlong)[2] <- fit$ctstanmodelbase$timeName
-    #   nfargs$datalong='dlong'
-    #   nfargs$ctstanmodel = 'fit$ctstanmodelbase'
-    #   nfargs[[1]] <- NULL
-    #   nfargs$fit=FALSE
-    #   nfb=lapply(nfargs,function(x) eval(parse(text=x)))
-    #   nf=suppressMessages(do.call(ctStanFit,nfb))
-    #   fit$standata <- nf$standata
-    #   fit$data<-lapply(fit$standata,function(x){ x[x==99999] <- NA; x})
-    #   
-    # }
+    if(all(timerange == 'asdata')) timerange <- range(fit$standata$time[fit$standata$subject %in% subjects])
+    if(timestep != 'asdata') {
+      times <- seq(timerange[1],timerange[2],timestep)
+      fit$standata <- standataFillTime(fit$standata,times)
+    }
     fit$standata$dokalmanrows <- as.integer(fit$standata$subject %in% subjects)
+
     out <- ctStanKalman(fit,collapsefunc=mean) #extract state predictions
-    # browser()
-    # out$y <- fit$data$Y #,dim=c(1,dim(fit$data$Y)))
-    # out$time <- array(fit$data$time)
-    niter <- dim(out$etaprior)[1]
+
     if(length(dim(out$llrow)) < 3) out$llrow <- array(out$llrow,dim=c(dim(out$llrow),1))
+
     out <- lapply(subjects, function(si) lapply(out, function(m) {
       if(length(dim(m)) > 2) m=array(m,dim=dim(m)[-1]) #ctCollapse(inarray = m,collapsemargin = 1,collapsefunc = mean,plyr=FALSE)
       if(length(dim(m)) ==1) m=m[fit$standata$subject %in% si, drop=FALSE]

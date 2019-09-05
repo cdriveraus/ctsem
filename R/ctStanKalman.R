@@ -27,9 +27,8 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
     if(!is.na(nsamples)) samples <- samples[sample(1:nrow(samples),nsamples),,drop=FALSE]
     if(class(collapsefunc) %in% 'function') samples = matrix(apply(samples,2,collapsefunc,...),ncol=ncol(samples))
     e=stan_constrainsamples(sm = fit$stanmodel,standata = standata,samples = samples,cores=cores)
-    
   # }
-  
+
   k=e$kalman
   
   k[k==99999] <- NA #for missingness
@@ -83,10 +82,11 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
   # }
   # 
   
-  
+  y=matrix(fit$standata$Y,ncol=ncol(fit$standata$Y))
+  y[y==99999] <- NA
   
   out=list(time=cbind(fit$standata$time), lln=lln,llscale=llscale,err=err,
-    y=matrix(fit$data$Y,ncol=ncol(fit$data$Y)), 
+    y=y, 
     # yprior=yprior,ypriorcov=ypriorcov,
     # yupd=yupd,yupdcov=yupdcov,
     # ysmooth=ysmooth,ysmoothcov=ysmoothcov,
@@ -115,7 +115,6 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
       }
     }
   }
-
 return(out)
 }
 
