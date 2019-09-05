@@ -13,6 +13,9 @@ standatact_specificsubjects(standata, subjects, timestep = NA)
 
 \item{timestep}{ignored at present}
 }
+\value{
+list of updated structure
+}
 \description{
 Adjust standata from ctsem to only use specific subjects
 }

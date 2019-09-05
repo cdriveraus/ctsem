@@ -4,7 +4,7 @@
 \alias{ctStanGenerateFromFit}
 \title{Add a \code{$generated} object to ctstanfit object, with random data generated from posterior of ctstanfit object}
 \usage{
-ctStanGenerateFromFit(fit, nsamples = 1, fullposterior = FALSE)
+ctStanGenerateFromFit(fit, nsamples = 200, fullposterior = FALSE)
 }
 \arguments{
 \item{fit}{ctstanfit object}

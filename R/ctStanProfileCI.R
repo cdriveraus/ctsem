@@ -1,5 +1,4 @@
-ctStanProfileCI <- function(fit, cipars){
-  browser()
+ctStanProfileCI <- function(fit, parnames){
   ll=fit$stanfit$optimfit$value
   cores=1
   # fit$standata$profilelltarget=fit$stanfit$optimfit$value
@@ -9,6 +8,7 @@ ctStanProfileCI <- function(fit, cipars){
   highpars = fit$stanfit$transformedpars_old[1:np,'97.5%']
   lowpars = fit$stanfit$transformedpars_old[1:np,'2.5%']
   
+  cipars <- fit$setup$matsetup$param[match(parnames,fit$setup$matsetup$parname)]
   
   optimfit=list()
   
