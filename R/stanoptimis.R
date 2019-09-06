@@ -3,7 +3,7 @@
 
 parallelStanSetup <- function(cores, sm, standata,split=TRUE){
   # 
-    stansubjectindices <- split(1:standata$nsubjects,sort(1:standata$nsubjects %% min(standata$nsubjects,cores)))
+    stansubjectindices <- split(unique(standata$subject),sort(unique(standata$subject) %% min(standata$nsubjects,cores)))
     if(!split && length(stansubjectindices) < cores){
       for(i in (length(stansubjectindices)+1):cores){
         stansubjectindices[[i]] <- NA
@@ -12,7 +12,7 @@ parallelStanSetup <- function(cores, sm, standata,split=TRUE){
   
   lf=lapply(stansubjectindices,function(subindices) {
     if(split) standata <- standatact_specificsubjects(standata,subindices)
-    future(globals = c('sm','subindices','standata'),
+    future(globals = c('sm','standata'),
       packages=c('ctsem','rstan'),
     gc=FALSE,expr = {
       smf<-stan_reinitsf(sm,standata,fast=FALSE)
@@ -142,8 +142,8 @@ standatatolong <- function(standata){
   long <- lapply(standatalongobjects(),function(x) standata[[x]])
   names(long) <- standatalongobjects()
   long <- data.frame(long) #,simplify=data.frame(subject=standata$subject, time=standata$time
-  colnames(long)[colnames(long) %in% 'Y'] <- 'Y.1'
-  colnames(long)[colnames(long) %in% 'tdpreds'] <- 'tdpreds.1'
+  # colnames(long)[colnames(long) %in% 'Y'] <- paste0('Y.1'
+  # colnames(long)[colnames(long) %in% 'tdpreds'] <- 'tdpreds.1'
   return(long)
 }
 
@@ -174,14 +174,22 @@ standataFillTime <- function(standata, times){
   nlong <- do.call(rbind,
     lapply(1:max(long$subject), function(si){
       stimes <- times[!times %in% long$time[long$subject==si]]
-      nadata <- matrix(99999, nrow=length(stimes),ncol=standata$nmanifest)
-      nadata <- cbind(nadata,matrix(0, nrow=length(stimes),ncol=standata$ntdpred))
-      colnames(nadata) <- c(paste0('Y.',1:standata$nmanifest),paste0(rep('tdpreds.',standata$ntdpred),seq_len(standata$ntdpred)))
-      subjdata <- data.frame(subject=si,time=stimes, 
-        dokalmanrows=1L,nobs_y=0L,ncont_y=0L,nbinary_y=0L,whichobs_y=0L,whichbinary_y=0L,whichcont_y=0L,
-        nadata)
+      # nadata <- matrix(99999, nrow=length(stimes),ncol=standata$nmanifest)
+      # nadata <- cbind(nadata,matrix(0, nrow=length(stimes),ncol=standata$ntdpred))
+      # colnames(nadata) <- colnames(long)[c(grep('^Y.',colnames(long)),grep('^tdpreds.',colnames(long)))] #c(paste0('Y.',1:standata$nmanifest),paste0(rep('tdpreds.',standata$ntdpred),seq_len(standata$ntdpred)))
+      # subjdata <- data.frame(subject=si,time=stimes, 
+      #   dokalmanrows=1L,nobs_y=0L,ncont_y=0L,nbinary_y=0L,whichobs_y=0L,whichbinary_y=0L,whichcont_y=0L,
+      #   nadata)
+      data.frame(subject=si,time=stimes)
     })
   )
+  nlong <- data.frame(nlong,long[1,!colnames(long) %in% c('subject','time')])
+  nlong[,grep('(^nobs)|(^which)|(^ncont)|(^nbin)',colnames(nlong))] <- 0L
+  nlong[,grep('^dokalman',colnames(nlong))] <- 1L
+  nlong[,grep('^Y.',colnames(nlong))] <- 99999
+  nlong[,grep('^tdpreds.',colnames(nlong))] <- 0
+  
+  
   mlong <- rbind(long,nlong)
   mlong <- mlong[order(mlong$subject,mlong$time),]
   standatamerged <- standatalongremerge(long=mlong, standata=standata)

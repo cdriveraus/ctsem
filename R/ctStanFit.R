@@ -483,7 +483,7 @@ verbosify<-function(sf,verbose=2){
 #' summary(f3nl)
 #' 
 #' ctKalman(f3nl,subjects=1:4,plot=TRUE,errorvec=NA)
-#' #?ctKalmanPlot #for plotting arguments
+#' #?plot.ctKalman #for plotting arguments
 #' 
 #' 
 #' 

@@ -15,9 +15,8 @@
 #' but take a little more time to calculate. Currently unavailable for ctStan fits.
 #' @param subjects vector of integers denoting which subjects (from 1 to N) to plot predictions for. 
 #' @param plot Logical. If TRUE, plots output instead of returning it. 
-#' See \code{\link{ctKalmanPlot}} for the possible arguments.
-#' @param oldstyle Logical. If TRUE, use Kalman filter written in R rather than Stan based.
-#' @param ... additional arguments to pass to \code{\link{ctKalmanPlot}}.
+#' See \code{\link{plot.ctKalman}} for the possible arguments.
+#' @param ... additional arguments to pass to \code{\link{plot.ctKalman}}.
 #' @return Returns a list containing matrix objects etaprior, etaupd, etasmooth, y, yprior, 
 #' yupd, ysmooth, prederror, time, loglik,  with values for each time point in each row. 
 #' eta refers to latent states and y to manifest indicators - y itself is thus just 
@@ -47,14 +46,14 @@
 #' @export
 
 ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
-  subjects=1, plot=FALSE,oldstyle=FALSE, ...){
+  subjects=1, plot=FALSE, ...){
   
   type=NA
   if(class(fit)=='ctStanFit') type='stan' 
   if(class(fit) =='ctsemFit') type ='omx'
   if(is.na(type)) stop('fit object is not from ctFit or ctStanFit!')
   
-  if(!oldstyle && type=='stan'){
+  if(type=='stan'){
     if(all(timerange == 'asdata')) timerange <- range(fit$standata$time[fit$standata$subject %in% subjects])
     if(timestep != 'asdata') {
       times <- seq(timerange[1],timerange[2],timestep)
@@ -67,13 +66,15 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
     if(length(dim(out$llrow)) < 3) out$llrow <- array(out$llrow,dim=c(dim(out$llrow),1))
 
     out <- lapply(subjects, function(si) lapply(out, function(m) {
-      if(length(dim(m)) > 2) m=array(m,dim=dim(m)[-1]) #ctCollapse(inarray = m,collapsemargin = 1,collapsefunc = mean,plyr=FALSE)
+      if(length(dim(m)) > 2) m=array(m,dim=dim(m)[-1],dimnames=dimnames(m)[-1]) #ctCollapse(inarray = m,collapsemargin = 1,collapsefunc = mean,plyr=FALSE)
       if(length(dim(m)) ==1) m=m[fit$standata$subject %in% si, drop=FALSE]
       if(length(dim(m)) ==2) m=m[fit$standata$subject %in% si, ,drop=FALSE]
       if(length(dim(m)) ==3) m=m[fit$standata$subject %in% si, , ,drop=FALSE]
-      
+
       return(m)
     }))
+
+    
     names(out)<-paste0(subjects)
     
     # browser()
@@ -93,7 +94,7 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
     
   }
   
-  if(oldstyle || type !='stan'){
+  if(type !='stan'){
     
     if(type=='stan') n.TDpred <-  fit$ctstanmodel$n.TDpred else n.TDpred <- fit$ctmodelobj$n.TDpred
     if(type=='stan') TDpredNames <- fit$ctstanmodel$TDpredNames else TDpredNames <- fit$ctmodelobj$TDpredNames
@@ -185,16 +186,15 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
     }
   }
   
+  class(out) <- c('ctKalman',class(out))
   
   if(plot) {
-    ctKalmanPlot(x=out,subjects=subjects,...)
+    plot.ctKalman(x=out,subjects=subjects,...)
   } else return(out)
 }
 
 
 
-#' ctKalmanPlot
-#' 
 #' Plots Kalman filter output from ctKalman.
 #'
 #' @param x Output from \code{\link{ctKalman}}. In general it is easier to call 
@@ -228,25 +228,28 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
 #' @param polygoncontrol List of arguments to the \code{\link{ctPoly}} function for filling the uncertainty region.
 #' @param polygonalpha Numeric for the opacity of the uncertainty region.
 #' @return Nothing. Generates plots.
+#' @method plot ctKalman
 #' @export
 #' @examples
 #' \donttest{
 #' ### Get output from ctKalman
 #' x<-ctKalman(ctstantestfit,subjects=2)
 #' 
-#' ### Plot with ctKalmanPlot
-#' ctKalmanPlot(x, subjects=2)
+#' ### Plot with plot.ctKalman
+#' plot.ctKalman(x, subjects=2)
 #' 
 #' ###Single step procedure:
 #' ctKalman(ctstantestfit,subjects=2,plot=TRUE)
 #' }
-ctKalmanPlot<-function(x, subjects, kalmanvec=c('y','ysmooth'),
+plot.ctKalman<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
   errorvec='auto', errormultiply=1.96,
   ltyvec="auto",colvec='auto', lwdvec='auto', 
   subsetindices=NULL,pchvec='auto', typevec='auto',grid=FALSE,add=FALSE, 
   plotcontrol=list(ylab='Value',xlab='Time',xaxs='i'),
   polygoncontrol=list(steps=20),polygonalpha=.3,
-  legend=TRUE, legendcontrol=list(x='topright',bg='white')){
+  legend=TRUE, legendcontrol=list(x='topright',bg='white',cex=.7)){
+  
+  if(!'ctKalman' %in% class(x)) stop('not a ctKalman object')
   
   out<-x
   if(length(subjects) > 1 & colvec[1] =='auto') colvec = rainbow(length(subjects),v=.9)

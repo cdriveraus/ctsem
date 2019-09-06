@@ -424,7 +424,7 @@ f3nl <- ctStanFit(datalong = dat2, ctstanmodel = m3nl, optimize=TRUE)
 summary(f3nl)
 
 ctKalman(f3nl,subjects=1:4,plot=TRUE,errorvec=NA)
-#?ctKalmanPlot #for plotting arguments
+#?plot.ctKalman #for plotting arguments
 
 
 

@@ -82,7 +82,7 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
   # }
   # 
   
-  y=matrix(fit$standata$Y,ncol=ncol(fit$standata$Y))
+  y=matrix(fit$standata$Y,ncol=ncol(fit$standata$Y),dimnames = list(NULL,fit$ctstanmodel$manifestNames))
   y[y==99999] <- NA
   
   out=list(time=cbind(fit$standata$time), lln=lln,llscale=llscale,err=err,
