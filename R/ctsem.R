@@ -49,7 +49,7 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
 #'  
 #' @docType package
 #' @name ctsem
-#' @import grDevices methods stats rstan OpenMx graphics rstantools Rcpp data.table ggplot2 future
+#' @import grDevices methods stats rstan OpenMx graphics rstantools Rcpp data.table ggplot2
 #' @importFrom plyr aaply alply round_any
 #' @importFrom utils relist as.relistable tail capture.output
 #' @importFrom Deriv Simplify 
@@ -68,7 +68,7 @@ NULL
 
 .onAttach <- function(libname, pkgname) {
   # to show a startup message
-  packageStartupMessage("ctsem also changes in time, for an up to date manual run function ctDocs()")
+  packageStartupMessage("ctsem also changes in time, for an up to date manual run function ctDocs(), for citation info see citation('ctsem')")
 }
 
 #' Get documentation pdf for ctsem

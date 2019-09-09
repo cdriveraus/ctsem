@@ -710,7 +710,6 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup){
       }
     }
     if(verbose>1) print("sJAx ",sJAx);
-    state = basestate; // reset state to pre jacobian form
     }
     ')
   }
@@ -1276,10 +1275,10 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
 }
 
 collectsubmats <- function(popmats=FALSE,matrices=c(names(mats$base),'DIFFUSIONcov','asymDIFFUSION','asymCINT')){
-  out<-''
+  out<-'if(savesubjectmatrices){'
   for(m in matrices){
     if(!popmats) out <- paste0(out, 'if( (', m,'subindex > 0 && subi > 0) || (',m,'subindex == 0 && subi==0) ) ',m,'[',m,'subindex ? subi : 1] = s',m,'; \n')
-    if(popmats) out <- paste0(out, 'pop_',m,' = s',m,'; \n')
+    if(popmats) out <- paste0(out, 'pop_',m,' = s',m,'; \n }')
   }
   
   return(out)
@@ -1487,6 +1486,7 @@ data {
   real matvalues[nrowmatsetup,6];
   int matrixdims[',length(mats$base),',2];
   int savescores;
+  int savesubjectmatrices;
   int fixedsubpars;
   vector[fixedsubpars ? nindvarying : 0] fixedindparams[fixedsubpars ? nsubjects : 0];
   int dokalman;

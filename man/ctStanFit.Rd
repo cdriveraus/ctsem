@@ -10,8 +10,8 @@ ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 1000,
   derrind = "all", optimize = FALSE, optimcontrol = list(),
   nlcontrol = list(), nopriors = FALSE, chains = 2,
   cores = "maxneeded", inits = NULL, forcerecompile = FALSE,
-  savescores = FALSE, gendata = FALSE, control = list(),
-  verbose = 0, ...)
+  savescores = FALSE, savesubjectmatrices = TRUE, gendata = FALSE,
+  control = list(), verbose = 0, ...)
 }
 \arguments{
 \item{datalong}{long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables, 
@@ -91,6 +91,9 @@ If TRUE, stan model is recompiled, regardless of apparent need for compilation.}
 
 \item{savescores}{Logical. If TRUE, output from the Kalman filter is saved in output. For datasets with many variables
 or time points, will increase file size substantially.}
+
+\item{savesubjectmatrices}{Logical. If TRUE, subject specific matrices are saved -- only relevant when either time dependent predictors
+are used, or individual differences are obtained via sampling (not via optimization, where they are integrated over).}
 
 \item{gendata}{Logical -- If TRUE, uses provided data for only covariates and a time and missingness structure, and 
 generates random data according to the specified model / priors. 
@@ -227,7 +230,7 @@ m1 <- ctModel(type = 'stanct',
 ctModelLatex(m1)
 
 #fit
-f1 <- ctStanFit(datalong = dat2, ctstanmodel = m1, optimize=TRUE, nopriors=TRUE,verbose=1)#,optimcontrol=list(is=T))
+f1 <- ctStanFit(datalong = dat2, ctstanmodel = m1, optimize=TRUE, nopriors=TRUE,verbose=1)
 
 summary(f1)
 
@@ -368,7 +371,6 @@ summary(f3n)
 k=ctKalman(f3n,plot=T,subjects=1,kalmanvec=c('y','etasmooth'),timestep=.01)
 ctKalman(f3n,plot=TRUE,subjects=1:3,kalmanvec=c('y','etasmooth'),errorvec=NA)
 
-ctstanprof
 
 
 

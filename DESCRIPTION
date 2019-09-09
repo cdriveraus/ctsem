@@ -49,8 +49,7 @@ Imports:
     mize,
     pkgbuild,
     cOde,
-    Deriv,
-    future
+    Deriv
 Encoding: UTF-8
 LazyData: true
 ByteCompile: true

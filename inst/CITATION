@@ -1,4 +1,26 @@
 bibentry(bibtype = "Article",
+  title        = "Hierarchical {{Bayesian}} Continuous Time Dynamic Modeling.",
+  author       = c(person(given = c("Charles", "C."),
+                          family = "Driver"),
+                   person(given = c("Manuel", "C."),
+                          family = "Voelkle")),
+  journal      = "Psychological Methods",
+  year         = "2018",
+  volume       = "23",
+  number       = "4",
+  pages        = "774-799",
+  doi          = "10.1037/met0000168",
+
+  header       = "To cite the current, hierarchical ctsem use:",
+  textVersion  =
+  paste("Charles C. Driver,  Manuel C. Voelkle (2018).",
+        "Hierarchical Bayesian Continuous Time Dynamic Modeling.",
+        "Psychological Methods, 23(4), 774-799.",
+        "10.1037/met0000168")
+)
+
+
+bibentry(bibtype = "Article",
   title        = "Continuous Time Structural Equation Modeling with {R} Package {ctsem}",
   author       = c(person(given = c("Charles", "C."),
                           family = "Driver"),
@@ -13,11 +35,10 @@ bibentry(bibtype = "Article",
   pages        = "1--35",
   doi          = "10.18637/jss.v077.i05",
 
-  header       = "To cite ctsem in publications use:",
+  header       = "To cite the original ctsem use:",
   textVersion  =
   paste("Charles C. Driver, Johan H. L. Oud, Manuel C. Voelkle (2017).",
         "Continuous Time Structural Equation Modeling with R Package ctsem.",
         "Journal of Statistical Software, 77(5), 1-35.",
         "doi:10.18637/jss.v077.i05")
 )
-

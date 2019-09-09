@@ -22,7 +22,7 @@ naf <-function(x){
 gridplot <- function(m, maxdim=c(3,3),...){
   d=n2mfrow(dim(m)[length(dim(m))])
   d[d>maxdim] <-maxdim[d>maxdim]
-  oldpar<-par()
+  oldpar<-par(no.readonly=TRUE)
   par(mfrow=d,mar=c(1.1,1.1,1.1,0),mgp=c(.1,.1,0))
   for(i in 1:dim(m)[length(dim(m))]){
     n=colnames(m)[i]
@@ -111,6 +111,7 @@ crosscov <- function(a,b){
 #' @param inarray Input array of more than one dimension.
 #' @param collapsemargin Integers denoting which margins to collapse.
 #' @param collapsefunc function to use over the collapsing margin.
+#' @param plyr Whether to use plyr.
 #' @param ... additional parameters to pass to collapsefunc.
 #' @examples
 #' testarray <- array(rnorm(900,2,1),dim=c(100,3,3))

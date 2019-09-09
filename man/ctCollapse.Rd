@@ -14,6 +14,8 @@ ctCollapse(inarray, collapsemargin, collapsefunc, plyr = TRUE, ...)
 
 \item{collapsefunc}{function to use over the collapsing margin.}
 
+\item{plyr}{Whether to use plyr.}
+
 \item{...}{additional parameters to pass to collapsefunc.}
 }
 \description{

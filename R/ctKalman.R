@@ -245,7 +245,7 @@ plot.ctKalman<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
   errorvec='auto', errormultiply=1.96,
   ltyvec="auto",colvec='auto', lwdvec='auto', 
   subsetindices=NULL,pchvec='auto', typevec='auto',grid=FALSE,add=FALSE, 
-  plotcontrol=list(ylab='Value',xlab='Time',xaxs='i'),
+  plotcontrol=list(ylab='Value',xlab='Time',xaxs='i',lwd=2,mgp=c(2,.8,0)),
   polygoncontrol=list(steps=20),polygonalpha=.3,
   legend=TRUE, legendcontrol=list(x='topright',bg='white',cex=.7)){
   
@@ -256,7 +256,7 @@ plot.ctKalman<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
   
   if(lwdvec[1] %in% 'auto') lwdvec=rep(2,length(kalmanvec))
   
-  if(is.null(plotcontrol$ylab)) plotcontrol$ylab='Value'
+  if(is.null(plotcontrol$ylab)) plotcontrol$ylab='Variable'
   if(is.null(plotcontrol$xlab)) plotcontrol$xlab='Time'
   
   if(typevec[1] %in% 'auto') typevec=c('p','l')[grepl("prior|upd|smooth|eta",kalmanvec)+1]
@@ -344,6 +344,7 @@ plot.ctKalman<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
         
         
         if(subjecti == subjects[1] & kveci==1 && dimi == 1 && !add) {
+  
           do.call(graphics::plot.default,plist) 
           if(grid) {
             grid()

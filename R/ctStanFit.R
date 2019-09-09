@@ -161,6 +161,8 @@ verbosify<-function(sf,verbose=2){
 #' If TRUE, stan model is recompiled, regardless of apparent need for compilation.
 #' @param savescores Logical. If TRUE, output from the Kalman filter is saved in output. For datasets with many variables
 #' or time points, will increase file size substantially.
+#' @param savesubjectmatrices Logical. If TRUE, subject specific matrices are saved -- only relevant when either time dependent predictors
+#' are used, or individual differences are obtained via sampling (not via optimization, where they are integrated over).
 #' @param gendata Logical -- If TRUE, uses provided data for only covariates and a time and missingness structure, and 
 #' generates random data according to the specified model / priors. 
 #' Generated data is in the $Ygen subobject after running \code{extract} on the fit object.
@@ -286,7 +288,7 @@ verbosify<-function(sf,verbose=2){
 #' ctModelLatex(m1)
 #' 
 #' #fit
-#' f1 <- ctStanFit(datalong = dat2, ctstanmodel = m1, optimize=TRUE, nopriors=TRUE,verbose=1)#,optimcontrol=list(is=T))
+#' f1 <- ctStanFit(datalong = dat2, ctstanmodel = m1, optimize=TRUE, nopriors=TRUE,verbose=1)
 #' 
 #' summary(f1)
 #' 
@@ -427,7 +429,6 @@ verbosify<-function(sf,verbose=2){
 #' k=ctKalman(f3n,plot=T,subjects=1,kalmanvec=c('y','etasmooth'),timestep=.01)
 #' ctKalman(f3n,plot=TRUE,subjects=1:3,kalmanvec=c('y','etasmooth'),errorvec=NA)
 #' 
-#' ctstanprof
 #' 
 #' 
 #' 
@@ -519,7 +520,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   fit=TRUE, intoverpop=FALSE, stationary=FALSE,plot=FALSE,  derrind='all',
   optimize=FALSE,  optimcontrol=list(),
   nlcontrol = list(), nopriors=FALSE, chains=2,cores='maxneeded', inits=NULL,
-  forcerecompile=FALSE,savescores=FALSE,gendata=FALSE,
+  forcerecompile=FALSE,savescores=FALSE,savesubjectmatrices=TRUE,gendata=FALSE,
   control=list(),verbose=0,...){
   if(.Machine$sizeof.pointer == 4) message('Bayesian functions not available on 32 bit systems') else{
     if(class(ctstanmodel) != 'ctStanModel') stop('not a ctStanModel object')
@@ -897,7 +898,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         ukffull = as.integer(nlcontrol$ukffull),
         nlmeasurement=as.integer(nlmeasurement),
         nopriors=as.integer(nopriors),
-        savescores=as.integer(savescores)
+        savescores=as.integer(savescores),
+        savesubjectmatrices=as.integer(savesubjectmatrices)
       ))
     
     
@@ -1074,7 +1076,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       }
       
       if(optimize==TRUE) {
-
         opcall <- paste0('stanoptimis(standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors),',
           paste0(gsub('list(','',paste0(deparse(optimcontrol),collapse=''),fixed=TRUE)))
         stanfit <- eval(parse(text=opcall))
