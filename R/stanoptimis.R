@@ -13,6 +13,7 @@ parallelStanSetup <- function(cl, sm, standata,split=TRUE){
   parallel::clusterExport(cl,c('standata','sm'),envir = environment())
   parallel::clusterApply(cl,stansubjectindices,function(subindices) {
     # require(Rcpp)
+    library(ctsem)
     if(length(subindices) < length(unique(standata$subject))) standata <- standatact_specificsubjects(standata,subindices)
     # future(globals = c('sm','standata'),
     #   packages=c('ctsem','rstan'),
@@ -221,7 +222,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2){
   cl2 <- parallel::makeCluster(cores, type = "PSOCK")
   on.exit(parallel::stopCluster(cl2),add = TRUE)
   parallel::clusterExport(cl2, c('sm','standata','samples','est1'),environment())
-  
+  parallel::clusterApply(cl2,1:cores, function(x) library(ctsem))
   transformedpars <- try(flexsapply(cl2, parallel::clusterSplit(cl2,1:nrow(samples)), function(x){ #could pass smaller samples
     # Sys.sleep(.1)
     if(!is.null(standata$savescores) && !standata$savescores) standata$dokalmanrows <- as.integer(c(1,standata$subject[-1] - standata$subject[-standata$ndatapoints]))
