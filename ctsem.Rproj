@@ -17,7 +17,7 @@ AutoAppendNewline: Yes
 BuildType: Package
 PackageInstallArgs: --no-multiarch --with-keep.source
 PackageBuildArgs: --compact-vignettes="gs+qpdf"
-PackageCheckArgs: --as-cran --compact-vignettes="gs+qpdf" --no-build-vignettes
+PackageCheckArgs: --as-cran --compact-vignettes="gs+qpdf"
 PackageRoxygenize: rd,collate,namespace
 
 QuitChildProcessesOnExit: Yes
