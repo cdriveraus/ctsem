@@ -46,7 +46,6 @@ parallelStanFunctionCreator <- function(cl, verbose){
         parlp(parm)
       })
     b=Sys.time()
-    out2=values(out2)
     
     out <- try(sum(unlist(out2)),silent=TRUE)
     attributes(out)$gradient <- try(apply(sapply(out2,function(x) attributes(x)$gradient,simplify='matrix'),1,sum))
@@ -56,8 +55,7 @@ parallelStanFunctionCreator <- function(cl, verbose){
       attributes(out) <- list(gradient=rep(0,length(parm)))
     }
     assign('storedPars', parm,pos= sys.frame(4))
-    evaltime <- b-a
-    if(verbose > 0) print(paste('lp= ',out,' ,    iter time = ',evaltime))
+    if(verbose > 0) print(paste('lp= ',out,' ,    iter time = ',b-a))
     return(-out)
   }
   
