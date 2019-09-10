@@ -12,12 +12,13 @@ parallelStanSetup <- function(cl, sm, standata,split=TRUE){
   }
   parallel::clusterExport(cl,c('standata','sm'),envir = environment())
   parallel::clusterApply(cl,stansubjectindices,function(subindices) {
-    require(Rcpp)
+    # require(Rcpp)
     if(length(subindices) < length(unique(standata$subject))) standata <- standatact_specificsubjects(standata,subindices)
     # future(globals = c('sm','standata'),
     #   packages=c('ctsem','rstan'),
     # gc=FALSE,expr = {
-    assign('smfnode',stan_reinitsf(sm,standata,fast=TRUE),pos = globalenv())
+    g = eval(parse(text=paste0('gl','obalenv()'))) #avoid spurious cran check -- assigning to global environment only on created parallel workers.
+    assign('smfnode',stan_reinitsf(sm,standata,fast=TRUE),pos = g)
     
     parlp <- function(parm){
       out <- try(smfnode$log_prob(upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
@@ -187,10 +188,11 @@ standataFillTime <- function(standata, times){
       data.frame(subject=si,time=stimes)
     })
   )
-  nlong <- data.frame(nlong,long[1,!colnames(long) %in% c('subject','time')])
+
+  nlong <- suppressWarnings(data.frame(nlong,long[1,!colnames(long) %in% c('subject','time')]))
   nlong[,grep('(^nobs)|(^which)|(^ncont)|(^nbin)',colnames(nlong))] <- 0L
   nlong[,grep('^dokalman',colnames(nlong))] <- 1L
-  nlong[,grep('^Y.',colnames(nlong))] <- 99999
+  nlong[,grep('^Y',colnames(nlong))] <- 99999
   nlong[,grep('^tdpreds.',colnames(nlong))] <- 0
   
   
@@ -219,7 +221,6 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2){
   cl2 <- parallel::makeCluster(cores, type = "PSOCK")
   on.exit(parallel::stopCluster(cl2),add = TRUE)
   parallel::clusterExport(cl2, c('sm','standata','samples','est1'),environment())
-  parallel::clusterApply(cl2,1:cores,function(x) require(ctsem))
   
   transformedpars <- try(flexsapply(cl2, parallel::clusterSplit(cl2,1:nrow(samples)), function(x){ #could pass smaller samples
     # Sys.sleep(.1)
@@ -659,6 +660,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       
       storedPars <- c()
+      smfnode <- NULL #global variables issue...
+      parlp <- NULL 
       optimfinished <- FALSE
       on.exit({
         if(!optimfinished){

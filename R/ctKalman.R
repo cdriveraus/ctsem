@@ -227,6 +227,7 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
 #' @param legendcontrol List of arguments to the \code{\link{legend}} function.
 #' @param polygoncontrol List of arguments to the \code{\link{ctPoly}} function for filling the uncertainty region.
 #' @param polygonalpha Numeric for the opacity of the uncertainty region.
+#' @param ... not used.
 #' @return Nothing. Generates plots.
 #' @method plot ctKalman
 #' @export
@@ -247,7 +248,7 @@ plot.ctKalman<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
   subsetindices=NULL,pchvec='auto', typevec='auto',grid=FALSE,add=FALSE, 
   plotcontrol=list(ylab='Value',xlab='Time',xaxs='i',lwd=2,mgp=c(2,.8,0)),
   polygoncontrol=list(steps=20),polygonalpha=.3,
-  legend=TRUE, legendcontrol=list(x='topright',bg='white',cex=.7)){
+  legend=TRUE, legendcontrol=list(x='topright',bg='white',cex=.7),...){
   
   if(!'ctKalman' %in% class(x)) stop('not a ctKalman object')
   

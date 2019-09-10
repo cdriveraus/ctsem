@@ -894,15 +894,13 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         ndiffusion=as.integer(ndiffusion),
         driftdiagonly = as.integer(driftdiagonly),
         intoverpop=as.integer(intoverpop),
-        ukfspread = nlcontrol$ukfspread,
-        ukffull = as.integer(nlcontrol$ukffull),
         nlmeasurement=as.integer(nlmeasurement),
         nopriors=as.integer(nopriors),
         savescores=as.integer(savescores),
         savesubjectmatrices=as.integer(savesubjectmatrices)
       ))
     
-    
+    standata$taylorheun = ifelse(is.null(ctstanmodel$taylorheun), 0L,as.integer(ctstanmodel$taylorheun))
     if(ctstanmodel$n.TIpred == 0) tipreds <- array(0,c(0,0))
     standata$tipredsdata <- as.matrix(tipreds)
     standata$nmissingtipreds <- as.integer(length(tipreds[tipreds== 99999]))
