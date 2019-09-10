@@ -1275,11 +1275,12 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
 }
 
 collectsubmats <- function(popmats=FALSE,matrices=c(names(mats$base),'DIFFUSIONcov','asymDIFFUSION','asymCINT')){
-  out<-'if(savesubjectmatrices){'
+  out<-ifelse(popmats,'', "if(savesubjectmatrices){ \n")
   for(m in matrices){
-    if(!popmats) out <- paste0(out, 'if( (', m,'subindex > 0 && subi > 0) || (',m,'subindex == 0 && subi==0) ) ',m,'[',m,'subindex ? subi : 1] = s',m,'; \n')
-    if(popmats) out <- paste0(out, 'pop_',m,' = s',m,'; \n }')
+    if(!popmats) out <-paste0(out, 'if( (', m,'subindex > 0 && subi > 0) || (',m,'subindex == 0 && subi==0) ) ',m,'[',m,'subindex ? subi : 1] = s',m,'; \n')
+    if(popmats) out <- paste0(out, 'pop_',m,' = s',m,'; ')
   }
+  if(!popmats) out <- paste0(out,' \n }')
   
   return(out)
 }

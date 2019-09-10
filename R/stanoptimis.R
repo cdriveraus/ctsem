@@ -12,14 +12,15 @@ parallelStanSetup <- function(cl, sm, standata,split=TRUE){
   }
   parallel::clusterExport(cl,c('standata','sm'),envir = environment())
   parallel::clusterApply(cl,stansubjectindices,function(subindices) {
+    require(Rcpp)
     if(length(subindices) < length(unique(standata$subject))) standata <- standatact_specificsubjects(standata,subindices)
     # future(globals = c('sm','standata'),
     #   packages=c('ctsem','rstan'),
     # gc=FALSE,expr = {
-    assign('smfnode',stan_reinitsf(sm,standata),pos = globalenv())
+    assign('smfnode',stan_reinitsf(sm,standata,fast=TRUE),pos = globalenv())
     
     parlp <- function(parm){
-      out <- try(log_prob(smfnode,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
+      out <- try(smfnode$log_prob(upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
       if(class(out)=='try-error') {
         out[1] <- -1e100
         attributes(out)$gradient <- rep(NaN, length(parm))
@@ -42,8 +43,8 @@ parallelStanFunctionCreator <- function(cl, verbose){
     a=Sys.time()
     out2<- parallel::clusterApply(cl,
       lapply(1:cores,function(x) parm),
-      function(i){
-        parlp(parm)
+      function(p){
+        parlp(p)
       })
     b=Sys.time()
     

@@ -627,35 +627,24 @@ matrix[nlatent, nlatent] sDIFFUSIONcov;
         }
       }
     }
-  if( (T0MEANSsubindex > 0 && subi > 0 && savesubjectmatrices) || (T0MEANSsubindex == 0 && subi==0  && savesubjectmatrices) ) T0MEANS[T0MEANSsubindex ? subi : 1] = sT0MEANS; 
-if( (LAMBDAsubindex > 0 && subi > 0 && savesubjectmatrices) || (LAMBDAsubindex == 0 && subi==0  && savesubjectmatrices) ) LAMBDA[LAMBDAsubindex ? subi : 1] = sLAMBDA; 
-if( (DRIFTsubindex > 0 && subi > 0 && savesubjectmatrices) || (DRIFTsubindex == 0 && subi==0  && savesubjectmatrices) ) DRIFT[DRIFTsubindex ? subi : 1] = sDRIFT; 
-if( (DIFFUSIONsubindex > 0 && subi > 0 && savesubjectmatrices) || (DIFFUSIONsubindex == 0 && subi==0  && savesubjectmatrices) ) DIFFUSION[DIFFUSIONsubindex ? subi : 1] = sDIFFUSION; 
-if( (MANIFESTVARsubindex > 0 && subi > 0 && savesubjectmatrices) || (MANIFESTVARsubindex == 0 && subi==0  && savesubjectmatrices) ) MANIFESTVAR[MANIFESTVARsubindex ? subi : 1] = sMANIFESTVAR; 
-if( (MANIFESTMEANSsubindex > 0 && subi > 0 && savesubjectmatrices) || (MANIFESTMEANSsubindex == 0 && subi==0  && savesubjectmatrices) ) MANIFESTMEANS[MANIFESTMEANSsubindex ? subi : 1] = sMANIFESTMEANS; 
-if( (CINTsubindex > 0 && subi > 0 && savesubjectmatrices) || (CINTsubindex == 0 && subi==0  && savesubjectmatrices) ) CINT[CINTsubindex ? subi : 1] = sCINT; 
-if( (T0VARsubindex > 0 && subi > 0 && savesubjectmatrices) || (T0VARsubindex == 0 && subi==0  && savesubjectmatrices) ) T0VAR[T0VARsubindex ? subi : 1] = sT0VAR; 
-if( (TDPREDEFFECTsubindex > 0 && subi > 0 && savesubjectmatrices) || (TDPREDEFFECTsubindex == 0 && subi==0  && savesubjectmatrices) ) TDPREDEFFECT[TDPREDEFFECTsubindex ? subi : 1] = sTDPREDEFFECT; 
-if( (PARSsubindex > 0 && subi > 0 && savesubjectmatrices) || (PARSsubindex == 0 && subi==0  && savesubjectmatrices) ) PARS[PARSsubindex ? subi : 1] = sPARS; 
-if( (DIFFUSIONcovsubindex > 0 && subi > 0 && savesubjectmatrices) || (DIFFUSIONcovsubindex == 0 && subi==0  && savesubjectmatrices) ) DIFFUSIONcov[DIFFUSIONcovsubindex ? subi : 1] = sDIFFUSIONcov; 
-if( (asymDIFFUSIONsubindex > 0 && subi > 0 && savesubjectmatrices) || (asymDIFFUSIONsubindex == 0 && subi==0  && savesubjectmatrices) ) asymDIFFUSION[asymDIFFUSIONsubindex ? subi : 1] = sasymDIFFUSION; 
-if( (asymCINTsubindex > 0 && subi > 0 && savesubjectmatrices) || (asymCINTsubindex == 0 && subi==0  && savesubjectmatrices) ) asymCINT[asymCINTsubindex ? subi : 1] = sasymCINT; 
-
+  if(savesubjectmatrices){ 
+if( (T0MEANSsubindex > 0 && subi > 0) || (T0MEANSsubindex == 0 && subi==0) ) T0MEANS[T0MEANSsubindex ? subi : 1] = sT0MEANS; 
+if( (LAMBDAsubindex > 0 && subi > 0) || (LAMBDAsubindex == 0 && subi==0) ) LAMBDA[LAMBDAsubindex ? subi : 1] = sLAMBDA; 
+if( (DRIFTsubindex > 0 && subi > 0) || (DRIFTsubindex == 0 && subi==0) ) DRIFT[DRIFTsubindex ? subi : 1] = sDRIFT; 
+if( (DIFFUSIONsubindex > 0 && subi > 0) || (DIFFUSIONsubindex == 0 && subi==0) ) DIFFUSION[DIFFUSIONsubindex ? subi : 1] = sDIFFUSION; 
+if( (MANIFESTVARsubindex > 0 && subi > 0) || (MANIFESTVARsubindex == 0 && subi==0) ) MANIFESTVAR[MANIFESTVARsubindex ? subi : 1] = sMANIFESTVAR; 
+if( (MANIFESTMEANSsubindex > 0 && subi > 0) || (MANIFESTMEANSsubindex == 0 && subi==0) ) MANIFESTMEANS[MANIFESTMEANSsubindex ? subi : 1] = sMANIFESTMEANS; 
+if( (CINTsubindex > 0 && subi > 0) || (CINTsubindex == 0 && subi==0) ) CINT[CINTsubindex ? subi : 1] = sCINT; 
+if( (T0VARsubindex > 0 && subi > 0) || (T0VARsubindex == 0 && subi==0) ) T0VAR[T0VARsubindex ? subi : 1] = sT0VAR; 
+if( (TDPREDEFFECTsubindex > 0 && subi > 0) || (TDPREDEFFECTsubindex == 0 && subi==0) ) TDPREDEFFECT[TDPREDEFFECTsubindex ? subi : 1] = sTDPREDEFFECT; 
+if( (PARSsubindex > 0 && subi > 0) || (PARSsubindex == 0 && subi==0) ) PARS[PARSsubindex ? subi : 1] = sPARS; 
+if( (DIFFUSIONcovsubindex > 0 && subi > 0) || (DIFFUSIONcovsubindex == 0 && subi==0) ) DIFFUSIONcov[DIFFUSIONcovsubindex ? subi : 1] = sDIFFUSIONcov; 
+if( (asymDIFFUSIONsubindex > 0 && subi > 0) || (asymDIFFUSIONsubindex == 0 && subi==0) ) asymDIFFUSION[asymDIFFUSIONsubindex ? subi : 1] = sasymDIFFUSION; 
+if( (asymCINTsubindex > 0 && subi > 0) || (asymCINTsubindex == 0 && subi==0) ) asymCINT[asymCINTsubindex ? subi : 1] = sasymCINT; 
+ 
+ }
   if(subi == 0){
-pop_T0MEANS = sT0MEANS; 
-pop_LAMBDA = sLAMBDA; 
-pop_DRIFT = sDRIFT; 
-pop_DIFFUSION = sDIFFUSION; 
-pop_MANIFESTVAR = sMANIFESTVAR; 
-pop_MANIFESTMEANS = sMANIFESTMEANS; 
-pop_CINT = sCINT; 
-pop_T0VAR = sT0VAR; 
-pop_TDPREDEFFECT = sTDPREDEFFECT; 
-pop_PARS = sPARS; 
-pop_DIFFUSIONcov = sDIFFUSIONcov; 
-pop_asymDIFFUSION = sasymDIFFUSION; 
-pop_asymCINT = sasymCINT; 
-
+pop_T0MEANS = sT0MEANS; pop_LAMBDA = sLAMBDA; pop_DRIFT = sDRIFT; pop_DIFFUSION = sDIFFUSION; pop_MANIFESTVAR = sMANIFESTVAR; pop_MANIFESTMEANS = sMANIFESTMEANS; pop_CINT = sCINT; pop_T0VAR = sT0VAR; pop_TDPREDEFFECT = sTDPREDEFFECT; pop_PARS = sPARS; pop_DIFFUSIONcov = sDIFFUSIONcov; pop_asymDIFFUSION = sasymDIFFUSION; pop_asymCINT = sasymCINT; 
   }
 
 } // end subject matrix creation
