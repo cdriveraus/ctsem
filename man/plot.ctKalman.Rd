@@ -11,7 +11,7 @@
   plotcontrol = list(ylab = "Value", xlab = "Time", xaxs = "i", lwd = 2,
   mgp = c(2, 0.8, 0)), polygoncontrol = list(steps = 20),
   polygonalpha = 0.3, legend = TRUE, legendcontrol = list(x =
-  "topright", bg = "white", cex = 0.7))
+  "topright", bg = "white", cex = 0.7), ...)
 }
 \arguments{
 \item{x}{Output from \code{\link{ctKalman}}. In general it is easier to call 
@@ -61,6 +61,8 @@ though lty,col,lwd,x,y, will all be ignored.}
 \item{legend}{Logical, whether to include a legend if plotting.}
 
 \item{legendcontrol}{List of arguments to the \code{\link{legend}} function.}
+
+\item{...}{not used.}
 }
 \value{
 Nothing. Generates plots.

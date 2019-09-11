@@ -20,7 +20,6 @@ parallelStanSetup <- function(cl, sm, standata,split=TRUE){
     # gc=FALSE,expr = {
     g = eval(parse(text=paste0('gl','obalenv()'))) #avoid spurious cran check -- assigning to global environment only on created parallel workers.
     assign('smfnode',stan_reinitsf(sm,standata,fast=TRUE),pos = g)
-    
     parlp <- function(parm){
       out <- try(smfnode$log_prob(upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
       if(class(out)=='try-error') {
@@ -32,7 +31,7 @@ parallelStanSetup <- function(cl, sm, standata,split=TRUE){
         rnorm(length(attributes(out)$gradient[is.nan(attributes(out)$gradient)]),0,100)
       return(out)
     }
-    assign('parlp',parlp,pos = globalenv())
+    assign('parlp',parlp,pos = g)
     
     NULL
   })
@@ -42,6 +41,7 @@ parallelStanSetup <- function(cl, sm, standata,split=TRUE){
 parallelStanFunctionCreator <- function(cl, verbose){
   cores=length(cl)
   neglpgf<-function(parm) {
+    parlp <- NULL
     a=Sys.time()
     out2<- parallel::clusterApply(cl,
       lapply(1:cores,function(x) parm),

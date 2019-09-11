@@ -668,7 +668,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
               } 
               if(dtchange==1 || statedependence[2] || (T0check == 1 && (DRIFTsubindex + DIFFUSIONsubindex + CINTsubindex) > 0)){
                 sasymDIFFUSION[derrind,derrind] = to_matrix(  -kronsum(sJAx[derrind,derrind]) \ to_vector(tcrossprod(sDIFFUSION[derrind,derrind])), ndiffusion,ndiffusion);
-                discreteDIFFUSION[derrind,derrind] =  sasymDIFFUSION - quad_form( sasymDIFFUSION, Je[savescores ? rowi : 1, derrind,derrind]' );
+                discreteDIFFUSION[derrind,derrind] =  sasymDIFFUSION[derrind,derrind] - quad_form( sasymDIFFUSION[derrind,derrind], Je[savescores ? rowi : 1, derrind,derrind]' );
               }
               if(verbose>1) print("sJAx ",sJAx);
               if(verbose > 1) print("rowi = ",rowi, "state = ", state);
