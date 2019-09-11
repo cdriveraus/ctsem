@@ -765,11 +765,11 @@ if(verbose > 1) print ("below t0 row ", rowi);
                 if(verbose > 1) print("Je = ", Je[savescores ? rowi : 1]);
                 discreteDRIFT = expm2(append_row(append_col(sDRIFT[1:nlatent, 1:nlatent],sCINT),rep_vector(0,nlatent+1)') * dtsmall,drcintoffdiag);
                 if(verbose > 1) print("discreteDRIFT = ", discreteDRIFT);
-              } 
+              } else if(savescores) Je[rowi] = Je[rowi-1];
               if(dtchange==1 || statedependence[2] || (T0check == 1 && (DRIFTsubindex + DIFFUSIONsubindex + CINTsubindex) > 0)){
                 sasymDIFFUSION[derrind,derrind] = to_matrix(  -kronsum(sJAx[derrind,derrind]) \ to_vector(tcrossprod(sDIFFUSION[derrind,derrind])), ndiffusion,ndiffusion);
                 discreteDIFFUSION[derrind,derrind] =  sasymDIFFUSION[derrind,derrind] - quad_form( sasymDIFFUSION[derrind,derrind], Je[savescores ? rowi : 1, derrind,derrind]' );
-              }
+              } 
               if(verbose>1) print("sJAx ",sJAx);
               if(verbose > 1) print("rowi = ",rowi, "state = ", state);
               if(verbose > 1)  print("etacov = ",etacov," sasymDIFFUSION = ",sasymDIFFUSION," sDIFFUSION = ",sDIFFUSION);
