@@ -25,7 +25,7 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
     # smf <- stan_reinitsf(fit$stanmodel, standata)
     samples<-ctStanRawSamples(fit)
     if(!is.na(nsamples)) samples <- samples[sample(1:nrow(samples),nsamples),,drop=FALSE]
-    if(class(collapsefunc) %in% 'function') samples = matrix(apply(samples,2,collapsefunc,...),ncol=ncol(samples))
+    if(is.function(collapsefunc)) samples = matrix(apply(samples,2,collapsefunc,...),ncol=ncol(samples))
     e=stan_constrainsamples(sm = fit$stanmodel,standata = standata,samples = samples,cores=cores)
   # }
 

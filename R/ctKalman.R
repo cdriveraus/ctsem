@@ -58,6 +58,7 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
     if(timestep != 'asdata') {
       times <- seq(timerange[1],timerange[2],timestep)
       fit$standata <- standataFillTime(fit$standata,times)
+      fit$standata<- standatact_specificsubjects(fit$standata,subjects)
     }
     fit$standata$dokalmanrows <- as.integer(fit$standata$subject %in% subjects)
 

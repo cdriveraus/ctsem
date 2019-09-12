@@ -107,9 +107,9 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
       dimrawpopcorr <- dim(e$rawpopcorr)
       if(class(object$stanfit)!='stanfit') rawpopcorr= array(e$rawpopcorr,dim=c(dimrawpopcorr[1],1,dimrawpopcorr[2] * dimrawpopcorr[3]))
       if(class(object$stanfit)=='stanfit') rawpopcorr= rstan::extract(object$stanfit,pars='rawpopcorr',permuted=FALSE)
-      
+
       rawpopcorrout <- suppressWarnings(monitor(rawpopcorr, digits_summary=digits,warmup=0,print = FALSE)[lower.tri(diag(nindvarying)),c(monvars,'n_eff','Rhat'),drop=FALSE])
-      
+      if(class(object$stanfit)!='stanfit') rawpopcorrout <- rawpopcorrout[,-which(colnames(rawpopcorrout) %in% c('n_eff','Rhat')),drop=FALSE]
       # rawpopcorrout <- ctCollapse(rawpopcorr,1,mean)
       # rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,sd)[lower.tri(diag(nindvarying)),drop=FALSE])
       # rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.025))[lower.tri(diag(nindvarying)),drop=FALSE])
@@ -135,15 +135,16 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
       dimnames(rawpopcov_mean)<-list(parnamesiv,parnamesiv)
       dimnames(rawpopcov_sd)<-list(parnamesiv,parnamesiv)
       
-      out=list(note='Posterior means of the raw parameter population distribution correlation matrix:',
-        rawpopcorr_mean=round(rawpopcorrmean,digits),
-        note='Posterior std dev. of the raw parameter population distribution correlation matrix:',
-        rawpopcorr_sd=round(rawpopcorrsd,digits),
-        note='Posterior means of the raw parameter population distribution covariance matrix:',
-        rawpopcov_mean = round(rawpopcov_mean,digits),
-        note='Posterior std dev. of the raw parameter population distribution covariance matrix:',
-        rawpopcov_sd=round(rawpopcov_sd,digits)
-      )
+      # out=list(note='Posterior means of the raw parameter population distribution correlation matrix:',
+      #   rawpopcorr_mean=round(rawpopcorrmean,digits),
+      #   note='Posterior std dev. of the raw parameter population distribution correlation matrix:',
+      #   rawpopcorr_sd=round(rawpopcorrsd,digits),
+      #   note='Posterior means of the raw parameter population distribution covariance matrix:',
+      #   rawpopcov_mean = round(rawpopcov_mean,digits),
+      #   note='Posterior std dev. of the raw parameter population distribution covariance matrix:',
+      #   rawpopcov_sd=round(rawpopcov_sd,digits)
+      # )
+      out <-list()
       
       out$rawpopcorr = round(rawpopcorrout,digits)
     }
@@ -222,7 +223,6 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
       
       parmats <- parmats[-removeindices,]
       
-      
       out$parmatrices=round(parmats,digits=digits)
       
       out$parmatNote=paste0('Population mean parameter matrices calculated with time interval of ', timeinterval,' for discrete time (dt) matrices. ',
@@ -261,8 +261,8 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
     popmeans = popmeans[,monvars,drop=FALSE]
     
     logprob = object$stanfit$optimfit$value
-    df = ncol(object$stanfit$rawposterior)
-    aic = 2* df- 2*logprob
+    npars = length(object$stanfit$rawest)
+    aic = 2* npars - 2*logprob
   }
   
   if(!is.null(iter)) out$popsd=round(popsd,digits=digits)
@@ -271,12 +271,10 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   
   out$popNote=paste0('popmeans are reported as specified in ctModel -- covariance related matrices are in sd / matrix square root form.')
   
-  out$df = 
-    
-    out$logprob=logprob
+  out$logprob=logprob
   
   if(class(object$stanfit)!='stanfit') {
-    out$df = df
+    out$npars = npars
     out$aic = aic
   }
   

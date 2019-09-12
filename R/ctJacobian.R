@@ -17,7 +17,7 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
 
   #replace system matrix references
   matlist <- listOfMatrices(m$pars)
-  matnames <- names(ctStanMatricesList(m,unsafe=TRUE)$base)
+  matnames <- names(ctStanMatricesList(unsafe=TRUE)$base)
  
   
   # for(mati in matnames){ 

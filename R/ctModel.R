@@ -170,11 +170,11 @@
 #' 
 #' @export
 
-ctModel<-function(LAMBDA, n.manifest = nrow(LAMBDA), n.latent=ncol(LAMBDA), type='omx', Tpoints=NULL, 
+ctModel<-function(LAMBDA, n.manifest = 'auto', n.latent='auto', type='omx', Tpoints=NULL, 
   manifestNames='auto', latentNames='auto', 
   T0VAR="auto", T0MEANS="auto", MANIFESTMEANS="auto", MANIFESTVAR="auto", 
   DRIFT="auto", CINT="auto", DIFFUSION="auto",
-  n.TDpred=0, TDpredNames='auto', n.TIpred=0, TIpredNames='auto',
+  n.TDpred='auto', TDpredNames='auto', n.TIpred='auto', TIpredNames='auto',
   TRAITVAR=NULL, T0TRAITEFFECT=NULL,
   MANIFESTTRAITVAR=NULL,
   TDPREDMEANS="auto", TDPREDEFFECT="auto", 
@@ -184,6 +184,40 @@ ctModel<-function(LAMBDA, n.manifest = nrow(LAMBDA), n.latent=ncol(LAMBDA), type
   T0TIPREDEFFECT="auto", TIPREDVAR="auto", 
   PARS=NULL,
   startValues=NULL, timeVarying=NULL){
+  
+  #get dimensions
+  if(is.null(n.manifest) || is.null(n.latent) || all(n.manifest %in% 'auto') || all(n.latent %in% 'auto')){
+    if(is.matrix(LAMBDA)){
+      message('System dimensions inferred from LAMBDA')
+      n.manifest <- nrow(LAMBDA)
+      n.latent <- ncol(LAMBDA)
+    } else {
+      if(!all(manifestNames %in% 'auto') && !all(latentNames %in% 'auto')){
+        message('System dimensions inferred from manifestNames and latentNames')
+        n.manifest <- length(manifestNames)
+        n.latent <- length(latentNames)
+      } else stop('LAMBDA must either a matrix, n.manifest and n.latent must be specified, or manifestNames and latentNames must be specified!')
+    }
+  }
+
+  if(is.null(n.TDpred) || all(n.TDpred %in% 'auto')){
+    if(is.matrix(TDPREDEFFECT)){
+      message('n.TDpred inferred from TDPREDEFFECT')
+      n.TDpred <- ncol(TDPREDEFFECT)
+    } else {
+      if(!all(TDpredNames %in% 'auto')){
+        message('n.TDpred inferred  inferred from TDpredNames')
+        n.TDpred <- length(TDpredNames)
+      } else n.TDpred <- 0
+    } 
+  }
+  
+  if(is.null(n.TIpred) || all(n.TIpred %in% 'auto')){
+    if(!all(TIpredNames %in% 'auto')){
+      message('n.TIpred inferred  inferred from TDpredNames')
+      n.TIpred <- length(TIpredNames)
+    } else n.TIpred <- 0
+  } 
   
   
   
@@ -214,21 +248,53 @@ ctModel<-function(LAMBDA, n.manifest = nrow(LAMBDA), n.latent=ncol(LAMBDA), type
   if(all(manifestNames=='auto')) manifestNames=paste0('Y',1:n.manifest)
   if(all(latentNames=='auto')) latentNames=paste0('eta',1:n.latent)
   
-  if(length(manifestNames) != n.manifest) stop("Length of manifestNames does not equal n.manifest!") 
-  if(length(latentNames) != n.latent) stop("Length of latentNames does not equal n.latent!") 
+  if(length(manifestNames) != n.manifest) stop(paste0(
+    "Length of manifestNames (",length(manifestNames),") does not equal n.manifest (",n.manifest,")!")) 
+  if(length(latentNames) != n.latent) stop(paste0(
+    "Length of latentNames (",length(latentNames),") does not equal n.latent(",n.latent,")!"))
   
   if(n.TDpred > 0){
     if(all(TDpredNames=='auto')) TDpredNames=paste0('TD',1:n.TDpred)
-  if(length(TDpredNames) != n.TDpred) stop("Length of TDpredNames does not equal n.TDpred!") 
+  if(length(TDpredNames) != n.TDpred) stop(paste0(
+    "Length of TDpredNames (",length(TDpredNames),") does not equal n.TDpred(",n.TDpred,")!")) 
   } else {
     TDpredNames=c()
   }
   
   if(n.TIpred > 0){
   if(all(TIpredNames=='auto')) TIpredNames=paste0('TI',1:n.TIpred)
-  if(length(TIpredNames) != n.TIpred) stop("Length of TIpredNames does not equal n.TIpred!") 
+  if(length(TIpredNames) != n.TIpred) stop(paste0(
+    "Length of TIpredNames (",length(TIpredNames),') does not equal n.TIpred(',n.TIpred,')!')) 
   } else {
     TIpredNames=c()
+  }
+
+  mats <- ctStanMatricesList()
+  for(m in names(mats$base)){
+    if(!is.null(get(m))){
+      val <- get(m)
+      if(!all(val %in% 'auto') && !is.matrix(val)){
+        
+        mat<-ctLabel(TDpredNames=TDpredNames,TIpredNames=TIpredNames,
+          manifestNames=manifestNames,latentNames=latentNames,matrixname=m,n.latent=n.latent,
+          n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
+        counter <- 0
+        if(length(val) != length(mat) && length(val) !=1) stop(paste0(m,' needs ',length(mat),' values for ',nrow(mat),' * ',ncol(mat),' matrix, but has ',length(val)))
+        if(length(val)==1 && length(mat) > 1) {
+          message(m,' specified via single value -- filling ',nrow(mat),' * ',ncol(mat),' matrix:')
+          val <- rep(val,length(mat))
+        } else message(paste0(m,' vector spec input rowwise into ',nrow(mat),' * ',ncol(mat),' matrix:'))
+        for(ri in 1:nrow(mat)){
+          for(ci in 1:ncol(mat)){
+            counter <- counter + 1
+            mat[ri,ci] <- val[counter]
+          }
+        }
+       
+        print(mat,right=TRUE)
+        assign(m, mat)
+      }
+    }
   }
   
   

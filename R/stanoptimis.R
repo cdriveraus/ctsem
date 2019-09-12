@@ -129,7 +129,7 @@ flexlapply <- function(cl, X, fn,cores=1){
 #' @export
 #'
 #' @examples
-#' standatact_specificsubjects(ctstantestfit$standata, 1:2)
+#' d <- standatact_specificsubjects(ctstantestfit$standata, 1:2)
 standatact_specificsubjects <- function(standata, subjects,timestep=NA){
   long <- standatatolong(standata)
   long <- long[long$subject %in% subjects,]
@@ -213,17 +213,23 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2){
   est1=NA
   class(est1)<-'try-error'
   i=0
+  if(nrow(samples)==1) cores <- 1
   while(i < nrow(samples) && class(est1)=='try-error'){
     i=i+1
     est1=try(constrain_pars(smf, upars=samples[i,]))
   }
   if(class(est1)=='try-error') stop('All samples generated errors! Respecify, try stochastic optimizer, try again?')
   
+  if(cores > 1){
   cl2 <- parallel::makeCluster(cores, type = "PSOCK")
   on.exit(parallel::stopCluster(cl2),add = TRUE)
   parallel::clusterExport(cl2, c('sm','standata','samples','est1'),environment())
   parallel::clusterApply(cl2,1:cores, function(x) library(ctsem))
-  transformedpars <- try(flexsapply(cl2, parallel::clusterSplit(cl2,1:nrow(samples)), function(x){ #could pass smaller samples
+  } else cl2 <- NA
+  transformedpars <- try(flexsapply(cl2, 
+    split(1:nrow(samples), sort((1:nrow(samples))%%cores)),
+    # parallel::clusterSplit(cl2,1:nrow(samples)), 
+    function(x){ #could pass smaller samples
     # Sys.sleep(.1)
     if(!is.null(standata$savescores) && !standata$savescores) standata$dokalmanrows <- as.integer(c(1,standata$subject[-1] - standata$subject[-standata$ndatapoints]))
     smf <- stan_reinitsf(sm,standata)

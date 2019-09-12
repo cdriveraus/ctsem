@@ -4,13 +4,13 @@
 \alias{ctModel}
 \title{Define a ctsem model}
 \usage{
-ctModel(LAMBDA, n.manifest = nrow(LAMBDA), n.latent = ncol(LAMBDA),
-  type = "omx", Tpoints = NULL, manifestNames = "auto",
-  latentNames = "auto", T0VAR = "auto", T0MEANS = "auto",
-  MANIFESTMEANS = "auto", MANIFESTVAR = "auto", DRIFT = "auto",
-  CINT = "auto", DIFFUSION = "auto", n.TDpred = 0,
-  TDpredNames = "auto", n.TIpred = 0, TIpredNames = "auto",
-  TRAITVAR = NULL, T0TRAITEFFECT = NULL, MANIFESTTRAITVAR = NULL,
+ctModel(LAMBDA, n.manifest = "auto", n.latent = "auto", type = "omx",
+  Tpoints = NULL, manifestNames = "auto", latentNames = "auto",
+  T0VAR = "auto", T0MEANS = "auto", MANIFESTMEANS = "auto",
+  MANIFESTVAR = "auto", DRIFT = "auto", CINT = "auto",
+  DIFFUSION = "auto", n.TDpred = "auto", TDpredNames = "auto",
+  n.TIpred = "auto", TIpredNames = "auto", TRAITVAR = NULL,
+  T0TRAITEFFECT = NULL, MANIFESTTRAITVAR = NULL,
   TDPREDMEANS = "auto", TDPREDEFFECT = "auto", T0TDPREDCOV = "auto",
   TDPREDVAR = "auto", TRAITTDPREDCOV = "auto", TDTIPREDCOV = "auto",
   TIPREDMEANS = "auto", TIPREDEFFECT = "auto",

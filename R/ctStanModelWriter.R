@@ -340,7 +340,7 @@ ctStanModelCleanctspec <-  function(ctspec){ #clean ctspec structure
   return(ctspec)
 }
 
-ctStanMatricesList <- function(ctm,unsafe=FALSE){
+ctStanMatricesList <- function(unsafe=FALSE){
   m <- list()
   m$base <- c("T0MEANS","LAMBDA","DRIFT","DIFFUSION","MANIFESTVAR","MANIFESTMEANS", "CINT","T0VAR","TDPREDEFFECT",'PARS')
   m$driftcint <- c('DRIFT','CINT')
@@ -373,7 +373,7 @@ ctStanMatricesList <- function(ctm,unsafe=FALSE){
 
 
 ctStanModelMatrices <-function(ctm){
-  mats <- ctStanMatricesList(ctm,unsafe=TRUE)
+  mats <- ctStanMatricesList(unsafe=TRUE)
   ctspec <- ctm$pars
   n.TIpred <- ctm$n.TIpred
   matsetup <-list()
@@ -561,7 +561,7 @@ ctStanCalcsList <- function(ctm){
   temp <- ctm$calcs# temp <- sapply(ctm$calcs,function(x) gsub(' ','',Simplify(x),fixed=TRUE))
   names(temp) <- NULL
   # calcs<-list()
-  mats<-ctStanMatricesList(ctm)
+  mats<-ctStanMatricesList()
   # calcindices <- grep('\\]|\\[',ctm$pars$param)
   # if(length(calcindices) > 0){
   #   for(ci in calcindices){
@@ -655,7 +655,7 @@ jacobianelements <- function(J, when, ntdpred,matsetup,mats,textadd=NA,
 ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup){
   #if arguments change make sure to change ctStanFit !
   
-  mats <- ctStanMatricesList(ctm)
+  mats <- ctStanMatricesList()
   nlatentpop <- max(ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS'])
   nmanifest <- ctm$n.manifest
   mx <- listOfMatrices(ctm$pars)

@@ -615,7 +615,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     }
     
     
-    mats <- ctStanMatricesList(ctstanmodel)
+    mats <- ctStanMatricesList()
     
     #read in ctmodel values
     ctspec<-ctstanmodel$pars
