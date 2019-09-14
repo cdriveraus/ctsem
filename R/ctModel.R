@@ -543,11 +543,11 @@ ctModel<-function(LAMBDA, n.manifest = 'auto', n.latent='auto', type='omx', Tpoi
   ###model checks
   
   #lower triangular check
-  for(tempmatname in c('T0VAR','MANIFESTVAR','TRAITVAR','MANIFESTTRAITVAR','TDPREDVAR','TIPREDVAR')){
+  for(tempmatname in c('T0VAR','MANIFESTVAR','TRAITVAR','MANIFESTTRAITVAR','TDPREDVAR','DIFFUSION','TIPREDVAR')){
     assign('tempmat',get(tempmatname))
     if(is.null(tempmat)) next
     if(all(suppressWarnings(as.numeric(tempmat[upper.tri(tempmat)])) %in% 0)) next
-    warning(paste0(tempmatname,' is not lower triangular! Covariance type matrices should be specified in the appropriate lower-triangular form.'))
+    warning(paste0(tempmatname,' is not lower triangular! Covariance type matrices should usually be specified in the appropriate lower-triangular form.'))
   }
   
  
