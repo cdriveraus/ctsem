@@ -140,7 +140,7 @@ ctStanModelIntOverPop <- function(m){
     m$pars=ctStanModelCleanctspec(m$pars)
     
     t0mvaryingsimple <- m$pars$row[m$pars$indvarying & m$pars$matrix %in% 'T0MEANS' & m$pars$transform==0] #which t0means are indvarying and not transformed
-    t0mvaryingnames <- m$pars$param[m$pars$indvarying & m$pars$matrix %in% 'T0MEANS'& m$pars$transform==0] #which t0means are indvarying
+    t0mvaryingnames <- m$pars$param[m$pars$indvarying & m$pars$matrix %in% 'T0MEANS'& m$pars$transform==0] #names of t0means that are indvarying
     t0mnotvarying <- m$pars$row[!m$pars$indvarying & m$pars$matrix %in% 'T0MEANS']
     # m$pars$indvarying[m$pars$matrix %in% 'T0MEANS'] <- FALSE 
     
@@ -149,8 +149,10 @@ ctStanModelIntOverPop <- function(m){
     ivnamesfull <- c(t0mvaryingnames,ivnames) #for t0var naming
     nindvaryingsmall <- length(ivnames)
     
+    if(length(ivnames) > 0){
+      
     #new t0means
-    t0m <- m$pars[m$pars$param %in% ivnames,]
+    t0m <- m$pars[m$pars$param %in% ivnames,,drop=FALSE]
     t0m$matrix <- 'T0MEANS'
     t0m$col <- 1
     t0m$row <- (m$n.latent+1):(m$n.latent+nindvaryingsmall)
@@ -231,7 +233,10 @@ ctStanModelIntOverPop <- function(m){
     m$pars <- rbind(m$pars, t0m,t0v,drift) #
     m$pars[] <- lapply(m$pars, utils::type.convert, as.is = TRUE)
     
-    m$intoverpopindvaryingindex <- c(t0mvaryingsimple,(m$n.latent+1):(m$n.latent+length(ivnames)))
+    } #finish loop for non simple t0means indvarying
+    
+    extralatents <- seq.int(m$n.latent,m$n.latent+length(ivnames),length.out=length(ivnames))
+    m$intoverpopindvaryingindex <- c(t0mvaryingsimple,extralatents)
     return(m)
   }
 }

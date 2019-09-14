@@ -658,11 +658,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         } else stop(paste0('use install.packages(\"DEoptim\") to use deoptim')) #end require deoptim
       }
       
-      # if(optimcores > 1){ #check if parallel helps optimizing
-      #   a <- Sys.time()
-      #   # a=log_prob(smf,init)
-      #   if( (Sys.time() - a) < .2) optimcores <- 1
-      # }
+      if(optimcores > 1){ #check if parallel helps optimizing
+        a=system.time(log_prob(smf,init))
+        if( a[1] < .3) optimcores <- 1
+      }
       
       
       
@@ -770,7 +769,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       est2=optimfit$par #unconstrain_pars(smf, est1)
     }
-    
     
     if(!estonly){
       
@@ -976,10 +974,24 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           neglpgf <- parallelStanFunctionCreator(cl=cl,verbose = 0)$neglpgf
           parallel::clusterExport(cl,'samples',envir = environment())
           }
+          
+          if(cores==1) parlp <- function(parm){ #remove this duplication somehow
+            out <- try(log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
+            if(class(out)=='try-error') {
+              out[1] <- -1e100
+              attributes(out)$gradient <- rep(NaN, length(parm))
+            }
+            if(is.null(attributes(out)$gradient)) attributes(out)$gradient <- rep(NaN, length(parm))
+            attributes(out)$gradient[is.nan(attributes(out)$gradient)] <- 
+              rnorm(length(attributes(out)$gradient[is.nan(attributes(out)$gradient)]),0,100)
+            return(out)
+          }
+          
           target_dens[[j]] <- flexsapply(cl = cl, split(1:isloopsize, sort((1:isloopsize)%%cores)), function(x){
             # future(globals=c('x','samples','isloopsize'),expr={
-              eval(parse(text='apply(tail(samples,isloopsize)[x,],1,parlp)'))
-            },cores=cores)
+            eval(parse(text='apply(tail(samples,isloopsize)[x,],1,parlp)'))
+          },cores=cores)
+          
           
           
           

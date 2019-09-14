@@ -76,7 +76,7 @@ ctModelLatex<- function(ctmodel,matrixnames=TRUE,textsize='normalsize',folder=te
 
   
   W <- diag(1,ctmodel$n.latent)
-  if(continuoustime) diag(W) <- 'u'
+  if(continuoustime) diag(W) <- 'u-t'
   
   out <- ifelse(equationonly,"","
 \\documentclass[a4paper,landscape]{report}

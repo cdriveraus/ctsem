@@ -150,7 +150,10 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
     }
   }
   
-  if(priorcheck & object$standata$nopriors==0) out = c(out,priorcheckreport(object,...))
+  if(priorcheck & object$standata$nopriors==0) {
+    priorcheckres <- priorcheckreport(object,...)
+    if(nrow(priorcheckres$priorcheck) > 0) out = c(out,priorcheckres)
+  }
   
   if(object$ctstanmodel$n.TIpred > 0) {
     

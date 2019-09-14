@@ -184,9 +184,12 @@ ctspec$inneroffset <- NULL
     split = strsplit(gsub(' ','',ctspec$param[pi]),split = '|',fixed=TRUE)[[1]]
     # browser()
     # ctspec$param[pi] = split[length(split)]
-    ctspec[pi,c('param','transform','indvarying','sdscale')[1:(length(split))]] <- split[1:(length(split))]
-    ctspec[pi,c('param','transform','indvarying','sdscale')[min(4,length(split)):4]] <- 
-      c(NA,ctspec$transform[pi],TRUE,1)[min(4,length(split)):4]
+    nonzero <- which(!split %in% '')
+    ctspec[pi,c('param','transform','indvarying','sdscale')] <- 
+        list(NA,ctspec$transform[pi],ctspec$matrix[pi] %in% c('CINT','T0MEANS','MANIFESTMEANS'),1) #base values
+    ctspec[pi,c('param','transform','indvarying','sdscale')[1:(length(split))]][nonzero] <- 
+      split[1:(length(split))][nonzero] #update with non zero length split elements
+    
     message('Custom par ',ctspec$param[pi],' found, set as: ',paste0(
       colnames(ctspec[pi,c('param','transform','indvarying','sdscale')]),' = ',
       ctspec[pi,c('param','transform','indvarying','sdscale')],'; '))
