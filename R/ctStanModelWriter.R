@@ -234,8 +234,7 @@ ctStanModelIntOverPop <- function(m){
     m$pars[] <- lapply(m$pars, utils::type.convert, as.is = TRUE)
     
     } #finish loop for non simple t0means indvarying
-    
-    extralatents <- seq.int(m$n.latent,m$n.latent+length(ivnames),length.out=length(ivnames))
+    extralatents <- seq.int(m$n.latent+1,m$n.latent+length(ivnames),length.out=length(ivnames))
     m$intoverpopindvaryingindex <- c(t0mvaryingsimple,extralatents)
     return(m)
   }
