@@ -600,7 +600,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     if(ctstanmodel$rawpopsdtransform != 'exp(2*rawpopsdbase-1) .* sdscale') recompile <- TRUE
     
     
-    if(cores=='maxneeded') cores=min(c(chains,parallel::detectCores()-1)) else cores <- max(cores,parallel::detectCores()-1)
+    if(cores=='maxneeded') cores=max(1,min(c(chains,parallel::detectCores()-1))) else cores <-max(1, min(cores,parallel::detectCores()-1))
     whichT0VAR_T0MEANSindvarying <- ctstanmodel$pars$matrix %in% 'T0VAR'  &  
       is.na(ctstanmodel$pars$value) &
       (ctstanmodel$pars$row %in% ctstanmodel$pars$row[ctstanmodel$pars$matrix %in% 'T0MEANS' & ctstanmodel$pars$indvarying] |

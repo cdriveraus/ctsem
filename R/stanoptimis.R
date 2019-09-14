@@ -974,7 +974,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           neglpgf <- parallelStanFunctionCreator(cl=cl,verbose = 0)$neglpgf
           parallel::clusterExport(cl,'samples',envir = environment())
           }
-          
+
           if(cores==1) parlp <- function(parm){ #remove this duplication somehow
             out <- try(log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
             if(class(out)=='try-error') {
@@ -987,10 +987,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             return(out)
           }
           
-          target_dens[[j]] <- flexsapply(cl = cl, split(1:isloopsize, sort((1:isloopsize)%%cores)), function(x){
+          target_dens[[j]] <- unlist(flexlapply(cl = cl, split(1:isloopsize, sort((1:isloopsize)%%cores)), function(x){
             # future(globals=c('x','samples','isloopsize'),expr={
             eval(parse(text='apply(tail(samples,isloopsize)[x,],1,parlp)'))
-          },cores=cores)
+          },cores=cores))
           
           
           
@@ -1051,7 +1051,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           #check max resample probability and drop earlier samples if too high
           dropuntil <- ceiling(max(c(0,which(sample_prob > (chancethreshold / isloopsize)) / isloopsize),na.rm=TRUE))*isloopsize
           if((isloopsize - dropuntil) > isloopsize) dropuntil <- dropuntil -isloopsize
-          # 
+          if(nrow(samples)-dropuntil < isloopsize*2) dropuntil <- nrow(samples)-isloopsize*2
           if(length(unique(resample_i)) < 200) dropuntil <- 0 
           if(nrow(samples) < isloopsize *2) dropuntil <- 0
           
