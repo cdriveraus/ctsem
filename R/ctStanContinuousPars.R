@@ -50,7 +50,7 @@ ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
   
   # if(subjects[1]=='all') subjects=1:nsubjects
   
-  if(subjects=='all') collapsemargin <- 1 else collapsemargin<-c(1,2)
+  if(subjects[1]=='all') collapsemargin <- 1 else collapsemargin<-c(1,2)
   # if(collapseIterations) collapsemargin=1
   
   for(matname in c('DRIFT','DIFFUSIONcov','asymDIFFUSION','CINT','T0MEANS', 
@@ -69,10 +69,10 @@ ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
     calcfuncargs$collapsefunc=calcfunc
 
     # if(!vector) {
-      calcfuncargs$inarray = e[[ifelse(subjects!='all', matname, paste0('pop_',matname))]]
-      if(subjects!='all') calcfuncargs$inarray  <- calcfuncargs$inarray[,subselection,,,drop=FALSE]
+      calcfuncargs$inarray = e[[ifelse(subjects[1]!='all', matname, paste0('pop_',matname))]]
+      if(subjects[1]!='all') calcfuncargs$inarray  <- calcfuncargs$inarray[,subselection,,,drop=FALSE]
       assign(matname, array(do.call(ctCollapse,calcfuncargs),
-        dim=dim(e[[ifelse(subjects!='all', matname, paste0('pop_',matname))]])[-c(1,if(subjects!='all') 2)]))
+        dim=dim(e[[ifelse(subjects[1]!='all', matname, paste0('pop_',matname))]])[-c(1,if(subjects[1]!='all') 2)]))
     # }
     
     # if(vector) {

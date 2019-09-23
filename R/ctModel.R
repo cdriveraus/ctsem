@@ -271,14 +271,15 @@ ctModel<-function(LAMBDA, n.manifest = 'auto', n.latent='auto', type='omx', Tpoi
 
   mats <- ctStanMatricesList()
   for(m in names(mats$base)){
-    if(!is.null(get(m))){
+    if(!is.null(get(m))){ #if the matrix is specified
       val <- get(m)
-      if(!all(val %in% 'auto') && !is.matrix(val)){
-        
-        mat<-ctLabel(TDpredNames=TDpredNames,TIpredNames=TIpredNames,
+      if(!all(val %in% 'auto') && !is.matrix(val)){ #and not auto or a matrix
+        if(m %in% 'PARS') mat <- matrix(PARS,ncol=1) else {
+        mat<-ctLabel(TDpredNames=TDpredNames,TIpredNames=TIpredNames, #set the basic structure
           manifestNames=manifestNames,latentNames=latentNames,matrixname=m,n.latent=n.latent,
           n.manifest=n.manifest,n.TDpred=n.TDpred,n.TIpred=n.TIpred,Tpoints=Tpoints)
-        counter <- 0
+        }
+        counter <- 0 #then start filling with vector
         if(length(val) != length(mat) && length(val) !=1) stop(paste0(m,' needs ',length(mat),' values for ',nrow(mat),' * ',ncol(mat),' matrix, but has ',length(val)))
         if(length(val)==1 && length(mat) > 1) {
           message(m,' specified via single value -- filling ',nrow(mat),' * ',ncol(mat),' matrix:')
@@ -290,7 +291,7 @@ ctModel<-function(LAMBDA, n.manifest = 'auto', n.latent='auto', type='omx', Tpoi
             mat[ri,ci] <- val[counter]
           }
         }
-       
+        
         print(mat,right=TRUE)
         assign(m, mat)
       }

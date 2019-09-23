@@ -182,8 +182,11 @@ ctspec$inneroffset <- NULL
   for(pi in 1:nrow(ctspec)){
   if(grepl('|',ctspec$param[pi],fixed=TRUE)){
     split = strsplit(gsub(' ','',ctspec$param[pi]),split = '|',fixed=TRUE)[[1]]
-    # browser()
-    # ctspec$param[pi] = split[length(split)]
+
+    if(grepl('\\W',split[1]) || any(sapply(latentNames,function(x){ #if symbols or latent states
+      grepl(paste0('\\b(',x,')\\b'),split[1])
+      }))) stop(paste0(split[1],' invalid -- Matrix elements involving multiple parameters / latent states cannot have | separators -- transformations should be specified as part of the first element, indvarying and tipredeffects must be specified in the corresponding singular PARS matrix elements.'))
+    
     nonzero <- which(!split %in% '')
     ctspec[pi,c('param','transform','indvarying','sdscale')] <- 
         list(NA,ctspec$transform[pi],ctspec$matrix[pi] %in% c('CINT','T0MEANS','MANIFESTMEANS'),1) #base values

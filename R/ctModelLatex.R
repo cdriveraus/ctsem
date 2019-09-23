@@ -140,9 +140,7 @@ ctModelLatex<- function(ctmodel,matrixnames=TRUE,textsize='normalsize',folder=te
               ,
               \\underbrace{
                 ",bmatrix(ctmodel$MANIFESTVAR),"  
-              ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\Theta}}",ifelse(!matrixnames,"}","_\\textrm{MANIFESTVAR}}")," \\right) ", 
-    ifelse(is.null(ctmodel$PARS),"", paste0("\\\\ \\\\
-              &\\underbrace{",bmatrix(ctmodel$PARS),"}",ifelse(!matrixnames,"}","_\\textrm{PARS}"),"")),"
+              ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\Theta}}",ifelse(!matrixnames,"}","_\\textrm{MANIFESTVAR}}")," \\right) 
       \\end{align*}
       \\end{",textsize,"}
       ")

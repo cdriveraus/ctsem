@@ -540,6 +540,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     continuoustime<-ctstanmodel$continuoustime
 
     ctstanmodelbase <- ctstanmodel
+    ctstanmodel <- ctModelStatesAndPARS(ctstanmodel)
     ctstanmodel <- ctModelTransformsToNum(ctstanmodel)
     ctstanmodel$pars <- ctStanModelCleanctspec(ctstanmodel$pars)
     # ctstanmodel <- ctStanModelIntOverPop(ctstanmodel)
