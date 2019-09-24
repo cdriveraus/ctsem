@@ -324,13 +324,17 @@ sgd <- function(init,fitfunc,ndatapoints,plotsgd=FALSE,stepbase=1e-4,gmeminit=if
   oldlp <- -Inf
   converged <- FALSE
   nrows <- ifelse(is.na(startnrows),ndatapoints, min(ndatapoints, startnrows))
-  
   while(!converged && i < maxiter){
-    print
     i = i + 1
     accepted <- FALSE
     lproughnesstarget2 = ifelse(nrows==ndatapoints,lproughnesstarget,.49)
+    notacceptedcount <- 0
     while(!accepted){
+      notacceptedcount <- notacceptedcount+1
+      if(notacceptedcount > 50) {
+        stop('Cannot optimize! Problematic model, or bug?')
+      print(lpg)
+      }
       newpars = bestpars
       delta =   step  * (gsmooth*(gsmoothness) + g*(1-(gsmoothness))) * exp((rnorm(length(g),0,.01)))
       delta[abs(delta) > maxparchange] <- maxparchange*sign(delta[abs(delta) > maxparchange])
@@ -345,7 +349,6 @@ sgd <- function(init,fitfunc,ndatapoints,plotsgd=FALSE,stepbase=1e-4,gmeminit=if
       
       # lpg = try(smf$log_prob(upars=newpars,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
       lpg= -fitfunc(newpars)
-      
       if(lpg > -1e99 && class(lpg) !='try-error' && !is.nan(lpg[1]) && all(!is.nan(attributes(lpg)$gradient))){
         accepted <- TRUE
       } 
@@ -486,6 +489,7 @@ sgd <- function(init,fitfunc,ndatapoints,plotsgd=FALSE,stepbase=1e-4,gmeminit=if
     }
     
     #check convergence
+    
     if(i > 30){
       if(max(tail(lp,nconvergeiter)) - min(tail(lp,nconvergeiter)) < itertol) converged <- TRUE
       # print(max(tail(lp,nconvergeiter)) - min(tail(lp,nconvergeiter)))

@@ -2,6 +2,8 @@
 #'
 #' @param ctmodelobj ctsem model object of type 'omx' (default)
 #' @param type either 'stanct' for continuous time, or 'standt' for discrete time.
+#' @param tipredDefault Logical. TRUE sets any parameters with unspecified time independent 
+#' predictor effects to have effects estimated, FALSE fixes the effect to zero unless individually specified.
 #'
 #' @return List object of class ctStanModel, with random effects specified for any intercept type parameters
 #' (T0MEANS, MANIFESTMEANS, and or CINT), and time independent predictor effects for all parameters. Adjust these
@@ -25,7 +27,7 @@
 #' stanmodel=ctStanModel(model)
 #' 
 #' 
-ctStanModel<-function(ctmodelobj, type='stanct'){
+ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
   if(type=='stanct') continuoustime<-TRUE
   if(type=='standt') continuoustime<-FALSE
   
@@ -79,7 +81,7 @@ ctStanModel<-function(ctmodelobj, type='stanct'){
   ctspec$transform <- 0
   ctspec$offset <- 0
   ctspec$inneroffset <- 0
-
+  
   
   ######### STAN parameter transforms
   for(pi in 1:length(ctspec$matrix)){
@@ -91,11 +93,11 @@ ctStanModel<-function(ctmodelobj, type='stanct'){
         ctspec$offset[pi] <- 0.5
         ctspec$meanscale[pi] <- 5
       }
-
+      
       if(ctspec$matrix[pi] %in% c('DIFFUSION','MANIFESTVAR', 'T0VAR')) {
         if(ctspec$row[pi] != ctspec$col[pi]){
           ctspec$transform[pi] <- 0
-         # if(ctspec$matrix[pi] %in% c('DIFFUSION')) ctspec$meanscale[pi] <-2
+          # if(ctspec$matrix[pi] %in% c('DIFFUSION')) ctspec$meanscale[pi] <-2
         }
         if(ctspec$row[pi] == ctspec$col[pi]){
           ctspec$transform[pi] <- 1
@@ -110,7 +112,7 @@ ctStanModel<-function(ctmodelobj, type='stanct'){
             ctspec$transform[pi] <- 1
             ctspec$meanscale[pi] <- 2
             ctspec$multiplier[pi] <- -2
-             ctspec$offset[pi] <- 0
+            ctspec$offset[pi] <- 0
           }
           if(continuoustime==FALSE) {
             ctspec$transform[pi] <- 0
@@ -139,10 +141,10 @@ ctStanModel<-function(ctmodelobj, type='stanct'){
         singletext = TRUE))
     }
   }
-ctspec$multiplier <- NULL
-ctspec$meanscale <- NULL
-ctspec$offset <- NULL
-ctspec$inneroffset <- NULL
+  ctspec$multiplier <- NULL
+  ctspec$meanscale <- NULL
+  ctspec$offset <- NULL
+  ctspec$inneroffset <- NULL
   
   nparams<-sum(freeparams)
   
@@ -151,13 +153,13 @@ ctspec$inneroffset <- NULL
     indvarying<-rep(TRUE,nparams)
     # indvarying[ctspec$matrix[is.na(ctspec$value)] %in% 'T0VAR'] <- FALSE
   }
-
+  
   if(length(indvarying) != nparams) stop('indvarying must be ', nparams,' long!')
   nindvarying <- sum(indvarying)
   
-    
-    
-  indvarying[!ctspec$matrix[is.na(ctspec$value)] %in% c('T0MEANS','MANIFESTMEANS','CINT')] <- FALSE # tipred decisions are dependent on this so do this after
+  
+  
+  indvarying[!ctspec$matrix[is.na(ctspec$value)] %in% c('T0MEANS','MANIFESTMEANS','CINT')] <- FALSE 
   ctspec$indvarying<-NA
   ctspec$indvarying[is.na(ctspec$value)]<-indvarying
   ctspec$indvarying[!is.na(ctspec$value)]<-FALSE
@@ -172,37 +174,73 @@ ctspec$inneroffset <- NULL
     tipredspec<-matrix(TRUE,ncol=n.TIpred,nrow=1)
     colnames(tipredspec)<-paste0(TIpredNames,'_effect')
     ctspec<-cbind(ctspec,tipredspec,stringsAsFactors=FALSE)
-    ctspec[!is.na(ctspec$value),paste0(TIpredNames,'_effect')]<-FALSE
+    ctspec[!is.na(ctspec$value),paste0(TIpredNames,'_effect')]<-tipredDefault
     for(predi in TIpredNames){
       class(ctspec[,paste0(predi,'_effect')])<-'logical'
     }
     if(sum(unlist(ctspec[,paste0(TIpredNames,'_effect')]))==0) stop('TI predictors included but no effects specified!')
   }
   
-  for(pi in 1:nrow(ctspec)){
-  if(grepl('|',ctspec$param[pi],fixed=TRUE)){
-    split = strsplit(gsub(' ','',ctspec$param[pi]),split = '|',fixed=TRUE)[[1]]
-
-    if(grepl('\\W',split[1]) || any(sapply(latentNames,function(x){ #if symbols or latent states
-      grepl(paste0('\\b(',x,')\\b'),split[1])
+  
+  
+  getwords <- function(x) gsub('\\W+',',',x)
+  
+  
+  
+  for(pi in 1:nrow(ctspec)){ #check for complex / split specifications
+    if(grepl('|',ctspec$param[pi],fixed=TRUE)){
+      ctspec$param[pi] <- gsub('$',' ',ctspec$param[pi])
+      split = strsplit(ctspec$param[pi],split = '|',fixed=TRUE)[[1]]
+      split=sapply(split,function(x) gsub(' ','',x))
+      
+      tisplit <- NA
+      if(length(split) > 4){ #check for ti pred spec in splits
+        if(n.TIpred < 1 || length(split) > 5) stop(paste0('Param spec has too many separators!  ', ctspec$param[pi]))
+        tisplit <- split[5]
+        split <- split[1:4]
+      }
+      if(grepl('\\W',split[1]) || any(sapply(latentNames,function(x){ #if symbols or latent states
+        grepl(paste0('\\b(',x,')\\b'),split[1])
       }))) stop(paste0(split[1],' invalid -- Matrix elements involving multiple parameters / latent states cannot have | separators -- transformations should be specified as part of the first element, indvarying and tipredeffects must be specified in the corresponding singular PARS matrix elements.'))
-    
-    nonzero <- which(!split %in% '')
-    ctspec[pi,c('param','transform','indvarying','sdscale')] <- 
+      
+      nonzero <- which(!split %in% '')
+      ctspec[pi,c('param','transform','indvarying','sdscale')] <- 
         list(NA,ctspec$transform[pi],ctspec$matrix[pi] %in% c('CINT','T0MEANS','MANIFESTMEANS'),1) #base values
-    ctspec[pi,c('param','transform','indvarying','sdscale')[1:(length(split))]][nonzero] <- 
-      split[1:(length(split))][nonzero] #update with non zero length split elements
-    
-    message('Custom par ',ctspec$param[pi],' found, set as: ',paste0(
-      colnames(ctspec[pi,c('param','transform','indvarying','sdscale')]),' = ',
-      ctspec[pi,c('param','transform','indvarying','sdscale')],'; '))
+      ctspec[pi,c('param','transform','indvarying','sdscale')[1:(length(split))]][nonzero] <- 
+        split[1:(length(split))][nonzero] #update with non zero length split elements
+      
+      whichtipreds <- c()
+      timessage <- c()
+      if(!is.na(tisplit)){
+        tisplit <- strsplit(getwords(tisplit),split = ',')[[1]]
+        ctspec[,paste0(TIpredNames,'_effect')] <- FALSE #first set all FALSE
+        if(!tisplit[1] %in% ''){
+          for(ti in TIpredNames){ #check which tipreds were included
+            for(spliti in tisplit){
+              if(!spliti %in% TIpredNames) stop (spliti,' is not a time independent predictor!')
+              if(grepl(paste0('\\b(',ti,')\\b'),spliti)) whichtipreds <- c(whichtipreds,ti)
+            }
+          }
+        }
+        if(!is.null(whichtipreds))  ctspec[,paste0(whichtipreds,'_effect')] <- TRUE #set those effects TRUE
+        if(is.null(whichtipreds)) whichtipreds <- 'NULL'
+        timessage <- paste0(ctspec$param[pi],' tipred effects from: ', paste0(whichtipreds,collapse=', '))
+        
+      }
+      
+      
+      message('Custom par ',ctspec$param[pi],' set as: ',paste0(
+        colnames(ctspec[pi,c('param','transform','indvarying','sdscale')]),' = ',
+        ctspec[pi,c('param','transform','indvarying','sdscale')],'; '),timessage)
+    }
   }
-  }
-
+  
   
   out<-list(pars=ctspec,n.latent=n.latent,n.manifest=n.manifest,n.TIpred=n.TIpred,n.TDpred=n.TDpred,
-    latentNames=latentNames,manifestNames=manifestNames,TIpredNames=TIpredNames,TDpredNames=TDpredNames,subjectIDname='id',
-    timeName='time',
+    latentNames=latentNames,manifestNames=manifestNames,
+    TIpredNames=TIpredNames,TDpredNames=TDpredNames,
+    subjectIDname=ctmodelobj$id,
+    timeName=ctmodelobj$time,
     continuoustime=continuoustime)
   class(out)<-'ctStanModel'
   

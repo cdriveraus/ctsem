@@ -4,12 +4,15 @@
 \alias{ctStanModel}
 \title{Convert a frequentist (omx) ctsem model specification to Bayesian (Stan).}
 \usage{
-ctStanModel(ctmodelobj, type = "stanct")
+ctStanModel(ctmodelobj, type = "stanct", tipredDefault = TRUE)
 }
 \arguments{
 \item{ctmodelobj}{ctsem model object of type 'omx' (default)}
 
 \item{type}{either 'stanct' for continuous time, or 'standt' for discrete time.}
+
+\item{tipredDefault}{Logical. TRUE sets any parameters with unspecified time independent 
+predictor effects to have effects estimated, FALSE fixes the effect to zero unless individually specified.}
 }
 \value{
 List object of class ctStanModel, with random effects specified for any intercept type parameters

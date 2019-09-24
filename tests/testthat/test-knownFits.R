@@ -45,7 +45,6 @@ test_that("AnomAuth_traitasymptoticcheck", {
     CINT=matrix(0,nrow=2),
     T0MEANS=matrix(0,nrow=2),
     MANIFESTMEANS=matrix(c('m1','m2'),nrow=2),
-    timeVarying='MANIFESTMEANS',
     Tpoints=5)
   
   AnomAuthfit1<-ctRefineTo(AnomAuth, AnomAuthmodel,asymptotes=FALSE, verbose=0,retryattempts=1)

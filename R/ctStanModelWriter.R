@@ -1,3 +1,14 @@
+ctModel0DRIFT <- function(ctm,continuoustime){
+      repval <- ifelse(continuoustime,-1e-50, 1-1e-10)
+    checkval <- ifelse(continuoustime,0, 1)
+  if(any(ctm$pars$value %in% checkval & ctm$pars$matrix %in% 'DRIFT' & ctm$pars$row == ctm$pars$col)) {
+    message('Setting DRIFT diagonals of ',checkval,' to approximate ', checkval,' of ',repval)
+  ctm$pars$value[ctm$pars$value %in% checkval & ctm$pars$matrix %in% 'DRIFT' & ctm$pars$row == ctm$pars$col] <- repval
+  }
+  return(ctm)
+}
+
+
 ctModelStatesAndPARS <- function(ctm){
   #detect state refs
   ln <- ctm$latentNames
