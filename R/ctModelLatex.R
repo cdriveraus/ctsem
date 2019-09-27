@@ -85,7 +85,9 @@ ctModelLatex<- function(ctmodel,matrixnames=TRUE,textsize='normalsize',folder=te
 \\usepackage{bm}
 \\newcommand{\\vect}[1]{\\boldsymbol{\\mathbf{#1}}}
 
-\\begin{document}")
+
+\\begin{document}
+\\thispagestyle{empty}")
   out <- paste0(out, "
 \\setcounter{MaxMatrixCols}{200}
  \\begin{",textsize,"}

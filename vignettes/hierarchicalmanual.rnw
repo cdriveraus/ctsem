@@ -473,15 +473,17 @@ time <- 1749:1924
 datalong <- cbind(id, time, sunspots)
 
 #setup model
-ssmodel <- ctModel(type='stanct', n.latent=2, n.manifest=1, 
+ssmodel <- ctModel(type='stanct', 
   manifestNames='sunspots', 
   latentNames=c('ss_level', 'ss_velocity'),
-  LAMBDA=matrix(c( 1, 'ma1| log(1+(exp(param)))' ), nrow=1, ncol=2),
-  DRIFT=matrix(c(0, 'a21 | -log(1+exp(param))', 1, 'a22'), nrow=2, ncol=2),
-  MANIFESTMEANS=matrix(c('m1|param * 10 + 44'), nrow=1, ncol=1),
+  LAMBDA=c( 1, 'ma1| log(1+(exp(param)))'),
+  DRIFT=c(0, 1, 
+    'a21 | -log(1+exp(param))','a22'),
+  MANIFESTMEANS=c('m1|param * 10 + 44'),
   MANIFESTVAR=diag(0,1), #As per original spec
-  CINT=matrix(c(0, 0), nrow=2, ncol=1),
-  DIFFUSION=matrix(c(0, 0, 0, "diffusion"), ncol=2, nrow=2))
+  CINT=0,
+  DIFFUSION=c(0, 0, 
+    0, "diffusion"))
 #fit
 ssfit <- ctStanFit(datalong, ssmodel, iter=300, chains=2)
 
@@ -499,23 +501,23 @@ id <- 1
 time <- 1749:1924
 datalong <- data.frame(id, time, sunspots)
 
-m <- ctModel(n.latent=2, n.manifest=1, type='stanct', manifestNames = 'sunspots',
-  LAMBDA=matrix(c(1,'ma1|log(1+exp(param))'),nrow=1, ncol=2),
-  DRIFT = matrix(c(0,'drift21 | -log1p(exp(param))',1,  
-  '-log1p(exp(PARS[1,2] + PARS[1,1] *  state[1]))'), 2, 2),
-  DIFFUSION = matrix(c(0,0, 0,'diff11'), 2, 2),
-  MANIFESTVAR=matrix(0),
-  MANIFESTMEANS=matrix(c('m1|param * 10 + 44'), nrow=1, ncol=1),
-  PARS=matrix(c('driftbystate','driftintercept'), 1,2) )
+m <- ctModel(type='stanct', 
+  manifestNames='sunspots', 
+  latentNames=c('ss_level', 'ss_velocity'),
+  LAMBDA=c( 1, 'ma1|log(1+exp(param))'),
+  DRIFT=c(0, 1, 
+    '-log1p(exp(driftintercept + driftbystate *  ss_level))','a22'),
+  MANIFESTMEANS=c('m1|param * 10 + 44'),
+  # MANIFESTVAR=diag(0,1), #As per original spec
+  CINT=0,
+  DIFFUSION=c(0, 0, 
+    0, "diffusion"),
+  PARS=c('driftintercept','driftbystate'))
 
 ssfitnl <- ctStanFit(datalong, m, optimize=TRUE)
 
-k <- ctStanKalman(ssfitnl) #extract state predictions
+ctKalman(ssfitnl,kalmanvec=c('y','ysmooth'),timestep=.1,plot=TRUE)
 
-matplot(datalong$time,t(k$yprior[1:50,,1]),type='l',
-  col=rgb(1,0,0,.1),xlab='Year',ylab='Sunspots') 
-points(datalong$time,datalong$sunspots,type='l')
-legend('topright',c('Observed','Predicted'),text.col=c('black','red'),bty='n')
 @
 
 One important difference when using nonlinear estimation, is that DIFFUSION and T0VAR matrices are treated simply as Cholesky factors of covariance matrices -- this simplifies usage but may require more care with respect to prior specification / checking.

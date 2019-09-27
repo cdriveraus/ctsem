@@ -26,3 +26,4 @@
 ^src/stan_files/ctsmgen.bak
 ^\.rda
 ^R\modelchecking.R
+^installctsem.R
