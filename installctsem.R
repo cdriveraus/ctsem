@@ -16,17 +16,19 @@ if(mv == 'N' || mv =='n'){ #create makevars
   cat("\nCXX14FLAGS=-O3 -mtune=native",
     if( grepl("^darwin", R.version$os)) "CXX14FLAGS += -arch x86_64 -ftemplate-depth-256" else
       if (.Platform$OS.type == "windows") "CXX11FLAGS=-O3 -mtune=native
-  CXX14 = $(BINPREF)g++ -m$(WIN) -std=c++1y" else
+CXX14 = $(BINPREF)g++ -m$(WIN) -std=c++1y" else
     "CXX14FLAGS += -fPIC",
     file = M, sep = "\n", append = TRUE)
 }
+if(!requireNamespace('rstan')) install.packages('rstan',dependencies = TRUE)
+if(!requireNamespace('OpenMx')) install.packages('OpenMx',dependencies = TRUE)
 
 if(.Platform$OS.type == "windows"){
-  if(!pkgbuild::has_rtools()) message('Waiting for Rtools installation to complete')
+  if(!suppressMessages(pkgbuild::has_rtools())) message('Waiting for Rtools installation to complete...')
   while(! suppressMessages(pkgbuild::has_rtools())){
     Sys.sleep(.1)
   }
 }
 Sys.setenv(R_REMOTES_NO_ERRORS_FROM_WARNINGS='true')
-remotes::install_github('cdriveraus/ctsem', INSTALL_opts = "--no-multiarch", 
+remotes::install_github('cdriveraus/ctsem', upgrade='never',INSTALL_opts = "--no-multiarch", 
   dependencies = c("Depends", "Imports"))
