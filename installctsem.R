@@ -1,6 +1,6 @@
 install.packages('pkgbuild')
 library(pkgbuild)
-pkgbuild::check_build_tools()
+try(pkgbuild::check_build_tools())
 
 cat('Do you already have a MAKEVARS file configured for rstan usage? If unsure, type N')
 mv <- readline('Y / N ?')
