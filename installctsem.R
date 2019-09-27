@@ -1,9 +1,21 @@
-if(!is.null(names(sessionInfo()$otherPkgs))){ #unload packages
-  message('If any problems occur, please try this from a fresh R session')
-  suppressWarnings(invisible(lapply(paste0('package:', names(sessionInfo()$otherPkgs)), detach, character.only=TRUE, unload=TRUE)))
+packs <- c(names(sessionInfo()$otherPkgs), names(sessionInfo()$loadedOnly))
+if(length(packs) > 0){ 
+  message('Unloading packages -- if any problems occur, please try this from a fresh R session')
+  while(length(packs) > 0){
+    newpacks <- c()
+    for(packi in 1:length(packs)){
+      u=try(lapply(paste0('package:', packs), unloadNamespace))
+      if(class(u) %in% 'try-error') newpacks <- c(newpacks,packs[packi])
+    }
+    packs <- newpacks
+    Sys.sleep(.1)
+  }
 }
 
-if(!requireNamespace('pkgbuild')) install.packages('pkgbuild')
+buildpacks <- c('devtools','pkgbuild','remotes')
+for(bi in buildpacks){
+  if(!requireNamespace(bi)) install.packages(bi)
+}
 require(pkgbuild)
 try(pkgbuild::check_build_tools())
 
