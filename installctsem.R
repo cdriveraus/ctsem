@@ -21,10 +21,12 @@ if(mv == 'N' || mv =='n'){ #create makevars
     file = M, sep = "\n", append = TRUE)
 }
 
-while(!pkgbuild::check_rtools()){
-  Sys.sleep(.1)
-  Sys.setenv(R_REMOTES_NO_ERRORS_FROM_WARNINGS='true')
-  remotes::install_github('cdriveraus/ctsem', INSTALL_opts = "--no-multiarch", 
-    dependencies = c("Depends", "Imports"))
+if(.Platform$OS.type == "windows"){
+  if(!pkgbuild::has_rtools()) message('Waiting for Rtools installation to complete')
+  while(! suppressMessages(pkgbuild::has_rtools())){
+    Sys.sleep(.1)
+  }
 }
-
+Sys.setenv(R_REMOTES_NO_ERRORS_FROM_WARNINGS='true')
+remotes::install_github('cdriveraus/ctsem', INSTALL_opts = "--no-multiarch", 
+  dependencies = c("Depends", "Imports"))
