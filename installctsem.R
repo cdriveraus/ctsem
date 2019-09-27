@@ -1,5 +1,5 @@
-install.packages('pkgbuild')
-library(pkgbuild)
+if(!requireNamespace('pkgbuild')) install.packages('pkgbuild')
+require(pkgbuild)
 try(pkgbuild::check_build_tools())
 
 cat('Do you already have a MAKEVARS file configured for rstan usage? If unsure, type N')
