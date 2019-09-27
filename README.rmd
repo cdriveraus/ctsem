@@ -12,34 +12,24 @@ ctsem allows for easy specification and fitting of a range of continuous and dis
 
 ### To install the github version, use:
 ```r
-remotes::install_github('cdriveraus/ctsem', INSTALL_opts = "--no-multiarch", dependencies = c("Depends", "Imports"))
+source(file = 'https://github.com/cdriveraus/ctsem/raw/master/installctsem.R')
 ```
 
 
 ### Troubleshooting Rstan / Rtools install for Windows:
 
 Ensure recent version of R and Rtools is installed.
+If the installctsem.R code has never been run before, be sure to run that (see above).
 
-try including these lines in home/.R/makevars. :
+Make sure these lines exist in home/.R/makevars.win :
 
 ```
-CXX14 = g++ -std=c++1y
-CXX14FLAGS = -O3 -Wno-unused-variable -Wno-unused-function
+CXX14FLAGS=-O3 -mtune=native
+CXX11FLAGS=-O3 -mtune=native
+CXX14 = $(BINPREF)g++ -m$(WIN) -std=c++1y
 ```
 
-If makevars does not exist, run this code within R:
-
-```r
-dotR <- file.path(Sys.getenv("HOME"), ".R")
-if (!file.exists(dotR)) dir.create(dotR)
-M <- file.path(dotR, ifelse(.Platform$OS.type == "windows", "Makevars.win", "Makevars"))
-if (!file.exists(M)) file.create(M)
-cat("\nCXX14FLAGS=-O3 -march=native -mtune=native",
-    if( grepl("^darwin", R.version$os)) "CXX14FLAGS += -arch x86_64 -ftemplate-depth-256" else
-    if (.Platform$OS.type == "windows") "CXX11FLAGS=-O3 -march=native -mtune=native" else
-    "CXX14FLAGS += -fPIC",
-    file = M, sep = "\n", append = TRUE)
-```
+If makevars does not exist, re-run the install code above.
 
 In case of compile errors like `g++ not found`, ensure the devtools package is installed:
 
@@ -47,11 +37,11 @@ In case of compile errors like `g++ not found`, ensure the devtools package is i
 install.packages('devtools')
 ```
 
-and include the following in your .Rprofile
+and include the following in your .Rprofile, replacing c:/Rtools with the appropriate path -- sometimes Rbuildtools/3.5/ . 
 
 ```r
 library(devtools)
 Sys.setenv(PATH = paste("C:/Rtools/bin", Sys.getenv("PATH"), sep=";"))
-Sys.setenv(PATH = paste("C:\\Rtools\\mingw_64\\bin", Sys.getenv("PATH"), sep=";"))
+Sys.setenv(PATH = paste("C:/Rtools/mingw_64/bin", Sys.getenv("PATH"), sep=";"))
 Sys.setenv(BINPREF = "C:/Rtools/mingw_$(WIN)/bin/")
 ```

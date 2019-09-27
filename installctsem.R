@@ -1,3 +1,4 @@
+#unload packages
 packs <- c(names(sessionInfo()$otherPkgs), names(sessionInfo()$loadedOnly))
 if(length(packs) > 0){ 
   message('Unloading packages -- if any problems occur, please try this from a fresh R session')
@@ -12,6 +13,7 @@ if(length(packs) > 0){
   }
 }
 
+#install / load build packages
 buildpacks <- c('devtools','pkgbuild','remotes')
 for(bi in buildpacks){
   if(!requireNamespace(bi)) install.packages(bi)
@@ -19,6 +21,7 @@ for(bi in buildpacks){
 require(pkgbuild)
 try(pkgbuild::check_build_tools())
 
+#create / update makevars if needed
 cat('Do you already have a MAKEVARS file configured for rstan usage? If unsure, type N')
 mv <- readline('Y / N ?')
 while(!mv %in% c('Y','N','y','n')) {
@@ -45,6 +48,7 @@ if(.Platform$OS.type == "windows"){
   }
 }
 
+#check for new versions of critical packages
 old = old.packages()
 for(importantpack in c('rstan','OpenMx')){
   if(importantpack %in% old) {
@@ -53,6 +57,7 @@ for(importantpack in c('rstan','OpenMx')){
   }
 }
 
+#install ctsem from github
 Sys.setenv(R_REMOTES_NO_ERRORS_FROM_WARNINGS='true')
 remotes::install_github('cdriveraus/ctsem', upgrade='never',INSTALL_opts = "--no-multiarch", 
   dependencies = c("Depends", "Imports"))
