@@ -52,6 +52,10 @@ ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA){
   out$T0VAR <- out$T0VAR[1:nlatent,1:nlatent,drop=FALSE]
   out$T0MEANS <- out$T0MEANS[1:nlatent,,drop=FALSE]
   
+  
+  #cholesky factor fix
+  out$MANIFESTVAR=out$MANIFESTVAR %*% t(out$MANIFESTVAR) #cholesky factor inside stanfit...
+  
   #dimension naming (latent row object, manifest column object, etc
   for(lro in c('DRIFT','DIFFUSION','CINT','T0VAR','T0MEANS','asymDIFFUSION',if('TDPREDEFFECT' %in% model$pars$matrix) 'TDPREDEFFECT')){
     if(lro %in% whichmatrices) rownames(out[[lro]]) <- model$latentNames

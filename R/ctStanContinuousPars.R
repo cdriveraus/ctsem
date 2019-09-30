@@ -111,7 +111,7 @@ ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
   
   if(!is.null(e$pop_MANIFESTVAR)) {
     dimnames(MANIFESTVAR)=list(mn,mn)
-    model$MANIFESTVAR=MANIFESTVAR
+    model$MANIFESTVAR=MANIFESTVAR %*% t(MANIFESTVAR) #cholesky factor inside stanfit...
     
   }
   

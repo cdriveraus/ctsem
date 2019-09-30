@@ -537,6 +537,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     idName<-ctstanmodel$subjectIDname
     timeName<-ctstanmodel$timeName
+    if(!ctstanmodel$timeName %in% colnames(datalong) && !ctstanmodel$continuoustime) {
+      datalong[[ctstanmodel$timeName]] <- 1:nrow(datalong)
+    }
     continuoustime<-ctstanmodel$continuoustime
 
     ctstanmodelbase <- ctstanmodel

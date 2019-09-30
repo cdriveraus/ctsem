@@ -251,6 +251,8 @@ parameters {
 transformed parameters{
   vector[nindvarying] rawpopsd; //population level std dev
   matrix[nindvarying, nindvarying] rawpopcovsqrt; 
+  matrix[nindvarying,nindvarying] rawpopcorr;
+  matrix[nindvarying,nindvarying] rawpopcov;
 
   real ll = 0;
   vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatent*2 : 0)] kalman[savescores ? ndatapoints : 0];
@@ -334,8 +336,9 @@ matrix[nlatent, nlatent] pop_DIFFUSIONcov;
         }
       }
     }
- rawpopcovsqrt = cholesky_decompose(makesym(tcrossprod(diag_pre_multiply(rawpopsd, 
-      constraincorsqrt(rawpopcovsqrt))),verbose,1)); 
+    rawpopcorr = tcrossprod( constraincorsqrt(rawpopcovsqrt));
+    rawpopcov = makesym(quad_form_diag(rawpopcorr, rawpopsd),verbose,1);
+    rawpopcovsqrt = cholesky_decompose(rawpopcov); 
   }//end indvarying par setup
 
   {
@@ -477,19 +480,19 @@ matrix[nlatent, nlatent] sDIFFUSIONcov;
     sDIFFUSIONcov = sdcovsqrt2cov(sDIFFUSION,nldynamics);
   }
   if(subi <= (asymDIFFUSIONsubindex ? nsubjects : 0)) {
-      if(ndiffusion < nlatent) sasymDIFFUSION = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
+    if(ndiffusion < nlatent) sasymDIFFUSION = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
 
-      if(continuoustime==1) sasymDIFFUSION[ derrind, derrind] = to_matrix( 
-      -kronsum(sDRIFT[ derrind, derrind ]) \  to_vector( 
-           sDIFFUSIONcov[ derrind, derrind ]), ndiffusion,ndiffusion);
+    if(continuoustime==1) sasymDIFFUSION[ derrind, derrind] = to_matrix( 
+    -kronsum(sDRIFT[ derrind, derrind ]) \  to_vector( 
+         sDIFFUSIONcov[ derrind, derrind ]), ndiffusion,ndiffusion);
 
-      if(continuoustime==0) sasymDIFFUSION[ derrind, derrind ] = to_matrix( (IIlatent2 - 
-        sqkron_prod(sDRIFT[ derrind, derrind ], sDRIFT[ derrind, derrind ])) \  to_vector(sDIFFUSIONcov[ derrind, derrind ]), ndiffusion, ndiffusion);
-    } //end asymdiffusion loops
+    if(continuoustime==0) sasymDIFFUSION[ derrind, derrind ] = to_matrix( (IIlatent2 - 
+      sqkron_prod(sDRIFT[ derrind, derrind ], sDRIFT[ derrind, derrind ])) \  to_vector(sDIFFUSIONcov[ derrind, derrind ]), ndiffusion, ndiffusion);
+  } //end asymdiffusion loops
 
-      if(subi <= (MANIFESTVARsubindex ? nsubjects : 0)) {
-         for(ri in 1:nmanifest) sMANIFESTVAR[ri,ri] = square(sMANIFESTVAR[ri,ri]);
-      }
+ // if(subi <= (MANIFESTVARsubindex ? nsubjects : 0)) {
+   //  for(ri in 1:nmanifest) sMANIFESTVAR[ri,ri] = square(sMANIFESTVAR[ri,ri]);
+  //}
          
     if(subi <= (T0VARsubindex ? nsubjects : 0)) {
     if(intoverpop){
@@ -823,8 +826,9 @@ if(verbose > 1) print ("below t0 row ", rowi);
           if(verbose > 1) print ("sMANIFESTVAR[o,o] = ",sMANIFESTVAR[o,o])
           if(verbose > 1) print ("etacov[1:nlatent,1:nlatent] = ",etacov[1:nlatent,1:nlatent])
           if(verbose > 1) print ("sJy[o,]' = ",sJy[o,]');
-          ycov[o,o] = quad_form(etacov, sJy[o,]') + sMANIFESTVAR[o,o];
+          ycov[o,o] = quad_form(etacov, sJy[o,]'); // + sMANIFESTVAR[o,o]; shifted measurement error down
           for(wi in 1:nmanifest){ 
+            if(Y[rowi,wi] != 99999) ycov[wi,wi] += square(sMANIFESTVAR[wi,wi]);
             if(manifesttype[wi]==1 && Y[rowi,wi] != 99999) ycov[wi,wi] += fabs((yprior[wi] - 1) .* (yprior[wi]));
             if(manifesttype[wi]==2 && Y[rowi,wi] != 99999) ycov[wi,wi] += square(fabs((yprior[wi] - round(yprior[wi])))); 
           }
@@ -833,7 +837,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
         if(intoverstates==0) { //sampled states
           if(ncont_y[rowi] > 0) {
             yprior[o0] = sMANIFESTMEANS[o0,1] + sJy[o0,] * state;
-            ypriorcov_sqrt[o0,o0] = sqrt(sMANIFESTVAR[o0,o0]);
+            ypriorcov_sqrt[o0,o0] = sMANIFESTVAR[o0,o0];
           }
           if(nbinary_y[rowi] > 0) yprior[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * state[1:nlatent])));
         }
@@ -974,8 +978,6 @@ model{
 generated quantities{
   vector[nparams] popmeans;
   vector[nparams] popsd = rep_vector(0,nparams);
-  matrix[nindvarying,nindvarying] rawpopcov = tcrossprod(rawpopcovsqrt);
-  matrix[nindvarying,nindvarying] rawpopcorr = quad_form_diag(rawpopcov,inv_sqrt(diagonal(rawpopcov)));
   matrix[nparams,ntipred] linearTIPREDEFFECT;
 
 
