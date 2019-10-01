@@ -124,6 +124,7 @@ before_install:
   - eval "${MATRIX_EVAL}"
   
 install:
+  - R -e 'install.packages("devtools")'
   - R -e 'devtools::install_deps(dep = T)'
   - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo apt-get install -yq --allow-unauthenticated --no-install-suggests --no-install-recommends r-cran-openmx; fi
   - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo apt-get install -yq --allow-unauthenticated --no-install-suggests --no-install-recommends r-cran-rstan; fi
