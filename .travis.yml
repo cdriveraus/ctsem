@@ -1,5 +1,6 @@
 language: r
 sudo: true
+fortran: true
 #cache: packages
   
 r_check_args: "--no-vignettes"
@@ -50,6 +51,7 @@ matrix:
     - os: linux
       dist: trusty
       r: devel
+      fortran: true
   #   r_binary_packages:
   #    - remotes
   #    - rstantools
