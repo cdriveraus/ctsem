@@ -1,5 +1,5 @@
 language: r
-sudo: false
+#sudo: false
 #cache: packages
   
 r_check_args: "--no-vignettes"
@@ -21,23 +21,23 @@ matrix:
     - os: linux
       dist: trusty
       r: release
-      r_binary_packages:
-        - rstantools
-        - data.table
-        - jsonlite
-        - Rcpp
-        - cOde
-        - remotes
-        - Deriv
-        - mvtnorm
-        - knitr
-        - testthat
-        - devtools
-        - DEoptim
-        - GGally
-        - shiny
-        - mize
-        - StanHeaders
+   #   r_binary_packages:
+   #     - rstantools
+   #     - data.table
+   #     - jsonlite
+   #     - Rcpp
+   #     - cOde
+   #     - remotes
+   #     - Deriv
+   #     - mvtnorm
+   #     - knitr
+   #     - testthat
+   #     - devtools
+   #     - DEoptim
+   #     - GGally
+   #     - shiny
+   #     - mize
+   #     - StanHeaders
       addons:
         apt:
           sources:
@@ -49,23 +49,23 @@ matrix:
     - os: linux
       dist: trusty
       r: devel
-      r_binary_packages:
-        - remotes
-        - rstantools
-        - data.table
-        - jsonlite
-        - Rcpp
-        - cOde
-        - Deriv
-        - mvtnorm
-        - knitr
-        - testthat
-        - devtools
-        - DEoptim
-        - GGally
-        - shiny
-        - mize
-        - StanHeaders
+  #   r_binary_packages:
+  #     - remotes
+  #     - rstantools
+  #     - data.table
+  #     - jsonlite
+  #     - Rcpp
+  #     - cOde
+  #     - Deriv
+  #     - mvtnorm
+  #     - knitr
+  #     - testthat
+  #     - devtools
+  #     - DEoptim
+  #     - GGally
+  #     - shiny
+  #     - mize
+  #     - StanHeaders
       addons:
         apt:
           sources:
@@ -91,25 +91,25 @@ matrix:
     - os: osx
       osx_image: xcode10
       r: release
-      r_binary_packages:
-        - rstantools
-        - data.table
-        - jsonlite
-        - Rcpp
-        - OpenMx
-        - cOde
-        - remotes
-        - Deriv
-        - mvtnorm
-        - knitr
-        - testthat
-        - devtools
-        - DEoptim
-        - GGally
-        - shiny
-        - mize
-        - StanHeaders
-      fortran: false
+  #   r_binary_packages:
+  #     - rstantools
+  #     - data.table
+  #     - jsonlite
+  #     - Rcpp
+  #     - OpenMx
+  #     - cOde
+  #     - remotes
+  #     - Deriv
+  #     - mvtnorm
+  #     - knitr
+  #     - testthat
+  #     - devtools
+  #     - DEoptim
+  #     - GGally
+  #     - shiny
+  #     - mize
+  #     - StanHeaders
+  #   fortran: false
 
      
 before_install:
