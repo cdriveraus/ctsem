@@ -114,16 +114,16 @@ before_install:
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then printf "CXX14 = clang++ -arch x86_64 -ftemplate-depth-256" >> ~/.R/Makevars; fi
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then printf "CXX14FLAGS = -O3 -mtune=native -march=native -Wno-unused-variable -Wno-unused-function  -Wno-unknown-pragmas" >> ~/.R/Makevars; fi
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then printf "CC = clang" >> ~/.R/Makevars; fi
-  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo apt-get install -yq --allow-unauthenticated --no-install-suggests --no-install-recommends r-cran-openmx; fi
+  #- if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo apt-get install -yq --allow-unauthenticated --no-install-suggests --no-install-recommends r-cran-openmx; fi
   #- if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo apt-get install -yq --allow-unauthenticated --no-install-suggests --no-install-recommends r-cran-rstan; fi
 
   #- R -e 'install.packages("remotes");library(remotes);remotes::install_deps(dependencies = TRUE,upgrade="always")'
   #- eval "${MATRIX_EVAL}"
   
-install:
+#install:
   #- if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo ln -s /usr/lib/x86_64-linux-gnu/libgfortran.so.3 /usr/lib/libgfortran.so
-  - R -e 'install.packages("devtools")'
-  - R -e 'devtools::install_dev_deps(dep = T,upgrade="never")'
+  #- R -e 'install.packages("devtools")'
+  #- R -e 'devtools::install_dev_deps(dep = T,upgrade="never")'
 
 script:
   - travis_wait 30 R CMD build --no-build-vignettes .
