@@ -107,13 +107,13 @@ matrix:
 
 before_install:
   - mkdir -p ~/.R/   
-  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then echo "CC=gcc-7 \nF77 = gfortran \nFC = gfortran" >> ~/.R/Makevars; fi
-  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then echo "CXX=g++-7" >> ~/.R/Makevars; fi
-  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then echo "CXX14 = g++-7 -fPIC -std=c++1y" >> ~/.R/Makevars; fi
-  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then echo "CXX14FLAGS = -mtune=native -march=native -Wno-unused-variable -Wno-unused-function -Wno-unused-local-typedefs -Wno-ignored-attributes -Wno-deprecated-declarations -Wno-attributes -O3" >> ~/.R/Makevars; fi
-  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then echo "CXX14 = clang++ -arch x86_64 -ftemplate-depth-256" >> ~/.R/Makevars; fi
-  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then echo "CXX14FLAGS = -O3 -mtune=native -march=native -Wno-unused-variable -Wno-unused-function  -Wno-unknown-pragmas" >> ~/.R/Makevars; fi
-  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then echo "CC = clang" >> ~/.R/Makevars; fi
+  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then printf "CC=gcc-7 \nF77 = gfortran \nFC = gfortran" >> ~/.R/Makevars; fi
+  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then printf "CXX=g++-7" >> ~/.R/Makevars; fi
+  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then printf "CXX14 = g++-7 -fPIC -std=c++1y" >> ~/.R/Makevars; fi
+  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then printf "CXX14FLAGS = -mtune=native -march=native -Wno-unused-variable -Wno-unused-function -Wno-unused-local-typedefs -Wno-ignored-attributes -Wno-deprecated-declarations -Wno-attributes -O3" >> ~/.R/Makevars; fi
+  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then printf "CXX14 = clang++ -arch x86_64 -ftemplate-depth-256" >> ~/.R/Makevars; fi
+  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then printf "CXX14FLAGS = -O3 -mtune=native -march=native -Wno-unused-variable -Wno-unused-function  -Wno-unknown-pragmas" >> ~/.R/Makevars; fi
+  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then printf "CC = clang" >> ~/.R/Makevars; fi
   - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo apt-get install -yq --allow-unauthenticated --no-install-suggests --no-install-recommends r-cran-openmx; fi
   #- if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo apt-get install -yq --allow-unauthenticated --no-install-suggests --no-install-recommends r-cran-rstan; fi
 
