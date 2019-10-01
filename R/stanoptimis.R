@@ -57,7 +57,7 @@ parallelStanFunctionCreator <- function(cl, verbose){
       out=-1e100
       attributes(out) <- list(gradient=rep(0,length(parm)))
     }
-    assign('storedPars', parm,pos= sys.frame(4))
+    try(assign('storedPars', parm,pos= sys.frame(4)))
     if(verbose > 0) print(paste('lp= ',out,' ,    iter time = ',b-a))
     return(-out)
   }

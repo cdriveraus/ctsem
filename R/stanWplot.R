@@ -51,9 +51,16 @@ stanWplot <- function(object,iter=2000,chains=4,...){
     refresh <- input$refresh
     begin<-input$begin
     samps<-list()
+    
+    colclasses <- rep("NULL",length(varnames))
+colclasses[which(varnames %in% parameter)] <- NA
+        
     for(chaini in 1:chains) {
-      samps[[chaini]]<-try(as.matrix(data.table::fread(select = parameter,skip="lp__",
-        file=paste0(seed,"samples_",chaini,".csv"))),silent=TRUE)
+      samps[[chaini]]<-try(as.matrix(read.table(
+        file=paste0(seed,"samples_",chaini,".csv"),sep=",",comment.char="#",
+        header = TRUE,colClasses = colclasses)
+        ),silent=TRUE)
+#data.table::fread(select = parameter,skip="lp__",
       if(class(samps[[chaini]])[1]=="try-error" || length(samps[[chaini]]) ==0) samps[[chaini]]=samps[[1]][1,,drop=FALSE]
     }
     
