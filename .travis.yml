@@ -4,6 +4,7 @@ language: r
   
 r_check_args: "--no-vignettes"
 r_build_args: '--no-build-vignettes'
+use_devtools: true
 
 #repos:
 #  CRAN: https://cloud.r-project.org
