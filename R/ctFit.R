@@ -145,7 +145,7 @@
 #' @import OpenMx
 #' @export
 
-ctFit  <- function(dat, ctmodelobj, dataform='wide',
+ctFit  <- function(dat, ctmodelobj, dataform='auto',
   objective='auto', 
   stationary=c('T0TRAITEFFECT','T0TIPREDEFFECT'), 
   optimizer='CSOLNP', 
@@ -158,13 +158,18 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   omxStartValues=NULL, transformedParams=TRUE,
   datawide=NA){
   
-  if(length(datawide) > 1 || !is.na(datawide)) {
+  args <- match.call()
+  
+  if(!is.null(args$datawide)) {
     warning('ctsem now uses the dat argument instead of the datawide argument, and the form (wide or long) may be specified via the dataform argument.')
     if(class(try(length(dat),silent = TRUE)) == 'try-error') {
       message ('dat not specified, using datawide')
       dat <- datawide
     }
   }
+  
+  
+  
   # transformedParams<-TRUE
   largeAlgebras<-TRUE
   if(nofit) fit <- FALSE
@@ -187,7 +192,17 @@ ctFit  <- function(dat, ctmodelobj, dataform='wide',
   
       
   
-  if(dataform != 'wide' & dataform !='long') stop('dataform must be either "wide" or "long"!')
+  if(!dataform %in% c('auto','wide','long')) stop('dataform must be "auto", "wide", or "long"!')
+  
+  if(dataform %in% 'auto' & is.na(match(paste0(manifestNames, "_T0"), colnames(dat)))){
+    message('long format data detected')
+    dataform <- 'long' 
+    } else {
+      message('wide format data detected')
+      dataform <- 'wide'
+    }
+
+  
   if(dataform == 'long'){
     idcol='id'
     obsTpoints=max(unlist(lapply(unique(dat[,idcol]),function(x) 
