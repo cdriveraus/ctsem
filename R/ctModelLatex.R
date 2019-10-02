@@ -37,11 +37,11 @@ ctModelLatex<- function(ctmodel,matrixnames=TRUE,textsize='normalsize',folder=te
   if(class(ctmodel) == 'ctStanModel') {
     ctmodel <- c(ctmodel,listOfMatrices(ctmodel$pars)) 
     continuoustime <- ctmodel$continuoustime
-    } else {
-      if(class(ctmodel) != 'ctsemInit') stop('not a ctsem model!')
-      continuoustime <- TRUE
-    }
-
+  } else {
+    if(class(ctmodel) != 'ctsemInit') stop('not a ctsem model!')
+    continuoustime <- TRUE
+  }
+  
   if(equationonly) compile <- FALSE
   bmatrix = function(x, digits=NULL,nottext=FALSE, ...) {
     if(!is.null(x)){
@@ -73,7 +73,7 @@ ctModelLatex<- function(ctmodel,matrixnames=TRUE,textsize='normalsize',folder=te
     } else out=""
     return(out)
   }
-
+  
   
   W <- diag(1,ctmodel$n.latent)
   if(continuoustime) diag(W) <- 'u-t'
@@ -149,7 +149,7 @@ ctModelLatex<- function(ctmodel,matrixnames=TRUE,textsize='normalsize',folder=te
   
   if(!equationonly) out <- paste0(out, "\\end{document}")
   
-
+  
   
   if(tex) {
     oldwd <- getwd()
@@ -157,8 +157,18 @@ ctModelLatex<- function(ctmodel,matrixnames=TRUE,textsize='normalsize',folder=te
     on.exit(setwd(oldwd))
     write(x = out,file = paste0(filename,'.tex'))
     if(compile){
-    try(tools::texi2pdf(file=paste0(filename,'.tex'),clean=TRUE))
-    if(open) try(openPDF(paste0(filename,'.pdf')))
+      hastex <- !Sys.which('pdflatex') %in% ''
+      a=try(tools::texi2pdf(file=paste0(filename,'.tex'),quiet=FALSE, clean=TRUE))
+      if('try-error' %in% class(a) && !hastex) {
+        message('Tex not compiled -- do you want to install tinytex? Will require a manual restart of R.')
+        dotiny <- readline('Y/N?')
+        if(dotiny %in% c('Y','y')){
+          install.packages('tinytex')
+          requireNamespace('tinytex')
+          tinytex::install_tinytex()
+        }
+      }
+      if(open) try(openPDF(paste0(filename,'.pdf')))
     }
     
   }
