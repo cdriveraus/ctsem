@@ -107,7 +107,9 @@ matrix:
 
 before_install:
   - mkdir -p ~/.R/   
-  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then printf "CC=gcc-7 \nF77 = gfortran \nFC = gfortran" >> ~/.R/Makevars; fi
+  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then printf "CC=gcc-7" >> ~/.R/Makevars; fi
+  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then printf "F77 = gfortran" >> ~/.R/Makevars; fi
+  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then printf "FC = gfortran" >> ~/.R/Makevars; fi
   - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then printf "CXX=g++-7" >> ~/.R/Makevars; fi
   - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then printf "CXX14 = g++-7 -fPIC -std=c++1y" >> ~/.R/Makevars; fi
   - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then printf "CXX14FLAGS = -mtune=native -march=native -Wno-unused-variable -Wno-unused-function -Wno-unused-local-typedefs -Wno-ignored-attributes -Wno-deprecated-declarations -Wno-attributes -O3" >> ~/.R/Makevars; fi
@@ -122,8 +124,8 @@ before_install:
   
 install:
   #- if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo ln -s /usr/lib/x86_64-linux-gnu/libgfortran.so.3 /usr/lib/libgfortran.so
-  - R -e 'install.packages("devtools")'
-  - R -e 'devtools::install_deps(dep = T,upgrade="always")'
+  #- R -e 'install.packages("devtools")'
+  #- R -e 'devtools::install_deps(dep = T,upgrade="always")'
 
 script:
   - travis_wait 30 R CMD build --no-build-vignettes .
