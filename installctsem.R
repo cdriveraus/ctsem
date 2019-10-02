@@ -37,8 +37,7 @@ if(mv == 'N' || mv =='n'){ #create makevars
     if( grepl("^darwin", R.version$os)) "CXX14FLAGS += -arch x86_64 -ftemplate-depth-256" else
       if (.Platform$OS.type == "windows") "CXX11FLAGS=-O3 -mtune=native
 CXX14 = $(BINPREF)g++ -m$(WIN) -std=c++1y" else
-  "CXX14=g++
-CXX14FLAGS += -fPIC",
+  "CXX14FLAGS += -fPIC",
     file = M, sep = "\n", append = TRUE)
 }
 
