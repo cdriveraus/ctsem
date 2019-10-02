@@ -62,6 +62,7 @@ Suggests:
     devtools,
     DEoptim,
     GGally,
-    shiny
+    shiny,
+    tinytex
 VignetteBuilder: knitr
 RoxygenNote: 6.1.1
