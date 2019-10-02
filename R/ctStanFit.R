@@ -1057,9 +1057,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         #control arguments for rstan
         # if(is.null(control$adapt_term_buffer)) control$adapt_term_buffer <- min(c(iter/10,max(iter-20,75)))
         if(is.null(control$adapt_delta)) control$adapt_delta <- .8
-        if(is.null(control$adapt_window)) control$adapt_window <- 2
+        if(is.null(control$adapt_window)) control$adapt_window <- 20
         if(is.null(control$max_treedepth)) control$max_treedepth <- 10
-        if(is.null(control$adapt_init_buffer)) control$adapt_init_buffer=2
+        if(is.null(control$adapt_init_buffer)) control$adapt_init_buffer=20
         if(is.null(control$stepsize)) control$stepsize=.001
         if(is.null(control$metric)) control$metric='dense_e'
         
