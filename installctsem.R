@@ -5,7 +5,7 @@ if(length(packs) > 0){
   while(length(packs) > 0){
     newpacks <- c()
     for(packi in 1:length(packs)){
-      u=try(lapply(paste0('package:', packs), unloadNamespace))
+      u=try(unloadNamespace(packs[packi]),silent = TRUE)
       if(class(u) %in% 'try-error') newpacks <- c(newpacks,packs[packi])
     }
     packs <- newpacks
