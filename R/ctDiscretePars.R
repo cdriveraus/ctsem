@@ -121,7 +121,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   ctpars <- list()
   for(matname in c('DRIFT','DIFFUSIONcov','asymDIFFUSION')){ #,'CINT','T0MEANS', 'T0VAR','MANIFESTMEANS',if(!is.null(e$MANIFESTVAR)) 'MANIFESTVAR','LAMBDA', if(!is.null(e$TDPREDEFFECT)) 'TDPREDEFFECT')){
 
-    if('all' %in% subjects){
+    if('all' %in% subjects || dim(e[[matname]])[2] == 1){
       ctpars[[matname]] <- e[[paste0('pop_',matname)]]
     } else {
       ctpars[[matname]] <- e[[matname]][,subjects,,,drop=FALSE]
