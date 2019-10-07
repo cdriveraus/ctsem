@@ -47,7 +47,6 @@
 
 ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
   subjects=1, plot=FALSE, ...){
-  
   type=NA
   if(class(fit)=='ctStanFit') type='stan' 
   if(class(fit) =='ctsemFit') type ='omx'
@@ -59,9 +58,9 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
       if(fit$ctstanmodel$continuoustime != TRUE) stop('Discrete time model fits must use timestep = "asdata"')
       times <- seq(timerange[1],timerange[2],timestep)
       fit$standata <- standataFillTime(fit$standata,times)
-      fit$standata<- standatact_specificsubjects(fit$standata,subjects)
-    }
-    fit$standata$dokalmanrows <- as.integer(fit$standata$subject %in% subjects)
+    } 
+    
+    fit$standata <- standatact_specificsubjects(fit$standata, subjects = subjects)
 
     out <- ctStanKalman(fit,collapsefunc=mean) #extract state predictions
 
