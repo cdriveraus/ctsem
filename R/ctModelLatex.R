@@ -159,13 +159,12 @@ ctModelLatex<- function(ctmodel,matrixnames=TRUE,textsize='normalsize',folder=te
     if(compile){
       hastex <- !Sys.which('pdflatex') %in% ''
       a=try(tools::texi2pdf(file=paste0(filename,'.tex'),quiet=FALSE, clean=TRUE))
-      if('try-error' %in% class(a) && !hastex) {
-        message('Tex not compiled -- do you want to install tinytex? Will require a manual restart of R.')
+      if(interactive() && 'try-error' %in% class(a) && !hastex) {
+        message('Tex compiler not found -- do you want to install tinytex? Will require a manual restart of R.')
         dotiny <- readline('Y/N?')
         if(dotiny %in% c('Y','y')){
           install.packages('tinytex')
-          requireNamespace('tinytex')
-          tinytex::install_tinytex()
+          if(requireNamespace('tinytex',quietly=TRUE)) tinytex::install_tinytex()
         }
       }
       if(open) try(openPDF(paste0(filename,'.pdf')))

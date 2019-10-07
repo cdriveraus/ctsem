@@ -34,19 +34,12 @@ summary(fit1$mxobj)
 sqrt(fit1$mxobj$DIFFUSION$values[2,2]) 
 
 
-sm <- ctStanModel(model1,indvarying = rep(F,0))
+sm <- ctStanModel(model1)
 
-largs=list()
-largs[[1]]<-list(datalong=datalong, ctstanmodel=sm, stationary=FALSE,iter=2, control=list(max_treedepth=1),
-  # optimcontrol=list(isloops=0,issamples=10,isloopsize=10),
-  verbose=0,
+ssfit<-ctStanFit(datalong=datalong, ctstanmodel=sm, forcerecompile = T,
+  verbose=0,optimize=T,#optimcontrol=list(estonly=T),
   # nlcontrol=list(nldynamics=F, nlmeasurement=F,ukffull=1,ukfspread=1e-1),
-  savescores = T,gendata=F,
-  chains=1,nopriors=1)
-
-for( condi in 1:length(largs)){
-
-ssfit <- do.call(ctStanFit,largs[[condi]])
+  chains=1,nopriors=F)
 
 }
 }

@@ -24,7 +24,7 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
     standata$savescores <- 1L
     # smf <- stan_reinitsf(fit$stanmodel, standata)
     samples<-ctStanRawSamples(fit)
-    if(!is.na(nsamples)) samples <- samples[sample(1:nrow(samples),nsamples),,drop=FALSE]
+    if(!is.na(nsamples)) samples <- samples[sample(1:nrow(samples),nsamples),,drop=FALSE] else nsamples <- nrow(samples)
     if(is.function(collapsefunc)) samples = matrix(apply(samples,2,collapsefunc,...),ncol=ncol(samples))
     e=stan_constrainsamples(sm = fit$stanmodel,standata = standata,samples = samples,cores=cores)
   # }
@@ -36,13 +36,13 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
   nmanifest <- fit$standata$nmanifest
   dimnames(k) = list(iter=1:dim(k)[1],drow=1:dim(k)[2],
     kalman=paste0(c(rep('lln',nmanifest),
-      rep('llscale',nmanifest),rep('err',nmanifest),rep('yprior',nmanifest),rep('etaprior',nlatent),rep('etaupd',nlatent)),
+      rep('llscale',nmanifest),rep('stderr',nmanifest),rep('yprior',nmanifest),rep('etaprior',nlatent),rep('etaupd',nlatent)),
       c(1:nmanifest,1:nmanifest,1:nmanifest,1:nmanifest,1:nlatent,1:nlatent)))
   
   
   lln=k[,,1:nmanifest,drop=FALSE]
   llscale=k[,,(nmanifest*1+1):(nmanifest*1+nmanifest),drop=FALSE]
-  err=k[,,(nmanifest*2+1):(nmanifest*2+nmanifest),drop=FALSE]
+  stderr=k[,,(nmanifest*2+1):(nmanifest*2+nmanifest),drop=FALSE]
   e$yprior=k[,,(nmanifest*3+1):(nmanifest*3+nmanifest),drop=FALSE]
   # etaprior=k[,,(nmanifest*4+1):(nmanifest*4+nlatent),drop=FALSE]
   # etaupd=k[,,(nmanifest*4+nlatent+1):(nmanifest*4+nlatent*2),drop=FALSE]
@@ -52,47 +52,14 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
   })
   llrow = llvec - apply(llscale, 1:2, function(x) sum(x,na.rm=TRUE))
   
-  #covariance
-  # etapriorcov <- e$etapriorcov
-  # etaupdcov <- e$etaupdcov
-  # etapriorcov[etapriorcov==99999] <- NA
-  # etaupdcov[etaupdcov==99999] <- NA
-  # ypriorcov <- e$ypriorcov
-  # ypriorcov[ypriorcov==99999] <- NA
-  # yupdcov <- e$ypriorcov
-  # yupdcov[ypriorcov==99999] <- NA
-  # ysmoothcov <- e$ypriorcov
-  # ysmoothcov[ypriorcov==99999] <- NA
-  # yupd <- e$yupd
-  # yupd[yupd==99999] <- NA
-  # ysmooth <- e$ysmooth
-  # ysmooth[ysmooth==99999] <- NA
-  # etasmoothcov <- e$etasmoothcov#[,,1:nlatent,1:nlatent,drop=FALSE]
-  # etasmoothcov[etasmoothcov==99999] <- NA
-  # etasmooth <- e$etasmooth#[,,1:nlatent,drop=FALSE]
-  # etasmooth[etasmooth==99999] <- NA
-  
-  
-  
-  # 
-  # for(basei in c('y','eta')){
-  #   for(covtypei in c('prior','upd','smooth')){
-  #     assign(paste0(basei,covtypei,'cov'), aperm(get(paste0(basei,covtypei,'cov')),c(1,3,4,2)))
-  #   }
-  # }
-  # 
+ 
   
   y=matrix(fit$standata$Y,ncol=ncol(fit$standata$Y),dimnames = list(NULL,fit$ctstanmodel$manifestNames))
   y[y==99999] <- NA
   
-  out=list(time=cbind(fit$standata$time), lln=lln,llscale=llscale,err=err,
+  
+  out=list(time=cbind(fit$standata$time), lln=lln,llscale=llscale,stderr=stderr,
     y=y, 
-    # yprior=yprior,ypriorcov=ypriorcov,
-    # yupd=yupd,yupdcov=yupdcov,
-    # ysmooth=ysmooth,ysmoothcov=ysmoothcov,
-    # etaprior=etaprior, etapriorcov=etapriorcov,
-    # etaupd=etaupd,etaupdcov=etaupdcov,
-    # etasmooth=etasmooth,etasmoothcov=etasmoothcov,
     llrow=llrow)
   
   for(basei in c('y','eta')){
@@ -115,6 +82,26 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
       }
     }
   }
+ 
+  for(typei in c('prior','upd','smooth')){
+    out[[paste0('err',typei)]] <- aaply(out[[paste0('y',typei)]],1, function(yp) out$y-yp,.drop=FALSE)
+  } 
+  for(typei in c('prior','upd','smooth')){
+    arr <- array(sapply(1:dim(out$yprior)[1], function(i){
+      array(sapply(1:nrow(out$y), function(r){
+        tmp <- matrix(NA,nmanifest)
+        if(sum(!is.na(out$y[r,])) > 0) tmp[which(!is.na(out$y[r,]))] <- 
+            matrix(solve(
+              t(chol(matrix(out[[paste0('ypriorcov')]][i,r,,],ncol=nmanifest)))[
+                !is.na(out$y[r,]),!is.na(out$y[r,])], 
+          out[[paste0('err',typei)]][i,r,!is.na(out$y[r,])]), nrow=sum(!is.na(out$y[r,])))
+        return(tmp)
+      },simplify = 'array'), dim=c(nmanifest,1,nrow(out$y)))
+    },simplify = 'array'), dim=c(nmanifest,1,nrow(out$y),nsamples))
+    
+    out[[paste0('errstd',typei)]] <- array(aperm(arr, c(4,3,1,2)),dim=dim(arr)[c(4,3,1)])
+  }
+
 return(out)
 }
 
