@@ -4,7 +4,7 @@
 \alias{ctFit}
 \title{Fit a ctsem object}
 \usage{
-ctFit(dat, ctmodelobj, dataform = "wide", objective = "auto",
+ctFit(dat, ctmodelobj, dataform = "auto", objective = "auto",
   stationary = c("T0TRAITEFFECT", "T0TIPREDEFFECT"),
   optimizer = "CSOLNP", retryattempts = 5, iterationSummary = FALSE,
   carefulFit = TRUE, carefulFitWeight = 100, showInits = FALSE,
