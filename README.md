@@ -27,7 +27,7 @@ the more recent updates are outlined at
 <https://github.com/cdriveraus/ctsem/raw/master/vignettes/hierarchicalmanual.pdf>
 . To cite ctsem please use the citation(“ctsem”) command in R.
 
-### To install the github version, use:
+### To install the github version, from a fresh R session run:
 
 ``` r
 source(file = 'https://github.com/cdriveraus/ctsem/raw/master/installctsem.R')

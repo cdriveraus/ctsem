@@ -1,6 +1,6 @@
 #unload packages
 message('This is best run from a fresh R / Rstudio session, with no other R sessions running')
-go<-readline('Continue? Y/N')
+go<-readline('Continue? Y/N: ')
 if(go %in% c('Y','y')){
 packs <- c(names(sessionInfo()$otherPkgs), names(sessionInfo()$loadedOnly))
 if(length(packs) > 0){ 
