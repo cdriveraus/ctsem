@@ -1,4 +1,7 @@
 #unload packages
+message('This is best run from a fresh R / Rstudio session, with no other R sessions running')
+go<-readline('Continue? Y/N')
+if(go %in% c('Y','y')){
 packs <- c(names(sessionInfo()$otherPkgs), names(sessionInfo()$loadedOnly))
 if(length(packs) > 0){ 
   message('Unloading packages -- if any problems occur, please try this from a fresh R session')
@@ -61,3 +64,4 @@ for(importantpack in c('StanHeaders','rstan','OpenMx')){
 Sys.setenv(R_REMOTES_NO_ERRORS_FROM_WARNINGS='true')
 remotes::install_github('cdriveraus/ctsem', upgrade='never',INSTALL_opts = "--no-multiarch", 
   dependencies = c("Depends", "Imports"))
+}

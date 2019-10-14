@@ -726,8 +726,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       if(carefulfit && !deoptim & standata$nopriors == 1 ){ #init using priors
         message('carefulfit=TRUE , doing 1st pass with priors')
         standata$nopriors <- as.integer(0)
-        tipredscale <- standata$tipredscale
-        standata$tipredscale <- .0001
+        tipredeffectscale <- standata$tipredeffectscale
+        standata$tipredeffectscale <- .0001
         if(optimcores > 1) parallelStanSetup(cl = cl,sm = sm,standata = standata)
         if(optimcores==1) smf<-stan_reinitsf(sm,standata)
         if(!stochastic) {
@@ -742,7 +742,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         standata$nopriors <- as.integer(1)
         # smf<-stan_reinitsf(sm,standata)
         init = optimfit$par #+ rnorm(length(optimfit$par),0,abs(init/8)+1e-3)#rstan::constrain_pars(object = smf, optimfit$par)
-        standata$tipredscale <- tipredscale
+        standata$tipredeffectscale <- tipredeffectscale
       } #end carefulfit
       
       
@@ -1080,7 +1080,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   if(!estonly){
     if(!is) lpsamples <- NA else lpsamples <- unlist(target_dens)[resample_i]
     
+    sdtemp <- standata #only computing 1 row per subject for parameter uncertainty
+    sdtemp$dokalmanrows[] <- 0L
+    sdtemp$dokalmanrows[match(unique(sdtemp$subject),sdtemp$subject )] <- 1L
     transformedpars=stan_constrainsamples(sm = sm,standata = standata,samples=resamples,cores=cores)
+
     
     # quantile(sapply(transformedpars, function(x) x$rawpopcorr[3,2]),probs=c(.025,.5,.975))
     # quantile(sapply(transformedpars, function(x) x$DRIFT[1,2,2]),probs=c(.025,.5,.975))
