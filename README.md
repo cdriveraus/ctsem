@@ -27,10 +27,24 @@ the more recent updates are outlined at
 <https://github.com/cdriveraus/ctsem/raw/master/vignettes/hierarchicalmanual.pdf>
 . To cite ctsem please use the citation(“ctsem”) command in R.
 
-### To install the github version, from a fresh R session run:
+### To install the github version and (if needed) configure your system, from a fresh R session run:
 
 ``` r
 source(file = 'https://github.com/cdriveraus/ctsem/raw/master/installctsem.R')
+```
+
+### If there are problems with the above script, you can try:
+
+Manually install rstan, Rtools
+
+``` r
+remotes::install_github('cdriveraus/ctsem', INSTALL_opts = "--no-multiarch", dependencies = c("Depends", "Imports"))
+```
+
+### Or just use the CRAN version, but rstan compiler setup is needed separately for some models:
+
+``` r
+install.packages('ctsem')
 ```
 
 ### Troubleshooting Rstan / Rtools install for Windows:
