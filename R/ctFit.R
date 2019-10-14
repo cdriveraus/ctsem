@@ -193,8 +193,7 @@ ctFit  <- function(dat, ctmodelobj, dataform='auto',
       
   
   if(!dataform %in% c('auto','wide','long')) stop('dataform must be "auto", "wide", or "long"!')
-  
-  if(dataform %in% 'auto' & is.na(match(paste0(manifestNames, "_T0"), colnames(dat)))){
+  if(dataform %in% 'auto' & all(is.na(match(paste0(manifestNames, "_T0"), colnames(dat))))){
     message('long format data detected')
     dataform <- 'long' 
     } else {

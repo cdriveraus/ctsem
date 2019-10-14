@@ -34,7 +34,7 @@ summary.ctsemMultigroupFit<-function(object,group='show chooser',...){
   
   out$ctParameters<-ctParamsSummary(object=tempctobj,ctSummaryMatrices=out)
   out$ctparammessage<-'Note: Continuous time parameter estimates above are of the full variance-covariance matrices, not cholesky decompositions as used by ctModel.'
-  if(tempctobj$ctfitargs$transformedParams==TRUE) out$ctparammessage<- c(out$ctparammessage, 'Note: Covariance related standard errors are approximated with delta method..')
+  # if(tempctobj$ctfitargs$transformedParams==TRUE) out$ctparammessage<- c(out$ctparammessage, 'Note: Covariance related standard errors are approximated with delta method..')
   
   out$omxsummary<-omxSummary(tempctobj,verbose=TRUE)
   return(out)
@@ -129,12 +129,13 @@ ctParamsSummary<-function(object,ctSummaryMatrices){
   for(parami in 1:length(parnames)){ #for every free param
     for(matrixi in names(ctSummaryMatrices)[names(ctSummaryMatrices) %in% names(object$ctmodelobj)]){ #check every matrix that is in both ctmodelobj and output
       if(parnames[parami] %in% object$ctmodelobj[[matrixi]]) { #if the free param is in the ctmodelobj matrix
+        ind <- which(parnames[parami] == object$ctmodelobj[[matrixi]],arr.ind = TRUE)[1,,drop=FALSE]
         parmatrix[parami]<-matrixi
         newparvalues[parami]<-ctSummaryMatrices[[matrixi]][match(parnames[parami],object$ctmodelobj[[matrixi]])]
         parsd[parami]<- parsd[parami]
         #delta approx for sd pars
-        if(newparvalues[parami] != parvalues[parami]) parsd[parami]<- 
-         (exp(parvalues[parami] + parsd[parami]) - exp(parvalues[parami] - parsd[parami]))/2
+        if(newparvalues[parami] != parvalues[parami]) parsd[parami]<- suppressMessages(mxSE(paste0(matrixi,'[',ind[1,1],',',ind[1,2],']'),object$mxobj))
+         # (exp(parvalues[parami] + parsd[parami]) - exp(parvalues[parami] - parsd[parami]))/2
         # parsd[parami]<- abs(((newparvalues[parami]) / parvalues[parami]) * parsd[parami]) #old, bad? first order delta approximation of std error
         parvalues[parami]<- newparvalues[parami]
       }
