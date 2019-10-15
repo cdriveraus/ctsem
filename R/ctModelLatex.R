@@ -32,7 +32,7 @@
 #' l=ctModelLatex(ctmodel,compile=FALSE, open=FALSE)
 #' cat(l)
 ctModelLatex<- function(ctmodel,matrixnames=TRUE,textsize='normalsize',folder=tempdir(),
-  filename='ctsemTex',tex=TRUE, equationonly=FALSE, compile=TRUE, open=TRUE){
+  filename=paste0('ctsemTex',as.numeric(Sys.time())),tex=TRUE, equationonly=FALSE, compile=TRUE, open=TRUE){
   
   if(class(ctmodel) == 'ctStanModel') {
     ctmodel <- c(ctmodel,listOfMatrices(ctmodel$pars)) 
@@ -132,7 +132,10 @@ ctModelLatex<- function(ctmodel,matrixnames=TRUE,textsize='normalsize',folder=te
         \\underbrace{
           ",bmatrix(ctmodel$MANIFESTMEANS)," 
         ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\tau}}",ifelse(!matrixnames,"}","_\\textrm{MANIFESTMEANS}}")," + 
-        \\underbrace{
+              \\underbrace{
+                ",bmatrix(ctmodel$MANIFESTVAR),"  
+              ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\Theta}}",ifelse(!matrixnames,"}","_\\textrm{MANIFESTVAR}}"),"
+              \\underbrace{
           ",bmatrix(matrix(paste0('\\epsilon_{',1:ctmodel$n.manifest,'}')))," 
           (t)}_{\\vect{\\epsilon}(t)} \\\\ \\\\
           &\\underbrace{
@@ -140,9 +143,7 @@ ctModelLatex<- function(ctmodel,matrixnames=TRUE,textsize='normalsize',folder=te
             (t)}_{\\vect{\\epsilon}(t)} \\sim  \\mathrm{N} \\left(
               ",bmatrix(matrix(0,ctmodel$n.manifest,1)),"
               ,
-              \\underbrace{
-                ",bmatrix(ctmodel$MANIFESTVAR),"  
-              ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\Theta}}",ifelse(!matrixnames,"}","_\\textrm{MANIFESTVAR}}")," \\right) 
+                ",bmatrix(diag(1,ctmodel$n.manifest))," \\right) 
       \\end{align*}
       \\end{",textsize,"}
       ")
@@ -163,7 +164,7 @@ ctModelLatex<- function(ctmodel,matrixnames=TRUE,textsize='normalsize',folder=te
         message('Tex compiler not found -- do you want to install tinytex? Will require a manual restart of R.')
         dotiny <- readline('Y/N?')
         if(dotiny %in% c('Y','y')){
-          install.packages('tinytex')
+          utils::install.packages('tinytex')
           if(requireNamespace('tinytex',quietly=TRUE)) tinytex::install_tinytex()
         }
       }

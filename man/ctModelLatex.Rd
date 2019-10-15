@@ -5,8 +5,9 @@
 \title{Generate and optionally compile latex equation of subject level ctsem model.}
 \usage{
 ctModelLatex(ctmodel, matrixnames = TRUE, textsize = "normalsize",
-  folder = tempdir(), filename = "ctsemTex", tex = TRUE,
-  equationonly = FALSE, compile = TRUE, open = TRUE)
+  folder = tempdir(), filename = paste0("ctsemTex",
+  as.numeric(Sys.time())), tex = TRUE, equationonly = FALSE,
+  compile = TRUE, open = TRUE)
 }
 \arguments{
 \item{ctmodel}{ctsem model object}
