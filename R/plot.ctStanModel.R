@@ -11,6 +11,7 @@
 #' prior distribution for the raw population standard deviation, or a numeric value to use for the raw population standard deviation
 #' for all subject level prior plots - the plots in dotted blue or red.
 #' @param inddifdevs numeric vector of length 2, setting the means for the individual differences distributions.
+#' @param plot If FALSE, ouputs list of GGplot objects that can be further modified.
 #' @param ... not used.
 #' @details Plotted in black is the prior for the population mean. In red and blue are the subject level priors that result
 #' given that the population mean is estimated as 1 std deviation above the mean of the prior, or 1 std deviation below. 
@@ -36,67 +37,109 @@
 #' stanmodel=ctStanModel(model)
 #' plot(stanmodel,rows=8)
 
-plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='marginalise',inddifdevs=c(-1,1),...){
+plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='marginalise',inddifdevs=c(-1,1),plot=TRUE,...){
   if(class(x)!='ctStanModel') stop('not a ctStanModel object!')
   x <- ctModelTransformsToNum(x)
   m<-x$pars
   highmean=inddifdevs[2]
   lowmean= inddifdevs[1]
   if(rows=='all') rows<-1:nrow(m)
-  for(rowi in rows){
-    if(is.na(m$value[rowi])){
-      #rawpopsd
-      if(rawpopsd[1]=='marginalise'){
-        rawpopsdbase<-  stats::rnorm(nsamples)
-        if(!is.na(x$rawpopsdbaselowerbound)) rawpopsdbase <- rawpopsdbase[rawpopsdbase>x$rawpopsdbaselowerbound]
-        sdscale <- as.numeric(m$sdscale[rowi])
-        sdtform <- gsub('.*', '*',x$rawpopsdtransform,fixed=TRUE)
-        rawpopsdprior<-eval(parse(text=sdtform)) * sdscale
-
-      } else if(is.na(as.numeric(rawpopsd))) stop('rawpopsd argument is ill specified!') else {
-        rawpopsdprior <- rep(rawpopsd,nsamples)
-      }
-      denslist<-list()
-      #mean
-
-      rawpopmeans=stats::rnorm(length(rawpopsdprior))
-      # xmean=eval(parse(text=paste0(m$transform[rowi])))
-      denslist[[1]]=tform(rawpopmeans,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi],m$inneroffset[rowi])
-      leg <- c('Pop. mean prior')
-      colvec <- c(1)
-      
-      if(m$indvarying[rowi]){
-        
-        if(inddifdevs[1]=='marginalise'){
-          param=stats::rnorm(length(rawpopsdprior),rawpopmeans,rawpopsdprior)
-          denslist[[2]]=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi],m$inneroffset[rowi])
-          leg <- c('Pop. mean prior', paste0('Subject prior',lowmean))
-          colvec <- c(1,2)
+  nplots<-ceiling(length(rows) /6)
+  plots <- list()
+  if(1==99) Par.Value <- type <- Density <- NULL
+  for(ploti in 1:nplots){
+    dat <- data.table(Par.Value=0, Density=0,type='',param='')
+    for(rowi in if(length(rows) > 1) rows[as.integer(cut_number(rows,nplots))==ploti] else rows){
+      if(is.na(m$value[rowi])){
+        #rawpopsd
+        if(rawpopsd[1]=='marginalise'){
+          rawpopsdbase<-  stats::rnorm(nsamples)
+          if(!is.na(x$rawpopsdbaselowerbound)) rawpopsdbase <- rawpopsdbase[rawpopsdbase>x$rawpopsdbaselowerbound]
+          sdscale <- as.numeric(m$sdscale[rowi])
+          sdtform <- gsub('.*', '*',x$rawpopsdtransform,fixed=TRUE)
+          rawpopsdprior<-eval(parse(text=sdtform)) * sdscale
+          
+        } else if(is.na(as.numeric(rawpopsd))) stop('rawpopsd argument is ill specified!') else {
+          rawpopsdprior <- rep(rawpopsd,nsamples)
         }
-        if(inddifdevs[1]!='marginalise'){
-        #high
-        param=stats::rnorm(length(rawpopsdprior),highmean,rawpopsdprior)
-        denslist[[2]]=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi],m$inneroffset[rowi])
+        denslist<-list()
+        #mean
         
-        #low
-        param=stats::rnorm(length(rawpopsdprior),lowmean,rawpopsdprior)
-        denslist[[3]]=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi],m$inneroffset[rowi])
-  
-        leg <- c('Pop. mean prior', paste0('Subject prior | mean = ',lowmean),paste0('Subject prior | mean = ',highmean))
-        colvec <- c(1,2,4)
+        rawpopmeans=stats::rnorm(length(rawpopsdprior))
+        # xmean=eval(parse(text=paste0(m$transform[rowi])))
+        denslist[[1]]=tform(rawpopmeans,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi],m$inneroffset[rowi])
+        leg <- c('Pop. mean prior')
+        colvec <- c(1)
+        
+        if(m$indvarying[rowi]){
+          
+          if(inddifdevs[1]=='marginalise'){
+            param=stats::rnorm(length(rawpopsdprior),rawpopmeans,rawpopsdprior)
+            denslist[[2]]=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi],m$inneroffset[rowi])
+            leg <- c('Pop. mean prior', paste0('Subject prior',lowmean))
+            colvec <- c(1,2)
+          }
+          if(inddifdevs[1]!='marginalise'){
+            #high
+            param=stats::rnorm(length(rawpopsdprior),highmean,rawpopsdprior)
+            denslist[[2]]=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi],m$inneroffset[rowi])
+            
+            #low
+            param=stats::rnorm(length(rawpopsdprior),lowmean,rawpopsdprior)
+            denslist[[3]]=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi],m$inneroffset[rowi])
+            
+            leg <- c('Pop. mean prior', paste0('Subject prior | mean = ',lowmean),paste0('Subject prior | mean = ',highmean))
+            colvec <- c(1,2,4)
+          }
         }
-      }
-
-        ctDensityList(denslist,plot = TRUE, lwd=2,probs=c(.01,.99),main=m$param[rowi],
-        cex=.8,cex.main=.8,cex.axis=.8,cex.lab=.8,cex.sub=.8,
-        legend = leg,
-        legendargs=list(cex=.8),
-        colvec = colvec)
-
-      if(wait==TRUE & rowi != utils::tail(rows,1)){
-        message("Press [enter] to display next plot")
-        readline()
+        dens <- ctDensityList(denslist,probs=c(.01,.99),plot=FALSE)
+        for(i in 1:length(leg)){
+          dat <- rbind(dat,data.table(Par.Value=dens$density[[i]]$x,Density=dens$density[[i]]$y, type=leg[i],param=m$param[rowi]))
+        }
       }
     }
+    dat <- dat[-1,]
+    # browser()
+    # dat[,xlow := quantile(Par.Value,.3),by=list(type,param)]
+    # dat[,xhigh := quantile(Par.Value,.7),by=list(type,param)]
+    # dat[,xhigh := max(xhigh),by=list(param)]
+    # dat[,xlow := min(xlow),by=list(param)]
+    # dat[,xhigh := min(c(max(Par.Value),max(xhigh+(xhigh-xlow)*2))) ,by=list(param)]
+    # dat[,xlow := max(c(min(Par.Value),min(xlow-(xhigh-xlow)*2))) ,by=list(param)]
+    # 
+    # dat[,Par.Value:=min(Par.Value,xhigh)]
+    # 
+    # dat$Par.Value[dat$Par.Value >= dat$xhigh] <- dat$xhigh[dat$Par.Value >= dat$xhigh]
+    # dat$Par.Value[dat$Par.Value <= dat$xlow] <- dat$xlow[dat$Par.Value <= dat$xlow]
+    
+    plots<-c(plots,list(
+      ggplot(dat,aes(x=Par.Value,fill=type,ymax=Density,y=Density) )+
+        geom_line(alpha=.3) +
+        geom_ribbon(alpha=.4,ymin=0) +
+        scale_fill_manual(values=c('black','red','blue')) +
+        # geom_violin(alpha=.4) +
+        # coord_cartesian(xlim = c(vars(xlow)[1], vars(xhigh)[1]))+
+        # coord_cartesian(xlim = mean(vars(x))-sd(vars(x)), mean(vars(x))+sd(vars(x)))+
+        theme_minimal()+
+        theme(legend.title = element_blank())+
+        facet_wrap(vars(param),scales='free')
+    ))
   }
+  # ctDensityList(denslist,plot = TRUE, probs=c(.01,.99),main=m$param[rowi],
+  #   # cex=.8,cex.main=.8,cex.axis=.8,cex.lab=.8,cex.sub=.8,
+  #   # legend = leg,
+  #   # legendargs=list(cex=.8),
+  #   colvec = colvec)
+  
+  if(plot) {
+    firstplot=TRUE
+    lapply(plots,function(x){
+      if(wait && !firstplot) readline("Press [return] for next plot.")
+      firstplot <<- FALSE
+      suppressWarnings(print(x))
+    })
+    return(NULL)
+  } else return(plots)
+  
 }
+

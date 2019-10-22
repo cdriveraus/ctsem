@@ -4,20 +4,14 @@
 \alias{ctStanTIpredMarginal}
 \title{Plot marginal relationships between covariates and parameters for a ctStanFit object.}
 \usage{
-ctStanTIpredMarginal(fit, tipred, pars, probs = c(0.025, 0.5, 0.975),
-  useimputed = TRUE, plot = TRUE)
+ctStanTIpredMarginal(fit, tipred, pars, plot = TRUE)
 }
 \arguments{
 \item{fit}{ctStanFit object.}
 
-\item{tipred}{Integer representing which tipred to use -- integer corresponds to TIpredNames specification.}
+\item{tipred}{character vector representing which tipreds to use.}
 
 \item{pars}{Subject level matrices from the ctStanFit output -- e.g, 'DRIFT' or 'DIFFUSION'.}
-
-\item{probs}{vector of 3 quantile probabilities, the 2nd will be plotted as a line, the 
-outer two as shaded regions.}
-
-\item{useimputed}{Logical, include imputed tipreds or only observed?}
 
 \item{plot}{Logical, whether to plot.}
 }
@@ -29,6 +23,6 @@ Plot marginal relationships between covariates and parameters for a ctStanFit ob
 }
 \examples{
 \donttest{
-ctStanTIpredMarginal(ctstantestfit,pars='CINT',tipred=3)
+ctStanTIpredMarginal(ctstantestfit,pars=c('DRIFT','CINT'),tipred=c('TI2','TI3'))
 }
 }

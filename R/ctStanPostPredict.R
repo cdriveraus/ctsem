@@ -2,37 +2,45 @@
 #' Compares model implied density and values to observed, for a ctStanFit object.
 #'
 #' @param fit ctStanFit object. 
-#' @param legend Logical, whether to plot a legend.
 #' @param diffsize Integer > 0. Number of discrete time lags to use for data viz.
-#' @param shading Logical -- show smoothed shading over generated data points? Otherwise, plot shaded polygon based on quantile estimate. 
-#' Shading is better for non-linearities.
 #' @param probs Vector of length 3 containing quantiles to plot -- should be rising numeric values between 0 and 1. 
-#' @param wait Logical, if TRUE, waits for input before plotting next plot.
+#' @param wait Logical, if TRUE and \code{plot=TRUE}, waits for input before plotting next plot.
 #' @param jitter Positive numeric between 0 and 1, if TRUE, jitters empirical data by specified proportion of std dev.
 #' @param datarows integer vector specifying rows of data to plot. Otherwise 'all' uses all data.
 #' @param nsamples Number of datasets to generate for comparisons.
-#' @param ... extra arguments to pass to plot function.
+#' @param resolution Positive integer, the number of rows and columns to split plots into for shading.
+#' @param plot logical. If FALSE, a list of ggplot objects is returned.
 #' @return If plot=FALSE, an array containing quantiles of generated data. If plot=TRUE, nothing, only plots.
 #' @export
 #' @details This function relies on the data generated during each iteration of fitting to approximate the
 #' model implied distributions -- thus, when limited iterations are available, the approximation will be worse.
-#'
+#' @return if plot=TRUE, nothing is returned and plots are created. Otherwise, a list containing ggplot objects is returned 
+#' and may be customized as desired.
 #' @examples
 #' \donttest{
-#' ctStanPostPredict(ctstantestfit,wait=FALSE, shading=FALSE, datarows=1:25,diffsize=2)
+#' ctStanPostPredict(ctstantestfit,wait=FALSE, datarows=1:25,diffsize=2)
 #' }
-ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,.5,.975),shading=TRUE, datarows='all',nsamples=500,...){
-
+ctStanPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,.5,.975),
+  datarows='all',nsamples=500,resolution=100,plot=TRUE){
+  
+  plots <-list()
   if(datarows[1]=='all') datarows <- 1:nrow(fit$data$Y)
-
-  xmeasure=datarows
+  xmeasure=data.table(id=fit$standata$subject[datarows])
+  if(1==99) id <- count <- Density <- param <- NULL
+  xmeasure= xmeasure[, count := seq(.N), by = .(id)]$count
+  
   if(is.null(fit$generated$Y)) Ygen <- ctStanGenerateFromFit(fit,fullposterior=TRUE,nsamples=nsamples)$generated$Y else Ygen <- fit$generated$Y
   Ygen<-aperm(Ygen,c(2,1,3))
   Ygen <- Ygen[,datarows,,drop=FALSE]
   time <- fit$standata$time[datarows]
   Ydat <- fit$data$Y[datarows,,drop=FALSE]
-  ctDensityList(x=list(Ydat[datarows,,drop=FALSE],Ygen[,,,drop=FALSE]),plot=TRUE,
-    main='All variables',lwd=2,legend = c('Observed','Model implied'),xlab='Value',...)
+  
+
+  dens <- ctDensityList(x=list(Observed=Ydat[datarows,,drop=FALSE],Model=Ygen[,,,drop=FALSE]),
+    main='',xlab='All variables',colvec=c('blue','red'),plot=FALSE)
+  densdt <- data.table(x= dens$density[[1]]$x, Density=dens$density[[1]]$y,source='Observed',param='All Variables')
+  densdt <- rbind(densdt, data.table(x= dens$density[[2]]$x, Density=dens$density[[2]]$y,source='Model',param='All Variables'))
+  
   
   y<-aaply(Ygen,c(2,3),quantile,na.rm=TRUE,probs=probs,.drop=FALSE)
   # y<-array(y,dim=dim(y)[-1])  
@@ -44,7 +52,6 @@ ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,p
   
   for(typei in c('obs','change')){
     for(i in 1:dim(Ygen)[3]){ #dim 3 is indicator, dim 2 is datarows, dim 1 iterations
-      if(wait) readline("Press [return] for next plot.")
       # xsmeasure=rep(xmeasure,each=dim(Ygen)[1])
       # xstime=rep(xtime,each=dim(Ygen)[1])
       # xsmeasure=xsmeasure[ys>ycut[1] & ys<ycut[2]]
@@ -52,46 +59,59 @@ ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,p
       # 
       
       if(typei=='obs'){
-        
-        ctDensityList(x=list(Ydat[,i,drop=FALSE],Ygen[,datarows,i,drop=FALSE]),plot=TRUE,
-          main=fit$ctstanmodel$manifestNames[i],lwd=2,legend = c('Observed','Model implied'),xlab='Value',...)
-        
-        if(wait) readline("Press [return] for next plot.")
-        
+
+          dens <- ctDensityList(x=list(Observed=Ydat[,i,drop=FALSE],Model=Ygen[,datarows,i,drop=FALSE]),
+            main=fit$ctstanmodel$manifestNames[i],xlab=dimnames(y)[[2]][i],colvec=c('blue','red'),plot=FALSE)
+        densdt <- rbind(densdt, data.table(x= dens$density[[1]]$x, Density=dens$density[[1]]$y,source='Observed', param=dimnames(y)[[2]][i]))
+        densdt <- rbind(densdt, data.table(x= dens$density[[2]]$x, Density=dens$density[[2]]$y,source='Model', param=dimnames(y)[[2]][i]))
+
         for(subtypei in c('Time','Observation')){
           if(subtypei=='Observation') x <- xmeasure
           if(subtypei=='Time') x <- time
           
-          notmissing <- which(!is.na(c(y[datarows,i,1])))
+          # notmissing <- which(!is.na(c(y[datarows,i,1])))
           
-          if(shading) {
-            xs=rep(x,each=dim(Ygen)[1])
-            ycut=quantile(Ygen[,,i],c(.005,.995),na.rm=TRUE)
-            ysamps=Ygen[,,i]
-            xs=xs[ysamps>ycut[1] & ysamps<ycut[2]]
-            ysamps=ysamps[ysamps>ycut[1] & ysamps<ycut[2]]
-            graphics::smoothScatter(xs,ysamps,nbin=256,colramp=grDevices::colorRampPalette(colors=c(rgb(1,1,1,0),rgb(1,.4,.4,.3))),nrpoints=0,
-              transformation=function(x) x,ylim=range(c(y[,i,],quantile(ysamps,probs = c(.01,.99),na.rm=TRUE)),na.rm=TRUE),
-              xlab=subtypei,ylab=dimnames(y)[[2]][i])
-          }
+          # if(shading) {
+          #   xs=rep(x,each=dim(Ygen)[1])
+          #   ycut=quantile(Ygen[,,i],c(.005,.995),na.rm=TRUE)
+          #   ysamps=Ygen[,,i]
+          #   xs=xs[ysamps>ycut[1] & ysamps<ycut[2]]
+          #   ysamps=ysamps[ysamps>ycut[1] & ysamps<ycut[2]]
+          #   graphics::smoothScatter(xs,ysamps,nbin=256,colramp=grDevices::colorRampPalette(colors=c(rgb(1,1,1,0),rgb(1,.4,.4,.3))),nrpoints=0,
+          #     transformation=function(x) x,ylim=range(c(y[,i,],quantile(ysamps,probs = c(.01,.99),na.rm=TRUE)),na.rm=TRUE),
+          #     xlab=subtypei,ylab=dimnames(y)[[2]][i])
+          # }
           
-          if(subtypei=='Observation') ctPlotArray(list(y=y[notmissing,i,,drop=FALSE],x=x[notmissing]),legend=FALSE,add=shading,polygon=!shading,
-            plotcontrol=list(xlab=subtypei,main=dimnames(y)[[2]][i],...))
+          # if(subtypei=='Observation') ctPlotArray(list(y=y[notmissing,i,,drop=FALSE],x=x[notmissing]),legend=FALSE,
+          #   # add=shading,polygon=!shading,
+          #   plotcontrol=list(xlab=subtypei,main=dimnames(y)[[2]][i],...))
           
           # if(subtypei=='Time')
           
-          ocol <- rgb(0,0,.7,.7)
-          points(x[notmissing],
-            Ydat[,i][notmissing] +  rnorm(length(Ydat[,i][notmissing]),0, jitter * sd(Ydat[,i][notmissing],na.rm=TRUE)),
-            type=ifelse(subtypei=='Time','p','l'),lwd=2,lty=1,pch=17, col=ocol)
-          if(legend) legend('topright',c('Model implied','Observed'),text.col=c('red',ocol))
-          if(i < dim(Ygen)[3])  if(wait) readline("Press [return] for next plot.")
+          # ocol <- rgb(0,0,.7,.7)
+          # points(x[notmissing],
+          #   Ydat[,i][notmissing] +  rnorm(length(Ydat[,i][notmissing]),0, jitter * sd(Ydat[,i][notmissing],na.rm=TRUE)),
+          #   type=ifelse(subtypei=='Time','p','l'),lwd=2,lty=1,pch=17, col=ocol)
+          # if(legend) legend('topright',c('Model implied','Observed'),text.col=c('red',ocol))
+          
+          plots <- c(plots,
+            list(
+              plotdensity2dby2(x1 = rep(x,each=dim(Ygen)[1]),
+                y1 = c(Ygen[,,i]), #(dygendt[,,drop=FALSE]),
+                x2=x,
+                y2=Ydat[,i],
+                xlab = subtypei,ylab = dimnames(y)[[2]][i],title='',
+                grouplab = c('Model','Observed'),colours=c('red','blue'),
+                resolution=resolution)
+            ))
+          
         }
       }
       
       
+      
       if(typei=='change'){
-
+        
         yp<-aperm(matrix(ys[,,i,drop=TRUE],nrow=dim(ys)[1],ncol=dim(ys)[2]),c(2,1))#drop true set here if looking for problems!
         
         for(cdiffsize in diffsize){
@@ -106,7 +126,7 @@ ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,p
           # yp[-1,i,,,drop=FALSE] - yp[-fit$data$ndatapoints,i,,,drop=FALSE]
           dygendt <- dygen / diff(time,lag = cdiffsize)
           dygendt<-dygendt[-subdiff,,drop=FALSE]
-
+          
           # dydt<-diff(Ydat[,i], lag = cdiffsize)/diff(time,lag = cdiffsize)
           dydt <- diff(Ydat[,i],lag=cdiffsize)
           dydt <- (dydt/ diff(time,lag = cdiffsize))[-subdiff]
@@ -118,29 +138,98 @@ ctStanPostPredict <- function(fit,legend=TRUE,diffsize=1,jitter=.02, wait=TRUE,p
           #   # transformation=function(x) x,
           #   ylim=range(c(quantile(c(dygendt),probs = c(.01,.99),na.rm=TRUE)),na.rm=TRUE),
           #   xlab='Observation',ylab=dimnames(y)[[2]][i])
-          samps<-sample(1:length(dygendt),size=50000,replace=TRUE)
-          plot(matrix(yp[-subdiff,,drop=FALSE][samps],ncol=1),
-            matrix(dygendt[,,drop=FALSE][samps],ncol=1),
-            ylab=paste0('dy/dt, diff=',cdiffsize),xlab='y', main=dimnames(y)[[2]][i],
-            pch=16,cex=.2,col=rgb(1,0,0,.1),...)
-          points( Ydat[-subdiff,i],
-            dydt,
-            col=rgb(0,0,1,.5),pch=17,...)
+          samps<-sample(1:length(dygendt),size=min(50000,length(dygendt)),replace=FALSE)
+          # plot(matrix(yp[-subdiff,,drop=FALSE][samps],ncol=1),
+          #   matrix(dygendt[,,drop=FALSE][samps],ncol=1),
+          #   ylab=paste0('dy/dt, diff=',cdiffsize),xlab='y', main=dimnames(y)[[2]][i],
+          #   pch=16,cex=.2,col=rgb(1,0,0,.1),...)
+          # points( Ydat[-subdiff,i],
+          #   dydt,
+          #   col=rgb(0,0,1,.5),pch=17,...)
+          # if(length(Ydat[-subdiff,i]) > 500) datasample <- sample(1:length(Ydat[-subdiff,i]),500) else datasample <- 1:length(Ydat[-subdiff,i])
+          plots <- c(plots,
+            list(
+              plotdensity2dby2(x1 = c(yp[-subdiff,,drop=FALSE]),
+                y1 = c(dygendt[,,drop=FALSE]),
+                x2=c(Ydat[-subdiff,i]),
+                y2=dydt,
+                xlab = dimnames(y)[[2]][i],ylab = '~dy/dt', title='',
+                grouplab = c('Model','Observed'),colours=c('red','blue'))
+            ))
           
-          if(wait) readline("Press [return] for next plot.")  
           
-          plot(
-            rep(xtime,(dim(dygendt)[2]))[samps],
-            matrix(dygendt[,,drop=FALSE],ncol=1)[samps],
-            ylab=paste0('dy/dt, diff=',cdiffsize),xlab='time', main=dimnames(y)[[2]][i],
-            pch=16,cex=.1,col=rgb(1,0,0,.3),...)
-          points(xtime,
-            dydt,
-            col=rgb(0,0,1,.5),pch=17,...)
+          # pd <- data.table(Source='Model',
+          #   y=c(matrix(yp[-subdiff,,drop=FALSE][samps],ncol=1)),
+          #   dydt=c(matrix(dygendt[,,drop=FALSE][samps],ncol=1)))
+          # pd <- rbind(pd,data.table(Source='Observed', 
+          #   y=Ydat[-subdiff,i][datasample],
+          #   dydt=dydt))
+          # 
+          # lims <- lapply(c('dydt','y'),function(b) sapply(c('Observed','Model'),function (a) quantile(pd[Source==a,..b],c(.01,.99),na.rm=TRUE)))
+          # names(lims) <- c('dydt','y')
+          # lims <- lapply(lims, function(x) c(min(x[1,]),max(x[2,])))
+          # 
+          # suppressWarnings(print(ggplot(data=pd,aes(y=dydt,x=y,shape=Source,colour=Source)) + 
+          #     stat_density_2d(data = subset(pd, Source=='Model'),geom="raster", 
+          #       aes(alpha=..density..,fill = ..density..),show.legend = FALSE, contour = FALSE) +
+          #     stat_density_2d(data = subset(pd, Source=='Observed'),
+          #       aes(alpha=..level..),linetype='dotted',show.legend = FALSE, contour = TRUE) +
+          #     coord_cartesian(xlim = lims$y, ylim = lims$dydt) +
+          #     geom_point(data = subset(pd, Source=='Observed'),show.legend = TRUE) +
+          #     scale_fill_gradient (low = "#FFFFFF", high = "#FF0000",guide='none')+
+          #     labs(x='y',y='dy/dt',title = dimnames(y)[[2]][i], color  = "Source", shape = "Source")+ 
+          #     theme_minimal() + 
+          #     scale_alpha(guide = 'none') +
+          #     scale_colour_manual(values=c("Observed"="blue", "Model"="red"))+
+          #     scale_shape_manual(values=c("Observed" = 20, "Model" = 19)) +
+          #     theme(legend.title = element_blank())))
+          
+          plots <- c(plots,
+            list(
+              plotdensity2dby2(
+                x1 = rep(xtime,(dim(dygendt)[2]))[samps],
+                y1 = matrix(dygendt[,,drop=FALSE],ncol=1)[samps],
+                x2=xtime,
+                y2=dydt,
+                xlab = 'time',ylab = dimnames(y)[[2]][i],title='',
+                grouplab = c('Model','Observed'),colours=c('red','blue'))
+            ))
+          
+          # plot(
+          #   rep(xtime,(dim(dygendt)[2]))[samps],
+          #   matrix(dygendt[,,drop=FALSE],ncol=1)[samps],
+          #   ylab=paste0('dy/dt, diff=',cdiffsize),xlab='time', main=dimnames(y)[[2]][i],
+          #   pch=16,cex=.1,col=rgb(1,0,0,.3),...)
+          # points(xtime,
+          #   dydt,
+          #   col=rgb(0,0,1,.5),pch=17,...)
           
         }
       }
     }
   }
+
+  plots<-c(list(
+    ggplot(densdt,aes(x=x,fill=source,ymax=Density,y=Density) )+
+      geom_line(alpha=.3) +
+      geom_ribbon(alpha=.4,ymin=0) +
+      scale_fill_manual(values=c('red','blue')) +
+      theme_minimal()+
+      theme(legend.title = element_blank(),
+        panel.grid.minor = element_line(size = 0.1), panel.grid.major = element_line(size = .2),
+        strip.text.x = element_text(margin = margin(.01, 0, .01, 0, "cm"))) +
+      facet_wrap(vars(param),scales = 'free')
+  ),plots) #add density plots to front
+  
+  
+  if(plot) {
+    firstplot=TRUE
+    lapply(plots,function(x){
+      if(wait && !firstplot) readline("Press [return] for next plot.")
+      firstplot <<- FALSE
+      suppressWarnings(print(x))
+    })
+    return(NULL)
+  } else return(plots)
   
 }

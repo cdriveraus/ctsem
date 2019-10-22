@@ -211,7 +211,7 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
       xlab=colnames(tipreds)[1],
       xaxs='i')
     
-    do.call(ctPlotArray,dots)
+    do.call(ctPlotArrayGG,dots)
   }
 }
 

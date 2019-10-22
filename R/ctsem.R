@@ -54,6 +54,7 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
 #' @importFrom utils relist as.relistable tail capture.output
 #' @importFrom Deriv Simplify 
 #' @importFrom cOde jacobianSymb prodSymb
+#' @importFrom quantreg qss
 #' @useDynLib ctsem, .registration = TRUE
 #' 
 #' @references 

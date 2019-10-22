@@ -1,11 +1,8 @@
 #' Plot marginal relationships between covariates and parameters for a ctStanFit object.
 #'
 #' @param fit ctStanFit object.
-#' @param tipred Integer representing which tipred to use -- integer corresponds to TIpredNames specification.
+#' @param tipred character vector representing which tipreds to use.
 #' @param pars Subject level matrices from the ctStanFit output -- e.g, 'DRIFT' or 'DIFFUSION'.
-#' @param probs vector of 3 quantile probabilities, the 2nd will be plotted as a line, the 
-#' outer two as shaded regions.
-#' @param useimputed Logical, include imputed tipreds or only observed?
 #' @param plot Logical, whether to plot.
 #'
 #' @return If \code{plot=TRUE}, nothing, otherwise an array that can be used with ctPlotArray.
@@ -13,34 +10,88 @@
 #'
 #' @examples
 #' \donttest{
-#' ctStanTIpredMarginal(ctstantestfit,pars='CINT',tipred=3)
+#' ctStanTIpredMarginal(ctstantestfit,pars=c('DRIFT','CINT'),tipred=c('TI2','TI3'))
 #' }
-ctStanTIpredMarginal<-function(fit,tipred,pars,probs=c(.025,.5,.975),useimputed=TRUE, plot=TRUE){
+ctStanTIpredMarginal<-function(fit,tipred,pars, plot=TRUE){
   e<-extract(fit)
-  p<- e[[pars]]
-  if(useimputed) tipreds <- ctCollapse(e$tipreds,1,mean) else tipreds <- fit$data$tipredsdata
-  p<-plyr::aaply(p,2:length(dim(p)),quantile,probs=probs,.drop=FALSE)
-  pdim<-dim(p)
-  p<-array(p,c(pdim[1],prod(pdim[c(-1,-length(pdim))]),pdim[length(pdim)]))
-  for(dimi in 2:(length(pdim)-1)){
-    if(dimi==2) pnames <- 1:pdim[dimi] else pnames <- paste0(pnames,', ',rep(1:pdim[dimi],each=length(pnames)))
+  
+  qseq <- seq(.01,.99,.01)
+  
+  dt <- data.table(Parameter = '', TIpred = '', y=0,x=0)
+  # browser()
+  if(requireNamespace('quantreg')){
+  qr <- data.table(matrix(0,ncol=length(qseq)))
+  qrnames <- paste0('q',qseq)
+  names(qr) <- qrnames
+  dt <- cbind(dt,qr)
   }
-  dimnames(p) <- list(fit$setup$idmap[,'original'],
-    paste0(pars,'[',pnames,']'),
-    paste0('Q',probs*100,'%'))
-  
-  #sort
-  p <- p[order(tipreds[,tipred[1],drop=FALSE]), ,,drop=FALSE]
-  tipreds <- tipreds[order(tipreds[,tipred[1],drop=FALSE]),,drop=FALSE]
-  colnames(tipreds) <- fit$ctstanmodel$TIpredNames
-  input <- list(y=p,x=tipreds[,tipred[1],drop=FALSE])
-  
-  if(plot){
-    for(ci in 1:(dim(p)[2])){
-      intemp<-input
-      intemp$y <- intemp$y[,ci, ,drop=FALSE]
-      ctPlotArray(intemp)
-      # plot(rep(tipreds[,tipred],pdim[1]),p[,ci,drop=FALSE],xlab=fit$ctstanmodel$TIpredNames[tipred],ylab=colnames(p)[ci],pch=pch,pcol=pcol)
+  for(p in pars){
+    for(ti in tipred){
+      tin <- match(ti,fit$ctstanmodelbase$TIpredNames)
+      for(i in 1:dim(e[[p]])[3]){
+        for(j in 1:dim(e[[p]])[4]){
+          
+          dts <-data.frame(Parameter = paste0(p, '[',i,',',j,']'),
+            TIpred = ti, y=c(e[[p]][1,,i,j]), x=c(e$tipreds[1,,tin]))
+          
+          if(requireNamespace('quantreg')){
+            # browser()
+            qr=data.table(sapply(qseq,function(d){
+            quantreg::predict.rqss(quantreg::rqss(formula = as.formula('y ~ qss(x)'),data=dts,tau=d),dts)
+          }))
+          names(qr) <- qrnames
+          dts <- cbind(dts,qr)
+          }
+          
+          
+            
+            # qr= rqss(formula = as.formula('y ~ x'),data=dts,tau=d)
+          dt <- rbind(dt,dts)
+        }
+      }
     }
   }
+  dt=dt[-1,]
+  
+  # colours = suppressWarnings(RColorBrewer::brewer.pal(length(tipred),'Set1'))[1:length(tipred)]
+  
+ g<- ggplot(data = dt,aes(y=y,x=x,colour=TIpred,fill=TIpred)) +
+    theme_minimal() +
+    # stat_density_2d(aes(alpha=..nlevel..),linetype='dotted',show.legend = FALSE, contour = TRUE) +
+    # stat_bin2d(aes(alpha=..density..,fill=TIpred,colour=TIpred),geom='tile',linetype=0,contour=FALSE,show.legend = FALSE) +
+    # layer(geom = 'raster',stat=StatDensity2d,params=list(contour=FALSE,linetype=0,alpha=0.2)
+      # ,mapping=aes(alpha=(..ndensity..)),position='identity') +
+    # geom_quantile(method = "rqss",aes(alpha=.5-abs(.5-(..quantile..))),quantiles = seq(.01,.99,.01))+
+    # stat_summary(geom="ribbon", 
+    #   fun.ymin = function(x) stat_quantile(aes(x=x), 0.05), 
+    #   fun.ymax = function(x) stat_quantile(aes(x=x), 0.95))
+    geom_point(data=dt[sample(1:nrow(dt),min(nrow(dt),300),replace=FALSE),],show.legend = TRUE) +
+    # geom_point(data = subset(pd, Source==grouplab[1]),show.legend = TRUE) +
+    # scale_fill_gradient (low = "white", high = colours[1,guide='none')+
+    # scale_fill_manual(values=setNames(colours,tipred)) + #values=c("a"="#FF0000", "b"="#00FF00")) +
+    # labs(x=xlab,y=ylab,title = title, color  = "Source", shape = "Source")+ 
+    theme_minimal() +
+    scale_alpha(guide = 'none') +
+    # scale_colour_manual(values=setNames(colours, grouplab))+
+    # scale_shape_manual(values=setNames(grouppch,grouplab)) +
+    theme(legend.title = element_blank()
+      ,panel.background=element_rect(fill="transparent",colour=NA),
+      plot.background=element_rect(fill="transparent",colour=NA),
+      legend.key = element_rect(fill = "transparent", colour = "transparent")
+      # ,panel.background = element_rect(fill = "white",colour = 'white'), # or theme_blank()
+      # panel.grid.minor = theme_blank(), 
+      # panel.grid.major = theme_blank(),
+      # plot.background = element_rect(fill = "white",colour = 'white')
+    ) +
+    facet_wrap(vars(Parameter),scales='free')
+ 
+ # g<-g+geom_quantile(quantiles=qseq,method='rqss')
+
+for(i in 1:(length(qrnames)/2)){
+  g <- g+ geom_ribbon(mapping=aes_string(ymin=qrnames[i],ymax=qrnames[i+(length(qrnames)/2)]),linetype=0,alpha=.01)
+}
+
+  
+  if(plot) print(g)
+  
 }
