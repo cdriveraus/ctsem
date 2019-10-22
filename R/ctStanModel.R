@@ -174,17 +174,15 @@ ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
     tipredspec<-matrix(TRUE,ncol=n.TIpred,nrow=1)
     colnames(tipredspec)<-paste0(TIpredNames,'_effect')
     ctspec<-cbind(ctspec,tipredspec,stringsAsFactors=FALSE)
-    ctspec[!is.na(ctspec$value),paste0(TIpredNames,'_effect')]<-tipredDefault
+    ctspec[,paste0(TIpredNames,'_effect')]<-tipredDefault
     for(predi in TIpredNames){
       class(ctspec[,paste0(predi,'_effect')])<-'logical'
     }
-    if(sum(unlist(ctspec[,paste0(TIpredNames,'_effect')]))==0) stop('TI predictors included but no effects specified!')
   }
   
   
   
   getwords <- function(x) gsub('\\W+',',',x)
-  
   
   
   for(pi in 1:nrow(ctspec)){ #check for complex / split specifications
@@ -213,7 +211,7 @@ ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
       timessage <- c()
       if(!is.na(tisplit)){
         tisplit <- strsplit(getwords(tisplit),split = ',')[[1]]
-        ctspec[,paste0(TIpredNames,'_effect')] <- FALSE #first set all FALSE
+        ctspec[pi,paste0(TIpredNames,'_effect')] <- FALSE #first set all FALSE
         if(!tisplit[1] %in% ''){
           for(ti in TIpredNames){ #check which tipreds were included
             for(spliti in tisplit){
@@ -222,7 +220,8 @@ ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
             }
           }
         }
-        if(!is.null(whichtipreds))  ctspec[,paste0(whichtipreds,'_effect')] <- TRUE #set those effects TRUE
+        
+        if(!is.null(whichtipreds))  ctspec[pi,paste0(whichtipreds,'_effect')] <- TRUE #set those effects TRUE
         if(is.null(whichtipreds)) whichtipreds <- 'NULL'
         timessage <- paste0(ctspec$param[pi],' tipred effects from: ', paste0(whichtipreds,collapse=', '))
         
@@ -235,6 +234,7 @@ ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
     }
   }
   
+  if(n.TIpred > 0 && sum(unlist(ctspec[,paste0(TIpredNames,'_effect')]))==0) stop('TI predictors included but no effects specified!')
   
   out<-list(pars=ctspec,n.latent=n.latent,n.manifest=n.manifest,n.TIpred=n.TIpred,n.TDpred=n.TDpred,
     latentNames=latentNames,manifestNames=manifestNames,
