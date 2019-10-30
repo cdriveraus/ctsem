@@ -43,7 +43,7 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='margi
   m<-x$pars
   highmean=inddifdevs[2]
   lowmean= inddifdevs[1]
-  if(rows=='all') rows<-1:nrow(m)
+  if(rows[1]=='all') rows<-1:nrow(m)
   nplots<-ceiling(length(rows) /6)
   plots <- list()
   if(1==99) Par.Value <- type <- Density <- NULL
@@ -88,7 +88,7 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='margi
             param=stats::rnorm(length(rawpopsdprior),lowmean,rawpopsdprior)
             denslist[[3]]=tform(param,m$transform[rowi], m$multiplier[rowi], m$meanscale[rowi], m$offset[rowi],m$inneroffset[rowi])
             
-            leg <- c('Pop. mean prior', paste0('Subject prior | mean = ',lowmean),paste0('Subject prior | mean = ',highmean))
+            leg <- c('Pop. mean prior', paste0('Subject prior\nmean = ',lowmean,' sd'),paste0('Subject prior\nmean = +',highmean,' sd'))
             colvec <- c(1,2,4)
           }
         }
@@ -121,7 +121,7 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='margi
         # coord_cartesian(xlim = c(vars(xlow)[1], vars(xhigh)[1]))+
         # coord_cartesian(xlim = mean(vars(x))-sd(vars(x)), mean(vars(x))+sd(vars(x)))+
         theme_minimal()+
-        theme(legend.title = element_blank())+
+        theme(legend.title = element_blank(),legend.position='top')+
         facet_wrap(vars(param),scales='free')
     ))
   }
@@ -138,7 +138,7 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='margi
       firstplot <<- FALSE
       suppressWarnings(print(x))
     })
-    return(NULL)
+    return(invisible(NULL))
   } else return(plots)
   
 }

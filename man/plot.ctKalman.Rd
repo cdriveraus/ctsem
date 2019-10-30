@@ -28,7 +28,8 @@ or smoothed (conditional on all data) estimates.}
 
 \item{errorvec}{vector of names of covariance elements to use for uncertainty indication 
 around the kalmanvec items. 'auto' uses the latent covariance when plotting
-latent states, and total covariance when plotting expectations of observed states. Use NA to skip uncertainty plotting.}
+latent states, and total covariance when plotting expectations of observed states. 
+Use NA to skip uncertainty plotting.}
 
 \item{errormultiply}{Numeric denoting the multiplication factor of the std deviation of errorvec objects. 
 Defaults to 1.96, for 95\% intervals.}
@@ -65,20 +66,17 @@ though lty,col,lwd,x,y, will all be ignored.}
 \item{...}{not used.}
 }
 \value{
-Nothing. Generates plots.
+Generates plots.
 }
 \description{
 Plots Kalman filter output from ctKalman.
 }
 \examples{
 \donttest{
-### Get output from ctKalman
-x<-ctKalman(ctstantestfit,subjects=2)
-
-### Plot with plot.ctKalman
-plot.ctKalman(x, subjects=2)
-
-###Single step procedure:
-ctKalman(ctstantestfit,subjects=2,plot=TRUE)
+data(AnomAuth) 
+AnomAuthmodel <- ctModel(LAMBDA = matrix(c(1, 0, 0, 1), nrow = 2, ncol = 2), 
+  Tpoints = 5, n.latent = 2, n.manifest = 2,  TRAITVAR = NULL) 
+AnomAuthfit <- ctFit(AnomAuth, AnomAuthmodel)
+ctKalman(AnomAuthfit,subjects=1,plot=TRUE)
 }
 }

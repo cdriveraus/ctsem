@@ -55,6 +55,8 @@ ctStanTIpredMarginal<-function(fit,tipred,pars, plot=TRUE){
   
   # colours = suppressWarnings(RColorBrewer::brewer.pal(length(tipred),'Set1'))[1:length(tipred)]
   
+  if(1==99) y <- x <- Parameter <- TIpred <- NULL
+  
  g<- ggplot(data = dt,aes(y=y,x=x,colour=TIpred,fill=TIpred)) +
     theme_minimal() +
     # stat_density_2d(aes(alpha=..nlevel..),linetype='dotted',show.legend = FALSE, contour = TRUE) +

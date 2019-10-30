@@ -5,12 +5,13 @@
 \title{ctStanDiscreteParsPlot}
 \usage{
 ctStanDiscreteParsPlot(x, indices = "all", add = FALSE,
-  legend = TRUE, polygon = TRUE, quantiles = c(0.025, 0.5, 0.975),
-  times = seq(0, 10, 0.1), latentNames = "auto", lwdvec = "auto",
-  colvec = "auto", ltyvec = "auto", plotcontrol = list(ylab =
-  "Value", xlab = "Time interval", main = "Regression coefficients", type =
-  "l", xaxs = "i"), grid = FALSE, legendcontrol = list(x = "topright",
-  bg = "white"), polygonalpha = 0.1, polygoncontrol = list(steps = 20))
+  legend = TRUE, polygon = TRUE, gg = TRUE, plot = TRUE,
+  quantiles = c(0.025, 0.5, 0.975), times = seq(0, 10, 0.1),
+  latentNames = "auto", lwdvec = "auto", colvec = "auto",
+  ltyvec = "auto", plotcontrol = list(ylab = "Value", xlab =
+  "Time interval", main = "Regression coefficients", type = "l", xaxs =
+  "i"), grid = FALSE, legendcontrol = list(x = "topright", bg =
+  "white"), polygonalpha = 0.1, polygoncontrol = list(steps = 20))
 }
 \arguments{
 \item{x}{list object returned from \code{\link{ctStanDiscretePars}}.}
@@ -27,6 +28,11 @@ overlayed on existing plot.}
 \item{legend}{Logical. If TRUE, generates a legend.}
 
 \item{polygon}{Logical. If TRUE, fills a polygon between the first and last specified quantiles.}
+
+\item{gg}{Logical -- use GGplot2 or not? if TRUE, other graphical parameters are ignored, and the
+ggplot object is returned and may be modified further.}
+
+\item{plot}{Logical. Only relevant with gg=TRUE.}
 
 \item{quantiles}{numeric vector of length 3, with values between 0 and 1, specifying which quantiles to plot.
 The default of c(.05,.5,.95) plots 95\% credible intervals and the posterior median at 50\%.}
@@ -67,6 +73,12 @@ continuous time models fit with ctStanFit.
 }
 \examples{
 x <- ctStanDiscretePars(ctstantestfit)
+ctStanDiscreteParsPlot(x, indices='CR')
+\dontrun{
+#to modify plot:
+g <- ctStanDiscreteParsPlot(x, indices='CR',plot=FALSE) + 
+ ggplot2::labs(title='My ggplot modification')
+print(g)
+}
 
-ctStanDiscreteParsPlot(x, 'CR')
 }

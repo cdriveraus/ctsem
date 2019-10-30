@@ -135,7 +135,7 @@ ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE, smoothness=1,
       firstplot <<- FALSE
       suppressWarnings(print(x))
     })
-    return(NULL)
+    return(invisible(NULL))
   } else return(plots)
   # do.call(graphics::par,paroriginal)
   

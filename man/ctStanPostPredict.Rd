@@ -42,6 +42,6 @@ model implied distributions -- thus, when limited iterations are available, the 
 }
 \examples{
 \donttest{
-ctStanPostPredict(ctstantestfit,wait=FALSE, datarows=1:25,diffsize=2)
+ctStanPostPredict(ctstantestfit,wait=FALSE, diffsize=2,resolution=100)
 }
 }

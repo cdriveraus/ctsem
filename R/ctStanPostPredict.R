@@ -7,7 +7,8 @@
 #' @param wait Logical, if TRUE and \code{plot=TRUE}, waits for input before plotting next plot.
 #' @param jitter Positive numeric between 0 and 1, if TRUE, jitters empirical data by specified proportion of std dev.
 #' @param datarows integer vector specifying rows of data to plot. Otherwise 'all' uses all data.
-#' @param nsamples Number of datasets to generate for comparisons.
+#' @param nsamples Number of datasets to generate for comparisons, if fit object does not contain generated
+#' data already.
 #' @param resolution Positive integer, the number of rows and columns to split plots into for shading.
 #' @param plot logical. If FALSE, a list of ggplot objects is returned.
 #' @return If plot=FALSE, an array containing quantiles of generated data. If plot=TRUE, nothing, only plots.
@@ -18,11 +19,14 @@
 #' and may be customized as desired.
 #' @examples
 #' \donttest{
-#' ctStanPostPredict(ctstantestfit,wait=FALSE, datarows=1:25,diffsize=2)
+#' p<-ctStanPostPredict(ctstantestfit,wait=FALSE, diffsize=2,resolution=100,plot=FALSE)
+#' print(p[[3]])
+#' }
+#' \dontrun{
+#' ctStanPostPredict(ctstantestfit,wait=FALSE, diffsize=2,resolution=100,plot=TRUE)
 #' }
 ctStanPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,.5,.975),
   datarows='all',nsamples=500,resolution=100,plot=TRUE){
-  
   plots <-list()
   if(datarows[1]=='all') datarows <- 1:nrow(fit$data$Y)
   xmeasure=data.table(id=fit$standata$subject[datarows])
@@ -35,9 +39,9 @@ ctStanPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,
   time <- fit$standata$time[datarows]
   Ydat <- fit$data$Y[datarows,,drop=FALSE]
   
-
+  
   dens <- ctDensityList(x=list(Observed=Ydat[datarows,,drop=FALSE],Model=Ygen[,,,drop=FALSE]),
-    main='',xlab='All variables',colvec=c('blue','red'),plot=FALSE)
+    main='',xlab='All variables',colvec=c('blue','red'),plot=FALSE,probs=c(.01,.99))
   densdt <- data.table(x= dens$density[[1]]$x, Density=dens$density[[1]]$y,source='Observed',param='All Variables')
   densdt <- rbind(densdt, data.table(x= dens$density[[2]]$x, Density=dens$density[[2]]$y,source='Model',param='All Variables'))
   
@@ -50,8 +54,10 @@ ctStanPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,
   ys=Ygen
   ys[ys<ycut[1] | ys>ycut[2]] <- NA 
   
-  for(typei in c('obs','change')){
-    for(i in 1:dim(Ygen)[3]){ #dim 3 is indicator, dim 2 is datarows, dim 1 iterations
+  for(i in 1:dim(Ygen)[3]){ #dim 3 is indicator, dim 2 is datarows, dim 1 iterations
+    plots[[i]] <- list()
+    for(typei in c('obs','change')){
+      
       # xsmeasure=rep(xmeasure,each=dim(Ygen)[1])
       # xstime=rep(xtime,each=dim(Ygen)[1])
       # xsmeasure=xsmeasure[ys>ycut[1] & ys<ycut[2]]
@@ -59,12 +65,16 @@ ctStanPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,
       # 
       
       if(typei=='obs'){
-
-          dens <- ctDensityList(x=list(Observed=Ydat[,i,drop=FALSE],Model=Ygen[,datarows,i,drop=FALSE]),
-            main=fit$ctstanmodel$manifestNames[i],xlab=dimnames(y)[[2]][i],colvec=c('blue','red'),plot=FALSE)
-        densdt <- rbind(densdt, data.table(x= dens$density[[1]]$x, Density=dens$density[[1]]$y,source='Observed', param=dimnames(y)[[2]][i]))
-        densdt <- rbind(densdt, data.table(x= dens$density[[2]]$x, Density=dens$density[[2]]$y,source='Model', param=dimnames(y)[[2]][i]))
-
+        dens <- ctDensityList(x=list(Observed=Ydat[,i,drop=FALSE],Model=Ygen[,datarows,i,drop=FALSE]),
+          main=fit$ctstanmodel$manifestNames[i],
+          probs=c(.01,.99),
+          xlab=dimnames(y)[[2]][i],
+          colvec=c('blue','red'),plot=FALSE)
+        densdt <- rbind(densdt, data.table(x= dens$density[[1]]$x, 
+          Density=dens$density[[1]]$y,source='Observed', param=dimnames(y)[[2]][i]))
+        densdt <- rbind(densdt, data.table(x= dens$density[[2]]$x, 
+          Density=dens$density[[2]]$y,source='Model', param=dimnames(y)[[2]][i]))
+        
         for(subtypei in c('Time','Observation')){
           if(subtypei=='Observation') x <- xmeasure
           if(subtypei=='Time') x <- time
@@ -94,14 +104,14 @@ ctStanPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,
           #   type=ifelse(subtypei=='Time','p','l'),lwd=2,lty=1,pch=17, col=ocol)
           # if(legend) legend('topright',c('Model implied','Observed'),text.col=c('red',ocol))
           
-          plots <- c(plots,
+          plots[[i]] <- c(plots[[i]],
             list(
               plotdensity2dby2(x1 = rep(x,each=dim(Ygen)[1]),
                 y1 = c(Ygen[,,i]), #(dygendt[,,drop=FALSE]),
                 x2=x,
                 y2=Ydat[,i],
                 xlab = subtypei,ylab = dimnames(y)[[2]][i],title='',
-                grouplab = c('Model','Observed'),colours=c('red','blue'),
+                grouplab = c('Observed','Model'),colours=c('blue','red'),
                 resolution=resolution)
             ))
           
@@ -147,14 +157,16 @@ ctStanPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,
           #   dydt,
           #   col=rgb(0,0,1,.5),pch=17,...)
           # if(length(Ydat[-subdiff,i]) > 500) datasample <- sample(1:length(Ydat[-subdiff,i]),500) else datasample <- 1:length(Ydat[-subdiff,i])
-          plots <- c(plots,
+          
+          plots[[i]] <- c(plots[[i]],
             list(
               plotdensity2dby2(x1 = c(yp[-subdiff,,drop=FALSE]),
                 y1 = c(dygendt[,,drop=FALSE]),
                 x2=c(Ydat[-subdiff,i]),
                 y2=dydt,
-                xlab = dimnames(y)[[2]][i],ylab = '~dy/dt', title='',
-                grouplab = c('Model','Observed'),colours=c('red','blue'))
+                xlab = dimnames(y)[[2]][i],ylab = paste0('d (',dimnames(y)[[2]][i],') / dt'), title='',
+                grouplab = c('Observed','Model'),colours=c('blue','red'),
+                resolution=resolution)
             ))
           
           
@@ -184,15 +196,16 @@ ctStanPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,
           #     scale_shape_manual(values=c("Observed" = 20, "Model" = 19)) +
           #     theme(legend.title = element_blank())))
           
-          plots <- c(plots,
+          plots[[i]] <- c(plots[[i]],
             list(
               plotdensity2dby2(
                 x1 = rep(xtime,(dim(dygendt)[2]))[samps],
                 y1 = matrix(dygendt[,,drop=FALSE],ncol=1)[samps],
                 x2=xtime,
                 y2=dydt,
-                xlab = 'time',ylab = dimnames(y)[[2]][i],title='',
-                grouplab = c('Model','Observed'),colours=c('red','blue'))
+                xlab = 'time',ylab = paste0('d (',dimnames(y)[[2]][i],') / dt'),title='',
+                grouplab = c('Observed','Model'),colours=c('blue','red'),
+                resolution=resolution)
             ))
           
           # plot(
@@ -208,8 +221,8 @@ ctStanPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,
       }
     }
   }
-
-  plots<-c(list(
+  
+  plots[[length(plots)+1]]<-c(list(
     ggplot(densdt,aes(x=x,fill=source,ymax=Density,y=Density) )+
       geom_line(alpha=.3) +
       geom_ribbon(alpha=.4,ymin=0) +
@@ -219,17 +232,25 @@ ctStanPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,
         panel.grid.minor = element_line(size = 0.1), panel.grid.major = element_line(size = .2),
         strip.text.x = element_text(margin = margin(.01, 0, .01, 0, "cm"))) +
       facet_wrap(vars(param),scales = 'free')
-  ),plots) #add density plots to front
+  )) #add density plots to front
   
   
   if(plot) {
+    if(!requireNamespace('gridExtra')) plots <- unlist(plots,recursive = FALSE)
     firstplot=TRUE
     lapply(plots,function(x){
       if(wait && !firstplot) readline("Press [return] for next plot.")
       firstplot <<- FALSE
-      suppressWarnings(print(x))
+      if(requireNamespace('gridExtra')){
+        if(length(x) > 1){
+          for(li in seq_along(x)[-2]){
+            x[[li]] <- x[[li]]  + theme(legend.position = "none")
+          }
+        }
+        suppressWarnings(gridExtra::grid.arrange(grobs=x))
+      } else suppressWarnings(print(x))
     })
     return(NULL)
-  } else return(plots)
+  } else return(invisible(plots))
   
 }

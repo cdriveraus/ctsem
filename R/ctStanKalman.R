@@ -19,16 +19,16 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
   # if(class(collapsefunc) %in% 'function' ) e=extract(fit)
   
   # if(!class(collapsefunc) %in% 'function' || length(dim(e$k))==0){
-    message('Computing state estimates..')
-    standata <- fit$standata
-    standata$savescores <- 1L
-    # smf <- stan_reinitsf(fit$stanmodel, standata)
-    samples<-ctStanRawSamples(fit)
-    if(!is.na(nsamples)) samples <- samples[sample(1:nrow(samples),nsamples),,drop=FALSE] else nsamples <- nrow(samples)
-    if(is.function(collapsefunc)) samples = matrix(apply(samples,2,collapsefunc,...),ncol=ncol(samples))
-    e=stan_constrainsamples(sm = fit$stanmodel,standata = standata,samples = samples,cores=cores)
+  message('Computing state estimates..')
+  standata <- fit$standata
+  standata$savescores <- 1L
+  # smf <- stan_reinitsf(fit$stanmodel, standata)
+  samples<-ctStanRawSamples(fit)
+  if(!is.na(nsamples)) samples <- samples[sample(1:nrow(samples),nsamples),,drop=FALSE] else nsamples <- nrow(samples)
+  if(is.function(collapsefunc)) samples = matrix(apply(samples,2,collapsefunc,...),ncol=ncol(samples))
+  e=stan_constrainsamples(sm = fit$stanmodel,standata = standata,samples = samples,cores=cores)
   # }
-
+  
   k=e$kalman
   
   k[k==99999] <- NA #for missingness
@@ -52,7 +52,7 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
   })
   llrow = llvec - apply(llscale, 1:2, function(x) sum(x,na.rm=TRUE))
   
- 
+  
   
   y=matrix(fit$standata$Y,ncol=ncol(fit$standata$Y),dimnames = list(NULL,fit$ctstanmodel$manifestNames))
   y[y==99999] <- NA
@@ -76,13 +76,13 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
             out[[ref]] <- out[[ref]][,,1:nlatent,drop=FALSE] 
             dimnames(out[[ref]]) <- list(NULL, NULL, fit$ctstanmodel$latentNames[1:nlatent])
           } else { #for cov
-            out[[ref]] <- out[[ref]][,,,1:nlatent,drop=FALSE]
+            out[[ref]] <- out[[ref]][,,1:nlatent,1:nlatent,drop=FALSE]
           }
         }
       }
     }
   }
- 
+  
   for(typei in c('prior','upd','smooth')){
     out[[paste0('err',typei)]] <- aaply(out[[paste0('y',typei)]],1, function(yp) out$y-yp,.drop=FALSE)
   } 
@@ -94,15 +94,44 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
             matrix(solve(
               t(chol(matrix(out[[paste0('ypriorcov')]][i,r,,],ncol=nmanifest)))[
                 !is.na(out$y[r,]),!is.na(out$y[r,])], 
-          out[[paste0('err',typei)]][i,r,!is.na(out$y[r,])]), nrow=sum(!is.na(out$y[r,])))
+              out[[paste0('err',typei)]][i,r,!is.na(out$y[r,])]), nrow=sum(!is.na(out$y[r,])))
         return(tmp)
       },simplify = 'array'), dim=c(nmanifest,1,nrow(out$y)))
     },simplify = 'array'), dim=c(nmanifest,1,nrow(out$y),nsamples))
     
     out[[paste0('errstd',typei)]] <- array(aperm(arr, c(4,3,1,2)),dim=dim(arr)[c(4,3,1)])
   }
+  
+  
+  mindex <- grep('(^y)|(^err)|(^ll)',names(out))
+  lindex <- grep('^eta',names(out))
+  nosampindex <- which(names(out) %in% c('time','y'))
+  
+  for(i in 1:length(out)){
+    d<-list()
+    if(!i %in% nosampindex){
+      ds <- 1:dim(out[[i]])[1]
+      d <- c(d,Sample=list(ds))
+    }
+    do <- 1:dim(out[[i]])[ifelse(i %in% nosampindex,1,2)]#obs
+    d <- c(d,Obs=list(do))
+    
+    if(names(out)[i] %in% 'time') d <- c(d,Row=list('Time'))
+    if(names(out)[i] %in% 'y') d <- c(d,Row = list(fit$ctstanmodelbase$manifestNames))
+    
+    
+    if(length(dim(out[[i]])) > 2){
+      if(i %in% mindex) dr <- fit$ctstanmodelbase$manifestNames
+      if(i %in% lindex) dr <- fit$ctstanmodelbase$latentNames
+      d <- c(d,Row=list(dr))
+      if(length(dim(out[[i]])) > 3) d <- c(d,Col=list(dr))
+    }
+    
+    dimnames(out[[i]]) <- d
+  }
+  out$id <- fit$standata$subject
 
-return(out)
+  return(out)
 }
 
 

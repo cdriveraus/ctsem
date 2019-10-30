@@ -19,6 +19,55 @@ naf <-function(x){
   return(x)
 }
 
+
+
+meltkalman <- function(l){
+if(1==99) Row <- Col <- NULL
+  Time <- data.table(l$time,Obs=1:length(l$time))
+  Subject <- data.table(Subject=factor(l$id),Obs=seq_along(l$time))
+  l$id <- NULL
+  l$time <- NULL
+  TimeSubject <- merge(Time,Subject)
+  
+  dout <- NULL
+  i=0
+  while(i < length(l)){
+    i=i+1
+    
+    while(length(dim(l[[i]])) < 3){
+      dn = c(dimnames(l[[i]]),list(NULL))
+      l[[i]] <- array(l[[i]],dim = c(dim(l[[i]]),1))
+      dimnames(l[[i]]) <- dn
+      
+    }
+      x <- melt(as.data.table(l[[i]],keep.rownames = TRUE,na.rm = FALSE),measure.vars = 'value')
+      x$Obs <- as.integer(x$Obs)
+      x <- merge(cbind(x,Element = names(l)[i]),TimeSubject,by='Obs')
+      if(grepl('(prior)|(upd)|(smooth)',names(l)[i]) &!grepl('(cov$)|(^err)',names(l)[i])){
+        # browser()
+        xsd<-melt(as.data.table(l[[ paste0(names(l)[i],'cov') ]],
+          keep.rownames = TRUE,na.rm = FALSE),measure.vars='value')
+        xsd <-subset(xsd,Row==Col)
+        xsd$value <- sqrt(xsd$value)
+        xsd$Obs <- as.integer(xsd$Obs)
+        setnames(xsd,'value','sd')
+        x<-merge(x,xsd,by=colnames(xsd)[colnames(xsd) %in% colnames(x)]) #data.table(sd=(sqrt(xsd$value))))
+      }
+      if(is.null(dout)) dout <- x else dout <- rbind(dout,x,fill=TRUE)
+  }
+  
+  # 
+  # ggplot(data=subset(dout,Element %in% 'ysmooth' & Sample == 1),aes(x=Time,y=value,colour=Subject))+
+  # # stat_quantile(quantiles=seq(.01,.99,.01),
+  # #   aes(alpha=1-(abs(.5-(..quantile..)))),method='rqss')+
+  #   geom_line()+
+  #   geom_ribbon(aes(ymin=value-sd,ymax=value+sd,fill=Subject),alpha=.2,linetype=0)+
+  #   theme_minimal()+
+  #   facet_wrap(vars(Row))
+  class(dout) <- c('ctKalmanDF',class(dout))
+return(dout)
+}
+
 gridplot <- function(m, maxdim=c(3,3),...){
   d=n2mfrow(dim(m)[length(dim(m))])
   d[d>maxdim] <-maxdim[d>maxdim]
@@ -215,14 +264,9 @@ ctDensityList<-function(x,xlimsindex='all',plot=FALSE,smoothness=1,
   sd=sd(xlims)
   xlims[1] = xlims[1] - sd/2
   xlims[2] = xlims[2] + sd/2
-  
-  bw=mean(sapply(x,function(d) bw.SJ(na.omit(c(d))))) *2
-  # bw=abs(max( 
-  #   min( (sd)/length(x[[1]])^.4,sd/50),
-  #   1e-5)) * smoothness
-  
-  # if(all(colvec=='auto')) colvec=1:length(x)
-  # if(all(ltyvec=='auto')) ltyvec=1:length(x)
+
+  bw=sapply(x,function(d) bw.SJ(na.omit(c(d))))
+  bw = mean(bw) + ifelse(length(bw) > 1,sd(bw),0)
 
   denslist<-lapply(1:length(x),function(xi) {
     d=stats::density(x[[xi]],bw=bw,n=5000,from=xlims[1],to=xlims[2],na.rm=TRUE)

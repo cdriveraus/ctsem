@@ -200,7 +200,11 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   )
   
   colnames(tipreds) <- colnames(fit$data$tipredsdata)[whichTIpreds]
+
+  names(attributes(out)$dimnames) <- c('Parameter','param',paste(colnames(tipreds),collapse=''))
   out <- list(y=aperm(out, c(3,2,1)), x=tipreds[,1,drop=FALSE])
+  
+  # names(out)[[1]] <-
   
   if(!plot) return(out) else {
     dots <- list(...)

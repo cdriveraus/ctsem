@@ -160,15 +160,16 @@ ctModelLatex<- function(ctmodel,matrixnames=TRUE,textsize='normalsize',folder=te
     if(compile){
       hastex <- !Sys.which('pdflatex') %in% ''
       a=try(tools::texi2pdf(file=paste0(filename,'.tex'),quiet=FALSE, clean=TRUE))
-      if(interactive() && 'try-error' %in% class(a) && !hastex) {
-        message('Tex compiler not found -- do you want to install tinytex? Will require a manual restart of R.')
-        dotiny <- readline('Y/N?')
-        if(dotiny %in% c('Y','y')){
-          utils::install.packages('tinytex')
-          if(requireNamespace('tinytex',quietly=TRUE)) tinytex::install_tinytex()
-        }
+      if('try-error' %in% class(a) && !hastex) {
+        open <- FALSE
+        message('Tex compiler not found -- you could install the tinytex package using:\ninstall.packages("tinytex")\ntinytex::install_tinytex()')
+        # dotiny <- readline('Y/N?')
+        # if(dotiny %in% c('Y','y')){
+        #   utils::install.packages('tinytex')
+        #   if(requireNamespace('tinytex',quietly=TRUE)) tinytex::install_tinytex()
+        # }
       }
-      if(open) try(openPDF(paste0(filename,'.pdf')))
+      if(interactive() && open) try(openPDF(paste0(filename,'.pdf')))
     }
     
   }

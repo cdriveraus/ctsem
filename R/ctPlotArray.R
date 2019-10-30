@@ -1,11 +1,13 @@
 ctPlotArrayGG <- function(input,plot=TRUE,...){
 
+  names <- names(attributes(input$y)$dimnames)
+  
   dt=unlist(apply(input$y[,,1:dim(input$y)[3],drop=FALSE],3,function(x) list(x)),recursive = FALSE)
   dt=data.table(plyr::ldply(dt,.id=names(dimnames(input$y)[3])))
 
   dt$x <- rep(input$x,dim(input$y)[3])
-  dt$Quantile <- factor(match(dt$Quantile,unique(dt$Quantile)))
-  dt <- melt(dt,id.vars = c('Quantile','x'))
+  dt$Quantile <- factor(match(dt[[names[3] ]],unique(dt[[names[3] ]])))
+  dt <- melt(dt[,!names(dt) %in% names[3],with=FALSE],id.vars = c('Quantile','x'))
   
   dt$max <- -9999
   qu <- as.numeric(unique(dt$Quantile))
@@ -14,6 +16,8 @@ ctPlotArrayGG <- function(input,plot=TRUE,...){
   for(qi in 1:(floor(dim(input$y)[3]/2))){
     dt[dt$Quantile==qi,'max'] <- c(dt[dt$Quantile==qi+(2*qi),'value'])
   }
+  
+  if(1==99) variable <- value <- x <- NULL
   
   g<-ggplot(dt[as.numeric(dt$Quantile) < mean(qu),],aes(x=x,y=value,colour=variable)) +
     ylab(names(dimnames(input$y)[3])) +xlab(names(dimnames(input$y)[1])) +

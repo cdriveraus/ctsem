@@ -112,7 +112,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   latentNames=ctstanfitobj$ctstanmodel$latentNames
   
   if(nsamples > niter) nsamples <- niter
-
+  
   out<-list()
   
   #get all ctparameter matrices at once and remove unneeded subjects
@@ -128,9 +128,9 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   }
   
   # 
-nlatent <- dim(ctpars$asymDIFFUSION)[2]
-
-ctpars$DRIFT <- ctpars$DRIFT[,1:nlatent,1:nlatent,drop=FALSE] #intoverpop
+  nlatent <- dim(ctpars$asymDIFFUSION)[2]
+  
+  ctpars$DRIFT <- ctpars$DRIFT[,1:nlatent,1:nlatent,drop=FALSE] #intoverpop
   print(apply(ctpars$DRIFT,c(2,3),mean))
   nsubjects <- length(subjects)
   
@@ -158,7 +158,7 @@ ctpars$DRIFT <- ctpars$DRIFT[,1:nlatent,1:nlatent,drop=FALSE] #intoverpop
     },simplify = 'array'),dim=c(nlatent,nlatent,length(times),nsamples))
     
     nr=dim(discreteDRIFT)[2]
-
+    
     out[[typei]] <- apply(get(type[typei]),c(1,2,3),quantile,probs=quantiles)
     
     # out[[typei]] <- plyr::aaply(1:nsamples,1,function(iterx){ #for every iteration
@@ -218,6 +218,7 @@ ctpars$DRIFT <- ctpars$DRIFT[,1:nlatent,1:nlatent,drop=FALSE] #intoverpop
   dimnames(out$discreteDRIFT)$col=latentNames
   
   if(plot) {
+    
     ctStanDiscreteParsPlot(out,times=times,latentNames=ctstanfitobj$ctstanmodel$latentNames,...)
   } else return(out)
 }
@@ -235,6 +236,9 @@ ctpars$DRIFT <- ctpars$DRIFT[,1:nlatent,1:nlatent,drop=FALSE] #intoverpop
 #''all' plots all AR and CR effects at once.
 #'@param add Logical. If FALSE, a new plot is generated, if TRUE, specified plot/s are
 #'overlayed on existing plot.
+#'@param gg Logical -- use GGplot2 or not? if TRUE, other graphical parameters are ignored, and the
+#'ggplot object is returned and may be modified further. 
+#'@param plot Logical. Only relevant with gg=TRUE. 
 #'@param legend Logical. If TRUE, generates a legend.
 #'@param grid Logical. Plot with a grid?
 #'@param polygon Logical. If TRUE, fills a polygon between the first and last specified quantiles.
@@ -261,11 +265,18 @@ ctpars$DRIFT <- ctpars$DRIFT[,1:nlatent,1:nlatent,drop=FALSE] #intoverpop
 #'create a graduated transparency. Set to 1 for a flat looking plot.
 #'@examples
 #'x <- ctStanDiscretePars(ctstantestfit)
+#'ctStanDiscreteParsPlot(x, indices='CR')
+#'\dontrun{
+#'#to modify plot:
+#'g <- ctStanDiscreteParsPlot(x, indices='CR',plot=FALSE) + 
+#'  ggplot2::labs(title='My ggplot modification')
+#'print(g)
+#'}
 #'
-#'ctStanDiscreteParsPlot(x, 'CR')
 #'@export
 
 ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon=TRUE, 
+  gg=TRUE,plot=TRUE,
   quantiles=c(.025,.5,.975), times=seq(0,10,.1),latentNames='auto',
   lwdvec='auto',colvec='auto',ltyvec='auto',
   plotcontrol=list(ylab='Value',xlab='Time interval',
@@ -311,64 +322,80 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
     if(legend) plotcontrol$ylim[2] <- plotcontrol$ylim[2] + sd(plotcontrol$ylim)/3
   }
   
-  
-  #blank plot
-  blankargs=plotcontrol
-  blankargs$xlim=range(times)
-  blankargs$y=NA
-  blankargs$x=NA
-  do.call(plot,blankargs)
-  if(grid) {
-    grid()
-    par(new=TRUE)
+  if(gg){
+    parnames<-paste0(latentNames[indices[,1]],'_',latentNames[indices[,2]])
+    y = input
+    y = array(y,dim = c(dim(y)[1]^2,dim(y)[c(3,4)]))
+    y <- y[matrix(1:dim(y)[1],sqrt(dim(y)[1]),sqrt(dim(y)[1]))[indices],,,drop=FALSE]
+    dimn <- list(Index=parnames)
+    dimn <- c(dimn,dimnames(input)[3:4])
+    names(dimn) <- c('Index','Time interval','Effect')
+    dimnames(y) <- dimn
+    
+    g <- ctPlotArrayGG(list(x=times,y=aperm(y,c(2,1,3))))
+    if(plot) print(g)
+    if(!plot) return(invisible(g))
+  } else {
+    
+    
+    
+    #blank plot
+    blankargs=plotcontrol
+    blankargs$xlim=range(times)
+    blankargs$y=NA
+    blankargs$x=NA
     do.call(plot,blankargs)
-    par(new=FALSE)
-  }
-  
-  ####plotting confidence region
-  if(polygon) {
-    cc=0
-    ccup=TRUE
-    for(indexi in c(1:nrow(indices))){
-      cc=ifelse(ccup,cc+1,cc-1)
-      if(indexi==nrow(indices)) ccup=FALSE
-      ri=indices[indexi,1]
-      ci=indices[indexi,2]
-      polygonargs<-polygoncontrol
-      polygonargs$x=times
-      polygonargs$y=input[ri,ci,,2]
-      polygonargs$ylow=input[ri,ci,,1]
-      polygonargs$yhigh=input[ri,ci,,length(quantiles)]
-      polygonargs$col=grDevices::adjustcolor(colvec[cc],alpha.f=max(c(.004,polygonalpha/(2*sqrt(polygonargs$steps)))))
-      do.call(ctPoly,polygonargs)
+    if(grid) {
+      grid()
+      par(new=TRUE)
+      do.call(plot,blankargs)
+      par(new=FALSE)
     }
-  }
-  
-  ####plotting quantile lines
-  for(qi in 1:3){
-    cc=0
-    for(indexi in 1:nrow(indices)){
-      cc=cc+1
-      ri=indices[indexi,1]
-      ci=indices[indexi,2]
-      
-      plotargs<-plotcontrol
-      plotargs$x=times
-      plotargs$y=input[ri,ci,,qi]
-      plotargs$lty=ltyvec[cc]
-      plotargs$col=ifelse(qi!= 2,grDevices::adjustcolor(colvec[cc],alpha.f=.5) ,colvec[cc])
-      plotargs$lwd=ifelse(qi!= 2,1, lwdvec[cc])
-      do.call(points,plotargs)
-    }}
-  
-  
-  
-  legendcontrol$legend=paste0(latentNames[indices[,1]],'_',latentNames[indices[,2]])
-  legendcontrol$text.col=colvec
-  legendcontrol$col=colvec
-  legendcontrol$lty = ltyvec
-  legendcontrol$lwd=lwdvec
-  
-  if(legend) do.call(graphics::legend,legendcontrol)
-  
+    
+    ####plotting confidence region
+    if(polygon) {
+      cc=0
+      ccup=TRUE
+      for(indexi in c(1:nrow(indices))){
+        cc=ifelse(ccup,cc+1,cc-1)
+        if(indexi==nrow(indices)) ccup=FALSE
+        ri=indices[indexi,1]
+        ci=indices[indexi,2]
+        polygonargs<-polygoncontrol
+        polygonargs$x=times
+        polygonargs$y=input[ri,ci,,2]
+        polygonargs$ylow=input[ri,ci,,1]
+        polygonargs$yhigh=input[ri,ci,,length(quantiles)]
+        polygonargs$col=grDevices::adjustcolor(colvec[cc],alpha.f=max(c(.004,polygonalpha/(2*sqrt(polygonargs$steps)))))
+        do.call(ctPoly,polygonargs)
+      }
+    }
+    
+    ####plotting quantile lines
+    for(qi in 1:3){
+      cc=0
+      for(indexi in 1:nrow(indices)){
+        cc=cc+1
+        ri=indices[indexi,1]
+        ci=indices[indexi,2]
+        
+        plotargs<-plotcontrol
+        plotargs$x=times
+        plotargs$y=input[ri,ci,,qi]
+        plotargs$lty=ltyvec[cc]
+        plotargs$col=ifelse(qi!= 2,grDevices::adjustcolor(colvec[cc],alpha.f=.5) ,colvec[cc])
+        plotargs$lwd=ifelse(qi!= 2,1, lwdvec[cc])
+        do.call(points,plotargs)
+      }}
+    
+    
+    
+    legendcontrol$legend=paste0(latentNames[indices[,1]],'_',latentNames[indices[,2]])
+    legendcontrol$text.col=colvec
+    legendcontrol$col=colvec
+    legendcontrol$lty = ltyvec
+    legendcontrol$lwd=lwdvec
+    
+    if(legend) do.call(graphics::legend,legendcontrol)
+  }#end if not gg
 }

@@ -61,37 +61,32 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
     } 
     
     fit$standata <- standatact_specificsubjects(fit$standata, subjects = subjects)
-
+    
     out <- ctStanKalman(fit,collapsefunc=mean) #extract state predictions
-
-    if(length(dim(out$llrow)) < 3) out$llrow <- array(out$llrow,dim=c(dim(out$llrow),1))
-
-    out <- lapply(subjects, function(si) lapply(out, function(m) {
-      if(length(dim(m)) > 2) m=array(m,dim=dim(m)[-1],dimnames=dimnames(m)[-1]) #ctCollapse(inarray = m,collapsemargin = 1,collapsefunc = mean,plyr=FALSE)
-      if(length(dim(m)) ==1) m=m[fit$standata$subject %in% si, drop=FALSE]
-      if(length(dim(m)) ==2) m=m[fit$standata$subject %in% si, ,drop=FALSE]
-      if(length(dim(m)) ==3) m=m[fit$standata$subject %in% si, , ,drop=FALSE]
-
-      return(m)
-    }))
-
     
-    names(out)<-paste0(subjects)
+    out <- meltkalman(out)
     
-    # browser()
-    for(si in paste0(subjects)){
-      for(basei in c('y','eta')){
-        for(covtypei in c('prior','upd','smooth')){
-          out[[si]][[paste0(basei,covtypei,'cov')]] <- aperm(out[[si]][[paste0(basei,covtypei,'cov')]],c(2,3,1))
-        }
-      }
-    }
+    # if(length(dim(out$llrow)) < 3) out$llrow <- array(out$llrow,dim=c(dim(out$llrow),1))
+    
+    # out <- lapply(subjects, function(si) lapply(out, function(m) {
+    #   if(length(dim(m)) > 2) m=array(m,dim=dim(m)[-1],dimnames=dimnames(m)[-1]) #ctCollapse(inarray = m,collapsemargin = 1,collapsefunc = mean,plyr=FALSE)
+    #   if(length(dim(m)) ==1) m=m[fit$standata$subject %in% si, drop=FALSE]
+    #   if(length(dim(m)) ==2) m=m[fit$standata$subject %in% si, ,drop=FALSE]
+    #   if(length(dim(m)) ==3) m=m[fit$standata$subject %in% si, , ,drop=FALSE]
+    #   
+    #   return(m)
+    # }))
     
     
-    # matplot(datalong$time,t(k$ypred[,,1]),type='l',
-    #   col=rgb(1,0,0,.1),xlab='Year',ylab='Sunspots')
-    # points(datalong$time,datalong$sunspots,type='l')
-    # legend('topright',c('Observed','Predicted'),text.col=c('black','red'),bty='n')
+    # names(out)<-paste0(subjects)
+    # 
+    #    for(si in paste0(subjects)){
+    #   for(basei in c('y','eta')){
+    #     for(covtypei in c('prior','upd','smooth')){
+    #       out[[si]][[paste0(basei,covtypei,'cov')]] <- aperm(out[[si]][[paste0(basei,covtypei,'cov')]],c(2,3,1))
+    #     }
+    #   }
+    # }
     
   }
   
@@ -185,12 +180,11 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
         timecol='time',
         derrind=derrind)
     }
+    class(out) <- c('ctKalman',class(out))
   }
   
-  class(out) <- c('ctKalman',class(out))
-  
   if(plot) {
-    plot.ctKalman(x=out,subjects=subjects,...)
+    plot(x=out,subjects=subjects,...)
   } else return(out)
 }
 
@@ -209,7 +203,8 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
 #' or smoothed (conditional on all data) estimates.
 #' @param errorvec vector of names of covariance elements to use for uncertainty indication 
 #' around the kalmanvec items. 'auto' uses the latent covariance when plotting
-#' latent states, and total covariance when plotting expectations of observed states. Use NA to skip uncertainty plotting.
+#' latent states, and total covariance when plotting expectations of observed states. 
+#' Use NA to skip uncertainty plotting.
 #' @param errormultiply Numeric denoting the multiplication factor of the std deviation of errorvec objects. 
 #' Defaults to 1.96, for 95\% intervals.
 #' @param ltyvec vector of line types, varying over dimensions of the kalmanvec object.
@@ -229,19 +224,16 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
 #' @param polygoncontrol List of arguments to the \code{\link{ctPoly}} function for filling the uncertainty region.
 #' @param polygonalpha Numeric for the opacity of the uncertainty region.
 #' @param ... not used.
-#' @return Nothing. Generates plots.
+#' @return Generates plots.
 #' @method plot ctKalman
 #' @export
 #' @examples
 #' \donttest{
-#' ### Get output from ctKalman
-#' x<-ctKalman(ctstantestfit,subjects=2)
-#' 
-#' ### Plot with plot.ctKalman
-#' plot.ctKalman(x, subjects=2)
-#' 
-#' ###Single step procedure:
-#' ctKalman(ctstantestfit,subjects=2,plot=TRUE)
+#' data(AnomAuth) 
+#' AnomAuthmodel <- ctModel(LAMBDA = matrix(c(1, 0, 0, 1), nrow = 2, ncol = 2), 
+#'   Tpoints = 5, n.latent = 2, n.manifest = 2,  TRAITVAR = NULL) 
+#' AnomAuthfit <- ctFit(AnomAuth, AnomAuthmodel)
+#' ctKalman(AnomAuthfit,subjects=1,plot=TRUE)
 #' }
 plot.ctKalman<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
   errorvec='auto', errormultiply=1.96,
@@ -253,169 +245,252 @@ plot.ctKalman<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
   
   if(!'ctKalman' %in% class(x)) stop('not a ctKalman object')
   
-  out<-x
-  if(length(subjects) > 1 & colvec[1] =='auto') colvec = rainbow(length(subjects),v=.9)
-  
-  if(lwdvec[1] %in% 'auto') lwdvec=rep(2,length(kalmanvec))
-  
-  if(is.null(plotcontrol$ylab)) plotcontrol$ylab='Variable'
-  if(is.null(plotcontrol$xlab)) plotcontrol$xlab='Time'
-  
-  if(typevec[1] %in% 'auto') typevec=c('p','l')[grepl("prior|upd|smooth|eta",kalmanvec)+1]
-  
-  if(errorvec[1] %in% 'auto') {
-    errorvec=rep(NA,length(kalmanvec))
-    errorvec[grepl("prior|upd|smooth",kalmanvec)]<-paste0(
-      kalmanvec[grepl("prior|upd|smooth",kalmanvec)],'cov')
-  }
-  
-  if(is.null(plotcontrol$xlim)) plotcontrol$xlim <- range(sapply(out,function(x) x$time))
-  if(is.null(plotcontrol$ylim)) {
-    plotcontrol$ylim <- range(unlist(lapply(out,function(x) { #for every subject
-      if(!is.null(x)){
-        ret<-c()
-        for(kveci in 1:length(kalmanvec)){
-          est<-x[[kalmanvec[kveci]]] [,
-            if(is.null(subsetindices)) 1:dim(x[[kalmanvec[kveci]]])[2] else subsetindices]
-          
-          if(!is.na(errorvec[kveci])) err <- sqrt(abs(c(apply(x[[errorvec[kveci]]][
-            (if(is.null(subsetindices)) 1:dim(x[[errorvec[kveci]]])[2] else subsetindices),
-            (if(is.null(subsetindices)) 1:dim(x[[errorvec[kveci]]])[2] else subsetindices),
-            ,drop=FALSE],3,diag))))
-          
-          if(is.na(errorvec[kveci])) err <- 0
-          
-          esthigh <- est + err*errormultiply
-          estlow <- est - err*errormultiply
-          ret <- c(ret,esthigh,estlow)
-        }
-        return(ret)}})),na.rm=TRUE)
-    if(legend) plotcontrol$ylim[2] <- plotcontrol$ylim[2] + sd(plotcontrol$ylim)/4
-  }
   
   
-  
-  
-  legendtext<-c()
-  legendcol <- c()
-  legendlty<-c()
-  legendpch<-c()
-  
-  #when not set to auto, must define 'new' vector as the user specified vector
-  colvecnew <- colvec
-  ltyvecnew<-ltyvec
-  pchvecnew <- pchvec
-  
-  
-  for(si in 1:length(subjects)){#subjects
-    subjecti = subjects[si]
-    subiname=paste('subject',subjecti)
-    names(out)[si] <-subiname
-    plist<-plotcontrol
-    if(length(subjects) > 1) {
-      plist$col = colvec[si] #set colour based on subject if multiple subjects
+  if('ctKalman' %in% class(x)){ #base plots
+    if(length(subjects) > 1 & colvec[1] =='auto') colvec = rainbow(length(subjects),v=.9)
+    
+    if(lwdvec[1] %in% 'auto') lwdvec=rep(2,length(kalmanvec))
+    
+    if(is.null(plotcontrol$ylab)) plotcontrol$ylab='Variable'
+    if(is.null(plotcontrol$xlab)) plotcontrol$xlab='Time'
+    
+    if(typevec[1] %in% 'auto') typevec=c('p','l')[grepl("prior|upd|smooth|eta",kalmanvec)+1]
+    
+    if(errorvec[1] %in% 'auto') {
+      errorvec=rep(NA,length(kalmanvec))
+      errorvec[grepl("prior|upd|smooth",kalmanvec)]<-paste0(
+        kalmanvec[grepl("prior|upd|smooth",kalmanvec)],'cov')
     }
     
-    for(kveci in 1:length(kalmanvec)){ #kalman output types
-      kvecdims=1:dim(out[[subiname]][[kalmanvec[kveci]]])[-1]
-      if(length(subjects) == 1 & colvec[1] =='auto') colvecnew = rainbow(length(kvecdims),v=.9)
-      if(any(subsetindices > max(kvecdims))) stop('subsetindices contains a value greater than relevant dimensions of object in kalmanvec!')
-      if(!is.null(subsetindices)) kvecdims=kvecdims[subsetindices]
-      if(rl(ltyvec[1]=='auto')) ltyvecnew <- 1:length(kvecdims) else ltyvecnew <- ltyvec
-      
-      if(rl(pchvec[1] =='auto')) pchvecnew = 1:(length(kvecdims)) else pchvecnew <- pchvec
-      
-      # if((length(unique(pchvec[typevec!='l']))>1) || 
-      #     (length(subjects) == 1 && length(unique(colvec)) > 1)) { #if changing pch, then legend needs to show pch elements along with lty and maybe colour
-      #   legendtext<-c(legendtext,paste(kalmanvec[kveci],
-      #     colnames(out[[subiname]][[kalmanvec[kveci]]])[kdimi]))
-      #   legendlty <- c(legendlty,ifelse(plist$type=='p',0,ltyvec[dimi]))
-      #   legendpch <- c(legendpch,ifelse(plist$type=='l',NA,plist$pch))
-      #   if(length(subjects) == 1) legendcol = c(legendcol,plist$col) else legendcol=c(legendcol,'black')
-      # }
-      
-      for(dimi in 1:length(kvecdims)){ #dimensions of kalman matrix
-        kdimi <- kvecdims[dimi]
-        plist$x=out[[subiname]]$time
-        plist$y=out[[subiname]][[kalmanvec[kveci]]][,kdimi] 
-        plist$lwd=lwdvec[kveci]
-        plist$lty=ltyvecnew[dimi] 
-        plist$pch=pchvecnew[dimi]
-        plist$type=typevec[kveci]
-        if(length(subjects)==1) plist$col=colvecnew[dimi]
-        
-        
-        if(subjecti == subjects[1] & kveci==1 && dimi == 1 && !add) {
-  
-          do.call(graphics::plot.default,plist) 
-          if(grid) {
-            grid()
-            par(new=TRUE)
-            do.call(graphics::plot.default,plist) 
-            par(new=FALSE)
+    if(is.null(plotcontrol$xlim)) plotcontrol$xlim <- range(sapply(x,function(x) x$time))
+    if(is.null(plotcontrol$ylim)) {
+      plotcontrol$ylim <- range(unlist(lapply(x,function(x) { #for every subject
+        if(!is.null(x)){
+          ret<-c()
+          for(kveci in 1:length(kalmanvec)){
+            est<-x[[kalmanvec[kveci]]] [,
+              if(is.null(subsetindices)) 1:dim(x[[kalmanvec[kveci]]])[2] else subsetindices]
+            
+            if(!is.na(errorvec[kveci])) err <- sqrt(abs(c(apply(x[[errorvec[kveci]]][
+              (if(is.null(subsetindices)) 1:dim(x[[errorvec[kveci]]])[2] else subsetindices),
+              (if(is.null(subsetindices)) 1:dim(x[[errorvec[kveci]]])[2] else subsetindices),
+              ,drop=FALSE],3,diag))))
+            
+            if(is.na(errorvec[kveci])) err <- 0
+            
+            esthigh <- est + err*errormultiply
+            estlow <- est - err*errormultiply
+            ret <- c(ret,esthigh,estlow)
           }
-        } else do.call(graphics::points.default,plist) 
+          return(ret)}})),na.rm=TRUE)
+      if(legend) plotcontrol$ylim[2] <- plotcontrol$ylim[2] + sd(plotcontrol$ylim)/4
+    }
+    
+    
+    
+    
+    legendtext<-c()
+    legendcol <- c()
+    legendlty<-c()
+    legendpch<-c()
+    
+    #when not set to auto, must define 'new' vector as the user specified vector
+    colvecnew <- colvec
+    ltyvecnew<-ltyvec
+    pchvecnew <- pchvec
+    
+    for(si in 1:length(subjects)){#subjects
+      subjecti = subjects[si]
+      subiname=paste('subject',subjecti)
+      names(x)[si] <-subiname
+      plist<-plotcontrol
+      if(length(subjects) > 1) {
+        plist$col = colvec[si] #set colour based on subject if multiple subjects
+      }
+      
+      for(kveci in 1:length(kalmanvec)){ #kalman output types
+        kvecdims=1:dim(x[[subiname]][[kalmanvec[kveci]]])[-1]
+        if(length(subjects) == 1 & colvec[1] =='auto') colvecnew = rainbow(length(kvecdims),v=.9)
+        if(any(subsetindices > max(kvecdims))) stop('subsetindices contains a value greater than relevant dimensions of object in kalmanvec!')
+        if(!is.null(subsetindices)) kvecdims=kvecdims[subsetindices]
+        if(rl(ltyvec[1]=='auto')) ltyvecnew <- 1:length(kvecdims) else ltyvecnew <- ltyvec
         
-        if(!is.na(errorvec[kveci])){
-          if(is.null(out[[subiname]][[errorvec[kveci]]])) stop('Invalid errorvec specified!')
-          backwardstimesindex=order(plist$x,decreasing=TRUE)
-          
-          # if(is.null(polygoncontrol$angle)) 
-          # polygoncontrol$angle=stats::runif(1,0,359)
-          
-          # polygonargs<-polygoncontrol
-          # polygonargs$x=c(plist$x,plist$x[backwardstimesindex])
-          # polygonargs$y=c(plist$y + errormultiply * sqrt(abs(out[[subiname]][[errorvec[kveci]]][kdimi,kdimi,])), 
-          #   (plist$y - errormultiply * sqrt(abs(out[[subiname]][[errorvec[kveci]]][kdimi,kdimi,])))[backwardstimesindex])
-          # polygonargs$col=grDevices::adjustcolor(plist$col,alpha.f=polygonalpha)
-          # do.call(graphics::polygon,polygonargs)
-          
-          ctpolyargs<-polygoncontrol
-          ctpolyargs$x=c(plist$x)
-          ctpolyargs$ylow=c(plist$y - errormultiply * sqrt(abs(out[[subiname]][[errorvec[kveci]]][kdimi,kdimi,])))
-          ctpolyargs$y=c(plist$y)
-          ctpolyargs$yhigh=c(plist$y + errormultiply * sqrt(abs(out[[subiname]][[errorvec[kveci]]][kdimi,kdimi,])))
-          ctpolyargs$col=grDevices::adjustcolor(plist$col,alpha.f=polygonalpha)
-          ctpolyargs$col =grDevices::adjustcolor(ctpolyargs$col,alpha.f=max(c(.004,polygonalpha/sqrt(ctpolyargs$steps))))
-          do.call(ctPoly,ctpolyargs)
-          
-          #add quantile lines
-          plist$y <- ctpolyargs$ylow
-          plist$lwd <- 1
-          # plist$col <- grDevices::adjustcolor(plist$col,alpha.f=.5)
-          do.call(points,plist)
-          plist$y <- ctpolyargs$yhigh
-          do.call(points,plist)
-        }
+        if(rl(pchvec[1] =='auto')) pchvecnew = 1:(length(kvecdims)) else pchvecnew <- pchvec
         
-        #if changing lty then legend needs lty types
-        if(subjecti == subjects[1]) { #length(unique(ltyvecnew))>1 && 
-          legendtext<-c(legendtext,paste0(kalmanvec[kveci],': ',
-            colnames(out[[subiname]][[kalmanvec[kveci]]])[kdimi]))
-          legendlty <- c(legendlty,ifelse(plist$type=='p',0,ltyvecnew[dimi]))
-          legendpch <- c(legendpch,ifelse(plist$type=='l',NA,pchvecnew[dimi]))
-          if(length(subjects) == 1) legendcol = c(legendcol,plist$col) else legendcol=c(legendcol,'black')
+        for(dimi in 1:length(kvecdims)){ #dimensions of kalman matrix
+          kdimi <- kvecdims[dimi]
+          plist$x=x[[subiname]]$time
+          plist$y=x[[subiname]][[kalmanvec[kveci]]][,kdimi] 
+          plist$lwd=lwdvec[kveci]
+          plist$lty=ltyvecnew[dimi] 
+          plist$pch=pchvecnew[dimi]
+          plist$type=typevec[kveci]
+          if(length(subjects)==1) plist$col=colvecnew[dimi]
+          
+          
+          if(subjecti == subjects[1] & kveci==1 && dimi == 1 && !add) {
+            
+            do.call(graphics::plot.default,plist) 
+            if(grid) {
+              grid()
+              par(new=TRUE)
+              do.call(graphics::plot.default,plist) 
+              par(new=FALSE)
+            }
+          } else do.call(graphics::points.default,plist) 
+          
+          if(!is.na(errorvec[kveci])){
+            if(is.null(x[[subiname]][[errorvec[kveci]]])) stop('Invalid errorvec specified!')
+            backwardstimesindex=order(plist$x,decreasing=TRUE)
+            
+            ctpolyargs<-polygoncontrol
+            ctpolyargs$x=c(plist$x)
+            ctpolyargs$ylow=c(plist$y - errormultiply * sqrt(abs(x[[subiname]][[errorvec[kveci]]][kdimi,kdimi,])))
+            ctpolyargs$y=c(plist$y)
+            ctpolyargs$yhigh=c(plist$y + errormultiply * sqrt(abs(x[[subiname]][[errorvec[kveci]]][kdimi,kdimi,])))
+            ctpolyargs$col=grDevices::adjustcolor(plist$col,alpha.f=polygonalpha)
+            ctpolyargs$col =grDevices::adjustcolor(ctpolyargs$col,alpha.f=max(c(.004,polygonalpha/sqrt(ctpolyargs$steps))))
+            do.call(ctPoly,ctpolyargs)
+            
+            #add quantile lines
+            plist$y <- ctpolyargs$ylow
+            plist$lwd <- 1
+            # plist$col <- grDevices::adjustcolor(plist$col,alpha.f=.5)
+            do.call(points,plist)
+            plist$y <- ctpolyargs$yhigh
+            do.call(points,plist)
+          }
+          
+          #if changing lty then legend needs lty types
+          if(subjecti == subjects[1]) { #length(unique(ltyvecnew))>1 && 
+            legendtext<-c(legendtext,paste0(kalmanvec[kveci],': ',
+              colnames(x[[subiname]][[kalmanvec[kveci]]])[kdimi]))
+            legendlty <- c(legendlty,ifelse(plist$type=='p',0,ltyvecnew[dimi]))
+            legendpch <- c(legendpch,ifelse(plist$type=='l',NA,pchvecnew[dimi]))
+            if(length(subjects) == 1) legendcol = c(legendcol,plist$col) else legendcol=c(legendcol,'black')
+          }
         }
       }
     }
-  }
-  
-  if(length(subjects) > 1 && length(unique(colvec))>1) { #include subject color in legend if necessary
-    legendtext<-c(legendtext,paste('Subject', subjects))
-    legendcol <- c(legendcol,colvec)
-    legendlty <-c(legendlty,rep(0,length(subjects)))
-    legendpch <-c(legendpch,rep(NA,length(subjects)))
-  }
-  
-  if(legend && length(legendtext)>0){
-    legendcontrol$legend<-legendtext
-    legendcontrol$col<-legendcol
-    legendcontrol$text.col <- legendcol
-    legendcontrol$pch <- legendpch
-    legendcontrol$lty <- legendlty  
-    do.call(graphics::legend,legendcontrol)
-  }
+    
+    if(length(subjects) > 1 && length(unique(colvec))>1) { #include subject color in legend if necessary
+      legendtext<-c(legendtext,paste('Subject', subjects))
+      legendcol <- c(legendcol,colvec)
+      legendlty <-c(legendlty,rep(0,length(subjects)))
+      legendpch <-c(legendpch,rep(NA,length(subjects)))
+    }
+    
+    if(legend && length(legendtext)>0){
+      legendcontrol$legend<-legendtext
+      legendcontrol$col<-legendcol
+      legendcontrol$text.col <- legendcol
+      legendcontrol$pch <- legendpch
+      legendcontrol$lty <- legendlty  
+      do.call(graphics::legend,legendcontrol)
+    }
+  }#end base plots
 }
 
+
+#' Plots Kalman filter output from ctKalman.
+#'
+#' @param x Output from \code{\link{ctKalman}}. In general it is easier to call 
+#' \code{\link{ctKalman}} directly with the \code{plot=TRUE} argument, which calls this function.
+#' @param subjects vector of integers denoting which subjects (from 1 to N) to plot predictions for. 
+#' @param kalmanvec string vector of names of any elements of the output you wish to plot, 
+#' the defaults of 'y' and 'ysmooth' plot the original data, 'y', 
+#' and the estimates of the 'true' value of y given all data. Replacing 'y' by 'eta' will 
+#' plot latent states instead (though 'eta' alone does not exist) and replacing 'smooth' 
+#' with 'upd' or 'prior' respectively plots updated (conditional on all data up to current time point)
+#' or prior (conditional on all previous data) estimates.
+#' @param errorvec vector of names indicating which kalmanvec elements to plot uncertainty bands for. 
+#' 'auto' plots all possible.
+#' @param elementNames if NA, all relevant object elements are included -- e.g. if yprior is in the kalmanvec
+#' argument, all manifest variables are plotted, and likewise for latent states if etasmooth was specified.
+#' Alternatively, a character vector specifying the manifest and latent names to plot explicitly can be specified.
+#' @param plot if FALSE, plots are not generated and the ggplot object is simply returned invisibly.
+#' @param errormultiply Numeric denoting the multiplication factor of the std deviation of errorvec objects. 
+#' Defaults to 1.96, for 95\% intervals.
+#' @param polygonsteps Number of steps to use for uncertainty band shading. 
+#' @param polygonalpha Numeric for the opacity of the uncertainty region.
+#' @param ... not used.
+#' @return A ggplot2 object. Side effect -- Generates plots.
+#' @method plot ctKalmanDF
+#' @export
+#' @examples
+#' \donttest{
+#' ### Get output from ctKalman
+#' x<-ctKalman(ctstantestfit,subjects=2,timestep=.01)
+#' 
+#' ### Plot with plot.ctKalman
+#' plot.ctKalmanDF(x, subjects=2)
+#' 
+#' ###Single step procedure:
+#' ctKalman(ctstantestfit,subjects=2,
+#'   kalmanvec=c('y','yprior'),
+#'   elementNames=c('Y1','Y2'), 
+#'   plot=TRUE,timestep=.01)
+#' }
+plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
+  errorvec='auto', errormultiply=1.96,plot=TRUE,elementNames=NA,
+  polygonsteps=20,polygonalpha=.3,...){
+  
+  if(!'ctKalmanDF' %in% class(x)) stop('not a ctKalmanDF object')
+  
+  if(1==99) Time <- Value <- Subject <- Row <- Variable <- Element <- NULL
+  setnames(x,'Row', "Variable")
+  setnames(x,'value', "Value")
+  
+  if(any(!is.na(elementNames))) x <- subset(x,Variable %in% elementNames)
+  
+  klines <- kalmanvec[grep('(prior)|(upd)|(smooth)',kalmanvec)]
+  # kpoints<- kalmanvec[-grep('(prior)|(upd)|(smooth)',kalmanvec)]
+  colvec=ifelse(length(subjects) > 1, 'Subject', 'Variable')
+  ltyvec = setNames(1:length(klines),klines)
+  if(length(kalmanvec) > length(klines)) ltyvec <- 
+    c(setNames(rep(0,length(kalmanvec)-length(klines)),kalmanvec[!kalmanvec %in% klines]),
+      ltyvec)
+  shapevec<-ltyvec
+  shapevec[shapevec==0] <- 19
+  shapevec[shapevec==1] <- NA
+  d<-subset(x,Element %in% kalmanvec)
+
+  g <- ggplot(d,
+    aes_string(x='Time',y='Value',colour=colvec,linetype='Element',shape='Element'))+
+    # stat_quantile(quantiles=seq(.01,.99,.01),
+    #   aes(alpha=1-(abs(.5-(..quantile..)))),method='rqss')+
+    geom_line()+
+    geom_point()+
+    scale_linetype_manual(breaks=names(ltyvec),values=ltyvec)+
+    scale_shape_manual(breaks=names(shapevec),values=shapevec) +
+    # labs(linetype='Element',shape='Element',colour='Element',fill='Element')+
+    scale_fill_discrete(guide='none') +
+    theme_minimal()
+  
+  if(length(subjects) > 1 && length(unique(subset(x,Element %in% kalmanvec)$Variable)) > 1){
+    g <- g+ facet_wrap(vars(Variable),scales = 'free') 
+  }
+  polysteps <- seq(errormultiply,0,-errormultiply/polygonsteps)[c(-polygonsteps)]
+  
+  for(si in polysteps){
+    d2 <- subset(d,Element %in% klines)
+    d2$sd <- d2$sd *si
+    
+    if(length(subjects) ==1){
+      g<- g+ 
+        geom_ribbon(data=d2,aes(ymin=(Value-sd),x=Time,
+          ymax=(Value+sd),fill=(Variable)),alpha=polygonalpha/polygonsteps,inherit.aes = FALSE,linetype=0)
+    } else {
+      g <- g+ 
+        geom_ribbon(data=d2,aes(ymin=(Value-sd),x=Time,
+          ymax=(Value+sd),fill=(Subject)),inherit.aes = FALSE,alpha=polygonalpha/polygonsteps,linetype=0)
+    }
+    # print(g)
+  }
+  if(plot) suppressWarnings(print(g))
+  return(invisible(g))
+  
+}
 
 
