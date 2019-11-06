@@ -431,9 +431,9 @@ plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
   
   polysteps <- seq(errormultiply,0,-errormultiply/(polygonsteps+1))[c(-polygonsteps+1)]
   
-  # alphasum <- 0
+  alphasum <- 0
   for(si in polysteps){
-    # alphasum <- alphasum + polygonalpha/polygonsteps
+    alphasum <- alphasum + polygonalpha/polygonsteps
     
     d2 <- subset(d,Element %in% klines)
     d2$sd <- d2$sd *si
@@ -451,7 +451,7 @@ plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
       g <- g+ 
         geom_ribbon(data=d2,aes(ymin=(Value-sd),x=Time,
           ymax=(Value+sd),fill=(Subject)),inherit.aes = FALSE,
-          alpha=ifelse(alphasum < .05,.05,polygonalpha/polygonsteps),,linetype=0)
+          alpha=ifelse(alphasum < .05,.05,polygonalpha/polygonsteps),linetype=0)
       if(si== polysteps[1]) g <- g + 
           geom_line(data=d2,aes(y=(Value-sd),colour=Subject),linetype='dotted',alpha=.7) + 
           geom_line(data=d2,aes(y=(Value+sd),colour=Subject),linetype='dotted',alpha=.7)
