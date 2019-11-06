@@ -22,7 +22,7 @@
 #' p<-ctStanPostPredict(ctstantestfit,wait=FALSE, diffsize=2,resolution=100,plot=FALSE)
 #' print(p[[3]])
 #' }
-#' \dontrun{
+#' \dontrun{ #just too slow for cran
 #' ctStanPostPredict(ctstantestfit,wait=FALSE, diffsize=2,resolution=100,plot=TRUE)
 #' }
 ctStanPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,.5,.975),

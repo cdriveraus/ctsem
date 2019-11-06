@@ -43,4 +43,11 @@ from ctStanFit, for specified subjects.
 \examples{
 ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
  plot=TRUE,indices='all')
+ 
+ #modify plot
+ require(ggplot2)
+ g=ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
+   plot=TRUE,indices='CR')
+ g= g+ labs(title='Cross effects')
+ print(g)
 }

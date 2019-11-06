@@ -7,7 +7,7 @@
 ctStanTIpredeffects(fit, returndifference = FALSE, probs = c(0.025,
   0.5, 0.975), includeMeanUncertainty = FALSE, whichTIpreds = 1,
   parmatrices = TRUE, whichpars = "all", nsamples = 100,
-  timeinterval = 1, nsubjects = 50, filter = NA, plot = FALSE, ...)
+  timeinterval = 1, nsubjects = 50, filter = NA, plot = FALSE.)
 }
 \arguments{
 \item{fit}{fit object from \code{\link{ctStanFit}}}
@@ -56,8 +56,6 @@ to only calculate effects for subjects where the tipreds of the denoted index ar
 
 \item{plot}{Logical. If TRUE, nothing is returned but instead \code{\link{ctPlotArray}}
 is used to plot the output instead.}
-
-\item{...}{arguments to pass to \code{\link{ctPlotArray}} for plotting.}
 }
 \value{
 Either a three dimensional array of predictor effects, or nothing with a plot
@@ -70,6 +68,6 @@ on subject level parameters of a ctStanFit object.
 \examples{
 \donttest{
 #samples reduced here for speed
-ctStanTIpredeffects(ctstantestfit,plot=TRUE,whichpars='CINT',nsamples=10,nsubjects=10)
+ctStanTIpredeffects(ctstantestfit,whichpars='CINT',nsamples=10,nsubjects=10)
 }
 }

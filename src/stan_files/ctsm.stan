@@ -495,31 +495,29 @@ matrix[nlatent, nlatent] sDIFFUSIONcov;
   //}
          
     if(subi <= (T0VARsubindex ? nsubjects : 0)) {
-    if(intoverpop){
-      sT0VAR[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopcovsqrt;
-    }
+      if(intoverpop) sT0VAR[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopcovsqrt;
       sT0VAR = makesym(sdcovsqrt2cov(sT0VAR,nldynamics),verbose,1);
-    if(intoverpop){ //adjust cov matrix for transforms
-      for(ri in 1:size(matsetup)){
-        if(matsetup[ri,7]==1){ //if t0means
-          if(matsetup[ri,5]) { //and indvarying
-            sT0VAR[matsetup[ri,1], ] = sT0VAR[matsetup[ri,1], ] * matvalues[ri,2] * matvalues[ri,3]* matvalues[ri,5]; //multiplier meanscale sdscale
-            sT0VAR[, matsetup[ri,1] ] = sT0VAR[, matsetup[ri,1] ] * matvalues[ri,2] * matvalues[ri,3]* matvalues[ri,5]; //multiplier meanscale sdscale
-          }
-        }
-      }
-    }
       if(nt0varstationary > 0) {
         for(ri in 1:nt0varstationary){ 
           sT0VAR[t0varstationary[ri,1],t0varstationary[ri,2] ] =  sasymDIFFUSION[t0varstationary[ri,1],t0varstationary[ri,2] ];
         }
       }
+      if(intoverpop){ //adjust cov matrix for transforms
+        for(ri in 1:size(matsetup)){
+          if(matsetup[ri,7]==1){ //if t0means
+            if(matsetup[ri,5]) { //and indvarying
+              sT0VAR[matsetup[ri,1], ] = sT0VAR[matsetup[ri,1], ] * matvalues[ri,2] * matvalues[ri,3]* matvalues[ri,5]; //multiplier meanscale sdscale
+              sT0VAR[, matsetup[ri,1] ] = sT0VAR[, matsetup[ri,1] ] * matvalues[ri,2] * matvalues[ri,3]* matvalues[ri,5]; //multiplier meanscale sdscale
+            }
+          }
+        }
+      }
     }
     
-      if(subi <= (asymCINTsubindex ? nsubjects : 0)){
-        if(continuoustime==1) sasymCINT =  -sDRIFT[1:nlatent,1:nlatent] \ sCINT[ ,1 ];
-        if(continuoustime==0) sasymCINT =  (IIlatent - sDRIFT[1:nlatent,1:nlatent]) \ sCINT[,1 ];
-      }
+    if(subi <= (asymCINTsubindex ? nsubjects : 0)){
+      if(continuoustime==1) sasymCINT =  -sDRIFT[1:nlatent,1:nlatent] \ sCINT[ ,1 ];
+      if(continuoustime==0) sasymCINT =  (IIlatent - sDRIFT[1:nlatent,1:nlatent]) \ sCINT[,1 ];
+    }
     
     if(nt0meansstationary > 0){
       if(subi <= (T0MEANSsubindex ? nsubjects : 0)) {
@@ -732,7 +730,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
     ;
     
       state = sT0MEANS[,1];
-      etacov= quad_form(sT0VAR, sJ0');
+      etacov += quad_form(sT0VAR, sJ0');
     if(verbose > 1) print("rowi = ",rowi,"  state = ",sT0MEANS);
     if(verbose > 1) print("sJ0 = ",sJ0);
     if(verbose > 1) print("etacov = ",etacov);

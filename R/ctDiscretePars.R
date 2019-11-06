@@ -89,6 +89,13 @@ ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
 #'@examples
 #'ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
 #'  plot=TRUE,indices='all')
+#'  
+#'  #modify plot
+#'  require(ggplot2)
+#'  g=ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
+#'    plot=TRUE,indices='CR')
+#'  g= g+ labs(title='Cross effects')
+#'  print(g)
 #'@export
 ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=10,by=.1), 
   quantiles = c(.025, .5, .975),nsamples=500,observational=FALSE,standardise=FALSE, plot=FALSE,...){
@@ -131,7 +138,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   nlatent <- dim(ctpars$asymDIFFUSION)[2]
   
   ctpars$DRIFT <- ctpars$DRIFT[,1:nlatent,1:nlatent,drop=FALSE] #intoverpop
-  print(apply(ctpars$DRIFT,c(2,3),mean))
+  # print(apply(ctpars$DRIFT,c(2,3),mean))
   nsubjects <- length(subjects)
   
   
@@ -219,8 +226,9 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   
   if(plot) {
     
-    ctStanDiscreteParsPlot(out,times=times,latentNames=ctstanfitobj$ctstanmodel$latentNames,...)
-  } else return(out)
+    out <- ctStanDiscreteParsPlot(out,times=times,latentNames=ctstanfitobj$ctstanmodel$latentNames,...)
+  } 
+  return(out)
 }
 
 #'ctStanDiscreteParsPlot
@@ -331,10 +339,10 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
     dimn <- c(dimn,dimnames(input)[3:4])
     names(dimn) <- c('Index','Time interval','Effect')
     dimnames(y) <- dimn
-    
     g <- ctPlotArrayGG(list(x=times,y=aperm(y,c(2,1,3))))
-    if(plot) print(g)
-    if(!plot) return(invisible(g))
+    # if(plot) print(g)
+    # if(!plot) return(invisible(g))
+    return(g)
   } else {
     
     

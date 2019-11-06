@@ -21,7 +21,8 @@ ctStanPostPredict(fit, diffsize = 1, jitter = 0.02, wait = TRUE,
 
 \item{datarows}{integer vector specifying rows of data to plot. Otherwise 'all' uses all data.}
 
-\item{nsamples}{Number of datasets to generate for comparisons.}
+\item{nsamples}{Number of datasets to generate for comparisons, if fit object does not contain generated
+data already.}
 
 \item{resolution}{Positive integer, the number of rows and columns to split plots into for shading.}
 
@@ -42,6 +43,10 @@ model implied distributions -- thus, when limited iterations are available, the 
 }
 \examples{
 \donttest{
-ctStanPostPredict(ctstantestfit,wait=FALSE, diffsize=2,resolution=100)
+p<-ctStanPostPredict(ctstantestfit,wait=FALSE, diffsize=2,resolution=100,plot=FALSE)
+print(p[[3]])
+}
+\dontrun{ #just too slow for cran
+ctStanPostPredict(ctstantestfit,wait=FALSE, diffsize=2,resolution=100,plot=TRUE)
 }
 }

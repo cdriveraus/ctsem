@@ -6,7 +6,7 @@
 \usage{
 \method{plot}{ctKalmanDF}(x, subjects = 1, kalmanvec = c("y",
   "ysmooth"), errorvec = "auto", errormultiply = 1.96, plot = TRUE,
-  polygonsteps = 20, polygonalpha = 0.3, ...)
+  elementNames = NA, polygonsteps = 20, polygonalpha = 0.3, ...)
 }
 \arguments{
 \item{x}{Output from \code{\link{ctKalman}}. In general it is easier to call 
@@ -28,6 +28,10 @@ or prior (conditional on all previous data) estimates.}
 Defaults to 1.96, for 95\% intervals.}
 
 \item{plot}{if FALSE, plots are not generated and the ggplot object is simply returned invisibly.}
+
+\item{elementNames}{if NA, all relevant object elements are included -- e.g. if yprior is in the kalmanvec
+argument, all manifest variables are plotted, and likewise for latent states if etasmooth was specified.
+Alternatively, a character vector specifying the manifest and latent names to plot explicitly can be specified.}
 
 \item{polygonsteps}{Number of steps to use for uncertainty band shading.}
 
@@ -51,6 +55,8 @@ plot.ctKalmanDF(x, subjects=2)
 
 ###Single step procedure:
 ctKalman(ctstantestfit,subjects=2,
-  kalmanvec=c('y','yprior'),plot=TRUE,timestep=.01)
+  kalmanvec=c('y','yprior'),
+  elementNames=c('Y1','Y2'), 
+  plot=TRUE,timestep=.01)
 }
 }

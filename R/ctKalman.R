@@ -65,84 +65,42 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
     out <- ctStanKalman(fit,collapsefunc=mean) #extract state predictions
     
     out <- meltkalman(out)
-    
-    # if(length(dim(out$llrow)) < 3) out$llrow <- array(out$llrow,dim=c(dim(out$llrow),1))
-    
-    # out <- lapply(subjects, function(si) lapply(out, function(m) {
-    #   if(length(dim(m)) > 2) m=array(m,dim=dim(m)[-1],dimnames=dimnames(m)[-1]) #ctCollapse(inarray = m,collapsemargin = 1,collapsefunc = mean,plyr=FALSE)
-    #   if(length(dim(m)) ==1) m=m[fit$standata$subject %in% si, drop=FALSE]
-    #   if(length(dim(m)) ==2) m=m[fit$standata$subject %in% si, ,drop=FALSE]
-    #   if(length(dim(m)) ==3) m=m[fit$standata$subject %in% si, , ,drop=FALSE]
-    #   
-    #   return(m)
-    # }))
-    
-    
-    # names(out)<-paste0(subjects)
-    # 
-    #    for(si in paste0(subjects)){
-    #   for(basei in c('y','eta')){
-    #     for(covtypei in c('prior','upd','smooth')){
-    #       out[[si]][[paste0(basei,covtypei,'cov')]] <- aperm(out[[si]][[paste0(basei,covtypei,'cov')]],c(2,3,1))
-    #     }
-    #   }
-    # }
-    
   }
   
   if(type !='stan'){
-    
-    if(type=='stan') n.TDpred <-  fit$ctstanmodel$n.TDpred else n.TDpred <- fit$ctmodelobj$n.TDpred
-    if(type=='stan') TDpredNames <- fit$ctstanmodel$TDpredNames else TDpredNames <- fit$ctmodelobj$TDpredNames
-    if(type=='stan') manifestNames <- fit$ctstanmodel$manifestNames else manifestNames <- fit$ctmodelobj$manifestNames
-    if(type=='stan') latentNames <- fit$ctstanmodel$latentNames else latentNames <- fit$ctmodelobj$latentNames
     
     out<-list()
     if(timerange[1] != 'asdata' & timestep[1] == 'asdata') stop('If timerange is not asdata, a timestep must be specified!')
     
     if(!is.null(datalong)) { #adjust ids and colnames as needed
+      
       datalong <- makeNumericIDs(datalong, fit$ctstanmodel$subjectIDname,fit$ctstanmodel$timeName) #ensure id's are appropriate
       colnames(datalong)[colnames(datalong)==fit$ctstanmodel$subjectIDname] <- 'subject'
       colnames(datalong)[colnames(datalong)==fit$ctstanmodel$timeName] <- 'time'
     }
     
     if(is.null(datalong)) { #get relevant data
-      
-      if(type=='stan') {
-        time<-fit$standata$time
-        datalong<-cbind(fit$standata$subject,time,fit$standata$Y)
-        datalong[,-1:-2][datalong[,-1:-2] == 99999] <- NA #because stan can't handle NA's
-        if(n.TDpred > 0) datalong <- cbind(datalong,fit$standata$tdpreds)
-        if(fit$ctstanmodel$n.TIpred > 0) datalong <- merge(datalong,cbind(unique(fit$standata$subject),fit$standata$tipredsdata))
-        colnames(datalong)<-c('subject','time',
-          fit$ctstanmodel$manifestNames,
-          fit$ctstanmodel$TDpredNames,
-          fit$ctstanmodel$TIpredNames)
+
+      if(is.null(fit$mxobj$expectation$P0)) { #if not fit with kalman filter then data needs rearranging
+        datalong=suppressMessages(ctWideToLong(datawide = fit$mxobj$data$observed[subjects,,drop=FALSE],
+          Tpoints=fit$ctmodelobj$Tpoints,
+          n.manifest=fit$ctmodelobj$n.manifest,manifestNames = fit$ctmodelobj$manifestNames,
+          n.TDpred=fit$ctmodelobj$n.TDpred,TDpredNames = fit$ctmodelobj$TDpredNames,
+          n.TIpred = fit$ctmodelobj$n.TIpred, TIpredNames = fit$ctmodelobj$TIpredNames))
+        datalong <- suppressMessages(ctDeintervalise(datalong = datalong,id = 'id',dT = 'dT'))
+        datalong[,'id'] <- subjects[datalong[,'id'] ]
+      } else {
+        datalong=fit$mxobj$data$observed
+        datalong <- suppressMessages(ctDeintervalise(datalong = datalong,id = 'id',dT = 'dT1'))
       }
+      colnames(datalong)[colnames(datalong) == 'id'] <- 'subject'
       
-      
-      if(type=='omx'){
-        if(is.null(fit$mxobj$expectation$P0)) { #if not fit with kalman filter then data needs rearranging
-          datalong=suppressMessages(ctWideToLong(datawide = fit$mxobj$data$observed[subjects,,drop=FALSE],
-            Tpoints=fit$ctmodelobj$Tpoints,
-            n.manifest=fit$ctmodelobj$n.manifest,manifestNames = manifestNames,
-            n.TDpred=fit$ctmodelobj$n.TDpred,TDpredNames = TDpredNames,
-            n.TIpred = fit$ctmodelobj$n.TIpred, TIpredNames = fit$ctmodelobj$TIpredNames))
-          datalong <- suppressMessages(ctDeintervalise(datalong = datalong,id = 'id',dT = 'dT'))
-        } else {
-          datalong=fit$mxobj$data$observed
-          datalong <- suppressMessages(ctDeintervalise(datalong = datalong,id = 'id',dT = 'dT1'))
-        }
-        colnames(datalong)[colnames(datalong) == 'id'] <- 'subject'
-      }
       
     }
     
     
     
     if(!all(subjects %in% datalong[,'subject'])) stop('Invalid subjects specified!')
-    
-    if(type=='stan') derrind<-fit$data$derrind else derrind<-c()
     
     for(subjecti in subjects){
       #setup subjects data, interpolating and extending as necessary
@@ -155,30 +113,29 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
         snewtimes <- seq(stimerange[1],stimerange[2],timestep)
         snewdat <- array(NA,dim=c(length(snewtimes),dim(sdat)[-1]),dimnames=list(c(),dimnames(sdat)[[2]]))
         snewdat[,'time'] <- snewtimes
-        snewdat[,TDpredNames] <- 0
+        snewdat[,fit$ctmodelobj$TDpredNames] <- 0
         sdat <- rbind(sdat,snewdat)
         sdat[,'time'] <- round(sdat[,'time'],10)
         sdat<-sdat[!duplicated(sdat[,'time']),,drop=FALSE]
         sdat <- sdat[order(sdat[,'time']),,drop=FALSE]
-        sdat[,c(manifestNames,TDpredNames)] [sdat[,c(manifestNames,TDpredNames)]==99999] <- NA
+        sdat[,c(fit$ctmodelobj$manifestNames,fit$ctmodelobj$TDpredNames)] [sdat[,c(fit$ctmodelobj$manifestNames,fit$ctmodelobj$TDpredNames)]==99999] <- NA
         sdat[,'subject'] <- subjecti
       }
       
-      
       #get parameter matrices
-      if(type=='stan') model<-ctStanContinuousPars(fit, subjects=subjecti)
-      if(type=='omx') model <- ctModelFromFit(fit)
+      # browser()
+      model <- summary(fit)
+      # model <- model$
       
       #get kalman estimates
       
       out[[paste('subject',subjecti)]]<-Kalman(kpars=model,
         datalong=sdat,
-        manifestNames=manifestNames,
-        latentNames=latentNames,
-        TDpredNames=TDpredNames,
+        manifestNames=fit$ctmodelobj$manifestNames,
+        latentNames=fit$ctmodelobj$latentNames,
+        TDpredNames=fit$ctmodelobj$TDpredNames,
         idcol='subject',
-        timecol='time',
-        derrind=derrind)
+        timecol='time')
     }
     class(out) <- c('ctKalman',class(out))
   }
@@ -455,7 +412,7 @@ plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
   shapevec[shapevec==0] <- 19
   shapevec[shapevec==1] <- NA
   d<-subset(x,Element %in% kalmanvec)
-
+  
   g <- ggplot(d,
     aes_string(x='Time',y='Value',colour=colvec,linetype='Element',shape='Element'))+
     # stat_quantile(quantiles=seq(.01,.99,.01),
@@ -471,21 +428,35 @@ plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
   if(length(subjects) > 1 && length(unique(subset(x,Element %in% kalmanvec)$Variable)) > 1){
     g <- g+ facet_wrap(vars(Variable),scales = 'free') 
   }
-  polysteps <- seq(errormultiply,0,-errormultiply/polygonsteps)[c(-polygonsteps)]
   
+  polysteps <- seq(errormultiply,0,-errormultiply/(polygonsteps+1))[c(-polygonsteps+1)]
+  
+  # alphasum <- 0
   for(si in polysteps){
+    # alphasum <- alphasum + polygonalpha/polygonsteps
+    
     d2 <- subset(d,Element %in% klines)
     d2$sd <- d2$sd *si
     
     if(length(subjects) ==1){
       g<- g+ 
         geom_ribbon(data=d2,aes(ymin=(Value-sd),x=Time,
-          ymax=(Value+sd),fill=(Variable)),alpha=polygonalpha/polygonsteps,inherit.aes = FALSE,linetype=0)
+          ymax=(Value+sd),fill=(Variable)),
+          alpha=ifelse(si== polysteps[1],.05,polygonalpha/polygonsteps),
+          inherit.aes = FALSE,linetype=0)
+      if(si== polysteps[1]) g <- g + 
+          geom_line(data=d2,aes(y=(Value-sd),colour=Variable),linetype='dotted',alpha=.4) + 
+          geom_line(data=d2,aes(y=(Value+sd),colour=Variable),linetype='dotted',alpha=.4)
     } else {
       g <- g+ 
         geom_ribbon(data=d2,aes(ymin=(Value-sd),x=Time,
-          ymax=(Value+sd),fill=(Subject)),inherit.aes = FALSE,alpha=polygonalpha/polygonsteps,linetype=0)
+          ymax=(Value+sd),fill=(Subject)),inherit.aes = FALSE,
+          alpha=ifelse(alphasum < .05,.05,polygonalpha/polygonsteps),,linetype=0)
+      if(si== polysteps[1]) g <- g + 
+          geom_line(data=d2,aes(y=(Value-sd),colour=Subject),linetype='dotted',alpha=.7) + 
+          geom_line(data=d2,aes(y=(Value+sd),colour=Subject),linetype='dotted',alpha=.7)
     }
+    
     # print(g)
   }
   if(plot) suppressWarnings(print(g))

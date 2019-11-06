@@ -38,7 +38,6 @@
 #' @param filter either NA, or a length 2 vector, where the first element contains the time independent predictor index
 #' to filter by, and the second contains the comparison operator in string form (e.g. "< 3",
 #' to only calculate effects for subjects where the tipreds of the denoted index are less than 3).
-#' @param ... arguments to pass to \code{\link{ctPlotArray}} for plotting.
 #' @return Either a three dimensional array of predictor effects, or nothing with a plot
 #' generated.
 #' @export
@@ -46,13 +45,12 @@
 #' @examples
 #' \donttest{
 #' #samples reduced here for speed
-#' ctStanTIpredeffects(ctstantestfit,plot=TRUE,whichpars='CINT',nsamples=10,nsubjects=10)
+#' ctStanTIpredeffects(ctstantestfit,whichpars='CINT',nsamples=10,nsubjects=10)
 #' }
 ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   includeMeanUncertainty=FALSE,
   whichTIpreds=1,parmatrices=TRUE, whichpars='all', nsamples=100, timeinterval=1,
-  nsubjects=50,filter=NA,
-  plot=FALSE,...){
+  nsubjects=50,filter=NA,plot=FALSE.){
 
   #get objects
   ctspec <- fit$ctstanmodel$pars
@@ -145,7 +143,7 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
       out = ctStanParMatrices(fit,  c(raweffect[x,],parmeans[-1:-ncol(raweffect)]), timeinterval=timeinterval,sf = sf)#rawpopmeans[x,] +
       return(out)
     })
-    # browser()
+    # 
     
     # parmatlists <- apply(e$rawpopmeans,1,ctStanParMatrices,model=object,timeinterval=timeinterval)
     parmatarray <- array(unlist(parmatlists),dim=c(length(unlist(parmatlists[[1]])),length(parmatlists)))
@@ -207,15 +205,16 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   # names(out)[[1]] <-
   
   if(!plot) return(out) else {
-    dots <- list(...)
-    dots$input=out
+    # dots <- list(...)
+    # dots$input=out
     # dots$x=tipreds[,1]
-    if(is.null(dots$plotcontrol)) dots$plotcontrol=list(
-      ylab=ifelse(!returndifference,'Par. Value','Effect'),
-      xlab=colnames(tipreds)[1],
-      xaxs='i')
+    # if(is.null(dots$plotcontrol)) dots$plotcontrol=list(
+    #   ylab=ifelse(!returndifference,'Par. Value','Effect'),
+    #   xlab=colnames(tipreds)[1],
+    #   xaxs='i')
     
-    do.call(ctPlotArrayGG,dots)
+    g<-ctPlotArrayGG(out)
+    return(g)
   }
 }
 

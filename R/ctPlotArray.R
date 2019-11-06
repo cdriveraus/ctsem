@@ -1,4 +1,4 @@
-ctPlotArrayGG <- function(input,plot=TRUE,...){
+ctPlotArrayGG <- function(input){
 
   names <- names(attributes(input$y)$dimnames)
   
@@ -28,7 +28,7 @@ ctPlotArrayGG <- function(input,plot=TRUE,...){
     theme_minimal() + 
     theme(legend.title = element_blank())
   
-  if(plot) print(g) else return(g)
+  return(invisible(g))
   
 }
 
