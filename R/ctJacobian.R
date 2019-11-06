@@ -81,8 +81,8 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
       Jrows = nrow(mats$T0MEANS)
       t0func <- mats$T0MEANS[,1]
       t0func <- sapply(1:length(t0func), function(xi){
-        if(is.na(suppressWarnings(as.numeric(t0func[xi]))) && !grepl('[',t0func[xi],fixed=TRUE)) out <- 
-          paste0('state[',xi,']') else out <- t0func[xi]
+        # if(is.na(suppressWarnings(as.numeric(t0func[xi]))) && !grepl('[',t0func[xi],fixed=TRUE)) 
+          out <-  paste0('state[',xi,'] + ',t0func[xi])
           return(out)
       })
       fn = sapply(prodSymb(diag(nrow(mats$T0MEANS)), matrix(t0func,ncol=1)),Simplify)

@@ -493,8 +493,7 @@ matrix[nlatent, nlatent] sDIFFUSIONcov;
  // if(subi <= (MANIFESTVARsubindex ? nsubjects : 0)) {
    //  for(ri in 1:nmanifest) sMANIFESTVAR[ri,ri] = square(sMANIFESTVAR[ri,ri]);
   //}
-         
-    if(subi <= (T0VARsubindex ? nsubjects : 0)) {
+     if(subi <= (T0VARsubindex ? nsubjects : 0)) {
       if(intoverpop) sT0VAR[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopcovsqrt;
       sT0VAR = makesym(sdcovsqrt2cov(sT0VAR,nldynamics),verbose,1);
       if(nt0varstationary > 0) {
@@ -730,7 +729,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
     ;
     
       state = sT0MEANS[,1];
-      etacov += quad_form(sT0VAR, sJ0');
+      etacov = quad_form(sT0VAR, sJ0');
     if(verbose > 1) print("rowi = ",rowi,"  state = ",sT0MEANS);
     if(verbose > 1) print("sJ0 = ",sJ0);
     if(verbose > 1) print("etacov = ",etacov);
