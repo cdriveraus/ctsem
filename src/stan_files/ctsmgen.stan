@@ -70,11 +70,14 @@ functions{
 
   matrix makesym(matrix mat, int verbose, int pd){
     matrix[rows(mat),cols(mat)] out;
+    int counter = 0;
     for(coli in 1:cols(mat)){
-      if(pd ==1){ // && mat[coli,coli] < 1e-5
+      out[coli,coli] = mat[coli,coli]; 
+      while(counter < 10 && pd ==1 && out[coli,coli] < 1e-5){
+        counter += 1;
         //if(verbose > 0) print("diagonal too low (",mat[coli,coli],") during makesym row ", coli, " col ", coli);
-        out[coli,coli] = mat[coli,coli] + 1e-5;
-      } else out[coli,coli] = mat[coli,coli]; 
+        out[coli,coli] += 1e-5;
+      }  
       for(rowi in coli:rows(mat)){
         if(rowi > coli) {
           out[rowi,coli] = mat[rowi,coli]; //(mat[coli,rowi] + ) *.5;
