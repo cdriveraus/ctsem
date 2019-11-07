@@ -1084,12 +1084,12 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     if(fit) {
       out <- list(args=args,
         setup=setup, 
-        stanmodeltext=stanmodeltext, data=standataout, standata=standata, ctstanmodelbase=ctstanmodelbase, ctm=ctm,stanmodel=sm, stanfit=stanfit)
+        stanmodeltext=stanmodeltext, data=standataout, standata=standata, ctstanmodelbase=ctstanmodelbase, ctstanmodel=ctm,stanmodel=sm, stanfit=stanfit)
       class(out) <- 'ctStanFit'
     }
 
     if(!fit) out=list(args=args,setup=setup,
-      stanmodeltext=stanmodeltext,data=standataout, standata=standata, ctstanmodelbase=ctstanmodelbase,  ctm=ctm)
+      stanmodeltext=stanmodeltext,data=standataout, standata=standata, ctstanmodelbase=ctstanmodelbase,  ctstanmodel=ctm)
     
     return(out)
   }

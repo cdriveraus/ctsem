@@ -757,8 +757,6 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup){
   }
   
   
-  
-  
   ukfilterfunc<-function(ppchecking){
     out<-paste0('
   int si = 0;
@@ -1423,13 +1421,11 @@ functions{
 
   matrix makesym(matrix mat, int verbose, int pd){
     matrix[rows(mat),cols(mat)] out;
-    int counter = 0;
     for(coli in 1:cols(mat)){
       out[coli,coli] = mat[coli,coli]; 
-      while(counter < 10 && pd ==1 && out[coli,coli] < 1e-5){
-        counter += 1;
+      if(pd ==1 && out[coli,coli] < 1e-5){
         //if(verbose > 0) print("diagonal too low (",mat[coli,coli],") during makesym row ", coli, " col ", coli);
-        out[coli,coli] += 1e-5;
+        out[coli,coli] = 1e-5 + fmin(0.0,out[coli,coli]);
       }  
       for(rowi in coli:rows(mat)){
         if(rowi > coli) {
