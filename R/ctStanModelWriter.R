@@ -234,7 +234,7 @@ ctStanModelIntOverPop <- function(m){
       drift <- m$pars[m$pars$matrix %in% 'DRIFT' & m$pars$row==1 & m$pars$col==1,]
       for(ri in 1:(m$n.latent+nindvaryingsmall)){
         for(ci in 1:(m$n.latent+nindvaryingsmall)){
-          newrow <- list('DRIFT',ri,ci,NA,ifelse(m$continuoustime,0,1),0,1,1,0,0,FALSE,1)
+          newrow <- list('DRIFT',ri,ci,NA,ifelse(m$continuoustime,0,ifelse(ri==ci,1,0)),0,1,1,0,0,FALSE,1)
           if(m$n.TIpred > 0) newrow<-c(newrow,rep(FALSE,m$n.TIpred))
           drift[nrow(drift)+1,] <- newrow
         }}

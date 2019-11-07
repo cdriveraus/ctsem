@@ -61,7 +61,6 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
         }
         if(!is.na(mats$CINT[row])) fn[row] = paste0(fn[row],' + ',mats$CINT[row]) #checking for NA because CINT is not always as large as DRIFT
       }
-      # 
     }
 
     

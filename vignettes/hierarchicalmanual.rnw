@@ -558,7 +558,7 @@ m <- ctModel(type='stanct',
 
 ssfitnl <- ctStanFit(datalong, m, optimize=TRUE)
 
-ctKalman(ssfitnl,kalmanvec=c('y','ysmooth'),timestep=.1,plot=TRUE)
+ctKalman(ssfitnl,kalmanvec=c('y','yprior'),timestep=.1,plot=TRUE)
 
 @
 

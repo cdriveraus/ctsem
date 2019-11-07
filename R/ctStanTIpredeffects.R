@@ -50,7 +50,7 @@
 ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   includeMeanUncertainty=FALSE,
   whichTIpreds=1,parmatrices=TRUE, whichpars='all', nsamples=100, timeinterval=1,
-  nsubjects=50,filter=NA,plot=FALSE.){
+  nsubjects=50,filter=NA,plot=FALSE){
 
   #get objects
   ctspec <- fit$ctstanmodel$pars
