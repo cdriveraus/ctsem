@@ -8,7 +8,9 @@ ctStanProfileCI <- function(fit, parnames){
   highpars = fit$stanfit$transformedpars_old[1:np,'97.5%']
   lowpars = fit$stanfit$transformedpars_old[1:np,'2.5%']
   
-  cipars <- fit$setup$matsetup$param[match(parnames,fit$setup$matsetup$parname)]
+  parrows <- match(parnames,fit$setup$matsetup$parname) #find raw parameter corresponding to parnames
+  cipars <- paste0('rawpopmeans',fit$setup$matsetup$param[parrows])
+  # cipars <- fit$setup$matsetup$param[match(parnames,fit$setup$matsetup$parname)]
   
   optimfit=list()
   
@@ -63,7 +65,7 @@ ctStanProfileCI <- function(fit, parnames){
           max_iter=99999,
           method="L-BFGS",memory=100,
           line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',
-          abs_tol=1e-10,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)$f)) + 
+          abs_tol=1e-8,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)$f)) + 
           ifelse(upperci && parx < fit$stanfit$rawest[which( rownames(fit$stanfit$transformedpars_old[1:np,]) %in% cipars[pi])], 100, 0) + 
           ifelse(!upperci && parx > fit$stanfit$rawest[which( rownames(fit$stanfit$transformedpars_old[1:np,]) %in% cipars[pi])], 100, 0)
         # print(pll)
@@ -81,20 +83,38 @@ ctStanProfileCI <- function(fit, parnames){
           return( (up-down)/(2*1e-6))
         }
       )
-      
+  
       optimfit <- mize(init[which( rownames(fit$stanfit$transformedpars_old[1:np,]) %in% cipars[pi]) ], 
           fg=mizelpgouter, 
           max_iter=99999,
           method="L-BFGS",memory=100,
           line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',
-          abs_tol=1e-10,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)$par
+          abs_tol=1e-8,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)$par
       # browser()
       if(upperci) highpars[which( rownames(fit$stanfit$transformedpars_old[1:np,]) %in% cipars[pi]) ] <- optimfit
       if(!upperci) lowpars[which( rownames(fit$stanfit$transformedpars_old[1:np,]) %in% cipars[pi]) ] <- optimfit
     }
   }
-  low <- constrain_pars(object = smf, lowpars)
-  high <- constrain_pars(object = smf, highpars)
   
-  return(list(low=low,high=high))
+  lowcipars=lowpars[which( rownames(fit$stanfit$transformedpars_old[1:np,]) %in% cipars[pi]) ]
+  highcipars=highpars[which( rownames(fit$stanfit$transformedpars_old[1:np,]) %in% cipars[pi]) ]
+  
+  low <- sapply(1:length(lowcipars),function(x) tform(param = lowcipars[x],
+    transform = fit$setup$matsetup$transform[parrows[x]],
+    multiplier = fit$setup$matvalues$multiplier[parrows[x]],
+    meanscale = fit$setup$matvalues$meanscale[parrows[x]],
+    offset = fit$setup$matvalues$offset[parrows[x]],
+    inneroffset = fit$setup$matvalues$inneroffset[parrows[x]])) #constrain_pars(object = smf, lowpars)
+  
+  high <- sapply(1:length(highcipars),function(x) tform(param = highcipars[x],
+    transform = fit$setup$matsetup$transform[parrows[x]],
+    multiplier = fit$setup$matvalues$multiplier[parrows[x]],
+    meanscale = fit$setup$matvalues$meanscale[parrows[x]],
+    offset = fit$setup$matvalues$offset[parrows[x]],
+    inneroffset = fit$setup$matvalues$inneroffset[parrows[x]])) 
+  
+  out <- data.frame(param=parnames,low=low,high=high)
+  rownames(out) <- NULL
+  
+  return(out)
 }

@@ -211,7 +211,7 @@ int asymDIFFUSIONsubindex;
 int DIFFUSIONcovsubindex;
   int TIPREDEFFECTsetup[nparams, ntipred];
   int nrowmatsetup;
-  int matsetup[nrowmatsetup,8];
+  int matsetup[nrowmatsetup,9];
   real matvalues[nrowmatsetup,6];
   int matrixdims[10,2];
   int savescores;
@@ -223,8 +223,6 @@ int DIFFUSIONcovsubindex;
   real Jstep;
   real dokalmanpriormodifier;
   int intoverpopindvaryingindex[intoverpop ? nindvarying : 0];
-  int sJAxdrift[nlatentpop,nlatentpop];
-  int sJylambda[nmanifest,nlatentpop];
   int nsJAxfinite;
   int sJAxfinite[nsJAxfinite];
 }
@@ -400,6 +398,7 @@ matrix[nlatent, nlatent] sDIFFUSIONcov;
   if(nldynamics==0) discreteDIFFUSION = rep_matrix(0,nlatent,nlatent); //in case some elements remain zero due to derrind
 
   if(savescores) kout = rep_array(rep_vector(99999,rows(kout[1])),ndatapoints);
+  //print("sJy 0 = ",sJy);
   
   for(rowi in 1:(dokalman ? ndatapoints :1)){
   if(dokalmanrows[rowi] ==1) { //used for subset selection
@@ -434,7 +433,7 @@ matrix[nlatent, nlatent] sDIFFUSIONcov;
   rawindparams = rawpopmeans + tipredaddition + indvaraddition;
 
     for(ri in 1:size(matsetup)){ //for each row of matrix setup
-    for(statecalcs in 0:1){
+        for(statecalcs in 0:1){
         if(subi ==0 ||  //if population parameter
           (matsetup[ri,7]==4 && DIFFUSIONsubindex) ||( matsetup[ri,7] == 8 && T0VARsubindex) || //or a covariance parameter in an individually varying matrix
           (matsetup[ri,3] > 0 && (matsetup[ri,5] > 0 || matsetup[ri,6] > 0)) //or there is individual variation
@@ -458,6 +457,26 @@ matrix[nlatent, nlatent] sDIFFUSIONcov;
       if(matsetup[ri, 7] == 52) sJAx[matsetup[ ri,1], matsetup[ri,2]] = newval; 
       if(matsetup[ri, 7] == 53) sJtd[matsetup[ ri,1], matsetup[ri,2]] = newval; 
       if(matsetup[ri, 7] == 54) sJy[matsetup[ ri,1], matsetup[ri,2]] = newval;
+                if(matsetup[ri,9] < 0){
+                for(ri2 in 1:size(matsetup)){
+                  if(matsetup[ri2,9] == ri){ 
+                  if(matsetup[ri2, 7] == 1) sT0MEANS[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
+      if(matsetup[ri2, 7] == 2) sLAMBDA[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
+      if(matsetup[ri2, 7] == 3) sDRIFT[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
+      if(matsetup[ri2, 7] == 4) sDIFFUSION[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
+      if(matsetup[ri2, 7] == 5) sMANIFESTVAR[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
+      if(matsetup[ri2, 7] == 6) sMANIFESTMEANS[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
+      if(matsetup[ri2, 7] == 7) sCINT[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
+      if(matsetup[ri2, 7] == 8) sT0VAR[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
+      if(matsetup[ri2, 7] == 9) sTDPREDEFFECT[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
+      if(matsetup[ri2, 7] == 10) sPARS[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
+      if(matsetup[ri2, 7] == 51) sJ0[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
+      if(matsetup[ri2, 7] == 52) sJAx[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
+      if(matsetup[ri2, 7] == 53) sJtd[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
+      if(matsetup[ri2, 7] == 54) sJy[matsetup[ri2,1], matsetup[ri2,2]] = newval;
+                  }
+                }
+              }
             }
           }
         state=sT0MEANS[,1];
@@ -618,12 +637,18 @@ if(verbose > 1) print ("below t0 row ", rowi);
       
           for(ri in 1:size(matsetup)){ //for each row of matrix setup
             if(matsetup[ri,3] > 0 && matsetup[ri,8] == 2){ //perform calcs appropriate to this section
-            real newval;
-            newval = tform(state[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
-            if(matsetup[ri, 7] == 3) sDRIFT[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 4) sDIFFUSION[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 7) sCINT[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 52) sJAx[matsetup[ ri,1], matsetup[ri,2]] = newval;
+              real newval;
+              newval = tform(state[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
+              if(matsetup[ri, 7] == 3) sDRIFT[matsetup[ ri,1], matsetup[ri,2]] = newval; 
+      if(matsetup[ri, 7] == 7) sCINT[matsetup[ ri,1], matsetup[ri,2]] = newval;
+              if(matsetup[ri,9] < 0){
+                for(ri2 in 1:size(matsetup)){
+                  if(matsetup[ri2,9] == ri){ //if row ri2 is a copy of original row ri
+                    if(matsetup[ri2, 7] == 3) sDRIFT[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
+      if(matsetup[ri2, 7] == 7) sCINT[matsetup[ri2,1], matsetup[ri2,2]] = newval;
+                  }
+                }
+              }
             }
           }
           {
@@ -646,19 +671,28 @@ if(verbose > 1) print ("below t0 row ", rowi);
     }
     if(verbose>1) print("sJAx ",sJAx);
     }
-        {
+    
+          for(ri in 1:size(matsetup)){ //for each row of matrix setup
+            if(matsetup[ri,3] > 0 && matsetup[ri,8] == 2){ //perform calcs appropriate to this section
+              real newval;
+              newval = tform(state[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
+              if(matsetup[ri, 7] == 4) sDIFFUSION[matsetup[ ri,1], matsetup[ri,2]] = newval; 
+      if(matsetup[ri, 7] == 52) sJAx[matsetup[ ri,1], matsetup[ri,2]] = newval;
+              if(matsetup[ri,9] < 0){
+                for(ri2 in 1:size(matsetup)){
+                  if(matsetup[ri2,9] == ri){ //if row ri2 is a copy of original row ri
+                    if(matsetup[ri2, 7] == 4) sDIFFUSION[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
+      if(matsetup[ri2, 7] == 52) sJAx[matsetup[ri2,1], matsetup[ri2,2]] = newval;
+                  }
+                }
+              }
+            }
+          }    {
   ;  
   
   } 
-  
+   
              
-      if(verbose>1) print("sJAx ",sJAx);
-        for(ri in 1:nlatentpop){ 
-          for(ci in 1:nlatentpop){
-            if(sJAxdrift[ri,ci]) sJAx[ri,ci]=sDRIFT[ri,ci]; //set jacobian to drift where appropriate
-          }
-        }
-            
             if(continuoustime){
             if(taylorheun==0){
               if(dtchange==1 || statedependence[2] || (T0check == 1 && (DRIFTsubindex + CINTsubindex > 0))){
@@ -720,15 +754,23 @@ if(verbose > 1) print ("below t0 row ", rowi);
     
           for(ri in 1:size(matsetup)){ //for each row of matrix setup
             if(matsetup[ri,3] > 0 && matsetup[ri,8] == 1){ //perform calcs appropriate to this section
-            real newval;
-            newval = tform(state[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
-            if(matsetup[ri, 7] == 1) sT0MEANS[matsetup[ ri,1], matsetup[ri,2]] = newval; 
+              real newval;
+              newval = tform(state[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
+              if(matsetup[ri, 7] == 1) sT0MEANS[matsetup[ ri,1], matsetup[ri,2]] = newval; 
       if(matsetup[ri, 7] == 8) sT0VAR[matsetup[ ri,1], matsetup[ri,2]] = newval; 
       if(matsetup[ri, 7] == 51) sJ0[matsetup[ ri,1], matsetup[ri,2]] = newval;
+              if(matsetup[ri,9] < 0){
+                for(ri2 in 1:size(matsetup)){
+                  if(matsetup[ri2,9] == ri){ //if row ri2 is a copy of original row ri
+                    if(matsetup[ri2, 7] == 1) sT0MEANS[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
+      if(matsetup[ri2, 7] == 8) sT0VAR[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
+      if(matsetup[ri2, 7] == 51) sJ0[matsetup[ri2,1], matsetup[ri2,2]] = newval;
+                  }
+                }
+              }
             }
           }
     ;
-    
       state = sT0MEANS[,1];
       etacov = quad_form(sT0VAR, sJ0');
     if(verbose > 1) print("rowi = ",rowi,"  state = ",sT0MEANS);
@@ -743,10 +785,18 @@ if(verbose > 1) print ("below t0 row ", rowi);
     
           for(ri in 1:size(matsetup)){ //for each row of matrix setup
             if(matsetup[ri,3] > 0 && matsetup[ri,8] == 3){ //perform calcs appropriate to this section
-            real newval;
-            newval = tform(state[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
-            if(matsetup[ri, 7] == 9) sTDPREDEFFECT[matsetup[ ri,1], matsetup[ri,2]] = newval; 
+              real newval;
+              newval = tform(state[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
+              if(matsetup[ri, 7] == 9) sTDPREDEFFECT[matsetup[ ri,1], matsetup[ri,2]] = newval; 
       if(matsetup[ri, 7] == 53) sJtd[matsetup[ ri,1], matsetup[ri,2]] = newval;
+              if(matsetup[ri,9] < 0){
+                for(ri2 in 1:size(matsetup)){
+                  if(matsetup[ri2,9] == ri){ //if row ri2 is a copy of original row ri
+                    if(matsetup[ri2, 7] == 9) sTDPREDEFFECT[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
+      if(matsetup[ri2, 7] == 53) sJtd[matsetup[ri2,1], matsetup[ri2,2]] = newval;
+                  }
+                }
+              }
             }
           }
     ;
@@ -775,6 +825,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
 
 
     if(nlmeasurement==0 && T0check == 0) sJy[ ,1:nlatent] = sLAMBDA;
+    
     if (nobs_y[rowi] > 0 || savescores) {  // if some observations create right size matrices for missingness and calculate...
     
       int o[savescores ? nmanifest : nobs_y[rowi]]; //which obs are not missing in this row
@@ -798,25 +849,32 @@ if(verbose > 1) print ("below t0 row ", rowi);
       
 
       if(nlmeasurement==1){
+      //print("sJy 1 = ",sJy);
       
           for(ri in 1:size(matsetup)){ //for each row of matrix setup
             if(matsetup[ri,3] > 0 && matsetup[ri,8] == 4){ //perform calcs appropriate to this section
-            real newval;
-            newval = tform(state[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
-            if(matsetup[ri, 7] == 2) sLAMBDA[matsetup[ ri,1], matsetup[ri,2]] = newval; 
+              real newval;
+              newval = tform(state[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
+              if(matsetup[ri, 7] == 2) sLAMBDA[matsetup[ ri,1], matsetup[ri,2]] = newval; 
       if(matsetup[ri, 7] == 5) sMANIFESTVAR[matsetup[ ri,1], matsetup[ri,2]] = newval; 
       if(matsetup[ri, 7] == 6) sMANIFESTMEANS[matsetup[ ri,1], matsetup[ri,2]] = newval; 
       if(matsetup[ri, 7] == 54) sJy[matsetup[ ri,1], matsetup[ri,2]] = newval;
+              if(matsetup[ri,9] < 0){
+                for(ri2 in 1:size(matsetup)){
+                  if(matsetup[ri2,9] == ri){ //if row ri2 is a copy of original row ri
+                    if(matsetup[ri2, 7] == 2) sLAMBDA[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
+      if(matsetup[ri2, 7] == 5) sMANIFESTVAR[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
+      if(matsetup[ri2, 7] == 6) sMANIFESTMEANS[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
+      if(matsetup[ri2, 7] == 54) sJy[matsetup[ri2,1], matsetup[ri2,2]] = newval;
+                  }
+                }
+              }
             }
           }
       ;
-        
-        for(ri in 1:nmanifest){ 
-          for(ci in 1:nlatentpop){
-            if(sJylambda[ri,ci]) sJy[ ri,ci]=sLAMBDA[ri,ci]; //set jacobian to lambda where appropriate
-          }
-        }
+       //print("sJy 2 = ",sJy); 
       }
+      //print("sJy 3 = ",sJy);
           
         if(intoverstates==1) { //classic kalman
           yprior[o] = sMANIFESTMEANS[o,1] + sLAMBDA[o,] * state[1:nlatent];
@@ -873,6 +931,7 @@ err[od] = Y[rowi,od] - yprior[od]; // prediction error
             "  sDRIFT =", sDRIFT, " sDIFFUSION =", sDIFFUSION, " sCINT =", sCINT, "  sMANIFESTVAR ", diagonal(sMANIFESTVAR), "  sMANIFESTMEANS ", sMANIFESTMEANS, 
             "  sT0VAR", sT0VAR,  " sT0MEANS ", sT0MEANS, "sLAMBDA = ", sLAMBDA, "  sJy = ",sJy,
             " discreteDRIFT = ", discreteDRIFT, "  discreteDIFFUSION ", discreteDIFFUSION, "  sasymDIFFUSION ", sasymDIFFUSION, 
+            " DIFFUSIONcov = ", sDIFFUSIONcov,
             "  rawpopsd ", rawpopsd,  "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
         }
   
@@ -984,7 +1043,7 @@ vector[nparams] rawpopsdfull;
 rawpopsdfull[indvaryingindex] = sqrt(diagonal(rawpopcov)); //base for calculations
 
     for(ri in 1:size(matsetup)){
-      if(matsetup[ri,3] && matsetup[ri,8]==0) { //if a free parameter 
+      if(matsetup[ri,9] <=0 && matsetup[ri,3] && matsetup[ri,8]==0) { //if a free parameter 
         real rawpoppar = rawpopmeans[matsetup[ri,3] ];
         int pr = ri; // unless intoverpop, pop matrix row reference is simply current row
         

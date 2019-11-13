@@ -5,6 +5,7 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
   
   # require(cOde)
   # require(Deriv)
+  mm=ctStanModelMatrices(m) #do here because we change m
   
   # get system dimension
   ndim = max(m$pars$row[m$pars$matrix%in% 'T0MEANS'])
@@ -18,7 +19,6 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
   #replace system matrix references
   matlist <- listOfMatrices(m$pars)
   matnames <- names(ctStanMatricesList(unsafe=TRUE)$base)
- 
   
   # for(mati in matnames){ 
   for(ri in 1:nrow(m$pars)){
@@ -49,7 +49,7 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
       }
     }
   }
-  
+  # browser()
   mats<-listOfMatrices(m$pars)
   Jout <- list()
   for(typei in types){
@@ -125,20 +125,22 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
     J = gsub("___comma___", ",", J, fixed = TRUE)
     
     
-    mm=ctStanModelMatrices(m)
+    # mm=ctStanModelMatrices(m)
     Js=J #replace parameter labels with matrix references
+    
     for(x in 1:nrow(mm$matsetup)){
       Js=gsub(
         pattern = paste0("\\b",mm$matsetup$parname[x],"\\b"),
-        replacement = paste0('s',matnames[mm$matsetup$matrix[x]],'[',
+        replacement = paste0(matnames[mm$matsetup$matrix[x]],'[',
           mm$matsetup$row[x],',',
           mm$matsetup$col[x],']'),
         x = Js)
-      
+
       for(mati in matnames) { #append s to system matrices
         Js=gsub(pattern = paste0("\\b",mati,"\\b"), replacement = paste0('s',mati),  x = Js)
       }
     }
+    # browser()
     Jout[[typei]] <- matrix(Js,Jrows,ndim)
   }#end type loop
   # print(Jout)

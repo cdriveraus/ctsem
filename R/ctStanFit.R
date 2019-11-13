@@ -39,7 +39,7 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
     if(any(is.na(tdpreds))) {
       # if(NAtdpreds == 'error'
       message('Missingness in TDpreds! Replaced by zeroes...')
-    tdpreds[is.na(tdpreds)] <-0 ## rough fix for missingness
+      tdpreds[is.na(tdpreds)] <-0 ## rough fix for missingness
     }
   }
   
@@ -543,20 +543,18 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       datalong[[ctm$timeName]] <- 1:nrow(datalong)
     }
     continuoustime<-ctm$continuoustime
-
     ctstanmodelbase <- ctm
     ctm <- ctModel0DRIFT(ctm, continuoustime)
     ctm <- ctModelStatesAndPARS(ctm)
+    # browser()
     ctm <- ctModelTransformsToNum(ctm)
     ctm$pars <- ctStanModelCleanctspec(ctm$pars)
     # ctm <- ctStanModelIntOverPop(ctm)
     
     if('data.table' %in% class(datalong)) datalong <- data.frame(datalong)
     
-    
-    
     ###stationarity
-     # if(intoverpop && (any(ctm$pars$param %in% 'stationary') || stationary)) stop('stationarity incompatible with random effects integration')
+    # if(intoverpop && (any(ctm$pars$param %in% 'stationary') || stationary)) stop('stationarity incompatible with random effects integration')
     if(stationary) {
       ctm$pars$param[ctm$pars$matrix %in% c('T0VAR','T0MEANS')] <- 'stationary'
       ctm$pars$value[ctm$pars$matrix %in% c('T0VAR','T0MEANS')] <- NA
@@ -572,7 +570,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     t0varstationary = unique(t0varstationary) #remove any duplicated rows
     
     t0meansstationary <- as.matrix(rbind(ctm$pars[which(ctm$pars$param[ctm$pars$matrix %in% 'T0MEANS'] %in% 'stationary'),c('row','col')]))
-    ctm$pars$value[ctm$pars$param %in% 'stationary'] <- 0
+    ctm$pars$value[ctm$pars$param %in% 'stationary'] <- -99 #does this get inserted?
     ctm$pars$indvarying[ctm$pars$param %in% 'stationary'] <- FALSE
     ctm$pars$transform[ctm$pars$param %in% 'stationary'] <- NA
     ctm$pars$param[ctm$pars$param %in% 'stationary'] <- NA
@@ -624,10 +622,60 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         if(intoverpop & any(ctm$pars$indvarying[is.na(ctm$pars$value)]) & nldynamics==FALSE) { stop('nldynamics cannot be set FALSE if intoverpop is TRUE')
         }
     
+    # browser()
     if(intoverpop)   ctm <- ctStanModelIntOverPop(ctm)
     
     ctm$jacobian <- ctJacobian(ctm)
+    
+    jl <- ctModelUnlist(ctm$jacobian,names(ctm$jacobian))
+    jl2 <- as.data.frame(rbind(data.table(ctm$pars[1,]),data.table(jl),fill=TRUE))[-1,]
+    # jl2$transform <- jl2$param
+    
+    # getStates <- function(x){
+    # 
+    # ctm <- ctModelTransformsToNum(ctm)
+    # ctm$pars <- ctStanModelCleanctspec(ctm$pars)
 
+    jl3=ctModelTransformsToNum(list(pars=data.frame(jl2)))
+    jl3$pars$indvarying<-FALSE
+    ctm$pars <- rbind(ctm$pars, jl3$pars)
+    
+    
+    # #single state references to integer
+    # cpx <- ctm$pars
+    # cpx <- cpx[!is.na(cpx$param) & is.na(cpx$transform),]
+    # if(nrow(cpx) > 0){  #if number of state and latent matches is exactly 1, we can use integer transforms
+    #   statematches <- gregexpr(paste0(
+    #     '\\b(state)\\b\\[\\d+\\]'),cpx$param)
+    #   cpx <- cpx[sapply(statematches, function(x) length(x) ==1),]
+    #   cpx$transform <- gsub('\\b(state)\\b\\[\\d+\\]',
+    #     'param',cpx$param)
+    #   # browser()
+    #   cpx$multiplier <- cpx$offset <- cpx$meanscale <- cpx$inneroffset <- NULL
+    #   # rownames(cpx)=1:nrow(cpx)
+    #   cpx <- ctModelTransformsToNum(list(pars=cpx))$pars
+    # 
+    #   
+    #   mg=c() #replace ctm elements with updates
+    #   for(i in 1:nrow(cpx)){
+    #     mg[i]=which(ctm$pars$matrix==cpx$matrix[i] & 
+    #         ctm$pars$col==cpx$col[i] &
+    #         ctm$pars$row==cpx$row[i] )
+    #   }
+    #   ctm$pars[mg,]<-cpx
+      
+      
+    # }
+    # browser() #fix names
+    # ctm$pars$param <- #get state reference
+    #   gsub('\\[|\\]','',unlist(regmatches(ctm$pars, #extract one or more references
+    #     gregexpr(
+    #       paste0('(?=\\[).*?(?<=\\])'), 
+    #       ctm$pars, perl=TRUE)
+    #   )))
+    
+    
+    #combine jl3 and ctm, detect complex params with single var and NA transform, convert to numeric
     
     if(naf(!is.na(ctm$rawpopsdbaselowerbound))) recompile <- TRUE
     if(ctm$rawpopsdbase != 'normal(0,1)') recompile <- TRUE
@@ -635,6 +683,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     
     if(cores=='maxneeded') cores=max(1,min(c(chains,parallel::detectCores()-1))) else cores <-max(1, min(cores,parallel::detectCores()-1))
+    
+    
     whichT0VAR_T0MEANSindvarying <- ctm$pars$matrix %in% 'T0VAR'  &  
       is.na(ctm$pars$value) &
       (ctm$pars$row %in% ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS' & ctm$pars$indvarying] |
@@ -651,7 +701,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     mats <- ctStanMatricesList()
     
-
+    
     if(!all(ctm$pars$transform[!is.na(suppressWarnings(as.integer(ctm$pars$transform)))] %in% c(0,1,2,3,4))) stop('Unknown transform specified -- integers should be 0 to 4')
     
     # if(binomial) {
@@ -659,7 +709,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     #   message(paste0('MANIFESTVAR matrix is ignored when binomial=TRUE'))
     # }
     
-   
+    
     
     manifesttype=ctm$manifesttype
     
@@ -684,7 +734,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       ctm$pars$meanscale[indices] <- 10
       ctm$pars$offset[indices] <- 0
     }
-
+    
     
     
     # if(nt0meansstationary ==0) t0meansstationary <- matrix(-99,ncol=2)
@@ -707,12 +757,12 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     #simply exponential?
     driftdiagonly <- ifelse(all(!is.na(ctm$pars$value[ctm$pars$matrix == 'DRIFT' & ctm$pars$row != ctm$pars$col]) &
         all(ctm$pars$value[ctm$pars$matrix == 'DRIFT' & ctm$pars$row != ctm$pars$col] == 0) ), 1, 0)
-
+    
     n.latent<-ctm$n.latent
     n.manifest<-ctm$n.manifest
     n.TDpred<-ctm$n.TDpred
     n.TIpred<-ctm$n.TIpred
-
+    
     ###data checks
     
     if(any(!c(ctm$manifestNames,ctm$TDpredNames,ctm$TIpredNames) %in% colnames(datalong))) stop(paste0('
@@ -723,7 +773,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     
     if(nopriors==FALSE){
-      
       if(ctm$n.TIpred > 1 && any(abs(colMeans(datalong[,c(ctm$TIpredNames),drop=FALSE],na.rm=TRUE)) > .3)){
         message('Uncentered TI predictors noted -- interpretability may be hindered and default priors may not be appropriate')
       }
@@ -753,7 +802,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     
     #generate model matrix lists for stan
-
+    for(i in 1:nrow(ctm$pars)){ #simplify any calcs
+      if(grepl('[',ctm$pars$param[i],fixed=TRUE)) ctm$pars$param[i] <- Deriv::Simplify(ctm$pars$param[i])
+    }
     ctsmodelmats <- ctStanModelMatrices(ctm)
     matsetup <- ctsmodelmats$matsetup
     matvalues <- ctsmodelmats$matvalues
@@ -761,20 +812,25 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     TIPREDEFFECTsetup=ctsmodelmats$TIPREDEFFECTsetup
     matrixdims <- ctsmodelmats$matrixdims
     ctm$calcs <- ctsmodelmats$calcs
-    
-    
+# browser()
     #get extra calculations and adjust model spec as needed
     ctm <- ctStanCalcsList(ctm)
     if(sum(sapply(ctm$calcs,length)) > 0){
       if(nldynamics == FALSE) warning('Linear model requested but nonlinear model specified! May be a poor approximation') else nldynamics <- TRUE 
     }
-    if(sum(unlist(lapply(ctm$calcs,length) > 0))) recompile <- TRUE
+
+    ncalcs <- length(unlist(ctm$calcs)) 
+    ncalcsNoJ<- length(unlist(ctm$calcs)[!grepl('JAx[',unlist(ctm$calcs),fixed=TRUE)])
+    if(ncalcsNoJ > 0) recompile <- TRUE
+    if(!recompile && ncalcsNoJ >0)  message('Finite difference jacobian used to avoid recompiling -- use forcerecompile=TRUE for analytic jacobians')
     if( (nt0varstationary + nt0meansstationary) >0 && 
         length(c(ctm$calcs$driftcint, ctm$calcs$diffusion)) > 0) message('Stationarity assumptions based on initial states when using non-linear dynamics')
     
     nlmeasurement <- nlcontrol$nlmeasurement
-    if(length(ctm$calcs$measurement) > 0 || (intoverpop && any(ctm$pars$indvarying[ctm$pars$matrix %in% names(mats$measurement)]))) { 
+    if(length(ctm$calcs$measurement) > 0 || 
+        (intoverpop && any(ctstanmodelbase$pars$indvarying[ctstanmodelbase$pars$matrix %in% names(mats$measurement)]))) { 
       if(nlmeasurement == FALSE) warning('Linear measurement model requested but nonlinear measurement specified!') else nlmeasurement <- TRUE
+      
     }
     
     if(nldynamics==TRUE && !intoverstates) stop('intoverstates must be TRUE for nonlinear dynamics')
@@ -787,7 +843,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     if(nldynamics == 'auto') nldynamics <- FALSE
     if(nldynamics) message('Using nonlinear Kalman filter for dynamics')
     if(!nldynamics) message('Using linear Kalman filter for dynamics')
-
+    
     
     #check diffusion indices input by user - which latents are involved in covariance
     if(intoverstates==FALSE || all(derrind=='all') ) derrind = 1:n.latent
@@ -806,14 +862,13 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     nindvarying <- max(matsetup$indvarying)
     nparams <- max(matsetup$param[matsetup$when==0])
     nmatrices <- length(mats$base)
-    
     matsetup[which(matsetup$indvarying > 0),]
     indvaryingindex <- matsetup$param[which(matsetup$indvarying > 0)]
     indvaryingindex <- array(indvaryingindex[!duplicated(indvaryingindex)])
     
     sdscale <- array(matvalues$sdscale[match(indvaryingindex,matsetup$param)])
     
-   
+    
     if(any(matsetup[,'transform'] < -10)) recompile <- TRUE #if custom transforms needed
     
     
@@ -899,7 +954,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     standata$tipredsimputedscale <- ctm$tipredsimputedscale
     standata$tipredeffectscale <- ctm$tipredeffectscale
     
-
+    
     #drift off diagonal check
     mx=listOfMatrices(ctm$pars)
     driftcint <- rbind(cbind(mx$DRIFT[1:n.latent,1:n.latent,drop=FALSE],mx$CINT),0)
@@ -910,30 +965,41 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     standata$drcintoffdiag <- array(as.integer(c(z,1)),dim=nrow(driftcint))
     
     # #jacobians
-    standata$sJAxdrift <- array(jacobianelements(ctm$jacobian$JAx,mats=mx,
-      remove='drift',
-      ntdpred=ctm$n.TDpred,when=2,matsetup=matsetup,returndriftonly=TRUE),
-      dim=c(standata$nlatentpop,standata$nlatentpop))
-
-    standata$sJylambda <- array(jacobianelements(ctm$jacobian$Jy,mats=mx,
-      remove='lambda',
-      ntdpred=ctm$n.TDpred,when=4,matsetup=matsetup,returnlambdaonly=TRUE),
-      dim=c(standata$nmanifest,standata$nlatentpop))
+    # standata$sJAxdrift <- array(jacobianelements(ctm$jacobian$JAx,mats=mx,
+    #   remove='drift',
+    #   ntdpred=ctm$n.TDpred,when=2,matsetup=matsetup,returndriftonly=TRUE),
+    #   dim=c(standata$nlatentpop,standata$nlatentpop))
+    # 
+    # standata$sJylambda <- array(jacobianelements(ctm$jacobian$Jy,mats=mx,
+    #   remove='lambda',
+    #   ntdpred=ctm$n.TDpred,when=4,matsetup=matsetup,returnlambdaonly=TRUE),
+    #   dim=c(standata$nmanifest,standata$nlatentpop))
     
     if(!recompile){ #then use finite diffs for some elements
-      standata$sJAxfinite <- array(as.integer(unique(c(which(matrix(ctm$jacobian$JAx %in% #which rows of jacobian are not simply drift / fixed / state refs
-      jacobianelements(ctm$jacobian$JAx,mats=mx,remove=c('drift','fixed'),
-        ntdpred=ctm$n.TDpred,when=2,matsetup=matsetup),standata$nlatentpop,standata$nlatentpop), 
-      arr.ind = TRUE))))) #[,'col'] maybe split up into row / column?
-    standata$nsJAxfinite <- length(standata$sJAxfinite)
+      # standata$sJAxfinite <- array(as.integer(unique(c(which(matrix(ctm$jacobian$JAx %in% #which rows of jacobian are not simply drift / fixed / state refs
+        #   jacobianelements(ctm$jacobian$JAx,mats=mx,remove=c('drift','fixed'),
+        #     ntdpred=ctm$n.TDpred,when=2,matsetup=matsetup),standata$nlatentpop,standata$nlatentpop), 
+        # arr.ind = TRUE))))) #[,'col'] maybe split up into row / column?
+      
+      #collect row and column of complicated jacobian elements into vector
+      standata$sJAxfinite <- array(as.integer(unique(
+        unlist(matsetup[matsetup$matrix %in% 52 & matsetup$when == -999 & matsetup$copyrow < 1,c('row','col')]))))# ])))
+      
+      #if any needed, set all as temp workaround for bad subsetting in finite diff jacobian
+      if(length(standata$sJAxfinite) > 0) standata$sJAxfinite <- 1:standata$nlatentpop
+      
+      standata$nsJAxfinite <- length(standata$sJAxfinite)
+      whichfinite <- matsetup$row %in% standata$sJAxfinite & matsetup$matrix %in% 52
+      matsetup <- matsetup[!whichfinite,]
+      matvalues <- matvalues[!whichfinite,]
     }
     if(recompile){
       standata$sJAxfinite <- array(as.integer(c()))
       standata$nsJAxfinite <- 0L
     }
     
-
-
+    
+    
     #add subject variability indices to data
     for(mati in c(names(mats$base),'asymCINT','asymDIFFUSION','DIFFUSIONcov')){
       sname <- paste0(mati,'subindex')
@@ -946,7 +1012,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         any(grepl('state[',ctm$jacobian$JAx,fixed=TRUE)) ||
         any(grepl('state[',ctm$calcs$driftcint,fixed=TRUE)) ||
         any(grepl('state[',ctm$calcs$diffusion,fixed=TRUE)) 
-      ) statedependence[2] = 1L
+    ) statedependence[2] = 1L
     
     standata$statedependence <- statedependence
     
@@ -955,10 +1021,10 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     standata$nmatrices <- as.integer(nmatrices)
     standata$matrixdims <- matrixdims
     standata$nrowmatsetup <- as.integer(nrow(matsetup))
-
+    
     standata$sdscale <- array(as.numeric(sdscale),dim=length(sdscale))
     
-
+    
     
     #fixed hyper pars
     if(!is.null(ctm$fixedrawpopchol)) {
@@ -973,7 +1039,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     standata$fixedsubpars <- as.integer(!is.null(ctm$fixedsubpars))
     if(!is.null(ctm$fixedsubpars)) standata$fixedindparams <- 
       ctm$fixedsubpars else standata$fixedindparams <-array(0,dim=c(0,0))
-
+    
     if(fit){
       # if(gendata && stanmodels$ctsmgen@model_code != stanmodeltext) recompile <- TRUE
       # if(!gendata && paste0(stanmodels$ctsm@model_code) != paste0(stanmodeltext)) recompile <- TRUE
@@ -1087,7 +1153,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         stanmodeltext=stanmodeltext, data=standataout, standata=standata, ctstanmodelbase=ctstanmodelbase, ctstanmodel=ctm,stanmodel=sm, stanfit=stanfit)
       class(out) <- 'ctStanFit'
     }
-
+    
     if(!fit) out=list(args=args,setup=setup,
       stanmodeltext=stanmodeltext,data=standataout, standata=standata, ctstanmodelbase=ctstanmodelbase,  ctstanmodel=ctm)
     

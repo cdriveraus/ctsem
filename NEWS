@@ -2,9 +2,9 @@ ctsem news:
 
 
 30/10/2019
-#### 3.0.7 ####
+#### 3.0.8 ####
 - ctStanFit bug fix: MANIFESTVAR wrongly reported as the sqrt
-- ctFit bug fix: Std errors of covariance matrices were too wide when transformedParams=TRUE
+- ctFit bug fix: Std errors of covariances were too wide when transformedParams=TRUE
 - TI predictor effects can be specified as the 5th element of parameter string in ctModel -- "drift11 | -exp(param) | FALSE | 1 | age, gender"
 - Nonlinear models: Parameter names in the additional PARS matrix, and latent variables, can be referenced directly in parameters -- "-exp(cognition * drift11)" instead of "-exp(state[2] * PARS[1,1]". PARS matrix must still be specified.
 - Switched plotting to ggplot2, many changes / improvements.

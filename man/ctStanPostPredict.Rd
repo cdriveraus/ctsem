@@ -42,7 +42,5 @@ This function relies on the data generated during each iteration of fitting to a
 model implied distributions -- thus, when limited iterations are available, the approximation will be worse.
 }
 \examples{
-\dontrun{
-ctStanPostPredict(ctstantestfit,wait=FALSE, diffsize=2,resolution=100,plot=FALSE)
-}
+ctStanPostPredict(ctstantestfit,wait=FALSE, diffsize=2,resolution=100)
 }

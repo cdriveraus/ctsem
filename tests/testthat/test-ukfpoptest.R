@@ -171,7 +171,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
   
   test_that("ukfpopcheck2_randomdrift", {
     set.seed(1)
-    nsubjects=35
+    nsubjects=60
     Tpoints=50
     driftsd=.2
     driftmu= log(.5)

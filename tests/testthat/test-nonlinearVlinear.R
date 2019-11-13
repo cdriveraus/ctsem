@@ -31,13 +31,13 @@ datalong <- cbind(id, time, sunspots)
  datalong[seq(10,150,10),'TD1'] = 1
 
 ssfitnl <- ctStanFit(datalong, ssmodel, iter=300, chains=1,optimize=T,verbose=0,maxtimestep = .3,
-  nlcontrol=list(nldynamics=TRUE),optimcontrol = list(finishsamples=10),nopriors=TRUE,deoptim=FALSE)
+  nlcontrol=list(nldynamics=TRUE),optimcontrol = list(finishsamples=1000),nopriors=TRUE,deoptim=FALSE)
 ssfitl <- ctStanFit(datalong, ssmodel, iter=300, chains=1,optimize=T,verbose=0,
-  nlcontrol=list(nldynamics=FALSE),optimcontrol = list(finishsamples=10,deoptim=FALSE),nopriors=TRUE)
+  nlcontrol=list(nldynamics=FALSE),optimcontrol = list(finishsamples=1000,deoptim=FALSE),nopriors=TRUE)
 
 ssfitnlm <- ctStanFit(datalong, ssmodel, iter=300, chains=1,optimize=T,verbose=0,maxtimestep = 2,fit=T,
    # forcerecompile=T,
-  nlcontrol=list(nldynamics=T,nlmeasurement=T),optimcontrol = list(finishsamples=10),nopriors=TRUE,deoptim=FALSE)
+  nlcontrol=list(nldynamics=T,nlmeasurement=T),optimcontrol = list(finishsamples=1000),nopriors=TRUE,deoptim=FALSE)
 
 #output
 # snl=summary(ssfitnl)

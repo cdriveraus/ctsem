@@ -901,7 +901,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # hessdown=hess1s(pars = est2,direction = -1,step = 1e-4,lpdifmin = 1e-4,lpdifmax = 1e-3)
         # hess=(hessup+hessdown)/2
         
-        hess=grmat(pars=est2,step=1e-12)
+        hess=grmat(pars=est2,step=1e-8)
         for(ri in 1:nrow(hess)){
           for(ci in 1:ncol(hess)){
             if(is.na(hess[ri,ci])) hess[ri,ci] <- hess[ci,ri]

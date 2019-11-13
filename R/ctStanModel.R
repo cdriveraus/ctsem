@@ -1,3 +1,27 @@
+ctModelUnlist<-function(ctmodelobj,matnames=c('T0MEANS','LAMBDA','DRIFT','DIFFUSION','MANIFESTVAR','MANIFESTMEANS', 'CINT', 'TDPREDEFFECT', 'T0VAR','PARS')){
+  out<-matrix(NA,nrow=0,ncol=5)
+  out<-as.data.frame(out,stringsAsFactors =FALSE)
+  for(obji in matnames){
+    if(!is.null(dim(ctmodelobj[[obji]])) && !is.null(ctmodelobj[[obji]]) && !is.na(ctmodelobj[[obji]][1])){
+      for(rowi in 1:nrow(ctmodelobj[[obji]])){
+        for(coli in 1:ncol(ctmodelobj[[obji]])){
+          out<-rbind(out,data.frame(obji,rowi,coli,
+            ifelse(is.na(suppressWarnings(as.numeric(ctmodelobj[[obji]][rowi,coli]))), #ifelse element is character string
+              ctmodelobj[[obji]][rowi,coli],
+              NA),
+            ifelse(!is.na(suppressWarnings(as.numeric(ctmodelobj[[obji]][rowi,coli]))), #ifelse element is numeric
+              as.numeric(ctmodelobj[[obji]][rowi,coli]),
+              NA),
+            stringsAsFactors =FALSE
+          ))
+        }
+      }
+    }
+  }
+  colnames(out)<-c('matrix','row','col','param','value')
+  return(out)
+}
+
 #' Convert a frequentist (omx) ctsem model specification to Bayesian (Stan).
 #'
 #' @param ctmodelobj ctsem model object of type 'omx' (default)
@@ -31,47 +55,26 @@ ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
   if(type=='stanct') continuoustime<-TRUE
   if(type=='standt') continuoustime<-FALSE
   
-  if(!is.null(ctmodelobj$timeVarying)) stop('Time varying parameters not allowed for ctsem Stan model at present! Correct ctModel spec')
+  ctm <- ctmodelobj
   
-  unlistCtModel<-function(ctmodelobj){
-    out<-matrix(NA,nrow=0,ncol=5)
-    out<-as.data.frame(out,stringsAsFactors =FALSE)
-    objectlist<-c('T0MEANS','LAMBDA','DRIFT','DIFFUSION','MANIFESTVAR','MANIFESTMEANS', 'CINT', if(n.TDpred > 0) 'TDPREDEFFECT', 'T0VAR','PARS')
-    for(obji in objectlist){
-      if(!is.null(ctmodelobj[[obji]]) && !is.na(ctmodelobj[[obji]][1])){
-        for(rowi in 1:nrow(ctmodelobj[[obji]])){
-          for(coli in 1:ncol(ctmodelobj[[obji]])){
-            out<-rbind(out,data.frame(obji,rowi,coli,
-              ifelse(is.na(suppressWarnings(as.numeric(ctmodelobj[[obji]][rowi,coli]))), #ifelse element is character string
-                ctmodelobj[[obji]][rowi,coli],
-                NA),
-              ifelse(!is.na(suppressWarnings(as.numeric(ctmodelobj[[obji]][rowi,coli]))), #ifelse element is numeric
-                as.numeric(ctmodelobj[[obji]][rowi,coli]),
-                NA),
-              stringsAsFactors =FALSE
-            ))
-          }
-        }
-      }
-    }
-    colnames(out)<-c('matrix','row','col','param','value')
-    return(out)
-  }
+  if(!is.null(ctm$timeVarying)) stop('Time varying parameters not allowed for ctsem Stan model at present! Correct ctModel spec')
+  
+  
   
   
   #read in ctmodel values
-  n.latent<-ctmodelobj$n.latent
-  n.manifest<-ctmodelobj$n.manifest
-  Tpoints<-ctmodelobj$Tpoints
-  n.TDpred<-ctmodelobj$n.TDpred
-  n.TIpred<-ctmodelobj$n.TIpred
+  n.latent<-ctm$n.latent
+  n.manifest<-ctm$n.manifest
+  Tpoints<-ctm$Tpoints
+  n.TDpred<-ctm$n.TDpred
+  n.TIpred<-ctm$n.TIpred
   
-  manifestNames<-ctmodelobj$manifestNames
-  latentNames<-ctmodelobj$latentNames
-  TDpredNames<-ctmodelobj$TDpredNames
-  TIpredNames<-ctmodelobj$TIpredNames
+  manifestNames<-ctm$manifestNames
+  latentNames<-ctm$latentNames
+  TDpredNames<-ctm$TDpredNames
+  TIpredNames<-ctm$TIpredNames
   
-  ctspec<-unlistCtModel(ctmodelobj)
+  ctspec<-ctModelUnlist(ctm)
   
   freeparams<-is.na(ctspec[,'value'])
   
@@ -130,6 +133,7 @@ ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
   
   ctspec[!is.na(ctspec$value),c('transform','multiplier','meanscale','offset','inneroffset')] <- NA
   
+  
   for(ri in 1:nrow(ctspec)){ #convert back to text for new approach
     if(!is.na(as.integer(ctspec$transform[ri]))){
       ctspec$transform[ri] <- Simplify(tform(param = 'param',
@@ -146,23 +150,23 @@ ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
   ctspec$offset <- NULL
   ctspec$inneroffset <- NULL
   
+  
+  
   nparams<-sum(freeparams)
   
-  indvarying <- 'all'
-  if(all(indvarying=='all'))  {
-    indvarying<-rep(TRUE,nparams)
-    # indvarying[ctspec$matrix[is.na(ctspec$value)] %in% 'T0VAR'] <- FALSE
-  }
+  # indvarying <- 'all'
+  # if(all(indvarying=='all'))  {
+  #   indvarying<-rep(TRUE,nparams)
+  #   # indvarying[ctspec$matrix[is.na(ctspec$value)] %in% 'T0VAR'] <- FALSE
+  # }
+  # 
+  # if(length(indvarying) != nparams) stop('indvarying must be ', nparams,' long!')
+  # nindvarying <- sum(indvarying)
+  # 
   
-  if(length(indvarying) != nparams) stop('indvarying must be ', nparams,' long!')
-  nindvarying <- sum(indvarying)
-  
-  
-  
-  indvarying[!ctspec$matrix[is.na(ctspec$value)] %in% c('T0MEANS','MANIFESTMEANS','CINT')] <- FALSE 
-  ctspec$indvarying<-NA
-  ctspec$indvarying[is.na(ctspec$value)]<-indvarying
-  ctspec$indvarying[!is.na(ctspec$value)]<-FALSE
+   
+  ctspec$indvarying<-FALSE
+  ctspec$indvarying[!is.na(ctspec$transform) & ctspec$matrix %in% c('T0MEANS','MANIFESTMEANS','CINT')] <- TRUE
   
   ctspec$sdscale<-NA
   ctspec$sdscale[is.na(ctspec$value)]<-1
@@ -203,7 +207,7 @@ ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
       
       nonzero <- which(!split %in% '')
       ctspec[pi,c('param','transform','indvarying','sdscale')] <- 
-        list(NA,ctspec$transform[pi],ctspec$matrix[pi] %in% c('CINT','T0MEANS','MANIFESTMEANS'),1) #base values
+        list(NA,ctspec$transform[pi],ctspec$indvarying[pi],1) #base values
       ctspec[pi,c('param','transform','indvarying','sdscale')[1:(length(split))]][nonzero] <- 
         split[1:(length(split))][nonzero] #update with non zero length split elements
       
@@ -236,11 +240,20 @@ ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
   
   if(n.TIpred > 0 && sum(unlist(ctspec[,paste0(TIpredNames,'_effect')]))==0) stop('TI predictors included but no effects specified!')
   
+  for(ri in 1:nrow(ctspec)){ #set NA's on complex params
+    if(grepl('\\W',gsub('.','',ctspec$param[ri],fixed=TRUE)) || ctspec$param[ri] %in% latentNames){
+      ctspec$value[ri] <- NA
+      ctspec$transform[ri] <-NA
+    }
+  }
+  
+  ctspec$indvarying <- as.logical(ctspec$indvarying)
+  
   out<-list(pars=ctspec,n.latent=n.latent,n.manifest=n.manifest,n.TIpred=n.TIpred,n.TDpred=n.TDpred,
     latentNames=latentNames,manifestNames=manifestNames,
     TIpredNames=TIpredNames,TDpredNames=TDpredNames,
-    subjectIDname=ctmodelobj$id,
-    timeName=ctmodelobj$time,
+    subjectIDname=ctm$id,
+    timeName=ctm$time,
     continuoustime=continuoustime)
   class(out)<-'ctStanModel'
   
