@@ -451,7 +451,8 @@ ctStanModelMatrices <-function(ctm){
         copycol=0
         simplestate <- FALSE
         if(!is.na(ctspec$param[i])){ #if non fixed parameter,
-          # 
+          
+          # browser()
           if(grepl('\\b(state)\\b\\[\\d+\\]',ctspec$param[i])){ #if state based 
             statematches <- gregexpr('\\[', ctspec$param[i])[[1]] 
             simplestate <- statematches > 0 && length(statematches) == 1 #find 1 match of [ only
@@ -460,9 +461,10 @@ ctStanModelMatrices <-function(ctm){
               cpx$transform <- gsub('\\b(state)\\b\\[\\d+\\]','param',cpx$param)
               cpx$multiplier <- cpx$offset <- cpx$meanscale <- cpx$inneroffset <- NULL
               ctspec[i,] <- ctModelTransformsToNum(list(pars=cpx))$pars
+              if(is.na(suppressWarnings(as.integer(ctspec$transform[i])))) simplestate <- FALSE  #if couldn't convert to integer tform
             }
           }
-          # if(is.na(ctspec$transform[i]))  #if couldn't convert to integer tform
+          # 
           
           if(!simplestate && grepl('[',ctspec$param[i],fixed=TRUE)){ #if non simple calculation parameter
             # if(grepl('^\\b(state)\\b\\[\\d+\\]$',ctspec$param[i])){ #if a simple state reference
@@ -477,14 +479,14 @@ ctStanModelMatrices <-function(ctm){
             # browser()
             if(grepl(paste0('^(',
               paste0('s',names(c(mats$base,mats$jacobian)),collapse='|'),
-              ')\\[\\d,\\s*\\d\\]$'),ctspec$param[i])){
+              ')\\[\\d+,\\s*\\d+\\]$'),ctspec$param[i])){
               copymatrix=sum(sapply(seq_along(c(mats$base,mats$jacobian)), function(x){
                 ifelse(grepl(paste0('s',names(c(mats$base,mats$jacobian)[x])),ctspec$param[i]),x,0)
               }))
               copymatrix = c(mats$base,mats$jacobian)[copymatrix]
               index = as.numeric(strsplit(gsub('\\]','',
                 gsub('\\[','',
-                  regmatches(ctspec$param[i],regexpr('\\[\\d,\\s*\\d\\]$',ctspec$param[i]))
+                  regmatches(ctspec$param[i],regexpr('\\[\\d+,\\s*\\d+\\]$',ctspec$param[i]))
                 )),split = ',\\s*')[[1]])
               copyrow=index[1]
               copycol=index[2]
@@ -550,7 +552,7 @@ ctStanModelMatrices <-function(ctm){
           row=ctspec$row[i],
           col=ctspec$col[i],
           param=parameter, # ifelse(!is.na(ctspec$param[i]) && !grepl('[',ctspec$param[i],fixed=TRUE),freepar, 0), #freepar reference
-          transform=ifelse(is.na(as.integer(ctspec$transform[i])), -1, ctspec$transform[i]), #transform
+          transform=ifelse(is.na(suppressWarnings(as.integer(ctspec$transform[i]))), -1, ctspec$transform[i]), #transform
           indvarying=ifelse(!is.na(ctspec$param[i]),indvar,0), #indvarying
           tipred=ifelse(any(TIPREDEFFECTsetup[freepar,] > 0) && !dynpar, 1, 0), #tipredvarying
           matrix=m, #matrix reference
