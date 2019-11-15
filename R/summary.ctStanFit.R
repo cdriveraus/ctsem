@@ -43,13 +43,16 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
  
   #cov of residuals
   k=ctStanKalman(object,collapsefunc = mean,cores=1)
-  obscov <- cov(object$standata$Y,use='pairwise.complete.obs')
+  obscov <- cov(object$data$Y,use='pairwise.complete.obs')
   idobscov <- diag(1/sqrt(diag(obscov)),ncol(obscov))
-
-  out$residCovStd <- round(idobscov %*% cov(matrix(k$errprior,ncol=ncol(obscov)),use='pairwise.complete.obs') %*% idobscov ,3)
+  rescov <- cov(matrix(k$errprior,ncol=ncol(obscov)),use='pairwise.complete.obs')
+  narescov <- which(is.na(rescov))
+  rescov[narescov] <- 0
+  
+  out$residCovStd <- round(idobscov %*% rescov %*% idobscov ,3)
+  out$residCovStd[narescov] <- NA
   dimnames(out$residCovStd) <- list(object$ctstanmodel$manifestNames,object$ctstanmodel$manifestNames)
   out$resiCovStdNote <- 'Standardised covariance of residuals'
-  
   
   
   if(class(object$stanfit)!='stanfit')  e <- extract(object) 

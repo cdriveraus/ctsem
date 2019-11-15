@@ -92,7 +92,7 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
         tmp <- matrix(NA,nmanifest)
         if(sum(!is.na(out$y[r,])) > 0) tmp[which(!is.na(out$y[r,]))] <- 
             matrix(solve(
-              t(chol(matrix(out[[paste0('ypriorcov')]][i,r,,],ncol=nmanifest)))[
+              t(chol(matrix(out[[paste0('ypriorcov')]][i,r,,],ncol=nmanifest) + diag(1e-10,nmanifest)))[
                 !is.na(out$y[r,]),!is.na(out$y[r,])], 
               out[[paste0('err',typei)]][i,r,!is.na(out$y[r,])]), nrow=sum(!is.na(out$y[r,])))
         return(tmp)
