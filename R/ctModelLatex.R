@@ -1,6 +1,6 @@
 #' Generate and optionally compile latex equation of subject level ctsem model.
 #'
-#' @param ctmodel ctsem model object
+#' @param object ctsem model object or ctStanFit object.
 #' @param matrixnames Logical. If TRUE, includes ctsem matrix names such as DRIFT and DIFFUSION under the matrices.
 #' @param textsize Standard latex text sizes -- 
 #' tiny scriptsize footnotesize small normalsize large Large LARGE huge Huge. 
@@ -31,8 +31,22 @@
 #'   
 #' l=ctModelLatex(ctmodel,compile=FALSE, open=FALSE)
 #' cat(l)
-ctModelLatex<- function(ctmodel,matrixnames=TRUE,textsize='normalsize',folder=tempdir(),
+ctModelLatex<- function(x,matrixnames=TRUE,textsize='normalsize',folder=tempdir(),
   filename=paste0('ctsemTex',as.numeric(Sys.time())),tex=TRUE, equationonly=FALSE, compile=TRUE, open=TRUE){
+  
+  if('ctStanFit' %in% class(x)){
+    parmats <- summary(x,residualcov=FALSE,priorcheck=FALSE)
+    parmats <- data.frame(parmats$parmatrices,matrix=rownames(parmats$parmatrices))
+    ctmodel <- x$ctstanmodelbase
+    for(i in 1:nrow(ctmodel$pars)){
+      if(is.na(ctmodel$pars$value[i])){
+        ctmodel$pars$value[i] <- parmats[parmats$matrix %in% ctmodel$pars$matrix[i] & 
+            ctmodel$pars$row[i] == parmats$Row & ctmodel$pars$col[i]==parmats$Col,'Mean']
+      }
+    }
+    
+    
+  } else ctmodel <- x
   
   if(class(ctmodel) == 'ctStanModel') {
     ctmodel <- c(ctmodel,listOfMatrices(ctmodel$pars)) 

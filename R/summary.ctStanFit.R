@@ -18,6 +18,7 @@ ctStanRawSamples<-function(fit){
 #' @param parmatrices if TRUE, also return additional parameter matrices -- can be slow to compute
 #' for large models with many samples.
 #' @param priorcheck Whether or not to use \code{ctsem:::priorchecking} to compare posterior mean and sd to prior mean and sd.
+#' @param residualcov Whether or not to show standardised residual covariance. Takes a little longer to compute.
 #' @param ... Additional arguments to pass to \code{ctsem:::priorcheckreport}, such as \code{meanlim}, or \code{sdlim}.
 #' @return List containing summary items.
 #' @examples
@@ -27,7 +28,7 @@ ctStanRawSamples<-function(fit){
 #' @method summary ctStanFit
 #' @export
 
-summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,priorcheck=TRUE,...){
+summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,priorcheck=TRUE,residualcov = TRUE,...){
   
   if(class(object) != 'ctStanFit') stop('Not a ctStanFit object!')
   
@@ -41,7 +42,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   }
 
  
-  #cov of residuals
+  if(residualcov){ #cov of residuals
   k=ctStanKalman(object,collapsefunc = mean,cores=1)
   obscov <- cov(object$data$Y,use='pairwise.complete.obs')
   idobscov <- diag(1/sqrt(diag(obscov)),ncol(obscov))
@@ -53,7 +54,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   out$residCovStd[narescov] <- NA
   dimnames(out$residCovStd) <- list(object$ctstanmodel$manifestNames,object$ctstanmodel$manifestNames)
   out$resiCovStdNote <- 'Standardised covariance of residuals'
-  
+  }
   
   if(class(object$stanfit)!='stanfit')  e <- extract(object) 
   

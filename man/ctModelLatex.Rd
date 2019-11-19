@@ -4,14 +4,12 @@
 \alias{ctModelLatex}
 \title{Generate and optionally compile latex equation of subject level ctsem model.}
 \usage{
-ctModelLatex(ctmodel, matrixnames = TRUE, textsize = "normalsize",
+ctModelLatex(x, matrixnames = TRUE, textsize = "normalsize",
   folder = tempdir(), filename = paste0("ctsemTex",
   as.numeric(Sys.time())), tex = TRUE, equationonly = FALSE,
   compile = TRUE, open = TRUE)
 }
 \arguments{
-\item{ctmodel}{ctsem model object}
-
 \item{matrixnames}{Logical. If TRUE, includes ctsem matrix names such as DRIFT and DIFFUSION under the matrices.}
 
 \item{textsize}{Standard latex text sizes -- 
@@ -29,6 +27,8 @@ Useful if output overflows page.}
 \item{compile}{Compile to .pdf? (Depends on \code{tex = TRUE})}
 
 \item{open}{Open after compiling? (Depends on \code{compile = TRUE})}
+
+\item{object}{ctsem model object or ctStanFit object.}
 }
 \value{
 character string of latex code. Side effects include saving a .tex, .pdf, and displaying the pdf.

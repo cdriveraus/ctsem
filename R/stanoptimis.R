@@ -23,7 +23,7 @@ parallelStanSetup <- function(cl, sm, standata,split=TRUE){
     parlp <- function(parm){
       out <- try(smfnode$log_prob(upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
       if(class(out)=='try-error') {
-        out[1] <- -1e100
+        out <- -1e100
         attributes(out)$gradient <- rep(NaN, length(parm))
       }
       if(is.null(attributes(out)$gradient)) attributes(out)$gradient <- rep(NaN, length(parm))
