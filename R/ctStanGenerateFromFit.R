@@ -11,12 +11,13 @@
 #' plot(gen$generated$Y[,3,2],type='l') #Third random data sample, 2nd manifest var, all time points. 
 #' }
 ctStanGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE){
-  if(class(fit)!='ctStanFit') stop('Not a ctStanFit object!')
+  if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object!')
   if(class(fit$stanfit)!='stanfit') {
     umat=t(fit$stanfit$rawposterior)
   } else  {
     umat <- stan_unconstrainsamples(fit$stanfit,fit$standata)
   }
+
   
   if(!fullposterior) umat=matrix(apply(umat, 1, mean),ncol=1)
   umat=umat[,sample(1:ncol(umat),nsamples,replace = ifelse(nsamples > ncol(umat), TRUE, FALSE)),drop=FALSE]

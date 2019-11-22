@@ -10,7 +10,7 @@
   pchvec = "auto", typevec = "auto", grid = FALSE, add = FALSE,
   plotcontrol = list(ylab = "Value", xlab = "Time", xaxs = "i", lwd = 2,
   mgp = c(2, 0.8, 0)), polygoncontrol = list(steps = 20),
-  polygonalpha = 0.3, legend = TRUE, legendcontrol = list(x =
+  polygonalpha = 0.1, legend = TRUE, legendcontrol = list(x =
   "topright", bg = "white", cex = 0.7), ...)
 }
 \arguments{

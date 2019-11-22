@@ -6,7 +6,7 @@
 \usage{
 \method{plot}{ctKalmanDF}(x, subjects = 1, kalmanvec = c("y",
   "ysmooth"), errorvec = "auto", errormultiply = 1.96, plot = TRUE,
-  elementNames = NA, polygonsteps = 20, polygonalpha = 0.3, ...)
+  elementNames = NA, polygonsteps = 10, polygonalpha = 0.1, ...)
 }
 \arguments{
 \item{x}{Output from \code{\link{ctKalman}}. In general it is easier to call 

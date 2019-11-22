@@ -1,3 +1,19 @@
+T0VARredundancies <- function(ctm) {
+  whichT0VAR_T0MEANSindvarying <- ctm$pars$matrix %in% 'T0VAR'  &  
+    is.na(ctm$pars$value) &
+    (ctm$pars$row %in% ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS' & ctm$pars$indvarying] |
+        ctm$pars$col %in% ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS' & ctm$pars$indvarying])
+  if(any(whichT0VAR_T0MEANSindvarying)){
+    message('Free T0VAR parameters as well as indvarying T0MEANS -- fixing T0VAR pars to diag matrix 1e-3')
+    ctm$pars$value[whichT0VAR_T0MEANSindvarying & ctm$pars$col == ctm$pars$row ] <- 1e-3
+    ctm$pars$value[whichT0VAR_T0MEANSindvarying & ctm$pars$col != ctm$pars$row ] <- 0
+    ctm$pars$param[whichT0VAR_T0MEANSindvarying] <- NA
+    ctm$pars$transform[whichT0VAR_T0MEANSindvarying] <- NA
+    ctm$pars$indvarying[whichT0VAR_T0MEANSindvarying] <- FALSE
+  }
+  return(ctm)
+}
+
 stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
   #t0 index
   T0check<-rep(1,nrow(datalong))
@@ -635,47 +651,11 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     # 
     # ctm <- ctModelTransformsToNum(ctm)
     # ctm$pars <- ctStanModelCleanctspec(ctm$pars)
-
+    
     jl3=ctModelTransformsToNum(list(pars=data.frame(jl2)))
     jl3$pars$indvarying<-FALSE
     ctm$pars <- rbind(ctm$pars, jl3$pars)
     
-    
-    # #single state references to integer
-    # cpx <- ctm$pars
-    # cpx <- cpx[!is.na(cpx$param) & is.na(cpx$transform),]
-    # if(nrow(cpx) > 0){  #if number of state and latent matches is exactly 1, we can use integer transforms
-    #   statematches <- gregexpr(paste0(
-    #     '\\b(state)\\b\\[\\d+\\]'),cpx$param)
-    #   cpx <- cpx[sapply(statematches, function(x) length(x) ==1),]
-    #   cpx$transform <- gsub('\\b(state)\\b\\[\\d+\\]',
-    #     'param',cpx$param)
-    #   # browser()
-    #   cpx$multiplier <- cpx$offset <- cpx$meanscale <- cpx$inneroffset <- NULL
-    #   # rownames(cpx)=1:nrow(cpx)
-    #   cpx <- ctModelTransformsToNum(list(pars=cpx))$pars
-    # 
-    #   
-    #   mg=c() #replace ctm elements with updates
-    #   for(i in 1:nrow(cpx)){
-    #     mg[i]=which(ctm$pars$matrix==cpx$matrix[i] & 
-    #         ctm$pars$col==cpx$col[i] &
-    #         ctm$pars$row==cpx$row[i] )
-    #   }
-    #   ctm$pars[mg,]<-cpx
-      
-      
-    # }
-    # browser() #fix names
-    # ctm$pars$param <- #get state reference
-    #   gsub('\\[|\\]','',unlist(regmatches(ctm$pars, #extract one or more references
-    #     gregexpr(
-    #       paste0('(?=\\[).*?(?<=\\])'), 
-    #       ctm$pars, perl=TRUE)
-    #   )))
-    
-    
-    #combine jl3 and ctm, detect complex params with single var and NA transform, convert to numeric
     
     if(naf(!is.na(ctm$rawpopsdbaselowerbound))) recompile <- TRUE
     if(ctm$rawpopsdbase != 'normal(0,1)') recompile <- TRUE
@@ -685,18 +665,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     if(cores=='maxneeded') cores=max(1,min(c(chains,parallel::detectCores()-1))) else cores <-max(1, min(cores,parallel::detectCores()-1))
     
     
-    whichT0VAR_T0MEANSindvarying <- ctm$pars$matrix %in% 'T0VAR'  &  
-      is.na(ctm$pars$value) &
-      (ctm$pars$row %in% ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS' & ctm$pars$indvarying] |
-          ctm$pars$col %in% ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS' & ctm$pars$indvarying])
-    if(any(whichT0VAR_T0MEANSindvarying)){
-      message('Free T0VAR parameters as well as indvarying T0MEANS -- fixing T0VAR pars to diag matrix 1e-3')
-      ctm$pars$value[whichT0VAR_T0MEANSindvarying & ctm$pars$col == ctm$pars$row ] <- 1e-3
-      ctm$pars$value[whichT0VAR_T0MEANSindvarying & ctm$pars$col != ctm$pars$row ] <- 0
-      ctm$pars$param[whichT0VAR_T0MEANSindvarying] <- NA
-      ctm$pars$transform[whichT0VAR_T0MEANSindvarying] <- NA
-      ctm$pars$indvarying[whichT0VAR_T0MEANSindvarying] <- FALSE
-    }
+    ctm <- T0VARredundancies(ctm)
     
     
     mats <- ctStanMatricesList()
@@ -812,13 +781,13 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     TIPREDEFFECTsetup=ctsmodelmats$TIPREDEFFECTsetup
     matrixdims <- ctsmodelmats$matrixdims
     ctm$calcs <- ctsmodelmats$calcs
-# browser()
+    # browser()
     #get extra calculations and adjust model spec as needed
     ctm <- ctStanCalcsList(ctm)
     if(sum(sapply(ctm$calcs,length)) > 0){
       if(nldynamics == FALSE) warning('Linear model requested but nonlinear model specified! May be a poor approximation') else nldynamics <- TRUE 
     }
-
+    
     ncalcs <- length(unlist(ctm$calcs)) 
     ncalcsNoJ<- length(unlist(ctm$calcs)[!grepl('JAx[',unlist(ctm$calcs),fixed=TRUE)])
     if(ncalcsNoJ > 0) recompile <- TRUE
@@ -977,9 +946,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     if(!recompile){ #then use finite diffs for some elements
       # standata$sJAxfinite <- array(as.integer(unique(c(which(matrix(ctm$jacobian$JAx %in% #which rows of jacobian are not simply drift / fixed / state refs
-        #   jacobianelements(ctm$jacobian$JAx,mats=mx,remove=c('drift','fixed'),
-        #     ntdpred=ctm$n.TDpred,when=2,matsetup=matsetup),standata$nlatentpop,standata$nlatentpop), 
-        # arr.ind = TRUE))))) #[,'col'] maybe split up into row / column?
+      #   jacobianelements(ctm$jacobian$JAx,mats=mx,remove=c('drift','fixed'),
+      #     ntdpred=ctm$n.TDpred,when=2,matsetup=matsetup),standata$nlatentpop,standata$nlatentpop), 
+      # arr.ind = TRUE))))) #[,'col'] maybe split up into row / column?
       
       #collect row and column of complicated jacobian elements into vector
       standata$sJAxfinite <- array(as.integer(unique(
@@ -1129,7 +1098,10 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       }
       
       if(optimize==TRUE) {
-        opcall <- paste0('stanoptimis(standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors),',
+        optimcontrol$cores <- cores
+        optimcontrol$verbose <- verbose
+        optimcontrol$nopriors <- as.logical(nopriors)
+        opcall <- paste0('stanoptimis(standata = standata,sm = sm,init = inits,',
           paste0(gsub('list(','',paste0(deparse(optimcontrol),collapse=''),fixed=TRUE)))
         stanfit <- eval(parse(text=opcall))
         # stanfit <- rlang::exec(stanoptimis,!!!optimcontrol,standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors))
@@ -1150,12 +1122,12 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     if(fit) {
       out <- list(args=args,
         setup=setup, 
-        stanmodeltext=stanmodeltext, data=standataout, standata=standata, ctstanmodelbase=ctstanmodelbase, ctstanmodel=ctm,stanmodel=sm, stanfit=stanfit)
+        stanmodeltext=stanmodeltext, data=standataout, ctdatastruct=datalong[c(1,nrow(datalong)),],standata=standata, ctstanmodelbase=ctstanmodelbase, ctstanmodel=ctm,stanmodel=sm, stanfit=stanfit)
       class(out) <- 'ctStanFit'
     }
     
     if(!fit) out=list(args=args,setup=setup,
-      stanmodeltext=stanmodeltext,data=standataout, standata=standata, ctstanmodelbase=ctstanmodelbase,  ctstanmodel=ctm)
+      stanmodeltext=stanmodeltext,data=standataout,  ctdatastruct=datalong[c(1,nrow(datalong)),],standata=standata, ctstanmodelbase=ctstanmodelbase,  ctstanmodel=ctm)
     
     return(out)
   }

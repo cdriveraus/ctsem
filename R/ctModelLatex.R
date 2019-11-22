@@ -187,7 +187,7 @@ ctModelLatex<- function(x,matrixnames=TRUE,textsize='normalsize',folder=tempdir(
     }
     
   }
-  return(out)
+  return(invisible(out))
 }
 
 

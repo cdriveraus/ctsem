@@ -282,16 +282,19 @@ ctDensityList<-function(x,xlimsindex='all',plot=FALSE,smoothness=1,
   xlims[1] = xlims[1] - sd/2
   xlims[2] = xlims[2] + sd/2
 
-  bw=sapply(x,function(d) bw.SJ(na.omit(c(d))))
-  bw = mean(bw) + ifelse(length(bw) > 1,sd(bw),0)
-
+  logbw=log(sapply(x,function(d) bw.SJ(na.omit(c(d)))))
+  # browser()
+  logbwmean = mean(logbw + ifelse(length(logbw) > 1,sd(logbw),0))
+# browser()
   denslist<-lapply(1:length(x),function(xi) {
-    d=stats::density(x[[xi]],bw=bw,n=5000,from=xlims[1],to=xlims[2],na.rm=TRUE)
+    bw=exp(mean(logbw[xi]+logbwmean))
+    # print(bw)
+    d=stats::density(x[[xi]],bw=bw*2,n=5000,from=xlims[1],to=xlims[2],na.rm=TRUE)
     # d$y=d$y/ sum(d$y)/range(d$x)[2]*length(d$y)
     return(d)
   })
 
-  xlims=range(sapply(denslist,function(d) d$x[d$y> (.05*max(d$y))]))
+  xlims=range(sapply(denslist,function(d) d$x[d$y> (.1*max(d$y))]))
   xlims <- xlims +c(-1,1)*sd(xlims)
   ylims=c(0,max(unlist(lapply(denslist,function(li) max(li$y))))*1.1)
 

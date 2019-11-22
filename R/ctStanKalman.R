@@ -4,6 +4,7 @@
 #' @param nsamples either NA (to extract all) or a positive integer from 1 to maximum samples in the fit.
 #' @param cores Integer number of cpu cores to use. Only needed if savescores was set to FALSE when fitting.
 #' @param collapsefunc function to apply over samples, such as \code{mean}
+#' @param standardisederrors If TRUE, computes standardised errors for prior, upd, smooth conditions.
 #' @param ... additional arguments to collpsefunc.
 #'
 #' @return list containing Kalman filter elements, each element in array of
@@ -14,7 +15,7 @@
 #' \donttest{
 #' k=ctStanKalman(ctstantestfit)
 #' }
-ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
+ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,standardisederrors=FALSE,...){
   if(class(fit)!='ctStanFit') stop('Not a ctStanFit object')
   # if(class(collapsefunc) %in% 'function' ) e=extract(fit)
   
@@ -27,7 +28,7 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
   if(!is.na(nsamples)) samples <- samples[sample(1:nrow(samples),nsamples),,drop=FALSE] else nsamples <- nrow(samples)
   if(is.function(collapsefunc)) samples = matrix(apply(samples,2,collapsefunc,...),ncol=ncol(samples))
   e=stan_constrainsamples(sm = fit$stanmodel,standata = standata,samples = samples,cores=cores)
-  # }
+
   
   k=e$kalman
   
@@ -86,20 +87,23 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
   for(typei in c('prior','upd','smooth')){
     out[[paste0('err',typei)]] <- aaply(out[[paste0('y',typei)]],1, function(yp) out$y-yp,.drop=FALSE)
   } 
-  for(typei in c('prior','upd','smooth')){
-    arr <- array(sapply(1:dim(out$yprior)[1], function(i){
-      array(sapply(1:nrow(out$y), function(r){
-        tmp <- matrix(NA,nmanifest)
-        if(sum(!is.na(out$y[r,])) > 0) tmp[which(!is.na(out$y[r,]))] <- 
-            matrix(solve(
-              t(chol(matrix(out[[paste0('ypriorcov')]][i,r,,],ncol=nmanifest) + diag(1e-10,nmanifest)))[
-                !is.na(out$y[r,]),!is.na(out$y[r,])], 
-              out[[paste0('err',typei)]][i,r,!is.na(out$y[r,])]), nrow=sum(!is.na(out$y[r,])))
-        return(tmp)
-      },simplify = 'array'), dim=c(nmanifest,1,nrow(out$y)))
-    },simplify = 'array'), dim=c(nmanifest,1,nrow(out$y),nsamples))
-    
-    out[[paste0('errstd',typei)]] <- array(aperm(arr, c(4,3,1,2)),dim=dim(arr)[c(4,3,1)])
+  
+  if(standardisederrors){
+    for(typei in c('prior','upd','smooth')){
+      arr <- array(sapply(1:dim(out$yprior)[1], function(i){
+        array(sapply(1:nrow(out$y), function(r){
+          tmp <- matrix(NA,nmanifest)
+          if(sum(!is.na(out$y[r,])) > 0) tmp[which(!is.na(out$y[r,]))] <- 
+              matrix(solve(
+                t(chol(matrix(out[[paste0('ypriorcov')]][i,r,,],ncol=nmanifest) + diag(1e-10,nmanifest)))[
+                  !is.na(out$y[r,]),!is.na(out$y[r,])], 
+                out[[paste0('err',typei)]][i,r,!is.na(out$y[r,])]), nrow=sum(!is.na(out$y[r,])))
+          return(tmp)
+        },simplify = 'array'), dim=c(nmanifest,1,nrow(out$y)))
+      },simplify = 'array'), dim=c(nmanifest,1,nrow(out$y),nsamples))
+      
+      out[[paste0('errstd',typei)]] <- array(aperm(arr, c(4,3,1,2)),dim=dim(arr)[c(4,3,1)])
+    }
   }
   
   
@@ -130,7 +134,7 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,...){
     dimnames(out[[i]]) <- d
   }
   out$id <- fit$standata$subject
-
+  
   return(out)
 }
 

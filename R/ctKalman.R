@@ -197,7 +197,7 @@ plot.ctKalman<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
   ltyvec="auto",colvec='auto', lwdvec='auto', 
   subsetindices=NULL,pchvec='auto', typevec='auto',grid=FALSE,add=FALSE, 
   plotcontrol=list(ylab='Value',xlab='Time',xaxs='i',lwd=2,mgp=c(2,.8,0)),
-  polygoncontrol=list(steps=20),polygonalpha=.3,
+  polygoncontrol=list(steps=20),polygonalpha=.1,
   legend=TRUE, legendcontrol=list(x='topright',bg='white',cex=.7),...){
   
   if(!'ctKalman' %in% class(x)) stop('not a ctKalman object')
@@ -391,7 +391,7 @@ plot.ctKalman<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
 #' }
 plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
   errorvec='auto', errormultiply=1.96,plot=TRUE,elementNames=NA,
-  polygonsteps=20,polygonalpha=.3,...){
+  polygonsteps=10,polygonalpha=.1,...){
   
   if(!'ctKalmanDF' %in% class(x)) stop('not a ctKalmanDF object')
   
@@ -414,16 +414,11 @@ plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
   d<-subset(x,Element %in% kalmanvec)
   
   g <- ggplot(d,
-    aes_string(x='Time',y='Value',colour=colvec,linetype='Element',shape='Element'))+
-    # stat_quantile(quantiles=seq(.01,.99,.01),
-    #   aes(alpha=1-(abs(.5-(..quantile..)))),method='rqss')+
-    geom_line()+
-    geom_point()+
+    aes_string(x='Time',y='Value',colour=colvec,linetype='Element',shape='Element')) +
     scale_linetype_manual(breaks=names(ltyvec),values=ltyvec)+
     scale_shape_manual(breaks=names(shapevec),values=shapevec) +
     # labs(linetype='Element',shape='Element',colour='Element',fill='Element')+
-    scale_fill_discrete(guide='none') +
-    theme_minimal()
+    scale_fill_discrete(guide='none')
   
   if(length(subjects) > 1 && length(unique(subset(x,Element %in% kalmanvec)$Variable)) > 1){
     g <- g+ facet_wrap(vars(Variable),scales = 'free') 
@@ -433,8 +428,8 @@ plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
   
   alphasum <- 0
   for(si in polysteps){
-    alphasum <- alphasum + polygonalpha/polygonsteps
-    
+    # alphasum <- alphasum + polygonalpha/polygonsteps
+    # print(alphasum)
     d2 <- subset(d,Element %in% klines)
     d2$sd <- d2$sd *si
     
@@ -451,12 +446,16 @@ plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
       g <- g+ 
         geom_ribbon(data=d2,aes(ymin=(Value-sd),x=Time,
           ymax=(Value+sd),fill=(Subject)),inherit.aes = FALSE,
-          alpha=ifelse(alphasum < .05,.05,polygonalpha/polygonsteps),linetype=0)
+          alpha=polygonalpha/polygonsteps,linetype=0)
       if(si== polysteps[1]) g <- g + 
           geom_line(data=d2,aes(y=(Value-sd),colour=Subject),linetype='dotted',alpha=.7) + 
           geom_line(data=d2,aes(y=(Value+sd),colour=Subject),linetype='dotted',alpha=.7)
     }
     
+    g <- g + 
+      geom_line()+
+      geom_point()+
+      theme_minimal()
     # print(g)
   }
   if(plot) suppressWarnings(print(g))

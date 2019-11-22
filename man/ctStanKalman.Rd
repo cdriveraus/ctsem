@@ -4,7 +4,8 @@
 \alias{ctStanKalman}
 \title{Get Kalman filter estimates from a ctStanFit object}
 \usage{
-ctStanKalman(fit, nsamples = NA, collapsefunc = NA, cores = 2, ...)
+ctStanKalman(fit, nsamples = NA, collapsefunc = NA, cores = 2,
+  standardisederrors = FALSE, ...)
 }
 \arguments{
 \item{fit}{fit object from \code{\link{ctStanFit}}.}
@@ -14,6 +15,8 @@ ctStanKalman(fit, nsamples = NA, collapsefunc = NA, cores = 2, ...)
 \item{collapsefunc}{function to apply over samples, such as \code{mean}}
 
 \item{cores}{Integer number of cpu cores to use. Only needed if savescores was set to FALSE when fitting.}
+
+\item{standardisederrors}{If TRUE, computes standardised errors for prior, upd, smooth conditions.}
 
 \item{...}{additional arguments to collpsefunc.}
 }
