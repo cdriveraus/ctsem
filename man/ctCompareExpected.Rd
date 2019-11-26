@@ -5,8 +5,15 @@
 \title{ctCompareExpected
 Compares model implied to observed means and covariances for panel data fit with ctsem.}
 \usage{
-ctCompareExpected(fitobj, cov = TRUE, outputmatrices = FALSE,
-  pause = TRUE, varlist = "all", ylim = c(-1, 1), ...)
+ctCompareExpected(
+  fitobj,
+  cov = TRUE,
+  outputmatrices = FALSE,
+  pause = TRUE,
+  varlist = "all",
+  ylim = c(-1, 1),
+  ...
+)
 }
 \arguments{
 \item{fitobj}{Fitted model object from OpenMx or ctsem.}

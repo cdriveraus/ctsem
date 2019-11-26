@@ -4,14 +4,33 @@
 \alias{ctStanFit}
 \title{ctStanFit}
 \usage{
-ctStanFit(datalong, ctstanmodel, stanmodeltext = NA, iter = 1000,
-  intoverstates = TRUE, binomial = FALSE, fit = TRUE,
-  intoverpop = FALSE, stationary = FALSE, plot = FALSE,
-  derrind = "all", optimize = FALSE, optimcontrol = list(),
-  nlcontrol = list(), nopriors = FALSE, chains = 2,
-  cores = "maxneeded", inits = NULL, forcerecompile = FALSE,
-  savescores = FALSE, savesubjectmatrices = TRUE, gendata = FALSE,
-  control = list(), verbose = 0, ...)
+ctStanFit(
+  datalong,
+  ctstanmodel,
+  stanmodeltext = NA,
+  iter = 1000,
+  intoverstates = TRUE,
+  binomial = FALSE,
+  fit = TRUE,
+  intoverpop = FALSE,
+  stationary = FALSE,
+  plot = FALSE,
+  derrind = "all",
+  optimize = FALSE,
+  optimcontrol = list(),
+  nlcontrol = list(),
+  nopriors = FALSE,
+  chains = 2,
+  cores = "maxneeded",
+  inits = NULL,
+  forcerecompile = FALSE,
+  savescores = FALSE,
+  savesubjectmatrices = TRUE,
+  gendata = FALSE,
+  control = list(),
+  verbose = 0,
+  ...
+)
 }
 \arguments{
 \item{datalong}{long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables, 
@@ -285,7 +304,7 @@ m2i <- ctModel(type = 'stanct',
   MANIFESTMEANS=matrix(0,ncol=1),
   MANIFESTVAR=matrix(c('merror'),nrow=1,ncol=1))
 
-m2i$pars$indvarying[m2i$pars$matrix \%in\% 'TDPREDEFFECT'] <- TRUE
+m2i$pars$indvarying[m2i$pars$matrix %in% 'TDPREDEFFECT'] <- TRUE
 
 plot(m2i)
 
@@ -311,7 +330,7 @@ m2ic <- ctModel(type = 'stanct',
   MANIFESTMEANS=matrix(0,ncol=1),
   MANIFESTVAR=matrix(c('merror'),nrow=1,ncol=1))
 
-m2ic$pars$indvarying[m2ic$pars$matrix \%in\% 'TDPREDEFFECT'] <- TRUE
+m2ic$pars$indvarying[m2ic$pars$matrix %in% 'TDPREDEFFECT'] <- TRUE
 
 plot(m2ic)
 

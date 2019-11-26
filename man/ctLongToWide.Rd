@@ -5,8 +5,14 @@
 \title{ctLongToWide
 Restructures time series / panel data from long format to wide format for ctsem analysis}
 \usage{
-ctLongToWide(datalong, id, time, manifestNames, TDpredNames = NULL,
-  TIpredNames = NULL)
+ctLongToWide(
+  datalong,
+  id,
+  time,
+  manifestNames,
+  TDpredNames = NULL,
+  TIpredNames = NULL
+)
 }
 \arguments{
 \item{datalong}{dataset in long format, including subject/id column, observation time 

@@ -4,10 +4,21 @@
 \alias{Kalman}
 \title{Kalman}
 \usage{
-Kalman(kpars, datalong, manifestNames, latentNames,
-  imputeMissings = FALSE, TDpredNames = NULL, continuoustime = TRUE,
-  idcol = "id", timecol = "time", derrind = "all",
-  optimize = FALSE, ukf = FALSE, plotoptim = FALSE)
+Kalman(
+  kpars,
+  datalong,
+  manifestNames,
+  latentNames,
+  imputeMissings = FALSE,
+  TDpredNames = NULL,
+  continuoustime = TRUE,
+  idcol = "id",
+  timecol = "time",
+  derrind = "all",
+  optimize = FALSE,
+  ukf = FALSE,
+  plotoptim = FALSE
+)
 }
 \arguments{
 \item{kpars}{list object containing DRIFT,T0VAR,DIFFUSION,CINT,T0MEANS,TDPREDEFFECT,

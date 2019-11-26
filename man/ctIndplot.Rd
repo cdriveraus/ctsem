@@ -4,11 +4,25 @@
 \alias{ctIndplot}
 \title{ctIndplot}
 \usage{
-ctIndplot(datawide, n.manifest, Tpoints, n.subjects = "all",
-  colourby = "variable", vars = "all", opacity = 1,
-  varnames = NULL, xlab = "Time", ylab = "Value", type = "b",
-  start = 0, legend = TRUE, legendposition = "topright",
-  new = TRUE, jittersd = 0.05, ...)
+ctIndplot(
+  datawide,
+  n.manifest,
+  Tpoints,
+  n.subjects = "all",
+  colourby = "variable",
+  vars = "all",
+  opacity = 1,
+  varnames = NULL,
+  xlab = "Time",
+  ylab = "Value",
+  type = "b",
+  start = 0,
+  legend = TRUE,
+  legendposition = "topright",
+  new = TRUE,
+  jittersd = 0.05,
+  ...
+)
 }
 \arguments{
 \item{datawide}{ctsem wide format data}

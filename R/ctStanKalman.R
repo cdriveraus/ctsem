@@ -16,7 +16,7 @@
 #' k=ctStanKalman(ctstantestfit)
 #' }
 ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,standardisederrors=FALSE,...){
-  if('ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
+  if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
   # if(class(collapsefunc) %in% 'function' ) e=extract(fit)
   
   # if(!class(collapsefunc) %in% 'function' || length(dim(e$k))==0){

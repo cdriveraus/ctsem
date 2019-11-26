@@ -5,8 +5,15 @@
 \title{ctWideNames
 sets default column names for wide ctsem datasets. Primarily intended for internal ctsem usage.}
 \usage{
-ctWideNames(n.manifest, Tpoints, n.TDpred = 0, n.TIpred = 0,
-  manifestNames = "auto", TDpredNames = "auto", TIpredNames = "auto")
+ctWideNames(
+  n.manifest,
+  Tpoints,
+  n.TDpred = 0,
+  n.TIpred = 0,
+  manifestNames = "auto",
+  TDpredNames = "auto",
+  TIpredNames = "auto"
+)
 }
 \arguments{
 \item{n.manifest}{number of manifest variables per time point in the data.}

@@ -4,8 +4,14 @@
 \alias{ctDiscretiseData}
 \title{Discretise long format continuous time (ctsem) data to specific timestep.}
 \usage{
-ctDiscretiseData(dlong, timestep, timecol = "time", idcol = "id",
-  TDpredNames = NULL, TIpredNames = NULL)
+ctDiscretiseData(
+  dlong,
+  timestep,
+  timecol = "time",
+  idcol = "id",
+  TDpredNames = NULL,
+  TIpredNames = NULL
+)
 }
 \arguments{
 \item{dlong}{Long format data}

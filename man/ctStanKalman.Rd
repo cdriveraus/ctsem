@@ -4,8 +4,14 @@
 \alias{ctStanKalman}
 \title{Get Kalman filter estimates from a ctStanFit object}
 \usage{
-ctStanKalman(fit, nsamples = NA, collapsefunc = NA, cores = 2,
-  standardisederrors = FALSE, ...)
+ctStanKalman(
+  fit,
+  nsamples = NA,
+  collapsefunc = NA,
+  cores = 2,
+  standardisederrors = FALSE,
+  ...
+)
 }
 \arguments{
 \item{fit}{fit object from \code{\link{ctStanFit}}.}

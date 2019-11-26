@@ -4,15 +4,31 @@
 \alias{ctFit}
 \title{Fit a ctsem object}
 \usage{
-ctFit(dat, ctmodelobj, dataform = "auto", objective = "auto",
+ctFit(
+  dat,
+  ctmodelobj,
+  dataform = "auto",
+  objective = "auto",
   stationary = c("T0TRAITEFFECT", "T0TIPREDEFFECT"),
-  optimizer = "CSOLNP", retryattempts = 5, iterationSummary = FALSE,
-  carefulFit = TRUE, carefulFitWeight = 100, showInits = FALSE,
-  asymptotes = FALSE, meanIntervals = FALSE,
-  plotOptimization = FALSE, crossEffectNegStarts = TRUE, fit = TRUE,
-  nofit = FALSE, discreteTime = FALSE, verbose = 0,
-  useOptimizer = TRUE, omxStartValues = NULL,
-  transformedParams = TRUE, datawide = NA)
+  optimizer = "CSOLNP",
+  retryattempts = 5,
+  iterationSummary = FALSE,
+  carefulFit = TRUE,
+  carefulFitWeight = 100,
+  showInits = FALSE,
+  asymptotes = FALSE,
+  meanIntervals = FALSE,
+  plotOptimization = FALSE,
+  crossEffectNegStarts = TRUE,
+  fit = TRUE,
+  nofit = FALSE,
+  discreteTime = FALSE,
+  verbose = 0,
+  useOptimizer = TRUE,
+  omxStartValues = NULL,
+  transformedParams = TRUE,
+  datawide = NA
+)
 }
 \arguments{
 \item{dat}{the data you wish to fit a ctsem model to, in either wide format (one individual per row), 

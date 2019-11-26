@@ -4,8 +4,16 @@
 \alias{ctStanGenerate}
 \title{Generate data from a ctstanmodel object}
 \usage{
-ctStanGenerate(ctm, datastruct, optimize = TRUE, is = TRUE,
-  fullposterior = TRUE, nsamples = 200, parsonly = FALSE, ...)
+ctStanGenerate(
+  ctm,
+  datastruct,
+  optimize = TRUE,
+  is = TRUE,
+  fullposterior = TRUE,
+  nsamples = 200,
+  parsonly = FALSE,
+  ...
+)
 }
 \arguments{
 \item{ctm}{\code{\link{ctStanModel}} object.}

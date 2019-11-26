@@ -4,8 +4,15 @@
 \alias{ctGenerate}
 \title{ctGenerate}
 \usage{
-ctGenerate(ctmodelobj, n.subjects = 100, burnin = 0, dtmean = 1,
-  logdtsd = 0, dtmat = NA, wide = TRUE)
+ctGenerate(
+  ctmodelobj,
+  n.subjects = 100,
+  burnin = 0,
+  dtmean = 1,
+  logdtsd = 0,
+  dtmat = NA,
+  wide = TRUE
+)
 }
 \arguments{
 \item{ctmodelobj}{ctsem model object from \code{\link{ctModel}}.}

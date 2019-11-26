@@ -16,7 +16,7 @@
 #' }
 ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA){
   
-  if('ctStanFit' %in% class(fit)) stop('not a ctStanFit object')
+  if(!'ctStanFit' %in% class(fit)) stop('not a ctStanFit object')
 
   model <- fit$ctstanmodel
   fit$standata$savescores <- 0L

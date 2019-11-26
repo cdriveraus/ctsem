@@ -5,8 +5,16 @@
 \title{ctWideToLong
 Convert ctsem wide to long format}
 \usage{
-ctWideToLong(datawide, Tpoints, n.manifest, n.TDpred = 0, n.TIpred = 0,
-  manifestNames = "auto", TDpredNames = "auto", TIpredNames = "auto")
+ctWideToLong(
+  datawide,
+  Tpoints,
+  n.manifest,
+  n.TDpred = 0,
+  n.TIpred = 0,
+  manifestNames = "auto",
+  TDpredNames = "auto",
+  TIpredNames = "auto"
+)
 }
 \arguments{
 \item{datawide}{ctsem wide format data}

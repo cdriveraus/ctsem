@@ -4,10 +4,17 @@
 \alias{ctStanDiscretePars}
 \title{ctStanDiscretePars}
 \usage{
-ctStanDiscretePars(ctstanfitobj, subjects = "all", times = seq(from =
-  0, to = 10, by = 0.1), quantiles = c(0.025, 0.5, 0.975),
-  nsamples = 500, observational = FALSE, standardise = FALSE,
-  plot = FALSE, ...)
+ctStanDiscretePars(
+  ctstanfitobj,
+  subjects = "all",
+  times = seq(from = 0, to = 10, by = 0.1),
+  quantiles = c(0.025, 0.5, 0.975),
+  nsamples = 500,
+  observational = FALSE,
+  standardise = FALSE,
+  plot = FALSE,
+  ...
+)
 }
 \arguments{
 \item{ctstanfitobj}{Continuous time model fit from \code{\link{ctStanFit}}}

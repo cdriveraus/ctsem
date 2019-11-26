@@ -4,11 +4,21 @@
 \alias{ctPlotArray}
 \title{Plots three dimensional y values for quantile plots}
 \usage{
-ctPlotArray(input, grid = FALSE, add = FALSE, colvec = "auto",
-  lwdvec = "auto", ltyvec = "auto", typevec = "auto",
-  plotcontrol = list(ylab = "Array values", xaxs = "i"), legend = TRUE,
-  legendcontrol = list(), polygon = TRUE, polygonalpha = 0.1,
-  polygoncontrol = list(steps = 25))
+ctPlotArray(
+  input,
+  grid = FALSE,
+  add = FALSE,
+  colvec = "auto",
+  lwdvec = "auto",
+  ltyvec = "auto",
+  typevec = "auto",
+  plotcontrol = list(ylab = "Array values", xaxs = "i"),
+  legend = TRUE,
+  legendcontrol = list(),
+  polygon = TRUE,
+  polygonalpha = 0.1,
+  polygoncontrol = list(steps = 25)
+)
 }
 \arguments{
 \item{input}{list containing 3 dimensional array to use for Y values, \code{$y}

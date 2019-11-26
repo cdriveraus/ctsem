@@ -4,8 +4,14 @@
 \alias{ctGenerateFromFit}
 \title{Generates data according to the model estimated in a ctsemFit object.}
 \usage{
-ctGenerateFromFit(fit, timestep = "asdata", n.subjects = 100,
-  timerange = "asdata", predictorSubjects = "all", ...)
+ctGenerateFromFit(
+  fit,
+  timestep = "asdata",
+  n.subjects = 100,
+  timerange = "asdata",
+  predictorSubjects = "all",
+  ...
+)
 }
 \arguments{
 \item{fit}{object of class ctsemFit as returned from \code{\link{ctFit}}}

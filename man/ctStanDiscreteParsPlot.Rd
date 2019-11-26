@@ -4,14 +4,27 @@
 \alias{ctStanDiscreteParsPlot}
 \title{ctStanDiscreteParsPlot}
 \usage{
-ctStanDiscreteParsPlot(x, indices = "all", add = FALSE,
-  legend = TRUE, polygon = TRUE, gg = TRUE, plot = TRUE,
-  quantiles = c(0.025, 0.5, 0.975), times = seq(0, 10, 0.1),
-  latentNames = "auto", lwdvec = "auto", colvec = "auto",
-  ltyvec = "auto", plotcontrol = list(ylab = "Value", xlab =
-  "Time interval", main = "Regression coefficients", type = "l", xaxs =
-  "i"), grid = FALSE, legendcontrol = list(x = "topright", bg =
-  "white"), polygonalpha = 0.1, polygoncontrol = list(steps = 20))
+ctStanDiscreteParsPlot(
+  x,
+  indices = "all",
+  add = FALSE,
+  legend = TRUE,
+  polygon = TRUE,
+  gg = TRUE,
+  plot = TRUE,
+  quantiles = c(0.025, 0.5, 0.975),
+  times = seq(0, 10, 0.1),
+  latentNames = "auto",
+  lwdvec = "auto",
+  colvec = "auto",
+  ltyvec = "auto",
+  plotcontrol = list(ylab = "Value", xlab = "Time interval", main =
+    "Regression coefficients", type = "l", xaxs = "i"),
+  grid = FALSE,
+  legendcontrol = list(x = "topright", bg = "white"),
+  polygonalpha = 0.1,
+  polygoncontrol = list(steps = 20)
+)
 }
 \arguments{
 \item{x}{list object returned from \code{\link{ctStanDiscretePars}}.}

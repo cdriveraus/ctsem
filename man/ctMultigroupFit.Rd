@@ -4,9 +4,19 @@
 \alias{ctMultigroupFit}
 \title{Fits a multiple group continuous time model.}
 \usage{
-ctMultigroupFit(dat, groupings, ctmodelobj, dataform = "wide",
-  fixedmodel = NA, freemodel = NA, carefulFit = TRUE,
-  omxStartValues = NULL, retryattempts = 5, showInits = FALSE, ...)
+ctMultigroupFit(
+  dat,
+  groupings,
+  ctmodelobj,
+  dataform = "wide",
+  fixedmodel = NA,
+  freemodel = NA,
+  carefulFit = TRUE,
+  omxStartValues = NULL,
+  retryattempts = 5,
+  showInits = FALSE,
+  ...
+)
 }
 \arguments{
 \item{dat}{Wide format data, as used in \code{\link{ctFit}}.  See \code{\link{ctLongToWide}} to

@@ -4,11 +4,21 @@
 \alias{ctIntervalise}
 \title{Converts absolute times to intervals for wide format ctsem panel data}
 \usage{
-ctIntervalise(datawide, Tpoints, n.manifest, n.TDpred = 0,
-  n.TIpred = 0, imputedefs = F, manifestNames = "auto",
-  TDpredNames = "auto", TIpredNames = "auto", digits = 5,
-  mininterval = 0.001, individualRelativeTime = TRUE,
-  startoffset = 0)
+ctIntervalise(
+  datawide,
+  Tpoints,
+  n.manifest,
+  n.TDpred = 0,
+  n.TIpred = 0,
+  imputedefs = F,
+  manifestNames = "auto",
+  TDpredNames = "auto",
+  TIpredNames = "auto",
+  digits = 5,
+  mininterval = 0.001,
+  individualRelativeTime = TRUE,
+  startoffset = 0
+)
 }
 \arguments{
 \item{datawide}{Wide format data, containing absolute time measurements, 

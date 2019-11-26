@@ -3,7 +3,6 @@
 \docType{package}
 \name{ctsem}
 \alias{ctsem}
-\alias{ctsem-package}
 \title{ctsem}
 \description{
 ctsem is an R package for continuous time structural equation modelling of panel (N > 1) 
