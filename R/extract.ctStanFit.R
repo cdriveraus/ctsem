@@ -9,9 +9,9 @@
 #' @export
 extract <- function(object,...){
   if(!class(object) %in% c('ctStanFit', 'stanfit')) stop('Not a ctStanFit or stanfit object')
-  if(class(object)=='stanfit') out <- rstan::extract(object,...) else{
-  if(class(object$stanfit)=='stanfit') out <- rstan::extract(object$stanfit,...)
-  if(class(object$stanfit)!='stanfit') out <- object$stanfit$transformedpars
+  if('stanfit' %in% class(object)) out <- rstan::extract(object,...) else{
+  if('stanfit' %in% class(object$stanfit)) out <- rstan::extract(object$stanfit,...)
+  if(!'stanfit' %in% class(object$stanfit)) out <- object$stanfit$transformedpars
   out$Ygen[out$Ygen==99999] <- NA
   }
   return(out)

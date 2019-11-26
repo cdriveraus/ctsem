@@ -48,8 +48,8 @@
 ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
   subjects=1, plot=FALSE, ...){
   type=NA
-  if(class(fit)=='ctStanFit') type='stan' 
-  if(class(fit) =='ctsemFit') type ='omx'
+  if('ctStanFit' %in% class(fit)) type='stan' 
+  if('ctsemFit' %in% class(fit)) type ='omx'
   if(is.na(type)) stop('fit object is not from ctFit or ctStanFit!')
   
   if(type=='stan'){

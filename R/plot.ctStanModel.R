@@ -38,7 +38,7 @@
 #' plot(stanmodel,rows=8)
 
 plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='marginalise',inddifdevs=c(-1,1),plot=TRUE,...){
-  if(class(x)!='ctStanModel') stop('not a ctStanModel object!')
+  if(!'ctStanModel' %in% class(x)) stop('not a ctStanModel object!')
   x <- ctModelTransformsToNum(x)
   x <- T0VARredundancies(x)
   m<-x$pars

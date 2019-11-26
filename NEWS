@@ -1,5 +1,9 @@
 ctsem news:
 
+20/11/2019
+#### 3.0.9 ####
+- ctStanGenerate function -- generate from a ctstanmodel and prior distribution.
+- various minor output / efficiency / estimation robustness improvements.
 
 30/10/2019
 #### 3.0.8 ####

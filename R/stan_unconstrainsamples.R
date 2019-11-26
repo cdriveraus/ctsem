@@ -12,10 +12,10 @@
 #' umat <- stan_unconstrainsamples(ctstantestfit$stanfit, ctstantestfit$standata)
 #' }
 stan_unconstrainsamples <- function(fit, standata=NA){
-  if(class(fit)!='stanfit') stop('not a stanfit object')
+  if('stanfit' %in% class(fit)) stop('not a stanfit object')
   npars <- try(get_num_upars(fit),silent=TRUE) #$stanmodel)
   
-  if(class(npars)=='try-error'){ #in case R has been restarted or similar
+  if(class(npars)[1]=='try-error'){ #in case R has been restarted or similar
     if(any(!is.na(standata))){
       newfit <- stan_reinitsf(fit@stanmodel,standata) 
     } 

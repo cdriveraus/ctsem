@@ -36,7 +36,7 @@ ctStanProfileCI <- function(fit, parnames){
         attributes(out)$gradient <- attributes(out)$gradient[-which( rownames(fit$stanfit$transformedpars_old[1:np,]) %in% cipars[pi])]
         # }
         
-        if(class(out)=='try-error' || is.nan(out)) {
+        if('try-error' %in% class(out)|| all(is.nan(out))) {
           out[1]=-Inf
           # gradout <<- rep(NaN,length(parm))
         } 

@@ -92,7 +92,7 @@ ctModelTransformsToNum<-function(ctm){
           parx=pars;parx[x]<-pars[x]+1e-8;
           (b-ff(parx))/1e-8
         }))
-        if(class(g)=='try-error') g <- rnorm(pars)
+        if('try-error' %in% class(g)) g <- rnorm(pars)
         if(any(is.na(g))) g[is.na(g)] <- rnorm(sum(is.na(g)))
         return(-g)
       }

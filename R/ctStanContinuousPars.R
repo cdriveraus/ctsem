@@ -28,7 +28,7 @@ ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
   if(subjects[1] != 'all' && any(!is.integer(as.integer(subjects)))) stop('
     subjects argument must be either "all" or an integer denoting specific subjects')
   
-  if(class(ctstanfitobj)!='ctStanFit') stop('Not an object of class ctStanFit')
+  if(!'ctStanFit' %in% class(ctstanfitobj)) stop('Not an object of class ctStanFit')
   
   e<-extract(ctstanfitobj) #first dim of subobjects is iter, 2nd subjects
   niter=dim(e$DRIFT)[1]

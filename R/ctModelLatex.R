@@ -48,7 +48,7 @@ ctModelLatex<- function(x,matrixnames=TRUE,textsize='normalsize',folder=tempdir(
     
   } else ctmodel <- x
   
-  if(class(ctmodel) == 'ctStanModel') {
+  if('ctStanModel' %in% class(ctmodel)) {
     ctmodel <- c(ctmodel,listOfMatrices(ctmodel$pars)) 
     continuoustime <- ctmodel$continuoustime
   } else {

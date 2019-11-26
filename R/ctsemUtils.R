@@ -92,8 +92,8 @@ gridplot <- function(m, maxdim=c(3,3),...){
   par(mfrow=d,mar=c(1.1,1.1,1.1,0),mgp=c(.1,.1,0))
   for(i in 1:dim(m)[length(dim(m))]){
     n=colnames(m)[i]
-    if(class(m)=='matrix') plot(m[,i],main=ifelse(is.null(n),i,n),col='red',xlab='',ylab='',...)
-    if(class(m)=='array') matplot(m[,,i],main=ifelse(is.null(n),i,n),type='l',xlab='',ylab='',...)
+    if('matrix' %in% class(m)) plot(m[,i],main=ifelse(is.null(n),i,n),col='red',xlab='',ylab='',...)
+    if('array' %in% class(m)) matplot(m[,,i],main=ifelse(is.null(n),i,n),type='l',xlab='',ylab='',...)
   }
   suppressWarnings(do.call(par,oldpar))
 }

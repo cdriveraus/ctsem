@@ -22,7 +22,7 @@ parallelStanSetup <- function(cl, sm, standata,split=TRUE){
     assign('smfnode',stan_reinitsf(sm,standata,fast=TRUE),pos = g)
     parlp <- function(parm){
       out <- try(smfnode$log_prob(upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
-      if(class(out)=='try-error') {
+      if('try-error' %in% class(out)) {
         out <- -1e100
         attributes(out)$gradient <- rep(NaN, length(parm))
       }
@@ -53,7 +53,7 @@ parallelStanFunctionCreator <- function(cl, verbose){
     out <- try(sum(unlist(out2)),silent=TRUE)
     attributes(out)$gradient <- try(apply(sapply(out2,function(x) attributes(x)$gradient,simplify='matrix'),1,sum))
     
-    if(class(out)=='try-error' || is.nan(out)) {
+    if('try-error' %in% class(out) || is.nan(out)) {
       out=-1e100
       attributes(out) <- list(gradient=rep(0,length(parm)))
     }
@@ -218,7 +218,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2){
     i=i+1
     est1=try(constrain_pars(smf, upars=samples[i,]))
   }
-  if(class(est1)=='try-error') stop('All samples generated errors! Respecify, try stochastic optimizer, try again?')
+  if(class(est1)[1]=='try-error') stop('All samples generated errors! Respecify, try stochastic optimizer, try again?')
   
   if(cores > 1){
   cl2 <- parallel::makeCluster(cores, type = "PSOCK")
@@ -297,10 +297,10 @@ sgd <- function(init,fitfunc,ndatapoints,plotsgd=FALSE,stepbase=1e-4,gmeminit=if
   # parallelStanSetup(cores,sm,standata)
   
   g= -fitfunc(init) # try(smf$grad_log_prob(upars=init,adjust_transform=TRUE),silent = TRUE) #rnorm(length(init),0,.001)
-  if(class(g)=='try-error') {
+  if('try-error' %in% class(g)) {
     i = 0
     message('Problems initialising, trying random values...')
-    while(i < 50 && class(g)=='try-error'){
+    while(i < 50 && 'try-error' %in% class(g)){
       if(i %%5 == 0) init = rep(0,length(init))
       init=init+rnorm(length(init),0,abs(init)+ .1)
       g= -fitfunc(init) #try(smf$grad_log_prob(upars=init,adjust_transform=TRUE),silent = TRUE)
@@ -640,7 +640,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           
           lp2 = function(parm) {
             out<-try(log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=FALSE),silent = TRUE)
-            if(class(out)=='try-error') {
+            if('try-error' %in% class(out)) {
               out=-1e200
             }
             return(-out)
@@ -692,7 +692,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           a=Sys.time()
           out<- try(log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
           
-          if(class(out)=='try-error' || is.nan(out)) {
+          if('try-error' %in% class(out) || is.nan(out)) {
             out=-1e100
             attributes(out) <- list(gradient=rep(0,length(parm)))
           }
@@ -800,7 +800,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               downpars[i]<-pars[i]-stepsize
               uplp= -neglpgf(uppars) #try(smf$log_prob(upars=uppars,adjust_transform=TRUE,gradient=TRUE)) #lpg(uppars)
               downlp = -neglpgf(downpars) #try(smf$log_prob(upars=downpars,adjust_transform=TRUE,gradient=TRUE)) #lpg(downpars)
-              if(class(uplp)=='try-error' || class(downlp)=='try-error'){
+              if('try-error' %in% class(uplp) || class(downlp)=='try-error'){
                 lpdifok <- TRUE
                 upgrad <- rep(NA,length(pars))
                 downgrad <- rep(NA,length(pars))
@@ -913,11 +913,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # neghesschol = try(chol(-hess),silent=TRUE)
         
         mchol=try(t(chol(solve(-hess))),silent=TRUE)
-        if(class(mchol)=='try-error') {
+        if('try-error' %in% class(mchol)) {
           message('Hessian not positive-definite so approximating, treat SE\'s with caution, consider respecification / priors.')
           npd <- TRUE
         } else npd <- FALSE
-        # if(class(mchol)=='try-error') {
+        # if('try-error' %in% class(mchol)) {
         mcov=MASS::ginv(-hess) #-optimfit$hessian)
         mcov=as.matrix(Matrix::nearPD(mcov,conv.norm.type = 'F')$mat)
       }
@@ -981,7 +981,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
 
           if(cores==1) parlp <- function(parm){ #remove this duplication somehow
             out <- try(log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
-            if(class(out)=='try-error') {
+            if('try-error' %in% class(out)) {
               out[1] <- -1e100
               attributes(out)$gradient <- rep(NaN, length(parm))
             }
@@ -1090,7 +1090,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     # quantile(sapply(transformedpars, function(x) x$DRIFT[1,2,2]),probs=c(.025,.5,.975))
     
     sds=try(suppressWarnings(sqrt(diag(mcov))))  #try(sqrt(diag(solve(optimfit$hessian))))
-    if(class(sds)=='try-error') sds <- rep(NA,length(est2))
+    if(class(sds)[1]=='try-error') sds <- rep(NA,length(est2))
     lest= est2 - 1.96 * sds
     uest= est2 + 1.96 * sds
     

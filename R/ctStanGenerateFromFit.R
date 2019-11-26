@@ -12,7 +12,7 @@
 #' }
 ctStanGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE){
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object!')
-  if(class(fit$stanfit)!='stanfit') {
+  if(!'stanfit' %in% class(fit$stanfit)) {
     umat=t(fit$stanfit$rawposterior)
   } else  {
     umat <- stan_unconstrainsamples(fit$stanfit,fit$standata)

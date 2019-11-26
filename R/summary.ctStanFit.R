@@ -30,12 +30,12 @@ ctStanRawSamples<-function(fit){
 
 summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,priorcheck=TRUE,residualcov = TRUE,...){
   
-  if(class(object) != 'ctStanFit') stop('Not a ctStanFit object!')
+  if(!'ctStanFit' %in% class(object)) stop('Not a ctStanFit object!')
   
   out=list()
   monvars <- c('mean','sd','2.5%','50%','97.5%')
   
-  if(class(object$stanfit)=='stanfit'){ 
+  if('stanfit' %in% class(object$stanfit)){ 
     s<-suppressWarnings(getMethod('summary','stanfit')(object$stanfit))
     if('98%' %in% colnames(s$summary)) colnames(s$summary)[colnames(s$summary)=='98%'] <- '97.5%'
     e <- extract(object) 
@@ -56,7 +56,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   out$resiCovStdNote <- 'Standardised covariance of residuals'
   }
   
-  if(class(object$stanfit)!='stanfit')  e <- extract(object) 
+  if(!'stanfit' %in% class(object$stanfit))  e <- extract(object) 
   
   parnames <- object$setup$matsetup$parname[object$setup$matsetup$when==0 & object$setup$matsetup$param > 0]
   parindices <- object$setup$matsetup$param[object$setup$matsetup$when==0 & object$setup$matsetup$param > 0]
@@ -121,11 +121,11 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
       }
       #raw pop distribution params
       dimrawpopcorr <- dim(e$rawpopcorr)
-      if(class(object$stanfit)!='stanfit') rawpopcorr= array(e$rawpopcorr,dim=c(dimrawpopcorr[1],1,dimrawpopcorr[2] * dimrawpopcorr[3]))
-      if(class(object$stanfit)=='stanfit') rawpopcorr= rstan::extract(object$stanfit,pars='rawpopcorr',permuted=FALSE)
+      if(!'stanfit' %in% class(object$stanfit)) rawpopcorr= array(e$rawpopcorr,dim=c(dimrawpopcorr[1],1,dimrawpopcorr[2] * dimrawpopcorr[3]))
+      if('stanfit' %in% class(object$stanfit)) rawpopcorr= rstan::extract(object$stanfit,pars='rawpopcorr',permuted=FALSE)
 
       rawpopcorrout <- suppressWarnings(monitor(rawpopcorr, digits_summary=digits,warmup=0,print = FALSE)[lower.tri(diag(nindvarying)),c(monvars,'n_eff','Rhat'),drop=FALSE])
-      if(class(object$stanfit)!='stanfit') rawpopcorrout <- rawpopcorrout[,-which(colnames(rawpopcorrout) %in% c('n_eff','Rhat')),drop=FALSE]
+      if(!'stanfit' %in% class(object$stanfit)) rawpopcorrout <- rawpopcorrout[,-which(colnames(rawpopcorrout) %in% c('n_eff','Rhat')),drop=FALSE]
       # rawpopcorrout <- ctCollapse(rawpopcorr,1,mean)
       # rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,sd)[lower.tri(diag(nindvarying)),drop=FALSE])
       # rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.025))[lower.tri(diag(nindvarying)),drop=FALSE])
@@ -173,7 +173,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   
   if(object$ctstanmodel$n.TIpred > 0) {
     
-    if(class(object$stanfit)=='stanfit'){
+    if('stanfit' %in% class(object$stanfit)){
       rawtieffect <- rstan::extract(object$stanfit,permuted=FALSE,pars='TIPREDEFFECT')
       tidiags <- suppressWarnings(monitor(rawtieffect,warmup=0,digits_summary = digits,print = FALSE))
     }
@@ -182,7 +182,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
     tieffectnames <- paste0('tip_',rep(object$ctstanmodel$TIpredNames,each=length(parnames)),'_',parnames)
     dimnames(tieffect)<-list(c(),c(),tieffectnames)
     tipreds = suppressWarnings(monitor(tieffect,warmup = 0,print = FALSE)[,monvars,drop=FALSE])
-    if(class(object$stanfit)=='stanfit') tipreds <- cbind(tipreds,tidiags[,c('n_eff','Rhat'),drop=FALSE])
+    if('stanfit' %in% class(object$stanfit)) tipreds <- cbind(tipreds,tidiags[,c('n_eff','Rhat'),drop=FALSE])
     tipreds <- tipreds[c(object$data$TIPREDEFFECTsetup)>0,,drop=FALSE]
     z = tipreds[,'mean'] / tipreds[,'sd'] 
     out$tipreds= round(cbind(tipreds,z),digits) #[order(abs(z)),]
@@ -210,7 +210,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
       #   replace = FALSE),],
       1,ctStanParMatrices,fit=object,timeinterval=timeinterval,sf=sf))
     
-    if(class(parmatlists)!='try-error'){
+    if(class(parmatlists)[1]!='try-error'){
       parmatarray <- array(unlist(parmatlists),dim=c(length(unlist(parmatlists[[1]])),length(parmatlists)))
       parmats <- matrix(NA,nrow=length(unlist(parmatlists[[1]])),ncol=7)
       rownames(parmats) <- paste0('r',1:nrow(parmats))
@@ -249,12 +249,12 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
       out$parmatNote=paste0('Population mean parameter matrices calculated with time interval of ', timeinterval,' for discrete time (dt) matrices. ',
         'Covariance related matrices shown as covariance matrices, correlations have (cor) suffix. Asymptotic (asym) matrices based on infinitely large time interval.')
     }
-    if(class(parmatlists)=='try-error') out$parmatNote = 'Could not calculate parameter matrices'
+    if(class(parmatlists)[1]=='try-error') out$parmatNote = 'Could not calculate parameter matrices'
   }
     
   
   
-  if(class(object$stanfit)=='stanfit'){
+  if('stanfit' %in% class(object$stanfit)){
     popsd=s$summary[c(grep('^popsd',rownames(s$summary),fixed=FALSE)),
       c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE] [ object$data$indvaryingindex,,drop=FALSE]
     rownames(popsd)=parnames[ object$data$indvaryingindex]
@@ -271,7 +271,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
       c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE]
   }
   
-  if(class(object$stanfit)!='stanfit'){ #if optimized / importance sampled
+  if(!'stanfit' %in% class(object$stanfit)){ #if optimized / importance sampled
     
     if(!is.null(iter)){ popsd <- suppressWarnings(monitor(array(e$popsd,dim=c(dim(e$popsd)[1],1,dim(e$popsd)[2])),warmup=0,print=FALSE))
     popsd=popsd[ object$data$indvaryingindex, monvars,drop=FALSE]
@@ -295,7 +295,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   
   out$logprob=logprob
   
-  if(class(object$stanfit)!='stanfit') {
+  if(!'stanfit' %in% class(object$stanfit)) {
     out$npars = npars
     out$aic = aic
   }
@@ -309,7 +309,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   # }
   
   
-  # if(class(object$stanfit)!='stanfit'){ #optimization summary
+  # if(!'stanfit' %in% class(object$stanfit)){ #optimization summary
   #   out=list()
   #   out$popmeans=object$stanfit$transformedpars[grep('hmean_',rownames(object$stanfit$transformedpars)),]
   #   out$popsd=object$stanfit$transformedpars[grep('hsd_',rownames(object$stanfit$transformedpars)),]
