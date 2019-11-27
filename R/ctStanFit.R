@@ -347,9 +347,9 @@ verbosify<-function(sf,verbose=2){
 #' #Individual differences in intervention, Bayesian estimation, covariates
 #' m2i <- ctModel(type = 'stanct',
 #'   manifestNames = c('Y1'), latentNames=c('eta1'),
-#'   n.TIpred = 1, TIpredNames = 'age',
-#'   n.TDpred=1,TDpredNames = 'TD1', #this line includes the intervention
-#'   TDPREDEFFECT=matrix(c('tdpredeffect'),nrow=1,ncol=1), #intervention effect
+#'   TIpredNames = 'age',
+#'   TDpredNames = 'TD1', #this line includes the intervention
+#'   TDPREDEFFECT=matrix(c('tdpredeffect||TRUE'),nrow=1,ncol=1), #intervention effect
 #'   DRIFT=matrix(-1e-5,nrow=1,ncol=1),
 #'   DIFFUSION=matrix(0,nrow=1,ncol=1),
 #'   CINT=matrix(c('cint1'),ncol=1),
@@ -358,9 +358,7 @@ verbosify<-function(sf,verbose=2){
 #'   LAMBDA = diag(1),
 #'   MANIFESTMEANS=matrix(0,ncol=1),
 #'   MANIFESTVAR=matrix(c('merror'),nrow=1,ncol=1))
-#' 
-#' m2i$pars$indvarying[m2i$pars$matrix %in% 'TDPREDEFFECT'] <- TRUE
-#' 
+#'   
 #' plot(m2i)
 #' 
 #' f2i <- ctStanFit(datalong = dat2, ctstanmodel = m2i,

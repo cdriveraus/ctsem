@@ -4,11 +4,19 @@
 \alias{plot.ctsemFitMeasure}
 \title{Misspecification plot using ctCheckFit output}
 \usage{
-\method{plot}{ctsemFitMeasure}(x, indices = "all", means = TRUE,
-  separatemeans = TRUE, cov = TRUE, covtype = "MisspecRatio",
-  cov2cor = FALSE, wait = TRUE, ggcorrArgs = list(data = NULL,
-  cor_matrix = get(covtype), limits = limits, geom = "circle", max_size =
-  10, name = covtype), ...)
+\method{plot}{ctsemFitMeasure}(
+  x,
+  indices = "all",
+  means = TRUE,
+  separatemeans = TRUE,
+  cov = TRUE,
+  covtype = "MisspecRatio",
+  cov2cor = FALSE,
+  wait = TRUE,
+  ggcorrArgs = list(data = NULL, cor_matrix = get(covtype), limits = limits, geom =
+    "circle", max_size = 10, name = covtype),
+  ...
+)
 }
 \arguments{
 \item{x}{Object output from ctCheckFit function.}

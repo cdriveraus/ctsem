@@ -4,8 +4,13 @@
 \alias{stan_confidenceRegion}
 \title{Extract functions of multiple variables from a stanfit object}
 \usage{
-stan_confidenceRegion(stanfit, parstrings, prefuncstring = "(",
-  joinfuncstring = " + ", postfuncstring = ")")
+stan_confidenceRegion(
+  stanfit,
+  parstrings,
+  prefuncstring = "(",
+  joinfuncstring = " + ",
+  postfuncstring = ")"
+)
 }
 \arguments{
 \item{stanfit}{object of class stanfit.}

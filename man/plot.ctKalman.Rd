@@ -4,14 +4,28 @@
 \alias{plot.ctKalman}
 \title{Plots Kalman filter output from ctKalman.}
 \usage{
-\method{plot}{ctKalman}(x, subjects = 1, kalmanvec = c("y", "ysmooth"),
-  errorvec = "auto", errormultiply = 1.96, ltyvec = "auto",
-  colvec = "auto", lwdvec = "auto", subsetindices = NULL,
-  pchvec = "auto", typevec = "auto", grid = FALSE, add = FALSE,
-  plotcontrol = list(ylab = "Value", xlab = "Time", xaxs = "i", lwd = 2,
-  mgp = c(2, 0.8, 0)), polygoncontrol = list(steps = 20),
-  polygonalpha = 0.1, legend = TRUE, legendcontrol = list(x =
-  "topright", bg = "white", cex = 0.7), ...)
+\method{plot}{ctKalman}(
+  x,
+  subjects = 1,
+  kalmanvec = c("y", "ysmooth"),
+  errorvec = "auto",
+  errormultiply = 1.96,
+  ltyvec = "auto",
+  colvec = "auto",
+  lwdvec = "auto",
+  subsetindices = NULL,
+  pchvec = "auto",
+  typevec = "auto",
+  grid = FALSE,
+  add = FALSE,
+  plotcontrol = list(ylab = "Value", xlab = "Time", xaxs = "i", lwd = 2, mgp = c(2, 0.8,
+    0)),
+  polygoncontrol = list(steps = 20),
+  polygonalpha = 0.1,
+  legend = TRUE,
+  legendcontrol = list(x = "topright", bg = "white", cex = 0.7),
+  ...
+)
 }
 \arguments{
 \item{x}{Output from \code{\link{ctKalman}}. In general it is easier to call 

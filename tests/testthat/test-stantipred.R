@@ -7,12 +7,12 @@ set.seed(1)
 context("tipredcheck")
 
 test_that("simpleTIpredcheck", {
-Tpoints=100
+Tpoints=10
 n.manifest=1
 n.TDpred=0
 n.TIpred=1
 n.latent=1
-n.subjects=10
+n.subjects=50
 TI1 <- rnorm(n.subjects)
 gm<-ctModel(type='omx', Tpoints=Tpoints,n.latent=n.latent,
 n.TDpred=n.TDpred,n.manifest=n.manifest,
@@ -47,18 +47,18 @@ MANIFESTVAR=diag(0.5,1),
 
  checkm$pars[c(-1,-7) ,c('TI1_effect')] <- FALSE
 
-tfit<-ctStanFit(tdat,checkm,chains=2,optimize=T,optimcontrol=list(is=TRUE,finishsamples=200),nopriors=F,verbose=0)
+tfit<-ctStanFit(tdat,checkm,chains=2,optimize=T,optimcontrol=list(is=TRUE,finishsamples=500),nopriors=F,verbose=0)
 s=summary(tfit)
 
 expect_equal(s$tipreds[2,'mean'],5,tolerance=.1)
 
-tfit<-ctStanFit(tdat,checkm,iter=400, warmup=380,chains=2,optimize=T,optimcontrol=list(is=FALSE),nopriors=F,verbose=0,
+tfit<-ctStanFit(tdat,checkm,chains=2,optimize=T,optimcontrol=list(is=FALSE),nopriors=F,
   nlcontrol=list(nldynamics=TRUE,nlmeasurement=TRUE))
 s=summary(tfit)
 
 expect_equal(s$tipreds[2,'mean'],5,tolerance=.1)
 
-tfit<-ctStanFit(tdat,checkm,iter=400,chains=2,control=list(adapt_delta=.8,max_treedepth=6))
+tfit<-ctStanFit(tdat,checkm,iter=400,chains=2,control=list(adapt_delta=.8,max_treedepth=6),plot=T)
 s=summary(tfit)
 
 expect_equal(s$tipreds[2,'mean'],5,tolerance=.1)

@@ -4,8 +4,13 @@
 \alias{stan_postcalc}
 \title{Compute functions of matrices from samples of a stanfit object}
 \usage{
-stan_postcalc(stanfit, object, calc = "object", objectindices = "all",
-  summary = TRUE)
+stan_postcalc(
+  stanfit,
+  object,
+  calc = "object",
+  objectindices = "all",
+  summary = TRUE
+)
 }
 \arguments{
 \item{stanfit}{object of class stanfit.}

@@ -4,8 +4,15 @@
 \alias{summary.ctStanFit}
 \title{summary.ctStanFit}
 \usage{
-\method{summary}{ctStanFit}(object, timeinterval = 1, digits = 3,
-  parmatrices = TRUE, priorcheck = TRUE, residualcov = TRUE, ...)
+\method{summary}{ctStanFit}(
+  object,
+  timeinterval = 1,
+  digits = 3,
+  parmatrices = TRUE,
+  priorcheck = TRUE,
+  residualcov = TRUE,
+  ...
+)
 }
 \arguments{
 \item{object}{fit object from \code{\link{ctStanFit}}, of class ctStanFit.}
