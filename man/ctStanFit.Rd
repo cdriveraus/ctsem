@@ -328,7 +328,7 @@ m2ic <- ctModel(type = 'stanct',
   MANIFESTMEANS=matrix(0,ncol=1),
   MANIFESTVAR=matrix(c('merror'),nrow=1,ncol=1))
 
-m2ic$pars$indvarying[m2ic$pars$matrix %in% 'TDPREDEFFECT'] <- TRUE
+m2ic$pars$indvarying[m2ic$pars$matrix \%in\% 'TDPREDEFFECT'] <- TRUE
 
 plot(m2ic)
 

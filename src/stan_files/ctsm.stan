@@ -191,7 +191,7 @@ data {
   
   int intoverpop;
   int statedependence[4];
-  int taylorheun;
+  int multiplicativenoise;
   int nlmeasurement;
   int intoverstates;
   int verbose; //level of printing during model fit
@@ -372,12 +372,10 @@ matrix[nlatent, nlatent] pop_DIFFUSIONcov;
   matrix[ nmanifest,nlatentpop] Jy[ndatapoints];//store Jacobian for measurement over time
   matrix[ nmanifest,nlatentpop] sJy;//Jacobian for measurement 
   matrix[nmanifest,nlatent] tLAMBDA[ndatapoints]; // store lambda time varying for smoother
-  vector[taylorheun ? nlatent : 0] s1;
-  vector[taylorheun ? nlatent : 0] s05;
 
   //linear continuous time calcs
   matrix[nlatent+1,nlatent+1] discreteDRIFT;
-  matrix[nlatent,nlatent] discreteDIFFUSION;
+  matrix[nlatent,nlatent] discreteDIFFUSION = rep_matrix(0.0,nlatent,nlatent);
 
   //dynamic system matrices
      matrix[matrixdims[1, 1], matrixdims[1, 2] ] sT0MEANS; 
@@ -609,7 +607,48 @@ if(verbose > 1) print ("below t0 row ", rowi);
       if(ntdpred > 0) state[1:nlatent] += sTDPREDEFFECT * tdpreds[rowi];
       if(intoverstates==1) {
         etacov = quad_form(etacov, discreteDRIFT[1:nlatent,1:nlatent]');
+        
+      {
+      int doprint=0;
+              for(ci in 1:nlatent){
+              if(discreteDIFFUSION[ci,ci] < -1e-6){
+              doprint=1;
+                discreteDIFFUSION[,ci] = rep_vector(0,nlatent);
+                discreteDIFFUSION[ci,] = rep_vector(0,nlatent)';
+              }
+              if(doprint){
+              print("discrete DIFFUSION problem! ",rowi);
+              print("discreteDIFFUSION = ",discreteDIFFUSION);
+              print("sJAx = ", sJAx);
+              print("Je = ", Je);
+              print("sDIFFUSION = ", sDIFFUSION);
+              print("sDRIFT = ", sDRIFT);
+              
+              }
+              }
+      }
+      
+      {
+      int doprint=0;
+              for(ci in 1:nlatent){
+              if(etacov[ci,ci] < -1e-6){
+              doprint=1;
+                etacov[,ci] = rep_vector(0,nlatent);
+                etacov[ci,] = rep_vector(0,nlatent)';
+              }
+              if(doprint){
+              print("etacov problem! ",rowi);
+              print("discreteDIFFUSION = ",discreteDIFFUSION);
+              print("sJAx = ", sJAx);
+              print("Je = ", Je);
+              print("sDIFFUSION = ", sDIFFUSION);
+              print("sDRIFT = ", sDRIFT);
+              }
+              }
+      }
+      
         if(ndiffusion > 0) etacov += discreteDIFFUSION;
+
       }
     }//end linear time update
 
@@ -618,14 +657,10 @@ if(verbose > 1) print ("below t0 row ", rowi);
       if(T0check>0){
         vector[nlatentpop] base;
         real intstepi = 0;
-        int th_steps[taylorheun ? 2 : 1];
-        th_steps[1] = 1;
-        if(taylorheun) th_steps[2] = 2;
         dtsmall = dt / ceil(dt / maxtimestep);
         
         while(intstepi < dt){
           intstepi = intstepi + dtsmall;
-        for(th_step in th_steps){
           
     {
     int zeroint[1];
@@ -694,56 +729,81 @@ if(verbose > 1) print ("below t0 row ", rowi);
    
              
             if(continuoustime){
-            if(taylorheun==0){
               if(dtchange==1 || statedependence[2] || (T0check == 1 && (DRIFTsubindex + CINTsubindex > 0))){
                 Je[savescores ? rowi : 1]= matrix_exp(sJAx * dtsmall);
-                if(verbose > 1) print("Je = ", Je[savescores ? rowi : 1]);
                 discreteDRIFT = expm2(append_row(append_col(sDRIFT[1:nlatent, 1:nlatent],sCINT),rep_vector(0,nlatent+1)') * dtsmall,drcintoffdiag);
-                if(verbose > 1) print("discreteDRIFT = ", discreteDRIFT);
               } else if(savescores) Je[rowi] = Je[rowi-1];
+              state[1:nlatent] = (discreteDRIFT * append_row(state[1:nlatent],1.0))[1:nlatent]; //compute before new diffusion calcs
               if(dtchange==1 || statedependence[2] || (T0check == 1 && (DRIFTsubindex + DIFFUSIONsubindex + CINTsubindex) > 0)){
+                if(multiplicativenoise){
+                matrix [nlatent,nlatent] tempDIFFUSION = sDIFFUSION;
+                    {
+  ;  
+  
+  } 
+   //calc at new state and average
+                sDIFFUSION[derrind,derrind] = (sDIFFUSION[derrind,derrind] + tempDIFFUSION[derrind,derrind]) /2;
+                }
                 sasymDIFFUSION[derrind,derrind] = to_matrix(  -kronsum(sJAx[derrind,derrind]) \ to_vector(tcrossprod(sDIFFUSION[derrind,derrind])), ndiffusion,ndiffusion);
                 discreteDIFFUSION[derrind,derrind] =  sasymDIFFUSION[derrind,derrind] - quad_form( sasymDIFFUSION[derrind,derrind], Je[savescores ? rowi : 1, derrind,derrind]' );
               } 
-              if(verbose>1) print("sJAx ",sJAx);
-              if(verbose > 1) print("rowi = ",rowi, "state = ", state);
-              if(verbose > 1)  print("etacov = ",etacov," sasymDIFFUSION = ",sasymDIFFUSION," sDIFFUSION = ",sDIFFUSION);
-              if(verbose > 1) print("sJAx = ",sJAx);
               etacov = quad_form(etacov, Je[savescores ? rowi : 1]');
+      {
+      int doprint=0;
+              for(ci in 1:nlatent) if(discreteDIFFUSION[ci,ci] < -1e-6){
+              doprint=1;
+                discreteDIFFUSION[,ci] = rep_vector(0,nlatent);
+                discreteDIFFUSION[ci,] = rep_vector(0,nlatent)';
+              }
+              if(doprint){
+              print("discrete DIFFUSION problem! ",rowi);
+              print("discreteDIFFUSION = ",discreteDIFFUSION);
+              print("sJAx = ", sJAx);
+              print("Je = ", Je);
+              print("sDIFFUSION = ", sDIFFUSION);
+              print("sDRIFT = ", sDRIFT);
+              
+              }
+      }
+      
+      {
+      int doprint=0;
+              for(ci in 1:nlatent) if(etacov[ci,ci] < -1e-6){
+              doprint=1;
+                etacov[,ci] = rep_vector(0,nlatent);
+                etacov[ci,] = rep_vector(0,nlatent)';
+              }
+              if(doprint){
+              print("etacov problem! ",rowi);
+              print("etacov = ",etacov);
+              print("discreteDIFFUSION = ",discreteDIFFUSION);
+              print("sJAx = ", sJAx);
+              print("Je = ", Je);
+              print("sDIFFUSION = ", sDIFFUSION);
+              print("sDRIFT = ", sDRIFT);
+              
+              }
+      }
+      
+      
+      
+              
               etacov[derrind,derrind] += discreteDIFFUSION[derrind,derrind]; //may need improving
-              state[1:nlatent] = (discreteDRIFT * append_row(state[1:nlatent],1.0))[1:nlatent];
-            }
-            
-            if(taylorheun==1){
-  
-             if(th_step==1){
-              s1 = state[1:nlatent] + (IIlatent - sJAx[1:nlatent,1:nlatent] * (dtsmall /2) ) \ 
-                (sDRIFT[1:nlatent,1:nlatent] * state[1:nlatent] + sCINT[1:nlatent,1]) * dtsmall;
-               state[1:nlatent] = .5 * (state[1:nlatent] + s1 - 
-                 (sJAx[1:nlatent,1:nlatent] * sDRIFT[1:nlatent,1:nlatent] * state[1:nlatent] + sCINT[1:nlatent,1]) * 
-                 ((dtsmall^2) / 4) );
-             }
-               if(th_step==2){
-                state[1:nlatent] = s1;
-                etacov[derrind,derrind] += quad_form(
-                  sJAx[derrind,derrind] * etacov[derrind,derrind] + etacov[derrind,derrind] * sJAx[derrind,derrind]' + tcrossprod(sDIFFUSION[ derrind, derrind ]),
-                  (inverse(IIlatent - sJAx[derrind,derrind] * (dtsmall/2) ))') * dtsmall;
-             }
-            }
+              
+
             if(intstepi >= dt && savescores) Je[rowi] = matrix_exp(sJAx * dt); //save approximate exponentiated jacobian for smoothing
             }
   
           if(continuoustime==0){ 
             Je[savescores ? rowi : 1] = sJAx;
             etacov = quad_form(etacov, sJAx');
-            sasymDIFFUSION[ derrind, derrind ] = to_matrix( (IIlatent2 - 
-              sqkron_prod(sDRIFT[ derrind, derrind ], sDRIFT[ derrind, derrind ])) \  to_vector(tcrossprod(sDIFFUSION[ derrind, derrind ])), ndiffusion, ndiffusion);
+            //sasymDIFFUSION[ derrind, derrind ] = to_matrix( (IIlatent2 - 
+              //sqkron_prod(sDRIFT[ derrind, derrind ], sDRIFT[ derrind, derrind ])) \  to_vector(tcrossprod(sDIFFUSION[ derrind, derrind ])), ndiffusion, ndiffusion);
             etacov[ derrind, derrind ] += tcrossprod(sDIFFUSION[ derrind, derrind ]); //may need improving re sDIFFUSION
             discreteDRIFT=append_row(append_col(sDRIFT[1:nlatent, 1:nlatent],sCINT),rep_matrix(0,1,nlatent+1));
             discreteDRIFT[nlatent+1,nlatent+1] = 1;
             state[1:nlatent] = (discreteDRIFT * append_row(state[1:nlatent],1.0))[1:nlatent];
           }
-        } // end taylor heun loop
       }
     } // end of non t0 time update
   
@@ -880,7 +940,6 @@ if(verbose > 1) print ("below t0 row ", rowi);
           yprior[o] = sMANIFESTMEANS[o,1] + sLAMBDA[o,] * state[1:nlatent];
           if(nbinary_y[rowi] > 0) yprior[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * state[1:nlatent])));
           if(verbose > 1) print ("sMANIFESTVAR[o,o] = ",sMANIFESTVAR[o,o])
-          if(verbose > 1) print ("etacov[1:nlatent,1:nlatent] = ",etacov[1:nlatent,1:nlatent])
           if(verbose > 1) print ("sJy[o,]' = ",sJy[o,]');
           ycov[o,o] = quad_form(etacov, sJy[o,]'); // + sMANIFESTVAR[o,o]; shifted measurement error down
           for(wi in 1:nmanifest){ 

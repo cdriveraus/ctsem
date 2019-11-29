@@ -20,7 +20,6 @@ stansubjectdata <- function(ctsmodel, datalong,maxtimestep){
   for(i in 2:nrow(datalong)){
     T0check[i]<- ifelse(datalong[i,ctsmodel$subjectIDname] != datalong[i-1,ctsmodel$subjectIDname], 1, 0)
   }
-  
   if (!(ctsmodel$timeName %in% colnames(datalong))) stop(paste('time column', omxQuotes(ctsmodel$timeName), "not found in data"))
   if(any(is.na(datalong[,ctsmodel$timeName]))) stop('Missings in time column!')
   #check id and calculate intervals, discrete matrix indices
@@ -560,7 +559,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     ctstanmodelbase <- ctm
     ctm <- ctModel0DRIFT(ctm, continuoustime)
     ctm <- ctModelStatesAndPARS(ctm)
-    # browser()
+    # 
     ctm <- ctModelTransformsToNum(ctm)
     ctm$pars <- ctStanModelCleanctspec(ctm$pars)
     # ctm <- ctStanModelIntOverPop(ctm)
@@ -635,21 +634,14 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       } else 
         if(intoverpop & any(ctm$pars$indvarying[is.na(ctm$pars$value)]) & nldynamics==FALSE) { stop('nldynamics cannot be set FALSE if intoverpop is TRUE')
         }
-    
-    # browser()
+
     if(intoverpop)   ctm <- ctStanModelIntOverPop(ctm)
     
     ctm$jacobian <- ctJacobian(ctm)
     
     jl <- ctModelUnlist(ctm$jacobian,names(ctm$jacobian))
     jl2 <- as.data.frame(rbind(data.table(ctm$pars[1,]),data.table(jl),fill=TRUE))[-1,]
-    # jl2$transform <- jl2$param
-    
-    # getStates <- function(x){
-    # 
-    # ctm <- ctModelTransformsToNum(ctm)
-    # ctm$pars <- ctStanModelCleanctspec(ctm$pars)
-    
+
     jl3=ctModelTransformsToNum(list(pars=data.frame(jl2)))
     jl3$pars$indvarying<-FALSE
     ctm$pars <- rbind(ctm$pars, jl3$pars)
@@ -759,6 +751,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     # if(binomial & any(intoverstates)) stop('Binomial only possible with intoverstates=FALSE')
     
     #id mapping
+    
     original <- unique(datalong[,idName])
     datalong <- makeNumericIDs(datalong,idName,timeName)
     new <- unique(datalong[,idName])
@@ -779,13 +772,13 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     TIPREDEFFECTsetup=ctsmodelmats$TIPREDEFFECTsetup
     matrixdims <- ctsmodelmats$matrixdims
     ctm$calcs <- ctsmodelmats$calcs
-    # browser()
+    # 
     #get extra calculations and adjust model spec as needed
     ctm <- ctStanCalcsList(ctm)
     if(sum(sapply(ctm$calcs,length)) > 0){
       if(nldynamics == FALSE) warning('Linear model requested but nonlinear model specified! May be a poor approximation') else nldynamics <- TRUE 
     }
-    
+        
     ncalcs <- length(unlist(ctm$calcs)) 
     ncalcsNoJ<- length(unlist(ctm$calcs)[!grepl('JAx[',unlist(ctm$calcs),fixed=TRUE)])
     if(ncalcsNoJ > 0) recompile <- TRUE
@@ -799,7 +792,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       if(nlmeasurement == FALSE) warning('Linear measurement model requested but nonlinear measurement specified!') else nlmeasurement <- TRUE
       
     }
-    
+        
     if(nldynamics==TRUE && !intoverstates) stop('intoverstates must be TRUE for nonlinear dynamics')
     
     if(nlmeasurement=='auto') nlmeasurement <- FALSE
@@ -811,18 +804,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     if(nldynamics) message('Using nonlinear Kalman filter for dynamics')
     if(!nldynamics) message('Using linear Kalman filter for dynamics')
     
-    
-    #check diffusion indices input by user - which latents are involved in covariance
-    if(derrind[1]=='all'){
-      derrind <- c()
-      diffusion=listOfMatrices(ctm$pars)$DIFFUSION
-      for(i in 1:nrow(diffusion)){
-        if(all(suppressWarnings(as.numeric(diffusion[i,])) %in% 0) && all(suppressWarnings(as.numeric(diffusion[,i])) %in% 0)){
-          derrind <- derrind
-          } else derrind <- c(derrind,i)
-      }
-    }
-      
+        
     if(intoverstates==FALSE || all(derrind=='all') ) derrind = 1:n.latent
     # if(all(derrind=='all')) derrind = sort(unique(ctm$pars$col[
     #   ctm$pars$matrix=='DIFFUSION' & (!is.na(ctm$pars$param) | ctm$pars$value!=0)]))
@@ -849,7 +831,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     if(any(matsetup[,'transform'] < -10)) recompile <- TRUE #if custom transforms needed
     
     
-    
+        
     
     
     if(is.na(stanmodeltext)) {
@@ -862,7 +844,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     
     # out<-list(stanmodeltext=stanmodeltext)
-    
+        
     #tipred data
     if(ctm$n.TIpred > 0) {
       tipreds <- datalong[match(unique(datalong[,ctm$subjectIDname]),datalong[,ctm$subjectIDname]),ctm$TIpredNames,drop=FALSE]
@@ -880,8 +862,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     datalong[,c(ctm$manifestNames,ctm$TIpredNames)][is.na(datalong[,c(ctm$manifestNames,ctm$TIpredNames)])]<-99999 #missing data
     
-    
-    
+
     
     standata<-c(stansubjectdata(ctsmodel = ctm,datalong = datalong, maxtimestep = nlcontrol$maxtimestep), 
       list(
@@ -920,8 +901,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         savescores=as.integer(savescores),
         savesubjectmatrices=as.integer(savesubjectmatrices)
       ))
-    
-    standata$taylorheun = ifelse(is.null(ctm$taylorheun), 0L,as.integer(ctm$taylorheun))
+
     if(ctm$n.TIpred == 0) tipreds <- array(0,c(0,0))
     standata$tipredsdata <- as.matrix(tipreds)
     standata$nmissingtipreds <- as.integer(length(tipreds[tipreds== 99999]))
@@ -985,13 +965,19 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     #state dependence
     statedependence=rep(0L,4)
+    multiplicativenoise = 0L
     if(any(matsetup$when == 2) ||
         any(grepl('state[',ctm$jacobian$JAx,fixed=TRUE)) ||
         any(grepl('state[',ctm$calcs$driftcint,fixed=TRUE)) ||
         any(grepl('state[',ctm$calcs$diffusion,fixed=TRUE)) 
     ) statedependence[2] = 1L
     
+        if(any(matsetup$when == 2 & matsetup$matrix == 4) ||
+        any(grepl('state[',ctm$calcs$diffusion,fixed=TRUE)) 
+    ) multiplicativenoise = 1L
+    
     standata$statedependence <- statedependence
+    standata$multiplicativenoise <- multiplicativenoise
     
     standata$matsetup <- apply(matsetup[,-1],c(1,2),as.integer,.drop=FALSE) #remove parname and convert to int
     standata$matvalues <- apply(matvalues,c(1,2),as.numeric)

@@ -4,7 +4,12 @@
 \alias{ctStanGenerateFromFit}
 \title{Add a \code{$generated} object to ctstanfit object, with random data generated from posterior of ctstanfit object}
 \usage{
-ctStanGenerateFromFit(fit, nsamples = 200, fullposterior = FALSE)
+ctStanGenerateFromFit(
+  fit,
+  nsamples = 200,
+  fullposterior = FALSE,
+  verboseErrors = FALSE
+)
 }
 \arguments{
 \item{fit}{ctstanfit object}
@@ -12,6 +17,8 @@ ctStanGenerateFromFit(fit, nsamples = 200, fullposterior = FALSE)
 \item{nsamples}{Positive integer specifying number of datasets to generate.}
 
 \item{fullposterior}{Logical indicating whether to sample from the full posterior (original nsamples) or the posterior mean.}
+
+\item{verboseErrors}{if TRUE, print verbose output when errors in generation encountered.}
 }
 \value{
 Matrix of generated data -- one dataset per iteration, according to original time and missingness structure.

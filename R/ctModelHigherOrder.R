@@ -1,4 +1,22 @@
-ctModelHigherOrder <- function(ctm, indices){
+#' Raise the order of a ctsem model object of type 'omx'.
+#'
+#' @param ctm ctModel
+#' @param indices Vector of integers, which latents to raise the order of.
+#' @param diffusion Shift the diffusion parameters / values to the higher order?
+#'
+#' @return extended ctModel
+#' @export
+#'
+#' @examples
+#' om <- ctModel(LAMBDA=diag(1,2),DRIFT=0, 
+#'   MANIFESTMEANS=0,type='omx',Tpoints=4)
+#'   
+#' om <- ctModelHigherOrder(om,1:2)
+#' print(om$DRIFT)
+#' 
+#' m <- ctStanModel(om)
+#' print(m$pars)
+ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE){
   ctm$latentNames <- c(ctm$latentNames,paste0('d',ctm$latentNames[indices]))
   nl <- ctm$n.latent
   
@@ -13,7 +31,7 @@ ctModelHigherOrder <- function(ctm, indices){
     
     for(m in c('T0VAR','DIFFUSION')){
       ctm[[m]] <- rbind(cbind(ctm[[m]],0),0)
-      if(m=='DIFFUSION'){
+      if(diffusion && m=='DIFFUSION'){
       ctm[[m]][i+nl,] <- ctm[[m]][i,] #move diffusion params / value to higher order
       ctm[[m]][,i+nl] <- ctm[[m]][,i] #move diffusion params / value to higher order
       ctm[[m]][i,] <- 0 #set order 1 diffusion to 0
@@ -25,7 +43,7 @@ ctModelHigherOrder <- function(ctm, indices){
     
     for(m in c('CINT','T0MEANS')){
       ctm[[m]] <- rbind(ctm[[m]],0)
-      ctm[[m]][i+nl,1] <- paste0('T0mean_d_',ctm$latentNames[i])
+      if(m %in% 'T0MEANS') ctm[[m]][i+nl,1] <- paste0('T0mean_d_',ctm$latentNames[i])
       if(!m %in% 'T0MEANS') ctm[[m]][i,] <- 0 #set order 1 param to 0
       if(i==tail(indices,1)) rownames(ctm[[m]]) <- ctm$latentNames
     }
@@ -33,8 +51,8 @@ ctModelHigherOrder <- function(ctm, indices){
     ctm$LAMBDA <- cbind(ctm$LAMBDA,0)
   }
   
-  for(i in indices+nl){
-    for(j in indices+nl){
+  for(i in c(indices,indices+nl)){
+    for(j in c(indices,indices+nl)){
       if(i >= j) ctm$T0VAR[i,j] <- paste0('T0var_',ctm$latentNames[i],'_',
         ctm$latentNames[j])
     }

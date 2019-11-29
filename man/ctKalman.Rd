@@ -10,6 +10,7 @@ ctKalman(
   timerange = "asdata",
   timestep = "asdata",
   subjects = 1,
+  removeObs = FALSE,
   plot = FALSE,
   ...
 )
@@ -29,6 +30,10 @@ indicating the time step to use for interpolating values. Lower values give a mo
 but take a little more time to calculate. Currently unavailable for ctStan fits.}
 
 \item{subjects}{vector of integers denoting which subjects (from 1 to N) to plot predictions for.}
+
+\item{removeObs}{Logical. If TRUE, observations (but not covariates)
+are set to NA, so only expectations based on
+parameters and covariates are returned.}
 
 \item{plot}{Logical. If TRUE, plots output instead of returning it. 
 See \code{\link{plot.ctKalman}} for the possible arguments.}

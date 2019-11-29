@@ -295,6 +295,8 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
   
   input <- x[[1]] #ctStanDiscretePars(x,type='discreteDRIFT',times=times,quantiles=quantiles,...)[[1]]
   
+  if(is.data.frame(indices)) indices <- as.matrix(indices)
+  
   nlatent=dim(input)[1]
   
   if(latentNames[1]=='auto') latentNames=dimnames(x$discreteDRIFT)$row
@@ -307,11 +309,10 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
   
   if(is.null(legendcontrol$x)) legendcontrol$x = 'topright'
   if(is.null(legendcontrol$bg)) legendcontrol$bg = 'white'
+
+  if(all(indices=='AR')) indices <- matrix(1:nlatent,nrow=nlatent,ncol=2)
   
-  
-  if(indices[1]=='AR') indices <- matrix(1:nlatent,nrow=nlatent,ncol=2)
-  
-  if(indices[1]=='CR') indices <- cbind(
+  if(all(indices=='CR')) indices <- cbind(
     rep(1:nlatent,nlatent)[-seq(1,nlatent^2,nlatent+1)],
     rep(1:nlatent,each=nlatent-1))
   
