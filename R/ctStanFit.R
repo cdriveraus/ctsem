@@ -14,7 +14,7 @@ T0VARredundancies <- function(ctm) {
   return(ctm)
 }
 
-stansubjectdata <- function(ctsmodel, datalong,maxtimestep,optimize=optimize){
+stansubjectdata <- function(ctsmodel, datalong,maxtimestep){
   #t0 index
   T0check<-rep(1,nrow(datalong))
   for(i in 2:nrow(datalong)){
@@ -813,6 +813,16 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     
     #check diffusion indices input by user - which latents are involved in covariance
+    if(derrind[1]=='all'){
+      derrind <- c()
+      diffusion=listOfMatrices(ctm$pars)$DIFFUSION
+      for(i in 1:nrow(diffusion)){
+        if(all(suppressWarnings(as.numeric(diffusion[i,])) %in% 0) && all(suppressWarnings(as.numeric(diffusion[,i])) %in% 0)){
+          derrind <- derrind
+          } else derrind <- c(derrind,i)
+      }
+    }
+      
     if(intoverstates==FALSE || all(derrind=='all') ) derrind = 1:n.latent
     # if(all(derrind=='all')) derrind = sort(unique(ctm$pars$col[
     #   ctm$pars$matrix=='DIFFUSION' & (!is.na(ctm$pars$param) | ctm$pars$value!=0)]))
@@ -873,7 +883,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     
     
-    standata<-c(stansubjectdata(ctsmodel = ctm,datalong = datalong,optimize = optimize, maxtimestep = nlcontrol$maxtimestep), 
+    standata<-c(stansubjectdata(ctsmodel = ctm,datalong = datalong, maxtimestep = nlcontrol$maxtimestep), 
       list(
         nsubjects=as.integer(nsubjects),
         nmanifest=as.integer(n.manifest),

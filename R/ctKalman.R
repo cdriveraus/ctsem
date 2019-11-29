@@ -14,6 +14,9 @@
 #' indicating the time step to use for interpolating values. Lower values give a more accurate / smooth representation,
 #' but take a little more time to calculate. Currently unavailable for ctStan fits.
 #' @param subjects vector of integers denoting which subjects (from 1 to N) to plot predictions for. 
+#' @param removeObs Logical. If TRUE, observations (but not covariates)
+#' are set to NA, so only expectations based on
+#' parameters and covariates are returned. 
 #' @param plot Logical. If TRUE, plots output instead of returning it. 
 #' See \code{\link{plot.ctKalman}} for the possible arguments.
 #' @param ... additional arguments to pass to \code{\link{plot.ctKalman}}.
@@ -46,7 +49,7 @@
 #' @export
 
 ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
-  subjects=1, plot=FALSE, ...){
+  subjects=1, removeObs = FALSE, plot=FALSE, ...){
   type=NA
   if('ctStanFit' %in% class(fit)) type='stan' 
   if('ctsemFit' %in% class(fit)) type ='omx'
@@ -61,6 +64,12 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
     } 
     
     fit$standata <- standatact_specificsubjects(fit$standata, subjects = subjects)
+
+    if(removeObs){
+      sapply(c('nobs_y','nbinary_y','ncont_y','whichobs_y','whichbinary_y','whichcont_y'),
+        function(x) fit$standata[[x]][] <<- 0L)
+      fit$standata$Y[] <- 99999
+    }
     
     out <- ctStanKalman(fit,collapsefunc=mean) #extract state predictions
     

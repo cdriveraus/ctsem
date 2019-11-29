@@ -359,7 +359,7 @@ sgd <- function(init,fitfunc,ndatapoints,plotsgd=FALSE,stepbase=1e-4,gmeminit=if
       if(is.na(startnrows) && i < warmuplength && i > 1 && lpg[1] < lp[1]) {
         accepted <- FALSE
         if(plotsgd) print('not accepted!')
-        # step = step * .5
+        step = step * .8
         gsmooth=gsmooth*.5
       }
     }

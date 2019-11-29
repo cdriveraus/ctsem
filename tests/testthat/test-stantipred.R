@@ -23,7 +23,7 @@ n.TDpred=n.TDpred,n.manifest=n.manifest,
   T0VAR=diag(10,1))
 
 for(i in 1:n.subjects){
-  gm$CINT[1,1] <- TI1[i]*5
+  gm$CINT[1,1] <- TI1[i]*5+rnorm(1,0,.6)
 ndat<-ctGenerate(gm,n.subjects=1,burnin=30,wide=FALSE,logdtsd=.4)
 ndat <- cbind(ndat,TI1[i])
 ndat[,1] <- i
@@ -43,24 +43,29 @@ MANIFESTVAR=diag(0.5,1),
   CINT=matrix(c('cint1'),ncol=1),
   n.manifest=n.manifest,LAMBDA=diag(1))
 
- checkm$pars$indvarying <- FALSE
+ # checkm$pars$indvarying <- FALSE
 
  checkm$pars[c(-1,-7) ,c('TI1_effect')] <- FALSE
 
-tfit<-ctStanFit(tdat,checkm,chains=2,optimize=T,optimcontrol=list(is=TRUE,finishsamples=500),nopriors=F,verbose=0)
-s=summary(tfit)
+tfit<-ctStanFit(tdat,checkm,chains=2,optimize=TRUE,
+  optimcontrol=list(is=TRUE,finishsamples=500),nopriors=FALSE,verbose=0)
+s1=summary(tfit)
 
-expect_equal(s$tipreds[2,'mean'],5,tolerance=.1)
+expect_equal(s1$tipreds[2,'mean'],5,tolerance=.1)
+expect_equal(s1$popsd[2,'mean'],.6,tolerance=.2)
 
-tfit<-ctStanFit(tdat,checkm,chains=2,optimize=T,optimcontrol=list(is=FALSE),nopriors=F,
+tfit<-ctStanFit(tdat,checkm,chains=2,optimize=TRUE,
+  optimcontrol=list(is=FALSE),nopriors=FALSE,
   nlcontrol=list(nldynamics=TRUE,nlmeasurement=TRUE))
-s=summary(tfit)
+s2=summary(tfit)
 
-expect_equal(s$tipreds[2,'mean'],5,tolerance=.1)
+expect_equal(s2$tipreds[2,'mean'],5,tolerance=.1)
+expect_equal(s2$popsd[2,'mean'],.6,tolerance=.2)
 
-tfit<-ctStanFit(tdat,checkm,iter=400,chains=2,control=list(adapt_delta=.8,max_treedepth=6),plot=T)
-s=summary(tfit)
+tfit<-ctStanFit(tdat,checkm,iter=400,chains=2,control=list(adapt_delta=.8,max_treedepth=6),plot=FALSE)
+s3=summary(tfit)
 
-expect_equal(s$tipreds[2,'mean'],5,tolerance=.1)
+expect_equal(s3$tipreds[2,'mean'],5,tolerance=.1)
+expect_equal(s3$popsd[2,'mean'],.6,tolerance=.2)
 })
 }

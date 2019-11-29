@@ -65,10 +65,10 @@ ctStanProfileCI <- function(fit, parnames){
           max_iter=99999,
           method="L-BFGS",memory=100,
           line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',
-          abs_tol=1e-8,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)$f)) + 
+          abs_tol=1e-3,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)$f)) + 
           ifelse(upperci && parx < fit$stanfit$rawest[which( rownames(fit$stanfit$transformedpars_old[1:np,]) %in% cipars[pi])], 100, 0) + 
           ifelse(!upperci && parx > fit$stanfit$rawest[which( rownames(fit$stanfit$transformedpars_old[1:np,]) %in% cipars[pi])], 100, 0)
-        # print(pll)
+        print(pll)
         return(pll)
       }
       
@@ -89,7 +89,7 @@ ctStanProfileCI <- function(fit, parnames){
           max_iter=99999,
           method="L-BFGS",memory=100,
           line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',
-          abs_tol=1e-8,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)$par
+          abs_tol=1e-3,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)$par
       # browser()
       if(upperci) highpars[which( rownames(fit$stanfit$transformedpars_old[1:np,]) %in% cipars[pi]) ] <- optimfit
       if(!upperci) lowpars[which( rownames(fit$stanfit$transformedpars_old[1:np,]) %in% cipars[pi]) ] <- optimfit
