@@ -407,7 +407,8 @@ matrix[nlatent, nlatent] sDIFFUSIONcov;
     timei = time[rowi]; //must come after dt!
     si=subject[rowi]; //only update subject after t0check!
 
-    
+    if(savescores || rowi==1) Je[savescores ? rowi : 1] = diag_matrix(rep_vector(1,nlatentpop)); //elements updated later
+       
     if(T0check == 0) { // calculate initial matrices if this is first row for si
   
     
@@ -583,7 +584,8 @@ if(verbose > 1) print ("below t0 row ", rowi);
     
       if(continuoustime ==1){
         if(dtchange==1 || (T0check == 1 && (DRIFTsubindex + CINTsubindex > 0))){ //if dtchanged or if subject variability
-          discreteDRIFT = matrix_exp(append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1)) * dt);
+          discreteDRIFT = matrix_exp(append_row(append_col(sDRIFT[1:nlatent,1:nlatent],sCINT),rep_matrix(0,1,nlatent+1)) * dt);
+          if(!savescores) Je[savescores ? rowi : 1, 1:nlatent, 1:nlatent] = discreteDRIFT[1:nlatent,1:nlatent];
         }
       
         if(dtchange==1 || (T0check == 1 && (DIFFUSIONsubindex + DRIFTsubindex > 0))){ //if dtchanged or if subject variability
@@ -595,59 +597,19 @@ if(verbose > 1) print ("below t0 row ", rowi);
 
       if(continuoustime==0 && T0check == 1){
         if(subjectcount == 1 || DIFFUSIONsubindex + DRIFTsubindex + CINTsubindex > 0){ //if first subject or variability
-          discreteDRIFT=append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1));
+          discreteDRIFT=append_row(append_col(sDRIFT[1:nlatent,1:nlatent],sCINT),rep_matrix(0,1,nlatent+1));
           discreteDRIFT[nlatent+1,nlatent+1] = 1;
+          if(!savescores) Je[savescores ? rowi : 1, 1:nlatent, 1:nlatent] = discreteDRIFT[1:nlatent,1:nlatent];
           discreteDIFFUSION=sDIFFUSIONcov;
           if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(makesym(discreteDIFFUSION,verbose,1));
         }
       }
-
-      Je[savescores ? rowi : 1] = discreteDRIFT[1:nlatent,1:nlatent];
-      state[1:nlatent] = (discreteDRIFT * append_row(state,1.0))[1:nlatent];
+      if(savescores) Je[savescores ? rowi : 1, 1:nlatent, 1:nlatent] = discreteDRIFT[1:nlatent,1:nlatent];
+      state[1:nlatent] = (discreteDRIFT * append_row(state[1:nlatent],1.0))[1:nlatent];
       if(ntdpred > 0) state[1:nlatent] += sTDPREDEFFECT * tdpreds[rowi];
       if(intoverstates==1) {
-        etacov = quad_form(etacov, discreteDRIFT[1:nlatent,1:nlatent]');
-        
-      {
-      int doprint=0;
-              for(ci in 1:nlatent){
-              if(discreteDIFFUSION[ci,ci] < -1e-6){
-              doprint=1;
-                discreteDIFFUSION[,ci] = rep_vector(0,nlatent);
-                discreteDIFFUSION[ci,] = rep_vector(0,nlatent)';
-              }
-              if(doprint){
-              print("discrete DIFFUSION problem! ",rowi);
-              print("discreteDIFFUSION = ",discreteDIFFUSION);
-              print("sJAx = ", sJAx);
-              print("Je = ", Je);
-              print("sDIFFUSION = ", sDIFFUSION);
-              print("sDRIFT = ", sDRIFT);
-              
-              }
-              }
-      }
-      
-      {
-      int doprint=0;
-              for(ci in 1:nlatent){
-              if(etacov[ci,ci] < -1e-6){
-              doprint=1;
-                etacov[,ci] = rep_vector(0,nlatent);
-                etacov[ci,] = rep_vector(0,nlatent)';
-              }
-              if(doprint){
-              print("etacov problem! ",rowi);
-              print("discreteDIFFUSION = ",discreteDIFFUSION);
-              print("sJAx = ", sJAx);
-              print("Je = ", Je);
-              print("sDIFFUSION = ", sDIFFUSION);
-              print("sDRIFT = ", sDRIFT);
-              }
-              }
-      }
-      
-        if(ndiffusion > 0) etacov += discreteDIFFUSION;
+        etacov[1:nlatentpop,1:nlatentpop] = quad_form(etacov[1:nlatentpop,1:nlatentpop], Je[savescores ? rowi : 1]');
+        if(ndiffusion > 0) etacov[1:nlatent,1:nlatent] += discreteDIFFUSION;
 
       }
     }//end linear time update
@@ -748,46 +710,6 @@ if(verbose > 1) print ("below t0 row ", rowi);
                 discreteDIFFUSION[derrind,derrind] =  sasymDIFFUSION[derrind,derrind] - quad_form( sasymDIFFUSION[derrind,derrind], Je[savescores ? rowi : 1, derrind,derrind]' );
               } 
               etacov = quad_form(etacov, Je[savescores ? rowi : 1]');
-      {
-      int doprint=0;
-              for(ci in 1:nlatent) if(discreteDIFFUSION[ci,ci] < -1e-6){
-              doprint=1;
-                discreteDIFFUSION[,ci] = rep_vector(0,nlatent);
-                discreteDIFFUSION[ci,] = rep_vector(0,nlatent)';
-              }
-              if(doprint){
-              print("discrete DIFFUSION problem! ",rowi);
-              print("discreteDIFFUSION = ",discreteDIFFUSION);
-              print("sJAx = ", sJAx);
-              print("Je = ", Je);
-              print("sDIFFUSION = ", sDIFFUSION);
-              print("sDRIFT = ", sDRIFT);
-              
-              }
-      }
-      
-      {
-      int doprint=0;
-              for(ci in 1:nlatent) if(etacov[ci,ci] < -1e-6){
-              doprint=1;
-                etacov[,ci] = rep_vector(0,nlatent);
-                etacov[ci,] = rep_vector(0,nlatent)';
-              }
-              if(doprint){
-              print("etacov problem! ",rowi);
-              print("etacov = ",etacov);
-              print("discreteDIFFUSION = ",discreteDIFFUSION);
-              print("sJAx = ", sJAx);
-              print("Je = ", Je);
-              print("sDIFFUSION = ", sDIFFUSION);
-              print("sDRIFT = ", sDRIFT);
-              
-              }
-      }
-      
-      
-      
-              
               etacov[derrind,derrind] += discreteDIFFUSION[derrind,derrind]; //may need improving
               
 
@@ -1074,7 +996,6 @@ model{
     if(ntipred > 0){ 
       target+= dokalmanpriormodifier * normal_lpdf(tipredeffectparams| 0, tipredeffectscale);
       target+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
-      //target+= dokalmanpriormodifier * normal_lpdf(tipredglobalscalepar | 0-log(ntipred),log(square(ntipred)));
     }
     
     if(nindvarying > 0){

@@ -51,21 +51,21 @@ tfit<-ctStanFit(tdat,checkm,chains=2,optimize=TRUE,
   optimcontrol=list(is=TRUE,finishsamples=500),nopriors=FALSE,verbose=0)
 s1=summary(tfit)
 
-expect_equal(s1$tipreds[2,'mean'],5,tolerance=.1)
-expect_equal(s1$popsd[2,'mean'],.6,tolerance=.2)
+expect_equivalent(s1$tipreds[2,'mean'],5,tolerance=.1)
+expect_equivalent(s1$popsd[2,'mean'],.6,tolerance=.2)
 
-tfit<-ctStanFit(tdat,checkm,chains=2,optimize=TRUE,
+tfit<-ctStanFit(tdat,checkm,chains=2,optimize=TRUE,verbose=1,
   optimcontrol=list(is=FALSE),nopriors=FALSE,
   nlcontrol=list(nldynamics=TRUE,nlmeasurement=TRUE))
 s2=summary(tfit)
 
-expect_equal(s2$tipreds[2,'mean'],5,tolerance=.1)
-expect_equal(s2$popsd[2,'mean'],.6,tolerance=.2)
+expect_equivalent(s2$tipreds[2,'mean'],5,tolerance=.1)
+expect_equivalent(s2$popsd[2,'mean'],.6,tolerance=.2)
 
 tfit<-ctStanFit(tdat,checkm,iter=400,chains=2,control=list(adapt_delta=.8,max_treedepth=6),plot=FALSE)
 s3=summary(tfit)
 
-expect_equal(s3$tipreds[2,'mean'],5,tolerance=.1)
-expect_equal(s3$popsd[2,'mean'],.6,tolerance=.2)
+expect_equivalent(s3$tipreds[2,'mean'],5,tolerance=.1)
+expect_equivalent(s3$popsd[2,'mean'],.6,tolerance=.2)
 })
 }

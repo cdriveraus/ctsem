@@ -43,11 +43,13 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
     dm$pars$indvarying <- FALSE
     dm$pars$indvarying[dm$pars$matrix %in% c('CINT','T0MEANS')] <- TRUE
     
-    
+ 
     for(m in c('cm','dm')){
       argslist <- list(
-        ml=list(datalong = dat,ctstanmodel = get(m),optimize=TRUE, nlcontrol=list(),
-        verbose=0,optimcontrol=list(plotsgd=F,estonly=F,stochastic=F),savescores = F,nopriors=T)
+        ml=list(datalong = dat,ctstanmodel = get(m),optimize=TRUE,
+          verbose=0,optimcontrol=list(plotsgd=FALSE,estonly=FALSE,stochastic=F),savescores = FALSE,nopriors=TRUE)
+        # ,mlnl=list(datalong = dat,ctstanmodel = get(m),optimize=TRUE, nlcontrol=list(nldynamics=TRUE),
+        #   verbose=0,optimcontrol=list(plotsgd=F,estonly=F,stochastic=F),savescores = FALSE,nopriors=TRUE)
         #, mlis=list(datalong = dat,ctstanmodel = get(m),optimize=TRUE, nlcontrol=list(Jstep=1e-6), 
         #   verbose=0,optimcontrol=list(plotsgd=F,estonly=F,isloops=1,stochastic=F),savescores = F,nopriors=T)
         # ,mapis=list(datalong = dat,ctstanmodel = get(m),optimize=TRUE, nlcontrol=list(Jstep=1e-6),

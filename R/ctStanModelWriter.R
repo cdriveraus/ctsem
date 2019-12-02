@@ -25,7 +25,7 @@ ctModelStatesAndPARS <- function(ctm){
   for(li in seq_along(ln)){
     for(ri in grep(paste0('\\b(',ln[li],')\\b'),ctm$pars$param)){ #wherever there are extra pars
       if(!ctm$pars$matrix[ri] %in% 'PARS'){ #except in PARS itself
-        parmatch <- which(ctm$pars$param %in% ln[li])
+        parmatch <- which(ctm$pars$param %in% ln[li] & ctm$pars$matrix %in% 'PARS')
         ctm$pars$param[ri] <- gsub(paste0('\\b(',ln[li],')\\b'), #replace with PARS reference...
           paste0('PARS[',ctm$pars$row[parmatch],',',ctm$pars$col[parmatch],']'),ctm$pars$param[ri])
       }
@@ -53,90 +53,143 @@ ctModelTransformsToNum<-function(ctm){
     )
     # Get some param values over multiplier wide range, and compute the corresponding y
     # values.
+    
     param = c(seq(-2, 2, .1),seq(-10,10,.5),c(rnorm(10)))
+    # browser()
     y = eval(parse(text=e)) #eval(substitute(substitute(e, list(param = param)), list(e = as.quoted(e)[[1]]))))
-    param <- param[abs(y) < 1e5]; 
-    y <- y[abs(y) < 1e5]
+    keep <- abs(y) < 1e5 & !is.na(param)
+    param <- param[keep]
+    y <- y[keep]
+    # plot(param,y)
     
     # Try to fit each formula to the data.
-    for(i in 1:nrow(formula.types)) {
-      start.params = list(multiplier = 1.0, offset = 0)
-      if(!is.na(formula.types$meanscale[i])) {
-        start.params[["meanscale"]] = 1.0
-      }
-      if(!is.na(formula.types$inneroffset[i])) {
-        start.params[["inneroffset"]] = 0
-      }
-      
-      ff <- function(pars){
-        multiplier=pars[1];
-        offset=pars[2];
-        if(i > 1) {
-          meanscale=pars[3];
-          inneroffset=pars[4]
-        } else{
-          meanscale=1;inneroffset=0
+    success <- FALSE
+    for(tryi in 1:2){ #if no success try with more enthusiasm
+      if(success) break
+      for(i in 1:nrow(formula.types)) {
+        if(i > 1 && any((formula.types$lsfit < .001) %in% TRUE)) next #found the answer already
+        tftype <- formula.types$type[i]
+        # start.params = list(multiplier = 1.0, offset = 0)
+        # if(!is.na(formula.types$meanscale[i])) {
+        #   start.params[["meanscale"]] = 1.0
+        # }
+        # if(!is.na(formula.types$inneroffset[i])) {
+        #   start.params[["inneroffset"]] = 0
+        # }
+        # 
+        ff <- function(pars){
+          # print(pars)
+          multiplier=pars[1];
+          offset=pars[2];
+          if(tftype > 0) {
+            meanscale=pars[3];
+            inneroffset=pars[4]
+          } else{
+            meanscale=1;inneroffset=0
+          }
+          yest<- eval(parse(text=formula.types$formula[i]))
+          res <- (sum( ((y-yest)^2)/(abs(y)+.01)))
+          if(is.na(res)) res <- 1e100
+          return(res)
         }
-        yest<- eval(parse(text=formula.types$formula[i]))
-        res <- (sum( ((y-yest)^2)/(abs(y)+.01)))
-        if(is.na(res)) res <- 1e100
-        return(res)
-      }
+        
+        ffg <- function(pars){
+          b=ff(pars)
+          # g=try(numDeriv::grad(ff,pars,method='simple',
+          #   method.args=list(eps=1e-8,inneroffset=1e-10,r=2)
+          # ),silent=TRUE)
+          g=try(sapply(1:length(pars),function(x) {
+            parx=pars
+            parx[x]<-pars[x]+1e-8;
+            (b-ff(parx))/1e-8
+          }))
+          if('try-error' %in% class(g)) g <- rnorm(pars)
+          if(any(is.na(g))) g[is.na(g)] <- rnorm(sum(is.na(g)))
+          return(-g)
+        }
+        
+        # teststarts <- matrix(rnorm(4*500,0,5),500,4)
+        # testres <- apply(teststarts,1,function(x) ff(x))
+        # start.params[c(-3:-4)] <- teststarts[testres == min(testres,na.rm=TRUE),c(-3:-4)]
+        # if(tftype > 0) start.params[3:4] <- teststarts[testres == min(testres,na.rm=TRUE),3:4]
+        
+        gridbase=ifelse(tryi==1,1.5,.5)
+        gs=seq(-2,2,gridbase)
+        p1g <- p2g <- sort(c(-exp(gs),exp(gs)))
+        if(tftype > 0){
+          p3g <- p4g <- p1g
+        } else {
+          p3g <-1
+          p4g <-0
+        }
+        min <- Inf
+
+        teststarts <- expand.grid(p1g,p2g,p3g,p4g)
       
-      ffg <- function(pars){
-        b=ff(pars)
-        # g=try(numDeriv::grad(ff,pars,method='simple',
-        #   method.args=list(eps=1e-8,inneroffset=1e-10,r=2)
-        # ),silent=TRUE)
-        g=try(sapply(1:length(pars),function(x) {
-          parx=pars;parx[x]<-pars[x]+1e-8;
-          (b-ff(parx))/1e-8
-        }))
-        if('try-error' %in% class(g)) g <- rnorm(pars)
-        if(any(is.na(g))) g[is.na(g)] <- rnorm(sum(is.na(g)))
-        return(-g)
-      }
-      # 
-      fit = try(mize(par = unlist(start.params),
-        fg = list(fn=ff,gr=ffg),
-        max_iter=100,abs_tol=1e-3,rel_tol=1e-5,
-        method='BFGS'))
-      if(fit$f > .1) {
-        start.params[1] = -1
+        teststarts <- teststarts[teststarts[,3]!=0,]
+        teststarts <- teststarts[teststarts[,1]!=0,]
+        teststarts <- teststarts[!duplicated(teststarts),]
+
+        res <- apply(teststarts,1,function(x) ff(unlist(x)))
+        start.params <- teststarts[which(res == min(res))[1],]
+      
+        if(tftype==0) start.params <- start.params[1:2]
         fit = try(mize(par = unlist(start.params),
           fg = list(fn=ff,gr=ffg),
-          max_iter=100,abs_tol=1e-3,rel_tol=1e-5,
+          max_iter=50*ifelse(tryi==1,1,4),abs_tol=1e-3*ifelse(tryi==1,1,1e-4),
+          rel_tol=1e-5*ifelse(tryi==1,1,1e-4),
           method='BFGS'))
+        
+        # if(tftype > 0) piseq <- 1:4 else piseq <- 1:2
+        # for(pi in piseq){
+        #   if(fit$f > .1) {
+        #     start <- unlist(start.params)
+        #     start[pi] = -start[pi]
+        #     fit = try(mize(par = start,
+        #       fg = list(fn=ff,gr=ffg),
+        #       max_iter=100,abs_tol=1e-5,rel_tol=1e-8,
+        #       method='BFGS'))
+        #   }
+        # }
+        
+        if(fit$f < .1 && fit$f > 1e-5) {
+          # message('close, ', round(fit$f,5))
+          fit = try(mize(par = fit$par, #if close, refine estimate
+            fg = list(fn=ff,gr=ffg),
+            max_iter=200,abs_tol=1e-5,rel_tol=1e-9,
+            method='BFGS'))
+          # message('close2, ', round(fit$f,5))
+        }
+        
+        formula.types$offset[i] = fit$par[2] #round(coef(fit)[["offset"]])
+        formula.types$multiplier[i] = fit$par[1] #round(coef(fit)[["multiplier"]])
+        if(!is.na(formula.types$meanscale[i])) {
+          formula.types$meanscale[i] = fit$par[3] #round(coef(fit)[["meanscale"]])
+        }
+        if(!is.na(formula.types$inneroffset[i])) {
+          formula.types$inneroffset[i] = fit$par[4] #round(coef(fit)[["inneroffset"]])
+        }
+        formula.types$lsfit[i] = fit$f #AIC(fit)
       }
-      
-      if(fit$f < .1 && fit$f > 1e-5) {
-        # message('close, ', round(fit$f,3))
-        fit = try(mize(par = unlist(start.params), #if close, refine estimate
-          fg = list(fn=ff,gr=ffg),
-          max_iter=500,abs_tol=1e-5,rel_tol=1e-6,
-          method='BFGS'))
+      # browser()
+      if(any(formula.types$lsfit < .1)) success <- TRUE else {
+        # browser()
+        message('Trying to determine transforms...')#browser()
       }
-      
-      formula.types$offset[i] = fit$par[2] #round(coef(fit)[["offset"]])
-      formula.types$multiplier[i] = fit$par[1] #round(coef(fit)[["multiplier"]])
-      if(!is.na(formula.types$meanscale[i])) {
-        formula.types$meanscale[i] = fit$par[3] #round(coef(fit)[["meanscale"]])
-      }
-      if(!is.na(formula.types$inneroffset[i])) {
-        formula.types$inneroffset[i] = fit$par[4] #round(coef(fit)[["inneroffset"]])
-      }
-      formula.types$lsfit[i] = fit$f #AIC(fit)
     }
+
     # Return the values we found.
+    # print(e)
     # print(formula.types)
     # return(formula.types %>%
     #     filter(lsfit == min(lsfit)) %>%
     #     mutate(inneroffset = coalesce(inneroffset, 0),
     #       meanscale = coalesce(meanscale, 1)) %>%
     #     select(type, offset, inneroffset, multiplier, meanscale,lsfit))
-    return(formula.types[which(formula.types$lsfit %in% min(formula.types$lsfit)),])
+    # browser()
+    return(formula.types[which(formula.types$lsfit %in% min(formula.types$lsfit,na.rm=TRUE)),])
   }
-  
+  # browser()
   rownames(ctm$pars)=1:nrow(ctm$pars)
   newrows <- which(!is.na(ctm$pars$transform))
   if(length(newrows) ==0){
@@ -156,8 +209,12 @@ ctModelTransformsToNum<-function(ctm){
     colnames(df)[1] <- 'transform'
     df$transform[df$lsfit > .1] <- eqs[df$lsfit > .1]
     df$lsfit <- NULL
-    rownames(df) <- newrows
     
+    #hack for NA's on unused pars
+    df$inneroffset[!is.na(df$offset) & is.na(df$inneroffset)] <- 0
+    df$meanscale[!is.na(df$offset) & is.na(df$meanscale)] <- 1
+    
+    rownames(df) <- newrows
     ctm$pars$transform <- NULL
     # nctspec <- cbind(ctm$pars[newrows,,drop=FALSE],df)
     # nctspec <- 
@@ -374,7 +431,7 @@ ctStanModelCleanctspec <-  function(ctspec){ #clean ctspec structure
         message('Individual variation requested on deterministic parameter ', ctspec$param[rowi],' , setting to FALSE')
         ctspec$indvarying[rowi] <- FALSE
       }
-     
+      
       if(length(tieffects) > 0 && any(as.logical(ctspec[rowi,tieffects]) %in% TRUE)){
         message('TI predictor effects requested on deterministic parameter ', ctspec$param[rowi],' , setting to FALSE')
         ctspec[rowi,tieffects] <- FALSE
@@ -533,9 +590,11 @@ ctStanModelMatrices <-function(ctm){
               parameter <- freepar
               if(is.na(suppressWarnings(as.integer(ctspec$transform[i])))) { #extra tform needed
                 extratformcounter <- extratformcounter + 1
+                # extratforms <- paste0(extratforms,'if(transform==',-10-extratformcounter,') out = ',
+                #   ctspec$offset[i],' + ',ctspec$multiplier[i],' * (inneroffset + ',
+                #   gsub('param', paste0('param * ',ctspec$meanscale[i]),ctspec$transform[i]),');')
                 extratforms <- paste0(extratforms,'if(transform==',-10-extratformcounter,') out = ',
-                  ctspec$offset[i],' + ',ctspec$multiplier[i],' * (inneroffset + ',
-                  gsub('param', paste0('param * ',ctspec$meanscale[i]),ctspec$transform[i]),');')
+                  ctspec$transform[i],';')
                 ctspec$transform[i] <- -10-extratformcounter
               }
               if(n.TIpred > 0) {
@@ -917,7 +976,8 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup){
     timei = time[rowi]; //must come after dt!
     si=subject[rowi]; //only update subject after t0check!
 
-    
+    if(savescores || rowi==1) Je[savescores ? rowi : 1] = diag_matrix(rep_vector(1,nlatentpop)); //elements updated later
+       
     if(T0check == 0) { // calculate initial matrices if this is first row for si
   
     ',subjectparscalc2(popmats=ifelse(gendata,TRUE,TRUE),subjmats=ifelse(gendata,TRUE,TRUE)),'
@@ -938,7 +998,8 @@ if(verbose > 1) print ("below t0 row ", rowi);
     
       if(continuoustime ==1){
         if(dtchange==1 || (T0check == 1 && (DRIFTsubindex + CINTsubindex > 0))){ //if dtchanged or if subject variability
-          discreteDRIFT = matrix_exp(append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1)) * dt);
+          discreteDRIFT = matrix_exp(append_row(append_col(sDRIFT[1:nlatent,1:nlatent],sCINT),rep_matrix(0,1,nlatent+1)) * dt);
+          if(!savescores) Je[savescores ? rowi : 1, 1:nlatent, 1:nlatent] = discreteDRIFT[1:nlatent,1:nlatent];
         }
       
         if(dtchange==1 || (T0check == 1 && (DIFFUSIONsubindex + DRIFTsubindex > 0))){ //if dtchanged or if subject variability
@@ -950,19 +1011,19 @@ if(verbose > 1) print ("below t0 row ", rowi);
 
       if(continuoustime==0 && T0check == 1){
         if(subjectcount == 1 || DIFFUSIONsubindex + DRIFTsubindex + CINTsubindex > 0){ //if first subject or variability
-          discreteDRIFT=append_row(append_col(sDRIFT,sCINT),rep_matrix(0,1,nlatent+1));
+          discreteDRIFT=append_row(append_col(sDRIFT[1:nlatent,1:nlatent],sCINT),rep_matrix(0,1,nlatent+1));
           discreteDRIFT[nlatent+1,nlatent+1] = 1;
+          if(!savescores) Je[savescores ? rowi : 1, 1:nlatent, 1:nlatent] = discreteDRIFT[1:nlatent,1:nlatent];
           discreteDIFFUSION=sDIFFUSIONcov;
           if(intoverstates==0) discreteDIFFUSION = cholesky_decompose(makesym(discreteDIFFUSION,verbose,1));
         }
       }
-
-      Je[savescores ? rowi : 1] = discreteDRIFT[1:nlatent,1:nlatent];
-      state[1:nlatent] = (discreteDRIFT * append_row(state,1.0))[1:nlatent];
+      if(savescores) Je[savescores ? rowi : 1, 1:nlatent, 1:nlatent] = discreteDRIFT[1:nlatent,1:nlatent];
+      state[1:nlatent] = (discreteDRIFT * append_row(state[1:nlatent],1.0))[1:nlatent];
       if(ntdpred > 0) state[1:nlatent] += sTDPREDEFFECT * tdpreds[rowi];
       if(intoverstates==1) {
-        etacov = quad_form(etacov, discreteDRIFT[1:nlatent,1:nlatent]\');
-        if(ndiffusion > 0) etacov += discreteDIFFUSION;
+        etacov[1:nlatentpop,1:nlatentpop] = quad_form(etacov[1:nlatentpop,1:nlatentpop], Je[savescores ? rowi : 1]\');
+        if(ndiffusion > 0) etacov[1:nlatent,1:nlatent] += discreteDIFFUSION;
 
       }
     }//end linear time update
@@ -1718,7 +1779,6 @@ model{
     if(ntipred > 0){ 
       target+= dokalmanpriormodifier * normal_lpdf(tipredeffectparams| 0, tipredeffectscale);
       target+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
-      //target+= dokalmanpriormodifier * normal_lpdf(tipredglobalscalepar | 0-log(ntipred),log(square(ntipred)));
     }
     
     if(nindvarying > 0){

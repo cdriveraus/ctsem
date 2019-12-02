@@ -113,7 +113,7 @@ ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
         if(ctspec$row[pi] == ctspec$col[pi]){
           if(continuoustime==TRUE) {
             ctspec$transform[pi] <- 1
-            ctspec$meanscale[pi] <- 2
+            ctspec$meanscale[pi] <- -2
             ctspec$multiplier[pi] <- -2
             ctspec$offset[pi] <- 0
           }

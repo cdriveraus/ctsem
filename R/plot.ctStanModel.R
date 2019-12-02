@@ -39,6 +39,7 @@
 
 plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='marginalise',inddifdevs=c(-1,1),plot=TRUE,...){
   if(!'ctStanModel' %in% class(x)) stop('not a ctStanModel object!')
+  
   x <- ctModelTransformsToNum(x)
   x <- T0VARredundancies(x)
   m<-x$pars
@@ -112,7 +113,7 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='margi
     # 
     # dat$Par.Value[dat$Par.Value >= dat$xhigh] <- dat$xhigh[dat$Par.Value >= dat$xhigh]
     # dat$Par.Value[dat$Par.Value <= dat$xlow] <- dat$xlow[dat$Par.Value <= dat$xlow]
-    
+
     plots<-c(plots,list(
       ggplot(dat,aes(x=Par.Value,fill=type,ymax=Density,y=Density) )+
         geom_line(alpha=.3) +

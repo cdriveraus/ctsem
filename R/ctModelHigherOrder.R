@@ -3,6 +3,7 @@
 #' @param ctm ctModel
 #' @param indices Vector of integers, which latents to raise the order of.
 #' @param diffusion Shift the diffusion parameters / values to the higher order?
+#' @param crosseffects Shift cross coupling parameters of the DRIFT matrix to the higher order?
 #'
 #' @return extended ctModel
 #' @export
@@ -16,43 +17,61 @@
 #' 
 #' m <- ctStanModel(om)
 #' print(m$pars)
-ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE){
+ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE){
   ctm$latentNames <- c(ctm$latentNames,paste0('d',ctm$latentNames[indices]))
   nl <- ctm$n.latent
   
-  for(i in indices){
-    ctm$DRIFT <- rbind(cbind(ctm$DRIFT,0),0)
-    ctm$DRIFT[i+nl,i+nl] <- ctm$DRIFT[i,i] #move ar param / value to higher order
-    ctm$DRIFT[i,i] <- 0 #set ar param / value to 0
-    ctm$DRIFT[i,i+nl] <- 1 #set effect of higher order to 1
-    ctm$DRIFT[i+nl,i] <-paste0('drift_',ctm$latentNames[i+nl],'_',ctm$latentNames[i],'|-log1p(exp(-param*2))') #estimate effect of 1st order on 2nd
-    if(i==tail(indices,1)) rownames(ctm$DRIFT) <- ctm$latentNames
-    if(i==tail(indices,1)) colnames(ctm$DRIFT) <- ctm$latentNames
+  for(i in 1:length(indices)){
+    for(m in c('DRIFT','DIFFUSION','T0VAR')){
+    ctm[[m]] <- rbind(cbind(ctm[[m]],0),0)
+    }
+    for(m in c('CINT','T0MEANS')){
+      ctm[[m]] <- rbind(ctm[[m]],0)
+    }
+    ctm$LAMBDA <- cbind(ctm$LAMBDA,0)
+    if(ctm$n.TDpred > 0) ctm$TDPREDEFFECT <- rbind(ctm$TDPREDEFFECT,0)
+  }
+  
+  for(i in 1:length(indices)){
+    # browser()
+    if(!crosseffects) ctm$DRIFT[i+nl,i+nl] <- ctm$DRIFT[indices[i],indices[i]] #move ar param / value to higher order
+    if(crosseffects){
+      m <- 'DRIFT'
+      # browser()
+      ctm[[m]][i+nl,] <- ctm[[m]][indices[i],] #move crosseffect params / value to higher order
+      ctm[[m]][,i+nl] <- ctm[[m]][,indices[i]] #move crosseffect params / value to higher order
+      ctm[[m]][indices[i],] <- 0 #set order 1 crosseffect to 0
+      ctm[[m]][,indices[i]] <- 0 #set order 1 crosseffect to 0
+    }
+    ctm$DRIFT[indices[i],indices[i]] <- 0 #set ar param / value to 0
+    ctm$DRIFT[indices[i],i+nl] <- 1 #set effect of higher order to 1
+    ctm$DRIFT[i+nl,indices[i]] <-paste0('drift_',ctm$latentNames[i+nl],'_',
+      ctm$latentNames[indices[i]],
+      '|-5*log1p(exp(-param*2))') #estimate effect of 1st order on 2nd
+    if(indices[i]==tail(indices,1)) rownames(ctm$DRIFT) <- ctm$latentNames
+    if(indices[i]==tail(indices,1)) colnames(ctm$DRIFT) <- ctm$latentNames
     
     for(m in c('T0VAR','DIFFUSION')){
-      ctm[[m]] <- rbind(cbind(ctm[[m]],0),0)
       if(diffusion && m=='DIFFUSION'){
-      ctm[[m]][i+nl,] <- ctm[[m]][i,] #move diffusion params / value to higher order
-      ctm[[m]][,i+nl] <- ctm[[m]][,i] #move diffusion params / value to higher order
-      ctm[[m]][i,] <- 0 #set order 1 diffusion to 0
-      ctm[[m]][,i] <- 0 #set order 1 diffusion to 0
+        ctm[[m]][i+nl,] <- ctm[[m]][indices[i],] #move diffusion params / value to higher order
+        ctm[[m]][,i+nl] <- ctm[[m]][,indices[i]] #move diffusion params / value to higher order
+        ctm[[m]][indices[i],] <- 0 #set order 1 diffusion to 0
+        ctm[[m]][,indices[i]] <- 0 #set order 1 diffusion to 0
       }
-      if(i==tail(indices,1)) colnames(ctm[[m]]) <- ctm$latentNames
-      if(i==tail(indices,1)) rownames(ctm[[m]]) <- ctm$latentNames
+      if(indices[i]==tail(indices,1)) colnames(ctm[[m]]) <- ctm$latentNames
+      if(indices[i]==tail(indices,1)) rownames(ctm[[m]]) <- ctm$latentNames
     }
     
     for(m in c('CINT','T0MEANS')){
-      ctm[[m]] <- rbind(ctm[[m]],0)
-      if(m %in% 'T0MEANS') ctm[[m]][i+nl,1] <- paste0('T0mean_d_',ctm$latentNames[i])
-      if(!m %in% 'T0MEANS') ctm[[m]][i,] <- 0 #set order 1 param to 0
-      if(i==tail(indices,1)) rownames(ctm[[m]]) <- ctm$latentNames
+      # browser()
+      if(m %in% 'T0MEANS') ctm[[m]][i+nl,1] <- paste0('T0mean_d_',ctm$latentNames[indices[i]])
+      if(!m %in% 'T0MEANS') ctm[[m]][indices[i],] <- 0 #set order 1 param to 0
+      if(indices[i]==tail(indices,1)) rownames(ctm[[m]]) <- ctm$latentNames
     }
- 
-    ctm$LAMBDA <- cbind(ctm$LAMBDA,0)
   }
-  
-  for(i in c(indices,indices+nl)){
-    for(j in c(indices,indices+nl)){
+  # browser()
+  for(i in c(1:nl,nl+seq_along(indices))){
+    for(j in c(1:nl,nl+seq_along(indices))){
       if(i >= j) ctm$T0VAR[i,j] <- paste0('T0var_',ctm$latentNames[i],'_',
         ctm$latentNames[j])
     }

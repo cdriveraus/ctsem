@@ -626,14 +626,15 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       message('Setting intoverpop=TRUE to enable optimization of random effects...')
     }
     
-    if(intoverpop & any(ctm$pars$indvarying[is.na(ctm$pars$value)]) & nldynamics=='auto') {
-      nldynamics=TRUE 
-    } else 
+    # if(intoverpop & any(ctm$pars$indvarying[is.na(ctm$pars$value)]) & nldynamics=='auto') {
+    #   nldynamics=TRUE 
+    # } else 
       if(intoverpop==TRUE && !any(ctm$pars$indvarying[is.na(ctm$pars$value)])) {
         message('No individual variation -- disabling intoverpop switch'); intoverpop <- FALSE
-      } else 
-        if(intoverpop & any(ctm$pars$indvarying[is.na(ctm$pars$value)]) & nldynamics==FALSE) { stop('nldynamics cannot be set FALSE if intoverpop is TRUE')
-        }
+      } 
+    # else 
+        # if(intoverpop & any(ctm$pars$indvarying[is.na(ctm$pars$value)]) & nldynamics==FALSE) { stop('nldynamics cannot be set FALSE if intoverpop is TRUE')
+        # }
 
     if(intoverpop)   ctm <- ctStanModelIntOverPop(ctm)
     
@@ -769,13 +770,16 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     matsetup <- ctsmodelmats$matsetup
     matvalues <- ctsmodelmats$matvalues
     extratforms <- ctsmodelmats$extratforms
+    # if(length(extratforms) > 0) browser()
     TIPREDEFFECTsetup=ctsmodelmats$TIPREDEFFECTsetup
     matrixdims <- ctsmodelmats$matrixdims
     ctm$calcs <- ctsmodelmats$calcs
-    # 
+    
+    
+     
     #get extra calculations and adjust model spec as needed
     ctm <- ctStanCalcsList(ctm)
-    if(sum(sapply(ctm$calcs,length)) > 0){
+    if(sum(sapply(ctm$calcs,length)) > 0 || any(matsetup$when %in% c(1,2,3))){
       if(nldynamics == FALSE) warning('Linear model requested but nonlinear model specified! May be a poor approximation') else nldynamics <- TRUE 
     }
         
