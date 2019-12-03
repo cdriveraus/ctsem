@@ -111,6 +111,7 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,standardisederr
   mindex <- grep('(^y)|(^err)|(^ll)',names(out))
   lindex <- grep('^eta',names(out))
   nosampindex <- which(names(out) %in% c('time','y'))
+  out$llrow <- matrix(out$llrow,dim(out$llrow)[1],dim(out$llrow)[2])
   
   for(i in 1:length(out)){
     d<-list()
