@@ -65,7 +65,7 @@ if(1==99) Row <- Col <- NULL
         xsd<-melt(as.data.table(l[[ paste0(names(l)[i],'cov') ]],
           keep.rownames = TRUE,na.rm = FALSE),measure.vars='value')
         xsd <-subset(xsd,Row==Col)
-        xsd$value <- sqrt(xsd$value)
+        xsd$value <- sqrt(xsd$value+1e-8)
         xsd$Obs <- as.integer(xsd$Obs)
         setnames(xsd,'value','sd')
         x<-merge(x,xsd,by=colnames(xsd)[colnames(xsd) %in% colnames(x)]) #data.table(sd=(sqrt(xsd$value))))

@@ -55,7 +55,6 @@ ctModelTransformsToNum<-function(ctm){
     # values.
     
     param = c(seq(-2, 2, .1),seq(-10,10,.5),c(rnorm(10)))
-    # browser()
     y = eval(parse(text=e)) #eval(substitute(substitute(e, list(param = param)), list(e = as.quoted(e)[[1]]))))
     keep <- abs(y) < 1e5 & !is.na(param)
     param <- param[keep]
@@ -171,10 +170,10 @@ ctModelTransformsToNum<-function(ctm){
         }
         formula.types$lsfit[i] = fit$f #AIC(fit)
       }
-      # browser()
+      # 
       if(any(formula.types$lsfit < .1)) success <- TRUE else {
-        # browser()
-        message('Trying to determine transforms...')#browser()
+        # 
+        message('Trying to determine transforms...')#
       }
     }
 
@@ -186,10 +185,10 @@ ctModelTransformsToNum<-function(ctm){
     #     mutate(inneroffset = coalesce(inneroffset, 0),
     #       meanscale = coalesce(meanscale, 1)) %>%
     #     select(type, offset, inneroffset, multiplier, meanscale,lsfit))
-    # browser()
+    # 
     return(formula.types[which(formula.types$lsfit %in% min(formula.types$lsfit,na.rm=TRUE)),])
   }
-  # browser()
+  # 
   rownames(ctm$pars)=1:nrow(ctm$pars)
   newrows <- which(!is.na(ctm$pars$transform))
   if(length(newrows) ==0){
@@ -509,7 +508,7 @@ ctStanModelMatrices <-function(ctm){
         simplestate <- FALSE
         if(!is.na(ctspec$param[i])){ #if non fixed parameter,
           
-          # browser()
+          # 
           if(grepl('\\b(state)\\b\\[\\d+\\]',ctspec$param[i])){ #if state based 
             statematches <- gregexpr('\\[', ctspec$param[i])[[1]] 
             simplestate <- statematches > 0 && length(statematches) == 1 #find 1 match of [ only
@@ -533,7 +532,7 @@ ctStanModelMatrices <-function(ctm){
             #   parameter = gsub(']','',parameter,fixed=TRUE)  #and ], to leave state reference as parameter
             #   indvar <- 0 #state varying anyway
             # } else { #if a non simple calculation
-            # browser()
+            # 
             if(grepl(paste0('^(',
               paste0('s',names(c(mats$base,mats$jacobian)),collapse='|'),
               ')\\[\\d+,\\s*\\d+\\]$'),ctspec$param[i])){
@@ -645,7 +644,7 @@ ctStanModelMatrices <-function(ctm){
   # matvalues <- rbind(matvalues[-copys,],matvalues[copys,])
   
   #compute row matches for copys
-  # browser()
+  # 
   for(i in 1:nrow(matsetup)){
     if(matsetup$copymatrix[i] > 0){
       matsetup$copyrow[i] <- which(matsetup$row == matsetup$copyrow[i] &
@@ -925,7 +924,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup){
     out<-paste0('
   int si = 0;
   int subjectcount = 0;
-  int counter = 0;
+  int counter = 1;
   matrix[nlatentpop, nlatentpop] etacov; //covariance of latent states
   real timei = 0;
   real dt = 0;
@@ -937,15 +936,14 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup){
 
   //measurement 
   vector[nmanifest] err;
-  vector[nmanifest] yprior;
+  vector[sum(ncont_y)] errtrans = rep_vector(0,sum(ncont_y)); //to collect normalised errors
+  vector[nmanifest] syprior;
   matrix[nlatentpop, nmanifest] K; // kalman gain
   matrix[nmanifest, nmanifest] ypriorcov_sqrt; 
   matrix[nmanifest, nmanifest] ycov; 
   
   matrix[nlatentpop,nlatentpop] Je[savescores ? ndatapoints : 1]; //time evolved jacobian, saved for smoother
   matrix[nlatent*2,nlatent*2] dQi; //covariance from jacobian
-
-  vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatent*2 : 0)] kout[ndatapoints];
 
   vector[nlatentpop] state = rep_vector(-1,nlatentpop); 
   matrix[nlatentpop,nlatentpop] sJAx; //Jacobian for drift
@@ -964,9 +962,6 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup){
 
   if(nldynamics==0) discreteDIFFUSION = rep_matrix(0,nlatent,nlatent); //in case some elements remain zero due to derrind
 
-  if(savescores) kout = rep_array(rep_vector(99999,rows(kout[1])),ndatapoints);
-  //print("sJy 0 = ",sJy);
-  
   for(rowi in 1:(dokalman ? ndatapoints :1)){
   if(dokalmanrows[rowi] ==1) { //used for subset selection
 
@@ -1107,7 +1102,6 @@ if(verbose > 1) print ("below t0 row ", rowi);
 
 
   if(savescores==1) {
-    kout[rowi,(nmanifest*4+1):(nmanifest*4+nlatent)] = state[1:nlatent];
     etaprior[rowi] = state;
     etapriorcov[rowi]=etacov;
     if(nobs_y[rowi] == 0) etaupdcov[rowi]=etacov;
@@ -1153,24 +1147,24 @@ if(verbose > 1) print ("below t0 row ", rowi);
       //print("sJy 3 = ",sJy);
           
         if(intoverstates==1) { //classic kalman
-          yprior[o] = sMANIFESTMEANS[o,1] + sLAMBDA[o,] * state[1:nlatent];
-          if(nbinary_y[rowi] > 0) yprior[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * state[1:nlatent])));
+          syprior[o] = sMANIFESTMEANS[o,1] + sLAMBDA[o,] * state[1:nlatent];
+          if(nbinary_y[rowi] > 0) syprior[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * state[1:nlatent])));
           if(verbose > 1) print ("sMANIFESTVAR[o,o] = ",sMANIFESTVAR[o,o])
           if(verbose > 1) print ("sJy[o,]\' = ",sJy[o,]\');
           ycov[o,o] = quad_form(etacov, sJy[o,]\'); // + sMANIFESTVAR[o,o]; shifted measurement error down
           for(wi in 1:nmanifest){ 
             if(Y[rowi,wi] != 99999 || savescores==1) ycov[wi,wi] += square(sMANIFESTVAR[wi,wi]);
-            if(manifesttype[wi]==1 && (Y[rowi,wi] != 99999  || savescores==1)) ycov[wi,wi] += fabs((yprior[wi] - 1) .* (yprior[wi]));
-            if(manifesttype[wi]==2 && (Y[rowi,wi] != 99999  || savescores==1)) ycov[wi,wi] += square(fabs((yprior[wi] - round(yprior[wi])))); 
+            if(manifesttype[wi]==1 && (Y[rowi,wi] != 99999  || savescores==1)) ycov[wi,wi] += fabs((syprior[wi] - 1) .* (syprior[wi]));
+            if(manifesttype[wi]==2 && (Y[rowi,wi] != 99999  || savescores==1)) ycov[wi,wi] += square(fabs((syprior[wi] - round(syprior[wi])))); 
           }
         }
         
         if(intoverstates==0) { //sampled states
           if(ncont_y[rowi] > 0) {
-            yprior[o0] = sMANIFESTMEANS[o0,1] + sJy[o0,] * state;
+            syprior[o0] = sMANIFESTMEANS[o0,1] + sJy[o0,] * state;
             ypriorcov_sqrt[o0,o0] = sMANIFESTVAR[o0,o0];
           }
-          if(nbinary_y[rowi] > 0) yprior[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * state[1:nlatent])));
+          if(nbinary_y[rowi] > 0) syprior[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * state[1:nlatent])));
         }
         
      
@@ -1179,18 +1173,18 @@ if(verbose > 1) print ("below t0 row ", rowi);
   {
   int skipupd = 0;
         for(vi in 1:nobs_y[rowi]){
-            if(fabs(yprior[od[vi]]) > 1e10 || is_nan(yprior[od[vi]]) || is_inf(yprior[od[vi]])) {
+            if(fabs(syprior[od[vi]]) > 1e10 || is_nan(syprior[od[vi]]) || is_inf(syprior[od[vi]])) {
               skipupd = 1; 
-              yprior[od[vi]] =99999;
-  if(verbose > 1) print("pp yprior problem! row ", rowi);
+              syprior[od[vi]] =99999;
+  if(verbose > 1) print("pp syprior problem! row ", rowi);
             }
           }
         if(skipupd==0){ 
           if(ncont_y[rowi] > 0){
             ypriorcov_sqrt[o0d,o0d]=cholesky_decompose(makesym(ycov[o0d, o0d],verbose,1)); 
-            Ygen[ rowi, o0d] = yprior[o0d] + ypriorcov_sqrt[o0d,o0d] * Ygenbase[rowi,o0d];
+            Ygen[ rowi, o0d] = syprior[o0d] + ypriorcov_sqrt[o0d,o0d] * Ygenbase[rowi,o0d];
           }
-          if(nbinary_y[rowi] > 0) for(obsi in 1:size(o1d)) Ygen[rowi, o1d[obsi]] = (yprior[o1d[obsi]] > Ygenbase[rowi,o1d[obsi]]) ? 1 : 0; 
+          if(nbinary_y[rowi] > 0) for(obsi in 1:size(o1d)) Ygen[rowi, o1d[obsi]] = (syprior[o1d[obsi]] > Ygenbase[rowi,o1d[obsi]]) ? 1 : 0; 
           for(vi in 1:nobs_y[rowi]) if(is_nan(Ygen[rowi,od[vi]])) {
             Ygen[rowi,od[vi]] = 99999;
 print("pp ygen problem! row ", rowi);
@@ -1202,12 +1196,12 @@ print("pp ygen problem! row ", rowi);
             }
           }
         }
-        err[od] = Ygen[rowi,od] - yprior[od]; // prediction error
+        err[od] = Ygen[rowi,od] - syprior[od]; // prediction error
         }
 }
       '), 
       
-      if(!ppchecking) 'err[od] = Y[rowi,od] - yprior[od]; // prediction error','
+      if(!ppchecking) 'err[od] = Y[rowi,od] - syprior[od]; // prediction error','
     
       if(intoverstates==1 && size(od) > 0) {
         K[,od] = mdivide_right(etacov * sJy[od,]\', ycov[od,od]); 
@@ -1216,11 +1210,7 @@ print("pp ygen problem! row ", rowi);
       }
       
       if(savescores==1) {
-        int tmpindex[nmanifest] = o;
-        for(oi in 1:nmanifest) tmpindex[oi] +=  nmanifest*2;
-        kout[rowi,tmpindex] = err[o];
-        for(oi in 1:nmanifest) tmpindex[oi] +=  nmanifest;
-        kout[rowi,tmpindex] = yprior[o];
+        yprior[rowi] = syprior[o];
         etaupd[rowi] = state;
         ypriorcov[rowi] = ycov;
         etaupdcov[rowi] = etacov;
@@ -1235,7 +1225,7 @@ print("pp ygen problem! row ", rowi);
       
       if(verbose > 1) {
           print("rowi =",rowi, "  si =", si, "  state =",state,"  etacov ",etacov,
-            "  yprior =",yprior,"  ycov ",ycov, "  K ",K,
+            "  syprior =",syprior,"  ycov ",ycov, "  K ",K,
             "  sDRIFT =", sDRIFT, " sDIFFUSION =", sDIFFUSION, " sCINT =", sCINT, "  sMANIFESTVAR ", diagonal(sMANIFESTVAR), "  sMANIFESTMEANS ", sMANIFESTMEANS, 
             "  sT0VAR", sT0VAR,  " sT0MEANS ", sT0MEANS, "sLAMBDA = ", sLAMBDA, "  sJy = ",sJy,
             " discreteDRIFT = ", discreteDRIFT, "  discreteDIFFUSION ", discreteDIFFUSION, "  sasymDIFFUSION ", sasymDIFFUSION, 
@@ -1244,21 +1234,18 @@ print("pp ygen problem! row ", rowi);
         }
   
       ',if(!ppchecking){
-        'if(nbinary_y[rowi] > 0) kout[rowi,o1d] =  Y[rowi,o1d] .* (yprior[o1d]) + (1-Y[rowi,o1d]) .* (1-yprior[o1d]); 
+        'if(nbinary_y[rowi] > 0) ll+= sum(log(Y[rowi,o1d] .* (syprior[o1d]) + (1-Y[rowi,o1d]) .* (1-syprior[o1d]))); 
   
         if(size(o0d) > 0){
-          int tmpindex[ncont_y[rowi]] = o0d;
-          for(oi in 1:ncont_y[rowi]) tmpindex[oi] +=  nmanifest;
            if(intoverstates==1) ypriorcov_sqrt[o0d,o0d]=cholesky_decompose(makesym(ycov[o0d,o0d],verbose,1));
-           //ll+=  multi_normal_cholesky_lpdf(Y[rowi] | yprior, ypriorcov_sqrt[o0d,o0d]);
-           kout[rowi,o0d] = mdivide_left_tri_low(ypriorcov_sqrt[o0d,o0d], err[o0d]); //transform pred errors to standard normal dist and collect
-           kout[rowi,tmpindex] = log(diagonal(ypriorcov_sqrt[o0d,o0d])); //account for transformation of scale in loglik
+           if(savescores) llrow[rowi,1] =  multi_normal_cholesky_lpdf(Y[rowi,o0d] | syprior[o0d], ypriorcov_sqrt[o0d,o0d]);
+           errtrans[counter:(counter + ncont_y[rowi]-1)] = mdivide_left_tri_low(ypriorcov_sqrt[o0d,o0d], err[o0d]); //transform pred errors to standard normal dist and collect
+           ll+= -sum(log(diagonal(ypriorcov_sqrt[o0d,o0d]))); //account for transformation of scale in loglik
+           counter += ncont_y[rowi];
         }
       '},'
     }//end nobs > 0 section
-  if(savescores==1) {
-    kout[rowi,(nmanifest*4+nlatent+1):(nmanifest*4+nlatent+nlatent)] = state[1:nlatent];
-  }','
+','
   
   if(savescores && (rowi==ndatapoints || subject[rowi+1] != subject[rowi])){ //at subjects last datapoint, smooth
     int sri = rowi;
@@ -1286,34 +1273,10 @@ print("pp ygen problem! row ", rowi);
     return(out)}
 
 kalmanll <- function(){ out <-'
-  if(sum(nbinary_y) > 0) {
-    vector[sum(nbinary_y)] binaryll;
-    counter = 1;
-    for(ri in 1:ndatapoints){
-    if(dokalmanrows[ri]==1){
-      int o1[nbinary_y[ri]] = whichbinary_y[ri,1:nbinary_y[ri]]; //which indicators are observed and binary
-      binaryll[counter:(counter + nbinary_y[ri]-1)] = kout[ri,o1];
-      counter+= nbinary_y[ri];
-    }
-    }
-    ll+= sum(log(binaryll[1:(counter-1)]));
-  }
-
+ 
   if(( sum(ncont_y) > 0)) {
-    vector[sum(ncont_y)] errtrans[2];
-    counter = 1;
-    for(ri in 1:ndatapoints){
-    if(dokalmanrows[ri]==1){
-      int o0[ncont_y[ri]] = whichcont_y[ri,1:ncont_y[ri]]; //which indicators are observed and continuous
-      errtrans[1,counter:(counter + ncont_y[ri]-1)] = kout[ri, o0];
-      for(oi in 1:ncont_y[ri]) o0[oi] +=  nmanifest; //modify o0 index
-      errtrans[2,counter:(counter + ncont_y[ri]-1)] = kout[ri, o0];
-      counter+= ncont_y[ri];
-    }
-    }
-    ll += normal_lpdf(errtrans[1,1:(counter-1)]|0,1) - sum(errtrans[2,1:(counter-1)]);
+    ll += normal_lpdf(errtrans|0,1);
   }
-if(savescores) kalman = kout;
 '
 if(!is.null(ctm$w32)) out <- ''
 return(out)}
@@ -1701,7 +1664,7 @@ transformed parameters{
   matrix[nindvarying,nindvarying] rawpopcov;
 ',if(!gendata) paste0('
   real ll = 0;
-  vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatent*2 : 0)] kalman[savescores ? ndatapoints : 0];
+  vector[1] llrow[savescores ? ndatapoints : 0] = rep_array(rep_vector(0.0,1),savescores ? ndatapoints : 0);
   matrix[nlatentpop,nlatentpop] etapriorcov[savescores ? ndatapoints : 0];
   matrix[nlatentpop,nlatentpop] etaupdcov[savescores ? ndatapoints : 0];
   matrix[nlatentpop,nlatentpop] etasmoothcov[savescores ? ndatapoints : 0];
@@ -1711,6 +1674,7 @@ transformed parameters{
   vector[nlatentpop] etaprior[savescores ? ndatapoints : 0];
   vector[nlatentpop] etaupd[savescores ? ndatapoints : 0];
   vector[nlatentpop] etasmooth[savescores ? ndatapoints : 0];
+  vector[nmanifest] yprior[savescores ? ndatapoints : 0];
   vector[nmanifest] yupd[savescores ? ndatapoints : 0];
   vector[nmanifest] ysmooth[savescores ? ndatapoints : 0];
   ',subjectparaminit(pop=FALSE,smats=FALSE),'
@@ -1800,7 +1764,7 @@ generated quantities{
   matrix[nparams,ntipred] linearTIPREDEFFECT;
 ',if(gendata) paste0('
   real ll = 0;
-  vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatent*2 : 0)] kalman[savescores ? ndatapoints : 0];
+  vector[1] llrow[savescores ? ndatapoints : 0] = rep_array(rep_vector(0.0,1),savescores ? ndatapoints : 0);
   matrix[nlatentpop,nlatentpop] etapriorcov[savescores ? ndatapoints : 0];
   matrix[nlatentpop,nlatentpop] etaupdcov[savescores ? ndatapoints : 0];
   matrix[nlatentpop,nlatentpop] etasmoothcov[savescores ? ndatapoints : 0];
@@ -1810,6 +1774,7 @@ generated quantities{
   vector[nlatentpop] etaprior[savescores ? ndatapoints : 0];
   vector[nlatentpop] etaupd[savescores ? ndatapoints : 0];
   vector[nlatentpop] etasmooth[savescores ? ndatapoints : 0];
+  vector[nmanifest] yprior[savescores ? ndatapoints : 0];
   vector[nmanifest] yupd[savescores ? ndatapoints : 0];
   vector[nmanifest] ysmooth[savescores ? ndatapoints : 0];
   vector[nmanifest] Ygen[ndatapoints];

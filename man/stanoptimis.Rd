@@ -103,7 +103,7 @@ fit <- sampling(sm, iter = 10000)
 summary(fit)$summary
 
 ## extract samples as a list of arrays
-e <- extract(fit, permuted = TRUE)
+e <- ctExtract(fit, permuted = TRUE)
 
 #for ml or map estimates
 optimis <- stanoptimis(standata = list(),sm = sm,finishsamples = 3000,cores=2)

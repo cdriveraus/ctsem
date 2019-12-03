@@ -102,7 +102,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   
   type='discreteDRIFT'
   collapseSubjects=TRUE #consider this for a switch
-  e<-extract(ctstanfitobj)
+  e<-ctExtract(ctstanfitobj)
   
   if(type=='all') type=c('discreteDRIFT','latentMeans') #must match with ctDiscretePars
   

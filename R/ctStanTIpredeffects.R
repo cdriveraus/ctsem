@@ -54,7 +54,7 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
 
   #get objects
   ctspec <- fit$ctstanmodel$pars
-  e<-extract(fit)
+  e<-ctExtract(fit)
   rawpopmeans <- e$rawpopmeans
   tipreds<-ctCollapse(e$tipreds,1,mean) #maybe collapsing over sampled tipred values is not ideal?
   

@@ -413,13 +413,15 @@ plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
   klines <- kalmanvec[grep('(prior)|(upd)|(smooth)',kalmanvec)]
   # kpoints<- kalmanvec[-grep('(prior)|(upd)|(smooth)',kalmanvec)]
   colvec=ifelse(length(subjects) > 1, 'Subject', 'Variable')
-  ltyvec = setNames(1:length(klines),klines)
-  if(length(kalmanvec) > length(klines)) ltyvec <- 
-    c(setNames(rep(0,length(kalmanvec)-length(klines)),kalmanvec[!kalmanvec %in% klines]),
-      ltyvec)
+  ltyvec <- setNames( rep(NA,length(kalmanvec)),kalmanvec)
+  ltyvec[kalmanvec %in% klines] = setNames(1:length(klines),klines)
+  # if(length(kalmanvec) > length(klines)) ltyvec <- 
+  #   c(setNames(rep(0,length(kalmanvec)-length(klines)),kalmanvec[!kalmanvec %in% klines]),
+  #     ltyvec)
   shapevec<-ltyvec
-  shapevec[shapevec==0] <- 19
-  shapevec[shapevec==1] <- NA
+  shapevec[shapevec>0] <- NA
+  shapevec[is.na(ltyvec)] <- 19
+  # browser()
   d<-subset(x,Element %in% kalmanvec)
   
   g <- ggplot(d,
@@ -434,8 +436,7 @@ plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
   }
   
   polysteps <- seq(errormultiply,0,-errormultiply/(polygonsteps+1))[c(-polygonsteps+1)]
-  
-  alphasum <- 0
+
   for(si in polysteps){
     # alphasum <- alphasum + polygonalpha/polygonsteps
     # print(alphasum)

@@ -1,5 +1,5 @@
 priorchecker <- function(sf,pars=c('rawpopmeans','rawpopsdbase','tipredeffectparams'),digits=2){
-  e=extract(sf)
+  e=ctExtract(sf)
   funcs <- c(base::mean,stats::sd)
   pars=unlist(lapply(pars,function(x) if(!is.null(dim(e[[x]]))) x))
   out=round(do.call(cbind,lapply(funcs, function(fn) do.call(c,
@@ -34,7 +34,7 @@ priorcheckreport <- function(sf, meanlim = 2, sdlim= .2,digits=2){
   out$priorcheck=p[,c('mean','sd')]
   
   # if(any(p$object %in% 'rawpopsdbase')){
-  #   e=apply(extract(sf,pars='rawpopsdprops')$rawpopsdprops,2,mean,na.rm=TRUE)
+  #   e=apply(ctExtract(sf,pars='rawpopsdprops')$rawpopsdprops,2,mean,na.rm=TRUE)
   #   names(e) = ps$parname[match(x = 1:length(e),ps$param)]
   #   e=e[e> 1/length(e) | e==max(e)]
   #   out$priorcheck_sd_note = 'Population posterior variance exceeded check limits. Not necessarily a problem, but these parameters contribute most variance: '

@@ -30,7 +30,7 @@ ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
   
   if(!'ctStanFit' %in% class(ctstanfitobj)) stop('Not an object of class ctStanFit')
   
-  e<-extract(ctstanfitobj) #first dim of subobjects is iter, 2nd subjects
+  e<-ctExtract(ctstanfitobj) #first dim of subobjects is iter, 2nd subjects
   niter=dim(e$DRIFT)[1]
   
   if(iter!='all') {

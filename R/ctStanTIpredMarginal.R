@@ -13,7 +13,7 @@
 #' ctStanTIpredMarginal(ctstantestfit,pars=c('DRIFT','CINT'),tipred=c('TI2','TI3'))
 #' }
 ctStanTIpredMarginal<-function(fit,tipred,pars, plot=TRUE){
-  e<-extract(fit)
+  e<-ctExtract(fit)
   
   qseq <- seq(.01,.99,.01)
   

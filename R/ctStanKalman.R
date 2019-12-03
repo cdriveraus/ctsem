@@ -30,28 +30,28 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,standardisederr
   e=stan_constrainsamples(sm = fit$stanmodel,standata = standata,samples = samples,cores=cores)
 
   
-  k=e$kalman
+  # k=e$kalman
   
-  k[k==99999] <- NA #for missingness
+  # k[k==99999] <- NA #for missingness
   nlatent <- fit$standata$nlatent
   nmanifest <- fit$standata$nmanifest
-  dimnames(k) = list(iter=1:dim(k)[1],drow=1:dim(k)[2],
-    kalman=paste0(c(rep('lln',nmanifest),
-      rep('llscale',nmanifest),rep('stderr',nmanifest),rep('yprior',nmanifest),rep('etaprior',nlatent),rep('etaupd',nlatent)),
-      c(1:nmanifest,1:nmanifest,1:nmanifest,1:nmanifest,1:nlatent,1:nlatent)))
-  
-  
-  lln=k[,,1:nmanifest,drop=FALSE]
-  llscale=k[,,(nmanifest*1+1):(nmanifest*1+nmanifest),drop=FALSE]
-  stderr=k[,,(nmanifest*2+1):(nmanifest*2+nmanifest),drop=FALSE]
-  e$yprior=k[,,(nmanifest*3+1):(nmanifest*3+nmanifest),drop=FALSE]
+  # dimnames(k) = list(iter=1:dim(k)[1],drow=1:dim(k)[2],
+  #   kalman=paste0(c(rep('lln',nmanifest),
+  #     rep('llscale',nmanifest),rep('stderr',nmanifest),rep('yprior',nmanifest),rep('etaprior',nlatent),rep('etaupd',nlatent)),
+  #     c(1:nmanifest,1:nmanifest,1:nmanifest,1:nmanifest,1:nlatent,1:nlatent)))
+  # 
+  # 
+  # lln=k[,,1:nmanifest,drop=FALSE]
+  # llscale=k[,,(nmanifest*1+1):(nmanifest*1+nmanifest),drop=FALSE]
+  # stderr=k[,,(nmanifest*2+1):(nmanifest*2+nmanifest),drop=FALSE]
+  # e$yprior=k[,,(nmanifest*3+1):(nmanifest*3+nmanifest),drop=FALSE]
   # etaprior=k[,,(nmanifest*4+1):(nmanifest*4+nlatent),drop=FALSE]
   # etaupd=k[,,(nmanifest*4+nlatent+1):(nmanifest*4+nlatent*2),drop=FALSE]
   
-  llvec = apply(lln,1:2,function(x) {
-    sum(dnorm(x[!is.na(x)],log = TRUE))
-  })
-  llrow = llvec - apply(llscale, 1:2, function(x) sum(x,na.rm=TRUE))
+  # llvec = apply(lln,1:2,function(x) {
+  #   sum(dnorm(x[!is.na(x)],log = TRUE))
+  # })
+  # llrow = llvec - apply(llscale, 1:2, function(x) sum(x,na.rm=TRUE))
   
   
   
@@ -59,9 +59,10 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,standardisederr
   y[y==99999] <- NA
   
   
-  out=list(time=cbind(fit$standata$time), lln=lln,llscale=llscale,stderr=stderr,
+  out=list(time=cbind(fit$standata$time), 
+    # lln=lln,llscale=llscale,stderr=stderr,
     y=y, 
-    llrow=llrow)
+    llrow=e$llrow)
   
   for(basei in c('y','eta')){
     for(typei in c('prior','upd','smooth')){
@@ -87,7 +88,7 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,standardisederr
   for(typei in c('prior','upd','smooth')){
     out[[paste0('err',typei)]] <- aaply(out[[paste0('y',typei)]],1, function(yp) out$y-yp,.drop=FALSE)
   } 
-  
+  # 
   if(standardisederrors){
     for(typei in c('prior','upd','smooth')){
       arr <- array(sapply(1:dim(out$yprior)[1], function(i){

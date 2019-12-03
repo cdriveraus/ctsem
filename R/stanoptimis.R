@@ -251,9 +251,9 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2){
       }
       return(out)
     },cores=cores))
-  est1=transformedpars[[1]]
   # browser()
-  transformedpars=unlist(transformedpars,recursive = FALSE)
+  # transformedpars=unlist(transformedpars,recursive = FALSE)
+  est1=transformedpars[[1]]
   missingsamps <-sapply(transformedpars, function(x) 'try-error' %in% class(x))
   nasampscount <- sum(missingsamps) 
   
@@ -580,7 +580,7 @@ sgd <- function(init,fitfunc,ndatapoints,plotsgd=FALSE,stepbase=1e-4,gmeminit=if
 #' summary(fit)$summary
 #'
 #' ## extract samples as a list of arrays
-#' e <- extract(fit, permuted = TRUE)
+#' e <- ctExtract(fit, permuted = TRUE)
 #'
 #' #for ml or map estimates
 #' optimis <- stanoptimis(standata = list(),sm = sm,finishsamples = 3000,cores=2)

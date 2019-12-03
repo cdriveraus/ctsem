@@ -341,7 +341,7 @@ generated quantities{
   matrix[nparams,ntipred] linearTIPREDEFFECT;
 
   real ll = 0;
-  vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatent*2 : 0)] kalman[savescores ? ndatapoints : 0];
+  vector[1] llrow[savescores ? ndatapoints : 0] = rep_array(rep_vector(0.0,1),savescores ? ndatapoints : 0);
   matrix[nlatentpop,nlatentpop] etapriorcov[savescores ? ndatapoints : 0];
   matrix[nlatentpop,nlatentpop] etaupdcov[savescores ? ndatapoints : 0];
   matrix[nlatentpop,nlatentpop] etasmoothcov[savescores ? ndatapoints : 0];
@@ -351,6 +351,7 @@ generated quantities{
   vector[nlatentpop] etaprior[savescores ? ndatapoints : 0];
   vector[nlatentpop] etaupd[savescores ? ndatapoints : 0];
   vector[nlatentpop] etasmooth[savescores ? ndatapoints : 0];
+  vector[nmanifest] yprior[savescores ? ndatapoints : 0];
   vector[nmanifest] yupd[savescores ? ndatapoints : 0];
   vector[nmanifest] ysmooth[savescores ? ndatapoints : 0];
   vector[nmanifest] Ygen[ndatapoints];
@@ -440,7 +441,7 @@ rawpopsdfull[indvaryingindex] = sqrt(diagonal(rawpopcov)); //base for calculatio
 
   int si = 0;
   int subjectcount = 0;
-  int counter = 0;
+  int counter = 1;
   matrix[nlatentpop, nlatentpop] etacov; //covariance of latent states
   real timei = 0;
   real dt = 0;
@@ -452,15 +453,14 @@ rawpopsdfull[indvaryingindex] = sqrt(diagonal(rawpopcov)); //base for calculatio
 
   //measurement 
   vector[nmanifest] err;
-  vector[nmanifest] yprior;
+  vector[sum(ncont_y)] errtrans = rep_vector(0,sum(ncont_y)); //to collect normalised errors
+  vector[nmanifest] syprior;
   matrix[nlatentpop, nmanifest] K; // kalman gain
   matrix[nmanifest, nmanifest] ypriorcov_sqrt; 
   matrix[nmanifest, nmanifest] ycov; 
   
   matrix[nlatentpop,nlatentpop] Je[savescores ? ndatapoints : 1]; //time evolved jacobian, saved for smoother
   matrix[nlatent*2,nlatent*2] dQi; //covariance from jacobian
-
-  vector[nmanifest+nmanifest+ (savescores ? nmanifest*2+nlatent*2 : 0)] kout[ndatapoints];
 
   vector[nlatentpop] state = rep_vector(-1,nlatentpop); 
   matrix[nlatentpop,nlatentpop] sJAx; //Jacobian for drift
@@ -492,9 +492,6 @@ matrix[nlatent, nlatent] sDIFFUSIONcov;
 
   if(nldynamics==0) discreteDIFFUSION = rep_matrix(0,nlatent,nlatent); //in case some elements remain zero due to derrind
 
-  if(savescores) kout = rep_array(rep_vector(99999,rows(kout[1])),ndatapoints);
-  //print("sJy 0 = ",sJy);
-  
   for(rowi in 1:(dokalman ? ndatapoints :1)){
   if(dokalmanrows[rowi] ==1) { //used for subset selection
 
@@ -890,7 +887,6 @@ if(verbose > 1) print ("below t0 row ", rowi);
 
 
   if(savescores==1) {
-    kout[rowi,(nmanifest*4+1):(nmanifest*4+nlatent)] = state[1:nlatent];
     etaprior[rowi] = state;
     etapriorcov[rowi]=etacov;
     if(nobs_y[rowi] == 0) etaupdcov[rowi]=etacov;
@@ -956,24 +952,24 @@ if(verbose > 1) print ("below t0 row ", rowi);
       //print("sJy 3 = ",sJy);
           
         if(intoverstates==1) { //classic kalman
-          yprior[o] = sMANIFESTMEANS[o,1] + sLAMBDA[o,] * state[1:nlatent];
-          if(nbinary_y[rowi] > 0) yprior[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * state[1:nlatent])));
+          syprior[o] = sMANIFESTMEANS[o,1] + sLAMBDA[o,] * state[1:nlatent];
+          if(nbinary_y[rowi] > 0) syprior[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * state[1:nlatent])));
           if(verbose > 1) print ("sMANIFESTVAR[o,o] = ",sMANIFESTVAR[o,o])
           if(verbose > 1) print ("sJy[o,]' = ",sJy[o,]');
           ycov[o,o] = quad_form(etacov, sJy[o,]'); // + sMANIFESTVAR[o,o]; shifted measurement error down
           for(wi in 1:nmanifest){ 
             if(Y[rowi,wi] != 99999 || savescores==1) ycov[wi,wi] += square(sMANIFESTVAR[wi,wi]);
-            if(manifesttype[wi]==1 && (Y[rowi,wi] != 99999  || savescores==1)) ycov[wi,wi] += fabs((yprior[wi] - 1) .* (yprior[wi]));
-            if(manifesttype[wi]==2 && (Y[rowi,wi] != 99999  || savescores==1)) ycov[wi,wi] += square(fabs((yprior[wi] - round(yprior[wi])))); 
+            if(manifesttype[wi]==1 && (Y[rowi,wi] != 99999  || savescores==1)) ycov[wi,wi] += fabs((syprior[wi] - 1) .* (syprior[wi]));
+            if(manifesttype[wi]==2 && (Y[rowi,wi] != 99999  || savescores==1)) ycov[wi,wi] += square(fabs((syprior[wi] - round(syprior[wi])))); 
           }
         }
         
         if(intoverstates==0) { //sampled states
           if(ncont_y[rowi] > 0) {
-            yprior[o0] = sMANIFESTMEANS[o0,1] + sJy[o0,] * state;
+            syprior[o0] = sMANIFESTMEANS[o0,1] + sJy[o0,] * state;
             ypriorcov_sqrt[o0,o0] = sMANIFESTVAR[o0,o0];
           }
-          if(nbinary_y[rowi] > 0) yprior[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * state[1:nlatent])));
+          if(nbinary_y[rowi] > 0) syprior[o1] = to_vector(inv_logit(to_array_1d(sMANIFESTMEANS[o1,1] +sLAMBDA[o1,] * state[1:nlatent])));
         }
         
      
@@ -981,18 +977,18 @@ if(verbose > 1) print ("below t0 row ", rowi);
   {
   int skipupd = 0;
         for(vi in 1:nobs_y[rowi]){
-            if(fabs(yprior[od[vi]]) > 1e10 || is_nan(yprior[od[vi]]) || is_inf(yprior[od[vi]])) {
+            if(fabs(syprior[od[vi]]) > 1e10 || is_nan(syprior[od[vi]]) || is_inf(syprior[od[vi]])) {
               skipupd = 1; 
-              yprior[od[vi]] =99999;
-  if(verbose > 1) print("pp yprior problem! row ", rowi);
+              syprior[od[vi]] =99999;
+  if(verbose > 1) print("pp syprior problem! row ", rowi);
             }
           }
         if(skipupd==0){ 
           if(ncont_y[rowi] > 0){
             ypriorcov_sqrt[o0d,o0d]=cholesky_decompose(makesym(ycov[o0d, o0d],verbose,1)); 
-            Ygen[ rowi, o0d] = yprior[o0d] + ypriorcov_sqrt[o0d,o0d] * Ygenbase[rowi,o0d];
+            Ygen[ rowi, o0d] = syprior[o0d] + ypriorcov_sqrt[o0d,o0d] * Ygenbase[rowi,o0d];
           }
-          if(nbinary_y[rowi] > 0) for(obsi in 1:size(o1d)) Ygen[rowi, o1d[obsi]] = (yprior[o1d[obsi]] > Ygenbase[rowi,o1d[obsi]]) ? 1 : 0; 
+          if(nbinary_y[rowi] > 0) for(obsi in 1:size(o1d)) Ygen[rowi, o1d[obsi]] = (syprior[o1d[obsi]] > Ygenbase[rowi,o1d[obsi]]) ? 1 : 0; 
           for(vi in 1:nobs_y[rowi]) if(is_nan(Ygen[rowi,od[vi]])) {
             Ygen[rowi,od[vi]] = 99999;
 print("pp ygen problem! row ", rowi);
@@ -1004,7 +1000,7 @@ print("pp ygen problem! row ", rowi);
             }
           }
         }
-        err[od] = Ygen[rowi,od] - yprior[od]; // prediction error
+        err[od] = Ygen[rowi,od] - syprior[od]; // prediction error
         }
 }
       
@@ -1016,11 +1012,7 @@ print("pp ygen problem! row ", rowi);
       }
       
       if(savescores==1) {
-        int tmpindex[nmanifest] = o;
-        for(oi in 1:nmanifest) tmpindex[oi] +=  nmanifest*2;
-        kout[rowi,tmpindex] = err[o];
-        for(oi in 1:nmanifest) tmpindex[oi] +=  nmanifest;
-        kout[rowi,tmpindex] = yprior[o];
+        yprior[rowi] = syprior[o];
         etaupd[rowi] = state;
         ypriorcov[rowi] = ycov;
         etaupdcov[rowi] = etacov;
@@ -1035,7 +1027,7 @@ print("pp ygen problem! row ", rowi);
       
       if(verbose > 1) {
           print("rowi =",rowi, "  si =", si, "  state =",state,"  etacov ",etacov,
-            "  yprior =",yprior,"  ycov ",ycov, "  K ",K,
+            "  syprior =",syprior,"  ycov ",ycov, "  K ",K,
             "  sDRIFT =", sDRIFT, " sDIFFUSION =", sDIFFUSION, " sCINT =", sCINT, "  sMANIFESTVAR ", diagonal(sMANIFESTVAR), "  sMANIFESTMEANS ", sMANIFESTMEANS, 
             "  sT0VAR", sT0VAR,  " sT0MEANS ", sT0MEANS, "sLAMBDA = ", sLAMBDA, "  sJy = ",sJy,
             " discreteDRIFT = ", discreteDRIFT, "  discreteDIFFUSION ", discreteDIFFUSION, "  sasymDIFFUSION ", sasymDIFFUSION, 
@@ -1045,9 +1037,7 @@ print("pp ygen problem! row ", rowi);
   
       
     }//end nobs > 0 section
-  if(savescores==1) {
-    kout[rowi,(nmanifest*4+nlatent+1):(nmanifest*4+nlatent+nlatent)] = state[1:nlatent];
-  }
+
   
   if(savescores && (rowi==ndatapoints || subject[rowi+1] != subject[rowi])){ //at subjects last datapoint, smooth
     int sri = rowi;

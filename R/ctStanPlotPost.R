@@ -32,7 +32,7 @@ ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE, smoothness=1,
   
   # do.call(graphics::par,parcontrol)
   
-  e<-extract(obj)
+  e<-ctExtract(obj)
   # browser()
   
   # data

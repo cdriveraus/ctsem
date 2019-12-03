@@ -38,7 +38,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   if('stanfit' %in% class(object$stanfit)){ 
     s<-suppressWarnings(getMethod('summary','stanfit')(object$stanfit))
     if('98%' %in% colnames(s$summary)) colnames(s$summary)[colnames(s$summary)=='98%'] <- '97.5%'
-    e <- extract(object) 
+    e <- ctExtract(object) 
   }
 
  
@@ -56,7 +56,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   out$resiCovStdNote <- 'Standardised covariance of residuals'
   }
   
-  if(!'stanfit' %in% class(object$stanfit))  e <- extract(object) 
+  if(!'stanfit' %in% class(object$stanfit))  e <- ctExtract(object) 
   
   parnames <- object$setup$matsetup$parname[object$setup$matsetup$when==0 & object$setup$matsetup$param > 0]
   parindices <- object$setup$matsetup$param[object$setup$matsetup$when==0 & object$setup$matsetup$param > 0]
