@@ -29,7 +29,7 @@
 #' #generate and plot samples from prior predictive
 #' priorpred <- ctStanGenerate(ctm = m1,datastruct = exfitdat,cores=6,nsamples = 50)
 #'}
-ctStanGenerate <- function(ctm,datastruct, optimize=TRUE, is=TRUE, fullposterior=TRUE, nsamples=200, parsonly=FALSE,...){
+ctStanGenerate <- function(ctm,datastruct, optimize=TRUE, is=FALSE, fullposterior=TRUE, nsamples=200, parsonly=FALSE,...){
   datastruct[,ctm$manifestNames] <- NA
   dots <- list(...)
   dots$carefulfit=FALSE

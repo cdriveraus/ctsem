@@ -281,15 +281,19 @@ ctDensityList<-function(x,xlimsindex='all',plot=FALSE,smoothness=1,
   sd=sd(xlims)
   xlims[1] = xlims[1] - sd/2
   xlims[2] = xlims[2] + sd/2
-
-  logbw=log(sapply(x,function(d) bw.SJ(na.omit(c(d)))))
+# browser()
+  logbw=log(sapply(x,function(d) {
+    out<-try(bw.SJ(na.omit(c(d))),silent=TRUE)
+    if('try-error' %in% class(out)) out <- bw.nrd0(na.omit(c(d)))
+    return(out)
+    }))
   # browser()
   logbwmean = mean(logbw + ifelse(length(logbw) > 1,sd(logbw),0))
 # browser()
   denslist<-lapply(1:length(x),function(xi) {
-    bw=exp(mean(logbw[xi]+logbwmean))
+    bw=sqrt(exp(mean(logbwmean))) #logbw[xi]+
     # print(bw)
-    d=stats::density(x[[xi]],bw=bw*2,n=5000,from=xlims[1],to=xlims[2],na.rm=TRUE)
+    d=stats::density(x[[xi]],bw=bw/2,n=5000,from=xlims[1],to=xlims[2],na.rm=TRUE)
     # d$y=d$y/ sum(d$y)/range(d$x)[2]*length(d$y)
     return(d)
   })

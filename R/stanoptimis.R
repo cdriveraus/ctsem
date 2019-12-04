@@ -228,7 +228,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2){
   #   est1=try(constrain_pars(smf, upars=samples[i,]))
   # }
   # if(class(est1)[1]=='try-error') stop('All samples generated errors! Respecify, try stochastic optimizer, try again?')
-  
+  # browser()
   if(cores > 1){
     cl2 <- parallel::makeCluster(cores, type = "PSOCK",useXDR=TRUE)
     on.exit(parallel::stopCluster(cl2),add = TRUE)
@@ -252,7 +252,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2){
       return(out)
     },cores=cores))
   # browser()
-  # transformedpars=unlist(transformedpars,recursive = FALSE)
+  if(cores > 1) transformedpars=unlist(transformedpars,recursive = FALSE)
   est1=transformedpars[[1]]
   missingsamps <-sapply(transformedpars, function(x) 'try-error' %in% class(x))
   nasampscount <- sum(missingsamps) 

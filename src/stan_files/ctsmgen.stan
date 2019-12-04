@@ -290,7 +290,7 @@ transformed parameters{
 
   if(nindvarying > 0){
     int counter =0;
-    rawpopsd = exp(2*rawpopsdbase-1) .* sdscale; // sqrts of proportions of total variance
+    rawpopsd = log1p(exp(2*rawpopsdbase-1)) .* sdscale; // sqrts of proportions of total variance
     for(j in 1:nindvarying){
       rawpopcovsqrt[j,j] = 1;
       for(i in 1:nindvarying){

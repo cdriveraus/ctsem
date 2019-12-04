@@ -650,7 +650,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     if(naf(!is.na(ctm$rawpopsdbaselowerbound))) recompile <- TRUE
     if(ctm$rawpopsdbase != 'normal(0,1)') recompile <- TRUE
-    if(ctm$rawpopsdtransform != 'exp(2*rawpopsdbase-1) .* sdscale') recompile <- TRUE
+    if(ctm$rawpopsdtransform != 'log1p(exp(2*rawpopsdbase-1)) .* sdscale') recompile <- TRUE
     
     
     if(cores=='maxneeded') cores=max(1,min(c(chains,parallel::detectCores()-1))) else cores <-max(1, min(cores,parallel::detectCores()-1))
