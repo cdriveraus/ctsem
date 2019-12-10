@@ -21,7 +21,7 @@ ctStanFit(
   nlcontrol = list(),
   nopriors = FALSE,
   chains = 2,
-  cores = "maxneeded",
+  cores = ifelse(optimize, getOption("mc.cores", 2L), "maxneeded"),
   inits = NULL,
   forcerecompile = FALSE,
   savescores = FALSE,

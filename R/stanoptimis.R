@@ -14,6 +14,7 @@ parallelStanSetup <- function(cl, sm, standata,split=TRUE){
     # require(Rcpp)
     library(ctsem)
     if(length(subindices) < length(unique(standata$subject))) standata <- standatact_specificsubjects(standata,subindices)
+    if(!1 %in% subindices) standata$nopriors <- 1L
     # future(globals = c('sm','standata'),
     #   packages=c('ctsem','rstan'),
     # gc=FALSE,expr = {
@@ -28,63 +29,6 @@ parallelStanSetup <- function(cl, sm, standata,split=TRUE){
   })
   NULL
 }
-# 
-# 
-# parallelStanFunctionCreator <- function(cl, verbose){
-#   cores=length(cl)
-#   
-#   
-#   neglpgf<-function(parm) {
-#     # parlp <- NULL
-#     # 
-#     whichframe <- which(sapply(lapply(sys.frames(),ls),function(x){ 'clctsem' %in% x}))
-#     parallel::clusterExport(get('clctsem',envir = sys.frame(whichframe)),'parm',envir=environment())
-#     a=Sys.time()
-#     out2<- parallel::clusterCall(get('clctsem',envir = sys.frame(whichframe)),parlp)
-#     # function(){
-#     #   parlp(parm)
-#     # })
-#     b=Sys.time()
-#     b-a
-#     
-#     out <- try(sum(unlist(out2)),silent=TRUE)
-#     attributes(out)$gradient <- try(apply(sapply(out2,function(x) attributes(x)$gradient,simplify='matrix'),1,sum))
-#     
-#     if('try-error' %in% class(out) || is.nan(out)) {
-#       out=-1e100
-#       attributes(out) <- list(gradient=rep(0,length(parm)))
-#     }
-#     try(assign('storedPars', parm,pos= sys.frame(whichframe)))
-#     if(get('verbose',envir = sys.frame(whichframe)) > 0) print(paste('lp= ',out,' ,    iter time = ',b-a))
-#     return(-out)
-#   }
-#   
-#   # env <- new.env(parent = globalenv())
-#   # env$a <- 1
-#   # environment(parlp) <- env
-#   # environment(neglpgf) <- env
-#   
-#   fg=function(pars){
-#     r=neglpgf(pars)
-#     r=list(fn=r[1],gr= -attributes(r)$gradient)
-#     return(r)
-#   }
-#   # environment(fg) <- env
-#   
-#   gr <- function(pars) -attributes(neglpgf(pars))$gradient
-#   # environment(gr) <- env
-#   
-#   
-#   mizelpg=list( #list also created in parallel function creator
-#     fg=fg,
-#     fn=neglpgf,
-#     gr=gr
-#   )
-#   # environment(mizelpg) <- env
-#   return(list(neglpgf=neglpgf,mizelpg=mizelpg))
-# }
-
-
 
 
 
@@ -123,8 +67,8 @@ flexsapply <- function(cl, X, fn,cores=1){
   if(cores > 1) parallel::parSapply(cl,X,fn) else sapply(X, fn)
 }
 
-flexlapply <- function(cl, X, fn,cores=1){
-  if(cores > 1) parallel::parLapply(cl,X,fn) else lapply(X, fn)
+flexlapply <- function(cl, X, fn,cores=1,...){
+  if(cores > 1) parallel::parLapply(cl,X,fn,...) else lapply(X, fn,...)
 }
 
 
@@ -144,6 +88,9 @@ standatact_specificsubjects <- function(standata, subjects,timestep=NA){
   long <- long[long$subject %in% subjects,]
   standatamerged <- standatalongremerge(long=long, standata=standata)
   standatamerged$ndatapoints <- as.integer(nrow(long))
+  if(standata$ntipred > 0) standatamerged$tipredsdata <- standatamerged$tipredsdata[unique(standatamerged$subject),,drop=FALSE]
+  standatamerged$nsubjects <- as.integer(length(unique(standatamerged$subject)))
+  standatamerged$subject <- as.integer(factor(standatamerged$subject))
   return(standatamerged)
 }  
 
@@ -228,31 +175,51 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2){
   #   est1=try(constrain_pars(smf, upars=samples[i,]))
   # }
   # if(class(est1)[1]=='try-error') stop('All samples generated errors! Respecify, try stochastic optimizer, try again?')
-  # browser()
+  # 
+  
+  #create via eval due to parallel communication rubbish
+  eval(parse(text="tparfunc <- function(x, parallel = TRUE){ 
+    if(parallel) library(ctsem)
+    if(!is.null(standata$savescores) && !standata$savescores){
+      standata$dokalmanrows <- 
+        as.integer(c(1,standata$subject[-1] - standata$subject[-standata$ndatapoints]))
+    }
+    smf <- stan_reinitsf(sm,standata)
+    out <- list()
+    for(li in 1:length(x)){
+      out[[li]] <- try(rstan::constrain_pars(smf, upars=samples[x[li],]))
+      if(any(
+        sapply(out[[li]], function(x){
+          test <- length(x) > 0 && 
+            (any(c(is.nan(x),is.infinite(x),is.na(x))))
+          # if(any(test)) print(x)
+          return(test)
+        })
+      )){
+        class(out[[li]]) <- c(class(out[[li]]),'try-error')
+      }
+    }
+    return(out)
+  }"))
+  
+  env <- new.env(parent = globalenv(),hash = TRUE)
+  environment(tparfunc) <- env
+  env$standata <- standata
+  env$sm <- sm
+  env$samples <- samples
+  
   if(cores > 1){
     cl2 <- parallel::makeCluster(cores, type = "PSOCK",useXDR=TRUE)
     on.exit(parallel::stopCluster(cl2),add = TRUE)
-    parallel::clusterExport(cl2, c('sm','standata','samples'),environment())
-    parallel::clusterApply(cl2,1:cores, function(x) library(ctsem))
+    # parallel::clusterExport(cl2, c('sm','standata','samples'),environment())
+    # parallel::clusterApply(cl2,1:cores, function(x) library(ctsem))
   } else cl2 <- NA
-  transformedpars <- try(flexsapply(cl2, 
-    split(1:nrow(samples), sort((1:nrow(samples))%%cores)),
-    # parallel::clusterSplit(cl2,1:nrow(samples)), 
-    function(x){ #could pass smaller samples
-      # Sys.sleep(.1)
-      if(!is.null(standata$savescores) && !standata$savescores) standata$dokalmanrows <- as.integer(c(1,standata$subject[-1] - standata$subject[-standata$ndatapoints]))
-      smf <- stan_reinitsf(sm,standata)
-      # Sys.sleep(.1)
-      out <- list()
-      # skeleton=est1
-      for(li in 1:length(x)){
-        out[[li]] <- try(constrain_pars(smf, upars=samples[x[li],]))
-        if(any(sapply(out[[li]], function(x) any(c(is.nan(x),is.infinite(x),is.na(x)))))) class(out[[li]]) <- c(class(out[[li]]),'try-error')
-      }
-      return(out)
-    },cores=cores))
-  # browser()
-  if(cores > 1) transformedpars=unlist(transformedpars,recursive = FALSE)
+  # 
+  transformedpars <- try(flexlapply(cl2, 
+    split(1:nrow(samples), sort((1:nrow(samples))%%cores)),tparfunc,cores=cores,parallel=cores > 1))
+
+  #fix this hack
+  if(!is.null(transformedpars[[1]][[1]]$popmeans)) transformedpars=unlist(transformedpars,recursive = FALSE)
   est1=transformedpars[[1]]
   missingsamps <-sapply(transformedpars, function(x) 'try-error' %in% class(x))
   nasampscount <- sum(missingsamps) 
@@ -364,7 +331,7 @@ sgd <- function(init,fitfunc,ndatapoints,plotsgd=FALSE,stepbase=1e-4,gmeminit=if
         accepted <- TRUE
       } 
       else {
-        # browser()
+        # 
         step <- step * .8
       }
       
@@ -672,22 +639,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           bestfit = -optimfitde$optim$bestval
         } else stop(paste0('use install.packages(\"DEoptim\") to use deoptim')) #end require deoptim
       }
-      
-      # if(optimcores > 1){ #check if parallel helps optimizing
-      #   tempcl <- parallel::makeCluster(1) #create temp cluster to avoid cluttering memory
-      #   a=parallel::parLapply(tempcl,list(init), function(x) {
-      #     smf <- stan_reinitsf(sm,standata)
-      #     system.time(log_prob(smf,x))
-      #   })[[1]]
-      #   parallel::stopCluster(tempcl)
-      #   if( a[1] < .3) optimcores <- 1
-      # }
-      
-      
+
       
       storedPars <- c()
-      # smfnode <- NULL #global variables issue...
-      # parlp <- NULL 
+
       optimfinished <- FALSE
       on.exit({
         if(!optimfinished){
@@ -739,9 +694,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         
         target<-function(parm) {
           whichframe <- which(sapply(lapply(sys.frames(),ls),function(x){ 'clctsem' %in% x}))
-          # parallel::clusterExport(get('clctsem',envir = sys.frame(whichframe)),'parm',envir=environment())
-          # env$parm<<- parm
-          # browser()
           a=Sys.time()
           out2<- parallel::clusterCall(clctsem,parlp,parm)
           b=Sys.time()
@@ -1059,6 +1011,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           if(all(target_dens[[j]] < -1e100)) stop('Could not sample from optimum! Try reparamaterizing?')
           if(any(target_dens[[j]] > bestfit)){
             oldfit <- bestfit
+            browser()
             try2 <- TRUE
             bestfit<-max(target_dens[[j]],na.rm=TRUE)
             betterfit<-TRUE

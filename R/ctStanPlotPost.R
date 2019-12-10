@@ -33,11 +33,11 @@ ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE, smoothness=1,
   # do.call(graphics::par,parcontrol)
   
   e<-ctExtract(obj)
-  # browser()
+  # 
   
   # data
   priors <- ctStanGenerate(ctm = obj$ctstanmodelbase,
-    datastruct = obj$ctdatastruct,parsonly=TRUE,nsamples=3000,isloopsize=2000)
+    datastruct = obj$ctdatastruct,parsonly=TRUE,nsamples=6000)
   priors <- priors$stanfit$transformedpars
   
   
@@ -56,7 +56,7 @@ ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE, smoothness=1,
   for(ploti in 1:nplots){
     dat <- data.table(quantity='',Par.Value=0, Density=0,type='',param='')
     for(ri in if(length(rows) > 1) rows[as.integer(cut_number(rows,nplots))==ploti] else rows){
-      # browser()
+      # 
       pname <- obj$setup$popsetup$parname[ri]
       # print(pname)
       pari <- obj$setup$popsetup[ri,'param']
@@ -83,7 +83,7 @@ ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE, smoothness=1,
         rawpopsd <- e$rawpopsd[,popsetup$indvarying[ri]] #c(eval(parse(text=sdtform)) * ifelse(!is.null(obj$standata$varreg),exp(e$varregbase),1))
         
         param<-stats::rnorm(densiter,rawpopmeans,rawpopsd)
-        # browser()
+        # 
         subjectprior<-tform(param,popsetup$transform[ri],popvalues$multiplier[ri], popvalues$meanscale[ri],popvalues$offset[ri], popvalues$inneroffset[ri])
         
         if(!obj$data$intoverpop) {
@@ -99,7 +99,7 @@ ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE, smoothness=1,
               Density=dens$density[[i]]$y, type='Subject Params',param=pname))
           }
         }
-        # browser()
+        # 
         
         # rawpopsdbase<-  stats::rnorm(densiter,0,1)
         # rawpopsdprior <- c(eval(parse(text=sdtform))  * sdscale)#rawpopsd prior samples
@@ -113,7 +113,7 @@ ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE, smoothness=1,
         
         
         # #instead of hsdprior -- fixing intoverpop problems
-        # browser()
+        # 
         # rawpopsdbase<-  stats::rnorm(densiter)
         # if(!is.na(obj$ctstanmodel$rawpopsdbaselowerbound)) rawpopsdbase <- 
         #   rawpopsdbase[rawpopsdbase>obj$ctstanmodel$rawpopsdbaselowerbound]

@@ -256,6 +256,19 @@ model<-ctModel(type='stanct',
   LAMBDA=diag(2))
 @
 
+It is possible to simplify the specification of parameter matrices somewhat, by passing a vector of values and or parameters to be put row-wise (distinct from the R default of column-wise) into a matrix of the correct size. Singular values can also be used as a fill for the entire matrix. The above model in this shorter form is specified like:
+
+<<model2>>=
+model<-ctModel(type='stanct',
+  latentNames=c('eta1','eta2'),
+  manifestNames=c('Y1','Y2'),
+  CINT=c('cint1','cint2'),
+  MANIFESTMEANS=0,
+  TDpredNames='TD1', 
+  TIpredNames=c('TI1'),
+  LAMBDA=c(1,0,0,1))
+@
+
 The code above specifies a first order bivariate latent process model, with each process measured by a single, potentially noisy, manifest variable. A single time dependent predictor is included in the model, and a time independent predictor. To see the subject level model equation, the \verb|ctModelLatex| function can be used on the model object, generating output as shown in Figure \ref{fig:ctmodellatexout}.
 
 <<texout,results='asis',echo=FALSE>>=
@@ -330,6 +343,8 @@ summary(fit, timeinterval = 1)
 @
 
 In the summary output, the free population mean parameters under \verb|$popmeans| are likely one of the main points of interest. They are returned in the same form that they are input to \verb|ctModel| - that is, covariance matrix related parameters are in the form of either standard deviations or a transformed correlation parameter. Because the latter is difficult to interpret, various parameter matrices are also returned in the \verb|$parmatrices| section of the summary. The discrete time matrices reported here (prefixed by \verb|dt|, unless a discrete time model was estimated in the first place) are by default from a time interval of 1, but this can be changed. Asymptotic matrices -- those for a time interval of infinity -- are also output in some cases, and prefixed by \verb|asym|. Covariance related matrices are reported in covariance form, except where the suffix \verb|cor| is added to indicate correlations. 
+
+It is possible to represent the results for the within subject model using the Latex representation, running \verb|ctModelLatex(fit)| will show this.
 
 The function \verb}ctStanContinuousPars} can be used to return the continuous time parameter matrices in actual matrix form, for specific subjects, groups of subjects, or for the estimated population means. In the following code, the 97.5\% quantile is returned, for subject 3 (leaving the additional arguments out would instead give the population means).
 

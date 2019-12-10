@@ -37,23 +37,18 @@
 #' ctKalman(ctstantestfit, timerange=c(0,60), timestep=.1, plot=TRUE,
 #'   subjects=2:3, 
 #'   kalmanvec=c('y','yprior'),
-#'   errorvec=c(NA,'ypriorcov'), #'auto' would also have achieved this
-#'   ltyvec="auto",
-#'   colvec='auto', 
-#'   lwdvec='auto', 
-#'   subsetindices=2, #Only plotting 2nd dimension of y and yprior
-#'   pchvec='auto', typevec='auto',grid=TRUE,legend=TRUE,
-#'   plotcontrol=list(xlim=c(0,55),main='Observations and priors'),
-#'   polygoncontrol=list(steps=5))
+#'   errorvec=c(NA,'ypriorcov')) #'auto' would also have achieved this
 #'   }
 #' @export
 
-ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
+ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep=sd(fit$standata$time,na.rm=TRUE)/50,
   subjects=1, removeObs = FALSE, plot=FALSE, ...){
   type=NA
   if('ctStanFit' %in% class(fit)) type='stan' 
   if('ctsemFit' %in% class(fit)) type ='omx'
   if(is.na(type)) stop('fit object is not from ctFit or ctStanFit!')
+  
+  subjects <- sort(subjects) #in case not entered in ascending order
   
   if(type=='stan'){
     if(all(timerange == 'asdata')) timerange <- range(fit$standata$time[fit$standata$subject %in% subjects])
@@ -72,7 +67,7 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
     }
     
     out <- ctStanKalman(fit,collapsefunc=mean) #extract state predictions
-    
+    out$id <- as.integer(subjects[out$id]) #get correct subject indicators
     out <- meltkalman(out)
   }
   
@@ -201,7 +196,7 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep='asdata',
 #' AnomAuthfit <- ctFit(AnomAuth, AnomAuthmodel)
 #' ctKalman(AnomAuthfit,subjects=1,plot=TRUE)
 #' }
-plot.ctKalman<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
+plot.ctKalman<-function(x, subjects=1, kalmanvec=c('y','yprior'),
   errorvec='auto', errormultiply=1.96,
   ltyvec="auto",colvec='auto', lwdvec='auto', 
   subsetindices=NULL,pchvec='auto', typevec='auto',grid=FALSE,add=FALSE, 

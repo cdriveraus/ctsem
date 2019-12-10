@@ -8,7 +8,7 @@ ctStanGenerate(
   ctm,
   datastruct,
   optimize = TRUE,
-  is = TRUE,
+  is = FALSE,
   fullposterior = TRUE,
   nsamples = 200,
   parsonly = FALSE,

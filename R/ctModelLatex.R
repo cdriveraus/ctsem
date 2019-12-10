@@ -57,6 +57,7 @@ ctModelLatex<- function(x,matrixnames=TRUE,textsize='normalsize',folder=tempdir(
   }
   
   if(equationonly) compile <- FALSE
+  
   bmatrix = function(x, digits=NULL,nottext=FALSE, ...) {
     if(!is.null(x)){
       if(!nottext){
@@ -90,7 +91,7 @@ ctModelLatex<- function(x,matrixnames=TRUE,textsize='normalsize',folder=tempdir(
   
   
   W <- diag(1,ctmodel$n.latent)
-  if(continuoustime) diag(W) <- 'u-t'
+  if(continuoustime) diag(W) <- '\\Delta t'
   
   out <- ifelse(equationonly,"","
 \\documentclass[a4paper,landscape]{report}
@@ -132,7 +133,7 @@ ctModelLatex<- function(x,matrixnames=TRUE,textsize='normalsize',folder=tempdir(
       (t)}_{",ifelse(continuoustime,"\\mathrm{d}","")," \\vect{W}(t)} \\\\ \\\\
           &",if(continuoustime) paste0("\\underbrace{
             ",bmatrix(matrix(paste0('W_{',1:ctmodel$n.latent,'}')),nottext=TRUE),"  
-            (t+u)}_{\\vect{W}(t+u)} - "),"  \\underbrace{",bmatrix(matrix(paste0('W_{',1:ctmodel$n.latent,'}')),nottext=TRUE),"  
+            (t+\\Delta t)}_{\\vect{W}(t+\\Delta t)} - "),"  \\underbrace{",bmatrix(matrix(paste0('W_{',1:ctmodel$n.latent,'}')),nottext=TRUE),"  
             (t)}_{\\vect{W}(t)} \\sim  \\mathrm{N} \\left(
               ",bmatrix(matrix(0,ctmodel$n.latent,1)),", ",bmatrix(W)," \\right) \\\\ \\\\
 &\\underbrace{

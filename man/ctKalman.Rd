@@ -8,7 +8,7 @@ ctKalman(
   fit,
   datalong = NULL,
   timerange = "asdata",
-  timestep = "asdata",
+  timestep = sd(fit$standata$time, na.rm = TRUE)/50,
   subjects = 1,
   removeObs = FALSE,
   plot = FALSE,
@@ -64,13 +64,6 @@ ctKalman(ctstantestfit, timerange=c(0,60), timestep=.5, plot=TRUE)
 ctKalman(ctstantestfit, timerange=c(0,60), timestep=.1, plot=TRUE,
   subjects=2:3, 
   kalmanvec=c('y','yprior'),
-  errorvec=c(NA,'ypriorcov'), #'auto' would also have achieved this
-  ltyvec="auto",
-  colvec='auto', 
-  lwdvec='auto', 
-  subsetindices=2, #Only plotting 2nd dimension of y and yprior
-  pchvec='auto', typevec='auto',grid=TRUE,legend=TRUE,
-  plotcontrol=list(xlim=c(0,55),main='Observations and priors'),
-  polygoncontrol=list(steps=5))
+  errorvec=c(NA,'ypriorcov')) #'auto' would also have achieved this
   }
 }
