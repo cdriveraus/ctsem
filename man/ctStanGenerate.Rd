@@ -28,7 +28,9 @@ ctStanGenerate(
 
 \item{nsamples}{How many samples to generate?}
 
-\item{...}{}
+\item{parsonly}{If TRUE, only return samples of raw parameters, don't generate data.}
+
+\item{...}{arguments to pass to stanoptimis}
 }
 \value{
 Array of nsamples x time points x manifest variables.
@@ -45,7 +47,7 @@ DRIFT= 0,
 DIFFUSION=0,
 CINT='cint1',
 T0MEANS='t0m1',
-T0VAR=0, #only need to set this when t0means are not individually varying -- otherwise automatic / inherent.
+T0VAR=0, #only need to set this when t0means not individually varying
 LAMBDA = 1,
 MANIFESTMEANS=0,
 MANIFESTVAR='merror')

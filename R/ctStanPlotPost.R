@@ -15,7 +15,9 @@
 #' If false, graphs are plotted one after another without waiting.
 #' @param plot Logical, if FALSE, ggplot objects are returned in a list instead of plotting.
 #' @examples
+#' \dontrun{
 #' ctStanPlotPost(ctstantestfit, rows=3:4)
+#' }
 #' @export
 
 ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE, smoothness=1,

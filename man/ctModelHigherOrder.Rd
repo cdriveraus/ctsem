@@ -4,7 +4,14 @@
 \alias{ctModelHigherOrder}
 \title{Raise the order of a ctsem model object of type 'omx'.}
 \usage{
-ctModelHigherOrder(ctm, indices, diffusion = TRUE, crosseffects = FALSE)
+ctModelHigherOrder(
+  ctm,
+  indices,
+  diffusion = TRUE,
+  crosseffects = FALSE,
+  cint = FALSE,
+  explosive = FALSE
+)
 }
 \arguments{
 \item{ctm}{ctModel}
@@ -14,6 +21,10 @@ ctModelHigherOrder(ctm, indices, diffusion = TRUE, crosseffects = FALSE)
 \item{diffusion}{Shift the diffusion parameters / values to the higher order?}
 
 \item{crosseffects}{Shift cross coupling parameters of the DRIFT matrix to the higher order?}
+
+\item{cint}{shift continuous intercepts to higher order?}
+
+\item{explosive}{Allow explosive (non equilibrium returning) processes?}
 }
 \value{
 extended ctModel

@@ -1,8 +1,8 @@
 Package: ctsem
 Type: Package
 Title: Continuous Time Structural Equation Modelling
-Version: 3.0.8
-Date: 2019-11-04
+Version: 3.0.9
+Date: 2019-12-10
 Authors@R: c(person("Charles", "Driver", role =
     c("aut","cre","cph"),email="driver@mpib-berlin.mpg.de"),
     person("Manuel", "Voelkle", role = c("aut","cph")),
@@ -14,7 +14,7 @@ Description: Hierarchical continuous time state space modelling, for linear
     differential equation (SDE), measurement models are typically multivariate normal factor models. 
     Using the original ctsem formulation based on OpenMx, described in the JSS paper 
     "Continuous Time Structural Equation Modeling with R Package ctsem", with updated version
-    as CRAN vignette <https://cran.r-project.org/web/packages/ctsem/vignettes/ctsem.pdf> ,
+    as CRAN vignette <https://cran.r-project.org/package=ctsem/vignettes/ctsem.pdf> ,
     linear mixed effects SDE's estimated via maximum likelihood and optimization are possible.
     Using the Stan based formulation, described in <https://github.com/cdriveraus/ctsem/raw/master/vignettes/hierarchicalmanual.pdf> , 
     nonlinearity (state dependent parameters) and random effects on all parameters
@@ -50,6 +50,7 @@ Imports:
     pkgbuild,
     cOde,
     Deriv,
+    numDeriv,
     quantreg
 Encoding: UTF-8
 LazyData: true
@@ -66,4 +67,4 @@ Suggests:
     shiny,
     gridExtra
 VignetteBuilder: knitr
-RoxygenNote: 7.0.1
+RoxygenNote: 7.0.2

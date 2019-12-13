@@ -1,6 +1,6 @@
 #' Generate and optionally compile latex equation of subject level ctsem model.
 #'
-#' @param object ctsem model object or ctStanFit object.
+#' @param x ctsem model object or ctStanFit object.
 #' @param matrixnames Logical. If TRUE, includes ctsem matrix names such as DRIFT and DIFFUSION under the matrices.
 #' @param textsize Standard latex text sizes -- 
 #' tiny scriptsize footnotesize small normalsize large Large LARGE huge Huge. 
@@ -9,6 +9,7 @@
 #' @param folder Character string specifying folder to save to, defaults to temporary directory, use "./" for working directory.
 #' @param tex Save .tex file? Otherwise latex is simply returned within R as a string.
 #' @param equationonly Logical. If TRUE, output is only the latex relevant to the equation, not a compileable document.
+#' @param minimal if TRUE, outputs reduced form version displaying matrix dimensions and equation structure only.
 #' @param compile Compile to .pdf? (Depends on \code{tex = TRUE}) 
 #' @param open Open after compiling? (Depends on \code{compile = TRUE})
 #'
@@ -32,7 +33,11 @@
 #' l=ctModelLatex(ctmodel,compile=FALSE, open=FALSE)
 #' cat(l)
 ctModelLatex<- function(x,matrixnames=TRUE,textsize='normalsize',folder=tempdir(),
-  filename=paste0('ctsemTex',as.numeric(Sys.time())),tex=TRUE, equationonly=FALSE, compile=TRUE, open=TRUE){
+  filename=paste0('ctsemTex',as.numeric(Sys.time())),tex=TRUE, equationonly=FALSE, compile=TRUE, open=TRUE,
+  minimal=FALSE){
+  #library(ctsem)
+  
+  
   
   if('ctStanFit' %in% class(x)){
     parmats <- summary(x,residualcov=FALSE,priorcheck=FALSE)
@@ -91,9 +96,12 @@ ctModelLatex<- function(x,matrixnames=TRUE,textsize='normalsize',folder=tempdir(
   
   
   W <- diag(1,ctmodel$n.latent)
-  if(continuoustime) diag(W) <- '\\Delta t'
+  if(continuoustime) diag(W) <- 'u-t'
+
+#out = 'Hello' 
+
   
-  out <- ifelse(equationonly,"","
+out <- ifelse(equationonly,"","
 \\documentclass[a4paper,landscape]{report}
 \\usepackage[margin=1cm]{geometry}
 \\usepackage{amsmath} %for multiple line equations
@@ -103,7 +111,100 @@ ctModelLatex<- function(x,matrixnames=TRUE,textsize='normalsize',folder=tempdir(
 
 \\begin{document}
 \\thispagestyle{empty}")
-  out <- paste0(out, "
+
+if (minimal){
+  dict = list('A' = 'DRIFT','b'='CINT','M'='TDPREDEFFECT','G'='DIFFUSION','tau'='MANIFESTMEANS')
+  
+  for (name in names(dict)) {
+    chmat = ctmodel[[dict[[name]]]]
+    if (!is.numeric(chmat)){
+      dict[[name]] = TRUE
+    } else {
+      #print('Recognized as numeric')
+      if (max(abs(chmat)) < 1e-3) {
+        dict[[name]] = FALSE
+      } else dict[[name]] = TRUE
+    }
+  }
+  
+  nu = ctmodel$n.latent
+  c = ctmodel$n.manifest
+  l = ctmodel$n.TDpred
+  
+  tablestring <- '\\begin{center}
+\\begin{tabular}'#{c|c|c|c} missing
+  equationstring <- '\\begin{align*} \n'
+  
+  tabledim = '{c'
+  tablecont1 = '$\\eta(t)$'
+  tablecont2 = paste0('$',nu,'$')
+  noisestring = ''
+  equationcont = 'd\\eta(t) &= '
+  
+  if (!dict[['A']] & !dict[['b']] & !dict[['M']] ){ #if all of these are not in the equation, we only have noise.
+    if (!dict[['G']]) equationcont = paste0(equationcont,'\\mathbf{0}') 
+  } else {
+    equationcont = paste0(equationcont, '\\left(')
+    if (dict[['A']]){
+      tabledim = paste0(tabledim,'|c')
+      tablecont1 = paste0(tablecont1,'& $\\mathbf{A}$')
+      tablecont2 = paste0(tablecont2,'& $',nu,'\\times', nu,'$')
+      equationcont = paste0(equationcont,'\\mathbf{A} \\eta(t)')
+    }
+    if (dict[['b']]){
+      tabledim = paste0(tabledim,'|c')
+      tablecont1 = paste0(tablecont1,'& $\\mathbf{b}$')
+      tablecont2 = paste0(tablecont2,'& $',nu,'$')
+      if(dict[['A']]) equationcont = paste0(equationcont,'+')
+      equationcont = paste0(equationcont,'\\mathbf{b}')
+    }
+    if (dict[['M']] && !l==0){
+      tabledim = paste0(tabledim,'|c|c')
+      tablecont1 = paste0(tablecont1,'& $\\mathbf{M}$ & $\\chi(t)$')
+      tablecont2 = paste0(tablecont2,'& $',nu,'\\times', l,'$','& $',l,'$')
+      if(dict[['A']]||dict[['b']]) equationcont = paste0(equationcont,'+')
+      equationcont = paste0(equationcont,'\\mathbf{M} \\chi(t)')
+    }
+  }
+  
+  if (dict[['A']] || dict[['b']] || dict[['M']] ) equationcont = paste0(equationcont,'\\right) dt')
+  
+  
+  if (dict[['G']]){
+    tabledim = paste0(tabledim,'|c|c')
+    tablecont1 = paste0(tablecont1,'& $\\mathbf{G}$ & $d\\mathbf{W}(t) $')
+    tablecont2 = paste0(tablecont2,'& $',nu,'\\times', nu,'$','& $',nu,'$')
+    noisestring = paste0(noisestring,'\\mathbf{W}(t+\\Delta t)-\\mathbf{W}(t) &\\sim N(\\mathbf{0},\\mathrm{diag}(\\Delta t)) \\\\','\n' )
+    if (dict[['A']] || dict[['b']] || dict[['M']] ) equationcont = paste0(equationcont,'+')
+    equationcont = paste0(equationcont,'\\mathbf{G} d\\mathbf{W}(t)')
+  }
+  
+  tabledim = tabledim = paste0(tabledim,'|c|c')
+  tablecont1 = paste0(tablecont1,'& $\\mathbf{y}$ & $\\Lambda $')
+  tablecont2 = paste0(tablecont2,'& $',c,'$','& $',nu,'\\times', c,'$')
+  equationcont = paste0(equationcont,'\\\\','\n', '\\mathbf{y}(t) &= \\Lambda \\eta(t)')
+  
+  if (dict[['tau']]){
+    tabledim = paste0(tabledim,'|c')
+    tablecont1 = paste0(tablecont1,'& $\\tau$')
+    tablecont2 = paste0(tablecont2,'& $',c,'$')
+    equationcont = paste0(equationcont,'+ \\tau')
+  }
+  
+  tabledim = tabledim = paste0(tabledim,'|c|c}')
+  tablecont1 = paste0(tablecont1,'& $\\epsilon(t)$ & $\\Theta$ \\\\','\n', '\\hline')
+  tablecont2 = paste0(tablecont2,'& $',c,'$','& $',c,'\\times', c,'$')
+  noisestring = paste0(noisestring,'\\epsilon(t) &\\sim N(\\mathbf{0},\\Theta) \\\\','\n' )
+  equationcont = paste0(equationcont,'+ \\epsilon(t)')
+  
+  
+  tablestring = paste0(tablestring,tabledim,'\n',tablecont1,'\n',tablecont2,'\n','\\end{tabular}','\n','\\end{center}')
+  
+  equationstring = paste0(equationstring,noisestring,'\\\\',equationcont,'\n','\\end{align*}')
+  
+  out= paste0(out,tablestring,'\n',equationstring)
+} else {
+out <- paste0(out, "
 \\setcounter{MaxMatrixCols}{200}
  \\begin{",textsize,"}
   \\begin{align*}
@@ -133,7 +234,7 @@ ctModelLatex<- function(x,matrixnames=TRUE,textsize='normalsize',folder=tempdir(
       (t)}_{",ifelse(continuoustime,"\\mathrm{d}","")," \\vect{W}(t)} \\\\ \\\\
           &",if(continuoustime) paste0("\\underbrace{
             ",bmatrix(matrix(paste0('W_{',1:ctmodel$n.latent,'}')),nottext=TRUE),"  
-            (t+\\Delta t)}_{\\vect{W}(t+\\Delta t)} - "),"  \\underbrace{",bmatrix(matrix(paste0('W_{',1:ctmodel$n.latent,'}')),nottext=TRUE),"  
+            (t+u)}_{\\vect{W}(t+u)} - "),"  \\underbrace{",bmatrix(matrix(paste0('W_{',1:ctmodel$n.latent,'}')),nottext=TRUE),"  
             (t)}_{\\vect{W}(t)} \\sim  \\mathrm{N} \\left(
               ",bmatrix(matrix(0,ctmodel$n.latent,1)),", ",bmatrix(W)," \\right) \\\\ \\\\
 &\\underbrace{
@@ -162,9 +263,9 @@ ctModelLatex<- function(x,matrixnames=TRUE,textsize='normalsize',folder=tempdir(
       \\end{align*}
       \\end{",textsize,"}
       ")
+}
   
   if(!equationonly) out <- paste0(out, "\\end{document}")
-  
   
   
   if(tex) {
@@ -190,5 +291,4 @@ ctModelLatex<- function(x,matrixnames=TRUE,textsize='normalsize',folder=tempdir(
   }
   return(invisible(out))
 }
-
 

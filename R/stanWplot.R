@@ -41,7 +41,7 @@ stanWplot <- function(object,iter=2000,chains=4,...){
       Sys.sleep(1);
       samps<-try(data.table::fread(skip="lp__",
       file=paste0(seed,"samples_1.csv")),silent=TRUE)
-      if(class(samps)[1] != "try-error" && length(samps) > 0) notyet<-FALSE
+      if("try-error" %in% class(samps)[1] && length(samps) > 0) notyet<-FALSE
     }
     varnames<-colnames(samps);
     shiny::runApp(appDir=list(server=function(input, output,session) {
@@ -61,7 +61,7 @@ colclasses[which(varnames %in% parameter)] <- NA
         header = TRUE,colClasses = colclasses)
         ),silent=TRUE)
 #data.table::fread(select = parameter,skip="lp__",
-      if(class(samps[[chaini]])[1]=="try-error" || length(samps[[chaini]]) ==0) samps[[chaini]]=samps[[1]][1,,drop=FALSE]
+      if("try-error" %in% class(samps[[chaini]])[1] || length(samps[[chaini]]) ==0) samps[[chaini]]=samps[[1]][1,,drop=FALSE]
     }
     
     mini<-min(unlist(lapply(1:chains,function(chaini) samps[[chaini]][begin:length(samps[[chaini]]),parameter])),na.rm=T)

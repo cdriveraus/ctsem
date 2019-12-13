@@ -38,5 +38,7 @@ If false, graphs are plotted one after another without waiting.}
 Plots prior and posterior distributions of model parameters in a ctStanModel or ctStanFit object.
 }
 \examples{
+\dontrun{
 ctStanPlotPost(ctstantestfit, rows=3:4)
+}
 }

@@ -1,8 +1,11 @@
 ctsem news:
 
-20/11/2019
+10/12/2019
 #### 3.0.9 ####
 - ctStanGenerate function -- generate from a ctstanmodel and prior distribution.
+- Parallel optimization improvements -- memory usage halved, more cores nearly always useful.
+- Missing time independent predictors single imputed when optimizing.
+- ctModelHigherOrder function to easily add higher order structure to specified model. E.g. slow changing trends / oscillations.
 - various minor output / efficiency / estimation robustness improvements.
 
 30/10/2019

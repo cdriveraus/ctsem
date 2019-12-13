@@ -17,7 +17,7 @@ stanoptimis(
   stochastic = FALSE,
   nopriors = FALSE,
   carefulfit = TRUE,
-  plotsgd = FALSE,
+  plot = FALSE,
   is = FALSE,
   isloopsize = 1000,
   finishsamples = 500,
@@ -58,7 +58,7 @@ the stan model uses this value.}
 
 \item{carefulfit}{Logical. If TRUE, priors are always used for a rough first pass to obtain starting values when nopriors=TRUE.}
 
-\item{plotsgd}{Logical. If TRUE, plot iteration details when using stochastic optimizer.}
+\item{plot}{Logical. If TRUE, plot iteration details. Probably slower.}
 
 \item{is}{Logical. Use importance sampling, or just return map estimates?}
 

@@ -12,7 +12,6 @@ ctModel0DRIFT <- function(ctm,continuoustime){
 ctModelStatesAndPARS <- function(ctm){
   #detect state refs
   ln <- ctm$latentNames
-  
   for(li in c(1:length(ln))){
     for(ri in grep(paste0('\\b(',ln[li],')\\b'),ctm$pars$param)){
       ctm$pars$param[ri] <- gsub(paste0('\\b(',ln[li],')\\b'),paste0('state[',li,']'),ctm$pars$param[ri])
@@ -1036,6 +1035,9 @@ if(verbose > 1) print ("below t0 row ", rowi);
       finiteJ(),
       simplestatedependencies(when=2,mlist=c(mats$diffusion,mats$jacobian[2])),
       simplifystanfunction(paste0(paste0(ctm$calcs$diffusion,';\n',collapse=' '))),' 
+      
+      if(multiplicativenoise) sDIFFUSIONcov[derrind,derrind] = sdcovsqrt2cov(sDIFFUSION[derrind,derrind],choleskymats);
+      
              
             if(continuoustime){
               if(dtchange==1 || statedependence[2] || (T0check == 1 && (DRIFTsubindex + CINTsubindex > 0))){
@@ -1044,12 +1046,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
               } else if(savescores) Je[rowi] = Je[rowi-1];
               state[1:nlatent] = (discreteDRIFT * append_row(state[1:nlatent],1.0))[1:nlatent]; //compute before new diffusion calcs
               if(dtchange==1 || statedependence[2] || (T0check == 1 && (DRIFTsubindex + DIFFUSIONsubindex + CINTsubindex) > 0)){
-                if(multiplicativenoise){
-                matrix [nlatent,nlatent] tempDIFFUSION = sDIFFUSION;
-                ',simplifystanfunction(paste0(paste0(ctm$calcs$diffusion,';\n',collapse=' '))),' //calc at new state and average
-                sDIFFUSION[derrind,derrind] = (sDIFFUSION[derrind,derrind] + tempDIFFUSION[derrind,derrind]) /2;
-                }
-                sasymDIFFUSION[derrind,derrind] = to_matrix(  -kronsum(sJAx[derrind,derrind]) \\ to_vector(tcrossprod(sDIFFUSION[derrind,derrind])), ndiffusion,ndiffusion);
+                sasymDIFFUSION[derrind,derrind] = to_matrix(  -kronsum(sJAx[derrind,derrind]) \\ to_vector(sDIFFUSIONcov[derrind,derrind]), ndiffusion,ndiffusion);
                 discreteDIFFUSION[derrind,derrind] =  sasymDIFFUSION[derrind,derrind] - quad_form( sasymDIFFUSION[derrind,derrind], Je[savescores ? rowi : 1, derrind,derrind]\' );
               } 
               etacov = quad_form(etacov, Je[savescores ? rowi : 1]\');
@@ -1062,8 +1059,6 @@ if(verbose > 1) print ("below t0 row ", rowi);
           if(continuoustime==0){ 
             Je[savescores ? rowi : 1] = sJAx;
             etacov = quad_form(etacov, sJAx\');
-            //sasymDIFFUSION[ derrind, derrind ] = to_matrix( (IIlatent2 - 
-              //sqkron_prod(sDRIFT[ derrind, derrind ], sDRIFT[ derrind, derrind ])) \\  to_vector(tcrossprod(sDIFFUSION[ derrind, derrind ])), ndiffusion, ndiffusion);
             etacov[ derrind, derrind ] += tcrossprod(sDIFFUSION[ derrind, derrind ]); //may need improving re sDIFFUSION
             discreteDRIFT=append_row(append_col(sDRIFT[1:nlatent, 1:nlatent],sCINT),rep_matrix(0,1,nlatent+1));
             discreteDRIFT[nlatent+1,nlatent+1] = 1;
@@ -1330,7 +1325,7 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
                if(matsetup[ri,3] < 1) newval = matvalues[ri, 1]; //doing this once over all subjects unless covariance matrix -- speed ups possible here, check properly!
               ',paste0('if(matsetup[ri, 7] == ', c(mats$base,mats$jacobian),') s',
                 names(c(mats$base,mats$jacobian)),'[matsetup[ ri,1], matsetup[ri,2]] = newval;', collapse = ' \n      '),'
-                if(matsetup[ri,9] < 0){
+                if(matsetup[ri,9] < 0){ //then send copies elsewhere
                 for(ri2 in 1:size(matsetup)){
                   if(matsetup[ri2,9] == ri){ 
                   ',paste0('if(matsetup[ri2, 7] == ', c(mats$base,mats$jacobian),') s', names(c(mats$base,mats$jacobian)),'[matsetup[ri2,1], matsetup[ri2,2]] = newval;', collapse = ' \n      '),'
@@ -1352,7 +1347,7 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
   ',paste0(ctm$calcs$measurement,';\n',collapse=' '),';
   
   if(subi <= (DIFFUSIONsubindex ? nsubjects : 0)) {
-    sDIFFUSIONcov = sdcovsqrt2cov(sDIFFUSION,nldynamics);
+    sDIFFUSIONcov = sdcovsqrt2cov(sDIFFUSION,choleskymats);
   }
   if(subi <= (asymDIFFUSIONsubindex ? nsubjects : 0)) {
     if(ndiffusion < nlatent) sasymDIFFUSION = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
@@ -1370,7 +1365,7 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
   //}
      if(subi <= (T0VARsubindex ? nsubjects : 0)) {
       if(intoverpop) sT0VAR[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopcovsqrt;
-      sT0VAR = makesym(sdcovsqrt2cov(sT0VAR,nldynamics),verbose,1);
+      sT0VAR = makesym(sdcovsqrt2cov(sT0VAR,choleskymats),verbose,1);
       if(nt0varstationary > 0) {
         for(ri in 1:nt0varstationary){ 
           sT0VAR[t0varstationary[ri,1],t0varstationary[ri,2] ] =  sasymDIFFUSION[t0varstationary[ri,1],t0varstationary[ri,2] ];
@@ -1615,6 +1610,7 @@ data {
   int intoverpop;
   int statedependence[4];
   int multiplicativenoise;
+  int choleskymats;
   int nlmeasurement;
   int intoverstates;
   int verbose; //level of printing during model fit

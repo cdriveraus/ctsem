@@ -298,7 +298,7 @@ plot.ctsemFit<-function(x,resolution=50,wait=TRUE,max.time="auto",mean=TRUE,
   
   if(standardiseCR==TRUE) {
     standardiser<-try(suppressWarnings(rep(sqrt(diag(abs(asymDIFFUSION))),each=n.latent) / rep(diag(sqrt(abs(asymDIFFUSION))),times=n.latent)))
-    if(class(standardiser)=='try-error') {
+    if('try-error' %in% class(standardiser)) {
       message('Unable to standardardise cross regression - plotting unstandardised.')
       standardiseCR<-FALSE
     }
@@ -620,7 +620,7 @@ ctPlot<-function(x,plotType,xlim,resolution=50,impulseIndex=NULL,subject=1,typeV
     
     if(plotType=='standardiseCR') {
       standardiser<-try(suppressWarnings(rep(sqrt(diag(abs(asymDIFFUSION))),each=n.latent) / rep(diag(sqrt(abs(asymDIFFUSION))),times=n.latent)))
-      if(class(standardiser)=='try-error')  stop('Unable to standardardise cross regression - try unstandardised.')
+      if('try-error' %in% class(standardiser))  stop('Unable to standardardise cross regression - try unstandardised.')
       standardiser[is.nan(standardiser)]<-0
     }
     

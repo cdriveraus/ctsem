@@ -6,7 +6,8 @@
 #' @param is If optimizing, follow up with importance sampling? 
 #' @param fullposterior Generate from the full posterior or just the mean?
 #' @param nsamples How many samples to generate?
-#' @param ... 
+#' @param parsonly If TRUE, only return samples of raw parameters, don't generate data.
+#' @param ... arguments to pass to stanoptimis 
 #'
 #' @return Array of nsamples x time points x manifest variables.
 #' @export
@@ -20,7 +21,7 @@
 #' DIFFUSION=0,
 #' CINT='cint1',
 #' T0MEANS='t0m1',
-#' T0VAR=0, #only need to set this when t0means are not individually varying -- otherwise automatic / inherent.
+#' T0VAR=0, #only need to set this when t0means not individually varying
 #' LAMBDA = 1,
 #' MANIFESTMEANS=0,
 #' MANIFESTVAR='merror')

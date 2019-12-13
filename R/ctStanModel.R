@@ -238,7 +238,7 @@ ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
     }
   }
   
-  if(n.TIpred > 0 && sum(unlist(ctspec[,paste0(TIpredNames,'_effect')]))==0) stop('TI predictors included but no effects specified!')
+  if(n.TIpred > 0 && sum(unlist(ctspec[,paste0(TIpredNames,'_effect')]))==0) warning('TI predictors included but no effects specified!')
   
   for(ri in 1:nrow(ctspec)){ #set NA's on complex params
     if(grepl('\\W',gsub('.','',ctspec$param[ri],fixed=TRUE)) || ctspec$param[ri] %in% latentNames){
@@ -267,6 +267,7 @@ ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
   # out$stationarymeanprior <- NA
   # out$stationaryvarprior <- NA
   out$manifesttype <- rep(0,n.manifest)
+  out$covmattransform <- 'unconstrainedcorr'
   
   return(out)
 }

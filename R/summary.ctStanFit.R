@@ -210,7 +210,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
       #   replace = FALSE),],
       1,ctStanParMatrices,fit=object,timeinterval=timeinterval,sf=sf))
     
-    if(class(parmatlists)[1]!='try-error'){
+    if(!'try-error' %in% class(parmatlists)[1]){
       parmatarray <- array(unlist(parmatlists),dim=c(length(unlist(parmatlists[[1]])),length(parmatlists)))
       parmats <- matrix(NA,nrow=length(unlist(parmatlists[[1]])),ncol=7)
       rownames(parmats) <- paste0('r',1:nrow(parmats))
@@ -249,7 +249,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
       out$parmatNote=paste0('Population mean parameter matrices calculated with time interval of ', timeinterval,' for discrete time (dt) matrices. ',
         'Covariance related matrices shown as covariance matrices, correlations have (cor) suffix. Asymptotic (asym) matrices based on infinitely large time interval.')
     }
-    if(class(parmatlists)[1]=='try-error') out$parmatNote = 'Could not calculate parameter matrices'
+    if('try-error' %in% class(parmatlists)[1]) out$parmatNote = 'Could not calculate parameter matrices'
   }
     
   

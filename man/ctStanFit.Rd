@@ -62,8 +62,8 @@ the parameters are instead fixed to long run expectations. More control over thi
 by instead setting parameter names of T0MEANS and T0VAR matrices in the input model to 'stationary', for
 elements that should be fixed to stationarity.}
 
-\item{plot}{if TRUE, a Shiny program is launched upon fitting to interactively plot samples. 
-May struggle with many (e.g., > 5000) parameters, and may leave sample files in working directory if sampling is terminated.}
+\item{plot}{if TRUE, for sampling, a Shiny program is launched upon fitting to interactively plot samples. 
+May struggle with many (e.g., > 5000) parameters. For optimizing, various optimization details are plotted -- in development.}
 
 \item{derrind}{vector of integers denoting which latent variables are involved in dynamic error calculations.
 latents involved only in deterministic trends or input effects can be removed from matrices (ie, that
@@ -82,17 +82,12 @@ otherwise nonlinear -- nonlinear is slower.
 \code{nlmeasurement} defaults to "auto", but may also be a logical. Set to TRUE to use non linear measurement model estimator, 
 FALSE to use linear model. "auto" selects linear if appropriate, otherwise nonlinear. Non-linear methods are slower but applicable to both linear
 and non linear cases.
-\code{ukffull} may be TRUE or FALSE. If FALSE, nonlinear filtering via the unscented filter uses a minimal number of sigma points,
-that does not capture skew in the resulting distribution. 
 \code{maxtimestep} must be a positive numeric,  specifying the largest time
 span covered by the numerical integration. The large default ensures that for each observation time interval, 
 only a single step of exponential integration is used. When \code{maxtimestep} is smaller than the observation time interval, 
 the integration is nested within an Euler like loop. 
 Smaller values may offer greater accuracy, but are slower and not always necessary. Given the exponential integration,
-linear model elements are fit exactly with only a single step. 
-\code{ukfspread} should be a small positive numeric value, indicating what fraction of a standard deviation to 
-use for unscented sigma points. Values between 1e-4 and 2 have tended to be reasonable, in our experience. 
-In general, larger values may not make sense when using the default of \code{ukffull=FALSE}.}
+linear model elements are fit exactly with only a single step.}
 
 \item{nopriors}{logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.}
 

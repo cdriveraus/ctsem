@@ -4,6 +4,8 @@
 #' @param indices Vector of integers, which latents to raise the order of.
 #' @param diffusion Shift the diffusion parameters / values to the higher order?
 #' @param crosseffects Shift cross coupling parameters of the DRIFT matrix to the higher order?
+#' @param cint shift continuous intercepts to higher order?
+#' @param explosive Allow explosive (non equilibrium returning) processes?
 #'
 #' @return extended ctModel
 #' @export
@@ -17,7 +19,7 @@
 #' 
 #' m <- ctStanModel(om)
 #' print(m$pars)
-ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE){
+ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,cint=FALSE, explosive=FALSE){
   ctm$latentNames <- c(ctm$latentNames,paste0('d',ctm$latentNames[indices]))
   nl <- ctm$n.latent
   
@@ -47,7 +49,7 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE){
     ctm$DRIFT[indices[i],i+nl] <- 1 #set effect of higher order to 1
     ctm$DRIFT[i+nl,indices[i]] <-paste0('drift_',ctm$latentNames[i+nl],'_',
       ctm$latentNames[indices[i]],
-      '|-5*log1p(exp(-param*2))') #estimate effect of 1st order on 2nd
+      ifelse(!explosive,'|-5*log1p(exp(-param*2))','|param*5-2')) #estimate effect of 1st order on 2nd
     if(indices[i]==tail(indices,1)) rownames(ctm$DRIFT) <- ctm$latentNames
     if(indices[i]==tail(indices,1)) colnames(ctm$DRIFT) <- ctm$latentNames
     
@@ -65,12 +67,15 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE){
     for(m in c('CINT','T0MEANS')){
       # browser()
       if(m %in% 'T0MEANS') ctm[[m]][i+nl,1] <- paste0('T0mean_d_',ctm$latentNames[indices[i]])
-      if(!m %in% 'T0MEANS') ctm[[m]][indices[i],] <- 0 #set order 1 param to 0
+      if(!m %in% 'T0MEANS' && cint){
+        ctm[[m]][indices[i]+nl,] <- ctm[[m]][indices[i],]
+        ctm[[m]][indices[i],] <- 0 #set order 1 param to 0
+        }
       if(indices[i]==tail(indices,1)) rownames(ctm[[m]]) <- ctm$latentNames
     }
   }
   # browser()
-  for(i in c(1:nl,nl+seq_along(indices))){
+  for(i in c(nl+seq_along(indices))){
     for(j in c(1:nl,nl+seq_along(indices))){
       if(i >= j) ctm$T0VAR[i,j] <- paste0('T0var_',ctm$latentNames[i],'_',
         ctm$latentNames[j])

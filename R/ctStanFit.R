@@ -128,8 +128,8 @@ verbosify<-function(sf,verbose=2){
 #' @param fit If TRUE, fit specified model using Stan, if FALSE, return stan model object without fitting.
 #' @param intoverpop if TRUE, integrates over population distribution of parameters rather than full sampling.
 #' Allows for optimization of non-linearities and random effects.
-#' @param plot if TRUE, a Shiny program is launched upon fitting to interactively plot samples. 
-#' May struggle with many (e.g., > 5000) parameters, and may leave sample files in working directory if sampling is terminated.
+#' @param plot if TRUE, for sampling, a Shiny program is launched upon fitting to interactively plot samples. 
+#' May struggle with many (e.g., > 5000) parameters. For optimizing, various optimization details are plotted -- in development.
 #' @param derrind vector of integers denoting which latent variables are involved in dynamic error calculations.
 #' latents involved only in deterministic trends or input effects can be removed from matrices (ie, that
 #' obtain no additional stochastic inputs after first observation), speeding up calculations. 
@@ -156,17 +156,12 @@ verbosify<-function(sf,verbose=2){
 #' \code{nlmeasurement} defaults to "auto", but may also be a logical. Set to TRUE to use non linear measurement model estimator, 
 #' FALSE to use linear model. "auto" selects linear if appropriate, otherwise nonlinear. Non-linear methods are slower but applicable to both linear
 #' and non linear cases.
-#' \code{ukffull} may be TRUE or FALSE. If FALSE, nonlinear filtering via the unscented filter uses a minimal number of sigma points,
-#' that does not capture skew in the resulting distribution. 
 #' \code{maxtimestep} must be a positive numeric,  specifying the largest time
 #' span covered by the numerical integration. The large default ensures that for each observation time interval, 
 #' only a single step of exponential integration is used. When \code{maxtimestep} is smaller than the observation time interval, 
 #' the integration is nested within an Euler like loop. 
 #' Smaller values may offer greater accuracy, but are slower and not always necessary. Given the exponential integration,
 #' linear model elements are fit exactly with only a single step. 
-#' \code{ukfspread} should be a small positive numeric value, indicating what fraction of a standard deviation to 
-#' use for unscented sigma points. Values between 1e-4 and 2 have tended to be reasonable, in our experience. 
-#' In general, larger values may not make sense when using the default of \code{ukffull=FALSE}.
 #' @param verbose Integer from 0 to 2. Higher values print more information during model fit -- for debugging.
 #' @param stationary Logical. If TRUE, T0VAR and T0MEANS input matrices are ignored, 
 #' the parameters are instead fixed to long run expectations. More control over this can be achieved
@@ -1013,6 +1008,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     standata$statedependence <- statedependence
     standata$multiplicativenoise <- multiplicativenoise
+    standata$choleskymats<- ifelse(ctm$covmattransform=='unconstrainedcorr',0L,1L)
+    if(!ctm$covmattransform %in% c('unconstrainedcorr','cholesky')) stop('covtransform must be either "unconstrainedcorr" or "cholesky"')
     
     standata$matsetup <- apply(matsetup[,-1],c(1,2),as.integer,.drop=FALSE) #remove parname and convert to int
     standata$matvalues <- apply(matvalues,c(1,2),as.numeric)
@@ -1130,7 +1127,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         optimcontrol$cores <- cores
         optimcontrol$verbose <- verbose
         optimcontrol$nopriors <- as.logical(nopriors)
-        opcall <- paste0('stanoptimis(standata = standata,sm = sm,init = inits,',
+        opcall <- paste0('stanoptimis(standata = standata,sm = sm,init = inits,plot=plot,',
           paste0(gsub('list(','',paste0(deparse(optimcontrol),collapse=''),fixed=TRUE)))
         stanfit <- eval(parse(text=opcall))
         # stanfit <- rlang::exec(stanoptimis,!!!optimcontrol,standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors))

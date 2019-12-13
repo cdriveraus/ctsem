@@ -13,10 +13,13 @@ ctModelLatex(
   tex = TRUE,
   equationonly = FALSE,
   compile = TRUE,
-  open = TRUE
+  open = TRUE,
+  minimal = FALSE
 )
 }
 \arguments{
+\item{x}{ctsem model object or ctStanFit object.}
+
 \item{matrixnames}{Logical. If TRUE, includes ctsem matrix names such as DRIFT and DIFFUSION under the matrices.}
 
 \item{textsize}{Standard latex text sizes -- 
@@ -35,7 +38,7 @@ Useful if output overflows page.}
 
 \item{open}{Open after compiling? (Depends on \code{compile = TRUE})}
 
-\item{object}{ctsem model object or ctStanFit object.}
+\item{minimal}{if TRUE, outputs reduced form version displaying matrix dimensions and equation structure only.}
 }
 \value{
 character string of latex code. Side effects include saving a .tex, .pdf, and displaying the pdf.

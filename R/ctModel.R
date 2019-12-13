@@ -562,7 +562,9 @@ ctModel<-function(LAMBDA, type='omx',n.manifest = 'auto', n.latent='auto', Tpoin
   if(any(dim(LAMBDA)!=c(n.manifest,n.latent))) stop("Incorrect LAMBDA structure specified - check number or rows and columns")
   dimnames(LAMBDA)=list(manifestNames,latentNames)
   
-
+  sapply(c(manifestNames,latentNames,TDpredNames,TIpredNames, time,id),function(x){
+  if(grepl('\\W',x)) stop(paste0(x,' contains symbols, variable names must be alphanumerics only please!'))
+  })
   
   
   
