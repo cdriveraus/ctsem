@@ -57,18 +57,24 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep=sd(fit$stand
       times <- seq(timerange[1],timerange[2],timestep)
       fit$standata <- standataFillTime(fit$standata,times)
     } 
-    
-    fit$standata <- standatact_specificsubjects(fit$standata, subjects = subjects)
+    idstore <- fit$standata$subject
+    if(!class(fit$stanfit) %in% 'stanfit') {
+      fit$standata <- standatact_specificsubjects(fit$standata, subjects = subjects)
+      idstore <- as.integer(subjects[fit$standata$subject])
+    }
+    if(class(fit$stanfit) %in% 'stanfit') fit$standata$dokalmanrows <-
+        as.integer(fit$standata$subject %in% subjects |
+            as.logical(match(unique(fit$standata$subject),fit$standata$subject)))
 
     if(removeObs){
       sapply(c('nobs_y','nbinary_y','ncont_y','whichobs_y','whichbinary_y','whichcont_y'),
         function(x) fit$standata[[x]][] <<- 0L)
       fit$standata$Y[] <- 99999
     }
-    
     out <- ctStanKalman(fit,collapsefunc=mean) #extract state predictions
-    out$id <- as.integer(subjects[out$id]) #get correct subject indicators
+    out$id <- idstore #as.integer(subjects[out$id]) #get correct subject indicators
     out <- meltkalman(out)
+    out=out[!(out$Subject %in% subjects) %in% FALSE,]
   }
   
   if(type !='stan'){
@@ -127,7 +133,7 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep=sd(fit$stand
       }
       
       #get parameter matrices
-      # browser()
+      # 
       model <- summary(fit)
       # model <- model$
       
@@ -397,6 +403,7 @@ plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
   errorvec='auto', errormultiply=1.96,plot=TRUE,elementNames=NA,
   polygonsteps=10,polygonalpha=.1,...){
   
+  
   if(!'ctKalmanDF' %in% class(x)) stop('not a ctKalmanDF object')
   
   if(1==99) Time <- Value <- Subject <- Row <- Variable <- Element <- NULL
@@ -416,7 +423,7 @@ plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
   shapevec<-ltyvec
   shapevec[shapevec>0] <- NA
   shapevec[is.na(ltyvec)] <- 19
-  # browser()
+  # 
   d<-subset(x,Element %in% kalmanvec)
   
   g <- ggplot(d,
@@ -434,7 +441,7 @@ plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
 
   for(si in polysteps){
     # alphasum <- alphasum + polygonalpha/polygonsteps
-    # print(alphasum)
+    
     d2 <- subset(d,Element %in% klines)
     d2$sd <- d2$sd *si
     
@@ -461,7 +468,6 @@ plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
       geom_line()+
       geom_point()+
       theme_minimal()
-    # print(g)
   }
   if(plot) suppressWarnings(print(g))
   return(invisible(g))
