@@ -950,15 +950,19 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         
         mchol=try(t(chol(solve(-hess))),silent=TRUE)
         if('try-error' %in% class(mchol)) {
-          message('Gradient based Hessian not positive-definite, computing numerically...')
-          
-          hess = numDeriv::hessian(target,est2,
-            method.args=list(eps=1e-4, d=1e-3, zero.tol=sqrt(.Machine$double.eps/7e-7), r=2, v=2, show.details=FALSE))
-          mchol=try(t(chol(solve(-hess))),silent=TRUE)
-          if('try-error' %in% class(mchol)) message('Hessian still not positive-definite so approximating, treat SE\'s with caution, consider respecification / priors.')
-          
-          npd <- TRUE
-        } else npd <- FALSE
+          # message('Gradient based Hessian not positive-definite, computing numerically...')
+          # 
+          # hess2 = try(numDeriv::hessian(target,est2,
+          #   method.args=list(eps=1e-4, d=1e-3, zero.tol=sqrt(.Machine$double.eps/7e-7), r=2, v=2, show.details=FALSE)))
+          # mchol=try(t(chol(solve(-hess2))),silent=TRUE)
+          # if('try-error' %in% class(mchol)){
+            message('Hessian not positive-definite so approximating, treat SE\'s with caution, consider respecification / priors.')
+            npd<-TRUE
+          } else {
+            # hess=hess2
+            npd <- FALSE
+          }
+        # }
         # if('try-error' %in% class(mchol)) {
         mcov=MASS::ginv(-hess) #-optimfit$hessian)
         mcov=as.matrix(Matrix::nearPD(mcov,conv.norm.type = 'F')$mat)

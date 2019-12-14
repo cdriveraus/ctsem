@@ -49,7 +49,7 @@ ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,c
     ctm$DRIFT[indices[i],i+nl] <- 1 #set effect of higher order to 1
     ctm$DRIFT[i+nl,indices[i]] <-paste0('drift_',ctm$latentNames[i+nl],'_',
       ctm$latentNames[indices[i]],
-      ifelse(!explosive,'|-5*log1p(exp(-param*2))','|param*5-2')) #estimate effect of 1st order on 2nd
+      ifelse(!explosive,'|-5*log1p(exp(-param*2))-1e-6','|param*5-2')) #estimate effect of 1st order on 2nd
     if(indices[i]==tail(indices,1)) rownames(ctm$DRIFT) <- ctm$latentNames
     if(indices[i]==tail(indices,1)) colnames(ctm$DRIFT) <- ctm$latentNames
     
