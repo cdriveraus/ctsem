@@ -42,15 +42,15 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     for(m in c('cm','dm')){
       argslist <- list(
         ml=list(datalong = dat,ctstanmodel = get(m),optimize=TRUE, nlcontrol=list(),
-        verbose=0,optimcontrol=list(plotsgd=F,estonly=F,stochastic=F),savescores = F,nopriors=F)
+        verbose=0,optimcontrol=list(plot=F,estonly=F,stochastic=F),savescores = F,nopriors=F)
         #, mlis=list(datalong = dat,ctstanmodel = get(m),optimize=TRUE, nlcontrol=list(Jstep=1e-6), 
-        #   verbose=0,optimcontrol=list(plotsgd=F,estonly=F,isloops=1,stochastic=F),savescores = F,nopriors=T)
+        #   verbose=0,optimcontrol=list(plot=F,estonly=F,isloops=1,stochastic=F),savescores = F,nopriors=T)
         # ,mapis=list(datalong = dat,ctstanmodel = get(m),optimize=TRUE, nlcontrol=list(Jstep=1e-6),
-        # verbose=0,optimcontrol=list(plotsgd=F,estonly=F,isloops=1,stochastic=F),savescores = F,nopriors=F)
+        # verbose=0,optimcontrol=list(plot=F,estonly=F,isloops=1,stochastic=F),savescores = F,nopriors=F)
         # ,hmcintoverpop=list(datalong = dat,ctstanmodel = get(m),optimize=F,iter=500,chains=3, nlcontrol=list(Jstep=1e-6), 
-        #   verbose=0,optimcontrol=list(plotsgd=F,estonly=F,stochastic=F),savescores = F,nopriors=F,intoverpop=T),
+        #   verbose=0,optimcontrol=list(plot=F,estonly=F,stochastic=F),savescores = F,nopriors=F,intoverpop=T),
         # hmc=list(datalong = dat,ctstanmodel = get(m),optimize=F,iter=500,chains=3, nlcontrol=list(),
-          # verbose=0,optimcontrol=list(plotsgd=F,estonly=F,stochastic=F),savescores = F,nopriors=F,control=list(max_treedepth=7))
+          # verbose=0,optimcontrol=list(plot=F,estonly=F,stochastic=F),savescores = F,nopriors=F,control=list(max_treedepth=7))
       )
       
       

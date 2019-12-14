@@ -5,9 +5,24 @@ testall<- function(cores=4,folder = '/tests/testthat'){
   tests <- tests[grepl('^test',tests)]
   runex <- grep('runExamples',tests)
   tests <- c(tests[runex],tests[-runex]) #do examples first
-  cl <- parallel::makeCluster(cores)
-  on.exit(parallel::stopCluster(cl))
-  out <- parallel::parLapplyLB(cl,paste0(getwd(),folder,'/',tests),testthat::test_file, reporter = "minimal")
+
+  if(cores > 1){
+    cl <- parallel::makeCluster(cores,outfile='')
+    on.exit(parallel::stopCluster(cl))
+    out <- parallel::parLapplyLB(cl,paste0(getwd(),folder,'/',tests),function(x){
+    out<-testthat::test_file(x, reporter = "minimal")
+    print(out)
+    return(out)
+  })
+  }
+  if(cores==1){
+    out <- lapply(paste0(getwd(),folder,'/',tests),function(x){
+      cat(x)
+      out<-testthat::test_file(x, reporter = "minimal")
+      print(out)
+      return(out)
+    })
+  }
   out2 <- do.call(what = rbind,lapply(out,as.data.frame))
   print(out2[,colnames(out2)!='result'])
   return(invisible(out2))

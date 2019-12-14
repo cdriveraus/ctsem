@@ -1021,6 +1021,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           standata$verbose <- 0L
           if(cores > 1){
             # neglpgf <- parallelStanFunctionCreator(cl=clctsem,verbose = 0)$neglpgf
+            parallelStanSetup(cl=clctsem,sm,standata,split=FALSE)
             parallel::clusterExport(clctsem,'samples',envir = environment())
           }
           
@@ -1048,7 +1049,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           if(all(target_dens[[j]] < -1e100)) stop('Could not sample from optimum! Try reparamaterizing?')
           if(any(target_dens[[j]] > bestfit)){
             oldfit <- bestfit
-            browser()
             try2 <- TRUE
             bestfit<-max(target_dens[[j]],na.rm=TRUE)
             betterfit<-TRUE
