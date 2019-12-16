@@ -1,6 +1,6 @@
 testall<- function(cores=4,folder = '/tests/testthat'){
   Sys.setenv(NOT_CRAN='true')
-  
+  pdf(NULL)
   tests <- dir(paste0('.',folder))
   tests <- tests[grepl('^test',tests)]
   runex <- grep('runExamples',tests)
@@ -10,8 +10,9 @@ testall<- function(cores=4,folder = '/tests/testthat'){
     cl <- parallel::makeCluster(cores,outfile='')
     on.exit(parallel::stopCluster(cl))
     out <- parallel::parLapplyLB(cl,paste0(getwd(),folder,'/',tests),function(x){
+      pdf(NULL)
     out<-testthat::test_file(x, reporter = "minimal")
-    print(out)
+    dev.off()
     return(out)
   })
   }
@@ -24,6 +25,7 @@ testall<- function(cores=4,folder = '/tests/testthat'){
     })
   }
   out2 <- do.call(what = rbind,lapply(out,as.data.frame))
+  dev.off()
   print(out2[,colnames(out2)!='result'])
   return(invisible(out2))
 }

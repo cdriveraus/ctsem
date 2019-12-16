@@ -1057,7 +1057,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             break
           }
           
-          if(nrow(samples) >= targetsamples) nresamples <- finishsamples else nresamples = min(5000,length(samples)/5)
+          if(nrow(samples) >= targetsamples) {
+            message ('Finishing importance sampling...')
+            nresamples <- finishsamples 
+             }else nresamples = min(5000,nrow(samples)/5)
           
           
           target_dens2 <- target_dens[[j]] -max(target_dens[[j]],na.rm=TRUE) + max(prop_dens) #adjustment to get in decent range, doesnt change to prob
@@ -1083,6 +1086,26 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           
           sample_prob[!is.finite(sample_prob)] <- 0
           sample_prob[is.na(sample_prob)] <- 0
+          
+          
+          #check max resample probability and drop earlier samples if too high
+          dropuntil <- ceiling(max(c(0,which(sample_prob > (chancethreshold / isloopsize)) / isloopsize),na.rm=TRUE))*isloopsize
+          if((isloopsize - dropuntil) > isloopsize) dropuntil <- dropuntil -isloopsize
+          if(nrow(samples)-dropuntil < isloopsize*2) dropuntil <- nrow(samples)-isloopsize*2
+          # if(length(unique(resample_i)) < 200) dropuntil <- 0 
+          if(nrow(samples) <= isloopsize *2) dropuntil <- 0
+          
+          if(dropuntil > 0){
+            # browser()
+            # resamples <- resamples[-(0:dropuntil),,drop=FALSE]
+            sample_prob <- sample_prob[-(0:dropuntil)]
+            samples <- samples[-(0:dropuntil),,drop=FALSE]
+          }
+          
+          
+          
+          
+          
           # points(target_dens2[sample_prob> (1/isloopsize * 10)], prop_dens[sample_prob> (1/isloopsize * 10)],col='red')
           resample_i <- sample(1:nrow(samples), size = nresamples, replace = ifelse(nrow(samples) > targetsamples,FALSE,TRUE),
             prob = sample_prob / sum(sample_prob))
@@ -1098,18 +1121,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           
           resamples <- samples[resample_i, , drop = FALSE]
           
-          #check max resample probability and drop earlier samples if too high
-          dropuntil <- ceiling(max(c(0,which(sample_prob > (chancethreshold / isloopsize)) / isloopsize),na.rm=TRUE))*isloopsize
-          if((isloopsize - dropuntil) > isloopsize) dropuntil <- dropuntil -isloopsize
-          if(nrow(samples)-dropuntil < isloopsize*2) dropuntil <- nrow(samples)-isloopsize*2
-          if(length(unique(resample_i)) < 200) dropuntil <- 0 
-          if(nrow(samples) < isloopsize *2) dropuntil <- 0
-          
-          if(dropuntil > 0){
-            resamples <- resamples[-(0:dropuntil),,drop=FALSE]
-            sample_prob <- sample_prob[-(0:dropuntil)]
-            samples <- samples[-(0:dropuntil),,drop=FALSE]
-          }
+         
           
           ess[j] <- (sum(sample_prob[resample_i]))^2 / sum(sample_prob[resample_i]^2)
           qdiag[j]<-mean(unlist(lapply(sample(x = 1:length(sample_prob),size = 500,replace = TRUE),function(i){

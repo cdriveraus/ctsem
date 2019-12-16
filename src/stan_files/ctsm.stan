@@ -251,6 +251,7 @@ parameters {
 transformed parameters{
   vector[nindvarying] rawpopsd; //population level std dev
   matrix[nindvarying, nindvarying] rawpopcovsqrt; 
+  matrix[nindvarying, nindvarying] rawpopcovchol; 
   matrix[nindvarying,nindvarying] rawpopcorr;
   matrix[nindvarying,nindvarying] rawpopcov;
 
@@ -328,7 +329,7 @@ matrix[nlatent, nlatent] pop_DIFFUSIONcov;
     int counter =0;
     rawpopsd = log1p(exp(2*rawpopsdbase-1)) .* sdscale; // sqrts of proportions of total variance
     for(j in 1:nindvarying){
-      rawpopcovsqrt[j,j] = 1;
+      rawpopcovsqrt[j,j] = rawpopsd[j];
       for(i in 1:nindvarying){
         if(i > j){
           counter += 1;
@@ -339,7 +340,7 @@ matrix[nlatent, nlatent] pop_DIFFUSIONcov;
     }
     rawpopcorr = tcrossprod( constraincorsqrt(rawpopcovsqrt));
     rawpopcov = makesym(quad_form_diag(rawpopcorr, rawpopsd),verbose,1);
-    rawpopcovsqrt = cholesky_decompose(rawpopcov); 
+    rawpopcovchol = cholesky_decompose(rawpopcov); 
   }//end indvarying par setup
 
   {
@@ -421,8 +422,8 @@ matrix[nlatent, nlatent] sDIFFUSIONcov;
   vector[nparams] indvaraddition = rep_vector(0,nparams);
 
   if(subi > 0 && nindvarying > 0 && intoverpop==0) {
-    if(fixedsubpars==0) indvaraddition[indvaryingindex] = rawpopcovsqrt * baseindparams[subi];
-    if(fixedsubpars==1) indvaraddition[indvaryingindex] = rawpopcovsqrt * fixedindparams[subi];
+    if(fixedsubpars==0) indvaraddition[indvaryingindex] = rawpopcovchol * baseindparams[subi];
+    if(fixedsubpars==1) indvaraddition[indvaryingindex] = rawpopcovchol * fixedindparams[subi];
   }
   
   if(subi > 0 &&  ntipred > 0) tipredaddition = TIPREDEFFECT * tipreds[subi]';
@@ -454,7 +455,7 @@ matrix[nlatent, nlatent] sDIFFUSIONcov;
       if(matsetup[ri, 7] == 52) sJAx[matsetup[ ri,1], matsetup[ri,2]] = newval; 
       if(matsetup[ri, 7] == 53) sJtd[matsetup[ ri,1], matsetup[ri,2]] = newval; 
       if(matsetup[ri, 7] == 54) sJy[matsetup[ ri,1], matsetup[ri,2]] = newval;
-                if(matsetup[ri,9] < 0){
+                if(matsetup[ri,9] < 0){ //then send copies elsewhere
                 for(ri2 in 1:size(matsetup)){
                   if(matsetup[ri2,9] == ri){ 
                   if(matsetup[ri2, 7] == 1) sT0MEANS[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
@@ -511,8 +512,8 @@ matrix[nlatent, nlatent] sDIFFUSIONcov;
    //  for(ri in 1:nmanifest) sMANIFESTVAR[ri,ri] = square(sMANIFESTVAR[ri,ri]);
   //}
      if(subi <= (T0VARsubindex ? nsubjects : 0)) {
-      if(intoverpop) sT0VAR[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopcovsqrt;
-      sT0VAR = makesym(sdcovsqrt2cov(sT0VAR,choleskymats),verbose,1);
+     if(intoverpop) sT0VAR[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopcovsqrt;
+      sT0VAR = makesym(sdcovsqrt2cov(sT0VAR,choleskymats),verbose,1); 
       if(nt0varstationary > 0) {
         for(ri in 1:nt0varstationary){ 
           sT0VAR[t0varstationary[ri,1],t0varstationary[ri,2] ] =  sasymDIFFUSION[t0varstationary[ri,1],t0varstationary[ri,2] ];

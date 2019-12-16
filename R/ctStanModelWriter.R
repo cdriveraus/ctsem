@@ -1302,8 +1302,8 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
   vector[nparams] indvaraddition = rep_vector(0,nparams);
 
   if(subi > 0 && nindvarying > 0 && intoverpop==0) {
-    if(fixedsubpars==0) indvaraddition[indvaryingindex] = rawpopcovsqrt * baseindparams[subi];
-    if(fixedsubpars==1) indvaraddition[indvaryingindex] = rawpopcovsqrt * fixedindparams[subi];
+    if(fixedsubpars==0) indvaraddition[indvaryingindex] = rawpopcovchol * baseindparams[subi];
+    if(fixedsubpars==1) indvaraddition[indvaryingindex] = rawpopcovchol * fixedindparams[subi];
   }
   
   if(subi > 0 &&  ntipred > 0) tipredaddition = TIPREDEFFECT * tipreds[subi]\';
@@ -1364,8 +1364,8 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
    //  for(ri in 1:nmanifest) sMANIFESTVAR[ri,ri] = square(sMANIFESTVAR[ri,ri]);
   //}
      if(subi <= (T0VARsubindex ? nsubjects : 0)) {
-      if(intoverpop) sT0VAR[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopcovsqrt;
-      sT0VAR = makesym(sdcovsqrt2cov(sT0VAR,choleskymats),verbose,1);
+     if(intoverpop) sT0VAR[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopcovsqrt;
+      sT0VAR = makesym(sdcovsqrt2cov(sT0VAR,choleskymats),verbose,1); 
       if(nt0varstationary > 0) {
         for(ri in 1:nt0varstationary){ 
           sT0VAR[t0varstationary[ri,1],t0varstationary[ri,2] ] =  sasymDIFFUSION[t0varstationary[ri,1],t0varstationary[ri,2] ];
@@ -1656,6 +1656,7 @@ parameters {
 transformed parameters{
   vector[nindvarying] rawpopsd; //population level std dev
   matrix[nindvarying, nindvarying] rawpopcovsqrt; 
+  matrix[nindvarying, nindvarying] rawpopcovchol; 
   matrix[nindvarying,nindvarying] rawpopcorr;
   matrix[nindvarying,nindvarying] rawpopcov;
 ',if(!gendata) paste0('
@@ -1708,7 +1709,7 @@ transformed parameters{
     int counter =0;
     rawpopsd = ',ctm$rawpopsdtransform, '; // sqrts of proportions of total variance
     for(j in 1:nindvarying){
-      rawpopcovsqrt[j,j] = 1;
+      rawpopcovsqrt[j,j] = rawpopsd[j];
       for(i in 1:nindvarying){
         if(i > j){
           counter += 1;
@@ -1719,7 +1720,7 @@ transformed parameters{
     }
     rawpopcorr = tcrossprod( constraincorsqrt(rawpopcovsqrt));
     rawpopcov = makesym(quad_form_diag(rawpopcorr, rawpopsd),verbose,1);
-    rawpopcovsqrt = cholesky_decompose(rawpopcov); 
+    rawpopcovchol = cholesky_decompose(rawpopcov); 
   }//end indvarying par setup
 
   {',

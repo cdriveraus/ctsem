@@ -27,4 +27,4 @@
 ^\.rda
 ^R\modelchecking.R
 ^installctsem.R
-^tests\testthat\Rplots.pdf
+^tests/testthat/Rplots.pdf
