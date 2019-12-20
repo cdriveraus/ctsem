@@ -356,7 +356,7 @@ verbosify<-function(sf,verbose=2){
 #' plot(m2i)
 #' 
 #' f2i <- ctStanFit(datalong = dat2, ctstanmodel = m2i,intoverpop=TRUE,
-#'   iter=300,chains=2,control=list(max_treedepth=7))
+#'   iter=200,chains=2,control=list(max_treedepth=7))
 #' summary(f2i)
 #' ctStanPlotPost(f2i)
 #' ctKalman(f2i,kalmanvec=c('y','ysmooth'),subjects=2:4,plot=TRUE,errorvec=NA)
@@ -464,35 +464,6 @@ verbosify<-function(sf,verbose=2){
 #' 
 #' ctKalman(f4,plot=TRUE,subjects=1,kalmanvec=c('y','ysmooth'))
 #' ctKalman(f4,plot=TRUE,subjects=1:2,kalmanvec=c('y','ysmooth'),errorvec=NA)
-#' 
-#' 
-#' 
-#' #non-linear dedpendencies - based on m3 model (including intervention)
-#' #specify intervention as dependent on extra parameters in PARS matrix, and latent process 1
-#' 
-#' m3nl <- ctModel( type = 'stanct',
-#'   manifestNames = c('Y1'), latentNames=c('eta1'),
-#'   n.TDpred=1,TDpredNames = 'TD1',
-#'   TDPREDEFFECT=matrix(c('PARS[1,1] + PARS[1,2] * state[1]'),nrow=1,ncol=1),
-#'   PARS=matrix(c('tdpredeffect_int','tdpredeffect_multiply'),1,2),
-#'   DRIFT=matrix('drift11',nrow=1,ncol=1),
-#'   DIFFUSION=matrix('diffusion11',nrow=1,ncol=1),
-#'   CINT=matrix(c('cint1'),ncol=1),
-#'   T0MEANS=matrix(c('t0m1'),ncol=1),
-#'   T0VAR=matrix('t0var11',nrow=1,ncol=1),
-#'   LAMBDA = diag(1),
-#'   MANIFESTMEANS=matrix(0,ncol=1),
-#'   MANIFESTVAR=matrix(c('merror1'),nrow=1,ncol=1))
-#' 
-#' l=ctModelLatex(m3nl)
-#' 
-#' #here fit using optimization instead of sampling -- not appropriate in all cases!
-#' f3nl <- ctStanFit(datalong = dat2, ctstanmodel = m3nl, optimize=TRUE)
-#' 
-#' summary(f3nl)
-#' 
-#' ctKalman(f3nl,subjects=1:4,plot=TRUE,errorvec=NA)
-#' #?plot.ctKalman #for plotting arguments
 #' 
 #' 
 #' 

@@ -30,6 +30,8 @@ test_that("anomauth", {
     ctstanmodel = sm, optimize=TRUE,verbose=0,savescores = FALSE,cores=2,nopriors=TRUE,
     optimcontrol=list(finishsamples=100))
   expect_equal(23415.929,-2*sf$stanfit$optimfit$value,tolerance=.01)
+  anoms=summary(sf)
+  expect_equivalent(.038,anoms$popmeans['manifestmeans_Y1','sd'],tolerance=.004)
  }
 
 })
@@ -69,7 +71,7 @@ names(inits) <- c("crosseffect","autoeffect", "diffusion",
   "T0var11", "T0var21", "T0var22","m1", "m2")
 
 oscillatingm <- ctModel(n.latent = 2, n.manifest = 1, Tpoints = 11, 
-  # MANIFESTVAR = matrix(c(0), nrow = 1, ncol = 1),
+  MANIFESTVAR = matrix(c(0), nrow = 1, ncol = 1),
   LAMBDA = matrix(c(1, 0), nrow = 1, ncol = 2),
   T0MEANS = matrix(c('m1', 'm2'), nrow = 2, ncol = 1), 
   T0VAR = matrix(c("T0var11", "T0var21", 0, "T0var22"), nrow = 2, ncol = 2),
@@ -83,11 +85,12 @@ oscillatingf <- ctFit(Oscillating, oscillatingm, carefulFit = FALSE,retryattempt
 expect_equal(-3461.936,oscillatingf$mxobj$output$Minus2LogLikelihood,tolerance=.001)
 
 if( .Machine$sizeof.pointer != 4){
-  oscillatingm$DRIFT[2,1]="crosseffect|-log1p(exp(-param))"
+  oscillatingm$DRIFT[2,1]="crosseffect|-log1p(exp(-param))-1e-5"
  sm <- ctStanModel(oscillatingm)
   sm$pars$indvarying<- FALSE
   sf=ctStanFit(ctDeintervalise(ctWideToLong(Oscillating,Tpoints = oscillatingm$Tpoints,n.manifest = 1)),
     cores=2,verbose=0,
+    # optimcontrol=list(carefulfit=T),
     ctstanmodel = sm, optimize=TRUE,savescores = FALSE,nopriors=TRUE)
   expect_equal(-3461.936,-2*sf$stanfit$optimfit$value,tolerance=.01)
   

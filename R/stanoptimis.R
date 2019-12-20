@@ -781,9 +781,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         smlnsub <- min(standata$nsubjects,max(min(30,cores*2),ceiling(standata$nsubjects/4)))
         standatasml <- standatact_specificsubjects(standata,
           sample(unique(standata$subject),smlnsub))
-        smlndat <- min(standatasml$ndatapoints,ceiling(max(standatasml$nsubjects * 10, standatasml$ndatapoints*.5)))
-        standatasml$dokalmanrows[sample(1:standatasml$ndatapoints,smlndat)] <- 0L
-        standatasml$dokalmanrows[match(unique(standatasml$subject),standatasml$subject)] <- 1L #ensure first obs is included for t0var consistency
+        # smlndat <- min(standatasml$ndatapoints,ceiling(max(standatasml$nsubjects * 10, standatasml$ndatapoints*.5)))
+        # standatasml$dokalmanrows[sample(1:standatasml$ndatapoints,smlndat)] <- 0L
+        # standatasml$dokalmanrows[match(unique(standatasml$subject),standatasml$subject)] <- 1L #ensure first obs is included for t0var consistency
         if(optimcores > 1) parallelStanSetup(cl = clctsem,sm = sm,standata = standatasml)
         if(optimcores==1) smf<-stan_reinitsf(sm,standatasml)
         
