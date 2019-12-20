@@ -270,7 +270,7 @@ tostanarray <- function(flesh, skeleton){
 
 
 sgd <- function(init,fitfunc,ndatapoints,plot=FALSE,stepbase=1e-4,gmeminit=ifelse(is.na(startnrows),.9,.9),gmemmax=.95,maxparchange = .5,
-  startnrows=NA,gsmoothness = 1,roughnessmemory=.95,groughnesstarget=.5,lproughnesstarget=.3,
+  startnrows=NA,gsmoothness = 1,roughnessmemory=.95,groughnesstarget=.5,lproughnesstarget=.2,
   gsmoothroughnesstarget=.1,
   warmuplength=20,
   minparchange=1e-40,maxiter=50000,nconvergeiter=30, itertol=1e-3, deltatol=1e-5){
@@ -846,7 +846,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       grmat<-function(pars,step=1e-5,lpdifmin=1e-10, lpdifmax=1, direction=1){
         hessout <- flexsapply(cl = clctsem, cores = 1,1:length(pars), function(i) {
           # smf <- stan_reinitsf(sm,standata,fast=TRUE)
-          basegrad <- attributes(target(pars))$gradient
+          basegrad <- attributes(target(pars,gradnoise = FALSE))$gradient
           stepsize <- step *10 * direction
           colout <- NA
           dolpchecks <- FALSE #set to true to try the log prob checks again...
@@ -995,39 +995,61 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # browser()
         # mchol=try(t(chol(solve(-hess))),silent=TRUE)
         
-        
-        hessup=grmat(pars=est2,step=1e-4)
-        hessdown=grmat(pars=est2,step=1e-4,direction=-1)
-        mcholup=try(t(chol(solve(-hessup))))
-        mcholdown=try(t(chol(solve(-hessdown))))
-        npd <- c()
-        if('try-error' %in% c(class(mcholup))) npd <- c(npd,1)
-        if('try-error' %in% c(class(mcholdown))) npd <- c(npd,2)
-        
-        if(length(npd)==2){ #repeat with smaller step
-          hessup=grmat(pars=est2,step=1e-8)
-          hessdown=grmat(pars=est2,step=1e-8,direction=-1)
-          mcholup=try(t(chol(solve(-hessup))))
-          mcholdown=try(t(chol(solve(-hessdown))))
-          npd <- c()
-          if('try-error' %in% c(class(mcholup))) npd <- c(npd,1)
-          if('try-error' %in% c(class(mcholdown))) npd <- c(npd,2)
+        dirsuccess <- c()
+        stepsuccess<-c()
+        for(step in c(1e-4,1e-8)){
+          if(1 %in% dirsuccess && -1 %in% dirsuccess) next #stop if both directions ok
+          for(direction in c(-1,1)){
+          hesstry=grmat(pars=est2,step=step, direction=direction)
+          if(!'try-error' %in% c(class(try(t(chol(solve(-hesstry))))))){
+            dirsuccess <- c(dirsuccess,direction)
+            stepsuccess <- c(stepsuccess,step)
+            if(!exists('hess')) hess <- hesstry else hess <- hess + hesstry
+          } else if(!exists('hessfail')) hessfail <- hesstry else hessfail <- hessfail + hesstry
+          }
+        }
+        if(length(dirsuccess) > 0) hess <- hess / length(dirsuccess) #average over succcesses
+        if(length(unique(dirsuccess)) == 1) message('Single sided Hessian used')
+        if(length(dirsuccess) == 0) {
+          message('Hessian not positive-definite so approximating, treat SE\'s with caution, consider respecification / priors.')
+          hess <- hessfail / 4 #average over fails
         }
         
-        if(length(npd)==2){
-          # message('Gradient based Hessian not positive-definite, computing numerically...')
-          # 
-          # hess2 = try(numDeriv::hessian(target,est2,
-          #   method.args=list(eps=1e-4, d=1e-3, zero.tol=sqrt(.Machine$double.eps/7e-7), r=2, v=2, show.details=FALSE)))
-          # mchol=try(t(chol(solve(-hess2))),silent=TRUE)
-          # if('try-error' %in% class(mchol)){
-            message('Hessian not positive-definite so approximating, treat SE\'s with caution, consider respecification / priors.')
-        }
-        if(length(npd)==1){
-          message('Single sided Hessian used')
-          if(npd==1) hess <- hessup else hess <- hessdown
-        }
-        if(length(npd)==0) hess <- (hessup + hessdown) *.5
+        
+        # 
+        # hessdown=grmat(pars=est2,step=1e-4,direction=-1)
+        # mcholup=try(t(chol(solve(-hessup))))
+        # mcholdown=try(t(chol(solve(-hessdown))))
+        # npd <- c()
+        # if('try-error' %in% c(class(mcholup))) npd <- c(npd,1)
+        # if('try-error' %in% c(class(mcholdown))) npd <- c(npd,2)
+        # 
+        # if(length(npd)==2){ #repeat with smaller step
+        #   hessup2=grmat(pars=est2,step=1e-8)
+        #   hessdown2=grmat(pars=est2,step=1e-8,direction=-1)
+        #   mcholup=try(t(chol(solve(-hessup))))
+        #   mcholdown=try(t(chol(solve(-hessdown))))
+        #   npd <- c()
+        #   if('try-error' %in% c(class(mcholup))) npd <- c(npd,1) else hessup <-
+        #   if('try-error' %in% c(class(mcholdown))) npd <- c(npd,2)
+        #   if(length
+        # }
+        # 
+        # if(length(npd)==2){
+        #   # message('Gradient based Hessian not positive-definite, computing numerically...')
+        #   # 
+        #   # hess2 = try(numDeriv::hessian(target,est2,
+        #   #   method.args=list(eps=1e-4, d=1e-3, zero.tol=sqrt(.Machine$double.eps/7e-7), r=2, v=2, show.details=FALSE)))
+        #   # mchol=try(t(chol(solve(-hess2))),silent=TRUE)
+        #   # if('try-error' %in% class(mchol)){
+        #     message('Hessian not positive-definite so approximating, treat SE\'s with caution, consider respecification / priors.')
+        #   hess <- (hessup + hessdown) *.5
+        # }
+        # if(length(npd)==1){
+        #   message('Single sided Hessian used')
+        #   if(npd==1) hess <- hessup else hess <- hessdown
+        # }
+        # if(length(npd)==0) hess <- (hessup + hessdown) *.5
 
         mcov=MASS::ginv(-hess) #-optimfit$hessian)
         mcov=as.matrix(Matrix::nearPD(mcov,conv.norm.type = 'F')$mat)

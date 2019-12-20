@@ -69,7 +69,7 @@ names(inits) <- c("crosseffect","autoeffect", "diffusion",
   "T0var11", "T0var21", "T0var22","m1", "m2")
 
 oscillatingm <- ctModel(n.latent = 2, n.manifest = 1, Tpoints = 11, 
-  MANIFESTVAR = matrix(c(0), nrow = 1, ncol = 1),
+  # MANIFESTVAR = matrix(c(0), nrow = 1, ncol = 1),
   LAMBDA = matrix(c(1, 0), nrow = 1, ncol = 2),
   T0MEANS = matrix(c('m1', 'm2'), nrow = 2, ncol = 1), 
   T0VAR = matrix(c("T0var11", "T0var21", 0, "T0var22"), nrow = 2, ncol = 2),

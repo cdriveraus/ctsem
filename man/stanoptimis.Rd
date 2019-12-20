@@ -12,7 +12,7 @@ stanoptimis(
   sampleinit = NA,
   deoptim = FALSE,
   estonly = FALSE,
-  tol = 1e-14,
+  tol = 1e-12,
   decontrol = list(),
   stochastic = FALSE,
   nopriors = FALSE,
