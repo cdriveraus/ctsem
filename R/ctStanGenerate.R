@@ -35,8 +35,11 @@ ctStanGenerate <- function(ctm,datastruct, optimize=TRUE, is=FALSE, fullposterio
   dots <- list(...)
   dots$carefulfit=FALSE
   dots$is <- is
+  dots$tol=1e-18
   if(is.null(dots$finishsamples) && parsonly) dots$finishsamples=nsamples
-  pp<-ctStanFit(datalong = datastruct[c(1,nrow(datastruct)),,drop=FALSE], ctstanmodel = ctm,optimize=optimize, optimcontrol=dots)
+  #problem with multiple cores inside function?
+  pp<-ctStanFit(datalong = datastruct[c(1,nrow(datastruct)),,drop=FALSE], 
+    ctstanmodel = ctm,optimize=optimize, optimcontrol=dots,cores=1,verbose=0)
 
   if(parsonly) dat <- pp else{
   

@@ -226,9 +226,9 @@ out <- paste0(out, "
         ",bmatrix(matrix(paste0('\\chi_{',1:ncol(ctmodel$TDPREDEFFECT),'}')))," 
       }_{\\vect{\\chi} (t)}"),
     "\\right) ",ifelse(continuoustime,"\\mathrm{d}t","")," \\quad + \\nonumber \\\\ \\\\
-    & \\qquad \\qquad \\quad \\underbrace{
+    & \\qquad \\qquad \\quad cholsdcor\\bigg(\\underbrace{
       ",bmatrix(ctmodel$DIFFUSION),"
-    ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{G}}",ifelse(!matrixnames,"}","_\\textrm{DIFFUSION}}"),"
+    ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{G}}",ifelse(!matrixnames,"}","_\\textrm{DIFFUSION}}\\bigg)"),"
     \\underbrace{",ifelse(continuoustime,"\\mathrm{d}",""),"
       ",bmatrix(matrix(paste0('W_{',1:ctmodel$n.latent,'}')),nottext=TRUE)," 
       (t)}_{",ifelse(continuoustime,"\\mathrm{d}","")," \\vect{W}(t)} \\\\ \\\\
@@ -259,7 +259,9 @@ out <- paste0(out, "
             (t)}_{\\vect{\\epsilon}(t)} \\sim  \\mathrm{N} \\left(
               ",bmatrix(matrix(0,ctmodel$n.manifest,1)),"
               ,
-                ",bmatrix(diag(1,ctmodel$n.manifest))," \\right) 
+                ",bmatrix(diag(1,ctmodel$n.manifest))," \\right) \\\\
+&\\textrm{cholsdcor = Function converting lower tri matrix of std dev and unconstrained correlation to Cholesky factor.} \\\\ \\\\ 
+&\\textrm{See Driver \\& Voelkle (2018) p11.}
       \\end{align*}
       \\end{",textsize,"}
       ")

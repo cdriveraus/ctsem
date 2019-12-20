@@ -45,7 +45,7 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='margi
   m<-x$pars
   highmean=inddifdevs[2]
   lowmean= inddifdevs[1]
-  if(rows[1]=='all') rows<-1:nrow(m)
+  if(rows[1]=='all') rows<-which(is.na(m$value))#1:nrow(m)
   nplots<-ceiling(length(rows) /6)
   plots <- list()
   if(1==99) Par.Value <- type <- Density <- NULL

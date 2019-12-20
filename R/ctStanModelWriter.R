@@ -201,7 +201,7 @@ ctModelTransformsToNum<-function(ctm){
     eqmatch <- match(eqs, uniqueeqs)
     df=data.frame(do.call(rbind,l))
     df[1:length(eqmatch),] <- df[eqmatch,]
-    df[,] <- lapply(df,function(x) if(is.numeric(x)) return(round(x,2)) else return(x))
+    df[,] <- lapply(df,function(x) if(is.numeric(x)) return(round(x,6)) else return(x))
     df$formula <- eqs
     df[df$lsfit > .1,c('offset','inneroffset','multiplier','meanscale')]<-NA
     colnames(df)[1] <- 'transform'
@@ -1709,17 +1709,17 @@ transformed parameters{
     int counter =0;
     rawpopsd = ',ctm$rawpopsdtransform, '; // sqrts of proportions of total variance
     for(j in 1:nindvarying){
-      rawpopcovsqrt[j,j] = rawpopsd[j];
+      rawpopcovsqrt[j,j] = 1;//rawpopsd[j];
       for(i in 1:nindvarying){
         if(i > j){
           counter += 1;
           rawpopcovsqrt[i,j]=sqrtpcov[counter];
-          rawpopcovsqrt[j,i]=sqrtpcov[counter];
+          rawpopcovsqrt[j,i]=0;//sqrtpcov[counter];
         }
       }
     }
     rawpopcorr = tcrossprod( constraincorsqrt(rawpopcovsqrt));
-    rawpopcov = makesym(quad_form_diag(rawpopcorr, rawpopsd),verbose,1);
+    rawpopcov = makesym(quad_form_diag(rawpopcorr, rawpopsd+1e-8),verbose,1);
     rawpopcovchol = cholesky_decompose(rawpopcov); 
   }//end indvarying par setup
 

@@ -10,6 +10,7 @@ ctStanPlotPost(
   npp = 6,
   priorwidth = TRUE,
   smoothness = 1,
+  priorsamples = 10000,
   plot = TRUE,
   wait = FALSE
 )
@@ -28,6 +29,8 @@ and posterior distributions. If FALSE, scale is based only on the posterior.}
 
 \item{smoothness}{Positive numeric -- multiplier to modify smoothness of density plots, higher is smoother but
 can cause plots to exceed natural boundaries, such as standard deviations below zero.}
+
+\item{priorsamples}{number of samples from prior to use. More is slower.}
 
 \item{plot}{Logical, if FALSE, ggplot objects are returned in a list instead of plotting.}
 

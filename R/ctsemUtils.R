@@ -308,7 +308,7 @@ ctDensityList<-function(x,xlimsindex='all',plot=FALSE,smoothness=1,
   logbwmean = mean(logbw + ifelse(length(logbw) > 1,sd(logbw),0))
 # browser()
   denslist<-lapply(1:length(x),function(xi) {
-    bw=sqrt(exp(mean(logbwmean))) #logbw[xi]+
+    bw=(exp(mean(logbwmean)))^1 #logbw[xi]+
     # print(bw)
     d=stats::density(x[[xi]],bw=bw/2,n=5000,from=xlims[1],to=xlims[2],na.rm=TRUE)
     # d$y=d$y/ sum(d$y)/range(d$x)[2]*length(d$y)

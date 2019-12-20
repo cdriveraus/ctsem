@@ -244,7 +244,7 @@ m1 <- ctModel(type = 'stanct',
 ctModelLatex(m1)
 
 #fit
-f1 <- ctStanFit(datalong = dat2, ctstanmodel = m1, optimize=TRUE, nopriors=TRUE,verbose=1)
+f1 <- ctStanFit(datalong = dat2, ctstanmodel = m1, optimize=TRUE, nopriors=TRUE)
 
 summary(f1)
 
@@ -301,8 +301,8 @@ m2i <- ctModel(type = 'stanct',
   
 plot(m2i)
 
-f2i <- ctStanFit(datalong = dat2, ctstanmodel = m2i,
-  iter=300,chains=3,control=list(max_treedepth=7))
+f2i <- ctStanFit(datalong = dat2, ctstanmodel = m2i,intoverpop=TRUE,
+  iter=300,chains=2,control=list(max_treedepth=7))
 summary(f2i)
 ctStanPlotPost(f2i)
 ctKalman(f2i,kalmanvec=c('y','ysmooth'),subjects=2:4,plot=TRUE,errorvec=NA)
@@ -376,7 +376,7 @@ m3n <- ctModel(type = 'stanct',
 
 ctModelLatex(m3n)
 
-f3n <- ctStanFit(datalong = dat2, ctstanmodel = m3n, optimize=TRUE,cores=4)
+f3n <- ctStanFit(datalong = dat2, ctstanmodel = m3n, optimize=TRUE)
 
 summary(f3n)
 
@@ -402,7 +402,7 @@ m4 <- ctModel(n.manifest = 2,n.latent = 2, type = 'stanct',
   MANIFESTMEANS=matrix(c(0,0),nrow=2,ncol=1),
   MANIFESTVAR=matrix(c('merror1',0,0,'merror2'),nrow=2,ncol=2))
 
-f4 <- ctStanFit(datalong = dat2, ctstanmodel = m4,optimize=TRUE,cores=1)
+f4 <- ctStanFit(datalong = dat2, ctstanmodel = m4,optimize=TRUE)
 
 summary(f4)
 

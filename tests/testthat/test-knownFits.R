@@ -69,20 +69,21 @@ names(inits) <- c("crosseffect","autoeffect", "diffusion",
   "T0var11", "T0var21", "T0var22","m1", "m2")
 
 oscillatingm <- ctModel(n.latent = 2, n.manifest = 1, Tpoints = 11, 
-  MANIFESTVAR = matrix(c(0), nrow = 1, ncol = 1), 
+  MANIFESTVAR = matrix(c(0), nrow = 1, ncol = 1),
   LAMBDA = matrix(c(1, 0), nrow = 1, ncol = 2),
   T0MEANS = matrix(c('m1', 'm2'), nrow = 2, ncol = 1), 
   T0VAR = matrix(c("T0var11", "T0var21", 0, "T0var22"), nrow = 2, ncol = 2),
-  DRIFT = matrix(c(0, "crosseffect", 1, "autoeffect"), nrow = 2, ncol = 2), 
+  DRIFT = matrix(c(1e-5, "crosseffect", 1, "autoeffect"), nrow = 2, ncol = 2), 
   CINT = matrix(0, ncol = 1, nrow = 2),
   DIFFUSION = matrix(c(0, 0, 0, "diffusion"), nrow = 2, ncol = 2))#,
   # startValues = inits)
 
-oscillatingf <- ctFit(Oscillating, oscillatingm, carefulFit = FALSE,retryattempts = 3)
+oscillatingf <- ctFit(Oscillating, oscillatingm, carefulFit = FALSE,retryattempts = 0)
 
 expect_equal(-3461.936,oscillatingf$mxobj$output$Minus2LogLikelihood,tolerance=.001)
 
 if( .Machine$sizeof.pointer != 4){
+  oscillatingm$DRIFT[2,1]="crosseffect|-log1p(exp(-param))"
  sm <- ctStanModel(oscillatingm)
   sm$pars$indvarying<- FALSE
   sf=ctStanFit(ctDeintervalise(ctWideToLong(Oscillating,Tpoints = oscillatingm$Tpoints,n.manifest = 1)),

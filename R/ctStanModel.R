@@ -106,6 +106,7 @@ ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
           ctspec$transform[pi] <- 1
           ctspec$meanscale[pi] <- 2
           ctspec$multiplier[pi] <- 5
+          ctspec$offset[pi] <- 1e-6
           if(ctspec$matrix[pi] %in% c('DIFFUSION')) ctspec$multiplier[pi] <-10
         }
       }
@@ -115,7 +116,7 @@ ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
             ctspec$transform[pi] <- 1
             ctspec$meanscale[pi] <- -2
             ctspec$multiplier[pi] <- -2
-            ctspec$offset[pi] <- 0
+            ctspec$offset[pi] <- -1e-6
           }
           if(continuoustime==FALSE) {
             ctspec$transform[pi] <- 0

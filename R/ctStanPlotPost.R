@@ -11,6 +11,7 @@
 #' and posterior distributions. If FALSE, scale is based only on the posterior.
 #' @param smoothness Positive numeric -- multiplier to modify smoothness of density plots, higher is smoother but
 #' can cause plots to exceed natural boundaries, such as standard deviations below zero.
+#' @param priorsamples number of samples from prior to use. More is slower.
 #' @param wait If true, user is prompted to continue before plotting next graph.  
 #' If false, graphs are plotted one after another without waiting.
 #' @param plot Logical, if FALSE, ggplot objects are returned in a list instead of plotting.
@@ -20,7 +21,7 @@
 #' }
 #' @export
 
-ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE, smoothness=1,
+ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE, smoothness=1,priorsamples=10000,
   plot=TRUE,wait=FALSE){
   
   if(!priorwidth) message('priorwidth argument temporarily unavailable sorry...')
@@ -39,7 +40,7 @@ ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE, smoothness=1,
   
   # data
   priors <- ctStanGenerate(ctm = obj$ctstanmodelbase,
-    datastruct = obj$ctdatastruct,parsonly=TRUE,nsamples=6000)
+    datastruct = obj$ctdatastruct,parsonly=TRUE,nsamples=priorsamples)
   priors <- priors$stanfit$transformedpars
   
   
