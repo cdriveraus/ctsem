@@ -509,7 +509,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     if(is.null(nlcontrol$ukfspread)) nlcontrol$ukfspread = 1e-1
     if(is.null(nlcontrol$maxtimestep)) nlcontrol$maxtimestep = 999999
     if(is.null(nlcontrol$nldynamics)) nlcontrol$nldynamics = 'auto'
-    if(is.null(nlcontrol$ukffull)) nlcontrol$ukffull = FALSE
     if(is.null(nlcontrol$nlmeasurement)) nlcontrol$nlmeasurement = 'auto'
     if(is.null(nlcontrol$Jstep)) nlcontrol$Jstep = 1e-6
     nldynamics <- nlcontrol$nldynamics

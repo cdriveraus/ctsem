@@ -1,4 +1,5 @@
 testall<- function(cores=4,folder = '/tests/testthat'){
+  requireNamespace('testthat')
   Sys.setenv(NOT_CRAN='true')
   pdf(NULL)
   tests <- dir(paste0('.',folder))
@@ -24,7 +25,7 @@ testall<- function(cores=4,folder = '/tests/testthat'){
       return(out)
     })
   }
-  out2 <- do.call(what = rbind,lapply(out,as.data.frame))
+  out2 <- do.call(what = rbind,lapply(out,getS3method('as.data.frame','testthat_results')))
   dev.off()
   print(out2[,colnames(out2)!='result'])
   return(invisible(out2))
