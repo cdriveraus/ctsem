@@ -10,6 +10,7 @@ ctStanKalman(
   collapsefunc = NA,
   cores = 2,
   standardisederrors = FALSE,
+  subjectpars = FALSE,
   ...
 )
 }
@@ -23,6 +24,9 @@ ctStanKalman(
 \item{cores}{Integer number of cpu cores to use. Only needed if savescores was set to FALSE when fitting.}
 
 \item{standardisederrors}{If TRUE, computes standardised errors for prior, upd, smooth conditions.}
+
+\item{subjectpars}{if TRUE, state estimates are not returned, instead, predictions of each subjects parameters
+are returned, for parameters that had random effects specified.}
 
 \item{...}{additional arguments to collpsefunc.}
 }

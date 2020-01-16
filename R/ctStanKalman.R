@@ -5,6 +5,8 @@
 #' @param cores Integer number of cpu cores to use. Only needed if savescores was set to FALSE when fitting.
 #' @param collapsefunc function to apply over samples, such as \code{mean}
 #' @param standardisederrors If TRUE, computes standardised errors for prior, upd, smooth conditions.
+#' @param subjectpars if TRUE, state estimates are not returned, instead, predictions of each subjects parameters
+#' are returned, for parameters that had random effects specified.
 #' @param ... additional arguments to collpsefunc.
 #'
 #' @return list containing Kalman filter elements, each element in array of
@@ -15,7 +17,7 @@
 #' \donttest{
 #' k=ctStanKalman(ctstantestfit)
 #' }
-ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,standardisederrors=FALSE,...){
+ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,standardisederrors=FALSE, subjectpars=FALSE,...){
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
   # if(class(collapsefunc) %in% 'function' ) e=extract(fit)
   
@@ -28,6 +30,36 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,standardisederr
   if(!is.na(nsamples)) samples <- samples[sample(1:nrow(samples),nsamples),,drop=FALSE] else nsamples <- nrow(samples)
   if(is.function(collapsefunc)) samples = matrix(apply(samples,2,collapsefunc,...),ncol=ncol(samples))
   e=stan_constrainsamples(sm = fit$stanmodel,standata = standata,samples = samples,cores=cores)
+  
+  if(subjectpars){
+    p=standata$indvaryingindex
+    p=p[p > standata$nlatent]
+    if(length(p)==0) stop('No random effects have been integrated over! Did you specify individual variation, and did you optimize
+    or set intoverpop = TRUE ?')
+    lastsub <- rep(FALSE,standata$ndatapoints)
+    for(i in 2:standata$ndatapoints){
+      if(standata$subject[i] != standata$subject[i-1]) lastsub[i-1] <- TRUE
+      if(i == standata$ndatapoints) lastsub[i] <- TRUE
+    }
+    pars <- e$etaprior[,lastsub,p,drop=FALSE]
+    dimnames(pars) <- list(iter=1:dim(pars)[1],id = unique(standata$subject), par = 1:dim(pars)[3])
+    ms <- fit$setup$matsetup
+    mv <- fit$setup$matvalues
+    mats <- ctStanMatricesList()$all
+    for(i in 1:nrow(ms)){
+      if(ms$when[i] > 0 && ms$param[i] %in% p){
+        if(ms$transform[i] >=0){ #havent done custom transforms here
+        pars[,,ms$param[i]-standata$nlatent] <- tform(
+        param = pars[,,ms$param[i]-standata$nlatent], transform = ms$transform[i],
+          multiplier = mv$multiplier[i],meanscale = mv$meanscale[i],offset = mv$offset[i],
+          inneroffset = mv$inneroffset[i])
+        dimnames(pars)$par[ms$param[i]-standata$nlatent] <- paste0(names(mats[ms$matrix[i]]),'[',ms$row[i],',',ms$col[i],']')
+        }
+        if(ms$transform[i] <0) message('custom transforms not implemented yet...sorry')
+      }
+    }
+    return(pars)
+  } else{
 
   nlatent <- fit$standata$nlatent
   nmanifest <- fit$standata$nmanifest
@@ -114,6 +146,7 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,standardisederr
   out$id <- fit$standata$subject
   
   return(out)
+  }
 }
 
 
