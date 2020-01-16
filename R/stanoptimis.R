@@ -150,7 +150,7 @@ standataFillTime <- function(standata, times){
   nlong[,grep('(^nobs)|(^which)|(^ncont)|(^nbin)',colnames(nlong))] <- 0L
   nlong[,grep('^dokalman',colnames(nlong))] <- 1L
   nlong[,grep('^Y',colnames(nlong))] <- 99999
-  nlong[,grep('^tdpreds.',colnames(nlong))] <- 0
+  nlong[,grep('^tdpreds',colnames(nlong))] <- 0
   
   
   mlong <- rbind(long,nlong)
@@ -775,7 +775,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
        if(carefulfit && !deoptim & standata$nopriors == 1 ){ #init using priors
         message('Doing 1st pass with priors on reduced data set')
         nopriorsbak <- standata$nopriors
+        taylorheun <- standata$taylorheun
         standata$nopriors <- as.integer(0)
+        standata$taylorheun <- 1L
         tipredeffectscale <- standata$tipredeffectscale
         standata$tipredeffectscale <- tipredeffectscale*.01
         smlnsub <- min(standata$nsubjects,max(min(30,cores*2),ceiling(standata$nsubjects/4)))
@@ -801,6 +803,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           ndatapoints=standata$ndatapoints,gmeminit=.9,
           plot=plot,itertol=1,maxiter=300)
         standata$nopriors <- as.integer(nopriorsbak)
+        standata$taylorheun <- as.integer(taylorheun)
         # smf<-stan_reinitsf(sm,standata)
         init = optimfit$par #+ rnorm(length(optimfit$par),0,abs(init/8)+1e-3)#rstan::constrain_pars(object = smf, optimfit$par)
         standata$tipredeffectscale <- tipredeffectscale

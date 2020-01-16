@@ -989,7 +989,11 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     standata$sdscale <- array(as.numeric(sdscale),dim=length(sdscale))
     
+    standata$approxct <- 0L
+    if(!is.null(ctm$approxct)) standata$approxct <- as.integer(ctm$approxct)
     
+    standata$taylorheun <- 0L
+    if(!is.null(ctm$taylorheun)) standata$taylorheun <- as.integer(ctm$taylorheun)
     
     #fixed hyper pars
     if(!is.null(ctm$fixedrawpopchol)) {

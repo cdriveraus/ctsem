@@ -1,5 +1,6 @@
 
 functions{
+
    matrix expm2(matrix M,int[] z){
     matrix[rows(M),rows(M)] out;
     int z1[sum(z)];
@@ -21,7 +22,7 @@ functions{
     out[,z0] = rep_matrix(0,rows(M),size(z0));
     if(size(z0) > 0) for(i in 1:size(z0)) out[z0[i],z0[i]] = exp(M[z0[i],z0[i]]);
     return out;
-  }
+   }
 
    matrix constraincorsqrt(matrix mat){ //converts from unconstrained lower tri matrix to cor
     matrix[rows(mat),cols(mat)] o;
@@ -63,8 +64,7 @@ functions{
     return out;
   }
 
-  matrix kronsum(matrix mata){
-    matrix[rows(mata),rows(mata)] II = diag_matrix(rep_vector(1,rows(mata)));
+  matrix kronsum(matrix mata, matrix II){
     return sqkron_prod(mata, II) + sqkron_prod(II, mata );
   }
 
@@ -226,11 +226,14 @@ int DIFFUSIONcovsubindex;
   int intoverpopindvaryingindex[intoverpop ? nindvarying : 0];
   int nsJAxfinite;
   int sJAxfinite[nsJAxfinite];
+  int approxct;
+  int taylorheun;
 }
       
 transformed data{
   matrix[nlatent,nlatent] IIlatent= diag_matrix(rep_vector(1,nlatent));
   matrix[nlatent*nlatent,nlatent*nlatent] IIlatent2 = diag_matrix(rep_vector(1,nlatent*nlatent));
+  matrix[nlatentpop,nlatentpop] IIlatentpop = diag_matrix(rep_vector(1,nlatentpop));
   matrix[nindvarying,nindvarying] IIindvar = diag_matrix(rep_vector(1,nindvarying));
   vector[ndatapoints] dtsmall = rep_vector(0,ndatapoints);
   vector[ndatapoints] dt = rep_vector(0,ndatapoints);
@@ -415,13 +418,11 @@ matrix[nlatent, nlatent] pop_DIFFUSIONcov;
   vector[nlatent] sasymCINT; // latent process asymptotic level
 matrix[nlatent, nlatent] sDIFFUSIONcov;
 
-  if(nldynamics==0) discreteDIFFUSION = rep_matrix(0,nlatent,nlatent); //in case some elements remain zero due to derrind
-
   for(rowi in 1:(dokalman ? ndatapoints :1)){
   if(dokalmanrows[rowi] ==1) { //used for subset selection
     si = subject[rowi];
 
-    if(savescores || rowi==1) Je[savescores ? rowi : 1] = diag_matrix(rep_vector(1,nlatentpop)); //elements updated later
+    if(savescores || rowi==1) Je[savescores ? rowi : 1] = IIlatentpop; //elements updated later
        
     if(T0check[rowi] == 0) { // calculate initial matrices if this is first row for si
   
@@ -516,7 +517,7 @@ matrix[nlatent, nlatent] sDIFFUSIONcov;
     if(ndiffusion < nlatent) sasymDIFFUSION = to_matrix(rep_vector(0,nlatent * nlatent),nlatent,nlatent);
 
     if(continuoustime==1) sasymDIFFUSION[ derrind, derrind] = to_matrix( 
-    -kronsum(sDRIFT[ derrind, derrind ]) \  to_vector( 
+    -kronsum(sDRIFT[ derrind, derrind ],IIlatentpop[derrind,derrind]) \  to_vector( 
          sDIFFUSIONcov[ derrind, derrind ]), ndiffusion,ndiffusion);
 
     if(continuoustime==0) sasymDIFFUSION[ derrind, derrind ] = to_matrix( (IIlatent2 - 
@@ -702,18 +703,50 @@ if(verbose > 1) print ("below t0 row ", rowi);
       
              
             if(continuoustime){
+            
+            if(taylorheun==0){
               if(dtchange[rowi]==1 || statedependence[2] || (T0check[rowi] == 1 && (DRIFTsubindex + CINTsubindex > 0))){
                 Je[savescores ? rowi : 1]= matrix_exp(sJAx * dtsmall[rowi]);
                 discreteDRIFT = expm2(append_row(append_col(sDRIFT[1:nlatent, 1:nlatent],sCINT),rep_vector(0,nlatent+1)') * dtsmall[rowi],drcintoffdiag);
               } else if(savescores) Je[rowi] = Je[rowi-1];
+              
               state[1:nlatent] = (discreteDRIFT * append_row(state[1:nlatent],1.0))[1:nlatent]; //compute before new diffusion calcs
+              
               if(dtchange[rowi]==1 || statedependence[2] || (T0check[rowi] == 1 && (DRIFTsubindex + DIFFUSIONsubindex + CINTsubindex) > 0)){
-                sasymDIFFUSION[derrind,derrind] = to_matrix(  -kronsum(sJAx[derrind,derrind]) \ to_vector(sDIFFUSIONcov[derrind,derrind]), ndiffusion,ndiffusion);
-                discreteDIFFUSION[derrind,derrind] =  sasymDIFFUSION[derrind,derrind] - quad_form( sasymDIFFUSION[derrind,derrind], Je[savescores ? rowi : 1, derrind,derrind]' );
-              } 
+                matrix[nlatent*2,nlatent*2] ebA;
+                matrix[nlatent*2,nlatent*2] bA;
+            
+                bA[1:nlatent,1:nlatent] = -sJAx[1:nlatent,1:nlatent];
+                bA[1:nlatent,(1+nlatent):(nlatent*2)] = sDIFFUSIONcov;
+                bA[(1+nlatent):(nlatent*2),(1+nlatent):(nlatent*2)] = sJAx[1:nlatent,1:nlatent]';
+                bA[(1+nlatent):(nlatent*2),1:nlatent] = rep_matrix(0,nlatent,nlatent);
+                
+                ebA = matrix_exp(bA * dtsmall[rowi]);
+                discreteDIFFUSION = ebA[(1+nlatent):(nlatent*2),(1+nlatent):(nlatent*2)]' * ebA[1:nlatent,(1+nlatent):(nlatent*2)];
+                
+                //sasymDIFFUSION[derrind,derrind] = to_matrix(  -kronsum(sJAx[derrind,derrind],IIlatentpop[derrind,derrind]) \ to_vector(sDIFFUSIONcov[derrind,derrind]), ndiffusion,ndiffusion);
+                //discreteDIFFUSION[derrind,derrind] =  difftest - quad_form( sasymDIFFUSION[derrind,derrind], Je[savescores ? rowi : 1, derrind,derrind]' );
+                //discreteDIFFUSION=getDiscreteDIFFUSION(sDRIFT,sDIFFUSIONcov, dtsmall[rowi], approxct, nlatent);
+              }
               etacov = quad_form(etacov, Je[savescores ? rowi : 1]');
               etacov[derrind,derrind] += discreteDIFFUSION[derrind,derrind]; 
-              
+            }
+            
+            if(taylorheun==1){
+              matrix[nlatentpop,nlatentpop] Kth = inverse(IIlatentpop - sJAx * (dtsmall[rowi] /2) );
+              matrix[nlatentpop,nlatentpop] Mth = Kth * (IIlatentpop + sJAx * (dtsmall[rowi] /2) );
+              state[1:nlatent] = state[1:nlatent] + Kth[1:nlatent,1:nlatent] *
+                (sDRIFT[1:nlatent,1:nlatent] * state[1:nlatent] + sCINT[1:nlatent,1]) * dtsmall[rowi];
+                
+              //state[1:nlatent] = .5 * (state[1:nlatent] + s1 - 
+                //(sJAx[1:nlatent,1:nlatent] * sDRIFT[1:nlatent,1:nlatent] * state[1:nlatent] + sCINT[1:nlatent,1]) * 
+                //((dtsmall[rowi]^2) / 4) );
+
+              //state[1:nlatent] = s1;
+              etacov = quad_form(etacov, Mth');
+              etacov[derrind,derrind] += quad_form(Kth[derrind,derrind],sDIFFUSIONcov[derrind,derrind]) * dtsmall[rowi];
+            }
+
 
             if(intstepi >= (dt[rowi]-1e-10) && savescores) Je[rowi] = matrix_exp(sJAx * dt[rowi]); //save approximate exponentiated jacobian for smoothing
             }

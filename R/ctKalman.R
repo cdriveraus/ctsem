@@ -52,7 +52,7 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep=sd(fit$stand
   
   if(type=='stan'){
     if(all(timerange == 'asdata')) timerange <- range(fit$standata$time[fit$standata$subject %in% subjects])
-    if(timestep != 'asdata') {
+    if(timestep != 'asdata' && fit$ctstanmodel$continuoustime) {
       if(fit$ctstanmodel$continuoustime != TRUE) stop('Discrete time model fits must use timestep = "asdata"')
       times <- seq(timerange[1],timerange[2],timestep)
       fit$standata <- standataFillTime(fit$standata,times)
