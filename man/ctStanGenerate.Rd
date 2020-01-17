@@ -40,20 +40,9 @@ Generate data from a ctstanmodel object
 }
 \examples{
 \dontrun{
-m1 <- ctModel(type = 'stanct',
-manifestNames = c('Exercise1'), 
-latentNames=c('Exercise'),
-DRIFT= 0,
-DIFFUSION=0,
-CINT='cint1',
-T0MEANS='t0m1',
-T0VAR=0, #only need to set this when t0means not individually varying
-LAMBDA = 1,
-MANIFESTMEANS=0,
-MANIFESTVAR='merror')
-
 
 #generate and plot samples from prior predictive
-priorpred <- ctStanGenerate(ctm = m1,datastruct = exfitdat,cores=6,nsamples = 50)
+priorpred <- ctStanGenerate(ctm = ctstantestfit$ctstanmodelbase,
+  datastruct = ctstantestdat,cores=6,nsamples = 50)
 }
 }

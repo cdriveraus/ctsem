@@ -871,14 +871,13 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup){
       ',simplestatedependencies(when=2,mlist=c(mats$driftcint)),'
       ',simplifystanfunction(paste0(paste0(c(ctm$calcs$driftcint),';\n',collapse=' '))),' 
       if(statei > 0) {
-        sJAx[sJAxfinite,statei] =  sDRIFT[sJAxfinite, ] * state + append_row(sCINT[,1],rep_vector(0,nlatentpop-nlatent))[sJAxfinite]; //compute new change
+        sJAx[sJAxfinite,statei] =  sDRIFT[sJAxfinite, ] * state + append_row(sCINT[,1],cintzerovec)[sJAxfinite]; //compute new change
          if(verbose>1) print("sJAx ",sJAx);
       }
       if(statei== 0 && size(sJAxfinite) ) { //only need these calcs if there are finite differences to do -- otherwise loop just performs system calcs.
-        base[sJAxfinite] = sDRIFT[sJAxfinite, ] * state + append_row(sCINT[,1],rep_vector(0,nlatentpop-nlatent))[sJAxfinite];
+        base[sJAxfinite] = sDRIFT[sJAxfinite, ] * state + append_row(sCINT[,1],cintzerovec)[sJAxfinite];
         if(verbose>1) print("base = ",base,"    sjaxinit= ",sJAx);
         for(fi in sJAxfinite){
-        //print("fi!!!!! ",fi);
           sJAx[sJAxfinite,fi] = (sJAx[sJAxfinite,fi] - base[sJAxfinite]) / Jstep; //new - baseline change divided by stepsize
         }
       }
@@ -976,7 +975,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
     
       if(continuoustime ==1){
         if(dtchange[rowi]==1 || (T0check[rowi] == 1 && (DRIFTsubindex + CINTsubindex > 0))){ //if dtchanged or if subject variability
-          discreteDRIFT = matrix_exp(append_row(append_col(sDRIFT[1:nlatent,1:nlatent],sCINT),rep_matrix(0,1,nlatent+1)) * dt[rowi]);
+          discreteDRIFT = matrix_exp(append_row(append_col(sDRIFT[1:nlatent,1:nlatent],sCINT),nlplusonezerovec\') * dt[rowi]);
           if(!savescores) Je[1, 1:nlatent, 1:nlatent] = discreteDRIFT[1:nlatent,1:nlatent];
         }
       
@@ -989,7 +988,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
 
       if(continuoustime==0 && T0check[rowi] == 1){
         if(subjectcount == 1 || DIFFUSIONsubindex + DRIFTsubindex + CINTsubindex > 0){ //if first subject or variability
-          discreteDRIFT=append_row(append_col(sDRIFT[1:nlatent,1:nlatent],sCINT),rep_matrix(0,1,nlatent+1));
+          discreteDRIFT=append_row(append_col(sDRIFT[1:nlatent,1:nlatent],sCINT),nlplusonezerovec\');
           discreteDRIFT[nlatent+1,nlatent+1] = 1;
           if(!savescores) Je[1, 1:nlatent, 1:nlatent] = discreteDRIFT[1:nlatent,1:nlatent];
           discreteDIFFUSION=sDIFFUSIONcov;
@@ -1027,7 +1026,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
             if(taylorheun==0){
               if(dtchange[rowi]==1 || statedependence[2] || (T0check[rowi] == 1 && (DRIFTsubindex + CINTsubindex > 0))){
                 Je[savescores ? rowi : 1]= matrix_exp(sJAx * dtsmall[rowi]);
-                discreteDRIFT = expm2(append_row(append_col(sDRIFT[1:nlatent, 1:nlatent],sCINT),rep_vector(0,nlatent+1)\') * dtsmall[rowi],drcintoffdiag);
+                discreteDRIFT = expm2(append_row(append_col(sDRIFT[1:nlatent, 1:nlatent],sCINT),nlplusonezerovec\') * dtsmall[rowi],drcintoffdiag);
               } else if(savescores) Je[rowi] = Je[rowi-1];
               
               state[1:nlatent] = (discreteDRIFT * append_row(state[1:nlatent],1.0))[1:nlatent]; //compute before new diffusion calcs
@@ -1045,8 +1044,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
                 discreteDIFFUSION = ebA[(1+nlatent):(nlatent*2),(1+nlatent):(nlatent*2)]\' * ebA[1:nlatent,(1+nlatent):(nlatent*2)];
                 
                 //sasymDIFFUSION[derrind,derrind] = to_matrix(  -kronsum(sJAx[derrind,derrind],IIlatentpop[derrind,derrind]) \\ to_vector(sDIFFUSIONcov[derrind,derrind]), ndiffusion,ndiffusion);
-                //discreteDIFFUSION[derrind,derrind] =  difftest - quad_form( sasymDIFFUSION[derrind,derrind], Je[savescores ? rowi : 1, derrind,derrind]\' );
-                //discreteDIFFUSION=getDiscreteDIFFUSION(sDRIFT,sDIFFUSIONcov, dtsmall[rowi], approxct, nlatent);
+                //discreteDIFFUSION[derrind,derrind] =  sasymDIFFUSION[derrind,derrind] - quad_form( sasymDIFFUSION[derrind,derrind], Je[savescores ? rowi : 1, derrind,derrind]\' );
               }
               etacov = quad_form(etacov, Je[savescores ? rowi : 1]\');
               etacov[derrind,derrind] += discreteDIFFUSION[derrind,derrind]; 
@@ -1057,25 +1055,17 @@ if(verbose > 1) print ("below t0 row ", rowi);
               matrix[nlatentpop,nlatentpop] Mth = Kth * (IIlatentpop + sJAx * (dtsmall[rowi] /2) );
               state[1:nlatent] = state[1:nlatent] + Kth[1:nlatent,1:nlatent] *
                 (sDRIFT[1:nlatent,1:nlatent] * state[1:nlatent] + sCINT[1:nlatent,1]) * dtsmall[rowi];
-                
-              //state[1:nlatent] = .5 * (state[1:nlatent] + s1 - 
-                //(sJAx[1:nlatent,1:nlatent] * sDRIFT[1:nlatent,1:nlatent] * state[1:nlatent] + sCINT[1:nlatent,1]) * 
-                //((dtsmall[rowi]^2) / 4) );
-
-              //state[1:nlatent] = s1;
               etacov = quad_form(etacov, Mth\');
               etacov[derrind,derrind] += quad_form(Kth[derrind,derrind],sDIFFUSIONcov[derrind,derrind]) * dtsmall[rowi];
             }
-
-
             if(intstepi >= (dt[rowi]-1e-10) && savescores) Je[rowi] = matrix_exp(sJAx * dt[rowi]); //save approximate exponentiated jacobian for smoothing
-            }
+          }
   
           if(continuoustime==0){ 
             Je[savescores ? rowi : 1] = sJAx;
             etacov = quad_form(etacov, sJAx\');
             etacov[ derrind, derrind ] += tcrossprod(sDIFFUSION[ derrind, derrind ]); //may need improving re sDIFFUSION
-            discreteDRIFT=append_row(append_col(sDRIFT[1:nlatent, 1:nlatent],sCINT),rep_matrix(0,1,nlatent+1));
+            discreteDRIFT=append_row(append_col(sDRIFT[1:nlatent, 1:nlatent],sCINT),nlplusonezerovec\');
             discreteDRIFT[nlatent+1,nlatent+1] = 1;
             state[1:nlatent] = (discreteDRIFT * append_row(state[1:nlatent],1.0))[1:nlatent];
           }
@@ -1262,21 +1252,21 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
   out <- paste0(
     '
  int subjectvec[subjectcount ? 1 : 2];
+ vector[nparams] rawindparams;
+ vector[nparams] tipredaddition = rep_vector(0,nparams);
+ vector[nparams] indvaraddition = rep_vector(0,nparams);
  subjectvec[size(subjectvec)] = si;
  if(subjectcount == 0)  subjectvec[1] = 0; // only needed for subject 0 (pop pars)
  subjectcount = subjectcount + 1;
  for(subjectveci in 1:size(subjectvec)){
   int subi = subjectvec[subjectveci];
-  vector[nparams] rawindparams;
-  vector[nparams] tipredaddition = rep_vector(0,nparams);
-  vector[nparams] indvaraddition = rep_vector(0,nparams);
 
   if(subi > 0 && nindvarying > 0 && intoverpop==0) {
     if(fixedsubpars==0) indvaraddition[indvaryingindex] = rawpopcovchol * baseindparams[subi];
     if(fixedsubpars==1) indvaraddition[indvaryingindex] = rawpopcovchol * fixedindparams[subi];
   }
   
-  if(subi > 0 &&  ntipred > 0) tipredaddition = TIPREDEFFECT * tipreds[subi]\';
+  if(subi > 0 &&  ntipred > 0 && dotipred == 1) tipredaddition = TIPREDEFFECT * tipreds[subi]\';
 
   rawindparams = rawpopmeans + tipredaddition + indvaraddition;
 ',
@@ -1409,9 +1399,11 @@ functions{
       }
     }
     if(size(z1) > 0) out[z1,z1] = matrix_exp(M[z1,z1]);
-    out[z0,] = rep_matrix(0,size(z0),rows(M));
-    out[,z0] = rep_matrix(0,rows(M),size(z0));
-    if(size(z0) > 0) for(i in 1:size(z0)) out[z0[i],z0[i]] = exp(M[z0[i],z0[i]]);
+    if(size(z0) > 0){
+      out[z0,] = rep_matrix(0,size(z0),rows(M));
+      out[,z0] = rep_matrix(0,rows(M),size(z0));
+      for(i in 1:size(z0)) out[z0[i],z0[i]] = exp(M[z0[i],z0[i]]);
+    }
     return out;
    }
 
@@ -1492,14 +1484,6 @@ functions{
     return out;
   }
   
-  
-  real Jtform(real param, int transform, data real multiplier, data real meanscale, data real offset, data real inneroffset){
-    real out;
-    ',tformshapes(jacobian=TRUE),
-    if(length(extratforms) > 0) paste0(extratforms,collapse=" \n"),'
-    return out;
-  }
-  
   int[] vecequals(int[] a, int test, int comparison){ //do indices of a match test condition?
     int check[size(a)];
     for(i in 1:size(check)){
@@ -1509,23 +1493,6 @@ functions{
     return(check);
   }
   
-  int[] whichequals(int[] b, int test, int comparison){  //return array of indices of b matching test condition
-    int bsize = size(b);
-    int check[bsize] = vecequals(b,test,comparison);
-    int whichsize = sum(check);
-    int which[whichsize];
-    int counter = 1;
-    if(bsize > 0){
-    for(i in 1:bsize){
-      if(check[i] == 1){
-        which[counter] = i;
-        counter += 1;
-      }
-    }
-    }
-    return(which);
-  }
-
 }
 data {
   int<lower=0> ndatapoints;
@@ -1599,8 +1566,8 @@ data {
   int intoverpopindvaryingindex[intoverpop ? nindvarying : 0];
   int nsJAxfinite;
   int sJAxfinite[nsJAxfinite];
-  int approxct;
   int taylorheun;
+  int dotipred;
 }
       
 transformed data{
@@ -1612,6 +1579,8 @@ transformed data{
   vector[ndatapoints] dt = rep_vector(0,ndatapoints);
   int T0check[ndatapoints] = rep_array(-1,ndatapoints);
   int dtchange[ndatapoints] = rep_array(-1,ndatapoints);
+  vector[nlatentpop-nlatent] nlpzerovec = rep_vector(0,nlatentpop-nlatent);
+  vector[nlatentpop-nlatent] nlplusonezerovec = rep_vector(0,nlatent+1);
   
   { //dt calcs
     int si = 0;
