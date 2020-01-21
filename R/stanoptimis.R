@@ -417,13 +417,16 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       }
       
       
-      storedPars <- c()
+      storedPars <- matrix(0,nrow=npars,ncol=0)
+      gradstore <- rep(0,npars)
+      gradmem <- .9
+      storedLp <- c()
       
       optimfinished <- FALSE
       on.exit({
         if(!optimfinished){
           message('Optimization cancelled -- restart from current point by including this argument:')
-          message((paste0(c('init = c(',   paste0(round(storedPars,5),collapse=', '), ')'    ))))
+          message((paste0(c('init = c(',   paste0(round(storedPars[,ncol(storedPars)],5),collapse=', '), ')'    ))))
           # message('Return inits? Y/N')
           # if(readline() %in% c('Y','y')) returnValue(storedPars)
         }},add=TRUE)
@@ -453,18 +456,17 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           out=-1e100
           attributes(out) <- list(gradient=rep(0,length(parm)))
         }
-        storedPars <<- parm
+        storedPars <<- cbind(storedPars,matrix(parm))
+        storedLp <<- c(storedLp,out[1])
         b=Sys.time()
         evaltime <- b-a
         if(verbose > 0) print(paste('lp= ',out,' ,    iter time = ',round(evaltime,2)))
-        if(gradnoise) attributes(out)$gradient <-attributes(out)$gradient * 
-          exp( rnorm(length(attributes(out)$gradient),0,1e-3))
+        if(gradnoise) attributes(out)$gradient <-attributes(out)$gradient *
+    exp(rnorm(length(parm),0,1e-3))
         return(out)
       }
       
-      gradstore <- rep(0,npars)
-      gradmem <- .9
-      lpstore <- -1e100
+
       if(optimcores==1) target = singletarget #we use this for importance sampling
       if(cores > 1) {
         
@@ -492,7 +494,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           } 
           
           # if(plot){
-          #   lpstore <<- c(lpstore,out[1])
+          #   storedLp <<- c(storedLp,out[1])
           #   # attributes(out)$gradient <- (1-gradmem)*attributes(out)$gradient + gradmem*gradstore
           #   gradstore <<- cbind(gradstore,attributes(out)$gradient)
           #   gstore <- log(abs(gradstore))*sign(gradstore)
@@ -501,7 +503,12 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           #    matplot(tail(t(gstore),50),type='l')
           #  }
           # }
-          try(assign('storedPars', parm,pos= sys.frame(whichframe)))
+          # try(get('storedPars', parm,pos= sys.frame(whichframe)))
+          # try(get('storedLp', parm,pos= sys.frame(whichframe)))
+          # storedLp <- c(storedLp,out[1])
+          # storedPars <- cbind(storedPars,matrix(parm))
+          # try(assign('storedPars', parm,pos= sys.frame(whichframe)))
+          # try(assign('storedLp', parm,pos= sys.frame(whichframe)))
           if(verbose > 0) print(paste('lp= ',out,' ,    iter time = ',b-a))
           if(gradnoise) attributes(out)$gradient <-attributes(out)$gradient * 
             exp( rnorm(length(attributes(out)$gradient),0,1e-3))
@@ -534,7 +541,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         standata$taylorheun <- 1L
         tipredeffectscale <- standata$tipredeffectscale
         standata$tipredeffectscale <- tipredeffectscale*.01
-        smlnsub <- min(standata$nsubjects,max(min(30,cores*2),ceiling(standata$nsubjects/4)))
+        smlnsub <- standata$nsubjects #min(standata$nsubjects,max(min(30,cores*2),ceiling(standata$nsubjects/4)))
         standatasml <- standatact_specificsubjects(standata,
           sample(unique(standata$subject),smlnsub))
         # smlndat <- min(standatasml$ndatapoints,ceiling(max(standatasml$nsubjects * 10, standatasml$ndatapoints*.5)))
@@ -556,6 +563,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(stochastic) optimfit <- sgd(init, fitfunc = target,
           # ndatapoints=standata$ndatapoints,gmeminit=.9,
           plot=plot,itertol=1,maxiter=300)
+        
         standata$nopriors <- as.integer(nopriorsbak)
         standata$taylorheun <- as.integer(taylorheun)
         # smf<-stan_reinitsf(sm,standata)
@@ -570,7 +578,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       if(optimcores==1) smf<-stan_reinitsf(sm,standata)
       
       if(!stochastic) {
-        
         optimfit <- mize(init, fg=mizelpg, max_iter=99999,
           method="L-BFGS",memory=100,
           line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
@@ -699,6 +706,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # hess=(hessup+hessdown)/2
         message('Estimating Hessian')
         # 
+        
+        
+        
 
         
         # hess2=grmat(pars=est2,step=1e-8)
@@ -722,6 +732,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # neghesschol = try(chol(-hess),silent=TRUE)
         # browser()
         # mchol=try(t(chol(solve(-hess))),silent=TRUE)
+        
+        #reset before hessian calcs
+        # storedLp <- c()
+        # storedPars <- storedPars[,0]
         
         dirsuccess <- c()
         stepsuccess<-c()
@@ -782,6 +796,16 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         mcov=MASS::ginv(-hess) #-optimfit$hessian)
         mcov=as.matrix(Matrix::nearPD(mcov,conv.norm.type = 'F')$mat)
         
+        # # browser()
+        # lplim <- 1
+        # dmix=densitymixt::tmix(dfvec = 100000,fixeddf = TRUE,
+        #   samples = t(storedPars[,storedLp > max(storedLp)-lplim,drop=FALSE]),
+        #   lpsamps = storedLp[storedLp > max(storedLp)-lplim],
+        #   ngen = finishsamples,priors = FALSE,stochastic=FALSE,tol=1e-12)
+        # 
+        # dmix$sigm[1,,]
+        # mcov
+
       }
       
       if(!is.na(sampleinit[1])){
@@ -809,6 +833,18 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         resamples <- matrix(unlist(lapply(1:nresamples,function(x){
           delta[[1]] + t(chol(mcovl[[1]])) %*% t(matrix(rnorm(length(delta[[1]])),nrow=1))
         } )),byrow=TRUE,ncol=length(delta[[1]]))
+        
+        
+        
+        # for(i in 1:ncol(resamples)){
+        # plot(density(resamples[,i]),main=i)
+        # points(density(dmix$gensamples[,i]),type='l',col='red')
+        # }
+        # resamples <- dmix$gensamples
+        
+        
+        
+        
         message('Getting ',finishsamples,' samples from Hessian for interval estimates...')
       }
       
@@ -824,9 +860,24 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             samples <- mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = tdf)
             
           } else {
+            if(1==1){
             delta[[j]]=colMeans(resamples)
             mcovl[[j]] = as.matrix(Matrix::nearPD(cov(resamples))$mat) #+diag(1e-12,ncol(samples))
             samples <- rbind(samples,mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = tdf))
+            }
+            if(1==99){
+              lplim=10
+            dmix=densitymixt::tmix(dfvec = 10,fixeddf = F,
+              samples = resamples[target_dens2 > max(target_dens2)-lplim],
+              lpsamps = target_dens2[target_dens2 > max(target_dens2)-lplim],
+              ngen = isloopsize,priors = FALSE,stochastic=FALSE,tol=1e-12)
+            
+            # delta[[j]]=colMeans(resamples)
+            # mcovl[[j]] = as.matrix(Matrix::nearPD(cov(resamples))$mat) #+diag(1e-12,ncol(samples))
+            samples <- dmix$gensamples
+            }
+  
+            
             # samples <- rbind(samples, MASS::mvrnorm(isloopsize, delta[[j]],mcovl[[j]]))
           }
           # if(j > 1 || !npd)
@@ -929,7 +980,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           if(nrow(samples) >= targetsamples && (max(sample_prob)/ sum(sample_prob)) < chancethreshold) {
             message ('Finishing importance sampling...')
             nresamples <- finishsamples 
-          }else nresamples = min(5000,nrow(samples)/5)
+          }else nresamples = max(5000,nrow(samples)/5)
           
           
           # points(target_dens2[sample_prob> (1/isloopsize * 10)], prop_dens[sample_prob> (1/isloopsize * 10)],col='red')
