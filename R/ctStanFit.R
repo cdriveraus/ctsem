@@ -932,6 +932,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     #   ntdpred=ctm$n.TDpred,when=4,matsetup=matsetup,returnlambdaonly=TRUE),
     #   dim=c(standata$nmanifest,standata$nlatentpop))
     
+    standata$difftype <- 2L;
+    standata$dotipred <- 1L;
+    
     if(!recompile){ #then use finite diffs for some elements
       # standata$sJAxfinite <- array(as.integer(unique(c(which(matrix(ctm$jacobian$JAx %in% #which rows of jacobian are not simply drift / fixed / state refs
       #   jacobianelements(ctm$jacobian$JAx,mats=mx,remove=c('drift','fixed'),
@@ -1018,7 +1021,12 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       
       if(recompile || forcerecompile) {
         message('Compiling model...') 
-        sm <- stan_model(model_name='ctsem', model_code = c(stanmodeltext),auto_write=TRUE)
+        sm <- stan_model(model_name='ctsem', model_code = c(stanmodeltext),auto_write=TRUE
+          # ,allow_undefined = TRUE,verbose=TRUE,
+          # includes = paste0(
+          #   '\n#include "', file.path(getwd(), 'syl2.hpp'),'"',
+          #   '\n')
+          )
       }
       if(!recompile && !forcerecompile) {
         if(!gendata) sm <- stanmodels$ctsm else sm <- stanmodels$ctsmgen

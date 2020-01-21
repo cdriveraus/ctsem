@@ -871,11 +871,11 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup){
       ',simplestatedependencies(when=2,mlist=c(mats$driftcint)),'
       ',simplifystanfunction(paste0(paste0(c(ctm$calcs$driftcint),';\n',collapse=' '))),' 
       if(statei > 0) {
-        sJAx[sJAxfinite,statei] =  sDRIFT[sJAxfinite, ] * state + append_row(sCINT[,1],cintzerovec)[sJAxfinite]; //compute new change
+        sJAx[sJAxfinite,statei] =  sDRIFT[sJAxfinite, ] * state + append_row(sCINT[,1],nlpzerovec)[sJAxfinite]; //compute new change
          if(verbose>1) print("sJAx ",sJAx);
       }
       if(statei== 0 && size(sJAxfinite) ) { //only need these calcs if there are finite differences to do -- otherwise loop just performs system calcs.
-        base[sJAxfinite] = sDRIFT[sJAxfinite, ] * state + append_row(sCINT[,1],cintzerovec)[sJAxfinite];
+        base[sJAxfinite] = sDRIFT[sJAxfinite, ] * state + append_row(sCINT[,1],nlpzerovec)[sJAxfinite];
         if(verbose>1) print("base = ",base,"    sjaxinit= ",sJAx);
         for(fi in sJAxfinite){
           sJAx[sJAxfinite,fi] = (sJAx[sJAxfinite,fi] - base[sJAxfinite]) / Jstep; //new - baseline change divided by stepsize
@@ -1032,6 +1032,8 @@ if(verbose > 1) print ("below t0 row ", rowi);
               state[1:nlatent] = (discreteDRIFT * append_row(state[1:nlatent],1.0))[1:nlatent]; //compute before new diffusion calcs
               
               if(dtchange[rowi]==1 || statedependence[2] || (T0check[rowi] == 1 && (DRIFTsubindex + DIFFUSIONsubindex + CINTsubindex) > 0)){
+                
+                if(difftype==2){
                 matrix[nlatent*2,nlatent*2] ebA;
                 matrix[nlatent*2,nlatent*2] bA;
             
@@ -1042,6 +1044,12 @@ if(verbose > 1) print ("below t0 row ", rowi);
                 
                 ebA = matrix_exp(bA * dtsmall[rowi]);
                 discreteDIFFUSION = ebA[(1+nlatent):(nlatent*2),(1+nlatent):(nlatent*2)]\' * ebA[1:nlatent,(1+nlatent):(nlatent*2)];
+                }
+                
+                //if(difftype==1){
+                //matrix[nlatent,nlatent] V = sDIFFUSIONcov-quad_form(sDIFFUSIONcov, Je[savescores ? rowi : 1]\');
+                //discreteDIFFUSION = solvesyl(sJAx[1:nlatent,1:nlatent],-V,discreteDIFFUSION, rep_array(nlatent,1));
+                //}
                 
                 //sasymDIFFUSION[derrind,derrind] = to_matrix(  -kronsum(sJAx[derrind,derrind],IIlatentpop[derrind,derrind]) \\ to_vector(sDIFFUSIONcov[derrind,derrind]), ndiffusion,ndiffusion);
                 //discreteDIFFUSION[derrind,derrind] =  sasymDIFFUSION[derrind,derrind] - quad_form( sasymDIFFUSION[derrind,derrind], Je[savescores ? rowi : 1, derrind,derrind]\' );
@@ -1382,6 +1390,8 @@ writemodel<-function(){
   paste0('
 functions{
 
+  //matrix solvesyl(matrix A, matrix C); //using form F and -V from Wahlstrom Axelsson Gustafsson 2014
+
    matrix expm2(matrix M,int[] z){
     matrix[rows(M),rows(M)] out;
     int z1[sum(z)];
@@ -1568,6 +1578,7 @@ data {
   int sJAxfinite[nsJAxfinite];
   int taylorheun;
   int dotipred;
+  int difftype;
 }
       
 transformed data{
@@ -1580,7 +1591,7 @@ transformed data{
   int T0check[ndatapoints] = rep_array(-1,ndatapoints);
   int dtchange[ndatapoints] = rep_array(-1,ndatapoints);
   vector[nlatentpop-nlatent] nlpzerovec = rep_vector(0,nlatentpop-nlatent);
-  vector[nlatentpop-nlatent] nlplusonezerovec = rep_vector(0,nlatent+1);
+  vector[nlatent+1] nlplusonezerovec = rep_vector(0,nlatent+1);
   
   { //dt calcs
     int si = 0;
