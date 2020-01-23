@@ -743,10 +743,13 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     ctm$calcs <- ctsmodelmats$calcs
     
     
-    
     #get extra calculations and adjust model spec as needed
     ctm <- ctStanCalcsList(ctm)
-    if(sum(sapply(ctm$calcs,length)) > 0 || any(matsetup$when %in% c(1,2,3))){
+    
+    if(sum(sapply(ctm$calcs[!names(ctm$calcs) %in% c('jacobian','measurement')],length)) > 0 || 
+        any(matsetup$when %in% c(1,2,3)) ||
+        length(ctm$calcs$jacobian) - sum(grepl('sJy[',unlist(ctm$calcs$jacobian),fixed=TRUE)) > 0 #non measurement jacobians
+        ){
       if(nldynamics == FALSE) warning('Linear model requested but nonlinear model specified! May be a poor approximation') else nldynamics <- TRUE 
     }
     

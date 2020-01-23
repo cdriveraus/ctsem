@@ -8,6 +8,14 @@ ctModel0DRIFT <- function(ctm,continuoustime){
   return(ctm)
 }
 
+simpleStateCheck <- function(x){   
+  if(grepl('\\b(state)\\b\\[\\d+\\]',x)){ #if state based 
+  refmatches <- gregexpr('\\[', x)[[1]] 
+  simplestate <- refmatches > 0 && length(refmatches) == 1 #find 1 match of [ only
+  } else simplestate <- FALSE
+  return(simplestate)
+}
+
 
 ctModelStatesAndPARS <- function(ctm){
   #detect state refs

@@ -608,13 +608,13 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       # if(cores > 1) parallelStanSetup(cl=clctsem,sm,standata,split=FALSE) #parallel::clusterExport(clctsem,varlist = c('
       
-      grmat<-function(pars,step=1e-5,lpdifmin=1e-10, lpdifmax=1, direction=1){
+      grmat<-function(pars,step=1e-5,lpdifmin=1e-10, 
+        lpdifmax=1e-1, direction=1,gradmod=TRUE){
         hessout <- flexsapply(cl = clctsem, cores = 1,1:length(pars), function(i) {
-          # smf <- stan_reinitsf(sm,standata,fast=TRUE)
           basegrad <- attributes(target(pars,gradnoise = FALSE))$gradient
-          stepsize <- step *10 * direction
+          stepsize <- step * direction
           colout <- NA
-          dolpchecks <- FALSE #set to true to try the log prob checks again...
+          dolpchecks <- TRUE #set to true to try the log prob checks again...
           while(any(is.na(colout)) && abs(stepsize) > 1e-16){
             stepsize <- stepsize * .1
             lpdifok<-FALSE
@@ -623,26 +623,21 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             lpdifmultiplier <- 1
             # message('par',i)
             while(!lpdifok & lpdifcount < 15){
-              # message(stepsize)
               # message(paste(i,'  col=',colout,'  lpdifmultiplier=',lpdifmultiplier, '  stepsize=',stepsize))
               lpdifok <- TRUE
               lpdifcount <- lpdifcount + 1
               uppars<-pars
-              # downpars<-pars
-              uppars[i]<-pars[i]+stepsize
-              # downpars[i]<-pars[i]-stepsize
+              uppars[i]<-pars[i]+stepsize * ifelse(gradmod,(abs(basegrad[i])),1)
               uplp= target(uppars,gradnoise=FALSE) #try(smf$log_prob(upars=uppars,adjust_transform=TRUE,gradient=TRUE)) #lpg(uppars)
-              # downlp = target(downpars,gradnoise=FALSE) #try(smf$log_prob(upars=downpars,adjust_transform=TRUE,gradient=TRUE)) #lpg(downpars)
+              storedPars <<- cbind(storedPars,matrix(uppars))
+              storedLp <<- c(storedLp,uplp[1])
+    
               if('try-error' %in% class(uplp)){
                 lpdifok <- TRUE
                 upgrad <- rep(NA,length(pars))
-                # downgrad <- rep(NA,length(pars))
                 dolpchecks <- FALSE
-                # if(stepsize < 1e-12) 
               } else{
                 upgrad= attributes(uplp)$gradient
-                # downgrad = attributes(downlp)$gradient
-                
                 if(dolpchecks){
                   if(abs(bestfit-uplp) > lpdifmax) {
                     # message(paste0('decreasing step for ', i))
@@ -667,29 +662,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                 }
               }
             }
-            # hessout[i,]<- (upgrad-downgrad) /stepsize/2
-            colout<- (upgrad-basegrad) /abs(stepsize) * direction
-            # print(colout)
+            colout<- (upgrad-basegrad) /abs(stepsize) * direction / ifelse(gradmod,(abs(basegrad[i])),1)
           }
           rbind(colout)
         })
-        # print(hessout)
         return(t(hessout))
-      }
-     
-      
-      grmat2<-function(step=1e-4){
-        base <- target(est2,gradnoise = FALSE)
-        basegrad <- attributes(base)$gradient
-        parsmat <- matrix(rnorm(length(est2)^2,est2,step),length(est2))
-        s1=lapply(1:nrow(parsmat),function(x){
-          o=target(parsmat[,x],gradnoise=FALSE)
-          o[1] <- base[1] - o[1]
-          attributes(o)$gradient <- attributes(o)$gradient - basegrad
-          return(o)
-          })
-        gmat <- sapply(s1,function(x) attributes(x)$gradient) #rows are parameters cols are samples
-        h <- gmat
       }
 
       # A more numerically stable way of calculating log( sum( exp( x ))) Source:
@@ -701,111 +678,39 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       
       if(is.na(sampleinit[1])){
-        # hessup=hess1s(pars = est2,direction = 1,step = 1e-4,lpdifmin = 1e-4,lpdifmax = 1e-3)
-        # hessdown=hess1s(pars = est2,direction = -1,step = 1e-4,lpdifmin = 1e-4,lpdifmax = 1e-3)
-        # hess=(hessup+hessdown)/2
-        message('Estimating Hessian')
-        # 
-        
-        
-        
 
-        
-        # hess2=grmat(pars=est2,step=1e-8)
-        # browser()
-        # grfunc <- function(x) attributes(target(x))$gradient
-        # hess=numDeriv::jacobian(func = grfunc,est2,
-        #   method='simple',
-        #   method.args=list(eps=1e-6, d=1e-4, zero.tol=sqrt(.Machine$double.eps/7e-7),
-        #     r=4, v=2, show.details=FALSE))
-        # browser()
-        
-        # for(ri in 1:nrow(hess)){
-        #   for(ci in 1:ncol(hess)){
-        #     if(is.na(hess[ri,ci])) hess[ri,ci] <- hess[ci,ri]
-        #   }}
-        # if(any(is.na(hess))) warning(paste0('Hessian could not be computed for pars: ', paste0(which(apply(hess,1,function(x) any(is.na(x)))),collapse=', '), ' -- standard errors will be nonsense, model adjustment may be needed.',collapse=''))
-        # diag(hess)[is.na(diag(hess))]<- -1
-        # hess[is.na(hess)] <- 0
-        # hess = ((hess) + t(hess))/2
-        
-        # neghesschol = try(chol(-hess),silent=TRUE)
-        # browser()
-        # mchol=try(t(chol(solve(-hess))),silent=TRUE)
-        
-        #reset before hessian calcs
-        # storedLp <- c()
-        # storedPars <- storedPars[,0]
-        
         dirsuccess <- c()
         stepsuccess<-c()
-        for(step in c(1e-4,1e-8)){
+        message('Estimating Hessian')
+        successcount <- 0
+        failcount <- 0 
+        for(step in c(1e-2,1e-6,1)){
           if(1 %in% dirsuccess && -1 %in% dirsuccess) next #stop if both directions ok
+          if(step != 1e-2) message('Trying again...')
           for(direction in c(-1,1)){
-          hesstry=grmat(pars=est2,step=step, direction=direction)
-          if(!'try-error' %in% c(class(try(t(chol(solve(-hesstry))))))){
-            dirsuccess <- c(dirsuccess,direction)
-            stepsuccess <- c(stepsuccess,step)
-            if(!exists('hess')) hess <- hesstry else hess <- hess + hesstry
-          } else if(!exists('hessfail')) hessfail <- hesstry else hessfail <- hessfail + hesstry
+            if(direction %in% dirsuccess) next #skip direction if ok
+            hesstry=grmat(pars=est2,step=step, direction=direction,gradmod = TRUE)
+            cholcov = try(suppressWarnings(t(chol(solve(-hesstry)))),silent = TRUE)
+            if(!'try-error' %in% c(class(cholcov))){
+              dirsuccess <- c(dirsuccess,direction)
+              stepsuccess <- c(stepsuccess,step)
+              successcount <- successcount + 1
+              if(successcount==1) hess <- hesstry else hess <- hess + hesstry
+            } else{
+              if(failcount==1) hessfail <- hesstry 
+              if(failcount > 2) hessfail <- hessfail +  hesstry 
+            }
           }
         }
         if(length(dirsuccess) > 0) hess <- hess / length(dirsuccess) #average over succcesses
-        if(length(unique(dirsuccess)) == 1) message('Single sided Hessian used')
+        if(length(unique(dirsuccess)) == 1) warning('Only single sided Hessian based cov positive definite, treat SE\'s with caution, consider respecification / priors / sampling.')
         if(length(dirsuccess) == 0) {
-          message('Hessian not positive-definite so approximating, treat SE\'s with caution, consider respecification / priors.')
-          hess <- hessfail / 4 #average over fails
+          warning('Hessian based cov not positive-definite so approximating, treat SE\'s with caution, consider respecification / priors / sampling.')
+          hess <- hessfail / 6 #average over fails
         }
-        # browser()
-        
-        # 
-        # hessdown=grmat(pars=est2,step=1e-4,direction=-1)
-        # mcholup=try(t(chol(solve(-hessup))))
-        # mcholdown=try(t(chol(solve(-hessdown))))
-        # npd <- c()
-        # if('try-error' %in% c(class(mcholup))) npd <- c(npd,1)
-        # if('try-error' %in% c(class(mcholdown))) npd <- c(npd,2)
-        # 
-        # if(length(npd)==2){ #repeat with smaller step
-        #   hessup2=grmat(pars=est2,step=1e-8)
-        #   hessdown2=grmat(pars=est2,step=1e-8,direction=-1)
-        #   mcholup=try(t(chol(solve(-hessup))))
-        #   mcholdown=try(t(chol(solve(-hessdown))))
-        #   npd <- c()
-        #   if('try-error' %in% c(class(mcholup))) npd <- c(npd,1) else hessup <-
-        #   if('try-error' %in% c(class(mcholdown))) npd <- c(npd,2)
-        #   if(length
-        # }
-        # 
-        # if(length(npd)==2){
-        #   # message('Gradient based Hessian not positive-definite, computing numerically...')
-        #   # 
-        #   # hess2 = try(numDeriv::hessian(target,est2,
-        #   #   method.args=list(eps=1e-4, d=1e-3, zero.tol=sqrt(.Machine$double.eps/7e-7), r=2, v=2, show.details=FALSE)))
-        #   # mchol=try(t(chol(solve(-hess2))),silent=TRUE)
-        #   # if('try-error' %in% class(mchol)){
-        #     message('Hessian not positive-definite so approximating, treat SE\'s with caution, consider respecification / priors.')
-        #   hess <- (hessup + hessdown) *.5
-        # }
-        # if(length(npd)==1){
-        #   message('Single sided Hessian used')
-        #   if(npd==1) hess <- hessup else hess <- hessdown
-        # }
-        # if(length(npd)==0) hess <- (hessup + hessdown) *.5
-
+      
         mcov=MASS::ginv(-hess) #-optimfit$hessian)
         mcov=as.matrix(Matrix::nearPD(mcov,conv.norm.type = 'F')$mat)
-        
-        # # browser()
-        # lplim <- 1
-        # dmix=densitymixt::tmix(dfvec = 100000,fixeddf = TRUE,
-        #   samples = t(storedPars[,storedLp > max(storedLp)-lplim,drop=FALSE]),
-        #   lpsamps = storedLp[storedLp > max(storedLp)-lplim],
-        #   ngen = finishsamples,priors = FALSE,stochastic=FALSE,tol=1e-12)
-        # 
-        # dmix$sigm[1,,]
-        # mcov
-
       }
       
       if(!is.na(sampleinit[1])){
@@ -826,28 +731,35 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       sample_prob<-c()
       ess <- 0
       qdiag<-0
+      
+      domix=F
 
       if(!is) {
-          
         nresamples = finishsamples
+        if(!domix){  
+        message('Getting ',finishsamples,' samples from Hessian for interval estimates...')
         resamples <- matrix(unlist(lapply(1:nresamples,function(x){
           delta[[1]] + t(chol(mcovl[[1]])) %*% t(matrix(rnorm(length(delta[[1]])),nrow=1))
         } )),byrow=TRUE,ncol=length(delta[[1]]))
+        }
         
+        if(domix){
+          message('Getting ',finishsamples,' samples from estimated density for interval estimates...')
+          lplim <- 1
+          dmix=densitymixt::tmix(dfvec = 50,fixeddf = FALSE,
+            samples = t(storedPars[,storedLp > max(storedLp)-lplim,drop=FALSE]),
+            lpsamps = storedLp[storedLp > max(storedLp)-lplim],
+            ngen = finishsamples,priors = FALSE,stochastic=FALSE,tol=1e-8)
+          resamples <- dmix$fit$gensamples
+        }
         
         
         # for(i in 1:ncol(resamples)){
         # plot(density(resamples[,i]),main=i)
-        # points(density(dmix$gensamples[,i]),type='l',col='red')
+        # points(density(dmix$fit$gensamples[,i]),type='l',col='red')
         # }
-        # resamples <- dmix$gensamples
-        
-        
-        
-        
-        message('Getting ',finishsamples,' samples from Hessian for interval estimates...')
+        # resamples <- dmix$fit$gensamples
       }
-      
       if(is){
         if(cores > 1)  parallelStanSetup(cl=clctsem,sm,standata,split=FALSE)
         targetsamples <- finishsamples * finishmultiply
@@ -857,35 +769,49 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           j<- j+1
           if(j==1){
             # if(!npd)
-            samples <- mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = tdf)
+            # if(!domix) 
+              samples <- mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = tdf)
+            
+            # if(domix){
+            #   lplim <- 10
+            #   dmix=densitymixt::tmix(dfvec = 50,fixeddf = F,
+            #     samples = t(storedPars[,storedLp > max(storedLp)-lplim,drop=FALSE]),
+            #     lpsamps = storedLp[storedLp > max(storedLp)-lplim],
+            #     targettype = 0,
+            #     ngen = isloopsize,priors = FALSE,stochastic=F,tol=1e-12,plot=T)
+            #   samples <- dmix$fit$gensamples
+            #   prop_dens <- dmix$fit$genlp
+            #   browser()
+            # }
             
           } else {
-            if(1==1){
+            if(!domix){
             delta[[j]]=colMeans(resamples)
             mcovl[[j]] = as.matrix(Matrix::nearPD(cov(resamples))$mat) #+diag(1e-12,ncol(samples))
             samples <- rbind(samples,mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = tdf))
             }
-            if(1==99){
-              lplim=10
+            if(domix){
+              lplim=3
+              # browser()
             dmix=densitymixt::tmix(dfvec = 10,fixeddf = F,
-              samples = resamples[target_dens2 > max(target_dens2)-lplim],
-              lpsamps = target_dens2[target_dens2 > max(target_dens2)-lplim],
-              ngen = isloopsize,priors = FALSE,stochastic=FALSE,tol=1e-12)
+              samples = samples[targetvec > max(targetvec)-lplim,],
+              lpsamps = targetvec[targetvec > max(targetvec)-lplim],
+              ngen = isloopsize,priors = FALSE,stochastic=F,tol=1e-8,plot=T)
             
             # delta[[j]]=colMeans(resamples)
             # mcovl[[j]] = as.matrix(Matrix::nearPD(cov(resamples))$mat) #+diag(1e-12,ncol(samples))
-            samples <- dmix$gensamples
+            samples <- rbind(samples,dmix$fit$gensamples)
+            prop_dens <- dmix$fit$genlp
             }
   
             
             # samples <- rbind(samples, MASS::mvrnorm(isloopsize, delta[[j]],mcovl[[j]]))
           }
           # if(j > 1 || !npd)
-          prop_dens <- mvtnorm::dmvt(tail(samples,isloopsize), delta[[j]], mcovl[[j]], df = tdf,log = TRUE)
+          if(!domix || j==1) prop_dens <- mvtnorm::dmvt(tail(samples,isloopsize), delta[[j]], mcovl[[j]], df = tdf,log = TRUE)
           # prop_dens <- mvtnorm::dmvnorm(tail(samples,isloopsize), delta[[j]], mcovl[[j]],log = TRUE)
           # prop_dens <- ctdmvnorm(tail(samples,isloopsize), delta[[j]], mcovl[[j]])
-          
-          
+ 
           
           standata$verbose <- 0L
           if(cores > 1) parallel::clusterExport(clctsem,'samples',envir = environment())
@@ -921,7 +847,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             message('Improved fit found - ', bestfit,' vs ', oldfit,' - restarting optimization')
             break
           }
-          
+          targetvec <- unlist(target_dens)
           
           target_dens2 <- target_dens[[j]] -max(target_dens[[j]],na.rm=TRUE) + max(prop_dens) #adjustment to get in decent range, doesnt change to prob
           target_dens2[!is.finite(target_dens[[j]])] <- -1e30
@@ -959,6 +885,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           if(dropuntil > 0){
             # 
             # resamples <- resamples[-(0:dropuntil),,drop=FALSE]
+            targetvec <- targetvec[-(0:dropuntil)]
             sample_prob <- sample_prob[-(0:dropuntil)]
             samples <- samples[-(0:dropuntil),,drop=FALSE]
           }
