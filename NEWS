@@ -1,5 +1,14 @@
 ctsem news:
 
+21/01/2020
+#### 3.1.0 ####
+- Fixed Hessian estimation sensitivity introduced last release.
+- ctStanKalman has option to return subject specific estimates.
+- Various performance improvements -- stochastic optimizer very effective with many parameters.
+- Fix rounding, off by one issue when using timestep argument for nonlinear dynamics.
+
+
+
 10/12/2019
 #### 3.0.9 ####
 - ctStanGenerate function -- generate from a ctstanmodel and prior distribution.

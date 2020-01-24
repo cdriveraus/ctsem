@@ -31,7 +31,7 @@ test_that("anomauth", {
     optimcontrol=list(finishsamples=100))
   expect_equal(23415.929,-2*sf$stanfit$optimfit$value,tolerance=.01)
   anoms=summary(sf)
-  expect_equivalent(.038,anoms$popmeans['manifestmeans_Y1','sd'],tolerance=.004)
+  expect_equivalent(.036,anoms$popmeans['manifestmeans_Y1','sd'],tolerance=.004)
  }
 
 })

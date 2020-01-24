@@ -3,7 +3,7 @@ sgd <- function(init,fitfunc,ndatapoints=NA,plot=FALSE,
   startnrows=NA,gsmoothness = 1,roughnessmemory=.95,groughnesstarget=.5,lproughnesstarget=.2,
   gsmoothroughnesstarget=.1,
   warmuplength=20,
-  minparchange=1e-40,maxiter=50000,nconvergeiter=30, itertol=1e-3, deltatol=1e-5){
+  minparchange=1e-80,maxiter=50000,nconvergeiter=30, itertol=1e-3, deltatol=1e-5){
   pars=init
   ngstore <- length(pars)*2
   pstore <- gstore <- matrix(NA,ngstore, length(pars))
