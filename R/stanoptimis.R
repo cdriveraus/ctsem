@@ -713,7 +713,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               dirsuccess <- c(dirsuccess,direction)
               stepsuccess <- c(stepsuccess,step)
               successcount <- successcount + 1
-              if(successcount==1) hess <- hesstry else hess <- hess + hesstry
+              if(successcount==1) hessfail <- hesstry else hess <- hess + hesstry
             } else{
               if(failcount==1) hessfail <- hesstry else hessfail <- hessfail +  hesstry 
             }
