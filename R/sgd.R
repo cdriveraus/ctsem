@@ -1,7 +1,7 @@
 sgd <- function(init,fitfunc,ndatapoints=NA,plot=FALSE,
-  stepbase=1e-1,gmeminit=ifelse(is.na(startnrows),.8,.8),gmemmax=.95,maxparchange = 50,
-  startnrows=NA,gsmoothness = 1,roughnessmemory=.95,groughnesstarget=.5,lproughnesstarget=.2,
-  gsmoothroughnesstarget=.1,
+  stepbase=1e-3,gmeminit=ifelse(is.na(startnrows),.8,.8),gmemmax=.95,maxparchange = 50,
+  startnrows=NA,gsmoothness = 1,roughnessmemory=.8,groughnesstarget=.4,lproughnesstarget=.15,
+  gsmoothroughnesstarget=.05,
   warmuplength=20,
   minparchange=1e-80,maxiter=50000,nconvergeiter=30, itertol=1e-3, deltatol=1e-5){
   pars=init
@@ -97,9 +97,9 @@ sgd <- function(init,fitfunc,ndatapoints=NA,plot=FALSE,
     g=attributes(lpg)$gradient
     g=sign(g)*.1*sqrt(abs(g))
     oldgsmooth = gsmooth
-    gmemory2 = gmemory * min(i/warmuplength,1)^(1/8)
+    gmemory2 = gmemory * min(i/warmuplength,1)#^(1/8)
     gsmooth= gsmooth*gmemory2 + (1-gmemory2)*g#^2 #should it really be squared? sgd algorithms do so
-    roughnessmemory2 = roughnessmemory * min(i/warmuplength,1)^(1/8)
+    roughnessmemory2 = roughnessmemory * min(i/warmuplength,1)#^(1/8)
     
     # stdgdifold = (g-oldg) * step
     # stdgdifsmooth = (g-gsmooth) * step
@@ -120,27 +120,28 @@ sgd <- function(init,fitfunc,ndatapoints=NA,plot=FALSE,
     # deltasmoothsq = deltasmoothsq * gmemory + (1-gmemory)*delta^2
     lproughnessmod=  ( ( (1/(-lproughness-lproughnesstarget2)) / (1/-lproughnesstarget2) + .5) -1) #balanced eq for any centre / target
     # gmemoryupd = min(gmemmax,max(.1,gmemory /  ( (1/(-mean(groughness)-groughnesstarget)) / (1/-groughnesstarget) + .5) ))
-    gsmoothroughnessmod =  .1 *(( ( (1/(-(gsmoothroughness)-gsmoothroughnesstarget)) / (1/-gsmoothroughnesstarget) + .5) ) -1)
-    groughnessmod = .5 *( ( ( (1/(-(groughness)-groughnesstarget)) / (1/-groughnesstarget) + .5) ) -1)
+    gsmoothroughnessmod =  (( ( (1/(-(gsmoothroughness)-gsmoothroughnesstarget)) / (1/-gsmoothroughnesstarget) + .5) ) -1)
+    groughnessmod = ( ( ( (1/(-(groughness)-groughnesstarget)) / (1/-groughnesstarget) + .5) ) -1)
     # rmsstepmod = sqrt(abs(gsmooth+1e-7))/step -1 #like adagrad but with decaying gradient
     
+    # groughnesstarget = groughnesstarget * (1+ .1*gsmoothroughnessmod)
     step = (step
-      + step*signdifmod *.1#* min(sqrt(deltasmoothsq),1)
-      + step*lproughnessmod
-      + step* 0*gsmoothroughnessmod #* min(sqrt(deltasmoothsq),1)
-      + step* groughnessmod# * min(sqrt(deltasmoothsq),1)
+      + step*signdifmod *0#* min(sqrt(deltasmoothsq),1)
+      + step*.5*lproughnessmod
+      + step* .5*gsmoothroughnessmod #* min(sqrt(deltasmoothsq),1)
+      + step* .5*groughnessmod# * min(sqrt(deltasmoothsq),1)
       # + step * rmsstepmod
     )
 
     if(lp[i] >= max(lp)) {
-      # step = step * sqrt(2-gmemory) #exp((1-gmemory)/8)
+      step = step * 1.1 #sqrt(2-gmemory) #exp((1-gmemory)/8)
       if(i > warmuplength/2) {
         ##max/min par update extra
-        gsmooth[pars>maxpars | pars < minpars] <- gsmooth[pars>maxpars | pars < minpars]  * 1.1#*delta[pars>maxpars | pars < minpars] /step[pars>maxpars | pars < minpars]
-        step[pars>maxpars | pars < minpars] <- step[pars>maxpars | pars < minpars] * 1.2  #+ pars[pars>maxpars | pars < minpars]
+        # gsmooth[pars>maxpars | pars < minpars] <- gsmooth[pars>maxpars | pars < minpars]  * 1.1#*delta[pars>maxpars | pars < minpars] /step[pars>maxpars | pars < minpars]
+        # step[pars>maxpars | pars < minpars] <- step[pars>maxpars | pars < minpars] * 1.2  #+ pars[pars>maxpars | pars < minpars]
         changepars=pars
         changepars[!(pars>maxpars | pars < minpars)] <- NA
-        lproughness = lproughness * .9
+        # lproughness = lproughness * .9
       }
       # pars <- newpars
       bestpars <- pars
@@ -158,6 +159,7 @@ sgd <- function(init,fitfunc,ndatapoints=NA,plot=FALSE,
       minpars[rndchange] <- pars[rndchange]
     }
 
+    # gmemory <- gmemory * gsmoothroughnessmod
     if(i > 30 && i %% 20 == 0) {
       lpdif <- sum(diff(tail(lp,10)))
       oldlpdif <- sum(diff(head(tail(lp,10),20)))
@@ -184,7 +186,7 @@ sgd <- function(init,fitfunc,ndatapoints=NA,plot=FALSE,
       abline(h=(gsmoothroughnesstarget),col='blue',lty=1,lwd=2)
       points(gsmoothroughness,ylim=c(0,1),col='blue')
       abline(h=mean(groughness),col='red',lty=2)
-      # abline(h=(groughnesstarget),col='red',lty=1)
+      abline(h=(groughnesstarget),col='red',lty=1)
       
       abline(h=lproughnesstarget,lty=1,col='green')
       abline(h=lproughness, col='green',lty=2)
