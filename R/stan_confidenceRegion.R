@@ -1,23 +1,4 @@
-#' Extract functions of multiple variables from a stanfit object
-#'
-#' Can be useful for determining quantiles or plotting multidimensional regions -- 
-#' for instance in case of colinearity of predictors.
-#' @param stanfit object of class stanfit.
-#' @param parstrings vector of strings containing partial (or full) matches of parameter names.
-#' When more than one string is passed, functions are computed based on the combination of the first match for
-#' each string, then the second match for each string, etc. The first match of the first string is only ever combined
-#' with the first match of the second, similarly for the 2nd match, etc.
-#' @param prefuncstring string containing front element of function. E.g., 'exp(' for an exponential region.
-#' @param joinfuncstring string used to join the (possibly) multiple parameters involved.
-#' @param postfuncstring string containing end element of function. E.g., ') *2' to multiply the result by 2.
-#'
-#' @return matrix of values of the specified interactions at each iteration. 
-#' @export
-#'
-#' @examples
-#' temp<-stan_confidenceRegion(stanfit=ctstantestfit$stanfit, 
-#'   parstrings=c('pop_DRIFT[1,2]','pop_DRIFT[2,1]'))
-#' t(apply(temp,2,quantile))
+
 stan_confidenceRegion <-function(stanfit,parstrings,prefuncstring='(', joinfuncstring=' + ',postfuncstring=')'){
   mc=As.mcmc.list(stanfit)
   mc=do.call(rbind,mc)

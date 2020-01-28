@@ -969,7 +969,7 @@ if(verbose > 1){
         }
         if(skipupd==0){ 
           if(manifesttype[od[wi]]!=1){
-            Ygen[ rowi, od[wi]] = syprior[od[wi]] + ypriorcov_sqrt[od[wi],od[wi]] * Ygenbase[rowi,od[wi]];
+            Ygen[ rowi, od[wi]] = syprior[od[wi]] + sqrt(ycov[od[wi],od[wi]]) * Ygenbase[rowi,od[wi]];
           }
           if(manifesttype[od[wi]]==1) Ygen[rowi, od[wi]] = (syprior[od[wi]] > Ygenbase[rowi,od[wi]]) ? 1 : 0; 
           if(is_nan(Ygen[rowi,od[wi]])) {

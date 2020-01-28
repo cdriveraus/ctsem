@@ -15,7 +15,7 @@
 #'
 #' @examples 
 #' \donttest{
-#' k=ctStanKalman(ctstantestfit)
+#' k=ctStanKalman(ctstantestfit,subjectpars=T,collapsefunc=mean)
 #' }
 ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,standardisederrors=FALSE, subjectpars=FALSE,...){
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
@@ -32,33 +32,36 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,standardisederr
   e=stan_constrainsamples(sm = fit$stanmodel,standata = standata,samples = samples,cores=cores)
   
   if(subjectpars){
-    p=standata$indvaryingindex
-    p=p[p > standata$nlatent]
-    if(length(p)==0) stop('No random effects have been integrated over! Did you specify individual variation, and did you optimize
-    or set intoverpop = TRUE ?')
-    lastsub <- rep(FALSE,standata$ndatapoints)
+    # browser()
+    p=sort(unique(fit$setup$matsetup$param[fit$setup$matsetup$indvarying]))# | fit$setup$matsetup$tipred]))
+    p=p[p>0]
+    # pt0 = p[p < standata$nlatent] #t0means calculated from smoothed states
+    # p=p[p > standata$nlatent] #other pars based on final point
+    if(length(p)==0) stop('No random effect parameters found!')
+    firstsub <- rep(TRUE,standata$ndatapoints) #which rows represent first rows per subject
     for(i in 2:standata$ndatapoints){
-      if(standata$subject[i] != standata$subject[i-1]) lastsub[i-1] <- TRUE
-      if(i == standata$ndatapoints) lastsub[i] <- TRUE
+      if(standata$subject[i] == standata$subject[i-1]) firstsub[i] <- FALSE
     }
-    pars <- e$etaprior[,lastsub,p,drop=FALSE]
-    dimnames(pars) <- list(iter=1:dim(pars)[1],id = unique(standata$subject), par = 1:dim(pars)[3])
+    
+    states <- e$etasmooth[,firstsub,p,drop=FALSE]
+    dimnames(states) <- list(iter=1:dim(states)[1],id = unique(standata$subject), par = 1:dim(states)[3])
     ms <- fit$setup$matsetup
     mv <- fit$setup$matvalues
     mats <- ctStanMatricesList()$all
     for(i in 1:nrow(ms)){
-      if(ms$when[i] > 0 && ms$param[i] %in% p){
+      if(ms$param[i] %in% p){
         if(ms$transform[i] >=0){ #havent done custom transforms here
-        pars[,,ms$param[i]-standata$nlatent] <- tform(
-        param = pars[,,ms$param[i]-standata$nlatent], transform = ms$transform[i],
+        if(ms$param[i] > standata$nlatent) states[,,ms$param[i]] <- tform( #t0means not done here because they are not based on the state
+         param = states[,,ms$param[i]], transform = ms$transform[i],
           multiplier = mv$multiplier[i],meanscale = mv$meanscale[i],offset = mv$offset[i],
           inneroffset = mv$inneroffset[i])
-        dimnames(pars)$par[ms$param[i]-standata$nlatent] <- paste0(names(mats[ms$matrix[i]]),'[',ms$row[i],',',ms$col[i],']')
+        dimnames(states)$par[ms$param[i]] <- paste0(names(mats[ms$matrix[i]]),'[',ms$row[i],',',ms$col[i],']')
         }
         if(ms$transform[i] <0) message('custom transforms not implemented yet...sorry')
       }
     }
-    return(pars)
+    states <- states[,,p,drop=FALSE]
+    return(states)
   } else{
 
   nlatent <- fit$standata$nlatent

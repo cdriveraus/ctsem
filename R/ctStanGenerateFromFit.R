@@ -53,14 +53,16 @@ ctStanGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE,verboseErro
   
   fit$generated$Y <- aperm(fit$generated$Y,c(1,3,2))
   fit$generated$Y[fit$generated$Y==99999] <- NA
-  
-  for(i in 1:dim(fit$generated$Y)[3]){ #remove crazy outliers
-    for(j in 1:dim(fit$generated$Y)[2]){
-      fit$generated$Y[(fit$generated$Y[,j,i]) > 
-          quantile(fit$generated$Y[,j,i],.95,na.rm=TRUE) * 100,j,i] <- NA
-      fit$generated$Y[c(fit$generated$Y[,j,i] < 
-          quantile(fit$generated$Y[,j,i],.05,na.rm=TRUE) * 100),j,i] <- NA
-    }
-  }
+  # print(fit$generated$Y)
+  # browser()
+  # for(i in 1:dim(fit$generated$Y)[3]){ #remove crazy outliers
+  #   for(j in 1:dim(fit$generated$Y)[2]){
+  #     # browser()
+  #     fit$generated$Y[(fit$generated$Y[,j,i]) > 
+  #         quantile(c(fit$generated$Y[,,i]),.99,na.rm=TRUE) * 100,j,i] <- NA
+  #     fit$generated$Y[(fit$generated$Y[,j,i] < 
+  #         quantile(c(fit$generated$Y[,,i]),.01,na.rm=TRUE) ),j,i] <- NA
+  #   }
+  # }
   return(fit)
 }

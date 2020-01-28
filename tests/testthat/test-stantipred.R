@@ -62,7 +62,7 @@ s2=summary(tfit)
 expect_equivalent(s2$tipreds[2,'mean'],5,tolerance=.1)
 expect_equivalent(s2$popsd[2,'mean'],.6,tolerance=.2)
 
-tfit<-ctStanFit(tdat,checkm,iter=400,chains=2,control=list(adapt_delta=.8,max_treedepth=6),plot=FALSE)
+tfit<-suppressWarnings(ctStanFit(tdat,checkm,iter=400,chains=2,control=list(adapt_delta=.8,max_treedepth=6),plot=FALSE))
 s3=summary(tfit)
 
 expect_equivalent(s3$tipreds[2,'mean'],5,tolerance=.1)

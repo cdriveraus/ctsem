@@ -1,9 +1,9 @@
 sgd <- function(init,fitfunc,ndatapoints=NA,plot=FALSE,
-  stepbase=1e-3,gmeminit=ifelse(is.na(startnrows),.8,.8),gmemmax=.95,maxparchange = 50,
-  startnrows=NA,gsmoothness = 1,roughnessmemory=.8,groughnesstarget=.4,lproughnesstarget=.15,
-  gsmoothroughnesstarget=.05,
+  stepbase=1e-5,gmeminit=ifelse(is.na(startnrows),.8,.8),gmemmax=.95,maxparchange = 50,
+  startnrows=NA,gsmoothness = 1,roughnessmemory=.95,groughnesstarget=.5,lproughnesstarget=.2,
+  gsmoothroughnesstarget=.2,
   warmuplength=20,
-  minparchange=1e-80,maxiter=50000,nconvergeiter=30, itertol=1e-3, deltatol=1e-5){
+  minparchange=1e-120,maxiter=50000,nconvergeiter=30, itertol=1e-3, deltatol=1e-5){
   pars=init
   ngstore <- length(pars)*2
   pstore <- gstore <- matrix(NA,ngstore, length(pars))
@@ -13,7 +13,7 @@ sgd <- function(init,fitfunc,ndatapoints=NA,plot=FALSE,
   changepars=pars
   step=rep(stepbase,length(init))
   # parallelStanSetup(cores,sm,standata)
-
+  
   g= fitfunc(init) # try(smf$grad_log_prob(upars=init,adjust_transform=TRUE),silent = TRUE) #rnorm(length(init),0,.001)
   if('try-error' %in% class(g)) {
     i = 0
@@ -25,7 +25,7 @@ sgd <- function(init,fitfunc,ndatapoints=NA,plot=FALSE,
       i = i + 1
     }
   }
-  g=sign(attributes(g)$gradient)#*.1*sqrt(abs(g))
+  g=sign(attributes(g)$gradient)*sqrt(abs(g))
   gsmooth=g
   oldg=g
   groughness = rep(groughnesstarget,length(g))
@@ -55,9 +55,9 @@ sgd <- function(init,fitfunc,ndatapoints=NA,plot=FALSE,
       }
       newpars = bestpars
       if(i > 1){
-      delta =   step  * gsmooth * exp((rnorm(length(g),0,.01)))
-      delta[abs(delta) > maxparchange] <- maxparchange*sign(delta[abs(delta) > maxparchange])
-      newpars = newpars + delta
+        delta =   step  * gsmooth * exp((rnorm(length(g),0,.0)))
+        delta[abs(delta) > maxparchange] <- maxparchange*sign(delta[abs(delta) > maxparchange])
+        newpars = newpars + delta
       }
       
       #sub sampling
@@ -74,7 +74,7 @@ sgd <- function(init,fitfunc,ndatapoints=NA,plot=FALSE,
           class(lpg) !='try-error' && 
           !is.nan(lpg[1]) && 
           all(!is.nan(attributes(lpg)$gradient)) &&
-           (i < warmuplength || lp[i-1]- lpg[1] < sd(tail(lp,5))*4+1e-6)){
+          (i < warmuplength || lp[i-1]- lpg[1] < sd(tail(lp,5))*4+1e-6)){
         accepted <- TRUE
       } 
       else {
@@ -84,25 +84,34 @@ sgd <- function(init,fitfunc,ndatapoints=NA,plot=FALSE,
       if(is.na(startnrows) && i < warmuplength && i > 1 && lpg[1] < lp[1]) {
         accepted <- FALSE
         step = step * .5
-        gsmooth=gsmooth*.5
+        # gsmooth=gsmooth*.5
       }
       if(plot && !accepted) print(paste0('iter ', i,' not accepted!'))
     }
     lp[i]=lpg[1]
     pars <- newpars
-
+    
+    if(i > 1 && lp[i] < lp[i-1]) { #if worsening, forget gradient faster
+      signdif=sign(g)!=sign(gsmooth)
+      # signdif=rep(TRUE, length(gsmooth))
+      gsmooth[signdif]= gsmooth[signdif]*gmemory2 + (1-gmemory2) * g[signdif] #increase influence of last gradient at inflections
+      # gsmooth=g
+    }
+    
     gstore[(i-1) %% ngstore +1,] <- g
     pstore[(i-1) %% ngstore +1,] <- pars
     oldg=g
+    
     g=attributes(lpg)$gradient
-    g=sign(g)*.1*sqrt(abs(g))
+    g=sign(g)*sqrt(abs(g))
     oldgsmooth = gsmooth
-    gmemory2 = gmemory * min(i/warmuplength,1)#^(1/8)
-    gsmooth= gsmooth*gmemory2 + (1-gmemory2)*g#^2 #should it really be squared? sgd algorithms do so
+    gmemory2 = gmemory * min(i/warmuplength,1)^(1/4)
+    gsmooth= gsmooth*gmemory2 + (1-gmemory2) * g #should it really be squared? sgd algorithms do so
     roughnessmemory2 = roughnessmemory * min(i/warmuplength,1)#^(1/8)
     
-    # stdgdifold = (g-oldg) * step
-    # stdgdifsmooth = (g-gsmooth) * step
+    
+    
+    
     groughness = groughness * (roughnessmemory2) + (1-(roughnessmemory2)) * as.numeric(sign(g)!=sign(oldg))
     gsmoothroughness = gsmoothroughness * (roughnessmemory2) + (1-(roughnessmemory2)) * as.numeric(sign(gsmooth)!=sign(oldgsmooth))
     if(i > 1) lproughness = lproughness * (roughnessmemory2) + (1-(roughnessmemory2)) * as.numeric(lp[i-1] >= (lp[i] + sd(tail(lp,min(i,3)))))
@@ -125,14 +134,14 @@ sgd <- function(init,fitfunc,ndatapoints=NA,plot=FALSE,
     # rmsstepmod = sqrt(abs(gsmooth+1e-7))/step -1 #like adagrad but with decaying gradient
     
     # groughnesstarget = groughnesstarget * (1+ .1*gsmoothroughnessmod)
-    step = (step
-      + step*signdifmod *0#* min(sqrt(deltasmoothsq),1)
-      + step*.5*lproughnessmod
+    step = (step + .5*(
+      # + step*signdifmod *.5#* min(sqrt(deltasmoothsq),1)
+       step* .5*lproughnessmod
       + step* .5*gsmoothroughnessmod #* min(sqrt(deltasmoothsq),1)
       + step* .5*groughnessmod# * min(sqrt(deltasmoothsq),1)
       # + step * rmsstepmod
-    )
-
+    ))
+    
     if(lp[i] >= max(lp)) {
       step = step * 1.1 #sqrt(2-gmemory) #exp((1-gmemory)/8)
       if(i > warmuplength/2) {
@@ -158,7 +167,7 @@ sgd <- function(init,fitfunc,ndatapoints=NA,plot=FALSE,
       maxpars[rndchange] <- pars[rndchange]
       minpars[rndchange] <- pars[rndchange]
     }
-
+    
     # gmemory <- gmemory * gsmoothroughnessmod
     if(i > 30 && i %% 20 == 0) {
       lpdif <- sum(diff(tail(lp,10)))
@@ -192,7 +201,8 @@ sgd <- function(init,fitfunc,ndatapoints=NA,plot=FALSE,
       abline(h=lproughness, col='green',lty=2)
       
       plot(tail(log(-(lp-max(lp)-1)),500),type='l')
-      plot(gsmooth,ylim= c(-max(abs(gsmooth)),max(abs(gsmooth))))
+      gsmoothsqrt=sign(gsmooth) * sqrt(abs(gsmooth))
+      plot(gsmoothsqrt,ylim= range(gsmoothsqrt))
       
       matplot(cbind(signdifmod,gsmoothroughnessmod),col=c('black','blue'),pch=1,ylim=c(-1,1))
       points(groughnessmod,col='red')

@@ -347,7 +347,7 @@ tostanarray <- function(flesh, skeleton){
 stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   deoptim=FALSE, estonly=FALSE,tol=1e-12,
   decontrol=list(),
-  stochastic = 'auto',
+  stochastic = "auto",
   nopriors=FALSE,carefulfit=TRUE,
   plot=FALSE,
   is=FALSE, isloopsize=1000, finishsamples=500, tdf=10,chancethreshold=100,finishmultiply=5,
@@ -542,8 +542,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         tipredeffectscale <- standata$tipredeffectscale
         dotipred <- standata$dotipred
         # standata$dotipred <- 0L
-        # standata$tipredeffectscale <- tipredeffectscale*.01
-        smlnsub <- standata$nsubjects #min(standata$nsubjects,max(min(30,cores*2),ceiling(standata$nsubjects/4)))
+        standata$tipredeffectscale <- tipredeffectscale*.01
+        smlnsub <- min(standata$nsubjects,max(min(30,cores*2),ceiling(standata$nsubjects/4)))
         standatasml <- standatact_specificsubjects(standata,
           sample(unique(standata$subject),smlnsub))
         # smlndat <- min(standatasml$ndatapoints,ceiling(max(standatasml$nsubjects * 10, standatasml$ndatapoints*.5)))
@@ -562,7 +562,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         
         if(stochastic) optimfit <- sgd(init, fitfunc = target,
           # ndatapoints=standata$ndatapoints,gmeminit=.9,
-          plot=plot,itertol=1e-1,deltatol=1e-3,maxiter=300)
+          plot=plot,itertol=1e-1,deltatol=1e-3,maxiter=3000)
         
         standata$nopriors <- as.integer(nopriorsbak)
         standata$taylorheun <- as.integer(taylorheun)
@@ -627,12 +627,15 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       # if(cores > 1) parallelStanSetup(cl=clctsem,sm,standata,split=FALSE) #parallel::clusterExport(clctsem,varlist = c('
       
       grmat<-function(pars,step=1e-5,lpdifmin=1e-10, 
-        lpdifmax=1e-1, direction=1,gradmod=TRUE){
-        hessout <- flexsapply(cl = clctsem, cores = 1,1:length(pars), function(i) {
+        lpdifmax=1e-1, direction=1,whichpars='all',gradmod=FALSE){
+        if('all' %in% whichpars) whichpars <- 1:npars
+        hessout <- flexsapply(cl = clctsem, cores = 1, whichpars, function(i) {
           basegrad <- attributes(target(pars,gradnoise = FALSE))$gradient
+          # print(basegrad)
           stepsize <- step * direction
           colout <- NA
-          dolpchecks <- TRUE #set to true to try the log prob checks again...
+          dolpchecks <- TRUE #set to true to try the log prob checks again..
+          # browser()
           while(any(is.na(colout)) && abs(stepsize) > 1e-16){
             stepsize <- stepsize * .1
             lpdifok<-FALSE
@@ -655,7 +658,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                 upgrad <- rep(NA,length(pars))
                 dolpchecks <- FALSE
               } else{
-                upgrad= attributes(uplp)$gradient
+                upgrad= attributes(uplp)$gradient #-basegrad
+
+                # print((  (upgrad[i] * (-abs(uppars[i]-pars[i]))) / (uplp[1]-bestfit[1]) ))
+                # upgrad = upgrad / (  (upgrad[i] * (-abs(uppars[i]-pars[i]))) / (uplp[1]-bestfit[1]) ) #linearised upgrad
+
                 if(dolpchecks){
                   if(abs(bestfit-uplp) > lpdifmax) {
                     # message(paste0('decreasing step for ', i))
@@ -666,7 +673,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                     stepsize = stepsize * 1e-2 * lpdifmultiplier
                     lpdifdirection <- -1
                   }
-                  if(abs(uplp-bestfit) < lpdifmin) {
+                  if(abs(uplp-bestfit) < lpdifmin ) { #include sufficient gradient[i] checks #|| upgrad[i] < 1e-2
                     # 
                     # message(paste0('increasing step for ', i))
                     lpdifok <- FALSE
@@ -680,11 +687,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                 }
               }
             }
-            colout<- (upgrad-basegrad) /abs(stepsize) * direction / ifelse(gradmod,(abs(basegrad[i])),1)
+            colout<- (upgrad) /abs(stepsize) * direction / ifelse(gradmod,(abs(basegrad[i])),1)
           }
           rbind(colout)
         })
-        return(t(hessout))
+        return((hessout))# + t(hessout))/2)
       }
       
       # A more numerically stable way of calculating log( sum( exp( x ))) Source:
@@ -696,41 +703,75 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       
       if(is.na(sampleinit[1])){
-        
-        dirsuccess <- c()
-        stepsuccess<-c()
+
         message('Estimating Hessian')
-        successcount <- 0
-        failcount <- 0 
-        for(step in c(1e-2,1e-6,1)){
-          if(1 %in% dirsuccess && -1 %in% dirsuccess) next #stop if both directions ok
-          if(step != 1e-2) message('Trying again...')
-          for(direction in c(-1,1)){
-            if(direction %in% dirsuccess) next #skip direction if ok
-            hesstry=grmat(pars=est2,step=step, direction=direction,gradmod = TRUE)
-            cholcov = try(suppressWarnings(t(chol(solve(-hesstry)))),silent = TRUE)
-            if(!'try-error' %in% c(class(cholcov))){
-              dirsuccess <- c(dirsuccess,direction)
-              stepsuccess <- c(stepsuccess,step)
-              successcount <- successcount + 1
+        hesslist <- list()
+        for(direction in c(-1,1)){
+          whichpars <- 1:npars
+          hess = matrix(0,npars,npars)
+          hessbad <- hess
+          steps=c(1e-4,1e-8,1)
+          for(stepi in 1:length(steps) ){
+            if(length(whichpars) > 0){
+              # browser()
+              hesstry <- hess
+              hesstry[,whichpars]= grmat(pars=est2,step=steps[stepi], direction=direction,gradmod = FALSE,whichpars=whichpars)
+              # hesstry <- ()
+              eig <- eigen((hesstry+t(hesstry))/2)$values
+              # browser()
+              # print((eig$val))
               
-              if(successcount==1) hess <- hesstry else hess <- hess + hesstry
-            } else{
-              failcount <- failcount +1
-              if(failcount==1) hessfail <- hesstry else hessfail <- hessfail +  hesstry 
+              hessgood <- which(abs(eig) > 1e-8) #which columns / pars are non singular
+              hess[,hessgood] <- hess[,hessgood] + hesstry[,hessgood]
+              whichpars <- whichpars[!whichpars %in% hessgood] #leave bad pars to do again
+              hessbad <- hessbad/stepi * (stepi-1) + hesstry/stepi #cumulative update
             }
           }
+          if(direction==1){
+            remainingpars <- whichpars
+            hesslist[[1]] <- hess
+            hesslist[[2]] <- hessbad
+          } else {
+            remainingpars <- c()
+            hesslist[[3]] <- hess
+            hesslist[[4]] <- hessbad
+          }
         }
-        if(length(dirsuccess) > 0) hess <- hess / length(dirsuccess) #average over succcesses
-        if(length(unique(dirsuccess)) == 1) warning('Only single sided Hessian based cov positive definite, treat SE\'s with caution, consider respecification / priors / sampling.')
-        if(length(dirsuccess) == 0) {
-          warning('Hessian based cov not positive-definite so approximating, treat SE\'s with caution, consider respecification / priors / sampling.')
-          hess <- hessfail / 6 #average over fails
-        }
+        badpars <- unique(c(whichpars,remainingpars) )
+        onesidedpars <- c(whichpars[!whichpars %in% remainingpars],
+          remainingpars[!remainingpars %in% whichpars])
+        badpars <- badpars[!badpars %in% onesidedpars]
         
+        mats <- ctStanMatricesList()$all
+        nameref <- function(p){
+          r <- which(standata$matsetup[,'param'] %in% p)
+          out <- c()
+          for(ri in r){
+            out <- c(out,paste0(names(mats)[standata$matsetup[ri,'matrix']],'[',
+              standata$matsetup[ri,'row'],',',
+              standata$matsetup[ri,'col'],'] ')
+            )
+          }
+          if(!length(r)) out <- p
+          return(out)
+        }        
+        
+        hess <- (hesslist[[1]] + hesslist[[3]] ) /2
+        hess <- (t(hess)+hess )/2
+        hess[,onesidedpars] <- hess[,onesidedpars] * 2
+        hess[,badpars] <- (( hesslist[[2]] + hesslist[[4]]) /2)[,badpars]
+        cholcov = try(suppressWarnings(t(chol(solve(-hess)))),silent = TRUE)
+
+        if('try-error' %in% class(cholcov)){
+        if(length(badpars)) warning('Standard error could not be determined for pars: ',paste0(nameref(badpars),collapse=', '),', approximate hessian used, consider respecification / priors / sampling.')
+          if(!length(badpars)) warning('Hessian based cov not positive-definite so approximating, treat SE\'s with caution, consider respecification / priors / sampling.')
+        } else if(length(onesidedpars)) message('Standard error only defined in one direction for pars: ',paste0(nameref(onesidedpars),collapse=', '),', one sided hessian used.')
+
         mcov=MASS::ginv(-hess) #-optimfit$hessian)
         mcov=as.matrix(Matrix::nearPD(mcov,conv.norm.type = 'F')$mat)
       }
+      
+      
       
       if(!is.na(sampleinit[1])){
         mcov = cov(sampleinit)*1.5+diag(1e-6,ncol(sampleinit))

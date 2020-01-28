@@ -32,7 +32,3 @@ matrix of values of the specified interactions at each iteration.
 \description{
 Compute functions of matrices from samples of a stanfit object
 }
-\examples{
-temp<-stan_postcalc(stanfit=ctstantestfit$stanfit, 
-  object='DRIFT', objectindices='all', calc='exp(object)')
-}

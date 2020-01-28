@@ -1,6 +1,6 @@
 #' ctStanParnames
 #' 
-#' Gets internal stan parameter names of a ctStanFit object based on specified substrings.
+#' Gets internal stan parameter names of a ctStanFit object sampled via stan based on specified substrings.
 #'
 #' @param x ctStanFit object
 #' @param substrings vector of character strings, parameter names of the stan model
@@ -10,9 +10,32 @@
 #' means of temporal dynamics parameters
 #' @return vector of character strings.
 #' @examples
-#' ctStanParnames(ctstantestfit,substrings=c('pop_','popsd'))
+#' \dontrun{
+#' sunspots<-sunspot.year
+#' sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
+#' id <- 1
+#' time <- 1749:1924
+#' datalong <- cbind(id, time, sunspots)
+#'
+#' #setup model
+#' ssmodel <- ctModel(type='stanct', n.latent=2, n.manifest=1, 
+#'  manifestNames='sunspots', 
+#'  latentNames=c('ss_level', 'ss_velocity'),
+#'  LAMBDA=matrix(c( 1, 'ma1| log(1+(exp(param)))' ), nrow=1, ncol=2),
+#'  DRIFT=matrix(c(0, 'a21 | -log(1+exp(param))', 1, 'a22'), nrow=2, ncol=2),
+#'  MANIFESTMEANS=matrix(c('m1|param * 10 + 44'), nrow=1, ncol=1),
+#'  MANIFESTVAR=diag(0,1), #As per original spec
+#'  CINT=matrix(c(0, 0), nrow=2, ncol=1),
+#'  DIFFUSION=matrix(c(0, 0, 0, "diffusion"), ncol=2, nrow=2))
+#'
+#' #fit
+#' ssfit <- ctStanFit(datalong, ssmodel, iter=300, chains=2)
+#' ctStanParnames(ssfit,substrings=c('pop_','popsd'))
+#' }
+#' 
 #' @export
 ctStanParnames <- function(x,substrings=c('pop_','popsd')){
+  if(!'stanfit' %in% class(x$stanfit)) stop('Doesnt contain sampled stanfit object')
   out<-c()
   for(subsi in substrings){
     out<- c(out, x$stanfit@model_pars[grep(paste0('^',subsi),x$stanfit@model_pars)])

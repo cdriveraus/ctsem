@@ -10,11 +10,6 @@
 #' rstan::monitor is first run on the output.
 #'
 #' @return matrix of values of the specified interactions at each iteration. 
-#' @export
-#'
-#' @examples
-#' temp<-stan_postcalc(stanfit=ctstantestfit$stanfit, 
-#'   object='DRIFT', objectindices='all', calc='exp(object)')
 stan_postcalc <-function(stanfit,object,calc='object', objectindices='all', summary=TRUE){
   mc=As.mcmc.list(stanfit)
   m=do.call(rbind,mc)
