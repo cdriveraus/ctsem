@@ -2,7 +2,7 @@ logit = function(x) log(x)-log((1-x))
 
 sgd <- function(init,fitfunc,ndatapoints=NA,plot=FALSE,
   stepbase=1e-3,gmeminit=ifelse(is.na(startnrows),.8,.8),gmemmax=.9,maxparchange = .50,
-  startnrows=NA,roughnessmemory=.95,groughnesstarget=.4,lproughnesstarget=.2,
+  startnrows=NA,roughnessmemory=.95,groughnesstarget=.4,lproughnesstarget=.3,
   gsmoothroughnesstarget=.05,
   warmuplength=20,
   minparchange=1e-800,maxiter=50000,nconvergeiter=30, itertol=1e-3, deltatol=1e-5){
@@ -32,10 +32,12 @@ sgd <- function(init,fitfunc,ndatapoints=NA,plot=FALSE,
   dghatsmoothpar = rep(1,length(pars))
   dghatweight = rep(.2,length(pars)) #ideally one step length...
   dghatdownerr = dghatmixerr = dghatuperr = rep(0,length(g))
+  
+  lprdif = lpdif = 0
 
   groughness = rep(groughnesstarget,length(g))
   gsmoothroughness = rep(gsmoothroughnesstarget,length(g))
-  lproughness=lproughnesstarget
+  lproughness=oldlproughnesstarget=lproughnesstarget
   gmemory <- gmeminit
   oldgmemory  <- gmemory
   ghatsmoothpar <- rep(.8,length(g))
@@ -73,14 +75,15 @@ sgd <- function(init,fitfunc,ndatapoints=NA,plot=FALSE,
           class(lpg) !='try-error' && 
           !is.nan(lpg[1]) && 
           all(!is.nan(attributes(lpg)$gradient)) 
-        && (i < warmuplength || (lp[i-1]- lpg[1]) < sd(tail(lp,20))*4+1e-6)
+        && (i < warmuplength || (lp[i-1]- lpg[1]) < sd(tail(lp,20))*8+1e-6)
       ){
         accepted <- TRUE
       } 
       else {
+        ghatmix=g*.5
         # gsmooth= gsmooth*gmemory2 + (1-gmemory2) * g #increase influence of last gradient at inflections
         step <- step * .5
-        pars=bestpars
+        # pars=bestpars
       }
       #warmup check
       if(is.na(startnrows) && i < warmuplength && i > 1 && lpg[1] < lp[1]-5) {
@@ -205,12 +208,21 @@ sgd <- function(init,fitfunc,ndatapoints=NA,plot=FALSE,
     
     # gmemory <- gmemory * gsmoothroughnessmod
     if(i > 30 && i %% 20 == 0) {
+      oldlpdif <- lpdif# sum(diff(head(tail(lp,10),20)))
       lpdif <- sum(diff(tail(lp,10)))
-      oldlpdif <- sum(diff(head(tail(lp,10),20)))
-      if(oldlpdif >= lpdif) gmemory <- oldgmemory
+      if(oldlpdif > lpdif) gmemory <- oldgmemory
       proposal = gmemory*2-oldgmemory
-      gmemory <- min(gmemmax, max(0, proposal + runif(1,-.05,.1)))
       oldgmemory <- gmemory
+      gmemory <- min(gmemmax, max(0, proposal + runif(1,-.05,.1)))
+    }
+    
+    if(i > 30 && i %% 30 == 0) {
+      oldlprdif <- lprdif
+      lprdif <- sum(diff(tail(lp,30)))
+      if(oldlprdif > lprdif) lproughnesstarget <- oldlproughnesstarget
+      lprproposal = lproughnesstarget*2-oldlproughnesstarget
+      oldlproughnesstarget <- lproughnesstarget
+      lproughnesstarget <- min(.5, max(.05, lprproposal + runif(1,-.05,.05)))
     }
     
     step[step > maxparchange] <- maxparchange
