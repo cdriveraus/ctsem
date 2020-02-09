@@ -188,7 +188,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     colnames(dat)[1]='id'
     
       dtm <- ctModel(LAMBDA=diag(1), type='stanct',
-      DRIFT=matrix('dr11| -2*log1p(exp(2*param))'),
+      DRIFT=matrix('dr11| -2*log1p(exp(-2*param))'),
       CINT=matrix('cint'),
       MANIFESTMEANS = matrix(0)
     )
@@ -201,7 +201,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       verbose=0,optimcontrol=list(estonly=T),savescores = F,nopriors=T)
     
        dtm2 <- ctModel(LAMBDA=matrix(c(1,0),1,2), type='stanct',
-      DIFFUSION=matrix(c('diff',0,0,0),2,2),DRIFT=matrix(c('-2*log1p(exp(2*state[2]))',0,0,-.00001),2,2),
+      DIFFUSION=matrix(c('diff',0,0,0),2,2),DRIFT=matrix(c('state[2]|-2*log1p(exp(-2*param))',0,0,-.00001),2,2),
       CINT=matrix(c('cint',0),2,1),T0MEANS=matrix(c('t0m1','t0m2|param'),2,1),
       T0VAR=matrix(c('t0v11',0,0,paste0('t0var22 | ',gsub(".* sdscale","",gsub('rawpopsdbase','param',dtm$rawpopsdtransform),fixed=TRUE))),2,2),
       MANIFESTMEANS = matrix(0))

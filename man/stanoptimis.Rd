@@ -17,6 +17,7 @@ stanoptimis(
   stochastic = "auto",
   nopriors = FALSE,
   carefulfit = TRUE,
+  subsamplesize = 0.5,
   plot = FALSE,
   is = FALSE,
   isloopsize = 1000,
@@ -57,6 +58,8 @@ Still experimental, worth trying for either robustness checks or problematic, hi
 the stan model uses this value.}
 
 \item{carefulfit}{Logical. If TRUE, priors are always used for a rough first pass to obtain starting values when nopriors=TRUE.}
+
+\item{subsamplesize}{value between 0 and 1 representing proportion of subjects to include in first pass fit.}
 
 \item{plot}{Logical. If TRUE, plot iteration details. Probably slower.}
 

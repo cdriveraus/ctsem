@@ -501,7 +501,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   nlcontrol = list(), nopriors=FALSE, chains=2,
   cores=ifelse(optimize,getOption("mc.cores", 2L),'maxneeded'),
   inits=NULL,
-  forcerecompile=FALSE,savescores=FALSE,savesubjectmatrices=TRUE,gendata=FALSE,
+  forcerecompile=FALSE,savescores=FALSE,savesubjectmatrices=TRUE,
+  gendata=FALSE,
   control=list(),verbose=0,...){
   if(.Machine$sizeof.pointer == 4) message('Bayesian functions not available on 32 bit systems') else{
     if(!'ctStanModel' %in% class(ctstanmodel)) stop('not a ctStanModel object')
@@ -737,7 +738,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     matsetup <- ctsmodelmats$matsetup
     matvalues <- ctsmodelmats$matvalues
     extratforms <- ctsmodelmats$extratforms
-    # if(length(extratforms) > 0) browser()
     TIPREDEFFECTsetup=ctsmodelmats$TIPREDEFFECTsetup
     matrixdims <- ctsmodelmats$matrixdims
     ctm$calcs <- ctsmodelmats$calcs
@@ -779,7 +779,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     if(nldynamics == 'auto') nldynamics <- FALSE
     if(nldynamics) message('Using nonlinear Kalman filter for dynamics')
     if(!nldynamics) message('Using linear Kalman filter for dynamics')
-    
     
     if(intoverstates==FALSE || all(derrind=='all') ) derrind = 1:n.latent
     # if(all(derrind=='all')) derrind = sort(unique(ctm$pars$col[
@@ -857,7 +856,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
             #   apply(meandat[,-which(colnames(meandat) %in% ctm$TIpredNames[i]),with=FALSE],
             #     2,sd,na.rm=TRUE) - 
             #   lmf$coefficients[-1]
-            # browser()
+            # 
             plot(c(meandat[,ctm$TIpredNames[i],with=FALSE])[[1]],predict(lmf),main=ctm$TIpredNames[i])
             tipreds[is.na(tipreds[,1]),1] <- predict(lmf)[is.na(tipreds[,1])]
           }
@@ -917,7 +916,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     standata$tipredeffectscale <- ctm$tipredeffectscale
     
     
-    #drift off diagonal check
+    #drift, jacobian off diagonal check
     mx=listOfMatrices(ctm$pars)
     driftcint <- rbind(cbind(mx$DRIFT[1:n.latent,1:n.latent,drop=FALSE],mx$CINT),0)
     z=c()
@@ -925,6 +924,19 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       if(all(driftcint[ri,-ri] %in% 0) && all(driftcint[-ri,ri] %in% 0)) z[ri]=0L else z[ri]=1L
     }
     standata$drcintoffdiag <- array(as.integer(c(z,1)),dim=nrow(driftcint))
+
+    jac <- mx$JAx
+        z=c()
+    for(ri in 1:nrow(jac)){
+      if(all(jac[ri,-ri] %in% 0) && all(jac[-ri,ri] %in% 0)) z[ri]=0L else z[ri]=1L
+    }
+    standata$jacoffdiag <- array(as.integer(c(z,1)),dim=nrow(jac))
+    standata$jacoffdiagindex <- array(as.integer(sort(unique(c(1:n.latent,which(standata$jacoffdiag ==1))))))
+    standata$njacoffdiagindex <- as.integer(length(standata$jacoffdiagindex))
+    # browser()
+    standata$sJycolindex <- array(unique(as.integer(apply(mx$Jy,1, function(x) which(!x%in%0)))))
+    standata$sJycolindex<-array(standata$sJycolindex[!is.na(standata$sJycolindex)])
+    standata$sJycolindexsize <- as.integer(length(standata$sJycolindex))
     
     # #jacobians
     # standata$sJAxdrift <- array(jacobianelements(ctm$jacobian$JAx,mats=mx,
