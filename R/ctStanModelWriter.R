@@ -1315,7 +1315,7 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
     for(ri in 1:size(matsetup)){ //for each row of matrix setup
         for(statecalcs in 0:1){
         if(subi ==0 ||  //if population parameter
-          (matsetup[ri,7]==4 && DIFFUSIONsubindex) ||( matsetup[ri,7] == 8 && T0VARsubindex) || //or a covariance parameter in an individually varying matrix
+          ( matsetup[ri,7] == 8 && T0VARsubindex) || //or a covariance parameter in an individually varying matrix
           (matsetup[ri,3] > 0 && (matsetup[ri,5] > 0 || matsetup[ri,6] > 0)) //or there is individual variation
           ){ //otherwise repeated values
             if( (statecalcs && matsetup[ri,8]>0) || (!statecalcs && matsetup[ri,8]==0) ){ //if doing statecalcs do them, if doing static calcs do them
@@ -1406,7 +1406,7 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
 }
 
 collectsubmats <- function(popmats=FALSE,matrices=c(names(mats$base),'DIFFUSIONcov','asymDIFFUSION','asymCINT')){
-  out<-ifelse(popmats,'', "if(savesubjectmatrices){ \n")
+  out<-ifelse(popmats,'', "if(subi == 0 || savesubjectmatrices){ \n")
   for(m in matrices){
     if(!popmats) out <-paste0(out, 'if( (', m,'subindex > 0 && subi > 0) || (',m,'subindex == 0 && subi==0) ) ',m,'[',m,'subindex ? subi : 1] = s',m,'; \n')
     if(popmats) out <- paste0(out, 'pop_',m,' = s',m,'; ')

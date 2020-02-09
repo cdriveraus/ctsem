@@ -226,7 +226,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2){
   
   
   if(nasampscount > 0) {
-    browser()
+    # browser()
     message(paste0(nasampscount,' NAs generated during final sampling of ', nrow(samples), '. Biased estimates may result -- consider importance sampling, respecification, or full HMC sampling'))
   }
   if(nasampscount < nrow(samples)){
