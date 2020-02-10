@@ -980,7 +980,7 @@ if(savescores){
       }
         
       if(intoverstates==0) { //sampled states
-        if(ncont_y[rowi] > 0) ypriorcov_sqrt[o0,o0] = sMANIFESTVAR[o0,o0];
+        if(ncont_y[rowi] > 0) ypriorcov_sqrt[o0,o0] = sMANIFESTVAR[o0,o0]+1e-8;
         if(nbinary_y[rowi] > 0) syprior[o1] = to_vector(inv_logit(to_array_1d(syprior[o1])));
       }
         
@@ -1058,7 +1058,7 @@ if(savescores){
         etasmoothcov[sri]=etaupdcov[sri];
       } else{
         matrix[nlatentpop,nlatentpop] smoother;
-        smoother = makesym(etaupdcov[sri],verbose,1) * Je[sri+1]' / makesym(etapriorcov[sri+1],verbose,1);
+        smoother = etaupdcov[sri] * Je[sri+1]' / makesym(etapriorcov[sri+1],verbose,1);
         etasmooth[sri]= etaupd[sri] + smoother * (etasmooth[sri+1] - etaprior[sri+1]);
         etasmoothcov[sri]= etaupdcov[sri] + smoother * ( etasmoothcov[sri+1] - etapriorcov[sri+1]) * smoother';
 

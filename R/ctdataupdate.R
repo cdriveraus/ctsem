@@ -164,10 +164,10 @@ ctdataupdate<-function(forcerecompile=FALSE){
   
   ctstantestfit<-ctStanFit(ctstantestdat,checkm,
     optimize = TRUE,optimcontrol=list(finishsamples=20),
-    iter=300, warmup=260,thin=2,chains=2,
-    plot=TRUE,
+    iter=300, warmup=260,thin=2,chains=2,verbose=0,
+    # plot=TRUE,
     # forcerecompile=forcerecompile,
-    save_warmup=T,savescores=FALSE,
+    save_warmup=TRUE,savescores=FALSE,
     control=list(max_treedepth=8,adapt_delta=.8))
   ctstantestfit <- ctStanGenerateFromFit(ctstantestfit,nsamples = 20,fullposterior = TRUE)
   print( summary(ctstantestfit))

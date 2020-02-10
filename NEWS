@@ -1,5 +1,12 @@
 ctsem news:
 
+10/1/2020
+#### 3.1.1 ####
+- Reverted to non sequential measurement update introduced in 3.1.0
+- Further hessian estimation fixes
+- Stochastic optimizer further improved
+
+
 21/01/2020
 #### 3.1.0 ####
 - Fixed Hessian estimation sensitivity introduced last release.

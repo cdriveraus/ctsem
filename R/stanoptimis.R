@@ -163,7 +163,7 @@ standataFillTime <- function(standata, times){
 
 
 
-stan_constrainsamples<-function(sm,standata, samples,cores=2){
+stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA){
   # smf <- stan_reinitsf(model = sm,data = standata)
   message('Computing quantities for ', nrow(samples),' samples...')
   # est1=NA
@@ -207,17 +207,16 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2){
   env$standata <- standata
   env$sm <- sm
   env$samples <- samples
-  
-  if(cores > 1){
-    cl2 <- parallel::makeCluster(cores, type = "PSOCK",useXDR=TRUE)
-    on.exit(parallel::stopCluster(cl2),add = TRUE)
+  if(cores > 1 && is.na(cl)){
+    cl <- parallel::makeCluster(cores, type = "PSOCK",useXDR=TRUE)
+    on.exit(parallel::stopCluster(cl),add = TRUE)
     # parallel::clusterExport(cl2, c('sm','standata','samples'),environment())
     # parallel::clusterApply(cl2,1:cores, function(x) library(ctsem))
-  } else cl2 <- NA
+  }
   # 
-  transformedpars <- try(flexlapply(cl2, 
+  transformedpars <- try(flexlapply(cl, 
     split(1:nrow(samples), sort((1:nrow(samples))%%cores)),tparfunc,cores=cores,parallel=cores > 1))
-  
+
   #fix this hack
   if(!is.null(transformedpars[[1]][[1]]$popmeans)) transformedpars=unlist(transformedpars,recursive = FALSE)
   est1=transformedpars[[1]]
@@ -227,6 +226,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2){
   
   if(nasampscount > 0) {
     # browser()
+    # lapply(transformedpars$`0`,function(x) any(is.na(x)))
     message(paste0(nasampscount,' NAs generated during final sampling of ', nrow(samples), '. Biased estimates may result -- consider importance sampling, respecification, or full HMC sampling'))
   }
   if(nasampscount < nrow(samples)){
@@ -1038,7 +1038,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   if(!estonly){
     if(!is) lpsamples <- NA else lpsamples <- unlist(target_dens)[resample_i]
     
-    transformedpars=stan_constrainsamples(sm = sm,standata = standata,samples=resamples,cores=cores)
+    transformedpars=stan_constrainsamples(sm = sm,standata = standata,samples=resamples,cores=cores, cl=clctsem)
     
     
     # quantile(sapply(transformedpars, function(x) x$rawpopcorr[3,2]),probs=c(.025,.5,.975))
