@@ -386,37 +386,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     
     if(is.na(sampleinit[1])){
       
-      if(deoptim){ #init with DE
-        message('Using differential evolution for initialization')
-        if(requireNamespace('DEoptim',quietly = TRUE)) {
-          if(decontrol$NP=='auto') NP=min(c(40,10*npars)) else NP = decontrol$NP
-          
-          decontrollist <- c(decontrol,DEoptim::DEoptim.control())
-          decontrollist <- decontrollist[unique(names(decontrollist))]
-          
-          lp2 = function(parm) {
-            out<-try(log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=FALSE),silent = TRUE)
-            if('try-error' %in% class(out)) {
-              out=-1e200
-            }
-            return(-out)
-          }
-          
-          deinit <- matrix(rnorm(npars*NP,0,2),nrow = NP)
-          deinit[2,] <- rnorm(npars,0,.0002)
-          if(length(init)>1 & try2) {
-            deinit[1,] <- unconstrain_pars(smf,init)
-            if(NP > 10) deinit[3:9,] =  matrix( rnorm(npars*(7),rep(deinit[1,],each=7),.1), nrow = 7)
-          }
-          decontrollist$initialpop=deinit
-          decontrollist$NP = NP
-          optimfitde <- suppressWarnings(DEoptim::DEoptim(fn = lp2,lower = rep(-1e10, npars), upper=rep(1e10, npars),
-            control = decontrollist))
-          # init=constrain_pars(object = smf,optimfitde$optim$bestmem)
-          init=optimfitde$optim$bestmem
-          bestfit = -optimfitde$optim$bestval
-        } else stop(paste0('use install.packages(\"DEoptim\") to use deoptim')) #end require deoptim
-      }
       
       
       storedPars <- c()#matrix(0,nrow=npars,ncol=0)
@@ -514,6 +483,41 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         }
         
       } #end multicore setup
+      
+      
+      
+      if(deoptim){ #init with DE
+        message('Using differential evolution for initialization')
+        if(requireNamespace('DEoptim',quietly = TRUE)) {
+          if(decontrol$NP=='auto') NP=min(c(40,10*npars)) else NP = decontrol$NP
+          
+          decontrollist <- c(decontrol,DEoptim::DEoptim.control())
+          decontrollist <- decontrollist[unique(names(decontrollist))]
+          
+          lp2 = function(parm) {
+            out<- -target(parm)
+            attributes(out)$gradient <- -attributes(out)$gradient
+            return(out)
+          }
+          
+          deinit <- matrix(rnorm(npars*NP,0,2),nrow = NP)
+          deinit[2,] <- rnorm(npars,0,.0002)
+          if(length(init)>1 & try2) { #if better fit found during IS
+            deinit[1,] <- unconstrain_pars(smf,init)
+            if(NP > 10) deinit[3:9,] =  matrix( rnorm(npars*(7),rep(deinit[1,],each=7),.1), nrow = 7)
+          }
+          decontrollist$initialpop=deinit
+          decontrollist$NP = NP
+          optimfitde <- suppressWarnings(DEoptim::DEoptim(fn = lp2,lower = rep(-1e10, npars), upper=rep(1e10, npars),
+            control = decontrollist))
+          # init=constrain_pars(object = smf,optimfitde$optim$bestmem)
+          init=optimfitde$optim$bestmem
+          bestfit = -optimfitde$optim$bestval
+        } else stop(paste0('use install.packages(\"DEoptim\") to use deoptim')) #end require deoptim
+      }
+      
+      
+      
       
       mizelpg=list( #single core mize functions
         fg=function(pars){
@@ -661,7 +665,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               lpdifcount <- lpdifcount + 1
               uppars<-pars
               uppars[i]<-pars[i]+stepsize / ifelse(gradmod,(abs(basegrad[i])),1)
-              uplp= target(uppars,gradnoise=FALSE) #try(smf$log_prob(upars=uppars,adjust_transform=TRUE,gradient=TRUE)) #lpg(uppars)
+              uplp= suppressMessages(target(uppars,gradnoise=FALSE)) #try(smf$log_prob(upars=uppars,adjust_transform=TRUE,gradient=TRUE)) #lpg(uppars)
               # storedPars <<- cbind(storedPars,matrix(uppars))
               # storedLp <<- c(storedLp,uplp[1])
               

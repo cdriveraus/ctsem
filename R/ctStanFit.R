@@ -568,8 +568,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       message('Individual variation not possible as only 1 subject! indvarying set to FALSE on all parameters')
     }
     
-    
-    if(length(unique(datalong[,idName]))==1 & any(!is.na(ctm$pars$value[ctm$pars$matrix %in% 'T0VAR'])) & 
+    # browser()
+    if(length(unique(datalong[,idName]))==1 & any(is.na(ctm$pars$value[ctm$pars$matrix %in% 'T0VAR'])) & 
         is.null(ctm$fixedrawpopmeans) & is.null(ctm$fixedsubpars) & is.null(ctm$forcemultisubject)) {
       for(ri in 1:nrow(ctm$pars)){
         if(is.na(ctm$pars$value[ri]) && ctm$pars$matrix[ri] %in% 'T0VAR'){
