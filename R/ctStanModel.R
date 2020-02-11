@@ -154,18 +154,7 @@ ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
   
   
   nparams<-sum(freeparams)
-  
-  # indvarying <- 'all'
-  # if(all(indvarying=='all'))  {
-  #   indvarying<-rep(TRUE,nparams)
-  #   # indvarying[ctspec$matrix[is.na(ctspec$value)] %in% 'T0VAR'] <- FALSE
-  # }
-  # 
-  # if(length(indvarying) != nparams) stop('indvarying must be ', nparams,' long!')
-  # nindvarying <- sum(indvarying)
-  # 
-  
-  
+
   ctspec$indvarying<-FALSE
   ctspec$indvarying[!is.na(ctspec$transform) & ctspec$matrix %in% c('T0MEANS','MANIFESTMEANS','CINT')] <- TRUE
   
@@ -249,6 +238,7 @@ ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
     if(grepl('\\W',gsub('.','',ctspec$param[ri],fixed=TRUE)) || ctspec$param[ri] %in% latentNames){
       ctspec$value[ri] <- NA
       if(!simpleStateCheck(ctspec$param[ri])) ctspec$transform[ri] <-NA #allow transforms for simplestates
+      if(simpleStateCheck(ctspec$param[ri])) ctspec$transform[ri] <-'param' #allow transforms for simplestates
     }
   }
   

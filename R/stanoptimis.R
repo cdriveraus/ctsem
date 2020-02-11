@@ -207,7 +207,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA){
   env$standata <- standata
   env$sm <- sm
   env$samples <- samples
-  if(cores > 1 && is.na(cl)){
+  if(cores > 1 && all(is.na(cl))){
     cl <- parallel::makeCluster(cores, type = "PSOCK",useXDR=TRUE)
     on.exit(parallel::stopCluster(cl),add = TRUE)
     # parallel::clusterExport(cl2, c('sm','standata','samples'),environment())
