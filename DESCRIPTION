@@ -34,7 +34,7 @@ Imports:
     rstantools (>= 1.5.0),
     plyr,
     tools,
-    data.table (>=1.12.8),
+    data.table (>= 1.12.8),
     Matrix,
     datasets,
     stats,

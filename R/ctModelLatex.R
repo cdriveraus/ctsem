@@ -96,7 +96,7 @@ ctModelLatex<- function(x,matrixnames=TRUE,textsize='normalsize',folder=tempdir(
   
   
   W <- diag(1,ctmodel$n.latent)
-  if(continuoustime) diag(W) <- 'u-t'
+  if(continuoustime) diag(W) <- 't-u'
 
 #out = 'Hello' 
 
@@ -110,7 +110,7 @@ out <- ifelse(equationonly,"","
 
 
 \\begin{document}
-\\thispagestyle{empty}")
+\\pagenumbering{gobble}")
 
 if (minimal){
   dict = list('A' = 'DRIFT','b'='CINT','M'='TDPREDEFFECT','G'='DIFFUSION','tau'='MANIFESTMEANS')
@@ -205,8 +205,9 @@ if (minimal){
   out= paste0(out,tablestring,'\n',equationstring)
 } else {
 out <- paste0(out, "
-\\setcounter{MaxMatrixCols}{200}
+\\begin{samepage}
  \\begin{",textsize,"}
+ \\setcounter{MaxMatrixCols}{200}
   \\begin{align*}
   &\\underbrace{",ifelse(continuoustime,"\\mathrm{d}",""),"
     ",bmatrix(matrix(paste0(ctmodel$latentNames)))," 
@@ -234,8 +235,7 @@ out <- paste0(out, "
       (t)}_{",ifelse(continuoustime,"\\mathrm{d}","")," \\vect{W}(t)} \\\\ \\\\
           &",if(continuoustime) paste0("\\underbrace{
             ",bmatrix(matrix(paste0('W_{',1:ctmodel$n.latent,'}')),nottext=TRUE),"  
-            (t+u)}_{\\vect{W}(t+u)} - "),"  \\underbrace{",bmatrix(matrix(paste0('W_{',1:ctmodel$n.latent,'}')),nottext=TRUE),"  
-            (t)}_{\\vect{W}(t)} \\sim  \\mathrm{N} \\left(
+            (t-u)}_{\\vect{W}(t-u)}"),"   \\sim  \\mathrm{N} \\left(
               ",bmatrix(matrix(0,ctmodel$n.latent,1)),", ",bmatrix(W)," \\right) \\\\ \\\\
 &\\underbrace{
       ",bmatrix(matrix(ctmodel$manifestNames),nottext=FALSE),"  
@@ -264,6 +264,7 @@ out <- paste0(out, "
 &\\textrm{See Driver \\& Voelkle (2018) p11.}
       \\end{align*}
       \\end{",textsize,"}
+      \\end{samepage}
       ")
 }
   
