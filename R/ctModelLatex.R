@@ -1,3 +1,30 @@
+ctModelBuildPopCov <- function(ctm){ #for latex
+  ctm <- T0VARredundancies(ctm)
+  pars <- ctm$pars$param[ctm$pars$indvarying]
+  d=length(pars)
+  m <- matrix(paste0('PCov_',rep(1:d,d),'_',rep(1:d,each=d)),d,d,dimnames = list(pars,pars))
+  m[upper.tri(m)]=t(m[lower.tri(m)])
+  return(m)
+}
+
+ctModelBuildTIeffects <- function(ctm){ #for latex
+  tieffects <- colnames(ctm$pars)[grep('_effect',colnames(ctm$pars),fixed=TRUE)]
+  pars <- ctm$pars$param[apply(ctm$pars[,tieffects,drop=FALSE],1,any)]
+  timat <- matrix(0,length(pars),length(tieffects),dimnames = list(pars,gsub('_effect','',tieffects)))
+  if(length(tieffects)){
+    for(p in 1:length(pars)){
+      timat[p,] <- unlist(ctm$pars[match(x = pars[p],ctm$pars$param),tieffects,drop=FALSE])
+    }
+  }
+  for(i in 1:nrow(timat)){
+    for(j in 1:ncol(timat)){
+      if(timat[i,j] !=0) timat[i,j] = paste0('tip_',pars[i],'_',gsub('_effect','',tieffects[j],fixed=TRUE))
+    }}
+  return(timat)
+}
+
+
+
 #' Generate and optionally compile latex equation of subject level ctsem model.
 #'
 #' @param x ctsem model object or ctStanFit object.
@@ -37,7 +64,7 @@ ctModelLatex<- function(x,matrixnames=TRUE,textsize='normalsize',folder=tempdir(
   minimal=FALSE){
   #library(ctsem)
   
-  
+  dopopcov <- FALSE
   
   if('ctStanFit' %in% class(x)){
     parmats <- summary(x,residualcov=FALSE,priorcheck=FALSE)
@@ -54,6 +81,27 @@ ctModelLatex<- function(x,matrixnames=TRUE,textsize='normalsize',folder=tempdir(
   } else ctmodel <- x
   
   if('ctStanModel' %in% class(ctmodel)) {
+    popCov <- ctModelBuildPopCov(ctmodel)
+    timat <- ctModelBuildTIeffects(ctmodel)
+    ctmodel<-T0VARredundancies(ctmodel)
+    
+    dopopcov <- as.logical(nrow(popCov))
+    doti <- as.logical(nrow(timat))
+    
+    if(doti){
+      # 
+      # both <- rownames(timat) %in% rownames(popCov)
+      pars <- unique(c(rownames(popCov),rownames(timat)))
+      newpopcov <- matrix(0,length(pars),length(pars),dimnames=list(pars,pars))
+      newtimat <- matrix(0,length(pars),ncol(timat),dimnames=list(pars,colnames(timat)))
+      newtimat[na.omit(match(rownames(newtimat),rownames(timat))),] <- timat
+      newpopcov[na.omit(match(rownames(newpopcov),rownames(popCov))), 
+        na.omit(match(rownames(newpopcov),rownames(popCov)))] <- popCov
+      popCov <- newpopcov
+      timat <- newtimat
+    }
+    
+    dopop <- doti||dopopcov
     ctmodel <- c(ctmodel,listOfMatrices(ctmodel$pars)) 
     continuoustime <- ctmodel$continuoustime
   } else {
@@ -95,19 +143,21 @@ ctModelLatex<- function(x,matrixnames=TRUE,textsize='normalsize',folder=tempdir(
   }
   
   
-  W <- diag(1,ctmodel$n.latent)
+  W <- diag(1,1)
   if(continuoustime) diag(W) <- 't-u'
 
 #out = 'Hello' 
 
   
 out <- ifelse(equationonly,"","
-\\documentclass[a4paper,landscape]{report}
-\\usepackage[margin=1cm]{geometry}
-\\usepackage{amsmath} %for multiple line equations
+\\documentclass[a4paper]{article}
+\\usepackage{geometry}
+\\geometry{paperwidth=\\maxdimen,paperheight=\\maxdimen,margin=1cm}
+
+\\usepackage[fleqn]{amsmath} %for multiple line equations
+\\usepackage[active,tightpage,displaymath]{preview}
 \\usepackage{bm}
 \\newcommand{\\vect}[1]{\\boldsymbol{\\mathbf{#1}}}
-
 
 \\begin{document}
 \\pagenumbering{gobble}")
@@ -204,14 +254,39 @@ if (minimal){
   
   out= paste0(out,tablestring,'\n',equationstring)
 } else {
+  showd <- ifelse(continuoustime,"\\mathrm{d}","") #for continuous or discrete system
 out <- paste0(out, "
-\\begin{samepage}
  \\begin{",textsize,"}
  \\setcounter{MaxMatrixCols}{200}
   \\begin{align*}
-  &\\underbrace{",ifelse(continuoustime,"\\mathrm{d}",""),"
+  ",if(dopop) paste0("\\textrm{Subject specific parameters: }
+             &\\underbrace{",bmatrix(matrix(paste0('\\text{',
+             gsub('_','\\_',colnames(popCov),fixed=TRUE),'}_i')),nottext=T)," 
+            }_{\\vect{\\phi}(i)} \\sim  \\mathrm{N} \\left(
+              ",bmatrix(paste0(colnames(popCov))),"
+              ,
+                ",bmatrix(popCov)," \\right) ",ifelse(doti," + ",""),"\\\\  "),
+      if(doti) paste0("\\textrm{Time independent effects: } 
+  &\\qquad \\qquad \\quad \\underbrace{
+    ",bmatrix(timat),"
+    ",ifelse(!matrixnames,"}_{{", "}_{"),"\\vect{\\beta}}","
+  \\underbrace{
+    ",bmatrix(matrix(colnames(timat))),"
+    ",ifelse(!matrixnames,"}_{{", "}_{"),"\\vect{z}}\\\\"),
+  "\\textrm{Initial latent states: }
+  &\\underbrace{",bmatrix(matrix(paste0(ctmodel$latentNames)))," 
+    \\big{(}t_0\\big{)}}_{\\vect{\\eta} (t_0)}	\\sim \\mathrm{N} \\left(
+              \\underbrace{
+        ",bmatrix(ctmodel$T0MEANS),"
+      ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{}}",ifelse(!matrixnames,"}","_\\textrm{T0MEANS}}"),",
+      \\underbrace{covsdcor\\bigg(
+        ",bmatrix(ctmodel$T0VAR),"
+      ",ifelse(!matrixnames,"\\bigg)}_{{", "\\bigg)}_{\\underbrace{"),"\\vect{Q^{*}}_{t0}}",ifelse(!matrixnames,"}","_\\textrm{T0VAR}}"),"
+      \\right) \\\\
+      \\textrm{Deterministic change:}
+  &\\underbrace{",showd,"
     ",bmatrix(matrix(paste0(ctmodel$latentNames)))," 
-    \\big{(}t\\big{)}}_{",ifelse(continuoustime,"\\mathrm{d}","")," \\vect{\\eta} (t)}	=  \\left(
+    \\big{(}t\\big{)}}_{",showd," \\vect{\\eta} (t)}	=  \\left(
       \\underbrace{
         ",bmatrix(ctmodel$DRIFT),"
       ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{A}}",ifelse(!matrixnames,"}","_\\textrm{DRIFT}}")," \\underbrace{
@@ -227,16 +302,14 @@ out <- paste0(out, "
         ",bmatrix(matrix(paste0('\\chi_{',1:ncol(ctmodel$TDPREDEFFECT),'}')))," 
       }_{\\vect{\\chi} (t)}"),
     "\\right) ",ifelse(continuoustime,"\\mathrm{d}t","")," \\quad + \\nonumber \\\\ \\\\
+    \\textrm{Random change: }
     & \\qquad \\qquad \\quad cholsdcor\\bigg(\\underbrace{
       ",bmatrix(ctmodel$DIFFUSION),"
     ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{G}}",ifelse(!matrixnames,"}","_\\textrm{DIFFUSION}}\\bigg)"),"
-    \\underbrace{",ifelse(continuoustime,"\\mathrm{d}",""),"
+    \\underbrace{",showd,"
       ",bmatrix(matrix(paste0('W_{',1:ctmodel$n.latent,'}')),nottext=TRUE)," 
-      (t)}_{",ifelse(continuoustime,"\\mathrm{d}","")," \\vect{W}(t)} \\\\ \\\\
-          &",if(continuoustime) paste0("\\underbrace{
-            ",bmatrix(matrix(paste0('W_{',1:ctmodel$n.latent,'}')),nottext=TRUE),"  
-            (t-u)}_{\\vect{W}(t-u)}"),"   \\sim  \\mathrm{N} \\left(
-              ",bmatrix(matrix(0,ctmodel$n.latent,1)),", ",bmatrix(W)," \\right) \\\\ \\\\
+      (t)}_{",showd," \\vect{W}(t)} \\\\ \\\\
+              \\textrm{Observations: }
 &\\underbrace{
       ",bmatrix(matrix(ctmodel$manifestNames),nottext=FALSE),"  
       (t)}_{\\vect{Y}(t)} = 
@@ -254,17 +327,18 @@ out <- paste0(out, "
               \\underbrace{
           ",bmatrix(matrix(paste0('\\epsilon_{',1:ctmodel$n.manifest,'}')))," 
           (t)}_{\\vect{\\epsilon}(t)} \\\\ \\\\
-          &\\underbrace{
-            ",bmatrix(matrix(paste0('\\epsilon_{',1:ctmodel$n.manifest,'}')))," 
-            (t)}_{\\vect{\\epsilon}(t)} \\sim  \\mathrm{N} \\left(
-              ",bmatrix(matrix(0,ctmodel$n.manifest,1)),"
-              ,
-                ",bmatrix(diag(1,ctmodel$n.manifest))," \\right) \\\\
-&\\textrm{cholsdcor = Function converting lower tri matrix of std dev and unconstrained correlation to Cholesky factor.} \\\\ \\\\ 
+                \\textrm{Latent noise per time step : }
+          &",ifelse(continuoustime,'\\Delta ',''),"\\big[W_{j \\in [1,",ctmodel$n.latent,"]}\\big](t",
+          ifelse(continuoustime,'-u',''),")   \\sim  \\mathrm{N}(0,",W,") \\quad
+              \\textrm{Observation noise: }
+            ",bmatrix(matrix(paste0('\\epsilon_{j \\in [1,',ctmodel$n.latent,']}')))," 
+            (t) \\sim  \\mathrm{N}(0,1) \\\\ \\\\
+            &\\textrm{Indivividual specific notation (subscript i) not shown for system dynamics and observation model.} \\\\
+&cholsdcor\\textrm{ converts lower tri matrix of std dev and unconstrained correlation to Cholesky factor covariance.} \\\\
+&covsdcor =\\textrm{ transposed cross product of cholsdcor, to give covariance.} \\\\
 &\\textrm{See Driver \\& Voelkle (2018) p11.}
       \\end{align*}
       \\end{",textsize,"}
-      \\end{samepage}
       ")
 }
   
@@ -277,6 +351,10 @@ out <- paste0(out, "
     on.exit(setwd(oldwd))
     write(x = out,file = paste0(filename,'.tex'))
     if(compile){
+      if(requireNamespace('tinytex',quietly=TRUE)){
+        tinytex::pdflatex(file=paste0(filename,'.tex'), clean=TRUE)
+        
+      } else{
       hastex <- !Sys.which('pdflatex') %in% ''
       a=try(tools::texi2pdf(file=paste0(filename,'.tex'),quiet=FALSE, clean=TRUE))
       if('try-error' %in% class(a) && !hastex) {
@@ -288,6 +366,8 @@ out <- paste0(out, "
         #   if(requireNamespace('tinytex',quietly=TRUE)) tinytex::install_tinytex()
         # }
       }
+      } #end else
+      
       if(interactive() && open) try(openPDF(paste0(filename,'.pdf')))
     }
     
