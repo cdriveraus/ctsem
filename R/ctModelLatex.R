@@ -8,6 +8,7 @@ ctModelBuildPopCov <- function(ctm){ #for latex
 }
 
 ctModelBuildTIeffects <- function(ctm){ #for latex
+  ctm$pars <- ctStanModelCleanctspec(ctm$pars)
   tieffects <- colnames(ctm$pars)[grep('_effect',colnames(ctm$pars),fixed=TRUE)]
   pars <- ctm$pars$param[apply(ctm$pars[,tieffects,drop=FALSE],1,any)]
   timat <- matrix(0,length(pars),length(tieffects),dimnames = list(pars,gsub('_effect','',tieffects)))
@@ -21,6 +22,11 @@ ctModelBuildTIeffects <- function(ctm){ #for latex
       if(timat[i,j] !=0) timat[i,j] = paste0('tip_',pars[i],'_',gsub('_effect','',tieffects[j],fixed=TRUE))
     }}
   return(timat)
+}
+
+ctMatsetupFreePars <- function(m){
+  m=m[m$when==0 & m$param > 0,]
+  m=m[match(unique(m$param),m$param),]
 }
 
 
@@ -67,6 +73,20 @@ ctModelLatex<- function(x,matrixnames=TRUE,textsize='normalsize',folder=tempdir(
   dopopcov <- FALSE
   
   if('ctStanFit' %in% class(x)){
+    ms=ctMatsetupFreePars(x$setup$matsetup)
+    e=ctExtract(x)
+    
+    if(x$standata$ntipred > 0){
+    timat <- ctCollapse(e$TIPREDEFFECT,1,mean)
+    rownames(timat) <- ms$parname
+    colnames(timat) <- x$ctstanmodel$TIpredNames
+    timat <- timat[apply(timat,1,function(x) any(x!=0)),,drop=FALSE]
+    } else timat <- diag(0,0)
+    
+    if(!is.null(e$rawpopcov)){
+      browser()
+    } else popCov <- diag(0,0)
+    
     parmats <- summary(x,residualcov=FALSE,priorcheck=FALSE)
     parmats <- data.frame(parmats$parmatrices,matrix=rownames(parmats$parmatrices))
     ctmodel <- x$ctstanmodelbase
@@ -81,9 +101,12 @@ ctModelLatex<- function(x,matrixnames=TRUE,textsize='normalsize',folder=tempdir(
   } else ctmodel <- x
   
   if('ctStanModel' %in% class(ctmodel)) {
+    
+    if(!'ctStanFit' %in% class(x)){ #construct pop effects
     popCov <- ctModelBuildPopCov(ctmodel)
-    timat <- ctModelBuildTIeffects(ctmodel)
+    if(ctmodel$n.TIpred > 0) timat <- ctModelBuildTIeffects(ctmodel) else timat <- diag(0,0)
     ctmodel<-T0VARredundancies(ctmodel)
+    }
     
     dopopcov <- as.logical(nrow(popCov))
     doti <- as.logical(nrow(timat))
@@ -91,10 +114,11 @@ ctModelLatex<- function(x,matrixnames=TRUE,textsize='normalsize',folder=tempdir(
     if(doti){
       # 
       # both <- rownames(timat) %in% rownames(popCov)
+      # browser()
       pars <- unique(c(rownames(popCov),rownames(timat)))
       newpopcov <- matrix(0,length(pars),length(pars),dimnames=list(pars,pars))
       newtimat <- matrix(0,length(pars),ncol(timat),dimnames=list(pars,colnames(timat)))
-      newtimat[na.omit(match(rownames(newtimat),rownames(timat))),] <- timat
+      newtimat[na.omit(match(rownames(timat),rownames(newtimat))),] <- timat
       newpopcov[na.omit(match(rownames(newpopcov),rownames(popCov))), 
         na.omit(match(rownames(newpopcov),rownames(popCov)))] <- popCov
       popCov <- newpopcov
@@ -262,26 +286,23 @@ out <- paste0(out, "
   ",if(dopop) paste0("\\textrm{Subject specific parameters: }
              &\\underbrace{",bmatrix(matrix(paste0('\\text{',
              gsub('_','\\_',colnames(popCov),fixed=TRUE),'}_i')),nottext=T)," 
-            }_{\\vect{\\phi}(i)} \\sim  \\mathrm{N} \\left(
+            }_{\\vect{\\phi}(i)} \\sim  \\textrm{tform}\\left\\{ \\mathrm{N} \\left(
               ",bmatrix(paste0(colnames(popCov))),"
               ,
-                ",bmatrix(popCov)," \\right) ",ifelse(doti," + ",""),"\\\\  "),
-      if(doti) paste0("\\textrm{Time independent effects: } 
-  &\\qquad \\qquad \\quad \\underbrace{
-    ",bmatrix(timat),"
-    ",ifelse(!matrixnames,"}_{{", "}_{"),"\\vect{\\beta}}","
+                ",bmatrix(popCov)," \\right) ",
+      if(doti) paste0(" + \\underbrace{",bmatrix(timat),"}_{\\vect{\\beta}}","
   \\underbrace{
-    ",bmatrix(matrix(colnames(timat))),"
-    ",ifelse(!matrixnames,"}_{{", "}_{"),"\\vect{z}}\\\\"),
+    ",bmatrix(matrix(colnames(timat))),"}_{\\vect{z}}"),
+    " \\right\\} \\\\"),
   "\\textrm{Initial latent states: }
   &\\underbrace{",bmatrix(matrix(paste0(ctmodel$latentNames)))," 
     \\big{(}t_0\\big{)}}_{\\vect{\\eta} (t_0)}	\\sim \\mathrm{N} \\left(
               \\underbrace{
         ",bmatrix(ctmodel$T0MEANS),"
       ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{}}",ifelse(!matrixnames,"}","_\\textrm{T0MEANS}}"),",
-      \\underbrace{covsdcor\\bigg(
-        ",bmatrix(ctmodel$T0VAR),"
-      ",ifelse(!matrixnames,"\\bigg)}_{{", "\\bigg)}_{\\underbrace{"),"\\vect{Q^{*}}_{t0}}",ifelse(!matrixnames,"}","_\\textrm{T0VAR}}"),"
+      \\underbrace{covsdcor \\left\\{
+        ",bmatrix(ctmodel$T0VAR),"\\right\\}
+      ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{Q^{*}}_{t0}}",ifelse(!matrixnames,"}","_\\textrm{T0VAR}}"),"
       \\right) \\\\
       \\textrm{Deterministic change:}
   &\\underbrace{",showd,"
@@ -303,9 +324,9 @@ out <- paste0(out, "
       }_{\\vect{\\chi} (t)}"),
     "\\right) ",ifelse(continuoustime,"\\mathrm{d}t","")," \\quad + \\nonumber \\\\ \\\\
     \\textrm{Random change: }
-    & \\qquad \\qquad \\quad cholsdcor\\bigg(\\underbrace{
-      ",bmatrix(ctmodel$DIFFUSION),"
-    ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{G}}",ifelse(!matrixnames,"}","_\\textrm{DIFFUSION}}\\bigg)"),"
+    & \\qquad \\qquad \\quad \\underbrace{cholsdcor\\left\\{
+      ",bmatrix(ctmodel$DIFFUSION),"\\right\\}
+    ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{G}}",ifelse(!matrixnames,"}","_\\textrm{DIFFUSION}}"),"
     \\underbrace{",showd,"
       ",bmatrix(matrix(paste0('W_{',1:ctmodel$n.latent,'}')),nottext=TRUE)," 
       (t)}_{",showd," \\vect{W}(t)} \\\\ \\\\

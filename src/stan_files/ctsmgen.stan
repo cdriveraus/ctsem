@@ -739,7 +739,9 @@ if(verbose > 1) print ("below t0 row ", rowi);
       if(statei>0)  state[statei] += Jstep;
       
           for(ri in 1:size(matsetup)){ //for each row of matrix setup
-            if(matsetup[ri,3] > 0 && matsetup[ri,8] == 2){ //perform calcs appropriate to this section
+            if(matsetup[ri,3] > 0 && matsetup[ri,8] == 2 &&(
+            matsetup[ri,7] ==3||
+            matsetup[ri,7] ==7 )){ //perform calcs appropriate to this section
               real newval;
               newval = tform(state[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
               if(matsetup[ri, 7] == 3) sDRIFT[matsetup[ ri,1], matsetup[ri,2]] = newval; 
@@ -775,7 +777,9 @@ if(verbose > 1) print ("below t0 row ", rowi);
     }
     
           for(ri in 1:size(matsetup)){ //for each row of matrix setup
-            if(matsetup[ri,3] > 0 && matsetup[ri,8] == 2){ //perform calcs appropriate to this section
+            if(matsetup[ri,3] > 0 && matsetup[ri,8] == 2 &&(
+            matsetup[ri,7] ==4||
+            matsetup[ri,7] ==52 )){ //perform calcs appropriate to this section
               real newval;
               newval = tform(state[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
               if(matsetup[ri, 7] == 4) sDIFFUSION[matsetup[ ri,1], matsetup[ri,2]] = newval; 
@@ -857,7 +861,10 @@ if(verbose > 1) print ("below t0 row ", rowi);
     state = sT0MEANS[,1]; //in case of t0 dependencies, may have missingness
     
           for(ri in 1:size(matsetup)){ //for each row of matrix setup
-            if(matsetup[ri,3] > 0 && matsetup[ri,8] == 1){ //perform calcs appropriate to this section
+            if(matsetup[ri,3] > 0 && matsetup[ri,8] == 1 &&(
+            matsetup[ri,7] ==1||
+            matsetup[ri,7] ==8||
+            matsetup[ri,7] ==51 )){ //perform calcs appropriate to this section
               real newval;
               newval = tform(state[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
               if(matsetup[ri, 7] == 1) sT0MEANS[matsetup[ ri,1], matsetup[ri,2]] = newval; 
@@ -885,7 +892,9 @@ if(verbose > 1) print ("below t0 row ", rowi);
       if(nonzerotdpred){
       
           for(ri in 1:size(matsetup)){ //for each row of matrix setup
-            if(matsetup[ri,3] > 0 && matsetup[ri,8] == 3){ //perform calcs appropriate to this section
+            if(matsetup[ri,3] > 0 && matsetup[ri,8] == 3 &&(
+            matsetup[ri,7] ==9||
+            matsetup[ri,7] ==53 )){ //perform calcs appropriate to this section
               real newval;
               newval = tform(state[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
               if(matsetup[ri, 7] == 9) sTDPREDEFFECT[matsetup[ ri,1], matsetup[ri,2]] = newval; 
@@ -946,7 +955,11 @@ if(savescores){
       if(nlmeasurement==1){
       
           for(ri in 1:size(matsetup)){ //for each row of matrix setup
-            if(matsetup[ri,3] > 0 && matsetup[ri,8] == 4){ //perform calcs appropriate to this section
+            if(matsetup[ri,3] > 0 && matsetup[ri,8] == 4 &&(
+            matsetup[ri,7] ==2||
+            matsetup[ri,7] ==6||
+            matsetup[ri,7] ==5||
+            matsetup[ri,7] ==54 )){ //perform calcs appropriate to this section
               real newval;
               newval = tform(state[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
               if(matsetup[ri, 7] == 2) sLAMBDA[matsetup[ ri,1], matsetup[ri,2]] = newval; 

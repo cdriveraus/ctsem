@@ -4,8 +4,8 @@ ctLabel<-function(matrixname, n.latent, n.manifest, n.TDpred, n.TIpred, Tpoints,
   
   if(matrixname=="T0MEANS") out <- matrix(paste0("T0m_",latentNames[1:n.latent]),ncol=1)
   if(matrixname=="T0VAR") out <- indexMatrix(dimension=n.latent,starttext="T0var_",lowerTriangular=TRUE,sep="_",namesvector=latentNames,shortdiag=TRUE)
-  if(matrixname=='LAMBDA') out <- matrix(paste0('lambda_',rep(1:n.manifest,times=n.latent),rep(latentNames[1:n.latent],each=n.manifest)),nrow=n.manifest)
-  if(matrixname=="MANIFESTVAR") out <- indexMatrix(dimension=n.manifest,shortdiag=TRUE,starttext="mvar_",lowerTriangular=TRUE,sep="_",namesvector=manifestNames)
+  if(matrixname=='LAMBDA') out <- matrix(paste0('lambda_',rep(1:n.manifest,times=n.latent),'_',rep(latentNames[1:n.latent],each=n.manifest)),nrow=n.manifest)
+  if(matrixname=="MANIFESTVAR") out <- indexMatrix(dimension=n.manifest,shortdiag=TRUE,starttext="mvar",lowerTriangular=TRUE,sep="_",namesvector=manifestNames)
   if(matrixname=="DRIFT") out <- indexMatrix(dimension=n.latent,starttext="drift_",shortdiag=TRUE,symmetrical=FALSE,sep="_",namesvector=latentNames)
   if(matrixname=="CINT") out <- matrix(paste0("cint_",latentNames[1:n.latent]),ncol=1)
   if(matrixname=="DIFFUSION") out <- indexMatrix(dimension=n.latent,starttext="diff_",lowerTriangular=TRUE,sep="_",shortdiag=TRUE,namesvector=latentNames)

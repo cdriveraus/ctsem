@@ -116,18 +116,31 @@ gridplot <- function(m, maxdim=c(3,3),...){
   suppressWarnings(do.call(par,oldpar))
 }
 
+perm <- function(v) {
+  n <- length(v)
+  if (n == 1) v
+  else {
+    X <- NULL
+    for (i in 1:n) X <- rbind(X, cbind(v[i], perm(v[-i])))
+    X
+  }
+}
+
 # helper function to generate an index matrix, or return unique elements of a matrix
 indexMatrix<-function(dimension,symmetrical=FALSE,upper=FALSE,lowerTriangular=FALSE, sep=NULL,starttext=NULL,endtext=NULL,
   unique=FALSE,rowoffset=0,coloffset=0,indices=FALSE,diagonal=TRUE,namesvector=NULL,shortdiag=FALSE){
   if(is.null(namesvector)) namesvector=1:9999
   if(indices==TRUE) sep<-c(",")
-  tempmatrix<-matrix(paste0(starttext,sep,rep(namesvector[1:dimension+coloffset],each=dimension),endtext),nrow=dimension,ncol=dimension)
+  tempmatrix<-matrix(paste0(starttext,rep(namesvector[1:dimension+coloffset],dimension)),nrow=dimension,ncol=dimension)
   for(i in 1:nrow(tempmatrix)){ #append step by step for shortdiag
     for(j in 1:ncol(tempmatrix)){
-        tempmatrix[i,j] <- paste0(tempmatrix[i,j],sep,namesvector[1:dimension+rowoffset][i])
+        # tempmatrix[i,j] <- paste0(tempmatrix[i,j],sep,namesvector[1:dimension+rowoffset][i])
+        # print(tempmatrix[i,j])
+        # print(namesvector[1:dimension+rowoffset][i])
         if(i!=j || !shortdiag) tempmatrix[i,j] <- paste0(tempmatrix[i,j],sep,namesvector[1:dimension+rowoffset][j])
     }
   }
+  tempmatrix[,]<-paste0(tempmatrix[,],endtext)
       
   if(upper==TRUE) tempmatrix<-t(tempmatrix)
   if(symmetrical==TRUE) tempmatrix[col(tempmatrix)>row(tempmatrix)] <-t(tempmatrix)[col(tempmatrix)>row(tempmatrix)]

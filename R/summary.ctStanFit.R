@@ -291,7 +291,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   
   out$popmeans=round(popmeans,digits=digits)
   
-  out$popNote=paste0('popmeans are reported as specified in ctModel -- covariance related matrices are in sd / matrix square root form.')
+  out$popNote=paste0('popmeans are reported as specified in ctModel -- covariance related matrices are in sd / unconstrained correlation form -- see $parmatrices for simpler interpretations!')
   
   out$logprob=logprob
   

@@ -1,6 +1,6 @@
 # parlp <- function()  out <- try(rstan::log_prob(sf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
 
-parallelStanSetup <- function(cl, sm, standata,split=TRUE){
+parallelStanSetup <- function(cl, standata,split=TRUE){
   cores <- length(cl)
   if(split) stansubjectindices <- split(unique(standata$subject),sort(unique(standata$subject) %% min(standata$nsubjects,cores)))
   if(!split) stansubjectindices <- lapply(1:cores,function(x) unique(standata$subject))
@@ -9,7 +9,8 @@ parallelStanSetup <- function(cl, sm, standata,split=TRUE){
       stansubjectindices[[i]] <- NA
     }
   }
-  parallel::clusterExport(cl,c('standata','sm'),envir = environment())
+
+  parallel::clusterExport(cl,c('standata'),envir = environment())
   parallel::clusterApply(cl,stansubjectindices,function(subindices) {
     # require(Rcpp)
     library(ctsem)
@@ -225,7 +226,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA){
   
   
   if(nasampscount > 0) {
-    # browser()
+    browser()
     # lapply(transformedpars$`0`,function(x) any(is.na(x)))
     message(paste0(nasampscount,' NAs generated during final sampling of ', nrow(samples), '. Biased estimates may result -- consider importance sampling, respecification, or full HMC sampling'))
   }
@@ -360,8 +361,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   }
   standata$nopriors=as.integer(nopriors)
   
-  if(is.null(decontrol$steptol)) decontrol$steptol=5
-  if(is.null(decontrol$reltol)) decontrol$reltol=1e-4
+  if(is.null(decontrol$steptol)) decontrol$steptol=3
+  if(is.null(decontrol$reltol)) decontrol$reltol=1e-2
   if(is.null(decontrol$NP)) decontrol$NP='auto'
   if(is.null(decontrol$CR)) decontrol$CR=.9
   if(is.null(decontrol$trace)) decontrol$trace =ifelse(verbose>0,1,0)
@@ -439,16 +440,17 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       
       if(optimcores==1) target = singletarget #we use this for importance sampling
-      if(cores > 1) {
+      if(optimcores > 1) {
         
-        clctsem=parallel::makeCluster(cores,useXDR=TRUE)
+        clctsem=parallel::makeCluster(optimcores,useXDR=TRUE)
         on.exit({parallel::stopCluster(clctsem)},add=TRUE)
         
         #crazy trickery to avoid parallel communication pauses
         env <- new.env(parent = globalenv(),hash = TRUE)
         environment(parlp) <- env
-      }
-      if(optimcores > 1) {   
+
+        parallel::clusterExport(clctsem,varlist = 'sm',envir = environment())
+
         target<-function(parm,gradnoise=TRUE) {
           whichframe <- which(sapply(lapply(sys.frames(),ls),function(x){ 'clctsem' %in% x}))
           a=Sys.time()
@@ -508,6 +510,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           }
           decontrollist$initialpop=deinit
           decontrollist$NP = NP
+          
+          if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standata)
+          if(optimcores==1) smf<-stan_reinitsf(sm,standata)
+          
           optimfitde <- suppressWarnings(DEoptim::DEoptim(fn = lp2,lower = rep(-1e10, npars), upper=rep(1e10, npars),
             control = decontrollist))
           # init=constrain_pars(object = smf,optimfitde$optim$bestmem)
@@ -550,7 +556,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # smlndat <- min(standatasml$ndatapoints,ceiling(max(standatasml$nsubjects * 10, standatasml$ndatapoints*.5)))
         # standatasml$dokalmanrows[sample(1:standatasml$ndatapoints,smlndat)] <- 0L
         # standatasml$dokalmanrows[match(unique(standatasml$subject),standatasml$subject)] <- 1L #ensure first obs is included for t0var consistency
-        if(optimcores > 1) parallelStanSetup(cl = clctsem,sm = sm,standata = standatasml)
+        if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standatasml)
         if(optimcores==1) smf<-stan_reinitsf(sm,standatasml)
         
         if(!stochastic) {
@@ -574,7 +580,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # if(standata$ntipred > 0){ #do extra step with reduced scale tipreds
         #   message ('Pass 2 -- penalised tipreds')
         #   init = optimfit$par
-        #   if(optimcores > 1) parallelStanSetup(cl = clctsem,sm = sm,standata = standata)
+        #   if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standata)
         #   if(optimcores==1) smf<-stan_reinitsf(sm,standata)
         #   if(!stochastic) {
         #     optimfit <- mize(init, fg=mizelpg, max_iter=99999,
@@ -593,7 +599,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       
       message('Optimizing...')
-      if(optimcores > 1) parallelStanSetup(cl = clctsem,sm = sm,standata = standata)
+      if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standata)
       if(optimcores==1) smf<-stan_reinitsf(sm,standata)
       if(!stochastic) {
         
@@ -665,7 +671,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               lpdifcount <- lpdifcount + 1
               uppars<-pars
               uppars[i]<-pars[i]+stepsize / ifelse(gradmod,(abs(basegrad[i])),1)
-              uplp= suppressMessages(target(uppars,gradnoise=FALSE)) #try(smf$log_prob(upars=uppars,adjust_transform=TRUE,gradient=TRUE)) #lpg(uppars)
+
+              uplp=suppressMessages(suppressWarnings( target(uppars,gradnoise=FALSE))) #try(smf$log_prob(upars=uppars,adjust_transform=TRUE,gradient=TRUE)) #lpg(uppars)
               # storedPars <<- cbind(storedPars,matrix(uppars))
               # storedLp <<- c(storedLp,uplp[1])
               
@@ -686,7 +693,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                     if(lpdifdirection== 1) {
                       lpdifmultiplier = lpdifmultiplier * .5
                     }
-                    stepsize = stepsize * 1e-2 * lpdifmultiplier
+                    stepsize = stepsize * (1e-2 * lpdifmultiplier)
                     lpdifdirection <- -1
                   }
                   if(abs(uplp-bestfit) < lpdifmin ) { #include sufficient gradient[i] checks #|| upgrad[i] < 1e-2
@@ -696,7 +703,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                     if(lpdifdirection== -1) {
                       lpdifmultiplier = lpdifmultiplier * .5
                     }
-                    stepsize = stepsize * 100 * lpdifmultiplier
+                    stepsize = stepsize * (100 * lpdifmultiplier)
                     lpdifdirection <- 1
                   }
                   if(any(is.na(c(uplp)))) stepsize = stepsize * .1
@@ -864,7 +871,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       }
       if(is){
         message('Importance sampling...')
-        if(cores > 1)  parallelStanSetup(cl=clctsem,sm,standata,split=FALSE)
+        if(optimcores > 1)  parallelStanSetup(cl=clctsem,standata,split=FALSE)
         targetsamples <- finishsamples * finishmultiply
         # message('Adaptive importance sampling, loop:')
         j <- 0
@@ -918,7 +925,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           
           
           standata$verbose <- 0L
-          if(cores > 1) parallel::clusterExport(clctsem,'samples',envir = environment())
+          if(optimcores > 1) parallel::clusterExport(clctsem,'samples',envir = environment())
           
           # if(cores==1) parlp <- function(parm){ #remove this duplication somehow
           #   out <- try(log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
