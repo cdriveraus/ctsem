@@ -31,7 +31,7 @@
 #' @examples
 #' \donttest{
 #' #Basic
-#' ctKalman(ctstantestfit, timerange=c(0,60), timestep=.5, plot=TRUE)
+#' ctKalman(ctstantestfit, timerange=c(0,60), plot=TRUE)
 #' 
 #' #Multiple subjects, y and yprior, showing plot arguments
 #' ctKalman(ctstantestfit, timerange=c(0,60), timestep=.1, plot=TRUE,

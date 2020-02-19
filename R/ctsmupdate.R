@@ -19,10 +19,10 @@ datalong <- cbind(id, time, sunspots)
    DIFFUSION=matrix(c(.0001, 0, 0, "diffusion"), ncol=2, nrow=2))
 
 #fit
-smgen <- ctStanFit(datalong, model,fit=FALSE,gendata=TRUE)$stanmodeltext
+smgen <- ctStanFit(datalong, model,fit=FALSE,gendata=TRUE,forcerecompile=TRUE)$stanmodeltext
 stanc(model_code = smgen,verbose = TRUE)
 
-sm <- ctStanFit(datalong, model,fit=FALSE,gendata=FALSE)$stanmodeltext
+sm <- ctStanFit(datalong, model,fit=FALSE,gendata=FALSE,forcerecompile=TRUE)$stanmodeltext
 stanc(model_code = sm,verbose = TRUE)
 
 # model$w32 <- TRUE

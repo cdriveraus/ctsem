@@ -7,12 +7,12 @@ set.seed(1)
 context("tipredcheck")
 
 test_that("simpleTIpredcheck", {
-Tpoints=10
+Tpoints=20
 n.manifest=1
 n.TDpred=0
 n.TIpred=1
 n.latent=1
-n.subjects=50
+n.subjects=80
 TI1 <- rnorm(n.subjects)
 gm<-ctModel(type='omx', Tpoints=Tpoints,n.latent=n.latent,
 n.TDpred=n.TDpred,n.manifest=n.manifest,
@@ -47,23 +47,25 @@ MANIFESTVAR=diag(0.5,1),
 
  checkm$pars[c(-1,-7) ,c('TI1_effect')] <- FALSE
 
-tfit<-ctStanFit(tdat,checkm,chains=2,optimize=TRUE,
-  optimcontrol=list(is=TRUE,finishsamples=500),nopriors=FALSE,verbose=0)
-s1=summary(tfit)
+tfit1<-ctStanFit(tdat,checkm,chains=2,optimize=TRUE,
+  optimcontrol=list(is=TRUE,finishsamples=500),
+  nopriors=FALSE,verbose=0)
+s1=summary(tfit1)
 
 expect_equivalent(s1$tipreds[2,'mean'],5,tolerance=.1)
 expect_equivalent(s1$popsd[2,'mean'],.6,tolerance=.2)
 
-tfit<-ctStanFit(tdat,checkm,chains=1,optimize=TRUE,cores=1,
+tfit2<-ctStanFit(tdat,checkm,chains=1,optimize=TRUE,cores=1,verbose=0,
   optimcontrol=list(is=FALSE),nopriors=FALSE,
   nlcontrol=list(nldynamics=TRUE,nlmeasurement=TRUE))
-s2=summary(tfit)
+s2=summary(tfit2)
 
 expect_equivalent(s2$tipreds[2,'mean'],5,tolerance=.1)
 expect_equivalent(s2$popsd[2,'mean'],.6,tolerance=.2)
 
-tfit<-suppressWarnings(ctStanFit(tdat,checkm,iter=400,chains=2,control=list(adapt_delta=.8,max_treedepth=6),plot=FALSE))
-s3=summary(tfit)
+tfit3<-suppressWarnings(ctStanFit(tdat,checkm,iter=400,chains=2,
+  control=list(adapt_delta=.8,max_treedepth=6),plot=FALSE))
+s3=summary(tfit3)
 
 expect_equivalent(s3$tipreds[2,'mean'],5,tolerance=.1)
 expect_equivalent(s3$popsd[2,'mean'],.6,tolerance=.2)
