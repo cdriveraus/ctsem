@@ -7,6 +7,8 @@
 ctModelLatex(
   x,
   matrixnames = TRUE,
+  digits = 3,
+  linearise = class(x) \%in\% "ctStanFit",
   textsize = "normalsize",
   folder = tempdir(),
   filename = paste0("ctsemTex", as.numeric(Sys.time())),
@@ -21,6 +23,11 @@ ctModelLatex(
 \item{x}{ctsem model object or ctStanFit object.}
 
 \item{matrixnames}{Logical. If TRUE, includes ctsem matrix names such as DRIFT and DIFFUSION under the matrices.}
+
+\item{digits}{Precision of decimals for numeric values.}
+
+\item{linearise}{Logical. Show the linearised normal approximation for subject parameters and 
+covariate effects, or the raw parameters?}
 
 \item{textsize}{Standard latex text sizes -- 
 tiny scriptsize footnotesize small normalsize large Large LARGE huge Huge. 
