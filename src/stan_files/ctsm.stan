@@ -67,7 +67,7 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
     }
 
     for(i in 1:rows(o)){
-      s[i] = inv_sqrt(o[i,] * o[,i]);
+      s[i] = inv_sqrt(o[i,] * o[,i] + 1e-10);
       if(is_inf(s[i])) s[i]=0;
     }
     return diag_pre_multiply(s,o);
@@ -355,7 +355,7 @@ matrix[nlatent, nlatent] pop_DIFFUSIONcov;
 
   if(nindvarying > 0){
     int counter =0;
-    rawpopsd = log1p(exp(2*rawpopsdbase-1)) .* sdscale; // sqrts of proportions of total variance
+    rawpopsd = log1p(exp(2*rawpopsdbase-1)) .* sdscale + 1e-10; // sqrts of proportions of total variance
     for(j in 1:nindvarying){
       rawpopcovsqrt[j,j] = rawpopsd[j]; //used with intoverpop
       for(i in 1:nindvarying){
@@ -1041,12 +1041,11 @@ generated quantities{
         }
       }
         
-      if(!matsetup[pr1,5]) popmeans[pi] = tform(rawpoppar, matsetup[pr2,4], matvalues[pr2,2], matvalues[pr2,3], matvalues[pr2,4], matvalues[pr2,6] ); 
+      popmeans[pi] = tform(rawpoppar, matsetup[pr2,4], matvalues[pr2,2], matvalues[pr2,3], matvalues[pr2,4], matvalues[pr2,6] ); 
       if(matsetup[pr1,5]){ //if indvarying, transform random sample
         for(ri in 1:rows(x)){
           x[ri,matsetup[pr1,5]] = tform(x[ri,matsetup[pr1,5]],matsetup[pr2,4],matvalues[pr2,2],matvalues[pr2,3],matvalues[pr2,4],matvalues[pr2,6]);
         }
-        popmeans[matsetup[pr1,3]]=mean(x[,matsetup[pr1,5]]);
         x[,matsetup[pr1,5]] += rep_vector(-mean(x[,matsetup[pr1,5]]),rows(x));
       }
       if(ntipred > 0){

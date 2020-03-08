@@ -597,7 +597,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       if(!stochastic) {
         optimfit <- mize(init, fg=mizelpg, max_iter=99999,
           method="L-BFGS",memory=100,
-          check_conv_every = 5,
+          # check_conv_every = 5,
           # try_newton_step=TRUE,
           line_search='Schmidt',c1=1e-4,c2=.9,step0='schmidt',ls_max_fn=999,
           abs_tol=NULL,grad_tol=NULL,rel_tol=tol,step_tol=NULL,ginf_tol=NULL)

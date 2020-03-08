@@ -25,6 +25,7 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,standardisederr
   message('Computing state estimates..')
   standata <- fit$standata
   standata$savescores <- 1L
+  standata$popcovn=5L
   # smf <- stan_reinitsf(fit$stanmodel, standata)
   samples<-ctStanRawSamples(fit)
   if(!is.na(nsamples)) samples <- samples[sample(1:nrow(samples),nsamples),,drop=FALSE] else nsamples <- nrow(samples)

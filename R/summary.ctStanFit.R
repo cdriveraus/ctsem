@@ -203,6 +203,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
     object$standata$savescores <- 0L
     object$standata$gendata <- 0L
     object$standata$dokalman <- 0L
+    object$standata$popcovn <- 5L
     sf <- stan_reinitsf(object$stanmodel,data=object$standata)
     parmatlists <- try(apply(ctStanRawSamples(object),
       # sample(x = 1:dim(e$rawpopmeans)[1],
