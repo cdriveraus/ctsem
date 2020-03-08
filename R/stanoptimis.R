@@ -9,7 +9,7 @@ parallelStanSetup <- function(cl, standata,split=TRUE){
       stansubjectindices[[i]] <- NA
     }
   }
-
+  
   parallel::clusterExport(cl,c('standata'),envir = environment())
   parallel::clusterApply(cl,stansubjectindices,function(subindices) {
     # require(Rcpp)
@@ -217,7 +217,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA){
   # 
   transformedpars <- try(flexlapply(cl, 
     split(1:nrow(samples), sort((1:nrow(samples))%%cores)),tparfunc,cores=cores,parallel=cores > 1))
-
+  
   #fix this hack
   if(!is.null(transformedpars[[1]][[1]]$popmeans)) transformedpars=unlist(transformedpars,recursive = FALSE)
   est1=transformedpars[[1]]
@@ -226,8 +226,8 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA){
   
   
   if(nasampscount > 0) {
-    browser()
-    # lapply(transformedpars$`0`,function(x) any(is.na(x)))
+    
+    # lapply(transformedpars[[1]],function(x) any(is.na(x)))
     message(paste0(nasampscount,' NAs generated during final sampling of ', nrow(samples), '. Biased estimates may result -- consider importance sampling, respecification, or full HMC sampling'))
   }
   if(nasampscount < nrow(samples)){
@@ -355,7 +355,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   plot=FALSE,
   is=FALSE, isloopsize=1000, finishsamples=500, tdf=10,chancethreshold=100,finishmultiply=5,
   verbose=0,cores=2){
-  
   if(!is.null(standata$verbose)) {
     if(standata$verbose > 1) standata$verbose=as.integer(verbose) else standata$verbose=0L
   }
@@ -377,6 +376,14 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   betterfit<-TRUE
   bestfit <- -9999999999
   try2 <- FALSE
+  
+  #remove tipreds for first pass
+  TIPREDEFFECTsetup <- standata$TIPREDEFFECTsetup
+  standata$TIPREDEFFECTsetup[,] <- 0L
+  standata$ntipredeffects <- 0L
+  # npars <- npars-sum(TIPREDEFFECTsetup)
+  
+  
   while(betterfit){ #repeat loop if importance sampling improves on optimized max
     betterfit <- FALSE
     smf <- stan_reinitsf(sm,standata)
@@ -384,6 +391,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     
     if(all(init %in% 'random')) init <- rnorm(npars, 0, initsd)
     if(all(init == 0)) init <- rep(0,npars)
+    if(length(init) != npars) init=init[1:npars]
+    
+    if(standata$ntipredeffects > 0) init[length(init):(length(init)+1-standata$ntipredeffects)] <- 0
     
     if(is.na(sampleinit[1])){
       
@@ -448,9 +458,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         #crazy trickery to avoid parallel communication pauses
         env <- new.env(parent = globalenv(),hash = TRUE)
         environment(parlp) <- env
-
+        
         parallel::clusterExport(clctsem,varlist = 'sm',envir = environment())
-
+        
         target<-function(parm,gradnoise=TRUE) {
           whichframe <- which(sapply(lapply(sys.frames(),ls),function(x){ 'clctsem' %in% x}))
           a=Sys.time()
@@ -486,7 +496,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         
       } #end multicore setup
       
-      
+
       
       if(deoptim){ #init with DE
         message('Using differential evolution for initialization')
@@ -546,10 +556,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         taylorheun <- standata$taylorheun
         standata$nopriors <- as.integer(0)
         standata$taylorheun <- 1L
-        tipredeffectscale <- standata$tipredeffectscale
-        dotipred <- standata$dotipred
-        # standata$dotipred <- 0L
-        standata$tipredeffectscale <- tipredeffectscale*.01
+        sdscale <- standata$sdscale
+        # standata$sdscale <- sdscale * 1e-6
+        # tipredeffectscale <- standata$tipredeffectscale
+        # standata$tipredeffectscale <- tipredeffectscale* 1e-5
         smlnsub <- min(standata$nsubjects,max(min(30,cores*2),ceiling(standata$nsubjects * subsamplesize)))
         standatasml <- standatact_specificsubjects(standata,
           sample(unique(standata$subject),smlnsub))
@@ -566,82 +576,113 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             abs_tol=1e-4,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)
           optimfit$value = optimfit$f
         }
-        
-        if(stochastic) optimfit <- sgd(init, fitfunc = function(x) target(x),
-          # ndatapoints=standata$ndatapoints,gmeminit=.9,
-          plot=plot,
-          itertol=1e-1,deltatol=1e-2,maxiter=500)
+
+        if(stochastic) {
+          optimfit <- sgd(init, fitfunc = function(x) target(x),
+          plot=plot,itertol=1e-1,deltatol=1e-2,maxiter=500)
+        }
         
         standata$nopriors <- as.integer(nopriorsbak)
         standata$taylorheun <- as.integer(taylorheun)
-        
-        standata$dokalmanrows[] <- 1L
-        
-        # if(standata$ntipred > 0){ #do extra step with reduced scale tipreds
-        #   message ('Pass 2 -- penalised tipreds')
-        #   init = optimfit$par
-        #   if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standata)
-        #   if(optimcores==1) smf<-stan_reinitsf(sm,standata)
-        #   if(!stochastic) {
-        #     optimfit <- mize(init, fg=mizelpg, max_iter=99999,
-        #       method="L-BFGS",memory=100,
-        #       line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
-        #       abs_tol=tol,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)
-        #     optimfit$value = optimfit$f
-        #   }
-        #   if(stochastic) optimfit <- sgd(init, fitfunc = target, plot=plot)
-        # }
+        standata$sdscale <- sdscale
         
         init = optimfit$par
-        standata$tipredeffectscale <- tipredeffectscale
-        standata$dotipred <- dotipred
       } #end carefulfit init
       
       
       message('Optimizing...')
       if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standata)
       if(optimcores==1) smf<-stan_reinitsf(sm,standata)
+      
       if(!stochastic) {
-        
         optimfit <- mize(init, fg=mizelpg, max_iter=99999,
           method="L-BFGS",memory=100,
           check_conv_every = 5,
           # try_newton_step=TRUE,
           line_search='Schmidt',c1=1e-4,c2=.9,step0='schmidt',ls_max_fn=999,
           abs_tol=NULL,grad_tol=NULL,rel_tol=tol,step_tol=NULL,ginf_tol=NULL)
-        # 
-        # gradstore <- -attributes(target(init))$gradient
-        # fml = function(x){
-        #   l=target(x)
-        #   gradstore <<- -attributes(l)$gradient
-        #   return(-l[1])
-        # }
-        # fmg <- function(x){
-        #   gradstore <--attributes(target(init))$gradient
-        #   return(gradstore)
-        # }
-        # optimfit <- bfgs(fml,fmg,matrix(init))
-        
-        
         optimfit$value = -optimfit$f
         init = optimfit$par
-        bestfit <- optimfit$value
+        if(is.infinite(bestfit)) stochastic<-TRUE
       }
       
-      if(stochastic || is.infinite(bestfit)){#  || #carefulfit
-        if(is.infinite(bestfit)) {
-          message('Switching to stochastic optimizer -- failed initialisation with bfgs')
-        }
+      if(stochastic){#  || #carefulfit
+        if(is.infinite(bestfit)) message('Switching to stochastic optimizer -- failed initialisation with bfgs')
         if(!stochastic && carefulfit) message('carefulfit = TRUE , so checking for improvements with stochastic optimizer')
-        optimfit <- sgd(init, fitfunc = target
-          ,ndatapoints=standata$ndatapoints,plot=plot
-          # gmeminit=ifelse(carefulfit,.9,.8),
-          # ,groughnesstarget = .3
-        )
-        bestfit <-optimfit$value
+        optimfit <- sgd(init, fitfunc = target,ndatapoints=standata$ndatapoints,plot=plot)
       }
+      
+      if(standata$ntipred > 0){ 
+        # 
+        # standata$tipredeffectscale <- tipredeffectscale
+        standata$dokalmanrows[] <- 1L
+        # init = optimfit$par
+        optimbase = optimfit$par#[-(length(optimfit$par):(length(optimfit$par)-max(TIPREDEFFECTsetup)+1))]
+        finished <- FALSE
+        found <- 0
+        tia=standata$TIPREDEFFECTsetup
+        while(!finished){
+          if(!is.null(standata$TIpredAuto) && standata$TIpredAuto){
+            message ('Looking for tipreds...')
+            oldtia=tia
+            fit <- list(stanfit=list(rawest=optimfit$par),standata=standata,stanmodel=sm)
+            tia=ctTIauto(fit)  
+            tia[tia > .05] = 0L
+            a <- 0
+            for(ci in 1:ncol(tia)){
+              for(ri in 1:nrow(tia)){
+                if(tia[ri,ci] +oldtia[ri,ci] > 0){
+                  a <- a+1
+                  tia[ri,ci] <- as.integer(a)
+                }
+              }
+            }
+            
+            
+            if(max(tia) > found){
+              tiinit=rep(0,max(tia))
+              oldtiinit = tail(optimfit$par,found)[oldtia[oldtia>0]]
+              tiinit[tia[tia>0&oldtia>0]] <- oldtiinit
+              standata$TIPREDEFFECTsetup <- array(as.integer(tia),dim=dim(tia))
+              found <- max(tia)
+              message('Found ',max(tia),' viable TIpreds')
+              standata$ntipredeffects <- as.integer(max(tia))
+              init = head(optimfit$par,length(optimbase))
+              init = c(init,tiinit)
+            } else finished <- TRUE
+          }
+          # if(!finished){
+            
+            if(!standata$TIpredAuto){
+              finished <- TRUE
+              init = c(init,rep(0,max(TIPREDEFFECTsetup)))
+              standata$TIPREDEFFECTsetup[,] <- TIPREDEFFECTsetup
+              standata$ntipredeffects <- as.integer(max(TIPREDEFFECTsetup))
+            }
+            
+            if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standata)
+            if(optimcores==1) smf<-stan_reinitsf(sm,standata)
+            if(!stochastic) {
+              optimfit <- mize(init, fg=mizelpg, max_iter=99999,
+                method="L-BFGS",memory=100,
+                line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
+                abs_tol=tol*ifelse(finished,1,1000),grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)
+              optimfit$value = -optimfit$f
+            }
+            if(stochastic) optimfit <- sgd(init, fitfunc = target, plot=plot)
+          # }
+        }
+        smf <- stan_reinitsf(sm,standata)
+      }
+      
+      
+      
+      bestfit <-optimfit$value
+      
       
       est2=optimfit$par #unconstrain_pars(smf, est1)
+      npars = length(est2)
+      
     }
     
     if(!estonly){
@@ -652,7 +693,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       grmat<-function(pars,step=1e-5,lpdifmin=1e-8, 
         lpdifmax=1e-4, direction=1,whichpars='all',gradmod=FALSE){
-        if('all' %in% whichpars) whichpars <- 1:npars
+        if('all' %in% whichpars) whichpars <- 1:length(pars)
         hessout <- flexsapply(cl = clctsem, cores = 1, whichpars, function(i) {
           stepsize <- step * direction
           colout <- NA
@@ -671,8 +712,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               lpdifcount <- lpdifcount + 1
               uppars<-pars
               uppars[i]<-pars[i]+stepsize / ifelse(gradmod,(abs(basegrad[i])),1)
-
-              uplp=suppressMessages(suppressWarnings( target(uppars,gradnoise=FALSE))) #try(smf$log_prob(upars=uppars,adjust_transform=TRUE,gradient=TRUE)) #lpg(uppars)
+              
+              suppressMessages(suppressWarnings(try({uplp<- target(uppars,gradnoise=FALSE)},silent=TRUE))) #try(smf$log_prob(upars=uppars,adjust_transform=TRUE,gradient=TRUE)) #lpg(uppars)
               # storedPars <<- cbind(storedPars,matrix(uppars))
               # storedLp <<- c(storedLp,uplp[1])
               
@@ -798,14 +839,14 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # hess <- (t(hess)+hess )/2
         # rankifremoved <- sapply(1:ncol(hess), function (x) qr(hess[,-x,drop=FALSE])$rank)
         # # newbadpars <- which(rankifremoved == max(rankifremoved))
-
-        hessup= grmat(pars=est2,step=1e-5, direction=1,gradmod = TRUE)
-        hessdown= grmat(pars=est2,step=1e-5, direction=1,gradmod = TRUE)
+        
+        hessup= grmat(pars=est2,step=1e-5, direction=1,gradmod = FALSE)
+        hessdown= grmat(pars=est2,step=1e-5, direction=1,gradmod = FALSE)
         hess = (hessup+hessdown)/2
         cholcovup = try(suppressWarnings(t(chol(solve(-hessup)))),silent = TRUE)
         cholcovdown = try(suppressWarnings(t(chol(solve(-hessdown)))),silent = TRUE)
         cholcov = try(suppressWarnings(t(chol(solve(-hess)))),silent = TRUE)
-        
+        # 
         if('try-error' %in% class(cholcov)){
           if(!'try-error' %in% class(cholcovup)){
             hess = hessup
@@ -1066,11 +1107,12 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       unlist(constrain_pars(smf, upars= uest))),silent=TRUE)
     try(colnames(transformedpars_old)<-c('2.5%','mean','97.5%'),silent=TRUE)
     
-    stanfit=list(optimfit=optimfit,stanfit=smf, rawest=est2, rawposterior = resamples, transformedpars=transformedpars,transformedpars_old=transformedpars_old,
+    stanfit=list(optimfit=optimfit,stanfit=smf, rawest=est2, rawposterior = resamples, transformedpars=transformedpars,transformedpars_old=transformedpars_old,standata=list(TIPREDEFFECTsetup=standata$TIPREDEFFECTsetup,ntipredeffects = standata$ntipredeffects),
       isdiags=list(cov=mcovl,means=delta,ess=ess,qdiag=qdiag,lpsamples=lpsamples ))
   }
   if(estonly) stanfit=list(optimfit=optimfit,stanfit=smf, rawest=est2)
   optimfinished <- TRUE #disable exit message re pars
   return(stanfit)
 }
+
 
