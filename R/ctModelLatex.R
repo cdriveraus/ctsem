@@ -24,10 +24,10 @@ ctModelBuildTIeffects <- function(ctm){ #for latex
   return(timat)
 }
 
-ctMatsetupFreePars <- function(m){
-  m=m[m$when==0 & m$param > 0,,drop=FALSE]
-  m=m[match(unique(m$param),m$param),,drop=FALSE]
-  m = m[order(m$param),,drop=FALSE]
+ctMatsetupFreePars <- function(m,intoverpop){
+    m=m[m$when==0 & m$param > 0,,drop=FALSE]
+    m=m[match(unique(m$param),m$param),,drop=FALSE]
+    m = m[order(m$param),,drop=FALSE]
 }
 
 ctMatvalueFreePars <- function(ms,mv){
@@ -37,23 +37,23 @@ ctMatvalueFreePars <- function(ms,mv){
   mv = mv[order(ms$param),,drop=FALSE]
 }
 
-ctCovTransform <- function(rawpopcov, rawpopmeans, ms, mv){
-  mv <- ctMatvalueFreePars(ms,mv)
-  ms <- ctMatsetupFreePars(ms)
-  rawpopmeans=rawpopmeans[ms$param[ms$indvarying>0 | ms$tipred >0]]
-  
-  d=nrow(rawpopcov)
-  n=10000
-  mc <- t(chol(rawpopcov))
-  
-  x <- matrix(rnorm(n*d),n,d)
-  x <- t(apply(x,1,function(y)  mc %*% (y) + rawpopmeans ))
-  tx <- x
-  for(i in 1:nrow(mc)){
-      tx[,i] <- ctsem:::tform(x[,i],ms$transform[i],mv$multiplier[i], mv$meanscale[i], mv$offset[i],mv$inneroffset[i])
-    }
-  return(cov(tx))
-}
+# ctCovTransform <- function(rawpopcov, rawpopmeans, ms, mv){
+#   mv <- ctMatvalueFreePars(ms,mv)
+#   ms <- ctMatsetupFreePars(ms)
+#   rawpopmeans=rawpopmeans[ms$param[ms$indvarying>0]]
+#   
+#   d=nrow(rawpopcov)
+#   n=10000
+#   mc <- t(chol(rawpopcov))
+#   
+#   x <- matrix(rnorm(n*d),n,d)
+#   x <- t(apply(x,1,function(y)  mc %*% (y) + rawpopmeans ))
+#   tx <- x
+#   for(i in 1:nrow(mc)){
+#       tx[,i] <- ctsem:::tform(x[,i],ms$transform[i],mv$multiplier[i], mv$meanscale[i], mv$offset[i],mv$inneroffset[i])
+#   }
+#   return(cov(tx))
+# }
 
 
 
@@ -116,20 +116,28 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
     if(!is.null(e$rawpopcov)){ 
       # browser()
       if(!linearise) popCov <- round(ctCollapse(e$rawpopcov,1,mean),digits)
-      if(linearise) popCov <- round(ctCovTransform(rawpopcov = ctCollapse(e$rawpopcov,1,mean),
-        rawpopmeans = matrix(ctCollapse(e$rawpopmeans,1,mean)),
-        ms = x$setup$matsetup,mv=x$setup$matvalues),digits=digits)
-      rownames(popCov) <- ms$parname[as.logical(ms$indvarying)]
-      colnames(popCov) <- ms$parname[as.logical(ms$indvarying)]
-      if(x$standata$intoverpop==1) popCov[x$standata$intoverpopindvaryingindex,
-        x$standata$intoverpopindvaryingindex] <- round(ctCollapse(e$pop_T0VAR,1,mean),digits=digits)[
-          x$standata$intoverpopindvaryingindex,x$standata$intoverpopindvaryingindex]
+      if(linearise) {
+        popCov <- round(ctCollapse(e$popcov,1,mean),digits=digits)
+      if(x$standata$intoverpop==1){
+        t0index <- ms$indvarying[ms$param <= x$standata$nlatent & ms$matrix %in% 1 & ms$indvarying > 0]
+        popCov[t0index,t0index] <- round(ctCollapse(e$pop_T0VAR,1,mean),digits=digits)[
+          t0index,t0index] #is this correct...?
+      }
+        rownames(popCov) <- ms$parname[as.logical(ms$indvarying)]
+        colnames(popCov) <- ms$parname[as.logical(ms$indvarying)]
+      }
     } else popCov <- diag(0,0)
 
     if(!linearise) popmeans <- round(ctCollapse(e$rawpopmeans,1,mean),digits)[
       as.logical(ms$indvarying + ms$tipred),drop=FALSE]
-    if(linearise) popmeans <- round(ctCollapse(e$popmeans,1,mean),digits)[
+    if(linearise) {
+      popmeans <- round(ctCollapse(e$popmeans,1,mean),digits)[
       as.logical(ms$indvarying + ms$tipred),drop=FALSE]
+      if(x$standata$intoverpop==1){
+        popmeans[t0index]<- round(ctCollapse(e$pop_T0MEANS,1,mean),digits=digits)[
+          t0index,1]
+      }
+    }
     
     parmats <- summary(x,residualcov=FALSE,priorcheck=FALSE,digits=digits)
     parmats <- data.frame(parmats$parmatrices,matrix=rownames(parmats$parmatrices))
@@ -403,7 +411,7 @@ out <- paste0(out, "
             ",bmatrix(matrix(paste0('\\epsilon_{j \\in [1,',ctmodel$n.latent,']}')))," 
             (t) \\sim  \\mathrm{N}(0,1) \\\\ \\\\",
             if(dopop) paste0(if(linearise) "&\\textrm{Linearised approximation of subject parameter distribution shown.}\\\\
-            &\\textrm{Indivividual specific notation (subscript i) not shown for system dynamics and observation model.} \\\\"),"
+            &\\textrm{Indivividual specific notation (subscript i) only shown for subject parameter distribution -- pop. means shown elsewhere.} \\\\"),"
 &cholsdcor\\textrm{ converts lower tri matrix of std dev and unconstrained correlation to Cholesky factor covariance.} \\\\
 &covsdcor =\\textrm{ transposed cross product of cholsdcor, to give covariance.} \\\\
 &\\textrm{See Driver \\& Voelkle (2018) p11.}

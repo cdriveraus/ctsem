@@ -207,7 +207,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       MANIFESTMEANS = matrix(0))
     
     dtm2$pars$indvarying <- FALSE
-    dtf2=ctStanFit(datalong = dat,ctstanmodel = dtm2,optimize = TRUE,optimcontrol=list(estonly=T),savescores = F,nopriors = T)
+    dtf2=ctStanFit(datalong = dat,ctstanmodel = dtm2,optimize = TRUE,nopriors = T)
     
     expect_equivalent(dtf2$stanfit$rawest,dtf$stanfit$rawest,tol=1e-2)
 

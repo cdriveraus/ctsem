@@ -274,7 +274,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   if(!'stanfit' %in% class(object$stanfit)){ #if optimized / importance sampled
     
     if(!is.null(iter)){ popsd <- suppressWarnings(monitor(array(e$popsd,dim=c(dim(e$popsd)[1],1,dim(e$popsd)[2])),warmup=0,print=FALSE))
-    popsd=popsd[ object$data$indvaryingindex, monvars,drop=FALSE]
+    popsd=popsd[, monvars,drop=FALSE]
     rownames(popsd)=parnamesiv
     }
     

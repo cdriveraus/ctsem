@@ -26,7 +26,6 @@ ctModelStatesAndPARS <- function(ctm){ #replace latentName and par references wi
       ctm$pars$param[ri] <- gsub(paste0('\\b(',ln[li],')\\b'),paste0('state[',li,']'),ctm$pars$param[ri])
     }
   }
-  
   #expand pars
   ln <- ctm$pars$param[ctm$pars$matrix %in% 'PARS' & !is.na(ctm$pars$param)] #get extra pars
   
@@ -39,7 +38,6 @@ ctModelStatesAndPARS <- function(ctm){ #replace latentName and par references wi
       }
     }
   }
-  
   return(ctm)
 }
 
@@ -358,15 +356,19 @@ ctStanModelIntOverPop <- function(m){
         #   inneroffset = m$pars$inneroffset[m$pars$param %in% ivi],singletext=TRUE)
         m$pars$indvarying[m$pars$param %in% ivi] <- FALSE
         m$pars[m$pars$param %in% ivi,paste0(m$TIpredNames,rep('_effect',m$n.TIpred))] <- FALSE
-        m$pars$param[m$pars$param %in% ivi] <- paste0( 'state[',m$n.latent+match(ivi,ivnames),']')
+        m$pars$param[m$pars$param %in% ivi] <- sapply(which(m$pars$param %in% ivi), function(ri){
+          gsub('param',paste0( 'state[',m$n.latent+match(ivi,ivnames),']'),m$pars$transform[ri]) 
+        })
+        m$pars$transform[m$pars$param %in% ivi] <-NA
+        
       }
       
-      #collect transform and state reference together in param
-      for(ri in 1:nrow(m$pars)){
-        if(grepl('[',m$pars$param[ri],fixed=TRUE)){
-          m$pars$param[ri] <- gsub('param',m$pars$param[ri],m$pars$transform[ri])
-        }
-      }
+      # #collect transform and state reference together in param
+      # for(ri in 1:nrow(m$pars)){
+      #   if(grepl('[',m$pars$param[ri],fixed=TRUE)){
+      #     m$pars$param[ri] <- gsub('param',m$pars$param[ri],m$pars$transform[ri])
+      #   }
+      # }
       
       # m$pars$indvarying  <-FALSE
       
@@ -495,8 +497,8 @@ ctStanMatricesList <- function(unsafe=FALSE){
   #   m$base <- c(m$base, 'PARS')
   #   if(!unsafe && any(sapply(ctm$pars$param[ctm$pars$matrix %in% 'PARS'], function(x) grepl('state[', x,fixed=TRUE) ))){
   #     stop('PARS matrix cannot contain further dependencies, simple parameters only!')
-  #     # m$driftcint <- c(m$driftcint,'PARS')
-  #     # m$measurement <- c(m$measurement,'PARS')
+      # m$driftcint <- c(m$driftcint,'PARS')
+      # m$measurement <- c(m$measurement,'PARS')
   #   }
   # }
   
@@ -1270,7 +1272,7 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
     if(fixedsubpars==1) indvaraddition[indvaryingindex] = rawpopcovchol * fixedindparams[subi];
   }
   
-  if(subi > 0 &&  ntipred > 0 && dotipred == 1) tipredaddition = TIPREDEFFECT * tipreds[subi]\';
+  if(subi > 0 &&  ntipred > 0) tipredaddition = TIPREDEFFECT * tipreds[subi]\';
 
   rawindparams = rawpopmeans + tipredaddition + indvaraddition;
 ',
@@ -1372,7 +1374,7 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
 collectsubmats <- function(popmats=FALSE,matrices=c(names(mats$base),'DIFFUSIONcov','asymDIFFUSION','asymCINT')){
   out<-ifelse(popmats,'', "if(subi == 0 || savesubjectmatrices){ \n")
   for(m in matrices){
-    if(!popmats) out <-paste0(out, 'if( (', m,'subindex > 0 && subi > 0) || (',m,'subindex == 0 && subi==0) ) ',m,'[',m,'subindex ? subi : 1] = s',m,'; \n')
+    if(!popmats) out <-paste0(out, 'if( (', m,'subindex > 0 && (subi > 0 || savesubjectmatrices==0) ) || (',m,'subindex == 0 && subi==0) ) ',m,'[(savesubjectmatrices && ',m,'subindex) ? subi : 1] = s',m,'; \n')
     if(popmats) out <- paste0(out, 'pop_',m,' = s',m,'; ')
   }
   if(!popmats) out <- paste0(out,' \n }')
@@ -1590,13 +1592,11 @@ data {
   int nsJAxfinite;
   int sJAxfinite[nsJAxfinite];
   int taylorheun;
-  int dotipred;
   int difftype;
   int jacoffdiag[nlatentpop];
   int njacoffdiagindex;
   int jacoffdiagindex[njacoffdiagindex];
-  int sJycolindexsize;
-  int sJycolindex[sJycolindexsize];
+  int popcovn;
 }
       
 transformed data{
@@ -1635,7 +1635,7 @@ transformed data{
   
 }
       
-parameters {
+parameters{
   vector[nparams] rawpopmeans; // population level means \n','
   vector',if(!is.na(ctm$rawpopsdbaselowerbound)) paste0('<lower=',ctm$rawpopsdbaselowerbound[1],'>'),'[nindvarying] rawpopsdbase; //population level std dev
   vector[nindvaryingoffdiagonals] sqrtpcov; // unconstrained basis of correlation parameters
@@ -1729,14 +1729,14 @@ if(!gendata) kalmanll(),'
 model{
   if(intoverpop==0 && fixedsubpars == 1) target+= multi_normal_cholesky_lpdf(fixedindparams | rep_vector(0,nindvarying),IIindvar);
 
+    if(ntipred > 0){ 
+      if(nopriors==0) target+= dokalmanpriormodifier * normal_lpdf(tipredeffectparams| 0, tipredeffectscale);
+      target+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
+    }
+
   if(nopriors==0){ //if split files over subjects, just compute priors once
    target+= dokalmanpriormodifier * normal_lpdf(rawpopmeans|0,1);
   
-    if(ntipred > 0){ 
-      target+= dokalmanpriormodifier * normal_lpdf(tipredeffectparams| 0, tipredeffectscale);
-      target+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
-    }
-    
     if(nindvarying > 0){
       if(nindvarying >1) target+= dokalmanpriormodifier * normal_lpdf(sqrtpcov | 0, 1);
       if(intoverpop==0 && fixedsubpars == 0) target+= multi_normal_cholesky_lpdf(baseindparams | rep_vector(0,nindvarying), IIindvar);
@@ -1752,7 +1752,8 @@ model{
 }
 generated quantities{
   vector[nparams] popmeans;
-  vector[nparams] popsd = rep_vector(0,nparams);
+  vector[nindvarying] popsd; // = rep_vector(0,nparams);
+  matrix[nindvarying,nindvarying] popcov;
   matrix[nparams,ntipred] linearTIPREDEFFECT;
 ',if(gendata) paste0('
   real ll = 0;
@@ -1774,46 +1775,66 @@ generated quantities{
   ',subjectparaminit(pop=TRUE,smats=FALSE)
   ,collapse=''),'
 
-{
-vector[nparams] rawpopsdfull;
-rawpopsdfull[indvaryingindex] = sqrt(diagonal(rawpopcov)); //base for calculations
-
-    for(ri in 1:size(matsetup)){
-      if(matsetup[ri,9] <=0 && matsetup[ri,3] && matsetup[ri,8]==0) { //if a free parameter 
-        real rawpoppar = rawpopmeans[matsetup[ri,3] ];
-        int pr = ri; // unless intoverpop, pop matrix row reference is simply current row
-        
-        if(intoverpop && matsetup[ri,5]) { //removed ri transform of rawpop because t0means only transforms once -- if non identity state tform in future, change this!
-          for(ri2 in 1:size(matsetup)){ //check when state reference param of matsetup corresponds to row of t0means in current matsetup row
-            if(matsetup[ri2,8]  && matsetup[ri2,3] == matsetup[ri,1]) pr = ri2;
-            //print("ri = ",ri, " pr = ",pr, " ri2 = ",ri2);
+  {
+    matrix[popcovn, nindvarying] x;
+    if(nindvarying){
+      for(ri in 1:rows(x)){
+        x[ri,] = (rawpopcovchol * 
+          to_vector(normal_rng(rep_vector(0,nindvarying),rep_vector(1,nindvarying))) + 
+          rawpopmeans[indvaryingindex])\';
+      }
+    }
+    
+    for(pi in 1:nparams){
+      int found=0;
+      int pr1;
+      int pr2;
+      real rawpoppar = rawpopmeans[pi];
+      while(!found){
+        for(ri in 1:size(matsetup)){
+          if(matsetup[ri,9] <=0 && matsetup[ri,3]==pi && matsetup[ri,8]==0) { //if a free parameter 
+            pr1 = ri; 
+            pr2=ri;// unless intoverpop, pop matrix row reference is simply current row
+            found=1;
+            if(intoverpop && matsetup[ri,5]) { //check if shifted
+              for(ri2 in 1:size(matsetup)){ //check when state reference param of matsetup corresponds to row of t0means in current matsetup row
+                if(matsetup[ri2,8]  && matsetup[ri2,3] == matsetup[ri,1] && 
+                matsetup[ri2,3] > nlatent && matsetup[ri2,7] < 20 &&
+                matsetup[ri,9] <=0) pr2 = ri2; //if param is dynamic and matches row (state ref) and is not in jacobian
+                //print("ri = ",ri, " pr2 = ",pr2, " ri2 = ",ri2);
+              }
+            }
           }
         }
+      }
         
-        popmeans[matsetup[ ri,3]] = tform(rawpoppar, matsetup[pr,4], matvalues[pr,2], matvalues[pr,3], matvalues[pr,4], matvalues[pr,6] ); 
-
-        popsd[matsetup[ ri,3]] = matsetup[ ri,5] ? //if individually varying
-          fabs(tform( //compute sd
-            rawpoppar  + rawpopsdfull[matsetup[ ri,3]], matsetup[pr,4], matvalues[pr,2], matvalues[pr,3], matvalues[pr,4], matvalues[pr,6]) -
-           tform(
-            rawpoppar  - rawpopsdfull[matsetup[ ri,3]], matsetup[pr,4], matvalues[pr,2], matvalues[pr,3], matvalues[pr,4], matvalues[pr,6]) ) /2 : 
-          0; //else zero
-
-        if(ntipred > 0){
-          for(tij in 1:ntipred){
-            if(TIPREDEFFECTsetup[matsetup[ri,3],tij] ==0) {
-              linearTIPREDEFFECT[matsetup[ri,3],tij] = 0;
-            } else {
-            linearTIPREDEFFECT[matsetup[ri,3],tij] = ( //tipred reference is from row ri, tform reference from row pr in case of intoverpop
-              tform(rawpoppar + TIPREDEFFECT[matsetup[ri,3],tij] * .01, matsetup[pr,4], matvalues[pr,2], matvalues[pr,3], matvalues[pr,4], matvalues[pr,6] ) -
-              tform(rawpoppar - TIPREDEFFECT[matsetup[ri,3],tij] * .01, matsetup[pr,4], matvalues[pr,2], matvalues[pr,3], matvalues[pr,4], matvalues[pr,6] )
-              ) /2 * 100;
-            }
-         }
+      if(!matsetup[pr1,5]) popmeans[pi] = tform(rawpoppar, matsetup[pr2,4], matvalues[pr2,2], matvalues[pr2,3], matvalues[pr2,4], matvalues[pr2,6] ); 
+      if(matsetup[pr1,5]){ //if indvarying, transform random sample
+        for(ri in 1:rows(x)){
+          x[ri,matsetup[pr1,5]] = tform(x[ri,matsetup[pr1,5]],matsetup[pr2,4],matvalues[pr2,2],matvalues[pr2,3],matvalues[pr2,4],matvalues[pr2,6]);
+        }
+        popmeans[matsetup[pr1,3]]=mean(x[,matsetup[pr1,5]]);
+        x[,matsetup[pr1,5]] += rep_vector(-mean(x[,matsetup[pr1,5]]),rows(x));
+      }
+      if(ntipred > 0){
+      for(tij in 1:ntipred){
+        if(TIPREDEFFECTsetup[matsetup[pr1,3],tij] ==0){
+          linearTIPREDEFFECT[matsetup[pr1,3],tij] = 0;
+        } else {
+        linearTIPREDEFFECT[matsetup[pr1,3],tij] = ( //tipred reference is from row pr1, tform reference from row pr2 in case of intoverpop
+          tform(rawpoppar + TIPREDEFFECT[matsetup[pr1,3],tij] * .01, matsetup[pr2,4], matvalues[pr2,2], matvalues[pr2,3], matvalues[pr2,4], matvalues[pr2,6] ) -
+          tform(rawpoppar - TIPREDEFFECT[matsetup[pr1,3],tij] * .01, matsetup[pr2,4], matvalues[pr2,2], matvalues[pr2,3], matvalues[pr2,4], matvalues[pr2,6] )
+          ) /2 * 100;
         }
       }
     }
-}
+    } //end nparams loop
+  
+  if(nindvarying){
+    popcov = crossprod(x) /(rows(x)-1);
+    popsd = sqrt(diagonal(popcov));
+  }
+  }
 
 ',if(gendata) paste0('
 {

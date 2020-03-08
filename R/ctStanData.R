@@ -154,7 +154,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
             #     2,sd,na.rm=TRUE) - 
             #   lmf$coefficients[-1]
             # 
-            plot(c(meandat[,ctm$TIpredNames[i],with=FALSE])[[1]],predict(lmf),main=ctm$TIpredNames[i])
+            # plot(c(meandat[,ctm$TIpredNames[i],with=FALSE])[[1]],predict(lmf),main=ctm$TIpredNames[i])
             tipreds[is.na(tipreds[,1]),1] <- predict(lmf)[is.na(tipreds[,1])]
           }
         }
@@ -279,10 +279,9 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     
     
     standata$sJAxfinite <- ctm$sJAxfinite
-
-    standata$sJycolindex <- array(unique(as.integer(apply(mx$Jy,1, function(x) which(!x%in%0)))))
-    standata$sJycolindex<-array(standata$sJycolindex[!is.na(standata$sJycolindex)])
-    standata$sJycolindexsize <- as.integer(length(standata$sJycolindex))
+    
+    standata$sJycolindexsize <- 1L
+    standata$sJycolindex <- array(1L)
 
     standata$difftype <- 2L;
     standata$dotipred <- 1L;
@@ -382,5 +381,9 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   
   
   standata$idmap <- idmap
+  standata$popcovn=1000L
+  
+  if(!is.null(ctm$TIpredAuto) && ctm$TIpredAuto %in% c(1L,TRUE)) standata$TIpredAuto <- 1L else standata$TIpredAuto <- 0L
+  
   return(standata)
 }

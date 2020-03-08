@@ -16,16 +16,17 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
   # initialize fn and state
   fn     = c()
   state   = paste0("state__", 1:ndim,'__')
-
+# browser()
   #replace system matrix references
   for(ri in 1:nrow(m$pars)){
-    if(grepl('[',m$pars$param[ri],fixed=TRUE) 
-      && !is.na(m$pars$transform[ri])) m$pars$param[ri] <- gsub('param',m$pars$param[ri],m$pars$transform[ri])
+    if(grepl('[',m$pars$param[ri],fixed=TRUE) && !is.na(m$pars$transform[ri])){
+      # m$pars$param[ri] <- gsub('param',m$pars$param[ri],m$pars$transform[ri])
+    } else if(!grepl('[',m$pars$param[ri],fixed=TRUE) && !is.na(m$pars$param[ri])) m$pars$param[ri] <- paste0(m$pars$matrix[ri],'[',m$pars$row[ri],',',m$pars$col[ri],']')
   }
   mats <- listOfMatrices(m$pars)
   matnames <- names(ctStanMatricesList(unsafe=TRUE)$base)
   
-  # # for(mati in matnames){ 
+  # for(mati in matnames){
   # for(ri in 1:nrow(m$pars)){
   #   counter <- 0
   #   if(grepl('^\\b(state)\\b\\[\\d+\\]$',m$pars$param[ri]) && 
@@ -100,6 +101,9 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
       fn = paste0(mats$MANIFESTMEANS,' + ',prodSymb(Jybase,cbind(paste0('state[',1:ndim,']'))))
       # fn = sapply(prodSymb(diag(nrow(mats$T0MEANS)), matrix(t0func,ncol=1)),Simplify)
     }
+    
+    # browser()
+    
     fn = gsub(" ", "", fn, fixed = TRUE) #remove spaces
     # replace state[~] by state~ for cOde Jacobian and make fn and state a named list
     names(fn) = paste0("fn", 1:length(fn))
@@ -139,7 +143,9 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
       for(mi in 1:length(mats)){
         for(ri in 1:nrow(mats[[mi]])){
           for(ci in 1:ncol(mats[[mi]])){
+            if(suppressWarnings(is.na(as.numeric(Js[x])))){
           if(Js[x] %in% mats[[mi]][ri,ci]) Js[x] <- paste0('s',names(mats)[mi],'[',ri,',',ci,']')
+            }
           }
         }
       }

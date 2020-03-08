@@ -634,42 +634,42 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       if(!recompile && !forcerecompile) {
         if(!gendata) sm <- stanmodels$ctsm else sm <- stanmodels$ctsmgen
       }
-      if(!is.null(inits) & any(inits!=0)){
-        sf <- stan_reinitsf(sm,standata)
-        staninits <- list(stan1=constrain_pars(sf,inits))
-        # staninits=list()
-        if(chains > 1){
-          for(i in 2:chains){
-            staninits[[i]]<-staninits[[1]]
-          }
-        }
-      }
-      
-      if(!is.null(inits) & class(inits) !='list') staninits=inits #if 0 init
-      if(is.null(inits)){
-        staninits=list()
-        # if(chains > 0){
-        # init=0
-        # message('Finding good start values...')
-        # if(is.null(ctm$fixedsubpars)) freesubpars <- TRUE else freesubpars <- FALSE
-        for(i in 1:(chains)){
-          #   if(nindvarying > 0 && !intoverpop & !optimize) {
-          #     ctm$fixedsubpars <- matrix( rnorm(nindvarying*nsubjects,0,.1),ncol=nindvarying)
-          #     if(i==1){
-          #     sf <- stan_reinitsf(sm,standata)
-          #     fitb=suppressMessages(ctStanFit(datalong = datalong,ctm = ctm,optimize=TRUE,fit=TRUE,inits=init,
-          #       savescores=FALSE,gendata = FALSE,
-          #       optimcontrol = list(estonly=TRUE,deoptim=FALSE,isloops=0,finishsamples=2,tol=1e-4),verbose=0,...))
-          #     init <- c(fitb$stanfit$rawest)+ rnorm(length(init),0,.05)
-          #     } else init = init + rnorm(length(init),0,.05)
-          #     staninits[[i]] <- constrain_pars(sf,c(init,ctm$fixedsubpars))
-          #     if(i==chains & freesubpars) ctm$fixedsubpars <- NULL
-          #   } else {
-          staninits[[i]]=list(
+      # if(!is.null(inits) & any(inits!=0)){
+      #   sf <- stan_reinitsf(sm,standata)
+      #   staninits <- list(stan1=constrain_pars(sf,inits))
+      #   # staninits=list()
+      #   if(chains > 1){
+      #     for(i in 2:chains){
+      #       staninits[[i]]<-staninits[[1]]
+      #     }
+      #   }
+      # }
+      # 
+      # if(!is.null(inits) & class(inits) !='list') staninits=inits #if 0 init
+      # if(is.null(inits)){
+      #   staninits=list()
+      #   # if(chains > 0){
+      #   # init=0
+      #   # message('Finding good start values...')
+      #   # if(is.null(ctm$fixedsubpars)) freesubpars <- TRUE else freesubpars <- FALSE
+      #   for(i in 1:(chains)){
+      #     #   if(nindvarying > 0 && !intoverpop & !optimize) {
+      #     #     ctm$fixedsubpars <- matrix( rnorm(nindvarying*nsubjects,0,.1),ncol=nindvarying)
+      #     #     if(i==1){
+      #     #     sf <- stan_reinitsf(sm,standata)
+      #     #     fitb=suppressMessages(ctStanFit(datalong = datalong,ctm = ctm,optimize=TRUE,fit=TRUE,inits=init,
+      #     #       savescores=FALSE,gendata = FALSE,
+      #     #       optimcontrol = list(estonly=TRUE,deoptim=FALSE,isloops=0,finishsamples=2,tol=1e-4),verbose=0,...))
+      #     #     init <- c(fitb$stanfit$rawest)+ rnorm(length(init),0,.05)
+      #     #     } else init = init + rnorm(length(init),0,.05)
+      #     #     staninits[[i]] <- constrain_pars(sf,c(init,ctm$fixedsubpars))
+      #     #     if(i==chains & freesubpars) ctm$fixedsubpars <- NULL
+      #     #   } else {
+      #     staninits[[i]]=list(
             # baseindparams=array(rnorm(ifelse(intoverpop,0,nsubjects*nindvarying),0,.1),dim = c(ifelse(intoverpop,0,nsubjects),ifelse(intoverpop,0,nindvarying))),
             # eta=array(stats::rnorm(nrow(datalong)*ctm$n.latent,0,.1),dim=c(nrow(datalong),ctm$n.latent)),
             # tipredeffectparams=array(rnorm(standata$ntipredeffects,0,.1)) 
-          )
+          # )
           
           # if(standata$fixedhyper==0){
           #   staninits[[i]]$rawpopmeans=array(rnorm(nparams,0,.1))
@@ -679,8 +679,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
           # if(!is.na(ctm$rawpopsdbaselowerbound) & standata$fixedhyper==0) staninits[[i]]$rawpopsdbase=exp(staninits[[i]]$rawpopsdbase)
           # }
           # }
-        }
-      }
+        # }
+      # }
 
       if(!optimize){
         
@@ -715,6 +715,10 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         opcall <- paste0('stanoptimis(standata = standata,sm = sm,init = inits,plot=plot,',
           paste0(gsub('list(','',paste0(deparse(optimcontrol),collapse=''),fixed=TRUE)))
         stanfit <- eval(parse(text=opcall))
+        for(ni in names(stanfit$standata)){
+          standata[[ni]] <- stanfit$standata[[ni]]
+        }
+        ctm$modelmats$TIPREDEFFECTsetup <- stanfit$standata$TIPREDEFFECTsetup
         # stanfit <- rlang::exec(stanoptimis,!!!optimcontrol,standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors))
         # stanfit <- stanoptimis(standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors))
       }
