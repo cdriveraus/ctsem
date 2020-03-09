@@ -61,14 +61,14 @@ sgd <- function(init,fitfunc,ndatapoints=NA,plot=FALSE,
         print(lpg)
       }
       
-      gdelta =  (ghatmix +dghatmix*step*dghatweight/2)
+      gdelta =  (ghatmix +dghatmix*dghatweight/2) #removed step multiply because divide by zero elsewhere
       if(i > 1){
         delta =   step  *sign(gdelta)*(abs(gdelta))  * exp((rnorm(length(g),0,.02)))
         delta[abs(delta) > maxparchange] <- maxparchange*sign(delta[abs(delta) > maxparchange])
         newpars = pars + delta
         newpars = newpars  + delta/2 - deltaold/2 #+ delta - deltaold #
       }
-      
+      if(any(is.na(newpars))) browser()
       lpg= fitfunc(newpars)
       
       if(lpg > -1e99 &&       #regular check
@@ -114,7 +114,7 @@ sgd <- function(init,fitfunc,ndatapoints=NA,plot=FALSE,
    
     oldgmid=gmid
     gmid = (oldg+g)/2
-    dg=(gmid-oldgmid)/step
+    dg=(gmid-oldgmid)#/step #removed step divide due to divide by zero problems
     
     #compute pred errors before new predictions
 
@@ -222,7 +222,7 @@ sgd <- function(init,fitfunc,ndatapoints=NA,plot=FALSE,
       if(oldlprdif > lprdif) lproughnesstarget <- oldlproughnesstarget
       lprproposal = lproughnesstarget*2-oldlproughnesstarget
       oldlproughnesstarget <- lproughnesstarget
-      lproughnesstarget <- min(.5, max(.05, lprproposal + runif(1,-.05,.05)))
+      lproughnesstarget <- min(.8, max(.05, lprproposal + runif(1,-.05,.05)))
     }
     
     step[step > maxparchange] <- maxparchange
@@ -272,7 +272,7 @@ sgd <- function(init,fitfunc,ndatapoints=NA,plot=FALSE,
       # points(groughnessmod,col='red')
       # abline(h=lproughnessmod,col='green')
       
-      message(paste0('Iter = ',i, '   Best LP = ', max(lp),'   grad = ', sqrt(sum(g^2)), '   gmem = ', gmemory))
+      message(paste0('Iter = ',i, '   Best LP = ', max(lp),'   grad = ', sqrt(sum(g^2)), '   gmem = ', gmemory,'  lprt = ',lproughnesstarget))
     }
     
     #check convergence

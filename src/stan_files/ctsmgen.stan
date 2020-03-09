@@ -231,6 +231,7 @@ int DIFFUSIONcovsubindex;
   int njacoffdiagindex;
   int jacoffdiagindex[njacoffdiagindex];
   int popcovn;
+  int llsinglerow;
 }
       
 transformed data{

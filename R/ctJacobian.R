@@ -150,8 +150,26 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
         }
       }
     }
+
+    Jm <- matrix(Js,Jrows,ndim)
     
-    # browser()
+    if(typei=='JAx') matches <- c('DRIFT','CINT')
+    if(typei=='J0') matches <- c('T0MEANS','T0VAR')
+    if(typei=='Jtd') matches <- c('TDPREDEFFECT')
+    if(typei=='Jy') matches <- c('MANIFESTMEANS','LAMBDA','MANIFESTVAR')
+    for(j in 1:ncol(Jm)){
+      for(i in 1:nrow(Jm)){
+        for(mi in matches){
+          for(jm in 1:ncol(mats[[mi]])){
+            for(im in 1:nrow(mats[[mi]])){
+              if(is.na(suppressWarnings(as.numeric(Jm[i,j]))) && Jm[i,j] %in% mats[[mi]][im,jm]) Jm[i,j] <- paste0('s',mi,'[',im,',',jm,']')
+            }
+          }
+        }
+      }
+    }
+        
+    
     # for(x in 1:nrow(mm$matsetup)){
     #   Js=gsub(
     #     pattern = paste0("\\b",mm$matsetup$parname[x],"\\b"),
@@ -165,7 +183,7 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
     #   }
     # }
     # browser()
-    Jout[[typei]] <- matrix(Js,Jrows,ndim)
+    Jout[[typei]] <- Jm
   }#end type loop
   # print(Jout)
   return(Jout)

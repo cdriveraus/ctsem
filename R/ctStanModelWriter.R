@@ -704,26 +704,49 @@ ctStanModelMatrices <-function(ctm){
 
 
 
-ctStanCalcsList <- function(ctm){
-  #extract any calcs from model and ensure spec is correct
+ctStanCalcsList <- function(ctm){  #extract any calcs from model and ensure spec is correct
   temp <- ctm$modelmats$calcs
   names(temp) <- NULL
   mats<-ctStanMatricesList()
-  
   for(mati in unique(ctm$pars$matrix)){ #append s to matrices
     temp <- gsub(paste0('\\b',mati),paste0('s',mati),temp)
   }
-  
-  #put calcs into lits
-  calcs <- lapply(mats[!names(mats) %in% c('base','all')], function(mlist) { #add custom calculations to correct list of matrices
-    out <- temp[unlist(sapply(temp, function(y) any(sapply(names(mlist), function(mli) grepl(mli,y)))))]
+  calcs <- lapply(mats[!names(mats) %in% c('base','all','jacobian')], function(mlist) { #add custom calculations to correct list of matrices
+    out <- temp[unlist(sapply(temp, function(y) any(sapply(names(mlist), function(mli) 
+      grepl(mli,gsub('=.*','',y))
+      ))))]
     return(out)
   })
-  
   ctm$modelmats$calcs <- calcs
-  
   return(ctm)
 }
+
+# duplicateRefs <- function(ctm){
+#   
+#   ml <- ctStanMatricesList(ctm)
+#   
+#   upd=lapply(ml$all, function(m){
+#     dups <-
+#     
+#     mats[!names(mats) %in% c('base','all','jacobian')], function(mlist) {
+#   
+#   calcs$diffusion2 <- c(calcs$driftcint,calcs$diffusion) #create combined vec for duplicate detection
+# calcs <- lapply(calcs,function(mli){ #create matrix refs for duplicates
+#   mli <- gsub(' ','',mli)
+#   rhs <- gsub('.*=','',mli)
+#   lhs <- gsub('=.*','',mli)
+#   
+#   dup <- duplicated(rhs)
+#   for(i in seq_along(rhs)){
+#     if(dup[i]) mli[i] <- gsub('=.*',paste0('=',lhs[match(x = rhs[i],rhs)]),mli[i])
+#   }
+#   return(mli)
+# })
+# calcs$diffusion <- tail(calcs$diffusion2,length(calcs$diffusion)) #replace with portion of combined vec
+# calcs$diffusion2 <- NULL
+# 
+# }
+
 
 
 jacobianelements <- function(J, when, ntdpred,matsetup,mats,textadd=NA, 
@@ -794,9 +817,6 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup){
   #if arguments change make sure to change ctStanFit !
   
   mats <- ctStanMatricesList()
-  nlatentpop <- max(ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS'])
-  nmanifest <- ctm$n.manifest
-  mx <- listOfMatrices(ctm$pars)
   # #check when / if PARS needs to be computed
   # for(mlist in names(mats[-1])){
   #   if(any(unlist(lapply(ctm$calcs[[mlist]], function(m) grepl('sPARS',m))))) mats[[mlist]]=c(mats[[mlist]],'PARS')
@@ -1196,7 +1216,7 @@ if(savescores){
       ',if(!ppchecking){
         'if(nbinary_y[rowi] > 0) ll+= sum(log(Y[rowi,o1d] .* (syprior[o1d]) + (1-Y[rowi,o1d]) .* (1-syprior[o1d]))); 
   
-        if(size(o0d) > 0){
+        if(size(o0d) > 0 && (llsinglerow==0 || llsinglerow == rowi)){
            if(intoverstates==1) ypriorcov_sqrt[o0d,o0d]=cholesky_decompose(makesym(ycov[o0d,o0d],verbose,1));
            if(savescores) llrow[rowi,1] =  multi_normal_cholesky_lpdf(Y[rowi,o0d] | syprior[o0d], ypriorcov_sqrt[o0d,o0d]);
            errtrans[counter:(counter + ncont_y[rowi]-1)] = mdivide_left_tri_low(ypriorcov_sqrt[o0d,o0d], err[o0d]); //transform pred errors to standard normal dist and collect
@@ -1597,6 +1617,7 @@ data {
   int njacoffdiagindex;
   int jacoffdiagindex[njacoffdiagindex];
   int popcovn;
+  int llsinglerow;
 }
       
 transformed data{
