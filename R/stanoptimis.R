@@ -666,10 +666,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               optimfit <- mize(init, fg=mizelpg, max_iter=99999,
                 method="L-BFGS",memory=100,
                 line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
-                abs_tol=tol*ifelse(finished,1,1000),grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)
+                abs_tol=tol*ifelse(finished,1,10000),grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)
               optimfit$value = -optimfit$f
             }
-            if(stochastic) optimfit <- sgd(init, fitfunc = target, plot=plot)
+            if(stochastic && finished) optimfit <- sgd(init, fitfunc = target, plot=plot)
+            if(stochastic && !finished) optimfit <- sgd(init, fitfunc = target, plot=plot,itertol=1e-1,deltatol=1e-2)
           # }
         }
         smf <- stan_reinitsf(sm,standata)
