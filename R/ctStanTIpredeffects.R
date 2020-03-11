@@ -29,8 +29,9 @@
 #' \code{param} column of the \code{fit$setup$matsetup} object. In either case 'all' uses all available parameters.
 #' @param nsamples Positive integer specifying the maximum number of saved iterations to use. 
 #' Character string 'all' can also be used.
-#' @param nsubjects Positive integer specifying the number of subjects to compute values for.
-#' Character string 'all' can also be used. Time taken is a function of nsubjects*niterations.
+#' @param nsubjects Positive integer specifying the number of subjects to compute values for. When only one TIpred 
+#' is used, this specifies the number of points along the curve.
+#' Character string 'all' can also be used. Time taken for plotting is a function of nsubjects*niterations.
 #' @param plot Logical. If TRUE, nothing is returned but instead \code{\link{ctPlotArray}}
 #' is used to plot the output instead.
 #' @param timeinterval positive numeric indicating time interval to use for discrete time parameter matrices,
@@ -50,8 +51,8 @@
 ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   includeMeanUncertainty=FALSE,
   whichTIpreds=1,parmatrices=TRUE, whichpars='all', nsamples=100, timeinterval=1,
-  nsubjects=50,filter=NA,plot=FALSE){
-
+  nsubjects=20,filter=NA,plot=FALSE){
+# browser()
   #get objects
   ctspec <- fit$ctstanmodel$pars
   e<-ctExtract(fit)
@@ -130,13 +131,14 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   fit$standata$savescores <- 0L
   fit$standata$gendata <- 0L
   fit$standata$dokalman <- 0L
+  fit$standata$popcovn <- 2L
   sf <- stan_reinitsf(fit$stanmodel,data=fit$standata)
-  whichmatrices <- sapply(whichpars,function(x) {
-    x=gsub(pattern = '[','',x,fixed=TRUE)
-    x=gsub(pattern = ']','',x,fixed=TRUE)
-    x=gsub(pattern = '[0-9]','',x)
-    x=gsub(pattern = ',','',x,fixed=TRUE)
-  })
+  # whichmatrices <- sapply(whichpars,function(x) {
+  #   x=gsub(pattern = '[','',x,fixed=TRUE)
+  #   x=gsub(pattern = ']','',x,fixed=TRUE)
+  #   x=gsub(pattern = '[0-9]','',x)
+  #   x=gsub(pattern = ',','',x,fixed=TRUE)
+  # })
   
   parmeans=apply(ctStanRawSamples(fit),2,mean)
     parmatlists<-lapply(1:nrow(rawpopmeans), function(x) { #for each param vector
