@@ -383,6 +383,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   standata$idmap <- idmap
   standata$popcovn=1000L
   standata$llsinglerow=0L
+  standata$doonesubject=0L
   
   if(!is.null(ctm$TIpredAuto) && ctm$TIpredAuto %in% c(1L,TRUE)) standata$TIpredAuto <- 1L else standata$TIpredAuto <- 0L
   

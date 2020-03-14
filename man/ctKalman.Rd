@@ -22,7 +22,8 @@ ctKalman(
 If not included, data from fit will used.}
 
 \item{timerange}{Either 'asdata' to just use the observed data range, or a numeric vector of length 2 denoting start and end of time range, 
-allowing for estimates outside the range of observed data. Currently unused for ctStan fits.}
+allowing for estimates outside the range of observed data. Ranges smaller than the observed data
+are ignored.}
 
 \item{timestep}{Either 'asdata' to just use the observed data 
 (which also requires 'asdata' for timerange) or a positive numeric value
@@ -36,9 +37,10 @@ are set to NA, so only expectations based on
 parameters and covariates are returned.}
 
 \item{plot}{Logical. If TRUE, plots output instead of returning it. 
-See \code{\link{plot.ctKalman}} for the possible arguments.}
+See \code{\link{plot.ctKalman}} (OpenMx based fit) or \code{\link{plot.ctKalmanDF}} 
+(Stan based fit) for the possible arguments.}
 
-\item{...}{additional arguments to pass to \code{\link{plot.ctKalman}}.}
+\item{...}{additional arguments to pass to \code{\link{plot.ctKalman}} or \code{\link{plot.ctKalmanDF}}.}
 }
 \value{
 Returns a list containing matrix objects etaprior, etaupd, etasmooth, y, yprior, 
@@ -61,9 +63,12 @@ based on medians of parameter distribution.
 ctKalman(ctstantestfit, timerange=c(0,60), plot=TRUE)
 
 #Multiple subjects, y and yprior, showing plot arguments
-ctKalman(ctstantestfit, timerange=c(0,60), timestep=.1, plot=TRUE,
+plot1<-ctKalman(ctstantestfit, timerange=c(0,60), timestep=.1, plot=TRUE,
   subjects=2:3, 
   kalmanvec=c('y','yprior'),
   errorvec=c(NA,'ypriorcov')) #'auto' would also have achieved this
+  
+ #modify plot as per normal with ggplot
+ print(plot1+ggplot2::coord_cartesian(xlim=c(0,10)))
   }
 }
