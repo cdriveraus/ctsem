@@ -412,8 +412,8 @@ verbosify<-function(sf,verbose=2){
 #' }
 
 ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intoverstates=TRUE, binomial=FALSE,
-  fit=TRUE, intoverpop=FALSE, stationary=FALSE,plot=FALSE,  derrind='all',
-  optimize=FALSE,  optimcontrol=list(),
+  fit=TRUE, intoverpop=TRUE, stationary=FALSE,plot=FALSE,  derrind='all',
+  optimize=TRUE,  optimcontrol=list(),
   nlcontrol = list(), nopriors=FALSE, chains=2,
   cores=ifelse(optimize,getOption("mc.cores", 2L),'maxneeded'),
   inits=NULL,
@@ -486,11 +486,11 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     recompile <- FALSE
     if(optimize && !intoverstates) stop('intoverstates=TRUE required for optimization!')
     
-    if(optimize && !intoverpop && any(ctm$pars$indvarying[is.na(ctm$pars$value)]) && 
-        is.null(ctm$fixedrawpopchol) && is.null(ctm$fixedsubpars)){
-      intoverpop <- TRUE
-      message('Setting intoverpop=TRUE to enable optimization of random effects...')
-    }
+    # if(optimize && !intoverpop && any(ctm$pars$indvarying[is.na(ctm$pars$value)]) && 
+    #     is.null(ctm$fixedrawpopchol) && is.null(ctm$fixedsubpars)){
+    #   intoverpop <- TRUE
+    #   message('Setting intoverpop=TRUE to enable optimization of random effects...')
+    # }
 
     if(intoverpop==TRUE && !any(ctm$pars$indvarying[is.na(ctm$pars$value)])) {
       message('No individual variation -- disabling intoverpop switch'); intoverpop <- FALSE
@@ -715,10 +715,20 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         opcall <- paste0('stanoptimis(standata = standata,sm = sm,init = inits,plot=plot,',
           paste0(gsub('list(','',paste0(deparse(optimcontrol),collapse=''),fixed=TRUE)))
         stanfit <- eval(parse(text=opcall))
+        #update data that may have changed during optimization
         for(ni in names(stanfit$standata)){
           standata[[ni]] <- stanfit$standata[[ni]]
         }
+        if(ctm$n.TIpred>0){
         ctm$modelmats$TIPREDEFFECTsetup <- stanfit$standata$TIPREDEFFECTsetup
+        ms <- ctm$modelmats$matsetup
+        ms$tipred <- 0L
+        parswithtipreds <- unique(ms$param[ms$param >0 & ms$when==0 & ms$copyrow < 1])
+        parswithtipreds<-parswithtipreds[apply(stanfit$standata$TIPREDEFFECTsetup,1,sum)>0]
+        ms$tipred[ms$param >0 & ms$when==0 & ms$copyrow < 1 & ms$param %in% parswithtipreds] <- 1L
+        ctm$modelmats$matsetup <- ms
+        }
+        
         # stanfit <- rlang::exec(stanoptimis,!!!optimcontrol,standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors))
         # stanfit <- stanoptimis(standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors))
       }

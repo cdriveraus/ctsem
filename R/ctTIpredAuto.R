@@ -55,12 +55,12 @@ popcovnames <- function(fit){
 
 
 checkTIauto <- function(){
-  Tpoints=20
+  Tpoints=30
   n.manifest=1
   n.TDpred=0
   n.TIpred=1
   n.latent=1
-  n.subjects=80
+  n.subjects=100
   TI1 <- rnorm(n.subjects)
   gm<-ctModel(type='omx', Tpoints=Tpoints,n.latent=n.latent,
     n.TDpred=n.TDpred,n.manifest=n.manifest,
@@ -96,23 +96,43 @@ checkTIauto <- function(){
   
   checkm$TIpredAuto <- 1L
   
-  fit<-ctStanFit(tdat,checkm,chains=1,optimize=TRUE,cores=1,verbose=1,
-    optimcontrol=list(is=FALSE),nopriors=TRUE,
-    nlcontrol=list(nldynamics=TRUE,nlmeasurement=TRUE))
+  fit1<-ctStanFit(tdat,checkm,chains=1,optimize=TRUE,cores=1,verbose=1,
+    # intoverpop=F,plot=T,
+    # init=init,
+    optimcontrol=list(is=FALSE,stochastic=T,subsamplesize=1,carefulfit=F),nopriors=TRUE)
 }
 
+whichsubjectpars <- function(standata,subjects=NA){
+  a1=standata$nparams+standata$nindvarying+
+    (standata$nindvarying^2-standata$nindvarying)/2
+  whichbase <- 1:a1
+  if(standata$intoverpop ==0 && standata$nindvarying > 0){ #then there are subject pars
+  whichsubjects <- a1+cseq(from=subjects,to=standata$nindvarying*standata$nsubjects,
+    by=standata$nsubjects)
+  whichbase <- c(whichbase,whichsubjects)
+  }
+  if(standata$ntipredeffects > 0) {
+    tipredstart <- (a1+standata$nindvarying*standata$nsubjects+standata$ntipredeffects)
+    whichbase <- c(whichbase,tipredstart:(tipredstart+(standata$nparams-standata$ntipredeffects)))
+  }
+  return(whichbase)
+}
+  
 
 scorecalc <- function(fit,subjectsonly=TRUE){
   fit$standata$nopriors=1L
   
   scores <- list()
   for(i in 1:fit$standata$nsubjects){
-    scores[[i]]<-matrix(NA,length(fit$stanfit$rawest),ifelse(subjectsonly,1,sum(fit$standata$subject==i)))
+    whichpars = whichsubjectpars(fit$standata,i)
+    scores[[i]]<-matrix(NA,length(whichpars),ifelse(subjectsonly,1,sum(fit$standata$subject==i)))
     standata <- standatact_specificsubjects(fit$standata,i)
     for(j in 1:ncol(scores[[i]])){
       standata$llsinglerow=as.integer(ifelse(subjectsonly,0,j))
       sf <- stan_reinitsf(fit$stanmodel,standata,fast = TRUE)
-      scores[[i]][,j] <- sf$grad_log_prob(upars=fit$stanfit$rawest,adjust_transform = TRUE)
+      scores[[i]][,j] <- sf$grad_log_prob(
+        upars=fit$stanfit$rawest[whichpars],
+        adjust_transform = TRUE)
     }
   }
   # browser()
@@ -168,11 +188,11 @@ ctTIauto <- function(fit,tipreds=NA){
     }
   }
   
-  # s2=lapply(s2,function(x) x=x[x[,4] < .05,,drop=FALSE])
-  # s2=s2[which(unlist(lapply(s2,function(x) length(x) > 0)))]
+  if(any(is.na(TIPREDEFFECTsetup))) warning('NA found, probably unused parameters?')
+  TIPREDEFFECTsetup[is.na(TIPREDEFFECTsetup)] <- 1
   return(TIPREDEFFECTsetup)
 }
-ctIndVarAuto <- function(fit){
+ctIndVarAuto <- function(fit,aicthreshold = -2){
   scores <- scorecalc(fit,subjectsonly = FALSE)
   scores <- t(do.call(cbind,scores))
   scores <- scores[,1:fit$standata$nparams]
@@ -190,6 +210,7 @@ ctIndVarAuto <- function(fit){
   statelist <- list()
   indvarying <- c()
   out <-list()
+  try(suppressWarnings(suppressMessages({
   for(i in 1:ncol(scores)){
     # for(j in 1:ncol(tipreds)){
     # plot(sort(tipreds[,j]),scores[i,][order(tipreds[,j])],ylab=rownames(scores)[i],xlab=colnames(tipreds)[j])
@@ -216,7 +237,7 @@ ctIndVarAuto <- function(fit){
       fs <- paste0(ifelse(length(states)>1,'+',''),states[-si],collapse='+')
       ls <- lmer(data = dat,formula(paste0(f,fs)))
       as <-  as.matrix(anova(l1,ls))
-      saic[si] <- as[1,'AIC']-as[2,'AIC']
+      saic[si] <- as[2,'AIC']-as[1,'AIC']
     }
     sumout <- s1$coefficients[,1,drop=FALSE]^2
     sumout <- cbind(sumout,c(0,saic))
@@ -226,6 +247,12 @@ ctIndVarAuto <- function(fit){
     out[[i]] <- sumout
     statelist[[i]] <- states
   }
+  })),silent=TRUE)
+  
   names(out)[1:fit$standata$nparams]<-fit$setup$matsetup$parname[match(1:fit$standata$nparams,fit$setup$matsetup$param)]
+  o=sapply(out,min)
+  out <- out[order(o)]
+  out <- lapply(out,function(x) x[x[,2]< aicthreshold,,drop=FALSE])
+  out <- out[lapply(out,length)>0]
   return(out)
 }

@@ -8,7 +8,8 @@
 #' @param datalong Optional long format data object as used by \code{\link{ctStanFit}}. 
 #' If not included, data from fit will used. 
 #' @param timerange Either 'asdata' to just use the observed data range, or a numeric vector of length 2 denoting start and end of time range, 
-#' allowing for estimates outside the range of observed data. Currently unused for ctStan fits.
+#' allowing for estimates outside the range of observed data. Ranges smaller than the observed data
+#' are ignored.
 #' @param timestep Either 'asdata' to just use the observed data 
 #' (which also requires 'asdata' for timerange) or a positive numeric value
 #' indicating the time step to use for interpolating values. Lower values give a more accurate / smooth representation,
@@ -18,8 +19,9 @@
 #' are set to NA, so only expectations based on
 #' parameters and covariates are returned. 
 #' @param plot Logical. If TRUE, plots output instead of returning it. 
-#' See \code{\link{plot.ctKalman}} for the possible arguments.
-#' @param ... additional arguments to pass to \code{\link{plot.ctKalman}}.
+#' See \code{\link{plot.ctKalman}} (OpenMx based fit) or \code{\link{plot.ctKalmanDF}} 
+#' (Stan based fit) for the possible arguments.
+#' @param ... additional arguments to pass to \code{\link{plot.ctKalman}} or \code{\link{plot.ctKalmanDF}}.
 #' @return Returns a list containing matrix objects etaprior, etaupd, etasmooth, y, yprior, 
 #' yupd, ysmooth, prederror, time, loglik,  with values for each time point in each row. 
 #' eta refers to latent states and y to manifest indicators - y itself is thus just 
@@ -34,10 +36,13 @@
 #' ctKalman(ctstantestfit, timerange=c(0,60), plot=TRUE)
 #' 
 #' #Multiple subjects, y and yprior, showing plot arguments
-#' ctKalman(ctstantestfit, timerange=c(0,60), timestep=.1, plot=TRUE,
+#' plot1<-ctKalman(ctstantestfit, timerange=c(0,60), timestep=.1, plot=TRUE,
 #'   subjects=2:3, 
 #'   kalmanvec=c('y','yprior'),
 #'   errorvec=c(NA,'ypriorcov')) #'auto' would also have achieved this
+#'   
+#'  #modify plot as per normal with ggplot
+#'  print(plot1+ggplot2::coord_cartesian(xlim=c(0,10)))
 #'   }
 #' @export
 
@@ -63,9 +68,9 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep=sd(fit$stand
       idstore <- as.integer(subjects[fit$standata$subject])
     }
     if(class(fit$stanfit) %in% 'stanfit') fit$standata$dokalmanrows <-
-        as.integer(fit$standata$subject %in% subjects |
-            as.logical(match(unique(fit$standata$subject),fit$standata$subject)))
-
+      as.integer(fit$standata$subject %in% subjects |
+          as.logical(match(unique(fit$standata$subject),fit$standata$subject)))
+    
     if(removeObs){
       sapply(c('nobs_y','nbinary_y','ncont_y','whichobs_y','whichbinary_y','whichcont_y'),
         function(x) fit$standata[[x]][] <<- 0L)
@@ -90,7 +95,7 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep=sd(fit$stand
     }
     
     if(is.null(datalong)) { #get relevant data
-
+      
       if(is.null(fit$mxobj$expectation$P0)) { #if not fit with kalman filter then data needs rearranging
         datalong=suppressMessages(ctWideToLong(datawide = fit$mxobj$data$observed[subjects,,drop=FALSE],
           Tpoints=fit$ctmodelobj$Tpoints,
@@ -399,7 +404,7 @@ plot.ctKalman<-function(x, subjects=1, kalmanvec=c('y','yprior'),
 #'   elementNames=c('Y1','Y2'), 
 #'   plot=TRUE,timestep=.01)
 #' }
-plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
+plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','yprior'),
   errorvec='auto', errormultiply=1.96,plot=TRUE,elementNames=NA,
   polygonsteps=10,polygonalpha=.1,...){
   
@@ -413,6 +418,8 @@ plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
   if(any(!is.na(elementNames))) x <- subset(x,Variable %in% elementNames)
   
   klines <- kalmanvec[grep('(prior)|(upd)|(smooth)',kalmanvec)]
+  if(all(errorvec %in% 'auto')) errorvec <- klines
+  errorvec <- errorvec[grep('(prior)|(upd)|(smooth)',kalmanvec)]
   # kpoints<- kalmanvec[-grep('(prior)|(upd)|(smooth)',kalmanvec)]
   colvec=ifelse(length(subjects) > 1, 'Subject', 'Variable')
   ltyvec <- setNames( rep(NA,length(kalmanvec)),kalmanvec)
@@ -437,38 +444,40 @@ plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','ysmooth'),
     g <- g+ facet_wrap(vars(Variable),scales = 'free') 
   }
   
+  polygonsteps <- polygonsteps + 1
   polysteps <- seq(errormultiply,0,-errormultiply/(polygonsteps+1))[c(-polygonsteps+1)]
-
-  for(si in polysteps){
-    # alphasum <- alphasum + polygonalpha/polygonsteps
-    
-    d2 <- subset(d,Element %in% klines)
-    d2$sd <- d2$sd *si
-    
-    if(length(subjects) ==1){
-      g<- g+ 
-        geom_ribbon(data=d2,aes(ymin=(Value-sd),x=Time,
-          ymax=(Value+sd),fill=(Variable)),
-          alpha=ifelse(si== polysteps[1],.05,polygonalpha/polygonsteps),
-          inherit.aes = FALSE,linetype=0)
-      if(si== polysteps[1]) g <- g + 
-          geom_line(data=d2,aes(y=(Value-sd),colour=Variable),linetype='dotted',alpha=.4) + 
-          geom_line(data=d2,aes(y=(Value+sd),colour=Variable),linetype='dotted',alpha=.4)
-    } else {
-      g <- g+ 
-        geom_ribbon(data=d2,aes(ymin=(Value-sd),x=Time,
-          ymax=(Value+sd),fill=(Subject)),inherit.aes = FALSE,
-          alpha=polygonalpha/polygonsteps,linetype=0)
-      if(si== polysteps[1]) g <- g + 
-          geom_line(data=d2,aes(y=(Value-sd),colour=Subject),linetype='dotted',alpha=.7) + 
-          geom_line(data=d2,aes(y=(Value+sd),colour=Subject),linetype='dotted',alpha=.7)
-    }
-    
-    g <- g + 
-      geom_line()+
-      geom_point()+
-      theme_minimal()
+  if(any(!is.na(errorvec))){
+    for(si in polysteps){
+      # alphasum <- alphasum + polygonalpha/polygonsteps
+      
+      d2 <- subset(d,Element %in% errorvec)
+      d2$sd <- d2$sd *si
+      
+      if(length(subjects) ==1){
+        g<- g+ 
+          geom_ribbon(data=d2,aes(ymin=(Value-sd),x=Time,
+            ymax=(Value+sd),fill=(Variable)),
+            alpha=ifelse(si== polysteps[1],.05,polygonalpha/polygonsteps),
+            inherit.aes = FALSE,linetype=0)
+        if(si== polysteps[1]) g <- g + 
+            geom_line(data=d2,aes(y=(Value-sd),colour=Variable),linetype='dotted',alpha=.4) + 
+            geom_line(data=d2,aes(y=(Value+sd),colour=Variable),linetype='dotted',alpha=.4)
+      } else {
+        g <- g+ 
+          geom_ribbon(data=d2,aes(ymin=(Value-sd),x=Time,
+            ymax=(Value+sd),fill=(Subject)),inherit.aes = FALSE,
+            alpha=polygonalpha/polygonsteps,linetype=0)
+        if(si== polysteps[1]) g <- g + 
+            geom_line(data=d2,aes(y=(Value-sd),colour=Subject),linetype='dotted',alpha=.7) + 
+            geom_line(data=d2,aes(y=(Value+sd),colour=Subject),linetype='dotted',alpha=.7)
+      }
+    } 
   }
+      g <- g + 
+        geom_line()+
+        geom_point()+
+        theme_minimal()
+    
   if(plot) suppressWarnings(print(g))
   return(invisible(g))
   

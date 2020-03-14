@@ -104,29 +104,28 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
   if('ctStanFit' %in% class(x)){
     ms=ctMatsetupFreePars(x$setup$matsetup)
     e=ctExtract(x)
-    
     if(x$standata$ntipred > 0){
     if(linearise) timat <- round(ctCollapse(e$linearTIPREDEFFECT,1,mean),digits)
     if(!linearise) timat <- round(ctCollapse(e$TIPREDEFFECT,1,mean),digits)
     rownames(timat) <- ms$parname
     colnames(timat) <- x$ctstanmodel$TIpredNames
-    timat <- timat[apply(timat,1,function(x) any(x!=0)),,drop=FALSE]
+    timat <- timat[apply(x$standata$TIPREDEFFECTsetup,1,function(x) any(x!=0)),,drop=FALSE]
     } else timat <- diag(0,0)
     
     if(!is.null(e$rawpopcov)){ 
-      # browser()
-      if(!linearise) popCov <- round(ctCollapse(e$rawpopcov,1,mean),digits)
+      
+      if(!linearise) popcov <- round(ctCollapse(e$rawpopcov,1,mean),digits)
       if(linearise) {
-        popCov <- round(ctCollapse(e$popcov,1,mean),digits=digits)
+        popcov <- round(ctCollapse(e$popcov,1,mean),digits=digits)
       if(x$standata$intoverpop==1){
-        t0index <- ms$indvarying[ms$param <= x$standata$nlatent & ms$matrix %in% 1 & ms$indvarying > 0]
-        popCov[t0index,t0index] <- round(ctCollapse(e$pop_T0VAR,1,mean),digits=digits)[
+        t0index <- ms$indvarying[ms$param > 0 & ms$row <= x$standata$nlatent & ms$matrix %in% 1 & ms$indvarying > 0]
+        popcov[t0index,t0index] <- round(ctCollapse(e$pop_T0VAR,1,mean),digits=digits)[
           t0index,t0index] #is this correct...?
       }
-        rownames(popCov) <- ms$parname[as.logical(ms$indvarying)]
-        colnames(popCov) <- ms$parname[as.logical(ms$indvarying)]
+        rownames(popcov) <- ms$parname[as.logical(ms$indvarying)]
+        colnames(popcov) <- ms$parname[as.logical(ms$indvarying)]
       }
-    } else popCov <- diag(0,0)
+    } else popcov <- diag(0,0)
 
     if(!linearise) popmeans <- round(ctCollapse(e$rawpopmeans,1,mean),digits)[
       as.logical(ms$indvarying + ms$tipred),drop=FALSE]
@@ -139,49 +138,56 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
       }
     }
     
-    parmats <- summary(x,residualcov=FALSE,priorcheck=FALSE,digits=digits)
-    parmats <- data.frame(parmats$parmatrices,matrix=rownames(parmats$parmatrices))
+    # parmats <- summary(x,residualcov=FALSE,priorcheck=FALSE,digits=digits)
+    # parmats <- data.frame(parmats$parmatrices,matrix=rownames(parmats$parmatrices))
+    ctmodelmats <- listOfMatrices((x$ctstanmodelbase$pars))
     ctmodel <- x$ctstanmodelbase
-    for(i in 1:nrow(ctmodel$pars)){
-      # if(is.na(ctmodel$pars$value[i])){
-      if(ctmodel$pars$matrix[i] %in% parmats$matrix){
-        try(ctmodel$pars$value[i] <- parmats[parmats$matrix %in% ctmodel$pars$matrix[i] & 
-            ctmodel$pars$row[i] == parmats$Row & ctmodel$pars$col[i]==parmats$Col,'Mean'],silent=TRUE)
+    ####################################################################
+    for(mi in names(ctmodelmats)){
+      mimean <- ctCollapse(e[[paste0('pop_',mi)]],1,mean)
+      for(i in 1:nrow(ctmodelmats[[mi]])){
+        for(j in 1:ncol(ctmodelmats[[mi]])){
+          ctmodelmats[[mi]][i,j] <- round(mimean[i,j],digits)
+      # if(ctmodel$pars$matrix[i] %in% parmats$matrix){
+      #   try(ctmodel$pars$value[i] <- parmats[parmats$matrix %in% ctmodel$pars$matrix[i] & 
+      #       ctmodel$pars$row[i] == parmats$Row & ctmodel$pars$col[i]==parmats$Col,'Mean'],silent=TRUE)
+        }
       }
     }
-    
+    ctmodel <- c(ctmodel,ctmodelmats)
+    class(ctmodel) <- 'ctStanModel'
   } else ctmodel <- x
   
   if('ctStanModel' %in% class(ctmodel)) {
     
     if(!'ctStanFit' %in% class(x)){ #construct pop effects
-    popCov <- ctModelBuildPopCov(ctmodel)
+    popcov <- ctModelBuildPopCov(ctmodel)
     if(ctmodel$n.TIpred > 0) timat <- ctModelBuildTIeffects(ctmodel) else timat <- diag(0,0)
     if(!linearise) timat[,] <- paste0('raw_',timat)
-    popmeans<-paste0(ifelse(linearise,'','raw_'),unique(c(rownames(popCov),rownames(timat))))
+    popmeans<-paste0(ifelse(linearise,'','raw_'),unique(c(rownames(popcov),rownames(timat))))
     ctmodel<-T0VARredundancies(ctmodel)
+    ctmodel <- c(ctmodel,listOfMatrices(ctmodel$pars)) 
     }
     
-    dopopcov <- as.logical(nrow(popCov))
+    dopopcov <- as.logical(nrow(popcov))
     doti <- as.logical(nrow(timat))
     
     if(doti){
-      # both <- rownames(timat) %in% rownames(popCov)
-      pars <- unique(c(rownames(popCov),rownames(timat)))
+      # both <- rownames(timat) %in% rownames(popcov)
+      pars <- unique(c(rownames(popcov),rownames(timat)))
       newpopcov <- matrix(0,length(pars),length(pars),dimnames=list(pars,pars))
       newtimat <- matrix(0,length(pars),ncol(timat),dimnames=list(pars,colnames(timat)))
       newtimat[na.omit(match(rownames(timat),rownames(newtimat))),] <- timat
-      newpopcov[na.omit(match(rownames(popCov),rownames(newpopcov))), 
-        na.omit(match(rownames(popCov),rownames(newpopcov)))] <- popCov
-      popCov <- newpopcov
+      newpopcov[na.omit(match(rownames(popcov),rownames(newpopcov))), 
+        na.omit(match(rownames(popcov),rownames(newpopcov)))] <- popcov
+      popcov <- newpopcov
       timat <- newtimat
     }
     
     dopop <- doti||dopopcov
-    ctmodel <- c(ctmodel,listOfMatrices(ctmodel$pars)) 
     
     #symmetry of t0var
-    if('ctStanFit' %in% class(x)) ctmodel$T0VAR[upper.tri(ctmodel$T0VAR)] <- t(ctmodel$T0VAR[lower.tri(ctmodel$T0VAR)])
+    # if('ctStanFit' %in% class(x)) ctmodel$T0VAR[upper.tri(ctmodel$T0VAR)] <- t(ctmodel$T0VAR[lower.tri(ctmodel$T0VAR)])
    
      continuoustime <- ctmodel$continuoustime
   } else {
@@ -341,11 +347,11 @@ out <- paste0(out, "
   \\begin{align*}
   ",if(dopop) paste0("\\textrm{Subject parameter distribution: }
              &\\underbrace{",bmatrix(matrix(paste0('\\text{',
-             gsub('_','\\_',colnames(popCov),fixed=TRUE),'}_i')),nottext=T)," 
+             gsub('_','\\_',colnames(popcov),fixed=TRUE),'}_i')),nottext=T)," 
             }_{\\vect{\\phi}(i)} ",ifelse(linearise,"\\approx","\\sim"),
     ifelse(linearise,"","\\textrm{tform}\\left\\{"),
     " \\mathrm{N} \\left(
-              ",bmatrix(popmeans),", ", bmatrix(popCov)," \\right) ",
+              ",bmatrix(popmeans),", ", bmatrix(popcov)," \\right) ",
       if(doti) paste0(" + \\underbrace{",bmatrix(timat),"}_{\\vect{",ifelse(linearise,"\\hat",""),"\\beta}}","
   \\underbrace{
     ",bmatrix(matrix(colnames(timat))),"}_{\\vect{z}}"),

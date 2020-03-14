@@ -7,7 +7,7 @@
 \method{plot}{ctKalmanDF}(
   x,
   subjects = 1,
-  kalmanvec = c("y", "ysmooth"),
+  kalmanvec = c("y", "yprior"),
   errorvec = "auto",
   errormultiply = 1.96,
   plot = TRUE,

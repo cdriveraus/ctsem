@@ -14,7 +14,7 @@ ctStanTIpredeffects(
   whichpars = "all",
   nsamples = 100,
   timeinterval = 1,
-  nsubjects = 50,
+  nsubjects = 20,
   filter = NA,
   plot = FALSE
 )
@@ -57,8 +57,9 @@ Character string 'all' can also be used.}
 \item{timeinterval}{positive numeric indicating time interval to use for discrete time parameter matrices,
 if \code{parmatrices=TRUE}.}
 
-\item{nsubjects}{Positive integer specifying the number of subjects to compute values for.
-Character string 'all' can also be used. Time taken is a function of nsubjects*niterations.}
+\item{nsubjects}{Positive integer specifying the number of subjects to compute values for. When only one TIpred 
+is used, this specifies the number of points along the curve.
+Character string 'all' can also be used. Time taken for plotting is a function of nsubjects*niterations.}
 
 \item{filter}{either NA, or a length 2 vector, where the first element contains the time independent predictor index
 to filter by, and the second contains the comparison operator in string form (e.g. "< 3",
