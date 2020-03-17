@@ -419,7 +419,7 @@ plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','yprior'),
   
   klines <- kalmanvec[grep('(prior)|(upd)|(smooth)',kalmanvec)]
   if(all(errorvec %in% 'auto')) errorvec <- klines
-  errorvec <- errorvec[grep('(prior)|(upd)|(smooth)',kalmanvec)]
+  errorvec <- errorvec[grep('(prior)|(upd)|(smooth)',errorvec)]
   # kpoints<- kalmanvec[-grep('(prior)|(upd)|(smooth)',kalmanvec)]
   colvec=ifelse(length(subjects) > 1, 'Subject', 'Variable')
   ltyvec <- setNames( rep(NA,length(kalmanvec)),kalmanvec)

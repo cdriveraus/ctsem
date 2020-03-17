@@ -1,8 +1,8 @@
-ctModelBuildPopCov <- function(ctm){ #for latex
+ctModelBuildPopCov <- function(ctm,linearise){ #for latex
   ctm <- T0VARredundancies(ctm)
   pars <- unique(ctm$pars$param[ctm$pars$indvarying])
   d=length(pars)
-  m <- matrix(paste0('PCov_',rep(1:d,d),'_',rep(1:d,each=d)),d,d,dimnames = list(pars,pars))
+  m <- matrix(paste0(ifelse(linearise,'','raw_'),'PCov_',rep(1:d,d),'_',rep(1:d,each=d)),d,d,dimnames = list(pars,pars))
   m[upper.tri(m)]=t(m[lower.tri(m)])
   return(m)
 }
@@ -161,7 +161,7 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
   if('ctStanModel' %in% class(ctmodel)) {
     
     if(!'ctStanFit' %in% class(x)){ #construct pop effects
-    popcov <- ctModelBuildPopCov(ctmodel)
+    popcov <- ctModelBuildPopCov(ctmodel,linearise=linearise)
     if(ctmodel$n.TIpred > 0) timat <- ctModelBuildTIeffects(ctmodel) else timat <- diag(0,0)
     if(!linearise) timat[,] <- paste0('raw_',timat)
     popmeans<-paste0(ifelse(linearise,'','raw_'),unique(c(rownames(popcov),rownames(timat))))
@@ -185,9 +185,20 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
     }
     
     dopop <- doti||dopopcov
-    
-    #symmetry of t0var
-    # if('ctStanFit' %in% class(x)) ctmodel$T0VAR[upper.tri(ctmodel$T0VAR)] <- t(ctmodel$T0VAR[lower.tri(ctmodel$T0VAR)])
+
+    if(!'ctStanFit' %in% class(x)){ #if a model
+
+      t0index <- unique(ctmodel$pars$row[ctmodel$pars$matrix %in% 'T0MEANS' & 
+          ctmodel$pars$indvarying & is.na(ctmodel$pars$value)])
+      if(length(t0index)){
+        t0varpopcov <- matrix(
+          paste0('Pcorsqrt_',t0index,'_',rep(t0index,each=length(t0index))),
+          nrow=length(t0index),ncol=length(t0index))
+        t0varpopcov[upper.tri(t0varpopcov)] <- 0
+        # ms$indvarying[ms$param > 0 & ms$row <= x$standata$nlatent & ms$matrix %in% 1 & ms$indvarying > 0]
+      ctmodel$T0VAR[t0index,t0index] <- t0varpopcov
+      }
+    }
    
      continuoustime <- ctmodel$continuoustime
   } else {

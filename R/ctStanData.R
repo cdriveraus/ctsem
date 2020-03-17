@@ -82,7 +82,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
       
     }
     
-    if(ctm$nlcontrol$nldynamics==TRUE && !ctm$intoverstates) stop('intoverstates must be TRUE for nonlinear dynamics')
+    # if(ctm$nlcontrol$nldynamics==TRUE && !ctm$intoverstates) stop('intoverstates must be TRUE for nonlinear dynamics')
     
     if(nlmeasurement=='auto') nlmeasurement <- FALSE
     if(nlmeasurement) message('Using nonlinear Kalman filter for measurement update');
@@ -319,7 +319,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     oldsubi<-subi
   }
   
-  if(mean(dT) > 3) message('Average time interval greater than 3 -- if using default priors, consider rescaling time data...')
+  if(mean(dT) > 3) message('Average time interval > 3 -- in typical settings this can be too large, consider time scaling...')
   
 
   
@@ -384,6 +384,13 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   standata$popcovn=1000L
   standata$llsinglerow=0L
   standata$doonesubject=0L
+  if(any(ctm$manifesttype==1)){
+    standata$nJyfinite <- as.integer(ctm$n.latent)
+    standata$sJyfinite <- array(as.integer(1:ctm$n.latent))
+  } else{
+    standata$nJyfinite <- 0L
+    standata$sJyfinite <- integer()
+  }
   
   if(!is.null(ctm$TIpredAuto) && ctm$TIpredAuto %in% c(1L,TRUE)) standata$TIpredAuto <- 1L else standata$TIpredAuto <- 0L
   

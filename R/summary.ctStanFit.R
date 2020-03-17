@@ -36,8 +36,8 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   monvars <- c('mean','sd','2.5%','50%','97.5%')
   
   if('stanfit' %in% class(object$stanfit)){ 
-    s<-suppressWarnings(getMethod('summary','stanfit')(object$stanfit))
-    if('98%' %in% colnames(s$summary)) colnames(s$summary)[colnames(s$summary)=='98%'] <- '97.5%'
+    smr<-suppressWarnings(getMethod('summary','stanfit')(object$stanfit))
+    if('98%' %in% colnames(smr$summary)) colnames(smr$summary)[colnames(smr$summary)=='98%'] <- '97.5%'
     e <- ctExtract(object) 
   }
 
@@ -256,19 +256,20 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   
   
   if('stanfit' %in% class(object$stanfit)){
-    popsd=s$summary[c(grep('^popsd',rownames(s$summary),fixed=FALSE)),
-      c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE] [ object$data$indvaryingindex,,drop=FALSE]
+    # browser()
+    popsd=smr$summary[c(grep('^popsd',rownames(smr$summary),fixed=FALSE)),
+      c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE] #[ object$data$indvaryingindex,,drop=FALSE]
     rownames(popsd)=parnames[ object$data$indvaryingindex]
-    # popmeans=s$summary[c(grep('hmean_',rownames(s$summary))),
+    # popmeans=smr$summary[c(grep('hmean_',rownames(smr$summary))),
     #   c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE]
-    popmeans=s$summary[c(grep('popmeans[', rownames(s$summary),fixed=TRUE)),
+    popmeans=smr$summary[c(grep('popmeans[', rownames(smr$summary),fixed=TRUE)),
       c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE]
     popmeans=popmeans[(nrow(popmeans)/2+1):nrow(popmeans),,drop=FALSE]
     rownames(popmeans) <- parnames
     
     
     
-    logprob=s$summary[c(grep('lp',rownames(s$summary))),
+    logprob=smr$summary[c(grep('lp',rownames(smr$summary))),
       c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE]
   }
   
@@ -305,7 +306,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   
   
   
-  # out$posteriorpredictive=round(s$summary[c(grep('stateppll',rownames(s$summary))),
+  # out$posteriorpredictive=round(smr$summary[c(grep('stateppll',rownames(smr$summary))),
   #     c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE],3)
   # }
   

@@ -510,7 +510,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     jl2$indvarying <- FALSE
     jl2$sdscale <- 1
     ctm$pars <- rbind(ctm$pars,jl2)
-    
     ctm <- ctModelTransformsToNum(ctm)
     
     ctm$pars <- ctStanModelCleanctspec(ctm$pars)
@@ -527,15 +526,21 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     if(!all(ctm$pars$transform[!is.na(suppressWarnings(as.integer(ctm$pars$transform)))] %in% c(0,1,2,3,4))) stop('Unknown transform specified -- integers should be 0 to 4')
 
     #fix binary manifestvariance
-    if(any(ctm$manifesttype==1)){ #if any non continuous variables, (with free parameters)...
-      if(any(is.na(as.numeric(c(ctm$pars$value[ctm$pars$matrix=='MANIFESTVAR'][ctm$pars$row[ctm$pars$matrix=='MANIFESTVAR'] %in% which(ctm$manifesttype==1)],
-        ctm$pars$value[ctm$pars$matrix=='MANIFESTVAR'][ctm$pars$col[ctm$pars$matrix=='MANIFESTVAR'] %in% which(ctm$manifesttype!=0)]))))){
+    
+    if(any(ctm$manifesttype > 0)){ #if any non continuous variables, (with free parameters)...
+      nlcontrol$nlmeasurement <- TRUE
+      errfix <- which(ctm$pars$matrix %in% 'MANIFESTVAR' & 
+            (ctm$pars$row %in% which(ctm$manifesttype==1) | 
+                ctm$pars$col %in% which(ctm$manifesttype==1)) &
+          is.na(suppressWarnings(as.numeric(
+            ctm$pars$value))))
+      
+        if(length(errfix) > 0){
         message('Fixing any free MANIFESTVAR parameters for binary indicators to deterministic calculation')
-        ctm$pars$value[ctm$pars$matrix=='MANIFESTVAR'][ctm$pars$row[ctm$pars$matrix=='MANIFESTVAR'] %in% which(ctm$manifesttype==1)] <- 0
-        ctm$pars$value[ctm$pars$matrix=='MANIFESTVAR'][ctm$pars$col[ctm$pars$matrix=='MANIFESTVAR'] %in% which(ctm$manifesttype==1)] <- 0
-        ctm$pars$value[ctm$pars$matrix=='MANIFESTVAR' & ctm$pars$row %in% which(ctm$manifesttype==1) & ctm$pars$row == ctm$pars$col] <- 1e-5
+        ctm$pars$value[errfix] <- 1e-5
+        ctm$pars[errfix,c('param','transform','multiplier','offset','meanscale','inneroffset','sdscale')] <- NA
+        ctm$pars$indvarying[errfix] <- FALSE
       }}
-    # ctm$pars <- ctStanModelCleanctspec(ctm$pars)
     
 
     #generate model matrix lists for stan
@@ -687,9 +692,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         #control arguments for rstan
         # if(is.null(control$adapt_term_buffer)) control$adapt_term_buffer <- min(c(iter/10,max(iter-20,75)))
         if(is.null(control$adapt_delta)) control$adapt_delta <- .8
-        if(is.null(control$adapt_window)) control$adapt_window <- 20
+        if(is.null(control$adapt_window)) control$adapt_window <- 5
         if(is.null(control$max_treedepth)) control$max_treedepth <- 10
-        if(is.null(control$adapt_init_buffer)) control$adapt_init_buffer=20
+        if(is.null(control$adapt_init_buffer)) control$adapt_init_buffer=2
         if(is.null(control$stepsize)) control$stepsize=.001
         if(is.null(control$metric)) control$metric='diag_e'
         
@@ -698,7 +703,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         # browser()
         stanargs <- list(object = sm, 
           # enable_random_init=TRUE,
-          init_r=.1,
+          init_r=.3,
           # init=staninits,
           refresh=20,
           iter=iter,

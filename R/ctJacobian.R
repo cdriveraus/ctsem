@@ -23,6 +23,9 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
       # m$pars$param[ri] <- gsub('param',m$pars$param[ri],m$pars$transform[ri])
     } else if(!grepl('[',m$pars$param[ri],fixed=TRUE) && !is.na(m$pars$param[ri])) m$pars$param[ri] <- paste0(m$pars$matrix[ri],'[',m$pars$row[ri],',',m$pars$col[ri],']')
   }
+  #replace inverse logit temporarily
+  m$pars$param <- gsub('\\binv_logit\\((.*)\\)','1/\\(1+exp\\(-\\(\\1\\)\\)\\)',m$pars$param)
+  
   mats <- listOfMatrices(m$pars)
   matnames <- names(ctStanMatricesList(unsafe=TRUE)$base)
   
@@ -186,6 +189,7 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
     Jout[[typei]] <- Jm
   }#end type loop
   # print(Jout)
+   # browser()
   return(Jout)
 }
 

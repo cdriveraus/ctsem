@@ -41,7 +41,8 @@ ssmodel <- ctModel(type='stanct', n.latent=2, n.manifest=1,
  DIFFUSION=matrix(c(0, 0, 0, "diffusion"), ncol=2, nrow=2))
 
 #fit
-ssfit <- ctStanFit(datalong, ssmodel, iter=300, chains=2)
+ssfit <- ctStanFit(datalong, ssmodel, iter=300, 
+  optimize=FALSE, chains=2)
 ctStanParnames(ssfit,substrings=c('pop_','popsd'))
 }
 
