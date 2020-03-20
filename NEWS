@@ -1,6 +1,15 @@
 ctsem news:
 
-10/1/2020
+18/3/2020
+####3.2.0####
+- Change to defaults of ctStanFit -- optimization without priors is new default.
+- Optimization with binary variables much improved -- specify using: 
+  mymodel$manifesttype <- c(1,0,1) 
+  for 3 manifest variables, 1st and last binary and second continuous.
+- Improved latex output for models and fits using ctModelLatex
+- Minor plotting / other fixes
+
+10/2/2020
 #### 3.1.1 ####
 - Reverted to non sequential measurement update introduced in 3.1.0
 - Further hessian estimation fixes

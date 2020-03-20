@@ -96,10 +96,11 @@ checkTIauto <- function(){
   
   checkm$TIpredAuto <- 1L
   
-  fit1<-ctStanFit(tdat,checkm,chains=1,optimize=TRUE,cores=1,verbose=1,
+  fit1<-ctStanFit(tdat,checkm,chains=1,optimize=TRUE,cores=2,verbose=0,
     # intoverpop=F,plot=T,
     # init=init,
-    optimcontrol=list(is=FALSE,stochastic=T,subsamplesize=1,carefulfit=F),nopriors=TRUE)
+    optimcontrol=list(is=FALSE,stochastic=T,subsamplesize=1,carefulfit=F),
+    nopriors=TRUE)
 }
 
 whichsubjectpars <- function(standata,subjects=NA){
@@ -107,21 +108,23 @@ whichsubjectpars <- function(standata,subjects=NA){
     (standata$nindvarying^2-standata$nindvarying)/2
   whichbase <- 1:a1
   if(standata$intoverpop ==0 && standata$nindvarying > 0){ #then there are subject pars
-  whichsubjects <- a1+cseq(from=subjects,to=standata$nindvarying*standata$nsubjects,
-    by=standata$nsubjects)
-  whichbase <- c(whichbase,whichsubjects)
+    whichsubjects <- a1+cseq(from=subjects,to=standata$nindvarying*standata$nsubjects,
+      by=standata$nsubjects)
+    whichbase <- c(whichbase,whichsubjects)
   }
   if(standata$ntipredeffects > 0) {
-    tipredstart <- (a1+standata$nindvarying*standata$nsubjects+standata$ntipredeffects)
-    whichbase <- c(whichbase,tipredstart:(tipredstart+(standata$nparams-standata$ntipredeffects)))
+    tipredstart <- (a1+
+        ifelse(standata$intoverpop,0,standata$nindvarying*standata$nsubjects)+1)
+    whichbase <- c(whichbase,tipredstart:(tipredstart+standata$ntipredeffects+
+        ifelse(standata$doonesubject >0,0,-1)))
   }
   return(whichbase)
 }
-  
+
 
 scorecalc <- function(fit,subjectsonly=TRUE){
   fit$standata$nopriors=1L
-  
+
   scores <- list()
   for(i in 1:fit$standata$nsubjects){
     whichpars = whichsubjectpars(fit$standata,i)
@@ -193,66 +196,68 @@ ctTIauto <- function(fit,tipreds=NA){
   return(TIPREDEFFECTsetup)
 }
 ctIndVarAuto <- function(fit,aicthreshold = -2){
-  scores <- scorecalc(fit,subjectsonly = FALSE)
-  scores <- t(do.call(cbind,scores))
-  scores <- scores[,1:fit$standata$nparams]
-  colnames(scores) <- paste0('p',1:ncol(scores))
-  sdat <- fit$standata
-  sdat$savescores <- 1L
-  sdat$nopriors <- 1L
-  sdat$popcovn <- 5L
-  e=rstan::constrain_pars(stan_reinitsf(fit$stanmodel,sdat),fit$stanfit$rawest)
-  colnames(e$etaprior) <- paste0('etaprior',1:ncol(e$etaprior))
-  etaprior <- scale(e$etaprior[,1:fit$ctstanmodel$n.latent,drop=FALSE])
-  etaprior2 <- scale(etaprior^2)
-  colnames(etaprior2) <- paste0(colnames(etaprior),'_sq')
-  scores <- scale(scores)
-  statelist <- list()
-  indvarying <- c()
-  out <-list()
-  try(suppressWarnings(suppressMessages({
-  for(i in 1:ncol(scores)){
-    # for(j in 1:ncol(tipreds)){
-    # plot(sort(tipreds[,j]),scores[i,][order(tipreds[,j])],ylab=rownames(scores)[i],xlab=colnames(tipreds)[j])
-    # }
-    states <-c()
-    dat=data.frame(scores=scores[,i],subject=fit$standata$subject,one=1,etaprior,etaprior2)
-    f <- paste0('scores ~ (1|subject)')
-    f1<-paste0('scores ~ (1|one)')
-    f2<- paste0('+',c(colnames(etaprior),colnames(etaprior2)),collapse='+')
-    l=lmer(data = dat,formula(paste0(f,f2)))
-    s=summary(l)
-    states<-rownames(s$coefficients[abs(s$coefficients[,3]) > 1.96 & 
-        abs(s$coefficients[,1]) > .1,])[-1]
-    f2 <- paste0(ifelse(length(states)>0,'+',''),states,collapse='+')
-    l1 <- lmer(data = dat,formula(paste0(f,f2)))
-    l2=lmer(data = dat,formula(paste0(f1,f2)),control=lmerControl(check.nlev.gtr.1="ignore"))
-    a=as.matrix(anova(l,l1,l2))
-    # a=a[2,]-a[1,]
-    s1=summary(l1)
-    if(s1$varcor$subject[1]^2 > .05 && a[2,'AIC']-a[1,'AIC'] < 3) indvarying[i] <- TRUE #if 5% or more variance explained 
+  if(requireNamespace('lme4',quietly=TRUE)){
+    scores <- scorecalc(fit,subjectsonly = FALSE)
+    scores <- t(do.call(cbind,scores))
+    scores <- scores[,1:fit$standata$nparams]
+    colnames(scores) <- paste0('p',1:ncol(scores))
+    sdat <- fit$standata
+    sdat$savescores <- 1L
+    sdat$nopriors <- 1L
+    sdat$popcovn <- 5L
+    e=rstan::constrain_pars(stan_reinitsf(fit$stanmodel,sdat),fit$stanfit$rawest)
+    colnames(e$etaprior) <- paste0('etaprior',1:ncol(e$etaprior))
+    etaprior <- scale(e$etaprior[,1:fit$ctstanmodel$n.latent,drop=FALSE])
+    etaprior2 <- scale(etaprior^2)
+    colnames(etaprior2) <- paste0(colnames(etaprior),'_sq')
+    scores <- scale(scores)
+    statelist <- list()
+    indvarying <- c()
+    out <-list()
+    try(suppressWarnings(suppressMessages({
+      for(i in 1:ncol(scores)){
+        # for(j in 1:ncol(tipreds)){
+        # plot(sort(tipreds[,j]),scores[i,][order(tipreds[,j])],ylab=rownames(scores)[i],xlab=colnames(tipreds)[j])
+        # }
+        states <-c()
+        dat=data.frame(scores=scores[,i],subject=fit$standata$subject,one=1,etaprior,etaprior2)
+        f <- paste0('scores ~ (1|subject)')
+        f1<-paste0('scores ~ (1|one)')
+        f2<- paste0('+',c(colnames(etaprior),colnames(etaprior2)),collapse='+')
+        l=lme4::lmer(data = dat,formula(paste0(f,f2)))
+        s=summary(l)
+        states<-rownames(s$coefficients[abs(s$coefficients[,3]) > 1.96 & 
+            abs(s$coefficients[,1]) > .1,])[-1]
+        f2 <- paste0(ifelse(length(states)>0,'+',''),states,collapse='+')
+        l1 <- lme4::lmer(data = dat,formula(paste0(f,f2)))
+        l2=lme4::lmer(data = dat,formula(paste0(f1,f2)),control=lme4::lmerControl(check.nlev.gtr.1="ignore"))
+        a=as.matrix(anova(l,l1,l2))
+        # a=a[2,]-a[1,]
+        s1=summary(l1)
+        if(s1$varcor$subject[1]^2 > .05 && a[2,'AIC']-a[1,'AIC'] < 3) indvarying[i] <- TRUE #if 5% or more variance explained 
+        
+        saic <-c()
+        for(si in seq_along(states)){
+          fs <- paste0(ifelse(length(states)>1,'+',''),states[-si],collapse='+')
+          ls <- lme4::lmer(data = dat,formula(paste0(f,fs)))
+          as <-  as.matrix(anova(l1,ls))
+          saic[si] <- as[2,'AIC']-as[1,'AIC']
+        }
+        sumout <- s1$coefficients[,1,drop=FALSE]^2
+        sumout <- cbind(sumout,c(0,saic))
+        sumout <- rbind(sumout, c(s1$varcor$subject[1]^2,a[1,'AIC']-a[2,'AIC']))[-1,,drop=FALSE]
+        rownames(sumout)[nrow(sumout)] <- 'random'
+        colnames(sumout)[2] <- 'AICdiff'
+        out[[i]] <- sumout
+        statelist[[i]] <- states
+      }
+    })),silent=TRUE)
     
-    saic <-c()
-    for(si in seq_along(states)){
-      fs <- paste0(ifelse(length(states)>1,'+',''),states[-si],collapse='+')
-      ls <- lmer(data = dat,formula(paste0(f,fs)))
-      as <-  as.matrix(anova(l1,ls))
-      saic[si] <- as[2,'AIC']-as[1,'AIC']
-    }
-    sumout <- s1$coefficients[,1,drop=FALSE]^2
-    sumout <- cbind(sumout,c(0,saic))
-    sumout <- rbind(sumout, c(s1$varcor$subject[1]^2,a[1,'AIC']-a[2,'AIC']))[-1,,drop=FALSE]
-    rownames(sumout)[nrow(sumout)] <- 'random'
-    colnames(sumout)[2] <- 'AICdiff'
-    out[[i]] <- sumout
-    statelist[[i]] <- states
-  }
-  })),silent=TRUE)
-  
-  names(out)[1:fit$standata$nparams]<-fit$setup$matsetup$parname[match(1:fit$standata$nparams,fit$setup$matsetup$param)]
-  o=sapply(out,min)
-  out <- out[order(o)]
-  out <- lapply(out,function(x) x[x[,2]< aicthreshold,,drop=FALSE])
-  out <- out[lapply(out,length)>0]
-  return(out)
+    names(out)[1:fit$standata$nparams]<-fit$setup$matsetup$parname[match(1:fit$standata$nparams,fit$setup$matsetup$param)]
+    o=sapply(out,min)
+    out <- out[order(o)]
+    out <- lapply(out,function(x) x[x[,2]< aicthreshold,,drop=FALSE])
+    out <- out[lapply(out,length)>0]
+    return(out)
+  } else stop('lme4 package needed -- install.packages("lme4")')
 }

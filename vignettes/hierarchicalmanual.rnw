@@ -7,6 +7,7 @@
 \usepackage[T1]{fontenc} 
 \usepackage{lmodern}
 \usepackage[utf8]{inputenc}
+\usepackage{rotating}
 
 \usepackage[style=apa,backend=biber,doi=true,natbib=true,url=true,sortcites=true,sorting=nyt]{biblatex}
 \usepackage[british]{babel}
@@ -116,7 +117,7 @@ library('ctsem')
 library(knitr)
 set.seed(22)
 knit_hooks$set(crop = hook_pdfcrop)
-opts_chunk$set(warning = FALSE, fig.align = 'center', width.cutoff = 100, fig.show = 'hold', eval = TRUE, echo = TRUE, message = FALSE, comment = NA, tidy = FALSE, autodep=TRUE, out.truncate = 100, size='small', crop=TRUE, fig.pos="htbp",pardef=TRUE)
+opts_chunk$set(warning = FALSE, fig.align = 'center', width.cutoff = 100, fig.show = 'hold', eval = TRUE, echo = TRUE, message = FALSE, comment = NA, tidy = FALSE, autodep=TRUE, out.truncate = 100, size='small', crop=TRUE, fig.pos="htbp",pardef=TRUE,cache=TRUE)
 knit_hooks$set(pardef = function(before, options, envir) {
     if (before) par(mfrow=c(1,1),mgp=c(1.5,.6,0),mar=c(3,2,2,1)+.2, cex=.7)  
 })
@@ -249,11 +250,11 @@ Specify model using \verb}ctModel(type="stanct",...)}. \verb|"stanct"| specifies
 model<-ctModel(type='stanct',
   latentNames=c('eta1','eta2'),
   manifestNames=c('Y1','Y2'),
-  CINT=matrix(c('cint1','cint2'),nrow=2,ncol=1),
+  CINT=matrix(c('cint1','cint2 |||| TI1'),nrow=2,ncol=1),
   MANIFESTMEANS=matrix(c(0,0),nrow=2,ncol=1),
   TDpredNames='TD1', 
-  TIpredNames=c('TI1'),
-  LAMBDA=diag(2))
+  TIpredNames = 'TI1',tipredDefault = FALSE,
+  LAMBDA=diag(2)) 
 @
 
 It is possible to simplify the specification of parameter matrices somewhat, by passing a vector of values and or parameters to be put row-wise (distinct from the R default of column-wise) into a matrix of the correct size. Singular values can also be used as a fill for the entire matrix. The above model in this shorter form is specified like:
@@ -262,21 +263,21 @@ It is possible to simplify the specification of parameter matrices somewhat, by 
 model<-ctModel(type='stanct',
   latentNames=c('eta1','eta2'),
   manifestNames=c('Y1','Y2'),
-  CINT=c('cint1','cint2'),
+  CINT=c('cint1','cint2 |||| TI1'),
   MANIFESTMEANS=0,
   TDpredNames='TD1', 
-  TIpredNames=c('TI1'),
+  TIpredNames = 'TI1',tipredDefault = FALSE,
   LAMBDA=c(1,0,0,1))
 @
 
-The code above specifies a first order bivariate latent process model, with each process measured by a single, potentially noisy, manifest variable. A single time dependent predictor is included in the model, and a time independent predictor. To see the subject level model equation, the \verb|ctModelLatex| function can be used on the model object, generating output as shown in Figure \ref{fig:ctmodellatexout}.
+The code above specifies a first order bivariate latent process model, with each process measured by a single, potentially noisy, manifest variable. A single time dependent predictor is included in the model, as well as a single time independent predictor with effects restricted to only the second continuous intercept. To see the between and within subject model equations, the \verb|ctModelLatex| function can be used on the model object, generating output as shown in Figure \ref{fig:ctmodellatexout}.
 
 <<texout,results='asis',echo=FALSE>>=
-cat(paste0('\\begin{figure}'))
-cat(ctModelLatex(model,textsize = 'footnotesize',compile = FALSE,equationonly = TRUE))
-cat('\\caption{Output from ctModelLatex function}
+cat(paste0('\\begin{sidewaysfigure}'))
+cat(ctModelLatex(model,textsize = 'tiny',compile = FALSE,equationonly = TRUE))
+cat('\\caption{Output from ctModelLatex function }
 \\label{fig:ctmodellatexout}
-\\end{figure}')
+\\end{sidewaysfigure}') 
 @
 
 Table \ref{tab:ctmodel} shows the basic arguments one may consider and their link to the dynamic model parameters. Note that ctModel requires variance covariance matrices (DIFFUSION, T0VAR, MANIFESTVAR) to be specified in a matrix square root form, with standard deviations on the diagonal, covariance related parameters on the lower off diagonal (excluding MANIFESTVAR which should be diagonal only), and (typically) zeroes on the upper off diagonal. While it is possible to fix the lower off diagonals of covariance matrices to non-zero values, in general this is difficult to interpret because of the necessary matrix transformations, thus we recommend either to fix to zero, or leave free. 
@@ -313,7 +314,7 @@ The \verb|pars| subobject of the created model object (in this case, \verb|model
 head(model$pars,4)
 @
 
-By default, intercept related model parameters (T0MEANS, MANIFESTMEANS, CINT) are set to individually varying using a correlated random effects formulation, while other parameters are fixed across subjects. In contrast to this, when time independent predictors are included (time invariant covariates), the default is that they affect all subject level parameters. One may modify the output model to further restrict, or allow, between subject differences (set some parameters to not vary over individuals), alter the transformation used to set the prior / bounds, or restrict which effects of time independent predictors to estimate -- see the section on adjusting model specification for details on this.  
+By default, intercept related model parameters (T0MEANS, MANIFESTMEANS, CINT) are set to individually varying using a correlated random effects formulation, while other parameters are fixed across subjects. In contrast to this, when time independent predictors are included (time invariant covariates), the default (adjustable using the \verb|tipredDefault| argument to ctModel) that they affect all free subject level parameters. One may modify the output model to further restrict, or allow, between subject differences (set some parameters to not vary over individuals), alter the transformation used to set the prior / bounds, or restrict which effects of time independent predictors to estimate -- see the section on adjusting model specification for details on this.  
 
 Priors are included by default but for those who prefer maximum likelihood, they can be switched off during model fitting using the \verb|nopriors=TRUE| argument. For such cases the information in this text regarding priors is obviously less relevant, however some awareness may be useful as a) priors are always used during an initial rough estimation, and b) although the prior probability is not relevant, some parameters (such as standard deviations) rely on transformations to ensure they stay within a particular range. 
 
@@ -385,10 +386,10 @@ Because time independent predictors give a linear effect \textit{prior} to any n
 
 <<tipredeffects,echo=TRUE, fig.width=5, fig.height=4, fig.cap='Expectations for individuals parameter values change depending on their score on time independent predictors.'>>=
 ctStanTIpredeffects(fit, plot = TRUE, whichpars=c('dtDRIFT[2,1]','CINT'), 
- timeinterval = .5, whichTIpreds = 1, includeMeanUncertainty = TRUE)
+ timeinterval = .5, whichTIpreds = 1, includeMeanUncertainty = TRUE) 
 @
 
-Figure \ref{fig:tipredeffects} shows how the expectation for an individuals parameter value is likely to change depending on the value they have for the time independent predictor specified. In this example, the discrete time drift effects for a time interval of 0.2, as well as the continuous intercepts parameters, are shown. Multiple predictors can be specified, and the combined effect based on observed predictor combinations will be shown, but this will likely make no sense unless there is a deterministic relation between the two -- this can be useful for including linear and quadratic effects, for instance, wherein the first predictor is linear, and the second quadratic. The nsamples and nsubjects parameters specify how many different parameter samples, and predictor values, are used -- higher values take longer to compute, but give smoother / more accurate plots.
+Figure \ref{fig:tipredeffects} shows how the expectation for an individuals parameter value is likely to change depending on the value they have for the time independent predictor specified. In this example, the discrete time drift effects for a time interval of 0.5, as well as the continuous intercepts parameters, are shown. Only one of these has a non-zero effect, because the others were not included in our model. Multiple predictors can be specified, and the combined effect based on observed predictor combinations will be shown, but this will likely make no sense unless there is a deterministic relation between the two -- this can be useful for including linear and quadratic effects, for instance, wherein the first predictor is linear, and the second quadratic. The nsamples and nsubjects parameters specify how many different parameter samples, and predictor values, are used -- higher values take longer to compute, but give smoother / more accurate plots.
 
 \section{Additional details}
 \subsection{Detailed model specification}
@@ -514,7 +515,8 @@ datalong <- cbind(id, time, sunspots)
    DIFFUSION=matrix(c(0, 0, 0, "diffusion"), ncol=2, nrow=2))
 
 #fit
-ssfit <- ctStanFit(datalong, ssmodel, iter=300, chains=2)
+ssfit <- ctStanFit(datalong, ssmodel, 
+  iter=300, chains=2,optimize=FALSE)
 
 #output
 summary(ssfit)$popmeans

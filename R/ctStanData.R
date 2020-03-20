@@ -1,5 +1,5 @@
 ctStanData <- function(ctm, datalong,optimize,derrind='all'){
-  
+  datalong <- datalong[,c(ctm$timeName,ctm$subjectIDname,ctm$manifestNames,ctm$TDpredNames,ctm$TIpredNames)]
       #start data section
   # if('data.table' %in% class(datalong) || 'tbl' %in% class(datalong)) 
    
@@ -128,7 +128,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
         if(optimize){
           message(paste0('Missingness in TIpreds - single imputing ', sum(is.na(tipreds)),'  NA\'s to allow optimization -- TI predictor effect estimates will be overly confident.'))
           tipreds[is.na(tipreds)] = 0
-          
+        
           meandat <- data.table((datalong))[ , lapply(.SD, function(x) 
             mean(x,na.rm=TRUE)) , 
             by=c("id")]

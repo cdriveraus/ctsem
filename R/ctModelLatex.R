@@ -2,7 +2,7 @@ ctModelBuildPopCov <- function(ctm,linearise){ #for latex
   ctm <- T0VARredundancies(ctm)
   pars <- unique(ctm$pars$param[ctm$pars$indvarying])
   d=length(pars)
-  m <- matrix(paste0(ifelse(linearise,'','raw_'),'PCov_',rep(1:d,d),'_',rep(1:d,each=d)),d,d,dimnames = list(pars,pars))
+  m <- matrix(paste0(ifelse(linearise,'','raw'),'PCov_',rep(1:d,d),'_',rep(1:d,each=d)),d,d,dimnames = list(pars,pars))
   m[upper.tri(m)]=t(m[lower.tri(m)])
   return(m)
 }
@@ -19,7 +19,7 @@ ctModelBuildTIeffects <- function(ctm){ #for latex
   }
   for(i in 1:nrow(timat)){
     for(j in 1:ncol(timat)){
-      if(timat[i,j] !=0) timat[i,j] = paste0('tip_',pars[i],'_',gsub('_effect','',tieffects[j],fixed=TRUE))
+      if(timat[i,j] !=0) timat[i,j] = paste0(pars[i],'_',gsub('_effect','',tieffects[j],fixed=TRUE))
     }}
   return(timat)
 }
@@ -356,7 +356,7 @@ out <- paste0(out, "
  \\begin{",textsize,"}
  \\setcounter{MaxMatrixCols}{200}
   \\begin{align*}
-  ",if(dopop) paste0("\\textrm{Subject parameter distribution: }
+  ",if(dopop) paste0("\\parbox{10em}{\\centering{Subject\\linebreak parameter\\linebreak distribution:}}
              &\\underbrace{",bmatrix(matrix(paste0('\\text{',
              gsub('_','\\_',colnames(popcov),fixed=TRUE),'}_i')),nottext=T)," 
             }_{\\vect{\\phi}(i)} ",ifelse(linearise,"\\approx","\\sim"),
@@ -367,7 +367,7 @@ out <- paste0(out, "
   \\underbrace{
     ",bmatrix(matrix(colnames(timat))),"}_{\\vect{z}}"),
     ifelse(linearise,"","\\right\\}")," \\\\"),
-  "\\textrm{Initial latent states: }
+  "\\parbox{10em}{\\centering{Initial\\linebreak latent\\linebreak state:}}
   &\\underbrace{",bmatrix(matrix(paste0(ctmodel$latentNames)))," 
     \\big{(}t_0\\big{)}}_{\\vect{\\eta} (t_0)}	\\sim \\mathrm{N} \\left(
               \\underbrace{
@@ -377,7 +377,7 @@ out <- paste0(out, "
         ",bmatrix(ctmodel$T0VAR),if(!'ctStanFit' %in% class(x)) "\\right\\}","
       ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{Q^{*}}_{t0}}",ifelse(!matrixnames,"}","_\\textrm{T0VAR}}"),"
       \\right) \\\\
-      \\textrm{Deterministic change:}
+      \\parbox{10em}{\\centering{Deterministic\\linebreak change:}}
   &\\underbrace{",showd,"
     ",bmatrix(matrix(paste0(ctmodel$latentNames)))," 
     \\big{(}t\\big{)}}_{",showd," \\vect{\\eta} (t)}	=  \\left(
@@ -396,7 +396,7 @@ out <- paste0(out, "
         ",bmatrix(matrix(paste0('\\chi_{',1:ncol(ctmodel$TDPREDEFFECT),'}')))," 
       }_{\\vect{\\chi} (t)}"),
     "\\right) ",ifelse(continuoustime,"\\mathrm{d}t","")," \\quad + \\nonumber \\\\ \\\\
-    \\textrm{Random change: }
+    \\parbox{10em}{\\centering{Random\\linebreak change:}}
     & \\qquad \\qquad \\quad \\underbrace{cholsdcor\\left\\{
       ",bmatrix(ctmodel$DIFFUSION),"\\right\\}
     ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{G}}",ifelse(!matrixnames,"}","_\\textrm{DIFFUSION}}"),"
@@ -421,10 +421,10 @@ out <- paste0(out, "
               \\underbrace{
           ",bmatrix(matrix(paste0('\\epsilon_{',1:ctmodel$n.manifest,'}')))," 
           (t)}_{\\vect{\\epsilon}(t)} \\\\ \\\\
-                \\textrm{Latent noise per time step : }
+                \\parbox{10em}{\\centering{Latent noise\\linebreak per time step:}}
           &",ifelse(continuoustime,'\\Delta ',''),"\\big[W_{j \\in [1,",ctmodel$n.latent,"]}\\big](t",
           ifelse(continuoustime,'-u',''),")   \\sim  \\mathrm{N}(0,",W,") \\quad
-              \\textrm{Observation noise: }
+              \\parbox{10em}{\\centering{Observation\\linebreak noise:}}
             ",bmatrix(matrix(paste0('\\epsilon_{j \\in [1,',ctmodel$n.latent,']}')))," 
             (t) \\sim  \\mathrm{N}(0,1) \\\\ \\\\",
             if(dopop) paste0(if(linearise) "&\\textrm{Linearised approximation of subject parameter distribution shown.}\\\\

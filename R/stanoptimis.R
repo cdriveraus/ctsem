@@ -18,7 +18,7 @@ parallelStanSetup <- function(cl, standata,split=TRUE){
     if(!1 %in% subindices) standata$nopriors <- 1L
     # future(globals = c('sm','standata'),
     #   packages=c('ctsem','rstan'),
-    # gc=FALSE,expr = {
+    if(1==99) sm=1
     g = eval(parse(text=paste0('gl','obalenv()'))) #avoid spurious cran check -- assigning to global environment only on created parallel workers.
     assign('smf',stan_reinitsf(sm,standata),pos = g)
     
@@ -218,6 +218,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA){
     split(1:nrow(samples), sort((1:nrow(samples))%%cores)),tparfunc,cores=cores,parallel=cores > 1))
   
   #fix this hack
+  # browser()
   if(!is.null(transformedpars[[1]][[1]]$popmeans)) transformedpars=unlist(transformedpars,recursive = FALSE)
   est1=transformedpars[[1]]
   missingsamps <-sapply(transformedpars, function(x) 'try-error' %in% class(x))
@@ -225,8 +226,8 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA){
   
   
   if(nasampscount > 0) {
-    
-    # lapply(transformedpars[[1]],function(x) any(is.na(x)))
+    browser()
+    # a=lapply(transformedpars[[1]],function(x) any(is.na(x)));a[unlist(a)]
     message(paste0(nasampscount,' NAs generated during final sampling of ', nrow(samples), '. Biased estimates may result -- consider importance sampling, respecification, or full HMC sampling'))
   }
   if(nasampscount < nrow(samples)){
@@ -711,7 +712,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standata)
         if(optimcores==1) smf<-stan_reinitsf(sm,standata)
       } 
-      
       npars = length(est2)
     }
     
@@ -811,7 +811,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         #     # message(steps[stepi])
         #     if(length(whichpars) > 0){
         #       hesstry <- hess
-        #       hesstry[,whichpars]= grmat(pars=est2,step=steps[stepi], direction=direction,gradmod = TRUE,whichpars=whichpars)
+        #       hesstry[,whichpars]= at(pars=est2,step=steps[stepi], direction=direction,gradmod = TRUE,whichpars=whichpars)
         #       h=(hesstry+t(hesstry))/2
         #       rankifremoved <- sapply(1:ncol(h), function (x) qr(h[,-x,drop=FALSE])$rank)
         #       hessgood<- which(rankifremoved < max(rankifremoved))
@@ -891,6 +891,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             warning('Approximate hessian used for std error estimation --  treat SE\'s with caution, consider respecification / priors / sampling.')
           }
         }
+      
         mcov=MASS::ginv(-hess) #-optimfit$hessian)
         mcov=as.matrix(Matrix::nearPD(mcov,conv.norm.type = 'F')$mat)
         mchol = t(chol(mcov))
@@ -1149,7 +1150,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       unlist(constrain_pars(smf, upars= est2)),
       unlist(constrain_pars(smf, upars= uest))),silent=TRUE)
     try(colnames(transformedpars_old)<-c('2.5%','mean','97.5%'),silent=TRUE)
-    stanfit=list(optimfit=optimfit,stanfit=smf, rawest=est2, rawposterior = resamples, 
+    stanfit=list(optimfit=optimfit,stanfit=smf, rawest=est2, rawposterior = resamples, cov=mcov,
       transformedpars=transformedpars,transformedpars_old=transformedpars_old,
       standata=list(TIPREDEFFECTsetup=standata$TIPREDEFFECTsetup,ntipredeffects = standata$ntipredeffects),
       isdiags=list(cov=mcovl,means=delta,ess=ess,qdiag=qdiag,lpsamples=lpsamples ))

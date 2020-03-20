@@ -1240,9 +1240,9 @@ if(savescores){
 
       }
       state=etasmooth[sri];
-       if(nlmeasurement==1){
+{
       ',finiteJy(),'
-      }
+}
 
       ysmooth[sri] = syprior;
       ysmoothcov[sri] = quad_form(etasmoothcov[sri], sJy\'); 

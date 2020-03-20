@@ -1,7 +1,7 @@
 logit = function(x) log(x)-log((1-x))
 
 sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoints=NA,plot=FALSE,
-  stepbase=1e-3,gmeminit=ifelse(is.na(startnrows),.8,.8),gmemmax=.9,maxparchange = .50,
+  stepbase=1e-3,gmeminit=ifelse(is.na(startnrows),.8,.8),gmemmax=.98,maxparchange = .50,
   startnrows=NA,roughnessmemory=.95,groughnesstarget=.4,
   lproughnesstarget=ifelse(is.na(whichmcmcpars[1]),.3,.4),
   gsmoothroughnesstarget=.05,
@@ -274,7 +274,7 @@ sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoi
       # + step * rmsstepmod
     ))
     
-    # step[gsmoothroughness < gsmoothroughnesstarget] <- step[gsmoothroughness < gsmoothroughnesstarget] + 
+    # step[gsmoothroughness < gsmoothroughnesstarget] <- step[gsmoothroughness < gsmoothroughnesstarget] * 1.1
     # step[gsmoothroughness < gsmoothroughnesstarget] * .1*gsmoothroughnessmod[gsmoothroughness < gsmoothroughnesstarget]
     signdif= sign(gmid)!=sign(gdelta)
     if(lp[i] >= max(lp)) {
@@ -282,7 +282,7 @@ sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoi
       if(i > warmuplength/2) {
         ##max/min par update extra
         # gsmooth[pars>maxpars | pars < minpars] <- gsmooth[pars>maxpars | pars < minpars]  * 1.1#*delta[pars>maxpars | pars < minpars] /step[pars>maxpars | pars < minpars]
-        # step[pars>maxpars | pars < minpars] <- step[pars>maxpars | pars < minpars] * 1.2  #+ pars[pars>maxpars | pars < minpars]
+        step[pars>maxpars | pars < minpars] <- step[pars>maxpars | pars < minpars] * 1.2  #+ pars[pars>maxpars | pars < minpars]
         changepars=pars
         changepars[!(pars>maxpars | pars < minpars)] <- NA
         # lproughness = lproughness * .9
@@ -304,18 +304,18 @@ sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoi
     }
     
     # gmemory <- gmemory * gsmoothroughnessmod
-    if(i > 30 && i %% 20 == 0) {
+    if(i > 30 && i %% 40 == 0) {
       oldlpdif <- lpdif# sum(diff(head(tail(lp,10),20)))
-      lpdif <- sum(diff(tail(lp,10)))
+      lpdif <- diff(c(max(head(lp,length(lp)-40)),max(lp)))
       if(oldlpdif > lpdif) gmemory <- oldgmemory
       proposal = gmemory*2-oldgmemory
       oldgmemory <- gmemory
       gmemory <- min(gmemmax, max(0, proposal + runif(1,-.05,.1)))
     }
     
-    if(i > 30 && i %% 20 == 0 && is.na(whichmcmcpars[1])) {
+    if(i > 31 && i %% 30 == 0 && is.na(whichmcmcpars[1])) {
       oldlprdif <- lprdif
-      lprdif <- diff(lp[c(length(lp),length(lp)-20)])
+      lprdif <- diff(c(max(head(lp,length(lp)-30)),max(lp)))
       if(oldlprdif > lprdif) lproughnesstarget <- oldlproughnesstarget
       lprproposal = lproughnesstarget*2-oldlproughnesstarget
       oldlproughnesstarget <- lproughnesstarget
@@ -326,7 +326,7 @@ sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoi
     step[step < minparchange] <- minparchange
     
     if(i > warmuplength && lp[i] < lp[i-1] && mcmcconverged) { #if worsening, update gradient faster
-      step[signdif]=step[signdif]*.5
+      step[signdif]=step[signdif]*lproughnesstarget
       # step=step*.5
       gsmooth[signdif]= gsmooth[signdif]*gmemory2 + (1-gmemory2) * g[signdif] #increase influence of gradient at inflections
     }

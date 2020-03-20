@@ -988,7 +988,7 @@ err[od] = Y[rowi,od] - syprior[od]; // prediction error
 
       }
       state=etasmooth[sri];
-       if(nlmeasurement==1){
+{
       
     int zeroint[1];
     vector[nlatentpop] basestate = state;
@@ -1044,7 +1044,7 @@ err[od] = Y[rowi,od] - syprior[od]; // prediction error
     }
     if(verbose>1) print("sJy ",sJy);
     
-      }
+}
 
       ysmooth[sri] = syprior;
       ysmoothcov[sri] = quad_form(etasmoothcov[sri], sJy'); 

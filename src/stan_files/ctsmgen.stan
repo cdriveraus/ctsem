@@ -1128,7 +1128,7 @@ if(savescores){
 
       }
       state=etasmooth[sri];
-       if(nlmeasurement==1){
+{
       
     int zeroint[1];
     vector[nlatentpop] basestate = state;
@@ -1184,7 +1184,7 @@ if(savescores){
     }
     if(verbose>1) print("sJy ",sJy);
     
-      }
+}
 
       ysmooth[sri] = syprior;
       ysmoothcov[sri] = quad_form(etasmoothcov[sri], sJy'); 

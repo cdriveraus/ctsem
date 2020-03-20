@@ -221,7 +221,7 @@ ctModel<-function(LAMBDA, type='omx',n.manifest = 'auto', n.latent='auto', Tpoin
   
   if(is.null(n.TIpred) || all(n.TIpred %in% 'auto')){
     if(!all(TIpredNames %in% 'auto')){
-      message('n.TIpred inferred  inferred from TDpredNames')
+      message('n.TIpred inferred  inferred from TIpredNames')
       n.TIpred <- length(TIpredNames)
     } else n.TIpred <- 0
   } 
