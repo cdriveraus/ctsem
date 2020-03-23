@@ -180,7 +180,7 @@ standataFillTime <- function(standata, times){
 
 stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,savescores=FALSE,
   savesubjectmatrices=TRUE,
-  dokalman=TRUE,onlyfirstrow=ifelse(savescores,FALSE,TRUE),pcovn=5){
+  dokalman=TRUE,onlyfirstrow=ifelse(savescores,FALSE,TRUE),pcovn=500){
   
   standata$savescores <- as.integer(savescores)
   standata$dokalman <- as.integer(dokalman)
