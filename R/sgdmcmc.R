@@ -78,7 +78,7 @@ sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoi
       dim=c(nrow(newmcmcpars),nsubjects,nstore))
     mcmclpg <- list()
   } 
-  delta=rep(0,length(pars))
+  delta=deltaold=rep(0,length(pars))
   bestpars = newpars=maxpars=minpars=changepars=pars
   parstore = matrix(rnorm(length(bestpars)*nstore),length(bestpars),nstore)
   
@@ -216,7 +216,7 @@ sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoi
     deltaold=delta
     oldg=g
     g=attributes(lpg)$gradient
-    g=sign(g)*(abs(g))^(1/4)#sqrt
+    g=sign(g)*(abs(g))^(1/8)#sqrt
     gmemory2 = gmemory * min(i/warmuplength,1)^(1/8)
     roughnessmemory2 = roughnessmemory * min(i/warmuplength,1)^(1/8)
     
@@ -285,7 +285,7 @@ sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoi
       # + step * rmsstepmod
     ))
     
-    step[gsmoothroughness < gsmoothroughnesstarget] <- step[gsmoothroughness < gsmoothroughnesstarget] * 1.5
+    step[gsmoothroughness < gsmoothroughnesstarget] <- step[gsmoothroughness < gsmoothroughnesstarget] * 1.2
     # step[gsmoothroughness < gsmoothroughnesstarget] * .1*gsmoothroughnessmod[gsmoothroughness < gsmoothroughnesstarget]
     signdif= sign(gmid)!=sign(gdelta)
     if(i > 1 && lp[i] >= max(head(lp,length(lp)-1))) {
@@ -341,7 +341,7 @@ sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoi
     
     if(i > warmuplength && lp[i] < lp[i-1] && mcmcconverged) { #if worsening, update gradient faster
       step[signdif]=step[signdif]*lproughnesstarget
-      if(lp[i] < lp[i-10]) gmemory <- gmemory *.99
+      if(lp[i] < lp[i-10]) gmemory <- gmemory * .995
       # step=step*.5
       gsmooth[signdif]= gsmooth[signdif]*gmemory2 + (1-gmemory2) * g[signdif] #increase influence of gradient at inflections
     }

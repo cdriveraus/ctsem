@@ -212,6 +212,7 @@ int DIFFUSIONcovsubindex;
   int fixedsubpars;
   vector[fixedsubpars ? nindvarying : 0] fixedindparams[fixedsubpars ? nsubjects : 0];
   int dokalman;
+  int dokalmanrowsdata[ndatapoints];
   real Jstep;
   real dokalmanpriormodifier;
   int intoverpopindvaryingindex[intoverpop ? nindvarying : 0];
@@ -417,12 +418,18 @@ matrix[nlatent, nlatent] pop_DIFFUSIONcov;
   vector[nlatent] sasymCINT; // latent process asymptotic level
 matrix[nlatent, nlatent] sDIFFUSIONcov;
   
-  int dokalmanrows[ndatapoints];
-   for(i in 1:ndatapoints){
-     if(doonesubject==0 || fabs(subject[i]-onesubject[1]) < .5){
-       dokalmanrows[i] = 1; 
-     } else dokalmanrows[i]=0;
-   }
+  int dokalmanrows[ndatapoints] = dokalmanrowsdata;
+  
+  if(doonesubject==1){
+    dokalmanrows=rep_array(0,ndatapoints);
+    for(i in 1:ndatapoints){
+      for(subi in 1:size(onesubject)){
+        if(fabs(subject[i]-onesubject[subi]) < .5){
+          dokalmanrows[i] = 1; 
+        }
+      }
+    }
+  }
 
   for(rowi in 1:(dokalman ? ndatapoints :1)){
   if(dokalmanrows[rowi] ==1) { //used for subset selection

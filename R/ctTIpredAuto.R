@@ -123,7 +123,7 @@ whichsubjectpars <- function(standata,subjects=NA){
 }
 
 
-scorecalc <- function(fit,subjectsonly=TRUE){
+scorecalc <- function(fit,subjectsonly=TRUE,cores=2){
   fit$standata$nopriors=1L
 
   scores <- list()

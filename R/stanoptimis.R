@@ -111,7 +111,7 @@ standatact_specificsubjects <- function(standata, subjects,timestep=NA){
 
 
 standatalongobjects <- function() {
-  longobjects <- c('subject','time','dokalmanrows','nobs_y','ncont_y','nbinary_y','Y','tdpreds', 'whichobs_y','whichbinary_y','whichcont_y')
+  longobjects <- c('subject','time','dokalmanrowsdata','nobs_y','ncont_y','nbinary_y','Y','tdpreds', 'whichobs_y','whichbinary_y','whichcont_y')
   return(longobjects)
 }
 
@@ -247,7 +247,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,savescores=F
   
   
   if(nasampscount > 0) {
-    browser()
+    # browser()
     # a=lapply(transformedpars[[1]],function(x) any(is.na(x)));a[unlist(a)]
     message(paste0(nasampscount,' NAs generated during final sampling of ', nrow(samples), '. Biased estimates may result -- consider importance sampling, respecification, or full HMC sampling'))
   }
@@ -582,7 +582,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         message('> 50 parameters and stochastic="auto" so stochastic gradient descent used -- try disabling if slow!')
         stochastic <- TRUE
       } else if(stochastic=='auto') stochastic <- FALSE
-      
       if(carefulfit && !deoptim){ #init using priors
         message('Doing 1st pass with priors on reduced data set')
         nopriorsbak <- standata$nopriors

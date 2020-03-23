@@ -393,6 +393,6 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   }
   
   if(!is.null(ctm$TIpredAuto) && ctm$TIpredAuto %in% c(1L,TRUE)) standata$TIpredAuto <- 1L else standata$TIpredAuto <- 0L
-  
+  standata$dokalmanrowsdata <- array(rep(1L,standata$ndatapoints))
   return(standata)
 }
