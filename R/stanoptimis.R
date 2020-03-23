@@ -1,4 +1,18 @@
 # parlp <- function()  out <- try(rstan::log_prob(sf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
+ctAddSamples <- function(fit,nsamples,cores=2){
+  mchol <- t(chol(fit$stanfit$cov))
+  
+  resamples <- matrix(unlist(lapply(1:nsamples,function(x){
+    fit$stanfit$rawest + (mchol) %*% t(matrix(rnorm(length(fit$stanfit$rawest)),nrow=1))
+  } )),byrow=TRUE,ncol=length(fit$stanfit$rawest))
+  
+  fit$stanfit$rawposterior <- rbind(fit$stanfit$rawposterior,resamples)
+
+  fit$stanfit$transformedpars=stan_constrainsamples(sm = fit$stanmodel,
+    standata = fit$standata,samples=fit$stanfit$rawposterior,
+    cores=cores)
+  return(fit)
+}
 
 parallelStanSetup <- function(cl, standata,split=TRUE){
   cores <- length(cl)
@@ -164,7 +178,14 @@ standataFillTime <- function(standata, times){
 
 
 
-stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA){
+stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,savescores=FALSE,
+  savesubjectmatrices=TRUE,
+  dokalman=TRUE,onlyfirstrow=ifelse(savescores,FALSE,TRUE),pcovn=5){
+  
+  standata$savescores <- as.integer(savescores)
+  standata$dokalman <- as.integer(dokalman)
+  standata$savesubjectmatrices<-as.integer(savesubjectmatrices)
+  if(onlyfirstrow) standata$dokalmanrows <- as.integer(c(1,diff(standata$subject)))
   # smf <- stan_reinitsf(model = sm,data = standata)
   message('Computing quantities for ', nrow(samples),' samples...')
   # est1=NA
@@ -628,7 +649,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       }
       
       if(standata$ntipred > 0){ 
-        # 
+        message('Including TI predictors...')
         # standata$tipredeffectscale <- tipredeffectscale
         standata$dokalmanrows[] <- 1L
         # init = optimfit$par
@@ -670,7 +691,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             
             if(!standata$TIpredAuto){
               finished <- TRUE
-              init = c(init,rep(0,max(TIPREDEFFECTsetup)))
+              init = c(optimbase,rep(0,max(TIPREDEFFECTsetup)))
               standata$TIPREDEFFECTsetup[,] <- TIPREDEFFECTsetup
               standata$ntipredeffects <- as.integer(max(TIPREDEFFECTsetup))
             }
@@ -1135,7 +1156,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     if(!is) lpsamples <- NA else lpsamples <- unlist(target_dens)[resample_i]
     
     transformedpars=stan_constrainsamples(sm = sm,standata = standata,samples=resamples,cores=cores, cl=clctsem)
-    
+
     
     # quantile(sapply(transformedpars, function(x) x$rawpopcorr[3,2]),probs=c(.025,.5,.975))
     # quantile(sapply(transformedpars, function(x) x$DRIFT[1,2,2]),probs=c(.025,.5,.975))

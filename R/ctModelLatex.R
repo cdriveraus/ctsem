@@ -116,6 +116,7 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
       
       if(!linearise) popcov <- round(ctCollapse(e$rawpopcov,1,mean),digits)
       if(linearise) {
+        popcov <- stan_constrainsamples(x$stanmodel,x$standata,rbind(x$stanfit$rawest),cores=1,pcovn =1000)$popcov
         popcov <- round(ctCollapse(e$popcov,1,mean),digits=digits)
       if(x$standata$intoverpop==1){
         t0index <- ms$indvarying[ms$param > 0 & ms$row <= x$standata$nlatent & ms$matrix %in% 1 & ms$indvarying > 0]

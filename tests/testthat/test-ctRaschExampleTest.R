@@ -31,7 +31,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       chains = 2,
       intoverstates = FALSE,
       optimize=FALSE,intoverpop=F,
-      stationary = FALSE,plot=T )
+      stationary = FALSE)
     s=summary(r)
     s
     

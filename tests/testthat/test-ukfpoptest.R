@@ -172,7 +172,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
   test_that("ukfpopcheck2_randomdrift", {
     set.seed(1)
     nsubjects=60
-    Tpoints=50
+    Tpoints=20
     driftsd=.2
     driftmu= log(.5)
     dt=1
@@ -197,7 +197,6 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     dtm$pars$indvarying[dtm$pars$matrix %in% 'DRIFT'] <- TRUE
     
     dtf = ctStanFit(datalong = dat,ctstanmodel = dtm,optimize=TRUE,
-      cores=2,
       verbose=0,optimcontrol=list(estonly=F),savescores = F,nopriors=T)
     
        dtm2 <- ctModel(LAMBDA=matrix(c(1,0),1,2), type='stanct',

@@ -417,7 +417,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   nlcontrol = list(), nopriors=FALSE, chains=2,
   cores=ifelse(optimize,getOption("mc.cores", 2L),'maxneeded'),
   inits=NULL,
-  forcerecompile=FALSE,savescores=FALSE,savesubjectmatrices=TRUE,
+  forcerecompile=FALSE,savescores=FALSE,
+  savesubjectmatrices=FALSE,
   gendata=FALSE,
   control=list(),verbose=0,...){
   

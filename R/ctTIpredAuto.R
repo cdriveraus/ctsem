@@ -98,6 +98,7 @@ checkTIauto <- function(){
   
   fit1<-ctStanFit(tdat,checkm,chains=1,optimize=TRUE,cores=2,verbose=0,
     # intoverpop=F,plot=T,
+    savesubjectmatrices = F,plot=T,
     # init=init,
     optimcontrol=list(is=FALSE,stochastic=T,subsamplesize=1,carefulfit=F),
     nopriors=TRUE)
@@ -174,8 +175,8 @@ ctTIauto <- function(fit,tipreds=NA){
   
   if(fit$standata$nindvarying > 0 && fit$standata$intoverpop > 0){
     fit$setup$matsetup <- data.frame(fit$standata$matsetup)
-    fit$standata$savescores <- 1L
-    e=stan_constrainsamples(sm = fit$stanmodel,standata = fit$standata,samples = matrix(fit$stanfit$rawest,nrow=1))
+    e=stan_constrainsamples(sm = fit$stanmodel,standata = fit$standata,
+      samples = matrix(fit$stanfit$rawest,nrow=1),savescores=TRUE)
     p=sort(unique(fit$setup$matsetup$row[fit$setup$matsetup$indvarying>0]))# | fit$setup$matsetup$tipred]))
     firstsub <- rep(TRUE,fit$standata$ndatapoints) #which rows represent first rows per subject
     for(i in 2:fit$standata$ndatapoints){

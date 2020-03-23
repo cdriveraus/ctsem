@@ -19,18 +19,14 @@
 #' }
 ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,standardisederrors=FALSE, subjectpars=FALSE,...){
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
-  # if(class(collapsefunc) %in% 'function' ) e=extract(fit)
-  
-  # if(!class(collapsefunc) %in% 'function' || length(dim(e$k))==0){
+
   message('Computing state estimates..')
   standata <- fit$standata
-  standata$savescores <- 1L
-  standata$popcovn=5L
-  # smf <- stan_reinitsf(fit$stanmodel, standata)
   samples<-ctStanRawSamples(fit)
   if(!is.na(nsamples)) samples <- samples[sample(1:nrow(samples),nsamples),,drop=FALSE] else nsamples <- nrow(samples)
   if(is.function(collapsefunc)) samples = matrix(apply(samples,2,collapsefunc,...),ncol=ncol(samples))
-  e=stan_constrainsamples(sm = fit$stanmodel,standata = standata,samples = samples,cores=cores)
+  e=stan_constrainsamples(sm = fit$stanmodel,standata = standata,
+    samples = samples,cores=cores,savescores=TRUE)
   
   if(subjectpars){
     # browser()

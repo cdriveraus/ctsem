@@ -25,7 +25,7 @@ ctStanFit(
   inits = NULL,
   forcerecompile = FALSE,
   savescores = FALSE,
-  savesubjectmatrices = TRUE,
+  savesubjectmatrices = FALSE,
   gendata = FALSE,
   control = list(),
   verbose = 0,

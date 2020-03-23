@@ -54,10 +54,8 @@ if(.Platform$OS.type == "windows"){
 #check for new versions of critical packages
 old = old.packages()
 for(importantpack in c('StanHeaders','rstan','OpenMx')){
-  if(importantpack %in% old) {
-    message('Updating ',importantpack)
+  if(importantpack %in% old)  message('Updating ',importantpack)
     install.packages(importantpack,dependencies = TRUE)
-  }
 }
 
 #install ctsem from github
