@@ -133,16 +133,14 @@ Stan.
 # 1 time dependent predictor, 3 time independent predictors
 head(ctstantestdat) 
 
-#generate a ctStanModel
+#generate a ctStanModel relying on defaults
 model<-ctModel(type='stanct',
-n.latent=2, latentNames=c('eta1','eta2'),
-n.manifest=2, manifestNames=c('Y1','Y2'),
-n.TDpred=1, TDpredNames='TD1', 
-n.TIpred=3, TIpredNames=c('TI1','TI2','TI3'),
-LAMBDA=diag(2))
+  latentNames=c('eta1','eta2'),
+  manifestNames=c('Y1','Y2'),
+  TDpredNames='TD1', 
+  TIpredNames=c('TI1','TI2','TI3'),
+  LAMBDA=diag(2))
 
-#set all parameters except manifest means to be fixed across subjects
-model$pars$indvarying[-c(19,20)] <- FALSE
 
 #fit model to data (takes a few minutes - but insufficient 
 # iterations and max_treedepth for inference!)

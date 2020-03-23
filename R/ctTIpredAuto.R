@@ -96,9 +96,9 @@ checkTIauto <- function(){
   
   checkm$TIpredAuto <- 1L
   
-  fit1<-ctStanFit(tdat,checkm,chains=1,optimize=TRUE,cores=2,verbose=0,
+  fit1<-ctStanFit(tdat,checkm,chains=1,optimize=TRUE,cores=2,verbose=1,
     # intoverpop=F,plot=T,
-    savesubjectmatrices = F,plot=T,
+    savesubjectmatrices = F,plot=F,
     # init=init,
     optimcontrol=list(is=FALSE,stochastic=T,subsamplesize=1,carefulfit=F),
     nopriors=TRUE)
@@ -125,7 +125,7 @@ whichsubjectpars <- function(standata,subjects=NA){
 
 scorecalc <- function(fit,subjectsonly=TRUE,cores=2){
   fit$standata$nopriors=1L
-
+  
   scores <- list()
   for(i in 1:fit$standata$nsubjects){
     whichpars = whichsubjectpars(fit$standata,i)

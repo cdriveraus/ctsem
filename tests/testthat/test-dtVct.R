@@ -65,6 +65,12 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
         f = do.call(ctStanFit,argslist[[argi]])
         if(is.null(s[[argi]])) s[[argi]] = list()
         s[[argi]][[m]] <- summary(f,parmatrices=TRUE)
+        
+        ctKalman(f,plot=T)
+        plot(f,wait=FALSE)
+        ctModelLatex(f)
+        p=ctStanKalman(f,collapsefunc = mean,subjectpars = T)
+        
       }
     }
     
