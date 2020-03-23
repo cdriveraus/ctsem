@@ -10,6 +10,7 @@ ctAddSamples <- function(fit,nsamples,cores=2){
 
   fit$stanfit$transformedpars=stan_constrainsamples(sm = fit$stanmodel,
     standata = fit$standata,samples=fit$stanfit$rawposterior,
+    savesubjectmatrices=FALSE,dokalman=FALSE,
     cores=cores)
   return(fit)
 }
@@ -182,35 +183,27 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,savescores=F
   savesubjectmatrices=TRUE,
   dokalman=TRUE,onlyfirstrow=ifelse(savescores,FALSE,TRUE),pcovn=500){
   
+  if(savesubjectmatrices && !dokalman){
+    dokalman <- TRUE
+    warning('savesubjectmatrices = TRUE requires dokalman=TRUE also!')
+  }
+  
   standata$savescores <- as.integer(savescores)
   standata$dokalman <- as.integer(dokalman)
   standata$savesubjectmatrices<-as.integer(savesubjectmatrices)
-  if(onlyfirstrow) standata$dokalmanrows <- as.integer(c(1,diff(standata$subject)))
-  # smf <- stan_reinitsf(model = sm,data = standata)
+  if(onlyfirstrow) standata$dokalmanrowsdata <- as.integer(c(1,diff(standata$subject)))
+
   message('Computing quantities for ', nrow(samples),' samples...')
-  # est1=NA
-  # class(est1)<-'try-error'
-  # i=0
   if(nrow(samples)==1) cores <- 1
-  # while(i < nrow(samples) && class(est1)=='try-error'){
-  #   i=i+1
-  #   est1=try(constrain_pars(smf, upars=samples[i,]))
-  # }
-  # if(class(est1)[1]=='try-error') stop('All samples generated errors! Respecify, try stochastic optimizer, try again?')
-  # 
-  
+
   #create via eval due to parallel communication rubbish
   eval(parse(text="tparfunc <- function(x, parallel = TRUE){ 
     if(parallel) library(ctsem)
-    if(!is.null(standata$savescores) && !standata$savescores){
-      standata$dokalmanrows <- 
-        as.integer(c(1,standata$subject[-1] - standata$subject[-standata$ndatapoints]))
-    }
     smf <- stan_reinitsf(sm,standata)
     out <- list()
     for(li in 1:length(x)){
       out[[li]] <- try(rstan::constrain_pars(smf, upars=samples[x[li],]))
-      if(any(
+      if(any( #check for invalid values in transformed pars
         sapply(out[[li]], function(x){
           test <- length(x) > 0 && 
             (any(c(is.nan(x),is.infinite(x),is.na(x))))
@@ -259,11 +252,8 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,savescores=F
     nresamples <- nrow(samples) 
   }
   
-  
-  #this seems inefficient and messy, should be a better way...  
   transformedpars=try(tostanarray(flesh=matrix(unlist(transformedpars),byrow=TRUE, nrow=nresamples), skeleton = est1))
-  
-  # parallel::stopCluster(cl)
+
   return(transformedpars)
 }
 
@@ -319,7 +309,8 @@ tostanarray <- function(flesh, skeleton){
 #' @param cores Number of cpu cores to use, should be at least 2.
 #' @param is Logical. Use importance sampling, or just return map estimates?
 #' @param isloopsize Number of samples of approximating distribution per iteration of importance sampling.
-#' @param finishsamples Number of samples to draw for final results of importance sampling.
+#' @param finishsamples Number of samples to draw (either from hessian
+#' based covariance or posterior distribution) for final results computation.
 #' @param finishmultiply Importance sampling stops once available samples reach \code{finishsamples * finishmultiply} , then the final samples are drawn
 #' without replacement from this set.
 #' @param tdf degrees of freedom of multivariate t distribution. Higher (more normal) generally gives more efficent
@@ -374,7 +365,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   nopriors=FALSE,carefulfit=TRUE,
   subsamplesize=.5,
   plot=FALSE,
-  is=FALSE, isloopsize=1000, finishsamples=500, tdf=10,chancethreshold=100,finishmultiply=5,
+  is=FALSE, isloopsize=1000, finishsamples=1000, tdf=10,chancethreshold=100,finishmultiply=5,
   verbose=0,cores=2){
   if(!is.null(standata$verbose)) {
     if(standata$verbose > 1) standata$verbose=as.integer(verbose) else standata$verbose=0L
@@ -633,7 +624,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           # check_conv_every = 5,
           # try_newton_step=TRUE,
           line_search='Schmidt',c1=1e-4,c2=.9,step0='schmidt',ls_max_fn=999,
-          abs_tol=NULL,grad_tol=NULL,rel_tol=tol,step_tol=NULL,ginf_tol=NULL)
+          abs_tol=NULL,grad_tol=NULL,rel_tol=tol*ifelse(standata$ntipred >0,100,1),step_tol=NULL,ginf_tol=NULL)
         optimfit$value = -optimfit$f
         init = optimfit$par
         if(is.infinite(bestfit)) stochastic<-TRUE
@@ -643,7 +634,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(is.infinite(bestfit)) message('Switching to stochastic optimizer -- failed initialisation with bfgs')
         if(!stochastic && carefulfit) message('carefulfit = TRUE , so checking for improvements with stochastic optimizer')
         optimfit <- sgd(init, fitfunc = target,
-          whichmcmcpars=whichmcmcpars,nsubjects=ifelse(is.na(whichmcmcpars[1]),NA,standata$nsubjects),
+          itertol = ifelse(standata$ntipred >0,1e-1,1e-3),
+          deltatol=ifelse(standata$ntipred >0,1e-2,1e-5),
+          whichmcmcpars=whichmcmcpars,
+          nsubjects=ifelse(is.na(whichmcmcpars[1]),NA,standata$nsubjects),
           ndatapoints=standata$ndatapoints,plot=plot)
       }
       
@@ -705,10 +699,12 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               optimfit$value = -optimfit$f
             }
             if(stochastic && finished) optimfit <- sgd(init, fitfunc = target, 
-              whichmcmcpars=whichmcmcpars,nsubjects=ifelse(is.na(whichmcmcpars[1]),NA,standata$nsubjects),
+              whichmcmcpars=whichmcmcpars,
+              nsubjects=ifelse(is.na(whichmcmcpars[1]),NA,standata$nsubjects),
               plot=plot)
             if(stochastic && !finished) optimfit <- sgd(init, fitfunc = target, 
-              whichmcmcpars=whichmcmcpars,nsubjects=ifelse(is.na(whichmcmcpars[1]),NA,standata$nsubjects),
+              whichmcmcpars=whichmcmcpars,
+              nsubjects=ifelse(is.na(whichmcmcpars[1]),NA,standata$nsubjects),
               plot=plot,itertol=1e-1,deltatol=1e-2)
           # }
         }
@@ -1154,7 +1150,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   if(!estonly){
     if(!is) lpsamples <- NA else lpsamples <- unlist(target_dens)[resample_i]
     
-    transformedpars=stan_constrainsamples(sm = sm,standata = standata,samples=resamples,cores=cores, cl=clctsem)
+    transformedpars=stan_constrainsamples(sm = sm,standata = standata,
+      savesubjectmatrices = FALSE, dokalman=FALSE,
+      samples=resamples,cores=cores, cl=clctsem)
 
     
     # quantile(sapply(transformedpars, function(x) x$rawpopcorr[3,2]),probs=c(.025,.5,.975))

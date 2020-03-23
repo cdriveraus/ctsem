@@ -1268,15 +1268,6 @@ if(savescores){
     if(!is.null(ctm$w32)) out <- ''
     return(out)}
 
-kalmanll <- function(){ out <-'
- 
-  if(( sum(ncont_y) > 0)) {
-  if(verbose > 1) print("errtrans = ", errtrans);
-    //ll += normal_lpdf(errtrans|0,1); //disabled for splitting subjects
-  }
-'
-if(!is.null(ctm$w32)) out <- ''
-return(out)}
 
 subjectparaminit<- function(popmats=FALSE,smats=TRUE){
   if(smats && popmats) stop('smats and popmats cannot both be TRUE!')
@@ -1759,10 +1750,7 @@ transformed parameters{
 
   {
 ',
-if(!gendata) ukfilterfunc(ppchecking=FALSE),
-'if(dokalman==1){',
-if(!gendata) kalmanll(),'
-    }
+if(!gendata) ukfilterfunc(ppchecking=FALSE),'
   }
 }
       
