@@ -10,10 +10,11 @@ ctModel0DRIFT <- function(ctm,continuoustime){
 
 simpleStateCheck <- function(x){   
   if(grepl('\\b(state)\\b\\[\\d+\\]',x)){ #if state based 
-  refmatches <- gregexpr('\\[', x)[[1]] 
-  simplestate <- refmatches > 0 && length(refmatches) == 1 #find 1 match of [ only
+  refmatches <- gregexpr('\\[(\\d+\\W*\\d*)\\]', x) #within sq brackets, find digits, possibly with non word chars, possibly with more digits.
+  simplestate <- refmatches[[1]][1] > 0 && #if state
+    length(unique(regmatches(x,refmatches)[[1]])) == 1 #reference 1 state only (possibly multiple times)
   } else simplestate <- FALSE
-  return(simplestate)
+  return(simplestate) 
 }
 
 
@@ -64,6 +65,7 @@ ctModelTransformsToNum<-function(ctm){
     param = c(seq(-2, 2, .1),seq(-10,10,.5),c(rnorm(10)))
     y = eval(parse(text=e)) #eval(substitute(substitute(e, list(param = param)), list(e = as.quoted(e)[[1]]))))
     keep <- abs(y) < 1e5 & !is.na(param)
+    keep[is.na(keep)] <- FALSE
     param <- param[keep]
     y <- y[keep]
     # plot(param,y)
@@ -75,16 +77,8 @@ ctModelTransformsToNum<-function(ctm){
       for(i in 1:nrow(formula.types)) {
         if(i > 1 && any((formula.types$lsfit < .001) %in% TRUE)) next #found the answer already
         tftype <- formula.types$type[i]
-        # start.params = list(multiplier = 1.0, offset = 0)
-        # if(!is.na(formula.types$meanscale[i])) {
-        #   start.params[["meanscale"]] = 1.0
-        # }
-        # if(!is.na(formula.types$inneroffset[i])) {
-        #   start.params[["inneroffset"]] = 0
-        # }
-        # 
+        
         ff <- function(pars){
-          # print(pars)
           multiplier=pars[1];
           offset=pars[2];
           if(tftype > 0) {
@@ -101,9 +95,6 @@ ctModelTransformsToNum<-function(ctm){
         
         ffg <- function(pars){
           b=ff(pars)
-          # g=try(numDeriv::grad(ff,pars,method='simple',
-          #   method.args=list(eps=1e-8,inneroffset=1e-10,r=2)
-          # ),silent=TRUE)
           g=try(sapply(1:length(pars),function(x) {
             parx=pars
             parx[x]<-pars[x]+1e-12;
@@ -113,15 +104,8 @@ ctModelTransformsToNum<-function(ctm){
           if(any(is.na(g))) g[is.na(g)] <- rnorm(sum(is.na(g)))
           return(-g)
         }
-        
-        # teststarts <- matrix(rnorm(4*500,0,5),500,4)
-        # testres <- apply(teststarts,1,function(x) ff(x))
-        # start.params[c(-3:-4)] <- teststarts[testres == min(testres,na.rm=TRUE),c(-3:-4)]
-        # if(tftype > 0) start.params[3:4] <- teststarts[testres == min(testres,na.rm=TRUE),3:4]
-        
-        # 
+
         if(tryi==1){
-          # 
           etmp<-gsub('\\(',' ',e)
           etmp<-gsub('\\)',' ',e)
           escn <- unlist(regmatches(e, gregexpr('\\b[0-9,.]+e+-?[0-9\\b[0-9]+', etmp)))
@@ -213,16 +197,6 @@ ctModelTransformsToNum<-function(ctm){
       success<-TRUE
     }
 
-    # Return the values we found.
-    # print(e)
-    # print(formula.types)
-    # return(formula.types %>%
-    #     filter(lsfit == min(lsfit)) %>%
-    #     mutate(inneroffset = coalesce(inneroffset, 0),
-    #       meanscale = coalesce(meanscale, 1)) %>%
-    #     select(type, offset, inneroffset, multiplier, meanscale,lsfit))
-    # 
-    # 
     return(formula.types[which(formula.types$lsfit %in% min(formula.types$lsfit,na.rm=TRUE)),])
   }
   # 
@@ -257,6 +231,13 @@ ctModelTransformsToNum<-function(ctm){
     nctspec <- nctspec[,c('matrix','row','col','param','value','transform','multiplier',
       'offset','meanscale','inneroffset','indvarying','sdscale',
       colnames(ctm$pars)[grep('_effect',colnames(ctm$pars),fixed=TRUE)]) ]
+    # browser()
+    if(any(rl(suppressWarnings(as.numeric(nctspec$transform)) >= length(tformshapes(singletext = TRUE))))) {
+      nctspec$transform[rl(suppressWarnings(as.numeric(nctspec$transform)) >= length(tformshapes(singletext = TRUE)))] <- #adjust jacobian gradients
+        suppressWarnings(as.numeric(
+          nctspec$transform[rl(suppressWarnings(as.numeric(nctspec$transform)) >= length(tformshapes(singletext = TRUE)))])) + 
+        (50-length(tformshapes(singletext = TRUE)))
+    }
     ctm$pars <- nctspec
     
     return(ctm)
@@ -376,6 +357,7 @@ ctStanModelIntOverPop <- function(m){
       
     } #finish loop for non simple t0means indvarying
     extralatents <- seq.int(m$n.latent+1,m$n.latent+length(ivnames),length.out=length(ivnames))
+    
     m$intoverpopindvaryingindex <- c(t0mvaryingsimple,extralatents)
     return(m)
   }
@@ -553,18 +535,17 @@ ctStanModelMatrices <-function(ctm){
         copycol=0
         simplestate <- FALSE
         if(!is.na(ctspec$param[i])){ #if non fixed parameter,
-          
+          # if(ctspec$row[i] %in% 6) browser()
           # 
           if(grepl('\\b(state)\\b\\[\\d+\\]',ctspec$param[i])){ #if state based 
-            statematches <- gregexpr('\\[', ctspec$param[i])[[1]] 
-            simplestate <- statematches > 0 && length(statematches) == 1 #find 1 match of [ only
-            # browser()
+            # print( ctspec[i,])
+            simplestate <- simpleStateCheck(ctspec$param[i])
             if(simplestate){# && is.na(ctspec$transform[i])){ 
               cpx <- ctspec[i,]
               cpx$transform <- gsub('\\b(state)\\b\\[\\d+\\]','param',cpx$param)
               cpx$multiplier <- cpx$offset <- cpx$meanscale <- cpx$inneroffset <- NULL
-              
               ctspec[i,] <- ctModelTransformsToNum(list(pars=cpx))$pars
+              # print( ctspec[i,])
               if(is.na(suppressWarnings(as.integer(ctspec$transform[i])))) simplestate <- FALSE  #if couldn't convert to integer tform
             }
           }
@@ -612,7 +593,7 @@ ctStanModelMatrices <-function(ctm){
               gregexpr(
                 paste0('(?=\\[).*?(?<=\\])'),
                 ctspec$param[i], perl=TRUE)
-            )))
+            )))[1]
             if(nm %in% c('JAx',names(c(mats$driftcint,mats$diffusion)))) when = 2
             if(nm %in% c('Jtd',names(mats$tdpred))) when = 3
             if(nm %in% c('Jy',names(mats$measurement))) when = 4
@@ -652,7 +633,7 @@ ctStanModelMatrices <-function(ctm){
             }#end not duplicated loop
           } #end non calculation parameters
         } #end non fixed value loop
-        
+        # if(simplestate) browser()
         mdatnew <- data.frame(
           parname=ctspec$param[i],
           row=ctspec$row[i],

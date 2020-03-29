@@ -21,6 +21,7 @@
 #' @param plot Logical. If TRUE, plots output instead of returning it. 
 #' See \code{\link{plot.ctKalman}} (OpenMx based fit) or \code{\link{plot.ctKalmanDF}} 
 #' (Stan based fit) for the possible arguments.
+#' @param realid Output using original (not necessarily integer sequence) subject id's?
 #' @param ... additional arguments to pass to \code{\link{plot.ctKalman}} or \code{\link{plot.ctKalmanDF}}.
 #' @return Returns a list containing matrix objects etaprior, etaupd, etasmooth, y, yprior, 
 #' yupd, ysmooth, prederror, time, loglik,  with values for each time point in each row. 
@@ -47,7 +48,7 @@
 #' @export
 
 ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep=sd(fit$standata$time,na.rm=TRUE)/50,
-  subjects=1, removeObs = FALSE, plot=FALSE, ...){
+  subjects=1, removeObs = FALSE, plot=FALSE, realid=FALSE,...){
   type=NA
   if('ctStanFit' %in% class(fit)) type='stan' 
   if('ctsemFit' %in% class(fit)) type ='omx'
@@ -78,8 +79,14 @@ ctKalman<-function(fit, datalong=NULL, timerange='asdata', timestep=sd(fit$stand
     }
     out <- ctStanKalman(fit,collapsefunc=mean) #extract state predictions
     out$id <- idstore #as.integer(subjects[out$id]) #get correct subject indicators
+
     out <- meltkalman(out)
     out=out[!(out$Subject %in% subjects) %in% FALSE,]
+    if(realid){
+      out$Subject <- as.integer(out$Subject)
+      out$Subject <- factor(fit$setup$idmap[
+        match(out$Subject,fit$setup$idmap[,2]),1])
+    }
   }
   
   if(type !='stan'){

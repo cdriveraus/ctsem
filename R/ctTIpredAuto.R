@@ -98,7 +98,7 @@ checkTIauto <- function(){
   
   fit1<-ctStanFit(tdat,checkm,chains=1,optimize=TRUE,cores=2,verbose=1,
     # intoverpop=F,plot=T,
-    savesubjectmatrices = F,plot=F,
+    # savesubjectmatrices = F,plot=F,
     # init=init,
     optimcontrol=list(is=FALSE,stochastic=T,subsamplesize=1,carefulfit=F),
     nopriors=TRUE)

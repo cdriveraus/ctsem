@@ -1,5 +1,7 @@
 ctStanData <- function(ctm, datalong,optimize,derrind='all'){
-  datalong <- datalong[,c(ctm$timeName,ctm$subjectIDname,ctm$manifestNames,ctm$TDpredNames,ctm$TIpredNames)]
+  # browser()
+  datalong <- datalong[,c(ctm$timeName,ctm$subjectIDname,
+    ctm$manifestNames,ctm$TDpredNames,ctm$TIpredNames)]
       #start data section
   # if('data.table' %in% class(datalong) || 'tbl' %in% class(datalong)) 
    
@@ -52,10 +54,11 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     
 
     #id mapping
+    # browser()
     original <- unique(datalong[,ctm$subjectIDname])
     datalong <- makeNumericIDs(datalong,ctm$subjectIDname,ctm$timeName)
     new <- unique(datalong[,ctm$subjectIDname])
-    idmap <- cbind(original, new)
+    idmap <- data.frame(original, new)
     
     
     

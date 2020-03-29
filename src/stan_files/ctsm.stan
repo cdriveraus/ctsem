@@ -122,13 +122,15 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
     if(transform==0) out = inneroffset + meanscale * multiplier * param + offset;
 if(transform==1) out = multiplier * log1p(exp(inneroffset + meanscale * param)) + offset;
 if(transform==2) out = multiplier * exp(inneroffset + meanscale * param) + offset;
-if(transform==3) out = multiplier * exp(inneroffset + meanscale * param)/(1 + exp(param)) +offset;
+if(transform==3) out = multiplier * exp(inneroffset + meanscale * param)/(1 + exp(inneroffset +meanscale * param)) + offset;
 if(transform==4) out = multiplier * (inneroffset + meanscale * param)^3 + offset;
+if(transform==5) out = multiplier * log1p(inneroffset + meanscale * param) + offset;
 if(transform==50) out = meanscale*multiplier;
 if(transform==51) out = multiplier*(exp(inneroffset+meanscale*param)*meanscale/(1+exp(inneroffset+meanscale*param)));
 if(transform==52) out = multiplier*(exp(inneroffset+meanscale*param)*meanscale);
-if(transform==53) out = multiplier*(exp(inneroffset+meanscale*param)*meanscale)/(1+exp(param))-multiplier*exp(inneroffset+meanscale*param)*exp(param)/(1+exp(param))^2;
+if(transform==53) out = multiplier*(exp(inneroffset+meanscale*param)*meanscale)/(1+exp(inneroffset+meanscale*param))-multiplier*exp(inneroffset+meanscale*param)*(exp(inneroffset+meanscale*param)*meanscale)/(1+exp(inneroffset+meanscale*param))^2;
 if(transform==54) out = multiplier*(3*(meanscale*(inneroffset+meanscale*param)^2));
+if(transform==55) out = multiplier*(meanscale/(1+(inneroffset+meanscale*param)));
 
     return out;
   }
@@ -1067,14 +1069,7 @@ err[od] = Y[rowi,od] - syprior[od]; // prediction error
   
   } // end dokalmanrows subset selection
 }//end rowi
-if(dokalman==1){
- 
-  if(( sum(ncont_y) > 0)) {
-  if(verbose > 1) print("errtrans = ", errtrans);
-    //ll += normal_lpdf(errtrans|0,1); //disabled for splitting subjects
-  }
 
-    }
   }
 }
       

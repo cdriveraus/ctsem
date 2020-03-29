@@ -2,8 +2,9 @@ tformshapes <- function(singletext=FALSE,transform=NA,jacobian=FALSE,driftdiag=F
   out = c('(param * meanscale * multiplier +inneroffset + offset)',
     '(log1p(exp(param * meanscale+inneroffset)) * multiplier + offset)',
     '(exp(param * meanscale+inneroffset) * multiplier + offset)',
-    '(exp(param*meanscale+inneroffset)/(1+exp(param)) * multiplier + offset)',
-    '(((param*meanscale+inneroffset)^3)*multiplier + offset)')
+    '(exp(param*meanscale+inneroffset)/(1+exp(param*meanscale+inneroffset)) * multiplier + offset)',
+    '(((param*meanscale+inneroffset)^3)*multiplier + offset)',
+    '(log1p(param * meanscale+inneroffset) * multiplier + offset)')
   
   out=gsub('param',parname,out,fixed=TRUE)
   
@@ -12,7 +13,7 @@ tformshapes <- function(singletext=FALSE,transform=NA,jacobian=FALSE,driftdiag=F
   out = sapply(out,Simplify)
   names(out)=paste0('fn',1:length(out))
   if(jacobian) out = jacobianSymb(out,variables='param')
-  if(!is.na(transform)) out = out[transform+1] else transform = 0:4
+  if(!is.na(transform)) out = out[transform+1] else transform = 0:(length(out)-1)
   if(!singletext)   out = paste0('if(transform==',transform+ifelse(jacobian,ifelse(driftdiag,60,50),0),') out = ',out,';\n',collapse='')
   out=gsub('  ','',out,fixed=TRUE)
   return(out)
