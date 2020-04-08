@@ -3,7 +3,9 @@
 \name{ctstantestdat}
 \alias{ctstantestdat}
 \title{ctstantestdat}
-\format{matrix}
+\format{
+matrix
+}
 \description{
 Generated dataset for testing \code{\link{ctStanFit}} from ctsem package.
 }

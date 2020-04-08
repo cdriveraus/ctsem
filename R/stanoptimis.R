@@ -315,6 +315,8 @@ tostanarray <- function(flesh, skeleton){
 #' without replacement from this set.
 #' @param tdf degrees of freedom of multivariate t distribution. Higher (more normal) generally gives more efficent
 #' importance sampling, at risk of truncating tails.
+#' @param finitediff Either 'ask', TRUE, or FALSE. Whether to use the slow finite difference calculations
+#' for the Hessian (used for confidence intervals) if other approaches do not give a positive definite result. 
 #' @param chancethreshold drop iterations of importance sampling where any samples are chancethreshold times more likely to be drawn than expected.
 #'
 #' @return list containing fit elements
@@ -363,7 +365,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   decontrol=list(),
   stochastic = "auto",
   nopriors=FALSE,carefulfit=TRUE,
-  subsamplesize=.5,
+  subsamplesize=.5,finitediff='ask',
   plot=FALSE,
   is=FALSE, isloopsize=1000, finishsamples=1000, tdf=10,chancethreshold=100,finishmultiply=5,
   verbose=0,cores=2){
@@ -652,7 +654,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         tia=standata$TIPREDEFFECTsetup
         while(!finished){
           if(!is.null(standata$TIpredAuto) && standata$TIpredAuto){
-            message ('Looking for tipreds...')
+            message ('Looking for tipred effects...')
             oldtia=tia
             fit <- list(stanfit=list(rawest=optimfit$par),standata=standata,stanmodel=sm)
             tia=ctTIauto(fit)  
@@ -674,7 +676,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               tiinit[tia[tia>0&oldtia>0]] <- oldtiinit
               standata$TIPREDEFFECTsetup <- array(as.integer(tia),dim=dim(tia))
               found <- max(tia)
-              message('Found ',max(tia),' viable TIpreds')
+              message('Found ',max(tia),' viable TIpred effects')
               standata$ntipredeffects <- as.integer(max(tia))
               init = head(optimfit$par,length(optimbase))
               init = c(init,tiinit)
@@ -734,14 +736,17 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     if(!estonly){
       
       # if(cores > 1) parallelStanSetup(cl=clctsem,sm,standata,split=FALSE) #parallel::clusterExport(clctsem,varlist = c('
-      base <- target(est2,gradnoise = FALSE)
-      basegrad <- attributes(base)$gradient
+      base <- lapply(1:10,function(x) target(est2 + rnorm(length(est2),0,1e-12),
+        gradnoise = FALSE))
+      basegrad <- mean(unlist(lapply(base,function(x) attributes(x)$gradient)))
+      base <- mean(unlist(base))
       
-      grmat<-function(pars,step=1e-5,lpdifmin=1e-8, 
-        lpdifmax=1e-4, direction=1,whichpars='all',gradmod=FALSE){
+      grmat<-function(pars,step=1e-1,lpdifmin=1e-1, 
+        lpdifmax=3, direction=1,whichpars='all',gradmod=FALSE,parmod=TRUE){
         if('all' %in% whichpars) whichpars <- 1:length(pars)
         hessout <- flexsapply(cl = clctsem, cores = 1, whichpars, function(i) {
           stepsize <- step * direction
+          if(parmod) stepsize <- min(step, abs(pars[i]*1e-4)) * direction
           colout <- NA
           dolpchecks <- TRUE #set to true to try the log prob checks again..
           # 
@@ -768,14 +773,19 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                 upgrad <- rep(NA,length(pars))
                 dolpchecks <- FALSE
               } else{
-                upgrad= attributes(uplp)$gradient -basegrad
+                
+                upgradnew= ((attributes(uplp)$gradient -basegrad) / stepsize)
+                upgrad = upgradnew * ifelse(abs(base-uplp) < 2,.5,0) + 
+                  upgradnew*ifelse(lpdifcount==1 ||abs(base-uplp) < 2,.5,0)
+                
                 
                 # print((  (upgrad[i] * (-abs(uppars[i]-pars[i]))) / (uplp[1]-bestfit[1]) ))
                 # upgrad = upgrad / (  (upgrad[i] * (-abs(uppars[i]-pars[i]))) / (uplp[1]-bestfit[1]) ) #linearised upgrad
                 
                 if(dolpchecks){
                   if(abs(base-uplp) > lpdifmax) {
-                    # message(paste0('decreasing step for ', i))
+                    print(abs(base-uplp))
+                    message(paste0('decreasing step for ', i))
                     lpdifok <- FALSE
                     if(lpdifdirection== 1) {
                       lpdifmultiplier = lpdifmultiplier * .5
@@ -783,9 +793,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                     stepsize = stepsize * (1e-2 * lpdifmultiplier)
                     lpdifdirection <- -1
                   }
-                  if(abs(uplp-base) < lpdifmin ) { #include sufficient gradient[i] checks #|| upgrad[i] < 1e-2
-                    # 
-                    # message(paste0('increasing step for ', i))
+                  if(abs(base-uplp) < lpdifmin ) { #include sufficient gradient[i] checks #|| upgrad[i] < 1e-2
+                    print(abs(base-uplp))
+                    message(paste0('increasing step for ', i))
                     lpdifok <- FALSE
                     if(lpdifdirection== -1) {
                       lpdifmultiplier = lpdifmultiplier * .5
@@ -797,7 +807,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                 }
               }
             }
-            colout<- (upgrad) /(stepsize) * ifelse(gradmod,(abs(basegrad[i])),1)
+            print(abs(base-uplp))
+            colout<- (upgrad)  * ifelse(gradmod,(abs(basegrad[i])),1)
           }
           rbind(colout)
         })
@@ -815,6 +826,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       if(is.na(sampleinit[1])){
         
         message('Estimating Hessian')
+        time1 <- Sys.time()
         
         # hesslist <- list()
         # remainingpars <- c()
@@ -887,28 +899,56 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # # newbadpars <- which(rankifremoved == max(rankifremoved))
         
         
-        whichhesspars = (1:npars)
-        if(standata$intoverpop == 0 && standata$nindvarying > 0) whichhesspars <- whichhesspars[-whichmcmcpars]
-        hessup= grmat(pars=est2,step=1e-8, direction=1,whichpars = whichhesspars,gradmod = FALSE)[whichhesspars,,drop=FALSE]
-        hessdown= grmat(pars=est2,step=1e-8, direction=1,whichpars = whichhesspars,gradmod = FALSE)[whichhesspars,,drop=FALSE]
-        hess = (hessup+hessdown)/2
-        cholcovup = try(suppressWarnings(t(chol(solve(-hessup)))),silent = TRUE)
-        cholcovdown = try(suppressWarnings(t(chol(solve(-hessdown)))),silent = TRUE)
+        # whichhesspars = (1:npars)
+        # if(standata$intoverpop == 0 && standata$nindvarying > 0) whichhesspars <- whichhesspars[-whichmcmcpars]
+        # hessup= grmat(pars=est2,step=1e-3, direction=1,whichpars = whichhesspars,gradmod = FALSE)[whichhesspars,,drop=FALSE]
+        # hessdown= grmat(pars=est2,step=1e-3, direction=1,whichpars = whichhesspars,gradmod = FALSE)[whichhesspars,,drop=FALSE]
+        # hess = (hessup+hessdown)/2
+        # cholcovup = try(suppressWarnings(t(chol(solve(-hessup)))),silent = TRUE)
+        # cholcovdown = try(suppressWarnings(t(chol(solve(-hessdown)))),silent = TRUE)
+        grfunc <- function(x) attributes(target(x))$gradient
+        hess <- numDeriv::jacobian(grfunc, est2,method.args=list(r=2))
         cholcov = try(suppressWarnings(t(chol(solve(-hess)))),silent = TRUE)
         # 
         if('try-error' %in% class(cholcov)){
-          if(!'try-error' %in% class(cholcovup)){
-            hess = hessup
-            message('One sided hessian used for std error estimation')
-          } else if(!'try-error' %in% class(cholcovdown)){
-            message('One sided hessian used for std error estimation')
-            hess = hessdown
-          } else if(!is){
-            warning('Approximate hessian used for std error estimation --  treat SE\'s with caution, consider respecification / priors / sampling.')
-          }
+          message('Trying harder...')
+          hess <- numDeriv::jacobian(grfunc, est2,method.args=list(r=5))
+          cholcov = try(suppressWarnings(t(chol(solve(-hess)))),silent = TRUE)
+        }
+        if('try-error' %in% class(cholcov)){
+          # if(!'try-error' %in% class(cholcovup)){
+          #   hess = hessup
+          #   message('One sided hessian used for std error estimation')
+          # } else if(!'try-error' %in% class(cholcovdown)){
+          #   message('One sided hessian used for std error estimation')
+          #   hess = hessdown
+          # } else{
+            time2 <- Sys.time()-time1
+            esttime <- round(time2*npars/60,0)
+            continue <- ifelse(finitediff %in% FALSE,'N','Y')
+            if(time2 * npars > 5*60 && interactive() && finitediff=='ask') continue <- readline(
+              paste0('Hessian not positive definite, std errors may be invalid, try slower approach? Est ',esttime,' mins.  Y/N?'))
+            if(!continue %in% c('n','N','no','No') || finitediff==TRUE){
+              message('Trying finite differences Richardson Hessian')
+              hess = numDeriv::hessian(target,est2,method.args=list(r=2))
+              cholcov = try(suppressWarnings(t(chol(solve(-hess)))),silent = TRUE)
+            }
+            if('try-error' %in% class(cholcov)) warning('Approximate hessian used for std error estimation --  treat SE\'s with caution, consider respecification / priors / sampling.')
+          # }
         }
       
         mcov=MASS::ginv(-hess) #-optimfit$hessian)
+        
+        # if(robust){
+        #   message('Getting scores for robust std errors...')
+        #   mcovnonrobust <-mcov
+        #   fit <- list(standata=standata,stanmodel=sm) #this is hacky...
+        #   fit$stanfit$rawest=est2
+        #   
+        #   score=as.matrix(ctsem:::scorecalc(fit,subjectsonly = F,returnsubjectlist = F,cores=cores))
+        #   mcov=tcrossprod(mcov,MASS::ginv(crossprod(score)))
+        # }
+        
         mcov=as.matrix(Matrix::nearPD(mcov,conv.norm.type = 'F')$mat)
         mchol = t(chol(mcov))
         if(standata$intoverpop == 0 && standata$nindvarying > 0){
@@ -947,7 +987,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       if(!is) {
         nresamples = finishsamples
         # if(!domix){  
-        message('Getting ',finishsamples,' samples from Hessian for interval estimates...')
+        # message('Getting ',finishsamples,' samples from Hessian for interval estimates...')
         resamples <- matrix(unlist(lapply(1:nresamples,function(x){
           delta[[1]] + (mchol) %*% t(matrix(rnorm(length(delta[[1]])),nrow=1))
         } )),byrow=TRUE,ncol=length(delta[[1]]))

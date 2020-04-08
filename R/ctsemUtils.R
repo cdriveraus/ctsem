@@ -300,7 +300,7 @@ ctDensity<-function(x,bw='auto',plot=FALSE,...){
 
 
 
-ctDensityList<-function(x,xlimsindex='all',plot=FALSE,smoothness=1,
+ctDensityList<-function(x,xlimsindex='all',ylimsindex='all',cut=FALSE,plot=FALSE,smoothness=1,
   grouplabels=names(x),
   ylab='Density',
   xlab='Par. Value',probs=c(.05,.95),main='',colvec=NA){
@@ -311,7 +311,7 @@ ctDensityList<-function(x,xlimsindex='all',plot=FALSE,smoothness=1,
     newxlims=stats::quantile(x[[i]],probs=probs,na.rm=TRUE)
     if(i==1) {
       xlims=newxlims
-    } 
+    }
     else {
       xlims <- range(c(xlims,newxlims))
     }
@@ -320,25 +320,36 @@ ctDensityList<-function(x,xlimsindex='all',plot=FALSE,smoothness=1,
   xlims[1] = xlims[1] - sd/2
   xlims[2] = xlims[2] + sd/2
 # browser()
-  logbw=log(sapply(x,function(d) {
+  bw=sapply(x,function(d) {
     out<-try(bw.SJ(na.omit(c(d))),silent=TRUE)
     if('try-error' %in% class(out)) out <- bw.nrd0(na.omit(c(d)))
     return(out)
-    }))
+    })
   # browser()
-  logbwmean = mean(logbw + ifelse(length(logbw) > 1,sd(logbw),0))
+  # logbwmean = mean(logbw)# + ifelse(length(logbw) > 1,sd(logbw),0))
 # browser()
   denslist<-lapply(1:length(x),function(xi) {
-    bw=(exp(mean(logbwmean)))^1 #logbw[xi]+
+    bw=exp(log(bw[xi]) + (mean(log(bw))-log(bw[xi]))*.3)
     # print(bw)
-    d=stats::density(x[[xi]],bw=bw/2,n=5000,from=xlims[1],to=xlims[2],na.rm=TRUE)
+    d=stats::density(x[[xi]],bw=bw,n=5000,from=xlims[1],to=xlims[2],na.rm=TRUE)
     # d$y=d$y/ sum(d$y)/range(d$x)[2]*length(d$y)
     return(d)
   })
-
-  xlims=range(sapply(denslist,function(d) d$x[d$y> (.1*max(d$y))]))
+if(xlimsindex[1] %in% 'all') xlimsindex <- 1:length(denslist)
+if(ylimsindex[1] %in% 'all') ylimsindex <- 1:length(denslist)
+  xlims=range(sapply(denslist[xlimsindex],function(d) d$x[d$y> (.1*max(d$y))]))
   xlims <- xlims +c(-1,1)*sd(xlims)
-  ylims=c(0,max(unlist(lapply(denslist,function(li) max(li$y))))*1.1)
+  ylims=c(0,max(unlist(lapply(denslist[ylimsindex],function(li) max(li$y))))*1.1)
+  
+  if(cut){
+    denslist<-lapply(denslist,function(d){
+      d$x[d$x < min(xlims)] <- NA
+      d$x[d$x > max(xlims)] <- NA
+      d$y<-d$y[!is.na(d$x)] 
+      d$x<-d$x[!is.na(d$x)] 
+      return(d)
+    })
+  }
 
   denslist <- lapply(denslist,function(d){
     o<-list()

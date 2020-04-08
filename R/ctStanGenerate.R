@@ -7,6 +7,8 @@
 #' @param fullposterior Generate from the full posterior or just the mean?
 #' @param nsamples How many samples to generate?
 #' @param parsonly If TRUE, only return samples of raw parameters, don't generate data.
+#' @param includePreds if TRUE, the prior for covariate effects (TD and TI predictors)
+#' is included, as well as the TD and TI pred data. Else the effects are set to zero.
 #' @param ... arguments to pass to stanoptimis 
 #'
 #' @return Array of nsamples x time points x manifest variables.
@@ -19,23 +21,33 @@
 #' priorpred <- ctStanGenerate(ctm = ctstantestfit$ctstanmodelbase,
 #'   datastruct = ctstantestdat,cores=6,nsamples = 50)
 #'}
-ctStanGenerate <- function(ctm,datastruct, optimize=TRUE, is=FALSE, fullposterior=TRUE, nsamples=200, parsonly=FALSE,...){
+ctStanGenerate <- function(ctm,datastruct, optimize=TRUE, is=FALSE, 
+  fullposterior=TRUE, nsamples=200, parsonly=FALSE,includePreds = FALSE,...){
   datastruct[,ctm$manifestNames] <- NA
   dots <- list(...)
   dots$carefulfit=FALSE
   dots$is <- is
   dots$tol=1e-18
   if(is.null(dots$finishsamples) && parsonly) dots$finishsamples=nsamples
+  if(!includePreds){
+    ctm$n.TDpred <- 0
+    ctm$TDpredNames <- NULL
+    ctm$n.TIpred <- 0
+    ctm$TIpredNames <- NULL
+  }
+  ctm$TIpredAuto <- 0L
+  
   #problem with multiple cores inside function?
   pp<-ctStanFit(datalong = datastruct[c(1,nrow(datastruct)),,drop=FALSE], 
-    ctstanmodel = ctm,optimize=optimize, optimcontrol=dots,cores=1,verbose=0)
+    ctstanmodel = ctm,optimize=optimize, optimcontrol=dots,verbose=0,...)
 
   if(parsonly) dat <- pp else{
   
   filled <- datastruct
   filled[,ctm$manifestNames] <- -99
   # browser()
-  ppf <- ctStanFit(datalong = filled, ctstanmodel = ctm,optimize=optimize, optimcontrol=dots,fit=FALSE)
+  ppf <- ctStanFit(datalong = filled, ctstanmodel = ctm,optimize=optimize, 
+    optimcontrol=dots,fit=FALSE)
   # pp$standata$Y <- ppf$standata$Y
   ppf$stanfit <- pp$stanfit
   class(ppf) <- c('ctStanFit',class(ppf))

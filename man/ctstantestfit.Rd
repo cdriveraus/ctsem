@@ -3,7 +3,9 @@
 \name{ctstantestfit}
 \alias{ctstantestfit}
 \title{ctstantestfit}
-\format{stanfit class.}
+\format{
+stanfit class.
+}
 \description{
 Minimal output from \code{\link{ctStanFit}} from ctsem package.
 }

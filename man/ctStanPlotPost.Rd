@@ -12,7 +12,8 @@ ctStanPlotPost(
   smoothness = 1,
   priorsamples = 10000,
   plot = TRUE,
-  wait = FALSE
+  wait = FALSE,
+  ...
 )
 }
 \arguments{
@@ -36,6 +37,9 @@ can cause plots to exceed natural boundaries, such as standard deviations below 
 
 \item{wait}{If true, user is prompted to continue before plotting next graph.
 If false, graphs are plotted one after another without waiting.}
+
+\item{...}{Parameters to pass to ctStanFit. \code{cores = x} will speed things up,
+where x is the number of cpu cores to use.}
 }
 \description{
 Plots prior and posterior distributions of model parameters in a ctStanModel or ctStanFit object.

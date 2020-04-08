@@ -3,8 +3,10 @@
 \name{ctExample1}
 \alias{ctExample1}
 \title{ctExample1}
-\format{100 by 17 matrix containing containing ctsem wide format data. 
-6 measurement occasions of leisure time and happiness and 5 measurement intervals for each of 100 individuals.}
+\format{
+100 by 17 matrix containing containing ctsem wide format data. 
+6 measurement occasions of leisure time and happiness and 5 measurement intervals for each of 100 individuals.
+}
 \description{
 Simulated example dataset for the ctsem package
 }

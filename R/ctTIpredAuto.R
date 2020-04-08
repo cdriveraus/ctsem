@@ -123,7 +123,7 @@ whichsubjectpars <- function(standata,subjects=NA){
 }
 
 
-scorecalc <- function(fit,subjectsonly=TRUE,cores=2){
+scorecalc <- function(fit,subjectsonly=TRUE,returnsubjectlist=TRUE,cores=2){
   fit$standata$nopriors=1L
   
   scores <- list()
@@ -141,6 +141,10 @@ scorecalc <- function(fit,subjectsonly=TRUE,cores=2){
   }
   # browser()
   if(subjectsonly) scores <- matrix(unlist(scores),nrow=length(scores[[i]]))
+  if(!returnsubjectlist){ #return data.table
+    scores=lapply(scores,function(x) data.table(t(x)))
+    scores=rbindlist(scores)
+  }
   return(scores)
 }
 

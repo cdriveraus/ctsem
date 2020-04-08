@@ -15,93 +15,89 @@
 #' @param wait If true, user is prompted to continue before plotting next graph.  
 #' If false, graphs are plotted one after another without waiting.
 #' @param plot Logical, if FALSE, ggplot objects are returned in a list instead of plotting.
+#' @param ... Parameters to pass to ctStanFit. \code{cores = x} will speed things up,
+#' where x is the number of cpu cores to use.
 #' @examples
 #' \dontrun{
 #' ctStanPlotPost(ctstantestfit, rows=3:4)
 #' }
 #' @export
 
-ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE, smoothness=1,priorsamples=10000,
-  plot=TRUE,wait=FALSE){
+ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE, 
+  smoothness=1,priorsamples=10000,
+  plot=TRUE,wait=FALSE,...){
   
-  if(!priorwidth) message('priorwidth argument temporarily unavailable sorry...')
+  # if(!priorwidth) message('priorwidth argument temporarily unavailable sorry...')
   if(!(class(obj) %in% c('ctStanFit','ctStanModel'))) stop('not a ctStanFit or ctStanModel object!')
   plots <- list()
   densiter <- 1e5
   popsetup <- obj$setup$popsetup
-  popvalues<- obj$setup$matvalues[obj$setup$matsetup$when==0 & obj$setup$matsetup$param > 0,]
+  popvalues<- obj$setup$popvalues
+  browser()
+  popvalues <- popvalues[popsetup$when==0 & popsetup$param > 0 & popsetup$copyrow < 1,]
+  popsetup <- popsetup[popsetup$when==0 & popsetup$param > 0 & popsetup$copyrow < 1,]
   
-  # paroriginal<-graphics::par()[c('mfrow','mgp','mar')]
+  popvalues<-popvalues[order(popsetup$param),]
+  popsetup<-popsetup[order(popsetup$param),]
   
-  # do.call(graphics::par,parcontrol)
   
   e<-ctExtract(obj)
-  # 
-  
-  # data
+
   priors <- ctStanGenerate(ctm = obj$ctstanmodelbase,
     datastruct = obj$ctdatastruct,parsonly=TRUE,nsamples=priorsamples)
   priors <- priors$stanfit$transformedpars
+  posteriors <- obj$stanfit$transformedpars
   
   
-  if(rows[1]=='all') rows<-which(!duplicated(obj$setup$popsetup$parname))
+  if(rows[1]=='all') rows<-which(!duplicated(popsetup$parname))
   nplots<-ceiling(length(rows) /4)
   if(1==99) Par.Value <- type <- quantity <- Density <- NULL
-  # if(all(mfrow=='auto')) {
-  #   mfrow <- grDevices::n2mfrow( (length(rows)+sum(as.logical(obj$setup$popsetup$indvarying[rows]))*2))
-  #   mfrow[mfrow > 3] <- 3
-  # }
-  # 
-  # if(any(mfrow!=par()$mfrow)) graphics::par(mfrow=mfrow)
-  
-  # nsubjects<-obj$data$nsubjects 
+
   quantity <- c('Posterior','Prior')
   for(ploti in 1:nplots){
     dat <- data.table(quantity='',Par.Value=0, Density=0,type='',param='')
     for(ri in if(length(rows) > 1) rows[as.integer(cut_number(rows,nplots))==ploti] else rows){
-      # 
-      pname <- obj$setup$popsetup$parname[ri]
-      # print(pname)
-      pari <- obj$setup$popsetup[ri,'param']
-      rawpopmeans<- e$rawpopmeans[,pari]
-      param<-rawpopmeans
-      popmeanspost<-e$popmeans[,pari] #tform(param,popsetup$transform[ri],popvalues$multiplier[ri], popvalues$meanscale[ri],popvalues$offset[ri], popvalues$inneroffset[ri])
       
-      param<-stats::rnorm(densiter,0,1)
-      mrow <- which(obj$ctstanmodel$pars$param %in% pname)[1]
+      pname <- obj$setup$popsetup$parname[ri]
+      pari <- obj$setup$popsetup[ri,'param']
+      # rawpopmeans<- e$rawpopmeans[,pari]
+      # param<-rawpopmeans
+      # popmeanspost<-e$popmeans[,pari] #tform(param,popsetup$transform[ri],popvalues$multiplier[ri], popvalues$meanscale[ri],popvalues$offset[ri], popvalues$inneroffset[ri])
+      # param<-stats::rnorm(densiter,0,1)
+      meanpost <- posteriors$popmeans[,pari]
       meanprior <- priors$popmeans[,pari]#tform(param,popsetup$transform[mrow],popvalues$multiplier[mrow], popvalues$meanscale[mrow],popvalues$offset[mrow], popvalues$inneroffset[mrow])
-
-      dens <- ctDensityList(list(popmeanspost, meanprior),probs=c(.05,.95),plot=FALSE)
+# if(pname %in% 'TD_memInt2') browser()
+      if(priorwidth) xlimsindex <- 'all' else xlimsindex <- 1
+      mdens <- ctDensityList(list(meanpost, meanprior),probs=c(.05,.95),plot=FALSE,
+        xlimsindex=xlimsindex,cut=TRUE)
       quantity <- c('Posterior','Prior')
-      for(i in 1:length(dens$density)){
-        dat <- rbind(dat,data.table(quantity=quantity[i],Par.Value=dens$density[[i]]$x,
-          Density=dens$density[[i]]$y, type='Pop. Mean',param=pname))
+      if(!priorwidth) 
+      for(i in 1:length(mdens$density)){
+        dat <- rbind(dat,data.table(quantity=quantity[i],Par.Value=mdens$density[[i]]$x,
+          Density=mdens$density[[i]]$y, type='Pop. Mean',param=pname))
       }
       
       
       if(obj$setup$popsetup[ri,'indvarying']>0){ #then also plot sd and subject level pars
-        sdscale <- popvalues[ri,'sdscale']
-        sdtform <- gsub('.*', '*',obj$ctstanmodel$rawpopsdtransform,fixed=TRUE)
-
-        rawpopsd <- e$rawpopsd[,popsetup$indvarying[ri]] #c(eval(parse(text=sdtform)) * ifelse(!is.null(obj$standata$varreg),exp(e$varregbase),1))
-        
-        param<-stats::rnorm(densiter,rawpopmeans,rawpopsd)
+        # sdscale <- popvalues[ri,'sdscale']
+        # sdtform <- gsub('.*', '*',obj$ctstanmodel$rawpopsdtransform,fixed=TRUE)
+        # rawpopsd <- e$rawpopsd[,popsetup$indvarying[ri]] #c(eval(parse(text=sdtform)) * ifelse(!is.null(obj$standata$varreg),exp(e$varregbase),1))
+        # param<-stats::rnorm(densiter,rawpopmeans,rawpopsd)
+        # subjectprior<-tform(param,popsetup$transform[ri],popvalues$multiplier[ri], popvalues$meanscale[ri],popvalues$offset[ri], popvalues$inneroffset[ri])
         # 
-        subjectprior<-tform(param,popsetup$transform[ri],popvalues$multiplier[ri], popvalues$meanscale[ri],popvalues$offset[ri], popvalues$inneroffset[ri])
-        
-        if(!obj$data$intoverpop) {
-          rawindparams<-e$baseindparams[,popsetup$indvarying[ri],,drop=FALSE] *
-            rawpopsd + rawpopmeans
-          param<-rawindparams
-          indparamspost<-tform(param,popsetup$transform[ri],popvalues$multiplier[ri], popvalues$meanscale[ri],popvalues$offset[ri], popvalues$inneroffset[ri])
-
-          dens <- ctDensityList(list(indparamspost, subjectprior),probs=c(.01,.99),plot=FALSE)
-          quantity <- c('Posterior','Prior')
-          for(i in 1:length(dens$density)){
-            dat <- rbind(dat,data.table(quantity=quantity[i],Par.Value=dens$density[[i]]$x,
-              Density=dens$density[[i]]$y, type='Subject Params',param=pname))
-          }
-        }
+        # if(!obj$data$intoverpop) {
+        #   rawindparams<-e$baseindparams[,popsetup$indvarying[ri],,drop=FALSE] *
+        #     rawpopsd + rawpopmeans
+        #   param<-rawindparams
+        #   indparamspost<-tform(param,popsetup$transform[ri],popvalues$multiplier[ri], popvalues$meanscale[ri],popvalues$offset[ri], popvalues$inneroffset[ri])
+        # 
+        #   dens <- ctDensityList(list(indparamspost, subjectprior),probs=c(.01,.99),plot=FALSE)
+        #   quantity <- c('Posterior','Prior')
+        #   for(i in 1:length(dens$density)){
+        #     dat <- rbind(dat,data.table(quantity=quantity[i],Par.Value=dens$density[[i]]$x,
+        #       Density=dens$density[[i]]$y, type='Subject Params',param=pname))
+        #   }
+        # }
         # 
         
         # rawpopsdbase<-  stats::rnorm(densiter,0,1)
@@ -124,23 +120,24 @@ ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE, smoothness=1,pr
         # sdtform <- gsub('.*', '*',obj$ctstanmodel$rawpopsdtransform,fixed=TRUE)
         # rawpopsdprior<-eval(parse(text=sdtform)) * sdscale
         
+        posteriorsd <- posteriors$popsd[,popsetup$indvarying[ri]]
+        priorsd <- priors$popsd[,popsetup$indvarying[ri]]
         
-        dens <- ctDensityList(list(e$popsd[,pari], priors$popsd[,pari]),probs=c(.05,.95),plot=FALSE)
-        for(i in 1:length(dens$density)){
-          dat <- rbind(dat,data.table(quantity=quantity[i],Par.Value=dens$density[[i]]$x,
-            Density=dens$density[[i]]$y, type='Pop. SD',param=pname))
+        
+        sddens <- ctDensityList(list(posteriorsd, priorsd),probs=c(.05,.95),plot=FALSE,
+          xlimsindex=xlimsindex)
+        for(i in 1:length(sddens$density)){
+          dat <- rbind(dat,data.table(quantity=quantity[i],Par.Value=sddens$density[[i]]$x,
+            Density=sddens$density[[i]]$y, type='Pop. SD',param=pname))
         }
         
       }
     }
-    
-    
     dat <- dat[-1,]
     # dat[,xlow := quantile(Par.Value,.3),by=list(quantity,type,param)]
     # dat[,xhigh := quantile(Par.Value,.7),by=list(quantity,type,param)]
     # dat<-dat[Par.Value <= (xhigh+(xhigh-xlow)*2),]
     # dat<-dat[Par.Value >= (xlow-(xhigh-xlow)*2),]
-
       plots<-c(plots,list(
       ggplot(dat,aes(x=Par.Value,fill=quantity,ymax=Density,y=Density) )+
         geom_line(alpha=.3) +
@@ -150,6 +147,7 @@ ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE, smoothness=1,pr
         theme(legend.title = element_blank(),
           panel.grid.minor = element_line(size = 0.1), panel.grid.major = element_line(size = .2),
           strip.text.x = element_text(margin = margin(.01, 0, .01, 0, "cm"))) +
+          # coord_cartesian(xlim=c(min(dat$xmin),max(dat$xmax)))+
         facet_wrap(vars(type,param),scales='free')
     ))
   }

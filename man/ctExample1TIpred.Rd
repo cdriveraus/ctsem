@@ -3,9 +3,11 @@
 \name{ctExample1TIpred}
 \alias{ctExample1TIpred}
 \title{ctExample1TIpred}
-\format{100 by 18 matrix containing containing ctsem wide format data. 
+\format{
+100 by 18 matrix containing containing ctsem wide format data. 
 6 measurement occasions of leisure time and happiness, 1 measurement of number of friends,
-and 5 measurement intervals for each of 100 individuals.}
+and 5 measurement intervals for each of 100 individuals.
+}
 \description{
 Simulated example dataset for the ctsem package
 }

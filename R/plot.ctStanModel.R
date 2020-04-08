@@ -96,7 +96,8 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='margi
         }
         dens <- ctDensityList(denslist,probs=c(.01,.99),plot=FALSE)
         for(i in 1:length(leg)){
-          dat <- rbind(dat,data.table(Par.Value=dens$density[[i]]$x,Density=dens$density[[i]]$y, type=leg[i],param=m$param[rowi]))
+          dat <- rbind(dat,data.table(Par.Value=dens$density[[i]]$x,
+            Density=dens$density[[i]]$y, type=leg[i],param=m$param[rowi]))
         }
       }
     }
