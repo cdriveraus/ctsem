@@ -1,5 +1,4 @@
 ctStanData <- function(ctm, datalong,optimize,derrind='all'){
-  # browser()
   datalong <- datalong[,c(ctm$timeName,ctm$subjectIDname,
     ctm$manifestNames,ctm$TDpredNames,ctm$TIpredNames)]
       #start data section
@@ -163,8 +162,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
         }
       }
     }
-    
-    datalong[,c(ctm$manifestNames,ctm$TIpredNames)][is.na(datalong[,c(ctm$manifestNames,ctm$TIpredNames)])]<-99999 #missing data
+    datalong[,ctm$manifestNames][is.na(datalong[,ctm$manifestNames])]<-99999 #missing data
     
     
     standata <- list(

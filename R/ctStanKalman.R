@@ -26,32 +26,40 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,standardisederr
   if(!is.na(nsamples)) samples <- samples[sample(1:nrow(samples),nsamples),,drop=FALSE] else nsamples <- nrow(samples)
   if(is.function(collapsefunc)) samples = matrix(apply(samples,2,collapsefunc,...),ncol=ncol(samples))
   e=stan_constrainsamples(sm = fit$stanmodel,standata = standata,
-    samples = samples,cores=cores,savescores=TRUE)
+    samples = samples,cores=cores,savescores=TRUE,pcovn=5)
   
   if(subjectpars){
-    # browser()
-    p=sort(unique(fit$setup$matsetup$param[fit$setup$matsetup$indvarying]))# | fit$setup$matsetup$tipred]))
+    if(!fit$standata$intoverpop) stop('This function only for extracting subject parameters when integrating over them using intoverpop=TRUE')
+    ms <- cbind(fit$setup$matsetup, fit$setup$matvalues)
+    
+    mst0 <- ms[(ms$when==0 & ms$indvarying > 0 & ms$matrix ==1 & ms$row <= fit$standata$nlatent),] #indvarying t0means
+    mst0 <- mst0[match(unique(mst0$param),mst0$param),] #remove duplicates
+    
+    ms <- ms[ms$when > 0 & ms$param > 0 & ms$copyrow <1,] #based on a state and not a copy
+    ms=ms[ms$param > fit$standata$nlatent & ms$matrix < 50,] #based on an indvarying latent state and not for jacobians
+    ms <- ms[match(unique(ms$param),ms$param),] #remove duplicates
+    
+    ms <- rbind(mst0,ms)
+    
+    p=sort(unique(ms$param))# | fit$setup$matsetup$tipred]))
     p=p[p>0]
-    # pt0 = p[p < standata$nlatent] #t0means calculated from smoothed states
-    # p=p[p > standata$nlatent] #other pars based on final point
-    if(length(p)==0) stop('No random effect parameters found!')
+    if(length(p)==0) stop('No individually varying parameters found!')
     firstsub <- rep(TRUE,standata$ndatapoints) #which rows represent first rows per subject
     for(i in 2:standata$ndatapoints){
       if(standata$subject[i] == standata$subject[i-1]) firstsub[i] <- FALSE
     }
-    
-    states <- e$etasmooth[,firstsub,p,drop=FALSE]
+    states <- e$etasmooth[,firstsub,,drop=FALSE]
     dimnames(states) <- list(iter=1:dim(states)[1],id = unique(standata$subject), par = 1:dim(states)[3])
-    ms <- fit$setup$matsetup
-    mv <- fit$setup$matvalues
+
     mats <- ctStanMatricesList()$all
     for(i in 1:nrow(ms)){
       if(ms$param[i] %in% p){
         if(ms$transform[i] >=0){ #havent done custom transforms here
-        if(ms$param[i] > standata$nlatent) states[,,ms$param[i]] <- tform( #t0means not done here because they are not based on the state
-         param = states[,,ms$param[i]], transform = ms$transform[i],
-          multiplier = mv$multiplier[i],meanscale = mv$meanscale[i],offset = mv$offset[i],
-          inneroffset = mv$inneroffset[i])
+          # browser()
+        states[,,ms$param[i]] <- tform( 
+         states[,,ms$param[i]], transform = ms$transform[i],
+          multiplier = ms$multiplier[i],meanscale = ms$meanscale[i],offset = ms$offset[i],
+          inneroffset = ms$inneroffset[i])
         dimnames(states)$par[ms$param[i]] <- paste0(names(mats[ms$matrix[i]]),'[',ms$row[i],',',ms$col[i],']')
         }
         if(ms$transform[i] <0) message('custom transforms not implemented yet...sorry')

@@ -123,27 +123,31 @@ whichsubjectpars <- function(standata,subjects=NA){
 }
 
 
-scorecalc <- function(fit,subjectsonly=TRUE,returnsubjectlist=TRUE,cores=2){
-  fit$standata$nopriors=1L
+scorecalc <- function(standata,est,stanmodel,subjectsonly=TRUE,
+  returnsubjectlist=TRUE,cores=2){
+  standata$dokalmanpriormodifier <- ifelse(subjectsonly, 1/standata$nsubjects,1/standata$ndatapoints)
   
   scores <- list()
-  for(i in 1:fit$standata$nsubjects){
-    whichpars = whichsubjectpars(fit$standata,i)
-    scores[[i]]<-matrix(NA,length(whichpars),ifelse(subjectsonly,1,sum(fit$standata$subject==i)))
-    standata <- standatact_specificsubjects(fit$standata,i)
+  for(i in 1:standata$nsubjects){
+    whichpars = whichsubjectpars(standata,i)
+    scores[[i]]<-matrix(NA,length(whichpars),ifelse(subjectsonly,1,sum(standata$subject==i)))
+    standata1 <- standatact_specificsubjects(standata,i)
     for(j in 1:ncol(scores[[i]])){
-      standata$llsinglerow=as.integer(ifelse(subjectsonly,0,j))
-      sf <- stan_reinitsf(fit$stanmodel,standata,fast = TRUE)
+      standata1$llsinglerow=as.integer(ifelse(subjectsonly,0,j))
+      sf <- stan_reinitsf(stanmodel,standata1,fast = TRUE)
       scores[[i]][,j] <- sf$grad_log_prob(
-        upars=fit$stanfit$rawest[whichpars],
+        upars=est[whichpars],
         adjust_transform = TRUE)
     }
   }
-  # browser()
+  
   if(subjectsonly) scores <- matrix(unlist(scores),nrow=length(scores[[i]]))
   if(!returnsubjectlist){ #return data.table
-    scores=lapply(scores,function(x) data.table(t(x)))
-    scores=rbindlist(scores)
+    if('list' %in% class(scores)){
+      scores=lapply(scores,function(x) data.table(t(x)))
+      scores=rbindlist(scores)
+    } else scores <- t(scores)
+   
   }
   return(scores)
 }
@@ -151,7 +155,8 @@ scorecalc <- function(fit,subjectsonly=TRUE,returnsubjectlist=TRUE,cores=2){
 ctTIauto <- function(fit,tipreds=NA){
   if(is.na(tipreds[1])) tipreds <- fit$standata$tipredsdata
   # colnames(tipreds) <- paste0('ti',1:ncol(tipreds))
-  scores <- scorecalc(fit)
+  scores <- scorecalc(standata = fit$standata,
+    est = fit$stanfit$rawest,stanmodel = fit$stanmodel)
   scores <- scores[1:fit$standata$nparams,,drop=FALSE]
   rownames(scores) <- paste0('p',1:nrow(scores))
   # matchindex <- match(1:fit$standata$nparams,fit$setup$matsetup$param)
@@ -180,7 +185,7 @@ ctTIauto <- function(fit,tipreds=NA){
   if(fit$standata$nindvarying > 0 && fit$standata$intoverpop > 0){
     fit$setup$matsetup <- data.frame(fit$standata$matsetup)
     e=stan_constrainsamples(sm = fit$stanmodel,standata = fit$standata,
-      samples = matrix(fit$stanfit$rawest,nrow=1),savescores=TRUE)
+      samples = matrix(fit$stanfit$rawest,nrow=1),savescores=TRUE,quiet=TRUE,pcovn=2)
     p=sort(unique(fit$setup$matsetup$row[fit$setup$matsetup$indvarying>0]))# | fit$setup$matsetup$tipred]))
     firstsub <- rep(TRUE,fit$standata$ndatapoints) #which rows represent first rows per subject
     for(i in 2:fit$standata$ndatapoints){
@@ -202,13 +207,14 @@ ctTIauto <- function(fit,tipreds=NA){
 }
 ctIndVarAuto <- function(fit,aicthreshold = -2){
   if(requireNamespace('lme4',quietly=TRUE)){
-    scores <- scorecalc(fit,subjectsonly = FALSE)
+    scores <- scorecalc(standata = fit$standata,est = fit$stanfit$rawest,
+      stanmodel = fit$stanmodel,subjectsonly = FALSE)
     scores <- t(do.call(cbind,scores))
     scores <- scores[,1:fit$standata$nparams]
     colnames(scores) <- paste0('p',1:ncol(scores))
     sdat <- fit$standata
     sdat$savescores <- 1L
-    sdat$nopriors <- 1L
+    # sdat$nopriors <- 1L
     sdat$popcovn <- 5L
     e=rstan::constrain_pars(stan_reinitsf(fit$stanmodel,sdat),fit$stanfit$rawest)
     colnames(e$etaprior) <- paste0('etaprior',1:ncol(e$etaprior))

@@ -92,33 +92,6 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
         return(out)
       }
       
-      if(1==99 & (is.null(object$data$intoverpop) || object$data$intoverpop==0)){    
-        #transformed subject level params
-        rawpopcorr_transformed= array(sapply(1:iter, function(x) cor(e$indparams[x,,])),dim=c(nindvarying,nindvarying,iter))
-        rawpopcov_transformed= array(sapply(1:iter, function(x) cov(e$indparams[x,,])),dim=c(nindvarying,nindvarying,iter))
-        
-        rawpopcorr_transformedmean=getMean(rawpopcorr_transformed)
-        rawpopcorr_transformedsd=getSd(rawpopcorr_transformed)
-        
-        rawpopcov_transformedmean=getMean(rawpopcov_transformed)
-        rawpopcov_transformedsd=getSd(rawpopcov_transformed)
-        
-        rawpopcovcor_transformedmean=rawpopcov_transformedmean
-        rawpopcovcor_transformedmean[lower.tri(diag(nindvarying))]=rawpopcorr_transformedmean[lower.tri(diag(nindvarying))]
-        
-        rawpopcovcor_transformedsd=rawpopcov_transformedsd
-        rawpopcovcor_transformedsd[lower.tri(diag(nindvarying))]=rawpopcorr_transformedsd[lower.tri(diag(nindvarying))]
-        
-        dimnames(rawpopcovcor_transformedsd)<-list(parnamesiv,parnamesiv)
-        dimnames(rawpopcovcor_transformedmean)<-list(parnamesiv,parnamesiv)
-        
-        out=list(paste0('The following matrix is the posterior mean of the correlation and covariance matrix of subject level parameters,', 
-          ' with correlations on the lower triangle'),
-          popcovcor_mean=round(rawpopcovcor_transformedmean,digits),
-          paste('The following matrix is the posterior std dev. of the correlation and covariance matrix of subject level parameters,', 
-            'with correlations on the lower triangle'),
-          popcovcor_sd=round(rawpopcovcor_transformedsd,digits))
-      }
       #raw pop distribution params
       dimrawpopcorr <- dim(e$rawpopcorr)
       if(!'stanfit' %in% class(object$stanfit)) rawpopcorr= array(e$rawpopcorr,dim=c(dimrawpopcorr[1],1,dimrawpopcorr[2] * dimrawpopcorr[3]))
@@ -275,7 +248,8 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   
   if(!'stanfit' %in% class(object$stanfit)){ #if optimized / importance sampled
     
-    if(!is.null(iter)){ popsd <- suppressWarnings(monitor(array(e$popsd,dim=c(dim(e$popsd)[1],1,dim(e$popsd)[2])),warmup=0,print=FALSE))
+    if(!is.null(iter)){ popsd <- suppressWarnings(monitor(array(
+      e$popsd,dim=c(dim(e$popsd)[1],1,dim(e$popsd)[2])),warmup=0,print=FALSE))
     popsd=popsd[, monvars,drop=FALSE]
     rownames(popsd)=parnamesiv
     }

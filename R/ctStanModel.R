@@ -137,7 +137,7 @@ ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
   
   for(ri in 1:nrow(ctspec)){ #convert back to text for new approach
     if(!is.na(as.integer(ctspec$transform[ri]))){
-      ctspec$transform[ri] <- Simplify(tform(param = 'param',
+      ctspec$transform[ri] <- Simplify(tform(parin = 'param',
         transform = as.integer(ctspec$transform[ri]),
         multiplier = ctspec$multiplier[ri],
         meanscale = ctspec$meanscale[ri],

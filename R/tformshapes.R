@@ -1,28 +1,48 @@
-tformshapes <- function(singletext=FALSE,transform=NA,jacobian=FALSE,driftdiag=FALSE, parname='param'){
-  out = c('(param * meanscale * multiplier +inneroffset + offset)',
-    '(log1p(exp(param * meanscale+inneroffset)) * multiplier + offset)',
-    '(exp(param * meanscale+inneroffset) * multiplier + offset)',
-    '(exp(param*meanscale+inneroffset)/(1+exp(param*meanscale+inneroffset)) * multiplier + offset)',
-    '(((param*meanscale+inneroffset)^3)*multiplier + offset)',
-    '(log1p(param * meanscale+inneroffset) * multiplier + offset)')
+tformshapes <- function(singletext=FALSE,transform=NA,jacobian=FALSE,driftdiag=FALSE, parname='param',stan=FALSE){
+ out = c('param',
+    '(log1p(exp(param)))',
+    '(exp(param))',
+    '(exp(param)/(1+exp(param)))',
+    '((param)^3)',
+    'log1p(param)',
+    'meanscale',
+    'exp(param)/(1+exp(param))',
+    'exp(param)',
+    'exp(param)/(1+exp(param))-exp(param)*exp(param)/(1+exp(param))^2',
+    '3*param^2',
+    '1/(1+param)')
+ 
+ tfvec=c(0:5,50:55)
   
   out=gsub('param',parname,out,fixed=TRUE)
   
+  # if(driftdiag && jacobian) out = paste0(out,' * param')
+  # out = sapply(out,Simplify)
+  # names(out)=paste0('fn',1:length(out))
+  # if(jacobian) out = jacobianSymb(out,variables='param')
   
-  if(driftdiag && jacobian) out = paste0(out,' * param')
-  out = sapply(out,Simplify)
-  names(out)=paste0('fn',1:length(out))
-  if(jacobian) out = jacobianSymb(out,variables='param')
-  if(!is.na(transform)) out = out[transform+1] else transform = 0:(length(out)-1)
-  if(!singletext)   out = paste0('if(transform==',transform+ifelse(jacobian,ifelse(driftdiag,60,50),0),') out = ',out,';\n',collapse='')
+  if(!is.na(transform)&&transform!=0) out = out[tfvec == transform] #ifelse(jacobian,0,1):(length(out)-ifelse(jacobian,1,0))
+  if(!singletext) {
+    out = paste0('if(transform==', tfvec,') param = ',out,';\n',collapse='')
+  
+  if(!stan) out <- paste0('param = parin * meanscale + inneroffset; \n ',out,'
+  param=param*multiplier;
+    if(transform < 49) param = param+offset;')
+  if(stan) out <- paste0('if(meanscale!=1.0) param *= meanscale; 
+  if(inneroffset != 0.0) param += inneroffset; \n',out,'
+  if(multiplier != 1.0) param *=multiplier;
+  if(transform < 49 && offset != 0.0) param+=offset;')
+  }
+  if(singletext) out <- paste0('offset + multiplier*',gsub('param','(param*meanscale+inneroffset)',out))
+  
   out=gsub('  ','',out,fixed=TRUE)
   return(out)
 }
 
-tform <- function(param, transform, multiplier, meanscale, offset, inneroffset, extratforms='',singletext=FALSE,jacobian=FALSE,driftdiag=FALSE){
-  
+tform <- function(parin, transform, multiplier, meanscale, offset, inneroffset, extratforms='',singletext=FALSE,jacobian=FALSE,driftdiag=FALSE){
+  param=parin
   if(!is.na(suppressWarnings(as.integer(transform)))) {
-    out <- tformshapes(singletext=singletext,transform=as.integer(transform),jacobian=jacobian)
+    out <- tformshapes(singletext=singletext,transform=as.integer(transform))#,jacobian=jacobian)
     if(!singletext) paste0(out,extratforms)
     if(singletext) {
       for(i in c('param','multiplier', 'meanscale',  'inneroffset','offset')){
@@ -31,14 +51,14 @@ tform <- function(param, transform, multiplier, meanscale, offset, inneroffset, 
       }
     }
   }
-  if(jacobian) transform <- transform + ifelse(driftdiag,60,50)
+  # if(jacobian) transform <- transform + ifelse(driftdiag,60,50)
   if(is.na(suppressWarnings(as.integer(transform)))) out <- transform
   if(!singletext) out <- eval(parse(text=out))
   return(out)
 }
 
-Jtformshapes <- function(){
-  fn=sapply(tformshapes(singletext = TRUE),function(x) Simplify(x))
-names(fn)=paste0('fn',1:length(fn))
-jacobianSymb(fn,variables = c('param'))
-}
+# Jtformshapes <- function(){
+#   fn=sapply(tformshapes(singletext = TRUE),function(x) Simplify(x))
+#   names(fn)=paste0('fn',1:length(fn))
+#   jacobianSymb(fn,variables = c('param'))
+# }

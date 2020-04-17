@@ -99,14 +99,14 @@ ctStanProfileCI <- function(fit, parnames){
   lowcipars=lowpars[which( rownames(fit$stanfit$transformedpars_old[1:np,]) %in% cipars[pi]) ]
   highcipars=highpars[which( rownames(fit$stanfit$transformedpars_old[1:np,]) %in% cipars[pi]) ]
   
-  low <- sapply(1:length(lowcipars),function(x) tform(param = lowcipars[x],
+  low <- sapply(1:length(lowcipars),function(x) tform(parin = lowcipars[x],
     transform = fit$setup$matsetup$transform[parrows[x]],
     multiplier = fit$setup$matvalues$multiplier[parrows[x]],
     meanscale = fit$setup$matvalues$meanscale[parrows[x]],
     offset = fit$setup$matvalues$offset[parrows[x]],
     inneroffset = fit$setup$matvalues$inneroffset[parrows[x]])) #constrain_pars(object = smf, lowpars)
   
-  high <- sapply(1:length(highcipars),function(x) tform(param = highcipars[x],
+  high <- sapply(1:length(highcipars),function(x) tform(parin = highcipars[x],
     transform = fit$setup$matsetup$transform[parrows[x]],
     multiplier = fit$setup$matvalues$multiplier[parrows[x]],
     meanscale = fit$setup$matvalues$meanscale[parrows[x]],

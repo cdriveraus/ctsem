@@ -65,16 +65,17 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
         f = do.call(ctStanFit,argslist[[argi]])
         if(is.null(s[[argi]])) s[[argi]] = list()
         s[[argi]][[m]] <- summary(f,parmatrices=TRUE)
-        
-        ctKalman(f,plot=T)
+
+        ctKalman(f,plot=TRUE)
         plot(f,wait=FALSE)
         ctModelLatex(f)
-        p=ctStanKalman(f,collapsefunc = mean,subjectpars = T)
+        p=ctStanKalman(f,collapsefunc = mean,subjectpars = TRUE)
         
       }
     }
     
     dtpars=lapply(s, function(argi) {
+      print(argi)
       ct=argi$cm$parmatrices[c(grep('(^dt|^asym)',rownames(argi$cm$parmatrices)),
         which(rownames(argi$cm$parmatrices) %in% c('MANIFESTVAR','LAMBDA','T0MEANS','T0VAR'))),c('Mean','Sd')]
       dt=argi$dm$parmatrices[c(grep('(^asym)',rownames(argi$dm$parmatrices)),

@@ -1,4 +1,4 @@
-testall<- function(cores=4,folder = '/tests/testthat'){
+testall<- function(cores=4,folder = '/tests/testthat',examples=TRUE){
   requireNamespace('testthat')
   Sys.setenv(NOT_CRAN='true')
   pdf(NULL)
@@ -6,6 +6,7 @@ testall<- function(cores=4,folder = '/tests/testthat'){
   tests <- tests[grepl('^test',tests)]
   runex <- grep('runExamples',tests)
   tests <- c(tests[runex],tests[-runex]) #do examples first
+  if(!examples) tests <- tests[-grep('runExamples',tests)]
 
   if(cores > 1){
     cl <- parallel::makeCluster(cores,outfile='')

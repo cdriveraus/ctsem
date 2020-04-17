@@ -1,14 +1,17 @@
 logit = function(x) log(x)-log((1-x))
 
-sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoints=NA,plot=FALSE,
-  stepbase=1e-3,gmeminit=ifelse(is.na(startnrows),.8,.8),gmemmax=.98,maxparchange = .50,
-  startnrows=NA,roughnessmemory=.8,groughnesstarget=.4,roughnesschangemulti = 1,
-  lproughnesstarget=ifelse(is.na(whichmcmcpars[1]),.3,.4),
+sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoints=NA,plot=FALSE,
+  stepbase=1e-3,gmeminit=ifelse(is.na(startnrows),.6,.8),gmemmax=.98,maxparchange = .50,
+  startnrows=NA,roughnessmemory=.9,groughnesstarget=.4,roughnesschangemulti = 2,
+  lproughnesstarget=ifelse(is.na(whichmcmcpars[1]),.4,.4),gamiter=50000,
   gsmoothroughnesstarget=.05,
-  warmuplength=20,nstore=100,
+  warmuplength=20,nstore=max(100,length(init)),
   minparchange=1e-800,maxiter=50000,
   nconvergeiter=ifelse(is.na(whichmcmcpars[1]),30,60), 
-  itertol=1e-3, deltatol=1e-5){
+  itertol=1e-3, deltatol=1e-5, parsdtol=1e-4){
+  
+  initfull=init #including ignored params start values
+  if(length(whichignore)>0) init=init[-whichignore]
   
   errsum = function(x) sqrt(sum(abs(x)))
   
@@ -56,7 +59,7 @@ sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoi
     #   apply(mcmcpars[,subjects,drop=FALSE],1,sum)) * nsubsinsample/nsubjects * .1
     # newmcmcpars[,-subjects] <- newmcmcpars[,-subjects] * (1+mcmcdiv) + 
     #   apply(mcmcdiff,1,mean) *nsubsinsample/nsubjects
-
+    
     mcmclpg <- mcmclpg[!sapply(mcmclpg,is.null)]
     
     mcmclpg[[length(mcmclpg)+1]] = fitfunc2(combinepars(newpars,newmcmcpars[,1],whichmcmcpars,0),
@@ -80,7 +83,8 @@ sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoi
   } 
   delta=deltaold=rep(0,length(pars))
   bestpars = newpars=maxpars=minpars=changepars=pars
-  parstore = matrix(rnorm(length(bestpars)*nstore),length(bestpars),nstore)
+  gstore=parstore = matrix(rnorm(length(bestpars)*nstore),length(bestpars),nstore)
+  gamweights = rep(.5,length(pars))
   
   step=rep(stepbase,length(pars))
   bestiter=1
@@ -111,6 +115,7 @@ sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoi
   dghatdownerr = dghatmixerr = dghatuperr = rep(0,length(g))
   
   lprdif = lpdif = 0
+  parscore=rep(0,length(pars))
   
   groughness = rep(groughnesstarget,length(g))
   gsmoothroughness = rep(gsmoothroughnesstarget,length(g))
@@ -138,15 +143,94 @@ sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoi
         print(lpg)
       }
       
+      if(i > nstore && i %% gamiter == 0 && notacceptedcount<2){
+        print(gamiter)
+        if(i-bestiter > gamiter) gamweights<-gamweights*.1
+        accepted <- TRUE #force acceptance
+        lpgood <- tail(lp,nstore)
+        # lpgood <- c(TRUE,sapply(2:nstore, function(x) lpgood[x]>=max(lpgood[1:(x-1)])))
+        lpgood <- order(lpgood)
+        gampars <- gamparsold <- pars
+        gamg=gamgold=gsmooth
+        gamindices <- sample(1:length(pars),ceiling(.1*length(pars)))
+        if(sum(lpgood) > 10){
+          for(pari in gamindices){
+            dat <- data.frame(x=
+                # log1p(-lp[1:nstore]+max(lp[1:nstore])),
+                c(1:max(lpgood)),
+              # g=gstore[pari,lpgood],
+              y=c((parstore[pari,lpgood]-mean(parstore[pari,lpgood]))/sd(parstore[pari,lpgood])))
+            weighting <- rep(1,nrow(dat))
+            # dat <- dat[lpgood,]
+            if(sd(parstore[pari,lpgood]) < .0001) next
+            
+            dat <- rbind(dat,data.frame(x=max(dat$x)*1.5,y=9999)) #for gam only
+            weighting=c(seq(.1,1,length.out=nrow(dat)-1),0)
+            
+            # browser()
+            # gamf <- suppressWarnings(try(gamboostLSS::gamboostLSS(formula = formula(y ~ x),
+            #   control=boost_control(nu=.01),dfbase=4,
+            #   # control=gamlss::gamlss.control(trace=FALSE)
+            #   # ,sigma.formula=formula(~s(x,df=3))
+            #   data = dat,weights = weighting),silent=TRUE))
+            # 
+            # if('try-error' %in% class(gamf)){
+            #   browser()
+            if(1==1){
+              gamf <- try(gam::gam(formula = formula(y ~ s(x)),
+              control=gam::gam.control(trace=FALSE),
+              data = dat,weights = weighting),silent=TRUE)
+              
+              if(!'try-error' %in% class(gamf)){
+              gampars[pari] = 
+                tail(predict(gamf),1)
+              
+              # plot(dat$x,predict(gamf),ylim=range(c(dat$y[-length(dat$y)],predict(gamf))))
+              # points(dat$x,dat$y,col='red')
+              }
+              
+            } else{
+              gampars[pari] = 
+                tail(predict(gamf)$mu,1)
+              
+              # plot(dat$x,predict(gamf)$mu,ylim=range(c(dat$y[-length(dat$y)],predict(gamf)$mu)))
+              # points(dat$x,dat$y,col='red')
+            }
+            if(!'try-error' %in% class(gamf)) gampars[pari]=gampars[pari]*sd(parstore[pari,lpgood])+mean(parstore[pari,lpgood])
+            
+            # gamfg <- try(gam::gam(formula = formula(g ~ s(x)),
+            #   control=gam::gam.control(trace=FALSE),
+            #   data = dat,weights = weighting))
+            # gamf <- lm(y ~ poly(x,5),data = dat) 
+
+            # gamg[pari] = 
+            #   tail(predict(gamfg),1)
+
+          }
+          # browser()
+        }}
+      
       gdelta =  (ghatmix +dghatmix*dghatweight/2) #removed step multiply because divide by zero elsewhere
       if(i > 1){
         delta =   step  *sign(gdelta)*(abs(gdelta))  * exp((rnorm(length(g),0,.02)))
+        # if(runif(1) > .95) {
+        #   parextra=sample(1:length(pars),floor(.05*length(pars)))
+        #   delta[parextra] <- delta[parextra]*10
+        # }
         delta[abs(delta) > maxparchange] <- maxparchange*sign(delta[abs(delta) > maxparchange])
         newpars = pars + delta
         newpars = newpars  + delta/2 - deltaold/2 #+ delta - deltaold #
       }
-      if(any(is.na(newpars))) browser()
       
+      if(i > nstore && (i%%gamiter)==0){
+        # gampars = newpars*(1-min(1,gamweights))+gampars*gamweights
+        newpars[gamindices]=newpars[gamindices] + 
+          (gampars[gamindices]-gamparsold[gamindices])*gamweights[gamindices]
+        # gsmooth=gsmooth*.8 + (gampars-gamparsold)/step*.2#(gamg-gamgold)*gamweights
+      }
+      
+      if(any(is.na(newpars))) browser()
+      if(i==1) itertime <- Sys.time()
       
       
       if(!mcmcconverged){
@@ -169,15 +253,22 @@ sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoi
         lpg= mcmcfitfunc(newpars,newmcmcpars,mcmcconverged)$lpg #fitfunc2(combinepars(newpars,newmcmcpars,whichmcmcpars),whichmcmcpars)
       }
       
+      fullnewpars <- initfull
+      if(length(whichignore)>0) fullnewpars[-whichignore] <- newpars else fullnewpars <- newpars
+      if(is.na(whichmcmcpars[1])) lpg= fitfunc2(fullnewpars,whichmcmcpars)
+      if(length(whichignore)>0) attributes(lpg)$gradient <- attributes(lpg)$gradient[-whichignore]
       
-
-      if(is.na(whichmcmcpars[1])) lpg= fitfunc2(newpars,whichmcmcpars)
+      if(i==1) {
+        itertime <- as.numeric(Sys.time()-itertime)
+        gamiter <- max(ceiling(10/itertime),gamiter)#
+        #/30.01*length(pars)
+      }
       
       if(lpg > -1e99 &&       #regular check
           class(lpg) !='try-error' && 
           !is.nan(lpg[1]) && 
           all(!is.nan(attributes(lpg)$gradient)) &&
-         (i < warmuplength || (!mcmcconverged || (lp[i-1]- lpg[1]) < sd(tail(lp,20))*8+1e-6))
+          (i < warmuplength || (!mcmcconverged || (lp[i-1]- lpg[1]) < sd(tail(lp,20))*8+1e-6))
       ){
         accepted <- TRUE
       } 
@@ -209,14 +300,14 @@ sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoi
     #once accepted 
     lp[i]=lpg[1]
     pars=newpars
-    parstore[,(i-1)%%ncol(parstore)+1] = pars
+
     
     
     
     deltaold=delta
     oldg=g
     g=attributes(lpg)$gradient
-    g=sign(g)*(abs(g))^(1/8)#sqrt
+    g=sign(g)*(abs(g))^(1/2)#sqrt
     gmemory2 = gmemory * min(i/warmuplength,1)^(1/8)
     roughnessmemory2 = roughnessmemory * min(i/warmuplength,1)^(1/8)
     
@@ -236,7 +327,7 @@ sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoi
     up= dghatmixerr > dghatuperr
     # dghatsmoothpar[down] = dghatsmoothpar[down]-.01
     # dghatsmoothpar[up] = dghatsmoothpar[up]+.01
-
+    
     ghatmixuperr <- abs(g- ( (inv_logit(logit(ghatsmoothpar)+.1))*gsmooth + (1-(inv_logit(logit(ghatsmoothpar)+.1)))*oldg ))
     ghatmixdownerr <- abs(g- ( (inv_logit(logit(ghatsmoothpar)-.1))*gsmooth + (1-(inv_logit(logit(ghatsmoothpar)-.1)))*oldg ))
     ghatmixerr <- abs(g-ghatmix)
@@ -266,13 +357,32 @@ sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoi
     dghatsmooth = gmemory2*dghatsmooth +(1-gmemory2)*dghat
     dghatmix = dghatsmooth * dghatsmoothpar + dghat*(1-dghatsmoothpar)
     
+
+      parstore[,1+(i-1) %% nstore] = pars
+      gstore[,1+(i-1) %% nstore] = g
+
     
     
+    if(i > (nstore+10) && (i %% gamiter)==10){# == (gamiter-2)) {
+      # browser()
+      print((lp[i]-lp[i-12]) > (lp[i-12]-lp[i-24]))
+      gamup <- sign(gampars[gamindices]-gamparsold[gamindices]) == 
+        sign(bestpars[gamindices] - gampars[gamindices])
+      if((lp[i]-lp[i-12]) > (lp[i-12]-lp[i-24])) {
+        gamweights[gamindices] <- gamweights[gamindices] * 1.1 
+      } else{
+        gamweights[gamindices] = gamweights[gamindices] * .9
+        # gamiter=gamiter*1.5 #increase time between gams
+      }
+      
+      gamweights[gamindices][gamup] <- gamweights[gamindices][gamup] * 1.2
+      gamweights[gamindices][!gamup] <- gamweights[gamindices][!gamup] * .8
+    }
     
-    
+    if(!i %% gamiter==0){
     groughness = groughness * (roughnessmemory2) + (1-(roughnessmemory2)) * as.numeric(sign(gmid)!=sign(oldgmid))
     gsmoothroughness = gsmoothroughness * (roughnessmemory2) + (1-(roughnessmemory2)) * as.numeric(sign(gsmooth)!=sign(oldgsmooth))
-    if(i > 1) lproughness = lproughness * (roughnessmemory2) + (1-(roughnessmemory2)) * as.numeric(lp[i-1] > (lp[i]))
+    if(i > 1) lproughness = lproughness * (roughnessmemory2) + (1-(roughnessmemory2)) * exp(-1/(i-bestiter+.1))#as.numeric(lp[i-1] > (lp[i]))
     
     lproughnessmod=  ( ( (1/(-lproughness-lproughnesstarget2)) / (1/-lproughnesstarget2) + .5) -1) #balanced eq for any centre / target
     gsmoothroughnessmod =  (( ( (1/(-(gsmoothroughness)-gsmoothroughnesstarget)) / (1/-gsmoothroughnesstarget) + .5) ) -1)
@@ -286,14 +396,20 @@ sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoi
     ))
     
     step[gsmoothroughness < gsmoothroughnesstarget] <- step[gsmoothroughness < gsmoothroughnesstarget] * 1.2
+    # gsmooth[gsmoothroughness < gsmoothroughnesstarget] <- gsmooth[gsmoothroughness < gsmoothroughnesstarget] * 1.2
     # step[gsmoothroughness < gsmoothroughnesstarget] * .1*gsmoothroughnessmod[gsmoothroughness < gsmoothroughnesstarget]
     signdif= sign(gmid)!=sign(gdelta)
     if(i > 1 && lp[i] >= max(head(lp,length(lp)-1))) {
       step = step * 1.1 #sqrt(2-gmemory) #exp((1-gmemory)/8)
-      if(i > warmuplength/2) {
+      if(i > warmuplength) {
         ##max/min par update extra
-        gsmooth[pars>maxpars | pars < minpars] <- gsmooth[pars>maxpars | pars < minpars]  * 1.1#*delta[pars>maxpars | pars < minpars] /step[pars>maxpars | pars < minpars]
-        step[pars>maxpars | pars < minpars] <- step[pars>maxpars | pars < minpars] * 1.2  #+ pars[pars>maxpars | pars < minpars]
+        parscore <- parscore * .95
+        parscore[pars>maxpars | pars < minpars] <- parscore[pars>maxpars | pars < minpars]+ifelse(pars>maxpars,1,-1)
+        
+        gsmooth[pars>maxpars | pars < minpars] <- gsmooth[pars>maxpars | pars < minpars]  * 1.2*(1+abs(parscore))#*delta[pars>maxpars | pars < minpars] /step[pars>maxpars | pars < minpars]
+        step[pars>maxpars | pars < minpars] <- step[pars>maxpars | pars < minpars] * 2*(1+abs(parscore))  #+ pars[pars>maxpars | pars < minpars]
+        pars[pars>maxpars] <- pars[pars>maxpars]+10*(1+abs(parscore))*(pars[pars>maxpars]-maxpars[pars>maxpars] )
+        pars[pars< minpars] <- pars[pars< minpars]+10*(1+abs(parscore))*(pars[pars< minpars]-minpars[pars< minpars] )
         changepars=pars
         changepars[!(pars>maxpars | pars < minpars)] <- NA
         # lproughness = lproughness * .9
@@ -307,12 +423,16 @@ sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoi
       minpars[pars<minpars] <-pars[pars<minpars]
     }
     
+    }#end if not gam
     
-    if(i > 1 && runif(1,0,1) > .95) {
+    if(i > 1 && runif(1,0,1) > .9) {
       # #slowly forget old max and mins, allow fast re exploration of space
-      rndchange <- runif(length(maxpars),0,1) > .98
-      maxpars[rndchange] <- pars[rndchange]
-      minpars[rndchange] <- pars[rndchange]
+      rndchange <- runif(length(maxpars),0,1) > .9
+      # step[rndchange] <- stepbase
+      if(any(rndchange)){
+      maxpars[rndchange] <- max(parstore[rndchange,])
+      minpars[rndchange] <- min(parstore[rndchange,])
+      }
     }
     
     # gmemory <- gmemory * gsmoothroughnessmod
@@ -324,6 +444,7 @@ sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoi
       proposal = gmemory*2-oldgmemory
       oldgmemory <- gmemory
       gmemory <- min(gmemmax, max(0, proposal + runif(1,-.025,.05)))
+      if(gmemory < .9) gmemory <- gmemory + .02
     }
     
     if(i > 31 && i %% 30 == 0 && is.na(whichmcmcpars[1])) {
@@ -333,7 +454,7 @@ sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoi
       if(oldlprdif > lprdif) lproughnesstarget <- oldlproughnesstarget
       lprproposal = lproughnesstarget*2-oldlproughnesstarget
       oldlproughnesstarget <- lproughnesstarget
-      lproughnesstarget <- min(.8, max(.05, lprproposal + .05 * (-1+2*rbinom(n = 1,size = 1,prob = .5))))
+      lproughnesstarget <- min(.95, max(.05, .01+lprproposal + .05 * (-1+2*rbinom(n = 1,size = 1,prob = .5))))
     }
     
     step[step > maxparchange] <- maxparchange
@@ -347,40 +468,43 @@ sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoi
     }
     
     oldghatmix=ghatmix
-    ghatmix = ghatsmoothpar*gsmooth + (1-ghatsmoothpar)*g
+    ghatmix = gsmooth #ghatsmoothpar*gsmooth + (1-ghatsmoothpar)*g
     # message('ghatsmoothpar = ',ghatsmoothpar)
-    
-    
-    if(plot){
+    # print(as.numeric(plot))
+    if(plot && i %% as.numeric(plot) ==0){
       if(i==1){parbase=par(no.readonly=TRUE)
       on.exit(do.call(par,parbase),add=TRUE)
       }
       par(mfrow=c(2,3),mgp=c(2,.8,0),mar=c(2,3,1,0)+.2)
-      plot(pars)
+      plot(pars,col=1:length(pars))
       points(changepars,pch=17,col='red')
       
-      plot(log(step))
-      
-      plot(groughness,col='red',ylim=c(0,1))
-      abline(h=mean(gsmoothroughness),col='blue',lty=2)
-      abline(h=(gsmoothroughnesstarget),col='blue',lty=1,lwd=2)
-      points(gsmoothroughness,ylim=c(0,1),col='blue')
-      abline(h=mean(groughness),col='red',lty=2)
-      abline(h=(groughnesstarget),col='red',lty=1)
-      
-      abline(h=lproughnesstarget,lty=1,col='green')
-      abline(h=lproughness, col='green',lty=2)
-      
+      plot(log(abs(step*gsmooth)),col=1:length(pars))
       plot(tail(log(-(lp-max(lp)-1)),500),type='l')
-      
-      # gsmoothsqrt=sign(gsmooth) * sqrt(abs(gsmooth))
-      # plot(gsmoothsqrt,ylim=c(-max(abs(gsmoothsqrt)),max(abs(gsmoothsqrt))))
-      
-      # plot(dghatmix*step,ylim=c(-max(abs(dghatmix*step)),max(abs(dghatmix*step))))
-      
-      plot(ghatsmoothpar,ylim=c(0,1))
-      if(!is.na(whichmcmcpars[1])) plot(c(newmcmcpars))
-      Sys.sleep(.01)
+      plot(gamweights,col=1:length(pars))
+      plot((apply(parstore,1,sd,na.rm=T)),col=1:length(pars))
+      abline(h=(parsdtol))
+      if(1==2){
+        plot(groughness,col='red',ylim=c(0,1))
+        abline(h=mean(gsmoothroughness),col='blue',lty=2)
+        abline(h=(gsmoothroughnesstarget),col='blue',lty=1,lwd=2)
+        points(gsmoothroughness,ylim=c(0,1),col='blue')
+        abline(h=mean(groughness),col='red',lty=2)
+        abline(h=(groughnesstarget),col='red',lty=1)
+        
+        abline(h=lproughnesstarget,lty=1,col='green')
+        abline(h=lproughness, col='green',lty=2)
+        
+        
+        # gsmoothsqrt=sign(gsmooth) * sqrt(abs(gsmooth))
+        # plot(gsmoothsqrt,ylim=c(-max(abs(gsmoothsqrt)),max(abs(gsmoothsqrt))))
+        
+        # plot(dghatmix*step,ylim=c(-max(abs(dghatmix*step)),max(abs(dghatmix*step))))
+        
+        plot(ghatsmoothpar,ylim=c(0,1))
+        if(!is.na(whichmcmcpars[1])) plot(c(newmcmcpars))
+      }
+      Sys.sleep(.03)
       # plot(dghatsmoothpar)
       # abline(h=mean(dghatsmoothpar))
       # plot(dghatweight)
@@ -396,9 +520,11 @@ sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoi
     #check convergence
     if(i > 30){
       if(is.na(whichmcmcpars[1])){
-      if( (i - bestiter) > nconvergeiter*5) converged <- TRUE #time since best
-      if(max(tail(lp,nconvergeiter)) - min(tail(lp,nconvergeiter)) < itertol) converged <- TRUE
-      if(max(diff(tail(lp,nconvergeiter))) < deltatol) converged <- TRUE
+        if( (i - bestiter) > nconvergeiter*5 && 
+            mean(sign(diff(tail(lp,nconvergeiter)))) < .3) converged <- TRUE #time since best
+        if(max(tail(lp,nconvergeiter)) - min(tail(lp,nconvergeiter)) < itertol) converged <- TRUE
+        if(max(diff(tail(lp,nconvergeiter))) < deltatol) converged <- TRUE
+        if(max(apply(parstore,1,sd)) < parsdtol) converged <- TRUE
       } else {
         mu1=apply(parstore[,1:ceiling(nstore/2),drop=FALSE],1,mean,na.rm=TRUE)
         mu2=apply(parstore[,(1+ceiling(nstore/2)):nstore,drop=FALSE],1,mean,na.rm=TRUE)
@@ -421,7 +547,8 @@ sgd <- function(init,fitfunc,whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoi
     }
   }
   # if(!is.na(whichmcmcpars[1])) bestpars = combinepars(bestpars,newmcmcpars,whichmcmcpars)
-  out=list(itervalues = lp, value = max(lp),par=bestpars)
+  out=list(itervalues = lp, value = max(lp),
+    par=bestpars,parstore=parstore,gstore=gstore,lpstore=tail(lp,nstore))
   if(!is.na(whichmcmcpars[1])){
     out$mcmcpars=newmcmcpars
     out$bestpars = mu2

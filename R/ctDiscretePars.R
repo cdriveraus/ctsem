@@ -344,6 +344,12 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
     rep(1:nlatent,nlatent),
     rep(1:nlatent,each=nlatent))
   
+  if(!'array' %in% class(indices)){#interpret as individual columns
+    indices <- cbind(
+      rep(1:nlatent,length(unique(indices))),
+      rep(unique(indices),each=length(unique(indices))))
+  }
+  
   if(ltyvec[1]=='auto') ltyvec=1:nrow(indices)
   if(lwdvec[1]=='auto') lwdvec= rep(3,nrow(indices))
   

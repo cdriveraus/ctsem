@@ -559,8 +559,8 @@ ctModel<-function(LAMBDA, type='omx',n.manifest = 'auto', n.latent='auto', Tpoin
   }
   
   # browser()
-  if(nrow(MANIFESTVAR) > 1 && any(suppressWarnings(as.numeric(
-    MANIFESTVAR[!diag(1,nrow(MANIFESTVAR))]))!=0)) stop('MANIFESTVAR should be diagonal!')
+  mvaroffdiag=MANIFESTVAR[!diag(1,nrow(MANIFESTVAR))]
+  if(nrow(MANIFESTVAR) > 1 && !all(mvaroffdiag %in% 0)) stop('MANIFESTVAR should be diagonal!')
   
  
   if(any(dim(LAMBDA)!=c(n.manifest,n.latent))) stop("Incorrect LAMBDA structure specified - check number or rows and columns")
@@ -569,6 +569,10 @@ ctModel<-function(LAMBDA, type='omx',n.manifest = 'auto', n.latent='auto', Tpoin
   sapply(c(manifestNames,latentNames,TDpredNames,TIpredNames, time,id),function(x){
   if(grepl('\\W',x)) stop(paste0(x,' contains symbols, variable names must be alphanumerics only please!'))
   })
+  
+  for(names in c('manifestNames','TIpredNames','TDpredNames','latentNames')){
+    if(any(duplicated(get(names)))) stop(paste0('Duplicate names in ',names))
+  }
   
   
   

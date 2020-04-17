@@ -33,7 +33,6 @@ ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE,
   densiter <- 1e5
   popsetup <- obj$setup$popsetup
   popvalues<- obj$setup$popvalues
-  browser()
   popvalues <- popvalues[popsetup$when==0 & popsetup$param > 0 & popsetup$copyrow < 1,]
   popsetup <- popsetup[popsetup$when==0 & popsetup$param > 0 & popsetup$copyrow < 1,]
   
@@ -66,12 +65,11 @@ ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE,
       # param<-stats::rnorm(densiter,0,1)
       meanpost <- posteriors$popmeans[,pari]
       meanprior <- priors$popmeans[,pari]#tform(param,popsetup$transform[mrow],popvalues$multiplier[mrow], popvalues$meanscale[mrow],popvalues$offset[mrow], popvalues$inneroffset[mrow])
-# if(pname %in% 'TD_memInt2') browser()
+# if(pname %in% 'TD_memInt2') 
       if(priorwidth) xlimsindex <- 'all' else xlimsindex <- 1
       mdens <- ctDensityList(list(meanpost, meanprior),probs=c(.05,.95),plot=FALSE,
         xlimsindex=xlimsindex,cut=TRUE)
       quantity <- c('Posterior','Prior')
-      if(!priorwidth) 
       for(i in 1:length(mdens$density)){
         dat <- rbind(dat,data.table(quantity=quantity[i],Par.Value=mdens$density[[i]]$x,
           Density=mdens$density[[i]]$y, type='Pop. Mean',param=pname))
@@ -138,6 +136,7 @@ ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE,
     # dat[,xhigh := quantile(Par.Value,.7),by=list(quantity,type,param)]
     # dat<-dat[Par.Value <= (xhigh+(xhigh-xlow)*2),]
     # dat<-dat[Par.Value >= (xlow-(xhigh-xlow)*2),]
+  
       plots<-c(plots,list(
       ggplot(dat,aes(x=Par.Value,fill=quantity,ymax=Density,y=Density) )+
         geom_line(alpha=.3) +
