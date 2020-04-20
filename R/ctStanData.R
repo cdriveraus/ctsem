@@ -284,7 +284,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     standata$sJycolindexsize <- 1L
     standata$sJycolindex <- array(1L)
 
-    standata$difftype <- 2L;
+    standata$difftype <- 0L;
     standata$dotipred <- 1L;
     
   
@@ -335,20 +335,28 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     }
     
     #state dependence
-    statedependence=rep(0L,4)
-    multiplicativenoise = 0L
-    if(any(ctm$modelmats$matsetup$when == 2) ||
-        any(grepl('state[',ctm$jacobian$JAx,fixed=TRUE)) ||
-        any(grepl('state[',ctm$modelmats$calcs$driftcint,fixed=TRUE)) ||
-        any(grepl('state[',ctm$modelmats$calcs$diffusion,fixed=TRUE)) 
-    ) statedependence[2] = 1L
+  statedep <- rep(0L,max(ctm$modelmats$matsetup$matrix))
+  for(i in 1:length(statedep)){
+    statedep[i] <- ifelse(any(
+      ctm$modelmats$matsetup$when >0 &
+        ctm$modelmats$matsetup$matrix %in% i),1L,0L)
+  }
+    # 
+    # statedep=rep(0L,4)
+    # v = 0L
+    # if(any(ctm$modelmats$matsetup$when == 2) ||
+    #     any(grepl('state[',ctm$jacobian$JAx,fixed=TRUE)) ||
+    #     any(grepl('state[',ctm$modelmats$calcs$driftcint,fixed=TRUE)) ||
+    #     any(grepl('state[',ctm$modelmats$calcs$diffusion,fixed=TRUE)) 
+    # ) statedep[2] = 1L
+    # 
+    # if(any(ctm$modelmats$matsetup$when == 2 & ctm$modelmats$matsetup$matrix == 4) ||
+    #     any(grepl('state[',ctm$modelmats$calcs$diffusion,fixed=TRUE)) 
+    # ) multiplicativenoise = 1L
     
-    if(any(ctm$modelmats$matsetup$when == 2 & ctm$modelmats$matsetup$matrix == 4) ||
-        any(grepl('state[',ctm$modelmats$calcs$diffusion,fixed=TRUE)) 
-    ) multiplicativenoise = 1L
-    
-    standata$statedependence <- statedependence
-    standata$multiplicativenoise <- multiplicativenoise
+    standata$statedep <- statedep
+    standata$nstatedep <- as.integer(length(statedep))
+    # standata$multiplicativenoise <- multiplicativenoise
     standata$choleskymats<- ifelse(ctm$covmattransform=='unconstrainedcorr',0L,1L)
     if(!ctm$covmattransform %in% c('unconstrainedcorr','cholesky')) stop('covtransform must be either "unconstrainedcorr" or "cholesky"')
     

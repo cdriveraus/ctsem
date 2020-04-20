@@ -1,6 +1,6 @@
-jac<-function(pars,grfunc,step=rep(1e-6,length(pars)), direction=1,whichpars='all'){
+jac<-function(pars,grfunc,step=rep(1e-6,length(pars)), direction=1,whichpars='all',cl=NA){
   if('all' %in% whichpars) whichpars <- 1:length(pars)
-  hessout <- flexsapply(cl = clctsem, cores = 1, whichpars, function(i) {
+  hessout <- flexsapply(cl = cl, cores = 1, whichpars, function(i) {
     stepsize = step[i]*direction
     uppars<-rep(0,length(pars))
     uppars[i]<-1
@@ -152,7 +152,6 @@ jacrandom <- function(grfunc, est, eps=1e-4,
   return(H)
 }
 
-islp <- function(parm)  out <- try(rstan::log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
 
 ctAddSamples <- function(fit,nsamples,cores=2){
   mchol <- t(chol(fit$stanfit$cov))
@@ -983,6 +982,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     }
     
     if(!estonly){
+      smf <- stan_reinitsf(sm,standata)
+      
       base <- lapply(1:10,function(x) target(est2 + rnorm(length(est2),0,1e-12),
         gradnoise = FALSE))
       basegrad <- mean(unlist(lapply(base,function(x) attributes(x)$gradient)))
@@ -1196,7 +1197,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # hess <- jacrandom(fgfunc, grinit)
         # browser()
         eps <- findstepsize(grinit,fgfunc)
-        hess <- jac(pars = grinit,grfunc = gfunc,step = eps)
+        hess <- jac(pars = grinit,grfunc = gfunc,step = eps,cl=clctsem)
         cholcov = try(suppressWarnings(t(chol(solve(-hess)))),silent = TRUE)
         # 
         # if('try-error' %in% class(cholcov)){
@@ -1289,6 +1290,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         
       }
       if(is){
+        islp <- function(parm)  out <- try(rstan::log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
+        
         message('Importance sampling...')
         if(cores > 1)  parallelStanSetup(cl=clctsem,standata,split=FALSE)
         targetsamples <- finishsamples * finishmultiply

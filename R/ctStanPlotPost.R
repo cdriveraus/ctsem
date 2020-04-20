@@ -136,6 +136,7 @@ ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE,
     # dat[,xhigh := quantile(Par.Value,.7),by=list(quantity,type,param)]
     # dat<-dat[Par.Value <= (xhigh+(xhigh-xlow)*2),]
     # dat<-dat[Par.Value >= (xlow-(xhigh-xlow)*2),]
+    if(1==99) param <- 1
   
       plots<-c(plots,list(
       ggplot(dat,aes(x=Par.Value,fill=quantity,ymax=Density,y=Density) )+

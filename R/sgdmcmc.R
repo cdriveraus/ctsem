@@ -268,7 +268,7 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
           class(lpg) !='try-error' && 
           !is.nan(lpg[1]) && 
           all(!is.nan(attributes(lpg)$gradient)) &&
-          (i < warmuplength || (!mcmcconverged || (lp[i-1]- lpg[1]) < sd(tail(lp,20))*8+1e-6))
+          (i < warmuplength || (!mcmcconverged || (lp[i-1]- lpg[1]) < sd(tail(lp,100))*8+1e-6))
       ){
         accepted <- TRUE
       } 
@@ -403,15 +403,20 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
       step = step * 1.1 #sqrt(2-gmemory) #exp((1-gmemory)/8)
       if(i > warmuplength) {
         ##max/min par update extra
-        parscore <- parscore * .95
-        parscore[pars>maxpars | pars < minpars] <- parscore[pars>maxpars | pars < minpars]+ifelse(pars>maxpars,1,-1)
-        
-        gsmooth[pars>maxpars | pars < minpars] <- gsmooth[pars>maxpars | pars < minpars]  * 1.2*(1+abs(parscore))#*delta[pars>maxpars | pars < minpars] /step[pars>maxpars | pars < minpars]
-        step[pars>maxpars | pars < minpars] <- step[pars>maxpars | pars < minpars] * 2*(1+abs(parscore))  #+ pars[pars>maxpars | pars < minpars]
-        pars[pars>maxpars] <- pars[pars>maxpars]+10*(1+abs(parscore))*(pars[pars>maxpars]-maxpars[pars>maxpars] )
-        pars[pars< minpars] <- pars[pars< minpars]+10*(1+abs(parscore))*(pars[pars< minpars]-minpars[pars< minpars] )
+        parscore <- parscore * .98
+        whichmax <- which(pars > maxpars | pars < minpars)
+        if(length(whichmax) > 0){
+        parscore[whichmax] <- parscore[whichmax]+.1*(as.numeric(pars[whichmax]>maxpars[whichmax])*2-1)
+        gsmooth[whichmax] <- gsmooth[whichmax]  * 1.2*(1+abs(parscore[whichmax]))#*delta[whichmax] /step[whichmax]
+        step[whichmax] <- step[whichmax] * 2*(1+abs(parscore[whichmax]))  #+ pars[whichmax]
+        pars[pars>maxpars] <- pars[pars>maxpars]+10*(1+abs(parscore[pars>maxpars]))*(pars[pars>maxpars]-maxpars[pars>maxpars] )
+        pars[pars< minpars] <- pars[pars< minpars]+10*(1+abs(parscore[pars<minpars]))*(pars[pars< minpars]-minpars[pars< minpars] )
+
+        maxpars[pars>maxpars] <-pars[pars>maxpars]
+        minpars[pars<minpars] <-pars[pars<minpars]
+        }
         changepars=pars
-        changepars[!(pars>maxpars | pars < minpars)] <- NA
+        if(length(whichmax)) changepars[-whichmax] <- NA else changepars[]<-NA
         # lproughness = lproughness * .9
       }
       # gmemory <- gmemory +(1-gmemory)*1.001
@@ -419,19 +424,17 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
       bestg <- g
       bestiter <- i
       
-      maxpars[pars>maxpars] <-pars[pars>maxpars]
-      minpars[pars<minpars] <-pars[pars<minpars]
     }
     
     }#end if not gam
     
-    if(i > 1 && runif(1,0,1) > .9) {
+    if(i > 1 && runif(1,0,1) > .95) {
       # #slowly forget old max and mins, allow fast re exploration of space
-      rndchange <- runif(length(maxpars),0,1) > .9
+      rndchange <- runif(length(maxpars),0,1) > .95
       # step[rndchange] <- stepbase
       if(any(rndchange)){
-      maxpars[rndchange] <- max(parstore[rndchange,])
-      minpars[rndchange] <- min(parstore[rndchange,])
+      maxpars[rndchange] <- max(parstore[rndchange,]+1e-6)
+      minpars[rndchange] <- min(parstore[rndchange,]-1e-6)
       }
     }
     

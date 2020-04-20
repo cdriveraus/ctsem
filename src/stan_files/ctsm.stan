@@ -201,8 +201,8 @@ data {
   int whichcont_y[ndatapoints, nmanifest]; // index of which variables are observed and continuous per observation
   
   int intoverpop;
-  int statedependence[4];
-  int multiplicativenoise;
+  int nstatedep;
+  int statedep[nstatedep];
   int choleskymats;
   int nlmeasurement;
   int intoverstates;
@@ -760,11 +760,11 @@ if(verbose > 1) print ("below t0 row ", rowi);
   } 
    
       
-      if(multiplicativenoise) sDIFFUSIONcov[derrind,derrind] = sdcovsqrt2cov(sDIFFUSION[derrind,derrind],choleskymats);
+      if(statedep[4]) sDIFFUSIONcov[derrind,derrind] = sdcovsqrt2cov(sDIFFUSION[derrind,derrind],choleskymats);
       
         if(continuoustime){
           if(taylorheun==0){
-            if(dtchange[rowi]==1 || statedependence[2] || 
+            if(dtchange[rowi]==1 || statedep[3]||statedep[4]||statedep[7] || 
               (T0check[rowi] == 1 && (DRIFTsubindex + DIFFUSIONsubindex + CINTsubindex) > 0)){
                 
               if(difftype==2){
@@ -781,16 +781,21 @@ if(verbose > 1) print ("below t0 row ", rowi);
                 discreteDIFFUSION[derrind,derrind] = Je[savescores ? rowi : 1,derrind,derrind] * ebA[1:ndiffusion,(1+ndiffusion):(ndiffusion*2)];
                 discreteDRIFT = expm2(append_row(append_col(sDRIFT[1:nlatent, 1:nlatent],sCINT),nlplusonezerovec') * dtsmall[rowi],drcintoffdiag);
                 if(ndiffusion < nlatentpop) Je[savescores ? rowi : 1] =  expm2(sJAx * dtsmall[rowi], jacoffdiag);
-              } else if(savescores) Je[rowi] = Je[rowi-1];
+              }
                 
               //if(difftype==1){
               //matrix[nlatent,nlatent] V = sDIFFUSIONcov-quad_form(sDIFFUSIONcov, Je[savescores ? rowi : 1]');
               //discreteDIFFUSION = solvesyl(sJAx[1:nlatent,1:nlatent],-V,discreteDIFFUSION, rep_array(nlatent,1));
               //}
               
-              //sasymDIFFUSION[derrind,derrind] = to_matrix(  -sqkron_sumii(sJAx[derrind,derrind]) \ to_vector(sDIFFUSIONcov[derrind,derrind]), ndiffusion,ndiffusion);
-              //discreteDIFFUSION[derrind,derrind] =  sasymDIFFUSION[derrind,derrind] - quad_form( sasymDIFFUSION[derrind,derrind], Je[savescores ? rowi : 1, derrind,derrind]' );
-            }
+              if(difftype==0){
+                discreteDRIFT = expm2(append_row(append_col(sDRIFT[1:nlatent, 1:nlatent],sCINT),nlplusonezerovec') * dtsmall[rowi],drcintoffdiag);
+                Je[savescores ? rowi : 1] =  expm2(sJAx * dtsmall[rowi], jacoffdiag);
+                if(statedep[3]||statedep[4]) sasymDIFFUSION[derrind,derrind] = to_matrix(  -sqkron_sumii(sJAx[derrind,derrind]) \ 
+                  to_vector(sDIFFUSIONcov[derrind,derrind]), ndiffusion,ndiffusion);
+                discreteDIFFUSION[derrind,derrind] =  sasymDIFFUSION[derrind,derrind] - quad_form( sasymDIFFUSION[derrind,derrind], Je[savescores ? rowi : 1, derrind,derrind]' );
+              }
+            }  else if(savescores) Je[rowi] = Je[rowi-1]; //if not updating
             state[1:nlatent] = (discreteDRIFT * append_row(state[1:nlatent],1.0))[1:nlatent]; // ???compute before new diffusion calcs
             if(intoverstates==1 || savescores==1){
               etacov = quad_form(etacov, Je[savescores ? rowi : 1]');
