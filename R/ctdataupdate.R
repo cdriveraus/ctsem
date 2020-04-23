@@ -150,29 +150,29 @@ ctdataupdate<-function(forcerecompile=FALSE){
 
   save(ctstantestdat,file='.\\data\\ctstantestdat.rda')
 
-  checkm<-ctModel(type='stanct',
-    n.latent=n.latent,n.TDpred=n.TDpred,n.TIpred=n.TIpred,
-    MANIFESTVAR=matrix(c('merror',0,0,'merror'),2,2),
-    MANIFESTMEANS=matrix(0,nrow=n.manifest),
-    CINT=matrix(c('cint1','cint2'),ncol=1),
-    n.manifest=n.manifest,LAMBDA=diag(2))
-  
-  # checkm$pars$indvarying[-c(7,13)] <- FALSE
-  # checkm$pars$sdscale <- .1
+  # checkm<-ctModel(type='stanct',
+  #   n.latent=n.latent,n.TDpred=n.TDpred,n.TIpred=n.TIpred,
+  #   MANIFESTVAR=matrix(c('merror',0,0,'merror'),2,2),
+  #   MANIFESTMEANS=matrix(0,nrow=n.manifest),
+  #   CINT=matrix(c('cint1','cint2'),ncol=1),
+  #   n.manifest=n.manifest,LAMBDA=diag(2))
   # 
-  # checkm$pars[c(-1,-2, -21,-22) ,c('TI1_effect','TI2_effect','TI3_effect')] <- FALSE
-  
-  ctstantestfit<-ctStanFit(ctstantestdat,checkm,
-    optimize = TRUE,optimcontrol=list(finishsamples=20),
-    iter=300, warmup=260,thin=2,chains=2,verbose=0,
-    # plot=TRUE,
-    # forcerecompile=forcerecompile,
-    save_warmup=TRUE,savescores=FALSE,
-    control=list(max_treedepth=8,adapt_delta=.8))
-  ctstantestfit <- ctStanGenerateFromFit(ctstantestfit,nsamples = 20,fullposterior = TRUE)
-  print( summary(ctstantestfit))
-
-  save(ctstantestfit,file='.\\data\\ctstantestfit.rda')
+  # # checkm$pars$indvarying[-c(7,13)] <- FALSE
+  # # checkm$pars$sdscale <- .1
+  # # 
+  # # checkm$pars[c(-1,-2, -21,-22) ,c('TI1_effect','TI2_effect','TI3_effect')] <- FALSE
+  # 
+  # ctstantestfit<-ctStanFit(ctstantestdat,checkm,
+  #   optimize = TRUE,optimcontrol=list(finishsamples=20),
+  #   iter=300, warmup=260,thin=2,chains=2,verbose=0,
+  #   # plot=TRUE,
+  #   # forcerecompile=forcerecompile,
+  #   save_warmup=TRUE,savescores=FALSE,
+  #   control=list(max_treedepth=8,adapt_delta=.8))
+  # ctstantestfit <- ctStanGenerateFromFit(ctstantestfit,nsamples = 20,fullposterior = TRUE)
+  # print( summary(ctstantestfit))
+  # 
+  # save(ctstantestfit,file='.\\data\\ctstantestfit.rda')
   
   paths <- sort(Sys.glob(c("data/*.rda", "data/*.RData")))
   tools::resaveRdaFiles(paths)

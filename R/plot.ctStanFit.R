@@ -25,6 +25,7 @@
 #' @method plot ctStanFit
 #' @examples
 #' \donttest{
+#' if (!exists("ctstantestfit")) example(ctstantestfit)
 #' plot(ctstantestfit,types=c('regression','kalman','priorcheck'), wait=FALSE)
 #' }
 #' @export

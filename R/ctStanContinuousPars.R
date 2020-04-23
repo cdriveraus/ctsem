@@ -15,6 +15,7 @@
 #'the probs argument is needed to ensure only a single value is returned.
 #'@examples
 #'\donttest{
+#'if (!exists("ctstantestfit")) example(ctstantestfit)
 #'#posterior median over all subjects (also reflects mean of unconstrained pars)
 #'ctStanContinuousPars(ctstantestfit)
 #'

@@ -123,7 +123,7 @@ verbosify<-function(sf,verbose=2){
 #' plot(fit,wait=FALSE)
 #' 
 #' }
-#' \dontrun{
+#' \donttest{
 #' library(ctsem)
 #' set.seed(3)
 #' 
@@ -483,6 +483,10 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     }
     
     recompile <- FALSE
+    if(!optimize && nopriors){
+      message('HMC sampling requested, priors required so disabling nopriors argument')
+      nopriors <- FALSE
+    }
     if(optimize && !intoverstates) stop('intoverstates=TRUE required for optimization!')
     
     # if(optimize && !intoverpop && any(ctm$pars$indvarying[is.na(ctm$pars$value)]) && 

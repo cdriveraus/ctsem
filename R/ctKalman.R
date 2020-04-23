@@ -33,6 +33,8 @@
 #' If plot=TRUE, nothing is returned but a plot is generated.
 #' @examples
 #' \donttest{
+#' if (!exists("ctstantestfit")) example(ctstantestfit)
+#' 
 #' #Basic
 #' ctKalman(ctstantestfit, timerange=c(0,60), plot=TRUE)
 #' 
@@ -399,6 +401,8 @@ plot.ctKalman<-function(x, subjects=1, kalmanvec=c('y','yprior'),
 #' @export
 #' @examples
 #' \donttest{
+#' if (!exists("ctstantestfit")) example(ctstantestfit)
+#' 
 #' ### Get output from ctKalman
 #' x<-ctKalman(ctstantestfit,subjects=2,timestep=.01)
 #' 

@@ -32,10 +32,12 @@
 #' Covariance matrices etapriorcov, etaupdcov, etasmoothcov, ypriorcov, yupdcov, ysmoothcov,  
 #' are returned in a row * column * time array. 
 #' @examples
+#' \donttest{
 #' ### ctstantestfit is a dummy ctStanFit object with 2 manifest indicators,
 #' ###  4 latents, and 1 time dependent predictor.
 #' 
 #' ### get parameter matrices
+#' if (!exists("ctstantestfit")) example(ctstantestfit)
 #' kpars <- ctStanContinuousPars(ctstantestfit)
 #' 
 #' #construct dummy data
@@ -53,6 +55,7 @@
 #' print(kout$ysmooth)
 #' matplot(kout$time,kout$ysmooth,type='l')
 #' matplot(kout$time,datalong[,3:4],type='p',add=TRUE,pch=1)
+#' }
 #' @export
 
 Kalman<-function(kpars,datalong,

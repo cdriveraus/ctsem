@@ -40,6 +40,7 @@ may be simpler in many cases to access those directly. They are:
 }
 \examples{
 \donttest{
+if (!exists("ctstantestfit")) example(ctstantestfit)
 plot(ctstantestfit,types=c('regression','kalman','priorcheck'), wait=FALSE)
 }
 }

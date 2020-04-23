@@ -10,6 +10,7 @@
 #'
 #' @examples
 #' \donttest{
+#' if (!exists("ctstantestfit")) example(ctstantestfit)
 #' ctStanTIpredMarginal(ctstantestfit,pars=c('DRIFT','CINT'),tipred=c('TI2','TI3'))
 #' }
 ctStanTIpredMarginal<-function(fit,tipred,pars, plot=TRUE){

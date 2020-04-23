@@ -15,7 +15,8 @@
 #' @export
 #'
 #' @examples
-#' \dontrun{
+#' \donttest{
+#' if (!exists("ctstantestfit")) example(ctstantestfit)
 #' 
 #' #generate and plot samples from prior predictive
 #' priorpred <- ctStanGenerate(ctm = ctstantestfit$ctstanmodelbase,

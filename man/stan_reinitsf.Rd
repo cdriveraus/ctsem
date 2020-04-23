@@ -21,6 +21,7 @@ Quickly initialise stanfit object from model and data
 }
 \examples{
 \donttest{
+if (!exists("ctstantestfit")) example(ctstantestfit)
 sf <- stan_reinitsf(ctstantestfit$stanmodel,ctstantestfit$standata)
 }
 }

@@ -37,7 +37,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     ro <- ctStanFit( datalong = d,
       ctstanmodel = m,cores=1,
-      iter = 300,verbose=1,control=list(max_treedepth=8),
+      iter = 300,verbose=0,control=list(max_treedepth=8),
       intoverstates = T,nopriors=T,
       optimcontrol = list(stochastic=T),
       optimize=T,intoverpop=T,#fit=F,

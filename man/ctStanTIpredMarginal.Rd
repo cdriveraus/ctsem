@@ -23,6 +23,7 @@ Plot marginal relationships between covariates and parameters for a ctStanFit ob
 }
 \examples{
 \donttest{
+if (!exists("ctstantestfit")) example(ctstantestfit)
 ctStanTIpredMarginal(ctstantestfit,pars=c('DRIFT','CINT'),tipred=c('TI2','TI3'))
 }
 }

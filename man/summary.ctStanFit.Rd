@@ -39,6 +39,7 @@ Summarise a ctStanFit object that was fit using \code{\link{ctStanFit}}.
 }
 \examples{
 \donttest{
+if (!exists("ctstantestfit")) example(ctstantestfit)
 summary(ctstantestfit)
 }
 }

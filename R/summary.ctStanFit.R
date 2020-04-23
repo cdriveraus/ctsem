@@ -23,6 +23,7 @@ ctStanRawSamples<-function(fit){
 #' @return List containing summary items.
 #' @examples
 #' \donttest{
+#' if (!exists("ctstantestfit")) example(ctstantestfit)
 #' summary(ctstantestfit)
 #' }
 #' @method summary ctStanFit

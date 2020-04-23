@@ -45,8 +45,9 @@
 #'
 #' @examples
 #' \donttest{
-#' #samples reduced here for speed
-#' ctStanTIpredeffects(ctstantestfit,whichpars='CINT',nsamples=10,nsubjects=10)
+#' if (!exists("ctstantestfit")) example(ctstantestfit)
+#' ctStanTIpredeffects(ctstantestfit,
+#'  whichpars=c('CINT','dtDIFFUSION[2,2]'), plot=TRUE)
 #' }
 ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   includeMeanUncertainty=FALSE,

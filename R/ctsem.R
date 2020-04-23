@@ -78,7 +78,7 @@ NULL
 #' @export
 #'
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctDocs()
 #' }
 ctDocs <- function(){

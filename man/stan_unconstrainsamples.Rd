@@ -20,6 +20,7 @@ Convert samples from a stanfit object to the unconstrained scale
 }
 \examples{
 \donttest{
+if (!exists("ctstantestfit")) example(ctstantestfit)
 umat <- stan_unconstrainsamples(ctstantestfit$stanfit, ctstantestfit$standata)
 }
 }

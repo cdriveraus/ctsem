@@ -78,7 +78,8 @@ on subject level parameters of a ctStanFit object.
 }
 \examples{
 \donttest{
-#samples reduced here for speed
-ctStanTIpredeffects(ctstantestfit,whichpars='CINT',nsamples=10,nsubjects=10)
+if (!exists("ctstantestfit")) example(ctstantestfit)
+ctStanTIpredeffects(ctstantestfit,
+ whichpars=c('CINT','dtDIFFUSION[2,2]'), plot=TRUE)
 }
 }

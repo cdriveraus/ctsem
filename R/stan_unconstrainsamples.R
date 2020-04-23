@@ -9,6 +9,7 @@
 #'
 #' @examples
 #' \donttest{
+#' if (!exists("ctstantestfit")) example(ctstantestfit)
 #' umat <- stan_unconstrainsamples(ctstantestfit$stanfit, ctstantestfit$standata)
 #' }
 stan_unconstrainsamples <- function(fit, standata=NA){

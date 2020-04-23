@@ -45,7 +45,8 @@ where x is the number of cpu cores to use.}
 Plots prior and posterior distributions of model parameters in a ctStanModel or ctStanFit object.
 }
 \examples{
-\dontrun{
+\donttest{
+if (!exists("ctstantestfit")) example(ctstantestfit)
 ctStanPlotPost(ctstantestfit, rows=3:4)
 }
 }

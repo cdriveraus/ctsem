@@ -10,7 +10,7 @@
 #' means of temporal dynamics parameters
 #' @return vector of character strings.
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' sunspots<-sunspot.year
 #' sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
 #' id <- 1
@@ -59,8 +59,11 @@ ctStanParnames <- function(x,substrings=c('pop_','popsd')){
 #''latentMeans' returns only the expected latent means, given initial (T0MEANS) level, 
 #'latent intercept (CINT) and temporal effects (DRIFT).
 #'@examples
+#'\donttest{
+#'if (!exists("ctstantestfit")) example(ctstantestfit)
 #'pars <- ctStanContinuousPars(ctstantestfit)
 #'ctDiscretePars(pars,times=c(.5,1))
+#'}
 #'
 #'@export
 ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
@@ -111,15 +114,18 @@ ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
 #'instead of returning output. 
 #'@param ... additional plotting arguments to control \code{\link{ctStanDiscreteParsPlot}}
 #'@examples
-#'ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
+#'\donttest{
+#' if (!exists("ctstantestfit")) example(ctstantestfit)
+#' ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
 #'  plot=TRUE,indices='all')
 #'  
-#'  #modify plot
-#'  require(ggplot2)
-#'  g=ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
-#'    plot=TRUE,indices='CR')
-#'  g= g+ labs(title='Cross effects')
-#'  print(g)
+#'#modify plot
+#'require(ggplot2)
+#'g=ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
+#'  plot=TRUE,indices='CR')
+#'g= g+ labs(title='Cross effects')
+#'print(g)
+#'}
 #'@export
 ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=10,by=.1), 
   quantiles = c(.025, .5, .975),nsamples=500,observational=FALSE,standardise=FALSE, plot=FALSE,...){
@@ -296,9 +302,11 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
 #'x,y, and col arguments will be ignored. Steps specifies the number of polygons to overlay to 
 #'create a graduated transparency. Set to 1 for a flat looking plot.
 #'@examples
+#'\donttest{
+#'if (!exists("ctstantestfit")) example(ctstantestfit)
 #'x <- ctStanDiscretePars(ctstantestfit)
 #'ctStanDiscreteParsPlot(x, indices='CR')
-#'\dontrun{
+#'
 #'#to modify plot:
 #'g <- ctStanDiscreteParsPlot(x, indices='CR',plot=FALSE) + 
 #'  ggplot2::labs(title='My ggplot modification')

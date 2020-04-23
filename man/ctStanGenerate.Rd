@@ -43,7 +43,8 @@ Array of nsamples x time points x manifest variables.
 Generate data from a ctstanmodel object
 }
 \examples{
-\dontrun{
+\donttest{
+if (!exists("ctstantestfit")) example(ctstantestfit)
 
 #generate and plot samples from prior predictive
 priorpred <- ctStanGenerate(ctm = ctstantestfit$ctstanmodelbase,

@@ -59,6 +59,7 @@ ctPlotArrayGG <- function(input){
 #'
 #' @examples
 #' \donttest{
+#' if (!exists("ctstantestfit")) example(ctstantestfit)
 #' input<-ctStanTIpredeffects(ctstantestfit, plot=FALSE, whichpars='CINT', 
 #'  nsamples=10,nsubjects=10)
 #'     

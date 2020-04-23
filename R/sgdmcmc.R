@@ -1,9 +1,10 @@
 logit = function(x) log(x)-log((1-x))
 
 sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoints=NA,plot=FALSE,
-  stepbase=1e-3,gmeminit=ifelse(is.na(startnrows),.6,.8),gmemmax=.98,maxparchange = .50,
+  stepbase=1e-3,gmeminit=ifelse(is.na(startnrows),.6,.8),gmemmax=.96, maxparchange = .50,
   startnrows=NA,roughnessmemory=.9,groughnesstarget=.4,roughnesschangemulti = 2,
-  lproughnesstarget=ifelse(is.na(whichmcmcpars[1]),.4,.4),gamiter=50000,
+  lproughnesstarget=ifelse(is.na(whichmcmcpars[1]),.4,.4),
+  # gamiter=50000,
   gsmoothroughnesstarget=.05,
   warmuplength=20,nstore=max(100,length(init)),
   minparchange=1e-800,maxiter=50000,
@@ -84,7 +85,7 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
   delta=deltaold=rep(0,length(pars))
   bestpars = newpars=maxpars=minpars=changepars=pars
   gstore=parstore = matrix(rnorm(length(bestpars)*nstore),length(bestpars),nstore)
-  gamweights = rep(.5,length(pars))
+  # gamweights = rep(.5,length(pars))
   
   step=rep(stepbase,length(pars))
   bestiter=1
@@ -143,72 +144,72 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
         print(lpg)
       }
       
-      if(i > nstore && i %% gamiter == 0 && notacceptedcount<2){
-        print(gamiter)
-        if(i-bestiter > gamiter) gamweights<-gamweights*.1
-        accepted <- TRUE #force acceptance
-        lpgood <- tail(lp,nstore)
-        # lpgood <- c(TRUE,sapply(2:nstore, function(x) lpgood[x]>=max(lpgood[1:(x-1)])))
-        lpgood <- order(lpgood)
-        gampars <- gamparsold <- pars
-        gamg=gamgold=gsmooth
-        gamindices <- sample(1:length(pars),ceiling(.1*length(pars)))
-        if(sum(lpgood) > 10){
-          for(pari in gamindices){
-            dat <- data.frame(x=
-                # log1p(-lp[1:nstore]+max(lp[1:nstore])),
-                c(1:max(lpgood)),
-              # g=gstore[pari,lpgood],
-              y=c((parstore[pari,lpgood]-mean(parstore[pari,lpgood]))/sd(parstore[pari,lpgood])))
-            weighting <- rep(1,nrow(dat))
-            # dat <- dat[lpgood,]
-            if(sd(parstore[pari,lpgood]) < .0001) next
-            
-            dat <- rbind(dat,data.frame(x=max(dat$x)*1.5,y=9999)) #for gam only
-            weighting=c(seq(.1,1,length.out=nrow(dat)-1),0)
-            
-            # browser()
-            # gamf <- suppressWarnings(try(gamboostLSS::gamboostLSS(formula = formula(y ~ x),
-            #   control=boost_control(nu=.01),dfbase=4,
-            #   # control=gamlss::gamlss.control(trace=FALSE)
-            #   # ,sigma.formula=formula(~s(x,df=3))
-            #   data = dat,weights = weighting),silent=TRUE))
-            # 
-            # if('try-error' %in% class(gamf)){
-            #   browser()
-            if(1==1){
-              gamf <- try(gam::gam(formula = formula(y ~ s(x)),
-              control=gam::gam.control(trace=FALSE),
-              data = dat,weights = weighting),silent=TRUE)
-              
-              if(!'try-error' %in% class(gamf)){
-              gampars[pari] = 
-                tail(predict(gamf),1)
-              
-              # plot(dat$x,predict(gamf),ylim=range(c(dat$y[-length(dat$y)],predict(gamf))))
-              # points(dat$x,dat$y,col='red')
-              }
-              
-            } else{
-              gampars[pari] = 
-                tail(predict(gamf)$mu,1)
-              
-              # plot(dat$x,predict(gamf)$mu,ylim=range(c(dat$y[-length(dat$y)],predict(gamf)$mu)))
-              # points(dat$x,dat$y,col='red')
-            }
-            if(!'try-error' %in% class(gamf)) gampars[pari]=gampars[pari]*sd(parstore[pari,lpgood])+mean(parstore[pari,lpgood])
-            
-            # gamfg <- try(gam::gam(formula = formula(g ~ s(x)),
-            #   control=gam::gam.control(trace=FALSE),
-            #   data = dat,weights = weighting))
-            # gamf <- lm(y ~ poly(x,5),data = dat) 
-
-            # gamg[pari] = 
-            #   tail(predict(gamfg),1)
-
-          }
-          # browser()
-        }}
+      # if(i > nstore && i %% gamiter == 0 && notacceptedcount<2){
+      #   print(gamiter)
+      #   if(i-bestiter > gamiter) gamweights<-gamweights*.1
+      #   accepted <- TRUE #force acceptance
+      #   lpgood <- tail(lp,nstore)
+      #   # lpgood <- c(TRUE,sapply(2:nstore, function(x) lpgood[x]>=max(lpgood[1:(x-1)])))
+      #   lpgood <- order(lpgood)
+      #   gampars <- gamparsold <- pars
+      #   gamg=gamgold=gsmooth
+      #   gamindices <- sample(1:length(pars),ceiling(.1*length(pars)))
+      #   if(sum(lpgood) > 10){
+      #     for(pari in gamindices){
+      #       dat <- data.frame(x=
+      #           # log1p(-lp[1:nstore]+max(lp[1:nstore])),
+      #           c(1:max(lpgood)),
+      #         # g=gstore[pari,lpgood],
+      #         y=c((parstore[pari,lpgood]-mean(parstore[pari,lpgood]))/sd(parstore[pari,lpgood])))
+      #       weighting <- rep(1,nrow(dat))
+      #       # dat <- dat[lpgood,]
+      #       if(sd(parstore[pari,lpgood]) < .0001) next
+      #       
+      #       dat <- rbind(dat,data.frame(x=max(dat$x)*1.5,y=9999)) #for gam only
+      #       weighting=c(seq(.1,1,length.out=nrow(dat)-1),0)
+      #       
+      #       # browser()
+      #       # gamf <- suppressWarnings(try(gamboostLSS::gamboostLSS(formula = formula(y ~ x),
+      #       #   control=boost_control(nu=.01),dfbase=4,
+      #       #   # control=gamlss::gamlss.control(trace=FALSE)
+      #       #   # ,sigma.formula=formula(~s(x,df=3))
+      #       #   data = dat,weights = weighting),silent=TRUE))
+      #       # 
+      #       # if('try-error' %in% class(gamf)){
+      #       #   browser()
+      #       if(1==1){
+      #         gamf <- try(gam::gam(formula = formula(y ~ s(x)),
+      #         control=gam::gam.control(trace=FALSE),
+      #         data = dat,weights = weighting),silent=TRUE)
+      #         
+      #         if(!'try-error' %in% class(gamf)){
+      #         gampars[pari] = 
+      #           tail(predict(gamf),1)
+      #         
+      #         # plot(dat$x,predict(gamf),ylim=range(c(dat$y[-length(dat$y)],predict(gamf))))
+      #         # points(dat$x,dat$y,col='red')
+      #         }
+      #         
+      #       } else{
+      #         gampars[pari] = 
+      #           tail(predict(gamf)$mu,1)
+      #         
+      #         # plot(dat$x,predict(gamf)$mu,ylim=range(c(dat$y[-length(dat$y)],predict(gamf)$mu)))
+      #         # points(dat$x,dat$y,col='red')
+      #       }
+      #       if(!'try-error' %in% class(gamf)) gampars[pari]=gampars[pari]*sd(parstore[pari,lpgood])+mean(parstore[pari,lpgood])
+      #       
+      #       # gamfg <- try(gam::gam(formula = formula(g ~ s(x)),
+      #       #   control=gam::gam.control(trace=FALSE),
+      #       #   data = dat,weights = weighting))
+      #       # gamf <- lm(y ~ poly(x,5),data = dat) 
+      # 
+      #       # gamg[pari] = 
+      #       #   tail(predict(gamfg),1)
+      # 
+      #     }
+      #     # browser()
+      #   }}
       
       gdelta =  (ghatmix +dghatmix*dghatweight/2) #removed step multiply because divide by zero elsewhere
       if(i > 1){
@@ -222,12 +223,12 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
         newpars = newpars  + delta/2 - deltaold/2 #+ delta - deltaold #
       }
       
-      if(i > nstore && (i%%gamiter)==0){
-        # gampars = newpars*(1-min(1,gamweights))+gampars*gamweights
-        newpars[gamindices]=newpars[gamindices] + 
-          (gampars[gamindices]-gamparsold[gamindices])*gamweights[gamindices]
-        # gsmooth=gsmooth*.8 + (gampars-gamparsold)/step*.2#(gamg-gamgold)*gamweights
-      }
+      # if(i > nstore && (i%%gamiter)==0){
+      #   # gampars = newpars*(1-min(1,gamweights))+gampars*gamweights
+      #   newpars[gamindices]=newpars[gamindices] + 
+      #     (gampars[gamindices]-gamparsold[gamindices])*gamweights[gamindices]
+      #   # gsmooth=gsmooth*.8 + (gampars-gamparsold)/step*.2#(gamg-gamgold)*gamweights
+      # }
       
       if(any(is.na(newpars))) browser()
       if(i==1) itertime <- Sys.time()
@@ -258,11 +259,11 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
       if(is.na(whichmcmcpars[1])) lpg= fitfunc2(fullnewpars,whichmcmcpars)
       if(length(whichignore)>0) attributes(lpg)$gradient <- attributes(lpg)$gradient[-whichignore]
       
-      if(i==1) {
-        itertime <- as.numeric(Sys.time()-itertime)
-        gamiter <- max(ceiling(10/itertime),gamiter)#
-        #/30.01*length(pars)
-      }
+      # if(i==1) {
+      #   itertime <- as.numeric(Sys.time()-itertime)
+      #   gamiter <- max(ceiling(10/itertime),gamiter)#
+      #   #/30.01*length(pars)
+      # }
       
       if(lpg > -1e99 &&       #regular check
           class(lpg) !='try-error' && 
@@ -363,23 +364,23 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
 
     
     
-    if(i > (nstore+10) && (i %% gamiter)==10){# == (gamiter-2)) {
-      # browser()
-      print((lp[i]-lp[i-12]) > (lp[i-12]-lp[i-24]))
-      gamup <- sign(gampars[gamindices]-gamparsold[gamindices]) == 
-        sign(bestpars[gamindices] - gampars[gamindices])
-      if((lp[i]-lp[i-12]) > (lp[i-12]-lp[i-24])) {
-        gamweights[gamindices] <- gamweights[gamindices] * 1.1 
-      } else{
-        gamweights[gamindices] = gamweights[gamindices] * .9
-        # gamiter=gamiter*1.5 #increase time between gams
-      }
+    # if(i > (nstore+10) && (i %% gamiter)==10){# == (gamiter-2)) {
+    #   # browser()
+    #   print((lp[i]-lp[i-12]) > (lp[i-12]-lp[i-24]))
+    #   gamup <- sign(gampars[gamindices]-gamparsold[gamindices]) == 
+    #     sign(bestpars[gamindices] - gampars[gamindices])
+    #   if((lp[i]-lp[i-12]) > (lp[i-12]-lp[i-24])) {
+    #     gamweights[gamindices] <- gamweights[gamindices] * 1.1 
+    #   } else{
+    #     gamweights[gamindices] = gamweights[gamindices] * .9
+    #     # gamiter=gamiter*1.5 #increase time between gams
+    #   }
       
-      gamweights[gamindices][gamup] <- gamweights[gamindices][gamup] * 1.2
-      gamweights[gamindices][!gamup] <- gamweights[gamindices][!gamup] * .8
-    }
+      # gamweights[gamindices][gamup] <- gamweights[gamindices][gamup] * 1.2
+      # gamweights[gamindices][!gamup] <- gamweights[gamindices][!gamup] * .8
+    # }
     
-    if(!i %% gamiter==0){
+    # if(!i %% gamiter==0){
     groughness = groughness * (roughnessmemory2) + (1-(roughnessmemory2)) * as.numeric(sign(gmid)!=sign(oldgmid))
     gsmoothroughness = gsmoothroughness * (roughnessmemory2) + (1-(roughnessmemory2)) * as.numeric(sign(gsmooth)!=sign(oldgsmooth))
     if(i > 1) lproughness = lproughness * (roughnessmemory2) + (1-(roughnessmemory2)) * exp(-1/(i-bestiter+.1))#as.numeric(lp[i-1] > (lp[i]))
@@ -426,7 +427,7 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
       
     }
     
-    }#end if not gam
+    # }#end if not gam
     
     if(i > 1 && runif(1,0,1) > .95) {
       # #slowly forget old max and mins, allow fast re exploration of space
@@ -457,7 +458,7 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
       if(oldlprdif > lprdif) lproughnesstarget <- oldlproughnesstarget
       lprproposal = lproughnesstarget*2-oldlproughnesstarget
       oldlproughnesstarget <- lproughnesstarget
-      lproughnesstarget <- min(.95, max(.05, .01+lprproposal + .05 * (-1+2*rbinom(n = 1,size = 1,prob = .5))))
+      lproughnesstarget <- min(.8, max(.05, .01+lprproposal + .05 * (-1+2*rbinom(n = 1,size = 1,prob = .5))))
     }
     
     step[step > maxparchange] <- maxparchange
@@ -484,7 +485,7 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
       
       plot(log(abs(step*gsmooth)),col=1:length(pars))
       plot(tail(log(-(lp-max(lp)-1)),500),type='l')
-      plot(gamweights,col=1:length(pars))
+      # plot(gamweights,col=1:length(pars))
       plot((apply(parstore,1,sd,na.rm=T)),col=1:length(pars))
       abline(h=(parsdtol))
       if(1==2){

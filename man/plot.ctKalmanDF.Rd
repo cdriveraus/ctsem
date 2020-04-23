@@ -56,6 +56,8 @@ Plots Kalman filter output from ctKalman.
 }
 \examples{
 \donttest{
+if (!exists("ctstantestfit")) example(ctstantestfit)
+
 ### Get output from ctKalman
 x<-ctKalman(ctstantestfit,subjects=2,timestep=.01)
 

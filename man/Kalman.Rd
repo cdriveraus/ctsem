@@ -69,10 +69,12 @@ Takes list containing ctsem subject matrices, as well as long form data object, 
 predicted and updated latent states, likelihoods, and predicted observations using the Kalman filter.
 }
 \examples{
+\donttest{
 ### ctstantestfit is a dummy ctStanFit object with 2 manifest indicators,
 ###  4 latents, and 1 time dependent predictor.
 
 ### get parameter matrices
+if (!exists("ctstantestfit")) example(ctstantestfit)
 kpars <- ctStanContinuousPars(ctstantestfit)
 
 #construct dummy data
@@ -90,4 +92,5 @@ kout <- Kalman(kpars=kpars, datalong=datalong,
 print(kout$ysmooth)
 matplot(kout$time,kout$ysmooth,type='l')
 matplot(kout$time,datalong[,3:4],type='p',add=TRUE,pch=1)
+}
 }

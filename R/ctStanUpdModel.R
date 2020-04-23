@@ -9,6 +9,7 @@
 #' @export
 #' @examples
 #' \donttest{
+#' if (!exists("ctstantestfit")) example(ctstantestfit)
 #'  newm<-ctModel(type='stanct',
 #'   n.latent=ctstantestfit$ctstanmodel$n.latent,
 #'   n.TDpred=ctstantestfit$ctstanmodel$n.TDpred,

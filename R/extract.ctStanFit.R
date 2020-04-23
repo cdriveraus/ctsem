@@ -5,7 +5,10 @@
 #' @return Array of posterior samples.
 #' @aliases extract
 #' @examples
+#' \donttest{
+#' if (!exists("ctstantestfit")) example(ctstantestfit)
 #' e = ctExtract(ctstantestfit)
+#' }
 #' @export
 ctExtract <- function(object,...){
   if(!class(object) %in% c('ctStanFit', 'stanfit')) stop('Not a ctStanFit or stanfit object')

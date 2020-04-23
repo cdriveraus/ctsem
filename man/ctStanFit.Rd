@@ -153,7 +153,7 @@ summary(fit)
 plot(fit,wait=FALSE)
 
 }
-\dontrun{
+\donttest{
 library(ctsem)
 set.seed(3)
 

@@ -19,5 +19,8 @@ Array of posterior samples.
 Extract samples from a ctStanFit object
 }
 \examples{
+\donttest{
+if (!exists("ctstantestfit")) example(ctstantestfit)
 e = ctExtract(ctstantestfit)
+}
 }

@@ -39,6 +39,7 @@ Get Kalman filter estimates from a ctStanFit object
 }
 \examples{
 \donttest{
+if (!exists("ctstantestfit")) example(ctstantestfit)
 k=ctStanKalman(ctstantestfit,subjectpars=T,collapsefunc=mean)
 }
 }
