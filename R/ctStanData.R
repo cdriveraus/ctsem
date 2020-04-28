@@ -336,10 +336,15 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     
     #state dependence
   statedep <- rep(0L,max(ctm$modelmats$matsetup$matrix))
+  lhscalcs <- sapply(unique(unlist(ctm$modelmats$calcs)),function(x) gsub('=.*','',x))
   for(i in 1:length(statedep)){
+    matname <- try(names(ctStanMatricesList()$all[ctStanMatricesList()$all %in% i]),silent=TRUE)
+    if(length(matname)==0) next
     statedep[i] <- ifelse(any(
       ctm$modelmats$matsetup$when >0 &
         ctm$modelmats$matsetup$matrix %in% i),1L,0L)
+    if(any(sapply(lhscalcs,function(calci) 
+      grepl(matname,calci)))) statedep[i] <- 1L #if any calcs modify this matrix, make state dependent
   }
     # 
     # statedep=rep(0L,4)

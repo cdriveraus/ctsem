@@ -38,8 +38,10 @@ if(mv == 'N' || mv =='n'){ #create makevars
   if (!file.exists(M)) file.create(M)
   cat("\nCXX14FLAGS=-O3 -mtune=native",
     if( grepl("^darwin", R.version$os)) "CXX14FLAGS += -arch x86_64 -ftemplate-depth-256" else
-      if (.Platform$OS.type == "windows") "CXX11FLAGS=-O3 -mtune=native
-CXX14 = $(BINPREF)g++ -m$(WIN) -std=c++1y" else
+      if (.Platform$OS.type == "windows") ifelse(as.numeric(version$major =='4'),
+      "CXX11FLAGS=-O3 -mtune=native",
+        "CXX11FLAGS=-O3 -mtune=native
+CXX14 = $(BINPREF)g++ -m$(WIN) -std=c++1y") else
   "CXX14FLAGS += -fPIC",
     file = M, sep = "\n", append = TRUE)
 }

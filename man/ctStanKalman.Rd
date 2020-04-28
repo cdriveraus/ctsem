@@ -11,6 +11,7 @@ ctStanKalman(
   cores = 2,
   standardisederrors = FALSE,
   subjectpars = FALSE,
+  indvarstates = FALSE,
   ...
 )
 }
@@ -27,6 +28,8 @@ ctStanKalman(
 
 \item{subjectpars}{if TRUE, state estimates are not returned, instead, predictions of each subjects parameters
 are returned, for parameters that had random effects specified.}
+
+\item{indvarstates}{if TRUE, do not remove indvarying states from output}
 
 \item{...}{additional arguments to collpsefunc.}
 }

@@ -29,6 +29,7 @@ ctStanGenerate <- function(ctm,datastruct, optimize=TRUE, is=FALSE,
   dots$carefulfit=FALSE
   dots$is <- is
   dots$tol=1e-18
+  dots$stochastic=FALSE
   if(is.null(dots$finishsamples) && parsonly) dots$finishsamples=nsamples
   if(!includePreds){
     ctm$n.TDpred <- 0
@@ -40,7 +41,7 @@ ctStanGenerate <- function(ctm,datastruct, optimize=TRUE, is=FALSE,
   
   #problem with multiple cores inside function?
   pp<-ctStanFit(datalong = datastruct[c(1,nrow(datastruct)),,drop=FALSE], 
-    ctstanmodel = ctm,optimize=optimize, optimcontrol=dots,verbose=0,...)
+    ctstanmodel = ctm,optimize=optimize, optimcontrol=dots,verbose=0, nopriors=FALSE,...)
 
   if(parsonly) dat <- pp else{
   
@@ -48,7 +49,7 @@ ctStanGenerate <- function(ctm,datastruct, optimize=TRUE, is=FALSE,
   filled[,ctm$manifestNames] <- -99
   # browser()
   ppf <- ctStanFit(datalong = filled, ctstanmodel = ctm,optimize=optimize, 
-    optimcontrol=dots,fit=FALSE)
+    optimcontrol=dots,fit=FALSE,nopriors=FALSE)
   # pp$standata$Y <- ppf$standata$Y
   ppf$stanfit <- pp$stanfit
   class(ppf) <- c('ctStanFit',class(ppf))

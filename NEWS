@@ -1,5 +1,10 @@
 ctsem news:
 
+26/4/2020
+####3.2.1####
+- Minor updates to suit rstan 2.2.3
+- Higher dim Hessian really really fixed...
+
 18/4/2020
 ####3.2.0####
 - Change to defaults of ctStanFit -- optimization without priors is new default.

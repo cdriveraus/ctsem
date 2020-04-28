@@ -15,9 +15,10 @@ LaTeX: pdfLaTeX
 AutoAppendNewline: Yes
 
 BuildType: Package
+PackageUseDevtools: Yes
 PackageInstallArgs: --no-multiarch --with-keep.source
-PackageBuildArgs: --compact-vignettes="gs+qpdf"
-PackageCheckArgs: --as-cran --compact-vignettes="gs+qpdf"
+PackageBuildArgs: --compact-vignettes=both
+PackageCheckArgs: --as-cran --compact-vignettes=both
 PackageRoxygenize: rd,collate,namespace
 
 QuitChildProcessesOnExit: Yes

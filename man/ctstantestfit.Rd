@@ -31,7 +31,7 @@ init = c(0.748310681869536,0.945659953796114,0.0964592332562144,
 0.576641002392084,0.248625561427667,-0.0683189297539777,
 -0.230342395895042,0.205299380670756,-0.34522281922735,
 0.0829819407118698,0.0137367678089216,-0.0611697475527028),
-  optimize = TRUE,optimcontrol=list(finishsamples=20))
+  optimize = TRUE,optimcontrol=list(finishsamples=20),nopriors=FALSE)
  
 ctstantestfit <- ctStanGenerateFromFit(ctstantestfit,nsamples = 20,fullposterior = TRUE)
 

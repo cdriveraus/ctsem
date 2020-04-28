@@ -109,7 +109,7 @@ ctModelTransformsToNum<-function(ctm){
           etmp<-gsub('\\(',' ',e)
           etmp<-gsub('\\)',' ',etmp)
           etmp<- gsub('([^0-9])\\.','\\10.',etmp) #add a zero in front of decimal only numbers
-          escn <- unlist(regmatches(e, gregexpr('\\b[0-9,.]+e+-?[0-9\\b[0-9]+', etmp)))
+          escn <- unlist(regmatches(etmp, gregexpr('[0-9,.]+e+-?[0-9\\b[0-9]+', etmp))) #replace scientific notation
           escn<- as.numeric(gsub('\\(', '-', gsub(',', '', escn)))
           etmp <- gsub('\\b[0-9,.]+e+-?[0-9\\b[0-9]+','',etmp)
         etmp <- gsub("\\[.*\\]","",etmp)
@@ -1457,21 +1457,16 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
 
    matrix constraincorsqrt(matrix mat){ //converts from unconstrained lower tri matrix to cor
     matrix[rows(mat),cols(mat)] o;
-    vector[rows(mat)] s;
   
     for(i in 1:rows(o)){ //set upper tri to lower
       for(j in min(i+1,rows(mat)):rows(mat)){
-        o[j,i] =  inv_logit(mat[j,i])*2-1;  // can change cor prior here
+        o[j,i] =  mat[j,i]; //inv_logit(mat[j,i])*2-1;  // can change cor prior here
         o[i,j] = o[j,i];
       }
       o[i,i]=1; // change to adjust prior for correlations
+      o[i,] = o[i,] / sqrt(sum(square(o[i,]))+1e-10);
     }
-
-    for(i in 1:rows(o)){
-      s[i] = inv_sqrt(o[i,] * o[,i] + 1e-10);
-      if(is_inf(s[i])) s[i]=0;
-    }
-    return diag_pre_multiply(s,o);
+    return o;
   } 
 
   matrix sdcovsqrt2cov(matrix mat, int cholbasis){ //covariance from cholesky or unconstrained cor sq root

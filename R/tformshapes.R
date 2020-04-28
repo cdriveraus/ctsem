@@ -1,14 +1,14 @@
 tformshapes <- function(singletext=FALSE,transform=NA,jacobian=FALSE,driftdiag=FALSE, parname='param',stan=FALSE){
  out = c('param',
-    '(log1p(exp(param)))',
+    '(log1p_exp(param))',
     '(exp(param))',
-    '(exp(param)/(1+exp(param)))',
+    '(1/(1+exp(-param)))',
     '((param)^3)',
     'log1p(param)',
     'meanscale',
-    'exp(param)/(1+exp(param))',
+    '1/(1+exp(-param))',
     'exp(param)',
-    'exp(param)/(1+exp(param))-exp(param)*exp(param)/(1+exp(param))^2',
+    '1/(1+exp(-param))-(exp(param)^2)/(1+exp(param))^2',
     '3*param^2',
     '1/(1+param)')
  

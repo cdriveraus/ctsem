@@ -19,7 +19,7 @@ ctStanFit(
   optimize = TRUE,
   optimcontrol = list(),
   nlcontrol = list(),
-  nopriors = FALSE,
+  nopriors = TRUE,
   chains = 2,
   cores = ifelse(optimize, getOption("mc.cores", 2L), "maxneeded"),
   inits = NULL,
@@ -142,10 +142,7 @@ model<-ctModel(type='stanct',
   LAMBDA=diag(2))
 
 
-#fit model to data (takes a few minutes - but insufficient 
-# iterations and max_treedepth for inference!)
-fit<-ctStanFit(ctstantestdat, model, iter=200, chains=2, 
-control=list(max_treedepth=6))
+fit<-ctStanFit(ctstantestdat, model,nopriors=FALSE)
 
 #output functions
 summary(fit) 

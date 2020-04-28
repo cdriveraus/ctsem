@@ -1,9 +1,11 @@
+log1p_exp <- function(x) log1p(exp(x))
+
 jac<-function(pars,fgfunc,step=rep(1e-6,length(pars)),whichpars='all',
-  lpdifmin=1e-6,lpdifmax=.01, cl=NA){
+  lpdifmin=1e-5,lpdifmax=1, cl=NA,verbose=1){
   if('all' %in% whichpars) whichpars <- 1:length(pars)
   base <- fgfunc(pars)
   hessout <- flexsapply(cl = cl, cores = 1, whichpars, function(i) {
-    # message('### Par ',i,'###')
+    if(verbose) message('### Par ',i,'###')
     stepsize = step[i]
     uppars<-rep(0,length(pars))
     uppars[i]<-1
@@ -19,20 +21,19 @@ jac<-function(pars,fgfunc,step=rep(1e-6,length(pars)),whichpars='all',
       while(!accepted && count < 15){
         stepchangemultiplier <- max(stepchangemultiplier,.11)
         count <- count + 1
-        # if(count > 15) stop('Unable to compute Hessian!?')
         lp[[di]] <- fgfunc(pars+uppars*stepsize*ifelse(di==2,-1,1))
         accepted <- !'try-error' %in% class(lp[[di]])
         if(accepted){
           lpdiff <- base[1] - lp[[di]][1]
           # if(lpdiff > 1e100) browser()
           if(lpdiff < lpdifmin) {
-            # message('Increasing step')
+            if(verbose) message('Increasing step')
             if(stepchange == -1) stepchangemultiplier = stepchangemultiplier*.5
             stepchange <- 1
             stepsize <- stepsize*(1-stepchangemultiplier)+ (stepsize*10)*stepchangemultiplier
           }
           if(lpdiff > lpdifmax){
-            # message('Decreasing step')
+            if(verbose) message('Decreasing step')
             if(stepchange == 1) stepchangemultiplier = stepchangemultiplier * .5
             stepchange <- -1
             stepsize <- stepsize*(1-stepchangemultiplier)+ (stepsize*.1)*stepchangemultiplier
@@ -40,7 +41,7 @@ jac<-function(pars,fgfunc,step=rep(1e-6,length(pars)),whichpars='all',
           if(lpdiff > lpdifmin && lpdiff < lpdifmax && lpdiff > 0) accepted <- TRUE else accepted <- FALSE
           if(lpdiff < 0){
             base <- lp[[di]]
-            # message('Better log probability found during Hessian estimation...')
+            if(verbose) message('Better log probability found during Hessian estimation...')
             accepted <- FALSE
             stepchangemultiplier <- 1
             stepchange=0
@@ -61,7 +62,15 @@ jac<-function(pars,fgfunc,step=rep(1e-6,length(pars)),whichpars='all',
   return((hessout+t(hessout))/2)
 }
 
-findstepsize <- function(est,func,eps=1e-3,maxlpd=.1,minlpd=1e-4){
+hesscalc <- function(sf,step){ #input stanfit, get hessian
+  smf <- stan_reinitsf(sf$stanmodel,sf$standata)
+  fgfunc <- function(x) rstan::log_prob(smf,x,gradient=TRUE)
+  # step=findstepsize(est = sf$stanfit$rawest,func = fgfunc,eps = 1e-2,
+  #   maxlpd = 2*length(sf$stanfit$rawest),minlpd=.1*length(sf$stanfit$rawest))
+  H=jac(pars = sf$stanfit$rawest,fgfunc = fgfunc,step = rep(step,length(sf$stanfit$rawest)))
+}
+
+findstepsize <- function(est,func,eps=1e-3,maxlpd=3,minlpd=1e-3){
   
   fmax=func(est)
   epsbase=.01
@@ -70,8 +79,9 @@ findstepsize <- function(est,func,eps=1e-3,maxlpd=.1,minlpd=1e-4){
   devs <- matrix(NA,nrow=n,ncol=length(est))
   lp<-c()
   epscount <- 0
+  goodcount <- 0
   
-  while(i < n && epscount < 20){
+  while(i < n && goodcount < 5){
     i=i+1
     accepted <- FALSE
     devs[i,] <- rnorm(length(est))*eps
@@ -92,22 +102,68 @@ findstepsize <- function(est,func,eps=1e-3,maxlpd=.1,minlpd=1e-4){
     fl <- sqrt(fl)
     
     frange <- fmax[1]-lp[i]
+    print(frange)
     if(length(good) <=5){
       if(frange < minlpd) eps <- eps * 2
       if(frange > maxlpd) eps <- eps /2
     }
     # message(i)
     # print(eps)
+    if(frange > minlpd && frange < maxlpd) goodcount <- goodcount + 1 else goodcount <- 0
     # 
     if(length(good)>5){
       if(frange < minlpd) epsbase <- epsbase * 2
       if(frange > maxlpd) epsbase <- epsbase / 2
       eps=epsbase/(sqrt(abs(apply(devs,2,function(x) coefficients(lm(fl[good]~abs(x[good])))[-1])))+1e-8)
       epscount <- epscount + 1
+      print(epsbase)
     }
   }
   return(eps)
 }
+
+gradcheck <- function(sf,min=1e-5,seqlength=10,whichpars=NA,
+  offdiags=FALSE,scale=TRUE,finite=FALSE){
+  p <- sf$stanfit$rawest
+  smf <- stan_reinitsf(sf$stanmodel,sf$standata)
+  if(is.na(whichpars[1])) whichpars <- 1:length(p)
+  
+  func<-function(x) log_prob(smf,x)
+  b=func(p)
+  
+  for(pi in whichpars){
+    g <- list()
+    gf=c()
+    devs <- min*2^(1:seqlength)
+    devs=sort(c(devs,-devs,0))
+    for(i in seq_along(devs)){
+      px <- p
+      px[pi] <- p[pi] + devs[i]
+      g[[i]] <- log_prob(smf,px,gradient=TRUE)
+      if(finite) gf[i]<-(func(px)-b)/devs[i]
+    }
+    lp=sapply(g,function(x) x[1])
+    plot(devs,lp,type='l',lwd=2,main=pi)
+    abline(h=lp[devs==0],lty=2)
+    abline(v=0,lty=2)
+    gmat<- sapply(g,function(x) attributes(x)$gradient)
+    if(finite) gfmat=sapply(gf,function(x) x*2)
+    if(scale) gmat <- t(t(gmat)/devs)
+    if(finite && scale) gfmat=t(t(gfmat)/devs)
+    plot(devs,gmat[pi,],type='l',lwd=2,main=pi,ylab='grad')
+    if(finite)  points(devs,gfmat,type='l',lwd=2,lty=2,col=2,main=pi,ylab='grad')
+    abline(v=0,lty=2)
+    abline(h=0,lty=2)
+    if(offdiags){
+      for(i in 1:length(p)){
+        if(i != pi) plot(devs,gmat[i,],type='l',lwd=2,main=paste0(pi,'  ',i),ylab='grad')
+        abline(v=0,lty=2)
+        abline(h=0,lty=2)
+      }
+    }
+  }
+}
+
 
 jacrandom <- function(grfunc, est, eps=1e-4,
   maxlpd=.5, minlpd=1e-5){
@@ -428,7 +484,8 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,savescores=F
     # parallel::clusterApply(cl2,1:cores, function(x) library(ctsem))
   }
   transformedpars <- try(flexlapply(cl, 
-    split(1:nrow(samples), sort((1:nrow(samples))%%cores)),tparfunc,cores=cores,parallel=cores > 1))
+    split(1:nrow(samples), sort((1:nrow(samples))%%cores)),
+    tparfunc,cores=cores,parallel=cores > 1))
   
   #fix this hack
   # 
@@ -1241,8 +1298,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         
         # hess <- jacrandom(fgfunc, grinit)
         # browser()
-        eps <- findstepsize(grinit,fgfunc)
-        hess <- jac(pars = grinit,fgfunc = fgfunc,step = eps,cl=clctsem)
+        # eps <- findstepsize(grinit,fgfunc)
+        hess <- jac(pars = grinit,fgfunc = fgfunc,
+          step = rep(1e-3,length(grinit)),cl=clctsem,verbose=verbose)
         cholcov = try(suppressWarnings(t(chol(solve(-hess)))),silent = TRUE)
         # 
         # if('try-error' %in% class(cholcov)){
@@ -1273,7 +1331,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # }
         # }
         
-        mcov=MASS::ginv(-hess) #-optimfit$hessian)
+        mcov=try(solve(-hess),silent=TRUE)
+        if('try-error' %in% class(mcov)){
+          mcov=MASS::ginv(-hess) 
+          warning('Generalized inverse required for Hessian inversion -- standard errors not trustworthy')
+        }
         
         # if(robust){
         #   message('Getting scores for robust std errors...')

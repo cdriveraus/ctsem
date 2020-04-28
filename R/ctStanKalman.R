@@ -7,6 +7,7 @@
 #' @param standardisederrors If TRUE, computes standardised errors for prior, upd, smooth conditions.
 #' @param subjectpars if TRUE, state estimates are not returned, instead, predictions of each subjects parameters
 #' are returned, for parameters that had random effects specified.
+#' @param indvarstates if TRUE, do not remove indvarying states from output
 #' @param ... additional arguments to collpsefunc.
 #'
 #' @return list containing Kalman filter elements, each element in array of
@@ -18,7 +19,8 @@
 #' if (!exists("ctstantestfit")) example(ctstantestfit)
 #' k=ctStanKalman(ctstantestfit,subjectpars=T,collapsefunc=mean)
 #' }
-ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,standardisederrors=FALSE, subjectpars=FALSE,...){
+ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,
+  standardisederrors=FALSE, subjectpars=FALSE, indvarstates=FALSE,...){
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
 
   message('Computing state estimates..')
@@ -70,7 +72,10 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,standardisederr
     return(states)
   } else{
 
-  nlatent <- fit$standata$nlatent
+  nlatent <- ifelse(!indvarstates, fit$standata$nlatent,fit$standata$nlatentpop)
+  latentNames <- fit$ctstanmodel$latentNames
+  if(indvarstates) latentNames <- c(latentNames,
+    paste0('indvar',1:(fit$standata$nlatentpop-fit$standata$nlatent)))
   nmanifest <- fit$standata$nmanifest
 
   
@@ -80,7 +85,6 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,standardisederr
   out=list(time=cbind(fit$standata$time), 
     y=y, 
     llrow=e$llrow)
-  
   for(basei in c('y','eta')){
     for(typei in c('prior','upd','smooth')){
       for(typex in c('','cov')){
@@ -93,7 +97,7 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,standardisederr
         if(basei=='eta'){
           if(typex=='') {
             out[[ref]] <- out[[ref]][,,1:nlatent,drop=FALSE] 
-            dimnames(out[[ref]]) <- list(NULL, NULL, fit$ctstanmodel$latentNames[1:nlatent])
+            dimnames(out[[ref]]) <- list(NULL, NULL, latentNames)
           } else { #for cov
             out[[ref]] <- out[[ref]][,,1:nlatent,1:nlatent,drop=FALSE]
           }
@@ -145,7 +149,7 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,standardisederr
     
     if(length(dim(out[[i]])) > 2){
       if(i %in% mindex) dr <- fit$ctstanmodelbase$manifestNames
-      if(i %in% lindex) dr <- fit$ctstanmodelbase$latentNames
+      if(i %in% lindex) dr <- latentNames
       d <- c(d,Row=list(dr))
       if(length(dim(out[[i]])) > 3) d <- c(d,Col=list(dr))
     }

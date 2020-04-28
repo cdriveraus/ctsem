@@ -25,6 +25,7 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
   }
   #replace inverse logit temporarily
   m$pars$param <- gsub('\\binv_logit\\((.*)\\)','1/\\(1+exp\\(-\\(\\1\\)\\)\\)',m$pars$param)
+  m$pars$param <- gsub('\\blog1p_exp\\((.*)\\)','log1p\\(exp\\(\\1\\)\\)',m$pars$param)
   
   mats <- listOfMatrices(m$pars)
   matnames <- names(ctStanMatricesList(unsafe=TRUE)$base)

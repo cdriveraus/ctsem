@@ -1,15 +1,15 @@
 logit = function(x) log(x)-log((1-x))
 
 sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoints=NA,plot=FALSE,
-  stepbase=1e-3,gmeminit=ifelse(is.na(startnrows),.6,.8),gmemmax=.96, maxparchange = .50,
+  stepbase=1e-3,gmeminit=ifelse(is.na(startnrows),.8,.8),gmemmax=.96, maxparchange = .50,
   startnrows=NA,roughnessmemory=.9,groughnesstarget=.4,roughnesschangemulti = 2,
-  lproughnesstarget=ifelse(is.na(whichmcmcpars[1]),.4,.4),
+  lproughnesstarget=ifelse(is.na(whichmcmcpars[1]),.5,.4),
   # gamiter=50000,
   gsmoothroughnesstarget=.05,
   warmuplength=20,nstore=max(100,length(init)),
   minparchange=1e-800,maxiter=50000,
   nconvergeiter=ifelse(is.na(whichmcmcpars[1]),30,60), 
-  itertol=1e-3, deltatol=1e-5, parsdtol=1e-4){
+  itertol=1e-3, deltatol=1e-5, parsdtol=1e-3){
   
   initfull=init #including ignored params start values
   if(length(whichignore)>0) init=init[-whichignore]
@@ -213,10 +213,10 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
       
       gdelta =  (ghatmix +dghatmix*dghatweight/2) #removed step multiply because divide by zero elsewhere
       if(i > 1){
-        delta =   step  *sign(gdelta)*(abs(gdelta))  * exp((rnorm(length(g),0,.02)))
+        delta =   step  *sign(gdelta)*(abs(gdelta))  #* exp((rnorm(length(g),0,.02)))
         # if(runif(1) > .95) {
         #   parextra=sample(1:length(pars),floor(.05*length(pars)))
-        #   delta[parextra] <- delta[parextra]*10
+        #   delta[parextra] <- step*sqrt(abs(gsmooth[parextra]))*10
         # }
         delta[abs(delta) > maxparchange] <- maxparchange*sign(delta[abs(delta) > maxparchange])
         newpars = pars + delta
@@ -397,7 +397,7 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
     ))
     
     step[gsmoothroughness < gsmoothroughnesstarget] <- step[gsmoothroughness < gsmoothroughnesstarget] * 1.2
-    # gsmooth[gsmoothroughness < gsmoothroughnesstarget] <- gsmooth[gsmoothroughness < gsmoothroughnesstarget] * 1.2
+    gsmooth[gsmoothroughness < gsmoothroughnesstarget] <- gsmooth[gsmoothroughness < gsmoothroughnesstarget] * 1.1
     # step[gsmoothroughness < gsmoothroughnesstarget] * .1*gsmoothroughnessmod[gsmoothroughness < gsmoothroughnesstarget]
     signdif= sign(gmid)!=sign(gdelta)
     if(i > 1 && lp[i] >= max(head(lp,length(lp)-1))) {
@@ -408,8 +408,8 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
         whichmax <- which(pars > maxpars | pars < minpars)
         if(length(whichmax) > 0){
         parscore[whichmax] <- parscore[whichmax]+.1*(as.numeric(pars[whichmax]>maxpars[whichmax])*2-1)
-        gsmooth[whichmax] <- gsmooth[whichmax]  * 1.2*(1+abs(parscore[whichmax]))#*delta[whichmax] /step[whichmax]
-        step[whichmax] <- step[whichmax] * 2*(1+abs(parscore[whichmax]))  #+ pars[whichmax]
+        # gsmooth[whichmax] <- gsmooth[whichmax]  * 1.2*(1+abs(parscore[whichmax]))#*delta[whichmax] /step[whichmax]
+        # step[whichmax] <- step[whichmax] * 2*(1+abs(parscore[whichmax]))  #+ pars[whichmax]
         pars[pars>maxpars] <- pars[pars>maxpars]+10*(1+abs(parscore[pars>maxpars]))*(pars[pars>maxpars]-maxpars[pars>maxpars] )
         pars[pars< minpars] <- pars[pars< minpars]+10*(1+abs(parscore[pars<minpars]))*(pars[pars< minpars]-minpars[pars< minpars] )
 
@@ -486,8 +486,12 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
       plot(log(abs(step*gsmooth)),col=1:length(pars))
       plot(tail(log(-(lp-max(lp)-1)),500),type='l')
       # plot(gamweights,col=1:length(pars))
-      plot((apply(parstore,1,sd,na.rm=T)),col=1:length(pars))
+      parsd=(apply(parstore,1,sd,na.rm=T))
+      plot(pars,col=1:length(pars))
       abline(h=(parsdtol))
+      matplot(t(parstore[
+        which(parsd > sort(parsd,decreasing = TRUE)[min(c(length(pars),5))]),,drop=FALSE]),
+        type='l')
       if(1==2){
         plot(groughness,col='red',ylim=c(0,1))
         abline(h=mean(gsmoothroughness),col='blue',lty=2)

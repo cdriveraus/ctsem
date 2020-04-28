@@ -259,7 +259,7 @@ ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
   # out$popsdpriorscale <- 1
   out$rawpopsdbase <- 'normal(0,1)' #'cauchy(0,1)'
   out$rawpopsdbaselowerbound <- NA
-  out$rawpopsdtransform <- 'log1p(exp(2*rawpopsdbase-1)) .* sdscale' #'log(1+exp(2*rawpopsdbase)) .* sdscale' #'exp(rawpopsdbase * 2 -2) .* sdscale' # 'rawpopsdbase .* sdscale' #
+  out$rawpopsdtransform <- 'log1p_exp(2*rawpopsdbase-1) .* sdscale' #'log(1+exp(2*rawpopsdbase)) .* sdscale' #'exp(rawpopsdbase * 2 -2) .* sdscale' # 'rawpopsdbase .* sdscale' #
   # out$stationarymeanprior <- NA
   # out$stationaryvarprior <- NA
   out$manifesttype <- rep(0,n.manifest)

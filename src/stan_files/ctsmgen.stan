@@ -56,21 +56,16 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
 
    matrix constraincorsqrt(matrix mat){ //converts from unconstrained lower tri matrix to cor
     matrix[rows(mat),cols(mat)] o;
-    vector[rows(mat)] s;
   
     for(i in 1:rows(o)){ //set upper tri to lower
       for(j in min(i+1,rows(mat)):rows(mat)){
-        o[j,i] =  inv_logit(mat[j,i])*2-1;  // can change cor prior here
+        o[j,i] =  mat[j,i]; //inv_logit(mat[j,i])*2-1;  // can change cor prior here
         o[i,j] = o[j,i];
       }
       o[i,i]=1; // change to adjust prior for correlations
+      o[i,] = o[i,] / sqrt(sum(square(o[i,]))+1e-10);
     }
-
-    for(i in 1:rows(o)){
-      s[i] = inv_sqrt(o[i,] * o[,i] + 1e-10);
-      if(is_inf(s[i])) s[i]=0;
-    }
-    return diag_pre_multiply(s,o);
+    return o;
   } 
 
   matrix sdcovsqrt2cov(matrix mat, int cholbasis){ //covariance from cholesky or unconstrained cor sq root
@@ -142,15 +137,15 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
     if(meanscale!=1.0) param *= meanscale; 
 if(inneroffset != 0.0) param += inneroffset; 
 if(transform==0) param = param;
-if(transform==1) param = (log1p(exp(param)));
+if(transform==1) param = (log1p_exp(param));
 if(transform==2) param = (exp(param));
-if(transform==3) param = (exp(param)/(1+exp(param)));
+if(transform==3) param = (1/(1+exp(-param)));
 if(transform==4) param = ((param)^3);
 if(transform==5) param = log1p(param);
 if(transform==50) param = meanscale;
-if(transform==51) param = exp(param)/(1+exp(param));
+if(transform==51) param = 1/(1+exp(-param));
 if(transform==52) param = exp(param);
-if(transform==53) param = exp(param)/(1+exp(param))-exp(param)*exp(param)/(1+exp(param))^2;
+if(transform==53) param = 1/(1+exp(-param))-(exp(param)^2)/(1+exp(param))^2;
 if(transform==54) param = 3*param^2;
 if(transform==55) param = 1/(1+param);
 
@@ -353,7 +348,7 @@ transformed parameters{
 
   if(nindvarying > 0){
     int counter =0;
-    rawpopsd = log1p(exp(2*rawpopsdbase-1)) .* sdscale + 1e-10; // sqrts of proportions of total variance
+    rawpopsd = log1p_exp(2*rawpopsdbase-1) .* sdscale + 1e-10; // sqrts of proportions of total variance
     for(j in 1:nindvarying){
       rawpopcovsqrt[j,j] = rawpopsd[j]; //used with intoverpop
       for(i in 1:nindvarying){

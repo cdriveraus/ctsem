@@ -331,7 +331,7 @@ suppressWarnings(fit<-ctStanFit(datalong = ctstantestdat, ctstanmodel = model,op
 @
 
 <<fittingshow,include=TRUE,eval=FALSE>>=
-fit<-ctStanFit(datalong = ctstantestdat, ctstanmodel = model, optimize=TRUE)
+fit<-ctStanFit(datalong = ctstantestdat, ctstanmodel = model)
 @
 %The plot argument allows for plotting of sampling chains in real time, which is useful for slow models to ensure that sampling is proceeding in a functional manner. Models with many parameters (e.g., many subjects and all parameters varying over subject) may be too taxing for the plotting function to handle smoothly - we have had success with up to around 4000 parameters.  
 
@@ -367,7 +367,7 @@ Figure \ref{fig:plots1} shows the dynamic regression coefficients (between laten
 The relation between posteriors and priors for variables of interest can also be plotted as follows -- note that the \verb}rows} argument of the shown code is not necessary, but if only particular parameter plots are desired the rows corresponding to specific parameters of \verb}fit$setup$popsetup} can be specified.
 
 <<outputposterior, fig.width=6, fig.height=3, fig.cap='Prior and posterior densities relevant to the first variables manifest intercept.' >>=
-ctStanPlotPost(obj = fit, rows=3 ) 
+ctStanPlotPost(obj = fit, rows=3) 
 @
 
 Shown in Figure \ref{fig:outputposterior} are approximate density plots based on the post-warmup samples drawn. For each parameter that has individual variation specified, three plots are shown. These are: 1) the population mean posterior compared to the prior; 2) the posterior (available only with sampling) versus prior distribution of subject level parameters along with the population mean prior; 3) and then the population standard deviation posterior compared to the prior. 
@@ -438,12 +438,12 @@ plot(model, rows=7,rawpopsd=1)
 
 Figure \ref{fig:transform} shows the prior distribution for the population mean of DRIFT[1,1] in black, as well as two possible priors for the subject level parameters, conditional on our specified raw population standard deviation of $1$. The blue prior results from assuming the population mean is one standard deviation lower than the mean of its prior, and the red one standard deviation higher. 
 
-In addition to adjusting the prior for the population mean, the prior for the extent of individual variation around that mean can also be adjusted. Amongst other circumstances, this prior may need to be reduced when limited time points are available, to ensure adequate regularisation. Here we change the scaling factor of the individual variation for all parameters, from 1.0 to 0.1, and demonstrate the effect of this using the previously adjusted auto effect. In this case, we do not fix the \verb|popsd| when plotting, which now gives the distribution of individual variation over all possible values for the population (pop) sd parameter -- the marginal distribution of Figure \ref{fig:transform2} has a very different shape to the conditional distribution of Figure \ref{fig:transform}, but the effect of the change in \verb|sdscale| parameter could be seen in both cases.
+In addition to adjusting the prior for the population mean, the prior for the extent of individual variation around that mean can also be adjusted. Amongst other circumstances, this prior may need to be reduced when limited time points are available, to ensure adequate regularisation. Here we change the scaling factor of the individual variation for all parameters, from 1.0 to 3.0, and demonstrate the effect of this using the previously adjusted auto effect. In this case, we do not fix the \verb|popsd| when plotting, which now gives the distribution of individual variation over all possible values for the population (pop) sd parameter -- the marginal distribution of Figure \ref{fig:transform2} has a very different shape to the conditional distribution of Figure \ref{fig:transform}, but the effect of the change in \verb|sdscale| parameter could be seen in both cases.
 
 <<transform2,  echo=FALSE,fig.height=4,fig.align='center',fig.cap="Prior distribution density plots of auto-effects, with default (left) and adjusted (right) scale parameter for population standard deviation. ">>=
-p <-plot(model, rows=7, plot=FALSE)[[1]] + ggplot2::theme(legend.position ='none')
-model$pars$sdscale<- .1
-p2 <- plot(model, rows=7,plot=FALSE)[[1]]
+p <-plot(model, rows=7, plot=FALSE,nsamples = 100000)[[1]] + ggplot2::theme(legend.position ='none')
+model$pars$sdscale<- 3
+p2 <- plot(model, rows=7,plot=FALSE,nsamples=100000)[[1]]
 p3 <- g_legend(p2)
 p2 <- p2 + ggplot2::theme(legend.position ='none')
 g=list(p,p2) 
@@ -451,10 +451,10 @@ lim <- sapply(g,function(p){
   g=ggplot_build(p)$layout$panel_params[[1]]
   return(c(x=g$x.range,y=g$y.range))
 })
-g <- lapply(g,function(x) x + coord_cartesian(xlim=c(mean(lim[1,]),mean(lim[2,])), 
+g <- lapply(g,function(x) x + coord_cartesian(xlim=c(-5,2.5), 
   ylim=c(mean(lim[3,]),mean(lim[4,]) )))
 g[[1]] <- g[[1]] +ggtitle('Default sdscale (1.0)')
-g[[2]] <- g[[2]] +ggtitle('Modified sdscale (0.1)')
+g[[2]] <- g[[2]] +ggtitle('Modified sdscale (3.0)')
 gridExtra::grid.arrange(g[[1]],g[[2]],p3,layout_matrix=matrix(c(3,1,1,1,1,1,1,1,3,2,2,2,2,2,2,2),ncol=2))
 @
 
@@ -566,15 +566,15 @@ m <- ctModel(type='stanct',
   latentNames=c('ss_level', 'ss_velocity'),
   LAMBDA=c( 1, 'ma1|log(1+exp(param))'),
   DRIFT=c(0, 1, 
-    '-log1p(exp(driftintercept + driftbystate *  ss_level))','a22'),
+    '-log1p_exp(driftintercept + driftbystate *  ss_level)','a22'),
   MANIFESTMEANS=c('m1|param * 10 + 44'),
-  # MANIFESTVAR=diag(0,1), #As per original spec
+  MANIFESTVAR=diag(0,1), #As per original spec
   CINT=0,
   DIFFUSION=c(0, 0, 
     0, "diffusion"),
-  PARS=c('driftintercept','driftbystate'))
+  PARS=c('driftintercept', 'driftbystate'))
 
-ssfitnl <- ctStanFit(datalong, m, optimize=TRUE)
+ssfitnl <- ctStanFit(datalong, m)
 
 ctKalman(ssfitnl,kalmanvec=c('y','yprior'),timestep=.1,plot=TRUE)
 

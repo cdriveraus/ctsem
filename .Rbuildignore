@@ -1,7 +1,6 @@
 ^.*\.Rproj$
 ^\.Rproj\.user$
 ^.omx
-^\ignore\*.*
 ^util/
 ^staging/
 ^R/old/*.*
@@ -25,6 +24,5 @@
 ^src/stan_files/ctsm.bak
 ^src/stan_files/ctsmgen.bak
 ^\.rda
-^R\modelchecking.R
 ^installctsem.R
 ^tests/testthat/Rplots.pdf
