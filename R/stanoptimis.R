@@ -277,16 +277,15 @@ parallelStanSetup <- function(cl, standata,split=TRUE){
   
   parallel::clusterExport(cl,c('standata'),envir = environment())
   parallel::clusterApply(cl,stansubjectindices,function(subindices) {
-    # require(Rcpp)
     library(ctsem)
     if(length(subindices) < length(unique(standata$subject))) standata <- standatact_specificsubjects(standata,subindices)
     if(!1 %in% subindices) standata$nopriors <- 1L
-    # future(globals = c('sm','standata'),
-    #   packages=c('ctsem','rstan'),
     if(1==99) sm=1
     g = eval(parse(text=paste0('gl','obalenv()'))) #avoid spurious cran check -- assigning to global environment only on created parallel workers.
     assign('smf',stan_reinitsf(sm,standata),pos = g)
     
+    rm(standata,env=g)
+    rm(sm,env=g)
     # env <- new.env(parent=globalenv())
     # environment(parlp) <- env
     # assign('parlp',parlp,pos = g)
