@@ -13,7 +13,8 @@
 #' @examples
 #' \donttest{
 #' if (!exists("ctstantestfit")) example(ctstantestfit)
-#' ctStanParMatrices(ctstantestfit,rnorm(17,0,.1))
+#' ctStanParMatrices(ctstantestfit,
+#'   rnorm(length(ctstantestfit$stanfit$rawest),0,.1))
 #' }
 ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA){
   

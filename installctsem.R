@@ -36,11 +36,11 @@ if(mv == 'N' || mv =='n'){ #create makevars
   if (!file.exists(dotR)) dir.create(dotR)
   M <- file.path(dotR, ifelse(.Platform$OS.type == "windows", "Makevars.win", "Makevars"))
   if (!file.exists(M)) file.create(M)
-  cat("\nCXX14FLAGS=-O3 -mtune=native",
+  cat("\nCXX14FLAGS=-O1 -mtune=native -march=native",
     if( grepl("^darwin", R.version$os)) "CXX14FLAGS += -arch x86_64 -ftemplate-depth-256" else
       if (.Platform$OS.type == "windows") ifelse(as.numeric(version$major =='4'),
-      "CXX11FLAGS=-O3 -mtune=native",
-        "CXX11FLAGS=-O3 -mtune=native
+      "CXX11FLAGS=-O1 -mtune=native -march=native",
+        "CXX11FLAGS=-O1 -mtune=native -march=native
 CXX14 = $(BINPREF)g++ -m$(WIN) -std=c++1y") else
   "CXX14FLAGS += -fPIC",
     file = M, sep = "\n", append = TRUE)

@@ -107,11 +107,4 @@ NULL
 NULL
 
 
-#' ctstantestfit
-#' 
-#' Minimal output from \code{\link{ctStanFit}} from ctsem package.
-#' @format stanfit class.
-#' @name ctstantestfit
-NULL
-
 

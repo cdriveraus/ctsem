@@ -1,7 +1,6 @@
-log1p_exp <- function(x) log1p(exp(x))
 
-jac<-function(pars,fgfunc,step=rep(1e-6,length(pars)),whichpars='all',
-  lpdifmin=1e-5,lpdifmax=1, cl=NA,verbose=1){
+jac<-function(pars,fgfunc,step=rep(1e-3,length(pars)),whichpars='all',
+  lpdifmin=1e-3,lpdifmax=1, cl=NA,verbose=1){
   if('all' %in% whichpars) whichpars <- 1:length(pars)
   base <- fgfunc(pars)
   hessout <- flexsapply(cl = cl, cores = 1, whichpars, function(i) {
@@ -582,42 +581,7 @@ tostanarray <- function(flesh, skeleton){
 #' @importFrom utils head tail
 #' @importFrom Rcpp evalCpp
 #' @import rstan
-#' @export
-#' @examples
-#' \donttest{
-#'
-#' library(rstan)
-#' scode <- "
-#' parameters {
-#'   real y[2];
-#' }
-#' model {
-#'   y[1] ~ normal(0, 1);
-#'   y[2] ~ double_exponential(0, 2);
-#' }
-#' "
-#'
-#' sm <- stan_model(model_code=scode)
-#' fit <- sampling(sm, iter = 10000)
-#' summary(fit)$summary
-#'
-#' ## extract samples as a list of arrays
-#' e <- ctExtract(fit, permuted = TRUE)
-#'
-#' #for ml or map estimates
-#' optimis <- stanoptimis(standata = list(),sm = sm,finishsamples = 3000,cores=2)
-#' optimis$optimfit
-#'
-#' #for posterior distributions
-#' optimis <- stanoptimis(standata = list(),sm = sm,finishsamples = 3000,cores=2,tdf=5)
-#'
-#' apply(optimis$rawposterior,2,mean)
-#' apply(optimis$rawposterior,2,sd)
-#' isdiag(optimis)
-#'
-#' plot(density(optimis$rawposterior[,2],bw=.05))
-#' points(density(e$y[,2],bw=.05),type='l',col=2)
-#' }
+
 stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   deoptim=FALSE, estonly=FALSE,tol=1e-12,
   decontrol=list(),
@@ -1300,7 +1264,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # browser()
         # eps <- findstepsize(grinit,fgfunc)
         hess <- jac(pars = grinit,fgfunc = fgfunc,
-          step = rep(1e-3,length(grinit)),cl=clctsem,verbose=verbose)
+          step = rep(1e-2,length(grinit)),cl=clctsem,verbose=verbose)
         cholcov = try(suppressWarnings(t(chol(solve(-hess)))),silent = TRUE)
         # 
         # if('try-error' %in% class(cholcov)){

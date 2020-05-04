@@ -32,7 +32,11 @@ summary.ctsemMultigroupFit<-function(object,group='show chooser',...){
   #replace mxobj in single group ctFit with whole model object
   tempctobj$mxobj <- object$mxobj
   
-  out$ctParameters<-ctParamsSummary(object=tempctobj,ctSummaryMatrices=out)
+  out$ctParameters<-lapply(object$groups,function(x){
+    ctParamsSummary(object=tempctobj,ctSummaryMatrices=out,group=x)
+  })
+  out$ctParameters <- do.call(rbind,out$ctParameters)
+  out$ctParameters <- out$ctParameters[!duplicated(rownames(out$ctParameters)),,drop=FALSE]
   out$ctparammessage<-'Note: Continuous time parameter estimates above are of the full variance-covariance matrices, not cholesky decompositions as used by ctModel.'
   # if(tempctobj$ctfitargs$transformedParams==TRUE) out$ctparammessage<- c(out$ctparammessage, 'Note: Covariance related standard errors are approximated with delta method..')
   
@@ -117,12 +121,14 @@ omxSummary<-function(object,verbose=FALSE){
 }
 
 
-ctParamsSummary<-function(object,ctSummaryMatrices){
-  parnames<-names(omxGetParameters(object$mxobj))
-  parvalues<-omxGetParameters(object$mxobj)
+ctParamsSummary<-function(object,ctSummaryMatrices,group=NA){
+  if(is.na(group[1])) mxobj <- object$mxobj else mxobj <- object$mxobj[[group]]
+  parnames<-names(omxGetParameters(mxobj))
+  parvalues<-omxGetParameters(mxobj)
   newparvalues<-parvalues
   if(is.null(object$mxobj$output$standardErrors)) parsd<-matrix(NA,nrow=length(parvalues))
   else parsd<-object$mxobj$output$standardErrors
+  parsd <- parsd[rownames(parsd) %in% parnames,,drop=FALSE]
   parmatrix<-rep(NA,length(parnames))
  
   # browser()
@@ -134,7 +140,8 @@ ctParamsSummary<-function(object,ctSummaryMatrices){
         newparvalues[parami]<-ctSummaryMatrices[[matrixi]][match(parnames[parami],object$ctmodelobj[[matrixi]])]
         parsd[parami]<- parsd[parami]
         #delta approx for sd pars
-        if(newparvalues[parami] != parvalues[parami]) parsd[parami]<- suppressMessages(mxSE(paste0(matrixi,'[',ind[1,1],',',ind[1,2],']'),object$mxobj))
+        if(newparvalues[parami] != parvalues[parami]) parsd[parami]<- 
+          suppressMessages(mxSE(paste0(ifelse(is.na(group[1]),'',paste0(group,'.')),matrixi,'[',ind[1,1],',',ind[1,2],']'),object$mxobj))
          # (exp(parvalues[parami] + parsd[parami]) - exp(parvalues[parami] - parsd[parami]))/2
         # parsd[parami]<- abs(((newparvalues[parami]) / parvalues[parami]) * parsd[parami]) #old, bad? first order delta approximation of std error
         parvalues[parami]<- newparvalues[parami]

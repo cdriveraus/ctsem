@@ -20,7 +20,27 @@ Convert samples from a stanfit object to the unconstrained scale
 }
 \examples{
 \donttest{
-if (!exists("ctstantestfit")) example(ctstantestfit)
-umat <- stan_unconstrainsamples(ctstantestfit$stanfit, ctstantestfit$standata)
+#get data
+sunspots<-sunspot.year
+sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
+id <- 1
+time <- 1749:1924
+datalong <- cbind(id, time, sunspots)
+
+#setup model
+ssmodel <- ctModel(type='stanct', n.latent=2, n.manifest=1, 
+  manifestNames='sunspots', 
+  latentNames=c('ss_level', 'ss_velocity'),
+  LAMBDA=matrix(c( 1, 'ma1| log(1+(exp(param)))' ), nrow=1, ncol=2),
+  DRIFT=matrix(c(0, 'a21 | -log(1+exp(param))', 1, 'a22'), nrow=2, ncol=2),
+  MANIFESTMEANS=matrix(c('m1|param * 10 + 44'), nrow=1, ncol=1),
+  MANIFESTVAR=diag(0,1), #As per original spec
+  CINT=matrix(c(0, 0), nrow=2, ncol=1),
+  DIFFUSION=matrix(c(0, 0, 0, "diffusion"), ncol=2, nrow=2))
+
+#fit
+ssfit <- ctStanFit(datalong, ssmodel, 
+  iter=200, chains=2,optimize=FALSE, nopriors=FALSE,control=list(max_treedepth=4))
+umat <- stan_unconstrainsamples(ssfit$stanfit)
 }
 }

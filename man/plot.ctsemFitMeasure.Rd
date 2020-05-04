@@ -55,7 +55,7 @@ traitmodel <- ctModel(n.manifest=2, n.latent=2, Tpoints=6, LAMBDA=diag(2),
 traitfit <- ctFit(dat=ctExample1, ctmodelobj=traitmodel)
 
 check <- ctCheckFit(traitfit,niter=50)
-plot(check)
+plot(check,wait=FALSE)
 
 if (!exists("ctstantestfit")) example(ctstantestfit)
 scheck <- ctCheckFit(ctstantestfit,niter=500)

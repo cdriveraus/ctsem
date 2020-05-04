@@ -96,39 +96,3 @@ list containing fit elements
 \description{
 Optimize / importance sample a stan or ctStan model.
 }
-\examples{
-\donttest{
-
-library(rstan)
-scode <- "
-parameters {
-  real y[2];
-}
-model {
-  y[1] ~ normal(0, 1);
-  y[2] ~ double_exponential(0, 2);
-}
-"
-
-sm <- stan_model(model_code=scode)
-fit <- sampling(sm, iter = 10000)
-summary(fit)$summary
-
-## extract samples as a list of arrays
-e <- ctExtract(fit, permuted = TRUE)
-
-#for ml or map estimates
-optimis <- stanoptimis(standata = list(),sm = sm,finishsamples = 3000,cores=2)
-optimis$optimfit
-
-#for posterior distributions
-optimis <- stanoptimis(standata = list(),sm = sm,finishsamples = 3000,cores=2,tdf=5)
-
-apply(optimis$rawposterior,2,mean)
-apply(optimis$rawposterior,2,sd)
-isdiag(optimis)
-
-plot(density(optimis$rawposterior[,2],bw=.05))
-points(density(e$y[,2],bw=.05),type='l',col=2)
-}
-}

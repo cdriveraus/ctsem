@@ -296,8 +296,7 @@ m2i <- ctModel(type = 'stanct',
   
 plot(m2i)
 
-f2i <- ctStanFit(datalong = dat2, ctstanmodel = m2i,intoverpop=TRUE,
-  iter=200,chains=2,control=list(max_treedepth=7))
+f2i <- ctStanFit(datalong = dat2, ctstanmodel = m2i)
 summary(f2i)
 ctStanPlotPost(f2i)
 ctKalman(f2i,kalmanvec=c('y','ysmooth'),subjects=2:4,plot=TRUE,errorvec=NA)
@@ -375,7 +374,7 @@ f3n <- ctStanFit(datalong = dat2, ctstanmodel = m3n, optimize=TRUE)
 
 summary(f3n)
 
-k=ctKalman(f3n,plot=T,subjects=1,kalmanvec=c('y','etasmooth'),timestep=.01)
+k=ctKalman(f3n,plot=TRUE,subjects=1,kalmanvec=c('y','etasmooth'),timestep=.01)
 ctKalman(f3n,plot=TRUE,subjects=1:3,kalmanvec=c('y','etasmooth'),errorvec=NA)
 
 

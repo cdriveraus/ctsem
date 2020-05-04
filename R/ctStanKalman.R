@@ -17,7 +17,7 @@
 #' @examples 
 #' \donttest{
 #' if (!exists("ctstantestfit")) example(ctstantestfit)
-#' k=ctStanKalman(ctstantestfit,subjectpars=T,collapsefunc=mean)
+#' k=ctStanKalman(ctstantestfit,subjectpars=TRUE,collapsefunc=mean)
 #' }
 ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,
   standardisederrors=FALSE, subjectpars=FALSE, indvarstates=FALSE,...){

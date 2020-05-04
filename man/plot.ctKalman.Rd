@@ -89,7 +89,7 @@ Plots Kalman filter output from ctKalman.
 \donttest{
 data(AnomAuth) 
 AnomAuthmodel <- ctModel(LAMBDA = matrix(c(1, 0, 0, 1), nrow = 2, ncol = 2), 
-  Tpoints = 5, n.latent = 2, n.manifest = 2,  TRAITVAR = NULL) 
+  Tpoints = 5, n.latent = 2, n.manifest = 2) 
 AnomAuthfit <- ctFit(AnomAuth, AnomAuthmodel)
 ctKalman(AnomAuthfit,subjects=1,plot=TRUE)
 }

@@ -26,6 +26,7 @@ Returns population system matrices from a ctStanFit object, and vector of values
 \examples{
 \donttest{
 if (!exists("ctstantestfit")) example(ctstantestfit)
-ctStanParMatrices(ctstantestfit,rnorm(17,0,.1))
+ctStanParMatrices(ctstantestfit,
+  rnorm(length(ctstantestfit$stanfit$rawest),0,.1))
 }
 }

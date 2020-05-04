@@ -29,7 +29,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       ctstanmodel = m,
       iter = 100,verbose=0,control=list(max_treedepth=8),
       chains = 2,
-      intoverstates = FALSE,
+      intoverstates = TRUE,
       optimize=FALSE,intoverpop=F,
       stationary = FALSE)
     s=summary(r)

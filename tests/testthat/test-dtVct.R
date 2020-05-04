@@ -2,7 +2,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
   # Sys.setenv(NOT_CRAN='true')
 
   set.seed(1)
-  #library(testthat)
+  library(testthat)
   
   context("dtVct_lVnl")
   
@@ -66,10 +66,12 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
         if(is.null(s[[argi]])) s[[argi]] = list()
         s[[argi]][[m]] <- summary(f,parmatrices=TRUE)
 
-        ctKalman(f,plot=TRUE)
+        if(!interactive()){
+          ctKalman(f,plot=TRUE)
         plot(f,wait=FALSE)
         ctModelLatex(f)
         p=ctStanKalman(f,collapsefunc = mean,subjectpars = TRUE)
+        }
         
       }
     }

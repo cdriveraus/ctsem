@@ -83,7 +83,7 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,...){
 #'   }
 #' @export
 
-ctKalman<-function(fit, timerange='asdata', timestep=sd(fit$standata$time,na.rm=TRUE)/50,
+ctKalman<-function(fit, timerange='asdata', timestep='auto',
   subjects=1, removeObs = FALSE, plot=FALSE, realid=FALSE,...){
   type=NA
   if('ctStanFit' %in% class(fit)) type='stan' 
@@ -93,6 +93,7 @@ ctKalman<-function(fit, timerange='asdata', timestep=sd(fit$standata$time,na.rm=
   subjects <- sort(subjects) #in case not entered in ascending order
   
   if(type=='stan'){
+    if(timestep=='auto') timestep=sd(fit$standata$time,na.rm=TRUE)/50
     if(all(timerange == 'asdata')) timerange <- range(fit$standata$time[fit$standata$subject %in% subjects])
     if(timestep != 'asdata' && fit$ctstanmodel$continuoustime) {
       if(fit$ctstanmodel$continuoustime != TRUE) stop('Discrete time model fits must use timestep = "asdata"')
@@ -126,7 +127,7 @@ ctKalman<-function(fit, timerange='asdata', timestep=sd(fit$standata$time,na.rm=
   }
   
   if(type !='stan'){
-    
+    if(timestep=='auto') timestep=1
     out<-list()
     if(timerange[1] != 'asdata' & timestep[1] == 'asdata') stop('If timerange is not asdata, a timestep must be specified!')
     
@@ -245,7 +246,7 @@ ctKalman<-function(fit, timerange='asdata', timestep=sd(fit$standata$time,na.rm=
 #' \donttest{
 #' data(AnomAuth) 
 #' AnomAuthmodel <- ctModel(LAMBDA = matrix(c(1, 0, 0, 1), nrow = 2, ncol = 2), 
-#'   Tpoints = 5, n.latent = 2, n.manifest = 2,  TRAITVAR = NULL) 
+#'   Tpoints = 5, n.latent = 2, n.manifest = 2) 
 #' AnomAuthfit <- ctFit(AnomAuth, AnomAuthmodel)
 #' ctKalman(AnomAuthfit,subjects=1,plot=TRUE)
 #' }
@@ -439,7 +440,7 @@ plot.ctKalman<-function(x, subjects=1, kalmanvec=c('y','yprior'),
 #' ### Get output from ctKalman
 #' x<-ctKalman(ctstantestfit,subjects=2,timestep=.01)
 #' 
-#' ### Plot with plot.ctKalman
+#' ### Plot with plot.ctKalmanDF
 #' plot.ctKalmanDF(x, subjects=2)
 #' 
 #' ###Single step procedure:

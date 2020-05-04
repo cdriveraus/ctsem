@@ -253,7 +253,16 @@ inv_logit<-function(x) {
   exp(x)/(1+exp(x))
 }
 
-
+#' log1p_exp
+#' 
+#' Maps the stan function so the same code works in R.
+#'
+#' @param x value to use. 
+#'
+#' @examples
+#' log1p_exp(-3)
+#' @export
+log1p_exp <- function(x) log1p(exp(x))
 
 #' ctDensity
 #'
