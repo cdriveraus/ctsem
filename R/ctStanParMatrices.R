@@ -12,7 +12,7 @@
 #'
 #' @examples
 #' \donttest{
-#' if (!exists("ctstantestfit")) example(ctstantestfit)
+#' if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
 #' ctStanParMatrices(ctstantestfit,
 #'   rnorm(length(ctstantestfit$stanfit$rawest),0,.1))
 #' }

@@ -25,7 +25,7 @@ Returns population system matrices from a ctStanFit object, and vector of values
 }
 \examples{
 \donttest{
-if (!exists("ctstantestfit")) example(ctstantestfit)
+if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
 ctStanParMatrices(ctstantestfit,
   rnorm(length(ctstantestfit$stanfit$rawest),0,.1))
 }

@@ -12,7 +12,10 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     mats <- ctStanMatricesList()
     for(mati in names(mats$base)){
       if( (!ctm$intoverpop && any(ctm$pars$indvarying[ctm$pars$matrix==mati])) || 
-          (ctm$n.TIpred >0 && any(unlist(ctm$pars[ctm$pars$matrix==mati,paste0(ctm$TIpredNames,'_effect')])))) subindex <- 1 else subindex <- 0
+          (ctm$n.TIpred >0 && (
+              any(unlist(ctm$pars[ctm$pars$matrix==mati,paste0(ctm$TIpredNames,'_effect')])) || 
+              any(ctm$pars$matrix==mati & grepl('[',ctm$pars$param,fixed=TRUE))  )
+        )) subindex <- 1 else subindex <- 0
           assign(paste0(mati,'subindex'), subindex)
     }
     if(ctm$stationary || nrow(ctm$t0varstationary) > 0) T0VARsubindex <- max(c(T0VARsubindex,DRIFTsubindex,DIFFUSIONsubindex))

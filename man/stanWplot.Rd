@@ -23,6 +23,7 @@ On windows, requires Rtools installed and able to be found by pkgbuild::rtools_p
 }
 \examples{
 \donttest{
+library(rstan)
 #### example 1 
 scode <- "
 parameters {

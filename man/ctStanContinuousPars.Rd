@@ -34,7 +34,7 @@ Returns the continuous time parameter matrices for specified subjects of a ctSta
 }
 \examples{
 \donttest{
-if (!exists("ctstantestfit")) example(ctstantestfit)
+if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
 #posterior median over all subjects (also reflects mean of unconstrained pars)
 ctStanContinuousPars(ctstantestfit)
 

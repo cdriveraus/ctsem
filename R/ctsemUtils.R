@@ -10,7 +10,7 @@ testall<- function(cores=4,folder = '/tests/testthat',examples=TRUE){
 
   if(cores > 1){
     cl <- parallel::makeCluster(cores,outfile='')
-    on.exit(parallel::stopCluster(cl))
+    on.exit(try(parallel::stopCluster(cl),silent=TRUE),add=TRUE)
     out <- parallel::parLapplyLB(cl,paste0(getwd(),folder,'/',tests),function(x){
       pdf(NULL)
     out<-testthat::test_file(x, reporter = "minimal")
@@ -29,6 +29,7 @@ testall<- function(cores=4,folder = '/tests/testthat',examples=TRUE){
   out2 <- do.call(what = rbind,lapply(out,utils::getS3method('as.data.frame','testthat_results')))
   dev.off()
   print(out2[,colnames(out2)!='result'])
+  if(cores > 1) parallel::stopCluster(cl)
   return(invisible(out2))
 }
   

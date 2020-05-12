@@ -10,43 +10,38 @@
 #'
 #' @examples
 #' \donttest{
-#' if (!exists("ctstantestfit")) example(ctstantestfit)
-#' ctStanTIpredMarginal(ctstantestfit,pars=c('DRIFT','CINT'),tipred=c('TI2','TI3'))
+#' if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
+#' ctStanTIpredMarginal(ctstantestfit,pars=c('CINT'),tipred=c('TI1'))
 #' }
 ctStanTIpredMarginal<-function(fit,tipred,pars, plot=TRUE){
-  e<-ctExtract(fit)
+  e<-ctExtract(fit,subjectMatrices = TRUE)
+  # qseq <- seq(.01,.99,.01)
   
-  qseq <- seq(.01,.99,.01)
-  
-  dt <- data.table(Parameter = '', TIpred = '', y=0,x=0)
-  # browser()
-  if(requireNamespace('quantreg')){
-  qr <- data.table(matrix(0,ncol=length(qseq)))
-  qrnames <- paste0('q',qseq)
-  names(qr) <- qrnames
-  dt <- cbind(dt,qr)
-  }
+  dt <- data.table(Parameter = '', TIpred = '', y=0,Covariate=0)
+
+  # if(requireNamespace('quantreg')){
+  # qr <- data.table(matrix(0,ncol=length(qseq)))
+  # qrnames <- paste0('q',qseq)
+  # names(qr) <- qrnames
+  # dt <- cbind(dt,qr)
+  # } else stop('To use this function, run:  install.packages("quantreg")')
   for(p in pars){
     for(ti in tipred){
       tin <- match(ti,fit$ctstanmodelbase$TIpredNames)
       for(i in 1:dim(e[[p]])[3]){
         for(j in 1:dim(e[[p]])[4]){
-          
           dts <-data.frame(Parameter = paste0(p, '[',i,',',j,']'),
-            TIpred = ti, y=c(e[[p]][1,,i,j]), x=c(e$tipreds[1,,tin]))
+            TIpred = ti, y=c(aaply(e[[p]],c(2,3,4),mean,.drop=FALSE)[,i,j,]), Covariate=c(e$tipreds[1,,tin]))
           
-          if(requireNamespace('quantreg')){
-            # browser()
-            qr=data.table(sapply(qseq,function(d){
-            quantreg::predict.rqss(quantreg::rqss(formula = as.formula('y ~ qss(x)'),data=dts,tau=d),dts)
-          }))
-          names(qr) <- qrnames
-          dts <- cbind(dts,qr)
-          }
-          
-          
-            
-            # qr= rqss(formula = as.formula('y ~ x'),data=dts,tau=d)
+          # if(requireNamespace('quantreg')){
+          #   # browser()
+          #   qr=data.table(sapply(qseq,function(d){
+          #   quantreg::predict.rqss(quantreg::rqss(formula = as.formula('y ~ qss(Covariate)'),data=dts,tau=d),dts)
+          # }))
+          # names(qr) <- qrnames
+          # dts <- cbind(dts,qr)
+          # }
+
           dt <- rbind(dt,dts)
         }
       }
@@ -56,9 +51,9 @@ ctStanTIpredMarginal<-function(fit,tipred,pars, plot=TRUE){
   
   # colours = suppressWarnings(RColorBrewer::brewer.pal(length(tipred),'Set1'))[1:length(tipred)]
   
-  if(1==99) y <- x <- Parameter <- TIpred <- NULL
+  if(1==99) y <- Covariate <- Parameter <- TIpred <- NULL
   
- g<- ggplot(data = dt,aes(y=y,x=x,colour=TIpred,fill=TIpred)) +
+ g<- ggplot(data = dt,aes(y=y,x=Covariate,colour=TIpred,fill=TIpred)) +
     theme_minimal() +
     # stat_density_2d(aes(alpha=..nlevel..),linetype='dotted',show.legend = FALSE, contour = TRUE) +
     # stat_bin2d(aes(alpha=..density..,fill=TIpred,colour=TIpred),geom='tile',linetype=0,contour=FALSE,show.legend = FALSE) +
@@ -90,9 +85,9 @@ ctStanTIpredMarginal<-function(fit,tipred,pars, plot=TRUE){
  
  # g<-g+geom_quantile(quantiles=qseq,method='rqss')
 
-for(i in 1:(length(qrnames)/2)){
-  g <- g+ geom_ribbon(mapping=aes_string(ymin=qrnames[i],ymax=qrnames[i+(length(qrnames)/2)]),linetype=0,alpha=.01)
-}
+# for(i in 1:(length(qrnames)/2)){
+#   g <- g+ geom_ribbon(mapping=aes_string(ymin=qrnames[i],ymax=qrnames[i+(length(qrnames)/2)]),linetype=0,alpha=.01)
+# }
 
   
   if(plot) print(g)

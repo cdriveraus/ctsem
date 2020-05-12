@@ -78,7 +78,7 @@ on subject level parameters of a ctStanFit object.
 }
 \examples{
 \donttest{
-if (!exists("ctstantestfit")) example(ctstantestfit)
+if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
 ctStanTIpredeffects(ctstantestfit,
  whichpars=c('CINT','dtDIFFUSION[2,2]'), plot=TRUE)
 }

@@ -60,7 +60,7 @@ ctStanParnames <- function(x,substrings=c('pop_','popsd')){
 #'latent intercept (CINT) and temporal effects (DRIFT).
 #'@examples
 #'\donttest{
-#'if (!exists("ctstantestfit")) example(ctstantestfit)
+#'if(!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
 #'pars <- ctStanContinuousPars(ctstantestfit)
 #'ctDiscretePars(pars,times=c(.5,1))
 #'}
@@ -115,7 +115,7 @@ ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
 #'@param ... additional plotting arguments to control \code{\link{ctStanDiscreteParsPlot}}
 #'@examples
 #'\donttest{
-#' if (!exists("ctstantestfit")) example(ctstantestfit)
+#' if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
 #' ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
 #'  plot=TRUE,indices='all')
 #'  
@@ -303,7 +303,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
 #'create a graduated transparency. Set to 1 for a flat looking plot.
 #'@examples
 #'\donttest{
-#'if (!exists("ctstantestfit")) example(ctstantestfit)
+#'if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
 #'x <- ctStanDiscretePars(ctstantestfit)
 #'ctStanDiscreteParsPlot(x, indices='CR')
 #'

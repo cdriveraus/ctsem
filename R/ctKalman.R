@@ -67,7 +67,7 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,...){
 #' If plot=TRUE, nothing is returned but a plot is generated.
 #' @examples
 #' \donttest{
-#' if (!exists("ctstantestfit")) example(ctstantestfit)
+#' if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
 #' 
 #' #Basic
 #' ctKalman(ctstantestfit, timerange=c(0,60), plot=TRUE)
@@ -435,13 +435,13 @@ plot.ctKalman<-function(x, subjects=1, kalmanvec=c('y','yprior'),
 #' @export
 #' @examples
 #' \donttest{
-#' if (!exists("ctstantestfit")) example(ctstantestfit)
+#' if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
 #' 
 #' ### Get output from ctKalman
 #' x<-ctKalman(ctstantestfit,subjects=2,timestep=.01)
 #' 
 #' ### Plot with plot.ctKalmanDF
-#' plot.ctKalmanDF(x, subjects=2)
+#' plot(x, subjects=2)
 #' 
 #' ###Single step procedure:
 #' ctKalman(ctstantestfit,subjects=2,

@@ -86,7 +86,7 @@ continuous time models fit with ctStanFit.
 }
 \examples{
 \donttest{
-if (!exists("ctstantestfit")) example(ctstantestfit)
+if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
 x <- ctStanDiscretePars(ctstantestfit)
 ctStanDiscreteParsPlot(x, indices='CR')
 

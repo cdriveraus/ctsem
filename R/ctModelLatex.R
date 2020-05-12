@@ -7,6 +7,39 @@ ctModelBuildPopCov <- function(ctm,linearise){ #for latex
   return(m)
 }
 
+getPopEffectsFromFit <- function(x,linearise=TRUE,digits=3){
+  ms=ctMatsetupFreePars(x$setup$matsetup)
+  e=ctExtract(x)
+  if(x$standata$ntipred > 0){
+    if(linearise) timat <- e$linearTIPREDEFFECT
+    if(!linearise) timat <- e$TIPREDEFFECT
+    dimnames(timat) <- list(iter=1:(dim(timat)[1]),param= ms$parname,
+    TIpred= x$ctstanmodel$TIpredNames)
+    timat <- timat[,apply(x$standata$TIPREDEFFECTsetup,1,function(x) any(x!=0)),,drop=FALSE]
+  } else timat <- diag(0,0)
+  
+  if(!is.null(e$rawpopcov)){ 
+    
+    if(!linearise) popcov <- e$rawpopcov
+    if(linearise) {
+      popcov <- e$popcov
+      #stan_constrainsamples(x$stanmodel,x$standata,rbind(x$stanfit$rawest),
+        # cores=1,pcovn =1000,dokalman=FALSE,savesubjectmatrices = FALSE)$popcov
+      # popcov <- round(ctCollapse(e$popcov,1,mean),digits=digits)
+      if(x$standata$intoverpop==1){
+        t0index <- ms$indvarying[ms$param > 0 & ms$row <= x$standata$nlatent & ms$matrix %in% 1 & ms$indvarying > 0]
+        popcov[,t0index,t0index] <- e$pop_T0VAR[,
+          t0index,t0index] #is this correct...?
+      }
+    }
+      dimnames(popcov) <- list(iter=1:(dim(popcov)[1]),
+        ms$parname[as.logical(ms$indvarying)],
+        ms$parname[as.logical(ms$indvarying)] )
+    
+  }
+  return(list(popcov=popcov,tieffects=timat))
+}
+
 ctModelBuildTIeffects <- function(ctm){ #for latex
   ctm$pars <- ctStanModelCleanctspec(ctm$pars)
   tieffects <- unique(colnames(ctm$pars)[grep('_effect',colnames(ctm$pars),fixed=TRUE)])

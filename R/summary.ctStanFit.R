@@ -23,13 +23,13 @@ ctStanRawSamples<-function(fit){
 #' @return List containing summary items.
 #' @examples
 #' \donttest{
-#' if (!exists("ctstantestfit")) example(ctstantestfit)
+#' if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
 #' summary(ctstantestfit)
 #' }
 #' @method summary ctStanFit
 #' @export
 
-summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,priorcheck=TRUE,residualcov = TRUE,...){
+summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,priorcheck=TRUE,residualcov = TRUE,...){
   
   if(!'ctStanFit' %in% class(object)) stop('Not a ctStanFit object!')
   

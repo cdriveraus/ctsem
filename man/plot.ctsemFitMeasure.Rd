@@ -57,7 +57,7 @@ traitfit <- ctFit(dat=ctExample1, ctmodelobj=traitmodel)
 check <- ctCheckFit(traitfit,niter=50)
 plot(check,wait=FALSE)
 
-if (!exists("ctstantestfit")) example(ctstantestfit)
+if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
 scheck <- ctCheckFit(ctstantestfit,niter=500)
 plot(scheck,wait=FALSE)
 

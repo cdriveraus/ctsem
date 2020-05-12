@@ -19,7 +19,7 @@
 #' where x is the number of cpu cores to use.
 #' @examples
 #' \donttest{
-#' if (!exists("ctstantestfit")) example(ctstantestfit)
+#' if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
 #' ctStanPlotPost(ctstantestfit, rows=3:4)
 #' }
 #' @export

@@ -28,7 +28,7 @@ stan_checkdivergences <- function(sf,nupars = 'all'){
 
 samplerps <- get_sampler_params(sf)
 if('all' %in% nupars) nupars <- get_num_upars(sf)
-e <- ctExtract(sf)
+e <- rstan::extract(sf)
 ea <- as.array(sf) #[,,1:nupars]
 
 ucsnames <- dimnames(ea)$parameters[1:nupars]

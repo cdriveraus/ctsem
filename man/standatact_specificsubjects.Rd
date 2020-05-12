@@ -21,7 +21,7 @@ Adjust standata from ctsem to only use specific subjects
 }
 \examples{
 \donttest{
-if (!exists("ctstantestfit")) example(ctstantestfit)
+if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
 d <- standatact_specificsubjects(ctstantestfit$standata, 1:2)
 }
 }

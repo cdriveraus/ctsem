@@ -49,7 +49,7 @@ from ctStanFit, for specified subjects.
 }
 \examples{
 \donttest{
-if (!exists("ctstantestfit")) example(ctstantestfit)
+if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
 ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
  plot=TRUE,indices='all')
  

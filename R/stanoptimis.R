@@ -1,9 +1,11 @@
 
 jac<-function(pars,fgfunc,step=rep(1e-3,length(pars)),whichpars='all',
-  lpdifmin=1e-3,lpdifmax=1, cl=NA,verbose=1){
+  lpdifmin=1e-2,lpdifmax=3, cl=NA,verbose=1,directions=c(-1,1)){
   if('all' %in% whichpars) whichpars <- 1:length(pars)
   base <- fgfunc(pars)
-  hessout <- flexsapply(cl = cl, cores = 1, whichpars, function(i) {
+  hessout <- matrix(NA, length(attributes(base)$gradient), length(whichpars))
+  # hessout <- flexsapply(cl = cl, cores = 1, whichpars, function(i) {
+  for(i in whichpars){
     if(verbose) message('### Par ',i,'###')
     stepsize = step[i]
     uppars<-rep(0,length(pars))
@@ -12,7 +14,7 @@ jac<-function(pars,fgfunc,step=rep(1e-3,length(pars)),whichpars='all',
     count <- 0
     lp <- list()
     steplist <- list()
-    for(di in 1:2){
+    for(di in 1:length(directions)){
       count <- 0
       accepted <- FALSE
       stepchange = 0
@@ -20,11 +22,11 @@ jac<-function(pars,fgfunc,step=rep(1e-3,length(pars)),whichpars='all',
       while(!accepted && count < 15){
         stepchangemultiplier <- max(stepchangemultiplier,.11)
         count <- count + 1
-        lp[[di]] <- fgfunc(pars+uppars*stepsize*ifelse(di==2,-1,1))
+        lp[[di]] <- fgfunc(pars+uppars*stepsize*directions[di])
         accepted <- !'try-error' %in% class(lp[[di]])
         if(accepted){
           lpdiff <- base[1] - lp[[di]][1]
-          # if(lpdiff > 1e100) browser()
+          # if(lpdiff > 1e100) 
           if(lpdiff < lpdifmin) {
             if(verbose) message('Increasing step')
             if(stepchange == -1) stepchangemultiplier = stepchangemultiplier*.5
@@ -52,12 +54,13 @@ jac<-function(pars,fgfunc,step=rep(1e-3,length(pars)),whichpars='all',
       }
       steplist[[di]] <- stepsize
     }
-    # browser()
-    grad<- suppressMessages(suppressWarnings(try({
-      (attributes(lp[[1]])$gradient / steplist[[di]] + attributes(lp[[2]])$gradient / (steplist[[di]]*-1))/2
-    },silent=TRUE)))
-    rbind(grad)
-  })
+    # 
+    grad<- attributes(lp[[1]])$gradient / steplist[[di]] * directions[di]
+    if(length(directions) > 1) grad <- (grad + attributes(lp[[2]])$gradient / (steplist[[di]]*-1))/2
+    
+    hessout[,i] <-rbind(grad)
+  }
+  # })
   return((hessout+t(hessout))/2)
 }
 
@@ -187,7 +190,7 @@ jacrandom <- function(grfunc, est, eps=1e-4,
       grm <- devs
     }
     i=i+1
-    # browser()
+    # 
     accepted <- FALSE
     trycount <-0
     while(!accepted){
@@ -317,7 +320,7 @@ getcxxfun <- function(object) {
 #'
 #' @examples
 #' \donttest{
-#' if (!exists("ctstantestfit")) example(ctstantestfit)
+#' if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
 #' sf <- stan_reinitsf(ctstantestfit$stanmodel,ctstantestfit$standata)
 #' }
 stan_reinitsf <- function(model, data,fast=FALSE){
@@ -349,7 +352,7 @@ flexlapply <- function(cl, X, fn,cores=1,...){
 #'
 #' @examples
 #' \donttest{
-#' if (!exists("ctstantestfit")) example(ctstantestfit)
+#' if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
 #' d <- standatact_specificsubjects(ctstantestfit$standata, 1:2)
 #' }
 standatact_specificsubjects <- function(standata, subjects,timestep=NA){
@@ -435,7 +438,6 @@ standataFillTime <- function(standata, times){
 stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,savescores=FALSE,
   savesubjectmatrices=TRUE,
   dokalman=TRUE,onlyfirstrow=ifelse(savescores,FALSE,TRUE),pcovn=500,quiet=FALSE){
-  
   if(savesubjectmatrices && !dokalman){
     dokalman <- TRUE
     warning('savesubjectmatrices = TRUE requires dokalman=TRUE also!')
@@ -477,13 +479,14 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,savescores=F
   env$samples <- samples
   if(cores > 1 && all(is.na(cl))){
     cl <- parallel::makeCluster(cores, type = "PSOCK",useXDR=TRUE)
-    on.exit(parallel::stopCluster(cl),add = TRUE)
+    on.exit(try(parallel::stopCluster(cl),silent=TRUE),add = TRUE)
     # parallel::clusterExport(cl2, c('sm','standata','samples'),environment())
     # parallel::clusterApply(cl2,1:cores, function(x) library(ctsem))
   }
   transformedpars <- try(flexlapply(cl, 
     split(1:nrow(samples), sort((1:nrow(samples))%%cores)),
     tparfunc,cores=cores,parallel=cores > 1))
+  
   
   #fix this hack
   # 
@@ -705,8 +708,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       if(optimcores==1) target = singletarget #we use this for importance sampling
       if(cores > 1){ #for parallelised computation after fitting, if only single subject
-        clctsem=parallel::makeCluster(cores,useXDR=TRUE)
-        on.exit({parallel::stopCluster(clctsem)},add=TRUE)
+        clctsem=parallel::makeCluster(cores,useXDR=TRUE,type='PSOCK')
+        on.exit(try({parallel::stopCluster(clctsem)},silent=TRUE),add=TRUE)
         parallel::clusterExport(clctsem,varlist = 'sm',envir = environment())
       }
       if(optimcores > 1) {
@@ -903,7 +906,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           #   abline(h=0)
           #   abline(h=mean(scale(score[,i],center = FALSE)),col='red')
           # }
-          # browser()
+          # 
           pstat=apply(score,2,function(x) wilcox.test(x)$p.value)[datadrivenpars]
           plot(pstat)
           # plot((apply(score,2,sum)/apply(score,2,sd))[datadrivenpars],pstat[datadrivenpars])
@@ -1251,7 +1254,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         
         if(length(datadrivenpars)>0) grinit= est2[-datadrivenpars] else grinit = est2
         # hess <- numDeriv::jacobian(grfunc, grinit,method.args=list(eps=1e-3,r=3,v=10))
-        # browser()
+        # 
         # 
         # lpstore <- optimfit$lpstore
         # gstore <- t(optimfit$gstore[,(bestfit-lpstore) < .5])
@@ -1260,10 +1263,30 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # lmf <- apply(gstore,2,function(y) coefficients(lm(y ~ parstore-1)))
         
         # hess <- jacrandom(fgfunc, grinit)
-        # browser()
+        # 
         # eps <- findstepsize(grinit,fgfunc)
-        hess <- jac(pars = grinit,fgfunc = fgfunc,
-          step = rep(1e-2,length(grinit)),cl=clctsem,verbose=verbose)
+        hess1 <- jac(pars = grinit,fgfunc = fgfunc,
+          step = rep(1e-4,length(grinit)),cl=clctsem,verbose=verbose,directions=1)
+        hess2 <- jac(pars = grinit,fgfunc = fgfunc,
+          step = rep(1e-4,length(grinit)),cl=clctsem,verbose=verbose,directions=-1)
+        
+        hess1good <- diag(hess1) < -1e-8
+        hess2good <- diag(hess2) < -1e-8
+        
+        hess <- hess1 
+        hess[,!hess1good & !hess2good] <- NA
+        hess[,hess2good & hess1good] <- (hess1[,hess2good & hess1good] + 
+            hess2[,hess2good & hess1good]) /2
+        hess[,hess1good & !hess2good] <- hess1[,hess1good & !hess2good]
+        hess[,hess2good & !hess1good] <- hess2[,hess2good & !hess1good]
+        
+        if(sum(hess1good)+sum(hess2good) < nrow(hess)*2){
+          if(any(is.na(hess))) message ('Problems computing Hessian...')
+          onesided <- c(which(!hess1good[hess2good]), which(!hess2good[hess1good]))
+          if(length(onesided))  message ('One sided Hessian used for pars: ', onesided)
+        }
+        
+        hess <- (t(hess)+hess)/2
         cholcov = try(suppressWarnings(t(chol(solve(-hess)))),silent = TRUE)
         # 
         # if('try-error' %in% class(cholcov)){
@@ -1309,7 +1332,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         #   score=as.matrix(ctsem:::scorecalc(fit,subjectsonly = F,returnsubjectlist = F,cores=cores))
         #   mcov=tcrossprod(mcov,MASS::ginv(crossprod(score)))
         # }
-        # browser()
+        # 
         mcovtmp=as.matrix(Matrix::nearPD(mcov,conv.norm.type = 'F')$mat)
         mcov <- diag(1e-10,npars)
         if(length(datadrivenpars)>0) mcov[-datadrivenpars,-datadrivenpars] <- mcovtmp else mcov <- mcovtmp
@@ -1391,14 +1414,14 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           #   return(out)
           # }
           
-          # browser()
+          # 
           target_dens[[j]] <- unlist(flexlapply(cl = clctsem, 
             split(1:isloopsize, sort((1:isloopsize)%%cores)), 
             function(x){
               # future(globals=c('x','samples','isloopsize'),expr={
               eval(parse(text='apply(tail(samples,isloopsize)[x,],1,parlp)'))
             },cores=cores))
-          # browser()
+          # 
           
           
           
@@ -1530,6 +1553,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   }
   if(estonly) stanfit=list(optimfit=optimfit,stanfit=smf, rawest=est2)
   optimfinished <- TRUE #disable exit message re pars
+  if(cores > 1) parallel::stopCluster(clctsem)
   return(stanfit)
 }
 

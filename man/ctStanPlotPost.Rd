@@ -46,7 +46,7 @@ Plots prior and posterior distributions of model parameters in a ctStanModel or 
 }
 \examples{
 \donttest{
-if (!exists("ctstantestfit")) example(ctstantestfit)
+if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
 ctStanPlotPost(ctstantestfit, rows=3:4)
 }
 }

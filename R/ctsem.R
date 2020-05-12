@@ -54,7 +54,6 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
 #' @importFrom utils relist as.relistable tail capture.output
 #' @importFrom Deriv Simplify 
 #' @importFrom cOde jacobianSymb prodSymb
-#' @importFrom quantreg qss
 #' @useDynLib ctsem, .registration = TRUE
 #' 
 #' @references 
@@ -83,7 +82,7 @@ NULL
 #' }
 ctDocs <- function(){
   r=runif(1,0,9999999)
-  pdfpath=paste0(tempdir(),'\\ctsemManual_',r,'.pdf')
+  pdfpath=file.path(tempdir(),paste0('/ctsemManual_',r,'.pdf'))
   utils::download.file(url="https://github.com/cdriveraus/ctsem/raw/master/vignettes/hierarchicalmanual.pdf",
     destfile=pdfpath,mode='wb')
   try(openPDF(pdfpath))

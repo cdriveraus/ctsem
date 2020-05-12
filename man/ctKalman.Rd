@@ -58,7 +58,7 @@ based on medians of parameter distribution.
 }
 \examples{
 \donttest{
-if (!exists("ctstantestfit")) example(ctstantestfit)
+if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
 
 #Basic
 ctKalman(ctstantestfit, timerange=c(0,60), plot=TRUE)

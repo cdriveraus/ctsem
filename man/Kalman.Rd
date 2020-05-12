@@ -74,7 +74,7 @@ predicted and updated latent states, likelihoods, and predicted observations usi
 ###  4 latents, and 1 time dependent predictor.
 
 ### get parameter matrices
-if (!exists("ctstantestfit")) example(ctstantestfit)
+if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
 kpars <- ctStanContinuousPars(ctstantestfit)
 
 #construct dummy data

@@ -44,7 +44,7 @@ Generate data from a ctstanmodel object
 }
 \examples{
 \donttest{
-if (!exists("ctstantestfit")) example(ctstantestfit)
+if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
 
 #generate and plot samples from prior predictive
 priorpred <- ctStanGenerate(ctm = ctstantestfit$ctstanmodelbase,

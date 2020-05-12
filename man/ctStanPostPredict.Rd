@@ -51,7 +51,7 @@ model implied distributions -- thus, when limited iterations are available, the 
 }
 \examples{
 \donttest{
-if (!exists("ctstantestfit")) example(ctstantestfit)
+if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
 ctStanPostPredict(ctstantestfit,wait=FALSE, diffsize=2,resolution=100)
 }
 }

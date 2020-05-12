@@ -1288,6 +1288,7 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
   rawindparams = rawpopmeans + indvaraddition;
   if(subi > 0 &&  ntieffects > 0) rawindparams[tieffectindices[1:ntieffects]] += 
     TIPREDEFFECT[tieffectindices[1:ntieffects]] *  tipreds[subi]\';
+
 ',
     
     paste0('
@@ -1295,7 +1296,7 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
         for(statecalcs in 0:1){ //do state based calcs after initialising t0means
         if(subi ==0 ||  //if population parameter
           ( matsetup[ri,7] == 8 && T0VARsubindex) || //or a covariance parameter in an individually varying matrix
-          (matsetup[ri,3] > 0 && (matsetup[ri,5] > 0 || matsetup[ri,6] > 0)) //or there is individual variation
+          (matsetup[ri,3] > 0 && (matsetup[ri,5] > 0 || matsetup[ri,6] > 0 || matsetup[ri,8] > 0)) //or there is individual variation
           ){ //otherwise repeated values
             if( (statecalcs && matsetup[ri,8]>0) || 
               (!statecalcs && matsetup[ri,8]==0) ){ //if doing statecalcs do them, if doing static calcs do them
@@ -1373,12 +1374,16 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
         }
       }
     }
+    
+
+    
   ',if(subjmats) collectsubmats(popmats=FALSE),
     if(popmats) paste0('
   if(subi == 0){
 ',collectsubmats(popmats=TRUE),'
   }
 ',collapse=''),'
+    
 } // end subject matrix creation
   ',collapse='\n')
   

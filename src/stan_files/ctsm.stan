@@ -501,11 +501,12 @@ matrix[nlatent, nlatent] sDIFFUSIONcov;
   if(subi > 0 &&  ntieffects > 0) rawindparams[tieffectindices[1:ntieffects]] += 
     TIPREDEFFECT[tieffectindices[1:ntieffects]] *  tipreds[subi]';
 
+
     for(ri in 1:size(matsetup)){ //for each row of matrix setup
         for(statecalcs in 0:1){ //do state based calcs after initialising t0means
         if(subi ==0 ||  //if population parameter
           ( matsetup[ri,7] == 8 && T0VARsubindex) || //or a covariance parameter in an individually varying matrix
-          (matsetup[ri,3] > 0 && (matsetup[ri,5] > 0 || matsetup[ri,6] > 0)) //or there is individual variation
+          (matsetup[ri,3] > 0 && (matsetup[ri,5] > 0 || matsetup[ri,6] > 0 || matsetup[ri,8] > 0)) //or there is individual variation
           ){ //otherwise repeated values
             if( (statecalcs && matsetup[ri,8]>0) || 
               (!statecalcs && matsetup[ri,8]==0) ){ //if doing statecalcs do them, if doing static calcs do them
@@ -613,6 +614,9 @@ matrix[nlatent, nlatent] sDIFFUSIONcov;
         }
       }
     }
+    
+
+    
   if(subi == 0 || savesubjectmatrices){ 
 if( (T0MEANSsubindex > 0 && (subi > 0 || savesubjectmatrices==0) ) || (T0MEANSsubindex == 0 && subi==0) ) T0MEANS[(savesubjectmatrices && T0MEANSsubindex) ? subi : 1] = sT0MEANS; 
 if( (LAMBDAsubindex > 0 && (subi > 0 || savesubjectmatrices==0) ) || (LAMBDAsubindex == 0 && subi==0) ) LAMBDA[(savesubjectmatrices && LAMBDAsubindex) ? subi : 1] = sLAMBDA; 
@@ -633,6 +637,7 @@ if( (asymCINTsubindex > 0 && (subi > 0 || savesubjectmatrices==0) ) || (asymCINT
 pop_T0MEANS = sT0MEANS; pop_LAMBDA = sLAMBDA; pop_DRIFT = sDRIFT; pop_DIFFUSION = sDIFFUSION; pop_MANIFESTVAR = sMANIFESTVAR; pop_MANIFESTMEANS = sMANIFESTMEANS; pop_CINT = sCINT; pop_T0VAR = sT0VAR; pop_TDPREDEFFECT = sTDPREDEFFECT; pop_PARS = sPARS; pop_DIFFUSIONcov = sDIFFUSIONcov; pop_asymDIFFUSION = sasymDIFFUSION; pop_asymCINT = sasymCINT; 
   }
 
+    
 } // end subject matrix creation
   
 
