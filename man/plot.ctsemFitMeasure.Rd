@@ -48,17 +48,9 @@ Misspecification plot using ctCheckFit output
 }
 \examples{
 \donttest{
-data(ctExample1)
-traitmodel <- ctModel(n.manifest=2, n.latent=2, Tpoints=6, LAMBDA=diag(2), 
-  manifestNames=c('LeisureTime', 'Happiness'), 
-  latentNames=c('LeisureTime', 'Happiness'), TRAITVAR="auto")
-traitfit <- ctFit(dat=ctExample1, ctmodelobj=traitmodel)
-
-check <- ctCheckFit(traitfit,niter=50)
-plot(check,wait=FALSE)
 
 if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-scheck <- ctCheckFit(ctstantestfit,niter=500)
+scheck <- ctCheckFit(ctstantestfit,niter=50)
 plot(scheck,wait=FALSE)
 
 }
