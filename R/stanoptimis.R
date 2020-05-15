@@ -1532,6 +1532,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       savesubjectmatrices = FALSE, dokalman=FALSE,
       samples=resamples,cores=cores, cl=clctsem)
     
+    transformedparsfull=stan_constrainsamples(sm = sm,standata = standata,
+      savesubjectmatrices = TRUE, dokalman=TRUE,savescores = TRUE,
+      samples=matrix(est2,nrow=1),cores=cores, cl=clctsem,quiet = TRUE)
+    
+    
     
     # quantile(sapply(transformedpars, function(x) x$rawpopcorr[3,2]),probs=c(.025,.5,.975))
     # quantile(sapply(transformedpars, function(x) x$DRIFT[1,2,2]),probs=c(.025,.5,.975))
@@ -1548,6 +1553,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     try(colnames(transformedpars_old)<-c('2.5%','mean','97.5%'),silent=TRUE)
     stanfit=list(optimfit=optimfit,stanfit=stan_reinitsf(sm,standata), rawest=est2, rawposterior = resamples, cov=mcov,
       transformedpars=transformedpars,transformedpars_old=transformedpars_old,
+      transformedparsfull=transformedparsfull,
       standata=list(TIPREDEFFECTsetup=standata$TIPREDEFFECTsetup,ntipredeffects = standata$ntipredeffects),
       isdiags=list(cov=mcovl,means=delta,ess=ess,qdiag=qdiag,lpsamples=lpsamples ))
   }

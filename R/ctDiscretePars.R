@@ -352,7 +352,7 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
     rep(1:nlatent,nlatent),
     rep(1:nlatent,each=nlatent))
   
-  if(!'array' %in% class(indices)){#interpret as individual columns
+  if(!'array' %in% class(indices) && !'matrix' %in% class(indices)){#interpret as individual columns
     indices <- cbind(
       rep(1:nlatent,length(unique(indices))),
       rep(unique(indices),each=length(unique(indices))))

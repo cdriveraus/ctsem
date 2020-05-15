@@ -259,9 +259,10 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
     rownames(popmeans) = parnames #names(e)[grep('hmean_',names(e))]
     popmeans = popmeans[,monvars,drop=FALSE]
     
-    logprob = object$stanfit$optimfit$value
+    loglik = object$stanfit$transformedparsfull$ll
+    logposterior = object$stanfit$optimfit$value
     npars = length(object$stanfit$rawest)
-    aic = 2* npars - 2*logprob
+    aic = 2* npars - 2*loglik
   }
   
   if(!is.null(iter)) out$popsd=round(popsd,digits=digits)
@@ -270,12 +271,13 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
   
   out$popNote=paste0('popmeans are reported as specified in ctModel -- covariance related matrices are in sd / unconstrained correlation form -- see $parmatrices for simpler interpretations!')
   
-  out$logprob=logprob
+  out$loglik=loglik
   
   if(!'stanfit' %in% class(object$stanfit)) {
     out$npars = npars
     out$aic = aic
   }
+  out$logposterior=logposterior
   
   if(!parmatrices) out$parmatNote <- 'For additional summary matrices, use argument: parmatrices = TRUE'
   
