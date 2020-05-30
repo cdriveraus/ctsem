@@ -210,8 +210,8 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   standata$tdpreds=array(as.matrix(tdpreds),dim=c(nrow(tdpreds),ncol(tdpreds)))
   
   #subset selection
-  if(is.null(ctm$dokalmanrows)) standata$dokalmanrows <- 
-    rep(1L, standata$ndatapoints) else standata$dokalmanrows <- as.integer(ctm$dokalmanrows)
+  if(is.null(ctm$dokalmanrows)) standata$dokalmanrowsdata <- 
+    rep(1L, standata$ndatapoints) else standata$dokalmanrowsdata <- as.integer(ctm$dokalmanrows)
   standata$dokalmanpriormodifier = sum(standata$dokalmanrows)/standata$ndatapoints
   
     standata<-c(standata, 
@@ -410,6 +410,6 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   }
   
   if(!is.null(ctm$TIpredAuto) && ctm$TIpredAuto %in% c(1L,TRUE)) standata$TIpredAuto <- 1L else standata$TIpredAuto <- 0L
-  standata$dokalmanrowsdata <- array(rep(1L,standata$ndatapoints))
+
   return(standata)
 }

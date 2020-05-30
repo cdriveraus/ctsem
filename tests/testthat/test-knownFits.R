@@ -28,11 +28,11 @@ test_that("anomauth", {
   sm$pars$indvarying<- FALSE
   sf=ctStanFit(ctDeintervalise(ctWideToLong(AnomAuth,Tpoints = AnomAuthmodel$Tpoints,n.manifest = 2)),
     ctstanmodel = sm, optimize=TRUE,verbose=0,savescores = FALSE,cores=2,nopriors=TRUE,
-    optimcontrol=list(finishsamples=100,stochastic=T),plot=F)
+    optimcontrol=list(finishsamples=100,stochastic=T),plot=F,nlcontrol=list(nldynamics=FALSE))
   expect_equal(23415.929,-2*sf$stanfit$optimfit$value,tolerance=.01)
   anoms=summary(sf)
   anoms$popmeans['mm_Y1','sd']
-  expect_equivalent(.036,anoms$popmeans['mm_Y1','sd'],tolerance=.004)
+  expect_equivalent(.036,anoms$popmeans['mm_Y1','sd'],tolerance=.008)
  }
 
 })

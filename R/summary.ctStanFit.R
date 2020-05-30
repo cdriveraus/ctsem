@@ -241,9 +241,8 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
     popmeans=popmeans[(nrow(popmeans)/2+1):nrow(popmeans),,drop=FALSE]
     rownames(popmeans) <- parnames
     
-    
-    
-    logprob=smr$summary[c(grep('lp',rownames(smr$summary))),
+
+    logposterior=smr$summary[c(grep('lp',rownames(smr$summary))),
       c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE]
   }
   
@@ -271,9 +270,9 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
   
   out$popNote=paste0('popmeans are reported as specified in ctModel -- covariance related matrices are in sd / unconstrained correlation form -- see $parmatrices for simpler interpretations!')
   
-  out$loglik=loglik
-  
   if(!'stanfit' %in% class(object$stanfit)) {
+    
+    out$loglik=loglik
     out$npars = npars
     out$aic = aic
   }

@@ -35,16 +35,16 @@ stanc(model_code = sm,verbose = TRUE)
 message(paste0('Update files? T / F?'))
 continue <- readline()
 if(continue){
-  pathbase <- ifelse(usecurrentwd, paste0(getwd(),'/src/'),'~/../Seafile/MPIB/CT-SEM/ctsem/src/')
+  pathbase <- ifelse(usecurrentwd, paste0(getwd(),'/src/'),'~/../Seafile/mpib/CT-SEM/ctsem/src')
   for(wi in 2){
     stan_files<-ifelse(wi==1,'stan_files32','stan_files')
-  file.rename(paste0(pathbase,stan_files,'/ctsm.stan'), paste0('./src/',stan_files,'/ctsm.bak'))
-  file.rename(paste0(pathbase,stan_files,'/ctsmgen.stan'), paste0('./src/',stan_files,'/ctsmgen.bak'))
-sink(file=paste0(pathbase,stan_files,'/ctsm.stan'))
+  file.rename(file.path(pathbase,stan_files,'ctsm.stan'), file.path(pathbase,stan_files,'ctsm.bak'))
+  file.rename(file.path(pathbase,stan_files,'ctsmgen.stan'), file.path(pathbase,stan_files,'ctsmgen.bak'))
+sink(file=file.path(pathbase,stan_files,'ctsm.stan'))
 # if(wi==1) cat(sm32) else 
 cat(sm)
 sink()
-sink(file=paste0(pathbase,stan_files,'/ctsmgen.stan'))
+sink(file=file.path(pathbase,stan_files,'ctsmgen.stan'))
 # if(wi==1) cat(smgen32) else 
 cat(smgen)
 sink()

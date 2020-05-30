@@ -182,7 +182,8 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
       asymDIFFUSIONdiag[rl(asymDIFFUSIONdiag <= 0) ] <- 1
       DRIFT <- matrix(ctpars$DRIFT[d,,],nl,nl)
       if(observational) {
-        g <- cov2cor(matrix(ctpars$DIFFUSION[d,,],nl,nl))^2
+        g <- matrix(ctpars$DIFFUSION[d,,],nl,nl)
+        g <- cov2cor(g)^2 * sign(g)
         g[is.nan(g)] <- 0
       }
       sapply(times, function(ti){ 

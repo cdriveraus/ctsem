@@ -3,7 +3,7 @@ logit = function(x) log(x)-log((1-x))
 sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoints=NA,plot=FALSE,
   stepbase=1e-3,gmeminit=ifelse(is.na(startnrows),.8,.8),gmemmax=.96, maxparchange = .50,
   startnrows=NA,roughnessmemory=.9,groughnesstarget=.4,roughnesschangemulti = 2,
-  lproughnesstarget=ifelse(is.na(whichmcmcpars[1]),.5,.4),
+  lproughnesstarget=ifelse(is.na(whichmcmcpars[1]),ifelse(parsets==1,.5,.3),.4),parsets=1,
   # gamiter=50000,
   gsmoothroughnesstarget=.05,
   warmuplength=20,nstore=max(100,length(init)),
@@ -13,7 +13,7 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
   
   initfull=init #including ignored params start values
   if(length(whichignore)>0) init=init[-whichignore]
-  
+
   errsum = function(x) sqrt(sum(abs(x)))
   
   combinepars <- function(pars,mcmcpars,whichmcmcpars,subject=NA){
@@ -168,7 +168,7 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
       #       dat <- rbind(dat,data.frame(x=max(dat$x)*1.5,y=9999)) #for gam only
       #       weighting=c(seq(.1,1,length.out=nrow(dat)-1),0)
       #       
-      #       # browser()
+      #       # 
       #       # gamf <- suppressWarnings(try(gamboostLSS::gamboostLSS(formula = formula(y ~ x),
       #       #   control=boost_control(nu=.01),dfbase=4,
       #       #   # control=gamlss::gamlss.control(trace=FALSE)
@@ -176,7 +176,7 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
       #       #   data = dat,weights = weighting),silent=TRUE))
       #       # 
       #       # if('try-error' %in% class(gamf)){
-      #       #   browser()
+      #       #   
       #       if(1==1){
       #         gamf <- try(gam::gam(formula = formula(y ~ s(x)),
       #         control=gam::gam.control(trace=FALSE),
@@ -208,7 +208,7 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
       #       #   tail(predict(gamfg),1)
       # 
       #     }
-      #     # browser()
+      #     # 
       #   }}
       
       gdelta =  (ghatmix +dghatmix*dghatweight/2) #removed step multiply because divide by zero elsewhere
@@ -230,13 +230,13 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
       #   # gsmooth=gsmooth*.8 + (gampars-gamparsold)/step*.2#(gamg-gamgold)*gamweights
       # }
       
-      if(any(is.na(newpars))) browser()
+      if(any(is.na(newpars))) 
       if(i==1) itertime <- Sys.time()
       
       
       if(!mcmcconverged){
         mcmcpars <- newmcmcpars #store current mcmcpars
-        # browser()
+        # 
         propchol <- t(chol(matrix(
           apply(
             apply(aperm(mcmcstore,c(3,2,1)),2,cov),
@@ -256,8 +256,30 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
       
       fullnewpars <- initfull
       if(length(whichignore)>0) fullnewpars[-whichignore] <- newpars else fullnewpars <- newpars
+      
+      
+      if(parsets > 1){
+        parmod <- (exp(1*((1:parsets)-(floor(parsets/2)))))
+        fullnewpars <- lapply(parmod,function(x) {
+          newpars <-  pars+x*
+            # sample(c(rep(1,parsets),parmod),length(newpars),replace = TRUE) *
+            (newpars-pars)
+          fullnewpars <- initfull
+          if(length(whichignore)>0) fullnewpars[-whichignore] <- newpars else fullnewpars <- newpars
+          return(fullnewpars)
+      })
+      }
+        
       if(is.na(whichmcmcpars[1])) lpg= fitfunc2(fullnewpars,whichmcmcpars)
       if(length(whichignore)>0) attributes(lpg)$gradient <- attributes(lpg)$gradient[-whichignore]
+      if(!is.null(attributes(lpg)$bestset)){
+        bestset <- attributes(lpg)$bestset
+        if(bestset > ceiling(parsets/2)) lproughnesstarget <- lproughnesstarget +.01
+        if(bestset < floor(parsets/2)) lproughnesstarget <- lproughnesstarget -.01
+        newpars <- fullnewpars[[bestset]]
+        if(length(whichignore)>0) newpars <- newpars[-whichignore]
+      }
+      
       
       # if(i==1) {
       #   itertime <- as.numeric(Sys.time()-itertime)
@@ -269,7 +291,7 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
           class(lpg) !='try-error' && 
           !is.nan(lpg[1]) && 
           all(!is.nan(attributes(lpg)$gradient)) &&
-          (i < warmuplength || (!mcmcconverged || (lp[i-1]- lpg[1]) < sd(tail(lp,100))*8+1e-6))
+          (i < warmuplength || (!mcmcconverged || (lp[i-1]- lpg[1]) < sd(tail(lp,100))*8+1e-3))
       ){
         accepted <- TRUE
       } 
@@ -365,7 +387,7 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
     
     
     # if(i > (nstore+10) && (i %% gamiter)==10){# == (gamiter-2)) {
-    #   # browser()
+    #   # 
     #   print((lp[i]-lp[i-12]) > (lp[i-12]-lp[i-24]))
     #   gamup <- sign(gampars[gamindices]-gamparsold[gamindices]) == 
     #     sign(bestpars[gamindices] - gampars[gamindices])

@@ -20,7 +20,7 @@
 MODELS_HOME <- "src"
 if (!file.exists(MODELS_HOME)) MODELS_HOME <- sub("R$", "src", getwd())
 
-w32 <-  .Machine$sizeof.pointer == 4 #.Platform$OS.type == "windows" &&
+w32 <-  .Machine$sizeof.pointer == 4 && .Platform$OS.type == "windows" #&&
 # w32 <- FALSE
 # 
 # # stan_files <- file.path(MODELS_HOME, 
@@ -43,8 +43,11 @@ stanmodels <- lapply(stan_files, function(f) {
                           obfuscate_model_name = FALSE))
   stanfit$model_cpp <- list(model_cppname = stanfit$model_name, 
                             model_cppcode = stanfit$cppcode)
-  return(do.call(methods::new, args = c(stanfit[-(1:3)], Class = "stanmodel", 
-                 mk_cppmodule = function(x) get(paste0("model_", model_cppname)))))
+  sm <- do.call(methods::new, args = c(stanfit[-(1:3)], 
+    Class = c("stanmodel"),#,),
+    mk_cppmodule = function(x) get(paste0("model_", model_cppname))))
+  attributes(sm)$stanheaders <- packageDescription('stanheaders')$version
+  return(sm)
   }
 )
 names(stanmodels) <- sub("\\.stan$", "", basename(stan_files))
