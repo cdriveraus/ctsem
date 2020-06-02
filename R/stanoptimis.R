@@ -1,13 +1,13 @@
 
 
 
-hesscalc <- function(sf,step){ #input stanfit, get hessian
-  smf <- stan_reinitsf(sf$stanmodel,sf$standata)
-  fgfunc <- function(x) rstan::log_prob(smf,x,gradient=TRUE)
-  # step=findstepsize(est = sf$stanfit$rawest,func = fgfunc,eps = 1e-2,
-  #   maxlpd = 2*length(sf$stanfit$rawest),minlpd=.1*length(sf$stanfit$rawest))
-  H=jac(pars = sf$stanfit$rawest,fgfunc = fgfunc,step = rep(step,length(sf$stanfit$rawest)))
-}
+# hesscalc <- function(sf,step){ #input stanfit, get hessian
+#   smf <- stan_reinitsf(sf$stanmodel,sf$standata)
+#   fgfunc <- function(x) rstan::log_prob(smf,x,gradient=TRUE)
+#   # step=findstepsize(est = sf$stanfit$rawest,func = fgfunc,eps = 1e-2,
+#   #   maxlpd = 2*length(sf$stanfit$rawest),minlpd=.1*length(sf$stanfit$rawest))
+#   H=jac(pars = sf$stanfit$rawest,fgfunc = fgfunc,step = rep(step,length(sf$stanfit$rawest)))
+# }
 
 findstepsize <- function(est,func,eps=1e-3,maxlpd=3,minlpd=1e-3){
   
@@ -1015,78 +1015,78 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       # basegrad <- mean(unlist(lapply(base,function(x) attributes(x)$gradient)))
       # base <- mean(unlist(base))
       
-      grmat<-function(pars,step=1e-1,lpdifmin=1e-1, 
-        lpdifmax=3, direction=1,whichpars='all',gradmod=FALSE,parmod=TRUE){
-        if('all' %in% whichpars) whichpars <- 1:length(pars)
-        hessout <- flexsapply(cl = clctsem, cores = 1, whichpars, function(i) {
-          stepsize <- step * direction
-          if(parmod) stepsize <- min(step, abs(pars[i]*1e-4)) * direction
-          colout <- NA
-          dolpchecks <- TRUE #set to true to try the log prob checks again..
-          # 
-          while(any(is.na(colout)) && abs(stepsize) > 1e-20){
-            stepsize <- stepsize * .1
-            lpdifok<-FALSE
-            lpdifcount <- 0
-            lpdifdirection <- 0
-            lpdifmultiplier <- 1
-            # message('par',i)
-            while(!lpdifok & lpdifcount < 15){
-              # message(paste(i,'  col=',colout,'  lpdifmultiplier=',lpdifmultiplier, '  stepsize=',stepsize))
-              lpdifok <- TRUE
-              lpdifcount <- lpdifcount + 1
-              uppars<-pars
-              uppars[i]<-pars[i]+stepsize / ifelse(gradmod,(abs(basegrad[i])),1)
-              
-              suppressMessages(suppressWarnings(try({uplp<- target(uppars,gradnoise=FALSE)},silent=TRUE))) #try(smf$log_prob(upars=uppars,adjust_transform=TRUE,gradient=TRUE)) #lpg(uppars)
-              # storedPars <<- cbind(storedPars,matrix(uppars))
-              # storedLp <<- c(storedLp,uplp[1])
-              
-              if('try-error' %in% class(uplp)){
-                lpdifok <- TRUE
-                upgrad <- rep(NA,length(pars))
-                dolpchecks <- FALSE
-              } else{
-                upgradnew= ((attributes(uplp)$gradient -basegrad) / stepsize)
-                upgrad = upgradnew * ifelse(abs(base-uplp) < 2,.5,0) + 
-                  upgradnew*ifelse(lpdifcount==1 ||abs(base-uplp) < 2,.5,0)
-                
-                
-                # print((  (upgrad[i] * (-abs(uppars[i]-pars[i]))) / (uplp[1]-bestfit[1]) ))
-                # upgrad = upgrad / (  (upgrad[i] * (-abs(uppars[i]-pars[i]))) / (uplp[1]-bestfit[1]) ) #linearised upgrad
-                
-                if(dolpchecks){
-                  if(abs(base-uplp) > lpdifmax) {
-                    # print(abs(base-uplp))
-                    message(paste0('decreasing step for ', i))
-                    lpdifok <- FALSE
-                    if(lpdifdirection== 1) {
-                      lpdifmultiplier = lpdifmultiplier * .5
-                    }
-                    stepsize = stepsize * (1e-2 * lpdifmultiplier)
-                    lpdifdirection <- -1
-                  }
-                  if(abs(base-uplp) < lpdifmin ) { #include sufficient gradient[i] checks #|| upgrad[i] < 1e-2
-                    # print(abs(base-uplp))
-                    message(paste0('increasing step for ', i))
-                    lpdifok <- FALSE
-                    if(lpdifdirection== -1) {
-                      lpdifmultiplier = lpdifmultiplier * .5
-                    }
-                    stepsize = stepsize * (100 * lpdifmultiplier)
-                    lpdifdirection <- 1
-                  }
-                  if(any(is.na(c(uplp)))) stepsize = stepsize * .1
-                }
-              }
-            }
-            # print(abs(base-uplp))
-            colout<- (upgrad)  * ifelse(gradmod,(abs(basegrad[i])),1)
-          }
-          rbind(colout)
-        })
-        return((hessout))# + t(hessout))/2)
-      }
+      # grmat<-function(pars,step=1e-1,lpdifmin=1e-1, 
+      #   lpdifmax=3, direction=1,whichpars='all',gradmod=FALSE,parmod=TRUE){
+      #   if('all' %in% whichpars) whichpars <- 1:length(pars)
+      #   hessout <- flexsapply(cl = clctsem, cores = 1, whichpars, function(i) {
+      #     stepsize <- step * direction
+      #     if(parmod) stepsize <- min(step, abs(pars[i]*1e-4)) * direction
+      #     colout <- NA
+      #     dolpchecks <- TRUE #set to true to try the log prob checks again..
+      #     # 
+      #     while(any(is.na(colout)) && abs(stepsize) > 1e-20){
+      #       stepsize <- stepsize * .1
+      #       lpdifok<-FALSE
+      #       lpdifcount <- 0
+      #       lpdifdirection <- 0
+      #       lpdifmultiplier <- 1
+      #       # message('par',i)
+      #       while(!lpdifok & lpdifcount < 15){
+      #         # message(paste(i,'  col=',colout,'  lpdifmultiplier=',lpdifmultiplier, '  stepsize=',stepsize))
+      #         lpdifok <- TRUE
+      #         lpdifcount <- lpdifcount + 1
+      #         uppars<-pars
+      #         uppars[i]<-pars[i]+stepsize / ifelse(gradmod,(abs(basegrad[i])),1)
+      #         
+      #         suppressMessages(suppressWarnings(try({uplp<- target(uppars,gradnoise=FALSE)},silent=TRUE))) #try(smf$log_prob(upars=uppars,adjust_transform=TRUE,gradient=TRUE)) #lpg(uppars)
+      #         # storedPars <<- cbind(storedPars,matrix(uppars))
+      #         # storedLp <<- c(storedLp,uplp[1])
+      #         
+      #         if('try-error' %in% class(uplp)){
+      #           lpdifok <- TRUE
+      #           upgrad <- rep(NA,length(pars))
+      #           dolpchecks <- FALSE
+      #         } else{
+      #           upgradnew= ((attributes(uplp)$gradient -basegrad) / stepsize)
+      #           upgrad = upgradnew * ifelse(abs(base-uplp) < 2,.5,0) + 
+      #             upgradnew*ifelse(lpdifcount==1 ||abs(base-uplp) < 2,.5,0)
+      #           
+      #           
+      #           # print((  (upgrad[i] * (-abs(uppars[i]-pars[i]))) / (uplp[1]-bestfit[1]) ))
+      #           # upgrad = upgrad / (  (upgrad[i] * (-abs(uppars[i]-pars[i]))) / (uplp[1]-bestfit[1]) ) #linearised upgrad
+      #           
+      #           if(dolpchecks){
+      #             if(abs(base-uplp) > lpdifmax) {
+      #               # print(abs(base-uplp))
+      #               message(paste0('decreasing step for ', i))
+      #               lpdifok <- FALSE
+      #               if(lpdifdirection== 1) {
+      #                 lpdifmultiplier = lpdifmultiplier * .5
+      #               }
+      #               stepsize = stepsize * (1e-2 * lpdifmultiplier)
+      #               lpdifdirection <- -1
+      #             }
+      #             if(abs(base-uplp) < lpdifmin ) { #include sufficient gradient[i] checks #|| upgrad[i] < 1e-2
+      #               # print(abs(base-uplp))
+      #               message(paste0('increasing step for ', i))
+      #               lpdifok <- FALSE
+      #               if(lpdifdirection== -1) {
+      #                 lpdifmultiplier = lpdifmultiplier * .5
+      #               }
+      #               stepsize = stepsize * (100 * lpdifmultiplier)
+      #               lpdifdirection <- 1
+      #             }
+      #             if(any(is.na(c(uplp)))) stepsize = stepsize * .1
+      #           }
+      #         }
+      #       }
+      #       # print(abs(base-uplp))
+      #       colout<- (upgrad)  * ifelse(gradmod,(abs(basegrad[i])),1)
+      #     }
+      #     rbind(colout)
+      #   })
+      #   return((hessout))# + t(hessout))/2)
+      # }
       
       # A more numerically stable way of calculating log( sum( exp( x ))) Source:
       # http://r.789695.n4.nabble.com/logsumexp-function-in-R-td3310119.html
@@ -1209,7 +1209,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         #   return(fg)
         # }
         
-        gfunc <- function(x) attributes(fgfunc(x))$gradient
+        # gfunc <- function(x) attributes(fgfunc(x))$gradient
         
         if(length(datadrivenpars)>0) grinit= est2[-datadrivenpars] else grinit = est2
         # hess <- numDeriv::jacobian(grfunc, grinit,method.args=list(eps=1e-3,r=3,v=10))

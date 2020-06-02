@@ -4,9 +4,10 @@
 #' @param folds Number of cross validation splits to use -- 10 folds implies that the 
 #' model is re-fit 10 times, each time to a data set with 1/10 of the observations randomly removed.
 #' @param cores Number of processor cores to use. 
+#' @param parallelFolds compute folds in parallel or use cores to finish single folds faster.
 #' @param subjectwise drop random subjects instead of data rows?
 #' @param keepfirstobs do not drop first observation (more stable estimates)
-#' @return
+#' @return list
 #' @export
 #'
 #' @examples
@@ -14,7 +15,8 @@
 #' if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
 #' ctLOO(ctstantestfit)
 #' }
-ctLOO <- function(fit,folds=10,cores=2,parallelFolds=FALSE, subjectwise=FALSE,keepfirstobs=TRUE){
+ctLOO <- function(fit,folds=10,cores=2,parallelFolds=TRUE, 
+  subjectwise=FALSE,keepfirstobs=TRUE){
   bootstrap <- FALSE
   if(!'ctStanFit' %in% class(fit)|| !'list' %in% class(fit$stanfit)) stop('Not an optimized ctStanFit object')
   
@@ -42,16 +44,16 @@ ctLOO <- function(fit,folds=10,cores=2,parallelFolds=FALSE, subjectwise=FALSE,ke
     parallel::clusterExport(clctsem,c('sdat','smodel','init'),envir=environment())
     on.exit({parallel::stopCluster(clctsem)},add = TRUE)
   } else clctsem <- NA
-  folded <- ctsem:::flexlapply(clctsem,X = srows,fn = function(x) {
+  folded <- flexlapply(clctsem,X = srows,fn = function(x) {
     library(ctsem)
     
     sdat$dokalmanrowsdata[x] <- 0L
     sdat$dokalmanrowsata[-x] <- 1L
     # browser()
-    e <- try(ctsem:::stanoptimis(standata = sdat,sm = smodel,init = init,
+    e <- try(stanoptimis(standata = sdat,sm = smodel,init = init,
       # optimcontrol(list(stochastic=TRUE)),
       estonly = TRUE,cores=ifelse(parallelFolds,1,cores),plot=10,verbose=0))
-    if('try-error' %in% class(e))   e <- try(ctsem:::stanoptimis(standata = sdat,sm = fit$stanmodel,init = fit$stanfit$rawest,
+    if('try-error' %in% class(e))   e <- try(stanoptimis(standata = sdat,sm = fit$stanmodel,init = fit$stanfit$rawest,
       estonly = TRUE,cores=ifelse(parallelFolds,1,cores),stochastic=FALSE))
     
     if('try-error' %in% class(e)) return(NA) else{

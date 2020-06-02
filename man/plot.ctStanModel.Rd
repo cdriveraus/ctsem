@@ -8,7 +8,7 @@
   x,
   rows = "all",
   wait = FALSE,
-  nsamples = 1e+06,
+  nsamples = 1000000,
   rawpopsd = "marginalise",
   inddifdevs = c(-1, 1),
   plot = TRUE,

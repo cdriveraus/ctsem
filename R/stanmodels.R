@@ -46,7 +46,7 @@ stanmodels <- lapply(stan_files, function(f) {
   sm <- do.call(methods::new, args = c(stanfit[-(1:3)], 
     Class = c("stanmodel"),#,),
     mk_cppmodule = function(x) get(paste0("model_", model_cppname))))
-  attributes(sm)$stanheaders <- packageDescription('stanheaders')$version
+  #attributes(sm)StanHeaders <- packageDescription('StanHeaders')$version
   return(sm)
   }
 )

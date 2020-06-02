@@ -8,7 +8,7 @@ ctLOO(
   fit,
   folds = 10,
   cores = 2,
-  parallelFolds = FALSE,
+  parallelFolds = TRUE,
   subjectwise = FALSE,
   keepfirstobs = TRUE
 )
@@ -21,12 +21,14 @@ model is re-fit 10 times, each time to a data set with 1/10 of the observations 
 
 \item{cores}{Number of processor cores to use.}
 
+\item{parallelFolds}{compute folds in parallel or use cores to finish single folds faster.}
+
 \item{subjectwise}{drop random subjects instead of data rows?}
 
 \item{keepfirstobs}{do not drop first observation (more stable estimates)}
 }
 \value{
-
+list
 }
 \description{
 K fold cross validation for ctStanFit objects
