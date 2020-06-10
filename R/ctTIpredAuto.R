@@ -72,7 +72,7 @@ checkTIauto <- function(){
   
   for(i in 1:n.subjects){
     gm$CINT[1,1] <- TI1[i]*.5+rnorm(1,0,.6)
-    ndat<-ctGenerate(gm,n.subjects=1,burnin=30,wide=FALSE,logdtsd=.4)
+    ndat<-ctGenerate(gm,n.subjects=1,burnin=30,logdtsd=.4)
     ndat <- cbind(ndat,TI1[i])
     ndat[,1] <- i
     if(i>1) tdat <- rbind(tdat,ndat) else tdat <- ndat

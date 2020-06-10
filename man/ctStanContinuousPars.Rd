@@ -6,20 +6,12 @@
 \usage{
 ctStanContinuousPars(
   ctstanfitobj,
-  subjects = "all",
-  iter = "all",
   calcfunc = quantile,
   calcfuncargs = list(probs = 0.5)
 )
 }
 \arguments{
 \item{ctstanfitobj}{fit object from \code{\link{ctStanFit}}}
-
-\item{subjects}{Either 'all', or integers denoting which subjects to perform the calculation over. 
-When multiple subjects are specified, the returned matrices will be a mean over subjects.}
-
-\item{iter}{Either character string 'all' which will then use all post-warmup iterations, 
-or an integer specifying which iteration/s to use.}
 
 \item{calcfunc}{Function to apply over samples, must return a single value. 
 By default the median over all samples is returned using the \code{\link[stats]{quantile}} function, 
@@ -30,16 +22,11 @@ For instance, with the default of calcfunc = quantile,
 the probs argument is needed to ensure only a single value is returned.}
 }
 \description{
-Returns the continuous time parameter matrices for specified subjects of a ctStanFit fit object
+Returns the continuous time parameter matricesof a ctStanFit fit object
 }
 \examples{
-\donttest{
-if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
+if(w32chk()){
 #posterior median over all subjects (also reflects mean of unconstrained pars)
-ctStanContinuousPars(ctstantestfit)
-
-#posterior 97.5\% quantiles for subject 2
-ctStanContinuousPars(ctstantestfit, subjects=2, calcfunc=quantile, 
-calcfuncargs=list(probs=0.975))
+ctStanContinuousPars(ctstantestfit())
 }
 }

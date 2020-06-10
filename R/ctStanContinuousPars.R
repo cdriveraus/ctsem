@@ -1,12 +1,8 @@
 #'ctStanContinuousPars
 #'
-#'Returns the continuous time parameter matrices for specified subjects of a ctStanFit fit object
+#'Returns the continuous time parameter matricesof a ctStanFit fit object
 #'
 #'@param ctstanfitobj fit object from \code{\link{ctStanFit}}
-#'@param subjects Either 'all', or integers denoting which subjects to perform the calculation over. 
-#'When multiple subjects are specified, the returned matrices will be a mean over subjects.
-#'@param iter Either character string 'all' which will then use all post-warmup iterations, 
-#'or an integer specifying which iteration/s to use.
 #'@param calcfunc Function to apply over samples, must return a single value. 
 #'By default the median over all samples is returned using the \code{\link[stats]{quantile}} function, 
 #'but one might also be interested in the \code{\link[base]{mean}} or \code{\link[stats]{sd}}, for instance.
@@ -14,113 +10,69 @@
 #'For instance, with the default of calcfunc = quantile, 
 #'the probs argument is needed to ensure only a single value is returned.
 #'@examples
-#'\donttest{
-#'if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
+#'if(w32chk()){
 #'#posterior median over all subjects (also reflects mean of unconstrained pars)
-#'ctStanContinuousPars(ctstantestfit)
-#'
-#'#posterior 97.5% quantiles for subject 2
-#'ctStanContinuousPars(ctstantestfit, subjects=2, calcfunc=quantile, 
-#'calcfuncargs=list(probs=0.975))
+#'ctStanContinuousPars(ctstantestfit())
 #'}
 #'@export
-ctStanContinuousPars <- function(ctstanfitobj,subjects='all',iter='all',
+ctStanContinuousPars <- function(ctstanfitobj,
   calcfunc=quantile,calcfuncargs=list(probs=0.5)){
-  if(subjects[1] != 'all' && any(!is.integer(as.integer(subjects)))) stop('
-    subjects argument must be either "all" or an integer denoting specific subjects')
-  
+
   if(!'ctStanFit' %in% class(ctstanfitobj)) stop('Not an object of class ctStanFit')
   
   e<-ctExtract(ctstanfitobj) #first dim of subobjects is iter, 2nd subjects
   niter=dim(e$DRIFT)[1]
   
-  if(iter!='all') {
-    if(!any(iter %in% 1:niter)) stop('Invalid iteration specified!')
-    e=lapply(e, function(x) {
-      xdims=dim(x)
-      out=array(eval(parse(text=
-          paste0('x[iter',if(length(xdims)>1) paste0(rep(',',length(xdims)-1),collapse=''),']')
-      )),dim=c(length(iter),xdims[-1]))
-      return(out)
-    }
-    )
-  }
-  
-  nsubjects <- ctstanfitobj$data$nsubjects #dim(e$indparams)[2]
-  # if(is.null(nsubjects)) nsubjects=1
-  
-  # if(subjects[1]=='all') subjects=1:nsubjects
-  
-  if(subjects[1]=='all') collapsemargin <- 1 else collapsemargin<-c(1,2)
-  # if(collapseIterations) collapsemargin=1
-  
-  for(matname in c('DRIFT','DIFFUSIONcov','asymDIFFUSION','CINT','T0MEANS', 
-    'T0VAR','MANIFESTMEANS',if(!is.null(e$pop_MANIFESTVAR)) 'MANIFESTVAR','LAMBDA', if(!is.null(e$pop_TDPREDEFFECT)) 'TDPREDEFFECT')){
+  mats <- ctStanMatricesList()
+  mats <- c(names(mats$base), names(mats$asymptotic),'DIFFUSIONcov')
 
-    subindex <- ctstanfitobj$data[[paste0(matname,'subindex')]]
-    # if(dim(e[[matname]])[2] > 1) subselection <- subjects else subselection <- 1
-    if(max(subindex) > 1 || subjects =='all') subselection <- 1:max(subindex) else subselection <- 1
-    subselection=ctstanfitobj$standata[[paste0(matname,'subindex')]][subselection]
-    
-    # vector <- FALSE
-    
-    # if(matname %in% c('T0MEANS','CINT', 'MANIFESTMEANS')) vector <- TRUE
-    
-    calcfuncargs$collapsemargin = collapsemargin
+  out <- list()
+  for(matname in (mats)){
+
+    try({
+      calcfuncargs$collapsemargin = 1
     calcfuncargs$collapsefunc=calcfunc
 
-    # if(!vector) {
-      calcfuncargs$inarray = e[[ifelse(subjects[1]!='all', matname, paste0('pop_',matname))]]
-      if(subjects[1]!='all') calcfuncargs$inarray  <- calcfuncargs$inarray[,subselection,,,drop=FALSE]
-      assign(matname, array(do.call(ctCollapse,calcfuncargs),
-        dim=dim(e[[ifelse(subjects[1]!='all', matname, paste0('pop_',matname))]])[-c(1,if(subjects[1]!='all') 2)]))
-    # }
-    
-    # if(vector) {
-    #   calcfuncargs$inarray = e[[matname]][,subselection,,drop=FALSE]
-    #   assign(matname, array(do.call(ctCollapse,calcfuncargs),dim=c(dim(e[[matname]])[-c(1,2)],1)))
-    # }
+      calcfuncargs$inarray = e[[paste0('pop_',matname)]]
+      out[[matname]] <- array(do.call(ctCollapse,calcfuncargs),
+        dim=dim(calcfuncargs$inarray)[-1])
+    },silent=TRUE)
     
   }
-  
-  # DRIFTHATCH<-DRIFT %x% diag(nrow(DRIFT)) + diag(nrow(DRIFT)) %x% DRIFT
-  # asymDIFFUSION<-matrix(-solve(DRIFTHATCH) %*% c(DIFFUSION), nrow=nrow(DRIFT)) 
-  
-  if(nrow(T0MEANS) > nrow(CINT)){ #then intoverpop used...
-    nlatent <- nrow(CINT)
-    T0MEANS <- T0MEANS[1:nlatent,1,drop=FALSE]
-    DRIFT <- DRIFT[1:nlatent,1:nlatent,drop=FALSE]
-    T0VAR <- T0VAR[1:nlatent,1:nlatent,drop=FALSE]
+
+  if(nrow(out$T0MEANS) > nrow(out$CINT)){ #then intoverpop used...
+    nlatent <- nrow(out$CINT)
+    out$T0MEANS <- out$T0MEANS[1:nlatent,1,drop=FALSE]
+    out$DRIFT <- out$DRIFT[1:nlatent,1:nlatent,drop=FALSE]
+    out$T0VAR <- out$T0VAR[1:nlatent,1:nlatent,drop=FALSE]
   }
   
   ln=ctstanfitobj$ctstanmodel$latentNames
   mn=ctstanfitobj$ctstanmodel$manifestNames
   tdn=ctstanfitobj$ctstanmodel$TDpredNames
-  dimnames(DRIFT)=list(ln,ln)
-  dimnames(DIFFUSIONcov)=list(ln,ln)
-  dimnames(asymDIFFUSION)=list(ln,ln)
-  rownames(CINT)=ln
-  rownames(MANIFESTMEANS)=mn
-  rownames(T0MEANS)=ln
+  dimnames(out$DRIFT)=list(ln,ln)
+  dimnames(out$DIFFUSIONcov)=list(ln,ln)
+  dimnames(out$asymDIFFUSION)=list(ln,ln)
+  rownames(out$CINT)=ln
+  rownames(out$MANIFESTMEANS)=mn
+  rownames(out$T0MEANS)=ln
   
-  dimnames(T0VAR)=list(ln,ln)
-  dimnames(asymDIFFUSION)=list(ln,ln)
-  dimnames(LAMBDA)=list(mn,ln)
-  
-  model<-list(DRIFT=DRIFT,T0VAR=T0VAR,DIFFUSIONcov=DIFFUSIONcov,asymDIFFUSION=asymDIFFUSION,CINT=CINT,T0MEANS=T0MEANS,
-    MANIFESTMEANS=MANIFESTMEANS, LAMBDA=LAMBDA)
+  dimnames(out$T0VAR)=list(ln,ln)
+  dimnames(out$asymDIFFUSION)=list(ln,ln)
+  dimnames(out$LAMBDA)=list(mn,ln)
+
   
   if(!is.null(e$pop_MANIFESTVAR)) {
-    dimnames(MANIFESTVAR)=list(mn,mn)
-    model$MANIFESTVAR=MANIFESTVAR %*% t(MANIFESTVAR) #cholesky factor inside stanfit...
+    dimnames(out$MANIFESTVAR)=list(mn,mn)
+    out$MANIFESTVAR=out$MANIFESTVAR %*% t(out$MANIFESTVAR) #cholesky factor inside stanfit...
     
   }
   
   if(!is.null(e$pop_TDPREDEFFECT)) {
-    dimnames(TDPREDEFFECT)=list(ln,tdn)
-    model$TDPREDEFFECT<-TDPREDEFFECT
+    dimnames(out$TDPREDEFFECT)=list(ln,tdn)
+    out$TDPREDEFFECT<-out$TDPREDEFFECT
   }
   
-  return(model)
+  return(out)
 }
 

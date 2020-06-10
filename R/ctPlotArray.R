@@ -58,9 +58,9 @@ ctPlotArrayGG <- function(input){
 #' @export
 #'
 #' @examples
-#' \donttest{
-#' if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-#' input<-ctStanTIpredeffects(ctstantestfit, plot=FALSE, whichpars='CINT', 
+#' if(w32chk()){
+#'
+#' input<-ctStanTIpredeffects(ctstantestfit(), plot=FALSE, whichpars='CINT', 
 #'  nsamples=10,nsubjects=10)
 #'     
 #' ctPlotArray(input=input)

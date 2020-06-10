@@ -22,7 +22,7 @@ Runs stan, and plots sampling information while sampling.
 On windows, requires Rtools installed and able to be found by pkgbuild::rtools_path()
 }
 \examples{
-\donttest{
+if(w32chk()){
 library(rstan)
 #### example 1 
 scode <- "

@@ -85,9 +85,8 @@ Plots model implied regression strengths at specified times for
 continuous time models fit with ctStanFit.
 }
 \examples{
-\donttest{
-if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-x <- ctStanDiscretePars(ctstantestfit)
+if(w32chk()){
+x <- ctStanDiscretePars(ctstantestfit())
 ctStanDiscreteParsPlot(x, indices='CR')
 
 #to modify plot:

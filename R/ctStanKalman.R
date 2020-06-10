@@ -15,12 +15,12 @@
 #' @export
 #'
 #' @examples 
-#' \donttest{
-#' if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-#' k=ctStanKalman(ctstantestfit,subjectpars=TRUE,collapsefunc=mean)
+#' if(w32chk()){
+#' k=ctStanKalman(ctstantestfit(),subjectpars=TRUE,collapsefunc=mean)
 #' }
 ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,
   standardisederrors=FALSE, subjectpars=FALSE, indvarstates=FALSE,...){
+  
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
 
   message('Computing state estimates..')

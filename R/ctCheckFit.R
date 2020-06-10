@@ -1,6 +1,6 @@
 #' Check absolute fit of ctFit or ctStanFit object.
 #'
-#' @param fit ctFit or ctStanFit object.
+#' @param fit ctFit object.
 #' @param niter number of data generation iterations to use to calculate quantiles.
 #' @param probs 3 digit vector of quantiles to return and to test significance.
 #'
@@ -15,15 +15,9 @@
 #' @details for plotting help see \code{\link{plot.ctsemFitMeasure}}
 #'
 #' @examples
-#' \donttest{
-#' data(ctExample1)
-#' traitmodel <- ctModel(n.manifest=2, n.latent=2, Tpoints=6, LAMBDA=diag(2), 
-#'   manifestNames=c('LeisureTime', 'Happiness'), 
-#'   latentNames=c('LeisureTime', 'Happiness'), TRAITVAR="auto")
-#' traitfit <- ctFit(dat=ctExample1, ctmodelobj=traitmodel)
-#' 
-#' check <- ctCheckFit(traitfit,niter=5)
-#' plot(check, wait=FALSE)
+#' if(w32chk()){
+#'
+#' scheck <- ctCheckFit(ctstantestfit(),niter=50)
 #' }
 ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
   
@@ -145,10 +139,10 @@ ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
 #' @method plot ctsemFitMeasure
 #'
 #' @examples
-#' \donttest{
+#' if(w32chk()){
 #' 
-#' if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-#' scheck <- ctCheckFit(ctstantestfit,niter=50)
+#'
+#' scheck <- ctCheckFit(ctstantestfit(),niter=50)
 #' plot(scheck,wait=FALSE)
 #' 
 #' }

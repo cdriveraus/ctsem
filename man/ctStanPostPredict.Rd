@@ -50,8 +50,8 @@ This function relies on the data generated during each iteration of fitting to a
 model implied distributions -- thus, when limited iterations are available, the approximation will be worse.
 }
 \examples{
-\donttest{
-if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-ctStanPostPredict(ctstantestfit,wait=FALSE, diffsize=2,resolution=100)
+if(w32chk()){
+
+ctStanPostPredict(ctstantestfit(),wait=FALSE, diffsize=2,resolution=100)
 }
 }

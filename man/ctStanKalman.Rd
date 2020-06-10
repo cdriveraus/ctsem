@@ -41,8 +41,7 @@ iterations, data row, variables. llrow is the log likelihood for each row of dat
 Get Kalman filter estimates from a ctStanFit object
 }
 \examples{
-\donttest{
-if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-k=ctStanKalman(ctstantestfit,subjectpars=TRUE,collapsefunc=mean)
+if(w32chk()){
+k=ctStanKalman(ctstantestfit(),subjectpars=TRUE,collapsefunc=mean)
 }
 }

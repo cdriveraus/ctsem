@@ -77,9 +77,9 @@ Computes and plots combined effects and quantiles for effects of time independen
 on subject level parameters of a ctStanFit object.
 }
 \examples{
-\donttest{
-if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-ctStanTIpredeffects(ctstantestfit,
+if(w32chk()){
+
+ctStanTIpredeffects(ctstantestfit(),
  whichpars=c('CINT','dtDIFFUSION[2,2]'), plot=TRUE)
 }
 }

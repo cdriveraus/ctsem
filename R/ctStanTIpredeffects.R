@@ -44,9 +44,9 @@
 #' @export
 #'
 #' @examples
-#' \donttest{
-#' if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-#' ctStanTIpredeffects(ctstantestfit,
+#' if(w32chk()){
+#'
+#' ctStanTIpredeffects(ctstantestfit(),
 #'  whichpars=c('CINT','dtDIFFUSION[2,2]'), plot=TRUE)
 #' }
 ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),

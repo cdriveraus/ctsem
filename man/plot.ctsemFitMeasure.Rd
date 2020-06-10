@@ -47,10 +47,10 @@ Nothing, just plots.
 Misspecification plot using ctCheckFit output
 }
 \examples{
-\donttest{
+if(w32chk()){
 
-if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-scheck <- ctCheckFit(ctstantestfit,niter=50)
+
+scheck <- ctCheckFit(ctstantestfit(),niter=50)
 plot(scheck,wait=FALSE)
 
 }

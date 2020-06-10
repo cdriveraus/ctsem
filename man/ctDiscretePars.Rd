@@ -21,9 +21,8 @@ Generate discrete time parameters for a sequence of times based on a list contai
 parameter matrices as used in ctsem.
 }
 \examples{
-\donttest{
-if(!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-pars <- ctStanContinuousPars(ctstantestfit)
+if(w32chk()){
+pars <- ctStanContinuousPars(ctstantestfit())
 ctDiscretePars(pars,times=c(.5,1))
 }
 

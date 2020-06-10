@@ -10,7 +10,7 @@
 #' means of temporal dynamics parameters
 #' @return vector of character strings.
 #' @examples
-#' \donttest{
+#' if(w32chk()){
 #' sunspots<-sunspot.year
 #' sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
 #' id <- 1
@@ -59,9 +59,8 @@ ctStanParnames <- function(x,substrings=c('pop_','popsd')){
 #''latentMeans' returns only the expected latent means, given initial (T0MEANS) level, 
 #'latent intercept (CINT) and temporal effects (DRIFT).
 #'@examples
-#'\donttest{
-#'if(!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-#'pars <- ctStanContinuousPars(ctstantestfit)
+#'if(w32chk()){
+#'pars <- ctStanContinuousPars(ctstantestfit())
 #'ctDiscretePars(pars,times=c(.5,1))
 #'}
 #'
@@ -114,14 +113,14 @@ ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
 #'instead of returning output. 
 #'@param ... additional plotting arguments to control \code{\link{ctStanDiscreteParsPlot}}
 #'@examples
-#'\donttest{
-#' if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-#' ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
+#'if(w32chk()){
+#'
+#' ctStanDiscretePars(ctstantestfit(),times=seq(.5,4,.1), 
 #'  plot=TRUE,indices='all')
 #'  
 #'#modify plot
 #'require(ggplot2)
-#'g=ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
+#'g=ctStanDiscretePars(ctstantestfit(),times=seq(.5,4,.1), 
 #'  plot=TRUE,indices='CR')
 #'g= g+ labs(title='Cross effects')
 #'print(g)
@@ -134,7 +133,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   collapseSubjects=TRUE #consider this for a switch
   e<-ctExtract(ctstanfitobj)
   
-  if(type=='all') type=c('discreteDRIFT','latentMeans') #must match with ctDiscretePars
+  # if(type=='all') type=c('discreteDRIFT','latentMeans') #must match with ctDiscretePars
   
   if(subjects[1] != 'all' && any(!is.integer(as.integer(subjects)))) stop('
   subjects argument must be either "all" or an integer denoting specific subjects')
@@ -166,100 +165,50 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   
   # 
   nlatent <- dim(ctpars$asymDIFFUSION)[2]
-  
+  browser()
   ctpars$DRIFT <- ctpars$DRIFT[,1:nlatent,1:nlatent,drop=FALSE] #intoverpop
-  # print(apply(ctpars$DRIFT,c(2,3),mean))
-  nsubjects <- length(subjects)
-  
-  
-  for(typei in 1:length(type)){ #for all types of discrete parameter requested, compute pars
-    message('Computing ', type[typei],' for ', nsamples,' samples, may take a moment...')
-    matrixtype=ifelse(type[typei] %in% c('discreteDRIFT'),TRUE, FALSE) #include any matrix type outputs
-    discreteDRIFT <- array(sapply(1:(dim(ctpars$DRIFT)[1]),function(d){
-      nl=dim(ctpars$DRIFT)[2]
-      asymDIFFUSION <- matrix(ctpars$asymDIFFUSION[d,,],nl,nl)
-      asymDIFFUSIONdiag <- diag(asymDIFFUSION)
-      asymDIFFUSIONdiag[rl(asymDIFFUSIONdiag <= 0) ] <- 1
-      DRIFT <- matrix(ctpars$DRIFT[d,,],nl,nl)
-      if(observational) {
-        g <- matrix(ctpars$DIFFUSION[d,,],nl,nl)
-        g <- cov2cor(g)^2 * sign(g)
-        g[is.nan(g)] <- 0
-      }
-      sapply(times, function(ti){ 
-        out <-expm(DRIFT *ti) 
-        if(standardise) out <- out * matrix(rep(sqrt((asymDIFFUSIONdiag)),each=nl) / 
-            rep((sqrt(asymDIFFUSIONdiag)),times=nl),nl)
-        if(observational) out <- out %*% g
-        return(matrix(out,ncol(out),ncol(out)))
-      },simplify = 'array')
-    },simplify = 'array'),dim=c(nlatent,nlatent,length(times),nsamples))
+  out <- ctStanDiscreteParsDrift(ctpars,times, observational, standardise)
+  out <- apply(out,c(1,2,3),quantile,probs=quantiles)
     
-    nr=dim(discreteDRIFT)[2]
-    
-    out[[typei]] <- apply(get(type[typei]),c(1,2,3),quantile,probs=quantiles)
-    
-    # out[[typei]] <- plyr::aaply(1:nsamples,1,function(iterx){ #for every iteration
-    #   if(collapseSubjects) subjectvec=1 else subjectvec=1:nsubjects #average over subjects before computing? much faster but answers dif question.
-    #   plyr::aaply(subjectvec,1,function(subjecty){ #for all subjects at once, or 1 subject at a time...
-    #     ctparsxy <- plyr::llply(ctpars, function(obji) { #
-    #       ismatrix = length(dim(obji)) > 3 #check if obji (ctparameter) is a matrix or vector
-    #       ctparsout=array(eval(parse(text=paste0('obji[,',
-    #         if(ismatrix) ',',
-    #         samples[iterx],',',
-    #         ifelse(dim(obji)[ifelse(ismatrix,4,3)] > 1, #if the parameter varies over multiple subjects,
-    #           ifelse(collapseSubjects, '1:nsubjects',  #and we collapse over subjects, return values for all subjects
-    #             'subjecty'), #if we don't collapse over subjects, just return for specified subject
-    #           1),#if the parameter doesn't vary over subjects then just return the only parameter
-    #         ']'))),dim=dim(obji)[-ifelse(ismatrix,3,2)]) #set dims to dims of par object without iterations
-    #       
-    #       if(collapseSubjects) ctparsout <- ctCollapse(ctparsout, #if we need to collapse over multiple subjects
-    #         collapsemargin = ifelse(ismatrix,3,2), #then collapse the subject margin
-    #         collapsefunc = median) #via the median function
-    #       
-    #       return(ctparsout)
-    #     })
-    #     
-    #     
-    #     
-    #     discreteparsxy <- ctDiscretePars(ctparsxy,
-    #       times=times,
-    #       type=type[typei])[[1]]
-    #     
-    #     return(discreteparsxy)
-    #   },.drop=FALSE)
-    # },.drop=FALSE)
-    
-    dimlist<- list(quantiles=paste0('quantile_',quantiles),
-      row=dimnames(out[[typei]])[[2]],
-      col=dimnames(out[[typei]])[[3]],
+    dimnames(out)<- list(quantiles=paste0('quantile_',quantiles),
+      row=latentNames,
+      col=latentNames,
       times=paste0('t',times)
     )
     
-    # out[[typei]] = plyr::aaply(quantiles, 1, function(quantx) {
-    #   ctCollapse(inarray=out[[typei]],collapsemargin=c(1,if(collapseSubjects) 2),collapsefunc=quantile,probs=quantx)
-    # } ,.drop=FALSE)
-    
-    
-    
-    
-    if(!matrixtype) dimlist[[3]]=NULL
-    
-    dimnames(out[[typei]])=dimlist
-    
-    out[[typei]]=aperm(out[[typei]],c(2,3,if(matrixtype) 4,1))
-  }
-  
-  names(out) <- type
-  
-  dimnames(out$discreteDRIFT)$row=latentNames
-  dimnames(out$discreteDRIFT)$col=latentNames
+    out=aperm(out,c(2,3,4,1))
   
   if(plot) {
     
     out <- ctStanDiscreteParsPlot(out,times=times,latentNames=ctstanfitobj$ctstanmodel$latentNames,...)
   } 
   return(out)
+}
+
+
+
+ctStanDiscreteParsDrift<-function(ctpars,times, observational, standardise){
+  nl=dim(ctpars$DRIFT)[3]
+  message('Computing temporal regression coefficients for ', dim(ctpars$DRIFT)[1],' samples, may take a moment...')
+  discreteDRIFT <- array(sapply(1:(dim(ctpars$DRIFT)[1]),function(d){
+    if(observational|standardise){
+      asymDIFFUSIONdiag <- diag(matrix(ctpars$asymDIFFUSION[d,,],nl,nl))
+    asymDIFFUSIONdiag[rl(asymDIFFUSIONdiag <= 0) ] <- 1
+    }
+    DRIFT <- matrix(ctpars$DRIFT[d,,],nl,nl)
+    if(observational) {
+      g <- matrix(ctpars$DIFFUSION[d,,],nl,nl)
+      g <- cov2cor(g)^2 * sign(g)
+      g[is.nan(g)] <- 0
+    }
+    sapply(times, function(ti){ 
+      out <-OpenMx::expm(DRIFT *ti)
+      if(standardise) out <- out * matrix(rep(sqrt((asymDIFFUSIONdiag)),each=nl) / 
+          rep((sqrt(asymDIFFUSIONdiag)),times=nl),nl)
+      if(observational) out <- out %*% g
+      return(matrix(out,ncol(out),ncol(out)))
+    },simplify = 'array')
+  },simplify = 'array'),dim=c(nl,nl,length(times),dim(ctpars$DRIFT)[1]))
 }
 
 #'ctStanDiscreteParsPlot
@@ -303,9 +252,8 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
 #'x,y, and col arguments will be ignored. Steps specifies the number of polygons to overlay to 
 #'create a graduated transparency. Set to 1 for a flat looking plot.
 #'@examples
-#'\donttest{
-#'if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-#'x <- ctStanDiscretePars(ctstantestfit)
+#'if(w32chk()){
+#'x <- ctStanDiscretePars(ctstantestfit())
 #'ctStanDiscreteParsPlot(x, indices='CR')
 #'
 #'#to modify plot:
@@ -325,14 +273,12 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
   legendcontrol=list(x='topright',bg='white'),
   polygonalpha=.1,
   polygoncontrol=list(steps=20)){
-  
-  input <- x[[1]] #ctStanDiscretePars(x,type='discreteDRIFT',times=times,quantiles=quantiles,...)[[1]]
-  
+
   if(is.data.frame(indices)) indices <- as.matrix(indices)
   
-  nlatent=dim(input)[1]
+  nlatent=dim(x)[1]
   
-  if(latentNames[1]=='auto') latentNames=dimnames(x$discreteDRIFT)$row
+  if(latentNames[1]=='auto') latentNames=dimnames(x)$row
   
   if(is.null(plotcontrol$ylab)) plotcontrol$ylab  <- 'Value'
   if(is.null(plotcontrol$xlab)) plotcontrol$xlab  <- 'Time interval'
@@ -365,18 +311,18 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
   if(colvec[1]=='auto') colvec=grDevices::rainbow(nrow(indices),alpha=.8,v=.9)
   
   if(is.null(plotcontrol$ylim)) {
-    plotcontrol$ylim=range(plyr::aaply(input,c(3,4),function(x) 
+    plotcontrol$ylim=range(plyr::aaply(x,c(3,4),function(x) 
       x[indices]),na.rm=TRUE) #range of diagonals
     if(legend) plotcontrol$ylim[2] <- plotcontrol$ylim[2] + sd(plotcontrol$ylim)/3
   }
   
   if(gg){
     parnames<-paste0(latentNames[indices[,1]],'_',latentNames[indices[,2]])
-    y = input
+    y = x
     y = array(y,dim = c(dim(y)[1]^2,dim(y)[c(3,4)]))
     y <- y[matrix(1:dim(y)[1],sqrt(dim(y)[1]),sqrt(dim(y)[1]))[indices],,,drop=FALSE]
     dimn <- list(Index=parnames)
-    dimn <- c(dimn,dimnames(input)[3:4])
+    dimn <- c(dimn,dimnames(x)[3:4])
     names(dimn) <- c('Index','Time interval','Effect')
     dimnames(y) <- dimn
     g <- ctPlotArrayGG(list(x=times,y=aperm(y,c(2,1,3))))
@@ -411,9 +357,9 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
         ci=indices[indexi,2]
         polygonargs<-polygoncontrol
         polygonargs$x=times
-        polygonargs$y=input[ri,ci,,2]
-        polygonargs$ylow=input[ri,ci,,1]
-        polygonargs$yhigh=input[ri,ci,,length(quantiles)]
+        polygonargs$y=x[ri,ci,,2]
+        polygonargs$ylow=x[ri,ci,,1]
+        polygonargs$yhigh=x[ri,ci,,length(quantiles)]
         polygonargs$col=grDevices::adjustcolor(colvec[cc],alpha.f=max(c(.004,polygonalpha/(2*sqrt(polygonargs$steps)))))
         do.call(ctPoly,polygonargs)
       }
@@ -429,7 +375,7 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
         
         plotargs<-plotcontrol
         plotargs$x=times
-        plotargs$y=input[ri,ci,,qi]
+        plotargs$y=x[ri,ci,,qi]
         plotargs$lty=ltyvec[cc]
         plotargs$col=ifelse(qi!= 2,grDevices::adjustcolor(colvec[cc],alpha.f=.5) ,colvec[cc])
         plotargs$lwd=ifelse(qi!= 2,1, lwdvec[cc])

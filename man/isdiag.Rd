@@ -25,7 +25,7 @@ time <- 1749:1924
 datalong <- cbind(id, time, sunspots)
 
 #setup model
-model <- ctModel(type='stanct', n.latent=2, n.manifest=1, 
+model <- ctModel(type='stanct', 
  manifestNames='sunspots', 
  latentNames=c('ss_level', 'ss_velocity'),
   LAMBDA=matrix(c( -1, 'ma1 | log(exp(-param)+1)' ), nrow=1, ncol=2),
@@ -36,8 +36,8 @@ model <- ctModel(type='stanct', n.latent=2, n.manifest=1,
   DIFFUSION=matrix(c(0.0001, 0, 0, "diffusion"), ncol=2, nrow=2))
 
 #fit and plot importance sampling diagnostic
-fit <- ctStanFit(datalong, model, chains=1,
-  optimcontrol=list(isloops=5,finishsamples=500),optimize=TRUE)
+fit <- ctStanFit(datalong, model, 
+  optimcontrol=list(finishsamples=500),nopriors=FALSE)
 isdiag(fit)
 }
 }

@@ -22,9 +22,9 @@ ctStanRawSamples<-function(fit){
 #' @param ... Additional arguments to pass to \code{ctsem:::priorcheckreport}, such as \code{meanlim}, or \code{sdlim}.
 #' @return List containing summary items.
 #' @examples
-#' \donttest{
-#' if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-#' summary(ctstantestfit)
+#' if(w32chk()){
+#'
+#' summary(ctstantestfit())
 #' }
 #' @method summary ctStanFit
 #' @export
@@ -69,29 +69,11 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
   
   #### generate covcor matrices of raw and transformed subject level params
   
-  iter=dim(e$rawpopcorr)[1]
+  iter=dim(e$rawpopcov)[1]
   if(!is.null(iter)){ #then there is some individual variation so continue
-    nindvarying=dim(e$rawpopcorr)[2]
+    nindvarying=dim(e$rawpopcov)[2]
     
     if(nindvarying>1){
-      
-      getMean=function(myarray){
-        out=matrix(NA,nrow=nindvarying,ncol=nindvarying)
-        for(i in 1:nrow(out)){
-          for(j in 1:ncol(out)){
-            out[i,j]<-mean(myarray[i,j,])
-          }}
-        return(out)
-      }
-      
-      getSd=function(myarray){
-        out=matrix(NA,nrow=nindvarying,ncol=nindvarying)
-        for(i in 1:nrow(out)){
-          for(j in 1:ncol(out)){
-            out[i,j]<-sd(myarray[i,j,])
-          }}
-        return(out)
-      }
       
       #raw pop distribution params
       dimrawpopcorr <- dim(e$rawpopcorr)
@@ -100,41 +82,12 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
 
       rawpopcorrout <- suppressWarnings(monitor(rawpopcorr, digits_summary=digits,warmup=0,print = FALSE)[lower.tri(diag(nindvarying)),c(monvars,'n_eff','Rhat'),drop=FALSE])
       if(!'stanfit' %in% class(object$stanfit)) rawpopcorrout <- rawpopcorrout[,-which(colnames(rawpopcorrout) %in% c('n_eff','Rhat')),drop=FALSE]
-      # rawpopcorrout <- ctCollapse(rawpopcorr,1,mean)
-      # rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,sd)[lower.tri(diag(nindvarying)),drop=FALSE])
-      # rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.025))[lower.tri(diag(nindvarying)),drop=FALSE])
-      # rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.5))[lower.tri(diag(nindvarying)),drop=FALSE])
-      # rawpopcorrout <- cbind(rawpopcorrout,ctCollapse(rawpopcorr,1,quantile,probs=c(.975))[lower.tri(diag(nindvarying)),drop=FALSE])
-      # colnames(rawpopcorrout) <- monvars
+
       rownames(rawpopcorrout) <- matrix(paste0('',parnamesiv,'__',rep(parnamesiv,each=length(parnamesiv))),
         length(parnamesiv),length(parnamesiv))[lower.tri(diag(nindvarying)),drop=FALSE]
-      # rawpopcorrout <- round(rawpopcorrout,digits=digits)
       
       rawpopcorrout <- cbind(rawpopcorrout,rawpopcorrout[,'mean'] / rawpopcorrout[,'sd'])
       colnames(rawpopcorrout)[ncol(rawpopcorrout)] <- 'z'
-      
-      # rawpopcorrout <- rawpopcorrout[order(abs(rawpopcorrout[,'z'])),,drop=FALSE]
-      
-      rawpopcorrmean= ctCollapse(e$rawpopcorr,1,mean)
-      rawpopcorrsd= ctCollapse(e$rawpopcorr,1,sd)
-      rawpopcov_mean = ctCollapse(e$rawpopcov,1,mean)
-      rawpopcov_sd=ctCollapse(e$rawpopcov,1,sd)
-      
-      dimnames(rawpopcorrmean)<-list(parnamesiv,parnamesiv)
-      dimnames(rawpopcorrsd)<-list(parnamesiv,parnamesiv)
-      dimnames(rawpopcov_mean)<-list(parnamesiv,parnamesiv)
-      dimnames(rawpopcov_sd)<-list(parnamesiv,parnamesiv)
-      
-      # out=list(note='Posterior means of the raw parameter population distribution correlation matrix:',
-      #   rawpopcorr_mean=round(rawpopcorrmean,digits),
-      #   note='Posterior std dev. of the raw parameter population distribution correlation matrix:',
-      #   rawpopcorr_sd=round(rawpopcorrsd,digits),
-      #   note='Posterior means of the raw parameter population distribution covariance matrix:',
-      #   rawpopcov_mean = round(rawpopcov_mean,digits),
-      #   note='Posterior std dev. of the raw parameter population distribution covariance matrix:',
-      #   rawpopcov_sd=round(rawpopcov_sd,digits)
-      # )
-      # out <-list()
       
       out$rawpopcorr = round(rawpopcorrout,digits)
     }

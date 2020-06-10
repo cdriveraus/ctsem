@@ -25,8 +25,7 @@
 #' @method plot ctStanFit
 #' @examples
 #' \donttest{
-#' if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-#' plot(ctstantestfit,types=c('regression','kalman','priorcheck'), wait=FALSE)
+#' plot(ctstantestfit(),types=c('regression','kalman','priorcheck'), wait=FALSE)
 #' }
 #' @export
 plot.ctStanFit <- function(x, types='all',wait=TRUE,...){

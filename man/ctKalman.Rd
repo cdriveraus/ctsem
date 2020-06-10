@@ -57,14 +57,14 @@ with covariances, for specific subjects from data fit with \code{\link{ctStanFit
 based on medians of parameter distribution.
 }
 \examples{
-\donttest{
-if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
+if(w32chk()){
 
 #Basic
-ctKalman(ctstantestfit, timerange=c(0,60), plot=TRUE)
+ctKalman(ctstantestfit(), timerange=c(0,60), plot=TRUE)
 
+\donttest{
 #Multiple subjects, y and yprior, showing plot arguments
-plot1<-ctKalman(ctstantestfit, timerange=c(0,60), timestep=.1, plot=TRUE,
+plot1<-ctKalman(ctstantestfit(), timerange=c(0,60), timestep=.1, plot=TRUE,
   subjects=2:3, 
   kalmanvec=c('y','yprior'),
   errorvec=c(NA,'ypriorcov')) #'auto' would also have achieved this
@@ -72,4 +72,5 @@ plot1<-ctKalman(ctstantestfit, timerange=c(0,60), timestep=.1, plot=TRUE,
  #modify plot as per normal with ggplot
  print(plot1+ggplot2::coord_cartesian(xlim=c(0,10)))
   }
+ }
 }

@@ -12,7 +12,7 @@ ctStanFit(
   intoverstates = TRUE,
   binomial = FALSE,
   fit = TRUE,
-  intoverpop = TRUE,
+  intoverpop = "auto",
   stationary = FALSE,
   plot = FALSE,
   derrind = "all",
@@ -54,7 +54,8 @@ This now sets \code{intoverstates = FALSE} and the \code{manifesttype} of every 
 
 \item{fit}{If TRUE, fit specified model using Stan, if FALSE, return stan model object without fitting.}
 
-\item{intoverpop}{if TRUE, integrates over population distribution of parameters rather than full sampling.
+\item{intoverpop}{if 'auto', set to TRUE if optimizing and FALSE if using hmc. 
+if TRUE, integrates over population distribution of parameters rather than full sampling.
 Allows for optimization of non-linearities and random effects.}
 
 \item{stationary}{Logical. If TRUE, T0VAR and T0MEANS input matrices are ignored, 
@@ -124,33 +125,28 @@ list(adapt_delta = .8, adapt_window=2, max_treedepth=10, adapt_init_buffer=2, st
 \item{...}{additional arguments to pass to \code{\link[rstan]{stan}} function.}
 }
 \description{
-Fits a ctsem model specified via \code{\link{ctModel}} with type either 'stanct' or 'standt', using Bayseian inference software
-Stan.
+Fits a ctsem model specified via \code{\link{ctModel}} with type either 'stanct' or 'standt'.
 }
 \examples{
 \donttest{
-#test data with 2 manifest indicators measuring 1 latent process each, 
-# 1 time dependent predictor, 3 time independent predictors
-head(ctstantestdat) 
 
-#generate a ctStanModel relying on defaults
+#generate a ctStanModel relying heavily on defaults
 model<-ctModel(type='stanct',
   latentNames=c('eta1','eta2'),
   manifestNames=c('Y1','Y2'),
+  MANIFESTVAR=diag(.1,2),
   TDpredNames='TD1', 
   TIpredNames=c('TI1','TI2','TI3'),
-  LAMBDA=diag(2))
-
+  LAMBDA=diag(2)) 
 
 fit<-ctStanFit(ctstantestdat, model,nopriors=FALSE)
 
-#output functions
 summary(fit) 
 
 plot(fit,wait=FALSE)
 
-}
-\donttest{
+#### extended examples
+
 library(ctsem)
 set.seed(3)
 
@@ -173,7 +169,6 @@ for(i in 1:nsubjects){
     LAMBDA = matrix(c(1,0,0,0, 0,1,.8,1.3),nrow=nmanifest,ncol=nlatent),
     DRIFT=matrix(c(-.3, .2, 0, -.5),nlatent,nlatent),
     TDPREDEFFECT=matrix(c(tdpredeffect[i],0),nrow=nlatent),
-    TDPREDMEANS=matrix(c(rep(0,Tpoints-10),1,rep(0,9)),ncol=1),
     DIFFUSION = matrix(c(1, 0, 0, .5),2,2),
     CINT = matrix(c(cint1[i],cint2[i]),ncol=1),
     T0VAR=diag(2,nlatent,nlatent),
@@ -181,8 +176,8 @@ for(i in 1:nsubjects){
 
   #generate data
   newdat <- ctGenerate(ctmodelobj = gm,n.subjects = 1,burnin = 2,
-    dtmat<-rbind(c(rep(.5,8),3,rep(.5,Tpoints-9))),
-    wide = FALSE)
+    TDPREDMEANS=matrix(c(rep(0,Tpoints-10),1,rep(0,9)),ncol=1),
+    dtmat<-rbind(c(rep(.5,8),3,rep(.5,Tpoints-9))))
   newdat[,'id'] <- i #set id for each subject
   newdat <- cbind(newdat,age[i]) #include time independent predictor
   if(i ==1) {

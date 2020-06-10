@@ -34,8 +34,7 @@ list
 K fold cross validation for ctStanFit objects
 }
 \examples{
-\donttest{#' 
-if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-ctLOO(ctstantestfit)
+\donttest{ 
+ctLOO(ctstantestfit())
 }
 }

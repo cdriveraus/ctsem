@@ -7,9 +7,9 @@
 #' @return Array of posterior samples.
 #' @aliases extract
 #' @examples
-#' \donttest{
-#' if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-#' e = ctExtract(ctstantestfit)
+#' if(w32chk()){
+#'
+#' e = ctExtract(ctstantestfit())
 #' }
 #' @export
 ctExtract <- function(object,subjectMatrices=FALSE,cores=2,...){

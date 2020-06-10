@@ -11,10 +11,10 @@
 #' @export
 #'
 #' @examples
-#' \donttest{
-#' if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-#' ctStanParMatrices(ctstantestfit,
-#'   rnorm(length(ctstantestfit$stanfit$rawest),0,.1))
+#' if(w32chk()){
+#'
+#' ctStanParMatrices(ctstantestfit(),
+#'   rnorm(length(ctstantestfit()$stanfit$rawest),0,.1))
 #' }
 ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA){
   
@@ -88,7 +88,7 @@ ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA){
     out$asymDIFFUSIONcor[is.na(out$asymDIFFUSIONcor)] <- 0
   }
 
-  if(fit$ctstanmodel$continuoustime) out$dtDRIFT=expm(out$DRIFT * timeinterval)
+  if(fit$ctstanmodel$continuoustime) out$dtDRIFT=as.matrix(Matrix::expm(out$DRIFT * timeinterval))
   if('dtDIFFUSION' %in% whichmatrices) out$dtDIFFUSION = out$asymDIFFUSION - (out$dtDRIFT %*% out$asymDIFFUSION %*% t(out$dtDRIFT ))
   if('dtDIFFUSIONcor' %in% whichmatrices) out$dtDIFFUSIONcor = cov2cor(out$dtDIFFUSION)
   if('dtCINT' %in% whichmatrices) out$dtCINT = (solve(out$DRIFT, out$dtDRIFT - diag(nrow(out$DRIFT))) %*% (out$CINT))

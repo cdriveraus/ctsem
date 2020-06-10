@@ -34,7 +34,7 @@
 #' @export
 
 ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat=NA,
-  wide=TRUE){
+  wide=FALSE){
   
   
   ###read in model

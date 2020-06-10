@@ -19,7 +19,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       gm=ctModel(LAMBDA=diag(2), Tpoints=Tpoints, DRIFT=diag(-.2,2),T0MEANS = matrix(c(3,2)), 
         DIFFUSION=diag(.5,2),
         T0VAR=diag(2))
-      d=suppressMessages(ctGenerate(gm,n.subjects = 1,burnin = 3,wide = FALSE,dtmean = dt))
+      d=suppressMessages(ctGenerate(gm,n.subjects = 1,burnin = 3,dtmean = dt))
       d[,'id'] <- subi
       if(subi==1) dat=d else dat=rbind(dat,d)
     }
@@ -84,7 +84,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       }}
     
     
-    ll=unlist(lapply(s, function(argi) lapply(argi, function(m) m$logprob)))
+    ll=unlist(lapply(s, function(argi) lapply(argi, function(m) m$loglik)))
     
     for(dimi in 2:length(ll)){
       expect_equivalent(ll[dimi],ll[dimi-1],tol=1e-3)

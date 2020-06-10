@@ -1,4 +1,4 @@
-listOfMatrices <- function(df){
+listOfMatrices <- function(df,matnames=NA){
   mats <- unique(df$matrix)
   mlist <- list()
   for(mi in mats){
@@ -11,6 +11,12 @@ listOfMatrices <- function(df){
           mlist[[mi]][ri,ci] <- df$value[df$matrix %in% mi & df$row == ri & df$col==ci]
         }
       }
+    }
+  }
+  
+  if(!is.na(matnames[1])){
+    for(mi in matnames){
+      mlist[[mi]] <- matrix(NA,0,0)
     }
   }
   return(mlist)

@@ -11,9 +11,8 @@
 #' @export
 #'
 #' @examples
-#' \donttest{#' 
-#' if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-#' ctLOO(ctstantestfit)
+#' \donttest{ 
+#' ctLOO(ctstantestfit())
 #' }
 ctLOO <- function(fit,folds=10,cores=2,parallelFolds=TRUE, 
   subjectwise=FALSE,keepfirstobs=TRUE){

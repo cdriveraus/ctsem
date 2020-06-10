@@ -7,7 +7,7 @@
 ctCheckFit(fit, niter = 500, probs = c(0.025, 0.5, 0.975))
 }
 \arguments{
-\item{fit}{ctFit or ctStanFit object.}
+\item{fit}{ctFit object.}
 
 \item{niter}{number of data generation iterations to use to calculate quantiles.}
 
@@ -27,14 +27,8 @@ Check absolute fit of ctFit or ctStanFit object.
 for plotting help see \code{\link{plot.ctsemFitMeasure}}
 }
 \examples{
-\donttest{
-data(ctExample1)
-traitmodel <- ctModel(n.manifest=2, n.latent=2, Tpoints=6, LAMBDA=diag(2), 
-  manifestNames=c('LeisureTime', 'Happiness'), 
-  latentNames=c('LeisureTime', 'Happiness'), TRAITVAR="auto")
-traitfit <- ctFit(dat=ctExample1, ctmodelobj=traitmodel)
+if(w32chk()){
 
-check <- ctCheckFit(traitfit,niter=5)
-plot(check, wait=FALSE)
+scheck <- ctCheckFit(ctstantestfit(),niter=50)
 }
 }

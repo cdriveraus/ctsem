@@ -2,6 +2,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
   # Sys.setenv(NOT_CRAN='true')
 
   set.seed(1)
+  library(ctsem)
   library(testthat)
   
   context("dtVct_lVnl")
@@ -22,7 +23,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
       gm=ctModel(LAMBDA=diag(1), Tpoints=Tpoints, DRIFT=matrix(-1),T0MEANS = matrix(4), 
         CINT=matrix(par[subi]),DIFFUSION=matrix(2),
         T0VAR=matrix(2), MANIFESTVAR=matrix(.8))
-      d=suppressMessages(ctGenerate(gm,n.subjects = 1,burnin = 3,wide = FALSE,dtmean = dt))
+      d=suppressMessages(ctGenerate(gm,n.subjects = 1,burnin = 3,dtmean = dt))
       if(subi==1) dat=cbind(subi,d) else dat=rbind(dat,cbind(subi,d))
     }
     
@@ -42,7 +43,6 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
     
     dm$pars$indvarying <- FALSE
     dm$pars$indvarying[dm$pars$matrix %in% c('CINT','T0MEANS')] <- TRUE
-    
  
     for(m in c('cm','dm')){
       argslist <- list(
@@ -59,8 +59,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
         # hmc=list(datalong = dat,ctstanmodel = get(m),optimize=F,iter=500,chains=3, nlcontrol=list(),
           # verbose=0,optimcontrol=list(plot=F,estonly=F,stochastic=F),savescores = F,nopriors=F,control=list(max_treedepth=7))
       )
-      
-      
+
       for(argi in names(argslist)){
         f = do.call(ctStanFit,argslist[[argi]])
         if(is.null(s[[argi]])) s[[argi]] = list()
@@ -72,7 +71,6 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
         ctModelLatex(f)
         p=ctStanKalman(f,collapsefunc = mean,subjectpars = TRUE)
         }
-        
       }
     }
     
@@ -89,7 +87,6 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
     )
     dtpars=unlist(dtpars,recursive = FALSE)
     dtpars=lapply(dtpars,function(x) x[order(rownames(x)),])
-    
     for(ri in 1:nrow(dtpars$ml.ct)){
       for(ci in 1:ncol(dtpars$ml.ct)){
         par=sapply(dtpars, function(y) y[ri,ci])
@@ -99,13 +96,12 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
       }}
     
     
-    ll=unlist(lapply(s, function(argi) lapply(argi, function(m) m$logprob)))
+    ll=unlist(lapply(s, function(argi) lapply(argi, function(m) m$loglik)))
     
     for(dimi in 2:length(ll)){
       expect_equivalent(ll[dimi],ll[dimi-1],tol=1e-3)
     }
-    
-    
+
   }) #end cint heterogeneity
     
     
@@ -125,7 +121,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
         gm=ctModel(LAMBDA=diag(1), Tpoints=Tpoints, DRIFT=matrix(-.5),T0MEANS = matrix(4), 
           CINT=matrix(par[subi]),DIFFUSION=matrix(2),
           T0VAR=matrix(2), MANIFESTVAR=matrix(2))
-        d=suppressMessages(ctGenerate(gm,n.subjects = 1,burnin = 10,wide = FALSE,dtmean = dt))
+        d=suppressMessages(ctGenerate(gm,n.subjects = 1,burnin = 10,dtmean = dt))
         if(subi==1) dat=cbind(subi,d) else dat=rbind(dat,cbind(subi,d))
       }
       
@@ -179,7 +175,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
         }}
       
       
-      ll=unlist(lapply(s, function(argi) lapply(argi, function(m) m$logprob)))
+      ll=unlist(lapply(s, function(argi) lapply(argi, function(m) m$loglik)))
       
       for(dimi in 2:length(ll)){
         expect_equivalent(ll[dimi],ll[dimi-1],tol=1e-3)

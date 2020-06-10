@@ -8,7 +8,7 @@
   x,
   rows = "all",
   wait = FALSE,
-  nsamples = 1000000,
+  nsamples = 1e+06,
   rawpopsd = "marginalise",
   inddifdevs = c(-1, 1),
   plot = TRUE,
@@ -46,8 +46,7 @@ so the red and blue distributions do not represent any specific subject level pr
 and shape of possible subject level priors at the specific points of the population mean prior.
 }
 \examples{
-model <- ctModel(type='omx', Tpoints=50,
-n.latent=2, n.manifest=1, 
+model <- ctModel(type='stanct',
 manifestNames='sunspots', 
 latentNames=c('ss_level', 'ss_velocity'),
 LAMBDA=matrix(c( 1, 'ma1' ), nrow=1, ncol=2),
@@ -58,7 +57,6 @@ CINT=matrix(c(0, 0), nrow=2, ncol=1),
 DIFFUSION=matrix(c(
   0, 0,
   0, "diffusion"), ncol=2, nrow=2, byrow=TRUE))
-
-stanmodel=ctStanModel(model)
-plot(stanmodel,rows=8)
+  
+plot(model,rows=8)
 }

@@ -55,17 +55,17 @@ A ggplot2 object. Side effect -- Generates plots.
 Plots Kalman filter output from ctKalman.
 }
 \examples{
-\donttest{
-if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
+if(w32chk()){
+
 
 ### Get output from ctKalman
-x<-ctKalman(ctstantestfit,subjects=2,timestep=.01)
+x<-ctKalman(ctstantestfit(),subjects=2,timestep=.01)
 
 ### Plot with plot.ctKalmanDF
 plot(x, subjects=2)
 
 ###Single step procedure:
-ctKalman(ctstantestfit,subjects=2,
+ctKalman(ctstantestfit(),subjects=2,
   kalmanvec=c('y','yprior'),
   elementNames=c('Y1','Y2'), 
   plot=TRUE,timestep=.01)

@@ -12,9 +12,13 @@
 ^vignettes/*.pdf
 ^vignettes/cache
 ^vignettes/figure
-^vignettes/^.bbl
+.bbl
+^vignettes/*.bcf
+^vignettes/*.xml
+^vignettes/*.bib
+^vignettes/*.log
+^vignettes/*.gz
 ^vignettes/jss.cls
-^vignettes/hierarchicalmanual.*
 ^vignettes/Sweave.sty
 ^vignettes/^.log
 ^vignettes/Sweave.sty

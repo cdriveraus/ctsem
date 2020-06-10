@@ -38,8 +38,8 @@ List containing summary items.
 Summarise a ctStanFit object that was fit using \code{\link{ctStanFit}}.
 }
 \examples{
-\donttest{
-if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-summary(ctstantestfit)
+if(w32chk()){
+
+summary(ctstantestfit())
 }
 }

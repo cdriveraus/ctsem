@@ -9,9 +9,9 @@
 #' @export
 #'
 #' @examples
-#' \donttest{
-#' if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-#' ctStanTIpredMarginal(ctstantestfit,pars=c('CINT'),tipred=c('TI1'))
+#' if(w32chk()){
+#'
+#' ctStanTIpredMarginal(ctstantestfit(),pars=c('CINT'),tipred=c('TI1'))
 #' }
 ctStanTIpredMarginal<-function(fit,tipred,pars, plot=TRUE){
   e<-ctExtract(fit,subjectMatrices = TRUE)

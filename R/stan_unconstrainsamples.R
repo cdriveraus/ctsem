@@ -8,7 +8,7 @@
 #' @export
 #'
 #' @examples
-#' \donttest{
+#' if(w32chk()){
 #' #get data
 #' sunspots<-sunspot.year
 #' sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]

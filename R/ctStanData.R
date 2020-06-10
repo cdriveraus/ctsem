@@ -10,19 +10,25 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     #create random effects indices for each matrix
 
     mats <- ctStanMatricesList()
+    subindices <- lapply(mats$base,function(x) 0)
     for(mati in names(mats$base)){
       if( (!ctm$intoverpop && any(ctm$pars$indvarying[ctm$pars$matrix==mati])) || 
           (ctm$n.TIpred >0 && (
               any(unlist(ctm$pars[ctm$pars$matrix==mati,paste0(ctm$TIpredNames,'_effect')])) || 
               any(ctm$pars$matrix==mati & grepl('[',ctm$pars$param,fixed=TRUE))  )
         )) subindex <- 1 else subindex <- 0
-          assign(paste0(mati,'subindex'), subindex)
+          subindices[[mati]] <- subindex
     }
-    if(ctm$stationary || nrow(ctm$t0varstationary) > 0) T0VARsubindex <- max(c(T0VARsubindex,DRIFTsubindex,DIFFUSIONsubindex))
-    if(ctm$stationary || nrow(ctm$t0meansstationary) > 0) T0MEANSsubindex <- max(c(T0MEANSsubindex,DRIFTsubindex,CINTsubindex))
-    asymCINTsubindex <- max(c(CINTsubindex,DRIFTsubindex))
-    asymDIFFUSIONsubindex <- max(c(DIFFUSIONsubindex,DRIFTsubindex))
-    DIFFUSIONcovsubindex <- max(c(DIFFUSIONsubindex))
+    
+    if(ctm$stationary || nrow(ctm$t0varstationary) > 0) subindices$T0VAR  <- 
+      max(c(subindices$T0VAR,subindices$DRIFT,subindices$DIFFUSION))
+    
+    if(ctm$stationary || nrow(ctm$t0meansstationary) > 0) subindices$T0MEANS <- 
+      max(c(subindices$T0MEANS,subindices$DRIFT,subindices$CINT))
+    
+    # subindices$asymCINT <- max(c(subindices$CINT,subindices$DRIFT))
+    # subindices$asymDIFFUSION <- max(c(subindices$DIFFUSION,subindices$DRIFT))
+    # subindices$DIFFUSIONcov <- max(c(subindices$DIFFUSION))
     
     #simply exponential?
     driftdiagonly <- ifelse(all(!is.na(ctm$pars$value[ctm$pars$matrix == 'DRIFT' & ctm$pars$row != ctm$pars$col]) &
@@ -35,7 +41,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
       variables: ', paste0(c(ctm$manifestNames,ctm$TDpredNames,ctm$TIpredNames)[
         which(!c(ctm$manifestNames,ctm$TDpredNames,ctm$TIpredNames) %in% colnames(datalong))], ', '),' not in data'))
     
-    if (!(ctm$subjectIDname %in% colnames(datalong))) stop(paste('id column', omxQuotes(ctm$subjectIDname), "not found in data"))
+    if (!(ctm$subjectIDname %in% colnames(datalong))) stop(paste('id column', (ctm$subjectIDname), "not found in data"))
     
     
     if(ctm$nopriors==FALSE){
@@ -43,15 +49,15 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
         message('Uncentered TI predictors noted -- interpretability may be hindered and default priors may not be appropriate')
       }
       
-      #scale check
-      if(naf(any(abs(colMeans(datalong[,c(ctm$manifestNames,ctm$TDpredNames),drop=FALSE],na.rm=TRUE)) > 5))){
-        message('Uncentered data noted -- default priors *may* not be appropriate')
-      }
-      
-      
-      if(naf(any(abs(apply(datalong[,c(ctm$manifestNames,ctm$TDpredNames,ctm$TIpredNames),drop=FALSE],2,sd,na.rm=TRUE)) > 3))){
-        message('Unscaled data noted -- default priors may not be appropriate')
-      }
+      # #scale check
+      # if(naf(any(abs(colMeans(datalong[,c(ctm$manifestNames,ctm$TDpredNames),drop=FALSE],na.rm=TRUE)) > 5))){
+      #   message('Uncentered data noted -- default priors *may* not be appropriate')
+      # }
+      # 
+      # 
+      # if(naf(any(abs(apply(datalong[,c(ctm$manifestNames,ctm$TDpredNames,ctm$TIpredNames),drop=FALSE],2,sd,na.rm=TRUE)) > 3))){
+      #   message('Unscaled data noted -- default priors may not be appropriate')
+      # }
     }
     
 
@@ -90,13 +96,13 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     # if(ctm$nlcontrol$nldynamics==TRUE && !ctm$intoverstates) stop('intoverstates must be TRUE for nonlinear dynamics')
     
     if(nlmeasurement=='auto') nlmeasurement <- FALSE
-    if(nlmeasurement) message('Using nonlinear Kalman filter for measurement update');
-    if(!nlmeasurement) message('Using linear Kalman filter for measurement update');
+    # if(nlmeasurement) message('Using nonlinear Kalman filter for measurement update');
+    # if(!nlmeasurement) message('Using linear Kalman filter for measurement update');
     
     
     if(ctm$nlcontrol$nldynamics == 'auto') ctm$nlcontrol$nldynamics <- FALSE
-    if(ctm$nlcontrol$nldynamics) message('Using nonlinear Kalman filter for dynamics')
-    if(!ctm$nlcontrol$nldynamics) message('Using linear Kalman filter for dynamics')
+    # if(ctm$nlcontrol$nldynamics) message('Using nonlinear Kalman filter for dynamics')
+    # if(!ctm$nlcontrol$nldynamics) message('Using linear Kalman filter for dynamics')
     
     
     if(ctm$intoverstates==FALSE || all(derrind=='all') ) derrind = 1:ctm$n.latent
@@ -300,7 +306,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   for(i in 2:nrow(datalong)){
     T0check[i]<- ifelse(datalong[i,ctm$subjectIDname] != datalong[i-1,ctm$subjectIDname], 1, 0)
   }
-  if (!(ctm$timeName %in% colnames(datalong))) stop(paste('time column', omxQuotes(ctm$timeName), "not found in data"))
+  if (!(ctm$timeName %in% colnames(datalong))) stop(paste('time column', (ctm$timeName), "not found in data"))
   if(any(is.na(datalong[,ctm$timeName]))) stop('Missings in time column!')
 
   oldsubi<-datalong[1,ctm$subjectIDname]-1
@@ -323,7 +329,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     oldsubi<-subi
   }
   
-  if(mean(dT) > 3) message('Average time interval > 3 -- in typical settings this can be too large, consider time scaling...')
+  # if(mean(dT) > 3) message('Average time interval > 3 -- in typical settings this can be too large, consider time scaling...')
   
 
   
@@ -332,13 +338,14 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     
     
     #add subject variability indices to data
-    for(mati in c(names(mats$base),'asymCINT','asymDIFFUSION','DIFFUSIONcov')){
-      sname <- paste0(mati,'subindex')
-      standata[[sname]] <- as.integer((get(sname)))
-    }
+    # for(mati in c(names(mats$base),'asymCINT','asymDIFFUSION','DIFFUSIONcov')){
+    #   sname <- paste0(mati,'subindex')
+    #   standata[[sname]] <- as.integer((get(sname)))
+    # }
+  standata$subindices <- as.integer(unlist(subindices))
     
     #state dependence
-  statedep <- rep(0L,max(ctm$modelmats$matsetup$matrix))
+  statedep <- rep(0L,10)
   lhscalcs <- sapply(unique(unlist(ctm$modelmats$calcs)),function(x) gsub('=.*','',x))
   for(i in 1:length(statedep)){
     matname <- try(names(ctStanMatricesList()$all[ctStanMatricesList()$all %in% i]),silent=TRUE)
@@ -363,7 +370,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     # ) multiplicativenoise = 1L
     
     standata$statedep <- statedep
-    standata$nstatedep <- as.integer(length(statedep))
+    # standata$nstatedep <- as.integer(length(statedep))
     # standata$multiplicativenoise <- multiplicativenoise
     standata$choleskymats<- ifelse(ctm$covmattransform=='unconstrainedcorr',0L,1L)
     if(!ctm$covmattransform %in% c('unconstrainedcorr','cholesky')) stop('covtransform must be either "unconstrainedcorr" or "cholesky"')

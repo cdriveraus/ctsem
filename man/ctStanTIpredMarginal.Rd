@@ -22,8 +22,8 @@ If \code{plot=TRUE}, nothing, otherwise an array that can be used with ctPlotArr
 Plot marginal relationships between covariates and parameters for a ctStanFit object.
 }
 \examples{
-\donttest{
-if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-ctStanTIpredMarginal(ctstantestfit,pars=c('CINT'),tipred=c('TI1'))
+if(w32chk()){
+
+ctStanTIpredMarginal(ctstantestfit(),pars=c('CINT'),tipred=c('TI1'))
 }
 }

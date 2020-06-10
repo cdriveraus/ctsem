@@ -36,11 +36,6 @@ any columns specified by TDpredNames or TIpredNames have zeroes rather than NA's
 inserted (because some estimation routines do not tolerate NA's in covariates).
 }
 \examples{
-long <- ctWideToLong(datawide=ctExample2,Tpoints=8,n.manifest=2,n.TDpred=1,
- manifestNames=c('LeisureTime','Happiness'),
- TDpredNames=c('MoneyInt'))
-
-long <- ctDeintervalise(long)
-
-long <- ctDiscretiseData(dlong=long, timestep = 1.1,TDpredNames=c('MoneyInt'))
+long <- ctDiscretiseData(dlong=ctstantestdat, timestep = .1,
+TDpredNames=c('TD1'),TIpredNames=c('TI1','TI2','TI3'))
 }

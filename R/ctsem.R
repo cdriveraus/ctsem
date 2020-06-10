@@ -26,9 +26,11 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
   'plot', 'points','T0TRAITEFFECT',
   'T0VARsubindex','DRIFTsubindex','DIFFUSIONsubindex','CINTsubindex'))
 
-`:=` = function(...) NULL
-`.` = function(...) NULL
+if(1==99){
+  `:=` = NULL
+`.` =NULL
 .N = id = grp = NULL # due to NSE notes in R CMD check
+}
 
 
 #' ctsem
@@ -49,7 +51,9 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
 #'  
 #' @docType package
 #' @name ctsem
-#' @import grDevices methods stats rstan OpenMx graphics Rcpp data.table ggplot2
+#' @import grDevices methods stats graphics data.table ggplot2 OpenMx
+#' @import Rcpp
+#' @importFrom rstan constrain_pars sampling unconstrain_pars stan_model log_prob monitor get_num_upars stanc get_sampler_params As.mcmc.list monitor
 #' @importFrom plyr aaply alply round_any
 #' @importFrom utils relist as.relistable tail capture.output
 #' @importFrom Deriv Simplify 
@@ -68,7 +72,7 @@ NULL
 
 .onAttach <- function(libname, pkgname) {
   # to show a startup message
-  packageStartupMessage("ctsem also changes in time, for an up to date manual run function ctDocs(), for citation info see citation('ctsem')")
+  packageStartupMessage("ctsem also changes in time, for current manual run ctDocs(), for blog see https://cdriver.netlify.app/, for citation info run citation('ctsem'), for older OpenMx functionality get the ctsemOMX package")
 }
 
 #' Get documentation pdf for ctsem
@@ -77,7 +81,7 @@ NULL
 #' @export
 #'
 #' @examples
-#' \donttest{
+#' if(w32chk()){
 #' ctDocs()
 #' }
 ctDocs <- function(){

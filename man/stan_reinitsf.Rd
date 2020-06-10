@@ -20,8 +20,8 @@ stanfit object
 Quickly initialise stanfit object from model and data
 }
 \examples{
-\donttest{
-if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-sf <- stan_reinitsf(ctstantestfit$stanmodel,ctstantestfit$standata)
+if(w32chk()){
+
+sf <- stan_reinitsf(ctstantestfit()$stanmodel,ctstantestfit()$standata)
 }
 }

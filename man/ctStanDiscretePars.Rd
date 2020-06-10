@@ -48,14 +48,14 @@ Calculate model implied regressions for a sequence of time intervals based on a 
 from ctStanFit, for specified subjects.
 }
 \examples{
-\donttest{
-if (!exists("ctstantestfit")) ctstantestfit <- ctstantestfitgen()
-ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
+if(w32chk()){
+
+ctStanDiscretePars(ctstantestfit(),times=seq(.5,4,.1), 
  plot=TRUE,indices='all')
  
 #modify plot
 require(ggplot2)
-g=ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
+g=ctStanDiscretePars(ctstantestfit(),times=seq(.5,4,.1), 
  plot=TRUE,indices='CR')
 g= g+ labs(title='Cross effects')
 print(g)

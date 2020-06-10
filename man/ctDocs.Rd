@@ -13,7 +13,7 @@ Nothing. Opens a pdf.
 Get documentation pdf for ctsem
 }
 \examples{
-\donttest{
+if(w32chk()){
 ctDocs()
 }
 }

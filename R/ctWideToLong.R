@@ -12,18 +12,24 @@
 #' Names must account for *all* the columns in the data - i.e. do not leave certain variables out
 #' just because you do not need them.
 #' @examples 
-#'  #First load the example ctsem wide format data with absolute times
-#'  data('datastructure')
-#'  datastructure #contains two time intervals (dTx), therefore 3 time points.
+#' #create wide data
+#' wideexample <- ctLongToWide(datalong = ctstantestdat, id = "id", 
+#' time = "time", manifestNames = c("Y1", "Y2"), 
+#' TDpredNames = "TD1", TIpredNames = c("TI1", "TI2","TI3"))
+#' 
+#' wide <- ctIntervalise(datawide = wideexample, Tpoints = 10, n.manifest = 2, 
+#' n.TDpred = 1, n.TIpred = 3, manifestNames = c("Y1", "Y2"), 
+#' TDpredNames = "TD1", TIpredNames = c("TI1", "TI2","TI3") )
+#' 
 #'  #Then convert to long format
-#'  longexample <- ctWideToLong(datawide = datastructure, Tpoints=3, 
-#'  n.manifest=3, manifestNames = c("Y1", "Y2", "Y3"),
+#'  longexample <- ctWideToLong(datawide = wideexample, Tpoints=10, 
+#'  n.manifest=2, manifestNames = c("Y1", "Y2"),
 #'  n.TDpred=1, TDpredNames = "TD1", 
-#'  n.TIpred=2, TIpredNames = c("TI1", "TI2"))
+#'  n.TIpred=3, TIpredNames = c("TI1", "TI2","TI3"))
 #'
 #'  #Then convert the time intervals to absolute time
 #'  long <- ctDeintervalise(datalong = longexample, id='id', dT='dT')
-#'  long
+#'  head(long,22)
 #'
 #' 
 #' @export
