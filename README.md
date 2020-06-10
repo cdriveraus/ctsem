@@ -53,11 +53,12 @@ Ensure recent version of R and Rtools is installed. If the
 installctsem.R code has never been run before, be sure to run that (see
 above).
 
-Make sure these lines exist in home/.R/makevars.win :
+Place this line in \~/.R/makevars.win , and if there are other lines,
+delete them:
 
-    CXX14FLAGS=-O3 -mtune=native
-    CXX11FLAGS=-O3 -mtune=native
-    CXX14 = $(BINPREF)g++ -m$(WIN) -std=c++1y
+    CXX14FLAGS += -mtune=native -march=native -Wno-ignored-attributes -Wno-deprecated-declarations
+
+see  for details
 
 If makevars does not exist, re-run the install code above.
 
@@ -69,7 +70,7 @@ install.packages('devtools')
 ```
 
 and include the following in your .Rprofile, replacing c:/Rtools with
-the appropriate path – sometimes Rbuildtools/3.5/ .
+the appropriate path – sometimes Rbuildtools/4.0/ .
 
 ``` r
 library(devtools)
