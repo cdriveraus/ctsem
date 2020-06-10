@@ -471,7 +471,11 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         ctm$pars[[paste0(tip,'_effect')]] <- TRUE
       }
     }
-      
+
+    if(optimize && nopriors) message("Maximum likelihood estimation requested")
+    if(optimize && !nopriors && (is.null(optimcontrol$is)  || optimcontrol$is %in% FALSE)) message("Maximum a posteriori estimation requested")
+    if(optimize && !nopriors && (!is.null(optimcontrol$is)  && optimcontrol$is %in% TRUE)) message("Bayesian estimation via optimization and importance sampling requested")
+    if(!optimize && !nopriors) message("Bayesian estimation via Stan's NUTS sampler requested")
 
     
     ###stationarity
@@ -522,7 +526,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       message('HMC sampling requested, priors required so disabling nopriors argument')
       nopriors <- FALSE
     }
-    if(optimize && !intoverstates) stop('intoverstates=TRUE required for optimization!')
+    if(optimize && !intoverstates) warning('intoverstates=TRUE required for sensible optimization! Proceed onwards to weird output at own risk!')
     
     if(intoverpop == 'auto')  intoverpop <- ifelse(optimize,TRUE,FALSE)
     

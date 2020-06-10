@@ -1139,6 +1139,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
               etacov = quad_form(etacov, sJAx\');
               etacov[ derrind, derrind ] += tcrossprod(sDIFFUSION[ derrind, derrind ]); 
             }
+            discreteDIFFUSION=sDIFFUSIONcov;
             discreteDRIFT=append_row(append_col(sDRIFT[1:nlatent, 1:nlatent],sCINT),nlplusonezerovec\');
             discreteDRIFT[nlatent+1,nlatent+1] = 1;
             state[1:nlatent] = (discreteDRIFT * append_row(state[1:nlatent],1.0))[1:nlatent];

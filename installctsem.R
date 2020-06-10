@@ -25,6 +25,7 @@ require(pkgbuild)
 try(pkgbuild::check_build_tools())
 
 #create / update makevars if needed
+if(.Platform$OS.type == "windows"){
 cat('Do you already have a MAKEVARS file configured for rstan usage? If unsure, type N')
 mv <- readline('Y / N ?')
 while(!mv %in% c('Y','N','y','n')) {
@@ -36,14 +37,12 @@ if(mv == 'N' || mv =='n'){ #create makevars
   if (!file.exists(dotR)) dir.create(dotR)
   M <- file.path(dotR, ifelse(.Platform$OS.type == "windows", "Makevars.win", "Makevars"))
   if (!file.exists(M)) file.create(M)
-  cat("\nCXX14FLAGS=-O1 -mtune=native -march=native",
+  cat("\nCXX14FLAGS += -mtune=native -march=native -Wno-ignored-attributes -Wno-deprecated-declarations",
     if( grepl("^darwin", R.version$os)) "CXX14FLAGS += -arch x86_64 -ftemplate-depth-256" else
-      if (.Platform$OS.type == "windows") ifelse(as.numeric(version$major =='4'),
-      "CXX11FLAGS=-O1 -mtune=native -march=native",
-        "CXX11FLAGS=-O1 -mtune=native -march=native
-CXX14 = $(BINPREF)g++ -m$(WIN) -std=c++1y") else
+      if (.Platform$OS.type == "windows") "CXX14FLAGS=-O3 -Wno-ignored-attributes -Wno-deprecated-declarations" else
   "CXX14FLAGS += -fPIC",
     file = M, sep = "\n", append = TRUE)
+}
 }
 
 if(.Platform$OS.type == "windows"){

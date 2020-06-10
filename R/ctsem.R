@@ -72,7 +72,7 @@ NULL
 
 .onAttach <- function(libname, pkgname) {
   # to show a startup message
-  packageStartupMessage("ctsem also changes in time, for current manual run ctDocs(), for blog see https://cdriver.netlify.app/, for citation info run citation('ctsem'), for older OpenMx functionality get the ctsemOMX package")
+  packageStartupMessage("ctsem also changes in time, for current manual run ctDocs(), for blog see https://cdriver.netlify.app/, for citation info run citation('ctsem')")
 }
 
 #' Get documentation pdf for ctsem

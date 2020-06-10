@@ -650,6 +650,10 @@ matrix[nlatent, nlatent] sDIFFUSIONcov;
   ;
 ; 
   state=sT0MEANS[,1];
+      {
+  ;  
+  
+  } 
   ;
 ;
   ;
@@ -808,17 +812,20 @@ if(verbose > 1) print ("below t0 row ", rowi);
       
           for(ri in 1:size(matsetup)){ //for each row of matrix setup
             if(matsetup[ri,3] > 0 && matsetup[ri,8] == 2 &&(
+            matsetup[ri,7] ==10||
             matsetup[ri,7] ==3||
             matsetup[ri,7] ==7 )){ //perform calcs appropriate to this section
               real newval;
               newval = tform(state[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
               if(matsetup[ri, 7] == 3) sDRIFT[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 7) sCINT[matsetup[ ri,1], matsetup[ri,2]] = newval;
+      if(matsetup[ri, 7] == 7) sCINT[matsetup[ ri,1], matsetup[ri,2]] = newval; 
+      if(matsetup[ri, 7] == 10) sPARS[matsetup[ ri,1], matsetup[ri,2]] = newval;
               if(matsetup[ri,9] < 0){
                 for(ri2 in 1:size(matsetup)){
                   if(matsetup[ri2,9] == ri){ //if row ri2 is a copy of original row ri
                     if(matsetup[ri2, 7] == 3) sDRIFT[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 7) sCINT[matsetup[ri2,1], matsetup[ri2,2]] = newval;
+      if(matsetup[ri2, 7] == 7) sCINT[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
+      if(matsetup[ri2, 7] == 10) sPARS[matsetup[ri2,1], matsetup[ri2,2]] = newval;
                   }
                 }
               }
@@ -912,6 +919,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
               etacov = quad_form(etacov, sJAx');
               etacov[ derrind, derrind ] += tcrossprod(sDIFFUSION[ derrind, derrind ]); 
             }
+            discreteDIFFUSION=sDIFFUSIONcov;
             discreteDRIFT=append_row(append_col(sDRIFT[1:nlatent, 1:nlatent],sCINT),nlplusonezerovec');
             discreteDRIFT[nlatent+1,nlatent+1] = 1;
             state[1:nlatent] = (discreteDRIFT * append_row(state[1:nlatent],1.0))[1:nlatent];
@@ -921,7 +929,11 @@ if(verbose > 1) print ("below t0 row ", rowi);
   
     if(T0check==0){ //nl t0
     state = sT0MEANS[,1]; //in case of t0 dependencies, may have missingness
-    
+        {
+  ;  
+  
+  } 
+  
           for(ri in 1:size(matsetup)){ //for each row of matrix setup
             if(matsetup[ri,3] > 0 && matsetup[ri,8] == 1 &&(
             matsetup[ri,7] ==1||
@@ -952,7 +964,11 @@ if(verbose > 1) print ("below t0 row ", rowi);
       int nonzerotdpred = 0;
       for(tdi in 1:ntdpred) if(tdpreds[rowi,tdi] != 0.0) nonzerotdpred = 1;
       if(nonzerotdpred){
-      
+          {
+  ;  
+  
+  } 
+  
           for(ri in 1:size(matsetup)){ //for each row of matrix setup
             if(matsetup[ri,3] > 0 && matsetup[ri,8] == 3 &&(
             matsetup[ri,7] ==9||
@@ -1002,9 +1018,14 @@ if(savescores){
     for(statei in append_array(sJyfinite,zeroint)){ //if some finite differences to do, compute these first
       state = basestate;
       if(statei>0 && (savescores + intoverstates) > 0)  state[statei] += Jstep;
-      
+          {
+  ;  
+  
+  } 
+  
           for(ri in 1:size(matsetup)){ //for each row of matrix setup
             if(matsetup[ri,3] > 0 && matsetup[ri,8] == 4 &&(
+            matsetup[ri,7] ==10||
             matsetup[ri,7] ==2||
             matsetup[ri,7] ==6||
             matsetup[ri,7] ==5||
@@ -1014,6 +1035,7 @@ if(savescores){
               if(matsetup[ri, 7] == 2) sLAMBDA[matsetup[ ri,1], matsetup[ri,2]] = newval; 
       if(matsetup[ri, 7] == 5) sMANIFESTVAR[matsetup[ ri,1], matsetup[ri,2]] = newval; 
       if(matsetup[ri, 7] == 6) sMANIFESTMEANS[matsetup[ ri,1], matsetup[ri,2]] = newval; 
+      if(matsetup[ri, 7] == 10) sPARS[matsetup[ ri,1], matsetup[ri,2]] = newval; 
       if(matsetup[ri, 7] == 54) sJy[matsetup[ ri,1], matsetup[ri,2]] = newval;
               if(matsetup[ri,9] < 0){
                 for(ri2 in 1:size(matsetup)){
@@ -1021,13 +1043,13 @@ if(savescores){
                     if(matsetup[ri2, 7] == 2) sLAMBDA[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
       if(matsetup[ri2, 7] == 5) sMANIFESTVAR[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
       if(matsetup[ri2, 7] == 6) sMANIFESTMEANS[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
+      if(matsetup[ri2, 7] == 10) sPARS[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
       if(matsetup[ri2, 7] == 54) sJy[matsetup[ri2,1], matsetup[ri2,2]] = newval;
                   }
                 }
               }
             }
-          }
-          {
+          }    {
   ;  
   
   } 
@@ -1149,9 +1171,14 @@ if(savescores){
     for(statei in append_array(sJyfinite,zeroint)){ //if some finite differences to do, compute these first
       state = basestate;
       if(statei>0 && (savescores + intoverstates) > 0)  state[statei] += Jstep;
-      
+          {
+  ;  
+  
+  } 
+  
           for(ri in 1:size(matsetup)){ //for each row of matrix setup
             if(matsetup[ri,3] > 0 && matsetup[ri,8] == 4 &&(
+            matsetup[ri,7] ==10||
             matsetup[ri,7] ==2||
             matsetup[ri,7] ==6||
             matsetup[ri,7] ==5||
@@ -1161,6 +1188,7 @@ if(savescores){
               if(matsetup[ri, 7] == 2) sLAMBDA[matsetup[ ri,1], matsetup[ri,2]] = newval; 
       if(matsetup[ri, 7] == 5) sMANIFESTVAR[matsetup[ ri,1], matsetup[ri,2]] = newval; 
       if(matsetup[ri, 7] == 6) sMANIFESTMEANS[matsetup[ ri,1], matsetup[ri,2]] = newval; 
+      if(matsetup[ri, 7] == 10) sPARS[matsetup[ ri,1], matsetup[ri,2]] = newval; 
       if(matsetup[ri, 7] == 54) sJy[matsetup[ ri,1], matsetup[ri,2]] = newval;
               if(matsetup[ri,9] < 0){
                 for(ri2 in 1:size(matsetup)){
@@ -1168,13 +1196,13 @@ if(savescores){
                     if(matsetup[ri2, 7] == 2) sLAMBDA[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
       if(matsetup[ri2, 7] == 5) sMANIFESTVAR[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
       if(matsetup[ri2, 7] == 6) sMANIFESTMEANS[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
+      if(matsetup[ri2, 7] == 10) sPARS[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
       if(matsetup[ri2, 7] == 54) sJy[matsetup[ri2,1], matsetup[ri2,2]] = newval;
                   }
                 }
               }
             }
-          }
-          {
+          }    {
   ;  
   
   } 
