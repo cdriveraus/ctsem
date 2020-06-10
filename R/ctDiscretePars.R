@@ -165,7 +165,6 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   
   # 
   nlatent <- dim(ctpars$asymDIFFUSION)[2]
-  browser()
   ctpars$DRIFT <- ctpars$DRIFT[,1:nlatent,1:nlatent,drop=FALSE] #intoverpop
   out <- ctStanDiscreteParsDrift(ctpars,times, observational, standardise)
   out <- apply(out,c(1,2,3),quantile,probs=quantiles)
