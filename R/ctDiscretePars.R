@@ -250,6 +250,8 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational, standardise){
 #'@param polygoncontrol list of arguments to pass to ctPoly function (if polygon=TRUE).
 #'x,y, and col arguments will be ignored. Steps specifies the number of polygons to overlay to 
 #'create a graduated transparency. Set to 1 for a flat looking plot.
+#'@param ... for plot adjustments a ggeval argument can be added, which should be based on the default code
+#'found in the ctsem:::ctPlotArrayGG function.
 #'@examples
 #'if(w32chk()){
 #'x <- ctStanDiscretePars(ctstantestfit())
@@ -271,7 +273,7 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
     main='Regression coefficients',type='l', xaxs='i'),grid=FALSE,
   legendcontrol=list(x='topright',bg='white'),
   polygonalpha=.1,
-  polygoncontrol=list(steps=20)){
+  polygoncontrol=list(steps=20),...){
 
   if(is.data.frame(indices)) indices <- as.matrix(indices)
   
@@ -324,7 +326,7 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
     dimn <- c(dimn,dimnames(x)[3:4])
     names(dimn) <- c('Index','Time interval','Effect')
     dimnames(y) <- dimn
-    g <- ctPlotArrayGG(list(x=times,y=aperm(y,c(2,1,3))))
+    g <- ctPlotArrayGG(list(x=times,y=aperm(y,c(2,1,3))),...)
     # if(plot) print(g)
     # if(!plot) return(invisible(g))
     return(g)

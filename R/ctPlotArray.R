@@ -1,4 +1,12 @@
-ctPlotArrayGG <- function(input){
+ctPlotArrayGG <- function(input,
+  ggeval = paste0("ggplot(dt[as.numeric(dt$Quantile) < mean(qu),],aes(x=x,y=value,colour=variable)) +
+    ylab(names(dimnames(input$y)[3])) +xlab(names(dimnames(input$y)[1])) +
+    geom_ribbon(aes(ymin=value,ymax=max,fill=variable),alpha=.1,linetype=0) +
+    geom_line(lwd=.2,linetype='dotted')+
+    geom_line(data=dt[as.numeric(dt$Quantile) > mean(qu),],lwd=.2,linetype='dotted')+
+    geom_line(data=dt[as.numeric(dt$Quantile) == mean(qu),],lwd=1)+
+    theme_minimal() + 
+    theme(legend.title = element_blank())")){
 
   names <- names(attributes(input$y)$dimnames)
   
@@ -19,14 +27,7 @@ ctPlotArrayGG <- function(input){
   
   if(1==99) variable <- value <- x <- NULL
   
-  g<-ggplot(dt[as.numeric(dt$Quantile) < mean(qu),],aes(x=x,y=value,colour=variable)) +
-    ylab(names(dimnames(input$y)[3])) +xlab(names(dimnames(input$y)[1])) +
-    geom_ribbon(aes(ymin=value,ymax=max,fill=variable),alpha=.1,linetype=0) +
-    geom_line(lwd=.2,linetype='dotted')+
-    geom_line(data=dt[as.numeric(dt$Quantile) > mean(qu),],lwd=.2,linetype='dotted')+
-    geom_line(data=dt[as.numeric(dt$Quantile) == mean(qu),],lwd=1)+
-    theme_minimal() + 
-    theme(legend.title = element_blank())
+  g<-eval(parse(text=ggeval))
   
   return(invisible(g))
   

@@ -23,7 +23,8 @@ ctStanDiscreteParsPlot(
   grid = FALSE,
   legendcontrol = list(x = "topright", bg = "white"),
   polygonalpha = 0.1,
-  polygoncontrol = list(steps = 20)
+  polygoncontrol = list(steps = 20),
+  ...
 )
 }
 \arguments{
@@ -79,6 +80,9 @@ the fill polygon.}
 \item{polygoncontrol}{list of arguments to pass to ctPoly function (if polygon=TRUE).
 x,y, and col arguments will be ignored. Steps specifies the number of polygons to overlay to 
 create a graduated transparency. Set to 1 for a flat looking plot.}
+
+\item{...}{for plot adjustments a ggeval argument can be added, which should be based on the default code
+found in the ctsem:::ctPlotArrayGG function.}
 }
 \description{
 Plots model implied regression strengths at specified times for 
