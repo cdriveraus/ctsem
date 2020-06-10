@@ -78,7 +78,7 @@ for(i in 1:n.subjects){
   }
   }
   if(timestep=='asdata') dtmat <- dat[,paste0('dT',1:(fit$ctmodelobj$Tpoints-1)),drop=FALSE] else dtmat <- NA
-  new=suppressMessages(ctGenerate(ctmodelobj = gm,n.subjects = 1,dtmean=timestep,dtmat=dtmat,...))
+  new=suppressMessages(ctGenerate(ctmodelobj = gm,n.subjects = 1,dtmean=timestep,dtmat=dtmat,wide=TRUE,...))
   # new[,'id']=i
    out=rbind(out,new)
    # if(i==1 & n.subjects > 1) out=rbind(out,matrix(NA,nrow=nrow(out)*(n.subjects-1),ncol=ncol(out))) #preallocate
