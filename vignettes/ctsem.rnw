@@ -536,7 +536,7 @@ testm <- ctModel(Tpoints = Tpoints, n.latent = 1,
   CINT = diag(4, 1), T0MEANS = matrix(0, ncol = 1, nrow = 1),
   T0VAR = diag(100, 1), 
   TDPREDMEANS = matrix(c(0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), ncol = 1, nrow = (Tpoints)))
-testd <- ctGenerate(testm, n.subjects = 100, burnin = 30)
+testd <- ctGenerate(testm, n.subjects = 100, burnin = 30, wide=TRUE)
 
 testm <- ctModel(Tpoints = Tpoints, n.latent = 1, n.TDpred = 1, 
   n.manifest = 1, LAMBDA = diag(1), DRIFT = diag(-.3, 1),
@@ -545,7 +545,7 @@ testm <- ctModel(Tpoints = Tpoints, n.latent = 1, n.TDpred = 1,
   T0MEANS = matrix(0, ncol = 1, nrow = 1),
   T0VAR = diag(1, 1), 
   TDPREDMEANS = matrix(c(0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), ncol = 1, nrow = (Tpoints)))
-testdpure <- ctGenerate(testm, n.subjects = 1, burnin = 30)
+testdpure <- ctGenerate(testm, n.subjects = 1, burnin = 30, wide=TRUE)
 
 par(mfrow = c(1, 2), cex = .7)
 plot(0:(Tpoints-1), testdpure[, 1:Tpoints], type = 'l', ylim = c(min(testd[, 1:Tpoints]), max(testd[, 1:Tpoints])),
@@ -561,7 +561,7 @@ testm <- ctModel(Tpoints = Tpoints, n.latent = 1,
   CINT = diag(4, 1), T0MEANS = matrix(0, ncol = 1, nrow = 1),
   T0VAR = diag(100, 1), 
   TDPREDMEANS = matrix(c(0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1), ncol = 1, nrow = (19)))
-testd <- ctGenerate(testm, n.subjects = 100, burnin = 30)
+testd <- ctGenerate(testm, n.subjects = 100, burnin = 30,wide=TRUE)
 
 testm <- ctModel(Tpoints = Tpoints, n.latent = 1, 
   n.TDpred = 1, n.manifest = 1, LAMBDA = diag(1), DRIFT = diag(-.3, 1),
@@ -569,7 +569,7 @@ testm <- ctModel(Tpoints = Tpoints, n.latent = 1,
   CINT = diag(4, 1), T0MEANS = matrix(0, ncol = 1, nrow = 1),
   T0VAR = diag(1, 1), 
   TDPREDMEANS = matrix(c(0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1), ncol = 1, nrow = (19)))
-testdpure <- ctGenerate(testm, n.subjects = 1, burnin = 30)
+testdpure <- ctGenerate(testm, n.subjects = 1, burnin = 30,wide=TRUE)
 
 plot(0:(Tpoints-1), testdpure[, 1:Tpoints], type = 'l', ylim = c(min(testd[, 1:Tpoints]), max(testd[, 1:Tpoints])), ylab = 'Dependent variable', xlab = 'Time', lwd = 3, main = 'Level predictor')
 for(i in 1:5){
@@ -706,7 +706,7 @@ genm <- ctModel(Tpoints = 200, n.latent = 2, n.manifest = 1,
   DRIFT = matrix(c(0, -.1, 1, -.2), nrow = 2),   
   CINT = matrix(c(1, 0), nrow = 2))
 
-data <- ctGenerate(genm, n.subjects = 1, burnin = 200)
+data <- ctGenerate(genm, n.subjects = 1, burnin = 200,wide=TRUE)
 
 ctIndplot(data, n.subjects = 1 , n.manifest = 1, Tpoints = 200)
 

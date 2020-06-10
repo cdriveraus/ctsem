@@ -1,4 +1,10 @@
 ctStanData <- function(ctm, datalong,optimize,derrind='all'){
+
+  if(is.null(datalong[[ctm$timeName]]) && ctm$continuoustime == FALSE) {
+    datalong <- data.frame(datalong)
+    datalong[ctm$timeName] <- 1:nrow(datalong)
+  }
+  
   datalong <- datalong[,c(ctm$timeName,ctm$subjectIDname,
     ctm$manifestNames,ctm$TDpredNames,ctm$TIpredNames)]
       #start data section
