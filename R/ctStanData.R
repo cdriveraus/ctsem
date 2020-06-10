@@ -4,7 +4,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     datalong <- data.frame(datalong)
     datalong[ctm$timeName] <- 1:nrow(datalong)
   }
-  
+
   datalong <- datalong[,c(ctm$timeName,ctm$subjectIDname,
     ctm$manifestNames,ctm$TDpredNames,ctm$TIpredNames)]
       #start data section

@@ -380,7 +380,7 @@ Shown in Figure \ref{fig:outputposterior} are approximate density plots based on
 \subsection{Model prediction plots}
 One means of assessing model performance is to view plots of the observed time series alongside the model predicted time series. ctsem includes functionality to output prior (based on all prior observations) and updated (based on all prior and current observations) expectations and covariances from the Kalman filter, based on specific subjects models. Examples of such are depicted in Figure \ref{fig:kalmanplot}, where we see observed, predicted, and smoothed scores for a selected subject from our sample. If we wanted to predict unobserved states in the future, we would need only to specify the appropriate timerange (prediction into earlier times is possible but makes little sense unless the model is restricted to stationarity). For help with these plots, see \verb|?ctKalman| and \verb|?ctKalmanPlot| (arguments for the latter are passed via \verb|ctKalman|, as below).
 
-<<kalmanplot, echo=c(-1,-4)fig.width=8, fig.height=4, fig.cap='Predictions for three subjects over two processes. Uncertainty shown is a 95\\% credible interval comprising both process and measurement error.'>>=
+<<kalmanplot, echo=c(-1,-4),fig.width=8, fig.height=4, fig.cap='Predictions for three subjects over two processes. Uncertainty shown is a 95\\% credible interval comprising both process and measurement error.'>>=
 if(w32chk()){
 ctKalman(fit, subjects=c(2,4,5),  kalmanvec=c('y', 'yprior'), 
   plot=TRUE, timestep=.01)
