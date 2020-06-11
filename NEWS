@@ -1,8 +1,9 @@
 ctsem news:
 26/5/2020
-####3.2.2####
+####3.3.0####
 - ctLOO function to compute leave k out entropy estimates for model comparison / validation.
 - Optimizer parallelisation for single subject models
+- ctStanFitUpdate function to use saved fit objects created in earlier versions of ctsem.
 
 26/4/2020
 ####3.2.1####

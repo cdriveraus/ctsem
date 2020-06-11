@@ -18,8 +18,7 @@
 #' @param ... Parameters to pass to ctStanFit. \code{cores = x} will speed things up,
 #' where x is the number of cpu cores to use.
 #' @examples
-#' if(w32chk()){
-#'
+#' \donttest{
 #' ctStanPlotPost(ctstantestfit(), rows=3:4)
 #' }
 #' @export

@@ -24,12 +24,12 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
   'T0VAR','T0MEANS', 'MANIFESTTRAITVAR',
   'TDpredNames', 'TIpredNames', 'Tpoints', 'extract', 'latentNames', 'manifestNames',
   'plot', 'points','T0TRAITEFFECT',
-  'T0VARsubindex','DRIFTsubindex','DIFFUSIONsubindex','CINTsubindex'))
+  'T0VARsubindex','DRIFTsubindex','DIFFUSIONsubindex','CINTsubindex','.'))
 
 if(1==99){
   `:=` = NULL
 `.` =NULL
-.N = id = grp = NULL # due to NSE notes in R CMD check
+.N = .id = id= . = grp = NULL # due to NSE notes in R CMD check
 }
 
 

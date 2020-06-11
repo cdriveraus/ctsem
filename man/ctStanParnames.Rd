@@ -22,7 +22,7 @@ vector of character strings.
 Gets internal stan parameter names of a ctStanFit object sampled via stan based on specified substrings.
 }
 \examples{
-if(w32chk()){
+\donttest{
 sunspots<-sunspot.year
 sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
 id <- 1

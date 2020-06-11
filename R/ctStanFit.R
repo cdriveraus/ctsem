@@ -173,6 +173,7 @@ verbosify<-function(sf,verbose=2){
 #'   gm<-ctModel(Tpoints=Tpoints,n.manifest = nmanifest,n.latent = nlatent,n.TDpred = 1,
 #'     LAMBDA = matrix(c(1,0,0,0, 0,1,.8,1.3),nrow=nmanifest,ncol=nlatent),
 #'     DRIFT=matrix(c(-.3, .2, 0, -.5),nlatent,nlatent),
+#'     TDPREDMEANS=matrix(c(rep(0,Tpoints-10),1,rep(0,9)),ncol=1),
 #'     TDPREDEFFECT=matrix(c(tdpredeffect[i],0),nrow=nlatent),
 #'     DIFFUSION = matrix(c(1, 0, 0, .5),2,2),
 #'     CINT = matrix(c(cint1[i],cint2[i]),ncol=1),
@@ -181,7 +182,6 @@ verbosify<-function(sf,verbose=2){
 #' 
 #'   #generate data
 #'   newdat <- ctGenerate(ctmodelobj = gm,n.subjects = 1,burnin = 2,
-#'     TDPREDMEANS=matrix(c(rep(0,Tpoints-10),1,rep(0,9)),ncol=1),
 #'     dtmat<-rbind(c(rep(.5,8),3,rep(.5,Tpoints-9))))
 #'   newdat[,'id'] <- i #set id for each subject
 #'   newdat <- cbind(newdat,age[i]) #include time independent predictor

@@ -10,7 +10,7 @@
 #' means of temporal dynamics parameters
 #' @return vector of character strings.
 #' @examples
-#' if(w32chk()){
+#' \donttest{
 #' sunspots<-sunspot.year
 #' sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
 #' id <- 1
@@ -59,7 +59,7 @@ ctStanParnames <- function(x,substrings=c('pop_','popsd')){
 #''latentMeans' returns only the expected latent means, given initial (T0MEANS) level, 
 #'latent intercept (CINT) and temporal effects (DRIFT).
 #'@examples
-#'if(w32chk()){
+#'\donttest{
 #'pars <- ctStanContinuousPars(ctstantestfit())
 #'ctDiscretePars(pars,times=c(.5,1))
 #'}

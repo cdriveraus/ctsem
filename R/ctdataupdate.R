@@ -22,11 +22,11 @@ ctdataupdate<-function(forcerecompile=FALSE){
     n.TIpred=n.TIpred,
     n.manifest=n.manifest,
     MANIFESTVAR=diag(0.5,2),
-    # TIPREDEFFECT=matrix(c(.5,0,0,-.7,0,2),nrow=2),
-    # TIPREDVAR=matrix(c(1,-.2,0, 0,1,0, 0,0,.5),nrow=3),
-    # TDPREDVAR=matrix(0,nrow=n.TDpred*(Tpoints),ncol=n.TDpred*(Tpoints)),
-    # TDPREDMEANS=matrix(round(exp(rnorm(n.TDpred*(Tpoints),-1.9,1)),0),
-    #  nrow=n.TDpred*(Tpoints)),
+    TIPREDEFFECT=matrix(c(.5,0,0,-.7,0,2),nrow=2),
+    TIPREDVAR=matrix(c(1,-.2,0, 0,1,0, 0,0,.5),nrow=3),
+    TDPREDVAR=matrix(0,nrow=n.TDpred*(Tpoints),ncol=n.TDpred*(Tpoints)),
+    TDPREDMEANS=matrix(round(exp(rnorm(n.TDpred*(Tpoints),-1.9,1)),0),
+     nrow=n.TDpred*(Tpoints)),
      TDPREDEFFECT = matrix(c(1,-1),ncol=1),
     LAMBDA=diag(1,2),
     DRIFT=matrix(c(-.3,.2,0,-.2),nrow=2),
@@ -35,11 +35,7 @@ ctdataupdate<-function(forcerecompile=FALSE){
     T0MEANS=matrix(10,ncol=1,nrow=2),
     T0VAR=diag(1,2))
 
-  ctstantestdat<-ctGenerate(gm,n.subjects=n.subjects,burnin=3,logdtsd=.4,dtmean = .3,
-    TIPREDEFFECT=matrix(c(.5,0,0,-.7,0,2),nrow=2),
-    TIPREDVAR=matrix(c(1,-.2,0, 0,1,0, 0,0,.5),nrow=3),
-    TDPREDMEANS=matrix(round(exp(rnorm(n.TDpred*(Tpoints),-1.9,1)),0),
-      nrow=n.TDpred*(Tpoints)))
+  ctstantestdat<-ctGenerate(gm,n.subjects=n.subjects,burnin=3,logdtsd=.4,dtmean = .3)
 
   ctstantestdat[2,'Y1'] <- NA
   ctstantestdat[ctstantestdat[,'id']==2,'TI1'] <- NA

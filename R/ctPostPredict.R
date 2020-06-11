@@ -36,7 +36,8 @@ ctPostPredict<-function(fit,timestep=.1,n.subjects = 100,probs=c(.025,.5,.975),
   mfrow='auto'){
 
  if(class(fit)!='ctsemFit') stop('not a ctsemFit object')
-pcheck=ctGenerateFromFit(fit = fit,n.subjects = n.subjects,wide=FALSE,timestep = timestep)
+pcheck=ctGenerateFromFit(fit = fit,n.subjects = n.subjects,timestep = timestep)
+
 timeupper=max(pcheck[,'time'])
 pcheck=array(t(pcheck),dim=c(ncol(pcheck),nrow(pcheck)/n.subjects,n.subjects),
   dimnames = list(vars=colnames(pcheck),

@@ -7,8 +7,7 @@
 #' @return Array of posterior samples.
 #' @aliases extract
 #' @examples
-#' if(w32chk()){
-#'
+#' \donttest{
 #' e = ctExtract(ctstantestfit())
 #' }
 #' @export

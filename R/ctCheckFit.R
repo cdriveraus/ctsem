@@ -15,12 +15,11 @@
 #' @details for plotting help see \code{\link{plot.ctsemFitMeasure}}
 #'
 #' @examples
-#' if(w32chk()){
-#'
+#' \donttest{
 #' scheck <- ctCheckFit(ctstantestfit(),niter=50)
 #' }
 ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
-  
+  id=NULL #global warnings
   if(!class(fit) %in% c('ctStanFit','ctsemFit')) stop('not a ctsemFit or ctStanFit object!')
   
   
@@ -81,7 +80,7 @@ ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
   
   if(class(fit)=='ctsemFit'){
     for(i in 1:niter){
-      ndat <- ctGenerateFromFit(fit = fit,n.subjects = nrow(wdat))
+      ndat <- ctGenerateFromFit(fit = fit,n.subjects = nrow(wdat),wide=TRUE)
       ndat[is.na(wdat)] <- NA #match missingness
       covarray[,,i] <- cov(ndat[,paste0(rep(manifestNames,each=fit$ctmodelobj$Tpoints),'_T',
         0:(fit$ctmodelobj$Tpoints-1)),drop=FALSE], use='pairwise.complete.obs')

@@ -23,8 +23,7 @@ Array of posterior samples.
 Extract samples from a ctStanFit object
 }
 \examples{
-if(w32chk()){
-
+\donttest{
 e = ctExtract(ctstantestfit())
 }
 }

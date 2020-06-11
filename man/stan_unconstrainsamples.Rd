@@ -19,7 +19,7 @@ Matrix containing columns of unconstrained parameters for each post-warmup itera
 Convert samples from a stanfit object to the unconstrained scale
 }
 \examples{
-if(w32chk()){
+\donttest{
 #get data
 sunspots<-sunspot.year
 sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]

@@ -20,7 +20,7 @@
 #'   Tpoints = 5, n.latent = 2, n.manifest = 2, MANIFESTVAR=diag(0, 2)) 
 #' AnomAuthfit <- ctFit(AnomAuth, AnomAuthmodel)
 #' 
-#' dwide <- ctGenerateFromFit(AnomAuthfit,timestep=1,n.subjects=5)
+#' dwide <- ctGenerateFromFit(AnomAuthfit,timestep=1,n.subjects=5,wide=TRUE)
 #' 
 #' par(mfrow=c(1,2))
 #' ctIndplot(datawide = dwide,n.subjects = 5,n.manifest = 2,vars=1,Tpoints = 4)
@@ -78,7 +78,7 @@ for(i in 1:n.subjects){
   }
   }
   if(timestep=='asdata') dtmat <- dat[,paste0('dT',1:(fit$ctmodelobj$Tpoints-1)),drop=FALSE] else dtmat <- NA
-  new=suppressMessages(ctGenerate(ctmodelobj = gm,n.subjects = 1,dtmean=timestep,dtmat=dtmat,wide=TRUE,...))
+  new=suppressMessages(ctGenerate(ctmodelobj = gm,n.subjects = 1,dtmean=timestep,dtmat=dtmat,...))
   # new[,'id']=i
    out=rbind(out,new)
    # if(i==1 & n.subjects > 1) out=rbind(out,matrix(NA,nrow=nrow(out)*(n.subjects-1),ncol=ncol(out))) #preallocate

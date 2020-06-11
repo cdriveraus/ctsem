@@ -27,8 +27,7 @@ Check absolute fit of ctFit or ctStanFit object.
 for plotting help see \code{\link{plot.ctsemFitMeasure}}
 }
 \examples{
-if(w32chk()){
-
+\donttest{
 scheck <- ctCheckFit(ctstantestfit(),niter=50)
 }
 }

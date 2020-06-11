@@ -429,7 +429,7 @@ out <- paste0(out, "
         ",bmatrix(ctmodel$TDPREDEFFECT),"
       ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{M}}",ifelse(!matrixnames,"}","_\\textrm{TDPREDEFFECT}}"),"
       \\underbrace{
-        ",bmatrix(matrix(paste0('\\chi_{',1:ncol(ctmodel$TDPREDEFFECT),'}')))," 
+        ",bmatrix(matrix(ctmodel$TDpredNames))," 
       }_{\\vect{\\chi} (t)}"),
     "\\right) ",ifelse(continuoustime,"\\mathrm{d}t","")," \\quad + \\nonumber \\\\ \\\\
     \\parbox{10em}{\\centering{Random\\linebreak change:}}
