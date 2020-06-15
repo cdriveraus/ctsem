@@ -37,7 +37,7 @@ ssfitl <- ctStanFit(datalong, ssmodel, iter=300, chains=1,optimize=T,verbose=0,
 
 ssfitnlm <- ctStanFit(datalong, ssmodel, iter=300, chains=1,optimize=T,verbose=0,maxtimestep = 2,fit=T,
    # forcerecompile=T,
-  nlcontrol=list(nldynamics=T,nlmeasurement=T),optimcontrol = list(finishsamples=1000),nopriors=TRUE,deoptim=FALSE)
+  nlcontrol=list(nldynamics=T),optimcontrol = list(finishsamples=1000,stochastic=F),nopriors=TRUE,deoptim=FALSE)
 
 #output
 # snl=summary(ssfitnl)
@@ -50,5 +50,9 @@ round(ssfitl$stanfit$transformedpars_old[grep('pop_',rownames(ssfitnl$stanfit$tr
 
 expect_equal(round(ssfitnlm$stanfit$transformedpars_old[grep('pop_',rownames(ssfitnl$stanfit$transformedpars_old)),'mean'],3),
 round(ssfitl$stanfit$transformedpars_old[grep('pop_',rownames(ssfitnl$stanfit$transformedpars_old)),'mean'],3),tol=.01)
+
+expect_equal(ssfitnl$stanfit$optimfit$value,ssfitnlm$stanfit$optimfit$value,tol=1e-2)
+expect_equal(ssfitnl$stanfit$optimfit$value,ssfitl$stanfit$optimfit$value,tol=1e-2)
+
 })
 }

@@ -80,6 +80,16 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,...){
 #'   
 #'  #modify plot as per normal with ggplot
 #'  print(plot1+ggplot2::coord_cartesian(xlim=c(0,10)))
+#'  
+#'  #or generate custom plot from scratch:#'  
+#'  k=ctKalman(ctstantestfit(), timerange=c(0,60), timestep=.1, subjects=2:3)
+#'  library(ggplot2)
+#'  ggplot(k[k$Element %in% 'yprior',],
+#'    aes(x=Time, y=value,colour=Subject,linetype=Row)) +
+#'    geom_line() +
+#'    theme_bw()
+#'
+#'  
 #'   }
 #'  }
 #' @export
@@ -430,6 +440,8 @@ plot.ctKalman<-function(x, subjects=1, kalmanvec=c('y','yprior'),
 #' Defaults to 1.96, for 95\% intervals.
 #' @param polygonsteps Number of steps to use for uncertainty band shading. 
 #' @param polygonalpha Numeric for the opacity of the uncertainty region.
+#' @param facets when multiple subjects are included in multivariate plots, the default is to facet plots 
+#' by variable type. This can be set to NA for no facets, or \code{variable(Subject)} for facetting by subject.
 #' @param ... not used.
 #' @return A ggplot2 object. Side effect -- Generates plots.
 #' @method plot ctKalmanDF
@@ -452,7 +464,9 @@ plot.ctKalman<-function(x, subjects=1, kalmanvec=c('y','yprior'),
 #' }
 plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','yprior'),
   errorvec='auto', errormultiply=1.96,plot=TRUE,elementNames=NA,
-  polygonsteps=10,polygonalpha=.1,...){
+  polygonsteps=10,polygonalpha=.1,
+  facets=vars(Variable),
+  ...){
   
   
   if(!'ctKalmanDF' %in% class(x)) stop('not a ctKalmanDF object')
@@ -486,8 +500,8 @@ plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','yprior'),
     # labs(linetype='Element',shape='Element',colour='Element',fill='Element')+
     scale_fill_discrete(guide='none')
   
-  if(length(subjects) > 1 && length(unique(subset(x,Element %in% kalmanvec)$Variable)) > 1){
-    g <- g+ facet_wrap(vars(Variable),scales = 'free') 
+  if(!is.na(facets[1]) && length(subjects) > 1 && length(unique(subset(x,Element %in% kalmanvec)$Variable)) > 1){
+    g <- g+ facet_wrap(facets,scales = 'free') 
   }
   
   polygonsteps <- polygonsteps + 1

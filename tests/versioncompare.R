@@ -45,7 +45,7 @@ set.seed(1)
     
     tfit2<-ctStanFit(tdat,checkm,chains=1,optimize=TRUE,cores=6,verbose=1,
       optimcontrol=list(is=FALSE),nopriors=TRUE,
-      nlcontrol=list(nldynamics=TRUE,nlmeasurement=TRUE))
+      nlcontrol=list(nldynamics=TRUE))
     
     summary(tfit2)
     

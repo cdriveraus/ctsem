@@ -105,9 +105,6 @@ verbosify<-function(sf,verbose=2){
 #' \code{nldynamics} defaults to "auto", but may also be a logical. Set to FALSE to use estimator that assumes linear dynamics, 
 #' TRUE to use non-linear estimator. "auto" selects linear when the model is obviously linear, 
 #' otherwise nonlinear -- nonlinear is slower.
-#' \code{nlmeasurement} defaults to "auto", but may also be a logical. Set to TRUE to use non linear measurement model estimator, 
-#' FALSE to use linear model. "auto" selects linear if appropriate, otherwise nonlinear. Non-linear methods are slower but applicable to both linear
-#' and non linear cases.
 #' \code{maxtimestep} must be a positive numeric,  specifying the largest time
 #' span covered by the numerical integration. The large default ensures that for each observation time interval, 
 #' only a single step of exponential integration is used. When \code{maxtimestep} is smaller than the observation time interval, 
@@ -454,7 +451,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     #set nlcontrol defaults
     if(is.null(nlcontrol$maxtimestep)) nlcontrol$maxtimestep = 999999
     if(is.null(nlcontrol$nldynamics)) nlcontrol$nldynamics = 'auto'
-    if(is.null(nlcontrol$nlmeasurement)) nlcontrol$nlmeasurement = 'auto'
+    # if(is.null(nlcontrol$nlmeasurement)) nlcontrol$nlmeasurement = 'auto'
     if(is.null(nlcontrol$Jstep)) nlcontrol$Jstep = 1e-6
     
     args=as.list(match.call(expand.dots=FALSE,))
@@ -573,7 +570,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     #fix binary manifestvariance
     
     if(any(ctm$manifesttype > 0)){ #if any non continuous variables, (with free parameters)...
-      nlcontrol$nlmeasurement <- TRUE
+      # nlcontrol$nlmeasurement <- TRUE
       errfix <- which(ctm$pars$matrix %in% 'MANIFESTVAR' & 
             (ctm$pars$row %in% which(ctm$manifesttype==1) | 
                 ctm$pars$col %in% which(ctm$manifesttype==1)) &

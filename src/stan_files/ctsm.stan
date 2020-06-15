@@ -163,7 +163,6 @@ data {
   vector[nmanifest] Y[ndatapoints];
   int nopriors;
   int nldynamics;
-  int nlmeasurement;
   vector[ntdpred] tdpreds[ndatapoints];
   
   real maxtimestep;

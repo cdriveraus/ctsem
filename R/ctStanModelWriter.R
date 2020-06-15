@@ -1223,13 +1223,6 @@ if(savescores){
             Ygen[rowi,od[vi]] = 99999;
             print("pp ygen problem! row ", rowi);
           }
-        if(nlmeasurement==0){ //linear measurement
-          if(intoverstates==1) { //classic kalman
-            for(wi in 1:nmanifest){ 
-              if(manifesttype[wi]> 0 && Y[rowi,wi] != 99999) Ygen[ rowi, wi] = round(Ygen[ rowi, wi]);
-            }
-          }
-        }
         err[od] = Ygen[rowi,od] - syprior[od]; // prediction error
         }
 }
@@ -1629,7 +1622,6 @@ data {
   vector[nmanifest] Y[ndatapoints];
   int nopriors;
   int nldynamics;
-  int nlmeasurement;
   vector[ntdpred] tdpreds[ndatapoints];
   
   real maxtimestep;

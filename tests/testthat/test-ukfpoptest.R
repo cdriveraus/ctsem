@@ -131,7 +131,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       optimize=TRUE,verbose=0,nopriors = TRUE,
       optimcontrol=list(deoptim = FALSE,is=FALSE,isloopsize=50,finishsamples=50),
       derrind=1:2,
-      nlcontrol=list(nldynamics=TRUE,nlmeasurement=TRUE))
+      nlcontrol=list(nldynamics=TRUE))
     sf1nl_derrindd=matrix(sf1nl_derrind$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf1nl_derrind$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
     sf1nl_derrindll=sf1nl_derrind$stanfit$optimfit$value
     

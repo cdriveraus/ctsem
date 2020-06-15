@@ -90,18 +90,18 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     if( (nrow(ctm$t0varstationary) + nrow(ctm$t0meansstationary)) >0 && 
         length(c(ctm$modelmats$calcs$driftcint, ctm$modelmats$calcs$diffusion)) > 0) message('Stationarity assumptions based on initial states when using non-linear dynamics')
     
-    nlmeasurement <- ctm$nlcontrol$nlmeasurement
+    # nlmeasurement <- ctm$nlcontrol$nlmeasurement
 
-    if(length(ctm$modelmats$calcs$measurement) > 0 || 
-        any(ctm$modelmats$matsetup$when %in% c(4)) ||
-        (ctm$intoverpop && any(ctm$pars$indvarying[ctm$pars$matrix %in% names(mats$measurement)]))) { 
-      if(nlmeasurement == FALSE) warning('Linear measurement model requested but nonlinear measurement specified!') else nlmeasurement <- TRUE
-      
-    }
+    # if(length(ctm$modelmats$calcs$measurement) > 0 || 
+    #     any(ctm$modelmats$matsetup$when %in% c(4)) ||
+    #     (ctm$intoverpop && any(ctm$pars$indvarying[ctm$pars$matrix %in% names(mats$measurement)]))) { 
+    #   if(nlmeasurement == FALSE) warning('Linear measurement model requested but nonlinear measurement specified!') else nlmeasurement <- TRUE
+    #   
+    # }
     
     # if(ctm$nlcontrol$nldynamics==TRUE && !ctm$intoverstates) stop('intoverstates must be TRUE for nonlinear dynamics')
     
-    if(nlmeasurement=='auto') nlmeasurement <- FALSE
+    # if(nlmeasurement=='auto') nlmeasurement <- FALSE
     # if(nlmeasurement) message('Using nonlinear Kalman filter for measurement update');
     # if(!nlmeasurement) message('Using linear Kalman filter for measurement update');
     
@@ -257,7 +257,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
         ndiffusion=as.integer(ndiffusion),
         driftdiagonly = as.integer(driftdiagonly),
         intoverpop=as.integer(ctm$intoverpop),
-        nlmeasurement=as.integer(nlmeasurement),
+        # nlmeasurement=as.integer(nlmeasurement),
         nopriors=as.integer(ctm$nopriors),
         savescores=0L,
         savesubjectmatrices=0L,

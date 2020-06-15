@@ -58,7 +58,7 @@ expect_equivalent(s1$popsd[2,'mean'],.6,tolerance=.2)
 
 tfit2<-ctStanFit(tdat,checkm,chains=1,optimize=TRUE,cores=1,verbose=0,
   optimcontrol=list(is=FALSE),nopriors=FALSE,
-  nlcontrol=list(nldynamics=TRUE,nlmeasurement=TRUE))
+  nlcontrol=list(nldynamics=TRUE))
 s2=summary(tfit2)
 
 expect_equivalent(s2$tipreds[2,'mean'],5,tolerance=.1)
