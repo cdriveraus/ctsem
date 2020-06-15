@@ -59,7 +59,7 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
   
     for(i in 1:rows(o)){ //set upper tri to lower
       for(j in min(i+1,rows(mat)):rows(mat)){
-        o[j,i] =  mat[j,i]; //inv_logit(mat[j,i])*2-1;  // can change cor prior here
+        o[j,i] =  inv_logit(mat[j,i])*2-1;  // can change cor prior here
         o[i,j] = o[j,i];
       }
       o[i,i]=1; // change to adjust prior for correlations
@@ -678,14 +678,14 @@ matrix[nlatent, nlatent] sDIFFUSIONcov;
   } //end asymdiffusion loops
 
      if(subi <= (subindices[8] ? nsubjects2 : 0)) {
-     if(intoverpop) sT0VAR[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopcovsqrt;
+     if(intoverpop && nindvarying > 0) sT0VAR[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopcovsqrt;
       sT0VAR = makesym(sdcovsqrt2cov(sT0VAR,choleskymats),verbose,1); 
       if(nt0varstationary > 0) {
         for(ri in 1:nt0varstationary){ 
           sT0VAR[t0varstationary[ri,1],t0varstationary[ri,2] ] =  sasymDIFFUSION[t0varstationary[ri,1],t0varstationary[ri,2] ];
         }
       }
-      if(intoverpop){ //adjust cov matrix for transforms
+      if(intoverpop && nindvarying > 0){ //adjust cov matrix for transforms
         for(ri in 1:size(matsetup)){
           if(matsetup[ri,7]==1){ //if t0means
             if(matsetup[ri,5]) { //and indvarying
