@@ -2,8 +2,8 @@ logit = function(x) log(x)-log((1-x))
 
 sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoints=NA,plot=FALSE,
   stepbase=1e-3,gmeminit=ifelse(is.na(startnrows),.8,.8),gmemmax=.96, maxparchange = .50,
-  startnrows=NA,roughnessmemory=.9,groughnesstarget=.4,roughnesschangemulti = 2,
-  lproughnesstarget=ifelse(is.na(whichmcmcpars[1]),ifelse(parsets==1,.5,.3),.4),parsets=1,
+  startnrows=NA,roughnessmemory=.95,groughnesstarget=.4,roughnesschangemulti = 2,
+  lproughnesstarget=ifelse(is.na(whichmcmcpars[1]),ifelse(parsets==1,.2,.1),.2),parsets=1,
   # gamiter=50000,
   gsmoothroughnesstarget=.05,
   warmuplength=20,nstore=max(100,length(init)),
@@ -405,7 +405,7 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
     # if(!i %% gamiter==0){
     groughness = groughness * (roughnessmemory2) + (1-(roughnessmemory2)) * as.numeric(sign(gmid)!=sign(oldgmid))
     gsmoothroughness = gsmoothroughness * (roughnessmemory2) + (1-(roughnessmemory2)) * as.numeric(sign(gsmooth)!=sign(oldgsmooth))
-    if(i > 1) lproughness = lproughness * (roughnessmemory2) + (1-(roughnessmemory2)) * exp(-1/(i-bestiter+.1))#as.numeric(lp[i-1] > (lp[i]))
+    if(i > 1) lproughness = lproughness * (roughnessmemory2) + (1-(roughnessmemory2)) * as.numeric(lp[i-1] > (lp[i]))#exp(-1/(i-bestiter+.1))
     
     lproughnessmod=  ( ( (1/(-lproughness-lproughnesstarget2)) / (1/-lproughnesstarget2) + .5) -1) #balanced eq for any centre / target
     gsmoothroughnessmod =  (( ( (1/(-(gsmoothroughness)-gsmoothroughnesstarget)) / (1/-gsmoothroughnesstarget) + .5) ) -1)
@@ -480,7 +480,7 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
       if(oldlprdif > lprdif) lproughnesstarget <- oldlproughnesstarget
       lprproposal = lproughnesstarget*2-oldlproughnesstarget
       oldlproughnesstarget <- lproughnesstarget
-      lproughnesstarget <- min(.8, max(.05, .01+lprproposal + .05 * (-1+2*rbinom(n = 1,size = 1,prob = .5))))
+      lproughnesstarget <- min(.8, max(.05, lprproposal + .05 * (-1+2*rbinom(n = 1,size = 1,prob = .5))))
     }
     
     step[step > maxparchange] <- maxparchange
