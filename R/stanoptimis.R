@@ -994,8 +994,14 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     }
     
     if(!estonly){
-      if(cores > 1) parallelStanSetup(cl = clctsem,standata = standata,split=FALSE)#,split=parsets<2)
-      if(cores==1) smf<-stan_reinitsf(sm,standata)
+      
+      if(standata$nsubjects > cores){
+      hesscl <- NA
+      } else {
+        hesscl <- clctsem
+        if(cores > 1) parallelStanSetup(cl = clctsem,standata = standata,split=FALSE)#,split=parsets<2)
+        if(cores==1) smf<-stan_reinitsf(sm,standata)
+      }
       
       # base <- lapply(1:10,function(x) target(est2 + rnorm(length(est2),0,1e-12),
       #   gradnoise = FALSE))
@@ -1219,7 +1225,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           # hessout <- matrix(NA, length(attributes(base)$gradient), length(whichpars))
           hessout <- flexsapply(cl = cl, cores = length(cl), whichpars, function(i){
             
-            fgfunc <- function(x){
+          if(!is.na(hesscl[1]))  fgfunc <- function(x){
               if(length(parsteps)>0){
                 pars <- est2
                 pars[-parsteps] <- x
@@ -1231,7 +1237,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               # print(fg[1])
               if(fg[1] < -1e99) class(fg) <- c('try-error',class(fg))
               return(fg)
-            }
+          }
+          
+          if(is.na(hesscl[1])) fgfunc <- target
             
             # for(i in whichpars){
             if(verbose) message('### Par ',i,'###')
@@ -1299,9 +1307,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         
         
         hess1 <- jac(pars = grinit,parsteps=parsteps,
-          step = rep(1e-3,length(grinit)),cl=clctsem,verbose=verbose,directions=1)
+          step = rep(1e-3,length(grinit)),cl=hesscl,verbose=verbose,directions=1)
         hess2 <- jac(pars = grinit,parsteps=parsteps,#fgfunc = fgfunc,
-          step = rep(1e-3,length(grinit)),cl=clctsem,verbose=verbose,directions=-1)
+          step = rep(1e-3,length(grinit)),cl=hesscl,verbose=verbose,directions=-1)
         
         # browser()
         

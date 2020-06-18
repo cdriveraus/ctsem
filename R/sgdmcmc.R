@@ -480,7 +480,7 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
       if(oldlprdif > lprdif) lproughnesstarget <- oldlproughnesstarget
       lprproposal = lproughnesstarget*2-oldlproughnesstarget
       oldlproughnesstarget <- lproughnesstarget
-      lproughnesstarget <- min(.8, max(.05, lprproposal + .05 * (-1+2*rbinom(n = 1,size = 1,prob = .5))))
+      lproughnesstarget <- min(.7, max(.05, lprproposal + .025 * (-1+2*rbinom(n = 1,size = 1,prob = .5))))
     }
     
     step[step > maxparchange] <- maxparchange
