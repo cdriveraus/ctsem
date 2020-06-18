@@ -166,6 +166,8 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   # 
   nlatent <- dim(ctpars$asymDIFFUSION)[2]
   ctpars$DRIFT <- ctpars$DRIFT[,1:nlatent,1:nlatent,drop=FALSE] #intoverpop
+
+  
   out <- ctStanDiscreteParsDrift(ctpars,times, observational, standardise)
   out <- apply(out,c(1,2,3),quantile,probs=quantiles)
     
@@ -196,7 +198,7 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational, standardise){
     }
     DRIFT <- matrix(ctpars$DRIFT[d,,],nl,nl)
     if(observational) {
-      g <- matrix(ctpars$DIFFUSION[d,,],nl,nl)
+      g <- matrix(ctpars$DIFFUSIONcov[d,,],nl,nl)
       g <- cov2cor(g)^2 * sign(g)
       g[is.nan(g)] <- 0
     }

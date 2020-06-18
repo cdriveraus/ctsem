@@ -588,6 +588,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   
   smf <- stan_reinitsf(sm,standata)
   npars=rstan::get_num_upars(smf)
+  if(cores > 1 & !deoptim) rm(smf)
   
   if(stochastic=='auto' && npars > 50){
     message('> 50 parameters and stochastic="auto" so stochastic gradient descent used -- try disabling if slow!')
@@ -993,8 +994,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     }
     
     if(!estonly){
-      if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standata,split=FALSE)#,split=parsets<2)
-      smf<-stan_reinitsf(sm,standata)
+      if(cores > 1) parallelStanSetup(cl = clctsem,standata = standata,split=FALSE)#,split=parsets<2)
+      if(cores==1) smf<-stan_reinitsf(sm,standata)
       
       # base <- lapply(1:10,function(x) target(est2 + rnorm(length(est2),0,1e-12),
       #   gradnoise = FALSE))
@@ -1214,7 +1215,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         jac<-function(pars,step=rep(1e-2,length(pars)),whichpars='all',
           lpdifmin=1e-2,lpdifmax=3, cl=NA,verbose=1,directions=c(-1,1),parsteps=c()){
           if('all' %in% whichpars) whichpars <- 1:length(pars)
-          base <- singletarget(pars)
+          base <- optimfit$value
           # hessout <- matrix(NA, length(attributes(base)$gradient), length(whichpars))
           hessout <- flexsapply(cl = cl, cores = length(cl), whichpars, function(i){
             
@@ -1578,6 +1579,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     lest= est2 - 1.96 * sds
     uest= est2 + 1.96 * sds
     
+    if(cores > 1) {
+      parallel::stopCluster(clctsem)
+      smf <- stan_reinitsf(sm,standata)
+    }
     transformedpars_old=NA
     try(transformedpars_old<-cbind(unlist(constrain_pars(smf, upars=lest)),
       unlist(constrain_pars(smf, upars= est2)),
@@ -1591,7 +1596,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   }
   if(estonly) stanfit=list(optimfit=optimfit,stanfit=smf, rawest=est2)
   optimfinished <- TRUE #disable exit message re pars
-  if(cores > 1) parallel::stopCluster(clctsem)
   return(stanfit)
 }
 
