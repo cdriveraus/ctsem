@@ -92,6 +92,7 @@ plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='margi
             colvec <- c(1,2,4)
           }
         }
+        
         dens <- ctDensityList(denslist,probs=c(.01,.99),plot=FALSE)
         for(i in 1:length(leg)){
           dat <- rbind(dat,data.table(Par.Value=dens$density[[i]]$x,

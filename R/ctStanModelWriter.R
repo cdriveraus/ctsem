@@ -1337,8 +1337,12 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
     if(fixedsubpars==1) rawindparams[indvaryingindex] += rawpopcovchol * fixedindparams[doonesubject ? 1 : subi];
   }
 
-  if(subi > 0 &&  ntieffects > 0) rawindparams[tieffectindices[1:ntieffects]] += 
+  if(subi > 0 &&  ntieffects > 0){
+  if(nmissingtipreds > 0) rawindparams[tieffectindices[1:ntieffects]] += 
     TIPREDEFFECT[tieffectindices[1:ntieffects]] *  tipreds[subi]\';
+    if(nmissingtipreds==0) rawindparams[tieffectindices[1:ntieffects]] += 
+    TIPREDEFFECT[tieffectindices[1:ntieffects]] *  tipredsdata[subi]\';
+  }
 
 ',
     
@@ -1747,13 +1751,14 @@ transformed parameters{
   ',subjectparaminit(pop=TRUE,smats=FALSE)
   ,collapse=''),'
 
-  matrix[ntipred ? nsubjects : 0, ntipred ? ntipred : 0] tipreds; //tipred values to fill from data and, when needed, imputation vector
+  matrix[ntipred ? (nmissingtipreds ? nsubjects : 0) : 0, ntipred ? (nmissingtipreds ? ntipred : 0) : 0] tipreds; //tipred values to fill from data and, when needed, imputation vector
   matrix[nparams, ntipred] TIPREDEFFECT; //design matrix of individual time independent predictor effects
   //real tipredglobalscale = 1.0;
   
   //if( ((ntipredeffects-1) * (1-nopriors))  > 0)  tipredglobalscale = exp(tipredglobalscalepar[1]);
 
   if(ntipred > 0){ 
+    if(nmissingtipreds > 0){
     int counter = 0;
     for(coli in 1:cols(tipreds)){ //insert missing ti predictors
       for(rowi in 1:rows(tipreds)){
@@ -1762,6 +1767,7 @@ transformed parameters{
           tipreds[rowi,coli] = tipredsimputed[counter];
         } else tipreds[rowi,coli] = tipredsdata[rowi,coli];
       }
+    }
     }
     for(ci in 1:ntipred){ //configure design matrix
       for(ri in 1:nparams){

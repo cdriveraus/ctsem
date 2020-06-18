@@ -31,7 +31,7 @@ ctStanTIpredMarginal<-function(fit,tipred,pars, plot=TRUE){
       for(i in 1:dim(e[[p]])[3]){
         for(j in 1:dim(e[[p]])[4]){
           dts <-data.frame(Parameter = paste0(p, '[',i,',',j,']'),
-            TIpred = ti, y=c(aaply(e[[p]],c(2,3,4),mean,.drop=FALSE)[,i,j,]), Covariate=c(e$tipreds[1,,tin]))
+            TIpred = ti, y=c(aaply(e[[p]],c(2,3,4),mean,.drop=FALSE)[,i,j,]), Covariate=c(fit$standata$tipredsdata[,tin]))
           
           # if(requireNamespace('quantreg')){
           #   # browser()

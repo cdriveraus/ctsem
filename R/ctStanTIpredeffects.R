@@ -55,10 +55,13 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   nsubjects=20,filter=NA,plot=FALSE){
 # browser()
   #get objects
+  # browser()
   ctspec <- fit$ctstanmodel$pars
   e<-ctExtract(fit)
   rawpopmeans <- e$rawpopmeans
-  tipreds<-ctCollapse(e$tipreds,1,mean) #maybe collapsing over sampled tipred values is not ideal?
+  if(fit$standata$nmissingtipreds){
+    tipreds<-ctCollapse(e$tipreds,1,mean) #maybe collapsing over sampled tipred values is not ideal?
+  } else tipreds <- fit$standata$tipredsdata
   
   #sample
   niter<-dim(e$rawpopmeans)[1]

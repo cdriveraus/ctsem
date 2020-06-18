@@ -793,7 +793,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     #convert missings back to NA's for data output
     standataout<-standata
     standataout$Y[standataout$Y==99999] <- NA
-    standataout$tipreds[standataout$Y==99999] <- NA
+    standataout$tipreds[standataout$tipreds==99999] <- NA
     # standataout <- utils::relist((standataout),skeleton=standata)
     
     setup=list(recompile=recompile,idmap=standata$idmap,matsetup=ctm$modelmats$matsetup,matvalues=ctm$modelmats$matvalues,
