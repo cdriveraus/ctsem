@@ -569,8 +569,7 @@ summary(ssfit)$popmeans
 \subsection{Non-linearities}
 The dynamic model that arises normally out of a typical ctsem model specification is linear, as the dynamic system and measurement matrices (DRIFT, MANIFESTVAR, etc.) do not vary over time. This can be changed by making certain elements of the matrices depend on the current state of the system. This is done by setting the element to a character string containing the reference to `state', and the specific state. In a simple univariate, first order linear system, the DRIFT matrix would be $1 \times 1$ and contain a character string such as `drift11', indicating we want to estimate the parameter called `drift11' for the DRIFT matrix. This parameter could however be made state dependent, by adding an additional latent process to the system governing the behaviour of the `drift11' parameter over time, as well as an additional matrix called PARS that contains any extra parameters needed. Careful thought regarding the required model structure and restrictions is necessary. Here, we modify the oscillatory, sunspots example from earlier, such that the oscillation damping factor is no longer constant but depends on the current level of sunspot activity. It is possible to reference the current states of the process by using the appropriate latent variable name. Whenever a square bracket or latent state is used in a ctsem parameter, ctsem recognises this as a nonlinear element, and additional formulas that are valid in the Stan language are also possible to use -- \verb|"exp(ss_level)"| would ensure positivity of the result, for instance. 
 
-<<nl,eval=TRUE,results='hide',echo=-1,messages=FALSE,cache=TRUE, fig.width=8, fig.height=4,fig.cap='Nonlinear oscillation example'>>=
-if(w32chk()){
+<<nl,eval=FALSE,results='hide',echo=-1,messages=FALSE,cache=TRUE, fig.width=8, fig.height=4,fig.cap='Nonlinear oscillation example'>>=
 sunspots<-sunspot.year
 sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
 id <- 1
@@ -609,7 +608,6 @@ ssfitnl <- ctStanFit(datalong, m, optimcontrol=list(stochastic=TRUE))
 
 ctKalman(ssfitnl,kalmanvec=c('y','yprior'),timestep=.1,
   timerange = c(1750,1950),plot=TRUE)
-}
 @
 
 \subsection{Population standard deviations - understanding the transforms}

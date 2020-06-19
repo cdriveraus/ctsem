@@ -11,6 +11,7 @@ ctStanKalman(
   cores = 2,
   standardisederrors = FALSE,
   subjectpars = FALSE,
+  tformsubjectpars = TRUE,
   indvarstates = FALSE,
   ...
 )
@@ -28,6 +29,8 @@ ctStanKalman(
 
 \item{subjectpars}{if TRUE, state estimates are not returned, instead, predictions of each subjects parameters
 are returned, for parameters that had random effects specified.}
+
+\item{tformsubjectpars}{if FALSE, subject level parameters are returned in raw, pre transformation form.}
 
 \item{indvarstates}{if TRUE, do not remove indvarying states from output}
 

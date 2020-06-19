@@ -66,12 +66,11 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,...){
 #' Some outputs are unavailable for ctStan fits at present.
 #' If plot=TRUE, nothing is returned but a plot is generated.
 #' @examples
-#' if(w32chk()){
+#' \donttest{
 #' 
 #' #Basic
 #' ctKalman(ctstantestfit(), timerange=c(0,60), plot=TRUE)
 #' 
-#' \donttest{
 #' #Multiple subjects, y and yprior, showing plot arguments
 #' plot1<-ctKalman(ctstantestfit(), timerange=c(0,60), timestep=.1, plot=TRUE,
 #'   subjects=2:3, 
@@ -89,8 +88,6 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,...){
 #'    geom_line() +
 #'    theme_bw()
 #'
-#'  
-#'   }
 #'  }
 #' @export
 

@@ -14,6 +14,7 @@
   elementNames = NA,
   polygonsteps = 10,
   polygonalpha = 0.1,
+  facets = vars(Variable),
   ...
 )
 }
@@ -45,6 +46,9 @@ Alternatively, a character vector specifying the manifest and latent names to pl
 \item{polygonsteps}{Number of steps to use for uncertainty band shading.}
 
 \item{polygonalpha}{Numeric for the opacity of the uncertainty region.}
+
+\item{facets}{when multiple subjects are included in multivariate plots, the default is to facet plots 
+by variable type. This can be set to NA for no facets, or \code{variable(Subject)} for facetting by subject.}
 
 \item{...}{not used.}
 }

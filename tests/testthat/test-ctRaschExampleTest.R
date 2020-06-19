@@ -6,44 +6,55 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
   
   test_that("ctRasch1", {
     set.seed( 1234 )
+    
+    #install software
+    # source(file = 'https://github.com/cdriveraus/ctsem/raw/master/installctsem.R')
+    
     invlog=function (x) exp(x)/(1 + exp(x))
+    n.manifest=21
     
+    #gen data
     gm <- ctModel(DRIFT=-.3, DIFFUSION=.3, CINT=.1,
-      TRAITVAR=diag(.3,1),
-      LAMBDA= c(1,.8,1.2),
-      n.latent=1,n.manifest=3,Tpoints=20,
-      MANIFESTMEANS=c(0,.5,-.5),T0MEANS=-.3,T0VAR=.5)
+      TRAITVAR=diag(.3,1), #old approach to allow individual variation 
+      LAMBDA= rep(1,each=n.manifest),
+      n.latent=1,n.manifest=n.manifest,Tpoints=20,
+      MANIFESTMEANS=c(0,rep(c(.5,-.5),each=(n.manifest-1)/2)),T0MEANS=-.3,T0VAR=.5)
     
-    d=ctGenerate(gm,n.subjects = 50,logdtsd=0)
-    # d[,gm$manifestNames] = d[,gm$manifestNames] + rnorm(nrow(d)*gm$n.manifest)
+    d=ctGenerate(gm,n.subjects = 50,logdtsd=.2)
     d[,gm$manifestNames] <- rbinom(nrow(d)*gm$n.manifest,size=1,prob=invlog(d[,gm$manifestNames]))
     
+    #model to fit
     m <- ctModel( n.latent = 1,
-      n.manifest = 3,
-      MANIFESTMEANS = c(0,'m2||FALSE','m3||FALSE'),
-      LAMBDA = c(1,.8,1.2),
-      CINT = 'b',
+      n.manifest = n.manifest,
+      MANIFESTMEANS = c(0,paste0('m',2:n.manifest,'|param|FALSE')), #set prior to N(0,1), disable individual variation
+      LAMBDA = rep(1,n.manifest),
+      T0MEANS='t0m|param|TRUE|.1',
+      CINT = 'b|param|TRUE|1', #use standard normal for mean prior, individual variation = TRUE (default), default scale for sd
       type = "stanct" )
     
-    m$manifesttype[]=1
+    #plot(m)
     
+    m$manifesttype[]=1 #set type to binary
+    
+    #fit without integration
     r <- ctStanFit( datalong = d,
+      #fit=FALSE, #set this to skip fitting and just get the standata and stanmodel objects
       ctstanmodel = m,
-      iter = 20,verbose=0,control=list(max_treedepth=8),
-      chains = 2,
-      intoverstates = TRUE,
-      optimize=FALSE,intoverpop=F,
-      stationary = FALSE)
+      iter = 20,verbose=0,control=list(max_treedepth=8),nopriors=FALSE,
+      chains = 2,#plot=T,
+      intoverstates = FALSE,
+      optimize=FALSE,intoverpop=F)
     s=summary(r)
     s
     
+    #r$standata contains data structure
+    #r$stanmodeltext contains model text
+    
+    #fit with integration (linear approximation)
     ro <- ctStanFit( datalong = d,
-      ctstanmodel = m,cores=1,
-      iter = 30,verbose=0,control=list(max_treedepth=8),
+      ctstanmodel = m,cores=2,
       intoverstates = T,nopriors=T,
-      optimcontrol = list(stochastic=T),
-      optimize=T,intoverpop=T,#fit=F,
-      stationary = FALSE)
+      optimize=T,intoverpop=T)
     so=summary(ro)
     so
     

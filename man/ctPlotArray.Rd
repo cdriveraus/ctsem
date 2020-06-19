@@ -56,8 +56,7 @@ Nothing. Generates plots.
 1st margin of $Y sets line values, 2nd sets variables, 3rd quantiles.
 }
 \examples{
-if(w32chk()){
-
+\donttest{#'
 input<-ctStanTIpredeffects(ctstantestfit(), plot=FALSE, whichpars='CINT', 
  nsamples=10,nsubjects=10)
     

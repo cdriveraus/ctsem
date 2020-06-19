@@ -5,18 +5,17 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
   
   # require(cOde)
   # require(Deriv)
-
+  
   # mm=ctStanModelMatrices(m) #do here because we change m
   
   # get system dimension
   ndim = max(m$pars$row[m$pars$matrix%in% 'T0MEANS'])
-  
   # 2): generate vector valued function fn = drift * state
   
   # initialize fn and state
   fn     = c()
   state   = paste0("state__", 1:ndim,'__')
-# browser()
+  
   #replace system matrix references
   for(ri in 1:nrow(m$pars)){
     if(grepl('[',m$pars$param[ri],fixed=TRUE) && !is.na(m$pars$transform[ri])){
@@ -59,7 +58,7 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
   #     }
   #   }
   # }
-  # browser()
+  
   # mats<-listOfMatrices(m$pars)
   
   
@@ -74,7 +73,7 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
         if(!is.na(mats$CINT[row])) fn[row] = paste0(fn[row],' + ',mats$CINT[row]) #checking for NA because CINT is not always as large as DRIFT
       }
     }
-
+    
     
     if(typei=='Jtd'){
       if(m$n.TDpred ==0) {
@@ -93,8 +92,8 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
       t0func <- mats$T0MEANS[,1]
       t0func <- sapply(1:length(t0func), function(xi){
         # if(is.na(suppressWarnings(as.numeric(t0func[xi]))) && !grepl('[',t0func[xi],fixed=TRUE)) 
-          out <-  paste0('state[',xi,'] + ',t0func[xi])
-          return(out)
+        out <-  paste0('state[',xi,'] + ',t0func[xi])
+        return(out)
       })
       fn = sapply(prodSymb(diag(nrow(mats$T0MEANS)), matrix(t0func,ncol=1)),Simplify)
     }
@@ -106,7 +105,7 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
       # fn = sapply(prodSymb(diag(nrow(mats$T0MEANS)), matrix(t0func,ncol=1)),Simplify)
     }
     
-    # browser()
+    
     
     fn = gsub(" ", "", fn, fixed = TRUE) #remove spaces
     # replace state[~] by state~ for cOde Jacobian and make fn and state a named list
@@ -122,14 +121,13 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
     fn = gsub("[", "___leftsquarebracket___", fn, fixed = TRUE)
     fn = gsub("]", "___rightsquarebracket___", fn, fixed = TRUE)
     fn=sapply(fn,Simplify)
-
+    
     # 3): calculate Jacobian of fn symbolically
     J  = jacobianSymb(fn, state)
     # 4): create Jacobian list in STAN format
     # J = sapply(J,Simplify)
-
-    J = gsub(" ", "", J, fixed = TRUE) #remove spaces
     
+    J = gsub(" ", "", J, fixed = TRUE) #remove spaces
     for(statei in 1:ndim){
       J=gsub(paste0('state__',statei,'__'),paste0('state[',statei,']'),J,fixed = TRUE)
     }
@@ -139,58 +137,24 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
     J = gsub("___leftsquarebracket___", "[", J, fixed = TRUE)
     J = gsub("___comma___", ",", J, fixed = TRUE)
     
-    
-    # mm=ctStanModelMatrices(m)
-    Js=J #replace parameter labels with matrix references
-    
-    for(x in 1:length(Js)){
-      for(mi in 1:length(mats)){
-        for(ri in 1:nrow(mats[[mi]])){
-          for(ci in 1:ncol(mats[[mi]])){
-            if(suppressWarnings(is.na(as.numeric(Js[x])))){
-          if(Js[x] %in% mats[[mi]][ri,ci]) Js[x] <- paste0('s',names(mats)[mi],'[',ri,',',ci,']')
+    Jm <- matrix(J,Jrows,ndim)
+    for(j in 1:ncol(Jm)){
+      for(i in 1:nrow(Jm)){
+        if(is.na(suppressWarnings(as.numeric(Jm[i,j])))){
+          for(mi in 1:length(mats)){
+            if(Jm[i,j] %in% mats[[mi]]){ 
+              arrind <- arrayInd(which(mats[[mi]] %in% Jm[i,j]),dim(mats[[mi]]))
+              for(ari in 1:nrow(arrind)){
+                Jm[i,j] <- paste0('s',names(mats)[mi],'[',arrind[ari,1],',',arrind[ari,2],']')
+              }
             }
           }
         }
       }
     }
 
-    Jm <- matrix(Js,Jrows,ndim)
-    
-    if(typei=='JAx') matches <- c('DRIFT','CINT')
-    if(typei=='J0') matches <- c('T0MEANS','T0VAR')
-    if(typei=='Jtd') matches <- c('TDPREDEFFECT')
-    if(typei=='Jy') matches <- c('MANIFESTMEANS','LAMBDA','MANIFESTVAR')
-    for(j in 1:ncol(Jm)){
-      for(i in 1:nrow(Jm)){
-        for(mi in matches){
-          for(jm in 1:ncol(mats[[mi]])){
-            for(im in 1:nrow(mats[[mi]])){
-              if(is.na(suppressWarnings(as.numeric(Jm[i,j]))) && Jm[i,j] %in% mats[[mi]][im,jm]) Jm[i,j] <- paste0('s',mi,'[',im,',',jm,']')
-            }
-          }
-        }
-      }
-    }
-        
-    
-    # for(x in 1:nrow(mm$matsetup)){
-    #   Js=gsub(
-    #     pattern = paste0("\\b",mm$matsetup$parname[x],"\\b"),
-    #     replacement = paste0(matnames[mm$matsetup$matrix[x]],'[',
-    #       mm$matsetup$row[x],',',
-    #       mm$matsetup$col[x],']'),
-    #     x = Js)
-    # 
-    #   for(mati in matnames) { #append s to system matrices
-    #     Js=gsub(pattern = paste0("\\b",mati,"\\b"), replacement = paste0('s',mati),  x = Js)
-    #   }
-    # }
-    # browser()
     Jout[[typei]] <- Jm
   }#end type loop
-  # print(Jout)
-   # browser()
   return(Jout)
 }
 

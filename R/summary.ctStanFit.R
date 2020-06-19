@@ -44,10 +44,9 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
 
  
   if(residualcov){ #cov of residuals
-  k=ctStanKalman(object,collapsefunc = mean,cores=1)
   obscov <- cov(object$data$Y,use='pairwise.complete.obs')
   idobscov <- diag(1/sqrt(diag(obscov)),ncol(obscov))
-  rescov <- cov(matrix(k$errprior,ncol=ncol(obscov)),use='pairwise.complete.obs')
+  rescov <- cov(matrix(object$kalman$errprior,ncol=ncol(obscov)),use='pairwise.complete.obs')
   narescov <- which(is.na(rescov))
   rescov[narescov] <- 0
   

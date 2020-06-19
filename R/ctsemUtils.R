@@ -1,3 +1,21 @@
+vgrep <- function(patterns,x){
+  unique(unlist(sapply(patterns,function(pattern) grep(pattern,x))))
+}
+
+findmatrixslots <- function(pars,l){
+  p<-list()
+  for(pi in pars){
+    for(mi in 1:length(l)){
+      if(any(l[[mi]] %in% pi)){
+        arrind <- arrayInd(which(l[[mi]] %in% pi),dim(l[[mi]]))
+        p[[pi]] <- paste0(names(l)[mi],'[',arrind[1,1],',',arrind[1,2],']')
+        next
+      }
+    }
+  }
+  return(p)
+}
+
 ctstantestfitobj <- NA
 
 #'ctStanFit example fit

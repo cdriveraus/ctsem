@@ -4,14 +4,17 @@
 \alias{ctStanTIpredMarginal}
 \title{Plot marginal relationships between covariates and parameters for a ctStanFit object.}
 \usage{
-ctStanTIpredMarginal(fit, tipred, pars, plot = TRUE)
+ctStanTIpredMarginal(fit, tipred, pars, matrices = TRUE, plot = TRUE)
 }
 \arguments{
 \item{fit}{ctStanFit object.}
 
 \item{tipred}{character vector representing which tipreds to use.}
 
-\item{pars}{Subject level matrices from the ctStanFit output -- e.g, 'DRIFT' or 'DIFFUSION'.}
+\item{pars}{Character vector of either parameter names, or if matrices=TRUE,
+system matrices with optional indices -- e.g, 'DRIFT' or 'DIFFUSION[2,1]'.}
+
+\item{matrices}{Logical, see pars argument.}
 
 \item{plot}{Logical, whether to plot.}
 }
@@ -22,8 +25,8 @@ If \code{plot=TRUE}, nothing, otherwise an array that can be used with ctPlotArr
 Plot marginal relationships between covariates and parameters for a ctStanFit object.
 }
 \examples{
-if(w32chk()){
-
-ctStanTIpredMarginal(ctstantestfit(),pars=c('CINT'),tipred=c('TI1'))
+if(w32chk()){#'
+ctStanTIpredMarginal(ctstantestfit(),pars=c('CINT'),
+  matrices=TRUE, tipred=c('TI1'))
 }
 }

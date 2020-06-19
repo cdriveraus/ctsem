@@ -80,9 +80,6 @@ otherwise use the HMC sampler from Stan, which is (much) slower, but generally m
 \code{nldynamics} defaults to "auto", but may also be a logical. Set to FALSE to use estimator that assumes linear dynamics, 
 TRUE to use non-linear estimator. "auto" selects linear when the model is obviously linear, 
 otherwise nonlinear -- nonlinear is slower.
-\code{nlmeasurement} defaults to "auto", but may also be a logical. Set to TRUE to use non linear measurement model estimator, 
-FALSE to use linear model. "auto" selects linear if appropriate, otherwise nonlinear. Non-linear methods are slower but applicable to both linear
-and non linear cases.
 \code{maxtimestep} must be a positive numeric,  specifying the largest time
 span covered by the numerical integration. The large default ensures that for each observation time interval, 
 only a single step of exponential integration is used. When \code{maxtimestep} is smaller than the observation time interval, 
@@ -263,7 +260,7 @@ m2 <- ctModel(type = 'stanct',
   MANIFESTMEANS=matrix(0,ncol=1),
   MANIFESTVAR=matrix(c('merror'),nrow=1,ncol=1))
 
-f2 <- ctStanFit(datalong = dat2, ctstanmodel = m2, optimize=TRUE)
+f2 <- ctStanFit(datalong = dat2, ctstanmodel = m2)
 
 summary(f2)
 

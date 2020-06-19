@@ -59,8 +59,7 @@ ctPlotArrayGG <- function(input,
 #' @export
 #'
 #' @examples
-#' if(w32chk()){
-#'
+#' \donttest{#'
 #' input<-ctStanTIpredeffects(ctstantestfit(), plot=FALSE, whichpars='CINT', 
 #'  nsamples=10,nsubjects=10)
 #'     

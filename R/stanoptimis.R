@@ -443,6 +443,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,savescores=F
     # parallel::clusterExport(cl2, c('sm','standata','samples'),environment())
     # parallel::clusterApply(cl2,1:cores, function(x) library(ctsem))
   }
+  if(cores > 1) parallel::clusterExport(cl, 'standata',environment())
   transformedpars <- try(flexlapply(cl, 
     split(1:nrow(samples), sort((1:nrow(samples))%%cores)),
     tparfunc,cores=cores,parallel=cores > 1))
@@ -1094,7 +1095,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       if(is.na(sampleinit[1])){
         
         message('Estimating Hessian')
-        time1 <- Sys.time()
         
         # hesslist <- list()
         # remainingpars <- c()
@@ -1222,24 +1222,24 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           lpdifmin=1e-2,lpdifmax=3, cl=NA,verbose=1,directions=c(-1,1),parsteps=c()){
           if('all' %in% whichpars) whichpars <- 1:length(pars)
           base <- optimfit$value
-          # hessout <- matrix(NA, length(attributes(base)$gradient), length(whichpars))
-          hessout <- flexsapply(cl = cl, cores = length(cl), whichpars, function(i){
-            
-          if(!is.na(hesscl[1]))  fgfunc <- function(x){
-              if(length(parsteps)>0){
-                pars <- est2
-                pars[-parsteps] <- x
-              } else pars <- x
-              fg=parlp(pars)
-              if(length(parsteps)>0){ 
-                attributes(fg)$gradient <- attributes(fg)$gradient[-parsteps]
-              }
-              # print(fg[1])
-              if(fg[1] < -1e99) class(fg) <- c('try-error',class(fg))
-              return(fg)
+          
+          if(!is.na(hesscl[1]))  target <- function(x){ #if cluster is passed, create target function, otherwise use old target
+            if(length(parsteps)>0){
+              pars <- est2
+              pars[-parsteps] <- x
+            } else pars <- x
+            fg=parlp(pars)
+            if(length(parsteps)>0){ 
+              attributes(fg)$gradient <- attributes(fg)$gradient[-parsteps]
+            }
+            # print(fg[1])
+            if(fg[1] < -1e99) class(fg) <- c('try-error',class(fg))
+            return(fg)
           }
           
-          if(is.na(hesscl[1])) fgfunc <- target
+          hessout <- flexsapply(cl = cl, cores = length(cl), whichpars, function(i){
+          
+          # if(is.na(cl[1])) fgfunc <- target
             
             # for(i in whichpars){
             if(verbose) message('### Par ',i,'###')
@@ -1258,7 +1258,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               while(!accepted && count < 15){
                 stepchangemultiplier <- max(stepchangemultiplier,.11)
                 count <- count + 1
-                lp[[di]] <- fgfunc(pars+uppars*stepsize*directions[di])
+                lp[[di]] <- target(pars+uppars*stepsize*directions[di])
                 accepted <- !'try-error' %in% class(lp[[di]])
                 if(accepted){
                   lpdiff <- base[1] - lp[[di]][1]
@@ -1298,20 +1298,18 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             return(grad)
           }
           ) #end flexapply
-          # browser()
+          # 
           out=(hessout+t(hessout))/2
           # attributes(out)$steplist=steplist
           # })
           return(out)
         }
-        
-        
+
         hess1 <- jac(pars = grinit,parsteps=parsteps,
           step = rep(1e-3,length(grinit)),cl=hesscl,verbose=verbose,directions=1)
         hess2 <- jac(pars = grinit,parsteps=parsteps,#fgfunc = fgfunc,
           step = rep(1e-3,length(grinit)),cl=hesscl,verbose=verbose,directions=-1)
-        
-        # browser()
+        # 
         
         hess1good <- diag(hess1) < -1e-8
         hess2good <- diag(hess2) < -1e-8
@@ -1576,9 +1574,14 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       savesubjectmatrices = FALSE, dokalman=FALSE,
       samples=resamples,cores=cores, cl=clctsem)
     
+    if(cores > 1) {
+      parallel::stopCluster(clctsem)
+      smf <- stan_reinitsf(sm,standata)
+    }
+    
     transformedparsfull=stan_constrainsamples(sm = sm,standata = standata,
       savesubjectmatrices = TRUE, dokalman=TRUE,savescores = TRUE,
-      samples=matrix(est2,nrow=1),cores=cores, cl=clctsem,quiet = TRUE)
+      samples=matrix(est2,nrow=1),cores=1, quiet = TRUE)
     
     
     
@@ -1587,10 +1590,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     lest= est2 - 1.96 * sds
     uest= est2 + 1.96 * sds
     
-    if(cores > 1) {
-      parallel::stopCluster(clctsem)
-      smf <- stan_reinitsf(sm,standata)
-    }
     transformedpars_old=NA
     try(transformedpars_old<-cbind(unlist(constrain_pars(smf, upars=lest)),
       unlist(constrain_pars(smf, upars= est2)),

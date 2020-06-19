@@ -265,7 +265,7 @@ verbosify<-function(sf,verbose=2){
 #'   MANIFESTMEANS=matrix(0,ncol=1),
 #'   MANIFESTVAR=matrix(c('merror'),nrow=1,ncol=1))
 #' 
-#' f2 <- ctStanFit(datalong = dat2, ctstanmodel = m2, optimize=TRUE)
+#' f2 <- ctStanFit(datalong = dat2, ctstanmodel = m2)
 #' 
 #' summary(f2)
 #' 
@@ -459,7 +459,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     args$datalong <- NULL
     
     ctm <- ctstanmodel
-
     ctm <- ctModel0DRIFT(ctm, ctm$continuoustime) #offset 0 drift
     ctm <- ctModelStatesAndPARS(ctm) #replace state and par refs with square bracket refs
     
@@ -806,6 +805,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         stanmodeltext=stanmodeltext, data=standataout, ctdatastruct=datalong[c(1,nrow(datalong)),],standata=standata, 
         ctstanmodelbase=ctstanmodel, ctstanmodel=ctm,stanmodel=sm, stanfit=stanfit)
       class(out) <- 'ctStanFit'
+      out$kalman <- ctStanKalman(out,collapsefunc = mean,cores=1)
     }
     
     if(!fit) out=list(args=args,setup=setup,

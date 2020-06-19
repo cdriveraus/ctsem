@@ -3,7 +3,6 @@
 #' @param object ctStanFit object, samples may be from Stan's HMC, or the importance sampling approach of ctsem.
 #' @param subjectMatrices Calculate subject specific system matrices?
 #' @param cores Only used if subjectMatrices = TRUE . For faster computation use more cores.
-#' @param ... additional arguments to pass to \code{rstan::extract}.
 #' @return Array of posterior samples.
 #' @aliases extract
 #' @examples
@@ -11,7 +10,7 @@
 #' e = ctExtract(ctstantestfit())
 #' }
 #' @export
-ctExtract <- function(object,subjectMatrices=FALSE,cores=2,...){
+ctExtract <- function(object,subjectMatrices=FALSE,cores=2){
   if(!class(object) %in% c('ctStanFit', 'stanfit')) stop('Not a ctStanFit or stanfit object')
   
   if(subjectMatrices & object$standata$savesubjectmatrices ==0){
@@ -23,8 +22,8 @@ ctExtract <- function(object,subjectMatrices=FALSE,cores=2,...){
       dokalman = TRUE,onlyfirstrow = TRUE)
     
   } else{
-  if('stanfit' %in% class(object)) out <- rstan::extract(object,...) else{
-  if('stanfit' %in% class(object$stanfit)) out <- rstan::extract(object$stanfit,...)
+  if('stanfit' %in% class(object)) out <- rstan::extract(object) else{
+  if('stanfit' %in% class(object$stanfit)) out <- rstan::extract(object$stanfit)
   if(!'stanfit' %in% class(object$stanfit)) out <- object$stanfit$transformedpars
   }
   out$Ygen[out$Ygen==99999] <- NA
