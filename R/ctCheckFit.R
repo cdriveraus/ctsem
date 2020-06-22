@@ -1,6 +1,6 @@
 #' Check absolute fit of ctFit or ctStanFit object.
 #'
-#' @param fit ctFit object.
+#' @param fit ctsem fit object.
 #' @param niter number of data generation iterations to use to calculate quantiles.
 #' @param probs 3 digit vector of quantiles to return and to test significance.
 #'
@@ -79,14 +79,7 @@ ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
   }
   
   if(class(fit)=='ctsemFit'){
-    for(i in 1:niter){
-      ndat <- ctGenerateFromFit(fit = fit,n.subjects = nrow(wdat),wide=TRUE)
-      ndat[is.na(wdat)] <- NA #match missingness
-      covarray[,,i] <- cov(ndat[,paste0(rep(manifestNames,each=fit$ctmodelobj$Tpoints),'_T',
-        0:(fit$ctmodelobj$Tpoints-1)),drop=FALSE], use='pairwise.complete.obs')
-      means[,,i] <- t(matrix(apply(ndat[,paste0(rep(manifestNames,each=fit$ctmodelobj$Tpoints),'_T',
-        0:(fit$ctmodelobj$Tpoints-1)),drop=FALSE],2,mean,na.rm=TRUE),byrow=TRUE,ncol=nmanifest))
-    }
+    stop('OpenMx based fit objects not supported -- try ctModel types standt or stanct!')
   }
   # browser()
   covql <- ctCollapse(covarray,collapsemargin = 3,quantile,probs=probs[1],na.rm=TRUE)

@@ -10,7 +10,7 @@
 #'For instance, with the default of calcfunc = quantile, 
 #'the probs argument is needed to ensure only a single value is returned.
 #'@examples
-#'if(w32chk()){
+#'\donttest{
 #'#posterior median over all subjects (also reflects mean of unconstrained pars)
 #'ctStanContinuousPars(ctstantestfit())
 #'}

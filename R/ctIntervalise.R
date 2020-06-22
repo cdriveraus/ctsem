@@ -1,6 +1,6 @@
 #' Converts absolute times to intervals for wide format ctsem panel data
 #' @param datawide Wide format data, containing absolute time measurements, 
-#' to convert to interval time scale. Otherwise as used in \code{\link{ctFit}}.  
+#' to convert to interval time scale.  
 #' See \code{\link{ctLongToWide}} to easily convert long format data.
 #' @param Tpoints Maximum number of discrete time points (waves of data, or measurement occasions) 
 #' for an individual in the input data structure.

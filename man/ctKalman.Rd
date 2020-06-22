@@ -34,12 +34,12 @@ are set to NA, so only expectations based on
 parameters and covariates are returned.}
 
 \item{plot}{Logical. If TRUE, plots output instead of returning it. 
-See \code{\link{plot.ctKalman}} (OpenMx based fit) or \code{\link{plot.ctKalmanDF}} 
+See \code{\link{plot.ctKalmanDF}} 
 (Stan based fit) for the possible arguments.}
 
 \item{realid}{Output using original (not necessarily integer sequence) subject id's?}
 
-\item{...}{additional arguments to pass to \code{\link{plot.ctKalman}} or \code{\link{plot.ctKalmanDF}}.}
+\item{...}{additional arguments to pass to \code{\link{plot.ctKalmanDF}}.}
 }
 \value{
 Returns a list containing matrix objects etaprior, etaupd, etasmooth, y, yprior, 

@@ -25,7 +25,7 @@ the probs argument is needed to ensure only a single value is returned.}
 Returns the continuous time parameter matricesof a ctStanFit fit object
 }
 \examples{
-if(w32chk()){
+\donttest{
 #posterior median over all subjects (also reflects mean of unconstrained pars)
 ctStanContinuousPars(ctstantestfit())
 }

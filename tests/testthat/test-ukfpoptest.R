@@ -66,22 +66,6 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     
     
-    # #original ctsem
-    cfit1 <- ctRefineTo(dat = cd,dataform = 'long',ctmodelobj = m1,retryattempts = 1)
-    ct1d=cfit1$mxobj$DRIFT$values[1:2,1:2]
-    # cfit1$mxobj$DIFFUSION$result
-    # cfit1$mxobj$T0VAR$result
-    ctll1=cfit1$mxobj$output$fit *-.5
-    
-    cfit2 <- ctRefineTo(dat = cd,dataform = 'long',ctmodelobj = m2,retryattempts = 0,carefulFit=T,stationary='')
-    ct2d=cfit2$mxobj$DRIFT$values
-    # cfit2$mxobj$DIFFUSION$result
-    # cfit2$mxobj$T0VAR$result
-    ctll2=cfit2$mxobj$output$fit *-.5
-    
-    # summary(cfit1)$ctparameters
-    # summary(cfit2)$ctparameters
-    
     #bayesian / ukf ctsem
     sm1 <- ctStanModel(m1)
     sm1$pars$indvarying <- FALSE
@@ -154,8 +138,8 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     sf2ll=sf2$stanfit$optimfit$value
     # summary(sf2)$popmeans
     
-    dvec=c('ct1d','ct2d','sf1d','sf2d','sf1nl_derrindd','sf1nld_derrindd')
-    llvec=c('ctll1','ctll2','sf1ll','sf1nldll','sf1nld_derrindll','sf1nl_derrindll')
+    dvec=c('sf1d','sf2d','sf1nl_derrindd','sf1nld_derrindd')
+    llvec=c('sf1ll','sf1nldll','sf1nld_derrindll','sf1nl_derrindll')
     
     sapply(dvec,get,envir=sys.frame(sys.parent(0)))
     sapply(llvec,get,envir=sys.frame(sys.parent(0)))

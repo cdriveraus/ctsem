@@ -29,8 +29,8 @@
 #'  DIFFUSION=matrix(c(0, 0, 0, "diffusion"), ncol=2, nrow=2))
 #'
 #' #fit
-#' ssfit <- ctStanFit(datalong, ssmodel, iter=300, 
-#'   optimize=FALSE, chains=2)
+#' ssfit <- ctStanFit(datalong, ssmodel, iter=2, 
+#'   optimize=FALSE, chains=1)
 #' ctStanParnames(ssfit,substrings=c('pop_','popsd'))
 #' }
 #' 
@@ -73,7 +73,7 @@ ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
   
   out<-list()
   discreteDRIFT = array(unlist(lapply(times, function(x) 
-    OpenMx::expm(ctpars$DRIFT*x))),
+    expm::expm(ctpars$DRIFT*x))),
     dim=c(nlatent,nlatent,length(times)),
     dimnames=list(latentNames,latentNames,paste0('t',times)))
   
@@ -203,7 +203,7 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational, standardise){
       g[is.nan(g)] <- 0
     }
     sapply(times, function(ti){ 
-      out <-OpenMx::expm(DRIFT *ti)
+      out <-expm::expm(DRIFT *ti)
       if(standardise) out <- out * matrix(rep(sqrt((asymDIFFUSIONdiag)),each=nl) / 
           rep((sqrt(asymDIFFUSIONdiag)),times=nl),nl)
       if(observational) out <- out %*% g

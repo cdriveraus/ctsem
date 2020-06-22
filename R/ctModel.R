@@ -1,8 +1,7 @@
 #' Define a ctsem model
 #' 
 #' This function is used to specify a continuous time structural equation model, 
-#' which can then be fit to data with function \code{\link{ctFit}}, or \code{\link{ctStanFit}}
-#' for Bayesian models.
+#' which can then be fit to data with function \code{\link{ctStanFit}}.
 #' 
 #' @param type character string. If 'omx' (default) configures model for maximum likelihood fitting with ctFit, using OpenMx. 
 #' If 'stanct' or 'standt' configures either continuous ('stanct') or discrete ('standt') time 
@@ -127,7 +126,7 @@
 #' 
 #' @param T0TIPREDEFFECT For type='omx' only.n.latent*n.TIpred effect matrix of time independent 
 #' predictors on latents at T0. "auto" freely estimates all parameters, though note that under the default 
-#' setting of \code{stationary} for \code{ctFit}, this matrix is ignored as the effects are determined based on
+#' setting of \code{stationary} for ctFit, this matrix is ignored as the effects are determined based on
 #' the overall process parameters.
 #' 
 #' @param TIPREDVAR For type='omx' only.lower triangular n.TIpred * n.TIpred Cholesky decomposed covariance
@@ -238,7 +237,7 @@ ctModel<-function(LAMBDA, type='omx',n.manifest = 'auto', n.latent='auto', Tpoin
   }
   
 
-
+  if(type=='omx') message('Type "omx" is still supported but requires ctsemOMX package installation. "stanct" or "standt" are recommended types.')
   if(type=='omx' & is.null(Tpoints)) stop('Type "omx" requires Tpoints specified!')
   
 

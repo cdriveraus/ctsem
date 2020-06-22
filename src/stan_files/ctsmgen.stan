@@ -364,7 +364,7 @@ generated quantities{
   matrix[nparams,ntipred] linearTIPREDEFFECT;
 
   real ll = 0;
-  vector[ndatapoints] llrow = rep_vector(0.0,ndatapoints);
+  vector[savescores ? ndatapoints : 1] llrow = rep_vector(0.0,savescores ? ndatapoints : 1);
   matrix[nlatentpop,nlatentpop] etapriorcov[savescores ? ndatapoints : 0];
   matrix[nlatentpop,nlatentpop] etaupdcov[savescores ? ndatapoints : 0];
   matrix[nlatentpop,nlatentpop] etasmoothcov[savescores ? ndatapoints : 0];

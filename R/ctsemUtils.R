@@ -18,6 +18,18 @@ findmatrixslots <- function(pars,l){
 
 ctstantestfitobj <- NA
 
+#' Dummy function for initialisation
+#'
+#' @return nothing. 
+#' @export 
+#'
+#' @examples
+#' if(w32chk()) ctstantestfit()
+aa_testfitinit<-function(){
+  return(NULL)
+}
+
+
 #'ctStanFit example fit
 #'
 #'@name ctstantestfit
@@ -263,19 +275,6 @@ makeNumericIDs <- function(datalong,idName='id',timeName='time'){
   
   if(any(is.na(as.numeric(datalong[,idName])))) stop('id column may not contain NA\'s or character strings!')
   return(datalong)
-}
-
-#' Right multiply a matrix by its transpose.
-#'
-#' @param x matrix.
-#'
-#' @return matrix.
-#' @export
-#'
-#' @examples
-#' msquare(t(chol(diag(3,4)+1)))
-msquare <- function(x) {
-  x %*% t(x)
 }
 
 

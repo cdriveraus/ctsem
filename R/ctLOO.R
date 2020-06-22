@@ -43,6 +43,7 @@ ctLOO <- function(fit,folds=10,cores=2,parallelFolds=TRUE,
     parallel::clusterExport(clctsem,c('sdat','smodel','init'),envir=environment())
     on.exit({parallel::stopCluster(clctsem)},add = TRUE)
   } else clctsem <- NA
+  
   folded <- flexlapply(clctsem,X = srows,fn = function(x) {
     library(ctsem)
     

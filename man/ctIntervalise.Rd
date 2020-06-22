@@ -22,7 +22,7 @@ ctIntervalise(
 }
 \arguments{
 \item{datawide}{Wide format data, containing absolute time measurements, 
-to convert to interval time scale. Otherwise as used in \code{\link{ctFit}}.  
+to convert to interval time scale.  
 See \code{\link{ctLongToWide}} to easily convert long format data.}
 
 \item{Tpoints}{Maximum number of discrete time points (waves of data, or measurement occasions) 

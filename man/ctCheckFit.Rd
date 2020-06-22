@@ -7,7 +7,7 @@
 ctCheckFit(fit, niter = 500, probs = c(0.025, 0.5, 0.975))
 }
 \arguments{
-\item{fit}{ctFit object.}
+\item{fit}{ctsem fit object.}
 
 \item{niter}{number of data generation iterations to use to calculate quantiles.}
 

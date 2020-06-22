@@ -26,9 +26,7 @@ if(1==0){
     DIFFUSION=matrix(c(0,0,
       0,16),ncol=2,nrow=2,byrow=TRUE))
   
-  fit1 <- ctFit(dat = datalong,dataform = 'long', ctmodelobj = model1, transformedParams = F, fit=F,
-    objective = "Kalman",stationary='T0VAR',carefulFit=F)
-  fit1$mxobj <- mxRun(fit1$mxobj)
+  
   
   summary(fit1$mxobj)
   sqrt(fit1$mxobj$DIFFUSION$values[2,2]) 

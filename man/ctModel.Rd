@@ -168,7 +168,7 @@ manually edit the model object after creation.}
 
 \item{T0TIPREDEFFECT}{For type='omx' only.n.latent*n.TIpred effect matrix of time independent 
 predictors on latents at T0. "auto" freely estimates all parameters, though note that under the default 
-setting of \code{stationary} for \code{ctFit}, this matrix is ignored as the effects are determined based on
+setting of \code{stationary} for ctFit, this matrix is ignored as the effects are determined based on
 the overall process parameters.}
 
 \item{TIPREDVAR}{For type='omx' only.lower triangular n.TIpred * n.TIpred Cholesky decomposed covariance
@@ -185,8 +185,7 @@ Better starting values may improve model fit speed and the chance of an appropri
 }
 \description{
 This function is used to specify a continuous time structural equation model, 
-which can then be fit to data with function \code{\link{ctFit}}, or \code{\link{ctStanFit}}
-for Bayesian models.
+which can then be fit to data with function \code{\link{ctStanFit}}.
 }
 \examples{
  ### Frequentist example:

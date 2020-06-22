@@ -244,7 +244,7 @@ ctStanPostPredict(f1, wait=FALSE) #compare randomly generated data from posterio
 cf<-ctCheckFit(f1) #compare mean and covariance of randomly generated data to observed cov
 plot(cf,wait=FALSE)
 
-
+ ### Further example models
 
 #Include intervention
 m2 <- ctModel(type = 'stanct',
@@ -259,15 +259,6 @@ m2 <- ctModel(type = 'stanct',
   LAMBDA = diag(1),
   MANIFESTMEANS=matrix(0,ncol=1),
   MANIFESTVAR=matrix(c('merror'),nrow=1,ncol=1))
-
-f2 <- ctStanFit(datalong = dat2, ctstanmodel = m2)
-
-summary(f2)
-
-ctKalman(f2,plot=TRUE,subjects=1,kalmanvec=c('y','ysmooth'))
-ctKalman(f2,plot=TRUE,subjects=1:3,kalmanvec=c('y','ysmooth'),errorvec=NA,legend=FALSE)
-
-ctStanPostPredict(f2, datarows=1:100, wait=FALSE)
 
 
 
@@ -286,14 +277,7 @@ m2i <- ctModel(type = 'stanct',
   MANIFESTMEANS=matrix(0,ncol=1),
   MANIFESTVAR=matrix(c('merror'),nrow=1,ncol=1))
   
-plot(m2i)
-
-f2i <- ctStanFit(datalong = dat2, ctstanmodel = m2i)
-summary(f2i)
-ctStanPlotPost(f2i)
-ctKalman(f2i,kalmanvec=c('y','ysmooth'),subjects=2:4,plot=TRUE,errorvec=NA)
-
-
+  
 #Including covariate effects
 m2ic <- ctModel(type = 'stanct',
   manifestNames = c('Y1'), latentNames=c('eta1'),
@@ -311,13 +295,6 @@ m2ic <- ctModel(type = 'stanct',
 
 m2ic$pars$indvarying[m2ic$pars$matrix \%in\% 'TDPREDEFFECT'] <- TRUE
 
-plot(m2ic)
-
-f2ic <- ctStanFit(datalong = dat2, ctstanmodel = m2ic,optimize=TRUE)
-summary(f2ic)
-
-ctStanTIpredeffects(fit = f2ic,includeMeanUncertainty = TRUE,whichpars = 'TDPREDEFFECT',
-  plot=TRUE,probs = c(.025,.5,.975))
 
 #Include deterministic dynamics
 m3 <- ctModel(type = 'stanct',
@@ -332,15 +309,6 @@ m3 <- ctModel(type = 'stanct',
   LAMBDA = diag(1),
   MANIFESTMEANS=matrix(0,ncol=1),
   MANIFESTVAR=matrix(c('merror1'),nrow=1,ncol=1))
-
-ctModelLatex(m3)
-
-f3 <- ctStanFit(datalong = dat2, ctstanmodel = m3, optimize=TRUE)
-
-summary(f3)
-
-ctKalman(f3,plot=TRUE,subjects=1,kalmanvec=c('y','ysmooth'))
-ctKalman(f3,plot=TRUE,subjects=1:3,kalmanvec=c('y','ysmooth'),errorvec=NA)
 
 
 
@@ -360,17 +328,6 @@ m3n <- ctModel(type = 'stanct',
   MANIFESTMEANS=matrix(0,ncol=1),
   MANIFESTVAR=matrix(c(0),nrow=1,ncol=1))
 
-ctModelLatex(m3n)
-
-f3n <- ctStanFit(datalong = dat2, ctstanmodel = m3n, optimize=TRUE)
-
-summary(f3n)
-
-k=ctKalman(f3n,plot=TRUE,subjects=1,kalmanvec=c('y','etasmooth'),timestep=.01)
-ctKalman(f3n,plot=TRUE,subjects=1:3,kalmanvec=c('y','etasmooth'),errorvec=NA)
-
-
-
 
 
 #include 2nd latent process
@@ -388,17 +345,6 @@ m4 <- ctModel(n.manifest = 2,n.latent = 2, type = 'stanct',
   MANIFESTMEANS=matrix(c(0,0),nrow=2,ncol=1),
   MANIFESTVAR=matrix(c('merror1',0,0,'merror2'),nrow=2,ncol=2))
 
-f4 <- ctStanFit(datalong = dat2, ctstanmodel = m4,optimize=TRUE)
-
-summary(f4)
-
-ctStanDiscretePars(f4,plot=TRUE) #auto and cross regressive plots over time
-
-ctKalman(f4,plot=TRUE,subjects=1,kalmanvec=c('y','ysmooth'))
-ctKalman(f4,plot=TRUE,subjects=1:2,kalmanvec=c('y','ysmooth'),errorvec=NA)
-
-
-
 #dynamic factor model -- fixing CINT to 0 and freeing indicator level intercepts
 
 m3df <- ctModel(type = 'stanct',
@@ -413,17 +359,6 @@ m3df <- ctModel(type = 'stanct',
   LAMBDA = matrix(c(1,'Y3loading'),nrow=2,ncol=1),
   MANIFESTMEANS=matrix(c('Y2_int','Y3_int'),nrow=2,ncol=1),
   MANIFESTVAR=matrix(c('Y2residual',0,0,'Y3residual'),nrow=2,ncol=2))
-
-ctModelLatex(m3df)
-
-f3df <- ctStanFit(datalong = dat2, ctstanmodel = m3df, optimize=TRUE)
-
-summary(f3df)
-
-ctKalman(f3df,plot=TRUE,subjects=1,kalmanvec=c('y','ysmooth'),errorvec=NA)
-ctKalman(f3df,plot=TRUE,subjects=1:3,kalmanvec=c('y','ysmooth'),errorvec=NA)
-
-
 
 }
 }
