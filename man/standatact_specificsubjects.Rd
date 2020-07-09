@@ -22,6 +22,6 @@ Adjust standata from ctsem to only use specific subjects
 \examples{
 if(w32chk()){
 
-d <- standatact_specificsubjects(ctstantestfit()$standata, 1:2)
+d <- standatact_specificsubjects(ctstantestfit$standata, 1:2)
 }
 }

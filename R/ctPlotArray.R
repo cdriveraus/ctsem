@@ -60,7 +60,7 @@ ctPlotArrayGG <- function(input,
 #'
 #' @examples
 #' \donttest{#'
-#' input<-ctStanTIpredeffects(ctstantestfit(), plot=FALSE, whichpars='CINT', 
+#' input<-ctStanTIpredeffects(ctstantestfit, plot=FALSE, whichpars='CINT', 
 #'  nsamples=10,nsubjects=10)
 #'     
 #' ctPlotArray(input=input)

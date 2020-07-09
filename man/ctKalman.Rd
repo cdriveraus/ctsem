@@ -60,10 +60,10 @@ based on medians of parameter distribution.
 \donttest{
 
 #Basic
-ctKalman(ctstantestfit(), timerange=c(0,60), plot=TRUE)
+ctKalman(ctstantestfit, timerange=c(0,60), plot=TRUE)
 
 #Multiple subjects, y and yprior, showing plot arguments
-plot1<-ctKalman(ctstantestfit(), timerange=c(0,60), timestep=.1, plot=TRUE,
+plot1<-ctKalman(ctstantestfit, timerange=c(0,60), timestep=.1, plot=TRUE,
   subjects=2:3, 
   kalmanvec=c('y','yprior'),
   errorvec=c(NA,'ypriorcov')) #'auto' would also have achieved this
@@ -72,7 +72,7 @@ plot1<-ctKalman(ctstantestfit(), timerange=c(0,60), timestep=.1, plot=TRUE,
  print(plot1+ggplot2::coord_cartesian(xlim=c(0,10)))
  
  #or generate custom plot from scratch:#'  
- k=ctKalman(ctstantestfit(), timerange=c(0,60), timestep=.1, subjects=2:3)
+ k=ctKalman(ctstantestfit, timerange=c(0,60), timestep=.1, subjects=2:3)
  library(ggplot2)
  ggplot(k[k$Element \%in\% 'yprior',],
    aes(x=Time, y=value,colour=Subject,linetype=Row)) +

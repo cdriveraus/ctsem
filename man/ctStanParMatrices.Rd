@@ -26,7 +26,7 @@ Returns population system matrices from a ctStanFit object, and vector of values
 \examples{
 if(w32chk()){
 
-ctStanParMatrices(ctstantestfit(),
-  rnorm(length(ctstantestfit()$stanfit$rawest),0,.1))
+ctStanParMatrices(ctstantestfit,
+  rnorm(length(ctstantestfit$stanfit$rawest),0,.1))
 }
 }

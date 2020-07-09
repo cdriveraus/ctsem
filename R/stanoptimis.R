@@ -259,7 +259,7 @@ getcxxfun <- function(object) {
 #' @examples
 #' if(w32chk()){
 #'
-#' sf <- stan_reinitsf(ctstantestfit()$stanmodel,ctstantestfit()$standata)
+#' sf <- stan_reinitsf(ctstantestfit$stanmodel,ctstantestfit$standata)
 #' }
 stan_reinitsf <- function(model, data,fast=FALSE){
   if(fast) sf <- new(model@mk_cppmodule(model),data,0L,getcxxfun(model@dso))
@@ -291,7 +291,7 @@ flexlapply <- function(cl, X, fn,cores=1,...){
 #' @examples
 #' if(w32chk()){
 #'
-#' d <- standatact_specificsubjects(ctstantestfit()$standata, 1:2)
+#' d <- standatact_specificsubjects(ctstantestfit$standata, 1:2)
 #' }
 standatact_specificsubjects <- function(standata, subjects,timestep=NA){
   long <- standatatolong(standata)
@@ -1218,8 +1218,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # 
         # eps <- findstepsize(grinit,fgfunc)
         
-        jac<-function(pars,step=rep(1e-2,length(pars)),whichpars='all',
-          lpdifmin=1e-2,lpdifmax=3, cl=NA,verbose=1,directions=c(-1,1),parsteps=c()){
+        jac<-function(pars,step=1e-3,whichpars='all',
+          lpdifmin=1e-3,lpdifmax=3, cl=NA,verbose=1,directions=c(-1,1),parsteps=c()){
           if('all' %in% whichpars) whichpars <- 1:length(pars)
           base <- optimfit$value
           
@@ -1243,7 +1243,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             
             # for(i in whichpars){
             if(verbose) message('### Par ',i,'###')
-            stepsize = step[i]
+            stepsize = step
             uppars<-rep(0,length(pars))
             uppars[i]<-1
             accepted <- FALSE
@@ -1288,6 +1288,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                 } else stepsize <- stepsize * 1e-3
                 # if(count > 1) print(paste0(count,'___',stepsize,'___',lpdiff))
               }
+              step <<- stepsize
               steplist[[di]] <- stepsize
             }
             # 

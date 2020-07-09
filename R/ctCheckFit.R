@@ -16,7 +16,7 @@
 #'
 #' @examples
 #' \donttest{
-#' scheck <- ctCheckFit(ctstantestfit(),niter=50)
+#' scheck <- ctCheckFit(ctstantestfit,niter=50)
 #' }
 ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
   id=NULL #global warnings
@@ -134,7 +134,7 @@ ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
 #' if(w32chk()){
 #' 
 #'
-#' scheck <- ctCheckFit(ctstantestfit(),niter=50)
+#' scheck <- ctCheckFit(ctstantestfit,niter=50)
 #' plot(scheck,wait=FALSE)
 #' 
 #' }

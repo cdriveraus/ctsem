@@ -20,7 +20,7 @@
 #' @examples
 #' if(w32chk()){
 #'
-#' ctStanPostPredict(ctstantestfit(),wait=FALSE, diffsize=2,resolution=100)
+#' ctStanPostPredict(ctstantestfit,wait=FALSE, diffsize=2,resolution=100)
 #' }
 ctStanPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,.5,.975),
   datarows='all',nsamples=500,resolution=100,plot=TRUE){

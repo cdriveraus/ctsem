@@ -22,6 +22,6 @@ Extract samples from a ctStanFit object
 }
 \examples{
 \donttest{
-e = ctExtract(ctstantestfit())
+e = ctExtract(ctstantestfit)
 }
 }

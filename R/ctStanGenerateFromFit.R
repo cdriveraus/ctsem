@@ -9,7 +9,7 @@
 #' @examples
 #' if(w32chk()){
 #'
-#' gen <- ctStanGenerateFromFit(ctstantestfit(), nsamples=3,fullposterior=TRUE)
+#' gen <- ctStanGenerateFromFit(ctstantestfit, nsamples=3,fullposterior=TRUE)
 #' plot(gen$generated$Y[,3,2],type='l') #Third random data sample, 2nd manifest var, all time points. 
 #' }
 ctStanGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErrors=FALSE){

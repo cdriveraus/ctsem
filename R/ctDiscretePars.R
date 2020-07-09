@@ -60,7 +60,7 @@ ctStanParnames <- function(x,substrings=c('pop_','popsd')){
 #'latent intercept (CINT) and temporal effects (DRIFT).
 #'@examples
 #'\donttest{
-#'pars <- ctStanContinuousPars(ctstantestfit())
+#'pars <- ctStanContinuousPars(ctstantestfit)
 #'ctDiscretePars(pars,times=c(.5,1))
 #'}
 #'
@@ -115,12 +115,12 @@ ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
 #'@examples
 #'if(w32chk()){
 #'
-#' ctStanDiscretePars(ctstantestfit(),times=seq(.5,4,.1), 
+#' ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
 #'  plot=TRUE,indices='all')
 #'  
 #'#modify plot
 #'require(ggplot2)
-#'g=ctStanDiscretePars(ctstantestfit(),times=seq(.5,4,.1), 
+#'g=ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
 #'  plot=TRUE,indices='CR')
 #'g= g+ labs(title='Cross effects')
 #'print(g)
@@ -256,7 +256,7 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational, standardise){
 #'found in the ctsem:::ctPlotArrayGG function.
 #'@examples
 #'if(w32chk()){
-#'x <- ctStanDiscretePars(ctstantestfit())
+#'x <- ctStanDiscretePars(ctstantestfit)
 #'ctStanDiscreteParsPlot(x, indices='CR')
 #'
 #'#to modify plot:

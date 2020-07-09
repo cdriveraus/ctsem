@@ -22,6 +22,6 @@ Quickly initialise stanfit object from model and data
 \examples{
 if(w32chk()){
 
-sf <- stan_reinitsf(ctstantestfit()$stanmodel,ctstantestfit()$standata)
+sf <- stan_reinitsf(ctstantestfit$stanmodel,ctstantestfit$standata)
 }
 }

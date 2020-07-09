@@ -7,7 +7,7 @@
 #' @aliases extract
 #' @examples
 #' \donttest{
-#' e = ctExtract(ctstantestfit())
+#' e = ctExtract(ctstantestfit)
 #' }
 #' @export
 ctExtract <- function(object,subjectMatrices=FALSE,cores=2){

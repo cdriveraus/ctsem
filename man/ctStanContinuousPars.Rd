@@ -27,6 +27,6 @@ Returns the continuous time parameter matricesof a ctStanFit fit object
 \examples{
 \donttest{
 #posterior median over all subjects (also reflects mean of unconstrained pars)
-ctStanContinuousPars(ctstantestfit())
+ctStanContinuousPars(ctstantestfit)
 }
 }

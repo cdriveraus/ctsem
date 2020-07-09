@@ -106,5 +106,12 @@ NULL
 #' @name ctstantestdat
 NULL
 
+#' ctstantestfit
+#' 
+#' Dummy fit for testing functions from ctsem package.
+#' @format ctStanFit object
+#' @name ctstantestfit
+NULL
+
 
 

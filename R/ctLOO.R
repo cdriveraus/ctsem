@@ -12,7 +12,7 @@
 #'
 #' @examples
 #' \donttest{ 
-#' ctLOO(ctstantestfit())
+#' ctLOO(ctstantestfit)
 #' }
 ctLOO <- function(fit,folds=10,cores=2,parallelFolds=TRUE, 
   subjectwise=FALSE,keepfirstobs=TRUE){

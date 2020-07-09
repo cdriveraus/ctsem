@@ -90,7 +90,7 @@ continuous time models fit with ctStanFit.
 }
 \examples{
 if(w32chk()){
-x <- ctStanDiscretePars(ctstantestfit())
+x <- ctStanDiscretePars(ctstantestfit)
 ctStanDiscreteParsPlot(x, indices='CR')
 
 #to modify plot:

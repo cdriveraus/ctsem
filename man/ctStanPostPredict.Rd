@@ -52,6 +52,6 @@ model implied distributions -- thus, when limited iterations are available, the 
 \examples{
 if(w32chk()){
 
-ctStanPostPredict(ctstantestfit(),wait=FALSE, diffsize=2,resolution=100)
+ctStanPostPredict(ctstantestfit,wait=FALSE, diffsize=2,resolution=100)
 }
 }

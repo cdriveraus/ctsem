@@ -69,10 +69,10 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,...){
 #' \donttest{
 #' 
 #' #Basic
-#' ctKalman(ctstantestfit(), timerange=c(0,60), plot=TRUE)
+#' ctKalman(ctstantestfit, timerange=c(0,60), plot=TRUE)
 #' 
 #' #Multiple subjects, y and yprior, showing plot arguments
-#' plot1<-ctKalman(ctstantestfit(), timerange=c(0,60), timestep=.1, plot=TRUE,
+#' plot1<-ctKalman(ctstantestfit, timerange=c(0,60), timestep=.1, plot=TRUE,
 #'   subjects=2:3, 
 #'   kalmanvec=c('y','yprior'),
 #'   errorvec=c(NA,'ypriorcov')) #'auto' would also have achieved this
@@ -81,7 +81,7 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,...){
 #'  print(plot1+ggplot2::coord_cartesian(xlim=c(0,10)))
 #'  
 #'  #or generate custom plot from scratch:#'  
-#'  k=ctKalman(ctstantestfit(), timerange=c(0,60), timestep=.1, subjects=2:3)
+#'  k=ctKalman(ctstantestfit, timerange=c(0,60), timestep=.1, subjects=2:3)
 #'  library(ggplot2)
 #'  ggplot(k[k$Element %in% 'yprior',],
 #'    aes(x=Time, y=value,colour=Subject,linetype=Row)) +
@@ -246,13 +246,13 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
 #'
 #' 
 #' ### Get output from ctKalman
-#' x<-ctKalman(ctstantestfit(),subjects=2,timestep=.01)
+#' x<-ctKalman(ctstantestfit,subjects=2,timestep=.01)
 #' 
 #' ### Plot with plot.ctKalmanDF
 #' plot(x, subjects=2)
 #' 
 #' ###Single step procedure:
-#' ctKalman(ctstantestfit(),subjects=2,
+#' ctKalman(ctstantestfit,subjects=2,
 #'   kalmanvec=c('y','yprior'),
 #'   elementNames=c('Y1','Y2'), 
 #'   plot=TRUE,timestep=.01)

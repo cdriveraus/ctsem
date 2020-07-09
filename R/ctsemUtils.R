@@ -16,32 +16,9 @@ findmatrixslots <- function(pars,l){
   return(p)
 }
 
-ctstantestfitobj <- NA
-
-#' Dummy function for initialisation
-#'
-#' @return nothing. 
-#' @export 
-#'
-#' @examples
-#' if(w32chk()) ctstantestfit()
-aa_testfitinit<-function(){
-  return(NULL)
-}
 
 
-#'ctStanFit example fit
-#'
-#'@name ctstantestfit
-#'@export
-#'@examples
-#'if(w32chk()){
-#'testfit <- ctstantestfit()
-#'}
-#'
-
-ctstantestfit<-function(){
-  if(is.na(ctstantestfitobj[1])){
+ctstantestfitfunc<-function(){
   checkm<-ctModel(
     type='stanct',
     n.latent=2,n.TDpred=1,n.TIpred=1,n.manifest=2,
@@ -50,7 +27,6 @@ ctstantestfit<-function(){
     DIFFUSION=c('diff11',0,'diff21','diff22||||TI1'),
     CINT=matrix(c('cint1||||TI1','cint2||||TI1'),ncol=1),
     LAMBDA=diag(2),tipredDefault=FALSE)  
-  
   
   ctstantestfit<-ctStanFit(ctsem::ctstantestdat,checkm,cores=1,
     inits = c(0.748310681869536,0.945659953796114,0.0964592332562144,
@@ -66,10 +42,7 @@ ctstantestfit<-function(){
   
   ctstantestfit <- ctStanGenerateFromFit(ctstantestfit,nsamples = 20,fullposterior = TRUE)
   
-  utils::assignInMyNamespace('ctstantestfitobj',ctstantestfit)
-  }
-  
-  return(ctstantestfitobj)
+  return(ctstantestfit)
 }
 
 

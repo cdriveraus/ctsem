@@ -35,7 +35,7 @@
 #' \donttest{
 #' ### get parameter matrices
 #'
-#' kpars <- ctStanContinuousPars(ctstantestfit())
+#' kpars <- ctStanContinuousPars(ctstantestfit)
 #' 
 #' #construct dummy data
 #' datalong <- cbind(0:9, 1, matrix(rnorm(20,2,1),ncol=2))

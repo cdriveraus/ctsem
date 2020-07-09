@@ -50,7 +50,7 @@ Misspecification plot using ctCheckFit output
 if(w32chk()){
 
 
-scheck <- ctCheckFit(ctstantestfit(),niter=50)
+scheck <- ctCheckFit(ctstantestfit,niter=50)
 plot(scheck,wait=FALSE)
 
 }

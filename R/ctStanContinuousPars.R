@@ -12,7 +12,7 @@
 #'@examples
 #'\donttest{
 #'#posterior median over all subjects (also reflects mean of unconstrained pars)
-#'ctStanContinuousPars(ctstantestfit())
+#'ctStanContinuousPars(ctstantestfit)
 #'}
 #'@export
 ctStanContinuousPars <- function(ctstanfitobj,

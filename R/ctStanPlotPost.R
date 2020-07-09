@@ -19,7 +19,7 @@
 #' where x is the number of cpu cores to use.
 #' @examples
 #' \donttest{
-#' ctStanPlotPost(ctstantestfit(), rows=3:4)
+#' ctStanPlotPost(ctstantestfit, rows=3:4)
 #' }
 #' @export
 

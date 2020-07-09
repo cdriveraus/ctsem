@@ -45,6 +45,6 @@ Get Kalman filter estimates from a ctStanFit object
 }
 \examples{
 if(w32chk()){
-k=ctStanKalman(ctstantestfit(),subjectpars=TRUE,collapsefunc=mean)
+k=ctStanKalman(ctstantestfit,subjectpars=TRUE,collapsefunc=mean)
 }
 }

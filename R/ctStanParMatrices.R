@@ -13,8 +13,8 @@
 #' @examples
 #' if(w32chk()){
 #'
-#' ctStanParMatrices(ctstantestfit(),
-#'   rnorm(length(ctstantestfit()$stanfit$rawest),0,.1))
+#' ctStanParMatrices(ctstantestfit,
+#'   rnorm(length(ctstantestfit$stanfit$rawest),0,.1))
 #' }
 ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA){
   

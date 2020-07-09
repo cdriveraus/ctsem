@@ -26,7 +26,7 @@ Plot marginal relationships between covariates and parameters for a ctStanFit ob
 }
 \examples{
 if(w32chk()){#'
-ctStanTIpredMarginal(ctstantestfit(),pars=c('CINT'),
+ctStanTIpredMarginal(ctstantestfit,pars=c('CINT'),
   matrices=TRUE, tipred=c('TI1'))
 }
 }

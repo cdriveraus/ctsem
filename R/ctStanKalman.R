@@ -17,7 +17,7 @@
 #'
 #' @examples 
 #' if(w32chk()){
-#' k=ctStanKalman(ctstantestfit(),subjectpars=TRUE,collapsefunc=mean)
+#' k=ctStanKalman(ctstantestfit,subjectpars=TRUE,collapsefunc=mean)
 #' }
 ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,
   standardisederrors=FALSE, subjectpars=FALSE, tformsubjectpars=TRUE, indvarstates=FALSE,...){

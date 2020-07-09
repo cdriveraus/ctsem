@@ -28,6 +28,6 @@ for plotting help see \code{\link{plot.ctsemFitMeasure}}
 }
 \examples{
 \donttest{
-scheck <- ctCheckFit(ctstantestfit(),niter=50)
+scheck <- ctCheckFit(ctstantestfit,niter=50)
 }
 }

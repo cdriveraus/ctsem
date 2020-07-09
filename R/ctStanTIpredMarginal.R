@@ -35,7 +35,7 @@ ctStanIndPars <- function(fit){
 #'
 #' @examples
 #' if(w32chk()){#'
-#' ctStanTIpredMarginal(ctstantestfit(),pars=c('CINT'),
+#' ctStanTIpredMarginal(ctstantestfit,pars=c('CINT'),
 #'   matrices=TRUE, tipred=c('TI1'))
 #' }
 ctStanTIpredMarginal<-function(fit,tipred,pars,matrices=TRUE, plot=TRUE){

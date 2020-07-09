@@ -46,7 +46,7 @@
 #' @examples
 #' if(w32chk()){
 #'
-#' ctStanTIpredeffects(ctstantestfit(),
+#' ctStanTIpredeffects(ctstantestfit,
 #'  whichpars=c('CINT','dtDIFFUSION[2,2]'), plot=TRUE)
 #' }
 ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),

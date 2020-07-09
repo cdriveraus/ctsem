@@ -79,7 +79,7 @@ on subject level parameters of a ctStanFit object.
 \examples{
 if(w32chk()){
 
-ctStanTIpredeffects(ctstantestfit(),
+ctStanTIpredeffects(ctstantestfit,
  whichpars=c('CINT','dtDIFFUSION[2,2]'), plot=TRUE)
 }
 }

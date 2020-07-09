@@ -35,6 +35,6 @@ K fold cross validation for ctStanFit objects
 }
 \examples{
 \donttest{ 
-ctLOO(ctstantestfit())
+ctLOO(ctstantestfit)
 }
 }

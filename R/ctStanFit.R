@@ -12,7 +12,7 @@
 #'
 #' @examples
 #' if(w32chk()){
-#' newfit <- ctStanFitUpdate(ctstantestfit())
+#' newfit <- ctStanFitUpdate(ctstantestfit)
 #' }
 #' 
 ctStanFitUpdate <- function(oldfit, data=NA, recompile=FALSE,...){

@@ -24,7 +24,7 @@ ctStanRawSamples<-function(fit){
 #' @examples
 #' if(w32chk()){
 #'
-#' summary(ctstantestfit())
+#' summary(ctstantestfit)
 #' }
 #' @method summary ctStanFit
 #' @export

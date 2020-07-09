@@ -14,7 +14,8 @@ Description: Hierarchical continuous time state space modelling, for linear
     differential equation (SDE), measurement models are typically multivariate normal factor models. 
     Linear mixed effects SDE's estimated via maximum likelihood and optimization are the default.
     Nonlinearities,  (state dependent parameters) and random effects on all parameters
-    are possible, using either optimization (with optional importance sampling) or
+    are possible, using either max likelihood / max a posteriori optimization 
+    (with optional importance sampling) or
     Stan's Hamiltonian Monte Carlo sampling. See  <https://github.com/cdriveraus/ctsem/raw/master/vignettes/hierarchicalmanual.pdf>
     for details. Priors may be used. For the conceptual
     overview of the hierarchical Bayesian linear SDE approach, see <https://www.researchgate.net/publication/324093594_Hierarchical_Bayesian_Continuous_Time_Dynamic_Modeling>.
