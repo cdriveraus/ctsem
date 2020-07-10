@@ -20,12 +20,17 @@ via the rstan package in R. This allows for all parameters of the
 dynamic model to individually vary, using an estimated population mean
 and variance, and any time independent covariate effects, as a prior.
 Version 3 allows for state dependencies in the parameter specification
-(i.e. time varying parameters). ctsem V1 is documented in a JSS
-publication (Driver, Voelkle, Oud, 2017), and in R vignette form at
-<https://cran.r-project.org/package=ctsem/vignettes/ctsem.pdf> .While
-the more recent updates are outlined at
-<https://github.com/cdriveraus/ctsem/raw/master/vignettes/hierarchicalmanual.pdf>
-. To cite ctsem please use the citation(“ctsem”) command in R.
+(i.e. time varying parameters).
+
+The curent manual is at
+<https://cran.r-project.org/package=ctsemOMX/vignettes/hierarchicalmanual.pdf>.
+The original ctsem is documented in a JSS publication (Driver, Voelkle,
+Oud, 2017), and in R vignette form at
+<https://cran.r-project.org/package=ctsemOMX/vignettes/ctsem.pdf>,
+however these OpenMx based functions have been split off into a sub
+package, ctsemOMX.
+
+To cite ctsem please use the citation(“ctsem”) command in R.
 
 ### To install the github version and (if needed) configure your system, from a fresh R session run:
 
