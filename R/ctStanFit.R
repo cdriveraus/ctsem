@@ -380,7 +380,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   
   datalong <- data.frame(datalong)
   
-  if(.Machine$sizeof.pointer == 4) message('Bayesian functions not available on 32 bit systems') else{
+  if(!w32chk()) message('Bayesian functions not available on 32 bit systems') else{
     if(!'ctStanModel' %in% class(ctstanmodel)) stop('not a ctStanModel object')
     
     #set nlcontrol defaults

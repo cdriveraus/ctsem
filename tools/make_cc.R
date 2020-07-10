@@ -38,7 +38,7 @@ make_cc <- function(file) {
   # paste("#include <meta_header.hpp>\n", "\\1"), cppcode)
   # 
   # w32 <- .Machine$sizeof.pointer == 4
-  stan_files<-paste0('stan_files',ifelse(.Machine$sizeof.pointer == 4,'32',''))
+  stan_files<-paste0('stan_files',ifelse((.Platform$OS.type=="windows" && .Platform$r_arch=="i386"),'32',''))
   
   cat(readLines(dir(stan_files, pattern = "license.stan", recursive = TRUE, full.names = TRUE)),
     "#ifndef MODELS_HPP", "#define MODELS_HPP", "#define STAN__SERVICES__COMMAND_HPP",
