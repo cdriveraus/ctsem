@@ -482,7 +482,7 @@ out <- paste0(out, "
     on.exit(setwd(oldwd))
     write(x = out,file = paste0(filename,'.tex'))
     if(compile){
-      if(requireNamespace('tinytex',quietly=TRUE)){
+      if(!grepl('SunOS',Sys.info()['sysname']) && requireNamespace('tinytex',quietly=TRUE)){
         tinytex::pdflatex(file=paste0(filename,'.tex'), clean=TRUE)
         
       } else{

@@ -11,7 +11,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     # source(file = 'https://github.com/cdriveraus/ctsem/raw/master/installctsem.R')
     
     invlog=function (x) exp(x)/(1 + exp(x))
-    n.manifest=21
+    n.manifest=7
     
     #gen data
     gm <- ctModel(DRIFT=-.3, DIFFUSION=.3, CINT=.1,
@@ -40,12 +40,12 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     r <- ctStanFit( datalong = d,
       #fit=FALSE, #set this to skip fitting and just get the standata and stanmodel objects
       ctstanmodel = m,
-      iter = 20,verbose=0,control=list(max_treedepth=8),nopriors=FALSE,
+      iter = 20,verbose=0,control=list(max_treedepth=3),nopriors=FALSE,
       chains = 2,#plot=T,
       intoverstates = FALSE,
       optimize=FALSE,intoverpop=F)
     s=summary(r)
-    s
+    # s
     
     #r$standata contains data structure
     #r$stanmodeltext contains model text
@@ -53,10 +53,11 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     #fit with integration (linear approximation)
     ro <- ctStanFit( datalong = d,
       ctstanmodel = m,cores=2,
+      plot=10,verbose=0,
       intoverstates = T,nopriors=T,
-      optimize=T,intoverpop=T)
+      optimize=T,intoverpop=T)#,optimcontrol=list(stochastic=F))
     so=summary(ro)
-    so
+    # so
     
   })
   

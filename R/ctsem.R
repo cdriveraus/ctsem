@@ -30,6 +30,7 @@ if(1==99){
   `:=` = NULL
   `.` =NULL
   .N = .id = id= . = grp = NULL # due to NSE notes in R CMD check
+  tibble() #due to weird hidden tibble requirement in plyr or ggplot?
 }
 
 
@@ -53,6 +54,7 @@ if(1==99){
 #' @import grDevices methods stats graphics data.table ggplot2
 #' @import Rcpp
 #' @importFrom RcppParallel CxxFlags RcppParallelLibs
+#' @importFrom tibble tibble
 #' @import expm expm
 #' @importFrom rstan constrain_pars sampling unconstrain_pars stan_model log_prob monitor get_num_upars stanc get_sampler_params As.mcmc.list monitor
 #' @importFrom plyr aaply alply round_any

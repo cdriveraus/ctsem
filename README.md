@@ -23,7 +23,7 @@ Version 3 allows for state dependencies in the parameter specification
 (i.e. time varying parameters).
 
 The curent manual is at
-<https://cran.r-project.org/package=ctsemOMX/vignettes/hierarchicalmanual.pdf>.
+<https://cran.r-project.org/package=ctsem/vignettes/hierarchicalmanual.pdf>.
 The original ctsem is documented in a JSS publication (Driver, Voelkle,
 Oud, 2017), and in R vignette form at
 <https://cran.r-project.org/package=ctsemOMX/vignettes/ctsem.pdf>,

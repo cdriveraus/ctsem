@@ -142,9 +142,9 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   if(is.null(nsubjects)) nsubjects=1
   if('all' %in% subjects) subjects='all' 
   
-  outdims=dim(e$DIFFUSION)
-  niter=outdims[1]
-  nlatent=outdims[3]
+  # outdims=dim(e$DIFFUSION)
+  niter=dim(e$pop_DRIFT)[1]
+  nlatent=ctstanfitobj$standata$nlatent#outdims[3]
   latentNames=ctstanfitobj$ctstanmodel$latentNames
   
   if(nsamples > niter) nsamples <- niter

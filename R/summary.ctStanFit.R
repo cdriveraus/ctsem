@@ -39,9 +39,9 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
   if('stanfit' %in% class(object$stanfit)){ 
     smr<-suppressWarnings(getMethod('summary','stanfit')(object$stanfit))
     if('98%' %in% colnames(smr$summary)) colnames(smr$summary)[colnames(smr$summary)=='98%'] <- '97.5%'
-    e <- ctExtract(object) 
   }
 
+  e <- ctExtract(object) 
  
   if(residualcov){ #cov of residuals
   obscov <- cov(object$data$Y,use='pairwise.complete.obs')
@@ -55,8 +55,6 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
   dimnames(out$residCovStd) <- list(object$ctstanmodel$manifestNames,object$ctstanmodel$manifestNames)
   out$resiCovStdNote <- 'Standardised covariance of residuals'
   }
-  
-  if(!'stanfit' %in% class(object$stanfit))  e <- ctExtract(object) 
   
   parnames <- object$setup$matsetup$parname[object$setup$matsetup$when==0 & object$setup$matsetup$param > 0]
   parindices <- object$setup$matsetup$param[object$setup$matsetup$when==0 & object$setup$matsetup$param > 0]
@@ -75,9 +73,11 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
     if(nindvarying>1){
       
       #raw pop distribution params
+      # browser()
       dimrawpopcorr <- dim(e$rawpopcorr)
-      if(!'stanfit' %in% class(object$stanfit)) rawpopcorr= array(e$rawpopcorr,dim=c(dimrawpopcorr[1],1,dimrawpopcorr[2] * dimrawpopcorr[3]))
-      if('stanfit' %in% class(object$stanfit)) rawpopcorr= rstan::extract(object$stanfit,pars='rawpopcorr',permuted=FALSE)
+      # if(!'stanfit' %in% class(object$stanfit)) 
+        rawpopcorr= array(e$rawpopcorr,dim=c(dimrawpopcorr[1],1,dimrawpopcorr[2] * dimrawpopcorr[3]))
+      # if('stanfit' %in% class(object$stanfit)) rawpopcorr= rstan::extract(object$stanfit,pars='rawpopcorr',permuted=FALSE)
 
       rawpopcorrout <- suppressWarnings(monitor(rawpopcorr, digits_summary=digits,warmup=0,print = FALSE)[lower.tri(diag(nindvarying)),c(monvars,'n_eff','Rhat'),drop=FALSE])
       if(!'stanfit' %in% class(object$stanfit)) rawpopcorrout <- rawpopcorrout[,-which(colnames(rawpopcorrout) %in% c('n_eff','Rhat')),drop=FALSE]

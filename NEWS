@@ -1,4 +1,9 @@
 ctsem news:
+
+10/7/2020
+####3.3.8####
+- Stationarity,subject specific parameter output, and linear system estimation removed (uses nonlinear in all cases, a bit slower) to try satisfy CRAN compile time checks.
+
 20/6/2020
 ####3.3.2####
 - ctLOO function to compute leave k out entropy estimates for model comparison / validation.
