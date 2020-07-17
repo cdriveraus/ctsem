@@ -79,6 +79,10 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
 
 
     #linearity checks
+    
+    #force nonlinear due to cran cuts:
+    ctm$nlcontrol$nldynamics=1L
+    
     if(sum(sapply(ctm$modelmats$calcs[!names(ctm$modelmats$calcs) %in% c('jacobian','measurement')],length)) > 0 || 
         any(ctm$modelmats$matsetup$when %in% c(1,2,3)) ||
         length(ctm$modelmats$calcs$jacobian) - sum(grepl('sJy[',unlist(ctm$modelmats$calcs$jacobian),fixed=TRUE)) > 0 #non measurement jacobians

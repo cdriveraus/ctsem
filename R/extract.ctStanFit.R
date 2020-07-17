@@ -28,5 +28,13 @@ ctExtract <- function(object,subjectMatrices=FALSE,cores=2){
   }
   out$Ygen[out$Ygen==99999] <- NA
   }
+  
+  if(!is.null(out$rawpopc)){
+  out$rawpopcov <- array(out$rawpopc[,4,,],dim=dim(out$rawpopc)[-2])
+  out$rawpopcorr <-  array(out$rawpopc[,3,,],dim=dim(out$rawpopc)[-2])
+  out$rawpopcovchol <-  array(out$rawpopc[,2,,],dim=dim(out$rawpopc)[-2])
+  out$rawpopcovsqrt <-  array(out$rawpopc[,1,,],dim=dim(out$rawpopc)[-2])
+  }
+  
   return(out)
 }

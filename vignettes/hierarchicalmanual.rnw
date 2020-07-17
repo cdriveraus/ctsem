@@ -493,9 +493,9 @@ model$pars[model$pars$matrix == 'DRIFT',
   c('TI1_effect','TI2_effect','TI3_effect')] <- TRUE
 @
 
-\subsection{Stationarity}
-When it is reasonable to assume that the prior for long term expectation and variance of the latent states is the same as (or very similar to) the prior for initial expectations and variances, setting some form of stationarity in advance may be desirable Two approaches to this are possible.
-The first approach is to give free parameters of the T0VAR or T0MEANS matrix the name \verb{'stationary'{, which can be useful if for instance only the initial variance should be stationary, or just one of the initial variances. Another approach is to set the argument stationary=TRUE to ctStanFit. Specifying this argument then ignores any T0VAR and T0MEANS matrices in the input, instead replacing them with asymptotic expectations based on the DRIFT, DIFFUSION, and CINT matrices. When stationarity is requested and nonlinearities are specified in the model, the computations are based on the starting DRIFT, DIFFUSION, and CINT matrices. 
+% \subsection{Stationarity}
+% When it is reasonable to assume that the prior for long term expectation and variance of the latent states is the same as (or very similar to) the prior for initial expectations and variances, setting some form of stationarity in advance may be desirable Two approaches to this are possible.
+% The first approach is to give free parameters of the T0VAR or T0MEANS matrix the name \verb{'stationary'{, which can be useful if for instance only the initial variance should be stationary, or just one of the initial variances. Another approach is to set the argument stationary=TRUE to ctStanFit. Specifying this argument then ignores any T0VAR and T0MEANS matrices in the input, instead replacing them with asymptotic expectations based on the DRIFT, DIFFUSION, and CINT matrices. When stationarity is requested and nonlinearities are specified in the model, the computations are based on the starting DRIFT, DIFFUSION, and CINT matrices. 
 
 \subsection{Accessing Stan model code}
 For diagnosing problems or modifying the model in ways not achievable via the ctsem model specification, one can use ctsem to generate the Stan code and then work directly with that, simply by specifying the argument \verb|fit=FALSE| to the \verb|ctStanFit| function, and accessing the \verb|$stanmodeltext| subobject. Any altered code can be passed back into \verb|ctStanFit| by using the \verb|stanmodeltext| argument, which can be convenient for setting up the data in particular.

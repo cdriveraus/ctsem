@@ -32,6 +32,22 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,
   e=stan_constrainsamples(sm = fit$stanmodel,standata = standata,
     samples = samples,cores=cores,savescores=TRUE,pcovn=5)
   
+  # browser()
+  
+  e$yprior <- array(e$ya[,1,,,drop=FALSE],dim=dim(e$ya)[-2])
+  e$yupd <-  array(e$ya[,2,,,drop=FALSE],dim=dim(e$ya)[-2])
+  e$ysmooth<-  array(e$ya[,3,,,drop=FALSE],dim=dim(e$ya)[-2])
+  e$etaprior <-  array(e$etaa[,1,,,drop=FALSE],dim=dim(e$etaa)[-2])
+  e$etaupd <-  array(e$etaa[,2,,,drop=FALSE],dim=dim(e$etaa)[-2])
+  e$etasmooth <-  array(e$etaa[,3,,,drop=FALSE],dim=dim(e$etaa)[-2])
+  e$ypriorcov <-  array(e$ycova[,1,,,,drop=FALSE],dim=dim(e$ycova)[-2])
+  e$yupdcov <-  array(e$ycova[,2,,,,drop=FALSE],dim=dim(e$ycova)[-2])
+  e$ysmoothcov <-  array(e$ycova[,3,,,,drop=FALSE],dim=dim(e$ycova)[-2])
+  e$etapriorcov <-  array(e$etacova[,1,,,,drop=FALSE],dim=dim(e$etacova)[-2])
+  e$etaupdcov <-  array(e$etacova[,2,,,,drop=FALSE],dim=dim(e$etacova)[-2])
+  e$etasmoothcov <-  array(e$etacova[,3,,,,drop=FALSE],dim=dim(e$etacova)[-2])
+  
+  
   if(subjectpars){
     if(!fit$standata$intoverpop) stop('This function only for extracting subject parameters when integrating over them using intoverpop=TRUE')
     ms <- cbind(fit$setup$matsetup, fit$setup$matvalues)
