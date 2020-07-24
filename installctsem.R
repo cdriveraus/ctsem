@@ -37,9 +37,9 @@ if(mv == 'N' || mv =='n'){ #create makevars
   if (!file.exists(dotR)) dir.create(dotR)
   M <- file.path(dotR, ifelse(.Platform$OS.type == "windows", "Makevars.win", "Makevars"))
   if (!file.exists(M)) file.create(M)
-  cat("\nCXX14FLAGS = -mtune=native -march=native",
+  cat("\nCXX14FLAGS = -mtune=native -O1 -Wno-ignored-attributes -Wno-deprecated-declarations",
     if( grepl("^darwin", R.version$os)) "CXX14FLAGS += -arch x86_64 -ftemplate-depth-256" else
-      if (.Platform$OS.type == "windows") "CXX14FLAGS=-O1 -Wno-ignored-attributes -Wno-deprecated-declarations" else
+      if (.Platform$OS.type == "windows") "CXX14FLAGS+= -Wno-ignored-attributes -Wno-deprecated-declarations" else
   "CXX14FLAGS += -fPIC",
     file = M, sep = "\n", append = TRUE)
 }
