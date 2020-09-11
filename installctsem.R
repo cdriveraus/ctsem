@@ -16,6 +16,21 @@ if(length(packs) > 0){
   }
 }
 
+# detachAllPackages <- function() {
+#   
+#   basic.packages <- c("package:stats","package:graphics","package:grDevices","package:utils","package:datasets","package:methods","package:base")
+#   
+#   package.list <- search()[ifelse(unlist(gregexpr("package:",search()))==1,TRUE,FALSE)]
+#   
+#   package.list <- setdiff(package.list,basic.packages)
+#   
+#   if (length(package.list)>0)  for (package in package.list) detach(package, character.only=TRUE)
+#   
+# }
+# 
+# detachAllPackages()
+
+
 #install / load build packages
 buildpacks <- c('devtools','pkgbuild','remotes')
 for(bi in buildpacks){
@@ -54,7 +69,7 @@ if(.Platform$OS.type == "windows"){
 
 #check for new versions of critical packages
 old = old.packages()
-for(importantpack in c('StanHeaders','rstan','OpenMx')){
+for(importantpack in c('StanHeaders','rstan')){
   if(importantpack %in% old)  message('Updating ',importantpack)
     install.packages(importantpack,dependencies = TRUE)
 }
