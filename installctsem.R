@@ -3,9 +3,16 @@ message('This is best run from a fresh R / Rstudio session, with no other R sess
 go<-readline('Continue? Y/N: ')
 if(go %in% c('Y','y')){
 packs <- c(names(sessionInfo()$otherPkgs), names(sessionInfo()$loadedOnly))
+packs <- packs[!packs%in% c("stats","graphics","grDevices","utils","datasets","methods","base",'remotes','tools','glue')]
 if(length(packs) > 0){ 
   message('Unloading packages -- if any problems occur, please try this from a fresh R session')
-  while(length(packs) > 0){
+  trycount <- 0
+  while(length(packs)  > 0){
+    trycount <- trycount + 1
+    if(trycount > 100) {
+      message('Unable to unload all packages, trying to continue...')
+      break
+    }
     newpacks <- c()
     for(packi in 1:length(packs)){
       u=try(unloadNamespace(packs[packi]),silent = TRUE)
