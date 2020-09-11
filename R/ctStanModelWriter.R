@@ -1012,7 +1012,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup){
       dtchange = dt==prevdt ? 0 : 1; 
       prevdt = dt; //update previous dt store after checking for change
     }
-    if(savescores || prevrow==0) Je[savescores ? rowi : 1] = IIlatentpop; //elements updated later
+    if(savescores || prevrow==0) Je[savescores ? rowi : 1] = IIlatentpop[1:nlatentpop,1:nlatentpop]; //elements updated later
     prevrow = rowi; //update previous row marker only after doing necessary calcs
        
     if(T0check == 0) { // calculate initial matrices if this is first row for si
@@ -1061,11 +1061,11 @@ if(verbose > 1) print ("below t0 row ", rowi);
                 Je[savescores ? rowi : 1,derrind,derrind] =  ebA[(1+ndiffusion):(ndiffusion*2),(1+ndiffusion):(ndiffusion*2)]\';
                 discreteDIFFUSION[derrind,derrind] = Je[savescores ? rowi : 1,derrind,derrind] * ebA[1:ndiffusion,(1+ndiffusion):(ndiffusion*2)];
                 discreteDRIFT = matrix_exp(append_row(append_col(sDRIFT[1:nlatent, 1:nlatent],sCINT),nlplusonezerovec\') * dtsmall);
-                if(ndiffusion < nlatent && savescores) Je[savescores ? rowi : 1] =  matrix_exp(sJAx * dtsmall);
+                if(ndiffusion < nlatent && savescores) Je[savescores ? rowi : 1,,] =  matrix_exp(sJAx * dtsmall);
               }
                 
               //if(difftype==1){
-              //matrix[nlatent,nlatent] V = sDIFFUSIONcov-quad_form(sDIFFUSIONcov, Je[savescores ? rowi : 1]\');
+              //matrix[nlatent,nlatent] V = sDIFFUSIONcov-quad_form(sDIFFUSIONcov, Je[savescores ? rowi : 1,,]\');
               //discreteDIFFUSION = solvesyl(sJAx[1:nlatent,1:nlatent],-V,discreteDIFFUSION, rep_array(nlatent,1));
               //}
               ','
@@ -1073,15 +1073,15 @@ if(verbose > 1) print ("below t0 row ", rowi);
               
               if(difftype==0 || (statedep[3]==0 && statedep[4]==0)){
                 discreteDRIFT = matrix_exp(append_row(append_col(sDRIFT[1:nlatent, 1:nlatent],sCINT),nlplusonezerovec\') * dtsmall);
-                Je[savescores ? rowi : 1] =  matrix_exp(sJAx * dtsmall);
+                Je[savescores ? rowi : 1,,] =  matrix_exp(sJAx * dtsmall);
                 if(statedep[3]||statedep[4]) sasymDIFFUSION[derrind,derrind] = to_matrix(  -sqkron_sumii(sJAx[derrind,derrind]) \\ 
                   to_vector(sDIFFUSIONcov[derrind,derrind]), ndiffusion,ndiffusion);
                 discreteDIFFUSION[derrind,derrind] =  sasymDIFFUSION[derrind,derrind] - quad_form( sasymDIFFUSION[derrind,derrind], Je[savescores ? rowi : 1, derrind,derrind]\' );
               }
-            }  else if(savescores) Je[rowi] = Je[rowi-1]; //if not updating
+            }  else if(savescores) Je[rowi] = Je[rowi-1,,]; //if not updating
             state[1:nlatent] = (discreteDRIFT * append_row(state[1:nlatent],1.0))[1:nlatent]; // ???compute before new diffusion calcs
             if(intoverstates==1 || savescores==1){
-              etacov = quad_form(etacov, Je[savescores ? rowi : 1]\');
+              etacov = quad_form(etacov, Je[savescores ? rowi : 1,,]\');
               etacov[derrind,derrind] += discreteDIFFUSION[derrind,derrind]; 
             }
           }
@@ -1097,11 +1097,11 @@ if(verbose > 1) print ("below t0 row ", rowi);
             etacov = quad_form_sym((etacov), Mth\');
             etacov[derrind,derrind] += (Kth[derrind,derrind] \\ sDIFFUSIONcov[derrind,derrind] / Kth[derrind,derrind]\') * dtsmall;
           }
-            if(intstepi >= (dt-1e-10) && savescores) Je[rowi] = matrix_exp(sJAx * dt); //save approximate exponentiated jacobian for smoothing
+            if(intstepi >= (dt-1e-10) && savescores) Je[rowi,,] = matrix_exp(sJAx * dt); //save approximate exponentiated jacobian for smoothing
           }
   
           if(continuoustime==0){ 
-            Je[savescores ? rowi : 1] = sJAx;
+            Je[savescores ? rowi : 1,,] = sJAx;
             if(intoverstates==1 || savescores==1){
               etacov = quad_form(etacov, sJAx\');
               etacov[ derrind, derrind ] += tcrossprod(sDIFFUSION[ derrind, derrind ]); 
@@ -1246,7 +1246,7 @@ if(verbose > 1){
         etacova[3,sri]=etacova[2,sri];
       } else{
         matrix[nlatentpop,nlatentpop] smoother;
-        smoother = etacova[2,sri] * Je[sri+1]\' / makesym(etacova[1,sri+1],verbose,1);
+        smoother = etacova[2,sri] * Je[sri+1,,]\' / makesym(etacova[1,sri+1],verbose,1);
         etaa[3,sri]= etaa[2,sri] + smoother * (etaa[3,sri+1] - etaa[1,sri+1]);
         etacova[3,sri]= etacova[2,sri] + smoother * ( etacova[3,sri+1] - etacova[1,sri+1]) * smoother\';
 
