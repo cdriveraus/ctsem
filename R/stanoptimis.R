@@ -189,6 +189,17 @@ jacrandom <- function(grfunc, est, eps=1e-4,
 }
 
 
+#' Sample more values from an optimized ctstanfit object
+#'
+#' @param fit fit object
+#' @param nsamples number of extra samples desired
+#' @param cores number of cores to use
+#'
+#' @return
+#' @export
+#'
+#' @examples
+#' newfit <- ctAddSamples(ctstantestfit, 10, 1)
 ctAddSamples <- function(fit,nsamples,cores=2){
   mchol <- t(chol(fit$stanfit$cov))
   
@@ -822,7 +833,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(stochastic) {
           optimfit <- sgd(init, fitfunc = function(x) target(x),
             parsets=parsets,
-            whichignore = unlist(parsteps),whichmcmcpars=whichmcmcpars,nsubjects=ifelse(is.na(whichmcmcpars[1]),NA,standata$nsubjects),
+            whichignore = unlist(parsteps),
+            whichmcmcpars=whichmcmcpars,nsubjects=ifelse(is.na(whichmcmcpars[1]),NA,standata$nsubjects),
             plot=plot,itertol=1e-1,deltatol=1e-2,maxiter=500)
         }
         

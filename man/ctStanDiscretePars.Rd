@@ -12,6 +12,7 @@ ctStanDiscretePars(
   nsamples = 500,
   observational = FALSE,
   standardise = FALSE,
+  cov = FALSE,
   plot = FALSE,
   ...
 )
@@ -37,6 +38,8 @@ an independent 1 unit change on each process, giving the expected response under
 
 \item{standardise}{Logical. If TRUE, output is standardised according to expected total within subject variance, given by the 
 asymDIFFUSION matrix.}
+
+\item{cov}{Logical. If TRUE, covariances are returned instead of regression coefficients.}
 
 \item{plot}{Logical. If TRUE, plots output using \code{\link{ctStanDiscreteParsPlot}}
 instead of returning output.}

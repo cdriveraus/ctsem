@@ -229,6 +229,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
     out$aic = aic
   }
   out$logposterior=logposterior
+  if(!'stanfit' %in% class(object$stanfit)) out$nsamples <- nrow(object$stanfit$samples)
   
   if(!parmatrices) out$parmatNote <- 'For additional summary matrices, use argument: parmatrices = TRUE'
   

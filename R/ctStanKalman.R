@@ -65,13 +65,13 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,
     p=sort(unique(ms$param))# | fit$setup$matsetup$tipred]))
     p=p[p>0]
     if(length(p)==0) stop('No individually varying parameters found!')
-    firstsub <- rep(TRUE,standata$ndatapoints) #which rows represent first rows per subject
-    for(i in 2:standata$ndatapoints){
-      if(standata$subject[i] == standata$subject[i-1]) firstsub[i] <- FALSE
+    lastsub <- rep(TRUE,standata$ndatapoints) #which rows represent last rows per subject
+    for(i in 1:(standata$ndatapoints-1)){
+      if(standata$subject[i] == standata$subject[i+1]) lastsub[i] <- FALSE
     }
-    states <- e$etasmooth[,firstsub,,drop=FALSE]
+    states <- e$etaupd[,lastsub,,drop=FALSE]
     dimnames(states) <- list(iter=1:dim(states)[1],id = unique(standata$subject), par = 1:dim(states)[3])
-    
+    # browser()
       mats <- ctStanMatricesList()$all
       for(i in 1:nrow(ms)){
         if(ms$param[i] %in% p){

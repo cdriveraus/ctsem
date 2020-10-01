@@ -191,6 +191,7 @@ ctTIauto <- function(fit,tipreds=NA){
     for(i in 2:fit$standata$ndatapoints){
       if(fit$standata$subject[i] == fit$standata$subject[i-1]) firstsub[i] <- FALSE
     }
+    e$etasmooth <-  array(e$etaa[,3,,,drop=FALSE],dim=dim(e$etaa)[-2])
     states <- ctCollapse(e$etasmooth[,firstsub,p,drop=FALSE],1,mean)
     sc=list()
     for(i in 1:ncol(states)){

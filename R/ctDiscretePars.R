@@ -109,6 +109,7 @@ ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
 #'an independent 1 unit change on each process, giving the expected response under a 1 unit experimental impulse.
 #'@param standardise Logical. If TRUE, output is standardised according to expected total within subject variance, given by the 
 #'asymDIFFUSION matrix.
+#'@param cov Logical. If TRUE, covariances are returned instead of regression coefficients.
 #'@param plot Logical. If TRUE, plots output using \code{\link{ctStanDiscreteParsPlot}}
 #'instead of returning output. 
 #'@param ... additional plotting arguments to control \code{\link{ctStanDiscreteParsPlot}}
@@ -127,7 +128,8 @@ ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
 #'}
 #'@export
 ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=10,by=.1), 
-  quantiles = c(.025, .5, .975),nsamples=500,observational=FALSE,standardise=FALSE, plot=FALSE,...){
+  quantiles = c(.025, .5, .975),nsamples=500,observational=FALSE,standardise=FALSE, 
+  cov=FALSE, plot=FALSE,...){
   
   type='discreteDRIFT'
   collapseSubjects=TRUE #consider this for a switch
@@ -168,7 +170,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   ctpars$DRIFT <- ctpars$DRIFT[,1:nlatent,1:nlatent,drop=FALSE] #intoverpop
 
   
-  out <- ctStanDiscreteParsDrift(ctpars,times, observational, standardise)
+  out <- ctStanDiscreteParsDrift(ctpars,times, observational, standardise, cov=cov)
   out <- apply(out,c(1,2,3),quantile,probs=quantiles)
     
     dimnames(out)<- list(quantiles=paste0('quantile_',quantiles),
@@ -188,7 +190,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
 
 
 
-ctStanDiscreteParsDrift<-function(ctpars,times, observational, standardise){
+ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=FALSE){
   nl=dim(ctpars$DRIFT)[3]
   message('Computing temporal regression coefficients for ', dim(ctpars$DRIFT)[1],' samples, may take a moment...')
   discreteDRIFT <- array(sapply(1:(dim(ctpars$DRIFT)[1]),function(d){
@@ -207,6 +209,8 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational, standardise){
       if(standardise) out <- out * matrix(rep(sqrt((asymDIFFUSIONdiag)),each=nl) / 
           rep((sqrt(asymDIFFUSIONdiag)),times=nl),nl)
       if(observational) out <- out %*% g
+      # browser()
+      if(cov) out <- (out %*% t(out))
       return(matrix(out,ncol(out),ncol(out)))
     },simplify = 'array')
   },simplify = 'array'),dim=c(nl,nl,length(times),dim(ctpars$DRIFT)[1]))

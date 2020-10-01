@@ -1,3 +1,22 @@
+ctModeltoNumeric <- function(ctmodelobj){
+  ###read in model
+  #set any matrices to numeric elements
+  domessage<-FALSE
+  sapply(names(ctmodelobj), function(x){
+    if(is.matrix(ctmodelobj[[x]])){
+      m <- ctmodelobj[[x]]
+      if(any(suppressWarnings(is.na(as.numeric(m))))){
+        domessage <<-TRUE
+      }
+      m[suppressWarnings(is.na(as.numeric(m)))] <- 0
+      ctmodelobj[[x]] <<- matrix(as.numeric(m),nrow=nrow(m), ncol=ncol(m))
+    }
+  })
+  if(domessage) message('Some free parameters in matrices set to zero!')
+  
+  return(ctmodelobj)
+}
+
 #' ctGenerate
 #' 
 #' This function generates data according to the specified ctsem model object. 
@@ -36,64 +55,12 @@
 ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat=NA,
   wide=FALSE){
   
+  ctmodelobj <- ctModeltoNumeric(ctmodelobj)
   
-  ###read in model
-  for(i in 1:length(ctmodelobj)){ #this loop reads in the specified continuous time model
-    assign(names(ctmodelobj[i]),ctmodelobj[[i]])
+  m <- ctmodelobj
+  
+  fullTpoints<-burnin+m$Tpoints
 
-    if(is.matrix(ctmodelobj[[i]])){ #if this element is a matrix, continue on...
-     
-    if(any(is.na(suppressWarnings(as.numeric(get(names(ctmodelobj[i]))))))){ #if it contains character labels
-      
-      if(!names(ctmodelobj[i]) %in% c('T0VAR','MANIFESTVAR')) { #,'TRAITVAR','MANIFESTTRAITVAR','TDPREDVAR','TIPREDVAR'
-      assign(names(ctmodelobj[i]),matrix(0,nrow=nrow(get(names(ctmodelobj[i]))), #set the values to 0 instead
-                                      ncol=ncol(get(names(ctmodelobj[i])))))
-      message(paste0(names(ctmodelobj[i])," contained character labels - setting matrix to 0"))
-    }
-      
-      if(names(ctmodelobj[i]) %in% c('T0VAR','MANIFESTVAR')) { #,,'TRAITVAR','MANIFESTTRAITVAR','TIPREDVAR','TDPREDVAR',
-        assign(names(ctmodelobj[i]),diag(0.00001,nrow(get(names(ctmodelobj[i])))))
-        message(paste0(names(ctmodelobj[i])," contained character labels - setting matrix to diagonal 0.00001"))
-      }
-      
-    }
-    
-     #set any matrices to numeric elements
-      assign(names(ctmodelobj[i]), 
-        matrix(as.numeric(get(names(ctmodelobj[i]))),nrow=nrow(get(names(ctmodelobj[i]))),
-                                      ncol=ncol(get(names(ctmodelobj[i])))))
-    }
-  }
-
-  #lower triangular transform to full and keep cholesky (named appropriately) 
-  for(tempmatname in c('T0VAR','MANIFESTVAR', 'DIFFUSION', 'TRAITVAR','MANIFESTTRAITVAR','TDPREDVAR','TIPREDVAR')){
-
-    tryCatch(assign(paste0(tempmatname,'chol'),get(tempmatname) ), error=function(e) {
-      assign(tempmatname,NULL)})
-    
-    tryCatch(assign(tempmatname,get(tempmatname) %*% t(get(tempmatname))), error=function(e) {
-      assign(tempmatname,NULL)})
-  }
-
-  
-  kpars=list(DRIFT=DRIFT,T0VAR=T0VAR,DIFFUSION=DIFFUSION,CINT=CINT,T0MEANS=T0MEANS,
-    MANIFESTMEANS=MANIFESTMEANS,MANIFESTVAR=MANIFESTVAR, LAMBDA=LAMBDA)
-  
-  if(!is.null(TDPREDEFFECT)) kpars$TDPREDEFFECT<-TDPREDEFFECT
-
-  
-  datalong <- matrix(NA,nrow=n.subjects*Tpoints,ncol= 1 + 1 + n.manifest + n.TDpred + n.TIpred)
-  colnames(datalong) <- c('id','time',manifestNames,TDpredNames,TIpredNames)
-  
-  fullTpoints<-burnin+Tpoints
-  
-  # if(n.TDpred > 0) { #add burnin to TDPREDMEANS
-  #   TDPREDMEANS <- matrix(rbind(matrix(0,nrow=1+(burnin),ncol=n.TDpred)[-1,,drop=FALSE], #additional row added then removed in case no burnin
-  #   matrix(TDPREDMEANS,ncol=n.TDpred)),ncol=1) #ugly transform to avoid burnin offset with multiple tdpreds 
-  # }
-  
-  # TRAITVARchol = t(chol(-solve(DRIFT) %*% TRAITVAR %*% -t(solve(DRIFT))))
-  
   for(si in 1:n.subjects){
     
     if(is.na(dtmat[1])) dtvec<- exp(rnorm(fullTpoints,log(dtmean),logdtsd))
@@ -101,53 +68,71 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
     time=rep(0,fullTpoints)
     for(t in 2:fullTpoints) time[t] = round(time[t-1] + dtvec[t-1],6)
     
-    if(n.TDpred > 0) {
-     # browser()
-      tdpreds <- rbind(matrix(0,nrow=1+(burnin),ncol=n.TDpred)[-1,,drop=FALSE], #additional row added then removed in case no burnin
-        matrix(TDPREDMEANS + TDPREDVARchol %*% rnorm(nrow(TDPREDVARchol),0,1),ncol=n.TDpred))
-}
-    
-    skpars=kpars
-    if(any(TRAITVARchol != 0)) {
-      traits = TRAITVARchol %*% rnorm(n.latent,0,1)
-      skpars$CINT = skpars$CINT +  traits
-      skpars$T0MEANS = skpars$T0MEANS + T0TRAITEFFECT %*% traits
+    if(m$n.TDpred > 0) {
+      tdpreds <- rbind(matrix(0,nrow=1+(burnin),ncol=m$n.TDpred)[-1,,drop=FALSE], #additional row added then removed in case no burnin
+        matrix(m$TDPREDMEANS + m$TDPREDVAR %*% rnorm(nrow(m$TDPREDVAR),0,1),ncol=m$n.TDpred))
     }
     
-    if(any(MANIFESTTRAITVARchol != 0)) {
-      skpars$MANIFESTMEANS = skpars$MANIFESTMEANS + MANIFESTTRAITVARchol %*% rnorm(n.manifest,0,1)
+    sm=m
+    if(any(m$TRAITVAR != 0)) {
+      traits = m$TRAITVAR %*% rnorm(m$n.latent,0,1)
+      sm$CINT = sm$CINT +  traits
+      sm$T0MEANS = sm$T0MEANS + m$T0TRAITEFFECT %*% traits
     }
     
-    if(n.TIpred > 0) {
-      tipreds <- TIPREDMEANS + TIPREDVARchol %*% rnorm(n.TIpred,0,1)
-      skpars$CINT = skpars$CINT + TIPREDEFFECT %*% tipreds
+    if(any(m$MANIFESTTRAITVAR != 0)) {
+      sm$MANIFESTMEANS = sm$MANIFESTMEANS + m$MANIFESTTRAITVAR %*% rnorm(m$n.manifest,0,1)
     }
     
-    manifests<-matrix(NA,fullTpoints,n.manifest)
+    if(m$n.TIpred > 0) {
+      tipreds <- m$TIPREDMEANS + m$TIPREDVAR %*% rnorm(m$n.TIpred,0,1)
+      sm$CINT = sm$CINT + m$TIPREDEFFECT %*% tipreds
+    }
+    
+    manifests<-matrix(NA,fullTpoints,m$n.manifest)
+    latents<-matrix(NA,fullTpoints,m$n.latent)
     
     sdat <- cbind(si,time,manifests,
-      if(n.TDpred > 0) tdpreds,
-      if(n.TIpred > 0) matrix(tipreds,byrow=TRUE,nrow=fullTpoints,ncol=n.TIpred))
+      if(m$n.TDpred > 0) tdpreds,
+      if(m$n.TIpred > 0) matrix(tipreds,byrow=TRUE,nrow=fullTpoints,ncol=m$n.TIpred))
     
-    colnames(sdat) <- colnames(datalong)
+    colnames(sdat) <- c('id','time',m$manifestNames,m$TDpredNames,m$TIpredNames)
+    sdat <- data.frame(sdat)
     
-    sdat[,manifestNames] <- Kalman(kpars=skpars,datalong=sdat,manifestNames=manifestNames,TDpredNames=TDpredNames,
-      latentNames=latentNames,
-      imputeMissings=TRUE)$y
+    # sdat[,manifestNames] <- Kalman(kpars=skpars,datalong=sdat,manifestNames=manifestNames,TDpredNames=TDpredNames,
+    #   latentNames=latentNames,
+    #   imputeMissings=TRUE)$y
+    
+    latents[1,] <- sm$T0MEANS+sm$T0VAR %*% rnorm(m$n.latent)
+    Qinf <- fQinf(sm$DRIFT,sm$DIFFUSION)
+    for(i in 2:nrow(latents)){
+      dtA=expm::expm(sm$DRIFT * (sdat$time[i]-sdat$time[i-1]))
+      latents[i,] <- dtA %*% latents[i-1,] +
+        (dtA - diag(d)) %*% sm$CINT + 
+        t(chol(fdtQ(Qinf,dtA))) %*% rnorm(m$n.latent)
+      if(m$n.TDpred > 0) latents[i,] <- latents[i,] + sm$TDPREDEFFECT %*% sdat[i,m$TDpredNames]
+    }
+    
+    for(i in 1:nrow(sdat)){
+      sdat[i,m$manifestNames] <- sm$LAMBDA %*% latents[i,] + sm$MANIFESTMEANS + 
+        sm$MANIFESTVAR %*% rnorm(m$n.manifest)
+    }
+        
+    
     
     sdat=sdat[(burnin+1):fullTpoints,]
     
-    sdat[,'time'] = sdat[,'time'] - sdat[1,'time']
+    sdat[,'time'] = sdat[,'time'] - sdat[1,'time'] 
     
-    datalong[(1+(si-1)*Tpoints):(si*Tpoints),]<-sdat
+    if(si==1) datalong <- sdat else datalong <- rbind(datalong,sdat)
   }
   
-
+  
   if(wide==FALSE) return(datalong) else {
     datawide <- ctLongToWide(datalong = datalong,id = 'id',time = 'time',
-      manifestNames = manifestNames, TDpredNames = TDpredNames,TIpredNames = TIpredNames)
-    datawide <- ctIntervalise(datawide = datawide,Tpoints = Tpoints,n.manifest = n.manifest,n.TDpred = n.TDpred,n.TIpred = n.TIpred,
-      manifestNames=manifestNames,TDpredNames=TDpredNames,TIpredNames=TIpredNames)
+      manifestNames = m$manifestNames, TDpredNames = m$TDpredNames,TIpredNames = m$TIpredNames)
+    datawide <- ctIntervalise(datawide = datawide,Tpoints = m$Tpoints,n.manifest = m$n.manifest,n.TDpred = m$n.TDpred,n.TIpred = m$n.TIpred,
+      manifestNames=m$manifestNames,TDpredNames=m$TDpredNames,TIpredNames=m$TIpredNames)
     return(datawide)
   }
 }
