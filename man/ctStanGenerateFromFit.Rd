@@ -8,7 +8,8 @@ ctStanGenerateFromFit(
   fit,
   nsamples = 200,
   fullposterior = FALSE,
-  verboseErrors = FALSE
+  verboseErrors = FALSE,
+  cores = 2
 )
 }
 \arguments{
@@ -19,6 +20,8 @@ ctStanGenerateFromFit(
 \item{fullposterior}{Logical indicating whether to sample from the full posterior (original nsamples) or the posterior mean.}
 
 \item{verboseErrors}{if TRUE, print verbose output when errors in generation encountered.}
+
+\item{cores}{Number of cpu cores to use.}
 }
 \value{
 Matrix of generated data -- one dataset per iteration, according to original time and missingness structure.

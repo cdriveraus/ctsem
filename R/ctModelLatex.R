@@ -483,7 +483,8 @@ out <- paste0(out, "
     write(x = out,file = paste0(filename,'.tex'))
     if(compile){
       if(!grepl('SunOS',Sys.info()['sysname']) && requireNamespace('tinytex',quietly=TRUE)){
-        tinytex::pdflatex(file=paste0(filename,'.tex'), clean=TRUE)
+        tt=try(tinytex::pdflatex(file=paste0(filename,'.tex'), clean=TRUE))
+        if('try-error' %in% class(tt)) 'Error - Perhaps tinytex needs to be installed via: tinytex::install_tinytex()' 
         
       } else{
       hastex <- !Sys.which('pdflatex') %in% ''

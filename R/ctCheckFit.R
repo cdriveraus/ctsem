@@ -65,7 +65,7 @@ ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
     } else ygen <- aperm(fit$generated$Y,c(2,1,3))
     wide <- matrix(NA, nrow=length(unique(fit$data$subject)),ncol=dim(ygen)[3]*maxtp)
     itervec <- sample(1:dim(ygen)[1],niter)
-    dimnames(ygen)<-list(iter=1:dim(ygen)[1],row=1:dim(ygen)[2],manifestNames)
+    
     for(i in 1:niter){
       idat <- data.table(ygen[i,,,drop=TRUE])
       colnames(idat) = manifestNames

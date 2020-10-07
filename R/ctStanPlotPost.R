@@ -42,7 +42,7 @@ ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE,
   
   e<-ctExtract(obj)
   priors <- ctStanGenerate(ctm = obj$ctstanmodelbase,
-    datastruct = obj$ctdatastruct,parsonly=TRUE,nsamples=priorsamples)
+    datastruct = obj$ctdatastruct,parsonly=TRUE,nsamples=priorsamples,...)
   priors <- priors$stanfit$transformedpars
   posteriors <- ctExtract(obj)
   

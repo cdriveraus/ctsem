@@ -734,7 +734,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     setup=list(recompile=recompile,idmap=standata$idmap,matsetup=ctm$modelmats$matsetup,matvalues=ctm$modelmats$matvalues,
       popsetup=ctm$modelmats$matsetup[ctm$modelmats$matsetup$when==0 & ctm$modelmats$matsetup$param > 0,],
-      popvalues=ctm$modelmats$matvalues[ctm$modelmats$matvalues$when==0 & ctm$modelmats$matvalues$param > 0,],
+      popvalues=ctm$modelmats$matvalues[ctm$modelmats$matsetup$when==0 & ctm$modelmats$matsetup$param > 0,],
       extratforms=ctm$modelmats$extratforms)
     if(fit) {
       out <- list(args=args,

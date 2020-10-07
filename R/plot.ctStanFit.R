@@ -66,7 +66,7 @@ plot.ctStanFit <- function(x, types='all',wait=TRUE,...){
   if('priorcheck' %in% types && continue){
     message('Plotting prior and posterior densities using ctStanPlotPost')
     
-    ctStanPlotPost(x,...)
+    ctStanPlotPost(x,wait = wait,...)
     types=types[types!='priorcheck']
     continue<-waitf()
   }

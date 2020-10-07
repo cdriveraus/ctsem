@@ -20,5 +20,5 @@ ctAddSamples(fit, nsamples, cores = 2)
 Sample more values from an optimized ctstanfit object
 }
 \examples{
-ctAddSamples(ctstantestfit, 10, 1)
+newfit <- ctAddSamples(ctstantestfit, 10, 1)
 }
