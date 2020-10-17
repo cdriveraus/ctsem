@@ -124,7 +124,7 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
     
     sdat[,'time'] = sdat[,'time'] - sdat[1,'time'] 
     
-    if(si==1) datalong <- sdat else datalong <- rbind(datalong,sdat)
+    if(si==1) datalong <- sdat else datalong <- as.matrix(rbind(datalong,sdat))
   }
   
   
