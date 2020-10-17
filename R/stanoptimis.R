@@ -326,7 +326,7 @@ standatatolong <- function(standata, origstructure=FALSE,ctm=NA){
   names(long) <- standatalongobjects()
   
   if(origstructure){
-    colnames(long[['Y']]) <- colnames(standata$Y)
+    colnames(long[['Y']]) <- ctm$manifestNames#colnames(standata$Y)
     long[['Y']][long[['Y']] %in% 99999] <- NA
     if(!is.na(ctm[1])){
       colnames(long[['subject']]) <- ctm$subjectIDname

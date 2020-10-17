@@ -2,7 +2,7 @@ logit = function(x) log(x)-log((1-x))
 
 sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoints=NA,plot=FALSE,
   stepbase=1e-3,gmeminit=ifelse(is.na(startnrows),.8,.8),gmemmax=.93, maxparchange = .50,
-  startnrows=NA,roughnessmemory=.95,groughnesstarget=.4,roughnesschangemulti = 2,
+  startnrows=NA,roughnessmemory=.9,groughnesstarget=.4,roughnesschangemulti = 2,
   lproughnesstarget=ifelse(is.na(whichmcmcpars[1]),ifelse(parsets==1,.2,.1),.2),parsets=1,
   # gamiter=50000,
   gsmoothroughnesstarget=.05,

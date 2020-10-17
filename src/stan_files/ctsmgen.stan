@@ -143,7 +143,6 @@ data {
 
   vector[nmanifest] Y[ndatapoints];
   int nopriors;
-  int nldynamics;
   vector[ntdpred] tdpreds[ndatapoints];
   
   real maxtimestep;
@@ -521,8 +520,8 @@ matrix[nlatent, nlatent] sDIFFUSIONcov;
       dtchange = dt==prevdt ? 0 : 1; 
       prevdt = dt; //update previous dt store after checking for change
     }
-    if(savescores || prevrow==0) Je[savescores ? rowi : 1] = IIlatentpop[1:nlatentpop,1:nlatentpop]; //elements updated later
-    prevrow = rowi; //update previous row marker only after doing necessary calcs
+    //if(savescores || prevrow==0) Je[savescores ? rowi : 1] = IIlatentpop[1:nlatentpop,1:nlatentpop]; //elements updated later
+    if(savescores && prevrow!=0) Je[rowi,,] = Je[prevrow,,];
        
     if(T0check == 0) { // calculate initial matrices if this is first row for si
   
@@ -666,13 +665,9 @@ pop_T0MEANS = sT0MEANS; pop_LAMBDA = sLAMBDA; pop_DRIFT = sDRIFT; pop_DIFFUSION 
     etacov =  sT0VAR;
     state = sT0MEANS[,1]; //init and in case of jacobian dependencies
 
-      if(nldynamics==0){ //initialize most parts for nl later!
-        if(ntdpred > 0) state[1:nlatent] += sTDPREDEFFECT * tdpreds[rowi];
-      }
     } //end T0 matrices
 if(verbose > 1) print ("below t0 row ", rowi);
 
-    if(nldynamics==1){ //nldynamics time update
       if(T0check>0){
         vector[nlatentpop] base;
         real intstepi = 0;
@@ -768,9 +763,10 @@ if(verbose > 1) print ("below t0 row ", rowi);
                 Je[savescores ? rowi : 1,,] =  matrix_exp(sJAx * dtsmall);
                 if(statedep[3]||statedep[4]) sasymDIFFUSION[derrind,derrind] = to_matrix(  -sqkron_sumii(sJAx[derrind,derrind]) \ 
                   to_vector(sDIFFUSIONcov[derrind,derrind]), ndiffusion,ndiffusion);
-                discreteDIFFUSION[derrind,derrind] =  sasymDIFFUSION[derrind,derrind] - quad_form( sasymDIFFUSION[derrind,derrind], Je[savescores ? rowi : 1, derrind,derrind]' );
+                discreteDIFFUSION[derrind,derrind] =  sasymDIFFUSION[derrind,derrind] - 
+                  quad_form( sasymDIFFUSION[derrind,derrind], Je[savescores ? rowi : 1, derrind,derrind]' );
               }
-            }  else if(savescores) Je[rowi] = Je[rowi-1,,]; //if not updating
+            } 
             state[1:nlatent] = (discreteDRIFT * append_row(state[1:nlatent],1.0))[1:nlatent]; // ???compute before new diffusion calcs
             if(intoverstates==1 || savescores==1){
               etacov = quad_form(etacov, Je[savescores ? rowi : 1,,]');
@@ -804,7 +800,6 @@ if(verbose > 1) print ("below t0 row ", rowi);
             state[1:nlatent] = (discreteDRIFT * append_row(state[1:nlatent],1.0))[1:nlatent];
           }
       }
-    } // end nonlinear time update
   
     if(T0check==0){ //nl t0
     state = sT0MEANS[,1]; //in case of t0 dependencies, may have missingness
@@ -1021,6 +1016,7 @@ if(verbose > 1){
   
   
   } // end dokalmanrows subset selection
+  prevrow = rowi; //update previous row marker only after doing necessary calcs
 }//end rowi
 ll+=sum(llrow);
 
