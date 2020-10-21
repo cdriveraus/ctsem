@@ -14,11 +14,11 @@ ctAddSamples(fit, nsamples, cores = 2)
 \item{cores}{number of cores to use}
 }
 \value{
-
+fit object with extra samples
 }
 \description{
 Sample more values from an optimized ctstanfit object
 }
 \examples{
-newfit <- ctAddSamples(ctstantestfit, 10, 1)
+if(w32chk()) newfit <- ctAddSamples(ctstantestfit, 10, 1)
 }

@@ -26,20 +26,25 @@ data{
   matrix[n,d] dat;
   int obs[n,d];
   int nobs[n];
-  int reg;
+  real reg;
+  int indep;
 }
 parameters{
   vector[d] mu;
   vector[d] logsd;
-  vector[(d * d - d) / 2] rawcor;
+  vector[indep ? 0 : (d * d - d) / 2] rawcor;
 }
 transformed parameters{
-  matrix[d, d] mcor = tcrossprod(constraincorsqrt(rawcor,d));
-  matrix[d,d] covm = diag_matrix(exp(logsd)+1e-10) * mcor * diag_matrix(exp(logsd)+1e-10);
+  matrix[d, d] mcor = diag_matrix(rep_vector(1,d)); 
+  matrix[d,d] covm;
   //matrix[d,d] cholm = cholesky_decompose(covm);
-  real corprior = normal_lpdf(rawcor| 0, 1);
-  real sdprior = normal_lpdf(logsd | 0, 10);
+  real corprior = indep ? 0 : normal_lpdf(rawcor| mean(fabs(rawcor)), 1);
+  real sdprior = normal_lpdf(logsd | mean(logsd), 10);
   vector[n] llrow=rep_vector(0,n);
+  
+  if(!indep) mcor=tcrossprod(constraincorsqrt(rawcor,d));
+  covm = diag_matrix(exp(logsd)+1e-5) * mcor * diag_matrix(exp(logsd)+1e-5);
+  
     for(i in 1:n){
     if(nobs[i]>0){
       llrow[i]= multi_normal_lpdf(dat[i,obs[i,1:nobs[i]]] | mu[obs[i,1:nobs[i]]], 
@@ -49,7 +54,7 @@ transformed parameters{
 }
 model{
   target += sum(llrow);
-  if(reg)  target+= corprior + sdprior;
+  if(reg!=0)  target+= reg*corprior + reg*sdprior;
 }
   
   

@@ -16,7 +16,7 @@
 #' }
 ctLOO <- function(fit,folds=10,cores=2,parallelFolds=TRUE, 
   subjectwise=ifelse(length(unique(fit$standata$subject)) > folds, TRUE, FALSE),
-  keepfirstobs=FALSE,init='fit'){
+  keepfirstobs=FALSE){
   bootstrap <- FALSE
   if(!'ctStanFit' %in% class(fit)|| !'list' %in% class(fit$stanfit)) stop('Not an optimized ctStanFit object')
   
@@ -37,7 +37,8 @@ ctLOO <- function(fit,folds=10,cores=2,parallelFolds=TRUE,
   
   sdat=fit$standata
   smodel <- fit$stanmodel
-  if(init=='fit') init=fit$stanfit$rawest else init=rnorm(length(fit$stanfit$rawest),0,.01)#
+  # if(init=='fit') 
+    init=fit$stanfit$rawest #else init=rnorm(length(fit$stanfit$rawest),0,.01)#
 
   if(parallelFolds && cores > 1){
     clctsem <- parallel::makeCluster(spec = min(cores,folds))
@@ -90,14 +91,16 @@ ctLOO <- function(fit,folds=10,cores=2,parallelFolds=TRUE,
     foldrows=srows,
     foldpars = as.matrix(data.frame(lapply(folded,function(x) x$pars))),
     # outsampleLogLikFolds=lloos,
+    insampleLogLikRow=llrow,
+    outsampleLogLikRow=llrowoos,
     insampleLogLik=sum(llrow,na.rm=TRUE),
     outsampleLogLik=sum(llrowoos,na.rm=TRUE),
     
     insampleRowwiseEntropy = -sum(llrow,na.rm=TRUE)/fit$standata$ndatapoints,
-    outsampleRowwiseEntropy = sum(-llrowoos,na.rm=TRUE)/fit$standata$ndatapoints,
+    outsampleRowwiseEntropy = -sum(llrowoos,na.rm=TRUE)/fit$standata$ndatapoints,
     
     insampleSubjectwiseEntropy = -sum(llrow,na.rm=TRUE)/length(unique(fit$standata$subject)),
-    outsampleSubjectwiseEntropy = sum(-llrowoos,na.rm=TRUE)/length(unique(fit$standata$subject)),
+    outsampleSubjectwiseEntropy = -sum(llrowoos,na.rm=TRUE)/length(unique(fit$standata$subject)),
     
     insampleRowwiseLogLikSD = sd(llrow,na.rm=TRUE),
     outsampleRowwiseLogLikSD = sd(llrowoos,na.rm=TRUE),

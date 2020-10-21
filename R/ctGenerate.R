@@ -110,7 +110,9 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
       latents[i,] <- dtA %*% latents[i-1,] +
         (dtA - diag(m$n.latent)) %*% sm$CINT + 
         t(chol(fdtQ(Qinf,dtA))) %*% rnorm(m$n.latent)
-      if(m$n.TDpred > 0) latents[i,] <- latents[i,] + sm$TDPREDEFFECT %*% sdat[i,m$TDpredNames]
+      # browser()
+      if(m$n.TDpred > 0) latents[i,] <- latents[i,] + sm$TDPREDEFFECT %*% 
+        t(as.matrix(sdat[i,m$TDpredNames,drop=FALSE]))
     }
     
     for(i in 1:nrow(sdat)){

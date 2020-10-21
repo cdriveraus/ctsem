@@ -8,7 +8,7 @@ if(1==99){ #random cor tests
   ndat[sample(1:length(ndat),100,replace=FALSE)] <- NA
   # ndat[-1:-2,c(3,4)] <- NA
   cov(ndat,use="pairwise.complete.obs")-rm
-  ctcov=ctsem:::covml(ndat,reg = F)
+  ctcov=ctsem:::covml(ndat,reg = 0)
   ctcov$cp$covm
   ctcov$lp
   cov(ndat,use="pairwise.complete.obs")
@@ -46,7 +46,7 @@ round(cov2cor(tcrossprod(covsqrt ))-corm)
 
 }
 
-covdata <- function(ndat,reg){
+covdata <- function(ndat,reg,independent=FALSE){
   sdat = as.matrix(ndat)
   d=ncol(sdat)
   n=nrow(sdat)
@@ -57,13 +57,14 @@ covdata <- function(ndat,reg){
   
   covdata <- list(d=as.integer(d),n=as.integer(n),
     dat=sdat,
-    reg=as.integer(reg),
+    reg=(reg),
+    indep=as.integer(independent),
     obs=array(as.integer(obs),dim=c(n,d)),
     nobs=nobs)
 }
 
-covml <- function(ndat,reg=FALSE,verbose=0){
-  covdata=covdata(ndat,reg)
+covml <- function(ndat,reg=0,verbose=0,hmc=FALSE,independent=FALSE){
+  covdata=covdata(ndat,reg,independent)
   d=covdata$d
   scovf <- suppressMessages(sampling(object = stanmodels$cov,iter=1,chains=0,check_data=FALSE,
     data=covdata))
@@ -99,7 +100,8 @@ covinit[is.na(covinit)&diag(d)==0] <- 0
   diag(cholinit) <- log(sqrt(diag(covinit)))
   
   
-  init=c(apply(as.matrix(ndat),2,mean,na.rm=TRUE),diag(cholinit),rnorm((d^2-d)/2,0,.01))
+  init=c(apply(as.matrix(ndat),2,mean,na.rm=TRUE),diag(cholinit))
+  if(!independent) init=c(init,rnorm((d^2-d)/2,0,.01))
   # for(i in 1:nrow(cholinit)){
   #   for(j in 1:ncol(cholinit)){
   #     if(i >=j) init = c(init,cholinit[i,j])
@@ -110,10 +112,16 @@ covinit[is.na(covinit)&diag(d)==0] <- 0
   # 
   # covfit=sgd(init = init,fitfunc = target,plot=20,roughnessmemory = .9,lproughnesstarget = .05,
   #   gsmoothroughnesstarget =  .1)
-  
+  # browser()
+  if(!hmc){
   covfit=mize(par = init,fg=mizelist,memory=20,max_iter=10000,
     # line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
     abs_tol=1e-8,grad_tol=0,rel_tol=1e-10,step_tol=0,ginf_tol=0)
+  } else{
+    browser()
+    covfit=sampling(object = stanmodels$cov,iter=2000,chains=cores,cores=cores,check_data=FALSE,
+      data=covdata)
+  }
   
   # covfit=optim(par = init,fn =mizelist$fn,gr = mizelist$gr,method = 'BFGS')
   

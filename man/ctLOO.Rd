@@ -9,8 +9,8 @@ ctLOO(
   folds = 10,
   cores = 2,
   parallelFolds = TRUE,
-  subjectwise = FALSE,
-  keepfirstobs = TRUE
+  subjectwise = ifelse(length(unique(fit$standata$subject)) > folds, TRUE, FALSE),
+  keepfirstobs = FALSE
 )
 }
 \arguments{

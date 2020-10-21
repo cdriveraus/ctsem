@@ -22,11 +22,11 @@ ctLongToWideSF <- function(fit){
   return(data.frame(dat))
 }
 
-ctSaturatedFitConditional<-function(dat,ucols,reg,covf=NA,verbose=0){
+ctSaturatedFitConditional<-function(dat,ucols,reg,hmc=FALSE,covf=NA,verbose=0){
   o1 = ucols
   o2=(1:ncol(dat))[-o1]
   
-  if(all(is.na(covf))) covf=covml(dat,reg = reg,verbose=verbose)
+  if(all(is.na(covf))) covf=covml(dat,reg = reg,hmc=hmc,verbose=verbose)
   if(length(o2) > 0){
     m=(covf$cp$mu)
     m1=m[o1]
@@ -51,32 +51,50 @@ ctSaturatedFitConditional<-function(dat,ucols,reg,covf=NA,verbose=0){
       return(llr)
     })
     # covf$ll_unconditional <- covf$ll
-    covf$ll <- sum(llrow)
+    covf$ll <- sum(llrow,na.rm=TRUE)
   } else { #if not conditional
-    covf$ll <- sum(sapply(1:nrow(dat),function(i){
-    llr=NA
-    d1 = !is.na(dat[i,o1])
-    if(sum(d1)>0){
-      mu=c(covf$cp$mu[d1])
-      llr=mvtnorm::dmvnorm(x = dat[i,o1][d1],mean = mu,sigma = covf$cp$covm[d1,d1,drop=FALSE],log=TRUE)
-    }
-    return(llr)
-  }))
+    
+    covdat <- covdata(ndat = dat[,o1,drop=FALSE],reg=reg)
+    smf <- rstan::sampling(stanmodels$cov,data=covdat,chains=0)
+    cp <- rstan::constrain_pars(smf,covf$fit$par)
+    
+  #   covf$llrow <- sapply(1:nrow(dat),function(i){
+  #   llr=NA
+  #   d1 = !is.na(dat[i,o1])
+  #   if(sum(d1)>0){
+  #     mu=c(covf$cp$mu)[d1]
+  #     llr=try(mvtnorm::dmvnorm(x = as.numeric(dat[i,o1[d1]]),mean = mu,sigma = covf$cp$covm[d1,d1,drop=FALSE],log=TRUE))
+  #     if('try-error' %in% class(llr)) browser()
+  #   }
+  #   return(llr)
+  # })
+      covf$ll <- sum(cp$llrow,na.rm=TRUE)
+      # print( covf$ll)
+    # browser()
   }
   
   return(covf)
 }
 
-ctSaturatedFit <- function(fit,conditional=FALSE,reg=FALSE, 
+ctSaturatedFit <- function(fit,conditional=FALSE,reg=FALSE, hmc=FALSE,
   time=FALSE, oos=TRUE, folds=10, cores=2,verbose=0){
   dat <-ctLongToWideSF(fit)
   dat=dat[,-1]
   if(!time) dat <- dat[,-grep(paste0('\\b',fit$ctstanmodelbase$timeName,'_T'),colnames(dat))]
   
+  if(!conditional){
+    dat <- data.frame(dat)[,unique(c(sapply(fit$ctstanmodelbase$manifestNames,function(x){
+      grep(paste0('\\b',x,'\\_T'),colnames(dat))
+    }))),drop=FALSE]
+    dat <- dat[,apply(dat,2,function(x) any(!is.na(x))),drop=FALSE] #drop na columns
+    ucols=1:ncol(dat)
+  } else { #if conditional
   #get unconditional columns
+    dat <- dat[,apply(dat,2,function(x) any(!is.na(x))),drop=FALSE] #drop na columns
   ucols=unique(c(unlist(sapply(fit$ctstanmodelbase$manifestNames,function(x){
     grep(paste0('\\b',x,'\\_T'),colnames(dat))
   }))))
+  }
   
   if(cores > 1){
     cl=parallel::makeCluster(cores,'PSOCK')
@@ -93,29 +111,37 @@ ctSaturatedFit <- function(fit,conditional=FALSE,reg=FALSE,
     srows,
     sort(1:length(srows) %% folds))
   
-  if(!conditional){
-    dat <- data.frame(dat)[,unique(c(sapply(fit$ctstanmodelbase$manifestNames,function(x){
-      grep(paste0('\\b',x,'\\_T'),colnames(dat))
-    }))),drop=FALSE]
-    o1=1:ncol(dat)
-  }
+# browser()
   
   sf = flexlapply(cl,srows,function(x){
     library(ctsem)
     datheldout <- dat
     datheldout[x,ucols] <- NA
-    fit=ctSaturatedFitConditional(dat = datheldout,ucols = ucols,reg = reg)
-    # covdata <- covdata(dat[x,,drop=FALSE],reg=reg)
-    fitoos=ctSaturatedFitConditional(dat = dat[x,,drop=FALSE],ucols = ucols,reg = reg,covf=fit)
-      # suppressMessages(sampling(object = stanmodels$cov,iter=1,chains=0,check_data=FALSE,data=covdata))
-    # f$lloos=rstan::constrain_pars(sfoos, f$fit$par)$llrow
-    fit$lloos <- fitoos$ll
-    return(fit)
+    #saturated model oos
+    fin=ctSaturatedFitConditional(dat = datheldout,ucols = ucols,reg = reg,hmc=hmc)
+    fitoos=ctSaturatedFitConditional(dat = dat[x,,drop=FALSE],ucols = ucols,reg = reg,covf=fin)
+    
+    #independence model oos
+    findep=covml(ndat = datheldout[,ucols,drop=FALSE],reg = reg,
+      hmc=hmc,independent=TRUE)
+    covdat <- covdata(ndat = dat[x,ucols,drop=FALSE],reg=reg,independent = TRUE)
+    smf <- rstan::sampling(stanmodels$cov,data=covdat,chains=0)
+    cp <- rstan::constrain_pars(smf,findep$fit$par)
+
+    fin$lloos <- fitoos$ll
+    fin$llindependentoos <- cp$llrow
+    return(fin)
   },cores = cores)
   # browser()
-  
+  llfold=unlist(lapply(sf,function(x) x$lloos))
+
+  plot(llfold,main='LL folds')
   covf = ctSaturatedFitConditional(dat = dat,ucols = ucols,reg = reg)
-  covf$lloos = sum(unlist(lapply(sf,function(x) x$lloos)),na.rm=TRUE)
+  covfindep = covml(ndat = dat[,ucols,drop=FALSE],reg = reg,
+    hmc=hmc,independent=TRUE)
+  covf$llindependent <- covfindep$ll
+  covf$lloos = sum(llfold,na.rm=TRUE)
+  covf$llindependentoos <- sum(unlist(sapply(sf,function(x) x$llindependentoos)),na.rm=TRUE)
   
   
   d=nrow(covf$cp$covm)
@@ -182,6 +208,14 @@ ctDataCombineSplit <- function(dat, idvars, vars){ #no splits yet
 }
 
 
+meltcov <- function(covm){
+  if(is.null(dimnames(covm))) dimnames(covm) = list(paste0('v',1:nrow(covm)),paste0('v',1:nrow(covm)))
+  covm=data.frame(row=factor(rownames(covm),levels=rownames(covm)),covm)
+  o=data.table::melt(data.table(covm),id.vars='row')
+  colnames(o)[!colnames(o) %in% 'value'] <- c('Var1','Var2')
+  return(o)
+}
+
 
 
 ctCheckFit2 <- function(fit, by=fit$ctstanmodelbase$timeName,
@@ -233,10 +267,12 @@ ctCheckFit2 <- function(fit, by=fit$ctstanmodelbase$timeName,
   
   if(covplot ||entropy){
     if(is.double(dat[[by]])){
+      if(requireNamespace('arules')){
       datb=dat
       gdatb=gdat
       dat[[by]] <- arules::discretize(dat[[by]],method='cluster',breaks = breaks,labels=FALSE)
       gdat[[by]] <- arules::discretize(gdat[[by]],method='cluster',breaks = breaks,labels=FALSE)
+      } else stop('arules package needed for discretization!')
     }
     if(covplot){
       # browser()
@@ -258,10 +294,11 @@ ctCheckFit2 <- function(fit, by=fit$ctstanmodelbase$timeName,
       # covdatmx <- OpenMx::mxRefModels(data.frame(wdat)[,!colnames(wdat) %in% fit$ctstanmodelbase$subjectIDname,drop=FALSE],run=TRUE)
       # covgdat / covdat
       # browser()
-      print(corplotmelt(reshape2::melt(cov2cor(covdat$cp$covm)),label='Orig. corr.',limits=c(-1,1)))
-      print(corplotmelt(reshape2::melt(cov2cor(covgdat$cp$covm)),label='Gen. corr.',limits=c(-1,1)))
+      print(corplotmelt(meltcov(cov2cor(covdat$cp$covm)),
+        label='Orig. corr.',limits=c(-1,1)))
+      print(corplotmelt(meltcov(cov2cor(covgdat$cp$covm)),label='Gen. corr.',limits=c(-1,1)))
       
-      print(corplotmelt(reshape2::melt(cov2cor(covgdat$cp$covm)-cov2cor(covdat$cp$covm)),label='Gen. corr. diff.',limits=c(-1,1)))
+      print(corplotmelt(meltcov(cov2cor(covgdat$cp$covm)-cov2cor(covdat$cp$covm)),label='Gen. corr. diff.',limits=c(-1,1)))
     }
     if(entropy){
       # browser()
@@ -510,7 +547,7 @@ plot.ctsemFitMeasure <- function(x,indices='all', means=TRUE,separatemeans=TRUE,
       if(cov2cor) limits <-c(-1,1) else limits <- range(get(covtype))
       # browser()
       
-      corm <- reshape2::melt(ggcorrArgs$cor_matrix)
+      corm <- meltcov(ggcorrArgs$cor_matrix)
       
       corplotmelt(corm,'MissSpec. Ratio',limits)
       

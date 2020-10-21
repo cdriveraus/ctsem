@@ -46,31 +46,8 @@ ctStanGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErr
   fit$generated$Y <- aperm(cs$Y,c(2,1,3))
   dimnames( fit$generated$Y)<-list(row=1:dim(fit$generated$Y)[1],
     iter=1:dim(fit$generated$Y)[2],fit$ctstanmodel$manifestNames)
-   # tmp= array(apply(umat, 2, function(x){
-   #  out <- try(rstan::constrain_pars(genf,x)$Y)
-   #  if('try-error' %in% class(out)) {
-   #    out <- rep(NA, standata$ndatapoints)
-   #    if(verboseErrors) {
-   #      standata$verbose <<- 2L
-   #      genf <- stan_reinitsf(genm,standata)
-   #      rstan::constrain_pars(genf,x)$Y
-   #    }
-   #  }
-   #  return(out)
-   #  }),dim=c(nrow(fit$standata$Y),fit$ctstanmodel$n.manifest,ncol(umat)))
-  
-  # fit$generated$Y <- aperm(fit$generated$Y,c(1,3,2))
+
   fit$generated$Y[fit$generated$Y==99999] <- NA
-  # print(fit$generated$Y)
-  # browser()
-  # for(i in 1:dim(fit$generated$Y)[3]){ #remove crazy outliers
-  #   for(j in 1:dim(fit$generated$Y)[2]){
-  #     # browser()
-  #     fit$generated$Y[(fit$generated$Y[,j,i]) > 
-  #         quantile(c(fit$generated$Y[,,i]),.99,na.rm=TRUE) * 100,j,i] <- NA
-  #     fit$generated$Y[(fit$generated$Y[,j,i] < 
-  #         quantile(c(fit$generated$Y[,,i]),.01,na.rm=TRUE) ),j,i] <- NA
-  #   }
-  # }
+
   return(fit)
 }

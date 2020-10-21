@@ -24,7 +24,14 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
   'T0VAR','T0MEANS', 'MANIFESTTRAITVAR',
   'TDpredNames', 'TIpredNames', 'Tpoints', 'extract', 'latentNames', 'manifestNames',
   'plot', 'points','T0TRAITEFFECT',
-  'T0VARsubindex','DRIFTsubindex','DIFFUSIONsubindex','CINTsubindex','.'))
+  'T0VARsubindex','DRIFTsubindex','DIFFUSIONsubindex','CINTsubindex','.',
+  'Var1',
+  'Var2',
+  'value',
+  'WhichObs',
+  'variable',
+  'manifest',
+  'Original','sysnoise','starts', 'obsNames'))
 
 if(1==99){
   `:=` = NULL

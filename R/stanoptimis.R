@@ -195,11 +195,11 @@ jacrandom <- function(grfunc, est, eps=1e-4,
 #' @param nsamples number of extra samples desired
 #' @param cores number of cores to use
 #'
-#' @return
+#' @return fit object with extra samples
 #' @export
 #'
 #' @examples
-#' newfit <- ctAddSamples(ctstantestfit, 10, 1)
+#' if(w32chk()) newfit <- ctAddSamples(ctstantestfit, 10, 1)
 ctAddSamples <- function(fit,nsamples,cores=2){
   mchol <- t(chol(fit$stanfit$cov))
   

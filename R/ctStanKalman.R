@@ -65,11 +65,11 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,
     p=sort(unique(ms$param))# | fit$setup$matsetup$tipred]))
     p=p[p>0]
     if(length(p)==0) stop('No individually varying parameters found!')
-    lastsub <- rep(TRUE,standata$ndatapoints) #which rows represent last rows per subject
-    for(i in 1:(standata$ndatapoints-1)){
-      if(standata$subject[i] == standata$subject[i+1]) lastsub[i] <- FALSE
+    firstsub <- rep(TRUE,standata$ndatapoints) #which rows represent first rows per subject
+    for(i in 2:(standata$ndatapoints)){
+      if(standata$subject[i] == standata$subject[i-1]) firstsub[i] <- FALSE
     }
-    states <- e$etaupd[,lastsub,,drop=FALSE]
+    states <- e$etasmooth[,firstsub,,drop=FALSE]
     dimnames(states) <- list(iter=1:dim(states)[1],id = unique(standata$subject), par = 1:dim(states)[3])
     # browser()
       mats <- ctStanMatricesList()$all
@@ -78,7 +78,7 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,
           if(ms$transform[i] >=0){ #havent done custom transforms here
             # browser()
             if(tformsubjectpars){ #then transform into system matrix elements
-            states[,,ms$param[i]] <- tform( 
+            if(!ms$matrix[i] %in% 1) states[,,ms$param[i]] <- tform( 
               states[,,ms$param[i]], transform = ms$transform[i],
               multiplier = ms$multiplier[i],meanscale = ms$meanscale[i],offset = ms$offset[i],
               inneroffset = ms$inneroffset[i])
@@ -91,10 +91,9 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,
           if(ms$transform[i] <0) message('custom transforms not implemented yet...sorry')
         }
       }
-      # browser()
     states <- states[,,p,drop=FALSE]
     return(states)
-  } else{
+  } else{ #if not doing subject level par output
     
     nlatent <- ifelse(!indvarstates, fit$standata$nlatent,fit$standata$nlatentpop)
     latentNames <- fit$ctstanmodel$latentNames

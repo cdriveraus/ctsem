@@ -55,7 +55,7 @@ popcovnames <- function(fit){
 
 
 checkTIauto <- function(){
-  Tpoints=30
+  Tpoints=5#30
   n.manifest=1
   n.TDpred=0
   n.TIpred=1
@@ -78,6 +78,8 @@ checkTIauto <- function(){
     if(i>1) tdat <- rbind(tdat,ndat) else tdat <- ndat
   }
   colnames(tdat)[4] <- 'TI1'
+  tdat$TI2 <- rnorm(nrow(tdat))
+  # colnames(tdat)[5] <- 'TI2'
   
   tdat[2,'Y1'] <- NA
   tdat[tdat[,'id']==2,'TI1'] <- NA
@@ -87,7 +89,7 @@ checkTIauto <- function(){
     # DRIFT=matrix(c(-.3),nrow=1),
     # DIFFUSION=matrix(c(2),1),
     n.latent=n.latent,n.TDpred=n.TDpred,
-    n.TIpred=n.TIpred,
+    n.TIpred=2,
     MANIFESTMEANS=matrix(0,nrow=n.manifest),
     CINT=matrix(c('cint1'),ncol=1),
     n.manifest=n.manifest,LAMBDA=diag(1))
@@ -96,12 +98,13 @@ checkTIauto <- function(){
   
   checkm$TIpredAuto <- 1L
   
-  fit1<-ctStanFit(tdat,checkm,chains=1,optimize=TRUE,cores=2,verbose=1,
+  fit1<-ctStanFit(tdat,checkm,chains=1,optimize=TRUE,cores=4,verbose=0,
     # intoverpop=F,plot=T,
     # savesubjectmatrices = F,plot=F,
     # init=init,
     optimcontrol=list(is=FALSE,stochastic=T,subsamplesize=1,carefulfit=F),
-    nopriors=TRUE)
+    nopriors=F)
+  summary(fit1)
 }
 
 whichsubjectpars <- function(standata,subjects=NA){
