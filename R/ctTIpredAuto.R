@@ -131,14 +131,20 @@ scorecalc <- function(standata,est,stanmodel,subjectsonly=TRUE,
   standata$dokalmanpriormodifier <- ifelse(subjectsonly, 1/standata$nsubjects,1/standata$ndatapoints)
   
   scores <- list()
+  # browser()
+  sf <- suppressMessages(try(stan_reinitsf(stanmodel,standata,fast = TRUE)))
+  if('try-error' %in% class(sf)) fast=FALSE else fast=TRUE
   for(i in 1:standata$nsubjects){
     whichpars = whichsubjectpars(standata,i)
     scores[[i]]<-matrix(NA,length(whichpars),ifelse(subjectsonly,1,sum(standata$subject==i)))
     standata1 <- standatact_specificsubjects(standata,i)
     for(j in 1:ncol(scores[[i]])){
       standata1$llsinglerow=as.integer(ifelse(subjectsonly,0,j))
-      sf <- stan_reinitsf(stanmodel,standata1,fast = TRUE)
-      scores[[i]][,j] <- sf$grad_log_prob(
+      sf <- stan_reinitsf(stanmodel,standata1,fast = fast)
+      if(fast) scores[[i]][,j] <- sf$grad_log_prob(
+        upars=est[whichpars],
+        adjust_transform = TRUE)
+      if(!fast) scores[[i]][,j] <- rstan::grad_log_prob(sf,
         upars=est[whichpars],
         adjust_transform = TRUE)
     }

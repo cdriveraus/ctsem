@@ -23,8 +23,13 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
     } else if(!grepl('[',m$pars$param[ri],fixed=TRUE) && !is.na(m$pars$param[ri])) m$pars$param[ri] <- paste0(m$pars$matrix[ri],'[',m$pars$row[ri],',',m$pars$col[ri],']')
   }
   #replace inverse logit temporarily
-  m$pars$param <- gsub('\\binv_logit\\((.*)\\)','1/\\(1+exp\\(-\\(\\1\\)\\)\\)',m$pars$param)
-  m$pars$param <- gsub('\\blog1p_exp\\((.*)\\)','log1p\\(exp\\(\\1\\)\\)',m$pars$param)
+  # browser()
+  try=0
+  while(try < 20 && any(grepl('\\<inv_logit\\((.*)\\)',m$pars$param) | grepl('\\blog1p_exp\\((.*)\\)',m$pars$param))){ 
+    try <- try + 1
+  m$pars$param <- gsub('\\<inv_logit\\((.*)\\)','1/\\(1+exp\\(-\\(\\1\\)\\)\\)',m$pars$param)
+  m$pars$param <- gsub('\\<log1p_exp\\((.*)\\)','log1p\\(exp\\(\\1\\)\\)',m$pars$param)
+  }
   
   mats <- listOfMatrices(m$pars)
   matnames <- names(ctStanMatricesList(unsafe=TRUE)$base)

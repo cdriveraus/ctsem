@@ -55,9 +55,9 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
   dimnames(out$residCovStd) <- list(object$ctstanmodel$manifestNames,object$ctstanmodel$manifestNames)
   out$resiCovStdNote <- 'Standardised covariance of residuals'
   }
-  
-  parnames <- object$setup$matsetup$parname[object$setup$matsetup$when==0 & object$setup$matsetup$param > 0]
-  parindices <- object$setup$matsetup$param[object$setup$matsetup$when==0 & object$setup$matsetup$param > 0]
+  ms=object$setup$matsetup
+  parnames <- ms$parname[ms$when==0 & ms$param > 0]
+  parindices <- ms$param[ms$when==0 & ms$param > 0]
   pars <- cbind(parnames,parindices)
   pars<-pars[!duplicated(pars[,1,drop=FALSE]),,drop=FALSE]
   parnames <- pars[as.numeric(pars[,2,drop=FALSE]) >0, 1]
@@ -205,7 +205,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
     popsd=popsd[, monvars,drop=FALSE]
     rownames(popsd)=parnamesiv
     }
-    
+   browser() 
     popmeans=suppressWarnings(monitor(array(e$popmeans,dim=c(dim(e$popmeans)[1],1,dim(e$popmeans)[2])),warmup=0,print=FALSE))
     rownames(popmeans) = parnames #names(e)[grep('hmean_',names(e))]
     popmeans = popmeans[,monvars,drop=FALSE]

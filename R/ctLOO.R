@@ -4,7 +4,8 @@
 #' @param folds Number of cross validation splits to use -- 10 folds implies that the 
 #' model is re-fit 10 times, each time to a data set with 1/10 of the observations randomly removed.
 #' @param cores Number of processor cores to use. 
-#' @param parallelFolds compute folds in parallel or use cores to finish single folds faster.
+#' @param parallelFolds compute folds in parallel or use cores to finish single folds faster. 
+#' parallelFolds will use folds times as much memory.
 #' @param subjectwise drop random subjects instead of data rows?
 #' @param keepfirstobs do not drop first observation (more stable estimates)
 #' @return list
@@ -14,7 +15,7 @@
 #' \donttest{ 
 #' ctLOO(ctstantestfit)
 #' }
-ctLOO <- function(fit,folds=10,cores=2,parallelFolds=TRUE, 
+ctLOO <- function(fit,folds=10,cores=2,parallelFolds=FALSE, 
   subjectwise=ifelse(length(unique(fit$standata$subject)) > folds, TRUE, FALSE),
   keepfirstobs=FALSE){
   bootstrap <- FALSE
@@ -46,6 +47,7 @@ ctLOO <- function(fit,folds=10,cores=2,parallelFolds=TRUE,
     on.exit({parallel::stopCluster(clctsem)},add = TRUE)
   } else clctsem <- NA
   
+    # browser()
   folded <- flexlapply(clctsem,X = srows,fn = function(x) {
     library(ctsem)
     # sink(file = file.path(tempdir(),paste0('parout_',ceiling(runif(1,0,10000)),'.txt')))

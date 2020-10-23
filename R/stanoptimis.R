@@ -881,7 +881,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else init=optimfit$par
       }
       
-      
+      # browser()
       if(length(parsteps) > 0){
         message('Freeing parameters...')
         finished <- FALSE
@@ -1580,7 +1580,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       }
     }
   }#end while no better fit
-  
   if(!estonly){
     if(!is) lpsamples <- NA else lpsamples <- unlist(target_dens)[resample_i]
     
@@ -1615,7 +1614,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       standata=list(TIPREDEFFECTsetup=standata$TIPREDEFFECTsetup,ntipredeffects = standata$ntipredeffects),
       isdiags=list(cov=mcovl,means=delta,ess=ess,qdiag=qdiag,lpsamples=lpsamples ))
   }
-  if(estonly) stanfit=list(optimfit=optimfit,stanfit=smf, rawest=est2)
+  
+  if(estonly) {
+    smf <- stan_reinitsf(sm,standata)
+    stanfit=list(optimfit=optimfit,stanfit=smf, rawest=est2)
+  }
   optimfinished <- TRUE #disable exit message re pars
   return(stanfit)
 }

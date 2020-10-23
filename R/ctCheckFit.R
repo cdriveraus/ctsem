@@ -111,8 +111,26 @@ ctSaturatedFit <- function(fit,conditional=FALSE,reg=FALSE, hmc=FALSE,
     srows,
     sort(1:length(srows) %% folds))
   
-# browser()
+  covf = ctSaturatedFitConditional(dat = dat,ucols = ucols,reg = reg)
+  covfindep = covml(ndat = dat[,ucols,drop=FALSE],reg = reg,
+    hmc=hmc,independent=TRUE)
+  covf$llindependent <- covfindep$ll
   
+  #independence fit of residuals
+  err=ctStanKalman(fit = fit,collapsefunc = mean)$errprior
+  err=data.table(data.frame(id=fit$standata$subject,matrix(err,ncol=dim(err)[3])))
+  err[ ,WhichObs:=(1:.N),by=id]
+  err = data.table::dcast(data = data.table(melt(err,id.vars = c('id','WhichObs'))),
+    formula='id~WhichObs+variable')
+  err=data.frame(err)
+  err <- err[,apply(err,2,function(x) any(!is.na(x))),drop=FALSE][,-1,drop=FALSE] #remove na and id cols
+  covfindepresid = covml(ndat = err,reg = reg,
+    hmc=hmc,independent=TRUE)
+  covf$llresid <- covfindepresid$ll
+  
+  # browser()
+  
+  if(oos){
   sf = flexlapply(cl,srows,function(x){
     library(ctsem)
     datheldout <- dat
@@ -136,13 +154,10 @@ ctSaturatedFit <- function(fit,conditional=FALSE,reg=FALSE, hmc=FALSE,
   llfold=unlist(lapply(sf,function(x) x$lloos))
 
   plot(llfold,main='LL folds')
-  covf = ctSaturatedFitConditional(dat = dat,ucols = ucols,reg = reg)
-  covfindep = covml(ndat = dat[,ucols,drop=FALSE],reg = reg,
-    hmc=hmc,independent=TRUE)
-  covf$llindependent <- covfindep$ll
+
   covf$lloos = sum(llfold,na.rm=TRUE)
   covf$llindependentoos <- sum(unlist(sapply(sf,function(x) x$llindependentoos)),na.rm=TRUE)
-  
+  }
   
   d=nrow(covf$cp$covm)
   covf$npars=length(covf$cp$mu)+(d^2-d)/2-length(fit$stanfit$rawest)

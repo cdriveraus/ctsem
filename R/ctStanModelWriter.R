@@ -559,6 +559,7 @@ ctStanModelMatrices <-function(ctm){
         copyrow=0
         copycol=0
         simplestate <- FALSE
+        # if(nm == 'PARS') browser()
         if(!is.na(ctspec$param[i])){ #if non fixed parameter,
           # if(ctspec$row[i] %in% 6) 
           # 
@@ -620,7 +621,7 @@ ctStanModelMatrices <-function(ctm){
                 paste0('(?=\\[).*?(?<=\\])'),
                 ctspec$param[i], perl=TRUE)
             )))[1]
-            if(nm %in% c('JAx',names(c(mats$driftcint,mats$diffusion)))) when = 2
+            if(nm %in% c('JAx',names(c(mats$driftcint,mats$diffusion)),'PARS')) when = 2 #included PARS here because they can't change due to dynamics
             if(nm %in% c('Jtd',names(mats$tdpred))) when = 3
             if(nm %in% c('Jy',names(mats$measurement))) when = 4
             if(nm %in% c('J0',names(mats$t0))) when = 1
@@ -708,6 +709,11 @@ ctStanModelMatrices <-function(ctm){
     -unique(matsetup$copyrow[matsetup$copyrow > 0]) #set rows to be copied from to neg of their own row num
   
   matsetup$copymatrix <-  matsetup$copycol <- NULL #not needed columns after processing
+  
+  #sort order so PARS are computed first (in case of state dependency in PARS, further dependencies on PARS must happen after)
+  matvalues = rbind(matvalues[matsetup$matrix==10,],matvalues[matsetup$matrix!=10,])
+  matsetup = rbind(matsetup[matsetup$matrix==10,],matsetup[matsetup$matrix!=10,])
+  
   
   return(list(
     matsetup=matsetup,   matvalues=matvalues, 
@@ -846,7 +852,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup){
   #save calcs without intoverpop for param intitialisation
   
   
-  #consider allowing copies across different when states by dropping mlist from the final loop
+  #consider allowing copies across different 'when' states by dropping mlist from the final loop
   simplestatedependencies <- function(when, mlist) {
     paste0('
           for(ri in 1:size(matsetup)){ //for each row of matrix setup
