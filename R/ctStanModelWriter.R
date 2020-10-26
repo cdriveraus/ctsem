@@ -51,12 +51,13 @@ ctModelStatesAndPARS <- function(ctm){ #replace latentName and par references wi
     }
   }
   #expand pars
+  # browser()
   ln <- ctm$pars$param[ctm$pars$matrix %in% 'PARS' & !is.na(ctm$pars$param)] #get extra pars
  
   for(li in seq_along(ln)){ #for every extra par
     parmatch <- which(ctm$pars$param %in% ln[li] & ctm$pars$matrix %in% 'PARS')
     for(ri in grep(paste0('\\b',ln[li],'\\b'),ctm$pars$param)){ #which rows contain the par
-      if(!(ctm$pars$param[ri] == ln[li] & ctm$pars$matrix[ri]=='PARS')){ #that are not the par itself
+      if(!(ctm$pars$param[ri] == ln[li])){ #that are not the par itself #& ctm$pars$matrix[ri]=='PARS' #removed limitation of referencing within PARS matrices
       # print(ctm$pars$param[ri])
         ctm$pars$param[ri] <- gsub(paste0('\\b',ln[li],'\\b'), #replace with PARS reference...
           paste0('sPARS[',ctm$pars$row[parmatch],',',ctm$pars$col[parmatch],']'),ctm$pars$param[ri])
@@ -559,7 +560,6 @@ ctStanModelMatrices <-function(ctm){
         copyrow=0
         copycol=0
         simplestate <- FALSE
-        # if(nm == 'PARS') browser()
         if(!is.na(ctspec$param[i])){ #if non fixed parameter,
           # if(ctspec$row[i] %in% 6) 
           # 
@@ -594,7 +594,7 @@ ctStanModelMatrices <-function(ctm){
               ')\\[\\d+,\\s*\\d+\\]$'),ctspec$param[i])){ 
               copymatrix=sum(sapply(seq_along(c(mats$base,mats$jacobian)), function(x){
                 ifelse(grepl(paste0('s',names(c(mats$base,mats$jacobian)[x])),ctspec$param[i]),x,0)
-              }))
+                }))
               copymatrix = c(mats$base,mats$jacobian)[copymatrix]
               index = as.numeric(strsplit(gsub('\\]','',
                 gsub('\\[','',
@@ -691,6 +691,7 @@ ctStanModelMatrices <-function(ctm){
   matsetup[,!colnames(matsetup) %in% 'parname'] <- lapply(matsetup[,!colnames(matsetup) %in% 'parname'],as.integer)
   matvalues <- data.frame(apply(mval,2,as.numeric,.drop=FALSE),stringsAsFactors = FALSE  )
 
+  #copy handling
   for(i in 1:nrow(matsetup)){
     if(matsetup$copymatrix[i] > 0){
       matsetup$copyrow[i] <- which(matsetup$row == matsetup$copyrow[i] &
@@ -704,9 +705,17 @@ ctStanModelMatrices <-function(ctm){
       matsetup$copyrow[i] <- matsetup$copyrow[matsetup$copyrow[i]]
     }
   }
+  # browser()
   
-  matsetup$copyrow[unique(matsetup$copyrow[matsetup$copyrow > 0])] <- 
-    -unique(matsetup$copyrow[matsetup$copyrow > 0]) #set rows to be copied from to neg of their own row num
+  for(i in 1:nrow(matsetup)){
+    if(matsetup$copyrow[i] > 0){
+      matsetup[i,c('param','transform','indvarying','tipred','when')] <- 
+        matsetup[matsetup$copyrow[i],c('param','transform','indvarying','tipred','when')]
+    }
+  }
+  
+  # matsetup$copyrow[unique(matsetup$copyrow[matsetup$copyrow > 0])] <- 
+  #   -unique(matsetup$copyrow[matsetup$copyrow > 0]) #set rows to be copied from to neg of their own row num
   
   matsetup$copymatrix <-  matsetup$copycol <- NULL #not needed columns after processing
   
@@ -854,22 +863,26 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup){
   
   #consider allowing copies across different 'when' states by dropping mlist from the final loop
   simplestatedependencies <- function(when, mlist) {
-    paste0('
-          for(ri in 1:size(matsetup)){ //for each row of matrix setup
-            if(matsetup[ri,3] > 0 && matsetup[ri,8] == ',when,' &&(',paste0('
-            matsetup[ri,7] ==',mlist,collapse='||'),' )){ //perform calcs appropriate to this section
-              real newval;
-              newval = tform(state[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
-              ',paste0('if(matsetup[ri, 7] == ', (mats$all)[(mats$all) %in% mlist],') s', names(mats$all)[(mats$all) %in% mlist],'[matsetup[ ri,1], matsetup[ri,2]] = newval;', collapse = ' \n      '),'
-              if(matsetup[ri,9] < 0){
-                for(ri2 in 1:size(matsetup)){
-                  if(matsetup[ri2,9] == ri){ //if row ri2 is a copy of original row ri
-                    ',paste0('if(matsetup[ri2, 7] == ', (mats$all)[(mats$all) %in% mlist],') s', names(mats$all)[(mats$all) %in% mlist],'[matsetup[ri2,1], matsetup[ri2,2]] = newval;', collapse = ' \n      '),'
-                  }
-                }
-              }
-            }
-          }')
+    # paste0('
+    #       for(ri in 1:size(matsetup)){ //for each row of matrix setup
+    #         if(matsetup[ri,3] > 0 && matsetup[ri,8] == ',when,' &&(',paste0('
+    #         matsetup[ri,7] ==',mlist,collapse='||'),' )){ //perform calcs appropriate to this section
+    #           real newval;
+    #           newval = tform(state[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
+    #           ',paste0('if(matsetup[ri, 7] == ', (mats$all)[(mats$all) %in% mlist],') s', names(mats$all)[(mats$all) %in% mlist],'[matsetup[ ri,1], matsetup[ri,2]] = newval;', collapse = ' \n      '),'
+    #           if(matsetup[ri,9] < 0){
+    #             for(ri2 in 1:size(matsetup)){
+    #               if(matsetup[ri2,9] == ri){ //if row ri2 is a copy of original row ri
+    #                 ',paste0('if(matsetup[ri2, 7] == ', (mats$all)[(mats$all) %in% mlist],') s', names(mats$all)[(mats$all) %in% mlist],'[matsetup[ri2,1], matsetup[ri2,2]] = newval;', collapse = ' \n      '),'
+    #               }
+    #             }
+    #           }
+    #         }
+    #       }')
+    
+    paste0('statetform = parvectform(statetform, state, ',when,', matsetup, matvalues, si, subindices);
+    ',matcalcs('statetform','si',when=when, mlist))
+    
   }
   
   
@@ -886,6 +899,8 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup){
       if(statei>0)  state[statei] += Jstep;
       ',simplestatedependencies(when=2,mlist=c(PARS=10,mats$driftcint)),'
       ',simplifystanfunction(paste0(paste0(c(ctm$modelmats$calcs$PARS,ctm$modelmats$calcs$driftcint),';\n',collapse=' '))),' 
+      
+      
       if(statei > 0) {
         sJAx[sJAxfinite,statei] =  sDRIFT[sJAxfinite, ] * state + append_row(sCINT[,1],nlpzerovec)[sJAxfinite]; //compute new change
          if(verbose>1) print("sJAx ",sJAx);
@@ -962,6 +977,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup){
   matrix[nlatent*2,nlatent*2] dQi; //covariance from jacobian
 
   vector[nlatentpop] state = rep_vector(-1,nlatentpop); 
+  vector[nlatentpop] statetform;
   matrix[nlatentpop,nlatentpop] sJAx; //Jacobian for drift
   matrix[nlatentpop,nlatentpop] sJ0; //Jacobian for t0
   matrix[nlatentpop,nlatentpop] sJtd;//diag_matrix(rep_vector(1),nlatentpop); //Jacobian for nltdpredeffect
@@ -1042,7 +1058,6 @@ if(verbose > 1) print ("below t0 row ", rowi);
       finiteJ(),
       simplestatedependencies(when=2,mlist=c(mats$diffusion)),
       simplifystanfunction(paste0(paste0(ctm$modelmats$calcs$diffusion,';\n',collapse=' '))),' 
-      
       if(statedep[4]) sDIFFUSIONcov[derrind,derrind] = sdcovsqrt2cov(sDIFFUSION[derrind,derrind],choleskymats);
       
         if(continuoustime){
@@ -1140,7 +1155,8 @@ if(verbose > 1) print ("below t0 row ", rowi);
 
   if(intoverstates==0){
     if(T0check==0) state += cholesky_decompose(sT0VAR) * etaupdbasestates[(1+(rowi-1)*nlatentpop):(rowi*nlatentpop)];
-    if(T0check>0) state[1:nlatent] +=  cholesky_decompose(discreteDIFFUSION) * etaupdbasestates[(1+(rowi-1)*nlatentpop):(rowi*nlatent)];
+    if(T0check>0) state[derrind] +=  cholesky_decompose(makesym(discreteDIFFUSION[derrind,derrind],verbose,1)) * 
+      (etaupdbasestates[(1+(rowi-1)*nlatentpop):(nlatent+(rowi-1)*nlatentpop)])[derrind];
   }
 
 if(verbose > 1){
@@ -1279,6 +1295,15 @@ ll+=sum(llrow);
     if(!is.null(ctm$w32)) out <- ''
     return(out)}
 
+matcalcs <- function(parvec,subjectid,when, matrices){
+  paste0(sapply(matrices, function(x){
+      mn=names(matrices[matrices == x])
+      out = paste0(
+        ifelse(when==0,'',paste0('if(whenmat[',x,',',when,'])')),
+      's',mn,'=mcalc(s',mn,',',parvec,',',when,', ',x,', matsetup, matvalues, ',subjectid,', subindices); \n')
+    }),collapse='')
+}
+
 
 subjectparaminit<- function(popmats=FALSE,smats=TRUE){
   if(smats && popmats) stop('smats and popmats cannot both be TRUE!')
@@ -1292,16 +1317,16 @@ subjectparaminit<- function(popmats=FALSE,smats=TRUE){
     collapse='\n')
 }
 
+# cat(matcalcs('statetform','subi',when='wheni',c(ctStanMatricesList()$base[-1],ctStanMatricesList()$jacobian)))
+
 subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
   out <- paste0(
     '
- int subjectvec[subjectcount ? 1 : 2];
  vector[nparams] rawindparams = rawpopmeans;
- subjectvec[size(subjectvec)] = si;
- if(subjectcount == 0)  subjectvec[1] = 0; // only needed for subject 0 (pop pars)
- subjectcount = subjectcount + 1;
- for(subjectveci in 1:size(subjectvec)){
-  int subi = subjectvec[subjectveci];
+ vector[nparams] indparams;
+
+ for(subjectveci in (prevrow==0 ? 0 : 1) : 1){
+  int subi = subjectveci == 0 ? 0 : si;
 
   if(subi > 0 && nindvarying > 0 && intoverpop==0) {
     if(fixedsubpars==0) rawindparams[indvaryingindex] += rawpopc[2] * baseindparams[doonesubject ? 1 : subi];
@@ -1315,40 +1340,25 @@ subjectparscalc2 <- function(popmats=FALSE,subjmats=TRUE){
     TIPREDEFFECT[tieffectindices[1:ntieffects]] *  tipredsdata[subi]\';
   }
 
-',
+    indparams= parvectform(indparams, rawindparams, 0, matsetup, matvalues, subi, subindices);
+    sT0MEANS = mcalc(sT0MEANS, indparams, 0, 1, matsetup, matvalues, subi, subindices);
+    state=sT0MEANS[,1];
+    ',paste0(ctm$modelmats$calcs$t0,';\n',collapse=' '),'; 
     
-    paste0('
-    for(ri in 1:size(matsetup)){ //for each row of matrix setup
-        for(statecalcs in 0:1){ //do state based calcs after initialising t0means
-        if(subi ==0 ||  //if population parameter
-          ( matsetup[ri,7] == 8 && subindices[8]) || //or a covariance parameter in an individually varying matrix
-          (matsetup[ri,3] > 0 && (matsetup[ri,5] > 0 || matsetup[ri,6] > 0 || matsetup[ri,8] > 0)) //or there is individual variation
-          ){ //otherwise repeated values
-            if( (statecalcs && matsetup[ri,8]>0) || 
-              (!statecalcs && matsetup[ri,8]==0) ){ //if doing statecalcs do them, if doing static calcs do them
-              real newval;
-              if(matsetup[ri,3] > 0)  newval = tform(matsetup[ri,8] ? state[ matsetup[ri,3] ] : rawindparams[ matsetup[ri,3] ], //tform static pars from rawindparams, dynamic from state
-                matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
-               if(matsetup[ri,3] < 1) newval = matvalues[ri, 1]; //doing this once over all subjects unless covariance matrix -- speed ups possible here, check properly!
-              ',paste0('if(matsetup[ri, 7] == ', c(mats$base,mats$jacobian),') s',
-                names(c(mats$base,mats$jacobian)),'[matsetup[ ri,1], matsetup[ri,2]] = newval;', collapse = ' \n      '),'
-                if(matsetup[ri,9] < 0){ //then send copies elsewhere
-                for(ri2 in 1:size(matsetup)){
-                  if(matsetup[ri2,9] == ri){ 
-                  ',paste0('if(matsetup[ri2, 7] == ', c(mats$base,mats$jacobian),') s', names(c(mats$base,mats$jacobian)),'[matsetup[ri2,1], matsetup[ri2,2]] = newval;', collapse = ' \n      '),'
-                  }
-                }
-              }
-            }
-          }
-        state=sT0MEANS[,1];
+    //if(subi==0){ // include this for efficiency but check first
+    statetform=state; // way too much copying, fix this...
+      for(wheni in 1:4){
+        statetform = parvectform(statetform, state, wheni, matsetup, matvalues, subi, subindices);
+        ',matcalcs('statetform','subi',when='wheni',c(ctStanMatricesList()$base,ctStanMatricesList()$jacobian)),'
       }
-    }',collapse='\n    '),'
+    //}
+    
+    ',matcalcs('indparams','subi',when=0,c(ctStanMatricesList()$base[-1],ctStanMatricesList()$jacobian)),'
+    
 
   // perform any whole matrix transformations, nonlinear calcs based on t0 in order to fill matrices
-  ',paste0(ctm$modelmats$calcs$t0,';\n',collapse=' '),'; 
-  state=sT0MEANS[,1];
-  ',simplifystanfunction(paste0(ctm$modelmats$calcs$PARS,';\n',collapse=' ')),
+  
+  ',simplifystanfunction(paste0(ctm$modelmats$calcs$PARS,';\n',collapse=' ')),' // these shouldnt exist...',
   paste0(ctm$modelmats$calcs$tdpred,';\n',collapse=' '),';
   ',paste0(ctm$modelmats$calcs$driftcint,';\n',collapse=' '),';
   ',paste0(ctm$modelmats$calcs$diffusion,';\n',collapse=' '),';
@@ -1540,6 +1550,60 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
     return param;
   }
   
+  vector parvectform(vector parin, vector rawpar, int when, int[,] ms, data real[,] mval, int subi, int[] subindices){
+    vector[num_elements(parin)] parout = parin;
+    
+    for(ri in 1:size(ms)){ //for each row of matrix setup
+      if(ms[ri,9] < 1){ //if not a copyrow
+      if(subi ==0 ||  //if population parameter
+        ( ms[ri,7] == 8 && subindices[8]) || //or a covariance parameter in an individually varying matrix
+        (ms[ri,3] > 0 && (ms[ri,5] > 0 || ms[ri,6] > 0 || ms[ri,8] > 0)) //or there is individual variation
+        ){ //otherwise repeated values
+        
+        if( (when > 0 && ms[ri,8]>0) || 
+          (when == 0 && ms[ri,8]==0) ){ //if doing statecalcs do them, if doing static calcs do them
+          
+          if(ms[ri,3] > 0)  parout[ms[ri,3]] = tform(rawpar[ms[ri,3]], 
+            ms[ri,4], mval[ri,2], mval[ri,3], mval[ri,4], mval[ri,6] ); 
+            
+          }
+        }
+      }
+    }
+  return parout;
+  }
+  
+  
+  matrix mcalc(matrix matin, vector pars, int when, int m, int[,] ms, real[,] mval, int subi, int[] subindices){
+    matrix[rows(matin),cols(matin)] matout = matin;
+
+    for(ri in 1:size(ms)){ //for each row of matrix setup
+      if(m==ms[ri,7] && ms[ri,8]==when){ // if correct matrix and when
+      
+        if(subi ==0 ||  //if population parameter
+          ( ms[ri,7] == 8 && subindices[8]) || //or a covariance parameter in an individually varying matrix
+          (ms[ri,3] > 0 && (ms[ri,5] > 0 || ms[ri,6] > 0 || ms[ri,8] > 0)) //or there is individual variation
+        ){ //otherwise repeated values
+        
+          if( (when > 0 && ms[ri,8]>0) || 
+              (when == 0 && ms[ri,8]==0) ){ //if doing statecalcs do them, if doing static calcs do them
+              
+            if(ms[ri,3] > 0)  matout[ms[ri,1], ms[ri,2] ] = pars[ms[ri,3]]; //already tformed
+            
+            if(ms[ri,3] < 1) matout[ms[ri,1], ms[ri,2] ] = mval[ri, 1]; //doing this once over all subjects unless covariance matrix -- speed ups possible here, check properly!
+            
+            if(ms[ri,9] > 0){ //then get par from other row
+              for(ri2 in 1:size(ms)){
+                if(ms[ri2,9] == -ri) matout[ms[ri,1], ms[ri,2] ] = pars[ms[ri2,3]];
+              }
+            }
+          }
+        }
+      }
+    }
+  return(matout);
+  }
+  
 }
 data {
   int<lower=0> ndatapoints;
@@ -1592,6 +1656,7 @@ data {
   int nrowmatsetup;
   int matsetup[nrowmatsetup,9];
   real matvalues[nrowmatsetup,6];
+  int whenmat[',max(c(mats$base,mats$jacobian)),',4];
   int matrixdims[',length(mats$base),',2];
   int savescores;
   int savesubjectmatrices;
@@ -1645,7 +1710,7 @@ parameters{
   vector[nmissingtipreds] tipredsimputed;
   //vector[ (( (ntipredeffects-1) * (1-nopriors) ) > 0) ? 1 : 0] tipredglobalscalepar;
   
-  vector[intoverstates ? 0 : nlatentpop*ndatapoints] etaupdbasestates; //sampled latent states posterior
+  ',if(!gendata) 'vector[intoverstates ? 0 : nlatentpop*ndatapoints] etaupdbasestates; //sampled latent states posterior','
   real onesubject[doonesubject ? doonesubject : 0]; //allows multiple specific
 }
       
@@ -1734,7 +1799,7 @@ model{
   } //end pop priors section
   }
   
-  if(intoverstates==0) target+= normal_lpdf(etaupdbasestates|0,1);
+  ',if(!gendata) 'if(intoverstates==0) target+= normal_lpdf(etaupdbasestates|0,1);','
   
   ',if(!gendata) 'target+= ll; \n','
   if(verbose > 0) print("lp = ", target());
@@ -1752,6 +1817,7 @@ generated quantities{
   vector[nlatentpop] etaa[3,savescores ? ndatapoints : 0];
   vector[nmanifest] ya[3,savescores ? ndatapoints : 0];
   vector[nmanifest] Ygen[ndatapoints];
+  //vector[nlatentpop*ndatapoints] etaupdbasestates = to_vector(normal_rng(rep_array(0.0,ndatapoints*nlatentpop),rep_array(1.0,ndatapoints*nlatentpop))); //sampled latent states posterior','
   ',subjectparaminit(pop=FALSE,smats=FALSE),'
   ',subjectparaminit(pop=TRUE,smats=FALSE)
   ,collapse=''),'

@@ -119,6 +119,60 @@ if(transform < 49 && offset != 0.0) param+=offset;
     return param;
   }
   
+  vector parvectform(vector parin, vector rawpar, int when, int[,] ms, data real[,] mval, int subi, int[] subindices){
+    vector[num_elements(parin)] parout = parin;
+    
+    for(ri in 1:size(ms)){ //for each row of matrix setup
+      if(ms[ri,9] < 1){ //if not a copyrow
+      if(subi ==0 ||  //if population parameter
+        ( ms[ri,7] == 8 && subindices[8]) || //or a covariance parameter in an individually varying matrix
+        (ms[ri,3] > 0 && (ms[ri,5] > 0 || ms[ri,6] > 0 || ms[ri,8] > 0)) //or there is individual variation
+        ){ //otherwise repeated values
+        
+        if( (when > 0 && ms[ri,8]>0) || 
+          (when == 0 && ms[ri,8]==0) ){ //if doing statecalcs do them, if doing static calcs do them
+          
+          if(ms[ri,3] > 0)  parout[ms[ri,3]] = tform(rawpar[ms[ri,3]], 
+            ms[ri,4], mval[ri,2], mval[ri,3], mval[ri,4], mval[ri,6] ); 
+            
+          }
+        }
+      }
+    }
+  return parout;
+  }
+  
+  
+  matrix mcalc(matrix matin, vector pars, int when, int m, int[,] ms, real[,] mval, int subi, int[] subindices){
+    matrix[rows(matin),cols(matin)] matout = matin;
+
+    for(ri in 1:size(ms)){ //for each row of matrix setup
+      if(m==ms[ri,7] && ms[ri,8]==when){ // if correct matrix and when
+      
+        if(subi ==0 ||  //if population parameter
+          ( ms[ri,7] == 8 && subindices[8]) || //or a covariance parameter in an individually varying matrix
+          (ms[ri,3] > 0 && (ms[ri,5] > 0 || ms[ri,6] > 0 || ms[ri,8] > 0)) //or there is individual variation
+        ){ //otherwise repeated values
+        
+          if( (when > 0 && ms[ri,8]>0) || 
+              (when == 0 && ms[ri,8]==0) ){ //if doing statecalcs do them, if doing static calcs do them
+              
+            if(ms[ri,3] > 0)  matout[ms[ri,1], ms[ri,2] ] = pars[ms[ri,3]]; //already tformed
+            
+            if(ms[ri,3] < 1) matout[ms[ri,1], ms[ri,2] ] = mval[ri, 1]; //doing this once over all subjects unless covariance matrix -- speed ups possible here, check properly!
+            
+            if(ms[ri,9] > 0){ //then get par from other row
+              for(ri2 in 1:size(ms)){
+                if(ms[ri2,9] == -ri) matout[ms[ri,1], ms[ri,2] ] = pars[ms[ri2,3]];
+              }
+            }
+          }
+        }
+      }
+    }
+  return(matout);
+  }
+  
 }
 data {
   int<lower=0> ndatapoints;
@@ -171,6 +225,7 @@ data {
   int nrowmatsetup;
   int matsetup[nrowmatsetup,9];
   real matvalues[nrowmatsetup,6];
+  int whenmat[54,4];
   int matrixdims[10,2];
   int savescores;
   int savesubjectmatrices;
@@ -323,6 +378,7 @@ matrix[nlatent, nlatent] pop_DIFFUSIONcov;
   matrix[nlatent*2,nlatent*2] dQi; //covariance from jacobian
 
   vector[nlatentpop] state = rep_vector(-1,nlatentpop); 
+  vector[nlatentpop] statetform;
   matrix[nlatentpop,nlatentpop] sJAx; //Jacobian for drift
   matrix[nlatentpop,nlatentpop] sJ0; //Jacobian for t0
   matrix[nlatentpop,nlatentpop] sJtd;//diag_matrix(rep_vector(1),nlatentpop); //Jacobian for nltdpredeffect
@@ -398,13 +454,11 @@ matrix[nlatent, nlatent] sDIFFUSIONcov;
     if(T0check == 0) { // calculate initial matrices if this is first row for si
   
     
- int subjectvec[subjectcount ? 1 : 2];
  vector[nparams] rawindparams = rawpopmeans;
- subjectvec[size(subjectvec)] = si;
- if(subjectcount == 0)  subjectvec[1] = 0; // only needed for subject 0 (pop pars)
- subjectcount = subjectcount + 1;
- for(subjectveci in 1:size(subjectvec)){
-  int subi = subjectvec[subjectveci];
+ vector[nparams] indparams;
+
+ for(subjectveci in (prevrow==0 ? 0 : 1) : 1){
+  int subi = subjectveci == 0 ? 0 : si;
 
   if(subi > 0 && nindvarying > 0 && intoverpop==0) {
     if(fixedsubpars==0) rawindparams[indvaryingindex] += rawpopc[2] * baseindparams[doonesubject ? 1 : subi];
@@ -418,68 +472,58 @@ matrix[nlatent, nlatent] sDIFFUSIONcov;
     TIPREDEFFECT[tieffectindices[1:ntieffects]] *  tipredsdata[subi]';
   }
 
+    indparams= parvectform(indparams, rawindparams, 0, matsetup, matvalues, subi, subindices);
+    sT0MEANS = mcalc(sT0MEANS, indparams, 0, 1, matsetup, matvalues, subi, subindices);
+    state=sT0MEANS[,1];
+    sT0MEANS = mcalc(sT0MEANS, state, 1, 1, matsetup, matvalues, subi, subindices); 
+    ;
+; 
+    state=sT0MEANS[,1]; // ensure t0means and state are computed before doing others
+    
+    //if(subi==0){ // include this for efficiency but check first
+    statetform=state; // way too much copying, fix this...
+      for(wheni in 1:4){
+        statetform = parvectform(statetform, state, wheni, matsetup, matvalues, subi, subindices);
+        if(whenmat[2,wheni])sLAMBDA=mcalc(sLAMBDA,statetform,wheni, 2, matsetup, matvalues, subi, subindices); 
+if(whenmat[3,wheni])sDRIFT=mcalc(sDRIFT,statetform,wheni, 3, matsetup, matvalues, subi, subindices); 
+if(whenmat[4,wheni])sDIFFUSION=mcalc(sDIFFUSION,statetform,wheni, 4, matsetup, matvalues, subi, subindices); 
+if(whenmat[5,wheni])sMANIFESTVAR=mcalc(sMANIFESTVAR,statetform,wheni, 5, matsetup, matvalues, subi, subindices); 
+if(whenmat[6,wheni])sMANIFESTMEANS=mcalc(sMANIFESTMEANS,statetform,wheni, 6, matsetup, matvalues, subi, subindices); 
+if(whenmat[7,wheni])sCINT=mcalc(sCINT,statetform,wheni, 7, matsetup, matvalues, subi, subindices); 
+if(whenmat[8,wheni])sT0VAR=mcalc(sT0VAR,statetform,wheni, 8, matsetup, matvalues, subi, subindices); 
+if(whenmat[9,wheni])sTDPREDEFFECT=mcalc(sTDPREDEFFECT,statetform,wheni, 9, matsetup, matvalues, subi, subindices); 
+if(whenmat[10,wheni])sPARS=mcalc(sPARS,statetform,wheni, 10, matsetup, matvalues, subi, subindices); 
+if(whenmat[51,wheni])sJ0=mcalc(sJ0,statetform,wheni, 51, matsetup, matvalues, subi, subindices); 
+if(whenmat[52,wheni])sJAx=mcalc(sJAx,statetform,wheni, 52, matsetup, matvalues, subi, subindices); 
+if(whenmat[53,wheni])sJtd=mcalc(sJtd,statetform,wheni, 53, matsetup, matvalues, subi, subindices); 
+if(whenmat[54,wheni])sJy=mcalc(sJy,statetform,wheni, 54, matsetup, matvalues, subi, subindices); 
 
-    for(ri in 1:size(matsetup)){ //for each row of matrix setup
-        for(statecalcs in 0:1){ //do state based calcs after initialising t0means
-        if(subi ==0 ||  //if population parameter
-          ( matsetup[ri,7] == 8 && subindices[8]) || //or a covariance parameter in an individually varying matrix
-          (matsetup[ri,3] > 0 && (matsetup[ri,5] > 0 || matsetup[ri,6] > 0 || matsetup[ri,8] > 0)) //or there is individual variation
-          ){ //otherwise repeated values
-            if( (statecalcs && matsetup[ri,8]>0) || 
-              (!statecalcs && matsetup[ri,8]==0) ){ //if doing statecalcs do them, if doing static calcs do them
-              real newval;
-              if(matsetup[ri,3] > 0)  newval = tform(matsetup[ri,8] ? state[ matsetup[ri,3] ] : rawindparams[ matsetup[ri,3] ], //tform static pars from rawindparams, dynamic from state
-                matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
-               if(matsetup[ri,3] < 1) newval = matvalues[ri, 1]; //doing this once over all subjects unless covariance matrix -- speed ups possible here, check properly!
-              if(matsetup[ri, 7] == 1) sT0MEANS[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 2) sLAMBDA[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 3) sDRIFT[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 4) sDIFFUSION[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 5) sMANIFESTVAR[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 6) sMANIFESTMEANS[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 7) sCINT[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 8) sT0VAR[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 9) sTDPREDEFFECT[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 10) sPARS[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 51) sJ0[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 52) sJAx[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 53) sJtd[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 54) sJy[matsetup[ ri,1], matsetup[ri,2]] = newval;
-                if(matsetup[ri,9] < 0){ //then send copies elsewhere
-                for(ri2 in 1:size(matsetup)){
-                  if(matsetup[ri2,9] == ri){ 
-                  if(matsetup[ri2, 7] == 1) sT0MEANS[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 2) sLAMBDA[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 3) sDRIFT[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 4) sDIFFUSION[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 5) sMANIFESTVAR[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 6) sMANIFESTMEANS[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 7) sCINT[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 8) sT0VAR[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 9) sTDPREDEFFECT[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 10) sPARS[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 51) sJ0[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 52) sJAx[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 53) sJtd[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 54) sJy[matsetup[ri2,1], matsetup[ri2,2]] = newval;
-                  }
-                }
-              }
-            }
-          }
-        state=sT0MEANS[,1];
       }
-    }
+    //}
+    
+    sLAMBDA=mcalc(sLAMBDA,indparams,0, 2, matsetup, matvalues, subi, subindices); 
+sDRIFT=mcalc(sDRIFT,indparams,0, 3, matsetup, matvalues, subi, subindices); 
+sDIFFUSION=mcalc(sDIFFUSION,indparams,0, 4, matsetup, matvalues, subi, subindices); 
+sMANIFESTVAR=mcalc(sMANIFESTVAR,indparams,0, 5, matsetup, matvalues, subi, subindices); 
+sMANIFESTMEANS=mcalc(sMANIFESTMEANS,indparams,0, 6, matsetup, matvalues, subi, subindices); 
+sCINT=mcalc(sCINT,indparams,0, 7, matsetup, matvalues, subi, subindices); 
+sT0VAR=mcalc(sT0VAR,indparams,0, 8, matsetup, matvalues, subi, subindices); 
+sTDPREDEFFECT=mcalc(sTDPREDEFFECT,indparams,0, 9, matsetup, matvalues, subi, subindices); 
+sPARS=mcalc(sPARS,indparams,0, 10, matsetup, matvalues, subi, subindices); 
+sJ0=mcalc(sJ0,indparams,0, 51, matsetup, matvalues, subi, subindices); 
+sJAx=mcalc(sJAx,indparams,0, 52, matsetup, matvalues, subi, subindices); 
+sJtd=mcalc(sJtd,indparams,0, 53, matsetup, matvalues, subi, subindices); 
+sJy=mcalc(sJy,indparams,0, 54, matsetup, matvalues, subi, subindices); 
+
+    
 
   // perform any whole matrix transformations, nonlinear calcs based on t0 in order to fill matrices
-  ;
-; 
-  state=sT0MEANS[,1];
+  
       {
   ;  
   
   } 
-  ;
+   // these shouldnt exist...;
 ;
   ;
 ;
@@ -555,33 +599,18 @@ if(verbose > 1) print ("below t0 row ", rowi);
     for(statei in append_array(sJAxfinite,zeroint)){ //if some finite differences to do, compute these first
       state = basestate;
       if(statei>0)  state[statei] += Jstep;
-      
-          for(ri in 1:size(matsetup)){ //for each row of matrix setup
-            if(matsetup[ri,3] > 0 && matsetup[ri,8] == 2 &&(
-            matsetup[ri,7] ==10||
-            matsetup[ri,7] ==3||
-            matsetup[ri,7] ==7 )){ //perform calcs appropriate to this section
-              real newval;
-              newval = tform(state[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
-              if(matsetup[ri, 7] == 3) sDRIFT[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 7) sCINT[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 10) sPARS[matsetup[ ri,1], matsetup[ri,2]] = newval;
-              if(matsetup[ri,9] < 0){
-                for(ri2 in 1:size(matsetup)){
-                  if(matsetup[ri2,9] == ri){ //if row ri2 is a copy of original row ri
-                    if(matsetup[ri2, 7] == 3) sDRIFT[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 7) sCINT[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 10) sPARS[matsetup[ri2,1], matsetup[ri2,2]] = newval;
-                  }
-                }
-              }
-            }
-          }
+      statetform = parvectform(statetform, state, 2, matsetup, matvalues, si, subindices);
+    if(whenmat[10,2])sPARS=mcalc(sPARS,statetform,2, 10, matsetup, matvalues, si, subindices); 
+if(whenmat[3,2])sDRIFT=mcalc(sDRIFT,statetform,2, 3, matsetup, matvalues, si, subindices); 
+if(whenmat[7,2])sCINT=mcalc(sCINT,statetform,2, 7, matsetup, matvalues, si, subindices); 
+
           {
   ;  
   
   } 
    
+      
+      
       if(statei > 0) {
         sJAx[sJAxfinite,statei] =  sDRIFT[sJAxfinite, ] * state + append_row(sCINT[,1],nlpzerovec)[sJAxfinite]; //compute new change
          if(verbose>1) print("sJAx ",sJAx);
@@ -596,30 +625,14 @@ if(verbose > 1) print ("below t0 row ", rowi);
     }
     if(verbose>1) print("sJAx ",sJAx);
     }
-    
-          for(ri in 1:size(matsetup)){ //for each row of matrix setup
-            if(matsetup[ri,3] > 0 && matsetup[ri,8] == 2 &&(
-            matsetup[ri,7] ==4||
-            matsetup[ri,7] ==52 )){ //perform calcs appropriate to this section
-              real newval;
-              newval = tform(state[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
-              if(matsetup[ri, 7] == 4) sDIFFUSION[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 52) sJAx[matsetup[ ri,1], matsetup[ri,2]] = newval;
-              if(matsetup[ri,9] < 0){
-                for(ri2 in 1:size(matsetup)){
-                  if(matsetup[ri2,9] == ri){ //if row ri2 is a copy of original row ri
-                    if(matsetup[ri2, 7] == 4) sDIFFUSION[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 52) sJAx[matsetup[ri2,1], matsetup[ri2,2]] = newval;
-                  }
-                }
-              }
-            }
-          }    {
+    statetform = parvectform(statetform, state, 2, matsetup, matvalues, si, subindices);
+    if(whenmat[4,2])sDIFFUSION=mcalc(sDIFFUSION,statetform,2, 4, matsetup, matvalues, si, subindices); 
+if(whenmat[52,2])sJAx=mcalc(sJAx,statetform,2, 52, matsetup, matvalues, si, subindices); 
+    {
   ;  
   
   } 
    
-      
       if(statedep[4]) sDIFFUSIONcov[derrind,derrind] = sdcovsqrt2cov(sDIFFUSION[derrind,derrind],choleskymats);
       
         if(continuoustime){
@@ -679,28 +692,11 @@ if(verbose > 1) print ("below t0 row ", rowi);
   ;  
   
   } 
-  
-          for(ri in 1:size(matsetup)){ //for each row of matrix setup
-            if(matsetup[ri,3] > 0 && matsetup[ri,8] == 1 &&(
-            matsetup[ri,7] ==1||
-            matsetup[ri,7] ==8||
-            matsetup[ri,7] ==51 )){ //perform calcs appropriate to this section
-              real newval;
-              newval = tform(state[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
-              if(matsetup[ri, 7] == 1) sT0MEANS[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 8) sT0VAR[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 51) sJ0[matsetup[ ri,1], matsetup[ri,2]] = newval;
-              if(matsetup[ri,9] < 0){
-                for(ri2 in 1:size(matsetup)){
-                  if(matsetup[ri2,9] == ri){ //if row ri2 is a copy of original row ri
-                    if(matsetup[ri2, 7] == 1) sT0MEANS[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 8) sT0VAR[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 51) sJ0[matsetup[ri2,1], matsetup[ri2,2]] = newval;
-                  }
-                }
-              }
-            }
-          }
+  statetform = parvectform(statetform, state, 1, matsetup, matvalues, si, subindices);
+    if(whenmat[1,1])sT0MEANS=mcalc(sT0MEANS,statetform,1, 1, matsetup, matvalues, si, subindices); 
+if(whenmat[8,1])sT0VAR=mcalc(sT0VAR,statetform,1, 8, matsetup, matvalues, si, subindices); 
+if(whenmat[51,1])sJ0=mcalc(sJ0,statetform,1, 51, matsetup, matvalues, si, subindices); 
+
     ;
       state = sT0MEANS[,1];
       etacov = quad_form(sT0VAR, sJ0');
@@ -714,25 +710,10 @@ if(verbose > 1) print ("below t0 row ", rowi);
   ;  
   
   } 
-  
-          for(ri in 1:size(matsetup)){ //for each row of matrix setup
-            if(matsetup[ri,3] > 0 && matsetup[ri,8] == 3 &&(
-            matsetup[ri,7] ==9||
-            matsetup[ri,7] ==53 )){ //perform calcs appropriate to this section
-              real newval;
-              newval = tform(state[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
-              if(matsetup[ri, 7] == 9) sTDPREDEFFECT[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 53) sJtd[matsetup[ ri,1], matsetup[ri,2]] = newval;
-              if(matsetup[ri,9] < 0){
-                for(ri2 in 1:size(matsetup)){
-                  if(matsetup[ri2,9] == ri){ //if row ri2 is a copy of original row ri
-                    if(matsetup[ri2, 7] == 9) sTDPREDEFFECT[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 53) sJtd[matsetup[ri2,1], matsetup[ri2,2]] = newval;
-                  }
-                }
-              }
-            }
-          }
+  statetform = parvectform(statetform, state, 3, matsetup, matvalues, si, subindices);
+    if(whenmat[9,3])sTDPREDEFFECT=mcalc(sTDPREDEFFECT,statetform,3, 9, matsetup, matvalues, si, subindices); 
+if(whenmat[53,3])sJtd=mcalc(sJtd,statetform,3, 53, matsetup, matvalues, si, subindices); 
+
       ;
         state[1:nlatent] +=   (sTDPREDEFFECT * tdpreds[rowi]); //tdpred effect only influences at observed time point
         if(statedep[9]) etacov = quad_form(etacov,sJtd'); //could be optimized
@@ -768,34 +749,13 @@ if(savescores){
   ;  
   
   } 
-  
-          for(ri in 1:size(matsetup)){ //for each row of matrix setup
-            if(matsetup[ri,3] > 0 && matsetup[ri,8] == 4 &&(
-            matsetup[ri,7] ==10||
-            matsetup[ri,7] ==2||
-            matsetup[ri,7] ==6||
-            matsetup[ri,7] ==5||
-            matsetup[ri,7] ==54 )){ //perform calcs appropriate to this section
-              real newval;
-              newval = tform(state[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
-              if(matsetup[ri, 7] == 2) sLAMBDA[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 5) sMANIFESTVAR[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 6) sMANIFESTMEANS[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 10) sPARS[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 54) sJy[matsetup[ ri,1], matsetup[ri,2]] = newval;
-              if(matsetup[ri,9] < 0){
-                for(ri2 in 1:size(matsetup)){
-                  if(matsetup[ri2,9] == ri){ //if row ri2 is a copy of original row ri
-                    if(matsetup[ri2, 7] == 2) sLAMBDA[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 5) sMANIFESTVAR[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 6) sMANIFESTMEANS[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 10) sPARS[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 54) sJy[matsetup[ri2,1], matsetup[ri2,2]] = newval;
-                  }
-                }
-              }
-            }
-          }    {
+  statetform = parvectform(statetform, state, 4, matsetup, matvalues, si, subindices);
+    if(whenmat[10,4])sPARS=mcalc(sPARS,statetform,4, 10, matsetup, matvalues, si, subindices); 
+if(whenmat[2,4])sLAMBDA=mcalc(sLAMBDA,statetform,4, 2, matsetup, matvalues, si, subindices); 
+if(whenmat[6,4])sMANIFESTMEANS=mcalc(sMANIFESTMEANS,statetform,4, 6, matsetup, matvalues, si, subindices); 
+if(whenmat[5,4])sMANIFESTVAR=mcalc(sMANIFESTVAR,statetform,4, 5, matsetup, matvalues, si, subindices); 
+if(whenmat[54,4])sJy=mcalc(sJy,statetform,4, 54, matsetup, matvalues, si, subindices); 
+    {
   ;  
   
   } 
@@ -901,34 +861,13 @@ err[od] = Y[rowi,od] - syprior[od]; // prediction error
   ;  
   
   } 
-  
-          for(ri in 1:size(matsetup)){ //for each row of matrix setup
-            if(matsetup[ri,3] > 0 && matsetup[ri,8] == 4 &&(
-            matsetup[ri,7] ==10||
-            matsetup[ri,7] ==2||
-            matsetup[ri,7] ==6||
-            matsetup[ri,7] ==5||
-            matsetup[ri,7] ==54 )){ //perform calcs appropriate to this section
-              real newval;
-              newval = tform(state[ matsetup[ri,3] ], matsetup[ri,4], matvalues[ri,2], matvalues[ri,3], matvalues[ri,4], matvalues[ri,6] ); 
-              if(matsetup[ri, 7] == 2) sLAMBDA[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 5) sMANIFESTVAR[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 6) sMANIFESTMEANS[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 10) sPARS[matsetup[ ri,1], matsetup[ri,2]] = newval; 
-      if(matsetup[ri, 7] == 54) sJy[matsetup[ ri,1], matsetup[ri,2]] = newval;
-              if(matsetup[ri,9] < 0){
-                for(ri2 in 1:size(matsetup)){
-                  if(matsetup[ri2,9] == ri){ //if row ri2 is a copy of original row ri
-                    if(matsetup[ri2, 7] == 2) sLAMBDA[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 5) sMANIFESTVAR[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 6) sMANIFESTMEANS[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 10) sPARS[matsetup[ri2,1], matsetup[ri2,2]] = newval; 
-      if(matsetup[ri2, 7] == 54) sJy[matsetup[ri2,1], matsetup[ri2,2]] = newval;
-                  }
-                }
-              }
-            }
-          }    {
+  statetform = parvectform(statetform, state, 4, matsetup, matvalues, si, subindices);
+    if(whenmat[10,4])sPARS=mcalc(sPARS,statetform,4, 10, matsetup, matvalues, si, subindices); 
+if(whenmat[2,4])sLAMBDA=mcalc(sLAMBDA,statetform,4, 2, matsetup, matvalues, si, subindices); 
+if(whenmat[6,4])sMANIFESTMEANS=mcalc(sMANIFESTMEANS,statetform,4, 6, matsetup, matvalues, si, subindices); 
+if(whenmat[5,4])sMANIFESTVAR=mcalc(sMANIFESTVAR,statetform,4, 5, matsetup, matvalues, si, subindices); 
+if(whenmat[54,4])sJy=mcalc(sJy,statetform,4, 54, matsetup, matvalues, si, subindices); 
+    {
   ;  
   
   } 

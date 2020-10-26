@@ -31,12 +31,13 @@ ctStanGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErr
         ctStanModelWriter(ctm = fit$ctstanmodel,
           gendata = TRUE,
           extratforms = fit$setup$extratforms,
-          matsetup=fit$setup$matsetup))
+          matsetup=fit$ctstanmodel$modelmats$matsetup))
   } else {
     genm <- stanmodels$ctsmgen
   }
   message('Generating data from ',ifelse(fullposterior,'posterior', 'posterior mean'))
   standata <- fit$standata
+  # standata$intoverstates=1L #tried to chang generator behaviour to better handle nonlinearity but more complex, jacobians etc
   standata$savescores <- 0L #have to disable for data generation in same structure as original
   # genf <- stan_reinitsf(genm,standata) 
   

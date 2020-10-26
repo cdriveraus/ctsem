@@ -428,5 +428,15 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   
   if(!is.null(ctm$TIpredAuto) && ctm$TIpredAuto %in% c(1L,TRUE)) standata$TIpredAuto <- 1L else standata$TIpredAuto <- 0L
 
+  mc=c(ctStanMatricesList()$base,ctStanMatricesList()$jacobian)
+  standata$whenmat <- array(0L,dim=c(max(mc),4))
+  for(wheni in 1:4){
+    for(mi in mc){
+      standata$whenmat[mi,wheni] = as.integer(any(
+        standata$matsetup[standata$matsetup[,'matrix']==mi,'when']==wheni))
+    }
+  }
+  rownames(standata$whenmat)[mc] <- names(mc)
+  
   return(standata)
 }
