@@ -800,14 +800,14 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       )
       
       nopriorsbak <- standata$nopriors
-      taylorheun <- standata$taylorheun
+      # taylorheun <- standata$taylorheun
       finished <- FALSE
       
       if(carefulfit && !deoptim){ #init using priors
         message('Doing 1st pass with priors on reduced data set')
         
         standata$nopriors <- as.integer(0)
-        standata$taylorheun <- 1L
+        # standata$taylorheun <- 1L
         sdscale <- standata$sdscale
         # standata$sdscale <- sdscale * 1e-6
         # tipredeffectscale <- standata$tipredeffectscale
@@ -840,7 +840,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         
         standata$nopriors <- as.integer(nopriorsbak)
         # if(standata$ntipred ==0)
-        standata$taylorheun <- as.integer(taylorheun)
+        # standata$taylorheun <- as.integer(taylorheun)
         standata$sdscale <- sdscale
         
         if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else init=optimfit$par

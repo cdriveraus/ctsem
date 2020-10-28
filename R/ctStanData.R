@@ -416,16 +416,21 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   rownames(standata$whenmat)[mc] <- names(mc)
   # browser()
   
-  standata$whenvecp <- array(0L, c(2,standata$nparams)) #whenvecp contains 0's for unchanging pars, 1's for changing pars
+  standata$whenvecp <- array(0L, c(3,standata$nparams)) #whenvecp contains 0's for unchanging pars, 1's for changing pars
   standata$whenvecp[1,] <- as.integer(1:standata$nparams) #base parameters
   standata$whenvecp[2,ms$param[ms$when == 0 & ms$copyrow <1 & (ms$tipred > 0 | ms$indvarying > 0) & ms$param > 0]] <- 
     as.integer(ms$param[ms$when == 0 & ms$copyrow <1 & (ms$tipred > 0 | ms$indvarying > 0) & ms$param > 0])
+  standata$whenvecp[3,] <- as.integer(1:ncol(standata$whenvecp))
   
-  standata$whenvecs <- array(0L,dim=c(4,standata$nlatentpop))
+  standata$whenvecs <- array(0L,dim=c(6,standata$nlatentpop))
   for(wheni in 1:4){ #whenvecs specifies array of when values for the state transform vector -- 1 to compute, 0 not
     standata$whenvecs[wheni,ms$param[ms$when == wheni & ms$copyrow <=0 & ms$param > 0]] <- 
       as.integer(ms$param[ms$when == wheni & ms$copyrow <=0 & ms$param > 0])
   }
+  standata$whenvecs[5,ms$param[ms$when==0 & ms$param > 0 & ms$copyrow < 1 
+    & (ms$indvarying > 0 | ms$tipred > 0)]] <- as.integer(ms$param[ms$when==0 & ms$param > 0 & ms$copyrow < 1 
+      & (ms$indvarying > 0 | ms$tipred > 0)])
+  standata$whenvecs[6,] <- as.integer(1:ncol(standata$whenvecs))
   
   return(standata)
 }
