@@ -1,6 +1,44 @@
 # ctm=ctModel(LAMBDA=cbind(diag(2),0), DRIFT=matrix(c('d11','state[3]',0, 'd12','d22',0,0,0,0),3,3),type='stanct')
 # ctm2=ctModel(LAMBDA=cbind(diag(2),0), DRIFT=matrix(c('d11','PARS[1,1]',0, 'd12','d22',0,0,0,0),3,3),PARS=matrix('state[3]'),type='stanct')
 
+###unfold self referential list of matrices
+unfoldmats <- function(ml){
+  for(mati in names(ml)){
+    for(ri in 1:nrow(ml[[mati]])){
+      for(ci in 1:ncol(ml[[mati]])){
+        counter=0
+        while(counter < 10 && grepl(paste0('\\b(',paste0(names(ml),collapse='|'),')\\b\\['), ml[[mati]][ri,ci])){ #if system matrix referenced, unfold
+          counter = counter +1 #prevent infinite loops
+          
+          items = regmatches(ml[[mati]][ri,ci], #extract one or more references
+            gregexpr(
+              paste0('\\b(',paste0(names(ml),collapse='|'),')\\b(?=\\[).*?(?<=\\])'),
+              ml[[mati]][ri,ci], perl=TRUE)
+          )[[1]]
+          
+          for(itemi in 1:length(items)){ #replace one or more references
+            ml[[mati]][ri,ci] <- gsub(pattern = items[itemi], replacement = eval(parse(text=paste0('ml$',items[itemi]))),x = ml[[mati]][ri,ci], fixed=TRUE)
+          }
+        }
+      }
+    }
+  }
+  return(ml)
+}
+
+#replace inverse logit
+inv_logit_gsub <- function(x){
+  try=0
+  while(try < 20 && any(grepl('\\<inv_logit\\((.*)\\)',x) | grepl('\\blog1p_exp\\((.*)\\)',x))){ 
+    try <- try + 1
+    x <- gsub('\\<inv_logit\\((.*)\\)','1/\\(1+exp\\(-\\(\\1\\)\\)\\)',x)
+    x <- gsub('\\<log1p_exp\\((.*)\\)','log1p\\(exp\\(\\1\\)\\)',x)
+  }
+  return(x)
+}
+
+
+
 ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
   
   # require(cOde)
@@ -16,56 +54,26 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
   fn     = c()
   state   = paste0("state__", 1:ndim,'__')
   
+  mbak=m
+  
   #replace system matrix references
   for(ri in 1:nrow(m$pars)){
     if(grepl('[',m$pars$param[ri],fixed=TRUE) && !is.na(m$pars$transform[ri])){
       # m$pars$param[ri] <- gsub('param',m$pars$param[ri],m$pars$transform[ri])
     } else if(!grepl('[',m$pars$param[ri],fixed=TRUE) && !is.na(m$pars$param[ri])) m$pars$param[ri] <- paste0(m$pars$matrix[ri],'[',m$pars$row[ri],',',m$pars$col[ri],']')
   }
-  #replace inverse logit temporarily
-  # browser()
-  try=0
-  while(try < 20 && any(grepl('\\<inv_logit\\((.*)\\)',m$pars$param) | grepl('\\blog1p_exp\\((.*)\\)',m$pars$param))){ 
-    try <- try + 1
-  m$pars$param <- gsub('\\<inv_logit\\((.*)\\)','1/\\(1+exp\\(-\\(\\1\\)\\)\\)',m$pars$param)
-  m$pars$param <- gsub('\\<log1p_exp\\((.*)\\)','log1p\\(exp\\(\\1\\)\\)',m$pars$param)
-  }
+  
+  m$pars$param <- inv_logit_gsub(m$pars$param) #replace inv_logit with known functions for differentiation
   
   mats <- listOfMatrices(m$pars)
   matnames <- names(ctStanMatricesList(unsafe=TRUE)$base)
-  
-  # for(mati in matnames){
-  # for(ri in 1:nrow(m$pars)){
-  #   counter <- 0
-  #   if(grepl('^\\b(state)\\b\\[\\d+\\]$',m$pars$param[ri]) && 
-  #       !is.na(as.integer(m$pars$transform[ri]))){ #if a simple state reference, and integer transform, include transforms
-  #     m$pars$param[ri] <- tform(
-  #       param = m$pars$param[ri],
-  #       transform = as.integer(m$pars$transform[ri]),
-  #       multiplier = m$pars$multiplier[ri],
-  #       meanscale = m$pars$meanscale[ri],
-  #       offset = m$pars$offset[ri],
-  #       inneroffset = m$pars$inneroffset[ri],singletext=TRUE)
-  #     # 
-  #     # m$pars$param[ri] <- paste0('Jtform___',m$pars$param[ri],' * ',m$pars$param[ri])
-  #   }
-  #   while(counter < 10 && grepl(paste0('\\b(',paste0(names(matlist),collapse='|'),')\\b\\['), m$pars$param[ri])){ #if system matrix referenced, unfold
-  #     counter = counter +1 #prevent infinite loops
-  #     
-  #     items = regmatches(m$pars$param[ri], #extract one or more references
-  #       gregexpr(
-  #         paste0('\\b(',paste0(names(matlist),collapse='|'),')\\b(?=\\[).*?(?<=\\])'), 
-  #         m$pars$param[ri], perl=TRUE)
-  #     )[[1]]
-  #     
-  #     for(itemi in 1:length(items)){ #replace one or more references
-  #       m$pars$param[ri] <- gsub(pattern = items[itemi], replacement = eval(parse(text=paste0('matlist$',items[itemi]))),x = m$pars$param[ri], fixed=TRUE)
-  #     }
-  #   }
-  # }
-  
-  # mats<-listOfMatrices(m$pars)
-  
+    
+    
+  # browser()
+  mats <- unfoldmats(mats)
+    
+    
+ 
   
   Jout <- list()
   for(typei in types){

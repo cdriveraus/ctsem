@@ -55,7 +55,7 @@ popcovnames <- function(fit){
 
 
 checkTIauto <- function(){
-  Tpoints=5#30
+  Tpoints=30
   n.manifest=1
   n.TDpred=0
   n.TIpred=1
@@ -94,14 +94,16 @@ checkTIauto <- function(){
     CINT=matrix(c('cint1'),ncol=1),
     n.manifest=n.manifest,LAMBDA=diag(1))
   
-  checkm$pars$indvarying[!checkm$pars$matrix %in% 'T0MEANS'] <- FALSE
+  # checkm$pars$indvarying[!checkm$pars$matrix %in% 'T0MEANS'] <- FALSE
   
   checkm$TIpredAuto <- 1L
   
-  fit1<-ctStanFit(tdat,checkm,chains=1,optimize=TRUE,cores=4,verbose=0,
-    # intoverpop=F,plot=T,
+  fit1<-ctStanFit(tdat,checkm,chains=1,optimize=TRUE,cores=1,verbose=0,
+    # intoverpop=F,
+    plot=10,
     # savesubjectmatrices = F,plot=F,
     # init=init,
+    # fit=F,
     optimcontrol=list(is=FALSE,stochastic=T,subsamplesize=1,carefulfit=F),
     nopriors=F)
   summary(fit1)

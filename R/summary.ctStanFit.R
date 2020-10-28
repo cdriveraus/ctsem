@@ -57,8 +57,8 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
   }
   ms=object$setup$matsetup
   # browser()
-  parnames <- ms$parname[ms$when==0 & ms$param > 0 & ms$copyrow < 1]
-  parindices <- ms$param[ms$when==0 & ms$param > 0 & ms$copyrow < 1]
+  parnames <- ms$parname[ms$when %in% c(0,-1) & ms$param > 0 & ms$copyrow < 1]
+  parindices <- ms$param[ms$when %in% c(0,-1) & ms$param > 0 & ms$copyrow < 1]
   pars <- cbind(parnames,parindices)
   pars<-pars[!duplicated(pars[,1,drop=FALSE]),,drop=FALSE]
   parnames <- pars[as.numeric(pars[,2,drop=FALSE]) >0, 1]

@@ -478,6 +478,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     # 
     
     #jacobian addition
+    
     ctm$jacobian <- ctJacobian(ctm)
     jl <- ctModelUnlist(ctm$jacobian,names(ctm$jacobian))
     jl2 <- as.data.frame(rbind(data.table(ctm$pars[1,]),data.table(jl),fill=TRUE))[-1,]
@@ -580,7 +581,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
     
     
-    standata <- ctStanData(ctm,datalong,optimize=optimize) 
+    standata <- ctStanData(ctm,datalong,optimize=optimize,derrind=derrind) 
     standata$verbose=as.integer(verbose)
     standata$savesubjectmatrices=as.integer(savesubjectmatrices)
     standata$gendata=as.integer(gendata)
@@ -702,7 +703,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         optimcontrol$sm=sm
         optimcontrol$init=inits
         optimcontrol$plot=plot
-        # browser()
+        
         # opcall <- paste0('stanoptimis(standata = standata,sm = sm,init = inits,plot=plot,',
         #   paste0(gsub('list(','',paste0(deparse(optimcontrol),collapse=''),fixed=TRUE)))
         stanfit <- do.call(stanoptimis,optimcontrol) #eval(parse(text=opcall))
@@ -714,9 +715,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         ctm$modelmats$TIPREDEFFECTsetup <- stanfit$standata$TIPREDEFFECTsetup
         ms <- ctm$modelmats$matsetup
         ms$tipred <- 0L
-        parswithtipreds <- unique(ms$param[ms$param >0 & ms$when==0 & ms$copyrow < 1])
+        parswithtipreds <- unique(ms$param[ms$param >0 & ms$when %in% c(0,-1) & ms$copyrow < 1])
         parswithtipreds<-parswithtipreds[apply(stanfit$standata$TIPREDEFFECTsetup,1,sum)>0]
-        ms$tipred[ms$param >0 & ms$when==0 & ms$copyrow < 1 & ms$param %in% parswithtipreds] <- 1L
+        ms$tipred[ms$param >0 & ms$when %in% c(0,-1) & ms$copyrow < 1 & ms$param %in% parswithtipreds] <- 1L
         ctm$modelmats$matsetup <- ms
         }
         
@@ -733,8 +734,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     # standataout <- utils::relist((standataout),skeleton=standata)
     
     setup=list(recompile=recompile,idmap=standata$idmap,matsetup=ctm$modelmats$matsetup,matvalues=ctm$modelmats$matvalues,
-      popsetup=ctm$modelmats$matsetup[ctm$modelmats$matsetup$when==0 & ctm$modelmats$matsetup$param > 0,],
-      popvalues=ctm$modelmats$matvalues[ctm$modelmats$matsetup$when==0 & ctm$modelmats$matsetup$param > 0,],
+      popsetup=ctm$modelmats$matsetup[ctm$modelmats$matsetup$when %in% c(0,-1) & ctm$modelmats$matsetup$param > 0,],
+      popvalues=ctm$modelmats$matvalues[ctm$modelmats$matsetup$when %in% c(0,-1) & ctm$modelmats$matsetup$param > 0,],
       extratforms=ctm$modelmats$extratforms)
     if(fit) {
       out <- list(args=args,

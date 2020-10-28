@@ -58,14 +58,14 @@ ctModelBuildTIeffects <- function(ctm){ #for latex
 }
 
 ctMatsetupFreePars <- function(m,intoverpop){
-    m=m[m$when==0 & m$param > 0,,drop=FALSE]
+    m=m[m$when %in% c(0,-1) & m$param > 0,,drop=FALSE]
     m=m[match(unique(m$param),m$param),,drop=FALSE]
     m = m[order(m$param),,drop=FALSE]
 }
 
 ctMatvalueFreePars <- function(ms,mv){
-  mv=mv[ms$when==0 & ms$param > 0,,drop=FALSE]
-  ms=ms[ms$when==0 & ms$param > 0,,drop=FALSE]
+  mv=mv[ms$when %in% c(0,-1) & ms$param > 0,,drop=FALSE]
+  ms=ms[ms$when %in% c(0,-1) & ms$param > 0,,drop=FALSE]
   mv=mv[match(unique(ms$param),ms$param),,drop=FALSE]
   mv = mv[order(ms$param),,drop=FALSE]
 }

@@ -33,8 +33,8 @@ ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE,
   densiter <- 1e5
   popsetup <- obj$setup$popsetup
   popvalues<- obj$setup$popvalues
-  popvalues <- popvalues[popsetup$when==0 & popsetup$param > 0 & popsetup$copyrow < 1,]
-  popsetup <- popsetup[popsetup$when==0 & popsetup$param > 0 & popsetup$copyrow < 1,]
+  popvalues <- popvalues[popsetup$when %in% c(0,-1) & popsetup$param > 0 & popsetup$copyrow < 1,]
+  popsetup <- popsetup[popsetup$when %in% c(0,-1) & popsetup$param > 0 & popsetup$copyrow < 1,]
   
   popvalues<-popvalues[order(popsetup$param),]
   popsetup<-popsetup[order(popsetup$param),]

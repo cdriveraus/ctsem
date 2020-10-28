@@ -53,7 +53,7 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,
     ms <- cbind(fit$setup$matsetup, fit$setup$matvalues)
     ms2=ms
     
-    mst0 <- ms[(ms$when==0 & ms$indvarying > 0 & ms$matrix ==1 & ms$row <= fit$standata$nlatent),] #indvarying t0means
+    mst0 <- ms[(ms$when %in% c(0,-1) & ms$indvarying > 0 & ms$matrix ==1 & ms$row <= fit$standata$nlatent),] #indvarying t0means
     mst0 <- mst0[match(unique(mst0$param),mst0$param),] #remove duplicates
     
     ms <- ms[ms$when > 0 & ms$param > 0 & ms$copyrow <1,] #based on a state and not a copy
@@ -85,7 +85,7 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,
             dimnames(states)$par[ms$param[i]] <- paste0(names(mats[ms$matrix[i]]),'[',ms$row[i],',',ms$col[i],']')
             }
             
-            if(!tformsubjectpars) dimnames(states)$par[ms$param[i]] <- ms2$parname[ms2$row==ms$param[i] & ms2$when==0 & ms2$matrix==1][1] 
+            if(!tformsubjectpars) dimnames(states)$par[ms$param[i]] <- ms2$parname[ms2$row==ms$param[i] & ms2$when %in% c(0,-1) & ms2$matrix==1][1] 
             
           }
           if(ms$transform[i] <0) message('custom transforms not implemented yet...sorry')
