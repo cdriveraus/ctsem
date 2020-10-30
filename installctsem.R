@@ -85,7 +85,7 @@ makevarsupdate <- function(){
       if (!file.exists(M)) file.create(M)
       
       
-      cat("\nCXX14FLAGS = -mtune=native -O1 -Wno-ignored-attributes -Wno-deprecated-declarations",
+      cat("\nCXX14FLAGS = -mtune=native -O3 -Wno-ignored-attributes -Wno-deprecated-declarations",
         if( grepl("^darwin", R.version$os)) "CXX14FLAGS += -arch x86_64 -ftemplate-depth-256" else
           if (.Platform$OS.type == "windows") "CXX14FLAGS+= -Wno-ignored-attributes -Wno-deprecated-declarations" else
             "CXX14FLAGS += -fPIC",

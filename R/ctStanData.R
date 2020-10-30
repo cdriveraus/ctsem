@@ -410,9 +410,10 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
         ms$when[mrows]==wheni))
     }
     standata$whenmat[mi,5] = as.integer(any(
-      ms$param[mrows] > 0 & ms$when[mrows] <=0 & (ms$indvarying[mrows] == 1 | ms$tipred[mrows] > 0) ))
+      ms$param[mrows] > 0 & ms$when[mrows] <=0 & (ms$indvarying[mrows] > 1 | ms$tipred[mrows] > 0) ))
   }
   rownames(standata$whenmat)[mc] <- names(mc)
+  # browser()
   
   standata$whenvecp <- array(0L, c(3,standata$nparams)) #whenvecp contains 0's for unchanging pars, 1's for changing pars
   standata$whenvecp[1,] <- as.integer(1:standata$nparams) #base parameters
@@ -426,12 +427,12 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
       as.integer(ms$param[ms$when == wheni & ms$copyrow <=0 & ms$param > 0])
   }
   # browser()
-  #when do we need the below line... ind varying based on states?
-  if(standata$intoverpop==1 && standata$nlatentpop > standata$nlatent){
-    standata$whenvecs[5,ms$param[ms$when==0 & ms$param > 0 & ms$copyrow < 1 & (ms$indvarying > 0 | ms$tipred > 0)]] <- 
-      as.integer(ms$param[ms$when==0 & ms$param > 0 & ms$copyrow < 1 & (ms$indvarying > 0 | ms$tipred > 0)])
-  }
-  standata$whenvecs[6,] <- as.integer(1:ncol(standata$whenvecs))
+  # why was this in the code? when do we need the below line... ind varying based on states?
+  # if(standata$intoverpop==1 && standata$nlatentpop > standata$nlatent){
+  #   standata$whenvecs[5,ms$param[ms$when==0 & ms$param > 0 & ms$copyrow < 1 & (ms$indvarying > 0 | ms$tipred > 0)]] <- 
+  #     as.integer(ms$param[ms$when==0 & ms$param > 0 & ms$copyrow < 1 & (ms$indvarying > 0 | ms$tipred > 0)])
+  # }
+  # standata$whenvecs[6,] <- as.integer(1:ncol(standata$whenvecs))
   
   #special matrix adjustments
   standata$whenmat[mc[names(mc) == 'asymDIFFUSION'],] <- 

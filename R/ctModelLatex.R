@@ -19,7 +19,7 @@ getPopEffectsFromFit <- function(x,linearise=TRUE,digits=3){
     timat <- timat[,apply(x$standata$TIPREDEFFECTsetup,1,function(x) any(x!=0)),,drop=FALSE]
   } else timat <- diag(0,0)
   
-  if(!is.null(e$rawpopc)){ 
+  if(!is.null(e$rawpopc) && !is.null(e$popcov)){ 
     if(!linearise) popcov <- matrix(e$rawpopc[1,4,,],dim(e$rawpopc)[3])
     if(linearise) {
       popcov <- matrix(e$popcov[1,,],dim(e$popcov)[3])
