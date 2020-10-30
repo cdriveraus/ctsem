@@ -21,17 +21,13 @@ options(Ncpus = ',nc,')'),
   }
 }
 
-#unload packages
-message('This is best run from a fresh R / Rstudio session, with no other R sessions running')
-go<-readline('Continue? Y/N: ')
-if(go %in% c('Y','y')){
   
-  rprofsetup()
-  
+unloadPackages <- function(){ 
+  message('Unloading packages -- if problems occur, please try this from a fresh R session (ctrl-shift-f10 in Rstudio')
   packs <- c(names(sessionInfo()$otherPkgs), names(sessionInfo()$loadedOnly))
   packs <- packs[!packs%in% c("stats","graphics","grDevices","utils","datasets","methods","base",'remotes','tools','glue')]
   if(length(packs) > 0){ 
-    message('Unloading packages -- if any problems occur, please try this from a fresh R session')
+ 
     trycount <- 0
     while(length(packs)  > 0){
       trycount <- trycount + 1
@@ -63,7 +59,9 @@ if(go %in% c('Y','y')){
   # 
   # detachAllPackages()
   
+}
   
+checkbuildpacks <- function(){  
   #install / load build packages
   buildpacks <- c('devtools','pkgbuild','remotes')
   for(bi in buildpacks){
@@ -71,7 +69,9 @@ if(go %in% c('Y','y')){
   }
   require(pkgbuild)
   try(pkgbuild::check_build_tools())
-  
+}
+ 
+makevarsupdate <- function(){ 
   #create / update makevars if needed
   mv=0
   while(!mv %in% c('Y','N','y','n')) {
@@ -83,6 +83,8 @@ if(go %in% c('Y','y')){
       if (!file.exists(dotR)) dir.create(dotR)
       M <- file.path(dotR, ifelse(.Platform$OS.type == "windows", "Makevars.win", "Makevars"))
       if (!file.exists(M)) file.create(M)
+      
+      
       cat("\nCXX14FLAGS = -mtune=native -O1 -Wno-ignored-attributes -Wno-deprecated-declarations",
         if( grepl("^darwin", R.version$os)) "CXX14FLAGS += -arch x86_64 -ftemplate-depth-256" else
           if (.Platform$OS.type == "windows") "CXX14FLAGS+= -Wno-ignored-attributes -Wno-deprecated-declarations" else
@@ -90,6 +92,10 @@ if(go %in% c('Y','y')){
         file = M, sep = "\n", append = TRUE)
     }
   }
+  
+}
+
+checkcriticalpacks <- function(){
   
   if(.Platform$OS.type == "windows"){
     if(!suppressMessages(pkgbuild::has_rtools())) message('Waiting for Rtools installation to complete...')
@@ -104,9 +110,28 @@ if(go %in% c('Y','y')){
     if(importantpack %in% old)  message('Updating ',importantpack)
     install.packages(importantpack,dependencies = TRUE)
   }
+}
   
+ctseminstall<-function(){
+  if(grepl("^darwin", R.version$os)) message('For problems compiling on mac, see: 
+    https://github.com/stan-dev/rstan/wiki/Installing-RStan-from-source-on-a-Mac')
   #install ctsem from github
   Sys.setenv(R_REMOTES_NO_ERRORS_FROM_WARNINGS='true')
   remotes::install_github('cdriveraus/ctsem', upgrade='never',INSTALL_opts = "--no-multiarch", 
     dependencies = c("Depends", "Imports"))
 }
+
+
+
+#unload packages
+
+go<-readline('Continue? Y/N: ')
+if(go %in% c('Y','y')){
+  message('This is best run from a fresh R / Rstudio session, with no other R sessions running')
+  rprofsetup()
+  unloadPackages()
+  makevarsupdate()
+  checkcriticalpacks()
+  ctseminstall()
+}
+
