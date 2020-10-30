@@ -4,6 +4,7 @@
 #' @param nsamples either NA (to extract all) or a positive integer from 1 to maximum samples in the fit.
 #' @param cores Integer number of cpu cores to use. Only needed if savescores was set to FALSE when fitting.
 #' @param collapsefunc function to apply over samples, such as \code{mean}
+#' @param pointest If TRUE, uses the posterior mode as the single sample.
 #' @param standardisederrors If TRUE, computes standardised errors for prior, upd, smooth conditions.
 #' @param subjectpars if TRUE, state estimates are not returned, instead, predictions of each subjects parameters
 #' are returned, for parameters that had random effects specified.
@@ -19,17 +20,21 @@
 #' if(w32chk()){
 #' k=ctStanKalman(ctstantestfit,subjectpars=TRUE,collapsefunc=mean)
 #' }
-ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,
+ctStanKalman <- function(fit,nsamples=NA,pointest=FALSE, collapsefunc=NA,cores=2,
   standardisederrors=FALSE, subjectpars=FALSE, tformsubjectpars=TRUE, indvarstates=FALSE,...){
   
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
-  
   message('Computing state estimates..')
   standata <- fit$standata
-  samples<-ctStanRawSamples(fit)
+  if(pointest){
+    if('stanfit' %in% class(fit$stanfit)) stop('Point estimates not available from sampled fits! Try the collapse argument.')
+    samples <- matrix(fit$stanfit$rawest,nrow=1)
+  }
+  if(!pointest) samples<-ctStanRawSamples(fit)
   if(!is.na(nsamples)) samples <- samples[sample(1:nrow(samples),nsamples),,drop=FALSE] else nsamples <- nrow(samples)
   if(is.function(collapsefunc)) samples = matrix(apply(samples,2,collapsefunc,...),ncol=ncol(samples))
   e=stan_constrainsamples(sm = fit$stanmodel,standata = standata,
+    savesubjectmatrices = FALSE,
     samples = samples,cores=cores,savescores=TRUE,pcovn=5)
   
   # browser()
@@ -98,7 +103,9 @@ ctStanKalman <- function(fit,nsamples=NA,collapsefunc=NA,cores=2,
     nlatent <- ifelse(!indvarstates, fit$standata$nlatent,fit$standata$nlatentpop)
     latentNames <- fit$ctstanmodel$latentNames
     if(indvarstates) latentNames <- c(latentNames,
-      paste0('indvar',1:(fit$standata$nlatentpop-fit$standata$nlatent)))
+      # paste0('indvar',1:(fit$standata$nlatentpop-fit$standata$nlatent))
+      getparnames(fit,popstatesonly=TRUE)
+      )
     nmanifest <- fit$standata$nmanifest
     
     

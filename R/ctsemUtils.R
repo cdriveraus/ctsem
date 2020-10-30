@@ -62,6 +62,17 @@ w32chk <- function(){
 }
 
 
+removeOutliers <- function(dat,multiplier,by=2){
+  dat2 <- array(apply(dat,by,function(x){
+    s=sd(x,na.rm=TRUE)
+    m=mean(x,na.rm=TRUE)
+    message("Removed ", sum(abs(x-m) > (multiplier*s),na.rm=TRUE)," outliers...")
+    x[abs(x-m) > (multiplier*s)] <- NA
+    return(x)
+  }),dim=dim(dat))
+}
+
+
 testall<- function(cores=4,folder = '/tests/testthat',examples=TRUE){
   requireNamespace('testthat')
   Sys.setenv(NOT_CRAN='true')

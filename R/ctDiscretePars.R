@@ -133,7 +133,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   
   type='discreteDRIFT'
   collapseSubjects=TRUE #consider this for a switch
-  e<-ctExtract(ctstanfitobj)
+  e<-ctExtract(ctstanfitobj,subjectMatrices = TRUE)
   
   # if(type=='all') type=c('discreteDRIFT','latentMeans') #must match with ctDiscretePars
   
@@ -144,7 +144,8 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   if(is.null(nsubjects)) nsubjects=1
   if('all' %in% subjects) subjects='all' 
   
-  # outdims=dim(e$DIFFUSION)
+  if(is.null(e$DRIFT) && any(!subjects %in% 'all')) stop('No individual variation in DRIFT matrix found?? Try subjects="all"')
+  
   niter=dim(e$pop_DRIFT)[1]
   nlatent=ctstanfitobj$standata$nlatent#outdims[3]
   latentNames=ctstanfitobj$ctstanmodel$latentNames
@@ -153,10 +154,13 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   
   out<-list()
   
+  
+  
   #get all ctparameter matrices at once and remove unneeded subjects
   ctpars <- list()
+  # browser()
   for(matname in c('DRIFT','DIFFUSIONcov','asymDIFFUSION')){ #,'CINT','T0MEANS', 'T0VAR','MANIFESTMEANS',if(!is.null(e$MANIFESTVAR)) 'MANIFESTVAR','LAMBDA', if(!is.null(e$TDPREDEFFECT)) 'TDPREDEFFECT')){
-    if('all' %in% subjects || dim(e[[matname]])[2] == 1){
+    if('all' %in% subjects || is.null(e[[matname]])){
       ctpars[[matname]] <- e[[paste0('pop_',matname)]]
     } else {
       ctpars[[matname]] <- e[[matname]][,subjects,,,drop=FALSE]

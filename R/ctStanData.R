@@ -4,7 +4,6 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     datalong <- data.frame(datalong)
     datalong[ctm$timeName] <- 1:nrow(datalong)
   }
-  
   datalong <- datalong[,c(ctm$timeName,ctm$subjectIDname,
     ctm$manifestNames,ctm$TDpredNames,ctm$TIpredNames)]
   #start data section
@@ -243,23 +242,23 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   standata$tipredeffectscale <- ctm$tipredeffectscale
   
   
-  #drift, jacobian off diagonal check
-  mx=listOfMatrices(ctm$pars)
-  driftcint <- rbind(cbind(mx$DRIFT[1:ctm$n.latent,1:ctm$n.latent,drop=FALSE],mx$CINT),0)
-  z=c()
-  for(ri in 1:nrow(driftcint)){
-    if(all(driftcint[ri,-ri] %in% 0) && all(driftcint[-ri,ri] %in% 0)) z[ri]=0L else z[ri]=1L
-  }
-  standata$drcintoffdiag <- array(as.integer(c(z,1)),dim=nrow(driftcint))
-  
-  jac <- mx$JAx
-  z=c()
-  for(ri in 1:nrow(jac)){
-    if(all(jac[ri,-ri] %in% 0) && all(jac[-ri,ri] %in% 0)) z[ri]=0L else z[ri]=1L
-  }
-  standata$jacoffdiag <- array(as.integer(c(z,1)),dim=nrow(jac))
-  standata$jacoffdiagindex <- array(as.integer(sort(unique(c(1:ctm$n.latent,which(standata$jacoffdiag ==1))))))
-  standata$njacoffdiagindex <- as.integer(length(standata$jacoffdiagindex))
+  # #drift, jacobian off diagonal check # seems to work ok internally with expm2
+  # mx=listOfMatrices(ctm$pars)
+  # driftcint <- rbind(cbind(mx$DRIFT[1:ctm$n.latent,1:ctm$n.latent,drop=FALSE],mx$CINT),0)
+  # z=c()
+  # for(ri in 1:nrow(driftcint)){
+  #   if(all(driftcint[ri,-ri] %in% 0) && all(driftcint[-ri,ri] %in% 0)) z[ri]=0L else z[ri]=1L
+  # }
+  # standata$drcintoffdiag <- array(as.integer(c(z,1)),dim=nrow(driftcint))
+  # 
+  # jac <- mx$JAx
+  # z=c()
+  # for(ri in 1:nrow(jac)){
+  #   if(all(jac[ri,-ri] %in% 0) && all(jac[-ri,ri] %in% 0)) z[ri]=0L else z[ri]=1L
+  # }
+  # standata$jacoffdiag <- array(as.integer(c(z,1)),dim=nrow(jac))
+  # standata$jacoffdiagindex <- array(as.integer(sort(unique(c(1:ctm$n.latent,which(standata$jacoffdiag ==1))))))
+  # standata$njacoffdiagindex <- as.integer(length(standata$jacoffdiagindex))
   
   
   standata$sJAxfinite <- ctm$sJAxfinite
@@ -275,11 +274,11 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     datalong[[ctm$timeName]] <- 1:nrow(datalong)
   }
   
-  #t0 index
-  T0check<-rep(1,nrow(datalong))
-  for(i in 2:nrow(datalong)){
-    T0check[i]<- ifelse(datalong[i,ctm$subjectIDname] != datalong[i-1,ctm$subjectIDname], 1, 0)
-  }
+  # #t0 index
+  # T0check<-rep(1,nrow(datalong))
+  # for(i in 2:nrow(datalong)){
+  #   T0check[i]<- ifelse(datalong[i,ctm$subjectIDname] != datalong[i-1,ctm$subjectIDname], 1, 0)
+  # }
   if (!(ctm$timeName %in% colnames(datalong))) stop(paste('time column', (ctm$timeName), "not found in data"))
   if(any(is.na(datalong[,ctm$timeName]))) stop('Missings in time column!')
   
@@ -400,7 +399,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   
   if(!is.null(ctm$TIpredAuto) && ctm$TIpredAuto %in% c(1L,TRUE)) standata$TIpredAuto <- 1L else standata$TIpredAuto <- 0L
   
-  mc=c(ctStanMatricesList()$base,ctStanMatricesList()$jacobian)
+  mc=c(ctStanMatricesList()$all)#base,ctStanMatricesList()$jacobian)
   ms=data.frame(standata$matsetup)
   ms=ms[order(ms$param),]
   standata$whenmat <- array(0L,dim=c(max(mc),5)) #whenmat contains 0's when matrix isn't computed, 1's when it is. 'when 5' is indvaryig.
@@ -414,7 +413,6 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
       ms$param[mrows] > 0 & ms$when[mrows] <=0 & (ms$indvarying[mrows] == 1 | ms$tipred[mrows] > 0) ))
   }
   rownames(standata$whenmat)[mc] <- names(mc)
-  # browser()
   
   standata$whenvecp <- array(0L, c(3,standata$nparams)) #whenvecp contains 0's for unchanging pars, 1's for changing pars
   standata$whenvecp[1,] <- as.integer(1:standata$nparams) #base parameters
@@ -422,15 +420,25 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     as.integer(ms$param[ms$when == 0 & ms$copyrow <1 & (ms$tipred > 0 | ms$indvarying > 0) & ms$param > 0])
   standata$whenvecp[3,] <- as.integer(1:ncol(standata$whenvecp))
   
-  standata$whenvecs <- array(0L,dim=c(6,standata$nlatentpop))
+  standata$whenvecs <- array(0L,dim=c(6,standata$nlatentpop)) #when do we need to compute transformed states?
   for(wheni in 1:4){ #whenvecs specifies array of when values for the state transform vector -- 1 to compute, 0 not
     standata$whenvecs[wheni,ms$param[ms$when == wheni & ms$copyrow <=0 & ms$param > 0]] <- 
       as.integer(ms$param[ms$when == wheni & ms$copyrow <=0 & ms$param > 0])
   }
-  standata$whenvecs[5,ms$param[ms$when==0 & ms$param > 0 & ms$copyrow < 1 
-    & (ms$indvarying > 0 | ms$tipred > 0)]] <- as.integer(ms$param[ms$when==0 & ms$param > 0 & ms$copyrow < 1 
-      & (ms$indvarying > 0 | ms$tipred > 0)])
+  # browser()
+  #when do we need the below line... ind varying based on states?
+  if(standata$intoverpop==1 && standata$nlatentpop > standata$nlatent){
+    standata$whenvecs[5,ms$param[ms$when==0 & ms$param > 0 & ms$copyrow < 1 & (ms$indvarying > 0 | ms$tipred > 0)]] <- 
+      as.integer(ms$param[ms$when==0 & ms$param > 0 & ms$copyrow < 1 & (ms$indvarying > 0 | ms$tipred > 0)])
+  }
   standata$whenvecs[6,] <- as.integer(1:ncol(standata$whenvecs))
+  
+  #special matrix adjustments
+  standata$whenmat[mc[names(mc) == 'asymDIFFUSION'],] <- 
+    apply(standata$whenmat[ mc[names(mc) %in% c('DIFFUSION','DRIFT')],],2,max)
+  standata$whenmat[mc[names(mc) == 'asymCINT'],] <- 
+    apply(standata$whenmat[mc[names(mc) %in% c('CINT','DRIFT')],],2,max)
+  standata$whenmat[mc[names(mc) == 'DIFFUSIONcov'],] <- standata$whenmat[mc[names(mc) == 'DIFFUSION'],]
   
   return(standata)
 }

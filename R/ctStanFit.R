@@ -120,8 +120,9 @@ verbosify<-function(sf,verbose=2){
 #' If TRUE, stan model is recompiled, regardless of apparent need for compilation.
 #' @param savescores Logical. If TRUE, output from the Kalman filter is saved in output. For datasets with many variables
 #' or time points, will increase file size substantially.
-#' @param savesubjectmatrices Logical. If TRUE, subject specific matrices are saved -- only relevant when either time dependent predictors
-#' are used, or individual differences are obtained via sampling (not via optimization, where they are integrated over).
+#' @param savesubjectmatrices Logical. If TRUE, subject specific matrices are saved -- 
+#' only relevant when either time dependent predictors or individual differences are 
+#' used. Can increase memory usage dramatically in large models.
 #' @param gendata Logical -- If TRUE, uses provided data for only covariates and a time and missingness structure, and 
 #' generates random data according to the specified model / priors. 
 #' Generated data is in the $Ygen subobject after running \code{extract} on the fit object.
@@ -569,11 +570,11 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
             ctm$modelmats$matsetup$copyrow < 1,c('row','col')]))))# ])))
       
       #if any needed, set all as temp workaround for bad subsetting in finite diff jacobian
-      if(length(ctm$sJAxfinite) > 0) ctm$sJAxfinite <- 1:ctm$nlatentpop
+      # if(length(ctm$sJAxfinite) > 0) ctm$sJAxfinite <- 1:ctm$nlatentpop
 
-      whichfinite <- ctm$modelmats$matsetup$row %in% ctm$sJAxfinite & ctm$modelmats$matsetup$matrix %in% 52
-      ctm$modelmats$matsetup <- ctm$modelmats$matsetup[!whichfinite,]
-      ctm$modelmats$matvalues <- ctm$modelmats$matvalues[!whichfinite,]
+      # whichfinite <- ctm$modelmats$matsetup$row %in% ctm$sJAxfinite & ctm$modelmats$matsetup$matrix %in% 52
+      # ctm$modelmats$matsetup <- ctm$modelmats$matsetup[!whichfinite,]
+      # ctm$modelmats$matvalues <- ctm$modelmats$matvalues[!whichfinite,]
     }
     if(recompile) ctm$sJAxfinite <- array(as.integer(c()))
     ctm$recompile <- recompile
@@ -587,7 +588,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     standata$gendata=as.integer(gendata)
     standata$savescores=as.integer(savescores)
     
-    
+    # print(standata$savesubjectmatrices)
     
     #####post model / data checks
     if(cores=='maxneeded') cores=max(1,min(c(chains,parallel::detectCores()-1))) else cores <-max(1, min(cores,parallel::detectCores()-1))

@@ -72,13 +72,18 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
   # browser()
   mats <- unfoldmats(mats)
     
-    
+  
  
   
   Jout <- list()
   for(typei in types){
     if(typei=='JAx'){
       Jrows = nrow(mats$T0MEANS)
+      if(nrow(mats$DRIFT)!=ndim) mats$DRIFT=rbind(
+        cbind(mats$DRIFT, 
+        matrix(0,nrow(mats$DRIFT),ndim-nrow(mats$DRIFT))),
+        matrix(0,ndim-nrow(mats$DRIFT),ndim))
+      
       for (row in 1:ndim) {
         for (col in 1:(ndim)) {
           fn[row] = paste0(ifelse(col > 1, paste0(fn[row],' + '),''), "(", mats$DRIFT[row, col], ") * state[", as.character(col), "]")
@@ -100,7 +105,6 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
     }
     
     if(typei=='J0') {
-      
       Jrows = nrow(mats$T0MEANS)
       t0func <- mats$T0MEANS[,1]
       t0func <- sapply(1:length(t0func), function(xi){

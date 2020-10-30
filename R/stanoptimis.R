@@ -211,7 +211,8 @@ ctAddSamples <- function(fit,nsamples,cores=2){
   
   fit$stanfit$transformedpars=stan_constrainsamples(sm = fit$stanmodel,
     standata = fit$standata,samples=fit$stanfit$rawposterior,
-    savesubjectmatrices=FALSE,dokalman=FALSE,
+    savesubjectmatrices=as.logical(fit$standata$savesubjectmatrices),
+    dokalman=as.logical(fit$standata$savesubjectmatrices),
     cores=cores)
   return(fit)
 }
@@ -406,9 +407,14 @@ standataFillTime <- function(standata, times){
 
 
 
-stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,savescores=FALSE,
+stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
+  savescores=FALSE,
   savesubjectmatrices=TRUE,
-  dokalman=TRUE,onlyfirstrow=ifelse(savescores,FALSE,TRUE),pcovn=500,quiet=FALSE){
+  dokalman=TRUE,
+  onlyfirstrow=ifelse(any(savesubjectmatrices,savescores),FALSE,TRUE),
+  pcovn=500,
+  quiet=FALSE){
+  
   if(savesubjectmatrices && !dokalman){
     dokalman <- TRUE
     warning('savesubjectmatrices = TRUE requires dokalman=TRUE also!')
@@ -1584,7 +1590,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     if(!is) lpsamples <- NA else lpsamples <- unlist(target_dens)[resample_i]
     
     transformedpars=stan_constrainsamples(sm = sm,standata = standata,
-      savesubjectmatrices = FALSE, dokalman=FALSE,
+      savesubjectmatrices = standata$savesubjectmatrices, 
+      dokalman=standata$savesubjectmatrices,
       samples=resamples,cores=cores, cl=clctsem)
     
     if(cores > 1) {

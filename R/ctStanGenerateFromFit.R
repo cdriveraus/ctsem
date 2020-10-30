@@ -16,15 +16,12 @@
 ctStanGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErrors=FALSE,cores=2){
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object!')
   if(!'stanfit' %in% class(fit$stanfit)) {
-    umat=t(fit$stanfit$rawposterior)
+    if(!fullposterior) umat=matrix(fit$stanfit$rawest,nrow=length(fit$stanfit$rawest),ncol=nsamples) else umat=t(fit$stanfit$rawposterior)
   } else  {
     umat <- stan_unconstrainsamples(fit$stanfit,fit$standata)
+    if(!fullposterior) umat=matrix(apply(umat, 1, mean),ncol=1)
   }
 
-  
-  if(!fullposterior) umat=matrix(apply(umat, 1, mean),ncol=1)
-  umat=umat[,sample(1:ncol(umat),nsamples,replace = ifelse(nsamples > ncol(umat), TRUE, FALSE)),drop=FALSE]
-  
   if(fit$setup$recompile) {
     message('Compilation needed -- compiling (usually ~ 1 min)')
     genm <- rstan::stan_model(model_code = 
@@ -37,7 +34,7 @@ ctStanGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErr
   }
   message('Generating data from ',ifelse(fullposterior,'posterior', 'posterior mean'))
   standata <- fit$standata
-  # standata$intoverstates=1L #tried to chang generator behaviour to better handle nonlinearity but more complex, jacobians etc
+  # standata$intoverstates=0L #why doesnt this work??
   standata$savescores <- 0L #have to disable for data generation in same structure as original
   # genf <- stan_reinitsf(genm,standata) 
   
@@ -45,6 +42,7 @@ ctStanGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErr
   cs=suppressMessages(stan_constrainsamples(sm =genm,standata = standata,cores=cores,samples = t(umat),
     savescores = FALSE, savesubjectmatrices = FALSE,dokalman = TRUE, onlyfirstrow = FALSE,pcovn = FALSE))
   fit$generated$Y <- aperm(cs$Y,c(2,1,3))
+  fit$generated$stanmodel <- genm
   dimnames( fit$generated$Y)<-list(row=1:dim(fit$generated$Y)[1],
     iter=1:dim(fit$generated$Y)[2],fit$ctstanmodel$manifestNames)
 

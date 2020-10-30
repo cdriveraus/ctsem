@@ -7,6 +7,19 @@ ctStanRawSamples<-function(fit){
   return(samples)
 }
 
+getparnames <- function(fit,indvaronly=FALSE, popstatesonly=FALSE){
+  ms <- fit$setup$matsetup
+  parnames <- ms$parname[ms$when %in% c(0,-1) & ms$param > 0 & ms$copyrow < 1]
+  parindices <- ms$param[ms$when %in% c(0,-1) & ms$param > 0 & ms$copyrow < 1]
+  pars <- cbind(parnames,parindices)
+  pars<-pars[!duplicated(pars[,1,drop=FALSE]),,drop=FALSE]
+  parnames <- pars[as.numeric(pars[,2,drop=FALSE]) >0, 1]
+  
+  if(indvaronly)  parnames <- parnames[fit$standata$indvaryingindex]
+  if(popstatesonly)  parnames <- parnames[ms$param[ms$param > 0 & ms$copyrow <1 & ms$matrix==1 & ms$indvarying > 0 & ms$row > fit$standata$nlatent]]
+  return(parnames)
+}
+
 #' summary.ctStanFit
 #'
 #' Summarise a ctStanFit object that was fit using \code{\link{ctStanFit}}. 
@@ -40,30 +53,25 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
     smr<-suppressWarnings(getMethod('summary','stanfit')(object$stanfit))
     if('98%' %in% colnames(smr$summary)) colnames(smr$summary)[colnames(smr$summary)=='98%'] <- '97.5%'
   }
-
-  e <- ctExtract(object) 
- 
-  if(residualcov){ #cov of residuals
-  obscov <- cov(object$data$Y,use='pairwise.complete.obs')
-  idobscov <- diag(1/sqrt(diag(obscov)),ncol(obscov))
-  rescov <- cov(matrix(object$kalman$errprior,ncol=ncol(obscov)),use='pairwise.complete.obs')
-  narescov <- which(is.na(rescov))
-  rescov[narescov] <- 0
   
-  out$residCovStd <- round(idobscov %*% rescov %*% idobscov ,3)
-  out$residCovStd[narescov] <- NA
-  dimnames(out$residCovStd) <- list(object$ctstanmodel$manifestNames,object$ctstanmodel$manifestNames)
-  out$resiCovStdNote <- 'Standardised covariance of residuals'
+  e <- ctExtract(object) 
+  
+  if(residualcov){ #cov of residuals
+    obscov <- cov(object$data$Y,use='pairwise.complete.obs')
+    idobscov <- diag(1/sqrt(diag(obscov)),ncol(obscov))
+    rescov <- cov(matrix(object$kalman$errprior,ncol=ncol(obscov)),use='pairwise.complete.obs')
+    narescov <- which(is.na(rescov))
+    rescov[narescov] <- 0
+    
+    out$residCovStd <- round(idobscov %*% rescov %*% idobscov ,3)
+    out$residCovStd[narescov] <- NA
+    dimnames(out$residCovStd) <- list(object$ctstanmodel$manifestNames,object$ctstanmodel$manifestNames)
+    out$resiCovStdNote <- 'Standardised covariance of residuals'
   }
   ms=object$setup$matsetup
-  # browser()
-  parnames <- ms$parname[ms$when %in% c(0,-1) & ms$param > 0 & ms$copyrow < 1]
-  parindices <- ms$param[ms$when %in% c(0,-1) & ms$param > 0 & ms$copyrow < 1]
-  pars <- cbind(parnames,parindices)
-  pars<-pars[!duplicated(pars[,1,drop=FALSE]),,drop=FALSE]
-  parnames <- pars[as.numeric(pars[,2,drop=FALSE]) >0, 1]
+  parnames = getparnames(object)
   # parnames <- unique(parnames)
-  parnamesiv <- parnames[object$data$indvaryingindex]
+  parnamesiv <- getparnames(object,indvaronly = TRUE)
   
   #### generate covcor matrices of raw and transformed subject level params
   
@@ -77,12 +85,12 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
       # browser()
       dimrawpopcorr <- dim(e$rawpopcorr)
       # if(!'stanfit' %in% class(object$stanfit)) 
-        rawpopcorr= array(e$rawpopcorr,dim=c(dimrawpopcorr[1],1,dimrawpopcorr[2] * dimrawpopcorr[3]))
+      rawpopcorr= array(e$rawpopcorr,dim=c(dimrawpopcorr[1],1,dimrawpopcorr[2] * dimrawpopcorr[3]))
       # if('stanfit' %in% class(object$stanfit)) rawpopcorr= rstan::extract(object$stanfit,pars='rawpopcorr',permuted=FALSE)
-
+      
       rawpopcorrout <- suppressWarnings(monitor(rawpopcorr, digits_summary=digits,warmup=0,print = FALSE)[lower.tri(diag(nindvarying)),c(monvars,'n_eff','Rhat'),drop=FALSE])
       if(!'stanfit' %in% class(object$stanfit)) rawpopcorrout <- rawpopcorrout[,-which(colnames(rawpopcorrout) %in% c('n_eff','Rhat')),drop=FALSE]
-
+      
       rownames(rawpopcorrout) <- matrix(paste0('',parnamesiv,'__',rep(parnamesiv,each=length(parnamesiv))),
         length(parnamesiv),length(parnamesiv))[lower.tri(diag(nindvarying)),drop=FALSE]
       
@@ -115,7 +123,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
     out$tipreds= round(cbind(tipreds,z),digits) #[order(abs(z)),]
   }
   
-
+  
   
   if(parmatrices){
     
@@ -179,7 +187,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
     }
     if('try-error' %in% class(parmatlists)[1]) out$parmatNote = 'Could not calculate parameter matrices'
   }
-    
+  
   
   
   if('stanfit' %in% class(object$stanfit)){
@@ -194,7 +202,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
     popmeans=popmeans[(nrow(popmeans)/2+1):nrow(popmeans),,drop=FALSE]
     rownames(popmeans) <- parnames
     
-
+    
     logposterior=smr$summary[c(grep('lp',rownames(smr$summary))),
       c('mean','sd','2.5%','50%','97.5%','n_eff','Rhat'),drop=FALSE]
   }
