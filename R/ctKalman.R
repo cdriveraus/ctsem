@@ -99,9 +99,10 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
   if(is.na(type)) stop('fit object is not from ctFit or ctStanFit!')
   
   subjects <- sort(subjects) #in case not entered in ascending order
-  
   if(type=='stan'){
-    if(timestep=='auto') timestep=sd(fit$standata$time,na.rm=TRUE)/50
+    if(timestep=='auto'){
+      if(fit$standata$intoverstates==1) timestep=sd(fit$standata$time,na.rm=TRUE)/50 else timestep ='asdata'
+    }
     if(all(timerange == 'asdata')) timerange <- range(fit$standata$time[fit$standata$subject %in% subjects])
     if(timestep != 'asdata' && fit$ctstanmodel$continuoustime) {
       if(fit$ctstanmodel$continuoustime != TRUE) stop('Discrete time model fits must use timestep = "asdata"')

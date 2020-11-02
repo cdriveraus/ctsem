@@ -1275,20 +1275,19 @@ if(verbose > 1){
             " discreteDRIFT = ", discreteDRIFT, "  discreteDIFFUSION ", discreteDIFFUSION, "  sasymDIFFUSION ", sasymDIFFUSION, 
             " DIFFUSIONcov = ", sDIFFUSIONcov,
             "  rawpopsd ", rawpopsd,  "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
-        }
-  
-      ',if(!ppchecking){
-        'if(nbinary_y[rowi] > 0) llrow[savescores ? rowi : 1] += sum(log(Y[rowi,o1d] .* (syprior[o1d]) + (1-Y[rowi,o1d]) .* (1-syprior[o1d]))); 
-  
-        if(size(o0d) > 0 && (llsinglerow==0 || llsinglerow == rowi)){
-          ypriorcov_sqrt[o0d,o0d]=cholesky_decompose(makesym(ycov[o0d,o0d],verbose,1));
-           llrow[savescores ? rowi : 1] +=  multi_normal_cholesky_lpdf(Y[rowi,o0d] | syprior[o0d], ypriorcov_sqrt[o0d,o0d]);
-           //errtrans[counter:(counter + ncont_y[rowi]-1)] = 
-             //mdivide_left_tri_low(ypriorcov_sqrt[o0d,o0d], err[o0d]); //transform pred errors to standard normal dist and collect
-           //ll+= -sum(log(diagonal(ypriorcov_sqrt[o0d,o0d]))); //account for transformation of scale in loglik
-           //counter += ncont_y[rowi];
-        }
-      '},'
+      }
+        
+  //likelihood stuff
+      if(nbinary_y[rowi] > 0) llrow[rowi] += sum(log(Y[rowi,o1d] .* (syprior[o1d]) + (1-Y[rowi,o1d]) .* (1-syprior[o1d]))); 
+
+      if(size(o0d) > 0 && (llsinglerow==0 || llsinglerow == rowi)){
+        if(intoverstates==1) ypriorcov_sqrt[o0d,o0d]=cholesky_decompose(makesym(ycov[o0d,o0d],verbose,1));
+         llrow[rowi] +=  multi_normal_cholesky_lpdf(Y[rowi,o0d] | syprior[o0d], ypriorcov_sqrt[o0d,o0d]);
+         //errtrans[counter:(counter + ncont_y[rowi]-1)] = 
+           //mdivide_left_tri_low(ypriorcov_sqrt[o0d,o0d], err[o0d]); //transform pred errors to standard normal dist and collect
+         //ll+= -sum(log(diagonal(ypriorcov_sqrt[o0d,o0d]))); //account for transformation of scale in loglik
+         //counter += ncont_y[rowi];
+      }
       
     }//end subi > 0 nobs > 0 section
   } // end measurement init loop and dokalmanrows section here to collect matrices
@@ -1725,7 +1724,7 @@ transformed parameters{
 
 ',if(!gendata) paste0('
   real ll = 0;
-  vector[savescores ? ndatapoints : 1] llrow = rep_vector(0.0,savescores ? ndatapoints : 1);
+  vector[ndatapoints] llrow = rep_vector(0,ndatapoints);
   matrix[nlatentpop,nlatentpop] etacova[3,savescores ? ndatapoints : 0];
   matrix[nmanifest,nmanifest] ycova[3,savescores ? ndatapoints : 0];
   vector[nlatentpop] etaa[3,savescores ? ndatapoints : 0];
@@ -1813,7 +1812,7 @@ generated quantities{
   matrix[nparams,ntipred] linearTIPREDEFFECT;
 ',if(gendata) paste0('
   real ll = 0;
-  vector[savescores ? ndatapoints : 1] llrow = rep_vector(0.0,savescores ? ndatapoints : 1);
+  vector[ndatapoints] llrow = rep_vector(0,ndatapoints);
   matrix[nlatentpop,nlatentpop] etacova[3,savescores ? ndatapoints : 0];
   matrix[nmanifest,nmanifest] ycova[3,savescores ? ndatapoints : 0];
   vector[nlatentpop] etaa[3,savescores ? ndatapoints : 0];

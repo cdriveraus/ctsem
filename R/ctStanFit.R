@@ -686,7 +686,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         # 
         stanargs <- list(object = sm, 
           # enable_random_init=TRUE,
-          init_r=.3,
+          init_r=.03,
           # init=staninits,
           refresh=20,
           iter=iter,

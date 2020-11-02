@@ -42,6 +42,9 @@ ctStanGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErr
   cs=suppressMessages(stan_constrainsamples(sm =genm,standata = standata,cores=cores,samples = t(umat),
     savescores = FALSE, savesubjectmatrices = FALSE,dokalman = TRUE, onlyfirstrow = FALSE,pcovn = FALSE))
   fit$generated$Y <- aperm(cs$Y,c(2,1,3))
+  # browser()
+  fit$generated$llrow <- cs$llrow
+  fit$generated$llrow[fit$generated$llrow==0]<-NA
   fit$generated$stanmodel <- genm
   dimnames( fit$generated$Y)<-list(row=1:dim(fit$generated$Y)[1],
     iter=1:dim(fit$generated$Y)[2],fit$ctstanmodel$manifestNames)

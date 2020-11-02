@@ -63,6 +63,7 @@ generator2 <- function(gm,nsubjects,
 #'}
 ctStanGenerate <- function(ctm,datastruct, optimize=TRUE, is=FALSE, 
   fullposterior=TRUE, nsamples=200, parsonly=FALSE,includePreds = FALSE,...){
+  
   datastruct[,ctm$manifestNames] <- NA
   dots <- list(...)
   dots$carefulfit=FALSE
@@ -79,8 +80,13 @@ ctStanGenerate <- function(ctm,datastruct, optimize=TRUE, is=FALSE,
   ctm$TIpredAuto <- 0L
   
   #problem with multiple cores inside function?
-  pp<-ctStanFit(datalong = datastruct[c(1,nrow(datastruct)),,drop=FALSE], 
-    ctstanmodel = ctm,optimize=optimize, optimcontrol=dots,verbose=0, nopriors=FALSE,...)
+  dots1=dots
+  dots1$cores=1
+  
+  datadummy= datastruct[c(1,nrow(datastruct)),,drop=FALSE]
+  datadummy[,ctm$TIpredNames] <- 0
+  pp<-ctStanFit(datalong =datadummy, #reenable multi core -- check parallel craziness in stanoptimis
+    ctstanmodel = ctm,optimize=optimize, optimcontrol=dots1,verbose=0, nopriors=FALSE)
   
   if(parsonly) dat <- pp else{
     
@@ -88,7 +94,7 @@ ctStanGenerate <- function(ctm,datastruct, optimize=TRUE, is=FALSE,
     filled[,ctm$manifestNames] <- -99
     # browser()
     ppf <- ctStanFit(datalong = filled, ctstanmodel = ctm,optimize=optimize, 
-      optimcontrol=dots,fit=FALSE,nopriors=FALSE)
+      optimcontrol=dots1,fit=FALSE,nopriors=FALSE)
     # pp$standata$Y <- ppf$standata$Y
     ppf$stanfit <- pp$stanfit
     class(ppf) <- c('ctStanFit',class(ppf))

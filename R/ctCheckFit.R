@@ -64,14 +64,14 @@ ctSaturatedFitConditional<-function(dat,ucols,reg,hmc=FALSE,covf=NA,verbose=0){
     #   if(sum(d1)>0){
     #     mu=c(covf$cp$mu)[d1]
     #     llr=try(mvtnorm::dmvnorm(x = as.numeric(dat[i,o1[d1]]),mean = mu,sigma = covf$cp$covm[d1,d1,drop=FALSE],log=TRUE))
-    #     if('try-error' %in% class(llr)) browser()
+    #     if('try-error' %in% class(llr)) 
     #   }
     #   return(llr)
     # })
     covf$cp <- cp
     covf$ll <- sum(cp$llrow,na.rm=TRUE)
     # print( covf$ll)
-    # browser()
+    # 
   }
   
   return(covf)
@@ -129,7 +129,7 @@ ctSaturatedFit <- function(fit,conditional=FALSE,reg=FALSE, hmc=FALSE,
     hmc=hmc,independent=TRUE)
   covf$llresid <- covfindepresid$ll
   
-  # browser()
+  # 
   
   if(oos){
     sf = flexlapply(cl,srows,function(x){
@@ -163,7 +163,7 @@ ctSaturatedFit <- function(fit,conditional=FALSE,reg=FALSE, hmc=FALSE,
     
     covf$lloos = sum(llfold,na.rm=TRUE)
     covf$llrowoos = llfold
-    # browser()
+    # 
     
     #out of sample independent ll
     covf$llrowindependentoos <-  unlist(lapply(sf,function(x) x$llindependentoos))[match(names(unlist(srows)),(unlist(srows)))]
@@ -258,6 +258,8 @@ ctCheckFit2 <- function(fit, predictions=FALSE, by=fit$ctstanmodelbase$timeName,
   dat$Sample <- 1
   dat[ ,WhichObs:=(1:.N),by=eval(fit$ctstanmodelbase$subjectIDname)]
   
+  dat$LogLik <- c(fit$stanfit$transformedparsfull$llrow)
+  
   if(!predictions){ #then use generated data
     if(is.null(fit$generated)) stop('First use ctStanGenerateFromFit() on fit object!')
     if(nsamples > dim(fit$generated$Y)[2]) stop('Not enough samples in generated values! Try fewer samples?')
@@ -267,6 +269,7 @@ ctCheckFit2 <- function(fit, predictions=FALSE, by=fit$ctstanmodelbase$timeName,
       fit$generated$Y[, samples, , drop=FALSE],
       ncol=dim(fit$generated$Y)[3]))
     gdat$Sample=rep(samples,each=dim(fit$generated$Y)[1])
+    gdat$LogLik<-c(fit$generated$llrow[samples,])
   }
   
   if(predictions){ #use kalman predictions
@@ -276,6 +279,7 @@ ctCheckFit2 <- function(fit, predictions=FALSE, by=fit$ctstanmodelbase$timeName,
     nsamples<-1
     gdat$Sample <- 1
     gdat[ ,WhichObs:=(1:.N),by=eval(fit$ctstanmodelbase$subjectIDname)]
+    gdat$LogLik <- c(fit$stanfit$transformedparsfull$llrow)
   }
   
   gdat <- data.table(gdat)
@@ -283,22 +287,11 @@ ctCheckFit2 <- function(fit, predictions=FALSE, by=fit$ctstanmodelbase$timeName,
   if(is.null(combinevars)) combinevars = setNames(
     lapply(fit$ctstanmodelbase$manifestNames,function(x) x),fit$ctstanmodelbase$manifestNames)
   
+  combinevars<-c(combinevars,LogLik='LogLik')
+  
   dat <- ctDataMelt(dat=dat,id=fit$ctstanmodelbase$subjectIDname, by=c(by,'Sample','WhichObs'),combinevars = combinevars)
   gdat <- ctDataMelt(dat=gdat,id=fit$ctstanmodelbase$subjectIDname, by=c(by,'Sample','WhichObs'),combinevars = combinevars)
-  # browser()
-  
-  #why did I have this in?
-  # dat <- dat[WhichObs <2 | !variable%in% eval(TIpredNames)]
-  # gdat <- gdat[WhichObs <2 | !variable%in% eval(TIpredNames)]
-  
-  #to remove tipred variation -- but maybe helpful to see
-  # dat<- data.frame(dat)
-  # dat <- dat[!(dat$WhichObs > 1 & dat$variable %in% TIpredNames),]
-  # dat=data.table(dat)
-  # 
-  # gdat<- data.frame(gdat)
-  # gdat <- gdat[!(gdat$WhichObs > 1 & gdat$variable %in% TIpredNames),]
-  # gdat=data.table(gdat)
+
   
   if(!'WhichObs' %in% by){
     dat$WhichObs <- NULL
@@ -318,7 +311,7 @@ ctCheckFit2 <- function(fit, predictions=FALSE, by=fit$ctstanmodelbase$timeName,
       } else stop('arules package needed for discretization!')
     }
     if(covplot){
-      # browser()
+      # 
       wdat <- dcast(dat,paste0(fit$ctstanmodelbase$subjectIDname, '~variable + ',by),fun.aggregate=mean,na.rm=TRUE)
       # wdat <- wdat[,apply(wdat,2,function(x) any(!is.na(x))),drop=FALSE]
       covdat <- covml(
@@ -336,7 +329,7 @@ ctCheckFit2 <- function(fit, predictions=FALSE, by=fit$ctstanmodelbase$timeName,
       # use='pairwise.complete.obs')
       # covdatmx <- OpenMx::mxRefModels(data.frame(wdat)[,!colnames(wdat) %in% fit$ctstanmodelbase$subjectIDname,drop=FALSE],run=TRUE)
       # covgdat / covdat
-      # browser()
+      # 
       print(corplotmelt(meltcov(cov2cor(covdat$cp$covm)),
         label='Orig. corr.',limits=c(-1,1)))
       print(corplotmelt(meltcov(cov2cor(covgdat$cp$covm)),label='Gen. corr.',limits=c(-1,1)))
@@ -344,7 +337,7 @@ ctCheckFit2 <- function(fit, predictions=FALSE, by=fit$ctstanmodelbase$timeName,
       print(corplotmelt(meltcov(cov2cor(covgdat$cp$covm)-cov2cor(covdat$cp$covm)),label='Gen. corr. diff.',limits=c(-1,1)))
     }
     if(entropy){
-      # browser()
+      # 
       # wdat <- data.frame(wdat)[,!(colnames(wdat) %in%  #remove covariates not used in fit lp
       #     c(fit$ctstanmodelbase$TIpredNames,fit$ctstanmodelbase$TDpredNames))]
       # wgdat <- data.frame(wgdat)[,!(colnames(wdat) %in%
@@ -372,12 +365,10 @@ ctCheckFit2 <- function(fit, predictions=FALSE, by=fit$ctstanmodelbase$timeName,
   dat <- rbind(dat,gdat)
   dat$Sample <- factor(dat$Sample)
   
-  if(!is.null(combinevars)) vars <- names(combinevars) else vars <- fit$ctstanmodelbase$manifestNames
+  vars <- names(combinevars)
   
   dat$manifest <- dat$variable %in% vars
-  # if(varapprox) dat[manifest==TRUE,value:=value^2]# <- dat[manifest==TRUE,value]^2
-  
-  # gam
+
   
   g=ggplot(data = dat[manifest==TRUE],
     mapping = aes_string(x=by,y='value',
@@ -461,7 +452,7 @@ ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
   
   if(class(fit)=='ctStanFit') {
     if(fit$data$nsubjects==1) stop('Only for nsubjects > 1!')
-    # browser()
+    # 
     manifestNames=fit$ctstanmodel$manifestNames
     nmanifest=fit$ctstanmodel$n.manifest
     ldat <- cbind(fit$data$subject,fit$data$time,fit$data$Y)
@@ -506,7 +497,7 @@ ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
   if(class(fit)=='ctsemFit'){
     stop('OpenMx based fit objects not supported -- try ctModel types standt or stanct!')
   }
-  # browser()
+  # 
   covql <- ctCollapse(covarray,collapsemargin = 3,quantile,probs=probs[1],na.rm=TRUE)
   covqm <- ctCollapse(covarray,collapsemargin = 3,quantile,probs=probs[2],na.rm=TRUE)
   covqh <- ctCollapse(covarray,collapsemargin = 3,quantile,probs=probs[3],na.rm=TRUE)
@@ -601,7 +592,7 @@ plot.ctsemFitMeasure <- function(x,indices='all', means=TRUE,separatemeans=TRUE,
       
       # main <- '(Observed - implied) / sd(implied)'
       if(cov2cor) limits <-c(-1,1) else limits <- range(get(covtype))
-      # browser()
+      # 
       
       corm <- meltcov(ggcorrArgs$cor_matrix)
       
