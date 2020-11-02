@@ -108,7 +108,7 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
     for(i in 2:nrow(latents)){
       dtA=expm::expm(sm$DRIFT * (sdat$time[i]-sdat$time[i-1]))
       latents[i,] <- dtA %*% latents[i-1,] +
-        (dtA - diag(m$n.latent)) %*% sm$CINT + 
+        solve(sm$DRIFT,(dtA - diag(m$n.latent))) %*% sm$CINT + 
         t(chol(fdtQ(Qinf,dtA))) %*% rnorm(m$n.latent)
       # browser()
       if(m$n.TDpred > 0) latents[i,] <- latents[i,] + sm$TDPREDEFFECT %*% 
@@ -120,6 +120,7 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
         sm$MANIFESTVAR %*% rnorm(m$n.manifest)
     }
         
+    
     
     
     sdat=sdat[(burnin+1):fullTpoints,]

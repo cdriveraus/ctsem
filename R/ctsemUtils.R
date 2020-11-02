@@ -169,14 +169,7 @@ if(1==99) Row <- Col <- NULL
       if(is.null(dout)) dout <- x else dout <- rbind(dout,x,fill=TRUE)
   }
   
-  # 
-  # ggplot(data=subset(dout,Element %in% 'ysmooth' & Sample == 1),aes(x=Time,y=value,colour=Subject))+
-  # # stat_quantile(quantiles=seq(.01,.99,.01),
-  # #   aes(alpha=1-(abs(.5-(..quantile..)))),method='rqss')+
-  #   geom_line()+
-  #   geom_ribbon(aes(ymin=value-sd,ymax=value+sd,fill=Subject),alpha=.2,linetype=0)+
-  #   theme_minimal()+
-  #   facet_wrap(vars(Row))
+  dout <- data.frame(dout) #because of weird temporal data.table behaviour
   class(dout) <- c('ctKalmanDF',class(dout))
 return(dout)
 }

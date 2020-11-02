@@ -38,7 +38,7 @@ transformed parameters{
   matrix[d, d] mcor = diag_matrix(rep_vector(1,d)); 
   matrix[d,d] covm;
   //matrix[d,d] cholm = cholesky_decompose(covm);
-  real corprior = indep ? 0 : normal_lpdf(rawcor| mean(fabs(rawcor)), 1);
+  real corprior = indep ? 0 : normal_lpdf(rawcor| 0, 1); //mean(fabs(rawcor))
   real sdprior = normal_lpdf(logsd | mean(logsd), 10);
   vector[n] llrow=rep_vector(0,n);
   

@@ -110,7 +110,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
         tipreds[is.na(tipreds)] = 99999
       }
       if(optimize){
-        message(paste0('Missingness in TIpreds - single imputing ', sum(is.na(tipreds)),'  NA\'s to allow optimization -- TI predictor effect estimates will be overly confident.'))
+        message(paste0("NA's in TIpreds - imputing ", sum(is.na(tipreds)),'  NA\'s to allow optimization -- TIpred effect estimates may be overly confident.'))
         tipreds[is.na(tipreds)] = 0
         
         meandat <- data.table((datalong))[ , lapply(.SD, function(x) 
@@ -189,9 +189,9 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   standata$tdpreds=array(as.matrix(tdpreds),dim=c(nrow(tdpreds),ncol(tdpreds)))
   
   #subset selection
-  if(is.null(ctm$dokalmanrows)) standata$dokalmanrowsdata <- 
-    rep(1L, standata$ndatapoints) else standata$dokalmanrowsdata <- as.integer(ctm$dokalmanrows)
-  standata$dokalmanpriormodifier = sum(standata$dokalmanrows)/standata$ndatapoints
+  if(is.null(ctm$dokalmanrows)) standata$dokalmanrows <- 
+    rep(1L, standata$ndatapoints) else standata$dokalmanrows <- as.integer(ctm$dokalmanrows)
+  standata$dokalmanpriormodifier = 1L#sum(standata$dokalmanrows)/standata$ndatapoints
   
   standata<-c(standata, 
     list(
@@ -370,25 +370,25 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   standata$taylorheun <- 0L
   if(!is.null(ctm$taylorheun)) standata$taylorheun <- as.integer(ctm$taylorheun)
   
-  #fixed hyper pars
-  if(!is.null(ctm$fixedrawpopchol)) {
-    standata$fixedrawpopmeans = array(ctm$fixedrawpopmeans)
-    standata$fixedrawpopchol= ctm$fixedrawpopchol
-  }
-  standata$fixedhyper <- as.integer(ifelse(is.null(ctm$fixedrawpopchol),0,1))
-  if(is.null(ctm$fixedrawpopchol)) {
-    standata$fixedrawpopmeans = array(0,dim = 0)
-    standata$fixedrawpopchol = matrix(0,0,0)
-  }
-  standata$fixedsubpars <- as.integer(!is.null(ctm$fixedsubpars))
-  if(!is.null(ctm$fixedsubpars)) standata$fixedindparams <- 
-    ctm$fixedsubpars else standata$fixedindparams <-array(0,dim=c(0,0))
+  #fixed hyper pars #ow disabled
+  # if(!is.null(ctm$fixedrawpopchol)) {
+  #   standata$fixedrawpopmeans = array(ctm$fixedrawpopmeans)
+  #   standata$fixedrawpopchol= ctm$fixedrawpopchol
+  # }
+  # standata$fixedhyper <- as.integer(ifelse(is.null(ctm$fixedrawpopchol),0,1))
+  # if(is.null(ctm$fixedrawpopchol)) {
+  #   standata$fixedrawpopmeans = array(0,dim = 0)
+  #   standata$fixedrawpopchol = matrix(0,0,0)
+  # }
+  # standata$fixedsubpars <- as.integer(!is.null(ctm$fixedsubpars))
+  # if(!is.null(ctm$fixedsubpars)) standata$fixedindparams <- 
+  #   ctm$fixedsubpars else standata$fixedindparams <-array(0,dim=c(0,0))
   
   
   standata$idmap <- idmap
   standata$popcovn=1000L
   standata$llsinglerow=0L
-  standata$doonesubject=0L
+  # standata$doonesubject=0L
   if(any(ctm$manifesttype==1)){
     standata$nJyfinite <- as.integer(ctm$n.latent)
     standata$sJyfinite <- array(as.integer(1:ctm$n.latent))

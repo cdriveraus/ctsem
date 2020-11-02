@@ -318,7 +318,7 @@ standatact_specificsubjects <- function(standata, subjects,timestep=NA){
 
 
 standatalongobjects <- function() {
-  longobjects <- c('subject','time','dokalmanrowsdata','nobs_y','ncont_y','nbinary_y','Y','tdpreds', 'whichobs_y','whichbinary_y','whichcont_y')
+  longobjects <- c('subject','time','dokalmanrows','nobs_y','ncont_y','nbinary_y','Y','tdpreds', 'whichobs_y','whichbinary_y','whichcont_y')
   return(longobjects)
 }
 
@@ -411,7 +411,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
   savescores=FALSE,
   savesubjectmatrices=TRUE,
   dokalman=TRUE,
-  onlyfirstrow=ifelse(any(savesubjectmatrices,savescores),FALSE,TRUE),
+  onlyfirstrow=FALSE, #ifelse(any(savesubjectmatrices,savescores),FALSE,TRUE),
   pcovn=500,
   quiet=FALSE){
   
@@ -423,7 +423,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
   standata$savescores <- as.integer(savescores)
   standata$dokalman <- as.integer(dokalman)
   standata$savesubjectmatrices<-as.integer(savesubjectmatrices)
-  if(onlyfirstrow) standata$dokalmanrowsdata <- as.integer(c(1,diff(standata$subject)))
+  if(onlyfirstrow) standata$dokalmanrows <- as.integer(c(1,diff(standata$subject)))
   
   if(!quiet) message('Computing quantities for ', nrow(samples),' samples...')
   if(nrow(samples)==1) cores <- 1
@@ -455,7 +455,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
   env$sm <- sm
   env$samples <- samples
   if(cores > 1 && all(is.na(cl))){
-    cl <- parallel::makeCluster(cores, type = "PSOCK",useXDR=TRUE)
+    cl <- parallel::makeCluster(cores, type = "PSOCK",useXDR=TRUE,outfile='')
     on.exit(try(parallel::stopCluster(cl),silent=TRUE),add = TRUE)
     # parallel::clusterExport(cl2, c('sm','standata','samples'),environment())
     # parallel::clusterApply(cl2,1:cores, function(x) library(ctsem))
@@ -595,14 +595,17 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     standata$ntipredeffects <- 0L
   }
   
-  if(standata$nindvarying > 0 && standata$intoverpop==0){ #detect subject level pars
-    stochastic <- TRUE
-    standata$doonesubject <- 1L
-    message('Using combined stochastic gradient descent + mcmc')
-    a1=standata$nparams+standata$nindvarying+
-      (standata$nindvarying^2-standata$nindvarying)/2
-    whichmcmcpars <- (a1+1):(a1+standata$nindvarying) #*standata$nsubjects)
-  } else whichmcmcpars <- NA
+  #disabled attempt at stochastic grad with mcmc subject pars
+  # if(standata$nindvarying > 0 && standata$intoverpop==0){ #detect subject level pars
+  #   stochastic <- TRUE
+  #   standata$doonesubject <- 1L
+  #   message('Using combined stochastic gradient descent + mcmc')
+  #   a1=standata$nparams+standata$nindvarying+
+  #     (standata$nindvarying^2-standata$nindvarying)/2
+  #   whichmcmcpars <- (a1+1):(a1+standata$nindvarying) #*standata$nsubjects)
+  # } else 
+    whichmcmcpars <- NA #leftover necessity
+    
   
   smf <- stan_reinitsf(sm,standata)
   npars=rstan::get_num_upars(smf)
@@ -672,8 +675,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
 
         
         if("try-error" %in% class(out)) {
+          outerr <- out
           out <- -1e100
           attributes(out)$gradient <- rep(NaN, length(parm))
+          attributes(out)$err <- outerr
         }
         if(is.null(attributes(out)$gradient)) attributes(out)$gradient <- rep(NaN, length(parm))
         attributes(out)$gradient[is.nan(attributes(out)$gradient)] <-
@@ -702,7 +707,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       if(optimcores==1) target = singletarget #we use this for importance sampling
       if(cores > 1){ #for parallelised computation after fitting, if only single subject
-        clctsem=parallel::makeCluster(cores,useXDR=TRUE,type='PSOCK')
+        clctsem=parallel::makeCluster(cores,useXDR=TRUE,type='PSOCK',outfile='')
         on.exit(try({parallel::stopCluster(clctsem)},silent=TRUE),add=TRUE)
         parallel::clusterExport(clctsem,varlist = 'sm',envir = environment())
       }
@@ -717,14 +722,20 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           a=Sys.time()
           if('list' %in% class(parm)){
             out2 <- parallel::parLapply(cl = clctsem,X = parm,parlp)
-            bestset <- which(unlist(out2)==max(unlist(out2)))#sapply(out,max))
-            # print(bestset)
+            bestset <- which(unlist(out2)==max(unlist(out2)))
             bestset <- bestset[1]
             parm <- parm[[bestset]]
             out <- out2[[bestset]]
             attributes(out)$bestset <- bestset
           } else {
             out2<- parallel::clusterCall(clctsem,parlp,parm)
+            tmp<-sapply(1:length(out2),function(x) {
+              if(!is.null(attributes(out2[[x]])$err)){
+                if(length(out2) > 1) message('Error on core ', x,':')
+                message(attributes(out2[[x]])$err)
+              }
+            })
+            # browser()
             out <- try(sum(unlist(out2)),silent=TRUE)
             attributes(out)$gradient <- try(apply(sapply(out2,function(x) attributes(x)$gradient,simplify='matrix'),1,sum))
           }
@@ -1000,7 +1011,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       if(length(parsteps)>0) est2[-parsteps] = optimfit$par else est2=optimfit$par
       
       if(standata$nindvarying > 0 && standata$intoverpop==0){ #recompose into single model
-        standata$doonesubject <- 0L
+        # standata$doonesubject <- 0L
         a1=standata$nparams+standata$nindvarying+
           (standata$nindvarying^2-standata$nindvarying)/2
         whichmcmcpars <- (a1+1):(a1+standata$nindvarying*standata$nsubjects)
@@ -1589,10 +1600,15 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   if(!estonly){
     if(!is) lpsamples <- NA else lpsamples <- unlist(target_dens)[resample_i]
     
-    transformedpars=stan_constrainsamples(sm = sm,standata = standata,
+    message('Computing posterior with ',nrow(resamples),' samples')
+    sdat=standata
+    if(standata$savesubjectmatrices==0){ #otherwise just do one row to get pop pars
+      sdat$dokalmanrows[] <- as.integer(1,rep(0),standata$ndatapoints-1)
+    }
+    transformedpars=stan_constrainsamples(sm = sm,standata = sdat,
       savesubjectmatrices = standata$savesubjectmatrices, 
       dokalman=standata$savesubjectmatrices,
-      samples=resamples,cores=cores, cl=clctsem)
+      samples=resamples,cores=cores, cl=clctsem, quiet=TRUE)
     
     if(cores > 1) {
       parallel::stopCluster(clctsem)

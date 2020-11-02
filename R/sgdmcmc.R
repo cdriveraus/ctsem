@@ -13,7 +13,7 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
   
   initfull=init #including ignored params start values
   if(length(whichignore)>0) init=init[-whichignore]
-
+  
   errsum = function(x) sqrt(sum(abs(x)))
   
   combinepars <- function(pars,mcmcpars,whichmcmcpars,subject=NA){
@@ -22,6 +22,12 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
     out[-whichmcmcpars] <- pars
     if(!is.na(subject)) out <- c(out,subject)
     return(out)
+  }
+  
+  if(plot){
+    parbase=par(no.readonly=TRUE)
+    on.exit(do.call(par,parbase),add=TRUE)
+    par(mfrow=c(2,3),mgp=c(2,.8,0),mar=c(2,3,1,0)+.2)
   }
   
   fitfunc2 <- function(x,whichmcmcpars=NA){
@@ -231,7 +237,7 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
       # }
       
       if(any(is.na(newpars))) 
-      if(i==1) itertime <- Sys.time()
+        if(i==1) itertime <- Sys.time()
       
       
       if(!mcmcconverged){
@@ -267,9 +273,9 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
           fullnewpars <- initfull
           if(length(whichignore)>0) fullnewpars[-whichignore] <- newpars else fullnewpars <- newpars
           return(fullnewpars)
-      })
+        })
       }
-        
+      
       if(is.na(whichmcmcpars[1])) lpg= fitfunc2(fullnewpars,whichmcmcpars)
       if(length(whichignore)>0) attributes(lpg)$gradient <- attributes(lpg)$gradient[-whichignore]
       if(!is.null(attributes(lpg)$bestset)){
@@ -323,7 +329,7 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
     #once accepted 
     lp[i]=lpg[1]
     pars=newpars
-
+    
     
     
     
@@ -380,10 +386,10 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
     dghatsmooth = gmemory2*dghatsmooth +(1-gmemory2)*dghat
     dghatmix = dghatsmooth * dghatsmoothpar + dghat*(1-dghatsmoothpar)
     
-
-      parstore[,1+(i-1) %% nstore] = pars
-      gstore[,1+(i-1) %% nstore] = g
-
+    
+    parstore[,1+(i-1) %% nstore] = pars
+    gstore[,1+(i-1) %% nstore] = g
+    
     
     
     # if(i > (nstore+10) && (i %% gamiter)==10){# == (gamiter-2)) {
@@ -397,9 +403,9 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
     #     gamweights[gamindices] = gamweights[gamindices] * .9
     #     # gamiter=gamiter*1.5 #increase time between gams
     #   }
-      
-      # gamweights[gamindices][gamup] <- gamweights[gamindices][gamup] * 1.2
-      # gamweights[gamindices][!gamup] <- gamweights[gamindices][!gamup] * .8
+    
+    # gamweights[gamindices][gamup] <- gamweights[gamindices][gamup] * 1.2
+    # gamweights[gamindices][!gamup] <- gamweights[gamindices][!gamup] * .8
     # }
     
     # if(!i %% gamiter==0){
@@ -429,14 +435,14 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
         parscore <- parscore * .98
         whichmax <- which(pars > maxpars | pars < minpars)
         if(length(whichmax) > 0){
-        parscore[whichmax] <- parscore[whichmax]+.1*(as.numeric(pars[whichmax]>maxpars[whichmax])*2-1)
-        # gsmooth[whichmax] <- gsmooth[whichmax]  * 1.2*(1+abs(parscore[whichmax]))#*delta[whichmax] /step[whichmax]
-        # step[whichmax] <- step[whichmax] * 2*(1+abs(parscore[whichmax]))  #+ pars[whichmax]
-        pars[pars>maxpars] <- pars[pars>maxpars]+10*(1+abs(parscore[pars>maxpars]))*(pars[pars>maxpars]-maxpars[pars>maxpars] )
-        pars[pars< minpars] <- pars[pars< minpars]+10*(1+abs(parscore[pars<minpars]))*(pars[pars< minpars]-minpars[pars< minpars] )
-
-        maxpars[pars>maxpars] <-pars[pars>maxpars]
-        minpars[pars<minpars] <-pars[pars<minpars]
+          parscore[whichmax] <- parscore[whichmax]+.1*(as.numeric(pars[whichmax]>maxpars[whichmax])*2-1)
+          # gsmooth[whichmax] <- gsmooth[whichmax]  * 1.2*(1+abs(parscore[whichmax]))#*delta[whichmax] /step[whichmax]
+          # step[whichmax] <- step[whichmax] * 2*(1+abs(parscore[whichmax]))  #+ pars[whichmax]
+          pars[pars>maxpars] <- pars[pars>maxpars]+10*(1+abs(parscore[pars>maxpars]))*(pars[pars>maxpars]-maxpars[pars>maxpars] )
+          pars[pars< minpars] <- pars[pars< minpars]+10*(1+abs(parscore[pars<minpars]))*(pars[pars< minpars]-minpars[pars< minpars] )
+          
+          maxpars[pars>maxpars] <-pars[pars>maxpars]
+          minpars[pars<minpars] <-pars[pars<minpars]
         }
         changepars=pars
         if(length(whichmax)) changepars[-whichmax] <- NA else changepars[]<-NA
@@ -456,8 +462,8 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
       rndchange <- runif(length(maxpars),0,1) > .95
       # step[rndchange] <- stepbase
       if(any(rndchange)){
-      maxpars[rndchange] <- max(parstore[rndchange,]+1e-6)
-      minpars[rndchange] <- min(parstore[rndchange,]-1e-6)
+        maxpars[rndchange] <- max(parstore[rndchange,]+1e-6)
+        minpars[rndchange] <- min(parstore[rndchange,]-1e-6)
       }
     }
     
@@ -498,10 +504,6 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
     # message('ghatsmoothpar = ',ghatsmoothpar)
     # print(as.numeric(plot))
     if(plot && i %% as.numeric(plot) ==0){
-      if(i==1){parbase=par(no.readonly=TRUE)
-      on.exit(do.call(par,parbase),add=TRUE)
-      }
-      par(mfrow=c(2,3),mgp=c(2,.8,0),mar=c(2,3,1,0)+.2)
       plot(pars,col=1:length(pars))
       points(changepars,pch=17,col='red')
       

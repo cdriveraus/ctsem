@@ -122,7 +122,8 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
         function(x) fit$standata[[x]][] <<- 0L)
       fit$standata$Y[] <- 99999
     }
-    out <- ctStanKalman(fit,pointest=ifelse('stanfit' %in% class(fit$stanfit),FALSE,TRUE), collapsefunc=mean, indvarstates = TRUE) #extract state predictions
+    out <- ctStanKalman(fit,pointest=ifelse('stanfit' %in% class(fit$stanfit),FALSE,TRUE), 
+      collapsefunc=mean, indvarstates = FALSE) #extract state predictions
     out$id <- idstore #as.integer(subjects[out$id]) #get correct subject indicators
 
     out <- meltkalman(out)
@@ -257,20 +258,21 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
 #'   elementNames=c('Y1','Y2'), 
 #'   plot=TRUE,timestep=.01)
 #' }
-plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','yprior'),
+plot.ctKalmanDF<-function(x, subjects=unique(x$Subject), kalmanvec=c('y','yprior'),
   errorvec='auto', errormultiply=1.96,plot=TRUE,elementNames=NA,
   polygonsteps=10,polygonalpha=.1,
   facets=vars(Variable),
   ...){
   
+  kdf <- (x)
   
-  if(!'ctKalmanDF' %in% class(x)) stop('not a ctKalmanDF object')
+  if(!'ctKalmanDF' %in% class(kdf)) stop('not a ctKalmanDF object')
   
   if(1==99) Time <- Value <- Subject <- Row <- Variable <- Element <- NULL
-  setnames(x,'Row', "Variable")
-  setnames(x,'value', "Value")
+  colnames(kdf)[colnames(kdf) %in% 'Row'] <- "Variable"
+  colnames(kdf)[colnames(kdf) %in% 'value'] <- "Value"
   
-  if(any(!is.na(elementNames))) x <- subset(x,Variable %in% elementNames)
+  if(any(!is.na(elementNames))) kdf <- subset(kdf,Variable %in% elementNames)
   
   klines <- kalmanvec[grep('(prior)|(upd)|(smooth)',kalmanvec)]
   if(all(errorvec %in% 'auto')) errorvec <- klines
@@ -286,7 +288,7 @@ plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','yprior'),
   shapevec[shapevec>0] <- NA
   shapevec[is.na(ltyvec)] <- 19
   # 
-  d<-subset(x,Element %in% kalmanvec)
+  d<-subset(kdf,Element %in% kalmanvec)
   
   g <- ggplot(d,
     aes_string(x='Time',y='Value',colour=colvec,linetype='Element',shape='Element')) +
@@ -295,7 +297,7 @@ plot.ctKalmanDF<-function(x, subjects=1, kalmanvec=c('y','yprior'),
     # labs(linetype='Element',shape='Element',colour='Element',fill='Element')+
     scale_fill_discrete(guide='none')
   
-  if(!is.na(facets[1]) && length(subjects) > 1 && length(unique(subset(x,Element %in% kalmanvec)$Variable)) > 1){
+  if(!is.na(facets[1]) && length(subjects) > 1 && length(unique(subset(kdf,Element %in% kalmanvec)$Variable)) > 1){
     g <- g+ facet_wrap(facets,scales = 'free') 
   }
   

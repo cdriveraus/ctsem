@@ -71,7 +71,7 @@ ctcorplots <- function(dlong, vars, maxlag, splitvar=NA, splitpoints=NA,varsPerP
 
 ctStanDataOut <- function(fit){
   dat <- data.table(fit$standata$time)
-  setnames(dat, fit$ctstanmodel$timeName)
+  colnames(dat) <- fit$ctstanmodel$timeName
   dat[,(fit$ctstanmodel$subjectIDname) := data.table(fit$setup$idmap[fit$data$subject,1] ) ]
   dat[,(fit$ctstanmodel$manifestNames) := data.table(fit$data$Y)]
   if(fit$ctstanmodel$n.TDpred > 0) dat[,(fit$ctstanmodel$TDpredNames) := data.table(fit$standata$tdpreds)]

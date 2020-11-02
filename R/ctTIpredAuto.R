@@ -121,8 +121,10 @@ whichsubjectpars <- function(standata,subjects=NA){
   if(standata$ntipredeffects > 0) {
     tipredstart <- (a1+
         ifelse(standata$intoverpop,0,standata$nindvarying*standata$nsubjects)+1)
-    whichbase <- c(whichbase,tipredstart:(tipredstart+standata$ntipredeffects+
-        ifelse(standata$doonesubject >0,0,-1)))
+    whichbase <- c(whichbase,tipredstart:(tipredstart+standata$ntipredeffects -1
+        # ifelse(standata$doonesubject >0,0,-1)
+        #disabled the doonesubject thing
+      ))
   }
   return(whichbase)
 }

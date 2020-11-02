@@ -17,7 +17,7 @@
 #' }
 ctLOO <- function(fit,folds=10,cores=2,parallelFolds=FALSE, 
   subjectwise=ifelse(length(unique(fit$standata$subject)) > folds, TRUE, FALSE),
-  keepfirstobs=FALSE){
+  keepfirstobs=FALSE, init='fit'){
   bootstrap <- FALSE
   if(!'ctStanFit' %in% class(fit)|| !'list' %in% class(fit$stanfit)) stop('Not an optimized ctStanFit object')
   
@@ -38,38 +38,31 @@ ctLOO <- function(fit,folds=10,cores=2,parallelFolds=FALSE,
   
   sdat=fit$standata
   smodel <- fit$stanmodel
-  # if(init=='fit') 
-    init=fit$stanfit$rawest #else init=rnorm(length(fit$stanfit$rawest),0,.01)#
+  if(init=='fit') init=fit$stanfit$rawest else init=rnorm(length(fit$stanfit$rawest),0,.01)#
 
   if(parallelFolds && cores > 1){
     clctsem <- parallel::makeCluster(spec = min(cores,folds))
     parallel::clusterExport(clctsem,c('sdat','smodel','init','parallelFolds'),envir=environment())
     on.exit({parallel::stopCluster(clctsem)},add = TRUE)
   } else clctsem <- NA
-  
-    # browser()
+
   folded <- flexlapply(clctsem,X = srows,fn = function(x) {
-    library(ctsem)
-    # sink(file = file.path(tempdir(),paste0('parout_',ceiling(runif(1,0,10000)),'.txt')))
-    
-    sdat$dokalmanrowsdata[x] <- 0L
-    sdat$dokalmanrowsata[-x] <- 1L
-    # browser()
+    require(ctsem)
+    sdat$dokalmanrows[x] <- 0L
+    sdat$dokalmanrows[-x] <- 1L
     e <- try(stanoptimis(standata = sdat,sm = smodel,init = init,
       # optimcontrol(list(stochastic=TRUE)),
       estonly = TRUE,cores=ifelse(parallelFolds,1,cores),plot=10,verbose=0))
-    # print(e)
-
-    if('try-error' %in% class(e))   e <- try(stanoptimis(standata = sdat,sm = smodel,
-      init = init,
-      estonly = TRUE,cores=ifelse(parallelFolds,1,cores),stochastic=FALSE))
+    # 
+    # if('try-error' %in% class(e) && init='fit')   e <- try(stanoptimis(standata = sdat,sm = smodel,
+    #   init = 0,
+    #   estonly = TRUE,cores=ifelse(parallelFolds,1,cores),stochastic=FALSE))
     
     if('try-error' %in% class(e)) return(NA) else{
     sdat$savescores <- 1L
-    sdat$dokalmanrowsdata <- fit$standata$dokalmanrowsdata
+    sdat$dokalmanrows <- fit$standata$dokalmanrows
     smf <- stan_reinitsf(smodel,sdat)
     cp = rstan::constrain_pars(smf,e$rawest)
-    sink()
     return(list(llrow=cp$llrow,pars=e$rawest))
     }
   },cores = ifelse(parallelFolds,cores,1))
@@ -80,7 +73,7 @@ ctLOO <- function(fit,folds=10,cores=2,parallelFolds=FALSE,
   llrowoos=unlist(lapply(1:folds,function(x) folded[[x]]$llrow[srows[[x]] ]))
   llrowoos=llrowoos[match(1:(fit$standata$ndatapoints),unlist(srows))]
   llrowoosSubject=sapply(unique(fit$standata$subject),function(x) 
-    sum(llrowoos[fit$standata$subject==x],na.rm=TRUE) )
+    sum(llrowoos[fit$standata$subject==x],na.rm=FALSE) )
   llrow=fit$stanfit$transformedparsfull$llrow
   llrowSubject=sapply(unique(fit$standata$subject),function(x) 
     sum(llrow[fit$standata$subject==x],na.rm=TRUE) )

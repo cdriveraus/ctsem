@@ -68,6 +68,7 @@ ctSaturatedFitConditional<-function(dat,ucols,reg,hmc=FALSE,covf=NA,verbose=0){
     #   }
     #   return(llr)
     # })
+    covf$cp <- cp
     covf$ll <- sum(cp$llrow,na.rm=TRUE)
     # print( covf$ll)
     # browser()
@@ -138,6 +139,8 @@ ctSaturatedFit <- function(fit,conditional=FALSE,reg=FALSE, hmc=FALSE,
       #saturated model oos
       fin=ctSaturatedFitConditional(dat = datheldout,ucols = ucols,reg = reg,hmc=hmc)
       fitoos=ctSaturatedFitConditional(dat = dat[x,,drop=FALSE],ucols = ucols,reg = reg,covf=fin)
+      fin$lloos <- fitoos$cp$llrow
+      print(fitoos$cp$llrow)
       
       #independence model oos
       findep=covml(ndat = datheldout[,ucols,drop=FALSE],reg = reg,
@@ -145,12 +148,11 @@ ctSaturatedFit <- function(fit,conditional=FALSE,reg=FALSE, hmc=FALSE,
       covdat <- covdata(ndat = dat[x,ucols,drop=FALSE],reg=reg,independent = TRUE)
       smf <- rstan::sampling(stanmodels$cov,data=covdat,chains=0)
       cp <- rstan::constrain_pars(smf,findep$fit$par)
-      
-      fin$lloos <- fitoos$ll
       fin$llindependentoos <- cp$llrow
+      
       return(fin)
     },cores = cores)
-    # browser()
+    browser()
     llfold=unlist(lapply(sf,function(x) x$lloos))
     
     plot(llfold,main='LL folds')
