@@ -265,10 +265,8 @@ data {
   int matrixdims[54,2];
   int savescores;
   int savesubjectmatrices;
-  int fixedsubpars;
-  vector[fixedsubpars ? nindvarying : 0] fixedindparams[fixedsubpars ? nsubjects : 0];
   int dokalman;
-  int dokalmanrowsdata[ndatapoints];
+  int dokalmanrows[ndatapoints];
   real Jstep;
   real dokalmanpriormodifier;
   int intoverpopindvaryingindex[intoverpop ? nindvarying : 0];
@@ -280,14 +278,12 @@ data {
   int difftype;
   int popcovn;
   int llsinglerow;
-  int doonesubject;
 }
       
 transformed data{
   matrix[nlatent+nindvarying,nlatent+nindvarying] IIlatentpop = diag_matrix(rep_vector(1,nlatent+nindvarying));
   vector[nlatentpop-nlatent] nlpzerovec = rep_vector(0,nlatentpop-nlatent);
   vector[nlatent+1] nlplusonezerovec = rep_vector(0,nlatent+1);
-  int nsubjects2 = doonesubject ? 1 : nsubjects;
   int tieffectindices[nparams]=rep_array(0,nparams);
   int ntieffects = 0;
   
@@ -307,14 +303,12 @@ parameters{
 
   vector[nindvarying] rawpopsdbase; //population level std dev
   vector[nindvaryingoffdiagonals] sqrtpcov; // unconstrained basis of correlation parameters
-  vector[fixedsubpars ? 0 : (intoverpop ? 0 : nindvarying)] baseindparams[fixedsubpars ? 0 : (intoverpop ? 0 :  (doonesubject ? 1 : nsubjects2) )]; //vector of subject level deviations, on the raw scale
+  vector[intoverpop ? 0 : nindvarying] baseindparams[intoverpop ? 0 : nsubjects]; //vector of subject level deviations, on the raw scale
   
   vector[ntipredeffects] tipredeffectparams; // effects of time independent covariates
   vector[nmissingtipreds] tipredsimputed;
-  //vector[ (( (ntipredeffects-1) * (1-nopriors) ) > 0) ? 1 : 0] tipredglobalscalepar;
   
   
-  real onesubject[doonesubject ? doonesubject : 0]; //allows multiple specific
 }
       
 transformed parameters{
@@ -373,15 +367,12 @@ transformed parameters{
 }
       
 model{
-  if(doonesubject==0 ||onesubject[1] > .5){ 
-    if(intoverpop==0 && fixedsubpars == 1 && nindvarying > 0) target+= multi_normal_cholesky_lpdf(fixedindparams | rep_vector(0,nindvarying),IIlatentpop[1:nindvarying,1:nindvarying]);
-    if(intoverpop==0 && fixedsubpars == 0 && nindvarying > 0) target+= multi_normal_cholesky_lpdf(baseindparams | rep_vector(0,nindvarying), IIlatentpop[1:nindvarying,1:nindvarying]);
+  if(intoverpop==0 && nindvarying > 0) target+= multi_normal_cholesky_lpdf(baseindparams | rep_vector(0,nindvarying), IIlatentpop[1:nindvarying,1:nindvarying]);
+
+  if(ntipred > 0){ 
+    if(nopriors==0) target+= dokalmanpriormodifier * normal_lpdf(tipredeffectparams| 0, tipredeffectscale);
+    target+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
   }
-  if(doonesubject==0 ||onesubject[1] < .5){ 
-    if(ntipred > 0){ 
-      if(nopriors==0) target+= dokalmanpriormodifier * normal_lpdf(tipredeffectparams| 0, tipredeffectscale);
-      target+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
-    }
 
   if(nopriors==0){ //if split files over subjects, just compute priors once
    target+= dokalmanpriormodifier * normal_lpdf(rawpopmeans|0,1);
@@ -391,7 +382,6 @@ model{
       target+= dokalmanpriormodifier * normal_lpdf(rawpopsdbase | 0,1);
     }
   } //end pop priors section
-  }
   
   
   
@@ -522,7 +512,6 @@ generated quantities{
   real dtsmall;
   int dtchange=1;
   int T0check=0;
-  int subjectcount = 0;
   int counter = 1;
   matrix[nlatentpop, nlatentpop] etacov; //covariance of latent states
 
@@ -541,6 +530,7 @@ generated quantities{
   matrix[nlatentpop,nlatentpop] sJ0; //Jacobian for t0
   matrix[nlatentpop,nlatentpop] sJtd;//diag_matrix(rep_vector(1),nlatentpop); //Jacobian for nltdpredeffect
   matrix[ nmanifest,nlatentpop] sJy;//Jacobian for measurement 
+  matrix[ nmanifest,nlatentpop] Jysaved[savescores ? ndatapoints : 0];
   
   
 
@@ -568,40 +558,17 @@ generated quantities{
       matrix[matrixdims[21, 1], matrixdims[21, 2] ] sasymCINT;
       matrix[matrixdims[22, 1], matrixdims[22, 2] ] sasymDIFFUSION;
   
-  int dokalmanrows[ndatapoints] = dokalmanrowsdata;
-  
   sasymDIFFUSION = rep_matrix(0,nlatent,nlatent); //in case of derrindices need to init
   sDIFFUSIONcov = rep_matrix(0,nlatent,nlatent);
-  
-  if(doonesubject==1){
-    dokalmanrows=rep_array(0,ndatapoints);
-    for(i in 1:ndatapoints){
-      for(subi in 1:size(onesubject)){
-        if(fabs(subject[i]-onesubject[subi]) < .5){
-          dokalmanrows[i] = 1; 
-        }
-      }
-    }
-  }
 
   for(rowi in 1:(dokalman ? ndatapoints :1)){
-  if(dokalmanrows[rowi] ==1) { //used for subset selection
-    int o[savescores ? nmanifest : nobs_y[rowi]]; //which obs are not missing in this row
-    int o1[savescores ? size(whichequals(manifesttype,1,1)) : nbinary_y[rowi] ];
-    int o0[savescores ? size(whichequals(manifesttype,1,0)) : ncont_y[rowi] ];
-    
-    int od[nobs_y[rowi]] = whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
-    int o1d[nbinary_y[rowi] ]= whichbinary_y[rowi,1:nbinary_y[rowi]];
-    int o0d[ncont_y[rowi] ]= whichcont_y[rowi,1:ncont_y[rowi]];
-    
-    if(!savescores){
-      o= whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
-      o1= whichbinary_y[rowi,1:nbinary_y[rowi]];
-      o0= whichcont_y[rowi,1:ncont_y[rowi]];
-    }
-    
+    int nsubs = prevrow ? 1 : 2; //first pass through needs 2 subjects for sub 0 (pop pars)
+    int rowsubs[nsubs]; //container for 1 or 2 subject refs
   
     si = subject[rowi];
+    rowsubs[size(rowsubs)] = si; //setup 2 subject index container
+    if(prevrow==0) rowsubs[1] = 0;
+    
     if(prevrow != 0) T0check = (si==subject[prevrow]) ? (T0check+1) : 0; //if same subject, add one, else zero
     if(T0check > 0){
       dt = time[rowi] - time[prevrow];
@@ -612,20 +579,18 @@ generated quantities{
     if(savescores && prevrow!=0) Je[rowi,,] = Je[prevrow,,];
     
     
-  for(subi in (((prevrow!=0) ? si : 0)):si){
-       
+  for(subi in rowsubs){
+    
     if(T0check == 0) { // calculate initial matrices if this is first row for si
   
   rawindparams=rawpopmeans;
   
-  if(subi > 0 && nindvarying > 0 && intoverpop==0) {
-    if(fixedsubpars==0) rawindparams[indvaryingindex] += rawpopc[2] * baseindparams[doonesubject ? 1 : subi];
-    if(fixedsubpars==1) rawindparams[indvaryingindex] += rawpopc[2] * fixedindparams[doonesubject ? 1 : subi];
-  }
+  if(subi > 0 && nindvarying > 0 && intoverpop==0)  rawindparams[indvaryingindex] += rawpopc[2] * baseindparams[subi];
 
   if(subi > 0 &&  ntieffects > 0){
   if(nmissingtipreds > 0) rawindparams[tieffectindices[1:ntieffects]] += 
     TIPREDEFFECT[tieffectindices[1:ntieffects]] *  tipreds[subi]';
+    
     if(nmissingtipreds==0) rawindparams[tieffectindices[1:ntieffects]] += 
     TIPREDEFFECT[tieffectindices[1:ntieffects]] *  tipredsdata[subi]';
   }
@@ -670,7 +635,7 @@ sJ0=mcalc(sJ0,indparams, statetf,{0,1}, 51, matsetup, matvalues, si, subindices)
 
     
     
-  if(subi <= (subindices[8] ? nsubjects2 : 0)) {
+  if(subi <= (subindices[8] ? nsubjects : 0)) {
    if(intoverpop && nindvarying > 0) sT0VAR[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopc[1];
     sT0VAR = makesym(sdcovsqrt2cov(sT0VAR,choleskymats),verbose,1); 
 
@@ -814,9 +779,25 @@ if(verbose > 1){
 
 
 
- if (subi==0 || nobs_y[rowi] > 0 || savescores) {  //do this section for 0th subject as well to init matrices
+ if ((subi==0 || nobs_y[rowi] > 0 || savescores) && dokalmanrows[rowi] ==1){ //do this section for 0th subject as well to init matrices
+   int full = (savescores==1 || subi ==0);
+   int o[full ? nmanifest : nobs_y[rowi]]; //which obs are not missing in this row
+    int o1[full ? size(whichequals(manifesttype,1,1)) : nbinary_y[rowi] ];
+    int o0[full ? size(whichequals(manifesttype,1,0)) : ncont_y[rowi] ];
+    
+    int od[nobs_y[rowi]] = whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
+    int o1d[nbinary_y[rowi] ]= whichbinary_y[rowi,1:nbinary_y[rowi]];
+    int o0d[ncont_y[rowi] ]= whichcont_y[rowi,1:ncont_y[rowi]];
+    
+    if(!full){
+      o= whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
+      o1= whichbinary_y[rowi,1:nbinary_y[rowi]];
+      o0= whichcont_y[rowi,1:ncont_y[rowi]];
+    }
+    
     
       
+  {
     int zeroint[1];
     vector[nlatentpop] basestate = state;
     zeroint[1] = 0;
@@ -849,11 +830,9 @@ if(sum(whenmat[54,{4}]) > 0)sJy=mcalc(sJy,indparams, statetf,{4}, 54, matsetup, 
       }
     }
     if(verbose>1) print("sJy ",sJy);
-    
-      
- } // end measurement init
+  }
  
-   if(subi > 0 && (nobs_y[rowi] > 0 || savescores)){   // if some observations create right size matrices for missingness and calculate...
+   if(subi > 0){   //if not just inits...
 
       if(intoverstates==1 || savescores==1) { //classic kalman
         ycov[o,o] = quad_form(etacov, sJy[o,]'); // + sMANIFESTVAR[o,o]; shifted measurement error down
@@ -935,21 +914,22 @@ if(sum(whenmat[54,{4}]) > 0)sJy=mcalc(sJy,indparams, statetf,{4}, 54, matsetup, 
         }
   
       
-    }//end nobs > 0 section
+      if(savescores) Jysaved[rowi] = sJy;
+      
+    }//end subi > 0 nobs > 0 section
+  } // end measurement init loop and dokalmanrows section here to collect matrices
     
        // store system matrices
        
-  if(subi <= ((subindices[3] + subindices[7])  ? nsubjects2 : 0)){
+  if(subi <= ((subindices[3] + subindices[7])  ? nsubjects : 0)){
     if(continuoustime==1) sasymCINT[,1] =  -sDRIFT[1:nlatent,1:nlatent] \ sCINT[ ,1 ];
     if(continuoustime==0) sasymCINT[,1] =  add_diag(-sDRIFT[1:nlatent,1:nlatent],1) \ sCINT[,1 ];
   }
   
-  if(subi <= ((subindices[3] + subindices[7])  ? nsubjects2 : 0) && !continuoustime) sasymDIFFUSION[ derrind, derrind ] = 
+  if(subi <= ((subindices[3] + subindices[7])  ? nsubjects : 0) && !continuoustime) sasymDIFFUSION[ derrind, derrind ] = 
     to_matrix( (add_diag( 
       -sqkron_prod(sDRIFT[ derrind, derrind ], sDRIFT[ derrind, derrind ]),1)) \  
       to_vector(sDIFFUSIONcov[ derrind, derrind ]), ndiffusion, ndiffusion);
-
-
     
   if(savesubjectmatrices && subi > 0 && (rowi==ndatapoints || subject[rowi+1] != subject[rowi])){
     if(sum(whenmat[10,1:5]) > 0) PARS[subi] = sPARS;
@@ -969,13 +949,11 @@ if(sum(whenmat[54,{4}]) > 0)sJy=mcalc(sJy,indparams, statetf,{4}, 54, matsetup, 
   if(subi == 0){
 pop_PARS = sPARS; pop_T0MEANS = sT0MEANS; pop_LAMBDA = sLAMBDA; pop_DRIFT = sDRIFT; pop_DIFFUSION = sDIFFUSION; pop_MANIFESTVAR = sMANIFESTVAR; pop_MANIFESTMEANS = sMANIFESTMEANS; pop_CINT = sCINT; pop_T0VAR = sT0VAR; pop_TDPREDEFFECT = sTDPREDEFFECT; pop_DIFFUSIONcov = sDIFFUSIONcov; pop_asymCINT = sasymCINT; pop_asymDIFFUSION = sasymDIFFUSION; 
   }
-    
-  } // end extra subi == 0 for subject matrix creation
 
   
   
+ } // end subi loop (includes sub 0)
   
-  } // end dokalmanrows subset selection
   prevrow = rowi; //update previous row marker only after doing necessary calcs
 }//end rowi
 ll+=sum(llrow);

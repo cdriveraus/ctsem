@@ -238,7 +238,7 @@ parallelStanSetup <- function(cl, standata,split=TRUE){
     assign('smf',stan_reinitsf(sm,standata),pos = g)
     
     rm(standata,env=g)
-    rm(sm,env=g)
+    # rm(sm,env=g)
     # env <- new.env(parent=globalenv())
     # environment(parlp) <- env
     # assign('parlp',parlp,pos = g)

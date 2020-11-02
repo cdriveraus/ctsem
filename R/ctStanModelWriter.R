@@ -894,6 +894,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,simplify=TRUE){
   
   finiteJy<-function(){
     paste0('
+  {
     int zeroint[1];
     vector[nlatentpop] basestate = state;
     zeroint[1] = 0;
@@ -920,7 +921,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,simplify=TRUE){
       }
     }
     if(verbose>1) print("sJy ",sJy);
-    ')
+  }')
   }
   
   
@@ -977,24 +978,6 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,simplify=TRUE){
   for(rowi in 1:(dokalman ? ndatapoints :1)){
     int nsubs = prevrow ? 1 : 2; //first pass through needs 2 subjects for sub 0 (pop pars)
     int rowsubs[nsubs]; //container for 1 or 2 subject refs
-    int o[savescores ? nmanifest : nobs_y[rowi]]; //which obs are not missing in this row
-    int o1[savescores ? size(whichequals(manifesttype,1,1)) : nbinary_y[rowi] ];
-    int o0[savescores ? size(whichequals(manifesttype,1,0)) : ncont_y[rowi] ];
-    
-    int od[nobs_y[rowi]] = whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
-    int o1d[nbinary_y[rowi] ]= whichbinary_y[rowi,1:nbinary_y[rowi]];
-    int o0d[ncont_y[rowi] ]= whichcont_y[rowi,1:ncont_y[rowi]];
-    
-    if(!savescores){
-      o= whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
-      o1= whichbinary_y[rowi,1:nbinary_y[rowi]];
-      o0= whichcont_y[rowi,1:ncont_y[rowi]];
-    }
-    ',if(!ppchecking) 'if(savescores){ //needed to calculate yprior and yupd ysmooth
-      for(mi in 1:nmanifest) o[mi] = mi;
-      o1= whichequals(manifesttype,1,1);
-      o0= whichequals(manifesttype,1,0);
-    }','
   
     si = subject[rowi];
     rowsubs[size(rowsubs)] = si; //setup 2 subject index container
@@ -1194,12 +1177,29 @@ if(verbose > 1){
 }','
 
  if ((subi==0 || nobs_y[rowi] > 0 || savescores) && dokalmanrows[rowi] ==1){ //do this section for 0th subject as well to init matrices
+   int full = (savescores==1 || subi ==0);
+   int o[full ? nmanifest : nobs_y[rowi]]; //which obs are not missing in this row
+    int o1[full ? size(whichequals(manifesttype,1,1)) : nbinary_y[rowi] ];
+    int o0[full ? size(whichequals(manifesttype,1,0)) : ncont_y[rowi] ];
+    
+    int od[nobs_y[rowi]] = whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
+    int o1d[nbinary_y[rowi] ]= whichbinary_y[rowi,1:nbinary_y[rowi]];
+    int o0d[ncont_y[rowi] ]= whichcont_y[rowi,1:ncont_y[rowi]];
+    
+    if(!full){
+      o= whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
+      o1= whichbinary_y[rowi,1:nbinary_y[rowi]];
+      o0= whichcont_y[rowi,1:ncont_y[rowi]];
+    }
+    ',if(!ppchecking) 'if(full){ //needed to calculate yprior and yupd ysmooth
+      for(mi in 1:nmanifest) o[mi] = mi;
+      o1= whichequals(manifesttype,1,1);
+      o0= whichequals(manifesttype,1,0);
+    }','
     
       ',finiteJy(),'
-      
- } // end measurement init
  
-   if(subi > 0 && dokalmanrows[rowi] ==1 && (nobs_y[rowi] > 0 || savescores)){   // if some observations create right size matrices for missingness and calculate...
+   if(subi > 0){   //if not just inits...
 
       if(intoverstates==1 || savescores==1) { //classic kalman
         ycov[o,o] = quad_form(etacov, sJy[o,]\'); // + sMANIFESTVAR[o,o]; shifted measurement error down
@@ -1296,7 +1296,9 @@ if(verbose > 1){
         }
       '},'
       if(savescores) Jysaved[rowi] = sJy;
-    }//end nobs > 0 section
+      
+    }//end subi > 0 nobs > 0 section
+  } // end measurement init loop and dokalmanrows section here to collect matrices
     
        // store system matrices
        
@@ -1309,8 +1311,6 @@ if(verbose > 1){
     to_matrix( (add_diag( 
       -sqkron_prod(sDRIFT[ derrind, derrind ], sDRIFT[ derrind, derrind ]),1)) \\  
       to_vector(sDIFFUSIONcov[ derrind, derrind ]), ndiffusion, ndiffusion);
-
-
     
   if(savesubjectmatrices && subi > 0 && (rowi==ndatapoints || subject[rowi+1] != subject[rowi])){',
   paste0(collectsubmats(popmats=FALSE),collapse=' '),'
@@ -1318,13 +1318,10 @@ if(verbose > 1){
   if(subi == 0){
 ',paste0(collectsubmats(popmats=TRUE),collapse=' '),'
   }
-    
-  } // end extra subi == 0 for subject matrix creation
 
   
-  ',if(!ppchecking) paste0('if(savescores && (rowi==ndatapoints || subject[rowi+1] != subject[rowi])){ //at subjects last datapoint, smooth
+  ',if(!ppchecking) paste0('if(subi > 0 && savescores && (rowi==ndatapoints || subject[rowi+1] != subject[rowi])){ //at subjects last datapoint, smooth
     int sri = rowi;
-    int subi = si; //copy needed
     while(sri>0 && subject[sri]==si){
       if(sri==rowi) {
         etaa[3,sri]=etaa[2,sri];
@@ -1350,6 +1347,7 @@ if(verbose > 1){
   } //end smoother
 
   '),'
+ } // end subi loop (includes sub 0)
   
   prevrow = rowi; //update previous row marker only after doing necessary calcs
 }//end rowi

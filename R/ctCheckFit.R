@@ -152,12 +152,24 @@ ctSaturatedFit <- function(fit,conditional=FALSE,reg=FALSE, hmc=FALSE,
       
       return(fin)
     },cores = cores)
-    browser()
-    llfold=unlist(lapply(sf,function(x) x$lloos))
     
-    plot(llfold,main='LL folds')
+    #out of sample saturated ll
+    llfold=unlist(lapply(sf,function(x) x$lloos))
+    llfold=llfold[match(names(unlist(srows)),(unlist(srows)))]
+    
+    plot(llfold,covf$cp$llrow, main='OOS vs IS LogLik',ylab='In sample LL',
+      xlab='Out of sample LL')
+    abline(a=0,b=1)
     
     covf$lloos = sum(llfold,na.rm=TRUE)
+    covf$llrowoos = llfold
+    # browser()
+    
+    #out of sample independent ll
+    covf$llrowindependentoos <-  unlist(lapply(sf,function(x) x$llindependentoos))[match(names(unlist(srows)),(unlist(srows)))]
+    plot(covf$llrowindependentoos,llfold, main='LL OOS indep. vs OOS sat.',ylab='Out of sample saturated LL',
+      xlab='Out of sample independence LL')
+    abline(a=0,b=1)
     covf$llindependentoos <- sum(unlist(sapply(sf,function(x) x$llindependentoos)),na.rm=TRUE)
   }
   

@@ -1,4 +1,4 @@
-ctsmupdate<-function(usecurrentwd=FALSE){
+ctsmupdate<-function(usecurrentwd=FALSE,scat=FALSE){
   
  sunspots<-datasets::sunspot.year
  sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
@@ -19,11 +19,17 @@ datalong <- cbind(id, time, sunspots)
    DIFFUSION=matrix(c(.0001, 0, 0, "diffusion"), ncol=2, nrow=2))
 
 #fit
+ 
+ sm <- ctStanFit(datalong, model,fit=FALSE,gendata=FALSE,forcerecompile=TRUE)$stanmodeltext
+
+ if(scat) scat(sm)
+ 
+ stanc(model_code = sm,verbose = TRUE)
+ 
 smgen <- ctStanFit(datalong, model,fit=FALSE,gendata=TRUE,forcerecompile=TRUE)$stanmodeltext
 stanc(model_code = smgen,verbose = TRUE)
 
-sm <- ctStanFit(datalong, model,fit=FALSE,gendata=FALSE,forcerecompile=TRUE)$stanmodeltext
-stanc(model_code = sm,verbose = TRUE)
+
 
 # model$w32 <- TRUE
 # smgen32 <- ctStanFit(datalong, model,fit=FALSE,gendata=TRUE)$stanmodeltext
