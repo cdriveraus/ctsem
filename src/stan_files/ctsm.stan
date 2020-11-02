@@ -414,7 +414,6 @@ transformed parameters{
   matrix[nlatentpop,nlatentpop] sJ0; //Jacobian for t0
   matrix[nlatentpop,nlatentpop] sJtd;//diag_matrix(rep_vector(1),nlatentpop); //Jacobian for nltdpredeffect
   matrix[ nmanifest,nlatentpop] sJy;//Jacobian for measurement 
-  matrix[ nmanifest,nlatentpop] Jysaved[savescores ? ndatapoints : 0];
   
   
 
@@ -445,13 +444,31 @@ transformed parameters{
   sasymDIFFUSION = rep_matrix(0,nlatent,nlatent); //in case of derrindices need to init
   sDIFFUSIONcov = rep_matrix(0,nlatent,nlatent);
 
-  for(rowi in 1:(dokalman ? ndatapoints :1)){
-    int nsubs = prevrow ? 1 : 2; //first pass through needs 2 subjects for sub 0 (pop pars)
-    int rowsubs[nsubs]; //container for 1 or 2 subject refs
+  for(subi in 0:max(subject)){
+  for(rowi in 1:ndatapoints){
+    if( (rowi==1 && subi==0) ||(dokalman && dokalmanrows[rowi] && subject[rowi]==subi) ){ //if doing this row for this subject
+    
+    int full = (savescores==1 || subi ==0);
+    int o[full ? nmanifest : nobs_y[rowi]]; //which obs are not missing in this row
+    int o1[full ? size(whichequals(manifesttype,1,1)) : nbinary_y[rowi] ];
+    int o0[full ? size(whichequals(manifesttype,1,0)) : ncont_y[rowi] ];
+    
+    int od[nobs_y[rowi]] = whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
+    int o1d[nbinary_y[rowi] ]= whichbinary_y[rowi,1:nbinary_y[rowi]];
+    int o0d[ncont_y[rowi] ]= whichcont_y[rowi,1:ncont_y[rowi]];
+    
+    if(!full){
+      o= whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
+      o1= whichbinary_y[rowi,1:nbinary_y[rowi]];
+      o0= whichcont_y[rowi,1:ncont_y[rowi]];
+    }
+    if(full){ //needed to calculate yprior and yupd ysmooth
+      for(mi in 1:nmanifest) o[mi] = mi;
+      o1= whichequals(manifesttype,1,1);
+      o0= whichequals(manifesttype,1,0);
+    }
   
-    si = subject[rowi];
-    rowsubs[size(rowsubs)] = si; //setup 2 subject index container
-    if(prevrow==0) rowsubs[1] = 0;
+    si = subi;  //subject[rowi]; //remove this reference
     
     if(prevrow != 0) T0check = (si==subject[prevrow]) ? (T0check+1) : 0; //if same subject, add one, else zero
     if(T0check > 0){
@@ -459,11 +476,7 @@ transformed parameters{
       dtchange = dt!=prevdt; 
       prevdt = dt; //update previous dt store after checking for change
     }
-    //if(savescores || prevrow==0) Je[savescores ? rowi : 1] = IIlatentpop[1:nlatentpop,1:nlatentpop]; //elements updated later
     if(savescores && prevrow!=0) Je[rowi,,] = Je[prevrow,,];
-    
-    
-  for(subi in rowsubs){
     
     if(T0check == 0) { // calculate initial matrices if this is first row for si
   
@@ -666,26 +679,7 @@ if(savescores){
   etaa[1,rowi] = state;
 }
 
- if ((subi==0 || nobs_y[rowi] > 0 || savescores) && dokalmanrows[rowi] ==1){ //do this section for 0th subject as well to init matrices
-   int full = (savescores==1 || subi ==0);
-   int o[full ? nmanifest : nobs_y[rowi]]; //which obs are not missing in this row
-    int o1[full ? size(whichequals(manifesttype,1,1)) : nbinary_y[rowi] ];
-    int o0[full ? size(whichequals(manifesttype,1,0)) : ncont_y[rowi] ];
-    
-    int od[nobs_y[rowi]] = whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
-    int o1d[nbinary_y[rowi] ]= whichbinary_y[rowi,1:nbinary_y[rowi]];
-    int o0d[ncont_y[rowi] ]= whichcont_y[rowi,1:ncont_y[rowi]];
-    
-    if(!full){
-      o= whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
-      o1= whichbinary_y[rowi,1:nbinary_y[rowi]];
-      o0= whichcont_y[rowi,1:ncont_y[rowi]];
-    }
-    if(full){ //needed to calculate yprior and yupd ysmooth
-      for(mi in 1:nmanifest) o[mi] = mi;
-      o1= whichequals(manifesttype,1,1);
-      o0= whichequals(manifesttype,1,0);
-    }
+ if ((subi==0 || nobs_y[rowi] > 0 || savescores)){ //do this section for 0th subject as well to init matrices
     
       
   {
@@ -723,7 +717,7 @@ if(sum(whenmat[54,{4}]) > 0)sJy=mcalc(sJy,indparams, statetf,{4}, 54, matsetup, 
     if(verbose>1) print("sJy ",sJy);
   }
  
-   if(subi > 0){   //if not just inits...
+   if(subi > 0 && dokalmanrows[rowi] ==1){   //if not just inits...
 
       if(intoverstates==1 || savescores==1) { //classic kalman
         ycov[o,o] = quad_form(etacov, sJy[o,]'); // + sMANIFESTVAR[o,o]; shifted measurement error down
@@ -792,7 +786,6 @@ err[od] = Y[rowi,od] - syprior[od]; // prediction error
            //counter += ncont_y[rowi];
         }
       
-      if(savescores) Jysaved[rowi] = sJy;
       
     }//end subi > 0 nobs > 0 section
   } // end measurement init loop and dokalmanrows section here to collect matrices
@@ -835,7 +828,7 @@ pop_PARS = sPARS; pop_T0MEANS = sT0MEANS; pop_LAMBDA = sLAMBDA; pop_DRIFT = sDRI
       if(sri==rowi) {
         etaa[3,sri]=etaa[2,sri];
         etacova[3,sri]=etacova[2,sri];
-      } else{ // could be improved by recomputing jacobian
+      } else{
         matrix[nlatentpop,nlatentpop] smoother;
         smoother = etacova[2,sri] * Je[sri+1,,]' / makesym(etacova[1,sri+1],verbose,1);
         etaa[3,sri]= etaa[2,sri] + smoother * (etaa[3,sri+1] - etaa[1,sri+1]);
@@ -843,8 +836,45 @@ pop_PARS = sPARS; pop_T0MEANS = sT0MEANS; pop_LAMBDA = sLAMBDA; pop_DRIFT = sDRI
 
       }
       state=etaa[3,sri];
+      
+      
+  {
+    int zeroint[1];
+    vector[nlatentpop] basestate = state;
+    zeroint[1] = 0;
+    for(statei in append_array(sJyfinite,zeroint)){ //if some finite differences to do, compute these first
+      state = basestate;
+      if(statei>0 && (savescores + intoverstates) > 0)  state[statei] += Jstep;
+      statetf[whichequals(whenvecs[4],0,0)] = 
+         parvectform(size(whichequals(whenvecs[4],0,0)),state, 4, matsetup, matvalues, si, subindices, whenvecs[4]);
+    
+    if(sum(whenmat[10,{4}]) > 0)sPARS=mcalc(sPARS,indparams, statetf,{4}, 10, matsetup, matvalues, subi, subindices); 
+if(sum(whenmat[2,{4}]) > 0)sLAMBDA=mcalc(sLAMBDA,indparams, statetf,{4}, 2, matsetup, matvalues, subi, subindices); 
+if(sum(whenmat[5,{4}]) > 0)sMANIFESTVAR=mcalc(sMANIFESTVAR,indparams, statetf,{4}, 5, matsetup, matvalues, subi, subindices); 
+if(sum(whenmat[6,{4}]) > 0)sMANIFESTMEANS=mcalc(sMANIFESTMEANS,indparams, statetf,{4}, 6, matsetup, matvalues, subi, subindices); 
+if(sum(whenmat[54,{4}]) > 0)sJy=mcalc(sJy,indparams, statetf,{4}, 54, matsetup, matvalues, subi, subindices); 
+ 
+      if(statei > 0 && (savescores + intoverstates) > 0) {
+        sJy[o,statei] =  sLAMBDA[o] * state[1:nlatent] + sMANIFESTMEANS[o,1]; //compute new change
+        sJy[o1,statei] = to_vector(inv_logit(to_array_1d(sJy[o1,statei])));
+         if(verbose>1) print("sJy ",sJy);
+      }
+      if(statei==0){
+        syprior[o] = sLAMBDA[o] * state[1:nlatent] + sMANIFESTMEANS[o,1];
+        syprior[o1] = to_vector(inv_logit(to_array_1d( syprior[o1] )));
+        if(size(sJyfinite) ) { //only need these calcs if there are finite differences to do -- otherwise loop just performs system calcs.
+          if(verbose>1) print("syprior = ",syprior,"    sJyinit= ",sJy);
+          for(fi in sJyfinite){
+            sJy[o,fi] = (sJy[o,fi] - syprior[o]) / Jstep; //new - baseline change divided by stepsize
+          }
+        }
+      }
+    }
+    if(verbose>1) print("sJy ",sJy);
+  }
+      
       ya[3,sri] = syprior;
-      ycova[3,sri] = quad_form(etacova[3,sri], Jysaved[rowi]'); //could be improved by recomputing jacobian
+      ycova[3,sri] = quad_form(etacova[3,sri], sJy'); 
       for(wi in 1:nmanifest){
         ycova[3,sri,wi,wi] += square(sMANIFESTVAR[wi,wi]);
         if(manifesttype[wi]==1) ycova[3,sri,wi,wi] += fabs((ya[3,sri,wi] - 1) * (ya[3,sri,wi]));
@@ -859,7 +889,8 @@ pop_PARS = sPARS; pop_T0MEANS = sT0MEANS; pop_LAMBDA = sLAMBDA; pop_DRIFT = sDRI
  } // end subi loop (includes sub 0)
   
   prevrow = rowi; //update previous row marker only after doing necessary calcs
-}//end rowi
+}//end active rowi
+} //end passive rowi
 ll+=sum(llrow);
 
   }
