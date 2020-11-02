@@ -794,7 +794,11 @@ if(verbose > 1){
       o1= whichbinary_y[rowi,1:nbinary_y[rowi]];
       o0= whichcont_y[rowi,1:ncont_y[rowi]];
     }
-    
+    if(full){ //needed to calculate yprior and yupd ysmooth
+      for(mi in 1:nmanifest) o[mi] = mi;
+      o1= whichequals(manifesttype,1,1);
+      o0= whichequals(manifesttype,1,0);
+    }
     
       
   {
