@@ -7,6 +7,7 @@
 ctStanKalman(
   fit,
   nsamples = NA,
+  pointest = FALSE,
   collapsefunc = NA,
   cores = 2,
   standardisederrors = FALSE,
@@ -20,6 +21,8 @@ ctStanKalman(
 \item{fit}{fit object from \code{\link{ctStanFit}}.}
 
 \item{nsamples}{either NA (to extract all) or a positive integer from 1 to maximum samples in the fit.}
+
+\item{pointest}{If TRUE, uses the posterior mode as the single sample.}
 
 \item{collapsefunc}{function to apply over samples, such as \code{mean}}
 

@@ -4,10 +4,12 @@
 \alias{sdpcor2cov}
 \title{sdcor2cov}
 \usage{
-sdpcor2cov(mat, cholesky = FALSE)
+sdpcor2cov(mat, coronly = FALSE, cholesky = FALSE)
 }
 \arguments{
 \item{mat}{input square matrix with std dev on diagonal and lower tri of partial correlations.}
+
+\item{coronly}{if TRUE, ignores everything except the lower triangle and outputs correlation.}
 
 \item{cholesky}{Logical. To return the cholesky decomposition instead of full covariance, set to TRUE.}
 }

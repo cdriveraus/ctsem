@@ -5,27 +5,25 @@
 \title{Generate data from a ctstanmodel object}
 \usage{
 ctStanGenerate(
-  ctm,
-  datastruct,
-  optimize = TRUE,
+  cts,
+  datastruct = NA,
   is = FALSE,
   fullposterior = TRUE,
   nsamples = 200,
   parsonly = FALSE,
   includePreds = FALSE,
-  ...
+  cores = 2
 )
 }
 \arguments{
-\item{ctm}{\code{\link{ctStanModel}} object.}
+\item{cts}{\code{\link{ctStanModel}} , or \code{\link{ctStanFit}},object.}
 
-\item{datastruct}{long format data structure as used by ctsem.}
-
-\item{optimize}{Whether to optimize or use Stan's HMC sampler}
+\item{datastruct}{long format data structure as used by ctsem. 
+Not used if ctm is a ctStanFit object.}
 
 \item{is}{If optimizing, follow up with importance sampling?}
 
-\item{fullposterior}{Generate from the full posterior or just the mean?}
+\item{fullposterior}{Generate from the full posterior or just the (unconstrained) mean?}
 
 \item{nsamples}{How many samples to generate?}
 
@@ -34,10 +32,11 @@ ctStanGenerate(
 \item{includePreds}{if TRUE, the prior for covariate effects (TD and TI predictors)
 is included, as well as the TD and TI pred data. Else the effects are set to zero.}
 
-\item{...}{arguments to pass to stanoptimis}
+\item{cores}{Number of cpu cores to use.}
 }
 \value{
-Array of nsamples x time points x manifest variables.
+List contining Y, and array of nsamples by data rows by manifest variables, 
+and llrow, an array of nsamples by data rows log likelihoods.
 }
 \description{
 Generate data from a ctstanmodel object
@@ -45,7 +44,7 @@ Generate data from a ctstanmodel object
 \examples{
 \donttest{
 #generate and plot samples from prior predictive
-priorpred <- ctStanGenerate(ctm = ctstantestfit$ctstanmodelbase,
+priorpred <- ctStanGenerate(ctm = ctstantestfit,
   datastruct = ctstantestdat,cores=2,nsamples = 50)
 }
 }

@@ -104,8 +104,9 @@ If TRUE, stan model is recompiled, regardless of apparent need for compilation.}
 \item{savescores}{Logical. If TRUE, output from the Kalman filter is saved in output. For datasets with many variables
 or time points, will increase file size substantially.}
 
-\item{savesubjectmatrices}{Logical. If TRUE, subject specific matrices are saved -- only relevant when either time dependent predictors
-are used, or individual differences are obtained via sampling (not via optimization, where they are integrated over).}
+\item{savesubjectmatrices}{Logical. If TRUE, subject specific matrices are saved -- 
+only relevant when either time dependent predictors or individual differences are 
+used. Can increase memory usage dramatically in large models.}
 
 \item{gendata}{Logical -- If TRUE, uses provided data for only covariates and a time and missingness structure, and 
 generates random data according to the specified model / priors. 

@@ -11,6 +11,7 @@
   nsamples = 1e+06,
   rawpopsd = "marginalise",
   inddifdevs = c(-1, 1),
+  inddifsd = 0.1,
   plot = TRUE,
   ...
 )

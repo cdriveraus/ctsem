@@ -6,7 +6,7 @@
 \usage{
 \method{plot}{ctKalmanDF}(
   x,
-  subjects = 1,
+  subjects = unique(x$Subject),
   kalmanvec = c("y", "yprior"),
   errorvec = "auto",
   errormultiply = 1.96,
