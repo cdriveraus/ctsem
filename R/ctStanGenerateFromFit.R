@@ -11,7 +11,7 @@
 #' if(w32chk()){
 #'
 #' gen <- ctStanGenerateFromFit(ctstantestfit, nsamples=3,fullposterior=TRUE)
-#' plot(gen$generated$Y[,3,2],type='l') #Third random data sample, 2nd manifest var, all time points. 
+#' plot(gen$generated$Y[3,,2],type='l') #Third random data sample, 2nd manifest var, all time points. 
 #' }
 ctStanGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErrors=FALSE,cores=2){
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object!')
@@ -33,6 +33,7 @@ ctStanGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErr
     genm <- stanmodels$ctsmgen
   }
   message('Generating data from ',ifelse(fullposterior,'posterior', 'posterior mean'))
+  message('Using ',cores,'/', parallel::detectCores(),' logical CPU cores')
   standata <- fit$standata
   # standata$intoverstates=0L #why doesnt this work??
   standata$savescores <- 0L #have to disable for data generation in same structure as original
@@ -41,13 +42,15 @@ ctStanGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErr
   
   cs=suppressMessages(stan_constrainsamples(sm =genm,standata = standata,cores=cores,samples = t(umat),
     savescores = FALSE, savesubjectmatrices = FALSE,dokalman = TRUE, onlyfirstrow = FALSE,pcovn = FALSE))
-  fit$generated$Y <- aperm(cs$Y,c(2,1,3))
-  # browser()
+  fit$generated$Y <- cs$Y #,c(2,1,3)) 
   fit$generated$llrow <- cs$llrow
   fit$generated$llrow[fit$generated$llrow==0]<-NA
   fit$generated$stanmodel <- genm
-  dimnames( fit$generated$Y)<-list(row=1:dim(fit$generated$Y)[1],
-    iter=1:dim(fit$generated$Y)[2],fit$ctstanmodel$manifestNames)
+  
+  dimnames( fit$generated$Y)<-list(
+    sample=1:dim(fit$generated$Y)[1],
+    row=1:dim(fit$generated$Y)[2],
+    fit$ctstanmodel$manifestNames)
 
   fit$generated$Y[fit$generated$Y==99999] <- NA
 

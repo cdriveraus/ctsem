@@ -46,7 +46,7 @@ round(cov2cor(tcrossprod(covsqrt ))-corm)
 
 }
 
-covdata <- function(ndat,reg,independent=FALSE){
+covdata <- function(ndat,reg,independent=FALSE,corpriortype=1L){
   sdat = as.matrix(ndat)
   d=ncol(sdat)
   n=nrow(sdat)
@@ -57,14 +57,15 @@ covdata <- function(ndat,reg,independent=FALSE){
   
   covdata <- list(d=as.integer(d),n=as.integer(n),
     dat=sdat,
+    corpriortype=as.integer(corpriortype),
     reg=(reg),
     indep=as.integer(independent),
     obs=array(as.integer(obs),dim=c(n,d)),
     nobs=nobs)
 }
 
-covml <- function(ndat,reg=0,verbose=0,hmc=FALSE,independent=FALSE){
-  covdata=covdata(ndat,reg,independent)
+covml <- function(ndat,reg=0,verbose=0,hmc=FALSE,independent=FALSE,corpriortype=2L){
+  covdata=covdata(ndat,reg,independent,corpriortype)
   d=covdata$d
   scovf <- suppressMessages(sampling(object = stanmodels$cov,iter=1,chains=0,check_data=FALSE,
     data=covdata))

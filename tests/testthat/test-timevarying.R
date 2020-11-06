@@ -19,7 +19,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       gm=ctModel(LAMBDA=diag(2), Tpoints=Tpoints, DRIFT=diag(-.2,2),T0MEANS = matrix(c(3,2)), 
         DIFFUSION=diag(.5,2),
         T0VAR=diag(2))
-      d=suppressMessages(ctGenerate(gm,n.subjects = 1,burnin = 3,dtmean = dt))
+      d=suppressMessages(ctGenerateOld(gm,n.subjects = 1,burnin = 3,dtmean = dt))
       d[,'id'] <- subi
       if(subi==1) dat=d else dat=rbind(dat,d)
     }
@@ -28,12 +28,16 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     colnames(dat)[1]='id'
     
-    cm <- ctModel(LAMBDA=matrix(c('1 + PARS[1,1] * state[2]',0,0,1),2,2), PARS=matrix('lbystate'),type='stanct')
+    cm <- ctModel(LAMBDA=matrix(c('PARS[3,1]',0,0,1),2,2),  T0MEANS=c('t0m1','t0m2|log1p_exp(param)'),
+      T0VAR=matrix(c('t0v11',0,0,'t0v22'),2,2),
+      PARS=c('lbystate','lbystate * eta2 + 1','PARS[2,1]'),type='stanct')
     
     cm$pars$indvarying <- FALSE
     # cm$pars$indvarying[cm$pars$matrix %in% c('CINT','T0MEANS')] <- TRUE
     
-    dm<- ctModel(LAMBDA=matrix(c('1 + PARS[1,1] * state[2]',0,0,1),2,2), PARS=matrix('lbystate'),, type='standt')
+    dm<- ctModel(LAMBDA=matrix(c('PARS[2,1]',0,0,1),2,2), T0MEANS=c('t0m1','t0m2|log1p_exp(param)'),
+      T0VAR=matrix(c('t0v11',0,0,'t0v22'),2,2),
+      PARS=c('lbystate','lbystate * eta2 + 1','PARS[2,1]'),type='standt')
     
     dm$pars$indvarying <- FALSE
     # dm$pars$indvarying[dm$pars$matrix %in% c('CINT','T0MEANS')] <- TRUE
@@ -89,6 +93,8 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     for(dimi in 2:length(ll)){
       expect_equivalent(ll[dimi],ll[dimi-1],tol=1e-3)
     }
+    
+    #do.call(cbind,dtpars)
     
       
       #check time varying lambda estimation

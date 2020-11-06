@@ -35,13 +35,16 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     #plot(m)
     
     m$manifesttype[]=1 #set type to binary
+    cores=2
     
     #fit without integration
     r <- ctStanFit( datalong = d,
       #fit=FALSE, #set this to skip fitting and just get the standata and stanmodel objects
       ctstanmodel = m,
-      iter = 20,verbose=0,control=list(max_treedepth=3),nopriors=FALSE,
-      chains = 2,#plot=T,
+      iter = 200,verbose=0,
+      control=list(max_treedepth=4),
+      nopriors=FALSE,
+      chains = cores,plot=F,
       intoverstates = FALSE,
       optimize=FALSE,intoverpop=F)
     s=summary(r)
@@ -52,12 +55,18 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     #fit with integration (linear approximation)
     ro <- ctStanFit( datalong = d,
-      ctstanmodel = m,cores=2,
+      ctstanmodel = m,cores=cores,
       plot=10,verbose=0,
-      intoverstates = T,nopriors=T,
+      intoverstates = T,nopriors=F,
       optimize=T,intoverpop=T)#,optimcontrol=list(stochastic=F))
     so=summary(ro)
     # so
+    
+    cbind(s$popmeans[order(rownames(s$popmeans)),1],so$popmeans[order(rownames(so$popmeans)),1])
+    
+    testthat::expect_equivalent(
+      s$popmeans[order(rownames(s$popmeans)),1],
+      so$popmeans[order(rownames(so$popmeans)),1],tol=.1)
     
   })
   

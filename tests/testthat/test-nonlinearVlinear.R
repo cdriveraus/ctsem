@@ -1,4 +1,4 @@
-if( .Machine$sizeof.pointer != 4){
+if(1==99 && .Machine$sizeof.pointer != 4){ #test is no longer useful with everything done via nonlinear
 library(ctsem)
 library(testthat)
 set.seed(1)

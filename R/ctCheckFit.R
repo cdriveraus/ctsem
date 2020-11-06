@@ -11,15 +11,27 @@ ctLongToWideSF <- function(fit){
   dat=data.table(dat)
   dat[ ,WhichObs:=0:(.N-1),by=eval(fit$ctstanmodelbase$subjectIDname)]
   dat=melt(dat,id.vars = c(fit$ctstanmodelbase$subjectIDname,'WhichObs'))
-  if(fit$ctstanmodelbase$n.TIpred > 0){
-    dat <- dat[WhichObs <1 | !variable%in% eval(fit$ctstanmodelbase$TIpredNames)]
-  }
+  
+  ###what does this do?... was removing data weirdly
+  # if(fit$ctstanmodelbase$n.TIpred > 0){
+  #   dat <- dat[WhichObs <1 | !variable%in% eval(fit$ctstanmodelbase$TIpredNames)]
+  # }
+  
+  
   dat$WhichObs <- paste0('T',dat$WhichObs);
   dat=dcast(dat,'id~variable+WhichObs')
   lapply(fit$ctstanmodelbase$TIpredNames, function(x){
     colnames(dat)[grep(paste0('\\b',x,'\\_T0'),colnames(dat))] <<- x
   })
-  return(data.frame(dat))
+  dat=data.frame(dat)
+  # if(1==99) {
+  #   message('Min obs per columns: ',paste(apply(dat,2,function(x) nrow(dat)-sum(is.na(x))),collapse=', '))
+  #   probcols=which(apply(dat,2,function(x) nrow(dat)-sum(is.na(x))) < 10)
+  #   tldat[tldat$id==143,c('T4asfa',]
+  #  
+  #  dat=dat[,probcols]
+  # }
+  return(dat)
 }
 
 ctSaturatedFitConditional<-function(dat,ucols,reg,hmc=FALSE,covf=NA,verbose=0){
@@ -77,7 +89,7 @@ ctSaturatedFitConditional<-function(dat,ucols,reg,hmc=FALSE,covf=NA,verbose=0){
   return(covf)
 }
 
-ctSaturatedFit <- function(fit,conditional=FALSE,reg=FALSE, hmc=FALSE,
+ctSaturatedFit <- function(fit,conditional=FALSE,reg=0, hmc=FALSE,
   time=FALSE, oos=TRUE, folds=10, cores=2,verbose=0){
   dat <-ctLongToWideSF(fit)
   dat=dat[,-1]
@@ -97,6 +109,8 @@ ctSaturatedFit <- function(fit,conditional=FALSE,reg=FALSE, hmc=FALSE,
     }))))
   }
   
+  # message('Min obs per columns: ',paste(apply(dat,2,function(x) nrow(dat)-sum(is.na(x))),collapse=', '))
+  
   if(cores > 1){
     cl=parallel::makeCluster(cores,'PSOCK')
     parallel::clusterExport(cl,c('ucols','dat','reg'),environment())
@@ -104,15 +118,27 @@ ctSaturatedFit <- function(fit,conditional=FALSE,reg=FALSE, hmc=FALSE,
   }
   
   bootstrap=FALSE
-  srows <- sample(1:nrow(dat),
-    nrow(dat),# *ifelse(bootstrap,folds,1),
-    replace=bootstrap)
   
-  srows <- split(
-    srows,
-    sort(1:length(srows) %% folds))
+  counter=0
+  minobs=0
+  while(counter <10 && minobs < 3){
+    srows <- sample(1:nrow(dat),
+      nrow(dat),# *ifelse(bootstrap,folds,1),
+      replace=bootstrap)
+    
+    srows <- split(
+      srows,
+      sort(1:length(srows) %% folds))
+    
+    minobspercol <- unlist(apply(dat,2,function(d) min(unlist(lapply(srows,function(sr) ( sum(!is.na(d[-sr]))))))))
+    minobs<-min(minobspercol)
+    if(minobs <5)  message('Minimum number of observations in a column = ', minobs, ', sampling again...')
+    counter = counter + 1
+  }
+  if(counter==10) stop('Too few observations per fold -- try more folds?')
+  message('Min obs per col: ', paste0(minobspercol,collapse=', '))
   
-  covf = ctSaturatedFitConditional(dat = dat,ucols = ucols,reg = reg)
+  covf = ctSaturatedFitConditional(dat = dat,ucols = ucols,reg = reg,verbose=0)
   covfindep = covml(ndat = dat[,ucols,drop=FALSE],reg = reg,
     hmc=hmc,independent=TRUE)
   covf$llindependent <- covfindep$ll
@@ -129,7 +155,7 @@ ctSaturatedFit <- function(fit,conditional=FALSE,reg=FALSE, hmc=FALSE,
     hmc=hmc,independent=TRUE)
   covf$llresid <- covfindepresid$ll
   
-  # 
+  
   
   if(oos){
     sf = flexlapply(cl,srows,function(x){
@@ -140,7 +166,7 @@ ctSaturatedFit <- function(fit,conditional=FALSE,reg=FALSE, hmc=FALSE,
       fin=ctSaturatedFitConditional(dat = datheldout,ucols = ucols,reg = reg,hmc=hmc)
       fitoos=ctSaturatedFitConditional(dat = dat[x,,drop=FALSE],ucols = ucols,reg = reg,covf=fin)
       fin$lloos <- fitoos$cp$llrow
-      print(fitoos$cp$llrow)
+      plot(fitoos$cp$llrow)
       
       #independence model oos
       findep=covml(ndat = datheldout[,ucols,drop=FALSE],reg = reg,
@@ -155,18 +181,20 @@ ctSaturatedFit <- function(fit,conditional=FALSE,reg=FALSE, hmc=FALSE,
     
     #out of sample saturated ll
     llfold=unlist(lapply(sf,function(x) x$lloos))
-    llfold=llfold[match(names(unlist(srows)),(unlist(srows)))]
+    llfold=llfold[match(1:nrow(dat),(unlist(srows)))]
+    # llfold=llfold[unlist(srows)]#sapply(unlist(srows),function(x) which(unlist(srows) %in% x))]
+    
     
     plot(llfold,covf$cp$llrow, main='OOS vs IS LogLik',ylab='In sample LL',
       xlab='Out of sample LL')
     abline(a=0,b=1)
     
-    covf$lloos = sum(llfold,na.rm=TRUE)
+    covf$lloos = sum(llfold)
     covf$llrowoos = llfold
     # 
     
     #out of sample independent ll
-    covf$llrowindependentoos <-  unlist(lapply(sf,function(x) x$llindependentoos))[match(names(unlist(srows)),(unlist(srows)))]
+    covf$llrowindependentoos <-  unlist(lapply(sf,function(x) x$llindependentoos))[match(1:nrow(dat),(unlist(srows)))]
     plot(covf$llrowindependentoos,llfold, main='LL OOS indep. vs OOS sat.',ylab='Out of sample saturated LL',
       xlab='Out of sample independence LL')
     abline(a=0,b=1)
@@ -205,7 +233,6 @@ ctDataMelt <- function(dat,id='id',by='time', combinevars=NULL){
 #takes list of vars, combines according to structure
 ctDataCombineSplit <- function(dat, idvars, vars){ #no splits yet
   ldat=as.data.table(dat)
-  # ldat[ ,WhichObs:=(1:.N),by=Subject]
   
   idvarcombine <- idvars[which(idvars %in% names(vars) & !idvars %in% unlist(vars))]
   if(length(idvarcombine) > 0){
@@ -245,105 +272,126 @@ meltcov <- function(covm){
   return(o)
 }
 
+ctStanFitMelt <- function(fit, by,combinevars=NULL,maxsamples='all'){
+  if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
 
 
-ctCheckFit2 <- function(fit, predictions=FALSE, by=fit$ctstanmodelbase$timeName,
+  datasources <- c('Data','StatePred')
+  if(!is.null(fit$generated)) datasources <- c(datasources,'PostPred')
+  if(!is.null(fit$priorpred)) datasources <- c(datasources,'PriorPred')
+  
+  datbase <- data.table(standatatolong(standata = fit$standata,origstructure = TRUE,ctm = fit$ctstanmodel))
+  datbase[ ,WhichObs:=(1:.N),by=eval(fit$ctstanmodelbase$subjectIDname)]
+  datbase <- data.frame(datbase)
+  
+  dat <- matrix(NA,nrow=0,ncol=0) #blank placeholder
+  
+  for(dsi in datasources){
+    dexists <- FALSE
+    if(dsi == 'Data'){
+      dexists<-TRUE
+      d<-list()
+      d$Y<- array(t(t(datbase[,(fit$ctstanmodelbase$manifestNames)])), dim=c(1,dim(fit$standata$Y)))
+      d$llrow <- fit$stanfit$transformedparsfull$llrow
+    }
+    
+    if(dsi=='PriorPred'){
+      dexists<-TRUE
+      d <- fit$priorpred
+    }
+    if(dsi=='PostPred'){
+      dexists<-TRUE
+      d <- fit$generate
+    }
+    
+    if(dsi== 'StatePred'){ #use kalman predictions
+      dexists<-TRUE
+      d<-list()
+      d$Y<- array(fit$stanfit$transformedparsfull$ya[1,1,,],dim=dim(fit$stanfit$transformedparsfull$ya[1,1,,,drop=FALSE])[-1])
+      d$llrow <- fit$stanfit$transformedparsfull$llrow #,dim=c(1,dim(fit$stanfit$transformedparsfull$llrow)))
+    }
+    
+    if(dexists){
+      if(maxsamples=='all') samples=1:dim(d$Y)[1] else samples = sample(1:dim(d$Y)[1],min(maxsamples,dim(d$Y)[1]))
+    gdat <- data.table(datbase[rep(seq_len(nrow(datbase)), length(samples)),])
+    
+    gdat[, (fit$ctstanmodelbase$manifestNames)]   <- #confusing aperm needed here, wish I understood why...
+      data.table(matrix(aperm(d$Y[samples,,,drop=FALSE],c(2,1,3)), ncol=dim(d$Y)[3]))
+    gdat$Sample=rep(samples,each=dim(d$Y)[2])
+    gdat$LogLik<-c(d$llrow[samples,])
+    gdat$DataSource <- dsi
+    
+    if(nrow(dat)==0) dat <- gdat else dat <- rbind(dat, gdat)
+    }
+  }
+
+  by=c(by,'Sample','WhichObs','DataSource')
+  if(is.na(combinevars[1])) combinevars = setNames(
+    colnames(datbase)[!colnames(datbase) %in% by],colnames(datbase)[!colnames(datbase) %in% by])
+  combinevars<-c(combinevars,LogLik='LogLik')
+
+  dat <- ctDataMelt(dat=dat,id=fit$ctstanmodelbase$subjectIDname, by=by,combinevars = combinevars)
+  dat$Sample <- factor(dat$Sample)
+  dat$DataSource <- factor(dat$DataSource)
+  
+  return(dat)
+}
+
+
+ctCheckFit2 <- function(fit, data=TRUE, postpred=TRUE, priorpred=FALSE, statepred=FALSE, by=fit$ctstanmodelbase$timeName,
   TIpredNames=fit$ctstanmodelbase$TIpredNames,
-  nsamples=10, covplot=TRUE, combinevars=NULL,
-  smooth=TRUE, k=10,breaks=4,entropy=covplot,reg=FALSE,verbose=0){
+  nsamples=10, covplot=TRUE, combinevars=NA,
+  smooth=TRUE, k=10,breaks=4,entropy=FALSE,reg=FALSE,verbose=0){
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
   
   
-  dat <- data.table(standatatolong(standata = fit$standata,ctm = fit$ctstanmodel,origstructure = TRUE))
-  dat$Sample <- 1
-  dat[ ,WhichObs:=(1:.N),by=eval(fit$ctstanmodelbase$subjectIDname)]
-  
-  dat$LogLik <- c(fit$stanfit$transformedparsfull$llrow)
-  
-  if(!predictions){ #then use generated data
-    if(is.null(fit$generated)) stop('First use ctStanGenerateFromFit() on fit object!')
-    if(nsamples > dim(fit$generated$Y)[2]) stop('Not enough samples in generated values! Try fewer samples?')
-    gdat <- data.frame(dat[rep(seq_len(nrow(dat)), nsamples)])
-    samples <- sample(1:dim(fit$generated$Y)[2], nsamples,replace = FALSE)
-    gdat[,(fit$ctstanmodelbase$manifestNames)] <- data.frame(matrix(
-      fit$generated$Y[, samples, , drop=FALSE],
-      ncol=dim(fit$generated$Y)[3]))
-    gdat$Sample=rep(samples,each=dim(fit$generated$Y)[1])
-    gdat$LogLik<-c(fit$generated$llrow[samples,])
-  }
-  
-  if(predictions){ #use kalman predictions
-    sdat=fit$standata
-    sdat$Y[]  <- fit$stanfit$transformedparsfull$ya[1,1,,]
-    gdat <- data.table(standatatolong(standata = sdat,ctm = fit$ctstanmodel,origstructure = TRUE))
-    nsamples<-1
-    gdat$Sample <- 1
-    gdat[ ,WhichObs:=(1:.N),by=eval(fit$ctstanmodelbase$subjectIDname)]
-    gdat$LogLik <- c(fit$stanfit$transformedparsfull$llrow)
-  }
-  
-  gdat <- data.table(gdat)
-  
-  if(is.null(combinevars)) combinevars = setNames(
-    lapply(fit$ctstanmodelbase$manifestNames,function(x) x),fit$ctstanmodelbase$manifestNames)
-  
-  combinevars<-c(combinevars,LogLik='LogLik')
-  
-  dat <- ctDataMelt(dat=dat,id=fit$ctstanmodelbase$subjectIDname, by=c(by,'Sample','WhichObs'),combinevars = combinevars)
-  gdat <- ctDataMelt(dat=gdat,id=fit$ctstanmodelbase$subjectIDname, by=c(by,'Sample','WhichObs'),combinevars = combinevars)
 
+  # combinevars<-c(combinevars,LogLik='LogLik')
   
-  if(!'WhichObs' %in% by){
-    dat$WhichObs <- NULL
-    gdat$WhichObs <- NULL
-  }
+  dat <- ctStanFitMelt(fit = fit,combinevars = combinevars, by=by,maxsamples = nsamples)
+  
+  if(is.na(combinevars[1])) combinevars <- setNames(unique(dat$variable), unique(dat$variable))
+  
+  samples <- 1:nsamples #fix this to randomly select each time
+  dat <- dat[Sample %in% samples]
+  if(!data) dat<-dat[!DataSource %in% 'Data']
+  if(!priorpred) dat<-dat[!DataSource %in% 'PriorPred']
+  if(!postpred) dat<-dat[!DataSource %in% 'PostPred']
+  if(!statepred) dat<-dat[!DataSource %in% 'StatePred']
+  
+  # if(!'WhichObs' %in% by) mdat$WhichObs <- NULL
   
   dat = dat[!is.na(value),]
-  gdat = gdat[!is.na(value),]
+  
+  #set k and breaks
+  breaks = min(breaks,length(unique(dat[[by]][!is.na(dat[[by]])])))
+  k = min(k,length(unique(dat[[by]][!is.na(dat[[by]])]))-1)
   
   if(covplot ||entropy){
     if(is.double(dat[[by]])){
       if(requireNamespace('arules')){
-        datb=dat
-        gdatb=gdat
-        dat[[by]] <- arules::discretize(dat[[by]],method='cluster',breaks = breaks,labels=FALSE)
-        gdat[[by]] <- arules::discretize(gdat[[by]],method='cluster',breaks = breaks,labels=FALSE)
+        discdat=dat
+        discdat[[by]] <- arules::discretize(dat[[by]],
+          method='cluster',breaks = breaks,labels=FALSE)
       } else stop('arules package needed for discretization!')
     }
     if(covplot){
-      # 
-      wdat <- dcast(dat,paste0(fit$ctstanmodelbase$subjectIDname, '~variable + ',by),fun.aggregate=mean,na.rm=TRUE)
-      # wdat <- wdat[,apply(wdat,2,function(x) any(!is.na(x))),drop=FALSE]
+      for(dsi in unique(dat$DataSource)){
+        
+      wdat <- dcast(discdat[DataSource==dsi],
+        paste0(fit$ctstanmodelbase$subjectIDname, '+Sample~variable + ',by),fun.aggregate=mean,na.rm=TRUE)
+      
       covdat <- covml(
-        data.frame(wdat)[,!colnames(wdat) %in% fit$ctstanmodelbase$subjectIDname,drop=FALSE],
+        data.frame(wdat)[,!colnames(wdat) %in% c('Sample',fit$ctstanmodelbase$subjectIDname),drop=FALSE],
         reg=reg,
-        verbose=verbose)#,
-      # use='pairwise.complete.obs')
+        verbose=verbose)
       
-      wgdat <- dcast(gdat,paste0(fit$ctstanmodelbase$subjectIDname, '+Sample~variable + ',by),fun.aggregate=mean,na.rm=TRUE)
-      # wdat <- wdat[,apply(wdat,2,function(x) any(!is.na(x))),drop=FALSE]
-      covgdat <- covml(
-        data.frame(wgdat)[,!colnames(wgdat) %in% c('Sample',fit$ctstanmodelbase$subjectIDname)],
-        reg=reg,
-        verbose=verbose)#,
-      # use='pairwise.complete.obs')
-      # covdatmx <- OpenMx::mxRefModels(data.frame(wdat)[,!colnames(wdat) %in% fit$ctstanmodelbase$subjectIDname,drop=FALSE],run=TRUE)
-      # covgdat / covdat
-      # 
       print(corplotmelt(meltcov(cov2cor(covdat$cp$covm)),
-        label='Orig. corr.',limits=c(-1,1)))
-      print(corplotmelt(meltcov(cov2cor(covgdat$cp$covm)),label='Gen. corr.',limits=c(-1,1)))
-      
-      print(corplotmelt(meltcov(cov2cor(covgdat$cp$covm)-cov2cor(covdat$cp$covm)),label='Gen. corr. diff.',limits=c(-1,1)))
+        label=paste0(dsi,' corr.'),limits=c(-1,1)))      
+      }
     }
     if(entropy){
       # 
-      # wdat <- data.frame(wdat)[,!(colnames(wdat) %in%  #remove covariates not used in fit lp
-      #     c(fit$ctstanmodelbase$TIpredNames,fit$ctstanmodelbase$TDpredNames))]
-      # wgdat <- data.frame(wgdat)[,!(colnames(wdat) %in%
-      #     c(fit$ctstanmodelbase$TIpredNames,fit$ctstanmodelbase$TDpredNames))]
-      
-      # mxRefModels(wdat,)
       dentropy <- -mean(covdat$cp$llrow)#lp/nrow(wdat)
       
       gdentropy <- sapply(unique(wgdat$Sample), function(x){
@@ -354,40 +402,44 @@ ctCheckFit2 <- function(fit, predictions=FALSE, by=fit$ctstanmodelbase$timeName,
       print(sum(covdat$cp$llrow))
       message('Entropy: Fit = ', -sum(fit$stanfit$transformedparsfull$ll)/nrow(wdat),'; Data = ',dentropy,'; Mean gen.data = ',mean(gdentropy),'  SD gen. data = ',sd(gdentropy))
     }
-    if(is.double(dat[[by]])){
-      dat=datb
-      gdat=gdatb
-    }
-  } 
-  
-  gdat$Original <- FALSE
-  dat$Original <- TRUE
-  dat <- rbind(dat,gdat)
-  dat$Sample <- factor(dat$Sample)
+  }
   
   vars <- names(combinevars)
-  
   dat$manifest <- dat$variable %in% vars
 
-  
+  dat$DataSource <- factor(as.character(dat$DataSource), levels = c( "Data", "StatePred","PostPred","PriorPred"))
+
   g=ggplot(data = dat[manifest==TRUE],
     mapping = aes_string(x=by,y='value',
-      colour='Original',
-      fill='Original',
-      group='Sample',
-      alpha='Original')) +theme_bw()+
+      colour='DataSource'
+      ,fill='DataSource'
+      # , group='Sample'
+      # ,alpha='DataSource'
+      )
+    ) +theme_bw() +
+    # scale_color_brewer(palette = 'Set1') +
+    # scale_fill_brewer(palette = 'Set1')
+  # +
+    scale_colour_manual(#"",
+      # breaks = c("Data", "StatePred", "PostPred", "PriorPred"),
+      values = c("blue", "red","green",  "Orange"))+
+    scale_fill_manual(#"",
+      # breaks = c("Data", "StatePred", "PostPred", "PriorPred"),
+      values = c("blue", "red","green",  "Orange"))
     # geom_point(alpha=.1)+
-    scale_alpha_ordinal(range = c(0.3, 1))
+    # scale_alpha_ordinal(range = c(0.3, 1))
   
   if(smooth) {
-    g = g + geom_smooth(data=dat[manifest==TRUE & Original==FALSE],aes(alpha=NULL),
-      alpha= max(.05,sqrt(.2/nsamples)),
+    g = g + geom_smooth(data=dat[manifest==TRUE & !DataSource %in% c('Data','StatePred')],
+      aes(group=Sample),
+      alpha= max(.05,sqrt(.3/nsamples)),
       linetype=ifelse(nsamples==1,1,0),
       stat="smooth",#se = nsamples==1,
       size=1
       ,method='gam', formula= as.formula(paste0('y ~ s(x,bs="cr",k=',k,')')))
     
-    g = g + geom_smooth(data=dat[manifest==TRUE & Original==TRUE],aes(alpha=NULL),
+    g = g + geom_smooth(data=dat[manifest==TRUE & DataSource %in% c('Data','StatePred')],
+      # aes(colour=DataSource,alpha=NULL),
       stat="smooth",se = TRUE,size=1,alpha=.3
       ,method='gam', formula= as.formula(paste0('y ~ s(x,bs="cr",k=',k,')')))
   }
@@ -395,15 +447,16 @@ ctCheckFit2 <- function(fit, predictions=FALSE, by=fit$ctstanmodelbase$timeName,
     # if(nsamples > 1) g = g + stat_summary(fun=mean,geom = "line",size=1) #geom_line(stat=mean)
     
     # if(nsamples ==1)
-      g = g +  stat_summary(data=dat[manifest==TRUE & Original==FALSE],
+    g = g +  stat_summary(data=dat[manifest==TRUE & !DataSource %in% c('Data','StatePred')],
+      aes(group=Sample),
       fun.data = function(x) list(y=mean(x),
         ymin=mean(x,na.rm=TRUE)-sd(x)/sqrt(length(x)), 
         ymax=mean(x)+sd(x)/sqrt(length(x))),
       geom = "ribbon",
-        alpha= max(.05,max(.05,sqrt(.2/nsamples))),
-        linetype=ifelse(nsamples==1,1,0))
+      alpha= max(.05,max(.05,sqrt(.2/nsamples))),
+      linetype=ifelse(nsamples==1,1,0))
     
-    g = g +  stat_summary(data=dat[manifest==TRUE & Original==TRUE],
+    g = g +  stat_summary(data=dat[manifest==TRUE & DataSource %in% c('Data','StatePred')],
       fun.data = function(x) list(y=mean(x),
         ymin=mean(x,na.rm=TRUE)-sd(x)/sqrt(length(x)), 
         ymax=mean(x)+sd(x)/sqrt(length(x))),
@@ -477,8 +530,8 @@ ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
   
   if(class(fit)=='ctStanFit'){
     if(is.null(fit$generated) || dim(fit$generated$Y)[2] < niter){
-      ygen <- aperm(ctStanGenerateFromFit(fit,fullposterior=FALSE,nsamples=niter)$generated$Y,c(2,1,3)) #array(e$Ygen,dim=c(ygendim[1] * ygendim[2],ygendim[-1:-2]))
-    } else ygen <- aperm(fit$generated$Y,c(2,1,3))
+      ygen <- ctStanGenerateFromFit(fit,fullposterior=FALSE,nsamples=niter)$generated$Y #array(e$Ygen,dim=c(ygendim[1] * ygendim[2],ygendim[-1:-2]))
+    } else ygen <- fit$generated$Y
     wide <- matrix(NA, nrow=length(unique(fit$data$subject)),ncol=dim(ygen)[3]*maxtp)
     itervec <- sample(1:dim(ygen)[1],niter)
     

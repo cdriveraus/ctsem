@@ -176,36 +176,7 @@ ctModelTransformsToNum<-function(ctm){
         fit <- list()
         fit$par <- as.numeric(c(start.params))
         fit$f<-res[which(res == min(res))[1]]
-        # if(tftype==0) start.params <- start.params[1:2]
-        # 
-        # if(!any(res < 1e-12)){
-        # fit = try(mize(par = unlist(start.params),
-        #   fg = list(fn=ff,gr=ffg),
-        #   max_iter=50*ifelse(tryi==1,1,4),abs_tol=1e-3*ifelse(tryi==1,1,1e-4),
-        #   rel_tol=1e-5*ifelse(tryi==1,1,1e-4),
-        #   method='BFGS'))
-        # 
-        # # if(tftype > 0) piseq <- 1:4 else piseq <- 1:2
-        # # for(pi in piseq){
-        # #   if(fit$f > .1) {
-        # #     start <- unlist(start.params)
-        # #     start[pi] = -start[pi]
-        # #     fit = try(mize(par = start,
-        # #       fg = list(fn=ff,gr=ffg),
-        # #       max_iter=100,abs_tol=1e-5,rel_tol=1e-8,
-        # #       method='BFGS'))
-        # #   }
-        # # }
-        # 
-        # if(fit$f < .1 && fit$f > 1e-5) {
-        #   # message('close, ', round(fit$f,5))
-        #   fit = try(mize(par = fit$par, #if close, refine estimate
-        #     fg = list(fn=ff,gr=ffg),
-        #     max_iter=200,abs_tol=1e-5,rel_tol=1e-9,
-        #     method='BFGS'))
-        #   # message('close2, ', round(fit$f,5))
-        # }
-        # }#end if need to optimize
+      
         
         formula.types$offset[i] = fit$par[2] #round(coef(fit)[["offset"]])
         formula.types$multiplier[i] = fit$par[1] #round(coef(fit)[["multiplier"]])
@@ -254,10 +225,15 @@ ctModelTransformsToNum<-function(ctm){
     
     rownames(df) <- newrows
     ctm$pars$transform <- NULL
-    # nctspec <- cbind(ctm$pars[newrows,,drop=FALSE],df)
-    # nctspec <- 
-    nctspec <- merge(ctm$pars,df,by=0,all=TRUE,no.dups = FALSE)
-    nctspec <- nctspec[order(as.numeric(nctspec$Row.names)),]
+    
+    #replaced with faster version
+    # nctspec <- data.frame(merge(ctm$pars,df,by=0,all=TRUE,no.dups = FALSE))
+    # nctspec <- nctspec[order(as.numeric(nctspec$Row.names)),]
+    
+    df <- data.table(Row.Names=as.integer(rownames(df)),df)
+    nctspec <- data.table(Row.Names=1:nrow(ctm$pars),ctm$pars)
+    nctspec <- data.frame(merge(nctspec,df,all=TRUE,no.dups = FALSE))
+    
     nctspec <- nctspec[,c('matrix','row','col','param','value','transform','multiplier',
       'offset','meanscale','inneroffset','indvarying','sdscale',
       colnames(ctm$pars)[grep('_effect',colnames(ctm$pars),fixed=TRUE)]) ]
@@ -281,7 +257,7 @@ ctStanModelIntOverPop <- function(m){
     message('No individual variation for ctStanModelIntOverPop to work with!')
     return(m)
   } else {
-    m$pars=ctStanModelCleanctspec(m$pars)
+    m$pars <- ctStanModelCleanctspec(m$pars)
     t0mvaryingsimple <- m$pars$row[m$pars$indvarying & m$pars$matrix %in% 'T0MEANS'] #which t0means are indvarying
     t0mvaryingnames <- m$pars$param[m$pars$indvarying & m$pars$matrix %in% 'T0MEANS'] #names of t0means that are indvarying
     t0mnotvarying <- m$pars$row[!m$pars$indvarying & m$pars$matrix %in% 'T0MEANS']
@@ -380,7 +356,6 @@ ctStanModelIntOverPop <- function(m){
       # }
       
       # m$pars$indvarying  <-FALSE
-      
       m$pars <- rbind(m$pars, t0m,t0v)#,drift) #
       m$pars[] <- lapply(m$pars, utils::type.convert, as.is = TRUE)
       
@@ -397,8 +372,6 @@ ctStanModelIntOverPop <- function(m){
 
 simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of computations, output simplified form
   if(length(bcalc)==0 || !grepl('=',bcalc)) return('')
-  
-  
   bcalc=gsub(' ','',bcalc)
   if(simplify && nchar(bcalc) > 200 && exists('verbose') && as.logical(verbose) ==TRUE ){
     cat(bcalc)
@@ -408,7 +381,6 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
 
   bcalcs=strsplit(bcalc,';')[[1]]
   bcalcs=gsub('\n','',bcalcs)
-  # bcalcs=inv_logit_gsub(bcalcs)
   bcalcs = bcalcs[!nchar(bcalcs)==0]
   bcalcs1=gsub('=.*','',bcalcs)
   bcalcs2=gsub('.*=','',bcalcs)
@@ -418,7 +390,7 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
   
   bcalcs2c=paste0('c(',paste0(bcalcs2,collapse=', '),')')
   if(simplify) scalcs2=Deriv::Deriv(bcalcs2c,nderiv=0)  else scalcs2=bcalcs2c 
-  if(simplify && !grepl('\\.e',scalcs2)) scalcs2=bcalcs2 #hack to avoid weird leftovers from non reduced simplify
+  if(simplify && !grepl('\\.e',scalcs2)) scalcs2=bcalcs2c #hack to avoid weird leftovers from non reduced simplify
   
   if(scalcs2 == 'NULL') return('') else{
     
@@ -445,8 +417,6 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
     scalcs = paste0(bcalcs1,scalcs2,'\n')
     # cat(scalcs)
     out = paste0('    {\n  ',paste0(ec,collapse='  '),paste0(scalcs,collapse=' '),'  } \n  ',collapse=' ')
-    # cat(out)
-    # browser()
     return(out)
   }
 }
@@ -456,37 +426,50 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
 ctStanModelCleanctspec <-  function(ctspec){ #clean ctspec structure
   tieffects <- colnames(ctspec)[grep('_effect',colnames(ctspec),fixed=TRUE)]
   found=FALSE
-
   ctspec$indvarying=as.logical(ctspec$indvarying)
   if(any(ctspec$indvarying[ctspec$matrix %in% 'T0VAR'])){
     ctspec$indvarying[ctspec$matrix %in% 'T0VAR'] <- FALSE
     message('Individual variation in T0VAR parameters not possible, removed')
   }
+
+  ctspec$row <- as.integer(ctspec$row)
+  ctspec$col <- as.integer(ctspec$col)
   ctspec$value=as.numeric(ctspec$value)
+  # ctspec$matrix=as.integer(ctspec$matrix)
+  ctspec$indvarying = as.logical(ctspec$indvarying)
   ctspec$transform=as.character(ctspec$transform) #ensure consistent type in case custom tforms used
-  ctspec$param=gsub(' ','',as.character(ctspec$param)) #remove spces
-  comparison=list(NA,NA,FALSE)
-  replacement=list(NA,NA,FALSE)
-  # names(comparison)=c('param','transform','indvarying')
-  for(rowi in 1:nrow(ctspec)){ 
-    if( !is.na(ctspec$value[rowi])) {#fixed value replacement
-      if(any(c(!is.na(ctspec[rowi,'param']),!is.na(ctspec[rowi,'transform']),ctspec[rowi,'indvarying']))){
-        if(ctspec[rowi,'value']!=99999) found<-TRUE
-        ctspec[rowi,c('param','transform','indvarying')]=replacement
-      }
-    }
-    if(grepl('[', ctspec$param[rowi],fixed=TRUE) || !is.na(ctspec$value[rowi])){
-      if(ctspec$indvarying[rowi]){
-        # message('Individual variation requested on deterministic parameter ', ctspec$param[rowi],' , setting to FALSE')
-        ctspec$indvarying[rowi] <- FALSE
-      }
-      if((length(tieffects) > 0 && any(as.logical(ctspec[rowi,tieffects]) %in% TRUE)) || !is.na(ctspec$value[rowi])){
-        # message('TI predictor effects requested on deterministic parameter ', ctspec$param[rowi],' , setting to FALSE')
-        ctspec[rowi,tieffects] <- FALSE
-      }
-    } #end deterministic relations check
-    if(all(is.na(c(ctspec[rowi,c('value','param')])))) stop('Parameters specified as NA ! Needs a value or character label.')
-  } #end row loop
+  ctspec$param=gsub(' ','',as.character(ctspec$param)) #remove spaces
+
+  
+  #values imply nothing happening elsewhere
+  fixed <- !is.na(ctspec$value) 
+  ctspec$indvarying[ fixed | grepl('[', ctspec$param,fixed=TRUE) ] <- FALSE #remove indvarying for calcs also
+  ctspec$param[ fixed ] <- NA
+  ctspec$transform[ fixed] <- NA
+  if(length(tieffects) > 0)  ctspec[fixed,tieffects] <- FALSE
+  if(any(apply(ctspec[,c('value','param')],1,function(x) all(is.na(x))))) stop('Parameters specified as NA ! Needs a value or character label.')
+  
+    
+    #was slow!
+  # for(rowi in 1:nrow(ctspec)){ 
+  #   if( !is.na(ctspec$value[rowi])) {#fixed value replacement
+  #     if(any(c(!is.na(ctspec[rowi,'param']),!is.na(ctspec[rowi,'transform']),ctspec[rowi,'indvarying']))){
+  #       if(ctspec[rowi,'value']!=99999) found<-TRUE
+  #       ctspec[rowi,c('param','transform','indvarying')]=replacement
+  #     }
+  #   }
+  #   if(grepl('[', ctspec$param[rowi],fixed=TRUE) || !is.na(ctspec$value[rowi])){
+  #     if(ctspec$indvarying[rowi]){
+  #       # message('Individual variation requested on deterministic parameter ', ctspec$param[rowi],' , setting to FALSE')
+  #       ctspec$indvarying[rowi] <- FALSE
+  #     }
+  #     if((length(tieffects) > 0 && any(as.logical(ctspec[rowi,tieffects]) %in% TRUE)) || !is.na(ctspec$value[rowi])){
+  #       # message('TI predictor effects requested on deterministic parameter ', ctspec$param[rowi],' , setting to FALSE')
+  #       ctspec[rowi,tieffects] <- FALSE
+  #     }
+  #   } #end deterministic relations check
+  #   if(all(is.na(c(ctspec[rowi,c('value','param')])))) stop('Parameters specified as NA ! Needs a value or character label.')
+  # } #end row loop
   # if(found) message('Minor inconsistencies in model found - removing param name, transform and indvarying from any parameters with a value specified')
   return(ctspec)
 }
@@ -516,7 +499,7 @@ ctStanModelMatrices <-function(ctm){
   matvalues <-list()
   freepar <- 0
   freeparcounter <- 0
-  # indvaryingindex <-array(0,dim=c(0))
+  
   indvaryingcounter <- 0
   TIPREDEFFECTsetup <- matrix(0,0,n.TIpred)
   tipredcounter <- 1
@@ -526,8 +509,7 @@ ctStanModelMatrices <-function(ctm){
   calcs<-ctm$calcs
   matsetup<-NULL
   mval<-NULL
-  # colnames(matsetup) <- c('row','col','param','transform', 'indvarying','tipred', 'matrix','when')
-  # colnames(mval) <- c('value','multiplier','meanscale','offset','sdscale','inneroffset')
+
   for(i in seq_along(c(mats$base,mats$jacobian))){
     m=c(mats$base,mats$jacobian)[i]
     nm=names(m)
@@ -558,17 +540,8 @@ ctStanModelMatrices <-function(ctm){
           }
           # 
           
-          if(!simplestate && grepl('[',ctspec$param[i],fixed=TRUE)){ #if non simple calculation parameter
-            # if(grepl('^\\b(state)\\b\\[\\d+\\]$',ctspec$param[i])){ #if a simple state reference
-            # if(m %in% names(c(mats$driftcint,mats$diffusion))) when = 2
-            # if(m %in% names(mats$tdpred)) when = 3
-            # if(m %in% names(mats$measurement)) when = 4
-            # if(m %in% names(mats$t0)) when = 1
-            #   parameter = gsub('^\\b(state)\\b\\[','',ctspec$param[i]) #remove state[
-            #   parameter = gsub(']','',parameter,fixed=TRUE)  #and ], to leave state reference as parameter
-            #   indvar <- 0 #state varying anyway
-            # } else { #if a non simple calculation
-            # 
+          if(!simplestate && grepl('[',ctspec$param[i],fixed=TRUE)){ 
+            
             if(grepl(paste0('^(', #if a direct matrix reference
               paste0('s',names(c(mats$base,mats$jacobian)),collapse='|'),
               ')\\[\\d+,\\s*\\d+\\]$'),ctspec$param[i])){ 
@@ -584,7 +557,8 @@ ctStanModelMatrices <-function(ctm){
               copycol=index[2]
               when = -999 #rely on original when rather than duplicates
               indvar <- 0
-            } else {
+            } else { #if not a direct matrix reference
+              
               calcs <- c(calcs, paste0(ctspec$matrix[i],'[',ctspec$row[i], ', ', ctspec$col[i],'] = ',
                 ctspec$param[i]))
               when= -999 #never use this row of ctspec during calculations (calc is extracted and placed elsewhere)
@@ -936,8 +910,8 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,simplify=TRUE){
   real dt=1; //initialise to make sure drift is computed on first pass
   real dtsmall;
   int dtchange=1;
+  real prevtime=0;
   int T0check=0;
-  int counter = 1;
   matrix[nlatentpop, nlatentpop] etacov; //covariance of latent states
 
   //measurement 
@@ -976,7 +950,8 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,simplify=TRUE){
 
   for(subi in 0:max(subject)){
   for(rowi in 1:ndatapoints){
-    if( (rowi==1 && subi==0) ||(dokalman && dokalmanrows[rowi] && subject[rowi]==subi) ){ //if doing this row for this subject
+    if( (rowi==1 && subi==0) ||
+      (dokalman && dokalmanrows[rowi] && subject[rowi]==subi) ){ //if doing this row for this subject
     
     int full = (savescores==1 || subi ==0);
     int o[full ? nmanifest : nobs_y[rowi]]; //which obs are not missing in this row
@@ -1005,7 +980,9 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,simplify=TRUE){
       dt = time[rowi] - time[prevrow];
       dtchange = dt!=prevdt; 
       prevdt = dt; //update previous dt store after checking for change
+      //prevtime = time[rowi];
     }
+
     if(savescores && prevrow!=0) Je[rowi,,] = Je[prevrow,,];
     
     if(T0check == 0) { // calculate initial matrices if this is first row for si
@@ -1072,9 +1049,10 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,simplify=TRUE){
     
 if(verbose > 1) print ("below t0 row ", rowi);
 
-      if(subi==0 || T0check>0){
+      if(subi==0 || (T0check>0)){ //for init or subsequent time steps when observations exist
         vector[nlatent] base;
         real intstepi = 0;
+        
         dtsmall = dt / ceil(dt / maxtimestep);
         
         while(intstepi < (dt-1e-10)){
@@ -1454,8 +1432,8 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
         o[j,i] =  inv_logit(mat[j,i])*2-1;  // can change cor prior here
         o[i,j] = o[j,i];
       }
-      o[i,i]=1; // change to adjust prior for correlations
-      o[i,] = o[i,] / sqrt(sum(square(o[i,]))+1e-10);
+      o[i,i]=.999; //avoids correlations of 1
+      o[i,] /= sqrt(sum(square(o[i,]))+1e-10);
     }
     return o;
   } 

@@ -1,6 +1,7 @@
 if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
 library(ctsem)
 library(testthat)
+  cores=2
 
 context("knownFits")
 
@@ -9,6 +10,7 @@ test_that("anomauth", {
   
   if( .Machine$sizeof.pointer != 4){
 
+  #cores=6
   data(AnomAuth)
   AnomAuthmodel<-ctModel(LAMBDA=matrix(c(1, 0, 0, 1), nrow=2, ncol=2),  
     n.latent=2,n.manifest=2, 
@@ -18,13 +20,13 @@ test_that("anomauth", {
    sm <- ctStanModel(AnomAuthmodel)
   sm$pars$indvarying<- FALSE
   a=Sys.time()
+  # sink('bad.txt')
   sf=ctStanFit(ctDeintervalise(ctWideToLong(AnomAuth,Tpoints = AnomAuthmodel$Tpoints,n.manifest = 2)),
-    ctstanmodel = sm, optimize=TRUE,verbose=1,savescores = FALSE,cores=4,nopriors=TRUE,,#forcerecompile = T,
+    ctstanmodel = sm, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores,nopriors=TRUE,#forcerecompile = T,
     optimcontrol=list(finishsamples=500,stochastic=T),plot=10,fit=T)
-  
-  
+  # sink()
   print(Sys.time()-a)
-  expect_equal(23415.929,-2*sf$stanfit$optimfit$value,tolerance=.01)
+  testthat::expect_equal(23415.929,-2*sf$stanfit$optimfit$value,tolerance=.01)
   anoms=summary(sf)
   anoms$popmeans['mm_Y1','sd']
   expect_equivalent(.036,anoms$popmeans['mm_Y1','sd'],tolerance=.008)

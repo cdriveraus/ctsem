@@ -367,7 +367,7 @@ ctDensity<-function(x,bw='auto',plot=FALSE,...){
 
 
 
-ctDensityList<-function(x,xlimsindex='all',ylimsindex='all',cut=FALSE,plot=FALSE,smoothness=1,
+ctDensityList<-function(x,xlimsindex='all',ylimsindex='all',cut=FALSE,plot=FALSE,
   grouplabels=names(x),
   ylab='Density',
   xlab='Par. Value',probs=c(.05,.95),main='',colvec=NA){

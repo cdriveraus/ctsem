@@ -58,7 +58,6 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
   ctmodelobj <- ctModeltoNumeric(ctmodelobj)
   
   m <- ctmodelobj
-  
   fullTpoints<-burnin+m$Tpoints
 
   for(si in 1:n.subjects){
@@ -73,20 +72,24 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
         matrix(m$TDPREDMEANS + m$TDPREDVAR %*% rnorm(nrow(m$TDPREDVAR),0,1),ncol=m$n.TDpred))
     }
     
+    # #convert to triangular...
+    # m$T0VAR <- t(chol(m$T0VAR))
+    # m$MANIFESTVAR <- t(chol(m$MANIFESTVAR))
+    
     sm=m
     if(any(m$TRAITVAR != 0)) {
       traits = m$TRAITVAR %*% rnorm(m$n.latent,0,1)
-      sm$CINT = sm$CINT +  traits
-      sm$T0MEANS = sm$T0MEANS + m$T0TRAITEFFECT %*% traits
+      sm$CINT = m$CINT +  traits
+      sm$T0MEANS = m$T0MEANS + m$T0TRAITEFFECT %*% traits
     }
     
     if(any(m$MANIFESTTRAITVAR != 0)) {
-      sm$MANIFESTMEANS = sm$MANIFESTMEANS + m$MANIFESTTRAITVAR %*% rnorm(m$n.manifest,0,1)
+      sm$MANIFESTMEANS = m$MANIFESTMEANS + m$MANIFESTTRAITVAR %*% rnorm(m$n.manifest,0,1)
     }
     
     if(m$n.TIpred > 0) {
       tipreds <- m$TIPREDMEANS + m$TIPREDVAR %*% rnorm(m$n.TIpred,0,1)
-      sm$CINT = sm$CINT + m$TIPREDEFFECT %*% tipreds
+      sm$CINT = m$CINT + m$TIPREDEFFECT %*% tipreds
     }
     
     manifests<-matrix(NA,fullTpoints,m$n.manifest)
@@ -98,15 +101,19 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
     
     colnames(sdat) <- c('id','time',m$manifestNames,m$TDpredNames,m$TIpredNames)
     sdat <- data.frame(sdat)
+
     
-    # sdat[,manifestNames] <- Kalman(kpars=skpars,datalong=sdat,manifestNames=manifestNames,TDpredNames=TDpredNames,
-    #   latentNames=latentNames,
-    #   imputeMissings=TRUE)$y
-    
-    latents[1,] <- sm$T0MEANS+sm$T0VAR %*% rnorm(m$n.latent)
+    latents[1,] <- sm$T0MEANS+m$T0VAR %*% rnorm(m$n.latent)
     Qinf <- fQinf(sm$DRIFT,sm$DIFFUSION)
+    
     for(i in 2:nrow(latents)){
       dtA=expm::expm(sm$DRIFT * (sdat$time[i]-sdat$time[i-1]))
+      # message('dtA')
+      # print(dtA)
+      # message('dtCINT')
+      # print(solve(sm$DRIFT,(dtA - diag(m$n.latent))) %*% sm$CINT)
+      # message('dtG')
+      # print(t(chol(fdtQ(Qinf,dtA))))
       latents[i,] <- dtA %*% latents[i-1,] +
         solve(sm$DRIFT,(dtA - diag(m$n.latent))) %*% sm$CINT + 
         t(chol(fdtQ(Qinf,dtA))) %*% rnorm(m$n.latent)
@@ -127,8 +134,10 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
     
     sdat[,'time'] = sdat[,'time'] - sdat[1,'time'] 
     
-    if(si==1) datalong <- sdat else datalong <- as.matrix(rbind(datalong,sdat))
+    if(si==1) datalong <- sdat else datalong <- rbind(datalong,sdat)
   }
+  
+  datalong<-as.matrix(datalong)
   
   
   if(wide==FALSE) return(datalong) else {

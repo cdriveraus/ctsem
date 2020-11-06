@@ -31,7 +31,7 @@ ctStanPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,
   xmeasure= xmeasure[, count := seq(.N), by = .(id)]$count
   
   if(is.null(fit$generated$Y)) Ygen <- ctStanGenerateFromFit(fit,fullposterior=TRUE,nsamples=nsamples)$generated$Y else Ygen <- fit$generated$Y
-  Ygen<-aperm(Ygen,c(2,1,3))
+  # Ygen<-aperm(Ygen,c(2,1,3)) #previously necessary but fixed generator
   Ygen <- Ygen[,datarows,,drop=FALSE]
   time <- fit$standata$time[datarows]
   Ydat <- fit$data$Y[datarows,,drop=FALSE]
@@ -76,30 +76,7 @@ ctStanPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,
           if(subtypei=='Observation') x <- xmeasure
           if(subtypei=='Time') x <- time
           
-          # notmissing <- which(!is.na(c(y[datarows,i,1])))
-          
-          # if(shading) {
-          #   xs=rep(x,each=dim(Ygen)[1])
-          #   ycut=quantile(Ygen[,,i],c(.005,.995),na.rm=TRUE)
-          #   ysamps=Ygen[,,i]
-          #   xs=xs[ysamps>ycut[1] & ysamps<ycut[2]]
-          #   ysamps=ysamps[ysamps>ycut[1] & ysamps<ycut[2]]
-          #   graphics::smoothScatter(xs,ysamps,nbin=256,colramp=grDevices::colorRampPalette(colors=c(rgb(1,1,1,0),rgb(1,.4,.4,.3))),nrpoints=0,
-          #     transformation=function(x) x,ylim=range(c(y[,i,],quantile(ysamps,probs = c(.01,.99),na.rm=TRUE)),na.rm=TRUE),
-          #     xlab=subtypei,ylab=dimnames(y)[[2]][i])
-          # }
-          
-          # if(subtypei=='Observation') ctPlotArray(list(y=y[notmissing,i,,drop=FALSE],x=x[notmissing]),legend=FALSE,
-          #   # add=shading,polygon=!shading,
-          #   plotcontrol=list(xlab=subtypei,main=dimnames(y)[[2]][i],...))
-          
-          # if(subtypei=='Time')
-          
-          # ocol <- rgb(0,0,.7,.7)
-          # points(x[notmissing],
-          #   Ydat[,i][notmissing] +  rnorm(length(Ydat[,i][notmissing]),0, jitter * sd(Ydat[,i][notmissing],na.rm=TRUE)),
-          #   type=ifelse(subtypei=='Time','p','l'),lwd=2,lty=1,pch=17, col=ocol)
-          # if(legend) legend('topright',c('Model implied','Observed'),text.col=c('red',ocol))
+        
           
           plots[[i]] <- c(plots[[i]],
             list(

@@ -3,6 +3,7 @@
 #' Converts a lower triangular matrix with standard deviations on the diagonal and partial correlations on
 #' lower triangle, to a covariance (or cholesky decomposed covariance)
 #' @param mat input square matrix with std dev on diagonal and lower tri of partial correlations.
+#' @param coronly if TRUE, ignores everything except the lower triangle and outputs correlation.
 #' @param cholesky Logical. To return the cholesky decomposition instead of full covariance, set to TRUE.
 #' @examples
 #' testmat <- diag(exp(rnorm(5,-3,2)),5) #generate arbitrary std deviations
@@ -11,7 +12,7 @@
 #' covmat <- sdpcor2cov(testmat) #convert to covariance
 #' cov2cor(covmat) #convert covariance to correlation
 #' @export
-sdpcor2cov <- function(mat, cholesky=FALSE){ 
+sdpcor2cov <- function(mat, coronly=FALSE, cholesky=FALSE){ 
 
     ndim = ncol(mat);
     mcholcor=diag(0,ndim);
@@ -28,8 +29,11 @@ sdpcor2cov <- function(mat, cholesky=FALSE){
         }
       }
     }
-    mscale=diag(diag(mat))
+   
+    if(!coronly){
+     mscale=diag(diag(mat))
     out= mscale %*% mcholcor
+    } else out = mcholcor
     if(!cholesky) out = out %*% t(out)
     return(out);
   }

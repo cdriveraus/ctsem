@@ -10,20 +10,20 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
   test_that("dtVct_CINTheterogeneity", {
     set.seed(1)
     s=list()
-    nsubjects=200
+    nsubjects=500
     Tpoints=15
-    parsd=1.4
-    parmu= -10.4
+    parsd=0#1.4
+    parmu= -3.4
     dt=1
     par= (rnorm(nsubjects,parmu,parsd))
     mean(par)
     sd(par)
     
     for(subi in 1:nsubjects){
-      gm=ctModel(LAMBDA=diag(1), Tpoints=Tpoints, DRIFT=matrix(-1),T0MEANS = matrix(4), 
+      gm=ctModel(LAMBDA=diag(1), Tpoints=Tpoints, DRIFT=matrix(-.3),T0MEANS = matrix(4), 
         CINT=matrix(par[subi]),DIFFUSION=matrix(2),
-        T0VAR=matrix(2), MANIFESTVAR=matrix(.8))
-      d=suppressMessages(ctGenerate(gm,n.subjects = 1,burnin = 3,dtmean = dt))
+        T0VAR=matrix(2), MANIFESTVAR=matrix(.3))
+      d=suppressMessages(ctGenerate(gm,n.subjects = 1,burnin = 0,dtmean = dt))
       if(subi==1) dat=cbind(subi,d) else dat=rbind(dat,cbind(subi,d))
     }
     

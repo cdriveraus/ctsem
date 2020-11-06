@@ -39,38 +39,60 @@ generator2 <- function(gm,nsubjects,
 }
 
 
+
 #' Generate data from a ctstanmodel object
 #'
-#' @param ctm \code{\link{ctStanModel}} object.
-#' @param datastruct long format data structure as used by ctsem.
-#' @param optimize Whether to optimize or use Stan's HMC sampler
+#' @param cts \code{\link{ctStanModel}} , or \code{\link{ctStanFit}},object.
+#' @param datastruct long format data structure as used by ctsem. 
+#' Not used if ctm is a ctStanFit object.
 #' @param is If optimizing, follow up with importance sampling? 
-#' @param fullposterior Generate from the full posterior or just the mean?
+#' @param fullposterior Generate from the full posterior or just the (unconstrained) mean?
 #' @param nsamples How many samples to generate?
 #' @param parsonly If TRUE, only return samples of raw parameters, don't generate data.
 #' @param includePreds if TRUE, the prior for covariate effects (TD and TI predictors)
 #' is included, as well as the TD and TI pred data. Else the effects are set to zero.
-#' @param ... arguments to pass to stanoptimis 
+#' @param cores Number of cpu cores to use.
 #'
-#' @return Array of nsamples x time points x manifest variables.
+#' @return List contining Y, and array of nsamples by data rows by manifest variables, 
+#' and llrow, an array of nsamples by data rows log likelihoods.
 #' @export
 #'
 #' @examples
 #' \donttest{
 #' #generate and plot samples from prior predictive
-#' priorpred <- ctStanGenerate(ctm = ctstantestfit$ctstanmodelbase,
+#' priorpred <- ctStanGenerate(ctm = ctstantestfit,
 #'   datastruct = ctstantestdat,cores=2,nsamples = 50)
 #'}
-ctStanGenerate <- function(ctm,datastruct, optimize=TRUE, is=FALSE, 
-  fullposterior=TRUE, nsamples=200, parsonly=FALSE,includePreds = FALSE,...){
+ctStanGenerate <- function(cts,datastruct=NA, is=FALSE, 
+  fullposterior=TRUE, nsamples=200, parsonly=FALSE,includePreds = FALSE,cores=2){
   
-  datastruct[,ctm$manifestNames] <- NA
-  dots <- list(...)
-  dots$carefulfit=FALSE
-  dots$is <- is
-  dots$tol=1e-18
-  dots$stochastic=FALSE
-  if(is.null(dots$finishsamples) && parsonly) dots$finishsamples=nsamples
+  #update this function to also generate posterior predictive
+  
+  nopriors <- FALSE # update this when creating posterior predictive, go to TRUE if fullposterior=F and fit object had no priors
+  derrind <- 'all' #possibly update below
+  
+  if('ctStanFit' %in% class(cts)){
+    # if(!fullposterior && cts$standata$nopriors==1) nopriors <- TRUE #generate from point estimate
+    derrind <- cts$standata$derrind
+    ctm <- cts$ctstanmodelbase
+    datastruct <- standatatolong(cts$standata, origstructure=TRUE, ctm=ctm)
+    
+    if(cts$setup$recompile){ #then temporarily attach compiled stanmodels to search path to avoid recompiling
+      ctStanModels <- new.env()
+      ctStanModels$fitmodel <- cts$stanmodel
+      if(!is.null(cts$generated)) ctStanModels$genmodel <- cts$generated$stanmodel
+      attach(ctStanModels)
+      on.exit(add = TRUE, {detach(name = 'ctStanModels')})
+      }
+    }
+
+  datastruct[,ctm$manifestNames] <- NA #remove manifest variables
+  optimcontrol<- list()
+  optimcontrol$carefulfit=FALSE
+  optimcontrol$is <- is
+  optimcontrol$stochastic=FALSE
+  # if(is.null(dots$finishsamples) && parsonly)  #why was this here? seemed to stop nsamples effect
+  optimcontrol$finishsamples=nsamples
   if(!includePreds){
     ctm$n.TDpred <- 0
     ctm$TDpredNames <- NULL
@@ -80,28 +102,30 @@ ctStanGenerate <- function(ctm,datastruct, optimize=TRUE, is=FALSE,
   ctm$TIpredAuto <- 0L
   
   #problem with multiple cores inside function?
-  dots1=dots
-  dots1$cores=1
   
   datadummy= datastruct[c(1,nrow(datastruct)),,drop=FALSE]
   datadummy[,ctm$TIpredNames] <- 0
-  pp<-ctStanFit(datalong =datadummy, #reenable multi core -- check parallel craziness in stanoptimis
-    ctstanmodel = ctm,optimize=optimize, optimcontrol=dots1,verbose=0, nopriors=FALSE)
+  
+  #fit to empty data 
+  message('Fitting model to empty dataset...')
+  pp<-ctStanFit(datalong =datadummy, #to reenable multi core -- check parallel craziness in stanoptimis (not needed though, fast to fit)
+    ctstanmodel = ctm, optimcontrol=optimcontrol,cores=1,nopriors=FALSE, init=1e-10)
+  
   
   if(parsonly) dat <- pp else{
+
+    datastruct[,ctm$manifestNames] <- -99
+
+    #get filled standata object
+    pp$standata<-ctStanData(ctm=pp$ctstanmodel, datalong=datastruct,optimize=TRUE,derrind= derrind)
+
+    ppf <- ctStanGenerateFromFit(fit = pp,nsamples = nsamples,fullposterior = fullposterior,cores=cores)
     
-    filled <- datastruct
-    filled[,ctm$manifestNames] <- -99
-    # browser()
-    ppf <- ctStanFit(datalong = filled, ctstanmodel = ctm,optimize=optimize, 
-      optimcontrol=dots1,fit=FALSE,nopriors=FALSE)
-    # pp$standata$Y <- ppf$standata$Y
-    ppf$stanfit <- pp$stanfit
-    class(ppf) <- c('ctStanFit',class(ppf))
-    ppf <- ctStanGenerateFromFit(fit = ppf,nsamples = nsamples,fullposterior = fullposterior)
-    
-    dat <- ppf$generated$Y
-    dimnames(dat) <- list(datapoints=1:dim(dat)[1], samples=1:dim(dat)[2], manifests = ctm$manifestNames)
+    #collect generated stuff
+    dat <-list()
+    dat$Y <- ppf$generated$Y
+    dimnames(dat$Y) <- list(datapoints=1:dim(dat$Y)[1], samples=1:dim(dat$Y)[2], manifests = ctm$manifestNames)
+    dat$llrow <- ppf$generated$llrow
   }
   
   

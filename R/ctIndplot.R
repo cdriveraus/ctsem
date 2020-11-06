@@ -57,7 +57,7 @@ ctIndplot<-function(datawide,n.manifest,Tpoints,n.subjects='all',colourby="varia
     for(j in 1:length(vars)){
       graphics::points(c(0,times[i,]),
         datawide[individuals[i],seq(vars[j],n.manifest*Tpoints,n.manifest)] +
-          rnorm(length(datawide[individuals[i],seq(vars[j],n.manifest*Tpoints,n.manifest)]),0,jittersd),
+          rnorm(length(t(datawide[individuals[i],seq(vars[j],n.manifest*Tpoints,n.manifest)])),0,jittersd),
         col=ifelse(colourby=="variable",colourvector[j],colourvector[i]),type=type,pch=j,lty=1,...) 
     }}
   

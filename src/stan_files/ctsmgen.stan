@@ -31,8 +31,8 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
         o[j,i] =  inv_logit(mat[j,i])*2-1;  // can change cor prior here
         o[i,j] = o[j,i];
       }
-      o[i,i]=1; // change to adjust prior for correlations
-      o[i,] = o[i,] / sqrt(sum(square(o[i,]))+1e-10);
+      o[i,i]=.999; //avoids correlations of 1
+      o[i,] /= sqrt(sum(square(o[i,]))+1e-10);
     }
     return o;
   } 
@@ -511,8 +511,8 @@ generated quantities{
   real dt=1; //initialise to make sure drift is computed on first pass
   real dtsmall;
   int dtchange=1;
+  real prevtime=0;
   int T0check=0;
-  int counter = 1;
   matrix[nlatentpop, nlatentpop] etacov; //covariance of latent states
 
   //measurement 
@@ -562,7 +562,8 @@ generated quantities{
 
   for(subi in 0:max(subject)){
   for(rowi in 1:ndatapoints){
-    if( (rowi==1 && subi==0) ||(dokalman && dokalmanrows[rowi] && subject[rowi]==subi) ){ //if doing this row for this subject
+    if( (rowi==1 && subi==0) ||
+      (dokalman && dokalmanrows[rowi] && subject[rowi]==subi) ){ //if doing this row for this subject
     
     int full = (savescores==1 || subi ==0);
     int o[full ? nmanifest : nobs_y[rowi]]; //which obs are not missing in this row
@@ -591,7 +592,9 @@ generated quantities{
       dt = time[rowi] - time[prevrow];
       dtchange = dt!=prevdt; 
       prevdt = dt; //update previous dt store after checking for change
+      //prevtime = time[rowi];
     }
+
     if(savescores && prevrow!=0) Je[rowi,,] = Je[prevrow,,];
     
     if(T0check == 0) { // calculate initial matrices if this is first row for si
@@ -671,9 +674,10 @@ sJ0=mcalc(sJ0,indparams, statetf,{0,1}, 51, matsetup, matvalues, si, subindices)
     
 if(verbose > 1) print ("below t0 row ", rowi);
 
-      if(subi==0 || T0check>0){
+      if(subi==0 || (T0check>0)){ //for init or subsequent time steps when observations exist
         vector[nlatent] base;
         real intstepi = 0;
+        
         dtsmall = dt / ceil(dt / maxtimestep);
         
         while(intstepi < (dt-1e-10)){

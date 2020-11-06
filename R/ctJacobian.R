@@ -53,8 +53,7 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
   # initialize fn and state
   fn     = c()
   state   = paste0("state__", 1:ndim,'__')
-  
-  mbak=m
+
   
   #replace system matrix references
   for(ri in 1:nrow(m$pars)){
@@ -169,7 +168,6 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
         }
       }
     }
-
     Jout[[typei]] <- Jm
   }#end type loop
   return(Jout)

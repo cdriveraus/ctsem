@@ -327,12 +327,11 @@ standatatolong <- function(standata, origstructure=FALSE,ctm=NA){
   names(long) <- standatalongobjects()
   
   if(origstructure){
+    if(is.na(ctm[1])) stop('Missing ctm arg in standatatolong()')
     colnames(long[['Y']]) <- ctm$manifestNames#colnames(standata$Y)
     long[['Y']][long[['Y']] %in% 99999] <- NA
-    if(!is.na(ctm[1])){
       colnames(long[['subject']]) <- ctm$subjectIDname
       colnames(long[['time']]) <- ctm$timeName
-    }
     longout <- data.frame(long[['subject']],long[['time']],long[['Y']])
     if(standata$ntdpred > 0){
       colnames(long[['tdpreds']]) <- colnames(standata$tdpreds)
@@ -735,7 +734,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                 message(attributes(out2[[x]])$err)
               }
             })
-            # browser()
+            # 
             out <- try(sum(unlist(out2)),silent=TRUE)
             attributes(out)$gradient <- try(apply(sapply(out2,function(x) attributes(x)$gradient,simplify='matrix'),1,sum))
           }
@@ -878,6 +877,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           abs_tol=NULL,grad_tol=NULL,
           rel_tol=tol*ifelse(!finished,100,1),
           step_tol=NULL,ginf_tol=NULL)
+        
         optimfit$value = -optimfit$f
         init = optimfit$par
         if(is.infinite(bestfit)) stochastic<-TRUE
@@ -898,7 +898,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else init=optimfit$par
       }
       
-      # browser()
+      # 
       if(length(parsteps) > 0){
         message('Freeing parameters...')
         finished <- FALSE
@@ -1301,6 +1301,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                   }
                   if(lpdiff > lpdifmax){
                     if(verbose) message('Decreasing step')
+                    
+                    
                     if(stepchange == 1) stepchangemultiplier = stepchangemultiplier * .5
                     stepchange <- -1
                     stepsize <- stepsize*(1-stepchangemultiplier)+ (stepsize*.1)*stepchangemultiplier

@@ -476,30 +476,24 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     }
 
     if(intoverpop)   ctm <- ctStanModelIntOverPop(ctm)
-    # 
     
     #jacobian addition
     
     ctm$jacobian <- ctJacobian(ctm)
     jl <- ctModelUnlist(ctm$jacobian,names(ctm$jacobian))
+    jl <- jl[apply(jl,1,function(x) any(!is.na(x))),] #clean up messy leftovers of NA's
     jl2 <- as.data.frame(rbind(data.table(ctm$pars[1,]),data.table(jl),fill=TRUE))[-1,]
-    jl2[,] <- lapply(jl2, function(x) { #probably no longer needed..
-      x[is.null(x)] <- NA
-      return(x)
-      })
+    # jl2[,] <- lapply(jl2, function(x) { #probably no longer needed..
+    #   if(any(is.null(x))) message('still needed')
+    #   x[is.null(x)] <- NA
+    #   return(x)
+    #   })
     jl2$indvarying <- FALSE
     jl2$sdscale <- 1
     ctm$pars <- rbind(ctm$pars,jl2)
     ctm <- ctModelTransformsToNum(ctm)
     
     ctm$pars <- ctStanModelCleanctspec(ctm$pars)
-    
-    # 
-    # 
-    # jl3=ctModelTransformsToNum(list(pars=data.frame(jl2)))
-    # jl3$pars$indvarying<-FALSE
-    # ctm$pars <- rbind(ctm$pars, jl3$pars)
-    
     
     ctm <- T0VARredundancies(ctm)
     
@@ -527,6 +521,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     for(i in 1:nrow(ctm$pars)){ #simplify any calcs
       if(grepl('[',ctm$pars$param[i],fixed=TRUE)) ctm$pars$param[i] <- Deriv::Simplify(ctm$pars$param[i])
     }
+
     ctm$modelmats <- ctStanModelMatrices(ctm)
     ctm <- ctStanCalcsList(ctm) #get extra calculations and adjust model spec as needed???
 

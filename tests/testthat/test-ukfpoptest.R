@@ -19,10 +19,10 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       gm<-ctModel(type='omx',n.latent=2,n.manifest=n.manifest,Tpoints=Tpoints,LAMBDA=matrix(c(1,.4,0,0,0,1),3,ncol=2),
         DRIFT=diag(-.4,2),
         CINT=matrix(c(par1[i],par2[i]),2),
-        T0VAR=diag(.1,2),
+        T0VAR=diag(1,2),
         T0MEANS=matrix(c(3,5),n.latent),
         # MANIFESTMEANS=diag(par1[i],1), #matrix(mmeans,nrow=n.manifest),
-        MANIFESTVAR=t(chol(diag(.0001,n.manifest))),
+        MANIFESTVAR=t(chol(diag(.5,n.manifest))),
         DIFFUSION=t(chol(diag(3,2))))
       if(i==1) cd<-ctGenerate(gm,n.subjects=1,burnin=burnin,wide=FALSE,dtmat = dtmat) else {
         newdat <- ctGenerate(gm,n.subjects=1,burnin=burnin,wide=FALSE,dtmat = dtmat)
@@ -31,10 +31,10 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       }
     }
     
-    cd[,gm$manifestNames]<-(cd[,gm$manifestNames]) + rnorm(length(cd[,gm$manifestNames]),0, .9^2)
     
-    
-    m1<-ctModel(type='omx',n.latent=4,n.manifest=3,Tpoints=Tpoints,
+    # n.manifest=2
+    m1<-ctModel(type='omx',n.latent=4,n.manifest=n.manifest,Tpoints=Tpoints,
+      # manifestNames = c('Y1','Y2'),
       LAMBDA=cbind(gm$LAMBDA,0,0),
       MANIFESTMEANS=matrix(0,nrow=n.manifest),
       # CINT=matrix(c('cint1',0),2,1),
@@ -80,7 +80,8 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     # sink()
     # summary(sf1)
     
-    sf1d=matrix(sf1$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf1$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
+    
+    sf1d=sf1$stanfit$transformedparsfull$pop_DRIFT[1,1:2,1:2]#matrix(sf1$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf1$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
     sf1ll=sf1$stanfit$optimfit$value
     
     sf1_derrind<- ctStanFit(cd,sm1,iter=200,
@@ -88,58 +89,22 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       optimcontrol=list(deoptim = FALSE,is=FALSE,isloopsize=50,finishsamples=50),
       derrind=1:2,
       nlcontrol=list(nldynamics=FALSE))
-    sf1_derrindd=matrix(sf1_derrind$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf1_derrind$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
+    sf1_derrindd=sf1_derrind$stanfit$transformedparsfull$pop_DRIFT[1,1:2,1:2]#matrix(sf1_derrind$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf1_derrind$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
     sf1_derrindll=sf1_derrind$stanfit$optimfit$value
-    
-    sf1nld<- ctStanFit(cd,sm1,iter=200,
-      optimize=TRUE,verbose=0,nopriors = TRUE,
-      optimcontrol=list(deoptim = FALSE,is=FALSE,isloopsize=50,finishsamples=50),
-      derrind=1:4,
-      nlcontrol=list(nldynamics=TRUE))
-    sf1nldd=matrix(sf1nld$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf1nld$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
-    sf1nldll=sf1nld$stanfit$optimfit$value
-    
-    # sink(file='../sinkoutg.txt')
-    sf1nld_derrind<- ctStanFit(cd,sm1,iter=200,
-      optimize=TRUE,verbose=0,nopriors = TRUE,
-      init=0,
-      optimcontrol=list(deoptim = FALSE,is=FALSE,isloopsize=50,finishsamples=50),
-      derrind=1:2,
-      nlcontrol=list(nldynamics=TRUE))
-    # sink()
-    sf1nld_derrindd=matrix(sf1nld_derrind$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf1nld_derrind$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
-    sf1nld_derrindll=sf1nld_derrind$stanfit$optimfit$value
-    
-    
-    sf1nl_derrind<- ctStanFit(cd,sm1,iter=200,
-      optimize=TRUE,verbose=0,nopriors = TRUE,
-      optimcontrol=list(deoptim = FALSE,is=FALSE,isloopsize=50,finishsamples=50),
-      derrind=1:2,
-      nlcontrol=list(nldynamics=TRUE))
-    sf1nl_derrindd=matrix(sf1nl_derrind$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf1nl_derrind$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
-    sf1nl_derrindll=sf1nl_derrind$stanfit$optimfit$value
-    
-    
-    # m2$T0VAR[,]=0
-    # m2$T0MEANS[,]=2.588
+
     sm2 <- ctStanModel(m2)
-    sm2$pars$indvarying[!(sm2$pars$matrix %in% c('CINT','T0MEANS'))] <- FALSE
-    # sm2$pars$multiplier[(sm2$pars$matrix %in% c('CINT','T0MEANS'))] =1
-    # sm2$pars$meanscale[(sm2$pars$matrix %in% c('CINT','T0MEANS'))] =1
-    
-    # sink(file='../sinkout.txt')
+
     sf2 <- ctStanFit(cd,sm2,iter=10,fit=T,
       optimize=T,verbose=0,nopriors = TRUE,intoverpop = TRUE,
-      # init=0,
       optimcontrol=list(deoptim = FALSE,is=FALSE,isloopsize=50,finishsamples=50),
       derrind=1:2)
     # sink()
-    sf2d=matrix(sf2$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf2$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
+    sf2d=sf2$stanfit$transformedparsfull$pop_DRIFT[1,1:2,1:2]# matrix(sf2$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf2$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
     sf2ll=sf2$stanfit$optimfit$value
     # summary(sf2)$popmeans
     
-    dvec=c('sf1d','sf2d','sf1nl_derrindd','sf1nld_derrindd')
-    llvec=c('sf1ll','sf1nldll','sf1nld_derrindll','sf1nl_derrindll')
+    dvec=c('sf1d','sf2d','sf1_derrindd')
+    llvec=c('sf1ll','sf2ll','sf1_derrindll')
     
     sapply(dvec,get,envir=sys.frame(sys.parent(0)))
     sapply(llvec,get,envir=sys.frame(sys.parent(0)))
@@ -147,6 +112,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     for(di in 2:length(dvec)){
       expect_equivalent(get(dvec[di]),get(dvec[di-1]),tol=1e-1)
       expect_equivalent(get(llvec[di]),get(llvec[di-1]),tol=1e-3)
+      expect_equivalent(get(dvec[di]),c(-.4,0,0,-.4),tol=.1)
     }
     
   })

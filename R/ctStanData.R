@@ -48,7 +48,6 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   
   
   #id mapping
-  # browser()
   original <- unique(datalong[,ctm$subjectIDname])
   datalong <- makeNumericIDs(datalong,ctm$subjectIDname,ctm$timeName)
   new <- unique(datalong[,ctm$subjectIDname])
@@ -150,7 +149,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   standata <- list(
     Y=cbind(as.matrix(datalong[,ctm$manifestNames])),
     subject=as.integer(datalong[,ctm$subjectIDname]),
-    time=datalong[,ctm$timeName], #not used in model but used elsewhere
+    time=datalong[,ctm$timeName], 
     ndatapoints=as.integer(nrow(datalong)),
     nobs_y=array(as.integer(apply(datalong[,ctm$manifestNames,drop=FALSE],1,function(x) length(x[x!=99999]))),dim=nrow(datalong)),
     whichobs_y=matrix(as.integer(t(apply(datalong[,ctm$manifestNames,drop=FALSE],1,function(x) {
@@ -234,8 +233,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   if(ctm$n.TIpred == 0) tipreds <- array(0,c(0,0))
   standata$tipredsdata <- as.matrix(tipreds)
   standata$nmissingtipreds <- as.integer(length(tipreds[tipreds== 99999]))
-  
-  # browser()
+
   standata$ntipredeffects <- as.integer(ifelse(ctm$n.TIpred > 0, as.integer(max(ctm$modelmats$TIPREDEFFECTsetup)), 0))
   standata$TIPREDEFFECTsetup <- apply(ctm$modelmats$TIPREDEFFECTsetup,c(1,2),as.integer,.drop=FALSE)
   standata$tipredsimputedscale <- ctm$tipredsimputedscale
@@ -413,7 +411,6 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
       ms$param[mrows] > 0 & ms$when[mrows] <=0 & (ms$indvarying[mrows] > 1 | ms$tipred[mrows] > 0) ))
   }
   rownames(standata$whenmat)[mc] <- names(mc)
-  # browser()
   
   standata$whenvecp <- array(0L, c(3,standata$nparams)) #whenvecp contains 0's for unchanging pars, 1's for changing pars
   standata$whenvecp[1,] <- as.integer(1:standata$nparams) #base parameters
@@ -426,7 +423,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     standata$whenvecs[wheni,ms$param[ms$when == wheni & ms$copyrow <=0 & ms$param > 0]] <- 
       as.integer(ms$param[ms$when == wheni & ms$copyrow <=0 & ms$param > 0])
   }
-  # browser()
+
   # why was this in the code? when do we need the below line... ind varying based on states?
   # if(standata$intoverpop==1 && standata$nlatentpop > standata$nlatent){
   #   standata$whenvecs[5,ms$param[ms$when==0 & ms$param > 0 & ms$copyrow < 1 & (ms$indvarying > 0 | ms$tipred > 0)]] <- 

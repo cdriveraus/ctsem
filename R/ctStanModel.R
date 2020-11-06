@@ -1,24 +1,27 @@
-ctModelUnlist<-function(ctmodelobj,matnames=c('T0MEANS','LAMBDA','DRIFT','DIFFUSION','MANIFESTVAR','MANIFESTMEANS', 'CINT', 'TDPREDEFFECT', 'T0VAR','PARS')){
-  out<-matrix(NA,nrow=0,ncol=5)
-  out<-as.data.frame(out,stringsAsFactors =FALSE)
+ctModelUnlist<-function(ctmodelobj,
+  matnames=c('T0MEANS','LAMBDA','DRIFT','DIFFUSION','MANIFESTVAR','MANIFESTMEANS', 'CINT', 'TDPREDEFFECT', 'T0VAR','PARS')){
+  out<-data.frame(matrix=as.character(NA), row=as.integer(NA), col=as.integer(NA), param=as.character(NA), value=as.numeric(NA),
+    stringsAsFactors =FALSE)
+  out[1:sum(sapply(ctmodelobj[names(ctmodelobj) %in% matnames],length)),]=out
+
+  rowcount <- 0
   for(obji in matnames){
     if(!is.null(dim(ctmodelobj[[obji]])) && !is.null(ctmodelobj[[obji]]) && !is.na(ctmodelobj[[obji]][1])){
       for(rowi in 1:nrow(ctmodelobj[[obji]])){
         for(coli in 1:ncol(ctmodelobj[[obji]])){
-          out<-rbind(out,data.frame(obji,rowi,coli,
+          rowcount <- rowcount + 1
+          out[rowcount,]<-list(obji,rowi,coli,
             ifelse(is.na(suppressWarnings(as.numeric(ctmodelobj[[obji]][rowi,coli]))), #ifelse element is character string
               ctmodelobj[[obji]][rowi,coli],
               NA),
             ifelse(!is.na(suppressWarnings(as.numeric(ctmodelobj[[obji]][rowi,coli]))), #ifelse element is numeric
               as.numeric(ctmodelobj[[obji]][rowi,coli]),
-              NA),
-            stringsAsFactors =FALSE
-          ))
+              NA)
+          )
         }
       }
     }
   }
-  colnames(out)<-c('matrix','row','col','param','value')
   return(out)
 }
 
@@ -243,6 +246,7 @@ ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
     }
   }
   
+
   ctspec$indvarying <- as.logical(ctspec$indvarying)
   
   out<-list(pars=ctspec,n.latent=n.latent,n.manifest=n.manifest,n.TIpred=n.TIpred,n.TDpred=n.TDpred,
