@@ -405,23 +405,24 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     mrows=which(ms$matrix==mi)
     for(wheni in 1:4){
       standata$whenmat[mi,wheni] = as.integer(any(
-        ms$when[mrows]==wheni))
+        ms$when[mrows] %in% c(wheni,100))) #100 for PARS, find a better approach to work out exactly when PARS are needed
     }
     standata$whenmat[mi,5] = as.integer(any(
-      ms$param[mrows] > 0 & ms$when[mrows] <=0 & (ms$indvarying[mrows] > 1 | ms$tipred[mrows] > 0) ))
+      ms$param[mrows] > 0 & ms$when[mrows] %in% c(0,100) & (ms$indvarying[mrows] > 1 | ms$tipred[mrows] > 0) ))
   }
   rownames(standata$whenmat)[mc] <- names(mc)
   
-  standata$whenvecp <- array(0L, c(3,standata$nparams)) #whenvecp contains 0's for unchanging pars, 1's for changing pars
+  #this PARS when = 100 thing is annoyinh, improve it...
+  standata$whenvecp <- array(0L, c(2,standata$nparams)) #whenvecp contains 0's for unchanging pars, 1's for changing pars
   standata$whenvecp[1,] <- as.integer(1:standata$nparams) #base parameters
-  standata$whenvecp[2,ms$param[ms$when == 0 & ms$copyrow <1 & (ms$tipred > 0 | ms$indvarying > 0) & ms$param > 0]] <- 
-    as.integer(ms$param[ms$when == 0 & ms$copyrow <1 & (ms$tipred > 0 | ms$indvarying > 0) & ms$param > 0])
-  standata$whenvecp[3,] <- as.integer(1:ncol(standata$whenvecp))
+  standata$whenvecp[2,ms$param[ms$when %in% c(0,100) & ms$copyrow <1 & (ms$tipred > 0 | ms$indvarying > 0) & ms$param > 0]] <- 
+    as.integer(ms$param[ms$when %in% c(0,100) & ms$copyrow <1 & (ms$tipred > 0 | ms$indvarying > 0) & ms$param > 0])
+  # standata$whenvecp[3,] <- as.integer(1:ncol(standata$whenvecp))
   
   standata$whenvecs <- array(0L,dim=c(6,standata$nlatentpop)) #when do we need to compute transformed states?
   for(wheni in 1:4){ #whenvecs specifies array of when values for the state transform vector -- 1 to compute, 0 not
-    standata$whenvecs[wheni,ms$param[ms$when == wheni & ms$copyrow <=0 & ms$param > 0]] <- 
-      as.integer(ms$param[ms$when == wheni & ms$copyrow <=0 & ms$param > 0])
+    standata$whenvecs[wheni,ms$param[ms$when %in% c(wheni,100) & ms$copyrow <=0 & ms$param > 0]] <- 
+      as.integer(ms$param[ms$when  %in% c(wheni,100) & ms$copyrow <=0 & ms$param > 0]) #100 is for PARS - needed everywhere.
   }
 
   # why was this in the code? when do we need the below line... ind varying based on states?

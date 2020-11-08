@@ -267,16 +267,24 @@ ctDataCombineSplit <- function(dat, idvars, vars){ #no splits yet
 meltcov <- function(covm){
   if(is.null(dimnames(covm))) dimnames(covm) = list(paste0('v',1:nrow(covm)),paste0('v',1:nrow(covm)))
   covm=data.frame(row=factor(rownames(covm),levels=rownames(covm)),covm)
-  o=data.table::melt(data.table(covm),id.vars='row')
-  colnames(o)[!colnames(o) %in% 'value'] <- c('Var1','Var2')
+  
+  # # browser()
+  # div = 4:6
+  # divisor = which(nrow(covm)%%div == min(nrow(covm)%%div))+3 #find minimum remainder for splitting factor
+  # 
+  # if(is.na(factors)) factors <- suppressWarnings(factor(c(matrix(paste0('g',1:(ceiling(nrow(covm)/divisor))),nrow=nrow(covm)))))
+  # 
+  # covm=cbind(covm,Group=factors)
+  o=data.table::melt(data.table(covm),id.vars=c('row'))
+  colnames(o)[colnames(o) %in% c('row','variable')] <- c('Var1','Var2')
   return(o)
 }
 
 ctStanFitMelt <- function(fit, by,combinevars=NULL,maxsamples='all'){
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
-
-
-  datasources <- c('Data','StatePred')
+  
+  
+  datasources <- c('Data','StatePred','Residuals')
   if(!is.null(fit$generated)) datasources <- c(datasources,'PostPred')
   if(!is.null(fit$priorpred)) datasources <- c(datasources,'PriorPred')
   
@@ -308,28 +316,39 @@ ctStanFitMelt <- function(fit, by,combinevars=NULL,maxsamples='all'){
       dexists<-TRUE
       d<-list()
       d$Y<- array(fit$stanfit$transformedparsfull$ya[1,1,,],dim=dim(fit$stanfit$transformedparsfull$ya[1,1,,,drop=FALSE])[-1])
-      d$llrow <- fit$stanfit$transformedparsfull$llrow #,dim=c(1,dim(fit$stanfit$transformedparsfull$llrow)))
+      d$Y[rep(fit$standata$Y,each=dim(d$Y)[1])==99999] <- NA
+      d$llrow <- d$llrow <- fit$stanfit$transformedparsfull$llrow # array(NA,dim=c(1,dim(d$Y)[2])) 
+    }
+    
+    if(dsi=='Residuals'){
+      dexists<-TRUE
+      d<-list()
+      d$Y<- d$Y<- array(t(t(datbase[,(fit$ctstanmodelbase$manifestNames)])), dim=c(1,dim(fit$standata$Y))) -
+        array(fit$stanfit$transformedparsfull$ya[1,1,,],dim=dim(fit$stanfit$transformedparsfull$ya[1,1,,,drop=FALSE])[-1])
+      d$llrow <- d$llrow <- fit$stanfit$transformedparsfull$llrow #array(NA,dim=c(1,dim(d$Y)[2]))
     }
     
     if(dexists){
       if(maxsamples=='all') samples=1:dim(d$Y)[1] else samples = sample(1:dim(d$Y)[1],min(maxsamples,dim(d$Y)[1]))
-    gdat <- data.table(datbase[rep(seq_len(nrow(datbase)), length(samples)),])
-    
-    gdat[, (fit$ctstanmodelbase$manifestNames)]   <- #confusing aperm needed here, wish I understood why...
-      data.table(matrix(aperm(d$Y[samples,,,drop=FALSE],c(2,1,3)), ncol=dim(d$Y)[3]))
-    gdat$Sample=rep(samples,each=dim(d$Y)[2])
-    gdat$LogLik<-c(d$llrow[samples,])
-    gdat$DataSource <- dsi
-    
-    if(nrow(dat)==0) dat <- gdat else dat <- rbind(dat, gdat)
+      gdat <- data.table(datbase[rep(seq_len(nrow(datbase)), length(samples)),])
+      
+      gdat[, (fit$ctstanmodelbase$manifestNames)]   <- #confusing aperm needed here, wish I understood why...
+        data.table(matrix(aperm(d$Y[samples,,,drop=FALSE],c(2,1,3)), ncol=dim(d$Y)[3]))
+      gdat$Sample=rep(samples,each=dim(d$Y)[2])
+      gdat$LogLik<-c(d$llrow[samples,])
+      gdat$DataSource <- dsi
+      
+      if(nrow(dat)==0) dat <- gdat else dat <- rbind(dat, gdat)
     }
   }
-
+  
   by=c(by,'Sample','WhichObs','DataSource')
-  if(is.na(combinevars[1])) combinevars = setNames(
+  if(is.na(combinevars[1])){
+    combinevars = setNames(
     colnames(datbase)[!colnames(datbase) %in% by],colnames(datbase)[!colnames(datbase) %in% by])
   combinevars<-c(combinevars,LogLik='LogLik')
-
+  }
+  
   dat <- ctDataMelt(dat=dat,id=fit$ctstanmodelbase$subjectIDname, by=by,combinevars = combinevars)
   dat$Sample <- factor(dat$Sample)
   dat$DataSource <- factor(dat$DataSource)
@@ -338,26 +357,30 @@ ctStanFitMelt <- function(fit, by,combinevars=NULL,maxsamples='all'){
 }
 
 
-ctCheckFit2 <- function(fit, data=TRUE, postpred=TRUE, priorpred=FALSE, statepred=FALSE, by=fit$ctstanmodelbase$timeName,
+ctCheckFit2 <- function(fit, 
+  data=TRUE, postpred=TRUE, priorpred=FALSE, statepred=FALSE, residuals=FALSE,
+  by=fit$ctstanmodelbase$timeName,
   TIpredNames=fit$ctstanmodelbase$TIpredNames,
-  nsamples=10, covplot=TRUE, combinevars=NA,
+  nsamples=10, covplot=TRUE, corr=TRUE, combinevars=NA,
+  groupby='split', byNA=TRUE,
   smooth=TRUE, k=10,breaks=4,entropy=FALSE,reg=FALSE,verbose=0){
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
   
+  covORcor <- function(m){
+    if(corr) return(cov2cor(m)) else return(m)
+  }
   
-
   # combinevars<-c(combinevars,LogLik='LogLik')
   
   dat <- ctStanFitMelt(fit = fit,combinevars = combinevars, by=by,maxsamples = nsamples)
   
   if(is.na(combinevars[1])) combinevars <- setNames(unique(dat$variable), unique(dat$variable))
   
-  samples <- 1:nsamples #fix this to randomly select each time
-  dat <- dat[Sample %in% samples]
   if(!data) dat<-dat[!DataSource %in% 'Data']
   if(!priorpred) dat<-dat[!DataSource %in% 'PriorPred']
   if(!postpred) dat<-dat[!DataSource %in% 'PostPred']
   if(!statepred) dat<-dat[!DataSource %in% 'StatePred']
+  if(!residuals) dat<-dat[!DataSource %in% 'Residuals']
   
   # if(!'WhichObs' %in% by) mdat$WhichObs <- NULL
   
@@ -365,29 +388,86 @@ ctCheckFit2 <- function(fit, data=TRUE, postpred=TRUE, priorpred=FALSE, statepre
   
   #set k and breaks
   breaks = min(breaks,length(unique(dat[[by]][!is.na(dat[[by]])])))
-  k = min(k,length(unique(dat[[by]][!is.na(dat[[by]])]))-1)
+  # k = min(k,length(unique(dat[[by]][!is.na(dat[[by]])]))-1)
   
   if(covplot ||entropy){
+    discdat=dat #make copy for use in covs
+    discdat[variable %in% TIpredNames & WhichObs > 1] <- NA #remove later tipreds to avoid duplicate cov columns
+    nontivars <- unique(discdat$variable)[!unique(discdat$variable) %in% TIpredNames]
+    
     if(is.double(dat[[by]])){
       if(requireNamespace('arules')){
-        discdat=dat
-        discdat[[by]] <- arules::discretize(dat[[by]],
+        discdat[[by]] <- arules::discretize(dat[[by]], #discretize
           method='cluster',breaks = breaks,labels=FALSE)
       } else stop('arules package needed for discretization!')
     }
     if(covplot){
-      for(dsi in unique(dat$DataSource)){
+      corlist <- list()
+      datasources <- as.character(unique(dat$DataSource))
+      for(dsi in unique(dat$DataSource)){ #make wide discretized data and get cov
         
-      wdat <- dcast(discdat[DataSource==dsi],
-        paste0(fit$ctstanmodelbase$subjectIDname, '+Sample~variable + ',by),fun.aggregate=mean,na.rm=TRUE)
-      
-      covdat <- covml(
-        data.frame(wdat)[,!colnames(wdat) %in% c('Sample',fit$ctstanmodelbase$subjectIDname),drop=FALSE],
-        reg=reg,
-        verbose=verbose)
-      
-      print(corplotmelt(meltcov(cov2cor(covdat$cp$covm)),
-        label=paste0(dsi,' corr.'),limits=c(-1,1)))      
+        wdat <- dcast(discdat[DataSource==dsi],
+          paste0(fit$ctstanmodelbase$subjectIDname, '+Sample~variable + ',by),fun.aggregate=mean,na.rm=TRUE)
+  
+        #put loglik on one side
+        if('LogLik_1' %in% colnames(wdat)) wdat <- cbind(wdat[,colnames(wdat) %in% paste0('LogLik_',1:breaks),with=FALSE],
+          wdat[,!colnames(wdat) %in% paste0('LogLik_',1:breaks),with=FALSE])
+        
+        if(byNA) breakset <-c(1:breaks,NA) else breakset=1:breaks #some values can't be placed in a by column if by = NA
+          
+        if(groupby == 'split'){
+          colorder <- unlist(lapply(breakset, function(b) grep(paste0('\\_',b,'$'),x=colnames(wdat))))
+          wdat <- wdat[,colorder,with=FALSE]
+        } else if(!byNA) wdat <- wdat[,-grep('\\_NA%',colnames(wdat)),with=FALSE] #if not seperating by group, still remove NA by relations if needed
+        
+        sapply(TIpredNames,function(x){ #fix tipred column names
+          if(paste0(x,'_1') %in% colnames(wdat)){
+            colnames(wdat)[ colnames(wdat) %in% paste0(x,'_1')] <<- x
+          }
+        })
+        
+        wdat <- cbind(wdat[,c(which(colnames(wdat) %in% TIpredNames), which(!colnames(wdat) %in% TIpredNames)),with=FALSE])
+        
+        covdat <- covml(
+          data.frame(wdat)[,!colnames(wdat) %in% c('Sample',fit$ctstanmodelbase$subjectIDname),drop=FALSE],
+          reg=reg,
+          verbose=verbose)
+        
+        corlist[[dsi]] <-covORcor(covdat$cp$covm)
+        
+        # if(covsplitdiffs){
+        #   browser()
+        #   splitcovs <- plyr::laply(breakset[!is.na(breakset)], function(b){
+        #     corlist[[dsi]][,colnames(corlist[[dsi]]) %in% c(TIpredNames, paste0(nontivars,'_',b)), drop=FALSE]
+        #   })
+        #   commonnames <- x
+        #   splitcovs <- x
+        #   cplot=corplotmelt(meltcov(corlist[[datasources[i]]]),
+        #     label=paste0(' corr.'),limits=c(-1,1))
+        #   cplot = cplot + ggplot2::labs(title=paste0(datasources[i],' correlations, split by ', by))
+        #   print(cplot)
+        # }
+          
+      } #finish datasource loop
+      # browser()
+      if(corr) covplotlims <- c(-1,1) else covplotlims <- NA
+      # browser()
+      for(i in seq_along(corlist)){ #regular corplots
+        cplot=corplotmelt(meltcov(corlist[[datasources[i]]]),
+          label=paste0(ifelse(corr,'Corr.','Cov.')),limits=covplotlims)
+        cplot = cplot + ggplot2::labs(title=paste0(datasources[i],
+          ifelse(corr,' correlations',' covariances'),', split by ', by))
+        print(cplot)
+      }
+      for(i in seq_along(corlist)){
+        for(j in seq_along(corlist)){ #difference corplots
+          if(j > i){ #only plot unique differences
+            cplot=corplotmelt(meltcov(corlist[[datasources[i]]] - corlist[[datasources[j]]]),
+              label=paste0(ifelse(corr,'Corr.','Cov.'),' diff.'),limits=covplotlims)
+            cplot = cplot + ggplot2::labs(title=paste0(datasources[i],' - ',datasources[j] ,' correlations, split by ', by))
+            print(cplot)
+          }
+        }
       }
     }
     if(entropy){
@@ -404,66 +484,64 @@ ctCheckFit2 <- function(fit, data=TRUE, postpred=TRUE, priorpred=FALSE, statepre
     }
   }
   
-  vars <- names(combinevars)
-  dat$manifest <- dat$variable %in% vars
-
-  dat$DataSource <- factor(as.character(dat$DataSource), levels = c( "Data", "StatePred","PostPred","PriorPred"))
-
-  g=ggplot(data = dat[manifest==TRUE],
-    mapping = aes_string(x=by,y='value',
-      colour='DataSource'
-      ,fill='DataSource'
-      # , group='Sample'
-      # ,alpha='DataSource'
+  if(!covplot){ #then plot bivariate relations
+    vars <- names(combinevars)
+    dat$manifest <- dat$variable %in% vars
+    
+    # dat$DataSource <- factor(as.character(dat$DataSource), levels = c( "Data", "StatePred","PostPred","PriorPred"))
+    # browser()
+    
+    g=ggplot(data = dat[manifest==TRUE],
+      mapping = aes_string(x=by,y='value',
+        colour='DataSource'
+        ,fill='DataSource'
+        # , group='Sample'
+        # ,alpha='DataSource'
       )
     ) +theme_bw() +
-    # scale_color_brewer(palette = 'Set1') +
-    # scale_fill_brewer(palette = 'Set1')
-  # +
-    scale_colour_manual(#"",
-      # breaks = c("Data", "StatePred", "PostPred", "PriorPred"),
-      values = c("blue", "red","green",  "Orange"))+
-    scale_fill_manual(#"",
-      # breaks = c("Data", "StatePred", "PostPred", "PriorPred"),
-      values = c("blue", "red","green",  "Orange"))
-    # geom_point(alpha=.1)+
-    # scale_alpha_ordinal(range = c(0.3, 1))
-  
-  if(smooth) {
-    g = g + geom_smooth(data=dat[manifest==TRUE & !DataSource %in% c('Data','StatePred')],
-      aes(group=Sample),
-      alpha= max(.05,sqrt(.3/nsamples)),
-      linetype=ifelse(nsamples==1,1,0),
-      stat="smooth",#se = nsamples==1,
-      size=1
-      ,method='gam', formula= as.formula(paste0('y ~ s(x,bs="cr",k=',k,')')))
+      # scale_color_brewer(palette = 'Set1') +
+      # scale_fill_brewer(palette = 'Set1')
+      # +
+      scale_colour_manual(values = c("blue", "red","green",  "Orange","Black"))+
+      scale_fill_manual(values = c("blue", "red","green",  "Orange",'Black'))#+
+    # scale_alpha_manual(values = c(1, max(.05,(.3/nsamples)),max(.05,(.3/nsamples)),1))
     
-    g = g + geom_smooth(data=dat[manifest==TRUE & DataSource %in% c('Data','StatePred')],
-      # aes(colour=DataSource,alpha=NULL),
-      stat="smooth",se = TRUE,size=1,alpha=.3
-      ,method='gam', formula= as.formula(paste0('y ~ s(x,bs="cr",k=',k,')')))
+    if(smooth) {
+      g = g + geom_smooth(data=dat[manifest==TRUE & !DataSource %in% c('Data','StatePred','Residuals')],
+        aes(group=Sample),
+        alpha= max(.05,(.3/nsamples)),
+        linetype=0,#3,#ifelse(nsamples==1,1,0),
+        stat="smooth",#se = FALSE,#nsamples==1,
+        size=.1
+        ,method='gam', formula= as.formula(paste0('y ~ s(x,bs="cr",k=',k,')')))
+      
+      g = g + geom_smooth(data=dat[manifest==TRUE & DataSource %in% c('Data','StatePred','Residuals')],
+        # aes(colour=DataSource,alpha=NULL),
+        stat="smooth",se = TRUE,size=1,alpha=.3
+        ,method='gam', formula= as.formula(paste0('y ~ s(x,bs="cr",k=',k,')')))
+    }
+    if(!smooth) {
+      # if(nsamples > 1) g = g + stat_summary(fun=mean,geom = "line",size=1) #geom_line(stat=mean)
+      
+      # if(nsamples ==1)
+      g = g +  stat_summary(data=dat[manifest==TRUE & !DataSource %in% c('Data','StatePred','Residuals')],
+        aes(group=Sample),
+        fun.data = function(x) list(y=mean(x),
+          ymin=mean(x,na.rm=TRUE)-sd(x)/sqrt(length(x)), 
+          ymax=mean(x)+sd(x)/sqrt(length(x))),
+        geom = "ribbon",
+        alpha= max(.05,max(.05,sqrt(.2/nsamples))),
+        linetype=ifelse(nsamples==1,1,0))
+      
+      g = g +  stat_summary(data=dat[manifest==TRUE & DataSource %in% c('Data','StatePred','Residuals')],
+        fun.data = function(x) list(y=mean(x),
+          ymin=mean(x,na.rm=TRUE)-sd(x)/sqrt(length(x)), 
+          ymax=mean(x)+sd(x)/sqrt(length(x))),
+        geom = "ribbon",alpha=.3)
+    }
+    g=g+facet_wrap(facets = vars(variable),scales = 'free')
+    print(g)
   }
-  if(!smooth) {
-    # if(nsamples > 1) g = g + stat_summary(fun=mean,geom = "line",size=1) #geom_line(stat=mean)
-    
-    # if(nsamples ==1)
-    g = g +  stat_summary(data=dat[manifest==TRUE & !DataSource %in% c('Data','StatePred')],
-      aes(group=Sample),
-      fun.data = function(x) list(y=mean(x),
-        ymin=mean(x,na.rm=TRUE)-sd(x)/sqrt(length(x)), 
-        ymax=mean(x)+sd(x)/sqrt(length(x))),
-      geom = "ribbon",
-      alpha= max(.05,max(.05,sqrt(.2/nsamples))),
-      linetype=ifelse(nsamples==1,1,0))
-    
-    g = g +  stat_summary(data=dat[manifest==TRUE & DataSource %in% c('Data','StatePred')],
-      fun.data = function(x) list(y=mean(x),
-        ymin=mean(x,na.rm=TRUE)-sd(x)/sqrt(length(x)), 
-        ymax=mean(x)+sd(x)/sqrt(length(x))),
-      geom = "ribbon",alpha=.3)
-  }
-  g=g+facet_wrap(facets = vars(variable),scales = 'free')
-  print(g)
 }
 
 
@@ -658,11 +736,14 @@ plot.ctsemFitMeasure <- function(x,indices='all', means=TRUE,separatemeans=TRUE,
   
 }
 
-corplotmelt <- function(corm, label,limits=NULL){
-  ggplot(data=(corm),aes(x=Var1,y=Var2,fill=(value)))+geom_tile()+
-    geom_tile(color = "black")+
-    scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+corplotmelt <- function(corm, label,limits=NA){
+  # browser()
+  if(is.na(limits[1])) limits <- range(corm[,'value'],na.rm=TRUE)
+  ggplot(data=(corm),aes_string(x='Var1',y='Var2',fill=('value')))+ #ifelse(groups,NULL,'Group')))+
+    geom_tile( width=1,height=1,colour='black')+
+    scale_fill_gradient2(low = "blue", high = "red", mid = "white",
       midpoint = 0, limits = limits, space = "Lab", 
       name=label)  +
     theme_minimal()+ theme(axis.text.x = element_text(angle = 90))
 }
+
