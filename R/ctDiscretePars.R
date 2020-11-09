@@ -134,14 +134,14 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
 
   type='discreteDRIFT'
   collapseSubjects=TRUE #consider this for a switch
-  e<-ctExtract(ctstanfitobj,subjectMatrices = subjects!='all')
+  e<-ctExtract(ctstanfitobj,subjectMatrices = subjects[1]!='all')
   
   # if(type=='all') type=c('discreteDRIFT','latentMeans') #must match with ctDiscretePars
   
   if(subjects[1] != 'all' && any(!is.integer(as.integer(subjects)))) stop('
   subjects argument must be either "all" or an integer denoting specific subjects')
   
-  nsubjects <- dim(e$indparams)[2]
+  nsubjects <- dim(e$subj_DRIFT)[2]
   if(is.null(nsubjects)) nsubjects=1
   if('all' %in% subjects) subjects='all' 
   
@@ -154,8 +154,6 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   if(nsamples > niter) nsamples <- niter
   
   out<-list()
-  
-  
   
   #get all ctparameter matrices at once and remove unneeded subjects
   ctpars <- list()
