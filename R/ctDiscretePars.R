@@ -125,15 +125,16 @@ ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
 #'  plot=TRUE,indices='CR')
 #'g= g+ labs(title='Cross effects')
 #'print(g)
+#'
 #'}
 #'@export
 ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=10,by=.1), 
   quantiles = c(.025, .5, .975),nsamples=500,observational=FALSE,standardise=FALSE, 
   cov=FALSE, plot=FALSE,...){
-  
+
   type='discreteDRIFT'
   collapseSubjects=TRUE #consider this for a switch
-  e<-ctExtract(ctstanfitobj,subjectMatrices = TRUE)
+  e<-ctExtract(ctstanfitobj,subjectMatrices = subjects!='all')
   
   # if(type=='all') type=c('discreteDRIFT','latentMeans') #must match with ctDiscretePars
   
@@ -144,7 +145,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   if(is.null(nsubjects)) nsubjects=1
   if('all' %in% subjects) subjects='all' 
   
-  if(is.null(e$DRIFT) && any(!subjects %in% 'all')) stop('No individual variation in DRIFT matrix found?? Try subjects="all"')
+  if(is.null(e$subj_DRIFT) && any(!subjects %in% 'all')) stop('No individual variation in DRIFT matrix found?? Try subjects="all"')
   
   niter=dim(e$pop_DRIFT)[1]
   nlatent=ctstanfitobj$standata$nlatent#outdims[3]
@@ -160,10 +161,11 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   ctpars <- list()
   # browser()
   for(matname in c('DRIFT','DIFFUSIONcov','asymDIFFUSION')){ #,'CINT','T0MEANS', 'T0VAR','MANIFESTMEANS',if(!is.null(e$MANIFESTVAR)) 'MANIFESTVAR','LAMBDA', if(!is.null(e$TDPREDEFFECT)) 'TDPREDEFFECT')){
-    if('all' %in% subjects || is.null(e[[matname]])){
+    if('all' %in% subjects || is.null(e[[paste0('subj_',matname)]])){
       ctpars[[matname]] <- e[[paste0('pop_',matname)]]
     } else {
-      ctpars[[matname]] <- e[[matname]][,subjects,,,drop=FALSE]
+      # browser()
+      ctpars[[matname]] <- e[[paste0('subj_',matname)]][,subjects,,,drop=FALSE]
       ctpars[[matname]]<-  array(ctpars[[matname]],dim=c(prod(dim(ctpars[[matname]])[1:2]),dim(ctpars[[matname]])[-1:-2]))
     }
     ctpars[[matname]] <- ctpars[[matname]][sample(1:dim(ctpars[[matname]])[1],nsamples),,,drop=FALSE]

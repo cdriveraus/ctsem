@@ -29,6 +29,7 @@ ctStanFit(
   gendata = FALSE,
   control = list(),
   verbose = 0,
+  vb = FALSE,
   ...
 )
 }
@@ -77,9 +78,6 @@ otherwise use the HMC sampler from Stan, which is (much) slower, but generally m
 \item{optimcontrol}{list of parameters sent to \code{\link{stanoptimis}} governing optimization / importance sampling.}
 
 \item{nlcontrol}{List of non-linear control parameters. 
-\code{nldynamics} defaults to "auto", but may also be a logical. Set to FALSE to use estimator that assumes linear dynamics, 
-TRUE to use non-linear estimator. "auto" selects linear when the model is obviously linear, 
-otherwise nonlinear -- nonlinear is slower.
 \code{maxtimestep} must be a positive numeric,  specifying the largest time
 span covered by the numerical integration. The large default ensures that for each observation time interval, 
 only a single step of exponential integration is used. When \code{maxtimestep} is smaller than the observation time interval, 
@@ -119,6 +117,8 @@ regarding warmup / sampling behaviour. Unless specified, values used are:
 list(adapt_delta = .8, adapt_window=2, max_treedepth=10, adapt_init_buffer=2, stepsize = .001)}
 
 \item{verbose}{Integer from 0 to 2. Higher values print more information during model fit -- for debugging.}
+
+\item{vb}{Logical. Use variational Bayes algorithm from stan?}
 
 \item{...}{additional arguments to pass to \code{\link[rstan]{stan}} function.}
 }

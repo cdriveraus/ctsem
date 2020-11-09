@@ -42,7 +42,7 @@ plot.ctStanFit <- function(x, types='all',wait=TRUE,...){
   }
 
   if(types[1]=='all') {
-    if( (x$standata$nldynamics) ==0 & x$standata$continuoustime == 1) types <- c('regression', 'kalman')
+    if(x$standata$continuoustime == 1) types <- c('regression', 'kalman')
     types=c(types, 'priorcheck')
     if('stanfit' %in% class(x$stanfit)) types <- c('trace','regression','density','intervals')
   }

@@ -9,14 +9,17 @@ ctStanRawSamples<-function(fit){
 
 getparnames <- function(fit,indvaronly=FALSE, popstatesonly=FALSE){
   ms <- fit$setup$matsetup
-  parnames <- ms$parname[ms$when %in% c(0,-1) & ms$param > 0 & ms$copyrow < 1]
-  parindices <- ms$param[ms$when %in% c(0,-1) & ms$param > 0 & ms$copyrow < 1]
-  pars <- cbind(parnames,parindices)
-  pars<-pars[!duplicated(pars[,1,drop=FALSE]),,drop=FALSE]
-  parnames <- pars[as.numeric(pars[,2,drop=FALSE]) >0, 1]
+  
+  if(popstatesonly)  indices=ms$param > 0 & ms$copyrow <1 & ms$matrix==1 & ms$indvarying > 0 & ms$row > fit$standata$nlatent
+  if(!popstatesonly)  indices=ms$when %in% c(0,-1) & ms$param > 0 & ms$copyrow < 1
+  pars <- data.frame(parnames = ms$parname[indices],  parindices = ms$param[indices])
+  
+  pars<-pars[!duplicated(pars$parnames),]
+  pars<-pars[order(pars$parindices),]
+  parnames <- pars[pars$parindices >0, 1]
   
   if(indvaronly)  parnames <- parnames[fit$standata$indvaryingindex]
-  if(popstatesonly)  parnames <- parnames[ms$param[ms$param > 0 & ms$copyrow <1 & ms$matrix==1 & ms$indvarying > 0 & ms$row > fit$standata$nlatent]]
+  
   return(parnames)
 }
 
@@ -68,6 +71,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
     dimnames(out$residCovStd) <- list(object$ctstanmodel$manifestNames,object$ctstanmodel$manifestNames)
     out$resiCovStdNote <- 'Standardised covariance of residuals'
   }
+  
   ms=object$setup$matsetup
   parnames = getparnames(object)
   # parnames <- unique(parnames)

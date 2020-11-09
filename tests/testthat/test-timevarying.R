@@ -14,12 +14,12 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     Tpoints=150
     lambdafactor = .3
     dt=1
-
+    
     for(subi in 1:nsubjects){
       gm=ctModel(LAMBDA=diag(2), Tpoints=Tpoints, DRIFT=diag(-.2,2),T0MEANS = matrix(c(3,2)), 
         DIFFUSION=diag(.5,2),
         T0VAR=diag(2))
-      d=suppressMessages(ctGenerateOld(gm,n.subjects = 1,burnin = 3,dtmean = dt))
+      d=suppressMessages(ctGenerate(gm,n.subjects = 1,burnin = 3,dtmean = dt))
       d[,'id'] <- subi
       if(subi==1) dat=d else dat=rbind(dat,d)
     }
@@ -28,25 +28,34 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     colnames(dat)[1]='id'
     
-    cm <- ctModel(LAMBDA=matrix(c('PARS[3,1]',0,0,1),2,2),  T0MEANS=c('t0m1','t0m2|log1p_exp(param)'),
+    cm <- ctModel(LAMBDA=matrix(c('lbystate * eta2 + 1',0,0,1),2,2),  T0MEANS=c('t0m1','t0m2'),
       T0VAR=matrix(c('t0v11',0,0,'t0v22'),2,2),
-      PARS=c('lbystate','lbystate * eta2 + 1','PARS[2,1]'),type='stanct')
+      PARS=c('lbystate','lbystate * eta2 + 1'),type='stanct')
     
     cm$pars$indvarying <- FALSE
     # cm$pars$indvarying[cm$pars$matrix %in% c('CINT','T0MEANS')] <- TRUE
     
     dm<- ctModel(LAMBDA=matrix(c('PARS[2,1]',0,0,1),2,2), T0MEANS=c('t0m1','t0m2|log1p_exp(param)'),
       T0VAR=matrix(c('t0v11',0,0,'t0v22'),2,2),
-      PARS=c('lbystate','lbystate * eta2 + 1','PARS[2,1]'),type='standt')
+      PARS=c('lbystate'),type='standt')
     
     dm$pars$indvarying <- FALSE
     # dm$pars$indvarying[dm$pars$matrix %in% c('CINT','T0MEANS')] <- TRUE
     
     
+    
+    if(1==99){ 
+      f=ctStanFit(datalong = dat,ctstanmodel = cm,optimize=TRUE,
+        verbose=0,optimcontrol=list(estonly=F,stochastic=T),savescores = F,nopriors=F)
+    }
+    
+    
+    
     for(m in c('cm','dm')){
       argslist <- list(
         ml=list(datalong = dat,ctstanmodel = get(m),optimize=TRUE, nlcontrol=list(),
-        verbose=0,optimcontrol=list(estonly=F,stochastic=F),savescores = F,nopriors=F)
+          verbose=0,optimcontrol=list(estonly=F,stochastic=F),savescores = F,nopriors=F)
+
         #, mlis=list(datalong = dat,ctstanmodel = get(m),optimize=TRUE, nlcontrol=list(Jstep=1e-6), 
         #   verbose=0,optimcontrol=list(plot=F,estonly=F,isloops=1,stochastic=F),savescores = F,nopriors=T)
         # ,mapis=list(datalong = dat,ctstanmodel = get(m),optimize=TRUE, nlcontrol=list(Jstep=1e-6),
@@ -54,7 +63,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
         # ,hmcintoverpop=list(datalong = dat,ctstanmodel = get(m),optimize=F,iter=500,chains=3, nlcontrol=list(Jstep=1e-6), 
         #   verbose=0,optimcontrol=list(plot=F,estonly=F,stochastic=F),savescores = F,nopriors=F,intoverpop=T),
         # hmc=list(datalong = dat,ctstanmodel = get(m),optimize=F,iter=500,chains=3, nlcontrol=list(),
-          # verbose=0,optimcontrol=list(plot=F,estonly=F,stochastic=F),savescores = F,nopriors=F,control=list(max_treedepth=7))
+        # verbose=0,optimcontrol=list(plot=F,estonly=F,stochastic=F),savescores = F,nopriors=F,control=list(max_treedepth=7))
       )
       
       
@@ -96,9 +105,9 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     #do.call(cbind,dtpars)
     
-      
-      #check time varying lambda estimation
-      sapply(s$ml,function(x) expect_equivalent(lambdafactor,x$popmeans[rownames(x$popmeans) %in% 'lbystate','mean'],tol=1e-1))
+    
+    #check time varying lambda estimation
+    sapply(s$ml,function(x) expect_equivalent(lambdafactor,x$popmeans[rownames(x$popmeans) %in% 'lbystate','mean'],tol=1e-1))
     
   }) 
 }

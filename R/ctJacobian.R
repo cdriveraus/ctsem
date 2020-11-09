@@ -4,20 +4,22 @@
 ###unfold self referential list of matrices
 unfoldmats <- function(ml){
   for(mati in names(ml)){
-    for(ri in 1:nrow(ml[[mati]])){
-      for(ci in 1:ncol(ml[[mati]])){
-        counter=0
-        while(counter < 10 && grepl(paste0('\\b(',paste0(names(ml),collapse='|'),')\\b\\['), ml[[mati]][ri,ci])){ #if system matrix referenced, unfold
-          counter = counter +1 #prevent infinite loops
-          
-          items = regmatches(ml[[mati]][ri,ci], #extract one or more references
-            gregexpr(
-              paste0('\\b(',paste0(names(ml),collapse='|'),')\\b(?=\\[).*?(?<=\\])'),
-              ml[[mati]][ri,ci], perl=TRUE)
-          )[[1]]
-          
-          for(itemi in 1:length(items)){ #replace one or more references
-            ml[[mati]][ri,ci] <- gsub(pattern = items[itemi], replacement = eval(parse(text=paste0('ml$',items[itemi]))),x = ml[[mati]][ri,ci], fixed=TRUE)
+    if(prod(dim(ml[[mati]])) > 0){ #if not a 0 matrix
+      for(ri in 1:nrow(ml[[mati]])){
+        for(ci in 1:ncol(ml[[mati]])){
+          counter=0
+          while(counter < 10 && grepl(paste0('\\b(',paste0(names(ml),collapse='|'),')\\b\\['), ml[[mati]][ri,ci])){ #if system matrix referenced, unfold
+            counter = counter +1 #prevent infinite loops
+            
+            items = regmatches(ml[[mati]][ri,ci], #extract one or more references
+              gregexpr(
+                paste0('\\b(',paste0(names(ml),collapse='|'),')\\b(?=\\[).*?(?<=\\])'),
+                ml[[mati]][ri,ci], perl=TRUE)
+            )[[1]]
+            
+            for(itemi in 1:length(items)){ #replace one or more references
+              ml[[mati]][ri,ci] <- gsub(pattern = items[itemi], replacement = eval(parse(text=paste0('ml$',items[itemi]))),x = ml[[mati]][ri,ci], fixed=TRUE)
+            }
           }
         }
       }
@@ -40,12 +42,7 @@ inv_logit_gsub <- function(x){
 
 
 ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
-  
-  # require(cOde)
-  # require(Deriv)
-  
-  # mm=ctStanModelMatrices(m) #do here because we change m
-  
+
   # get system dimension
   ndim = max(m$pars$row[m$pars$matrix%in% 'T0MEANS'])
   # 2): generate vector valued function fn = drift * state
@@ -53,26 +50,22 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
   # initialize fn and state
   fn     = c()
   state   = paste0("state__", 1:ndim,'__')
-
   
-  #replace system matrix references
-  for(ri in 1:nrow(m$pars)){
-    if(grepl('[',m$pars$param[ri],fixed=TRUE) && !is.na(m$pars$transform[ri])){
-      # m$pars$param[ri] <- gsub('param',m$pars$param[ri],m$pars$transform[ri])
-    } else if(!grepl('[',m$pars$param[ri],fixed=TRUE) && !is.na(m$pars$param[ri])) m$pars$param[ri] <- paste0(m$pars$matrix[ri],'[',m$pars$row[ri],',',m$pars$col[ri],']')
-  }
+  
+  # #replace basic pars with in place system matrix references
+  # for(ri in 1:nrow(m$pars)){
+  #   if(grepl('[',m$pars$param[ri],fixed=TRUE) && !is.na(m$pars$transform[ri])){
+  #     # m$pars$param[ri] <- gsub('param',m$pars$param[ri],m$pars$transform[ri])
+  #   } else if(!grepl('[',m$pars$param[ri],fixed=TRUE) && !is.na(m$pars$param[ri])) m$pars$param[ri] <- paste0(m$pars$matrix[ri],'[',m$pars$row[ri],',',m$pars$col[ri],']')
+  # }
   
   m$pars$param <- inv_logit_gsub(m$pars$param) #replace inv_logit with known functions for differentiation
   
   mats <- listOfMatrices(m$pars)
   matnames <- names(ctStanMatricesList(unsafe=TRUE)$base)
-    
-    
-  # browser()
+
   mats <- unfoldmats(mats)
-    
-  
- 
+
   
   Jout <- list()
   for(typei in types){
@@ -80,7 +73,7 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
       Jrows = nrow(mats$T0MEANS)
       if(nrow(mats$DRIFT)!=ndim) mats$DRIFT=rbind(
         cbind(mats$DRIFT, 
-        matrix(0,nrow(mats$DRIFT),ndim-nrow(mats$DRIFT))),
+          matrix(0,nrow(mats$DRIFT),ndim-nrow(mats$DRIFT))),
         matrix(0,ndim-nrow(mats$DRIFT),ndim))
       
       for (row in 1:ndim) {
@@ -94,7 +87,7 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
     
     if(typei=='Jtd'){
       if(m$n.TDpred ==0) {
-        Jout[[typei]] <- c('')
+        Jout[[typei]] <- matrix(NA,0,0)
         next
       }
       Jrows = nrow(mats$T0MEANS)
@@ -107,7 +100,6 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
       Jrows = nrow(mats$T0MEANS)
       t0func <- mats$T0MEANS[,1]
       t0func <- sapply(1:length(t0func), function(xi){
-        # if(is.na(suppressWarnings(as.numeric(t0func[xi]))) && !grepl('[',t0func[xi],fixed=TRUE)) 
         out <-  paste0('state[',xi,'] + ',t0func[xi])
         return(out)
       })
@@ -118,7 +110,6 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
       Jybase <- mats$LAMBDA
       Jybase <- cbind(Jybase,matrix(0,nrow(Jybase),ncol=nrow(mats$T0MEANS)-ncol(Jybase)))
       fn = paste0(mats$MANIFESTMEANS,' + ',prodSymb(Jybase,cbind(paste0('state[',1:ndim,']'))))
-      # fn = sapply(prodSymb(diag(nrow(mats$T0MEANS)), matrix(t0func,ncol=1)),Simplify)
     }
     
     
@@ -153,21 +144,25 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
     J = gsub("___leftsquarebracket___", "[", J, fixed = TRUE)
     J = gsub("___comma___", ",", J, fixed = TRUE)
     
+    
+    
     Jm <- matrix(J,Jrows,ndim)
-    for(j in 1:ncol(Jm)){
-      for(i in 1:nrow(Jm)){
-        if(is.na(suppressWarnings(as.numeric(Jm[i,j])))){
-          for(mi in 1:length(mats)){
-            if(Jm[i,j] %in% mats[[mi]]){ 
-              arrind <- arrayInd(which(mats[[mi]] %in% Jm[i,j]),dim(mats[[mi]]))
-              for(ari in 1:nrow(arrind)){
-                Jm[i,j] <- paste0('s',names(mats)[mi],'[',arrind[ari,1],',',arrind[ari,2],']')
-              }
-            }
-          }
-        }
-      }
-    }
+    
+    #this was creating direct references but not needed here
+    # for(j in 1:ncol(Jm)){
+    #   for(i in 1:nrow(Jm)){
+    #     if(is.na(suppressWarnings(as.numeric(Jm[i,j])))){
+    #       for(mi in 1:length(mats)){
+    #         if(Jm[i,j] %in% mats[[mi]]){ 
+    #           arrind <- arrayInd(which(mats[[mi]] %in% Jm[i,j]),dim(mats[[mi]]))
+    #           for(ari in 1:nrow(arrind)){
+    #             Jm[i,j] <- paste0(names(mats)[mi],'[',arrind[ari,1],',',arrind[ari,2],']') #removed 's',
+    #           }
+    #         }
+    #       }
+    #     }
+    #   }
+    # }
     Jout[[typei]] <- Jm
   }#end type loop
   return(Jout)

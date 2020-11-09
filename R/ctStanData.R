@@ -55,27 +55,10 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   
   
   
-  
-  
-  #linearity checks
-  
-  #force nonlinear due to cran cuts:
-  ctm$nlcontrol$nldynamics=1L
-  
-  # if(sum(sapply(ctm$modelmats$calcs[!names(ctm$modelmats$calcs) %in% c('jacobian','measurement')],length)) > 0 || 
-  #     any(ctm$modelmats$matsetup$when %in% c(1,2,3)) ||
-  #     length(ctm$modelmats$calcs$jacobian) - sum(grepl('sJy[',unlist(ctm$modelmats$calcs$jacobian),fixed=TRUE)) > 0 #non measurement jacobians
-  #     ){
-  #   if(ctm$nlcontrol$nldynamics == FALSE) warning('Linear model requested but nonlinear model specified! May be a poor approximation') else ctm$nlcontrol$nldynamics <- TRUE 
-  # }
-  
-  
+
   if( (nrow(ctm$t0varstationary) + nrow(ctm$t0meansstationary)) >0 && 
       length(c(ctm$modelmats$calcs$driftcint, ctm$modelmats$calcs$diffusion)) > 0) message('Stationarity assumptions based on initial states when using non-linear dynamics')
   
-  
-  
-  if(ctm$nlcontrol$nldynamics == 'auto') ctm$nlcontrol$nldynamics <- FALSE
   
   if(ctm$intoverstates==FALSE || all(derrind=='all') ) derrind = 1:ctm$n.latent
   # if(all(derrind=='all')) derrind = sort(unique(ctm$pars$col[
@@ -197,7 +180,6 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
       nsubjects=as.integer(nsubjects),
       nmanifest=as.integer(ctm$n.manifest),
       nlatentpop = ctm$nlatentpop,
-      nldynamics=as.integer(ctm$nlcontrol$nldynamics),
       Jstep = ctm$nlcontrol$Jstep,
       maxtimestep = ctm$nlcontrol$maxtimestep,
       dokalman=as.integer(is.null(ctm$dokalman)),
@@ -227,7 +209,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
       nopriors=as.integer(ctm$nopriors),
       savescores=0L,
       savesubjectmatrices=0L,
-      nsJAxfinite = ifelse(ctm$recompile,0L,length(ctm$sJAxfinite))
+      nJAxfinite = ifelse(ctm$recompile,0L,length(ctm$JAxfinite))
     ))
   
   if(ctm$n.TIpred == 0) tipreds <- array(0,c(0,0))
@@ -259,10 +241,10 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   # standata$njacoffdiagindex <- as.integer(length(standata$jacoffdiagindex))
   
   
-  standata$sJAxfinite <- ctm$sJAxfinite
+  standata$JAxfinite <- ctm$JAxfinite
   
-  standata$sJycolindexsize <- 1L
-  standata$sJycolindex <- array(1L)
+  standata$Jycolindexsize <- 1L
+  standata$Jycolindex <- array(1L)
   
   standata$difftype <- 0L;
   standata$dotipred <- 1L;
@@ -389,10 +371,10 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   # standata$doonesubject=0L
   if(any(ctm$manifesttype==1)){
     standata$nJyfinite <- as.integer(ctm$n.latent)
-    standata$sJyfinite <- array(as.integer(1:ctm$n.latent))
+    standata$Jyfinite <- array(as.integer(1:ctm$n.latent))
   } else{
     standata$nJyfinite <- 0L
-    standata$sJyfinite <- integer()
+    standata$Jyfinite <- integer()
   }
   
   if(!is.null(ctm$TIpredAuto) && ctm$TIpredAuto %in% c(1L,TRUE)) standata$TIpredAuto <- 1L else standata$TIpredAuto <- 0L

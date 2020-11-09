@@ -62,5 +62,6 @@ g=ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1),
  plot=TRUE,indices='CR')
 g= g+ labs(title='Cross effects')
 print(g)
+
 }
 }

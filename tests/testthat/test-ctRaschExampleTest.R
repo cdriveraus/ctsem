@@ -50,10 +50,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     s=summary(r)
     # s
     
-    #r$standata contains data structure
-    #r$stanmodeltext contains model text
-    
-    #fit with integration (linear approximation)
+    #fit with integration (linearised approximation)
     ro <- ctStanFit( datalong = d,
       ctstanmodel = m,cores=cores,
       plot=10,verbose=0,

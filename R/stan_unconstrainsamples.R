@@ -46,7 +46,8 @@ stan_unconstrainsamples <- function(fit, standata=NA){
   cmat=as.matrix(fit)
   # clist=apply(cmat,1,function(x) relist(flesh = x,skeleton = fit@inits[[1]]))
   
-  clist=apply(cmat,1,function(x) relistarrays(flesh=x,skeleton=fit@inits[[1]]))
+  if(is.null(names(fit@inits[[1]]))) skel = fit@inits else skel=fit@inits[[1]]
+  clist=apply(cmat,1,function(x) relistarrays(flesh=x,skeleton=skel))
 
   ulist=matrix(unlist(lapply(clist,function(x) unconstrain_pars(newfit,x))),ncol=length(clist))
   return(ulist)

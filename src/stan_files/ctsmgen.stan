@@ -123,21 +123,27 @@ if(transform < 49 && offset != 0.0) param+=offset;
   }
   
   // improve PARS when = 100 thing here too
-   vector parvectform(int n, vector rawpar, int when, int[,] ms, data real[,] mval, int subi, int[] subindices, int[] whenvec){
-    vector[n] parout;
-    if(n>0){
-      int outwhen[size(whichequals(whenvec,0,0))] = whenvec[whichequals(whenvec,0,0)]; //outwhen is nonzero elements of whenvec
+   vector parvectform(int[] which, vector rawpar, int when, int[,] ms, data real[,] mval, int subi, int[] subindices, int[] whenvec){
+    vector[size(which)] parout;
+    if(size(which)){
+      //int outwhen[size(whichequals(whenvec,0,0))] = whenvec[whichequals(whenvec,0,0)]; //outwhen is nonzero elements of whenvec
+      for(whichout in 1:size(which)){
+        int done=0; //only want to tform once, may be copies
       for(ri in 1:size(ms)){ //for each row of matrix setup
-        if((ms[ri,8]==when || ms[ri,8]==100) && ms[ri,9] < 1 && ms[ri,3] > 0){ //if correct when,not a copyrow, and free parameter
+        if(!done){
+        if((ms[ri,8]==when || ms[ri,8]==100)  && ms[ri,3] == which[whichout]){ //if correct when and free parameter //,not a copyrow,&& ms[ri,9] < 1
           if(subi ==0 ||  //if population parameter
             ( ms[ri,7] == 8 && subindices[8]) || //or a covariance parameter in an individually varying matrix
             (ms[ri,3] > 0 && (ms[ri,5] > 0 || ms[ri,6] > 0 || ms[ri,8] > 0)) //or there is individual variation
             ){ //otherwise repeated values
             
-            parout[whichequals(outwhen, ms[ri,3],1)[1] ] = tform(rawpar[ms[ri,3] ], //which outwhen refers to correct par
+            parout[whichout] = tform(rawpar[ms[ri,3] ], // was: whichequals(outwhen, ms[ri,3],1)[1], which outwhen refers to correct par
               ms[ri,4], mval[ri,2], mval[ri,3], mval[ri,4], mval[ri,6] ); 
-           }
+            }
+           done=1;
         }
+      }
+      }
       }
     }
   return parout;
@@ -271,10 +277,10 @@ data {
   real Jstep;
   real dokalmanpriormodifier;
   int intoverpopindvaryingindex[intoverpop ? nindvarying : 0];
-  int nsJAxfinite;
-  int sJAxfinite[nsJAxfinite];
+  int nJAxfinite;
+  int JAxfinite[nJAxfinite];
   int nJyfinite;
-  int sJyfinite[nJyfinite];
+  int Jyfinite[nJyfinite];
   int taylorheun;
   int difftype;
   int popcovn;
@@ -404,19 +410,19 @@ generated quantities{
   vector[nmanifest] Ygen[ndatapoints];
   vector[nlatentpop*ndatapoints] etaupdbasestates = to_vector(normal_rng(rep_array(0.0,ndatapoints*nlatentpop),rep_array(1.0,ndatapoints*nlatentpop))); //sampled latent states posterior
   
-      matrix[matrixdims[10, 1], matrixdims[10, 2] ] PARS[ (savesubjectmatrices && sum(whenmat[10,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[1, 1], matrixdims[1, 2] ] T0MEANS[ (savesubjectmatrices && sum(whenmat[1,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[2, 1], matrixdims[2, 2] ] LAMBDA[ (savesubjectmatrices && sum(whenmat[2,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[3, 1], matrixdims[3, 2] ] DRIFT[ (savesubjectmatrices && sum(whenmat[3,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[4, 1], matrixdims[4, 2] ] DIFFUSION[ (savesubjectmatrices && sum(whenmat[4,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[5, 1], matrixdims[5, 2] ] MANIFESTVAR[ (savesubjectmatrices && sum(whenmat[5,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[6, 1], matrixdims[6, 2] ] MANIFESTMEANS[ (savesubjectmatrices && sum(whenmat[6,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[7, 1], matrixdims[7, 2] ] CINT[ (savesubjectmatrices && sum(whenmat[7,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[8, 1], matrixdims[8, 2] ] T0VAR[ (savesubjectmatrices && sum(whenmat[8,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[9, 1], matrixdims[9, 2] ] TDPREDEFFECT[ (savesubjectmatrices && sum(whenmat[9,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[31, 1], matrixdims[31, 2] ] DIFFUSIONcov[ (savesubjectmatrices && sum(whenmat[31,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[21, 1], matrixdims[21, 2] ] asymCINT[ (savesubjectmatrices && sum(whenmat[21,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[22, 1], matrixdims[22, 2] ] asymDIFFUSION[ (savesubjectmatrices && sum(whenmat[22,1:5])) ? nsubjects : 0];
+      matrix[matrixdims[10, 1], matrixdims[10, 2] ] subj_PARS[ (savesubjectmatrices && sum(whenmat[10,1:5])) ? nsubjects : 0];
+      matrix[matrixdims[1, 1], matrixdims[1, 2] ] subj_T0MEANS[ (savesubjectmatrices && sum(whenmat[1,1:5])) ? nsubjects : 0];
+      matrix[matrixdims[2, 1], matrixdims[2, 2] ] subj_LAMBDA[ (savesubjectmatrices && sum(whenmat[2,1:5])) ? nsubjects : 0];
+      matrix[matrixdims[3, 1], matrixdims[3, 2] ] subj_DRIFT[ (savesubjectmatrices && sum(whenmat[3,1:5])) ? nsubjects : 0];
+      matrix[matrixdims[4, 1], matrixdims[4, 2] ] subj_DIFFUSION[ (savesubjectmatrices && sum(whenmat[4,1:5])) ? nsubjects : 0];
+      matrix[matrixdims[5, 1], matrixdims[5, 2] ] subj_MANIFESTVAR[ (savesubjectmatrices && sum(whenmat[5,1:5])) ? nsubjects : 0];
+      matrix[matrixdims[6, 1], matrixdims[6, 2] ] subj_MANIFESTMEANS[ (savesubjectmatrices && sum(whenmat[6,1:5])) ? nsubjects : 0];
+      matrix[matrixdims[7, 1], matrixdims[7, 2] ] subj_CINT[ (savesubjectmatrices && sum(whenmat[7,1:5])) ? nsubjects : 0];
+      matrix[matrixdims[8, 1], matrixdims[8, 2] ] subj_T0VAR[ (savesubjectmatrices && sum(whenmat[8,1:5])) ? nsubjects : 0];
+      matrix[matrixdims[9, 1], matrixdims[9, 2] ] subj_TDPREDEFFECT[ (savesubjectmatrices && sum(whenmat[9,1:5])) ? nsubjects : 0];
+      matrix[matrixdims[31, 1], matrixdims[31, 2] ] subj_DIFFUSIONcov[ (savesubjectmatrices && sum(whenmat[31,1:5])) ? nsubjects : 0];
+      matrix[matrixdims[21, 1], matrixdims[21, 2] ] subj_asymCINT[ (savesubjectmatrices && sum(whenmat[21,1:5])) ? nsubjects : 0];
+      matrix[matrixdims[22, 1], matrixdims[22, 2] ] subj_asymDIFFUSION[ (savesubjectmatrices && sum(whenmat[22,1:5])) ? nsubjects : 0];
   
       matrix[matrixdims[10, 1], matrixdims[10, 2] ] pop_PARS;
       matrix[matrixdims[1, 1], matrixdims[1, 2] ] pop_T0MEANS;
@@ -526,10 +532,10 @@ generated quantities{
 
   vector[nlatentpop] state = rep_vector(-999,nlatentpop); 
   vector[nlatentpop] statetf;
-  matrix[nlatentpop,nlatentpop] sJAx; //Jacobian for drift
-  matrix[nlatentpop,nlatentpop] sJ0; //Jacobian for t0
-  matrix[nlatentpop,nlatentpop] sJtd;//diag_matrix(rep_vector(1),nlatentpop); //Jacobian for nltdpredeffect
-  matrix[ nmanifest,nlatentpop] sJy;//Jacobian for measurement 
+  matrix[nlatentpop,nlatentpop] JAx; //Jacobian for drift
+  matrix[nlatentpop,nlatentpop] J0; //Jacobian for t0
+  matrix[nlatentpop,nlatentpop] Jtd;//diag_matrix(rep_vector(1),nlatentpop); //Jacobian for nltdpredeffect
+  matrix[ nmanifest,nlatentpop] Jy;//Jacobian for measurement 
   
   
 
@@ -543,22 +549,22 @@ generated quantities{
 
   //dynamic system matrices
   
-      matrix[matrixdims[10, 1], matrixdims[10, 2] ] sPARS;
-      matrix[matrixdims[1, 1], matrixdims[1, 2] ] sT0MEANS;
-      matrix[matrixdims[2, 1], matrixdims[2, 2] ] sLAMBDA;
-      matrix[matrixdims[3, 1], matrixdims[3, 2] ] sDRIFT;
-      matrix[matrixdims[4, 1], matrixdims[4, 2] ] sDIFFUSION;
-      matrix[matrixdims[5, 1], matrixdims[5, 2] ] sMANIFESTVAR;
-      matrix[matrixdims[6, 1], matrixdims[6, 2] ] sMANIFESTMEANS;
-      matrix[matrixdims[7, 1], matrixdims[7, 2] ] sCINT;
-      matrix[matrixdims[8, 1], matrixdims[8, 2] ] sT0VAR;
-      matrix[matrixdims[9, 1], matrixdims[9, 2] ] sTDPREDEFFECT;
-      matrix[matrixdims[31, 1], matrixdims[31, 2] ] sDIFFUSIONcov;
-      matrix[matrixdims[21, 1], matrixdims[21, 2] ] sasymCINT;
-      matrix[matrixdims[22, 1], matrixdims[22, 2] ] sasymDIFFUSION;
+      matrix[matrixdims[10, 1], matrixdims[10, 2] ] PARS;
+      matrix[matrixdims[1, 1], matrixdims[1, 2] ] T0MEANS;
+      matrix[matrixdims[2, 1], matrixdims[2, 2] ] LAMBDA;
+      matrix[matrixdims[3, 1], matrixdims[3, 2] ] DRIFT;
+      matrix[matrixdims[4, 1], matrixdims[4, 2] ] DIFFUSION;
+      matrix[matrixdims[5, 1], matrixdims[5, 2] ] MANIFESTVAR;
+      matrix[matrixdims[6, 1], matrixdims[6, 2] ] MANIFESTMEANS;
+      matrix[matrixdims[7, 1], matrixdims[7, 2] ] CINT;
+      matrix[matrixdims[8, 1], matrixdims[8, 2] ] T0VAR;
+      matrix[matrixdims[9, 1], matrixdims[9, 2] ] TDPREDEFFECT;
+      matrix[matrixdims[31, 1], matrixdims[31, 2] ] DIFFUSIONcov;
+      matrix[matrixdims[21, 1], matrixdims[21, 2] ] asymCINT;
+      matrix[matrixdims[22, 1], matrixdims[22, 2] ] asymDIFFUSION;
   
-  sasymDIFFUSION = rep_matrix(0,nlatent,nlatent); //in case of derrindices need to init
-  sDIFFUSIONcov = rep_matrix(0,nlatent,nlatent);
+  asymDIFFUSION = rep_matrix(0,nlatent,nlatent); //in case of derrindices need to init
+  DIFFUSIONcov = rep_matrix(0,nlatent,nlatent);
 
   for(si in 0:max(subject)){
   for(rowi in 1:ndatapoints){
@@ -610,63 +616,63 @@ generated quantities{
   }
 
   indparams[whichequals(whenvecp[si ? 2 : 1], 0, 0)]= 
-    parvectform(size(whichequals(whenvecp[si ? 2 : 1], 0, 0)),rawindparams, 
+    parvectform(whichequals(whenvecp[si ? 2 : 1], 0, 0),rawindparams, 
     0, matsetup, matvalues, si, subindices, whenvecp[si ? 2 : 1]);
      
-  if(whenmat[1, 5] >= (si ? 1 : 0)) sT0MEANS = 
-    mcalc(sT0MEANS, indparams, statetf, {0}, 1, matsetup, matvalues, si, subindices); // base t0means to init
+  if(whenmat[1, 5] >= (si ? 1 : 0)) T0MEANS = 
+    mcalc(T0MEANS, indparams, statetf, {0}, 1, matsetup, matvalues, si, subindices); // base t0means to init
       
-  for(li in 1:nlatentpop) if(!is_nan(sT0MEANS[li,1])) state[li] = sT0MEANS[li,1]; //in case of t0 dependencies, may have missingness
+  for(li in 1:nlatentpop) if(!is_nan(T0MEANS[li,1])) state[li] = T0MEANS[li,1]; //in case of t0 dependencies, may have missingness
   
-  statetf[whichequals(whenvecs[1],0,0)] = parvectform(size(whichequals(whenvecs[1],0,0)),state, 1,
+  statetf[whichequals(whenvecs[1],0,0)] = parvectform(whichequals(whenvecs[1],0,0),state, 1,
     matsetup, matvalues, si, subindices, whenvecs[1]);   
     
-  sPARS=mcalc(sPARS,indparams, statetf,{0,1}, 10, matsetup, matvalues, si, subindices); 
+  PARS=mcalc(PARS,indparams, statetf,{0,1}, 10, matsetup, matvalues, si, subindices); 
  //initialise simple PARS then do complex PARS
   
     
-  sT0MEANS=mcalc(sT0MEANS,indparams, statetf,{0,1}, 1, matsetup, matvalues, si, subindices); 
-sT0VAR=mcalc(sT0VAR,indparams, statetf,{0,1}, 8, matsetup, matvalues, si, subindices); 
-sJ0=mcalc(sJ0,indparams, statetf,{0,1}, 51, matsetup, matvalues, si, subindices); 
+  T0MEANS=mcalc(T0MEANS,indparams, statetf,{0,1}, 1, matsetup, matvalues, si, subindices); 
+T0VAR=mcalc(T0VAR,indparams, statetf,{0,1}, 8, matsetup, matvalues, si, subindices); 
+J0=mcalc(J0,indparams, statetf,{0,1}, 51, matsetup, matvalues, si, subindices); 
 
       
   
-    for(li in 1:nlatentpop) if(is_nan(state[li])) state[li] = sT0MEANS[li,1]; //finish updating state
+    for(li in 1:nlatentpop) if(is_nan(state[li])) state[li] = T0MEANS[li,1]; //finish updating state
     
     //init other system matrices (already done PARS, redo t0means in case of PARS dependencies...)
-    if(whenmat[2,5] || si==0) sLAMBDA=mcalc(sLAMBDA,indparams, statetf,{0}, 2, matsetup, matvalues, si, subindices); 
-  if(whenmat[3,5] || si==0) sDRIFT=mcalc(sDRIFT,indparams, statetf,{0}, 3, matsetup, matvalues, si, subindices); 
-  if(whenmat[4,5] || si==0) sDIFFUSION=mcalc(sDIFFUSION,indparams, statetf,{0}, 4, matsetup, matvalues, si, subindices); 
-  if(whenmat[5,5] || si==0) sMANIFESTVAR=mcalc(sMANIFESTVAR,indparams, statetf,{0}, 5, matsetup, matvalues, si, subindices); 
-  if(whenmat[6,5] || si==0) sMANIFESTMEANS=mcalc(sMANIFESTMEANS,indparams, statetf,{0}, 6, matsetup, matvalues, si, subindices); 
-  if(whenmat[7,5] || si==0) sCINT=mcalc(sCINT,indparams, statetf,{0}, 7, matsetup, matvalues, si, subindices); 
-  if(whenmat[8,5] || si==0) sT0VAR=mcalc(sT0VAR,indparams, statetf,{0}, 8, matsetup, matvalues, si, subindices); 
-  if(whenmat[9,5] || si==0) sTDPREDEFFECT=mcalc(sTDPREDEFFECT,indparams, statetf,{0}, 9, matsetup, matvalues, si, subindices); 
-  if(whenmat[51,5] || si==0) sJ0=mcalc(sJ0,indparams, statetf,{0}, 51, matsetup, matvalues, si, subindices); 
-  if(whenmat[52,5] || si==0) sJAx=mcalc(sJAx,indparams, statetf,{0}, 52, matsetup, matvalues, si, subindices); 
-  if(whenmat[53,5] || si==0) sJtd=mcalc(sJtd,indparams, statetf,{0}, 53, matsetup, matvalues, si, subindices); 
-  if(whenmat[54,5] || si==0) sJy=mcalc(sJy,indparams, statetf,{0}, 54, matsetup, matvalues, si, subindices); 
+    if(whenmat[2,5] || si==0) LAMBDA=mcalc(LAMBDA,indparams, statetf,{0}, 2, matsetup, matvalues, si, subindices); 
+  if(whenmat[3,5] || si==0) DRIFT=mcalc(DRIFT,indparams, statetf,{0}, 3, matsetup, matvalues, si, subindices); 
+  if(whenmat[4,5] || si==0) DIFFUSION=mcalc(DIFFUSION,indparams, statetf,{0}, 4, matsetup, matvalues, si, subindices); 
+  if(whenmat[5,5] || si==0) MANIFESTVAR=mcalc(MANIFESTVAR,indparams, statetf,{0}, 5, matsetup, matvalues, si, subindices); 
+  if(whenmat[6,5] || si==0) MANIFESTMEANS=mcalc(MANIFESTMEANS,indparams, statetf,{0}, 6, matsetup, matvalues, si, subindices); 
+  if(whenmat[7,5] || si==0) CINT=mcalc(CINT,indparams, statetf,{0}, 7, matsetup, matvalues, si, subindices); 
+  if(whenmat[8,5] || si==0) T0VAR=mcalc(T0VAR,indparams, statetf,{0}, 8, matsetup, matvalues, si, subindices); 
+  if(whenmat[9,5] || si==0) TDPREDEFFECT=mcalc(TDPREDEFFECT,indparams, statetf,{0}, 9, matsetup, matvalues, si, subindices); 
+  if(whenmat[51,5] || si==0) J0=mcalc(J0,indparams, statetf,{0}, 51, matsetup, matvalues, si, subindices); 
+  if(whenmat[52,5] || si==0) JAx=mcalc(JAx,indparams, statetf,{0}, 52, matsetup, matvalues, si, subindices); 
+  if(whenmat[53,5] || si==0) Jtd=mcalc(Jtd,indparams, statetf,{0}, 53, matsetup, matvalues, si, subindices); 
+  if(whenmat[54,5] || si==0) Jy=mcalc(Jy,indparams, statetf,{0}, 54, matsetup, matvalues, si, subindices); 
 
     
     
   if(si <= (subindices[8] ? nsubjects : 0)) {
-   if(intoverpop && nindvarying > 0) sT0VAR[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopc[1];
-    sT0VAR = makesym(sdcovsqrt2cov(sT0VAR,choleskymats),verbose,1); 
+   if(intoverpop && nindvarying > 0) T0VAR[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopc[1];
+    T0VAR = makesym(sdcovsqrt2cov(T0VAR,choleskymats),verbose,1); 
 
     if(intoverpop && nindvarying > 0){ //adjust cov matrix for transforms
       for(ri in 1:size(matsetup)){
         if(matsetup[ri,7]==1){ //if t0means
           if(matsetup[ri,5]) { //and indvarying
-            sT0VAR[matsetup[ri,1], ] = sT0VAR[matsetup[ri,1], ] * matvalues[ri,2] * matvalues[ri,3]* matvalues[ri,5]; //multiplier meanscale sdscale
-            sT0VAR[, matsetup[ri,1] ] = sT0VAR[, matsetup[ri,1] ] * matvalues[ri,2] * matvalues[ri,3]* matvalues[ri,5]; //multiplier meanscale sdscale
+            T0VAR[matsetup[ri,1], ] = T0VAR[matsetup[ri,1], ] * matvalues[ri,2] * matvalues[ri,3]* matvalues[ri,5]; //multiplier meanscale sdscale
+            T0VAR[, matsetup[ri,1] ] = T0VAR[, matsetup[ri,1] ] * matvalues[ri,2] * matvalues[ri,3]* matvalues[ri,5]; //multiplier meanscale sdscale
           }
         }
       }
     }
   }
     
-    if(verbose>1) print("nl t0var = ", sT0VAR, "   sJ0 = ", sJ0);
-    etacov = quad_form(sT0VAR, sJ0'); //probably unneeded, inefficient
+    if(verbose>1) print("nl t0var = ", T0VAR, "   J0 = ", J0);
+    etacov = quad_form(T0VAR, J0'); //probably unneeded, inefficient
 
     } //end T0 matrices
     
@@ -685,43 +691,43 @@ if(verbose > 1) print ("below t0 row ", rowi);
     int zeroint[1];
     vector[nlatentpop] basestate = state;
     zeroint[1] = 0;
-    for(statei in append_array(sJAxfinite,zeroint)){ //if some finite differences to do, compute these first
+    for(statei in append_array(JAxfinite,zeroint)){ //if some finite differences to do, compute these first
       state = basestate;
       if(statei>0)  state[statei] += Jstep;
       
         statetf[whichequals(whenvecs[2],0,0)] = 
-          parvectform(size(whichequals(whenvecs[2],0,0)),state, 2, matsetup, matvalues, si, subindices, whenvecs[2]);
+          parvectform(whichequals(whenvecs[2],0,0),state, 2, matsetup, matvalues, si, subindices, whenvecs[2]);
 
-        if(sum(whenmat[10,{2}]) > 0)sPARS=mcalc(sPARS,indparams, statetf,{2}, 10, matsetup, matvalues, si, subindices); 
+        if(sum(whenmat[10,{2}]) > 0)PARS=mcalc(PARS,indparams, statetf,{2}, 10, matsetup, matvalues, si, subindices); 
  //initialise PARS first, and simple PARS before complex PARS
         
       
-        if(sum(whenmat[3,{2}]) > 0)sDRIFT=mcalc(sDRIFT,indparams, statetf,{2}, 3, matsetup, matvalues, si, subindices); 
-if(sum(whenmat[7,{2}]) > 0)sCINT=mcalc(sCINT,indparams, statetf,{2}, 7, matsetup, matvalues, si, subindices); 
+        if(sum(whenmat[3,{2}]) > 0)DRIFT=mcalc(DRIFT,indparams, statetf,{2}, 3, matsetup, matvalues, si, subindices); 
+if(sum(whenmat[7,{2}]) > 0)CINT=mcalc(CINT,indparams, statetf,{2}, 7, matsetup, matvalues, si, subindices); 
 
         
       
       if(statei > 0) {
-        sJAx[1:nlatent,statei] =  sDRIFT * state[1:nlatent] + sCINT[,1]; //compute new change
-         if(verbose>1) print("sJAx ",sJAx);
+        JAx[1:nlatent,statei] =  DRIFT * state[1:nlatent] + CINT[,1]; //compute new change
+         if(verbose>1) print("JAx ",JAx);
       }
-      if(statei== 0 && size(sJAxfinite) ) { //only need these calcs if there are finite differences to do -- otherwise loop just performs system calcs.
-        base = sDRIFT * state[1:nlatent] + sCINT[,1];
-        if(verbose>1) print("base = ",base,"    sjaxinit= ",sJAx);
-        for(fi in sJAxfinite){
-          sJAx[1:nlatent,fi] = (sJAx[1:nlatent,fi] - base) / Jstep; //new - baseline change divided by stepsize
+      if(statei== 0 && size(JAxfinite) ) { //only need these calcs if there are finite differences to do -- otherwise loop just performs system calcs.
+        base = DRIFT * state[1:nlatent] + CINT[,1];
+        if(verbose>1) print("base = ",base,"    sjaxinit= ",JAx);
+        for(fi in JAxfinite){
+          JAx[1:nlatent,fi] = (JAx[1:nlatent,fi] - base) / Jstep; //new - baseline change divided by stepsize
         }
       }
     }
-    if(verbose>1) print("sJAx ",sJAx);
+    if(verbose>1) print("JAx ",JAx);
     }
     
       
-      if(sum(whenmat[4,{2}]) > 0)sDIFFUSION=mcalc(sDIFFUSION,indparams, statetf,{2}, 4, matsetup, matvalues, si, subindices); 
-if(sum(whenmat[52,{2}]) > 0)sJAx=mcalc(sJAx,indparams, statetf,{2}, 52, matsetup, matvalues, si, subindices); 
+      if(sum(whenmat[4,{2}]) > 0)DIFFUSION=mcalc(DIFFUSION,indparams, statetf,{2}, 4, matsetup, matvalues, si, subindices); 
+if(sum(whenmat[52,{2}]) > 0)JAx=mcalc(JAx,indparams, statetf,{2}, 52, matsetup, matvalues, si, subindices); 
 
       
-      if(si==0 || whenmat[4,2] || (T0check==1 && whenmat[4,5])) sDIFFUSIONcov[derrind,derrind] = sdcovsqrt2cov(sDIFFUSION[derrind,derrind],choleskymats);
+      if(si==0 || whenmat[4,2] || (T0check==1 && whenmat[4,5])) DIFFUSIONcov[derrind,derrind] = sdcovsqrt2cov(DIFFUSION[derrind,derrind],choleskymats);
       
         if(continuoustime){
           if(taylorheun==0){
@@ -731,15 +737,15 @@ if(sum(whenmat[52,{2}]) > 0)sJAx=mcalc(sJAx,indparams, statetf,{2}, 52, matsetup
               
               
               if(difftype==0 || (statedep[3]==0 && statedep[4]==0)){
-                discreteDRIFT = expm2(append_row(append_col(sDRIFT[1:nlatent, 1:nlatent],sCINT),nlplusonezerovec') * dtsmall);
-                Je[savescores ? rowi : 1,,] =  expm2(sJAx * dtsmall);
+                discreteDRIFT = expm2(append_row(append_col(DRIFT[1:nlatent, 1:nlatent],CINT),nlplusonezerovec') * dtsmall);
+                Je[savescores ? rowi : 1,,] =  expm2(JAx * dtsmall);
                
                 if(si==0 || statedep[3]||statedep[4]|| (T0check==1 && (whenmat[4,5] || whenmat[3,5]))){
-                sasymDIFFUSION[derrind,derrind] = to_matrix(  -sqkron_sumii(sJAx[derrind,derrind]) \ 
-                  to_vector(sDIFFUSIONcov[derrind,derrind]), ndiffusion,ndiffusion);
+                asymDIFFUSION[derrind,derrind] = to_matrix(  -sqkron_sumii(JAx[derrind,derrind]) \ 
+                  to_vector(DIFFUSIONcov[derrind,derrind]), ndiffusion,ndiffusion);
                 }
-                discreteDIFFUSION[derrind,derrind] =  sasymDIFFUSION[derrind,derrind] - 
-                  quad_form( sasymDIFFUSION[derrind,derrind], Je[savescores ? rowi : 1, derrind,derrind]' );
+                discreteDIFFUSION[derrind,derrind] =  asymDIFFUSION[derrind,derrind] - 
+                  quad_form( asymDIFFUSION[derrind,derrind], Je[savescores ? rowi : 1, derrind,derrind]' );
               }
             } 
             state[1:nlatent] = (discreteDRIFT * append_row(state[1:nlatent],1.0))[1:nlatent]; // ???compute before new diffusion calcs
@@ -751,17 +757,17 @@ if(sum(whenmat[52,{2}]) > 0)sJAx=mcalc(sJAx,indparams, statetf,{2}, 52, matsetup
             
            
               
-            if(intstepi >= (dt-1e-10) && savescores) Je[rowi,,] = expm2(sJAx * dt); //save approximate exponentiated jacobian for smoothing
+            if(intstepi >= (dt-1e-10) && savescores) Je[rowi,,] = expm2(JAx * dt); //save approximate exponentiated jacobian for smoothing
           }
   
           if(continuoustime==0){ 
-            Je[savescores ? rowi : 1,,] = sJAx;
+            Je[savescores ? rowi : 1,,] = JAx;
             if(intoverstates==1 || savescores==1){
-              etacov = quad_form(etacov, sJAx');
-              etacov[ derrind, derrind ] += tcrossprod(sDIFFUSION[ derrind, derrind ]); 
+              etacov = quad_form(etacov, JAx');
+              etacov[ derrind, derrind ] += tcrossprod(DIFFUSION[ derrind, derrind ]); 
             }
-            discreteDIFFUSION=sDIFFUSIONcov;
-            discreteDRIFT=append_row(append_col(sDRIFT[1:nlatent, 1:nlatent],sCINT),nlplusonezerovec');
+            discreteDIFFUSION=DIFFUSIONcov;
+            discreteDRIFT=append_row(append_col(DRIFT[1:nlatent, 1:nlatent],CINT),nlplusonezerovec');
             discreteDRIFT[nlatent+1,nlatent+1] = 1;
             state[1:nlatent] = (discreteDRIFT * append_row(state[1:nlatent],1.0))[1:nlatent];
             
@@ -775,24 +781,24 @@ if(sum(whenmat[52,{2}]) > 0)sJAx=mcalc(sJAx,indparams, statetf,{2}, 52, matsetup
       if(nonzerotdpred){
       
         statetf[whichequals(whenvecs[3],0,0)] = 
-          parvectform( size(whichequals(whenvecs[3],0,0)), state, 3, matsetup, matvalues, si, subindices, whenvecs[3]);
+          parvectform( whichequals(whenvecs[3],0,0), state, 3, matsetup, matvalues, si, subindices, whenvecs[3]);
           
-        if(sum(whenmat[10,{3}]) > 0)sPARS=mcalc(sPARS,indparams, statetf,{3}, 10, matsetup, matvalues, si, subindices); 
+        if(sum(whenmat[10,{3}]) > 0)PARS=mcalc(PARS,indparams, statetf,{3}, 10, matsetup, matvalues, si, subindices); 
  //initialise PARS first, and simple PARS before complex PARS
         
       
-        if(sum(whenmat[9,{3}]) > 0)sTDPREDEFFECT=mcalc(sTDPREDEFFECT,indparams, statetf,{3}, 9, matsetup, matvalues, si, subindices); 
-if(sum(whenmat[53,{3}]) > 0)sJtd=mcalc(sJtd,indparams, statetf,{3}, 53, matsetup, matvalues, si, subindices); 
+        if(sum(whenmat[9,{3}]) > 0)TDPREDEFFECT=mcalc(TDPREDEFFECT,indparams, statetf,{3}, 9, matsetup, matvalues, si, subindices); 
+if(sum(whenmat[53,{3}]) > 0)Jtd=mcalc(Jtd,indparams, statetf,{3}, 53, matsetup, matvalues, si, subindices); 
 
         
 
-        state[1:nlatent] +=   (sTDPREDEFFECT * tdpreds[rowi]); //tdpred effect only influences at observed time point
-        if(statedep[9]) etacov = quad_form(etacov,sJtd'); //could be optimized
+        state[1:nlatent] +=   (TDPREDEFFECT * tdpreds[rowi]); //tdpred effect only influences at observed time point
+        if(statedep[9]) etacov = quad_form(etacov,Jtd'); //could be optimized
       }
     }//end nonlinear tdpred
 
   if(intoverstates==0){
-    if(T0check==0) state += cholesky_decompose(sT0VAR) * etaupdbasestates[(1+(rowi-1)*nlatentpop):(rowi*nlatentpop)];
+    if(T0check==0) state += cholesky_decompose(T0VAR) * etaupdbasestates[(1+(rowi-1)*nlatentpop):(rowi*nlatentpop)];
     if(T0check>0) state[derrind] +=  cholesky_decompose(makesym(discreteDIFFUSION[derrind,derrind],verbose,1)) * 
       (etaupdbasestates[(1+(rowi-1)*nlatentpop):(nlatent+(rowi-1)*nlatentpop)])[derrind];
   }
@@ -811,57 +817,57 @@ if(verbose > 1){
     int zeroint[1];
     vector[nlatentpop] basestate = state;
     zeroint[1] = 0;
-    for(statei in append_array(sJyfinite,zeroint)){ //if some finite differences to do, compute these first
+    for(statei in append_array(Jyfinite,zeroint)){ //if some finite differences to do, compute these first
       state = basestate;
       if(statei>0 && (savescores + intoverstates) > 0)  state[statei] += Jstep;
       
             
         statetf[whichequals(whenvecs[4],0,0)] = 
-          parvectform( size(whichequals(whenvecs[4],0,0)), state, 4, matsetup, matvalues, si, subindices, whenvecs[4]);
+          parvectform( whichequals(whenvecs[4],0,0), state, 4, matsetup, matvalues, si, subindices, whenvecs[4]);
           
-        if(sum(whenmat[10,{4}]) > 0)sPARS=mcalc(sPARS,indparams, statetf,{4}, 10, matsetup, matvalues, si, subindices); 
+        if(sum(whenmat[10,{4}]) > 0)PARS=mcalc(PARS,indparams, statetf,{4}, 10, matsetup, matvalues, si, subindices); 
  //initialise PARS first, and simple PARS before complex PARS
         
       
-        if(sum(whenmat[2,{4}]) > 0)sLAMBDA=mcalc(sLAMBDA,indparams, statetf,{4}, 2, matsetup, matvalues, si, subindices); 
-if(sum(whenmat[5,{4}]) > 0)sMANIFESTVAR=mcalc(sMANIFESTVAR,indparams, statetf,{4}, 5, matsetup, matvalues, si, subindices); 
-if(sum(whenmat[6,{4}]) > 0)sMANIFESTMEANS=mcalc(sMANIFESTMEANS,indparams, statetf,{4}, 6, matsetup, matvalues, si, subindices); 
-if(sum(whenmat[54,{4}]) > 0)sJy=mcalc(sJy,indparams, statetf,{4}, 54, matsetup, matvalues, si, subindices); 
+        if(sum(whenmat[2,{4}]) > 0)LAMBDA=mcalc(LAMBDA,indparams, statetf,{4}, 2, matsetup, matvalues, si, subindices); 
+if(sum(whenmat[5,{4}]) > 0)MANIFESTVAR=mcalc(MANIFESTVAR,indparams, statetf,{4}, 5, matsetup, matvalues, si, subindices); 
+if(sum(whenmat[6,{4}]) > 0)MANIFESTMEANS=mcalc(MANIFESTMEANS,indparams, statetf,{4}, 6, matsetup, matvalues, si, subindices); 
+if(sum(whenmat[54,{4}]) > 0)Jy=mcalc(Jy,indparams, statetf,{4}, 54, matsetup, matvalues, si, subindices); 
 
         
         
       if(statei > 0 && (savescores + intoverstates) > 0) {
-        sJy[o,statei] =  sLAMBDA[o] * state[1:nlatent] + sMANIFESTMEANS[o,1]; //compute new change
-        sJy[o1,statei] = to_vector(inv_logit(to_array_1d(sJy[o1,statei])));
-         if(verbose>1) print("sJy ",sJy);
+        Jy[o,statei] =  LAMBDA[o] * state[1:nlatent] + MANIFESTMEANS[o,1]; //compute new change
+        Jy[o1,statei] = to_vector(inv_logit(to_array_1d(Jy[o1,statei])));
+         if(verbose>1) print("Jy ",Jy);
       }
       if(statei==0){
-        syprior[o] = sLAMBDA[o] * state[1:nlatent] + sMANIFESTMEANS[o,1];
+        syprior[o] = LAMBDA[o] * state[1:nlatent] + MANIFESTMEANS[o,1];
         syprior[o1] = to_vector(inv_logit(to_array_1d( syprior[o1] )));
-        if(size(sJyfinite) ) { //only need these calcs if there are finite differences to do -- otherwise loop just performs system calcs.
-          if(verbose>1) print("syprior = ",syprior,"    sJyinit= ",sJy);
-          for(fi in sJyfinite){
-            sJy[o,fi] = (sJy[o,fi] - syprior[o]) / Jstep; //new - baseline change divided by stepsize
+        if(size(Jyfinite) ) { //only need these calcs if there are finite differences to do -- otherwise loop just performs system calcs.
+          if(verbose>1) print("syprior = ",syprior,"    Jyinit= ",Jy);
+          for(fi in Jyfinite){
+            Jy[o,fi] = (Jy[o,fi] - syprior[o]) / Jstep; //new - baseline change divided by stepsize
           }
         }
       }
     }
-    if(verbose>1) print("sJy ",sJy);
+    if(verbose>1) print("Jy ",Jy);
   }
  
    if(si > 0 && dokalmanrows[rowi] ==1){   //if not just inits...
 
       if(intoverstates==1 || savescores==1) { //classic kalman
-        ycov[o,o] = quad_form(etacov, sJy[o,]'); // + sMANIFESTVAR[o,o]; shifted measurement error down
+        ycov[o,o] = quad_form(etacov, Jy[o,]'); // + MANIFESTVAR[o,o]; shifted measurement error down
         for(wi in 1:nmanifest){ 
-          if(Y[rowi,wi] != 99999 || savescores==1) ycov[wi,wi] += square(sMANIFESTVAR[wi,wi]);
+          if(Y[rowi,wi] != 99999 || savescores==1) ycov[wi,wi] += square(MANIFESTVAR[wi,wi]);
           if(manifesttype[wi]==1 && (Y[rowi,wi] != 99999  || savescores==1)) ycov[wi,wi] += fabs((syprior[wi] - 1) .* (syprior[wi]));
           if(manifesttype[wi]==2 && (Y[rowi,wi] != 99999  || savescores==1)) ycov[wi,wi] += square(fabs((syprior[wi] - round(syprior[wi])))); 
         }
       }
         
       if(intoverstates==0) { //sampled states
-        if(ncont_y[rowi] > 0) for(mi in o0) ypriorcov_sqrt[mi,mi] = sqrt(sMANIFESTVAR[mi,mi]);
+        if(ncont_y[rowi] > 0) for(mi in o0) ypriorcov_sqrt[mi,mi] = sqrt(MANIFESTVAR[mi,mi]);
       }
         
      
@@ -895,15 +901,15 @@ if(sum(whenmat[54,{4}]) > 0)sJy=mcalc(sJy,indparams, statetf,{4}, 54, matsetup, 
          if(verbose > 1) print("before K rowi =",rowi, "  si =", si, "  state =",state, "  statetf = ", statetf, "  etacov ",etacov,
           " indparams = ", indparams,
             "  syprior[o] =",syprior[o],"  ycov[o,o] ",ycov[o,o], 
-            "  sPARS = ", sPARS, 
-            "  sDRIFT =", sDRIFT, " sDIFFUSION =", sDIFFUSION, " sCINT =", sCINT, "  sMANIFESTVAR ", diagonal(sMANIFESTVAR), "  sMANIFESTMEANS ", sMANIFESTMEANS, 
-            "  sT0VAR", sT0VAR,  " sT0MEANS ", sT0MEANS, "sLAMBDA = ", sLAMBDA, "  sJy = ",sJy,
-            " discreteDRIFT = ", discreteDRIFT, "  discreteDIFFUSION ", discreteDIFFUSION, "  sasymDIFFUSION ", sasymDIFFUSION, 
-            " DIFFUSIONcov = ", sDIFFUSIONcov,
+            "  PARS = ", PARS, 
+            "  DRIFT =", DRIFT, " DIFFUSION =", DIFFUSION, " CINT =", CINT, "  MANIFESTVAR ", diagonal(MANIFESTVAR), "  MANIFESTMEANS ", MANIFESTMEANS, 
+            "  T0VAR", T0VAR,  " T0MEANS ", T0MEANS, "LAMBDA = ", LAMBDA, "  Jy = ",Jy,
+            " discreteDRIFT = ", discreteDRIFT, "  discreteDIFFUSION ", discreteDIFFUSION, "  asymDIFFUSION ", asymDIFFUSION, 
+            " DIFFUSIONcov = ", DIFFUSIONcov,
             "  rawpopsd ", rawpopsd,  "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
          
-        K[,od] = etacov * sJy[od,]' / makesym(ycov[od,od],verbose,1);// * multiply_lower_tri_self_transpose(ycovi');// ycov[od,od]; 
-        etacov += -K[,od] * sJy[od,] * etacov;
+        K[,od] = etacov * Jy[od,]' / makesym(ycov[od,od],verbose,1);// * multiply_lower_tri_self_transpose(ycovi');// ycov[od,od]; 
+        etacov += -K[,od] * Jy[od,] * etacov;
         state +=  (K[,od] * err[od]);
       }
       
@@ -912,9 +918,9 @@ if(sum(whenmat[54,{4}]) > 0)sJy=mcalc(sJy,indparams, statetf,{4}, 54, matsetup, 
         etaa[2,rowi] = state;
         ycova[1,rowi] = ycov;
         etacova[2,rowi] = etacov;
-        ycova[2,rowi] = quad_form(etacov, sJy');
-        for(wi in 1:nmanifest) ycova[2,rowi,wi,wi] += square(sMANIFESTVAR[wi,wi]);
-        ya[2,rowi] = sMANIFESTMEANS[o,1] + sLAMBDA[o,] * state[1:nlatent];
+        ycova[2,rowi] = quad_form(etacov, Jy');
+        for(wi in 1:nmanifest) ycova[2,rowi,wi,wi] += square(MANIFESTVAR[wi,wi]);
+        ya[2,rowi] = MANIFESTMEANS[o,1] + LAMBDA[o,] * state[1:nlatent];
       }
       
       
@@ -938,32 +944,32 @@ if(sum(whenmat[54,{4}]) > 0)sJy=mcalc(sJy,indparams, statetf,{4}, 54, matsetup, 
        // store system matrices
        
   if(si <= ((subindices[3] + subindices[7])  ? nsubjects : 0)){
-    if(continuoustime==1) sasymCINT[,1] =  -sDRIFT[1:nlatent,1:nlatent] \ sCINT[ ,1 ];
-    if(continuoustime==0) sasymCINT[,1] =  add_diag(-sDRIFT[1:nlatent,1:nlatent],1) \ sCINT[,1 ];
+    if(continuoustime==1) asymCINT[,1] =  -DRIFT[1:nlatent,1:nlatent] \ CINT[ ,1 ];
+    if(continuoustime==0) asymCINT[,1] =  add_diag(-DRIFT[1:nlatent,1:nlatent],1) \ CINT[,1 ];
   }
   
-  if(si <= ((subindices[3] + subindices[7])  ? nsubjects : 0) && !continuoustime) sasymDIFFUSION[ derrind, derrind ] = 
+  if(si <= ((subindices[3] + subindices[7])  ? nsubjects : 0) && !continuoustime) asymDIFFUSION[ derrind, derrind ] = 
     to_matrix( (add_diag( 
-      -sqkron_prod(sDRIFT[ derrind, derrind ], sDRIFT[ derrind, derrind ]),1)) \  
-      to_vector(sDIFFUSIONcov[ derrind, derrind ]), ndiffusion, ndiffusion);
+      -sqkron_prod(DRIFT[ derrind, derrind ], DRIFT[ derrind, derrind ]),1)) \  
+      to_vector(DIFFUSIONcov[ derrind, derrind ]), ndiffusion, ndiffusion);
     
   if(savesubjectmatrices && si > 0 && (rowi==ndatapoints || subject[rowi+1] != subject[rowi])){
-    if(sum(whenmat[10,1:5]) > 0) PARS[si] = sPARS;
-    if(sum(whenmat[1,1:5]) > 0) T0MEANS[si] = sT0MEANS;
-    if(sum(whenmat[2,1:5]) > 0) LAMBDA[si] = sLAMBDA;
-    if(sum(whenmat[3,1:5]) > 0) DRIFT[si] = sDRIFT;
-    if(sum(whenmat[4,1:5]) > 0) DIFFUSION[si] = sDIFFUSION;
-    if(sum(whenmat[5,1:5]) > 0) MANIFESTVAR[si] = sMANIFESTVAR;
-    if(sum(whenmat[6,1:5]) > 0) MANIFESTMEANS[si] = sMANIFESTMEANS;
-    if(sum(whenmat[7,1:5]) > 0) CINT[si] = sCINT;
-    if(sum(whenmat[8,1:5]) > 0) T0VAR[si] = sT0VAR;
-    if(sum(whenmat[9,1:5]) > 0) TDPREDEFFECT[si] = sTDPREDEFFECT;
-    if(sum(whenmat[31,1:5]) > 0) DIFFUSIONcov[si] = sDIFFUSIONcov;
-    if(sum(whenmat[21,1:5]) > 0) asymCINT[si] = sasymCINT;
-    if(sum(whenmat[22,1:5]) > 0) asymDIFFUSION[si] = sasymDIFFUSION;
+    if(sum(whenmat[10,1:5]) > 0) subj_PARS[si] = PARS;
+    if(sum(whenmat[1,1:5]) > 0) subj_T0MEANS[si] = T0MEANS;
+    if(sum(whenmat[2,1:5]) > 0) subj_LAMBDA[si] = LAMBDA;
+    if(sum(whenmat[3,1:5]) > 0) subj_DRIFT[si] = DRIFT;
+    if(sum(whenmat[4,1:5]) > 0) subj_DIFFUSION[si] = DIFFUSION;
+    if(sum(whenmat[5,1:5]) > 0) subj_MANIFESTVAR[si] = MANIFESTVAR;
+    if(sum(whenmat[6,1:5]) > 0) subj_MANIFESTMEANS[si] = MANIFESTMEANS;
+    if(sum(whenmat[7,1:5]) > 0) subj_CINT[si] = CINT;
+    if(sum(whenmat[8,1:5]) > 0) subj_T0VAR[si] = T0VAR;
+    if(sum(whenmat[9,1:5]) > 0) subj_TDPREDEFFECT[si] = TDPREDEFFECT;
+    if(sum(whenmat[31,1:5]) > 0) subj_DIFFUSIONcov[si] = DIFFUSIONcov;
+    if(sum(whenmat[21,1:5]) > 0) subj_asymCINT[si] = asymCINT;
+    if(sum(whenmat[22,1:5]) > 0) subj_asymDIFFUSION[si] = asymDIFFUSION;
   }
   if(si == 0){
-pop_PARS = sPARS; pop_T0MEANS = sT0MEANS; pop_LAMBDA = sLAMBDA; pop_DRIFT = sDRIFT; pop_DIFFUSION = sDIFFUSION; pop_MANIFESTVAR = sMANIFESTVAR; pop_MANIFESTMEANS = sMANIFESTMEANS; pop_CINT = sCINT; pop_T0VAR = sT0VAR; pop_TDPREDEFFECT = sTDPREDEFFECT; pop_DIFFUSIONcov = sDIFFUSIONcov; pop_asymCINT = sasymCINT; pop_asymDIFFUSION = sasymDIFFUSION; 
+pop_PARS = PARS; pop_T0MEANS = T0MEANS; pop_LAMBDA = LAMBDA; pop_DRIFT = DRIFT; pop_DIFFUSION = DIFFUSION; pop_MANIFESTVAR = MANIFESTVAR; pop_MANIFESTMEANS = MANIFESTMEANS; pop_CINT = CINT; pop_T0VAR = T0VAR; pop_TDPREDEFFECT = TDPREDEFFECT; pop_DIFFUSIONcov = DIFFUSIONcov; pop_asymCINT = asymCINT; pop_asymDIFFUSION = asymDIFFUSION; 
   }
 
   
