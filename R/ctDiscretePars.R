@@ -183,7 +183,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
     out <- ctStanDiscreteParsPlot(out,
       latentNames=ctstanfitobj$ctstanmodel$latentNames,
       title=paste0('Temporal ',ifelse(cov,'covariance','regressions'),
-      ' | ',ifelse(observational,'correlated','independent'), 'shock of 1.0'),...)
+      ' | ',ifelse(observational,'correlated','independent'), ' shock of 1.0'),...)
   } 
   return(out)
 }
