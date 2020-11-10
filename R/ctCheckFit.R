@@ -1,8 +1,6 @@
 ctLongToWideSF <- function(fit){
   dat <- data.frame(standatatolong(standata = fit$standata,
     ctm = fit$ctstanmodel,origstructure = TRUE))
-  # dat[[fit$ctstanmodelbase$subjectIDname]] <- NULL
-  # dat[[fit$ctstanmodelbase$timeName]] <- NULL
   dat <- dat[,c(fit$ctstanmodelbase$subjectIDname,
     fit$ctstanmodelbase$timeName,
     fit$ctstanmodelbase$manifestNames,
@@ -11,26 +9,13 @@ ctLongToWideSF <- function(fit){
   dat=data.table(dat)
   dat[ ,WhichObs:=0:(.N-1),by=eval(fit$ctstanmodelbase$subjectIDname)]
   dat=melt(dat,id.vars = c(fit$ctstanmodelbase$subjectIDname,'WhichObs'))
-  
-  ###what does this do?... was removing data weirdly
-  # if(fit$ctstanmodelbase$n.TIpred > 0){
-  #   dat <- dat[WhichObs <1 | !variable%in% eval(fit$ctstanmodelbase$TIpredNames)]
-  # }
-  
-  
+
   dat$WhichObs <- paste0('T',dat$WhichObs);
   dat=dcast(dat,'id~variable+WhichObs')
   lapply(fit$ctstanmodelbase$TIpredNames, function(x){
     colnames(dat)[grep(paste0('\\b',x,'\\_T0'),colnames(dat))] <<- x
   })
   dat=data.frame(dat)
-  # if(1==99) {
-  #   message('Min obs per columns: ',paste(apply(dat,2,function(x) nrow(dat)-sum(is.na(x))),collapse=', '))
-  #   probcols=which(apply(dat,2,function(x) nrow(dat)-sum(is.na(x))) < 10)
-  #   tldat[tldat$id==143,c('T4asfa',]
-  #  
-  #  dat=dat[,probcols]
-  # }
   return(dat)
 }
 
@@ -361,8 +346,9 @@ ctCheckFit2 <- function(fit,
   data=TRUE, postpred=TRUE, priorpred=FALSE, statepred=FALSE, residuals=FALSE,
   by=fit$ctstanmodelbase$timeName,
   TIpredNames=fit$ctstanmodelbase$TIpredNames,
-  nsamples=10, covplot=TRUE, corr=TRUE, combinevars=NA,
-  groupby='split', byNA=TRUE,
+  nsamples=10, covplot=FALSE, corr=TRUE, combinevars=NA, fastcov=FALSE,
+  aggfunc=mean,aggregate=TRUE,
+  groupby='split', byNA=TRUE,lag=0,
   smooth=TRUE, k=10,breaks=4,entropy=FALSE,reg=FALSE,verbose=0){
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
   
@@ -386,13 +372,29 @@ ctCheckFit2 <- function(fit,
   
   dat = dat[!is.na(value),]
   
-  #set k and breaks
+  
+  if(lag!=0){ 
+    
+    wdat=dcast(dat,paste0(
+      fit$ctstanmodelbase$subjectIDname,
+      '+Sample+DataSource+WhichObs+time','~variable'))
+    
+    lagcols=colnames(wdat)[!colnames(wdat) %in% c('id','Sample','DataSource','WhichObs')]
+    
+    wdat[, (paste0("lag",  rep(lag, times = length(lagcols)),'_',rep(lagcols, each = length(lag)))) :=  
+        shift(.SD, lag), by=c('id','Sample','DataSource')]
+    
+    dat <- melt(wdat,id.vars=c('id','Sample','DataSource','WhichObs','time'))
+    
+  }
+  
   breaks = min(breaks,length(unique(dat[[by]][!is.na(dat[[by]])])))
   # k = min(k,length(unique(dat[[by]][!is.na(dat[[by]])]))-1)
   
   if(covplot ||entropy){
     discdat=dat #make copy for use in covs
     discdat[variable %in% TIpredNames & WhichObs > 1] <- NA #remove later tipreds to avoid duplicate cov columns
+
     nontivars <- unique(discdat$variable)[!unique(discdat$variable) %in% TIpredNames]
     
     if(is.double(dat[[by]])){
@@ -407,8 +409,12 @@ ctCheckFit2 <- function(fit,
       for(dsi in unique(dat$DataSource)){ #make wide discretized data and get cov
         
         wdat <- dcast(discdat[DataSource==dsi],
-          paste0(fit$ctstanmodelbase$subjectIDname, '+Sample~variable + ',by),fun.aggregate=mean,na.rm=TRUE)
+          paste0(
+            fit$ctstanmodelbase$subjectIDname,
+            '+Sample',if(!aggregate) '+WhichObs','~variable + ',by),fun.aggregate=aggfunc,na.rm=TRUE)
   
+
+        
         #put loglik on one side
         if('LogLik_1' %in% colnames(wdat)) wdat <- cbind(wdat[,colnames(wdat) %in% paste0('LogLik_',1:breaks),with=FALSE],
           wdat[,!colnames(wdat) %in% paste0('LogLik_',1:breaks),with=FALSE])
@@ -428,12 +434,14 @@ ctCheckFit2 <- function(fit,
         
         wdat <- cbind(wdat[,c(which(colnames(wdat) %in% TIpredNames), which(!colnames(wdat) %in% TIpredNames)),with=FALSE])
         
-        covdat <- covml(
+        if(!fastcov) corlist[[dsi]] <- covml(
           data.frame(wdat)[,!colnames(wdat) %in% c('Sample',fit$ctstanmodelbase$subjectIDname),drop=FALSE],
           reg=reg,
-          verbose=verbose)
+          verbose=verbose)$cp$covm
         
-        corlist[[dsi]] <-covORcor(covdat$cp$covm)
+        if(fastcov) corlist[[dsi]] <- cov(
+          data.frame(wdat)[,!colnames(wdat) %in% c('Sample',fit$ctstanmodelbase$subjectIDname),drop=FALSE],
+          use='pairwise.complete.obs')
         
         # if(covsplitdiffs){
         #   browser()

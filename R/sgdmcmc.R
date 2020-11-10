@@ -27,7 +27,6 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
   if(plot){
     parbase=par(no.readonly=TRUE)
     on.exit(do.call(par,parbase),add=TRUE)
-    par(mfrow=c(2,3),mgp=c(2,.8,0),mar=c(2,3,1,0)+.2)
   }
   
   fitfunc2 <- function(x,whichmcmcpars=NA){
@@ -236,7 +235,7 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
       #   # gsmooth=gsmooth*.8 + (gampars-gamparsold)/step*.2#(gamg-gamgold)*gamweights
       # }
       
-      if(any(is.na(newpars))) 
+      if(any(is.na(newpars))) browser() 
         if(i==1) itertime <- Sys.time()
       
       
@@ -504,6 +503,7 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
     # message('ghatsmoothpar = ',ghatsmoothpar)
     # print(as.numeric(plot))
     if(plot && i %% as.numeric(plot) ==0){
+      par(mfrow=c(2,3),mgp=c(2,.8,0),mar=c(2,3,1,0)+.2)
       plot(pars,col=1:length(pars))
       points(changepars,pch=17,col='red')
       

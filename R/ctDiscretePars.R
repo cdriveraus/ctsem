@@ -99,8 +99,6 @@ ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
 #'@param subjects Either 'all', to take the average over all subjects, or a vector of integers denoting which
 #'subjects.
 #'@param times Numeric vector of positive values, discrete time parameters will be calculated for each.
-#'@param quantiles Which quantiles to return. If plotting, specify 3 quantiles, 
-#'the 2nd will be plotted as a line with 1 and 3 as uncertainty bounds.
 #'@param nsamples Number of samples from the stanfit to use for plotting. Higher values will
 #'increase smoothness / accuracy, at cost of plotting speed. Values greater than the total
 #'number of samples will be set to total samples.
@@ -129,9 +127,9 @@ ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
 #'}
 #'@export
 ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=10,by=.1), 
-  quantiles = c(.025, .5, .975),nsamples=500,observational=FALSE,standardise=FALSE, 
+  quantiles = c(.025, .5, .975),nsamples=100,observational=FALSE,standardise=FALSE, 
   cov=FALSE, plot=FALSE,...){
-
+  
   type='discreteDRIFT'
   collapseSubjects=TRUE #consider this for a switch
   e<-ctExtract(ctstanfitobj,subjectMatrices = subjects[1]!='all')
@@ -157,37 +155,35 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   
   #get all ctparameter matrices at once and remove unneeded subjects
   ctpars <- list()
+  
+  samples <- sample(1:dim(e[['pop_DRIFT']])[1],nsamples)
+  
   # browser()
   for(matname in c('DRIFT','DIFFUSIONcov','asymDIFFUSION')){ #,'CINT','T0MEANS', 'T0VAR','MANIFESTMEANS',if(!is.null(e$MANIFESTVAR)) 'MANIFESTVAR','LAMBDA', if(!is.null(e$TDPREDEFFECT)) 'TDPREDEFFECT')){
     if('all' %in% subjects || is.null(e[[paste0('subj_',matname)]])){
-      ctpars[[matname]] <- e[[paste0('pop_',matname)]]
+      ctpars[[matname]] <- e[[paste0('pop_',matname)]][samples,,,drop=FALSE]
     } else {
       # browser()
-      ctpars[[matname]] <- e[[paste0('subj_',matname)]][,subjects,,,drop=FALSE]
-      ctpars[[matname]]<-  array(ctpars[[matname]],dim=c(prod(dim(ctpars[[matname]])[1:2]),dim(ctpars[[matname]])[-1:-2]))
+      ctpars[[matname]] <- e[[paste0('subj_',matname)]][samples,subjects,,,drop=FALSE]
+      # ctpars[[matname]]<-  array(ctpars[[matname]],dim=c(prod(dim(ctpars[[matname]])[1:2]),dim(ctpars[[matname]])[-1:-2]))
     }
-    ctpars[[matname]] <- ctpars[[matname]][sample(1:dim(ctpars[[matname]])[1],nsamples),,,drop=FALSE]
+    # ctpars[[matname]] <- ctpars[[matname]][sample(1:dim(ctpars[[matname]])[1],nsamples),,,drop=FALSE]
   }
   
-  # 
-  nlatent <- dim(ctpars$asymDIFFUSION)[2]
-  ctpars$DRIFT <- ctpars$DRIFT[,1:nlatent,1:nlatent,drop=FALSE] #intoverpop
-
   
   out <- ctStanDiscreteParsDrift(ctpars,times, observational, standardise, cov=cov)
-  out <- apply(out,c(1,2,3),quantile,probs=quantiles)
-    
-    dimnames(out)<- list(quantiles=paste0('quantile_',quantiles),
-      row=latentNames,
-      col=latentNames,
-      times=paste0('t',times)
-    )
-    
-    out=aperm(out,c(2,3,4,1))
+  
+  dimnames(out)<- list(Sample=samples, Subject=subjects,
+    `Time interval`=times, row=latentNames, col=latentNames)
+  
+  
   
   if(plot) {
     
-    out <- ctStanDiscreteParsPlot(out,times=times,latentNames=ctstanfitobj$ctstanmodel$latentNames,...)
+    out <- ctStanDiscreteParsPlot(out,
+      latentNames=ctstanfitobj$ctstanmodel$latentNames,
+      title=paste0('Temporal ',ifelse(cov,'covariance','regressions'),
+      ' | ',ifelse(observational,'correlated','independent'), 'shock of 1.0'),...)
   } 
   return(out)
 }
@@ -195,29 +191,81 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
 
 
 ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=FALSE){
+  
   nl=dim(ctpars$DRIFT)[3]
+  
   message('Computing temporal regression coefficients for ', dim(ctpars$DRIFT)[1],' samples, may take a moment...')
-  discreteDRIFT <- array(sapply(1:(dim(ctpars$DRIFT)[1]),function(d){
-    if(observational|standardise){
-      asymDIFFUSIONdiag <- diag(matrix(ctpars$asymDIFFUSION[d,,],nl,nl))
-    asymDIFFUSIONdiag[rl(asymDIFFUSIONdiag <= 0) ] <- 1
+  
+  lapply(names(ctpars),function(x){ #add in extra dim if only 3 dims (e.g. when not individually varying)
+    dm=dim(ctpars[[x]])
+    if(length(dm)==3){
+      ctpars[[x]] <<- array(ctpars[[x]],dim=c(dm[1],1,dm[2:3]))
     }
-    DRIFT <- matrix(ctpars$DRIFT[d,,],nl,nl)
-    if(observational) {
-      g <- matrix(ctpars$DIFFUSIONcov[d,,],nl,nl)
-      g <- cov2cor(g)^2 * sign(g)
-      g[is.nan(g)] <- 0
+  })
+  
+  nsubs <- lapply(ctpars,function(x) dim(x)[2])
+  
+  
+  
+  
+  
+  # if(observational|standardise){
+  #   ctpars$asymDIFFUSIONdiag <- apply(ctpars$asymDIFFUSION,c(3,4),function(x){
+  #     a=diag(matrix(x,nl,nl))
+  #     if(any(!rl(diag(a) >0))) message('Unknown problems with standardization! setting problem diags to 1. yay.')
+  #     a[!rl(diag(a) >0)] <- 1 
+  #     return(a)
+  #   })
+  # }
+  # if(observational) {
+  #   ctpars$G <- apply(ctpars$DIFFUSIONcov,c(3,4),function(x){
+  #     g <- cov2cor(x)^2 * sign(g) #use cov2cor for standardising, but is squaring correct? seems wrong?
+  #     g[is.nan(g)] <- 0
+  #   })
+  # }
+  
+  ctpars$dtDRIFT <- array(NA, dim=c(dim(ctpars$DRIFT)[1],max(unlist(nsubs)),length(times),dim(ctpars$DRIFT)[3:4]))
+  
+  
+  for(i in 1:dim(ctpars$DRIFT)[1]){
+    for(j in 1:dim(ctpars$DRIFT)[2]){
+      for(ti in 1:length(times)){
+        ctpars$dtDRIFT[i,j,ti,,] <- expm::expm(as.matrix(ctpars$DRIFT[i,min(j,nsubs$DRIFT),,] * times[ti]))
+        if(standardise) {
+          ctpars$dtDRIFT[i,j,ti,,] <- ctpars$dtDRIFT[i,j,ti,,] * 
+            matrix(rep(sqrt((diag(ctpars$asymDIFFUSION[i,min(j,nsubs$asymDIFFUSION),,])+1e-10),each=nl) / 
+                rep((sqrt(asymDIFFUSIONdiag)),times=nl),nl))
+        }
+        if(observational){
+          Qcor<-cov2cor(as.matrix(ctpars$DIFFUSION[i,min(j,nsubs$DIFFUSIONcov),,])) 
+          Qcor <- Qcor^2 * sign(Qcor) #why is this squared?
+          ctpars$dtDRIFT[i,j,ti,,]  <- ctpars$dtDRIFT[i,j,ti,,]  %*% Qcor
+        }
+        if(cov) ctpars$dtDRIFT[i,j,ti,,]  <- tcrossprod(ctpars$dtDRIFT[i,j,ti,,] )
+      }
     }
-    sapply(times, function(ti){ 
-      out <-expm::expm(DRIFT *ti)
-      if(standardise) out <- out * matrix(rep(sqrt((asymDIFFUSIONdiag)),each=nl) / 
-          rep((sqrt(asymDIFFUSIONdiag)),times=nl),nl)
-      if(observational) out <- out %*% g
-      # browser()
-      if(cov) out <- (out %*% t(out))
-      return(matrix(out,ncol(out),ncol(out)))
-    },simplify = 'array')
-  },simplify = 'array'),dim=c(nl,nl,length(times),dim(ctpars$DRIFT)[1]))
+  }
+  
+  
+  # discreteDRIFT <- array(sapply(1:(dim(ctpars$DRIFT)[1]),function(d){ #for each sample
+  #   sapply(1:max(unlist(nsubs)),function(subi){ #and each subject
+  #     
+  #     
+  #     DRIFT <- matrix(ctpars$DRIFT[d,min(subi,nsubs$DRIFT),,],nl,nl)
+  #     
+  #     sapply(times, function(ti){ 
+  #       out <-expm::expm(DRIFT *ti)
+  #       if(standardise) out <- out * matrix(rep(sqrt((asymDIFFUSIONdiag)),each=nl) / 
+  #           rep((sqrt(asymDIFFUSIONdiag)),times=nl),nl)
+  #       if(observational) out <- out %*% g
+  #       # browser()
+  #       if(cov) out <- (out %*% t(out))
+  #       return(matrix(out,ncol(out),ncol(out)))
+  #     },simplify = 'array')
+  #   },simplify='array') #end subject loop
+  # },simplify = 'array'),dim=c(nl,nl,length(times),dim(ctpars$DRIFT)[1]))
+  
+  return(ctpars$dtDRIFT)
 }
 
 #'ctStanDiscreteParsPlot
@@ -231,37 +279,17 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
 #''AR' specifies all diagonals, for discrete time autoregression parameters.
 #''CR' specifies all off-diagonals,for discrete time cross regression parameters.
 #''all' plots all AR and CR effects at once.
-#'@param add Logical. If FALSE, a new plot is generated, if TRUE, specified plot/s are
-#'overlayed on existing plot.
-#'@param gg Logical -- use GGplot2 or not? if TRUE, other graphical parameters are ignored, and the
-#'ggplot object is returned and may be modified further. 
-#'@param plot Logical. Only relevant with gg=TRUE. 
-#'@param legend Logical. If TRUE, generates a legend.
-#'@param grid Logical. Plot with a grid?
-#'@param polygon Logical. If TRUE, fills a polygon between the first and last specified quantiles.
 #'@param quantiles numeric vector of length 3, with values between 0 and 1, specifying which quantiles to plot.
 #'The default of c(.05,.5,.95) plots 95\% credible intervals and the posterior median at 50\%. 
-#'@param times Numeric vector of positive values, discrete time parameters will be calculated for each.
 #'@param latentNames Vector of character strings denoting names for the latent variables. 
 #''auto' just uses eta1 eta2 etc.
-#'@param lwdvec Either 'auto', or a vector of positive integers denoting line widths for each quantile.
-#''auto' specifies c(1,3,1) if there are 3 quantiles to be plotted (default), otherwise simply 3.
-#'@param ltyvec Either 'auto', or a vector of line type integers (as for the lty parameter normally)
-#' denoting line types for each quantile.
-#' 'auto' specifies c(3, 1, 3) if there are 3 quantiles to be plotted (default), otherwise simply 1.
-#'@param colvec Either 'auto', or a vector of color values denoting colors for each index to be plotted.
-#''auto' generates colors using the \code{grDevices::rainbow} function.
-#'@param plotcontrol list of arguments to pass to plot function. 
-#'The following arguments are ignored: ylim,lwd,lty,col,x,y.
-#'@param legendcontrol list of arguments to pass to legend function. 'legend=' and 'text.col=' arguments
-#'will be ignored.
-#'@param polygonalpha Numeric between 0 and 1 to multiply the alpha (transparency) of colvec by for 
-#'the fill polygon.
-#'@param polygoncontrol list of arguments to pass to ctPoly function (if polygon=TRUE).
-#'x,y, and col arguments will be ignored. Steps specifies the number of polygons to overlay to 
-#'create a graduated transparency. Set to 1 for a flat looking plot.
-#'@param ... for plot adjustments a ggeval argument can be added, which should be based on the default code
-#'found in the ctsem:::ctPlotArrayGG function.
+#'@param polygonalpha Numeric between 0 and 1 to multiply the alpha of 
+#'the fill.
+#'@param colour Character string denoting how colour varies. 'Effect' or 'Subject'.
+#'@param title Character string.
+#'@param ggcode if TRUE, returns a list containing the data.table to plot, and a character string that can be
+#'evaluated (with the necessary arguments such as ylab etc filled in). For modifying plots.
+#'@return A ggplot2 object. This can be modified by the various ggplot2 functions, or displayed using print(x).
 #'@examples
 #'if(w32chk()){
 #'x <- ctStanDiscretePars(ctstantestfit)
@@ -275,31 +303,18 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
 #'
 #'@export
 
-ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon=TRUE, 
-  gg=TRUE,plot=TRUE,
-  quantiles=c(.025,.5,.975), times=seq(0,10,.1),latentNames='auto',
-  lwdvec='auto',colvec='auto',ltyvec='auto',
-  plotcontrol=list(ylab='Value',xlab='Time interval',
-    main='Regression coefficients',type='l', xaxs='i'),grid=FALSE,
-  legendcontrol=list(x='topright',bg='white'),
-  polygonalpha=.1,
-  polygoncontrol=list(steps=20),...){
-
+ctStanDiscreteParsPlot<- function(x,indices='all',
+  quantiles=c(.025,.5,.975), latentNames='auto',
+  ylab='Coefficient',xlab='Time interval',ylim=NA,facets=NA,
+  colour='Effect',title='Temporal regressions | independent shock of 1.0',
+  polygonalpha=.1,ggcode=NA){
+  
   if(is.data.frame(indices)) indices <- as.matrix(indices)
   
-  nlatent=dim(x)[1]
+  nlatent=dim(x)[5]
   
   if(latentNames[1]=='auto') latentNames=dimnames(x)$row
   
-  if(is.null(plotcontrol$ylab)) plotcontrol$ylab  <- 'Value'
-  if(is.null(plotcontrol$xlab)) plotcontrol$xlab  <- 'Time interval'
-  if(is.null(plotcontrol$main)) plotcontrol$main  <- 'Regression coefficients'
-  if(is.null(plotcontrol$type)) plotcontrol$type  <- 'l'
-  
-  
-  if(is.null(legendcontrol$x)) legendcontrol$x = 'topright'
-  if(is.null(legendcontrol$bg)) legendcontrol$bg = 'white'
-
   if(all(indices=='AR')) indices <- matrix(1:nlatent,nrow=nlatent,ncol=2)
   
   if(all(indices=='CR')) indices <- cbind(
@@ -315,92 +330,110 @@ ctStanDiscreteParsPlot<- function(x,indices='all',add=FALSE,legend=TRUE, polygon
       rep(1:nlatent,length(unique(indices))),
       rep(unique(indices),each=length(unique(indices))))
   }
+
   
-  if(ltyvec[1]=='auto') ltyvec=1:nrow(indices)
-  if(lwdvec[1]=='auto') lwdvec= rep(3,nrow(indices))
+  ym <- data.table(reshape2::melt(x))
+  ym$Effect <- interaction(ym$row,ym$col)
+  ym$Subject <- factor(ym$Subject)
+  ym$Sample <- factor(ym$Sample)
   
-  if(colvec[1]=='auto') colvec=grDevices::rainbow(nrow(indices),alpha=.8,v=.9)
+  #remove rows not in indices
+  ym <- ym[paste0(row,'_',col) %in% apply(indices,1,function(x) paste0(latentNames[x],collapse='_'))]
+
+  # title <- paste0('Temporal ', ifelse(cov,'covariance','regressions'),' | ',
+  #   ifelse(cov,'correlated','uncorrelated'), 'shock of 1.0')
   
-  if(is.null(plotcontrol$ylim)) {
-    plotcontrol$ylim=range(plyr::aaply(x,c(3,4),function(x) 
-      x[indices]),na.rm=TRUE) #range of diagonals
-    if(legend) plotcontrol$ylim[2] <- plotcontrol$ylim[2] + sd(plotcontrol$ylim)/3
-  }
+  g<-'ggplot2::ggplot(data = ym,mapping=aes(y=value,x=`Time interval`,
+    colour=Effect,
+    fill=Effect,
+    type=Subject))+
+    theme_bw()+ylab(ylab)+
+    ggplot2::labs(title = title)+  
+    stat_summary( #ribbon
+      fun.data = function(x) list(
+        y=quantile(x,quantiles[2]),
+        ymin=quantile(x,quantiles[1]), 
+        ymax=quantile(x,quantiles[3])
+      ),
+      geom = "ribbon",
+      alpha= polygonalpha,
+      linetype=3)+
+    stat_summary( #center line
+      fun.data = function(x) list(
+        y=quantile(x,quantiles[2])
+      ),
+      geom = "line",
+      linetype=1)'
   
-  if(gg){
-    parnames<-paste0(latentNames[indices[,1]],'_',latentNames[indices[,2]])
-    y = x
-    y = array(y,dim = c(dim(y)[1]^2,dim(y)[c(3,4)]))
-    y <- y[matrix(1:dim(y)[1],sqrt(dim(y)[1]),sqrt(dim(y)[1]))[indices],,,drop=FALSE]
-    dimn <- list(Index=parnames)
-    dimn <- c(dimn,dimnames(x)[3:4])
-    names(dimn) <- c('Index','Time interval','Effect')
-    dimnames(y) <- dimn
-    g <- ctPlotArrayGG(list(x=times,y=aperm(y,c(2,1,3))),...)
-    # if(plot) print(g)
-    # if(!plot) return(invisible(g))
-    return(g)
-  } else {
-    
-    
-    
-    #blank plot
-    blankargs=plotcontrol
-    blankargs$xlim=range(times)
-    blankargs$y=NA
-    blankargs$x=NA
-    do.call(plot,blankargs)
-    if(grid) {
-      grid()
-      par(new=TRUE)
-      do.call(plot,blankargs)
-      par(new=FALSE)
-    }
-    
-    ####plotting confidence region
-    if(polygon) {
-      cc=0
-      ccup=TRUE
-      for(indexi in c(1:nrow(indices))){
-        cc=ifelse(ccup,cc+1,cc-1)
-        if(indexi==nrow(indices)) ccup=FALSE
-        ri=indices[indexi,1]
-        ci=indices[indexi,2]
-        polygonargs<-polygoncontrol
-        polygonargs$x=times
-        polygonargs$y=x[ri,ci,,2]
-        polygonargs$ylow=x[ri,ci,,1]
-        polygonargs$yhigh=x[ri,ci,,length(quantiles)]
-        polygonargs$col=grDevices::adjustcolor(colvec[cc],alpha.f=max(c(.004,polygonalpha/(2*sqrt(polygonargs$steps)))))
-        do.call(ctPoly,polygonargs)
-      }
-    }
-    
-    ####plotting quantile lines
-    for(qi in 1:3){
-      cc=0
-      for(indexi in 1:nrow(indices)){
-        cc=cc+1
-        ri=indices[indexi,1]
-        ci=indices[indexi,2]
-        
-        plotargs<-plotcontrol
-        plotargs$x=times
-        plotargs$y=x[ri,ci,,qi]
-        plotargs$lty=ltyvec[cc]
-        plotargs$col=ifelse(qi!= 2,grDevices::adjustcolor(colvec[cc],alpha.f=.5) ,colvec[cc])
-        plotargs$lwd=ifelse(qi!= 2,1, lwdvec[cc])
-        do.call(points,plotargs)
-      }}
-    
-    
-    
-    legendcontrol$legend=paste0(latentNames[indices[,1]],'_',latentNames[indices[,2]])
-    legendcontrol$text.col=colvec
-    legendcontrol$col=colvec
-    legendcontrol$lty = ltyvec
-    legendcontrol$lwd=lwdvec
-    
-    if(legend) do.call(graphics::legend,legendcontrol)
-  }#end if not gg
+  if(!is.na(facets)) g <- paste0(g,'+ facet_wrap(facets)')
+  
+  if(!is.na(ylim)) g <- paste0(g,' + ylim(ylim)')
+  
+  if(is.na(ggcode)) g <- eval(parse(text=g)) else g <- list(dt=ym,ggcode=g)
+  
+  return(g)
 }
+# } else {
+
+#   
+#   #blank plot
+#   rm(plot) #otherwise can't find function
+#   blankargs=plotcontrol
+#   blankargs$xlim=range(times)
+#   blankargs$y=NA
+#   blankargs$x=NA
+#   do.call(plot,blankargs)
+#   if(grid) {
+#     grid()
+#     par(new=TRUE)
+#     do.call(plot,blankargs)
+#     par(new=FALSE)
+#   }
+#   
+#   ####plotting confidence region
+#   if(polygon) {
+#     cc=0
+#     ccup=TRUE
+#     for(indexi in c(1:nrow(indices))){
+#       cc=ifelse(ccup,cc+1,cc-1)
+#       if(indexi==nrow(indices)) ccup=FALSE
+#       ri=indices[indexi,1]
+#       ci=indices[indexi,2]
+#       polygonargs<-polygoncontrol
+#       polygonargs$x=times
+#       polygonargs$y=x[ri,ci,,2]
+#       polygonargs$ylow=x[ri,ci,,1]
+#       polygonargs$yhigh=x[ri,ci,,length(quantiles)]
+#       polygonargs$col=grDevices::adjustcolor(colvec[cc],alpha.f=max(c(.004,polygonalpha/(2*sqrt(polygonargs$steps)))))
+#       do.call(ctPoly,polygonargs)
+#     }
+#   }
+#   
+#   ####plotting quantile lines
+#   for(qi in 1:3){
+#     cc=0
+#     for(indexi in 1:nrow(indices)){
+#       cc=cc+1
+#       ri=indices[indexi,1]
+#       ci=indices[indexi,2]
+#       
+#       plotargs<-plotcontrol
+#       plotargs$x=times
+#       plotargs$y=x[ri,ci,,qi]
+#       plotargs$lty=ltyvec[cc]
+#       plotargs$col=ifelse(qi!= 2,grDevices::adjustcolor(colvec[cc],alpha.f=.5) ,colvec[cc])
+#       plotargs$lwd=ifelse(qi!= 2,1, lwdvec[cc])
+#       do.call(points,plotargs)
+#     }}
+#   
+#   
+#   
+#   legendcontrol$legend=paste0(latentNames[indices[,1]],'_',latentNames[indices[,2]])
+#   legendcontrol$text.col=colvec
+#   legendcontrol$col=colvec
+#   legendcontrol$lty = ltyvec
+#   legendcontrol$lwd=lwdvec
+#   
+#   if(legend) do.call(graphics::legend,legendcontrol)
+# }#end if not gg
+# }

@@ -9,7 +9,7 @@ ctStanDiscretePars(
   subjects = "all",
   times = seq(from = 0, to = 10, by = 0.1),
   quantiles = c(0.025, 0.5, 0.975),
-  nsamples = 500,
+  nsamples = 100,
   observational = FALSE,
   standardise = FALSE,
   cov = FALSE,
@@ -24,9 +24,6 @@ ctStanDiscretePars(
 subjects.}
 
 \item{times}{Numeric vector of positive values, discrete time parameters will be calculated for each.}
-
-\item{quantiles}{Which quantiles to return. If plotting, specify 3 quantiles, 
-the 2nd will be plotted as a line with 1 and 3 as uncertainty bounds.}
 
 \item{nsamples}{Number of samples from the stanfit to use for plotting. Higher values will
 increase smoothness / accuracy, at cost of plotting speed. Values greater than the total
