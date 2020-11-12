@@ -2,6 +2,22 @@ vgrep <- function(patterns,x){
   unique(unlist(sapply(patterns,function(pattern) grep(pattern,x))))
 }
 
+mupd <- function(m, nr=NA,nc=NA, upd=NA, sr=NA,sc=NA){
+  if(is.na(nr)) nr <- max(nrow(upd)+sr-1,nrow(m))
+  if(is.na(nc)) nc <- max(ncol(upd)+sc-1,nrow(m))
+  mo <- rbind(
+    cbind(m, matrix(0,nrow(m),nc-ncol(m))),
+    matrix(0,nr-nrow(m),nc))
+  if(!is.na(upd)) mo[sr:(sr+nrow(upd)-1),sc:(ncol(upd)+sc-1)] <- upd
+  return(mo)
+}
+
+diagt <- function(d){
+  m <- diag(0,length(d))
+  m[diag(1,length(d))==1] <- d
+  return(m)
+}
+
 findmatrixslots <- function(pars,l){
   p<-list()
   for(pi in pars){

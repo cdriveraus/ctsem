@@ -24,6 +24,7 @@ ctStanFit(
   cores = ifelse(optimize, getOption("mc.cores", 2L), "maxneeded"),
   inits = NULL,
   forcerecompile = FALSE,
+  useGlobalEnv = TRUE,
   savescores = FALSE,
   savesubjectmatrices = FALSE,
   gendata = FALSE,
@@ -98,6 +99,9 @@ up to the number of chains, or a positive integer. If \code{optimize=TRUE}, more
 
 \item{forcerecompile}{logical. For development purposes. 
 If TRUE, stan model is recompiled, regardless of apparent need for compilation.}
+
+\item{useGlobalEnv}{if TRUE and compilation is needed / requested, writes the stan model to
+the global environment as ctsem.compiled , to avoid unnecessary recompilation.}
 
 \item{savescores}{Logical. If TRUE, output from the Kalman filter is saved in output. For datasets with many variables
 or time points, will increase file size substantially.}

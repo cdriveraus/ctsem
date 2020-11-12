@@ -287,6 +287,7 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
 #'the fill.
 #'@param colour Character string denoting how colour varies. 'Effect' or 'Subject'.
 #'@param title Character string.
+#'@param splitSubjects if TRUE, subjects are plotted separately, if FALSE they are combined.
 #'@param ggcode if TRUE, returns a list containing the data.table to plot, and a character string that can be
 #'evaluated (with the necessary arguments such as ylab etc filled in). For modifying plots.
 #'@return A ggplot2 object. This can be modified by the various ggplot2 functions, or displayed using print(x).
@@ -305,7 +306,7 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
 
 ctStanDiscreteParsPlot<- function(x,indices='all',
   quantiles=c(.025,.5,.975), latentNames='auto',
-  ylab='Coefficient',xlab='Time interval',ylim=NA,facets=NA,
+  ylab='Coefficient',xlab='Time interval',ylim=NA,facets=NA,splitSubjects=TRUE,
   colour='Effect',title='Temporal regressions | independent shock of 1.0',
   polygonalpha=.1,ggcode=NA){
   
@@ -335,6 +336,7 @@ ctStanDiscreteParsPlot<- function(x,indices='all',
   ym <- data.table(reshape2::melt(x))
   ym$Effect <- interaction(ym$row,ym$col)
   ym$Subject <- factor(ym$Subject)
+  if(!splitSubjects) ym$Subject <- factor(1)
   ym$Sample <- factor(ym$Sample)
   
   #remove rows not in indices

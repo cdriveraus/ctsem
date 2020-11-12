@@ -115,6 +115,8 @@ verbosify<-function(sf,verbose=2){
 #' elements that should be fixed to stationarity.
 #' @param forcerecompile logical. For development purposes. 
 #' If TRUE, stan model is recompiled, regardless of apparent need for compilation.
+#' @param useGlobalEnv if TRUE and compilation is needed / requested, writes the stan model to
+#' the global environment as ctsem.compiled , to avoid unnecessary recompilation.
 #' @param savescores Logical. If TRUE, output from the Kalman filter is saved in output. For datasets with many variables
 #' or time points, will increase file size substantially.
 #' @param savesubjectmatrices Logical. If TRUE, subject specific matrices are saved -- 
@@ -372,7 +374,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   nlcontrol = list(), nopriors=TRUE, chains=2,
   cores=ifelse(optimize,getOption("mc.cores", 2L),'maxneeded'),
   inits=NULL,
-  forcerecompile=FALSE,savescores=FALSE,
+  forcerecompile=FALSE,useGlobalEnv=TRUE,savescores=FALSE,
   savesubjectmatrices=FALSE,
   gendata=FALSE,
   control=list(),verbose=0,vb=FALSE,...){
@@ -606,6 +608,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         # includes = paste0(
         #   '\n#include "', file.path(getwd(), 'syl2.hpp'),'"',
         #   '\n')
+        if(useGlobalEnv) assign(x = 'ctsem.compiled',sm,envir = globalenv())
       }
       if(!recompile && !forcerecompile) {
         if(!gendata) sm <- stanmodels$ctsm else sm <- stanmodels$ctsmgen
