@@ -46,57 +46,13 @@ ctStanParnames <- function(x,substrings=c('pop_','popsd')){
 
 
 
-
-#'ctDiscretePars
-#'
-#'Generate discrete time parameters for a sequence of times based on a list containing coninuous time
-#'parameter matrices as used in ctsem.
-#'
-#'@param ctpars List of continuous time parameter matrices.
-#'@param times Numeric vector of positive values, discrete time parameters will be calculated for each.
-#'@param type String. 'all' returns all possible outputs in a list. 
-#''discreteDRIFT' returns only discrete time auto and cross regression effects.
-#''latentMeans' returns only the expected latent means, given initial (T0MEANS) level, 
-#'latent intercept (CINT) and temporal effects (DRIFT).
-#'@examples
-#'\donttest{
-#'pars <- ctStanContinuousPars(ctstantestfit)
-#'ctDiscretePars(pars,times=c(.5,1))
-#'}
-#'
-#'@export
-ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
-  
-  if(type=='all') type=c('discreteDRIFT','latentMeans') #this needs to match with ctStanDiscretePars
-  nlatent=nrow(ctpars$DRIFT)
-  latentNames=paste0('eta',1:nlatent)
-  
-  out<-list()
-  discreteDRIFT = array(unlist(lapply(times, function(x) 
-    expm::expm(ctpars$DRIFT*x))),
-    dim=c(nlatent,nlatent,length(times)),
-    dimnames=list(latentNames,latentNames,paste0('t',times)))
-  
-  if('discreteDRIFT' %in% type) out$discreteDRIFT = discreteDRIFT
-  
-  if('latentMeans' %in% type) out$latentMeans = array(unlist(lapply(1:length(times), function(x)
-    discreteDRIFT[,,x] %*% ctpars$T0MEANS)),
-    dim=c(nlatent,length(times)),
-    dimnames=list(latentNames,paste0('t',times)))
-  
-  # if('impulse' %in% type) out$impulse <- 
-  
-  return(out)
-}
-
-
 #'ctStanDiscretePars
 #'
 #'Calculate model implied regressions for a sequence of time intervals based on a continuous time model fit
 #'from ctStanFit, for specified subjects.
 #'
 #'@param ctstanfitobj Continuous time model fit from \code{\link{ctStanFit}}
-#'@param subjects Either 'all', to take the average over all subjects, or a vector of integers denoting which
+#'@param subjects Either 'popmean', to use the population mean parameter, or a vector of integers denoting which
 #'subjects.
 #'@param times Numeric vector of positive values, discrete time parameters will be calculated for each.
 #'@param nsamples Number of samples from the stanfit to use for plotting. Higher values will
@@ -110,12 +66,14 @@ ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
 #'@param cov Logical. If TRUE, covariances are returned instead of regression coefficients.
 #'@param plot Logical. If TRUE, plots output using \code{\link{ctStanDiscreteParsPlot}}
 #'instead of returning output. 
+#'@param cores Number of cpu cores to use for computing subject matrices. 
+#'If subject matrices were saved during fiting, not used. 
 #'@param ... additional plotting arguments to control \code{\link{ctStanDiscreteParsPlot}}
 #'@examples
 #'if(w32chk()){
 #'
 #' ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
-#'  plot=TRUE,indices='all')
+#'  plot=TRUE,indices='popmean')
 #'  
 #'#modify plot
 #'require(ggplot2)
@@ -126,24 +84,22 @@ ctDiscretePars<-function(ctpars,times=seq(0,10,.1),type='all'){
 #'
 #'}
 #'@export
-ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=10,by=.1), 
+ctStanDiscretePars<-function(ctstanfitobj, subjects='popmean', times=seq(from=0,to=10,by=.1), 
   quantiles = c(.025, .5, .975),nsamples=100,observational=FALSE,standardise=FALSE, 
-  cov=FALSE, plot=FALSE,...){
+  cov=FALSE, plot=FALSE,cores=2,...){
   
   type='discreteDRIFT'
   collapseSubjects=TRUE #consider this for a switch
-  e<-ctExtract(ctstanfitobj,subjectMatrices = subjects[1]!='all')
+  e<-ctExtract(ctstanfitobj,subjectMatrices = subjects[1]!='popmean',cores=cores)
   
-  # if(type=='all') type=c('discreteDRIFT','latentMeans') #must match with ctDiscretePars
-  
-  if(subjects[1] != 'all' && any(!is.integer(as.integer(subjects)))) stop('
+  if(subjects[1] != 'popmean' && any(!is.integer(as.integer(subjects)))) stop('
   subjects argument must be either "all" or an integer denoting specific subjects')
   
   nsubjects <- dim(e$subj_DRIFT)[2]
   if(is.null(nsubjects)) nsubjects=1
-  if('all' %in% subjects) subjects='all' 
+  if('popmean' %in% subjects) subjects='popmean' 
   
-  if(is.null(e$subj_DRIFT) && any(!subjects %in% 'all')) stop('No individual variation in DRIFT matrix found?? Try subjects="all"')
+  if(is.null(e$subj_DRIFT) && any(!subjects %in% 'popmean')) stop('No individual variation in DRIFT matrix found?? Try subjects="all"')
   
   niter=dim(e$pop_DRIFT)[1]
   nlatent=ctstanfitobj$standata$nlatent#outdims[3]
@@ -160,7 +116,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='all', times=seq(from=0,to=1
   
   # browser()
   for(matname in c('DRIFT','DIFFUSIONcov','asymDIFFUSION')){ #,'CINT','T0MEANS', 'T0VAR','MANIFESTMEANS',if(!is.null(e$MANIFESTVAR)) 'MANIFESTVAR','LAMBDA', if(!is.null(e$TDPREDEFFECT)) 'TDPREDEFFECT')){
-    if('all' %in% subjects || is.null(e[[paste0('subj_',matname)]])){
+    if('popmean' %in% subjects || is.null(e[[paste0('subj_',matname)]])){
       ctpars[[matname]] <- e[[paste0('pop_',matname)]][samples,,,drop=FALSE]
     } else {
       # browser()
@@ -232,9 +188,11 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
       for(ti in 1:length(times)){
         ctpars$dtDRIFT[i,j,ti,,] <- expm::expm(as.matrix(ctpars$DRIFT[i,min(j,nsubs$DRIFT),,] * times[ti]))
         if(standardise) {
+          if(any(diag(ctpars$asymDIFFUSION[i,min(j,nsubs$asymDIFFUSION),,]) < 0)) stop(
+            "Asymptotic diffusion matrix has negative diagonals -- I don't know what non stationary standardization looks like")
           ctpars$dtDRIFT[i,j,ti,,] <- ctpars$dtDRIFT[i,j,ti,,] * 
-            matrix(rep(sqrt((diag(ctpars$asymDIFFUSION[i,min(j,nsubs$asymDIFFUSION),,])+1e-10),each=nl) / 
-                rep((sqrt(asymDIFFUSIONdiag)),times=nl),nl))
+            matrix(rep(sqrt(diag(ctpars$asymDIFFUSION[i,min(j,nsubs$asymDIFFUSION),,])+1e-10),each=nl) / 
+                rep((sqrt(diag(ctpars$asymDIFFUSION[i,min(j,nsubs$asymDIFFUSION),,]))),times=nl),nl)
         }
         if(observational){
           Qcor<-cov2cor(as.matrix(ctpars$DIFFUSION[i,min(j,nsubs$DIFFUSIONcov),,])) 

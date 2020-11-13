@@ -6,7 +6,7 @@
 \usage{
 ctStanDiscretePars(
   ctstanfitobj,
-  subjects = "all",
+  subjects = "popmean",
   times = seq(from = 0, to = 10, by = 0.1),
   quantiles = c(0.025, 0.5, 0.975),
   nsamples = 100,
@@ -14,13 +14,14 @@ ctStanDiscretePars(
   standardise = FALSE,
   cov = FALSE,
   plot = FALSE,
+  cores = 2,
   ...
 )
 }
 \arguments{
 \item{ctstanfitobj}{Continuous time model fit from \code{\link{ctStanFit}}}
 
-\item{subjects}{Either 'all', to take the average over all subjects, or a vector of integers denoting which
+\item{subjects}{Either 'popmean', to use the population mean parameter, or a vector of integers denoting which
 subjects.}
 
 \item{times}{Numeric vector of positive values, discrete time parameters will be calculated for each.}
@@ -41,6 +42,9 @@ asymDIFFUSION matrix.}
 \item{plot}{Logical. If TRUE, plots output using \code{\link{ctStanDiscreteParsPlot}}
 instead of returning output.}
 
+\item{cores}{Number of cpu cores to use for computing subject matrices. 
+If subject matrices were saved during fiting, not used.}
+
 \item{...}{additional plotting arguments to control \code{\link{ctStanDiscreteParsPlot}}}
 }
 \description{
@@ -51,7 +55,7 @@ from ctStanFit, for specified subjects.
 if(w32chk()){
 
 ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
- plot=TRUE,indices='all')
+ plot=TRUE,indices='popmean')
  
 #modify plot
 require(ggplot2)

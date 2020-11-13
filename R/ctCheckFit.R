@@ -226,7 +226,7 @@ ctDataCombineSplit <- function(dat, idvars, vars){ #no splits yet
       ldat[[eval(idvarcombine[vi])]] <- apply(data.frame(ldat)[,vars[[idvarcombine[vi]]]],1,mean,na.rm=TRUE)
     }
   }
-  
+
   ldat <- melt(data = ldat,id.vars = idvars)
   
   #remove unneeded variables
@@ -253,7 +253,7 @@ meltcov <- function(covm){
   if(is.null(dimnames(covm))) dimnames(covm) = list(paste0('v',1:nrow(covm)),paste0('v',1:nrow(covm)))
   covm=data.frame(row=factor(rownames(covm),levels=rownames(covm)),covm)
   
-  # # browser()
+  # # 
   # div = 4:6
   # divisor = which(nrow(covm)%%div == min(nrow(covm)%%div))+3 #find minimum remainder for splitting factor
   # 
@@ -310,7 +310,7 @@ ctStanFitMelt <- function(fit, by,combinevars=NULL,maxsamples='all'){
       d<-list()
       d$Y<- d$Y<- array(t(t(datbase[,(fit$ctstanmodelbase$manifestNames)])), dim=c(1,dim(fit$standata$Y))) -
         array(fit$stanfit$transformedparsfull$ya[1,1,,],dim=dim(fit$stanfit$transformedparsfull$ya[1,1,,,drop=FALSE])[-1])
-      d$llrow <- d$llrow <- fit$stanfit$transformedparsfull$llrow #array(NA,dim=c(1,dim(d$Y)[2]))
+      d$llrow <- fit$stanfit$transformedparsfull$llrow #array(NA,dim=c(1,dim(d$Y)[2]))
     }
     
     if(dexists){
@@ -321,13 +321,14 @@ ctStanFitMelt <- function(fit, by,combinevars=NULL,maxsamples='all'){
         data.table(matrix(aperm(d$Y[samples,,,drop=FALSE],c(2,1,3)), ncol=dim(d$Y)[3]))
       gdat$Sample=rep(samples,each=dim(d$Y)[2])
       gdat$LogLik<-c(d$llrow[samples,])
+      gdat$time<-rep(datbase$time,each=length(samples))
       gdat$DataSource <- dsi
       
       if(nrow(dat)==0) dat <- gdat else dat <- rbind(dat, gdat)
     }
   }
   
-  by=c(by,'Sample','WhichObs','DataSource')
+  by=unique(c(by,'Sample','WhichObs','DataSource','time'))
   if(is.na(combinevars[1])){
     combinevars = setNames(
     colnames(datbase)[!colnames(datbase) %in% by],colnames(datbase)[!colnames(datbase) %in% by])
@@ -357,9 +358,9 @@ ctCheckFit2 <- function(fit,
   }
   
   # combinevars<-c(combinevars,LogLik='LogLik')
-  
+  # 
   dat <- ctStanFitMelt(fit = fit,combinevars = combinevars, by=by,maxsamples = nsamples)
-  
+
   if(is.na(combinevars[1])) combinevars <- setNames(unique(dat$variable), unique(dat$variable))
   
   if(!data) dat<-dat[!DataSource %in% 'Data']
@@ -372,19 +373,21 @@ ctCheckFit2 <- function(fit,
   
   dat = dat[!is.na(value),]
   
-  
-  if(lag!=0){ 
-    
+  if(any(lag!=0)){ 
+    if(aggregate){
+      message('disabling aggregation -- incoherent with lags!')
+      aggregate=FALSE
+    }
     wdat=dcast(dat,paste0(
       fit$ctstanmodelbase$subjectIDname,
-      '+Sample+DataSource+WhichObs+time','~variable'))
+      '+Sample+DataSource+WhichObs+time','~variable'),value.var = 'value',fun.aggregate = mean)
     
-    lagcols=colnames(wdat)[!colnames(wdat) %in% c('id','Sample','DataSource','WhichObs')]
+    lagcols=colnames(wdat)[!colnames(wdat) %in% c('id','Sample','DataSource','WhichObs',TIpredNames)]
     
     wdat[, (paste0("lag",  rep(lag, times = length(lagcols)),'_',rep(lagcols, each = length(lag)))) :=  
-        shift(.SD, lag), by=c('id','Sample','DataSource')]
-    
-    dat <- melt(wdat,id.vars=c('id','Sample','DataSource','WhichObs','time'))
+        shift(.SD, lag), by=c('id','Sample','DataSource'),.SDcols=lagcols]
+
+    dat <- melt(wdat,id.vars=unique(c('id','Sample','DataSource','WhichObs','time',by)))
     
   }
   
@@ -412,7 +415,6 @@ ctCheckFit2 <- function(fit,
           paste0(
             fit$ctstanmodelbase$subjectIDname,
             '+Sample',if(!aggregate) '+WhichObs','~variable + ',by),fun.aggregate=aggfunc,na.rm=TRUE)
-  
 
         
         #put loglik on one side
@@ -444,7 +446,7 @@ ctCheckFit2 <- function(fit,
           use='pairwise.complete.obs')
         
         # if(covsplitdiffs){
-        #   browser()
+        #   
         #   splitcovs <- plyr::laply(breakset[!is.na(breakset)], function(b){
         #     corlist[[dsi]][,colnames(corlist[[dsi]]) %in% c(TIpredNames, paste0(nontivars,'_',b)), drop=FALSE]
         #   })
@@ -457,20 +459,20 @@ ctCheckFit2 <- function(fit,
         # }
           
       } #finish datasource loop
-      # browser()
+      # 
       if(corr) covplotlims <- c(-1,1) else covplotlims <- NA
-      # browser()
+      # 
       for(i in seq_along(corlist)){ #regular corplots
-        cplot=corplotmelt(meltcov(corlist[[datasources[i]]]),
+        cplot=corplotmelt(meltcov(covORcor(corlist[[datasources[i]]])),
           label=paste0(ifelse(corr,'Corr.','Cov.')),limits=covplotlims)
         cplot = cplot + ggplot2::labs(title=paste0(datasources[i],
-          ifelse(corr,' correlations',' covariances'),', split by ', by))
+          ifelse(corr,' correlations',' covariances'),if(breaks > 0) paste0(', split by ', by)))
         print(cplot)
       }
       for(i in seq_along(corlist)){
         for(j in seq_along(corlist)){ #difference corplots
           if(j > i){ #only plot unique differences
-            cplot=corplotmelt(meltcov(corlist[[datasources[i]]] - corlist[[datasources[j]]]),
+            cplot=corplotmelt(meltcov(covORcor(corlist[[datasources[i]]]) - covORcor(corlist[[datasources[j]]])),
               label=paste0(ifelse(corr,'Corr.','Cov.'),' diff.'),limits=covplotlims)
             cplot = cplot + ggplot2::labs(title=paste0(datasources[i],' - ',datasources[j] ,' correlations, split by ', by))
             print(cplot)
@@ -494,10 +496,11 @@ ctCheckFit2 <- function(fit,
   
   if(!covplot){ #then plot bivariate relations
     vars <- names(combinevars)
+    if(any(lag>0)) vars <- c(vars,paste0('lag',rep(lag,each=length(vars)),'_',vars))
     dat$manifest <- dat$variable %in% vars
     
     # dat$DataSource <- factor(as.character(dat$DataSource), levels = c( "Data", "StatePred","PostPred","PriorPred"))
-    # browser()
+    # 
     
     g=ggplot(data = dat[manifest==TRUE],
       mapping = aes_string(x=by,y='value',
@@ -745,7 +748,7 @@ plot.ctsemFitMeasure <- function(x,indices='all', means=TRUE,separatemeans=TRUE,
 }
 
 corplotmelt <- function(corm, label,limits=NA){
-  # browser()
+  # 
   if(is.na(limits[1])) limits <- range(corm[,'value'],na.rm=TRUE)
   ggplot(data=(corm),aes_string(x='Var1',y='Var2',fill=('value')))+ #ifelse(groups,NULL,'Group')))+
     geom_tile( width=1,height=1,colour='black')+
