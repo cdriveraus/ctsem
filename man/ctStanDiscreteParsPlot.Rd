@@ -60,7 +60,7 @@ x <- ctStanDiscretePars(ctstantestfit)
 ctStanDiscreteParsPlot(x, indices='CR')
 
 #to modify plot:
-g <- ctStanDiscreteParsPlot(x, indices='CR',plot=FALSE) + 
+g <- ctStanDiscreteParsPlot(x, indices='CR') + 
  ggplot2::labs(title='My ggplot modification')
 print(g)
 }

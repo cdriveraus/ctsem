@@ -25,8 +25,6 @@ ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA){
   fit$standata$gendata <- 0L
   fit$standata$dokalman <- 0L
   nlatent = fit$standata$nlatent
-  # browser()
-  # if(length(parvalues)!=fit$data$nparams) stop('length of parvalues != number of free params (',fit$data$nparams,') in model!')
   if(suppressWarnings(is.na(sf))) sf <- stan_reinitsf(fit$stanmodel,data=fit$standata) #suppressOutput(sf <- suppressWarnings(sampling(,iter=1,control=list(max_treedepth=1),chains=1)))
   # npars <- get_num_upars(sf)
   # pars <- c(parvalues,rep(0,npars - fit$data$nparams))
@@ -50,7 +48,7 @@ ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA){
   }
 
   #because of intoverpop
-  out$DRIFT <- out$DRIFT[1:nlatent,1:nlatent,drop=FALSE]
+  # out$DRIFT <- out$DRIFT[1:nlatent,1:nlatent,drop=FALSE]
   out$T0VAR <- out$T0VAR[1:nlatent,1:nlatent,drop=FALSE]
   out$T0MEANS <- out$T0MEANS[1:nlatent,,drop=FALSE]
   

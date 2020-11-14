@@ -31,14 +31,12 @@ ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE,
   if(!(class(obj) %in% c('ctStanFit','ctStanModel'))) stop('not a ctStanFit or ctStanModel object!')
   plots <- list()
   densiter <- 1e5
-  popsetup <- obj$setup$popsetup
-  popvalues<- obj$setup$popvalues
-  popvalues <- popvalues[popsetup$when %in% c(0,-1) & popsetup$param > 0 & popsetup$copyrow < 1,]
-  popsetup <- popsetup[popsetup$when %in% c(0,-1) & popsetup$param > 0 & popsetup$copyrow < 1,]
-  
-  popvalues<-popvalues[order(popsetup$param),]
-  popsetup<-popsetup[order(popsetup$param),]
-  
+  ps <- cbind(obj$setup$popsetup, obj$setup$popvalues)
+  ps <- ps[ps$when %in% c(0,-1) & ps$param > 0 & ps$copyrow < 1 & ps$matrix < 11,]
+  ps <- ps[!duplicated(ps$param),]
+
+  ps<-ps[order(ps$param),]
+
   
   e<-ctExtract(obj)
   priors <- ctStanGenerate(cts = obj,parsonly=TRUE,nsamples=priorsamples,...)
@@ -46,7 +44,7 @@ ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE,
   posteriors <- ctExtract(obj)
   
   
-  if(rows[1]=='all') rows<-which(!duplicated(popsetup$parname))
+  if(rows[1]=='all') rows<-1:nrow(ps)
   nplots<-ceiling(length(rows) /4)
   if(1==99) Par.Value <- type <- quantity <- Density <- NULL
 
@@ -54,16 +52,11 @@ ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE,
   for(ploti in 1:nplots){
     dat <- data.table(quantity='',Par.Value=0, Density=0,type='',param='')
     for(ri in if(length(rows) > 1) rows[as.integer(cut_number(rows,nplots))==ploti] else rows){
-      
-      pname <- obj$setup$popsetup$parname[ri]
-      pari <- obj$setup$popsetup[ri,'param']
-      # rawpopmeans<- e$rawpopmeans[,pari]
-      # param<-rawpopmeans
-      # popmeanspost<-e$popmeans[,pari] #tform(param,popsetup$transform[ri],popvalues$multiplier[ri], popvalues$meanscale[ri],popvalues$offset[ri], popvalues$inneroffset[ri])
-      # param<-stats::rnorm(densiter,0,1)
+      # browser()
+      pname <- ps$parname[ri]
+      pari <- ps[ri,'param']
       meanpost <- posteriors$popmeans[,pari]
-      meanprior <- priors$popmeans[,pari]#tform(param,popsetup$transform[mrow],popvalues$multiplier[mrow], popvalues$meanscale[mrow],popvalues$offset[mrow], popvalues$inneroffset[mrow])
-# if(pname %in% 'TD_memInt2') 
+      meanprior <- priors$popmeans[,pari]
       if(priorwidth) xlimsindex <- 'all' else xlimsindex <- 1
       mdens <- ctDensityList(list(meanpost, meanprior),probs=c(.05,.95),plot=FALSE,
         xlimsindex=xlimsindex,cut=TRUE)
@@ -74,50 +67,11 @@ ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE,
       }
       
       
-      if(obj$setup$popsetup[ri,'indvarying']>0){ #then also plot sd and subject level pars
-        # sdscale <- popvalues[ri,'sdscale']
-        # sdtform <- gsub('.*', '*',obj$ctstanmodel$rawpopsdtransform,fixed=TRUE)
-        # rawpopsd <- e$rawpopsd[,popsetup$indvarying[ri]] #c(eval(parse(text=sdtform)) * ifelse(!is.null(obj$standata$varreg),exp(e$varregbase),1))
-        # param<-stats::rnorm(densiter,rawpopmeans,rawpopsd)
-        # subjectprior<-tform(param,popsetup$transform[ri],popvalues$multiplier[ri], popvalues$meanscale[ri],popvalues$offset[ri], popvalues$inneroffset[ri])
-        # 
-        # if(!obj$data$intoverpop) {
-        #   rawindparams<-e$baseindparams[,popsetup$indvarying[ri],,drop=FALSE] *
-        #     rawpopsd + rawpopmeans
-        #   param<-rawindparams
-        #   indparamspost<-tform(param,popsetup$transform[ri],popvalues$multiplier[ri], popvalues$meanscale[ri],popvalues$offset[ri], popvalues$inneroffset[ri])
-        # 
-        #   dens <- ctDensityList(list(indparamspost, subjectprior),probs=c(.01,.99),plot=FALSE)
-        #   quantity <- c('Posterior','Prior')
-        #   for(i in 1:length(dens$density)){
-        #     dat <- rbind(dat,data.table(quantity=quantity[i],Par.Value=dens$density[[i]]$x,
-        #       Density=dens$density[[i]]$y, type='Subject Params',param=pname))
-        #   }
-        # }
-        # 
+      if(ps[ri,'indvarying']>0){ #then also plot sd and subject level pars
+       
         
-        # rawpopsdbase<-  stats::rnorm(densiter,0,1)
-        # rawpopsdprior <- c(eval(parse(text=sdtform))  * sdscale)#rawpopsd prior samples
-        # hsdpost <- e$popsd[,popsetup$param[ri]]
-        # 
-        # param<-suppressWarnings(rawpopmeans+rawpopsdprior)
-        # high<-tform(param,popsetup$transform[ri],popvalues$multiplier[ri], popvalues$meanscale[ri],popvalues$offset[ri], popvalues$inneroffset[ri])
-        # param<-suppressWarnings(rawpopmeans-rawpopsdprior)
-        # low<-tform(param,popsetup$transform[ri],popvalues$multiplier[ri], popvalues$meanscale[ri],popvalues$offset[ri], popvalues$inneroffset[ri])
-        # hsdprior<-abs(high - low)/2
-        
-        
-        # #instead of hsdprior -- fixing intoverpop problems
-        # 
-        # rawpopsdbase<-  stats::rnorm(densiter)
-        # if(!is.na(obj$ctstanmodel$rawpopsdbaselowerbound)) rawpopsdbase <- 
-        #   rawpopsdbase[rawpopsdbase>obj$ctstanmodel$rawpopsdbaselowerbound]
-        # sdscale <- as.numeric(obj$ctstanmodel$pars$sdscale[mrow])
-        # sdtform <- gsub('.*', '*',obj$ctstanmodel$rawpopsdtransform,fixed=TRUE)
-        # rawpopsdprior<-eval(parse(text=sdtform)) * sdscale
-        
-        posteriorsd <- posteriors$popsd[,popsetup$indvarying[ri]]
-        priorsd <- priors$popsd[,popsetup$indvarying[ri]]
+        posteriorsd <- posteriors$popsd[,ps$indvarying[ri]]
+        priorsd <- priors$popsd[,ps$indvarying[ri]]
         
         
         sddens <- ctDensityList(list(posteriorsd, priorsd),probs=c(.05,.95),plot=FALSE,
@@ -130,11 +84,7 @@ ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE,
       }
     }
     dat <- dat[-1,]
-    # dat[,xlow := quantile(Par.Value,.3),by=list(quantity,type,param)]
-    # dat[,xhigh := quantile(Par.Value,.7),by=list(quantity,type,param)]
-    # dat<-dat[Par.Value <= (xhigh+(xhigh-xlow)*2),]
-    # dat<-dat[Par.Value >= (xlow-(xhigh-xlow)*2),]
-    if(1==99) param <- 1
+    
   
       plots<-c(plots,list(
       ggplot(dat,aes(x=Par.Value,fill=quantity,ymax=Density,y=Density) )+

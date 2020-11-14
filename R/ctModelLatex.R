@@ -23,9 +23,6 @@ getPopEffectsFromFit <- function(x,linearise=TRUE,digits=3){
     if(!linearise) popcov <- matrix(e$rawpopc[1,4,,],dim(e$rawpopc)[3])
     if(linearise) {
       popcov <- matrix(e$popcov[1,,],dim(e$popcov)[3])
-      #stan_constrainsamples(x$stanmodel,x$standata,rbind(x$stanfit$rawest),
-        # cores=1,pcovn =1000,dokalman=FALSE,savesubjectmatrices = FALSE)$popcov
-      # popcov <- round(ctCollapse(e$popcov,1,mean),digits=digits)
       if(x$standata$intoverpop==1){
         t0index <- ms$indvarying[ms$param > 0 & ms$row <= x$standata$nlatent & ms$matrix %in% 1 & ms$indvarying > 0]
         popcov[t0index,t0index] <- e$pop_T0VAR[1,

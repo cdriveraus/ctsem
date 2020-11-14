@@ -44,7 +44,7 @@ plot.ctStanFit <- function(x, types='all',wait=TRUE,...){
   if(types[1]=='all') {
     if(x$standata$continuoustime == 1) types <- c('regression', 'kalman')
     types=c(types, 'priorcheck')
-    if('stanfit' %in% class(x$stanfit)) types <- c('trace','regression','density','intervals')
+    if(length(x$stanfit$stanfit@sim)>0) types <- c('trace','regression','density','intervals')
   }
   
   if('regression' %in% types && continue){
@@ -74,17 +74,17 @@ plot.ctStanFit <- function(x, types='all',wait=TRUE,...){
   
   if('trace' %in% types && continue){
     message('Plotting sampling traces using stan_trace')
-    print(rstan::stan_trace(x$stanfit,ctStanParnames(x,'pop_'),...))
+    print(rstan::stan_trace(x$stanfit$stanfit,ctStanParnames(x,'pop_'),...))
     continue<-waitf()
     
-    if(continue) p<-try(rstan::stan_trace(x$stanfit,ctStanParnames(x,'popsd'),...),silent=TRUE)
+    if(continue) p<-try(rstan::stan_trace(x$stanfit$stanfit,ctStanParnames(x,'popsd'),...),silent=TRUE)
      if(class(p)[1]!='try-error') {
        print(p)
        continue<-waitf()
      }
     
     if(continue)  {
-      p<-try(rstan::stan_trace(x$stanfit,ctStanParnames(x,'tipred_'),...),silent=TRUE)
+      p<-try(rstan::stan_trace(x$stanfit$stanfit,ctStanParnames(x,'tipred_'),...),silent=TRUE)
       types=types[types!='trace']
     }
     if(class(p)[1]!='try-error') {
@@ -98,28 +98,20 @@ plot.ctStanFit <- function(x, types='all',wait=TRUE,...){
     print(rstan::stan_dens(x$stanfit,ctStanParnames(x,'pop_'),...))
     continue<-waitf()
     
-    if(continue)  p=try(rstan::stan_dens(x$stanfit,ctStanParnames(x,'popsd'),...),silent=TRUE)
+    if(continue)  p=try(rstan::stan_dens(x$stanfit$stanfit$stanfit,ctStanParnames(x,'popsd'),...),silent=TRUE)
     if(class(p)[1]!='try-error') {
       print(p)
       continue<-waitf()
     }
-    
-    # if(continue)  {
-    #   p= try(rstan::stan_dens(x$stanfit,ctStanParnames(x,'tipred_'),...),silent=TRUE)
-    #   types=types[types!='density']
-    # }
-    # if(class(p)[1]!='try-error') {
-    #   print(p)
-    #   continue<-waitf()
-    # }
+
   }
   
   if('intervals' %in% types && continue){
     message('Plotting posterior intervals and point estimates using stan_plot')
-    print(rstan::stan_plot(x$stanfit,ctStanParnames(x,'pop_'),...))
+    print(rstan::stan_plot(x$stanfit$stanfit,ctStanParnames(x,'pop_'),...))
     continue<-waitf()
     
-    if(continue)  p=try(rstan::stan_plot(x$stanfit,ctStanParnames(x,'popsd'),...),silent=TRUE)
+    if(continue)  p=try(rstan::stan_plot(x$stanfit$stanfit,ctStanParnames(x,'popsd'),...),silent=TRUE)
     if(class(p)[1]!='try-error') {
       print(p)
       continue<-waitf()

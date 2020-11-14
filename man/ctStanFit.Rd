@@ -24,7 +24,7 @@ ctStanFit(
   cores = ifelse(optimize, getOption("mc.cores", 2L), "maxneeded"),
   inits = NULL,
   forcerecompile = FALSE,
-  useGlobalEnv = TRUE,
+  saveCompiled = TRUE,
   savescores = FALSE,
   savesubjectmatrices = FALSE,
   gendata = FALSE,
@@ -100,9 +100,6 @@ up to the number of chains, or a positive integer. If \code{optimize=TRUE}, more
 \item{forcerecompile}{logical. For development purposes. 
 If TRUE, stan model is recompiled, regardless of apparent need for compilation.}
 
-\item{useGlobalEnv}{if TRUE and compilation is needed / requested, writes the stan model to
-the global environment as ctsem.compiled , to avoid unnecessary recompilation.}
-
 \item{savescores}{Logical. If TRUE, output from the Kalman filter is saved in output. For datasets with many variables
 or time points, will increase file size substantially.}
 
@@ -125,6 +122,9 @@ list(adapt_delta = .8, adapt_window=2, max_treedepth=10, adapt_init_buffer=2, st
 \item{vb}{Logical. Use variational Bayes algorithm from stan?}
 
 \item{...}{additional arguments to pass to \code{\link[rstan]{stan}} function.}
+
+\item{saveCompile}{if TRUE and compilation is needed / requested, writes the stan model to
+the parent frame as ctsem.compiled (unless that object already exists and is not from ctsem), to avoid unnecessary recompilation.}
 }
 \description{
 Fits a ctsem model specified via \code{\link{ctModel}} with type either 'stanct' or 'standt'.

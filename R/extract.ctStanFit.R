@@ -13,7 +13,7 @@
 ctExtract <- function(object,subjectMatrices=FALSE,cores=2){
   if(!class(object) %in% c('ctStanFit', 'stanfit')) stop('Not a ctStanFit or stanfit object')
   
-  if(!'stanfit' %in% class(object$stanfit)){
+  if(length(object$stanfit$stanfit@sim)==0){
     samps <- object$stanfit$rawposterior
     if(subjectMatrices && object$standata$savesubjectmatrices==0){
       out = stan_constrainsamples(sm = object$stanmodel,standata = object$standata,
@@ -23,13 +23,13 @@ ctExtract <- function(object,subjectMatrices=FALSE,cores=2){
     } else out <- object$stanfit$transformedpars
   }
   
-  if('stanfit' %in% class(object$stanfit)){
+  if(length(object$stanfit$stanfit@sim)>0){
     if(subjectMatrices & object$standata$savesubjectmatrices!=1){
-      samps <- stan_unconstrainsamples(object$stanfit)
+      samps <- stan_unconstrainsamples(object$stanfit$stanfit)
       out = stan_constrainsamples(sm = object$stanmodel,standata = object$standata,
         samples = t(samps),
         cores = cores,savescores = FALSE,savesubjectmatrices = subjectMatrices)
-    } else  out <- rstan::extract(object$stanfit)
+    } else  out <- rstan::extract(object$stanfit$stanfit)
   } 
   
   out$Ygen[out$Ygen==99999] <- NA

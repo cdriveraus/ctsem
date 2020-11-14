@@ -110,11 +110,11 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
       fit$standata <- standataFillTime(fit$standata,times)
     } 
     idstore <- fit$standata$subject
-    if(!class(fit$stanfit) %in% 'stanfit') {
+    if(length(fit$stanfit$stanfit@sim)==0) {
       fit$standata <- standatact_specificsubjects(fit$standata, subjects = subjects)
       idstore <- as.integer(subjects[fit$standata$subject])
     }
-    if(class(fit$stanfit) %in% 'stanfit') fit$standata$dokalmanrows <-
+    if(!length(fit$stanfit$stanfit@sim)==0) fit$standata$dokalmanrows <-
       as.integer(fit$standata$subject %in% subjects |
           as.logical(match(unique(fit$standata$subject),fit$standata$subject)))
     
@@ -123,7 +123,7 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
         function(x) fit$standata[[x]][] <<- 0L)
       fit$standata$Y[] <- 99999
     }
-    out <- ctStanKalman(fit,pointest=ifelse('stanfit' %in% class(fit$stanfit),FALSE,TRUE), 
+    out <- ctStanKalman(fit,pointest=length(fit$stanfit$stanfit@sim)==0, 
       collapsefunc=mean, indvarstates = FALSE) #extract state predictions
     out$id <- idstore #as.integer(subjects[out$id]) #get correct subject indicators
 

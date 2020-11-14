@@ -2,32 +2,99 @@
 % Please edit documentation in R/ctCheckFit.R
 \name{ctCheckFit}
 \alias{ctCheckFit}
-\title{Check absolute fit of ctFit or ctStanFit object.}
+\title{Visual model fit diagnostics for ctsem fit objects.}
 \usage{
-ctCheckFit(fit, niter = 500, probs = c(0.025, 0.5, 0.975))
+ctCheckFit(
+  fit,
+  data = TRUE,
+  postpred = TRUE,
+  priorpred = FALSE,
+  statepred = FALSE,
+  residuals = FALSE,
+  by = fit$ctstanmodelbase$timeName,
+  TIpredNames = fit$ctstanmodelbase$TIpredNames,
+  nsamples = 10,
+  covplot = FALSE,
+  corr = TRUE,
+  combinevars = NA,
+  fastcov = FALSE,
+  aggfunc = mean,
+  aggregate = TRUE,
+  groupby = "split",
+  byNA = TRUE,
+  lag = 0,
+  smooth = TRUE,
+  k = 10,
+  breaks = 4,
+  entropy = FALSE,
+  reg = FALSE,
+  verbose = 0
+)
 }
 \arguments{
-\item{fit}{ctsem fit object.}
+\item{fit}{ctStanFit object.}
 
-\item{niter}{number of data generation iterations to use to calculate quantiles.}
+\item{data}{Include empirical data in plots?}
 
-\item{probs}{3 digit vector of quantiles to return and to test significance.}
+\item{postpred}{Include post predictive (conditional on estimated parameters and covariates) distribution data in plots?}
+
+\item{priorpred}{Include prior predictive (conditional on priors) distribution data in plots?}
+
+\item{statepred}{Include one step ahead (conditional on estimated parameters, covariates, and earlier data points) distribution data in plots?}
+
+\item{residuals}{Include one step ahead error (conditional on estimated parameters, covariates, and earlier data points) in plots?}
+
+\item{by}{Variable name to split or plot by. 'time', 'LogLik', and 'WhichObs' are also possibilities.}
+
+\item{TIpredNames}{Since time independent predictors do not change with time, by default observations after the first are ignored. 
+For observing attrition it can be helpful to set this to NULL, or when the combinevars argument is used, specifying different names may be useful.}
+
+\item{nsamples}{Number of samples (when applicable) to include in plots.}
+
+\item{covplot}{Splits variables in the model by the 'by' argument, according to the number of breaks (breaks argument), 
+and shows the covariance (or correlation) for the different data sources selected, as well as the differences between each pair.}
+
+\item{corr}{Turns the covplot into a correlation plot. Usually easier to make sense of visually.}
+
+\item{combinevars}{Can be a list of (possibly new) variable names, where each named element of the list contains a character vector 
+of one or more variable names in the fit object, to combine into the one variable. By default, the mean is used, but see the aggfunc argument.
+ The combinevars argument can also be used to ensure that only certain variables are plotted.}
+
+\item{fastcov}{Uses base R cov function for computing covariances. Not recommended with missing data.}
+
+\item{aggfunc}{Function to use for aggregation, if needed.}
+
+\item{aggregate}{If TRUE, duplicate observation types are aggregated over using aggfunc. For example,
+if by = 'time' and there are 8 time points per subject, but breaks = 2, 
+there will be 4 duplicate observation types per 'row' that will be collapsed. In most cases it is helpful to not collapse.}
+
+\item{groupby}{Logical. Affects variable ordering in covariance plots.}
+
+\item{byNA}{Logical. Create an extra break for when the split variable is missing?}
+
+\item{lag}{Integer vector. lag = 1 creates additional variables for plotting, prefixed by 'lag1_', containing the prior row of observations
+for that subject.}
+
+\item{smooth}{For bivariate plots, use a smoother for estimation?}
+
+\item{k}{Integer denoting number of knots to use in the smoothing spline.}
+
+\item{breaks}{Integer denoting number of discrete breaks to split variables by (when covariance plotting).}
+
+\item{entropy}{Still in development.}
+
+\item{reg}{Logical. Use regularisation when estimating covariance matrices? Can be necessary / faster for some problems.}
+
+\item{verbose}{Logical. If TRUE, shows optimization output when estimating covariances.}
 }
 \value{
-List containing a means and cov object, computed by sorting data into discrete time points.
-cov is a numeric matrix containing measures of the covariance matrices for observed and simulated data. 
-The MisspecRatio column shows Z score difference for each lower triangular index of the covariance matrix of data --
-observed covariance minus mean of generated, weighted by sd of generated covariance.
-means contains the empirical and generated data means.
+Nothing. Just plots.
 }
 \description{
-Check absolute fit of ctFit or ctStanFit object.
-}
-\details{
-for plotting help see \code{\link{plot.ctsemFitMeasure}}
+Visual model fit diagnostics for ctsem fit objects.
 }
 \examples{
-\donttest{
-scheck <- ctCheckFit(ctstantestfit,niter=50)
+if(w32chk()){
+ctCheckFit(ctstantestfit)
 }
 }

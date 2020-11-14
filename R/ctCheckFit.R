@@ -321,7 +321,7 @@ ctStanFitMelt <- function(fit, by,combinevars=NULL,maxsamples='all'){
         data.table(matrix(aperm(d$Y[samples,,,drop=FALSE],c(2,1,3)), ncol=dim(d$Y)[3]))
       gdat$Sample=rep(samples,each=dim(d$Y)[2])
       gdat$LogLik<-c(d$llrow[samples,])
-      gdat$time<-rep(datbase$time,each=length(samples))
+      gdat$time<-rep(datbase$time,times=length(samples))
       gdat$DataSource <- dsi
       
       if(nrow(dat)==0) dat <- gdat else dat <- rbind(dat, gdat)
@@ -343,7 +343,48 @@ ctStanFitMelt <- function(fit, by,combinevars=NULL,maxsamples='all'){
 }
 
 
-ctCheckFit2 <- function(fit, 
+#' Visual model fit diagnostics for ctsem fit objects.
+#'
+#' @param fit ctStanFit object.
+#' @param data Include empirical data in plots?
+#' @param postpred Include post predictive (conditional on estimated parameters and covariates) distribution data in plots? 
+#' @param priorpred Include prior predictive (conditional on priors) distribution data in plots? 
+#' @param statepred Include one step ahead (conditional on estimated parameters, covariates, and earlier data points) distribution data in plots? 
+#' @param residuals Include one step ahead error (conditional on estimated parameters, covariates, and earlier data points) in plots? 
+#' @param by Variable name to split or plot by. 'time', 'LogLik', and 'WhichObs' are also possibilities. 
+#' @param TIpredNames Since time independent predictors do not change with time, by default observations after the first are ignored. 
+#' For observing attrition it can be helpful to set this to NULL, or when the combinevars argument is used, specifying different names may be useful.
+#' @param nsamples Number of samples (when applicable) to include in plots.
+#' @param covplot Splits variables in the model by the 'by' argument, according to the number of breaks (breaks argument), 
+#' and shows the covariance (or correlation) for the different data sources selected, as well as the differences between each pair. 
+#' @param corr Turns the covplot into a correlation plot. Usually easier to make sense of visually. 
+#' @param combinevars Can be a list of (possibly new) variable names, where each named element of the list contains a character vector 
+#' of one or more variable names in the fit object, to combine into the one variable. By default, the mean is used, but see the aggfunc argument.
+#'  The combinevars argument can also be used to ensure that only certain variables are plotted.  
+#' @param fastcov Uses base R cov function for computing covariances. Not recommended with missing data.
+#' @param aggfunc Function to use for aggregation, if needed.
+#' @param aggregate If TRUE, duplicate observation types are aggregated over using aggfunc. For example,
+#' if by = 'time' and there are 8 time points per subject, but breaks = 2, 
+#' there will be 4 duplicate observation types per 'row' that will be collapsed. In most cases it is helpful to not collapse. 
+#' @param groupby Logical. Affects variable ordering in covariance plots.
+#' @param byNA Logical. Create an extra break for when the split variable is missing?
+#' @param lag Integer vector. lag = 1 creates additional variables for plotting, prefixed by 'lag1_', containing the prior row of observations
+#' for that subject.
+#' @param smooth For bivariate plots, use a smoother for estimation?
+#' @param k Integer denoting number of knots to use in the smoothing spline.
+#' @param breaks Integer denoting number of discrete breaks to split variables by (when covariance plotting).
+#' @param entropy Still in development. 
+#' @param reg Logical. Use regularisation when estimating covariance matrices? Can be necessary / faster for some problems.
+#' @param verbose Logical. If TRUE, shows optimization output when estimating covariances.
+#'
+#' @return Nothing. Just plots. 
+#' @export
+#'
+#' @examples
+#' if(w32chk()){
+#' ctCheckFit(ctstantestfit)
+#' }
+ctCheckFit <- function(fit, 
   data=TRUE, postpred=TRUE, priorpred=FALSE, statepred=FALSE, residuals=FALSE,
   by=fit$ctstanmodelbase$timeName,
   TIpredNames=fit$ctstanmodelbase$TIpredNames,
@@ -373,7 +414,7 @@ ctCheckFit2 <- function(fit,
   
   dat = dat[!is.na(value),]
   
-  if(any(lag!=0)){ 
+  if(any(lag!=0) && covplot){ 
     if(aggregate){
       message('disabling aggregation -- incoherent with lags!')
       aggregate=FALSE
@@ -472,7 +513,11 @@ ctCheckFit2 <- function(fit,
       for(i in seq_along(corlist)){
         for(j in seq_along(corlist)){ #difference corplots
           if(j > i){ #only plot unique differences
-            cplot=corplotmelt(meltcov(covORcor(corlist[[datasources[i]]]) - covORcor(corlist[[datasources[j]]])),
+            coli <- colnames(corlist[[datasources[i]]])[
+              colnames(corlist[[datasources[i]]]) %in% colnames(corlist[[datasources[j]]])
+              ]
+            cplot=corplotmelt(meltcov(covORcor(corlist[[datasources[i]]][coli,coli,drop=FALSE]) - 
+                covORcor(corlist[[datasources[j]]][coli,coli,drop=FALSE])),
               label=paste0(ifelse(corr,'Corr.','Cov.'),' diff.'),limits=covplotlims)
             cplot = cplot + ggplot2::labs(title=paste0(datasources[i],' - ',datasources[j] ,' correlations, split by ', by))
             print(cplot)
@@ -555,197 +600,6 @@ ctCheckFit2 <- function(fit,
   }
 }
 
-
-#' Check absolute fit of ctFit or ctStanFit object.
-#'
-#' @param fit ctsem fit object.
-#' @param niter number of data generation iterations to use to calculate quantiles.
-#' @param probs 3 digit vector of quantiles to return and to test significance.
-#'
-#' @return List containing a means and cov object, computed by sorting data into discrete time points.
-#' cov is a numeric matrix containing measures of the covariance matrices for observed and simulated data. 
-#' The MisspecRatio column shows Z score difference for each lower triangular index of the covariance matrix of data --
-#' observed covariance minus mean of generated, weighted by sd of generated covariance.
-#' means contains the empirical and generated data means.
-#' @export
-#' @importFrom data.table dcast
-#' 
-#' @details for plotting help see \code{\link{plot.ctsemFitMeasure}}
-#'
-#' @examples
-#' \donttest{
-#' scheck <- ctCheckFit(ctstantestfit,niter=50)
-#' }
-ctCheckFit <- function(fit, niter=500,probs=c(.025,.5,.975)){
-  id=NULL #global warnings
-  if(!class(fit) %in% c('ctStanFit','ctsemFit')) stop('not a ctsemFit or ctStanFit object!')
-  
-  
-  if(class(fit)=='ctsemFit'){
-    manifestNames = fit$ctmodelobj$manifestNames
-    nmanifest=fit$ctmodelobj$n.manifest
-    maxtp=fit$ctmodelobj$Tpoints
-    if('Kalman' %in% fit$ctfitargs$objective) {
-      suppressMessages(wdat <- ctLongToWide(fit$mxobj@data$observed,id='id',time='time',
-        manifestNames = manifestNames)[,paste0(manifestNames,'_T',1),drop=FALSE])
-    } else  wdat <- fit$mxobj@data$observed[,paste0(rep(manifestNames,each=fit$ctmodelobj$Tpoints),'_T',
-      0:(maxtp-1)),drop=FALSE]
-  }
-  
-  if(class(fit)=='ctStanFit') {
-    if(fit$data$nsubjects==1) stop('Only for nsubjects > 1!')
-    # 
-    manifestNames=fit$ctstanmodel$manifestNames
-    nmanifest=fit$ctstanmodel$n.manifest
-    ldat <- cbind(fit$data$subject,fit$data$time,fit$data$Y)
-    tpoints <- max(unlist(lapply(unique(fit$data$subject),function(x) length(fit$data$subject[fit$data$subject==x]))))
-    colnames(ldat) <- c('id','time', manifestNames)
-    dt = cbind(data.table(id=fit$data$subject),data.table(fit$data$Y))[ ,.(discrete.time.point=1:.N),by=id]
-    discrete.time.point=NULL #global variable complaint
-    maxtp=max(dt[,discrete.time.point])
-    suppressMessages(wdat <- ctLongToWide(ldat,id='id',time='time',
-      manifestNames = manifestNames)[,paste0(manifestNames,'_T',
-        rep(0:(tpoints-1),each=nmanifest)),drop=FALSE][,paste0(rep(manifestNames,each=maxtp),'_T',
-          0:(maxtp-1))])
-  }
-  
-  ecov <- cov(wdat,use = "pairwise.complete.obs")
-  emeans <- (matrix(apply(wdat,2,mean,na.rm=TRUE),ncol=nmanifest))
-  colnames(emeans) = manifestNames
-  rownames(emeans) = paste0('T',0:(maxtp-1))
-  
-  covarray<-array(NA,dim = c(dim(ecov),niter))
-  means <- array(NA,dim=c(maxtp,nmanifest,niter))
-  
-  if(class(fit)=='ctStanFit'){
-    if(is.null(fit$generated) || dim(fit$generated$Y)[2] < niter){
-      ygen <- ctStanGenerateFromFit(fit,fullposterior=FALSE,nsamples=niter)$generated$Y #array(e$Ygen,dim=c(ygendim[1] * ygendim[2],ygendim[-1:-2]))
-    } else ygen <- fit$generated$Y
-    wide <- matrix(NA, nrow=length(unique(fit$data$subject)),ncol=dim(ygen)[3]*maxtp)
-    itervec <- sample(1:dim(ygen)[1],niter)
-    
-    for(i in 1:niter){
-      idat <- data.table(ygen[i,,,drop=TRUE])
-      colnames(idat) = manifestNames
-      w <- dcast(data = cbind(dt,idat),
-        formula= id ~ discrete.time.point,value.var=manifestNames)
-      w=w[,-1]
-      covarray[,,i] <- cov(w, use='pairwise.complete.obs')
-      means[,,i] <- t(matrix(apply(w,2,mean,na.rm=TRUE),byrow=TRUE,ncol=nmanifest))
-    }
-    
-  }
-  
-  if(class(fit)=='ctsemFit'){
-    stop('OpenMx based fit objects not supported -- try ctModel types standt or stanct!')
-  }
-  # 
-  covql <- ctCollapse(covarray,collapsemargin = 3,quantile,probs=probs[1],na.rm=TRUE)
-  covqm <- ctCollapse(covarray,collapsemargin = 3,quantile,probs=probs[2],na.rm=TRUE)
-  covqh <- ctCollapse(covarray,collapsemargin = 3,quantile,probs=probs[3],na.rm=TRUE)
-  covmean <- ctCollapse(covarray,collapsemargin = 3,mean,na.rm=TRUE)
-  covsd <- ctCollapse(covarray,collapsemargin = 3,sd,na.rm=TRUE)
-  
-  test<-matrix(NA,ncol=8,nrow=(nrow(covql)^2+nrow(covql))/2)
-  counter=0
-  rowname <- c()
-  colname <- c()
-  
-  for(i in 1:nrow(covql)){
-    for(j in 1:nrow(covql)){
-      if(j <=i){
-        counter=counter+1
-        rowname <- c(rowname, rownames(ecov)[i])
-        colname <- c(colname, colnames(ecov)[j])
-        test[counter,] <- c(i,j,covmean[i,j],covql[i,j],covqm[i,j],covqh[i,j],ecov[i,j],
-          ifelse((ecov[i,j] > covqh[i,j] || ecov[i,j] < covql[i,j]), TRUE,FALSE))
-      }}}
-  
-  colnames(test) <- c('row','col','mean',paste0(probs*100,'%'), 'observed', 'significant')
-  MisspecRatio <- (test[,'observed'] - test[,'mean']) / covsd[lower.tri(diag(nrow(covql)),diag = TRUE)] #((test[,'97.5%'] - test[,'2.5%']))^2
-  sd <- covsd[lower.tri(diag(nrow(covql)),diag = TRUE)]
-  test<- cbind(rowname,colname,as.data.frame(cbind(test,sd)),MisspecRatio)
-  check <- list(cov=test,means=list(empirical=emeans, simulated=means))
-  class(check) <- c('ctsemFitMeasure',class(check))
-  return(check)
-}
-
-#' Misspecification plot using ctCheckFit output
-#'
-#' @param x Object output from ctCheckFit function.
-#' @param indices Either 'all' or a vector of integers denoting which observations to 
-#' include (from 1 to n.manifest * maximum number of obs for a subject, blocked by manifest).
-#' @param covtype Column name of \code{$cov} sub object
-#' @param cov Logical -- plot simulated cov vs observed?
-#' @param means Logical -- plot simulated means vs observed?
-#' @param cov2cor Logical -- convert covariances to correlations?
-#' @param separatemeans Logical -- means from different variables on same or different plots?
-#' @param ggcorrArgs List of arguments to GGally::ggcorr .
-#' @param wait Logical -- wait for input before new plot?
-#' @param ... not used.
-#'
-#' @return Nothing, just plots.
-#' @export
-#' @method plot ctsemFitMeasure
-#'
-#' @examples
-#' if(w32chk()){
-#' 
-#'
-#' scheck <- ctCheckFit(ctstantestfit,niter=50)
-#' plot(scheck,wait=FALSE)
-#' 
-#' }
-plot.ctsemFitMeasure <- function(x,indices='all', means=TRUE,separatemeans=TRUE, 
-  cov=TRUE,covtype='MisspecRatio',cov2cor=FALSE,wait=TRUE,
-  ggcorrArgs=list(data=NULL, cor_matrix =  get(covtype),
-    limits=limits, geom = 'circle',max_size = 10,name=covtype),...){
-  
-  if(!covtype %in% colnames(x$cov)) stop('covtype not in column names of x!')
-  
-  if(means){
-    if(separatemeans) manifests <- 1:dim(x$means$empirical)[2] else manifests <- 'all'
-    for(mani in manifests){
-      if(mani[1] > 1 && wait) readline('Press enter to continue')
-      if(mani == 'all') mani <- 1:dim(x$means$empirical)[2]
-      simd <- matrix(x$means$simulated[,mani,], nrow=dim(x$means$simulated)[1])
-      if(length(mani)>1) vpar=mani else vpar=1
-      matplot(simd,type='l',xlab='Time point',ylab='Mean',
-        col=adjustcolor(rep(vpar, dim(x$means$simulated)[3]),alpha.f = .1),
-        lty = vpar)
-      matplot(x$means$empirical[,mani,drop=FALSE],type='l',col=vpar,lwd=2,add=TRUE,lty=vpar)
-      legend('topright',colnames(x$means$empirical)[mani], col=vpar,text.col=vpar,bty='n',lty=vpar)
-    }
-  }
-  
-  if(cov){
-    if(requireNamespace('GGally')){ 
-      if(means && wait) readline('Press enter to continue')
-      n=x$cov$rowname[match(x = unique(1:max(x$cov$row)),x$cov$row)]
-      for(xi in covtype){
-        mat <- matrix(NA,max(x$cov[,'row']),max(x$cov[,'row']))
-        mat[upper.tri(mat,diag = TRUE)] = x$cov[,'MisspecRatio']
-        mat[lower.tri(mat)] = t(mat)[lower.tri(mat)]
-        dimnames(mat) <- dimnames(mat) <- list(n,n)
-        if(indices[1]=='all') indices <-1:nrow(mat)
-        if(cov2cor) mat <- cov2cor(mat)
-        assign(x = xi, mat[indices,indices,drop=FALSE])
-      }
-      
-      # main <- '(Observed - implied) / sd(implied)'
-      if(cov2cor) limits <-c(-1,1) else limits <- range(get(covtype))
-      # 
-      
-      corm <- meltcov(ggcorrArgs$cor_matrix)
-      
-      corplotmelt(corm,'MissSpec. Ratio',limits)
-      
-      
-      # do.call(GGally::ggcorr,ggcorrArgs) #(data=NULL,cor_matrix =  get(covtype),limits=limits, geom = 'circle',max_size = 13,name=covtype,...)
-    }
-  }
-  
-}
 
 corplotmelt <- function(corm, label,limits=NA){
   # 

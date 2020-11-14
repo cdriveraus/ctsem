@@ -115,8 +115,8 @@ verbosify<-function(sf,verbose=2){
 #' elements that should be fixed to stationarity.
 #' @param forcerecompile logical. For development purposes. 
 #' If TRUE, stan model is recompiled, regardless of apparent need for compilation.
-#' @param useGlobalEnv if TRUE and compilation is needed / requested, writes the stan model to
-#' the global environment as ctsem.compiled , to avoid unnecessary recompilation.
+#' @param saveCompile if TRUE and compilation is needed / requested, writes the stan model to
+#' the parent frame as ctsem.compiled (unless that object already exists and is not from ctsem), to avoid unnecessary recompilation.
 #' @param savescores Logical. If TRUE, output from the Kalman filter is saved in output. For datasets with many variables
 #' or time points, will increase file size substantially.
 #' @param savesubjectmatrices Logical. If TRUE, subject specific matrices are saved -- 
@@ -374,7 +374,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   nlcontrol = list(), nopriors=TRUE, chains=2,
   cores=ifelse(optimize,getOption("mc.cores", 2L),'maxneeded'),
   inits=NULL,
-  forcerecompile=FALSE,useGlobalEnv=TRUE,savescores=FALSE,
+  forcerecompile=FALSE,saveCompiled=TRUE,savescores=FALSE,
   savesubjectmatrices=FALSE,
   gendata=FALSE,
   control=list(),verbose=0,vb=FALSE,...){
@@ -388,7 +388,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     if(is.null(nlcontrol$maxtimestep)) nlcontrol$maxtimestep = 999999
     if(is.null(nlcontrol$Jstep)) nlcontrol$Jstep = 1e-6
     
-    args=as.list(match.call(expand.dots=FALSE,))
+    args=as.list(match.call(expand.dots=FALSE))
     args[[1]] <- NULL
     args$datalong <- NULL
     
@@ -608,13 +608,17 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         # includes = paste0(
         #   '\n#include "', file.path(getwd(), 'syl2.hpp'),'"',
         #   '\n')
-        if(useGlobalEnv) assign(x = 'ctsem.compiled',sm,envir = globalenv())
+        if(saveCompiled){
+          if(exists(x = 'ctsem.compiled',envir= parent.frame()) 
+            && !'ctStanFit' %in% class(get('ctsem.compiled',envir = parent.frame()))){
+            warning('ctsem.compiled object already exists, not saving compile')
+            } else  assign(x = 'ctsem.compiled',sm,envir = parent.frame())
+        }
       }
       if(!recompile && !forcerecompile) {
         if(!gendata) sm <- stanmodels$ctsm else sm <- stanmodels$ctsmgen
-        # 
-        # a=attributes(sm)
       }
+        
       # if(!is.null(inits) & any(inits!=0)){
       #   sf <- stan_reinitsf(sm,standata)
       #   staninits <- list(stan1=constrain_pars(sf,inits))
@@ -680,18 +684,34 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         stanargs <- list(object = sm, 
           # enable_random_init=TRUE,
           init_r=.03,
+          save_warmup=as.logical(plot),
           # init=staninits,
           refresh=20,
           iter=iter,
           data = standata, chains = chains, control=control,
           cores=cores,
           ...) 
+        
+
+        
         if(vb){
           if(!intoverpop && standata$nindvarying > 0) warning('Poor results are expected with variational inference and sampling individual differences! Suggest disabling vb or enabling intoverpop.')
-          stanfit <- rstan::vb(object = sm,data=standata, importance_resampling=TRUE,tol_rel_obj=1e-3)
+          stanfit <- list(stanfit=rstan::vb(object = sm,data=standata, importance_resampling=TRUE,tol_rel_obj=1e-3))
           browser()
         } else{ #if not vi
-          if(plot==TRUE) stanfit <- do.call(stanWplot,stanargs) else stanfit <- do.call(sampling,stanargs)
+          if(plot==TRUE) stanfit <- list(stanfit=do.call(stanWplot,stanargs)) else stanfit <- list(stanfit=do.call(sampling,stanargs))
+          
+          #find the median sample and compute kalman scores etc for this
+          e=rstan::extract(stanfit$stanfit)
+          middle <- which(e$ll-quantile(e$ll,.5) == min(e$ll-quantile(e$ll,.5) ))
+          stanfit$rawposterior <- t(stan_unconstrainsamples(fit = stanfit$stanfit,standata = standata))
+          stanfit$rawest <- stanfit$rawposterior[middle,,drop=FALSE]
+
+          # stanfit$transformedparsfull =   stan_constrainsamples(sm = sm,standata = standata,
+          #   savesubjectmatrices = TRUE, dokalman=TRUE,savescores = TRUE,
+          #   samples=stanfit$rawest,cores=1, quiet = TRUE)
+          
+          
         }
       }
       
@@ -720,9 +740,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
           ms$tipred[ms$param >0 & ms$when %in% c(0,-1) & ms$copyrow < 1 & ms$param %in% parswithtipreds] <- 1L
           ctm$modelmats$matsetup <- ms
         }
-        
-        # stanfit <- rlang::exec(stanoptimis,!!!optimcontrol,standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors))
-        # stanfit <- stanoptimis(standata = standata,sm = sm,init = inits, cores=cores, verbose=verbose,nopriors=as.logical(nopriors))
       }
       
       # if(is.na(STAN_NUM_THREADS)) Sys.unsetenv('STAN_NUM_THREADS') else Sys.setenv(STAN_NUM_THREADS = STAN_NUM_THREADS) #reset sys env
@@ -738,12 +755,15 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       popvalues=ctm$modelmats$matvalues[ctm$modelmats$matsetup$when %in% c(0,-1) & ctm$modelmats$matsetup$param > 0,],
       extratforms=ctm$modelmats$extratforms)
     if(fit) {
+       stanfit$transformedparsfull <- suppressMessages(stan_constrainsamples(sm = sm,standata = standata,
+        savesubjectmatrices = TRUE, samples = matrix(stanfit$rawest,1),cores=1,savescores=TRUE,pcovn=500))
+       
       out <- list(args=args,
-        setup=setup, 
+        setup=setup,
         stanmodeltext=stanmodeltext, data=standataout, ctdatastruct=datalong[c(1,nrow(datalong)),],standata=standata, 
         ctstanmodelbase=ctstanmodel, ctstanmodel=ctm,stanmodel=sm, stanfit=stanfit)
       class(out) <- 'ctStanFit'
-      if(!vb) out$kalman <- suppressMessages(ctStanKalman(out,pointest = optimize,collapsefunc = mean,cores=1))
+      out$stanfit$kalman<-ctStanKalman(out,pointest = TRUE)
     }
     
     if(!fit) out=list(args=args,setup=setup,
@@ -755,4 +775,3 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   }
 }
 
-#'@export

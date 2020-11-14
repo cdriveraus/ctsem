@@ -15,12 +15,8 @@
 #' }
 ctStanGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErrors=FALSE,cores=2){
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object!')
-  if(!'stanfit' %in% class(fit$stanfit)) {
     if(!fullposterior) umat=matrix(fit$stanfit$rawest,nrow=length(fit$stanfit$rawest),ncol=nsamples) else umat=t(fit$stanfit$rawposterior)
-  } else  {
-    umat <- stan_unconstrainsamples(fit$stanfit,fit$standata)
-    if(!fullposterior) umat=matrix(apply(umat, 1, mean),ncol=1)
-  }
+
 
   if(fit$setup$recompile) {
     message('Compilation needed -- compiling (usually ~ 1 min)')

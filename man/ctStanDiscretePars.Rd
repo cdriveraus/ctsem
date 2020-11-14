@@ -55,7 +55,7 @@ from ctStanFit, for specified subjects.
 if(w32chk()){
 
 ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
- plot=TRUE,indices='popmean')
+ plot=TRUE,indices='CR')
  
 #modify plot
 require(ggplot2)

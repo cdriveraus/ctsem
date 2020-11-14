@@ -30,7 +30,8 @@ ctDiscretiseData <- function(dlong,timestep,timecol='time',idcol='id',TDpredName
     odat[,timecol]<-plyr::round_any(odat[,timecol],timestep)
     trange<-range(odat[,timecol])
     time<-seq(trange[1],trange[2],timestep)
-    ndat<-matrix(NA,nrow=length(time),ncol=ncol(dlong),dimnames=dimnames(dlong))
+    ndat<-matrix(NA,nrow=length(time),ncol=ncol(dlong))
+    colnames(ndat) <- colnames(dlong)
     ndat[,timecol]=time
     ndat[,idcol]=idi
     ndat[match(odat[,timecol],ndat[,timecol]),]=odat
@@ -43,7 +44,7 @@ ctDiscretiseData <- function(dlong,timestep,timecol='time',idcol='id',TDpredName
 if(l1!=l2) warning(paste0(l1-l2,' cells of data removed due to time overlap, consider reducing timestep'))
     
   out[,TDpredNames][is.na(out[,TDpredNames])] <- 0 
-  out[,TIpredNames][is.na(out[,TIpredNames])] <- 0 
+  out[,TIpredNames][is.na(out[,TIpredNames])] <- NA
   
   
 

@@ -36,10 +36,10 @@
 #' 
 #' @export
 ctStanParnames <- function(x,substrings=c('pop_','popsd')){
-  if(!'stanfit' %in% class(x$stanfit)) stop('Doesnt contain sampled stanfit object')
+  if(length(x$stanfit$stanfit@sim)==0) stop('Doesnt contain sampled stanfit object')
   out<-c()
   for(subsi in substrings){
-    out<- c(out, x$stanfit@model_pars[grep(paste0('^',subsi),x$stanfit@model_pars)])
+    out<- c(out, x$stanfit$stanfit@model_pars[grep(paste0('^',subsi),x$stanfit@model_pars)])
   }
   return(out)
 }
@@ -73,7 +73,7 @@ ctStanParnames <- function(x,substrings=c('pop_','popsd')){
 #'if(w32chk()){
 #'
 #' ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
-#'  plot=TRUE,indices='popmean')
+#'  plot=TRUE,indices='CR')
 #'  
 #'#modify plot
 #'require(ggplot2)
@@ -255,7 +255,7 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
 #'ctStanDiscreteParsPlot(x, indices='CR')
 #'
 #'#to modify plot:
-#'g <- ctStanDiscreteParsPlot(x, indices='CR',plot=FALSE) + 
+#'g <- ctStanDiscreteParsPlot(x, indices='CR') + 
 #'  ggplot2::labs(title='My ggplot modification')
 #'print(g)
 #'}

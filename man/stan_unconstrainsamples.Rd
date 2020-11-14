@@ -41,6 +41,6 @@ ssmodel <- ctModel(type='stanct', n.latent=2, n.manifest=1,
 #fit
 ssfit <- ctStanFit(datalong, ssmodel, 
   iter=200, chains=2,optimize=FALSE, nopriors=FALSE,control=list(max_treedepth=4))
-umat <- stan_unconstrainsamples(ssfit$stanfit)
+umat <- stan_unconstrainsamples(ssfit$stanfit$stanfit)
 }
 }

@@ -7,11 +7,11 @@
 ctStanKalman(
   fit,
   nsamples = NA,
-  pointest = FALSE,
+  pointest = TRUE,
   collapsefunc = NA,
-  cores = 2,
+  cores = 1,
   standardisederrors = FALSE,
-  subjectpars = FALSE,
+  subjectpars = TRUE,
   tformsubjectpars = TRUE,
   indvarstates = FALSE,
   ...

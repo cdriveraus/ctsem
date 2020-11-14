@@ -19,7 +19,7 @@ ctLOO <- function(fit,folds=10,cores=2,parallelFolds=FALSE,
   subjectwise=ifelse(length(unique(fit$standata$subject)) > folds, TRUE, FALSE),
   keepfirstobs=FALSE, init='fit'){
   bootstrap <- FALSE
-  if(!'ctStanFit' %in% class(fit)|| !'list' %in% class(fit$stanfit)) stop('Not an optimized ctStanFit object')
+  if(!'ctStanFit' %in% class(fit)|| !length(fit$stanfit$stanfit@sim)==0) stop('Not an optimized ctStanFit object')
   
   message('Using ',cores,'/', parallel::detectCores(),' available CPU cores')
   

@@ -43,6 +43,6 @@ ssmodel <- ctModel(type='stanct', n.latent=2, n.manifest=1,
 ssfit <- ctStanFit(datalong, ssmodel, iter=2, 
   optimize=FALSE, chains=1)
   
-stan_checkdivergences(ssfit$stanfit) #stan object
+stan_checkdivergences(ssfit$stanfit$stanfit) #stan object
 }
 }

@@ -30,7 +30,7 @@
 #' #fit
 #' ssfit <- ctStanFit(datalong, ssmodel, 
 #'   iter=200, chains=2,optimize=FALSE, nopriors=FALSE,control=list(max_treedepth=4))
-#' umat <- stan_unconstrainsamples(ssfit$stanfit)
+#' umat <- stan_unconstrainsamples(ssfit$stanfit$stanfit)
 #' }
 stan_unconstrainsamples <- function(fit, standata=NA){
   if(!'stanfit' %in% class(fit)) stop('not a stanfit object')

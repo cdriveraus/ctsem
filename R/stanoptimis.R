@@ -730,7 +730,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             out2<- parallel::clusterCall(clctsem,parlp,parm)
             tmp<-sapply(1:length(out2),function(x) {
               if(!is.null(attributes(out2[[x]])$err)){
-                if(length(out2) > 1) message('Error on core ', x,':')
+                if(length(out2) > 1) message('Error on core ', x,' but continuing:')
                 message(attributes(out2[[x]])$err)
               }
             })
@@ -1617,9 +1617,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       smf <- stan_reinitsf(sm,standata)
     }
     
-    transformedparsfull=stan_constrainsamples(sm = sm,standata = standata,
-      savesubjectmatrices = TRUE, dokalman=TRUE,savescores = TRUE,
-      samples=matrix(est2,nrow=1),cores=1, quiet = TRUE)
+    # transformedparsfull=stan_constrainsamples(sm = sm,standata = standata,
+    #   savesubjectmatrices = TRUE, dokalman=TRUE,savescores = TRUE,
+    #   samples=matrix(est2,nrow=1),cores=1, quiet = TRUE)
     
     
     
@@ -1635,7 +1635,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     try(colnames(transformedpars_old)<-c('2.5%','mean','97.5%'),silent=TRUE)
     stanfit=list(optimfit=optimfit,stanfit=stan_reinitsf(sm,standata), rawest=est2, rawposterior = resamples, cov=mcov,
       transformedpars=transformedpars,transformedpars_old=transformedpars_old,
-      transformedparsfull=transformedparsfull,
+      # transformedparsfull=transformedparsfull,
       standata=list(TIPREDEFFECTsetup=standata$TIPREDEFFECTsetup,ntipredeffects = standata$ntipredeffects),
       isdiags=list(cov=mcovl,means=delta,ess=ess,qdiag=qdiag,lpsamples=lpsamples ))
   }
