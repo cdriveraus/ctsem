@@ -11,6 +11,8 @@
 #' prior distribution for the raw population standard deviation, or a numeric value to use for the raw population standard deviation
 #' for all subject level prior plots - the plots in dotted blue or red.
 #' @param inddifdevs numeric vector of length 2, setting the means for the individual differences distributions.
+#' @param inddifsd numeric, setting the standard deviation of the population means used to generate individual
+#' difference distributions. 
 #' @param plot If FALSE, ouputs list of GGplot objects that can be further modified.
 #' @param ... not used.
 #' @details Plotted in black is the prior for the population mean. In red and blue are the subject level priors that result
@@ -35,7 +37,8 @@
 #'   
 #' plot(model,rows=8)
 
-plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='marginalise',inddifdevs=c(-1,1),inddifsd=.1,plot=TRUE,...){
+plot.ctStanModel<-function(x,rows='all',wait=FALSE,nsamples=1e6, rawpopsd='marginalise',
+  inddifdevs=c(-1,1),inddifsd=.1,plot=TRUE,...){
   if(!'ctStanModel' %in% class(x)) stop('not a ctStanModel object!')
   
   x <- ctModelTransformsToNum(x)

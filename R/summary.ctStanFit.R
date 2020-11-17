@@ -7,6 +7,33 @@ ctStanRawSamples<-function(fit){
   return(samples)
 }
 
+
+ctStanSubjectPars <- function(fit,pointest=TRUE,cores=2,nsamples='all'){
+  if(!nsamples[1] %in% 'all') fit$stanfit$rawposterior <- 
+      fit$stanfit$rawposterior[sample(1:nrow(fit$stanfit$rawposterior),nsamples),,drop=FALSE]
+  pnames <- getparnames(fit,indvaronly = TRUE)
+  m <- fit$ctstanmodelbase$pars
+  if(pointest) tfp <- fit$stanfit$transformedparsfull else {
+    tfp <- ctExtract(fit,subjectMatrices = TRUE,cores=cores)
+  }
+  p <- array(NA, dim=c(dim(tfp$pop_DRIFT)[1],fit$standata$nsubjects,length(pnames)))
+  dimnames(p) <- list(iter=1:dim(p)[1],subject=1:dim(p)[2],param=1:dim(p)[3])
+  co<-0
+  for(i in 1:nrow(m)){
+    if(!is.na(m$param[i]) & is.na(m$value[i]) & #if a free param, not complex and not already collected...
+        !grepl('[',m$param[i],fixed=TRUE) & !m$param[i] %in% dimnames(p)[[3]]){
+      if(m$param[i] %in% pnames){ #if ind differences
+        co = co+1
+      p[,,co] <- tfp[[paste0('subj_',m$matrix[i])]] [
+        , ,m$row[i],m$col[i]]
+      dimnames(p)[[3]][co] <- m$param[i]
+    }
+    }
+  }
+  p=p[,,order(dimnames(p)[[3]]),drop=FALSE]
+  return(p)
+}
+
 getparnames <- function(fit,indvaronly=FALSE, popstatesonly=FALSE){
   ms <- fit$setup$matsetup
   

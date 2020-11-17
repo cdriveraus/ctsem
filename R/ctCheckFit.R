@@ -9,7 +9,7 @@ ctLongToWideSF <- function(fit){
   dat=data.table(dat)
   dat[ ,WhichObs:=0:(.N-1),by=eval(fit$ctstanmodelbase$subjectIDname)]
   dat=melt(dat,id.vars = c(fit$ctstanmodelbase$subjectIDname,'WhichObs'))
-
+  
   dat$WhichObs <- paste0('T',dat$WhichObs);
   dat=dcast(dat,'id~variable+WhichObs')
   lapply(fit$ctstanmodelbase$TIpredNames, function(x){
@@ -203,13 +203,8 @@ ctSaturatedFit <- function(fit,conditional=FALSE,reg=0, hmc=FALSE,
 }
 
 ctDataMelt <- function(dat,id='id',by='time', combinevars=NULL){
-  # setnames(dat,id,'Subject')
-  # by <- by[-which(by %in% 'WhichObs')]
   if(!is.null(combinevars)) {
-    # dat[ ,WhichObstmp:=(1:.N),by=eval(id)]
     dat <- ctDataCombineSplit(dat = dat,idvars = c(id,by),vars = combinevars)
-    # dat <- dcast(dat,formula = 'id +WhichObstmp~ variable',value.var = 'value')
-    # dat$WhichObstmp <- NULL
   }
   if(is.null(combinevars)) dat <- melt(dat,id.vars = c(id,by))
   return(dat)
@@ -226,7 +221,7 @@ ctDataCombineSplit <- function(dat, idvars, vars){ #no splits yet
       ldat[[eval(idvarcombine[vi])]] <- apply(data.frame(ldat)[,vars[[idvarcombine[vi]]]],1,mean,na.rm=TRUE)
     }
   }
-
+  
   ldat <- melt(data = ldat,id.vars = idvars)
   
   #remove unneeded variables
@@ -250,22 +245,21 @@ ctDataCombineSplit <- function(dat, idvars, vars){ #no splits yet
 
 
 meltcov <- function(covm){
-  if(is.null(dimnames(covm))) dimnames(covm) = list(paste0('v',1:nrow(covm)),paste0('v',1:nrow(covm)))
+  if(is.null(dimnames(covm))) dimnames(covm) = list(paste0('v',1:nrow(covm)),
+    paste0('v',1:ncol(covm)))
+  # browser()
+  colnames(covm)[rownames(covm) %in% ''] <- 
+    paste0('v',(1:nrow(covm))[rownames(covm) %in% ''])
+  rownames(covm)[rownames(covm) %in% ''] <- 
+    paste0('v',(1:nrow(covm))[rownames(covm) %in% ''])
   covm=data.frame(row=factor(rownames(covm),levels=rownames(covm)),covm)
   
-  # # 
-  # div = 4:6
-  # divisor = which(nrow(covm)%%div == min(nrow(covm)%%div))+3 #find minimum remainder for splitting factor
-  # 
-  # if(is.na(factors)) factors <- suppressWarnings(factor(c(matrix(paste0('g',1:(ceiling(nrow(covm)/divisor))),nrow=nrow(covm)))))
-  # 
-  # covm=cbind(covm,Group=factors)
   o=data.table::melt(data.table(covm),id.vars=c('row'))
   colnames(o)[colnames(o) %in% c('row','variable')] <- c('Var1','Var2')
   return(o)
 }
 
-ctStanFitMelt <- function(fit, by,combinevars=NULL,maxsamples='all'){
+ctStanFitMelt <- function(fit, maxsamples='all'){
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
   
   
@@ -328,17 +322,6 @@ ctStanFitMelt <- function(fit, by,combinevars=NULL,maxsamples='all'){
     }
   }
   
-  by=unique(c(by,'Sample','WhichObs','DataSource','time'))
-  if(is.na(combinevars[1])){
-    combinevars = setNames(
-    colnames(datbase)[!colnames(datbase) %in% by],colnames(datbase)[!colnames(datbase) %in% by])
-  combinevars<-c(combinevars,LogLik='LogLik')
-  }
-  
-  dat <- ctDataMelt(dat=dat,id=fit$ctstanmodelbase$subjectIDname, by=by,combinevars = combinevars)
-  dat$Sample <- factor(dat$Sample)
-  dat$DataSource <- factor(dat$DataSource)
-  
   return(dat)
 }
 
@@ -398,10 +381,45 @@ ctCheckFit <- function(fit,
     if(corr) return(cov2cor(m)) else return(m)
   }
   
-  # combinevars<-c(combinevars,LogLik='LogLik')
-  # 
-  dat <- ctStanFitMelt(fit = fit,combinevars = combinevars, by=by,maxsamples = nsamples)
-
+  
+  dat <- ctStanFitMelt(fit = fit,maxsamples = nsamples)
+  
+  
+  
+  
+  byc=unique(c('Sample','WhichObs','DataSource','time'))
+  if(is.na(combinevars[1])){
+    combinevars = setNames(
+      colnames(datbase)[!colnames(datbase) %in% byc],colnames(datbase)[!colnames(datbase) %in% byc])
+    combinevars<-c(combinevars,LogLik='LogLik')
+  }
+  
+  dat <- ctDataMelt(dat=dat,id=fit$ctstanmodelbase$subjectIDname, by=byc,combinevars = combinevars)
+  dat$Sample <- factor(dat$Sample)
+  dat$DataSource <- factor(dat$DataSource)
+  
+  
+  wdat=dcast(dat,paste0(
+    fit$ctstanmodelbase$subjectIDname,
+    '+Sample+DataSource+WhichObs+time','~variable'),value.var = 'value',fun.aggregate = mean,na.rm=TRUE)
+  
+  if(any(lag!=0)){ 
+    if(aggregate){
+      if(covplot){
+        message('disabling aggregation -- incoherent with lags!')
+        aggregate=FALSE
+      }
+    }
+    prelagcols=colnames(wdat)[!colnames(wdat) %in% c('id','Sample','DataSource','WhichObs','time',TIpredNames)]
+    lagcols=(paste0("lag",  rep(lag, times = length(prelagcols)),'_',rep(prelagcols, each = length(lag))))
+    
+    wdat[, eval(lagcols) :=  
+        shift(.SD, lag), by=c('id','Sample','DataSource'),.SDcols=prelagcols]
+  }
+  
+  dat <- melt(wdat,id.vars=unique(c('id','Sample','DataSource','WhichObs','time',by)))
+  
+  
   if(is.na(combinevars[1])) combinevars <- setNames(unique(dat$variable), unique(dat$variable))
   
   if(!data) dat<-dat[!DataSource %in% 'Data']
@@ -414,23 +432,8 @@ ctCheckFit <- function(fit,
   
   dat = dat[!is.na(value),]
   
-  if(any(lag!=0) && covplot){ 
-    if(aggregate){
-      message('disabling aggregation -- incoherent with lags!')
-      aggregate=FALSE
-    }
-    wdat=dcast(dat,paste0(
-      fit$ctstanmodelbase$subjectIDname,
-      '+Sample+DataSource+WhichObs+time','~variable'),value.var = 'value',fun.aggregate = mean)
-    
-    lagcols=colnames(wdat)[!colnames(wdat) %in% c('id','Sample','DataSource','WhichObs',TIpredNames)]
-    
-    wdat[, (paste0("lag",  rep(lag, times = length(lagcols)),'_',rep(lagcols, each = length(lag)))) :=  
-        shift(.SD, lag), by=c('id','Sample','DataSource'),.SDcols=lagcols]
-
-    dat <- melt(wdat,id.vars=unique(c('id','Sample','DataSource','WhichObs','time',by)))
-    
-  }
+  
+  # browser()
   
   breaks = min(breaks,length(unique(dat[[by]][!is.na(dat[[by]])])))
   # k = min(k,length(unique(dat[[by]][!is.na(dat[[by]])]))-1)
@@ -438,7 +441,7 @@ ctCheckFit <- function(fit,
   if(covplot ||entropy){
     discdat=dat #make copy for use in covs
     discdat[variable %in% TIpredNames & WhichObs > 1] <- NA #remove later tipreds to avoid duplicate cov columns
-
+    
     nontivars <- unique(discdat$variable)[!unique(discdat$variable) %in% TIpredNames]
     
     if(is.double(dat[[by]])){
@@ -456,14 +459,14 @@ ctCheckFit <- function(fit,
           paste0(
             fit$ctstanmodelbase$subjectIDname,
             '+Sample',if(!aggregate) '+WhichObs','~variable + ',by),fun.aggregate=aggfunc,na.rm=TRUE)
-
+        
         
         #put loglik on one side
         if('LogLik_1' %in% colnames(wdat)) wdat <- cbind(wdat[,colnames(wdat) %in% paste0('LogLik_',1:breaks),with=FALSE],
           wdat[,!colnames(wdat) %in% paste0('LogLik_',1:breaks),with=FALSE])
         
         if(byNA) breakset <-c(1:breaks,NA) else breakset=1:breaks #some values can't be placed in a by column if by = NA
-          
+        
         if(groupby == 'split'){
           colorder <- unlist(lapply(breakset, function(b) grep(paste0('\\_',b,'$'),x=colnames(wdat))))
           wdat <- wdat[,colorder,with=FALSE]
@@ -498,7 +501,7 @@ ctCheckFit <- function(fit,
         #   cplot = cplot + ggplot2::labs(title=paste0(datasources[i],' correlations, split by ', by))
         #   print(cplot)
         # }
-          
+        
       } #finish datasource loop
       # 
       if(corr) covplotlims <- c(-1,1) else covplotlims <- NA
@@ -515,7 +518,7 @@ ctCheckFit <- function(fit,
           if(j > i){ #only plot unique differences
             coli <- colnames(corlist[[datasources[i]]])[
               colnames(corlist[[datasources[i]]]) %in% colnames(corlist[[datasources[j]]])
-              ]
+            ]
             cplot=corplotmelt(meltcov(covORcor(corlist[[datasources[i]]][coli,coli,drop=FALSE]) - 
                 covORcor(corlist[[datasources[j]]][coli,coli,drop=FALSE])),
               label=paste0(ifelse(corr,'Corr.','Cov.'),' diff.'),limits=covplotlims)
@@ -525,34 +528,30 @@ ctCheckFit <- function(fit,
         }
       }
     }
-    if(entropy){
-      # 
-      dentropy <- -mean(covdat$cp$llrow)#lp/nrow(wdat)
-      
-      gdentropy <- sapply(unique(wgdat$Sample), function(x){
-        print(x)
-        -mean(covml(data.frame(wgdat)[wgdat$Sample==x,!colnames(wgdat) %in% 
-            c('Sample',fit$ctstanmodelbase$subjectIDname)],verbose=verbose)$cp$llrow)
-      }) 
-      print(sum(covdat$cp$llrow))
-      message('Entropy: Fit = ', -sum(fit$stanfit$transformedparsfull$ll)/nrow(wdat),'; Data = ',dentropy,'; Mean gen.data = ',mean(gdentropy),'  SD gen. data = ',sd(gdentropy))
-    }
+    # if(entropy){
+    #   # 
+    #   dentropy <- -mean(covdat$cp$llrow)#lp/nrow(wdat)
+    #   
+    #   gdentropy <- sapply(unique(wgdat$Sample), function(x){
+    #     print(x)
+    #     -mean(covml(data.frame(wgdat)[wgdat$Sample==x,!colnames(wgdat) %in% 
+    #         c('Sample',fit$ctstanmodelbase$subjectIDname)],verbose=verbose)$cp$llrow)
+    #   }) 
+    #   print(sum(covdat$cp$llrow))
+    #   message('Entropy: Fit = ', -sum(fit$stanfit$transformedparsfull$ll)/nrow(wdat),'; Data = ',dentropy,'; Mean gen.data = ',mean(gdentropy),'  SD gen. data = ',sd(gdentropy))
+    # }
   }
   
   if(!covplot){ #then plot bivariate relations
     vars <- names(combinevars)
-    if(any(lag>0)) vars <- c(vars,paste0('lag',rep(lag,each=length(vars)),'_',vars))
+    if(any(lag>0)) vars <- c(vars,lagcols)
     dat$manifest <- dat$variable %in% vars
     
-    # dat$DataSource <- factor(as.character(dat$DataSource), levels = c( "Data", "StatePred","PostPred","PriorPred"))
-    # 
     
     g=ggplot(data = dat[manifest==TRUE],
       mapping = aes_string(x=by,y='value',
         colour='DataSource'
         ,fill='DataSource'
-        # , group='Sample'
-        # ,alpha='DataSource'
       )
     ) +theme_bw() +
       # scale_color_brewer(palette = 'Set1') +
@@ -601,8 +600,8 @@ ctCheckFit <- function(fit,
 }
 
 
-corplotmelt <- function(corm, label,limits=NA){
-  # 
+corplotmelt <- function(corm, label='Coef.',limits=NA){
+  
   if(is.na(limits[1])) limits <- range(corm[,'value'],na.rm=TRUE)
   ggplot(data=(corm),aes_string(x='Var1',y='Var2',fill=('value')))+ #ifelse(groups,NULL,'Group')))+
     geom_tile( width=1,height=1,colour='black')+
@@ -611,4 +610,5 @@ corplotmelt <- function(corm, label,limits=NA){
       name=label)  +
     theme_minimal()+ theme(axis.text.x = element_text(angle = 90))
 }
+
 

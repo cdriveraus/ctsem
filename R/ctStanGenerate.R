@@ -78,11 +78,11 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
     datastruct <- standatatolong(cts$standata, origstructure=TRUE, ctm=ctm)
     
     if(cts$setup$recompile){ #then temporarily attach compiled stanmodels to search path to avoid recompiling
-      ctStanModels <- new.env()
-      ctStanModels$fitmodel <- cts$stanmodel
-      if(!is.null(cts$generated)) ctStanModels$genmodel <- cts$generated$stanmodel
-      attach(ctStanModels)
-      on.exit(add = TRUE, {detach(name = 'ctStanModels')})
+      ctsem.compiledmodel <- new.env()
+      ctsem.compiledmodel$fitmodel <- cts$stanmodel
+      if(!is.null(cts$generated)) ctsem.compiledmodel$genmodel <- cts$generated$stanmodel
+      attach(ctsem.compiledmodel)
+      on.exit(add = TRUE, {detach(name = 'ctsem.compiledmodel')})
       }
     }
 
@@ -109,7 +109,7 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
   #fit to empty data 
   message('Fitting model to empty dataset...')
   pp<-ctStanFit(datalong =datadummy, #to reenable multi core -- check parallel craziness in stanoptimis (not needed though, fast to fit)
-    ctstanmodel = ctm, optimcontrol=optimcontrol,cores=1,nopriors=FALSE, init=1e-10)
+    ctstanmodel = ctm, optimcontrol=optimcontrol,cores=1,nopriors=FALSE, inits=1e-10)
   
   
   if(parsonly) dat <- pp else{

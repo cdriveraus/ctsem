@@ -85,7 +85,7 @@ ctStanParnames <- function(x,substrings=c('pop_','popsd')){
 #'}
 #'@export
 ctStanDiscretePars<-function(ctstanfitobj, subjects='popmean', times=seq(from=0,to=10,by=.1), 
-  quantiles = c(.025, .5, .975),nsamples=100,observational=FALSE,standardise=FALSE, 
+  nsamples=100,observational=FALSE,standardise=FALSE, 
   cov=FALSE, plot=FALSE,cores=2,...){
   
   type='discreteDRIFT'
@@ -243,6 +243,10 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
 #''auto' just uses eta1 eta2 etc.
 #'@param polygonalpha Numeric between 0 and 1 to multiply the alpha of 
 #'the fill.
+#'@param ylab y label.
+#'@param xlab x label.
+#'@param ylim Custom ylim.
+#'@param facets May be 'Subject' or 'Effect'.
 #'@param colour Character string denoting how colour varies. 'Effect' or 'Subject'.
 #'@param title Character string.
 #'@param splitSubjects if TRUE, subjects are plotted separately, if FALSE they are combined.
@@ -290,8 +294,12 @@ ctStanDiscreteParsPlot<- function(x,indices='all',
       rep(unique(indices),each=length(unique(indices))))
   }
 
+
+  ym <- as.data.table(x)
+  ym$row <- factor(ym$row)
+  ym$col <- factor(ym$col)
+  ym$`Time interval` <- as.numeric(ym$`Time interval`)
   
-  ym <- data.table(reshape2::melt(x))
   ym$Effect <- interaction(ym$row,ym$col)
   ym$Subject <- factor(ym$Subject)
   if(!splitSubjects) ym$Subject <- factor(1)

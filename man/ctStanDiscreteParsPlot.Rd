@@ -35,6 +35,14 @@ The default of c(.05,.5,.95) plots 95\% credible intervals and the posterior med
 \item{latentNames}{Vector of character strings denoting names for the latent variables. 
 'auto' just uses eta1 eta2 etc.}
 
+\item{ylab}{y label.}
+
+\item{xlab}{x label.}
+
+\item{ylim}{Custom ylim.}
+
+\item{facets}{May be 'Subject' or 'Effect'.}
+
 \item{splitSubjects}{if TRUE, subjects are plotted separately, if FALSE they are combined.}
 
 \item{colour}{Character string denoting how colour varies. 'Effect' or 'Subject'.}

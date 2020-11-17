@@ -4,7 +4,7 @@
 \alias{ctStanFitUpdate}
 \title{Update a ctStanFit object}
 \usage{
-ctStanFitUpdate(oldfit, data = NA, recompile = FALSE, ...)
+ctStanFitUpdate(oldfit, data = NA, recompile = FALSE, refit = FALSE, ...)
 }
 \arguments{
 \item{oldfit}{fit object to be upgraded}
@@ -12,6 +12,9 @@ ctStanFitUpdate(oldfit, data = NA, recompile = FALSE, ...)
 \item{data}{replacement long format data object}
 
 \item{recompile}{whether to force a recompile -- safer but slower and usually unnecessary.}
+
+\item{refit}{if TRUE, refits the model using the old estimates as a starting point. Only applicable for
+optimized fits, not sampling.}
 
 \item{...}{extra arguments to pass to ctStanFit}
 }
@@ -23,7 +26,7 @@ Either to include different data, or because you have upgraded ctsem and the int
 }
 \examples{
 if(w32chk()){
-newfit <- ctStanFitUpdate(ctstantestfit)
+newfit <- ctStanFitUpdate(ctstantestfit,refit=TRUE)
 }
 
 }

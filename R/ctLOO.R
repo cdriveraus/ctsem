@@ -8,6 +8,7 @@
 #' parallelFolds will use folds times as much memory.
 #' @param subjectwise drop random subjects instead of data rows?
 #' @param keepfirstobs do not drop first observation (more stable estimates)
+#' 
 #' @return list
 #' @export
 #'
@@ -17,7 +18,7 @@
 #' }
 ctLOO <- function(fit,folds=10,cores=2,parallelFolds=FALSE, 
   subjectwise=ifelse(length(unique(fit$standata$subject)) > folds, TRUE, FALSE),
-  keepfirstobs=FALSE, init='fit'){
+  keepfirstobs=FALSE){
   bootstrap <- FALSE
   if(!'ctStanFit' %in% class(fit)|| !length(fit$stanfit$stanfit@sim)==0) stop('Not an optimized ctStanFit object')
   
@@ -38,7 +39,8 @@ ctLOO <- function(fit,folds=10,cores=2,parallelFolds=FALSE,
   
   sdat=fit$standata
   smodel <- fit$stanmodel
-  if(init=='fit') init=fit$stanfit$rawest else init=rnorm(length(fit$stanfit$rawest),0,.01)#
+  # if(init=='fit') 
+    init=fit$stanfit$rawest #else init=rnorm(length(fit$stanfit$rawest),0,.01)#
 
   if(parallelFolds && cores > 1){
     clctsem <- parallel::makeCluster(spec = min(cores,folds))

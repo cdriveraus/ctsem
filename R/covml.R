@@ -119,8 +119,8 @@ covinit[is.na(covinit)&diag(d)==0] <- 0
     # line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
     abs_tol=1e-8,grad_tol=0,rel_tol=1e-10,step_tol=0,ginf_tol=0)
   } else{
-    browser()
-    covfit=sampling(object = stanmodels$cov,iter=2000,chains=cores,cores=cores,check_data=FALSE,
+    # browser()
+    covfit=sampling(object = stanmodels$cov,iter=2000,chains=2,cores=2,check_data=FALSE,
       data=covdata)
   }
   

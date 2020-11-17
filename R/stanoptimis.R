@@ -276,8 +276,9 @@ getcxxfun <- function(object) {
 stan_reinitsf <- function(model, data,fast=FALSE){
   if(fast) sf <- new(model@mk_cppmodule(model),data,0L,getcxxfun(model@dso))
   
-  if(!fast) suppressMessages(suppressWarnings(suppressOutput(sf<-rstan::sampling(model,iter=0,chains=0,init=0,data=data,check_data=FALSE,
-    control=list(max_treedepth=0),save_warmup=FALSE,test_grad=FALSE))))
+  if(!fast) suppressMessages(suppressWarnings(suppressOutput(sf<-
+      rstan::sampling(model,iter=0,chains=0,init=0,data=data,check_data=FALSE,
+        control=list(max_treedepth=0),save_warmup=FALSE,test_grad=FALSE))))
   
   return(sf)
 }
@@ -453,13 +454,15 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
   env$standata <- standata
   env$sm <- sm
   env$samples <- samples
+  
   if(cores > 1 && all(is.na(cl))){
     cl <- parallel::makeCluster(cores, type = "PSOCK",useXDR=TRUE,outfile='')
     on.exit(try(parallel::stopCluster(cl),silent=TRUE),add = TRUE)
-    # parallel::clusterExport(cl2, c('sm','standata','samples'),environment())
-    # parallel::clusterApply(cl2,1:cores, function(x) library(ctsem))
   }
+  
   if(cores > 1) parallel::clusterExport(cl, 'standata',environment())
+  
+  # browser()
   transformedpars <- try(flexlapply(cl, 
     split(1:nrow(samples), sort((1:nrow(samples))%%cores)),
     tparfunc,cores=cores,parallel=cores > 1))
@@ -851,7 +854,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             parsets=parsets,
             whichignore = unlist(parsteps),
             whichmcmcpars=whichmcmcpars,nsubjects=ifelse(is.na(whichmcmcpars[1]),NA,standata$nsubjects),
-            plot=plot,itertol=1e-1,deltatol=1e-2,maxiter=500)
+            plot=plot,itertol=1e-1,deltatol=1e-1,maxiter=500)
         }
         
         standata$nopriors <- as.integer(nopriorsbak)
@@ -889,7 +892,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         optimfit <- sgd(init, fitfunc = target,
           parsets=parsets,
           itertol = ifelse(!finished,1e-1,1e-3),
-          deltatol=ifelse(!finished,1e-2,1e-5),
+          deltatol=ifelse(!finished,1e-1,1e-5),
           # itertol = ifelse(standata$ntipred >0,1e-1,1e-3),
           # deltatol=ifelse(standata$ntipred >0,1e-2,1e-5),
           whichignore = unlist(parsteps),whichmcmcpars=whichmcmcpars,

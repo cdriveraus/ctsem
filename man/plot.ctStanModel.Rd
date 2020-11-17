@@ -32,6 +32,9 @@ for all subject level prior plots - the plots in dotted blue or red.}
 
 \item{inddifdevs}{numeric vector of length 2, setting the means for the individual differences distributions.}
 
+\item{inddifsd}{numeric, setting the standard deviation of the population means used to generate individual
+difference distributions.}
+
 \item{plot}{If FALSE, ouputs list of GGplot objects that can be further modified.}
 
 \item{...}{not used.}

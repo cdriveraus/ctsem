@@ -5,6 +5,8 @@
 #' @param oldfit fit object to be upgraded
 #' @param data replacement long format data object
 #' @param recompile whether to force a recompile -- safer but slower and usually unnecessary.
+#' @param refit if TRUE, refits the model using the old estimates as a starting point. Only applicable for
+#' optimized fits, not sampling.
 #' @param ... extra arguments to pass to ctStanFit
 #'
 #' @return updated ctStanFit object.
@@ -12,24 +14,39 @@
 #'
 #' @examples
 #' if(w32chk()){
-#' newfit <- ctStanFitUpdate(ctstantestfit)
+#' newfit <- ctStanFitUpdate(ctstantestfit,refit=TRUE)
 #' }
 #' 
-ctStanFitUpdate <- function(oldfit, data=NA, recompile=FALSE,...){
+ctStanFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
+  
+  if(!refit) message('Trying to do a quick update -- if there are problems, try with refit=TRUE for more robustness')
   
   dots <- list(...)
   args <- as.list(oldfit$args)
   for(n in names(dots)){
     args[[n]] <- dots[[n]]
   }
-  args$fit <- FALSE
+  if(length(oldfit$stanfit$stanfit@sim) > 0) refit=FALSE
+  args$fit <- refit
+  args$init <- oldfit$stanfit$rawest
   args$ctstanmodel <- oldfit$ctstanmodelbase
+  
+  newargs <- as.list(args(ctStanFit))
+  for(argi in names(args)){
+    if(argi %in% names(args)) newargs[[argi]] <- args[[argi]] else message(argi, ' is no longer a valid argument, dropping...')
+  }
+  
+
   if(length(data==1)) args$datalong <- standatatolong(oldfit$standata,origstructure = TRUE,ctm=oldfit$ctstanmodelbase)
   if(length(data) > 1) args$datalong <- data
   newfit <- do.call(ctStanFit,args)
+  
+  if(!refit){
   oldfit$standata <- newfit$standata
   if(oldfit$ctstanmodel$recompile || recompile) oldfit$stanmodel <- rstan::stan_model(model_code = newfit$stanmodeltext) else
     oldfit$stanmodel <- stanmodels$ctsm
+  } 
+  if(refit) oldfit <- newfit
   return(oldfit)
 }
 
@@ -374,7 +391,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   nlcontrol = list(), nopriors=TRUE, chains=2,
   cores=ifelse(optimize,getOption("mc.cores", 2L),'maxneeded'),
   inits=NULL,
-  forcerecompile=FALSE,saveCompiled=TRUE,savescores=FALSE,
+  forcerecompile=FALSE,saveCompile=TRUE,savescores=FALSE,
   savesubjectmatrices=FALSE,
   gendata=FALSE,
   control=list(),verbose=0,vb=FALSE,...){
@@ -388,9 +405,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     if(is.null(nlcontrol$maxtimestep)) nlcontrol$maxtimestep = 999999
     if(is.null(nlcontrol$Jstep)) nlcontrol$Jstep = 1e-6
     
-    args=as.list(match.call(expand.dots=FALSE))
-    args[[1]] <- NULL
+    args=c(as.list(environment()), list(...)) #as.list((match.call(expand.dots=FALSE)))
     args$datalong <- NULL
+    args$ctstanmodel <- NULL
     
     ctm <- ctstanmodel
     
@@ -608,7 +625,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         # includes = paste0(
         #   '\n#include "', file.path(getwd(), 'syl2.hpp'),'"',
         #   '\n')
-        if(saveCompiled){
+        if(saveCompile){
           if(exists(x = 'ctsem.compiled',envir= parent.frame()) 
             && !'ctStanFit' %in% class(get('ctsem.compiled',envir = parent.frame()))){
             warning('ctsem.compiled object already exists, not saving compile')
