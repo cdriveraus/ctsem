@@ -76,14 +76,14 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
     derrind <- cts$standata$derrind
     ctm <- cts$ctstanmodelbase
     datastruct <- standatatolong(cts$standata, origstructure=TRUE, ctm=ctm)
-    
-    if(cts$setup$recompile){ #then temporarily attach compiled stanmodels to search path to avoid recompiling
-      ctsem.compiledmodel <- new.env()
-      ctsem.compiledmodel$fitmodel <- cts$stanmodel
-      if(!is.null(cts$generated)) ctsem.compiledmodel$genmodel <- cts$generated$stanmodel
-      attach(ctsem.compiledmodel)
-      on.exit(add = TRUE, {detach(name = 'ctsem.compiledmodel')})
-      }
+   # browser() 
+   #  if(cts$setup$recompile){ #then temporarily attach compiled stanmodels to search path to avoid recompiling
+   #    ctsem.compiledmodel <- new.env()
+   #    ctsem.compiledmodel$fitmodel <- cts$stanmodel
+   #    if(!is.null(cts$generated)) ctsem.compiledmodel$genmodel <- cts$generated$stanmodel
+   #    attach(ctsem.compiledmodel)
+   #    on.exit(add = TRUE, {detach(name = 'ctsem.compiledmodel')})
+   #    }
     }
 
   datastruct[,ctm$manifestNames] <- NA #remove manifest variables
@@ -91,8 +91,9 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
   optimcontrol$carefulfit=FALSE
   optimcontrol$is <- is
   optimcontrol$stochastic=FALSE
-  # if(is.null(dots$finishsamples) && parsonly)  #why was this here? seemed to stop nsamples effect
   optimcontrol$finishsamples=nsamples
+
+  
   if(!includePreds){
     ctm$n.TDpred <- 0
     ctm$TDpredNames <- NULL
@@ -101,16 +102,23 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
   }
   ctm$TIpredAuto <- 0L
   
-  #problem with multiple cores inside function?
-  
-  datadummy= datastruct[c(1,nrow(datastruct)),,drop=FALSE]
+  ds <- data.table(datastruct)
+  ds[,WhichObs:=(1:.N),by=eval(ctm$subjectIDname)]
+  datadummy= data.frame(datastruct)[ds$WhichObs==1,]
   datadummy[,ctm$TIpredNames] <- 0
+  
+  
+  args <- cts$args
+  args$optimcontrol=optimcontrol
+  args$optimize=TRUE
+  args$cores=1 #problem with multiple cores inside function?
+  args$ctstanmodel <- ctm
+  args$inits=1e-10
+  args$datalong=datadummy
   
   #fit to empty data 
   message('Fitting model to empty dataset...')
-  pp<-ctStanFit(datalong =datadummy, #to reenable multi core -- check parallel craziness in stanoptimis (not needed though, fast to fit)
-    ctstanmodel = ctm, optimcontrol=optimcontrol,cores=1,nopriors=FALSE, inits=1e-10)
-  
+  pp<-do.call(ctStanFit,args)
   
   if(parsonly) dat <- pp else{
 

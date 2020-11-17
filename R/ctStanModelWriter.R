@@ -855,7 +855,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,simplify=TRUE){
         ',matcalcs('si',when=4, mats$measurement,basemats=FALSE),'
         ',simplifystanfunction(paste0(ctm$modelmats$calcs$measurement,';\n\n ',collapse=' '),simplify),'
         
-      if(statei > 0 && (savescores + intoverstates) > 0) {
+      if(statei > 0 && (intoverstates) > 0) {
         Jy[o,statei] =  LAMBDA[o] * state[1:nlatent] + MANIFESTMEANS[o,1]; //compute new change
         Jy[o1,statei] = to_vector(inv_logit(to_array_1d(Jy[o1,statei])));
          if(verbose>1) print("Jy ",Jy);
@@ -1135,9 +1135,15 @@ if(verbose > 1) print ("below t0 row ", rowi);
     }//end nonlinear tdpred
 
   if(intoverstates==0){
-    if(T0check==0) state += cholesky_decompose(T0VAR) * etaupdbasestates[(1+(rowi-1)*nlatentpop):(rowi*nlatentpop)];
-    if(T0check>0) state[derrind] +=  cholesky_decompose(makesym(discreteDIFFUSION[derrind,derrind],verbose,1)) * 
-      (etaupdbasestates[(1+(rowi-1)*nlatentpop):(nlatent+(rowi-1)*nlatentpop)])[derrind];
+    //if(T0check==0) state += cholesky_decompose(T0VAR) * etaupdbasestates[(1+(rowi-1)*nlatentpop):(rowi*nlatentpop)];
+    //if(T0check>0) state[derrind] +=  cholesky_decompose(makesym(discreteDIFFUSION[derrind,derrind],verbose,1)) * 
+     // (etaupdbasestates[(1+(rowi-1)*nlatentpop):(nlatent+(rowi-1)*nlatentpop)])[derrind];
+     
+    if(T0check==0) llrow[rowi]+= multi_normal_cholesky_lpdf(
+       etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)] | rep_vector(0,nlatent), etacov);
+    if(T0check>0) llrow[rowi]+= multi_normal_lpdf(
+       etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)] | rep_vector(0,nlatent), discreteDIFFUSION);
+    state+=etaupdbasestates[(1+(rowi-1)*nlatentpop):(rowi*nlatentpop)];
   }
 
 if(verbose > 1){
@@ -1724,7 +1730,7 @@ model{
   if(intoverpop==0 && nindvarying > 0) target+= multi_normal_cholesky_lpdf(baseindparams | rep_vector(0,nindvarying), IIlatentpop[1:nindvarying,1:nindvarying]);
 
   if(ntipred > 0){ 
-    if(nopriors==0) target+= dokalmanpriormodifier * normal_lpdf(tipredeffectparams| 0, tipredeffectscale);
+    if(nopriors==0) target+= dokalmanpriormodifier * normal_lpdf(tipredeffectparams / tipredeffectscale| 0, 1);
     target+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
   }
 
@@ -1737,7 +1743,7 @@ model{
     }
   } //end pop priors section
   
-  ',if(!gendata) 'if(intoverstates==0) target+= normal_lpdf(etaupdbasestates|0,1);','
+  ',if(!gendata) '//if(intoverstates==0) target+= normal_lpdf(etaupdbasestates|0,1);','
   
   ',if(!gendata) 'target+= ll; \n','
   if(verbose > 0) print("lp = ", target());
