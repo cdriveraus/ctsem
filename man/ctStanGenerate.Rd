@@ -11,7 +11,6 @@ ctStanGenerate(
   fullposterior = TRUE,
   nsamples = 200,
   parsonly = FALSE,
-  includePreds = FALSE,
   cores = 2
 )
 }
@@ -28,9 +27,6 @@ Not used if ctm is a ctStanFit object.}
 \item{nsamples}{How many samples to generate?}
 
 \item{parsonly}{If TRUE, only return samples of raw parameters, don't generate data.}
-
-\item{includePreds}{if TRUE, the prior for covariate effects (TD and TI predictors)
-is included, as well as the TD and TI pred data. Else the effects are set to zero.}
 
 \item{cores}{Number of cpu cores to use.}
 }

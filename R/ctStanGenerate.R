@@ -62,10 +62,10 @@ generator2 <- function(gm,nsubjects,
 #'   datastruct = ctstantestdat,cores=2,nsamples = 50)
 #'}
 ctStanGenerate <- function(cts,datastruct=NA, is=FALSE, 
-  fullposterior=TRUE, nsamples=200, parsonly=FALSE,includePreds = FALSE,cores=2){
+  fullposterior=TRUE, nsamples=200, parsonly=FALSE,cores=2){
   
   includePreds <- FALSE #old argument, could reinstate some day...
-  
+  browser()
   #update this function to also generate posterior predictive
   
   nopriors <- FALSE # update this when creating posterior predictive, go to TRUE if fullposterior=F and fit object had no priors
@@ -93,7 +93,7 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
   optimcontrol$stochastic=FALSE
   optimcontrol$finishsamples=nsamples
 
-  if(args$optimize && includePreds) stop('Cannot sample from prior for TI preds when optimization is used')
+
   if(!includePreds){
     ctm$n.TDpred <- 0
     ctm$TDpredNames <- NULL
@@ -107,7 +107,7 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
   datadummy= data.frame(datastruct)[ds$WhichObs==1,]
   datadummy[,ctm$TIpredNames] <- 0
   
-  
+
   args <- cts$args
   args$optimcontrol=optimcontrol
   args$optimize=TRUE
