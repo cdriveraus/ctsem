@@ -1093,7 +1093,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
                 }
                 state[1:nlatent] += Kth[1:nlatent,1:nlatent] \
                 (DRIFT[1:nlatent,1:nlatent] * state[1:nlatent] + CINT[1:nlatent,1]) * dtsmall;
-                etacov = quad_form_sym((etacov), Mth\');
+                etacov = quad_form((etacov), Mth\');
       etacov[derrind,derrind] += (Kth[derrind,derrind] \\ DIFFUSIONcov[derrind,derrind] / Kth[derrind,derrind]\') * dtsmall;
               '),'
               
@@ -1558,6 +1558,8 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
     if(size(z1)) out[z1,z1] = matrix_exp(M[z1,z1]);
     return out;
   }
+  
+ 
   
 }
 data {

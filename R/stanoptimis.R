@@ -733,7 +733,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             out2<- parallel::clusterCall(clctsem,parlp,parm)
             tmp<-sapply(1:length(out2),function(x) {
               if(!is.null(attributes(out2[[x]])$err)){
-                if(length(out2) > 1) message('Error on core ', x,' but continuing:')
+                if(length(out2) > 1 && as.logical(verbose)) message('Error on core ', x,' but continuing:')
                 message(attributes(out2[[x]])$err)
               }
             })
@@ -1013,16 +1013,16 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       est2=init #because init contains the fixed values #unconstrain_pars(smf, est1)
       if(length(parsteps)>0) est2[-parsteps] = optimfit$par else est2=optimfit$par
       
-      if(standata$nindvarying > 0 && standata$intoverpop==0){ #recompose into single model
-        # standata$doonesubject <- 0L
-        a1=standata$nparams+standata$nindvarying+
-          (standata$nindvarying^2-standata$nindvarying)/2
-        whichmcmcpars <- (a1+1):(a1+standata$nindvarying*standata$nsubjects)
-        est3=est2[-whichmcmcpars]
-        est3=c(est3,(optimfit$mcmcpars))
-        est2=est3
-        if(standata$ntipredeffects > 0) est3 <- c(est3,est2[(a1+1):length(a1)])
-      }
+      # if(standata$nindvarying > 0 && standata$intoverpop==0){ #recompose into single model
+      #   # standata$doonesubject <- 0L
+      #   a1=standata$nparams+standata$nindvarying+
+      #     (standata$nindvarying^2-standata$nindvarying)/2
+      #   whichmcmcpars <- (a1+1):(a1+standata$nindvarying*standata$nsubjects)
+      #   est3=est2[-whichmcmcpars]
+      #   est3=c(est3,(optimfit$mcmcpars))
+      #   est2=est3
+      #   if(standata$ntipredeffects > 0) est3 <- c(est3,est2[(a1+1):length(a1)])
+      # }
       npars = length(est2)
     }
     
@@ -1419,17 +1419,17 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         
         
         
-        
-        if(standata$intoverpop == 0 && standata$nindvarying > 0){
-          mcmcsamps <- matrix(rnorm(finishsamples*length(whichmcmcpars)),nrow=finishsamples,ncol=length(whichmcmcpars))
-          mcmccov = cov(mcmcsamps)
-          mcmcchol = diag(1,length(whichmcmcpars))
-          fullchol <- matrix(0,nrow(mchol)+nrow(mcmcchol),nrow(mchol)+nrow(mcmcchol))
-          fullchol[whichmcmcpars,whichmcmcpars] <- mcmcchol
-          fullchol[-whichmcmcpars,-whichmcmcpars] <- mchol
-          mcov <- fullchol %*% t(fullchol)
-          mchol <- fullchol
-        }
+        # 
+        # if(standata$intoverpop == 0 && standata$nindvarying > 0){
+        #   mcmcsamps <- matrix(rnorm(finishsamples*length(whichmcmcpars)),nrow=finishsamples,ncol=length(whichmcmcpars))
+        #   mcmccov = cov(mcmcsamps)
+        #   mcmcchol = diag(1,length(whichmcmcpars))
+        #   fullchol <- matrix(0,nrow(mchol)+nrow(mcmcchol),nrow(mchol)+nrow(mcmcchol))
+        #   fullchol[whichmcmcpars,whichmcmcpars] <- mcmcchol
+        #   fullchol[-whichmcmcpars,-whichmcmcpars] <- mchol
+        #   mcov <- fullchol %*% t(fullchol)
+        #   mchol <- fullchol
+        # }
       }
       
       

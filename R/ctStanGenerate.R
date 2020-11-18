@@ -116,6 +116,8 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
   args$inits=1e-10
   args$datalong=datadummy
   
+  if(args$nopriors) stop('Priors disabled, cannot sample from prior!')
+
   #fit to empty data 
   message('Fitting model to empty dataset...')
   pp<-do.call(ctStanFit,args)

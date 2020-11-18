@@ -328,12 +328,13 @@ When \verb|optimize=FALSE|, Stan's Hamiltonian Monte Carlo sampler is used. Depe
 
 <<fitting,include=FALSE,cache=TRUE>>=
 if(w32chk()){
-suppressWarnings(fit<-ctStanFit(datalong = ctstantestdat, ctstanmodel = model,optimize=TRUE,savescores=TRUE))
+suppressWarnings(fit<-ctStanFit(datalong = ctstantestdat, 
+  ctstanmodel = model,optimize=TRUE,savescores=TRUE,savesubjectmatrices = TRUE, nopriors=FALSE))
 }
 @
 
 <<fittingshow,include=TRUE,eval=FALSE>>=
-fit<-ctStanFit(datalong = ctstantestdat, ctstanmodel = model)
+fit<-ctStanFit(datalong = ctstantestdat, ctstanmodel = model, nopriors=FALSE)
 @
 %The plot argument allows for plotting of sampling chains in real time, which is useful for slow models to ensure that sampling is proceeding in a functional manner. Models with many parameters (e.g., many subjects and all parameters varying over subject) may be too taxing for the plotting function to handle smoothly - we have had success with up to around 4000 parameters.  
 

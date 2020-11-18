@@ -8,6 +8,24 @@ ctStanRawSamples<-function(fit){
 }
 
 
+#' Extract an array of subject specific parameters from a ctStanFit object.
+#'
+#' @param fit fit object
+#' @param pointest if TRUE, returns only the set of individual difference parameters
+#' based on the max a posteriori estimate (or the median if sampling approaches were used).
+#' @param cores Number of cores to use.
+#' @param nsamples Number of samples to calculate parameters for. Not used if pointest=TRUE.
+#' 
+#' @details This function returns the estimates of individual parameters, taking into account any
+#' covariates and random effects. 
+#'
+#' @return an nsamples by nsubjects by nparams array.
+#' @export
+#'
+#' @examples
+#' indpars <- ctStanSubjectPars(ctstantestfit)
+#' dimnames(indpars)
+#' plot(indpars[1,,'cint1'],indpars[1,,'cint2'])
 ctStanSubjectPars <- function(fit,pointest=TRUE,cores=2,nsamples='all'){
   if(!nsamples[1] %in% 'all') fit$stanfit$rawposterior <- 
       fit$stanfit$rawposterior[sample(1:nrow(fit$stanfit$rawposterior),nsamples),,drop=FALSE]

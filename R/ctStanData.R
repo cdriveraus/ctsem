@@ -88,7 +88,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     tipreds <- datalong[match(unique(datalong[,ctm$subjectIDname]),datalong[,ctm$subjectIDname]),ctm$TIpredNames,drop=FALSE]
     if(any(is.na(tipreds))) {
       if(!optimize){
-        message(paste0('Missingness in TIpreds - sampling ', sum(is.na(tipreds)),' values'))
+        message(paste0("NA's in TIpreds - sampling ", sum(is.na(tipreds)),' values'))
         tipreds[is.na(tipreds)] = 99999
       }
       if(optimize){
@@ -163,7 +163,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     tdpreds <- datalong[,ctm$TDpredNames,drop=FALSE]
     if(any(is.na(tdpreds))) {
       # if(NAtdpreds == 'error'
-      message('Missingness in TDpreds! Replaced by zeroes...')
+      message("NA's in TDpreds! Replaced by zeroes, consider appropriateness...")
       tdpreds[is.na(tdpreds)] <-0 ## rough fix for missingness
     }
   }
