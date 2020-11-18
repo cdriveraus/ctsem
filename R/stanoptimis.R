@@ -1288,11 +1288,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               stepchange = 0
               stepchangemultiplier = 1
               while(!accepted && count < 15){
-                if(count>8) stepsize=stepsize*-1 #is this good?
+                # if(count>8) stepsize=stepsize*-1 #is this good?
                 stepchangemultiplier <- max(stepchangemultiplier,.11)
                 count <- count + 1
                 lp[[di]] <- target(pars+uppars*stepsize*directions[di])
-                accepted <- !'try-error' %in% class(lp[[di]])
+                accepted <- !'try-error' %in% class(lp[[di]]) && all(!is.na(attributes(lp[[di]])$gradient))
                 if(accepted){
                   lpdiff <- base[1] - lp[[di]][1]
                   # if(lpdiff > 1e100) 
@@ -1326,18 +1326,16 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               step <<- stepsize
               steplist[[di]] <- stepsize
             }
-            # 
-            grad<- attributes(lp[[1]])$gradient / steplist[[di]] * directions[di]
-            if(length(directions) > 1) grad <- (grad + attributes(lp[[2]])$gradient / (steplist[[di]]*-1))/2
             
-            # hessout[,i] <-rbind(grad)
+            grad<- attributes(lp[[1]])$gradient / steplist[[di]] * directions[di]
+            if(any(is.na(grad))) warning('NA gradient encountered at param ',i)
+            if(length(directions) > 1) grad <- (grad + attributes(lp[[2]])$gradient / (steplist[[di]]*-1))/2
+
             return(grad)
           }
           ) #end flexapply
-          # 
+      
           out=(hessout+t(hessout))/2
-          # attributes(out)$steplist=steplist
-          # })
           return(out)
         }
 
@@ -1345,10 +1343,12 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           step = rep(1e-3,length(grinit)),cl=hesscl,verbose=verbose,directions=1)
         hess2 <- jac(pars = grinit,parsteps=parsteps,#fgfunc = fgfunc,
           step = rep(1e-3,length(grinit)),cl=hesscl,verbose=verbose,directions=-1)
-        # 
         
         hess1good <- diag(hess1) < -1e-8
         hess2good <- diag(hess2) < -1e-8
+        
+        hess1good[is.na(hess1good)] <- FALSE
+        hess2good[is.na(hess2good)] <- FALSE
         
         hess <- hess1 
         hess[,!hess1good & !hess2good] <- (hess1[,!hess2good & !hess1good] + 
