@@ -64,11 +64,10 @@ generator2 <- function(gm,nsubjects,
 ctStanGenerate <- function(cts,datastruct=NA, is=FALSE, 
   fullposterior=TRUE, nsamples=200, parsonly=FALSE,cores=2){
   
-  includePreds <- FALSE #old argument, could reinstate some day...
-  browser()
+  # includePreds <- FALSE #old argument, could reinstate some day...
   #update this function to also generate posterior predictive
   
-  nopriors <- FALSE # update this when creating posterior predictive, go to TRUE if fullposterior=F and fit object had no priors
+  # nopriors <- FALSE # update this when creating posterior predictive, go to TRUE if fullposterior=F and fit object had no priors
   derrind <- 'all' #possibly update below
   
   if('ctStanFit' %in% class(cts)){
@@ -94,12 +93,12 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
   optimcontrol$finishsamples=nsamples
 
 
-  if(!includePreds){
-    ctm$n.TDpred <- 0
-    ctm$TDpredNames <- NULL
-    ctm$n.TIpred <- 0
-    ctm$TIpredNames <- NULL
-  }
+  # if(!includePreds){
+  #   ctm$n.TDpred <- 0
+  #   ctm$TDpredNames <- NULL
+  #   ctm$n.TIpred <- 0
+  #   ctm$TIpredNames <- NULL
+  # }
   ctm$TIpredAuto <- 0L
   
   ds <- data.table(datastruct)

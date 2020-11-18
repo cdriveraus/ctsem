@@ -388,9 +388,10 @@ ctCheckFit <- function(fit,
   
   
   byc=unique(c('Sample','WhichObs','DataSource','time'))
+
   if(is.na(combinevars[1])){
     combinevars = setNames(
-      colnames(datbase)[!colnames(datbase) %in% byc],colnames(datbase)[!colnames(datbase) %in% byc])
+      colnames(dat)[!colnames(dat) %in% byc],colnames(dat)[!colnames(dat) %in% byc])
     combinevars<-c(combinevars,LogLik='LogLik')
   }
   
