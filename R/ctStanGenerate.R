@@ -49,8 +49,6 @@ generator2 <- function(gm,nsubjects,
 #' @param fullposterior Generate from the full posterior or just the (unconstrained) mean?
 #' @param nsamples How many samples to generate?
 #' @param parsonly If TRUE, only return samples of raw parameters, don't generate data.
-#' @param includePreds if TRUE, the prior for covariate effects (TD and TI predictors)
-#' is included, as well as the TD and TI pred data. Else the effects are set to zero.
 #' @param cores Number of cpu cores to use.
 #'
 #' @return List contining Y, and array of nsamples by data rows by manifest variables, 
@@ -65,6 +63,8 @@ generator2 <- function(gm,nsubjects,
 #'}
 ctStanGenerate <- function(cts,datastruct=NA, is=FALSE, 
   fullposterior=TRUE, nsamples=200, parsonly=FALSE,includePreds = FALSE,cores=2){
+  
+  includePreds <- FALSE #old argument, could reinstate some day...
   
   #update this function to also generate posterior predictive
   
@@ -93,7 +93,7 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
   optimcontrol$stochastic=FALSE
   optimcontrol$finishsamples=nsamples
 
-  
+  if(args$optimize && includePreds) stop('Cannot sample from prior for TI preds when optimization is used')
   if(!includePreds){
     ctm$n.TDpred <- 0
     ctm$TDpredNames <- NULL
@@ -115,8 +115,7 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
   args$ctstanmodel <- ctm
   args$inits=1e-10
   args$datalong=datadummy
-  
-  if(args$nopriors) stop('Priors disabled, cannot sample from prior!')
+  if(as.logical(args$nopriors)) stop('Priors disabled, cannot sample from prior!')
 
   #fit to empty data 
   message('Fitting model to empty dataset...')
