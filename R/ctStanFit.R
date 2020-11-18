@@ -627,7 +627,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         #   '\n')
         if(saveCompile){
           if(exists(x = 'ctsem.compiled',envir= parent.frame()) 
-            && !'rstan' %in% class(get('ctsem.compiled',envir = parent.frame()))){
+            && !'stanmodel' %in% class(get('ctsem.compiled',envir = parent.frame()))){
             warning('ctsem.compiled object already exists, not saving compile')
             } else  assign(x = 'ctsem.compiled',sm,envir = parent.frame())
         }

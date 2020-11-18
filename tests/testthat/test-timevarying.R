@@ -10,8 +10,8 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
   test_that("varyingLAMBDA", {
     set.seed(1)
     s=list()
-    nsubjects=10
-    Tpoints=150
+    nsubjects=50
+    Tpoints=50
     lambdafactor = .3
     dt=1
     
@@ -23,8 +23,10 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       d[,'id'] <- subi
       if(subi==1) dat=d else dat=rbind(dat,d)
     }
+    dat <- as.matrix(dat)
     dat[,'Y1'] <-  dat[,'Y1'] * (1+ lambdafactor * dat[,'Y2']) #state dependent lambda
-    dat[,c('Y1','Y2')] <- dat[,c('Y1','Y2')] + rnorm(nrow(dat)*2,0,.5) #measurement error
+    dat[,c('Y1')] <- dat[,c('Y1')] + rnorm(nrow(dat),0,.5) #measurement error
+    dat[,c('Y2')] <- dat[,c('Y2')] + rnorm(nrow(dat),0,.5) #measurement error
     
     colnames(dat)[1]='id'
     

@@ -1135,15 +1135,15 @@ if(verbose > 1) print ("below t0 row ", rowi);
     }//end nonlinear tdpred
 
   if(intoverstates==0){
-    //if(T0check==0) state += cholesky_decompose(T0VAR) * etaupdbasestates[(1+(rowi-1)*nlatentpop):(rowi*nlatentpop)];
-    //if(T0check>0) state[derrind] +=  cholesky_decompose(makesym(discreteDIFFUSION[derrind,derrind],verbose,1)) * 
-     // (etaupdbasestates[(1+(rowi-1)*nlatentpop):(nlatent+(rowi-1)*nlatentpop)])[derrind];
+    if(T0check==0) state += cholesky_decompose(T0VAR) * etaupdbasestates[(1+(rowi-1)*nlatentpop):(rowi*nlatentpop)];
+    if(T0check>0) state[derrind] +=  cholesky_decompose(makesym(discreteDIFFUSION[derrind,derrind],verbose,1)) * 
+     (etaupdbasestates[(1+(rowi-1)*nlatentpop):(nlatent+(rowi-1)*nlatentpop)])[derrind];
      
-    if(T0check==0) llrow[rowi]+= multi_normal_cholesky_lpdf(
-       etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)] | rep_vector(0,nlatent), etacov);
-    if(T0check>0) llrow[rowi]+= multi_normal_lpdf(
-       etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)] | rep_vector(0,nlatent), discreteDIFFUSION);
-    state+=etaupdbasestates[(1+(rowi-1)*nlatentpop):(rowi*nlatentpop)];
+   // if(T0check==0) llrow[rowi]+= multi_normal_cholesky_lpdf(
+  //     etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)] | rep_vector(0,nlatent), etacov);
+  //  if(T0check>0) llrow[rowi]+= multi_normal_lpdf(
+  //     etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)] | rep_vector(0,nlatent), discreteDIFFUSION);
+  //  state+=etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
   }
 
 if(verbose > 1){
@@ -1745,7 +1745,7 @@ model{
     }
   } //end pop priors section
   
-  ',if(!gendata) '//if(intoverstates==0) target+= normal_lpdf(etaupdbasestates|0,1);','
+  ',if(!gendata) 'if(intoverstates==0) target+= normal_lpdf(etaupdbasestates|0,1);','
   
   ',if(!gendata) 'target+= ll; \n','
   if(verbose > 0) print("lp = ", target());

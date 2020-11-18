@@ -215,6 +215,8 @@ if(transform < 49 && offset != 0.0) param+=offset;
     return out;
   }
   
+ 
+  
 }
 data {
   int<lower=0> ndatapoints;
@@ -798,15 +800,15 @@ if(sum(whenmat[53,{3}]) > 0)Jtd=mcalc(Jtd,indparams, statetf,{3}, 53, matsetup, 
     }//end nonlinear tdpred
 
   if(intoverstates==0){
-    //if(T0check==0) state += cholesky_decompose(T0VAR) * etaupdbasestates[(1+(rowi-1)*nlatentpop):(rowi*nlatentpop)];
-    //if(T0check>0) state[derrind] +=  cholesky_decompose(makesym(discreteDIFFUSION[derrind,derrind],verbose,1)) * 
-     // (etaupdbasestates[(1+(rowi-1)*nlatentpop):(nlatent+(rowi-1)*nlatentpop)])[derrind];
+    if(T0check==0) state += cholesky_decompose(T0VAR) * etaupdbasestates[(1+(rowi-1)*nlatentpop):(rowi*nlatentpop)];
+    if(T0check>0) state[derrind] +=  cholesky_decompose(makesym(discreteDIFFUSION[derrind,derrind],verbose,1)) * 
+     (etaupdbasestates[(1+(rowi-1)*nlatentpop):(nlatent+(rowi-1)*nlatentpop)])[derrind];
      
-    if(T0check==0) llrow[rowi]+= multi_normal_cholesky_lpdf(
-       etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)] | rep_vector(0,nlatent), etacov);
-    if(T0check>0) llrow[rowi]+= multi_normal_lpdf(
-       etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)] | rep_vector(0,nlatent), discreteDIFFUSION);
-    state+=etaupdbasestates[(1+(rowi-1)*nlatentpop):(rowi*nlatentpop)];
+   // if(T0check==0) llrow[rowi]+= multi_normal_cholesky_lpdf(
+  //     etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)] | rep_vector(0,nlatent), etacov);
+  //  if(T0check>0) llrow[rowi]+= multi_normal_lpdf(
+  //     etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)] | rep_vector(0,nlatent), discreteDIFFUSION);
+  //  state+=etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)];
   }
 
 if(verbose > 1){
