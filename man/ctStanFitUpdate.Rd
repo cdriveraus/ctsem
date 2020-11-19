@@ -26,7 +26,7 @@ Either to include different data, or because you have upgraded ctsem and the int
 }
 \examples{
 if(w32chk()){
-newfit <- ctStanFitUpdate(ctstantestfit,refit=TRUE)
+newfit <- ctStanFitUpdate(ctstantestfit,refit=FALSE)
 }
 
 }

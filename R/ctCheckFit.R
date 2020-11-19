@@ -247,7 +247,6 @@ ctDataCombineSplit <- function(dat, idvars, vars){ #no splits yet
 meltcov <- function(covm){
   if(is.null(dimnames(covm))) dimnames(covm) = list(paste0('v',1:nrow(covm)),
     paste0('v',1:ncol(covm)))
-  # browser()
   colnames(covm)[rownames(covm) %in% ''] <- 
     paste0('v',(1:nrow(covm))[rownames(covm) %in% ''])
   rownames(covm)[rownames(covm) %in% ''] <- 
@@ -315,7 +314,7 @@ ctStanFitMelt <- function(fit, maxsamples='all'){
         data.table(matrix(aperm(d$Y[samples,,,drop=FALSE],c(2,1,3)), ncol=dim(d$Y)[3]))
       gdat$Sample=rep(samples,each=dim(d$Y)[2])
       gdat$LogLik<-c(d$llrow[samples,])
-      gdat$time<-rep(datbase$time,times=length(samples))
+      gdat[[fit$ctstanmodelbase$timeName]]<-rep(datbase[[fit$ctstanmodelbase$timeName]],times=length(samples))
       gdat$DataSource <- dsi
       
       if(nrow(dat)==0) dat <- gdat else dat <- rbind(dat, gdat)
@@ -386,8 +385,8 @@ ctCheckFit <- function(fit,
   
   
   
-  
-  byc=unique(c('Sample','WhichObs','DataSource','time'))
+  byc=unique(c('Sample','WhichObs','DataSource',fit$ctstanmodel$timeName))
+  bycid=c(fit$ctstanmodelbase$subjectIDname,byc)
 
   if(is.na(combinevars[1])){
     combinevars = setNames(
@@ -401,8 +400,8 @@ ctCheckFit <- function(fit,
   
   
   wdat=dcast(dat,paste0(
-    fit$ctstanmodelbase$subjectIDname,
-    '+Sample+DataSource+WhichObs+time','~variable'),value.var = 'value',fun.aggregate = mean,na.rm=TRUE)
+   paste0(bycid,collapse='+'),
+    '~variable'),value.var = 'value',fun.aggregate = mean,na.rm=TRUE)
   
   if(any(lag!=0)){ 
     if(aggregate){
@@ -411,14 +410,14 @@ ctCheckFit <- function(fit,
         aggregate=FALSE
       }
     }
-    prelagcols=colnames(wdat)[!colnames(wdat) %in% c('id','Sample','DataSource','WhichObs','time',TIpredNames)]
+    prelagcols=colnames(wdat)[!colnames(wdat) %in% c(bycid,TIpredNames)]
     lagcols=(paste0("lag",  rep(lag, times = length(prelagcols)),'_',rep(prelagcols, each = length(lag))))
     
     wdat[, eval(lagcols) :=  
-        shift(.SD, lag), by=c('id','Sample','DataSource'),.SDcols=prelagcols]
+        shift(.SD, lag), by=c(fit$ctstanmodel$subjectIDname,'Sample','DataSource'),.SDcols=prelagcols]
   }
   
-  dat <- melt(wdat,id.vars=unique(c('id','Sample','DataSource','WhichObs','time',by)))
+  dat <- melt(wdat,id.vars=unique(c(bycid,by)))
   
   
   if(is.na(combinevars[1])) combinevars <- setNames(unique(dat$variable), unique(dat$variable))
@@ -433,8 +432,7 @@ ctCheckFit <- function(fit,
   
   dat = dat[!is.na(value),]
   
-  
-  # browser()
+
   
   breaks = min(breaks,length(unique(dat[[by]][!is.na(dat[[by]])])))
   # k = min(k,length(unique(dat[[by]][!is.na(dat[[by]])]))-1)

@@ -14,7 +14,7 @@
 #'
 #' @examples
 #' if(w32chk()){
-#' newfit <- ctStanFitUpdate(ctstantestfit,refit=TRUE)
+#' newfit <- ctStanFitUpdate(ctstantestfit,refit=FALSE)
 #' }
 #' 
 ctStanFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){

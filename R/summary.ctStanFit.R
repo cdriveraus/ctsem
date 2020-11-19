@@ -29,7 +29,7 @@ ctStanRawSamples<-function(fit){
 ctStanSubjectPars <- function(fit,pointest=TRUE,cores=2,nsamples='all'){
   if(!nsamples[1] %in% 'all') fit$stanfit$rawposterior <- 
       fit$stanfit$rawposterior[sample(1:nrow(fit$stanfit$rawposterior),nsamples),,drop=FALSE]
-  pnames <- getparnames(fit,indvaronly = TRUE)
+  pnames <- getparnames(fit,subjvariationonly = TRUE)
   m <- fit$ctstanmodelbase$pars
   if(pointest) tfp <- fit$stanfit$transformedparsfull else {
     tfp <- ctExtract(fit,subjectMatrices = TRUE,cores=cores)
@@ -52,18 +52,18 @@ ctStanSubjectPars <- function(fit,pointest=TRUE,cores=2,nsamples='all'){
   return(p)
 }
 
-getparnames <- function(fit,indvaronly=FALSE, popstatesonly=FALSE){
+getparnames <- function(fit,reonly=FALSE, subjvariationonly=FALSE, popstatesonly=FALSE){
   ms <- fit$setup$matsetup
   
   if(popstatesonly)  indices=ms$param > 0 & ms$copyrow <1 & ms$matrix==1 & ms$indvarying > 0 & ms$row > fit$standata$nlatent
   if(!popstatesonly)  indices=ms$when %in% c(0,-1) & ms$param > 0 & ms$copyrow < 1
+  if(subjvariationonly) indices = ms$when %in% c(0,-1) & ms$param > 0 & ms$copyrow < 1 & (ms$tipred >0 | ms$indvarying > 0)
   pars <- data.frame(parnames = ms$parname[indices],  parindices = ms$param[indices])
   
   pars<-pars[!duplicated(pars$parnames),]
   pars<-pars[order(pars$parindices),]
   parnames <- pars[pars$parindices >0, 1]
-  
-  if(indvaronly)  parnames <- parnames[fit$standata$indvaryingindex]
+  if(reonly)  parnames <- parnames[fit$standata$indvaryingindex]
   
   return(parnames)
 }
@@ -122,7 +122,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
   ms=object$setup$matsetup
   parnames = getparnames(object)
   # parnames <- unique(parnames)
-  parnamesiv <- getparnames(object,indvaronly = TRUE)
+  parnamesiv <- getparnames(object,reonly = TRUE)
   
   #### generate covcor matrices of raw and transformed subject level params
   

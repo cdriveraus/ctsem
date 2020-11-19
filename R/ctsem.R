@@ -29,7 +29,7 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
   'Var2',
   'value',
   'WhichObs',
-  'variable',
+  'variable','Datasource','id','verbose','param',
   'manifest',
   'Original','sysnoise','starts', 'obsNames'))
 

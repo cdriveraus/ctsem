@@ -195,7 +195,7 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
                 rep((sqrt(diag(ctpars$asymDIFFUSION[i,min(j,nsubs$asymDIFFUSION),,]))),times=nl),nl)
         }
         if(observational){
-          Qcor<-cov2cor(as.matrix(ctpars$DIFFUSION[i,min(j,nsubs$DIFFUSIONcov),,])) 
+          Qcor<-cov2cor(matrix(ctpars$DIFFUSIONcov[i,min(j,nsubs$DIFFUSIONcov),,],nl,nl)+diag(1e-8,nl)) 
           Qcor <- Qcor^2 * sign(Qcor) #why is this squared?
           ctpars$dtDRIFT[i,j,ti,,]  <- ctpars$dtDRIFT[i,j,ti,,]  %*% Qcor
         }
@@ -203,7 +203,7 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
       }
     }
   }
-  
+  # browser()
   
   # discreteDRIFT <- array(sapply(1:(dim(ctpars$DRIFT)[1]),function(d){ #for each sample
   #   sapply(1:max(unlist(nsubs)),function(subi){ #and each subject
