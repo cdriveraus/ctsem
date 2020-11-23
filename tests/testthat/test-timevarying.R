@@ -30,14 +30,14 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     colnames(dat)[1]='id'
     
-    cm <- ctModel(LAMBDA=matrix(c('lbystate * eta2 + 1',0,0,1),2,2),  T0MEANS=c('t0m1','t0m2'),
+    cm <- ctModel(LAMBDA=matrix(c('lbystate * eta2 + 1',0,0,1),2,2),  T0MEANS=c('t0m1','t0m2|log1p_exp(param)'),
       T0VAR=matrix(c('t0v11',0,0,'t0v22'),2,2),
       PARS=c('lbystate','lbystate * eta2 + 1'),type='stanct')
     
     cm$pars$indvarying <- FALSE
     # cm$pars$indvarying[cm$pars$matrix %in% c('CINT','T0MEANS')] <- TRUE
     
-    dm<- ctModel(LAMBDA=matrix(c('PARS[2,1]',0,0,1),2,2), T0MEANS=c('t0m1','t0m2|log1p_exp(param)'),
+    dm<- ctModel(LAMBDA=matrix(c('1 + lbystate * eta2',0,0,1),2,2), T0MEANS=c('t0m1','t0m2|log1p_exp(param)'),
       T0VAR=matrix(c('t0v11',0,0,'t0v22'),2,2),
       PARS=c('lbystate'),type='standt')
     

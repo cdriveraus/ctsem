@@ -94,6 +94,13 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
   
   if(!'ctStanFit' %in% class(object)) stop('Not a ctStanFit object!')
   
+  monitor <- function(dat,...){
+    out <- rstan::monitor(dat,...)
+    class(out) <- 'data.frame'
+    return(out)
+  }
+  
+  
   out=list()
   monvars <- c('mean','sd','2.5%','50%','97.5%')
   
@@ -136,7 +143,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
       dimrawpopcorr <- dim(e$rawpopcorr)
       rawpopcorr= array(e$rawpopcorr,dim=c(dimrawpopcorr[1],1,dimrawpopcorr[2] * dimrawpopcorr[3]))
       rawpopcorrout <- suppressWarnings(monitor(rawpopcorr, digits_summary=digits,warmup=0,print = FALSE)[lower.tri(diag(nindvarying)),c(monvars,'n_eff','Rhat'),drop=FALSE])
-      if(optimize) rawpopcorrout <- rawpopcorrout[,-which(colnames(rawpopcorrout) %in% c('n_eff','Rhat')),drop=FALSE]
+       if(optimize) rawpopcorrout <- rawpopcorrout[,-which(colnames(rawpopcorrout) %in% c('n_eff','Rhat')),drop=FALSE]
       
       rownames(rawpopcorrout) <- matrix(paste0('',parnamesiv,'__',rep(parnamesiv,each=length(parnamesiv))),
         length(parnamesiv),length(parnamesiv))[lower.tri(diag(nindvarying)),drop=FALSE]

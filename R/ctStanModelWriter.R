@@ -429,7 +429,7 @@ ctStanMatricesList <- function(unsafe=FALSE){
     T0VAR=8,TDPREDEFFECT=9)
   jacobian = c(J0=51,JAx=52,Jtd=53,Jy=54)
   asymptotic = c(asymCINT=21,asymDIFFUSION=22)
-  extra <- c(DIFFUSIONcov=31)
+  extra <- c(DIFFUSIONcov=31,MANIFESTcov=32)
   all <- c(base,jacobian,asymptotic, extra)
   mn <- list(base=base, jacobian=jacobian, asymptotic=asymptotic, extra=extra,all=all)
   mn$driftcint <- all[names(all) %in% c('DRIFT','CINT')]
@@ -610,6 +610,8 @@ ctStanModelMatrices <-function(ctm){
     matrixdims[mats$all[names(mats$all ) == 'DIFFUSION'],]
   matrixdims[mats$all[names(mats$all ) == 'asymCINT'],] <- 
     matrixdims[mats$all[names(mats$all ) == 'CINT'],]
+  matrixdims[mats$all[names(mats$all ) == 'MANIFESTcov'],] <- 
+    matrixdims[mats$all[names(mats$all ) == 'MANIFESTVAR'],]
   
   #set integer types
   matsetup[,!colnames(matsetup) %in% 'parname'] <- lapply(matsetup[,!colnames(matsetup) %in% 'parname'],as.integer)
@@ -949,7 +951,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,simplify=TRUE){
       o0= whichequals(manifesttype,1,0);
     }
     
-    if(prevrow != 0) T0check = (si==subject[prevrow]) ? (T0check+1) : 0; //if same subject, add one, else zero
+    if(prevrow != 0 && rowi != 1) T0check = (si==subject[prevrow]) ? (T0check+1) : 0; //if same subject, add one, else zero
     if(T0check > 0){
       dt = time[rowi] - time[prevrow];
       dtchange = dt!=prevdt; 
@@ -980,7 +982,9 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,simplify=TRUE){
   if(whenmat[1, 5] >= (si ? 1 : 0)) T0MEANS = 
     mcalc(T0MEANS, indparams, statetf, {0}, 1, matsetup, matvalues, si, subindices); // base t0means to init
       
-  for(li in 1:nlatentpop) if(!is_nan(T0MEANS[li,1])) state[li] = T0MEANS[li,1]; //in case of t0 dependencies, may have missingness
+ // for(li in 1:nlatentpop) if(!is_nan(T0MEANS[li,1])) state[li] = T0MEANS[li,1]; //in case of t0 dependencies, may have missingness
+  
+  state=T0MEANS[,1];
   
   statetf[whichequals(whenvecs[1],0,0)] = parvectform(whichequals(whenvecs[1],0,0),state, 1,
     matsetup, matvalues, si, subindices, whenvecs[1]);   
@@ -1016,6 +1020,8 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,simplify=TRUE){
       }
     }
   }
+  
+  if(si==0 || statedep[5] || (whenmat[32,5])) MANIFESTcov = sdcovsqrt2cov(MANIFESTVAR,choleskymats);
     
     if(verbose>1) print("nl t0var = ", T0VAR, "   J0 = ", J0);
     etacov = quad_form(T0VAR, J0\'); //probably unneeded, inefficient
@@ -1160,20 +1166,21 @@ if(verbose > 1){
     
       ',finiteJy(),'
  
+   if(statedep[5]) MANIFESTcov = sdcovsqrt2cov(MANIFESTVAR,choleskymats);
    if(si > 0 && dokalmanrows[rowi] ==1){   //if not just inits...
 
       if(intoverstates==1 || savescores==1) { //classic kalman
-        ycov[o,o] = quad_form(etacov, Jy[o,]\'); // + MANIFESTVAR[o,o]; shifted measurement error down
+        ycov[o,o] = quad_form(etacov, Jy[o,]\') + MANIFESTcov[o,o]; // previously shifted measurement error down, but reverted
         for(wi in 1:nmanifest){ 
-          if(Y[rowi,wi] != 99999 || savescores==1) ycov[wi,wi] += square(MANIFESTVAR[wi,wi]);
+          // if(Y[rowi,wi] != 99999 || savescores==1) ycov[wi,wi] += square(MANIFESTVAR[wi,wi]);
           if(manifesttype[wi]==1 && (Y[rowi,wi] != 99999  || savescores==1)) ycov[wi,wi] += fabs((syprior[wi] - 1) .* (syprior[wi]));
           if(manifesttype[wi]==2 && (Y[rowi,wi] != 99999  || savescores==1)) ycov[wi,wi] += square(fabs((syprior[wi] - round(syprior[wi])))); 
         }
       }
         
-      if(intoverstates==0) { //sampled states
-        if(ncont_y[rowi] > 0) for(mi in o0) ypriorcov_sqrt[mi,mi] = sqrt(MANIFESTVAR[mi,mi]);
-      }
+      if(intoverstates==0 && ncont_y[rowi] > 0) ypriorcov_sqrt[o,o] = 
+        cholesky_decompose(makesym(MANIFESTcov[o,o],verbose,1));
+
         
      
 '    
@@ -1210,7 +1217,7 @@ if(verbose > 1){
           " indparams = ", indparams,
             "  syprior[o] =",syprior[o],"  ycov[o,o] ",ycov[o,o], 
             "  PARS = ", PARS, 
-            "  DRIFT =", DRIFT, " DIFFUSION =", DIFFUSION, " CINT =", CINT, "  MANIFESTVAR ", diagonal(MANIFESTVAR), "  MANIFESTMEANS ", MANIFESTMEANS, 
+            "  DRIFT =", DRIFT, " DIFFUSION =", DIFFUSION, " CINT =", CINT, "  MANIFESTcov ", (MANIFESTcov), "  MANIFESTMEANS ", MANIFESTMEANS, 
             "  T0VAR", T0VAR,  " T0MEANS ", T0MEANS, "LAMBDA = ", LAMBDA, "  Jy = ",Jy,
             " discreteDRIFT = ", discreteDRIFT, "  discreteDIFFUSION ", discreteDIFFUSION, "  asymDIFFUSION ", asymDIFFUSION, 
             " DIFFUSIONcov = ", DIFFUSIONcov,
@@ -1226,8 +1233,7 @@ if(verbose > 1){
         etaa[2,rowi] = state;
         ycova[1,rowi] = ycov;
         etacova[2,rowi] = etacov;
-        ycova[2,rowi] = quad_form(etacov, Jy\');
-        for(wi in 1:nmanifest) ycova[2,rowi,wi,wi] += square(MANIFESTVAR[wi,wi]);
+        ycova[2,rowi] = quad_form(etacov, Jy\') + MANIFESTcov;
         ya[2,rowi] = MANIFESTMEANS[o,1] + LAMBDA[o,] * state[1:nlatent];
       }
       
@@ -1287,9 +1293,8 @@ if(verbose > 1){
       ',finiteJy(),'
       
       ya[3,sri] = syprior;
-      ycova[3,sri] = quad_form(etacova[3,sri], Jy\'); 
+      ycova[3,sri] = quad_form(etacova[3,sri], Jy\')+MANIFESTcov; 
       for(wi in 1:nmanifest){
-        ycova[3,sri,wi,wi] += square(MANIFESTVAR[wi,wi]);
         if(manifesttype[wi]==1) ycova[3,sri,wi,wi] += fabs((ya[3,sri,wi] - 1) * (ya[3,sri,wi]));
         if(manifesttype[wi]==2) ycova[3,sri,wi,wi] += square(fabs((ya[3,sri,wi] - round(ya[3,sri,wi])))); 
       }
@@ -1323,7 +1328,7 @@ matcalcs <- function(subjectid,when, matrices, basemats){
 }
 
 
-subjectparaminit<- function(popmats=FALSE,smats=TRUE,matrices=c(mats$base,31, 21,22)){
+subjectparaminit<- function(popmats=FALSE,smats=TRUE,matrices=c(mats$base,31, 32, 21,22)){
   if(smats && popmats) stop('smats and popmats cannot both be TRUE!')
   ma <- ctStanMatricesList()$all
   out<-''
@@ -1341,7 +1346,7 @@ subjectparaminit<- function(popmats=FALSE,smats=TRUE,matrices=c(mats$base,31, 21
   return(out)
 }
 
-collectsubmats <- function(popmats=FALSE,matrices=c(mats$base,31, 21,22)){ #'DIFFUSIONcov','asymDIFFUSION','asymCINT'
+collectsubmats <- function(popmats=FALSE,matrices=c(mats$base,31, 32,21,22)){ #'DIFFUSIONcov','MANIFESTcov','asymDIFFUSION','asymCINT'
   ma <- ctStanMatricesList()$all
   out<-''
   for(mn in matrices){

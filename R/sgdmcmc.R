@@ -506,8 +506,7 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
       par(mfrow=c(2,3),mgp=c(2,.8,0),mar=c(2,3,1,0)+.2)
       plot(pars,col=1:length(pars))
       points(changepars,pch=17,col='red')
-      
-      plot(log(abs(step*gsmooth)),col=1:length(pars))
+      plot(log(abs(step*gsmooth)+1e-50),col=1:length(pars))
       plot(tail(log(-(lp-max(lp)-1)),500),type='l')
       # plot(gamweights,col=1:length(pars))
       parsd=(apply(parstore,1,sd,na.rm=T))

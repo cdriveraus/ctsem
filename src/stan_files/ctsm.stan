@@ -336,6 +336,7 @@ transformed parameters{
       matrix[matrixdims[8, 1], matrixdims[8, 2] ] pop_T0VAR;
       matrix[matrixdims[9, 1], matrixdims[9, 2] ] pop_TDPREDEFFECT;
       matrix[matrixdims[31, 1], matrixdims[31, 2] ] pop_DIFFUSIONcov;
+      matrix[matrixdims[32, 1], matrixdims[32, 2] ] pop_MANIFESTcov;
       matrix[matrixdims[21, 1], matrixdims[21, 2] ] pop_asymCINT;
       matrix[matrixdims[22, 1], matrixdims[22, 2] ] pop_asymDIFFUSION;
       matrix[matrixdims[10, 1], matrixdims[10, 2] ] subj_PARS[ (savesubjectmatrices && sum(whenmat[10,1:5])) ? nsubjects : 0];
@@ -349,6 +350,7 @@ transformed parameters{
       matrix[matrixdims[8, 1], matrixdims[8, 2] ] subj_T0VAR[ (savesubjectmatrices && sum(whenmat[8,1:5])) ? nsubjects : 0];
       matrix[matrixdims[9, 1], matrixdims[9, 2] ] subj_TDPREDEFFECT[ (savesubjectmatrices && sum(whenmat[9,1:5])) ? nsubjects : 0];
       matrix[matrixdims[31, 1], matrixdims[31, 2] ] subj_DIFFUSIONcov[ (savesubjectmatrices && sum(whenmat[31,1:5])) ? nsubjects : 0];
+      matrix[matrixdims[32, 1], matrixdims[32, 2] ] subj_MANIFESTcov[ (savesubjectmatrices && sum(whenmat[32,1:5])) ? nsubjects : 0];
       matrix[matrixdims[21, 1], matrixdims[21, 2] ] subj_asymCINT[ (savesubjectmatrices && sum(whenmat[21,1:5])) ? nsubjects : 0];
       matrix[matrixdims[22, 1], matrixdims[22, 2] ] subj_asymDIFFUSION[ (savesubjectmatrices && sum(whenmat[22,1:5])) ? nsubjects : 0];
 
@@ -446,6 +448,7 @@ transformed parameters{
       matrix[matrixdims[8, 1], matrixdims[8, 2] ] T0VAR;
       matrix[matrixdims[9, 1], matrixdims[9, 2] ] TDPREDEFFECT;
       matrix[matrixdims[31, 1], matrixdims[31, 2] ] DIFFUSIONcov;
+      matrix[matrixdims[32, 1], matrixdims[32, 2] ] MANIFESTcov;
       matrix[matrixdims[21, 1], matrixdims[21, 2] ] asymCINT;
       matrix[matrixdims[22, 1], matrixdims[22, 2] ] asymDIFFUSION;
   
@@ -477,7 +480,7 @@ transformed parameters{
       o0= whichequals(manifesttype,1,0);
     }
     
-    if(prevrow != 0) T0check = (si==subject[prevrow]) ? (T0check+1) : 0; //if same subject, add one, else zero
+    if(prevrow != 0 && rowi != 1) T0check = (si==subject[prevrow]) ? (T0check+1) : 0; //if same subject, add one, else zero
     if(T0check > 0){
       dt = time[rowi] - time[prevrow];
       dtchange = dt!=prevdt; 
@@ -508,7 +511,9 @@ transformed parameters{
   if(whenmat[1, 5] >= (si ? 1 : 0)) T0MEANS = 
     mcalc(T0MEANS, indparams, statetf, {0}, 1, matsetup, matvalues, si, subindices); // base t0means to init
       
-  for(li in 1:nlatentpop) if(!is_nan(T0MEANS[li,1])) state[li] = T0MEANS[li,1]; //in case of t0 dependencies, may have missingness
+ // for(li in 1:nlatentpop) if(!is_nan(T0MEANS[li,1])) state[li] = T0MEANS[li,1]; //in case of t0 dependencies, may have missingness
+  
+  state=T0MEANS[,1];
   
   statetf[whichequals(whenvecs[1],0,0)] = parvectform(whichequals(whenvecs[1],0,0),state, 1,
     matsetup, matvalues, si, subindices, whenvecs[1]);   
@@ -556,6 +561,8 @@ J0=mcalc(J0,indparams, statetf,{0,1}, 51, matsetup, matvalues, si, subindices);
       }
     }
   }
+  
+  if(si==0 || statedep[5] || (whenmat[32,5])) MANIFESTcov = sdcovsqrt2cov(MANIFESTVAR,choleskymats);
     
     if(verbose>1) print("nl t0var = ", T0VAR, "   J0 = ", J0);
     etacov = quad_form(T0VAR, J0'); //probably unneeded, inefficient
@@ -750,20 +757,21 @@ if(sum(whenmat[54,{4}]) > 0)Jy=mcalc(Jy,indparams, statetf,{4}, 54, matsetup, ma
     if(verbose>1) print("Jy ",Jy);
   }
  
+   if(statedep[5]) MANIFESTcov = sdcovsqrt2cov(MANIFESTVAR,choleskymats);
    if(si > 0 && dokalmanrows[rowi] ==1){   //if not just inits...
 
       if(intoverstates==1 || savescores==1) { //classic kalman
-        ycov[o,o] = quad_form(etacov, Jy[o,]'); // + MANIFESTVAR[o,o]; shifted measurement error down
+        ycov[o,o] = quad_form(etacov, Jy[o,]') + MANIFESTcov[o,o]; // previously shifted measurement error down, but reverted
         for(wi in 1:nmanifest){ 
-          if(Y[rowi,wi] != 99999 || savescores==1) ycov[wi,wi] += square(MANIFESTVAR[wi,wi]);
+          // if(Y[rowi,wi] != 99999 || savescores==1) ycov[wi,wi] += square(MANIFESTVAR[wi,wi]);
           if(manifesttype[wi]==1 && (Y[rowi,wi] != 99999  || savescores==1)) ycov[wi,wi] += fabs((syprior[wi] - 1) .* (syprior[wi]));
           if(manifesttype[wi]==2 && (Y[rowi,wi] != 99999  || savescores==1)) ycov[wi,wi] += square(fabs((syprior[wi] - round(syprior[wi])))); 
         }
       }
         
-      if(intoverstates==0) { //sampled states
-        if(ncont_y[rowi] > 0) for(mi in o0) ypriorcov_sqrt[mi,mi] = sqrt(MANIFESTVAR[mi,mi]);
-      }
+      if(intoverstates==0 && ncont_y[rowi] > 0) ypriorcov_sqrt[o,o] = 
+        cholesky_decompose(makesym(MANIFESTcov[o,o],verbose,1));
+
         
      
 err[od] = Y[rowi,od] - syprior[od]; // prediction error
@@ -774,7 +782,7 @@ err[od] = Y[rowi,od] - syprior[od]; // prediction error
           " indparams = ", indparams,
             "  syprior[o] =",syprior[o],"  ycov[o,o] ",ycov[o,o], 
             "  PARS = ", PARS, 
-            "  DRIFT =", DRIFT, " DIFFUSION =", DIFFUSION, " CINT =", CINT, "  MANIFESTVAR ", diagonal(MANIFESTVAR), "  MANIFESTMEANS ", MANIFESTMEANS, 
+            "  DRIFT =", DRIFT, " DIFFUSION =", DIFFUSION, " CINT =", CINT, "  MANIFESTcov ", (MANIFESTcov), "  MANIFESTMEANS ", MANIFESTMEANS, 
             "  T0VAR", T0VAR,  " T0MEANS ", T0MEANS, "LAMBDA = ", LAMBDA, "  Jy = ",Jy,
             " discreteDRIFT = ", discreteDRIFT, "  discreteDIFFUSION ", discreteDIFFUSION, "  asymDIFFUSION ", asymDIFFUSION, 
             " DIFFUSIONcov = ", DIFFUSIONcov,
@@ -790,8 +798,7 @@ err[od] = Y[rowi,od] - syprior[od]; // prediction error
         etaa[2,rowi] = state;
         ycova[1,rowi] = ycov;
         etacova[2,rowi] = etacov;
-        ycova[2,rowi] = quad_form(etacov, Jy');
-        for(wi in 1:nmanifest) ycova[2,rowi,wi,wi] += square(MANIFESTVAR[wi,wi]);
+        ycova[2,rowi] = quad_form(etacov, Jy') + MANIFESTcov;
         ya[2,rowi] = MANIFESTMEANS[o,1] + LAMBDA[o,] * state[1:nlatent];
       }
       
@@ -837,11 +844,12 @@ err[od] = Y[rowi,od] - syprior[od]; // prediction error
     if(sum(whenmat[8,1:5]) > 0) subj_T0VAR[si] = T0VAR;
     if(sum(whenmat[9,1:5]) > 0) subj_TDPREDEFFECT[si] = TDPREDEFFECT;
     if(sum(whenmat[31,1:5]) > 0) subj_DIFFUSIONcov[si] = DIFFUSIONcov;
+    if(sum(whenmat[32,1:5]) > 0) subj_MANIFESTcov[si] = MANIFESTcov;
     if(sum(whenmat[21,1:5]) > 0) subj_asymCINT[si] = asymCINT;
     if(sum(whenmat[22,1:5]) > 0) subj_asymDIFFUSION[si] = asymDIFFUSION;
   }
   if(si == 0){
-pop_PARS = PARS; pop_T0MEANS = T0MEANS; pop_LAMBDA = LAMBDA; pop_DRIFT = DRIFT; pop_DIFFUSION = DIFFUSION; pop_MANIFESTVAR = MANIFESTVAR; pop_MANIFESTMEANS = MANIFESTMEANS; pop_CINT = CINT; pop_T0VAR = T0VAR; pop_TDPREDEFFECT = TDPREDEFFECT; pop_DIFFUSIONcov = DIFFUSIONcov; pop_asymCINT = asymCINT; pop_asymDIFFUSION = asymDIFFUSION; 
+pop_PARS = PARS; pop_T0MEANS = T0MEANS; pop_LAMBDA = LAMBDA; pop_DRIFT = DRIFT; pop_DIFFUSION = DIFFUSION; pop_MANIFESTVAR = MANIFESTVAR; pop_MANIFESTMEANS = MANIFESTMEANS; pop_CINT = CINT; pop_T0VAR = T0VAR; pop_TDPREDEFFECT = TDPREDEFFECT; pop_DIFFUSIONcov = DIFFUSIONcov; pop_MANIFESTcov = MANIFESTcov; pop_asymCINT = asymCINT; pop_asymDIFFUSION = asymDIFFUSION; 
   }
 
   
@@ -904,9 +912,8 @@ if(sum(whenmat[54,{4}]) > 0)Jy=mcalc(Jy,indparams, statetf,{4}, 54, matsetup, ma
   }
       
       ya[3,sri] = syprior;
-      ycova[3,sri] = quad_form(etacova[3,sri], Jy'); 
+      ycova[3,sri] = quad_form(etacova[3,sri], Jy')+MANIFESTcov; 
       for(wi in 1:nmanifest){
-        ycova[3,sri,wi,wi] += square(MANIFESTVAR[wi,wi]);
         if(manifesttype[wi]==1) ycova[3,sri,wi,wi] += fabs((ya[3,sri,wi] - 1) * (ya[3,sri,wi]));
         if(manifesttype[wi]==2) ycova[3,sri,wi,wi] += square(fabs((ya[3,sri,wi] - round(ya[3,sri,wi])))); 
       }

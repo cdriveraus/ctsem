@@ -574,18 +574,21 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       message('Finite difference jacobian used to avoid recompiling -- use forcerecompile=TRUE for analytic jacobians')
     
     
-    
     #further model adjustments conditional on recompile
     if(!recompile){ #then use finite diffs for some elements
       
       #collect row and column of complicated jacobian elements into vector
       ctm$JAxfinite <- array(as.integer(unique(
         unlist(ctm$modelmats$matsetup[ctm$modelmats$matsetup$matrix %in% 52 & 
-            ctm$modelmats$matsetup$when == -999 & 
-            ctm$modelmats$matsetup$copyrow < 1,c('row','col')]))))# ])))
+            ctm$modelmats$matsetup$when == -999, 'col']))))# & 
+            # ctm$modelmats$matsetup$copyrow < 1,c('row','col')]))))
+
+      ctm$Jyfinite <- array(as.integer(unique(
+        unlist(ctm$modelmats$matsetup[ctm$modelmats$matsetup$matrix %in% 54 & 
+            ctm$modelmats$matsetup$when == -999, 'col']))))
       
     }
-    if(recompile) ctm$JAxfinite <- array(as.integer(c()))
+    if(recompile) ctm$JAxfinite <- ctm$Jyfinite <- array(as.integer(c()))
     ctm$recompile <- recompile
     
     
@@ -714,7 +717,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         if(vb){
           if(!intoverpop && standata$nindvarying > 0) warning('Poor results are expected with variational inference and sampling individual differences! Suggest disabling vb or enabling intoverpop.')
           stanfit <- list(stanfit=rstan::vb(object = sm,data=standata, importance_resampling=TRUE,tol_rel_obj=1e-3))
-          browser()
         } else{ #if not vi
           if(plot==TRUE) stanfit <- list(stanfit=do.call(stanWplot,stanargs)) else stanfit <- list(stanfit=do.call(sampling,stanargs))
           

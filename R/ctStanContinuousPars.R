@@ -24,7 +24,7 @@ ctStanContinuousPars <- function(ctstanfitobj,
   niter=dim(e$DRIFT)[1]
   
   mats <- ctStanMatricesList()
-  mats <- c(names(mats$base), names(mats$asymptotic),'DIFFUSIONcov')
+  mats <- c(names(mats$base), names(mats$asymptotic),'DIFFUSIONcov','MANIFESTcov')
 
   out <- list()
   for(matname in (mats)){
@@ -64,7 +64,8 @@ ctStanContinuousPars <- function(ctstanfitobj,
   
   if(!is.null(e$pop_MANIFESTVAR)) {
     dimnames(out$MANIFESTVAR)=list(mn,mn)
-    out$MANIFESTVAR=out$MANIFESTVAR %*% t(out$MANIFESTVAR) #cholesky factor inside stanfit...
+    dimnames(out$MANIFESTcov)=list(mn,mn)
+    # out$MANIFESTVAR=out$MANIFESTVAR %*% t(out$MANIFESTVAR) #cholesky factor inside stanfit...
     
   }
   

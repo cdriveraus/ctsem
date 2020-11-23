@@ -247,8 +247,9 @@ ctDataCombineSplit <- function(dat, idvars, vars){ #no splits yet
 meltcov <- function(covm){
   if(is.null(dimnames(covm))) dimnames(covm) = list(paste0('v',1:nrow(covm)),
     paste0('v',1:ncol(covm)))
-  colnames(covm)[rownames(covm) %in% ''] <- 
-    paste0('v',(1:nrow(covm))[rownames(covm) %in% ''])
+  # browser()
+  colnames(covm)[colnames(covm) %in% ''] <- 
+    paste0('v',(1:ncol(covm))[colnames(covm) %in% ''])
   rownames(covm)[rownames(covm) %in% ''] <- 
     paste0('v',(1:nrow(covm))[rownames(covm) %in% ''])
   covm=data.frame(row=factor(rownames(covm),levels=rownames(covm)),covm)

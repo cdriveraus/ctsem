@@ -209,7 +209,8 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
       nopriors=as.integer(ctm$nopriors),
       savescores=0L,
       savesubjectmatrices=0L,
-      nJAxfinite = ifelse(ctm$recompile,0L,length(ctm$JAxfinite))
+      nJAxfinite = ifelse(ctm$recompile,0L,length(ctm$JAxfinite)),
+      nJyfinite = ifelse(ctm$recompile,0L,length(ctm$Jyfinite))
     ))
   
   if(ctm$n.TIpred == 0) tipreds <- array(0,c(0,0))
@@ -242,6 +243,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   
   
   standata$JAxfinite <- ctm$JAxfinite
+  standata$Jyfinite <- ctm$Jyfinite
   
   standata$Jycolindexsize <- 1L
   standata$Jycolindex <- array(1L)
@@ -372,10 +374,11 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   if(any(ctm$manifesttype==1)){
     standata$nJyfinite <- as.integer(ctm$n.latent)
     standata$Jyfinite <- array(as.integer(1:ctm$n.latent))
-  } else{
-    standata$nJyfinite <- 0L
-    standata$Jyfinite <- integer()
   }
+  # } else{
+  #   standata$nJyfinite <- 0L
+  #   standata$Jyfinite <- integer()
+  # }
   
   if(!is.null(ctm$TIpredAuto) && ctm$TIpredAuto %in% c(1L,TRUE)) standata$TIpredAuto <- 1L else standata$TIpredAuto <- 0L
   
@@ -420,6 +423,8 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   standata$whenmat[mc[names(mc) == 'asymCINT'],] <- 
     apply(standata$whenmat[mc[names(mc) %in% c('CINT','DRIFT')],],2,max)
   standata$whenmat[mc[names(mc) == 'DIFFUSIONcov'],] <- standata$whenmat[mc[names(mc) == 'DIFFUSION'],]
+  standata$whenmat[mc[names(mc) == 'MANIFESTcov'],] <- standata$whenmat[mc[names(mc) == 'MANIFESTVAR'],]
+
   
   return(standata)
 }

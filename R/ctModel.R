@@ -557,9 +557,8 @@ ctModel<-function(LAMBDA, type='omx',n.manifest = 'auto', n.latent='auto', Tpoin
     warning(paste0(tempmatname,' is not lower triangular! Covariance type matrices should usually be specified in the appropriate lower-triangular form.'))
   }
   
-  # browser()
-  mvaroffdiag=MANIFESTVAR[!diag(1,nrow(MANIFESTVAR))]
-  if(nrow(MANIFESTVAR) > 1 && !all(mvaroffdiag %in% 0)) stop('MANIFESTVAR should be diagonal!')
+  # mvaroffdiag=MANIFESTVAR[!diag(1,nrow(MANIFESTVAR))]
+  # if(nrow(MANIFESTVAR) > 1 && !all(mvaroffdiag %in% 0)) stop('MANIFESTVAR should be diagonal!')
   
  
   if(any(dim(LAMBDA)!=c(n.manifest,n.latent))) stop("Incorrect LAMBDA structure specified - check number or rows and columns")

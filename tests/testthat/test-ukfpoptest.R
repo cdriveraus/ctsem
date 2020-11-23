@@ -148,7 +148,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     dtf = ctStanFit(datalong = dat,ctstanmodel = dtm,optimize=TRUE,
       verbose=0,optimcontrol=list(estonly=F),savescores = F,nopriors=T)
-    s1=summary.ctStanFit(dtf,parmatrices = F,priorcheck = F,residualcov = F)
+    s1=summary(dtf,parmatrices = F,priorcheck = F,residualcov = F)
     
        dtm2 <- ctModel(LAMBDA=matrix(c(1,0),1,2), type='stanct',
       DIFFUSION=matrix(c('diff',0,0,0),2,2),DRIFT=matrix(c('-2*log1p(exp(-2*state[2]))',0,0,-.00001),2,2),
@@ -158,10 +158,10 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     dtm2$pars$indvarying <- FALSE
     dtf2=ctStanFit(datalong = dat,ctstanmodel = dtm2,optimize = TRUE,nopriors = T)
-    s2=summary.ctStanFit(dtf2,parmatrices = F,priorcheck = F,residualcov = F)
+    s2=summary(dtf2,parmatrices = F,priorcheck = F,residualcov = F)
     
     # expect_equivalent(c(s1$popmeans[,1],s1$popsd[,1]),s2$popmeans[,1],tol=1e-2)
-    expect_equivalent(sort(dtf2$stanfit$rawest),sort(dtf$stanfit$rawest),tol=1e-3) #sorting is an ugly hack! could improve...
+    testthat::expect_equivalent(sort(dtf2$stanfit$rawest),sort(dtf$stanfit$rawest),tol=1e-3) #sorting is an ugly hack! could improve...
 
   })
   
