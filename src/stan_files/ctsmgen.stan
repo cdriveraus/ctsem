@@ -259,7 +259,7 @@ data {
   int whichcont_y[ndatapoints, nmanifest]; // index of which variables are observed and continuous per observation
   
   int intoverpop;
-  int statedep[10];
+  int statedep[54];
   int choleskymats;
   int intoverstates;
   int verbose; //level of printing during model fit
@@ -740,7 +740,7 @@ if(sum(whenmat[52,{2}]) > 0)JAx=mcalc(JAx,indparams, statetf,{2}, 52, matsetup, 
       
         if(continuoustime){
           if(taylorheun==0){
-            if(si==0 || dtchange==1 || statedep[3]||statedep[4]||statedep[7] || 
+            if(si==0 || dtchange==1 || statedep[3]||statedep[4]||statedep[7] || statedep[52] ||
               (T0check == 1 && (subindices[3] + subindices[4] + subindices[7]) > 0)){
                 
               
@@ -749,7 +749,7 @@ if(sum(whenmat[52,{2}]) > 0)JAx=mcalc(JAx,indparams, statetf,{2}, 52, matsetup, 
                 discreteDRIFT = expm2(append_row(append_col(DRIFT[1:nlatent, 1:nlatent],CINT),nlplusonezerovec') * dtsmall);
                 Je[savescores ? rowi : 1,,] =  expm2(JAx * dtsmall);
                
-                if(si==0 || statedep[3]||statedep[4]|| (T0check==1 && (whenmat[4,5] || whenmat[3,5]))){
+                if(si==0 || statedep[4]||statedep[52]|| (T0check==1 && (whenmat[4,5] || whenmat[3,5]))){ //if first pass, state dependent, or individually varying drift / diffusion
                 asymDIFFUSION[derrind,derrind] = to_matrix(  -sqkron_sumii(JAx[derrind,derrind]) \ 
                   to_vector(DIFFUSIONcov[derrind,derrind]), ndiffusion,ndiffusion);
                 }
@@ -802,7 +802,7 @@ if(sum(whenmat[53,{3}]) > 0)Jtd=mcalc(Jtd,indparams, statetf,{3}, 53, matsetup, 
         
 
         state[1:nlatent] +=   (TDPREDEFFECT * tdpreds[rowi]); //tdpred effect only influences at observed time point
-        if(statedep[9]) etacov = quad_form(etacov,Jtd'); //could be optimized
+        if(statedep[53]) etacov = quad_form(etacov,Jtd'); //could be optimized
       }
     }//end nonlinear tdpred
 
@@ -922,6 +922,7 @@ if(sum(whenmat[54,{4}]) > 0)Jy=mcalc(Jy,indparams, statetf,{4}, 54, matsetup, ma
             "  T0VAR", T0VAR,  " T0MEANS ", T0MEANS, "LAMBDA = ", LAMBDA, "  Jy = ",Jy,
             " discreteDRIFT = ", discreteDRIFT, "  discreteDIFFUSION ", discreteDIFFUSION, "  asymDIFFUSION ", asymDIFFUSION, 
             " DIFFUSIONcov = ", DIFFUSIONcov,
+            " Je = ", Je[savescores ? rowi : 1],
             "  rawpopsd ", rawpopsd,  "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
          
         K[,od] = etacov * Jy[od,]' / makesym(ycov[od,od],verbose,1);// * multiply_lower_tri_self_transpose(ycovi');// ycov[od,od]; 

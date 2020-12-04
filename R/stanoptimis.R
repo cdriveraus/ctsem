@@ -1255,7 +1255,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           if('all' %in% whichpars) whichpars <- 1:length(pars)
           base <- optimfit$value
           
-          if(!is.na(hesscl[1]))  target <- function(x){ #if cluster is passed, create target function, otherwise use old target
+          if(!is.na(hesscl[1])) target <- function(x){ #if cluster is passed, create target function, otherwise use old target
             if(length(parsteps)>0){
               pars <- est2
               pars[-parsteps] <- x
@@ -1291,7 +1291,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                 # if(count>8) stepsize=stepsize*-1 #is this good?
                 stepchangemultiplier <- max(stepchangemultiplier,.11)
                 count <- count + 1
-                lp[[di]] <- target(pars+uppars*stepsize*directions[di])
+                lp[[di]] <-  suppressWarnings(target(pars+uppars*stepsize*directions[di]))
                 accepted <- !'try-error' %in% class(lp[[di]]) && all(!is.na(attributes(lp[[di]])$gradient))
                 if(accepted){
                   lpdiff <- base[1] - lp[[di]][1]

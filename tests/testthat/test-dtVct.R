@@ -65,12 +65,12 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
         if(is.null(s[[argi]])) s[[argi]] = list()
         s[[argi]][[m]] <- summary(f,parmatrices=TRUE)
 
-        if(!interactive()){
-          ctKalman(f,plot=TRUE)
-        plot(f,wait=FALSE)
-        ctModelLatex(f)
-        p=ctStanKalman(f,collapsefunc = mean,subjectpars = TRUE)
-        }
+        # if(!interactive()){
+        #   ctKalman(f,plot=TRUE)
+        # plot(f,wait=FALSE)
+        # ctModelLatex(f)
+        # p=ctStanKalman(f,collapsefunc = mean,subjectpars = TRUE)
+        # }
       }
     }
     

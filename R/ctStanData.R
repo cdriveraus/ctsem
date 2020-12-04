@@ -307,11 +307,12 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   
   standata$subindices <- as.integer(unlist(subindices))
   
+
   #state dependence
-  statedep <- rep(0L,10)
+  statedep <- rep(0L,as.integer(max(mats$all)))
   lhscalcs <- sapply(unique(unlist(ctm$modelmats$calcs)),function(x) gsub('=.*','',x))
   for(i in 1:length(statedep)){
-    matname <- try(names(ctStanMatricesList()$all[ctStanMatricesList()$all %in% i]),silent=TRUE)
+    matname <- try(names(mats$all[mats$all %in% i]),silent=TRUE)
     if(length(matname)==0) next
     statedep[i] <- ifelse(any(
       ctm$modelmats$matsetup$when >0 &

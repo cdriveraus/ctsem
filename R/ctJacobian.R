@@ -41,7 +41,7 @@ inv_logit_gsub <- function(x){
 
 
 
-ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
+ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy'),simplify=TRUE ){
 
   # get system dimension
   ndim = max(m$pars$row[m$pars$matrix%in% 'T0MEANS'])
@@ -103,7 +103,7 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
         out <-  paste0('state[',xi,'] + ',t0func[xi])
         return(out)
       })
-      fn = sapply(prodSymb(diag(nrow(mats$T0MEANS)), matrix(t0func,ncol=1)),Simplify)
+      fn = prodSymb(diag(nrow(mats$T0MEANS)), matrix(t0func,ncol=1))
     }
     if(typei=='Jy') {
       Jrows = nrow(mats$MANIFESTMEANS)
@@ -113,7 +113,7 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
     }
     
     
-    
+    # browser()
     fn = gsub(" ", "", fn, fixed = TRUE) #remove spaces
     # replace state[~] by state~ for cOde Jacobian and make fn and state a named list
     names(fn) = paste0("fn", 1:length(fn))
@@ -121,13 +121,14 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
       fn=gsub(paste0('\\b(state)\\[(',statei,')?\\]'),paste0('state__',statei,'__'),fn,perl = TRUE)
     }
     
-    fn=gsub(' ','',sapply(fn,Simplify),fixed=TRUE)
+
+    
+    fn=gsub(' ','',fn,fixed=TRUE)
     #probably redundant now but maybe useful at some point?
     # replace remaining commas and square brackets for cOde Jacobian
     fn = gsub(",", "___comma___", fn, fixed = TRUE)
     fn = gsub("[", "___leftsquarebracket___", fn, fixed = TRUE)
     fn = gsub("]", "___rightsquarebracket___", fn, fixed = TRUE)
-    fn=sapply(fn,Simplify)
     
     # 3): calculate Jacobian of fn symbolically
     J  = jacobianSymb(fn, state)
@@ -135,6 +136,13 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy') ){
     # J = sapply(J,Simplify)
     
     J = gsub(" ", "", J, fixed = TRUE) #remove spaces
+    if(simplify) J=sapply(J,Simplify) else { #remove wrapping brackets only
+      J=sapply(J,function(x){
+        x <- gsub('^\\((\\d+)\\)$','\\1',x)
+        return(x)
+      })
+    }
+    
     for(statei in 1:ndim){
       J=gsub(paste0('state__',statei,'__'),paste0('state[',statei,']'),J,fixed = TRUE)
     }

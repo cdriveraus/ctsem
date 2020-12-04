@@ -79,11 +79,12 @@ ctLOO <- function(fit,folds=10,cores=2,parallelFolds=FALSE,
   llrow=fit$stanfit$transformedparsfull$llrow
   llrowSubject=sapply(unique(fit$standata$subject),function(x) 
     sum(llrow[fit$standata$subject==x],na.rm=TRUE) )
-  plot(llrow,llrowoos,col=fit$standata$subject,pch=16)
-  abline(b = 1,a=0)
-  plot(density(llrow-llrowoos),main='Original - OOS LogLik Difference')
-  abline(v=mean(llrow-llrowoos))
-  # ee=unlist(lapply(1:folds,function(x) -sum(folded[[x]]$llrow)/fit$standata$ndatapoints))
+  
+  # plot(llrow,llrowoos,col=fit$standata$subject,pch=16)
+  # abline(b = 1,a=0)
+  # plot(density(llrow-llrowoos),main='Original - OOS LogLik Difference')
+  # abline(v=mean(llrow-llrowoos))
+  
   out <- list(
     foldrows=srows,
     foldpars = as.matrix(data.frame(lapply(folded,function(x) x$pars))),

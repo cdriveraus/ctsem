@@ -494,7 +494,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     if(intoverpop)   ctm <- ctStanModelIntOverPop(ctm)
     
     #jacobian addition
-    ctm$jacobian <- ctJacobian(ctm)
+    ctm$jacobian <- try(ctJacobian(ctm))
+    if('try-error' %in% class(ctm$jacobian)) ctm$jacobian <- ctJacobian(ctm,simplify=FALSE)
     ctm$jacobian <- unfoldmats(
       c(listOfMatrices(ctm$pars),ctm$jacobian))[names(ctStanMatricesList()$jacobian)]
     jl <- ctModelUnlist(ctm$jacobian,names(ctm$jacobian))

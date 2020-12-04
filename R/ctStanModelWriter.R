@@ -57,9 +57,9 @@ ctModelStatesAndPARS <- function(ctspec, statenames){ #replace latentName and pa
   #expand pars
 
   ln <- ctspec$param[ctspec$matrix %in% 'PARS' & !is.na(ctspec$param)] #get extra pars
-  
+  # browser()
   for(li in seq_along(ln)){ #for every extra par
-    parmatch <- which(ctspec$param %in% ln[li] & ctspec$matrix %in% 'PARS')
+    parmatch <- which(ctspec$param %in% ln[li] & ctspec$matrix %in% 'PARS') #which row is the par itself
     for(ri in grep(paste0('\\b',ln[li],'\\b'),ctspec$param)){ #which rows contain the par
       if(!(ctspec$param[ri] == ln[li])){ #that are not the par itself #& ctspec$matrix[ri]=='PARS' #removed limitation of referencing within PARS matrices
         # print(ctspec$param[ri])
@@ -1047,7 +1047,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
       
         if(continuoustime){
           if(taylorheun==0){
-            if(si==0 || dtchange==1 || statedep[3]||statedep[4]||statedep[7] || 
+            if(si==0 || dtchange==1 || statedep[3]||statedep[4]||statedep[7] || statedep[52] ||
               (T0check == 1 && (subindices[3] + subindices[4] + subindices[7]) > 0)){
                 
               ',if(1==99) 'if(difftype==2 && (statedep[3]||statedep[4])){
@@ -1076,7 +1076,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
                 discreteDRIFT = expm2(append_row(append_col(DRIFT[1:nlatent, 1:nlatent],CINT),nlplusonezerovec\') * dtsmall);
                 Je[savescores ? rowi : 1,,] =  expm2(JAx * dtsmall);
                
-                if(si==0 || statedep[3]||statedep[4]|| (T0check==1 && (whenmat[4,5] || whenmat[3,5]))){
+                if(si==0 || statedep[4]||statedep[52]|| (T0check==1 && (whenmat[4,5] || whenmat[3,5]))){ //if first pass, state dependent, or individually varying drift / diffusion
                 asymDIFFUSION[derrind,derrind] = to_matrix(  -sqkron_sumii(JAx[derrind,derrind]) \\ 
                   to_vector(DIFFUSIONcov[derrind,derrind]), ndiffusion,ndiffusion);
                 }
@@ -1092,7 +1092,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
           }
             
            ',if(!is.null(ctm$taylorheun) && ctm$taylorheun==1) paste0('if(taylorheun==1){
-                if(dtchange==1 || statedep[3]||statedep[4] || 
+                if(dtchange==1 || statedep[3]||statedep[4] ||statedep[52] || 
                 (T0check == 1 && (subindices[3] + subindices[4]) > 0)){
                   Kth = (add_diag(-JAx * (dtsmall /2),1) );
                   Mth = Kth \ (add_diag(JAx * (dtsmall /2),1) );
@@ -1136,7 +1136,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
         ',simplifystanfunction(paste0(ctm$modelmats$calcs$tdpred,';\n\n ',collapse=' '),simplify),'
 
         state[1:nlatent] +=   (TDPREDEFFECT * tdpreds[rowi]); //tdpred effect only influences at observed time point','
-        if(statedep[9]) etacov = quad_form(etacov,Jtd\'); //could be optimized
+        if(statedep[53]) etacov = quad_form(etacov,Jtd\'); //could be optimized
       }
     }//end nonlinear tdpred
 
@@ -1221,6 +1221,7 @@ if(verbose > 1){
             "  T0VAR", T0VAR,  " T0MEANS ", T0MEANS, "LAMBDA = ", LAMBDA, "  Jy = ",Jy,
             " discreteDRIFT = ", discreteDRIFT, "  discreteDIFFUSION ", discreteDIFFUSION, "  asymDIFFUSION ", asymDIFFUSION, 
             " DIFFUSIONcov = ", DIFFUSIONcov,
+            " Je = ", Je[savescores ? rowi : 1],
             "  rawpopsd ", rawpopsd,  "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
          
         K[,od] = etacov * Jy[od,]\' / makesym(ycov[od,od],verbose,1);// * multiply_lower_tri_self_transpose(ycovi\');// ycov[od,od]; 
@@ -1608,7 +1609,7 @@ data {
   int whichcont_y[ndatapoints, nmanifest]; // index of which variables are observed and continuous per observation
   
   int intoverpop;
-  int statedep[10];
+  int statedep[',max(mats$all),'];
   int choleskymats;
   int intoverstates;
   int verbose; //level of printing during model fit

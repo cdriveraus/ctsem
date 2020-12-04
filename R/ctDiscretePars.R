@@ -84,7 +84,8 @@ ctStanParnames <- function(x,substrings=c('pop_','popsd')){
 #'
 #'}
 #'@export
-ctStanDiscretePars<-function(ctstanfitobj, subjects='popmean', times=seq(from=0,to=10,by=.1), 
+ctStanDiscretePars<-function(ctstanfitobj, subjects='popmean', 
+  times=seq(from=0,to=10,by=.1), 
   nsamples=100,observational=FALSE,standardise=FALSE, 
   cov=FALSE, plot=FALSE,cores=2,...){
   
@@ -132,14 +133,14 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='popmean', times=seq(from=0,
   dimnames(out)<- list(Sample=samples, Subject=subjects,
     `Time interval`=times, row=latentNames, col=latentNames)
   
-  
+  attributes(out)$observational <- observational
+  attributes(out)$cov <- cov
   
   if(plot) {
     
     out <- ctStanDiscreteParsPlot(out,
-      latentNames=ctstanfitobj$ctstanmodel$latentNames,
-      title=paste0('Temporal ',ifelse(cov,'covariance','regressions'),
-      ' | ',ifelse(observational,'correlated','independent'), ' shock of 1.0'),...)
+      # latentNames=ctstanfitobj$ctstanmodel$latentNames,
+      ...)
   } 
   return(out)
 }
@@ -273,6 +274,9 @@ ctStanDiscreteParsPlot<- function(x,indices='all',
   polygonalpha=.1,ggcode=NA){
   
   if(is.data.frame(indices)) indices <- as.matrix(indices)
+  
+  title= paste0('Temporal ',ifelse(attributes(x)$cov,'covariance','regressions'),
+    ' | ',ifelse(attributes(x)$observational,'correlated','independent'), ' shock of 1.0')
   
   nlatent=dim(x)[5]
   
