@@ -58,8 +58,7 @@ generator2 <- function(gm,nsubjects,
 #' @examples
 #' \donttest{
 #' #generate and plot samples from prior predictive
-#' priorpred <- ctStanGenerate(ctm = ctstantestfit,
-#'   datastruct = ctstantestdat,cores=2,nsamples = 50)
+#' priorpred <- ctStanGenerate(cts = ctstantestfit,cores=2,nsamples = 50)
 #'}
 ctStanGenerate <- function(cts,datastruct=NA, is=FALSE, 
   fullposterior=TRUE, nsamples=200, parsonly=FALSE,cores=2){

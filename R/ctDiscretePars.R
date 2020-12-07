@@ -39,7 +39,7 @@ ctStanParnames <- function(x,substrings=c('pop_','popsd')){
   if(length(x$stanfit$stanfit@sim)==0) stop('Doesnt contain sampled stanfit object')
   out<-c()
   for(subsi in substrings){
-    out<- c(out, x$stanfit$stanfit@model_pars[grep(paste0('^',subsi),x$stanfit@model_pars)])
+    out<- c(out, x$stanfit$stanfit@model_pars[grep(paste0('^',subsi),x$stanfit$stanfit@model_pars)])
   }
   return(out)
 }

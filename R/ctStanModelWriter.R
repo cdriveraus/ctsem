@@ -845,7 +845,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,simplify=TRUE){
     zeroint[1] = 0;
     for(statei in append_array(Jyfinite,zeroint)){ //if some finite differences to do, compute these first
       state = basestate;
-      if(statei>0 && (savescores + intoverstates) > 0)  state[statei] += Jstep;
+      if(statei>0 && (dosmoother + intoverstates) > 0)  state[statei] += Jstep;
       
             
         statetf[whichequals(whenvecs[4],0,0)] = 
@@ -899,7 +899,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,simplify=TRUE){
   matrix[nmanifest, nmanifest] ypriorcov_sqrt = rep_matrix(0,nmanifest,nmanifest); 
   matrix[nmanifest, nmanifest] ycov; 
   
-  matrix[nlatentpop,nlatentpop] Je[savescores ? ndatapoints : 1]; //time evolved jacobian, saved for smoother
+  matrix[nlatentpop,nlatentpop] Je[dosmoother ? ndatapoints : 1]; //time evolved jacobian, saved for smoother
 
   vector[nlatentpop] state = rep_vector(-999,nlatentpop); 
   vector[nlatentpop] statetf;
@@ -907,6 +907,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,simplify=TRUE){
   matrix[nlatentpop,nlatentpop] J0; //Jacobian for t0
   matrix[nlatentpop,nlatentpop] Jtd;//diag_matrix(rep_vector(1),nlatentpop); //Jacobian for nltdpredeffect
   matrix[ nmanifest,nlatentpop] Jy;//Jacobian for measurement 
+  matrix[ nmanifest,nlatentpop] Jys[dosmoother ? ndatapoints : 0];//saved Jacobian for measurement smoother
   
   ',if(!is.null(ctm$taylorheun) && ctm$taylorheun==1) paste0('
   matrix[taylorheun ? nlatentpop : 0, taylorheun ? nlatentpop : 0] Kth = rep_matrix(0.0,taylorheun ? nlatentpop : 0, taylorheun ? nlatentpop : 0); 
@@ -919,6 +920,11 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,simplify=TRUE){
   
   vector[nparams] rawindparams = rawpopmeans;
   vector[nparams] indparams;
+  
+  matrix[nlatentpop,nlatentpop] etacovb[3,dosmoother ? ndatapoints : 0];
+  matrix[nmanifest,nmanifest] ycovb[3,dosmoother ? ndatapoints : 0];
+  vector[nlatentpop] etab[3,dosmoother ? ndatapoints : 0];
+  vector[nmanifest] yb[3,dosmoother ? ndatapoints : 0];
 
   //dynamic system matrices
   ',subjectparaminit(pop=FALSE,smats=TRUE),'
@@ -931,7 +937,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,simplify=TRUE){
     if( (rowi==1 && si==0) ||
       (dokalman && dokalmanrows[rowi] && subject[rowi]==si) ){ //if doing this row for this subject
     
-    int full = (savescores==1 || si ==0);
+    int full = (dosmoother==1 || si ==0);
     int o[full ? nmanifest : nobs_y[rowi]]; //which obs are not missing in this row
     int o1[full ? size(whichequals(manifesttype,1,1)) : nbinary_y[rowi] ];
     int o0[full ? size(whichequals(manifesttype,1,0)) : ncont_y[rowi] ];
@@ -959,7 +965,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,simplify=TRUE){
       //prevtime = time[rowi];
     }
 
-    if(savescores && prevrow!=0) Je[rowi,,] = Je[prevrow,,];
+    if(dosmoother && prevrow!=0) Je[rowi,,] = Je[prevrow,,];
     
     if(T0check == 0) { // calculate initial matrices if this is first row for si
   
@@ -1060,33 +1066,33 @@ if(verbose > 1) print ("below t0 row ", rowi);
                 bA[(1+ndiffusion):(ndiffusion*2),1:ndiffusion] = rep_matrix(0,ndiffusion,ndiffusion);
                 
                 ebA = expm2(bA * dtsmall);
-                Je[savescores ? rowi : 1,derrind,derrind] =  ebA[(1+ndiffusion):(ndiffusion*2),(1+ndiffusion):(ndiffusion*2)]\';
-                discreteDIFFUSION[derrind,derrind] = Je[savescores ? rowi : 1,derrind,derrind] * ebA[1:ndiffusion,(1+ndiffusion):(ndiffusion*2)];
+                Je[dosmoother ? rowi : 1,derrind,derrind] =  ebA[(1+ndiffusion):(ndiffusion*2),(1+ndiffusion):(ndiffusion*2)]\';
+                discreteDIFFUSION[derrind,derrind] = Je[dosmoother ? rowi : 1,derrind,derrind] * ebA[1:ndiffusion,(1+ndiffusion):(ndiffusion*2)];
                 discreteDRIFT = expm2(append_row(append_col(DRIFT[1:nlatent, 1:nlatent],CINT),nlplusonezerovec\') * dtsmall);
-                if(ndiffusion < nlatent && savescores) Je[savescores ? rowi : 1,,] =  expm2(JAx * dtsmall);
+                if(ndiffusion < nlatent && dosmoother) Je[dosmoother ? rowi : 1,,] =  expm2(JAx * dtsmall);
               }
                 
               //if(difftype==1){
-              //matrix[nlatent,nlatent] V = DIFFUSIONcov-quad_form(DIFFUSIONcov, Je[savescores ? rowi : 1,,]\');
+              //matrix[nlatent,nlatent] V = DIFFUSIONcov-quad_form(DIFFUSIONcov, Je[dosmoother ? rowi : 1,,]\');
               //discreteDIFFUSION = solvesyl(JAx[1:nlatent,1:nlatent],-V,discreteDIFFUSION, rep_array(nlatent,1));
               //}
               ','
               
               if(difftype==0 || (statedep[3]==0 && statedep[4]==0)){
                 discreteDRIFT = expm2(append_row(append_col(DRIFT[1:nlatent, 1:nlatent],CINT),nlplusonezerovec\') * dtsmall);
-                Je[savescores ? rowi : 1,,] =  expm2(JAx * dtsmall);
+                Je[dosmoother ? rowi : 1,,] =  expm2(JAx * dtsmall);
                
                 if(si==0 || statedep[4]||statedep[52]|| (T0check==1 && (whenmat[4,5] || whenmat[3,5]))){ //if first pass, state dependent, or individually varying drift / diffusion
                 asymDIFFUSION[derrind,derrind] = to_matrix(  -sqkron_sumii(JAx[derrind,derrind]) \\ 
                   to_vector(DIFFUSIONcov[derrind,derrind]), ndiffusion,ndiffusion);
                 }
                 discreteDIFFUSION[derrind,derrind] =  asymDIFFUSION[derrind,derrind] - 
-                  quad_form( asymDIFFUSION[derrind,derrind], Je[savescores ? rowi : 1, derrind,derrind]\' );
+                  quad_form( asymDIFFUSION[derrind,derrind], Je[dosmoother ? rowi : 1, derrind,derrind]\' );
               }
             } 
             state[1:nlatent] = (discreteDRIFT * append_row(state[1:nlatent],1.0))[1:nlatent]; // ???compute before new diffusion calcs
-            if(intoverstates==1 || savescores==1){
-              etacov = quad_form(etacov, Je[savescores ? rowi : 1,,]\');
+            if(intoverstates==1 || dosmoother==1){
+              etacov = quad_form(etacov, Je[dosmoother ? rowi : 1,,]\');
               etacov[derrind,derrind] += discreteDIFFUSION[derrind,derrind]; 
             }
           }
@@ -1103,12 +1109,12 @@ if(verbose > 1) print ("below t0 row ", rowi);
       etacov[derrind,derrind] += (Kth[derrind,derrind] \\ DIFFUSIONcov[derrind,derrind] / Kth[derrind,derrind]\') * dtsmall;
               '),'
               
-            if(intstepi >= (dt-1e-10) && savescores) Je[rowi,,] = expm2(JAx * dt); //save approximate exponentiated jacobian for smoothing
+            if(intstepi >= (dt-1e-10) && dosmoother) Je[rowi,,] = expm2(JAx * dt); //save approximate exponentiated jacobian for smoothing
           }
   
           if(continuoustime==0){ 
-            Je[savescores ? rowi : 1,,] = JAx;
-            if(intoverstates==1 || savescores==1){
+            Je[dosmoother ? rowi : 1,,] = JAx;
+            if(intoverstates==1 || dosmoother==1){
               etacov = quad_form(etacov, JAx\');
               etacov[ derrind, derrind ] += tcrossprod(DIFFUSION[ derrind, derrind ]); 
             }
@@ -1157,24 +1163,24 @@ if(verbose > 1){
   print("etapriorcov = ", etacov);
 }
 
-',if(!ppchecking) 'if(savescores){
-  etacova[1,rowi] = etacov; 
-  etaa[1,rowi] = state;
+',if(!ppchecking) 'if(dosmoother){
+  etacovb[1,rowi] = etacov; 
+  etab[1,rowi] = state;
 }','
 
- if ((si==0 || nobs_y[rowi] > 0 || savescores)){ //do this section for 0th subject as well to init matrices
+ if ((si==0 || nobs_y[rowi] > 0 || dosmoother)){ //do this section for 0th subject as well to init matrices
     
       ',finiteJy(),'
  
    if(statedep[5]) MANIFESTcov = sdcovsqrt2cov(MANIFESTVAR,choleskymats);
    if(si > 0 && dokalmanrows[rowi] ==1){   //if not just inits...
 
-      if(intoverstates==1 || savescores==1) { //classic kalman
+      if(intoverstates==1 || dosmoother==1) { //classic kalman
         ycov[o,o] = quad_form(etacov, Jy[o,]\') + MANIFESTcov[o,o]; // previously shifted measurement error down, but reverted
         for(wi in 1:nmanifest){ 
-          // if(Y[rowi,wi] != 99999 || savescores==1) ycov[wi,wi] += square(MANIFESTVAR[wi,wi]);
-          if(manifesttype[wi]==1 && (Y[rowi,wi] != 99999  || savescores==1)) ycov[wi,wi] += fabs((syprior[wi] - 1) .* (syprior[wi]));
-          if(manifesttype[wi]==2 && (Y[rowi,wi] != 99999  || savescores==1)) ycov[wi,wi] += square(fabs((syprior[wi] - round(syprior[wi])))); 
+          // if(Y[rowi,wi] != 99999 || dosmoother==1) ycov[wi,wi] += square(MANIFESTVAR[wi,wi]);
+          if(manifesttype[wi]==1 && (Y[rowi,wi] != 99999  || dosmoother==1)) ycov[wi,wi] += fabs((syprior[wi] - 1) .* (syprior[wi]));
+          if(manifesttype[wi]==2 && (Y[rowi,wi] != 99999  || dosmoother==1)) ycov[wi,wi] += square(fabs((syprior[wi] - round(syprior[wi])))); 
         }
       }
         
@@ -1221,7 +1227,7 @@ if(verbose > 1){
             "  T0VAR", T0VAR,  " T0MEANS ", T0MEANS, "LAMBDA = ", LAMBDA, "  Jy = ",Jy,
             " discreteDRIFT = ", discreteDRIFT, "  discreteDIFFUSION ", discreteDIFFUSION, "  asymDIFFUSION ", asymDIFFUSION, 
             " DIFFUSIONcov = ", DIFFUSIONcov,
-            " Je = ", Je[savescores ? rowi : 1],
+            " Je = ", Je[dosmoother ? rowi : 1],
             "  rawpopsd ", rawpopsd,  "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
          
         K[,od] = etacov * Jy[od,]\' / makesym(ycov[od,od],verbose,1);// * multiply_lower_tri_self_transpose(ycovi\');// ycov[od,od]; 
@@ -1229,13 +1235,14 @@ if(verbose > 1){
         state +=  (K[,od] * err[od]);
       }
       
-      if(savescores==1) {
-        ya[1,rowi] = syprior[o];
-        etaa[2,rowi] = state;
-        ycova[1,rowi] = ycov;
-        etacova[2,rowi] = etacov;
-        ycova[2,rowi] = quad_form(etacov, Jy\') + MANIFESTcov;
-        ya[2,rowi] = MANIFESTMEANS[o,1] + LAMBDA[o,] * state[1:nlatent];
+      if(dosmoother==1) {
+        yb[1,rowi] = syprior[o];
+        etab[2,rowi] = state;
+        ycovb[1,rowi] = ycov;
+        etacovb[2,rowi] = etacov;
+        ycovb[2,rowi] = quad_form(etacov, Jy\') + MANIFESTcov;
+        yb[2,rowi] = MANIFESTMEANS[o,1] + LAMBDA[o,] * state[1:nlatent];
+        Jys[rowi,,] = Jy;
       }
       
       
@@ -1268,39 +1275,39 @@ if(verbose > 1){
       -sqkron_prod(DRIFT[ derrind, derrind ], DRIFT[ derrind, derrind ]),1)) \\  
       to_vector(DIFFUSIONcov[ derrind, derrind ]), ndiffusion, ndiffusion);
     
-  if(savesubjectmatrices && si > 0 && (rowi==ndatapoints || subject[rowi+1] != subject[rowi])){',
-  paste0(collectsubmats(popmats=FALSE),collapse=' '),'
-  }
   if(si == 0){
 ',paste0(collectsubmats(popmats=TRUE),collapse=' '),'
   }
 
   
-  ',if(!ppchecking) paste0('if(si > 0 && savescores && (rowi==ndatapoints || subject[rowi+1] != subject[rowi])){ //at subjects last datapoint, smooth
+  ',if(!ppchecking) paste0('if(si > 0 && dosmoother && (rowi==ndatapoints || subject[rowi+1] != subject[rowi])){ //at subjects last datapoint, smooth
     int sri = rowi;
     while(sri>0 && subject[sri]==si){
       if(sri==rowi) {
-        etaa[3,sri]=etaa[2,sri];
-        etacova[3,sri]=etacova[2,sri];
+        etab[3,sri]=etab[2,sri];
+        yb[3,sri]=yb[2,sri];
+        etacovb[3,sri]=etacovb[2,sri];
+        ycovb[3,sri]=ycovb[2,sri];
       } else{
         matrix[nlatentpop,nlatentpop] smoother;
-        smoother = etacova[2,sri] * Je[sri+1,,]\' / makesym(etacova[1,sri+1],verbose,1);
-        etaa[3,sri]= etaa[2,sri] + smoother * (etaa[3,sri+1] - etaa[1,sri+1]);
-        etacova[3,sri]= etacova[2,sri] + smoother * ( etacova[3,sri+1] - etacova[1,sri+1]) * smoother\';
-
+        smoother = etacovb[2,sri] * Je[sri+1,,]\' / makesym(etacovb[1,sri+1],verbose,1);
+        etab[3,sri,]= etab[2,sri,] + smoother * (etab[3,sri+1,] - etab[1,sri+1,]);
+        etacovb[3,sri]= etacovb[2,sri] + smoother * ( etacovb[3,sri+1] - etacovb[1,sri+1]) * smoother\';
+        yb[3,sri,] = yb[2,sri,] + Jys[sri,,] * (etab[3,sri,] - etab[2,sri,]);
+        ycovb[3,sri] = ycovb[2,sri] + Jys[sri,,] * (etacovb[3,sri] - etacovb[2,sri]) * Jys[sri,,]\';
       }
-      state=etaa[3,sri];
-      
-      ',finiteJy(),'
-      
-      ya[3,sri] = syprior;
-      ycova[3,sri] = quad_form(etacova[3,sri], Jy\')+MANIFESTcov; 
-      for(wi in 1:nmanifest){
-        if(manifesttype[wi]==1) ycova[3,sri,wi,wi] += fabs((ya[3,sri,wi] - 1) * (ya[3,sri,wi]));
-        if(manifesttype[wi]==2) ycova[3,sri,wi,wi] += square(fabs((ya[3,sri,wi] - round(ya[3,sri,wi])))); 
-      }
+      state=etab[3,sri,]; //update for t0means saving
       sri += -1;
       while(sri > 0 && dokalmanrows[sri]==0) sri+= -1; //skip rows if requested
+      
+      //custom calc parameters not always saved properly because whenmat does not account for them - fix!
+      
+      if(savesubjectmatrices && //if getting subj matrices and 
+        (sri ? subject[sri] != subject[sri+1] : 1)){ //no more rows, or change of subject
+        T0MEANS[,1] = state; //t0means updated, other pars as per final time point
+     ',paste0(collectsubmats(popmats=FALSE),collapse=' '),'
+        }
+      
     }
   } //end smoother
 
@@ -1310,7 +1317,15 @@ if(verbose > 1){
   prevrow = rowi; //update previous row marker only after doing necessary calcs
 }//end active rowi
 } //end passive rowi
+
+if(savescores){
+  ya=yb;
+  ycova=ycovb;
+  etaa=etab;
+  etacova=etacovb;
+}
 ll+=sum(llrow);
+
 ')
     if(!is.null(ctm$w32)) out <- ''
     return(out)}
@@ -1645,6 +1660,7 @@ transformed data{
   vector[nlatent+1] nlplusonezerovec = rep_vector(0,nlatent+1);
   int tieffectindices[nparams]=rep_array(0,nparams);
   int ntieffects = 0;
+  int dosmoother = savescores || savesubjectmatrices;
   
   if(ntipred >0){
     for(pi in 1:nparams){

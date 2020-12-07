@@ -138,7 +138,8 @@ verbosify<-function(sf,verbose=2){
 #' or time points, will increase file size substantially.
 #' @param savesubjectmatrices Logical. If TRUE, subject specific matrices are saved -- 
 #' only relevant when either time dependent predictors or individual differences are 
-#' used. Can increase memory usage dramatically in large models.
+#' used. Can increase memory usage dramatically in large models, and can be computed after fitting using ctExtract
+#' or ctStanSubjectPars .
 #' @param gendata Logical -- If TRUE, uses provided data for only covariates and a time and missingness structure, and 
 #' generates random data according to the specified model / priors. 
 #' Generated data is in the $Ygen subobject after running \code{extract} on the fit object.
@@ -599,6 +600,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     standata$verbose=as.integer(verbose)
     standata$savesubjectmatrices=as.integer(savesubjectmatrices)
     standata$gendata=as.integer(gendata)
+    
+    if(standata$savesubjectmatrices==1L) savescores = TRUE
     standata$savescores=as.integer(savescores)
     
     # print(standata$savesubjectmatrices)
