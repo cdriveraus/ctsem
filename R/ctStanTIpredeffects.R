@@ -53,9 +53,7 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   includeMeanUncertainty=FALSE,
   whichTIpreds=1,parmatrices=TRUE, whichpars='all', nsamples=100, timeinterval=1,
   nsubjects=20,filter=NA,plot=FALSE){
-# browser()
-  #get objects
-  # browser()
+
   ctspec <- fit$ctstanmodel$pars
   e<-ctExtract(fit)
   rawpopmeans <- e$rawpopmeans
@@ -143,7 +141,6 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   #   x=gsub(pattern = '[0-9]','',x)
   #   x=gsub(pattern = ',','',x,fixed=TRUE)
   # })
-  
   parmeans=apply(ctStanRawSamples(fit),2,mean)
     parmatlists<-lapply(1:nrow(rawpopmeans), function(x) { #for each param vector
       out = ctStanParMatrices(fit,  c(raweffect[x,],parmeans[-1:-ncol(raweffect)]), timeinterval=timeinterval,sf = sf)#rawpopmeans[x,] +

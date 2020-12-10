@@ -816,7 +816,7 @@ if(sum(whenmat[52,{2}]) > 0)JAx=mcalc(JAx,indparams, statetf,{2}, 52, matsetup, 
                 asymDIFFUSION[derrind,derrind] = ksolve(JAx[derrind,derrind], DIFFUSIONcov[derrind,derrind],verbose);
                 }
                 discreteDIFFUSION[derrind,derrind] =  asymDIFFUSION[derrind,derrind] - 
-                  quad_form_sym( asymDIFFUSION[derrind,derrind], eJAx' );
+                  quad_form_sym( asymDIFFUSION[derrind,derrind], eJAx[derrind,derrind]' );
               }
             }
             

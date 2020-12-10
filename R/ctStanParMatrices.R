@@ -34,7 +34,8 @@ ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA){
    whichmatrices='all'
   
   if(whichmatrices[1] == 'all') {
-    whichmatrices <- sort(c(unique(fit$ctstanmodel$pars$matrix),'DIFFUSIONcov','DIFFUSIONcor','asymDIFFUSION','asymDIFFUSIONcor','T0VARcor','asymCINT'))
+    whichmatrices <- sort(c(unique(fit$ctstanmodel$pars$matrix),
+      'DIFFUSIONcov','DIFFUSIONcor','asymDIFFUSION','asymDIFFUSIONcor','T0VARcor','asymCINT','MANIFESTcov'))
     if(fit$ctstanmodel$continuoustime) whichmatrices <- c(whichmatrices, 
       'dtDRIFT','dtDIFFUSION','dtCINT')
   } else whichmatrices <- unique(c(whichmatrices, fit$setup$matrices$base)) #need base matrices for computations
@@ -54,7 +55,8 @@ ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA){
   
   
   #cholesky factor fix
-  out$MANIFESTVAR=out$MANIFESTVAR %*% t(out$MANIFESTVAR) #cholesky factor inside stanfit...
+  out$MANIFESTVAR=out$MANIFESTcov #cholesky factor inside stanfit...
+  out$DIFFUSION=out$DIFFUSIONcov
   
   #dimension naming (latent row object, manifest column object, etc
   for(lro in c('DRIFT','DIFFUSION','CINT','T0VAR','T0MEANS','asymDIFFUSION',if('TDPREDEFFECT' %in% model$pars$matrix) 'TDPREDEFFECT')){

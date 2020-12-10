@@ -1069,7 +1069,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
                 asymDIFFUSION[derrind,derrind] = ksolve(JAx[derrind,derrind], DIFFUSIONcov[derrind,derrind],verbose);
                 }
                 discreteDIFFUSION[derrind,derrind] =  asymDIFFUSION[derrind,derrind] - 
-                  quad_form_sym( asymDIFFUSION[derrind,derrind], eJAx\' );
+                  quad_form_sym( asymDIFFUSION[derrind,derrind], eJAx[derrind,derrind]\' );
               }
             }
             
