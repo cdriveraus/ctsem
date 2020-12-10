@@ -261,8 +261,7 @@ meltcov <- function(covm){
 
 ctStanFitMelt <- function(fit, maxsamples='all'){
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
-  
-  
+
   datasources <- c('Data','StatePred','Residuals')
   if(!is.null(fit$generated)) datasources <- c(datasources,'PostPred')
   if(!is.null(fit$priorpred)) datasources <- c(datasources,'PriorPred')
@@ -302,7 +301,7 @@ ctStanFitMelt <- function(fit, maxsamples='all'){
     if(dsi=='Residuals'){
       dexists<-TRUE
       d<-list()
-      d$Y<- d$Y<- array(t(t(datbase[,(fit$ctstanmodelbase$manifestNames)])), dim=c(1,dim(fit$standata$Y))) -
+      d$Y<- array(t(t(datbase[,(fit$ctstanmodelbase$manifestNames)])), dim=c(1,dim(fit$standata$Y))) -
         array(fit$stanfit$transformedparsfull$ya[1,1,,],dim=dim(fit$stanfit$transformedparsfull$ya[1,1,,,drop=FALSE])[-1])
       d$llrow <- fit$stanfit$transformedparsfull$llrow #array(NA,dim=c(1,dim(d$Y)[2]))
     }
@@ -381,6 +380,8 @@ ctCheckFit <- function(fit,
     if(corr) return(cov2cor(m)) else return(m)
   }
   
+  DataSource <-Sample<-NULL
+  
   
   dat <- ctStanFitMelt(fit = fit,maxsamples = nsamples)
   
@@ -398,6 +399,9 @@ ctCheckFit <- function(fit,
   dat <- ctDataMelt(dat=dat,id=fit$ctstanmodelbase$subjectIDname, by=byc,combinevars = combinevars)
   dat$Sample <- factor(dat$Sample)
   dat$DataSource <- factor(dat$DataSource)
+  
+  # browser()
+  # ?acf
   
   
   wdat=dcast(dat,paste0(
@@ -600,7 +604,7 @@ ctCheckFit <- function(fit,
 }
 
 
-corplotmelt <- function(corm, label='Coef.',limits=NA){
+corplotmelt <- function(corm, label='Coef.',limits=NA,title=''){
   
   if(is.na(limits[1])) limits <- range(corm[,'value'],na.rm=TRUE)
   ggplot(data=(corm),aes_string(x='Var1',y='Var2',fill=('value')))+ #ifelse(groups,NULL,'Group')))+
@@ -608,7 +612,7 @@ corplotmelt <- function(corm, label='Coef.',limits=NA){
     scale_fill_gradient2(low = "blue", high = "red", mid = "white",
       midpoint = 0, limits = limits, space = "Lab", 
       name=label)  +
-    theme_minimal()+ theme(axis.text.x = element_text(angle = 90))
+    theme_minimal()+ theme(axis.text.x = element_text(angle = 90)) + ggtitle(title)
 }
 
 

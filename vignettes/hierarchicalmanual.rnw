@@ -329,7 +329,9 @@ When \verb|optimize=FALSE|, Stan's Hamiltonian Monte Carlo sampler is used. Depe
 <<fitting,include=FALSE,cache=TRUE>>=
 if(w32chk()){
 suppressWarnings(fit<-ctStanFit(datalong = ctstantestdat, 
-  ctstanmodel = model,optimize=TRUE,savescores=TRUE,savesubjectmatrices = TRUE, nopriors=FALSE))
+  ctstanmodel = model,optimize=TRUE,
+  # savescores=TRUE,savesubjectmatrices = TRUE, 
+  nopriors=FALSE))
 }
 @
 
@@ -350,7 +352,7 @@ In the summary output, the free population mean parameters under \verb|$popmeans
 
 It is possible to represent the results for the within subject model using the Latex representation, running \verb|ctModelLatex(fit)| will show this.
 
-The function \verb}ctStanContinuousPars} can be used to return the population level continuous time parameter matrices in matrix form. Here we return the 97.5 quantile for each of the elements in the matrices:
+The function \verb}ctStanContinuousPars} can be used to return the population level parameter matrices in matrix form. Here we return the 97.5 quantile for each of the elements in the matrices:
 
 <<ctStanContinuousPars,eval=FALSE>>=
 ctStanContinuousPars(fit,calcfunc = quantile, calcfuncargs = list(probs=.975))
@@ -414,14 +416,14 @@ Plotting the original prior implied by the model, making a change to the transfo
 if(w32chk()){
 model$pars$indvarying[7] <- TRUE
 p <- plot(model, rows=7,rawpopsd=1, plot=FALSE)[[1]] + 
-  ggplot2::theme(legend.position = "none")+ggtitle('Default prior')
+  ggplot2::theme(legend.position = "none")+ggplot2::ggtitle('Default prior')
 
 model$pars$transform[7]<- '2 * param -1'
 
 p2 <- plot(model, rows=7,rawpopsd=1,plot=FALSE)[[1]]
 
 p3 <- g_legend(p2)
-p2 <- p2 + ggplot2::theme(legend.position ='none')+ggtitle('Modified prior')
+p2 <- p2 + ggplot2::theme(legend.position ='none')+ggplot2::ggtitle('Modified prior')
 gridExtra::grid.arrange(p,p2,p3,layout_matrix=matrix(c(3,1,1,1,1,1,1,1,3,2,2,2,2,2,2,2),ncol=2))
 }
 @

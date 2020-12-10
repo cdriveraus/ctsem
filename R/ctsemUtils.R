@@ -98,6 +98,7 @@ testall<- function(cores=4,folder = '/tests/testthat',examples=TRUE){
   runex <- grep('runExamples',tests)
   tests <- c(tests[runex],tests[-runex]) #do examples first
   if(!examples) tests <- tests[-grep('runExamples',tests)]
+  a=Sys.time()
 
   if(cores > 1){
     cl <- parallel::makeCluster(cores,outfile='')
@@ -121,6 +122,7 @@ testall<- function(cores=4,folder = '/tests/testthat',examples=TRUE){
   out2 <- do.call(what = rbind,lapply(out,utils::getS3method('as.data.frame','testthat_results')))
   dev.off()
   print(out2[,colnames(out2)!='result'])
+  print(Sys.time()-a)
   if(cores > 1) parallel::stopCluster(cl)
   return(invisible(out2))
 }

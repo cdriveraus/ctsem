@@ -211,6 +211,7 @@ ctAddSamples <- function(fit,nsamples,cores=2){
   
   fit$stanfit$transformedpars=stan_constrainsamples(sm = fit$stanmodel,
     standata = fit$standata,samples=fit$stanfit$rawposterior,
+    savescores = fit$standata$savescores,
     savesubjectmatrices=as.logical(fit$standata$savesubjectmatrices),
     dokalman=as.logical(fit$standata$savesubjectmatrices),
     cores=cores)
@@ -420,6 +421,11 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
     warning('savesubjectmatrices = TRUE requires dokalman=TRUE also!')
   }
   
+  # if(savesubjectmatrices && !savescores){
+  #   savescores <- TRUE
+  #   warning('savesubjectmatrices = TRUE requires savescores=TRUE also!')
+  # }
+  
   standata$savescores <- as.integer(savescores)
   standata$dokalman <- as.integer(dokalman)
   standata$savesubjectmatrices<-as.integer(savesubjectmatrices)
@@ -488,7 +494,9 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
     nresamples <- nrow(samples) 
   }
   
-  transformedpars=try(tostanarray(flesh=matrix(unlist(transformedpars),byrow=TRUE, nrow=nresamples), skeleton = est1))
+  
+  flesh=matrix(unlist(transformedpars),byrow=TRUE, nrow=nresamples)
+  transformedpars=try(tostanarray(flesh=flesh, skeleton = est1))
   
   return(transformedpars)
 }
@@ -496,6 +504,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
 
 
 tostanarray <- function(flesh, skeleton){
+  # browser()
   skelnames <- names(skeleton)
   skelstruc <- lapply(skeleton,dim)
   count=1
@@ -596,6 +605,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     standata$TIPREDEFFECTsetup[,] <- 0L
     standata$ntipredeffects <- 0L
   }
+  
+  savesubjectmatrices <- standata$savesubjectmatrices
+  standata$savesubjectmatrices <- 0L #reinsert when saving samples
   
   #disabled attempt at stochastic grad with mcmc subject pars
   # if(standata$nindvarying > 0 && standata$intoverpop==0){ #detect subject level pars
@@ -841,21 +853,21 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standatasml,split=parsets<2)
         if(optimcores==1) smf<-stan_reinitsf(sm,standatasml)
         
-        if(!stochastic) {
+        # if(!stochastic) {
           optimfit <- mize(init, fg=mizelpg, max_iter=99999,
             method="L-BFGS",memory=100,
             line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
             abs_tol=1e-4,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)
           optimfit$value = optimfit$f
-        }
-        
-        if(stochastic) {
-          optimfit <- sgd(init, fitfunc = function(x) target(x),
-            parsets=parsets,
-            whichignore = unlist(parsteps),
-            whichmcmcpars=whichmcmcpars,nsubjects=ifelse(is.na(whichmcmcpars[1]),NA,standata$nsubjects),
-            plot=plot,itertol=1e-1,deltatol=1e-1,maxiter=500)
-        }
+        # }
+
+        # if(stochastic) {
+        #   optimfit <- sgd(init, fitfunc = function(x) target(x),
+        #     parsets=parsets,
+        #     whichignore = unlist(parsteps),nconvergeiter = 10,
+        #     whichmcmcpars=whichmcmcpars,nsubjects=ifelse(is.na(whichmcmcpars[1]),NA,standata$nsubjects),
+        #     plot=plot,itertol=1,deltatol=1,maxiter=500)
+        # }
         
         standata$nopriors <- as.integer(nopriorsbak)
         # if(standata$ntipred ==0)
@@ -1606,13 +1618,14 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     if(!is) lpsamples <- NA else lpsamples <- unlist(target_dens)[resample_i]
     
     message('Computing posterior with ',nrow(resamples),' samples')
-    sdat=standata
-    if(standata$savesubjectmatrices==0){ #otherwise just do one row to get pop pars
-      sdat$dokalmanrows[] <- as.integer(1,rep(0),standata$ndatapoints-1)
-    }
+    standata$savesubjectmatrices=savesubjectmatrices
+    
+    if(!savesubjectmatrices) sdat=standatact_specificsubjects(standata,1) #only use 1 subject
+    if(savesubjectmatrices) sdat=standata
+    
     transformedpars=stan_constrainsamples(sm = sm,standata = sdat,
-      savesubjectmatrices = standata$savesubjectmatrices, 
-      dokalman=standata$savesubjectmatrices,
+      savesubjectmatrices = savesubjectmatrices, savescores = standata$savescores,
+      dokalman=as.logical(standata$savesubjectmatrices),
       samples=resamples,cores=cores, cl=clctsem, quiet=TRUE)
     
     if(cores > 1) {

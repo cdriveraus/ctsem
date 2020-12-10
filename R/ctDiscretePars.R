@@ -147,11 +147,11 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='popmean',
 
 
 
-ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=FALSE){
+ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=FALSE,types='dtDRIFT',quiet=FALSE){
   
   nl=dim(ctpars$DRIFT)[3]
   
-  message('Computing temporal regression coefficients for ', dim(ctpars$DRIFT)[1],' samples, may take a moment...')
+  if(!quiet) message('Computing temporal regression coefficients for ', dim(ctpars$DRIFT)[1],' samples, may take a moment...')
   
   lapply(names(ctpars),function(x){ #add in extra dim if only 3 dims (e.g. when not individually varying)
     dm=dim(ctpars[[x]])
@@ -162,25 +162,8 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
   
   nsubs <- lapply(ctpars,function(x) dim(x)[2])
   
-  
-  
-  
-  
-  # if(observational|standardise){
-  #   ctpars$asymDIFFUSIONdiag <- apply(ctpars$asymDIFFUSION,c(3,4),function(x){
-  #     a=diag(matrix(x,nl,nl))
-  #     if(any(!rl(diag(a) >0))) message('Unknown problems with standardization! setting problem diags to 1. yay.')
-  #     a[!rl(diag(a) >0)] <- 1 
-  #     return(a)
-  #   })
-  # }
-  # if(observational) {
-  #   ctpars$G <- apply(ctpars$DIFFUSIONcov,c(3,4),function(x){
-  #     g <- cov2cor(x)^2 * sign(g) #use cov2cor for standardising, but is squaring correct? seems wrong?
-  #     g[is.nan(g)] <- 0
-  #   })
-  # }
-  
+ 
+ if('dtDRIFT' %in% types){ 
   ctpars$dtDRIFT <- array(NA, dim=c(dim(ctpars$DRIFT)[1],max(unlist(nsubs)),length(times),dim(ctpars$DRIFT)[3:4]))
   
   
@@ -204,25 +187,8 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
       }
     }
   }
-  # browser()
+ } #end dtdrift
   
-  # discreteDRIFT <- array(sapply(1:(dim(ctpars$DRIFT)[1]),function(d){ #for each sample
-  #   sapply(1:max(unlist(nsubs)),function(subi){ #and each subject
-  #     
-  #     
-  #     DRIFT <- matrix(ctpars$DRIFT[d,min(subi,nsubs$DRIFT),,],nl,nl)
-  #     
-  #     sapply(times, function(ti){ 
-  #       out <-expm::expm(DRIFT *ti)
-  #       if(standardise) out <- out * matrix(rep(sqrt((asymDIFFUSIONdiag)),each=nl) / 
-  #           rep((sqrt(asymDIFFUSIONdiag)),times=nl),nl)
-  #       if(observational) out <- out %*% g
-  #       # browser()
-  #       if(cov) out <- (out %*% t(out))
-  #       return(matrix(out,ncol(out),ncol(out)))
-  #     },simplify = 'array')
-  #   },simplify='array') #end subject loop
-  # },simplify = 'array'),dim=c(nl,nl,length(times),dim(ctpars$DRIFT)[1]))
   
   return(ctpars$dtDRIFT)
 }

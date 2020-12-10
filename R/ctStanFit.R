@@ -145,7 +145,7 @@ verbosify<-function(sf,verbose=2){
 #' Generated data is in the $Ygen subobject after running \code{extract} on the fit object.
 #' For datasets with many manifest variables or time points, file size may be large.
 #' To generate data based on the posterior of a fitted model, see \code{\link{ctStanGenerateFromFit}}.
-#' @param vb Logical. Use variational Bayes algorithm from stan? 
+#' @param vb Logical. Use variational Bayes algorithm from stan? Only kind of working, not recommended.
 #' @param ... additional arguments to pass to \code{\link[rstan]{stan}} function.
 #' @export
 #' @examples
@@ -786,7 +786,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         stanmodeltext=stanmodeltext, data=standataout, ctdatastruct=datalong[c(1,nrow(datalong)),],standata=standata, 
         ctstanmodelbase=ctstanmodel, ctstanmodel=ctm,stanmodel=sm, stanfit=stanfit)
       class(out) <- 'ctStanFit'
-      out$stanfit$kalman<-ctStanKalman(out,pointest = TRUE)
+      out$stanfit$kalman<-suppressMessages(ctStanKalman(out,pointest = TRUE))
     }
     
     if(!fit) out=list(args=args,setup=setup,

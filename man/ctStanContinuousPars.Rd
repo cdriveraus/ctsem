@@ -5,13 +5,14 @@
 \title{ctStanContinuousPars}
 \usage{
 ctStanContinuousPars(
-  ctstanfitobj,
+  fit,
   calcfunc = quantile,
-  calcfuncargs = list(probs = 0.5)
+  calcfuncargs = list(probs = 0.5),
+  timeinterval = 1
 )
 }
 \arguments{
-\item{ctstanfitobj}{fit object from \code{\link{ctStanFit}}}
+\item{fit}{fit object from \code{\link{ctStanFit}}}
 
 \item{calcfunc}{Function to apply over samples, must return a single value. 
 By default the median over all samples is returned using the \code{\link[stats]{quantile}} function, 
@@ -20,9 +21,11 @@ but one might also be interested in the \code{\link[base]{mean}} or \code{\link[
 \item{calcfuncargs}{A list of additional parameters to pass to calcfunc. 
 For instance, with the default of calcfunc = quantile, 
 the probs argument is needed to ensure only a single value is returned.}
+
+\item{timeinterval}{time interval for discrete time parameter matrix computation.}
 }
 \description{
-Returns the continuous time parameter matricesof a ctStanFit fit object
+Returns the continuous time parameter matrices of a ctStanFit fit object
 }
 \examples{
 \donttest{

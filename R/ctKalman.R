@@ -1,5 +1,4 @@
 ctKalmanTIP <- function(sf,tipreds='all',subject=1,...){
-  
   if(tipreds[1] %in% 'all') tipreds <- sf$ctstanmodel$TIpredNames
   if(length(subject) > 1) stop('>1 subject!')
   
@@ -9,28 +8,29 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,...){
   #create datalong structure
   dat <- data.frame(id=sdat$subject,time=sdat$time)
   datti <- suppressWarnings(merge(dat,data.frame(id=sdat$subject,time=sdat$time,sdat$tipredsdata),all=TRUE))
+  colnames(datti)[1:2] <- c(sf$ctstanmodelbase$subjectIDname,sf$ctstanmodelbase$timeName)
   addm <- matrix(NA,nrow=nrow(dat),ncol=length(sf$ctstanmodel$manifestNames))
   colnames(addm) <- sf$ctstanmodel$manifestNames
   tdpreds <- sdat$tdpreds
   colnames(tdpreds) <- sf$ctstanmodel$TDpredNames
-  addm<-cbind(dat,addm,tdpreds)
-  dat <- merge(datti,addm)
+  dat<-cbind(datti,addm,tdpreds)
+  # dat <- merge(datti,addm)
   
   tisd <- apply(sf$standata$tipredsdata,2,sd,na.rm=TRUE)
   timu <- apply(sf$standata$tipredsdata,2,mean,na.rm=TRUE)
-  
-  newdat <- dat
+
+  newdat=dat
   for(tip in 1:length(tipreds)){
     for(direction in c(-1,1)){
-      tdat <- dat
-      tdat$id <- paste0(tipreds[tip],
+      tdat <- newdat
+      tdat[[sf$ctstanmodelbase$subjectIDname]] <- paste0(tipreds[tip],
         ifelse(direction==1,' high',' low'))
       tdat[,tipreds[tip]] <- tisd[tip] * direction
       #add to full dat
-      newdat <- rbind(newdat,tdat)
+      dat <- rbind(dat,tdat)
     }
   }
-  sf$standata <- suppressMessages(ctStanData(sf$ctstanmodel,newdat,optimize=TRUE))
+  sf$standata <- suppressMessages(ctStanData(sf$ctstanmodel,dat,optimize=TRUE))
   ctKalman(fit = sf,subjects=1:sf$standata$nsubjects,realid=TRUE,...)
 }
 
@@ -136,77 +136,77 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
     }
   }
   
-  if(type !='stan'){
-    if(timestep=='auto') timestep=1
-    out<-list()
-    if(timerange[1] != 'asdata' & timestep[1] == 'asdata') stop('If timerange is not asdata, a timestep must be specified!')
-    
-    # if(!is.null(datalong)) { #adjust ids and colnames as needed
-    #   datalong <- makeNumericIDs(datalong, fit$ctstanmodel$subjectIDname,fit$ctstanmodel$timeName) #ensure id's are appropriate
-    #   colnames(datalong)[colnames(datalong)==fit$ctstanmodel$subjectIDname] <- 'subject'
-    #   colnames(datalong)[colnames(datalong)==fit$ctstanmodel$timeName] <- 'time'
-    # }
-    
-    # if(is.null(datalong)) { #get relevant data
-      
-      if(is.null(fit$mxobj$expectation$P0)) { #if not fit with kalman filter then data needs rearranging
-        datalong=suppressMessages(ctWideToLong(datawide = fit$mxobj$data$observed[subjects,,drop=FALSE],
-          Tpoints=fit$ctmodelobj$Tpoints,
-          n.manifest=fit$ctmodelobj$n.manifest,manifestNames = fit$ctmodelobj$manifestNames,
-          n.TDpred=fit$ctmodelobj$n.TDpred,TDpredNames = fit$ctmodelobj$TDpredNames,
-          n.TIpred = fit$ctmodelobj$n.TIpred, TIpredNames = fit$ctmodelobj$TIpredNames))
-        datalong <- suppressMessages(ctDeintervalise(datalong = datalong,id = 'id',dT = 'dT'))
-        datalong[,'id'] <- subjects[datalong[,'id'] ]
-      } else {
-        datalong=fit$mxobj$data$observed
-        datalong <- suppressMessages(ctDeintervalise(datalong = datalong,id = 'id',dT = 'dT1'))
-      }
-      colnames(datalong)[colnames(datalong) == 'id'] <- 'subject'
-      
-      
-    # }
-    
-    
-    
-    if(!all(subjects %in% datalong[,'subject'])) stop('Invalid subjects specified!')
-    
-    for(subjecti in subjects){
-      #setup subjects data, interpolating and extending as necessary
-      sdat=datalong[datalong[,'subject'] == subjecti,,drop=FALSE]
-      if(timestep != 'asdata' || timerange[1] != 'asdata') {
-        if(timerange[1]=='asdata') stimerange <- range(sdat[,'time']) else {
-          stimerange <- timerange
-          if(timerange[1] > min(sdat[,'time']) || timerange[2] < max(sdat[,'time']) ) stop('Specified timerange must contain all subjects time ranges!')
-        }
-        snewtimes <- seq(stimerange[1],stimerange[2],timestep)
-        snewdat <- array(NA,dim=c(length(snewtimes),dim(sdat)[-1]),dimnames=list(c(),dimnames(sdat)[[2]]))
-        snewdat[,'time'] <- snewtimes
-        snewdat[,fit$ctmodelobj$TDpredNames] <- 0
-        sdat <- rbind(sdat,snewdat)
-        sdat[,'time'] <- round(sdat[,'time'],10)
-        sdat<-sdat[!duplicated(sdat[,'time']),,drop=FALSE]
-        sdat <- sdat[order(sdat[,'time']),,drop=FALSE]
-        sdat[,c(fit$ctmodelobj$manifestNames,fit$ctmodelobj$TDpredNames)] [sdat[,c(fit$ctmodelobj$manifestNames,fit$ctmodelobj$TDpredNames)]==99999] <- NA
-        sdat[,'subject'] <- subjecti
-      }
-      
-      #get parameter matrices
-      # 
-      model <- summary(fit)
-      # model <- model$
-      
-      #get kalman estimates
-      
-      out[[paste('subject',subjecti)]]<-Kalman(kpars=model,
-        datalong=sdat,
-        manifestNames=fit$ctmodelobj$manifestNames,
-        latentNames=fit$ctmodelobj$latentNames,
-        TDpredNames=fit$ctmodelobj$TDpredNames,
-        idcol='subject',
-        timecol='time')
-    }
-    class(out) <- c('ctKalman',class(out))
-  }
+  # if(type !='stan'){
+  #   if(timestep=='auto') timestep=1
+  #   out<-list()
+  #   if(timerange[1] != 'asdata' & timestep[1] == 'asdata') stop('If timerange is not asdata, a timestep must be specified!')
+  #   
+  #   # if(!is.null(datalong)) { #adjust ids and colnames as needed
+  #   #   datalong <- makeNumericIDs(datalong, fit$ctstanmodel$subjectIDname,fit$ctstanmodel$timeName) #ensure id's are appropriate
+  #   #   colnames(datalong)[colnames(datalong)==fit$ctstanmodel$subjectIDname] <- 'subject'
+  #   #   colnames(datalong)[colnames(datalong)==fit$ctstanmodel$timeName] <- 'time'
+  #   # }
+  #   
+  #   # if(is.null(datalong)) { #get relevant data
+  #     
+  #     if(is.null(fit$mxobj$expectation$P0)) { #if not fit with kalman filter then data needs rearranging
+  #       datalong=suppressMessages(ctWideToLong(datawide = fit$mxobj$data$observed[subjects,,drop=FALSE],
+  #         Tpoints=fit$ctmodelobj$Tpoints,
+  #         n.manifest=fit$ctmodelobj$n.manifest,manifestNames = fit$ctmodelobj$manifestNames,
+  #         n.TDpred=fit$ctmodelobj$n.TDpred,TDpredNames = fit$ctmodelobj$TDpredNames,
+  #         n.TIpred = fit$ctmodelobj$n.TIpred, TIpredNames = fit$ctmodelobj$TIpredNames))
+  #       datalong <- suppressMessages(ctDeintervalise(datalong = datalong,id = 'id',dT = 'dT'))
+  #       datalong[,'id'] <- subjects[datalong[,'id'] ]
+  #     } else {
+  #       datalong=fit$mxobj$data$observed
+  #       datalong <- suppressMessages(ctDeintervalise(datalong = datalong,id = 'id',dT = 'dT1'))
+  #     }
+  #     colnames(datalong)[colnames(datalong) == 'id'] <- 'subject'
+  #     
+  #     
+  #   # }
+  #   
+  #   
+  #   
+  #   if(!all(subjects %in% datalong[,'subject'])) stop('Invalid subjects specified!')
+  #   
+  #   for(subjecti in subjects){
+  #     #setup subjects data, interpolating and extending as necessary
+  #     sdat=datalong[datalong[,'subject'] == subjecti,,drop=FALSE]
+  #     if(timestep != 'asdata' || timerange[1] != 'asdata') {
+  #       if(timerange[1]=='asdata') stimerange <- range(sdat[,'time']) else {
+  #         stimerange <- timerange
+  #         if(timerange[1] > min(sdat[,'time']) || timerange[2] < max(sdat[,'time']) ) stop('Specified timerange must contain all subjects time ranges!')
+  #       }
+  #       snewtimes <- seq(stimerange[1],stimerange[2],timestep)
+  #       snewdat <- array(NA,dim=c(length(snewtimes),dim(sdat)[-1]),dimnames=list(c(),dimnames(sdat)[[2]]))
+  #       snewdat[,'time'] <- snewtimes
+  #       snewdat[,fit$ctmodelobj$TDpredNames] <- 0
+  #       sdat <- rbind(sdat,snewdat)
+  #       sdat[,'time'] <- round(sdat[,'time'],10)
+  #       sdat<-sdat[!duplicated(sdat[,'time']),,drop=FALSE]
+  #       sdat <- sdat[order(sdat[,'time']),,drop=FALSE]
+  #       sdat[,c(fit$ctmodelobj$manifestNames,fit$ctmodelobj$TDpredNames)] [sdat[,c(fit$ctmodelobj$manifestNames,fit$ctmodelobj$TDpredNames)]==99999] <- NA
+  #       sdat[,'subject'] <- subjecti
+  #     }
+  #     
+  #     #get parameter matrices
+  #     # 
+  #     model <- summary(fit)
+  #     # model <- model$
+  #     
+  #     #get kalman estimates
+  #     
+  #     out[[paste('subject',subjecti)]]<-Kalman(kpars=model,
+  #       datalong=sdat,
+  #       manifestNames=fit$ctmodelobj$manifestNames,
+  #       latentNames=fit$ctmodelobj$latentNames,
+  #       TDpredNames=fit$ctmodelobj$TDpredNames,
+  #       idcol='subject',
+  #       timecol='time')
+  #   }
+  #   class(out) <- c('ctKalman',class(out))
+  # }#end old kalman
   
   if(plot) {
     plot(x=out,subjects=subjects,...)

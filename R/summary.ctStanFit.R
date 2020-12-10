@@ -42,10 +42,10 @@ ctStanSubjectPars <- function(fit,pointest=TRUE,cores=2,nsamples='all'){
         !grepl('[',m$param[i],fixed=TRUE) & !m$param[i] %in% dimnames(p)[[3]]){
       if(m$param[i] %in% pnames){ #if ind differences
         co = co+1
-      p[,,co] <- tfp[[paste0('subj_',m$matrix[i])]] [
-        , ,m$row[i],m$col[i]]
-      dimnames(p)[[3]][co] <- m$param[i]
-    }
+        p[,,co] <- tfp[[paste0('subj_',m$matrix[i])]] [
+          , ,m$row[i],m$col[i]]
+        dimnames(p)[[3]][co] <- m$param[i]
+      }
     }
   }
   p=p[,,order(dimnames(p)[[3]]),drop=FALSE]
@@ -111,6 +111,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
     if('98%' %in% colnames(smr$summary)) colnames(smr$summary)[colnames(smr$summary)=='98%'] <- '97.5%'
   }
   
+  
   e <- ctExtract(object) 
   
   if(residualcov){ #cov of residuals
@@ -143,7 +144,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
       dimrawpopcorr <- dim(e$rawpopcorr)
       rawpopcorr= array(e$rawpopcorr,dim=c(dimrawpopcorr[1],1,dimrawpopcorr[2] * dimrawpopcorr[3]))
       rawpopcorrout <- suppressWarnings(monitor(rawpopcorr, digits_summary=digits,warmup=0,print = FALSE)[lower.tri(diag(nindvarying)),c(monvars,'n_eff','Rhat'),drop=FALSE])
-       if(optimize) rawpopcorrout <- rawpopcorrout[,-which(colnames(rawpopcorrout) %in% c('n_eff','Rhat')),drop=FALSE]
+      if(optimize) rawpopcorrout <- rawpopcorrout[,-which(colnames(rawpopcorrout) %in% c('n_eff','Rhat')),drop=FALSE]
       
       rownames(rawpopcorrout) <- matrix(paste0('',parnamesiv,'__',rep(parnamesiv,each=length(parnamesiv))),
         length(parnamesiv),length(parnamesiv))[lower.tri(diag(nindvarying)),drop=FALSE]
@@ -180,66 +181,20 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
   
   
   if(parmatrices){
+    Mean=ctStanContinuousPars(object,calcfunc = mean,calcfuncargs=list(),timeinterval=timeinterval)
+    sd=ctStanContinuousPars(object,calcfunc = sd,calcfuncargs = list(na.rm=TRUE),timeinterval=timeinterval)
+    `2.5%` = ctStanContinuousPars(object,calcfunc = quantile,calcfuncargs = list(probs=.025),timeinterval=timeinterval)
+    `50%` = ctStanContinuousPars(object,calcfunc = quantile,calcfuncargs = list(probs=.5),timeinterval=timeinterval)
+    `97.5%` = ctStanContinuousPars(object,calcfunc = quantile,calcfuncargs = list(probs=.975),timeinterval=timeinterval)
     
-    # #check if stanfit object can be used
-    # sf <- object$stanfit
-    # npars <- try(get_num_upars(sf),silent=TRUE) #$stanmodel)
-    # 
-    # if(class(npars)=='try-error'){ #in case R has been restarted or similar
-    #   standataout <- object$standata
-    #   smf <- stan_reinitsf(object$stanmodel,standataout)
-    # }
-    object$standata$savescores <- 0L
-    object$standata$gendata <- 0L
-    object$standata$dokalman <- 0L
-    object$standata$popcovn <- 5L
-    sf <- stan_reinitsf(object$stanmodel,data=object$standata)
-    parmatlists <- try(apply(ctStanRawSamples(object),
-      # sample(x = 1:dim(e$rawpopmeans)[1],
-      #   size = dim(e$rawpopmeans)[1],  #min(parmatsamples,
-      #   replace = FALSE),],
-      1,ctStanParMatrices,fit=object,timeinterval=timeinterval,sf=sf))
+    d <- data.frame(ctModelUnlist(Mean,matnames = names(Mean)))
+    colnames(d)[colnames(d) %in% 'value'] <- 'Mean'
+    lapply(c('sd','2.5%','50%','97.5%'),function(x) d[[x]] <<-round(ctModelUnlist(get(x),names(Mean))$value,digits))
+    d$param <- NULL
+    d$Mean <- round(d$Mean,digits)
+    rm(sd)
     
-    if(!'try-error' %in% class(parmatlists)[1]){
-      parmatarray <- array(unlist(parmatlists),dim=c(length(unlist(parmatlists[[1]])),length(parmatlists)))
-      parmats <- matrix(NA,nrow=length(unlist(parmatlists[[1]])),ncol=7)
-      rownames(parmats) <- paste0('r',1:nrow(parmats))
-      counter=0
-      for(mati in 1:length(parmatlists[[1]])){
-        if(all(dim(parmatlists[[1]][[mati]]) > 0)){
-          for(coli in 1:ncol(parmatlists[[1]][[mati]])){
-            for(rowi in 1:nrow(parmatlists[[1]][[mati]])){
-              counter=counter+1
-              new <- matrix(c(
-                rowi,
-                coli,
-                mean(parmatarray[counter,],na.rm=TRUE),
-                sd(parmatarray[counter,],na.rm=TRUE),
-                quantile(parmatarray[counter,],probs=c(.025,.5,.975),na.rm=TRUE)),
-                nrow=1)
-              try(rownames(parmats)[counter] <- names(parmatlists[[1]])[mati])
-              try(parmats[counter,]<-new)
-            }}}}
-      
-      colnames(parmats) <- c('Row','Col', 'Mean','Sd','2.5%','50%','97.5%')
-      
-      #remove certain parmatrices lines
-      removeindices <- which(rownames(parmats) == 'MANIFESTVAR' & parmats[,'Row'] != parmats[,'Col'])
-      
-      removeindices <- c(removeindices,which((rownames(parmats) %in% c('MANIFESTVAR','T0VAR','DIFFUSION','dtDIFFUSION','asymDIFFUSION',
-        'T0VARcor','DIFFUSIONcor','DIFFUSIONcov','dtDIFFUSIONcor','asymDIFFUSIONcor') &  parmats[,'Row'] < parmats[,'Col'])))
-      
-      removeindices <- c(removeindices,which((rownames(parmats) %in% c('T0VARcor','DIFFUSIONcor','dtDIFFUSIONcor','asymDIFFUSIONcor') & 
-          parmats[,'Row'] == parmats[,'Col'])))
-      
-      parmats <- parmats[-removeindices,]
-      
-      out$parmatrices=round(parmats,digits=digits)
-      
-      out$parmatNote=paste0('Population mean parameter matrices calculated with time interval of ', timeinterval,' for discrete time (dt) matrices. ',
-        'Covariance related matrices shown as covariance matrices, correlations have (cor) suffix. Asymptotic (asym) matrices based on infinitely large time interval.')
-    }
-    if('try-error' %in% class(parmatlists)[1]) out$parmatNote = 'Could not calculate parameter matrices'
+    out$parmatrices=d
   }
   
   
@@ -293,7 +248,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
   
   if(!parmatrices) out$parmatNote <- 'For additional summary matrices, use argument: parmatrices = TRUE'
   
-
+  
   
   return(out)
 }

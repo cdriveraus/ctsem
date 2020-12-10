@@ -108,7 +108,8 @@ or time points, will increase file size substantially.}
 
 \item{savesubjectmatrices}{Logical. If TRUE, subject specific matrices are saved -- 
 only relevant when either time dependent predictors or individual differences are 
-used. Can increase memory usage dramatically in large models.}
+used. Can increase memory usage dramatically in large models, and can be computed after fitting using ctExtract
+or ctStanSubjectPars .}
 
 \item{gendata}{Logical -- If TRUE, uses provided data for only covariates and a time and missingness structure, and 
 generates random data according to the specified model / priors. 

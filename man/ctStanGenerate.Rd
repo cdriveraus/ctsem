@@ -40,7 +40,6 @@ Generate data from a ctstanmodel object
 \examples{
 \donttest{
 #generate and plot samples from prior predictive
-priorpred <- ctStanGenerate(ctm = ctstantestfit,
-  datastruct = ctstantestdat,cores=2,nsamples = 50)
+priorpred <- ctStanGenerate(cts = ctstantestfit,cores=2,nsamples = 50)
 }
 }

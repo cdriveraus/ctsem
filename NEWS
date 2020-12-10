@@ -1,5 +1,5 @@
 ctsem news:
-14/11/2020
+4/12/2020
 #### 3.4 ####
 - ctLOO function for leave one out / k fold cross validation.
 - ctCheckFit function dramatically improved for visual model diagnostics.

@@ -32,7 +32,7 @@ Add a \code{$generated} object to ctstanfit object, with random data generated f
 \examples{
 if(w32chk()){
 
-gen <- ctStanGenerateFromFit(ctstantestfit, nsamples=3,fullposterior=TRUE)
+gen <- ctStanGenerateFromFit(ctstantestfit, nsamples=3,fullposterior=TRUE,cores=1)
 plot(gen$generated$Y[3,,2],type='l') #Third random data sample, 2nd manifest var, all time points. 
 }
 }
