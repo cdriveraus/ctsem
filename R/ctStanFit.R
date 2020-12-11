@@ -725,15 +725,12 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
           if(plot==TRUE) stanfit <- list(stanfit=do.call(stanWplot,stanargs)) else stanfit <- list(stanfit=do.call(sampling,stanargs))
           
           #find the median sample and compute kalman scores etc for this
+          # browser()
           e=rstan::extract(stanfit$stanfit)
-          middle <- which(e$ll-quantile(e$ll,.5) == min(e$ll-quantile(e$ll,.5) ))
+          # middle <- which(abs(e$ll-quantile(e$ll,.5)) == min(abs(e$ll-quantile(e$ll,.5) )))
+          # middle <- which(e$ll==max(e$ll)) 
           stanfit$rawposterior <- t(stan_unconstrainsamples(fit = stanfit$stanfit,standata = standata))
-          stanfit$rawest <- stanfit$rawposterior[middle,,drop=FALSE]
-
-          # stanfit$transformedparsfull =   stan_constrainsamples(sm = sm,standata = standata,
-          #   savesubjectmatrices = TRUE, dokalman=TRUE,savescores = TRUE,
-          #   samples=stanfit$rawest,cores=1, quiet = TRUE)
-          
+          stanfit$rawest <- colMeans(stanfit$rawposterior)
           
         }
       }

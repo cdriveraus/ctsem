@@ -124,15 +124,12 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
       dm$pars$indvarying <- FALSE
       
       for(m in c('cm','dm')){
-        argslist <- list(ml=list(datalong = dat,ctstanmodel = get(m),optimize=TRUE, nlcontrol=list(),
-          verbose=0,optimcontrol=list(estonly=FALSE,stochastic=F),savescores = F,nopriors=T)
-          ,mlnl=list(datalong = dat,ctstanmodel = get(m),optimize=TRUE, nlcontrol=list(nldynamics=TRUE),
-            verbose=0,optimcontrol=list(estonly=F,stochastic=F),savescores = F,nopriors=T)
+        argslist <- list(ml=list(datalong = dat,ctstanmodel = get(m))
         )
         
         
         for(argi in names(argslist)){
-          f = do.call(ctStanFit,argslist[[argi]])
+          f = ctStanFit(datalong = dat,ctstanmodel = get(m))
           if(is.null(s[[argi]])) s[[argi]] = list()
           s[[argi]][[m]] <- summary(f,parmatrices=TRUE)
         }
@@ -156,7 +153,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
       ll=unlist(lapply(s, function(argi) lapply(argi, function(m) m$loglik)))
       
       for(dimi in 2:length(ll)){
-        expect_equivalent(ll[dimi],ll[dimi-1],tol=1e-3)
+       testthat:: expect_equivalent(ll[dimi],ll[dimi-1],tol=1e-3)
       }
       
       

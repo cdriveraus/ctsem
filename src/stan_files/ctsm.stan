@@ -395,20 +395,20 @@ transformed parameters{
       matrix[matrixdims[32, 1], matrixdims[32, 2] ] pop_MANIFESTcov;
       matrix[matrixdims[21, 1], matrixdims[21, 2] ] pop_asymCINT;
       matrix[matrixdims[22, 1], matrixdims[22, 2] ] pop_asymDIFFUSION;
-      matrix[matrixdims[10, 1], matrixdims[10, 2] ] subj_PARS[ (savesubjectmatrices && sum(whenmat[10,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[1, 1], matrixdims[1, 2] ] subj_T0MEANS[ (savesubjectmatrices && sum(whenmat[1,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[2, 1], matrixdims[2, 2] ] subj_LAMBDA[ (savesubjectmatrices && sum(whenmat[2,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[3, 1], matrixdims[3, 2] ] subj_DRIFT[ (savesubjectmatrices && sum(whenmat[3,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[4, 1], matrixdims[4, 2] ] subj_DIFFUSION[ (savesubjectmatrices && sum(whenmat[4,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[5, 1], matrixdims[5, 2] ] subj_MANIFESTVAR[ (savesubjectmatrices && sum(whenmat[5,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[6, 1], matrixdims[6, 2] ] subj_MANIFESTMEANS[ (savesubjectmatrices && sum(whenmat[6,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[7, 1], matrixdims[7, 2] ] subj_CINT[ (savesubjectmatrices && sum(whenmat[7,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[8, 1], matrixdims[8, 2] ] subj_T0VAR[ (savesubjectmatrices && sum(whenmat[8,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[9, 1], matrixdims[9, 2] ] subj_TDPREDEFFECT[ (savesubjectmatrices && sum(whenmat[9,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[31, 1], matrixdims[31, 2] ] subj_DIFFUSIONcov[ (savesubjectmatrices && sum(whenmat[31,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[32, 1], matrixdims[32, 2] ] subj_MANIFESTcov[ (savesubjectmatrices && sum(whenmat[32,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[21, 1], matrixdims[21, 2] ] subj_asymCINT[ (savesubjectmatrices && sum(whenmat[21,1:5])) ? nsubjects : 0];
-      matrix[matrixdims[22, 1], matrixdims[22, 2] ] subj_asymDIFFUSION[ (savesubjectmatrices && sum(whenmat[22,1:5])) ? nsubjects : 0];
+      matrix[matrixdims[10, 1], matrixdims[10, 2] ] subj_PARS[ (savesubjectmatrices && (sum(whenmat[10,1:5]) || statedep[10])) ? nsubjects : 0];
+      matrix[matrixdims[1, 1], matrixdims[1, 2] ] subj_T0MEANS[ (savesubjectmatrices && (sum(whenmat[1,1:5]) || statedep[1])) ? nsubjects : 0];
+      matrix[matrixdims[2, 1], matrixdims[2, 2] ] subj_LAMBDA[ (savesubjectmatrices && (sum(whenmat[2,1:5]) || statedep[2])) ? nsubjects : 0];
+      matrix[matrixdims[3, 1], matrixdims[3, 2] ] subj_DRIFT[ (savesubjectmatrices && (sum(whenmat[3,1:5]) || statedep[3])) ? nsubjects : 0];
+      matrix[matrixdims[4, 1], matrixdims[4, 2] ] subj_DIFFUSION[ (savesubjectmatrices && (sum(whenmat[4,1:5]) || statedep[4])) ? nsubjects : 0];
+      matrix[matrixdims[5, 1], matrixdims[5, 2] ] subj_MANIFESTVAR[ (savesubjectmatrices && (sum(whenmat[5,1:5]) || statedep[5])) ? nsubjects : 0];
+      matrix[matrixdims[6, 1], matrixdims[6, 2] ] subj_MANIFESTMEANS[ (savesubjectmatrices && (sum(whenmat[6,1:5]) || statedep[6])) ? nsubjects : 0];
+      matrix[matrixdims[7, 1], matrixdims[7, 2] ] subj_CINT[ (savesubjectmatrices && (sum(whenmat[7,1:5]) || statedep[7])) ? nsubjects : 0];
+      matrix[matrixdims[8, 1], matrixdims[8, 2] ] subj_T0VAR[ (savesubjectmatrices && (sum(whenmat[8,1:5]) || statedep[8])) ? nsubjects : 0];
+      matrix[matrixdims[9, 1], matrixdims[9, 2] ] subj_TDPREDEFFECT[ (savesubjectmatrices && (sum(whenmat[9,1:5]) || statedep[9])) ? nsubjects : 0];
+      matrix[matrixdims[31, 1], matrixdims[31, 2] ] subj_DIFFUSIONcov[ (savesubjectmatrices && (sum(whenmat[31,1:5]) || statedep[31])) ? nsubjects : 0];
+      matrix[matrixdims[32, 1], matrixdims[32, 2] ] subj_MANIFESTcov[ (savesubjectmatrices && (sum(whenmat[32,1:5]) || statedep[32])) ? nsubjects : 0];
+      matrix[matrixdims[21, 1], matrixdims[21, 2] ] subj_asymCINT[ (savesubjectmatrices && (sum(whenmat[21,1:5]) || statedep[21])) ? nsubjects : 0];
+      matrix[matrixdims[22, 1], matrixdims[22, 2] ] subj_asymDIFFUSION[ (savesubjectmatrices && (sum(whenmat[22,1:5]) || statedep[22])) ? nsubjects : 0];
 
   matrix[ntipred ? (nmissingtipreds ? nsubjects : 0) : 0, ntipred ? (nmissingtipreds ? ntipred : 0) : 0] tipreds; //tipred values to fill from data and, when needed, imputation vector
   matrix[nparams, ntipred] TIPREDEFFECT; //design matrix of individual time independent predictor effects
@@ -681,7 +681,10 @@ if(sum(whenmat[7,{2}]) > 0)CINT=mcalc(CINT,indparams, statetf,{2}, 7, matsetup, 
 if(sum(whenmat[52,{2}]) > 0)JAx=mcalc(JAx,indparams, statetf,{2}, 52, matsetup, matvalues, si, subindices); 
 
       
-      if(si==0 || whenmat[4,2] || (T0check==1 && whenmat[4,5])) DIFFUSIONcov[derrind,derrind] = sdcovsqrt2cov(DIFFUSION[derrind,derrind],choleskymats);
+      if(si==0 || statedep[4] || whenmat[4,2] || (T0check==1 && whenmat[4,5])){
+        DIFFUSIONcov[derrind,derrind] = sdcovsqrt2cov(DIFFUSION[derrind,derrind],choleskymats);
+        if(!continuoustime) discreteDIFFUSION=DIFFUSIONcov;
+      }
       
         if(continuoustime){
         
@@ -714,14 +717,15 @@ if(sum(whenmat[52,{2}]) > 0)JAx=mcalc(JAx,indparams, statetf,{2}, 52, matsetup, 
           }
   
           if(continuoustime==0){ //this could be much more efficient
-            eJAx = JAx;
+            if(dosmoother) eJAxs[rowi,,] = JAx;
             if(intoverstates==1 || dosmoother==1){
-              etacov = quad_form(etacov, JAx');
+              etacov = quad_form_sym(makesym(etacov,verbose,1), JAx');
               etacov[ derrind, derrind ] += DIFFUSIONcov[ derrind, derrind ]; 
             }
-            discreteDIFFUSION=DIFFUSIONcov;
-            discreteDRIFT=append_row(append_col(DRIFT[1:nlatent, 1:nlatent],CINT),nlplusonezerovec');
-            discreteDRIFT[nlatent+1,nlatent+1] = 1;
+            if(si==0 ||  statedep[3]||statedep[7] || (T0check == 1 && subindices[3] > 0)){
+              discreteDRIFT=append_row(append_col(DRIFT[1:nlatent, 1:nlatent],CINT),nlplusonezerovec');
+              discreteDRIFT[nlatent+1,nlatent+1] = 1;
+            }
             state[1:nlatent] = (discreteDRIFT * append_row(state[1:nlatent],1.0))[1:nlatent];
             
           }
@@ -750,8 +754,8 @@ if(sum(whenmat[53,{3}]) > 0)Jtd=mcalc(Jtd,indparams, statetf,{3}, 53, matsetup, 
       }
     }//end nonlinear tdpred
 
-  if(intoverstates==0){
-    if(T0check==0) state += cholesky_decompose(T0VAR) * etaupdbasestates[(1+(rowi-1)*nlatentpop):(rowi*nlatentpop)];
+  if(si > 0 && intoverstates==0){ //unused states if intoverpop is specified, consider fixing...
+    if(T0check==0) state += cholesky_decompose(etacov) * etaupdbasestates[(1+(rowi-1)*nlatentpop):(rowi*nlatentpop)];
     if(T0check>0) state[derrind] +=  cholesky_decompose(makesym(discreteDIFFUSION[derrind,derrind],verbose,1)) * 
      (etaupdbasestates[(1+(rowi-1)*nlatentpop):(nlatent+(rowi-1)*nlatentpop)])[derrind];
      
@@ -849,7 +853,7 @@ err[od] = Y[rowi,od] - syprior[od]; // prediction error
             " eJAx = ", eJAx,
             "  rawpopsd ", rawpopsd,  "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
          
-        K[,od] = mdivide_right_spd(etacov * Jy[od,]', ycov[od,od]);//removed makesym // * multiply_lower_tri_self_transpose(ycovi');// ycov[od,od]; 
+        K[,od] = mdivide_right_spd(etacov * Jy[od,]', makesym(ycov[od,od],verbose,1)); // * multiply_lower_tri_self_transpose(ycovi');// ycov[od,od]; 
         etacov += -K[,od] * Jy[od,] * etacov;
         state +=  (K[,od] * err[od]);
       }
@@ -923,22 +927,22 @@ pop_PARS = PARS; pop_T0MEANS = T0MEANS; pop_LAMBDA = LAMBDA; pop_DRIFT = DRIFT; 
       
       if(savesubjectmatrices && //if getting subj matrices and 
         (sri ? subject[sri] != subject[sri+1] : 1)){ //no more rows, or change of subject
-        T0MEANS[,1] = state; //t0means updated, other pars as per final time point
      
-    if(sum(whenmat[10,1:5]) > 0) subj_PARS[si] = PARS;
-    if(sum(whenmat[1,1:5]) > 0) subj_T0MEANS[si] = T0MEANS;
-    if(sum(whenmat[2,1:5]) > 0) subj_LAMBDA[si] = LAMBDA;
-    if(sum(whenmat[3,1:5]) > 0) subj_DRIFT[si] = DRIFT;
-    if(sum(whenmat[4,1:5]) > 0) subj_DIFFUSION[si] = DIFFUSION;
-    if(sum(whenmat[5,1:5]) > 0) subj_MANIFESTVAR[si] = MANIFESTVAR;
-    if(sum(whenmat[6,1:5]) > 0) subj_MANIFESTMEANS[si] = MANIFESTMEANS;
-    if(sum(whenmat[7,1:5]) > 0) subj_CINT[si] = CINT;
-    if(sum(whenmat[8,1:5]) > 0) subj_T0VAR[si] = T0VAR;
-    if(sum(whenmat[9,1:5]) > 0) subj_TDPREDEFFECT[si] = TDPREDEFFECT;
-    if(sum(whenmat[31,1:5]) > 0) subj_DIFFUSIONcov[si] = DIFFUSIONcov;
-    if(sum(whenmat[32,1:5]) > 0) subj_MANIFESTcov[si] = MANIFESTcov;
-    if(sum(whenmat[21,1:5]) > 0) subj_asymCINT[si] = asymCINT;
-    if(sum(whenmat[22,1:5]) > 0) subj_asymDIFFUSION[si] = asymDIFFUSION;
+    if(sum(whenmat[10,1:5]) > 0 || statedep[10]) subj_PARS[si] = PARS;
+    if(sum(whenmat[1,1:5]) > 0 || statedep[1]) subj_T0MEANS[si] = T0MEANS;
+    if(sum(whenmat[2,1:5]) > 0 || statedep[2]) subj_LAMBDA[si] = LAMBDA;
+    if(sum(whenmat[3,1:5]) > 0 || statedep[3]) subj_DRIFT[si] = DRIFT;
+    if(sum(whenmat[4,1:5]) > 0 || statedep[4]) subj_DIFFUSION[si] = DIFFUSION;
+    if(sum(whenmat[5,1:5]) > 0 || statedep[5]) subj_MANIFESTVAR[si] = MANIFESTVAR;
+    if(sum(whenmat[6,1:5]) > 0 || statedep[6]) subj_MANIFESTMEANS[si] = MANIFESTMEANS;
+    if(sum(whenmat[7,1:5]) > 0 || statedep[7]) subj_CINT[si] = CINT;
+    if(sum(whenmat[8,1:5]) > 0 || statedep[8]) subj_T0VAR[si] = T0VAR;
+    if(sum(whenmat[9,1:5]) > 0 || statedep[9]) subj_TDPREDEFFECT[si] = TDPREDEFFECT;
+    if(sum(whenmat[31,1:5]) > 0 || statedep[31]) subj_DIFFUSIONcov[si] = DIFFUSIONcov;
+    if(sum(whenmat[32,1:5]) > 0 || statedep[32]) subj_MANIFESTcov[si] = MANIFESTcov;
+    if(sum(whenmat[21,1:5]) > 0 || statedep[21]) subj_asymCINT[si] = asymCINT;
+    if(sum(whenmat[22,1:5]) > 0 || statedep[22]) subj_asymDIFFUSION[si] = asymDIFFUSION;
+     if(sum(whenmat[1,1:5]) > 0 || statedep[1]) subj_T0MEANS[si,,1] = state; //t0means updated, other pars as per final time point
         }
       
     }

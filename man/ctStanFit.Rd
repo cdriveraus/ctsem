@@ -123,7 +123,7 @@ list(adapt_delta = .8, adapt_window=2, max_treedepth=10, adapt_init_buffer=2, st
 
 \item{verbose}{Integer from 0 to 2. Higher values print more information during model fit -- for debugging.}
 
-\item{vb}{Logical. Use variational Bayes algorithm from stan?}
+\item{vb}{Logical. Use variational Bayes algorithm from stan? Only kind of working, not recommended.}
 
 \item{...}{additional arguments to pass to \code{\link[rstan]{stan}} function.}
 }

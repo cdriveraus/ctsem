@@ -57,7 +57,7 @@ ctModelStatesAndPARS <- function(ctspec, statenames){ #replace latentName and pa
   #expand pars
 
   ln <- ctspec$param[ctspec$matrix %in% 'PARS' & !is.na(ctspec$param)] #get extra pars
-  # browser()
+  
   for(li in seq_along(ln)){ #for every extra par
     parmatch <- which(ctspec$param %in% ln[li] & ctspec$matrix %in% 'PARS') #which row is the par itself
     for(ri in grep(paste0('\\b',ln[li],'\\b'),ctspec$param)){ #which rows contain the par
@@ -1050,7 +1050,10 @@ if(verbose > 1) print ("below t0 row ", rowi);
       
       ',matcalcs('si',when=2, mats$diffusion,basemats=FALSE),'
       ',simplifystanfunction(paste0(ctm$modelmats$calcs$diffusion,';\n\n ',collapse=' '),simplify),'
-      if(si==0 || whenmat[4,2] || (T0check==1 && whenmat[4,5])) DIFFUSIONcov[derrind,derrind] = sdcovsqrt2cov(DIFFUSION[derrind,derrind],choleskymats);
+      if(si==0 || statedep[4] || whenmat[4,2] || (T0check==1 && whenmat[4,5])){
+        DIFFUSIONcov[derrind,derrind] = sdcovsqrt2cov(DIFFUSION[derrind,derrind],choleskymats);
+        if(!continuoustime) discreteDIFFUSION=DIFFUSIONcov;
+      }
       
         if(continuoustime){
         
@@ -1083,14 +1086,15 @@ if(verbose > 1) print ("below t0 row ", rowi);
           }
   
           if(continuoustime==0){ //this could be much more efficient
-            eJAx = JAx;
+            if(dosmoother) eJAxs[rowi,,] = JAx;
             if(intoverstates==1 || dosmoother==1){
-              etacov = quad_form(etacov, JAx\');
+              etacov = quad_form_sym(makesym(etacov,verbose,1), JAx\');
               etacov[ derrind, derrind ] += DIFFUSIONcov[ derrind, derrind ]; 
             }
-            discreteDIFFUSION=DIFFUSIONcov;
-            discreteDRIFT=append_row(append_col(DRIFT[1:nlatent, 1:nlatent],CINT),nlplusonezerovec\');
-            discreteDRIFT[nlatent+1,nlatent+1] = 1;
+            if(si==0 ||  statedep[3]||statedep[7] || (T0check == 1 && subindices[3] > 0)){
+              discreteDRIFT=append_row(append_col(DRIFT[1:nlatent, 1:nlatent],CINT),nlplusonezerovec\');
+              discreteDRIFT[nlatent+1,nlatent+1] = 1;
+            }
             state[1:nlatent] = (discreteDRIFT * append_row(state[1:nlatent],1.0))[1:nlatent];
             
           }
@@ -1116,8 +1120,8 @@ if(verbose > 1) print ("below t0 row ", rowi);
       }
     }//end nonlinear tdpred
 
-  if(intoverstates==0){
-    if(T0check==0) state += cholesky_decompose(T0VAR) * etaupdbasestates[(1+(rowi-1)*nlatentpop):(rowi*nlatentpop)];
+  if(si > 0 && intoverstates==0){ //unused states if intoverpop is specified, consider fixing...
+    if(T0check==0) state += cholesky_decompose(etacov) * etaupdbasestates[(1+(rowi-1)*nlatentpop):(rowi*nlatentpop)];
     if(T0check>0) state[derrind] +=  cholesky_decompose(makesym(discreteDIFFUSION[derrind,derrind],verbose,1)) * 
      (etaupdbasestates[(1+(rowi-1)*nlatentpop):(nlatent+(rowi-1)*nlatentpop)])[derrind];
      
@@ -1200,7 +1204,7 @@ if(verbose > 1){
             " eJAx = ", eJAx,
             "  rawpopsd ", rawpopsd,  "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
          
-        K[,od] = mdivide_right_spd(etacov * Jy[od,]\', ycov[od,od]);//removed makesym // * multiply_lower_tri_self_transpose(ycovi\');// ycov[od,od]; 
+        K[,od] = mdivide_right_spd(etacov * Jy[od,]\', makesym(ycov[od,od],verbose,1)); // * multiply_lower_tri_self_transpose(ycovi\');// ycov[od,od]; 
         etacov += -K[,od] * Jy[od,] * etacov;
         state +=  (K[,od] * err[od]);
       }
@@ -1274,8 +1278,8 @@ if(verbose > 1){
       
       if(savesubjectmatrices && //if getting subj matrices and 
         (sri ? subject[sri] != subject[sri+1] : 1)){ //no more rows, or change of subject
-        T0MEANS[,1] = state; //t0means updated, other pars as per final time point
      ',paste0(collectsubmats(popmats=FALSE),collapse=' '),'
+     if(sum(whenmat[1,1:5]) > 0 || statedep[1]) subj_T0MEANS[si,,1] = state; //t0means updated, other pars as per final time point
         }
       
     }
@@ -1325,7 +1329,7 @@ subjectparaminit<- function(popmats=FALSE,smats=TRUE,matrices=c(mats$base,31, 32
       if(popmats) 'pop_',
       if(!smats && !popmats) paste0('subj_'),
       m,
-      if(!smats && !popmats) paste0('[ (savesubjectmatrices && sum(whenmat[',mn,',1:5])) ? nsubjects : 0]'),
+      if(!smats && !popmats) paste0('[ (savesubjectmatrices && (sum(whenmat[',mn,',1:5]) || statedep[',mn,'])) ? nsubjects : 0]'),
       ';')
   }
   
@@ -1338,7 +1342,7 @@ collectsubmats <- function(popmats=FALSE,matrices=c(mats$base,31, 32,21,22)){ #'
   for(mn in matrices){
     m=names(ma)[ma %in% mn]
     if(!popmats) out <- paste0(out, '
-    if(sum(whenmat[',mn,',1:5]) > 0) subj_',m,'[si] = ',m,';')
+    if(sum(whenmat[',mn,',1:5]) > 0 || statedep[',mn,']) subj_',m,'[si] = ',m,';')
     
     if(popmats) out <- paste0(out, 'pop_',m,' = ',m,'; ')
   }

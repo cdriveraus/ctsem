@@ -1,4 +1,4 @@
-if(1==99 && .Machine$sizeof.pointer != 4){ #test is no longer useful with everything done via nonlinear
+if(identical(Sys.getenv("NOT_CRAN"), "true") && .Machine$sizeof.pointer != 4){
 library(ctsem)
 library(testthat)
 set.seed(1)
@@ -21,7 +21,7 @@ datalong <- cbind(id, time, sunspots)
    DRIFT=matrix(c(0, 'a21|-log1p(exp(param))', 1, 'a22'), nrow=2, ncol=2),
    TDPREDEFFECT=matrix(c('tdeffect',0),2),
    MANIFESTMEANS=matrix(c('mm|param*10+44'), nrow=1, ncol=1),
-   MANIFESTVAR=diag(0,1),
+   # MANIFESTVAR=diag(0,1),
    T0VAR=matrix(c(1,0,0,1), nrow=2, ncol=2), #Because single subject
    DIFFUSION=matrix(c(0, 0, 0, 'diff'), ncol=2, nrow=2))
 
@@ -33,9 +33,19 @@ datalong <- cbind(id, time, sunspots)
 ssfit1 <- ctStanFit(datalong, ssmodel,cores=1,verbose=0)
 ssfit2 <- ctStanFit(datalong, ssmodel,cores=6,verbose=0)
 ssfit3 <- ctStanFit(datalong, ssmodel,cores=1,nlcontrol=list(maxtimestep=.3))
+ssfit4 <- ctStanFit(datalong, ssmodel,chains=3,iter=300,optimize=F,verbose=0)
+ssfit5 <- ctStanFit(datalong, ssmodel,chains=3,iter=300,intoverstates = FALSE,optimize=F,verbose=0)
 
-testthat::expect_equal(ssfit2$stanfit$transformedparsfull$ll,ssfit1$stanfit$transformedparsfull$ll,tol=1e-2)
-testthat::expect_equal(ssfit2$stanfit$transformedparsfull$ll,ssfit3$stanfit$transformedparsfull$ll,tol=1e-2)
+for(i in 2:4){
+testthat::expect_equivalent(get(paste0('ssfit',i))$stanfit$transformedparsfull$ll,
+   get(paste0('ssfit',i-1))$stanfit$transformedparsfull$ll,tol=1e-2)
+}
+
+for(i in 2:4){
+   testthat::expect_equivalent(
+      ctStanContinuousPars(get(paste0('ssfit',i)))$DRIFT,
+      ctStanContinuousPars(get(paste0('ssfit',i-1)))$DRIFT,tol=1e-1)
+}
 
 })
 }

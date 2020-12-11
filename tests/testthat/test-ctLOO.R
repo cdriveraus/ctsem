@@ -23,20 +23,19 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     aa[4:20,AnomAuthmodel$manifestNames] <- NA
     
     
-    
     sm <- ctStanModel(AnomAuthmodel,tipredDefault = FALSE)
     sm$pars$indvarying<- FALSE
     
     sf=ctStanFit(aa,
-      ctstanmodel = sm, optimize=TRUE,verbose=1,savescores = FALSE,cores=cores,
-      nopriors=F,
+      ctstanmodel = sm, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores,
+      nopriors=T,
       optimcontrol=list(finishsamples=500,stochastic=T,carefulfit=F),plot=10,fit=T)
     
     sdat <- sf$standata
-    sdat$dokalmanrows[sdat$subject==1] <- 0L
+    sdat$dokalmanrows[sdat$subject==1] <- 0L #remove 1 subject
     smf <- stan_reinitsf(sf$stanmodel,sdat)
     testthat::expect_equivalent(
-      sf$stanfit$optimfit$value - rstan::log_prob(smf,sf$stanfit$rawest),
+      sf$stanfit$optimfit$value - rstan::log_prob(smf,sf$stanfit$rawest), #check ll equiv
       sum(sf$stanfit$transformedparsfull$llrow[sdat$subject==1]))
     
     loo=ctLOO(fit = sf,folds = 10,cores=cores,parallelFolds = T,subjectwise = T)
@@ -47,11 +46,12 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       0,tol=1)
     
     testthat::expect_equivalent(
-      sum(loo2$outsampleLogLikRow),
+      sum(loo$outsampleLogLikRow),
       sum(sf$stanfit$transformedparsfull$llrow),tol=.1)
     
-    
-    
+    testthat::expect_equivalent(
+      sum(loo2$outsampleLogLikRow),
+      sum(sf$stanfit$transformedparsfull$llrow),tol=.1)
     
   })
   

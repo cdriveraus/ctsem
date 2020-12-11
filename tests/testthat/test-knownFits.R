@@ -22,7 +22,7 @@ test_that("anomauth", {
   a=Sys.time()
   # sink('bad.txt')
   sf=ctStanFit(ctDeintervalise(ctWideToLong(AnomAuth,Tpoints = AnomAuthmodel$Tpoints,n.manifest = 2)),
-    ctstanmodel = sm, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores,nopriors=TRUE,#forcerecompile = T,
+    ctstanmodel = sm, optimize=TRUE,verbose=1,savescores = FALSE,cores=cores,nopriors=TRUE,#forcerecompile = T,
     optimcontrol=list(finishsamples=500,stochastic=T),plot=FALSE,fit=T)
   # sink()
   print(Sys.time()-a)
