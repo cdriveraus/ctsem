@@ -1014,7 +1014,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,simplify=TRUE){
     
   if(si <= (subindices[8] ? nsubjects : 0)) {
    if(intoverpop && nindvarying > 0) T0VAR[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopc[1];
-    T0VAR = makesym(sdcovsqrt2cov(T0VAR,choleskymats),verbose,1); 
+    T0VAR = sdcovsqrt2cov(T0VAR,choleskymats); 
 
     if(intoverpop && nindvarying > 0){ //adjust cov matrix for transforms
       for(ri in 1:size(matsetup)){
@@ -1116,7 +1116,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
         ',simplifystanfunction(paste0(ctm$modelmats$calcs$tdpred,';\n\n ',collapse=' '),simplify),'
 
         state[1:nlatent] +=   (TDPREDEFFECT * tdpreds[rowi]); //tdpred effect only influences at observed time point','
-        if(statedep[53]) etacov = quad_form_sym(makesym(etacov,verbose,1),Jtd\'); //could be optimized
+        if(statedep[53]) etacov = quad_form_sym(makesym(etacov,verbose,1),Jtd\'); 
       }
     }//end nonlinear tdpred
 
@@ -1205,8 +1205,8 @@ if(verbose > 1){
             "  rawpopsd ", rawpopsd,  "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
          
         K[,od] = mdivide_right_spd(etacov * Jy[od,]\', makesym(ycov[od,od],verbose,1)); // * multiply_lower_tri_self_transpose(ycovi\');// ycov[od,od]; 
-        etacov += -K[,od] * Jy[od,] * etacov;
-        state +=  (K[,od] * err[od]);
+        etacov += -K[,od] * Jy[od,] * etacov; //cov update
+        state +=  (K[,od] * err[od]); //state update
       }
       
       if(dosmoother==1) {
@@ -1468,7 +1468,7 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
     triQ[z] = Q[i,j];
     }
   }
-  triQ=-O \\ to_vector(triQ); //get upper tri of asymQ
+  triQ=-O \\ triQ; //get upper tri of asymQ
   
     z=0; // put upper tri of asymQ into matrix
   for(j in 1:d){

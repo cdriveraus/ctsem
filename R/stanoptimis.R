@@ -1303,7 +1303,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                 # if(count>8) stepsize=stepsize*-1 #is this good?
                 stepchangemultiplier <- max(stepchangemultiplier,.11)
                 count <- count + 1
-                lp[[di]] <-  suppressWarnings(target(pars+uppars*stepsize*directions[di]))
+                lp[[di]] <-  suppressMessages(suppressWarnings(target(pars+uppars*stepsize*directions[di])))
                 accepted <- !'try-error' %in% class(lp[[di]]) && all(!is.na(attributes(lp[[di]])$gradient))
                 if(accepted){
                   lpdiff <- base[1] - lp[[di]][1]
@@ -1335,7 +1335,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                 } else stepsize <- stepsize * 1e-3
                 # if(count > 1) print(paste0(count,'___',stepsize,'___',lpdiff))
               }
-              step <<- stepsize
+              if(stepsize < step) step <<- step *.1
+              if(stepsize > step) step <<- step *10
               steplist[[di]] <- stepsize
             }
             

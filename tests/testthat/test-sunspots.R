@@ -34,7 +34,7 @@ ssfit1 <- ctStanFit(datalong, ssmodel,cores=1,verbose=0)
 ssfit2 <- ctStanFit(datalong, ssmodel,cores=6,verbose=0)
 ssfit3 <- ctStanFit(datalong, ssmodel,cores=1,nlcontrol=list(maxtimestep=.3))
 ssfit4 <- ctStanFit(datalong, ssmodel,chains=3,iter=300,optimize=F,verbose=0)
-ssfit5 <- ctStanFit(datalong, ssmodel,chains=3,iter=300,intoverstates = FALSE,optimize=F,verbose=0)
+# ssfit5 <- ctStanFit(datalong, ssmodel,chains=3,iter=300,intoverstates = FALSE,optimize=F,verbose=0)
 
 for(i in 2:4){
 testthat::expect_equivalent(get(paste0('ssfit',i))$stanfit$transformedparsfull$ll,

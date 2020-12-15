@@ -287,14 +287,15 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   # if(mean(dT) > 3) message('Average time interval > 3 -- in typical settings this can be too large, consider time scaling...')
   
   
+  
   subindices <- lapply(mats$base,function(x) 0)
-  for(mati in names(mats$base)){
-    if( (!ctm$intoverpop && any(ctm$pars$indvarying[ctm$pars$matrix==mati])) || 
+  for(mati in mats$base){
+    if( (!ctm$intoverpop && any(ctm$pars$indvarying[ctm$pars$matrix %in% names(mats$base)[mati]])) || 
         (ctm$n.TIpred >0 && (
-          any(unlist(ctm$pars[ctm$pars$matrix==mati,paste0(ctm$TIpredNames,'_effect')])) || 
-            any(ctm$pars$matrix==mati & grepl('[',ctm$pars$param,fixed=TRUE))  )
+          any(unlist(ctm$pars[ctm$pars$matrix %in%  names(mats$base)[mati],paste0(ctm$TIpredNames,'_effect')])) || 
+            any(ctm$pars$matrix %in%  names(mats$base)[mati] & grepl('[',ctm$pars$param,fixed=TRUE))  )
         )) subindex <- 1 else subindex <- 0
-        subindices[[mati]] <- subindex
+        subindices[[names(mats$base)[mati]]] <- subindex
   }
   
   if(ctm$stationary || nrow(ctm$t0varstationary) > 0) subindices$T0VAR  <- 
@@ -305,7 +306,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   
   
   
-  standata$subindices <- as.integer(unlist(subindices))
+  standata$subindices <- as.integer(unlist(subindices))[order(mats$base)]
   
 
   #state dependence
