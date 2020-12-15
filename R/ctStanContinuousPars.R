@@ -56,12 +56,13 @@ ctStanContinuousPars <- function(fit,
     nlatent <- nrow(out$CINT)
     out$T0MEANS <- out$T0MEANS[1:nlatent,1,drop=FALSE]
     out$DRIFT <- out$DRIFT[1:nlatent,1:nlatent,drop=FALSE]
-    out$T0VAR <- out$T0VAR[1:nlatent,1:nlatent,drop=FALSE]
+    # out$T0VAR <- out$T0VAR[1:nlatent,1:nlatent,drop=FALSE]
+    out$T0cov <- out$T0cov[1:nlatent,1:nlatent,drop=FALSE]
   }
   
   ln=fit$ctstanmodel$latentNames
   mn=fit$ctstanmodel$manifestNames
-  tdn=fit$ctstanmodel$TDpredNames
+  tdn=fit$ctstanmodel$TDpredNamesQ
   dimnames(out$DRIFT)=list(ln,ln)
   dimnames(out$DIFFUSIONcov)=list(ln,ln)
   dimnames(out$T0cov)=list(ln,ln)
@@ -70,7 +71,7 @@ ctStanContinuousPars <- function(fit,
   rownames(out$MANIFESTMEANS)=mn
   rownames(out$T0MEANS)=ln
   
-  dimnames(out$T0VAR)=list(ln,ln)
+  # dimnames(out$T0VAR)=list(ln,ln)
   dimnames(out$asymDIFFUSION)=list(ln,ln)
   dimnames(out$LAMBDA)=list(mn,ln)
 

@@ -83,7 +83,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
     ll=unlist(lapply(s, function(argi) lapply(argi, function(m) m$loglik)))
     
     for(dimi in 2:length(ll)){
-      expect_equivalent(ll[dimi],ll[dimi-1],tol=1e-3)
+      testthat::expect_equivalent(ll[dimi],ll[dimi-1],tol=1e-3)
     }
 
   }) #end cint heterogeneity
