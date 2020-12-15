@@ -425,7 +425,10 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   standata$whenmat[mc[names(mc) == 'asymCINT'],] <- 
     apply(standata$whenmat[mc[names(mc) %in% c('CINT','DRIFT')],],2,max)
   standata$whenmat[mc[names(mc) == 'DIFFUSIONcov'],] <- standata$whenmat[mc[names(mc) == 'DIFFUSION'],]
+  standata$whenmat[mc[names(mc) == 'T0cov'],] <- standata$whenmat[mc[names(mc) == 'T0VAR'],]
   standata$whenmat[mc[names(mc) == 'MANIFESTcov'],] <- standata$whenmat[mc[names(mc) == 'MANIFESTVAR'],]
+  
+  standata$statedep[31:33] <- standata$statedep[c(4,5,8)]
 
   
   return(standata)

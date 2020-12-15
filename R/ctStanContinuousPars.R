@@ -64,6 +64,7 @@ ctStanContinuousPars <- function(fit,
   tdn=fit$ctstanmodel$TDpredNames
   dimnames(out$DRIFT)=list(ln,ln)
   dimnames(out$DIFFUSIONcov)=list(ln,ln)
+  dimnames(out$T0cov)=list(ln,ln)
   dimnames(out$asymDIFFUSION)=list(ln,ln)
   rownames(out$CINT)=ln
   rownames(out$MANIFESTMEANS)=mn
@@ -86,7 +87,7 @@ ctStanContinuousPars <- function(fit,
     out$TDPREDEFFECT<-out$TDPREDEFFECT
   }
 
-  out$MANIFESTVAR <- NULL ; out$DIFFUSION <- NULL
+  out$MANIFESTVAR <- NULL ; out$DIFFUSION <- NULL; out$T0VAR <- NULL
   names(out)[names(out) %in% 'asymDIFFUSION'] <- 'asymDIFFUSIONcov'
   
   
