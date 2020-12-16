@@ -247,7 +247,7 @@ ctDataCombineSplit <- function(dat, idvars, vars){ #no splits yet
 meltcov <- function(covm){
   if(is.null(dimnames(covm))) dimnames(covm) = list(paste0('v',1:nrow(covm)),
     paste0('v',1:ncol(covm)))
-  # browser()
+  
   colnames(covm)[colnames(covm) %in% ''] <- 
     paste0('v',(1:ncol(covm))[colnames(covm) %in% ''])
   rownames(covm)[rownames(covm) %in% ''] <- 
@@ -261,7 +261,6 @@ meltcov <- function(covm){
 
 ctStanFitMelt <- function(fit, maxsamples='all'){
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
-
   datasources <- c('Data','StatePred','Residuals')
   if(!is.null(fit$generated)) datasources <- c(datasources,'PostPred')
   if(!is.null(fit$priorpred)) datasources <- c(datasources,'PriorPred')
@@ -358,6 +357,7 @@ ctStanFitMelt <- function(fit, maxsamples='all'){
 #' @param entropy Still in development. 
 #' @param reg Logical. Use regularisation when estimating covariance matrices? Can be necessary / faster for some problems.
 #' @param verbose Logical. If TRUE, shows optimization output when estimating covariances.
+#' @param indlines Integer number of individual subject lines to draw per data type. 
 #'
 #' @return Nothing. Just plots. 
 #' @export
@@ -373,7 +373,7 @@ ctCheckFit <- function(fit,
   nsamples=10, covplot=FALSE, corr=TRUE, combinevars=NA, fastcov=FALSE,
   aggfunc=mean,aggregate=TRUE,
   groupby='split', byNA=TRUE,lag=0,
-  smooth=TRUE, k=10,breaks=4,entropy=FALSE,reg=FALSE,verbose=0){
+  smooth=TRUE, k=10,breaks=4,entropy=FALSE,reg=FALSE,verbose=0, indlines=30){
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
   
   covORcor <- function(m){
@@ -381,7 +381,6 @@ ctCheckFit <- function(fit,
   }
   
   DataSource <-Sample<-NULL
-  
   
   dat <- ctStanFitMelt(fit = fit,maxsamples = nsamples)
   
@@ -399,8 +398,7 @@ ctCheckFit <- function(fit,
   dat <- ctDataMelt(dat=dat,id=fit$ctstanmodelbase$subjectIDname, by=byc,combinevars = combinevars)
   dat$Sample <- factor(dat$Sample)
   dat$DataSource <- factor(dat$DataSource)
-  
-  # browser()
+
   # ?acf
   
   
@@ -566,18 +564,38 @@ ctCheckFit <- function(fit,
     # scale_alpha_manual(values = c(1, max(.05,(.3/nsamples)),max(.05,(.3/nsamples)),1))
     
     if(smooth) {
-      g = g + geom_smooth(data=dat[manifest==TRUE & !DataSource %in% c('Data','StatePred','Residuals')],
-        aes(group=Sample),
-        alpha= max(.05,(.3/nsamples)),
-        linetype=0,#3,#ifelse(nsamples==1,1,0),
-        stat="smooth",#se = FALSE,#nsamples==1,
-        size=.1
-        ,method='gam', formula= as.formula(paste0('y ~ s(x,bs="cr",k=',k,')')))
+      # g = g + geom_smooth(data=dat[manifest==TRUE & !DataSource %in% c('Data','StatePred','Residuals')],
+      #   aes(group=Sample),
+      #   alpha= max(.05,(.3/nsamples)),
+      #   linetype=0,#3,#ifelse(nsamples==1,1,0),
+      #   stat="smooth",#se = FALSE,#nsamples==1,
+      #   size=.1
+      #   ,method='gam', formula= as.formula(paste0('y ~ s(x,bs="cr",k=',k,')')))
       
-      g = g + geom_smooth(data=dat[manifest==TRUE & DataSource %in% c('Data','StatePred','Residuals')],
+      g = g + geom_smooth(data=dat[manifest==TRUE 
+        # & DataSource %in% c('Data','StatePred','Residuals')
+        ],
         # aes(colour=DataSource,alpha=NULL),
         stat="smooth",se = TRUE,size=1,alpha=.3
         ,method='gam', formula= as.formula(paste0('y ~ s(x,bs="cr",k=',k,')')))
+      
+      
+      if(indlines > 0){
+        dat$individualInt <- eval(parse(text=paste0('interaction(dat$',fit$ctstanmodelbase$subjectIDname,',dat$Sample, dat$DataSource)')))
+        ids <- sapply(unique(dat$DataSource),function(x){
+          sample(unique(dat$individualInt[dat$DataSource %in% x]), 
+          min(indlines,length(unique(dat$individualInt[dat$DataSource %in% x]))),replace = FALSE)
+        })
+        g = g + geom_line(data=dat[manifest==TRUE &dat$individualInt %in% ids],
+          mapping = aes(group=individualInt),
+          alpha= max(.1,(.5/sqrt(indlines))),
+          linetype=1,#3,#ifelse(nsamples==1,1,0),
+          # stat="smooth",#se = FALSE,#nsamples==1,
+          size=.1
+          # ,method='gam', formula= as.formula(paste0('y ~ s(x,bs="cr",k=',k,')'))
+          )
+        
+      }
     }
     if(!smooth) {
       # if(nsamples > 1) g = g + stat_summary(fun=mean,geom = "line",size=1) #geom_line(stat=mean)

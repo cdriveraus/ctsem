@@ -4,10 +4,11 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,...){
   
   sdat <- standatact_specificsubjects(standata = sf$standata,subjects = subject)
   sdat$tipredsdata[,sf$ctstanmodel$TIpredNames] <- 0 #set all tipreds to zero
-  
+
   #create datalong structure
   dat <- data.frame(id=sdat$subject,time=sdat$time)
   datti <- suppressWarnings(merge(dat,data.frame(id=sdat$subject,time=sdat$time,sdat$tipredsdata),all=TRUE))
+  datti <- datti[order(datti[[sf$ctstanmodelbase$subjectIDname]],datti$time),]
   colnames(datti)[1:2] <- c(sf$ctstanmodelbase$subjectIDname,sf$ctstanmodelbase$timeName)
   addm <- matrix(NA,nrow=nrow(dat),ncol=length(sf$ctstanmodel$manifestNames))
   colnames(addm) <- sf$ctstanmodel$manifestNames
