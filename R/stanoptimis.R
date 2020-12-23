@@ -853,21 +853,21 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standatasml,split=parsets<2)
         if(optimcores==1) smf<-stan_reinitsf(sm,standatasml)
         
-        # if(!stochastic) {
+        if(!stochastic) {
           optimfit <- mize(init, fg=mizelpg, max_iter=99999,
             method="L-BFGS",memory=100,
             line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
             abs_tol=1e-4,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)
           optimfit$value = optimfit$f
-        # }
+        }
 
-        # if(stochastic) {
-        #   optimfit <- sgd(init, fitfunc = function(x) target(x),
-        #     parsets=parsets,
-        #     whichignore = unlist(parsteps),nconvergeiter = 10,
-        #     whichmcmcpars=whichmcmcpars,nsubjects=ifelse(is.na(whichmcmcpars[1]),NA,standata$nsubjects),
-        #     plot=plot,itertol=1,deltatol=1,maxiter=500)
-        # }
+        if(stochastic) {
+          optimfit <- sgd(init, fitfunc = function(x) target(x),
+            parsets=parsets,
+            whichignore = unlist(parsteps),nconvergeiter = 20,
+            whichmcmcpars=whichmcmcpars,nsubjects=ifelse(is.na(whichmcmcpars[1]),NA,standata$nsubjects),
+            plot=plot,itertol=.1,deltatol=.1,maxiter=500)
+        }
         
         standata$nopriors <- as.integer(nopriorsbak)
         # if(standata$ntipred ==0)
@@ -1353,9 +1353,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         }
 
         hess1 <- jac(pars = grinit,parsteps=parsteps,
-          step = rep(1e-3,length(grinit)),cl=hesscl,verbose=verbose,directions=1)
+          step = 1e-3,cl=hesscl,verbose=verbose,directions=1)
         hess2 <- jac(pars = grinit,parsteps=parsteps,#fgfunc = fgfunc,
-          step = rep(1e-3,length(grinit)),cl=hesscl,verbose=verbose,directions=-1)
+          step = 1e-3,cl=hesscl,verbose=verbose,directions=-1)
         
         hess1good <- diag(hess1) < -1e-8
         hess2good <- diag(hess2) < -1e-8

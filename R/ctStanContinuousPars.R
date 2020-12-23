@@ -23,7 +23,7 @@ ctStanContinuousPars <- function(fit,
 
   if(!'ctStanFit' %in% class(fit)) stop('Not an object of class ctStanFit')
   
-  e<-fit$stanfit$transformedpars #first dim of subobjects is iter, 2nd subjects
+  e<-ctExtract(fit,cores=1) #Qfit$stanfit$transformedpars #first dim of subobjects is iter, 2nd subjects
   niter=dim(e$pop_DRIFT)[1]
 
   
@@ -40,7 +40,6 @@ ctStanContinuousPars <- function(fit,
 
   out <- list()
   for(matname in (mats)){
-
     try({
       calcfuncargs$collapsemargin = 1
     calcfuncargs$collapsefunc=calcfunc

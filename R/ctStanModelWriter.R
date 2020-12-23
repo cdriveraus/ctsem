@@ -393,10 +393,11 @@ ctStanModelCleanctspec <-  function(ctspec){ #clean ctspec structure, non numeri
   
   #values imply nothing happening elsewhere
   fixed <- !is.na(ctspec$value) 
-  ctspec$indvarying[ fixed | grepl('[', ctspec$param,fixed=TRUE) ] <- FALSE #remove indvarying for calcs also
+  calc <-  grepl('\\+|\\*|/|-|\\[|\\]', ctspec$param)
+  ctspec$indvarying[ fixed | calc ] <- FALSE #remove indvarying for calcs also
   ctspec$param[ fixed ] <- NA
   ctspec$transform[ fixed] <- NA
-  if(length(tieffects) > 0)  ctspec[fixed,tieffects] <- FALSE
+  if(length(tieffects) > 0)  ctspec[fixed | calc,tieffects] <- FALSE
   if(any(apply(ctspec[,c('value','param')],1,function(x) all(is.na(x))))) stop('Parameters specified as NA ! Needs a value or character label.')
   
   

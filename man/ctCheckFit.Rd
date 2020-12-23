@@ -28,7 +28,8 @@ ctCheckFit(
   breaks = 4,
   entropy = FALSE,
   reg = FALSE,
-  verbose = 0
+  verbose = 0,
+  indlines = 30
 )
 }
 \arguments{
@@ -86,6 +87,8 @@ for that subject.}
 \item{reg}{Logical. Use regularisation when estimating covariance matrices? Can be necessary / faster for some problems.}
 
 \item{verbose}{Logical. If TRUE, shows optimization output when estimating covariances.}
+
+\item{indlines}{Integer number of individual subject lines to draw per data type.}
 }
 \value{
 Nothing. Just plots.
