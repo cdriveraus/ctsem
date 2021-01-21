@@ -8,9 +8,10 @@ context("knownFits")
 #anomauth
 test_that("anomauth", {
   
+  
   if( .Machine$sizeof.pointer != 4){
 
-  #cores=6
+  #library(ctsem);cores=12
   data(AnomAuth)
   AnomAuthmodel<-ctModel(LAMBDA=matrix(c(1, 0, 0, 1), nrow=2, ncol=2),  
     n.latent=2,n.manifest=2, 
@@ -29,7 +30,7 @@ test_that("anomauth", {
   testthat::expect_equal(23415.929,-2*sf$stanfit$optimfit$value,tolerance=.01)
   anoms=summary(sf)
   anoms$popmeans['mm_Y1','sd']
-  expect_equivalent(.036,anoms$popmeans['mm_Y1','sd'],tolerance=.008)
+  testthat::expect_equivalent(.036,anoms$popmeans['mm_Y1','sd'],tolerance=.008)
  }
 
 })

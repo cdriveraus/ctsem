@@ -37,6 +37,14 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     m$manifesttype[]=1 #set type to binary
     cores=2
     
+        #fit with integration (linearised approximation)
+    ro <- ctStanFit( datalong = d,
+      ctstanmodel = m,cores=1,
+      # plot=10,verbose=0,
+      intoverstates = T,nopriors=F,
+      optimize=T,intoverpop=T)#,optimcontrol=list(stochastic=F))
+    so=summary(ro)
+    
     #fit without integration
     r <- ctStanFit( datalong = d,
       #fit=FALSE, #set this to skip fitting and just get the standata and stanmodel objects
@@ -50,13 +58,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     s=summary(r)
     # s
     
-    #fit with integration (linearised approximation)
-    ro <- ctStanFit( datalong = d,
-      ctstanmodel = m,cores=cores,
-      plot=10,verbose=0,
-      intoverstates = T,nopriors=F,
-      optimize=T,intoverpop=T)#,optimcontrol=list(stochastic=F))
-    so=summary(ro)
+
     # so
     
     cbind(s$popmeans[order(rownames(s$popmeans)),1],so$popmeans[order(rownames(so$popmeans)),1])

@@ -66,22 +66,33 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy'),simplify=TRUE ){
 
   mats <- unfoldmats(mats)
 
-  
   Jout <- list()
   for(typei in types){
     if(typei=='JAx'){
       Jrows = nrow(mats$T0MEANS)
-      if(nrow(mats$DRIFT)!=ndim) mats$DRIFT=rbind(
-        cbind(mats$DRIFT, 
-          matrix(0,nrow(mats$DRIFT),ndim-nrow(mats$DRIFT))),
-        matrix(0,ndim-nrow(mats$DRIFT),ndim))
+      
+      if(nrow(mats$DRIFT)!=ndim){ #append extra rows and columns to drift in case of intoverpop
+        mats$DRIFT=rbind(
+          cbind(mats$DRIFT,
+            matrix(0,nrow(mats$DRIFT),ndim-nrow(mats$DRIFT))),
+          matrix(0,ndim-nrow(mats$DRIFT),ndim))
+
+        if(!m$continuoustime) diag(mats$DRIFT)[((nrow(mats$CINT)+1):ndim)] <- 1 #discrete time stability is 1 not 0
+      }
+        
+        
       
       for (row in 1:ndim) {
         for (col in 1:(ndim)) {
-          fn[row] = paste0(ifelse(col > 1, paste0(fn[row],' + '),''), "(", mats$DRIFT[row, col], ") * state[", as.character(col), "]")
+          fn[row] = paste0(
+            ifelse(col > 1, paste0(fn[row],' + '),''), 
+            "(", mats$DRIFT[row, col], ") * state[", as.character(col), "]")
         }
+        # browser()
+        # if(!m$continuoustime && is.na(mats$DRIFT[row,row])) fn[row] <- paste0("state[", as.character(row), "] +",fn[row])
         if(!is.na(mats$CINT[row])) fn[row] = paste0(fn[row],' + ',mats$CINT[row]) #checking for NA because CINT is not always as large as DRIFT
       }
+      # browser()
     }
     
     

@@ -24,10 +24,10 @@ datalong <- cbind(id, time, sunspots)
 
  if(scat) scat(sm)
  
- stanc(model_code = sm,verbose = TRUE)
+ stanc("",model_code = sm,verbose = TRUE)
  
 smgen <- ctStanFit(datalong, model,fit=FALSE,gendata=TRUE,forcerecompile=TRUE)$stanmodeltext
-stanc(model_code = smgen,verbose = TRUE)
+stanc("",model_code = smgen,verbose = TRUE)
 
 
 

@@ -55,7 +55,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   
   
   
-
+  
   if( (nrow(ctm$t0varstationary) + nrow(ctm$t0meansstationary)) >0 && 
       length(c(ctm$modelmats$calcs$driftcint, ctm$modelmats$calcs$diffusion)) > 0) message('Stationarity assumptions based on initial states when using non-linear dynamics')
   
@@ -216,7 +216,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   if(ctm$n.TIpred == 0) tipreds <- array(0,c(0,0))
   standata$tipredsdata <- as.matrix(tipreds)
   standata$nmissingtipreds <- as.integer(length(tipreds[tipreds== 99999]))
-
+  
   standata$ntipredeffects <- as.integer(ifelse(ctm$n.TIpred > 0, as.integer(max(ctm$modelmats$TIPREDEFFECTsetup)), 0))
   standata$TIPREDEFFECTsetup <- apply(ctm$modelmats$TIPREDEFFECTsetup,c(1,2),as.integer,.drop=FALSE)
   standata$tipredsimputedscale <- ctm$tipredsimputedscale
@@ -308,7 +308,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   
   standata$subindices <- as.integer(unlist(subindices))[order(mats$base)]
   
-
+  
   #state dependence
   statedep <- rep(0L,as.integer(max(mats$all)))
   lhscalcs <- sapply(unique(unlist(ctm$modelmats$calcs)),function(x) gsub('=.*','',x))
@@ -411,7 +411,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     standata$whenvecs[wheni,ms$param[ms$when %in% c(wheni,100) & ms$copyrow <=0 & ms$param > 0]] <- 
       as.integer(ms$param[ms$when  %in% c(wheni,100) & ms$copyrow <=0 & ms$param > 0]) #100 is for PARS - needed everywhere.
   }
-
+  
   # why was this in the code? when do we need the below line... ind varying based on states?
   # if(standata$intoverpop==1 && standata$nlatentpop > standata$nlatent){
   #   standata$whenvecs[5,ms$param[ms$when==0 & ms$param > 0 & ms$copyrow < 1 & (ms$indvarying > 0 | ms$tipred > 0)]] <- 
@@ -429,7 +429,47 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   standata$whenmat[mc[names(mc) == 'MANIFESTcov'],] <- standata$whenmat[mc[names(mc) == 'MANIFESTVAR'],]
   
   standata$statedep[31:33] <- standata$statedep[c(4,5,8)]
-
+  
+  standata$laplaceprior <- rep(0L,standata$nparams)
+  # browser()
+  if(!is.null(ctm$laplaceprior)){
+    ms <- data.frame(standata$matsetup)
+    standata$laplaceprior[
+      ms$param[
+        ms$matrix %in% ctStanMatricesList()$all[names(ctStanMatricesList()$all) %in% ctm$laplaceprior] & 
+          ms$param > 0 & 
+          ms$row!=ms$col & 
+          ms$when==0 & 
+          ms$copyrow<1]
+    ] <- 1L
+  }
+  
+  
+  #CINT non zero
+  ms <- data.frame(standata$matsetup)
+  CINTnonzero <- c()#1:standata$nlatent
+  for(i in 1:standata$nlatent){
+    ri=which(ms$matrix %in% ctStanMatricesList()$all[names(ctStanMatricesList()$all) %in% 'CINT'] & ms$row %in% i)
+    if(ms$param[ri]==0 && standata$matvalues[ri,'value']==0) next else CINTnonzero <- c(CINTnonzero,i)
+  }
+  standata$CINTnonzero <- array(as.integer(CINTnonzero))
+  standata$CINTnonzerosize <- length(CINTnonzero)
+  
+  #JAx different from DRIFT?
+  standata$JAxDRIFTequiv <- 1L
+  ml <- listOfMatrices(ctm$pars)
+  for(i in 1:nrow(ml$JAx)){
+    for(j in 1:ncol(ml$JAx)){
+      if(i <= nrow(ml$DRIFT) && j <= nrow(ml$DRIFT)){ #check drift equivalence
+        # if(i==j && !ctm$continuoustime && ml$JAx[i,j] %in% 1) ml$JAx[i,j] <- 
+        if(ml$JAx[i,j] != ml$DRIFT[i,j])   standata$JAxDRIFTequiv <- 0L
+      }
+      if(i > nrow(ml$DRIFT) || j > nrow(ml$DRIFT)){ #check drift equivalence
+        if(i != j && !ml$JAx %in% 0)   standata$JAxDRIFTequiv <- 0L
+        if(i == j && !ml$JAx %in% ifelse(ctm$continuoustime,0,1))   standata$JAxDRIFTequiv <- 0L
+      }
+    }
+  }
   
   return(standata)
 }

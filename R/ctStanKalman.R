@@ -53,52 +53,6 @@ ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
   e$etasmoothcov <-  array(e$etacova[,3,,,,drop=FALSE],dim=dim(e$etacova)[-2])
   
   
-  # if(subjectpars){
-  #   if(!fit$standata$intoverpop) stop('This function only for extracting subject parameters when integrating over them using intoverpop=TRUE')
-  #   ms <- cbind(fit$setup$matsetup, fit$setup$matvalues)
-  #   ms2=ms
-  #   
-  #   mst0 <- ms[(ms$when %in% c(0,-1) & ms$indvarying > 0 & ms$matrix ==1 & ms$row <= fit$standata$nlatent),] #indvarying t0means
-  #   mst0 <- mst0[match(unique(mst0$param),mst0$param),] #remove duplicates
-  #   
-  #   ms <- ms[ms$when > 0 & ms$param > 0 & ms$copyrow <1,] #based on a state and not a copy
-  #   ms=ms[ms$param > fit$standata$nlatent & ms$matrix < 50,] #based on an indvarying latent state and not for jacobians
-  #   ms <- ms[match(unique(ms$param),ms$param),] #remove duplicates
-  #   
-  #   ms <- rbind(mst0,ms)
-  #   
-  #   p=sort(unique(ms$param))# | fit$setup$matsetup$tipred]))
-  #   p=p[p>0]
-  #   if(length(p)==0) stop('No individually varying parameters found!')
-  #   firstsub <- rep(TRUE,fit$standata$ndatapoints) #which rows represent first rows per subject
-  #   for(i in 2:(standata$ndatapoints)){
-  #     if(standata$subject[i] == standata$subject[i-1]) firstsub[i] <- FALSE
-  #   }
-  #   states <- e$etasmooth[,firstsub,,drop=FALSE]
-  #   dimnames(states) <- list(iter=1:dim(states)[1],id = unique(standata$subject), par = 1:dim(states)[3])
-  #   # browser()
-  #   mats <- ctStanMatricesList()$all
-  #   for(i in 1:nrow(ms)){
-  #     if(ms$param[i] %in% p){
-  #       if(ms$transform[i] >=0){ #havent done custom transforms here
-  #         # browser()
-  #         if(tformsubjectpars){ #then transform into system matrix elements
-  #           if(!ms$matrix[i] %in% 1) states[,,ms$param[i]] <- tform( 
-  #             states[,,ms$param[i]], transform = ms$transform[i],
-  #             multiplier = ms$multiplier[i],meanscale = ms$meanscale[i],offset = ms$offset[i],
-  #             inneroffset = ms$inneroffset[i])
-  #           dimnames(states)$par[ms$param[i]] <- paste0(names(mats[ms$matrix[i]]),'[',ms$row[i],',',ms$col[i],']')
-  #         }
-  #         
-  #         if(!tformsubjectpars) dimnames(states)$par[ms$param[i]] <- ms2$parname[ms2$row==ms$param[i] & ms2$when %in% c(0,-1) & ms2$matrix==1][1] 
-  #         
-  #       }
-  #       if(ms$transform[i] <0) message('custom transforms not implemented yet...sorry')
-  #     }
-  #   }
-  #   states <- states[,,p,drop=FALSE]
-  #   return(states)
-  # } else{ #if not doing subject level par output
   
   nlatent <- ifelse(!indvarstates, fit$standata$nlatent,fit$standata$nlatentpop)
   latentNames <- fit$ctstanmodel$latentNames

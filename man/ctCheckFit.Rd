@@ -18,13 +18,14 @@ ctCheckFit(
   corr = TRUE,
   combinevars = NA,
   fastcov = FALSE,
+  lagcovplot = FALSE,
   aggfunc = mean,
   aggregate = TRUE,
-  groupby = "split",
+  groupbysplit = FALSE,
   byNA = TRUE,
   lag = 0,
   smooth = TRUE,
-  k = 10,
+  k = 4,
   breaks = 4,
   entropy = FALSE,
   reg = FALSE,
@@ -69,7 +70,8 @@ of one or more variable names in the fit object, to combine into the one variabl
 if by = 'time' and there are 8 time points per subject, but breaks = 2, 
 there will be 4 duplicate observation types per 'row' that will be collapsed. In most cases it is helpful to not collapse.}
 
-\item{groupby}{Logical. Affects variable ordering in covariance plots.}
+\item{groupbysplit}{Logical. Affects variable ordering in covariance plots. 
+Defaults to FALSE, grouping by variable, and within variable by split.}
 
 \item{byNA}{Logical. Create an extra break for when the split variable is missing?}
 

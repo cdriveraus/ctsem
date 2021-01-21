@@ -12,7 +12,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
     s=list()
     nsubjects=500
     Tpoints=15
-    parsd=0#1.4
+    parsd=1.4
     parmu= -3.4
     dt=1
     par= (rnorm(nsubjects,parmu,parsd))
@@ -31,36 +31,22 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
     
     cm <- ctModel(LAMBDA=diag(1), type='stanct',
       CINT=matrix('cint'),
-      MANIFESTMEANS = matrix(0))
-    
-    
-    cm$pars$indvarying <- FALSE
-    cm$pars$indvarying[cm$pars$matrix %in% c('CINT','T0MEANS')] <- TRUE
-    
+      MANIFESTMEANS = matrix(0)
+      )
+
     dm <- ctModel(LAMBDA=diag(1), type='standt',
       CINT=matrix('cint'),
-      MANIFESTMEANS = matrix(0))
-    
-    dm$pars$indvarying <- FALSE
-    dm$pars$indvarying[dm$pars$matrix %in% c('CINT','T0MEANS')] <- TRUE
- 
+      MANIFESTMEANS = matrix(0)
+      )
+
     for(m in c('cm','dm')){
-      argslist <- list(
-        ml=list(datalong = dat,ctstanmodel = get(m),optimize=TRUE,
-          verbose=0,optimcontrol=list(estonly=FALSE,stochastic=F),savescores = FALSE,nopriors=TRUE))
 
-      for(argi in names(argslist)){
-        f = do.call(ctStanFit,argslist[[argi]])
-        if(is.null(s[[argi]])) s[[argi]] = list()
-        s[[argi]][[m]] <- summary(f,parmatrices=TRUE)
-
-        # if(!interactive()){
-        #   ctKalman(f,plot=TRUE)
-        # plot(f,wait=FALSE)
-        # ctModelLatex(f)
-        # p=ctStanKalman(f,collapsefunc = mean,subjectpars = TRUE)
-        # }
-      }
+        f = ctStanFit(datalong = dat,ctstanmodel = get(m),optimize=TRUE,
+          verbose=0,optimcontrol=list(estonly=FALSE,stochastic=T),savescores = FALSE,nopriors=TRUE)
+      
+      
+        if(length(s)==0) s[[1]] = list()
+        s[[1]][[m]] <- summary(f,parmatrices=TRUE)
     }
     
     ctpars=s[[1]]$cm$parmatrices
@@ -72,7 +58,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
       i <- which(apply(ctpars,1,function(x) all(x[1:3] == dtpars[ri,1:3])))
       if(length(i)>0){
         for(ti in 4:5){
-          print(c(ctpars[i,ti],dtpars[ri,ti]))
+          # print(c(ctpars[i,ti],dtpars[ri,ti]))
         testthat::expect_equivalent(ctpars[i,ti],dtpars[ri,ti],tol=ifelse(ti==4,1e-2,1e-1))
         }
       }

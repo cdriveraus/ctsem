@@ -341,7 +341,7 @@ standatatolong <- function(standata, origstructure=FALSE,ctm=NA){
       longout <- cbind(longout,long[['tdpreds']])
     }
     if(standata$ntipred > 0){
-      tipreds <- standata$tipredsdata[longout$id,,drop=FALSE]
+      tipreds <- standata$tipredsdata[longout[[ctm$subjectIDname]],,drop=FALSE]
       tipreds[tipreds %in% 99999] <- NA
       if(!is.na(ctm[1])) colnames(tipreds) <- ctm$TIpredNames
       longout <- cbind(longout,tipreds)
@@ -435,24 +435,34 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
   if(nrow(samples)==1) cores <- 1
   
   #create via eval due to parallel communication rubbish
-  eval(parse(text="tparfunc <- function(x, parallel = TRUE){ 
-    if(parallel) library(ctsem)
-    smf <- stan_reinitsf(sm,standata)
-    out <- list()
-    for(li in 1:length(x)){
-      out[[li]] <- try(rstan::constrain_pars(smf, upars=samples[x[li],]))
-      if(any( #check for invalid values in transformed pars
-        sapply(out[[li]], function(x){
-          test <- length(x) > 0 && 
-            (any(c(is.nan(x),is.infinite(x),is.na(x))))
-          # if(any(test)) print(x)
-          return(test)
-        })
-      )){
-        class(out[[li]]) <- c(class(out[[li]]),'try-error')
-      }
+  eval(parse(text="tparfunc <- function(x, parallel = TRUE,unlist=TRUE){ 
+    if(parallel){
+    require(ctsem)
+    require(data.table)
     }
-    return(out)
+    smf <- stan_reinitsf(sm,standata)
+    out=data.table::data.table()
+    for(li in 1:length(x)){
+      # if(li==1){
+      # tout <- try(rstan::constrain_pars(smf, upars=samples[x[li],]))
+      # out <-matrix(NA,nrow=length(unlist(tout)),ncol=length(x))
+      # out[,li] <- unlist(tout)
+      # }
+      # if(li > 1) 
+      try({out[,paste0('d',li):= unlist(rstan::constrain_pars(smf, upars=samples[x[li],]))]})
+      # 
+      # if(any( #check for invalid values in transformed pars
+      #   sapply(out[[li]], function(x){
+      #     test <- length(x) > 0 && 
+      #       (any(c(is.nan(x),is.infinite(x),is.na(x))))
+      #     # if(any(test)) print(x)
+      #     return(test)
+      #   })
+      # )){
+      #   class(out[[li]]) <- c(class(out[[li]]),'try-error')
+      # }
+    }
+    if(unlist) return(out) else return(rstan::constrain_pars(smf, upars=samples[1,,drop=FALSE]))
   }"))
   
   env <- new.env(parent = globalenv(),hash = TRUE)
@@ -467,27 +477,30 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
   }
   
   if(cores > 1) parallel::clusterExport(cl, 'standata',environment())
-  
-  # browser()
+
   transformedpars <- try(flexlapply(cl, 
     split(1:nrow(samples), sort((1:nrow(samples))%%cores)),
     tparfunc,cores=cores,parallel=cores > 1))
   
+  smf <- stan_reinitsf(sm,standata)
+  skel= rstan::constrain_pars(smf, upars=samples[1,,drop=FALSE]) 
+#transformedpars[[1]]$skel
+  # browser()
+  transformedpars <- as.data.table(transformedpars)
   
   #fix this hack
-  # 
-  if(!is.null(transformedpars[[1]][[1]]$popmeans)) transformedpars=unlist(transformedpars,recursive = FALSE)
-  est1=transformedpars[[1]]
-  missingsamps <-sapply(transformedpars, function(x) 'try-error' %in% class(x))
-  nasampscount <- sum(missingsamps) 
+  # if(!is.null(transformedpars[[1]][[1]]$popmeans)) transformedpars=unlist(transformedpars,recursive = FALSE)
+  # est1=transformedpars[[1]]
+  # missingsamps <-apply(transformedpars, 2,function(x) any(is.na(x)))
+  nasampscount <- ncol(transformedpars)-nrow(samples) #sum(missingsamps) 
   
   
   if(nasampscount > 0) {
     # a=lapply(transformedpars[[1]],function(x) any(is.na(x)));a[unlist(a)]
     message(paste0(nasampscount,' NAs generated during final sampling of ', nrow(samples), '. Biased estimates may result -- consider importance sampling, respecification, or full HMC sampling'))
   }
-  if(nasampscount < nrow(samples)){
-    transformedpars <- transformedpars[!missingsamps] 
+  if(nasampscount < nrow(samples)){ 
+    # transformedpars <- transformedpars[,!missingsamps,drop=FALSE] #unneeded with data.table approach
     nresamples <- nrow(samples) - nasampscount
   } else{
     message('All samples contain NAs -- returning anyway')
@@ -495,8 +508,8 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
   }
   
   
-  flesh=matrix(unlist(transformedpars),byrow=TRUE, nrow=nresamples)
-  transformedpars=try(tostanarray(flesh=flesh, skeleton = est1))
+  # flesh=matrix(unlist(transformedpars),byrow=TRUE, nrow=nresamples)
+  transformedpars=tostanarray(flesh=t(as.matrix(transformedpars)), skeleton = skel)
   
   return(transformedpars)
 }
@@ -504,7 +517,6 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
 
 
 tostanarray <- function(flesh, skeleton){
-  # browser()
   skelnames <- names(skeleton)
   skelstruc <- lapply(skeleton,dim)
   count=1

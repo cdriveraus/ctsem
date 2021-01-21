@@ -56,7 +56,7 @@ s1=summary(tfit1)
 expect_equivalent(s1$tipreds[2,'mean'],5,tolerance=.1)
 expect_equivalent(s1$popsd[2,'mean'],.6,tolerance=.2)
 
-tfit2<-ctStanFit(tdat,checkm,chains=1,optimize=TRUE,cores=2,verbose=0,
+tfit2<-ctStanFit(tdat,checkm,optimize=TRUE,cores=2,verbose=0,
   optimcontrol=list(is=FALSE),nopriors=FALSE)
 s2=summary(tfit2)
 

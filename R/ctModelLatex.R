@@ -241,14 +241,21 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
   
   if(equationonly) compile <- FALSE
   
+  texPrep <- function(x){ #replaces certain characters with tex safe versions
+    for(i in 1:length(x)){
+    x[i]=gsub('_', '\\_',x[i],fixed=TRUE)
+    x[i]=gsub('^', '\\textasciicircum',x[i],fixed=TRUE)
+    }
+    return(x)
+  }
+  
   bmatrix = function(x, digits=NULL,nottext=FALSE, ...) {
     if(!is.null(x)){
       if(!nottext){
         for(i in 1:length(x)){
           if(is.na(suppressWarnings(as.numeric(x[i]))) & #if x[i] cannot be numeric and 
               grepl('\\',x[i],fixed=TRUE) == FALSE) {
-            x[i]=gsub('_', '\\_',x[i],fixed=TRUE)
-            x[i]=gsub('^', '\\textasciicircum',x[i],fixed=TRUE)
+            x[i] = texPrep(x[i])
             x[i] = paste0('\\text{',x[i],'}')
           }
         }
@@ -385,13 +392,14 @@ if (minimal){
   out= paste0(out,tablestring,'\n',equationstring)
 } else {
   showd <- ifelse(continuoustime,"\\mathrm{d}","") #for continuous or discrete system
+  
 out <- paste0(out, "
  \\begin{",textsize,"}
  \\setcounter{MaxMatrixCols}{200}
   \\begin{align*}
   ",if(dopop) paste0("\\parbox{10em}{\\centering{Subject\\linebreak parameter\\linebreak distribution:}}
              &\\underbrace{",bmatrix(matrix(paste0('\\text{',
-             gsub('_','\\_',colnames(popcov),fixed=TRUE),'}_i')),nottext=T)," 
+             texPrep(colnames(popcov)),'}_i')),nottext=TRUE)," 
             }_{\\vect{\\phi}(i)} ",ifelse(linearise,"\\approx","\\sim"),
     ifelse(linearise,"","\\textrm{tform}\\left\\{"),
     " \\mathrm{N} \\left(
@@ -479,25 +487,20 @@ out <- paste0(out, "
     on.exit(setwd(oldwd))
     write(x = out,file = paste0(filename,'.tex'))
     if(compile){
-      if(!grepl('SunOS',Sys.info()['sysname']) && requireNamespace('tinytex',quietly=TRUE)){
-        tt=try(tinytex::pdflatex(file=paste0(filename,'.tex'), clean=TRUE))
-        if('try-error' %in% class(tt)) 'Error - Perhaps tinytex needs to be installed via: tinytex::install_tinytex()' 
-        
-      } else{
       hastex <- !Sys.which('pdflatex') %in% ''
       a=try(tools::texi2pdf(file=paste0(filename,'.tex'),quiet=FALSE, clean=TRUE))
-      if('try-error' %in% class(a) && !hastex) {
+      if('try-error' %in% class(a)) {
+        
+        if(!grepl('SunOS',Sys.info()['sysname']) && requireNamespace('tinytex',quietly=TRUE)){
+          a=try(tinytex::pdflatex(file=paste0(filename,'.tex'), clean=TRUE))
+          if('try-error' %in% class(a)) 'Error - Perhaps tinytex needs to be installed via: tinytex::install_tinytex()' 
+        } else {
         open <- FALSE
         message('Tex compiler not found -- you could install the tinytex package using:\ninstall.packages("tinytex")\ntinytex::install_tinytex()')
-        # dotiny <- readline('Y/N?')
-        # if(dotiny %in% c('Y','y')){
-        #   utils::install.packages('tinytex')
-        #   if(requireNamespace('tinytex',quietly=TRUE)) tinytex::install_tinytex()
-        # }
+        }
       }
-      } #end else
       
-      if(interactive() && open) try(openPDF(paste0(filename,'.pdf')))
+      if(!'try-error' %in% class(a) && interactive() && open) try(openPDF(paste0(filename,'.pdf')))
     }
     
   }

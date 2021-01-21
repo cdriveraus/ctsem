@@ -16,7 +16,7 @@ listOfMatrices <- function(df,matnames=NA){
   
   if(!is.na(matnames[1])){
     for(mi in matnames){
-      mlist[[mi]] <- matrix(NA,0,0)
+      if(is.null(mlist[[mi]])) mlist[[mi]] <- matrix(NA,0,0)
     }
   }
   return(mlist)
