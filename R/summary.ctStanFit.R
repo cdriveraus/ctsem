@@ -194,6 +194,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
     d$param <- NULL
     d$Mean <- round(d$Mean,digits)
     rm(sd)
+    d <- d[!d$matrix %in% c('DIFFUSION','T0VAR'),]
     
     out$parmatrices=d
   }

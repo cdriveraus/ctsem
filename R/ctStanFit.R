@@ -607,8 +607,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     # print(standata$savesubjectmatrices)
     
     #####post model / data checks
-    if(cores=='maxneeded') cores=max(1,min(c(chains,parallel::detectCores()-1))) else cores <-max(1, min(cores,parallel::detectCores()-1))
-    
+    if(cores=='maxneeded') cores=max(1,min(c(chains,parallel::detectCores()-1)))
     
     if(is.logical(stanmodeltext)) {
       stanmodeltext<- ctStanModelWriter(ctm, gendata, ctm$modelmats$extratforms,ctm$modelmats$matsetup)
