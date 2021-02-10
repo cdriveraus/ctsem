@@ -22,7 +22,7 @@
 #' }
 ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
   standardisederrors=FALSE, subjectpars=TRUE, tformsubjectpars=TRUE, indvarstates=FALSE,...){
-  
+
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
   message('Computing state estimates..')
   # standata <- fit$standata
@@ -91,7 +91,7 @@ ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
   }
   
   for(typei in c('prior','upd','smooth')){
-    out[[paste0('err',typei)]] <- aaply(out[[paste0('y',typei)]],1, function(yp) out$y-yp,.drop=FALSE)
+    out[[paste0('err',typei)]] <- aaply(out[[paste0('y',typei)]],1, function(yp) array(out$y-yp,dim=dim(out$y)),.drop=FALSE,.inform=TRUE)
   } 
   # 
   if(standardisederrors){

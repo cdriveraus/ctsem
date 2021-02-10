@@ -29,7 +29,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     sf=ctStanFit(aa,
       ctstanmodel = sm, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores,
       nopriors=T,
-      optimcontrol=list(finishsamples=500,stochastic=T,carefulfit=F),plot=10,fit=T)
+      optimcontrol=list(finishsamples=500,carefulfit=F),plot=10,fit=T)
     
     sdat <- sf$standata
     sdat$dokalmanrows[sdat$subject==1] <- 0L #remove 1 subject

@@ -430,8 +430,8 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   
   standata$statedep[31:33] <- standata$statedep[c(4,5,8)]
   
+  #laplace priors
   standata$laplaceprior <- rep(0L,standata$nparams)
-  # browser()
   if(!is.null(ctm$laplaceprior)){
     ms <- data.frame(standata$matsetup)
     standata$laplaceprior[
@@ -443,6 +443,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
           ms$copyrow<1]
     ] <- 1L
   }
+  standata$laplaceprioronly <- ifelse(is.null(ctm$laplaceprioronly),0L,as.integer(ctm$laplaceprioronly))
   
   
   #CINT non zero

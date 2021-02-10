@@ -972,7 +972,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,simplify=TRUE){
   
   rawindparams=rawpopmeans;
   
-  if(si > 0 && nindvarying > 0 && intoverpop==0)  rawindparams[indvaryingindex] += rawpopc[2] * baseindparams[si];
+  if(si > 0 && nindvarying > 0 && intoverpop==0)  rawindparams[indvaryingindex] += rawpopcovchol * baseindparams[si];
 
   if(si > 0 &&  ntieffects > 0){
   if(nmissingtipreds > 0) rawindparams[tieffectindices[1:ntieffects]] += 
@@ -1005,31 +1005,29 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,simplify=TRUE){
     for(li in 1:nlatentpop) if(is_nan(state[li])) state[li] = T0MEANS[li,1]; //finish updating state
     
     //init other system matrices (already done PARS, redo t0means in case of PARS dependencies...)
-    ',paste0(sapply(1:length(c(mats$base[!mats$base %in% c(1,10)],mats$jacobian)),function(x) {
-      y=c(mats$base[!mats$base %in% c(1,10)],mats$jacobian)[x]
-      paste0(
-        'if(whenmat[',y,',5] || si==0) ',matcalcs('si',when=0,y,basemats=TRUE))
-    }),collapse='  '),'
+   ',matcalcs('si',when=0,
+          matrices = c(mats$base[!mats$base %in% c(1,10)],mats$jacobian),basemats=TRUE),'
     
     if(verbose==2) print("DRIFT = ",DRIFT);
     if(verbose==2) print("indparams = ", indparams);
     
     
-  if(si==0 || (sum(whenmat[8,]) + statedep[8]) > 0 ) {
-   if(intoverpop && nindvarying > 0) T0VAR[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopc[1];
+ // if(si==0 || (sum(whenmat[8,]) + statedep[8]) > 0 ) {
+   if(intoverpop && nindvarying > 0) T0VAR[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopcovbase;
     T0cov = sdcovsqrt2cov(T0VAR,choleskymats); 
 
     if(intoverpop && nindvarying > 0){ //adjust cov matrix for transforms
+    ',if(!gendata) paste0('if(si==0) rawpopcovchol = cholesky_decompose(T0cov[intoverpopindvaryingindex, intoverpopindvaryingindex]);'),'
       for(ri in 1:size(matsetup)){
         if(matsetup[ri,7]==1){ //if t0means
           if(matsetup[ri,5]) { //and indvarying
-            T0cov[matsetup[ri,1], ] = T0cov[matsetup[ri,1], ] * matvalues[ri,2] * matvalues[ri,3]* matvalues[ri,5]; //multiplier meanscale sdscale
-            T0cov[, matsetup[ri,1] ] = T0cov[, matsetup[ri,1] ] * matvalues[ri,2] * matvalues[ri,3]* matvalues[ri,5]; //multiplier meanscale sdscale
+            T0cov[matsetup[ri,1], ] = T0cov[matsetup[ri,1], ] * matvalues[ri,2] * matvalues[ri,3]; //multiplier meanscale
+            T0cov[, matsetup[ri,1] ] = T0cov[, matsetup[ri,1] ] * matvalues[ri,2] * matvalues[ri,3]; //multiplier meanscale
           }
         }
       }
     }
-  }
+  //}
   
   if(si==0 || statedep[5] || (whenmat[32,5])) MANIFESTcov = sdcovsqrt2cov(MANIFESTVAR,choleskymats);
     
@@ -1327,8 +1325,10 @@ matcalcs <- function(subjectid,when, matrices, basemats){
     whenax[whenax==0] <- 5
     whenax=paste0('{',paste0(whenax,collapse=','),'}') #remove 0 
     out = paste0(
-      ifelse(0 %in% when,'',paste0('if(',ifelse(basemats,'si==0 ||',''),'sum(whenmat[',x,',',whenax,']) > 0)')),
-      mn,'=mcalc(',mn,',indparams, statetf,',whena,', ',x,', matsetup, matvalues, ',subjectid,'); \n') #removed 's',
+      'if(',
+      ifelse(basemats,'si==0 || ',''),
+      paste0('sum(whenmat[',x,',',whenax,']) > 0 )'),
+      paste0(mn,'=mcalc(',mn,',indparams, statetf,',whena,', ',x,', matsetup, matvalues, ',subjectid,'); \n') )
   }),collapse='')
 }
 
@@ -1694,6 +1694,7 @@ data {
   int popcovn;
   int llsinglerow;
   int laplaceprior[nparams];
+  int laplaceprioronly;
   int CINTnonzerosize;
   int CINTnonzero[CINTnonzerosize];
   int JAxDRIFTequiv;
@@ -1732,7 +1733,10 @@ parameters{
       
 transformed parameters{
   vector[nindvarying] rawpopsd; //population level std dev
-  matrix[nindvarying, nindvarying] rawpopc[4];
+  matrix[nindvarying, nindvarying] rawpopcovbase;
+  matrix[nindvarying, nindvarying] rawpopcov;
+  matrix[nindvarying, nindvarying] rawpopcovchol;
+  matrix[nindvarying, nindvarying] rawpopcorr;
 
 ',if(!gendata) paste0('
   real ll = 0;
@@ -1775,18 +1779,18 @@ transformed parameters{
     int counter =0;
     rawpopsd = ',ctm$rawpopsdtransform, ' + 1e-10; // sqrts of proportions of total variance
     for(j in 1:nindvarying){
-      rawpopc[1,j,j] = rawpopsd[j]; //used with intoverpop
+      rawpopcovbase[j,j] = rawpopsd[j]; //used with intoverpop
       for(i in 1:nindvarying){
         if(i > j){
           counter += 1;
-          rawpopc[1,i,j]=sqrtpcov[counter];
-          rawpopc[1,j,i]=0;//sqrtpcov[counter];
+          rawpopcovbase[i,j]=sqrtpcov[counter];
+          rawpopcovbase[j,i]=0;//sqrtpcov[counter];
         }
       }
     }
-    rawpopc[3] = tcrossprod( constraincorsqrt(rawpopc[1]));
-    rawpopc[4] = makesym(quad_form_diag(rawpopc[3], rawpopsd +1e-8),verbose,1);
-    rawpopc[2] = cholesky_decompose(rawpopc[4]); 
+    rawpopcorr = tcrossprod( constraincorsqrt(rawpopcovbase));
+    rawpopcov = makesym(quad_form_diag(rawpopcorr, rawpopsd +1e-8),verbose,1);
+    rawpopcovchol = cholesky_decompose(rawpopcov); 
   }//end indvarying par setup
 
   {
@@ -1804,9 +1808,14 @@ model{
   }
 
   if(nopriors==0){ //if split files over subjects, just compute priors once
+    for(i in 1:nparams){
+      if(laplaceprior[i]==1) target+= dokalmanpriormodifier * double_exponential_lpdf(rawpopmeans[i]|0,1);
+    }
+  }
+
+  if(nopriors==0 && !laplaceprioronly){ //if split files over subjects, just compute priors once
   for(i in 1:nparams){
     if(laplaceprior[i]==0) target+= dokalmanpriormodifier * normal_lpdf(rawpopmeans[i]|0,1);
-    if(laplaceprior[i]==1) target+= dokalmanpriormodifier * double_exponential_lpdf(rawpopmeans[i]|0,1);
   }
   
     if(nindvarying > 0){
@@ -1842,9 +1851,8 @@ generated quantities{
     matrix[popcovn, nindvarying] x;
     if(nindvarying){
       for(ri in 1:rows(x)){
-        x[ri,] = (rawpopc[2] * 
-          to_vector(normal_rng(rep_vector(0,nindvarying),rep_vector(1,nindvarying))) + 
-          rawpopmeans[indvaryingindex])\';
+        x[ri,] = (rawpopcovchol * 
+          to_vector(normal_rng(rawpopmeans[indvaryingindex],rep_vector(1,nindvarying))) )\';
       }
     }
     

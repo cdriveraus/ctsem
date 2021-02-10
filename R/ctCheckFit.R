@@ -373,18 +373,16 @@ ctCheckFit <- function(fit,
   TIpredNames=fit$ctstanmodelbase$TIpredNames,
   nsamples=10, covplot=FALSE, corr=TRUE, combinevars=NA, fastcov=FALSE,
   lagcovplot=FALSE,
-  aggfunc=mean,aggregate=TRUE,
+  aggfunc=mean,aggregate=FALSE,
   groupbysplit=FALSE, byNA=TRUE,lag=0,
   smooth=TRUE, k=4,breaks=4,entropy=FALSE,reg=FALSE,verbose=0, indlines=30){
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
   covORcor <- function(m){
     if(corr) return(cov2cor(m)) else return(m)
   }
-  
+
   DataSource <-Sample<-NULL
-  
   dat <- ctStanFitMelt(fit = fit,maxsamples = nsamples)
-  
   
   
   byc=unique(c('Sample','WhichObs','DataSource',fit$ctstanmodel$timeName))
@@ -399,9 +397,7 @@ ctCheckFit <- function(fit,
   dat$Sample <- factor(dat$Sample)
   dat$DataSource <- factor(dat$DataSource)
 
-  # ?acf
-  
-  
+
   wdat=dcast(dat,paste0(
    paste0(bycid,collapse='+'),
     '~variable'),value.var = 'value',fun.aggregate = mean,na.rm=TRUE)
@@ -420,6 +416,11 @@ ctCheckFit <- function(fit,
         shift(.SD, n=lag,type='lead'), by=c(fit$ctstanmodel$subjectIDname,'Sample','DataSource'),.SDcols=prelagcols]
   }
   
+  if(covplot && by %in% names(combinevars)){ #then we need to make a copy for the splitting variable
+    wdat[[paste0(by,'_split')]] <- wdat[[by]]
+    by <- paste0(by,'_split')
+  }
+  # browser()
   dat <- melt(wdat,id.vars=unique(c(bycid,by)))
   
   if(!data) dat<-dat[!DataSource %in% 'Data']
@@ -442,13 +443,12 @@ ctCheckFit <- function(fit,
     discdat[variable %in% TIpredNames & WhichObs > 1] <- NA #remove later tipreds to avoid duplicate cov columns
     
     nontivars <- unique(discdat$variable)[!unique(discdat$variable) %in% TIpredNames]
-    
-    if(is.double(dat[[by]])){
+
       if(requireNamespace('arules')){
-        discdat[[by]] <- arules::discretize(dat[[by]], #discretize
+        discdat[[paste0(by)]] <- arules::discretize(dat[[by]], #discretize
           method='cluster',breaks = breaks,labels=FALSE)
       } else stop('arules package needed for discretization!')
-    }
+    
     if(covplot){
       corlist <- list()
       datasources <- as.character(unique(dat$DataSource))
@@ -457,8 +457,10 @@ ctCheckFit <- function(fit,
         wdat <- dcast(discdat[DataSource==dsi],
           paste0(
             fit$ctstanmodelbase$subjectIDname,
-            '+Sample',if(!aggregate) '+WhichObs','~variable + ',by),fun.aggregate=aggfunc,na.rm=TRUE)
-        
+            '+Sample',
+            if(!aggregate) '+WhichObs', #this caused problems, why was it in?
+            '~variable + ', by),fun.aggregate=aggfunc,na.rm=TRUE)
+ 
         
         #put loglik on one side
         if('LogLik_1' %in% colnames(wdat)) wdat <- cbind(wdat[,colnames(wdat) %in% paste0('LogLik_',1:breaks),with=FALSE],

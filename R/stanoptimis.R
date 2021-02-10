@@ -587,7 +587,7 @@ tostanarray <- function(flesh, skeleton){
 stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   deoptim=FALSE, estonly=FALSE,tol=1e-12,
   decontrol=list(),
-  stochastic = TRUE,
+  stochastic = FALSE,
   nopriors=FALSE,carefulfit=TRUE,
   subsamplesize=.5,finitediff=FALSE,
   parsteps=c(),
@@ -630,7 +630,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   #     (standata$nindvarying^2-standata$nindvarying)/2
   #   whichmcmcpars <- (a1+1):(a1+standata$nindvarying) #*standata$nsubjects)
   # } else 
-    whichmcmcpars <- NA #leftover necessity
+    # whichmcmcpars <- NA #leftover necessity
     
   
   smf <- stan_reinitsf(sm,standata)
@@ -648,7 +648,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   
   parsets <- 1
   if(length(unique(standata$subject)) < cores){
-    if(length(unique(standata$subject))==1){
+    if(1==99 && length(unique(standata$subject))==1){
       optimcores <- cores
       parsets <- cores
       if(cores >1) stochastic=TRUE
@@ -877,7 +877,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           optimfit <- sgd(init, fitfunc = function(x) target(x),
             parsets=parsets,
             whichignore = unlist(parsteps),nconvergeiter = 20,
-            whichmcmcpars=whichmcmcpars,nsubjects=ifelse(is.na(whichmcmcpars[1]),NA,standata$nsubjects),
             plot=plot,itertol=.1,deltatol=.1,maxiter=500)
         }
         
@@ -915,12 +914,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(!stochastic && carefulfit) message('carefulfit = TRUE , so checking for improvements with stochastic optimizer')
         optimfit <- sgd(init, fitfunc = target,
           parsets=parsets,
-          itertol = ifelse(!finished,1e-1,1e-3),
-          deltatol=ifelse(!finished,1e-1,1e-5),
+          itertol = ifelse(!finished,1e-1,tol*1e9),
+          deltatol=ifelse(!finished,1e-1,tol*1e7),
           # itertol = ifelse(standata$ntipred >0,1e-1,1e-3),
           # deltatol=ifelse(standata$ntipred >0,1e-2,1e-5),
-          whichignore = unlist(parsteps),whichmcmcpars=whichmcmcpars,
-          nsubjects=ifelse(is.na(whichmcmcpars[1]),NA,standata$nsubjects),
+          whichignore = unlist(parsteps),
           ndatapoints=standata$ndatapoints,plot=plot)
         if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else init=optimfit$par
       }
@@ -935,8 +933,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           optimfit <- sgd(init, fitfunc = target,
             parsets=parsets,
             itertol = 1e-2, deltatol= 1e-2,
-            whichignore = unlist(parsteps),whichmcmcpars=whichmcmcpars,
-            nsubjects=ifelse(is.na(whichmcmcpars[1]),NA,standata$nsubjects),
+            whichignore = unlist(parsteps),
             ndatapoints=standata$ndatapoints,plot=plot)
           
           if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else{
@@ -1011,24 +1008,16 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           }
           if(stochastic && finished) optimfit <- sgd(init, fitfunc = target,
             parsets=parsets,
-            whichignore = parsteps,whichmcmcpars=whichmcmcpars,
-            nsubjects=ifelse(is.na(whichmcmcpars[1]),NA,standata$nsubjects),
+            whichignore = parsteps,
             plot=plot)
           if(stochastic && !finished) optimfit <- sgd(init, fitfunc = target,
             parsets=parsets,
-            whichignore = parsteps,whichmcmcpars=whichmcmcpars,
-            nsubjects=ifelse(is.na(whichmcmcpars[1]),NA,standata$nsubjects),
+            whichignore = parsteps,
             plot=plot,itertol=1e-1,deltatol=1e-2)
           if(length(parsteps)>0) init[-parsteps] = optimfit$par else init=optimfit$par
           # }
         }
-        # smf <- stan_reinitsf(sm,standata)
-        # 
-        #   optimfit <- sgd(init, fitfunc = target,
-        #     itertol = 1e-3, deltatol= 1e-3,
-        #     whichignore = parsteps,whichmcmcpars=whichmcmcpars,
-        #     nsubjects=ifelse(is.na(whichmcmcpars[1]),NA,standata$nsubjects),
-        #     ndatapoints=standata$ndatapoints,plot=plot)
+
       } #end ti pred auto total loop
       
       

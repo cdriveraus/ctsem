@@ -45,18 +45,11 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     # dm$pars$indvarying[dm$pars$matrix %in% c('CINT','T0MEANS')] <- TRUE
     
     
-    
-    if(1==99){ 
-      f=ctStanFit(datalong = dat,ctstanmodel = cm,optimize=TRUE,
-        verbose=0,optimcontrol=list(estonly=F,stochastic=T),savescores = F,nopriors=F)
-    }
-    
-    
+
     
     for(m in c('cm','dm')){
       argslist <- list(
-        ml=list(datalong = dat,ctstanmodel = get(m),optimize=TRUE, nlcontrol=list(),
-          verbose=0,optimcontrol=list(estonly=F,stochastic=F),savescores = F,nopriors=F)
+        ml=list(datalong = dat,ctstanmodel = get(m),optimize=TRUE,   verbose=0,nopriors=F)
       )
       
       

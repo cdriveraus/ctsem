@@ -91,17 +91,30 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       nlcontrol=list(nldynamics=FALSE))
     sf1_derrindd=sf1_derrind$stanfit$transformedparsfull$pop_DRIFT[1,1:2,1:2]#matrix(sf1_derrind$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf1_derrind$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
     sf1_derrindll=sf1_derrind$stanfit$optimfit$value
-
+    
     sm2 <- ctStanModel(m2)
-
-    sf2 <- ctStanFit(cd,sm2,iter=10,fit=T,
-      optimize=T,verbose=0,nopriors = TRUE,intoverpop = TRUE,
-      optimcontrol=list(deoptim = FALSE,is=FALSE,isloopsize=50,finishsamples=50),
+    sm2$pars$sdscale <- .2
+    
+    sf2 <- ctStanFit(cd,sm2,iter=10,fit=T,plot=10,
+      optimize=T,verbose=0,nopriors = TRUE,
       derrind=1:2)
     # sink()
     sf2d=sf2$stanfit$transformedparsfull$pop_DRIFT[1,1:2,1:2]# matrix(sf2$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf2$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
     sf2ll=sf2$stanfit$optimfit$value
     # summary(sf2)$popmeans
+    cov2cor(sf2$stanfit$transformedparsfull$rawpopcov[1,,])
+    cov2cor(sf2$stanfit$transformedparsfull$popcov[1,,])
+    cov2cor(    sf1$stanfit$transformedparsfull$pop_T0cov[1,,])
+    for(i in 1:4){
+      for(j in 1:4){
+        if(i==j) testthat::expect_equivalent(
+             sf1$stanfit$transformedparsfull$pop_T0cov[1,i,j]/ sf2$stanfit$transformedparsfull$popcov[1,i,j],
+          1,
+          tol=.1)
+        if(i>j) testthat::expect_equivalent(  cov2cor(    sf1$stanfit$transformedparsfull$pop_T0cov[1,,])[i,j],
+          cov2cor(sf2$stanfit$transformedparsfull$popcov[1,,])[i,j],.1)
+      }
+    }
     
     dvec=c('sf1d','sf2d','sf1_derrindd')
     llvec=c('sf1ll','sf2ll','sf1_derrindll')
@@ -137,7 +150,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     colnames(dat)[1]='id'
     
-      dtm <- ctModel(LAMBDA=diag(1), type='stanct',
+    dtm <- ctModel(LAMBDA=diag(1), type='stanct',
       DRIFT=matrix('dr11| -2*log1p(exp(-2*param))'),
       CINT=matrix('cint'),
       MANIFESTMEANS = matrix(0)
@@ -150,7 +163,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       verbose=0,optimcontrol=list(estonly=F),savescores = F,nopriors=T)
     s1=summary(dtf,parmatrices = F,priorcheck = F,residualcov = F)
     
-       dtm2 <- ctModel(LAMBDA=matrix(c(1,0),1,2), type='stanct',
+    dtm2 <- ctModel(LAMBDA=matrix(c(1,0),1,2), type='stanct',
       DIFFUSION=matrix(c('diff',0,0,0),2,2),DRIFT=matrix(c('-2*log1p(exp(-2*state[2]))',0,0,-.00001),2,2),
       CINT=matrix(c('cint',0),2,1),T0MEANS=matrix(c('t0m1','t0m2|param'),2,1),
       T0VAR=matrix(c('t0v11',0,0,paste0('t0var22 | ',gsub(".* sdscale","",gsub('rawpopsdbase','param',dtm$rawpopsdtransform),fixed=TRUE))),2,2),
@@ -162,7 +175,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     # expect_equivalent(c(s1$popmeans[,1],s1$popsd[,1]),s2$popmeans[,1],tol=1e-2)
     testthat::expect_equivalent(sort(dtf2$stanfit$rawest),sort(dtf$stanfit$rawest),tol=1e-3) #sorting is an ugly hack! could improve...
-
+    
   })
   
 }

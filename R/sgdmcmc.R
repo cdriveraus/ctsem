@@ -1,9 +1,9 @@
 logit = function(x) log(x)-log((1-x))
 
-sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoints=NA,plot=FALSE,
-  stepbase=1e-3,gmeminit=ifelse(is.na(startnrows),.8,.8),gmemmax=.93, maxparchange = .50,
-  startnrows=NA,roughnessmemory=.9,groughnesstarget=.4,roughnesschangemulti = 2,
-  lproughnesstarget=ifelse(is.na(whichmcmcpars[1]),ifelse(parsets==1,.2,.1),.2),parsets=1,
+sgdmcmc <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubjects=NA,ndatapoints=NA,plot=FALSE,
+  stepbase=1e-3,gmeminit=ifelse(is.na(startnrows),.8,.8),gmemmax=.95, maxparchange = .50,
+  startnrows=NA,roughnessmemory=.8,groughnesstarget=.4,roughnesschangemulti = 2,
+  lproughnesstarget=ifelse(is.na(whichmcmcpars[1]),ifelse(parsets==1,.2,.2),.5),parsets=1,
   # gamiter=50000,
   gsmoothroughnesstarget=.05,
   warmuplength=20,nstore=max(100,length(init)),
@@ -219,6 +219,11 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
       gdelta =  (ghatmix +dghatmix*dghatweight/2) #removed step multiply because divide by zero elsewhere
       if(i > 1){
         delta =   step  *sign(gdelta)*(abs(gdelta))  #* exp((rnorm(length(g),0,.02)))
+                s <- which(rbinom(n = length(pars),size = 1,prob= .1)==1)
+          # delta[s] <- delta[s] + sign(newpars[s])*abs(rnorm(length(s),0,abs(gdelta[s])*step[s]))
+            # s <- which(rbinom(n = length(pars),size = 1,prob= .1)==1)
+          # delta[s] <- delta[s] + rnorm(length(s),0,abs(gdelta[s])*step[s]*2)
+          
         # if(runif(1) > .95) {
         #   parextra=sample(1:length(pars),floor(.05*length(pars)))
         #   delta[parextra] <- step*sqrt(abs(gsmooth[parextra]))*10
@@ -226,6 +231,11 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
         delta[abs(delta) > maxparchange] <- maxparchange*sign(delta[abs(delta) > maxparchange])
         newpars = pars + delta
         newpars = newpars  + delta/2 - deltaold/2 #+ delta - deltaold #
+        #random jumping
+        if(i %% 10 ==0){
+          s <- which(rbinom(n = length(pars),size = 1,prob= .8)==1)
+          newpars[s] <- newpars[s] + rnorm(length(s),0,abs(gdelta[s])*step[s])
+        }
       }
       
       # if(i > nstore && (i%%gamiter)==0){
@@ -408,7 +418,7 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
     # }
     
     # if(!i %% gamiter==0){
-    groughness = groughness * (roughnessmemory2) + (1-(roughnessmemory2)) * as.numeric(sign(gmid)!=sign(oldgmid))
+    groughness = groughness * (roughnessmemory2) + (1-(roughnessmemory2)) * as.numeric(sign(g)!=sign(oldg))
     gsmoothroughness = gsmoothroughness * (roughnessmemory2) + (1-(roughnessmemory2)) * as.numeric(sign(gsmooth)!=sign(oldgsmooth))
     if(i > 1) lproughness = lproughness * (roughnessmemory2) + (1-(roughnessmemory2)) * as.numeric(lp[i-1] > (lp[i]))#exp(-1/(i-bestiter+.1))
     
@@ -417,18 +427,19 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
     groughnessmod = ( ( ( (1/(-(groughness)-groughnesstarget)) / (1/-groughnesstarget) + .5) ) -1)
     
     step = (step + roughnesschangemulti*(
-      step* .8*lproughnessmod
-      # + step* .1*gsmoothroughnessmod #* min(sqrt(deltasmoothsq),1)
-      + step* .3*groughnessmod# * min(sqrt(deltasmoothsq),1)
+      step* .4*lproughnessmod
+      + step* .05*gsmoothroughnessmod #* min(sqrt(deltasmoothsq),1)
+      + step* .4*groughnessmod# * min(sqrt(deltasmoothsq),1)
       # + step * rmsstepmod
     ))
     
     step[gsmoothroughness < gsmoothroughnesstarget] <- step[gsmoothroughness < gsmoothroughnesstarget] * 1.2
-    gsmooth[gsmoothroughness < gsmoothroughnesstarget] <- gsmooth[gsmoothroughness < gsmoothroughnesstarget] * 1.1
+    # gsmooth[gsmoothroughness < gsmoothroughnesstarget] <- gsmooth[gsmoothroughness < gsmoothroughnesstarget] * 1.2
     # step[gsmoothroughness < gsmoothroughnesstarget] * .1*gsmoothroughnessmod[gsmoothroughness < gsmoothroughnesstarget]
-    signdif= sign(gmid)!=sign(gdelta)
+    signdif= sign(gsmooth)!=sign(g)
     if(i > 1 && lp[i] >= max(head(lp,length(lp)-1))) {
-      step = step * 1.1 #sqrt(2-gmemory) #exp((1-gmemory)/8)
+      step[!signdif] = step[!signdif] * 1.2 #sqrt(2-gmemory) #exp((1-gmemory)/8)
+      # step = step * 1.2
       if(i > warmuplength) {
         ##max/min par update extra
         parscore <- parscore * .98
@@ -493,9 +504,11 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
     
     if(i > warmuplength && lp[i] < lp[i-1] && mcmcconverged) { #if worsening, update gradient faster
       step[signdif]=step[signdif]*lproughnesstarget
+      # step = step * lproughnesstarget
       if(lp[i] < lp[i-10]) gmemory <- gmemory * .995
       # step=step*.5
       gsmooth[signdif]= gsmooth[signdif]*gmemory2 + (1-gmemory2) * g[signdif] #increase influence of gradient at inflections
+      # gsmooth[signdif]= gsmooth[signdif]*.5 + .5 * g[signdif] #increase influence of gradient at inflections
     }
     
     oldghatmix=ghatmix
@@ -510,12 +523,11 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
       plot(tail(log(-(lp-max(lp)-1)),500),type='l')
       # plot(gamweights,col=1:length(pars))
       parsd=(apply(parstore,1,sd,na.rm=T))
-      plot(pars,col=1:length(pars))
       abline(h=(parsdtol))
       matplot(t(parstore[
         which(parsd > sort(parsd,decreasing = TRUE)[min(c(length(pars),5))]),,drop=FALSE]),
         type='l')
-      if(1==2){
+      if(1==1){
         plot(groughness,col='red',ylim=c(0,1))
         abline(h=mean(gsmoothroughness),col='blue',lty=2)
         abline(h=(gsmoothroughnesstarget),col='blue',lty=1,lwd=2)
@@ -529,11 +541,14 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
         
         # gsmoothsqrt=sign(gsmooth) * sqrt(abs(gsmooth))
         # plot(gsmoothsqrt,ylim=c(-max(abs(gsmoothsqrt)),max(abs(gsmoothsqrt))))
+        plot(gsmooth,ylim=c(-max(abs(gsmooth)),max(abs(gsmooth))))
         
         # plot(dghatmix*step,ylim=c(-max(abs(dghatmix*step)),max(abs(dghatmix*step))))
         
-        plot(ghatsmoothpar,ylim=c(0,1))
+        if(1==2){
+          plot(ghatsmoothpar,ylim=c(0,1))
         if(!is.na(whichmcmcpars[1])) plot(c(newmcmcpars))
+        }
       }
       Sys.sleep(.03)
       # plot(dghatsmoothpar)
@@ -551,8 +566,8 @@ sgd <- function(init,fitfunc,whichignore=c(),whichmcmcpars=NA,mcmcstep=.01,nsubj
     #check convergence
     if(i > 30){
       if(is.na(whichmcmcpars[1])){
-        if( (i - bestiter) > nconvergeiter*5 && 
-            mean(sign(diff(tail(lp,nconvergeiter)))) < .3) converged <- TRUE #time since best
+        # if( (i - bestiter) > nconvergeiter*5 && 
+        #     mean(sign(diff(tail(lp,nconvergeiter)))) < .3) converged <- TRUE #time since best
         if(max(tail(lp,nconvergeiter)) - min(tail(lp,nconvergeiter)) < itertol) converged <- TRUE
         if(max(diff(tail(lp,nconvergeiter))) < deltatol) converged <- TRUE
         if(max(apply(parstore,1,sd)) < parsdtol) converged <- TRUE

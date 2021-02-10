@@ -8,8 +8,9 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,...){
   #create datalong structure
   dat <- data.frame(id=sdat$subject,time=sdat$time)
   datti <- suppressWarnings(merge(dat,data.frame(id=sdat$subject,time=sdat$time,sdat$tipredsdata),all=TRUE))
-  datti <- datti[order(datti[[sf$ctstanmodelbase$subjectIDname]],datti$time),]
+  datti <- datti[order(datti$id,datti$time),]
   colnames(datti)[1:2] <- c(sf$ctstanmodelbase$subjectIDname,sf$ctstanmodelbase$timeName)
+  colnames(dat)[1:2] <- c(sf$ctstanmodelbase$subjectIDname,sf$ctstanmodelbase$timeName)
   addm <- matrix(NA,nrow=nrow(dat),ncol=length(sf$ctstanmodel$manifestNames))
   colnames(addm) <- sf$ctstanmodel$manifestNames
   tdpreds <- sdat$tdpreds
@@ -31,6 +32,7 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,...){
       dat <- rbind(dat,tdat)
     }
   }
+  dat[[sf$ctstanmodelbase$subjectIDname]][dat[[sf$ctstanmodelbase$subjectIDname]] %in% 1] <- 0
   sf$standata <- suppressMessages(ctStanData(sf$ctstanmodel,dat,optimize=TRUE))
   ctKalman(fit = sf,subjects=1:sf$standata$nsubjects,realid=TRUE,...)
 }
@@ -295,13 +297,17 @@ plot.ctKalmanDF<-function(x, subjects=unique(x$Subject), kalmanvec=c('y','yprior
   g <- ggplot(d,
     aes_string(x='Time',y='Value',colour=colvec,linetype='Element',shape='Element')) +
     scale_linetype_manual(breaks=names(ltyvec),values=ltyvec)+
-    scale_shape_manual(breaks=names(shapevec),values=shapevec) +
+    scale_shape_manual(breaks=names(shapevec),values=shapevec)
     # labs(linetype='Element',shape='Element',colour='Element',fill='Element')+
-    scale_fill_discrete(guide='none')
-  
+    # guides(fill=FALSE)
+# browser()
+  if(length(unique(ltyvec[!is.na(ltyvec)]))<1) g<-g+guides(linetype=FALSE)
+  # if(length(unique(shapevec[!is.na(shapevec)]))<1) 
+    # g<-g+ guides(shape=FALSE)
   if(!is.na(facets[1]) && length(subjects) > 1 && length(unique(subset(kdf,Element %in% kalmanvec)$Variable)) > 1){
     g <- g+ facet_wrap(facets,scales = 'free') 
-  }
+  } 
+  g <- g + ylab(ifelse(length(unique(d$Variable))==1, unique(d$Variable),'Variable'))
   
   polygonsteps <- polygonsteps + 1
   polysteps <- seq(errormultiply,0,-errormultiply/(polygonsteps+1))[c(-polygonsteps+1)]
@@ -335,7 +341,8 @@ plot.ctKalmanDF<-function(x, subjects=unique(x$Subject), kalmanvec=c('y','yprior
       g <- g + 
         geom_line()+
         geom_point()+
-        theme_minimal()
+        theme_minimal()+
+        guides(fill=FALSE)
     
   if(plot) suppressWarnings(print(g))
   return(invisible(g))

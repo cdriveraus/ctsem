@@ -1,5 +1,5 @@
 if(1==1){
-  ctSummarise<-function(sf,name='ctSummary',cores=2, times=seq(0,10,.1),
+  ctSummarise<-function(sf,name='ctSummary',cores=2, times=seq(0,10,.1),quantiles=c(.025,.5,.975),
     folder = 'ctSummary/',nsamples=500,lags=1:3,
     latents=1:sf$ctstanmodelbase$n.latent, manifests=1:sf$ctstanmodelbase$n.manifest){
     
@@ -218,22 +218,7 @@ if(1==1){
       print(cm,digits=3)
       sink()
       
-      ### CHECKING MODELFIT ###
-      
-      # Checkfit function 
-      pdf(paste0(name,'_checkfit.pdf'))
-      by=sm$timeName
-      try(ctsem:::ctCheckFit(fit = sf,data = TRUE,postpred = TRUE,statepred = FALSE,by = by,breaks=2,covplot = TRUE,smooth=TRUE,reg=TRUE))
-      try(ctsem:::ctCheckFit(fit = sf,data = TRUE,postpred = TRUE,statepred = TRUE,by = by,breaks=4,covplot = FALSE,smooth=TRUE,reg=TRUE))
-      try(ctsem:::ctCheckFit(fit = sf,data = TRUE,postpred = TRUE,statepred = TRUE,by = by,fastcov = TRUE,
-        breaks=1,covplot = TRUE,smooth=TRUE,reg=TRUE,lagcovplot = TRUE,lag = lags,groupbysplit = TRUE))
-      try(ctsem:::ctCheckFit(fit = sf,data = TRUE,postpred = TRUE,statepred = FALSE,by = by,breaks=4,covplot = TRUE,smooth=TRUE,reg=TRUE))
-      try(ctsem:::ctCheckFit(fit = sf,data = TRUE,postpred = TRUE,statepred = FALSE,by = by,breaks=2,covplot = TRUE,lag=1,smooth=TRUE,reg=TRUE))
-      dev.off()
-      
-      
-      
-      
+    
       if(sf$ctstanmodelbase$n.TIpred > 0){
         
         if(sf$ctstanmodelbase$n.TIpred > 1){
@@ -285,11 +270,29 @@ if(1==1){
       # dtparsc=ctStanDiscretePars(sf,plot=FALSE,observational = TRUE,cov = TRUE,nsamples = 500,times=times) #
       # dtparsoc=ctStanDiscretePars(sf,plot=FALSE,observational = FALSE,cov = TRUE,nsamples = 500,times=times) #
       for(i in 1:sf$ctstanmodelbase$n.latent){
-        print(ctStanDiscreteParsPlot(dtpars,indices=cbind(latents,i)))
-        print(ctStanDiscreteParsPlot(dtparso,indices=cbind(latents,i)))
+        print(ctStanDiscreteParsPlot(dtpars,indices=cbind(latents,i),quantiles = quantiles))
+        print(ctStanDiscreteParsPlot(dtparso,indices=cbind(latents,i),quantiles=quantiles))
         # print(ctStanDiscreteParsPlot(dtparsc,indices=cbind(1:9,i),quantiles = c(.4,.5,.6)))
         # print(ctStanDiscreteParsPlot(dtparsoc,indices=cbind(1:9,i),quantiles = c(.4,.5,.6)))
       }
+      dev.off()
+      
+      
+        ### CHECKING MODELFIT ###
+      # Checkfit function 
+      pdf(paste0(name,'_checkfit.pdf'))
+      by=sm$timeName
+      try(ctsem:::ctCheckFit(fit = sf,data = TRUE,postpred = TRUE,statepred = FALSE,by = by,breaks=2,covplot = TRUE,smooth=TRUE,reg=TRUE))
+      try(ctsem:::ctCheckFit(fit = sf,data = TRUE,postpred = TRUE,statepred = TRUE,by = by,breaks=4,covplot = FALSE,smooth=TRUE,reg=TRUE))
+      try(ctsem:::ctCheckFit(fit = sf,data = TRUE,postpred = TRUE,statepred = TRUE,by = by,fastcov = TRUE,
+        breaks=1,covplot = TRUE,smooth=TRUE,reg=TRUE,lagcovplot = TRUE,lag = lags,groupbysplit = TRUE))
+      try(ctsem:::ctCheckFit(fit = sf,data = TRUE,postpred = TRUE,statepred = FALSE,by = by,breaks=4,covplot = TRUE,smooth=TRUE,reg=TRUE))
+      try(ctsem:::ctCheckFit(fit = sf,data = TRUE,postpred = TRUE,statepred = FALSE,by = by,breaks=2,covplot = TRUE,lag=1,smooth=TRUE,reg=TRUE))
+      for(mani in sm$manifestNames){
+        try(ctsem:::ctCheckFit(fit = sf,data = TRUE,postpred = TRUE,statepred = FALSE,by = mani,
+          breaks=2,covplot = TRUE,smooth=TRUE,reg=TRUE))
+      }
+      
       dev.off()
       
       

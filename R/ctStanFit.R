@@ -28,7 +28,7 @@ ctStanFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
   }
   if(length(oldfit$stanfit$stanfit@sim) > 0) refit=FALSE
   args$fit <- refit
-  args$init <- oldfit$stanfit$rawest
+  args$inits <- oldfit$stanfit$rawest
   args$ctstanmodel <- oldfit$ctstanmodelbase
   
   newargs <- as.list(args(ctStanFit))

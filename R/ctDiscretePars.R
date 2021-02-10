@@ -48,13 +48,14 @@ ctStanParnames <- function(x,substrings=c('pop_','popsd')){
 
 #'ctStanDiscretePars
 #'
-#'Calculate model implied regressions for a sequence of time intervals based on a continuous time model fit
-#'from ctStanFit, for specified subjects.
+#'Calculate model implied regressions for a sequence of time intervals (if ct) or steps (if dt) based on
+#'a ctStanFit object, for specified subjects.
 #'
-#'@param ctstanfitobj Continuous time model fit from \code{\link{ctStanFit}}
+#'@param ctstanfitobj model fit from \code{\link{ctStanFit}}
 #'@param subjects Either 'popmean', to use the population mean parameter, or a vector of integers denoting which
 #'subjects.
-#'@param times Numeric vector of positive values, discrete time parameters will be calculated for each.
+#'@param times Numeric vector of positive values, discrete time parameters will be calculated for each. If the fit 
+#'object is a discrete time model, these should be positive integers.
 #'@param nsamples Number of samples from the stanfit to use for plotting. Higher values will
 #'increase smoothness / accuracy, at cost of plotting speed. Values greater than the total
 #'number of samples will be set to total samples.
@@ -89,6 +90,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='popmean',
   nsamples=100,observational=FALSE,standardise=FALSE, 
   cov=FALSE, plot=FALSE,cores=2,...){
   
+  if(!ctstanfitobj$ctstanmodel$continuoustime) times <- unique(round(times))
   type='discreteDRIFT'
   collapseSubjects=TRUE #consider this for a switch
   e<-ctExtract(ctstanfitobj,subjectMatrices = subjects[1]!='popmean',cores=cores)
@@ -128,7 +130,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='popmean',
   }
   
   
-  out <- ctStanDiscreteParsDrift(ctpars,times, observational, standardise, cov=cov)
+  out <- ctStanDiscreteParsDrift(ctpars,times, observational, standardise, cov=cov,discreteInput = ctstanfitobj$ctstanmodel$continuoustime==FALSE)
   
   dimnames(out)<- list(Sample=samples, Subject=subjects,
     `Time interval`=times, row=latentNames, col=latentNames)
@@ -147,7 +149,8 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='popmean',
 
 
 
-ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=FALSE,types='dtDRIFT',quiet=FALSE){
+ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=FALSE,
+  types='dtDRIFT',discreteInput=FALSE, quiet=FALSE){
   
   nl=dim(ctpars$DRIFT)[3]
   
@@ -162,32 +165,43 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
   
   nsubs <- lapply(ctpars,function(x) dim(x)[2])
   
- 
- if('dtDRIFT' %in% types){ 
-  ctpars$dtDRIFT <- array(NA, dim=c(dim(ctpars$DRIFT)[1],max(unlist(nsubs)),length(times),dim(ctpars$DRIFT)[3:4]))
   
-  
-  for(i in 1:dim(ctpars$DRIFT)[1]){
-    for(j in 1:dim(ctpars$DRIFT)[2]){
-      for(ti in 1:length(times)){
-        ctpars$dtDRIFT[i,j,ti,,] <- expm::expm(as.matrix(ctpars$DRIFT[i,min(j,nsubs$DRIFT),,] * times[ti]))
-        if(standardise) {
-          if(any(diag(ctpars$asymDIFFUSION[i,min(j,nsubs$asymDIFFUSION),,]) < 0)) stop(
-            "Asymptotic diffusion matrix has negative diagonals -- I don't know what non stationary standardization looks like")
-          ctpars$dtDRIFT[i,j,ti,,] <- ctpars$dtDRIFT[i,j,ti,,] * 
-            matrix(rep(sqrt(diag(ctpars$asymDIFFUSION[i,min(j,nsubs$asymDIFFUSION),,])+1e-10),each=nl) / 
-                rep((sqrt(diag(ctpars$asymDIFFUSION[i,min(j,nsubs$asymDIFFUSION),,]))),times=nl),nl)
+  if('dtDRIFT' %in% types){ 
+    ctpars$dtDRIFT <- array(NA, dim=c(dim(ctpars$DRIFT)[1],max(unlist(nsubs)),length(times),dim(ctpars$DRIFT)[3:4]))
+    
+    mpow <- function(m,n){
+      if(n==0) return(diag(1,nrow(m))) else{
+        if(n>1){
+          mo <-m
+        for(i in 2:n){
+          m <- m %*% mo
         }
-        if(observational){
-          Qcor<-cov2cor(matrix(ctpars$DIFFUSIONcov[i,min(j,nsubs$DIFFUSIONcov),,],nl,nl)+diag(1e-8,nl)) 
-          Qcor <- Qcor^2 * sign(Qcor) #why is this squared?
-          ctpars$dtDRIFT[i,j,ti,,]  <- ctpars$dtDRIFT[i,j,ti,,]  %*% Qcor
         }
-        if(cov) ctpars$dtDRIFT[i,j,ti,,]  <- tcrossprod(ctpars$dtDRIFT[i,j,ti,,] )
+        return(m)
+      }}
+    
+    for(i in 1:dim(ctpars$DRIFT)[1]){
+      for(j in 1:dim(ctpars$DRIFT)[2]){
+        for(ti in 1:length(times)){
+          if(!discreteInput) ctpars$dtDRIFT[i,j,ti,,] <- expm::expm(as.matrix(ctpars$DRIFT[i,min(j,nsubs$DRIFT),,] * times[ti]))
+          if(discreteInput) ctpars$dtDRIFT[i,j,ti,,] <- mpow(as.matrix(ctpars$DRIFT[i,min(j,nsubs$DRIFT),,]),times[ti])
+          if(standardise) {
+            if(any(diag(ctpars$asymDIFFUSION[i,min(j,nsubs$asymDIFFUSION),,]) < 0)) stop(
+              "Asymptotic diffusion matrix has negative diagonals -- I don't know what non stationary standardization looks like")
+            ctpars$dtDRIFT[i,j,ti,,] <- ctpars$dtDRIFT[i,j,ti,,] * 
+              matrix(rep(sqrt(diag(ctpars$asymDIFFUSION[i,min(j,nsubs$asymDIFFUSION),,])+1e-10),each=nl) / 
+                  rep((sqrt(diag(ctpars$asymDIFFUSION[i,min(j,nsubs$asymDIFFUSION),,]))),times=nl),nl)
+          }
+          if(observational){
+            Qcor<-cov2cor(matrix(ctpars$DIFFUSIONcov[i,min(j,nsubs$DIFFUSIONcov),,],nl,nl)+diag(1e-8,nl)) 
+            Qcor <- Qcor^2 * sign(Qcor) #why is this squared?
+            ctpars$dtDRIFT[i,j,ti,,]  <- ctpars$dtDRIFT[i,j,ti,,]  %*% Qcor
+          }
+          if(cov) ctpars$dtDRIFT[i,j,ti,,]  <- tcrossprod(ctpars$dtDRIFT[i,j,ti,,] )
+        }
       }
     }
-  }
- } #end dtdrift
+  } #end dtdrift
   
   
   return(ctpars$dtDRIFT)
@@ -263,8 +277,8 @@ ctStanDiscreteParsPlot<- function(x,indices='all',
       rep(1:nlatent,length(unique(indices))),
       rep(unique(indices),each=length(unique(indices))))
   }
-
-
+  
+  
   ym <- as.data.table(x)
   ym$row <- factor(ym$row)
   ym$col <- factor(ym$col)
@@ -277,7 +291,7 @@ ctStanDiscreteParsPlot<- function(x,indices='all',
   
   #remove rows not in indices
   ym <- ym[paste0(row,'_',col) %in% apply(indices,1,function(x) paste0(latentNames[x],collapse='_'))]
-
+  
   # title <- paste0('Temporal ', ifelse(cov,'covariance','regressions'),' | ',
   #   ifelse(cov,'correlated','uncorrelated'), 'shock of 1.0')
   
