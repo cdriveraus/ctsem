@@ -110,6 +110,7 @@ checkcriticalpacks <- function(){
     if(importantpack %in% old)  message('Updating ',importantpack)
     install.packages(importantpack,dependencies = TRUE)
   }
+  remotes::install_version("withr", "2.2.0")
 }
   
 ctseminstall<-function(){

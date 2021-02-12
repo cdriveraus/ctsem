@@ -1,8 +1,8 @@
 Package: ctsem
 Type: Package
 Title: Continuous Time Structural Equation Modelling
-Version: 3.4.1
-Date: 2020-12-12
+Version: 3.4.2
+Date: 2021-02-12
 Authors@R: c(person("Charles", "Driver", role =
     c("aut","cre","cph"),email="driver@mpib-berlin.mpg.de"),
     person("Manuel", "Voelkle", role = c("aut","cph")),
@@ -70,7 +70,6 @@ Suggests:
     DEoptim,
     tinytex,
     lme4,
-    GGally,
     shiny,
     gridExtra,
     arules

@@ -18,12 +18,13 @@ ctStanDiscretePars(
 )
 }
 \arguments{
-\item{ctstanfitobj}{Continuous time model fit from \code{\link{ctStanFit}}}
+\item{ctstanfitobj}{model fit from \code{\link{ctStanFit}}}
 
 \item{subjects}{Either 'popmean', to use the population mean parameter, or a vector of integers denoting which
 subjects.}
 
-\item{times}{Numeric vector of positive values, discrete time parameters will be calculated for each.}
+\item{times}{Numeric vector of positive values, discrete time parameters will be calculated for each. If the fit 
+object is a discrete time model, these should be positive integers.}
 
 \item{nsamples}{Number of samples from the stanfit to use for plotting. Higher values will
 increase smoothness / accuracy, at cost of plotting speed. Values greater than the total
@@ -47,8 +48,8 @@ If subject matrices were saved during fiting, not used.}
 \item{...}{additional plotting arguments to control \code{\link{ctStanDiscreteParsPlot}}}
 }
 \description{
-Calculate model implied regressions for a sequence of time intervals based on a continuous time model fit
-from ctStanFit, for specified subjects.
+Calculate model implied regressions for a sequence of time intervals (if ct) or steps (if dt) based on
+a ctStanFit object, for specified subjects.
 }
 \examples{
 if(w32chk()){

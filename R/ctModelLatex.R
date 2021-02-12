@@ -128,7 +128,6 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
   filename=paste0('ctsemTex',as.numeric(Sys.time())),tex=TRUE, equationonly=FALSE, compile=TRUE, open=TRUE,
   minimal=FALSE){
   #library(ctsem)
-  
   dopopcov <- FALSE
   
   if('ctStanFit' %in% class(x)){
@@ -146,7 +145,7 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
       
       if(!linearise) popcov <- round(ctCollapse(e$rawpopcov,1,mean),digits)
       if(linearise) {
-        popcov <- stan_constrainsamples(x$stanmodel,x$standata,rbind(x$stanfit$rawest),
+        popcov <- stan_constrainsamples(x$stanmodel,x$standata,matrix(x$stanfit$rawest,nrow=1),
           cores=1,pcovn =1000,dokalman=FALSE,savesubjectmatrices = FALSE)$popcov
         popcov <- round(ctCollapse(e$popcov,1,mean),digits=digits)
       if(x$standata$intoverpop==1){

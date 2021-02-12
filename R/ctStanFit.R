@@ -548,7 +548,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     # }
     
     ctm$modelmats <- ctStanModelMatrices(ctm)
-    # browser()
     ctm <- ctStanCalcsList(ctm) #get extra calculations and adjust model spec as needed???
     
     #store values in ctm
@@ -775,7 +774,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       extratforms=ctm$modelmats$extratforms)
     if(fit) {
        stanfit$transformedparsfull <- suppressMessages(stan_constrainsamples(sm = sm,standata = standata,
-        savesubjectmatrices = TRUE, samples = matrix(stanfit$rawest,1),cores=1,savescores=TRUE,pcovn=500))
+        savesubjectmatrices = TRUE, samples = matrix(stanfit$rawest,1),cores=1,savescores=TRUE,pcovn=5000))
        
       out <- list(args=args,
         setup=setup,

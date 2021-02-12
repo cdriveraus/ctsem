@@ -55,7 +55,7 @@ ctModelStatesAndPARS <- function(ctspec, statenames){ #replace latentName and pa
     }
   }
   #expand pars
-
+  
   ln <- ctspec$param[ctspec$matrix %in% 'PARS' & !is.na(ctspec$param)] #get extra pars
   
   for(li in seq_along(ln)){ #for every extra par
@@ -225,7 +225,7 @@ ctModelTransformsToNum<-function(ctm){
     
     rownames(df) <- newrows
     ctm$pars$transform <- NULL
-
+    
     df <- data.table(Row.Names=as.integer(rownames(df)),df)
     nctspec <- data.table(Row.Names=1:nrow(ctm$pars),ctm$pars)
     nctspec <- data.frame(merge(nctspec,df,all=TRUE,no.dups = FALSE))
@@ -288,7 +288,7 @@ ctStanModelIntOverPop <- function(m){
         }}
       t0v=t0v[-1,,drop=FALSE] #remove initialisation row
       
-     
+      
       
       #reference new states
       for(ivi in ivnames){
@@ -300,7 +300,7 @@ ctStanModelIntOverPop <- function(m){
         m$pars$transform[m$pars$param %in% ivi] <-NA
         
       }
-
+      
       m$pars <- rbind(m$pars, t0m,t0v)#,drift) #
       m$pars[] <- lapply(m$pars, utils::type.convert, as.is = TRUE)
       
@@ -335,7 +335,7 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
   bcalcs2c=paste0('c(',paste0(bcalcs2,collapse=', '),')')
   if(simplify) scalcs2=Deriv::Deriv(bcalcs2c,nderiv=0)  else scalcs2=bcalcs2c 
   if(simplify && !grepl('\\.e',scalcs2)) scalcs2=bcalcs2c #hack to avoid weird leftovers from non reduced simplify
-
+  
   if(scalcs2 == 'NULL') return('') else{
     
     names(scalcs2)=NULL
@@ -526,36 +526,41 @@ ctStanModelMatrices <-function(ctm){
         }
         
       }
-       
+      
       
       if(!simplestate && grepl('[',ctspec$param[i],fixed=TRUE)){ #if a complex calc par
         
-         # else { #if not a direct matrix reference, add to list of calcs to be added to stan program
-          
-          calcs <- c(calcs, paste0(ctspec$matrix[i],'[',ctspec$row[i], ', ', ctspec$col[i],'] = ',
-            ctspec$param[i]))
-          when= -999 #never use this row of ctspec during calculations (calc is extracted and placed elsewhere)
-          indvar=0
-          dynpar=TRUE
+        # else { #if not a direct matrix reference, add to list of calcs to be added to stan program
+        
+        calcs <- c(calcs, paste0(ctspec$matrix[i],'[',ctspec$row[i], ', ', ctspec$col[i],'] = ',
+          ctspec$param[i]))
+        when= -999 #never use this row of ctspec during calculations (calc is extracted and placed elsewhere)
+        indvar=0
+        dynpar=TRUE
         # }
       }#end calculation / copy parameters
       
       else if(!grepl('[',ctspec$param[i],fixed=TRUE)){ #if non calculation parameter (consider removing duplication / copyrow checks)
         
         if(i > 1 && any(ctspec$param[1:(i-1)] %in% ctspec$param[i])){ #and after row 1, check for duplication
-          parameter <- matsetup[,'param'][ match(ctspec$param[i], matsetup$parname) ] #find which freepar corresponds to duplicate
-          indvar <- ifelse(ctspec$indvarying[i],  matsetup[,'indvarying'][ match(ctspec$param[i], matsetup$parname) ],0)#and which indvar corresponds to duplicate
+          rowmatch <- match(ctspec$param[i], matsetup$parname)#find which freepar corresponds to duplicate
+          freepar <- matsetup$param[rowmatch] #needed for tipred checks
+          parameter <- freepar
+          indvar <- matsetup$indvarying[rowmatch] #ifelse(ctspec$indvarying[i],  matsetup[,'indvarying'][ match(ctspec$param[i], matsetup$parname) ],0)#and which indvar corresponds to duplicate
+          tipred <- matsetup$tipred[rowmatch]
           
         } else { #if not duplicated
-          freeparcounter <- freeparcounter + 1
           TIPREDEFFECTsetup <- rbind(TIPREDEFFECTsetup,rep(0,ncol(TIPREDEFFECTsetup))) #add an extra row...
+          
           if(ctspec$indvarying[i]) {
             indvaryingcounter <- indvaryingcounter + 1
             indvar <- indvaryingcounter
-          }
-          if(!ctspec$indvarying[i]) indvar <- 0
+          } else  indvar <- 0
+          
+          freeparcounter <- freeparcounter + 1
           freepar <- freeparcounter
           parameter <- freepar
+          
           if(is.na(suppressWarnings(as.integer(ctspec$transform[i])))) { #extra tform needed
             # stop('extra transforms presently disabled -- use PARS matrix if necessary')
             extratformcounter <- extratformcounter + 1
@@ -1006,7 +1011,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,simplify=TRUE){
     
     //init other system matrices (already done PARS, redo t0means in case of PARS dependencies...)
    ',matcalcs('si',when=0,
-          matrices = c(mats$base[!mats$base %in% c(1,10)],mats$jacobian),basemats=TRUE),'
+     matrices = c(mats$base[!mats$base %in% c(1,10)],mats$jacobian),basemats=TRUE),'
     
     if(verbose==2) print("DRIFT = ",DRIFT);
     if(verbose==2) print("indparams = ", indparams);
@@ -1527,7 +1532,7 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
   real tform(real parin, int transform, data real multiplier, data real meanscale, data real offset, data real inneroffset){
     real param=parin;
     ',tformshapes(stan=TRUE),
-    if(length(extratforms) > 0) paste0(extratforms,collapse=" \n"),'
+if(length(extratforms) > 0) paste0(extratforms,collapse=" \n"),'
     return param;
   }
   

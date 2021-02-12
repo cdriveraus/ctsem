@@ -352,6 +352,7 @@ ctStanFitMelt <- function(fit, maxsamples='all'){
 #' @param byNA Logical. Create an extra break for when the split variable is missing?
 #' @param lag Integer vector. lag = 1 creates additional variables for plotting, prefixed by 'lag1_', containing the prior row of observations
 #' for that subject.
+#' @param lagcovplot Logical. Output lagged covariance type plots?
 #' @param smooth For bivariate plots, use a smoother for estimation?
 #' @param k Integer denoting number of knots to use in the smoothing spline.
 #' @param breaks Integer denoting number of discrete breaks to split variables by (when covariance plotting).
@@ -381,7 +382,7 @@ ctCheckFit <- function(fit,
     if(corr) return(cov2cor(m)) else return(m)
   }
 
-  DataSource <-Sample<-NULL
+  DataSource <-Sample<-Lag <- Row <- Sig. <- Sig <- NULL
   dat <- ctStanFitMelt(fit = fit,maxsamples = nsamples)
   
   

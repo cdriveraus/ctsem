@@ -1,50 +1,50 @@
 
-if(1==99){ #random cor tests
-  d=4
-  rm=matrix(rnorm(d^2,0,1),d)
-  rm = rm%*% t(rm)
-  cholrm=t(chol(rm))
-  ndat=(t(cholrm %*% matrix(rnorm(100*d,0,1),d)))
-  ndat[sample(1:length(ndat),100,replace=FALSE)] <- NA
-  # ndat[-1:-2,c(3,4)] <- NA
-  cov(ndat,use="pairwise.complete.obs")-rm
-  ctcov=ctsem:::covml(ndat,reg = 0)
-  ctcov$cp$covm
-  ctcov$lp
-  cov(ndat,use="pairwise.complete.obs")
-  mxcov=OpenMx::mxRefModels(data.frame(ndat),run=TRUE)
-mxcov$Saturated$ltCov$values %*% t(mxcov$Saturated$ltCov$values)
-rm
-mxcov$Saturated$output$Minus2LogLikelihood*-.5
-sum(mvtnorm::dmvnorm(x = ndat,mean = ctcov$cp$mu,sigma = cov(ndat),log = TRUE))
-
-
-constraincorsqrt=function(rawcor, d){ 
-  o=matrix(NA,d,d)
-  counter=0;
-  for(i in 1:d){ 
-    for(j in 1:d){
-      if(j > i){
-        counter=counter+1;
-        o[j,i] =  inv_logit(rawcor[counter])*2-1;  #// can change cor prior here
-        o[i,j] = o[j,i];
-      }
-    }
-    o[i,i]=1; 
-    o[i,] = o[i,] / sqrt(sum((o[i,])^2)+1e-10);
-  }
-  return(o);
-}
-
-sdvec=exp(rnorm(6,0,1))
-corsqrt = constraincorsqrt(rnorm((6^2-6)/2,0,1),6)
-corm = tcrossprod(corsqrt)
-covm=diag(sdvec) %*% corm %*% diag(sdvec)
-round(cov2cor(covm)-corm,3)
-covsqrt = diag(sdvec) %*% corsqrt
-round(cov2cor(tcrossprod(covsqrt ))-corm)
-
-}
+# if(1==99){ #random cor tests
+#   d=4
+#   rm=matrix(rnorm(d^2,0,1),d)
+#   rm = rm%*% t(rm)
+#   cholrm=t(chol(rm))
+#   ndat=(t(cholrm %*% matrix(rnorm(100*d,0,1),d)))
+#   ndat[sample(1:length(ndat),100,replace=FALSE)] <- NA
+#   # ndat[-1:-2,c(3,4)] <- NA
+#   cov(ndat,use="pairwise.complete.obs")-rm
+#   ctcov=ctsem:::covml(ndat,reg = 0)
+#   ctcov$cp$covm
+#   ctcov$lp
+#   cov(ndat,use="pairwise.complete.obs")
+#   mxcov=OpenMx::mxRefModels(data.frame(ndat),run=TRUE)
+# mxcov$Saturated$ltCov$values %*% t(mxcov$Saturated$ltCov$values)
+# rm
+# mxcov$Saturated$output$Minus2LogLikelihood*-.5
+# sum(mvtnorm::dmvnorm(x = ndat,mean = ctcov$cp$mu,sigma = cov(ndat),log = TRUE))
+# 
+# 
+# constraincorsqrt=function(rawcor, d){ 
+#   o=matrix(NA,d,d)
+#   counter=0;
+#   for(i in 1:d){ 
+#     for(j in 1:d){
+#       if(j > i){
+#         counter=counter+1;
+#         o[j,i] =  inv_logit(rawcor[counter])*2-1;  #// can change cor prior here
+#         o[i,j] = o[j,i];
+#       }
+#     }
+#     o[i,i]=1; 
+#     o[i,] = o[i,] / sqrt(sum((o[i,])^2)+1e-10);
+#   }
+#   return(o);
+# }
+# 
+# sdvec=exp(rnorm(6,0,1))
+# corsqrt = constraincorsqrt(rnorm((6^2-6)/2,0,1),6)
+# corm = tcrossprod(corsqrt)
+# covm=diag(sdvec) %*% corm %*% diag(sdvec)
+# round(cov2cor(covm)-corm,3)
+# covsqrt = diag(sdvec) %*% corsqrt
+# round(cov2cor(tcrossprod(covsqrt ))-corm)
+# 
+# }
 
 covdata <- function(ndat,reg,independent=FALSE,corpriortype=1L){
   sdat = as.matrix(ndat)

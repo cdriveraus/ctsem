@@ -20,7 +20,7 @@ ctCheckFit(
   fastcov = FALSE,
   lagcovplot = FALSE,
   aggfunc = mean,
-  aggregate = TRUE,
+  aggregate = FALSE,
   groupbysplit = FALSE,
   byNA = TRUE,
   lag = 0,
@@ -63,6 +63,8 @@ of one or more variable names in the fit object, to combine into the one variabl
  The combinevars argument can also be used to ensure that only certain variables are plotted.}
 
 \item{fastcov}{Uses base R cov function for computing covariances. Not recommended with missing data.}
+
+\item{lagcovplot}{Logical. Output lagged covariance type plots?}
 
 \item{aggfunc}{Function to use for aggregation, if needed.}
 

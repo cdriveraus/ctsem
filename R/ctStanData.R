@@ -6,14 +6,10 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   }
   datalong <- datalong[,c(ctm$timeName,ctm$subjectIDname,
     ctm$manifestNames,ctm$TDpredNames,ctm$TIpredNames)]
-  #start data section
-  # if('data.table' %in% class(datalong) || 'tbl' %in% class(datalong)) 
-  
+
   
   nsubjects <- length(unique(datalong[, ctm$subjectIDname])) 
-  
-  #create random effects indices for each matrix
-  
+
   mats <- ctStanMatricesList()
   
   #simply exponential?
@@ -27,7 +23,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
       variables: ', paste0(c(ctm$manifestNames,ctm$TDpredNames,ctm$TIpredNames)[
         which(!c(ctm$manifestNames,ctm$TDpredNames,ctm$TIpredNames) %in% colnames(datalong))], ', '),' not in data'))
   
-  if (!(ctm$subjectIDname %in% colnames(datalong))) stop(paste('id column', (ctm$subjectIDname), "not found in data"))
+  if(!(ctm$subjectIDname %in% colnames(datalong))) stop(paste('id column', (ctm$subjectIDname), "not found in data"))
   
   
   if(ctm$nopriors==FALSE){
@@ -70,7 +66,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   ndiffusion=length(derrind)
   
   
-  
+
   nindvarying <- max(ctm$modelmats$matsetup$indvarying)
   nparams <- max(ctm$modelmats$matsetup$param[ctm$modelmats$matsetup$when %in% c(0,-1)])
   nmatrices <- length(mats$base)
@@ -466,8 +462,8 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
         if(ml$JAx[i,j] != ml$DRIFT[i,j])   standata$JAxDRIFTequiv <- 0L
       }
       if(i > nrow(ml$DRIFT) || j > nrow(ml$DRIFT)){ #check drift equivalence
-        if(i != j && !ml$JAx %in% 0)   standata$JAxDRIFTequiv <- 0L
-        if(i == j && !ml$JAx %in% ifelse(ctm$continuoustime,0,1))   standata$JAxDRIFTequiv <- 0L
+        if(i != j && !ml$JAx[i,j] %in% 0)   standata$JAxDRIFTequiv <- 0L
+        if(i == j && !ml$JAx[i,j] %in% ifelse(ctm$continuoustime,0,1))   standata$JAxDRIFTequiv <- 0L
       }
     }
   }

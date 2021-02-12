@@ -17,6 +17,7 @@ Diagnostics for ctsem importance sampling
 }
 \examples{
 \donttest{
+if(w32chk()){
 #get data
 sunspots<-sunspot.year
 sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
@@ -36,8 +37,9 @@ model <- ctModel(type='stanct',
   DIFFUSION=matrix(c(0.0001, 0, 0, "diffusion"), ncol=2, nrow=2))
 
 #fit and plot importance sampling diagnostic
-fit <- ctStanFit(datalong, model, 
-  optimcontrol=list(finishsamples=500),nopriors=FALSE)
+fit <- ctStanFit(datalong, model,verbose=1, 
+  optimcontrol=list(is=TRUE, finishsamples=500),nopriors=FALSE)
 isdiag(fit)
+}
 }
 }

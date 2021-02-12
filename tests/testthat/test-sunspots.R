@@ -31,9 +31,9 @@ datalong <- cbind(id, time, sunspots)
  datalong[seq(10,150,10),'TD1'] = 1
 
 ssfit1 <- ctStanFit(datalong, ssmodel,cores=1,verbose=0)
-ssfit2 <- ctStanFit(datalong, ssmodel,cores=6,verbose=0)
+ssfit2 <- ctStanFit(datalong, ssmodel,cores=2,verbose=0)
 ssfit3 <- ctStanFit(datalong, ssmodel,cores=1,nlcontrol=list(maxtimestep=.3))
-ssfit4 <- ctStanFit(datalong, ssmodel,chains=3,iter=300,optimize=F,verbose=0)
+ssfit4 <- ctStanFit(datalong, ssmodel,chains=3,cores=2,iter=300,optimize=F,verbose=0)
 # ssfit5 <- ctStanFit(datalong, ssmodel,chains=3,iter=300,intoverstates = FALSE,optimize=F,verbose=0)
 
 for(i in 2:4){

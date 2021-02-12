@@ -39,7 +39,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
         #fit with integration (linearised approximation)
     ro <- ctStanFit( datalong = d,
-      ctstanmodel = m,cores=1,
+      ctstanmodel = m,cores=cores,
       # plot=10,verbose=0,
       intoverstates = T,nopriors=F,
       optimize=T,intoverpop=T)#,optimcontrol=list(stochastic=F))

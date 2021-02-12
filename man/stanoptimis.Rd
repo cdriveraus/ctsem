@@ -14,7 +14,7 @@ stanoptimis(
   estonly = FALSE,
   tol = 1e-12,
   decontrol = list(),
-  stochastic = TRUE,
+  stochastic = FALSE,
   nopriors = FALSE,
   carefulfit = TRUE,
   subsamplesize = 0.5,

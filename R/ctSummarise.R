@@ -3,6 +3,8 @@ if(1==1){
     folder = 'ctSummary/',nsamples=500,lags=1:3,
     latents=1:sf$ctstanmodelbase$n.latent, manifests=1:sf$ctstanmodelbase$n.manifest){
     
+    Sig. <- NULL
+    
     if(class(sf)=='ctStanFit'){ #avoid overwriting plots if error!
       # library(data.table)
       oldwd = getwd()
@@ -15,7 +17,7 @@ if(1==1){
       options(max.print=99999)
 
       
-      ydat=ctsem:::standatatolong(sf$standata,origstructure = TRUE,ctm=sf$ctstanmodelbase)
+      ydat=standatatolong(sf$standata,origstructure = TRUE,ctm=sf$ctstanmodelbase)
       
       sm <- sf$ctstanmodelbase 
       summ=summary(sf)
@@ -29,13 +31,13 @@ if(1==1){
       nl <- sm$n.latent
       nm <- sm$n.manifest
       pdf(paste0(name,'_VisualParMats.pdf'))
-      print(corplotmelt(ctsem:::meltcov(cov2cor(cp$MANIFESTcov[manifests,manifests,drop=FALSE])),title =  'Residual correlations'))
-      print(corplotmelt(ctsem:::meltcov(cov2cor(cp$DIFFUSIONcov[latents,latents,drop=FALSE])),title =  'Random latent change correlations'))
-      print(corplotmelt(ctsem:::meltcov(cov2cor(cp$asymDIFFUSION[latents,latents,drop=FALSE])),title =  'Asymptotic latent correlations'))
-      print(corplotmelt(ctsem:::meltcov(cov2cor(cp$T0cov[latents,latents,drop=FALSE])),title =  'Initial latent correlations'))
+      print(corplotmelt(meltcov(cov2cor(cp$MANIFESTcov[manifests,manifests,drop=FALSE])),title =  'Residual correlations'))
+      print(corplotmelt(meltcov(cov2cor(cp$DIFFUSIONcov[latents,latents,drop=FALSE])),title =  'Random latent change correlations'))
+      print(corplotmelt(meltcov(cov2cor(cp$asymDIFFUSION[latents,latents,drop=FALSE])),title =  'Asymptotic latent correlations'))
+      print(corplotmelt(meltcov(cov2cor(cp$T0cov[latents,latents,drop=FALSE])),title =  'Initial latent correlations'))
       dr=cp$DRIFT[latents,latents,drop=FALSE]
       dr[diag(nrow(dr))==1] <- -dr[diag(nrow(dr))==1]
-      print(corplotmelt(ctsem:::meltcov(cov2cor(dr %*% t(dr))),title =  'Std. deterministic change relations'))
+      print(corplotmelt(meltcov(cov2cor(dr %*% t(dr))),title =  'Std. deterministic change relations'))
       dev.off()
       
       ### GENERATING OUTPUT ### 
@@ -142,11 +144,11 @@ if(1==1){
       try(ctModelLatex(sm,folder = './',filename = paste0(name,'_tex_model'),open = FALSE))
       
       # #TI Correlations matrix plot
-      #   sub <- ctsem:::ctStanSubjectPars(sf)
+      #   sub <- ctStanSubjectPars(sf)
       #   pdf('TI_correlations.pdf')
-      #   corm=ctsem:::meltcov(cov2cor(cov(
+      #   corm=meltcov(cov2cor(cov(
       #     cbind(sf$standata$tipredsdata,sub[1,,order(dimnames(sub)[[3]])]))))
-      #   a=ctsem:::corplotmelt(corm, label = 'Corr.')
+      #   a=corplotmelt(corm, label = 'Corr.')
       #   print(a+ggplot2::labs(title='Individual difference correlations'))
       #   dev.off()
       #   
@@ -159,7 +161,7 @@ if(1==1){
       # library(plyr)
       # library(ggplot2)
       if(sf$standata$ntipred > 0 || sf$standata$nindvarying > 0){
-        sp=ctsem:::ctStanSubjectPars(sf,pointest=FALSE,cores=cores,nsamples = nsamples)
+        sp=ctStanSubjectPars(sf,pointest=FALSE,cores=cores,nsamples = nsamples)
         tip <- array(rep(sf$standata$tipredsdata,each=dim(sp)[[1]]),dim=c(dim(sp)[1:2],ncol(sf$standata$tipredsdata)))
         spti=array(c(sp, tip), dim = c(dim(sp)[1], dim(sp)[2], dim(sp)[3]+dim(tip)[3]))
         dn=dimnames(sp)
@@ -193,10 +195,10 @@ if(1==1){
         dimnames(spti) <- dn
         cm=cor(spti[1,,])
         
-        mcor=ctsem:::meltcov(cm)
+        mcor=meltcov(cm)
         msig=data.frame(matrix(as.numeric(qcsig),nrow=nrow(qcsig)))
         dimnames(msig) <- dimnames(cm)
-        mcorsig=ctsem:::meltcov(msig)
+        mcorsig=meltcov(msig)
         mcorsig$sig <- mcorsig$value
         mcorsig$value <- NULL
         mcor <- merge(mcor,mcorsig)
@@ -282,14 +284,14 @@ if(1==1){
       # Checkfit function 
       pdf(paste0(name,'_checkfit.pdf'))
       by=sm$timeName
-      try(ctsem:::ctCheckFit(fit = sf,data = TRUE,postpred = TRUE,statepred = FALSE,by = by,breaks=2,covplot = TRUE,smooth=TRUE,reg=TRUE))
-      try(ctsem:::ctCheckFit(fit = sf,data = TRUE,postpred = TRUE,statepred = TRUE,by = by,breaks=4,covplot = FALSE,smooth=TRUE,reg=TRUE))
-      try(ctsem:::ctCheckFit(fit = sf,data = TRUE,postpred = TRUE,statepred = TRUE,by = by,fastcov = TRUE,
+      try(ctCheckFit(fit = sf,data = TRUE,postpred = TRUE,statepred = FALSE,by = by,breaks=2,covplot = TRUE,smooth=TRUE,reg=TRUE))
+      try(ctCheckFit(fit = sf,data = TRUE,postpred = TRUE,statepred = TRUE,by = by,breaks=4,covplot = FALSE,smooth=TRUE,reg=TRUE))
+      try(ctCheckFit(fit = sf,data = TRUE,postpred = TRUE,statepred = TRUE,by = by,fastcov = TRUE,
         breaks=1,covplot = TRUE,smooth=TRUE,reg=TRUE,lagcovplot = TRUE,lag = lags,groupbysplit = TRUE))
-      try(ctsem:::ctCheckFit(fit = sf,data = TRUE,postpred = TRUE,statepred = FALSE,by = by,breaks=4,covplot = TRUE,smooth=TRUE,reg=TRUE))
-      try(ctsem:::ctCheckFit(fit = sf,data = TRUE,postpred = TRUE,statepred = FALSE,by = by,breaks=2,covplot = TRUE,lag=1,smooth=TRUE,reg=TRUE))
+      try(ctCheckFit(fit = sf,data = TRUE,postpred = TRUE,statepred = FALSE,by = by,breaks=4,covplot = TRUE,smooth=TRUE,reg=TRUE))
+      try(ctCheckFit(fit = sf,data = TRUE,postpred = TRUE,statepred = FALSE,by = by,breaks=2,covplot = TRUE,lag=1,smooth=TRUE,reg=TRUE))
       for(mani in sm$manifestNames){
-        try(ctsem:::ctCheckFit(fit = sf,data = TRUE,postpred = TRUE,statepred = FALSE,by = mani,
+        try(ctCheckFit(fit = sf,data = TRUE,postpred = TRUE,statepred = FALSE,by = mani,
           breaks=2,covplot = TRUE,smooth=TRUE,reg=TRUE))
       }
       
@@ -304,7 +306,7 @@ if(1==1){
       }
       
       # #K-fold Cross Validation - OOS entropy score
-      #   loo=ctsem:::ctLOO(fit = sf,parallelFolds = FALSE,folds = 10,cores = cores,subjectwise = TRUE,keepfirstobs = FALSE)
+      #   loo=ctLOO(fit = sf,parallelFolds = FALSE,folds = 10,cores = cores,subjectwise = TRUE,keepfirstobs = FALSE)
       #   save(loo,file='loo.rda')
       #   sink('loo.txt')
       #   print(loo)
