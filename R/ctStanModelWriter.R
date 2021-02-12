@@ -476,6 +476,7 @@ ctStanModelMatrices <-function(ctm){
     copyrow=0
     copycol=0
     simplestate <- FALSE
+    tipred <- 0L
     if(!is.na(ctspec$param[i])){ #if non fixed parameter,
       
       # if(grepl(paste0('^(',  #if a direct matrix reference
@@ -544,8 +545,7 @@ ctStanModelMatrices <-function(ctm){
         
         if(i > 1 && any(ctspec$param[1:(i-1)] %in% ctspec$param[i])){ #and after row 1, check for duplication
           rowmatch <- match(ctspec$param[i], matsetup$parname)#find which freepar corresponds to duplicate
-          freepar <- matsetup$param[rowmatch] #needed for tipred checks
-          parameter <- freepar
+          parameter <- matsetup$param[rowmatch]
           indvar <- matsetup$indvarying[rowmatch] #ifelse(ctspec$indvarying[i],  matsetup[,'indvarying'][ match(ctspec$param[i], matsetup$parname) ],0)#and which indvar corresponds to duplicate
           tipred <- matsetup$tipred[rowmatch]
           
@@ -573,6 +573,7 @@ ctStanModelMatrices <-function(ctm){
             TIPREDEFFECTsetup[freepar,][ ctspec[i,paste0(ctm$TIpredNames,'_effect')]==TRUE ] <- 
               tipredcounter: (tipredcounter + sum(as.integer(suppressWarnings(ctspec[i,paste0(ctm$TIpredNames,'_effect')]))) -1)
             tipredcounter<- tipredcounter + sum(as.integer(suppressWarnings(ctspec[i,paste0(ctm$TIpredNames,'_effect')])))
+            tipred <- as.integer( any(TIPREDEFFECTsetup[freepar,] > 0))
           }
         }#end not duplicated loop
       } #end non calculation parameters
@@ -586,7 +587,7 @@ ctStanModelMatrices <-function(ctm){
       param=parameter, # ifelse(!is.na(ctspec$param[i]) && !grepl('[',ctspec$param[i],fixed=TRUE),freepar, 0), #freepar reference
       transform=ifelse(is.na(suppressWarnings(as.integer(ctspec$transform[i]))), -1, ctspec$transform[i]), #transform
       indvarying=ifelse(!is.na(ctspec$param[i]),indvar,0), #indvarying
-      tipred=ifelse(any(TIPREDEFFECTsetup[freepar,] > 0) && !dynpar, 1, 0), #tipredvarying
+      tipred=tipred, #ifelse(any(TIPREDEFFECTsetup[freepar,] > 0) && !dynpar, 1, 0), #tipredvarying
       matrix=m, #matrix reference
       when=when,#when to compute
       copymatrix=copymatrix,copyrow=copyrow,copycol=copycol,

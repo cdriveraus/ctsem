@@ -578,7 +578,7 @@ tostanarray <- function(flesh, skeleton){
 #' @param finitediff Either 'ask', TRUE, or FALSE. Whether to use the slow finite difference calculations
 #' for the Hessian (used for confidence intervals) if other approaches do not give a positive definite result. 
 #' @param chancethreshold drop iterations of importance sampling where any samples are chancethreshold times more likely to be drawn than expected.
-#'
+#' @param matsetup subobject of ctStanFit output. If provided, parameter names instead of numbers are output for any problem indications.
 #' @return list containing fit elementsF
 #' @importFrom mize mize
 #' @importFrom utils head tail
@@ -593,7 +593,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   parsteps=c(),
   plot=FALSE,
   is=FALSE, isloopsize=1000, finishsamples=1000, tdf=10,chancethreshold=100,finishmultiply=5,
-  verbose=0,cores=2){
+  verbose=0,cores=2,matsetup=NA){
   if(!is.null(standata$verbose)) {
     if(standata$verbose > 1) standata$verbose=as.integer(verbose) else standata$verbose=0L
   }
@@ -1166,6 +1166,15 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         hess2 <- jac(pars = grinit,parsteps=parsteps,#fgfunc = fgfunc,
           step = 1e-3,cl=hesscl,verbose=verbose,directions=-1)
         
+        probpars <- c()
+        onesided <- c()
+        
+        if(FALSE){
+          lpf <-function(x) log_prob(smff,x)
+          smff <- stan_reinitsf(sm,standata)
+          nhess=numDeriv::hessian(lpf,est2)
+        }
+        
         hess1good <- diag(hess1) < -1e-8
         hess2good <- diag(hess2) < -1e-8
         
@@ -1183,7 +1192,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(sum(hess1good)+sum(hess2good) < nrow(hess)*2){
           if(any(is.na(hess))) message ('Problems computing Hessian...')
           onesided <- c(which(!hess1good[hess2good]), which(!hess2good[hess1good]))
-          if(length(onesided))  message ('One sided Hessian used for pars: ', onesided)
         }
         
         hess <- (t(hess)+hess)/2
@@ -1194,7 +1202,26 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         mcov=try(solve(-hess),silent=TRUE)
         if('try-error' %in% class(mcov)){
           mcov=MASS::ginv(-hess) 
-          warning('Generalized inverse required for Hessian inversion -- standard errors not trustworthy')
+          warning('***Generalized inverse required for Hessian inversion -- standard errors not trustworthy',call. = FALSE,immediate. = TRUE)
+          probpars=which(diag(hess) > -1e-6)
+        }
+        
+        
+        
+        if(length(c(probpars,onesided)) > 0){
+          if('data.frame' %in% class(matsetup) || !all(is.na(matsetup[1]))){
+            ms=matsetup
+            ms=ms[ms$param > 0 & ms$when == 0,]
+            ms=ms[!duplicated(ms$param),]
+            onesided=paste0(ms$parname[ms$param %in% onesided],collapse=', ')
+            probpars=paste0(ms$parname[ms$param %in% c(probpars)],collapse=', ')
+          }
+          if(length(onesided)){
+            message ('One sided Hessian used for params: ', onesided)
+          }
+          if(length(probpars)){
+            message('***These params "may" be not identified: ', probpars)
+          }
         }
         
         # if(robust){

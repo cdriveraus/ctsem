@@ -741,6 +741,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         optimcontrol$sm=sm
         optimcontrol$init=inits
         optimcontrol$plot=plot
+        optimcontrol$matsetup <- data.frame(ctm$modelmats$matsetup)
         
         # opcall <- paste0('stanoptimis(standata = standata,sm = sm,init = inits,plot=plot,',
         #   paste0(gsub('list(','',paste0(deparse(optimcontrol),collapse=''),fixed=TRUE)))
