@@ -754,7 +754,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
           ctm$modelmats$TIPREDEFFECTsetup <- stanfit$standata$TIPREDEFFECTsetup
           ms <- ctm$modelmats$matsetup
           ms$tipred <- 0L
-          parswithtipreds <- unique(ms$param[ms$param >0 & ms$when %in% c(0,-1) & ms$copyrow < 1])
+          parswithtipreds <- sort(unique(ms$param[ms$param >0 & ms$when %in% c(0,-1) & ms$copyrow < 1]))
           parswithtipreds<-parswithtipreds[apply(stanfit$standata$TIPREDEFFECTsetup,1,sum)>0]
           ms$tipred[ms$param >0 & ms$when %in% c(0,-1) & ms$copyrow < 1 & ms$param %in% parswithtipreds] <- 1L
           ctm$modelmats$matsetup <- ms

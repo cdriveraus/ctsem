@@ -61,8 +61,9 @@ ctModelStatesAndPARS <- function(ctspec, statenames){ #replace latentName and pa
   for(li in seq_along(ln)){ #for every extra par
     parmatch <- which(ctspec$param %in% ln[li] & ctspec$matrix %in% 'PARS') #which row is the par itself
     for(ri in grep(paste0('\\b',ln[li],'\\b'),ctspec$param)){ #which rows contain the par
-      if(!(ctspec$param[ri] == ln[li])){ #that are not the par itself #& ctspec$matrix[ri]=='PARS' #removed limitation of referencing within PARS matrices
+      if(!(ctspec$param[ri] == ln[li] & ctspec$matrix[ri]=='PARS')){ #that are not the par itself in the pars matrix# #removed limitation of referencing within PARS matrices
         # print(ctspec$param[ri])
+        # print(ctspec$matrix[ri])
         ctspec$param[ri] <- gsub(paste0('\\b',ln[li],'\\b'), #replace with PARS reference...
           paste0('PARS[',ctspec$row[parmatch],',',ctspec$col[parmatch],']'),ctspec$param[ri])
       }
@@ -544,6 +545,7 @@ ctStanModelMatrices <-function(ctm){
       else if(!grepl('[',ctspec$param[i],fixed=TRUE)){ #if non calculation parameter (consider removing duplication / copyrow checks)
         
         if(i > 1 && any(ctspec$param[1:(i-1)] %in% ctspec$param[i])){ #and after row 1, check for duplication
+          
           rowmatch <- match(ctspec$param[i], matsetup$parname)#find which freepar corresponds to duplicate
           parameter <- matsetup$param[rowmatch]
           indvar <- matsetup$indvarying[rowmatch] #ifelse(ctspec$indvarying[i],  matsetup[,'indvarying'][ match(ctspec$param[i], matsetup$parname) ],0)#and which indvar corresponds to duplicate
