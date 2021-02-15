@@ -20,5 +20,6 @@ fit object with extra samples
 Sample more values from an optimized ctstanfit object
 }
 \examples{
+
 if(w32chk()) newfit <- ctAddSamples(ctstantestfit, 10, 1)
 }

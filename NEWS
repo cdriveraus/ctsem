@@ -2,7 +2,9 @@ ctsem news:
 10/2/2021
 #### 3.4.2 ####
 - ctStanDiscretePars temporal dependence plots work for discrete time also
-- small bugfixes and efficiency improvements
+- Fix: In certain circumstances with covariate effects on duplicated parameters, 
+  the effects may not have been completely applied in the last few releases. 
+- other small bugfixes and efficiency improvements
 
 4/12/2020
 #### 3.4 ####

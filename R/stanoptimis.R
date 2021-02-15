@@ -199,6 +199,7 @@ jacrandom <- function(grfunc, est, eps=1e-4,
 #' @export
 #'
 #' @examples
+#' 
 #' if(w32chk()) newfit <- ctAddSamples(ctstantestfit, 10, 1)
 ctAddSamples <- function(fit,nsamples,cores=2){
   mchol <- t(chol(fit$stanfit$cov))
@@ -277,7 +278,7 @@ getcxxfun <- function(object) {
 stan_reinitsf <- function(model, data,fast=FALSE){
   if(fast) sf <- new(model@mk_cppmodule(model),data,0L,getcxxfun(model@dso))
   
-  if(!fast) suppressMessages(suppressWarnings(suppressOutput(sf<-
+  if(!fast) suppressMessages(suppressWarnings(suppressOutput(sf<- 
       rstan::sampling(model,iter=0,chains=0,init=0,data=data,check_data=FALSE,
         control=list(max_treedepth=0),save_warmup=FALSE,test_grad=FALSE))))
   
@@ -1169,11 +1170,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         probpars <- c()
         onesided <- c()
         
-        if(FALSE){
-          lpf <-function(x) log_prob(smff,x)
-          smff <- stan_reinitsf(sm,standata)
-          nhess=numDeriv::hessian(lpf,est2)
-        }
+        # if(FALSE){
+        #   lpf <-function(x) log_prob(smff,x)
+        #   smff <- stan_reinitsf(sm,standata)
+        #   nhess=numDeriv::hessian(lpf,est2)
+        # }
         
         hess1good <- diag(hess1) < -1e-8
         hess2good <- diag(hess2) < -1e-8

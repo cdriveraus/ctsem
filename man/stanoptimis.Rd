@@ -28,7 +28,8 @@ stanoptimis(
   chancethreshold = 100,
   finishmultiply = 5,
   verbose = 0,
-  cores = 2
+  cores = 2,
+  matsetup = NA
 )
 }
 \arguments{
@@ -90,6 +91,8 @@ without replacement from this set.}
 \item{verbose}{Integer from 0 to 2. Higher values print more information during model fit -- for debugging.}
 
 \item{cores}{Number of cpu cores to use, should be at least 2.}
+
+\item{matsetup}{subobject of ctStanFit output. If provided, parameter names instead of numbers are output for any problem indications.}
 }
 \value{
 list containing fit elementsF
