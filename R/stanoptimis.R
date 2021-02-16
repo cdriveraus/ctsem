@@ -1049,15 +1049,25 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     }
     
     if(!estonly){
+      # if(cores > 1){
+      #   suppressWarnings(rm(smf))
+      #   # parallelStanSetup(cl = clctsem,standata = standata,split=parsets<2)
+      #   hesscl <- NA
+      # }
+      # if(cores==1){
+      #   hesscl <- NA
+      #   # smf<-stan_reinitsf(sm,standata)
+      # }
       
-      if(cores > 1){
-        suppressWarnings(rm(smf))
-        parallelStanSetup(cl = clctsem,standata = standata,split=FALSE)#,split=parsets<2)
-        hesscl <- clctsem
-      }
-      if(cores==1){
+      if(standata$nsubjects > cores){
         hesscl <- NA
-        smf<-stan_reinitsf(sm,standata)
+      } else {
+        hesscl <- clctsem
+        if(cores > 1) {
+           suppressWarnings(rm(smf))
+          parallelStanSetup(cl = clctsem,standata = standata,split=FALSE)#,split=parsets<2)
+        }
+        if(cores==1) smf<-stan_reinitsf(sm,standata)
       }
       
       
@@ -1214,13 +1224,13 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             ms=matsetup
             ms=ms[ms$param > 0 & ms$when == 0,]
             ms=ms[!duplicated(ms$param),]
-            onesided=paste0(ms$parname[ms$param %in% onesided],collapse=', ')
-            probpars=paste0(ms$parname[ms$param %in% c(probpars)],collapse=', ')
           }
-          if(length(onesided)){
+          if(length(onesided) > 0){
+            onesided=paste0(ms$parname[ms$param %in% onesided],collapse=', ')
             message ('One sided Hessian used for params: ', onesided)
           }
-          if(length(probpars)){
+          if(length(probpars) > 0){
+            probpars=paste0(ms$parname[ms$param %in% c(probpars)],collapse=', ')
             message('***These params "may" be not identified: ', probpars)
           }
         }
@@ -1277,7 +1287,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           log1p(sum(exp(x[-xmax] - x[xmax]))) + x[xmax]
         }
         
-        # if(cores > 1)  parallelStanSetup(cl=clctsem,standata,split=FALSE)
+        if(cores > 1)  parallelStanSetup(cl=clctsem,standata,split=FALSE)
         targetsamples <- finishsamples * finishmultiply
         # message('Adaptive importance sampling, loop:')
         j <- 0
