@@ -341,6 +341,7 @@ data {
   int llsinglerow;
   int laplaceprior[nparams];
   int laplaceprioronly;
+  int laplacetipreds;
   int CINTnonzerosize;
   int CINTnonzero[CINTnonzerosize];
   int JAxDRIFTequiv;
@@ -440,7 +441,8 @@ model{
   if(intoverpop==0 && nindvarying > 0) target+= multi_normal_cholesky_lpdf(baseindparams | rep_vector(0,nindvarying), IIlatentpop[1:nindvarying,1:nindvarying]);
 
   if(ntipred > 0){ 
-    if(nopriors==0) target+= dokalmanpriormodifier * normal_lpdf(tipredeffectparams / tipredeffectscale| 0, 1);
+    if(nopriors==0 && laplacetipreds==0) target+= dokalmanpriormodifier * normal_lpdf(tipredeffectparams / tipredeffectscale| 0, 1);
+    if(nopriors==0 && laplacetipreds==1) target+= dokalmanpriormodifier * double_exponential_lpdf(tipredeffectparams / tipredeffectscale| 0, 1);
     target+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
   }
 
@@ -741,7 +743,7 @@ if(si==0 || sum(whenmat[54,{5}]) > 0 )Jy=mcalc(Jy,indparams, statetf,{0}, 54, ma
     if(verbose==2) print("indparams = ", indparams);
     
     
-  if(si==0 || (sum(whenmat[8,]) + statedep[8]) > 0 ) {
+ // if(si==0 || (sum(whenmat[8,]) + statedep[8]) > 0 ) {
    if(intoverpop && nindvarying > 0) T0VAR[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopcovbase;
     T0cov = sdcovsqrt2cov(T0VAR,choleskymats); 
 
@@ -756,7 +758,7 @@ if(si==0 || sum(whenmat[54,{5}]) > 0 )Jy=mcalc(Jy,indparams, statetf,{0}, 54, ma
         }
       }
     }
-  }
+  //}
   
   if(si==0 || statedep[5] || (whenmat[32,5])) MANIFESTcov = sdcovsqrt2cov(MANIFESTVAR,choleskymats);
     

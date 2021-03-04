@@ -301,7 +301,7 @@ if(1==1){
       #paramter posterior plots
       if(sf$standata$nopriors==0){
         pdf(paste0(name,'_parameter_posterior.pdf'))
-        ctStanPlotPost(sf,priorwidth = TRUE)
+        ctStanPlotPost(sf,priorwidth = TRUE,cores=cores)
         dev.off()
       }
       

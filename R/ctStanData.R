@@ -428,7 +428,9 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   
   #laplace priors
   standata$laplaceprior <- rep(0L,standata$nparams)
+  standata$laplacetipreds <- 0L
   if(!is.null(ctm$laplaceprior)){
+    if('tipreds' %in% ctm$laplaceprior) standata$laplacetipreds <- 1L
     ms <- data.frame(standata$matsetup)
     standata$laplaceprior[
       ms$param[

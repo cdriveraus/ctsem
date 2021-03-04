@@ -567,12 +567,13 @@ ssfit <- ctStanFit(datalong, ssmodel,
 
 #output
 summary(ssfit)$popmeans
+
 @
 
 \subsection{Non-linearities}
-The dynamic model that arises normally out of a typical ctsem model specification is linear, as the dynamic system and measurement matrices (DRIFT, MANIFESTVAR, etc.) do not vary over time. This can be changed by making certain elements of the matrices depend on the current state of the system. This is done by setting the element to a character string containing the reference to `state', and the specific state. In a simple univariate, first order linear system, the DRIFT matrix would be $1 \times 1$ and contain a character string such as `drift11', indicating we want to estimate the parameter called `drift11' for the DRIFT matrix. This parameter could however be made state dependent, by adding an additional latent process to the system governing the behaviour of the `drift11' parameter over time, as well as an additional matrix called PARS that contains any extra parameters needed. Careful thought regarding the required model structure and restrictions is necessary. Here, we modify the oscillatory, sunspots example from earlier, such that the oscillation damping factor is no longer constant but depends on the current level of sunspot activity. It is possible to reference the current states of the process by using the appropriate latent variable name. Whenever a square bracket or latent state is used in a ctsem parameter, ctsem recognises this as a nonlinear element, and additional formulas that are valid in the Stan language are also possible to use -- \verb|"exp(ss_level)"| would ensure positivity of the result, for instance. 
+The dynamic model that arises normally out of a typical ctsem model specification is linear, as the dynamic system and measurement matrices (DRIFT, MANIFESTVAR, etc.) do not vary over time. This can be changed by making certain elements of the matrices depend on the current state of the system. This is done by setting the element to a character string containing the reference to `state', and the specific state. In a simple univariate, first order linear system, the DRIFT matrix would be $1 \times 1$ and contain a character string such as `drift11', indicating we want to estimate the parameter called `drift11' for the DRIFT matrix. This parameter could however be made state dependent by specifying the DRIFT matrix element as a function of one or more parameters and latent states. Careful thought regarding the required model structure and restrictions is necessary. Here, we modify the oscillatorysunspots example from earlier, such that the oscillation damping factor is no longer constant but depends on the current level of sunspot activity. It is possible to reference the current states of the process by using the appropriate latent variable name, and additional parameters may be included so long as they are also specified in the PARS model element. Whenever a latent variable or additional parameter is referenced, additional formulas that are valid in the Stan language are also possible to use -- \verb|"exp(ss_level)"| takes the exponent of the current state of the sunspot level latent variable, and would ensure positivity of the result, for instance. In the following example \verb|-log1p_exp| is used to ensure negativity using a more linear transform than the exponential. 
 
-<<nl,eval=FALSE,results='hide',echo=-1,messages=FALSE,cache=TRUE, fig.width=8, fig.height=4,fig.cap='Nonlinear oscillation example'>>=
+<<nl,eval=FALSE,results='hide',messages=FALSE,cache=TRUE>>=
 sunspots<-sunspot.year
 sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
 id <- 1
@@ -584,7 +585,7 @@ m <- ctModel(type='stanct',
   latentNames=c('ss_level', 'ss_velocity'),
   LAMBDA=c( 1, 'ma1|log(1+exp(param))'),
   DRIFT=c(0, 1, 
-    '-log1p_exp(freqintercept + freqbystate *  ss_level)','a22'),
+    '-log1p_exp(freqintercept + freqbylevel *  ss_level)','a22'),
   MANIFESTMEANS=c('m1|param * 10 + 44'),
   MANIFESTVAR=diag(0,1), #As per original spec
   CINT=0,
@@ -592,25 +593,7 @@ m <- ctModel(type='stanct',
     0, "diffusion"),
   PARS=c('freqintercept', 'freqbylevel'))
 
-# slower fitting version (extended state space), but no need to recompile
-m <- ctModel(type='stanct', 
-  manifestNames='sunspots', 
-  latentNames=c('ss_level', 'ss_velocity','freqstate'),
-  LAMBDA=c( 1, 'ma1|log(1+exp(param))',0),
-  DRIFT=c(0, 1, 0,
-    '-log1p_exp(freqstate)','a22',0,
-    'freqbylevel',0,'freqstate_dependence'),
-  MANIFESTMEANS=c('m1|param * 10 + 44'),
-  MANIFESTVAR=diag(0,1), #As per original spec
-  CINT=c(0,0,'freqstate_cint'),
-  DIFFUSION=c(0, 0,0, 
-    0, "diffusion",0,
-    0,0,0))
-
-ssfitnl <- ctStanFit(datalong, m, optimcontrol=list(stochastic=TRUE))
-
-ctKalman(ssfitnl,kalmanvec=c('y','yprior'),timestep=.1,
-  timerange = c(1750,1950),plot=TRUE)
+ssfitnl <- ctStanFit(datalong, m)
 @
 
 \subsection{Population standard deviations - understanding the transforms}

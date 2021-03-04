@@ -334,6 +334,7 @@ data {
   int llsinglerow;
   int laplaceprior[nparams];
   int laplaceprioronly;
+  int laplacetipreds;
   int CINTnonzerosize;
   int CINTnonzero[CINTnonzerosize];
   int JAxDRIFTequiv;
@@ -997,7 +998,8 @@ model{
   if(intoverpop==0 && nindvarying > 0) target+= multi_normal_cholesky_lpdf(baseindparams | rep_vector(0,nindvarying), IIlatentpop[1:nindvarying,1:nindvarying]);
 
   if(ntipred > 0){ 
-    if(nopriors==0) target+= dokalmanpriormodifier * normal_lpdf(tipredeffectparams / tipredeffectscale| 0, 1);
+    if(nopriors==0 && laplacetipreds==0) target+= dokalmanpriormodifier * normal_lpdf(tipredeffectparams / tipredeffectscale| 0, 1);
+    if(nopriors==0 && laplacetipreds==1) target+= dokalmanpriormodifier * double_exponential_lpdf(tipredeffectparams / tipredeffectscale| 0, 1);
     target+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
   }
 
