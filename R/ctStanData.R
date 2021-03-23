@@ -4,8 +4,18 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     datalong <- data.frame(datalong)
     datalong[ctm$timeName] <- 1:nrow(datalong)
   }
-  datalong <- datalong[,c(ctm$timeName,ctm$subjectIDname,
-    ctm$manifestNames,ctm$TDpredNames,ctm$TIpredNames)]
+  
+  datavars <- c(ctm$timeName,ctm$subjectIDname, ctm$manifestNames,ctm$TDpredNames,ctm$TIpredNames)
+  
+  sapply(datavars,function(x){
+    if(!x %in% colnames(datalong)) stop(paste0(x,' column not found in data!'))
+    if(!x %in% ctm$subjectIDname){ #if not an id column
+      if(any(!is.numeric(as.numeric(datalong[!is.na(datalong[,x]),x])))) stop(x ,' column contains non-numeric data!')
+    }
+  })
+      
+  
+  datalong <- datalong[,datavars]
 
   
   nsubjects <- length(unique(datalong[, ctm$subjectIDname])) 
@@ -93,10 +103,10 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
         
         meandat <- data.table((datalong))[ , lapply(.SD, function(x) 
           mean(x,na.rm=TRUE)) , 
-          by=c("id")]
+          by=c(ctm$subjectIDname)]
         sddat <- data.table((datalong))[ , lapply(.SD, function(x) 
           sd(x,na.rm=TRUE)) , 
-          by=c("id")]
+          by=c(ctm$subjectIDname)]
         sddat<-sddat[,!colnames(sddat) %in% ctm$subjectIDname,with=FALSE]
         meandat <- meandat[,apply(meandat,2,sd,na.rm=TRUE) > 1e-4,with=FALSE]
         sddat <- sddat[,apply(sddat,2,sd,na.rm=TRUE) > 1e-4,with=FALSE]

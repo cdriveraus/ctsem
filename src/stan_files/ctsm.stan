@@ -25,12 +25,23 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
  
    matrix constraincorsqrt(matrix mat){ //converts from unconstrained lower tri matrix to cor
     matrix[rows(mat),cols(mat)] o;
+    real sumrawcor=1.0;
+    
+    for(i in 1:rows(o)){
+      for(j in 1:rows(o)){
+        if(j > i) sumrawcor += fabs(mat[j,i]);
+      }
+    }
+    sumrawcor = sqrt(sumrawcor)/10;  // can change cor prior here
+      
   
     for(i in 1:rows(o)){ //set upper tri to lower
       for(j in min(i+1,rows(mat)):rows(mat)){
-        o[j,i] =  inv_logit(mat[j,i])*2-1;  // can change cor prior here
+        o[j,i] =  inv_logit(mat[j,i]/sumrawcor)*2-1;  
         o[i,j] = o[j,i];
       }
+    }
+    for(i in 1:rows(o)){
       o[i,i]=.999; //avoids correlations of 1
       o[i,] /= sqrt(sum(square(o[i,]))+1e-10);
     }

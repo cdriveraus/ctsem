@@ -53,7 +53,7 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   includeMeanUncertainty=FALSE,
   whichTIpreds=1,parmatrices=TRUE, whichpars='all', nsamples=100, timeinterval=1,
   nsubjects=20,filter=NA,plot=FALSE){
-
+  
   ctspec <- fit$ctstanmodel$pars
   e<-ctExtract(fit)
   rawpopmeans <- e$rawpopmeans
@@ -64,12 +64,14 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   #sample
   niter<-dim(e$rawpopmeans)[1]
   if(nsamples=='all' || nsamples > niter) nsamples <- niter
-  rawpopmeans <- rawpopmeans[sample(x = 1:niter, nsamples,replace = FALSE),]
+  samplerows <- sample(x = 1:niter, nsamples,replace = FALSE)
   
   message(sprintf('Getting %s samples by %s subjects for %s total samples', nsamples,nsubjects, nsamples*nsubjects))
   
-  if(!includeMeanUncertainty) rawpopmeans <- matrix(apply(rawpopmeans,2,median),byrow=TRUE,nrow=nrow(rawpopmeans),ncol=ncol(rawpopmeans))
- 
+  if(!includeMeanUncertainty) rawpopmeans <- matrix(apply(rawpopmeans,2,median),byrow=TRUE,nrow=nsamples,ncol=ncol(rawpopmeans))
+  
+  if(includeMeanUncertainty)   rawpopmeans <- rawpopmeans[samplerows,,drop=FALSE]
+  
   if(any(!is.na(filter))) tipreds <- eval(parse(text=paste0('tipreds[tipreds[,',filter[1],']',filter[2],',,drop=FALSE]')))
   tipreds <- tipreds[,whichTIpreds,drop=FALSE]
   if(nsubjects=='all') nsubjects = nrow(tipreds)
@@ -81,7 +83,7 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   
   
   tieffect<-e$TIPREDEFFECT[,,whichTIpreds,drop=FALSE]
-
+  
   tiorder<-order(tipreds[,1])
   tipreds<-tipreds[tiorder,,drop=FALSE] #order tipreds according to first one
   
@@ -92,7 +94,7 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
       rawpopmeans[iterx,,drop=FALSE] + t(matrix(tieffect[iterx,,,drop=FALSE],nrow=dim(tieffect)[2]) %*% tix)
     },.drop=FALSE)
   },.drop=FALSE)
-
+  
   
   if(!parmatrices) {
     if(all(whichpars=='all')) whichpars=which(apply(tieffect,2,function(x) any(x!=0)))
@@ -113,11 +115,11 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
       noeffect<-aaply(1:npars, 1,function(pari){ #for each param
         param <- rawpopmeans[,pari]
         out=tform(param, 
-        fit$setup$popsetup$transform[whichpars[pari]], 
-        fit$setup$popvalues$multiplier[whichpars[pari]],
-        fit$setup$popvalues$meanscale[whichpars[pari]],
-        fit$setup$popvalues$offset[whichpars[pari]], 
-        fit$setup$popvalues$inneroffset[whichpars[pari]], fit$setup$extratforms) 
+          fit$setup$popsetup$transform[whichpars[pari]], 
+          fit$setup$popvalues$multiplier[whichpars[pari]],
+          fit$setup$popvalues$meanscale[whichpars[pari]],
+          fit$setup$popvalues$offset[whichpars[pari]], 
+          fit$setup$popvalues$inneroffset[whichpars[pari]], fit$setup$extratforms) 
         return(out)
       })
       effect<-effect-array(noeffect,dim=dim(effect))
@@ -128,20 +130,21 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   if(parmatrices)  {
     rawpopmeans <- rawpopmeans[rep(1:nrow(rawpopmeans),each=nsubjects),] #match rows of rawpopmeans and raweffect
     raweffect <- matrix(raweffect,ncol=dim(raweffect)[4])
-
-#adjust for speed
-  fit$standata$savescores <- 0L
-  fit$standata$gendata <- 0L
-  fit$standata$dokalman <- 0L
-  fit$standata$popcovn <- 2L
-  sf <- stan_reinitsf(fit$stanmodel,data=fit$standata)
-  # whichmatrices <- sapply(whichpars,function(x) {
-  #   x=gsub(pattern = '[','',x,fixed=TRUE)
-  #   x=gsub(pattern = ']','',x,fixed=TRUE)
-  #   x=gsub(pattern = '[0-9]','',x)
-  #   x=gsub(pattern = ',','',x,fixed=TRUE)
-  # })
-  parmeans=apply(ctStanRawSamples(fit),2,mean)
+    
+    #adjust for speed
+    fit$standata$savescores <- 0L
+    fit$standata$gendata <- 0L
+    fit$standata$dokalman <- 0L
+    fit$standata$popcovn <- 2L
+    sf <- stan_reinitsf(fit$stanmodel,data=fit$standata)
+    # whichmatrices <- sapply(whichpars,function(x) {
+    #   x=gsub(pattern = '[','',x,fixed=TRUE)
+    #   x=gsub(pattern = ']','',x,fixed=TRUE)
+    #   x=gsub(pattern = '[0-9]','',x)
+    #   x=gsub(pattern = ',','',x,fixed=TRUE)
+    # })
+    rawsamps=ctStanRawSamples(fit)
+    parmeans=apply(rawsamps,2,mean)
     parmatlists<-lapply(1:nrow(rawpopmeans), function(x) { #for each param vector
       out = ctStanParMatrices(fit,  c(raweffect[x,],parmeans[-1:-ncol(raweffect)]), timeinterval=timeinterval,sf = sf)#rawpopmeans[x,] +
       return(out)
@@ -154,16 +157,16 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
     counter=0
     for(mati in 1:length(parmatlists[[1]])){
       if(all(dim(parmatlists[[1]][[mati]]) > 0)){
-      for(coli in 1:ncol(parmatlists[[1]][[mati]])){
-        for(rowi in 1:nrow(parmatlists[[1]][[mati]])){
-          counter=counter+1
-          new <- matrix(c(
-            rowi,
-            coli),
-            nrow=1)
-          rownames(new) = paste0(names(parmatlists[[1]])[[mati]])
-          parmats<-rbind(parmats, new)
-        }}}}
+        for(coli in 1:ncol(parmatlists[[1]][[mati]])){
+          for(rowi in 1:nrow(parmatlists[[1]][[mati]])){
+            counter=counter+1
+            new <- matrix(c(
+              rowi,
+              coli),
+              nrow=1)
+            rownames(new) = paste0(names(parmatlists[[1]])[[mati]])
+            parmats<-rbind(parmats, new)
+          }}}}
     colnames(parmats) <- c('Row','Col') 
     
     rownames(parmatarray) <- paste0(rownames(parmats),'[',parmats[,'Row'],',',parmats[,'Col'],']')
@@ -201,7 +204,7 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   )
   
   colnames(tipreds) <- colnames(fit$data$tipredsdata)[whichTIpreds]
-
+  
   names(attributes(out)$dimnames) <- c('Parameter','param',paste(colnames(tipreds),collapse=''))
   out <- list(y=aperm(out, c(3,2,1)), x=tipreds[,1,drop=FALSE])
   

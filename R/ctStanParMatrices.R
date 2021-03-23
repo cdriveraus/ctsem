@@ -24,6 +24,7 @@ ctStanParMatrices <- function(fit, parvalues, timeinterval=1, sf=NA){
   fit$standata$savescores <- 0L
   fit$standata$gendata <- 0L
   fit$standata$dokalman <- 0L
+  fit$standata$dokalmanrows[-1] <- 0L
   nlatent = fit$standata$nlatent
   if(suppressWarnings(is.na(sf))) sf <- stan_reinitsf(fit$stanmodel,data=fit$standata) #suppressOutput(sf <- suppressWarnings(sampling(,iter=1,control=list(max_treedepth=1),chains=1)))
   # npars <- get_num_upars(sf)
