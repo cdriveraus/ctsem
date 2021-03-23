@@ -1400,16 +1400,18 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
   }
 
  
-   matrix constraincorsqrt(matrix mat){ //converts from unconstrained lower tri matrix to cor
+   matrix constraincorsqrt(matrix mat,int choleskymats){ //converts from unconstrained lower tri matrix to cor
     matrix[rows(mat),cols(mat)] o;
     real sumrawcor=1.0;
     
+    if(choleskymats == 0){ //
     for(i in 1:rows(o)){
       for(j in 1:rows(o)){
         if(j > i) sumrawcor += fabs(mat[j,i]);
       }
     }
     sumrawcor = sqrt(sumrawcor)/10;  // can change cor prior here
+    }
       
   
     for(i in 1:rows(o)){ //set upper tri to lower
@@ -1425,9 +1427,9 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
     return o;
   } 
 
-  matrix sdcovsqrt2cov(matrix mat, int cholbasis){ //covariance from cholesky or unconstrained cor sq root
-    if(cholbasis==0)  {
-      return(tcrossprod(diag_pre_multiply(diagonal(mat),constraincorsqrt(mat))));
+  matrix sdcovsqrt2cov(matrix mat, int choleskymats){ //covariance from cholesky or unconstrained cor sq root
+    if(choleskymats<1)  {
+      return(tcrossprod(diag_pre_multiply(diagonal(mat),constraincorsqrt(mat,choleskymats))));
     } else return(tcrossprod(mat));
   }
 
@@ -1808,7 +1810,7 @@ transformed parameters{
         }
       }
     }
-    rawpopcorr = tcrossprod( constraincorsqrt(rawpopcovbase));
+    rawpopcorr = tcrossprod( constraincorsqrt(rawpopcovbase,choleskymats));
     rawpopcov = makesym(quad_form_diag(rawpopcorr, rawpopsd +1e-8),verbose,1);
     rawpopcovchol = cholesky_decompose(rawpopcov); 
   }//end indvarying par setup

@@ -343,8 +343,11 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   standata$statedep <- statedep
   # standata$nstatedep <- as.integer(length(statedep))
   # standata$multiplicativenoise <- multiplicativenoise
-  standata$choleskymats<- ifelse(ctm$covmattransform=='unconstrainedcorr',0L,1L)
-  if(!ctm$covmattransform %in% c('unconstrainedcorr','cholesky')) stop('covtransform must be either "unconstrainedcorr" or "cholesky"')
+ if(ctm$covmattransform=='rawcorr') standata$choleskymats<- 0L
+  if(ctm$covmattransform=='rawcorr_indep') standata$choleskymats<- -1L
+  if(ctm$covmattransform=='cholesky') standata$choleskymats<- 1L
+  if(!ctm$covmattransform %in% c('rawcorr','rawcorr_indep','cholesky')) stop(
+    'covtransform must be either "rawcorr", "rawcorr_indep", or "cholesky"')
   
   standata$matsetup <- apply(ctm$modelmats$matsetup[,-1],c(1,2),as.integer,.drop=FALSE) #remove parname and convert to int
   standata$matvalues <- apply(ctm$modelmats$matvalues,c(1,2),as.numeric)
