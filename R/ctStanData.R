@@ -13,13 +13,13 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
       if(any(!is.numeric(as.numeric(datalong[!is.na(datalong[,x]),x])))) stop(x ,' column contains non-numeric data!')
     }
   })
-      
+  
   
   datalong <- datalong[,datavars]
-
+  
   
   nsubjects <- length(unique(datalong[, ctm$subjectIDname])) 
-
+  
   mats <- ctStanMatricesList()
   
   #simply exponential?
@@ -76,7 +76,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   ndiffusion=length(derrind)
   
   
-
+  
   nindvarying <- max(ctm$modelmats$matsetup$indvarying)
   nparams <- max(ctm$modelmats$matsetup$param[ctm$modelmats$matsetup$when %in% c(0,-1)])
   nmatrices <- length(mats$base)
@@ -343,11 +343,13 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   standata$statedep <- statedep
   # standata$nstatedep <- as.integer(length(statedep))
   # standata$multiplicativenoise <- multiplicativenoise
- if(ctm$covmattransform=='rawcorr') standata$choleskymats<- 0L
-  if(ctm$covmattransform=='rawcorr_indep') standata$choleskymats<- -1L
-  if(ctm$covmattransform=='cholesky') standata$choleskymats<- 1L
-  if(!ctm$covmattransform %in% c('rawcorr','rawcorr_indep','cholesky')) stop(
-    'covtransform must be either "rawcorr", "rawcorr_indep", or "cholesky"')
+  standata$choleskymats<- 0L
+  if(!is.null(ctm$covmattransform)){
+    if(ctm$covmattransform=='rawcorr_indep') standata$choleskymats<- -1L
+    if(ctm$covmattransform=='cholesky') standata$choleskymats<- 1L
+    if(!ctm$covmattransform %in% c('rawcorr','rawcorr_indep','cholesky')) stop(
+      'covtransform must be either "rawcorr", "rawcorr_indep", or "cholesky"')
+  }
   
   standata$matsetup <- apply(ctm$modelmats$matsetup[,-1],c(1,2),as.integer,.drop=FALSE) #remove parname and convert to int
   standata$matvalues <- apply(ctm$modelmats$matvalues,c(1,2),as.numeric)

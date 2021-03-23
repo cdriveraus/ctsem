@@ -267,7 +267,7 @@ ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
   # out$stationarymeanprior <- NA
   # out$stationaryvarprior <- NA
   out$manifesttype <- rep(0,n.manifest)
-  out$covmattransform <- 'unconstrainedcorr'
+  out$covmattransform <- 'rawcorr'
   
   return(out)
 }
