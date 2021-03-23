@@ -29,10 +29,10 @@ ctExtract <- function(object,subjectMatrices=FALSE,cores=2,nsamples='all'){
   
   if(length(object$stanfit$stanfit@sim)>0){
     if(subjectMatrices & object$standata$savesubjectmatrices!=1){
-      samps <- stan_unconstrainsamples(object$stanfit$stanfit)
+      samps <- t(stan_unconstrainsamples(object$stanfit$stanfit))
       if(!nsamples %in% 'all') samps <- samps[sample(1:nrow(samps),nsamples),,drop=FALSE]
       out = stan_constrainsamples(sm = object$stanmodel,standata = object$standata,
-        samples = t(samps),
+        samples = samps,
         cores = cores,savescores = FALSE,savesubjectmatrices = subjectMatrices)
     } else  out <- rstan::extract(object$stanfit$stanfit)
   } 

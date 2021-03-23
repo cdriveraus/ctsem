@@ -250,7 +250,11 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
   
   if(!parmatrices) out$parmatNote <- 'For additional summary matrices, use argument: parmatrices = TRUE'
   
-  
+  out <- lapply(out,function(x){
+    if('matrix' %in% class(x)){
+      x <- data.frame(x,check.names=FALSE)
+    }
+    x})
   
   return(out)
 }

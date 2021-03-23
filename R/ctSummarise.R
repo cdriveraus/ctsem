@@ -160,7 +160,9 @@ if(1==1){
       #subject par correlation quantiles
       # library(plyr)
       # library(ggplot2)
+      # browser()
       if(sf$standata$ntipred > 0 || sf$standata$nindvarying > 0){
+        
         sp=ctStanSubjectPars(sf,pointest=FALSE,cores=cores,nsamples = nsamples)
         tip <- array(rep(sf$standata$tipredsdata,each=dim(sp)[[1]]),dim=c(dim(sp)[1:2],ncol(sf$standata$tipredsdata)))
         spti=array(c(sp, tip), dim = c(dim(sp)[1], dim(sp)[2], dim(sp)[3]+dim(tip)[3]))

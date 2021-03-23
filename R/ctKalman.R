@@ -1,7 +1,7 @@
 ctKalmanTIP <- function(sf,tipreds='all',subject=1,...){
   if(tipreds[1] %in% 'all') tipreds <- sf$ctstanmodel$TIpredNames
   if(length(subject) > 1) stop('>1 subject!')
-  
+
   sdat <- standatact_specificsubjects(standata = sf$standata,subjects = subject)
   sdat$tipredsdata[,sf$ctstanmodel$TIpredNames] <- 0 #set all tipreds to zero
 
@@ -118,8 +118,8 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
       idstore <- as.integer(subjects[fit$standata$subject])
     }
     if(!length(fit$stanfit$stanfit@sim)==0) fit$standata$dokalmanrows <-
-      as.integer(fit$standata$subject %in% subjects |
-          as.logical(match(unique(fit$standata$subject),fit$standata$subject)))
+      as.integer(fit$standata$subject %in% subjects)# |
+          # as.logical(match(unique(fit$standata$subject),fit$standata$subject))) #what was this doing?
     
     if(removeObs){
       sapply(c('nobs_y','nbinary_y','ncont_y','whichobs_y','whichbinary_y','whichcont_y'),
