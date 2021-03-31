@@ -29,14 +29,12 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
     for(i in 1:rows(o)){ //set upper tri to lower
       for(j in 1:rows(mat)){
         if(j > i){
-          o[j,i] =  mat[j,i] / i;  
+          o[j,i] =  inv_logit(mat[j,i])*2-1; //divide by i for approx whole matrix equiv priors  
           o[i,j] = 0;
         }
       }
-    }
-    for(i in 1:rows(o)){
-      o[i,i]=1; 
-    o[i,] /= sqrt(sum(square(o[i,]))+1e-10);
+      o[i,i]=0; 
+      o[i,i] = 1-sqrt(sum(square(o[i,]))+1e-10);
     }
     return o;
   } 
