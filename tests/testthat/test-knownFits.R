@@ -11,7 +11,7 @@ test_that("anomauth", {
   
   if( .Machine$sizeof.pointer != 4){
 
-  #library(ctsem);cores=12
+  #library(ctsem);cores=6
   data(AnomAuth)
   AnomAuthmodel<-ctModel(LAMBDA=matrix(c(1, 0, 0, 1), nrow=2, ncol=2),  
     n.latent=2,n.manifest=2, 
@@ -27,7 +27,7 @@ test_that("anomauth", {
     optimcontrol=list(finishsamples=500),plot=FALSE,fit=T)
   # sink()
   print(Sys.time()-a)
-  testthat::expect_equal(23415.929,-2*sf$stanfit$optimfit$value,tolerance=.01)
+  testthat::expect_equal(23415.929,-2*sf$stanfit$optimfit$value,tolerance=.0001)
   anoms=summary(sf)
   anoms$popmeans['mm_Y1','sd']
   testthat::expect_equivalent(.036,anoms$popmeans['mm_Y1','sd'],tolerance=.008)

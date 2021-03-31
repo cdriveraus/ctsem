@@ -399,6 +399,19 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   
   datalong <- data.frame(datalong)
   
+    if(is.null(datalong[[ctstanmodel$timeName]]) && ctstanmodel$continuoustime == FALSE) {
+    datalong <- data.frame(datalong)
+    datalong[ctstanmodel$timeName] <- 1:nrow(datalong)
+  }
+  
+  datavars <- c(ctstanmodel$timeName,ctstanmodel$subjectIDname, ctstanmodel$manifestNames,ctstanmodel$TDpredNames,ctstanmodel$TIpredNames)
+  sapply(datavars,function(x){
+    if(!x %in% colnames(datalong)) stop(paste0(x,' column not found in data!'))
+    if(!x %in% ctstanmodel$subjectIDname){ #if not an id column
+      if(any(!is.numeric(as.numeric(datalong[!is.na(datalong[,x]),x])))) stop(x ,' column contains non-numeric data!')
+    }
+  })
+  
   if(!w32chk()) message('Bayesian functions not available on 32 bit systems') else{
     if(!'ctStanModel' %in% class(ctstanmodel)) stop('not a ctStanModel object')
     

@@ -49,8 +49,8 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     r <- ctStanFit( datalong = d,
       #fit=FALSE, #set this to skip fitting and just get the standata and stanmodel objects
       ctstanmodel = m,
-      iter = 200,verbose=0,
-      control=list(max_treedepth=4),
+      iter = 300,verbose=0,
+      control=list(max_treedepth=6),
       nopriors=FALSE,
       chains = cores,plot=F,
       intoverstates = FALSE,

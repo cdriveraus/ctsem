@@ -586,7 +586,7 @@ tostanarray <- function(flesh, skeleton){
 #' @importFrom Rcpp evalCpp
 
 stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
-  deoptim=FALSE, estonly=FALSE,tol=1e-12,
+  deoptim=FALSE, estonly=FALSE,tol=1e-10,
   decontrol=list(),
   stochastic = FALSE,
   nopriors=FALSE,carefulfit=TRUE,
@@ -751,7 +751,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         #crazy trickery to avoid parallel communication pauses
         env <- new.env(parent = globalenv(),hash = TRUE)
         environment(parlp) <- env
-        
+        iter <-0
         target<-function(parm,gradnoise=TRUE) {
           # whichframe <- which(sapply(lapply(sys.frames(),ls),function(x){ 'clctsem' %in% x}))
           a=Sys.time()
@@ -782,16 +782,21 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             attributes(out) <- list(gradient=rep(0,length(parm)))
           } 
           
-          # if(plot){
-          #   storedLp <<- c(storedLp,out[1])
-          #   # attributes(out)$gradient <- (1-gradmem)*attributes(out)$gradient + gradmem*gradstore
-          #   gradstore <<- cbind(gradstore,attributes(out)$gradient)
-          #   gstore <- log(abs(gradstore))*sign(gradstore)
-          #  if(runif(1,0,1) > .9) {
-          #    par(mfrow=c(1,1))
-          #    matplot(tail(t(gstore),50),type='l')
-          #  }
-          # }
+          if(plot > 0){
+              if(out[1] > (-1e99)) storedLp <<- c(storedLp,out[1])
+              iter <<- iter+1
+              # attributes(out)$gradient <- (1-gradmem)*attributes(out)$gradient + gradmem*gradstore
+              # gradstore <<- cbind(gradstore,attributes(out)$gradient)
+              # gstore <- log(abs(gradstore))*sign(gradstore)
+              g=log(abs(attributes(out)$gradient))*sign(attributes(out)$gradient)
+              # if(runif(1,0,1) > .9) {
+              if(iter %% plot == 0){
+              par(mfrow=c(1,3))
+              plot(parm,xlab='param',ylab='par value',col=1:length(parm))
+              plot(log(1+tail(-storedLp,500)-min(tail(-storedLp,500))),ylab='target',type='l')
+              plot(g,type='p',col=1:length(parm),ylab='gradient',xlab='param')
+            }
+          }
           storedPars <<- parm
           # storedLp <<- c(storedLp,out[1])
           if(verbose > 0) print(paste('lp= ',out,' ,    iter time = ',b-a))
@@ -899,6 +904,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       
       message('Optimizing...')
+      iter <- 0
+      storedLp <- c()
       if(length(parsteps) <1 && (standata$ntipred ==0 || notipredsfirstpass ==FALSE)) finished <- TRUE
       if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standata,split=parsets<2)
       if(optimcores==1) smf<-stan_reinitsf(sm,standata)
@@ -1064,7 +1071,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       } else {
         hesscl <- clctsem
         if(cores > 1) {
-           suppressWarnings(rm(smf))
+          suppressWarnings(rm(smf))
           parallelStanSetup(cl = clctsem,standata = standata,split=FALSE)#,split=parsets<2)
         }
         if(cores==1) smf<-stan_reinitsf(sm,standata)
