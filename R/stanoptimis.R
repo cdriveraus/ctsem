@@ -421,11 +421,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
     dokalman <- TRUE
     warning('savesubjectmatrices = TRUE requires dokalman=TRUE also!')
   }
-  
-  # if(savesubjectmatrices && !savescores){
-  #   savescores <- TRUE
-  #   warning('savesubjectmatrices = TRUE requires savescores=TRUE also!')
-  # }
+# browser()
   
   standata$savescores <- as.integer(savescores)
   standata$dokalman <- as.integer(dokalman)
@@ -443,26 +439,12 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
     }
     smf <- stan_reinitsf(sm,standata)
     out=data.table::data.table()
-    for(li in 1:length(x)){
-      # if(li==1){
-      # tout <- try(rstan::constrain_pars(smf, upars=samples[x[li],]))
-      # out <-matrix(NA,nrow=length(unlist(tout)),ncol=length(x))
-      # out[,li] <- unlist(tout)
-      # }
-      # if(li > 1) 
-      try({out[,paste0('d',li):= unlist(rstan::constrain_pars(smf, upars=samples[x[li],]))]})
-      # 
-      # if(any( #check for invalid values in transformed pars
-      #   sapply(out[[li]], function(x){
-      #     test <- length(x) > 0 && 
-      #       (any(c(is.nan(x),is.infinite(x),is.na(x))))
-      #     # if(any(test)) print(x)
-      #     return(test)
-      #   })
-      # )){
-      #   class(out[[li]]) <- c(class(out[[li]]),'try-error')
-      # }
-    }
+      try({out[,paste0('d',1:length(x)):= lapply(1:length(x),function(li){
+        unlist(rstan::constrain_pars(smf, upars=samples[x[li],]))
+        })
+        ]
+        })
+  
     if(unlist) return(out) else return(rstan::constrain_pars(smf, upars=samples[1,,drop=FALSE]))
   }"))
   
@@ -471,9 +453,8 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
   env$standata <- standata
   env$sm <- sm
   env$samples <- samples
-  
   if(cores > 1 && all(is.na(cl))){
-    cl <- parallel::makeCluster(cores, type = "PSOCK",useXDR=TRUE,outfile='')
+    cl <- parallel::makeCluster(cores, type = "PSOCK",useXDR=FALSE,outfile='',user=NULL)
     on.exit(try(parallel::stopCluster(cl),silent=TRUE),add = TRUE)
   }
   
@@ -539,6 +520,28 @@ tostanarray <- function(flesh, skeleton){
 }
 
 
+#below code avoids spurious cran check -- assigning to global environment only on created parallel workers.
+clctsemFunc <- function(envvars){
+  a=Sys.time()
+  clctsem <- parallel::makeCluster(envvars$cores,type='PSOCK',outfile='',methods=FALSE,user=NULL,useXDR=FALSE)
+  parallel::clusterExport(clctsem,varlist='envvars',envir = environment())
+
+  parallel::clusterEvalQ(clctsem,
+    assign('sm',value = envvars$sm,envir = eval(parse(text=paste0('gl','obalenv()')))))
+  
+  print(Sys.time()-a)
+  return(clctsem)
+}
+
+# env <- new.env(parent=globalenv())
+# eval(parse(text=paste0(clctsemFunc)),envir=env)
+
+
+parsetup <- parsetup <- function(){
+  cl <- parallel::makeCluster(12,type='PSOCK')
+  parallel::clusterCall(cl,function() 1+1)
+}
+
 
 
 
@@ -588,7 +591,7 @@ tostanarray <- function(flesh, skeleton){
 stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   deoptim=FALSE, estonly=FALSE,tol=1e-10,
   decontrol=list(),
-  stochastic = FALSE,
+  stochastic = TRUE,
   nopriors=FALSE,carefulfit=TRUE,
   subsamplesize=.5,finitediff=FALSE,
   parsteps=c(),
@@ -672,7 +675,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       if(length(parsteps)>0) init[unlist(parsteps)] <- 0 
     }
     if(all(init == 0)) init <- rep(0,npars)
-    if(length(init) != npars) init=init[1:npars]
+    if(length(init) != npars) init=c(init[1:min(length(init),npars)],rep(0,abs(npars-length(init))))
     init[is.na(init)] <- 0
     if(notipredsfirstpass && standata$ntipredeffects > 0) init[length(init):(length(init)+1-standata$ntipredeffects)] <- 0
     
@@ -734,16 +737,22 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       if(optimcores==1) target = singletarget #we use this for importance sampling
       if(cores > 1){ #for parallelised computation after fitting, if only single subject
-        clctsem=parallel::makeCluster(cores,useXDR=TRUE,type='PSOCK',outfile='')
+        # smfilepath <- file.path(tempdir(),'smfile.rds')
+        # saveRDS(sm,file=smfilepath,compress=FALSE)
+        # sm<-readRDS(file = smfilepath)
+        
+        envvars <- new.env(parent=emptyenv())
+        # envvars$smfilepath <- smfilepath
+        envvars$cores <- cores
+        envvars$sm <- sm
+        # browser()
+        clctsem <- clctsemFunc(envvars)
+        
+        
         on.exit(try({parallel::stopCluster(clctsem)},silent=TRUE),add=TRUE)
-        smfilepath <- file.path(tempdir(),'smfile.rda')
-        save(sm,file=smfilepath)
-        parallel::clusterCall(clctsem,function(){ #faster variable export
-          load(smfilepath)
-          g = eval(parse(text=paste0('gl','obalenv()'))) #avoid spurious cran check -- assigning to global environment only on created parallel workers.
-          assign('sm',value = sm,envir = g)
-          NULL
-        })
+       
+        # on.exit(add = TRUE, expr={unlink(smfilepath)})
+        
         # parallel::clusterExport(clctsem,varlist = 'sm',envir = environment())
       }
       if(optimcores > 1) {
@@ -764,15 +773,23 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             attributes(out)$bestset <- bestset
           } else {
             out2<- parallel::clusterCall(clctsem,parlp,parm)
+            error <- FALSE
             tmp<-sapply(1:length(out2),function(x) {
               if(!is.null(attributes(out2[[x]])$err)){
-                if(length(out2) > 1 && as.logical(verbose)) message('Error on core ', x,' but continuing:')
-                message(attributes(out2[[x]])$err)
+                if(!error & length(out2) > 1 && as.logical(verbose)){
+                  message('Error on core ', x,' but continuing:')
+                  error <<- TRUE
+                  message(attributes(out2[[x]])$err)
+                }
               }
             })
             # 
             out <- try(sum(unlist(out2)),silent=TRUE)
-            attributes(out)$gradient <- try(apply(sapply(out2,function(x) attributes(x)$gradient,simplify='matrix'),1,sum))
+            # attributes(out)$gradient <- try(apply(sapply(out2,function(x) attributes(x)$gradient,simplify='matrix'),1,sum))
+            for(i in seq_along(out2)){
+              if(i==1) attributes(out)$gradient <- attributes(out2[[1]])$gradient
+              if(i>1) attributes(out)$gradient <- attributes(out)$gradient+attributes(out2[[i]])$gradient
+            }
           }
           b=Sys.time()
           b-a
@@ -782,15 +799,15 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             attributes(out) <- list(gradient=rep(0,length(parm)))
           } 
           
-          if(plot > 0){
-              if(out[1] > (-1e99)) storedLp <<- c(storedLp,out[1])
-              iter <<- iter+1
-              # attributes(out)$gradient <- (1-gradmem)*attributes(out)$gradient + gradmem*gradstore
-              # gradstore <<- cbind(gradstore,attributes(out)$gradient)
-              # gstore <- log(abs(gradstore))*sign(gradstore)
-              g=log(abs(attributes(out)$gradient))*sign(attributes(out)$gradient)
-              # if(runif(1,0,1) > .9) {
-              if(iter %% plot == 0){
+          if(plot > 0 && (!stochastic || carefulfit)){
+            if(out[1] > (-1e99)) storedLp <<- c(storedLp,out[1])
+            iter <<- iter+1
+            # attributes(out)$gradient <- (1-gradmem)*attributes(out)$gradient + gradmem*gradstore
+            # gradstore <<- cbind(gradstore,attributes(out)$gradient)
+            # gstore <- log(abs(gradstore))*sign(gradstore)
+            g=log(abs(attributes(out)$gradient))*sign(attributes(out)$gradient)
+            # if(runif(1,0,1) > .9) {
+            if(iter %% plot == 0){
               par(mfrow=c(1,3))
               plot(parm,xlab='param',ylab='par value',col=1:length(parm))
               plot(log(1+tail(-storedLp,500)-min(tail(-storedLp,500))),ylab='target',type='l')
@@ -879,20 +896,21 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standatasml,split=parsets<2)
         if(optimcores==1) smf<-stan_reinitsf(sm,standatasml)
         
-        if(!stochastic) {
-          optimfit <- mize(init, fg=mizelpg, max_iter=99999,
-            method="L-BFGS",memory=100,
-            line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
-            abs_tol=1e-4,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)
-          optimfit$value = optimfit$f
-        }
+        # if(!stochastic) {
+        optimfit <- mize(init, fg=mizelpg, max_iter=99999,
+          method="L-BFGS",memory=100,
+          line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
+          abs_tol=1e-2,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)
+        optimfit$value = optimfit$f
+        carefulfit <- FALSE
+        # }
         
-        if(stochastic) {
-          optimfit <- sgd(init, fitfunc = function(x) target(x),
-            parsets=parsets,
-            whichignore = unlist(parsteps),nconvergeiter = 20,
-            plot=plot,itertol=.1,deltatol=.1,maxiter=500)
-        }
+        # if(stochastic) {
+        #   optimfit <- sgd(init, fitfunc = function(x) target(x),
+        #     parsets=parsets,
+        #     whichignore = unlist(parsteps),nconvergeiter = 20,
+        #     plot=plot,itertol=.1,deltatol=.1,maxiter=500)
+        # }
         
         standata$nopriors <- as.integer(nopriorsbak)
         # if(standata$ntipred ==0)
@@ -930,8 +948,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(!stochastic && carefulfit) message('carefulfit = TRUE , so checking for improvements with stochastic optimizer')
         optimfit <- sgd(init, fitfunc = target,
           parsets=parsets,
-          itertol = ifelse(!finished,1e-1,tol*1e9),
-          deltatol=ifelse(!finished,1e-1,tol*1e7),
+          itertol = ifelse(!finished,1e-1,1e-3),
+          deltatol=ifelse(!finished,1e-1,1e-5),
           # itertol = ifelse(standata$ntipred >0,1e-1,1e-3),
           # deltatol=ifelse(standata$ntipred >0,1e-2,1e-5),
           whichignore = unlist(parsteps),

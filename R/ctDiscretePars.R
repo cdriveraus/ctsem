@@ -63,7 +63,7 @@ ctStanParnames <- function(x,substrings=c('pop_','popsd')){
 #'this change is correlated according to the DIFFUSION matrix. If FALSE, outputs expected regression values -- also interpretable as
 #'an independent 1 unit change on each process, giving the expected response under a 1 unit experimental impulse.
 #'@param standardise Logical. If TRUE, output is standardised according to expected total within subject variance, given by the 
-#'asymDIFFUSION matrix.
+#'asymDIFFUSIONcov matrix.
 #'@param cov Logical. If TRUE, covariances are returned instead of regression coefficients.
 #'@param plot Logical. If TRUE, plots output using \code{\link{ctStanDiscreteParsPlot}}
 #'instead of returning output. 
@@ -118,7 +118,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='popmean',
   samples <- sample(1:dim(e[['pop_DRIFT']])[1],nsamples)
   
   # browser()
-  for(matname in c('DRIFT','DIFFUSIONcov','asymDIFFUSION')){ #,'CINT','T0MEANS', 'T0VAR','MANIFESTMEANS',if(!is.null(e$MANIFESTVAR)) 'MANIFESTVAR','LAMBDA', if(!is.null(e$TDPREDEFFECT)) 'TDPREDEFFECT')){
+  for(matname in c('DRIFT','DIFFUSIONcov','asymDIFFUSIONcov')){ #,'CINT','T0MEANS', 'T0VAR','MANIFESTMEANS',if(!is.null(e$MANIFESTVAR)) 'MANIFESTVAR','LAMBDA', if(!is.null(e$TDPREDEFFECT)) 'TDPREDEFFECT')){
     if('popmean' %in% subjects || is.null(e[[paste0('subj_',matname)]])){
       ctpars[[matname]] <- e[[paste0('pop_',matname)]][samples,,,drop=FALSE]
     } else {
@@ -186,11 +186,11 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
           if(!discreteInput) ctpars$dtDRIFT[i,j,ti,,] <- expm::expm(as.matrix(ctpars$DRIFT[i,min(j,nsubs$DRIFT),,] * times[ti]))
           if(discreteInput) ctpars$dtDRIFT[i,j,ti,,] <- mpow(as.matrix(ctpars$DRIFT[i,min(j,nsubs$DRIFT),,]),times[ti])
           if(standardise) {
-            if(any(diag(ctpars$asymDIFFUSION[i,min(j,nsubs$asymDIFFUSION),,]) < 0)) stop(
+            if(any(diag(ctpars$asymDIFFUSIONcov[i,min(j,nsubs$asymDIFFUSIONcov),,]) < 0)) stop(
               "Asymptotic diffusion matrix has negative diagonals -- I don't know what non stationary standardization looks like")
             ctpars$dtDRIFT[i,j,ti,,] <- ctpars$dtDRIFT[i,j,ti,,] * 
-              matrix(rep(sqrt(diag(ctpars$asymDIFFUSION[i,min(j,nsubs$asymDIFFUSION),,])+1e-10),each=nl) / 
-                  rep((sqrt(diag(ctpars$asymDIFFUSION[i,min(j,nsubs$asymDIFFUSION),,]))),times=nl),nl)
+              matrix(rep(sqrt(diag(ctpars$asymDIFFUSIONcov[i,min(j,nsubs$asymDIFFUSIONcov),,])+1e-10),each=nl) / 
+                  rep((sqrt(diag(ctpars$asymDIFFUSIONcov[i,min(j,nsubs$asymDIFFUSIONcov),,]))),times=nl),nl)
           }
           if(observational){
             Qcor<-cov2cor(matrix(ctpars$DIFFUSIONcov[i,min(j,nsubs$DIFFUSIONcov),,],nl,nl)+diag(1e-8,nl)) 

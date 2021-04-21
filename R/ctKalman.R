@@ -1,10 +1,10 @@
 ctKalmanTIP <- function(sf,tipreds='all',subject=1,...){
   if(tipreds[1] %in% 'all') tipreds <- sf$ctstanmodel$TIpredNames
   if(length(subject) > 1) stop('>1 subject!')
-
+  
   sdat <- standatact_specificsubjects(standata = sf$standata,subjects = subject)
   sdat$tipredsdata[,sf$ctstanmodel$TIpredNames] <- 0 #set all tipreds to zero
-
+  
   #create datalong structure
   dat <- data.frame(id=sdat$subject,time=sdat$time)
   datti <- suppressWarnings(merge(dat,data.frame(id=sdat$subject,time=sdat$time,sdat$tipredsdata),all=TRUE))
@@ -20,7 +20,7 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,...){
   
   tisd <- apply(sf$standata$tipredsdata,2,sd,na.rm=TRUE)
   timu <- apply(sf$standata$tipredsdata,2,mean,na.rm=TRUE)
-
+  
   newdat=dat
   for(tip in 1:length(tipreds)){
     for(direction in c(-1,1)){
@@ -95,11 +95,13 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,...){
 #' @export
 
 ctKalman<-function(fit, timerange='asdata', timestep='auto',
-  subjects=1, removeObs = FALSE, plot=FALSE, realid=FALSE,...){
+  subjects=1, removeObs = FALSE, plot=FALSE, realid=TRUE,...){
   type=NA
   if('ctStanFit' %in% class(fit)) type='stan' 
   if('ctsemFit' %in% class(fit)) type ='omx'
   if(is.na(type)) stop('fit object is not from ctFit or ctStanFit!')
+  
+  idmap <- fit$standata$idmap #store now because we may reduce it
   
   subjects <- sort(subjects) #in case not entered in ascending order
   if(type=='stan'){
@@ -107,19 +109,20 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
       if(fit$standata$intoverstates==1) timestep=sd(fit$standata$time,na.rm=TRUE)/50 else timestep ='asdata'
     }
     if(all(timerange == 'asdata')) timerange <- range(fit$standata$time[fit$standata$subject %in% subjects])
+    idstore <- fit$standata$subject
+    if(length(fit$stanfit$stanfit@sim)==0) {
+      fit$standata <- standatact_specificsubjects(fit$standata, subjects = subjects)
+    }
     if(timestep != 'asdata' && fit$ctstanmodel$continuoustime) {
       if(fit$ctstanmodel$continuoustime != TRUE) stop('Discrete time model fits must use timestep = "asdata"')
       times <- seq(timerange[1],timerange[2],timestep)
       fit$standata <- standataFillTime(fit$standata,times)
-    } 
-    idstore <- fit$standata$subject
-    if(length(fit$stanfit$stanfit@sim)==0) {
-      fit$standata <- standatact_specificsubjects(fit$standata, subjects = subjects)
-      idstore <- as.integer(subjects[fit$standata$subject])
     }
+    idstore <- as.integer(subjects[fit$standata$subject])
+    
     if(!length(fit$stanfit$stanfit@sim)==0) fit$standata$dokalmanrows <-
       as.integer(fit$standata$subject %in% subjects)# |
-          # as.logical(match(unique(fit$standata$subject),fit$standata$subject))) #what was this doing?
+    # as.logical(match(unique(fit$standata$subject),fit$standata$subject))) #what was this doing?
     
     if(removeObs){
       sapply(c('nobs_y','nbinary_y','ncont_y','whichobs_y','whichbinary_y','whichcont_y'),
@@ -129,13 +132,14 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
     out <- ctStanKalman(fit,pointest=length(fit$stanfit$stanfit@sim)==0, 
       collapsefunc=mean, indvarstates = FALSE) #extract state predictions
     out$id <- idstore #as.integer(subjects[out$id]) #get correct subject indicators
-
+    
     out <- meltkalman(out)
     out=out[!(out$Subject %in% subjects) %in% FALSE,]
     if(realid){
-      out$Subject <- as.integer(out$Subject)
-      out$Subject <- factor(fit$standata$idmap[
-        match(out$Subject,fit$standata$idmap[,2]),1])
+      # browser()
+      # out$Subject <- as.integer(out$Subject)
+      out$Subject <- factor(idmap[
+        match(out$Subject,idmap[,2]),1])
     }
   }
   
@@ -298,12 +302,12 @@ plot.ctKalmanDF<-function(x, subjects=unique(x$Subject), kalmanvec=c('y','yprior
     aes_string(x='Time',y='Value',colour=colvec,linetype='Element',shape='Element')) +
     scale_linetype_manual(breaks=names(ltyvec),values=ltyvec)+
     scale_shape_manual(breaks=names(shapevec),values=shapevec)
-    # labs(linetype='Element',shape='Element',colour='Element',fill='Element')+
-    # guides(fill=FALSE)
-# browser()
+  # labs(linetype='Element',shape='Element',colour='Element',fill='Element')+
+  # guides(fill=FALSE)
+  # browser()
   if(length(unique(ltyvec[!is.na(ltyvec)]))<1) g<-g+guides(linetype=FALSE)
   # if(length(unique(shapevec[!is.na(shapevec)]))<1) 
-    # g<-g+ guides(shape=FALSE)
+  # g<-g+ guides(shape=FALSE)
   if(!is.na(facets[1]) && length(subjects) > 1 && length(unique(subset(kdf,Element %in% kalmanvec)$Variable)) > 1){
     g <- g+ facet_wrap(facets,scales = 'free') 
   } 
@@ -338,12 +342,12 @@ plot.ctKalmanDF<-function(x, subjects=unique(x$Subject), kalmanvec=c('y','yprior
       }
     } 
   }
-      g <- g + 
-        geom_line()+
-        geom_point()+
-        theme_minimal()+
-        guides(fill=FALSE)
-    
+  g <- g + 
+    geom_line()+
+    geom_point()+
+    theme_minimal()+
+    guides(fill=FALSE)
+  
   if(plot) suppressWarnings(print(g))
   return(invisible(g))
   

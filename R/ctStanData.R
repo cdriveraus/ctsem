@@ -1,23 +1,6 @@
 ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   
-  if(is.null(datalong[[ctm$timeName]]) && ctm$continuoustime == FALSE) {
-    datalong <- data.frame(datalong)
-    datalong[ctm$timeName] <- 1:nrow(datalong)
-  }
-  
-  datavars <- c(ctm$timeName,ctm$subjectIDname, ctm$manifestNames,ctm$TDpredNames,ctm$TIpredNames)
-  
-  sapply(datavars,function(x){
-    if(!x %in% colnames(datalong)) stop(paste0(x,' column not found in data!'))
-    if(!x %in% ctm$subjectIDname){ #if not an id column
-      if(any(!is.numeric(as.numeric(datalong[!is.na(datalong[,x]),x])))) stop(x ,' column contains non-numeric data!')
-    }
-  })
-  
-  
-  datalong <- datalong[,datavars]
-  
-  
+
   nsubjects <- length(unique(datalong[, ctm$subjectIDname])) 
   
   mats <- ctStanMatricesList()
@@ -431,7 +414,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   # standata$whenvecs[6,] <- as.integer(1:ncol(standata$whenvecs))
   
   #special matrix adjustments
-  standata$whenmat[mc[names(mc) == 'asymDIFFUSION'],] <- 
+  standata$whenmat[mc[names(mc) == 'asymDIFFUSIONcov'],] <- 
     apply(standata$whenmat[ mc[names(mc) %in% c('DIFFUSION','DRIFT')],],2,max)
   standata$whenmat[mc[names(mc) == 'asymCINT'],] <- 
     apply(standata$whenmat[mc[names(mc) %in% c('CINT','DRIFT')],],2,max)

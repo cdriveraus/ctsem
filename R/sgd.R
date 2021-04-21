@@ -1,11 +1,10 @@
 logit = function(x) log(x)-log((1-x))
 
 sgd <- function(init,fitfunc,whichignore=c(),nsubjects=NA,ndatapoints=NA,plot=FALSE,
-  stepbase=1e-3,gmeminit=ifelse(is.na(startnrows),.8,.8),gmemmax=.95, maxparchange = .50,
-  startnrows=NA,roughnessmemory=.8,groughnesstarget=.4,roughnesschangemulti = 2,
-  lproughnesstarget=ifelse(parsets==1,.2,.2),parsets=1,
-  gsmoothroughnesstarget=.1,
-  bfgsweight=0.1,
+  stepbase=1e-3,gmeminit=ifelse(is.na(startnrows),.9,.8),gmemmax=.95, maxparchange = .50,
+  startnrows=NA,roughnessmemory=.9,groughnesstarget=.4,roughnesschangemulti = 2,
+  lproughnesstarget=ifelse(parsets==1,.4,.2),parsets=1,
+  gsmoothroughnesstarget=.05,
   warmuplength=20,nstore=max(100,length(init)),
   minparchange=1e-800,maxiter=50000,
   nconvergeiter=30, 
@@ -23,9 +22,8 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubjects=NA,ndatapoints=NA,plot=FA
   
   
   pars=init
-  
-  bfgsweight2=bfgsweight
-  delta=deltaold=bfgsdelta=rep(0,length(pars))
+
+  delta=deltaold=rep(0,length(pars))
   bestpars = newpars=maxpars=minpars=changepars=pars
   gstore=parstore = deltastore=matrix(rnorm(length(bestpars)*nstore),length(bestpars),nstore)
   
@@ -69,34 +67,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubjects=NA,ndatapoints=NA,plot=FA
       }
       
       
-      if(i==1) {
-        B = diag(1,length(pars))
-        z <- rep(0,length(pars))
-      }
-      
-      if(i > 2 && sd(S) > 1e-5){ #bfgs
-        Bprop = B + 
-          # diag(.05,length(pars)) + B * .95 + 
-          (y %*% t(y)) / c( t(y) %*% S) - 
-          (B %*% S %*% t(S) %*% t(B) ) / 
-          c( t(S) %*% B %*% S )
-        
-        # Bprop[diag(nrow(Bprop))==1] <- Bprop[diag(nrow(Bprop))==1] #+ diag(B) * 1 #pd hack
-        # browser()
-        BI = try(solve(B))
-        # BIchol=try(chol(BI))
-        if(!'try-error' %in% class(BI)){
-          zprop = BI %*% g
-          # if(!'try-error' %in% class(BIchol)){
-          B=Bprop
-          z=zprop
-          bfgsweight2=runif(1,0,bfgsweight)
-        }  else {
-          bfgsweight2 = 0
-          B=diag(1,length(pars))
-        }
-      }
-      
+     
       if(i > 1){
         # browser()
         delta =   step * (gsmooth+dgsmooth/2) 
@@ -116,20 +87,15 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubjects=NA,ndatapoints=NA,plot=FA
         delta[abs(delta) > maxparchange] <- maxparchange*sign(delta[abs(delta) > maxparchange])
         delta = delta +  delta/2 - deltaold/2
         
-        newpars = pars + delta *ifelse(i>5,1-bfgsweight2,1)
+        newpars = pars + delta 
+
         
-        if(i > 5 && bfgsweight2 > 0 & any(z!=0)){
-          bfgsdelta= z * sum(abs(delta))/sum(abs((z)))
-          newpars = newpars + bfgsdelta * bfgsweight2
-        }
-        
-        #random jumping
-        if(i %% 10 ==0){
-          s <- which(rbinom(n = length(pars),size = 1,prob= .8)==1)
-          newpars[s] <- newpars[s] + rnorm(length(s),0,abs(delta[s])*1)
-        }
-        
-        S <- matrix(newpars-pars,ncol=1)
+        # #random jumping
+        # if(i %% 10 ==0){
+        #   s <- which(rbinom(n = length(pars),size = 1,prob= .8)==1)
+        #   newpars[s] <- newpars[s] + rnorm(length(s),0,abs(delta[s])*1)
+        # }
+
       }
       
       
@@ -170,14 +136,15 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubjects=NA,ndatapoints=NA,plot=FA
           class(lpg) !='try-error' && 
           !is.nan(lpg[1]) && 
           all(!is.nan(attributes(lpg)$gradient)) &&
-          (i < warmuplength || ( (lp[i-1]- lpg[1]) < sd(tail(lp,100))*8+1e-3))
+          (i < warmuplength || ( exp(lpg[1] - lp[i-1]) > runif(1,0,1))) #sd(tail(lp,100))*8+
       ){
         accepted <- TRUE
       } 
       else {
-        # gsmooth= gsmooth*gmemory2 + (1-gmemory2) * g #increase influence of last gradient at inflections
+        gsmooth= gsmooth*gmemory2^2 + (1-gmemory2^2) * g #increase influence of last gradient at inflections
         step <- step * .5
         deltaold <- deltaold * .5
+        # if(i > 1) lproughness = lproughness * (roughnessmemory2) + (1-(roughnessmemory2)) ##exp(-1/(i-bestiter+.1))
         # pars=bestpars
       }
       #warmup check
@@ -205,18 +172,14 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubjects=NA,ndatapoints=NA,plot=FA
     deltaold=delta
     oldg=g
     g=attributes(lpg)$gradient
-    g=sign(g)*(abs(g))^(1/4)#sqrt
+    g=sign(g)*(abs(g))^(1/2)#sqrt
     gmemory2 = gmemory * min(i/warmuplength,1)^(1/8)
     roughnessmemory2 = roughnessmemory * min(i/warmuplength,1)^(1/8)
     
     
     oldgmid=gmid
-    gmid = (oldg+g)/2
+    gmid = g#(oldg+g)/2
     # dg=(g-oldg)#/step #removed step divide due to divide by zero problems
-    
-    #bfgs
-    # S <- matrix(delta,ncol=1)
-    y <- matrix(g-oldg,ncol=1)
     
     
     #predictions
@@ -229,29 +192,29 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubjects=NA,ndatapoints=NA,plot=FA
     gstore[,1+(i-1) %% nstore] = g
     
 
-    
+    if(i > 1) lproughness = lproughness * (roughnessmemory2) + (1-(roughnessmemory2)) * as.numeric(lp[i-1] > (lp[i]))#because accepted here, also see non accepted version
     groughness = groughness * (roughnessmemory2) + (1-(roughnessmemory2)) * as.numeric(sign(gmid)!=sign(oldgmid))
     gsmoothroughness = gsmoothroughness * (roughnessmemory2) + (1-(roughnessmemory2)) * as.numeric(sign(gsmooth)!=sign(oldgsmooth))
-    if(i > 1) lproughness = lproughness * (roughnessmemory2) + (1-(roughnessmemory2)) * as.numeric(lp[i-1] > (lp[i]))#exp(-1/(i-bestiter+.1))
     
     lproughnessmod=  ( ( (1/(-lproughness-lproughnesstarget2)) / (1/-lproughnesstarget2) + .5) -1) #balanced eq for any centre / target
     gsmoothroughnessmod =  (( ( (1/(-(gsmoothroughness)-gsmoothroughnesstarget)) / (1/-gsmoothroughnesstarget) + .5) ) -1)
     groughnessmod = ( ( ( (1/(-(groughness)-groughnesstarget)) / (1/-groughnesstarget) + .5) ) -1)
     
     step = (step + roughnesschangemulti*(
-      step* .8*lproughnessmod
+      step* .6*lproughnessmod
       # + step* .05*gsmoothroughnessmod #* min(sqrt(deltasmoothsq),1)
-      + step* .4*groughnessmod# * min(sqrt(deltasmoothsq),1)
+      + step* .6*groughnessmod# * min(sqrt(deltasmoothsq),1)
       # + step * rmsstepmod
     ))
     
-    step[gsmoothroughness < gsmoothroughnesstarget] <- step[gsmoothroughness < gsmoothroughnesstarget] *1.2
+    signdif= sign(gsmooth)!=sign(gmid)
+    if(i > warmuplength) step[gsmoothroughness < gsmoothroughnesstarget & !signdif] <- step[gsmoothroughness < gsmoothroughnesstarget& !signdif] *2
     
     # gsmooth[gsmoothroughness < gsmoothroughnesstarget] <- gsmooth[gsmoothroughness < gsmoothroughnesstarget] * 1.2
     # step[gsmoothroughness < gsmoothroughnesstarget] * .1*gsmoothroughnessmod[gsmoothroughness < gsmoothroughnesstarget]
-    signdif= sign(gsmooth)!=sign(gmid)
+    
     if(i > 1 && lp[i] >= max(head(lp,length(lp)-1))) {
-      step[!signdif] = step[!signdif] * 1.2 #sqrt(2-gmemory) #exp((1-gmemory)/8)
+      # step[!signdif] = step[!signdif] * 1.5 #sqrt(2-gmemory) #exp((1-gmemory)/8)
       # step = step * 1.2
       if(i > warmuplength) {
         ##max/min par update extra
@@ -261,9 +224,9 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubjects=NA,ndatapoints=NA,plot=FA
           parscore[whichmax] <- parscore[whichmax]+.1*(as.numeric(pars[whichmax]>maxpars[whichmax])*2-1)
           # gsmooth[whichmax] <- gsmooth[whichmax]  * 1.2*(1+abs(parscore[whichmax]))#*delta[whichmax] /step[whichmax]
           # step[whichmax] <- step[whichmax] * 2*(1+abs(parscore[whichmax]))  #+ pars[whichmax]
-          pars[pars>maxpars] <- pars[pars>maxpars]+10*(1+abs(parscore[pars>maxpars]))*(pars[pars>maxpars]-maxpars[pars>maxpars] )
-          pars[pars< minpars] <- pars[pars< minpars]+10*(1+abs(parscore[pars<minpars]))*(pars[pars< minpars]-minpars[pars< minpars] )
-          
+          # pars[pars>maxpars] <- pars[pars>maxpars]+10*(1+abs(parscore[pars>maxpars]))*(pars[pars>maxpars]-maxpars[pars>maxpars] )
+          # pars[pars< minpars] <- pars[pars< minpars]+10*(1+abs(parscore[pars<minpars]))*(pars[pars< minpars]-minpars[pars< minpars] )
+
           maxpars[pars>maxpars] <-pars[pars>maxpars]
           minpars[pars<minpars] <-pars[pars<minpars]
         }
@@ -291,15 +254,15 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubjects=NA,ndatapoints=NA,plot=FA
     }
     
     # gmemory <- gmemory * gsmoothroughnessmod
-    if(i > 45 && i %% 40 == 0) {
+    if(i > 25 && i %% 20 == 0) {
       oldlpdif <- lpdif# sum(diff(head(tail(lp,10),20)))
-      sublp <- tail(lp,45)
+      sublp <- tail(lp,20)
       lpdif <- diff(c(max(head(sublp,5)),max(tail(sublp,5))))
       if(oldlpdif > lpdif) gmemory <- oldgmemory
       proposal = gmemory*2-oldgmemory
       oldgmemory <- gmemory
       gmemory <- min(gmemmax, max(0, proposal + runif(1,-.025,.05)))
-      if(gmemory < .95) gmemory <- gmemory + .01
+      if(gmemory < .95) gmemory <- gmemory + .02
     }
     
     if(i > 31 && i %% 30 == 0) {
@@ -318,11 +281,11 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubjects=NA,ndatapoints=NA,plot=FA
     step[step < minparchange] <- minparchange
     
     if(i > warmuplength && lp[i] < lp[i-1]) { #if worsening, update gradient faster
-      step[signdif]=step[signdif]*lproughnesstarget
+      step[signdif]=step[signdif]*.5#lproughnesstarget
       # step = step * lproughnesstarget
       if(lp[i] < lp[i-10]) gmemory <- gmemory * .995
       # step=step*.5
-      gsmooth[signdif]= gsmooth[signdif]*gmemory2 + (1-gmemory2) * g[signdif] #increase influence of gradient at inflections
+      gsmooth[signdif]= gsmooth[signdif]*gmemory2^2 + (1-gmemory2^2) * g[signdif] #increase influence of gradient at inflections
       # gsmooth[signdif]= gsmooth[signdif]*.5 + .5 * g[signdif] #increase influence of gradient at inflections
     }
     
@@ -353,8 +316,6 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubjects=NA,ndatapoints=NA,plot=FA
         # gsmoothsqrt=sign(gsmooth) * sqrt(abs(gsmooth))
         # plot(gsmoothsqrt,ylim=c(-max(abs(gsmoothsqrt)),max(abs(gsmoothsqrt))))
         # plot(gsmooth,ylim=c(-max(abs(gsmooth)),max(abs(gsmooth))))
-        # plot((1-bfgsweight2)*delta,bfgsdelta, xlim=range(c((1-bfgsweight2)*delta,bfgsdelta)),
-        #   ylim=range(c((1-bfgsweight2)*delta,bfgsdelta)))
         
       }
       Sys.sleep(.03)

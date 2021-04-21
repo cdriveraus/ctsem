@@ -66,13 +66,13 @@ ctStanContinuousPars <- function(fit,
   dimnames(out$DIFFUSIONcov)=list(ln,ln)
   dimnames(out$DIFFUSION)=list(ln,ln)
   dimnames(out$T0cov)=list(ln,ln)
-  dimnames(out$asymDIFFUSION)=list(ln,ln)
+  dimnames(out$asymDIFFUSIONcov)=list(ln,ln)
   rownames(out$CINT)=ln
   rownames(out$MANIFESTMEANS)=mn
   rownames(out$T0MEANS)=ln
   
   dimnames(out$T0VAR)=list(ln,ln)
-  dimnames(out$asymDIFFUSION)=list(ln,ln)
+  dimnames(out$asymDIFFUSIONcov)=list(ln,ln)
   dimnames(out$LAMBDA)=list(mn,ln)
 
   
@@ -89,7 +89,6 @@ ctStanContinuousPars <- function(fit,
   }
 
   out$MANIFESTVAR <- NULL ; 
-  names(out)[names(out) %in% 'asymDIFFUSION'] <- 'asymDIFFUSIONcov'
   
   
   return(out)

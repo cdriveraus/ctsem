@@ -377,10 +377,13 @@ ctCheckFit <- function(fit,
   aggfunc=mean,aggregate=FALSE,
   groupbysplit=FALSE, byNA=TRUE,lag=0,
   smooth=TRUE, k=4,breaks=4,entropy=FALSE,reg=FALSE,verbose=0, indlines=30){
+  
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
   covORcor <- function(m){
     if(corr) return(cov2cor(m)) else return(m)
   }
+  
+  if(lagcovplot) covplot<-TRUE
 
   DataSource <-Sample<-Lag <- Row <- Sig. <- Sig <- NULL
   dat <- ctStanFitMelt(fit = fit,maxsamples = nsamples)

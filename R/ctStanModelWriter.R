@@ -426,7 +426,7 @@ ctStanMatricesList <- function(unsafe=FALSE){
   base <- c(PARS=10, T0MEANS=1,LAMBDA=2,DRIFT=3,DIFFUSION=4,MANIFESTVAR=5,MANIFESTMEANS=6, CINT=7,
     T0VAR=8,TDPREDEFFECT=9)
   jacobian = c(JAx=52,Jtd=53,Jy=54) #J0=51,
-  asymptotic = c(asymCINT=21,asymDIFFUSION=22)
+  asymptotic = c(asymCINT=21,asymDIFFUSIONcov=22)
   extra <- c(DIFFUSIONcov=31,MANIFESTcov=32,T0cov=33)
   all <- c(base,jacobian,asymptotic, extra)
   mn <- list(base=base, jacobian=jacobian, asymptotic=asymptotic, extra=extra,all=all)
@@ -610,7 +610,7 @@ ctStanModelMatrices <-function(ctm){
   })
   
   #special matrix adjustments
-  matrixdims[mats$all[names(mats$all ) == 'asymDIFFUSION'],] <- 
+  matrixdims[mats$all[names(mats$all ) == 'asymDIFFUSIONcov'],] <- 
     matrixdims[mats$all[names(mats$all ) == 'DIFFUSIONcov'],] <- 
     matrixdims[mats$all[names(mats$all ) == 'DIFFUSION'],]
   matrixdims[mats$all[names(mats$all ) == 'asymCINT'],] <- 
@@ -938,13 +938,13 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,simplify=TRUE){
   //dynamic system matrices
   ',subjectparaminit(pop=FALSE,smats=TRUE),'
   
-  asymDIFFUSION = rep_matrix(0,nlatent,nlatent); //in case of derrindices need to init
+  asymDIFFUSIONcov = rep_matrix(0,nlatent,nlatent); //in case of derrindices need to init
   DIFFUSIONcov = rep_matrix(0,nlatent,nlatent);
 
-  for(si in 0:max(subject)){
+  for(si in 0:(dokalman ? max(subject) : 0)){
   for(rowi in 1:ndatapoints){
     if( (rowi==1 && si==0) ||
-      (dokalman && dokalmanrows[rowi] && subject[rowi]==si) ){ //if doing this row for this subject
+      (dokalmanrows[rowi] && subject[rowi]==si) ){ //if doing this row for this subject
     
     int full = (dosmoother==1 || si ==0);
     int o[full ? nmanifest : nobs_y[rowi]]; //which obs are not missing in this row
@@ -1078,10 +1078,10 @@ if(verbose > 1) print ("below t0 row ", rowi);
                 } else eJAx[1:nlatent, 1:nlatent] = discreteDRIFT;
                                
                 if(si==0 || statedep[4]||statedep[52]|| (T0check==1 && (whenmat[4,5] || whenmat[3,5]))){ //if first pass, state dependent, or individually varying drift / diffusion
-                  asymDIFFUSION[derrind,derrind] = ksolve(JAx[derrind,derrind], DIFFUSIONcov[derrind,derrind],verbose);
+                  asymDIFFUSIONcov[derrind,derrind] = ksolve(JAx[derrind,derrind], DIFFUSIONcov[derrind,derrind],verbose);
                 }
-                discreteDIFFUSION[derrind,derrind] =  asymDIFFUSION[derrind,derrind] - 
-                  quad_form_sym( asymDIFFUSION[derrind,derrind], eJAx[derrind,derrind]\' );
+                discreteDIFFUSION[derrind,derrind] =  asymDIFFUSIONcov[derrind,derrind] - 
+                  quad_form_sym( asymDIFFUSIONcov[derrind,derrind], eJAx[derrind,derrind]\' );
               }
             }
             
@@ -1215,7 +1215,7 @@ if(verbose > 1){
             "  DRIFT =", DRIFT, " DIFFUSION =", DIFFUSION, 
             " CINT =", CINT, "  discreteCINT = ", discreteCINT, "  MANIFESTcov ", (MANIFESTcov), "  MANIFESTMEANS ", MANIFESTMEANS, 
             "  T0cov", T0cov,  " T0MEANS ", T0MEANS, "LAMBDA = ", LAMBDA, "  Jy = ",Jy,
-            " discreteDRIFT = ", discreteDRIFT, "  discreteDIFFUSION ", discreteDIFFUSION, "  asymDIFFUSION ", asymDIFFUSION, 
+            " discreteDRIFT = ", discreteDRIFT, "  discreteDIFFUSION ", discreteDIFFUSION, "  asymDIFFUSIONcov ", asymDIFFUSIONcov, 
             " DIFFUSIONcov = ", DIFFUSIONcov,
             " eJAx = ", eJAx,
             "  rawpopsd ", rawpopsd,  "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
@@ -1265,7 +1265,7 @@ if(verbose > 1){
     if(si==0 || //on either pop pars only
     (  (sum(whenmat[3,])+sum(whenmat[4,])+statedep[3]+statedep[4]) > 0 && savesubjectmatrices) ){ // or for each subject
   
-      asymDIFFUSION[ derrind, derrind ] = 
+      asymDIFFUSIONcov[ derrind, derrind ] = 
         to_matrix( (add_diag( -sqkron_prod(JAx[ derrind, derrind ], JAx[ derrind, derrind ]),1)) \\  
           to_vector(DIFFUSIONcov[ derrind, derrind ]), ndiffusion, ndiffusion);
     }
@@ -1359,7 +1359,7 @@ subjectparaminit<- function(popmats=FALSE,smats=TRUE,matrices=c(mats$base,31, 32
   return(out)
 }
 
-collectsubmats <- function(popmats=FALSE,matrices=c(mats$base,31, 32,33,21,22)){ #'DIFFUSIONcov','MANIFESTcov','asymDIFFUSION','asymCINT'
+collectsubmats <- function(popmats=FALSE,matrices=c(mats$base,31, 32,33,21,22)){ #'DIFFUSIONcov','MANIFESTcov','asymDIFFUSIONcov','asymCINT'
   ma <- ctStanMatricesList()$all
   out<-''
   for(mn in matrices){
@@ -1419,7 +1419,7 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
   matrix sdcovsqrt2cov(matrix mat, int choleskymats){ //covariance from cholesky or unconstrained cor sq root
     if(choleskymats< 1) {
       //if(choleskymats== -1){
-        return(tcrossprod(diag_pre_multiply(diagonal(mat),constraincorsqrt(mat,choleskymats))));
+        return(multiply_lower_tri_self_transpose(diag_pre_multiply(diagonal(mat),constraincorsqrt(mat,choleskymats))));
       //} else {
       //  return(quad_form_diag(constraincorsqrt(mat,choleskymats),diagonal(mat)));
       //}
@@ -1755,7 +1755,7 @@ transformed parameters{
 
 ',if(!gendata) paste0('
   real ll = 0;
-  vector[ndatapoints] llrow = rep_vector(0,ndatapoints);
+  vector[dokalman ? ndatapoints : 1] llrow = rep_vector(0,ndatapoints);
   matrix[nlatentpop,nlatentpop] etacova[3,savescores ? ndatapoints : 0];
   matrix[nmanifest,nmanifest] ycova[3,savescores ? ndatapoints : 0];
   vector[nlatentpop] etaa[3,savescores ? ndatapoints : 0];
@@ -1805,7 +1805,7 @@ transformed parameters{
     }
     //if(choleskymats==0) rawpopcorr = constraincorsqrt(rawpopcovbase,choleskymats);
     //if(choleskymats== -1) 
-    rawpopcorr = tcrossprod( constraincorsqrt(rawpopcovbase,choleskymats));
+    rawpopcorr = multiply_lower_tri_self_transpose( constraincorsqrt(rawpopcovbase,choleskymats));
     rawpopcov = makesym(quad_form_diag(rawpopcorr, rawpopsd +1e-8),verbose,1);
     rawpopcovchol = cholesky_decompose(rawpopcov); 
   }//end indvarying par setup

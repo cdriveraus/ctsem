@@ -1,4 +1,12 @@
 ctsem news:
+
+21/4/2021
+#### 3.4.3 ####
+- Changed optimization scheme, first BFGS, then stochastic gradient descent.
+- Fixed ctStanTIpredEffects function, much faster
+- Altered correlation matrix approach -- better optimization / sampling 
+  behaviour, priors can differ by index though.
+
 10/2/2021
 #### 3.4.2 ####
 - ctStanDiscretePars temporal dependence plots work for discrete time also

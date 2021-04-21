@@ -11,11 +11,11 @@ if(1==1){
       on.exit(add = TRUE,expr = setwd(oldwd))
       dir.create(file.path(oldwd,folder))
       setwd(file.path(oldwd,folder))
-
+      
       mp <- options()$max.print
       on.exit(expr = options(max.print=mp),add=TRUE)
       options(max.print=99999)
-
+      
       
       ydat=standatatolong(sf$standata,origstructure = TRUE,ctm=sf$ctstanmodelbase)
       
@@ -164,8 +164,12 @@ if(1==1){
       if(sf$standata$ntipred > 0 || sf$standata$nindvarying > 0){
         
         sp=ctStanSubjectPars(sf,pointest=FALSE,cores=cores,nsamples = nsamples)
-        tip <- array(rep(sf$standata$tipredsdata,each=dim(sp)[[1]]),dim=c(dim(sp)[1:2],ncol(sf$standata$tipredsdata)))
-        spti=array(c(sp, tip), dim = c(dim(sp)[1], dim(sp)[2], dim(sp)[3]+dim(tip)[3]))
+        
+        if(sf$standata$ntipred > 0){
+          tip <- array(rep(sf$standata$tipredsdata,each=dim(sp)[[1]]),dim=c(dim(sp)[1:2],ncol(sf$standata$tipredsdata)))
+          spti=array(c(sp, tip), dim = c(dim(sp)[1], dim(sp)[2], dim(sp)[3]+dim(tip)[3]))
+        } else spti <- sp
+        
         dn=dimnames(sp)
         dn[[3]] <- c(dn[[3]],sf$ctstanmodelbase$TIpredNames)
         dimnames(spti) <- dn
@@ -190,8 +194,11 @@ if(1==1){
         
         #now do similar to point estimate
         spp=ctStanSubjectPars(sf,pointest=TRUE,cores=1)
+        
+        if(sf$standata$ntipred > 0){
         tip <- array(rep(sf$standata$tipredsdata,each=dim(spp)[[1]]),dim=c(dim(spp)[1:2],ncol(sf$standata$tipredsdata)))
         spti=array(c(spp, tip), dim = c(dim(spp)[1], dim(spp)[2], dim(spp)[3]+dim(tip)[3]))
+        } else spti <- spp
         dn=dimnames(spp)
         dn[[3]] <- c(dn[[3]],sf$ctstanmodelbase$TIpredNames)
         dimnames(spti) <- dn
@@ -222,7 +229,7 @@ if(1==1){
       print(cm,digits=3)
       sink()
       
-    
+      
       if(sf$ctstanmodelbase$n.TIpred > 0){
         
         if(sf$ctstanmodelbase$n.TIpred > 1){
@@ -281,8 +288,27 @@ if(1==1){
       }
       dev.off()
       
+      #tipred effect plots
+      try({
+        if(sf$ctstanmodelbase$n.TIpred >0){
+          pdf('TIpred_effects.pdf')
+          for(tip in 1:sf$ctstanmodelbase$n.TIpred){
+            tieffects <- ctStanTIpredeffects(sf,nsamples = 200,whichTIpreds = tip,timeinterval = 1)
+            tieffects$y <- tieffects$y[, #drop unchanging parameters
+              apply(tieffects$y[,,2,drop=FALSE],2,function(x) length(unique(x))>1),,drop=FALSE]
+            matnames <- unique(unlist(sapply(colnames(tieffects$y),function(x) gsub(pattern = '\\[.*','',x))))
+            for(m in matnames){
+              tmp <- tieffects
+              tmp$y <- tmp$y[,grep(paste0('^',m,'\\['),colnames(tmp$y) ),,drop=FALSE]
+              print(ctPlotArrayGG(input = tmp))
+            }
+          }
+          dev.off()
+        }
+      })
       
-        ### CHECKING MODELFIT ###
+      
+      ### CHECKING MODELFIT ###
       # Checkfit function 
       pdf(paste0(name,'_checkfit.pdf'))
       by=sm$timeName
@@ -318,3 +344,4 @@ if(1==1){
   }
   
 }
+

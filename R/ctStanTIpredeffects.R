@@ -131,27 +131,22 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
     rawpopmeans <- rawpopmeans[rep(1:nrow(rawpopmeans),each=nsubjects),] #match rows of rawpopmeans and raweffect
     raweffect <- matrix(raweffect,ncol=dim(raweffect)[4])
     
-    #adjust for speed
-    fit$standata$savescores <- 0L
-    fit$standata$gendata <- 0L
-    fit$standata$dokalman <- 0L
-    fit$standata$popcovn <- 2L
-    sf <- stan_reinitsf(fit$stanmodel,data=fit$standata)
-    # whichmatrices <- sapply(whichpars,function(x) {
-    #   x=gsub(pattern = '[','',x,fixed=TRUE)
-    #   x=gsub(pattern = ']','',x,fixed=TRUE)
-    #   x=gsub(pattern = '[0-9]','',x)
-    #   x=gsub(pattern = ',','',x,fixed=TRUE)
-    # })
     rawsamps=ctStanRawSamples(fit)
     parmeans=apply(rawsamps,2,mean)
+    newsamples <- matrix(sapply(1:nrow(rawpopmeans), function(x) { #for each param vector
+      c(raweffect[x,],parmeans[-1:-ncol(raweffect)])
+    }),byrow=TRUE,nrow=nrow(rawpopmeans))
+
+    
+    newpars <- stan_constrainsamples(sm = fit$stanmodel,standata = fit$standata,
+      samples = newsamples,cores = 1,savescores = FALSE,
+      savesubjectmatrices = FALSE,dokalman = FALSE,pcovn = 2,quiet = FALSE)
+
     parmatlists<-lapply(1:nrow(rawpopmeans), function(x) { #for each param vector
-      out = ctStanParMatrices(fit,  c(raweffect[x,],parmeans[-1:-ncol(raweffect)]), timeinterval=timeinterval,sf = sf)#rawpopmeans[x,] +
+      out = ctStanParMatrices(fit,  newpars, parindex=x, timeinterval=timeinterval)
       return(out)
     })
-    # 
-    
-    # parmatlists <- apply(e$rawpopmeans,1,ctStanParMatrices,model=object,timeinterval=timeinterval)
+
     parmatarray <- array(unlist(parmatlists),dim=c(length(unlist(parmatlists[[1]])),length(parmatlists)))
     parmats <- matrix(0,nrow=0,ncol=2)
     counter=0
@@ -174,10 +169,10 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
     #remove certain parmatrices lines
     removeindices <- which(rownames(parmats) == 'MANIFESTVAR' & parmats[,'Row'] != parmats[,'Col'])
     
-    removeindices <- c(removeindices,which((rownames(parmats) %in% c('MANIFESTVAR','T0VAR','DIFFUSION','dtDIFFUSION','asymDIFFUSION',
-      'T0VARcor','DIFFUSIONcor','dtDIFFUSIONcor','asymDIFFUSIONcor') &  parmats[,'Row'] < parmats[,'Col'])))
+    removeindices <- c(removeindices,which((rownames(parmats) %in% c('MANIFESTcov','T0cov','DIFFUSIONcov','dtDIFFUSIONcov','asymDIFFUSIONcov',
+      'T0cor','DIFFUSIONcor','dtDIFFUSIONcor','asymDIFFUSIONcor') &  parmats[,'Row'] < parmats[,'Col'])))
     
-    removeindices <- c(removeindices,which((rownames(parmats) %in% c('T0VARcor','DIFFUSIONcor','dtDIFFUSIONcor','asymDIFFUSIONcor') & 
+    removeindices <- c(removeindices,which((rownames(parmats) %in% c('T0cor','DIFFUSIONcor','dtDIFFUSIONcor','asymDIFFUSIONcor') & 
         parmats[,'Row'] == parmats[,'Col'])))
     
     parmatarray <- parmatarray[-removeindices,]
