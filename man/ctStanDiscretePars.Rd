@@ -35,7 +35,7 @@ this change is correlated according to the DIFFUSION matrix. If FALSE, outputs e
 an independent 1 unit change on each process, giving the expected response under a 1 unit experimental impulse.}
 
 \item{standardise}{Logical. If TRUE, output is standardised according to expected total within subject variance, given by the 
-asymDIFFUSION matrix.}
+asymDIFFUSIONcov matrix.}
 
 \item{cov}{Logical. If TRUE, covariances are returned instead of regression coefficients.}
 

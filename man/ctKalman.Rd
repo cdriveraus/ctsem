@@ -11,7 +11,7 @@ ctKalman(
   subjects = 1,
   removeObs = FALSE,
   plot = FALSE,
-  realid = FALSE,
+  realid = TRUE,
   ...
 )
 }

@@ -1755,7 +1755,7 @@ transformed parameters{
 
 ',if(!gendata) paste0('
   real ll = 0;
-  vector[dokalman ? ndatapoints : 1] llrow = rep_vector(0,ndatapoints);
+  vector[dokalman ? ndatapoints : 1] llrow = rep_vector(0,dokalman ? ndatapoints : 1);
   matrix[nlatentpop,nlatentpop] etacova[3,savescores ? ndatapoints : 0];
   matrix[nmanifest,nmanifest] ycova[3,savescores ? ndatapoints : 0];
   vector[nlatentpop] etaa[3,savescores ? ndatapoints : 0];

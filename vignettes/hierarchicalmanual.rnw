@@ -1,4 +1,3 @@
-% !TeX document-id = {6a991034-a9bb-46a3-84c7-f076f4787178}
 \documentclass[11pt]{article}
 %\VignetteIndexEntry{Introduction to Hierarchical Continuous Time Dynamic Modelling with ctsem}
 %\VignetteKeyword{SEM, time series, panel data, dynamic models}

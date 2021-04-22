@@ -3,7 +3,7 @@ logit = function(x) log(x)-log((1-x))
 sgd <- function(init,fitfunc,whichignore=c(),nsubjects=NA,ndatapoints=NA,plot=FALSE,
   stepbase=1e-3,gmeminit=ifelse(is.na(startnrows),.9,.8),gmemmax=.95, maxparchange = .50,
   startnrows=NA,roughnessmemory=.9,groughnesstarget=.4,roughnesschangemulti = 2,
-  lproughnesstarget=ifelse(parsets==1,.4,.2),parsets=1,
+  lproughnesstarget=ifelse(parsets==1,.2,.2),parsets=1,
   gsmoothroughnesstarget=.05,
   warmuplength=20,nstore=max(100,length(init)),
   minparchange=1e-800,maxiter=50000,
@@ -90,11 +90,11 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubjects=NA,ndatapoints=NA,plot=FA
         newpars = pars + delta 
 
         
-        # #random jumping
-        # if(i %% 10 ==0){
-        #   s <- which(rbinom(n = length(pars),size = 1,prob= .8)==1)
-        #   newpars[s] <- newpars[s] + rnorm(length(s),0,abs(delta[s])*1)
-        # }
+        #random jumping
+        if(i %% 10 ==0){
+          s <- which(rbinom(n = length(pars),size = 1,prob= .8)==1)
+          newpars[s] <- newpars[s] + rnorm(length(s),0,abs(delta[s])*1)
+        }
 
       }
       
@@ -135,15 +135,15 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubjects=NA,ndatapoints=NA,plot=FA
       if(lpg > -1e99 &&       #regular check
           class(lpg) !='try-error' && 
           !is.nan(lpg[1]) && 
-          all(!is.nan(attributes(lpg)$gradient)) &&
-          (i < warmuplength || ( exp(lpg[1] - lp[i-1]) > runif(1,0,1))) #sd(tail(lp,100))*8+
+          all(!is.nan(attributes(lpg)$gradient)) #&&
+          # (i < warmuplength || ( exp(lpg[1] - lp[i-1]) > runif(1,0,1))) #sd(tail(lp,100))*8+
       ){
         accepted <- TRUE
       } 
       else {
         gsmooth= gsmooth*gmemory2^2 + (1-gmemory2^2) * g #increase influence of last gradient at inflections
         step <- step * .5
-        deltaold <- deltaold * .5
+        deltaold <- deltaold * 0
         # if(i > 1) lproughness = lproughness * (roughnessmemory2) + (1-(roughnessmemory2)) ##exp(-1/(i-bestiter+.1))
         # pars=bestpars
       }
@@ -152,7 +152,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubjects=NA,ndatapoints=NA,plot=FA
           i < warmuplength && i > 1 && lpg[1] < lp[1]-5) {
         accepted <- FALSE
         step = step * .1
-        deltaold <- deltaold * .1
+        deltaold <- deltaold * 0
         pars=bestpars
         
       }

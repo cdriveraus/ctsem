@@ -19,8 +19,8 @@
 #' predictor has been included, then you can specify both the linear and squared version. 
 #' The x axis of the plot (if generated) will be based off the first indexed predictor. To 
 #' check what predictors are in the model, run \code{fit$ctstanmodel$TIpredNames}.
-#' @param parmatrices Logical. If TRUE (default), the \code{\link{ctStanParMatrices}} function
-#' is used to return an expanded range of possible matrices of interest.
+#' @param parmatrices Logical. If TRUE (default), system matrices rather than specific parameters
+#' are referenced -- e.g. 'DRIFT' instead of a parameter name like drift12.
 #' @param whichpars if parmatrices==TRUE, character vector specifying which matrices, and potentially which 
 #' indices of the matrices, to plot. c('dtDRIFT[2,1]', 'DRIFT') would output for row 2 and column 1 of 
 #' the discrete time drift matrix, as well as all indices of the continuous time drift matrix. 

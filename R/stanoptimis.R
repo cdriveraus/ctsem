@@ -438,12 +438,9 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
     require(data.table)
     }
     smf <- stan_reinitsf(sm,standata)
-    out=data.table::data.table()
-      try({out[,paste0('d',1:length(x)):= lapply(1:length(x),function(li){
+    out=data.table::as.data.table(lapply(1:length(x),function(li){
         unlist(rstan::constrain_pars(smf, upars=samples[x[li],]))
-        })
-        ]
-        })
+        }))
   
     if(unlist) return(out) else return(rstan::constrain_pars(smf, upars=samples[1,,drop=FALSE]))
   }"))
@@ -467,14 +464,13 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
   smf <- stan_reinitsf(sm,standata)
   skel= rstan::constrain_pars(smf, upars=samples[1,,drop=FALSE]) 
   #transformedpars[[1]]$skel
-  # browser()
-  transformedpars <- as.data.table(transformedpars)
+  transformedpars <- t(data.table::as.data.table(transformedpars))
   
   #fix this hack
   # if(!is.null(transformedpars[[1]][[1]]$popmeans)) transformedpars=unlist(transformedpars,recursive = FALSE)
   # est1=transformedpars[[1]]
   # missingsamps <-apply(transformedpars, 2,function(x) any(is.na(x)))
-  nasampscount <- ncol(transformedpars)-nrow(samples) #sum(missingsamps) 
+  nasampscount <- nrow(transformedpars)-nrow(samples) #sum(missingsamps) 
   
   
   if(nasampscount > 0) {
@@ -491,7 +487,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
   
   
   # flesh=matrix(unlist(transformedpars),byrow=TRUE, nrow=nresamples)
-  transformedpars=tostanarray(flesh=t(as.matrix(transformedpars)), skeleton = skel)
+  transformedpars=tostanarray(flesh=transformedpars, skeleton = skel)
   
   return(transformedpars)
 }
@@ -523,13 +519,15 @@ tostanarray <- function(flesh, skeleton){
 #below code avoids spurious cran check -- assigning to global environment only on created parallel workers.
 clctsemFunc <- function(envvars){
   a=Sys.time()
+    g = paste0('gl','obalenv()') #avoid spurious cran check -- assigning to global environment only on created parallel workers.
   clctsem <- parallel::makeCluster(envvars$cores,type='PSOCK',outfile='',methods=FALSE,user=NULL,useXDR=FALSE)
-  parallel::clusterExport(clctsem,varlist='envvars',envir = environment())
+  parallel::clusterExport(clctsem,varlist=c('g','envvars'),envir = environment())
+
 
   parallel::clusterEvalQ(clctsem,
-    assign('sm',value = envvars$sm,envir = eval(parse(text=paste0('gl','obalenv()')))))
+    assign('sm',value = envvars$sm,envir = eval(parse(text=g))))
   
-  print(Sys.time()-a)
+  # print(Sys.time()-a)
   return(clctsem)
 }
 

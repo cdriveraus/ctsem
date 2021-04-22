@@ -13,7 +13,7 @@ ctCheckFit(
   residuals = FALSE,
   by = fit$ctstanmodelbase$timeName,
   TIpredNames = fit$ctstanmodelbase$TIpredNames,
-  nsamples = 10,
+  nsamples = 30,
   covplot = FALSE,
   corr = TRUE,
   combinevars = NA,
