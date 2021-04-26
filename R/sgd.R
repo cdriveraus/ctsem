@@ -203,7 +203,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubjects=NA,ndatapoints=NA,plot=FA
     step = (step + roughnesschangemulti*(
       step* .6*lproughnessmod
       # + step* .05*gsmoothroughnessmod #* min(sqrt(deltasmoothsq),1)
-      + step* .6*groughnessmod# * min(sqrt(deltasmoothsq),1)
+      + step* .5*groughnessmod# * min(sqrt(deltasmoothsq),1)
       # + step * rmsstepmod
     ))
     

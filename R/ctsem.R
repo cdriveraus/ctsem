@@ -119,7 +119,7 @@ ctDocs <- function(){
 ctFit <- function(...){
   if('ctsemOMX' %in% utils::installed.packages()[,1]){
     if(!'ctsemOMX' %in% (.packages())){
-      message('for original ctsem functionality using OpenMx, please load: library(ctsemOMX)')
+      message('for original ctsem functionality using OpenMx, please use: library(ctsemOMX)')
     } else eval(parse(text=paste0('ctsemOMX::ctFit(...)'))) #one time hack due to package splitting, forgive my soul...
   } else message('For original ctsem functionality using OpenMx, install.packages("ctsemOMX")')  
 }

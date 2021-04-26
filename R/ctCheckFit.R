@@ -192,7 +192,7 @@ ctSaturatedFit <- function(fit,conditional=FALSE,reg=0, hmc=FALSE,
   
   covf$test <- 1-pchisq(
     covf$ll-fit$stanfit$transformedparsfull$ll,
-    df=covf$npars)
+    df=covf$npars-length(fit$stanfit$rawest))
   covf$aicdiff = 
     (2*length(fit$stanfit$rawest) - 2*fit$stanfit$transformedparsfull$ll) -
     (2 * covf$npars - 2* covf$ll)
