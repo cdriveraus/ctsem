@@ -294,7 +294,7 @@ When \verb|optimize=FALSE|, Stan's Hamiltonian Monte Carlo sampler is used. Depe
 <<fitting,include=FALSE,cache=TRUE>>=
 if(w32chk()){
 suppressWarnings(fit<-ctStanFit(datalong = ctstantestdat, 
-  ctstanmodel = model,optimize=TRUE,
+  ctstanmodel = model,optimize=TRUE,cores=1,
   # savescores=TRUE,savesubjectmatrices = TRUE, 
   nopriors=FALSE))
 }
