@@ -70,42 +70,8 @@
 Manuel C. Voelkle \\ Humboldt University Berlin \\ Max Planck Institute for Human Development}
 \title{Introduction to Hierarchical Continuous Time Dynamic Modelling With ctsem}
 
-%% for pretty printing and a nice popsummary also set:
-%\Plainauthor{Charles C. Driver, Manuel C. Voelkle} %% comma-separated
-%\Plaintitle{Introduction to Hierarchical Continuous Time Dynamic Modelling with ctsem} %% without formatting
-%\Shorttitle{Introduction to Hierarchical Continuous Time Dynamic Modelling with ctsem} %% a short title (if necessary)
-
-
-
-%\Keywords{hierarchical time series, Bayesian, longitudinal, panel data, state space, structural equation, continuous time, stochastic differential equation, dynamic models, Kalman filter, R}
-%\Plainkeywords{hierarchical time series, longitudinal, panel data, state space, structural equation, continuous time, stochastic differential equation, dynamic models, Kalman filter, R} %% without formatting
-
-%\Address{
-%Charles Driver\\
-%Center for Lifespan Psychology\\
-%Max Planck Institute for Human Development\\
-%Lentzeallee 94, 14195 Berlin\\
-%Telephone: +49 30 82406-367
-%E-mail: \email{driver@mpib-berlin.mpg.de}\\
-%URL: \url{http://www.mpib-berlin.mpg.de/en/staff/charles-driver}
-%}
-%% It is also possible to add a telephone and fax number
-%% before the e-mail in the following format:
-%% Telephone: +43/512/507-7103
-%% Fax: +43/512/507-2851
-
-%% for those who use Sweave please include the following line (with % symbols):
-%% need no \usepackage{Sweave.sty}
-
-%% end of declarations %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
 
 \newcommand\numberthis{\addtocounter{equation}{1}\tag{\theequation}} %for adding numbers to specific lines
-
-% Set lowercase greek letters to non-italicised
-% \usepackage{Sweavel}
-% \usepackage{Sweave}
-
 
 
 \begin{document}
@@ -137,7 +103,7 @@ g_legend<-function(a.gplot){
 @
 
 \section{Overview}
-In this work, we describe the basic usage of the hierarchical formulation of the ctsem software for continuous-time dynamic modelling in R \citep{rcoreteam2014r}. This formulation was described in detail in \citet{driver2018hierarchicala}, though since then the scope has been expanded to include nonlinear models (such as parameters that vary over time), and optimization with optional importance sampling. The latter enhancement means that the approach described herein largely supersedes the initial mixed effects approach based upon OpenMx \citep{neale2016openmx}, as estimation options now include maximum likelihood, maximum a posteriori, and fully Bayesian with the Stan software's \citep{carpenter2017stan, standevelopmentteam_rstan} Hamiltonian Monte Carlo sampler. The major use case for the OpenMx based wide formulation is many subjects, few time points, and most or all time intervals consistent across subjects.  This older structural equation formulation is discussed in detail in \citet{driver2017continuous}. Although some of the R commands and functionality are now different in the newer Stan based format, the general concepts discussed in the original work are still relevant background. 
+In this work, we describe the basic usage of the hierarchical formulation of the ctsem software for continuous-time dynamic modelling in R \citep{rcoreteam2014r}. This formulation was described in detail in \citet{driver2018hierarchicala}, though since then the scope has been expanded to include regular (i.e. not Bayesian) maximum likelihood estimation, nonlinear models (such as parameters that vary over time), and optimization with optional importance sampling. The latter enhancement means that the approach described herein largely supersedes the initial mixed effects approach based upon OpenMx \citep{neale2016openmx}, as estimation options now include maximum likelihood, maximum a posteriori, and fully Bayesian with the Stan software's \citep{carpenter2017stan, standevelopmentteam_rstan} Hamiltonian Monte Carlo sampler. The major use case for the OpenMx based wide formulation is many subjects, few time points, and most or all time intervals consistent across subjects.  This older structural equation formulation is discussed in detail in \citet{driver2017continuous}. Although some of the R commands and functionality are now different in the newer Stan based format, the general concepts discussed in the original work are still relevant background. 
 
 ctsem allows for specification and fitting of a range of continuous and discrete time models to study dynamics and processes within a subject, as well as individual differences in these dynamics. The models may include multiple indicators (dynamic factor analysis), multiple, interrelated, potentially higher order processes, and both time dependent and time independent covariates. Classic longitudinal models like latent growth curve and latent change score models can be formulated as special cases. This approach offers some advantages over what could be considered more typical dynamic modelling approaches, such as vector autoregressive models or latent change score models. Two important advantages relate to the handling of time, and the treatment of individual differences. Time information is explicitly incorporated into the model, such that predictions from one measurement to another relate exactly to the amount of time that has passed, rather than simply the number of measurements, as is typical in discrete-time models. When the time interval between all measurements are equal, there is an exact relationship between the discrete and continuous time form (in many cases), but when they differ, the continuous-time form is typically more appropriate. For more on continuous-time models, see \citet{singer1993continuoustime, oud2000continuous, voelkle2013continuous}. With respect to individual differences, the hierarchical Bayesian approach allows for individual variation across all model parameters, while making full use of the data from all subjects to enhance estimation. This has the result that reasonable individual specific parameter estimates may be obtained with far fewer time points than would be required by single-subject time-series type modelling approaches. For more on hierarchical Bayesian models, see \citet{gelman2014bayesian}.
 
@@ -362,9 +328,9 @@ ctStanContinuousPars(fit,calcfunc = quantile, calcfuncargs = list(probs=.975))
 The plot function outputs a sequence of plots, all generated by specific functions. The name of the specific function appears in a message in the R console, checking the help for each specific function and running them separately will allow more customization of plots. Depending on model specifications and fitting, not all plots are available. Some of the plots, such as the trace, density, and interval, are generated by the relevant rstan function and are hopefully self explanatory. The plots specific to the hierarchical continuous time dynamic model are as follows:
 
 <<plots1,echo=2,fig.width=5, fig.height=3,fig.cap='Discrete-time cross-effect dynamics of the estimated system for a range of time intervals, with 95\\% credible intervals.'>>=
-if(w32chk()){
+if(w32chk()){try({
 ctStanDiscretePars(fit, plot=TRUE, indices = 'CR')
-}
+})}
 @
 
 Figure \ref{fig:plots1} shows the dynamic regression coefficients (between latent states at different time points) that are implied by the model for particular time intervals, as well as the uncertainty (default is 95\% credible interval) of these coefficients. In this case the estimates are of the cross regression effects, obtained by sampling from all subjects data, but specific subjects, as well as specific indices of the effects (e.g., indices = 'AR' or indices = rbind(c(2,1))' can be specified. The mapping of subject id to the internal sequential integer representation can be found via \verb|fit$setup$idmap| . 
