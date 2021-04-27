@@ -1,7 +1,9 @@
 
 <!-- README.md is generated from README.Rmd. Please edit that file -->
 
-<!-- [![Build Status](https://travis-ci.org/cdriveraus/ctsem.svg?branch=master)](https://travis-ci.org/cdriveraus/ctsem) -->
+<!-- badges: start -->
+[![R-CMD-check](https://github.com/cdriveraus/ctsem/workflows/R-CMD-check/badge.svg)](https://github.com/cdriveraus/ctsem/actions)
+<!-- badges: end -->
 
 **See the NEWS file for recent updates\!**
 
