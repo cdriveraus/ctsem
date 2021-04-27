@@ -70,7 +70,7 @@ jobs:
         run: |
           remotes::install_deps(dependencies = TRUE)
           remotes::install_cran("rcmdcheck")
-          tinytex::tlmgr_install(pkgs = c("biblatex-apa","biblatex","babel-english","csquotes","preprint","mathtools","caption"))
+          tinytex::tlmgr_install(pkgs = c("biblatex-apa","biblatex","babel-english","csquotes","preprint","mathtools","caption","biber"))
         shell: Rscript {0}
 
       - name: Check

@@ -682,7 +682,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     
     if(is.na(sampleinit[1])){
       
-      storedPars <- c()#matrix(0,nrow=npars,ncol=0)
+      storedPars <- as.numeric(c())#matrix(0,nrow=npars,ncol=0)
       gradstore <- rep(0,npars)
       gradmem <- .9
       storedLp <- c()
