@@ -74,10 +74,10 @@ jobs:
         shell: Rscript {0}
         
       - name: Preinstall ctsem
-      if: runner.os == 'Windows'
-       run:  |
-         devtools::install(reload=FALSE,quick=TRUE,build=TRUE,dependencies=FALSE,build_vignettes=FALSE)
-      shell: Rscript {0}
+        if: runner.os == 'Windows'
+        run: |
+          devtools::install(reload=FALSE,quick=TRUE,build=TRUE,dependencies=FALSE,build_vignettes=FALSE)
+        shell: Rscript {0}
 
       - name: Check      
         env:
