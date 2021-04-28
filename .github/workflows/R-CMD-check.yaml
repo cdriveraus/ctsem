@@ -73,13 +73,13 @@ jobs:
           tinytex::tlmgr_install(pkgs = c("biblatex-apa","biblatex","babel-english","csquotes","preprint","mathtools","caption","biber"))
         shell: Rscript {0}
         
-      -name: Preinstall ctsem
+      - name: Preinstall ctsem
       if: runner.os == 'Windows'
        run:  |
          devtools::install(reload=FALSE,quick=TRUE,build=TRUE,dependencies=FALSE,build_vignettes=FALSE)
       shell: Rscript {0}
 
-      - name: Check
+      - name: Check      
         env:
           _R_CHECK_CRAN_INCOMING_REMOTE_: false
         run: |
