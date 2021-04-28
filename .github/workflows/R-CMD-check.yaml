@@ -45,7 +45,7 @@ jobs:
 
       - name: Query dependencies
         run: |
-          install.packages('remotes')
+          install.packages('remotes','devtools')
           saveRDS(remotes::dev_package_deps(dependencies = TRUE), ".github/depends.Rds", version = 2)
           writeLines(sprintf("R-%i.%i", getRversion()$major, getRversion()$minor), ".github/R-version")
         shell: Rscript {0}
@@ -72,6 +72,12 @@ jobs:
           remotes::install_cran("rcmdcheck")
           tinytex::tlmgr_install(pkgs = c("biblatex-apa","biblatex","babel-english","csquotes","preprint","mathtools","caption","biber"))
         shell: Rscript {0}
+        
+      -name: Preinstall ctsem
+      if: runner.os == 'Windows'
+       run:  |
+         devtools::install(reload=FALSE,quick=TRUE,build=TRUE,dependencies=FALSE,build_vignettes=FALSE)
+      shell: Rscript {0}
 
       - name: Check
         env:
