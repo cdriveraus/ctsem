@@ -518,6 +518,7 @@ parsetup <- parsetup <- function(){
 
 makeClusterID <- function(cores){
   benv <- new.env(parent=globalenv())
+  benv$cores <- cores
   benv$cl <- parallel::makeCluster(spec = cores,type = "PSOCK",useXDR=FALSE,outfile='',user=NULL)
   eval(parse(text="parallel::parLapply(cl = cl,X = 1:cores,function(x) assign('nodeid',x,env=globalenv()))"),envir = benv)
   return(benv$cl)
@@ -731,10 +732,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       }
       
       if(optimcores==1) target = singletarget #we use this for importance sampling
-      # browser()
+      
       if(cores > 1){ #for parallelised computation after fitting, if only single subject
         clctsem <- makeClusterID(cores)
         on.exit(try({parallel::stopCluster(clctsem)},silent=TRUE),add=TRUE)
+        
         clusterIDexport(clctsem,c('cores', 'sm','parlptext'))
         clusterIDeval(clctsem,c(
           'eval(parse(text=parlptext))'
