@@ -7,6 +7,7 @@
 ctFitMultiModel(
   mlist,
   datalong,
+  prefix = "",
   type = "stanct",
   cores = 2,
   summaryOutput = TRUE,

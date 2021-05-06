@@ -468,5 +468,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     }
   }
   
+  standata$recompile <- as.integer(ctm$recompile)
+  
   return(standata)
 }

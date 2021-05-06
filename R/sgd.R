@@ -8,7 +8,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubjects=NA,ndatapoints=NA,plot=FA
   warmuplength=20,nstore=max(100,length(init)),
   minparchange=1e-800,maxiter=50000,
   nconvergeiter=30, 
-  itertol=1e-3, deltatol=1e-5, parsdtol=1e-3){
+  itertol=1e-3, deltatol=1e-5, parsdtol=NA){
   
   initfull=init #including ignored params start values
   if(length(whichignore)>0) init=init[-whichignore]
@@ -311,19 +311,10 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubjects=NA,ndatapoints=NA,plot=FA
         
         abline(h=lproughnesstarget,lty=1,col='green')
         abline(h=lproughness, col='green',lty=2)
-        
-        
-        # gsmoothsqrt=sign(gsmooth) * sqrt(abs(gsmooth))
-        # plot(gsmoothsqrt,ylim=c(-max(abs(gsmoothsqrt)),max(abs(gsmoothsqrt))))
-        # plot(gsmooth,ylim=c(-max(abs(gsmooth)),max(abs(gsmooth))))
+
         
       }
       Sys.sleep(.03)
-      
-      
-      # matplot(cbind(signdifmod,gsmoothroughnessmod),col=c('black','blue'),pch=1,ylim=c(-1,1))
-      # points(groughnessmod,col='red')
-      # abline(h=lproughnessmod,col='green')
       
       message(paste0('Iter = ',i, '   LP = ', (lp[i]),'   grad = ', sqrt(sum(g^2)), '   gmem = ', gmemory,'  lprt = ',lproughnesstarget))
     }
@@ -335,7 +326,9 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubjects=NA,ndatapoints=NA,plot=FA
       lpdiff=max(tail(lp,nconvergeiter)) - min(tail(lp,nconvergeiter))
       if(lpdiff < itertol & lpdiff > 0) converged <- TRUE
       if(abs(max(diff(tail(lp,nconvergeiter)))) < deltatol) converged <- TRUE
-      if(max(apply(parstore,1,sd)) < parsdtol) converged <- TRUE
+      if(!is.na(parsdtol)){
+        if(max(apply(parstore,1,sd)) < parsdtol) converged <- TRUE
+      }
       # if(converged) browser()
     }
   }

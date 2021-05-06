@@ -221,33 +221,31 @@ ctAddSamples <- function(fit,nsamples,cores=2){
 
 parallelStanSetup <- function(cl, standata,split=TRUE){
   cores <- length(cl)
-  if(split) stansubjectindices <- split(unique(standata$subject),sort(unique(standata$subject) %% min(standata$nsubjects,cores)))
-  if(!split) stansubjectindices <- lapply(1:cores,function(x) unique(standata$subject))
-  if(!split && length(stansubjectindices) < cores){
-    for(i in (length(stansubjectindices)+1):cores){
-      stansubjectindices[[i]] <- NA
+  if(split) stanindices <- split(unique(standata$subject),sort(unique(standata$subject) %% min(standata$nsubjects,cores)))
+  if(!split) stanindices <- lapply(1:cores,function(x) unique(standata$subject))
+  if(!split && length(stanindices) < cores){
+    for(i in (length(stanindices)+1):cores){
+      stanindices[[i]] <- NA
     }
   }
   
-  parallel::clusterExport(cl,c('standata'),envir = environment())
+  clusterIDexport(cl,c('standata','stanindices'))
   
-  parallel::clusterApply(cl,stansubjectindices,function(subindices) {
-    library(ctsem)
-    if(length(subindices) < length(unique(standata$subject))) standata <- standatact_specificsubjects(standata,subindices)
-    if(!1 %in% subindices) standata$nopriors <- 1L
-    if(FALSE) sm=99
-    g = eval(parse(text=paste0('gl','obalenv()'))) #avoid spurious cran check -- assigning to global environment only on created parallel workers.
-    assign('smf',stan_reinitsf(sm,standata),pos = g)
-    
-    rm(standata)
-    # rm(sm,env=g)
-    # env <- new.env(parent=globalenv())
-    # environment(parlp) <- env
-    # assign('parlp',parlp,pos = g)
-    
-    NULL
-  })
-  NULL
+  commands <- list(
+    "if(length(stanindices[[nodeid]]) < length(unique(standata$subject))) standata <- ctsem:::standatact_specificsubjects(standata,stanindices[[nodeid]])",
+    "if(!1 %in% stanindices[[nodeid]]) standata$nopriors <- 1L",
+    "if(FALSE) sm=99",
+    "g = eval(parse(text=paste0('gl','obalenv()')))", #avoid spurious cran check -- assigning to global environment only on created parallel workers.
+    "assign('smf',ctsem:::stan_reinitsf(sm,standata),pos = g)",
+    "rm(standata)",
+    "NULL"
+  )
+  # rm(sm,env=g)
+  # env <- new.env(parent=globalenv())
+  # environment(parlp) <- env
+  # assign('parlp',parlp,pos = g)
+  
+  clusterIDeval(cl = cl,commands = commands)
 }
 
 
@@ -290,7 +288,14 @@ flexsapply <- function(cl, X, fn,cores=1){
 }
 
 flexlapply <- function(cl, X, fn,cores=1,...){
-  if(cores > 1) parallel::parLapply(cl,X,fn,...) else lapply(X, fn,...)
+  if(cores > 1) {
+    nodeindices <- split(1:length(X), sort((1:length(X))%%cores))
+    nodeindices<-nodeindices[1:cores]
+    clusterIDexport(cl,c('nodeindices'))
+    out <-unlist(clusterIDeval(cl,paste0('lapply(nodeindices[[nodeid]],',fn,')')),recursive = FALSE)
+    # out2<-parallel::parLapply(cl,X,tparfunc,...) 
+    } else out <- lapply(X, eval(parse(text=fn),env=parent.frame()),...)
+    return(out)
 }
 
 
@@ -421,7 +426,6 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
     dokalman <- TRUE
     warning('savesubjectmatrices = TRUE requires dokalman=TRUE also!')
   }
-# browser()
   
   standata$savescores <- as.integer(savescores)
   standata$dokalman <- as.integer(dokalman)
@@ -431,62 +435,53 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
   if(!quiet) message('Computing quantities for ', nrow(samples),' samples...')
   if(nrow(samples)==1) cores <- 1
   
-  #create via eval due to parallel communication rubbish
-  eval(parse(text="tparfunc <- function(x, parallel = TRUE,unlist=TRUE){ 
-    if(parallel){
-    require(ctsem)
-    require(data.table)
-    }
-    smf <- stan_reinitsf(sm,standata)
-    out=data.table::as.data.table(lapply(1:length(x),function(li){
-        unlist(rstan::constrain_pars(smf, upars=samples[x[li],]))
-        }))
-  
-    if(unlist) return(out) else return(rstan::constrain_pars(smf, upars=samples[1,,drop=FALSE]))
-  }"))
-  
-  env <- new.env(parent = globalenv(),hash = TRUE)
-  environment(tparfunc) <- env
-  env$standata <- standata
-  env$sm <- sm
-  env$samples <- samples
   if(cores > 1 && all(is.na(cl))){
-    cl <- parallel::makeCluster(cores, type = "PSOCK",useXDR=FALSE,outfile='',user=NULL)
+    cl <- makeClusterID(cores)
     on.exit(try(parallel::stopCluster(cl),silent=TRUE),add = TRUE)
   }
   
-  if(cores > 1) parallel::clusterExport(cl, 'standata',environment())
+  if(cores > 1) {
+    clusterIDexport(cl, c('sm','standata','samples'))
+    clusterIDeval(cl,list(
+      'require(data.table)',
+      'smf <- ctsem::stan_reinitsf(sm,standata)',
+      'tparfunc <- function(x){ 
+         data.table::as.data.table(lapply(1:length(x),function(li){
+        unlist(rstan::constrain_pars(smf, upars=samples[x[li],]))
+        }))
+  }'))
+    
+  }
+  
+  if(cores ==1){
+    smf <- stan_reinitsf(sm,standata) 
+    tparfunc <- function(x){ 
+      data.table::as.data.table(lapply(1:length(x),function(li){
+        unlist(rstan::constrain_pars(smf, upars=samples[x[li],]))
+      }))
+    }
+  }
   
   transformedpars <- try(flexlapply(cl, 
     split(1:nrow(samples), sort((1:nrow(samples))%%cores)),
-    tparfunc,cores=cores,parallel=cores > 1))
+    'tparfunc',cores=cores))
   
-  smf <- stan_reinitsf(sm,standata)
+  if(cores >1) smf <- stan_reinitsf(sm,standata) #needs to be after, weird parallel stuff...
   skel= rstan::constrain_pars(smf, upars=samples[1,,drop=FALSE]) 
-  #transformedpars[[1]]$skel
   transformedpars <- t(data.table::as.data.table(transformedpars))
   
-  #fix this hack
-  # if(!is.null(transformedpars[[1]][[1]]$popmeans)) transformedpars=unlist(transformedpars,recursive = FALSE)
-  # est1=transformedpars[[1]]
-  # missingsamps <-apply(transformedpars, 2,function(x) any(is.na(x)))
-  nasampscount <- nrow(transformedpars)-nrow(samples) #sum(missingsamps) 
+  nasampscount <- nrow(transformedpars)-nrow(samples) 
   
   
   if(nasampscount > 0) {
-    # a=lapply(transformedpars[[1]],function(x) any(is.na(x)));a[unlist(a)]
     message(paste0(nasampscount,' NAs generated during final sampling of ', nrow(samples), '. Biased estimates may result -- consider importance sampling, respecification, or full HMC sampling'))
   }
   if(nasampscount < nrow(samples)){ 
-    # transformedpars <- transformedpars[,!missingsamps,drop=FALSE] #unneeded with data.table approach
     nresamples <- nrow(samples) - nasampscount
   } else{
     message('All samples contain NAs -- returning anyway')
     nresamples <- nrow(samples) 
   }
-  
-  
-  # flesh=matrix(unlist(transformedpars),byrow=TRUE, nrow=nresamples)
   transformedpars=tostanarray(flesh=transformedpars, skeleton = skel)
   
   return(transformedpars)
@@ -516,31 +511,33 @@ tostanarray <- function(flesh, skeleton){
 }
 
 
-#below code avoids spurious cran check -- assigning to global environment only on created parallel workers.
-clctsemFunc <- function(envvars){
-  a=Sys.time()
-    g = paste0('gl','obalenv()') #avoid spurious cran check -- assigning to global environment only on created parallel workers.
-  clctsem <- parallel::makeCluster(envvars$cores,type='PSOCK',outfile='',methods=FALSE,user=NULL,useXDR=FALSE)
-  parallel::clusterExport(clctsem,varlist=c('g','envvars'),envir = environment())
-
-
-  parallel::clusterEvalQ(clctsem,
-    assign('sm',value = envvars$sm,envir = eval(parse(text=g))))
-  
-  # print(Sys.time()-a)
-  return(clctsem)
-}
-
-# env <- new.env(parent=globalenv())
-# eval(parse(text=paste0(clctsemFunc)),envir=env)
-
-
 parsetup <- parsetup <- function(){
   cl <- parallel::makeCluster(12,type='PSOCK')
   parallel::clusterCall(cl,function() 1+1)
 }
 
+makeClusterID <- function(cores){
+  benv <- new.env(parent=globalenv())
+  benv$cl <- parallel::makeCluster(spec = cores,type = "PSOCK",useXDR=FALSE,outfile='',user=NULL)
+  eval(parse(text="parallel::parLapply(cl = cl,X = 1:cores,function(x) assign('nodeid',x,env=globalenv()))"),envir = benv)
+  return(benv$cl)
+}
 
+clusterIDexport <- function(cl, vars){
+  benv <- new.env(parent=globalenv())
+  benv$cl <- cl
+  lookframe <- parent.frame()
+  tmp<-lapply(vars,function(x) benv[[x]] <<- eval(parse(text=x),env=lookframe))
+  eval(parallel::clusterExport(benv$cl,vars,benv),envir=globalenv())
+}
+
+clusterIDeval <- function(cl,commands){
+  benv <- new.env(parent=globalenv())
+  benv$cl <- cl
+  clusterIDexport(cl,'commands')
+  unlist(eval(parallel::clusterEvalQ(cl = benv$cl, 
+    lapply(commands,function(x) eval(parse(text=x),envir = globalenv()))),env=globalenv()),recursive = FALSE)
+}
 
 
 #' Optimize / importance sample a stan or ctStan model.
@@ -696,8 +693,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           # if(readline() %in% c('Y','y')) returnValue(storedPars)
         }},add=TRUE)
       
-      #create parlp via eval because of parallel communication weirdness
-      eval(parse(text=
+      #create as text because of parallel communication weirdness
+      parlptext <-
           'parlp <- function(parm){
           out <- try(rstan::log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
 
@@ -713,7 +710,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           rnorm(length(attributes(out)$gradient[is.nan(attributes(out)$gradient)]),0,100)
           
         return(out)
-        }'))
+        }'
       
       singletarget<-function(parm,gradnoise=TRUE) {
         a=Sys.time()
@@ -734,43 +731,37 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       }
       
       if(optimcores==1) target = singletarget #we use this for importance sampling
+      # browser()
       if(cores > 1){ #for parallelised computation after fitting, if only single subject
-        # smfilepath <- file.path(tempdir(),'smfile.rds')
-        # saveRDS(sm,file=smfilepath,compress=FALSE)
-        # sm<-readRDS(file = smfilepath)
-        
-        envvars <- new.env(parent=emptyenv())
-        # envvars$smfilepath <- smfilepath
-        envvars$cores <- cores
-        envvars$sm <- sm
-        # browser()
-        clctsem <- clctsemFunc(envvars)
-        
-        
+        clctsem <- makeClusterID(cores)
         on.exit(try({parallel::stopCluster(clctsem)},silent=TRUE),add=TRUE)
-       
-        # on.exit(add = TRUE, expr={unlink(smfilepath)})
-        
-        # parallel::clusterExport(clctsem,varlist = 'sm',envir = environment())
+        clusterIDexport(clctsem,c('cores', 'sm','parlptext'))
+        clusterIDeval(clctsem,c(
+          'eval(parse(text=parlptext))'
+        ))
       }
+      
       if(optimcores > 1) {
-        
-        #crazy trickery to avoid parallel communication pauses
-        env <- new.env(parent = globalenv(),hash = TRUE)
-        environment(parlp) <- env
+        # #crazy trickery to avoid parallel communication pauses
+        # env <- new.env(parent = globalenv(),hash = TRUE)
+        # environment(parlp) <- env
+        # clusterIDexport(cl = clctsem,vars='parlp')
         iter <-0
+        
         target<-function(parm,gradnoise=TRUE) {
           # whichframe <- which(sapply(lapply(sys.frames(),ls),function(x){ 'clctsem' %in% x}))
           a=Sys.time()
+          # browser()
+          clusterIDexport(clctsem,'parm')
           if('list' %in% class(parm)){
-            out2 <- parallel::parLapply(cl = clctsem,X = parm,parlp)
+            out2 <- parallel::clusterEvalQ(cl = clctsem,parlp(parm))
             bestset <- which(unlist(out2)==max(unlist(out2)))
             bestset <- bestset[1]
             parm <- parm[[bestset]]
             out <- out2[[bestset]]
             attributes(out)$bestset <- bestset
           } else {
-            out2<- parallel::clusterCall(clctsem,parlp,parm)
+            out2<-  parallel::clusterEvalQ(cl = clctsem,parlp(parm))
             error <- FALSE
             tmp<-sapply(1:length(out2),function(x) {
               if(!is.null(attributes(out2[[x]])$err)){
