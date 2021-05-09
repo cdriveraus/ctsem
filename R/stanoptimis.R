@@ -240,10 +240,6 @@ parallelStanSetup <- function(cl, standata,split=TRUE){
     "rm(standata)",
     "NULL"
   )
-  # rm(sm,env=g)
-  # env <- new.env(parent=globalenv())
-  # environment(parlp) <- env
-  # assign('parlp',parlp,pos = g)
   
   clusterIDeval(cl = cl,commands = commands)
 }
@@ -292,10 +288,11 @@ flexlapply <- function(cl, X, fn,cores=1,...){
     nodeindices <- split(1:length(X), sort((1:length(X))%%cores))
     nodeindices<-nodeindices[1:cores]
     clusterIDexport(cl,c('nodeindices'))
+    
     out <-unlist(clusterIDeval(cl,paste0('lapply(nodeindices[[nodeid]],',fn,')')),recursive = FALSE)
     # out2<-parallel::parLapply(cl,X,tparfunc,...) 
-    } else out <- lapply(X, eval(parse(text=fn),env=parent.frame()),...)
-    return(out)
+  } else out <- lapply(X, eval(parse(text=fn),env=parent.frame()),...)
+  return(out)
 }
 
 
@@ -696,7 +693,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       #create as text because of parallel communication weirdness
       parlptext <-
-          'parlp <- function(parm){
+        'parlp <- function(parm){
           out <- try(rstan::log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
 
         
@@ -731,7 +728,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         return(out)
       }
       
-      if(optimcores==1) target = singletarget #we use this for importance sampling
+      if(optimcores==1) {
+        target = singletarget #we use this for importance sampling
+        eval(parse(text=parlptext))
+      }
       
       if(cores > 1){ #for parallelised computation after fitting, if only single subject
         clctsem <- makeClusterID(cores)
@@ -1302,7 +1302,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           xmax <- which.max(x)
           log1p(sum(exp(x[-xmax] - x[xmax]))) + x[xmax]
         }
-        
+    
         if(cores > 1)  parallelStanSetup(cl=clctsem,standata,split=FALSE)
         targetsamples <- finishsamples * finishmultiply
         # message('Adaptive importance sampling, loop:')
@@ -1314,6 +1314,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           } else {
             delta[[j]]=colMeans(resamples)
             mcovl[[j]] = as.matrix(Matrix::nearPD(cov(resamples))$mat) #+diag(1e-12,ncol(samples))
+            
+            for(iteri in 1:j){
+              if(iteri==1) mcov=mcovl[[j]] else mcov = mcov*.5+mcovl[[j]]*.5 #smoothed covariance estimator
+              if(iteri==1) mu=delta[[j]] else mu = mu*.5+delta[[j]]*.5 #smoothed means estimator
+            }
             samples <- rbind(samples,mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = tdf))
           }
           
@@ -1334,16 +1339,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           # }
           
           # 
+          # clusterIDexport(clctsem, c('isloopsize'))
           target_dens[[j]] <- unlist(flexlapply(cl = clctsem, 
-            split(1:isloopsize, sort((1:isloopsize)%%cores)), 
-            function(x){
-              # future(globals=c('x','samples','isloopsize'),expr={
-              eval(parse(text='apply(tail(samples,isloopsize)[x,],1,parlp)'))
-            },cores=cores))
-          # 
-          
-          
-          
+            X = 1:isloopsize, 
+            fn = "function(x){parlp(samples[x,])}",cores=cores))
+        
           
           target_dens[[j]][is.na(target_dens[[j]])] <- -1e200
           if(all(target_dens[[j]] < -1e100)) stop('Could not sample from optimum! Try reparamaterizing?')
@@ -1358,7 +1358,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           }
           targetvec <- unlist(target_dens)
           
-          target_dens2 <- target_dens[[j]] -max(target_dens[[j]],na.rm=TRUE) + max(prop_dens) #adjustment to get in decent range, doesnt change to prob
+          target_dens2 <- target_dens[[j]] #-max(target_dens[[j]],na.rm=TRUE) + max(prop_dens) #adjustment to get in decent range, doesnt change to prob
           target_dens2[!is.finite(target_dens[[j]])] <- -1e30
           weighted_dens <- target_dens2 - prop_dens
           # psis_dens <- psis(matrix(target_dens2,ncol=length(target_dens2)),r_eff=NA)
@@ -1384,20 +1384,17 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           sample_prob[is.na(sample_prob)] <- 0
           
           
-          #check max resample probability and drop earlier samples if too high
-          dropuntil <- ceiling(max(c(0,which(sample_prob > (chancethreshold / isloopsize)) / isloopsize),na.rm=TRUE))*isloopsize
-          if((isloopsize - dropuntil) > isloopsize) dropuntil <- dropuntil -isloopsize
-          if(nrow(samples)-dropuntil < isloopsize*2) dropuntil <- nrow(samples)-isloopsize*2
-          # if(length(unique(resample_i)) < 200) dropuntil <- 0 
-          if(nrow(samples) <= isloopsize *2) dropuntil <- 0
-          
-          if(dropuntil > 0){
-            # 
-            # resamples <- resamples[-(0:dropuntil),,drop=FALSE]
-            targetvec <- targetvec[-(0:dropuntil)]
-            sample_prob <- sample_prob[-(0:dropuntil)]
-            samples <- samples[-(0:dropuntil),,drop=FALSE]
-          }
+          # #check max resample probability and drop earlier samples if too high
+          # dropuntil <- ceiling(max(c(0,which(sample_prob > (chancethreshold / isloopsize)) / isloopsize),na.rm=TRUE))*isloopsize
+          # if((isloopsize - dropuntil) > isloopsize) dropuntil <- dropuntil -isloopsize
+          # if(nrow(samples)-dropuntil < isloopsize*2) dropuntil <- nrow(samples)-isloopsize*2
+          # if(nrow(samples) <= isloopsize *2) dropuntil <- 0
+          # 
+          # if(dropuntil > 0){
+          #   targetvec <- targetvec[-(0:dropuntil)]
+          #   sample_prob <- sample_prob[-(0:dropuntil)]
+          #   samples <- samples[-(0:dropuntil),,drop=FALSE]
+          # }
           
           
           # if(plot&runif(1,0,1) > .98){

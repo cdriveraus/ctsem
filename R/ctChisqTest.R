@@ -28,6 +28,6 @@ ctChisqTest<-function(fit1,fit2){
     npars=c(length(fit1$stanfit$rawest),
       length(fit2$stanfit$rawest))
   )
-  d <- d[order(d$ll),]
+  d <- d[order(d$npars,decreasing = FALSE),]
   stats::pchisq(q =  diff(2*d$ll),df = diff(d$npars),lower.tail = FALSE)
 }
