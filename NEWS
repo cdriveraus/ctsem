@@ -1,5 +1,8 @@
 ctsem news:
 
+- Added ctFitMultiModel function to simplify processing of multiple models.
+- Added ctChisqTest function for simplified likelihood ratio tests between models.
+
 21/4/2021
 #### 3.4.3 ####
 - Changed optimization scheme, first BFGS, then stochastic gradient descent.

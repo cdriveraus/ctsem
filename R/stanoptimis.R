@@ -232,6 +232,8 @@ parallelStanSetup <- function(cl, standata,split=TRUE){
   clusterIDexport(cl,c('standata','stanindices'))
   
   commands <- list(
+    'load(file=smfile)',
+    'eval(parse(text=parlptext))',
     "if(length(stanindices[[nodeid]]) < length(unique(standata$subject))) standata <- ctsem:::standatact_specificsubjects(standata,stanindices[[nodeid]])",
     "if(!1 %in% stanindices[[nodeid]]) standata$nopriors <- 1L",
     "if(FALSE) sm=99",
@@ -284,6 +286,10 @@ flexsapply <- function(cl, X, fn,cores=1){
 }
 
 flexlapply <- function(cl, X, fn,cores=1,...){
+  if(cores > 1) parallel::parLapply(cl,X,fn,...) else lapply(X, fn,...)
+}
+
+flexlapplytext <- function(cl, X, fn,cores=1,...){
   if(cores > 1) {
     nodeindices <- split(1:length(X), sort((1:length(X))%%cores))
     nodeindices<-nodeindices[1:cores]
@@ -459,7 +465,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
     }
   }
   
-  transformedpars <- try(flexlapply(cl, 
+  transformedpars <- try(flexlapplytext(cl, 
     split(1:nrow(samples), sort((1:nrow(samples))%%cores)),
     'tparfunc',cores=cores))
   
@@ -734,13 +740,17 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       }
       
       if(cores > 1){ #for parallelised computation after fitting, if only single subject
+        
         clctsem <- makeClusterID(cores)
         on.exit(try({parallel::stopCluster(clctsem)},silent=TRUE),add=TRUE)
+        smfile <- file.path(tempdir(),paste0('ctsem_sm_',ceiling(runif(1,0,100000)),'.rda'))
+        save(sm,file=smfile)
+        on.exit(add = TRUE,expr = {file.remove(smfile)})
         
-        clusterIDexport(clctsem,c('cores', 'sm','parlptext'))
-        clusterIDeval(clctsem,c(
-          'eval(parse(text=parlptext))'
-        ))
+        system.time(clusterIDexport(clctsem,c('cores','parlptext','smfile')))
+        # clusterIDeval(clctsem,c(
+        #   'eval(parse(text=parlptext))'
+        # ))
       }
       
       if(optimcores > 1) {
@@ -1302,7 +1312,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           xmax <- which.max(x)
           log1p(sum(exp(x[-xmax] - x[xmax]))) + x[xmax]
         }
-    
+        
         if(cores > 1)  parallelStanSetup(cl=clctsem,standata,split=FALSE)
         targetsamples <- finishsamples * finishmultiply
         # message('Adaptive importance sampling, loop:')
@@ -1340,10 +1350,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           
           # 
           # clusterIDexport(clctsem, c('isloopsize'))
-          target_dens[[j]] <- unlist(flexlapply(cl = clctsem, 
+          target_dens[[j]] <- unlist(flexlapplytext(cl = clctsem, 
             X = 1:isloopsize, 
             fn = "function(x){parlp(samples[x,])}",cores=cores))
-        
+          
           
           target_dens[[j]][is.na(target_dens[[j]])] <- -1e200
           if(all(target_dens[[j]] < -1e100)) stop('Could not sample from optimum! Try reparamaterizing?')

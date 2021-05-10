@@ -49,7 +49,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     for(m in c('cm','dm')){
       argslist <- list(
-        ml=list(datalong = dat,ctstanmodel = get(m),optimize=TRUE,   verbose=0,nopriors=F)
+        ml=list(datalong = dat,ctstanmodel = get(m),optimize=TRUE,   verbose=0)
       )
       
       
@@ -70,7 +70,8 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       i <- which(apply(ctpars,1,function(x) all(x[1:3] == dtpars[ri,1:3])))
       if(length(i)>0){
         for(ti in 4:5){
-          # print(c(ctpars[i,ti],dtpars[ri,ti]))
+          print(paste0(ctpars[i,'matrix'],' ', ctpars[i,'row'],',', ctpars[i,'col'],' ',
+            colnames(ctpars)[ti],' = ', ctpars[i,ti],', ',dtpars[ri,ti]))
           testthat::expect_equivalent(ctpars[i,ti],dtpars[ri,ti],tol=ifelse(ti==4,1e-1,1e-1))
         }
       }
