@@ -2,7 +2,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
 
 library(ctsem)
 library(testthat)
-set.seed(1)
+set.seed(2)
 
 context("tipredcheck")
 
