@@ -24,13 +24,20 @@ and variance, and any time independent covariate effects, as a prior.
 Version 3 allows for state dependencies in the parameter specification
 (i.e. time varying parameters).
 
-The curent manual is at
+The current manual is at
 <https://cran.r-project.org/package=ctsem/vignettes/hierarchicalmanual.pdf>.
 The original ctsem is documented in a JSS publication (Driver, Voelkle,
 Oud, 2017), and in R vignette form at
 <https://cran.r-project.org/package=ctsemOMX/vignettes/ctsem.pdf>,
 however these OpenMx based functions have been split off into a sub
-package, ctsemOMX.
+package, ctsemOMX. For most use cases the newer formulation (with Kalman
+filtering coded in Stan) is faster, more robust, and more flexible, and
+both default to maximum likelihood. For cases with many subjects, few
+time points, and no individual differences in timing, ctsemOMX may be
+faster.
+
+For questions (or to see past answers) please use
+<https://github.com/cdriveraus/ctsem/discussions>
 
 To cite ctsem please use the citation(“ctsem”) command in R.
 

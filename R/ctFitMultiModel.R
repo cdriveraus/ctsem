@@ -7,6 +7,7 @@
 #' @param summaryOutput Generate summary output into ctSummary folder? Large datasets can take some time. 
 #' @param saveFits Save fit objects to working directory?
 #' @param summaryArgs Additional arguments for ctSummarise.
+#' @param prefix prefix for output files.
 #' @param ... Additional arguments for ctStanFit. 
 #'
 #' @return List containing a named list of model fits ($fits), and a compare object ($compare)
