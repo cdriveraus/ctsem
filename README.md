@@ -41,15 +41,7 @@ For questions (or to see past answers) please use
 
 To cite ctsem please use the citation(“ctsem”) command in R.
 
-### To install the github version and (if needed) configure your system, from a fresh R session run:
-
-``` r
-source(file = 'https://github.com/cdriveraus/ctsem/raw/master/installctsem.R')
-```
-
-### If there are problems with the above script, you can try:
-
-Manually install rstan, Rtools
+### To install the github version, first install rstan and Rtools, then from a fresh R session:
 
 ``` r
 remotes::install_github('cdriveraus/ctsem', INSTALL_opts = "--no-multiarch", dependencies = c("Depends", "Imports"))
@@ -70,11 +62,9 @@ above).
 Place this line in \~/.R/makevars.win , and if there are other lines,
 delete them:
 
-    CXX14FLAGS += -mtune=native -march=native -Wno-ignored-attributes -Wno-deprecated-declarations
+    CXX14FLAGS += -mtune=native -Wno-ignored-attributes -Wno-deprecated-declarations
 
 see  for details
-
-If makevars does not exist, re-run the install code above.
 
 In case of compile errors like `g++ not found`, ensure the devtools
 package is installed:
@@ -92,3 +82,115 @@ Sys.setenv(PATH = paste("C:/Rtools/bin", Sys.getenv("PATH"), sep=";"))
 Sys.setenv(PATH = paste("C:/Rtools/mingw_64/bin", Sys.getenv("PATH"), sep=";"))
 Sys.setenv(BINPREF = "C:/Rtools/mingw_$(WIN)/bin/")
 ```
+
+### Quick start – univariate panel data with covariate effects on parameters
+
+\#’ The basic long data structure. Diet, (our covariate) is a
+categorical variable so needs dummy / ‘one hot’ encoding.
+
+``` r
+head(ChickWeight) 
+```
+
+\#’ Setup dummy coding
+
+``` r
+library(data.table)
+library(mltools)
+chickdata <- one_hot(as.data.table(ChickWeight),cols = 'Diet')
+```
+
+\#’ Scaling of continuous variables makes for easier estimation and more
+sensible default priors (if used). Time intervals can also benefit
+
+``` r
+chickdata$weight <- scale(chickdata$weight) 
+head(chickdata) #now we have the four diet categories
+```
+
+\#’ Setup continuous time model – in this case we are estimating a
+regular first order autoregressive
+
+``` r
+library(ctsem)
+
+m <- ctModel(
+  LAMBDA=diag(1), #Factor loading matrix of latent processes on measurements, fixed to 1
+  type = 'stanct', #Could specify 'standt' here for discrete time.
+  tipredDefault = FALSE, #limit covariate effects on parameters to those explicitly specified
+  manifestNames='weight', #Observed measurements of the latent processes
+  latentNames='Lweight', #Names here simply make parameters and plots more interpretable
+  TIpredNames = paste0('Diet_',2:4), #Covariates, in this case one category needs to be baseline...
+  DRIFT='a11 | param', #normally self feedback (diagonal drift terms) are restricted to negative
+  MANIFESTMEANS=0, #For identification CINT is normally zero with this freely estimated
+  CINT='cint ||||Diet_2,Diet_3,Diet_4', #diet covariates specified in 5th 'slot' (four '|' separators)
+  time='Time',
+  id='Chick')
+```
+
+\#’ View model in pdf/ latex form
+
+``` r
+ctModelLatex(m)
+```
+
+\#’ Fit model to data – here using priors because Hessian problems are
+reported otherwise
+
+``` r
+f <- ctStanFit(chickdata,m,nopriors=FALSE) 
+```
+
+\#’ Summarise fit, view covariate effects – Diets 3 and 4 seem most
+obviously successful
+
+``` r
+s=summary(f)
+
+print(s$tipreds )
+```
+
+\#’ Predictions conditional on all earlier data
+
+``` r
+ctKalman(f,plot=TRUE,subjects=2:4,kalmanvec=c('yprior','ysmooth')) 
+```
+
+\#’ Predictions conditional only on covariates, showing 1 chick from
+each diet
+
+``` r
+ctKalman(f,plot=T, 
+  subjects=as.numeric(chickdata$Chick[!duplicated(ChickWeight$Diet)]),
+  removeObs = T,polygonalpha=0)
+```
+
+\#’ Plot temporal regression coefficients conditional on time interval –
+increases in this case\!
+
+``` r
+ctStanDiscretePars(f,plot=T) 
+```
+
+\#’ Other useful functions:
+
+\#’ Compare two fits: ctChisqTest()
+
+\#’ Fit and summarise / plot a list of models: ctFitMultiModel()
+
+\#’ Add samples to fit to increase estimate precision: ctAddSamples()
+
+\#’ Return dynamic system parameters in matrix forms:
+ctStanContinuousPars()
+
+\#’ Compute cross validation statistics: ctLOO()
+
+\#’ Plot time independent predictor (covariate effects on parameters):
+ctStanTIpredEffects()
+
+\#’ Get samples from the fitted object: ctExtract()
+
+\#’ In samples, pop\_DRIFT refers to the population drift matrix,
+subj\_DRIFT refers to the subject matrix. Subject matrices only computed
+for max likelihood / posterior mode by default, and found in the
+\(stanfit\)transformedparsfull object.
