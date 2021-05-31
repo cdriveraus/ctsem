@@ -62,7 +62,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
       if(length(i)>0){
         for(ti in 4:5){
           # print(c(ctpars[i,ti],dtpars[ri,ti]))
-        testthat::expect_equivalent(ctpars[i,ti],dtpars[ri,ti],tol=ifelse(ti==4,1e-2,1e-2))
+        testthat::expect_equivalent(ctpars[i,ti],dtpars[ri,ti],tol=ifelse(ti==4,1e-2,1e-1))
         }
       }
     }

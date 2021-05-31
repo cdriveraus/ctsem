@@ -13,6 +13,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
   itertol=1e-3, deltatol=1e-5, parrangetol=1e-4){
   
   if(nsubsets>1){
+    oldsubsetilp <- -Inf
     bestsubsetlp <- -Inf
     plot=plot*nsubsets
     worsecount = 0
@@ -25,7 +26,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
     maxiter=maxiter*nsubsets
     lproughnesstarget=.4#1/nsubsets + .05
     gsmoothroughnesstarget=.1
-    groughnesstarget=.3
+    groughnesstarget=.4
     roughnesschangemulti=.1 #0r .5?
     roughnessmemory=.9
     subsetorder=rep(1:nsubsets,each=subsetrepeats)
@@ -175,7 +176,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
           class(lpg) !='try-error' && 
           !is.nan(lpg[1]) && 
           all(!is.nan(attributes(lpg)$gradient)) &&
-          (nsubsets > 1 || i ==1 || lpg[1] > min(tail(lp,10)))  #no subset lp check
+          (nsubsets > 1 || i ==1 || lpg[1] > (min(tail(lp,20))-notacceptedcount))  #no subset lp check
         # (i < warmuplength || ( exp(lpg[1] - lp[i-1]) > runif(1,0,1))) #sd(tail(lp,100))*8+
       ){
         accepted <- TRUE
@@ -238,10 +239,13 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
           (1-(roughnessmemory2)) * as.numeric(lp[i-1] > (lp[i]))#because accepted here, also see non accepted version
       
       if(nsubsets > 1) lproughness = lproughness * (roughnessmemory2) + 
-          (1-(roughnessmemory2)) * as.numeric( (lp[i]-subsetlps[subseti]) > (lp[i-1]-subsetlps[subsetiold]))#because accepted here, also see non accepted version
+          (1-(roughnessmemory2)) * as.numeric( (lp[i]-subsetlps[subseti]) > (lp[i-1]-oldsubsetilp))#because accepted here, also see non accepted version
     }
     # if(i==101) browser()
-    if(nsubsets > 1) subsetlps[subsetorder[i]] <- lpg[1]
+    if(nsubsets > 1){
+      oldsubsetilp <- subsetlps[subseti]
+      subsetlps[subseti] <- lpg[1]
+    }
     
     
     
@@ -269,7 +273,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
     
     if(i > 1 && lp[i] >= max(head(lp,length(lp)-1))) {
       # step[!signdif] = step[!signdif] * 1.5 #sqrt(2-gmemory) #exp((1-gmemory)/8)
-      # step = step * 1.2
+      # step = step * 1.05
       if(i > warmuplength) {
         ##max/min par update extra
         parscore <- parscore * .98
@@ -340,7 +344,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
     # step[step < minparchange] <- minparchange
     
     if(nsubsets==1 && i > warmuplength && lp[i] < lp[i-1]) { #if worsening, update gradient faster
-      step[signdif]=step[signdif]*.5#lproughnesstarget
+      # step[signdif]=step[signdif]*.5#lproughnesstarget
       # step = step * lproughnesstarget
       if(lp[i] < lp[i-10]) gmemory <- gmemory * .995
       # step=step*.5

@@ -17,9 +17,9 @@ ctLabel<-function(matrixname, n.latent, n.manifest, n.TDpred, n.TIpred, Tpoints,
   if(matrixname=="TDPREDEFFECT") out <- matrix(paste0("td_",latentNames[1:n.latent],"_",rep(TDpredNames[1:n.TDpred],each=n.latent)),nrow=n.latent,ncol=n.TDpred)
   
   if(matrixname=="TDPREDMEANS") out <- matrix(paste0("mean_",rep(TDpredNames[1:n.TDpred],each=Tpoints),"T",0:(Tpoints-1)),ncol=1)
-   
+  
   if(matrixname=="TIPREDMEANS") out <- matrix(paste0("mean_",TIpredNames),ncol=1)
-
+  
   if(matrixname=="T0TDPREDCOV") out <- matrix(paste0(
     "T0TDPREDCOV_",
     latentNames[1:n.latent],
@@ -38,18 +38,17 @@ ctLabel<-function(matrixname, n.latent, n.manifest, n.TDpred, n.TIpred, Tpoints,
   
   
   if(matrixname=="TDPREDVAR")  {
-    
     out <- matrix(paste0(
-    rep(TDpredNames,each=Tpoints-1), #row predictor
-    "T", 
-    0:(Tpoints-1), #row time
-    "_", 
-    rep(TDpredNames,each=((Tpoints)*n.TDpred*(Tpoints-1))), #col predictor
-    "T", 
-    rep(0:(Tpoints-1),each=(Tpoints)*n.TDpred), #col time
-    "_cov"),
-    nrow=(n.TDpred*(Tpoints)), ncol=(n.TDpred*(Tpoints)))
-  
+      rep(TDpredNames,each=Tpoints), #row predictor
+      "T", 
+      0:(Tpoints-1), #row time
+      "_", 
+      rep(TDpredNames,each=((Tpoints)*n.TDpred*(Tpoints))), #col predictor
+      "T", 
+      rep(0:(Tpoints-1),each=(Tpoints)*n.TDpred), #col time
+      "_cov"),
+      nrow=(n.TDpred*(Tpoints)), ncol=(n.TDpred*(Tpoints)))
+    
     out[upper.tri(out)]<- 0 #ensure lower triangular
     
   }
@@ -58,11 +57,11 @@ ctLabel<-function(matrixname, n.latent, n.manifest, n.TDpred, n.TIpred, Tpoints,
   
   if(matrixname=="TIPREDVAR") {
     out <- matrix(paste0(
-    TIpredNames, 
-    "_", 
-    rep(TIpredNames,each=n.TIpred), 
-    "_cov"),
-    nrow=n.TIpred, ncol=n.TIpred)
+      TIpredNames, 
+      "_", 
+      rep(TIpredNames,each=n.TIpred), 
+      "_cov"),
+      nrow=n.TIpred, ncol=n.TIpred)
     
     out[upper.tri(out)]<- 0 #ensure lower triangular
   }
@@ -79,23 +78,23 @@ ctLabel<-function(matrixname, n.latent, n.manifest, n.TDpred, n.TIpred, Tpoints,
   
   
   
-
-
-
-if(matrixname=="TRAITTDPREDCOV"){
-  if(n.TDpred>0) {
-    TRAITTDPREDCOV<-matrix(paste0("traitTDcov_",latentNames[1:n.latent],"_",
-      rep(TDpredNames[1:n.TDpred],each=(Tpoints)*n.latent),
-      paste0("T",rep(0:(Tpoints-1),each=n.latent))),
-      nrow=n.latent,ncol=n.TDpred*(Tpoints))
-    out <-TRAITTDPREDCOV
-  }
-}  
-  
-
   
   
   
-
-return(out)
+  if(matrixname=="TRAITTDPREDCOV"){
+    if(n.TDpred>0) {
+      TRAITTDPREDCOV<-matrix(paste0("traitTDcov_",latentNames[1:n.latent],"_",
+        rep(TDpredNames[1:n.TDpred],each=(Tpoints)*n.latent),
+        paste0("T",rep(0:(Tpoints-1),each=n.latent))),
+        nrow=n.latent,ncol=n.TDpred*(Tpoints))
+      out <-TRAITTDPREDCOV
+    }
+  }  
+  
+  
+  
+  
+  
+  
+  return(out)
 }

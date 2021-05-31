@@ -3,7 +3,7 @@
 #' @param fit1 One of the fits to be compared (better fit is assumed as base for comparison)
 #' @param fit2 Second fit to be compared
 #'
-#' @return
+#' @return Numeric probability
 #' @export
 #'
 #' @examples

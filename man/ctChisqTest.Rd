@@ -12,7 +12,7 @@ ctChisqTest(fit1, fit2)
 \item{fit2}{Second fit to be compared}
 }
 \value{
-
+Numeric probability
 }
 \description{
 Chi Square test wrapper for ctStanFit objects.

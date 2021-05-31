@@ -54,7 +54,7 @@ ctLOO <- function(fit,folds=10,cores=2,parallelFolds=FALSE,
     sdat$dokalmanrows[-x] <- 1L
     e <- try(stanoptimis(standata = sdat,sm = smodel,init = init,
       # optimcontrol(list(stochastic=TRUE)),
-      estonly = TRUE,cores=ifelse(parallelFolds,1,cores),plot=10,verbose=0))
+      estonly = TRUE,cores=ifelse(parallelFolds,1,cores),plot=0,verbose=0))
     # 
     # if('try-error' %in% class(e) && init='fit')   e <- try(stanoptimis(standata = sdat,sm = smodel,
     #   init = 0,

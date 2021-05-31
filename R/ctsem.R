@@ -31,7 +31,8 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
   'WhichObs',
   'variable','Datasource','id','verbose','param',
   'manifest',
-  'Original','sysnoise','starts', 'obsNames'))
+  'Original','sysnoise','starts', 'obsNames',
+  'parlp'))
 
 if(1==99){
   `:=` = NULL

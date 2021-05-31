@@ -317,7 +317,7 @@ flexlapplytext <- function(cl, X, fn,cores=1,...){
     
     out <-unlist(clusterIDeval(cl,paste0('lapply(nodeindices[[nodeid]],',fn,')')),recursive = FALSE)
     # out2<-parallel::parLapply(cl,X,tparfunc,...) 
-  } else out <- lapply(X, eval(parse(text=fn),env=parent.frame()),...)
+  } else out <- lapply(X, eval(parse(text=fn),envir =parent.frame()),...)
   return(out)
 }
 
@@ -542,7 +542,7 @@ makeClusterID <- function(cores){
   benv <- new.env(parent=globalenv())
   benv$cores <- cores
   benv$cl <- parallel::makeCluster(spec = cores,type = "PSOCK",useXDR=FALSE,outfile='',user=NULL)
-  eval(parse(text="parallel::parLapply(cl = cl,X = 1:cores,function(x) assign('nodeid',x,env=globalenv()))"),envir = benv)
+  eval(parse(text="parallel::parLapply(cl = cl,X = 1:cores,function(x) assign('nodeid',x,envir=globalenv()))"),envir = benv)
   return(benv$cl)
 }
 
@@ -550,7 +550,7 @@ clusterIDexport <- function(cl, vars){
   benv <- new.env(parent=globalenv())
   benv$cl <- cl
   lookframe <- parent.frame()
-  tmp<-lapply(vars,function(x) benv[[x]] <<- eval(parse(text=x),env=lookframe))
+  tmp<-lapply(vars,function(x) benv[[x]] <<- eval(parse(text=x),envir =lookframe))
   eval(parallel::clusterExport(benv$cl,vars,benv),envir=globalenv())
 }
 
@@ -559,7 +559,7 @@ clusterIDeval <- function(cl,commands){
   benv$cl <- cl
   clusterIDexport(cl,'commands')
   unlist(eval(parallel::clusterEvalQ(cl = benv$cl, 
-    lapply(commands,function(x) eval(parse(text=x),envir = globalenv()))),env=globalenv()),recursive = FALSE)
+    lapply(commands,function(x) eval(parse(text=x),envir = globalenv()))),envir =globalenv()),recursive = FALSE)
 }
 
 
@@ -636,7 +636,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   
   clctsem <- NA #placeholder for flexsapply usage
   
-  notipredsfirstpass <- TRUE
+  notipredsfirstpass <- FALSE
   if(init[1] =='random'){# #remove tipreds for first pass
     notipredsfirstpass <- TRUE
     TIPREDEFFECTsetup <- standata$TIPREDEFFECTsetup
