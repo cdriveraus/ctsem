@@ -248,7 +248,7 @@ parallelStanSetup <- function(cl, standata,split=TRUE,nsubsets=1){
   }
   
   standata$nsubsets <- as.integer(nsubsets)
-  
+  if(!split) cores <- 1 #for prior mod
   clusterIDexport(cl,c('standata','stanindices','cores'))
   
   commands <- list(
@@ -902,9 +902,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       if(carefulfit && !deoptim){ #init using priors
         message('Doing 1st pass optimize...')
         
-        standata$nopriors <- as.integer(0)
+       
         # standata$taylorheun <- 1L
-        sdscale <- standata$sdscale
+        # sdscale <- standata$sdscale
         # standata$sdscale <- sdscale * 1e-6
         # tipredeffectscale <- standata$tipredeffectscale
         # standata$tipredeffectscale <- tipredeffectscale* 1e-5
@@ -913,6 +913,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           standatasml <- standatact_specificsubjects(standata,
             sample(unique(standata$subject),smlnsub))
         } else standatasml <- standata
+         standatasml$nopriors <- 0L
         standatasml$nsubsets <- as.integer(nsubsets)
         
         # smlndat <- min(standatasml$ndatapoints,ceiling(max(standatasml$nsubjects * 10, standatasml$ndatapoints*.5)))
@@ -939,10 +940,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             itertol=.1,deltatol=.1,worsecountconverge = 20,maxiter=500)
         }
         
-        standata$nopriors <- as.integer(nopriorsbak)
+       
         # if(standata$ntipred ==0)
         # standata$taylorheun <- as.integer(taylorheun)
-        standata$sdscale <- sdscale
+        # standata$sdscale <- sdscale
         
         iter <- 0
         storedLp <- c()
@@ -972,13 +973,15 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         }
       } #end carefulfit
       
+      if(nopriors){ #then we need to reinitialise model
+        if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standata,split=parsets<2,nsubsets = nsubsets)
+        if(optimcores==1) smf<-stan_reinitsf(sm,standata)
+      }
+      
       if(standata$ntipred > 0 && notipredsfirstpass){
         message('Including TI predictors...')
         
-        if(nopriors){ #then we need to reinitialise model
-          if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standata,split=parsets<2,nsubsets = nsubsets)
-          if(optimcores==1) smf<-stan_reinitsf(sm,standata)
-        }
+        
         
         # standata$tipredeffectscale <- tipredeffectscale
         standata$dokalmanrows[] <- 1L

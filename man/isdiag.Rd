@@ -37,7 +37,7 @@ model <- ctModel(type='stanct',
   DIFFUSION=matrix(c(0.0001, 0, 0, "diffusion"), ncol=2, nrow=2))
 
 #fit and plot importance sampling diagnostic
-fit <- ctStanFit(datalong, model,verbose=1, 
+fit <- ctStanFit(datalong, model,verbose=0, 
   optimcontrol=list(is=TRUE, finishsamples=500),nopriors=FALSE)
 isdiag(fit)
 }
