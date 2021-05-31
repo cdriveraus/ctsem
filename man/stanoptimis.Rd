@@ -17,7 +17,7 @@ stanoptimis(
   stochastic = TRUE,
   nopriors = FALSE,
   carefulfit = TRUE,
-  subsamplesize = 0.5,
+  subsamplesize = 1,
   finitediff = FALSE,
   parsteps = c(),
   plot = FALSE,
@@ -29,7 +29,8 @@ stanoptimis(
   finishmultiply = 5,
   verbose = 0,
   cores = 2,
-  matsetup = NA
+  matsetup = NA,
+  nsubsets = 10
 )
 }
 \arguments{
@@ -93,6 +94,9 @@ without replacement from this set.}
 \item{cores}{Number of cpu cores to use, should be at least 2.}
 
 \item{matsetup}{subobject of ctStanFit output. If provided, parameter names instead of numbers are output for any problem indications.}
+
+\item{nsubsets}{number of subsets for stochastic optimizer. Subsets are further split across cores, 
+but each subjects data remains whole -- processed by one core in one subset.}
 }
 \value{
 list containing fit elementsF

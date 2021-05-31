@@ -636,7 +636,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   
   clctsem <- NA #placeholder for flexsapply usage
   
-  notipredsfirstpass <- FALSE
+  notipredsfirstpass <- TRUE
   if(init[1] =='random'){# #remove tipreds for first pass
     notipredsfirstpass <- TRUE
     TIPREDEFFECTsetup <- standata$TIPREDEFFECTsetup
@@ -784,7 +784,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         target<-function(parm,gradnoise=TRUE) {
           # whichframe <- which(sapply(lapply(sys.frames(),ls),function(x){ 'clctsem' %in% x}))
           a=Sys.time()
-          # browser()
+          # 
           clusterIDexport(clctsem,'parm')
           if('list' %in% class(parm)){
             out2 <- parallel::clusterEvalQ(cl = clctsem,parlp(parm))
@@ -1031,6 +1031,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             standata$ntipredeffects <- as.integer(max(TIPREDEFFECTsetup))
           }
           
+          standata$nsubsets <- as.integer(nsubsets)
           if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standata,split=parsets<2,nsubsets = nsubsets)
           if(optimcores==1) smf<-stan_reinitsf(sm,standata)
           if(!stochastic && nsubsets ==1) {
@@ -1061,6 +1062,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       message('Optimizing...')
       finished <- TRUE
+      standata$nsubsets <- 1L
       if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standata,split=parsets<2)
       if(optimcores==1) smf<-stan_reinitsf(sm,standata)
       
@@ -1083,7 +1085,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(is.infinite(bestfit)) message('Switching to stochastic optimizer -- failed initialisation with bfgs')
         if(!stochastic && carefulfit) message('carefulfit = TRUE , so checking for improvements with stochastic optimizer')
         
-        # browser()
+        # 
         optimfit <- sgd(init, fitfunc = target,
           parsets=parsets,
           nsubsets = 1,

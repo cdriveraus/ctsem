@@ -21,6 +21,8 @@ ctFitMultiModel(
 
 \item{datalong}{ctsem long format data}
 
+\item{prefix}{prefix for output files.}
+
 \item{type}{'stanct' for continuous time or 'standt' for discrete time}
 
 \item{cores}{number of cpu cores to use}

@@ -1,7 +1,10 @@
 ctsem news:
 
+31/5/2021
+#### 3.5.0 ####
 - Added ctFitMultiModel function to simplify processing of multiple models.
 - Added ctChisqTest function for simplified likelihood ratio tests between models.
+- Added subsampling optimization for first pass, faster for larger models / data.
 
 21/4/2021
 #### 3.4.3 ####
