@@ -146,6 +146,12 @@ ctStanDiscretePars(f,plot=T)
 
 #' Plot time independent predictor (covariate effects on parameters): ctStanTIpredEffects()
 
+#' Generate data from a specified model of fixed parameters: ctGenerate()
+
+#' Generate data from a specified model of fixed and free parameters / priors: ctStanGenerate()
+
+#' Generate data from a fitted model: ctStanGenerateFromFit()
+
 #' Get samples from the fitted object: ctExtract()
 
 #' In samples, pop_DRIFT refers to the population drift matrix, subj_DRIFT refers to the subject matrix. Subject matrices only computed for max likelihood / posterior mode by default, and found in the $stanfit$transformedparsfull object. 

@@ -314,8 +314,7 @@ ctStanDiscreteParsPlot<- function(x,indices='all',
       fun.data = function(x) list(
         y=quantile(x,quantiles[2])
       ),
-      geom = "line",
-      linetype=1)'
+      geom = "line")'
   
   if(!is.na(facets)) g <- paste0(g,'+ facet_wrap(facets)')
   

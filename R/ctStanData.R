@@ -162,7 +162,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   #subset selection
   if(is.null(ctm$dokalmanrows)) standata$dokalmanrows <- 
     rep(1L, standata$ndatapoints) else standata$dokalmanrows <- as.integer(ctm$dokalmanrows)
-  standata$dokalmanpriormodifier = 1L#sum(standata$dokalmanrows)/standata$ndatapoints
+  standata$priormod = 1L#sum(standata$dokalmanrows)/standata$ndatapoints
   
   standata<-c(standata, 
     list(
@@ -469,6 +469,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   }
   
   standata$recompile <- as.integer(ctm$recompile)
+  standata$nsubsets <- 1L
   
   return(standata)
 }

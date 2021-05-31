@@ -48,7 +48,6 @@ ctStanContinuousPars <- function(fit,
       out[[matname]] <- array(do.call(ctCollapse,calcfuncargs),
         dim=dim(calcfuncargs$inarray)[-1])
     },silent=TRUE)
-    
   }
 
   if(nrow(out$T0MEANS) > nrow(out$CINT)){ #then intoverpop used...

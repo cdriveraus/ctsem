@@ -5,7 +5,7 @@
 [![R-CMD-check](https://github.com/cdriveraus/ctsem/workflows/R-CMD-check/badge.svg)](https://github.com/cdriveraus/ctsem/actions)
 <!-- badges: end -->
 
-**See the NEWS file for recent updates\!**
+**See the NEWS file for recent updates, and below for quick start\!**
 
 ctsem allows for easy specification and fitting of a range of continuous
 and discrete time dynamic models, including multiple indicators (dynamic
@@ -187,6 +187,14 @@ ctStanContinuousPars()
 
 \#’ Plot time independent predictor (covariate effects on parameters):
 ctStanTIpredEffects()
+
+\#’ Generate data from a specified model of fixed parameters:
+ctGenerate()
+
+\#’ Generate data from a specified model of fixed and free parameters /
+priors: ctStanGenerate()
+
+\#’ Generate data from a fitted model: ctStanGenerateFromFit()
 
 \#’ Get samples from the fitted object: ctExtract()
 

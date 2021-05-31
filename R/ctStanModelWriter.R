@@ -778,7 +778,7 @@ ctStanCalcsList <- function(ctm){  #extract any calcs from model into specific l
 #   return(out)
 # }
 
-ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,simplify=TRUE){
+ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE, simplify=TRUE){
   #if arguments change make sure to change ctStanFit !
   
   mats <- ctStanMatricesList()
@@ -941,11 +941,13 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,simplify=TRUE){
   asymDIFFUSIONcov = rep_matrix(0,nlatent,nlatent); //in case of derrindices need to init
   DIFFUSIONcov = rep_matrix(0,nlatent,nlatent);
 
-  for(si in 0:(dokalman ? max(subject) : 0)){
-  for(rowi in 1:ndatapoints){
-    if( (rowi==1 && si==0) ||
-      (dokalmanrows[rowi] && subject[rowi]==si) ){ //if doing this row for this subject
+  for(rowx in 0:(dokalman ? ndatapoints : 0)){
+    int rowi = rowx ? rowx : 1;
+    if( rowx==0 ||
+      (dokalmanrows[rowi] && 
+        subject[rowi] >= (firstsub - .1) &&  subject[rowi] <= (lastsub + .1))){ //if doing this row for this subject
     
+    int si = rowx ? subject[rowi] : 0;
     int full = (dosmoother==1 || si ==0);
     int o[full ? nmanifest : nobs_y[rowi]]; //which obs are not missing in this row
     int o1[full ? size(whichequals(manifesttype,1,1)) : nbinary_y[rowi] ];
@@ -1225,7 +1227,7 @@ if(verbose > 1){
         state +=  (K[,od] * err[od]); //state update
       }
       
-      if(dosmoother==1) {
+      ',if(savemodel) 'if(dosmoother==1) {
         yb[1,rowi] = syprior[o];
         etab[2,rowi] = state;
         ycovb[1,rowi] = ycov;
@@ -1233,17 +1235,17 @@ if(verbose > 1){
         ycovb[2,rowi] = quad_form_sym(makesym(etacov,verbose,1), Jy\') + MANIFESTcov;
         yb[2,rowi] = MANIFESTMEANS[o,1] + LAMBDA[o,] * state[1:nlatent];
         Jys[rowi,,] = Jy;
-      }
+      }','
       
       
       if(verbose > 1) print(" After K rowi =",rowi, "  si =", si, "  state =",state,"  etacov ",etacov,"  K[,o] ",K[,o]);
         
   //likelihood stuff
-      if(nbinary_y[rowi] > 0) llrow[rowi] += sum(log(Y[rowi,o1d] .* (syprior[o1d]) + (1-Y[rowi,o1d]) .* (1-syprior[o1d]))); 
+      if(nbinary_y[rowi] > 0) ',ifelse(savemodel,'llrow[rowi]','ll'),' += sum(log(Y[rowi,o1d] .* (syprior[o1d]) + (1-Y[rowi,o1d]) .* (1-syprior[o1d]))); 
 
       if(size(o0d) > 0 && (llsinglerow==0 || llsinglerow == rowi)){
         if(intoverstates==1) ypriorcov_sqrt[o0d,o0d]=cholesky_decompose(ycov[o0d,o0d]); //removed makesym
-         llrow[rowi] +=  multi_normal_cholesky_lpdf(Y[rowi,o0d] | syprior[o0d], ypriorcov_sqrt[o0d,o0d]);
+         ',ifelse(savemodel,'llrow[rowi]','ll'),' +=  multi_normal_cholesky_lpdf(Y[rowi,o0d] | syprior[o0d], ypriorcov_sqrt[o0d,o0d]);
          //errtrans[counter:(counter + ncont_y[rowi]-1)] = 
            //mdivide_left_tri_low(ypriorcov_sqrt[o0d,o0d], err[o0d]); //transform pred errors to standard normal dist and collect
          //ll+= -sum(log(diagonal(ypriorcov_sqrt[o0d,o0d]))); //account for transformation of scale in loglik
@@ -1253,7 +1255,7 @@ if(verbose > 1){
     }//end si > 0 nobs > 0 section
   } // end measurement init loop and dokalmanrows section here to collect matrices
     
-       // store system matrices
+  ',if(savemodel) '     // store system matrices
        
   if(si==0 || //on either pop pars only
     (  (sum(whenmat[3,])+sum(whenmat[7,])+statedep[3]+statedep[7]) > 0 && savesubjectmatrices) ){ // or for each subject
@@ -1269,15 +1271,15 @@ if(verbose > 1){
         to_matrix( (add_diag( -sqkron_prod(JAx[ derrind, derrind ], JAx[ derrind, derrind ]),1)) \\  
           to_vector(DIFFUSIONcov[ derrind, derrind ]), ndiffusion, ndiffusion);
     }
-  }
+  }', '
       
     
   if(si == 0){
-',paste0(collectsubmats(popmats=TRUE),collapse=' '),'
+',if(savemodel) paste0(collectsubmats(popmats=TRUE),collapse=' '),'
   }
 
   
-  ',if(!ppchecking) paste0('if(si > 0 && dosmoother && (rowi==ndatapoints || subject[rowi+1] != subject[rowi])){ //at subjects last datapoint, smooth
+  ',if(!ppchecking && savemodel) paste0('if(si > 0 && dosmoother && (rowi==ndatapoints || subject[rowi+1] != subject[rowi])){ //at subjects last datapoint, smooth
     int sri = rowi;
     while(sri>0 && subject[sri]==si){
       if(sri==rowi) {
@@ -1311,15 +1313,14 @@ if(verbose > 1){
   
   prevrow = rowi; //update previous row marker only after doing necessary calcs
 }//end active rowi
-} //end passive rowi
 
-if(savescores){
+',if(savemodel) 'if(savescores){
   ya=yb;
   ycova=ycovb;
   etaa=etab;
   etacova=etacovb;
 }
-ll+=sum(llrow);
+ll+=sum(llrow);','
 
 ')
     if(!is.null(ctm$w32)) out <- ''
@@ -1696,8 +1697,9 @@ data {
   int savesubjectmatrices;
   int dokalman;
   int dokalmanrows[ndatapoints];
+  int nsubsets;
   real Jstep;
-  real dokalmanpriormodifier;
+  real priormod;
   int intoverpopindvaryingindex[intoverpop ? nindvarying : 0];
   int nJAxfinite;
   int JAxfinite[nJAxfinite];
@@ -1744,6 +1746,7 @@ parameters{
   vector[nmissingtipreds] tipredsimputed;
   
   ',if(!gendata) 'vector[intoverstates ? 0 : nlatentpop*ndatapoints] etaupdbasestates; //sampled latent states posterior','
+  vector[(nsubsets > 1) ? 1 : 0] subsetpar;
 }
       
 transformed parameters{
@@ -1752,9 +1755,11 @@ transformed parameters{
   matrix[nindvarying, nindvarying] rawpopcov;
   matrix[nindvarying, nindvarying] rawpopcovchol;
   matrix[nindvarying, nindvarying] rawpopcorr;
-
-',if(!gendata) paste0('
-  real ll = 0;
+  real subset = (nsubsets > 1) ? subsetpar[1] : 1.0;
+  real firstsub = round(nsubjects*1.0/nsubsets*(subset-1)+1);
+  real lastsub = round(nsubjects*1.0/nsubsets*(subset));
+  ',if(!gendata) 'real ll = 0;
+',if(!gendata & savemodel) paste0('
   vector[dokalman ? ndatapoints : 1] llrow = rep_vector(0,dokalman ? ndatapoints : 1);
   matrix[nlatentpop,nlatentpop] etacova[3,savescores ? ndatapoints : 0];
   matrix[nmanifest,nmanifest] ycova[3,savescores ? ndatapoints : 0];
@@ -1817,28 +1822,29 @@ if(!gendata) ukfilterfunc(ppchecking=FALSE),'
 }
       
 model{
+  real priormod2 = priormod / nsubsets;
   if(intoverpop==0 && nindvarying > 0) target+= multi_normal_cholesky_lpdf(baseindparams | rep_vector(0,nindvarying), IIlatentpop[1:nindvarying,1:nindvarying]);
 
   if(ntipred > 0){ 
-    if(nopriors==0 && laplacetipreds==0) target+= dokalmanpriormodifier * normal_lpdf(tipredeffectparams / tipredeffectscale| 0, 1);
-    if(nopriors==0 && laplacetipreds==1) target+= dokalmanpriormodifier * double_exponential_lpdf(tipredeffectparams / tipredeffectscale| 0, 1);
+    if(nopriors==0 && laplacetipreds==0) target+= priormod2 * normal_lpdf(tipredeffectparams / tipredeffectscale| 0, 1);
+    if(nopriors==0 && laplacetipreds==1) target+= priormod2 * double_exponential_lpdf(tipredeffectparams / tipredeffectscale| 0, 1);
     target+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
   }
 
   if(nopriors==0){ //if split files over subjects, just compute priors once
     for(i in 1:nparams){
-      if(laplaceprior[i]==1) target+= dokalmanpriormodifier * double_exponential_lpdf(rawpopmeans[i]|0,1);
+      if(laplaceprior[i]==1) target+= priormod2 * double_exponential_lpdf(rawpopmeans[i]|0,1);
     }
   }
 
   if(nopriors==0 && !laplaceprioronly){ //if split files over subjects, just compute priors once
   for(i in 1:nparams){
-    if(laplaceprior[i]==0) target+= dokalmanpriormodifier * normal_lpdf(rawpopmeans[i]|0,1);
+    if(laplaceprior[i]==0) target+= priormod2 * normal_lpdf(rawpopmeans[i]|0,1);
   }
   
     if(nindvarying > 0){
-      if(nindvarying >1) target+= dokalmanpriormodifier * normal_lpdf(sqrtpcov | 0, 1);
-      target+= dokalmanpriormodifier * normal_lpdf(rawpopsdbase | ',gsub('normal(','',ctm$rawpopsdbase,fixed=TRUE),';
+      if(nindvarying >1) target+= priormod2 * normal_lpdf(sqrtpcov | 0, 1);
+      target+= priormod2 * normal_lpdf(rawpopsdbase | ',gsub('normal(','',ctm$rawpopsdbase,fixed=TRUE),';
     }
   } //end pop priors section
   
@@ -1847,7 +1853,8 @@ model{
   ',if(!gendata) 'target+= ll; \n','
   if(verbose > 0) print("lp = ", target());
 }
-generated quantities{
+',if(savemodel) paste0('
+  generated quantities{
   vector[nparams] popmeans;
   vector[nindvarying] popsd; // = rep_vector(0,nparams);
   matrix[nindvarying,nindvarying] popcov;
@@ -1943,7 +1950,7 @@ generated quantities{
 ',collapse=";\n"),'
 
 }
-')
+'),collapse='')
 }
   m <- writemodel()
   return(m)

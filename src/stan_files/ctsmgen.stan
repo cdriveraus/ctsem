@@ -334,8 +334,9 @@ data {
   int savesubjectmatrices;
   int dokalman;
   int dokalmanrows[ndatapoints];
+  int nsubsets;
   real Jstep;
-  real dokalmanpriormodifier;
+  real priormod;
   int intoverpopindvaryingindex[intoverpop ? nindvarying : 0];
   int nJAxfinite;
   int JAxfinite[nJAxfinite];
@@ -383,6 +384,7 @@ parameters{
   vector[nmissingtipreds] tipredsimputed;
   
   
+  vector[(nsubsets > 1) ? 1 : 0] subsetpar;
 }
       
 transformed parameters{
@@ -391,8 +393,10 @@ transformed parameters{
   matrix[nindvarying, nindvarying] rawpopcov;
   matrix[nindvarying, nindvarying] rawpopcovchol;
   matrix[nindvarying, nindvarying] rawpopcorr;
-
-
+  real subset = (nsubsets > 1) ? subsetpar[1] : 1.0;
+  real firstsub = round(nsubjects*1.0/nsubsets*(subset-1)+1);
+  real lastsub = round(nsubjects*1.0/nsubsets*(subset));
+  
 
   matrix[ntipred ? (nmissingtipreds ? nsubjects : 0) : 0, ntipred ? (nmissingtipreds ? ntipred : 0) : 0] tipreds; //tipred values to fill from data and, when needed, imputation vector
   matrix[nparams, ntipred] TIPREDEFFECT; //design matrix of individual time independent predictor effects
@@ -446,28 +450,29 @@ transformed parameters{
 }
       
 model{
+  real priormod2 = priormod / nsubsets;
   if(intoverpop==0 && nindvarying > 0) target+= multi_normal_cholesky_lpdf(baseindparams | rep_vector(0,nindvarying), IIlatentpop[1:nindvarying,1:nindvarying]);
 
   if(ntipred > 0){ 
-    if(nopriors==0 && laplacetipreds==0) target+= dokalmanpriormodifier * normal_lpdf(tipredeffectparams / tipredeffectscale| 0, 1);
-    if(nopriors==0 && laplacetipreds==1) target+= dokalmanpriormodifier * double_exponential_lpdf(tipredeffectparams / tipredeffectscale| 0, 1);
+    if(nopriors==0 && laplacetipreds==0) target+= priormod2 * normal_lpdf(tipredeffectparams / tipredeffectscale| 0, 1);
+    if(nopriors==0 && laplacetipreds==1) target+= priormod2 * double_exponential_lpdf(tipredeffectparams / tipredeffectscale| 0, 1);
     target+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
   }
 
   if(nopriors==0){ //if split files over subjects, just compute priors once
     for(i in 1:nparams){
-      if(laplaceprior[i]==1) target+= dokalmanpriormodifier * double_exponential_lpdf(rawpopmeans[i]|0,1);
+      if(laplaceprior[i]==1) target+= priormod2 * double_exponential_lpdf(rawpopmeans[i]|0,1);
     }
   }
 
   if(nopriors==0 && !laplaceprioronly){ //if split files over subjects, just compute priors once
   for(i in 1:nparams){
-    if(laplaceprior[i]==0) target+= dokalmanpriormodifier * normal_lpdf(rawpopmeans[i]|0,1);
+    if(laplaceprior[i]==0) target+= priormod2 * normal_lpdf(rawpopmeans[i]|0,1);
   }
   
     if(nindvarying > 0){
-      if(nindvarying >1) target+= dokalmanpriormodifier * normal_lpdf(sqrtpcov | 0, 1);
-      target+= dokalmanpriormodifier * normal_lpdf(rawpopsdbase | 0,1);
+      if(nindvarying >1) target+= priormod2 * normal_lpdf(sqrtpcov | 0, 1);
+      target+= priormod2 * normal_lpdf(rawpopsdbase | 0,1);
     }
   } //end pop priors section
   
@@ -476,7 +481,8 @@ model{
   
   if(verbose > 0) print("lp = ", target());
 }
-generated quantities{
+
+  generated quantities{
   vector[nparams] popmeans;
   vector[nindvarying] popsd; // = rep_vector(0,nparams);
   matrix[nindvarying,nindvarying] popcov;
@@ -659,11 +665,13 @@ generated quantities{
   asymDIFFUSIONcov = rep_matrix(0,nlatent,nlatent); //in case of derrindices need to init
   DIFFUSIONcov = rep_matrix(0,nlatent,nlatent);
 
-  for(si in 0:(dokalman ? max(subject) : 0)){
-  for(rowi in 1:ndatapoints){
-    if( (rowi==1 && si==0) ||
-      (dokalmanrows[rowi] && subject[rowi]==si) ){ //if doing this row for this subject
+  for(rowx in 0:(dokalman ? ndatapoints : 0)){
+    int rowi = rowx ? rowx : 1;
+    if( rowx==0 ||
+      (dokalmanrows[rowi] && 
+        subject[rowi] >= (firstsub - .1) &&  subject[rowi] <= (lastsub + .1))){ //if doing this row for this subject
     
+    int si = rowx ? subject[rowi] : 0;
     int full = (dosmoother==1 || si ==0);
     int o[full ? nmanifest : nobs_y[rowi]]; //which obs are not missing in this row
     int o1[full ? size(whichequals(manifesttype,1,1)) : nbinary_y[rowi] ];
@@ -1087,7 +1095,6 @@ pop_PARS = PARS; pop_T0MEANS = T0MEANS; pop_LAMBDA = LAMBDA; pop_DRIFT = DRIFT; 
   
   prevrow = rowi; //update previous row marker only after doing necessary calcs
 }//end active rowi
-} //end passive rowi
 
 if(savescores){
   ya=yb;

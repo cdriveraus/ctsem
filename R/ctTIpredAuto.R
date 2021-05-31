@@ -132,7 +132,7 @@ whichsubjectpars <- function(standata,subjects=NA){
 
 scorecalc <- function(standata,est,stanmodel,subjectsonly=TRUE,
   returnsubjectlist=TRUE,cores=2){
-  standata$dokalmanpriormodifier <- ifelse(subjectsonly, 1/standata$nsubjects,1/standata$ndatapoints)
+  standata$priormod <- ifelse(subjectsonly, 1/standata$nsubjects,1/standata$ndatapoints)
   
   scores <- list()
   # browser()
