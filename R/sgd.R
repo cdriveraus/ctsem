@@ -23,12 +23,13 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
     gmeminit=.9
     stepbase=1e-3
     maxiter=maxiter*nsubsets
-    lproughnesstarget=.5#1/nsubsets + .05
+    lproughnesstarget=.4#1/nsubsets + .05
     gsmoothroughnesstarget=.1
     groughnesstarget=.3
     roughnesschangemulti=.1 #0r .5?
     roughnessmemory=.9
     subsetorder=rep(1:nsubsets,each=subsetrepeats)
+    subsetlps <- rep(-Inf, nsubsets)
   }
   
   initfull=init #including ignored params start values
@@ -146,7 +147,12 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
         })
       }
       
-      if(nsubsets > 1) fullnewpars <- c(fullnewpars, subsetorder[(i-1) %% (nsubsets * subsetrepeats) + 1]) #add subset par
+      if(nsubsets > 1){
+        if(i > 1) subsetiold <- subseti
+       subseti <- subsetorder[(i-1) %% (nsubsets * subsetrepeats) + 1]
+       
+        fullnewpars <- c(fullnewpars, subseti) #add subset par
+      }
       # print(subsetorder[i %% (nsubsets) + 1])
       
       lpg= fitfunc(fullnewpars) #fit function!
@@ -227,7 +233,18 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
     gstore[,1+(i-1) %% nstore] = g
     
     
-    if(i > 1) lproughness = lproughness * (roughnessmemory2) + (1-(roughnessmemory2)) * as.numeric(lp[i-1] > (lp[i]))#because accepted here, also see non accepted version
+    if(i > 1) {
+      if(nsubsets==1) lproughness = lproughness * (roughnessmemory2) + 
+          (1-(roughnessmemory2)) * as.numeric(lp[i-1] > (lp[i]))#because accepted here, also see non accepted version
+      
+      if(nsubsets > 1) lproughness = lproughness * (roughnessmemory2) + 
+          (1-(roughnessmemory2)) * as.numeric( (lp[i]-subsetlps[subseti]) > (lp[i-1]-subsetlps[subsetiold]))#because accepted here, also see non accepted version
+    }
+    # if(i==101) browser()
+    if(nsubsets > 1) subsetlps[subsetorder[i]] <- lpg[1]
+    
+    
+    
     groughness = groughness * (roughnessmemory2) + (1-(roughnessmemory2)) * as.numeric(sign(gmid)!=sign(oldgmid))
     gsmoothroughness = gsmoothroughness * (roughnessmemory2) + (1-(roughnessmemory2)) * as.numeric(sign(gsmooth)!=sign(oldgsmooth))
     
@@ -245,7 +262,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
     signdif= sign(gsmooth)!=sign(gmid)
     # if(i > warmuplength*5) 
     # step[gsmoothroughness < gsmoothroughnesstarget & !signdif] <-
-      # step[gsmoothroughness < gsmoothroughnesstarget& !signdif] *(1+roughnesschangemulti*.01)
+    # step[gsmoothroughness < gsmoothroughnesstarget& !signdif] *(1+roughnesschangemulti*.01)
     
     # gsmooth[gsmoothroughness < gsmoothroughnesstarget] <- gsmooth[gsmoothroughness < gsmoothroughnesstarget] * 1.2
     # step[gsmoothroughness < gsmoothroughnesstarget] * .1*gsmoothroughnessmod[gsmoothroughness < gsmoothroughnesstarget]
@@ -387,29 +404,29 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
         bestsubsetlp <- subsetlp
         bestsubsetpars <- subsetpars
       }
+      
+      if(i >=(nsubsets*2*subsetrepeats)){ #then oldsubset exists
         
-        if(i >=(nsubsets*2*subsetrepeats)){ #then oldsubset exists
-          
-          if(subsetlp < bestsubsetlp) worsecount <- worsecount + 1 else worsecount = 0
-          if(worsecount > worsecountconverge) converged = 4
-          if(plot > 0) message(paste0(subsetlp, ' , bestlp = ',bestsubsetlp,' , worsecount = ',worsecount))
-          # message(bestsubsetlp)
-          # message(paste0(worsecount))
-          
-          if(subsetlp <= bestsubsetlp &&
-              all(abs(subsetpars-oldsubsetpars) < (itertol/1000))) converged <- 5
-          if(plot > 0 && i %%plot==0) plot(abs(subsetpars-oldsubsetpars))
-          if(subsetlp < (oldsubsetlp-lpnoisethresh)) step = step * .8 else step=step*1.1
-          
-          subsetorder = rep(sample(1:nsubsets),each=subsetrepeats)
-          # if(i > 300) browser()
-          # subsetorder = subsetorder[order(tail(lp,subsetrepeats*nsubsets),decreasing = FALSE)]
-          # cbind(subsetorder,order(tail(lp,subsetrepeats*nsubsets),decreasing = FALSE))
-          # plot(tail(lp,subsetrepeats*nsubsets)[subsetorder])
-          # print(subsetorder)
-          if(converged) bestpars=bestsubsetpars
-          
-        }
+        if(subsetlp < bestsubsetlp) worsecount <- worsecount + 1 else worsecount = 0
+        if(worsecount > worsecountconverge) converged = 4
+        if(plot > 0) message(paste0(subsetlp, ' , bestlp = ',bestsubsetlp,' , worsecount = ',worsecount))
+        # message(bestsubsetlp)
+        # message(paste0(worsecount))
+        
+        if(subsetlp <= bestsubsetlp &&
+            all(abs(subsetpars-oldsubsetpars) < (itertol/1000))) converged <- 5
+        if(plot > 0 && i %%plot==0) plot(abs(subsetpars-oldsubsetpars))
+        if(subsetlp < (oldsubsetlp-lpnoisethresh)) step = step * .8 else step=step*1.1
+        
+        subsetorder = rep(sample(1:nsubsets),each=subsetrepeats)
+        # if(i > 300) browser()
+        # subsetorder = subsetorder[order(tail(lp,subsetrepeats*nsubsets),decreasing = FALSE)]
+        # cbind(subsetorder,order(tail(lp,subsetrepeats*nsubsets),decreasing = FALSE))
+        # plot(tail(lp,subsetrepeats*nsubsets)[subsetorder])
+        # print(subsetorder)
+        if(converged) bestpars=bestsubsetpars
+        
+      }
     }
   }
   convergemessages <- c(

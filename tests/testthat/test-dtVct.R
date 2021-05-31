@@ -20,9 +20,9 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
     sd(par)
     
     for(subi in 1:nsubjects){
-      gm=ctModel(LAMBDA=diag(1), Tpoints=Tpoints, DRIFT=matrix(-.3),T0MEANS = matrix(4), 
-        CINT=matrix(par[subi]),DIFFUSION=matrix(2),
-        T0VAR=matrix(2), MANIFESTVAR=matrix(.3))
+      gm=ctModel(LAMBDA=diag(1), Tpoints=Tpoints, DRIFT=matrix(-.5),T0MEANS = matrix(4), 
+        CINT=matrix(par[subi]),DIFFUSION=matrix(1),
+        T0VAR=matrix(1), MANIFESTVAR=matrix(.3))
       d=suppressMessages(ctGenerate(gm,n.subjects = 1,burnin = 0,dtmean = dt))
       if(subi==1) dat=cbind(subi,d) else dat=rbind(dat,cbind(subi,d))
     }
@@ -53,13 +53,16 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
     ctpars <- ctpars[!ctpars$matrix %in% c('DRIFT','CINT','DIFFUSIONcov'),]
     dtpars=s[[1]]$dm$parmatrices
     dtpars$matrix[dtpars$matrix %in% 'DRIFT'] <- 'dtDRIFT'
+    dtpars <- dtpars[dtpars$matrix %in% ctpars$matrix,]
+    dtpars <- dtpars[order(dtpars$matrix),]
+    ctpars <- ctpars[order(ctpars$matrix),]
     
     for(ri in 1:nrow(dtpars)){
       i <- which(apply(ctpars,1,function(x) all(x[1:3] == dtpars[ri,1:3])))
       if(length(i)>0){
         for(ti in 4:5){
           # print(c(ctpars[i,ti],dtpars[ri,ti]))
-        testthat::expect_equivalent(ctpars[i,ti],dtpars[ri,ti],tol=ifelse(ti==4,1e-2,1e-1))
+        testthat::expect_equivalent(ctpars[i,ti],dtpars[ri,ti],tol=ifelse(ti==4,1e-2,1e-2))
         }
       }
     }

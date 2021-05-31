@@ -444,7 +444,6 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
   onlyfirstrow=FALSE, #ifelse(any(savesubjectmatrices,savescores),FALSE,TRUE),
   pcovn=500,
   quiet=FALSE){
-  browser()
   if(savesubjectmatrices && !dokalman){
     dokalman <- TRUE
     warning('savesubjectmatrices = TRUE requires dokalman=TRUE also!')
@@ -486,7 +485,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
   }
   
   transformedpars <- try(flexlapplytext(cl, 
-    split(1:nrow(samples), sort((1:nrow(samples))%%cores)),
+    1:nrow(samples),
     'tparfunc',cores=cores))
   
   if(cores >1) smf <- stan_reinitsf(sm,standata) #needs to be after, weird parallel stuff...
@@ -922,7 +921,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standatasml,split=parsets<2,nsubsets = nsubsets)
         if(optimcores==1) smf<-stan_reinitsf(sm,standatasml)
         
-        if(!stochastic && nsubsets ==1) {
+        if(npars <=50 && nsubsets ==1) {
           optimfit <- mize(init, fg=mizelpg, max_iter=99999,
             method="L-BFGS",memory=100,
             line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
@@ -931,7 +930,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           carefulfit <- FALSE
         }
         
-        if(stochastic || nsubsets > 1) {;
+        if(npars > 50 || nsubsets > 1) {;
           optimfit <- sgd(init, fitfunc = function(x) target(x),
             parsets=parsets,
             nsubsets = nsubsets,
@@ -1346,7 +1345,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         resamples <- matrix(unlist(lapply(1:nresamples,function(x){
           delta[[1]] + (mchol) %*% t(matrix(rnorm(length(delta[[1]])),nrow=1))
         } )),byrow=TRUE,ncol=length(delta[[1]]))
-        resamples<- rbind(resamples,gensigstates(delta[[1]],mchol))
+        # resamples<- rbind(resamples,gensigstates(delta[[1]],mchol))
         
       }
       if(is){
