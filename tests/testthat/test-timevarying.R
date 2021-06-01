@@ -32,14 +32,14 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     cm <- ctModel(LAMBDA=matrix(c('lbystate * eta2 + 1',0,0,1),2,2),  T0MEANS=c('t0m1','t0m2|log1p_exp(param)'),
       T0VAR=matrix(c('t0v11',0,0,'t0v22'),2,2),
-      PARS=c('lbystate','lbystate * eta2 + 1'),type='stanct')
+      PARS=c('lbystate|log1p_exp(param)','lbystate * eta2 + 1'),type='stanct')
     
     cm$pars$indvarying <- FALSE
     # cm$pars$indvarying[cm$pars$matrix %in% c('CINT','T0MEANS')] <- TRUE
     
-    dm<- ctModel(LAMBDA=matrix(c('1 + lbystate * eta2',0,0,1),2,2), T0MEANS=c('t0m1','t0m2|log1p_exp(param)'),
+    dm <- ctModel(LAMBDA=matrix(c('lbystate * eta2 + 1',0,0,1),2,2),  T0MEANS=c('t0m1','t0m2|log1p_exp(param)'),
       T0VAR=matrix(c('t0v11',0,0,'t0v22'),2,2),
-      PARS=c('lbystate'),type='standt')
+      PARS=c('lbystate|log1p_exp(param)','lbystate * eta2 + 1'),type='standt')
     
     dm$pars$indvarying <- FALSE
     # dm$pars$indvarying[dm$pars$matrix %in% c('CINT','T0MEANS')] <- TRUE
@@ -70,8 +70,8 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       i <- which(apply(ctpars,1,function(x) all(x[1:3] == dtpars[ri,1:3])))
       if(length(i)>0){
         for(ti in 4:5){
-          print(paste0(ctpars[i,'matrix'],' ', ctpars[i,'row'],',', ctpars[i,'col'],' ',
-            colnames(ctpars)[ti],' = ', ctpars[i,ti],', ',dtpars[ri,ti]))
+          # print(paste0(ctpars[i,'matrix'],' ', ctpars[i,'row'],',', ctpars[i,'col'],' ',
+            # colnames(ctpars)[ti],' = ', ctpars[i,ti],', ',dtpars[ri,ti]))
           testthat::expect_equivalent(ctpars[i,ti],dtpars[ri,ti],tol=ifelse(ti==4,1e-1,1e-1))
         }
       }
