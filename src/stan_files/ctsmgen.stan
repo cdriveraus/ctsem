@@ -34,7 +34,7 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
         }
       }
       o[i,i]=0; 
-      o[i,i] = 1-sqrt(sum(square(o[i,]))+1e-10);
+      o[i,i] = 1-sqrt(sum(square(o[i,]))); //+1e-10 to avoid neg sqrts
     }
     return o;
   } 

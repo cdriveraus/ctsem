@@ -442,7 +442,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
   savesubjectmatrices=TRUE,
   dokalman=TRUE,
   onlyfirstrow=FALSE, #ifelse(any(savesubjectmatrices,savescores),FALSE,TRUE),
-  pcovn=500,
+  pcovn=2000,
   quiet=FALSE){
   if(savesubjectmatrices && !dokalman){
     dokalman <- TRUE
@@ -483,7 +483,6 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
       }))
     }
   }
-  
   transformedpars <- try(flexlapplytext(cl, 
     1:nrow(samples),
     'tparfunc',cores=cores))
@@ -1094,7 +1093,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           nsubsets = 1,
           itertol = ifelse(!finished,1e-1,1e-3),
           deltatol=ifelse(!finished,1e-1,1e-5),
-          parrangetol=1e-4,
+          parrangetol=1e-3,
           whichignore = unlist(parsteps),
           ndatapoints=standata$ndatapoints,plot=plot)
         if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else init=optimfit$par

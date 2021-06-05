@@ -176,13 +176,13 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
           class(lpg) !='try-error' && 
           !is.nan(lpg[1]) && 
           all(!is.nan(attributes(lpg)$gradient)) &&
-          (nsubsets > 1 || i ==1 || lpg[1] > (min(tail(lp,20))-notacceptedcount))  #no subset lp check
+          (nsubsets > 1 || i ==1 || lpg[1] > (min(tail(lp,20))-notacceptedcount-1))  #no subset lp check
         # (i < warmuplength || ( exp(lpg[1] - lp[i-1]) > runif(1,0,1))) #sd(tail(lp,100))*8+
       ){
         accepted <- TRUE
       } 
       if(!accepted){
-        if(nsubsets==1) gsmooth= gsmooth*gmemory2^2 + (1-gmemory2^2) * g #increase influence of last gradient at inflections
+        #if(nsubsets==1) gsmooth= gsmooth*gmemory2^2 + (1-gmemory2^2) * g #increase influence of last gradient at inflections
         step <- step * .5
         deltaold <- deltaold * 0
         if(nsubsets > 1) pars =bestpars* .8 + apply(parstore,2,mean)*.2
@@ -199,7 +199,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
         
       }
       if(plot && !accepted) {
-        message(paste0('iter ', i,' not accepted!'))
+        message(paste0('iter ', i,' not accepted! lp = ', lpg[1]))
         # 
       }
     } #end acceptance loop

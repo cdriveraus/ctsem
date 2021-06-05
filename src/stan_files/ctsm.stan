@@ -34,7 +34,7 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
         }
       }
       o[i,i]=0; 
-      o[i,i] = 1-sqrt(sum(square(o[i,]))+1e-10);
+      o[i,i] = 1-sqrt(sum(square(o[i,]))); //+1e-10 to avoid neg sqrts
     }
     return o;
   } 
@@ -639,7 +639,7 @@ if(si==0 || sum(whenmat[54,{5}]) > 0 )Jy=mcalc(Jy,indparams, statetf,{0}, 54, ma
     T0cov = sdcovsqrt2cov(T0VAR,choleskymats); 
 
     if(intoverpop && nindvarying > 0){ //adjust cov matrix for transforms
-    if(si==0) rawpopcovchol = cholesky_decompose(T0cov[intoverpopindvaryingindex, intoverpopindvaryingindex]);
+    if(si==0) rawpopcovchol = cholesky_decompose(makesym(T0cov[intoverpopindvaryingindex, intoverpopindvaryingindex],verbose,1));
       for(ri in 1:size(matsetup)){
         if(matsetup[ri,7]==1){ //if t0means
           if(matsetup[ri,5]) { //and indvarying

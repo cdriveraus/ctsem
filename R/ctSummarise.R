@@ -163,7 +163,7 @@ ctSummarise<-function(sf,name='ctSummary',cores=2, times=seq(0,10,.1),quantiles=
     # browser()
     if(IndDifCorrelations){
       if(sf$standata$ntipred > 0 || sf$standata$nindvarying > 0){
-        
+        try({
         sp=ctStanSubjectPars(sf,pointest=FALSE,cores=cores,nsamples = nsamples)
         
         if(sf$standata$ntipred > 0){
@@ -224,6 +224,7 @@ ctSummarise<-function(sf,name='ctSummary',cores=2, times=seq(0,10,.1),quantiles=
             theme_minimal()+ theme(axis.text.y=element_text(size=8),
               axis.text.x = element_text(angle = 90,size=8)))
         dev.off()
+        }) #end try
       }
       
       sink(paste0(name,'_IndDifCorrelations.txt'))
