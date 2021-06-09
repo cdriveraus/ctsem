@@ -8,6 +8,18 @@ fQinf <- function(A,G){
 
 fdtQ <- function(Qinf, dtA) Qinf - (dtA %*% Qinf %*% t(dtA ))
 
+fdtQe <- function(A, Q,dt=1){
+  d=nrow(A)
+  bA <- matrix(0,d*2,d*2)
+  bA[1:d,1:d] <- -(A)
+  bA[1:d,(d+1):(d*2)] <- Q
+  bA[(d+1):(d*2),(d+1):(d*2)] <- t(A)
+  
+  ebA <- expm(bA %x% dt)
+  dtQ<-t(ebA[(d+1):(d*2),(d+1):(d*2)]) %*% ebA[1:d,(d+1):(d*2)]
+  return(dtQ)
+}
+
 fAstd <- function(A, G){
   d=nrow(A)
   asymDIFFUSION<-fQinf(A,G)
@@ -39,11 +51,11 @@ fAstd2 <- function(A, G,Jstep=1e-3){
   for(i in 1:d){
     for(j in 1:d){
       # if(i!=j){
-        As <- A
-        As[i,j] <- As[i,j] + Jstep*sign(As[i,j])
-        Qinfs <- fQinf(As,G)
-        # J[i,j] <- (sum(diag(t(chol(Qinfs))))-sum(diag(t(chol(Qinf)))))/Jstep
-        J[i,j] <- (sum(diag(t(chol(Qinfs))))-sum(diag(t(chol(Qinf)))))/Jstep
+      As <- A
+      As[i,j] <- As[i,j] + Jstep*sign(As[i,j])
+      Qinfs <- fQinf(As,G)
+      # J[i,j] <- (sum(diag(t(chol(Qinfs))))-sum(diag(t(chol(Qinf)))))/Jstep
+      J[i,j] <- (sum(diag(t(chol(Qinfs))))-sum(diag(t(chol(Qinf)))))/Jstep
       # }
     }
   }

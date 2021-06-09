@@ -10,7 +10,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
   nconvergeiter=30, 
   worsecountconverge=1000,
   lpnoisethresh= .1,#length(init)*.01,
-  itertol=1e-3, deltatol=1e-5, parrangetol=1e-4){
+  itertol=1e-3, deltatol=1e-5, parrangetol=1e-3){
   
   if(nsubsets>1){
     oldsubsetilp <- -Inf
@@ -384,8 +384,8 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
     
     #check convergence
     if(nsubsets==1 && i > 30 && max(tail(lp,nconvergeiter)) ==max(lp)){
-      # if( (i - bestiter) > nconvergeiter*5 && 
-      #     mean(sign(diff(tail(lp,nconvergeiter)))) < .3) converged <- TRUE #time since best
+      if( (i - bestiter) > nconvergeiter*3 &&
+          mean(sign(diff(tail(lp,nconvergeiter)))) < .3) converged <- TRUE #time since best
       lpdiff=max(tail(lp,nconvergeiter)) - min(tail(lp,nconvergeiter))
       if(lpdiff < itertol & lpdiff > 0) converged <- 1
       if(abs(max(diff(tail(lp,nconvergeiter)))) < deltatol) converged <- 2
