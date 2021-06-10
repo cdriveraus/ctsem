@@ -754,6 +754,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         return(out)
       }
       
+      if(plot > 0) {
+        dev.new(noRStudioGD = TRUE)
+        on.exit(expr = {dev.off()},add = TRUE)
+      }
+      
       if(optimcores==1) {
         target = singletarget #we use this for importance sampling
         eval(parse(text=parlptext))

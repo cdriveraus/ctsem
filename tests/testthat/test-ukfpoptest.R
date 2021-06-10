@@ -95,7 +95,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     sm2 <- ctStanModel(m2)
     sm2$pars$sdscale <- .2
     
-    sf2 <- ctStanFit(cd,sm2,iter=10,fit=T,plot=10,
+    sf2 <- ctStanFit(cd,sm2,
       optimize=T,verbose=0,nopriors = TRUE,
       derrind=1:2)
     # sink()

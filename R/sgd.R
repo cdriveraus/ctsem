@@ -386,9 +386,11 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
     if(nsubsets==1 && i > 30 && max(tail(lp,nconvergeiter)) ==max(lp)){
       if( (i - bestiter) > nconvergeiter*3 &&
           mean(sign(diff(tail(lp,nconvergeiter)))) < .3) converged <- TRUE #time since best
-      lpdiff=max(tail(lp,nconvergeiter)) - min(tail(lp,nconvergeiter))
+      lpdiff=max(tail(lp,nconvergeiter)) - min(tail(lp,nconvergeiter)) #variability over convergerange
       if(lpdiff < itertol & lpdiff > 0) converged <- 1
-      if(abs(max(diff(tail(lp,nconvergeiter)))) < deltatol) converged <- 2
+      if(abs(max(diff(tail(lp,nconvergeiter)))) < deltatol) converged <- 2 #change from step to step
+      prevbest=max(head(lp,length(lp)-nconvergeiter))
+      if(i > (nconvergeiter*2)) if(max(lp)-prevbest > 0 && max(lp)-prevbest < itertol) converged <- 6
       if(!is.na(parrangetol)){
         if(max(apply(parstore,1,range)) < parrangetol) converged <- 3
       }
@@ -434,11 +436,12 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
     }
   }
   convergemessages <- c(
-    'Converged -- lp change within itertol',
+    'Converged -- lp variability within itertol',
     'Converged -- no lp changes greater than deltatol',
     'Converged -- parameter changes within parrangetol',
     'Converged -- count of non-improving iterations exceeded',
-    'Converged -- lp and par change within tolerances')
+    'Converged -- lp and par change within tolerances',
+    'Converged -- lp change within itertol')
   if(converged > 0) message(convergemessages[converged]) else message('Max iterations reached')
   out=list(itervalues = lp, value = max(lp),
     par=bestpars,parstore=parstore,gstore=gstore,lpstore=tail(lp,nstore))
