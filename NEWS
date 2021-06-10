@@ -1,5 +1,8 @@
 ctsem news:
 
+- Fixed bug in output of $rawpopcorr introduced in 3.4.3. 
+  Correlations displayed incorrectly, other parameters unaffected.
+
 31/5/2021
 #### 3.5.0 ####
 - Added ctFitMultiModel function to simplify processing of multiple models.

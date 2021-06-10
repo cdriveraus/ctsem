@@ -1053,7 +1053,7 @@ if(sum(whenmat[54,{4}]) > 0 )Jy=mcalc(Jy,indparams, statetf,{4}, 54, matsetup, m
       if(verbose > 1) print(" After K rowi =",rowi, "  si =", si, "  state =",state,"  etacov ",etacov,"  K[,o] ",K[,o]);
         
   //likelihood stuff
-      if(nbinary_y[rowi] > 0) llrow[rowi] += sum(log(Y[rowi,o1d] .* (syprior[o1d]) + (1-Y[rowi,o1d]) .* (1-syprior[o1d]))); 
+      if(nbinary_y[rowi] > 0) llrow[rowi] += sum(log(1e-10+Y[rowi,o1d] .* (syprior[o1d]) + (1-Y[rowi,o1d]) .* (1-syprior[o1d]))); 
 
       if(size(o0d) > 0 && (llsinglerow==0 || llsinglerow == rowi)){
         if(intoverstates==1) ypriorcov_sqrt[o0d,o0d]=cholesky_decompose(ycov[o0d,o0d]); //removed makesym
@@ -1063,6 +1063,7 @@ if(sum(whenmat[54,{4}]) > 0 )Jy=mcalc(Jy,indparams, statetf,{4}, 54, matsetup, m
          //ll+= -sum(log(diagonal(ypriorcov_sqrt[o0d,o0d]))); //account for transformation of scale in loglik
          //counter += ncont_y[rowi];
       }
+      if(verbose > 1) print(llrow[rowi]);
       
     }//end si > 0 nobs > 0 section
   } // end measurement init loop and dokalmanrows section here to collect matrices

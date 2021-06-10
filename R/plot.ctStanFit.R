@@ -31,7 +31,6 @@
 plot.ctStanFit <- function(x, types='all',wait=TRUE,...){
   
   continue=TRUE
-  
   waitf<-function(){
     out<-TRUE
     if(wait==TRUE && length(types) > 0){
@@ -50,7 +49,7 @@ plot.ctStanFit <- function(x, types='all',wait=TRUE,...){
   if('regression' %in% types && continue){
     message('Plotting model implied regression coeffcients conditional on time interval using ctStanDiscretePars')
     
-    ctStanDiscretePars(x, plot=TRUE,...)
+    print(ctStanDiscretePars(x, plot=TRUE,...))
     types=types[types!='regression']
     continue<-waitf()
   }

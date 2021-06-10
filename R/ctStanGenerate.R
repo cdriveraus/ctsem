@@ -109,8 +109,10 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
   args <- cts$args
   args$optimcontrol=optimcontrol
   args$optimize=TRUE
-  args$cores=1 #problem with multiple cores inside function?
+  args$cores=cores #problem with multiple cores inside function?
   args$ctstanmodel <- ctm
+  args$intoverstates <- TRUE
+  args$intoverpop <- TRUE
   args$inits=1e-10
   args$datalong=datadummy
   if(as.logical(args$nopriors)) stop('Priors disabled, cannot sample from prior!')
