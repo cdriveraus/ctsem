@@ -49,7 +49,7 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
         s[i] += o[i,j];
       }
     }
-    s[i] = sqrt(.2*log1p_exp(10*square(fabs(s[i])-s[i]-.5)-20)+1);
+    s[i] =sqrt(log1p_exp(10*(fabs(s[i])-s[i]-.5)-20)+1);
     ss[i]=sqrt(ss[i]+s[i]);
   }
   
