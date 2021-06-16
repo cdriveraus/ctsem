@@ -1403,19 +1403,51 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
 
  
    matrix constraincorsqrt(matrix mat,int choleskymats){ //converts from unconstrained lower tri matrix to cor
-    matrix[rows(mat),cols(mat)] o;
+    int d=rows(mat);
+    matrix[d,d] o;
+    vector[d] ss = rep_vector(0,d);
+    vector[d] s = rep_vector(0,d);
 
-    for(i in 1:rows(o)){ //set upper tri to lower
-      for(j in 1:rows(mat)){
+    for(i in 1:d){ //set upper tri to lower
+      for(j in 1:d){
         if(j > i){
           o[j,i] =  inv_logit(mat[j,i])*2-1; //divide by i for approx whole matrix equiv priors  
-          o[i,j] = 0;
+          //o[i,j] = o[j,i];
         }
       }
-      o[i,i]=0;
-      o[i,]=o[i,]/sqrt(sum(square(o[i,]))+.2);
-      o[i,i]=sqrt(1-(sum(square(o[i,]))));
     }
+    
+  for(i in 1:d){
+    for(j in 1:d){
+      if(j > i) {
+        ss[i] += square(o[j,i]);
+        s[i] += o[j,i];
+      }
+      if(j < i){
+        ss[i] = square(o[i,j]);
+        s[i] += o[i,j];
+      }
+    }
+    s[i] = sqrt(.2*log1p_exp(10*square(fabs(s[i])-s[i]-.5)-20)+1);
+    ss[i]=sqrt(ss[i]+s[i]);
+  }
+  
+  for(i in 1:d){
+    for(j in 1:d){
+      if(j > i)  o[i,j]=o[j,i]/ss[i];
+      if(j < i) o[i,j] = o[i,j] / ss[i];
+    }
+  }
+  
+  for(i in 1:d){
+    o[i,i]=0;
+    o[i,i]=sqrt(1-(sum(square(o[i,]))));
+  }
+
+      //o[i,i]=0;
+      //o[i,]=o[i,]/sqrt(sum(square(o[i,]))+.2);
+      //o[i,i]=sqrt(1-(sum(square(o[i,]))));
+    
     return o;
   } 
 

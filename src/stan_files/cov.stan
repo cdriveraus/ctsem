@@ -2,23 +2,46 @@ functions{
   
   matrix constraincorsqrt(vector rawcor, int r, int symm){ //converts from unconstrained lower tri vec to cor sqrt
   int counter = 0;
-  vector[r] ones = rep_vector(1, r);
+  vector[r] ss = rep_vector(0, r);
+  vector[r] s = rep_vector(0,r);
   matrix[r, r] o;
   
   for(i in 1:r){ //set upper tri to lower
   for(j in 1:r){
     if(j > i){
       counter+=1;
-      o[j,i] =  inv_logit(rawcor[counter])*2-1; //divide by i for approx whole matrix equiv priors  
-      o[i,j] = symm ? o[j,i] : 0;
+      o[j,i] =  rawcor[counter];//inv_logit(rawcor[counter])*2-1; //divide by i for approx whole matrix equiv priors  
     }
   }
-  o[i,i]=0;
-  o[i,]=o[i,]/sqrt(sum(square(o[i,]))+1);
-  o[i,i]=sqrt(1-(sum(square(o[i,]))));
+  }
+  
+  for(i in 1:r){
+    for(j in 1:r){
+      if(j > i) {
+        ss[i] += square(o[j,i]);
+        s[i] += o[j,i];
+      }
+      if(j < i){
+        ss[i] = square(o[i,j]);
+        s[i] += o[i,j];
+      }
+    }
+    s[i] = sqrt(.2*log1p_exp(10*square(fabs(s[i])-s[i]-.5)-20)+1);
+    ss[i]=sqrt(ss[i]+s[i]);
+  }
+  for(i in 1:r){
+    for(j in 1:r){
+      if(j > i)  o[i,j]=o[j,i]/ss[i];
+      if(j < i) o[i,j] = o[i,j] / ss[i];
+    }
+  }
+  for(i in 1:r){
+    o[i,i]=0;
+    o[i,i]=sqrt(1-(sum(square(o[i,]))));
   }
   return o;
   }
+  
   
 }
 data{
