@@ -29,53 +29,49 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
     vector[d] ss = rep_vector(0,d);
     vector[d] s = rep_vector(0,d);
     real r;
+    real r3;
+    real r4;
+    real r1;
+    real r2;
 
-    for(i in 1:d){ //set upper tri to lower
+     for(i in 1:d){ 
       for(j in 1:d){
         if(j > i){
-          o[j,i] =  inv_logit(mat[j,i])*2-1; //divide by i for approx whole matrix equiv priors  
-          //o[i,j] = o[j,i];
+          o[j,i] =  inv_logit(mat[j,i])*2-1;
         }
       }
     }
     
-  for(i in 1:d){
-    for(j in 1:d){
-      if(j > i) {
-        ss[i] += square(o[j,i]);
-        s[i] += o[j,i];
+    for(i in 1:d){
+      for(j in 1:d){
+        if(j > i) {
+          ss[i] =ss[i] +square(o[j,i]);
+          s[i] =s[i]+ o[j,i];
+        }
+        if(j < i){
+          ss[i] = ss[i]+ square(o[i,j]);
+          s[i] = s[i]+ o[i,j];
+        }
       }
-      if(j < i){
-        ss[i] = square(o[i,j]);
-        s[i] += o[i,j];
-      }
+      s[i]=s[i]+1e-5;
+      ss[i]=ss[i]+1e-5;
     }
-    s[i]+=1e-5;
-    ss[i]+=1e-5;
-
-
-  }
-  
-  for(i in 1:d){
-    r=sqrt(log1p_exp(2*(fabs(s[i])-s[i]-1)-4)+1e-5);
-    r*=(r*((fabs(s[i])/ss[i]-1))+1);
-    r+=1+ss[i];
-    r=sqrt(r);
-    for(j in 1:d){
-      if(j > i)  o[i,j]=o[j,i]/r;
-      if(j < i) o[i,j] = o[i,j] /r;
-    }
-  }
-  
-  for(i in 1:d){
-    o[i,i]=0;
-    o[i,i]=sqrt(1-ss[i]+1e-5);
-  }
-
-      //o[i,i]=0;
-      //o[i,]=o[i,]/sqrt(sum(square(o[i,]))+.2);
-      //o[i,i]=sqrt(1-(sum(square(o[i,]))));
     
+    for(i in 1:d){
+      o[i,i]=0;
+      r1=sqrt(ss[i]);
+      
+       r3=(fabs(r2))/(r1)-1;
+      r4=sqrt(log1p_exp(2*(fabs(r2)-r2-1)-4));
+      r=(r4*((r3))+1)*r4+1;
+      r=(sqrt(ss[i]+r));
+      for(j in 1:d){
+        if(j > i)  o[i,j]=o[j,i]/r;
+        if(j < i) o[i,j] = o[i,j] /r;
+      }
+      o[i,i]=sqrt(1-sum(square(o[i,]))+1e-5);
+    }
+
     return o;
   } 
 
