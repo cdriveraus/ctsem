@@ -28,6 +28,7 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
     matrix[d,d] o;
     vector[d] ss = rep_vector(0,d);
     vector[d] s = rep_vector(0,d);
+    real r;
 
     for(i in 1:d){ //set upper tri to lower
       for(j in 1:d){
@@ -49,14 +50,20 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
         s[i] += o[i,j];
       }
     }
-    s[i] =sqrt(log1p_exp(10*(fabs(s[i])-s[i]-.5)-20)+1);
-    ss[i]=sqrt(ss[i]+s[i]);
+    s[i]+=1e-5;
+    ss[i]+=1e-5;
+
+
   }
   
   for(i in 1:d){
+    r=sqrt(log1p_exp(2*(fabs(s[i])-s[i]-1)-4));
+    r*=(r*((fabs(s[i])/ss[i]-1))+1);
+    r+=1+ss[i];
+    r=sqrt(r);
     for(j in 1:d){
-      if(j > i)  o[i,j]=o[j,i]/ss[i];
-      if(j < i) o[i,j] = o[i,j] / ss[i];
+      if(j > i)  o[i,j]=o[j,i]/r;
+      if(j < i) o[i,j] = o[i,j] /r;
     }
   }
   
