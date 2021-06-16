@@ -23,7 +23,7 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
   }
 
  
-   matrix constraincorsqrt(matrix mat,int choleskymats){ //converts from unconstrained lower tri matrix to cor
+  matrix constraincorsqrt(matrix mat,int step){ //converts from unconstrained lower tri matrix to cor
     int d=rows(mat);
     matrix[d,d] o;
     vector[d] ss = rep_vector(0,d);
@@ -40,7 +40,7 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
           o[j,i] =  inv_logit(mat[j,i])*2-1;
         }
       }
-    }
+     }
     
     for(i in 1:d){
       for(j in 1:d){
@@ -56,10 +56,12 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
       s[i]=s[i]+1e-5;
       ss[i]=ss[i]+1e-5;
     }
+
     
     for(i in 1:d){
       o[i,i]=0;
       r1=sqrt(ss[i]);
+      r2=s[i];
       
        r3=(fabs(r2))/(r1)-1;
       r4=sqrt(log1p_exp(2*(fabs(r2)-r2-1)-4));
@@ -73,7 +75,7 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
     }
 
     return o;
-  } 
+}  
 
   matrix sdcovsqrt2cov(matrix mat, int choleskymats){ //covariance from cholesky or unconstrained cor sq root
     if(choleskymats< 1) {
