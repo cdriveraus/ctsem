@@ -57,7 +57,7 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
   }
   
   for(i in 1:d){
-    r=sqrt(log1p_exp(2*(fabs(s[i])-s[i]-1)-4));
+    r=sqrt(log1p_exp(2*(fabs(s[i])-s[i]-1)-4)+1e-5);
     r*=(r*((fabs(s[i])/ss[i]-1))+1);
     r+=1+ss[i];
     r=sqrt(r);
@@ -69,7 +69,7 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
   
   for(i in 1:d){
     o[i,i]=0;
-    o[i,i]=sqrt(1-(sum(square(o[i,]))));
+    o[i,i]=sqrt(1-ss[i]+1e-5);
   }
 
       //o[i,i]=0;
