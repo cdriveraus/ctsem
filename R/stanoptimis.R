@@ -254,7 +254,7 @@ parallelStanSetup <- function(cl, standata,split=TRUE,nsubsets=1){
   benv <- new.env(parent = globalenv())
   
   sapply(c('standata','stanindices','cores','cl'),function(x){
-    assign(x,get(x),envir = benv)
+    assign(x,get(x),pos = benv)
     NULL
   })
   
@@ -270,7 +270,6 @@ parallelStanSetup <- function(cl, standata,split=TRUE,nsubsets=1){
     "if(FALSE) sm=99",
     "smf=ctsem:::stan_reinitsf(sm,standata)"
   )
-  
   eval(parse(text=
       "parallel::clusterExport(cl,c('standata','stanindices','cores','commands'),envir=environment())"),
     envir = benv)
@@ -794,11 +793,12 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       }
       
       if(cores > 1){ #for parallelised computation after fitting, if only single subject
-        
+    
         benv <- new.env(parent=globalenv())
         assign(x = 'clctsem',
           parallel::makeCluster(spec = cores,type = "PSOCK",useXDR=FALSE,outfile='',user=NULL),
           envir = benv)
+        benv$cores=cores
         
         eval(parse(text=
             "parallel::parLapply(cl = clctsem,X = 1:cores,function(x){
