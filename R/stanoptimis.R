@@ -250,7 +250,6 @@ parallelStanSetup <- function(cl, standata,split=TRUE,nsubsets=1){
   standata$nsubsets <- as.integer(nsubsets)
   if(!split) cores <- 1 #for prior mod
   # clusterIDexport(cl,c('standata','stanindices','cores'))
-  print('1')
   benv <- new.env(parent = globalenv())
   
   sapply(c('standata','stanindices','cores','cl'),function(x){
@@ -278,9 +277,7 @@ parallelStanSetup <- function(cl, standata,split=TRUE,nsubsets=1){
   eval(parse(text="parallel::clusterEvalQ(cl,sapply(commands,function(x) eval(parse(text=x))))"),envir = benv)
   
   # eval(parse(text="parallel::clusterEvalQ(cl,ls(envir=globalenv()))"),envir = benv)
-  
-  print(2)
-  # browser()
+
   NULL
 }
 
@@ -678,7 +675,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   if(is.null(init)) init <- 'random'
   if(init[1] !='random') carefulfit <- FALSE
   
-  clctsem <- NA #placeholder for flexsapply usage
+  benv <- new.env(parent=globalenv())
+  benv$clctsem <- NA #placeholder for flexsapply usage
   
   notipredsfirstpass <- FALSE
   if(init[1] =='random'){# #remove tipreds for first pass
@@ -794,7 +792,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       if(cores > 1){ #for parallelised computation after fitting, if only single subject
     
-        benv <- new.env(parent=globalenv())
+        
         assign(x = 'clctsem',
           parallel::makeCluster(spec = cores,type = "PSOCK",useXDR=FALSE,outfile='',user=NULL),
           envir = benv)
@@ -972,13 +970,13 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         standatasml$nopriors <- 0L
         standatasml$nsubsets <- as.integer(nsubsets)
         
-        print(system.time({
+        
           # smlndat <- min(standatasml$ndatapoints,ceiling(max(standatasml$nsubjects * 10, standatasml$ndatapoints*.5)))
           # standatasml$dokalmanrows[sample(1:standatasml$ndatapoints,smlndat)] <- 0L
           # standatasml$dokalmanrows[match(unique(standatasml$subject),standatasml$subject)] <- 1L #ensure first obs is included for t0var consistency
           if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standatasml,split=parsets<2,nsubsets = nsubsets)
           if(optimcores==1) smf<-stan_reinitsf(sm,standatasml)
-        }))
+        
         if(npars <=50 && nsubsets ==1) {
           optimfit <- mize(init, fg=mizelpg, max_iter=99999,
             method="L-BFGS",memory=100,
@@ -1191,7 +1189,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       #   hesscl <- NA
       #   # smf<-stan_reinitsf(sm,standata)
       # }
-      
+      # browser()
       standata$nsubsets <- 1L
       if(standata$nsubjects > cores){
         hesscl <- NA

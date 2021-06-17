@@ -5,7 +5,7 @@ set.seed(1)
 
 context("sunspots") 
 
-test_that("1vs2core", { 
+test_that("sunspots", { 
 sunspots<-sunspot.year
  sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
  id <- 1

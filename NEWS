@@ -1,7 +1,9 @@
 ctsem news:
-
+16/6/2021
+#### 3.5.2 ####
 - Fixed bug in output of $rawpopcorr introduced in 3.4.3. 
   Correlations displayed incorrectly, other parameters unaffected.
+- Modified correlation approach to ensure monotonicity in high dims.
 
 31/5/2021
 #### 3.5.0 ####

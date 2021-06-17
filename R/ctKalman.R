@@ -297,7 +297,8 @@ plot.ctKalmanDF<-function(x, subjects=unique(x$Subject), kalmanvec=c('y','yprior
   shapevec[is.na(ltyvec)] <- 19
   # 
   d<-subset(kdf,Element %in% kalmanvec)
-  
+
+
   g <- ggplot(d,
     aes_string(x='Time',y='Value',colour=colvec,linetype='Element',shape='Element')) +
     scale_linetype_manual(breaks=names(ltyvec),values=ltyvec)+
@@ -305,7 +306,7 @@ plot.ctKalmanDF<-function(x, subjects=unique(x$Subject), kalmanvec=c('y','yprior
   # labs(linetype='Element',shape='Element',colour='Element',fill='Element')+
   # guides(fill=FALSE)
   # browser()
-  if(length(unique(ltyvec[!is.na(ltyvec)]))<1) g<-g+guides(linetype=FALSE)
+  if(length(unique(ltyvec[!is.na(ltyvec)]))<1) g<-g+guides(linetype='none')
   # if(length(unique(shapevec[!is.na(shapevec)]))<1) 
   # g<-g+ guides(shape=FALSE)
   if(!is.na(facets[1]) && length(subjects) > 1 && length(unique(subset(kdf,Element %in% kalmanvec)$Variable)) > 1){
@@ -343,10 +344,10 @@ plot.ctKalmanDF<-function(x, subjects=unique(x$Subject), kalmanvec=c('y','yprior
     } 
   }
   g <- g + 
-    geom_line()+
+    geom_line(linetype=1)+
     geom_point()+
     theme_minimal()+
-    guides(fill=FALSE)
+    guides(fill='none')
   
   if(plot) suppressWarnings(print(g))
   return(invisible(g))

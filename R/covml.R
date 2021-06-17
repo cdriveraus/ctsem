@@ -1,28 +1,29 @@
 
 # if(1==99){ #random cor tests
-#   d=4
+# set.seed(1)
+#   d=6
 #   rm=matrix(rnorm(d^2,0,1),d)
 #   rm = rm%*% t(rm)
 #   cholrm=t(chol(rm))
-#   ndat=(t(cholrm %*% matrix(rnorm(100*d,0,1),d)))
+#   ndat=(t(cholrm %*% matrix(rnorm(1000*d,0,1),d)))
 #   ndat[sample(1:length(ndat),100,replace=FALSE)] <- NA
 #   # ndat[-1:-2,c(3,4)] <- NA
 #   cov(ndat,use="pairwise.complete.obs")-rm
-#   ctcov=ctsem:::covml(ndat,reg = 0)
+#   system.time({ctcov=ctsem:::covml(ndat,reg = 0,hmc=F,verbose = 0)})
 #   ctcov$cp$covm
 #   ctcov$lp
 #   cov(ndat,use="pairwise.complete.obs")
-#   mxcov=OpenMx::mxRefModels(data.frame(ndat),run=TRUE)
+#   system.time({mxcov=OpenMx::mxRefModels(data.frame(ndat),run=TRUE)})
 # mxcov$Saturated$ltCov$values %*% t(mxcov$Saturated$ltCov$values)
 # rm
 # mxcov$Saturated$output$Minus2LogLikelihood*-.5
 # sum(mvtnorm::dmvnorm(x = ndat,mean = ctcov$cp$mu,sigma = cov(ndat),log = TRUE))
 # 
 # 
-# constraincorsqrt=function(rawcor, d){ 
+# constraincorsqrt=function(rawcor, d){
 #   o=matrix(NA,d,d)
 #   counter=0;
-#   for(i in 1:d){ 
+#   for(i in 1:d){
 #     for(j in 1:d){
 #       if(j > i){
 #         counter=counter+1;
@@ -30,7 +31,7 @@
 #         o[i,j] = o[j,i];
 #       }
 #     }
-#     o[i,i]=1; 
+#     o[i,i]=1;
 #     o[i,] = o[i,] / sqrt(sum((o[i,])^2)+1e-10);
 #   }
 #   return(o);
@@ -61,7 +62,8 @@ covdata <- function(ndat,reg,independent=FALSE,corpriortype=1L){
     reg=(reg),
     indep=as.integer(independent),
     obs=array(as.integer(obs),dim=c(n,d)),
-    nobs=nobs)
+    nobs=nobs,
+    symm=0L)
 }
 
 covml <- function(ndat,reg=0,verbose=0,hmc=FALSE,independent=FALSE,corpriortype=2L){
@@ -109,19 +111,19 @@ covinit[is.na(covinit)&diag(d)==0] <- 0
   #   }
   # }
   init[is.na(init) | is.infinite(init)]=0
-  # browser()
-  # 
-  # covfit=sgd(init = init,fitfunc = target,plot=20,roughnessmemory = .9,lproughnesstarget = .05,
-  #   gsmoothroughnesstarget =  .1)
-  # browser()
+
   if(!hmc){
+    # covfit=sgd(init = init,fitfunc = target)
   covfit=mize(par = init,fg=mizelist,memory=20,max_iter=10000,
     # line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
     abs_tol=1e-8,grad_tol=0,rel_tol=1e-10,step_tol=0,ginf_tol=0)
   } else{
     # browser()
-    covfit=sampling(object = stanmodels$cov,iter=2000,chains=2,cores=2,check_data=FALSE,
-      data=covdata)
+    covfit=stanWplot(object = stanmodels$cov,iter=2000,chains=4,cores=4,check_data=FALSE,
+      data=covdata,init_r=.01)
+    # covfit=sampling(object = stanmodels$cov,iter=2000,chains=2,cores=2,check_data=FALSE,
+    #   data=covdata)
+    
   }
   
   # covfit=optim(par = init,fn =mizelist$fn,gr = mizelist$gr,method = 'BFGS')
@@ -133,6 +135,6 @@ covinit[is.na(covinit)&diag(d)==0] <- 0
   # round(mcov,3)
   # round(cov(ndat,use='pairwise.complete.obs'),3)
   # round(mcov-cov(ndat,use='pairwise.complete.obs'),3)
-  return(list(fit=covfit, cp=cp,ll=sum(cp$llrow,na.rm=TRUE), 
+  return(list(dat=covdata,fit=covfit, cp=cp,ll=sum(cp$llrow,na.rm=TRUE), 
     lp=rstan::log_prob(scovf,covfit$par)))
 }
