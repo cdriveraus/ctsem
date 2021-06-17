@@ -80,7 +80,7 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
   matrix sdcovsqrt2cov(matrix mat, int choleskymats){ //covariance from cholesky or unconstrained cor sq root
     if(choleskymats< 1) {
       //if(choleskymats== -1){
-        return(multiply_lower_tri_self_transpose(diag_pre_multiply(diagonal(mat),constraincorsqrt(mat,choleskymats))));
+        return(tcrossprod(diag_pre_multiply(diagonal(mat),constraincorsqrt(mat,choleskymats))));
       //} else {
       //  return(quad_form_diag(constraincorsqrt(mat,choleskymats),diagonal(mat)));
       //}
@@ -507,7 +507,7 @@ transformed parameters{
     }
     //if(choleskymats==0) rawpopcorr = constraincorsqrt(rawpopcovbase,choleskymats);
     //if(choleskymats== -1) 
-    rawpopcorr = multiply_lower_tri_self_transpose( constraincorsqrt(rawpopcovbase,choleskymats));
+    rawpopcorr = tcrossprod( constraincorsqrt(rawpopcovbase,choleskymats));
     rawpopcov = makesym(quad_form_diag(rawpopcorr, rawpopsd +1e-8),verbose,1);
     rawpopcovchol = cholesky_decompose(rawpopcov); 
   }//end indvarying par setup
