@@ -45,12 +45,12 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
     for(i in 1:d){
       for(j in 1:d){
         if(j > i) {
-          ss[i] =ss[i] +square(o[j,i]);
-          s[i] =s[i]+ o[j,i];
+          ss[i] =ss[i] +square(mat[j,i]);
+          s[i] =s[i]+ mat[j,i];
         }
         if(j < i){
-          ss[i] = ss[i]+ square(o[i,j]);
-          s[i] = s[i]+ o[i,j];
+          ss[i] = ss[i]+ square(mat[i,j]);
+          s[i] = s[i]+ mat[i,j];
         }
       }
       s[i]=s[i]+1e-5;
@@ -68,8 +68,8 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
       r=(r4*((r3))+1)*r4+1;
       r=(sqrt(ss[i]+r));
       for(j in 1:d){
-        if(j > i)  o[i,j]=o[j,i]/r;
-        if(j < i) o[i,j] = o[i,j] /r;
+        if(j > i)  o[i,j]=mat[j,i]/r;
+        if(j < i) o[i,j] = mat[i,j] /r;
       }
       o[i,i]=sqrt(1-sum(square(o[i,]))+1e-5);
     }
@@ -470,8 +470,8 @@ transformed parameters{
       for(i in 1:nindvarying){
         if(i > j){
           counter += 1;
-          rawpopcovbase[i,j]=sqrtpcov[counter];
-          rawpopcovbase[j,i]=0;//sqrtpcov[counter];
+          rawpopcovbase[i,j]=inv_logit(sqrtpcov[counter])*2-1;
+          rawpopcovbase[j,i]=0;// needed to avoid nan output;
         }
       }
     }

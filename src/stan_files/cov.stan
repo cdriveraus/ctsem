@@ -23,16 +23,16 @@ functions{
   for(i in 1:d){
     for(j in 1:d){
       if(j > i) {
-        ss[i] =ss[i] +square(o[j,i]);
-        s[i] =s[i]+ o[j,i];
+        ss[i] +=square(o[j,i]);
+        s[i] +=o[j,i];
       }
       if(j < i){
-        ss[i] = ss[i]+ square(o[i,j]);
-        s[i] = s[i]+ o[i,j];
+        ss[i] += square(o[i,j]);
+        s[i] += o[i,j];
       }
     }
-    s[i]=s[i]+1e-5;
-    ss[i]=ss[i]+1e-5;
+    s[i]+=1e-5;
+    ss[i]+=1e-5;
   }
   
   

@@ -102,7 +102,9 @@ ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
       
       if(ctspec$matrix[pi] %in% c('DIFFUSION','MANIFESTVAR', 'T0VAR')) {
         if(ctspec$row[pi] != ctspec$col[pi]){
-          ctspec$transform[pi] <- 0
+          ctspec$transform[pi] <- 3
+          ctspec$multiplier[pi] <- 2
+          ctspec$offset[pi] <- -1
           # if(ctspec$matrix[pi] %in% c('DIFFUSION')) ctspec$meanscale[pi] <-2
         }
         if(ctspec$row[pi] == ctspec$col[pi]){
