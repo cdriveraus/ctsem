@@ -84,6 +84,12 @@ NULL
 .onAttach <- function(libname, pkgname) {
   # to show a startup message
   packageStartupMessage("ctsem also changes in time, for manual run ctDocs(), for blog see https://cdriver.netlify.app/, for citation info run citation('ctsem'), for original OpenMx functionality install.packages('ctsemOMX'), and for discussion https://github.com/cdriveraus/ctsem/discussions")
+  
+  try({
+  a=utils::installed.packages()
+  a=utils::old.packages(instPkgs = a[rownames(a) %in% c('rstan','ctsem'),,drop=FALSE],repos = "https://cloud.r-project.org")
+  if(!is.null(a)) warning('The following important packages for ctsem are out of date: ', paste0(rownames(a),collapse=', '))
+})
 }
 
 #' Get documentation pdf for ctsem
@@ -95,11 +101,11 @@ NULL
 #' ctDocs()
 ctDocs <- function(){
   if(interactive()){
-  r=runif(1,0,9999999)
-  pdfpath=file.path(tempdir(),paste0('/ctsemManual_',r,'.pdf'))
-  utils::download.file(url="https://github.com/cdriveraus/ctsem/raw/master/vignettes/hierarchicalmanual.pdf",
-    destfile=pdfpath,mode='wb')
-  try(openPDF(pdfpath))
+    r=runif(1,0,9999999)
+    pdfpath=file.path(tempdir(),paste0('/ctsemManual_',r,'.pdf'))
+    utils::download.file(url="https://github.com/cdriveraus/ctsem/raw/master/vignettes/hierarchicalmanual.pdf",
+      destfile=pdfpath,mode='wb')
+    try(openPDF(pdfpath))
   }
 }
 

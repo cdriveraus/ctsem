@@ -30,11 +30,37 @@ ctSummarise<-function(sf,name='ctSummary',cores=2, times=seq(0,10,.1),quantiles=
     
     nl <- sm$n.latent
     nm <- sm$n.manifest
+    
+    viscovf <- function(mat){
+      matname <- mat
+      if(mat %in% 'MANIFESTcov') matname <- 'Residual'
+      #correlation ci's
+      diffusion=sf$stanfit$transformedpars[[paste0('pop_',mat)]]
+      diffindices <- unique(c(which(diffusion[1,,] != 0,arr.ind = TRUE)))
+      if(length(diffindices) > 0){
+      diffusion <- plyr::aaply(diffusion,1,function(x) matrix(x[diffindices,diffindices,drop=FALSE],length(diffindices),length(diffindices)))
+      dimnames(diffusion) <- list(NULL,sf$ctstanmodelbase$latentNames[diffindices],sf$ctstanmodelbase$latentNames[diffindices])
+      dcor=plyr::aaply(diffusion,1, function(x) cov2cor(x))
+      dcorq=plyr::aaply(dcor,c(2,3),quantile,probs=c(.025,.5,.975))
+      dcorm <- as.data.table(dcorq)
+      dcorm <- dcast(dcorm,'V1+V2 ~ V3')
+      print(corplotmelt(meltcov(dcorq[,,1]),title = paste0(gsub('cov','',matname),' corr. 2.5% quantile')))
+      print(corplotmelt(meltcov(dcorq[,,2]),title = paste0(gsub('cov','',matname),' corr. 50% quantile')))
+      print(corplotmelt(meltcov(dcorq[,,3]),title = paste0(gsub('cov','',matname),' corr. 97.5% quantile')))
+      options(max.print=100000)
+      cat(gsub('cov','',matname),' correlation matrix confidence intervals')
+      print(dcorm,nrows = 10000)
+      }
+    }
+    
+    sink(paste0(name,'_corrCI.txt'))
     pdf(paste0(name,'_VisualParMats.pdf'))
-    print(corplotmelt(meltcov(cov2cor(cp$MANIFESTcov[manifests,manifests,drop=FALSE])),title =  'Residual correlations'))
-    print(corplotmelt(meltcov(cov2cor(cp$DIFFUSIONcov[latents,latents,drop=FALSE])),title =  'Random latent change correlations'))
-    print(corplotmelt(meltcov(cov2cor(cp$asymDIFFUSION[latents,latents,drop=FALSE])),title =  'Asymptotic latent correlations'))
-    print(corplotmelt(meltcov(cov2cor(cp$T0cov[latents,latents,drop=FALSE])),title =  'Initial latent correlations'))
+    lapply(c('MANIFESTcov','DIFFUSIONcov','asymDIFFUSIONcov','T0cov'),viscovf)
+    sink()
+    # print(corplotmelt(meltcov(cov2cor(cp$MANIFESTcov[manifests,manifests,drop=FALSE])),title =  'Residual correlations'))
+    # print(corplotmelt(meltcov(cov2cor(cp$DIFFUSIONcov[latents,latents,drop=FALSE])),title =  'Random latent change correlations'))
+    # print(corplotmelt(meltcov(cov2cor(cp$asymDIFFUSION[latents,latents,drop=FALSE])),title =  'Asymptotic latent correlations'))
+    # print(corplotmelt(meltcov(cov2cor(cp$T0cov[latents,latents,drop=FALSE])),title =  'Initial latent correlations'))
     dr=cp$DRIFT[latents,latents,drop=FALSE]
     dr[diag(nrow(dr))==1] <- -dr[diag(nrow(dr))==1]
     print(corplotmelt(meltcov(cov2cor(dr %*% t(dr))),title =  'Std. deterministic change relations'))
@@ -164,66 +190,66 @@ ctSummarise<-function(sf,name='ctSummary',cores=2, times=seq(0,10,.1),quantiles=
     if(IndDifCorrelations){
       if(sf$standata$ntipred > 0 || sf$standata$nindvarying > 0){
         try({
-        sp=ctStanSubjectPars(sf,pointest=FALSE,cores=cores,nsamples = nsamples)
-        
-        if(sf$standata$ntipred > 0){
-          tip <- array(rep(sf$standata$tipredsdata,each=dim(sp)[[1]]),dim=c(dim(sp)[1:2],ncol(sf$standata$tipredsdata)))
-          spti=array(c(sp, tip), dim = c(dim(sp)[1], dim(sp)[2], dim(sp)[3]+dim(tip)[3]))
-        } else spti <- sp
-        
-        dn=dimnames(sp)
-        dn[[3]] <- c(dn[[3]],sf$ctstanmodelbase$TIpredNames)
-        dimnames(spti) <- dn
-        
-        cornames <- matrix(
-          paste0(dimnames(spti)[[3]],'_',rep(dimnames(spti)[[3]],each=length(dimnames(spti)[[3]]))),
-          nrow=length(dimnames(spti)[[3]]))
-        
-        cornames <- cornames[lower.tri(cornames)]
-        cm=aaply(spti,1,cor,.drop=FALSE)
-        qc=aaply(cm,c(3,2),function(x) round(c(Mean=mean(x),SD=sd(x),
-          `2.5%`=quantile(x,probs=c(.025)),`50%`=quantile(x,probs=c(.5)),
-          `97.5%`=quantile(x,probs=c(.975)),z=mean(x)/sd(x)),2),.drop=FALSE)
-        
-        qcsig <- apply(qc[,,c("2.5%.2.5%","97.5%.97.5%"),drop=FALSE],c(1,2),function(x) abs(sum(sign(x)))==2)
-        cors <- as.data.table(qc)
-        cors <- data.frame(dcast(cors,'V1+V2~V3'))
-        colnames(cors) <- c('Par1','Par2','2.5%','50%','97.5%','Mean','SD','z')
-        cors <- cors[,c('Par1','Par2','Mean','SD','2.5%','50%','97.5%','z')]
-        cors <- cors[paste0(cors$Par1,'_',cors$Par2) %in% cornames,]
-        corssig <- cors[apply(cors,1,function(x) sum(sign(as.numeric(x[3:5])))==3),]
-        
-        #now do similar to point estimate
-        spp=ctStanSubjectPars(sf,pointest=TRUE,cores=1)
-        
-        if(sf$standata$ntipred > 0){
-          tip <- array(rep(sf$standata$tipredsdata,each=dim(spp)[[1]]),dim=c(dim(spp)[1:2],ncol(sf$standata$tipredsdata)))
-          spti=array(c(spp, tip), dim = c(dim(spp)[1], dim(spp)[2], dim(spp)[3]+dim(tip)[3]))
-        } else spti <- spp
-        dn=dimnames(spp)
-        dn[[3]] <- c(dn[[3]],sf$ctstanmodelbase$TIpredNames)
-        dimnames(spti) <- dn
-        cm=cor(spti[1,,])
-        
-        mcor=meltcov(cm)
-        msig=data.frame(matrix(as.numeric(qcsig),nrow=nrow(qcsig)))
-        dimnames(msig) <- dimnames(cm)
-        mcorsig=meltcov(msig)
-        mcorsig$sig <- mcorsig$value
-        mcorsig$value <- NULL
-        mcor <- merge(mcor,mcorsig)
-        mcor$`Sig.` <- as.logical(mcor$sig)
-        pdf(paste0(name,'_IndDifCorrelations.pdf'))
-        print(ggplot(data=(mcor),
-          aes_string(x='Var1',y='Var2',fill=('value')))+ #ifelse(groups,NULL,'Group')))+
-            geom_tile( width=1,height=1,colour='black')+
-            scale_fill_gradient2(low = "blue", high = "red", mid = "white",
-              midpoint = 0, limits = c(-1,1), space = "Lab", 
-              name='Corr')  +
-            geom_point(mapping=aes(alpha=Sig.),stroke=0,size=.6)+
-            theme_minimal()+ theme(axis.text.y=element_text(size=8),
-              axis.text.x = element_text(angle = 90,size=8)))
-        dev.off()
+          sp=ctStanSubjectPars(sf,pointest=FALSE,cores=cores,nsamples = nsamples)
+          
+          if(sf$standata$ntipred > 0){
+            tip <- array(rep(sf$standata$tipredsdata,each=dim(sp)[[1]]),dim=c(dim(sp)[1:2],ncol(sf$standata$tipredsdata)))
+            spti=array(c(sp, tip), dim = c(dim(sp)[1], dim(sp)[2], dim(sp)[3]+dim(tip)[3]))
+          } else spti <- sp
+          
+          dn=dimnames(sp)
+          dn[[3]] <- c(dn[[3]],sf$ctstanmodelbase$TIpredNames)
+          dimnames(spti) <- dn
+          
+          cornames <- matrix(
+            paste0(dimnames(spti)[[3]],'_',rep(dimnames(spti)[[3]],each=length(dimnames(spti)[[3]]))),
+            nrow=length(dimnames(spti)[[3]]))
+          
+          cornames <- cornames[lower.tri(cornames)]
+          cm=aaply(spti,1,cor,.drop=FALSE)
+          qc=aaply(cm,c(3,2),function(x) round(c(Mean=mean(x),SD=sd(x),
+            `2.5%`=quantile(x,probs=c(.025)),`50%`=quantile(x,probs=c(.5)),
+            `97.5%`=quantile(x,probs=c(.975)),z=mean(x)/sd(x)),2),.drop=FALSE)
+          
+          qcsig <- apply(qc[,,c("2.5%.2.5%","97.5%.97.5%"),drop=FALSE],c(1,2),function(x) abs(sum(sign(x)))==2)
+          cors <- as.data.table(qc)
+          cors <- data.frame(dcast(cors,'V1+V2~V3'))
+          colnames(cors) <- c('Par1','Par2','2.5%','50%','97.5%','Mean','SD','z')
+          cors <- cors[,c('Par1','Par2','Mean','SD','2.5%','50%','97.5%','z')]
+          cors <- cors[paste0(cors$Par1,'_',cors$Par2) %in% cornames,]
+          corssig <- cors[apply(cors,1,function(x) sum(sign(as.numeric(x[3:5])))==3),]
+          
+          #now do similar to point estimate
+          spp=ctStanSubjectPars(sf,pointest=TRUE,cores=1)
+          
+          if(sf$standata$ntipred > 0){
+            tip <- array(rep(sf$standata$tipredsdata,each=dim(spp)[[1]]),dim=c(dim(spp)[1:2],ncol(sf$standata$tipredsdata)))
+            spti=array(c(spp, tip), dim = c(dim(spp)[1], dim(spp)[2], dim(spp)[3]+dim(tip)[3]))
+          } else spti <- spp
+          dn=dimnames(spp)
+          dn[[3]] <- c(dn[[3]],sf$ctstanmodelbase$TIpredNames)
+          dimnames(spti) <- dn
+          cm=cor(spti[1,,])
+          
+          mcor=meltcov(cm)
+          msig=data.frame(matrix(as.numeric(qcsig),nrow=nrow(qcsig)))
+          dimnames(msig) <- dimnames(cm)
+          mcorsig=meltcov(msig)
+          mcorsig$sig <- mcorsig$value
+          mcorsig$value <- NULL
+          mcor <- merge(mcor,mcorsig)
+          mcor$`Sig.` <- as.logical(mcor$sig)
+          pdf(paste0(name,'_IndDifCorrelations.pdf'))
+          print(ggplot(data=(mcor),
+            aes_string(x='Var1',y='Var2',fill=('value')))+ #ifelse(groups,NULL,'Group')))+
+              geom_tile( width=1,height=1,colour='black')+
+              scale_fill_gradient2(low = "blue", high = "red", mid = "white",
+                midpoint = 0, limits = c(-1,1), space = "Lab", 
+                name='Corr')  +
+              geom_point(mapping=aes(alpha=Sig.),stroke=0,size=.6)+
+              theme_minimal()+ theme(axis.text.y=element_text(size=8),
+                axis.text.x = element_text(angle = 90,size=8)))
+          dev.off()
         }) #end try
       }
       

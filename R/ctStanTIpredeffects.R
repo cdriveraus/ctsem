@@ -1,4 +1,12 @@
-#' Get time independent predictor effect estimates
+ctStanTIpredParMats <- function(fit, tipvalues){
+  newpars <- fit$stanfit$rawest
+  effect <- matrix(fit$stanfit$transformedparsfull$TIPREDEFFECT[1,,], fit$standata$nparams,fit$standata$ntipred)
+  newpars[1:fit$standata$nparams] <- newpars[1:fit$standata$nparams] + effect %*% matrix(tipvalues)
+  
+  cp=stan_constrainsamples(fit$stanmodel,standata = fit$standata,samples = matrix(newpars,1),cores = 1)
+}
+
+  #' Get time independent predictor effect estimates
 #' 
 #' Computes and plots combined effects and quantiles for effects of time independent predictors
 #' on subject level parameters of a ctStanFit object.
@@ -166,6 +174,8 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
     
     rownames(parmatarray) <- paste0(rownames(parmats),'[',parmats[,'Row'],',',parmats[,'Col'],']')
     
+    
+    if(!any(grepl('\\[',whichpars))){ #if brackets are specified in whichpars, dont drop upper triangle
     #remove certain parmatrices lines
     removeindices <- which(rownames(parmats) == 'MANIFESTVAR' & parmats[,'Row'] != parmats[,'Col'])
     
@@ -176,9 +186,11 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
         parmats[,'Row'] == parmats[,'Col'])))
     
     parmatarray <- parmatarray[-removeindices,]
+    }
     
     effect <- array(parmatarray,dim=c(nrow(parmatarray),nsamples,nsubjects))
     rownames(effect) <- rownames(parmatarray)
+
     if(any(whichpars !='all')) {
       selection <- unlist(lapply(whichpars,function(x) grep(paste0('^\\Q',x,'\\E'),dimnames(effect)[[1]])))
       effect <- effect[selection,,,drop=FALSE]

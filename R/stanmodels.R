@@ -21,34 +21,21 @@ MODELS_HOME <- "src"
 if (!file.exists(MODELS_HOME)) MODELS_HOME <- sub("R$", "src", getwd())
 
 w32 <-  (.Platform$OS.type=="windows" && .Platform$r_arch=="i386")#.Machine$sizeof.pointer == 4 && .Platform$OS.type == "windows" #&&
-# w32 <- FALSE
-# 
-# # stan_files <- file.path(MODELS_HOME, 
-# #   ifelse(w32, "stan_files/ctsmW32.stan", "stan_files/ctsm.stan" ))
-# # 
-# # if(!file.exists(paste0('./src/stan_files/ctsm',ifelse(w32,'W32',''),'.stan')) {
-# #   file.rename(paste0('./src/stan_files/ctsm',ifelse(w32,'W32',''),'.bak'), 
-# #   paste0('./src/stan_files/ctsm',ifelse(w32,'W32',''),'.stan')) #rename backup .stan file to use
-# # }
-# 
-# # suppressMessages(try(file.rename('./src/stan_files/ctsm.stan','./src/stan_files/ctsm.del'),silent = TRUE))
-# file.copy(paste0('./src/stan_files/ctsm',ifelse(w32,'W32',''),'.prep'),
-#   paste0('./src/stan_files/ctsm',ifelse(w32,'W32',''),'.stan'),overwrite=TRUE,copy.date=TRUE) #rename unused .stan file to avoid errors
 
 stan_files <- dir(file.path(MODELS_HOME, paste0('stan_files',ifelse(w32,'32',''))),
-                  pattern = "stan$", full.names = TRUE)
+  pattern = "stan$", full.names = TRUE)
 stanmodels <- lapply(stan_files, function(f) {
   model_cppname <- sub("\\.stan$", "", basename(f))
   stanfit <- suppressWarnings(rstan::stanc(f, allow_undefined = TRUE, 
-                          obfuscate_model_name = FALSE))
+    obfuscate_model_name = FALSE))
   stanfit$model_cpp <- list(model_cppname = stanfit$model_name, 
-                            model_cppcode = stanfit$cppcode)
+    model_cppcode = stanfit$cppcode)
   sm <- do.call(methods::new, args = c(stanfit[-(1:3)], 
     Class = c("stanmodel"),#,),
     mk_cppmodule = function(x) get(paste0("model_", model_cppname))))
   #attributes(sm)StanHeaders <- packageDescription('StanHeaders')$version
   return(sm)
-  }
+}
 )
 names(stanmodels) <- sub("\\.stan$", "", basename(stan_files))
 rm(MODELS_HOME)
