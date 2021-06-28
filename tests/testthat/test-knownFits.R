@@ -23,8 +23,7 @@ test_that("anomauth", {
   a=Sys.time()
   # sink('bad.txt')
   sf=ctStanFit(ctDeintervalise(ctWideToLong(AnomAuth,Tpoints = AnomAuthmodel$Tpoints,n.manifest = 2)),
-    ctstanmodel = sm1, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores,nopriors=TRUE,#forcerecompile = T,
-    optimcontrol=list(finishsamples=500,nsubsets=1,stochastic=F),plot=0,fit=TRUE)
+    ctstanmodel = sm1, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores)
   # sink()
   print(Sys.time()-a)
   testthat::expect_equal(23415.929,-2*sf$stanfit$optimfit$value,tolerance=.0001)

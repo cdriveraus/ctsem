@@ -1402,7 +1402,7 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
   }
 
  
-  matrix constraincorsqrt(matrix mat,int step){ //converts from unconstrained lower tri matrix to cor
+  matrix constraincorsqrt(matrix mat){ //converts from unconstrained lower tri matrix to cor
     int d=rows(mat);
     matrix[d,d] o;
     vector[d] ss = rep_vector(0,d);
@@ -1411,15 +1411,6 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
     real r3;
     real r4;
     real r1;
-    real r2;
-
-     for(i in 1:d){ 
-      for(j in 1:d){
-        if(j > i){
-          o[j,i] =  inv_logit(mat[j,i])*2-1;
-        }
-      }
-     }
     
     for(i in 1:d){
       for(j in 1:d){
@@ -1440,7 +1431,7 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
     for(i in 1:d){
       o[i,i]=0;
       r1=sqrt(ss[i]);
-      r3=(fabs(r2))/(r1)-1;
+      r3=(fabs(s[i]))/(r1)-1;
       r4=sqrt(log1p_exp(2*(fabs(s[i])-s[i]-1)-4));
       r=(r4*((r3))+1)*r4+1;
       r=(sqrt(ss[i]+r));
@@ -1457,9 +1448,9 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
   matrix sdcovsqrt2cov(matrix mat, int choleskymats){ //covariance from cholesky or unconstrained cor sq root
     if(choleskymats< 1) {
       //if(choleskymats== -1){
-        return(tcrossprod(diag_pre_multiply(diagonal(mat),constraincorsqrt(mat,choleskymats))));
+        return(tcrossprod(diag_pre_multiply(diagonal(mat),constraincorsqrt(mat))));
       //} else {
-      //  return(quad_form_diag(constraincorsqrt(mat,choleskymats),diagonal(mat)));
+      //  return(quad_form_diag(constraincorsqrt(mat),diagonal(mat)));
       //}
       } else return(tcrossprod(mat));
   }
@@ -1845,9 +1836,9 @@ transformed parameters{
         }
       }
     }
-    //if(choleskymats==0) rawpopcorr = constraincorsqrt(rawpopcovbase,choleskymats);
+    //if(choleskymats==0) rawpopcorr = constraincorsqrt(rawpopcovbase);
     //if(choleskymats== -1) 
-    rawpopcorr = tcrossprod( constraincorsqrt(rawpopcovbase,choleskymats));
+    rawpopcorr = tcrossprod( constraincorsqrt(rawpopcovbase));
     rawpopcov = makesym(quad_form_diag(rawpopcorr, rawpopsd +1e-8),verbose,1);
     rawpopcovchol = cholesky_decompose(rawpopcov); 
   }//end indvarying par setup
