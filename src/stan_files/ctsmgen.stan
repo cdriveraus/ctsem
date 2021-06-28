@@ -45,26 +45,24 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
     for(i in 1:d){
       for(j in 1:d){
         if(j > i) {
-          ss[i] =ss[i] +square(mat[j,i]);
-          s[i] =s[i]+ mat[j,i];
+          ss[i] +=square(mat[j,i]);
+          s[i] +=mat[j,i];
         }
         if(j < i){
-          ss[i] = ss[i]+ square(mat[i,j]);
-          s[i] = s[i]+ mat[i,j];
+          ss[i] += square(mat[i,j]);
+          s[i] += mat[i,j];
         }
       }
-      s[i]=s[i]+1e-5;
-      ss[i]=ss[i]+1e-5;
+      s[i] += 1e-5;
+      ss[i] += 1e-5;
     }
 
     
     for(i in 1:d){
       o[i,i]=0;
       r1=sqrt(ss[i]);
-      r2=s[i];
-      
-       r3=(fabs(r2))/(r1)-1;
-      r4=sqrt(log1p_exp(2*(fabs(r2)-r2-1)-4));
+      r3=(fabs(r2))/(r1)-1;
+      r4=sqrt(log1p_exp(2*(fabs(s[i])-s[i]-1)-4));
       r=(r4*((r3))+1)*r4+1;
       r=(sqrt(ss[i]+r));
       for(j in 1:d){

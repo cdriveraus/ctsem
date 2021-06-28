@@ -1424,8 +1424,8 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
     for(i in 1:d){
       for(j in 1:d){
         if(j > i) {
-          ss[i] +=ssquare(mat[j,i]);
-          s[i] +=smat[j,i];
+          ss[i] +=square(mat[j,i]);
+          s[i] +=mat[j,i];
         }
         if(j < i){
           ss[i] += square(mat[i,j]);
