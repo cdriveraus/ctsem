@@ -1022,7 +1022,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE,
     if(verbose==2) print("indparams = ", indparams);
     
     
- // if(si==0 || (sum(whenmat[8,]) + statedep[8]) > 0 ) {
+ if(si==0 || (sum(whenmat[8,]) + statedep[8]) > 0 ) {
    if(intoverpop && nindvarying > 0) T0VAR[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopcovbase;
     T0cov = sdcovsqrt2cov(T0VAR,choleskymats); 
 
@@ -1037,7 +1037,33 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE,
         }
       }
     }
-  //}
+ }
+  
+    if(nt0varstationary > 0) {
+      if(si==0 || (sum(whenmat[8,]) + statedep[8] + sum(whenmat[3,]) + statedep[3] + sum(whenmat[4,]) + statedep[4]) > 0 ){
+        matrix[nlatent,nlatent] stationarycov;
+        stationarycov = ksolve(DRIFT[derrind,derrind], sdcovsqrt2cov(DIFFUSION[derrind,derrind],choleskymats),verbose);
+      for(ri in 1:nt0varstationary){ 
+        T0cov[t0varstationary[ri,1],t0varstationary[ri,2] ] =  stationarycov[t0varstationary[ri,1],t0varstationary[ri,2] ];
+      }
+      }
+    }
+  
+  
+  if(si==0 || //on either pop pars only
+    (  (sum(whenmat[3,])+sum(whenmat[7,])+statedep[3]+statedep[7]) > 0 && savesubjectmatrices) ){ // or for each subject
+    if(continuoustime==1) asymCINT[,1] =  -DRIFT[1:nlatent,1:nlatent] \\ CINT[ ,1 ];
+    if(continuoustime==0) asymCINT[,1] =  add_diag(-DRIFT[1:nlatent,1:nlatent],1) \\ CINT[,1 ];
+  }
+  
+    if(nt0meansstationary > 0){
+      if(si==0 || (sum(whenmat[1,]) + statedep[1]) > 0) {
+        for(ri in 1:nt0meansstationary){
+          T0MEANS[t0meansstationary[ri,1]] = 
+            asymCINT[t0meansstationary[ri,1] ];
+        }
+      }
+    }
   
   if(si==0 || statedep[5] || (whenmat[32,5])) MANIFESTcov = sdcovsqrt2cov(MANIFESTVAR,choleskymats);
     
@@ -1258,11 +1284,7 @@ if(verbose > 1){
     
   ',if(savemodel) '     // store system matrices
        
-  if(si==0 || //on either pop pars only
-    (  (sum(whenmat[3,])+sum(whenmat[7,])+statedep[3]+statedep[7]) > 0 && savesubjectmatrices) ){ // or for each subject
-    if(continuoustime==1) asymCINT[,1] =  -DRIFT[1:nlatent,1:nlatent] \\ CINT[ ,1 ];
-    if(continuoustime==0) asymCINT[,1] =  add_diag(-DRIFT[1:nlatent,1:nlatent],1) \\ CINT[,1 ];
-  }
+
   
   if(!continuoustime){
     if(si==0 || //on either pop pars only
@@ -1696,6 +1718,11 @@ data {
   vector[nindvarying] sdscale;
   int indvaryingindex[nindvarying];
   int notindvaryingindex[nparams-nindvarying];
+  
+  int nt0varstationary;
+  int nt0meansstationary;
+  int t0varstationary [nt0varstationary, 2];
+  int t0meansstationary [nt0meansstationary, 2];
 
   int nobs_y[ndatapoints];  // number of observed variables per observation
   int whichobs_y[ndatapoints, nmanifest]; // index of which variables are observed per observation

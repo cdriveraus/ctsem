@@ -446,7 +446,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     }
     
     #collect individual stationary elements and update ctm$pars
-    if(any(ctm$pars$param %in% 'stationary')) stop('Stationary option temporarily unavailable -- reductions needed to pass all CRAN checks')
+    # if(any(ctm$pars$param %in% 'stationary')) stop('Stationary option temporarily unavailable -- reductions needed to pass all CRAN checks')
     ctm$t0varstationary <- as.matrix(rbind(ctm$pars[which(ctm$pars$param %in% 'stationary' & ctm$pars$matrix %in% 'T0VAR'),c('row','col')]))
     if(nrow(ctm$t0varstationary) > 0){ #ensure upper tri is consistent with lower
       for(i in 1:nrow(ctm$t0varstationary)){
