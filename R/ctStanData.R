@@ -1,6 +1,6 @@
 ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   
-
+  
   nsubjects <- length(unique(datalong[, ctm$subjectIDname])) 
   
   mats <- ctStanMatricesList()
@@ -82,21 +82,40 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
       }
       if(optimize){
         message(paste0("NA's in TIpreds - imputing ", sum(is.na(tipreds)),'  NA\'s to allow optimization -- TIpred effect estimates may be overly confident.'))
-        tipreds[is.na(tipreds)] = 0
+        # tipreds[is.na(tipreds)] = 0
+        timu <- apply(tipreds,2,mean,na.rm=TRUE)
+        tisd <- apply(tipreds,2,sd,na.rm=TRUE)
         
         meandat <- data.table((datalong))[ , lapply(.SD, function(x) 
-          mean(x,na.rm=TRUE)) , 
+          sum(x,na.rm=TRUE)/sum(!is.na(x))) ,
+          # x[1]),
           by=c(ctm$subjectIDname)]
-        sddat <- data.table((datalong))[ , lapply(.SD, function(x) 
-          sd(x,na.rm=TRUE)) , 
-          by=c(ctm$subjectIDname)]
-        sddat<-sddat[,!colnames(sddat) %in% ctm$subjectIDname,with=FALSE]
-        meandat <- meandat[,apply(meandat,2,sd,na.rm=TRUE) > 1e-4,with=FALSE]
-        sddat <- sddat[,apply(sddat,2,sd,na.rm=TRUE) > 1e-4,with=FALSE]
-        colnames(sddat) <- paste0('sd_',colnames(sddat))
-        meandat <- cbind(meandat,sddat)
+        # sddat <- data.table((datalong))[ , lapply(.SD, function(x) 
+        #   sd(x,na.rm=TRUE)) , 
+        #   by=c(ctm$subjectIDname)]
+        # sddat<-sddat[,!colnames(sddat) %in% ctm$subjectIDname,with=FALSE]
+        meandat <- data.frame(scale(meandat[,apply(meandat,2,sd,na.rm=TRUE) > 1e-4,with=FALSE]))
+        meandat[is.na(meandat)] <- 0
+        # sddat <- sddat[,apply(sddat,2,sd,na.rm=TRUE) > 1e-4,with=FALSE]
+        # colnames(sddat) <- paste0('sd_',colnames(sddat))
+        # meandat <- cbind(meandat,sddat)
+
+        
+        # cml <- covml(meandat,reg = TRUE)
         
         for(i in 1:ctm$n.TIpred){
+          # cnames <- c(colnames(meandat)[!colnames(meandat) %in% ctm$TIpredNames[i]],ctm$TIpredNames[i])
+          # 
+          # 
+          # chol <- cml$cp$covm
+          # dimnames(chol) <- list(colnames(meandat),colnames(meandat))
+          # chol <- t(chol(chol[cnames,cnames]))
+          # 
+          #  tipreds[is.na(tipreds[,i]),i] <- 
+          #    apply(meandat[is.na(tipreds[,i]),head(cnames,length(cnames)-1)],1,function(x){
+          #      sum(x * c(tail(chol,1))[-ncol(chol)])
+          #    }) *tisd[i] + timu[i]
+          
           lmform = formula(paste0(ctm$TIpredNames[i],' ~ 1 + ',
             paste0(colnames(meandat)[-which(colnames(meandat) %in% ctm$TIpredNames[i])],
               collapse=' + ')))
@@ -109,8 +128,10 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
           #     2,sd,na.rm=TRUE) - 
           #   lmf$coefficients[-1]
           # 
-          # plot(c(meandat[,ctm$TIpredNames[i],with=FALSE])[[1]],predict(lmf),main=ctm$TIpredNames[i])
-          tipreds[is.na(tipreds[,1]),1] <- predict(lmf)[is.na(tipreds[,1])]
+          plot(meandat[,ctm$TIpredNames[i]],predict(lmf),main=ctm$TIpredNames[i],col=as.numeric(is.na(tipreds[,i]))+1)
+          
+          browser()
+          tipreds[is.na(tipreds[,i]),i] <- predict(lmf)[is.na(tipreds[,i])] * tisd + timu
         }
       }
     }
