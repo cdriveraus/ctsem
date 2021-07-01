@@ -414,7 +414,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   rownames(standata$whenmat)[mc] <- names(mc)
   
   #this PARS when = 100 thing is annoyinh, improve it...
-  standata$whenvecp <- array(0L, c(2,standata$nparams)) #whenvecp contains 0's for unchanging pars, 1's for changing pars
+  standata$whenvecp <- array(0L, c(2,standata$nparams)) #whenvecp contains 0's for unchanging pars
   standata$whenvecp[1,] <- as.integer(1:standata$nparams) #base parameters
   standata$whenvecp[2,ms$param[ms$when %in% c(0,100) & ms$copyrow <1 & (ms$tipred > 0 | ms$indvarying > 0) & ms$param > 0]] <- 
     as.integer(ms$param[ms$when %in% c(0,100) & ms$copyrow <1 & (ms$tipred > 0 | ms$indvarying > 0) & ms$param > 0])

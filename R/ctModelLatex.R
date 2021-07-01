@@ -3,7 +3,7 @@ ctModelBuildPopCov <- function(ctm,linearise){ #for latex
   pars <- unique(ctm$pars$param[ctm$pars$indvarying])
   d=length(pars)
   m <- matrix(paste0(ifelse(linearise,'','raw'),'PCov_',rep(1:d,d),'_',rep(1:d,each=d)),d,d,dimnames = list(pars,pars))
-  m[upper.tri(m)]=t(m[lower.tri(m)])
+  m[upper.tri(m)]=t(m)[upper.tri(m)]
   return(m)
 }
 

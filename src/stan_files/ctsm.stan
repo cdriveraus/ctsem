@@ -623,6 +623,7 @@ transformed parameters{
     TIPREDEFFECT[tieffectindices[1:ntieffects]] *  tipredsdata[si]';
   }
 
+  // compute individual parameters that are not state dependent, either all (if si=0) or just update indvarying ones.
   indparams[whichequals(whenvecp[si ? 2 : 1], 0, 0)]= 
     parvectform(whichequals(whenvecp[si ? 2 : 1], 0, 0),rawindparams, 
     0, matsetup, matvalues, si, whenvecp[si ? 2 : 1]);
@@ -666,7 +667,7 @@ if(si==0 || sum(whenmat[54,{5}]) > 0 )Jy=mcalc(Jy,indparams, statetf,{0}, 54, ma
     if(verbose==2) print("indparams = ", indparams);
     
     
- if(si==0 || (sum(whenmat[8,]) + statedep[8]) > 0 ) {
+ if(si==0 || (sum(whenmat[8,]) + statedep[8]) > 0 ) { // this causes problems but shouldnt -- is t0var being adjusted each iteration when it shouldnt?
    if(intoverpop && nindvarying > 0) T0VAR[intoverpopindvaryingindex, intoverpopindvaryingindex] = rawpopcovbase;
     T0cov = sdcovsqrt2cov(T0VAR,choleskymats); 
 
@@ -683,31 +684,28 @@ if(si==0 || sum(whenmat[54,{5}]) > 0 )Jy=mcalc(Jy,indparams, statetf,{0}, 54, ma
     }
  }
   
-    if(nt0varstationary > 0) {
-      if(si==0 || (sum(whenmat[8,]) + statedep[8] + sum(whenmat[3,]) + statedep[3] + sum(whenmat[4,]) + statedep[4]) > 0 ){
-        matrix[nlatent,nlatent] stationarycov;
-        stationarycov = ksolve(DRIFT[derrind,derrind], sdcovsqrt2cov(DIFFUSION[derrind,derrind],choleskymats),verbose);
-      for(ri in 1:nt0varstationary){ 
-        T0cov[t0varstationary[ri,1],t0varstationary[ri,2] ] =  stationarycov[t0varstationary[ri,1],t0varstationary[ri,2] ];
-      }
-      }
-    }
-  
-  
-  if(si==0 || //on either pop pars only
-    (  (sum(whenmat[3,])+sum(whenmat[7,])+statedep[3]+statedep[7]) > 0 && savesubjectmatrices) ){ // or for each subject
-    if(continuoustime==1) asymCINT[,1] =  -DRIFT[1:nlatent,1:nlatent] \ CINT[ ,1 ];
-    if(continuoustime==0) asymCINT[,1] =  add_diag(-DRIFT[1:nlatent,1:nlatent],1) \ CINT[,1 ];
-  }
-  
-    if(nt0meansstationary > 0){
-      if(si==0 || (sum(whenmat[1,]) + statedep[1]) > 0) {
-        for(ri in 1:nt0meansstationary){
-          T0MEANS[t0meansstationary[ri,1]] = 
-            asymCINT[t0meansstationary[ri,1] ];
-        }
-      }
-    }
+//      if(nt0varstationary > 0) {
+//    if(si==0 || (sum(whenmat[8,]) + statedep[8] + sum(whenmat[3,]) + statedep[3] + sum(whenmat[4,]) + statedep[4]) > 0 ){
+//      matrix[nlatent,nlatent] stationarycov;
+//      stationarycov = ksolve(DRIFT[derrind,derrind], sdcovsqrt2cov(DIFFUSION[derrind,derrind],choleskymats),verbose);
+//    for(ri in 1:nt0varstationary){ 
+//      T0cov[t0varstationary[ri,1],t0varstationary[ri,2] ] =  stationarycov[t0varstationary[ri,1],t0varstationary[ri,2] ];
+//    }
+//    }
+//  }
+//    if(si==0 || //on either pop pars only
+//  (  (sum(whenmat[3,])+sum(whenmat[7,])+statedep[3]+statedep[7]) > 0 && savesubjectmatrices) ){ // or for each subject
+//  if(continuoustime==1) asymCINT[,1] =  -DRIFT[1:nlatent,1:nlatent] \ CINT[ ,1 ];
+//  if(continuoustime==0) asymCINT[,1] =  add_diag(-DRIFT[1:nlatent,1:nlatent],1) \ CINT[,1 ];
+//  
+//  //  if(nt0meansstationary > 0){
+//    if(si==0 || (sum(whenmat[1,]) + statedep[1]) > 0) {
+//      for(ri in 1:nt0meansstationary){
+//        T0MEANS[t0meansstationary[ri,1]] = 
+//          asymCINT[t0meansstationary[ri,1] ];
+//      }
+//    }
+//  }
   
   if(si==0 || statedep[5] || (whenmat[32,5])) MANIFESTcov = sdcovsqrt2cov(MANIFESTVAR,choleskymats);
     
@@ -982,6 +980,11 @@ err[od] = Y[rowi,od] - syprior[od]; // prediction error
     
        // store system matrices
        
+    if(si==0 || //on either pop pars only
+      (  (sum(whenmat[3,])+sum(whenmat[7,])+statedep[3]+statedep[7]) > 0 && savesubjectmatrices) ){ // or for each subject
+      if(continuoustime==1) asymCINT[,1] =  -DRIFT[1:nlatent,1:nlatent] \ CINT[ ,1 ];
+      if(continuoustime==0) asymCINT[,1] =  add_diag(-DRIFT[1:nlatent,1:nlatent],1) \ CINT[,1 ];
+    }
 
   
   if(!continuoustime){

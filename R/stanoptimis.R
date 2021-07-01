@@ -287,15 +287,15 @@ parlptext <-
           out <- try(rstan::log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
 
         
-        if("try-error" %in% class(out)) {
+        if("try-error" %in% class(out) || any(is.nan(attributes(out)$gradient))) {
           outerr <- out
           out <- -1e100
           attributes(out)$gradient <- rep(NaN, length(parm))
           attributes(out)$err <- outerr
         }
         if(is.null(attributes(out)$gradient)) attributes(out)$gradient <- rep(NaN, length(parm))
-        attributes(out)$gradient[is.nan(attributes(out)$gradient)] <-
-          rnorm(length(attributes(out)$gradient[is.nan(attributes(out)$gradient)]),0,100)
+        # attributes(out)$gradient[is.nan(attributes(out)$gradient)] <-
+          # rnorm(length(attributes(out)$gradient[is.nan(attributes(out)$gradient)]),0,100)
           
         return(out)
         }'
@@ -806,8 +806,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         
         # eval(clctsem <- makeClusterID(cores),envir = globalenv())
         on.exit(try({parallel::stopCluster(benv$clctsem)},silent=TRUE),add=TRUE)
-        
-        # browser()
+
         if(standata$recompile > 0){
           smfile <- file.path(tempdir(),paste0('ctsem_sm_',ceiling(runif(1,0,100000)),'.rda'))
           save(sm,file=smfile,eval.promises = FALSE,precheck = FALSE)
@@ -862,6 +861,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             # 
             out <- try(sum(unlist(out2)),silent=TRUE)
             # attributes(out)$gradient <- try(apply(sapply(out2,function(x) attributes(x)$gradient,simplify='matrix'),1,sum))
+            
             for(i in seq_along(out2)){
               if(i==1) attributes(out)$gradient <- attributes(out2[[1]])$gradient
               if(i>1) attributes(out)$gradient <- attributes(out)$gradient+attributes(out2[[i]])$gradient
@@ -986,7 +986,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           carefulfit <- FALSE
         }
         
-        if(npars > 50 || nsubsets > 1) {;
+        if(npars > 50 || nsubsets > 1) {
+
           optimfit <- sgd(init, fitfunc = function(x) target(x),
             parsets=parsets,
             nsubsets = nsubsets,
@@ -1189,7 +1190,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       #   hesscl <- NA
       #   # smf<-stan_reinitsf(sm,standata)
       # }
-      # browser()
+
       standata$nsubsets <- 1L
       if(standata$nsubjects > cores){
         hesscl <- NA
