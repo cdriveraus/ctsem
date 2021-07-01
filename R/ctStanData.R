@@ -128,9 +128,8 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
           #     2,sd,na.rm=TRUE) - 
           #   lmf$coefficients[-1]
           # 
-          plot(meandat[,ctm$TIpredNames[i]],predict(lmf),main=ctm$TIpredNames[i],col=as.numeric(is.na(tipreds[,i]))+1)
+          # plot(meandat[,ctm$TIpredNames[i]],predict(lmf),main=ctm$TIpredNames[i],col=as.numeric(is.na(tipreds[,i]))+1)
           
-          browser()
           tipreds[is.na(tipreds[,i]),i] <- predict(lmf)[is.na(tipreds[,i])] * tisd + timu
         }
       }
