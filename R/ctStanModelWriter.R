@@ -1722,10 +1722,10 @@ data {
   int indvaryingindex[nindvarying];
   int notindvaryingindex[nparams-nindvarying];
   
-  int nt0varstationary;
-  int nt0meansstationary;
-  int t0varstationary [nt0varstationary, 2];
-  int t0meansstationary [nt0meansstationary, 2];
+//  int nt0varstationary;
+//  int nt0meansstationary;
+//  int t0varstationary [nt0varstationary, 2];
+//  int t0meansstationary [nt0meansstationary, 2];
 
   int nobs_y[ndatapoints];  // number of observed variables per observation
   int whichobs_y[ndatapoints, nmanifest]; // index of which variables are observed per observation
