@@ -33,13 +33,16 @@ ctSummarise<-function(sf,name='ctSummary',cores=2, times=seq(0,10,.1),quantiles=
     
     viscovf <- function(mat){
       matname <- mat
-      if(mat %in% 'MANIFESTcov') matname <- 'Residual'
+      if(mat %in% 'MANIFESTcov') {
+        matname <- 'Residual'
+        varnames <- sf$ctstanmodelbase$manifestNames
+      } else varnames <- sf$ctstanmodelbase$latentNames
       #correlation ci's
       diffusion=sf$stanfit$transformedpars[[paste0('pop_',mat)]]
       diffindices <- unique(c(which(diffusion[1,,] != 0,arr.ind = TRUE)))
       if(length(diffindices) > 0){
       diffusion <- plyr::aaply(diffusion,1,function(x) matrix(x[diffindices,diffindices,drop=FALSE],length(diffindices),length(diffindices)))
-      dimnames(diffusion) <- list(NULL,sf$ctstanmodelbase$latentNames[diffindices],sf$ctstanmodelbase$latentNames[diffindices])
+      dimnames(diffusion) <- list(NULL,varnames[diffindices],varnames[diffindices])
       dcor=plyr::aaply(diffusion,1, function(x) cov2cor(x))
       dcorq=plyr::aaply(dcor,c(2,3),quantile,probs=c(.025,.5,.975))
       dcorm <- as.data.table(dcorq)
@@ -52,10 +55,9 @@ ctSummarise<-function(sf,name='ctSummary',cores=2, times=seq(0,10,.1),quantiles=
       print(dcorm,nrows = 10000)
       }
     }
-    
     sink(paste0(name,'_corrCI.txt'))
     pdf(paste0(name,'_VisualParMats.pdf'))
-    lapply(c('MANIFESTcov','DIFFUSIONcov','asymDIFFUSIONcov','T0cov'),viscovf)
+    lapply(c('MANIFESTcov','DIFFUSIONcov','asymDIFFUSIONcov','T0cov'),function(x) try(viscovf(x)))
     sink()
     # print(corplotmelt(meltcov(cov2cor(cp$MANIFESTcov[manifests,manifests,drop=FALSE])),title =  'Residual correlations'))
     # print(corplotmelt(meltcov(cov2cor(cp$DIFFUSIONcov[latents,latents,drop=FALSE])),title =  'Random latent change correlations'))
