@@ -39,6 +39,9 @@ ctSummarise<-function(sf,name='ctSummary',cores=2, times=seq(0,10,.1),quantiles=
       } else varnames <- sf$ctstanmodelbase$latentNames
       #correlation ci's
       diffusion=sf$stanfit$transformedpars[[paste0('pop_',mat)]]
+      if(mat %in% 'T0cov' && sf$standata$nindvarying > 0 && sf$standata$intoverpop){
+        diffusion = diffusion[,latents,latents,drop=FALSE]
+      }
       diffindices <- unique(c(which(diffusion[1,,] != 0,arr.ind = TRUE)))
       if(length(diffindices) > 0){
       diffusion <- plyr::aaply(diffusion,1,function(x) matrix(x[diffindices,diffindices,drop=FALSE],length(diffindices),length(diffindices)))

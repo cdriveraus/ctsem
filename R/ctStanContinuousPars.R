@@ -60,7 +60,7 @@ ctStanContinuousPars <- function(fit,
   
   ln=fit$ctstanmodel$latentNames
   mn=fit$ctstanmodel$manifestNames
-  tdn=fit$ctstanmodel$TDpredNamesQ
+  tdn=fit$ctstanmodel$TDpredNames
   dimnames(out$DRIFT)=list(ln,ln)
   dimnames(out$DIFFUSIONcov)=list(ln,ln)
   dimnames(out$DIFFUSION)=list(ln,ln)
@@ -84,7 +84,6 @@ ctStanContinuousPars <- function(fit,
   
   if(!is.null(e$pop_TDPREDEFFECT)) {
     dimnames(out$TDPREDEFFECT)=list(ln,tdn)
-    out$TDPREDEFFECT<-out$TDPREDEFFECT
   }
 
   out$MANIFESTVAR <- NULL ; 

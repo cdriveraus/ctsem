@@ -1145,7 +1145,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
     if(ntdpred > 0) {
       int nonzerotdpred = 0;
       for(tdi in 1:ntdpred) if(tdpreds[rowi,tdi] != 0.0) nonzerotdpred = 1;
-      if(nonzerotdpred){
+      if(si==0 ||nonzerotdpred){
       
         statetf[whichequals(whenvecs[3],0,0)] = 
           parvectform( whichequals(whenvecs[3],0,0), state, 3, matsetup, matvalues, si, whenvecs[3]);

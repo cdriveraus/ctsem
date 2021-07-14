@@ -39,10 +39,13 @@ stanWplot <- function(object,iter=2000,chains=4,...){
     iter<-',iter,';
     # addtopath=ifelse(windows,paste0(pkgbuild::rtools_path(),"/"),"")
     notyet<-TRUE
-    while(any(notyet==TRUE)){
+     while(any(notyet==TRUE)){
       Sys.sleep(1);
+       cmd = paste0(\'findstr "^[^#]" \', seed,"samples_1.csv") #needed because of comments after warmup
       samps<-try(data.table::fread(skip="lp__",
-      file=paste0(seed,"samples_1.csv")),silent=TRUE)
+        cmd=cmd,
+      # file=paste0(seed,"samples_1.csv"),
+        ),silent=TRUE)
       if(!"try-error" %in% class(samps) && length(samps) > 0) notyet<-FALSE
     }
     varnames<-colnames(samps);
@@ -58,20 +61,26 @@ stanWplot <- function(object,iter=2000,chains=4,...){
 colclasses[which(varnames %in% parameter)] <- NA
         
     for(chaini in 1:chains) {
-      samps[[chaini]]<-try(as.matrix(read.table(
-        file=paste0(seed,"samples_",chaini,".csv"),sep=",",comment.char="#",
-        header = TRUE,colClasses = colclasses)
-        ),silent=TRUE)
-#data.table::fread(select = parameter,skip="lp__",
-      if("try-error" %in% class(samps[[chaini]]) || length(samps[[chaini]]) ==0) samps[[chaini]]=samps[[1]][1,,drop=FALSE]
+      cmd = paste0(\'findstr "^[^#]" \', seed,"samples_",chaini,".csv") #needed because of comments after warmup
+      samps[[chaini]]<-try(
+        # as.matrix(read.table(
+        #   file=paste0(seed,"samples_",chaini,".csv"),sep=",",comment.char="#",
+        #   header = TRUE,colClasses = colclasses)
+        
+        data.table::fread(cmd = cmd,
+          colClasses = colclasses,
+          select = parameter,
+          skip="lp__")
+      ,silent=TRUE)
+      if("try-error" %in% class(samps[[chaini]]) || nrow(samps[[chaini]]) ==0) samps[[chaini]]=samps[[1]][1,,drop=FALSE]
     }
     
-    mini<-min(unlist(lapply(1:chains,function(chaini) samps[[chaini]][begin:length(samps[[chaini]]),parameter])),na.rm=T)
-    maxi<-max(unlist(lapply(1:chains,function(chaini) samps[[chaini]][begin:length(samps[[chaini]]),parameter])),na.rm=T)
-    lengthi<-max(unlist(lapply(1:chains,function(chaini) length(samps[[chaini]][,parameter]))),na.rm=T) #-1:-begin
+    mini<-min(unlist(lapply(1:chains,function(chaini) samps[[chaini]][begin:nrow(samps[[chaini]]),parameter,with=FALSE])),na.rm=T)
+    maxi<-max(unlist(lapply(1:chains,function(chaini) samps[[chaini]][begin:nrow(samps[[chaini]]),parameter,with=FALSE])),na.rm=T)
+    lengthi<-max(unlist(lapply(1:chains,function(chaini) nrow(samps[[chaini]][,parameter,with=FALSE]))),na.rm=TRUE) #-1:-begin
     
-    plot(begin:length(samps[[1]]),
-      samps[[1]][begin:length(samps[[1]]),parameter],
+    plot(begin:nrow(samps[[1]]),
+      unlist(samps[[1]][begin:nrow(samps[[1]]),parameter,with=FALSE]),
       type="l",xlab="",ylab="",main=parameter,
       log=ifelse(parameter %in% c("stepsize__"),"y",""),
       xlim=c(begin,lengthi),
@@ -79,8 +88,8 @@ colclasses[which(varnames %in% parameter)] <- NA
     )
     
     if(chains > 1) for(chaini in 2:chains){
-      points(begin:length(samps[[chaini]]),
-      samps[[chaini]][begin:length(samps[[chaini]]),parameter], type="l",xlab="",ylab="",main=parameter,col=chaini)
+      points(begin:nrow(samps[[chaini]]),
+      unlist(samps[[chaini]][begin:nrow(samps[[chaini]]),parameter,with=FALSE]), type="l",xlab="",ylab="",main=parameter,col=chaini)
     }
     grid()
     

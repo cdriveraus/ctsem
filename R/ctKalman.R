@@ -1,4 +1,4 @@
-ctKalmanTIP <- function(sf,tipreds='all',subject=1,...){
+ctKalmanTIP <- function(sf,tipreds='all',subject=1,plot=TRUE,...){
   if(tipreds[1] %in% 'all') tipreds <- sf$ctstanmodel$TIpredNames
   if(length(subject) > 1) stop('>1 subject!')
   
@@ -34,7 +34,22 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,...){
   }
   dat[[sf$ctstanmodelbase$subjectIDname]][dat[[sf$ctstanmodelbase$subjectIDname]] %in% 1] <- 0
   sf$standata <- suppressMessages(ctStanData(sf$ctstanmodel,dat,optimize=TRUE))
-  ctKalman(fit = sf,subjects=1:sf$standata$nsubjects,realid=TRUE,...)
+  k=ctKalman(fit = sf,subjects=1:sf$standata$nsubjects,realid=TRUE)
+  k=plot.ctKalmanDF(k,plot=FALSE,...)
+  # k$labels$colour[1] <- 'Covariate'
+  k$data$`Direction` <- factor(ifelse(grepl(' high$',k$data$Subject),'+ 1','- 1'))
+  k$data$Subject <- gsub(' high','',k$data$Subject)
+  k$data$Subject <- gsub(' low','',k$data$Subject)
+  kdat <- k$data
+  colnames(kdat)[colnames(kdat)%in%'Subject'] <- 'Covariate'
+  kdat$Covariate <- factor(kdat$Covariate)
+
+  k=ggplot(data = kdat,mapping = aes(y=Value,x=Time,linetype=Direction,colour=Covariate))+
+    geom_line(size=1)+
+    scale_colour_manual(values=c(1,2:length(unique(kdat$Covariate))),
+      labels=c('No covariate',levels(kdat$Covariate)[-1]))+
+    facet_wrap(vars(Variable),scales = 'free_y')+theme_bw()
+  return(k)
 }
 
 #' ctKalman 
@@ -132,11 +147,10 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
     out <- ctStanKalman(fit,pointest=length(fit$stanfit$stanfit@sim)==0, 
       collapsefunc=mean, indvarstates = FALSE) #extract state predictions
     out$id <- idstore #as.integer(subjects[out$id]) #get correct subject indicators
-    
+  
     out <- meltkalman(out)
     out=out[!(out$Subject %in% subjects) %in% FALSE,]
     if(realid){
-      # browser()
       # out$Subject <- as.integer(out$Subject)
       out$Subject <- factor(idmap[
         match(out$Subject,idmap[,2]),1])
@@ -245,7 +259,7 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
 #' @param polygonsteps Number of steps to use for uncertainty band shading. 
 #' @param polygonalpha Numeric for the opacity of the uncertainty region.
 #' @param facets when multiple subjects are included in multivariate plots, the default is to facet plots 
-#' by variable type. This can be set to NA for no facets, or \code{variable(Subject)} for facetting by subject.
+#' by variable type. This can be set to NA for no facets, or \code{vars(Subject)} for facetting by subject.
 #' @param ... not used.
 #' @return A ggplot2 object. Side effect -- Generates plots.
 #' @method plot ctKalmanDF
@@ -287,21 +301,22 @@ plot.ctKalmanDF<-function(x, subjects=unique(x$Subject), kalmanvec=c('y','yprior
   errorvec <- errorvec[grep('(prior)|(upd)|(smooth)',errorvec)]
   # kpoints<- kalmanvec[-grep('(prior)|(upd)|(smooth)',kalmanvec)]
   colvec=ifelse(length(subjects) > 1, 'Subject', 'Variable')
-  ltyvec <- setNames( rep(NA,length(kalmanvec)),kalmanvec)
+  ltyvec <- setNames( rep(0,length(kalmanvec)),kalmanvec)
   ltyvec[kalmanvec %in% klines] = setNames(1:length(klines),klines)
   # if(length(kalmanvec) > length(klines)) ltyvec <- 
   #   c(setNames(rep(0,length(kalmanvec)-length(klines)),kalmanvec[!kalmanvec %in% klines]),
   #     ltyvec)
   shapevec<-ltyvec
+  shapevec[shapevec %in% 0] <- 1
   shapevec[shapevec>0] <- NA
-  shapevec[is.na(ltyvec)] <- 19
+  shapevec[ltyvec %in% 0] <- 19
   # 
   d<-subset(kdf,Element %in% kalmanvec)
-
-
+# browser()
   g <- ggplot(d,
     aes_string(x='Time',y='Value',colour=colvec,linetype='Element',shape='Element')) +
     scale_linetype_manual(breaks=names(ltyvec),values=ltyvec)+
+    guides(linetype='none',shape='none')+
     scale_shape_manual(breaks=names(shapevec),values=shapevec)
   # labs(linetype='Element',shape='Element',colour='Element',fill='Element')+
   # guides(fill=FALSE)
@@ -344,7 +359,7 @@ plot.ctKalmanDF<-function(x, subjects=unique(x$Subject), kalmanvec=c('y','yprior
     } 
   }
   g <- g + 
-    geom_line(linetype=1)+
+    geom_line()+
     geom_point()+
     theme_minimal()+
     guides(fill='none')
