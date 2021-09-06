@@ -8,17 +8,18 @@ Authors@R: c(person("Charles", "Driver", role =
     person("Manuel", "Voelkle", role = c("aut","cph")),
     person("Han", "Oud", role = c("aut","cph") ),
     person("Trustees of Columbia University",role='cph'))
-Description: Hierarchical continuous time state space modelling, for linear
+Description: Hierarchical continuous (and discrete) time state space modelling, for linear
     and nonlinear systems measured by  continuous variables, with limited support for 
     binary data. The subject specific dynamic system is modelled as a stochastic 
-    differential equation (SDE), measurement models are typically multivariate normal factor models. 
+    differential equation (SDE) or difference equation, measurement models are typically multivariate normal factor models. 
     Linear mixed effects SDE's estimated via maximum likelihood and optimization are the default.
     Nonlinearities,  (state dependent parameters) and random effects on all parameters
     are possible, using either max likelihood / max a posteriori optimization 
-    (with optional importance sampling) or
-    Stan's Hamiltonian Monte Carlo sampling. See  <https://github.com/cdriveraus/ctsem/raw/master/vignettes/hierarchicalmanual.pdf>
-    for details. Priors may be used. For the conceptual
-    overview of the hierarchical Bayesian linear SDE approach, see <https://www.researchgate.net/publication/324093594_Hierarchical_Bayesian_Continuous_Time_Dynamic_Modeling>.
+    (with optional importance sampling) or Stan's Hamiltonian Monte Carlo sampling. 
+    See  <https://github.com/cdriveraus/ctsem/raw/master/vignettes/hierarchicalmanual.pdf>
+    for details. Priors may be used. For the conceptual overview of the hierarchical Bayesian 
+    linear SDE approach, 
+    see <https://www.researchgate.net/publication/324093594_Hierarchical_Bayesian_Continuous_Time_Dynamic_Modeling>.
     Exogenous inputs may also be included, for an overview of such possibilities see <https://www.researchgate.net/publication/328221807_Understanding_the_Time_Course_of_Interventions_with_Continuous_Time_Dynamic_Models> .
     Stan based functions are not available on 32 bit Windows systems at present. 
     <https://cdriver.netlify.app/> contains some tutorial blog posts.

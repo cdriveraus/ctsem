@@ -44,6 +44,8 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,plot=TRUE,...){
   colnames(kdat)[colnames(kdat)%in%'Subject'] <- 'Covariate'
   kdat$Covariate <- factor(kdat$Covariate)
 
+  Covariate = Direction = Time = Value = Variable = NULL #global vars nonsense
+  
   k=ggplot(data = kdat,mapping = aes(y=Value,x=Time,linetype=Direction,colour=Covariate))+
     geom_line(size=1)+
     scale_colour_manual(values=c(1,2:length(unique(kdat$Covariate))),

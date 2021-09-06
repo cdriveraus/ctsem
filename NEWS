@@ -1,6 +1,11 @@
 ctsem news:
+
+22/7/2021
+#### 3.5.4 ####
+- Improved automatic imputation of time independent predictors, fixed bug where too many imputed values were set to zero. Care still recommended if relying on automatic imputation though!
+
 16/6/2021
-#### 3.5.2 ####
+#### 3.5.3 ####
 - Fixed bug in output of $rawpopcorr introduced in 3.4.3. 
   Correlations displayed incorrectly, other parameters unaffected.
 - Modified correlation approach to ensure monotonicity in high dims.

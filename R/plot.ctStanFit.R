@@ -94,10 +94,10 @@ plot.ctStanFit <- function(x, types='all',wait=TRUE,...){
   
   if('density' %in% types && continue){
     message('Plotting posterior density estimates using stan_dens')
-    print(rstan::stan_dens(x$stanfit,ctStanParnames(x,'pop_'),...))
+    print(rstan::stan_dens(x$stanfit$stanfit,ctStanParnames(x,'pop_'),...))
     continue<-waitf()
     
-    if(continue)  p=try(rstan::stan_dens(x$stanfit$stanfit$stanfit,ctStanParnames(x,'popsd'),...),silent=TRUE)
+    if(continue)  p=try(rstan::stan_dens(x$stanfit$stanfit,ctStanParnames(x,'popsd'),...),silent=TRUE)
     if(class(p)[1]!='try-error') {
       print(p)
       continue<-waitf()
