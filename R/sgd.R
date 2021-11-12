@@ -185,7 +185,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
         #if(nsubsets==1) gsmooth= gsmooth*gmemory2^2 + (1-gmemory2^2) * g #increase influence of last gradient at inflections
         step <- step * .5
         deltaold <- deltaold * 0
-        if(nsubsets > 1) pars =bestpars* .8 + apply(parstore,2,mean)*.2
+        if(nsubsets > 1) pars =bestpars* .8 + apply(parstore,1,mean)*.2
         # if(i > 1) lproughness = lproughness * (roughnessmemory2) + (1-(roughnessmemory2)) ##exp(-1/(i-bestiter+.1))
         # pars=bestpars
       }
