@@ -1157,6 +1157,18 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           whichignore = unlist(parsteps),
           ndatapoints=standata$ndatapoints,plot=plot)
         if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else init=optimfit$par
+        
+        #use bfgs to double check stochastic fit... 
+          optimfit <- mize(init, fg=mizelpg, max_iter=99999,
+          method="L-BFGS",memory=100,
+          line_search='Schmidt',c1=1e-4,c2=.9,step0='schmidt',ls_max_fn=999,
+          abs_tol=NULL,grad_tol=NULL,
+          rel_tol=tol*ifelse(!finished,100,1),
+          step_tol=NULL,ginf_tol=NULL)
+        
+        optimfit$value = -optimfit$f
+        init = optimfit$par
+        
       }
       
       # 
@@ -1377,7 +1389,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         #   mcov=tcrossprod(mcov,MASS::ginv(crossprod(score)))
         # }
         # 
-        mcovtmp=as.matrix(Matrix::nearPD(mcov,conv.norm.type = 'F')$mat)
+        
+        mcovtmp=try({as.matrix(Matrix::nearPD(mcov,conv.norm.type = 'F')$mat)})
+if(any(class(mcovtmp) %in% 'try-error')) browser()
         mcov <- diag(1e-10,npars)
         if(length(parsteps)>0) mcov[-parsteps,-parsteps] <- mcovtmp else mcov <- mcovtmp
         mchol = t(chol(mcov))

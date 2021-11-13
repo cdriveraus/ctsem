@@ -1111,6 +1111,9 @@ if(verbose > 1) print ("below t0 row ", rowi);
               }
             }
             
+             for(li in 1:nlatent) if(is_nan(state[li]) || is_nan(sum(discreteDRIFT[li,]))) {
+             print("Possible time step problem? Intervals too large? Try reduce maxtimestep"
+            }
             state[1:nlatent] = discreteDRIFT * state[1:nlatent]; // ???compute before new diffusion calcs
             
             if(size(CINTnonzero)>0){
