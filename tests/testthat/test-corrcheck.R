@@ -18,7 +18,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       # MANIFESTMEANS = 0,
       MANIFESTVAR = 0)
     
-    f <- ctStanFit(datalong = d,ctstanmodel = m,nopriors=F)
+    f <- ctStanFit(datalong = d,ctstanmodel = m,nopriors=F,verbose=0,cores=cores)
     
     p <- ctStanContinuousPars(f)
     
@@ -48,7 +48,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
   })
   
-  test_that("corrCheckHighDim", {
+  if(FALSE) test_that("corrCheckHighDim", {
     set.seed(1)
     
     cmat <- diag(.5,10) + 1 
@@ -84,7 +84,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       MANIFESTMEANS=0,
       MANIFESTVAR = 0)
     
-    f <- ctStanFit(datalong = d,ctstanmodel = m,nopriors=F,cores=6)
+    f <- ctStanFit(datalong = d,ctstanmodel = m,nopriors=F,cores=cores,verbose=0)
     
     p <- ctStanContinuousPars(f)
     
