@@ -1112,7 +1112,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
             }
             
              for(li in 1:nlatent) if(is_nan(state[li]) || is_nan(sum(discreteDRIFT[li,]))) {
-             print("Possible time step problem? Intervals too large? Try reduce maxtimestep"
+             print("Possible time step problem? Intervals too large? Try reduce maxtimestep");
             }
             state[1:nlatent] = discreteDRIFT * state[1:nlatent]; // ???compute before new diffusion calcs
             
@@ -1576,7 +1576,7 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
     //  if(pd ==1 && mat[coli,coli] < 1e-5){
      //   out[coli,coli] = 1e-5;// 
      // } else 
-      out[coli,coli] = mat[coli,coli] + 1e-6; 
+      out[coli,coli] = mat[coli,coli] + 1e-10; 
       for(rowi in 1:rows(mat)){
         if(rowi > coli) {
           out[rowi,coli] = mat[rowi,coli];
