@@ -194,7 +194,7 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
           }
           if(observational){
             Qcor<-cov2cor(matrix(ctpars$DIFFUSIONcov[i,min(j,nsubs$DIFFUSIONcov),,],nl,nl)+diag(1e-8,nl)) 
-            Qcor <- Qcor^2 * sign(Qcor) #why is this squared?
+            Qcor <- Qcor * sign(Qcor) #why was this squared before?
             ctpars$dtDRIFT[i,j,ti,,]  <- ctpars$dtDRIFT[i,j,ti,,]  %*% Qcor
           }
           if(cov) ctpars$dtDRIFT[i,j,ti,,]  <- tcrossprod(ctpars$dtDRIFT[i,j,ti,,] )
