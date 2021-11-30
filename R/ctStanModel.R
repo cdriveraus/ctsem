@@ -1,7 +1,7 @@
 ctModelUnlist<-function(ctmodelobj,
   matnames=c('T0MEANS','LAMBDA','DRIFT','DIFFUSION','MANIFESTVAR','MANIFESTMEANS', 'CINT', 'TDPREDEFFECT', 'T0VAR','PARS')){
   out<-data.frame(matrix=as.character(NA), row=as.integer(NA), col=as.integer(NA), param=as.character(NA), value=as.numeric(NA),
-    stringsAsFactors =FALSE)
+    stringsAsFactors =FALSE) 
   out[1:sum(sapply(ctmodelobj[names(ctmodelobj) %in% matnames],length)),]=out
 
   rowcount <- 0
