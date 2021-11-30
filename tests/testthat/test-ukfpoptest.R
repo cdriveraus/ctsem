@@ -21,7 +21,6 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
         CINT=matrix(c(par1[i],par2[i]),2),
         T0VAR=diag(1,2),
         T0MEANS=matrix(c(30,50),n.latent),
-        # MANIFESTMEANS=diag(par1[i],1), #matrix(mmeans,nrow=n.manifest),
         MANIFESTVAR=t(chol(diag(.5,n.manifest))),
         DIFFUSION=t(chol(diag(3,2))))
       if(i==1) cd<-ctGenerate(gm,n.subjects=1,burnin=burnin,wide=FALSE,dtmat = dtmat) else {
@@ -31,17 +30,10 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       }
     }
     
-    
-    # n.manifest=2
+
     m1<-ctModel(type='omx',n.latent=4,n.manifest=n.manifest,Tpoints=Tpoints,
-      # manifestNames = c('Y1','Y2'),
       LAMBDA=cbind(gm$LAMBDA,0,0),
-      MANIFESTMEANS=matrix(0,nrow=n.manifest),
-      # CINT=matrix(c('cint1',0),2,1),
-      # T0MEANS=matrix(c('t0m1',0),2),
-      # T0VAR=matrix(c('t0var11',0, 0,'t0var22'),2,2),
-      # DIFFUSION=matrix(c('diff11',0,0,1e-5),2,2),
-      # DRIFT=matrix(c('dr11',0,1,-1e-5),2,2)
+      MANIFESTMEANS=matrix(0,nrow=n.manifest)
     )
     m1$DRIFT[3:4,] <- 0
     m1$DRIFT[,3:4] <- 0
@@ -54,12 +46,8 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     #model for ukf ctsem
     m2<-ctModel(type='omx',n.latent=2,n.manifest=n.manifest,Tpoints=Tpoints,
-      # T0MEANS=matrix(c(0),1),
-      # T0VAR=matrix(c(1.5),1),
       MANIFESTMEANS=matrix(0,n.manifest),
       CINT=matrix(paste0('cint',1:gm$n.latent)),
-      # DIFFUSION=matrix(c(1.4),1),
-      # DRIFT=matrix(c(-.4),1),
       TRAITVAR='auto',
       LAMBDA=gm$LAMBDA
     )
@@ -69,17 +57,13 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     #bayesian / ukf ctsem
     sm1 <- ctStanModel(m1)
     sm1$pars$indvarying <- FALSE
-    # sm1$pars$indvarying[!sm1$pars$matrix %in% c('MANIFESTMEANS')] <- FALSE
-    
-    # sink(file='../sf1.txt')
+
     sf1 <- ctStanFit(cd,sm1,iter=200,
-      optimize=TRUE,verbose=0,nopriors = TRUE,
-      optimcontrol=list(deoptim = F,is=FALSE,isloopsize=50,finishsamples=50),
+      optimize=TRUE,verbose=1,nopriors = TRUE,
+      optimcontrol=list(finishsamples=50),
       derrind=1:4,
       nlcontrol=list(nldynamics=FALSE))
-    # sink()
-    # summary(sf1)
-    
+
     
     sf1d=sf1$stanfit$transformedparsfull$pop_DRIFT[1,1:2,1:2]#matrix(sf1$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf1$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
     sf1ll=sf1$stanfit$optimfit$value
@@ -96,16 +80,17 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     sm2$pars$sdscale <- .2
     
     sf2 <- ctStanFit(cd,sm2,
-      optimize=T,verbose=0,nopriors = TRUE,
-      derrind=1:2)
-    # sink()
+      optimize=T,verbose=0,nopriors = TRUE)
+
     sf2d=sf2$stanfit$transformedparsfull$pop_DRIFT[1,1:2,1:2]# matrix(sf2$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf2$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
     sf2ll=sf2$stanfit$optimfit$value
+    
     if(1==99){
     summary(sf2)$popmeans
     sf2$stanfit$transformedparsfull$popcov[1,,]
     sf1$stanfit$transformedparsfull$pop_T0cov[1,,]
     }
+    
     for(i in 1:4){
       for(j in 1:4){
         if(i==j) testthat::expect_equivalent(

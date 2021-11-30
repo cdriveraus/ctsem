@@ -1159,6 +1159,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else init=optimfit$par
         
         #use bfgs to double check stochastic fit... 
+        message('Finishing optimization...')
           optimfit <- mize(init, fg=mizelpg, max_iter=99999,
           method="L-BFGS",memory=100,
           line_search='Schmidt',c1=1e-4,c2=.9,step0='schmidt',ls_max_fn=999,
@@ -1263,7 +1264,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               accepted <- FALSE
               stepchange = 0
               stepchangemultiplier = 1
-              while(!accepted && count < 15){
+              while(!accepted && (count==0 || 
+                  ( 
+                    (count < 30 && any(is.na(attributes(lp[[di]])$gradient))) || #if NA gradient, try for 30 attempts
+                      (count < 15 && all(!is.na(attributes(lp[[di]])$gradient))))#if gradient ok, stop after 15
+                )){ 
                 # if(count>8) stepsize=stepsize*-1 #is this good?
                 stepchangemultiplier <- max(stepchangemultiplier,.11)
                 count <- count + 1
@@ -1305,7 +1310,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             }
             
             grad<- attributes(lp[[1]])$gradient / steplist[[di]] * directions[di]
-            if(any(is.na(grad))) warning('NA gradient encountered at param ',i)
+            if(any(is.na(grad))){
+              warning('NA gradient encountered at param ',i,immediate. =TRUE)
+              browser()
+            }
             if(length(directions) > 1) grad <- (grad + attributes(lp[[2]])$gradient / (steplist[[di]]*-1))/2
             
             return(grad)
@@ -1330,29 +1338,39 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         #   nhess=numDeriv::hessian(lpf,est2)
         # }
         
-        hess1good <- diag(hess1) < -1e-8
-        hess2good <- diag(hess2) < -1e-8
+        # hess1good <- hess1#diag(hess1) < -1e-8
+        # hess1good[,] <- ifelse(is.na(hess1),0,1)
+        # hess2good <- hess2#diag(hess2) < -1e-8
+        # hess2good[,] <- ifelse(is.na(hess2),0,1)
         
-        hess1good[is.na(hess1good)] <- FALSE
-        hess2good[is.na(hess2good)] <- FALSE
+        hess <- hess1
+        hess[is.na(hess)] <- 0 #set hess1 NA's to 0
+        hess[!is.na(hess2)] <- hess[!is.na(hess2)] + hess2[!is.na(hess2)] #add hess2 non NA's
+        hess[!is.na(hess1) & !is.na(hess2)] <- hess[!is.na(hess1) & !is.na(hess2)] /2 #divide items where both hess1 and 2 used by 2
+        hess[is.na(hess1) & is.na(hess2)] <- NA #set NA when both hess1 and 2 NA
+        # 
+        # hess[hess1good*hess2good > 1] <- hess[hess1good*hess2good > 1] /2
+        # 
+        # hess1good[is.na(hess1good)] <- FALSE
+        # hess2good[is.na(hess2good)] <- FALSE
+        # 
+        # hess <- hess1 
+        # hess[,!hess1good & !hess2good] <- (hess1[,!hess2good & !hess1good] + 
+        #     hess2[,!hess2good & !hess1good]) /2
+        # hess[,hess2good & hess1good] <- (hess1[,hess2good & hess1good] + 
+        #     hess2[,hess2good & hess1good]) /2
+        # hess[,hess1good & !hess2good] <- hess1[,hess1good & !hess2good]
+        # hess[,hess2good & !hess1good] <- hess2[,hess2good & !hess1good]
         
-        hess <- hess1 
-        hess[,!hess1good & !hess2good] <- (hess1[,!hess2good & !hess1good] + 
-            hess2[,!hess2good & !hess1good]) /2
-        hess[,hess2good & hess1good] <- (hess1[,hess2good & hess1good] + 
-            hess2[,hess2good & hess1good]) /2
-        hess[,hess1good & !hess2good] <- hess1[,hess1good & !hess2good]
-        hess[,hess2good & !hess1good] <- hess2[,hess2good & !hess1good]
-        
-        if(sum(hess1good)+sum(hess2good) < nrow(hess)*2){
+        if(any(is.na(c(diag(hess1),diag(hess2))))){
           if(any(is.na(hess))) message ('Problems computing Hessian...')
-          onesided <- c(which(!hess1good[hess2good]), which(!hess2good[hess1good]))
+          onesided <- which(sum(is.na(diag(hess1) & is.na(diag(hess2)))) %in% 1)
         }
         
         hess <- (t(hess)+hess)/2
-        cholcov = try(suppressWarnings(t(chol(solve(-hess)))),silent = TRUE)
+        # cholcov = try(suppressWarnings(t(chol(solve(-hess)))),silent = TRUE)
         
-        if('try-error' %in% class(cholcov) && !is) message('Approximate hessian used for std error estimation.')
+        # if('try-error' %in% class(cholcov) && !is) message('Approximate hessian used for std error estimation.')
         
         mcov=try(solve(-hess),silent=TRUE)
         if('try-error' %in% class(mcov)){
