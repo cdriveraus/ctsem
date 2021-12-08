@@ -782,7 +782,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       if(plot > 0 && .Platform$OS.type=="windows") {
         dev.new(noRStudioGD = TRUE)
-        on.exit(expr = {dev.off()},add = TRUE)
+        on.exit(expr = {try({dev.off()})},add = TRUE)
       }
       
       if(optimcores==1) {
