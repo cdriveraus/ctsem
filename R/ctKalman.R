@@ -1,4 +1,4 @@
-ctKalmanTIP <- function(sf,tipreds='all',subject=1,plot=TRUE,...){
+ctKalmanTIP <- function(sf,tipreds='all',subject=1,timestep='auto',plot=TRUE,returndat=FALSE,...){
   if(tipreds[1] %in% 'all') tipreds <- sf$ctstanmodel$TIpredNames
   if(length(subject) > 1) stop('>1 subject!')
   
@@ -34,7 +34,7 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,plot=TRUE,...){
   }
   dat[[sf$ctstanmodelbase$subjectIDname]][dat[[sf$ctstanmodelbase$subjectIDname]] %in% 1] <- 0
   sf$standata <- suppressMessages(ctStanData(sf$ctstanmodel,dat,optimize=TRUE))
-  k=ctKalman(fit = sf,subjects=1:sf$standata$nsubjects,realid=TRUE)
+  k=ctKalman(fit = sf,subjects=1:sf$standata$nsubjects,realid=TRUE,timestep=timestep)
   k=plot.ctKalmanDF(k,plot=FALSE,...)
   # k$labels$colour[1] <- 'Covariate'
   k$data$`Direction` <- factor(ifelse(grepl(' high$',k$data$Subject),'+ 1','- 1'))
@@ -46,12 +46,14 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,plot=TRUE,...){
 
   Covariate = Direction = Time = Value = Variable = NULL #global vars nonsense
   
+  if(returndat) return(kdat) else{
   k=ggplot(data = kdat,mapping = aes(y=Value,x=Time,linetype=Direction,colour=Covariate))+
     geom_line(size=1)+
     scale_colour_manual(values=c(1,2:length(unique(kdat$Covariate))),
       labels=c('No covariate',levels(kdat$Covariate)[-1]))+
     facet_wrap(vars(Variable),scales = 'free_y')+theme_bw()
   return(k)
+  }
 }
 
 #' ctKalman 
@@ -67,7 +69,7 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,plot=TRUE,...){
 #' @param timestep Either 'asdata' to just use the observed data 
 #' (which also requires 'asdata' for timerange) or a positive numeric value
 #' indicating the time step to use for interpolating values. Lower values give a more accurate / smooth representation,
-#' but take a little more time to calculate. Currently unavailable for ctStan fits.
+#' but take a little more time to calculate. 
 #' @param subjects vector of integers denoting which subjects (from 1 to N) to plot predictions for. 
 #' @param removeObs Logical. If TRUE, observations (but not covariates)
 #' are set to NA, so only expectations based on

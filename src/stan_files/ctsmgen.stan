@@ -211,8 +211,8 @@ if(transform < 49 && offset != 0.0) param+=offset;
   }
   
   // improve PARS when = 100 thing here too
-   vector parvectform(int[] which, vector rawpar, int when, int[,] ms, data real[,] mval, int subi, int[] whenvec){
-    vector[size(which)] parout;
+   row_vector parvectform(int[] which, row_vector rawpar, int when, int[,] ms, data real[,] mval, int subi, int[] whenvec){
+    row_vector[size(which)] parout;
     if(size(which)){
       //int outwhen[size(whichequals(whenvec,0,0))] = whenvec[whichequals(whenvec,0,0)]; //outwhen is nonzero elements of whenvec
       for(whichout in 1:size(which)){
@@ -237,7 +237,7 @@ if(transform < 49 && offset != 0.0) param+=offset;
   }
   
   
-  matrix mcalc(matrix matin, vector tfpars, vector tfstates, int[] when, int m, int[,] ms, data real[,] mval, int subi){
+  matrix mcalc(matrix matin, vector tfpars, row_vector tfstates, int[] when, int m, int[,] ms, data real[,] mval, int subi){
     matrix[rows(matin),cols(matin)] matout;
 
     for(ri in 1:size(ms)){ //for each row of matrix setup
@@ -652,8 +652,8 @@ model{
   matrix[nlatentpop,nlatentpop] eJAx = diag_matrix(rep_vector(1,nlatentpop)); //time evolved jacobian
   matrix[nlatentpop,nlatentpop] eJAxs[dosmoother ? ndatapoints : 1]; //time evolved jacobian, saved for smoother
 
-  vector[nlatentpop] state = rep_vector(-999,nlatentpop); 
-  vector[nlatentpop] statetf;
+  row_vector[nlatentpop] state = rep_row_vector(-999,nlatentpop); 
+  row_vector[nlatentpop] statetf;
   matrix[nlatentpop,nlatentpop] JAx; //Jacobian for drift
   //matrix[nlatentpop,nlatentpop] J0; //Jacobian for t0
   matrix[nlatentpop,nlatentpop] Jtd;//diag_matrix(rep_vector(1),nlatentpop); //Jacobian for nltdpredeffect
@@ -750,15 +750,15 @@ model{
 
   // compute individual parameters that are not state dependent, either all (if si=0) or just update indvarying ones.
   indparams[whichequals(whenvecp[si ? 2 : 1], 0, 0)]= 
-    parvectform(whichequals(whenvecp[si ? 2 : 1], 0, 0),rawindparams, 
-    0, matsetup, matvalues, si, whenvecp[si ? 2 : 1]);
+    parvectform(whichequals(whenvecp[si ? 2 : 1], 0, 0),rawindparams', 
+    0, matsetup, matvalues, si, whenvecp[si ? 2 : 1])';
      
   if(whenmat[1, 5] >= (si ? 1 : 0)) T0MEANS = 
     mcalc(T0MEANS, indparams, statetf, {0}, 1, matsetup, matvalues, si); // base t0means to init
       
  // for(li in 1:nlatentpop) if(!is_nan(T0MEANS[li,1])) state[li] = T0MEANS[li,1]; //in case of t0 dependencies, may have missingness
   
-  state=T0MEANS[,1];
+  state=T0MEANS[,1]';
   
   statetf[whichequals(whenvecs[1],0,0)] = parvectform(whichequals(whenvecs[1],0,0),state, 1,
     matsetup, matvalues, si, whenvecs[1]);   
@@ -801,8 +801,8 @@ if(si==0 || sum(whenmat[54,{5}]) > 0 )Jy=mcalc(Jy,indparams, statetf,{0}, 54, ma
       for(ri in 1:size(matsetup)){
         if(matsetup[ri,7]==1){ //if t0means
           if(matsetup[ri,5]) { //and indvarying
-            T0cov[matsetup[ri,1], ] = T0cov[matsetup[ri,1], ] * matvalues[ri,2] * matvalues[ri,3]; //multiplier meanscale
-            T0cov[, matsetup[ri,1] ] = T0cov[, matsetup[ri,1] ] * matvalues[ri,2] * matvalues[ri,3]; //multiplier meanscale
+            T0cov[matsetup[ri,1], ] *= matvalues[ri,2] * matvalues[ri,3]; //multiplier meanscale
+            T0cov[, matsetup[ri,1] ] *=  matvalues[ri,2] * matvalues[ri,3]; //multiplier meanscale
           }
         }
       }
@@ -852,7 +852,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
           
     {
     int zeroint[1];
-    vector[nlatentpop] basestate = state;
+    row_vector[nlatentpop] basestate = state;
     zeroint[1] = 0;
     for(statei in append_array(JAxfinite,zeroint)){ //if some finite differences to do, compute these first
       state = basestate;
@@ -871,14 +871,15 @@ if(sum(whenmat[7,{2}]) > 0 )CINT=mcalc(CINT,indparams, statetf,{2}, 7, matsetup,
         
       
       if(statei > 0) {
-        JAx[1:nlatent,statei] =  DRIFT * state[1:nlatent] + CINT[,1]; //compute new change
+        JAx[1:nlatent,statei] =  DRIFT * state[1:nlatent]' + CINT[,1]; //compute new change
          if(verbose>1) print("JAx ",JAx);
       }
       if(statei== 0 && size(JAxfinite) ) { //only need these calcs if there are finite differences to do -- otherwise loop just performs system calcs.
-        base = DRIFT * state[1:nlatent] + CINT[,1];
+        base = DRIFT * state[1:nlatent]' + CINT[,1];
         if(verbose>1) print("base = ",base,"    sjaxinit= ",JAx);
         for(fi in JAxfinite){
-          JAx[1:nlatent,fi] = (JAx[1:nlatent,fi] - base) / Jstep; //new - baseline change divided by stepsize
+          JAx[1:nlatent,fi] -= base;
+          JAx[1:nlatent,fi] /= Jstep; //new - baseline change divided by stepsize
         }
       }
     }
@@ -919,14 +920,14 @@ if(sum(whenmat[52,{2}]) > 0 )JAx=mcalc(JAx,indparams, statetf,{2}, 52, matsetup,
              for(li in 1:nlatent) if(is_nan(state[li]) || is_nan(sum(discreteDRIFT[li,]))) {
              print("Possible time step problem? Intervals too large? Try reduce maxtimestep");
             }
-            state[1:nlatent] = discreteDRIFT * state[1:nlatent]; // ???compute before new diffusion calcs
+            state[1:nlatent] *= discreteDRIFT'; // ???compute before new diffusion calcs
             
             if(size(CINTnonzero)>0){
               if(si==0 || dtchange==1 || statedep[3]|| statedep[7] || //if first sub or changing every state
                 (T0check == 1 && (sum(whenmat[3,])+sum(whenmat[7,])) > 0)){ //or first time step of new sub with ind difs
                 discreteCINT = (DRIFT \ (discreteDRIFT-IIlatentpop[1:nlatent,1:nlatent])) * CINT[,1];
               }
-              state[1:nlatent] += discreteCINT;
+              state[1:nlatent] += discreteCINT';
             }
             
             if(intoverstates==1 || dosmoother==1){
@@ -943,8 +944,8 @@ if(sum(whenmat[52,{2}]) > 0 )JAx=mcalc(JAx,indparams, statetf,{2}, 52, matsetup,
               etacov = quad_form_sym(makesym(etacov,verbose,1), JAx');
               etacov[ derrind, derrind ] += DIFFUSIONcov[ derrind, derrind ]; 
             }
-            state[1:nlatent] = DRIFT * state[1:nlatent];
-            state[CINTnonzero]+= CINT[CINTnonzero,1];
+            state[1:nlatent] *= DRIFT';
+            state[CINTnonzero]+= CINT[CINTnonzero,1]';
             
           }
         }
@@ -967,15 +968,15 @@ if(sum(whenmat[53,{3}]) > 0 )Jtd=mcalc(Jtd,indparams, statetf,{3}, 53, matsetup,
 
         
 
-        state[1:nlatent] +=   (TDPREDEFFECT * tdpreds[rowi]); //tdpred effect only influences at observed time point
+        state[1:nlatent] +=   (TDPREDEFFECT * tdpreds[rowi])'; //tdpred effect only influences at observed time point
         if(statedep[53]) etacov = quad_form_sym(makesym(etacov,verbose,1),Jtd'); 
       }
     }//end nonlinear tdpred
 
   if(si > 0 && intoverstates==0){ //unused states if intoverpop is specified, consider fixing...
-    if(T0check==0) state += cholesky_decompose(etacov) * etaupdbasestates[(1+(rowi-1)*nlatentpop):(rowi*nlatentpop)];
-    if(T0check>0) state[derrind] +=  cholesky_decompose(makesym(discreteDIFFUSION[derrind,derrind],verbose,1)) * 
-     (etaupdbasestates[(1+(rowi-1)*nlatentpop):(nlatent+(rowi-1)*nlatentpop)])[derrind];
+    if(T0check==0) state += (cholesky_decompose(etacov) * etaupdbasestates[(1+(rowi-1)*nlatentpop):(rowi*nlatentpop)])';
+    if(T0check>0) state[derrind] +=  (cholesky_decompose(makesym(discreteDIFFUSION[derrind,derrind],verbose,1)) * 
+     (etaupdbasestates[(1+(rowi-1)*nlatentpop):(nlatent+(rowi-1)*nlatentpop)])[derrind])';
      
    // if(T0check==0) llrow[rowi]+= multi_normal_cholesky_lpdf(
   //     etaupdbasestates[(1+(rowi-1)*nlatent):(rowi*nlatent)] | rep_vector(0,nlatent), etacov);
@@ -996,7 +997,7 @@ if(verbose > 1){
       
   {
     int zeroint[1];
-    vector[nlatentpop] basestate = state;
+    row_vector[nlatentpop] basestate = state;
     zeroint[1] = 0;
     for(statei in append_array(Jyfinite,zeroint)){ //if some finite differences to do, compute these first
       state = basestate;
@@ -1018,12 +1019,12 @@ if(sum(whenmat[54,{4}]) > 0 )Jy=mcalc(Jy,indparams, statetf,{4}, 54, matsetup, m
         
         
       if(statei > 0 && (intoverstates) > 0) {
-        Jy[o,statei] =  LAMBDA[o] * state[1:nlatent] + MANIFESTMEANS[o,1]; //compute new change
+        Jy[o,statei] =  LAMBDA[o] * state[1:nlatent]' + MANIFESTMEANS[o,1]; //compute new change
         Jy[o1,statei] = to_vector(inv_logit(to_array_1d(Jy[o1,statei])));
          if(verbose>1) print("Jy ",Jy);
       }
       if(statei==0){
-        syprior[o] = LAMBDA[o] * state[1:nlatent] + MANIFESTMEANS[o,1];
+        syprior[o] = LAMBDA[o] * state[1:nlatent]' + MANIFESTMEANS[o,1];
         syprior[o1] = to_vector(inv_logit(to_array_1d( syprior[o1] )));
         if(size(Jyfinite) ) { //only need these calcs if there are finite differences to do -- otherwise loop just performs system calcs.
           if(verbose>1) print("syprior = ",syprior,"    Jyinit= ",Jy);
@@ -1094,16 +1095,16 @@ if(sum(whenmat[54,{4}]) > 0 )Jy=mcalc(Jy,indparams, statetf,{4}, 54, matsetup, m
          
         K[,od] = mdivide_right_spd(etacov * Jy[od,]', makesym(ycov[od,od],verbose,1)); // * multiply_lower_tri_self_transpose(ycovi');// ycov[od,od]; 
         etacov += -K[,od] * Jy[od,] * etacov; //cov update
-        state +=  (K[,od] * err[od]); //state update
+        state +=  (K[,od] * err[od])'; //state update
       }
       
       if(dosmoother==1) {
         yb[1,rowi] = syprior[o];
-        etab[2,rowi] = state;
+        etab[2,rowi] = state';
         ycovb[1,rowi] = ycov;
         etacovb[2,rowi] = etacov;
         ycovb[2,rowi] = quad_form_sym(makesym(etacov,verbose,1), Jy') + MANIFESTcov;
-        yb[2,rowi] = MANIFESTMEANS[o,1] + LAMBDA[o,] * state[1:nlatent];
+        yb[2,rowi] = MANIFESTMEANS[o,1] + LAMBDA[o,] * state[1:nlatent]';
         Jys[rowi,,] = Jy;
       }
       

@@ -1,4 +1,8 @@
 ctsem news:
+6/12/2021
+#### 3.5.5 ####
+- Some edge case optimizer problems resolved. 
+- Bug fix in discrete time plots when observational=TRUE. Correlations were unnecessarily squared previously.
 
 22/7/2021
 #### 3.5.4 ####

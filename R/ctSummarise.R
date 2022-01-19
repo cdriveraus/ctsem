@@ -42,7 +42,7 @@ ctSummarise<-function(sf,name='ctSummary',cores=2, times=seq(0,10,.1),quantiles=
       if(mat %in% 'T0cov' && sf$standata$nindvarying > 0 && sf$standata$intoverpop){
         diffusion = diffusion[,latents,latents,drop=FALSE]
       }
-      diffindices <- unique(c(which(diffusion[1,,] != 0,arr.ind = TRUE)))
+      diffindices <- unique(c(which(matrix(diffusion[1,,],nrow=dim(diffusion)[2],ncol=dim(diffusion)[3]) != 0,arr.ind = TRUE)))
       if(length(diffindices) > 0){
       diffusion <- plyr::aaply(diffusion,1,function(x) matrix(x[diffindices,diffindices,drop=FALSE],length(diffindices),length(diffindices)))
       dimnames(diffusion) <- list(NULL,varnames[diffindices],varnames[diffindices])
@@ -286,9 +286,9 @@ ctSummarise<-function(sf,name='ctSummary',cores=2, times=seq(0,10,.1),quantiles=
           rm(lktifull);rm(ktifull);
         }
         for(ti in sm$TIpredNames){
-          print(plot(ctKalmanTIP(sf,tipreds = ti,subject = whichsubfull[1]),
+          print(ctKalmanTIP(sf,tipreds = ti,subject = whichsubfull[1],
             kalmanvec='etaprior', plot=FALSE,polygonsteps=0)+scale_color_discrete(name='Covariate')+ggtitle('Latent Expectations'))
-          print( plot(ctKalmanTIP(sf,tipreds = ti,subject = whichsubfull[1]),kalmanvec='yprior',
+          print( ctKalmanTIP(sf,tipreds = ti,subject = whichsubfull[1],kalmanvec='yprior',
             plot=FALSE,polygonsteps=0)+scale_color_discrete(name='Covariate')+ggtitle('Expectations'))
         }
         dev.off()
