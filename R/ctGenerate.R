@@ -30,8 +30,7 @@ ctModeltoNumeric <- function(ctmodelobj){
 #' containing positive numeric values for all time intervals between measurements. 
 #' If not NA, dtmean and logdtsd are ignored.
 #' @param wide Logical. Output in wide format?
-#' @details TRAITVAR and MANIFESTRAITVAR are treated as Cholesky factor covariances 
-#' of CINT and MANIFESTMEANS, respectively. 
+#' @details Covariance related matrices are treated as Cholesky factors. 
 #' TRAITTDPREDCOV and TIPREDCOV matrices are not accounted for, at present. 
 #' The first 1:n.TDpred rows and columns of TDPREDVAR are used for generating
 #' tdpreds at each time point. 

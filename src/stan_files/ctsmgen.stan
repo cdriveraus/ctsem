@@ -891,7 +891,7 @@ if(sum(whenmat[7,{2}]) > 0 )CINT=mcalc(CINT,indparams, statetf,{2}, 7, matsetup,
 if(sum(whenmat[52,{2}]) > 0 )JAx=mcalc(JAx,indparams, statetf,{2}, 52, matsetup, matvalues, si); 
 
       
-      if(si==0 ||statedep[4] || whenmat[4,2] || (T0check==1 && whenmat[4,5])){
+      if(si==0 ||statedep[4] || whenmat[4,2] || ( (T0check+intoverpop) >0 && whenmat[4,5])){
         DIFFUSIONcov[derrind,derrind] = sdcovsqrt2cov(DIFFUSION[derrind,derrind],choleskymats);
         if(!continuoustime) discreteDIFFUSION=DIFFUSIONcov;
       }
@@ -909,7 +909,9 @@ if(sum(whenmat[52,{2}]) > 0 )JAx=mcalc(JAx,indparams, statetf,{2}, 52, matsetup,
                   eJAx =  expm2(JAx * dtsmall);
                 } else eJAx[1:nlatent, 1:nlatent] = discreteDRIFT;
                                
-                if(si==0 || statedep[4]||statedep[52]|| (T0check==1 && (whenmat[4,5] || whenmat[3,5]))){ //if first pass, state dependent, or individually varying drift / diffusion
+                if(si==0 || statedep[4]||statedep[52]|| 
+                  (whenmat[4,2]+whenmat[3,2]) > 0 || 
+                  (T0check==1 && (whenmat[4,5] || whenmat[3,5]))){ //if first pass, state dependent, or individually varying drift / diffusion
                   asymDIFFUSIONcov[derrind,derrind] = ksolve(JAx[derrind,derrind], DIFFUSIONcov[derrind,derrind],verbose);
                 }
                 discreteDIFFUSION[derrind,derrind] =  asymDIFFUSIONcov[derrind,derrind] - 
@@ -969,7 +971,7 @@ if(sum(whenmat[53,{3}]) > 0 )Jtd=mcalc(Jtd,indparams, statetf,{3}, 53, matsetup,
         
 
         state[1:nlatent] +=   (TDPREDEFFECT * tdpreds[rowi])'; //tdpred effect only influences at observed time point
-        if(statedep[53]) etacov = quad_form_sym(makesym(etacov,verbose,1),Jtd'); 
+        etacov = quad_form_sym(makesym(etacov,verbose,1),Jtd');  //could speed up by detecting if non diagonal Jtd
       }
     }//end nonlinear tdpred
 
@@ -1029,7 +1031,8 @@ if(sum(whenmat[54,{4}]) > 0 )Jy=mcalc(Jy,indparams, statetf,{4}, 54, matsetup, m
         if(size(Jyfinite) ) { //only need these calcs if there are finite differences to do -- otherwise loop just performs system calcs.
           if(verbose>1) print("syprior = ",syprior,"    Jyinit= ",Jy);
           for(fi in Jyfinite){
-            Jy[o,fi] = (Jy[o,fi] - syprior[o]) / Jstep; //new - baseline change divided by stepsize
+            Jy[o,fi] -= syprior[o];
+            Jy[o,fi] /= Jstep; //new - baseline change divided by stepsize
           }
         }
       }

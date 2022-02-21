@@ -27,9 +27,11 @@ ctStanRawSamples<-function(fit){
 #' dimnames(indpars)
 #' plot(indpars[1,,'cint1'],indpars[1,,'cint2'])
 ctStanSubjectPars <- function(fit,pointest=TRUE,cores=2,nsamples='all'){
+  
   if(!nsamples[1] %in% 'all') fit$stanfit$rawposterior <- 
       fit$stanfit$rawposterior[sample(1:nrow(fit$stanfit$rawposterior),nsamples),,drop=FALSE]
   pnames <- getparnames(fit,subjvariationonly = TRUE)
+  if(length(pnames)==0) stop('No individually varying parameters in model!')
   m <- fit$ctstanmodelbase$pars
   if(pointest) tfp <- fit$stanfit$transformedparsfull else {
     gc()
@@ -52,6 +54,7 @@ ctStanSubjectPars <- function(fit,pointest=TRUE,cores=2,nsamples='all'){
   p=p[,,order(dimnames(p)[[3]]),drop=FALSE]
   return(p)
 }
+
 
 getparnames <- function(fit,reonly=FALSE, subjvariationonly=FALSE, popstatesonly=FALSE){
   ms <- fit$setup$matsetup
