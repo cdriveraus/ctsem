@@ -93,7 +93,8 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='popmean',
   if(!ctstanfitobj$ctstanmodel$continuoustime) times <- unique(round(times))
   type='discreteDRIFT'
   collapseSubjects=TRUE #consider this for a switch
-  e<-ctExtract(ctstanfitobj,subjectMatrices = subjects[1]!='popmean',cores=cores)
+  e<-ctExtract(ctstanfitobj,subjectMatrices = subjects[1]!='popmean',cores=cores,
+    nsamples = min(nsamples,dim(ctstanfitobj$stanfit$transformedpars$pop_DRIFT)[1]))
   
   if(subjects[1] != 'popmean' && any(!is.integer(as.integer(subjects)))) stop('
   subjects argument must be either "all" or an integer denoting specific subjects')
