@@ -679,12 +679,12 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   benv$clctsem <- NA #placeholder for flexsapply usage
   
   notipredsfirstpass <- FALSE
-  if(init[1] =='random'){# #remove tipreds for first pass
-    notipredsfirstpass <- TRUE
-    TIPREDEFFECTsetup <- standata$TIPREDEFFECTsetup
-    standata$TIPREDEFFECTsetup[,] <- 0L
-    standata$ntipredeffects <- 0L
-  }
+  # if(init[1] =='random'){# #remove tipreds for first pass
+  #   notipredsfirstpass <- TRUE
+  #   TIPREDEFFECTsetup <- standata$TIPREDEFFECTsetup
+  #   standata$TIPREDEFFECTsetup[,] <- 0L
+  #   standata$ntipredeffects <- 0L
+  # }
   
   savesubjectmatrices <- standata$savesubjectmatrices
   standata$savesubjectmatrices <- 0L #reinsert when saving samples
@@ -1228,7 +1228,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(length(parsteps)>0) grinit= est2[-parsteps] else grinit = est2
         
         jac<-function(pars,step=1e-3,whichpars='all',
-          lpdifmin=1e-2,lpdifmax=5, cl=NA,verbose=1,directions=c(-1,1),parsteps=c()){
+          lpdifmin=1e-3,lpdifmax=5, cl=NA,verbose=1,directions=c(-1,1),parsteps=c()){
           if('all' %in% whichpars) whichpars <- 1:length(pars)
           base <- optimfit$value
           
