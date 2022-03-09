@@ -245,7 +245,7 @@ cat('\\caption{Output from ctModelLatex function }
 \\end{sidewaysfigure}') 
 @
 
-Table \ref{tab:ctmodel} shows the basic arguments one may consider and their link to the dynamic model parameters. Note that ctModel requires variance covariance matrices (DIFFUSION, T0VAR, MANIFESTVAR) to be specified in a matrix square root form, with standard deviations on the diagonal, covariance related parameters on the lower off diagonal (excluding MANIFESTVAR which should be diagonal only), and (typically) zeroes on the upper off diagonal. While it is possible to fix the lower off diagonals of covariance matrices to non-zero values, in general this is difficult to interpret because of the necessary matrix transformations, thus we recommend either to fix to zero, or leave free. 
+Table \ref{tab:ctmodel} shows the basic arguments one may consider and their link to the dynamic model parameters. Note that ctModel requires variance covariance matrices (DIFFUSION, T0VAR, MANIFESTVAR) to be specified in a matrix square root form, with standard deviations on the diagonal, covariance related parameters on the lower off diagonal (excluding MANIFESTVAR which should for many casess be diagonal only), and (typically) zeroes on the upper off diagonal. While it is possible to fix the lower off diagonals of covariance related matrices to non-zero values, in general this is difficult to interpret because of the necessary matrix transformations, thus we recommend either to fix to zero, or leave free. 
 
 \begin{table}\footnotesize
 \caption{ctModel arguments} \label{tab:ctmodel}
@@ -281,7 +281,7 @@ head(model$pars,4)
 
 By default, intercept related model parameters (T0MEANS, MANIFESTMEANS, CINT) are set to individually varying using a correlated random effects formulation, while other parameters are fixed across subjects. In contrast to this, when time independent predictors are included (time invariant covariates), the default (adjustable using the \verb|tipredDefault| argument to ctModel) that they affect all free subject level parameters. One may modify the output model to further restrict, or allow, between subject differences (set some parameters to not vary over individuals), alter the transformation used to set the prior / bounds, or restrict which effects of time independent predictors to estimate -- see the section on adjusting model specification for details on this.  
 
-Priors are included by default but for those who prefer maximum likelihood, they can be switched off during model fitting using the \verb|nopriors=TRUE| argument. For such cases the information in this text regarding priors is obviously less relevant, however some awareness may be useful as a) priors are always used during an initial rough estimation, and b) although the prior probability is not relevant, some parameters (such as standard deviations) rely on transformations to ensure they stay within a particular range. 
+Priors are not included by default but for those who wish to use Bayesian estimation approaches, they can be switched on during model fitting using the \verb|nopriors=FALSE| argument. For the default of maximum likelihoood the information in this text regarding priors is obviously less relevant, however some awareness may be useful as a) priors are always used during an initial rough estimation, and b) although the prior probability is not relevant, some parameters (such as standard deviations) rely on transformations to ensure they stay within a particular range. 
 
 \subsection{Model fitting}
 Once model specification is complete, the model is fit to the data using the \verb|ctStanFit| function as shown in the following example. Various options are available for fitting, from a maximum likelihood approach using optimization, to a fully Bayesian approach via Stan's Hamiltonian Monte Carlo sampler. For these examples we will use optimization, though for cases with many random effects on non-intercept parameters, or missing time independent predictors, optimization may not always provide the most appropriate results and should be interpreted with care. 
@@ -460,6 +460,21 @@ model$pars[,c('TI1_effect','TI2_effect','TI3_effect')] <- FALSE
 model$pars[model$pars$matrix == 'DRIFT', 
   c('TI1_effect','TI2_effect','TI3_effect')] <- TRUE
 @
+
+An alternative approach to specifying the tipredeffects is in the initial model specification, using the '|' separator notation. The following shows an example where the DRIFT[1,1] parameter is influenced by covariates TI1 and TI3,  DRIFT[1,2] is influenced by TI2, and there are no other time independent predictor effects (because \verb|tipredDefault=FALSE|)
+<<echo=TRUE,eval=FALSE,tipredspec>>=
+model<-ctModel(type='stanct', tipredDefault = FALSE,
+	DRIFT = matrix(c(
+	  'drift_eta1_eta1||||TI1,TI3','dr21||||TI2',
+	  'dr12','dr22'),2,2),
+	latentNames=c('eta1','eta2'),
+	manifestNames=c('Y1','Y2'),
+	TDpredNames='TD1', 
+	TIpredNames=c('TI1'),
+	LAMBDA=diag(2))
+
+@
+
 
 % \subsection{Stationarity}
 % When it is reasonable to assume that the prior for long term expectation and variance of the latent states is the same as (or very similar to) the prior for initial expectations and variances, setting some form of stationarity in advance may be desirable Two approaches to this are possible.

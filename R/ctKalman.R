@@ -77,7 +77,7 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,timestep='auto',plot=TRUE,ret
 #' @param plot Logical. If TRUE, plots output instead of returning it. 
 #' See \code{\link{plot.ctKalmanDF}} 
 #' (Stan based fit) for the possible arguments.
-#' @param realid Output using original (not necessarily integer sequence) subject id's?
+#' @param realid use original (not necessarily integer sequence) subject id's?
 #' @param ... additional arguments to pass to \code{\link{plot.ctKalmanDF}}.
 #' @return Returns a list containing matrix objects etaprior, etaupd, etasmooth, y, yprior, 
 #' yupd, ysmooth, prederror, time, loglik,  with values for each time point in each row. 
@@ -121,6 +121,8 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
   if(is.na(type)) stop('fit object is not from ctFit or ctStanFit!')
   
   idmap <- fit$standata$idmap #store now because we may reduce it
+
+  if(realid) subjects <- idmap[which(idmap[,1] %in% subjects),2]
   
   subjects <- sort(subjects) #in case not entered in ascending order
   if(type=='stan'){
@@ -316,7 +318,7 @@ plot.ctKalmanDF<-function(x, subjects=unique(x$Subject), kalmanvec=c('y','yprior
   shapevec[ltyvec %in% 0] <- 19
   # 
   d<-subset(kdf,Element %in% kalmanvec)
-# browser()
+
   g <- ggplot(d,
     aes_string(x='Time',y='Value',colour=colvec,linetype='Element',shape='Element')) +
     scale_linetype_manual(breaks=names(ltyvec),values=ltyvec)+
