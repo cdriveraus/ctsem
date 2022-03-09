@@ -644,6 +644,7 @@ clusterIDeval <- function(cl,commands){
 #' @param matsetup subobject of ctStanFit output. If provided, parameter names instead of numbers are output for any problem indications.
 #' @param nsubsets number of subsets for stochastic optimizer. Subsets are further split across cores, 
 #' but each subjects data remains whole -- processed by one core in one subset.
+#' @param stochasticTolAdjust Multiplier for initial subsampling optimizer tolerance. 
 #' @return list containing fit elementsF
 #' @importFrom mize mize
 #' @importFrom utils head tail
@@ -658,7 +659,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   parsteps=c(),
   plot=FALSE,
   is=FALSE, isloopsize=1000, finishsamples=1000, tdf=10,chancethreshold=100,finishmultiply=5,
-  verbose=0,cores=2,matsetup=NA,nsubsets=10){
+  verbose=0,cores=2,matsetup=NA,nsubsets=10, stochasticTolAdjust=1){
   
   if(!is.null(standata$verbose)) {
     if(verbose > 1) standata$verbose=as.integer(verbose) else standata$verbose=0L
@@ -679,12 +680,12 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   benv$clctsem <- NA #placeholder for flexsapply usage
   
   notipredsfirstpass <- FALSE
-  # if(init[1] =='random'){# #remove tipreds for first pass
-  #   notipredsfirstpass <- TRUE
-  #   TIPREDEFFECTsetup <- standata$TIPREDEFFECTsetup
-  #   standata$TIPREDEFFECTsetup[,] <- 0L
-  #   standata$ntipredeffects <- 0L
-  # }
+  if(init[1] =='random'){# #remove tipreds for first pass
+    notipredsfirstpass <- TRUE
+    TIPREDEFFECTsetup <- standata$TIPREDEFFECTsetup
+    standata$TIPREDEFFECTsetup[,] <- 0L
+    standata$ntipredeffects <- 0L
+  }
   
   savesubjectmatrices <- standata$savesubjectmatrices
   standata$savesubjectmatrices <- 0L #reinsert when saving samples
@@ -875,7 +876,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             attributes(out) <- list(gradient=rep(0,length(parm)))
           } 
           
-          if(plot > 0 && (!stochastic || (carefulfit && nsubsets==1))){
+          if(plot > 0 && ( (!stochastic &&!carefulfit) || (carefulfit && nsubsets==1))){
             if(out[1] > (-1e99)) storedLp <<- c(storedLp,out[1])
             iter <<- iter+1
             # attributes(out)$gradient <- (1-gradmem)*attributes(out)$gradient + gradmem*gradstore
@@ -889,6 +890,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               plot(log(1+tail(-storedLp,500)-min(tail(-storedLp,500))),ylab='target',type='l')
               plot(g,type='p',col=1:length(parm),ylab='gradient',xlab='param')
             }
+            if(verbose==0) print(paste('lp= ',out,' ,    iter time = ',b-a)) #if not verbose, print lp when plotting
           }
           storedPars <<- parm
           # storedLp <<- c(storedLp,out[1])
@@ -983,7 +985,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
             abs_tol=1e-2,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)
           optimfit$value = optimfit$f
-          carefulfit <- FALSE
         }
         
         if(npars > 50 || nsubsets > 1) {
@@ -993,7 +994,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             nsubsets = nsubsets,
             whichignore = unlist(parsteps),nconvergeiter = 20,
             plot=plot,
-            itertol=.1,deltatol=.1,worsecountconverge = 20,maxiter=500)
+            itertol=.1*stochasticTolAdjust,deltatol=.1*stochasticTolAdjust,
+            worsecountconverge = 20,maxiter=ifelse(standata$ntipred > 0 && notipredsfirstpass, 500,5000))
         }
         
         
@@ -1001,6 +1003,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # standata$taylorheun <- as.integer(taylorheun)
         # standata$sdscale <- sdscale
         
+        carefulfit <- FALSE
         iter <- 0
         storedLp <- c()
         # if(length(parsteps) <1 && (standata$ntipred ==0 || notipredsfirstpass ==FALSE)) finished <- TRUE
@@ -1112,7 +1115,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             nsubsets = nsubsets,
             whichignore = parsteps,
             plot=plot,
-            itertol=1e-1,deltatol=1e-2,worsecountconverge = 20)
+            itertol=1e-1*stochasticTolAdjust,deltatol=1e-2*stochasticTolAdjust,worsecountconverge = 20)
           if(length(parsteps)>0) init[-parsteps] = optimfit$par else init=optimfit$par
           # }
         }
