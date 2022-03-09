@@ -1,7 +1,5 @@
 if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
-library(ctsem)
-library(testthat)
-  cores=2
+
 
 context("knownFits")
 
@@ -10,8 +8,11 @@ test_that("anomauth", {
   
   
   if( .Machine$sizeof.pointer != 4){
-
+    library(ctsem)
+    library(testthat)
+    
   #library(ctsem);cores=12
+    cores=2
   data(AnomAuth)
   AnomAuthmodel<-ctModel(LAMBDA=matrix(c(1, 0, 0, 1), nrow=2, ncol=2),  
     n.latent=2,n.manifest=2, 

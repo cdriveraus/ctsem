@@ -1,7 +1,7 @@
 \documentclass[11pt]{article}
 %\VignetteIndexEntry{Introduction to Hierarchical Continuous Time Dynamic Modelling with ctsem}
 %\VignetteKeyword{SEM, time series, panel data, dynamic models}
-%\VignetteEngine{knitr::knitr}
+%\VignetteEngine{knitr::knitr_notangle}
 %\usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc} 
 \usepackage{lmodern}
@@ -20,6 +20,7 @@
 %\usepackage{cmap} % to ensure pdf text can be copied - error
 
 \usepackage{mathtools}
+\usepackage{hyperref}
 \setlength{\parindent}{0cm}
 \setlength{\parskip}{1ex}
 
@@ -90,6 +91,10 @@ options(width = 100, scipen = 12, digits = 3)
 
 set.seed(1)
 
+cran_check <- ("CheckExEnv" %in% search()) || any(c("_R_CHECK_TIMINGS_",
+             "_R_CHECK_LICENSE_") %in% names(Sys.getenv()))
+knitr::opts_chunk$set(eval = !cran_check)
+
 library(ggplot2)
 g_legend<-function(a.gplot){
   tmp <- ggplot_gtable(ggplot_build(a.gplot))
@@ -103,7 +108,7 @@ g_legend<-function(a.gplot){
 @
 
 \section{Overview}
-In this work, we describe the basic usage of the hierarchical formulation of the ctsem software for continuous-time dynamic modelling in R \citep{rcoreteam2014r}. This formulation was described in detail in \citet{driver2018hierarchicala}, though since then the scope has been expanded to include regular (i.e. not Bayesian) maximum likelihood estimation, nonlinear models (such as parameters that vary over time), and optimization with optional importance sampling. The latter enhancement means that the approach described herein largely supersedes the initial mixed effects approach based upon OpenMx \citep{neale2016openmx}, as estimation options now include maximum likelihood, maximum a posteriori, and fully Bayesian with the Stan software's \citep{carpenter2017stan, standevelopmentteam_rstan} Hamiltonian Monte Carlo sampler. The major use case for the OpenMx based wide formulation is many subjects, few time points, and most or all time intervals consistent across subjects.  This older structural equation formulation is discussed in detail in \citet{driver2017continuous}. Although some of the R commands and functionality are now different in the newer Stan based format, the general concepts discussed in the original work are still relevant background. 
+In this work, we describe the basic usage of the hierarchical formulation of the ctsem software for continuous-time dynamic modelling in R \citep{rcoreteam2014r}. This formulation was described in detail in \citet{driver2018hierarchicala}, though since then the scope has been expanded to include regular (i.e. not Bayesian) maximum likelihood estimation, nonlinear models (such as parameters that vary over time), and optimization with optional importance sampling. The latter enhancement means that the approach described herein largely supersedes the initial mixed effects approach based upon OpenMx \citep{neale2016openmx}, as estimation options now include maximum likelihood, maximum a posteriori, and fully Bayesian with the Stan software's \citep{carpenter2017stan, standevelopmentteam_rstan} Hamiltonian Monte Carlo sampler. The major use case for the OpenMx based wide formulation is many subjects, few time points, and most or all time intervals consistent across subjects.  This older structural equation formulation is discussed in detail in \citet{driver2017continuous}. Although some of the R commands and functionality are now different in the newer Stan based format, the general concepts discussed in the original work are still relevant background. Additional material can be found at \url{https://github.com/cdriveraus/ctsem} (very quick start guide on main page), \url{https://github.com/cdriveraus/ctsem/discussions} (question and answer), and \url{https://cdriver.netlify.app/} (tutorials and Bayesian quick start).
 
 ctsem allows for specification and fitting of a range of continuous and discrete time models to study dynamics and processes within a subject, as well as individual differences in these dynamics. The models may include multiple indicators (dynamic factor analysis), multiple, interrelated, potentially higher order processes, and both time dependent and time independent covariates. Classic longitudinal models like latent growth curve and latent change score models can be formulated as special cases. This approach offers some advantages over what could be considered more typical dynamic modelling approaches, such as vector autoregressive models or latent change score models. Two important advantages relate to the handling of time, and the treatment of individual differences. Time information is explicitly incorporated into the model, such that predictions from one measurement to another relate exactly to the amount of time that has passed, rather than simply the number of measurements, as is typical in discrete-time models. When the time interval between all measurements are equal, there is an exact relationship between the discrete and continuous time form (in many cases), but when they differ, the continuous-time form is typically more appropriate. For more on continuous-time models, see \citet{singer1993continuoustime, oud2000continuous, voelkle2013continuous}. With respect to individual differences, the hierarchical Bayesian approach allows for individual variation across all model parameters, while making full use of the data from all subjects to enhance estimation. This has the result that reasonable individual specific parameter estimates may be obtained with far fewer time points than would be required by single-subject time-series type modelling approaches. For more on hierarchical Bayesian models, see \citet{gelman2014bayesian}.
 
@@ -461,7 +466,7 @@ model$pars[model$pars$matrix == 'DRIFT',
   c('TI1_effect','TI2_effect','TI3_effect')] <- TRUE
 @
 
-An alternative approach to specifying the tipredeffects is in the initial model specification, using the '|' separator notation. The following shows an example where the DRIFT[1,1] parameter is influenced by covariates TI1 and TI3,  DRIFT[1,2] is influenced by TI2, and there are no other time independent predictor effects (because \verb|tipredDefault=FALSE|)
+An alternative approach to specifying the tipredeffects is in the initial model specification, using the `|' separator notation. The following shows an example where the DRIFT[1,1] parameter is influenced by covariates TI1 and TI3,  DRIFT[1,2] is influenced by TI2, and there are no other time independent predictor effects (because \verb|tipredDefault=FALSE|)
 <<echo=TRUE,eval=FALSE,tipredspec>>=
 model<-ctModel(type='stanct', tipredDefault = FALSE,
 	DRIFT = matrix(c(

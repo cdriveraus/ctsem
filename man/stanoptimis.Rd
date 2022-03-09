@@ -30,7 +30,8 @@ stanoptimis(
   verbose = 0,
   cores = 2,
   matsetup = NA,
-  nsubsets = 10
+  nsubsets = 10,
+  stochasticTolAdjust = 1
 )
 }
 \arguments{
@@ -97,6 +98,8 @@ without replacement from this set.}
 
 \item{nsubsets}{number of subsets for stochastic optimizer. Subsets are further split across cores, 
 but each subjects data remains whole -- processed by one core in one subset.}
+
+\item{stochasticTolAdjust}{Multiplier for initial subsampling optimizer tolerance.}
 }
 \value{
 list containing fit elementsF

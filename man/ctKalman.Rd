@@ -37,7 +37,7 @@ parameters and covariates are returned.}
 See \code{\link{plot.ctKalmanDF}} 
 (Stan based fit) for the possible arguments.}
 
-\item{realid}{Output using original (not necessarily integer sequence) subject id's?}
+\item{realid}{use original (not necessarily integer sequence) subject id's?}
 
 \item{...}{additional arguments to pass to \code{\link{plot.ctKalmanDF}}.}
 }
