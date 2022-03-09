@@ -681,7 +681,7 @@ corplotmelt <- function(corm, label='Coef.',limits=NA,title=''){
   ggplot(data=(corm),aes_string(x='Var1',y='Var2',fill=('value')))+ #ifelse(groups,NULL,'Group')))+
     geom_tile( width=1,height=1,colour='black')+
     scale_fill_gradient2(low = "blue", high = "red", mid = "white",
-      midpoint = 0, limits = limits, space = "Lab", 
+      midpoint = limits[2]-(limits[2]-limits[1])/2, limits = limits, space = "Lab", 
       name=label)  +
     theme_minimal()+ theme(axis.text.x = element_text(angle = 90)) + ggtitle(title)
 }
