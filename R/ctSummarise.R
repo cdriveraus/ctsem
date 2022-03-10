@@ -5,7 +5,7 @@ ctSummarise<-function(sf,name='ctSummary',cores=2, times=seq(0,10,.1),quantiles=
   
   Sig. <- NULL
   
-  if(class(sf)=='ctStanFit'){ #avoid overwriting plots if error!
+  if('ctStanFit' %in% class(sf)){ #avoid overwriting plots if error!
     # library(data.table)
     oldwd = getwd()
     on.exit(add = TRUE,expr = setwd(oldwd))
