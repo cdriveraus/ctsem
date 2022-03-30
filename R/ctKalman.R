@@ -43,16 +43,16 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,timestep='auto',plot=TRUE,ret
   kdat <- k$data
   colnames(kdat)[colnames(kdat)%in%'Subject'] <- 'Covariate'
   kdat$Covariate <- factor(kdat$Covariate)
-
+  
   Covariate = Direction = Time = Value = Variable = NULL #global vars nonsense
   
   if(returndat) return(kdat) else{
-  k=ggplot(data = kdat,mapping = aes(y=Value,x=Time,linetype=Direction,colour=Covariate))+
-    geom_line(size=1)+
-    scale_colour_manual(values=c(1,2:length(unique(kdat$Covariate))),
-      labels=c('No covariate',levels(kdat$Covariate)[-1]))+
-    facet_wrap(vars(Variable),scales = 'free_y')+theme_bw()
-  return(k)
+    k=ggplot(data = kdat,mapping = aes(y=Value,x=Time,linetype=Direction,colour=Covariate))+
+      geom_line(size=1)+
+      scale_colour_manual(values=c(1,2:length(unique(kdat$Covariate))),
+        labels=c('No covariate',levels(kdat$Covariate)[-1]))+
+      facet_wrap(vars(Variable),scales = 'free_y')+theme_bw()
+    return(k)
   }
 }
 
@@ -77,7 +77,7 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,timestep='auto',plot=TRUE,ret
 #' @param plot Logical. If TRUE, plots output instead of returning it. 
 #' See \code{\link{plot.ctKalmanDF}} 
 #' (Stan based fit) for the possible arguments.
-#' @param realid use original (not necessarily integer sequence) subject id's?
+#' @param realid use original (not necessarily integer sequence) subject id's? Otherwise use integers 1:N.
 #' @param ... additional arguments to pass to \code{\link{plot.ctKalmanDF}}.
 #' @return Returns a list containing matrix objects etaprior, etaupd, etasmooth, y, yprior, 
 #' yupd, ysmooth, prederror, time, loglik,  with values for each time point in each row. 
@@ -114,15 +114,23 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,timestep='auto',plot=TRUE,ret
 #' @export
 
 ctKalman<-function(fit, timerange='asdata', timestep='auto',
-  subjects=1, removeObs = FALSE, plot=FALSE, realid=TRUE,...){
+  subjects=fit$setup$idmap[1,1], removeObs = FALSE, plot=FALSE, realid=TRUE,...){
   type=NA
   if('ctStanFit' %in% class(fit)) type='stan' 
   if('ctsemFit' %in% class(fit)) type ='omx'
   if(is.na(type)) stop('fit object is not from ctFit or ctStanFit!')
   
   idmap <- fit$standata$idmap #store now because we may reduce it
-
+  
+  subjectsarg <- subjects
   if(realid) subjects <- idmap[which(idmap[,1] %in% subjects),2]
+  
+  if(length(subjects) == 0){
+    if(all(is.integer(subjectsarg))){
+      subjects <- subjectsarg
+      warning('Specified subjects not found in original id set -- assuming integers correspond to internal integer mapping. Consider setting realid=FALSE')
+    } else stop('Specified subjects not found in original id set, and (some) are not integers...')
+  }
   
   subjects <- sort(subjects) #in case not entered in ascending order
   if(type=='stan'){
@@ -153,7 +161,7 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
     out <- ctStanKalman(fit,pointest=length(fit$stanfit$stanfit@sim)==0, 
       collapsefunc=mean, indvarstates = FALSE) #extract state predictions
     out$id <- idstore #as.integer(subjects[out$id]) #get correct subject indicators
-  
+    
     out <- meltkalman(out)
     out=out[!(out$Subject %in% subjects) %in% FALSE,]
     if(realid){
@@ -318,7 +326,7 @@ plot.ctKalmanDF<-function(x, subjects=unique(x$Subject), kalmanvec=c('y','yprior
   shapevec[ltyvec %in% 0] <- 19
   # 
   d<-subset(kdf,Element %in% kalmanvec)
-
+  
   g <- ggplot(d,
     aes_string(x='Time',y='Value',colour=colvec,linetype='Element',shape='Element')) +
     scale_linetype_manual(breaks=names(ltyvec),values=ltyvec)+

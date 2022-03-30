@@ -8,7 +8,7 @@ ctKalman(
   fit,
   timerange = "asdata",
   timestep = "auto",
-  subjects = 1,
+  subjects = fit$setup$idmap[1, 1],
   removeObs = FALSE,
   plot = FALSE,
   realid = TRUE,
@@ -37,7 +37,7 @@ parameters and covariates are returned.}
 See \code{\link{plot.ctKalmanDF}} 
 (Stan based fit) for the possible arguments.}
 
-\item{realid}{use original (not necessarily integer sequence) subject id's?}
+\item{realid}{use original (not necessarily integer sequence) subject id's? Otherwise use integers 1:N.}
 
 \item{...}{additional arguments to pass to \code{\link{plot.ctKalmanDF}}.}
 }
