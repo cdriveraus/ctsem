@@ -245,6 +245,7 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
 #'g <- ctStanDiscreteParsPlot(x, indices='CR') + 
 #'  ggplot2::labs(title='My ggplot modification')
 #'print(g)
+#'
 #'}
 #'
 #'@export
@@ -297,23 +298,27 @@ ctStanDiscreteParsPlot<- function(x,indices='all',
   # title <- paste0('Temporal ', ifelse(cov,'covariance','regressions'),' | ',
   #   ifelse(cov,'correlated','uncorrelated'), 'shock of 1.0')
   
-  g<-'ggplot2::ggplot(data = ym,mapping=aes(y=value,x=`Time interval`,
+  g<-paste0('ggplot2::ggplot(data = ym,mapping=aes(y=value,x=`Time interval`,
     colour=Effect,
     fill=Effect))+
-    theme_bw()+ylab(ylab)+
-    ggplot2::labs(title = title)+  
+    theme_bw()+ylab("',ylab,'")+
+    ggplot2::labs(title = "',title,'")+  
     stat_summary( #ribbon
       fun.data = function(x) list(
-        y=quantile(x,quantiles[2]),
-        ymin=quantile(x,quantiles[1]), 
-        ymax=quantile(x,quantiles[3])
+        y=quantile(x,',quantiles[2],'),
+        ymin=quantile(x,',quantiles[1],'), 
+        ymax=quantile(x,',quantiles[3],')
       ),
       geom = "ribbon",
-      alpha= polygonalpha,
+      alpha= ',polygonalpha,',
       linetype=3)+
     stat_summary( #center line
-      fun.data = function(x) list(y=quantile(x,quantiles[2])),
-      geom = "line")'
+      fun.data = function(x) list(y=quantile(x,',quantiles[2],')),
+      geom = "line")')
+    
+  #needs data input as well...
+    # if(rug) g <- paste0(g,'+ geom_rug(data= as.data.table(hist(data.table(ym)[order(Subject,`Time interval`),][,.(timeDiff=c(diff(`Time interval`))),by=Subject]$timeDiff,plot=F)[2:4])[counts > 0,],
+    #  aes(x = mids,alpha=density,size=density/max(density)),inherit.aes=F,linetype=1,show.legend = FALSE)')
   
   if(!is.na(facets)) g <- paste0(g,'+ facet_wrap(facets)')
   
