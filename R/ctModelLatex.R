@@ -104,6 +104,7 @@ ctMatvalueFreePars <- function(ms,mv){
 #' @param minimal if TRUE, outputs reduced form version displaying matrix dimensions and equation structure only.
 #' @param compile Compile to .pdf? (Depends on \code{tex = TRUE}) 
 #' @param open Open after compiling? (Depends on \code{compile = TRUE})
+#' @param includeNote Include text describing matrix transformations and subject notation?
 #'
 #' @return character string of latex code. Side effects include saving a .tex, .pdf, and displaying the pdf. 
 #' @export
@@ -125,7 +126,7 @@ ctMatvalueFreePars <- function(ms,mv){
 #' l=ctModelLatex(ctmodel,compile=FALSE, open=FALSE)
 #' cat(l)
 ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctStanFit',textsize='normalsize',folder=tempdir(),
-  filename=paste0('ctsemTex',as.numeric(Sys.time())),tex=TRUE, equationonly=FALSE, compile=TRUE, open=TRUE,
+  filename=paste0('ctsemTex',as.numeric(Sys.time())),tex=TRUE, equationonly=FALSE, compile=TRUE, open=TRUE, includeNote=TRUE,
   minimal=FALSE){
   #library(ctsem)
   dopopcov <- FALSE
@@ -472,12 +473,12 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
               \\parbox{10em}{\\centering{Observation noise\\linebreak distribution:}}
             ",bmatrix(matrix(paste0('\\epsilon_{j \\in [1,',ctmodel$n.latent,']}')))," 
             (t) \\sim  \\mathrm{N}(0,1) \\\\ \\\\
-      \\end{aligned} \\\\
-&Note: UcorSDtoChol \\textrm{converts lower tri matrix of standard deviations and unconstrained correlations to Cholesky factor,} \\\\
+      \\end{aligned} \\\\",
+      if(includeNote) paste0("&\\textrm{Note: } UcorSDtoChol \\textrm{converts lower tri matrix of standard deviations and unconstrained correlations to Cholesky factor,} \\\\
 &UcorSDtoCov =\\textrm{ transposed cross product of UcorSDtoChol, to give covariance, See Driver \\& Voelkle (2018) p11.} \\\\",
-if(dopop) paste0("&\\textrm{Individual specific notation (subscript i) only shown for subject parameter distribution -- pop. means shown elsewhere.} \\\\",
-if(linearise) "&\\textrm{Linearised approximation of subject parameter distribution shown.} \\\\"),"
-  \\end{flalign*}
+if(dopop) paste0("&\\textrm{Individual specific notation (subscript i) only shown for subject parameter distribution -- pop. means shown elsewhere.} \\\\
+",if(linearise) "&\\textrm{Linearised approximation of subject parameter distribution shown.} \\\\")),
+"\\end{flalign*}
       ")
   }
   
