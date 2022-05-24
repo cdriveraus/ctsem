@@ -85,6 +85,43 @@ ctMatvalueFreePars <- function(ms,mv){
 #   return(cov(tx))
 # }
 
+texPrep <- function(x){ #replaces certain characters with tex safe versions
+  for(i in 1:length(x)){
+    x[i]=gsub('_', '\\_',x[i],fixed=TRUE)
+    x[i]=gsub('^', '\\textasciicircum',x[i],fixed=TRUE)
+  }
+  return(x)
+}
+
+bmatrix = function(x, digits=NULL,nottext=FALSE, ...) {
+  if(!is.null(x)){
+    if(!nottext){
+      for(i in 1:length(x)){
+        if(is.na(suppressWarnings(as.numeric(x[i]))) & #if x[i] cannot be numeric and 
+            grepl('\\',x[i],fixed=TRUE) == FALSE) {
+          x[i] = texPrep(x[i])
+          x[i] = paste0('\\text{',x[i],'}')
+        }
+      }
+    }
+    x=as.matrix(x)
+    
+    out=c()
+    for(i in 1:nrow(x)){
+      for(j in 1:ncol(x)){
+        out=c(out,x[i,j])
+        if(j!=ncol(x)) out=c(out,paste0(' & '))
+        if(j==ncol(x) & i!=nrow(x)) out=c(out,paste0('\\\\ \n'))
+        if(j==ncol(x) & i==nrow(x)) out=c(out, '\n')
+      }
+    }
+    
+    out = paste0("\\begin{bmatrix}\n",
+      paste0(out,collapse=''),
+      "\\end{bmatrix}",collapse='')
+  } else out=""
+  return(out)
+}
 
 
 #' Generate and optionally compile latex equation of subject level ctsem model.
@@ -105,6 +142,8 @@ ctMatvalueFreePars <- function(ms,mv){
 #' @param compile Compile to .pdf? (Depends on \code{tex = TRUE}) 
 #' @param open Open after compiling? (Depends on \code{compile = TRUE})
 #' @param includeNote Include text describing matrix transformations and subject notation?
+#' triangular matrices (which results in a covariance or Cholesky matrix) is shown -- 
+#' the latter is a more direct representation of the model, while the former is often simpler to convey.
 #'
 #' @return character string of latex code. Side effects include saving a .tex, .pdf, and displaying the pdf. 
 #' @export
@@ -218,19 +257,20 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
     
     dopop <- doti||dopopcov
     
-    if(!'ctStanFit' %in% class(x)){ #if a model
-      
-      t0index <- unique(ctmodel$pars$row[ctmodel$pars$matrix %in% 'T0MEANS' & 
-          ctmodel$pars$indvarying & is.na(ctmodel$pars$value)])
-      if(length(t0index)){
-        t0varpopcov <- matrix(
-          paste0('Pcorsqrt_',t0index,'_',rep(t0index,each=length(t0index))),
-          nrow=length(t0index),ncol=length(t0index))
-        t0varpopcov[upper.tri(t0varpopcov)] <- 0
-        # ms$indvarying[ms$param > 0 & ms$row <= x$standata$nlatent & ms$matrix %in% 1 & ms$indvarying > 0]
-        ctmodel$T0VAR[t0index,t0index] <- t0varpopcov
-      }
-    }
+    ### this section replaced t0var fixed values with params, seemed broken...
+    # if(!'ctStanFit' %in% class(x)){ #if a model
+    #   
+    #   t0index <- unique(ctmodel$pars$row[ctmodel$pars$matrix %in% 'T0MEANS' & 
+    #       ctmodel$pars$indvarying & is.na(ctmodel$pars$value)]) #which t0means are indvarying
+    #   if(length(t0index)){
+    #     t0varpopcov <- matrix(
+    #       paste0('Pcorsqrt_',t0index,'_',rep(t0index,each=length(t0index))),
+    #       nrow=length(t0index),ncol=length(t0index))
+    #     t0varpopcov[upper.tri(t0varpopcov)] <- 0
+    #     # ms$indvarying[ms$param > 0 & ms$row <= x$standata$nlatent & ms$matrix %in% 1 & ms$indvarying > 0]
+    #     ctmodel$T0VAR[t0index,t0index] <- t0varpopcov
+    #   }
+    # }
     
     continuoustime <- ctmodel$continuoustime
   } else {
@@ -241,43 +281,9 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
   
   if(equationonly) compile <- FALSE
   
-  texPrep <- function(x){ #replaces certain characters with tex safe versions
-    for(i in 1:length(x)){
-      x[i]=gsub('_', '\\_',x[i],fixed=TRUE)
-      x[i]=gsub('^', '\\textasciicircum',x[i],fixed=TRUE)
-    }
-    return(x)
-  }
+
   
-  bmatrix = function(x, digits=NULL,nottext=FALSE, ...) {
-    if(!is.null(x)){
-      if(!nottext){
-        for(i in 1:length(x)){
-          if(is.na(suppressWarnings(as.numeric(x[i]))) & #if x[i] cannot be numeric and 
-              grepl('\\',x[i],fixed=TRUE) == FALSE) {
-            x[i] = texPrep(x[i])
-            x[i] = paste0('\\text{',x[i],'}')
-          }
-        }
-      }
-      x=as.matrix(x)
-      
-      out=c()
-      for(i in 1:nrow(x)){
-        for(j in 1:ncol(x)){
-          out=c(out,x[i,j])
-          if(j!=ncol(x)) out=c(out,paste0(' & '))
-          if(j==ncol(x) & i!=nrow(x)) out=c(out,paste0('\\\\ \n'))
-          if(j==ncol(x) & i==nrow(x)) out=c(out, '\n')
-        }
-      }
-      
-      out = paste0("\\begin{bmatrix}\n",
-        paste0(out,collapse=''),
-        "\\end{bmatrix}",collapse='')
-    } else out=""
-    return(out)
-  }
+  
   
   
   W <- diag(1,1)
@@ -397,6 +403,20 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
   } else { #end minimal
     showd <- ifelse(continuoustime,"\\mathrm{d}","") #for continuous or discrete system
     
+    # if(covMatrices){
+    #   if('ctStanFit' %in% class(m)){
+    #     cp <- ctStanContinuousPars(m)
+    #     ctmodel$T0VAR <- cp$T0COV
+    #     ctmodel$DIFFUSION <- cp$DIFFUSIONcov
+    #     } else {
+    #       ctmodel$T0VAR[upper.tri(ctmodel$T0VAR)] <- t(ctmodel$T0VAR)[upper.tri(ctmodel$T0VAR)]
+    #       ctmodel$DIFFUSION[upper.tri(ctmodel$DIFFUSION)] <- t(ctmodel$DIFFUSION)[upper.tri(ctmodel$DIFFUSION)]
+    #     }
+    # }
+          
+        
+        
+    
     out <- paste0(out, "
  \\setcounter{MaxMatrixCols}{200}
  \\begin{flalign*}
@@ -474,7 +494,7 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
             ",bmatrix(matrix(paste0('\\epsilon_{j \\in [1,',ctmodel$n.latent,']}')))," 
             (t) \\sim  \\mathrm{N}(0,1) \\\\ \\\\
       \\end{aligned} \\\\",
-      if(includeNote) paste0("&\\textrm{Note: } UcorSDtoChol \\textrm{converts lower tri matrix of standard deviations and unconstrained correlations to Cholesky factor,} \\\\
+      if(includeNote) paste0("&\\textrm{Note: } UcorSDtoChol\\textrm{ converts lower tri matrix of standard deviations and unconstrained correlations to Cholesky factor,} \\\\
 &UcorSDtoCov =\\textrm{ transposed cross product of UcorSDtoChol, to give covariance, See Driver \\& Voelkle (2018) p11.} \\\\",
 if(dopop) paste0("&\\textrm{Individual specific notation (subscript i) only shown for subject parameter distribution -- pop. means shown elsewhere.} \\\\
 ",if(linearise) "&\\textrm{Linearised approximation of subject parameter distribution shown.} \\\\")),
