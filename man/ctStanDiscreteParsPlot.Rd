@@ -71,6 +71,7 @@ ctStanDiscreteParsPlot(x, indices='CR')
 g <- ctStanDiscreteParsPlot(x, indices='CR') + 
  ggplot2::labs(title='My ggplot modification')
 print(g)
+
 }
 
 }

@@ -277,6 +277,7 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
 #' @param ... not used.
 #' @return A ggplot2 object. Side effect -- Generates plots.
 #' @method plot ctKalmanDF
+#' @export plot.ctKalmanDF
 #' @export
 #' @examples
 #' if(w32chk()){

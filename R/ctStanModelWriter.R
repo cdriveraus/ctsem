@@ -1507,7 +1507,7 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
  
  matrix ksolve(matrix A, matrix Q, int verbose){
   int d= rows(A);
-  int d2= (d*d-d)/2;
+  int d2= (d*d-d)%/%2;
   matrix[d+d2,d+d2] O;
   vector[d+d2] triQ;
   matrix[d,d] AQ;
