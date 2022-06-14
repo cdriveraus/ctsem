@@ -891,7 +891,7 @@ if(sum(whenmat[7,{2}]) > 0 )CINT=mcalc(CINT,indparams, statetf,{2}, 7, matsetup,
 if(sum(whenmat[52,{2}]) > 0 )JAx=mcalc(JAx,indparams, statetf,{2}, 52, matsetup, matvalues, si); 
 
       
-      if(si==0 ||statedep[4] || whenmat[4,2] || ( T0check >0 && whenmat[4,5])){
+      if(si==0 ||statedep[4] || ( T0check >0 && (whenmat[4,5] || whenmat[4,2]))){
         DIFFUSIONcov[derrind,derrind] = sdcovsqrt2cov(DIFFUSION[derrind,derrind],choleskymats);
         if(!continuoustime) discreteDIFFUSION=DIFFUSIONcov;
       }
@@ -900,7 +900,7 @@ if(sum(whenmat[52,{2}]) > 0 )JAx=mcalc(JAx,indparams, statetf,{2}, 52, matsetup,
         
             if(si==0 || dtchange==1 || statedep[3]||statedep[4] || statedep[52] || //if first sub or changing every state
               whenmat[3,2] || whenmat[4,2] ||
-              (T0check == 1 && (whenmat[3,5]+whenmat[4,5]) > 0)){ //or first time step of new sub with ind difs
+              whenmat[3,5] || whenmat[4,5]){ //or  ind difs
               
               if(difftype==0 || (statedep[3]==0 && statedep[4]==0)){
                 //discreteDRIFT = expm2(append_row(append_col(DRIFT[1:nlatent, 1:nlatent],CINT),nlplusonezerovec') * dtsmall);
@@ -910,9 +910,9 @@ if(sum(whenmat[52,{2}]) > 0 )JAx=mcalc(JAx,indparams, statetf,{2}, 52, matsetup,
                   eJAx =  expm2(JAx * dtsmall);
                 } else eJAx[1:nlatent, 1:nlatent] = discreteDRIFT;
                                
-                if(si==0 || statedep[4]||statedep[52]|| 
-                  (whenmat[4,2]+whenmat[3,2]) > 0 || 
-                  (T0check==1 && (whenmat[4,5] || whenmat[3,5]))){ //if first pass, state dependent, or individually varying drift / diffusion
+                if(si==0 || statedep[3] || statedep[4]||statedep[52]|| 
+                  whenmat[4,2] || whenmat[3,2] || 
+                  whenmat[4,5] || whenmat[3,5]){ //if first pass, state dependent, or individually varying drift / diffusion
                   asymDIFFUSIONcov[derrind,derrind] = ksolve(JAx[derrind,derrind], DIFFUSIONcov[derrind,derrind],verbose);
                 }
                 discreteDIFFUSION[derrind,derrind] =  asymDIFFUSIONcov[derrind,derrind] - 
@@ -928,7 +928,7 @@ if(sum(whenmat[52,{2}]) > 0 )JAx=mcalc(JAx,indparams, statetf,{2}, 52, matsetup,
             if(size(CINTnonzero)>0){
               if(si==0 || dtchange==1 || statedep[3]|| statedep[7] || 
                 whenmat[3,2] || whenmat[7,2] || //if first sub or changing every state
-                (T0check == 1 && (whenmat[3,5]+whenmat[7,5]) > 0)){ //or first time step of new sub with ind difs
+                whenmat[3,5] || whenmat[7,5]){ //or ind difs
                 discreteCINT = (DRIFT \ (discreteDRIFT-IIlatentpop[1:nlatent,1:nlatent])) * CINT[,1];
               }
               state[1:nlatent] += discreteCINT';
@@ -1042,7 +1042,7 @@ if(sum(whenmat[54,{4}]) > 0 )Jy=mcalc(Jy,indparams, statetf,{4}, 54, matsetup, m
     if(verbose>1) print("Jy ",Jy);
   }
  
-   if(statedep[5] || whenmat[5,4]) MANIFESTcov = sdcovsqrt2cov(MANIFESTVAR,choleskymats);
+   if(statedep[5] || whenmat[5,4] || whenmat[5,5]) MANIFESTcov = sdcovsqrt2cov(MANIFESTVAR,choleskymats);
    if(si > 0 && dokalmanrows[rowi] ==1){   //if not just inits...
 
       if(intoverstates==1 || dosmoother==1) { //classic kalman
