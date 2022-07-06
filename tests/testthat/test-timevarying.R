@@ -49,7 +49,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     for(m in c('cm','dm')){
       argslist <- list(
-        ml=list(datalong = dat,ctstanmodel = get(m),optimize=TRUE,   verbose=0)
+        ml=list(datalong = dat,ctstanmodel = get(m))
       )
       
       

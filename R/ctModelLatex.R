@@ -438,8 +438,8 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
               \\underbrace{
         ",bmatrix(ctmodel$T0MEANS),"
       ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{}}",ifelse(!matrixnames,"}","_\\textrm{T0MEANS}}"),",
-      \\underbrace{",if(!'ctStanFit' %in% class(x)) "UcorSDtoCov \\left\\{","
-        ",bmatrix(ctmodel$T0VAR),if(!'ctStanFit' %in% class(x)) "\\right\\}","
+      \\underbrace{UcorSDtoCov \\left\\{","
+        ",bmatrix(ctmodel$T0VAR),"\\right\\}","
       ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{Q^{*}}_{t0}}",ifelse(!matrixnames,"}","_\\textrm{T0VAR}}"),"
       \\right) \\\\
       \\parbox{10em}{\\centering{Deterministic\\linebreak change:}}

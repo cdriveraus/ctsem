@@ -277,7 +277,7 @@ parallelStanSetup <- function(cl, standata,split=TRUE,nsubsets=1){
   eval(parse(text="parallel::clusterEvalQ(cl,sapply(commands,function(x) eval(parse(text=x))))"),envir = benv)
   
   # eval(parse(text="parallel::clusterEvalQ(cl,ls(envir=globalenv()))"),envir = benv)
-
+  
   NULL
 }
 
@@ -627,6 +627,8 @@ clusterIDeval <- function(cl,commands){
 #' @param carefulfit Logical. If TRUE, priors are always used for a rough first pass to obtain starting values when nopriors=TRUE.
 #' @param subsamplesize value between 0 and 1 representing proportion of subjects to include in first pass fit. 
 #' @param cores Number of cpu cores to use, should be at least 2.
+#' @param bootstrapUncertainty Logical. If TRUE, subject wise gradient contributions are resampled to estimate the hessian, 
+#' for computing standard errors or initializing importance sampling.
 #' @param is Logical. Use importance sampling, or just return map estimates?
 #' @param isloopsize Number of samples of approximating distribution per iteration of importance sampling.
 #' @param finishsamples Number of samples to draw (either from hessian
@@ -655,6 +657,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   decontrol=list(),
   stochastic = TRUE,
   nopriors=FALSE,carefulfit=TRUE,
+  bootstrapUncertainty=FALSE,
   subsamplesize=1,finitediff=FALSE,
   parsteps=c(),
   plot=FALSE,
@@ -792,7 +795,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       }
       
       if(cores > 1){ #for parallelised computation after fitting, if only single subject
-    
+        
         
         assign(x = 'clctsem',
           parallel::makeCluster(spec = cores,type = "PSOCK",useXDR=FALSE,outfile='',user=NULL),
@@ -807,7 +810,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         
         # eval(clctsem <- makeClusterID(cores),envir = globalenv())
         on.exit(try({parallel::stopCluster(benv$clctsem)},silent=TRUE),add=TRUE)
-
+        
         if(standata$recompile > 0){
           smfile <- file.path(tempdir(),paste0('ctsem_sm_',ceiling(runif(1,0,100000)),'.rda'))
           save(sm,file=smfile,eval.promises = FALSE,precheck = FALSE)
@@ -973,11 +976,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         standatasml$nsubsets <- as.integer(nsubsets)
         
         
-          # smlndat <- min(standatasml$ndatapoints,ceiling(max(standatasml$nsubjects * 10, standatasml$ndatapoints*.5)))
-          # standatasml$dokalmanrows[sample(1:standatasml$ndatapoints,smlndat)] <- 0L
-          # standatasml$dokalmanrows[match(unique(standatasml$subject),standatasml$subject)] <- 1L #ensure first obs is included for t0var consistency
-          if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standatasml,split=parsets<2,nsubsets = nsubsets)
-          if(optimcores==1) smf<-stan_reinitsf(sm,standatasml)
+        # smlndat <- min(standatasml$ndatapoints,ceiling(max(standatasml$nsubjects * 10, standatasml$ndatapoints*.5)))
+        # standatasml$dokalmanrows[sample(1:standatasml$ndatapoints,smlndat)] <- 0L
+        # standatasml$dokalmanrows[match(unique(standatasml$subject),standatasml$subject)] <- 1L #ensure first obs is included for t0var consistency
+        if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standatasml,split=parsets<2,nsubsets = nsubsets)
+        if(optimcores==1) smf<-stan_reinitsf(sm,standatasml)
         
         if(npars <=50 && nsubsets ==1) {
           optimfit <- mize(init, fg=mizelpg, max_iter=99999,
@@ -988,7 +991,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         }
         
         if(npars > 50 || nsubsets > 1) {
-
+          
           optimfit <- sgd(init, fitfunc = function(x) target(x),
             parsets=parsets,
             nsubsets = nsubsets,
@@ -1163,7 +1166,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         
         #use bfgs to double check stochastic fit... 
         message('Finishing optimization...')
-          optimfit <- mize(init, fg=mizelpg, max_iter=99999,
+        optimfit <- mize(init, fg=mizelpg, max_iter=99999,
           method="L-BFGS",memory=100,
           line_search='Schmidt',c1=1e-4,c2=.9,step0='schmidt',ls_max_fn=999,
           abs_tol=NULL,grad_tol=NULL,
@@ -1206,7 +1209,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       #   hesscl <- NA
       #   # smf<-stan_reinitsf(sm,standata)
       # }
-
+      
       standata$nsubsets <- 1L
       if(standata$nsubjects > cores){
         hesscl <- NA
@@ -1230,147 +1233,170 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         
         if(length(parsteps)>0) grinit= est2[-parsteps] else grinit = est2
         
-        jac<-function(pars,step=1e-3,whichpars='all',
-          lpdifmin=1e-3,lpdifmax=5, cl=NA,verbose=1,directions=c(-1,1),parsteps=c()){
-          if('all' %in% whichpars) whichpars <- 1:length(pars)
-          base <- optimfit$value
+        # browser()
+        if(bootstrapUncertainty %in% 'auto'){
+          if(standata$nsubjects < 50){
+            bootstrapUncertainty <- FALSE
+            message('Too few subjects (<50) for bootstrap uncertainty, classical hessian used')
+          } else bootstrapUncertainty=TRUE
+        }
+        
+        if(bootstrapUncertainty){
+          scores <- scorecalc(standata = standata,est = grinit,stanmodel = sm,
+            subjectsonly = standata$nsubjects > 30,returnsubjectlist = F,cores=cores)
           
-          if(!is.na(hesscl[1])) target <- function(x){ #if cluster is passed, create target function, otherwise use old target
-            if(length(parsteps)>0){
-              pars <- est2
-              pars[-parsteps] <- x
-            } else pars <- x
-            fg=parlp(pars)
-            if(length(parsteps)>0){ 
-              attributes(fg)$gradient <- attributes(fg)$gradient[-parsteps]
-            }
-            # print(fg[1])
-            if(fg[1] < -1e99) class(fg) <- c('try-error',class(fg))
-            return(fg)
+          # browser()
+          gradsamples <- matrix(NA,10000,ncol(scores))
+          for(i in 1:nrow(gradsamples)){
+            weights <- runif(1:nrow(scores),-2,2)
+            # weights <- rbinom(1:nrow(scores),size = 1,prob=.5)*2-1
+            gradsamples[i,] <- apply(scores[sample(1:nrow(scores),size = nrow(scores),replace = TRUE),,drop=FALSE],2,sum)
+            # gradsamples[i,] <- apply(scores*weights,2,sum)
           }
           
-          hessout <- flexsapply(cl = cl, cores = length(cl), whichpars, function(i){
+          hess <- -cov(gradsamples)
+        }
+        
+        if(!bootstrapUncertainty){
+          jac<-function(pars,step=1e-3,whichpars='all',
+            lpdifmin=1e-3,lpdifmax=5, cl=NA,verbose=1,directions=c(-1,1),parsteps=c()){
+            if('all' %in% whichpars) whichpars <- 1:length(pars)
+            base <- optimfit$value
             
-            # if(is.na(cl[1])) fgfunc <- target
-            
-            # for(i in whichpars){
-            if(verbose) message('### Par ',i,'###')
-            stepsize = step
-            uppars<-rep(0,length(pars))
-            uppars[i]<-1
-            accepted <- FALSE
-            count <- 0
-            lp <- list()
-            steplist <- list()
-            for(di in 1:length(directions)){
-              count <- 0
-              accepted <- FALSE
-              stepchange = 0
-              stepchangemultiplier = 1
-              while(!accepted && (count==0 || 
-                  ( 
-                    (count < 30 && any(is.na(attributes(lp[[di]])$gradient))) || #if NA gradient, try for 30 attempts
-                      (count < 15 && all(!is.na(attributes(lp[[di]])$gradient))))#if gradient ok, stop after 15
-                )){ 
-                # if(count>8) stepsize=stepsize*-1 #is this good?
-                stepchangemultiplier <- max(stepchangemultiplier,.11)
-                count <- count + 1
-                lp[[di]] <-  suppressMessages(suppressWarnings(target(pars+uppars*stepsize*directions[di])))
-                accepted <- !'try-error' %in% class(lp[[di]]) && all(!is.na(attributes(lp[[di]])$gradient))
-                if(accepted){
-                  lpdiff <- base[1] - lp[[di]][1]
-                  # if(lpdiff > 1e100) 
-                  if(lpdiff < lpdifmin) {
-                    if(verbose) message('Increasing step')
-                    if(stepchange == -1) stepchangemultiplier = stepchangemultiplier*.5
-                    stepchange <- 1
-                    stepsize <- stepsize*(1-stepchangemultiplier)+ (stepsize*10)*stepchangemultiplier
-                  }
-                  if(lpdiff > lpdifmax){
-                    if(verbose) message('Decreasing step')
-                    
-                    
-                    if(stepchange == 1) stepchangemultiplier = stepchangemultiplier * .5
-                    stepchange <- -1
-                    stepsize <- stepsize*(1-stepchangemultiplier)+ (stepsize*.1)*stepchangemultiplier
-                  }
-                  if(lpdiff > lpdifmin && lpdiff < lpdifmax && lpdiff > 0) accepted <- TRUE else accepted <- FALSE
-                  if(lpdiff < 0){
-                    base <- lp[[di]]
-                    if(verbose) message('Better log probability found during Hessian estimation...')
-                    accepted <- FALSE
-                    stepchangemultiplier <- 1
-                    stepchange=0
-                    count <- 0
-                    di <- 1
-                  }
-                } else stepsize <- stepsize * 1e-3
-                # if(count > 1) print(paste0(count,'___',stepsize,'___',lpdiff))
+            if(!is.na(hesscl[1])) target <- function(x){ #if cluster is passed, create target function, otherwise use old target
+              if(length(parsteps)>0){
+                pars <- est2
+                pars[-parsteps] <- x
+              } else pars <- x
+              fg=parlp(pars)
+              if(length(parsteps)>0){ 
+                attributes(fg)$gradient <- attributes(fg)$gradient[-parsteps]
               }
-              if(stepsize < step) step <<- step *.1
-              if(stepsize > step) step <<- step *10
-              steplist[[di]] <- stepsize
+              # print(fg[1])
+              if(fg[1] < -1e99) class(fg) <- c('try-error',class(fg))
+              return(fg)
             }
             
-            grad<- attributes(lp[[1]])$gradient / steplist[[di]] * directions[di]
-            if(any(is.na(grad))){
-              warning('NA gradient encountered at param ',i,immediate. =TRUE)
-              browser()
+            hessout <- flexsapply(cl = cl, cores = length(cl), whichpars, function(i){
+              
+              # if(is.na(cl[1])) fgfunc <- target
+              
+              # for(i in whichpars){
+              if(verbose) message('### Par ',i,'###')
+              stepsize = step
+              uppars<-rep(0,length(pars))
+              uppars[i]<-1
+              accepted <- FALSE
+              count <- 0
+              lp <- list()
+              steplist <- list()
+              for(di in 1:length(directions)){
+                count <- 0
+                accepted <- FALSE
+                stepchange = 0
+                stepchangemultiplier = 1
+                while(!accepted && (count==0 || 
+                    ( 
+                      (count < 30 && any(is.na(attributes(lp[[di]])$gradient))) || #if NA gradient, try for 30 attempts
+                        (count < 15 && all(!is.na(attributes(lp[[di]])$gradient))))#if gradient ok, stop after 15
+                )){ 
+                  # if(count>8) stepsize=stepsize*-1 #is this good?
+                  stepchangemultiplier <- max(stepchangemultiplier,.11)
+                  count <- count + 1
+                  lp[[di]] <-  suppressMessages(suppressWarnings(target(pars+uppars*stepsize*directions[di])))
+                  accepted <- !'try-error' %in% class(lp[[di]]) && all(!is.na(attributes(lp[[di]])$gradient))
+                  if(accepted){
+                    lpdiff <- base[1] - lp[[di]][1]
+                    # if(lpdiff > 1e100) 
+                    if(lpdiff < lpdifmin) {
+                      if(verbose) message('Increasing step')
+                      if(stepchange == -1) stepchangemultiplier = stepchangemultiplier*.5
+                      stepchange <- 1
+                      stepsize <- stepsize*(1-stepchangemultiplier)+ (stepsize*10)*stepchangemultiplier
+                    }
+                    if(lpdiff > lpdifmax){
+                      if(verbose) message('Decreasing step')
+                      
+                      
+                      if(stepchange == 1) stepchangemultiplier = stepchangemultiplier * .5
+                      stepchange <- -1
+                      stepsize <- stepsize*(1-stepchangemultiplier)+ (stepsize*.1)*stepchangemultiplier
+                    }
+                    if(lpdiff > lpdifmin && lpdiff < lpdifmax && lpdiff > 0) accepted <- TRUE else accepted <- FALSE
+                    if(lpdiff < 0){
+                      base <- lp[[di]]
+                      if(verbose) message('Better log probability found during Hessian estimation...')
+                      accepted <- FALSE
+                      stepchangemultiplier <- 1
+                      stepchange=0
+                      count <- 0
+                      di <- 1
+                    }
+                  } else stepsize <- stepsize * 1e-3
+                  # if(count > 1) print(paste0(count,'___',stepsize,'___',lpdiff))
+                }
+                if(stepsize < step) step <<- step *.1
+                if(stepsize > step) step <<- step *10
+                steplist[[di]] <- stepsize
+              }
+              
+              grad<- attributes(lp[[1]])$gradient / steplist[[di]] * directions[di]
+              if(any(is.na(grad))){
+                warning('NA gradient encountered at param ',i,immediate. =TRUE)
+                browser()
+              }
+              if(length(directions) > 1) grad <- (grad + attributes(lp[[2]])$gradient / (steplist[[di]]*-1))/2
+              
+              return(grad)
             }
-            if(length(directions) > 1) grad <- (grad + attributes(lp[[2]])$gradient / (steplist[[di]]*-1))/2
+            ) #end flexapply
             
-            return(grad)
+            out=(hessout+t(hessout))/2
+            return(out)
           }
-          ) #end flexapply
           
-          out=(hessout+t(hessout))/2
-          return(out)
-        }
+          hess1 <- jac(pars = grinit,parsteps=parsteps,
+            step = 1e-3,cl=hesscl,verbose=verbose,directions=1)
+          hess2 <- jac(pars = grinit,parsteps=parsteps,#fgfunc = fgfunc,
+            step = 1e-3,cl=hesscl,verbose=verbose,directions=-1)
+          
+          
+          
+          probpars <- c()
+          onesided <- c()
+          
+          hess <- hess1
+          hess[is.na(hess)] <- 0 #set hess1 NA's to 0
+          hess[!is.na(hess2)] <- hess[!is.na(hess2)] + hess2[!is.na(hess2)] #add hess2 non NA's
+          hess[!is.na(hess1) & !is.na(hess2)] <- hess[!is.na(hess1) & !is.na(hess2)] /2 #divide items where both hess1 and 2 used by 2
+          hess[is.na(hess1) & is.na(hess2)] <- NA #set NA when both hess1 and 2 NA
+          
+          if(any(is.na(c(diag(hess1),diag(hess2))))){
+            if(any(is.na(hess))) message ('Problems computing Hessian...')
+            onesided <- which(sum(is.na(diag(hess1) & is.na(diag(hess2)))) %in% 1)
+          }
+          
+          hess <- (t(hess)+hess)/2
+          
+          
+          if(length(c(probpars,onesided)) > 0){
+            if('data.frame' %in% class(matsetup) || !all(is.na(matsetup[1]))){
+              ms=matsetup
+              ms=ms[ms$param > 0 & ms$when == 0,]
+              ms=ms[!duplicated(ms$param),]
+            }
+            if(length(onesided) > 0){
+              onesided=paste0(ms$parname[ms$param %in% onesided],collapse=', ')
+              message ('One sided Hessian used for params: ', onesided)
+            }
+            if(length(probpars) > 0){
+              probpars=paste0(ms$parname[ms$param %in% c(probpars)],collapse=', ')
+              message('***These params "may" be not identified: ', probpars)
+            }
+          }
+          
+        } #end classical hessian
         
-        hess1 <- jac(pars = grinit,parsteps=parsteps,
-          step = 1e-3,cl=hesscl,verbose=verbose,directions=1)
-        hess2 <- jac(pars = grinit,parsteps=parsteps,#fgfunc = fgfunc,
-          step = 1e-3,cl=hesscl,verbose=verbose,directions=-1)
-        
-        probpars <- c()
-        onesided <- c()
-        
-        # if(FALSE){
-        #   lpf <-function(x) log_prob(smff,x)
-        #   smff <- stan_reinitsf(sm,standata)
-        #   nhess=numDeriv::hessian(lpf,est2)
-        # }
-        
-        # hess1good <- hess1#diag(hess1) < -1e-8
-        # hess1good[,] <- ifelse(is.na(hess1),0,1)
-        # hess2good <- hess2#diag(hess2) < -1e-8
-        # hess2good[,] <- ifelse(is.na(hess2),0,1)
-        
-        hess <- hess1
-        hess[is.na(hess)] <- 0 #set hess1 NA's to 0
-        hess[!is.na(hess2)] <- hess[!is.na(hess2)] + hess2[!is.na(hess2)] #add hess2 non NA's
-        hess[!is.na(hess1) & !is.na(hess2)] <- hess[!is.na(hess1) & !is.na(hess2)] /2 #divide items where both hess1 and 2 used by 2
-        hess[is.na(hess1) & is.na(hess2)] <- NA #set NA when both hess1 and 2 NA
-        # 
-        # hess[hess1good*hess2good > 1] <- hess[hess1good*hess2good > 1] /2
-        # 
-        # hess1good[is.na(hess1good)] <- FALSE
-        # hess2good[is.na(hess2good)] <- FALSE
-        # 
-        # hess <- hess1 
-        # hess[,!hess1good & !hess2good] <- (hess1[,!hess2good & !hess1good] + 
-        #     hess2[,!hess2good & !hess1good]) /2
-        # hess[,hess2good & hess1good] <- (hess1[,hess2good & hess1good] + 
-        #     hess2[,hess2good & hess1good]) /2
-        # hess[,hess1good & !hess2good] <- hess1[,hess1good & !hess2good]
-        # hess[,hess2good & !hess1good] <- hess2[,hess2good & !hess1good]
-        
-        if(any(is.na(c(diag(hess1),diag(hess2))))){
-          if(any(is.na(hess))) message ('Problems computing Hessian...')
-          onesided <- which(sum(is.na(diag(hess1) & is.na(diag(hess2)))) %in% 1)
-        }
-        
-        hess <- (t(hess)+hess)/2
         # cholcov = try(suppressWarnings(t(chol(solve(-hess)))),silent = TRUE)
         
         # if('try-error' %in% class(cholcov) && !is) message('Approximate hessian used for std error estimation.')
@@ -1384,21 +1410,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         
         
         
-        if(length(c(probpars,onesided)) > 0){
-          if('data.frame' %in% class(matsetup) || !all(is.na(matsetup[1]))){
-            ms=matsetup
-            ms=ms[ms$param > 0 & ms$when == 0,]
-            ms=ms[!duplicated(ms$param),]
-          }
-          if(length(onesided) > 0){
-            onesided=paste0(ms$parname[ms$param %in% onesided],collapse=', ')
-            message ('One sided Hessian used for params: ', onesided)
-          }
-          if(length(probpars) > 0){
-            probpars=paste0(ms$parname[ms$param %in% c(probpars)],collapse=', ')
-            message('***These params "may" be not identified: ', probpars)
-          }
-        }
+    
         
         # if(robust){
         #   message('Getting scores for robust std errors...')
@@ -1412,7 +1424,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # 
         
         mcovtmp=try({as.matrix(Matrix::nearPD(mcov,conv.norm.type = 'F')$mat)})
-if(any(class(mcovtmp) %in% 'try-error')) browser()
+        if(any(class(mcovtmp) %in% 'try-error')) browser()
         mcov <- diag(1e-10,npars)
         if(length(parsteps)>0) mcov[-parsteps,-parsteps] <- mcovtmp else mcov <- mcovtmp
         mchol = t(chol(mcov))

@@ -99,7 +99,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
         # sddat <- sddat[,apply(sddat,2,sd,na.rm=TRUE) > 1e-4,with=FALSE]
         # colnames(sddat) <- paste0('sd_',colnames(sddat))
         # meandat <- cbind(meandat,sddat)
-
+        
         
         # cml <- covml(meandat,reg = TRUE)
         
@@ -402,6 +402,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   ms=data.frame(standata$matsetup)
   ms=ms[order(ms$param),]
   standata$whenmat <- array(0L,dim=c(max(mc),5)) #whenmat contains 0's when matrix isn't computed, 1's when it is. 'when 5' is indvaryig.
+  
   for(mi in mc){
     mrows=which(ms$matrix==mi)
     for(wheni in 1:4){
@@ -412,6 +413,18 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
       ms$param[mrows] > 0 & ms$when[mrows] %in% c(0,100) & (ms$indvarying[mrows] > 1 | ms$tipred[mrows] > 0) ))
   }
   rownames(standata$whenmat)[mc] <- names(mc)
+
+  if(optimize){ #indvarying elements need to be updated dynamically
+    for(ri in 1:nrow(standata$whenmat)){
+      if(standata$whenmat[ri,5]>0){ #if any of this matrices pars are indvarying
+        standata$whenmat[mi,
+          switch(rownames(standata$whenmat)[ri],PARS=5,T0MEANS=5,LAMBDA=4,DRIFT=2,DIFFUSION=2,MANIFESTVAR=4,MANIFESTMEANS=4,CINT=2,T0VAR=5,TDPREDEFFECT=3,
+            JAx=2,Jtd=3,Jy=4,asymCINT=2,asymDIFFUSIONcov=2,DIFFUSIONcov=2,MANIFESTcov=4,T0cov=5)] <- 1L
+        # standata$whenmat[ri,5] <- 0 #set indvarying to zero because updating dynamically -- don't do this not all are dynamically updated.
+      }
+    }
+  }
+
   
   #this PARS when = 100 thing is annoyinh, improve it...
   standata$whenvecp <- array(0L, c(2,standata$nparams)) #whenvecp contains 0's for unchanging pars
