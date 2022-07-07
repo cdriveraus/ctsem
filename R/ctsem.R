@@ -98,16 +98,16 @@ NULL
     if(any(apkgs > 0)) warning('The following important packages for ctsem are out of date: ', paste0(names(a)[apkgs > 0],collapse=', '))
     
     
-    #check for rstan 2.26 / windows / r 4.2
-    if(.Platform$OS.type=="windows" && R.Version()$major >=4 && R.Version()$minor >= 2 && 
-        compareVersion(as.character(packageVersion('rstan')[[1]]),'2.25.0') == -1){
-      
-      Sys.setenv(PKG_LIBS=
-          paste0(' \"',system.file('lib/x64', package = 'rstan', mustWork = TRUE),'/libStanServices.a','\"', 
-            ' -L','\"',system.file('libs/x64', package = 'StanHeaders', mustWork = TRUE),'\"',
-            ' -lStanHeaders -L','\"',system.file('lib/x64', package = 'RcppParallel', mustWork = TRUE),'\"',
-            ' -ltbb'))
-    }
+    # #check for rstan 2.26 / windows / r 4.2
+    # if(.Platform$OS.type=="windows" && R.Version()$major >=4 && R.Version()$minor >= 2 && 
+    #     compareVersion(as.character(packageVersion('rstan')[[1]]),'2.25.0') == -1){
+    #   
+    #   Sys.setenv(PKG_LIBS=
+    #       paste0(' \"',system.file('lib/x64', package = 'rstan', mustWork = TRUE),'/libStanServices.a','\"', 
+    #         ' -L','\"',system.file('libs/x64', package = 'StanHeaders', mustWork = TRUE),'\"',
+    #         ' -lStanHeaders -L','\"',system.file('lib/x64', package = 'RcppParallel', mustWork = TRUE),'\"',
+    #         ' -ltbb'))
+    # }
   })
   
 }

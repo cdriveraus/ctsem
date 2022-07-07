@@ -72,7 +72,7 @@ ctPlotArray <- function(input,
   legend=TRUE,legendcontrol=list(),
   polygon=TRUE, polygonalpha=.1,polygoncontrol=list(steps=25)){
   if(!w32chk()) message('Bayesian functions not available on 32 bit systems') else{  
-    if(class(input)!='list') stop('Input must be a list containing y and x subobjects!')
+    if(!'list' %in% class(input)) stop('Input must be a list containing y and x subobjects!')
     
     x <- input$x
     if(length(dim(input$y))!=3) stop('$y subobject must have 3 dimensions!')

@@ -174,7 +174,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
       
       
       if(lpg > -1e99 &&       #regular check
-          class(lpg) !='try-error' && 
+          !'try-error' %in% class(lpg) && 
           !is.nan(lpg[1]) && 
           all(!is.nan(attributes(lpg)$gradient)) &&
           (nsubsets > 1 || i ==1 || lpg[1] > (min(tail(lp,20))-notacceptedcount-1))  #no subset lp check

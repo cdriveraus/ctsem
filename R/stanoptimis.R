@@ -482,7 +482,6 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
     dokalman <- TRUE
     warning('savesubjectmatrices = TRUE requires dokalman=TRUE also!')
   }
-  
   standata$savescores <- as.integer(savescores)
   standata$dokalman <- as.integer(dokalman)
   standata$savesubjectmatrices<-as.integer(savesubjectmatrices)
@@ -502,9 +501,10 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
       'require(data.table)',
       'smf <- ctsem::stan_reinitsf(sm,standata)',
       'tparfunc <- function(x){ 
-         data.table::as.data.table(lapply(1:length(x),function(li){
+         out <- try(data.table::as.data.table(lapply(1:length(x),function(li){
         unlist(rstan::constrain_pars(smf, upars=samples[x[li],]))
-        }))
+      })))
+      if(!"try-error" %in% class(out)) return(out)
   }'))
     
   }
@@ -512,17 +512,21 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
   if(cores ==1){
     smf <- stan_reinitsf(sm,standata) 
     tparfunc <- function(x){ 
-      data.table::as.data.table(lapply(1:length(x),function(li){
+      out <- try(data.table::as.data.table(lapply(1:length(x),function(li){
         unlist(rstan::constrain_pars(smf, upars=samples[x[li],]))
-      }))
+      })))
+      if(!'try-error' %in% class(out)) return(out)
     }
   }
   transformedpars <- try(flexlapplytext(cl, 
     1:nrow(samples),
     'tparfunc',cores=cores))
+  nulls <- unlist(lapply(transformedpars,is.null))
+  if(any(nulls==FALSE)) transformedpars <- transformedpars[!nulls] else stop('No admissable samples!?')
+  if(sum(nulls)>0) message(paste0(sum(nulls)/length(nulls)*100,'% of samples inadmissable'))
   
   if(cores >1) smf <- stan_reinitsf(sm,standata) #needs to be after, weird parallel stuff...
-  skel= rstan::constrain_pars(smf, upars=samples[1,,drop=FALSE]) 
+  skel= rstan::constrain_pars(smf, upars=samples[which(!nulls)[1],,drop=FALSE]) 
   transformedpars <- t(data.table::as.data.table(transformedpars))
   
   nasampscount <- nrow(transformedpars)-nrow(samples) 

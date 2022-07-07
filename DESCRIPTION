@@ -1,8 +1,8 @@
 Package: ctsem
 Type: Package
 Title: Continuous Time Structural Equation Modelling
-Version: 3.6.0
-Date: 2022-03-09
+Version: 3.7.0
+Date: 2022-07-04
 Authors@R: c(person("Charles", "Driver", role =
     c("aut","cre","cph"),email="charles.driver@ibe.uzh.ch"),
     person("Manuel", "Voelkle", role = c("aut","cph")),
@@ -75,5 +75,5 @@ Suggests:
     gridExtra,
     arules
 VignetteBuilder: knitr
-RoxygenNote: 7.1.2
+RoxygenNote: 7.2.0
 Biarch: true

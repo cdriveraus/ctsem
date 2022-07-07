@@ -275,7 +275,7 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
     continuoustime <- ctmodel$continuoustime
   } else {
     dopop <- FALSE
-    if(class(ctmodel) != 'ctsemInit') stop('not a ctsem model!')
+    if(! 'ctsemInit' %in% class(ctmodel)) stop('not a ctsem model!')
     continuoustime <- TRUE
   }
   
