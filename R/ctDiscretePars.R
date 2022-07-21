@@ -264,6 +264,7 @@ ctStanDiscreteParsPlot<- function(x,indices='all',
   nlatent=dim(x)[5]
   
   if(latentNames[1]=='auto') latentNames=dimnames(x)$row
+  dimnames(x)$row <- dimnames(x)$col <- latentNames
   
   if(all(indices=='AR')) indices <- matrix(1:nlatent,nrow=nlatent,ncol=2)
   
@@ -291,6 +292,7 @@ ctStanDiscreteParsPlot<- function(x,indices='all',
   ym$Subject <- factor(ym$Subject)
   if(!splitSubjects) ym$Subject <- factor(1)
   ym$Sample <- factor(ym$Sample)
+  
   
   #remove rows not in indices
   ym <- ym[paste0(row,'_',col) %in% apply(indices,1,function(x) paste0(latentNames[x],collapse='_'))]
