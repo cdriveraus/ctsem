@@ -217,8 +217,9 @@ jacrandom <- function(grfunc, est, eps=1e-4,
 #' @export
 #'
 #' @examples
-#' 
+#' \dontrun{
 #' if(w32chk()) newfit <- ctAddSamples(ctstantestfit, 10, 1)
+#' }
 ctAddSamples <- function(fit,nsamples,cores=2){
   mchol <- t(chol(fit$stanfit$cov))
   

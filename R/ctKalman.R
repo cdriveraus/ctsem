@@ -335,7 +335,7 @@ plot.ctKalmanDF<-function(x, subjects=unique(x$Subject), kalmanvec=c('y','yprior
     scale_shape_manual(breaks=names(shapevec),values=shapevec)
   # labs(linetype='Element',shape='Element',colour='Element',fill='Element')+
   # guides(fill=FALSE)
-  # browser()
+  # 
   if(length(unique(ltyvec[!is.na(ltyvec)]))<1) g<-g+guides(linetype='none')
   # if(length(unique(shapevec[!is.na(shapevec)]))<1) 
   # g<-g+ guides(shape=FALSE)
