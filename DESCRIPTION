@@ -43,7 +43,6 @@ Imports:
     mize,
     mvtnorm,
     parallel,
-    pkgbuild,
     plyr,
     rstan (>= 2.19.0),
     stats,
@@ -75,5 +74,4 @@ Suggests:
     gridExtra,
     arules
 VignetteBuilder: knitr
-RoxygenNote: 7.2.0
-Biarch: true
+RoxygenNote: 7.2.1
