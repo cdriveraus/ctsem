@@ -638,6 +638,25 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
       if(recompile || forcerecompile) {
         message('Compiling model...') 
         
+        #r4.2 / windows / old rstan check
+        if(.Platform$OS.type=="windows" && R.version$major %in% 4 && as.numeric(R.version$minor) >= 2 &&
+            unlist(utils::packageVersion('rstan'))[2] < 25){
+          stop('
+*****
+Compiling not possible with R version 4.2+ on Windows with Rstan version < 2.26
+To upgrade rstan, close and restart all R sessions then run:
+              
+install.packages("StanHeaders", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
+install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
+*****')
+          # a=readline('Attempt to upgrade Rstan from Stan repository? y/n')
+          # if(a %in% c('yes','y','Y','Yes','YES')){
+          #   message(
+          #   install.packages("StanHeaders", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
+          #   install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
+          # }
+        }
+        
         sm <- stan_model(model_name='ctsem', model_code = c(stanmodeltext),auto_write=TRUE)
         # ,allow_undefined = TRUE,verbose=TRUE,
         # includes = paste0(
