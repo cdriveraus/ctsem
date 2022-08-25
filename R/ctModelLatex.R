@@ -190,8 +190,8 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
         popcov <- round(ctCollapse(e$popcov,1,mean),digits=digits)
         if(x$standata$intoverpop==1){
           t0index <- ms$indvarying[ms$param > 0 & ms$row <= x$standata$nlatent & ms$matrix %in% 1 & ms$indvarying > 0]
-          popcov[t0index,t0index] <- round(ctCollapse(e$pop_T0VAR,1,mean),digits=digits)[
-            t0index,t0index] #is this correct...?
+          popcov[t0index,t0index] <- round(ctCollapse(e$pop_T0cov,1,mean),digits=digits)[
+            t0index,t0index] 
         }
         rownames(popcov) <- ms$parname[as.logical(ms$indvarying)]
         colnames(popcov) <- ms$parname[as.logical(ms$indvarying)]

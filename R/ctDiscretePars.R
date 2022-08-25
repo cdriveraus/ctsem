@@ -279,7 +279,7 @@ ctStanDiscreteParsPlot<- function(x,indices='all',
   if(!'array' %in% class(indices) && !'matrix' %in% class(indices)){#interpret as individual columns
     indices <- cbind(
       rep(1:nlatent,length(unique(indices))),
-      rep(unique(indices),each=length(unique(indices))))
+      rep(unique(indices),each=nlatent))
   }
   
   
