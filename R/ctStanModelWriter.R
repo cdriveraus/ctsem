@@ -1905,13 +1905,13 @@ model{
 
   if(ntipred > 0){ 
     if(nopriors==0 && laplacetipreds==0) target+= priormod2 * normal_lpdf(tipredeffectparams / tipredeffectscale| 0, 1);
-    if(nopriors==0 && laplacetipreds==1) target+= priormod2 * double_exponential_lpdf(.001+fabs(tipredeffectparams) / tipredeffectscale| 0, 1);
+    if(nopriors==0 && laplacetipreds==1) target+= priormod2 * double_exponential_lpdf(pow(tipredeffectparams,(2.5-inv_logit((tipredeffectparams*1000)^2)*1.5)) / tipredeffectscale| 0, 1);
     target+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
   }
 
   if(nopriors==0){ //if split files over subjects, just compute priors once
     for(i in 1:nparams){
-      if(laplaceprior[i]==1) target+= priormod2 * double_exponential_lpdf(.001+fabs(rawpopmeans[i])|0,1);
+      if(laplaceprior[i]==1) target+= priormod2 * double_exponential_lpdf(pow(rawpopmeans[i] ,(2.5-inv_logit((rawpopmeans[i] *1000)^2)*1.5))|0,1);
     }
   }
 
