@@ -89,7 +89,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
     while(!accepted){
       notacceptedcount <- notacceptedcount+1
       if(notacceptedcount > 20) {
-        Warning('Cannot optimize stochastically! Problematic model, or bug?')
+        warning('Cannot optimize stochastically! Problematic model, or bug?')
         print(lpg)
         accepted<-TRUE
       }
@@ -215,7 +215,8 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
     deltaold=delta
     oldg=g
     g=attributes(lpg)$gradient
-    if(any(g==0)) warning(paste0('Gradient of parameter ',paste0(which(g==0),collapse=', '), ' is exactly zero, maybe model problem?'))
+    if(any(g %in% 0)) warning(paste0('Gradient of parameter ',paste0(which(g %in% 0),collapse=', '), ' is exactly zero, maybe model problem?'))
+    if(any(is.na(g))) warning(paste0('Gradient of parameter ',paste0(which(is.na(g)),collapse=', '), ' is NA, maybe model problem?'))
     # g=sign(g)*(abs(g))#^(1/2)#sqrt
     gmemory2 = gmemory * min(i/warmuplength,1)^(1/8)
     roughnessmemory2 = roughnessmemory * min(i/warmuplength,1)^(1/8)
