@@ -1287,11 +1287,11 @@ if(verbose > 1){
       if(verbose > 1) print(" After K rowi =",rowi, "  si =", si, "  state =",state,"  etacov ",etacov,"  K[,o] ",K[,o]);
         
   //likelihood stuff
-      if(nbinary_y[rowi] > 0) ',ifelse(savemodel,'llrow[rowi]','ll'),' += sum(log(1e-10+Y[rowi,o1d] .* (syprior[o1d]) + (1-Y[rowi,o1d]) .* (1-syprior[o1d]))); 
+      if(nbinary_y[rowi] > 0) ',ifelse(savemodel,'llrow[rowi]','ll'),' += sum(log(1e-10+',ifelse(gendata,'Ygen','Y'),'[rowi,o1d] .* (syprior[o1d]) + (1-',ifelse(gendata,'Ygen','Y'),'[rowi,o1d]) .* (1-syprior[o1d]))); 
 
       if(size(o0d) > 0 && (llsinglerow==0 || llsinglerow == rowi)){
         if(intoverstates==1) ypriorcov_sqrt[o0d,o0d]=cholesky_decompose(ycov[o0d,o0d]); //removed makesym
-         ',ifelse(savemodel,'llrow[rowi]','ll'),' +=  multi_normal_cholesky_lpdf(Y[rowi,o0d] | syprior[o0d], ypriorcov_sqrt[o0d,o0d]);
+         ',ifelse(savemodel,'llrow[rowi]','ll'),' +=  multi_normal_cholesky_lpdf(',ifelse(gendata,'Ygen','Y'),'[rowi,o0d] | syprior[o0d], ypriorcov_sqrt[o0d,o0d]);
          //errtrans[counter:(counter + ncont_y[rowi]-1)] = 
            //mdivide_left_tri_low(ypriorcov_sqrt[o0d,o0d], err[o0d]); //transform pred errors to standard normal dist and collect
          //ll+= -sum(log(diagonal(ypriorcov_sqrt[o0d,o0d]))); //account for transformation of scale in loglik
@@ -1905,13 +1905,13 @@ model{
 
   if(ntipred > 0){ 
     if(nopriors==0 && laplacetipreds==0) target+= priormod2 * normal_lpdf(tipredeffectparams / tipredeffectscale| 0, 1);
-    if(nopriors==0 && laplacetipreds==1) target+= priormod2 * double_exponential_lpdf(tipredeffectparams / tipredeffectscale| 0, 1);
+    if(nopriors==0 && laplacetipreds==1) target+= priormod2 * double_exponential_lpdf(.001+fabs(tipredeffectparams) / tipredeffectscale| 0, 1);
     target+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
   }
 
   if(nopriors==0){ //if split files over subjects, just compute priors once
     for(i in 1:nparams){
-      if(laplaceprior[i]==1) target+= priormod2 * double_exponential_lpdf(rawpopmeans[i]|0,1);
+      if(laplaceprior[i]==1) target+= priormod2 * double_exponential_lpdf(.001+fabs(rawpopmeans[i])|0,1);
     }
   }
 
