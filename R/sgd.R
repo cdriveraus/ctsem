@@ -89,9 +89,9 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
     while(!accepted){
       notacceptedcount <- notacceptedcount+1
       if(notacceptedcount > 20) {
-        browser()
-        stop('Cannot optimize! Problematic model, or bug?')
+        Warning('Cannot optimize stochastically! Problematic model, or bug?')
         print(lpg)
+        accepted<-TRUE
       }
       
       
