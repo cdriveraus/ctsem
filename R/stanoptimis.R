@@ -285,7 +285,9 @@ parallelStanSetup <- function(cl, standata,split=TRUE,nsubsets=1){
 #create as text because of parallel communication weirdness
 parlptext <- 
   'parlp <- function(parm){
+     a=Sys.time()
           out <- try(rstan::log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
+          
 
         
         if("try-error" %in% class(out) || any(is.nan(attributes(out)$gradient))) {
@@ -294,6 +296,9 @@ parlptext <-
           attributes(out)$gradient <- rep(NaN, length(parm))
           attributes(out)$err <- outerr
         }
+        
+        attributes(out)$time <- Sys.time()-a
+        
         if(is.null(attributes(out)$gradient)) attributes(out)$gradient <- rep(NaN, length(parm))
         # attributes(out)$gradient[is.nan(attributes(out)$gradient)] <-
           # rnorm(length(attributes(out)$gradient[is.nan(attributes(out)$gradient)]),0,100)
@@ -667,12 +672,13 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   parsteps=c(),
   plot=FALSE,
   is=FALSE, isloopsize=1000, finishsamples=1000, tdf=10,chancethreshold=100,finishmultiply=5,
-  verbose=0,cores=2,matsetup=NA,nsubsets=10, stochasticTolAdjust=1){
+  verbose=0,cores=2,matsetup=NA,nsubsets=100, stochasticTolAdjust=1){
   
   if(!is.null(standata$verbose)) {
     if(verbose > 1) standata$verbose=as.integer(verbose) else standata$verbose=0L
   }
   standata$nopriors=as.integer(nopriors)
+  if(nsubsets > (standata$nsubjects/10)) nsubsets <- floor(standata$nsubjects/10)
   if(nsubsets > (standata$nsubjects/cores)) nsubsets <- max(1,floor(standata$nsubjects/cores))
   
   if(is.null(decontrol$steptol)) decontrol$steptol=3
@@ -869,6 +875,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             })
             # 
             out <- try(sum(unlist(out2)),silent=TRUE)
+            coretimes <- sapply(out2,function(x) round(attributes(x)$time,3))
             # attributes(out)$gradient <- try(apply(sapply(out2,function(x) attributes(x)$gradient,simplify='matrix'),1,sum))
             
             for(i in seq_along(out2)){
@@ -898,11 +905,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               plot(log(1+tail(-storedLp,500)-min(tail(-storedLp,500))),ylab='target',type='l')
               plot(g,type='p',col=1:length(parm),ylab='gradient',xlab='param')
             }
-            if(verbose==0) print(paste('lp= ',out,' ,    iter time = ',b-a)) #if not verbose, print lp when plotting
+            if(verbose==0) print(paste('lp= ',out,' ,    iter time = ',round(b-a,3), '; core times = ',paste0(coretimes,collapse=', '))) #if not verbose, print lp when plotting
           }
           storedPars <<- parm
           # storedLp <<- c(storedLp,out[1])
-          if(verbose > 0) print(paste('lp= ',out,' ,    iter time = ',b-a))
+          if(verbose > 0) print(paste('lp= ',out,' ,    iter time = ',round(b-a,3), '; core times = ',paste0(coretimes,collapse=', '))) #if not verbose, print lp when plotting
           if(gradnoise) attributes(out)$gradient <-attributes(out)$gradient * 
             exp( rnorm(length(attributes(out)$gradient),0,1e-3))
           return(out)
@@ -1028,7 +1035,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             
             optimfit <- sgd(init, fitfunc = target,
               parsets=parsets,
-              itertol = 1e-2, deltatol= 1e-2,
+              itertol = 1e-3, deltatol= 1e-5,
               whichignore = unlist(parsteps),
               ndatapoints=standata$ndatapoints,plot=plot)
             
@@ -1123,7 +1130,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             nsubsets = nsubsets,
             whichignore = parsteps,
             plot=plot,
-            itertol=1e-1*stochasticTolAdjust,deltatol=1e-2*stochasticTolAdjust,worsecountconverge = 20)
+            itertol=1e-1*stochasticTolAdjust,deltatol=1e-3*stochasticTolAdjust,worsecountconverge = 20,)
           if(length(parsteps)>0) init[-parsteps] = optimfit$par else init=optimfit$par
           # }
         }
