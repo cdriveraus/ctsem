@@ -994,23 +994,25 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standatasml,split=parsets<2,nsubsets = nsubsets)
         if(optimcores==1) smf<-stan_reinitsf(sm,standatasml)
         
-        if(npars <=50 && nsubsets ==1) {
-          optimfit <- mize(init, fg=mizelpg, max_iter=99999,
-            method="L-BFGS",memory=100,
-            line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
-            abs_tol=1e-2,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)
-          optimfit$value = optimfit$f
-        }
         
+        optimfit <- c() #placeholder
         if(npars > 50 || nsubsets > 1) {
           
-          optimfit <- sgd(init, fitfunc = function(x) target(x),
+          optimfit <- try(sgd(init, fitfunc = function(x) target(x),
             parsets=parsets,
             nsubsets = nsubsets,
             whichignore = unlist(parsteps),nconvergeiter = 20,
             plot=plot,
             itertol=.1*stochasticTolAdjust,deltatol=.1*stochasticTolAdjust,
-            worsecountconverge = 20,maxiter=ifelse(standata$ntipred > 0 && notipredsfirstpass, 500,5000))
+            worsecountconverge = 20,maxiter=ifelse(standata$ntipred > 0 && notipredsfirstpass, 500,5000)))
+        }
+        
+        if((npars <=50 && nsubsets ==1) || 'try-error' %in% class(optimfit)) {
+          optimfit <- mize(init, fg=mizelpg, max_iter=99999,
+            method="L-BFGS",memory=100,
+            line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
+            abs_tol=1e-2,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)
+          optimfit$value = optimfit$f
         }
         
         
@@ -1105,7 +1107,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           
           if(!standata$TIpredAuto){
             finished <- TRUE
-            # standata$taylorheun <- as.integer(taylorheun)
             init = c(optimbase,rep(0,max(TIPREDEFFECTsetup)))
             standata$TIPREDEFFECTsetup[,] <- TIPREDEFFECTsetup
             standata$ntipredeffects <- as.integer(max(TIPREDEFFECTsetup))
@@ -1114,25 +1115,26 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           standata$nsubsets <- as.integer(nsubsets)
           if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standata,split=parsets<2,nsubsets = nsubsets)
           if(optimcores==1) smf<-stan_reinitsf(sm,standata)
-          if(!stochastic && nsubsets ==1) {
+          
+          
+          if(stochastic || nsubsets > 1) optimfit <- try(sgd(init, fitfunc = target,
+            parsets=parsets,
+            nsubsets = nsubsets,
+            whichignore = parsteps,
+            plot=plot,
+            itertol=1e-1*stochasticTolAdjust,deltatol=1e-3*stochasticTolAdjust,worsecountconverge = 20))
+          
+          
+          if((!stochastic && nsubsets ==1) || 'try-error' %in% class(optimfit)) {
             optimfit <- mize(init, fg=mizelpg, max_iter=99999,
               method="L-BFGS",memory=100,
               line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
               abs_tol=tol*ifelse(finished,1,10000),grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)
             optimfit$value = -optimfit$f
           }
-          # if(stochastic && finished) optimfit <- sgd(init, fitfunc = target,
-          #   parsets=parsets,
-          #   whichignore = parsteps,
-          #   plot=plot)
-          if(stochastic || nsubsets > 1) optimfit <- sgd(init, fitfunc = target,
-            parsets=parsets,
-            nsubsets = nsubsets,
-            whichignore = parsteps,
-            plot=plot,
-            itertol=1e-1*stochasticTolAdjust,deltatol=1e-3*stochasticTolAdjust,worsecountconverge = 20,)
+          
           if(length(parsteps)>0) init[-parsteps] = optimfit$par else init=optimfit$par
-          # }
+          
         }
         
       } #end ti pred auto total loop
@@ -1164,17 +1166,19 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       if(stochastic){
         if(is.infinite(bestfit)) message('Switching to stochastic optimizer -- failed initialisation with bfgs')
         if(!stochastic && carefulfit) message('carefulfit = TRUE , so checking for improvements with stochastic optimizer')
-        
-        # 
-        optimfit <- sgd(init, fitfunc = target,
+
+        optimfit <- try(sgd(init, fitfunc = target,
           parsets=parsets,
           nsubsets = 1,
           itertol = ifelse(!finished,1e-1,1e-3),
           deltatol=ifelse(!finished,1e-1,1e-5),
           parrangetol=1e-3,
           whichignore = unlist(parsteps),
-          ndatapoints=standata$ndatapoints,plot=plot)
-        if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else init=optimfit$par
+          ndatapoints=standata$ndatapoints,plot=plot))
+        
+        if(!'try-error' %in% class(optimfit)){
+          if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else init=optimfit$par
+        }
         
         #use bfgs to double check stochastic fit... 
         message('Finishing optimization...')
@@ -1422,7 +1426,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         
         
         
-    
+        
         
         # if(robust){
         #   message('Getting scores for robust std errors...')
