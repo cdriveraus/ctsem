@@ -127,7 +127,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
       }
       
       
-      if(any(is.na(newpars))) browser() 
+      if(any(is.na(newpars))) stop('NA in parameter proposal!') 
       if(i==1) itertime <- Sys.time()
       
       
