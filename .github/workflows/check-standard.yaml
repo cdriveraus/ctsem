@@ -42,7 +42,7 @@ jobs:
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          extra-packages: any::rcmdcheck
+          extra-packages: any::rcmdcheck, local::.
           needs: check
           
       - uses: r-lib/actions/setup-tinytex@v2
@@ -53,11 +53,11 @@ jobs:
         run: |
           tlmgr install biblatex-apa biblatex babel-english csquotes preprint mathtools caption biber
       
-      - name: Preinstall ctsem
-        if: runner.os == 'Windows'
-        run: |
-          devtools::install(reload=FALSE,quick=TRUE,build=TRUE,dependencies=FALSE,build_vignettes=FALSE)
-        shell: Rscript {0}
+      # - name: Preinstall ctsem
+      #   if: runner.os == 'Windows'
+      #   run: |
+      #     devtools::install(reload=FALSE,quick=TRUE,build=TRUE,dependencies=FALSE,build_vignettes=FALSE)
+      #   shell: Rscript {0}
           
       - uses: r-lib/actions/check-r-package@v2
         with:
