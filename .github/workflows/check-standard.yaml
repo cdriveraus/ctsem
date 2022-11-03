@@ -50,12 +50,12 @@ jobs:
           extra-packages: any::rcmdcheck
           needs: check
           
-      - name: Install dependencies
-        run: |
-          remotes::install_deps(dependencies = TRUE)
-          remotes::install_cran("rcmdcheck")
-          tinytex::tlmgr_install(pkgs = c("biblatex-apa","biblatex","babel-english","csquotes","preprint","mathtools","caption","biber"))
-          shell: Rscript {0}
+- name: Install dependencies
+run: |
+remotes::install_deps(dependencies = TRUE)
+remotes::install_cran("rcmdcheck")
+tinytex::tlmgr_install(pkgs = c("biblatex-apa","biblatex","babel-english","csquotes","preprint","mathtools","caption","biber"))
+shell: Rscript {0}
 
       - uses: r-lib/actions/check-r-package@v2
         with:
