@@ -46,15 +46,12 @@ jobs:
           needs: check
           
       - uses: r-lib/actions/setup-tinytex@v2
-        env:
-          # install full prebuilt version
+        env: 
           TINYTEX_INSTALLER: TinyTeX
           
       - name: Install additional LaTeX packages
       run: |
-        tlmgr install biblatex-apa biblatex babel-english csquotes preprint mathtools caption biber
-        tlmgr list --only-installed
-
+      tlmgr install biblatex-apa
           
       - uses: r-lib/actions/check-r-package@v2
         with:
