@@ -140,8 +140,8 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   
   standata <- list(
     Y=cbind(as.matrix(datalong[,ctm$manifestNames])),
-    subject=as.integer(datalong[,ctm$subjectIDname]),
-    time=datalong[,ctm$timeName], 
+    subject=array(as.integer(datalong[,ctm$subjectIDname])),
+    time=array(datalong[,ctm$timeName]), 
     ndatapoints=as.integer(nrow(datalong)),
     nobs_y=array(as.integer(apply(datalong[,ctm$manifestNames,drop=FALSE],1,function(x) length(x[x!=99999]))),dim=nrow(datalong)),
     whichobs_y=matrix(as.integer(t(apply(datalong[,ctm$manifestNames,drop=FALSE],1,function(x) {
@@ -181,7 +181,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   
   #subset selection
   if(is.null(ctm$dokalmanrows)) standata$dokalmanrows <- 
-    rep(1L, standata$ndatapoints) else standata$dokalmanrows <- as.integer(ctm$dokalmanrows)
+    array(rep(1L, standata$ndatapoints)) else standata$dokalmanrows <- array(as.integer(ctm$dokalmanrows))
   standata$priormod = 1L#sum(standata$dokalmanrows)/standata$ndatapoints
   
   standata<-c(standata, 

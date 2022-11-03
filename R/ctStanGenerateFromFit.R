@@ -14,10 +14,14 @@
 #' plot(gen$generated$Y[3,,2],type='l') #Third random data sample, 2nd manifest var, all time points. 
 #' }
 ctStanGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErrors=FALSE,cores=2){
+  
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object!')
-    if(!fullposterior) umat=matrix(fit$stanfit$rawest,nrow=length(fit$stanfit$rawest),ncol=nsamples) else umat=t(fit$stanfit$rawposterior)
-
-
+  
+  if(!fullposterior){
+    umat=matrix(fit$stanfit$rawest,nrow=length(fit$stanfit$rawest),ncol=nsamples)
+    } else umat=t(fit$stanfit$rawposterior)[,sample(1:nrow(fit$stanfit$rawposterior),size=nsamples),drop=FALSE]
+  
+  
   if(fit$setup$recompile) {
     message('Compilation needed -- compiling (usually ~ 1 min)')
     genm <- rstan::stan_model(model_code = 
@@ -47,8 +51,8 @@ ctStanGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErr
     sample=1:dim(fit$generated$Y)[1],
     row=1:dim(fit$generated$Y)[2],
     fit$ctstanmodel$manifestNames)
-
+  
   fit$generated$Y[fit$generated$Y==99999] <- NA
-
+  
   return(fit)
 }

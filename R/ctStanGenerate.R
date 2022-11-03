@@ -44,7 +44,7 @@ generator2 <- function(gm,nsubjects,
 #'
 #' @param cts \code{\link{ctStanModel}} , or \code{\link{ctStanFit}},object.
 #' @param datastruct long format data structure as used by ctsem. 
-#' Not used if ctm is a ctStanFit object.
+#' Not used if cts is a ctStanFit object.
 #' @param is If optimizing, follow up with importance sampling? 
 #' @param fullposterior Generate from the full posterior or just the (unconstrained) mean?
 #' @param nsamples How many samples to generate?
@@ -68,12 +68,13 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
   
   # nopriors <- FALSE # update this when creating posterior predictive, go to TRUE if fullposterior=F and fit object had no priors
   derrind <- 'all' #possibly update below
-  
   if('ctStanFit' %in% class(cts)){
     # if(!fullposterior && cts$standata$nopriors==1) nopriors <- TRUE #generate from point estimate
     derrind <- cts$standata$derrind
-    ctm <- cts$ctstanmodelbase
-    datastruct <- standatatolong(cts$standata, origstructure=TRUE, ctm=ctm)
+    nopriors <- cts$args$nopriors
+    datastruct <- standatatolong(cts$standata, origstructure=TRUE, ctm=cts$ctstanmodelbase)
+    
+    cts <- cts$ctstanmodelbase
    # browser() 
    #  if(cts$setup$recompile){ #then temporarily attach compiled stanmodels to search path to avoid recompiling
    #    ctsem.compiledmodel <- new.env()
@@ -82,9 +83,10 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
    #    attach(ctsem.compiledmodel)
    #    on.exit(add = TRUE, {detach(name = 'ctsem.compiledmodel')})
    #    }
-    }
+    
+    } else nopriors<-FALSE
 
-  datastruct[,ctm$manifestNames] <- NA #remove manifest variables
+  datastruct[,cts$manifestNames] <- NA #remove manifest variables
   optimcontrol<- list()
   optimcontrol$carefulfit=FALSE
   optimcontrol$is <- is
@@ -92,30 +94,25 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
   optimcontrol$finishsamples=nsamples
 
 
-  # if(!includePreds){
-  #   ctm$n.TDpred <- 0
-  #   ctm$TDpredNames <- NULL
-  #   ctm$n.TIpred <- 0
-  #   ctm$TIpredNames <- NULL
-  # }
-  ctm$TIpredAuto <- 0L
+  cts$TIpredAuto <- 0L
   
   ds <- data.table(datastruct)
-  ds[,WhichObs:=(1:.N),by=eval(ctm$subjectIDname)]
+  ds[,WhichObs:=(1:.N),by=eval(cts$subjectIDname)]
   datadummy= data.frame(datastruct)[ds$WhichObs==1,]
-  datadummy[,ctm$TIpredNames] <- 0
+  datadummy[,cts$TIpredNames] <- 0
   
 
   args <- cts$args
   args$optimcontrol=optimcontrol
   args$optimize=TRUE
   args$cores=cores #problem with multiple cores inside function?
-  args$ctstanmodel <- ctm
+  args$ctstanmodel <- cts
   args$intoverstates <- TRUE
   args$intoverpop <- TRUE
   args$inits=1e-10
   args$datalong=datadummy
-  if(as.logical(args$nopriors)) stop('Priors disabled, cannot sample from prior!')
+  args$nopriors <- nopriors
+  if(!is.null(args$nopriors) && as.logical(args$nopriors)) stop('Priors disabled, cannot sample from prior!')
 
   #fit to empty data 
   message('Fitting model to empty dataset...')
@@ -123,7 +120,7 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
   
   if(parsonly) dat <- pp else{
 
-    datastruct[,ctm$manifestNames] <- -99
+    datastruct[,cts$manifestNames] <- -99
 
     #get filled standata object
     pp$standata<-ctStanData(ctm=pp$ctstanmodel, datalong=datastruct,optimize=TRUE,derrind= derrind)
@@ -133,7 +130,7 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
     #collect generated stuff
     dat <-list()
     dat$Y <- ppf$generated$Y
-    dimnames(dat$Y) <- list(datapoints=1:dim(dat$Y)[1], samples=1:dim(dat$Y)[2], manifests = ctm$manifestNames)
+    dimnames(dat$Y) <- list(datapoints=1:dim(dat$Y)[1], samples=1:dim(dat$Y)[2], manifests = cts$manifestNames)
     dat$llrow <- ppf$generated$llrow
   }
   

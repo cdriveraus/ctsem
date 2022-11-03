@@ -1424,8 +1424,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # }
         # 
         
+        # mcov <- mcov+diag(1e-20,nrow(mcov))
         mcovtmp=try({as.matrix(Matrix::nearPD(mcov,conv.norm.type = 'F')$mat)})
-        if(any(class(mcovtmp) %in% 'try-error')) browser()
+        if(any(class(mcovtmp) %in% 'try-error')) stop('Hessian could not be computed')
         mcov <- diag(1e-10,npars)
         if(length(parsteps)>0) mcov[-parsteps,-parsteps] <- mcovtmp else mcov <- mcovtmp
         mchol = t(chol(mcov))
