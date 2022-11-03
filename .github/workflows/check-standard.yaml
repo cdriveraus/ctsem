@@ -48,7 +48,11 @@ jobs:
       - uses: r-lib/actions/setup-tinytex@v2
         env: 
           TINYTEX_INSTALLER: TinyTeX
-
+          
+      - name: Install additional LaTeX packages
+        run: |
+          tlmgr install biblatex-apa
+          
       - uses: r-lib/actions/check-r-package@v2
         with:
           upload-snapshots: true
