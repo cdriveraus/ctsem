@@ -693,6 +693,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   
   benv <- new.env(parent=globalenv())
   benv$clctsem <- NA #placeholder for flexsapply usage
+  optimfit <- c() #placeholder
   
   notipredsfirstpass <- FALSE
   if(init[1] =='random'){# #remove tipreds for first pass
@@ -970,7 +971,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       nopriorsbak <- standata$nopriors
       # taylorheun <- standata$taylorheun
       finished <- FALSE
-      optimfit <- c() #placeholder
       
       if(carefulfit && !deoptim){ #init using priors
         message('Doing 1st pass optimize...')
@@ -996,8 +996,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(optimcores==1) smf<-stan_reinitsf(sm,standatasml)
         
         
-
-
         if(npars > 50 || nsubsets > 1) {
           
           optimfit <- try(sgd(init, fitfunc = function(x) target(x),
@@ -1166,7 +1164,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
 
 
       
-      if(!'try-error' %in% class(optimfit)){
+      if(!'try-error' %in% class(optimfit) & !'NULL' %in% class(optimfit)){
         if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else init=optimfit$par
       }
         
