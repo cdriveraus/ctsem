@@ -970,6 +970,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       nopriorsbak <- standata$nopriors
       # taylorheun <- standata$taylorheun
       finished <- FALSE
+      optimfit <- c() #placeholder
       
       if(carefulfit && !deoptim){ #init using priors
         message('Doing 1st pass optimize...')
@@ -995,7 +996,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(optimcores==1) smf<-stan_reinitsf(sm,standatasml)
         
         
-        optimfit <- c() #placeholder
+
 
         if(npars > 50 || nsubsets > 1) {
           
