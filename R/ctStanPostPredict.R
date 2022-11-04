@@ -24,6 +24,7 @@
 #' }
 ctStanPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,.5,.975),
   datarows='all',nsamples=500,resolution=100,plot=TRUE){
+  
   plots <-list()
   if(datarows[1]=='all') datarows <- 1:nrow(fit$data$Y)
   xmeasure=data.table(id=fit$standata$subject[datarows])
@@ -108,7 +109,7 @@ ctStanPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,
           
           dygen<-diff(yp,lag = cdiffsize) 
           # yp[-1,i,,,drop=FALSE] - yp[-fit$data$ndatapoints,i,,,drop=FALSE]
-          dygendt <- dygen / diff(time,lag = cdiffsize)
+          dygendt <- dygen / matrix(diff(time,lag = cdiffsize),nrow=length(time)-1,ncol=nsamples)
           dygendt<-dygendt[-subdiff,,drop=FALSE]
           
           # dydt<-diff(Ydat[,i], lag = cdiffsize)/diff(time,lag = cdiffsize)
