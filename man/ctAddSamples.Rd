@@ -9,7 +9,7 @@ ctAddSamples(fit, nsamples, cores = 2)
 \arguments{
 \item{fit}{fit object}
 
-\item{nsamples}{number of extra samples desired}
+\item{nsamples}{number of samples desired}
 
 \item{cores}{number of cores to use}
 }
