@@ -31,7 +31,7 @@ stanoptimis(
   verbose = 0,
   cores = 2,
   matsetup = NA,
-  nsubsets = 10,
+  nsubsets = 100,
   stochasticTolAdjust = 1
 )
 }

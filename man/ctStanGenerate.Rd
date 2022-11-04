@@ -18,7 +18,7 @@ ctStanGenerate(
 \item{cts}{\code{\link{ctStanModel}} , or \code{\link{ctStanFit}},object.}
 
 \item{datastruct}{long format data structure as used by ctsem. 
-Not used if ctm is a ctStanFit object.}
+Not used if cts is a ctStanFit object.}
 
 \item{is}{If optimizing, follow up with importance sampling?}
 

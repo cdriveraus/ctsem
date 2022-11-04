@@ -31,7 +31,10 @@ ctStanPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,
   if(1==99) id <- count <- Density <- param <- NULL
   xmeasure= xmeasure[, count := seq(.N), by = .(id)]$count
   
-  if(is.null(fit$generated$Y)) Ygen <- ctStanGenerateFromFit(fit,fullposterior=TRUE,nsamples=nsamples)$generated$Y else Ygen <- fit$generated$Y
+  if(is.null(fit$generated$Y) || dim(fit$generated$Y)[1] < nsamples){
+    Ygen <- ctStanGenerateFromFit(fit,fullposterior=TRUE,nsamples=nsamples)$generated$Y
+    } else Ygen <- fit$generated$Y
+  
   # Ygen<-aperm(Ygen,c(2,1,3)) #previously necessary but fixed generator
   Ygen <- Ygen[,datarows,,drop=FALSE]
   time <- fit$standata$time[datarows]
@@ -109,7 +112,7 @@ ctStanPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,
           
           dygen<-diff(yp,lag = cdiffsize) 
           # yp[-1,i,,,drop=FALSE] - yp[-fit$data$ndatapoints,i,,,drop=FALSE]
-          dygendt <- dygen / matrix(diff(time,lag = cdiffsize),nrow=length(time)-1,ncol=nsamples)
+          dygendt <- dygen / matrix(diff(time,lag = cdiffsize),nrow=length(time)-cdiffsize,ncol=nsamples)
           dygendt<-dygendt[-subdiff,,drop=FALSE]
           
           # dydt<-diff(Ydat[,i], lag = cdiffsize)/diff(time,lag = cdiffsize)

@@ -210,7 +210,7 @@ jacrandom <- function(grfunc, est, eps=1e-4,
 #' Sample more values from an optimized ctstanfit object
 #'
 #' @param fit fit object
-#' @param nsamples number of extra samples desired
+#' @param nsamples number of samples desired
 #' @param cores number of cores to use
 #'
 #' @return fit object with extra samples

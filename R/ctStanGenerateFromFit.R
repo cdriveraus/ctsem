@@ -17,6 +17,8 @@ ctStanGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErr
   
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object!')
   
+  if(nsamples > ncol(fit$stanfit$rawposterior)) fit <- ctAddSamples(fit,nsamples = nsamples,cores=1)
+  
   if(!fullposterior){
     umat=matrix(fit$stanfit$rawest,nrow=length(fit$stanfit$rawest),ncol=nsamples)
     } else umat=t(fit$stanfit$rawposterior)[,sample(1:nrow(fit$stanfit$rawposterior),size=nsamples),drop=FALSE]
