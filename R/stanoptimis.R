@@ -1002,9 +1002,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             parsets=parsets,
             nsubsets = nsubsets,
             whichignore = unlist(parsteps),nconvergeiter = 20,
-            plot=plot,
+            plot=plot, 
             itertol=.1*stochasticTolAdjust,deltatol=.1*stochasticTolAdjust,
             worsecountconverge = 20,maxiter=ifelse(standata$ntipred > 0 && notipredsfirstpass, 500,5000)))
+
         }
         
         if((npars <=50 && nsubsets ==1) || 'try-error' %in% class(optimfit)) {
@@ -1038,6 +1039,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             optimfit <- sgd(init, fitfunc = target,
               parsets=parsets,
               itertol = 1e-3, deltatol= 1e-5,
+              maxiter=5000,
               whichignore = unlist(parsteps),
               ndatapoints=standata$ndatapoints,plot=plot)
             
@@ -1122,6 +1124,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             nsubsets = nsubsets,
             whichignore = parsteps,
             plot=plot,
+            maxiter=5000,
             itertol=1e-1*stochasticTolAdjust,deltatol=1e-3*stochasticTolAdjust,worsecountconverge = 20))
           
           
@@ -1158,6 +1161,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           itertol = ifelse(!finished,1e-1,1e-3),
           deltatol=ifelse(!finished,1e-1,1e-5),
           parrangetol=1e-3,
+          maxiter=5000,
           whichignore = unlist(parsteps),
           ndatapoints=standata$ndatapoints,plot=plot))
       }
