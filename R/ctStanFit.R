@@ -140,6 +140,8 @@ verbosify<-function(sf,verbose=2){
 #' only relevant when either time dependent predictors or individual differences are 
 #' used. Can increase memory usage dramatically in large models, and can be computed after fitting using ctExtract
 #' or ctStanSubjectPars .
+#' @param saveComplexPars Logical. If TRUE, also save rowwise output of any complex parameters specified,
+#' i.e. combinations of parameters, functions and states. 
 #' @param gendata Logical -- If TRUE, uses provided data for only covariates and a time and missingness structure, and 
 #' generates random data according to the specified model / priors. 
 #' Generated data is in the $Ygen subobject after running \code{extract} on the fit object.
@@ -393,7 +395,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   cores=ifelse(optimize,getOption("mc.cores", 2L),'maxneeded'),
   inits=NULL,
   forcerecompile=FALSE,saveCompile=TRUE,savescores=FALSE,
-  savesubjectmatrices=FALSE,
+  savesubjectmatrices=FALSE, saveComplexPars=FALSE,
   gendata=FALSE,
   control=list(),verbose=0,vb=FALSE,...){
   
@@ -523,8 +525,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
           ctm$pars[which(ctm$pars$param %in% jl2$param[i])[1], !colnames(ctm$pars) %in% list('matrix','row','col')]
       }
     }
-    
-    # browser()
+
     ctm$pars <- rbind(ctm$pars,jl2)
 
     ctm$pars <- ctModelStatesAndPARS(ctm$pars,statenames=ctm$latentNames) #replace any new state and par refs with square bracket refs
@@ -540,7 +541,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     #fix binary manifestvariance
     
     if(any(ctm$manifesttype > 0)){ #if any non continuous variables, (with free parameters)...
-      # nlcontrol$nlmeasurement <- TRUE
       errfix <- which(ctm$pars$matrix %in% 'MANIFESTVAR' & 
           (ctm$pars$row %in% which(ctm$manifesttype==1) | 
               ctm$pars$col %in% which(ctm$manifesttype==1)) &
@@ -553,15 +553,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
         ctm$pars[errfix,c('param','transform','multiplier','offset','meanscale','inneroffset','sdscale')] <- NA
         ctm$pars$indvarying[errfix] <- FALSE
       }}
-    
-    
-    # #generate model matrix lists for stan
-    # for(i in 1:nrow(ctm$pars)){ #simplify any calcs
-    #   if(grepl('[',ctm$pars$param[i],fixed=TRUE)) ctm$pars$param[i] <- Deriv::Simplify(ctm$pars$param[i])
-    # }
-    
+
     ctm$modelmats <- ctStanModelMatrices(ctm)
-    ctm <- ctStanCalcsList(ctm) #get extra calculations and adjust model spec as needed???
+    ctm <- ctStanCalcsList(ctm,save=saveComplexPars) #get extra calculations and adjust model spec as needed???
     
     #store values in ctm
     ctm$intoverpop <- as.integer(intoverpop)

@@ -362,8 +362,9 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
     
     scalcs2 = strsplit(scalcs2,'__eqbreak__')[[1]]
     scalcs = paste0(bcalcs1,scalcs2,';\n')
-    # cat(scalcs)
+
     out = paste0('    {\n  ',paste0(ec,collapse='\n  '),'\n',paste0(scalcs,collapse=' '),'  } \n  ',collapse=' ')
+    # cat(out)
     return(out)
   }
 }
@@ -480,26 +481,6 @@ ctStanModelMatrices <-function(ctm){
     tipred <- 0L
     if(!is.na(ctspec$param[i])){ #if non fixed parameter,
       
-      # if(grepl(paste0('^(',  #if a direct matrix reference
-      #   paste0(names(c(mats$base,mats$jacobian)),collapse='|'), #removed 's',
-      #   ')\\[\\d+,\\s*\\d+\\]$'),ctspec$param[i])){
-      #   
-      #   
-      #   # copymatrix=sum(sapply(seq_along(c(mats$base,mats$jacobian)), function(x){
-      #   #   ifelse(grepl(paste0(names(c(mats$base,mats$jacobian)[x])),ctspec$param[i]),x,0) #removed 's',
-      #   # }))
-      #   # 
-      #   # copymatrix = c(mats$base,mats$jacobian)[copymatrix]
-      #   # index = as.numeric(strsplit(gsub('\\]','',
-      #   #   gsub('\\[','',
-      #   #     regmatches(ctspec$param[i],regexpr('\\[\\d+,\\s*\\d+\\]$',ctspec$param[i]))
-      #   #   )),split = ',\\s*')[[1]])
-      #   # copyrow=index[1]
-      #   # copycol=index[2]
-      #   # when = -999 #rely on original when rather than duplicates
-      #   # indvar <- 0
-      # }
-      
       if(grepl('\\b(state)\\b\\[\\d+\\]',ctspec$param[i])){ #if state based, 
         simplestate <- simpleStateCheck(ctspec$param[i]) #check if only 1 state we can easily handle
         
@@ -530,16 +511,13 @@ ctStanModelMatrices <-function(ctm){
       }
       
       
-      if(!simplestate && grepl('[',ctspec$param[i],fixed=TRUE)){ #if a complex calc par
-        
-        # else { #if not a direct matrix reference, add to list of calcs to be added to stan program
+      if(!simplestate && grepl('[',ctspec$param[i],fixed=TRUE)){ #if a complex calc par add to list of calcs to be added to stan program
         
         calcs <- c(calcs, paste0(ctspec$matrix[i],'[',ctspec$row[i], ', ', ctspec$col[i],'] = ',
           ctspec$param[i]))
         when= -999 #never use this row of ctspec during calculations (calc is extracted and placed elsewhere)
         indvar=0
         dynpar=TRUE
-        # }
       }#end calculation / copy parameters
       
       else if(!grepl('[',ctspec$param[i],fixed=TRUE)){ #if non calculation parameter (consider removing duplication / copyrow checks)
@@ -667,14 +645,10 @@ ctStanModelMatrices <-function(ctm){
 
 
 
-ctStanCalcsList <- function(ctm){  #extract any calcs from model into specific lists
+ctStanCalcsList <- function(ctm, save=FALSE){  #extract any calcs from model into specific lists
   temp <- ctm$modelmats$calcs
   names(temp) <- NULL
   mats<-ctStanMatricesList()
-  
-  # for(mati in unique(ctm$pars$matrix)){ #append s to matrices
-  #   temp <- gsub(paste0('\\b',mati),paste0(mati),temp) #removed 's',
-  # }
   
   calcs <- lapply(c(list(PARS=c(PARS=10)),mats[!names(mats) %in% c('base','all','jacobian')]), function(mlist) { #add custom calculations to correct list of matrices
     out <- temp[unlist(sapply(temp, function(y) any(sapply(names(mlist), function(mli) 
@@ -682,101 +656,30 @@ ctStanCalcsList <- function(ctm){  #extract any calcs from model into specific l
     ))))]
     return(out)
   })
+  
+  if(save){ #if outputting nonlinear computations
+    uniqueCounter <- 1
+    uniqueNames <- c()
+  calcs <- lapply(calcs, function(x){ #get unique equations and save these to output vector if save requested
+    whicheqs <- which(!duplicated(gsub('^.* = ','',x)))
+    if(length(x)){
+     rhs <- gsub('^.* = ','',x)[whicheqs]
+     lhs <- gsub(' = .*','',x)[whicheqs]
+     neweqs <- paste0('calcs[rowi, ', uniqueCounter:(uniqueCounter+(length(lhs)-1)),'] = ',rhs)
+       x <- c(x,neweqs)
+       uniqueCounter <<- uniqueCounter+length(lhs)
+       uniqueNames <<- c(uniqueNames,lhs)
+    }
+    return(x)
+  })
+  
+  calcs$calcNames <- uniqueNames
+  }
+    
+  
   ctm$modelmats$calcs <- calcs
   return(ctm)
 }
-
-# duplicateRefs <- function(ctm){
-#   
-#   ml <- ctStanMatricesList(ctm)
-#   
-#   upd=lapply(ml$all, function(m){
-#     dups <-
-#     
-#     mats[!names(mats) %in% c('base','all','jacobian')], function(mlist) {
-#   
-#   calcs$diffusion2 <- c(calcs$driftcint,calcs$diffusion) #create combined vec for duplicate detection
-# calcs <- lapply(calcs,function(mli){ #create matrix refs for duplicates
-#   mli <- gsub(' ','',mli)
-#   rhs <- gsub('.*=','',mli)
-#   lhs <- gsub('=.*','',mli)
-#   
-#   dup <- duplicated(rhs)
-#   for(i in seq_along(rhs)){
-#     if(dup[i]) mli[i] <- gsub('=.*',paste0('=',lhs[match(x = rhs[i],rhs)]),mli[i])
-#   }
-#   return(mli)
-# })
-# calcs$diffusion <- tail(calcs$diffusion2,length(calcs$diffusion)) #replace with portion of combined vec
-# calcs$diffusion2 <- NULL
-# 
-# }
-
-
-
-# jacobianelements <- function(J, when, ntdpred,matsetup,mats,textadd=NA, 
-#   remove='', #c('drift','simplestate', 'state','fixed','lambda'),
-#   returndriftonly=FALSE,
-#   returnlambdaonly=FALSE){ 
-#   out=c()
-#   # if(returndriftonly) 
-#   if(!(when == 3 && ntdpred ==0)){
-#     lambdaonly <- driftonly <-   simplestatesonly <- c()
-#     if( !returnlambdaonly){
-#       for(ci in 1:ncol(J)){
-#         for(ri in 1:nrow(J)){ #check for standard drift reference
-#           if('drift' %in% remove && J[ri,ci] == paste0('DRIFT[',ri,',',ci,']')) {
-#             chk=TRUE
-#           } else {
-#             if('drift' %in% remove && J[ri,ci] == mats$DRIFT[ri,ci] && is.na(suppressWarnings(as.numeric(J[ri,ci])))){
-#               chk=TRUE
-#             } else chk <- FALSE
-#           }
-#           driftonly <- c(driftonly, chk) 
-#           simplestatesonly <- c(simplestatesonly, grepl('^\\b(state)\\b\\[\\d+\\]$',J[ri,ci]))
-#         }
-#       }
-#     }
-#     chk <- c()
-#     if('lambda' %in% remove && !returndriftonly){
-#       for(ci in 1:nrow(mats$T0MEANS)){
-#         for(ri in 1:nrow(mats$LAMBDA)){ #check for standard lambda reference
-#           if(ci <= ncol(mats$LAMBDA) && J[ri,ci] == paste0('LAMBDA[',ri,',',ci,']')) {
-#             chk=TRUE
-#           } else {
-#             if(ci <= ncol(mats$LAMBDA) && 
-#                 J[ri,ci] == mats$LAMBDA[ri,ci] && 
-#                 is.na(suppressWarnings(as.numeric(J[ri,ci])))){
-#               chk=TRUE
-#             } else chk <- FALSE
-#           }
-#           lambdaonly <- c(lambdaonly, chk) 
-#         }
-#       }
-#     }
-#     
-#     out = J
-#     drop<-as.integer(c())
-#     if('fixed' %in% remove) drop=which(!is.na(suppressWarnings(as.numeric(out)))) #dropping single values
-#     if('lambda' %in% remove) drop = unique(c(drop,which(lambdaonly)))
-#     if('drift' %in% remove) drop = unique(c(drop,which(driftonly)))
-#     if('simplestate' %in% remove && length(simplestatesonly) > 0) drop = unique(c(drop,which(simplestatesonly)))
-#     
-#     if(all(!is.na(textadd))) out=paste0(textadd, J,';\n')
-#     if(length(drop) > 0) out=out[-drop] #dropping selected terms
-#     
-#     if('state' %in% remove) out = out[!grepl('state[',out,fixed=TRUE)] #else out = out[(grepl('state[',out,fixed=TRUE))]
-#     
-#     if(all(!is.na(textadd))) out=paste0(out,collapse='')
-#     if(when==3 && ntdpred==0) out <- c() #no need for extra jacobian lines if no predictors!
-#     if(returndriftonly) out <- matrix(as.integer(as.logical(driftonly)),nrow(J),ncol(J))
-#     if(returnlambdaonly) {
-#       out <- matrix(as.integer(as.logical(lambdaonly)),nrow(mats$LAMBDA),nrow(mats$T0MEANS))
-#       
-#     }
-#   }
-#   return(out)
-# }
 
 ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE, simplify=TRUE){
   #if arguments change make sure to change ctStanFit !
@@ -846,7 +749,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE,
     ')
   }
   
-
+  
   
   
   
@@ -1843,6 +1746,7 @@ transformed parameters{
   matrix[nmanifest,nmanifest] ycova[3,savescores ? ndatapoints : 0];
   vector[nlatentpop] etaa[3,savescores ? ndatapoints : 0];
   vector[nmanifest] ya[3,savescores ? ndatapoints : 0];
+  vector[',ifelse(is.null(ctm$modelmats$calcs$calcNames),0,length(ctm$modelmats$calcs$calcNames)),'] calcs[',ifelse(is.null(ctm$modelmats$calcs$calcNames),0,'ndatapoints'),'];
   ',subjectparaminit(pop=TRUE,smats=FALSE),
   subjectparaminit(pop=FALSE,smats=FALSE),
   collapse=''),'

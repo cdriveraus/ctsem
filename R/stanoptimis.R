@@ -1348,7 +1348,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               grad<- attributes(lp[[1]])$gradient / steplist[[di]] * directions[di]
               if(any(is.na(grad))){
                 warning('NA gradient encountered at param ',i,immediate. =TRUE)
-                browser()
+                # browser()
               }
               if(length(directions) > 1) grad <- (grad + attributes(lp[[2]])$gradient / (steplist[[di]]*-1))/2
               
