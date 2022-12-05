@@ -12,7 +12,7 @@ ctModel0DRIFT <- function(ctm,continuoustime){
   return(ctm)
 }
 
-simpleStateCheck <- function(x){   
+simpleStateCheck <- function(x){   #checks if system matrix elements that reference states are 'simple' -- don't contain operations
   if(grepl('\\b(state)\\b\\[\\d+\\]',x)){ #if state based 
     refmatches <- gregexpr('\\[(\\d+\\W*\\d*)\\]', x) #within sq brackets, find digits, possibly with non word chars, possibly with more digits.
     simplestate <- refmatches[[1]][1] > 0 && #if state
@@ -62,10 +62,14 @@ ctModelStatesAndPARS <- function(ctspec, statenames){ #replace latentName and pa
     parmatch <- which(ctspec$param %in% ln[li] & ctspec$matrix %in% 'PARS') #which row is the par itself
     for(ri in grep(paste0('\\b',ln[li],'\\b'),ctspec$param)){ #which rows contain the par
       if(!(ctspec$param[ri] == ln[li] & ctspec$matrix[ri]=='PARS')){ #that are not the par itself in the pars matrix# #removed limitation of referencing within PARS matrices
-        # print(ctspec$param[ri])
-        # print(ctspec$matrix[ri])
-        ctspec$param[ri] <- gsub(paste0('\\b',ln[li],'\\b'), #replace with PARS reference...
-          paste0('PARS[',ctspec$row[parmatch],',',ctspec$col[parmatch],']'),ctspec$param[ri])
+        print(ctspec$param[ri])
+        print(ctspec$matrix[ri])
+        print(gsub(paste0('\\b',ln[li],'\\b([^\\[])'), #replace with PARS reference...
+          paste0('PARS[',ctspec$row[parmatch],',',ctspec$col[parmatch],']\\1'),ctspec$param[ri]))
+        # browser()
+        ctspec$param[ri] <- 
+          gsub(paste0('\\b',ln[li],'\\b([^\\[])'), #replace with PARS reference...
+            paste0('PARS[',ctspec$row[parmatch],',',ctspec$col[parmatch],']\\1'),ctspec$param[ri])
       }
     }
   }
@@ -512,7 +516,6 @@ ctStanModelMatrices <-function(ctm){
       
       
       if(!simplestate && grepl('[',ctspec$param[i],fixed=TRUE)){ #if a complex calc par add to list of calcs to be added to stan program
-        
         calcs <- c(calcs, paste0(ctspec$matrix[i],'[',ctspec$row[i], ', ', ctspec$col[i],'] = ',
           ctspec$param[i]))
         when= -999 #never use this row of ctspec during calculations (calc is extracted and placed elsewhere)
