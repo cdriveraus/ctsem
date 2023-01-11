@@ -100,7 +100,3 @@ model{
   target += sum(llrow);
   if(reg!=0)  target+= reg*corprior + reg*sdprior;
 }
-
-
-
-

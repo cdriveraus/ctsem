@@ -706,7 +706,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE,
     
     paste0('statetf[whichequals(whenvecs[',when[when!=0],'],0,0)] = 
          parvectform(whichequals(whenvecs[',when,'],0,0),state, ',when,
-      ', matsetup, matvalues, si, whenvecs[',when,']);
+      ', matsetup, matvalues, si);
     
     ',matcalcs('si',when=when, mlist,basemats=basemats))
     
@@ -725,7 +725,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE,
       if(statei>0)  state[statei] += Jstep;
       
         statetf[whichequals(whenvecs[2],0,0)] = 
-          parvectform(whichequals(whenvecs[2],0,0),state, 2, matsetup, matvalues, si, whenvecs[2]);
+          parvectform(whichequals(whenvecs[2],0,0),state, 2, matsetup, matvalues, si);
           
         //initialise PARS first, and simple PARS before complex PARS
         if(statedep[10] || whenmat[10,2]) PARS=mcalc(PARS,indparams, statetf,{2}, 10, matsetup, matvalues, si); 
@@ -865,7 +865,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE,
   // compute individual parameters that are not state dependent, either all (if si=0) or just update indvarying ones.
   indparams[whichequals(whenvecp[si ? 2 : 1], 0, 0)]= 
     parvectform(whichequals(whenvecp[si ? 2 : 1], 0, 0),rawindparams\', 
-    0, matsetup, matvalues, si, whenvecp[si ? 2 : 1])\';
+    0, matsetup, matvalues, si)\';
      
   if(whenmat[1, 5] >= (si ? 1 : 0)) T0MEANS = 
     mcalc(T0MEANS, indparams, statetf, {0}, 1, matsetup, matvalues, si); // base t0means to init
@@ -875,7 +875,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE,
   state=T0MEANS[,1]\';
   
   statetf[whichequals(whenvecs[1],0,0)] = parvectform(whichequals(whenvecs[1],0,0),state, 1,
-    matsetup, matvalues, si, whenvecs[1]);   
+    matsetup, matvalues, si);   
     
   ',matcalcs('si',when=0:1, c(PARS=10),basemats=TRUE),' //initialise simple PARS then do complex PARS
   ',simplifystanfunction(paste0(ctm$modelmats$calcs$PARS,';\n\n ',collapse=' '),simplify),'
@@ -912,31 +912,32 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE,
     }
  }
   
-//      if(nt0varstationary > 0) {
-//    if(si==0 || (sum(whenmat[8,]) + statedep[8] + sum(whenmat[3,]) + statedep[3] + sum(whenmat[4,]) + statedep[4]) > 0 ){
-//      matrix[nlatent,nlatent] stationarycov;
-//      stationarycov = ksolve(DRIFT[derrind,derrind], sdcovsqrt2cov(DIFFUSION[derrind,derrind],choleskymats),verbose);
-//    for(ri in 1:nt0varstationary){ 
-//      T0cov[t0varstationary[ri,1],t0varstationary[ri,2] ] =  stationarycov[t0varstationary[ri,1],t0varstationary[ri,2] ];
-//    }
-//    }
-//  }
-//    if(si==0 || //on either pop pars only
-//  (  (sum(whenmat[3,])+sum(whenmat[7,])+statedep[3]+statedep[7]) > 0 && savesubjectmatrices) ){ // or for each subject
-//  if(continuoustime==1) asymCINT[,1] =  -DRIFT[1:nlatent,1:nlatent] \\ CINT[ ,1 ];
-//  if(continuoustime==0) asymCINT[,1] =  add_diag(-DRIFT[1:nlatent,1:nlatent],1) \\ CINT[,1 ];
-//  
-//  //  if(nt0meansstationary > 0){
-//    if(si==0 || (sum(whenmat[1,]) + statedep[1]) > 0) {
-//      for(ri in 1:nt0meansstationary){
-//        T0MEANS[t0meansstationary[ri,1]] = 
-//          asymCINT[t0meansstationary[ri,1] ];
-//      }
-//    }
-//  }
+// if(nt0varstationary > 0) {
+//   if(si==0 || (sum(whenmat[8,]) + statedep[8] + sum(whenmat[3,]) + statedep[3] + sum(whenmat[4,]) + statedep[4]) > 0 ){
+//     matrix[nlatent,nlatent] stationarycov;
+//     stationarycov = ksolve(DRIFT[derrind,derrind], sdcovsqrt2cov(DIFFUSION[derrind,derrind],choleskymats),verbose);
+//   for(ri in 1:nt0varstationary){ 
+//     T0cov[t0varstationary[ri,1],t0varstationary[ri,2] ] =  stationarycov[t0varstationary[ri,1],t0varstationary[ri,2] ];
+//   }
+//   }
+// }
+// 
+// if(nt0meansstationary > 0){
+//   if(si==0 || //on either pop pars only
+//     ( (sum(whenmat[3,])+sum(whenmat[7,])+statedep[3]+statedep[7]) > 0) && savesubjectmatrices ){ // or for each subject
+//     
+//     if(continuoustime) asymCINT[,1] =  -DRIFT[1:nlatent,1:nlatent] \\ CINT[ ,1 ];
+//     if(!continuoustime) asymCINT[,1] =  add_diag(-DRIFT[1:nlatent,1:nlatent],1) \\ CINT[,1 ];
+// 
+//     if(si==0 || (sum(whenmat[1,]) + statedep[1]) > 0) {
+//       for(ri in 1:nt0meansstationary){
+//         T0MEANS[t0meansstationary[ri,1]] = 
+//           asymCINT[t0meansstationary[ri,1] ];
+//       }
+//     }
+//   }
+// }
 
-    //if(verbose>1) print("nl T0cov = ", T0cov, "   J0 = ", J0);
-    //etacov = quad_form(T0cov, J0\'); //probably unneeded, inefficient
     etacov=T0cov;
     } //end T0 matrices
     
@@ -1028,7 +1029,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
       if(si==0 ||nonzerotdpred){
       
         statetf[whichequals(whenvecs[3],0,0)] = 
-          parvectform( whichequals(whenvecs[3],0,0), state, 3, matsetup, matvalues, si, whenvecs[3]);
+          parvectform( whichequals(whenvecs[3],0,0), state, 3, matsetup, matvalues, si);
           
         //initialise PARS first, and simple PARS before complex PARS
         if(statedep[10] || whenmat[10,3]) PARS=mcalc(PARS,indparams, statetf,{3}, 10, matsetup, matvalues, si); 
@@ -1079,7 +1080,7 @@ if(verbose > 1){
       
             
         statetf[whichequals(whenvecs[4],0,0)] = 
-          parvectform( whichequals(whenvecs[4],0,0), state, 4, matsetup, matvalues, si, whenvecs[4]);
+          parvectform( whichequals(whenvecs[4],0,0), state, 4, matsetup, matvalues, si);
           
         //initialise PARS first, and simple PARS before complex PARS
         if(statedep[10] || whenmat[10,4]) PARS=mcalc(PARS,indparams, statetf,{4}, 10, matsetup, matvalues, si); 
@@ -1527,10 +1528,9 @@ if(length(extratforms) > 0) paste0(extratforms,collapse=" \n"),'
   }
   
   // improve PARS when = 100 thing here too
-   row_vector parvectform(int[] which, row_vector rawpar, int when, int[,] ms, data real[,] mval, int subi, int[] whenvec){
+   row_vector parvectform(int[] which, row_vector rawpar, int when, int[,] ms, data real[,] mval, int subi){
     row_vector[size(which)] parout;
     if(size(which)){
-      //int outwhen[size(whichequals(whenvec,0,0))] = whenvec[whichequals(whenvec,0,0)]; //outwhen is nonzero elements of whenvec
       for(whichout in 1:size(which)){
         int done=0; //only want to tform once, may be copies
       for(ri in 1:size(ms)){ //for each row of matrix setup
