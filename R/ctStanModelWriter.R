@@ -62,10 +62,10 @@ ctModelStatesAndPARS <- function(ctspec, statenames){ #replace latentName and pa
     parmatch <- which(ctspec$param %in% ln[li] & ctspec$matrix %in% 'PARS') #which row is the par itself
     for(ri in grep(paste0('\\b',ln[li],'\\b'),ctspec$param)){ #which rows contain the par
       if(!(ctspec$param[ri] == ln[li] & ctspec$matrix[ri]=='PARS')){ #that are not the par itself in the pars matrix# #removed limitation of referencing within PARS matrices
-        print(ctspec$param[ri])
-        print(ctspec$matrix[ri])
-        print(gsub(paste0('\\b',ln[li],'\\b([^\\[])'), #replace with PARS reference...
-          paste0('PARS[',ctspec$row[parmatch],',',ctspec$col[parmatch],']\\1'),ctspec$param[ri]))
+        # print(ctspec$param[ri])
+        # print(ctspec$matrix[ri])
+        # print(gsub(paste0('\\b',ln[li],'\\b([^\\[])'), #replace with PARS reference...
+          # paste0('PARS[',ctspec$row[parmatch],',',ctspec$col[parmatch],']\\1'),ctspec$param[ri]))
         # browser()
         ctspec$param[ri] <- 
           gsub(paste0('\\b',ln[li],'\\b([^\\[])'), #replace with PARS reference...

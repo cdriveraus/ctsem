@@ -384,6 +384,7 @@ standatact_specificsubjects <- function(standata, subjects,timestep=NA){
   if(standata$ntipred > 0) standatamerged$tipredsdata <- standatamerged$tipredsdata[unique(standatamerged$subject),,drop=FALSE]
   standatamerged$nsubjects <- as.integer(length(unique(standatamerged$subject)))
   standatamerged$subject <- array(as.integer(factor(standatamerged$subject)))
+  standatamerged$idmap <- standata$idmap[standata$idmap$new %in% subjects,]
   return(standatamerged)
 }  
 

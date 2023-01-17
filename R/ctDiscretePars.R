@@ -93,11 +93,15 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='popmean',
   if(!ctstanfitobj$ctstanmodel$continuoustime) times <- unique(round(times))
   type='discreteDRIFT'
   collapseSubjects=TRUE #consider this for a switch
-  e<-ctExtract(ctstanfitobj,subjectMatrices = subjects[1]!='popmean',cores=cores,
-    nsamples = min(nsamples,dim(ctstanfitobj$stanfit$transformedpars$pop_DRIFT)[1]))
   
   if(subjects[1] != 'popmean' && any(!is.integer(as.integer(subjects)))) stop('
-  subjects argument must be either "all" or an integer denoting specific subjects')
+  subjects argument must be either "popmean" or an integer denoting specific subjects')
+  
+  extractSubjects <- subjects
+  if('popmean' %in% extractSubjects) extractSubjects <- 'all'
+  e<-ctExtract(ctstanfitobj,subjectMatrices = subjects[1]!='popmean',cores=cores,
+    nsamples = min(nsamples,dim(ctstanfitobj$stanfit$transformedpars$pop_DRIFT)[1]),
+    subjects=extractSubjects)
   
   nsubjects <- dim(e$subj_DRIFT)[2]
   if(is.null(nsubjects)) nsubjects=1
@@ -123,8 +127,10 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='popmean',
     if('popmean' %in% subjects || is.null(e[[paste0('subj_',matname)]])){
       ctpars[[matname]] <- e[[paste0('pop_',matname)]][samples,,,drop=FALSE]
     } else {
-      # browser()
-      ctpars[[matname]] <- e[[paste0('subj_',matname)]][samples,subjects,,,drop=FALSE]
+      if(dim(e[[paste0('subj_',matname)]])[2] != ctstanfitobj$standata$nsubjects){ #if we computed subject parameters for only the specified subjects
+        parsubjects <- 1:length(subjects)
+      } else parsubjects <- subjects
+      ctpars[[matname]] <- e[[paste0('subj_',matname)]][samples,parsubjects,,,drop=FALSE]
       # ctpars[[matname]]<-  array(ctpars[[matname]],dim=c(prod(dim(ctpars[[matname]])[1:2]),dim(ctpars[[matname]])[-1:-2]))
     }
     # ctpars[[matname]] <- ctpars[[matname]][sample(1:dim(ctpars[[matname]])[1],nsamples),,,drop=FALSE]

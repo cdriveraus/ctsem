@@ -11,7 +11,7 @@
 #' e = ctExtract(ctstantestfit)
 #' }
 #' @export
-ctExtract <- function(object,subjectMatrices=FALSE,cores=2,nsamples='all'){
+ctExtract <- function(object,subjectMatrices=FALSE,cores=2,nsamples='all', subjects='all'){
   if(!class(object) %in% c('ctStanFit', 'stanfit')) stop('Not a ctStanFit or stanfit object')
   
   
@@ -20,6 +20,7 @@ ctExtract <- function(object,subjectMatrices=FALSE,cores=2,nsamples='all'){
     samps <- object$stanfit$rawposterior
     if(!nsamples %in% 'all') samps <- samps[sample(1:nrow(samps),nsamples),,drop=FALSE]
     if(subjectMatrices && object$standata$savesubjectmatrices==0){
+      if(!'all' %in% subjects) object$standata<- standatact_specificsubjects(standata = object$standata,subjects = subjects)
       out = stan_constrainsamples(sm = object$stanmodel,standata = object$standata,
         samples = samps,
         cores = cores,savescores = FALSE,savesubjectmatrices = subjectMatrices,
