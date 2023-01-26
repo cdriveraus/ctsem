@@ -93,4 +93,44 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 & !(
     sapply(s$ml,function(x) expect_equivalent(lambdafactor,x$popmeans[rownames(x$popmeans) %in% 'lbystate','mean'],tol=1e-1))
     
   }) 
+  
+  test_that("higherDimNonLinearCompileCheck", {
+    test_ <- ctModel(type='stanct',
+      n.latent=3, n.manifest=3,
+      manifestNames=c("X", "Y", "Z"),
+      latentNames = c("X_", "Y_", "Z_"),
+      Tpoints = 4,
+      time = "time",
+      LAMBDA=diag(3),
+      TRAITVAR = "auto",
+      DRIFT=matrix(c('a11', 'a12','a13',
+        '(a + b * Z_)', 'a22', 'a23',
+        'a31', 'a32', 'a33'), nrow=3, ncol=3, byrow=TRUE),
+      DIFFUSION='auto',
+      T0VAR='auto',
+      CINT=0,
+      T0MEANS = 'auto',
+      MANIFESTMEANS = 'auto',
+      MANIFESTVAR = 0,
+      PARS=c('a', 'b'))
+    
+    
+    gm <- ctModel(LAMBDA=diag(2), #diagonal factor loading, 2 latents 2 observables
+      Tpoints = 5,
+      DRIFT=matrix(c(-1,.5,0,-1),2,2), #temporal dynamics
+      TRAITVAR = diag(.5,2), #stable latent intercept variance (cholesky factor)
+      DIFFUSION=diag(2)) #within person covariance 
+
+    d <- data.frame(ctGenerate(ctmodelobj = gm,n.subjects = 100,
+      burnin = 20,dtmean = 1))
+    
+    d<-data.frame(d)
+    d$Z <- d$Y1 + rnorm(nrow(d))
+    d$X <- d$Y1
+    d$Y <- d$Y2
+    
+    f <- ctStanFit(datalong = d,ctstanmodel = test_)
+    
+  }
+  
 }

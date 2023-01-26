@@ -506,22 +506,23 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     
   
     ctm <- ctModel0DRIFT(ctm, ctm$continuoustime) #offset 0 drift
-    ctm$pars <- ctModelStatesAndPARS(ctm$pars,statenames=ctm$latentNames) #need this early because we rely on [] detection
-    if(intoverpop)   ctm <- ctStanModelIntOverPop(ctm)
+    ctm$pars <- ctModelStatesAndPARS(ctm$pars,statenames=ctm$latentNames) #replace latent states and PARS with state and PAR[] refs, need this early because we rely on [] detection
+    if(intoverpop)   ctm <- ctStanModelIntOverPop(ctm) #extend system matrices for individual differences
     
     #jacobian addition
     ctm$jacobian <- try(ctJacobian(ctm))
     if('try-error' %in% class(ctm$jacobian)) ctm$jacobian <- ctJacobian(ctm,simplify=FALSE)
-    ctm$jacobian <- unfoldmats(
-      c(listOfMatrices(ctm$pars),ctm$jacobian))[names(ctStanMatricesList()$jacobian)]
+    # ctm$jacobian <- unfoldmats( #replaces matrix references with base parameter
+    #   c(listOfMatrices(ctm$pars),ctm$jacobian))
+    ctm$jacobian <- ctm$jacobian[names(ctStanMatricesList()$jacobian)]
     jl <- ctModelUnlist(ctm$jacobian,names(ctm$jacobian))
     jl <- jl[apply(jl,1,function(x) any(!is.na(x))),] #clean up messy leftovers of NA's
     jl2 <- as.data.frame(rbind(data.table(ctm$pars[1,]),data.table(jl),fill=TRUE))[-1,]
     
     
-    for(i in 1:nrow(jl2)){ #copy base params to jacobian when needed
+    for(i in 1:nrow(jl2)){ #copy base parameter transforms etc to jacobian when needed
       if(!is.na(jl2$param[i]) && jl2$param[i] %in% ctm$pars$param){
-        jl2[i, !colnames(jl2) %in% list('matrix','row','col')] <- 
+        jl2[i, !colnames(jl2) %in% list('matrix','row','col')] <-
           ctm$pars[which(ctm$pars$param %in% jl2$param[i])[1], !colnames(ctm$pars) %in% list('matrix','row','col')]
       }
     }
@@ -598,9 +599,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     }
     if(recompile) ctm$JAxfinite <- ctm$Jyfinite <- array(as.integer(c()))
     ctm$recompile <- recompile
-    
-    
-    
+
     
     standata <- ctStanData(ctm,datalong,optimize=optimize,derrind=derrind) 
     standata$verbose=as.integer(verbose)

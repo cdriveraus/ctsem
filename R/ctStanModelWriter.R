@@ -465,7 +465,7 @@ ctStanModelMatrices <-function(ctm){
   
   
   matlist <- listOfMatrices(ctspec) #put back into matrix form
-  matlist <- unfoldmats(matlist) #unfold references to basic state
+  # matlist <- unfoldmats(matlist) #unfold references to basic state
   ctspecp <- ctModelUnlist(matlist,matnames = names(c(mats$base,mats$jacobian))) #convert back to list
   ctspecp <- ctModelStatesAndPARS(ctspecp,statenames=ctm$latentNames) #ensure PARS[,] refs are not replaced by names
   ctspec[order(ctspec$matrix, ctspec$row,ctspec$col),colnames(ctspecp)] <-  

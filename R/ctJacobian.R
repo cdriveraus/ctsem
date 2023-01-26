@@ -42,7 +42,7 @@ inv_logit_gsub <- function(x){
 
 
 ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy'),simplify=TRUE ){
-
+  
   # get system dimension
   ndim = max(m$pars$row[m$pars$matrix%in% 'T0MEANS'])
   # 2): generate vector valued function fn = drift * state
@@ -63,9 +63,9 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy'),simplify=TRUE ){
   
   mats <- listOfMatrices(m$pars)
   matnames <- names(ctStanMatricesList(unsafe=TRUE)$base)
-
+  
   mats <- unfoldmats(mats)
-
+  
   Jout <- list()
   for(typei in types){
     if(typei=='JAx'){
@@ -76,11 +76,11 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy'),simplify=TRUE ){
           cbind(mats$DRIFT,
             matrix(0,nrow(mats$DRIFT),ndim-nrow(mats$DRIFT))),
           matrix(0,ndim-nrow(mats$DRIFT),ndim))
-
+        
         if(!m$continuoustime) diag(mats$DRIFT)[((nrow(mats$CINT)+1):ndim)] <- 1 #discrete time stability is 1 not 0
       }
-        
-        
+      
+      
       
       for (row in 1:ndim) {
         for (col in 1:(ndim)) {
@@ -124,7 +124,6 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy'),simplify=TRUE ){
     }
     
     
-    # browser()
     fn = gsub(" ", "", fn, fixed = TRUE) #remove spaces
     # replace state[~] by state~ for cOde Jacobian and make fn and state a named list
     names(fn) = paste0("fn", 1:length(fn))
@@ -132,7 +131,7 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy'),simplify=TRUE ){
       fn=gsub(paste0('\\b(state)\\[(',statei,')?\\]'),paste0('state__',statei,'__'),fn,perl = TRUE)
     }
     
-
+    
     
     fn=gsub(' ','',fn,fixed=TRUE)
     #probably redundant now but maybe useful at some point?
@@ -166,6 +165,23 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy'),simplify=TRUE ){
     
     
     Jm <- matrix(J,Jrows,ndim)
+    
+    #replace references to simple parameters with the matrix ref, when they are found in complex parameters
+    simplepars <- unique(m$pars$param[!is.na(m$pars$param) & !grepl('\\W',m$pars$param)])
+    if(length(simplepars)>0){
+      for(pi in 1:length(Jm)){
+        if(is.na(suppressWarnings(as.numeric(Jm[pi]))) &
+            grepl('\\W', Jm[pi])
+        ){
+          print(Jm[pi])
+          for(spi in 1:length(simplepars)){
+            modelrowmatch <- which(m$pars$param %in% simplepars[spi])[1]
+            Jm[pi]<-gsub(paste0('\\<',simplepars[spi],'\\>'), 
+              paste0(m$pars$matrix[modelrowmatch],'[',m$pars$row[modelrowmatch],',',m$pars$col[modelrowmatch],']'),
+              Jm[pi])
+          }}
+      }
+    }
     
     #this was creating direct references but not needed here
     # for(j in 1:ncol(Jm)){
