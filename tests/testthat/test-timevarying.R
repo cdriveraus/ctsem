@@ -47,7 +47,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 & !(
     # dm$pars$indvarying[dm$pars$matrix %in% c('CINT','T0MEANS')] <- TRUE
     
     
-
+    
     
     for(m in c('cm','dm')){
       argslist <- list(
@@ -73,7 +73,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 & !(
       if(length(i)>0){
         for(ti in 4:5){
           # print(paste0(ctpars[i,'matrix'],' ', ctpars[i,'row'],',', ctpars[i,'col'],' ',
-            # colnames(ctpars)[ti],' = ', ctpars[i,ti],', ',dtpars[ri,ti]))
+          # colnames(ctpars)[ti],' = ', ctpars[i,ti],', ',dtpars[ri,ti]))
           testthat::expect_equivalent(ctpars[i,ti],dtpars[ri,ti],tol=ifelse(ti==4,1e-1,1e-1))
         }
       }
@@ -120,7 +120,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 & !(
       DRIFT=matrix(c(-1,.5,0,-1),2,2), #temporal dynamics
       TRAITVAR = diag(.5,2), #stable latent intercept variance (cholesky factor)
       DIFFUSION=diag(2)) #within person covariance 
-
+    
     d <- data.frame(ctGenerate(ctmodelobj = gm,n.subjects = 100,
       burnin = 20,dtmean = 1))
     
@@ -131,6 +131,6 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 & !(
     
     f <- ctStanFit(datalong = d,ctstanmodel = test_)
     
-  }
+  })
   
 }
