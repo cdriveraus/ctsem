@@ -173,7 +173,6 @@ ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy'),simplify=TRUE ){
         if(is.na(suppressWarnings(as.numeric(Jm[pi]))) &
             grepl('\\W', Jm[pi])
         ){
-          print(Jm[pi])
           for(spi in 1:length(simplepars)){
             modelrowmatch <- which(m$pars$param %in% simplepars[spi])[1]
             Jm[pi]<-gsub(paste0('\\<',simplepars[spi],'\\>'), 
