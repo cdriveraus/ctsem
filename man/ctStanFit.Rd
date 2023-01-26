@@ -27,6 +27,7 @@ ctStanFit(
   saveCompile = TRUE,
   savescores = FALSE,
   savesubjectmatrices = FALSE,
+  saveComplexPars = FALSE,
   gendata = FALSE,
   control = list(),
   verbose = 0,
@@ -110,6 +111,9 @@ or time points, will increase file size substantially.}
 only relevant when either time dependent predictors or individual differences are 
 used. Can increase memory usage dramatically in large models, and can be computed after fitting using ctExtract
 or ctStanSubjectPars .}
+
+\item{saveComplexPars}{Logical. If TRUE, also save rowwise output of any complex parameters specified,
+i.e. combinations of parameters, functions and states.}
 
 \item{gendata}{Logical -- If TRUE, uses provided data for only covariates and a time and missingness structure, and 
 generates random data according to the specified model / priors. 

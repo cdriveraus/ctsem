@@ -48,7 +48,7 @@ Alternatively, a character vector specifying the manifest and latent names to pl
 \item{polygonalpha}{Numeric for the opacity of the uncertainty region.}
 
 \item{facets}{when multiple subjects are included in multivariate plots, the default is to facet plots 
-by variable type. This can be set to NA for no facets, or \code{vars(Subject)} for facetting by subject.}
+by variable type. This can be set to NA for no facets, or \code{ggplot2::vars(Subject)} for facetting by subject.}
 
 \item{...}{not used.}
 }

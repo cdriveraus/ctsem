@@ -1,5 +1,9 @@
 ctsem news:
 
+26/1/2023
+####3.7.3####
+- Fix compile error for some higher dimensional non-linear models
+
 1/7/2022
 ####3.7.0####
 - Fix some plotting features, speed up random effects a little.

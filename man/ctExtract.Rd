@@ -5,7 +5,13 @@
 \alias{extract}
 \title{Extract samples from a ctStanFit object}
 \usage{
-ctExtract(object, subjectMatrices = FALSE, cores = 2, nsamples = "all")
+ctExtract(
+  object,
+  subjectMatrices = FALSE,
+  cores = 2,
+  nsamples = "all",
+  subjects = "all"
+)
 }
 \arguments{
 \item{object}{ctStanFit object, samples may be from Stan's HMC, or the importance sampling approach of ctsem.}
@@ -15,6 +21,8 @@ ctExtract(object, subjectMatrices = FALSE, cores = 2, nsamples = "all")
 \item{cores}{Only used if subjectMatrices = TRUE . For faster computation use more cores.}
 
 \item{nsamples}{either 'all' or an integer denoting number of random samples to extract.}
+
+\item{subjects}{either 'all', or an integer vector denoting subjects to extract.}
 }
 \value{
 Array of posterior samples.

@@ -4,6 +4,7 @@
 #' @param subjectMatrices Calculate subject specific system matrices?
 #' @param cores Only used if subjectMatrices = TRUE . For faster computation use more cores.
 #' @param nsamples either 'all' or an integer denoting number of random samples to extract.
+#' @param subjects either 'all', or an integer vector denoting subjects to extract.
 #' @return Array of posterior samples.
 #' @aliases extract
 #' @examples
