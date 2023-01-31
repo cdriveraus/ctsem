@@ -668,7 +668,7 @@ ctStanCalcsList <- function(ctm, save=FALSE){  #extract any calcs from model int
     if(length(x)){
      rhs <- gsub('^.* = ','',x)[whicheqs]
      lhs <- gsub(' = .*','',x)[whicheqs]
-     neweqs <- paste0('calcs[rowi, ', uniqueCounter:(uniqueCounter+(length(lhs)-1)),'] = ',rhs)
+     neweqs <- paste0('if(si >0) calcs[rowi, ', uniqueCounter:(uniqueCounter+(length(lhs)-1)),'] = ',rhs)
        x <- c(x,neweqs)
        uniqueCounter <<- uniqueCounter+length(lhs)
        uniqueNames <<- c(uniqueNames,lhs)
