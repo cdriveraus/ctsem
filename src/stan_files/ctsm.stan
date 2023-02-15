@@ -661,8 +661,6 @@ if(si==0 || sum(whenmat[52,{5}]) > 0 )JAx=mcalc(JAx,indparams, statetf,{0}, 52, 
 if(si==0 || sum(whenmat[53,{5}]) > 0 )Jtd=mcalc(Jtd,indparams, statetf,{0}, 53, matsetup, matvalues, si); 
 if(si==0 || sum(whenmat[54,{5}]) > 0 )Jy=mcalc(Jy,indparams, statetf,{0}, 54, matsetup, matvalues, si); 
 
-     
-    if(si==0 || whenmat[5,5] || whenmat[5,4] || statedep[5]) MANIFESTcov = sdcovsqrt2cov(MANIFESTVAR,choleskymats);
     
     if(verbose==2) print("DRIFT = ",DRIFT);
     if(verbose==2) print("indparams = ", indparams);
@@ -920,7 +918,7 @@ if(dosmoother){
     if(verbose>1) print("Jy ",Jy);
   } //end measurement init
       
-  if(statedep[5] || whenmat[5,4]) MANIFESTcov = sdcovsqrt2cov(MANIFESTVAR,choleskymats);
+  if(si==0 || whenmat[5,5] || whenmat[5,4] || statedep[5]) MANIFESTcov = sdcovsqrt2cov(MANIFESTVAR,choleskymats);
 
  
   if(si > 0 && (nobs_y[rowi] > 0 || dosmoother)){   //if not just inits...

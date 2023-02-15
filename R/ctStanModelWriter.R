@@ -888,8 +888,6 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE,
     //init other system matrices (already done PARS, redo t0means in case of PARS dependencies...)
    ',matcalcs('si',when=0,
      matrices = c(mats$base[!mats$base %in% c(1,10)],mats$jacobian),basemats=TRUE),'
-     
-    if(si==0 || whenmat[5,5] || whenmat[5,4] || statedep[5]) MANIFESTcov = sdcovsqrt2cov(MANIFESTVAR,choleskymats);
     
     if(verbose==2) print("DRIFT = ",DRIFT);
     if(verbose==2) print("indparams = ", indparams);
@@ -1114,7 +1112,7 @@ if(verbose > 1){
     if(verbose>1) print("Jy ",Jy);
   } //end measurement init
       
-  if(statedep[5] || whenmat[5,4]) MANIFESTcov = sdcovsqrt2cov(MANIFESTVAR,choleskymats);
+  if(si==0 || whenmat[5,5] || whenmat[5,4] || statedep[5]) MANIFESTcov = sdcovsqrt2cov(MANIFESTVAR,choleskymats);
 
  
   if(si > 0 && (nobs_y[rowi] > 0 || dosmoother)){   //if not just inits...
