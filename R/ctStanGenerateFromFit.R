@@ -17,11 +17,13 @@ ctStanGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErr
   
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object!')
   
-  if(nsamples > ncol(fit$stanfit$rawposterior)) fit <- ctAddSamples(fit,nsamples = nsamples,cores=1)
+  if(nsamples > ncol(fit$stanfit$rawposterior) & fullposterior & is.null(fit$stanfit$stanfit)) fit <- ctAddSamples(fit,nsamples = nsamples,cores=1)
+  
+  if(nsamples > ncol(fit$stanfit$rawposterior)) replace=TRUE else replace=FALSE #if nsamples still larger than available, use replacement
   
   if(!fullposterior){
     umat=matrix(fit$stanfit$rawest,nrow=length(fit$stanfit$rawest),ncol=nsamples)
-    } else umat=t(fit$stanfit$rawposterior)[,sample(1:nrow(fit$stanfit$rawposterior),size=nsamples),drop=FALSE]
+    } else umat=t(fit$stanfit$rawposterior)[,sample(1:nrow(fit$stanfit$rawposterior),size=nsamples,replace = replace),drop=FALSE]
   
   
   if(fit$setup$recompile) {

@@ -130,7 +130,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 & !(
     d$Y <- d$Y2
     
     f <- ctStanFit(datalong = d,ctstanmodel = test_)
-    
+    testthat::expect_equivalent(class(f),'ctStanFit')
   })
   
 }
