@@ -46,6 +46,7 @@ Imports:
     plyr,
     RcppParallel (>= 5.0.1),
     rstan (>= 2.21.0),
+    rstantools (>= 2.3.0),
     stats,
     tibble,
     tools,
@@ -74,3 +75,4 @@ Suggests:
 VignetteBuilder: knitr
 RoxygenNote: 7.2.3
 SystemRequirements: GNU make
+Biarch: true
