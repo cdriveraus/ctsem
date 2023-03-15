@@ -49,6 +49,12 @@ jobs:
         run: |
           chmod +x configure
           
+      - name: rstan Upgrade
+        run: |
+          install.packages("stanHeaders", repos = c('https://mc-stan.org/r-packages/', getOption('repos')))
+          install.packages("rstan", repos = c('https://mc-stan.org/r-packages/', getOption('repos')))
+        shell: Rscript {0}
+          
       - uses: r-lib/actions/setup-tinytex@v2
         env: 
           TINYTEX_INSTALLER: TinyTeX
