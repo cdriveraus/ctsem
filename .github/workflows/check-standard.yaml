@@ -45,7 +45,7 @@ jobs:
           extra-packages: any::rcmdcheck, local::.
           needs: check
       
-      -name executablePermissions:
+      -name: executable Permissions
         run: |
           chmod +x configure
           
