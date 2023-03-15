@@ -52,6 +52,6 @@ ctsmupdate<-function(usecurrentwd=FALSE,scat=FALSE){
     sink(file=file.path(pathbase,'ctsmgen.stan'))
     cat(smgen)
     sink()
-    rstantools::rstan_config(pkgdir = pkgdir)
+    # rstantools::rstan_config(pkgdir = pkgdir)
   }
 }

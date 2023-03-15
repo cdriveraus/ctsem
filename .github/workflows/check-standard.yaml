@@ -51,7 +51,7 @@ jobs:
           
       - name: rstan Upgrade
         run: |
-          install.packages("stanHeaders", repos = c('https://mc-stan.org/r-packages/', getOption('repos')))
+          install.packages("StanHeaders", repos = c('https://mc-stan.org/r-packages/', getOption('repos')))
           install.packages("rstan", repos = c('https://mc-stan.org/r-packages/', getOption('repos')))
         shell: Rscript {0}
           
