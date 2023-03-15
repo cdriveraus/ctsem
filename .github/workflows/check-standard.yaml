@@ -56,8 +56,9 @@ jobs:
       - name: Updated rstan
         #if: runner.os == 'Windows'
         run: |
-          devtools::install(reload=FALSE,quick=TRUE,build=TRUE,dependencies=FALSE,build_vignettes=FALSE)
-          shell: Rscript {0}
+          install.packages("stanHeaders", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
+          install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
+        shell: Rscript {0}
           
       - uses: r-lib/actions/check-r-package@v2
         with:
