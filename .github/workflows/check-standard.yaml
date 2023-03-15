@@ -52,13 +52,6 @@ jobs:
       - name: Install additional LaTeX packages
         run: |
           tlmgr install biblatex-apa biblatex babel-english csquotes preprint mathtools caption biber
-      
-      - name: Updated rstan
-        #if: runner.os == 'Windows'
-        run: |
-          #install.packages("stanHeaders", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
-          #install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
-        shell: Rscript {0}
           
       - uses: r-lib/actions/check-r-package@v2
         with:
