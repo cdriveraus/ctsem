@@ -44,6 +44,9 @@ jobs:
         with:
           extra-packages: any::rcmdcheck, local::.
           needs: check
+      
+      before_install:
+      - chmod +x configure
           
       - uses: r-lib/actions/setup-tinytex@v2
         env: 
