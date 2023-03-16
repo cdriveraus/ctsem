@@ -75,4 +75,4 @@ Suggests:
 VignetteBuilder: knitr
 RoxygenNote: 7.2.3
 SystemRequirements: GNU make
-Biarch: true
+Biarch: false
