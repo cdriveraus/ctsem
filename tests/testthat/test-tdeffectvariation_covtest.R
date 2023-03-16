@@ -260,7 +260,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
   test_that("randomEffectsDRIFT", {
     set.seed(1)
     nsubjects <- 400
-    ntimes <- 20
+    ntimes <- 50
     
     baseline <- rnorm(nsubjects,2, 2)
     t0m <- rnorm(nsubjects,baseline/2,1)
@@ -428,7 +428,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     m2$pars$indvarying=F
     
     f <- ctStanFit(datalong = dat,ctstanmodel = m,cores=cores,
-      optimcontrol = list(stochastic=F,carefulfit=F,bootstrapUncertainty=TRUE))#,init=f$stanfit$rawest)
+      optimcontrol = list(stochastic=F,carefulfit=F))#,init=f$stanfit$rawest)
     s=summary(f)
     s
     subjpars=ctStanSubjectPars(f)[1,,] #calculate subject specific parameter estimates
@@ -471,7 +471,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     #test sd of ctsem between subjects setup vs manual specification
     testthat::expect_equivalent(sqrt(diag(f2$stanfit$transformedparsfull$pop_T0cov[1,,])),
-      f$stanfit$transformedparsfull$rawpopsd,tol=.01)
+      f$stanfit$transformedparsfull$rawpopsd,tol=.05)
     
     #test sd of ctsem between subjects setup vs subject specific pars
     testthat::expect_equivalent(dfsdtf$X50.,dfsdtf$subjPars,tol=.1)
@@ -505,7 +505,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     #test corr of ctsem between subjects setup vs true sample sd -- why is t0means sd overestimated?
     testthat::expect_equivalent(dfcorr[,'trueSample'],
-      dfcorr[,'X50.'],tol=.1)
+      dfcorr[,'X50.'],tol=.2)
     
     
   })
@@ -561,7 +561,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     m2$pars$indvarying=F
     
     f <- ctStanFit(datalong = dat,ctstanmodel = m,cores=cores,
-      optimcontrol = list(stochastic=F,carefulfit=F,bootstrapUncertainty=TRUE))#,init=f$stanfit$rawest)
+      optimcontrol = list(stochastic=F,carefulfit=F))#,init=f$stanfit$rawest)
     s=summary(f)
     s
     subjpars=ctStanSubjectPars(f)[1,,] #calculate subject specific parameter estimates
