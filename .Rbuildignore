@@ -24,8 +24,7 @@
 ^vignettes/compactPDF.R
 ^\.travis\.yml$
 ^docs
-^src/stan_files/ctsm.bak
-^src/stan_files/ctsmgen.bak
+^src$
 ^installctsem.R
 ^tests/testthat/Rplots.pdf
 ^vignettes/.*\.blg

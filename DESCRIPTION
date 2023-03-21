@@ -49,7 +49,8 @@ Imports:
     tools,
     utils,
     RcppParallel,
-    tibble
+    tibble,
+    rstantools
 Encoding: UTF-8
 LazyData: true
 ByteCompile: true
@@ -75,3 +76,4 @@ Suggests:
     arules
 VignetteBuilder: knitr
 RoxygenNote: 7.2.3
+Biarch: true
