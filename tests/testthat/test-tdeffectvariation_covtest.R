@@ -465,7 +465,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       f2est=sqrt(diag(f2$stanfit$transformedparsfull$pop_T0cov[1,,])),
       f1est=c(f$stanfit$transformedparsfull$rawpopsd)) #population estimate
     
-    dfsdtf=data.frame(trueSample=c(sd(t0m),sd(raweffect),sd(baseline)),  #sample sd
+    dfsdtf=data.frame(trueSample=c(sd(t0m),sd(effect),sd(baseline)),  #sample sd
       subjPars=sqrt(diag(cov(subjpars))), #sd of individual effect point estimates
       s$popsd) #population estimate
     
@@ -478,7 +478,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     #test sd of ctsem between subjects setup vs true sample sd 
     testthat::expect_equivalent(dfsd[,'trueSample'],dfsd[,'f1est'],tol=.1)
-    # testthat::expect_equivalent(dfsdtf$X50.,dfsdtf[,'trueSample'],tol=.1) #disabled but investigate where large discrepancy comes from
+    testthat::expect_equivalent(dfsdtf$X50.,dfsdtf[,'trueSample'],tol=.1) 
     
     plot(density(sqrt(f2$stanfit$transformedpars$pop_T0cov[,2,2])),type='l') #distribution of pop sd estimates
     points(density(f$stanfit$transformedpars$rawpopsd[,2]),col=2,type='l') #distribution of pop sd estimates

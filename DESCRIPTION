@@ -4,7 +4,7 @@ Title: Continuous Time Structural Equation Modelling
 Version: 3.7.4
 Date: 2023-03-14
 Authors@R: c(person("Charles", "Driver", role =
-    c("aut","cre","cph"),email="charles.driver@ibe.uzh.ch"),
+    c("aut","cre","cph"),email="charles.driver@ife.uzh.ch"),
     person("Manuel", "Voelkle", role = c("aut","cph")),
     person("Han", "Oud", role = c("aut","cph") ),
     person("Trustees of Columbia University",role='cph'))
@@ -75,4 +75,4 @@ Suggests:
 VignetteBuilder: knitr
 RoxygenNote: 7.2.3
 SystemRequirements: GNU make
-Biarch: false
+Biarch: true

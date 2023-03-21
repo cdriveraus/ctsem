@@ -84,7 +84,7 @@ transformed parameters{
     mcor=tcrossprod(constraincorsqrt(rawcor,d));
     if(corpriortype==1)  corprior=normal_lpdf(rawcor| 0, 1); //mean(fabs(rawcor))
     if(corpriortype==2) corprior= normal_lpdf(to_vector(mcor) | 0, 1);
-    if(corpriortype==3) corprior= normal_lpdf(eigenvalues_sym(mcor) | 0, 1);
+    if(corpriortype==3) corprior= normal_lpdf(to_vector(eigenvalues_sym(mcor)) | 0, 1);
   }
 
   covm = diag_matrix(exp(logsd)+1e-5) * mcor * diag_matrix(exp(logsd)+1e-5);
