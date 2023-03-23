@@ -71,8 +71,6 @@ ctStanParnames <- function(x,substrings=c('pop_','popsd')){
 #'If subject matrices were saved during fiting, not used. 
 #'@param ... additional plotting arguments to control \code{\link{ctStanDiscreteParsPlot}}
 #'@examples
-#'if(w32chk()){
-#'
 #' ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
 #'  plot=TRUE,indices='CR')
 #'  
@@ -82,8 +80,6 @@ ctStanParnames <- function(x,substrings=c('pop_','popsd')){
 #'  plot=TRUE,indices='CR')
 #'g= g+ labs(title='Cross effects')
 #'print(g)
-#'
-#'}
 #'@export
 ctStanDiscretePars<-function(ctstanfitobj, subjects='popmean', 
   times=seq(from=0,to=10,by=.1), 
@@ -243,7 +239,6 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
 #'evaluated (with the necessary arguments such as ylab etc filled in). For modifying plots.
 #'@return A ggplot2 object. This can be modified by the various ggplot2 functions, or displayed using print(x).
 #'@examples
-#'if(w32chk()){
 #'x <- ctStanDiscretePars(ctstantestfit)
 #'ctStanDiscreteParsPlot(x, indices='CR')
 #'
@@ -251,8 +246,6 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
 #'g <- ctStanDiscreteParsPlot(x, indices='CR') + 
 #'  ggplot2::labs(title='My ggplot modification')
 #'print(g)
-#'
-#'}
 #'
 #'@export
 

@@ -101,7 +101,5 @@ Nothing. Just plots.
 Visual model fit diagnostics for ctsem fit objects.
 }
 \examples{
-if(w32chk()){
 ctCheckFit(ctstantestfit)
-}
 }

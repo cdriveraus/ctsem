@@ -65,7 +65,7 @@ ctModelStatesAndPARS <- function(ctspec, statenames){ #replace latentName and pa
         # print(ctspec$param[ri])
         # print(ctspec$matrix[ri])
         # print(gsub(paste0('\\b',ln[li],'\\b([^\\[])'), #replace with PARS reference...
-          # paste0('PARS[',ctspec$row[parmatch],',',ctspec$col[parmatch],']\\1'),ctspec$param[ri]))
+        # paste0('PARS[',ctspec$row[parmatch],',',ctspec$col[parmatch],']\\1'),ctspec$param[ri]))
         # browser()
         ctspec$param[ri] <- 
           gsub(paste0('\\b',ln[li],'\\b([^\\[])'), #replace with PARS reference...
@@ -366,7 +366,7 @@ simplifystanfunction<-function(bcalc,simplify=TRUE){ #input text of list of comp
     
     scalcs2 = strsplit(scalcs2,'__eqbreak__')[[1]]
     scalcs = paste0(bcalcs1,scalcs2,';\n')
-
+    
     out = paste0('    {\n  ',paste0(ec,collapse='\n  '),'\n',paste0(scalcs,collapse=' '),'  } \n  ',collapse=' ')
     # cat(out)
     return(out)
@@ -663,22 +663,22 @@ ctStanCalcsList <- function(ctm, save=FALSE){  #extract any calcs from model int
   if(save){ #if outputting nonlinear computations
     uniqueCounter <- 1
     uniqueNames <- c()
-  calcs <- lapply(calcs, function(x){ #get unique equations and save these to output vector if save requested
-    whicheqs <- which(!duplicated(gsub('^.* = ','',x)))
-    if(length(x)){
-     rhs <- gsub('^.* = ','',x)[whicheqs]
-     lhs <- gsub(' = .*','',x)[whicheqs]
-     neweqs <- paste0('if(si >0) calcs[rowi, ', uniqueCounter:(uniqueCounter+(length(lhs)-1)),'] = ',rhs)
-       x <- c(x,neweqs)
-       uniqueCounter <<- uniqueCounter+length(lhs)
-       uniqueNames <<- c(uniqueNames,lhs)
-    }
-    return(x)
-  })
-  
-  calcs$calcNames <- uniqueNames
-  }
+    calcs <- lapply(calcs, function(x){ #get unique equations and save these to output vector if save requested
+      whicheqs <- which(!duplicated(gsub('^.* = ','',x)))
+      if(length(x)){
+        rhs <- gsub('^.* = ','',x)[whicheqs]
+        lhs <- gsub(' = .*','',x)[whicheqs]
+        neweqs <- paste0('if(si >0) calcs[rowi, ', uniqueCounter:(uniqueCounter+(length(lhs)-1)),'] = ',rhs)
+        x <- c(x,neweqs)
+        uniqueCounter <<- uniqueCounter+length(lhs)
+        uniqueNames <<- c(uniqueNames,lhs)
+      }
+      return(x)
+    })
     
+    calcs$calcNames <- uniqueNames
+  }
+  
   
   ctm$modelmats$calcs <- calcs
   return(ctm)
@@ -1275,8 +1275,9 @@ if(verbose > 1){
 ll+=sum(llrow);','
 
 ')
-    if(!is.null(ctm$w32)) out <- ''
-    return(out)}
+    
+    return(out)
+  }
 
 matcalcs <- function(subjectid,when, matrices, basemats){
   paste0(sapply(matrices, function(x){

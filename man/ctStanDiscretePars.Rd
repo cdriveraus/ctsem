@@ -52,8 +52,6 @@ Calculate model implied regressions for a sequence of time intervals (if ct) or 
 a ctStanFit object, for specified subjects.
 }
 \examples{
-if(w32chk()){
-
 ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
  plot=TRUE,indices='CR')
  
@@ -63,6 +61,4 @@ g=ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1),
  plot=TRUE,indices='CR')
 g= g+ labs(title='Cross effects')
 print(g)
-
-}
 }

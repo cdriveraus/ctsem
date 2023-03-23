@@ -63,7 +63,6 @@ Plots model implied regression strengths at specified times for
 continuous time models fit with ctStanFit.
 }
 \examples{
-if(w32chk()){
 x <- ctStanDiscretePars(ctstantestfit)
 ctStanDiscreteParsPlot(x, indices='CR')
 
@@ -71,7 +70,5 @@ ctStanDiscreteParsPlot(x, indices='CR')
 g <- ctStanDiscreteParsPlot(x, indices='CR') + 
  ggplot2::labs(title='My ggplot modification')
 print(g)
-
-}
 
 }

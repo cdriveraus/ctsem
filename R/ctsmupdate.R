@@ -29,14 +29,7 @@ ctsmupdate<-function(usecurrentwd=FALSE,scat=FALSE){
   smgen <- ctStanFit(datalong, model,fit=FALSE,gendata=TRUE,forcerecompile=TRUE)$stanmodeltext
   stanc(model_code = smgen,verbose = TRUE)
   
-  
-  
-  # model$w32 <- TRUE
-  # smgen32 <- ctStanFit(datalong, model,fit=FALSE,gendata=TRUE)$stanmodeltext
-  # stanc(model_code = smgen32,verbose = TRUE)
-  # 
-  # sm32 <- ctStanFit(datalong, model,fit=FALSE,gendata=FALSE)$stanmodeltext
-  # stanc(model_code = sm32,verbose = TRUE)
+
   
   message(paste0('Update files? T / F?'))
   continue <- readline()

@@ -68,7 +68,6 @@ ctstantestfitfunc<-function(){
 #' If win32, returns FALSE, else TRUE
 #'
 #' @return Logical
-#' @export
 #'
 #' @examples
 #' w32chk()

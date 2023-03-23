@@ -59,9 +59,6 @@ A ggplot2 object. Side effect -- Generates plots.
 Plots Kalman filter output from ctKalman.
 }
 \examples{
-if(w32chk()){
-
-
 ### Get output from ctKalman
 x<-ctKalman(ctstantestfit,subjects=2,timestep=.01)
 
@@ -73,5 +70,4 @@ ctKalman(ctstantestfit,subjects=2,
   kalmanvec=c('y','yprior'),
   elementNames=c('Y1','Y2'), 
   plot=TRUE,timestep=.01)
-}
 }

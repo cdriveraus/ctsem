@@ -52,11 +52,8 @@ ctStanTIpredParMats <- function(fit, tipvalues){
 #' @export
 #'
 #' @examples
-#' if(w32chk()){
-#'
 #' ctStanTIpredeffects(ctstantestfit,
 #'  whichpars=c('CINT','dtDIFFUSION[2,2]'), plot=TRUE)
-#' }
 ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   includeMeanUncertainty=FALSE,
   whichTIpreds=1,parmatrices=TRUE, whichpars='all', nsamples=100, timeinterval=1,

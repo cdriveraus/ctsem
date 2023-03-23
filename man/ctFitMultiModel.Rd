@@ -43,7 +43,6 @@ Fit and summarise a list of ctsem models
 }
 \examples{
 \dontrun{
-if(w32chk()){
 sunspots<-data.frame(id=1,
   time=do.call(seq,(lapply(attributes(sunspot.year)$tsp,function(x) x))),
   sunspots=sunspot.year)
@@ -63,6 +62,5 @@ sunspots<-data.frame(id=1,
  fits<-ctFitMultiModel(list(m1=ssmodel1,m2=ssmodel2),datalong = sunspots,
    summaryOutput = FALSE,saveFits = FALSE,cores=1)
  print(fits$compare)
-}
 }
 }

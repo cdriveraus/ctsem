@@ -208,9 +208,6 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
 #' @export plot.ctKalmanDF
 #' @export
 #' @examples
-#' if(w32chk()){
-#'
-#' 
 #' ### Get output from ctKalman
 #' x<-ctKalman(ctstantestfit,subjects=2,timestep=.01)
 #' 
@@ -222,7 +219,6 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
 #'   kalmanvec=c('y','yprior'),
 #'   elementNames=c('Y1','Y2'), 
 #'   plot=TRUE,timestep=.01)
-#' }
 plot.ctKalmanDF<-function(x, subjects=unique(x$Subject), kalmanvec=c('y','yprior'),
   errorvec='auto', errormultiply=1.96,plot=TRUE,elementNames=NA,
   polygonsteps=10,polygonalpha=.1,

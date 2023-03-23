@@ -38,8 +38,5 @@ List containing summary items.
 Summarise a ctStanFit object that was fit using \code{\link{ctStanFit}}.
 }
 \examples{
-if(w32chk()){
-
 summary(ctstantestfit)
-}
 }

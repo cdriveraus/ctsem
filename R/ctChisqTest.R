@@ -8,7 +8,6 @@
 #'
 #' @examples
 #' \donttest{
-#'   if(w32chk()){ #skips on 32 bit systems
 #'     df <- data.frame(id=1, time=1:length(sunspot.year), Y1=sunspot.year)
 #'     
 #'     m1 <- ctModel(type='standt', LAMBDA=diag(1),MANIFESTVAR=0)
@@ -18,7 +17,6 @@
 #'     f2 <- ctStanFit(df,m2,cores=1)
 #'     
 #'     ctChisqTest(f1,f2)
-#'   }
 #' }
 
 ctChisqTest<-function(fit1,fit2){

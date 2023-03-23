@@ -365,9 +365,7 @@ ctStanFitMelt <- function(fit, maxsamples='all'){
 #' @export
 #'
 #' @examples
-#' if(w32chk()){
 #' ctCheckFit(ctstantestfit)
-#' }
 ctCheckFit <- function(fit, 
   data=TRUE, postpred=TRUE, priorpred=FALSE, statepred=FALSE, residuals=FALSE,
   by=fit$ctstanmodelbase$timeName,

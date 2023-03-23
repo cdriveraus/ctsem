@@ -7,7 +7,6 @@
 #' @export
 #' @details On windows, requires Rtools installed and able to be found by pkgbuild::rtools_path()
 #' @examples
-#' if(w32chk()){
 #' library(rstan)
 #' #### example 1 
 #' scode <- "
@@ -22,7 +21,6 @@
 #' #Uncomment the following lines -- launches rscript not compatible with cran check.
 #' #sm <- stan_model(model_code = scode)
 #' #fit1 <- stanWplot(object = sm,iter = 100000,chains=2,cores=1)
-#' }
 
 stanWplot <- function(object,iter=2000,chains=4,...){
     

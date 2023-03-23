@@ -25,8 +25,5 @@ updated ctStanFit object.
 Either to include different data, or because you have upgraded ctsem and the internal data structure has changed.
 }
 \examples{
-if(w32chk()){
 newfit <- ctStanFitUpdate(ctstantestfit,refit=FALSE)
-}
-
 }

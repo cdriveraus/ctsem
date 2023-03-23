@@ -87,10 +87,7 @@ getparnames <- function(fit,reonly=FALSE, subjvariationonly=FALSE, popstatesonly
 #' @param ... Additional arguments to pass to \code{ctsem:::priorcheckreport}, such as \code{meanlim}, or \code{sdlim}.
 #' @return List containing summary items.
 #' @examples
-#' if(w32chk()){
-#'
 #' summary(ctstantestfit)
-#' }
 #' @method summary ctStanFit
 #' @export
 
