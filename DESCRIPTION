@@ -1,10 +1,10 @@
 Package: ctsem
 Type: Package
 Title: Continuous Time Structural Equation Modelling
-Version: 3.7.3
-Date: 2023-02-14
+Version: 3.7.6
+Date: 2023-03-23
 Authors@R: c(person("Charles", "Driver", role =
-    c("aut","cre","cph"),email="charles.driver@ibe.uzh.ch"),
+    c("aut","cre","cph"),email="charles.driver@ife.uzh.ch"),
     person("Manuel", "Voelkle", role = c("aut","cph")),
     person("Han", "Oud", role = c("aut","cph") ),
     person("Trustees of Columbia University",role='cph'))
@@ -30,10 +30,10 @@ Depends:
 URL: https://github.com/cdriveraus/ctsem
 Imports:
     cOde,
-    expm,
     data.table (>= 1.12.8),
     datasets,
     Deriv,
+    expm,
     ggplot2,
     graphics,
     grDevices,
@@ -44,12 +44,13 @@ Imports:
     mvtnorm,
     parallel,
     plyr,
-    rstan (>= 2.19.0),
+    RcppParallel (>= 5.0.1),
+    rstan (>= 2.21.0),
+    rstantools (>= 2.3.0),
     stats,
+    tibble,
     tools,
-    utils,
-    RcppParallel,
-    tibble
+    utils
 Encoding: UTF-8
 LazyData: true
 ByteCompile: true
@@ -61,8 +62,6 @@ LinkingTo:
     rstan (>= 2.21),
     StanHeaders (>= 2.21.0),
     RcppParallel (>= 5.0.1)
-SystemRequirements: GNU make
-NeedsCompilation: yes
 Suggests:
     knitr,
     testthat,
@@ -75,3 +74,5 @@ Suggests:
     arules
 VignetteBuilder: knitr
 RoxygenNote: 7.2.3
+SystemRequirements: GNU make
+Biarch: true

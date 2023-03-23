@@ -1,6 +1,5 @@
 ^.*\.Rproj$
 ^\.Rproj\.user$
-^.*\.omx
 ^util/
 ^staging/
 ^R/old/*.
@@ -22,11 +21,8 @@
 ^vignettes/.*\.log
 ^vignettes/Sweave.sty
 ^vignettes/compactPDF.R
-^\.travis\.yml$
 ^docs
-^src/stan_files/ctsm.bak
-^src/stan_files/ctsmgen.bak
-^installctsem.R
+^src/((?!RcppExports\.cpp).)*$
 ^tests/testthat/Rplots.pdf
 ^vignettes/.*\.blg
 ^\.github$
