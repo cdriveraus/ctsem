@@ -22,7 +22,7 @@
 ^vignettes/Sweave.sty
 ^vignettes/compactPDF.R
 ^docs
-^src$
+^src/((?!RcppExports\.cpp).)*$
 ^tests/testthat/Rplots.pdf
 ^vignettes/.*\.blg
 ^\.github$

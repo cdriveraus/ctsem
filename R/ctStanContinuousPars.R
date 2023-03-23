@@ -21,7 +21,7 @@
 ctStanContinuousPars <- function(fit,
   calcfunc=quantile,calcfuncargs=list(probs=0.5),timeinterval=1){
 
-  if(!'ctStanFit' %in% class(fit)) stop('Not an object of class ctStanFit')
+  if(!'ctStanFit' %in% class(fit)) stop(paste0('Not an object of class ctStanFit! Instead is ',paste0(class(fit),collapse=', ')))
   
   e<-ctExtract(fit,cores=1) #Qfit$stanfit$transformedpars #first dim of subobjects is iter, 2nd subjects
   niter=dim(e$pop_DRIFT)[1]
