@@ -31,11 +31,12 @@ ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
     if(!is.na(nsamples)) samples <- samples[sample(1:nrow(samples),nsamples),,drop=FALSE] else nsamples <- nrow(samples)
     if(is.function(collapsefunc)) samples = matrix(apply(samples,2,collapsefunc,...),ncol=ncol(samples))
   }
+  
     e=stan_constrainsamples(sm = fit$stanmodel,standata = fit$standata,
       savesubjectmatrices = subjectpars,
       samples = samples,cores=cores,savescores=TRUE,pcovn=5)
-  
-  # browser()
+
+    nsamples <-nrow(samples) #in case it was set NA, compute nsamples
   
   e$yprior <- array(e$ya[,1,,,drop=FALSE],dim=dim(e$ya)[-2])
   e$yupd <-  array(e$ya[,2,,,drop=FALSE],dim=dim(e$ya)[-2])

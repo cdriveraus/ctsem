@@ -11,6 +11,7 @@ ctKalman(
   subjects = fit$setup$idmap[1, 1],
   removeObs = FALSE,
   plot = FALSE,
+  standardisederrors = TRUE,
   realid = TRUE,
   ...
 )
@@ -36,6 +37,9 @@ parameters and covariates are returned.}
 \item{plot}{Logical. If TRUE, plots output instead of returning it. 
 See \code{\link{plot.ctKalmanDF}} 
 (Stan based fit) for the possible arguments.}
+
+\item{standardisederrors}{if TRUE, also include standardised error output (based on covariance
+per time point).}
 
 \item{realid}{use original (not necessarily integer sequence) subject id's? Otherwise use integers 1:N.}
 

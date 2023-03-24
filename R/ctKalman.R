@@ -74,6 +74,8 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,timestep='auto',plot=TRUE,ret
 #' @param removeObs Logical. If TRUE, observations (but not covariates)
 #' are set to NA, so only expectations based on
 #' parameters and covariates are returned. 
+#' @param standardisederrors if TRUE, also include standardised error output (based on covariance
+#' per time point).
 #' @param plot Logical. If TRUE, plots output instead of returning it. 
 #' See \code{\link{plot.ctKalmanDF}} 
 #' (Stan based fit) for the possible arguments.
@@ -114,7 +116,8 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,timestep='auto',plot=TRUE,ret
 #' @export
 
 ctKalman<-function(fit, timerange='asdata', timestep='auto',
-  subjects=fit$setup$idmap[1,1], removeObs = FALSE, plot=FALSE, realid=TRUE,...){
+  subjects=fit$setup$idmap[1,1], removeObs = FALSE, plot=FALSE, 
+  standardisederrors=TRUE,realid=TRUE,...){
   type=NA
   if('ctStanFit' %in% class(fit)) type='stan' 
   if('ctsemFit' %in% class(fit)) type ='omx'
@@ -159,7 +162,7 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
       fit$standata$Y[] <- 99999
     }
     out <- ctStanKalman(fit,pointest=length(fit$stanfit$stanfit@sim)==0, 
-      collapsefunc=mean, indvarstates = FALSE) #extract state predictions
+      collapsefunc=mean, indvarstates = FALSE,standardisederrors = standardisederrors) #extract state predictions
     out$id <- idstore #as.integer(subjects[out$id]) #get correct subject indicators
     
     out <- meltkalman(out)
