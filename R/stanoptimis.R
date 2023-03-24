@@ -222,7 +222,7 @@ jacrandom <- function(grfunc, est, eps=1e-4,
 #' }
 ctAddSamples <- function(fit,nsamples,cores=2){
   
-  if(length(ctstantestfit$stanfit$stanfit@sim) > 0) stop('ctStanFit object was sampled and not optimized, cannot add samples!')
+  if(length(fit$stanfit$stanfit@sim) > 0) stop('ctStanFit object was sampled and not optimized, cannot add samples!')
   
   mchol <- t(chol(fit$stanfit$cov))
   resamples <- matrix(unlist(lapply(1:nsamples,function(x){

@@ -75,4 +75,5 @@ Suggests:
 VignetteBuilder: knitr
 RoxygenNote: 7.2.3
 SystemRequirements: GNU make
+NeedsCompilation: yes
 Biarch: true
