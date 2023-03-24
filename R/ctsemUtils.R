@@ -63,19 +63,6 @@ ctstantestfitfunc<-function(){
 
 
 
-#' Check for non win32
-#' 
-#' If win32, returns FALSE, else TRUE
-#'
-#' @return Logical
-#'
-#' @examples
-#' w32chk()
-w32chk <- function(){
-  notw32 <- !(.Platform$OS.type=="windows" && .Platform$r_arch=="i386")
-  return(notw32)
-}
-
 
 removeOutliers <- function(dat,multiplier,by=2){
   dat2 <- array(apply(dat,by,function(x){
