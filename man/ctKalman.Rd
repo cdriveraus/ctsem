@@ -30,9 +30,10 @@ but take a little more time to calculate.}
 
 \item{subjects}{vector of integers denoting which subjects (from 1 to N) to plot predictions for.}
 
-\item{removeObs}{Logical. If TRUE, observations (but not covariates)
-are set to NA, so only expectations based on
-parameters and covariates are returned.}
+\item{removeObs}{Logical or integer. If TRUE, observations (but not covariates)
+are set to NA, so only expectations based on parameters and covariates are returned. If a positive integer N, 
+every N observations are retained while others are set NA for computing model expectations -- useful for observing prediction performance
+forward further in time than one observation.}
 
 \item{plot}{Logical. If TRUE, plots output instead of returning it. 
 See \code{\link{plot.ctKalmanDF}} 

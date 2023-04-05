@@ -71,9 +71,10 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,timestep='auto',plot=TRUE,ret
 #' indicating the time step to use for interpolating values. Lower values give a more accurate / smooth representation,
 #' but take a little more time to calculate. 
 #' @param subjects vector of integers denoting which subjects (from 1 to N) to plot predictions for. 
-#' @param removeObs Logical. If TRUE, observations (but not covariates)
-#' are set to NA, so only expectations based on
-#' parameters and covariates are returned. 
+#' @param removeObs Logical or integer. If TRUE, observations (but not covariates)
+#' are set to NA, so only expectations based on parameters and covariates are returned. If a positive integer N, 
+#' every N observations are retained while others are set NA for computing model expectations -- useful for observing prediction performance
+#' forward further in time than one observation.
 #' @param standardisederrors if TRUE, also include standardised error output (based on covariance
 #' per time point).
 #' @param plot Logical. If TRUE, plots output instead of returning it. 
@@ -156,10 +157,13 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
       as.integer(fit$standata$subject %in% subjects)# |
     # as.logical(match(unique(fit$standata$subject),fit$standata$subject))) #what was this doing?
     
-    if(removeObs){
-      sapply(c('nobs_y','nbinary_y','ncont_y','whichobs_y','whichbinary_y','whichcont_y'),
-        function(x) fit$standata[[x]][] <<- 0L)
-      fit$standata$Y[] <- 99999
+    if(removeObs || removeObs > 0){
+      if(is.numeric(removeObs)) skipn <- removeObs else skipn <- 1
+      for(x in c('nobs_y','nbinary_y','ncont_y','whichobs_y','whichbinary_y','whichcont_y')){
+       if(length(dim(fit$standata[[x]]))==2) fit$standata[[x]][(1:skipn)!=1,] <- 0L else fit$standata[[x]][(1:skipn)!=1] <-0L 
+      }
+      # fit$standata$Y[(1:skipn)!=1,] <- 99999
+      # browser()
     }
     out <- ctStanKalman(fit,pointest=length(fit$stanfit$stanfit@sim)==0, 
       collapsefunc=mean, indvarstates = FALSE,standardisederrors = standardisederrors) #extract state predictions
