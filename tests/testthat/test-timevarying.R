@@ -1,6 +1,6 @@
-if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 & !(
-  .Platform$OS.type=="windows" && R.Version()$major >=4 && R.Version()$minor >= 2 && 
-    compareVersion(as.character(packageVersion('rstan')[[1]]),'2.25.0')== -1)){
+if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 & 
+    !(.Platform$OS.type=="windows" && R.version$major %in% 4 && as.numeric(R.version$minor) >= 2 &&
+    unlist(utils::packageVersion('rstan'))[2] < 25)){
   # Sys.setenv(NOT_CRAN = 'true')
   
   library(ctsem)

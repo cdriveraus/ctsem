@@ -1,4 +1,5 @@
-if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
+if(identical(Sys.getenv("NOT_CRAN"), "true")& !(.Platform$OS.type=="windows" && R.version$major %in% 4 && as.numeric(R.version$minor) >= 2 &&
+    unlist(utils::packageVersion('rstan'))[2] < 25) ){
   library(ctsem)
   library(testthat)
   library(data.table)
