@@ -647,8 +647,6 @@ clusterIDeval <- function(cl,commands){
 #' @param parsteps ordered list of vectors of integers denoting which parameters should begin fixed
 #' at zero, and freed sequentially (by list order). Useful for complex models, e.g. keep all cross couplings fixed to zero 
 #' as a first step, free them in second step. 
-#' @param finitediff Either 'ask', TRUE, or FALSE. Whether to use the slow finite difference calculations
-#' for the Hessian (used for confidence intervals) if other approaches do not give a positive definite result. 
 #' @param chancethreshold drop iterations of importance sampling where any samples are chancethreshold times more likely to be drawn than expected.
 #' @param matsetup subobject of ctStanFit output. If provided, parameter names instead of numbers are output for any problem indications.
 #' @param nsubsets number of subsets for stochastic optimizer. Subsets are further split across cores, 
@@ -665,7 +663,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   stochastic = TRUE,
   nopriors=FALSE,carefulfit=TRUE,
   bootstrapUncertainty=FALSE,
-  subsamplesize=1,finitediff=FALSE,
+  subsamplesize=1,
   parsteps=c(),
   plot=FALSE,
   is=FALSE, isloopsize=1000, finishsamples=1000, tdf=10,chancethreshold=100,finishmultiply=5,
@@ -769,7 +767,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       on.exit({
         if(!optimfinished){
           message('Optimization cancelled -- restart from current point by including this argument:')
-          message((paste0(c('init = c(',   paste0(round(storedPars,5),collapse=', '), ')'    ))))
+          message((paste0(c('inits = c(',   paste0(round(storedPars,5),collapse=', '), ')'    ))))
           # message('Return inits? Y/N')
           # if(readline() %in% c('Y','y')) returnValue(storedPars)
         }},add=TRUE)

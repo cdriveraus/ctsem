@@ -160,7 +160,12 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
     if(removeObs || removeObs > 0){
       if(is.numeric(removeObs)) skipn <- removeObs else skipn <- 1
       for(x in c('nobs_y','nbinary_y','ncont_y','whichobs_y','whichbinary_y','whichcont_y')){
-       if(length(dim(fit$standata[[x]]))==2) fit$standata[[x]][(1:skipn)!=1,] <- 0L else fit$standata[[x]][(1:skipn)!=1] <-0L 
+        if(skipn > 1) {
+          if(length(dim(fit$standata[[x]]))==2) fit$standata[[x]][(1:skipn)!=1,] <- 0L else fit$standata[[x]][(1:skipn)!=1] <-0L 
+        }
+        if(skipn==1) {
+          if(length(dim(fit$standata[[x]]))==2) fit$standata[[x]][,] <- 0L else fit$standata[[x]][] <-0L 
+        }
       }
       # fit$standata$Y[(1:skipn)!=1,] <- 99999
       # browser()

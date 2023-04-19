@@ -60,6 +60,7 @@ ctModelStatesAndPARS <- function(ctspec, statenames){ #replace latentName and pa
   
   for(li in seq_along(ln)){ #for every extra par
     parmatch <- which(ctspec$param %in% ln[li] & ctspec$matrix %in% 'PARS') #which row is the par itself
+    # if(grepl('taux',ln[li])) browser()
     for(ri in grep(paste0('\\b',ln[li],'\\b'),ctspec$param)){ #which rows contain the par
       if(!(ctspec$param[ri] == ln[li] & ctspec$matrix[ri]=='PARS')){ #that are not the par itself in the pars matrix# #removed limitation of referencing within PARS matrices
         # print(ctspec$param[ri])
