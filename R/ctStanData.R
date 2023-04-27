@@ -286,8 +286,8 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     }
     if(subi - oldsubi == 0) {
       dT[rowi]<-datalong[rowi,ctm$timeName] - datalong[rowi-1,ctm$timeName]
-      if(dT[rowi] < 0) stop(paste0('A time interval of ', dT[rowi],' was found at row ',rowi))
-      if(dT[rowi] == 0) warning(paste0('A time interval of ', dT[rowi],' was found at row ',rowi))
+      if(dT[rowi] <= 0) stop(paste0('A time interval of ', dT[rowi],' was found at row ',rowi))
+      # if(dT[rowi] == 0) warning(paste0('A time interval of ', dT[rowi],' was found at row ',rowi))
       
     }
     oldsubi<-subi

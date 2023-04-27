@@ -43,6 +43,7 @@ ctStanContinuousPars <- function(fit,
     try({
       calcfuncargs$collapsemargin = 1
     calcfuncargs$collapsefunc=calcfunc
+    calcfuncargs$na.rm=TRUE
 
       calcfuncargs$inarray = e[[paste0('pop_',matname)]]
       out[[matname]] <- array(do.call(ctCollapse,calcfuncargs),
@@ -71,7 +72,6 @@ ctStanContinuousPars <- function(fit,
   rownames(out$T0MEANS)=ln
   
   dimnames(out$T0VAR)=list(ln,ln)
-  dimnames(out$asymDIFFUSIONcov)=list(ln,ln)
   dimnames(out$LAMBDA)=list(mn,ln)
 
   
