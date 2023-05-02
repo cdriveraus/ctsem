@@ -13,7 +13,7 @@ if(FALSE){
       cint <- t0m/2+rnorm(nsubjects)
       # cor(t0m,cint)
       for(subi in 1:nsubjects){
-        gm <- ctModel(Tpoints=10,
+        gm <- suppressMessages(ctModel(Tpoints=10,
           LAMBDA=matrix(1), 
           DRIFT= -1,
           T0MEANS = t0m[subi],
@@ -21,9 +21,10 @@ if(FALSE){
           MANIFESTVAR = 0.5,
           T0VAR = 0,
           MANIFESTMEANS = 0,
-          CINT=cint[subi])
+          CINT=cint[subi]))
         
-        dd <- data.frame(ctGenerate(ctmodelobj = gm,n.subjects = 1,burnin = 0,dtmean = 1,logdtsd = 0))
+        dd <- suppressMessages(data.frame(ctGenerate(ctmodelobj = gm,n.subjects = 1,
+          burnin = 0,dtmean = 1,logdtsd = 0)))
         dd$id <- subi
         if(subi==1) d <- dd else d <- rbind(d,dd)
       }

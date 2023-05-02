@@ -59,7 +59,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     sm1$pars$indvarying <- FALSE
 
     sf1 <- ctStanFit(cd,sm1,iter=200,
-      optimize=TRUE,verbose=1,nopriors = TRUE,
+      optimize=TRUE,verbose=0,nopriors = TRUE,
       optimcontrol=list(finishsamples=50),
       derrind=1:4,
       nlcontrol=list(nldynamics=FALSE))

@@ -44,7 +44,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& !(.Platform$OS.type=="windows" && 
         corz <- (t0corz+zyg[subi]*zyg_t0corz) + age_corz*age +
           zyg_age_corz * age * zyg[subi]+
           agesq_corz*age^2
-        if(subi==1) print(paste0('age = ',age,'  corz= ', corz))
+        # if(subi==1) print(paste0('age = ',age,'  corz= ', corz))
         cholm <- t(chol(matrix(c(1,(inv_logit(corz)*2-1)*.99,(.99*inv_logit(corz)*2-1),1),2,2)))
         slope <- slope + (slopecrosseffect*y[i-1,] + slope * drift) * dt +
           cholm %*% rnorm(2,0,exp(diffusion+diffusionage*age)) * dt

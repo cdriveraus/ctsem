@@ -20,9 +20,9 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
     sd(par)
     
     for(subi in 1:nsubjects){
-      gm=ctModel(LAMBDA=diag(1), Tpoints=Tpoints, DRIFT=matrix(-.5),T0MEANS = matrix(4), 
+      gm=suppressMessages(ctModel(LAMBDA=diag(1), Tpoints=Tpoints, DRIFT=matrix(-.5),T0MEANS = matrix(4), 
         CINT=matrix(par[subi]),DIFFUSION=matrix(1),
-        T0VAR=matrix(1), MANIFESTVAR=matrix(.3))
+        T0VAR=matrix(1), MANIFESTVAR=matrix(.3)))
       d=suppressMessages(ctGenerate(gm,n.subjects = 1,burnin = 0,dtmean = dt))
       if(subi==1) dat=cbind(subi,d) else dat=rbind(dat,cbind(subi,d))
     }

@@ -19,7 +19,6 @@ stanoptimis(
   carefulfit = TRUE,
   bootstrapUncertainty = FALSE,
   subsamplesize = 1,
-  finitediff = FALSE,
   parsteps = c(),
   plot = FALSE,
   is = FALSE,
@@ -69,9 +68,6 @@ the stan model uses this value.}
 for computing standard errors or initializing importance sampling.}
 
 \item{subsamplesize}{value between 0 and 1 representing proportion of subjects to include in first pass fit.}
-
-\item{finitediff}{Either 'ask', TRUE, or FALSE. Whether to use the slow finite difference calculations
-for the Hessian (used for confidence intervals) if other approaches do not give a positive definite result.}
 
 \item{parsteps}{ordered list of vectors of integers denoting which parameters should begin fixed
 at zero, and freed sequentially (by list order). Useful for complex models, e.g. keep all cross couplings fixed to zero 
