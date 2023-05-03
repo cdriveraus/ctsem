@@ -15,7 +15,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
   effect <- rnorm(nsubjects, 5-baseline/3, 0.5)
   
   for(i in 1:nsubjects){
-    gm <- suppressMessages(ctModel(Tpoints=ntimes,
+    gm <- suppressMessages(ctModel(silent=TRUE,Tpoints=ntimes,
       LAMBDA=matrix(c(1,0),1,2), 
       DRIFT= c(-1,1,
         0,-.5),
@@ -33,7 +33,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
   }
   
   #regular bw effect approach
-  m <- ctModel(type='stanct',
+  m <- ctModel(silent=TRUE,type='stanct',
     LAMBDA=matrix(c(1,0),1,2), 
     DRIFT= c('drift',1,
       0,-0.5),
@@ -43,7 +43,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     TDPREDEFFECT = matrix(c(0,'tdpredeffect|param|TRUE')))
   
   #manual bw effects
-  m2 <- ctModel(type='omx',Tpoints=3,
+  m2 <- ctModel(silent=TRUE,type='omx',Tpoints=3,
     LAMBDA=matrix(c(1,0,0,0),1,4), 
     DRIFT= c('drift',1,0,0,
       0,-0.5,0,0,
@@ -143,7 +143,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     effect <- rnorm(nsubjects, 5-baseline/3, 0.5)
     
     for(i in 1:nsubjects){
-      gm <- suppressMessages(ctModel(Tpoints=ntimes,
+      gm <- suppressMessages(ctModel(silent=TRUE,Tpoints=ntimes,
         LAMBDA=matrix(c(1,effect[i]),1,2), 
         DRIFT= c(-1,0,
           0,-.5),
@@ -161,7 +161,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     }
     
     #regular bw effect approach
-    m <- ctModel(type='stanct',
+    m <- ctModel(silent=TRUE,type='stanct',
       LAMBDA=matrix(c(1,'tdpredeffect|param|TRUE'),1,2), 
       DRIFT= c('drift',0,
         0,-0.5),
@@ -171,7 +171,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       TDPREDEFFECT = matrix(c(0,1)))
     
     #manual bw effects
-    m2 <- ctModel(type='omx',Tpoints=3,
+    m2 <- ctModel(silent=TRUE,type='omx',Tpoints=3,
       LAMBDA=matrix(c(1,'state[4]',0,0),1,4), 
       DRIFT= c('drift',0,0,0,
         0,-0.5,0,0,
@@ -268,7 +268,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     effect <- -log1p(exp(-raweffect))
     
     for(i in 1:nsubjects){
-      gm <- suppressMessages(ctModel(Tpoints=ntimes,
+      gm <- suppressMessages(ctModel(silent=TRUE,Tpoints=ntimes,
         LAMBDA=matrix(1), 
         DRIFT= c(effect[i]),
         T0MEANS = c(t0m[i]),
@@ -283,12 +283,12 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     }
     
     #regular bw effect approach
-    m <- ctModel(type='stanct',
+    m <- ctModel(silent=TRUE,type='stanct',
       CINT='cint',MANIFESTMEANS=0,
       LAMBDA=matrix(1),DRIFT='drift|-log1p_exp(-param)|TRUE')
     
     #manual bw effects
-    m2 <- ctModel(type='omx',Tpoints=3,
+    m2 <- ctModel(silent=TRUE,type='omx',Tpoints=3,
       LAMBDA=matrix(c(1,0,0),ncol=3), 
       DRIFT= c('-log1p_exp(-state[2])',0,0,
         0,-1e-6,0,
@@ -388,7 +388,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     effect <- log1p(exp(raweffect))
     
     for(i in 1:nsubjects){
-      gm <- suppressMessages(ctModel(Tpoints=ntimes,
+      gm <- suppressMessages(ctModel(silent=TRUE,Tpoints=ntimes,
         LAMBDA=matrix(1), 
         DRIFT= -1,
         T0MEANS = c(t0m[i]),
@@ -404,14 +404,14 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     }
     
     #regular bw effect approach
-    m <- ctModel(type='stanct',
+    m <- ctModel(silent=TRUE,type='stanct',
       T0MEANS='t0m|param',
       MANIFESTVAR=.5,
       MANIFESTMEANS=0,CINT='cint|param',
       LAMBDA=matrix(1),DIFFUSION='diffusion|log1p_exp(param)|TRUE')
     
     #manual bw effects
-    m2 <- ctModel(type='omx',Tpoints=3,
+    m2 <- ctModel(silent=TRUE,type='omx',Tpoints=3,
       LAMBDA=matrix(c(1,0,0),ncol=3), 
       DRIFT= c('drift',0,0,
         0,-1e-12,0,
@@ -521,7 +521,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     effect <- log1p(exp(raweffect))
     
     for(i in 1:nsubjects){
-      gm <- suppressMessages(ctModel(Tpoints=ntimes,
+      gm <- suppressMessages(ctModel(silent=TRUE,Tpoints=ntimes,
         LAMBDA=matrix(1), 
         DRIFT= -1,
         T0MEANS = c(t0m[i]),
@@ -537,14 +537,14 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     }
     
     #regular bw effect approach
-    m <- ctModel(type='stanct',
+    m <- ctModel(silent=TRUE,type='stanct',
       T0MEANS='t0m|param',
       DIFFUSION=.5,
       MANIFESTMEANS=0,CINT='cint|param',
       LAMBDA=matrix(1),MANIFESTVAR='errsd|log1p_exp(param)|TRUE')
     
     #manual bw effects
-    m2 <- ctModel(type='omx',Tpoints=3,
+    m2 <- ctModel(silent=TRUE,type='omx',Tpoints=3,
       LAMBDA=matrix(c(1,0,0),ncol=3), 
       DRIFT= c('drift',0,0,
         0,-1e-12,0,

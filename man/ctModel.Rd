@@ -14,6 +14,7 @@ ctModel(
   latentNames = "auto",
   id = "id",
   time = "time",
+  silent = FALSE,
   T0VAR = "auto",
   T0MEANS = "auto",
   MANIFESTMEANS = "auto",
@@ -72,6 +73,8 @@ without any _Tx time point suffix that may be present in wide data.  Defaults to
 id data may be of any form, though will be coerced internally to an integer sequence rising from 1.}
 
 \item{time}{character string denoting column name containing timing data. Timing data must be numeric.}
+
+\item{silent}{Suppress all output to console.}
 
 \item{T0VAR}{lower triangular n.latent*n.latent cholesky matrix of latent process initial variance / covariance. 
 "auto" freely estimates all parameters.}
