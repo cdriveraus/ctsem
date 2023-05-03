@@ -34,7 +34,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     tdat[2,'Y1'] <- NA
     tdat[tdat[,'id']==2,'TI1'] <- NA
     
-    checkm<-ctModel(type='stanct',Tpoints=Tpoints,
+    checkm<-suppressMessages(ctModel(type='stanct',Tpoints=Tpoints,
       MANIFESTVAR=diag(0.5,1),
       DRIFT=matrix(c(-.3),nrow=1),
       DIFFUSION=matrix(c(2),1),
@@ -42,7 +42,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       n.TIpred=n.TIpred,
       MANIFESTMEANS=matrix(0,nrow=n.manifest),
       CINT=matrix(c('cint1'),ncol=1),
-      n.manifest=n.manifest,LAMBDA=diag(1))
+      n.manifest=n.manifest,LAMBDA=diag(1)))
     
     # checkm$pars$indvarying <- FALSE
     
