@@ -34,7 +34,7 @@ if(FALSE){
       
       f <- ctStanFit(datalong = d,ctstanmodel = m,cores=1,nopriors=F,optimcontrol=list(carefulfit=F,stochastic=F,finishsamples=5000))
       s=summary(f)
-      print(s)
+      # print(s)
       
       scores=t(ctsem:::scorecalc(standata = f$standata,est = f$stanfit$rawest,stanmodel = f$stanmodel,subjectsonly = T,cores=1))
       
@@ -42,8 +42,8 @@ if(FALSE){
       sc=summary(fc)
       # print(sc)
       
-      print(sc$popmeans)
-      print(s$popmeans)
+      # print(sc$popmeans)
+      # print(s$popmeans)
       colnames(sc$popmeans) <- paste0(colnames(sc$popmeans),'c')
       colnames(sc$rawpopcorr) <- paste0(colnames(sc$rawpopcorr),'c')
       colnames(sc$popsd) <- paste0(colnames(sc$popsd),'c')
@@ -87,7 +87,7 @@ if(FALSE){
       }
     }
     rownames(coverage) <- rownames(truepars)
-    print(coverage)
+    # print(coverage)
     
     
     

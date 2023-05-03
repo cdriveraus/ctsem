@@ -16,15 +16,15 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     par1<-rnorm(nsubjects,-.3,.8)
     par2 <- par1*.4 + rnorm(nsubjects,0,.3)
     for(i in 1:nsubjects){
-      gm<-ctModel(type='omx',n.latent=2,n.manifest=n.manifest,Tpoints=Tpoints,LAMBDA=matrix(c(1,.4,0,0,0,1),3,ncol=2),
+      gm<-suppressMessages(ctModel(type='omx',n.latent=2,n.manifest=n.manifest,Tpoints=Tpoints,LAMBDA=matrix(c(1,.4,0,0,0,1),3,ncol=2),
         DRIFT=diag(-.4,2),
         CINT=matrix(c(par1[i],par2[i]),2),
         T0VAR=diag(1,2),
         T0MEANS=matrix(c(30,50),n.latent),
         MANIFESTVAR=t(chol(diag(.5,n.manifest))),
-        DIFFUSION=t(chol(diag(3,2))))
-      if(i==1) cd<-ctGenerate(gm,n.subjects=1,burnin=burnin,wide=FALSE,dtmat = dtmat) else {
-        newdat <- ctGenerate(gm,n.subjects=1,burnin=burnin,wide=FALSE,dtmat = dtmat)
+        DIFFUSION=t(chol(diag(3,2)))))
+      if(i==1) cd<-suppressMessages(ctGenerate(gm,n.subjects=1,burnin=burnin,wide=FALSE,dtmat = dtmat)) else {
+        newdat <- suppressMessages(ctGenerate(gm,n.subjects=1,burnin=burnin,wide=FALSE,dtmat = dtmat))
         newdat[,'id'] <- i
         cd<-rbind(cd,newdat)
       }

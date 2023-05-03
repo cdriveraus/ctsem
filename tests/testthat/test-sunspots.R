@@ -41,7 +41,7 @@ testthat::expect_equivalent(get(paste0('ssfit',i))$stanfit$transformedparsfull$l
 }
 
 for(i in 2:4){
-  print(i)
+  # print(i)
    testthat::expect_equivalent(
       ctStanContinuousPars(get(paste0('ssfit',i)))$DRIFT,
       ctStanContinuousPars(get(paste0('ssfit',i-1)))$DRIFT,tol=1e-1)

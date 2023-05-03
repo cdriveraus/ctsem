@@ -1,4 +1,5 @@
-if(identical(Sys.getenv("NOT_CRAN"), "true")& !(.Platform$OS.type=="windows" && R.version$major %in% 4 && as.numeric(R.version$minor) >= 2 &&
+if(identical(Sys.getenv("NOT_CRAN"), "true")& !(.Platform$OS.type=="windows" && 
+    R.version$major %in% 4 && as.numeric(R.version$minor) >= 2 &&
     unlist(utils::packageVersion('rstan'))[2] < 25) ){
   library(ctsem)
   library(testthat)
@@ -70,10 +71,10 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& !(.Platform$OS.type=="windows" && 
     dat[, "latentcors":= list(cor(adjValue1,adjValue2)), by=list(time,zyg)] #correlation on scaled (as check)
     dat[, "latentsds":= list(sd(c(adjValue1,adjValue2))), by=list(time,zyg)] #correlation on scaled (as check)
     
-    plot(unique(dat[zyg == 1,time]),unique(dat[zyg == 1,latentcor]),type='l',ylim=range(dat$latentcor))
-    points(unique(dat[zyg == -1,time]),unique(dat[zyg == -1,latentcor]),type='l',col='blue')
+    # plot(unique(dat[zyg == 1,time]),unique(dat[zyg == 1,latentcor]),type='l',ylim=range(dat$latentcor))
+    # points(unique(dat[zyg == -1,time]),unique(dat[zyg == -1,latentcor]),type='l',col='blue')
     
-    points(dat[id==1,time],dat[id==1,latentcors],type='l',lty=2,col='red')
+    # points(dat[id==1,time],dat[id==1,latentcors],type='l',lty=2,col='red')
     
     
     Nsubjects <- 50

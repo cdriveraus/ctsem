@@ -18,9 +18,9 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 &
     dt=1
     
     for(subi in 1:nsubjects){
-      gm=ctModel(LAMBDA=diag(2), Tpoints=Tpoints, DRIFT=diag(-.2,2),T0MEANS = matrix(c(3,2)), 
+      gm=suppressMessages(ctModel(LAMBDA=diag(2), Tpoints=Tpoints, DRIFT=diag(-.2,2),T0MEANS = matrix(c(3,2)), 
         DIFFUSION=diag(.5,2),
-        T0VAR=diag(2))
+        T0VAR=diag(2)))
       d=suppressMessages(ctGenerate(gm,n.subjects = 1,burnin = 3,dtmean = dt))
       d[,'id'] <- subi
       if(subi==1) dat=d else dat=rbind(dat,d)

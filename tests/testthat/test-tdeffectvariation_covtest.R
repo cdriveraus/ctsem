@@ -15,7 +15,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
   effect <- rnorm(nsubjects, 5-baseline/3, 0.5)
   
   for(i in 1:nsubjects){
-    gm <- ctModel(Tpoints=ntimes,
+    gm <- suppressMessages(ctModel(Tpoints=ntimes,
       LAMBDA=matrix(c(1,0),1,2), 
       DRIFT= c(-1,1,
         0,-.5),
@@ -25,9 +25,9 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       T0VAR = c(0,0,0,0),
       TDPREDMEANS = matrix(c(rep(0,9),1,rep(0,ntimes-10))),
       TDPREDEFFECT = matrix(c(0,effect[i]),2),
-      MANIFESTMEANS = baseline[i])
+      MANIFESTMEANS = baseline[i]))
     
-    d <- data.frame(ctGenerate(ctmodelobj = gm,n.subjects = 1,burnin = 0,dtmean = 1,logdtsd = 0))
+    d <- suppressMessages(data.frame(ctGenerate(ctmodelobj = gm,n.subjects = 1,burnin = 0,dtmean = 1,logdtsd = 0)))
     d$id <- i
     if(i==1) dat <- d else dat <- rbind(dat,d)
   }
@@ -143,7 +143,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     effect <- rnorm(nsubjects, 5-baseline/3, 0.5)
     
     for(i in 1:nsubjects){
-      gm <- ctModel(Tpoints=ntimes,
+      gm <- suppressMessages(ctModel(Tpoints=ntimes,
         LAMBDA=matrix(c(1,effect[i]),1,2), 
         DRIFT= c(-1,0,
           0,-.5),
@@ -153,9 +153,9 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
         T0VAR = c(0,0,0,0),
         TDPREDMEANS = matrix(c(rep(0,9),1,rep(0,ntimes-10))),
         TDPREDEFFECT = matrix(c(0,1),2),
-        MANIFESTMEANS = baseline[i])
+        MANIFESTMEANS = baseline[i]))
       
-      d <- data.frame(ctGenerate(ctmodelobj = gm,n.subjects = 1,burnin = 0,dtmean = 1,logdtsd = 0))
+      d <- suppressMessages(data.frame(ctGenerate(ctmodelobj = gm,n.subjects = 1,burnin = 0,dtmean = 1,logdtsd = 0)))
       d$id <- i
       if(i==1) dat <- d else dat <- rbind(dat,d)
     }
@@ -388,7 +388,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     effect <- log1p(exp(raweffect))
     
     for(i in 1:nsubjects){
-      gm <- ctModel(Tpoints=ntimes,
+      gm <- suppressMessages(ctModel(Tpoints=ntimes,
         LAMBDA=matrix(1), 
         DRIFT= -1,
         T0MEANS = c(t0m[i]),
@@ -396,9 +396,9 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
         MANIFESTVAR = 0.5,
         T0VAR = c(0),
         CINT = baseline[i],
-        MANIFESTMEANS=0)
+        MANIFESTMEANS=0))
       
-      d <- data.frame(ctGenerate(ctmodelobj = gm,n.subjects = 1,burnin = 0,dtmean = .1,logdtsd = 0))
+      d <- suppressMessages(data.frame(ctGenerate(ctmodelobj = gm,n.subjects = 1,burnin = 0,dtmean = .1,logdtsd = 0)))
       d$id <- i
       if(i==1) dat <- d else dat <- rbind(dat,d)
     }
@@ -521,7 +521,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     effect <- log1p(exp(raweffect))
     
     for(i in 1:nsubjects){
-      gm <- ctModel(Tpoints=ntimes,
+      gm <- suppressMessages(ctModel(Tpoints=ntimes,
         LAMBDA=matrix(1), 
         DRIFT= -1,
         T0MEANS = c(t0m[i]),
@@ -529,9 +529,9 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
         DIFFUSION = 0.5,
         T0VAR = c(0),
         CINT = baseline[i],
-        MANIFESTMEANS=0)
+        MANIFESTMEANS=0))
       
-      d <- data.frame(ctGenerate(ctmodelobj = gm,n.subjects = 1,burnin = 0,dtmean = .1,logdtsd = 0))
+      d <- suppressMessages(data.frame(ctGenerate(ctmodelobj = gm,n.subjects = 1,burnin = 0,dtmean = .1,logdtsd = 0)))
       d$id <- i
       if(i==1) dat <- d else dat <- rbind(dat,d)
     }

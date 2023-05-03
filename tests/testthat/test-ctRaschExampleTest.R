@@ -81,7 +81,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     a=cbind(s$popmeans[order(rownames(s$popmeans)),1,drop=FALSE],so$popmeans[order(rownames(so$popmeans)),1])
     colnames(a)=NULL
-    print(a)
+    # print(a)
     
     testthat::expect_equivalent(
       s$popmeans[order(rownames(s$popmeans)),1],
