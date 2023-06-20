@@ -141,7 +141,7 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
     if(timestep=='auto'){
       if(fit$standata$intoverstates==1) timestep=sd(fit$standata$time,na.rm=TRUE)/50 else timestep ='asdata'
     }
-    if(all(timerange == 'asdata')) timemax <- max(fit$standata$time[fit$standata$subject %in% subjects])
+    if(all(timerange == 'asdata')) timerange <- range(fit$standata$time[fit$standata$subject %in% subjects]) 
     idstore <- fit$standata$subject
     if(length(fit$stanfit$stanfit@sim)==0) {
       fit$standata <- standatact_specificsubjects(fit$standata, subjects = subjects)
@@ -149,7 +149,7 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
     if(timestep != 'asdata' && fit$ctstanmodel$continuoustime) {
       if(fit$ctstanmodel$continuoustime != TRUE) stop('Discrete time model fits must use timestep = "asdata"')
       for(subjecti in 1:length(subjects)){
-        times <- seq(min(fit$standata$time[fit$standata$subject %in% subjecti]),timemax,timestep)
+        times <- seq(timerange[1],timerange[2],timestep)
         fit$standata <- standataFillTime(fit$standata,times,subject=subjecti)
       }
     }

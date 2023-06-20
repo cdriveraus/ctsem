@@ -164,7 +164,7 @@ verbosify<-function(sf,verbose=2){
 #'   TIpredNames=c('TI1','TI2','TI3'),
 #'   LAMBDA=diag(2)) 
 #' 
-#' fit<-ctStanFit(ctstantestdat, model,!priors=FALSE)
+#' fit<-ctStanFit(ctstantestdat, model,priors=TRUE)
 #' 
 #' summary(fit) 
 #' 
@@ -259,7 +259,7 @@ verbosify<-function(sf,verbose=2){
 #' ctModelLatex(m1)
 #' 
 #' #fit
-#' f1 <- ctStanFit(datalong = dat2, ctstanmodel = m1, optimize=TRUE, !priors=TRUE)
+#' f1 <- ctStanFit(datalong = dat2, ctstanmodel = m1, optimize=TRUE, priors=FALSE)
 #' 
 #' summary(f1)
 #' 
