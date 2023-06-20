@@ -22,7 +22,7 @@ m <- ctModel(LAMBDA=diag(2),type='stanct',
   manifestNames = c('Y1','Y2'))
 
 
-f <- ctStanFit(datalong = d,ctstanmodel = m,cores=6,nopriors = F)
+f <- ctStanFit(datalong = d,ctstanmodel = m,cores=6,priors = TRUE)
 s=summary(f)
 s
 

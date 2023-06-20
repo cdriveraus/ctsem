@@ -51,7 +51,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     ro <- ctStanFit( datalong = d,
       ctstanmodel = m,cores=cores,
       # plot=10,verbose=0,
-      intoverstates = T,nopriors=T,
+      intoverstates = T,priors=F,
       optimize=T,intoverpop=T)#,optimcontrol=list(stochastic=F))
     so=summary(ro)
     
@@ -59,7 +59,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
         rod <- ctStanFit( datalong = d,
       ctstanmodel = md,cores=cores,
       # plot=10,verbose=0,
-      intoverstates = T,nopriors=T,
+      intoverstates = T,priors=F,
       optimize=T,intoverpop=T)#,optimcontrol=list(stochastic=F))
     sod=summary(rod)
     
@@ -69,7 +69,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       ctstanmodel = m,
       iter = 300,verbose=0,
       control=list(max_treedepth=8),
-      nopriors=FALSE,
+      priors=TRUE,
       chains = cores,plot=F,
       intoverstates = FALSE,
       optimize=FALSE,intoverpop=FALSE)

@@ -157,7 +157,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
     }
   }
   
-  if(priorcheck & object$standata$nopriors==0) {
+  if(priorcheck & !object$standata$priors) {
     priorcheckres <- priorcheckreport(object,...)
     if(nrow(priorcheckres$priorcheck) > 0) out = c(out,priorcheckres)
   }
@@ -190,7 +190,9 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
     
     d <- data.frame(ctModelUnlist(Mean,matnames = names(Mean)))
     colnames(d)[colnames(d) %in% 'value'] <- 'Mean'
-    lapply(c('sd','2.5%','50%','97.5%'),function(x) d[[x]] <<-round(ctModelUnlist(get(x),names(Mean))$value,digits))
+    lapply(c('sd','2.5%','50%','97.5%'),function(x){
+      d[[x]] <<-round(ctModelUnlist(get(x),names(Mean))$value,digits)
+      })
     d$param <- NULL
     d$Mean <- round(d$Mean,digits)
     rm(sd)

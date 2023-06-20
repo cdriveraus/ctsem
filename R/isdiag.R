@@ -27,7 +27,7 @@
 #'
 #' #fit and plot importance sampling diagnostic
 #' fit <- ctStanFit(datalong, model,verbose=0, 
-#'   optimcontrol=list(is=TRUE, finishsamples=500),nopriors=FALSE)
+#'   optimcontrol=list(is=TRUE, finishsamples=500),priors=TRUE)
 #' isdiag(fit)
 #' }
  

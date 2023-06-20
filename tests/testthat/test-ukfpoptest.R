@@ -59,7 +59,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     sm1$pars$indvarying <- FALSE
 
     sf1 <- ctStanFit(cd,sm1,iter=200,
-      optimize=TRUE,verbose=0,nopriors = TRUE,
+      optimize=TRUE,verbose=0,
       optimcontrol=list(finishsamples=50),
       derrind=1:4,
       nlcontrol=list(nldynamics=FALSE))
@@ -69,7 +69,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     sf1ll=sf1$stanfit$optimfit$value
     
     sf1_derrind<- ctStanFit(cd,sm1,iter=200,
-      optimize=TRUE,verbose=0,nopriors = TRUE,
+      optimize=TRUE,verbose=0,
       optimcontrol=list(deoptim = FALSE,is=FALSE,isloopsize=50,finishsamples=50),
       derrind=1:2,
       nlcontrol=list(nldynamics=FALSE))
@@ -80,7 +80,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     sm2$pars$sdscale <- .2
     
     sf2 <- ctStanFit(cd,sm2,
-      optimize=T,verbose=0,nopriors = TRUE)
+      optimize=T,verbose=0)
 
     sf2d=sf2$stanfit$transformedparsfull$pop_DRIFT[1,1:2,1:2]# matrix(sf2$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf2$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
     sf2ll=sf2$stanfit$optimfit$value
@@ -146,7 +146,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     dtm$pars$indvarying[dtm$pars$matrix %in% 'DRIFT'] <- TRUE
     
     dtf = ctStanFit(datalong = dat,ctstanmodel = dtm,optimize=TRUE,
-      verbose=0,optimcontrol=list(estonly=F),savescores = F,nopriors=T)
+      verbose=0,optimcontrol=list(estonly=F),savescores = F)
     s1=summary(dtf,parmatrices = F,priorcheck = F,residualcov = F)
     
     dtm2 <- ctModel(LAMBDA=matrix(c(1,0),1,2), type='stanct',
@@ -156,7 +156,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       MANIFESTMEANS = matrix(0))
     
     dtm2$pars$indvarying <- FALSE
-    dtf2=ctStanFit(datalong = dat,ctstanmodel = dtm2,optimize = TRUE,nopriors = T)
+    dtf2=ctStanFit(datalong = dat,ctstanmodel = dtm2,optimize = TRUE)
     s2=summary(dtf2,parmatrices = F,priorcheck = F,residualcov = F)
     
     # expect_equivalent(c(s1$popmeans[,1],s1$popsd[,1]),s2$popmeans[,1],tol=1e-2)

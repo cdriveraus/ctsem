@@ -28,7 +28,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     sf=ctStanFit(aa,
       ctstanmodel = sm, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores,
-      nopriors=T,
+      priors=FALSE,
       optimcontrol=list(finishsamples=500,carefulfit=F))
     
     sdat <- sf$standata

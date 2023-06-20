@@ -363,7 +363,7 @@ ctSummarise<-function(sf,name='ctSummary',cores=2, times=seq(0,10,.1),quantiles=
     
     if(ctStanPlotPost){
       #paramter posterior plots
-      if(sf$standata$nopriors==0){
+      if(sf$standata$priors){
         pdf(paste0(name,'_parameter_posterior.pdf'))
         ctStanPlotPost(sf,priorwidth = TRUE,cores=cores)
         dev.off()

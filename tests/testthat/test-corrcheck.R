@@ -18,7 +18,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       # MANIFESTMEANS = 0,
       MANIFESTVAR = 0)
     
-    f <- ctStanFit(datalong = d,ctstanmodel = m,nopriors=F,verbose=0,cores=cores)
+    f <- ctStanFit(datalong = d,ctstanmodel = m,priors=T,verbose=0,cores=cores)
     
     p <- ctStanContinuousPars(f)
     
@@ -84,7 +84,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       MANIFESTMEANS=0,
       MANIFESTVAR = 0)
     
-    f <- ctStanFit(datalong = d,ctstanmodel = m,nopriors=F,cores=cores,verbose=0)
+    f <- ctStanFit(datalong = d,ctstanmodel = m,priors=TRUE,cores=cores,verbose=0)
     
     p <- ctStanContinuousPars(f)
     

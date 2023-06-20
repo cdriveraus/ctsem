@@ -71,7 +71,7 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
   if('ctStanFit' %in% class(cts)){
     # if(!fullposterior && cts$standata$nopriors==1) nopriors <- TRUE #generate from point estimate
     derrind <- cts$standata$derrind
-    nopriors <- cts$args$nopriors
+    priors <- cts$args$priors
     datastruct <- standatatolong(cts$standata, origstructure=TRUE, ctm=cts$ctstanmodelbase)
     
     cts <- cts$ctstanmodelbase
@@ -84,7 +84,7 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
    #    on.exit(add = TRUE, {detach(name = 'ctsem.compiledmodel')})
    #    }
     
-    } else nopriors<-FALSE
+    } else priors<-TRUE
 
   datastruct[,cts$manifestNames] <- NA #remove manifest variables
   optimcontrol<- list()
@@ -111,8 +111,8 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
   args$intoverpop <- TRUE
   args$inits=1e-10
   args$datalong=datadummy
-  args$nopriors <- nopriors
-  if(!is.null(args$nopriors) && as.logical(args$nopriors)) stop('Priors disabled, cannot sample from prior!')
+  args$priors <- priors
+  if(!is.null(args$priors) && !as.logical(args$priors)) stop('Priors disabled, cannot sample from prior!')
 
   #fit to empty data 
   message('Fitting model to empty dataset...')

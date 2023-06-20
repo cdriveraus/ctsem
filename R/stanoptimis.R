@@ -442,17 +442,11 @@ standatalongremerge <- function(long, standata){ #merge an updated long portion 
   return(standatamerged)
 }
 
-standataFillTime <- function(standata, times){
+standataFillTime <- function(standata, times, subject){
   long <- standatatolong(standata)
   nlong <- do.call(rbind,
-    lapply(1:max(long$subject), function(si){
+    lapply(subject, function(si){
       stimes <- times[!times %in% long$time[long$subject==si]]
-      # nadata <- matrix(99999, nrow=length(stimes),ncol=standata$nmanifest)
-      # nadata <- cbind(nadata,matrix(0, nrow=length(stimes),ncol=standata$ntdpred))
-      # colnames(nadata) <- colnames(long)[c(grep('^Y.',colnames(long)),grep('^tdpreds.',colnames(long)))] #c(paste0('Y.',1:standata$nmanifest),paste0(rep('tdpreds.',standata$ntdpred),seq_len(standata$ntdpred)))
-      # subjdata <- data.frame(subject=si,time=stimes, 
-      #   dokalmanrows=1L,nobs_y=0L,ncont_y=0L,nbinary_y=0L,whichobs_y=0L,whichbinary_y=0L,whichcont_y=0L,
-      #   nadata)
       data.frame(subject=si,time=stimes)
     })
   )
@@ -629,9 +623,9 @@ clusterIDeval <- function(cl,commands){
 #' @param verbose Integer from 0 to 2. Higher values print more information during model fit -- for debugging.
 #' @param decontrol List of control parameters for differential evolution step, to pass to \code{DEoptim.control}.
 #' @param tol objective tolerance.
-#' @param nopriors logical. If TRUE, a nopriors integer is set to 1 (TRUE) in the standata object -- only has an effect if 
+#' @param priors logical. If TRUE, a priors integer is set to 1 (TRUE) in the standata object -- only has an effect if 
 #' the stan model uses this value. 
-#' @param carefulfit Logical. If TRUE, priors are always used for a rough first pass to obtain starting values when nopriors=TRUE.
+#' @param carefulfit Logical. If TRUE, priors are always used for a rough first pass to obtain starting values when priors=FALSE
 #' @param subsamplesize value between 0 and 1 representing proportion of subjects to include in first pass fit. 
 #' @param cores Number of cpu cores to use, should be at least 2.
 #' @param bootstrapUncertainty Logical. If TRUE, subject wise gradient contributions are resampled to estimate the hessian, 
@@ -661,18 +655,19 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   deoptim=FALSE, estonly=FALSE,tol=1e-10,
   decontrol=list(),
   stochastic = TRUE,
-  nopriors=FALSE,carefulfit=TRUE,
+  priors=TRUE,carefulfit=TRUE,
   bootstrapUncertainty=FALSE,
   subsamplesize=1,
   parsteps=c(),
   plot=FALSE,
+  hessianType='numerical',stochasticHessianSamples=50, stochasticHessianEpsilon=1e-5,
   is=FALSE, isloopsize=1000, finishsamples=1000, tdf=10,chancethreshold=100,finishmultiply=5,
   verbose=0,cores=2,matsetup=NA,nsubsets=100, stochasticTolAdjust=1){
   
   if(!is.null(standata$verbose)) {
     if(verbose > 1) standata$verbose=as.integer(verbose) else standata$verbose=0L
   }
-  standata$nopriors=as.integer(nopriors)
+  standata$priors=as.integer(priors)
   
   if(nsubsets > (standata$nsubjects/10)) nsubsets <- ceiling(standata$nsubjects/10)
   if(nsubsets > (standata$nsubjects/cores)) nsubsets <- max(1,ceiling(standata$nsubjects/cores))
@@ -963,7 +958,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         gr=function(pars) -attributes(target(pars))$gradient
       )
       
-      nopriorsbak <- standata$nopriors
+      priorsbak <- standata$priors
       # taylorheun <- standata$taylorheun
       finished <- FALSE
       
@@ -980,7 +975,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           standatasml <- standatact_specificsubjects(standata,
             sample(unique(standata$subject),smlnsub))
         } else standatasml <- standata
-        standatasml$nopriors <- 0L
+        standatasml$priors <- 1L
         standatasml$nsubsets <- as.integer(nsubsets)
         
         
@@ -1062,7 +1057,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         tia=standata$TIPREDEFFECTsetup
         while(!finished){
           if(found==0){
-            if(nopriors){ #then we need to reinitialise model
+            if(!priors){ #then we need to reinitialise model
               if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standata,split=parsets<2,nsubsets = nsubsets)
               if(optimcores==1) smf<-stan_reinitsf(sm,standata)
             }
@@ -1256,10 +1251,57 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           
           hess <- -cov(gradsamples)
         }
+      
+      
+        
+        
+        
+        
         
         if(!bootstrapUncertainty){
-          jac<-function(pars,step=1e-3,whichpars='all',
-            lpdifmin=1e-3,lpdifmax=5, cl=NA,verbose=1,directions=c(-1,1),parsteps=c()){
+          
+          if(hessianType %in% 'stochastic'){
+            
+            randomized_hessian_approximation <- function(gradient_func, params, num_samples, epsilon, regularization = 1e-6) {
+              n_params <- length(params)
+              hessian_approx <- matrix(0, n_params, n_params)
+              
+              for (i in 1:num_samples) {
+                random_params <- rnorm(n_params)  # Generate random parameter vector
+                
+                gradient_plus <- gradient_func(params + epsilon * random_params)
+                gradient_minus <- gradient_func(params - epsilon * random_params)
+                
+                hessian_approx <- hessian_approx + (gradient_plus - gradient_minus) %*% t(random_params)
+              }
+              
+              hessian_approx <- hessian_approx / (2 * epsilon * num_samples)
+              
+              # Add regularization to the diagonal elements of the Hessian matrix
+              hessian_approx <- hessian_approx + regularization * diag(n_params)
+              
+              return(hessian_approx)
+            }
+            
+            
+            
+            
+            
+            
+            gfunc <- function(params){
+              x=target(params)
+              return(c(attributes(x)$gradient))#,x[1]))
+            }
+            
+            hess <- randomized_hessian_approximation(gfunc,init,stochasticHessianSamples, stochasticHessianEpsilon)
+            diag(solve(-hess))
+            
+          } #end stochastic hessian
+          
+          
+          if(hessianType != 'stochastic') {
+            jac<-function(pars,step=1e-3,whichpars='all',
+            lpdifmin=1e-5,lpdifmax=5, cl=NA,verbose=1,directions=c(-1,1),parsteps=c()){
             if('all' %in% whichpars) whichpars <- 1:length(pars)
             base <- optimfit$value
             
@@ -1395,7 +1437,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             }
           }
           
+          
         } #end classical hessian
+        }
         
         # cholcov = try(suppressWarnings(t(chol(solve(-hess)))),silent = TRUE)
         

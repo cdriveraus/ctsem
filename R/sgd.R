@@ -183,7 +183,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
         accepted <- TRUE
       } 
       if(!accepted){
-        #if(nsubsets==1) gsmooth= gsmooth*gmemory2^2 + (1-gmemory2^2) * g #increase influence of last gradient at inflections
+        if(nsubsets==1) gsmooth= gsmooth*gmemory2^2 + (1-gmemory2^2) * g #increase influence of last gradient at inflections
         step <- step / (exp(notacceptedcount))
         deltaold <- deltaold * 0
         if(nsubsets > 1) pars =bestpars* .8 + apply(parstore,1,mean)*.2
@@ -261,7 +261,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
     
     if(i > warmuplength) step = (step + roughnesschangemulti*(
       step* 2*lproughnessmod #(ifelse(nsubsets > 0,0,1))
-      + step* .2*gsmoothroughnessmod #* min(sqrt(deltasmoothsq),1)
+      + step* .5*gsmoothroughnessmod #* min(sqrt(deltasmoothsq),1)
       + step* .2*groughnessmod# * min(sqrt(deltasmoothsq),1)
       # + step * rmsstepmod
     ))
@@ -332,7 +332,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
       # lprproposal = lproughnesstarget*2-oldlproughnesstarget
       # oldlproughnesstarget <- lproughnesstarget
       # if(max(lp) > max(tail(lp,30))) lprproposal <- min(.2,.5 * lprproposal)
-      lproughnesstarget <- min(.5, max(.2, lproughnesstarget + .02 + .05 * (-1+2*rbinom(n = 1,size = 1,prob = .5))))
+      lproughnesstarget <- min(.5, max(.1, lproughnesstarget + .05 * (-1+2*rbinom(n = 1,size = 1,prob = .5))))
       if(sd(tail(lp,30)) < lpnoisethresh) lproughnesstarget <- lproughnesstarget + .01
       
     }

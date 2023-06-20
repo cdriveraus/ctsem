@@ -4,7 +4,7 @@ tformshapes <- function(singletext=FALSE,transform=NA,jacobian=FALSE,driftdiag=F
     '(exp(param))',
     '(1/(1+exp(-param)))',
     '((param)^3)',
-    'log1p(param)',
+    'log1p(param)', #why is this here? results in NA's / warnings. 
     'meanscale',
     '1/(1+exp(-param))',
     'exp(param)',

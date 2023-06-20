@@ -61,7 +61,7 @@ if( .Machine$sizeof.pointer != 4){
   sf=ctStanFit(ctDeintervalise(ctWideToLong(Oscillating,Tpoints = oscillatingm$Tpoints,n.manifest = 1)),
     cores=2,verbose=0,
     # optimcontrol=list(carefulfit=T),
-    ctstanmodel = sm, optimize=TRUE,savescores = FALSE,nopriors=TRUE)
+    ctstanmodel = sm, optimize=TRUE,savescores = FALSE,priors=FALSE)
   expect_equal(-3461.936,-2*sf$stanfit$optimfit$value,tolerance=.01)
   
 }

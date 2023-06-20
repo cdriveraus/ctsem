@@ -105,7 +105,7 @@ checkTIauto <- function(){
     # init=init,
     # fit=F,
     optimcontrol=list(is=FALSE,stochastic=T,subsamplesize=1,carefulfit=F),
-    nopriors=F)
+    priors=T)
   summary(fit1)
 }
 

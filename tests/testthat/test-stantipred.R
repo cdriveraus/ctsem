@@ -50,14 +50,14 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     tfit1<-ctStanFit(tdat,checkm,chains=1,cores=2,optimize=TRUE,
       optimcontrol=list(is=TRUE,finishsamples=500),
-      nopriors=FALSE,verbose=0)
+      priors=TRUE,verbose=0)
     s1=summary(tfit1)
     
     expect_equivalent(s1$tipreds[2,'mean'],5,tolerance=.1)
     expect_equivalent(s1$popsd[2,'mean'],.6,tolerance=.2)
     
     tfit2<-ctStanFit(tdat,checkm,optimize=TRUE,cores=2,verbose=0,
-      optimcontrol=list(is=FALSE),nopriors=FALSE)
+      optimcontrol=list(is=FALSE),priors=TRUE)
     s2=summary(tfit2)
     
     expect_equivalent(s2$tipreds[2,'mean'],5,tolerance=.1)

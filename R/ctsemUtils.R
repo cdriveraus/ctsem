@@ -54,7 +54,7 @@ ctstantestfitfunc<-function(){
       0.576641002392084,0.248625561427667,-0.0683189297539777,
       -0.230342395895042,0.205299380670756,-0.34522281922735,
       0.0829819407118698,0.0137367678089216,-0.0611697475527028),
-    optimize = TRUE,optimcontrol=list(finishsamples=20),nopriors=FALSE)
+    optimize = TRUE,optimcontrol=list(finishsamples=20),priors=TRUE)
   
   ctstantestfit <- ctStanGenerateFromFit(ctstantestfit,nsamples = 20,fullposterior = TRUE)
   
@@ -311,7 +311,7 @@ rl<-function(x) { #robust logical - wrap checks likely to return NA's in this
 #' inv_logit(-3)
 #' @export
 inv_logit<-function(x) {
-  exp(x)/(1+exp(x))
+  1/(1+exp(-x))
 }
 
 #' log1p_exp

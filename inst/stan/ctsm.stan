@@ -311,7 +311,7 @@ data {
   real<lower=0> tipredeffectscale;
 
   vector[nmanifest] Y[ndatapoints];
-  int nopriors;
+  int priors;
   vector[ntdpred] tdpreds[ndatapoints];
   
   real maxtimestep;
@@ -1078,18 +1078,18 @@ model{
   if(intoverpop==0 && nindvarying > 0) target+= multi_normal_cholesky_lpdf(baseindparams | rep_vector(0,nindvarying), IIlatentpop[1:nindvarying,1:nindvarying]);
 
   if(ntipred > 0){ 
-    if(nopriors==0 && laplacetipreds==0) target+= priormod2 * normal_lpdf(tipredeffectparams / tipredeffectscale| 0, 1);
-    if(nopriors==0 && laplacetipreds==1) for(i in 1:ntipredeffects) target+= priormod2 * double_exponential_lpdf(pow(fabs(tipredeffectparams[i]),1+.1/((tipredeffectparams[i]*100)^2+.1)) / tipredeffectscale| 0, 1);
+    if(priors && laplacetipreds==0) target+= priormod2 * normal_lpdf(tipredeffectparams / tipredeffectscale| 0, 1);
+    if(priors && laplacetipreds==1) for(i in 1:ntipredeffects) target+= priormod2 * double_exponential_lpdf(pow(fabs(tipredeffectparams[i]),1+.1/((tipredeffectparams[i]*100)^2+.1)) / tipredeffectscale| 0, 1);
     target+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
   }
 
-  if(nopriors==0){ //if split files over subjects, just compute priors once
+  if(priors){ //if split files over subjects, just compute priors once
     for(i in 1:nparams){
       if(laplaceprior[i]==1) target+= priormod2 * double_exponential_lpdf(pow(fabs(rawpopmeans[i]) ,1+.1/((rawpopmeans[i]*100)^2+.1))|0,1);
     }
   }
 
-  if(nopriors==0 && !laplaceprioronly){ //if split files over subjects, just compute priors once
+  if(priors && !laplaceprioronly){ //if split files over subjects, just compute priors once
   for(i in 1:nparams){
     if(laplaceprior[i]==0) target+= priormod2 * normal_lpdf(rawpopmeans[i]|0,1);
   }

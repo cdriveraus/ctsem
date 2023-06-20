@@ -95,6 +95,9 @@ verbosify<-function(sf,verbose=2){
 #' @param intoverpop if 'auto', set to TRUE if optimizing and FALSE if using hmc. 
 #' if TRUE, integrates over population distribution of parameters rather than full sampling.
 #' Allows for optimization of non-linearities and random effects.
+#' @param sameInitialTimes if TRUE, include an empty observation for every subject that has no observation 
+#' at the earliest observation time of the dataset. This ensures that the T0MEANS occurs for every subject at the same time,
+#' rather than just at the earliest observation for that subject. Important when modelling trends over time, age, etc. 
 #' @param plot if TRUE, for sampling, a Shiny program is launched upon fitting to interactively plot samples. 
 #' May struggle with many (e.g., > 5000) parameters. For optimizing, various optimization details are plotted -- in development.
 #' @param derrind vector of integers denoting which latent variables are involved in dynamic error calculations.
@@ -104,7 +107,8 @@ verbosify<-function(sf,verbose=2){
 #' @param optimize if TRUE, use \code{\link{stanoptimis}} function for maximum a posteriori / importance sampling estimates, 
 #' otherwise use the HMC sampler from Stan, which is (much) slower, but generally more robust, accurate, and informative.
 #' @param optimcontrol list of parameters sent to \code{\link{stanoptimis}} governing optimization / importance sampling.
-#' @param nopriors logical. If TRUE, any priors are disabled -- sometimes desirable for optimization. 
+#' @param !priors deprecated, use priors argument. logical. If TRUE, any priors are disabled -- sometimes desirable for optimization. 
+#' @param priors if TRUE, priors are included in computations, otherwise specified priors are ignored.
 #' @param iter number of iterations, half of which will be devoted to warmup by default when sampling.
 #' When optimizing, this is the maximum number of iterations to allow -- convergence hopefully occurs before this!
 #' @param inits vector of parameter start values, as returned by the rstan function \code{rstan::unconstrain_pars} for instance. 
@@ -160,7 +164,7 @@ verbosify<-function(sf,verbose=2){
 #'   TIpredNames=c('TI1','TI2','TI3'),
 #'   LAMBDA=diag(2)) 
 #' 
-#' fit<-ctStanFit(ctstantestdat, model,nopriors=FALSE)
+#' fit<-ctStanFit(ctstantestdat, model,!priors=FALSE)
 #' 
 #' summary(fit) 
 #' 
@@ -255,7 +259,7 @@ verbosify<-function(sf,verbose=2){
 #' ctModelLatex(m1)
 #' 
 #' #fit
-#' f1 <- ctStanFit(datalong = dat2, ctstanmodel = m1, optimize=TRUE, nopriors=TRUE)
+#' f1 <- ctStanFit(datalong = dat2, ctstanmodel = m1, optimize=TRUE, !priors=TRUE)
 #' 
 #' summary(f1)
 #' 
@@ -387,15 +391,20 @@ verbosify<-function(sf,verbose=2){
 #' }
 
 ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intoverstates=TRUE, binomial=FALSE,
-  fit=TRUE, intoverpop='auto', stationary=FALSE,plot=FALSE,  derrind='all',
+  fit=TRUE, intoverpop='auto', sameInitialTimes=FALSE, stationary=FALSE,plot=FALSE,  derrind='all',
   optimize=TRUE,  optimcontrol=list(),
-  nlcontrol = list(), nopriors=TRUE, chains=2,
+  nlcontrol = list(), nopriors=NA, priors=FALSE, chains=2,
   cores=ifelse(optimize,getOption("mc.cores", 2L),'maxneeded'),
   inits=NULL,
   forcerecompile=FALSE,saveCompile=TRUE,savescores=FALSE,
   savesubjectmatrices=FALSE, saveComplexPars=FALSE,
   gendata=FALSE,
   control=list(),verbose=0,vb=FALSE,...){
+  
+  if(!is.na(nopriors)){
+    warning('nopriors argument is deprecated, use priors argument in future')
+    priors <- priors
+  }
   
   datalong <- data.frame(datalong)
   
@@ -430,10 +439,10 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     }
   }
   
-  if(optimize && nopriors) message("Maximum likelihood estimation requested")
-  if(optimize && !nopriors && (is.null(optimcontrol$is)  || optimcontrol$is %in% FALSE)) message("Maximum a posteriori estimation requested")
-  if(optimize && !nopriors && (!is.null(optimcontrol$is)  && optimcontrol$is %in% TRUE)) message("Bayesian estimation via optimization and importance sampling requested")
-  if(!optimize && !nopriors) message("Bayesian estimation via Stan's NUTS sampler requested")
+  if(optimize && !priors) message("Maximum likelihood estimation requested")
+  if(optimize && priors && (is.null(optimcontrol$is)  || optimcontrol$is %in% FALSE)) message("Maximum a posteriori estimation requested")
+  if(optimize && priors && (!is.null(optimcontrol$is)  && optimcontrol$is %in% TRUE)) message("Bayesian estimation via optimization and importance sampling requested")
+  if(!optimize) message("Bayesian estimation via Stan's NUTS sampler requested")
   
   
   ###stationarity
@@ -482,9 +491,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   }
   
   recompile <- FALSE
-  if(!optimize && nopriors){
-    message('HMC sampling requested, priors required so disabling nopriors argument')
-    nopriors <- FALSE
+  if(!optimize && !priors){
+    message('HMC sampling requested, but priors disabled -- are you sure? consider setting priors=TRUE')
+    # !priors <- FALSE
   }
   if(optimize && !intoverstates) warning('intoverstates=TRUE required for sensible optimization! Proceed onwards to weird output at own risk!')
   
@@ -559,7 +568,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   ctm$intoverpop <- as.integer(intoverpop)
   ctm$nlatentpop <- as.integer(ifelse(ctm$intoverpop ==1, max(ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS']),  ctm$n.latent))
   ctm$intoverstates <- as.integer(intoverstates)
-  ctm$nopriors <- as.integer(nopriors)
+  ctm$priors <- as.integer(priors)
   ctm$stationary <- as.integer(stationary)
   ctm$nlcontrol <- nlcontrol
   
@@ -598,7 +607,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   ctm$recompile <- recompile
   
   
-  standata <- ctStanData(ctm,datalong,optimize=optimize,derrind=derrind) 
+  standata <- ctStanData(ctm,datalong,optimize=optimize,derrind=derrind, sameInitialTimes=sameInitialTimes) 
   standata$verbose=as.integer(verbose)
   standata$savesubjectmatrices=as.integer(savesubjectmatrices)
   standata$gendata=as.integer(gendata)
@@ -663,53 +672,40 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
       if(!gendata) sm <- stanmodels$ctsm else sm <- stanmodels$ctsmgen
     }
     
-    # if(!is.null(inits) & any(inits!=0)){
-    #   sf <- stan_reinitsf(sm,standata)
-    #   staninits <- list(stan1=constrain_pars(sf,inits))
-    #   # staninits=list()
-    #   if(chains > 1){
-    #     for(i in 2:chains){
-    #       staninits[[i]]<-staninits[[1]]
-    #     }
-    #   }
-    # }
-    # 
-    # if(!is.null(inits) & class(inits) !='list') staninits=inits #if 0 init
-    # if(is.null(inits)){
-    #   staninits=list()
-    #   # if(chains > 0){
-    #   # init=0
-    #   # message('Finding good start values...')
-    #   # if(is.null(ctm$fixedsubpars)) freesubpars <- TRUE else freesubpars <- FALSE
-    #   for(i in 1:(chains)){
-    #     #   if(nindvarying > 0 && !intoverpop & !optimize) {
-    #     #     ctm$fixedsubpars <- matrix( rnorm(nindvarying*nsubjects,0,.1),ncol=nindvarying)
-    #     #     if(i==1){
-    #     #     sf <- stan_reinitsf(sm,standata)
-    #     #     fitb=suppressMessages(ctStanFit(datalong = datalong,ctm = ctm,optimize=TRUE,fit=TRUE,inits=init,
-    #     #       savescores=FALSE,gendata = FALSE,
-    #     #       optimcontrol = list(estonly=TRUE,deoptim=FALSE,isloops=0,finishsamples=2,tol=1e-4),verbose=0,...))
-    #     #     init <- c(fitb$stanfit$rawest)+ rnorm(length(init),0,.05)
-    #     #     } else init = init + rnorm(length(init),0,.05)
-    #     #     staninits[[i]] <- constrain_pars(sf,c(init,ctm$fixedsubpars))
-    #     #     if(i==chains & freesubpars) ctm$fixedsubpars <- NULL
-    #     #   } else {
-    #     staninits[[i]]=list(
-    # baseindparams=array(rnorm(ifelse(intoverpop,0,nsubjects*nindvarying),0,.1),dim = c(ifelse(intoverpop,0,nsubjects),ifelse(intoverpop,0,nindvarying))),
-    # eta=array(stats::rnorm(nrow(datalong)*ctm$n.latent,0,.1),dim=c(nrow(datalong),ctm$n.latent)),
-    # tipredeffectparams=array(rnorm(standata$ntipredeffects,0,.1)) 
-    # )
-    
-    # if(standata$fixedhyper==0){
-    #   staninits[[i]]$rawpopmeans=array(rnorm(nparams,0,.1))
-    #   staninits[[i]]$rawpopsdbase=array(rnorm(nindvarying,0,.1))
-    #   staninits[[i]]$sqrtpcov=array(rnorm((nindvarying^2-nindvarying)/2,0,.1))
-    # }
-    # if(!is.na(ctm$rawpopsdbaselowerbound) & standata$fixedhyper==0) staninits[[i]]$rawpopsdbase=exp(staninits[[i]]$rawpopsdbase)
-    # }
-    # }
-    # }
-    # }
+
+# configure inits ---------------------------------------------------------
+    initOptim <- (length(inits)==1 && (inits=='optimize' || inits=='Optimize' || inits=='optimise' || inits=='Optimise'))
+    if(optimize || initOptim){ #then set optimcontrol list
+      optimcontrol$cores <- cores
+      optimcontrol$verbose <- verbose
+      optimcontrol$priors <- as.logical(priors)
+      optimcontrol$standata=standata
+      optimcontrol$sm=sm
+      optimcontrol$init=inits
+      optimcontrol$plot=plot
+      optimcontrol$matsetup <- data.frame(ctm$modelmats$matsetup)
+    }
+
+    if(!optimize && !is.null(inits)){
+      if('list' %in% class(inits)){
+        staninits=inits
+      } else {
+        if(initOptim){ #then first optimize to get inits
+          optimcontrol$init <- NULL
+          optimcontrol$tol=1e-7
+          if(!intoverpop & ! intoverstates) stop('Cannot initialize with optimization unless intoverpop and intoverstates are set to TRUE')
+          inits <- do.call(stanoptimis,optimcontrol)$rawest
+        }
+      sf <- stan_reinitsf(sm,standata)
+      staninits <- list(stan1=constrain_pars(sf,inits))
+      if(chains > 1){ #set all chains to same inits
+        for(i in 2:chains){
+          staninits[[i]]<-staninits[[1]]
+        }
+      }
+      }
+  }
+
     
     if(!optimize){
       
@@ -726,23 +722,20 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
       message('Sampling...')
       # 
       stanargs <- list(object = sm, 
-        # enable_random_init=TRUE,
         init_r=.03,
         save_warmup=as.logical(plot),
-        # init=staninits,
         refresh=20,
         iter=iter,
         data = standata, chains = chains, control=control,
         cores=cores,
         ...) 
-      
-      
+      if(!is.null(inits)) stanargs$init=staninits
       
       if(vb){
         if(!intoverpop && standata$nindvarying > 0) warning('Poor results are expected with variational inference and sampling individual differences! Suggest disabling vb or enabling intoverpop.')
         stanfit <- list(stanfit=rstan::vb(object = sm,data=standata, importance_resampling=TRUE,tol_rel_obj=1e-3))
       } else{ #if not vi
-        if(plot==TRUE) stanfit <- list(stanfit=do.call(stanWplot,stanargs)) else stanfit <- list(stanfit=do.call(sampling,stanargs))
+        if(plot==TRUE) stanfit <- suppressWarnings(list(stanfit=do.call(stanWplot,stanargs))) else stanfit <- suppressWarnings(list(stanfit=do.call(sampling,stanargs)))
         
         #find the median sample and compute kalman scores etc for this
         # browser()
@@ -756,18 +749,8 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
     }
     
     if(optimize==TRUE) {
-      optimcontrol$cores <- cores
-      optimcontrol$verbose <- verbose
-      optimcontrol$nopriors <- as.logical(nopriors)
-      optimcontrol$standata=standata
-      optimcontrol$sm=sm
-      optimcontrol$init=inits
-      optimcontrol$plot=plot
-      optimcontrol$matsetup <- data.frame(ctm$modelmats$matsetup)
-      
-      # opcall <- paste0('stanoptimis(standata = standata,sm = sm,init = inits,plot=plot,',
-      #   paste0(gsub('list(','',paste0(deparse(optimcontrol),collapse=''),fixed=TRUE)))
       stanfit <- do.call(stanoptimis,optimcontrol) #eval(parse(text=opcall))
+      
       #update data that may have changed during optimization
       for(ni in names(stanfit$standata)){
         standata[[ni]] <- stanfit$standata[[ni]]

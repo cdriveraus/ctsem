@@ -1,4 +1,4 @@
-ctStanData <- function(ctm, datalong,optimize,derrind='all'){
+ctStanData <- function(ctm, datalong,optimize,derrind='all',sameInitialTimes=FALSE){
   
   
   nsubjects <- length(unique(datalong[, ctm$subjectIDname])) 
@@ -19,7 +19,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
   if(!(ctm$subjectIDname %in% colnames(datalong))) stop(paste('id column', (ctm$subjectIDname), "not found in data"))
   
   
-  if(ctm$nopriors==FALSE){
+  if(ctm$priors){
     if(ctm$n.TIpred > 1 && any(abs(colMeans(datalong[,c(ctm$TIpredNames),drop=FALSE],na.rm=TRUE)) > .3)){
       message('Uncentered TI predictors noted -- interpretability may be hindered and default priors may not be appropriate')
     }
@@ -135,6 +135,14 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
       }
     }
   }
+  
+  if(sameInitialTimes){
+    datanew <- datalong[!duplicated(datalong[[ctm$subjectIDname]]),]
+  datanew[[ctm$timeName]] <- min(datanew[[ctm$timeName]])
+  datalong <- merge.data.frame(x = datalong,y = datanew[,c(ctm$subjectIDname,ctm$timeName)],
+    by = c(ctm$subjectIDname,ctm$timeName),all = TRUE)
+  }
+  
   datalong[,ctm$manifestNames][is.na(datalong[,ctm$manifestNames])]<-99999 #missing data
   
   
@@ -215,7 +223,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
       driftdiagonly = as.integer(driftdiagonly),
       intoverpop=as.integer(ctm$intoverpop),
       # nlmeasurement=as.integer(nlmeasurement),
-      nopriors=as.integer(ctm$nopriors),
+      priors=as.integer(ctm$priors),
       savescores=0L,
       savesubjectmatrices=0L,
       nJAxfinite = ifelse(ctm$recompile,0L,length(ctm$JAxfinite)),
@@ -286,8 +294,8 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all'){
     }
     if(subi - oldsubi == 0) {
       dT[rowi]<-datalong[rowi,ctm$timeName] - datalong[rowi-1,ctm$timeName]
-      if(dT[rowi] <= 0) stop(paste0('A time interval of ', dT[rowi],' was found at row ',rowi))
-      # if(dT[rowi] == 0) warning(paste0('A time interval of ', dT[rowi],' was found at row ',rowi))
+      if(dT[rowi] < 0) stop(paste0('A time interval of ', dT[rowi],' was found at row ',rowi))
+      if(dT[rowi] == 0) warning(paste0('A time interval of ', dT[rowi],' was found at row ',rowi))
       
     }
     oldsubi<-subi

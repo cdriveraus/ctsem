@@ -30,6 +30,7 @@ datalong <- cbind(id, time, sunspots)
  datalong[seq(10,150,10),'TD1'] = 1
 
 ssfit1 <- ctStanFit(datalong, ssmodel,cores=1,verbose=0)
+# ssfit <- ctStanFit(datalong, ssmodel,cores=1,verbose=0,optimcontrol = list(hessianType='stochastic', stochasticHessianEpsilon=1e-1))
 ssfit2 <- ctStanFit(datalong, ssmodel,cores=2,verbose=0)
 ssfit3 <- ctStanFit(datalong, ssmodel,cores=1,nlcontrol=list(maxtimestep=.3))
 ssfit4 <- ctStanFit(datalong, ssmodel,chains=2,cores=2,iter=300,optimize=F,verbose=0)

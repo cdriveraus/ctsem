@@ -54,7 +54,7 @@ ctdataupdate<-function(forcerecompile=FALSE){
     LAMBDA=diag(2),tipredDefault=FALSE)  
   
   ctstantestfit<-ctStanFit(ctsem::ctstantestdat,checkm,cores=1,
-    optimize = TRUE,optimcontrol=list(finishsamples=20,stochastic=T),nopriors=FALSE)
+    optimize = TRUE,optimcontrol=list(finishsamples=20,stochastic=T),priors=TRUE)
   
   ctstantestfit <- ctStanGenerateFromFit(ctstantestfit,nsamples = 20,fullposterior = TRUE)
   

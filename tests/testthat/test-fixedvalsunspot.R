@@ -37,7 +37,7 @@ if(1==0){
   ssfit<-ctStanFit(datalong=datalong, ctstanmodel=sm, forcerecompile = T,
     verbose=0,optimize=T,#optimcontrol=list(estonly=T),
     # nlcontrol=list(nldynamics=F, nlmeasurement=F,ukffull=1,ukfspread=1e-1),
-    chains=1,nopriors=F)
+    chains=1,priors=TRUE)
   
 }
 

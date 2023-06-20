@@ -13,13 +13,15 @@ ctStanFit(
   binomial = FALSE,
   fit = TRUE,
   intoverpop = "auto",
+  sameInitialTimes = FALSE,
   stationary = FALSE,
   plot = FALSE,
   derrind = "all",
   optimize = TRUE,
   optimcontrol = list(),
   nlcontrol = list(),
-  nopriors = TRUE,
+  nopriors = NA,
+  priors = FALSE,
   chains = 2,
   cores = ifelse(optimize, getOption("mc.cores", 2L), "maxneeded"),
   inits = NULL,
@@ -61,6 +63,10 @@ This now sets \code{intoverstates = FALSE} and the \code{manifesttype} of every 
 if TRUE, integrates over population distribution of parameters rather than full sampling.
 Allows for optimization of non-linearities and random effects.}
 
+\item{sameInitialTimes}{if TRUE, include an empty observation for every subject that has no observation 
+at the earliest observation time of the dataset. This ensures that the T0MEANS occurs for every subject at the same time,
+rather than just at the earliest observation for that subject. Important when modelling trends over time, age, etc.}
+
 \item{stationary}{Logical. If TRUE, T0VAR and T0MEANS input matrices are ignored, 
 the parameters are instead fixed to long run expectations. More control over this can be achieved
 by instead setting parameter names of T0MEANS and T0VAR matrices in the input model to 'stationary', for
@@ -87,7 +93,7 @@ the integration is nested within an Euler like loop.
 Smaller values may offer greater accuracy, but are slower and not always necessary. Given the exponential integration,
 linear model elements are fit exactly with only a single step.}
 
-\item{nopriors}{logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.}
+\item{priors}{if TRUE, priors are included in computations, otherwise specified priors are ignored.}
 
 \item{chains}{number of chains to sample, during HMC or post-optimization importance sampling. Unless the cores
 argument is also set, the number of chains determines the number of cpu cores used, up to 
@@ -130,6 +136,8 @@ list(adapt_delta = .8, adapt_window=2, max_treedepth=10, adapt_init_buffer=2, st
 \item{vb}{Logical. Use variational Bayes algorithm from stan? Only kind of working, not recommended.}
 
 \item{...}{additional arguments to pass to \code{\link[rstan]{stan}} function.}
+
+\item{!priors}{deprecated, use priors argument. logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.}
 }
 \description{
 Fits a ctsem model specified via \code{\link{ctModel}} with type either 'stanct' or 'standt'.
@@ -146,7 +154,7 @@ model<-ctModel(type='stanct',
   TIpredNames=c('TI1','TI2','TI3'),
   LAMBDA=diag(2)) 
 
-fit<-ctStanFit(ctstantestdat, model,nopriors=FALSE)
+fit<-ctStanFit(ctstantestdat, model,!priors=FALSE)
 
 summary(fit) 
 
@@ -241,7 +249,7 @@ m1 <- ctModel(type = 'stanct',
 ctModelLatex(m1)
 
 #fit
-f1 <- ctStanFit(datalong = dat2, ctstanmodel = m1, optimize=TRUE, nopriors=TRUE)
+f1 <- ctStanFit(datalong = dat2, ctstanmodel = m1, optimize=TRUE, !priors=TRUE)
 
 summary(f1)
 

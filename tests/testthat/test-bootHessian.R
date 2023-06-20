@@ -32,13 +32,13 @@ if(FALSE){
       m <- ctModel(type='stanct',LAMBDA=matrix(1),CINT='cint',MANIFESTMEANS=0)
       # m$pars$indvarying=F
       
-      f <- ctStanFit(datalong = d,ctstanmodel = m,cores=1,nopriors=F,optimcontrol=list(carefulfit=F,stochastic=F,finishsamples=5000))
+      f <- ctStanFit(datalong = d,ctstanmodel = m,cores=1,priors=TRUE,optimcontrol=list(carefulfit=F,stochastic=F,finishsamples=5000))
       s=summary(f)
       # print(s)
       
       scores=t(ctsem:::scorecalc(standata = f$standata,est = f$stanfit$rawest,stanmodel = f$stanmodel,subjectsonly = T,cores=1))
       
-      fc <- ctStanFit(datalong = d,ctstanmodel = m,cores=1,nopriors=F,optimcontrol=list(carefulfit=F,stochastic=F,finishsamples=5000,bootstrapUncertainty=F))
+      fc <- ctStanFit(datalong = d,ctstanmodel = m,cores=1,priors=TRUE,optimcontrol=list(carefulfit=F,stochastic=F,finishsamples=5000,bootstrapUncertainty=F))
       sc=summary(fc)
       # print(sc)
       

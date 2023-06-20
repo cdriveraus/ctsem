@@ -138,7 +138,7 @@ ctModelLatex(m)
 reported otherwise
 
 ``` r
-f <- ctStanFit(chickdata,m,nopriors=FALSE) 
+f <- ctStanFit(chickdata,m,priors=TRUE) 
 ```
 
 \#’ Summarise fit, view covariate effects – Diets 3 and 4 seem most

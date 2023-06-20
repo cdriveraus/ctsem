@@ -15,12 +15,15 @@ stanoptimis(
   tol = 1e-10,
   decontrol = list(),
   stochastic = TRUE,
-  nopriors = FALSE,
+  priors = TRUE,
   carefulfit = TRUE,
   bootstrapUncertainty = FALSE,
   subsamplesize = 1,
   parsteps = c(),
   plot = FALSE,
+  hessianType = "numerical",
+  stochasticHessianSamples = 50,
+  stochasticHessianEpsilon = 1e-05,
   is = FALSE,
   isloopsize = 1000,
   finishsamples = 1000,
@@ -59,10 +62,10 @@ minima / difficult optimization.}
 \item{stochastic}{Logical. Use stochastic gradient descent instead of mize (bfgs) optimizer.
 Still experimental, worth trying for either robustness checks or problematic, high dimensional, nonlinear, problems.}
 
-\item{nopriors}{logical. If TRUE, a nopriors integer is set to 1 (TRUE) in the standata object -- only has an effect if 
+\item{priors}{logical. If TRUE, a priors integer is set to 1 (TRUE) in the standata object -- only has an effect if 
 the stan model uses this value.}
 
-\item{carefulfit}{Logical. If TRUE, priors are always used for a rough first pass to obtain starting values when nopriors=TRUE.}
+\item{carefulfit}{Logical. If TRUE, priors are always used for a rough first pass to obtain starting values when priors=FALSE}
 
 \item{bootstrapUncertainty}{Logical. If TRUE, subject wise gradient contributions are resampled to estimate the hessian, 
 for computing standard errors or initializing importance sampling.}
