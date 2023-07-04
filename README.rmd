@@ -17,6 +17,8 @@ The original ctsem is documented in a JSS publication (Driver, Voelkle, Oud, 201
 
 For questions (or to see past answers) please use <https://github.com/cdriveraus/ctsem/discussions>
 
+For some tutorials and another quick start, see \url{https://cdriver.netlify.app/}. The *very* quick start is below.
+
 To cite ctsem please use the citation("ctsem") command in R.
 
 ### To install the github version, first install rstan and Rtools, then from a fresh R session:
@@ -39,23 +41,14 @@ If the installctsem.R code has never been run before, be sure to run that (see a
 Place this line  in ~/.R/makevars.win , and if there are other lines, delete them:
 
 ```
-CXX14FLAGS += -mtune=native -Wno-ignored-attributes -Wno-deprecated-declarations
+CXX17FLAGS += -mtune=native -Wno-ignored-attributes -Wno-deprecated-declarations
 ```
-see \url{https://discourse.mc-stan.org/t/dealing-with-r-4-0/14586} for details
+For compile issues, check if you can use rstan, check forum posts on \url{https://discourse.mc-stan.org/}
 
 In case of compile errors like `g++ not found`, ensure the devtools package is installed:
 
 ```r
 install.packages('devtools')
-```
-
-and include the following in your .Rprofile, replacing c:/Rtools with the appropriate path -- sometimes Rbuildtools/4.0/ . 
-
-```r
-library(devtools)
-Sys.setenv(PATH = paste("C:/Rtools/bin", Sys.getenv("PATH"), sep=";"))
-Sys.setenv(PATH = paste("C:/Rtools/mingw_64/bin", Sys.getenv("PATH"), sep=";"))
-Sys.setenv(BINPREF = "C:/Rtools/mingw_$(WIN)/bin/")
 ```
 
 ### Quick start -- univariate panel data with covariate effects on parameters

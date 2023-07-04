@@ -5,7 +5,7 @@
 [![R-CMD-check](https://github.com/cdriveraus/ctsem/workflows/R-CMD-check/badge.svg)](https://github.com/cdriveraus/ctsem/actions)
 <!-- badges: end -->
 
-**See the NEWS file for recent updates, and below for quick start\!**
+**See the NEWS file for recent updates, and below for quick start!**
 
 ctsem allows for easy specification and fitting of a range of continuous
 and discrete time dynamic models, including multiple indicators (dynamic
@@ -39,6 +39,9 @@ faster.
 For questions (or to see past answers) please use
 <https://github.com/cdriveraus/ctsem/discussions>
 
+For some tutorials and another quick start, see . The *very* quick start
+is below.
+
 To cite ctsem please use the citation(“ctsem”) command in R.
 
 ### To install the github version, first install rstan and Rtools, then from a fresh R session:
@@ -59,28 +62,18 @@ Ensure recent version of R and Rtools is installed. If the
 installctsem.R code has never been run before, be sure to run that (see
 above).
 
-Place this line in \~/.R/makevars.win , and if there are other lines,
+Place this line in ~/.R/makevars.win , and if there are other lines,
 delete them:
 
-    CXX14FLAGS += -mtune=native -Wno-ignored-attributes -Wno-deprecated-declarations
+    CXX17FLAGS += -mtune=native -Wno-ignored-attributes -Wno-deprecated-declarations
 
-see  for details
+For compile issues, check if you can use rstan, check forum posts on
 
 In case of compile errors like `g++ not found`, ensure the devtools
 package is installed:
 
 ``` r
 install.packages('devtools')
-```
-
-and include the following in your .Rprofile, replacing c:/Rtools with
-the appropriate path – sometimes Rbuildtools/4.0/ .
-
-``` r
-library(devtools)
-Sys.setenv(PATH = paste("C:/Rtools/bin", Sys.getenv("PATH"), sep=";"))
-Sys.setenv(PATH = paste("C:/Rtools/mingw_64/bin", Sys.getenv("PATH"), sep=";"))
-Sys.setenv(BINPREF = "C:/Rtools/mingw_$(WIN)/bin/")
 ```
 
 ### Quick start – univariate panel data with covariate effects on parameters
@@ -166,7 +159,7 @@ ctKalman(f,plot=T,
 ```
 
 \#’ Plot temporal regression coefficients conditional on time interval –
-increases in this case\!
+increases in this case!
 
 ``` r
 ctStanDiscretePars(f,plot=T) 
@@ -198,7 +191,7 @@ priors: ctStanGenerate()
 
 \#’ Get samples from the fitted object: ctExtract()
 
-\#’ In samples, pop\_DRIFT refers to the population drift matrix,
-subj\_DRIFT refers to the subject matrix. Subject matrices only computed
+\#’ In samples, pop_DRIFT refers to the population drift matrix,
+subj_DRIFT refers to the subject matrix. Subject matrices only computed
 for max likelihood / posterior mode by default, and found in the
-\(stanfit\)transformedparsfull object.
+$stanfit$transformedparsfull object.
