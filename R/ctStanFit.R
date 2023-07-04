@@ -505,10 +505,10 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   #   message('Setting intoverpop=TRUE to enable optimization of random effects...')
   # }
   
-  if(intoverpop==TRUE && !any(ctm$pars$indvarying[is.na(ctm$pars$value)])) {
-    # message('No individual variation -- disabling intoverpop switch'); 
-    intoverpop <- FALSE
-  }
+  # if(intoverpop==TRUE && !any(ctm$pars$indvarying[is.na(ctm$pars$value)])) {
+  #   # message('No individual variation -- disabling intoverpop switch'); 
+  #   intoverpop <- FALSE
+  # }
   
   
   ctm <- ctModel0DRIFT(ctm, ctm$continuoustime) #offset 0 drift
@@ -691,7 +691,7 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
         staninits=inits
       } else {
         if(initOptim){ #then first optimize to get inits
-          if(!intoverpop) stop('Cannot optimize to get inits unless intoverpop=TRUE')
+          if(!intoverpop && nsubjects > 1) stop('Cannot optimize to get inits unless intoverpop=TRUE')
           optimcontrol$init <- NULL
           optimcontrol$tol=1e-7
           if(!intoverpop & ! intoverstates) stop('Cannot initialize with optimization unless intoverpop and intoverstates are set to TRUE')
@@ -744,7 +744,7 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
         # middle <- which(abs(e$ll-quantile(e$ll,.5)) == min(abs(e$ll-quantile(e$ll,.5) )))
         # middle <- which(e$ll==max(e$ll)) 
         stanfit$rawposterior <- t(stan_unconstrainsamples(fit = stanfit$stanfit,standata = standata))
-        stanfit$rawest <- colMeans(stanfit$rawposterior)
+        stanfit$rawest <- apply(stanfit$rawposterior,2,median)
         
       }
     }
