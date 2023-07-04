@@ -57,12 +57,12 @@ plot.ctStanFit <- function(x, types='all',wait=TRUE,...){
   if('kalman' %in% types && continue){
     message('Plotting expectations from Kalman filter using ctKalman')
     
-    ctKalman(x, plot=TRUE,...)
+    print(ctKalman(x, plot=TRUE,...))
     types=types[types!='kalman']
     continue<-waitf()
   }
   
-  if('priorcheck' %in% types && continue){
+  if('priorcheck' %in% types && continue && x$standata$priors==1){
     message('Plotting prior and posterior densities using ctStanPlotPost')
     
     ctStanPlotPost(x,wait = wait,...)

@@ -10,6 +10,10 @@
 #' are returned, for parameters that had random effects specified.
 #' @param tformsubjectpars if FALSE, subject level parameters are returned in raw, pre transformation form.
 #' @param indvarstates if TRUE, do not remove indvarying states from output
+#' @param removeObs Logical or integer. If TRUE, observations (but not covariates)
+#' are set to NA, so only expectations based on parameters and covariates are returned. If a positive integer N, 
+#' every N observations are retained while others are set NA for computing model expectations -- useful for observing prediction performance
+#' forward further in time than one observation.
 #' @param ... additional arguments to collpsefunc.
 #'
 #' @return list containing Kalman filter elements, each element in array of
@@ -18,9 +22,10 @@
 #'
 #' @examples 
 #' k=ctStanKalman(ctstantestfit,subjectpars=TRUE,collapsefunc=mean)
-ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
-  standardisederrors=FALSE, subjectpars=TRUE, tformsubjectpars=TRUE, indvarstates=FALSE,...){
-
+ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1, 
+  subjects=1:max(fit$standata$subject), timestep='asdata',timerange='asdata',
+  standardisederrors=FALSE, subjectpars=TRUE, tformsubjectpars=TRUE, indvarstates=FALSE,removeObs=F,...){
+  
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
   message('Computing state estimates..')
   # standata <- fit$standata
@@ -32,11 +37,48 @@ ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
     if(is.function(collapsefunc)) samples = matrix(apply(samples,2,collapsefunc,...),ncol=ncol(samples))
   }
   
-    e=stan_constrainsamples(sm = fit$stanmodel,standata = fit$standata,
-      savesubjectmatrices = subjectpars,
-      samples = samples,cores=cores,savescores=TRUE,pcovn=5)
-
-    nsamples <-nrow(samples) #in case it was set NA, compute nsamples
+  # use only selected subjects data -----------------------------------------
+  if(length(subjects!=fit$standata$nsubjects)){
+    idstore <- fit$standata$subject
+    if(length(fit$stanfit$stanfit@sim)==0) { #if optimized fit
+      fit$standata <- standatact_specificsubjects(fit$standata, subjects = subjects)
+    }
+  }
+  
+  if(removeObs || removeObs > 0){
+    if(is.numeric(removeObs)) skipn <- removeObs else skipn <- 1
+    for(x in c('nobs_y','nbinary_y','ncont_y','whichobs_y','whichbinary_y','whichcont_y')){
+      if(skipn > 1) {
+        if(length(dim(fit$standata[[x]]))==2) fit$standata[[x]][(1:skipn)!=1,] <- 0L else fit$standata[[x]][(1:skipn)!=1] <-0L 
+      }
+      if(skipn==1) {
+        if(length(dim(fit$standata[[x]]))==2) fit$standata[[x]][,] <- 0L else fit$standata[[x]][] <-0L 
+      }
+    }
+  }
+  
+  # timerange ---------------------------------------------------------------
+  if(timestep=='auto'){
+    if(fit$standata$intoverstates==1) timestep=sd(fit$standata$time,na.rm=TRUE)/50 else timestep ='asdata'
+  }
+  if(all(timerange == 'asdata')) timerange <- range(fit$standata$time[fit$standata$subject %in% subjects]) 
+  
+  if(timestep != 'asdata' && fit$ctstanmodel$continuoustime) {
+    if(fit$ctstanmodel$continuoustime != TRUE) stop('Discrete time model fits must use timestep = "asdata"')
+    for(subjecti in 1:length(subjects)){
+      times <- seq(timerange[1],timerange[2],timestep)
+      fit$standata <- standataFillTime(fit$standata,times,subject=subjecti)
+    }
+  }
+  
+  if(!length(fit$stanfit$stanfit@sim)==0) fit$standata$dokalmanrows <-
+    as.integer(fit$standata$subject %in% subjects)
+  
+  e=stan_constrainsamples(sm = fit$stanmodel,standata = fit$standata,
+    savesubjectmatrices = subjectpars,
+    samples = samples,cores=cores,savescores=TRUE,pcovn=5)
+  
+  nsamples <-nrow(samples) #in case it was set NA, compute nsamples
   
   e$yprior <- array(e$ya[,1,,,drop=FALSE],dim=dim(e$ya)[-2])
   e$yupd <-  array(e$ya[,2,,,drop=FALSE],dim=dim(e$ya)[-2])

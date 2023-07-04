@@ -403,7 +403,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   
   if(!is.na(nopriors)){
     warning('nopriors argument is deprecated, use priors argument in future')
-    priors <- priors
+    priors <- !nopriors
   }
   
   datalong <- data.frame(datalong)
@@ -691,6 +691,7 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
         staninits=inits
       } else {
         if(initOptim){ #then first optimize to get inits
+          if(!intoverpop) stop('Cannot optimize to get inits unless intoverpop=TRUE')
           optimcontrol$init <- NULL
           optimcontrol$tol=1e-7
           if(!intoverpop & ! intoverstates) stop('Cannot initialize with optimization unless intoverpop and intoverstates are set to TRUE')
