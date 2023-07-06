@@ -497,7 +497,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   }
   if(optimize && !intoverstates) warning('intoverstates=TRUE required for sensible optimization! Proceed onwards to weird output at own risk!')
   
-  if(intoverpop == 'auto')  intoverpop <- ifelse(optimize,TRUE,FALSE)
+  if(intoverpop == 'auto')  intoverpop <- 
+    ifelse(optimize && any(ctm$pars$indvarying[is.na(ctm$pars$value)]),TRUE,FALSE)
   
   # if(optimize && !intoverpop && any(ctm$pars$indvarying[is.na(ctm$pars$value)]) && 
   #     is.null(ctm$fixedrawpopchol) && is.null(ctm$fixedsubpars)){
