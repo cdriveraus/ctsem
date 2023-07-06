@@ -25,7 +25,7 @@
 ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1, 
   subjects=1:max(fit$standata$subject), timestep='asdata',timerange='asdata',
   standardisederrors=FALSE, subjectpars=TRUE, tformsubjectpars=TRUE, indvarstates=FALSE,removeObs=F,...){
-  
+
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
   message('Computing state estimates..')
   # standata <- fit$standata
@@ -38,7 +38,7 @@ ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
   }
   
   # use only selected subjects data -----------------------------------------
-  if(length(subjects!=fit$standata$nsubjects)){
+  if(length(subjects)!=fit$standata$nsubjects){
     idstore <- fit$standata$subject
     if(length(fit$stanfit$stanfit@sim)==0) { #if optimized fit
       fit$standata <- standatact_specificsubjects(fit$standata, subjects = subjects)
@@ -65,10 +65,10 @@ ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
   
   if(timestep != 'asdata' && fit$ctstanmodel$continuoustime) {
     if(fit$ctstanmodel$continuoustime != TRUE) stop('Discrete time model fits must use timestep = "asdata"')
-    for(subjecti in 1:length(subjects)){
+    # for(subjecti in 1:length(subjects)){
       times <- seq(timerange[1],timerange[2],timestep)
-      fit$standata <- standataFillTime(fit$standata,times,subject=subjecti)
-    }
+      fit$standata <- standataFillTime(fit$standata,times,subject=subjects)
+    # }
   }
   
   if(!length(fit$stanfit$stanfit@sim)==0) fit$standata$dokalmanrows <-

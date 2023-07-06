@@ -139,7 +139,7 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
   }
   subjects <- sort(subjects) #in case not entered in ascending order
   
-  out <- ctStanKalman(fit,pointest=length(fit$stanfit$stanfit@sim)==0, removeObs=removeObs, subjects=subjects,
+  out <- ctStanKalman(fit,pointest=length(fit$stanfit$stanfit@sim)==0, removeObs=removeObs, subjects=subjects,timestep = timestep,
     collapsefunc=mean, indvarstates = FALSE,standardisederrors = standardisederrors) #extract state predictions
   
   out <- meltkalman(out)
