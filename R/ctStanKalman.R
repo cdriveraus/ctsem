@@ -43,6 +43,7 @@ ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
     if(length(fit$stanfit$stanfit@sim)==0) { #if optimized fit
       fit$standata <- standatact_specificsubjects(fit$standata, subjects = subjects)
     }
+    subjects <- sort(unique(fit$standata$subject))
   }
   
   if(removeObs || removeObs > 0){
@@ -59,7 +60,9 @@ ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
   
   # timerange ---------------------------------------------------------------
   if(timestep=='auto'){
-    if(fit$standata$intoverstates==1) timestep=sd(fit$standata$time,na.rm=TRUE)/50 else timestep ='asdata'
+    timediff <- diff(fit$standata$time)
+    timediff <- timediff[timediff > 0]
+    if(fit$standata$intoverstates==1) timestep=median(timediff)/5 else timestep ='asdata'
   }
   if(all(timerange == 'asdata')) timerange <- range(fit$standata$time[fit$standata$subject %in% subjects]) 
   

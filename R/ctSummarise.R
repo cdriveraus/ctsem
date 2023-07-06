@@ -4,7 +4,7 @@ ctSummarise<-function(sf,name='ctSummary',cores=2, times=seq(0,10,.1),quantiles=
   latents=1:sf$ctstanmodelbase$n.latent, manifests=1:sf$ctstanmodelbase$n.manifest){
   
   Sig. <- NULL
-  
+
   if('ctStanFit' %in% class(sf)){ #avoid overwriting plots if error!
     # library(data.table)
     oldwd = getwd()
@@ -294,10 +294,9 @@ ctSummarise<-function(sf,name='ctSummary',cores=2, times=seq(0,10,.1),quantiles=
         dev.off()
       }
     }
-    
-    
+
     #subject expectation plots 
-    k<-ctKalman(sf,subjects = whichsubfull,realid = TRUE)
+    k<-ctKalman(sf,subjects = sf$setup$idmap[whichsubfull,1],realid = TRUE)
     krem<-ctKalman(sf, subjects = whichsubfull,removeObs = TRUE,realid = TRUE)
     pdf(paste0(name,'_subjectexpectations.pdf'))
     print(plot(krem,polygonsteps=FALSE, kalmanvec='etaprior',plot=FALSE)+ggtitle('Latent Expectations Conditional on Covariates'))

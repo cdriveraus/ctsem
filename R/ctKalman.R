@@ -126,7 +126,6 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
   
   
   # get subjects ------------------------------------------------------------
-  
   idmap <- fit$setup$idmap #store now because we may reduce it
   subjectsarg <- subjects
   if(realid) subjects <- idmap[which(idmap[,1] %in% subjects),2]
