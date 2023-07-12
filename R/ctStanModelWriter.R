@@ -702,19 +702,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE,
   #save calcs without intoverpop for param intitialisation
   
   
-  #consider allowing copies across different 'when' states by dropping mlist from the final loop
-  simplestatedependencies <- function(when, mlist,basemats=FALSE) {
-    
-    paste0('statetf[whichequals(whenvecs[',when[when!=0],'],0,0)] = 
-         parvectform(whichequals(whenvecs[',when,'],0,0),state, ',when,
-      ', matsetup, matvalues, si);
-    
-    ',matcalcs('si',when=when, mlist,basemats=basemats))
-    
-  }
-  
-  
-  
+
   finiteJ<-function(){
     paste0('
     {
@@ -724,15 +712,12 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE,
     for(statei in append_array(JAxfinite,zeroint)){ //if some finite differences to do, compute these first
       state = basestate;
       if(statei>0)  state[statei] += Jstep;
-      
-        statetf[whichequals(whenvecs[2],0,0)] = 
-          parvectform(whichequals(whenvecs[2],0,0),state, 2, matsetup, matvalues, si);
           
         //initialise PARS first, and simple PARS before complex PARS
-        if(statedep[10] || whenmat[10,2]) PARS=mcalc(PARS,indparams, statetf,{2}, 10, matsetup, matvalues, si); 
+        if(statedep[10] || whenmat[10,2]) PARS=mcalc(PARS,indparams, state,{2}, 10, matsetup, matvalues, si); 
         ',simplifystanfunction(paste0(ctm$modelmats$calcs$PARS,';\n\n ',collapse=' '),simplify),'
-        if(statedep[3] || whenmat[3,2]) DRIFT=mcalc(DRIFT,indparams, statetf,{2}, 3, matsetup, matvalues, si); 
-        if(statedep[7] || whenmat[7,2]) CINT=mcalc(CINT,indparams, statetf,{2}, 7, matsetup, matvalues, si); 
+        if(statedep[3] || whenmat[3,2]) DRIFT=mcalc(DRIFT,indparams, state,{2}, 3, matsetup, matvalues, si); 
+        if(statedep[7] || whenmat[7,2]) CINT=mcalc(CINT,indparams, state,{2}, 7, matsetup, matvalues, si); 
         ',simplifystanfunction(paste0(ctm$modelmats$calcs$driftcint,';\n\n ',collapse=' '),simplify),'
       
       if(statei > 0) {
@@ -781,7 +766,6 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE,
   matrix[nlatentpop,nlatentpop] eJAxs[dosmoother ? ndatapoints : 1]; //time evolved jacobian, saved for smoother
 
   row_vector[nlatentpop] state = rep_row_vector(-999,nlatentpop); 
-  row_vector[nlatentpop] statetf;
   matrix[nlatentpop,nlatentpop] JAx; //Jacobian for drift
   //matrix[nlatentpop,nlatentpop] J0; //Jacobian for t0
   matrix[nlatentpop,nlatentpop] Jtd;//diag_matrix(rep_vector(1),nlatentpop); //Jacobian for nltdpredeffect
@@ -869,14 +853,11 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE,
     0, matsetup, matvalues, si)\';
      
   if(whenmat[1, 5] >= (si ? 1 : 0)) T0MEANS = 
-    mcalc(T0MEANS, indparams, statetf, {0}, 1, matsetup, matvalues, si); // base t0means to init
+    mcalc(T0MEANS, indparams, state, {0}, 1, matsetup, matvalues, si); // base t0means to init
       
  // for(li in 1:nlatentpop) if(!is_nan(T0MEANS[li,1])) state[li] = T0MEANS[li,1]; //in case of t0 dependencies, may have missingness
   
   state=T0MEANS[,1]\';
-  
-  statetf[whichequals(whenvecs[1],0,0)] = parvectform(whichequals(whenvecs[1],0,0),state, 1,
-    matsetup, matvalues, si);   
     
   ',matcalcs('si',when=0:1, c(PARS=10),basemats=TRUE),' //initialise simple PARS then do complex PARS
   ',simplifystanfunction(paste0(ctm$modelmats$calcs$PARS,';\n\n ',collapse=' '),simplify),'
@@ -950,11 +931,11 @@ if(verbose > 1) print ("below t0 row ", rowi);
         
         while(intstepi < (dt-1e-10)){
           intstepi = intstepi + dtsmall;
-          ',#simplestatedependencies(when=2,mlist=c(mats$driftcint,mats$diffusion,mats$jacobian[2])),' #now done inside finite diff loop
+          ',
       finiteJ(),'
       
-      if(statedep[4] || whenmat[4,2]) DIFFUSION=mcalc(DIFFUSION,indparams, statetf,{2}, 4, matsetup, matvalues, si); 
-      if(statedep[52] || whenmat[52,2]) JAx=mcalc(JAx,indparams, statetf,{2}, 52, matsetup, matvalues, si); 
+      if(statedep[4] || whenmat[4,2]) DIFFUSION=mcalc(DIFFUSION,indparams, state,{2}, 4, matsetup, matvalues, si); 
+      if(statedep[52] || whenmat[52,2]) JAx=mcalc(JAx,indparams, state,{2}, 52, matsetup, matvalues, si); 
       ',simplifystanfunction(paste0(ctm$modelmats$calcs$diffusion,';\n\n ',collapse=' '),simplify),'
       
       if(si==0 ||statedep[4] || whenmat[4,2] || ( T0check ==1 && whenmat[4,5])){
@@ -1026,17 +1007,14 @@ if(verbose > 1) print ("below t0 row ", rowi);
       int nonzerotdpred = 0;
       for(tdi in 1:ntdpred) if(tdpreds[rowi,tdi] != 0.0) nonzerotdpred = 1;
       if(si==0 ||nonzerotdpred){
-      
-        statetf[whichequals(whenvecs[3],0,0)] = 
-          parvectform( whichequals(whenvecs[3],0,0), state, 3, matsetup, matvalues, si);
           
         //initialise PARS first, and simple PARS before complex PARS
-        if(statedep[10] || whenmat[10,3]) PARS=mcalc(PARS,indparams, statetf,{3}, 10, matsetup, matvalues, si); 
+        if(statedep[10] || whenmat[10,3]) PARS=mcalc(PARS,indparams, state,{3}, 10, matsetup, matvalues, si); 
         ',simplifystanfunction(paste0(ctm$modelmats$calcs$PARS,';\n\n ',collapse=' '),simplify),'
         
       
-        if(statedep[9] || whenmat[9,3]) TDPREDEFFECT=mcalc(TDPREDEFFECT,indparams, statetf,{3}, 9, matsetup, matvalues, si); 
-        if(statedep[53] || whenmat[53,3]) Jtd=mcalc(Jtd,indparams, statetf,{3}, 53, matsetup, matvalues, si); 
+        if(statedep[9] || whenmat[9,3]) TDPREDEFFECT=mcalc(TDPREDEFFECT,indparams, state,{3}, 9, matsetup, matvalues, si); 
+        if(statedep[53] || whenmat[53,3]) Jtd=mcalc(Jtd,indparams, state,{3}, 53, matsetup, matvalues, si); 
 
         ',simplifystanfunction(paste0(ctm$modelmats$calcs$tdpred,';\n\n ',collapse=' '),simplify),'
 
@@ -1076,20 +1054,16 @@ if(verbose > 1){
     for(statei in append_array(Jyfinite,zeroint)){ //if some finite differences to do, compute these first
       state = basestate;
       if(statei>0 && (dosmoother + intoverstates) > 0)  state[statei] += Jstep;
-      
-            
-        statetf[whichequals(whenvecs[4],0,0)] = 
-          parvectform( whichequals(whenvecs[4],0,0), state, 4, matsetup, matvalues, si);
-          
+
         //initialise PARS first, and simple PARS before complex PARS
-        if(statedep[10] || whenmat[10,4]) PARS=mcalc(PARS,indparams, statetf,{4}, 10, matsetup, matvalues, si); 
+        if(statedep[10] || whenmat[10,4]) PARS=mcalc(PARS,indparams, state,{4}, 10, matsetup, matvalues, si); 
         ',simplifystanfunction(paste0(ctm$modelmats$calcs$PARS,';\n\n ',collapse=' '),simplify),'
         
       
-        if(statedep[2] || whenmat[2,4]) LAMBDA=mcalc(LAMBDA,indparams, statetf,{4}, 2, matsetup, matvalues, si); 
-        if(statedep[5] || whenmat[5,4]) MANIFESTVAR=mcalc(MANIFESTVAR,indparams, statetf,{4}, 5, matsetup, matvalues, si); 
-        if(statedep[6] || whenmat[6,4]) MANIFESTMEANS=mcalc(MANIFESTMEANS,indparams, statetf,{4}, 6, matsetup, matvalues, si); 
-        if(statedep[54] || whenmat[54,4]) Jy=mcalc(Jy,indparams, statetf,{4}, 54, matsetup, matvalues, si); 
+        if(statedep[2] || whenmat[2,4]) LAMBDA=mcalc(LAMBDA,indparams, state,{4}, 2, matsetup, matvalues, si); 
+        if(statedep[5] || whenmat[5,4]) MANIFESTVAR=mcalc(MANIFESTVAR,indparams, state,{4}, 5, matsetup, matvalues, si); 
+        if(statedep[6] || whenmat[6,4]) MANIFESTMEANS=mcalc(MANIFESTMEANS,indparams, state,{4}, 6, matsetup, matvalues, si); 
+        if(statedep[54] || whenmat[54,4]) Jy=mcalc(Jy,indparams, state,{4}, 54, matsetup, matvalues, si); 
 
         ',simplifystanfunction(paste0(ctm$modelmats$calcs$measurement,';\n\n ',collapse=' '),simplify),'
         
@@ -1162,7 +1136,7 @@ if(verbose > 1){
     
       if(intoverstates==1 && size(od) > 0) {
         
-         if(verbose > 1) print("before K rowi =",rowi, "  si =", si, "  state =",state, "  statetf = ", statetf, "  etacov ",etacov,
+         if(verbose > 1) print("before K rowi =",rowi, "  si =", si, "  state =",state, "  etacov ",etacov,
           " indparams = ", indparams,
             "  syprior[o] =",syprior[o],"  ycov[o,o] ",ycov[o,o], 
             "  PARS = ", PARS, 
@@ -1291,7 +1265,7 @@ matcalcs <- function(subjectid,when, matrices, basemats){
       'if(',
       ifelse(basemats,'si==0 || ',''),
       paste0('sum(whenmat[',x,',',whenax,']) > 0 )'),
-      paste0(mn,'=mcalc(',mn,',indparams, statetf,',whena,', ',x,', matsetup, matvalues, ',subjectid,'); \n') )
+      paste0(mn,'=mcalc(',mn,',indparams, state,',whena,', ',x,', matsetup, matvalues, ',subjectid,'); \n') )
   }),collapse='')
 }
 
@@ -1553,7 +1527,7 @@ if(length(extratforms) > 0) paste0(extratforms,collapse=" \n"),'
   }
   
   
-  matrix mcalc(matrix matin, vector tfpars, row_vector tfstates, int[] when, int m, int[,] ms, data real[,] mval, int subi){
+  matrix mcalc(matrix matin, vector tfpars, row_vector states, int[] when, int m, int[,] ms, data real[,] mval, int subi){
     matrix[rows(matin),cols(matin)] matout;
 
     for(ri in 1:size(ms)){ //for each row of matrix setup
@@ -1566,7 +1540,8 @@ if(length(extratforms) > 0) paste0(extratforms,collapse=" \n"),'
           ){ //otherwise repeated values (maybe this check not needed now?
 
           if(ms[ri,3] > 0 && ms[ri,8]==0)  matout[ms[ri,1], ms[ri,2] ] = tfpars[ms[ri,3]]; //should be already tformed
-          if(ms[ri,3] > 0 && ms[ri,8]>0)  matout[ms[ri,1], ms[ri,2] ] = tfstates[ms[ri,3]]; //should be already tformed
+          if(ms[ri,3] > 0 && ms[ri,8]>0)  matout[ms[ri,1], ms[ri,2] ] =   //if references param and is state based
+            tform(states[ms[ri,3] ], ms[ri,4], mval[ri,2], mval[ri,3], mval[ri,4], mval[ri,6] );
           if(ms[ri,3] < 1) matout[ms[ri,1], ms[ri,2] ] = mval[ri, 1]; //doing this once over all subjects unless covariance matrix -- speed ups possible here, check properly!
         }
       }
