@@ -466,7 +466,7 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all',sameInitialTimes=FAL
   standata$statedep[31:33] <- standata$statedep[c(4,5,8)]
   
   #laplace priors
-  standata$laplaceprior <- rep(0L,standata$nparams)
+  standata$laplaceprior <- array(rep(0L,standata$nparams))
   standata$laplacetipreds <- 0L
   if(!is.null(ctm$laplaceprior)){
     if('tipreds' %in% ctm$laplaceprior) standata$laplacetipreds <- 1L
