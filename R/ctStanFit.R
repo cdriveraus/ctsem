@@ -692,7 +692,7 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
         staninits=inits
       } else {
         if(initOptim){ #then first optimize to get inits
-          if(!intoverpop && nsubjects > 1) stop('Cannot optimize to get inits unless intoverpop=TRUE')
+          if(!intoverpop && length(unique(datalong[[ctm$subjectIDname]]) > 1) && any(ctm$pars$indvarying)) stop('Cannot optimize to get inits unless intoverpop=TRUE')
           optimcontrol$init <- NULL
           optimcontrol$tol=1e-7
           if(!intoverpop & ! intoverstates) stop('Cannot initialize with optimization unless intoverpop and intoverstates are set to TRUE')
