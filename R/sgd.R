@@ -3,7 +3,8 @@ logit = function(x) log(x)-log((1-x))
 sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints=NA,plot=FALSE,
   stepbase=1e-3,gmeminit=ifelse(is.na(startnrows),.8,.8),gmemmax=.95, maxparchange = .50,
   startnrows=NA,roughnessmemory=.9,groughnesstarget=.4,roughnesschangemulti = 1,
-  lproughnesstarget=ifelse(parsets==1,.2,.5),parsets=1,
+  parsets=1,
+  lproughnesstarget=ifelse(parsets==1,.2,.5),
   gsmoothroughnesstarget=.1,
   warmuplength=20,nstore=100,
   minparchange=1e-800,maxiter=50000,
@@ -24,10 +25,10 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
     gmeminit=.9
     stepbase=1e-3
     maxiter=maxiter*nsubsets
-    lproughnesstarget=.4#1/nsubsets + .05
+    lproughnesstarget=.45#1/nsubsets + .05
     gsmoothroughnesstarget=.1
     groughnesstarget=.4
-    roughnesschangemulti=.1 #0r .5?
+    roughnesschangemulti= .1#0r .5?
     roughnessmemory=.9
     subsetorder=rep(1:nsubsets,each=subsetrepeats)
     subsetlps <- rep(-Inf, nsubsets)
@@ -242,7 +243,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
           (1-(roughnessmemory2)) * as.numeric(lp[i-1] > (lp[i]))#because accepted here, also see non accepted version
       
       if(nsubsets > 1) lproughness = lproughness * (roughnessmemory2) + 
-          (1-(roughnessmemory2)) * as.numeric( (lp[i]-subsetlps[subseti]) > (lp[i-1]-oldsubsetilp))#because accepted here, also see non accepted version
+          (1-(roughnessmemory2)) * as.numeric( (lp[i-1]-oldsubsetilp) > (lp[i]-subsetlps[subseti]))#because accepted here, also see non accepted version
     }
     # if(i==101) browser()
     if(nsubsets > 1){
