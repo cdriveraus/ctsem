@@ -826,7 +826,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE,
     if(prevrow != 0 && rowi != 1) T0check = (si==subject[prevrow]) ? (T0check+1) : 0; //if same subject, add one, else zero
     if(T0check > 0){
       dt = time[rowi] - time[prevrow];
-      dtchange = dt!=prevdt; 
+      dtchange = continuoustime ? dt!=prevdt : 0; 
       prevdt = dt; //update previous dt store after checking for change
       //prevtime = time[rowi];
     }
@@ -923,85 +923,81 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE,
     
 if(verbose > 1) print ("below t0 row ", rowi);
 
-      if(si==0 || (T0check>0)){ //for init or subsequent time steps when observations exist
-        vector[nlatent] base;
-        real intstepi = 0;
-        
-        dtsmall = dt / ceil(dt / maxtimestep);
-        
-        while(intstepi < (dt-1e-10)){
-          intstepi = intstepi + dtsmall;
-          ',
-      finiteJ(),'
+    if(si==0 || (T0check>0)){ //for init or subsequent time steps when observations exist
+      vector[nlatent] base;
+      real intstepi = 0;
       
-      if(statedep[4] || whenmat[4,2]) DIFFUSION=mcalc(DIFFUSION,indparams, state,{2}, 4, matsetup, matvalues, si); 
-      if(statedep[52] || whenmat[52,2]) JAx=mcalc(JAx,indparams, state,{2}, 52, matsetup, matvalues, si); 
-      ',simplifystanfunction(paste0(ctm$modelmats$calcs$diffusion,';\n\n ',collapse=' '),simplify),'
+      dtsmall = dt / ceil(dt / maxtimestep);
       
-      if(si==0 ||statedep[4] || whenmat[4,2] || ( T0check ==1 && whenmat[4,5])){
-        DIFFUSIONcov[derrind,derrind] = sdcovsqrt2cov(DIFFUSION[derrind,derrind],choleskymats);
-        if(!continuoustime) discreteDIFFUSION=DIFFUSIONcov;
+      while(intstepi < (dt-1e-10)){
+        intstepi = intstepi + dtsmall;
+        ',
+    finiteJ(),'
+    
+    if(statedep[4] || whenmat[4,2]) DIFFUSION=mcalc(DIFFUSION,indparams, state,{2}, 4, matsetup, matvalues, si); 
+    if(statedep[52] || whenmat[52,2]) JAx=mcalc(JAx,indparams, state,{2}, 52, matsetup, matvalues, si); 
+    ',simplifystanfunction(paste0(ctm$modelmats$calcs$diffusion,';\n\n ',collapse=' '),simplify),'
+    
+    if(si==0 ||statedep[4] || whenmat[4,2] || ( T0check ==1 && whenmat[4,5])){
+      DIFFUSIONcov[derrind,derrind] = sdcovsqrt2cov(DIFFUSION[derrind,derrind],choleskymats);
+      if(!continuoustime) discreteDIFFUSION=DIFFUSIONcov;
+    }
+    
+    if(continuoustime && (si==0 || dtchange==1 || statedep[3]|| statedep[52] || whenmat[3,2] || //if first sub or changing every state
+      (T0check == 1 && whenmat[3,5]))){ //or first time step of new sub with ind difs
+      
+      //discreteDRIFT = expm2(append_row(append_col(DRIFT[1:nlatent, 1:nlatent],CINT),nlplusonezerovec\') * dtsmall);
+      discreteDRIFT = expm2(DRIFT * dtsmall);
+      if(!JAxDRIFTequiv){ 
+        eJAx =  expm2(JAx * dtsmall);
+      } else eJAx[1:nlatent, 1:nlatent] = discreteDRIFT;
+                             
+      if(si==0 || statedep[3] || statedep[4]||statedep[52]||  //if first pass or state dependent
+        whenmat[4,2] || whenmat[3,2] ||
+        (T0check == 1 && (whenmat[3,5]  || whenmat[4,5]))){ //or first time step of new sub with ind difs
+        asymDIFFUSIONcov[derrind,derrind] = ksolve(JAx[derrind,derrind], DIFFUSIONcov[derrind,derrind],verbose);
       }
       
-        if(continuoustime){
+      discreteDIFFUSION[derrind,derrind] =  asymDIFFUSIONcov[derrind,derrind] - 
+        quad_form_sym( asymDIFFUSIONcov[derrind,derrind], eJAx[derrind,derrind]\' );
         
-            if(si==0 || dtchange==1 || statedep[3]|| statedep[52] || whenmat[3,2] || //if first sub or changing every state
-              (T0check == 1 && whenmat[3,5])){ //or first time step of new sub with ind difs
-              
-                //discreteDRIFT = expm2(append_row(append_col(DRIFT[1:nlatent, 1:nlatent],CINT),nlplusonezerovec\') * dtsmall);
-                discreteDRIFT = expm2(DRIFT * dtsmall);
-                
-                if(!JAxDRIFTequiv){ 
-                  eJAx =  expm2(JAx * dtsmall);
-                } else eJAx[1:nlatent, 1:nlatent] = discreteDRIFT;
-                               
-            if(si==0 || statedep[3] || statedep[4]||statedep[52]||  //if first pass or state dependent
-              whenmat[4,2] || whenmat[3,2] ||
-              (T0check == 1 && (whenmat[3,5]  || whenmat[4,5]))){ //or first time step of new sub with ind difs
-              asymDIFFUSIONcov[derrind,derrind] = ksolve(JAx[derrind,derrind], DIFFUSIONcov[derrind,derrind],verbose);
-            }
-            
-            discreteDIFFUSION[derrind,derrind] =  asymDIFFUSIONcov[derrind,derrind] - 
-              quad_form_sym( asymDIFFUSIONcov[derrind,derrind], eJAx[derrind,derrind]\' );
-              
-            } //end discrete coef calcs
-            
-            for(li in 1:nlatent) if(is_nan(state[li]) || is_nan(sum(discreteDRIFT[li,]))) {
-            print("Possible time step problem? Intervals too large? Try reduce maxtimestep");
-            }
-            
-            state[1:nlatent] *= discreteDRIFT\'; // ???compute before new diffusion calcs
-            
-            if(size(CINTnonzero)){
-            
-              if(si==0 || dtchange==1 || statedep[3]|| statedep[7] || whenmat[3,2] || whenmat[7,2] || // state depenency
-                (T0check == 1 && (whenmat[7,5] || whenmat[3,5]))){ //or ind difs
-                discreteCINT = (DRIFT \\ (discreteDRIFT-IIlatentpop[1:nlatent,1:nlatent])) * CINT[,1];
-              }
-              
-            state[1:nlatent] += discreteCINT\';
-            } // end cint section
-            
-            if(intoverstates==1 || dosmoother==1){
-              etacov = quad_form_sym(makesym(etacov,verbose,1), eJAx\');
-              etacov[derrind,derrind] += discreteDIFFUSION[derrind,derrind]; 
-            }
-              
-            if(intstepi >= (dt-1e-10) && dosmoother) eJAxs[rowi,,] = expm2(JAx * dt); //save approximate exponentiated jacobian for smoothing
-        } // end continuous time section
+      for(li in 1:nlatent) if(is_nan(state[li]) || is_nan(sum(discreteDRIFT[li,]))) {
+        print("Possible time step problem? Intervals too large? Try reduce maxtimestep");
+      }
         
-        if(continuoustime==0){ 
-          if(dosmoother) eJAxs[rowi,,] = JAx;
-          if(intoverstates==1 || dosmoother==1){
-            etacov = quad_form_sym(makesym(etacov,verbose,1), JAx\');
-            etacov[ derrind, derrind ] += DIFFUSIONcov[ derrind, derrind ]; 
-          }
-          state[1:nlatent] *= DRIFT\';
-          state[CINTnonzero]+= CINT[CINTnonzero,1]\';
-        } // end non continuous time coefs
-        
-        } // end time step loop
-      } // end non linear time update
+    } //end discrete drift / diffusion coef calcs based on ct
+          
+          
+    if(continuoustime) state[1:nlatent] *= discreteDRIFT\'; 
+    if(!continuoustime) state[1:nlatent] *= DRIFT\'; 
+    
+    if(intoverstates==1 || dosmoother==1){
+      if(continuoustime){
+        etacov = quad_form_sym(makesym(etacov,verbose,1), eJAx\');
+        etacov[derrind,derrind] += discreteDIFFUSION[derrind,derrind]; 
+      }
+      if(!continuoustime){
+        etacov = quad_form_sym(makesym(etacov,verbose,1), JAx\');
+        etacov[ derrind, derrind ] += DIFFUSIONcov[ derrind, derrind ]; 
+      }
+    }
+      
+    if(continuoustime && dosmoother && intstepi >= (dt-1e-10)) eJAxs[rowi,,] = expm2(JAx * dt); //save approximate exponentiated jacobian for smoothing
+    if(!continuoustime && dosmoother) eJAxs[rowi,,] = JAx;
+    
+    if(size(CINTnonzero)){
+      if(continuoustime){
+        if(si==0 || dtchange==1 || statedep[3]|| statedep[7] || whenmat[3,2] || whenmat[7,2] || // state depenency
+          (T0check == 1 && (whenmat[7,5] || whenmat[3,5]))){ //or ind difs
+          discreteCINT = (DRIFT \\ (discreteDRIFT-IIlatentpop[1:nlatent,1:nlatent])) * CINT[,1];
+        }
+        state[1:nlatent] += discreteCINT\';
+      }
+    if(!continuoustime) state[CINTnonzero]+= CINT[CINTnonzero,1]\';
+    } // end cint section
+
+    } // end time step loop
+  } // end non linear time update
     
     if(ntdpred > 0) {
       int nonzerotdpred = 0;
