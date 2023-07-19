@@ -20,7 +20,7 @@ datalong <- cbind(id, time, sunspots)
    DRIFT=matrix(c(0, 'a21|-log1p(exp(param))', 1, 'a22'), nrow=2, ncol=2),
    TDPREDEFFECT=matrix(c('tdeffect',0),2),
    MANIFESTMEANS=0, CINT=c(0,'cint'),
-   # MANIFESTVAR=diag(0,1),
+   MANIFESTVAR=diag(0,1),
    T0VAR=matrix(c(1e-3,0,0,1e-3), nrow=2, ncol=2), #Because single subject
    DIFFUSION=c(0, 'ma1|param-1', 
      0,'diff'))

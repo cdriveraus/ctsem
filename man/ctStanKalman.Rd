@@ -10,10 +10,14 @@ ctStanKalman(
   pointest = TRUE,
   collapsefunc = NA,
   cores = 1,
+  subjects = 1:max(fit$standata$subject),
+  timestep = "asdata",
+  timerange = "asdata",
   standardisederrors = FALSE,
   subjectpars = TRUE,
   tformsubjectpars = TRUE,
   indvarstates = FALSE,
+  removeObs = F,
   ...
 )
 }
@@ -36,6 +40,11 @@ are returned, for parameters that had random effects specified.}
 \item{tformsubjectpars}{if FALSE, subject level parameters are returned in raw, pre transformation form.}
 
 \item{indvarstates}{if TRUE, do not remove indvarying states from output}
+
+\item{removeObs}{Logical or integer. If TRUE, observations (but not covariates)
+are set to NA, so only expectations based on parameters and covariates are returned. If a positive integer N, 
+every N observations are retained while others are set NA for computing model expectations -- useful for observing prediction performance
+forward further in time than one observation.}
 
 \item{...}{additional arguments to collpsefunc.}
 }
