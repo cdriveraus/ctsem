@@ -11,8 +11,9 @@ test_that("anomauth", {
     library(ctsem)
     library(testthat)
     
-  #library(ctsem);cores=12
     cores=2
+  #library(ctsem);cores=12
+
   data(AnomAuth)
   AnomAuthmodel<-ctModel(LAMBDA=matrix(c(1, 0, 0, 1), nrow=2, ncol=2),  
     n.latent=2,n.manifest=2, 

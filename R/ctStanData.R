@@ -1,3 +1,27 @@
+expmGetSubsets <- function(m){
+  nr = nrow(m)
+  m <- matrix(suppressWarnings(as.numeric(m)),nr,nr)
+  m[is.na(m)] <- 999
+  subsets <- list()
+  indices <- 1:nrow(m)
+  indexmat <- 1:nrow(m)
+  while(length(indices) >0){
+    oldsubsetsize <- -1
+    subindices <- indices[1]
+    while(length(subindices) > oldsubsetsize){
+      oldsubsetsize <- length(subindices)
+      subindices <- unique(c(subindices,
+        which(m!=0 & col(m) %in% subindices,arr.ind = TRUE),
+        which(m!=0 & row(m) %in% subindices,arr.ind = TRUE)))
+    }
+    subsets[[length(subsets)+1]] <- subindices
+    indices <- indices[!indices %in% subindices]
+  }
+  subsets <- lapply(subsets, function(x) c(x,rep(0,nr-length(x))))
+  subsets <- t(array(as.integer(unlist(subsets)),dim =c(nr,length(subsets))))
+  return(subsets)
+}
+
 ctStanData <- function(ctm, datalong,optimize,derrind='all',sameInitialTimes=FALSE){
   
   
@@ -258,6 +282,12 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all',sameInitialTimes=FAL
   # standata$jacoffdiagindex <- array(as.integer(sort(unique(c(1:ctm$n.latent,which(standata$jacoffdiag ==1))))))
   # standata$njacoffdiagindex <- as.integer(length(standata$jacoffdiagindex))
   
+
+  
+  standata$DRIFTsubsets <- expmGetSubsets(listOfMatrices(ctm$pars)$DRIFT)
+  standata$JAxsubsets <- expmGetSubsets(listOfMatrices(ctm$pars)$JAx)
+  standata$nDRIFTsubsets <- nrow(standata$DRIFTsubsets)
+  standata$nJAxsubsets <- nrow(standata$JAxsubsets)
   
   standata$JAxfinite <- ctm$JAxfinite
   standata$Jyfinite <- ctm$Jyfinite

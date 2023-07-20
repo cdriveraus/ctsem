@@ -256,45 +256,18 @@ if(transform < 49 && offset != 0.0) param+=offset;
   return(matout);
   }
   
-  
-  int[] checkoffdiagzero(matrix M){
-    int z[rows(M)];
-    for(i in 1:rows(M)){
-      z[i] = 0;
-      for(j in 1:rows(M)){ // check cols and rows simultaneously
-        if(i!=j && (M[i,j]!=0.0 || M[j,i] != 0.0)){
-          z[i] = 1;
-          break;
-        }
+  matrix expmSubsets(matrix m, int[,] subsets){
+    int nr = rows(m);
+    matrix[nr,nr] e;
+    for(si in 1:size(subsets)){
+      int n=0;
+      for(j in 1:nr){
+        if(subsets[si,j]!=0) n+=1;
       }
+      e[subsets[si][1:n],subsets[si][1:n]] = matrix_exp(m[subsets[si][1:n],subsets[si][1:n]]);
     }
-    return z;
+    return e;
   }
-  
-   
-  matrix expm2(matrix M){
-    matrix[rows(M),rows(M)] out;
-    int z0[rows(out)] = checkoffdiagzero(M);
-    int z1[sum(z0)]; //contains which rowcols need full expm
-    int count=1;
-    for(j in 1:cols(M)){
-      if(z0[j]){
-        z1[count]=j;
-        count+=1;
-      } else {
-        for(i in 1:rows(M)){
-          if(i!=j){
-          out[i,j] =  0; 
-          out[j,i] = 0;
-          } else out[i,i] = exp(M[i,j]);
-        }
-      }
-    }
-    if(size(z1)) out[z1,z1] = matrix_exp(M[z1,z1]);
-    return out;
-  }
-  
- 
   
 }
 data {
@@ -376,6 +349,11 @@ data {
   int CINTnonzerosize;
   int CINTnonzero[CINTnonzerosize];
   int JAxDRIFTequiv;
+  
+  int nDRIFTsubsets;
+  int nJAxsubsets;
+  int DRIFTsubsets[nDRIFTsubsets,nlatent];
+  int JAxsubsets[nJAxsubsets,nlatentpop];
 }
       
 transformed data{
@@ -765,9 +743,9 @@ if(verbose > 1) print ("below t0 row ", rowi);
       (T0check == 1 && whenmat[3,5]))){ //or first time step of new sub with ind difs
       
       //discreteDRIFT = expm2(append_row(append_col(DRIFT[1:nlatent, 1:nlatent],CINT),nlplusonezerovec') * dtsmall);
-      discreteDRIFT = matrix_exp(DRIFT * dtsmall);
+      discreteDRIFT = expmSubsets(DRIFT * dtsmall,DRIFTsubsets);
       if(!JAxDRIFTequiv){ 
-        eJAx =  matrix_exp(JAx * dtsmall);
+        eJAx =  expmSubsets(JAx * dtsmall,JAxsubsets);
       } else eJAx[1:nlatent, 1:nlatent] = discreteDRIFT;
                              
       if(si==0 || statedep[3] || statedep[4]||statedep[52]||  //if first pass or state dependent
@@ -800,7 +778,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
       }
     }
       
-    if(continuoustime && dosmoother && intstepi >= (dt-1e-10)) eJAxs[rowi,,] = expm2(JAx * dt); //save approximate exponentiated jacobian for smoothing
+    if(continuoustime && dosmoother && intstepi >= (dt-1e-10)) eJAxs[rowi,,] = expmSubsets(JAx * dt,JAxsubsets); //save approximate exponentiated jacobian for smoothing
     if(!continuoustime && dosmoother) eJAxs[rowi,,] = JAx;
     
     if(size(CINTnonzero)){
