@@ -1558,7 +1558,7 @@ if(length(extratforms) > 0) paste0(extratforms,collapse=" \n"),'
       for(j in 1:nr){
         if(subsets[si,j]!=0) n+=1;
       }
-      e[subsets[si][1:n],subsets[si][1:n]] = matrix_exp(m[subsets[si][1:n],subsets[si][1:n]]);
+      e[subsets[si,1:n],subsets[si,1:n] ] = matrix_exp(m[subsets[si,1:n],subsets[si,1:n]]);
     }
     return e;
   }
