@@ -275,7 +275,6 @@ parallelStanSetup <- function(cl, standata,split=TRUE,nsubsets=1){
   eval(parse(text=
       "parallel::clusterExport(cl,c('standata','stanindices','cores','commands'),envir=environment())"),
     envir = benv)
-  
   eval(parse(text="parallel::clusterEvalQ(cl,eval(parse(text=paste0(commands,collapse=';'))))"),envir = benv)
   eval(parse(text="parallel::clusterEvalQ(cl,sapply(commands,function(x) eval(parse(text=x))))"),envir = benv)
   
@@ -646,6 +645,9 @@ clusterIDeval <- function(cl,commands){
 #' @param nsubsets number of subsets for stochastic optimizer. Subsets are further split across cores, 
 #' but each subjects data remains whole -- processed by one core in one subset.
 #' @param stochasticTolAdjust Multiplier for initial subsampling optimizer tolerance. 
+#' @param hessianType either 'numerical' or 'stochastic', the latter is experimental at present.
+#' @param stochasticHessianSamples number of samples to use for stochastic Hessian, if selected.
+#' @param stochasticHessianEpsilon SD of random samples for stochastic hessian, if selected.
 #' @return list containing fit elementsF
 #' @importFrom mize mize
 #' @importFrom utils head tail
@@ -799,7 +801,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       if(cores > 1){ #for parallelised computation after fitting, if only single subject
         
-        
         assign(x = 'clctsem',
           parallel::makeCluster(spec = cores,type = "PSOCK",useXDR=FALSE,outfile='',user=NULL),
           envir = benv)
@@ -854,6 +855,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             out <- out2[[bestset]]
             attributes(out)$bestset <- bestset
           } else {
+            # browser()
             out2<-  parallel::clusterEvalQ(cl = benv$clctsem,parlp(parm))
             error <- FALSE
             tmp<-sapply(1:length(out2),function(x) {

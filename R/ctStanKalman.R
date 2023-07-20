@@ -14,6 +14,11 @@
 #' are set to NA, so only expectations based on parameters and covariates are returned. If a positive integer N, 
 #' every N observations are retained while others are set NA for computing model expectations -- useful for observing prediction performance
 #' forward further in time than one observation.
+#' @param subjects integer vector of subjects to compute for.
+#' @param timestep Either a positive numeric value, 'asdata' to use the times in the dataset, or 'auto' to select 
+#' a timestep automatically (resulting in some interpolation but not excessive computation).
+#' @param timerange only relevant if timestep is not 'asdata'. Positive numeric vector of length 2 denoting 
+#' time range for computations.
 #' @param ... additional arguments to collpsefunc.
 #'
 #' @return list containing Kalman filter elements, each element in array of

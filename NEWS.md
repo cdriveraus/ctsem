@@ -1,5 +1,12 @@
 # ctsem News
 
+## 20/7/2023
+### 3.8.1
+- Correct bug in nonlinear formulations when the same state is referenced for multiple nonlinearities.
+- Correct unnecessary memory usage when computing Hessian with multiple cores.
+- Improve stochastic subsampling first pass optimizer.
+- Simplify discrete time model computations internally.
+
 ## 20/6/2023
 ### 3.7.6
 - Deprecate `nopriors` argument to `ctStanFit`, allow `priors` argument

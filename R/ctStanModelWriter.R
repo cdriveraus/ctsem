@@ -947,9 +947,9 @@ if(verbose > 1) print ("below t0 row ", rowi);
       (T0check == 1 && whenmat[3,5]))){ //or first time step of new sub with ind difs
       
       //discreteDRIFT = expm2(append_row(append_col(DRIFT[1:nlatent, 1:nlatent],CINT),nlplusonezerovec\') * dtsmall);
-      discreteDRIFT = expm2(DRIFT * dtsmall);
+      discreteDRIFT = matrix_exp(DRIFT * dtsmall);
       if(!JAxDRIFTequiv){ 
-        eJAx =  expm2(JAx * dtsmall);
+        eJAx =  matrix_exp(JAx * dtsmall);
       } else eJAx[1:nlatent, 1:nlatent] = discreteDRIFT;
                              
       if(si==0 || statedep[3] || statedep[4]||statedep[52]||  //if first pass or state dependent

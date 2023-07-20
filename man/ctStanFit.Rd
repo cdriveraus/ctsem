@@ -93,6 +93,8 @@ the integration is nested within an Euler like loop.
 Smaller values may offer greater accuracy, but are slower and not always necessary. Given the exponential integration,
 linear model elements are fit exactly with only a single step.}
 
+\item{nopriors}{deprecated, use priors argument. logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.}
+
 \item{priors}{if TRUE, priors are included in computations, otherwise specified priors are ignored.}
 
 \item{chains}{number of chains to sample, during HMC or post-optimization importance sampling. Unless the cores
@@ -136,8 +138,6 @@ list(adapt_delta = .8, adapt_window=2, max_treedepth=10, adapt_init_buffer=2, st
 \item{vb}{Logical. Use variational Bayes algorithm from stan? Only kind of working, not recommended.}
 
 \item{...}{additional arguments to pass to \code{\link[rstan]{stan}} function.}
-
-\item{!priors}{deprecated, use priors argument. logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.}
 }
 \description{
 Fits a ctsem model specified via \code{\link{ctModel}} with type either 'stanct' or 'standt'.

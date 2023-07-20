@@ -107,7 +107,7 @@ verbosify<-function(sf,verbose=2){
 #' @param optimize if TRUE, use \code{\link{stanoptimis}} function for maximum a posteriori / importance sampling estimates, 
 #' otherwise use the HMC sampler from Stan, which is (much) slower, but generally more robust, accurate, and informative.
 #' @param optimcontrol list of parameters sent to \code{\link{stanoptimis}} governing optimization / importance sampling.
-#' @param !priors deprecated, use priors argument. logical. If TRUE, any priors are disabled -- sometimes desirable for optimization. 
+#' @param nopriors deprecated, use priors argument. logical. If TRUE, any priors are disabled -- sometimes desirable for optimization. 
 #' @param priors if TRUE, priors are included in computations, otherwise specified priors are ignored.
 #' @param iter number of iterations, half of which will be devoted to warmup by default when sampling.
 #' When optimizing, this is the maximum number of iterations to allow -- convergence hopefully occurs before this!

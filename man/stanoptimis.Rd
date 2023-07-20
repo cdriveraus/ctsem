@@ -78,6 +78,12 @@ as a first step, free them in second step.}
 
 \item{plot}{Logical. If TRUE, plot iteration details. Probably slower.}
 
+\item{hessianType}{either 'numerical' or 'stochastic', the latter is experimental at present.}
+
+\item{stochasticHessianSamples}{number of samples to use for stochastic Hessian, if selected.}
+
+\item{stochasticHessianEpsilon}{SD of random samples for stochastic hessian, if selected.}
+
 \item{is}{Logical. Use importance sampling, or just return map estimates?}
 
 \item{isloopsize}{Number of samples of approximating distribution per iteration of importance sampling.}

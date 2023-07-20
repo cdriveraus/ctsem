@@ -2,4 +2,4 @@
 
 #! /bin/sh
 "${R_HOME}/bin${R_ARCH_BIN}/Rscript.exe" -e "rstantools::rstan_config()"
-echo "PKG_CXXFLAGS += --param ggc-min-expand=10" >> src/Makevars.win
+# echo "PKG_CXXFLAGS += --param ggc-min-expand=10" >> src/Makevars.win

@@ -3,6 +3,7 @@
 ^util/
 ^staging/
 ^R/old/*.
+^R/dev/*.
 ^R/donotpackage/*.
 ^.git
 ^.gitignore

@@ -32,6 +32,14 @@ ctStanKalman(
 
 \item{cores}{Integer number of cpu cores to use. Only needed if savescores was set to FALSE when fitting.}
 
+\item{subjects}{integer vector of subjects to compute for.}
+
+\item{timestep}{Either a positive numeric value, 'asdata' to use the times in the dataset, or 'auto' to select 
+a timestep automatically (resulting in some interpolation but not excessive computation).}
+
+\item{timerange}{only relevant if timestep is not 'asdata'. Positive numeric vector of length 2 denoting 
+time range for computations.}
+
 \item{standardisederrors}{If TRUE, computes standardised errors for prior, upd, smooth conditions.}
 
 \item{subjectpars}{if TRUE, state estimates are not returned, instead, predictions of each subjects parameters
