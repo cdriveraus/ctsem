@@ -265,7 +265,7 @@ if(transform < 49 && offset != 0.0) param+=offset;
   
   matrix expmSubsets(matrix m, int[,] subsets){
     int nr = rows(m);
-    matrix[nr,nr] e;
+    matrix[nr,nr] e = rep_matrix(0,nr,nr);
     for(si in 1:size(subsets)){
       int n=0;
       for(j in 1:nr){
