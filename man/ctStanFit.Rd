@@ -16,7 +16,7 @@ ctStanFit(
   sameInitialTimes = FALSE,
   stationary = FALSE,
   plot = FALSE,
-  derrind = "all",
+  derrind = NA,
   optimize = TRUE,
   optimcontrol = list(),
   nlcontrol = list(),
@@ -75,10 +75,7 @@ elements that should be fixed to stationarity.}
 \item{plot}{if TRUE, for sampling, a Shiny program is launched upon fitting to interactively plot samples. 
 May struggle with many (e.g., > 5000) parameters. For optimizing, various optimization details are plotted -- in development.}
 
-\item{derrind}{vector of integers denoting which latent variables are involved in dynamic error calculations.
-latents involved only in deterministic trends or input effects can be removed from matrices (ie, that
-obtain no additional stochastic inputs after first observation), speeding up calculations. 
-If unsure, leave default of 'all' ! Ignored if intoverstates=FALSE.}
+\item{derrind}{deprecated, latents involved in dynamic error calculations are determined automatically now.}
 
 \item{optimize}{if TRUE, use \code{\link{stanoptimis}} function for maximum a posteriori / importance sampling estimates, 
 otherwise use the HMC sampler from Stan, which is (much) slower, but generally more robust, accurate, and informative.}
