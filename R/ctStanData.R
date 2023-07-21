@@ -22,7 +22,7 @@ expmGetSubsets <- function(m){
   return(subsets)
 }
 
-ctStanData <- function(ctm, datalong,optimize,derrind='all',sameInitialTimes=FALSE){
+ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
   
   
   nsubjects <- length(unique(datalong[, ctm$subjectIDname])) 
@@ -71,18 +71,6 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all',sameInitialTimes=FAL
   
   if( (nrow(ctm$t0varstationary) + nrow(ctm$t0meansstationary)) >0 && 
       length(c(ctm$modelmats$calcs$driftcint, ctm$modelmats$calcs$diffusion)) > 0) message('Stationarity assumptions based on initial states when using non-linear dynamics')
-  
-  
-  if(ctm$intoverstates==FALSE || all(derrind=='all') ) derrind = 1:ctm$n.latent
-  # if(all(derrind=='all')) derrind = sort(unique(ctm$pars$col[
-  #   ctm$pars$matrix=='DIFFUSION' & (!is.na(ctm$pars$param) | ctm$pars$value!=0)]))
-  derrind = as.integer(derrind)
-  if(any(derrind > ctm$n.latent)) stop('derrind > than n.latent found!')
-  if(length(derrind) > ctm$n.latent) stop('derrind vector cannot be longer than n.latent!')
-  if(length(unique(derrind)) < length(derrind)) stop('derrind vector cannot contain duplicates or!')
-  ndiffusion=length(derrind)
-  
-  
   
   nindvarying <- max(ctm$modelmats$matsetup$indvarying)
   nparams <- max(ctm$modelmats$matsetup$param[ctm$modelmats$matsetup$when %in% c(0,-1)])
@@ -242,8 +230,6 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all',sameInitialTimes=FAL
       nt0meansstationary=as.integer(nrow(ctm$t0meansstationary)),
       t0varstationary=matrix(as.integer(ctm$t0varstationary),ncol=2),
       t0meansstationary=matrix(as.integer(ctm$t0meansstationary),ncol=2),
-      derrind=array(as.integer(derrind),dim=ndiffusion),
-      ndiffusion=as.integer(ndiffusion),
       driftdiagonly = as.integer(driftdiagonly),
       intoverpop=as.integer(ctm$intoverpop),
       # nlmeasurement=as.integer(nlmeasurement),
@@ -288,6 +274,14 @@ ctStanData <- function(ctm, datalong,optimize,derrind='all',sameInitialTimes=FAL
   standata$JAxsubsets <- expmGetSubsets(listOfMatrices(ctm$pars)$JAx)
   standata$nDRIFTsubsets <- nrow(standata$DRIFTsubsets)
   standata$nJAxsubsets <- nrow(standata$JAxsubsets)
+  
+  tempdiff <- listOfMatrices(ctm$pars)$DIFFUSION
+  derrind <- unique(c(which(tempdiff!=0,arr.ind = TRUE))) #which latents have some non zero diffusion
+  derrind <- unique(c(standata$JAxsubsets[ #and which expm subsets are these part of
+    apply(standata$JAxsubsets,1,function(x) any(derrind %in% x)),]))
+  derrind <- array(sort(derrind[derrind <= standata$nlatent & derrind > 0])) #exclude any elements that are stable individual differences
+  standata$derrind <- derrind
+  standata$ndiffusion <- length(derrind)
   
   standata$JAxfinite <- ctm$JAxfinite
   standata$Jyfinite <- ctm$Jyfinite

@@ -100,10 +100,7 @@ verbosify<-function(sf,verbose=2){
 #' rather than just at the earliest observation for that subject. Important when modelling trends over time, age, etc. 
 #' @param plot if TRUE, for sampling, a Shiny program is launched upon fitting to interactively plot samples. 
 #' May struggle with many (e.g., > 5000) parameters. For optimizing, various optimization details are plotted -- in development.
-#' @param derrind vector of integers denoting which latent variables are involved in dynamic error calculations.
-#' latents involved only in deterministic trends or input effects can be removed from matrices (ie, that
-#' obtain no additional stochastic inputs after first observation), speeding up calculations. 
-#' If unsure, leave default of 'all' ! Ignored if intoverstates=FALSE.
+#' @param derrind deprecated, latents involved in dynamic error calculations are determined automatically now.
 #' @param optimize if TRUE, use \code{\link{stanoptimis}} function for maximum a posteriori / importance sampling estimates, 
 #' otherwise use the HMC sampler from Stan, which is (much) slower, but generally more robust, accurate, and informative.
 #' @param optimcontrol list of parameters sent to \code{\link{stanoptimis}} governing optimization / importance sampling.
@@ -391,7 +388,7 @@ verbosify<-function(sf,verbose=2){
 #' }
 
 ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intoverstates=TRUE, binomial=FALSE,
-  fit=TRUE, intoverpop='auto', sameInitialTimes=FALSE, stationary=FALSE,plot=FALSE,  derrind='all',
+  fit=TRUE, intoverpop='auto', sameInitialTimes=FALSE, stationary=FALSE,plot=FALSE,  derrind=NA,
   optimize=TRUE,  optimcontrol=list(),
   nlcontrol = list(), nopriors=NA, priors=FALSE, chains=2,
   cores=ifelse(optimize,getOption("mc.cores", 2L),'maxneeded'),
@@ -405,6 +402,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     warning('nopriors argument is deprecated, use priors argument in future')
     priors <- !nopriors
   }
+  
+  if(!is.na(derrind)) warning('derrind argment is deprecated, computed automatically now')
   
   datalong <- data.frame(datalong)
   
@@ -608,7 +607,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   ctm$recompile <- recompile
   
   
-  standata <- ctStanData(ctm,datalong,optimize=optimize,derrind=derrind, sameInitialTimes=sameInitialTimes) 
+  standata <- ctStanData(ctm,datalong,optimize=optimize, sameInitialTimes=sameInitialTimes) 
   standata$verbose=as.integer(verbose)
   standata$savesubjectmatrices=as.integer(savesubjectmatrices)
   standata$gendata=as.integer(gendata)

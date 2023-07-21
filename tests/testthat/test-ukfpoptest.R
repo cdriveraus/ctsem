@@ -61,20 +61,11 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     sf1 <- ctStanFit(cd,sm1,iter=200,
       optimize=TRUE,verbose=0,
       optimcontrol=list(finishsamples=50),
-      derrind=1:4,
       nlcontrol=list(nldynamics=FALSE))
 
     
     sf1d=sf1$stanfit$transformedparsfull$pop_DRIFT[1,1:2,1:2]#matrix(sf1$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf1$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
     sf1ll=sf1$stanfit$optimfit$value
-    
-    sf1_derrind<- ctStanFit(cd,sm1,iter=200,
-      optimize=TRUE,verbose=0,
-      optimcontrol=list(deoptim = FALSE,is=FALSE,isloopsize=50,finishsamples=50),
-      derrind=1:2,
-      nlcontrol=list(nldynamics=FALSE))
-    sf1_derrindd=sf1_derrind$stanfit$transformedparsfull$pop_DRIFT[1,1:2,1:2]#matrix(sf1_derrind$stanfit$transformedpars_old[grep('pop_DRIFT',rownames(sf1_derrind$stanfit$transformedpars_old)),'mean'],4,4)[1:2,1:2]
-    sf1_derrindll=sf1_derrind$stanfit$optimfit$value
     
     sm2 <- ctStanModel(m2)
     sm2$pars$sdscale <- .2
@@ -102,8 +93,8 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       }
     }
     
-    dvec=c('sf1d','sf2d','sf1_derrindd')
-    llvec=c('sf1ll','sf2ll','sf1_derrindll')
+    dvec=c('sf1d','sf2d')
+    llvec=c('sf1ll','sf2ll')
     
     sapply(dvec,get,envir=sys.frame(sys.parent(0)))
     sapply(llvec,get,envir=sys.frame(sys.parent(0)))

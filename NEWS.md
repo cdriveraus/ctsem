@@ -6,6 +6,7 @@
 - Correct unnecessary memory usage when computing Hessian with multiple cores.
 - Improve stochastic subsampling first pass optimizer.
 - Simplify discrete time model computations internally.
+- Performance gains and reduced memory usage via usage of matrix exponential subsets and automatic computation of dynamic error indices.
 
 ## 20/6/2023
 ### 3.7.6
