@@ -1170,7 +1170,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         method="L-BFGS",memory=100,
         line_search='Schmidt',c1=1e-4,c2=.9,step0='schmidt',ls_max_fn=999,
         abs_tol=NULL,grad_tol=NULL,
-        rel_tol=tol*ifelse(!finished,100,1),
+        rel_tol=tol,
         step_tol=NULL,ginf_tol=NULL)
       
       optimfit$value = -optimfit$f

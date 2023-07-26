@@ -1525,16 +1525,21 @@ if(length(extratforms) > 0) paste0(extratforms,collapse=" \n"),'
   
   matrix mcalc(matrix matin, vector tfpars, row_vector states, int[] when, int m, int[,] ms, data real[,] mval, int subi){
     matrix[rows(matin),cols(matin)] matout;
+    int changeMade=0;
 
     for(ri in 1:size(ms)){ //for each row of matrix setup
-      int whenyes = 0;
-      for(wi in 1:size(when)) if(when[wi]==ms[ri,8] || ms[ri,8]==100) whenyes = 1; //improve PARS when = 100 thing
-      if(m==ms[ri,7] && whenyes){ // if correct matrix and when
-
-        if(subi ==0 ||  //if population parameter
-          (ms[ri,3] > 0 && (ms[ri,5] > 0 || ms[ri,6] > 0 || ms[ri,8] > 0)) //or there is individual variation
-          ){ //otherwise repeated values (maybe this check not needed now?
-
+      if(m==ms[ri,7] && ( //if correct matrix
+        subi ==0 ||  //and need to compute population parameter
+        (ms[ri,3] > 0 && (ms[ri,5] > 0 || ms[ri,6] > 0 || ms[ri,8] > 0)) //or there is individual variation
+        )){
+        int whenyes = (ms[ri,8]==100); //if PARS matrix then need to compute at each kalman step, could improve
+        int wi=0;
+        while(whenyes==0 && wi < size(when)){
+          wi+=1;
+          whenyes+= (when[wi]==ms[ri,8]); //does the parameter in this row of ms need to be computed now?
+        }
+        if(whenyes){ // if correct matrix and when
+          changeMade=1;
           if(ms[ri,3] > 0 && ms[ri,8]==0)  matout[ms[ri,1], ms[ri,2] ] = tfpars[ms[ri,3]]; //should be already tformed
           if(ms[ri,3] > 0 && ms[ri,8]>0)  matout[ms[ri,1], ms[ri,2] ] =   //if references param and is state based
             tform(states[ms[ri,3] ], ms[ri,4], mval[ri,2], mval[ri,3], mval[ri,4], mval[ri,6] );
@@ -1542,12 +1547,14 @@ if(length(extratforms) > 0) paste0(extratforms,collapse=" \n"),'
         }
       }
     }
-    for(ri in 1:rows(matin)){ //fill holes with unchanged input matrix
-      for(ci in 1:cols(matin)){
-        if(is_nan(matout[ri,ci]) && !is_nan(matin[ri,ci])) matout[ri,ci] = matin[ri,ci];
+    if(changeMade){
+      for(ri in 1:rows(matin)){ //fill holes with unchanged input matrix
+        for(ci in 1:cols(matin)){
+          if(is_nan(matout[ri,ci]) && !is_nan(matin[ri,ci])) matout[ri,ci] = matin[ri,ci];
+        }
       }
-    }
   return(matout);
+    } else return(matin);
   }
   
   matrix expmSubsets(matrix m, int[,] subsets){
@@ -1555,11 +1562,10 @@ if(length(extratforms) > 0) paste0(extratforms,collapse=" \n"),'
     matrix[nr,nr] e = rep_matrix(0,nr,nr);
     for(si in 1:size(subsets)){
       int n=0;
-      for(j in 1:nr){
-        if(subsets[si,j]!=0) n+=1;
-      }
-      if(n > 1) e[subsets[si,1:n],subsets[si,1:n] ] = matrix_exp(m[subsets[si,1:n],subsets[si,1:n]]);
-      if(n == 1) e[subsets[si,1],subsets[si,1] ] = exp(m[subsets[si,1],subsets[si,1]]);
+      for(j in 1:nr) n+= subsets[si,j]!=0;
+      if(n > 1){
+        e[subsets[si,1:n],subsets[si,1:n] ] = matrix_exp(m[subsets[si,1:n],subsets[si,1:n]]);
+      } else e[subsets[si,1],subsets[si,1] ] = exp(m[subsets[si,1],subsets[si,1]]);
     }
     return e;
   }

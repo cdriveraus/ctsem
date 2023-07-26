@@ -264,7 +264,8 @@ if(transform < 49 && offset != 0.0) param+=offset;
       for(j in 1:nr){
         if(subsets[si,j]!=0) n+=1;
       }
-      e[subsets[si,1:n],subsets[si,1:n] ] = matrix_exp(m[subsets[si,1:n],subsets[si,1:n]]);
+      if(n > 1) e[subsets[si,1:n],subsets[si,1:n] ] = matrix_exp(m[subsets[si,1:n],subsets[si,1:n]]);
+      if(n == 1) e[subsets[si,1],subsets[si,1] ] = exp(m[subsets[si,1],subsets[si,1]]);
     }
     return e;
   }
