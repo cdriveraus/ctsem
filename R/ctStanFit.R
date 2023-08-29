@@ -403,7 +403,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     priors <- !nopriors
   }
   
-  if(!is.na(derrind)) warning('derrind argment is deprecated, computed automatically now')
+  if(any(!is.na(derrind))) warning('derrind argment is deprecated, computed automatically now')
   
   datalong <- data.frame(datalong)
   

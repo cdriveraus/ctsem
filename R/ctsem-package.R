@@ -1,3 +1,9 @@
+#' @keywords internal
+"_PACKAGE"
+
+## usethis namespace: start
+## usethis namespace: end
+
 utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
   "mxData","mxMatrix","mxAlgebra","MANIFESTVARbase","MANIFESTVARcholdiag",
   "MANIFESTVARchol","T0VARbase","T0VARcholdiag","T0VARchol","DIFFUSIONbase",
@@ -59,8 +65,6 @@ if(1==99){
 #' For examples, see  \code{\link{ctStanFit}}. 
 #' For citation info, please run \code{citation('ctsem')} .
 #'  
-#' @docType package
-#' @name ctsem
 #' @import grDevices methods stats graphics data.table ggplot2
 #' @import Rcpp
 #' @importFrom RcppParallel CxxFlags RcppParallelLibs
@@ -152,3 +156,4 @@ ctFit <- function(...){
     } else eval(parse(text=paste0('ctsemOMX::ctFit(...)'))) #one time hack due to package splitting, forgive my soul...
   } else message('For original ctsem functionality using OpenMx, install.packages("ctsemOMX")')  
 }
+
