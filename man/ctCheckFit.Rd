@@ -101,5 +101,7 @@ Nothing. Just plots.
 Visual model fit diagnostics for ctsem fit objects.
 }
 \examples{
+\donttest{
 ctCheckFit(ctstantestfit)
+}
 }

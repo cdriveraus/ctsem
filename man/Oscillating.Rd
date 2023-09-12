@@ -8,7 +8,7 @@
 11 measurement occasions and 10 measurement intervals for each of 200 individuals
 }
 \source{
-See \url{https://onlinelibrary.wiley.com/doi/10.1111/j.2044-8317.2012.02043.x}
+See \url{https://bpspsychub.onlinelibrary.wiley.com/doi/10.1111/j.2044-8317.2012.02043.x}
 }
 \description{
 Simulated example dataset for the ctsem package.

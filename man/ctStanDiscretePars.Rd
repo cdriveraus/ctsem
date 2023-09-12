@@ -52,6 +52,7 @@ Calculate model implied regressions for a sequence of time intervals (if ct) or 
 a ctStanFit object, for specified subjects.
 }
 \examples{
+data.table::setDTthreads(1) #ignore this line
 ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
  plot=TRUE,indices='CR')
  

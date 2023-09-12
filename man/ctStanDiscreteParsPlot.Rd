@@ -63,6 +63,7 @@ Plots model implied regression strengths at specified times for
 continuous time models fit with ctStanFit.
 }
 \examples{
+data.table::setDTthreads(1) #ignore this line
 x <- ctStanDiscretePars(ctstantestfit)
 ctStanDiscreteParsPlot(x, indices='CR')
 

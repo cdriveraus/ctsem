@@ -41,8 +41,8 @@ functions{
     r1=sqrt(ss[i]);
     r2=s[i];
 
-    r3=(fabs(r2))/(r1)-1;
-    r4=sqrt(log1p_exp(2*(fabs(r2)-r2-1)-4));
+    r3=(abs(r2))/(r1)-1;
+    r4=sqrt(log1p_exp(2*(abs(r2)-r2-1)-4));
     r=(r4*((r3))+1)*r4+1;
     r=(sqrt(ss[i]+r));
     for(j in 1:d){
@@ -61,8 +61,8 @@ data{
   int d;
   int n;
   matrix[n,d] dat;
-  int obs[n,d];
-  int nobs[n];
+  array[n,d] int obs;
+  array[n] int nobs;
   real reg;
   int corpriortype;
   int indep;
@@ -70,7 +70,7 @@ data{
 parameters{
   vector[d] mu;
   vector[d] logsd;
-  vector[indep ? 0 : (d * d - d) / 2] rawcor;
+  vector[indep ? 0 : (d * d - d) %/% 2] rawcor;
 }
 transformed parameters{
   matrix[d, d] mcor = diag_matrix(rep_vector(1,d));
@@ -82,7 +82,7 @@ transformed parameters{
 
   if(!indep){
     mcor=tcrossprod(constraincorsqrt(rawcor,d));
-    if(corpriortype==1)  corprior=normal_lpdf(rawcor| 0, 1); //mean(fabs(rawcor))
+    if(corpriortype==1)  corprior=normal_lpdf(rawcor| 0, 1); //mean(abs(rawcor))
     if(corpriortype==2) corprior= normal_lpdf(to_vector(mcor) | 0, 1);
     if(corpriortype==3) corprior= normal_lpdf(to_vector(eigenvalues_sym(mcor)) | 0, 1);
   }

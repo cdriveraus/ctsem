@@ -75,7 +75,7 @@ ctSaturatedFitConditional<-function(dat,ucols,reg,hmc=FALSE,covf=NA,verbose=0){
 }
 
 ctSaturatedFit <- function(fit,conditional=FALSE,reg=0, hmc=FALSE,
-  time=FALSE, oos=TRUE, folds=10, cores=2,verbose=0){
+  time=FALSE, oos=TRUE, folds=10, cores=1,verbose=0){
   dat <-ctLongToWideSF(fit)
   dat=dat[,-1]
   if(!time) dat <- dat[,-grep(paste0('\\b',fit$ctstanmodelbase$timeName,'_T'),colnames(dat))]
@@ -365,7 +365,9 @@ ctStanFitMelt <- function(fit, maxsamples='all'){
 #' @export
 #'
 #' @examples
+#' \donttest{
 #' ctCheckFit(ctstantestfit)
+#' }
 ctCheckFit <- function(fit, 
   data=TRUE, postpred=TRUE, priorpred=FALSE, statepred=FALSE, residuals=FALSE,
   by=fit$ctstanmodelbase$timeName,
@@ -422,7 +424,7 @@ ctCheckFit <- function(fit,
     wdat[[paste0(by,'_split')]] <- wdat[[by]]
     by <- paste0(by,'_split')
   }
-  # browser()
+
   dat <- melt(wdat,id.vars=unique(c(bycid,by)))
   
   if(!data) dat<-dat[!DataSource %in% 'Data']

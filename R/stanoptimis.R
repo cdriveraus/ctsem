@@ -644,7 +644,7 @@ clusterIDeval <- function(cl,commands){
 #' @param matsetup subobject of ctStanFit output. If provided, parameter names instead of numbers are output for any problem indications.
 #' @param nsubsets number of subsets for stochastic optimizer. Subsets are further split across cores, 
 #' but each subjects data remains whole -- processed by one core in one subset.
-#' @param stochasticTolAdjust Multiplier for initial subsampling optimizer tolerance. 
+#' @param stochasticTolAdjust Multiplier for stochastic optimizer tolerance. 
 #' @param hessianType either 'numerical' or 'stochastic', the latter is experimental at present.
 #' @param stochasticHessianSamples number of samples to use for stochastic Hessian, if selected.
 #' @param stochasticHessianEpsilon SD of random samples for stochastic hessian, if selected.
@@ -654,7 +654,7 @@ clusterIDeval <- function(cl,commands){
 #' @importFrom Rcpp evalCpp
 
 stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
-  deoptim=FALSE, estonly=FALSE,tol=1e-10,
+  deoptim=FALSE, estonly=FALSE,tol=1e-8,
   decontrol=list(),
   stochastic = TRUE,
   priors=TRUE,carefulfit=TRUE,
@@ -664,7 +664,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   plot=FALSE,
   hessianType='numerical',stochasticHessianSamples=50, stochasticHessianEpsilon=1e-5,
   is=FALSE, isloopsize=1000, finishsamples=1000, tdf=10,chancethreshold=100,finishmultiply=5,
-  verbose=0,cores=2,matsetup=NA,nsubsets=100, stochasticTolAdjust=1){
+  verbose=0,cores=2,matsetup=NA,nsubsets=100, stochasticTolAdjust=1000){
   
   if(!is.null(standata$verbose)) {
     if(verbose > 1) standata$verbose=as.integer(verbose) else standata$verbose=0L
@@ -771,7 +771,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       
       
-      singletarget<-function(parm,gradnoise=TRUE) {
+      singletarget<-function(parm,gradnoise=FALSE) {
         a=Sys.time()
         out<- try(log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
         b=Sys.time()
@@ -842,7 +842,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # clusterIDexport(cl = clctsem,vars='parlp')
         iter <-0
         
-        target<-function(parm,gradnoise=TRUE) {
+        target<-function(parm,gradnoise=FALSE) {
           # whichframe <- which(sapply(lapply(sys.frames(),ls),function(x){ 'clctsem' %in% x}))
           a=Sys.time()
           # 
@@ -885,7 +885,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             attributes(out) <- list(gradient=rep(0,length(parm)))
           } 
           
-          if(plot > 0 && ( (!stochastic &&!carefulfit) || (carefulfit && nsubsets==1))){
+          if(plot > 0 && ( (!stochastic &&!carefulfit && nsubsets ==1))){
             if(out[1] > (-1e99)) storedLp <<- c(storedLp,out[1])
             iter <<- iter+1
             # attributes(out)$gradient <- (1-gradmem)*attributes(out)$gradient + gradmem*gradstore
@@ -899,7 +899,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               plot(log(1+tail(-storedLp,500)-min(tail(-storedLp,500))),ylab='target',type='l')
               plot(g,type='p',col=1:length(parm),ylab='gradient',xlab='param')
             }
-            if(verbose==0) print(paste('lp= ',out,' ,    iter time = ',round(b-a,3), '; core times = ',paste0(coretimes,collapse=', '))) #if not verbose, print lp when plotting
+            if(verbose==0) message(paste('\rlp= ',out,' ,    iter time = ',round(b-a,3), '; core times = ',paste0(coretimes,collapse=', ')),appendLF = FALSE) #if not verbose, print lp when plotting
           }
           storedPars <<- parm
           # storedLp <<- c(storedLp,out[1])
@@ -965,7 +965,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       finished <- FALSE
       
       if(carefulfit && !deoptim){ #init using priors
-        message('Doing 1st pass optimize...')
+        message('1st pass optimization (carefulfit)...')
         
         # standata$taylorheun <- 1L
         # sdscale <- standata$sdscale
@@ -993,9 +993,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           optimfit <- try(sgd(init, fitfunc = function(x) target(x),
             parsets=parsets,
             nsubsets = nsubsets,
-            whichignore = unlist(parsteps),nconvergeiter = 20,
+            whichignore = unlist(parsteps),nconvergeiter = 30,
             plot=plot, 
-            itertol=.1*stochasticTolAdjust,deltatol=.1*stochasticTolAdjust,
+            itertol=tol*1000*stochasticTolAdjust,
             worsecountconverge = 20,maxiter=ifelse(standata$ntipred > 0 && notipredsfirstpass, 500,5000)))
           
         }
@@ -1030,7 +1030,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             
             optimfit <- sgd(init, fitfunc = target,
               parsets=parsets,
-              itertol = 1e-3, deltatol= 1e-5,
+              itertol = tol*1000*stochasticTolAdjust,
               maxiter=5000,
               whichignore = unlist(parsteps),
               ndatapoints=standata$ndatapoints,plot=plot)
@@ -1117,7 +1117,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             whichignore = parsteps,
             plot=plot,
             maxiter=5000,
-            itertol=1e-1*stochasticTolAdjust,deltatol=1e-3*stochasticTolAdjust,worsecountconverge = 20))
+            itertol=tol*1000*stochasticTolAdjust,worsecountconverge = 20))
           
           
           if((!stochastic && nsubsets ==1) || 'try-error' %in% class(optimfit)) {
@@ -1137,22 +1137,18 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       
       
-      message('Optimizing...')
       finished <- TRUE
-      standata$nsubsets <- 1L
+      standata$nsubsets <- nsubsets <- 1L
       if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standata,split=parsets<2)
       if(optimcores==1) smf<-stan_reinitsf(sm,standata)
       
       if(stochastic){
-        # if(is.infinite(bestfit)) message('Switching to stochastic optimizer -- failed initialisation with bfgs')
-        # if(!stochastic && carefulfit) message('carefulfit = TRUE , so checking for improvements with stochastic optimizer')
-        
+        message('Optimizing...')
         optimfit <- try(sgd(init, fitfunc = target,
           parsets=parsets,
           nsubsets = 1,
-          itertol = ifelse(!finished,1e-1,1e-3),
-          deltatol=ifelse(!finished,1e-1,1e-5),
-          parrangetol=1e-3,
+          itertol = tol*stochasticTolAdjust,
+          parrangetol=tol*100,
           maxiter=5000,
           whichignore = unlist(parsteps),
           ndatapoints=standata$ndatapoints,plot=plot))
@@ -1164,7 +1160,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else init=optimfit$par
       }
       
-      #use bfgs to double check stochastic fit... 
+      #use bfgs to double check stochastic fit (or just use bfgs if requested)... 
       message('Finishing optimization...')
       optimfit <- mize(init, fg=mizelpg, max_iter=99999,
         method="L-BFGS",memory=100,
@@ -1172,7 +1168,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         abs_tol=NULL,grad_tol=NULL,
         rel_tol=tol,
         step_tol=NULL,ginf_tol=NULL)
-      
+      if(verbose==0 && as.logical(plot)) message('')
       optimfit$value = -optimfit$f
       init = optimfit$par
       
@@ -1225,7 +1221,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       if(is.na(sampleinit[1])){
         
-        message('Estimating Hessian')
+        message('Estimating Hessian',appendLF = FALSE)
+        plot=FALSE
         
         
         if(length(parsteps)>0) grinit= est2[-parsteps] else grinit = est2
@@ -1322,11 +1319,14 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               #   return(fg)
               # }
               
-              hessout <- flexsapply(cl = cl, cores = length(cl), whichpars, function(i){
+              hessout <- sapply( whichpars, function(i){
                 
                 # if(is.na(cl[1])) fgfunc <- target
                 
                 # for(i in whichpars){
+                message(paste0("\rEstimating Hessian, par ",i,',', 
+                  as.integer(i/length(pars)*50+ifelse(directions[1]==1,0,50)),
+                  '%'),appendLF = FALSE)
                 if(verbose) message('### Par ',i,'###')
                 stepsize = step
                 uppars<-rep(0,length(pars))
@@ -1391,10 +1391,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                   # browser()
                 }
                 if(length(directions) > 1) grad <- (grad + attributes(lp[[2]])$gradient / (steplist[[di]]*-1))/2
-                
                 return(grad)
               }
-              ) #end flexapply
+              ) #end sapply
               
               out=(hessout+t(hessout))/2
               return(out)
@@ -1404,6 +1403,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               step = 1e-3,cl=NA,verbose=verbose,directions=1)
             hess2 <- jac(pars = grinit,parsteps=parsteps,#fgfunc = fgfunc,
               step = 1e-3,cl=NA,verbose=verbose,directions=-1)
+            message('') #to create new line due to overwriting progress bar
             
             
             

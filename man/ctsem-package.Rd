@@ -4,9 +4,30 @@
 \name{ctsem-package}
 \alias{ctsem}
 \alias{ctsem-package}
-\title{ctsem: Continuous Time Structural Equation Modelling}
+\title{ctsem}
 \description{
-Hierarchical continuous (and discrete) time state space modelling, for linear and nonlinear systems measured by continuous variables, with limited support for binary data. The subject specific dynamic system is modelled as a stochastic differential equation (SDE) or difference equation, measurement models are typically multivariate normal factor models. Linear mixed effects SDE's estimated via maximum likelihood and optimization are the default. Nonlinearities, (state dependent parameters) and random effects on all parameters are possible, using either max likelihood / max a posteriori optimization (with optional importance sampling) or Stan's Hamiltonian Monte Carlo sampling. See \url{https://github.com/cdriveraus/ctsem/raw/master/vignettes/hierarchicalmanual.pdf} for details. Priors may be used. For the conceptual overview of the hierarchical Bayesian linear SDE approach, see \url{https://www.researchgate.net/publication/324093594_Hierarchical_Bayesian_Continuous_Time_Dynamic_Modeling}. Exogenous inputs may also be included, for an overview of such possibilities see \url{https://www.researchgate.net/publication/328221807_Understanding_the_Time_Course_of_Interventions_with_Continuous_Time_Dynamic_Models} . Stan based functions are not available on 32 bit Windows systems at present. \url{https://cdriver.netlify.app/} contains some tutorial blog posts.
+ctsem is an R package for continuous time structural equation modelling of panel (N > 1) 
+and time series (N = 1) data, using either a frequentist or Bayesian approach, or middle
+ground forms like maximum a posteriori. 
+ 
+The general workflow begins by specifying a model using the \code{\link{ctModel}} function, 
+in which the \code{type} of model is also specified. Then the model is fit to data using 
+\code{\link{ctStanFit}}. The ctFit function which allows for fitting using the OpenMx / SEM form,
+as described in the original JSS ctsem paper, can now be found in the ctsemOMX package.  
+The omx forms are no longer in 
+development and for most purposes, the newer stan based forms are more robust and flexible.
+For examples, see  \code{\link{ctStanFit}}. 
+For citation info, please run \code{citation('ctsem')} .
+}
+\references{
+https://www.jstatsoft.org/article/view/v077i05
+
+Driver, C. C., & Voelkle, M. C. (2018). Hierarchical Bayesian continuous time dynamic modeling. 
+Psychological Methods. Advance online publication.http://dx.doi.org/10.1037/met0000168
+
+Stan Development Team (2018). RStan: the R interface to Stan. R package version 2.17.3. http://mc-stan.org
+
+#' @keywords internal
 }
 \seealso{
 Useful links:
@@ -30,4 +51,3 @@ Other contributors:
 }
 
 }
-\keyword{internal}

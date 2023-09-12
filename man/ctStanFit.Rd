@@ -48,7 +48,7 @@ models respectively.}
 \item{stanmodeltext}{already specified Stan model character string, generally leave NA unless modifying Stan model directly.
 (Possible after modification of output from fit=FALSE)}
 
-\item{iter}{number of iterations, half of which will be devoted to warmup by default when sampling.
+\item{iter}{used when \code{optimize=FALSE}. number of iterations, half of which will be devoted to warmup by default when sampling.
 When optimizing, this is the maximum number of iterations to allow -- convergence hopefully occurs before this!}
 
 \item{intoverstates}{logical indicating whether or not to integrate over latent states using a Kalman filter. 
@@ -94,14 +94,16 @@ linear model elements are fit exactly with only a single step.}
 
 \item{priors}{if TRUE, priors are included in computations, otherwise specified priors are ignored.}
 
-\item{chains}{number of chains to sample, during HMC or post-optimization importance sampling. Unless the cores
+\item{chains}{used when \code{optimize=FALSE}. Number of chains to sample, during HMC or post-optimization importance sampling. Unless the cores
 argument is also set, the number of chains determines the number of cpu cores used, up to 
 the maximum available minus one. Irrelevant when \code{optimize=TRUE}.}
 
 \item{cores}{number of cpu cores to use. Either 'maxneeded' to use as many as available minus one,
 up to the number of chains, or a positive integer. If \code{optimize=TRUE}, more cores are generally faster.}
 
-\item{inits}{vector of parameter start values, as returned by the rstan function \code{rstan::unconstrain_pars} for instance.}
+\item{inits}{either character string 'optimize, NULL, or vector of (unconstrained)
+parameter start values, as returned by the rstan function \code{rstan::unconstrain_pars}, or the parameter values
+found in a ctsem fit object \code{myfit$stanfit$rawest} (or \code{$rawposterior}) for instance.}
 
 \item{forcerecompile}{logical. For development purposes. 
 If TRUE, stan model is recompiled, regardless of apparent need for compilation.}
@@ -126,7 +128,7 @@ Generated data is in the $Ygen subobject after running \code{extract} on the fit
 For datasets with many manifest variables or time points, file size may be large.
 To generate data based on the posterior of a fitted model, see \code{\link{ctStanGenerateFromFit}}.}
 
-\item{control}{List of arguments sent to \code{\link[rstan]{stan}} control argument, 
+\item{control}{Used when \code{optimize=FALSE}. List of arguments sent to \code{\link[rstan]{stan}} control argument, 
 regarding warmup / sampling behaviour. Unless specified, values used are:
 list(adapt_delta = .8, adapt_window=2, max_treedepth=10, adapt_init_buffer=2, stepsize = .001)}
 

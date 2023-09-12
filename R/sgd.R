@@ -2,7 +2,7 @@ logit = function(x) log(x)-log((1-x))
 
 sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints=NA,plot=FALSE,
   stepbase=1e-3,gmeminit=ifelse(is.na(startnrows),.8,.8),gmemmax=.95, maxparchange = .50,
-  startnrows=NA,roughnessmemory=.9,groughnesstarget=.4,roughnesschangemulti = 1,
+  startnrows=NA,roughnessmemory=.9,groughnesstarget=.5,roughnesschangemulti = .2,
   parsets=1,
   lproughnesstarget=ifelse(parsets==1,.2,.5),
   gsmoothroughnesstarget=.1,
@@ -11,27 +11,29 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
   nconvergeiter=30, 
   worsecountconverge=1000,
   lpnoisethresh= .1,#length(init)*.01,
-  itertol=1e-3, deltatol=1e-5, parrangetol=1e-3){
+  itertol=1e-3, parrangetol=1e-3){
   
   if(nsubsets>1){
+    lpchange=0
+    progressEst=0
     oldsubsetilp <- -Inf
     bestsubsetlp <- -Inf
     plot=plot*nsubsets
     worsecount = 0
     warmuplength = warmuplength * nsubsets
-    subsetrepeats=1
-    nstore=nsubsets*subsetrepeats
+    nstore=nsubsets
     oldsubsetlp <- -1e100
-    gmeminit=.9
+    gmeminit=.8
     stepbase=1e-3
     maxiter=maxiter*nsubsets
     lproughnesstarget=.45#1/nsubsets + .05
-    gsmoothroughnesstarget=.1
-    groughnesstarget=.4
+    gsmoothroughnesstarget=.05
+    groughnesstarget=.5
     roughnesschangemulti= .1#0r .5?
     roughnessmemory=.9
-    subsetorder=rep(1:nsubsets,each=subsetrepeats)
+    subsetorder=1:nsubsets
     subsetlps <- rep(-Inf, nsubsets)
+    subsetlpstore <- c()
   }
   
   initfull=init #including ignored params start values
@@ -98,7 +100,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
       
       
       if(i > 1){
-        delta =   step * sign(gsmooth+dgsmooth/2) * (abs(gsmooth+dgsmooth/2))^(1/8)
+        delta =   step * sign(gsmooth+dgsmooth/4) * (abs(gsmooth+dgsmooth/4))^(1/2)
         # deltadgdp= step * dgsmooth * sum(abs(gsmooth))/sum(abs(dgsmooth))# +dgsmooth *sum(abs(gsmooth))/sum(abs(dgsmooth)))   #* exp((rnorm(length(g),0,.02)))
         # delta=delta+deltadgdp
         
@@ -114,9 +116,9 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
         #   delta[parextra] <- step*sqrt(abs(gsmooth[parextra]))*10
         # }
         delta[abs(delta) > maxparchange] <- maxparchange*sign(delta[abs(delta) > maxparchange])
-        delta = delta +  delta/2 - deltaold/2
+        # delta = delta +  delta/2 - deltaold/2
         
-        newpars = pars + delta 
+        newpars = pars + delta
         
         
         #random jumping
@@ -152,7 +154,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
       
       if(nsubsets > 1){
         if(i > 1) subsetiold <- subseti
-        subseti <- subsetorder[(i-1) %% (nsubsets * subsetrepeats) + 1]
+        subseti <- subsetorder[(i-1) %% (nsubsets) + 1]
         
         fullnewpars <- c(fullnewpars, subseti) #add subset par
       }
@@ -184,7 +186,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
         accepted <- TRUE
       } 
       if(!accepted){
-        if(nsubsets==1) gsmooth= gsmooth*gmemory2^2 + (1-gmemory2^2) * g #increase influence of last gradient at inflections
+        if(nsubsets==1 && i > warmuplength) gsmooth= gsmooth*gmemory2^2 + (1-gmemory2^2) * g #increase influence of last gradient at inflections
         step <- step / (exp(notacceptedcount))
         deltaold <- deltaold * 0
         if(nsubsets > 1) pars =bestpars* .8 + apply(parstore,1,mean)*.2
@@ -201,7 +203,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
         
       }
       if(plot && !accepted) {
-        message(paste0('iter ', i,' not accepted! lp = ', lpg[1]))
+        message(paste0('\rIter ', i,' not accepted! lp = ', lpg[1],', continuing...                '))
         # 
       }
     } #end acceptance loop
@@ -216,8 +218,8 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
     deltaold=delta
     oldg=g
     g=attributes(lpg)$gradient
-    if(any(g %in% 0)) warning(paste0('Gradient of parameter ',paste0(which(g %in% 0),collapse=', '), ' is exactly zero, maybe model problem?'))
-    if(any(is.na(g))) warning(paste0('Gradient of parameter ',paste0(which(is.na(g)),collapse=', '), ' is NA, maybe model problem?'))
+    if(any(g %in% 0)) message(paste0('Gradient of parameter ',paste0(which(g %in% 0),collapse=', '), ' is exactly zero -- if this repeats or optimization fails, maybe model problem?'))
+    if(any(is.na(g))) warning(paste0('Gradient of parameter ',paste0(which(is.na(g)),collapse=', '), ' is NA, if this repeats or optimization fails, maybe model problem?'))
     # g=sign(g)*(abs(g))#^(1/2)#sqrt
     gmemory2 = gmemory * min(i/warmuplength,1)^(1/8)
     roughnessmemory2 = roughnessmemory * min(i/warmuplength,1)^(1/8)
@@ -257,15 +259,19 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
     gsmoothroughness = gsmoothroughness * (roughnessmemory2) + (1-(roughnessmemory2)) * as.numeric(sign(gsmooth)!=sign(oldgsmooth))
     
     lproughnessmod=  ( ( (1/(-lproughness-lproughnesstarget2)) / (1/-lproughnesstarget2) + .5) -1) #balanced eq for any centre / target
+    
+    gsmoothroughnessmodmax=(( ( (1/(-(0)-gsmoothroughnesstarget)) / (1/-gsmoothroughnesstarget) + .5) ) -1)^4
     gsmoothroughnessmod =  (( ( (1/(-(gsmoothroughness)-gsmoothroughnesstarget)) / (1/-gsmoothroughnesstarget) + .5) ) -1)
+    gsmoothroughnessmod=(gsmoothroughnessmod^4*sign(gsmoothroughnessmod))/gsmoothroughnessmodmax
+    # gsmoothroughnessmod =  (max(c(0,gsmoothroughnesstarget-gsmoothroughness))^4)/gsmoothroughnesstarget^4
     groughnessmod = ( ( ( (1/(-(groughness)-groughnesstarget)) / (1/-groughnesstarget) + .5) ) -1)
     
-    if(i > warmuplength) step = (step + roughnesschangemulti*(
-      step* 2*lproughnessmod #(ifelse(nsubsets > 0,0,1))
-      + step* .5*gsmoothroughnessmod #* min(sqrt(deltasmoothsq),1)
-      + step* .2*groughnessmod# * min(sqrt(deltasmoothsq),1)
+    if(i > warmuplength) {
+      if(nsubsets==1) step = step + roughnesschangemulti*(step* .5*lproughnessmod) #(ifelse(nsubsets > 0,0,1))
+      step = step + roughnesschangemulti*step* 2*gsmoothroughnessmod #* min(sqrt(deltasmoothsq),1)
+      if(nsubsets==1) step = step + roughnesschangemulti*step* .6*groughnessmod # * min(sqrt(deltasmoothsq),1)
       # + step * rmsstepmod
-    ))
+    }
     
     signdif= sign(gsmooth)!=sign(gmid)
     # if(i > warmuplength*5) 
@@ -315,17 +321,18 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
     
     # gmemory <- gmemory * gsmoothroughnessmod
     if(nsubsets==1 &&i > 25 && i %% 20 == 0) {
-      oldlpdif <- lpdif# sum(diff(head(tail(lp,10),20)))
-      sublp <- tail(lp,20)
-      lpdif <- diff(c(max(head(sublp,5)),max(tail(sublp,5))))
-      if(oldlpdif > lpdif) gmemory <- oldgmemory
-      proposal = gmemory*2-oldgmemory
-      oldgmemory <- gmemory
-      gmemory <- min(gmemmax, max(0, proposal + runif(1,-.025,.1)))
-      if(gmemory > .95) gmemory = .95
+      # oldlpdif <- lpdif# sum(diff(head(tail(lp,10),20)))
+      # sublp <- tail(lp,20)
+      # lpdif <- diff(c(max(head(sublp,5)),max(tail(sublp,5))))
+      # if(oldlpdif > lpdif) gmemory <- oldgmemory
+      # proposal = gmemory*2-oldgmemory
+      # oldgmemory <- gmemory
+      # gmemory <- min(gmemmax, max(0, proposal + runif(1,-.025,.1)))
+      gmemory=min(c(gmemmax,max(c(.8,gmemory+runif(1,-.01,.01)))))
+      # if(gmemory > .95) gmemory = .95
     }
     
-    if(nsubsets==1 && i %% 30 == 0) {
+    if(nsubsets==1 && i %% 10 == 0) {
       # oldlprdif <- lprdif
       # sublp <- tail(lp,15)
       # lprdif <- diff(c(max(head(sublp,5)),max(tail(sublp,5))))
@@ -333,8 +340,8 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
       # lprproposal = lproughnesstarget*2-oldlproughnesstarget
       # oldlproughnesstarget <- lproughnesstarget
       # if(max(lp) > max(tail(lp,30))) lprproposal <- min(.2,.5 * lprproposal)
-      lproughnesstarget <- min(.5, max(.1, lproughnesstarget + .05 * (-1+2*rbinom(n = 1,size = 1,prob = .5))))
-      if(sd(tail(lp,30)) < lpnoisethresh) lproughnesstarget <- lproughnesstarget + .01
+      lproughnesstarget <- min(.4, max(.2, .01 + lproughnesstarget + .02 * (-1+2*rbinom(n = 1,size = 1,prob = .5))))
+      # if(sd(tail(lp,30)) < lpnoisethresh) lproughnesstarget <- lproughnesstarget + .01
       
     }
     
@@ -356,12 +363,14 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
       # gsmooth[signdif]= gsmooth[signdif]*.5 + .5 * g[signdif] #increase influence of gradient at inflections
     }
     
-    if(plot && i %% as.numeric(plot) ==0){
+    if(plot && i %% as.numeric(plot) ==0 && (nsubsets==1 || i > nsubsets)){
       par(mfrow=c(2,3),mgp=c(2,.8,0),mar=c(2,3,1,0)+.2)
       plot(pars,col=1:length(pars))
       points(changepars,pch=17,col='red')
       plot(log(abs(step*gsmooth)+1e-50),col=1:length(pars))
-      plot(tail(log(-(lp-max(lp)-1)),100),type='l')
+      if(nsubsets==1) plot(tail(log(-(lp-max(lp)-1)),100),type='l')
+      if(nsubsets>1)  plot(tail(log(-(subsetlpstore-max(subsetlpstore)-1)),500),type='l',
+        ylim=c(0,max(tail(log(-(subsetlpstore-max(subsetlpstore)-1)),500))))
       # plot(gamweights,col=1:length(pars))
       parrange=(apply(parstore,1,function(x) abs(diff(range(x)))))
       abline(h=(parrangetol))
@@ -378,70 +387,110 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
         
         abline(h=lproughnesstarget,lty=1,col='green')
         abline(h=lproughness, col='green',lty=2)
-        
-        
       }
-      # Sys.sleep(.03)
-      
-      message(paste0('Iter = ',i, ', LP = ', (lp[i]),', bestlp = ',lp[bestiter],', grad = ', mean(sqrt((g^2))), ', gmem = ', gmemory,'  lprt = ',lproughnesstarget))
     }
     
     #check convergence
-    if(nsubsets==1 && i > 30 && max(tail(lp,nconvergeiter)) ==max(lp)){
+    if(i==1) lpdiff1 <- NA
+    if(nsubsets==1 && 
+        i > nconvergeiter && 
+        max(tail(lp,nconvergeiter)) ==max(lp)){
+      
       if( (i - bestiter) > nconvergeiter*3 &&
           mean(sign(diff(tail(lp,nconvergeiter)))) < .3) converged <- TRUE #time since best
-      lpdiff=max(tail(lp,nconvergeiter)) - min(tail(lp,nconvergeiter)) #variability over convergerange
+      
+      lpdiff=(max(tail(lp,nconvergeiter)) - max(lp[1:(i-nconvergeiter)]))/nconvergeiter #avg progress over convergerange
+      
+      #convergence progress update and itertol check
+      
+      if(is.na(lpdiff1) || lpdiff1 < lpdiff) lpdiff1 <- lpdiff
+      progressEst <- round(min(100,100*(1 - log(lpdiff/itertol) / log(lpdiff1/itertol))),2)
+      
+      message(paste0('\rProgress est. = ',progressEst,'%, LPchange = ',signif(lpdiff,digits = 2), 
+        ', Iter = ',i, ', LP = ',lp[bestiter]),appendLF = FALSE)
+      # ', grad = ', mean(sqrt((g^2))), ', gmem = ', gmemory,'  lprt = ',lproughnesstarget))
+      
       if(lpdiff < itertol & lpdiff > 0) converged <- 1
-      if(abs(max(diff(tail(lp,nconvergeiter)))) < deltatol) converged <- 2 #change from step to step
+      
       prevbest=max(head(lp,length(lp)-nconvergeiter))
-      if(i > (nconvergeiter*2)) if(max(lp)-prevbest > 0 && max(lp)-prevbest < itertol) converged <- 6
+      
+      if(i > (nconvergeiter*2)) if(max(lp)-prevbest > 0 && max(lp)-prevbest < itertol) converged <- 5
+      
       if(!is.na(parrangetol)){
-        if(max(apply(parstore,1,range)) < parrangetol) converged <- 3
+        if(max(apply(parstore,1,function(x) diff(range(x)))) < parrangetol) converged <- 3
       }
+      
     }
-    if(nsubsets > 1 && i >= (nsubsets*subsetrepeats) && (i %% (nsubsets*subsetrepeats))==0){ #stochastic check
-      
-      
-      if(i >= (nsubsets*subsetrepeats * 2)){
+    
+    if(nsubsets > 1 && (i %% (nsubsets))==0){ #store subset lps
+      if(i >=(nsubsets*2)){ #then oldsubset exists
         oldsubsetlp <- subsetlp
         oldsubsetpars <- pars
       }
-      
-      subsetlp <- sum(tail(lp,nsubsets*subsetrepeats))/subsetrepeats
+      subsetlp <- sum(tail(lp,nsubsets))
+      subsetlpstore <- c(subsetlpstore,subsetlp)
       subsetpars <- apply(parstore,1,mean)
       
-      if(i >= (nsubsets*subsetrepeats * 2) && subsetlp > bestsubsetlp) {
+      if(subsetlp > bestsubsetlp) {
         bestsubsetlp <- subsetlp
         bestsubsetpars <- subsetpars
       }
+    }
+    
+    
+    
+    if(nsubsets > 1 && #subsampling convergence check
+        i > (nconvergeiter*nsubsets) && 
+        (i %% (nsubsets))==0){ 
       
-      if(i >=(nsubsets*2*subsetrepeats)){ #then oldsubset exists
+      lpdiff <- (subsetlp-max(subsetlpstore[1:((i/nsubsets)-nconvergeiter)]))/nconvergeiter
+      if(is.na(lpdiff)) browser()
+      
+      if(i >=(nsubsets*2)){ #then oldsubset exists
+        
+        if(lpdiff >0){ #epochwise lproughness update!
+          step = step*2 
+        } else {
+          step = step*.1 
+          gsmooth=gsmooth*.5+g*.5
+        }
+        
+        if(lpdiff >= 0){
+        #convergence progress update and itertol check
+        if(is.na(lpdiff1) || lpdiff1 < lpdiff) lpdiff1 <- lpdiff
+        progressEst <- round(min(100,100*(1 - log(lpdiff/itertol) / log(lpdiff1/itertol))),2)
+        lpchange=signif(lpdiff,digits = 2)
+        }
+        
+        message(paste0('\rProgress est. = ',progressEst,'%, LPchange = ',lpchange, 
+          ', Iter = ',i, ', LP = ',bestsubsetlp,', worseCount = ',worsecount,'           '),appendLF = FALSE)
+        # ', grad = ', mean(sqrt((g^2))), ', gmem = ', gmemory,'  lprt = ',lproughnesstarget))
+        
+        if(lpdiff < itertol & lpdiff > 0 && bestsubsetlp==subsetlp) converged <- 1
+        
         
         if(subsetlp < bestsubsetlp) worsecount <- worsecount + 1 else worsecount = 0
-        if(worsecount > worsecountconverge) converged = 4
-        if(plot > 0) message(paste0(subsetlp, ' , bestlp = ',bestsubsetlp,' , worsecount = ',worsecount))
+        
+        if(worsecount > worsecountconverge) converged = 3
+        # if(plot > 0) message(paste0(subsetlp, ' , bestlp = ',bestsubsetlp,' , worsecount = ',worsecount))
         # message(bestsubsetlp)
         # message(paste0(worsecount))
         
-        if(subsetlp <= bestsubsetlp &&
-            all(abs(subsetpars-oldsubsetpars) < (itertol/1000))) converged <- 5
-        if(plot > 0 && i %%plot==0) plot(abs(subsetpars-oldsubsetpars))
-        if(subsetlp < (oldsubsetlp-lpnoisethresh)) step = step * .8 else step=step*1.1
+        # if(subsetlp <= bestsubsetlp &&
+        #     all(abs(subsetpars-oldsubsetpars) < (itertol/1000))) converged <- 4
+        # if(plot > 0 && i %%plot==0) plot(abs(subsetpars-oldsubsetpars))
+        # if(subsetlp < (oldsubsetlp-lpnoisethresh)) step = step * .8 else step=step*1.1
         
-        subsetorder = rep(sample(1:nsubsets),each=subsetrepeats)
-        # if(i > 300) browser()
-        # subsetorder = subsetorder[order(tail(lp,subsetrepeats*nsubsets),decreasing = FALSE)]
-        # cbind(subsetorder,order(tail(lp,subsetrepeats*nsubsets),decreasing = FALSE))
-        # plot(tail(lp,subsetrepeats*nsubsets)[subsetorder])
-        # print(subsetorder)
+        subsetorder = sample(1:nsubsets)
         if(converged) bestpars=bestsubsetpars
         
       }
-    }
+    } #end subsampling check
+    
   }
+  message('')
   convergemessages <- c(
-    'Converged -- lp variability within itertol',
-    'Converged -- no lp changes greater than deltatol',
+    paste0('Converged -- lp change within tol(',itertol,')'),
     'Converged -- parameter changes within parrangetol',
     'Converged -- count of non-improving iterations exceeded',
     'Converged -- lp and par change within tolerances',

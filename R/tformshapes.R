@@ -1,4 +1,5 @@
-tformshapes <- function(singletext=FALSE,transform=NA,jacobian=FALSE,driftdiag=FALSE, parname='param',stan=FALSE){
+tformshapes <- function(singletext=FALSE,transform=NA,jacobian=FALSE,
+  driftdiag=FALSE, parname='param',stan=FALSE){
  out = c('param',
     '(log1p_exp(param))',
     '(exp(param))',
@@ -13,15 +14,15 @@ tformshapes <- function(singletext=FALSE,transform=NA,jacobian=FALSE,driftdiag=F
     '1/(1+param)')
  
  tfvec=c(0:5,50:55)
+ 
+ if(stan){
+   tfvec=tfvec[-1]
+   out=out[-1]
+ }
   
   out=gsub('param',parname,out,fixed=TRUE)
-  
-  # if(driftdiag && jacobian) out = paste0(out,' * param')
-  # out = sapply(out,Simplify)
-  # names(out)=paste0('fn',1:length(out))
-  # if(jacobian) out = jacobianSymb(out,variables='param')
-  
-  if(!is.na(transform)&&transform!=0) out = out[tfvec == transform] #ifelse(jacobian,0,1):(length(out)-ifelse(jacobian,1,0))
+
+  if(!is.na(transform)&&transform!=0) out = out[tfvec == transform] 
   if(!singletext) {
     out = paste0('if(transform==', tfvec,') param = ',out,';\n',collapse='')
   

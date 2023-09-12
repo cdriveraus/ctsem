@@ -21,33 +21,33 @@
 
 ctDiscretiseData <- function(dlong,timestep,timecol='time',idcol='id',TDpredNames=NULL,
   TIpredNames=NULL){
-  if(any(is.na(dlong[,timecol]))) stop('Cannot discretise with missing time data!')
-  if(any(is.na(dlong[,idcol]))) stop('Cannot discretise with missing id data!')
- 
-  out<-matrix(NA,nrow=0,ncol=ncol(dlong))
-  for(idi in unique(dlong[,idcol])){
-    odat<-dlong[dlong[,idcol]==idi,]
-    odat[,timecol]<-plyr::round_any(odat[,timecol],timestep)
-    trange<-range(odat[,timecol])
-    time<-seq(trange[1],trange[2],timestep)
-    ndat<-matrix(NA,nrow=length(time),ncol=ncol(dlong))
-    colnames(ndat) <- colnames(dlong)
-    ndat[,timecol]=time
-    ndat[,idcol]=idi
-    ndat[match(odat[,timecol],ndat[,timecol]),]=odat
-    out<-rbind(out,ndat)
-  }
-  colnames(out) <- colnames(dlong)
-  l1 <- sum(!is.na(dlong[,-which(colnames(dlong) %in% c(timecol,idcol))])) 
-   l2 <-   sum(!is.na(out[,-which(colnames(out) %in% c(timecol,idcol))])) 
+  
+  dlong <- data.table(dlong)
+  if(any(is.na(dlong[[timecol]]))) stop('Cannot discretise with missing time data!')
+  if(any(is.na(dlong[[idcol]]))) stop('Cannot discretise with missing id data!')
+  originalrows <- sum(apply(dlong,1,function(x) sum(!is.na(x))-2))
+  
+  dlong[[timecol]] <- plyr::round_any(dlong[[timecol]],timestep)
+  dlong <- melt(dlong,id.vars = c(idcol,timecol))
+  dlong <- dlong[!is.na(value),]
+  dlong <- dcast(dlong,formula=formula(paste0(idcol,'+',timecol,'~variable')),fun.aggregate = mean,na.rm=TRUE)
 
-if(l1!=l2) warning(paste0(l1-l2,' cells of data removed due to time overlap, consider reducing timestep'))
+  dnew=dlong
+  dnew <- dnew[,.(newtime=seq(min(get(timecol)),max(get(timecol)),timestep)),by=idcol]
+  setnames(dnew,old = 'newtime',timecol)
+  dlong <- merge(dlong,dnew,all = TRUE,by=c(idcol,timecol))
+  setorderv(dlong,cols=c(idcol,timecol))
+  
+  newrows <- sum(apply(dlong,1,function(x) sum(!is.na(x))-2))
+  
+if(newrows!=originalrows) warning(paste0(originalrows-newrows,' cells of data removed due to time overlap -- reduce timestep if problematic'))
     
-  out[,TDpredNames][is.na(out[,TDpredNames])] <- 0 
-  out[,TIpredNames][is.na(out[,TIpredNames])] <- NA
+  dlong <- data.frame(dlong)
+  dlong[,TDpredNames][is.na(dlong[,TDpredNames])] <- 0 
+  dlong[,TIpredNames][is.na(dlong[,TIpredNames])] <- NA
   
   
 
-  return(out)
+  return(dlong)
 }
   

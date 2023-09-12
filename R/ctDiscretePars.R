@@ -71,6 +71,7 @@ ctStanParnames <- function(x,substrings=c('pop_','popsd')){
 #'If subject matrices were saved during fiting, not used. 
 #'@param ... additional plotting arguments to control \code{\link{ctStanDiscreteParsPlot}}
 #'@examples
+#' data.table::setDTthreads(1) #ignore this line
 #' ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
 #'  plot=TRUE,indices='CR')
 #'  
@@ -239,6 +240,7 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
 #'evaluated (with the necessary arguments such as ylab etc filled in). For modifying plots.
 #'@return A ggplot2 object. This can be modified by the various ggplot2 functions, or displayed using print(x).
 #'@examples
+#' data.table::setDTthreads(1) #ignore this line
 #'x <- ctStanDiscretePars(ctstantestfit)
 #'ctStanDiscreteParsPlot(x, indices='CR')
 #'

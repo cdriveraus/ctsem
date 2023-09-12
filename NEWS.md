@@ -1,6 +1,8 @@
 # ctsem News
 
-## 20/7/2023
+- Add progress reports for stochastic optimizer and Hessian.
+
+## 20/8/2023
 ### 3.8.1
 - Correct bug in nonlinear formulations when the same state is referenced for multiple nonlinearities.
 - Correct unnecessary memory usage when computing Hessian with multiple cores.

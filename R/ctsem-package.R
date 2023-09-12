@@ -1,8 +1,3 @@
-#' @keywords internal
-"_PACKAGE"
-
-## usethis namespace: start
-## usethis namespace: end
 
 utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
   "mxData","mxMatrix","mxAlgebra","MANIFESTVARbase","MANIFESTVARcholdiag",
@@ -50,6 +45,8 @@ if(1==99){
 
 
 
+
+
 #' ctsem
 #' 
 #' ctsem is an R package for continuous time structural equation modelling of panel (N > 1) 
@@ -85,6 +82,12 @@ if(1==99){
 #' 
 #' Stan Development Team (2018). RStan: the R interface to Stan. R package version 2.17.3. http://mc-stan.org
 #' 
+#' #' @keywords internal
+"_PACKAGE"
+
+## usethis namespace: start
+## usethis namespace: end
+
 NULL
 
 .onAttach <- function(libname, pkgname) {

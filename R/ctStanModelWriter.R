@@ -706,7 +706,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE,
   finiteJ<-function(){
     paste0('
     {
-    int zeroint[1];
+    array[1] int zeroint;
     row_vector[nlatentpop] basestate = state;
     zeroint[1] = 0;
     for(statei in append_array(JAxfinite,zeroint)){ //if some finite differences to do, compute these first
@@ -763,15 +763,15 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE,
   matrix[nmanifest, nmanifest] ycov; 
   
   matrix[nlatentpop,nlatentpop] eJAx = diag_matrix(rep_vector(1,nlatentpop)); //time evolved jacobian
-  matrix[nlatentpop,nlatentpop] eJAxs[dosmoother ? ndatapoints : 1]; //time evolved jacobian, saved for smoother
-
+  array[dosmoother ? ndatapoints : 1] matrix[nlatentpop,nlatentpop] eJAxs; //time evolved jacobian, saved for smoother
+    
   row_vector[nlatentpop] state = rep_row_vector(-999,nlatentpop); 
   matrix[nlatentpop,nlatentpop] JAx; //Jacobian for drift
   //matrix[nlatentpop,nlatentpop] J0; //Jacobian for t0
   matrix[nlatentpop,nlatentpop] Jtd;//diag_matrix(rep_vector(1),nlatentpop); //Jacobian for nltdpredeffect
   matrix[ nmanifest,nlatentpop] Jy;//Jacobian for measurement 
-  matrix[ nmanifest,nlatentpop] Jys[dosmoother ? ndatapoints : 0];//saved Jacobian for measurement smoother
-  
+  array[dosmoother ? ndatapoints : 0] matrix[ nmanifest,nlatentpop] Jys;//saved Jacobian for measurement smoother
+     
   ',if(!is.null(ctm$taylorheun) && ctm$taylorheun==1) paste0('
   matrix[taylorheun ? nlatentpop : 0, taylorheun ? nlatentpop : 0] Kth = rep_matrix(0.0,taylorheun ? nlatentpop : 0, taylorheun ? nlatentpop : 0); 
   matrix[taylorheun ? nlatentpop : 0, taylorheun ? nlatentpop : 0] Mth = Kth;'),'
@@ -785,11 +785,11 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE,
   vector[nparams] rawindparams = rawpopmeans;
   vector[nparams] indparams;
   
-  matrix[nlatentpop,nlatentpop] etacovb[3,dosmoother ? ndatapoints : 0];
-  matrix[nmanifest,nmanifest] ycovb[3,dosmoother ? ndatapoints : 0];
-  vector[nlatentpop] etab[3,dosmoother ? ndatapoints : 0];
-  vector[nmanifest] yb[3,dosmoother ? ndatapoints : 0];
-
+  array[3,dosmoother ? ndatapoints : 0] matrix[nlatentpop,nlatentpop] etacovb;
+  array[3,dosmoother ? ndatapoints : 0] matrix[nmanifest,nmanifest] ycovb;
+  array[3,dosmoother ? ndatapoints : 0] vector[nlatentpop] etab;
+  array[3,dosmoother ? ndatapoints : 0] vector[nmanifest] yb;
+    
   //dynamic system matrices
   ',subjectparaminit(pop=FALSE,smats=TRUE),'
   
@@ -804,13 +804,13 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE,
     
     int si = rowx ? subject[rowi] : 0;
     int full = (dosmoother==1 || si ==0);
-    int o[full ? nmanifest : nobs_y[rowi]]; //which obs are not missing in this row
-    int o1[full ? size(whichequals(manifesttype,1,1)) : nbinary_y[rowi] ];
-    int o0[full ? size(whichequals(manifesttype,1,0)) : ncont_y[rowi] ];
+    array[full ? nmanifest : nobs_y[rowi]] int o; //which obs are not missing in this row
+    array[full ? size(whichequals(manifesttype,1,1)) : nbinary_y[rowi] ] int o1;
+    array[full ? size(whichequals(manifesttype,1,0)) : ncont_y[rowi] ] int o0;
     
-    int od[nobs_y[rowi]] = whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
-    int o1d[nbinary_y[rowi] ]= whichbinary_y[rowi,1:nbinary_y[rowi]];
-    int o0d[ncont_y[rowi] ]= whichcont_y[rowi,1:ncont_y[rowi]];
+    array[nobs_y[rowi]] int od = whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
+    array[nbinary_y[rowi] ] int o1d= whichbinary_y[rowi,1:nbinary_y[rowi]];
+    array[ncont_y[rowi] ] int o0d= whichcont_y[rowi,1:ncont_y[rowi]];
     
     if(!full){
       o= whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
@@ -1044,7 +1044,7 @@ if(verbose > 1){
 //measurement update
 
   if(si == 0 || nobs_y[rowi] > 0 || dosmoother){ //measurement init
-    int zeroint[1];
+    array[1] int zeroint;
     row_vector[nlatentpop] basestate = state;
     zeroint[1] = 0;
     for(statei in append_array(Jyfinite,zeroint)){ //if some finite differences to do, compute these first
@@ -1092,8 +1092,8 @@ if(verbose > 1){
         ycov[o,o] = quad_form_sym(makesym(etacov,verbose,1), Jy[o,]\') + MANIFESTcov[o,o]; // previously shifted measurement error down, but reverted
         for(wi in 1:nmanifest){ 
           // if(Y[rowi,wi] != 99999 || dosmoother==1) ycov[wi,wi] += square(MANIFESTVAR[wi,wi]);
-          if(manifesttype[wi]==1 && (Y[rowi,wi] != 99999  || dosmoother==1)) ycov[wi,wi] += fabs((syprior[wi] - 1) .* (syprior[wi]));
-          if(manifesttype[wi]==2 && (Y[rowi,wi] != 99999  || dosmoother==1)) ycov[wi,wi] += square(fabs((syprior[wi] - round(syprior[wi])))); 
+          if(manifesttype[wi]==1 && (Y[rowi,wi] != 99999  || dosmoother==1)) ycov[wi,wi] += abs((syprior[wi] - 1) .* (syprior[wi]));
+          if(manifesttype[wi]==2 && (Y[rowi,wi] != 99999  || dosmoother==1)) ycov[wi,wi] += square(abs((syprior[wi] - round(syprior[wi])))); 
         }
       }
         
@@ -1107,7 +1107,7 @@ if(verbose > 1){
   {
   int skipupd = 0;
         for(vi in 1:nobs_y[rowi]){
-            if(fabs(syprior[od[vi]]) > 1e10 || is_nan(syprior[od[vi]]) || is_inf(syprior[od[vi]])) {
+            if(abs(syprior[od[vi]]) > 1e10 || is_nan(syprior[od[vi]]) || is_inf(syprior[od[vi]])) {
               skipupd = 1; 
               syprior[od[vi]] =99999;
   if(verbose > 1) print("pp syprior problem! row ", rowi);
@@ -1272,12 +1272,12 @@ subjectparaminit<- function(popmats=FALSE,smats=TRUE,matrices=c(mats$base,31, 32
   out<-''
   for(mn in matrices){ #removed if(smats) 's',
     m=names(ma)[ma %in% mn]
-    out <- paste0(out, '
+    out <- paste0(out, 
+      if(!smats && !popmats) paste0('array[ (savesubjectmatrices && (sum(whenmat[',mn,',1:5]) || statedep[',mn,'])) ? nsubjects : 0]'),'
       matrix[matrixdims[',mn,', 1], matrixdims[',mn,', 2] ] ',
       if(popmats) 'pop_',
       if(!smats && !popmats) paste0('subj_'),
       m,
-      if(!smats && !popmats) paste0('[ (savesubjectmatrices && (sum(whenmat[',mn,',1:5]) || statedep[',mn,'])) ? nsubjects : 0]'),
       ';')
   }
   
@@ -1354,8 +1354,8 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
     for(i in 1:d){
       o[i,i]=0;
       r1=sqrt(ss[i]);
-      r3=(fabs(s[i]))/(r1)-1;
-      r4=sqrt(log1p_exp(2*(fabs(s[i])-s[i]-1)-4));
+      r3=(abs(s[i]))/(r1)-1;
+      r4=sqrt(log1p_exp(2*(abs(s[i])-s[i]-1)-4));
       r=(r4*((r3))+1)*r4+1;
       r=(sqrt(ss[i]+r));
       for(j in 1:d){
@@ -1477,61 +1477,54 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
           out[rowi,coli] = mat[rowi,coli];
           out[coli,rowi] = mat[rowi,coli];
         }
-        ',if(gendata) paste0('if(is_nan(out[rowi,coli])){
-          if(verbose > 0) print("nan during makesym row ", rowi, " col ", coli);
-          if(rowi==coli) out[rowi,coli] = 99999;
-          if(rowi!=coli) {
-            out[rowi,coli] = 0;
-            out[coli,rowi] = 0;
-          }
-        }'),'
+        
       }
     }
     return out;
   }
 
-  real tform(real parin, int transform, data real multiplier, data real meanscale, data real offset, data real inneroffset){
+  real tform(real parin, int transform, data real scale, data real meanscale, data real shift, data real innershift){
     real param=parin;
-    ',tformshapes(stan=TRUE),
+    ',gsub('offset','shift',gsub('multiplier','scale',tformshapes(stan=TRUE))),
 if(length(extratforms) > 0) paste0(extratforms,collapse=" \n"),'
     return param;
   }
   
   // improve PARS when = 100 thing here too
-   row_vector parvectform(int[] which, row_vector rawpar, int when, int[,] ms, data real[,] mval, int subi){
+  row_vector parvectform(array[] int which, row_vector rawpar, int when, array[,] int ms, data array[,] real mval, int subi){
     row_vector[size(which)] parout;
     if(size(which)){
       for(whichout in 1:size(which)){
         int done=0; //only want to tform once, may be copies
-      for(ri in 1:size(ms)){ //for each row of matrix setup
-        if(!done){
-        if((ms[ri,8]==when || ms[ri,8]==100)  && ms[ri,3] == which[whichout]){ //if correct when and free parameter //,not a copyrow,&& ms[ri,9] < 1
-          if(subi ==0 ||  //if population parameter
-            (ms[ri,3] > 0 && (ms[ri,5] > 0 || ms[ri,6] > 0 || ms[ri,8] > 0)) //or there is individual variation
-            ){ //otherwise repeated values
-            
-            parout[whichout] = tform(rawpar[ms[ri,3] ], // was: whichequals(outwhen, ms[ri,3],1)[1], which outwhen refers to correct par
-              ms[ri,4], mval[ri,2], mval[ri,3], mval[ri,4], mval[ri,6] ); 
+        for(ri in 1:size(ms)){ //for each row of matrix setup
+          if(!done){
+            if((ms[ri,8]==when || ms[ri,8]==100)  && ms[ri,3] == which[whichout]){ //if correct when and free parameter //,not a copyrow,&& ms[ri,9] < 1
+              if(subi ==0 ||  //if population parameter
+                (ms[ri,3] > 0 && (ms[ri,5] > 0 || ms[ri,6] > 0 || ms[ri,8] > 0)) //or there is individual variation
+              ){ //otherwise repeated values
+                
+                parout[whichout] = tform(rawpar[ms[ri,3] ], // was: whichequals(outwhen, ms[ri,3],1)[1], which outwhen refers to correct par
+                  ms[ri,4], mval[ri,2], mval[ri,3], mval[ri,4], mval[ri,6] ); 
+              }
+              done=1;
             }
-           done=1;
+          }
         }
       }
-      }
-      }
     }
-  return parout;
+    return parout;
   }
   
   
-  matrix mcalc(matrix matin, vector tfpars, row_vector states, int[] when, int m, int[,] ms, data real[,] mval, int subi){
+  matrix mcalc(matrix matin, vector tfpars, row_vector states, array[] int when, int m, array[,] int ms, data array[,] real mval, int subi){
     matrix[rows(matin),cols(matin)] matout;
     int changeMade=0;
-
+    
     for(ri in 1:size(ms)){ //for each row of matrix setup
       if(m==ms[ri,7] && ( //if correct matrix
         subi ==0 ||  //and need to compute population parameter
         (ms[ri,3] > 0 && (ms[ri,5] > 0 || ms[ri,6] > 0 || ms[ri,8] > 0)) //or there is individual variation
-        )){
+      )){
         int whenyes = (ms[ri,8]==100); //if PARS matrix then need to compute at each kalman step, could improve
         int wi=0;
         while(whenyes==0 && wi < size(when)){
@@ -1542,7 +1535,7 @@ if(length(extratforms) > 0) paste0(extratforms,collapse=" \n"),'
           changeMade=1;
           if(ms[ri,3] > 0 && ms[ri,8]==0)  matout[ms[ri,1], ms[ri,2] ] = tfpars[ms[ri,3]]; //should be already tformed
           if(ms[ri,3] > 0 && ms[ri,8]>0)  matout[ms[ri,1], ms[ri,2] ] =   //if references param and is state based
-            tform(states[ms[ri,3] ], ms[ri,4], mval[ri,2], mval[ri,3], mval[ri,4], mval[ri,6] );
+          tform(states[ms[ri,3] ], ms[ri,4], mval[ri,2], mval[ri,3], mval[ri,4], mval[ri,6] );
           if(ms[ri,3] < 1) matout[ms[ri,1], ms[ri,2] ] = mval[ri, 1]; //doing this once over all subjects unless covariance matrix -- speed ups possible here, check properly!
         }
       }
@@ -1553,11 +1546,11 @@ if(length(extratforms) > 0) paste0(extratforms,collapse=" \n"),'
           if(is_nan(matout[ri,ci]) && !is_nan(matin[ri,ci])) matout[ri,ci] = matin[ri,ci];
         }
       }
-  return(matout);
+      return(matout);
     } else return(matin);
   }
   
-  matrix expmSubsets(matrix m, int[,] subsets){
+  matrix expmSubsets(matrix m, array[,] int subsets){
     int nr = rows(m);
     matrix[nr,nr] e = rep_matrix(0,nr,nr);
     for(si in 1:size(subsets)){
@@ -1584,40 +1577,40 @@ data {
   int ntipredeffects;
   real<lower=0> tipredsimputedscale;
   real<lower=0> tipredeffectscale;
-
-  vector[nmanifest] Y[ndatapoints];
+  
+  array[ndatapoints] vector[nmanifest] Y;
   int priors;
-  vector[ntdpred] tdpreds[ndatapoints];
+  array[ndatapoints] vector[ntdpred] tdpreds;
   
   real maxtimestep;
-  real time[ndatapoints];
-  int subject[ndatapoints];
+  array[ndatapoints] real time;
+  array[ndatapoints] int subject;
   int<lower=0> nparams;
   int continuoustime; // logical indicating whether to incorporate timing information
   int nindvarying; // number of subject level parameters that are varying across subjects
   int nindvaryingoffdiagonals; //number of off diagonal parameters needed for popcov matrix
   vector[nindvarying] sdscale;
-  int indvaryingindex[nindvarying];
-  int notindvaryingindex[nparams-nindvarying];
+  array[nindvarying] int indvaryingindex;
+  array[nparams-nindvarying] int notindvaryingindex;
   
-//  int nt0varstationary;
-//  int nt0meansstationary;
-//  int t0varstationary [nt0varstationary, 2];
-//  int t0meansstationary [nt0meansstationary, 2];
-
-  int nobs_y[ndatapoints];  // number of observed variables per observation
-  int whichobs_y[ndatapoints, nmanifest]; // index of which variables are observed per observation
+  //  int nt0varstationary;
+  //  int nt0meansstationary;
+  //  int t0varstationary [nt0varstationary, 2];
+  //  int t0meansstationary [nt0meansstationary, 2];
+  
+  array[ndatapoints] int nobs_y;  // number of observed variables per observation
+  array[ndatapoints, nmanifest] int whichobs_y; // index of which variables are observed per observation
   int ndiffusion; //number of latents involved in system noise calcs
-  int derrind[ndiffusion]; //index of which latent variables are involved in system noise calculations
-
-  int manifesttype[nmanifest];
-  int nbinary_y[ndatapoints];  // number of observed binary variables per observation
-  int whichbinary_y[ndatapoints, nmanifest]; // index of which variables are observed and binary per observation
-  int ncont_y[ndatapoints];  // number of observed continuous variables per observation
-  int whichcont_y[ndatapoints, nmanifest]; // index of which variables are observed and continuous per observation
+  array[ndiffusion] int derrind; //index of which latent variables are involved in system noise calculations
   
+  array[nmanifest] int manifesttype;
+  array[ndatapoints] int nbinary_y;  // number of observed binary variables per observation
+  array[ndatapoints, nmanifest] int whichbinary_y; // index of which variables are observed and binary per observation
+  array[ndatapoints] int ncont_y;  // number of observed continuous variables per observation
+  array[ndatapoints, nmanifest] int whichcont_y; // index of which variables are observed and continuous per observation
+ 
   int intoverpop;
-  int statedep[',max(mats$all),'];
+  array[',max(mats$all),'] int statedep;
   int choleskymats;
   int intoverstates;
   int verbose; //level of printing during model fit
@@ -1625,62 +1618,62 @@ data {
   int nrowmatsetup;
   int matsetup[nrowmatsetup,9];
   real matvalues[nrowmatsetup,6];
-  int whenmat[',max(mats$all),',5];
-  int whenvecp[2,nparams];
-  int whenvecs[6,nlatentpop];
-  int matrixdims[',max(mats$all),',2];
+  array[',max(mats$all),',5]int whenmat;
+  array[2,nparams]int whenvecp;
+  array[6,nlatentpop]int whenvecs;
+  array[',max(mats$all),',2]int matrixdims;
   int savescores;
   int savesubjectmatrices;
   int dokalman;
-  int dokalmanrows[ndatapoints];
+  array[ndatapoints] int dokalmanrows;
   int nsubsets;
   real Jstep;
   real priormod;
-  int intoverpopindvaryingindex[intoverpop ? nindvarying : 0];
+  array[intoverpop ? nindvarying : 0] int intoverpopindvaryingindex;
   int nJAxfinite;
-  int JAxfinite[nJAxfinite];
+  array[nJAxfinite] int JAxfinite;
   int nJyfinite;
-  int Jyfinite[nJyfinite];
+  array[nJyfinite] int Jyfinite;
   int taylorheun;
   int popcovn;
   int llsinglerow;
-  int laplaceprior[nparams];
+  array[nparams] int laplaceprior;
   int laplaceprioronly;
   int laplacetipreds;
   int CINTnonzerosize;
-  int CINTnonzero[CINTnonzerosize];
+  array[CINTnonzerosize] int CINTnonzero;
   int JAxDRIFTequiv;
   
   int nDRIFTsubsets;
   int nJAxsubsets;
-  int DRIFTsubsets[nDRIFTsubsets,nlatent];
-  int JAxsubsets[nJAxsubsets,nlatentpop];
+  array[nDRIFTsubsets,nlatent] int DRIFTsubsets;
+  array[nJAxsubsets,nlatentpop] int JAxsubsets;
 }
-      
+
 transformed data{
   matrix[nlatent+nindvarying,nlatent+nindvarying] IIlatentpop = diag_matrix(rep_vector(1,nlatent+nindvarying));
   vector[nlatentpop-nlatent] nlpzerovec = rep_vector(0,nlatentpop-nlatent);
   vector[nlatent+1] nlplusonezerovec = rep_vector(0,nlatent+1);
-  int tieffectindices[nparams]=rep_array(0,nparams);
+  array[nparams] int tieffectindices=rep_array(0,nparams);
   int ntieffects = 0;
   int dosmoother = savescores || savesubjectmatrices;
   
   if(ntipred >0){
     for(pi in 1:nparams){
       if(sum(TIPREDEFFECTsetup[pi,]) > .5){
-      ntieffects+=1;
-      tieffectindices[ntieffects] = pi;
+        ntieffects+=1;
+        tieffectindices[ntieffects] = pi;
       }
     }
   }
   
 }
-      
+
 parameters{
-  vector[nparams] rawpopmeans; // population level means \n','
+  vector[nparams] rawpopmeans; // population level means 
   vector',if(!is.na(ctm$rawpopsdbaselowerbound)) paste0('<lower=',ctm$rawpopsdbaselowerbound[1],'>'),'[nindvarying] rawpopsdbase; //population level std dev
   vector[nindvaryingoffdiagonals] sqrtpcov; // unconstrained basis of correlation parameters
-  vector[intoverpop ? 0 : nindvarying] baseindparams[intoverpop ? 0 : nsubjects]; //vector of subject level deviations, on the raw scale
+  array [intoverpop ? 0 : nsubjects]vector[intoverpop ? 0 : nindvarying] baseindparams; //vector of subject level deviations, on the raw scale
   
   vector[ntipredeffects] tipredeffectparams; // effects of time independent covariates
   vector[nmissingtipreds] tipredsimputed;
@@ -1701,29 +1694,29 @@ transformed parameters{
   ',if(!gendata) 'real ll = 0;
 ',if(!gendata & savemodel) paste0('
   vector[dokalman ? ndatapoints : 1] llrow = rep_vector(0,dokalman ? ndatapoints : 1);
-  matrix[nlatentpop,nlatentpop] etacova[3,savescores ? ndatapoints : 0];
-  matrix[nmanifest,nmanifest] ycova[3,savescores ? ndatapoints : 0];
-  vector[nlatentpop] etaa[3,savescores ? ndatapoints : 0];
-  vector[nmanifest] ya[3,savescores ? ndatapoints : 0];
-  vector[',ifelse(is.null(ctm$modelmats$calcs$calcNames),0,length(ctm$modelmats$calcs$calcNames)),'] calcs[',ifelse(is.null(ctm$modelmats$calcs$calcNames),0,'ndatapoints'),'];
+  array[3,savescores ? ndatapoints : 0] matrix[nlatentpop,nlatentpop] etacova;
+  array[3,savescores ? ndatapoints : 0] matrix[nmanifest,nmanifest] ycova;
+  array[3,savescores ? ndatapoints : 0] vector[nlatentpop] etaa;
+  array[3,savescores ? ndatapoints : 0] vector[nmanifest] ya;
+  array[',ifelse(is.null(ctm$modelmats$calcs$calcNames),0,'ndatapoints'),'] vector[',ifelse(is.null(ctm$modelmats$calcs$calcNames),0,length(ctm$modelmats$calcs$calcNames)),'] calcs;
   ',subjectparaminit(pop=TRUE,smats=FALSE),
   subjectparaminit(pop=FALSE,smats=FALSE),
   collapse=''),'
 
   matrix[ntipred ? (nmissingtipreds ? nsubjects : 0) : 0, ntipred ? (nmissingtipreds ? ntipred : 0) : 0] tipreds; //tipred values to fill from data and, when needed, imputation vector
   matrix[nparams, ntipred] TIPREDEFFECT; //design matrix of individual time independent predictor effects
-
+  
   if(ntipred > 0){ 
     if(nmissingtipreds > 0){
-    int counter = 0;
-    for(coli in 1:cols(tipreds)){ //insert missing ti predictors
-      for(rowi in 1:rows(tipreds)){
-        if(tipredsdata[rowi,coli]==99999) {
-          counter += 1;
-          tipreds[rowi,coli] = tipredsimputed[counter];
-        } else tipreds[rowi,coli] = tipredsdata[rowi,coli];
+      int counter = 0;
+      for(coli in 1:cols(tipreds)){ //insert missing ti predictors
+        for(rowi in 1:rows(tipreds)){
+          if(tipredsdata[rowi,coli]==99999) {
+            counter += 1;
+            tipreds[rowi,coli] = tipredsimputed[counter];
+          } else tipreds[rowi,coli] = tipredsdata[rowi,coli];
+        }
       }
-    }
     }
     for(ci in 1:ntipred){ //configure design matrix
       for(ri in 1:nparams){
@@ -1768,13 +1761,13 @@ model{
 
   if(ntipred > 0){ 
     if(priors && laplacetipreds==0) target+= priormod2 * normal_lpdf(tipredeffectparams / tipredeffectscale| 0, 1);
-    if(priors && laplacetipreds==1) for(i in 1:ntipredeffects) target+= priormod2 * double_exponential_lpdf(pow(fabs(tipredeffectparams[i]),1+.1/((tipredeffectparams[i]*100)^2+.1)) / tipredeffectscale| 0, 1);
+    if(priors && laplacetipreds==1) for(i in 1:ntipredeffects) target+= priormod2 * double_exponential_lpdf(pow(abs(tipredeffectparams[i]),1+.1/((tipredeffectparams[i]*100)^2+.1)) / tipredeffectscale| 0, 1);
     target+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
   }
 
   if(priors){ //if split files over subjects, just compute priors once
     for(i in 1:nparams){
-      if(laplaceprior[i]==1) target+= priormod2 * double_exponential_lpdf(pow(fabs(rawpopmeans[i]) ,1+.1/((rawpopmeans[i]*100)^2+.1))|0,1);
+      if(laplaceprior[i]==1) target+= priormod2 * double_exponential_lpdf(pow(abs(rawpopmeans[i]) ,1+.1/((rawpopmeans[i]*100)^2+.1))|0,1);
     }
   }
 

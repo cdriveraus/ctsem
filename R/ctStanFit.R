@@ -106,15 +106,17 @@ verbosify<-function(sf,verbose=2){
 #' @param optimcontrol list of parameters sent to \code{\link{stanoptimis}} governing optimization / importance sampling.
 #' @param nopriors deprecated, use priors argument. logical. If TRUE, any priors are disabled -- sometimes desirable for optimization. 
 #' @param priors if TRUE, priors are included in computations, otherwise specified priors are ignored.
-#' @param iter number of iterations, half of which will be devoted to warmup by default when sampling.
+#' @param iter used when \code{optimize=FALSE}. number of iterations, half of which will be devoted to warmup by default when sampling.
 #' When optimizing, this is the maximum number of iterations to allow -- convergence hopefully occurs before this!
-#' @param inits vector of parameter start values, as returned by the rstan function \code{rstan::unconstrain_pars} for instance. 
-#' @param chains number of chains to sample, during HMC or post-optimization importance sampling. Unless the cores
+#' @param inits either character string 'optimize, NULL, or vector of (unconstrained)
+#' parameter start values, as returned by the rstan function \code{rstan::unconstrain_pars}, or the parameter values
+#' found in a ctsem fit object \code{myfit$stanfit$rawest} (or \code{$rawposterior}) for instance. 
+#' @param chains used when \code{optimize=FALSE}. Number of chains to sample, during HMC or post-optimization importance sampling. Unless the cores
 #' argument is also set, the number of chains determines the number of cpu cores used, up to 
 #' the maximum available minus one. Irrelevant when \code{optimize=TRUE}.
 #' @param cores number of cpu cores to use. Either 'maxneeded' to use as many as available minus one,
 #' up to the number of chains, or a positive integer. If \code{optimize=TRUE}, more cores are generally faster.
-#' @param control List of arguments sent to \code{\link[rstan]{stan}} control argument, 
+#' @param control Used when \code{optimize=FALSE}. List of arguments sent to \code{\link[rstan]{stan}} control argument, 
 #' regarding warmup / sampling behaviour. Unless specified, values used are:
 #' list(adapt_delta = .8, adapt_window=2, max_treedepth=10, adapt_init_buffer=2, stepsize = .001)
 #' @param nlcontrol List of non-linear control parameters. 
@@ -698,10 +700,10 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
           inits <- do.call(stanoptimis,optimcontrol)$rawest
         }
       sf <- stan_reinitsf(sm,standata)
-      staninits <- list(stan1=constrain_pars(sf,inits))
+      staninits <- list() 
       if(chains > 1){ #set all chains to same inits
-        for(i in 2:chains){
-          staninits[[i]]<-staninits[[1]]
+        for(i in 1:chains){
+          staninits[[i]]<-constrain_pars(sf,inits+rnorm(length(inits),0,.01))
         }
       }
       }
