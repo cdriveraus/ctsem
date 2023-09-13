@@ -35,7 +35,7 @@ In this case the timestep is computed as 1/10th of the 10th percentile for time 
 
 \item{nboot}{The number of bootstrap samples for confidence interval estimation (default is 100).}
 
-\item{...}{additional arguments (such as demean=FALSE) to pass to the \code{\link{stats::acf}} function.}
+\item{...}{additional arguments (such as demean=FALSE) to pass to the \code{stats::acf} function.}
 }
 \value{
 If 'plot' is TRUE, the function returns a ggplot object of the ACF plot. If 'plot' is

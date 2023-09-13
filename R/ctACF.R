@@ -13,7 +13,7 @@
 #'        In this case the timestep is computed as 1/10th of the 10th percentile for time intervals in the data.
 #' @param time.max The maximum time lag to compute the ACF (default is 10). If 'auto', is set to 10 times the 90th percentile interval in the data.
 #' @param nboot The number of bootstrap samples for confidence interval estimation (default is 100).
-#' @param ... additional arguments (such as demean=FALSE) to pass to the \code{\link{stats::acf}} function.
+#' @param ... additional arguments (such as demean=FALSE) to pass to the \code{stats::acf} function.
 #'
 #' @return If 'plot' is TRUE, the function returns a ggplot object of the ACF plot. If 'plot' is
 #'         FALSE, it returns a data table with ACF estimates and confidence intervals.
@@ -31,6 +31,8 @@
 #'
 #' @export
 ctACF <- function(dat, varnames='auto',idcol='id', timecol='time',plot=TRUE,timestep='auto',time.max='auto',nboot=100,...){
+  
+  if(F) .timediff = ACFhigh= ACFlow= Element= Estimate= SignificanceLevel=  TimeInterval= Variable= boot= ci=NULL
 
   dat=copy(data.table(dat))
   if(timestep == 'auto') timestep = 0.1 * quantile(dat[,.timediff:= c(NA,diff(get(timecol))),by=idcol][['.timediff']],probs=.1,na.rm=TRUE)

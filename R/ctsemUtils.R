@@ -1,36 +1,36 @@
-vgrep <- function(patterns,x){
-  unique(unlist(sapply(patterns,function(pattern) grep(pattern,x))))
-}
+# vgrep <- function(patterns,x){
+#   unique(unlist(sapply(patterns,function(pattern) grep(pattern,x))))
+# }
 
-mupd <- function(m, nr=NA,nc=NA, upd=NA, sr=NA,sc=NA){
-  if(is.na(nr)) nr <- max(nrow(upd)+sr-1,nrow(m))
-  if(is.na(nc)) nc <- max(ncol(upd)+sc-1,nrow(m))
-  mo <- rbind(
-    cbind(m, matrix(0,nrow(m),nc-ncol(m))),
-    matrix(0,nr-nrow(m),nc))
-  if(!is.na(upd)) mo[sr:(sr+nrow(upd)-1),sc:(ncol(upd)+sc-1)] <- upd
-  return(mo)
-}
+# mupd <- function(m, nr=NA,nc=NA, upd=NA, sr=NA,sc=NA){
+#   if(is.na(nr)) nr <- max(nrow(upd)+sr-1,nrow(m))
+#   if(is.na(nc)) nc <- max(ncol(upd)+sc-1,nrow(m))
+#   mo <- rbind(
+#     cbind(m, matrix(0,nrow(m),nc-ncol(m))),
+#     matrix(0,nr-nrow(m),nc))
+#   if(!is.na(upd)) mo[sr:(sr+nrow(upd)-1),sc:(ncol(upd)+sc-1)] <- upd
+#   return(mo)
+# }
 
-diagt <- function(d){
-  m <- diag(0,length(d))
-  m[diag(1,length(d))==1] <- d
-  return(m)
-}
+# diagt <- function(d){
+#   m <- diag(0,length(d))
+#   m[diag(1,length(d))==1] <- d
+#   return(m)
+# }
 
-findmatrixslots <- function(pars,l){
-  p<-list()
-  for(pi in pars){
-    for(mi in 1:length(l)){
-      if(any(l[[mi]] %in% pi)){
-        arrind <- arrayInd(which(l[[mi]] %in% pi),dim(l[[mi]]))
-        p[[pi]] <- paste0(names(l)[mi],'[',arrind[1,1],',',arrind[1,2],']')
-        next
-      }
-    }
-  }
-  return(p)
-}
+# findmatrixslots <- function(pars,l){
+#   p<-list()
+#   for(pi in pars){
+#     for(mi in 1:length(l)){
+#       if(any(l[[mi]] %in% pi)){
+#         arrind <- arrayInd(which(l[[mi]] %in% pi),dim(l[[mi]]))
+#         p[[pi]] <- paste0(names(l)[mi],'[',arrind[1,1],',',arrind[1,2],']')
+#         next
+#       }
+#     }
+#   }
+#   return(p)
+# }
 
 
 
@@ -64,15 +64,15 @@ ctstantestfitfunc<-function(){
 
 
 
-removeOutliers <- function(dat,multiplier,by=2){
-  dat2 <- array(apply(dat,by,function(x){
-    s=sd(x,na.rm=TRUE)
-    m=mean(x,na.rm=TRUE)
-    message("Removed ", sum(abs(x-m) > (multiplier*s),na.rm=TRUE)," outliers...")
-    x[abs(x-m) > (multiplier*s)] <- NA
-    return(x)
-  }),dim=dim(dat))
-}
+# removeOutliers <- function(dat,multiplier,by=2){
+#   dat2 <- array(apply(dat,by,function(x){
+#     s=sd(x,na.rm=TRUE)
+#     m=mean(x,na.rm=TRUE)
+#     message("Removed ", sum(abs(x-m) > (multiplier*s),na.rm=TRUE)," outliers...")
+#     x[abs(x-m) > (multiplier*s)] <- NA
+#     return(x)
+#   }),dim=dim(dat))
+# }
 
 
 testall<- function(cores=4,folder = '/tests/testthat',examples=TRUE){
@@ -178,28 +178,28 @@ if(1==99) Row <- Col <- NULL
 return(dout)
 }
 
-gridplot <- function(m, maxdim=c(3,3),...){
-  d=n2mfrow(dim(m)[length(dim(m))])
-  d[d>maxdim] <-maxdim[d>maxdim]
-  oldpar<-par(no.readonly=TRUE)
-  par(mfrow=d,mar=c(1.1,1.1,1.1,0),mgp=c(.1,.1,0))
-  for(i in 1:dim(m)[length(dim(m))]){
-    n=colnames(m)[i]
-    if('matrix' %in% class(m)) plot(m[,i],main=ifelse(is.null(n),i,n),col='red',xlab='',ylab='',...)
-    if('array' %in% class(m)) matplot(m[,,i],main=ifelse(is.null(n),i,n),type='l',xlab='',ylab='',...)
-  }
-  suppressWarnings(do.call(par,oldpar))
-}
+# gridplot <- function(m, maxdim=c(3,3),...){
+#   d=n2mfrow(dim(m)[length(dim(m))])
+#   d[d>maxdim] <-maxdim[d>maxdim]
+#   oldpar<-par(no.readonly=TRUE)
+#   par(mfrow=d,mar=c(1.1,1.1,1.1,0),mgp=c(.1,.1,0))
+#   for(i in 1:dim(m)[length(dim(m))]){
+#     n=colnames(m)[i]
+#     if('matrix' %in% class(m)) plot(m[,i],main=ifelse(is.null(n),i,n),col='red',xlab='',ylab='',...)
+#     if('array' %in% class(m)) matplot(m[,,i],main=ifelse(is.null(n),i,n),type='l',xlab='',ylab='',...)
+#   }
+#   suppressWarnings(do.call(par,oldpar))
+# }
 
-perm <- function(v) {
-  n <- length(v)
-  if (n == 1) v
-  else {
-    X <- NULL
-    for (i in 1:n) X <- rbind(X, cbind(v[i], perm(v[-i])))
-    X
-  }
-}
+# perm <- function(v) {
+#   n <- length(v)
+#   if (n == 1) v
+#   else {
+#     X <- NULL
+#     for (i in 1:n) X <- rbind(X, cbind(v[i], perm(v[-i])))
+#     X
+#   }
+# }
 
 # helper function to generate an index matrix, or return unique elements of a matrix
 indexMatrix<-function(dimension,symmetrical=FALSE,upper=FALSE,lowerTriangular=FALSE, sep=NULL,starttext=NULL,endtext=NULL,
@@ -559,35 +559,35 @@ cseq <- function(from, to, by){
   return(temp)
 }
 
-get_stan_params <- function(object) {
-  stopifnot(methods::is(object, "stanfit"))
-  params <- grep("context__.vals_r", fixed = TRUE, value = TRUE,
-    x = strsplit(rstan::get_cppcode(rstan::get_stanmodel(object)), "\n")[[1]])
-  params <- sapply(strsplit(params, "\""), FUN = function(x) x[[2]])
-  params <- intersect(params, object@model_pars)
-  return(params)
-}
+# get_stan_params <- function(object) {
+#   stopifnot(methods::is(object, "stanfit"))
+#   params <- grep("context__.vals_r", fixed = TRUE, value = TRUE,
+#     x = strsplit(rstan::get_cppcode(rstan::get_stanmodel(object)), "\n")[[1]])
+#   params <- sapply(strsplit(params, "\""), FUN = function(x) x[[2]])
+#   params <- intersect(params, object@model_pars)
+#   return(params)
+# }
 
 
-get_stan_massmat<-function(fit){
-  
-  spars<-get_stan_params(fit)
-  spars2<-c()
-  for(pari in spars){
-    spars2<-c(spars2,grep(paste0(pari,'['),names(fit@sim$samples[[1]]),fixed=TRUE))
-  }
-  
-  massmat<-list()
-  for(chaini in 1:fit@sim$chains){
-    temp<-c()
-    for(pari in spars2){
-      newval<-stats::cov(cbind(fit@sim$samples[[chaini]][[pari]][(fit@sim$warmup - fit@stan_args[[1]]$control$adapt_term_buffer):fit@sim$warmup]))
-      names(newval)<-names(fit@sim$samples[[chaini]])[pari]
-      temp<-c(temp,newval)
-    }
-    massmat[[chaini]]<-temp
-  }
-  return(massmat)
-}
+# get_stan_massmat<-function(fit){
+#   
+#   spars<-get_stan_params(fit)
+#   spars2<-c()
+#   for(pari in spars){
+#     spars2<-c(spars2,grep(paste0(pari,'['),names(fit@sim$samples[[1]]),fixed=TRUE))
+#   }
+#   
+#   massmat<-list()
+#   for(chaini in 1:fit@sim$chains){
+#     temp<-c()
+#     for(pari in spars2){
+#       newval<-stats::cov(cbind(fit@sim$samples[[chaini]][[pari]][(fit@sim$warmup - fit@stan_args[[1]]$control$adapt_term_buffer):fit@sim$warmup]))
+#       names(newval)<-names(fit@sim$samples[[chaini]])[pari]
+#       temp<-c(temp,newval)
+#     }
+#     massmat[[chaini]]<-temp
+#   }
+#   return(massmat)
+# }
 
 

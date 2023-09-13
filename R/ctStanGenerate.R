@@ -1,42 +1,42 @@
-generator2 <- function(gm,nsubjects,
-  maxtime, genstep=1e-3, obsstep=100,
-  interventiontimes=c(), burnin=0){
-  
-  times <- seq(0,maxtime,genstep) #create the vector of observation times
-  
-  intervention <- rep(0,length(times)) #at nearly all times, there is no intervention happening
-  if(length(interventiontimes)>1) intervention[interventiontimes / genstep+1] <- 1
-  
-  for(si in 1:nsubjects){
-  #latent process loop
-  latents <- matrix(gm$T0MEANS,nrow=1) #initialise our latent processes with the start value
-  for(i in 2:length(times)){ #then calculate forward in time the subjects process values
-    latents <- rbind(latents, #put the previous values of the latent processes on top with row bind
-      c(latents[i-1,] + #then the new latents are based off the previous values
-          (gm$DRIFT %*% latents[i-1,] + gm$CINT) * genstep + #deterministic change
-          sysnoise %*% rnorm(length(starts),0,sqrt(genstep))))
-    if(length(interventiontimes)>0) latents[i,]=latents[i,]+gm$TDPREDEFFECT %*% intervention[i]
-  }#end latent loop
-  
-  #observations
-  for(i in 1:length(times)){
-    newobs <- gm$LAMBDA %*% latents[i,] +#our factor loadings transfer the latent process into observed measures
-      gm$MANIFESTMEANS + gm$MANIFESTVAR %*% rnorm(length(obsNames),0,1) #which also can have some intercept and error variation
-    if(i==1) obs <- matrix(newobs,nrow=1) else obs <- rbind(obs, c(newobs)) #if first row, we need to create the object, else we append below again
-  }
-  
-  colnames(latents)<-gm$latentNames
-  colnames(obs) <- gm$manifestNames
-  
-  
-  dat <- data.frame(id=si,time=times, obs) #put all our data together to output it
-  if(length(interventiontimes)>0) dat <- cbind(dat,intervention)
-  dat <- dat[dat$time %in% seq(0,maxtime,obsstep),]
-  }
-  if(si==1) fulldat <- dat else fulldat <- rbind(fulldat,dat)
-  fulldat <- fulldat[fulldat$time >= burnin,]
-  return(fulldat)
-}
+# generator2 <- function(gm,nsubjects,
+#   maxtime, genstep=1e-3, obsstep=100,
+#   interventiontimes=c(), burnin=0){
+#   
+#   times <- seq(0,maxtime,genstep) #create the vector of observation times
+#   
+#   intervention <- rep(0,length(times)) #at nearly all times, there is no intervention happening
+#   if(length(interventiontimes)>1) intervention[interventiontimes / genstep+1] <- 1
+#   
+#   for(si in 1:nsubjects){
+#   #latent process loop
+#   latents <- matrix(gm$T0MEANS,nrow=1) #initialise our latent processes with the start value
+#   for(i in 2:length(times)){ #then calculate forward in time the subjects process values
+#     latents <- rbind(latents, #put the previous values of the latent processes on top with row bind
+#       c(latents[i-1,] + #then the new latents are based off the previous values
+#           (gm$DRIFT %*% latents[i-1,] + gm$CINT) * genstep + #deterministic change
+#           sysnoise %*% rnorm(length(starts),0,sqrt(genstep))))
+#     if(length(interventiontimes)>0) latents[i,]=latents[i,]+gm$TDPREDEFFECT %*% intervention[i]
+#   }#end latent loop
+#   
+#   #observations
+#   for(i in 1:length(times)){
+#     newobs <- gm$LAMBDA %*% latents[i,] +#our factor loadings transfer the latent process into observed measures
+#       gm$MANIFESTMEANS + gm$MANIFESTVAR %*% rnorm(length(obsNames),0,1) #which also can have some intercept and error variation
+#     if(i==1) obs <- matrix(newobs,nrow=1) else obs <- rbind(obs, c(newobs)) #if first row, we need to create the object, else we append below again
+#   }
+#   
+#   colnames(latents)<-gm$latentNames
+#   colnames(obs) <- gm$manifestNames
+#   
+#   
+#   dat <- data.frame(id=si,time=times, obs) #put all our data together to output it
+#   if(length(interventiontimes)>0) dat <- cbind(dat,intervention)
+#   dat <- dat[dat$time %in% seq(0,maxtime,obsstep),]
+#   }
+#   if(si==1) fulldat <- dat else fulldat <- rbind(fulldat,dat)
+#   fulldat <- fulldat[fulldat$time >= burnin,]
+#   return(fulldat)
+# }
 
 
 

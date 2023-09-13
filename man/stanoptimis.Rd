@@ -12,7 +12,7 @@ stanoptimis(
   sampleinit = NA,
   deoptim = FALSE,
   estonly = FALSE,
-  tol = 1e-10,
+  tol = 1e-08,
   decontrol = list(),
   stochastic = TRUE,
   priors = TRUE,
@@ -34,7 +34,7 @@ stanoptimis(
   cores = 2,
   matsetup = NA,
   nsubsets = 100,
-  stochasticTolAdjust = 1
+  stochasticTolAdjust = 1000
 )
 }
 \arguments{
@@ -108,7 +108,7 @@ without replacement from this set.}
 \item{nsubsets}{number of subsets for stochastic optimizer. Subsets are further split across cores, 
 but each subjects data remains whole -- processed by one core in one subset.}
 
-\item{stochasticTolAdjust}{Multiplier for initial subsampling optimizer tolerance.}
+\item{stochasticTolAdjust}{Multiplier for stochastic optimizer tolerance.}
 }
 \value{
 list containing fit elementsF

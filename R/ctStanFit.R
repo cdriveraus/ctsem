@@ -67,14 +67,14 @@ T0VARredundancies <- function(ctm) {
 
 
 
-verbosify<-function(sf,verbose=2){
-  sm <- sf$stanmodel
-  sd <- sf$standata
-  sd$verbose=as.integer(verbose)
-  
-  sfr <- stan_reinitsf(sm,sd)
-  log_prob(sfr,sf$stanfit$rawest)
-}
+# verbosify<-function(sf,verbose=2){
+#   sm <- sf$stanmodel
+#   sd <- sf$standata
+#   sd$verbose=as.integer(verbose)
+#   
+#   sfr <- stan_reinitsf(sm,sd)
+#   log_prob(sfr,sf$stanfit$rawest)
+# }
 
 #' ctStanFit
 #'

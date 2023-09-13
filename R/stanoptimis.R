@@ -1,22 +1,22 @@
 
 
-# states from sigpoints
-gensigstates <- function(mu, ch){
-  ndim=nrow(ch)
-  asquared=1
-  ukfspread = sqrt(1) / (2/sqrt(ndim*2)) #ensuring asquared is 1
-  k=.5
-  b=0
-  lambda=asquared * ( ndim +k)-ndim*2
-  sqrtukfadjust = sqrt(ndim*2 +lambda)
-  
-  sigpoints <- t(chol(as.matrix(Matrix::bdiag((ch%*%t(ch))))))*sqrtukfadjust
-  
-  t0states <- matrix(mu,byrow=TRUE,ndim*2+2,ndim)
-  t0states[3:(2+ndim),] =  t0states[3:(2+ndim),] + t(sigpoints)
-  t0states[(3+ndim):(ndim*2+2),] = t0states[(3+ndim):(ndim*2+2),] - t(sigpoints)
-  return(t0states)
-}
+# # states from sigpoints
+# gensigstates <- function(mu, ch){
+#   ndim=nrow(ch)
+#   asquared=1
+#   ukfspread = sqrt(1) / (2/sqrt(ndim*2)) #ensuring asquared is 1
+#   k=.5
+#   b=0
+#   lambda=asquared * ( ndim +k)-ndim*2
+#   sqrtukfadjust = sqrt(ndim*2 +lambda)
+#   
+#   sigpoints <- t(chol(as.matrix(Matrix::bdiag((ch%*%t(ch))))))*sqrtukfadjust
+#   
+#   t0states <- matrix(mu,byrow=TRUE,ndim*2+2,ndim)
+#   t0states[3:(2+ndim),] =  t0states[3:(2+ndim),] + t(sigpoints)
+#   t0states[(3+ndim):(ndim*2+2),] = t0states[(3+ndim):(ndim*2+2),] - t(sigpoints)
+#   return(t0states)
+# }
 
 
 # hesscalc <- function(sf,step){ #input stanfit, get hessian
@@ -27,184 +27,184 @@ gensigstates <- function(mu, ch){
 #   H=jac(pars = sf$stanfit$rawest,fgfunc = fgfunc,step = rep(step,length(sf$stanfit$rawest)))
 # }
 
-findstepsize <- function(est,func,eps=1e-3,maxlpd=3,minlpd=1e-3){
-  
-  fmax=func(est)
-  epsbase=.01
-  i=0
-  n<-100
-  devs <- matrix(NA,nrow=n,ncol=length(est))
-  lp<-c()
-  epscount <- 0
-  goodcount <- 0
-  
-  while(i < n && goodcount < 5){
-    i=i+1
-    accepted <- FALSE
-    devs[i,] <- rnorm(length(est))*eps
-    count <- 0
-    while(!accepted){
-      count = count + 1
-      if(count==20) stop('Couldnt determine step size!')
-      fg<-try(func(devs[i,]+est))
-      if('try-error' %in% class(fg)) eps <- eps * .5+1e-6 else accepted <- TRUE
-    }
-    
-    bad=(lp<quantile(lp,.2,na.rm = TRUE) & (fmax-lp) > maxlpd) | 
-      (lp>quantile(lp, .95,na.rm = TRUE) & (fmax-lp) < minlpd*.001)
-    
-    good <- c(1:i)[!bad]
-    lp <- c(lp,fg[1])
-    fl=lp-min(lp)
-    fl <- sqrt(fl)
-    
-    frange <- fmax[1]-lp[i]
-    print(frange)
-    if(length(good) <=5){
-      if(frange < minlpd) eps <- eps * 2
-      if(frange > maxlpd) eps <- eps /2
-    }
-    # message(i)
-    # print(eps)
-    if(frange > minlpd && frange < maxlpd) goodcount <- goodcount + 1 else goodcount <- 0
-    # 
-    if(length(good)>5){
-      if(frange < minlpd) epsbase <- epsbase * 2
-      if(frange > maxlpd) epsbase <- epsbase / 2
-      eps=epsbase/(sqrt(abs(apply(devs,2,function(x) coefficients(lm(fl[good]~abs(x[good])))[-1])))+1e-8)
-      epscount <- epscount + 1
-      print(epsbase)
-    }
-  }
-  return(eps)
-}
+# findstepsize <- function(est,func,eps=1e-3,maxlpd=3,minlpd=1e-3){
+#   
+#   fmax=func(est)
+#   epsbase=.01
+#   i=0
+#   n<-100
+#   devs <- matrix(NA,nrow=n,ncol=length(est))
+#   lp<-c()
+#   epscount <- 0
+#   goodcount <- 0
+#   
+#   while(i < n && goodcount < 5){
+#     i=i+1
+#     accepted <- FALSE
+#     devs[i,] <- rnorm(length(est))*eps
+#     count <- 0
+#     while(!accepted){
+#       count = count + 1
+#       if(count==20) stop('Couldnt determine step size!')
+#       fg<-try(func(devs[i,]+est))
+#       if('try-error' %in% class(fg)) eps <- eps * .5+1e-6 else accepted <- TRUE
+#     }
+#     
+#     bad=(lp<quantile(lp,.2,na.rm = TRUE) & (fmax-lp) > maxlpd) | 
+#       (lp>quantile(lp, .95,na.rm = TRUE) & (fmax-lp) < minlpd*.001)
+#     
+#     good <- c(1:i)[!bad]
+#     lp <- c(lp,fg[1])
+#     fl=lp-min(lp)
+#     fl <- sqrt(fl)
+#     
+#     frange <- fmax[1]-lp[i]
+#     print(frange)
+#     if(length(good) <=5){
+#       if(frange < minlpd) eps <- eps * 2
+#       if(frange > maxlpd) eps <- eps /2
+#     }
+#     # message(i)
+#     # print(eps)
+#     if(frange > minlpd && frange < maxlpd) goodcount <- goodcount + 1 else goodcount <- 0
+#     # 
+#     if(length(good)>5){
+#       if(frange < minlpd) epsbase <- epsbase * 2
+#       if(frange > maxlpd) epsbase <- epsbase / 2
+#       eps=epsbase/(sqrt(abs(apply(devs,2,function(x) coefficients(lm(fl[good]~abs(x[good])))[-1])))+1e-8)
+#       epscount <- epscount + 1
+#       print(epsbase)
+#     }
+#   }
+#   return(eps)
+# }
 
-gradcheck <- function(sf,min=1e-5,seqlength=10,whichpars=NA,
-  offdiags=FALSE,scale=TRUE,finite=FALSE){
-  p <- sf$stanfit$rawest
-  smf <- stan_reinitsf(sf$stanmodel,sf$standata)
-  if(is.na(whichpars[1])) whichpars <- 1:length(p)
-  
-  func<-function(x) log_prob(smf,x)
-  b=func(p)
-  
-  for(pi in whichpars){
-    g <- list()
-    gf=c()
-    devs <- min*2^(1:seqlength)
-    devs=sort(c(devs,-devs,0))
-    for(i in seq_along(devs)){
-      px <- p
-      px[pi] <- p[pi] + devs[i]
-      g[[i]] <- log_prob(smf,px,gradient=TRUE)
-      if(finite) gf[i]<-(func(px)-b)/devs[i]
-    }
-    lp=sapply(g,function(x) x[1])
-    plot(devs,lp,type='l',lwd=2,main=pi)
-    abline(h=lp[devs==0],lty=2)
-    abline(v=0,lty=2)
-    gmat<- sapply(g,function(x) attributes(x)$gradient)
-    if(finite) gfmat=sapply(gf,function(x) x*2)
-    if(scale) gmat <- t(t(gmat)/devs)
-    if(finite && scale) gfmat=t(t(gfmat)/devs)
-    plot(devs,gmat[pi,],type='l',lwd=2,main=pi,ylab='grad')
-    if(finite)  points(devs,gfmat,type='l',lwd=2,lty=2,col=2,main=pi,ylab='grad')
-    abline(v=0,lty=2)
-    abline(h=0,lty=2)
-    if(offdiags){
-      for(i in 1:length(p)){
-        if(i != pi) plot(devs,gmat[i,],type='l',lwd=2,main=paste0(pi,'  ',i),ylab='grad')
-        abline(v=0,lty=2)
-        abline(h=0,lty=2)
-      }
-    }
-  }
-}
+# gradcheck <- function(sf,min=1e-5,seqlength=10,whichpars=NA,
+#   offdiags=FALSE,scale=TRUE,finite=FALSE){
+#   p <- sf$stanfit$rawest
+#   smf <- stan_reinitsf(sf$stanmodel,sf$standata)
+#   if(is.na(whichpars[1])) whichpars <- 1:length(p)
+#   
+#   func<-function(x) log_prob(smf,x)
+#   b=func(p)
+#   
+#   for(pi in whichpars){
+#     g <- list()
+#     gf=c()
+#     devs <- min*2^(1:seqlength)
+#     devs=sort(c(devs,-devs,0))
+#     for(i in seq_along(devs)){
+#       px <- p
+#       px[pi] <- p[pi] + devs[i]
+#       g[[i]] <- log_prob(smf,px,gradient=TRUE)
+#       if(finite) gf[i]<-(func(px)-b)/devs[i]
+#     }
+#     lp=sapply(g,function(x) x[1])
+#     plot(devs,lp,type='l',lwd=2,main=pi)
+#     abline(h=lp[devs==0],lty=2)
+#     abline(v=0,lty=2)
+#     gmat<- sapply(g,function(x) attributes(x)$gradient)
+#     if(finite) gfmat=sapply(gf,function(x) x*2)
+#     if(scale) gmat <- t(t(gmat)/devs)
+#     if(finite && scale) gfmat=t(t(gfmat)/devs)
+#     plot(devs,gmat[pi,],type='l',lwd=2,main=pi,ylab='grad')
+#     if(finite)  points(devs,gfmat,type='l',lwd=2,lty=2,col=2,main=pi,ylab='grad')
+#     abline(v=0,lty=2)
+#     abline(h=0,lty=2)
+#     if(offdiags){
+#       for(i in 1:length(p)){
+#         if(i != pi) plot(devs,gmat[i,],type='l',lwd=2,main=paste0(pi,'  ',i),ylab='grad')
+#         abline(v=0,lty=2)
+#         abline(h=0,lty=2)
+#       }
+#     }
+#   }
+# }
 
 
-jacrandom <- function(grfunc, est, eps=1e-4,
-  maxlpd=.5, minlpd=1e-5){
-  
-  fmax=grfunc(est)
-  n <- max(length(est)*2,200)
-  mcholtest=c()
-  epsbase=.0001
-  mcholtest <- FALSE
-  i=0
-  epsadapted <- FALSE
-  pd<-rep(FALSE,n)
-  H <- NA
-  
-  while(i < n && suppressWarnings(min(which(pd))) > (i-20)){
-    # print(i)
-    if(i==0){
-      devs <- matrix(NA,nrow=n,ncol=length(est))
-      covstore <- devs
-      fg<-list()
-      f<-c()
-      grm <- devs
-    }
-    i=i+1
-    # 
-    accepted <- FALSE
-    trycount <-0
-    while(!accepted){
-      trycount <- trycount + 1
-      if(trycount > 20) stop('Errors encountered estimating Hessian')
-      devs[i,] <- rnorm(length(est),0,eps)
-      fg[[i]] <- try(grfunc((devs[i,])+est))
-      if('try-error' %in% class(fg[[i]])) eps <- eps * .5 else accepted <- TRUE
-    }
-    
-    
-    grm[i,] <- attributes(fg[[i]])$gradient
-    f[i] <- fg[[i]][1]
-    
-    # plot(f)
-    bad=(f<quantile(f,.2,na.rm = TRUE) & (fmax-f) > maxlpd) | 
-      (f>quantile(f, .95,na.rm = TRUE) & (fmax-f) < minlpd*.001)
-    # if(i > length(est)+5) bad <- unique(c(1:(i-length(est)-5)),(bad))
-    
-    good <- c(1:i)[!bad]
-    fl=f-min(f)
-    fl <- sqrt(fl)
-    
-    if(length(good)>5){
-      frange <- fmax-f[i]
-      if(frange < minlpd) epsbase <- epsbase * 1.1
-      if(frange > maxlpd) epsbase <- epsbase / 1.1
-      eps=epsbase/abs(apply(devs,2,function(x) coefficients(lm(fl[good]~abs(x[good])))[-1]))
-      # if(length(good)>length(est)){
-      #   eps=epsbase/abs(coefficients(lm(fl[good]~abs(devs[good,])))[-1])
-      #   }
-      # print(epsbase)
-      
-      if(i==10 && !epsadapted){
-        epsadapted <- TRUE
-        i <- 0
-      }
-    }
-    # print(round(epsbase,4))
-    
-    if(length(good) > length(est) && i > length(est)) {
-      lf=t(apply(grm[good,],2,function(y) coefficients(lm((y) ~ (devs[good,])))[-1])) #without intercept
-      #     lf=t(apply(grm[good,],2,function(y){
-      #       apply(devs[good,],2,function(x) coefficients(lm((y) ~ x-1)))
-      #       }))
-      # print(i)
-      
-      lf=(lf+t(lf))/2
-      # mc=MASS::ginv(-lf)
-      # mc=as.matrix(Matrix::nearPD(mc)$mat)
-      mchol = try(t(chol(solve(-lf))),silent=TRUE)
-      pd[i] <- !'try-error' %in% class(mchol)
-      if(pd[i]) H <- lf
-      # covstore[i,] <- diag(mc)
-    }
-  }
-  if(is.na(H[1])) H <- lf #return last non pos def if no good ones found
-  return(H)
-}
+# jacrandom <- function(grfunc, est, eps=1e-4,
+#   maxlpd=.5, minlpd=1e-5){
+#   
+#   fmax=grfunc(est)
+#   n <- max(length(est)*2,200)
+#   mcholtest=c()
+#   epsbase=.0001
+#   mcholtest <- FALSE
+#   i=0
+#   epsadapted <- FALSE
+#   pd<-rep(FALSE,n)
+#   H <- NA
+#   
+#   while(i < n && suppressWarnings(min(which(pd))) > (i-20)){
+#     # print(i)
+#     if(i==0){
+#       devs <- matrix(NA,nrow=n,ncol=length(est))
+#       covstore <- devs
+#       fg<-list()
+#       f<-c()
+#       grm <- devs
+#     }
+#     i=i+1
+#     # 
+#     accepted <- FALSE
+#     trycount <-0
+#     while(!accepted){
+#       trycount <- trycount + 1
+#       if(trycount > 20) stop('Errors encountered estimating Hessian')
+#       devs[i,] <- rnorm(length(est),0,eps)
+#       fg[[i]] <- try(grfunc((devs[i,])+est))
+#       if('try-error' %in% class(fg[[i]])) eps <- eps * .5 else accepted <- TRUE
+#     }
+#     
+#     
+#     grm[i,] <- attributes(fg[[i]])$gradient
+#     f[i] <- fg[[i]][1]
+#     
+#     # plot(f)
+#     bad=(f<quantile(f,.2,na.rm = TRUE) & (fmax-f) > maxlpd) | 
+#       (f>quantile(f, .95,na.rm = TRUE) & (fmax-f) < minlpd*.001)
+#     # if(i > length(est)+5) bad <- unique(c(1:(i-length(est)-5)),(bad))
+#     
+#     good <- c(1:i)[!bad]
+#     fl=f-min(f)
+#     fl <- sqrt(fl)
+#     
+#     if(length(good)>5){
+#       frange <- fmax-f[i]
+#       if(frange < minlpd) epsbase <- epsbase * 1.1
+#       if(frange > maxlpd) epsbase <- epsbase / 1.1
+#       eps=epsbase/abs(apply(devs,2,function(x) coefficients(lm(fl[good]~abs(x[good])))[-1]))
+#       # if(length(good)>length(est)){
+#       #   eps=epsbase/abs(coefficients(lm(fl[good]~abs(devs[good,])))[-1])
+#       #   }
+#       # print(epsbase)
+#       
+#       if(i==10 && !epsadapted){
+#         epsadapted <- TRUE
+#         i <- 0
+#       }
+#     }
+#     # print(round(epsbase,4))
+#     
+#     if(length(good) > length(est) && i > length(est)) {
+#       lf=t(apply(grm[good,],2,function(y) coefficients(lm((y) ~ (devs[good,])))[-1])) #without intercept
+#       #     lf=t(apply(grm[good,],2,function(y){
+#       #       apply(devs[good,],2,function(x) coefficients(lm((y) ~ x-1)))
+#       #       }))
+#       # print(i)
+#       
+#       lf=(lf+t(lf))/2
+#       # mc=MASS::ginv(-lf)
+#       # mc=as.matrix(Matrix::nearPD(mc)$mat)
+#       mchol = try(t(chol(solve(-lf))),silent=TRUE)
+#       pd[i] <- !'try-error' %in% class(mchol)
+#       if(pd[i]) H <- lf
+#       # covstore[i,] <- diag(mc)
+#     }
+#   }
+#   if(is.na(H[1])) H <- lf #return last non pos def if no good ones found
+#   return(H)
+# }
 
 
 #' Sample more values from an optimized ctstanfit object
@@ -566,10 +566,10 @@ tostanarray <- function(flesh, skeleton){
 }
 
 
-parsetup <- parsetup <- function(){
-  cl <- parallel::makeCluster(12,type='PSOCK')
-  parallel::clusterCall(cl,function() 1+1)
-}
+# parsetup <- parsetup <- function(){
+#   cl <- parallel::makeCluster(12,type='PSOCK')
+#   parallel::clusterCall(cl,function() 1+1)
+# }
 
 makeClusterID <- function(cores){
   # benv <- new.env(parent=globalenv())
