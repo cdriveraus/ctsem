@@ -162,6 +162,7 @@ ctACFresiduals <- function(fit,...){
 #'
 #' @export
 ctResiduals <- function(fit){
+  if(F) Element=NULL
   k = data.table(meltkalman(suppressMessages(ctStanKalman(fit, standardisederrors = TRUE))))
   k = k[Element %in% 'errstdprior' & !is.na(value), ]
   k = dcast(k, formula = formula(Subject + Time ~ Row))

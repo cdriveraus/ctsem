@@ -12,19 +12,18 @@ jobs:
   R-CMD-check:
     runs-on: ${{ matrix.config.os }}
 
-    name: ${{ matrix.config.os }} (${{ matrix.config.r }}) (${{ matrix.config.newRstan }})  # Modified line
+    name: ${{ matrix.config.os }} (${{ matrix.config.r }})
 
 
     strategy:
       fail-fast: false
       matrix:
         config:
-          - {os: macos-latest,   r: 'release', newRstan: false}
-          - {os: windows-latest, r: 'release', newRstan: false}
-          - {os: windows-latest, r: 'release', newRstan: true}
-          - {os: ubuntu-latest,   r: 'devel', http-user-agent: 'release', newRstan: false}
-          - {os: ubuntu-latest,   r: 'release', newRstan: false}
-          - {os: ubuntu-latest,   r: 'oldrel-1', newRstan: false}
+          - {os: macos-latest,   r: 'release'}
+          - {os: windows-latest, r: 'release'}
+          - {os: ubuntu-latest,   r: 'devel', http-user-agent: 'release'}
+          - {os: ubuntu-latest,   r: 'release'}
+          - {os: ubuntu-latest,   r: 'oldrel-1'}
 
     env:
       R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
@@ -51,14 +50,6 @@ jobs:
         run: |
           chmod +x configure
 
-      - name: rstan Upgrade
-        if: ${{ matrix.config.newRstan == true }}
-        run: |
-          install.packages("StanHeaders", repos = c('https://mc-stan.org/r-packages/', getOption('repos')))
-          install.packages("rstan", repos = c('https://mc-stan.org/r-packages/', getOption('repos')))
-        shell: Rscript {0}
-
-          
       - uses: r-lib/actions/setup-tinytex@v2
         env: 
           TINYTEX_INSTALLER: TinyTeX
