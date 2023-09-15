@@ -70,7 +70,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       iter = 300,verbose=0,
       control=list(max_treedepth=8),
       priors=TRUE,
-      chains = cores,plot=F,
+      chains = cores,plot=FALSE,
       intoverstates = FALSE,
       optimize=FALSE,intoverpop=FALSE)
     s=summary(r)

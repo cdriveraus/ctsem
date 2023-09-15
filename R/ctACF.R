@@ -25,9 +25,10 @@
 #' @seealso \code{\link{ctDiscretiseData}}
 #'
 #' @examples
+#' data.table::setDTthreads(1) #ignore this line
 #' # Example usage:
 #' head(ctstantestdat)
-#' ctACF(ctstantestdat,varnames=c('Y1','Y2'),idcol='id',timecol='time',nboot=10)
+#' ctACF(ctstantestdat,varnames=c('Y1'),idcol='id',timecol='time',nboot=5)
 #'
 #' @export
 ctACF <- function(dat, varnames='auto',idcol='id', timecol='time',plot=TRUE,timestep='auto',time.max='auto',nboot=100,...){
@@ -133,8 +134,9 @@ ctACF <- function(dat, varnames='auto',idcol='id', timecol='time',plot=TRUE,time
 #' @seealso \code{\link{ctStanKalman}}
 #'
 #' @examples
+#' data.table::setDTthreads(1) #ignore this line
 #' # Example usage:
-#' ctACFresiduals(ctstantestfit,nboot=10)
+#' ctACFresiduals(ctstantestfit, varnames='Y1',nboot=5)
 #'
 #' @export
 ctACFresiduals <- function(fit,...){
@@ -157,6 +159,7 @@ ctACFresiduals <- function(fit,...){
 #' @seealso \code{\link{ctStanKalman}}
 #'
 #' @examples
+#' data.table::setDTthreads(1) #ignore this line
 #' # Example usage:
 #' residuals <- ctResiduals(ctstantestfit)
 #'

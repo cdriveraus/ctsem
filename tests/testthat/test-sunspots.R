@@ -36,7 +36,6 @@ ssfit4 <- ctStanFit(datalong, ssmodel,chains=2,cores=2,iter=300,optimize=F,prior
   control=list(max_treedepth=8),verbose=0,  
   inits='optimize',
   intoverpop = T)
-# ssfit5 <- ctStanFit(datalong, ssmodel,chains=3,iter=300,intoverstates = FALSE,optimize=F,verbose=0)
 
 for(i in 2:4){
 testthat::expect_equivalent(get(paste0('ssfit',i))$stanfit$transformedparsfull$ll,

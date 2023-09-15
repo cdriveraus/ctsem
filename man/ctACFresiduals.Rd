@@ -24,8 +24,9 @@ the \code{\link{ctStanKalman}} function. Then, it calculates the continuous time
 and returns the results as a data table.
 }
 \examples{
+data.table::setDTthreads(1) #ignore this line
 # Example usage:
-ctACFresiduals(ctstantestfit,nboot=10)
+ctACFresiduals(ctstantestfit, varnames='Y1',nboot=5)
 
 }
 \seealso{

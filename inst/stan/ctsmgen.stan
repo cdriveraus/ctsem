@@ -1,15 +1,15 @@
 
 functions{
-
- int[] vecequals(int[] a, int test, int comparison){ //do indices of a match test condition?
-    int check[size(a)];
+  
+  array[] int vecequals(array[] int a, int test, int comparison){ //do indices of a match test condition?
+      array[size(a)] int check;
     for(i in 1:size(check)) check[i] = comparison ? (test==a[i]) : (test!=a[i]);
     return(check);
   }
-
-int[] whichequals(int[] b, int test, int comparison){  //return array of indices of b matching test condition
-    int check[size(b)] = vecequals(b,test,comparison);
-    int which[sum(check)];
+  
+  array[] int whichequals(array[] int b, int test, int comparison){  //return array of indices of b matching test condition
+    array[size(b)] int check = vecequals(b,test,comparison);
+    array[sum(check)] int which;
     int counter = 1;
     if(size(b) > 0){
       for(i in 1:size(b)){
@@ -21,8 +21,8 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
     }
     return(which);
   }
-
- 
+  
+  
   matrix constraincorsqrt(matrix mat){ //converts from unconstrained lower tri matrix to cor
     int d=rows(mat);
     matrix[d,d] o;
@@ -47,7 +47,7 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
       s[i] += 1e-5;
       ss[i] += 1e-5;
     }
-
+    
     
     for(i in 1:d){
       o[i,i]=0;
@@ -62,20 +62,20 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
       }
       o[i,i]=sqrt(1-sum(square(o[i,]))+1e-5);
     }
-
+    
     return o;
-}  
-
+  }  
+  
   matrix sdcovsqrt2cov(matrix mat, int choleskymats){ //covariance from cholesky or unconstrained cor sq root
     if(choleskymats< 1) {
       //if(choleskymats== -1){
         return(tcrossprod(diag_pre_multiply(diagonal(mat),constraincorsqrt(mat))));
-      //} else {
-      //  return(quad_form_diag(constraincorsqrt(mat),diagonal(mat)));
-      //}
-      } else return(tcrossprod(mat));
+        //} else {
+          //  return(quad_form_diag(constraincorsqrt(mat),diagonal(mat)));
+          //}
+    } else return(tcrossprod(mat));
   }
-
+  
   matrix sqkron_prod(matrix mata, matrix matb){
     int d=rows(mata);
     matrix[d*d,d*d] out;
@@ -90,97 +90,97 @@ int[] whichequals(int[] b, int test, int comparison){  //return array of indices
     }
     return out;
   }
-
- 
- matrix ksolve(matrix A, matrix Q, int verbose){
-  int d= rows(A);
-  int d2= (d*d-d)/2;
-  matrix[d+d2,d+d2] O;
-  vector[d+d2] triQ;
-  matrix[d,d] AQ;
-  int z=0; //z is row of output
-  for(j in 1:d){//for column reference of solution vector
-    for(i in 1:j){ //and row reference...
-      if(j >= i){ //if i and j denote a covariance parameter (from upper tri)
-        int y=0; //start new output row
-        z+=1; //shift current output row down
-        
-        for(ci in 1:d){//for columns and
-          for(ri in 1:d){ //rows of solution
-            if(ci >= ri){ //when in upper tri (inc diag)
-              y+=1; //move to next column of output
-              
-              if(i==j){ //if output row is for a diagonal element
-                if(ri==i) O[z,y] = 2*A[ri,ci];
-                if(ci==i) O[z,y] = 2*A[ci,ri];
-              }
-              
-              if(i!=j){ //if output row is not for a diagonal element
-                if(y==z) O[z,y] = A[ri,ri] + A[ci,ci]; //if column of output matches row of output, sum both A diags
-                if(y!=z){ //otherwise...
-                  // if solution element we refer to is related to output row...
-                  if(ci==ri){ //if solution element is a variance
-                    if(ci==i) O[z,y] = A[j,ci]; //if variance of solution corresponds to row of our output
-                    if(ci==j) O[z,y] = A[i,ci]; //if variance of solution corresponds to col of our output
-                  }
-                  if(ci!=ri && (ri==i||ri==j||ci==i||ci==j)){//if solution element is a related covariance
-                    //for row 1,2 / 2,1 of output, if solution row ri 1 (match) and column ci 3, we need A[2,3]
-                    if(ri==i) O[z,y] = A[j,ci];
-                    if(ri==j) O[z,y] = A[i,ci];
-                    if(ci==i) O[z,y] = A[j,ri];
-                    if(ci==j) O[z,y] = A[i,ri];
+  
+  
+  matrix ksolve(matrix A, matrix Q, int verbose){
+    int d= rows(A);
+    int d2= (d*d-d)%/%2;
+    matrix[d+d2,d+d2] O;
+    vector[d+d2] triQ;
+    matrix[d,d] AQ;
+    int z=0; //z is row of output
+    for(j in 1:d){//for column reference of solution vector
+      for(i in 1:j){ //and row reference...
+        if(j >= i){ //if i and j denote a covariance parameter (from upper tri)
+          int y=0; //start new output row
+          z+=1; //shift current output row down
+          
+          for(ci in 1:d){//for columns and
+            for(ri in 1:d){ //rows of solution
+              if(ci >= ri){ //when in upper tri (inc diag)
+                y+=1; //move to next column of output
+                
+                if(i==j){ //if output row is for a diagonal element
+                  if(ri==i) O[z,y] = 2*A[ri,ci];
+                  if(ci==i) O[z,y] = 2*A[ci,ri];
+                }
+                
+                if(i!=j){ //if output row is not for a diagonal element
+                  if(y==z) O[z,y] = A[ri,ri] + A[ci,ci]; //if column of output matches row of output, sum both A diags
+                  if(y!=z){ //otherwise...
+                    // if solution element we refer to is related to output row...
+                    if(ci==ri){ //if solution element is a variance
+                      if(ci==i) O[z,y] = A[j,ci]; //if variance of solution corresponds to row of our output
+                      if(ci==j) O[z,y] = A[i,ci]; //if variance of solution corresponds to col of our output
+                    }
+                    if(ci!=ri && (ri==i||ri==j||ci==i||ci==j)){//if solution element is a related covariance
+                      //for row 1,2 / 2,1 of output, if solution row ri 1 (match) and column ci 3, we need A[2,3]
+                      if(ri==i) O[z,y] = A[j,ci];
+                      if(ri==j) O[z,y] = A[i,ci];
+                      if(ci==i) O[z,y] = A[j,ri];
+                      if(ci==j) O[z,y] = A[i,ri];
+                    }
                   }
                 }
+                if(is_nan(O[z,y])) O[z,y]=0;
               }
-              if(is_nan(O[z,y])) O[z,y]=0;
             }
           }
         }
       }
     }
-  }
-  
-  z=0; //get upper tri of Q
-  for(j in 1:d){
-    for(i in 1:j){
-    z+=1;
-    triQ[z] = Q[i,j];
+    
+    z=0; //get upper tri of Q
+    for(j in 1:d){
+      for(i in 1:j){
+        z+=1;
+        triQ[z] = Q[i,j];
+      }
     }
-  }
-  triQ=-O \ triQ; //get upper tri of asymQ
-  
+    triQ=-O \ triQ; //get upper tri of asymQ
+    
     z=0; // put upper tri of asymQ into matrix
-  for(j in 1:d){
-    for(i in 1:j){
-    z+=1;
-    AQ[i,j] = triQ[z];
-    if(i!=j) AQ[j,i] = triQ[z];
+    for(j in 1:d){
+      for(i in 1:j){
+        z+=1;
+        AQ[i,j] = triQ[z];
+        if(i!=j) AQ[j,i] = triQ[z];
+      }
     }
+    
+    if(verbose>1) print("AQ = ", AQ, "   triQ = ", triQ, "   O = ", O);
+    
+    return AQ;
   }
   
-  if(verbose>1) print("AQ = ", AQ, "   triQ = ", triQ, "   O = ", O);
-  
-  return AQ;
-}
-
   matrix makesym(matrix mat, int verbose, int pd){
     matrix[rows(mat),cols(mat)] out;
     for(coli in 1:cols(mat)){
-    //  if(pd ==1 && mat[coli,coli] < 1e-5){
-     //   out[coli,coli] = 1e-5;// 
-     // } else 
-      out[coli,coli] = mat[coli,coli] + 1e-10; 
-      for(rowi in 1:rows(mat)){
-        if(rowi > coli) {
-          out[rowi,coli] = mat[rowi,coli];
-          out[coli,rowi] = mat[rowi,coli];
-        }
-        
-      }
+      //  if(pd ==1 && mat[coli,coli] < 1e-5){
+        //   out[coli,coli] = 1e-5;// 
+          // } else 
+            out[coli,coli] = mat[coli,coli] + 1e-10; 
+          for(rowi in 1:rows(mat)){
+            if(rowi > coli) {
+              out[rowi,coli] = mat[rowi,coli];
+              out[coli,rowi] = mat[rowi,coli];
+            }
+            
+          }
     }
     return out;
   }
-
+ 
   real tform(real parin, int transform, data real scale, data real meanscale, data real shift, data real innershift){
     real param=parin;
     if(meanscale!=1.0) param *= meanscale; 
@@ -326,14 +326,14 @@ data {
   int choleskymats;
   int intoverstates;
   int verbose; //level of printing during model fit
-  int TIPREDEFFECTsetup[nparams, ntipred];
+  array[nparams, ntipred] int TIPREDEFFECTsetup;
   int nrowmatsetup;
-  int matsetup[nrowmatsetup,9];
-  real matvalues[nrowmatsetup,6];
-  array[54,5]int whenmat;
+  array[nrowmatsetup,9] int matsetup;
+  array[nrowmatsetup,6] real matvalues;
+  array[54,5] int whenmat;
   array[2,nparams]int whenvecp;
   array[6,nlatentpop]int whenvecs;
-  array[54,2]int matrixdims;
+  array[54,2] int matrixdims;
   int savescores;
   int savesubjectmatrices;
   int dokalman;
@@ -497,11 +497,11 @@ model{
 
   real ll = 0;
   vector[ndatapoints] llrow = rep_vector(0,ndatapoints);
-  matrix[nlatentpop,nlatentpop] etacova[3,savescores ? ndatapoints : 0];
-  matrix[nmanifest,nmanifest] ycova[3,savescores ? ndatapoints : 0];
-  vector[nlatentpop] etaa[3,savescores ? ndatapoints : 0];
-  vector[nmanifest] ya[3,savescores ? ndatapoints : 0];
-  vector[nmanifest] Ygen[ndatapoints];
+  array[3,savescores ? ndatapoints : 0] matrix[nlatentpop,nlatentpop] etacova;
+  array[3,savescores ? ndatapoints : 0] matrix[nmanifest,nmanifest] ycova;
+  array[3,savescores ? ndatapoints : 0] vector[nlatentpop] etaa;
+  array[3,savescores ? ndatapoints : 0] vector[nmanifest] ya;
+  array[ndatapoints] vector[nmanifest] Ygen;
   vector[nlatentpop*ndatapoints] etaupdbasestates = to_vector(normal_rng(rep_array(0.0,ndatapoints*nlatentpop),rep_array(1.0,ndatapoints*nlatentpop))); //sampled latent states posterior
   array[ (savesubjectmatrices && (sum(whenmat[10,1:5]) || statedep[10])) ? nsubjects : 0]
       matrix[matrixdims[10, 1], matrixdims[10, 2] ] subj_PARS;array[ (savesubjectmatrices && (sum(whenmat[1,1:5]) || statedep[1])) ? nsubjects : 0]
@@ -596,7 +596,7 @@ model{
 
 
 {
-  vector[nmanifest] Ygenbase[ndatapoints];
+  array[ndatapoints] vector[nmanifest] Ygenbase;
   Ygen = rep_array(rep_vector(99999,nmanifest),ndatapoints);
   for(mi in 1:nmanifest){
     if(manifesttype[mi]==0 || manifesttype[mi]==2) {

@@ -26,8 +26,8 @@ f <- ctStanFit(datalong = d,ctstanmodel = m,cores=6,priors = TRUE)
 s=summary(f)
 s
 
-f2 <- ctStanFit(datalong = d,ctstanmodel = m,cores=6,optimize=F,chains=4,plot=T,intoverpop = F)
+f2 <- ctStanFit(datalong = d,ctstanmodel = m,cores=6,optimize=F,chains=4,intoverpop = F)
 s2=summary(f2)
-f3 <- ctStanFit(datalong = d,ctstanmodel = m,cores=6,optimize=F,chains=4,plot=T,intoverpop = F,intoverstates = F)
+f3 <- ctStanFit(datalong = d,ctstanmodel = m,cores=6,optimize=F,chains=4,intoverpop = F,intoverstates = F)
 s3=summary(f3)
 }

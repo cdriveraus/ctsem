@@ -51,9 +51,10 @@ performing bootstrapped ACF calculations to estimate the confidence intervals. I
 ACF plots with confidence intervals if 'plot' is set to TRUE.
 }
 \examples{
+data.table::setDTthreads(1) #ignore this line
 # Example usage:
 head(ctstantestdat)
-ctACF(ctstantestdat,varnames=c('Y1','Y2'),idcol='id',timecol='time',nboot=10)
+ctACF(ctstantestdat,varnames=c('Y1'),idcol='id',timecol='time',nboot=5)
 
 }
 \seealso{

@@ -21,6 +21,7 @@ and then extracts and formats them as a data table. The standardized residuals r
 between the observed and predicted values, divided by the standard errors of the observations.
 }
 \examples{
+data.table::setDTthreads(1) #ignore this line
 # Example usage:
 residuals <- ctResiduals(ctstantestfit)
 
