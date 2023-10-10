@@ -41,7 +41,7 @@ ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
     if(!is.na(nsamples)) samples <- samples[sample(1:nrow(samples),nsamples),,drop=FALSE] else nsamples <- nrow(samples)
     if(is.function(collapsefunc)) samples = matrix(apply(samples,2,collapsefunc,...),ncol=ncol(samples))
   }
-  
+
   # use only selected subjects data -----------------------------------------
   if(length(subjects)!=fit$standata$nsubjects){
     idstore <- fit$standata$subject
@@ -70,13 +70,12 @@ ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
     if(fit$standata$intoverstates==1) timestep=median(timediff)/5 else timestep ='asdata'
   }
   if(all(timerange == 'asdata')) timerange <- range(fit$standata$time[fit$standata$subject %in% subjects]) 
-  
-  if(timestep != 'asdata' && fit$ctstanmodel$continuoustime) {
+  if(is.na(timestep) && timerange[1]==timerange[2]) timestep=0
+
+  if(!'asdata' %in% timestep && fit$ctstanmodel$continuoustime) {
     if(fit$ctstanmodel$continuoustime != TRUE) stop('Discrete time model fits must use timestep = "asdata"')
-    # for(subjecti in 1:length(subjects)){
       times <- seq(timerange[1],timerange[2],timestep)
       fit$standata <- standataFillTime(fit$standata,times,subject=subjects)
-    # }
   }
   
   if(!length(fit$stanfit$stanfit@sim)==0) fit$standata$dokalmanrows <-
@@ -85,7 +84,7 @@ ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
   e=stan_constrainsamples(sm = fit$stanmodel,standata = fit$standata,
     savesubjectmatrices = subjectpars,
     samples = samples,cores=cores,savescores=TRUE,pcovn=5)
-  
+
   nsamples <-nrow(samples) #in case it was set NA, compute nsamples
   
   e$yprior <- array(e$ya[,1,,,drop=FALSE],dim=dim(e$ya)[-2])
@@ -160,7 +159,6 @@ ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
       out[[paste0('errstd',typei)]] <- array(aperm(arr, c(4,3,1,2)),dim=dim(arr)[c(4,3,1)])
     }
   }
-  
   
   mindex <- grep('(^y)|(^err)|(^ll)',names(out))
   lindex <- grep('^eta',names(out))

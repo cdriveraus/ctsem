@@ -140,13 +140,13 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
   
   out <- ctStanKalman(fit,pointest=length(fit$stanfit$stanfit@sim)==0, removeObs=removeObs, subjects=subjects,timestep = timestep,
     collapsefunc=mean, indvarstates = FALSE,standardisederrors = standardisederrors) #extract state predictions
-  
+  # browser()
   out <- meltkalman(out)
-  out=out[!(out$Subject %in% subjects) %in% FALSE,]
   if(realid){
     out$Subject <- factor(idmap[
       match(out$Subject,idmap[,2]),1])
   }
+  # out=out[!(out$Subject %in% subjects) %in% FALSE,]
   
   
   if(plot) {

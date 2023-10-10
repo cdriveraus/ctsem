@@ -442,7 +442,9 @@ standatalongremerge <- function(long, standata){ #merge an updated long portion 
 }
 
 standataFillTime <- function(standata, times, subject){
-  long <- standatatolong(standata)
+  long <- ctsem:::standatatolong(standata)
+  
+  if(any(!times %in% long$time)){ #if missing any times, add empty rows
   nlong <- do.call(rbind,
     lapply(subject, function(si){
       stimes <- times[!times %in% long$time[long$subject==si]]
@@ -456,11 +458,12 @@ standataFillTime <- function(standata, times, subject){
   nlong[,grep('^Y',colnames(nlong))] <- 99999
   nlong[,grep('^tdpreds',colnames(nlong))] <- 0
   
+  long <- rbind(long,nlong)
+  } #end empty rows addition
   
-  mlong <- rbind(long,nlong)
-  mlong <- mlong[order(mlong$subject,mlong$time),]
-  standatamerged <- standatalongremerge(long=mlong, standata=standata)
-  standatamerged$ndatapoints <- as.integer(nrow(mlong))
+  long <- long[order(long$subject,long$time),]
+  standatamerged <- standatalongremerge(long=long, standata=standata)
+  standatamerged$ndatapoints <- as.integer(nrow(long))
   return(standatamerged)
 }
 
