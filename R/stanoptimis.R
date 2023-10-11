@@ -442,7 +442,7 @@ standatalongremerge <- function(long, standata){ #merge an updated long portion 
 }
 
 standataFillTime <- function(standata, times, subject){
-  long <- ctsem:::standatatolong(standata)
+  long <- standatatolong(standata)
   
   if(any(!times %in% long$time)){ #if missing any times, add empty rows
   nlong <- do.call(rbind,
@@ -1562,15 +1562,18 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           
           target_dens[[j]][is.na(target_dens[[j]])] <- -1e200
           if(all(target_dens[[j]] < -1e100)) stop('Could not sample from optimum! Try reparamaterizing?')
-          if(any(target_dens[[j]] > bestfit)){
-            oldfit <- bestfit
-            try2 <- TRUE
-            bestfit<-max(target_dens[[j]],na.rm=TRUE)
-            betterfit<-TRUE
-            init = samples[which(unlist(target_dens) == bestfit),]
-            message('Improved fit found - ', bestfit,' vs ', oldfit,' - restarting optimization')
-            break
-          }
+          
+          ### this was used to restart optimization in case a better logprob was found during sampling, but might have caused cran problems with break statement.
+          # if(any(target_dens[[j]] > bestfit)){
+          #   oldfit <- bestfit
+          #   try2 <- TRUE
+          #   bestfit<-max(target_dens[[j]],na.rm=TRUE)
+          #   betterfit<-TRUE
+          #   init = samples[which(unlist(target_dens) == bestfit),]
+          #   message('Improved fit found - ', bestfit,' vs ', oldfit,' - restarting optimization')
+          #   break
+          # }
+          
           targetvec <- unlist(target_dens)
           
           target_dens2 <- target_dens[[j]] #-max(target_dens[[j]],na.rm=TRUE) + max(prop_dens) #adjustment to get in decent range, doesnt change to prob

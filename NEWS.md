@@ -1,5 +1,12 @@
 # ctsem News
 
+## 10/10/2023
+### 3.9.1
+- Fix bug in ctKalman - was dropping certain subjects resulting in no plots / output.
+- Fix fatal (i.e, erroring out) bug in certain nonlinear parameter specifications.
+- Allow direct references to time dependent predictors in nonlinear specifications - now measurement model can easily depend on time varying covariates.
+- Update array syntax internally to rstan 2.26+ approach -- completely this time...
+
 ## 14/9/2023
 ### 3.9.0
 - Add progress reports for stochastic optimizer and Hessian.

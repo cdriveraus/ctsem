@@ -45,7 +45,7 @@ ctStanUpdModel <- function(fit, datalong, ctstanmodel,...){
 
 
 
-ctModelStatesAndPARS <- function(ctspec, statenames){ #replace latentName and par references with square bracket refs
+ctModelStatesAndPARS <- function(ctspec, statenames,tdprednames){ #replace latentName and par references with square bracket refs
   #detect state refs
   # 
   ln <- statenames
@@ -54,13 +54,23 @@ ctModelStatesAndPARS <- function(ctspec, statenames){ #replace latentName and pa
       ctspec$param[ri] <- gsub(paste0('\\b(',ln[li],')\\b'),paste0('state[',li,']'),ctspec$param[ri])
     }
   }
+  
+  if(length(tdprednames)>0){
+    ln <- tdprednames
+  for(li in c(1:length(ln))){
+    for(ri in grep(paste0('\\b(',ln[li],')\\b'),ctspec$param)){
+      ctspec$param[ri] <- gsub(paste0('\\b(',ln[li],')\\b'),paste0('tdpreds[rowi, ',li,']'),ctspec$param[ri])
+    }
+  }
+  }
+  
   #expand pars
   
   ln <- ctspec$param[ctspec$matrix %in% 'PARS' & !is.na(ctspec$param)] #get extra pars
   
   for(li in seq_along(ln)){ #for every extra par
     parmatch <- which(ctspec$param %in% ln[li] & ctspec$matrix %in% 'PARS') #which row is the par itself
-    # if(grepl('taux',ln[li])) browser()
+    # if(grepl('beep2',ln[li])) browser()
     for(ri in grep(paste0('\\b',ln[li],'\\b'),ctspec$param)){ #which rows contain the par
       if(!(ctspec$param[ri] == ln[li] & ctspec$matrix[ri]=='PARS')){ #that are not the par itself in the pars matrix# #removed limitation of referencing within PARS matrices
         # print(ctspec$param[ri])
@@ -69,7 +79,7 @@ ctModelStatesAndPARS <- function(ctspec, statenames){ #replace latentName and pa
         # paste0('PARS[',ctspec$row[parmatch],',',ctspec$col[parmatch],']\\1'),ctspec$param[ri]))
         # browser()
         ctspec$param[ri] <- 
-          gsub(paste0('\\b',ln[li],'\\b([^\\[])'), #replace with PARS reference...
+          gsub(paste0('\\b',ln[li],'(\\b([^\\[])|$)'), #replace with PARS reference... 
             paste0('PARS[',ctspec$row[parmatch],',',ctspec$col[parmatch],']\\1'),ctspec$param[ri])
       }
     }
@@ -108,7 +118,7 @@ ctModelTransformsToNum<-function(ctm){
     # Try to fit each formula to the data.
     success <- FALSE
     for(tryi in 1:2){ #if no success try with more enthusiasm
-      if(success) break
+      if(success) next
       for(i in 1:nrow(formula.types)) {
         if(i > 1 && any((formula.types$lsfit < .001) %in% TRUE)) next #found the answer already
         tftype <- formula.types$type[i]
@@ -468,7 +478,7 @@ ctStanModelMatrices <-function(ctm){
   matlist <- listOfMatrices(ctspec) #put back into matrix form
   # matlist <- unfoldmats(matlist) #unfold references to basic state
   ctspecp <- ctModelUnlist(matlist,matnames = names(c(mats$base,mats$jacobian))) #convert back to list
-  ctspecp <- ctModelStatesAndPARS(ctspecp,statenames=ctm$latentNames) #ensure PARS[,] refs are not replaced by names
+  ctspecp <- ctModelStatesAndPARS(ctspecp,statenames=ctm$latentNames,tdprednames=ctm$TDpredNames) #ensure PARS[,] refs are not replaced by names
   ctspec[order(ctspec$matrix, ctspec$row,ctspec$col),colnames(ctspecp)] <-  
     ctspecp[order(ctspecp$matrix, ctspecp$row,ctspecp$col),] #replace updated columns, free of direct references
   

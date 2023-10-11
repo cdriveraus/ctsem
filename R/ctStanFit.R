@@ -515,7 +515,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   
   
   ctm <- ctModel0DRIFT(ctm, ctm$continuoustime) #offset 0 drift
-  ctm$pars <- ctModelStatesAndPARS(ctm$pars,statenames=ctm$latentNames) #replace latent states and PARS with state and PAR[] refs, need this early because we rely on [] detection
+  ctm$pars <- ctModelStatesAndPARS(ctm$pars,statenames = ctm$latentNames,tdprednames=ctm$TDpredNames) #replace latent states and PARS with state and PAR[] refs, need this early because we rely on [] detection
   if(intoverpop)   ctm <- ctStanModelIntOverPop(ctm) #extend system matrices for individual differences
   
   #jacobian addition
@@ -538,7 +538,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   
   ctm$pars <- rbind(ctm$pars,jl2)
   
-  ctm$pars <- ctModelStatesAndPARS(ctm$pars,statenames=ctm$latentNames) #replace any new state and par refs with square bracket refs
+  ctm$pars <- ctModelStatesAndPARS(ctm$pars,statenames = ctm$latentNames,tdprednames=ctm$TDpredNames) #replace any new state and par refs with square bracket refs
   
   ctm <- ctModelTransformsToNum(ctm)
   
