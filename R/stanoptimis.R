@@ -991,7 +991,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(optimcores==1) smf<-stan_reinitsf(sm,standatasml)
         
         
-        if(npars > 50 || nsubsets > 1) {
+        if(stochastic) {
           
           optimfit <- try(sgd(init, fitfunc = function(x) target(x),
             parsets=parsets,
@@ -999,11 +999,12 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             whichignore = unlist(parsteps),nconvergeiter = 30,
             plot=plot, 
             itertol=tol*1000*stochasticTolAdjust,
-            worsecountconverge = 20,maxiter=ifelse(standata$ntipred > 0 && notipredsfirstpass, 500,5000)))
+            worsecountconverge = 20,
+            maxiter=ifelse(standata$ntipred > 0 && notipredsfirstpass, 500,5000)))
           
         }
         
-        if((npars <=50 && nsubsets ==1) || 'try-error' %in% class(optimfit)) {
+        if(!stochastic || 'try-error' %in% class(optimfit)) {
           optimfit <- mize(init, fg=mizelpg, max_iter=99999,
             method="L-BFGS",memory=100,
             line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
@@ -1021,10 +1022,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         storedLp <- c()
         # if(length(parsteps) <1 && (standata$ntipred ==0 || notipredsfirstpass ==FALSE)) finished <- TRUE
         
-        
+        #update init, making sure ignored parameters still have values in init
         if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else init=optimfit$par
-        
-        
+
         if(length(parsteps) > 0){
           message('Freeing parameters...')
           finished <- FALSE
@@ -1033,10 +1033,12 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             
             optimfit <- sgd(init, fitfunc = target,
               parsets=parsets,
+              nsubsets = nsubsets,
               itertol = tol*1000*stochasticTolAdjust,
               maxiter=5000,
               whichignore = unlist(parsteps),
-              ndatapoints=standata$ndatapoints,plot=plot)
+              plot=plot,worsecountconverge = 20)
+            
             
             if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else{
               finished <- TRUE
@@ -1154,7 +1156,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           parrangetol=tol*100,
           maxiter=5000,
           whichignore = unlist(parsteps),
-          ndatapoints=standata$ndatapoints,plot=plot))
+          plot=plot))
       }
       
       

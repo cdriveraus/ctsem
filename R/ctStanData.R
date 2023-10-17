@@ -308,6 +308,7 @@ ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
   oldsubi<-datalong[1,ctm$subjectIDname]-1
   dT<-rep(-1,length(datalong[,ctm$timeName]))
   
+  dt0rows <- c()
   for(rowi in 1:length(datalong[,ctm$timeName])) {
     subi<-datalong[rowi,ctm$subjectIDname]
     # if(rowi==1 && subi!=1) stop('subject id column must ascend from 1 to total subjects without gaps')
@@ -319,9 +320,9 @@ ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
     if(subi - oldsubi == 0) {
       dT[rowi]<-datalong[rowi,ctm$timeName] - datalong[rowi-1,ctm$timeName]
       if(dT[rowi] < 0) stop(paste0('A time interval of ', dT[rowi],' was found at row ',rowi))
-      if(dT[rowi] == 0) warning(paste0('A time interval of ', dT[rowi],' was found at row ',rowi))
-      
+      if(dT[rowi] == 0) dt0rows <- c(dt0rows,rowi) 
     }
+    if(length(dt0rows)>0) warning(paste0('A time interval of 0 was found at row/s: ',paste0(dt0rows,collapse=', ')))
     oldsubi<-subi
   }
   

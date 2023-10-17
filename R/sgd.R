@@ -1,6 +1,6 @@
 logit = function(x) log(x)-log((1-x))
 
-sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints=NA,plot=FALSE,
+sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,plot=FALSE,
   stepbase=1e-3,gmeminit=ifelse(is.na(startnrows),.8,.8),gmemmax=.95, maxparchange = .50,
   startnrows=NA,roughnessmemory=.9,groughnesstarget=.5,roughnesschangemulti = .2,
   parsets=1,
@@ -12,6 +12,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
   worsecountconverge=1000,
   lpnoisethresh= .1,#length(init)*.01,
   itertol=1e-3, parrangetol=1e-3){
+  
   
   if(nsubsets>1){
     lpchange=0
@@ -39,6 +40,17 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
   initfull=init #including ignored params start values
   if(length(whichignore)>0) init=init[-whichignore]
   
+  fitfunc2 <- function(p,subset=NA){
+    ptemp=initfull
+    if(length(whichignore)>0) ptemp[-whichignore] <- p else ptemp <- p
+    if(!is.na(subset)) ptemp <- c(ptemp,subset)
+    lpg=fitfunc(ptemp)
+    if(length(whichignore)>0) attributes(lpg)$gradient <- attributes(lpg)$gradient[-whichignore]
+    if(nsubsets > 1) attributes(lpg)$gradient <- 
+      attributes(lpg)$gradient[-length(attributes(lpg)$gradient)]
+    return(lpg)
+  }
+  
   errsum = function(x) sqrt(sum(abs(x)))
   
   if(plot){
@@ -46,9 +58,8 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
     on.exit(do.call(par,parbase),add=TRUE)
   }
   
-  
   pars=init
-  
+  zeroG=0
   delta=deltaold=rep(0,length(pars))
   bestpars = newpars=maxpars=minpars=changepars=pars
   gstore=parstore = deltastore=matrix(rnorm(length(bestpars)*nstore),length(bestpars),nstore)
@@ -56,13 +67,9 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
   step=rep(stepbase,length(pars))
   bestiter=1
   
-  if(nsubsets > 1) init <- c(init,1)
-  lpg=fitfunc(init)#-999999
-  if(nsubsets > 1){
-    init <- head(init,length(init)-1)
-    attributes(lpg)$gradient <- head(attributes(lpg)$gradient,length(init))
-  }
   
+  lpg=fitfunc2(init,subset=ifelse(nsubsets>1,1,NA))#-999999
+  # if(any(is.na(attributes(lpg)$gradient))) browser()
   
   g=sign(attributes(lpg)$gradient)*(abs(lpg))^(1/2)
   gsmooth=oldgsmooth=oldg=gmid=dgsmooth=gdelta=g
@@ -96,8 +103,6 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
         print(lpg)
         accepted<-TRUE
       }
-      
-      
       
       if(i > 1){
         delta =   step * sign(gsmooth+dgsmooth/4) * (abs(gsmooth+dgsmooth/4))^(1/2)
@@ -133,46 +138,28 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
       if(any(is.na(newpars))) stop('NA in parameter proposal!') 
       if(i==1) itertime <- Sys.time()
       
-      
-      
-      
-      fullnewpars <- initfull
-      if(length(whichignore)>0) fullnewpars[-whichignore] <- newpars else fullnewpars <- newpars
-      
+      fullnewpars <- newpars
       
       if(parsets > 1){
         parmod <- (exp(1*((1:parsets)-(floor(parsets/2)))))
         fullnewpars <- lapply(parmod,function(x) {
-          newpars <-  pars+x*
-            # sample(c(rep(1,parsets),parmod),length(newpars),replace = TRUE) *
-            (newpars-pars)
-          fullnewpars <- initfull
-          if(length(whichignore)>0) fullnewpars[-whichignore] <- newpars else fullnewpars <- newpars
-          return(fullnewpars)
+          newpars <-  pars+x*(newpars-pars)
+          return(newpars)
         })
       }
       
       if(nsubsets > 1){
         if(i > 1) subsetiold <- subseti
         subseti <- subsetorder[(i-1) %% (nsubsets) + 1]
-        
-        fullnewpars <- c(fullnewpars, subseti) #add subset par
       }
-      # print(subsetorder[i %% (nsubsets) + 1])
+
+      lpg= fitfunc2(fullnewpars,subset=ifelse(nsubsets > 1, subseti, NA)) #fit function!
       
-      lpg= fitfunc(fullnewpars) #fit function!
-      
-      if(nsubsets > 1) { #drop subset par
-        attributes(lpg)$gradient <- attributes(lpg)$gradient[-length(fullnewpars)]
-        fullnewpars <- fullnewpars[-length(fullnewpars)]
-      }
-      if(length(whichignore)>0) attributes(lpg)$gradient <- attributes(lpg)$gradient[-whichignore]
       if(!is.null(attributes(lpg)$bestset)){
         bestset <- attributes(lpg)$bestset
         if(bestset > ceiling(parsets/2)) lproughnesstarget <- lproughnesstarget +.01
         if(bestset < floor(parsets/2)) lproughnesstarget <- lproughnesstarget -.01
         newpars <- fullnewpars[[bestset]]
-        if(length(whichignore)>0) newpars <- newpars[-whichignore]
       }
       
       
@@ -188,7 +175,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
       if(!accepted){
         if(nsubsets==1 && i > warmuplength) gsmooth= gsmooth*gmemory2^2 + (1-gmemory2^2) * g #increase influence of last gradient at inflections
         step <- step / (exp(notacceptedcount))
-        deltaold <- deltaold * 0
+        deltaold <- 0#deltaold * 0
         if(nsubsets > 1) pars =bestpars* .8 + apply(parstore,1,mean)*.2
         # if(i > 1) lproughness = lproughness * (roughnessmemory2) + (1-(roughnessmemory2)) ##exp(-1/(i-bestiter+.1))
         # pars=bestpars
@@ -202,10 +189,10 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
         pars=bestpars
         
       }
-      if(plot && !accepted) {
-        message(paste0('\rIter ', i,' not accepted! lp = ', lpg[1],', continuing...                '))
-        # 
-      }
+      # if(plot && !accepted) {
+      #   message(paste0('\rIter ', i,' not accepted! lp = ', lpg[1],', continuing...                     '))
+      #   # 
+      # }
     } #end acceptance loop
     
     #once accepted 
@@ -218,7 +205,13 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
     deltaold=delta
     oldg=g
     g=attributes(lpg)$gradient
-    if(any(g %in% 0)) message(paste0('Gradient of parameter ',paste0(which(g %in% 0),collapse=', '), ' is exactly zero -- if this repeats or optimization fails, maybe model problem?'))
+    if(zeroG < 11){ #check zero gradient count
+      if(any(g %in% 0)){
+        message(paste0('Gradient of parameter ',paste0(which(g %in% 0),collapse=', '), ' is exactly zero -- if this repeats or optimization fails, maybe model problem?'))
+        zeroG <- zeroG + 1
+        if(zeroG >  10) message ('Gradient warning limit exceeded, silencing...')
+      }
+    }
     if(any(is.na(g))) warning(paste0('Gradient of parameter ',paste0(which(is.na(g)),collapse=', '), ' is NA, if this repeats or optimization fails, maybe model problem?'))
     # g=sign(g)*(abs(g))#^(1/2)#sqrt
     gmemory2 = gmemory * min(i/warmuplength,1)^(1/8)
@@ -247,7 +240,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
       if(nsubsets > 1) lproughness = lproughness * (roughnessmemory2) + 
           (1-(roughnessmemory2)) * as.numeric( (lp[i-1]-oldsubsetilp) > (lp[i]-subsetlps[subseti]))#because accepted here, also see non accepted version
     }
-    # if(i==101) browser()
+    # if(i==101) 
     if(nsubsets > 1){
       oldsubsetilp <- subsetlps[subseti]
       subsetlps[subseti] <- lpg[1]
@@ -444,7 +437,6 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,ndatapoints
         (i %% (nsubsets))==0){ 
       
       lpdiff <- (subsetlp-max(subsetlpstore[1:((i/nsubsets)-nconvergeiter)]))/nconvergeiter
-      if(is.na(lpdiff)) browser()
       
       if(i >=(nsubsets*2)){ #then oldsubset exists
         
