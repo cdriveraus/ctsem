@@ -7,6 +7,7 @@
 ctACF(
   dat,
   varnames = "auto",
+  ccfnames = "all",
   idcol = "id",
   timecol = "time",
   plot = TRUE,
@@ -20,6 +21,8 @@ ctACF(
 \item{dat}{The input data in data frame or data table format.}
 
 \item{varnames}{Character vector of variable names in the data to compute the ACF for. 'auto' uses all columns that are not time / id.}
+
+\item{ccfnames}{Character vector of variable names in the data to compute cross correlation for. 'all' uses all variables in varnames.}
 
 \item{idcol}{The name of the column containing subject IDs (default is 'id').}
 

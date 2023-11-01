@@ -10,7 +10,9 @@ ctLOO(
   cores = 2,
   parallelFolds = FALSE,
   subjectwise = ifelse(length(unique(fit$standata$subject)) > folds, TRUE, FALSE),
-  keepfirstobs = FALSE
+  keepfirstobs = FALSE,
+  leaveOutN = NA,
+  refit = TRUE
 )
 }
 \arguments{
@@ -27,6 +29,13 @@ parallelFolds will use folds times as much memory.}
 \item{subjectwise}{drop random subjects instead of data rows?}
 
 \item{keepfirstobs}{do not drop first observation (more stable estimates)}
+
+\item{leaveOutN}{if a positive integer is given, the folds argument is ignored and 
+instead the folds are calculated by leaving out every Nth row from the data when fitting. 
+Leaving 2 out would result in 3 folds (starting at rows 1,2,3), each containing one third of the data.}
+
+\item{refit}{if FALSE, do not optimise parameters for the new data set, 
+just compute the likelihoods etc from the original parameters}
 }
 \value{
 list

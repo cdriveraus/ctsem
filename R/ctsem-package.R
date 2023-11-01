@@ -33,7 +33,11 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
   'variable','Datasource','id','verbose','param',
   'manifest',
   'Original','sysnoise','starts', 'obsNames',
-  'parlp'))
+  'parlp',
+  "ACF", "ACFhigh", "ACFlow", "Element", "Estimate", "Model", "NobsDT", "Obs", 
+  "ObsVsGenID", "ObsVsGenRow", "OutOf95Row", "Row", "Sample", "Time", 
+  "TimeInterval", "V2", "Variable", "aic", "ci", "highdat", "leaveOutN", 
+  "lowdat", "lp", "mediandat", "mediandatRank", "np", "obsValue"))
 
 if(1==99){
   `:=` = NULL

@@ -19,35 +19,39 @@
 #' long <- ctDiscretiseData(dlong=ctstantestdat, timestep = .1,
 #' TDpredNames=c('TD1'),TIpredNames=c('TI1','TI2','TI3'))
 
-ctDiscretiseData <- function(dlong,timestep,timecol='time',idcol='id',TDpredNames=NULL,
-  TIpredNames=NULL){
+ctDiscretiseData <- function(dlong, timestep, timecol = 'time', idcol = 'id', TDpredNames = NULL, TIpredNames = NULL) {
   
   dlong <- data.table(dlong)
-  if(any(is.na(dlong[[timecol]]))) stop('Cannot discretise with missing time data!')
-  if(any(is.na(dlong[[idcol]]))) stop('Cannot discretise with missing id data!')
-  originalrows <- sum(apply(dlong,1,function(x) sum(!is.na(x))-2))
   
-  dlong[[timecol]] <- plyr::round_any(dlong[[timecol]],timestep)
-  dlong <- melt(dlong,id.vars = c(idcol,timecol))
+  if (any(is.na(dlong[[timecol]]))) stop('Cannot discretise with missing time data!')
+  if (any(is.na(dlong[[idcol]]))) stop('Cannot discretise with missing id data!')
+  
+  # Calculate the time offset that minimizes information loss
+  offset <- mean(diff(unique(dlong[[timecol]]))) %% timestep
+  
+  originalrows <- sum(apply(dlong, 1, function(x) sum(!is.na(x)) - 2))
+  
+  dlong[[timecol]] <- dlong[[timecol]] - offset
+  dlong <- melt(dlong, id.vars = c(idcol, timecol))
   dlong <- dlong[!is.na(value),]
-  dlong <- dcast(dlong,formula=formula(paste0(idcol,'+',timecol,'~variable')),fun.aggregate = mean,na.rm=TRUE)
-
-  dnew=dlong
-  dnew <- dnew[,.(newtime=seq(min(get(timecol)),max(get(timecol)),timestep)),by=idcol]
-  setnames(dnew,old = 'newtime',timecol)
-  dlong <- merge(dlong,dnew,all = TRUE,by=c(idcol,timecol))
-  setorderv(dlong,cols=c(idcol,timecol))
+  dlong <- dcast(dlong, formula = formula(paste0(idcol, '+', timecol, '~variable')), fun.aggregate = mean, na.rm = TRUE)
   
-  newrows <- sum(apply(dlong,1,function(x) sum(!is.na(x))-2))
+  dnew <- dlong
+  dnew <- dnew[, .(newtime = seq(min(get(timecol)), max(get(timecol)), timestep)), by = idcol]
+  setnames(dnew, old = 'newtime', timecol)
+  dlong <- merge(dlong, dnew, all = TRUE, by = c(idcol, timecol))
+  setorderv(dlong, cols = c(idcol, timecol))
   
-if(newrows!=originalrows) warning(paste0(originalrows-newrows,' cells of data removed due to time overlap -- reduce timestep if problematic'))
-    
+  newrows <- sum(apply(dlong, 1, function(x) sum(!is.na(x)) - 2))
+  
+  if (newrows != originalrows) warning(paste0(originalrows - newrows, ' cells of data removed due to time overlap -- reduce timestep if problematic'))
+  
   dlong <- data.frame(dlong)
-  dlong[,TDpredNames][is.na(dlong[,TDpredNames])] <- 0 
-  dlong[,TIpredNames][is.na(dlong[,TIpredNames])] <- NA
+  dlong[, TDpredNames][is.na(dlong[, TDpredNames])] <- 0 
+  dlong[, TIpredNames][is.na(dlong[, TIpredNames])] <- NA
   
-  
-
   return(dlong)
 }
+
+
   

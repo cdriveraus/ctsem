@@ -21,11 +21,11 @@ ctSummarise<-function(sf,name='ctSummary',cores=2, times=seq(0,10,.1),quantiles=
     
     sm <- sf$ctstanmodelbase 
     summ=summary(sf)
-    if(is.null(sf$generated)) sf <- ctStanGenerateFromFit(fit = sf,nsamples = nsamples,fullposterior = FALSE,cores = cores)
+    if(is.null(sf$generated) && ctCheckFit) sf <- ctStanGenerateFromFit(fit = sf,nsamples = nsamples,fullposterior = FALSE,cores = cores)
     cp <- ctStanContinuousPars(sf)
     
     n<-sapply(unique(ydat[[sm$subjectIDname]]),function(x) sum(ydat[[sm$subjectIDname]] %in% x))
-    whichsubfull <- unique(ydat[[sm$subjectIDname]])[order(n,decreasing = TRUE)][1:(min(30,length(n)))]
+    whichsubfull <- unique(ydat[[sm$subjectIDname]])[order(n,decreasing = TRUE)][1:(min(10,length(n)))]
     # whichsubfull <- match(whichsubfull,sf$setup$idmap[,1]) #set to numeric
     
     nl <- sm$n.latent

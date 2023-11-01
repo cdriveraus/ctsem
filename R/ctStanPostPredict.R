@@ -1,3 +1,182 @@
+#' Create a data.table to compare data generated from a ctsem fit with the original data.
+#'
+#' This function allows for easy comparison of data generated from a fitted ctsem model
+#' with the original data used to fit the model. It provides options to include residuals
+#' in the comparison.
+#'
+#' @param fit A fitted ctsem model.
+#' @param residuals If set to TRUE, includes residuals in the comparison.
+#'
+#' @return A data table containing the comparison between generated and original data.
+#'
+#' @seealso Other ctsem functions for model fitting and analysis.
+#'
+#' @examples
+#' data_comparison <- ctPostPredData(ctstantestfit)
+#'
+#' @export
+ctPostPredData <- function(fit,residuals=F){
+  if(is.null(fit$generated))  fit <- ctStanGenerateFromFit(fit) 
+  
+  ll <- melt(
+    data.table(sample=1:nrow(fit$generated$llrow),(fit$generated$llrow)),
+    id.vars = c('sample'),variable.name = 'row')[order(sample),]
+  
+  ll[['row']] <- as.numeric(ll[['row']])
+  ll[['V1']] <- 'LogLik'
+  dat=fit$generated$Y
+  dat <- as.data.table(dat,na.rm = FALSE)
+  dat[['sample']] <- as.integer(dat[['sample']])
+  dat[['row']] <- as.numeric(dat[['row']])
+  dat <- rbind(dat,ll)
+  setnames(dat,'V1','variable')
+  setorder(dat,'sample','row')
+  colnames(fit$standata$Y) <- fit$ctstanmodelbase$manifestNames
+  
+  dat[,id:=fit$setup$idmap$original[match(fit$standata$subject,fit$setup$idmap$new)],by=interaction(sample,variable)]
+  dat[,Time:=fit$standata$time,by=interaction(sample,variable)]
+  dat[,TimeInterval:=c(NA,diff(Time)),by=interaction(sample,id,variable)]
+  
+  truedat <- fit$standata$Y
+  truedat[truedat==99999]<-NA #set missings to NA
+  truell <- fit$stanfit$transformedparsfull$llrow[1,]
+  truell[apply(truedat,1,function(x) all(is.na(x)))] <- NA #ensure missings propagate to likelihood also
+  dat=merge(dat, #generated
+    melt(data.table(row=1:max(dat$row),cbind(truedat, #true
+      LogLik=truell)),#fitted
+      id.vars='row',value.name = 'obsValue'),by=c('row','variable'),all=T)
+  
+  if(residuals){
+    ft <- fit
+    stderrprior <- list()
+    for(i in 1:max(ll[['sample']])){
+      ft$standata$Y <- matrix(fit$generated$Y[i,,],ncol=ncol(ft$standata$Y))
+      stderrprior[[i]] <- data.table(sample=i,suppressMessages(meltkalman(ctStanKalman(ft,standardisederrors = TRUE))))[Element %in% 'errstdprior',.(sample,Row,value,Obs)]
+    }
+    stderrprior <- rbindlist(stderrprior)
+    stderrpriorObs<-data.table(suppressMessages(
+      meltkalman(ctStanKalman(fit,standardisederrors = TRUE))))[Element %in% 'errstdprior',.(Row,value,Obs)]
+    setnames(stderrpriorObs,'value','obsValue')
+    stderrprior<-merge(stderrprior,stderrpriorObs)
+    setnames(stderrprior,c('Row','Obs'),c('variable','row'))
+    stderrprior[,variable:=paste0(variable,' std. res.')]
+    dat <- rbind(dat,stderrprior[,colnames(dat),with=FALSE])
+  }
+  
+  return(dat)
+}
+
+
+#' Create diagnostic plots to assess the goodness-of-fit for a ctsem model.
+#'
+#' This function generates a set of diagnostic plots to assess the goodness-of-fit for
+#' a fitted ctsem model. 
+#'
+#' @param fit A fitted ctsem model.
+#'
+#' @details The function calculates various statistics and creates visualizations to evaluate
+#' how well the generated data matches the original data used to fit the model. The plots
+#' included are as follows:
+# 
+#'   - A scatter plot comparing observed values and the median of generated data.
+#'   - A plot showing the proportion of observed data outside the 95% confidence interval
+#     of generated data per row.
+#'   - A density plot of the proportion of observed data greater than the generated data.
+#'   - A time series plot of the proportion of observed data greater than generated data.
+#   - A plot of the proportion of observed data greater than generated data over time.
+#   - A plot showing the proportion of observed data greater than generated data by time
+#     intervals (smoothed if there are many intervals).
+#   - A plot comparing the proportion of observed data greater than generated data by ID.
+# 
+#' @seealso Other ctsem functions for model fitting and analysis.
+#'
+#' @examples
+#' ctPostPredPlots(ctstantestfit)
+#'
+#' @export
+ctPostPredPlots <- function(fit){
+  dat <- ctPostPredData(fit)
+  
+  dat[,mediandat:=median(value,na.rm=TRUE),by=interaction(variable,row)]
+  dat[,highdat:=quantile(value,.975,na.rm=TRUE),by=interaction(variable,row)]
+  dat[,lowdat:=quantile(value,.025,na.rm=TRUE),by=interaction(variable,row)]
+  dat[,ObsVsGenRow:=sum(obsValue > value)/.N,by=interaction(variable,row)]
+  dat[,ObsVsGenID:=sum(obsValue > value,na.rm=TRUE)/.N,by=interaction(variable,id)]
+  
+  datsum<-dat[sample==1,.(row,mediandat,highdat,lowdat,obsValue,ObsVsGenRow,ObsVsGenID,variable,Time,TimeInterval,id)]
+  datsum <- datsum[,mediandatRank:=rank(mediandat),by=variable]
+  datsum[,OutOf95Row:=obsValue > highdat | obsValue < lowdat,by=interaction(row,variable)]
+  
+  
+  print(ggplot(datsum,aes(x=mediandatRank,y=mediandat))+
+      # geom_ribbon(aes(ymin=lowdat, ymax=highdat),fill='red',alpha=.5)+
+      geom_point(data=datsum[sample(1:nrow(datsum),size=min(10000,nrow(datsum))),],aes(y=obsValue),alpha=.1)+
+      geom_line(mapping = aes(y=mediandat),colour='red',linewidth=1)+
+      geom_smooth(mapping = aes(y=highdat),colour='red',linewidth=.2,se=F)+
+      geom_smooth(mapping = aes(y=lowdat),colour='red',linewidth=.2,se=F)+
+      theme_bw()+xlab('Gen. Observations Ranked')+ylab('Obs. value / generated 95% CI')+
+      facet_wrap(vars(variable),scales = 'free'))
+  
+  print(ggplot(datsum,aes(x=mediandatRank,y=as.numeric(OutOf95Row)))+
+      # geom_ribbon(aes(ymin=lowdat, ymax=highdat),fill='red',alpha=.5)+
+      # geom_point(data=datsum[sample(1:nrow(datsum),size=min(10000,nrow(datsum))),],aes(y=obsValue),alpha=.1)+
+      # geom_line(mapping = aes(y=mediandat),colour='red',linewidth=1)+
+      geom_hline(yintercept=.05,linewidth=1.1)+
+      geom_smooth(fill='red',colour='red',linewidth=1,se=T)+
+      # geom_smooth(mapping = aes(y=lowdat),colour='red',linewidth=.2,se=F)+
+      theme_bw()+xlab('Gen. Observations Ranked')+ylab('Proportion of obs. out of 95% CI per row')+
+      coord_cartesian(ylim=c(0,1))+
+      facet_wrap(vars(variable),scales = 'free'))
+  
+  
+  # print(ggplot(dat,aes(x=rank(mediandat),y=value))+
+  #     # geom_ribbon(aes(ymin=lowdat, ymax=highdat),fill='red',alpha=.5)+
+  #     geom_density2d_filled(contour=TRUE,h=.1,n=512)+
+  #     # geom_line(mapping = aes(y=mediandat),colour='red',linewidth=1)+
+  #     # geom_point(aes(y=obsValue),alpha=.1)+
+  #     theme_bw()+xlab('Gen. Observations Ranked')+ylab('Obs. value / generated 95% CI')+
+  #     facet_wrap(vars(variable),scales = 'free'))
+  
+  print(ggplot(datsum,aes(x=ObsVsGenRow))+
+      geom_density(linewidth=1)+
+      geom_hline(yintercept=1)+
+      xlab('Quantile of observed data wrt generated')+
+      theme_bw()+
+      facet_wrap(vars(variable),scales = 'free'))
+  
+  print(ggplot(datsum,aes(x=mediandatRank,y=ObsVsGenRow))+
+      # geom_smooth()+
+      geom_smooth(aes(x=Time))+
+      xlab('Time')+
+      ylab('Prop. observed data greater than generated')+
+      geom_hline(yintercept =.5,linewidth=1)+
+      coord_cartesian(ylim=c(0,1))+
+      theme_bw()+
+      facet_wrap(vars(variable),scales = 'free'))
+  
+  
+  smoothedDT <- length(unique( datsum[!is.na(TimeInterval),TimeInterval])) > 50
+  datsum[,NobsDT:=.N,by=TimeInterval]
+  gg <- ggplot(datsum[!is.na(TimeInterval),],aes(x=TimeInterval,y=ObsVsGenRow))+
+    coord_cartesian(ylim=c(0,1))+
+    ylab('Prop. observed data greater than generated')+
+    geom_hline(yintercept =.5,linewidth=1)+
+    theme_bw()+
+    facet_wrap(vars(variable),scales = 'free')
+  if(smoothedDT) gg <- gg + geom_smooth() else gg <- gg + stat_summary(data=datsum[NobsDT > 10 & !is.na(TimeInterval),],fun.data = mean_cl_boot,geom='point')
+  print(gg)
+  
+  print(ggplot(datsum,aes(x=id,y=ObsVsGenID,colour=factor(id)))+
+      geom_point(alpha=.3)+
+      ylab('Prop. observed data greater than generated')+
+      # scale_color_manual(values = 
+          # rep(RColorBrewer::brewer.pal(10,name = 'RdBu'), length.out = length(unique(datsum$id))))+
+      coord_cartesian(ylim=c(0,1))+guides(colour='none')+
+      theme_bw()+
+      facet_wrap(vars(variable),scales = 'free'))
+  
+}
+
 
 #' Compares model implied density and values to observed, for a ctStanFit object.
 #'

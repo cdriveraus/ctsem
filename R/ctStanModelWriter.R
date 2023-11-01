@@ -810,7 +810,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE,
     int rowi = rowx ? rowx : 1;
     if( rowx==0 ||
       (dokalmanrows[rowi] && 
-        subject[rowi] >= (firstsub - .1) &&  subject[rowi] <= (lastsub + .1))){ //if doing this row for this subject
+        subject[rowi] >= (firstsub - .1) &&  subject[rowi] <= (lastsub + .1))){ //if doing this row for this subset
     
     int si = rowx ? subject[rowi] : 0;
     int full = (dosmoother==1 || si ==0);
@@ -833,7 +833,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE,
       o0= whichequals(manifesttype,1,0);
     }
     
-    if(prevrow != 0 && rowi != 1) T0check = (si==subject[prevrow]) ? (T0check+1) : 0; //if same subject, add one, else zero
+    if(prevrow != 0) T0check = (si==subject[prevrow]) ? (T0check+1) : 0; //if same subject, add one, else zero
     if(T0check > 0){
       dt = time[rowi] - time[prevrow];
       dtchange = continuoustime ? dt!=prevdt : 0; 
@@ -1244,7 +1244,7 @@ if(verbose > 1){
   '),'
  } // end si loop (includes sub 0)
   
-  prevrow = rowi; //update previous row marker only after doing necessary calcs
+  prevrow = rowx; //update previous row marker only after doing necessary calcs
 }//end active rowi
 
 ',if(savemodel) 'if(savescores){

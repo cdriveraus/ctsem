@@ -1,6 +1,6 @@
 # ctsem News
 
-## 10/10/2023
+## 30/10/2023
 ### 3.9.1
 - Fix bug in ctKalman - was dropping certain subjects resulting in no plots / output.
 - Fix fatal (i.e, erroring out) bug in certain nonlinear parameter specifications.

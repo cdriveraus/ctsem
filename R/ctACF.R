@@ -1,3 +1,5 @@
+
+
 #' Continuous Time Autocorrelation Function (ctACF)
 #'
 #' This function computes an approximate continuous time autocorrelation function (ACF) for data
@@ -5,7 +7,7 @@
 #'
 #' @param dat The input data in data frame or data table format.
 #' @param varnames Character vector of variable names in the data to compute the ACF for. 'auto' uses all columns that are not time / id. 
-#' @param ccf if TRUE, compute cross correlations also. 
+#' @param ccfnames Character vector of variable names in the data to compute cross correlation for. 'all' uses all variables in varnames. 
 #' @param idcol The name of the column containing subject IDs (default is 'id').
 #' @param timecol The name of the column containing time values (default is 'time').
 #' @param plot A logical value indicating whether to create a plot (default is TRUE).
@@ -35,7 +37,6 @@
 ctACF <- function(dat, varnames='auto',ccfnames='all',idcol='id', timecol='time',
   plot=TRUE,timestep='auto',time.max='auto',nboot=100,...){
   if(F) .timediff = ACFhigh= ACFlow= Element= Estimate= SignificanceLevel=  TimeInterval= Variable= boot= ci=NULL
-  
   dat=copy(data.table(dat))
   if(timestep == 'auto') timestep = 0.1 * quantile(dat[,.timediff:= c(NA,diff(get(timecol))),by=idcol][['.timediff']],probs=.1,na.rm=TRUE)
   if(time.max == 'auto') time.max = 10 * quantile(dat[,.timediff:= c(NA,diff(get(timecol))),by=idcol][['.timediff']],probs=.9,na.rm=TRUE)
@@ -59,18 +60,18 @@ ctACF <- function(dat, varnames='auto',ccfnames='all',idcol='id', timecol='time'
   #   }, by = idcol]
   # }
   
-  remove_rows_with_missing <- function(dt, col_names) {
-    dt[, {
-      row_has_data <- rowSums(!is.na(.SD[, col_names,with=FALSE])) > 0
-      first_non_missing <- min(which(row_has_data))
-      last_non_missing <- max(which(row_has_data))
-      if (is.na(first_non_missing) || is.na(last_non_missing)) {
-        .SD[1:.N]
-      } else {
-        .SD[first_non_missing:last_non_missing, ]
-      }
-    }, by = idcol]
-  }
+  # remove_rows_with_missing <- function(dt, col_names) {
+  #   dt[, {
+  #     row_has_data <- rowSums(!is.na(.SD[, col_names,with=FALSE])) > 0
+  #     first_non_missing <- min(which(row_has_data))
+  #     last_non_missing <- max(which(row_has_data))
+  #     if (is.na(first_non_missing) || is.na(last_non_missing)) {
+  #       .SD[1:.N]
+  #     } else {
+  #       .SD[first_non_missing:last_non_missing, ]
+  #     }
+  #   }, by = idcol]
+  # }
   
   
   
@@ -80,25 +81,50 @@ ctACF <- function(dat, varnames='auto',ccfnames='all',idcol='id', timecol='time'
     for(varj in ccfnames){
       counter <- counter + 1
       varji <- unique(c(vari,varj))
-      vdat<-remove_rows_with_missing(dat[,c(idcol,timecol,varji),with=FALSE],varji)
-      datt=vdat[,tail(.SD,1),by=idcol] #adding distant time point (outside acf range) to ensure sufficient padding with NA's for stacking (avoiding attenuation of low lag corr)
-      datt[,(timecol):=get(timecol)+time.max]
-      datt <- datt[,c(idcol,timecol),with=FALSE]
-      vdat=merge(vdat,datt,by = c(idcol,timecol),all=TRUE)
+      # browser()
+      vdat <- dat[,c(idcol,timecol,varji),with=FALSE]
+      vdat <- vdat[apply(vdat[,(varji),with=F],1,function(x) !all(is.na(x))),] #remove rows with total missingness first
+      for(col in varji) set(vdat, j = col, value = as.numeric(vdat[[col]])) #ensure cols are numeric!
+      # vdat[apply(.SD,1,function(x) !(all(is.na(x)))), ,.SDcols=varji]
+      # vdat<-remove_rows_with_missing(vdat,varji)
+      # browser()
+      # for(varjik in varji) vdat[,(varjik):=scale(get(varjik)),by=idcol]
+      vdat = data.table(ctDiscretiseData(vdat,timecol = timecol,idcol = idcol,timestep=timestep)) #collapse to specified time step
       
-      vdat = data.table(ctDiscretiseData(vdat,timecol = timecol,idcol = idcol,timestep=timestep))
+      # datt=vdat[,tail(.SD,1),by=idcol] #adding distant time point (outside acf range) to ensure sufficient padding with NA's for stacking (avoiding attenuation of low lag corr)
+      # datt=datt[,list(.newtime=seq(get(timecol),get(timecol)+time.max+timestep,timestep)),by=idcol]
+      # setnames(datt,old = '.newtime',timecol)
+      # vdat=merge(vdat,datt,by = c(idcol,timecol),all=TRUE)
+      # 
+      # acf=vdat[,{
+      #   acftemp=acf(get(varji),na.action = na.pass,plot=FALSE)$acf[,1,1];
+      #   data.table(TimeInterval=seq(0,length.out=length(acftemp),by=timestep),ACF=acftemp)
+      # }, by=idcol]
       
-      
+      # psacf(vdat[[vari]][rows], g=vdat[[idcol]][rows],lag.max=ceiling(time.max/timestep), 
+      # plot=F, na.action=na.pass,...)
+      # browser()
       ACF=lapply(0:nboot,function(x) {
         message(sprintf(paste0("\r ",paste(varji,collapse=' ')," %3d%%"), as.integer(x/nboot*100)),appendLF = FALSE)
-        subjects <- sample(unique(vdat[[idcol]]),replace=TRUE)
-        if(x==0) rows <- 1:nrow(vdat) else{
-          rows <- unlist(sapply(subjects,function(x) which(vdat[[idcol]] %in% x)))
+        
+        if(x==0){
+          subjects <- vdat[[idcol]]
+          rows <- 1:nrow(vdat)
+        } else{
+          subjects <- sample(unique(vdat[[idcol]]),replace=TRUE)
+          rows <- unlist(lapply(subjects,function(si) which(vdat[[idcol]] %in% si)))
+          subjects <- unlist(lapply(subjects,function(si){
+            r=which(vdat[[idcol]] %in% si)
+            paste0('s',round(rnorm(1),5),vdat[[idcol]][r])
+          }))
         }
-        if(vari==varj) acfout <- acf(vdat[[vari]][rows], lag.max=ceiling(time.max/timestep), 
-          plot=F, na.action=na.pass,...)$acf[,1,1]
-        if(vari!=varj) acfout <- ccf(x = vdat[[vari]][rows],y = vdat[[varj]][rows],
-          lag.max =ceiling(time.max/timestep),plot=FALSE, na.action=na.pass,...)$acf[,1,1]
+        
+        if(vari==varj) acfout <- collapse:::psacf(vdat[[vari]][rows], 
+          g=subjects,lag.max=ceiling(time.max/timestep), 
+          plot=F,...)$acf[,1,1] #na.action=na.pass
+        if(vari!=varj) acfout <- collapse:::psccf(x = vdat[[vari]][rows],y = vdat[[varj]][rows],
+          g=subjects,
+          lag.max =ceiling(time.max/timestep),plot=FALSE,...)$acf[,1,1]
         
         out <- data.table(ACF=acfout)
         out[,TimeInterval:=seq(0,length.out=.N,by=timestep)]
@@ -113,8 +139,7 @@ ctACF <- function(dat, varnames='auto',ccfnames='all',idcol='id', timecol='time'
       ACF[,SignificanceLevel:= ifelse(vari==varj,
         qnorm((1 + 0.95)/2)/sqrt(sum(!is.na(dat[[vari]]))),
         NA)]
-      # browser()
-      if(nboot >0)  ACF <- ctACFquantiles(ACF,c(.025,.975)) else ACF[,Sample:=NULL]
+      # if(nboot >0)  ACF <- ctACFquantiles(ACF,c(.025,.975)) else ACF[,Sample:=NULL]
       
       if(counter>1) fullACF <- rbind(fullACF,ACF) else fullACF <- ACF
     }
@@ -136,17 +161,21 @@ ctACFquantiles<-function(ACF,probs=c(.025,.975)){
   return(ACF)
 }
 
-plotctACF <- function(ctacfobj){
-  gg <- ggplot(ctacfobj,aes(y=ACF,
+plotctACF <- function(ctacfobj,df=15){
+  gg <- ggplot(na.omit(ctacfobj),aes(y=ACF,
     # colour=Estimate,
-    linewidth=ci,
-    linetype=ci,
-    group=Estimate,
+    # linewidth=ci,
+    # linetype=ci,
+    # group=Estimate,
     x=TimeInterval))+
     scale_linewidth_manual(values = c(1,.1))+
     scale_linetype_manual(values = c('solid','dashed'))+
-    geom_smooth(se=F,method='gam', formula = y ~ s(x, bs = "tp"))+
-    # geom_point()+
+    # geom_smooth(se=T,method='gam', formula = y ~ s(x, bs = "tp"))+
+    stat_quantile(method='rqss',
+      formula=y ~ bs(x,df=df),
+      quantiles = .5,linewidth=2)+
+    stat_quantile(method='rqss',formula=y ~ splines::bs(x,df=15),quantiles = c(.025,.975),linetype='dashed')+
+    geom_point(alpha=.1)+
     guides(linewidth='none',linetype='none')+
     # geom_hline(aes(yintercept=SignificanceLevel),colour='blue',linetype='dotted')+
     # geom_hline(aes(yintercept=-SignificanceLevel),colour='blue',linetype='dotted')+
