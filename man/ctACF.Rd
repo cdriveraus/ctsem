@@ -32,7 +32,7 @@ ctACF(
 
 \item{timestep}{The time step for discretizing data. 'auto' to automatically determine
 the timestep based on data distribution (default is 'auto'). 
-In this case the timestep is computed as 1/10th of the 10th percentile for time intervals in the data.}
+In this case the timestep is computed as half of the median for time intervals in the data.}
 
 \item{time.max}{The maximum time lag to compute the ACF (default is 10). If 'auto', is set to 10 times the 90th percentile interval in the data.}
 

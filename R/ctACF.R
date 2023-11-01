@@ -13,7 +13,7 @@
 #' @param plot A logical value indicating whether to create a plot (default is TRUE).
 #' @param timestep The time step for discretizing data. 'auto' to automatically determine
 #'        the timestep based on data distribution (default is 'auto'). 
-#'        In this case the timestep is computed as 1/10th of the 10th percentile for time intervals in the data.
+#'        In this case the timestep is computed as half of the median for time intervals in the data.
 #' @param time.max The maximum time lag to compute the ACF (default is 10). If 'auto', is set to 10 times the 90th percentile interval in the data.
 #' @param nboot The number of bootstrap samples for confidence interval estimation (default is 100).
 #' @param ... additional arguments (such as demean=FALSE) to pass to the \code{stats::acf} function.
@@ -36,10 +36,18 @@
 #' @export
 ctACF <- function(dat, varnames='auto',ccfnames='all',idcol='id', timecol='time',
   plot=TRUE,timestep='auto',time.max='auto',nboot=100,...){
+  
+  if(requireNamespace('collapse')){
+  } else stop('collapse package needed for ACF!')
+  
   if(F) .timediff = ACFhigh= ACFlow= Element= Estimate= SignificanceLevel=  TimeInterval= Variable= boot= ci=NULL
   dat=copy(data.table(dat))
-  if(timestep == 'auto') timestep = 0.1 * quantile(dat[,.timediff:= c(NA,diff(get(timecol))),by=idcol][['.timediff']],probs=.1,na.rm=TRUE)
-  if(time.max == 'auto') time.max = 10 * quantile(dat[,.timediff:= c(NA,diff(get(timecol))),by=idcol][['.timediff']],probs=.9,na.rm=TRUE)
+  if(timestep == 'auto'){
+    timestep = 0.5 * quantile(dat[,.timediff:= c(NA,diff(get(timecol))),by=idcol][['.timediff']],
+      probs=.5,na.rm=TRUE)
+    message('Timestep used: ',timestep)
+  }
+  if(time.max == 'auto')time.max = 10 * quantile(dat[,.timediff:= c(NA,diff(get(timecol))),by=idcol][['.timediff']],probs=.9,na.rm=TRUE)
   
   
   
@@ -161,8 +169,29 @@ ctACFquantiles<-function(ACF,probs=c(.025,.975)){
   return(ACF)
 }
 
-plotctACF <- function(ctacfobj,df=15){
-  gg <- ggplot(na.omit(ctacfobj),aes(y=ACF,
+#' Plot an approximate continuous-time ACF object from ctACF
+#'
+#' @param ctacfobj object
+#' @param df df for the basis spline.
+#'
+#' @return a ggplot object
+#' @export
+#'
+#' @examples
+#' data.table::setDTthreads(1) #ignore this line
+#' # Example usage:
+#' head(ctstantestdat)
+#' ac=ctACF(ctstantestdat,varnames=c('Y1'),idcol='id',timecol='time',timestep=.5,nboot=5,plot=FALSE)
+#' plotctACF(ac)
+plotctACF <- function(ctacfobj,df='auto'){
+  if(df =='auto'){
+    ndt=length(unique(ctacfobj$TimeInterval))
+    dfmax=ndt-1
+    df=min(c(dfmax,
+      ceiling(sqrt(ndt))+5))
+  }
+      
+  gg <- ggplot((ctacfobj),aes(y=ACF,
     # colour=Estimate,
     # linewidth=ci,
     # linetype=ci,
@@ -171,11 +200,11 @@ plotctACF <- function(ctacfobj,df=15){
     scale_linewidth_manual(values = c(1,.1))+
     scale_linetype_manual(values = c('solid','dashed'))+
     # geom_smooth(se=T,method='gam', formula = y ~ s(x, bs = "tp"))+
-    stat_quantile(method='rqss',
-      formula=y ~ bs(x,df=df),
-      quantiles = .5,linewidth=2)+
-    stat_quantile(method='rqss',formula=y ~ splines::bs(x,df=15),quantiles = c(.025,.975),linetype='dashed')+
-    geom_point(alpha=.1)+
+    stat_quantile(method='rqss', formula=formula(paste0('y ~ bs(x,df=',df,')')), 
+      quantiles = .5, linewidth=2)+
+    stat_quantile(method='rqss', formula=formula(paste0('y ~ bs(x,df=',df,')')), 
+      quantiles = c(.025,.975), linetype='dashed')+
+    # geom_point(alpha=.1)+
     guides(linewidth='none',linetype='none')+
     # geom_hline(aes(yintercept=SignificanceLevel),colour='blue',linetype='dotted')+
     # geom_hline(aes(yintercept=-SignificanceLevel),colour='blue',linetype='dotted')+

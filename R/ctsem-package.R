@@ -76,6 +76,7 @@ if(1==99){
 #' @importFrom utils relist as.relistable tail capture.output
 #' @importFrom Deriv Simplify 
 #' @importFrom cOde jacobianSymb prodSymb
+#' @importFrom splines bs
 #' @useDynLib ctsem, .registration = TRUE
 #' 
 #' @references 
