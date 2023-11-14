@@ -142,7 +142,7 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
     collapsefunc=mean, indvarstates = FALSE,standardisederrors = standardisederrors) #extract state predictions
 
   out <- meltkalman(out)
-  if(timerange!='asdata') out <- out[out$Time >= min(timerange) & out$Time <= max(timerange),]
+  if(!all(timerange %in% 'asdata')) out <- out[out$Time >= min(timerange) & out$Time <= max(timerange),]
   if(realid){
     out$Subject <- factor(idmap[
       match(out$Subject,idmap[,2]),1])
