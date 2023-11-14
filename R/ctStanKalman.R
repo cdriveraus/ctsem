@@ -30,8 +30,11 @@
 ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1, 
   subjects=1:max(fit$standata$subject), timestep='asdata',timerange='asdata',
   standardisederrors=FALSE, subjectpars=TRUE, tformsubjectpars=TRUE, indvarstates=FALSE,removeObs=F,...){
-
+  
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
+  if(fit$standata$intoverstates==0){
+    warning('Kalman filter operation unreliable when states were sampled -- system noise represents prior while point estimates represent posterior / smoothed')
+  }
   message('Computing state estimates..')
   # standata <- fit$standata
   if(pointest)  samples <- matrix(fit$stanfit$rawest,nrow=1)
@@ -41,14 +44,14 @@ ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
     if(!is.na(nsamples)) samples <- samples[sample(1:nrow(samples),nsamples),,drop=FALSE] else nsamples <- nrow(samples)
     if(is.function(collapsefunc)) samples = matrix(apply(samples,2,collapsefunc,...),ncol=ncol(samples))
   }
-
+  
   # use only selected subjects data -----------------------------------------
   if(length(subjects)!=fit$standata$nsubjects){
     idstore <- fit$standata$subject
-    if(length(fit$stanfit$stanfit@sim)==0) { #if optimized fit
+    if(length(fit$stanfit$stanfit@sim)==0) { #only select subjects if optimized fit
       fit$standata <- standatact_specificsubjects(fit$standata, subjects = subjects)
+      subjects <- sort(unique(fit$standata$subject))
     }
-    subjects <- sort(unique(fit$standata$subject))
   }
   
   if(removeObs || removeObs > 0){
@@ -64,6 +67,7 @@ ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
   }
   
   # timerange ---------------------------------------------------------------
+
   if(timestep=='auto'){
     timediff <- diff(fit$standata$time)
     timediff <- timediff[timediff > 0]
@@ -71,22 +75,28 @@ ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
   }
   if(all(timerange == 'asdata')) timerange <- range(fit$standata$time[fit$standata$subject %in% subjects]) 
   if(is.na(timestep) && timerange[1]==timerange[2]) timestep=0
-
+  
   if(!'asdata' %in% timestep && fit$ctstanmodel$continuoustime) {
     if(fit$ctstanmodel$continuoustime != TRUE) stop('Discrete time model fits must use timestep = "asdata"')
-      times <- seq(timerange[1],timerange[2],timestep)
-      fit$standata <- standataFillTime(fit$standata,times,subject=subjects)
+    times <- seq(timerange[1],timerange[2],timestep)
+    fit$standata <- standataFillTime(fit$standata,times,subject=subjects)
   }
   
-  if(!length(fit$stanfit$stanfit@sim)==0) fit$standata$dokalmanrows <-
-    as.integer(fit$standata$subject %in% subjects)
+  #only do computations for rows of subjects requested, only really necessary for sampling approach because otherwise dropped from data
+  fit$standata$dokalmanrows <- as.integer(fit$standata$subject %in% subjects)
+  
   
   e=stan_constrainsamples(sm = fit$stanmodel,standata = fit$standata,
     savesubjectmatrices = subjectpars,
     samples = samples,cores=cores,savescores=TRUE,pcovn=5)
 
-  nsamples <-nrow(samples) #in case it was set NA, compute nsamples
   
+  e$ya <- e$ya[,,fit$standata$dokalmanrows==1,,drop=FALSE]
+  e$ycova <- e$ycova[,,fit$standata$dokalmanrows==1,,,drop=FALSE]
+  e$etaa <- e$etaa[,,fit$standata$dokalmanrows==1,,drop=FALSE]
+  e$etacova <- e$etacova[,,fit$standata$dokalmanrows==1,,,drop=FALSE]
+  
+  nsamples <-nrow(samples) #in case it was set NA, compute nsamples
   e$yprior <- array(e$ya[,1,,,drop=FALSE],dim=dim(e$ya)[-2])
   e$yupd <-  array(e$ya[,2,,,drop=FALSE],dim=dim(e$ya)[-2])
   e$ysmooth<-  array(e$ya[,3,,,drop=FALSE],dim=dim(e$ya)[-2])
@@ -111,12 +121,11 @@ ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
   nmanifest <- fit$standata$nmanifest
   
   
-  y=matrix(fit$standata$Y,ncol=ncol(fit$standata$Y),dimnames = list(NULL,fit$ctstanmodel$manifestNames))
-  y[y==99999] <- NA
   
-  out=list(time=cbind(fit$standata$time), 
-    y=y, 
-    llrow=e$llrow)
+  out=list(time=cbind(fit$standata$time[fit$standata$dokalmanrows==1]), 
+    y=matrix(fit$standata$Y[fit$standata$dokalmanrows==1,,drop=FALSE],ncol=ncol(fit$standata$Y),dimnames = list(NULL,fit$ctstanmodel$manifestNames)), 
+    llrow=e$llrow[,fit$standata$dokalmanrows==1,drop=FALSE])
+  out$y[out$y==99999] <- NA
   for(basei in c('y','eta')){
     for(typei in c('prior','upd','smooth')){
       for(typex in c('','cov')){
@@ -187,7 +196,7 @@ ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
     
     dimnames(out[[i]]) <- d
   }
-  out$id <- fit$standata$subject
+  out$id <- fit$standata$subject[fit$standata$dokalmanrows==1]
   
   return(out)
 }

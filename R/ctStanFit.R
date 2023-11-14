@@ -408,9 +408,12 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   if(any(!is.na(derrind))) warning('derrind argment is deprecated, computed automatically now')
   
   datalong <- data.frame(datalong)
-  
-  if(ctstanmodel$continuoustime == FALSE) { #set time variable for discrete time
-    datalong[ctstanmodel$timeName] <- 1:nrow(datalong)
+
+  if(!ctstanmodel$timeName %in% colnames(datalong) && !ctstanmodel$continuoustime) {
+    dtable <- data.table(datalong)
+    dtable[,.ObsCount:=1:.N,by=ctstanmodel$id]
+    datalong[[ctstanmodel$timeName]] <- dtable[['.ObsCount']]
+    rm(dtable)
   }
   
   datalong <- datalong[order(datalong[[ctstanmodel$subjectIDname]],datalong[[ctstanmodel$timeName]]),] #sort by subject, time.

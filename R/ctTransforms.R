@@ -1,3 +1,5 @@
+fdtb <- function(b, A, dt) solve(A,fdtA(A,dt)[[1]]-diag(1,nrow(A))) %*% b
+
 fQinf <- function(A,G){
   Ahatch=A %x% diag(1,nrow(A)) + 
     diag(1,nrow(A)) %x% A

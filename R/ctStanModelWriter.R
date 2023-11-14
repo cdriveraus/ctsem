@@ -1102,7 +1102,7 @@ if(verbose > 1){
         ycov[o,o] = quad_form_sym(makesym(etacov,verbose,1), Jy[o,]\') + MANIFESTcov[o,o]; // previously shifted measurement error down, but reverted
         for(wi in 1:nmanifest){ 
           // if(Y[rowi,wi] != 99999 || dosmoother==1) ycov[wi,wi] += square(MANIFESTVAR[wi,wi]);
-          if(manifesttype[wi]==1 && (Y[rowi,wi] != 99999  || dosmoother==1)) ycov[wi,wi] += abs((syprior[wi] - 1) .* (syprior[wi]));
+          if(manifesttype[wi]==1 && (Y[rowi,wi] != 99999  || dosmoother==1)) ycov[wi,wi] += (1-syprior[wi]) .* (syprior[wi]);
           if(manifesttype[wi]==2 && (Y[rowi,wi] != 99999  || dosmoother==1)) ycov[wi,wi] += square(abs((syprior[wi] - round(syprior[wi])))); 
         }
       }
@@ -1160,12 +1160,15 @@ if(verbose > 1){
       }
       
       ',if(savemodel) 'if(dosmoother==1) {
-        yb[1,rowi] = syprior[o];
-        etab[2,rowi] = state\';
-        ycovb[1,rowi] = ycov;
-        etacovb[2,rowi] = etacov;
-        ycovb[2,rowi] = quad_form_sym(makesym(etacov,verbose,1), Jy\') + MANIFESTcov;
-        yb[2,rowi] = MANIFESTMEANS[o,1] + LAMBDA[o,] * state[1:nlatent]\';
+        yb[1,rowi,] = syprior[o];
+        etab[2,rowi,] = state\';
+        ycovb[1,rowi,,] = ycov;
+        etacovb[2,rowi,,] = etacov;
+        ycovb[2,rowi,,] = quad_form_sym(makesym(etacov,verbose,1), Jy\') + MANIFESTcov;
+        yb[2,rowi,] = MANIFESTMEANS[o,1] + LAMBDA[o,] * state[1:nlatent]\';
+        for(wi in 1:nmanifest){ 
+          if(manifesttype[wi]==1) yb[2,rowi,wi] = inv_logit( yb[2,rowi,wi] );
+        }
         Jys[rowi,,] = Jy;
       }','
       
@@ -1469,9 +1472,6 @@ functions{
         if(i!=j) AQ[j,i] = triQ[z];
       }
     }
-    
-    if(verbose>1) print("AQ = ", AQ, "   triQ = ", triQ, "   O = ", O);
-    
     return AQ;
   }
   

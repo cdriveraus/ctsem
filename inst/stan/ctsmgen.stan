@@ -675,7 +675,7 @@ model{
     int rowi = rowx ? rowx : 1;
     if( rowx==0 ||
       (dokalmanrows[rowi] && 
-        subject[rowi] >= (firstsub - .1) &&  subject[rowi] <= (lastsub + .1))){ //if doing this row for this subject
+        subject[rowi] >= (firstsub - .1) &&  subject[rowi] <= (lastsub + .1))){ //if doing this row for this subset
     
     int si = rowx ? subject[rowi] : 0;
     int full = (dosmoother==1 || si ==0);
@@ -698,7 +698,7 @@ model{
       o0= whichequals(manifesttype,1,0);
     }
     
-    if(prevrow != 0 && rowi != 1) T0check = (si==subject[prevrow]) ? (T0check+1) : 0; //if same subject, add one, else zero
+    if(prevrow != 0) T0check = (si==subject[prevrow]) ? (T0check+1) : 0; //if same subject, add one, else zero
     if(T0check > 0){
       dt = time[rowi] - time[prevrow];
       dtchange = continuoustime ? dt!=prevdt : 0; 
@@ -1007,7 +1007,7 @@ if(verbose > 1){
         ycov[o,o] = quad_form_sym(makesym(etacov,verbose,1), Jy[o,]') + MANIFESTcov[o,o]; // previously shifted measurement error down, but reverted
         for(wi in 1:nmanifest){ 
           // if(Y[rowi,wi] != 99999 || dosmoother==1) ycov[wi,wi] += square(MANIFESTVAR[wi,wi]);
-          if(manifesttype[wi]==1 && (Y[rowi,wi] != 99999  || dosmoother==1)) ycov[wi,wi] += abs((syprior[wi] - 1) .* (syprior[wi]));
+          if(manifesttype[wi]==1 && (Y[rowi,wi] != 99999  || dosmoother==1)) ycov[wi,wi] += (1-syprior[wi]) .* (syprior[wi]);
           if(manifesttype[wi]==2 && (Y[rowi,wi] != 99999  || dosmoother==1)) ycov[wi,wi] += square(abs((syprior[wi] - round(syprior[wi])))); 
         }
       }
@@ -1062,12 +1062,15 @@ if(verbose > 1){
       }
       
       if(dosmoother==1) {
-        yb[1,rowi] = syprior[o];
-        etab[2,rowi] = state';
-        ycovb[1,rowi] = ycov;
-        etacovb[2,rowi] = etacov;
-        ycovb[2,rowi] = quad_form_sym(makesym(etacov,verbose,1), Jy') + MANIFESTcov;
-        yb[2,rowi] = MANIFESTMEANS[o,1] + LAMBDA[o,] * state[1:nlatent]';
+        yb[1,rowi,] = syprior[o];
+        etab[2,rowi,] = state';
+        ycovb[1,rowi,,] = ycov;
+        etacovb[2,rowi,,] = etacov;
+        ycovb[2,rowi,,] = quad_form_sym(makesym(etacov,verbose,1), Jy') + MANIFESTcov;
+        yb[2,rowi,] = MANIFESTMEANS[o,1] + LAMBDA[o,] * state[1:nlatent]';
+        for(wi in 1:nmanifest){ 
+          if(manifesttype[wi]==1) yb[2,rowi,wi] = inv_logit( yb[2,rowi,wi] );
+        }
         Jys[rowi,,] = Jy;
       }
       
@@ -1117,7 +1120,7 @@ pop_PARS = PARS; pop_T0MEANS = T0MEANS; pop_LAMBDA = LAMBDA; pop_DRIFT = DRIFT; 
   
  } // end si loop (includes sub 0)
   
-  prevrow = rowi; //update previous row marker only after doing necessary calcs
+  prevrow = rowx; //update previous row marker only after doing necessary calcs
 }//end active rowi
 
 if(savescores){

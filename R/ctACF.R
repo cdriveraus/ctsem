@@ -7,7 +7,7 @@
 #'
 #' @param dat The input data in data frame or data table format.
 #' @param varnames Character vector of variable names in the data to compute the ACF for. 'auto' uses all columns that are not time / id. 
-#' @param ccfnames Character vector of variable names in the data to compute cross correlation for. 'all' uses all variables in varnames. 
+#' @param ccfnames Character vector of variable names in the data to compute cross correlation for. 'all' uses all variables in varnames, NA uses none.  
 #' @param idcol The name of the column containing subject IDs (default is 'id').
 #' @param timecol The name of the column containing time values (default is 'time').
 #' @param plot A logical value indicating whether to create a plot (default is TRUE).
@@ -49,10 +49,9 @@ ctACF <- function(dat, varnames='auto',ccfnames='all',idcol='id', timecol='time'
   }
   if(time.max == 'auto')time.max = 10 * quantile(dat[,.timediff:= c(NA,diff(get(timecol))),by=idcol][['.timediff']],probs=.9,na.rm=TRUE)
   
-  
-  
   if(length(varnames)==1 && varnames[1] == 'auto') varnames <- colnames(dat)[!colnames(dat) %in% c(idcol,timecol,'.timediff')]
-  if(length(ccfnames )==1 && ccfnames=='all') ccfnames=varnames
+  if(length(ccfnames )==1 && ccfnames %in% 'all') ccfnames=varnames
+  if(length(ccfnames)==1 && is.na(ccfnames)) ccfnames=NULL
   acfnames <- varnames
   varnames <- unique(c(acfnames,ccfnames))
   # Function to remove rows with missing values before and after non-missing values
@@ -81,12 +80,29 @@ ctACF <- function(dat, varnames='auto',ccfnames='all',idcol='id', timecol='time'
   #   }, by = idcol]
   # }
   
-  
+  # for(vi in v){ #demean via random effects
+  # browser()
+  #   model <- lmer(formula=paste0(vi,' ~ 1 + (1 | id)'), data = dat)
+  #   
+  #   # Extract estimated random intercept and SD
+  #   random_intercept <- as.numeric(ranef(model)$id[, "(Intercept)"])
+  #   
+  #   datsd <- dat[,sdvi:=sd(get(vi),na.rm=TRUE),by=id]
+  #   datsd <- datsd[,weight:=sum(!is.na(get(vi)))/.N,by=id]
+  #   weights <- datsd$weight
+  #   model <- lmer(formula='sdvi ~ 1 + (1 | id)', data = datsd,weights=weights)
+  #   random_sd <- as.numeric(ranef(model)$id[, "(Intercept)"])
+  #   
+  #   
+  #   # Scale the 'Variable' column using the estimated parameters
+  #   dat[, (vi) := (Variable - random_intercept) / random_sd]
+  #   }
+  # 
   
   
   counter <- 0
   for(vari in acfnames){
-    for(varj in ccfnames){
+    for(varj in unique(c(vari,ccfnames))){
       counter <- counter + 1
       varji <- unique(c(vari,varj))
       # browser()

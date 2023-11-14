@@ -292,11 +292,6 @@ ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
   standata$difftype <- 0L;
   standata$dotipred <- 1L;
   
-  
-  if(!ctm$timeName %in% colnames(datalong) && !ctm$continuoustime) {
-    datalong[[ctm$timeName]] <- 1:nrow(datalong)
-  }
-  
   # #t0 index
   # T0check<-rep(1,nrow(datalong))
   # for(i in 2:nrow(datalong)){

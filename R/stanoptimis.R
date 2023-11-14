@@ -447,7 +447,7 @@ standataFillTime <- function(standata, times, subject){
   if(any(!times %in% long$time)){ #if missing any times, add empty rows
   nlong <- do.call(rbind,
     lapply(subject, function(si){
-      stimes <- times[!times %in% long$time[long$subject==si]]
+      stimes <- times[!round(times,10) %in% round(long$time,10)[long$subject==si]]
       data.frame(subject=si,time=stimes)
     })
   )

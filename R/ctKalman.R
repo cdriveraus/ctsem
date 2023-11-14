@@ -118,13 +118,12 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,timestep='auto',plot=TRUE,ret
 
 ctKalman<-function(fit, timerange='asdata', timestep='auto',
   subjects=fit$setup$idmap[1,1], removeObs = FALSE, plot=FALSE, 
-  standardisederrors=TRUE,realid=TRUE,...){
+  standardisederrors=FALSE,realid=TRUE,...){
   
   
   if('ctsemFit' %in% class(fit)) stop('This function is no longer supported with ctsemOMX, try ctsem')
   if(!'ctStanFit' %in% class(fit)) stop('fit object is not from ctStanFit!')
-  
-  
+
   # get subjects ------------------------------------------------------------
   idmap <- fit$setup$idmap #store now because we may reduce it
   subjectsarg <- subjects
@@ -138,10 +137,12 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
   }
   subjects <- sort(subjects) #in case not entered in ascending order
   
-  out <- ctStanKalman(fit,pointest=length(fit$stanfit$stanfit@sim)==0, removeObs=removeObs, subjects=subjects,timestep = timestep,
+  out <- ctStanKalman(fit,pointest=TRUE, 
+    removeObs=removeObs, subjects=subjects,timestep = timestep,
     collapsefunc=mean, indvarstates = FALSE,standardisederrors = standardisederrors) #extract state predictions
-  # browser()
+
   out <- meltkalman(out)
+  if(timerange!='asdata') out <- out[out$Time >= min(timerange) & out$Time <= max(timerange),]
   if(realid){
     out$Subject <- factor(idmap[
       match(out$Subject,idmap[,2]),1])
@@ -179,7 +180,7 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
 #' @param polygonsteps Number of steps to use for uncertainty band shading. 
 #' @param polygonalpha Numeric for the opacity of the uncertainty region.
 #' @param facets when multiple subjects are included in multivariate plots, the default is to facet plots 
-#' by variable type. This can be set to NA for no facets, or \code{ggplot2::vars(Subject)} for facetting by subject.
+#' by variable type. This can be set to NA for no facets, or "Subject" for facetting by subject.
 #' @param ... not used.
 #' @return A ggplot2 object. Side effect -- Generates plots.
 #' @method plot ctKalmanDF
@@ -200,59 +201,53 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
 plot.ctKalmanDF<-function(x, subjects=unique(x$Subject), kalmanvec=c('y','yprior'),
   errorvec='auto', errormultiply=1.96,plot=TRUE,elementNames=NA,
   polygonsteps=10,polygonalpha=.1,
-  facets=vars(Variable),
+  facets='Variable',
   ...){
+
+  if(!'ctKalmanDF' %in% class(x)) stop('not a ctKalmanDF object')
   
-  kdf <- (x)
+  if(FALSE) Time <- Value <- Subject <- Row <- Variable <- Element <- NULL
+  colnames(x)[colnames(x) %in% 'Row'] <- "Variable"
+  colnames(x)[colnames(x) %in% 'value'] <- "Value"
   
-  if(!'ctKalmanDF' %in% class(kdf)) stop('not a ctKalmanDF object')
-  
-  if(1==99) Time <- Value <- Subject <- Row <- Variable <- Element <- NULL
-  colnames(kdf)[colnames(kdf) %in% 'Row'] <- "Variable"
-  colnames(kdf)[colnames(kdf) %in% 'value'] <- "Value"
-  
-  if(any(!is.na(elementNames))) kdf <- subset(kdf,Variable %in% elementNames)
+  if(any(!is.na(elementNames))) x <- subset(x,Variable %in% elementNames)
+  x <- subset(x,Subject %in% subjects)
+  x<-subset(x,Element %in% kalmanvec)
   
   klines <- kalmanvec[grep('(prior)|(upd)|(smooth)',kalmanvec)]
   if(all(errorvec %in% 'auto')) errorvec <- klines
   errorvec <- errorvec[grep('(prior)|(upd)|(smooth)',errorvec)]
-  # kpoints<- kalmanvec[-grep('(prior)|(upd)|(smooth)',kalmanvec)]
-  colvec=ifelse(length(subjects) > 1, 'Subject', 'Variable')
+  colvec='Variable'
+  if(length(subjects) > 1){
+    colvec=ifelse(facets %in% 'Subject','Variable','Subject')
+  }
   ltyvec <- setNames( rep(0,length(kalmanvec)),kalmanvec)
   ltyvec[kalmanvec %in% klines] = setNames(1:length(klines),klines)
-  # if(length(kalmanvec) > length(klines)) ltyvec <- 
-  #   c(setNames(rep(0,length(kalmanvec)-length(klines)),kalmanvec[!kalmanvec %in% klines]),
-  #     ltyvec)
+
   shapevec<-ltyvec
   shapevec[shapevec %in% 0] <- 1
   shapevec[shapevec>0] <- NA
   shapevec[ltyvec %in% 0] <- 19
-  # 
-  d<-subset(kdf,Element %in% kalmanvec)
-  
-  g <- ggplot(d,
+
+  g <- ggplot(x,
     aes_string(x='Time',y='Value',colour=colvec,linetype='Element',shape='Element')) +
     scale_linetype_manual(breaks=names(ltyvec),values=ltyvec)+
     guides(linetype='none',shape='none')+
     scale_shape_manual(breaks=names(shapevec),values=shapevec)
-  # labs(linetype='Element',shape='Element',colour='Element',fill='Element')+
-  # guides(fill=FALSE)
-  # 
+
   if(length(unique(ltyvec[!is.na(ltyvec)]))<1) g<-g+guides(linetype='none')
-  # if(length(unique(shapevec[!is.na(shapevec)]))<1) 
-  # g<-g+ guides(shape=FALSE)
-  if(!is.na(facets[1]) && length(subjects) > 1 && length(unique(subset(kdf,Element %in% kalmanvec)$Variable)) > 1){
+
+  if(!is.na(facets[1]) && length(subjects) > 1 && length(unique(subset(x,Element %in% kalmanvec)$Variable)) > 1){
     g <- g+ facet_wrap(facets,scales = 'free') 
   } 
-  g <- g + ylab(ifelse(length(unique(d$Variable))==1, unique(d$Variable),'Variable'))
+  g <- g + ylab(ifelse(length(unique(x$Variable))==1, unique(x$Variable),'Variable'))
   
   polygonsteps <- polygonsteps + 1
   polysteps <- seq(errormultiply,0,-errormultiply/(polygonsteps+1))[c(-polygonsteps+1)]
   if(any(!is.na(errorvec))){
     for(si in polysteps){
-      # alphasum <- alphasum + polygonalpha/polygonsteps
       
-      d2 <- subset(d,Element %in% errorvec)
+      d2 <- subset(x,Element %in% errorvec)
       d2$sd <- d2$sd *si
       
       if(length(subjects) ==1){
@@ -280,8 +275,7 @@ plot.ctKalmanDF<-function(x, subjects=unique(x$Subject), kalmanvec=c('y','yprior
     geom_point()+
     theme_minimal()+
     guides(fill='none')
-  
-  # if(plot) suppressWarnings(print(g))
+
   return(g)
   
 }

@@ -166,8 +166,9 @@ ctPostPredPlots <- function(fit){
   if(smoothedDT) gg <- gg + geom_smooth() else gg <- gg + stat_summary(data=datsum[NobsDT > 10 & !is.na(TimeInterval),],fun.data = mean_cl_boot,geom='point')
   print(gg)
   
-  print(ggplot(datsum,aes(x=id,y=ObsVsGenID,colour=factor(id)))+
-      geom_point(alpha=.3)+
+  # browser()
+  print(ggplot(datsum,aes(x=id,y=ObsVsGenID,colour=factor(sample(id))))+
+      geom_point(alpha=.9)+
       ylab('Prop. observed data greater than generated')+
       # scale_color_manual(values = 
           # rep(RColorBrewer::brewer.pal(10,name = 'RdBu'), length.out = length(unique(datsum$id))))+
