@@ -15,7 +15,9 @@
 #'        the timestep based on data distribution (default is 'auto'). 
 #'        In this case the timestep is computed as half of the median for time intervals in the data.
 #' @param time.max The maximum time lag to compute the ACF (default is 10). If 'auto', is set to 10 times the 90th percentile interval in the data.
-#' @param nboot The number of bootstrap samples for confidence interval estimation (default is 100).
+#' @param nboot The number of bootstrap samples for confidence interva1l estimation (default is 100).
+#' @param scale if TRUE, scale variables based on within-subject standard deviation.
+#' @param center if TRUE, center variables based on within-subject mean.
 #' @param ... additional arguments (such as demean=FALSE) to pass to the \code{stats::acf} function.
 #'
 #' @return If 'plot' is TRUE, the function returns a ggplot object of the ACF plot. If 'plot' is
@@ -35,25 +37,28 @@
 #'
 #' @export
 ctACF <- function(dat, varnames='auto',ccfnames='all',idcol='id', timecol='time',
-  plot=TRUE,timestep='auto',time.max='auto',nboot=100,...){
+  plot=TRUE,timestep='auto',time.max='auto',nboot=100,scale=FALSE, center=FALSE,...){
   
   if(requireNamespace('collapse')){
   } else stop('collapse package needed for ACF!')
   
   if(F) .timediff = ACFhigh= ACFlow= Element= Estimate= SignificanceLevel=  TimeInterval= Variable= boot= ci=NULL
   dat=copy(data.table(dat))
-  if(timestep == 'auto'){
-    timestep = 0.5 * quantile(dat[,.timediff:= c(NA,diff(get(timecol))),by=idcol][['.timediff']],
-      probs=.5,na.rm=TRUE)
-    message('Timestep used: ',timestep)
-  }
-  if(time.max == 'auto')time.max = 10 * quantile(dat[,.timediff:= c(NA,diff(get(timecol))),by=idcol][['.timediff']],probs=.9,na.rm=TRUE)
   
   if(length(varnames)==1 && varnames[1] == 'auto') varnames <- colnames(dat)[!colnames(dat) %in% c(idcol,timecol,'.timediff')]
   if(length(ccfnames )==1 && ccfnames %in% 'all') ccfnames=varnames
   if(length(ccfnames)==1 && is.na(ccfnames)) ccfnames=NULL
   acfnames <- varnames
   varnames <- unique(c(acfnames,ccfnames))
+  
+  if(timestep == 'auto'){
+    timestep = 0.5 * quantile(dat[,.timediff:= c(NA,diff(get(timecol))),by=idcol][['.timediff']],
+      probs=.5,na.rm=TRUE)
+    message('Timestep used: ',timestep)
+  }
+  if(time.max == 'auto')time.max = 2/3*mean(dat[,.timerange:= diff(range(get(timecol))),by=idcol][['.timerange']])
+  
+  
   # Function to remove rows with missing values before and after non-missing values
   # remove_rows_with_missing <- function(dt, col_name) {
   #   dt[, {
@@ -80,38 +85,30 @@ ctACF <- function(dat, varnames='auto',ccfnames='all',idcol='id', timecol='time'
   #   }, by = idcol]
   # }
   
-  # for(vi in v){ #demean via random effects
-  # browser()
-  #   model <- lmer(formula=paste0(vi,' ~ 1 + (1 | id)'), data = dat)
-  #   
-  #   # Extract estimated random intercept and SD
-  #   random_intercept <- as.numeric(ranef(model)$id[, "(Intercept)"])
-  #   
-  #   datsd <- dat[,sdvi:=sd(get(vi),na.rm=TRUE),by=id]
-  #   datsd <- datsd[,weight:=sum(!is.na(get(vi)))/.N,by=id]
-  #   weights <- datsd$weight
-  #   model <- lmer(formula='sdvi ~ 1 + (1 | id)', data = datsd,weights=weights)
-  #   random_sd <- as.numeric(ranef(model)$id[, "(Intercept)"])
-  #   
-  #   
-  #   # Scale the 'Variable' column using the estimated parameters
-  #   dat[, (vi) := (Variable - random_intercept) / random_sd]
-  #   }
-  # 
-  
+  if(scale || center){
+    dat[[idcol]] <- factor(dat[[idcol]])
+    for(vi in varnames){ #scale each subject (skip demeaning so we can see trait variance)
+      model <- lme4::lmer(formula=paste0(vi,' ~ 0+(1 | ',idcol,')'), data = dat)
+      randomint=as.data.table(lme4::ranef(model))
+      setnames(randomint,old = 'grp',new=idcol)
+      dat <- merge(dat,randomint[,c('id','condval'),with=FALSE],by = idcol)
+      dat[, (vi) := (get(vi) - condval) / sd(get(vi),na.rm=TRUE)+condval/sd(get(vi),na.rm=TRUE),by=idcol]
+      dat[['condval']] <- NULL
+    }
+    dat[[idcol]] <- as.character(dat[[idcol]])
+  }
   
   counter <- 0
   for(vari in acfnames){
     for(varj in unique(c(vari,ccfnames))){
       counter <- counter + 1
       varji <- unique(c(vari,varj))
-      # browser()
+      
       vdat <- dat[,c(idcol,timecol,varji),with=FALSE]
       vdat <- vdat[apply(vdat[,(varji),with=F],1,function(x) !all(is.na(x))),] #remove rows with total missingness first
       for(col in varji) set(vdat, j = col, value = as.numeric(vdat[[col]])) #ensure cols are numeric!
       # vdat[apply(.SD,1,function(x) !(all(is.na(x)))), ,.SDcols=varji]
       # vdat<-remove_rows_with_missing(vdat,varji)
-      # browser()
       # for(varjik in varji) vdat[,(varjik):=scale(get(varjik)),by=idcol]
       vdat = data.table(ctDiscretiseData(vdat,timecol = timecol,idcol = idcol,timestep=timestep)) #collapse to specified time step
       
@@ -142,12 +139,11 @@ ctACF <- function(dat, varnames='auto',ccfnames='all',idcol='id', timecol='time'
             paste0('s',round(rnorm(1),5),vdat[[idcol]][r])
           }))
         }
-        
         if(vari==varj) acfout <- collapse:::psacf(vdat[[vari]][rows], 
-          g=subjects,lag.max=ceiling(time.max/timestep), 
-          plot=F,...)$acf[,1,1] #na.action=na.pass
+          g=subjects,gscale=FALSE,lag.max=ceiling(time.max/timestep), 
+          plot=F,...)$acf[,1,1] #
         if(vari!=varj) acfout <- collapse:::psccf(x = vdat[[vari]][rows],y = vdat[[varj]][rows],
-          g=subjects,
+          g=subjects,gscale=FALSE,
           lag.max =ceiling(time.max/timestep),plot=FALSE,...)$acf[,1,1]
         
         out <- data.table(ACF=acfout)
@@ -175,20 +171,59 @@ ctACF <- function(dat, varnames='auto',ccfnames='all',idcol='id', timecol='time'
   } else return(fullACF)
 }
 
-ctACFquantiles<-function(ACF,probs=c(.025,.975)){
+ctACFquantiles<-function(ctacfobj,quantiles=c(.025,.5,.975),separateLearnRates=FALSE,df='auto'){
   
-  ACF[,ACFlow:=quantile(ACF[Sample!=0],probs = probs[1],na.rm = TRUE),by=TimeInterval]
-  ACF[,ACFhigh:=quantile(ACF[Sample!=0],probs = probs[2],na.rm = TRUE),by=TimeInterval]
-  ACF<- melt(ACF[Sample==0,colnames(ACF)[colnames(ACF)!='Sample'],with=FALSE],
-    measure.vars = c('ACF','ACFlow','ACFhigh'),value.name = 'ACF',variable.name='Estimate')
-  ACF[,ci:=grepl('(high)|(low)',Estimate)]
-  return(ACF)
+  if(df =='auto'){
+    ndt=length(unique(ctacfobj$TimeInterval))
+    dfmax=ndt-1
+    df=min(c(dfmax,
+      ceiling(ndt/3)))
+  }
+  ctacfobj <- data.table(data.frame(ctacfobj))
+  
+  if(!requireNamespace('qgam')) stop("qgam package required for ACF plots: install.packages('qgam')")
+  
+  learnrate <- NA #estimate the learning rates based on one variable combination, but if that fails, try the next until one succeeds. 
+  for(vari in unique(ctacfobj$Variable)){
+    if(is.na(learnrate[1])){
+      try({
+        learnrate=qgam::tuneLearnFast(data = ctacfobj[Variable %in% vari,],qu = quantiles,
+          form = ACF ~ s(TimeInterval,bs='cc',k=df),
+          control=list(tol=.Machine$double.eps^0.25,progress=FALSE),
+          argGam=list(select=TRUE))
+      })
+    }
+  }
+  # browser()
+  for(vari in unique(ctacfobj$Variable)){
+    if(separateLearnRates) try({
+      learnrate=qgam::tuneLearnFast(data = ctacfobj[Variable %in% vari,],qu = quantiles,
+        form = ACF ~ s(TimeInterval,bs='tp',k=df),
+        control=list(tol=.Machine$double.eps^0.1,progress=FALSE),
+        argGam=list(select=TRUE,optimizer=c('outer','bfgs')))
+    })
+    
+    qg=qgam::mqgam(data = ctacfobj[Variable %in% vari,],qu = quantiles,
+      form = ACF ~ s(TimeInterval,bs='tp',k=df),
+      # control=list(tol=.Machine$double.eps^0.1,progress=T),
+      err=learnrate$err,
+      lsig = learnrate$lsig,
+      argGam=list(select=TRUE,gamma=2))
+    pred=qgam::qdo(obj = qg,qu = quantiles, fun = predict,newdata=ctacfobj[Variable %in% vari,])
+    ctacfobj[Variable %in% vari,paste0('Q',quantiles*100,'%'):=pred]
+    # })
+  }
+  return(ctacfobj)
 }
 
 #' Plot an approximate continuous-time ACF object from ctACF
 #'
 #' @param ctacfobj object
 #' @param df df for the basis spline.
+#' @param separateLearnRates if TRUE, estimate the learning rate for the quantile splines for each combination of variables. Slower but theoretically more accurate. 
+#' @param reducedXlim if non-zero, n timesteps are removed from the upper and lower end of the x range 
+#' where the spline estimates are less likely to be reasonable. 
+#' @param estimateSpline if TRUE, quantile spline regression is used, otherwise the samples are simply plotted as lines and the other arguments here are not used.
 #'
 #' @return a ggplot object
 #' @export
@@ -198,37 +233,35 @@ ctACFquantiles<-function(ACF,probs=c(.025,.975)){
 #' # Example usage:
 #' head(ctstantestdat)
 #' ac=ctACF(ctstantestdat,varnames=c('Y1'),idcol='id',timecol='time',timestep=.5,nboot=5,plot=FALSE)
-#' plotctACF(ac)
-plotctACF <- function(ctacfobj,df='auto'){
-  if(df =='auto'){
-    ndt=length(unique(ctacfobj$TimeInterval))
-    dfmax=ndt-1
-    df=min(c(dfmax,
-      ceiling(sqrt(ndt))+5))
+#' plotctACF(ac, reducedXlim=0)
+plotctACF <- function(ctacfobj,df='auto',quantiles=c(.025,.5,.975),
+  separateLearnRates=FALSE, reducedXlim=1,estimateSpline=TRUE){
+  
+  
+  # browser()
+  # ctacfobj=melt(ctacfobj,measure.vars = paste0('Q',quantiles*100,'%'),variable.name = 'Quantile',value.name = 'Corr')
+  if(estimateSpline){
+    ctacfobj=copy(ctACFquantiles(ctacfobj,quantiles=quantiles,
+      separateLearnRates=separateLearnRates,df=df))
+    ctacfobj <- ctacfobj[abs(TimeInterval) < min(tail(sort(unique(TimeInterval)),reducedXlim)),] #drop the ends of the spline
+    gg <- ggplot(ctacfobj,aes(y=!!sym(paste0('Q',quantiles[2]*100,'%')),
+      x=TimeInterval))+
+      geom_ribbon(aes(ymin=!!sym(paste0('Q',quantiles[1]*100,'%')),
+        ymax=!!sym(paste0('Q',quantiles[3]*100,'%'))),alpha=.2,linetype='dashed',linewidth=.5)+
+      geom_line(linewidth=1)+
+      # guides(linewidth='none',linetype='none')+
+      geom_hline(yintercept=0,linetype='dotted')+
+      geom_vline(xintercept=0,linetype='dotted')+
+      ylab('ACF')+
+      theme_bw()
+  } else {
+    gg <- ggplot(ctacfobj,aes(y=ACF,x=TimeInterval,group=Sample))+
+      geom_line(alpha=.2)+
+      geom_hline(yintercept=0,linetype='dotted')+
+      geom_vline(xintercept=0,linetype='dotted')+
+      ylab('ACF')+
+      theme_bw()
   }
-      
-  gg <- ggplot((ctacfobj),aes(y=ACF,
-    # colour=Estimate,
-    # linewidth=ci,
-    # linetype=ci,
-    # group=Estimate,
-    x=TimeInterval))+
-    scale_linewidth_manual(values = c(1,.1))+
-    scale_linetype_manual(values = c('solid','dashed'))+
-    # geom_smooth(se=T,method='gam', formula = y ~ s(x, bs = "tp"))+
-    stat_quantile(method='rqss', formula=formula(paste0('y ~ bs(x,df=',df,')')), 
-      quantiles = .5, linewidth=2)+
-    stat_quantile(method='rqss', formula=formula(paste0('y ~ bs(x,df=',df,')')), 
-      quantiles = c(.025,.975), linetype='dashed')+
-    # geom_point(alpha=.1)+
-    guides(linewidth='none',linetype='none')+
-    # geom_hline(aes(yintercept=SignificanceLevel),colour='blue',linetype='dotted')+
-    # geom_hline(aes(yintercept=-SignificanceLevel),colour='blue',linetype='dotted')+
-    geom_hline(yintercept=0)+
-    geom_vline(xintercept=0)+
-    ylab('ACF')+
-    # coord_cartesian(ylim=c(-1,1))+
-    theme_bw()
   
   if(length(unique(ctacfobj[['Variable']])) > 1) gg <- gg+facet_wrap(vars(Variable),scales = 'free')
   return(gg)

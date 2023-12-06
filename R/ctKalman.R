@@ -142,6 +142,7 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
     collapsefunc=mean, indvarstates = FALSE,standardisederrors = standardisederrors) #extract state predictions
 
   out <- meltkalman(out)
+  out[['Subject']] <- factor(subjects[out[['Subject']]]) #correct for subjects being set 1:Nsub by ctStanKalman
   if(!all(timerange %in% 'asdata')) out <- out[out$Time >= min(timerange) & out$Time <= max(timerange),]
   if(realid){
     out$Subject <- factor(idmap[

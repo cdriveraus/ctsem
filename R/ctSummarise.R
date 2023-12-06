@@ -23,6 +23,8 @@ ctSummarise<-function(sf,name='ctSummary',cores=2, times=seq(0,10,.1),quantiles=
     summ=summary(sf)
     if(is.null(sf$generated) && ctCheckFit) sf <- ctStanGenerateFromFit(fit = sf,nsamples = nsamples,fullposterior = FALSE,cores = cores)
     cp <- ctStanContinuousPars(sf)
+    cpl <- ctStanContinuousPars(sf,calcfuncargs = list(probs=c(.025)))
+    cph <- ctStanContinuousPars(sf,calcfuncargs = list(probs=c(.975)))
     
     n<-sapply(unique(ydat[[sm$subjectIDname]]),function(x) sum(ydat[[sm$subjectIDname]] %in% x))
     whichsubfull <- unique(ydat[[sm$subjectIDname]])[order(n,decreasing = TRUE)][1:(min(10,length(n)))]
@@ -90,16 +92,28 @@ ctSummarise<-function(sf,name='ctSummary',cores=2, times=seq(0,10,.1),quantiles=
       subset(summ$popmeans, summ$popmeans$`2.5%` > 0 & summ$popmeans$`97.5%` > 0 | summ$popmeans$`2.5%` < 0 & summ$popmeans$`97.5%` < 0)
     )
     cat("\n")
-    print('Par matrices')
+    print('Par matrices - 2.5%')
+    print(cpl)
+    print('Par matrices - 50%')
     print(cp)
-    print('T0VAR correlation')
+    print('Par matrices - 97.5%')
+    print(cph)
+    print('T0VAR correlation - 2.5%, 50%, 97.5%')
+    print(cov2cor(cpl$T0cov))
     print(cov2cor(cp$T0cov))
-    print('DIFFUSION correlation')
+    print(cov2cor(cph$T0cov))
+    print('DIFFUSION correlation - 2.5%, 50%, 97.5%')
+    print(cov2cor(cpl$DIFFUSIONcov))
     print(cov2cor(cp$DIFFUSIONcov))
-    print('asymptotic DIFFUSION correlation')
+    print(cov2cor(cph$DIFFUSIONcov))
+    print('asymptotic DIFFUSION correlation - 2.5%, 50%, 97.5%')
+    print(cov2cor(cpl$asymDIFFUSION))
     print(cov2cor(cp$asymDIFFUSION))
-    print('Residual correlation')
+    print(cov2cor(cph$asymDIFFUSION))
+    print('Residual correlation - 2.5%, 50%, 97.5%')
+    print(cov2cor(cpl$MANIFESTcov))
     print(cov2cor(cp$MANIFESTcov))
+    print(cov2cor(cph$MANIFESTcov))
     sink()
     
     # #Tables output -> makes word document
@@ -135,6 +149,37 @@ ctSummarise<-function(sf,name='ctSummary',cores=2, times=seq(0,10,.1),quantiles=
     sink(file = paste0(name,'_tables.txt'))
     print(ftlist,row.names=FALSE)
     sink()
+    
+
+# apa tables latex --------------------------------------------------------
+if(requireNamespace('papaja')){
+    dir.create('tables')
+    stables <- summ
+    
+    if(!is.null(stables$tipreds)){
+      stables$tipreds[,'z'] <- NULL
+      rownames(stables$tipreds) <- gsub('tip_','',rownames(stables$tipreds),fixed=TRUE)
+    }
+    
+    
+    for(listi in c('rawpopcorr','popsd','popmeans','parmatrices','tipreds')){
+      if(!is.null(stables[[listi]])){
+        if(listi!='parmatrices'){
+          stables[[listi]]<- cbind(Parameter=rownames(stables[[listi]]),stables[[listi]])
+          rownames(stables[[listi]])<-NULL
+          stables[[listi]] <- stables[[listi]][,c('Parameter','mean','sd','2.5%','97.5%')]
+          colnames(stables[[listi]]) <- c('Parameter','Est.','SD','2.5%','97.5%')
+        }
+        sink(file = paste0('./tables/',listi,'.tex'))
+        apatab <- papaja::apa_table(stables[[listi]],format = 'latex')
+        apatab <- gsub('\n\n\n\\begin{table}[tbp]\n\n','',apatab,fixed=T)
+        apatab <- gsub('\n\n\\end{table}\n\n\n','',apatab,fixed=T)
+        cat(apatab)
+        sink()
+      }}    
+} else message('Latex tables not created, papaja package needs to be installed')
+    
+    
     
     #   ftlist <- lapply(ftlist,function(x){
     #     if(!is.null(x)){
@@ -307,18 +352,41 @@ ctSummarise<-function(sf,name='ctSummary',cores=2, times=seq(0,10,.1),quantiles=
     rm(k);rm(krem)
     
     #Discrete pars plots
+    ctd=ctStanDiscretePars(ctstanfitobj = sf,times = times,nsamples = 500,plot=T,ggcode=T)$dt
+    ctdo=ctStanDiscretePars(ctstanfitobj = sf,times = times,nsamples = 500,observational = T,plot=T,ggcode=T)$dt
+    d=rbind(
+      data.frame(Type='Intervention',ctd),
+      data.frame(Type='Observation',ctdo)
+    )
+    d=data.table(d)[row %in% sf$ctstanmodelbase$latentNames[latents] & 
+        col %in% sf$ctstanmodelbase$latentNames[latents],]
+    
     pdf(paste0(name,'_discretepars.pdf'))
-    dtpars=ctStanDiscretePars(sf,plot=FALSE,times=times) #,indices=cbind(1:9,i))
-    dtparso=ctStanDiscretePars(sf,plot=FALSE,observational = TRUE,times=times) #
-    # dtparsc=ctStanDiscretePars(sf,plot=FALSE,observational = TRUE,cov = TRUE,nsamples = 500,times=times) #
-    # dtparsoc=ctStanDiscretePars(sf,plot=FALSE,observational = FALSE,cov = TRUE,nsamples = 500,times=times) #
-    for(i in 1:sf$ctstanmodelbase$n.latent){
-      print(ctStanDiscreteParsPlot(dtpars,indices=cbind(latents,i),quantiles = quantiles))
-      print(ctStanDiscreteParsPlot(dtparso,indices=cbind(latents,i),quantiles=quantiles))
-      # print(ctStanDiscreteParsPlot(dtparsc,indices=cbind(1:9,i),quantiles = c(.4,.5,.6)))
-      # print(ctStanDiscreteParsPlot(dtparsoc,indices=cbind(1:9,i),quantiles = c(.4,.5,.6)))
-    }
+    print(
+      ggplot2::ggplot(data = d,mapping=aes(y=value,x=Time.interval/4,
+        colour=Type,
+        fill=Type))+
+        theme_bw()+ylab("Temporal regression coefficient")+
+        stat_summary( #ribbon
+          fun.data = function(x) list(
+            y=quantile(x,quantiles[2]),
+            ymin=quantile(x,quantiles[1]), 
+            ymax=quantile(x,quantiles[3])
+          ),
+          geom = "ribbon",
+          alpha= 0.3,
+          linetype=3)+
+        stat_summary( #center line
+          fun.data = function(x) list(y=quantile(x,0.5)),
+          geom = "line")+
+        xlab('Time interval in days')+
+        scale_colour_manual(values = c('red','blue'))+
+        scale_fill_manual(values = c('red','blue'))+
+        facet_grid(rows=vars(row),cols=vars(col))+
+        theme(legend.position = 'bottom')
+    )
     dev.off()
+    
     
     #tipred effect plots
     if(ctStanTIpredEffects){

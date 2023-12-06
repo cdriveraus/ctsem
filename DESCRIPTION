@@ -73,7 +73,8 @@ Suggests:
     shiny,
     gridExtra,
     arules,
-    collapse
+    collapse,
+    qgam
 VignetteBuilder: knitr
 RoxygenNote: 7.2.3
 SystemRequirements: GNU make
