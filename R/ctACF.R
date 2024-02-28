@@ -1,3 +1,112 @@
+ctACFpostpred <- function(fit,cores=ceiling(parallel::detectCores()/2),
+  nsamples=50,splitbycovs=TRUE,quantiles=c(.25,.5,.75),ylims=as.numeric(c(NA,NA)),xlims=as.numeric(c(NA,NA)),df='auto'){
+  
+  v <- fit$ctstanmodelbase$manifestNames
+  
+  dat <- ctsem:::standatatolong(fit$standata,origstructure = TRUE,ctm = fit$ctstanmodelbase)
+  truedat <- melt(data.table(row = 1:nrow(dat), dat), 
+    measure.vars = v, variable.name = 'V1', value.name = 'TrueValue')
+  
+  if(is.null(fit$generated)) {
+    message('No generated data found, generating -- for faster repeated performance use ctStanGenerateFromFit first')
+    fit <- ctStanGenerateFromFit(fit,cores=cores,nsamples = nsamples)
+  }
+  gendat <- as.data.table(fit$generated$Y)
+  gendat[, row := as.integer(row)]
+  gendat <- merge(gendat, truedat, by = c('row', 'V1'))
+  
+  #consider setnames here to set id and time names properly
+  
+  #acf/ccf on generated data
+  gendatwide <- dcast.data.table(gendat,formula('sample + id + time ~ V1'),
+    value.var = 'value')
+  gendatwide[,id:=interaction(sample,id)]
+  Nsamples <- 50
+  
+  compareDirection <- function(dir,v1,v2){ #function to do conditional greater / less than
+    if(dir=='high') return(v1 > v2) else return(v1 <= v2)
+  }
+  
+  
+  splitseq <- NA
+  if(splitbycovs) splitseq <- c(NA,fit$ctstanmodelbase$TIpredNames)
+  
+  for(vari in v){
+    for(spliti in splitseq){
+      for(diri in c('high','low')){
+        if(is.na(spliti) & diri == 'low') next #only calculate for high if no split
+        
+        #compute split averages per subject and select data
+        if(!is.na(spliti)){ 
+          dat[,.splitmedian:=median(get(spliti),na.rm=TRUE),by=id]
+          gendatwide[,.splitmedian:=median(get(spliti),na.rm=TRUE),by=id]
+          gendatw <- gendatwide[compareDirection(diri,.splitmedian,median(get(spliti),na.rm=TRUE)),]
+        } else {
+          gendatw <- gendatwide 
+        }
+        
+        #compute acf on generated and split data
+        ac=rbindlist(lapply(1:Nsamples,function(i){ #compute acf on generated samples seperately
+          rows <- which(gendatw[['sample']] %in% i)
+          data.table(Iter=i,
+            suppressMessages(ctACF(gendatw[rows,],varnames = vari,ccfnames=v,
+              # timestep = timestep,time.max = time.max,
+              plot = F,nboot=0))
+          )[!is.na(ACF),]
+        }))
+        # ac=ctACF(gendatwide[sample %in% 1:Nsamples,],varnames = vari,ccfnames=v,timestep = timestep,time.max = time.max,plot = F,nboot=0)
+        # ac=expct::expct(gendatwide[sample %in% 1:Nsamples,],Time = 'time',ID = 'id',outcome = v,Tpred = seq(0,time.max,timestep),plot_show = F,ncores = detectCores()/2)
+        
+        
+        # acs0 <- copy(ac)[,ACF:=median(ACF),by=interaction(Variable,TimeInterval)][Sample==1,][,Sample:=0] #create average acf as sample 0
+        # ac <- rbind(acs0,ac) #bind them together
+        # ac=ctsem:::ctACFquantiles(ac) #compute the acf quantiles
+        splitsuffix <- ifelse(is.na(spliti),'',paste0(diri,'_',spliti)) #describe split
+        # ac[,DataType:='Gen'] #describe data type and split type
+        ac[,Split:= splitsuffix]
+        # ac[,Estimate:=paste0(Estimate,'_gen',splitsuffix)]#specify here so that line types and grouping are assigned correctly
+        ac[,DataType:='Sim']
+        if(diri=='high') acgen = ac else acgen <- rbind(acgen,ac)
+        
+        
+        #compute acf on true and split data and combine
+        if(!is.na(spliti)) sdat <- dat[compareDirection(diri,.splitmedian,median(get(spliti),na.rm=TRUE)),] else sdat <- dat
+        actrue <-ctACF(sdat,varnames = vari,ccfnames=v,
+          # timestep = timestep,time.max = time.max,
+          plot = F,nboot=Nsamples)
+        actrue[,DataType:='True']
+        actrue[,Iter:=NA]
+        actrue[,Split:= splitsuffix]
+        # actrue[,Estimate:=paste0(Estimate,splitsuffix)]#specify here so that line types and grouping are assigned correctly
+        if(diri=='high') actruef = copy(actrue) else actruef <- rbind(actruef,actrue)
+      }
+      #plot
+      fullac=rbind(acgen,actruef)
+      fullac[,var1:=Variable];
+      fullac[,Variable:=interaction(Variable, Split, DataType)]
+      
+      estSplinei=TRUE
+      # for(estSplinei in c(T)){
+      p<-ctsem:::plotctACF(fullac,quantiles = quantiles,df=df)
+      p=p+facet_wrap(vars(var1),scales = 'free')
+      
+      if(estSplinei) p <- p + aes(colour=interaction(Split,DataType),fill=interaction(Split,DataType),
+        group=interaction(Variable),x=TimeInterval/6) 
+      if(!estSplinei) p <- p + aes(colour=interaction(Split,DataType),fill=interaction(Split,DataType),
+        group=interaction(Variable,Sample),x=TimeInterval/6)+geom_point(alpha=.2) 
+      
+      p = p + guides(colour='none',fill=guide_legend(title=""))+xlab('Time Interval')+ylab('Correlation')
+      if(is.na(spliti)){
+        p <- p + scale_color_manual(values=c('blue','red'))+ 
+          scale_fill_manual(values=c('blue','red')) 
+      } else p <- p + scale_color_manual(values=c('blue','darkblue','red','darkred'))+
+        scale_fill_manual(values=c('blue','darkblue','red','darkred'))
+      print(p + theme(legend.position = 'bottom')+coord_cartesian(ylim=ylims)+
+          xlim(xlims))
+    }
+  }
+}
+
 
 
 #' Continuous Time Autocorrelation Function (ctACF)

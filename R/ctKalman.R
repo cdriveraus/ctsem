@@ -126,11 +126,14 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
 
   # get subjects ------------------------------------------------------------
   idmap <- fit$setup$idmap #store now because we may reduce it
+  if(class(idmap$original) %in% 'factor') idmap$original <- as.character(idmap$original)
+  if(class(subjects) %in% 'factor') subjects <- as.character(subjects)
   subjectsarg <- subjects
   if(realid) subjects <- idmap[which(idmap[,1] %in% subjects),2]
   
+  # browser()
   if(length(subjects) == 0){
-    if(all(!is.na(as.integer(subjectsarg)))){
+    if(all(!is.na(as.integer(subjectsarg)))){ #if all subjects specified as integers
       subjects <- as.integer(subjectsarg)
       warning('Specified subjects not found in original id set -- assuming integers correspond to internal integer mapping. Consider setting realid=FALSE')
     } else stop('Specified subjects not found in original id set, and (some) are not integers...')
@@ -140,7 +143,7 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
   out <- ctStanKalman(fit,pointest=TRUE, 
     removeObs=removeObs, subjects=subjects,timestep = timestep,
     collapsefunc=mean, indvarstates = FALSE,standardisederrors = standardisederrors) #extract state predictions
-
+  
   out <- meltkalman(out)
   out[['Subject']] <- factor(subjects[out[['Subject']]]) #correct for subjects being set 1:Nsub by ctStanKalman
   if(!all(timerange %in% 'asdata')) out <- out[out$Time >= min(timerange) & out$Time <= max(timerange),]
@@ -148,11 +151,12 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
     out$Subject <- factor(idmap[
       match(out$Subject,idmap[,2]),1])
   }
+ 
   # out=out[!(out$Subject %in% subjects) %in% FALSE,]
   
   
   if(plot) {
-    plot(x=out,subjects=subjects,...)
+    plot(x=out,subjects=subjectsarg,...)
   } else return(out)
 }
 
@@ -204,7 +208,6 @@ plot.ctKalmanDF<-function(x, subjects=unique(x$Subject), kalmanvec=c('y','yprior
   polygonsteps=10,polygonalpha=.1,
   facets='Variable',
   ...){
-
   if(!'ctKalmanDF' %in% class(x)) stop('not a ctKalmanDF object')
   
   if(FALSE) Time <- Value <- Subject <- Row <- Variable <- Element <- NULL
