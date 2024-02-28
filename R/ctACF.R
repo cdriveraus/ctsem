@@ -3,7 +3,7 @@ ctACFpostpred <- function(fit,cores=ceiling(parallel::detectCores()/2),
   
   v <- fit$ctstanmodelbase$manifestNames
   
-  dat <- ctsem:::standatatolong(fit$standata,origstructure = TRUE,ctm = fit$ctstanmodelbase)
+  dat <- data.table(ctsem:::standatatolong(fit$standata,origstructure = TRUE,ctm = fit$ctstanmodelbase))
   truedat <- melt(data.table(row = 1:nrow(dat), dat), 
     measure.vars = v, variable.name = 'V1', value.name = 'TrueValue')
   
@@ -16,6 +16,8 @@ ctACFpostpred <- function(fit,cores=ceiling(parallel::detectCores()/2),
   gendat <- merge(gendat, truedat, by = c('row', 'V1'))
   
   #consider setnames here to set id and time names properly
+  setnames(gendat,old = c(fit$ctstanmodelbase$timeName,fit$ctstanmodelbase$subjectIDname),new = c('time','id'))
+  setnames(dat,old = c(fit$ctstanmodelbase$timeName,fit$ctstanmodelbase$subjectIDname),new = c('time','id'))
   
   #acf/ccf on generated data
   gendatwide <- dcast.data.table(gendat,formula('sample + id + time ~ V1'),
@@ -38,6 +40,7 @@ ctACFpostpred <- function(fit,cores=ceiling(parallel::detectCores()/2),
         
         #compute split averages per subject and select data
         if(!is.na(spliti)){ 
+          # browser()
           dat[,.splitmedian:=median(get(spliti),na.rm=TRUE),by=id]
           gendatwide[,.splitmedian:=median(get(spliti),na.rm=TRUE),by=id]
           gendatw <- gendatwide[compareDirection(diri,.splitmedian,median(get(spliti),na.rm=TRUE)),]
