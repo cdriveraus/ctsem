@@ -287,9 +287,9 @@ ctACFquantiles<-function(ctacfobj,quantiles=c(.025,.5,.975),separateLearnRates=F
   
   if(df =='auto'){
     ndt=length(unique(ctacfobj$TimeInterval))
-    dfmax=ndt-1
+    dfmax=ndt-1 #max df is limited by the number of time intervals
     df=min(c(dfmax,
-      ceiling(ndt/3)))
+      ceiling(ndt/10))) #and 10% of the total observations
   }
   ctacfobj <- data.table(data.frame(ctacfobj))
   
