@@ -1,5 +1,5 @@
 ctACFpostpred <- function(fit,cores=ceiling(parallel::detectCores()/2),
-  nsamples=50,splitbycovs=TRUE,quantiles=c(.25,.5,.75),ylims=as.numeric(c(NA,NA)),xlims=as.numeric(c(NA,NA)),df='auto'){
+  nsamples=50,splitbycovs=TRUE,quantiles=c(.25,.5,.75),ylims=as.numeric(c(NA,NA)),xlims=as.numeric(c(NA,NA)),df='auto',...){
   
   v <- fit$ctstanmodelbase$manifestNames
   
@@ -54,7 +54,7 @@ ctACFpostpred <- function(fit,cores=ceiling(parallel::detectCores()/2),
           data.table(Iter=i,
             suppressMessages(ctACF(gendatw[rows,],varnames = vari,ccfnames=v,
               # timestep = timestep,time.max = time.max,
-              plot = F,nboot=0))
+              plot = F,nboot=0,...))
           )[!is.na(ACF),]
         }))
         # ac=ctACF(gendatwide[sample %in% 1:Nsamples,],varnames = vari,ccfnames=v,timestep = timestep,time.max = time.max,plot = F,nboot=0)
@@ -76,7 +76,7 @@ ctACFpostpred <- function(fit,cores=ceiling(parallel::detectCores()/2),
         if(!is.na(spliti)) sdat <- dat[compareDirection(diri,.splitmedian,median(get(spliti),na.rm=TRUE)),] else sdat <- dat
         actrue <-ctACF(sdat,varnames = vari,ccfnames=v,
           # timestep = timestep,time.max = time.max,
-          plot = F,nboot=Nsamples)
+          plot = F,nboot=Nsamples,...)
         actrue[,DataType:='True']
         actrue[,Iter:=NA]
         actrue[,Split:= splitsuffix]
@@ -94,9 +94,9 @@ ctACFpostpred <- function(fit,cores=ceiling(parallel::detectCores()/2),
       p=p+facet_wrap(vars(var1),scales = 'free')
       
       if(estSplinei) p <- p + aes(colour=interaction(Split,DataType),fill=interaction(Split,DataType),
-        group=interaction(Variable),x=TimeInterval/6) 
+        group=interaction(Variable),x=TimeInterval) 
       if(!estSplinei) p <- p + aes(colour=interaction(Split,DataType),fill=interaction(Split,DataType),
-        group=interaction(Variable,Sample),x=TimeInterval/6)+geom_point(alpha=.2) 
+        group=interaction(Variable,Sample),x=TimeInterval)+geom_point(alpha=.2) 
       
       p = p + guides(colour='none',fill=guide_legend(title=""))+xlab('Time Interval')+ylab('Correlation')
       if(is.na(spliti)){
@@ -166,6 +166,7 @@ ctACF <- function(dat, varnames='auto',ccfnames='all',idcol='id', timecol='time'
   if(timestep == 'auto'){
     timestep = 0.5 * quantile(dat[,.timediff:= c(NA,diff(get(timecol))),by=idcol][['.timediff']],
       probs=.5,na.rm=TRUE)
+    # if(timestep < min(na.omit(dat[['.timediff']]))) timestep = min(na.omit(dat[['.timediff']]))
     message('Timestep used: ',timestep)
   }
   if(time.max == 'auto')time.max = 2/3*mean(dat[,.timerange:= diff(range(get(timecol))),by=idcol][['.timerange']])
