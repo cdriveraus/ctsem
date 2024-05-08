@@ -3,6 +3,9 @@ ctACFpostpred <- function(fit,cores=ceiling(parallel::detectCores()/2),
   
   v <- fit$ctstanmodelbase$manifestNames
   
+  splitseq <- NA
+  if(splitbycovs) splitseq <- c(NA,fit$ctstanmodelbase$TIpredNames)
+  
   dat <- data.table(ctsem:::standatatolong(fit$standata,origstructure = TRUE,ctm = fit$ctstanmodelbase))
   truedat <- melt(data.table(row = 1:nrow(dat), dat), 
     measure.vars = v, variable.name = 'V1', value.name = 'TrueValue')
@@ -20,7 +23,8 @@ ctACFpostpred <- function(fit,cores=ceiling(parallel::detectCores()/2),
   setnames(dat,old = c(fit$ctstanmodelbase$timeName,fit$ctstanmodelbase$subjectIDname),new = c('time','id'))
   
   #acf/ccf on generated data
-  gendatwide <- dcast.data.table(gendat,formula('sample + id + time ~ V1'),
+  gendatwide <- dcast.data.table(gendat,formula(
+    paste0('sample + id + time',ifelse(length(splitseq)>1,'+',''),paste0(splitseq[-1],collapse=' + '),' ~ V1')),
     value.var = 'value')
   gendatwide[,id:=interaction(sample,id)]
   Nsamples <- 50
@@ -30,17 +34,16 @@ ctACFpostpred <- function(fit,cores=ceiling(parallel::detectCores()/2),
   }
   
   
-  splitseq <- NA
-  if(splitbycovs) splitseq <- c(NA,fit$ctstanmodelbase$TIpredNames)
+
   
   for(vari in v){
     for(spliti in splitseq){
       for(diri in c('high','low')){
         if(is.na(spliti) & diri == 'low') next #only calculate for high if no split
-        
+        # browser()
         #compute split averages per subject and select data
         if(!is.na(spliti)){ 
-          # browser()
+          
           dat[,.splitmedian:=median(get(spliti),na.rm=TRUE),by=id]
           gendatwide[,.splitmedian:=median(get(spliti),na.rm=TRUE),by=id]
           gendatw <- gendatwide[compareDirection(diri,.splitmedian,median(get(spliti),na.rm=TRUE)),]
