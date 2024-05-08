@@ -21,12 +21,15 @@ ctsmupdate<-function(usecurrentwd=FALSE,scat=FALSE){
   #fit
   
   sm <- ctStanFit(datalong, model,fit=FALSE,gendata=FALSE,forcerecompile=TRUE)$stanmodeltext
+  #replace multiple empty lines with single empty lines
+  sm <- gsub("\\n+", "\n", sm)
   
   if(scat) scat(sm)
   
   stanc(model_code = sm,verbose = TRUE)
   
   smgen <- ctStanFit(datalong, model,fit=FALSE,gendata=TRUE,forcerecompile=TRUE)$stanmodeltext
+  smgen <- gsub("\\n+", "\n", smgen)
   stanc(model_code = smgen,verbose = TRUE)
   
 
@@ -45,6 +48,17 @@ ctsmupdate<-function(usecurrentwd=FALSE,scat=FALSE){
     sink(file=file.path(pathbase,'ctsmgen.stan'))
     cat(smgen)
     sink()
+    
+    message(paste0('Remove compiled files? T / F?'))
+    continue <- readline()
+    if(continue){ #delete all files in src folder and remove folder
+      srcpath <- ifelse(usecurrentwd, paste0(getwd(),'/src'),'~/../sync/CT-SEM/ctsem/src')
+      unlink(srcpath,recursive=TRUE)
+    }
+    
     # rstantools::rstan_config(pkgdir = pkgdir)
   }
+
+  
+  
 }

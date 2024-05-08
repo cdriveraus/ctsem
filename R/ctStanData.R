@@ -150,9 +150,9 @@ ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
   
   if(sameInitialTimes){
     datanew <- datalong[!duplicated(datalong[[ctm$subjectIDname]]),]
-  datanew[[ctm$timeName]] <- min(datanew[[ctm$timeName]])
-  datalong <- merge.data.frame(x = datalong,y = datanew[,c(ctm$subjectIDname,ctm$timeName)],
-    by = c(ctm$subjectIDname,ctm$timeName),all = TRUE)
+    datanew[[ctm$timeName]] <- min(datanew[[ctm$timeName]])
+    datalong <- merge.data.frame(x = datalong,y = datanew[,c(ctm$subjectIDname,ctm$timeName)],
+      by = c(ctm$subjectIDname,ctm$timeName),all = TRUE)
   }
   
   datalong[,ctm$manifestNames][is.na(datalong[,ctm$manifestNames])]<-99999 #missing data
@@ -176,12 +176,18 @@ ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
       out<-as.numeric(which(ctm$manifesttype==1 & x!=99999)) #conditional on whichobs_y
       if(length(out)==0) out<-rep(0,ctm$n.manifest)
       if(length(out)<ctm$n.manifest) out<-c(out,rep(0,ctm$n.manifest-length(out)))
-      out
-    }) )),nrow=c(nrow(datalong),ncol=ctm$n.manifest)),
+      out}) )),nrow=c(nrow(datalong),ncol=ctm$n.manifest)),
+    nordinal_y=array(as.integer(apply(datalong[,ctm$manifestNames,drop=FALSE],1,function(x) 
+      length(x[ctm$manifesttype==2 & x!=99999]))),dim=nrow(datalong)),
+    whichordinal_y=matrix(as.integer(t(apply(datalong[,ctm$manifestNames,drop=FALSE],1,function(x) {
+      out<-as.numeric(which(ctm$manifesttype==2 & x!=99999)) #conditional on whichobs_y
+      if(length(out)==0) out<-rep(0,ctm$n.manifest)
+      if(length(out)<ctm$n.manifest) out<-c(out,rep(0,ctm$n.manifest-length(out)))
+      out}) )),nrow=c(nrow(datalong),ncol=ctm$n.manifest)),
     ncont_y=array(as.integer(apply(datalong[,ctm$manifestNames,drop=FALSE],1,function(x) 
-      length(x[(ctm$manifesttype==0 | ctm$manifesttype==2) & x!=99999]))),dim=nrow(datalong)),
+      length(x[(ctm$manifesttype==0) & x!=99999]))),dim=nrow(datalong)),
     whichcont_y=matrix(as.integer(t(apply(datalong[,ctm$manifestNames,drop=FALSE],1,function(x) {
-      out<-as.numeric(which( (ctm$manifesttype==0 | ctm$manifesttype==2) & x!=99999)) #conditional on whichobs_y
+      out<-as.numeric(which( (ctm$manifesttype==0) & x!=99999)) #conditional on whichobs_y
       if(length(out)==0) out<-rep(0,ctm$n.manifest)
       if(length(out)<ctm$n.manifest) out<-c(out,rep(0,ctm$n.manifest-length(out)))
       out
@@ -215,6 +221,7 @@ ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
       intoverstates=as.integer(ctm$intoverstates),
       verbose=0L,
       manifesttype=array(as.integer(ctm$manifesttype),dim=length(ctm$manifesttype)),
+      nordinal=as.integer(sum(ctm$manifesttype==2)),
       indvaryingindex=array(as.integer(indvaryingindex)),
       intoverpopindvaryingindex=array(as.integer(ctm$intoverpopindvaryingindex)),
       notindvaryingindex=array(as.integer(which(!(1:nparams) %in% indvaryingindex))),
@@ -249,6 +256,19 @@ ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
   standata$tipredsimputedscale <- ctm$tipredsimputedscale
   standata$tipredeffectscale <- ctm$tipredeffectscale
   
+  ##ordinal categories
+  # if(any(ctm$manifesttype==2)){
+  standata$ncategories=array(as.integer(apply(datalong[,ctm$manifestNames,drop=FALSE][,ctm$manifesttype==2,drop=FALSE],2,function(x) length(unique(x)))))
+  standata$nthresholdpars=as.integer(sum(standata$ncategories-1))
+  # } else standata$ncategories=array(integer())
+  if(as.integer(ctm$NOrdinalIntegrationPoints) %% 2 == 0) stop('NOrdinalIntegrationPoints must be odd')
+  standata$nordinalintegrationpoints=as.integer(ctm$NOrdinalIntegrationPoints)
+  midpoint = ceiling(standata$nordinalintegrationpoints/2) #ensure midpoint (mean) is included first, because catprobs is only recomputed for non mean points.
+  standata$sigmapoints=array(round(statmod::gauss.quad.prob(n=ctm$NOrdinalIntegrationPoints,dist='normal')$nodes[
+    c(midpoint,(1:standata$nordinalintegrationpoints)[-midpoint])],5))
+  standata$sigweights=array(round(statmod::gauss.quad.prob(n=ctm$NOrdinalIntegrationPoints,dist='normal')$weights[
+    c(midpoint,(1:standata$nordinalintegrationpoints)[-midpoint])],5))
+  
   
   # #drift, jacobian off diagonal check # seems to work ok internally with expm2
   # mx=listOfMatrices(ctm$pars)
@@ -268,7 +288,7 @@ ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
   # standata$jacoffdiagindex <- array(as.integer(sort(unique(c(1:ctm$n.latent,which(standata$jacoffdiag ==1))))))
   # standata$njacoffdiagindex <- as.integer(length(standata$jacoffdiagindex))
   
-
+  
   
   standata$DRIFTsubsets <- expmGetSubsets(listOfMatrices(ctm$pars)$DRIFT)
   standata$JAxsubsets <- expmGetSubsets(listOfMatrices(ctm$pars)$JAx)
@@ -389,6 +409,7 @@ ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
   standata$nrowmatsetup <- as.integer(nrow(ctm$modelmats$matsetup))
   
   standata$sdscale <- array(as.numeric(sdscale),dim=length(sdscale))
+  standata$rawpopcovscale=1
   
   standata$approxct <- 0L
   if(!is.null(ctm$approxct)) standata$approxct <- as.integer(ctm$approxct)
@@ -415,7 +436,7 @@ ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
   standata$popcovn=1000L
   standata$llsinglerow=0L
   # standata$doonesubject=0L
-  if(any(ctm$manifesttype==1)){
+  if(any(ctm$manifesttype > 0)){ #if any non gaussian observables, just use finite differences for measurement jacobian
     standata$nJyfinite <- as.integer(ctm$n.latent)
     standata$Jyfinite <- array(as.integer(1:ctm$n.latent))
   }
@@ -441,7 +462,7 @@ ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
       ms$param[mrows] > 0 & ms$when[mrows] %in% c(0,100) & (ms$indvarying[mrows] > 1 | ms$tipred[mrows] > 0) ))
   }
   rownames(standata$whenmat)[mc] <- names(mc)
-
+  
   if(optimize){ #indvarying elements need to be updated dynamically
     for(ri in 1:nrow(standata$whenmat)){
       if(standata$whenmat[ri,5]>0){ #if any of this matrices pars are indvarying
@@ -452,7 +473,7 @@ ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
       }
     }
   }
-
+  
   
   #this PARS when = 100 thing is annoyinh, improve it...
   standata$whenvecp <- array(0L, c(2,standata$nparams)) #whenvecp contains 0's for unchanging pars

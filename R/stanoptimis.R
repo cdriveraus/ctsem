@@ -385,7 +385,8 @@ standatact_specificsubjects <- function(standata, subjects,timestep=NA){
 
 
 standatalongobjects <- function() {
-  longobjects <- c('subject','time','dokalmanrows','nobs_y','ncont_y','nbinary_y','Y','tdpreds', 'whichobs_y','whichbinary_y','whichcont_y')
+  longobjects <- c('subject','time','dokalmanrows','nobs_y','ncont_y','nbinary_y','nordinal_y',
+    'Y','tdpreds', 'whichobs_y','whichbinary_y','whichordinal_y','whichcont_y')
   return(longobjects)
 }
 
@@ -488,13 +489,12 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
   
   if(!quiet) message('Computing quantities for ', nrow(samples),' samples...')
   if(nrow(samples)==1) cores <- 1
-  
-  if(cores > 1 && all(is.na(cl))){
-    cl <- makeClusterID(cores)
-    on.exit(try(parallel::stopCluster(cl),silent=TRUE),add = TRUE)
-  }
-  
+
   if(cores > 1) {
+    if(all(is.na(cl))){
+      cl <- makeClusterID(cores)
+      on.exit(try(parallel::stopCluster(cl),silent=TRUE),add = TRUE)
+    }
     clusterIDexport(cl, c('sm','standata','samples'))
     clusterIDeval(cl,list(
       'require(data.table)',
@@ -509,6 +509,7 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
   }
   
   if(cores ==1){
+    # browser()
     smf <- stan_reinitsf(sm,standata) 
     tparfunc <- function(x){ 
       out <- try(data.table::as.data.table(lapply(1:length(x),function(li){
@@ -739,7 +740,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   bestfit <- -9999999999
   try2 <- FALSE
   
-  message('Using ',cores,'/', parallel::detectCores(),' logical CPU cores')
+  message('Using ',cores,'/', parallel::detectCores(),' CPU cores (see cores argument)')
   
   while(betterfit){ #repeat loop if importance sampling improves on optimized max
     betterfit <- FALSE

@@ -28,18 +28,16 @@ unfoldmats <- function(ml){
   return(ml)
 }
 
-#replace inverse logit
-inv_logit_gsub <- function(x){
-  try=0
-  while(try < 20 && any(grepl('\\<inv_logit\\((.*)\\)',x) | grepl('\\blog1p_exp\\((.*)\\)',x))){ 
-    try <- try + 1
-    x <- gsub('\\<inv_logit\\((.*)\\)','1/\\(1+exp\\(-\\(\\1\\)\\)\\)',x)
-    x <- gsub('\\<log1p_exp\\((.*)\\)','log1p\\(exp\\(\\1\\)\\)',x)
-  }
-  return(x)
-}
-
-
+# #replace inverse logit - problematic for complex parameters, now unneeded
+# inv_logit_gsub <- function(x){
+#   try=0
+#   while(try < 20 && any(grepl('\\<inv_logit\\((.*)\\)',x) | grepl('\\blog1p_exp\\((.*)\\)',x))){ 
+#     try <- try + 1
+#     x <- gsub('\\<inv_logit\\((.*)\\)','1/\\(1+exp\\(-\\(\\1\\)\\)\\)',x)
+#     x <- gsub('\\<log1p_exp\\((.*)\\)','log1p\\(exp\\(\\1\\)\\)',x)
+#   }
+#   return(x)
+# }
 
 ctJacobian <- function(m,types=c('J0','JAx','Jtd','Jy'),simplify=TRUE ){
   

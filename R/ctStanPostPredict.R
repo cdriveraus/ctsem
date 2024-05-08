@@ -107,6 +107,14 @@ ctPostPredPlots <- function(fit){
   datsum <- datsum[,mediandatRank:=rank(mediandat),by=variable]
   datsum[,OutOf95Row:=obsValue > highdat | obsValue < lowdat,by=interaction(row,variable)]
   
+  print(ggplot(dat,aes(y=value,x=Time))+ 
+    stat_summary(fun.data=mean_sdl,geom='ribbon',alpha=.3,fill='red')+
+    stat_summary(aes(y = value), fun.y=mean, colour="red", geom="line",size=1)+
+    geom_line(data=dat[sample %in% 1,],aes(y=obsValue,group=id),alpha=.1)+
+    stat_summary(data=dat[sample %in% 1,],aes(y = obsValue), fun.y=mean, geom="line",linetype='dashed',size=1)+
+    facet_wrap(vars(variable),scales = 'free')+
+    theme_bw())
+  
   
   print(ggplot(datsum,aes(x=mediandatRank,y=mediandat))+
       # geom_ribbon(aes(ymin=lowdat, ymax=highdat),fill='red',alpha=.5)+

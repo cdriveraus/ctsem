@@ -56,7 +56,7 @@ ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
   
   if(removeObs || removeObs > 0){
     if(is.numeric(removeObs)) skipn <- removeObs else skipn <- 1
-    for(x in c('nobs_y','nbinary_y','ncont_y','whichobs_y','whichbinary_y','whichcont_y')){
+    for(x in c('nobs_y','nbinary_y','nordinal_y','ncont_y','whichobs_y','whichbinary_y','whichordinal_y','whichcont_y')){
       if(skipn > 1) {
         if(length(dim(fit$standata[[x]]))==2) fit$standata[[x]][(1:skipn)!=1,] <- 0L else fit$standata[[x]][(1:skipn)!=1] <-0L 
       }

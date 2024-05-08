@@ -695,7 +695,7 @@ ctStanCalcsList <- function(ctm, save=FALSE){  #extract any calcs from model int
   return(ctm)
 }
 
-ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE, simplify=TRUE){
+ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup, simplify=TRUE){
   #if arguments change make sure to change ctStanFit !
   
   mats <- ctStanMatricesList()
@@ -768,9 +768,11 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE,
   //measurement 
   vector[nmanifest] err;
   vector[nmanifest] syprior;
+  vector[nmanifest] sypred; //storage for predicted values in case of ordinal or binary
   matrix[nlatentpop, nmanifest] K; // kalman gain
   matrix[nmanifest, nmanifest] ypriorcov_sqrt = rep_matrix(0,nmanifest,nmanifest); 
   matrix[nmanifest, nmanifest] ycov; 
+  array[nordinal] vector[nordinal ? max(ncategories) : 0] catprobs;
   
   matrix[nlatentpop,nlatentpop] eJAx = diag_matrix(rep_vector(1,nlatentpop)); //time evolved jacobian
   array[dosmoother ? ndatapoints : 1] matrix[nlatentpop,nlatentpop] eJAxs; //time evolved jacobian, saved for smoother
@@ -813,24 +815,28 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE,
         subject[rowi] >= (firstsub - .1) &&  subject[rowi] <= (lastsub + .1))){ //if doing this row for this subset
     
     int si = rowx ? subject[rowi] : 0;
-    int full = (dosmoother==1 || si ==0);
+    int full = (dosmoother==1 || si ==0); //in some cases we need full computations for all observables even when missing
     array[full ? nmanifest : nobs_y[rowi]] int o; //which obs are not missing in this row
+    array[full ? size(whichequals(manifesttype,2,1)) : nordinal_y[rowi] ] int o2;
     array[full ? size(whichequals(manifesttype,1,1)) : nbinary_y[rowi] ] int o1;
-    array[full ? size(whichequals(manifesttype,1,0)) : ncont_y[rowi] ] int o0;
+    array[full ? size(whichequals(manifesttype,0,1)) : ncont_y[rowi] ] int o0;
     
     array[nobs_y[rowi]] int od = whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
+    array[nordinal_y[rowi] ] int o2d= whichordinal_y[rowi,1:nordinal_y[rowi]];
     array[nbinary_y[rowi] ] int o1d= whichbinary_y[rowi,1:nbinary_y[rowi]];
     array[ncont_y[rowi] ] int o0d= whichcont_y[rowi,1:ncont_y[rowi]];
     
     if(!full){
       o= whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
+      o2= whichordinal_y[rowi,1:nordinal_y[rowi]];
       o1= whichbinary_y[rowi,1:nbinary_y[rowi]];
       o0= whichcont_y[rowi,1:ncont_y[rowi]];
     }
     if(full){ //needed to calculate yprior and yupd ysmooth
       for(mi in 1:nmanifest) o[mi] = mi;
+      o2= whichequals(manifesttype,2,1);
       o1= whichequals(manifesttype,1,1);
-      o0= whichequals(manifesttype,1,0);
+      o0= whichequals(manifesttype,0,1);
     }
     
     if(prevrow != 0) T0check = (si==subject[prevrow]) ? (T0check+1) : 0; //if same subject, add one, else zero
@@ -930,7 +936,9 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup,savemodel=TRUE,
 
     etacov=T0cov;
     } //end T0 matrices
-    
+',
+# dynamics ----------------------------------------------------------------
+'      
 if(verbose > 1) print ("below t0 row ", rowi);
 
     if(si==0 || (T0check>0)){ //for init or subsequent time steps when observations exist
@@ -1049,68 +1057,96 @@ if(verbose > 1){
 ',if(!ppchecking) 'if(dosmoother){
   etacovb[1,rowi] = etacov; 
   etab[1,rowi] = state\';
-}','
-
+}',
+# measurement -------------------------------------------------------------
+'
 //measurement update
-
+if(verbose > 1) print("a");
   if(si == 0 || nobs_y[rowi] > 0 || dosmoother){ //measurement init
+if(verbose > 1) print("b");
     array[1] int zeroint;
-    row_vector[nlatentpop] basestate = state;
+    row_vector[nlatentpop] basestate = state; //needed because we modify state in each finite difference
     zeroint[1] = 0;
-    for(statei in append_array(Jyfinite,zeroint)){ //if some finite differences to do, compute these first
-      state = basestate;
-      if(statei>0 && (dosmoother + intoverstates) > 0)  state[statei] += Jstep;
+    for(statei in append_array(Jyfinite,zeroint)){ //if some finite differences to do, compute these first, then expected value
+      state = basestate; //reset state
+      if(statei>0 && (dosmoother + intoverstates) > 0)  state[statei] += Jstep; //if doing finite difference, add step to statei
 
-        //initialise PARS first, and simple PARS before complex PARS
-        if(statedep[10] || whenmat[10,4]) PARS=mcalc(PARS,indparams, state,{4}, 10, matsetup, matvalues, si); 
-        ',simplifystanfunction(paste0(ctm$modelmats$calcs$PARS,';\n\n ',collapse=' '),simplify),'
-        
-      
-        if(statedep[2] || whenmat[2,4]) LAMBDA=mcalc(LAMBDA,indparams, state,{4}, 2, matsetup, matvalues, si); 
-        if(statedep[5] || whenmat[5,4]) MANIFESTVAR=mcalc(MANIFESTVAR,indparams, state,{4}, 5, matsetup, matvalues, si); 
-        if(statedep[6] || whenmat[6,4]) MANIFESTMEANS=mcalc(MANIFESTMEANS,indparams, state,{4}, 6, matsetup, matvalues, si); 
-        if(statedep[54] || whenmat[54,4]) Jy=mcalc(Jy,indparams, state,{4}, 54, matsetup, matvalues, si); 
-
-        ',simplifystanfunction(paste0(ctm$modelmats$calcs$measurement,';\n\n ',collapse=' '),simplify),'
-        
-      if(statei > 0 && (intoverstates) > 0) {
-        Jy[o,statei] =  LAMBDA[o] * state[1:nlatent]\' + MANIFESTMEANS[o,1]; //compute new change
-        Jy[o1,statei] = to_vector(inv_logit(to_array_1d(Jy[o1,statei])));
-        if(verbose>1) print("Jy ",Jy);
-      }
-      if(statei==0){
-        syprior[o] = LAMBDA[o] * state[1:nlatent]\' + MANIFESTMEANS[o,1];
-        syprior[o1] = to_vector(inv_logit(to_array_1d( syprior[o1] )));
-        if(size(Jyfinite) ) { //only need these calcs if there are finite differences to do -- otherwise loop just performs system calcs.
-          if(verbose>1) print("syprior = ",syprior,"    Jyinit= ",Jy);
-          for(fi in Jyfinite){
-            Jy[o,fi] -= syprior[o];
-            Jy[o,fi] /= Jstep; //new - baseline change divided by stepsize
+      //initialise PARS first, and simple PARS before complex PARS
+      if(statedep[10] || whenmat[10,4]) PARS=mcalc(PARS,indparams, state,{4}, 10, matsetup, matvalues, si); 
+      ',simplifystanfunction(paste0(ctm$modelmats$calcs$PARS,';\n\n ',collapse=' '),simplify),'
+      if(statedep[2] || whenmat[2,4]) LAMBDA=mcalc(LAMBDA,indparams, state,{4}, 2, matsetup, matvalues, si); 
+      if(statedep[5] || whenmat[5,4]) MANIFESTVAR=mcalc(MANIFESTVAR,indparams, state,{4}, 5, matsetup, matvalues, si); 
+      if(statedep[6] || whenmat[6,4]) MANIFESTMEANS=mcalc(MANIFESTMEANS,indparams, state,{4}, 6, matsetup, matvalues, si); 
+      if(statedep[54] || whenmat[54,4]) Jy=mcalc(Jy,indparams, state,{4}, 54, matsetup, matvalues, si); 
+      ',simplifystanfunction(paste0(ctm$modelmats$calcs$measurement,';\n\n ',collapse=' '),simplify),'
+    
+      syprior[o] =  LAMBDA[o] * state[1:nlatent]\' + MANIFESTMEANS[o,1]; //compute new change
+      if(statei==0) sypred=syprior;//store expected value for predictor in case of binary or ordinal transform
+      if(size(o1)) syprior[o1] = to_vector(inv_logit(to_array_1d(syprior[o1])));
+      if(size(o2)){ //if ordinal variables
+      int o2i=0;
+        for(manifesti in 1:nmanifest){
+          if(manifesttype[manifesti]==2){    
+            o2i+=1; //which ordinal variable are we referring to
+            catprobs[o2i,] = compute_catprobs(ncategories[o2i],logitthresholds[o2i,],syprior[manifesti]);
+            syprior[manifesti] = 0;
+            for(cati in 0:(ncategories[o2i]-1)){
+              syprior[manifesti] += cati * catprobs[o2i,cati+1]; //expected value, remember offset for cat 0
+            }
           }
         }
       }
-    }
-    if(verbose>1) print("Jy ",Jy);
+      
+      if(statei > 0) Jy[o,statei] = syprior[o]; //insert expected obs val (with step added to statei) to column statei of Jacobian
+      
+      if(statei==0 && size(Jyfinite)){ //only need these calcs if there are finite differences to do -- otherwise loop just performs system calcs.
+        for(fi in Jyfinite){
+          Jy[o,fi] -= syprior[o]; //subtract expected value from state fi column of Jy to attain difference
+          Jy[o,fi] /= Jstep; //new - baseline change divided by stepsize
+        }
+      }
+      
+    } //end finite difference and initialization loop
+    if(verbose>1) print("Jy ",Jy,"  catprobs = ",catprobs, "   logitthresholds = ", logitthresholds);
   } //end measurement init
       
   if(si==0 || whenmat[5,5] || whenmat[5,4] || statedep[5]) MANIFESTcov = sdcovsqrt2cov(MANIFESTVAR,choleskymats);
 
  
   if(si > 0 && (nobs_y[rowi] > 0 || dosmoother)){   //if not just inits...
-
-      if(intoverstates==1 || dosmoother==1) { //classic kalman
-        ycov[o,o] = quad_form_sym(makesym(etacov,verbose,1), Jy[o,]\') + MANIFESTcov[o,o]; // previously shifted measurement error down, but reverted
-        for(wi in 1:nmanifest){ 
-          // if(Y[rowi,wi] != 99999 || dosmoother==1) ycov[wi,wi] += square(MANIFESTVAR[wi,wi]);
-          if(manifesttype[wi]==1 && (Y[rowi,wi] != 99999  || dosmoother==1)) ycov[wi,wi] += (1-syprior[wi]) .* (syprior[wi]);
-          if(manifesttype[wi]==2 && (Y[rowi,wi] != 99999  || dosmoother==1)) ycov[wi,wi] += square(abs((syprior[wi] - round(syprior[wi])))); 
+    matrix[nmanifest,nmanifest] ypredcov;
+    
+    if(intoverstates==1 || dosmoother==1) { //classic kalman
+      int o2i=0; //ordinal variable counter
+      ycov[o,o] = quad_form_sym(makesym(etacov,verbose,1), Jy[o,]\')+ MANIFESTcov[o,o]; // add measurement error; 
+      if(size(o2)) ypredcov[o2,o2] = quad_form_sym(makesym(etacov,verbose,1), LAMBDA[o2,]\');  // should compute extra jacobian -- currently linear prediction cov without measurement error (for integration over ll with binary / ordinal)
+      for(manifesti in 1:nmanifest){ 
+        // if(Y[rowi,wi] != 99999 || dosmoother==1) ycov[wi,wi] += square(MANIFESTVAR[wi,wi]); //added measurement error above
+        if(manifesttype[manifesti]==1 && (whichbinary_y[rowi,manifesti]  || dosmoother==1)) ycov[manifesti,manifesti] += (1-syprior[manifesti]) .* (syprior[manifesti]);
+        if(manifesttype[manifesti]==2 && (whichordinal_y[rowi,manifesti]  || dosmoother==1)){ //if ordinal and a) not missing, or b) smoothing, compute integral for likelihood and measurement error
+          o2i+=1; //which ordinal variable are we referring to
+          for(sigmapointi in 1:nordinalintegrationpoints){ //recompute catprobs for sigma points that are not the mean(1), then use all for weighted likelihood
+            if(sigmapointi > 1) catprobs[o2i,] = compute_catprobs(ncategories[o2i], logitthresholds[o2i,], 
+              sypred[manifesti] + sigmapoints[sigmapointi] * sqrt(ypredcov[manifesti,manifesti])); //using stored linear predictor (sypred)
+            for(cati in 0:(ncategories[o2i]-1)){ //increment log prob and errorsd for category and include sigmapoint weighting
+              ycov[manifesti,manifesti] += sigweights[sigmapointi] * catprobs[o2i,cati+1] * (syprior[manifesti] - cati)^2; //increment measurement error for ordinal variable
+              if(whichordinal_y[rowi,manifesti] && Y[rowi,manifesti] == cati){ //if not missing and category matches observation, increment loglik
+                llrow[rowi] += sigweights[sigmapointi] * log(catprobs[o2i,cati+1]+1e-50); //remember the +1 for category offset (due to category 0)
+              }
+            }
+            if(verbose>1 || is_nan(llrow[rowi])){
+              print("ordinal likelihood =",llrow[rowi]);
+              print("logitthresholds[o2i,] =",logitthresholds[o2i,]);
+              print("catprobs =",catprobs[o2i,]);
+              print("log catprobs =",log(catprobs[o2i,]));
+              print("Y[rowi,manifesti] =",Y[rowi,manifesti]);
+            }
+          }
         }
       }
+    } //problems in this loop when generating data, because data are not yet generated!
         
-      if(intoverstates==0 && ncont_y[rowi] > 0) ypriorcov_sqrt[o,o] = 
-        cholesky_decompose(makesym(MANIFESTcov[o,o],verbose,1));
-
-        
+    if(intoverstates==0 && ncont_y[rowi] > 0) ypriorcov_sqrt[o,o] = cholesky_decompose(makesym(MANIFESTcov[o,o],verbose,1));
      
 '    
   ,if(ppchecking) paste0('
@@ -1140,57 +1176,64 @@ if(verbose > 1){
   
   if(!ppchecking) 'err[od] = Y[rowi,od] - syprior[od]; // prediction error','
     
-      if(intoverstates==1 && size(od) > 0) {
-        
-         if(verbose > 1) print("before K rowi =",rowi, "  si =", si, "  state =",state, "  etacov ",etacov,
-          " indparams = ", indparams,
-            "  syprior[o] =",syprior[o],"  ycov[o,o] ",ycov[o,o], 
-            "  PARS = ", PARS, 
-            "  DRIFT =", DRIFT, " DIFFUSION =", DIFFUSION, 
-            " CINT =", CINT, "  discreteCINT = ", discreteCINT, "  MANIFESTcov ", (MANIFESTcov), "  MANIFESTMEANS ", MANIFESTMEANS, 
-            "  T0cov", T0cov,  " T0MEANS ", T0MEANS, "LAMBDA = ", LAMBDA, "  Jy = ",Jy,
-            " discreteDRIFT = ", discreteDRIFT, "  discreteDIFFUSION ", discreteDIFFUSION, "  asymDIFFUSIONcov ", asymDIFFUSIONcov, 
-            " DIFFUSIONcov = ", DIFFUSIONcov,
-            " eJAx = ", eJAx,
-            "  rawpopsd ", rawpopsd,  "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
-         
-        K[,od] = mdivide_right_spd(etacov * Jy[od,]\', makesym(ycov[od,od],verbose,1)); // * multiply_lower_tri_self_transpose(ycovi\');// ycov[od,od]; 
-        etacov += -K[,od] * Jy[od,] * etacov; //cov update
-        state +=  (K[,od] * err[od])\'; //state update
-      }
-      
-      ',if(savemodel) 'if(dosmoother==1) {
-        yb[1,rowi,] = syprior[o];
-        etab[2,rowi,] = state\';
-        ycovb[1,rowi,,] = ycov;
-        etacovb[2,rowi,,] = etacov;
-        ycovb[2,rowi,,] = quad_form_sym(makesym(etacov,verbose,1), Jy\') + MANIFESTcov;
-        yb[2,rowi,] = MANIFESTMEANS[o,1] + LAMBDA[o,] * state[1:nlatent]\';
-        for(wi in 1:nmanifest){ 
-          if(manifesttype[wi]==1) yb[2,rowi,wi] = inv_logit( yb[2,rowi,wi] );
+    if(intoverstates==1 && size(od) > 0) {
+       if(verbose > 1) print("before K rowi =",rowi, "  si =", si, "  state =",state, "  etacov ",etacov,
+        " indparams = ", indparams,
+          "  syprior[o] =",syprior[o],"  ycov[o,o] ",ycov[o,o], 
+          "  PARS = ", PARS, 
+          "  DRIFT =", DRIFT, " DIFFUSION =", DIFFUSION, 
+          " CINT =", CINT, "  discreteCINT = ", discreteCINT, "MANIFESTVAR = ",MANIFESTVAR,"  MANIFESTcov ", (MANIFESTcov), "  MANIFESTMEANS ", MANIFESTMEANS, 
+          "  T0cov", T0cov,  " T0MEANS ", T0MEANS, "LAMBDA = ", LAMBDA, "  Jy = ",Jy,
+          " discreteDRIFT = ", discreteDRIFT, "  discreteDIFFUSION ", discreteDIFFUSION, "  asymDIFFUSIONcov ", asymDIFFUSIONcov, 
+          " DIFFUSIONcov = ", DIFFUSIONcov,
+          " eJAx = ", eJAx,
+          "  rawpopsd ", rawpopsd,  "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
+       
+      K[,od] = mdivide_right_spd(etacov * Jy[od,]\', makesym(ycov[od,od],verbose,1)); // * multiply_lower_tri_self_transpose(ycovi\');// ycov[od,od]; 
+      etacov += -K[,od] * Jy[od,] * etacov; //cov update
+      state +=  (K[,od] * err[od])\'; //state update
+    }
+    
+    if(dosmoother==1) { //these could be improved by recomputing all state dependent pars, error covariances etc. at each step
+      array[nordinal] vector[nordinal ? max(ncategories) : 0] smoothcatprobs;
+      yb[1,rowi,] = syprior[o];
+      etab[2,rowi,] = state\';
+      ycovb[1,rowi,,] = ycov;
+      etacovb[2,rowi,,] = etacov;
+      ycovb[2,rowi,,] = quad_form_sym(makesym(etacov,verbose,1), Jy\') + MANIFESTcov;
+      yb[2,rowi,o] = MANIFESTMEANS[o,1] + LAMBDA[o,] * state[1:nlatent]\';
+      int o2i=0;
+      for(manifesti in 1:nmanifest){ // compute new expectations for binary and ordinal variables, but just use predicted covariance
+        if(manifesttype[manifesti]==1) yb[2,rowi,manifesti] = inv_logit( yb[2,rowi,manifesti] );
+        if(manifesttype[manifesti]==2){
+          o2i+=1; //which ordinal variable are we referring to
+          smoothcatprobs[o2i,] = compute_catprobs(ncategories[o2i],logitthresholds[o2i,], yb[2,rowi,manifesti]);
+          yb[2,rowi,manifesti] = 0;
+          for(o2ij in 1:(ncategories[o2i])){
+            yb[2,rowi,manifesti] += o2ij * smoothcatprobs[o2i,o2ij]; //expected value
+          }
         }
-        Jys[rowi,,] = Jy;
-      }','
-      
-      
-      if(verbose > 1) print(" After K rowi =",rowi, "  si =", si, "  state =",state,"  etacov ",etacov,"  K[,o] ",K[,o]);
-        
-  //likelihood stuff
-      if(nbinary_y[rowi] > 0) ',ifelse(savemodel,'llrow[rowi]','ll'),' += sum(log(1e-10+',ifelse(gendata,'Ygen','Y'),'[rowi,o1d] .* (syprior[o1d]) + (1-',ifelse(gendata,'Ygen','Y'),'[rowi,o1d]) .* (1-syprior[o1d]))); 
-
-      if(size(o0d) > 0 && (llsinglerow==0 || llsinglerow == rowi)){
-        if(intoverstates==1) ypriorcov_sqrt[o0d,o0d]=cholesky_decompose(ycov[o0d,o0d]); //removed makesym
-         ',ifelse(savemodel,'llrow[rowi]','ll'),' +=  multi_normal_cholesky_lpdf(',ifelse(gendata,'Ygen','Y'),'[rowi,o0d] | syprior[o0d], ypriorcov_sqrt[o0d,o0d]);
-         //errtrans[counter:(counter + ncont_y[rowi]-1)] = 
-           //mdivide_left_tri_low(ypriorcov_sqrt[o0d,o0d], err[o0d]); //transform pred errors to standard normal dist and collect
-         //ll+= -sum(log(diagonal(ypriorcov_sqrt[o0d,o0d]))); //account for transformation of scale in loglik
-         //counter += ncont_y[rowi];
       }
-      if(verbose > 1) print(llrow[rowi]);
+      Jys[rowi,,] = Jy; // approximate smoothed jacobian with predicted jacobian
+    }
+    if(verbose > 1) print(" After K rowi =",rowi, "  si =", si, "  state =",state,"  etacov ",etacov,"  K[,o] ",K[,o]);
+      
+//likelihood stuff
+    if(nbinary_y[rowi] > 0) llrow[rowi] += sum(log(1e-10+',ifelse(gendata,'Ygen','Y'),'[rowi,o1d] .* (syprior[o1d]) + (1-',ifelse(gendata,'Ygen','Y'),'[rowi,o1d]) .* (1-syprior[o1d]))); 
+      
+   if(size(o0d) > 0 && (llsinglerow==0 || llsinglerow == rowi)){
+    if(intoverstates==1) ypriorcov_sqrt[o0d,o0d]=cholesky_decompose(ycov[o0d,o0d]); //removed makesym
+     llrow[rowi] +=  multi_normal_cholesky_lpdf(',ifelse(gendata,'Ygen','Y'),'[rowi,o0d] | syprior[o0d], ypriorcov_sqrt[o0d,o0d]);
+     //errtrans[counter:(counter + ncont_y[rowi]-1)] = 
+       //mdivide_left_tri_low(ypriorcov_sqrt[o0d,o0d], err[o0d]); //transform pred errors to standard normal dist and collect
+     //ll+= -sum(log(diagonal(ypriorcov_sqrt[o0d,o0d]))); //account for transformation of scale in loglik
+     //counter += ncont_y[rowi];
+    }
+    if(verbose > 1) print(llrow[rowi]);
       
     }//end si > 0 nobs > 0 section
     
-  ',if(savemodel) '     // store system matrices
+  ','     // store system matrices
        
     if(si==0 || //on either pop pars only
       (  (sum(whenmat[3,])+sum(whenmat[7,])+statedep[3]+statedep[7]) > 0 && savesubjectmatrices) ){ // or for each subject
@@ -1211,11 +1254,11 @@ if(verbose > 1){
       
     
   if(si == 0){
-',if(savemodel) paste0(collectsubmats(popmats=TRUE),collapse=' '),'
+',paste0(collectsubmats(popmats=TRUE),collapse=' '),'
   }
 
   
-  ',if(!ppchecking && savemodel) paste0('if(si > 0 && dosmoother && (rowi==ndatapoints || subject[rowi+1] != subject[rowi])){ //at subjects last datapoint, smooth
+  ',if(!ppchecking) paste0('if(si > 0 && dosmoother && (rowi==ndatapoints || subject[rowi+1] != subject[rowi])){ //at subjects last datapoint, smooth
     int sri = rowi;
     while(sri>0 && subject[sri]==si){
       if(sri==rowi) {
@@ -1250,7 +1293,7 @@ if(verbose > 1){
   prevrow = rowx; //update previous row marker only after doing necessary calcs
 }//end active rowi
 
-',if(savemodel) 'if(savescores){
+if(savescores){
   ya=yb;
   ycova=ycovb;
   etaa=etab;
@@ -1312,6 +1355,9 @@ collectsubmats <- function(popmats=FALSE,matrices=c(mats$base,31, 32,33,21,22)){
 
 
 
+# functions ---------------------------------------------------------------
+
+
 writemodel<-function(){
   paste0('
 functions{
@@ -1322,6 +1368,15 @@ functions{
     return(check);
   }
   
+  // Function: whichequals
+  // Parameters:
+  //   - b: an array of integers
+  //   - test: an integer value representing the test condition
+  //   - comparison: an integer value representing the type of comparison (0 for !=, 1 for ==)
+  // Returns:
+  //   - An array of integers representing the indices of elements in b that match the test condition.
+  // Description:
+  //   - Returns the indices of elements in array b that match the given test condition.
   array[] int whichequals(array[] int b, int test, int comparison){  //return array of indices of b matching test condition
     array[size(b)] int check = vecequals(b,test,comparison);
     array[sum(check)] int which;
@@ -1337,60 +1392,20 @@ functions{
     return(which);
   }
   
-  
-  matrix constraincorsqrt(matrix mat){ //converts from unconstrained lower tri matrix to cor
-    int d=rows(mat);
-    matrix[d,d] o;
-    vector[d] ss = rep_vector(0,d);
-    vector[d] s = rep_vector(0,d);
-    real r;
-    real r3;
-    real r4;
-    real r1;
-    
-    for(i in 1:d){
-      for(j in 1:d){
-        if(j > i) {
-          ss[i] +=square(mat[j,i]);
-          s[i] +=mat[j,i];
-        }
-        if(j < i){
-          ss[i] += square(mat[i,j]);
-          s[i] += mat[i,j];
-        }
-      }
-      s[i] += 1e-5;
-      ss[i] += 1e-5;
+  vector compute_catprobs(int ncategories, vector logitthresholdsvec, real linpred) {
+    vector[ncategories] catprobsvec;
+    int currentcat = ncategories;
+    catprobsvec[ncategories] = 1;
+    for(o2j in 1:(ncategories-1)){
+      catprobsvec[o2j] = inv_logit(logitthresholdsvec[o2j] - linpred);
     }
-    
-    
-    for(i in 1:d){
-      o[i,i]=0;
-      r1=sqrt(ss[i]);
-      r3=(abs(s[i]))/(r1)-1;
-      r4=sqrt(log1p_exp(2*(abs(s[i])-s[i]-1)-4));
-      r=(r4*((r3))+1)*r4+1;
-      r=(sqrt(ss[i]+r));
-      for(j in 1:d){
-        if(j > i)  o[i,j]=mat[j,i]/r;
-        if(j < i) o[i,j] = mat[i,j] /r;
-      }
-      o[i,i]=sqrt(1-sum(square(o[i,]))+1e-5);
+    for(o2j in 1:(ncategories-1)){
+      catprobsvec[currentcat] -= catprobsvec[currentcat-1]; //subtract cumulative probs backwards to get probs
+      currentcat -= 1;
     }
-    
-    return o;
-  }  
-  
-  matrix sdcovsqrt2cov(matrix mat, int choleskymats){ //covariance from cholesky or unconstrained cor sq root
-    if(choleskymats< 1) {
-      //if(choleskymats== -1){
-        return(tcrossprod(diag_pre_multiply(diagonal(mat),constraincorsqrt(mat))));
-        //} else {
-          //  return(quad_form_diag(constraincorsqrt(mat),diagonal(mat)));
-          //}
-    } else return(tcrossprod(mat));
+    return catprobsvec;
   }
-  
+
   matrix sqkron_prod(matrix mata, matrix matb){
     int d=rows(mata);
     matrix[d*d,d*d] out;
@@ -1473,6 +1488,29 @@ functions{
       }
     }
     return AQ;
+  }
+  
+  matrix constraincorsqrt(matrix rawcor) {
+    int d = rows(rawcor);
+    matrix[d, d] mcholcor = rep_matrix(0, d, d);
+    mcholcor[1, 1] = 1;
+    if (d > 1) {
+      for (coli in 1:d) {
+        for (rowi in coli:d) {
+          if (coli == 1 && rowi > 1) mcholcor[rowi, coli] = rawcor[rowi, coli];
+          if (coli > 1) {
+            if (rowi == coli) mcholcor[rowi, coli] = prod(sqrt(1 - rawcor[rowi, 1:(coli - 1)]^2));
+            if (rowi > coli) mcholcor[rowi, coli] = rawcor[rowi, coli] * prod(sqrt(1 - rawcor[rowi, 1:(coli - 1)]^2));
+          }
+        }
+      }
+    }
+    return mcholcor;
+  }
+
+  matrix sdcovsqrt2cov(matrix mat, int choleskymats){ //covariance from cholesky or unconstrained cor sq root
+    if(choleskymats< 1) return(tcrossprod(diag_pre_multiply(diagonal(mat),constraincorsqrt(mat))));
+    else return(tcrossprod(mat));
   }
   
   matrix makesym(matrix mat, int verbose, int pd){
@@ -1573,7 +1611,11 @@ if(length(extratforms) > 0) paste0(extratforms,collapse=" \n"),'
     return e;
   }
   
-}
+}',
+
+# data --------------------------------------------------------------------
+
+'    
 data {
   int<lower=0> ndatapoints;
   int<lower=1> nmanifest;
@@ -1600,6 +1642,7 @@ data {
   int nindvarying; // number of subject level parameters that are varying across subjects
   int nindvaryingoffdiagonals; //number of off diagonal parameters needed for popcov matrix
   vector[nindvarying] sdscale;
+  real rawpopcovscale;
   array[nindvarying] int indvaryingindex;
   array[nparams-nindvarying] int notindvaryingindex;
   
@@ -1618,6 +1661,15 @@ data {
   array[ndatapoints, nmanifest] int whichbinary_y; // index of which variables are observed and binary per observation
   array[ndatapoints] int ncont_y;  // number of observed continuous variables per observation
   array[ndatapoints, nmanifest] int whichcont_y; // index of which variables are observed and continuous per observation
+  
+  int nordinal;
+  array[nordinal] int ncategories;
+  int nthresholdpars;
+  array[ndatapoints] int nordinal_y;  // number of observed ordinal variables per observation
+  array[ndatapoints, nmanifest] int whichordinal_y; // index of which variables are observed and binary per observation
+  int nordinalintegrationpoints;
+  real sigmapoints[nordinalintegrationpoints];
+  real sigweights[nordinalintegrationpoints];
  
   int intoverpop;
   array[',max(mats$all),'] int statedep;
@@ -1659,7 +1711,11 @@ data {
   array[nDRIFTsubsets,nlatent] int DRIFTsubsets;
   array[nJAxsubsets,nlatentpop] int JAxsubsets;
 }
+',
 
+# transformed data --------------------------------------------------------
+
+'
 transformed data{
   matrix[nlatent+nindvarying,nlatent+nindvarying] IIlatentpop = diag_matrix(rep_vector(1,nlatent+nindvarying));
   vector[nlatentpop-nlatent] nlpzerovec = rep_vector(0,nlatentpop-nlatent);
@@ -1678,20 +1734,28 @@ transformed data{
   }
   
 }
+',
 
+# parameters --------------------------------------------------------------
+
+'
 parameters{
   vector[nparams] rawpopmeans; // population level means 
   vector',if(!is.na(ctm$rawpopsdbaselowerbound)) paste0('<lower=',ctm$rawpopsdbaselowerbound[1],'>'),'[nindvarying] rawpopsdbase; //population level std dev
   vector[nindvaryingoffdiagonals] sqrtpcov; // unconstrained basis of correlation parameters
   array [intoverpop ? 0 : nsubjects]vector[intoverpop ? 0 : nindvarying] baseindparams; //vector of subject level deviations, on the raw scale
-  
+  vector[nthresholdpars] logitthresholdsbase;
   vector[ntipredeffects] tipredeffectparams; // effects of time independent covariates
   vector[nmissingtipreds] tipredsimputed;
   
   ',if(!gendata) 'vector[intoverstates ? 0 : nlatentpop*ndatapoints] etaupdbasestates; //sampled latent states posterior','
   vector[(nsubsets > 1) ? 1 : 0] subsetpar;
 }
-      
+',
+
+# transformed parameters --------------------------------------------------
+
+'
 transformed parameters{
   vector[nindvarying] rawpopsd; //population level std dev
   matrix[nindvarying, nindvarying] rawpopcovbase;
@@ -1702,7 +1766,7 @@ transformed parameters{
   real firstsub = round(nsubjects*1.0/nsubsets*(subset-1)+1);
   real lastsub = round(nsubjects*1.0/nsubsets*(subset));
   ',if(!gendata) 'real ll = 0;
-',if(!gendata & savemodel) paste0('
+',if(!gendata) paste0('
   vector[dokalman ? ndatapoints : 1] llrow = rep_vector(0,dokalman ? ndatapoints : 1);
   array[3,savescores ? ndatapoints : 0] matrix[nlatentpop,nlatentpop] etacova;
   array[3,savescores ? ndatapoints : 0] matrix[nmanifest,nmanifest] ycova;
@@ -1712,7 +1776,9 @@ transformed parameters{
   ',subjectparaminit(pop=TRUE,smats=FALSE),
   subjectparaminit(pop=FALSE,smats=FALSE),
   collapse=''),'
-
+  
+  array[nordinal] vector[nordinal ? max(ncategories)-1 : 0] logitthresholds;
+  
   matrix[ntipred ? (nmissingtipreds ? nsubjects : 0) : 0, ntipred ? (nmissingtipreds ? ntipred : 0) : 0] tipreds; //tipred values to fill from data and, when needed, imputation vector
   matrix[nparams, ntipred] TIPREDEFFECT; //design matrix of individual time independent predictor effects
   
@@ -1758,13 +1824,32 @@ transformed parameters{
     rawpopcov = makesym(quad_form_diag(rawpopcorr, rawpopsd +1e-8),verbose,1);
     rawpopcovchol = cholesky_decompose(rawpopcov); 
   }//end indvarying par setup
+  
+  if(nordinal > 0){
+  int thresholdcounter = 0;
+  int thresholdstart;
+    for(i in 1:nordinal){
+    thresholdstart = thresholdcounter + 1;
+      for(j in 1:(ncategories[i]-1)){
+        thresholdcounter += 1;
+        if(j==1) logitthresholds[i,j] = exp(2*logitthresholdsbase[thresholdcounter]);
+        if(j>1) logitthresholds[i,j] = exp(logitthresholdsbase[thresholdcounter]*2) + logitthresholds[i,j-1];
+      }
+      logitthresholds[i,] = logit(logitthresholds[i,] /(logitthresholds[i,ncategories[i]-1]+(sqrt(ncategories[i]))));
+    }
+  }
+
 
   {
 ',
 if(!gendata) ukfilterfunc(ppchecking=FALSE),'
   }
 }
-      
+',
+
+# model -------------------------------------------------------------------
+
+'
 model{
   real priormod2 = priormod / nsubsets;
   if(intoverpop==0 && nindvarying > 0) target+= multi_normal_cholesky_lpdf(baseindparams | rep_vector(0,nindvarying), IIlatentpop[1:nindvarying,1:nindvarying]);
@@ -1774,6 +1859,8 @@ model{
     if(priors && laplacetipreds==1) for(i in 1:ntipredeffects) target+= priormod2 * double_exponential_lpdf(pow(abs(tipredeffectparams[i]),1+.1/((tipredeffectparams[i]*100)^2+.1)) / tipredeffectscale| 0, 1);
     target+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
   }
+  
+  if(nordinal > 0 && priors) logitthresholdsbase ~ normal(0,1);
 
   if(priors){ //if split files over subjects, just compute priors once
     for(i in 1:nparams){
@@ -1797,7 +1884,10 @@ model{
   ',if(!gendata) 'target+= ll; \n','
   if(verbose > 0) print("lp = ", target());
 }
-',if(savemodel) paste0('
+',
+
+# generated quants --------------------------------------------------------
+paste0('
   generated quantities{
   vector[nparams] popmeans;
   vector[nindvarying] popsd; // = rep_vector(0,nparams);

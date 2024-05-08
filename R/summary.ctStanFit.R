@@ -157,7 +157,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
     }
   }
   
-  if(priorcheck & !object$standata$priors) {
+  if(priorcheck && object$standata$priors) {
     priorcheckres <- priorcheckreport(object,...)
     if(nrow(priorcheckres$priorcheck) > 0) out = c(out,priorcheckres)
   }
