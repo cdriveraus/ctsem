@@ -6,7 +6,7 @@ ctACFpostpred <- function(fit,cores=ceiling(parallel::detectCores()/2),
   splitseq <- NA
   if(splitbycovs) splitseq <- c(NA,fit$ctstanmodelbase$TIpredNames)
   
-  dat <- data.table(ctsem:::standatatolong(fit$standata,origstructure = TRUE,ctm = fit$ctstanmodelbase))
+  dat <- data.table(standatatolong(fit$standata,origstructure = TRUE,ctm = fit$ctstanmodelbase))
   truedat <- melt(data.table(row = 1:nrow(dat), dat), 
     measure.vars = v, variable.name = 'V1', value.name = 'TrueValue')
   
@@ -66,7 +66,7 @@ ctACFpostpred <- function(fit,cores=ceiling(parallel::detectCores()/2),
         
         # acs0 <- copy(ac)[,ACF:=median(ACF),by=interaction(Variable,TimeInterval)][Sample==1,][,Sample:=0] #create average acf as sample 0
         # ac <- rbind(acs0,ac) #bind them together
-        # ac=ctsem:::ctACFquantiles(ac) #compute the acf quantiles
+        # ac=ctACFquantiles(ac) #compute the acf quantiles
         splitsuffix <- ifelse(is.na(spliti),'',paste0(diri,'_',spliti)) #describe split
         # ac[,DataType:='Gen'] #describe data type and split type
         ac[,Split:= splitsuffix]
@@ -93,7 +93,7 @@ ctACFpostpred <- function(fit,cores=ceiling(parallel::detectCores()/2),
       
       estSplinei=TRUE
       # for(estSplinei in c(T)){
-      p<-ctsem:::plotctACF(fullac,quantiles = quantiles,df=df)
+      p<-plotctACF(fullac,quantiles = quantiles,df=df)
       p=p+facet_wrap(vars(var1),scales = 'free')
       
       if(estSplinei) p <- p + aes(colour=interaction(Split,DataType),fill=interaction(Split,DataType),
@@ -255,10 +255,10 @@ ctACF <- function(dat, varnames='auto',ccfnames='all',idcol='id', timecol='time'
             paste0('s',round(rnorm(1),5),vdat[[idcol]][r])
           }))
         }
-        if(vari==varj) acfout <- collapse:::psacf(vdat[[vari]][rows], 
+        if(vari==varj) acfout <- collapse::psacf(vdat[[vari]][rows], 
           g=subjects,gscale=FALSE,lag.max=ceiling(time.max/timestep), 
           plot=F,...)$acf[,1,1] #
-        if(vari!=varj) acfout <- collapse:::psccf(x = vdat[[vari]][rows],y = vdat[[varj]][rows],
+        if(vari!=varj) acfout <- collapse::psccf(x = vdat[[vari]][rows],y = vdat[[varj]][rows],
           g=subjects,gscale=FALSE,
           lag.max =ceiling(time.max/timestep),plot=FALSE,...)$acf[,1,1]
         
@@ -336,6 +336,7 @@ ctACFquantiles<-function(ctacfobj,quantiles=c(.025,.5,.975),separateLearnRates=F
 #'
 #' @param ctacfobj object
 #' @param df df for the basis spline.
+#' @param quantiles quantiles to plot.
 #' @param separateLearnRates if TRUE, estimate the learning rate for the quantile splines for each combination of variables. Slower but theoretically more accurate. 
 #' @param reducedXlim if non-zero, n timesteps are removed from the upper and lower end of the x range 
 #' where the spline estimates are less likely to be reasonable. 

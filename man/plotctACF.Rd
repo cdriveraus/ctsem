@@ -4,12 +4,28 @@
 \alias{plotctACF}
 \title{Plot an approximate continuous-time ACF object from ctACF}
 \usage{
-plotctACF(ctacfobj, df = "auto")
+plotctACF(
+  ctacfobj,
+  df = "auto",
+  quantiles = c(0.025, 0.5, 0.975),
+  separateLearnRates = FALSE,
+  reducedXlim = 1,
+  estimateSpline = TRUE
+)
 }
 \arguments{
 \item{ctacfobj}{object}
 
 \item{df}{df for the basis spline.}
+
+\item{quantiles}{quantiles to plot.}
+
+\item{separateLearnRates}{if TRUE, estimate the learning rate for the quantile splines for each combination of variables. Slower but theoretically more accurate.}
+
+\item{reducedXlim}{if non-zero, n timesteps are removed from the upper and lower end of the x range 
+where the spline estimates are less likely to be reasonable.}
+
+\item{estimateSpline}{if TRUE, quantile spline regression is used, otherwise the samples are simply plotted as lines and the other arguments here are not used.}
 }
 \value{
 a ggplot object
@@ -22,5 +38,5 @@ data.table::setDTthreads(1) #ignore this line
 # Example usage:
 head(ctstantestdat)
 ac=ctACF(ctstantestdat,varnames=c('Y1'),idcol='id',timecol='time',timestep=.5,nboot=5,plot=FALSE)
-plotctACF(ac)
+plotctACF(ac, reducedXlim=0)
 }

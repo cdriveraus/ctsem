@@ -1,5 +1,13 @@
 # ctsem News
 
+## 10/05/2024
+### 3.10.0
+- Fix bug when computing Jacobian of certain nonlinear models.
+- Modify unconstrained correlation approach for better optimization / uncertainty quantification and clearer interpretation.
+- Add ctACF function for plotting approximate continuous time auto and cross correlations.
+- Bug fixes to ctKalman plots, were occasionally confused re subject ID.
+- Include experimental / imperfect approach to ordinal data. 
+
 ## 30/10/2023
 ### 3.9.1
 - Fix bug in ctKalman - was dropping certain subjects resulting in no plots / output.

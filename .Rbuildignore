@@ -12,8 +12,6 @@
 ^vignettes/ctsem\.pdf$
 ^vignettes/cache
 ^vignettes/figure
-^vignettes/.*\.bbl
-^vignettes/.*\.bcf
 ^vignettes/.*\.xml
 ^vignettes/.*\.log
 ^vignettes/.*\.gz

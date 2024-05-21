@@ -11,7 +11,7 @@ ctKalman(
   subjects = fit$setup$idmap[1, 1],
   removeObs = FALSE,
   plot = FALSE,
-  standardisederrors = TRUE,
+  standardisederrors = FALSE,
   realid = TRUE,
   ...
 )

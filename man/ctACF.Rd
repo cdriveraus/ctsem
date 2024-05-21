@@ -14,6 +14,8 @@ ctACF(
   timestep = "auto",
   time.max = "auto",
   nboot = 100,
+  scale = FALSE,
+  center = FALSE,
   ...
 )
 }
@@ -22,7 +24,7 @@ ctACF(
 
 \item{varnames}{Character vector of variable names in the data to compute the ACF for. 'auto' uses all columns that are not time / id.}
 
-\item{ccfnames}{Character vector of variable names in the data to compute cross correlation for. 'all' uses all variables in varnames.}
+\item{ccfnames}{Character vector of variable names in the data to compute cross correlation for. 'all' uses all variables in varnames, NA uses none.}
 
 \item{idcol}{The name of the column containing subject IDs (default is 'id').}
 
@@ -36,7 +38,11 @@ In this case the timestep is computed as half of the median for time intervals i
 
 \item{time.max}{The maximum time lag to compute the ACF (default is 10). If 'auto', is set to 10 times the 90th percentile interval in the data.}
 
-\item{nboot}{The number of bootstrap samples for confidence interval estimation (default is 100).}
+\item{nboot}{The number of bootstrap samples for confidence interva1l estimation (default is 100).}
+
+\item{scale}{if TRUE, scale variables based on within-subject standard deviation.}
+
+\item{center}{if TRUE, center variables based on within-subject mean.}
 
 \item{...}{additional arguments (such as demean=FALSE) to pass to the \code{stats::acf} function.}
 }

@@ -1509,8 +1509,11 @@ functions{
   }
 
   matrix sdcovsqrt2cov(matrix mat, int choleskymats){ //covariance from cholesky or unconstrained cor sq root
-    if(choleskymats< 1) return(tcrossprod(diag_pre_multiply(diagonal(mat),constraincorsqrt(mat))));
-    else return(tcrossprod(mat));
+    if(rows(mat) == 0) return(mat);
+    else {
+      if(choleskymats< 1) return(tcrossprod(diag_pre_multiply(diagonal(mat),constraincorsqrt(mat))));
+      else return(tcrossprod(mat));
+    }
   }
   
   matrix makesym(matrix mat, int verbose, int pd){

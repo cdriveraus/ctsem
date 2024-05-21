@@ -37,7 +37,7 @@ Useful links:
 
 }
 \author{
-\strong{Maintainer}: Charles Driver \email{charles.driver@ife.uzh.ch} [copyright holder]
+\strong{Maintainer}: Charles Driver \email{charles.driver2@uzh.ch} [copyright holder]
 
 Authors:
 \itemize{

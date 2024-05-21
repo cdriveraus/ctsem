@@ -130,12 +130,12 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
   if(class(subjects) %in% 'factor') subjects <- as.character(subjects)
   subjectsarg <- subjects
   if(realid) subjects <- idmap[which(idmap[,1] %in% subjects),2]
-  
-  # browser()
+
   if(length(subjects) == 0){
     if(all(!is.na(as.integer(subjectsarg)))){ #if all subjects specified as integers
       subjects <- as.integer(subjectsarg)
       warning('Specified subjects not found in original id set -- assuming integers correspond to internal integer mapping. Consider setting realid=FALSE')
+      realid=FALSE
     } else stop('Specified subjects not found in original id set, and (some) are not integers...')
   }
   subjects <- sort(subjects) #in case not entered in ascending order

@@ -1471,7 +1471,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         #   fit <- list(standata=standata,stanmodel=sm) #this is hacky...
         #   fit$stanfit$rawest=est2
         #   
-        #   score=as.matrix(ctsem:::scorecalc(fit,subjectsonly = F,returnsubjectlist = F,cores=cores))
+        #   score=as.matrix(scorecalc(fit,subjectsonly = F,returnsubjectlist = F,cores=cores))
         #   mcov=tcrossprod(mcov,MASS::ginv(crossprod(score)))
         # }
         # 

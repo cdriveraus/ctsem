@@ -80,7 +80,7 @@ ctMatvalueFreePars <- function(ms,mv){
 #   x <- t(apply(x,1,function(y)  mc %*% (y) + rawpopmeans ))
 #   tx <- x
 #   for(i in 1:nrow(mc)){
-#       tx[,i] <- ctsem:::tform(x[,i],ms$transform[i],mv$multiplier[i], mv$meanscale[i], mv$offset[i],mv$inneroffset[i])
+#       tx[,i] <- tform(x[,i],ms$transform[i],mv$multiplier[i], mv$meanscale[i], mv$offset[i],mv$inneroffset[i])
 #   }
 #   return(cov(tx))
 # }

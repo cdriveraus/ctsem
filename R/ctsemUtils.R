@@ -44,7 +44,7 @@ ctstantestfitfunc<-function(){
     CINT=matrix(c('cint1||||TI1','cint2||||TI1'),ncol=1),
     LAMBDA=diag(2),tipredDefault=FALSE)  
   
-  ctstantestfit<-ctStanFit(ctsem::ctstantestdat,checkm,cores=1,
+  ctstantestfit<-ctStanFit(ctstantestdat,checkm,cores=1,
     inits = c(0.748310681869536,0.945659953796114,0.0964592332562144,
       0.029153487981562,0.651471066485501,0.0314778013950629,
       0.217818608752396,1.10441297459423,-0.801320300354595,
