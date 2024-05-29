@@ -33,8 +33,7 @@
 ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',plot=TRUE,...){
   if(tipreds[1] %in% 'all') tipreds <- sf$ctstanmodel$TIpredNames
   if(length(subject) > 1) stop('>1 subject!')
-  
-  browser()
+
   
   sdat <- standatact_specificsubjects(standata = sf$standata,subjects = subject)
   sdat$tipredsdata[,sf$ctstanmodel$TIpredNames] <- 0 #set all tipreds to zero
