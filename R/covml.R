@@ -3,23 +3,39 @@
 # set.seed(1)
 #   d=6
 #   rm=matrix(rnorm(d^2,0,1),d)
+#   # rm[diag(d)==1] <- 10
 #   rm = rm%*% t(rm)
 #   cholrm=t(chol(rm))
 #   ndat=(t(cholrm %*% matrix(rnorm(1000*d,0,1),d)))
-#   ndat[sample(1:length(ndat),100,replace=FALSE)] <- NA
+#   ndat[sample(1:length(ndat),ceiling(.1*length(ndat)),replace=FALSE)] <- NA
 #   # ndat[-1:-2,c(3,4)] <- NA
-#   cov(ndat,use="pairwise.complete.obs")-rm
-#   system.time({ctcov=ctsem:::covml(ndat,reg = 0,hmc=F,verbose = 0)})
-#   ctcov$cp$covm
-#   ctcov$lp
-#   cov(ndat,use="pairwise.complete.obs")
-#   system.time({mxcov=OpenMx::mxRefModels(data.frame(ndat),run=TRUE)})
-# mxcov$Saturated$ltCov$values %*% t(mxcov$Saturated$ltCov$values)
+#   ecov=cov(ndat,use="pairwise.complete.obs")
+# 
+#   system.time({ctfit=ctsem:::covml(ndat,reg = 0,independent = F,
+#     corpriortype = 0,hmc=F,verbose = 0)})
+#   ctcov=ctfit$estimate$covm
+#   round(ctcov - ecov,2)
+# 
+#   system.time({mxfit=OpenMx::mxRefModels(data.frame(ndat),run=TRUE)})
+#   mxcov <- tcrossprod(mxfit$Saturated$ltCov$values)
+#   round(mxcov - ecov,3)
+# 
+#   #compare ctsem to openmx saturated
+#   round(ctcov - mxcov,2)
+#   round(cov2cor(ctcov) - cov2cor(mxcov),2)
+# 
+#   #compare ctsem to openmx variances
+#   plot(1:d,
+#     diag(ctcov) - diag(ecov),
+#     type='b')
+#   points(1:d,diag(mxcov) - diag(ecov),type='b',col='red')
+# 
 # rm
-# mxcov$Saturated$output$Minus2LogLikelihood*-.5
-# sum(mvtnorm::dmvnorm(x = ndat,mean = ctcov$cp$mu,sigma = cov(ndat),log = TRUE))
-# 
-# 
+# ctfit$lp - mxfit$Saturated$output$Minus2LogLikelihood*-.5
+## need to get working with missings:
+# sum(mvtnorm::dmvnorm(x = ndat,mean = ctfit$estimate$mu,sigma = ctcov,log = TRUE))
+
+## old function
 # constraincorsqrt=function(rawcor, d){
 #   o=matrix(NA,d,d)
 #   counter=0;
@@ -66,8 +82,10 @@ covdata <- function(ndat,reg,independent=FALSE,corpriortype=1L){
     symm=0L)
 }
 
-covml <- function(ndat,reg=0,verbose=0,hmc=FALSE,independent=FALSE,corpriortype=2L){
-  covdata=covdata(ndat,reg,independent,corpriortype)
+covml <- function(dat,reg=0,verbose=0,hmc=FALSE,
+  independent=FALSE,corpriortype=2L){
+  
+  covdata=covdata(dat,reg,independent,corpriortype)
   d=covdata$d
   scovf <- suppressMessages(sampling(object = stanmodels$cov,iter=1,chains=0,check_data=FALSE,
     data=covdata))
@@ -96,27 +114,16 @@ covml <- function(ndat,reg=0,verbose=0,hmc=FALSE,independent=FALSE,corpriortype=
     }
   )
   
-  covinit=cov(ndat,use='pairwise.complete.obs')
-covinit[is.na(covinit)&diag(d)==1] <- 1
-covinit[is.na(covinit)&diag(d)==0] <- 0
-  cholinit <- t(chol(as.matrix(Matrix::nearPD(covinit)$mat)))
-  diag(cholinit) <- log(sqrt(diag(covinit)))
-  
-  
-  init=c(apply(as.matrix(ndat),2,mean,na.rm=TRUE),diag(cholinit))
+  init=c(apply(as.matrix(dat),2,mean,na.rm=TRUE),
+    log(c(apply(as.matrix(dat),2, sd,na.rm=TRUE))))
   if(!independent) init=c(init,rnorm((d^2-d)/2,0,.01))
-  # for(i in 1:nrow(cholinit)){
-  #   for(j in 1:ncol(cholinit)){
-  #     if(i >=j) init = c(init,cholinit[i,j])
-  #   }
-  # }
   init[is.na(init) | is.infinite(init)]=0
 
   if(!hmc){
-    # covfit=sgd(init = init,fitfunc = target)
+    # covfit=sgd(init = init,fitfunc = target,plot = 1)
   covfit=mize(par = init,fg=mizelist,memory=20,max_iter=10000,
-    # line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
-    abs_tol=1e-8,grad_tol=0,rel_tol=1e-10,step_tol=0,ginf_tol=0)
+  #   # line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
+    abs_tol=1e-10,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)
   } else{
     # browser()
     covfit=stanWplot(object = stanmodels$cov,iter=2000,chains=4,cores=4,check_data=FALSE,
@@ -125,16 +132,11 @@ covinit[is.na(covinit)&diag(d)==0] <- 0
     #   data=covdata)
     
   }
-  
-  # covfit=optim(par = init,fn =mizelist$fn,gr = mizelist$gr,method = 'BFGS')
-  
+
   cp=rstan::constrain_pars(object = scovf,covfit$par)
+  dimnames(cp$covm)=list(colnames(dat),colnames(dat))
   
-  # mcov=cp$cholm %*% t(cp$cholm)
-  dimnames(cp$covm)=list(colnames(ndat),colnames(ndat))
-  # round(mcov,3)
-  # round(cov(ndat,use='pairwise.complete.obs'),3)
-  # round(mcov-cov(ndat,use='pairwise.complete.obs'),3)
-  return(list(dat=covdata,fit=covfit, cp=cp,ll=sum(cp$llrow,na.rm=TRUE), 
+  return(list(dat=covdata,fit=covfit, estimate=cp,
+    ll=sum(cp$llrow,na.rm=TRUE), 
     lp=rstan::log_prob(scovf,covfit$par)))
 }

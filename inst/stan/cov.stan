@@ -1,61 +1,24 @@
 functions{
-
-  matrix constraincorsqrt(vector rawcor, int d){ //converts from unconstrained lower tri vec to cor sqrt
-  int counter = 0;
-  matrix[d,d] o;
-  vector[d] ss = rep_vector(0,d);
-  vector[d] s = rep_vector(0,d);
-  real r;
-  real r3;
-  real r4;
-  real r1;
-  real r2;
-
-  for(i in 1:d){ //set upper tri to lower
-  for(j in 1:d){
-    if(j > i){
-      counter+=1;
-      o[j,i] =  rawcor[counter];//inv_logit(rawcor[counter])*2-1; //divide by i for approx whole matrix equiv priors
-    }
-  }
-  }
-
-  for(i in 1:d){
-    for(j in 1:d){
-      if(j > i) {
-        ss[i] +=square(o[j,i]);
-        s[i] +=o[j,i];
-      }
-      if(j < i){
-        ss[i] += square(o[i,j]);
-        s[i] += o[i,j];
+  
+  matrix constraincorsqrt(matrix rawcor) {
+    int d = rows(rawcor);
+    matrix[d, d] mcholcor = rep_matrix(0, d, d);
+    mcholcor[1, 1] = 1;
+    if (d > 1) {
+      for (coli in 1:d) {
+        for (rowi in coli:d) {
+          if (coli == 1 && rowi > 1) mcholcor[rowi, coli] = rawcor[rowi, coli];
+          if (coli > 1) {
+            if (rowi == coli) mcholcor[rowi, coli] = prod(sqrt(1 - rawcor[rowi, 1:(coli - 1)]^2));
+            if (rowi > coli) mcholcor[rowi, coli] = rawcor[rowi, coli] * prod(sqrt(1 - rawcor[rowi, 1:(coli - 1)]^2));
+          }
+        }
       }
     }
-    s[i]+=1e-5;
-    ss[i]+=1e-5;
+    return mcholcor;
   }
-
-
-  for(i in 1:d){
-    o[i,i]=0;
-    r1=sqrt(ss[i]);
-    r2=s[i];
-
-    r3=(abs(r2))/(r1)-1;
-    r4=sqrt(log1p_exp(2*(abs(r2)-r2-1)-4));
-    r=(r4*((r3))+1)*r4+1;
-    r=(sqrt(ss[i]+r));
-    for(j in 1:d){
-      if(j > i)  o[i,j]=o[j,i]/r;
-      if(j < i) o[i,j] = o[i,j] /r;
-    }
-    o[i,i]=sqrt(1-sum(square(o[i,]))+1e-5);
-  }
-
-  return o;
-  }
-
-
+  
+  
 }
 data{
   int d;
@@ -74,21 +37,38 @@ parameters{
 }
 transformed parameters{
   matrix[d, d] mcor = diag_matrix(rep_vector(1,d));
+  matrix[d, d] mcorbase = rep_matrix(0, d, d);
   matrix[d,d] covm;
+  matrix[d,d] cholm;
   //matrix[d,d] cholm = cholesky_decompose(covm);
   real corprior=0;
   real sdprior = normal_lpdf(logsd | mean(logsd), 10);
   vector[n] llrow=rep_vector(0,n);
-
+  
   if(!indep){
-    mcor=tcrossprod(constraincorsqrt(rawcor,d));
-    if(corpriortype==1)  corprior=normal_lpdf(rawcor| 0, 1); //mean(abs(rawcor))
-    if(corpriortype==2) corprior= normal_lpdf(to_vector(mcor) | 0, 1);
-    if(corpriortype==3) corprior= normal_lpdf(to_vector(eigenvalues_sym(mcor)) | 0, 1);
+    int counter=0;
+    for(i in 1:d){
+      for(j in 1:d){
+        if(i > j){
+          counter+=1;
+          mcorbase[i,j]=inv_logit(rawcor[counter])*2-1;
+        }
+      }
+    }
+    //print(mcorbase);
+    
+    mcor=tcrossprod(constraincorsqrt(mcorbase));
+    //print(mcor);
+    if(reg != 0){
+      if(corpriortype==1)  corprior=normal_lpdf(rawcor| 0, 1); //mean(abs(rawcor))
+      if(corpriortype==2) corprior= normal_lpdf(to_vector(mcor) | 0, 1);
+      if(corpriortype==3) corprior= normal_lpdf(to_vector(eigenvalues_sym(mcor)) | 0, 1);
+    }
   }
-
-  covm = diag_matrix(exp(logsd)+1e-5) * mcor * diag_matrix(exp(logsd)+1e-5);
-
+  
+  covm = quad_form_diag(mcor, log1p_exp(logsd));
+  cholm = cholesky_decompose(covm);
+  
   for(i in 1:n){
     if(nobs[i]>0){
       llrow[i]= multi_normal_lpdf(dat[i,obs[i,1:nobs[i]]] | mu[obs[i,1:nobs[i]]],

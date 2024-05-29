@@ -1,6 +1,40 @@
-ctKalmanTIP <- function(sf,tipreds='all',subject=1,timestep='auto',plot=TRUE,returndat=FALSE,...){
+#' ctPredictTIP
+#' 
+#' Outputs the estimated effect of time independent predictors (covariate moderators) on the expected observations.
+#' 
+#' @param sf A fitted ctStanFit object from the ctsem package.
+#' @param tipreds A character vector specifying which time independent predictors to use. Default is 'all', which uses all time independent predictors in the model.
+#' @param subject An integer value specifying the internal ctsem subject ID (mapping visible under myfit$setup$idmap) for which predictions are made. 
+#' This is relevant only when time dependent predictors are also included in the model. 
+#' @param timestep A numeric value specifying the time step for predictions. Default is 'auto', which tries to automatically determine an appropriate time step.
+#' @param plot A logical value indicating whether to ggplot the results instead of returning a data.frame of predictions. Default is TRUE.
+#' @param ... Additional arguments passed to the plot.ctKalmanDF function.
+#' 
+#' @return If plot is TRUE, a ggplot object showing the estimated effects of covariate moderators. If returndat is TRUE, a data frame with the processed data.
+#' 
+#' @details This function estimates the effects of covariate moderators on the expected process and observations for a specified subject in a dynamic system. The covariate moderators are varied by one standard deviation above and below the mean, and their effects are plotted or returned as a data frame.
+#' 
+#' @examples
+#' # Example usage:
+#' ctPredictTIP(ctstantestfit, tipreds='all', plot=TRUE)
+#' 
+#' # To return the predictions instead of the plot
+#' tipPredictions <- ctPredictTIP(ctstantestfit, tipreds='all', plot=FALSE)
+#' 
+#' # Plot the output predictions
+#' ggplot(data = tipPredictions,mapping = aes(y=Value,x=Time,linetype=Direction,colour=Covariate))+
+#'   geom_line(size=1)+
+#'   scale_colour_manual(values=c(1,2:length(unique(kdat$Covariate))),
+#'   labels=c('No covariate',levels(kdat$Covariate)[-1]))+
+#'   facet_wrap(vars(Variable),scales = 'free_y')+theme_bw()+
+#'   theme(legend.position = 'bottom')
+#' 
+#' @export
+ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',plot=TRUE,...){
   if(tipreds[1] %in% 'all') tipreds <- sf$ctstanmodel$TIpredNames
   if(length(subject) > 1) stop('>1 subject!')
+  
+  browser()
   
   sdat <- standatact_specificsubjects(standata = sf$standata,subjects = subject)
   sdat$tipredsdata[,sf$ctstanmodel$TIpredNames] <- 0 #set all tipreds to zero
@@ -45,13 +79,15 @@ ctKalmanTIP <- function(sf,tipreds='all',subject=1,timestep='auto',plot=TRUE,ret
   kdat$Covariate <- factor(kdat$Covariate)
   
   Covariate = Direction = Time = Value = Variable = NULL #global vars nonsense
+  kdat <- kdat[kdat$Element %in% 'yprior',] #why do we need this now and didn't used to...
   
-  if(returndat) return(kdat) else{
+  if(!plot) return(kdat) else{
     k=ggplot(data = kdat,mapping = aes(y=Value,x=Time,linetype=Direction,colour=Covariate))+
       geom_line(size=1)+
       scale_colour_manual(values=c(1,2:length(unique(kdat$Covariate))),
         labels=c('No covariate',levels(kdat$Covariate)[-1]))+
-      facet_wrap(vars(Variable),scales = 'free_y')+theme_bw()
+      facet_wrap(vars(Variable),scales = 'free_y')+theme_bw()+
+      theme(legend.position = 'bottom')
     return(k)
   }
 }

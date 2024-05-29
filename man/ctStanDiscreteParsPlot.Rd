@@ -30,7 +30,7 @@ matrix specifying which indices of the output matrix to plot.
 'all' plots all AR and CR effects at once.}
 
 \item{quantiles}{numeric vector of length 3, with values between 0 and 1, specifying which quantiles to plot.
-The default of c(.05,.5,.95) plots 95\% credible intervals and the posterior median at 50\%.}
+The default plots 95\% credible intervals and the posterior median at 50\%.}
 
 \item{latentNames}{Vector of character strings denoting names for the latent variables. 
 'auto' just uses eta1 eta2 etc.}
