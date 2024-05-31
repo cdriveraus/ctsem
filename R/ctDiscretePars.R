@@ -158,7 +158,7 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
   
   nl=dim(ctpars$DRIFT)[3]
   
-  if(!quiet) message('Computing temporal regression coefficients for ', dim(ctpars$DRIFT)[1],' samples, may take a moment...')
+  if(!quiet) message('Computing temporal regression coefficients for ', dim(ctpars$DRIFT)[1],' samples')
   
   lapply(names(ctpars),function(x){ #add in extra dim if only 3 dims (e.g. when not individually varying)
     dm=dim(ctpars[[x]])

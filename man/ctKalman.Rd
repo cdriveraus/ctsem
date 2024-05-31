@@ -8,7 +8,7 @@ ctKalman(
   fit,
   timerange = "asdata",
   timestep = "auto",
-  subjects = fit$setup$idmap[1, 1],
+  subjects = fit$standata$idmap[1, 1],
   removeObs = FALSE,
   plot = FALSE,
   standardisederrors = FALSE,

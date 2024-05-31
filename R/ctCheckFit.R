@@ -51,7 +51,7 @@ ctSaturatedFitConditional<-function(dat,ucols,reg,hmc=FALSE,covf=NA,verbose=0){
     covf$ll <- sum(llrow,na.rm=TRUE)
   } else { #if not conditional
     
-    covdat <- covdata(ndat = dat[,o1,drop=FALSE],reg=reg)
+    covdat <- covdata(dat[,o1,drop=FALSE],reg=reg)
     smf <- rstan::sampling(stanmodels$cov,data=covdat,chains=0)
     cp <- rstan::constrain_pars(smf,covf$fit$par)
     
@@ -124,7 +124,7 @@ ctSaturatedFit <- function(fit,conditional=FALSE,reg=0, hmc=FALSE,
   message('Min obs per col: ', paste0(minobspercol,collapse=', '))
   
   covf = ctSaturatedFitConditional(dat = dat,ucols = ucols,reg = reg,verbose=0)
-  covfindep = covml(ndat = dat[,ucols,drop=FALSE],reg = reg,
+  covfindep = covml(dat[,ucols,drop=FALSE],reg = reg,
     hmc=hmc,independent=TRUE)
   covf$llindependent <- covfindep$ll
   
@@ -136,7 +136,7 @@ ctSaturatedFit <- function(fit,conditional=FALSE,reg=0, hmc=FALSE,
     formula='id~WhichObs+variable')
   err=data.frame(err)
   err <- err[,apply(err,2,function(x) any(!is.na(x))),drop=FALSE][,-1,drop=FALSE] #remove na and id cols
-  covfindepresid = covml(ndat = err,reg = reg,
+  covfindepresid = covml(err,reg = reg,
     hmc=hmc,independent=TRUE)
   covf$llresid <- covfindepresid$ll
   
@@ -154,9 +154,9 @@ ctSaturatedFit <- function(fit,conditional=FALSE,reg=0, hmc=FALSE,
       plot(fitoos$cp$llrow)
       
       #independence model oos
-      findep=covml(ndat = datheldout[,ucols,drop=FALSE],reg = reg,
+      findep=covml(datheldout[,ucols,drop=FALSE],reg = reg,
         hmc=hmc,independent=TRUE)
-      covdat <- covdata(ndat = dat[x,ucols,drop=FALSE],reg=reg,independent = TRUE)
+      covdat <- covdata(dat[x,ucols,drop=FALSE],reg=reg,independent = TRUE)
       smf <- rstan::sampling(stanmodels$cov,data=covdat,chains=0)
       cp <- rstan::constrain_pars(smf,findep$fit$par)
       fin$llindependentoos <- cp$llrow
