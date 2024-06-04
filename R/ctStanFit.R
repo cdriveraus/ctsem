@@ -489,6 +489,15 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     message('Free T0VAR parameters fixed to diagonal matrix of 1 as only 1 subject - consider appropriateness!')
   }
   
+  if(any(duplicated(ctm$pars$param[ctm$pars$matrix %in% 'T0MEANS']))) stop(paste0(
+  'Unfortunately, duplicate T0MEANS parameters must be specified via inclusion of additional PARS matrix in ctModel: e.g.,
+ctModel(... #regular model code
+PARS=c("t0mPar||TRUE"), #specify an additional parameter called t0mPar, with random effects
+T0MEANS=c("t0mPar","t0mPar"), #insert this parameter into the T0MEANS matrix as many times as needed.
+... #regular model code)
+'))
+    
+  
   if(binomial){
     message('Binomial argument deprecated -- in future set manifesttype in the model object to 1 for binary indicators')
     intoverstates <- FALSE
