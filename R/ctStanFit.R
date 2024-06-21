@@ -488,8 +488,9 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     }
     message('Free T0VAR parameters fixed to diagonal matrix of 1 as only 1 subject - consider appropriateness!')
   }
-  
-  if(any(duplicated(ctm$pars$param[ctm$pars$matrix %in% 'T0MEANS']))) stop(paste0(
+
+  if(any(duplicated(ctm$pars$param[ctm$pars$matrix %in% 'T0MEANS' & 
+      !is.na(ctm$pars$param)]))) stop(paste0(
   'Unfortunately, duplicate T0MEANS parameters must be specified via inclusion of additional PARS matrix in ctModel: e.g.,
 ctModel(... #regular model code
 PARS=c("t0mPar||TRUE"), #specify an additional parameter called t0mPar, with random effects

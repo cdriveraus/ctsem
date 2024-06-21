@@ -49,7 +49,7 @@ ctStanParnames <- function(x,substrings=c('pop_','popsd')){
 #'ctStanDiscretePars
 #'
 #'Calculate model implied regressions for a sequence of time intervals (if ct) or steps (if dt) based on
-#'a ctStanFit object, for specified subjects.
+#'a ctStanFit object, for specified subjects. Wrap with print() when used inside for loops!
 #'
 #'@param ctstanfitobj model fit from \code{\link{ctStanFit}}
 #'@param subjects Either 'popmean', to use the population mean parameter, or a vector of integers denoting which
@@ -65,7 +65,7 @@ ctStanParnames <- function(x,substrings=c('pop_','popsd')){
 #'@param standardise Logical. If TRUE, output is standardised according to expected total within subject variance, given by the 
 #'asymDIFFUSIONcov matrix.
 #'@param cov Logical. If TRUE, covariances are returned instead of regression coefficients.
-#'@param plot Logical. If TRUE, plots output using \code{\link{ctStanDiscreteParsPlot}}
+#'@param plot Logical. If TRUE, ggplots output using \code{\link{ctStanDiscreteParsPlot}}
 #'instead of returning output. 
 #'@param cores Number of cpu cores to use for computing subject matrices. 
 #'If subject matrices were saved during fiting, not used. 
@@ -81,6 +81,9 @@ ctStanParnames <- function(x,substrings=c('pop_','popsd')){
 #'  plot=TRUE,indices='CR')
 #'g= g+ labs(title='Cross effects')
 #'print(g)
+#'@details If plot=TRUE, the function will return a ggplot2 object 
+#'(and hence needs to be printed if intended to display within a loop). 
+#'This can be modified by the various ggplot2 functions, or displayed using print(x).
 #'@export
 ctStanDiscretePars<-function(ctstanfitobj, subjects='popmean', 
   times=seq(from=0,to=10,by=.1), 
@@ -93,7 +96,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='popmean',
   
   if(subjects[1] != 'popmean' && any(!is.integer(as.integer(subjects)))) stop('
   subjects argument must be either "popmean" or an integer denoting specific subjects')
-  
+
   extractSubjects <- subjects
   if('popmean' %in% extractSubjects) extractSubjects <- 'all'
   e<-ctExtract(ctstanfitobj,subjectMatrices = subjects[1]!='popmean',cores=cores,
