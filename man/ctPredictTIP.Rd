@@ -13,6 +13,7 @@ ctPredictTIP(
   quantiles = c(0.32, 0.5, 0.68),
   baselineQuantile = 0.5,
   showUncertainty = TRUE,
+  TIPValues = NA,
   ...
 )
 }
@@ -31,6 +32,9 @@ This is relevant only when time dependent predictors are also included in the mo
 \item{quantiles}{A numeric vector specifying the quantiles of the time independent predictors to plot. Default is 1SD either side and the median, c(.32,.5,.68).}
 
 \item{showUncertainty}{A logical value indicating whether to plot the uncertainty of the predictions. Default is TRUE.}
+
+\item{TIPValues}{A numeric matrix specifying fixed values for the time independent predictors. 
+Default is NA, which instead relies on the quantiles specified in the quantiles argument.}
 }
 \value{
 If plot is TRUE, a list of ggplot objects showing the estimated effects of covariate moderators. Otherwise, a data frame with the predictions.

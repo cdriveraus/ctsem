@@ -39,7 +39,7 @@ asymDIFFUSIONcov matrix.}
 
 \item{cov}{Logical. If TRUE, covariances are returned instead of regression coefficients.}
 
-\item{plot}{Logical. If TRUE, plots output using \code{\link{ctStanDiscreteParsPlot}}
+\item{plot}{Logical. If TRUE, ggplots output using \code{\link{ctStanDiscreteParsPlot}}
 instead of returning output.}
 
 \item{cores}{Number of cpu cores to use for computing subject matrices. 
@@ -49,7 +49,12 @@ If subject matrices were saved during fiting, not used.}
 }
 \description{
 Calculate model implied regressions for a sequence of time intervals (if ct) or steps (if dt) based on
-a ctStanFit object, for specified subjects.
+a ctStanFit object, for specified subjects. Wrap with print() when used inside for loops!
+}
+\details{
+If plot=TRUE, the function will return a ggplot2 object 
+(and hence needs to be printed if intended to display within a loop). 
+This can be modified by the various ggplot2 functions, or displayed using print(x).
 }
 \examples{
 data.table::setDTthreads(1) #ignore this line

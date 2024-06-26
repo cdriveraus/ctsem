@@ -13,6 +13,8 @@ ctFitMultiModel(
   summaryOutput = TRUE,
   saveFits = TRUE,
   summaryArgs = list(),
+  cv = FALSE,
+  cvArgs = list(),
   ...
 )
 }
@@ -32,6 +34,10 @@ ctFitMultiModel(
 \item{saveFits}{Save fit objects to working directory?}
 
 \item{summaryArgs}{Additional arguments for ctSummarise.}
+
+\item{cv}{Perform k-fold cross validation?}
+
+\item{cvArgs}{Additional arguments for ctLOO function used for cross validation.}
 
 \item{...}{Additional arguments for ctStanFit.}
 }
@@ -60,7 +66,7 @@ sunspots<-data.frame(id=1,
  ssmodel2$LAMBDA[2] <- 0
  
  fits<-ctFitMultiModel(list(m1=ssmodel1,m2=ssmodel2),datalong = sunspots,
-   summaryOutput = FALSE,saveFits = FALSE,cores=1)
+   summaryOutput = FALSE, saveFits = FALSE, cores=1, cv=TRUE, cvArgs=list(folds=5))
  print(fits$compare)
 }
 }

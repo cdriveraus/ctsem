@@ -8,6 +8,8 @@
 #' @param saveFits Save fit objects to working directory?
 #' @param summaryArgs Additional arguments for ctSummarise.
 #' @param prefix prefix for output files.
+#' @param cv Perform k-fold cross validation?
+#' @param cvArgs Additional arguments for ctLOO function used for cross validation.
 #' @param ... Additional arguments for ctStanFit. 
 #'
 #' @return List containing a named list of model fits ($fits), and a compare object ($compare)
@@ -32,13 +34,13 @@
 #'  ssmodel2$LAMBDA[2] <- 0
 #'  
 #'  fits<-ctFitMultiModel(list(m1=ssmodel1,m2=ssmodel2),datalong = sunspots,
-#'    summaryOutput = FALSE,saveFits = FALSE,cores=1)
+#'    summaryOutput = FALSE, saveFits = FALSE, cores=1, cv=TRUE, cvArgs=list(folds=5))
 #'  print(fits$compare)
 #' }
  
  
 ctFitMultiModel <- function(mlist, datalong, prefix='',type='stanct',cores=2, summaryOutput=TRUE, 
-  saveFits = TRUE, summaryArgs = list(),...){
+  saveFits = TRUE, summaryArgs = list(),cv=FALSE, cvArgs=list(),...){
   
   newfit <- function(model,name){ #function to convert old model to new form, fit with and without covariates, summarise, and save.
     if(class(model) %in% "ctsemInit") model <- ctStanModel(model,type = type) #convert to new model form  
@@ -63,12 +65,23 @@ ctFitMultiModel <- function(mlist, datalong, prefix='',type='stanct',cores=2, su
     aic=2*length(x$stanfit$rawest)-2*x$stanfit$transformedparsfull$ll,
     logprob=x$stanfit$optimfit$value))))
   
-  mcompare <- mcompare[order(mcompare$aic),]
+  # mcompare <- mcompare[order(mcompare$aic),] #disabled ordering - return in same order as models input
   
   if(summaryOutput){
   sink(file = paste0(prefix,'_compare.txt'))
   print(mcompare)
   sink()
   }
+  
+  if(cv){
+    if(is.null(cvArgs$cores)) cvArgs$cores <- cores
+    cv <- lapply(mfit,function(x){
+      args <- cvArgs
+      args$fit <- x
+      do.call(ctLOO,args)
+    })
+    mcompare$OOSloglik <- lapply(cv,function(x) x$outsampleLogLik)
+  }
+  
   return(list(fits = mfit, compare=mcompare))
 }
