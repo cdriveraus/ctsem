@@ -87,7 +87,7 @@ ctStanParnames <- function(x,substrings=c('pop_','popsd')){
 #'@export
 ctStanDiscretePars<-function(ctstanfitobj, subjects='popmean', 
   times=seq(from=0,to=10,by=.1), 
-  nsamples=100,observational=FALSE,standardise=FALSE, 
+  nsamples=200,observational=FALSE,standardise=FALSE, 
   cov=FALSE, plot=FALSE,cores=2,...){
   
   if(!ctstanfitobj$ctstanmodel$continuoustime) times <- unique(round(times))

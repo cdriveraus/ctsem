@@ -9,8 +9,10 @@
 #' @param timestep A numeric value specifying the time step for predictions. Default is 'auto', which tries to automatically determine an appropriate time step.
 #' @param plot A logical value indicating whether to ggplot the results instead of returning a data.frame of predictions. Default is TRUE.
 #' @param quantiles A numeric vector specifying the quantiles of the time independent predictors to plot. Default is 1SD either side and the median, c(.32,.5,.68).
+#' @param discreteTimeQuantiles a numeric vector of length 3 specifying the quantiles of the discrete time points to plot, when 
+#' showUncertainty is TRUE.
 #' @param showUncertainty A logical value indicating whether to plot the uncertainty of the predictions. Default is TRUE.
-#' @param TIPValues A numeric matrix specifying fixed values for the time independent predictors. 
+#' @param TIPvalues An nvalue * nTIpred numeric matrix specifying the fixed values for each time independent predictor effect to plot. 
 #' Default is NA, which instead relies on the quantiles specified in the quantiles argument.
 #' 
 #' @return If plot is TRUE, a list of ggplot objects showing the estimated effects of covariate moderators. Otherwise, a data frame with the predictions.
@@ -36,19 +38,20 @@
 #' 
 #' @export
 ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',plot=TRUE,
-  quantiles=c(.32,.5,.68), baselineQuantile=.5, showUncertainty=TRUE, 
-  TIPValues=NA,...){
+  quantiles=c(.16,.5,.84), discreteTimeQuantiles=c(.025, .5, .975),
+  baselineQuantile=.5, showUncertainty=TRUE, 
+  TIPvalues=NA,...){
   if(tipreds[1] %in% 'all') tipreds <- sf$ctstanmodel$TIpredNames
   if(length(subject) > 1) stop('>1 subject!')
   if(length(unique(sf$standata$subject)) < 3) stop('With fewer than 3 subjects in the data, these predictions are not possible')
   
   # TIPbaselineQuantiles <- apply(sf$standata$tipredsdata[,sf$ctstanmodel$TIpredNames,drop=FALSE],2,quantile,probs=baselineQuantile)
-  if(all(is.na(TIPValues))){
-    TIPValues = apply(sf$standata$tipredsdata[,tipreds,drop=FALSE],2,quantile,probs=quantiles)
+  if(all(is.na(TIPvalues))){
+    TIPvalues = apply(sf$standata$tipredsdata[,tipreds,drop=FALSE],2,quantile,probs=quantiles)
   }
-  #check for duplicates in columns of TIPValues and stop if found
-  if(!all(apply(TIPValues,2,function(x) length(unique(x))==length(x)))){
-    stop('Duplicate values for TI predictors -- if using categorical / dummy predictors, specify values using TIPValues arg')
+  #check for duplicates in columns of TIPvalues and stop if found
+  if(!all(apply(TIPvalues,2,function(x) length(unique(x))==length(x)))){
+    stop('Duplicate values for TI predictors -- if using categorical / dummy predictors, specify values using TIPvalues arg')
   }
   
   sdat <- standatact_specificsubjects(standata = sf$standata,subjects = subject)
@@ -59,11 +62,14 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',plot=TRUE,
   dat <- standatatolong(sdat,origstructure = TRUE,ctm=sf$ctstanmodelbase)
   dat[,sf$ctstanmodelbase$manifestNames] <- NA #set all manifest obs to missing
   
+  TIPvalues <- matrix(apply(TIPvalues,2,function(x) sort(x)),ncol=ncol(TIPvalues)) #sort ascending to get plot colours correct
+  
   fulldat <- dat[c(),]
   for(tipi in 1:length(tipreds)){ #for each tipred
-    for(vali in 1:nrow(TIPValues)){ #for each quantile
+    for(vali in 1:nrow(TIPvalues)){ #for each tipred value
       tdat <- dat #copy the data
-      tipvali <- TIPValues[vali,tipi] #compute the quantile
+      tdat[,sf$ctstanmodelbase$TIpredNames] <- 0 #set all covariates to zero
+      tipvali <- TIPvalues[vali,tipi] #get the tipred value
       tdat[[sf$ctstanmodelbase$subjectIDname]] <- paste0(tipreds[tipi],' = ',round(tipvali,2)) #modify the subject ID
       tdat[,tipreds[tipi]] <- tipvali #set the tipred value to the quantile or value specified
       if(nrow(fulldat)==0){
@@ -82,36 +88,49 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',plot=TRUE,
     for(tipi in 1:length(tipreds)){ #for each tipred
       ks <- k[grepl(paste0('^',tipreds[tipi],' = '),k$Subject),] #subset to tipred
       ks$Subject <- factor(as.numeric(gsub('^.* = ','',ks$Subject))) #extract the subject value
+      # if(length(unique(ks$Subject))==1){ #add dummy subject to avoid problems due to ctKalman not plotting single subjects the same
+      #   newksrow <- ks[1,]
+      #   newksrow$value <- newksrow$sd <- newksrow$Time <-NA
+      #   newksrow$Subject=99999
+      #   ks <- rbind(ks,newksrow)
+      # }
+      # ks$Subject <- factor(ks$Subject)
       
       for(elementi in c('yprior','etaprior')){
-      ksp=plot.ctKalmanDF(ks,plot=FALSE,kalmanvec=elementi,
-        polygonsteps = ifelse(showUncertainty,10,0))
-      
-      ksp <- ksp +
-        theme(legend.position = 'bottom') +
-        guides(colour=guide_legend(title=tipi)) +
-        scale_colour_manual(values=colorRampPalette(c("red",'black', "blue"))(length(unique(ksp$data$Subject))))+
-        aes(linetype=NULL)+
-        theme(legend.position = 'bottom')+
-        guides(colour=guide_legend(title=tipreds[tipi]))+
-        ggtitle(paste0('Effect of ',tipreds[tipi],' on ',ifelse(elementi=='yprior','observed','latent'),' trajectory'))
-      
-      gglist[['Process']][[ifelse(elementi=='yprior','Observed','Latent')]][[tipreds[tipi]]] <- ksp
+        ksp=plot.ctKalmanDF(ks,plot=FALSE,kalmanvec=elementi,
+          polygonsteps = ifelse(showUncertainty,10,0))
+        # if(tail(ksp$data$Subject,1)==99999){ #if we added a dummy subject, remove from plot now
+        #   ksp$data <- ksp$data[-nrow(ksp$data),]
+        #   # ksp$data$Subject <- factor(ksp$data$Subject)
+        # }
+        
+        ksp <- ksp +
+          theme(legend.position = 'bottom') +
+          guides(colour=guide_legend(title=tipi)) +
+          aes(linetype=NULL,colour=factor(Subject),fill=factor(Subject))+
+          scale_colour_manual(values=colorRampPalette(c("red",'black', "blue"))(length(ksp$data$Subject)))+
+          scale_fill_manual(values=colorRampPalette(c("red",'black', "blue"))(length(ksp$data$Subject)))+
+          theme(legend.position = 'bottom')+
+          guides(colour=guide_legend(title=tipreds[tipi]))+
+          ggtitle(paste0('Effect of ',tipreds[tipi],' on ',ifelse(elementi=='yprior','observed','latent'),' trajectory'))+
+          facet_wrap(vars(Variable))
+        
+        gglist[['Process']][[ifelse(elementi=='yprior','Observed','Latent')]][[tipreds[tipi]]] <- ksp
       }
       
       #include ctstandiscretepars plots
       for(typei in c('Independent','Correlated')){
         ctd=ctStanDiscretePars(sf,plot=F,
-          subject=(tipi-1)*nrow(TIPValues) + 1:nrow(TIPValues),
+          subject=(tipi-1)*nrow(TIPvalues) + 1:nrow(TIPvalues),
           observational = !typei %in% 'Independent')
-        if(showUncertainty) ctdQuantiles <- c(.025,.5,.975) else ctdQuantiles <- c(.5,.5,.5)
+        if(showUncertainty) ctdQuantiles <- discreteTimeQuantiles else ctdQuantiles <- c(.5,.5,.5)
         ctdp=ctStanDiscreteParsPlot(ctd,quantiles=ctdQuantiles,splitSubjects = TRUE)
-        ctdp$data$CovariateValue <- factor(round(TIPValues[ctdp$data$Subject,tipi],3))
+        ctdp$data$CovariateValue <- factor(round(TIPvalues[ctdp$data$Subject,tipi],3))
         
         ctdp=ctdp+aes(colour=CovariateValue,fill=CovariateValue)+
           facet_wrap(vars(Effect))+theme(legend.position = 'bottom')+
-          scale_colour_manual(values=colorRampPalette(c("red",'black', "blue"))(nrow(TIPValues)))+
-          scale_fill_manual(values=colorRampPalette(c("red",'black', "blue"))(nrow(TIPValues)))+
+          scale_colour_manual(values=colorRampPalette(c("red",'black', "blue"))(nrow(TIPvalues)))+
+          scale_fill_manual(values=colorRampPalette(c("red",'black', "blue"))(nrow(TIPvalues)))+
           theme(legend.position = 'bottom') +
           guides(colour=guide_legend(title=tipreds[tipi]),
             fill=guide_legend(title=tipreds[tipi]))
@@ -289,9 +308,9 @@ plot.ctKalmanDF<-function(x, subjects=unique(x$Subject), kalmanvec=c('y','yprior
   if(all(errorvec %in% 'auto')) errorvec <- klines
   errorvec <- errorvec[grep('(prior)|(upd)|(smooth)',errorvec)]
   colvec='Variable'
-  if(length(subjects) > 1){
-    colvec=ifelse(facets %in% 'Subject','Variable','Subject')
-  }
+  # if(length(subjects) > 1){
+  colvec=ifelse(facets %in% 'Subject','Variable','Subject')
+  # }
   ltyvec <- setNames( rep(0,length(kalmanvec)),kalmanvec)
   ltyvec[kalmanvec %in% klines] = setNames(1:length(klines),klines)
   
@@ -308,7 +327,7 @@ plot.ctKalmanDF<-function(x, subjects=unique(x$Subject), kalmanvec=c('y','yprior
   
   if(length(unique(ltyvec[!is.na(ltyvec)]))<1) g<-g+guides(linetype='none')
   
-  if(!is.na(facets[1]) && length(subjects) > 1 && length(unique(subset(x,Element %in% kalmanvec)$Variable)) > 1){
+  if(!is.na(facets[1]) && length(unique(subset(x,Element %in% kalmanvec)$Variable)) > 1){
     g <- g+ facet_wrap(facets,scales = 'free') 
   } 
   g <- g + ylab(ifelse(length(unique(x$Variable))==1, unique(x$Variable),'Variable'))
@@ -321,7 +340,7 @@ plot.ctKalmanDF<-function(x, subjects=unique(x$Subject), kalmanvec=c('y','yprior
       d2 <- subset(x,Element %in% errorvec)
       d2$sd <- d2$sd *si
       
-      if(length(subjects) ==1){
+      if(facets %in% 'Subject'){
         g<- g+ 
           geom_ribbon(data=d2,aes(ymin=(Value-sd),x=Time,
             ymax=(Value+sd),fill=(Variable)),
