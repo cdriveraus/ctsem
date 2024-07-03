@@ -107,9 +107,9 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',plot=TRUE,
         ksp <- ksp +
           theme(legend.position = 'bottom') +
           guides(colour=guide_legend(title=tipi)) +
-          aes(linetype=NULL,colour=factor(Subject),fill=factor(Subject))+
-          scale_colour_manual(values=colorRampPalette(c("red",'black', "blue"))(length(ksp$data$Subject)))+
-          scale_fill_manual(values=colorRampPalette(c("red",'black', "blue"))(length(ksp$data$Subject)))+
+          aes(linetype=NULL,colour=Subject,fill=Subject)+
+          scale_colour_manual(values=colorRampPalette(c("red",'black', "blue"))(length(unique(ksp$data$Subject))))+
+          scale_fill_manual(values=colorRampPalette(c("red",'black', "blue"))(length(unique(ksp$data$Subject))))+
           theme(legend.position = 'bottom')+
           guides(colour=guide_legend(title=tipreds[tipi]))+
           ggtitle(paste0('Effect of ',tipreds[tipi],' on ',ifelse(elementi=='yprior','observed','latent'),' trajectory'))+
