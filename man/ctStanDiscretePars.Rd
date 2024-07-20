@@ -8,7 +8,7 @@ ctStanDiscretePars(
   ctstanfitobj,
   subjects = "popmean",
   times = seq(from = 0, to = 10, by = 0.1),
-  nsamples = 100,
+  nsamples = 200,
   observational = FALSE,
   standardise = FALSE,
   cov = FALSE,

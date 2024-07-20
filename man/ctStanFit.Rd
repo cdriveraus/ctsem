@@ -25,6 +25,7 @@ ctStanFit(
   chains = 2,
   cores = ifelse(optimize, getOption("mc.cores", 2L), "maxneeded"),
   inits = NULL,
+  compileArgs = list(),
   forcerecompile = FALSE,
   saveCompile = TRUE,
   savescores = FALSE,
@@ -104,6 +105,8 @@ up to the number of chains, or a positive integer. If \code{optimize=TRUE}, more
 \item{inits}{either character string 'optimize, NULL, or vector of (unconstrained)
 parameter start values, as returned by the rstan function \code{rstan::unconstrain_pars}, or the parameter values
 found in a ctsem fit object \code{myfit$stanfit$rawest} (or \code{$rawposterior}) for instance.}
+
+\item{compileArgs}{List of arguments to pass to \code{\link{stan_model}} for compilation of the Stan model.}
 
 \item{forcerecompile}{logical. For development purposes. 
 If TRUE, stan model is recompiled, regardless of apparent need for compilation.}

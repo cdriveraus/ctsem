@@ -1,5 +1,5 @@
 bibentry(bibtype = "Article",
-  title        = "Hierarchical {{Bayesian}} Continuous Time Dynamic Modeling.",
+  title        = "Hierarchical {{Bayesian}} continuous time dynamic modeling.",
   author       = c(person(given = c("Charles", "C."),
                           family = "Driver"),
                    person(given = c("Manuel", "C."),
@@ -12,16 +12,11 @@ bibentry(bibtype = "Article",
   doi          = "10.1037/met0000168",
 
   header       = "To cite the current, hierarchical ctsem use:",
-  textVersion  =
-  paste("Charles C. Driver,  Manuel C. Voelkle (2018).",
-        "Hierarchical Bayesian Continuous Time Dynamic Modeling.",
-        "Psychological Methods, 23(4), 774-799.",
-        "10.1037/met0000168")
 )
 
 
 bibentry(bibtype = "Article",
-  title        = "Continuous Time Structural Equation Modeling with {R} Package {ctsem}",
+  title        = "Continuous Time Structural Equation Modeling with {R} package {ctsem}",
   author       = c(person(given = c("Charles", "C."),
                           family = "Driver"),
                    person(given = c("Johan", "H.", "L."),
@@ -34,11 +29,20 @@ bibentry(bibtype = "Article",
   number       = "5",
   pages        = "1--35",
   doi          = "10.18637/jss.v077.i05",
-
   header       = "To cite the original ctsem use:",
-  textVersion  =
-  paste("Charles C. Driver, Johan H. L. Oud, Manuel C. Voelkle (2017).",
-        "Continuous Time Structural Equation Modeling with R Package ctsem.",
-        "Journal of Statistical Software, 77(5), 1-35.",
-        "doi:10.18637/jss.v077.i05")
+)
+
+bibentry(
+  bibtype = "incollection",
+  title = "Hierarchical continuous time modeling",
+  editor = "John F. Rauthmann",
+  booktitle = "The Handbook of Personality Dynamics and Processes",
+  publisher = "Academic Press",
+  pages = "887-908",
+  year = 2021,
+  isbn = "978-0-12-813995-0",
+  doi = "10.1016/B978-0-12-813995-0.00034-0",
+  url = "https://www.sciencedirect.com/science/article/pii/B9780128139950000340",
+  author = c("Charles C. Driver", "Manuel C. Voelkle"),
+  header       = "To cite the current manual use:",
 )

@@ -10,10 +10,11 @@ ctPredictTIP(
   subject = 1,
   timestep = "auto",
   plot = TRUE,
-  quantiles = c(0.32, 0.5, 0.68),
+  quantiles = c(0.16, 0.5, 0.84),
+  discreteTimeQuantiles = c(0.025, 0.5, 0.975),
   baselineQuantile = 0.5,
   showUncertainty = TRUE,
-  TIPValues = NA,
+  TIPvalues = NA,
   ...
 )
 }
@@ -31,9 +32,12 @@ This is relevant only when time dependent predictors are also included in the mo
 
 \item{quantiles}{A numeric vector specifying the quantiles of the time independent predictors to plot. Default is 1SD either side and the median, c(.32,.5,.68).}
 
+\item{discreteTimeQuantiles}{a numeric vector of length 3 specifying the quantiles of the discrete time points to plot, when 
+showUncertainty is TRUE.}
+
 \item{showUncertainty}{A logical value indicating whether to plot the uncertainty of the predictions. Default is TRUE.}
 
-\item{TIPValues}{A numeric matrix specifying fixed values for the time independent predictors. 
+\item{TIPvalues}{An nvalue * nTIpred numeric matrix specifying the fixed values for each time independent predictor effect to plot. 
 Default is NA, which instead relies on the quantiles specified in the quantiles argument.}
 }
 \value{

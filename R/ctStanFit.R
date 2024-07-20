@@ -149,6 +149,7 @@ T0VARredundancies <- function(ctm) {
 #' For datasets with many manifest variables or time points, file size may be large.
 #' To generate data based on the posterior of a fitted model, see \code{\link{ctStanGenerateFromFit}}.
 #' @param vb Logical. Use variational Bayes algorithm from stan? Only kind of working, not recommended.
+#' @param compileArgs List of arguments to pass to \code{\link{stan_model}} for compilation of the Stan model.
 #' @param ... additional arguments to pass to \code{\link[rstan]{stan}} function.
 #' @export
 #' @examples
@@ -395,6 +396,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   nlcontrol = list(), nopriors=NA, priors=FALSE, chains=2,
   cores=ifelse(optimize,getOption("mc.cores", 2L),'maxneeded'),
   inits=NULL,
+  compileArgs=list(),
   forcerecompile=FALSE,saveCompile=TRUE,savescores=FALSE,
   savesubjectmatrices=FALSE, saveComplexPars=FALSE,
   gendata=FALSE,
@@ -671,8 +673,10 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
         #   install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
         # }
       }
-      
-      sm <- stan_model(model_name='ctsem', model_code = c(stanmodeltext),auto_write=TRUE)
+      compileArgs$model_name='ctsem'
+      compileArgs$model_code=stanmodeltext
+      compileArgs$auto_write=TRUE
+      sm <- do.call(stan_model,compileArgs)
       # ,allow_undefined = TRUE,verbose=TRUE,
       # includes = paste0(
       #   '\n#include "', file.path(getwd(), 'syl2.hpp'),'"',
