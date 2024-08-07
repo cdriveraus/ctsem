@@ -491,16 +491,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     message('Free T0VAR parameters fixed to diagonal matrix of 1 as only 1 subject - consider appropriateness!')
   }
 
-  if(any(duplicated(ctm$pars$param[ctm$pars$matrix %in% 'T0MEANS' & 
-      !is.na(ctm$pars$param)]))) stop(paste0(
-  'Unfortunately, duplicate T0MEANS parameters must be specified via inclusion of additional PARS matrix in ctModel: e.g.,
-ctModel(... #regular model code
-PARS=c("t0mPar||TRUE"), #specify an additional parameter called t0mPar, with random effects
-T0MEANS=c("t0mPar","t0mPar"), #insert this parameter into the T0MEANS matrix as many times as needed.
-... #regular model code)
-'))
-    
-  
   if(binomial){
     message('Binomial argument deprecated -- in future set manifesttype in the model object to 1 for binary indicators')
     intoverstates <- FALSE
@@ -532,6 +522,16 @@ T0MEANS=c("t0mPar","t0mPar"), #insert this parameter into the T0MEANS matrix as 
   ctm <- ctModel0DRIFT(ctm, ctm$continuoustime) #offset 0 drift
   ctm$pars <- ctModelStatesAndPARS(ctm$pars,statenames = ctm$latentNames,tdprednames=ctm$TDpredNames) #replace latent states and PARS with state and PAR[] refs, need this early because we rely on [] detection
   if(intoverpop)   ctm <- ctStanModelIntOverPop(ctm) #extend system matrices for individual differences
+  
+  #check this *after* replacing PARS references as needed
+  if(any(duplicated(ctm$pars$param[ctm$pars$matrix %in% 'T0MEANS' & 
+      !grepl('[',ctm$pars$param,fixed=TRUE)]))) stop(paste0(
+        'Unfortunately, duplicate T0MEANS parameters must be specified via inclusion of additional PARS matrix in ctModel: e.g.,
+ctModel(... #regular model code
+PARS=c("t0mPar||TRUE"), #specify an additional parameter called t0mPar, with random effects
+T0MEANS=c("t0mPar","t0mPar"), #insert this parameter into the T0MEANS matrix as many times as needed.
+... #regular model code)
+'))
   
   #jacobian addition
   ctm$jacobian <- try(ctJacobian(ctm))

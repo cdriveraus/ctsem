@@ -6,6 +6,8 @@
 #' @param tipreds A character vector specifying which time independent predictors to use. Default is 'all', which uses all time independent predictors in the model.
 #' @param subject An integer value specifying the internal ctsem subject ID (mapping visible under myfit$setup$idmap) for which predictions are made. 
 #' This is relevant only when time dependent predictors are also included in the model. 
+#' @param doDynamics A logical value indicating whether to plot the effects of time independent predictors on the dynamics of the system. Default is TRUE. 
+#' Can be problematic for systems with many dimensions.
 #' @param timestep A numeric value specifying the time step for predictions. Default is 'auto', which tries to automatically determine an appropriate time step.
 #' @param plot A logical value indicating whether to ggplot the results instead of returning a data.frame of predictions. Default is TRUE.
 #' @param quantiles A numeric vector specifying the quantiles of the time independent predictors to plot. Default is 1SD either side and the median, c(.32,.5,.68).
@@ -37,7 +39,7 @@
 #'   theme(legend.position = 'bottom')
 #' 
 #' @export
-ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',plot=TRUE,
+ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=TRUE, plot=TRUE,
   quantiles=c(.16,.5,.84), discreteTimeQuantiles=c(.025, .5, .975),
   baselineQuantile=.5, showUncertainty=TRUE, 
   TIPvalues=NA,...){
@@ -113,29 +115,31 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',plot=TRUE,
           theme(legend.position = 'bottom')+
           guides(colour=guide_legend(title=tipreds[tipi]))+
           ggtitle(paste0('Effect of ',tipreds[tipi],' on ',ifelse(elementi=='yprior','observed','latent'),' trajectory'))+
-          facet_wrap(vars(Variable))
+          facet_wrap(vars(Variable),scale='free_y')
         
         gglist[['Process']][[ifelse(elementi=='yprior','Observed','Latent')]][[tipreds[tipi]]] <- ksp
       }
       
       #include ctstandiscretepars plots
-      for(typei in c('Independent','Correlated')){
-        ctd=ctStanDiscretePars(sf,plot=F,
-          subject=(tipi-1)*nrow(TIPvalues) + 1:nrow(TIPvalues),
-          observational = !typei %in% 'Independent')
-        if(showUncertainty) ctdQuantiles <- discreteTimeQuantiles else ctdQuantiles <- c(.5,.5,.5)
-        ctdp=ctStanDiscreteParsPlot(ctd,quantiles=ctdQuantiles,splitSubjects = TRUE)
-        ctdp$data$CovariateValue <- factor(round(TIPvalues[ctdp$data$Subject,tipi],3))
-        
-        ctdp=ctdp+aes(colour=CovariateValue,fill=CovariateValue)+
-          facet_wrap(vars(Effect))+theme(legend.position = 'bottom')+
-          scale_colour_manual(values=colorRampPalette(c("red",'black', "blue"))(nrow(TIPvalues)))+
-          scale_fill_manual(values=colorRampPalette(c("red",'black', "blue"))(nrow(TIPvalues)))+
-          theme(legend.position = 'bottom') +
-          guides(colour=guide_legend(title=tipreds[tipi]),
-            fill=guide_legend(title=tipreds[tipi]))
-        
-        gglist[['Dynamics']][[typei]][[tipreds[tipi]]] <- ctdp
+      if(doDynamics){
+        for(typei in c('Independent','Correlated')){
+          ctd=ctStanDiscretePars(sf,plot=F,
+            subject=(tipi-1)*nrow(TIPvalues) + 1:nrow(TIPvalues),
+            observational = !typei %in% 'Independent')
+          if(showUncertainty) ctdQuantiles <- discreteTimeQuantiles else ctdQuantiles <- c(.5,.5,.5)
+          ctdp=ctStanDiscreteParsPlot(ctd,quantiles=ctdQuantiles,splitSubjects = TRUE)
+          ctdp$data$CovariateValue <- factor(round(TIPvalues[ctdp$data$Subject,tipi],3))
+          
+          ctdp=ctdp+aes(colour=CovariateValue,fill=CovariateValue)+
+            facet_wrap(vars(Effect))+theme(legend.position = 'bottom')+
+            scale_colour_manual(values=colorRampPalette(c("red",'black', "blue"))(nrow(TIPvalues)))+
+            scale_fill_manual(values=colorRampPalette(c("red",'black', "blue"))(nrow(TIPvalues)))+
+            theme(legend.position = 'bottom') +
+            guides(colour=guide_legend(title=tipreds[tipi]),
+              fill=guide_legend(title=tipreds[tipi]))
+          
+          gglist[['Dynamics']][[typei]][[tipreds[tipi]]] <- ctdp
+        }
       }
     }
     return(gglist)
