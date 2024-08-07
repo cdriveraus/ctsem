@@ -110,7 +110,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& !(.Platform$OS.type=="windows" &&
     
     latentNames=c('level1',"level2",'slope1','slope2')
     
-    PARS <- c() #no extra pars unless added lower
+    PARS <- c('baselevel','baseslope' ) #no extra pars unless added lower
     
     basecor <- '2/(1 + exp(-basecor)) - 1'
     
@@ -167,7 +167,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& !(.Platform$OS.type=="windows" &&
     
     CINT=c(0,0,'cint1||FALSE',"cint1||FALSE") #disable individual variation in par
     
-    T0MEANS=c('baselevel||FALSE',"baselevel||FALSE",'baseslope||FALSE','baseslope||FALSE') #disable individual variation in pars
+    T0MEANS=c('baselevel',"baselevel",'baseslope','baseslope') #disable individual variation in pars
     
     LAMBDA = matrix(c(
       1,0,0,0,

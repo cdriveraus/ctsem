@@ -57,11 +57,11 @@ ctModelStatesAndPARS <- function(ctspec, statenames,tdprednames){ #replace laten
   
   if(length(tdprednames)>0){
     ln <- tdprednames
-  for(li in c(1:length(ln))){
-    for(ri in grep(paste0('\\b(',ln[li],')\\b'),ctspec$param)){
-      ctspec$param[ri] <- gsub(paste0('\\b(',ln[li],')\\b'),paste0('tdpreds[rowi, ',li,']'),ctspec$param[ri])
+    for(li in c(1:length(ln))){
+      for(ri in grep(paste0('\\b(',ln[li],')\\b'),ctspec$param)){
+        ctspec$param[ri] <- gsub(paste0('\\b(',ln[li],')\\b'),paste0('tdpreds[rowi, ',li,']'),ctspec$param[ri])
+      }
     }
-  }
   }
   
   #expand pars
@@ -712,7 +712,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup, simplify=TRUE)
   #save calcs without intoverpop for param intitialisation
   
   
-
+  
   finiteJ<-function(){
     paste0('
     {
@@ -937,8 +937,8 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup, simplify=TRUE)
     etacov=T0cov;
     } //end T0 matrices
 ',
-# dynamics ----------------------------------------------------------------
-'      
+      # dynamics ----------------------------------------------------------------
+      '      
 if(verbose > 1) print ("below t0 row ", rowi);
 
     if(si==0 || (T0check>0)){ //for init or subsequent time steps when observations exist
@@ -950,7 +950,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
       while(intstepi < (dt-1e-10)){
         intstepi = intstepi + dtsmall;
         ',
-    finiteJ(),'
+      finiteJ(),'
     
     if(statedep[4] || whenmat[4,2]) DIFFUSION=mcalc(DIFFUSION,indparams, state,{2}, 4, matsetup, matvalues, si); 
     if(statedep[52] || whenmat[52,2]) JAx=mcalc(JAx,indparams, state,{2}, 52, matsetup, matvalues, si); 
@@ -1058,8 +1058,8 @@ if(verbose > 1){
   etacovb[1,rowi] = etacov; 
   etab[1,rowi] = state\';
 }',
-# measurement -------------------------------------------------------------
-'
+  # measurement -------------------------------------------------------------
+  '
 //measurement update
 if(verbose > 1) print("a");
   if(si == 0 || nobs_y[rowi] > 0 || dosmoother){ //measurement init
@@ -1507,11 +1507,54 @@ functions{
     }
     return mcholcor;
   }
+  
+  matrix constraincorsqrt1(matrix mat){ //converts from unconstrained lower tri matrix to cor
+    int d=rows(mat);
+    matrix[d,d] o;
+    vector[d] ss = rep_vector(0,d);
+    vector[d] s = rep_vector(0,d);
+    real r;
+    real r3;
+    real r4;
+    real r1;
+    
+    for(i in 1:d){
+      for(j in 1:d){
+        if(j > i) {
+          ss[i] +=square(mat[j,i]);
+          s[i] +=mat[j,i];
+        }
+        if(j < i){
+          ss[i] += square(mat[i,j]);
+          s[i] += mat[i,j];
+        }
+      }
+      s[i] += 1e-5;
+      ss[i] += 1e-5;
+    }
+    
+    
+    for(i in 1:d){
+      o[i,i]=0;
+      r1=sqrt(ss[i]);
+      r3=(abs(s[i]))/(r1)-1;
+      r4=sqrt(log1p_exp(2*(abs(s[i])-s[i]-1)-4));
+      r=(r4*((r3))+1)*r4+1;
+      r=(sqrt(ss[i]+r));
+      for(j in 1:d){
+        if(j > i)  o[i,j]=mat[j,i]/r;
+        if(j < i) o[i,j] = mat[i,j] /r;
+      }
+      o[i,i]=sqrt(1-sum(square(o[i,]))+1e-5);
+    }
+    
+    return o;
+  }
 
   matrix sdcovsqrt2cov(matrix mat, int choleskymats){ //covariance from cholesky or unconstrained cor sq root
     if(rows(mat) == 0) return(mat);
     else {
-      if(choleskymats< 1) return(tcrossprod(diag_pre_multiply(diagonal(mat),constraincorsqrt(mat))));
+      if(choleskymats< 1) return(tcrossprod(diag_pre_multiply(diagonal(mat),constraincorsqrt1(mat))));
       else return(tcrossprod(mat));
     }
   }
@@ -1537,7 +1580,7 @@ functions{
   real tform(real parin, int transform, data real scale, data real meanscale, data real shift, data real innershift){
     real param=parin;
     ',gsub('offset','shift',gsub('multiplier','scale',tformshapes(stan=TRUE))),
-if(length(extratforms) > 0) paste0(extratforms,collapse=" \n"),'
+    if(length(extratforms) > 0) paste0(extratforms,collapse=" \n"),'
     return param;
   }
   
@@ -1615,10 +1658,10 @@ if(length(extratforms) > 0) paste0(extratforms,collapse=" \n"),'
   }
   
 }',
-
-# data --------------------------------------------------------------------
-
-'    
+    
+    # data --------------------------------------------------------------------
+    
+    '    
 data {
   int<lower=0> ndatapoints;
   int<lower=1> nmanifest;
@@ -1821,9 +1864,9 @@ transformed parameters{
         }
       }
     }
-    //if(choleskymats==0) rawpopcorr = constraincorsqrt(rawpopcovbase);
+    //if(choleskymats==0) rawpopcorr = constraincorsqrt1(rawpopcovbase);
     //if(choleskymats== -1) 
-    rawpopcorr = tcrossprod( constraincorsqrt(rawpopcovbase));
+    rawpopcorr = tcrossprod( constraincorsqrt1(rawpopcovbase));
     rawpopcov = makesym(quad_form_diag(rawpopcorr, rawpopsd +1e-8),verbose,1);
     rawpopcovchol = cholesky_decompose(rawpopcov); 
   }//end indvarying par setup

@@ -145,9 +145,55 @@ functions{
     }
     return mcholcor;
   }
+  
+  matrix constraincorsqrt1(matrix mat){ //converts from unconstrained lower tri matrix to cor
+    int d=rows(mat);
+    matrix[d,d] o;
+    vector[d] ss = rep_vector(0,d);
+    vector[d] s = rep_vector(0,d);
+    real r;
+    real r3;
+    real r4;
+    real r1;
+    
+    for(i in 1:d){
+      for(j in 1:d){
+        if(j > i) {
+          ss[i] +=square(mat[j,i]);
+          s[i] +=mat[j,i];
+        }
+        if(j < i){
+          ss[i] += square(mat[i,j]);
+          s[i] += mat[i,j];
+        }
+      }
+      s[i] += 1e-5;
+      ss[i] += 1e-5;
+    }
+    
+    
+    for(i in 1:d){
+      o[i,i]=0;
+      r1=sqrt(ss[i]);
+      r3=(abs(s[i]))/(r1)-1;
+      r4=sqrt(log1p_exp(2*(abs(s[i])-s[i]-1)-4));
+      r=(r4*((r3))+1)*r4+1;
+      r=(sqrt(ss[i]+r));
+      for(j in 1:d){
+        if(j > i)  o[i,j]=mat[j,i]/r;
+        if(j < i) o[i,j] = mat[i,j] /r;
+      }
+      o[i,i]=sqrt(1-sum(square(o[i,]))+1e-5);
+    }
+    
+    return o;
+  }
   matrix sdcovsqrt2cov(matrix mat, int choleskymats){ //covariance from cholesky or unconstrained cor sq root
-    if(choleskymats< 1) return(makesym(tcrossprod(diag_pre_multiply(diagonal(mat),constraincorsqrt(mat))),0,1));
-    else return(tcrossprod(mat));
+    if(rows(mat) == 0) return(mat);
+    else {
+      if(choleskymats< 1) return(tcrossprod(diag_pre_multiply(diagonal(mat),constraincorsqrt(mat))));
+      else return(tcrossprod(mat));
+    }
   }
   
   matrix makesym(matrix mat, int verbose, int pd){

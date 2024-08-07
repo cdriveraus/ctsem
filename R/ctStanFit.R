@@ -525,7 +525,8 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   
   #check this *after* replacing PARS references as needed
   if(any(duplicated(ctm$pars$param[ctm$pars$matrix %in% 'T0MEANS' & 
-      !grepl('[',ctm$pars$param,fixed=TRUE)]))) stop(paste0(
+      !grepl('[',ctm$pars$param,fixed=TRUE) &
+      !is.na(ctm$pars$param)]))) stop(paste0(
         'Unfortunately, duplicate T0MEANS parameters must be specified via inclusion of additional PARS matrix in ctModel: e.g.,
 ctModel(... #regular model code
 PARS=c("t0mPar||TRUE"), #specify an additional parameter called t0mPar, with random effects
