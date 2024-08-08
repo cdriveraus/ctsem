@@ -1,6 +1,6 @@
 if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 & 
     !(.Platform$OS.type=="windows" && R.version$major %in% 4 && as.numeric(R.version$minor) >= 2 &&
-    unlist(utils::packageVersion('rstan'))[2] < 25)){
+        unlist(utils::packageVersion('rstan'))[2] < 25)){
   # Sys.setenv(NOT_CRAN = 'true')
   
   library(ctsem)
@@ -46,32 +46,22 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 &
     dm$pars$indvarying <- FALSE
     # dm$pars$indvarying[dm$pars$matrix %in% c('CINT','T0MEANS')] <- TRUE
     
+
+    fct <- ctStanFit(datalong = dat,ctstanmodel = cm)
+    fdt <- ctStanFit(datalong = dat,ctstanmodel = dm)
     
+    sct <- summary(fct,parmatrices=TRUE)
+    sdt <- summary(fdt,parmatrices=TRUE)
     
-    
-    for(m in c('cm','dm')){
-      argslist <- list(
-        ml=list(datalong = dat,ctstanmodel = get(m))
-      )
-      
-      
-      for(argi in names(argslist)){
-        f = do.call(ctStanFit,argslist[[argi]])
-        if(is.null(s[[argi]])) s[[argi]] = list()
-        s[[argi]][[m]] <- summary(f,parmatrices=TRUE)
-      }
-    }
-    
-    
-    ctpars=s[[1]]$cm$parmatrices
+    ctpars=sct$parmatrices
     ctpars <- ctpars[!ctpars$matrix %in% c('DRIFT','CINT','DIFFUSIONcov'),]
-    dtpars=s[[1]]$dm$parmatrices
+    dtpars=sdt$parmatrices
     dtpars$matrix[dtpars$matrix %in% 'DRIFT'] <- 'dtDRIFT'
     
     for(ri in 1:nrow(dtpars)){
-      i <- which(apply(ctpars,1,function(x) all(x[1:3] == dtpars[ri,1:3])))
+      i <- which(apply(ctpars,1,function(x) all(x[1:3] == dtpars[ri,1:3])))[1] #find matching row between ct and dt fits
       if(length(i)>0){
-        for(ti in 4:5){
+        for(ti in 4:5){ #compare parameters mean and sd
           # print(paste0(ctpars[i,'matrix'],' ', ctpars[i,'row'],',', ctpars[i,'col'],' ',
           # colnames(ctpars)[ti],' = ', ctpars[i,ti],', ',dtpars[ri,ti]))
           testthat::expect_equivalent(ctpars[i,ti],dtpars[ri,ti],tol=ifelse(ti==4,1e-1,1e-1))
@@ -80,17 +70,17 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 &
     }
     
     
-    ll=unlist(lapply(s, function(argi) lapply(argi, function(m) m$loglik)))
+    expect_equivalent(sct$loglik,sdt$loglik,tol=1e-3)
     
-    for(dimi in 2:length(ll)){
-      expect_equivalent(ll[dimi],ll[dimi-1],tol=1e-3)
-    }
     
     #do.call(cbind,dtpars)
     
     
     #check time varying lambda estimation
-    sapply(s$ml,function(x) expect_equivalent(lambdafactor,x$popmeans[rownames(x$popmeans) %in% 'lbystate','mean'],tol=1e-1))
+    expect_equivalent(
+      lambdafactor,
+      sct$popmeans[rownames(sct$popmeans) %in% 'lbystate','mean'],
+      sdt$popmeans[rownames(sdt$popmeans) %in% 'lbystate','mean'],tol=1e-1)
     
   }) 
   

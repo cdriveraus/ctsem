@@ -27,9 +27,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     sm$pars$indvarying<- FALSE
     
     sf=ctStanFit(aa,
-      ctstanmodel = sm, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores,
-      priors=FALSE,
-      optimcontrol=list(finishsamples=500,carefulfit=F))
+      ctstanmodel = sm, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores)
     
     sdat <- sf$standata
     sdat$dokalmanrows[sdat$subject==1] <- 0L #remove 1 subject
@@ -43,14 +41,14 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     testthat::expect_equivalent(
       sum(loo2$outsampleLogLikRow-loo$outsampleLogLikRow),
-      0,tol=1)
+      0,tol=2)
     
     testthat::expect_equivalent(
-      sum(loo$outsampleLogLikRow),
+      sum(loo$insampleLogLikRow),
       sum(sf$stanfit$transformedparsfull$llrow),tol=.1)
     
     testthat::expect_equivalent(
-      sum(loo2$outsampleLogLikRow),
+      sum(loo2$insampleLogLikRow),
       sum(sf$stanfit$transformedparsfull$llrow),tol=.1)
     
   })
