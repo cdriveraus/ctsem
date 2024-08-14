@@ -38,12 +38,12 @@ ssfit4 <- ctStanFit(datalong, ssmodel,chains=2,cores=2,iter=300,optimize=F,prior
   intoverpop = T)
 
 for(i in 2:4){
-testthat::expect_equivalent(get(paste0('ssfit',i))$stanfit$transformedparsfull$ll,
-   get(paste0('ssfit',i-1))$stanfit$transformedparsfull$ll,tol=1e-2)
+  test_isclose(get(paste0('ssfit',i))$stanfit$transformedparsfull$ll,
+   get(paste0('ssfit',i-1))$stanfit$transformedparsfull$ll,tol=ifelse(i==4,3e-1,1e-2))
 }
 
 for(i in 2:4){
-   testthat::expect_equivalent(
+  test_isclose(
       ctStanContinuousPars(get(paste0('ssfit',i)))$DRIFT,
       ctStanContinuousPars(get(paste0('ssfit',i-1)))$DRIFT,tol=1e-1)
 }

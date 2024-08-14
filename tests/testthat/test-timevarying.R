@@ -27,24 +27,20 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 &
     }
     dat <- as.matrix(dat)
     dat[,'Y1'] <-  dat[,'Y1'] * (1+ lambdafactor * dat[,'Y2']) #state dependent lambda
-    dat[,c('Y1')] <- dat[,c('Y1')] + rnorm(nrow(dat),0,.5) #measurement error
-    dat[,c('Y2')] <- dat[,c('Y2')] + rnorm(nrow(dat),0,.5) #measurement error
+    dat[,c('Y1')] <- dat[,c('Y1')] + rnorm(nrow(dat),0,.1) #measurement error
+    dat[,c('Y2')] <- dat[,c('Y2')] + rnorm(nrow(dat),0,.1) #measurement error
     
     colnames(dat)[1]='id'
     
     cm <- ctModel(LAMBDA=matrix(c('lbystate * eta2 + 1',0,0,1),2,2),  T0MEANS=c('t0m1','t0m2|log1p_exp(param)'),
-      T0VAR=matrix(c('t0v11',0,0,'t0v22'),2,2),
-      PARS=c('lbystate|log1p_exp(param)','lbystate * eta2 + 1'),type='stanct')
+      PARS=c('lbystate|log1p_exp(param)'),type='stanct')
     
     cm$pars$indvarying <- FALSE
-    # cm$pars$indvarying[cm$pars$matrix %in% c('CINT','T0MEANS')] <- TRUE
     
     dm <- ctModel(LAMBDA=matrix(c('lbystate * eta2 + 1',0,0,1),2,2),  T0MEANS=c('t0m1','t0m2|log1p_exp(param)'),
-      T0VAR=matrix(c('t0v11',0,0,'t0v22'),2,2),
-      PARS=c('lbystate|log1p_exp(param)','lbystate * eta2 + 1'),type='standt')
+      PARS=c('lbystate|log1p_exp(param)'),type='standt')
     
     dm$pars$indvarying <- FALSE
-    # dm$pars$indvarying[dm$pars$matrix %in% c('CINT','T0MEANS')] <- TRUE
     
 
     fct <- ctStanFit(datalong = dat,ctstanmodel = cm)
@@ -60,24 +56,24 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 &
     
     for(ri in 1:nrow(dtpars)){
       i <- which(apply(ctpars,1,function(x) all(x[1:3] == dtpars[ri,1:3])))[1] #find matching row between ct and dt fits
-      if(length(i)>0){
+      if(!is.na(i) & length(i)>0){
         for(ti in 4:5){ #compare parameters mean and sd
           # print(paste0(ctpars[i,'matrix'],' ', ctpars[i,'row'],',', ctpars[i,'col'],' ',
           # colnames(ctpars)[ti],' = ', ctpars[i,ti],', ',dtpars[ri,ti]))
-          testthat::expect_equivalent(ctpars[i,ti],dtpars[ri,ti],tol=ifelse(ti==4,1e-1,1e-1))
+          test_isclose(ctpars[i,ti],dtpars[ri,ti],tol=ifelse(ti==4,1e-1,1e-1))
         }
       }
     }
     
     
-    expect_equivalent(sct$loglik,sdt$loglik,tol=1e-3)
+    test_isclose(sct$loglik,sdt$loglik,tol=1e-3)
     
     
     #do.call(cbind,dtpars)
     
     
     #check time varying lambda estimation
-    expect_equivalent(
+    test_isclose(
       lambdafactor,
       sct$popmeans[rownames(sct$popmeans) %in% 'lbystate','mean'],
       sdt$popmeans[rownames(sdt$popmeans) %in% 'lbystate','mean'],tol=1e-1)

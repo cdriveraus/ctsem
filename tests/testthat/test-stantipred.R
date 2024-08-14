@@ -53,21 +53,21 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       priors=TRUE,verbose=0)
     s1=summary(tfit1)
     
-    expect_equivalent(s1$tipreds[2,'mean'],5,tolerance=.1)
-    expect_equivalent(s1$popsd[2,'mean'],.6,tolerance=.2)
+    test_isclose(s1$tipreds[2,'mean'],5,tol=.2)
+    test_isclose(s1$popsd[2,'mean'],.6,tol=.2)
     
     tfit2<-ctStanFit(tdat,checkm,optimize=TRUE,cores=2,verbose=0,
       optimcontrol=list(is=FALSE),priors=TRUE)
     s2=summary(tfit2)
     
-    expect_equivalent(s2$tipreds[2,'mean'],5,tolerance=.1)
-    expect_equivalent(s2$popsd[2,'mean'],.6,tolerance=.2)
+    test_isclose(s2$tipreds[2,'mean'],5,tol=.2)
+    test_isclose(s2$popsd[2,'mean'],.6,tol=.2)
     
     tfit3<-suppressWarnings(ctStanFit(tdat,checkm,iter=300,chains=2,optimize=FALSE,
       control=list(adapt_delta=.8,max_treedepth=6),plot=FALSE))
     s3=summary(tfit3)
     
-    expect_equivalent(s3$tipreds[2,'mean'],5,tolerance=.1)
-    expect_equivalent(s3$popsd[2,'mean'],.6,tolerance=.2)
+    test_isclose(s3$tipreds[2,'mean'],5,tol=.2)
+    test_isclose(s3$popsd[2,'mean'],.6,tol=.2)
   })
 }

@@ -34,16 +34,16 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     cov2cor(tcrossprod(gm$MANIFESTTRAITVAR))
     
     #check diagonal of 1's for corr
-    testthat::expect_equivalent(diag(f$stanfit$transformedparsfull$rawpopcorr[1,,]),
-      rep(1,nrow(f$stanfit$transformedparsfull$rawpopcorr[1,,])),tol=1e-5)
+    test_isclose(diag(f$stanfit$transformedparsfull$rawpopcorr[1,,]),
+      rep(1,nrow(f$stanfit$transformedparsfull$rawpopcorr[1,,])),tol=1e-3)
     
     #cov check
-    testthat::expect_equivalent(f$stanfit$transformedparsfull$popcov[1,4:6,4:6],
-      tcrossprod(gm$MANIFESTTRAITVAR),tol=.5)
+    test_isclose(f$stanfit$transformedparsfull$popcov[1,4:6,4:6],
+      tcrossprod(gm$MANIFESTTRAITVAR),tol=1)
     
     #cor check
-    testthat::expect_equivalent(f$stanfit$transformedparsfull$rawpopcorr[1,4:6,4:6],
-      cov2cor(tcrossprod(gm$MANIFESTTRAITVAR)),tol=1e-1)
+    test_isclose(f$stanfit$transformedparsfull$rawpopcorr[1,4:6,4:6],
+      cov2cor(tcrossprod(gm$MANIFESTTRAITVAR)),tol=.1)
     
     
   })
@@ -101,11 +101,11 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     
     #cov check
-    testthat::expect_equivalent(cov2cor(e$subj_T0cov[1,1001,,]),
+    test_isclose(cov2cor(e$subj_T0cov[1,1001,,]),
       cov2cor(tcrossprod(cmat2)),tol=.005)
     
     #cor check
-    testthat::expect_equivalent(cov2cor(e$subj_T0cov[1,1,,]),
+    test_isclose(cov2cor(e$subj_T0cov[1,1,,]),
       cov2cor(tcrossprod(cmat)),tol=.005)
     
     

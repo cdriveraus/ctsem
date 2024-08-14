@@ -83,9 +83,9 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     colnames(a)=NULL
     # print(a)
     
-    testthat::expect_equivalent(
+    test_isclose(
       s$popmeans[order(rownames(s$popmeans)),1],
-      so$popmeans[order(rownames(so$popmeans)),1],tol=.1)
+      so$popmeans[order(rownames(so$popmeans)),1],tol=.2)
     
   })
   

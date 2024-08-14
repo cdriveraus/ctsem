@@ -62,7 +62,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
       if(length(i)>0){
         for(ti in 4:5){
           # print(c(ctpars[i,ti],dtpars[ri,ti]))
-        testthat::expect_equivalent(ctpars[i,ti],dtpars[ri,ti],tol=ifelse(ti==4,1e-2,1e-1))
+        test_isclose(ctpars[i,ti],dtpars[ri,ti],tol=ifelse(ti==4,1e-2,1e-1))
         }
       }
     }
@@ -72,7 +72,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
     ll=unlist(lapply(s, function(argi) lapply(argi, function(m) m$loglik)))
     
     for(dimi in 2:length(ll)){
-      testthat::expect_equivalent(ll[dimi],ll[dimi-1],tol=1e-2)
+      test_isclose(ll[dimi],ll[dimi-1],tol=1e-2)
     }
 
   }) #end cint heterogeneity
@@ -133,7 +133,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
         if(length(i)>0){
           for(ti in 4:5){
             # print(c(ctpars[i,ti],dtpars[ri,ti]))
-            testthat::expect_equivalent(ctpars[i,ti],dtpars[ri,ti],tol=ifelse(ti==4,1e-1,1e-1))
+            test_isclose(ctpars[i,ti],dtpars[ri,ti],tol=ifelse(ti==4,1e-1,1e-1))
           }
         }
       }
@@ -142,7 +142,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
       ll=unlist(lapply(s, function(argi) lapply(argi, function(m) m$loglik)))
       
       for(dimi in 2:length(ll)){
-       testthat:: expect_equivalent(ll[dimi],ll[dimi-1],tol=1e-2)
+        test_isclose(ll[dimi],ll[dimi-1],tol=1e-2)
       }
       
       

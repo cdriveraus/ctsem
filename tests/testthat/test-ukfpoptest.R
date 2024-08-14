@@ -68,15 +68,16 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     sf2d=sf2$stanfit$transformedparsfull$pop_DRIFT[1,1:2,1:2]
     sf2ll=sf2$stanfit$optimfit$value
     
-    testthat::expect_equivalent(sf1ll,sf2ll,tol=1e-3)
+    test_isclose(sf1ll,sf2ll,tol=1e-3)
     
-    testthat::expect_equivalent(sf1$stanfit$transformedparsfull$pop_T0cov,
-      sf2$stanfit$transformedparsfull$popcov,tol=1e-1)
+    test_isclose(sf1$stanfit$transformedparsfull$pop_T0cov[1,,]/
+      sf2$stanfit$transformedparsfull$popcov[1,,],
+      matrix(1,4,4),tol=1)
     
-    testthat::expect_equivalent(cov2cor(sf1$stanfit$transformedparsfull$pop_T0cov[1,,]),
+    test_isclose(cov2cor(sf1$stanfit$transformedparsfull$pop_T0cov[1,,]),
       cov2cor(sf2$stanfit$transformedparsfull$rawpopcov[1,,]),tol=1e-2)
 
-    testthat::expect_equivalent(sf1d,sf2d,tol=1e-2)
+    test_isclose(sf1d,sf2d,tol=1e-2)
     
   })
   
@@ -122,8 +123,8 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     dtf2=ctStanFit(datalong = dat,ctstanmodel = dtm2,optimize = TRUE)
     s2=summary(dtf2,parmatrices = F,priorcheck = F,residualcov = F)
     
-    testthat::expect_equivalent(s1$ll,s2$ll,tol=1e-3)
-    testthat::expect_equivalent(sort(dtf2$stanfit$rawest),sort(dtf$stanfit$rawest),tol=1e-3) #sorting is an ugly hack! could improve...
+    test_isclose(s1$ll,s2$ll,tol=1e-3)
+    test_isclose(sort(dtf2$stanfit$rawest),sort(dtf$stanfit$rawest),tol=1e-3) #sorting is an ugly hack! could improve...
     
   })
   

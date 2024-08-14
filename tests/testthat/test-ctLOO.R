@@ -32,22 +32,22 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     sdat <- sf$standata
     sdat$dokalmanrows[sdat$subject==1] <- 0L #remove 1 subject
     smf <- stan_reinitsf(sf$stanmodel,sdat)
-    testthat::expect_equivalent(
+    test_isclose(
       sf$stanfit$optimfit$value - rstan::log_prob(smf,sf$stanfit$rawest), #check ll equiv
       sum(sf$stanfit$transformedparsfull$llrow[sdat$subject==1]))
     
     loo=ctLOO(fit = sf,folds = 10,cores=cores,parallelFolds = T,subjectwise = T)
     loo2=ctLOO(fit = sf,folds = 10,cores=cores,parallelFolds = F,subjectwise = T)
     
-    testthat::expect_equivalent(
+    test_isclose(
       sum(loo2$outsampleLogLikRow-loo$outsampleLogLikRow),
       0,tol=2)
     
-    testthat::expect_equivalent(
+    test_isclose(
       sum(loo$insampleLogLikRow),
       sum(sf$stanfit$transformedparsfull$llrow),tol=.1)
     
-    testthat::expect_equivalent(
+    test_isclose(
       sum(loo2$insampleLogLikRow),
       sum(sf$stanfit$transformedparsfull$llrow),tol=.1)
     

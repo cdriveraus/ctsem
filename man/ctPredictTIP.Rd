@@ -9,6 +9,7 @@ ctPredictTIP(
   tipreds = "all",
   subject = 1,
   timestep = "auto",
+  doDynamics = TRUE,
   plot = TRUE,
   quantiles = c(0.16, 0.5, 0.84),
   discreteTimeQuantiles = c(0.025, 0.5, 0.975),
@@ -27,6 +28,9 @@ ctPredictTIP(
 This is relevant only when time dependent predictors are also included in the model.}
 
 \item{timestep}{A numeric value specifying the time step for predictions. Default is 'auto', which tries to automatically determine an appropriate time step.}
+
+\item{doDynamics}{A logical value indicating whether to plot the effects of time independent predictors on the dynamics of the system. Default is TRUE. 
+Can be problematic for systems with many dimensions.}
 
 \item{plot}{A logical value indicating whether to ggplot the results instead of returning a data.frame of predictions. Default is TRUE.}
 

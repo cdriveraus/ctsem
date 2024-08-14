@@ -167,3 +167,30 @@ ctFit <- function(...){
   } else message('For original ctsem functionality using OpenMx, install.packages("ctsemOMX")')  
 }
 
+#' Tests if 2 values are close to each other
+#'
+#' @param ... values to compare
+#' @param tol tolerance
+#'
+#' @return Logical or testthat output.
+#' @export
+#'
+#' @examples
+#' test_isclose(1,1.0000001, tol=1e-4)
+test_isclose <- function(..., tol = 1e-8) {
+  values <- list(...)
+  n <- length(values)
+  out <- TRUE
+  for (i in 1:(n-1)) {
+    for (j in (i+1):n) {
+      if (any(abs(values[[i]] - values[[j]]) >= tol)) {
+        out <- FALSE
+      }
+    }
+  }
+  
+  if(!requireNamespace("testthat", quietly = TRUE)){
+    message("testthat not installed, returning logical")
+    return(out)
+  } else return(testthat::expect_true(out))
+}
