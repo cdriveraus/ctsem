@@ -937,7 +937,7 @@ if(verbose > 1) print("b");
     if(intoverstates==1 || dosmoother==1) { //classic kalman
       int o2i=0; //ordinal variable counter
       ycov[o,o] = quad_form_sym(makesym(etacov,verbose,1), Jy[o,]')+ MANIFESTcov[o,o]; // add measurement error; 
-      if(size(o2)) ypredcov[o2,o2] = quad_form_sym(makesym(etacov,verbose,1), LAMBDA[o2,]');  // should compute extra jacobian -- currently linear prediction cov without measurement error (for integration over ll with binary / ordinal)
+      if(size(o2)) ypredcov[o2,o2] = quad_form_sym(makesym(etacov[1:nlatent,1:nlatent],verbose,1), LAMBDA[o2,]');  // should compute extra jacobian -- currently linear prediction cov without measurement error (for integration over ll with binary / ordinal)
       for(manifesti in 1:nmanifest){ 
         // if(Y[rowi,wi] != 99999 || dosmoother==1) ycov[wi,wi] += square(MANIFESTVAR[wi,wi]); //added measurement error above
         if(manifesttype[manifesti]==1 && (whichbinary_y[rowi,manifesti]  || dosmoother==1)) ycov[manifesti,manifesti] += (1-syprior[manifesti]) .* (syprior[manifesti]);

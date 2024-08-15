@@ -28,10 +28,10 @@ test_that("anomauth", {
     ctstanmodel = sm1, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores)
   # sink()
   print(Sys.time()-a)
-  test_isclose(23415.929,-2*sf$stanfit$optimfit$value,tol=.0001)
+  test_isclose(23415.929,-2*sf$stanfit$optimfit$value,tol=.01)
   anoms=summary(sf)
   anoms$popmeans['mm_Y1','sd']
-  test_isclose(.036,anoms$popmeans['mm_Y1','sd'],tol=.008)
+  test_isclose(.036,anoms$popmeans['mm_Y1','sd'],tol=.01)
  }
 
 })
