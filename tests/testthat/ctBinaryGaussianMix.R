@@ -44,7 +44,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     m$pars$indvarying=F
     
     #fit with integration (linearised approximation)
-    f <- ctStanFit( datalong = d, ctstanmodel = m,cores=cores,plot=10)
+    f <- ctStanFit( datalong = d, ctstanmodel = m,cores=2,plot=10)
 
   
     #test if the estimated model pars 95% confidence intervals contain true pars

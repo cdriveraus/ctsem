@@ -270,7 +270,7 @@ ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
   # out$stationaryvarprior <- NA
   out$manifesttype <- rep(0,n.manifest)
   out$covmattransform <- 'rawcorr'
-  out$NOrdinalIntegrationPoints <- 9L
+  # out$NOrdinalIntegrationPoints <- 9L
   
   return(out)
 }

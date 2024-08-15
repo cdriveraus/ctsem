@@ -272,6 +272,7 @@ parallelStanSetup <- function(cl, standata,split=TRUE,nsubsets=1){
     "if(FALSE) sm=99",
     "smf=ctsem:::stan_reinitsf(sm,standata)"
   )
+
   eval(parse(text=
       "parallel::clusterExport(cl,c('standata','stanindices','cores','commands'),envir=environment())"),
     envir = benv)
@@ -385,8 +386,8 @@ standatact_specificsubjects <- function(standata, subjects,timestep=NA){
 
 
 standatalongobjects <- function() {
-  longobjects <- c('subject','time','dokalmanrows','nobs_y','ncont_y','nbinary_y','nordinal_y',
-    'Y','tdpreds', 'whichobs_y','whichbinary_y','whichordinal_y','whichcont_y')
+  longobjects <- c('subject','time','dokalmanrows','nobs_y','ncont_y','nbinary_y',#'nordinal_y','whichordinal_y',
+    'Y','tdpreds', 'whichobs_y','whichbinary_y','whichcont_y')
   return(longobjects)
 }
 

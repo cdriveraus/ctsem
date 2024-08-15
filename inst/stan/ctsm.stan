@@ -30,20 +30,6 @@ functions{
     }
     return(which);
   }
-  
-  vector compute_catprobs(int ncategories, vector logitthresholdsvec, real linpred) {
-    vector[ncategories] catprobsvec;
-    int currentcat = ncategories;
-    catprobsvec[ncategories] = 1;
-    for(o2j in 1:(ncategories-1)){
-      catprobsvec[o2j] = inv_logit(logitthresholdsvec[o2j] - linpred);
-    }
-    for(o2j in 1:(ncategories-1)){
-      catprobsvec[currentcat] -= catprobsvec[currentcat-1]; //subtract cumulative probs backwards to get probs
-      currentcat -= 1;
-    }
-    return catprobsvec;
-  }
   matrix sqkron_prod(matrix mata, matrix matb){
     int d=rows(mata);
     matrix[d*d,d*d] out;
@@ -353,15 +339,6 @@ data {
   array[ndatapoints, nmanifest] int whichbinary_y; // index of which variables are observed and binary per observation
   array[ndatapoints] int ncont_y;  // number of observed continuous variables per observation
   array[ndatapoints, nmanifest] int whichcont_y; // index of which variables are observed and continuous per observation
-  
-  int nordinal;
-  array[nordinal] int ncategories;
-  int nthresholdpars;
-  array[ndatapoints] int nordinal_y;  // number of observed ordinal variables per observation
-  array[ndatapoints, nmanifest] int whichordinal_y; // index of which variables are observed and binary per observation
-  int nordinalintegrationpoints;
-  real sigmapoints[nordinalintegrationpoints];
-  real sigweights[nordinalintegrationpoints];
  
   int intoverpop;
   array[54] int statedep;
@@ -426,7 +403,6 @@ parameters{
   vector[nindvarying] rawpopsdbase; //population level std dev
   vector[nindvaryingoffdiagonals] sqrtpcov; // unconstrained basis of correlation parameters
   array [intoverpop ? 0 : nsubjects]vector[intoverpop ? 0 : nindvarying] baseindparams; //vector of subject level deviations, on the raw scale
-  vector[nthresholdpars] logitthresholdsbase;
   vector[ntipredeffects] tipredeffectparams; // effects of time independent covariates
   vector[nmissingtipreds] tipredsimputed;
   
@@ -480,9 +456,6 @@ transformed parameters{
       matrix[matrixdims[33, 1], matrixdims[33, 2] ] subj_T0cov;array[ (savesubjectmatrices && (sum(whenmat[21,1:5]) || statedep[21])) ? nsubjects : 0]
       matrix[matrixdims[21, 1], matrixdims[21, 2] ] subj_asymCINT;array[ (savesubjectmatrices && (sum(whenmat[22,1:5]) || statedep[22])) ? nsubjects : 0]
       matrix[matrixdims[22, 1], matrixdims[22, 2] ] subj_asymDIFFUSIONcov;
-  
-  array[nordinal] vector[nordinal ? max(ncategories)-1 : 0] logitthresholds;
-  
   matrix[ntipred ? (nmissingtipreds ? nsubjects : 0) : 0, ntipred ? (nmissingtipreds ? ntipred : 0) : 0] tipreds; //tipred values to fill from data and, when needed, imputation vector
   matrix[nparams, ntipred] TIPREDEFFECT; //design matrix of individual time independent predictor effects
   
@@ -527,20 +500,6 @@ transformed parameters{
     rawpopcov = makesym(quad_form_diag(rawpopcorr, rawpopsd +1e-8),verbose,1);
     rawpopcovchol = cholesky_decompose(rawpopcov); 
   }//end indvarying par setup
-  
-  if(nordinal > 0){
-  int thresholdcounter = 0;
-  int thresholdstart;
-    for(i in 1:nordinal){
-    thresholdstart = thresholdcounter + 1;
-      for(j in 1:(ncategories[i]-1)){
-        thresholdcounter += 1;
-        if(j==1) logitthresholds[i,j] = exp(2*logitthresholdsbase[thresholdcounter]);
-        if(j>1) logitthresholds[i,j] = exp(logitthresholdsbase[thresholdcounter]*2) + logitthresholds[i,j-1];
-      }
-      logitthresholds[i,] = logit(logitthresholds[i,] /(logitthresholds[i,ncategories[i]-1]+(sqrt(ncategories[i]))));
-    }
-  }
   {
   int prevrow=0;
   real prevdt=0;
@@ -557,7 +516,6 @@ transformed parameters{
   matrix[nlatentpop, nmanifest] K; // kalman gain
   matrix[nmanifest, nmanifest] ypriorcov_sqrt = rep_matrix(0,nmanifest,nmanifest); 
   matrix[nmanifest, nmanifest] ycov; 
-  array[nordinal] vector[nordinal ? max(ncategories) : 0] catprobs;
   
   matrix[nlatentpop,nlatentpop] eJAx = diag_matrix(rep_vector(1,nlatentpop)); //time evolved jacobian
   array[dosmoother ? ndatapoints : 1] matrix[nlatentpop,nlatentpop] eJAxs; //time evolved jacobian, saved for smoother
@@ -612,24 +570,20 @@ transformed parameters{
     int si = rowx ? subject[rowi] : 0;
     int full = (dosmoother==1 || si ==0); //in some cases we need full computations for all observables even when missing
     array[full ? nmanifest : nobs_y[rowi]] int o; //which obs are not missing in this row
-    array[full ? size(whichequals(manifesttype,2,1)) : nordinal_y[rowi] ] int o2;
     array[full ? size(whichequals(manifesttype,1,1)) : nbinary_y[rowi] ] int o1;
     array[full ? size(whichequals(manifesttype,0,1)) : ncont_y[rowi] ] int o0;
     
     array[nobs_y[rowi]] int od = whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
-    array[nordinal_y[rowi] ] int o2d= whichordinal_y[rowi,1:nordinal_y[rowi]];
     array[nbinary_y[rowi] ] int o1d= whichbinary_y[rowi,1:nbinary_y[rowi]];
     array[ncont_y[rowi] ] int o0d= whichcont_y[rowi,1:ncont_y[rowi]];
     
     if(!full){
       o= whichobs_y[rowi,1:nobs_y[rowi]]; //which obs are not missing in this row
-      o2= whichordinal_y[rowi,1:nordinal_y[rowi]];
       o1= whichbinary_y[rowi,1:nbinary_y[rowi]];
       o0= whichcont_y[rowi,1:ncont_y[rowi]];
     }
     if(full){ //needed to calculate yprior and yupd ysmooth
       for(mi in 1:nmanifest) o[mi] = mi;
-      o2= whichequals(manifesttype,2,1);
       o1= whichequals(manifesttype,1,1);
       o0= whichequals(manifesttype,0,1);
     }
@@ -902,19 +856,6 @@ if(verbose > 1) print("b");
       syprior[o] =  LAMBDA[o] * state[1:nlatent]' + MANIFESTMEANS[o,1]; //compute new change
       if(statei==0) sypred=syprior;//store expected value for predictor in case of binary or ordinal transform
       if(size(o1)) syprior[o1] = to_vector(inv_logit(to_array_1d(syprior[o1])));
-      if(size(o2)){ //if ordinal variables
-      int o2i=0;
-        for(manifesti in 1:nmanifest){
-          if(manifesttype[manifesti]==2){    
-            o2i+=1; //which ordinal variable are we referring to
-            catprobs[o2i,] = compute_catprobs(ncategories[o2i],logitthresholds[o2i,],syprior[manifesti]);
-            syprior[manifesti] = 0;
-            for(cati in 0:(ncategories[o2i]-1)){
-              syprior[manifesti] += cati * catprobs[o2i,cati+1]; //expected value, remember offset for cat 0
-            }
-          }
-        }
-      }
       
       if(statei > 0) Jy[o,statei] = syprior[o]; //insert expected obs val (with step added to statei) to column statei of Jacobian
       
@@ -926,41 +867,15 @@ if(verbose > 1) print("b");
       }
       
     } //end finite difference and initialization loop
-    if(verbose>1) print("Jy ",Jy,"  catprobs = ",catprobs, "   logitthresholds = ", logitthresholds);
   } //end measurement init
       
   if(si==0 || whenmat[5,5] || whenmat[5,4] || statedep[5]) MANIFESTcov = sdcovsqrt2cov(MANIFESTVAR,choleskymats);
  
   if(si > 0 && (nobs_y[rowi] > 0 || dosmoother)){   //if not just inits...
-    matrix[nmanifest,nmanifest] ypredcov;
-    
     if(intoverstates==1 || dosmoother==1) { //classic kalman
-      int o2i=0; //ordinal variable counter
       ycov[o,o] = quad_form_sym(makesym(etacov,verbose,1), Jy[o,]')+ MANIFESTcov[o,o]; // add measurement error; 
-      if(size(o2)) ypredcov[o2,o2] = quad_form_sym(makesym(etacov[1:nlatent,1:nlatent],verbose,1), LAMBDA[o2,]');  // should compute extra jacobian -- currently linear prediction cov without measurement error (for integration over ll with binary / ordinal)
       for(manifesti in 1:nmanifest){ 
-        // if(Y[rowi,wi] != 99999 || dosmoother==1) ycov[wi,wi] += square(MANIFESTVAR[wi,wi]); //added measurement error above
         if(manifesttype[manifesti]==1 && (whichbinary_y[rowi,manifesti]  || dosmoother==1)) ycov[manifesti,manifesti] += (1-syprior[manifesti]) .* (syprior[manifesti]);
-        if(manifesttype[manifesti]==2 && (whichordinal_y[rowi,manifesti]  || dosmoother==1)){ //if ordinal and a) not missing, or b) smoothing, compute integral for likelihood and measurement error
-          o2i+=1; //which ordinal variable are we referring to
-          for(sigmapointi in 1:nordinalintegrationpoints){ //recompute catprobs for sigma points that are not the mean(1), then use all for weighted likelihood
-            if(sigmapointi > 1) catprobs[o2i,] = compute_catprobs(ncategories[o2i], logitthresholds[o2i,], 
-              sypred[manifesti] + sigmapoints[sigmapointi] * sqrt(ypredcov[manifesti,manifesti])); //using stored linear predictor (sypred)
-            for(cati in 0:(ncategories[o2i]-1)){ //increment log prob and errorsd for category and include sigmapoint weighting
-              ycov[manifesti,manifesti] += sigweights[sigmapointi] * catprobs[o2i,cati+1] * (syprior[manifesti] - cati)^2; //increment measurement error for ordinal variable
-              if(whichordinal_y[rowi,manifesti] && Y[rowi,manifesti] == cati){ //if not missing and category matches observation, increment loglik
-                llrow[rowi] += sigweights[sigmapointi] * log(catprobs[o2i,cati+1]+1e-50); //remember the +1 for category offset (due to category 0)
-              }
-            }
-            if(verbose>1 || is_nan(llrow[rowi])){
-              print("ordinal likelihood =",llrow[rowi]);
-              print("logitthresholds[o2i,] =",logitthresholds[o2i,]);
-              print("catprobs =",catprobs[o2i,]);
-              print("log catprobs =",log(catprobs[o2i,]));
-              print("Y[rowi,manifesti] =",Y[rowi,manifesti]);
-            }
-          }
-        }
       }
     } //problems in this loop when generating data, because data are not yet generated!
         
@@ -987,24 +902,14 @@ err[od] = Y[rowi,od] - syprior[od]; // prediction error
     }
     
     if(dosmoother==1) { //these could be improved by recomputing all state dependent pars, error covariances etc. at each step
-      array[nordinal] vector[nordinal ? max(ncategories) : 0] smoothcatprobs;
       yb[1,rowi,] = syprior[o];
       etab[2,rowi,] = state';
       ycovb[1,rowi,,] = ycov;
       etacovb[2,rowi,,] = etacov;
       ycovb[2,rowi,,] = quad_form_sym(makesym(etacov,verbose,1), Jy') + MANIFESTcov;
       yb[2,rowi,o] = MANIFESTMEANS[o,1] + LAMBDA[o,] * state[1:nlatent]';
-      int o2i=0;
       for(manifesti in 1:nmanifest){ // compute new expectations for binary and ordinal variables, but just use predicted covariance
         if(manifesttype[manifesti]==1) yb[2,rowi,manifesti] = inv_logit( yb[2,rowi,manifesti] );
-        if(manifesttype[manifesti]==2){
-          o2i+=1; //which ordinal variable are we referring to
-          smoothcatprobs[o2i,] = compute_catprobs(ncategories[o2i],logitthresholds[o2i,], yb[2,rowi,manifesti]);
-          yb[2,rowi,manifesti] = 0;
-          for(o2ij in 1:(ncategories[o2i])){
-            yb[2,rowi,manifesti] += o2ij * smoothcatprobs[o2i,o2ij]; //expected value
-          }
-        }
       }
       Jys[rowi,,] = Jy; // approximate smoothed jacobian with predicted jacobian
     }
@@ -1112,8 +1017,6 @@ model{
     if(priors && laplacetipreds==1) for(i in 1:ntipredeffects) target+= priormod2 * double_exponential_lpdf(pow(abs(tipredeffectparams[i]),1+.1/((tipredeffectparams[i]*100)^2+.1)) / tipredeffectscale| 0, 1);
     target+= normal_lpdf(tipredsimputed| 0, tipredsimputedscale); //consider better handling of this when using subset approach
   }
-  
-  if(nordinal > 0 && priors) logitthresholdsbase ~ normal(0,1);
   if(priors){ //if split files over subjects, just compute priors once
     for(i in 1:nparams){
       if(laplaceprior[i]==1) target+= priormod2 * double_exponential_lpdf(pow(abs(rawpopmeans[i]) ,1+.1/((rawpopmeans[i]*100)^2+.1))|0,1);
