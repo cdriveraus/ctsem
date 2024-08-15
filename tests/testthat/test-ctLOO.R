@@ -40,8 +40,8 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     loo2=ctLOO(fit = sf,folds = 10,cores=cores,parallelFolds = F,subjectwise = T)
     
     test_isclose(
-      sum(loo2$outsampleLogLikRow-loo$outsampleLogLikRow),
-      0,tol=2)
+      mean(loo2$outsampleLogLikRow-loo$outsampleLogLikRow),
+      0,tol=.01)
     
     test_isclose(
       sum(loo$insampleLogLikRow),
