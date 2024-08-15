@@ -1097,8 +1097,8 @@ if(verbose > 1) print("b");
   if(si > 0 && (nobs_y[rowi] > 0 || dosmoother)){   //if not just inits...
     if(intoverstates==1 || dosmoother==1) { //classic kalman
       ycov[o,o] = quad_form_sym(makesym(etacov,verbose,1), Jy[o,]\')+ MANIFESTcov[o,o]; // add measurement error; 
-      for(manifesti in 1:nmanifest){ 
-        if(manifesttype[manifesti]==1 && (whichbinary_y[rowi,manifesti]  || dosmoother==1)) ycov[manifesti,manifesti] += (1-syprior[manifesti]) .* (syprior[manifesti]);
+      for(mi in 1:nmanifest){ 
+        if(manifesttype[mi]==1 && (Y[rowi,mi] != 99999  || dosmoother==1)) ycov[mi,mi] += (1-syprior[mi]) .* (syprior[mi]);
       }
     } //problems in this loop when generating data, because data are not yet generated!
         

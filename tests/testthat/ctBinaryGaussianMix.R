@@ -27,8 +27,6 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       d[[paste0('b',i)]] <- rbinom(nrow(d),size=1,prob=invlog(d[,gm$manifestNames[2]]))
     }
     
-   
-    
     # plot(invlog(d[,gm$manifestNames[2]])[1:100],type='l',col=2)
     # points( apply(d[,paste0('b',1:10)],1,function(x) mean(x))[1:100],type='l')
 
@@ -44,8 +42,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     m$pars$indvarying=F
     
     #fit with integration (linearised approximation)
-    f <- ctStanFit( datalong = d, ctstanmodel = m,cores=2,plot=10)
-
+    f <- ctStanFit( datalong = d, ctstanmodel = m,cores=cores,plot=10)
   
     #test if the estimated model pars 95% confidence intervals contain true pars
     lowmats <- ctStanContinuousPars(f,calcfuncargs = list(probs=.025))
