@@ -25,29 +25,16 @@
 #' 
 #' @examples
 #' # Example usage:
-#' ctPredictTIP(ctstantestfit, tipreds='all', plot=TRUE)
-#' 
-#' # To return the predictions instead of the plot
-#' tipPredictions <- ctPredictTIP(ctstantestfit, tipreds='all', plot=FALSE)
-#' 
-#' # Plot the output predictions
-#' ggplot(data = tipPredictions,mapping = aes(y=Value,x=Time,linetype=Direction,colour=Covariate))+
-#'   geom_line(size=1)+
-#'   scale_colour_manual(values=c(1,2:length(unique(kdat$Covariate))),
-#'   labels=c('No covariate',levels(kdat$Covariate)[-1]))+
-#'   facet_wrap(vars(Variable),scales = 'free_y')+theme_bw()+
-#'   theme(legend.position = 'bottom')
-#' 
+#' ctPredictTIP(ctstantestfit, tipreds='all', doDynamics=FALSE, plot=TRUE)
 #' @export
 ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=TRUE, plot=TRUE,
   quantiles=c(.16,.5,.84), discreteTimeQuantiles=c(.025, .5, .975),
-  baselineQuantile=.5, showUncertainty=TRUE, 
+  showUncertainty=TRUE, 
   TIPvalues=NA,...){
   if(tipreds[1] %in% 'all') tipreds <- sf$ctstanmodel$TIpredNames
   if(length(subject) > 1) stop('>1 subject!')
   if(length(unique(sf$standata$subject)) < 3) stop('With fewer than 3 subjects in the data, these predictions are not possible')
   
-  # TIPbaselineQuantiles <- apply(sf$standata$tipredsdata[,sf$ctstanmodel$TIpredNames,drop=FALSE],2,quantile,probs=baselineQuantile)
   if(all(is.na(TIPvalues))){
     TIPvalues = apply(sf$standata$tipredsdata[,tipreds,drop=FALSE],2,quantile,probs=quantiles)
   }
@@ -57,9 +44,6 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
   }
   
   sdat <- standatact_specificsubjects(standata = sf$standata,subjects = subject)
-  # for(tipi in 1:length(tipreds)){
-  #   sdat$tipredsdata[,tipreds[tipi]] <- TIPbaselineQuantiles[tipi]
-  # }
   
   dat <- standatatolong(sdat,origstructure = TRUE,ctm=sf$ctstanmodelbase)
   dat[,sf$ctstanmodelbase$manifestNames] <- NA #set all manifest obs to missing
@@ -83,20 +67,17 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
   sf$standata <- suppressMessages(ctStanData(sf$ctstanmodel,fulldat,optimize=TRUE))
   k=ctKalman(fit = sf,subjects=unique(fulldat[[sf$ctstanmodelbase$subjectIDname]]),realid=TRUE,timestep=timestep)
   k = k[k$Element %in% c('etaprior','yprior','ypriorcov','etapriorcov'),]
-  k$V1 <- k$variable <- Sample <- Col <- NULL
+  k$V1 <- k$variable <- NULL
+
   
   if(!plot) return(k) else{
+    Sample <- Col <- CovariateValue <- Effect <- Subject<- NULL #local variables for ggplot
     gglist <- list(Process=list(Observed=list(),Latent=list()),Dynamics=list(Independent=list(),Correlated=list())) #empty list
     for(tipi in 1:length(tipreds)){ #for each tipred
       ks <- k[grepl(paste0('^',tipreds[tipi],' = '),k$Subject),] #subset to tipred
       ks$Subject <- factor(as.numeric(gsub('^.* = ','',ks$Subject))) #extract the subject value
-      # if(length(unique(ks$Subject))==1){ #add dummy subject to avoid problems due to ctKalman not plotting single subjects the same
-      #   newksrow <- ks[1,]
-      #   newksrow$value <- newksrow$sd <- newksrow$Time <-NA
-      #   newksrow$Subject=99999
-      #   ks <- rbind(ks,newksrow)
-      # }
-      # ks$Subject <- factor(ks$Subject)
+
+      
       
       for(elementi in c('yprior','etaprior')){
         ksp=plot.ctKalmanDF(ks,plot=FALSE,kalmanvec=elementi,
@@ -115,7 +96,7 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
           theme(legend.position = 'bottom')+
           guides(colour=guide_legend(title=tipreds[tipi]))+
           ggtitle(paste0('Effect of ',tipreds[tipi],' on ',ifelse(elementi=='yprior','observed','latent'),' trajectory'))+
-          facet_wrap(vars(Variable),scale='free_y')
+          facet_wrap(vars(Variable),scales ='free_y')
         
         gglist[['Process']][[ifelse(elementi=='yprior','Observed','Latent')]][[tipreds[tipi]]] <- ksp
       }
@@ -124,7 +105,7 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
       if(doDynamics){
         for(typei in c('Independent','Correlated')){
           ctd=ctStanDiscretePars(sf,plot=F,
-            subject=(tipi-1)*nrow(TIPvalues) + 1:nrow(TIPvalues),
+            subjects=(tipi-1)*nrow(TIPvalues) + 1:nrow(TIPvalues),
             observational = !typei %in% 'Independent')
           if(showUncertainty) ctdQuantiles <- discreteTimeQuantiles else ctdQuantiles <- c(.5,.5,.5)
           ctdp=ctStanDiscreteParsPlot(ctd,quantiles=ctdQuantiles,splitSubjects = TRUE)

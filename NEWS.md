@@ -1,5 +1,13 @@
 # ctsem News
 
+## 12/8/2024
+### 3.10.1
+- Fix bug introduced in 3.10.0 where certain combinations of Gaussian and binary variables cause convergence difficulties and invalid results. 
+- Revert unconstrained correlation change introduced in 3.10.0, it was more difficult to fit in some cases.
+- Detect duplicated T0MEANS parameters and propose alternative approach.
+- Add ctPredictTIP function for examining and plotting differences due to time independent predictors.
+
+
 ## 10/05/2024
 ### 3.10.0
 - Fix bug when computing Jacobian of certain nonlinear models.

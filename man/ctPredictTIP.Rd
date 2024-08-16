@@ -13,7 +13,6 @@ ctPredictTIP(
   plot = TRUE,
   quantiles = c(0.16, 0.5, 0.84),
   discreteTimeQuantiles = c(0.025, 0.5, 0.975),
-  baselineQuantile = 0.5,
   showUncertainty = TRUE,
   TIPvalues = NA,
   ...
@@ -57,17 +56,5 @@ and their effects on the trajectory are plotted or returned as a data frame.
 }
 \examples{
 # Example usage:
-ctPredictTIP(ctstantestfit, tipreds='all', plot=TRUE)
-
-# To return the predictions instead of the plot
-tipPredictions <- ctPredictTIP(ctstantestfit, tipreds='all', plot=FALSE)
-
-# Plot the output predictions
-ggplot(data = tipPredictions,mapping = aes(y=Value,x=Time,linetype=Direction,colour=Covariate))+
-  geom_line(size=1)+
-  scale_colour_manual(values=c(1,2:length(unique(kdat$Covariate))),
-  labels=c('No covariate',levels(kdat$Covariate)[-1]))+
-  facet_wrap(vars(Variable),scales = 'free_y')+theme_bw()+
-  theme(legend.position = 'bottom')
-
+ctPredictTIP(ctstantestfit, tipreds='all', doDynamics=FALSE, plot=TRUE)
 }

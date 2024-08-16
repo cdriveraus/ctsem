@@ -7,10 +7,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
   test_that("ctRasch1", {
     set.seed( 1234 )
     cores=2
-    
-    #install software
-    # source(file = 'https://github.com/cdriveraus/ctsem/raw/master/installctsem.R')
-    
+
     invlog=function (x) exp(x)/(1 + exp(x))
     n.manifest=7
     
