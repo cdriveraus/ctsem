@@ -30,7 +30,7 @@
 ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=TRUE, plot=TRUE,
   quantiles=c(.16,.5,.84), discreteTimeQuantiles=c(.025, .5, .975),
   showUncertainty=TRUE, 
-  TIPvalues=NA,...){
+  TIPvalues=NA){
   if(tipreds[1] %in% 'all') tipreds <- sf$ctstanmodel$TIpredNames
   if(length(subject) > 1) stop('>1 subject!')
   if(length(unique(sf$standata$subject)) < 3) stop('With fewer than 3 subjects in the data, these predictions are not possible')

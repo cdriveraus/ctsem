@@ -149,7 +149,7 @@ T0VARredundancies <- function(ctm) {
 #' For datasets with many manifest variables or time points, file size may be large.
 #' To generate data based on the posterior of a fitted model, see \code{\link{ctStanGenerateFromFit}}.
 #' @param vb Logical. Use variational Bayes algorithm from stan? Only kind of working, not recommended.
-#' @param compileArgs List of arguments to pass to \code{\link{stan_model}} for compilation of the Stan model.
+#' @param compileArgs List of arguments to pass to \code{\link[rstan]{stan_model}} for compilation of the Stan model.
 #' @param ... additional arguments to pass to \code{\link[rstan]{stan}} function.
 #' @export
 #' @examples

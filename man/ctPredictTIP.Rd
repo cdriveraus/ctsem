@@ -14,8 +14,7 @@ ctPredictTIP(
   quantiles = c(0.16, 0.5, 0.84),
   discreteTimeQuantiles = c(0.025, 0.5, 0.975),
   showUncertainty = TRUE,
-  TIPvalues = NA,
-  ...
+  TIPvalues = NA
 )
 }
 \arguments{

@@ -307,37 +307,37 @@ if(requireNamespace('papaja')){
       print(cm,digits=3)
       sink()
       
-      
-      if(sf$ctstanmodelbase$n.TIpred > 0){
-        
-        if(sf$ctstanmodelbase$n.TIpred > 1){
-          #TIP Effect expectations 2
-          ktifull=ctPredictTIP(sf,kalmanvec='yprior',subject = 1,
-            #elementNames=c(sf$ctstanmodelbase$latentNames),
-            plot=TRUE,polygonsteps=0)+
-            scale_colour_manual(name='Covariate',values=c(1,rep(2:((sm$n.TIpred+1)),each=2)))+
-            ggtitle('Expectations')
-          
-          lktifull=ctPredictTIP(sf,kalmanvec='etaprior',subject = 1,
-            plot=TRUE,polygonsteps=0)+
-            scale_colour_manual(name='Covariate',values=c(1,rep(2:((sm$n.TIpred+1)),each=2)))+
-            ggtitle('Latent Expectations')
-        }
-        
-        pdf(paste0(name,'_tieffects_expectations.pdf'))
-        if(sf$ctstanmodelbase$n.TIpred > 1){
-          print(lktifull)
-          print(ktifull)
-          rm(lktifull);rm(ktifull);
-        }
-        for(ti in sm$TIpredNames){
-          print(ctPredictTIP(sf,tipreds = ti,subject = whichsubfull[1],
-            kalmanvec='etaprior', plot=FALSE,polygonsteps=0)+scale_color_discrete(name='Covariate')+ggtitle('Latent Expectations'))
-          print( ctPredictTIP(sf,tipreds = ti,subject = whichsubfull[1],kalmanvec='yprior',
-            plot=FALSE,polygonsteps=0)+scale_color_discrete(name='Covariate')+ggtitle('Expectations'))
-        }
-        dev.off()
-      }
+      ## disabled, need to update to ctPredictTIP
+      # if(sf$ctstanmodelbase$n.TIpred > 0){
+      #   
+      #   if(sf$ctstanmodelbase$n.TIpred > 1){
+      #     #TIP Effect expectations 2
+      #     ktifull=ctPredictTIP(sf,kalmanvec='yprior',subject = 1,
+      #       #elementNames=c(sf$ctstanmodelbase$latentNames),
+      #       plot=TRUE,polygonsteps=0)+
+      #       scale_colour_manual(name='Covariate',values=c(1,rep(2:((sm$n.TIpred+1)),each=2)))+
+      #       ggtitle('Expectations')
+      #     
+      #     lktifull=ctPredictTIP(sf,kalmanvec='etaprior',subject = 1,
+      #       plot=TRUE,polygonsteps=0)+
+      #       scale_colour_manual(name='Covariate',values=c(1,rep(2:((sm$n.TIpred+1)),each=2)))+
+      #       ggtitle('Latent Expectations')
+      #   }
+      #   
+      #   pdf(paste0(name,'_tieffects_expectations.pdf'))
+      #   if(sf$ctstanmodelbase$n.TIpred > 1){
+      #     print(lktifull)
+      #     print(ktifull)
+      #     rm(lktifull);rm(ktifull);
+      #   }
+      #   for(ti in sm$TIpredNames){
+      #     print(ctPredictTIP(sf,tipreds = ti,subject = whichsubfull[1],
+      #       kalmanvec='etaprior', plot=FALSE,polygonsteps=0)+scale_color_discrete(name='Covariate')+ggtitle('Latent Expectations'))
+      #     print( ctPredictTIP(sf,tipreds = ti,subject = whichsubfull[1],kalmanvec='yprior',
+      #       plot=FALSE,polygonsteps=0)+scale_color_discrete(name='Covariate')+ggtitle('Expectations'))
+      #   }
+      #   dev.off()
+      # }
     }
 
     #subject expectation plots 
