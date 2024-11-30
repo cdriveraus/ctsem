@@ -240,8 +240,8 @@ ctAddSamples <- function(fit,nsamples,cores=2){
   return(fit)
 }
 
-parallelStanSetup <- function(cl, standata,split=TRUE,nsubsets=1){
-  cores <- length(cl)
+parallelStanSetup <- function(miraiNodes, standata,split=TRUE,nsubsets=1){
+  cores <- length(miraiNodes)
   if(split) stanindices <- split(unique(standata$subject),(unique(standata$subject) %% min(standata$nsubjects,cores))) #disabled sorting so subset works parallel
   if(!split) stanindices <- lapply(1:cores,function(x) unique(standata$subject))
   if(!split && length(stanindices) < cores){
@@ -251,62 +251,42 @@ parallelStanSetup <- function(cl, standata,split=TRUE,nsubsets=1){
   }
   
   standata$nsubsets <- as.integer(nsubsets)
-  if(!split) cores <- 1 #for prior mod
-  # clusterIDexport(cl,c('standata','stanindices','cores'))
-  benv <- new.env(parent = globalenv())
+  if(!split) cores <- 1 else cores <- length(miraiNodes)
   
-  sapply(c('standata','stanindices','cores','cl'),function(x){
-    assign(x,get(x),pos = benv)
-    NULL
-  })
+  for(idi in 1:length(miraiNodes)){
+    mirai({
+      library(rstan)
+      library(ctsem)
+      if(standata$recompile > 0) load(file=smfile) else sm <- ctsem:::stanmodels$ctsm
+      if(length(stanindices[[idi]]) < length(unique(standata$subject))){
+        standata <- ctsem:::standatact_specificsubjects(standata,stanindices[[idi]])
+      }
+      standata$priormod <- 1/cores
+      smf<<-stan_reinitsf(sm,standata)
+      parlp <<- parlp
+    },standata=standata,cores=cores,stanindices=stanindices,idi=idi,parlp=parlp,.compute = miraiNodes[idi])
+  }
   
-  
-  benv$commands <- list(
-    "g = eval(parse(text=paste0('gl','obalenv()')))", #avoid spurious cran check -- assigning to global environment only on created parallel workers.
-    "environment(parlptext) <- g",
-    'if(standata$recompile > 0) load(file=smfile) else sm <- ctsem:::stanmodels$ctsm',
-    'eval(parse(text=parlptext))',
-    'assign("parlp",parlp,pos=g)',
-    "if(length(stanindices[[nodeid]]) < length(unique(standata$subject))) standata <- ctsem:::standatact_specificsubjects(standata,stanindices[[nodeid]])",
-    "standata$priormod <- 1/cores",
-    "if(FALSE) sm=99",
-    "smf=ctsem:::stan_reinitsf(sm,standata)"
-  )
-
-  eval(parse(text=
-      "parallel::clusterExport(cl,c('standata','stanindices','cores','commands'),envir=environment())"),
-    envir = benv)
-  eval(parse(text="parallel::clusterEvalQ(cl,eval(parse(text=paste0(commands,collapse=';'))))"),envir = benv)
-  eval(parse(text="parallel::clusterEvalQ(cl,sapply(commands,function(x) eval(parse(text=x))))"),envir = benv)
-  
-  # eval(parse(text="parallel::clusterEvalQ(cl,ls(envir=globalenv()))"),envir = benv)
-  
+  for(idi in 1:length(miraiNodes)){ #wait for all cores to initialise
+    test=mirai({smf},.compute = miraiNodes[idi])[]
+  }
   NULL
 }
 
-#create as text because of parallel communication weirdness
-parlptext <- 
-  'parlp <- function(parm){
-     a=Sys.time()
-          out <- try(rstan::log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
-          
 
-        
-        if("try-error" %in% class(out) || any(is.nan(attributes(out)$gradient))) {
-          outerr <- out
-          out <- -1e100
-          attributes(out)$gradient <- rep(NaN, length(parm))
-          attributes(out)$err <- outerr
-        }
-        
-        attributes(out)$time <- Sys.time()-a
-        
-        if(is.null(attributes(out)$gradient)) attributes(out)$gradient <- rep(NaN, length(parm))
-        # attributes(out)$gradient[is.nan(attributes(out)$gradient)] <-
-          # rnorm(length(attributes(out)$gradient[is.nan(attributes(out)$gradient)]),0,100)
-          
-        return(out)
-        }'
+parlp <- function(parm,nodeid){ #use mirai to compute (partial) log prob + gradient of already configured mirai node
+  a=Sys.time()
+  out=try(rstan::log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
+  if("try-error" %in% class(out) || any(is.nan(attributes(out)$gradient))) {
+    outerr <- out
+    out <- -1e100
+    attributes(out)$gradient <- rep(NaN, length(parm))
+    attributes(out)$err <- outerr
+  }
+  attributes(out)$time <- Sys.time()-a
+  if(is.null(attributes(out)$gradient)) attributes(out)$gradient <- rep(NaN, length(parm))
+  return(out)
+}
 
 
 
@@ -348,17 +328,17 @@ flexlapply <- function(cl, X, fn,cores=1,...){
   if(cores > 1) parallel::parLapply(cl,X,fn,...) else lapply(X, fn,...)
 }
 
-flexlapplytext <- function(cl, X, fn,cores=1,...){
-  if(cores > 1) {
-    nodeindices <- split(1:length(X), sort((1:length(X))%%cores))
-    nodeindices<-nodeindices[1:cores]
-    clusterIDexport(cl,c('nodeindices'))
-    
-    out <-unlist(clusterIDeval(cl,paste0('lapply(nodeindices[[nodeid]],',fn,')')),recursive = FALSE)
-    # out2<-parallel::parLapply(cl,X,tparfunc,...) 
-  } else out <- lapply(X, eval(parse(text=fn),envir =parent.frame()),...)
-  return(out)
-}
+# flexlapplytext <- function(cl, X, fn,cores=1,...){
+#   if(cores > 1) {
+#     nodeindices <- split(1:length(X), sort((1:length(X))%%cores))
+#     nodeindices<-nodeindices[1:cores]
+#     clusterIDexport(cl,c('nodeindices'))
+#     
+#     out <-unlist(clusterIDeval(cl,paste0('lapply(nodeindices[[nodeid]],',fn,')')),recursive = FALSE)
+#     # out2<-parallel::parLapply(cl,X,tparfunc,...) 
+#   } else out <- lapply(X, eval(parse(text=fn),envir =parent.frame()),...)
+#   return(out)
+# }
 
 
 #' Adjust standata from ctsem to only use specific subjects
@@ -447,20 +427,20 @@ standataFillTime <- function(standata, times, subject){
   long <- standatatolong(standata)
   
   if(any(!times %in% long$time)){ #if missing any times, add empty rows
-  nlong <- do.call(rbind,
-    lapply(subject, function(si){
-      stimes <- times[!round(times,10) %in% round(long$time,10)[long$subject==si]]
-      data.frame(subject=si,time=stimes)
-    })
-  )
-  
-  nlong <- suppressWarnings(data.frame(nlong,long[1,!colnames(long) %in% c('subject','time')]))
-  nlong[,grep('(^nobs)|(^which)|(^ncont)|(^nbin)',colnames(nlong))] <- 0L
-  nlong[,grep('^dokalman',colnames(nlong))] <- 1L
-  nlong[,grep('^Y',colnames(nlong))] <- 99999
-  nlong[,grep('^tdpreds',colnames(nlong))] <- 0
-  
-  long <- rbind(long,nlong)
+    nlong <- do.call(rbind,
+      lapply(subject, function(si){
+        stimes <- times[!round(times,10) %in% round(long$time,10)[long$subject==si]]
+        data.frame(subject=si,time=stimes)
+      })
+    )
+    
+    nlong <- suppressWarnings(data.frame(nlong,long[1,!colnames(long) %in% c('subject','time')]))
+    nlong[,grep('(^nobs)|(^which)|(^ncont)|(^nbin)',colnames(nlong))] <- 0L
+    nlong[,grep('^dokalman',colnames(nlong))] <- 1L
+    nlong[,grep('^Y',colnames(nlong))] <- 99999
+    nlong[,grep('^tdpreds',colnames(nlong))] <- 0
+    
+    long <- rbind(long,nlong)
   } #end empty rows addition
   
   long <- long[order(long$subject,long$time),]
@@ -472,7 +452,7 @@ standataFillTime <- function(standata, times, subject){
 
 
 
-stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
+stan_constrainsamples<-function(sm,standata, samples,cores=2,
   savescores=FALSE,
   savesubjectmatrices=TRUE,
   dokalman=TRUE,
@@ -491,44 +471,37 @@ stan_constrainsamples<-function(sm,standata, samples,cores=2, cl=NA,
   if(!quiet) message('Computing quantities for ', nrow(samples),' samples...')
   if(nrow(samples)==1) cores <- 1
 
-  if(cores > 1) {
-    if(all(is.na(cl))){
-      cl <- makeClusterID(cores)
-      on.exit(try(parallel::stopCluster(cl),silent=TRUE),add = TRUE)
-    }
-    clusterIDexport(cl, c('sm','standata','samples'))
-    clusterIDeval(cl,list(
-      'require(data.table)',
-      'smf <- ctsem::stan_reinitsf(sm,standata)',
-      'tparfunc <- function(x){ 
-         out <- try(data.table::as.data.table(lapply(1:length(x),function(li){
-        unlist(rstan::constrain_pars(smf, upars=samples[x[li],]))
-      })))
-      if(!"try-error" %in% class(out)) return(out)
-  }'))
-    
-  }
+  miraiNodes <- miraiClusterInit(cores)
+  message('miraiClusterInit')
+  on.exit(try({sapply(miraiNodes,function(x) daemons(0,.compute=x))},silent=TRUE),add=TRUE)
+  message('miraiClusterInit')
+  splitsamples <- lapply(suppressWarnings(split(1:nrow(samples),f=1:cores)),function(subsamples) samples[subsamples,,drop=FALSE])
   
-  if(cores ==1){
-    # browser()
-    smf <- stan_reinitsf(sm,standata) 
-    tparfunc <- function(x){ 
-      out <- try(data.table::as.data.table(lapply(1:length(x),function(li){
-        unlist(rstan::constrain_pars(smf, upars=samples[x[li],]))
-      })))
-      if(!'try-error' %in% class(out)) return(out)
-    }
-  }
-  transformedpars <- try(flexlapplytext(cl, 
-    1:nrow(samples),
-    'tparfunc',cores=cores))
-  nulls <- unlist(lapply(transformedpars,is.null))
-  if(any(nulls==FALSE)) transformedpars <- transformedpars[!nulls] else stop('No admissable samples!?')
-  if(sum(nulls)>0) message(paste0(sum(nulls)/length(nulls)*100,'% of samples inadmissable'))
+  transformedpars <- do.call(rbind,mirai::collect_mirai(
+    lapply(splitsamples,function(samples){
+      mirai({
+        require(data.table)
+        require(ctsem)
+        smf <- ctsem:::stan_reinitsf(sm,standata) 
+        tpars <- t(data.table::as.data.table(
+          lapply(1:nrow(samples),function(subrowi){
+            out <- try(unlist(rstan::constrain_pars(smf, upars=samples[subrowi,])))
+          if(!'try-error' %in% class(out)) return(out)
+          else return(NULL)
+          })))
+        return(tpars)
+        }, samples=samples, sm=sm, standata=standata)
+    })
+  ))
+  message('tform pars')
+  admissableProportion <- 1 -(nrow(samples) - nrow(transformedpars))/nrow(samples)
+  # nulls <- unlist(lapply(transformedpars,is.null))
+  if(admissableProportion == 0) stop('No admissable samples!?')
+  if(admissableProportion>0 & admissableProportion < 1) message(1-admissableProportion,'% of samples inadmissable')
   
-  if(cores >1) smf <- stan_reinitsf(sm,standata) #needs to be after, weird parallel stuff...
-  skel= rstan::constrain_pars(smf, upars=samples[which(!nulls)[1],,drop=FALSE]) 
-  transformedpars <- t(data.table::as.data.table(transformedpars))
+  smf <- stan_reinitsf(sm,standata) 
+  skel= rstan::constrain_pars(smf, upars=samples[1,,drop=FALSE]) 
+  # transformedpars <- t(data.table::as.data.table(transformedpars))
   
   nasampscount <- nrow(transformedpars)-nrow(samples) 
   
@@ -571,42 +544,21 @@ tostanarray <- function(flesh, skeleton){
 }
 
 
-# parsetup <- parsetup <- function(){
-#   cl <- parallel::makeCluster(12,type='PSOCK')
-#   parallel::clusterCall(cl,function() 1+1)
-# }
 
-makeClusterID <- function(cores){
-  # benv <- new.env(parent=globalenv())
-  # benv$cores <- cores
-  # benv$
-  cl <- parallel::makeCluster(spec = cores,type = "PSOCK",useXDR=FALSE,outfile='',user=NULL)
-  eval(parse(text="parallel::parLapply(cl = cl,X = 1:cores,function(x) assign('nodeid',x,envir=globalenv()))"))
-  return(cl)
+miraiClusterInit <- function(cores){ #initialise mirai cluster with distinct names for each node, return node names
+  miraiSeed <- ceiling(runif(1, 100000, 1000000))
+  for(idi in 1:cores){
+    daemons(1,dispatcher = F,cleanup=F,.compute = paste0(miraiSeed,idi))
+    mirai({clusterid <<- idi},idi=idi,.compute = paste0(miraiSeed,idi))
+  }
+  ids <- list() #configure mirai daemon ids
+  for(idi in 1:cores){
+    ids[[idi]] <- mirai({clusterid},.compute = paste0(miraiSeed,idi))[]
+  }
+  return(paste0(miraiSeed,ids))
 }
 
-clusterIDexport <- function(cl, vars){
-  # benv <- new.env(parent=globalenv())
-  # benv$cl <- cl
-  # lookframe <- parent.frame()
-  # tmp<-lapply(vars,function(x) benv[[x]] <<- eval(parse(text=x),envir =lookframe))
-  # eval(
-  parallel::clusterExport(cl,vars,envir = parent.frame())
-  # ,envir=globalenv())
-}
 
-clusterIDeval <- function(cl,commands){
-  # benv <- new.env(parent=globalenv())
-  # benv$cl <- cl
-  clusterIDexport(cl,'commands')
-  # unlist(eval(
-  unlist(parallel::clusterEvalQ(cl = cl, 
-    lapply(commands,function(x){
-      eval(parse(text=x),envir = globalenv())
-    })),
-    #,envir =globalenv())
-    recursive = FALSE)
-}
 
 
 #' Optimize / importance sample a stan or ctStan model.
@@ -657,6 +609,7 @@ clusterIDeval <- function(cl,commands){
 #' @importFrom mize mize
 #' @importFrom utils head tail
 #' @importFrom Rcpp evalCpp
+#' @importFrom mirai daemons mirai
 
 stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   deoptim=FALSE, estonly=FALSE,tol=1e-8,
@@ -688,8 +641,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   if(is.null(init)) init <- 'random'
   if(init[1] !='random') carefulfit <- FALSE
   
-  benv <- new.env(parent=globalenv())
-  benv$clctsem <- NA #placeholder for flexsapply usage
   optimfit <- c() #placeholder
   
   notipredsfirstpass <- FALSE
@@ -746,8 +697,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   while(betterfit){ #repeat loop if importance sampling improves on optimized max
     betterfit <- FALSE
     
-    # if(standata$TIpredAuto >0) parsteps <- c(parsteps,(npars:(npars-max(standata$TIPREDEFFECTsetup)+1)))
-    
     if(all(init %in% 'random')){
       init <- rnorm(npars, 0, initsd)
       if(length(parsteps)>0) init[unlist(parsteps)] <- 0 
@@ -770,151 +719,90 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         if(!optimfinished){
           message('Optimization cancelled -- restart from current point by including this argument:')
           message((paste0(c('inits = c(',   paste0(round(storedPars,5),collapse=', '), ')'    ))))
-          # message('Return inits? Y/N')
-          # if(readline() %in% c('Y','y')) returnValue(storedPars)
         }},add=TRUE)
       
-      
-      
-      singletarget<-function(parm,gradnoise=FALSE) {
-        a=Sys.time()
-        out<- try(log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
-        b=Sys.time()
-        if('try-error' %in% class(out) || is.nan(out)) {
-          out=-1e100
-          attributes(out) <- list(gradient=rep(0,length(parm)))
-        }
-        storedPars <<- parm
-        # storedLp <<- c(storedLp,out[1])
-        
-        evaltime <- b-a
-        if(verbose > 0) print(paste('lp= ',out,' ,    iter time = ',round(evaltime,2)),digits=14)
-        if(gradnoise) attributes(out)$gradient <-attributes(out)$gradient *
-          exp(rnorm(length(parm),0,1e-3))
-        return(out)
-      }
       
       if(plot > 0 && .Platform$OS.type=="windows") {
         dev.new(noRStudioGD = TRUE)
         on.exit(expr = {try({dev.off()})},add = TRUE)
       }
       
-      if(optimcores==1) {
-        target = singletarget #we use this for importance sampling
-        eval(parse(text=parlptext))
-      }
       
-      if(cores > 1){ #for parallelised computation after fitting, if only single subject
-        
-        assign(x = 'clctsem',
-          parallel::makeCluster(spec = cores,type = "PSOCK",useXDR=FALSE,outfile='',user=NULL),
-          envir = benv)
-        benv$cores=cores
-        
-        eval(parse(text=
-            "parallel::parLapply(cl = clctsem,X = 1:cores,function(x){
-         assign('nodeid',x,envir=globalenv())
-        })"),envir=benv)
-        
-        
-        # eval(clctsem <- makeClusterID(cores),envir = globalenv())
-        on.exit(try({parallel::stopCluster(benv$clctsem)},silent=TRUE),add=TRUE)
-        
-        if(standata$recompile > 0){
-          smfile <- file.path(tempdir(),paste0('ctsem_sm_',ceiling(runif(1,0,100000)),'.rda'))
-          save(sm,file=smfile,eval.promises = FALSE,precheck = FALSE)
-          on.exit(add = TRUE,expr = {file.remove(smfile)})
-        } else smfile <- ''
-        
-        sapply(c('cores','parlptext','smfile'),function(x){
-          assign(x,get(x),envir = benv)
-          NULL
-        })
-        
-        eval(parse(text="parallel::clusterExport(clctsem,c('cores','parlptext','smfile'),envir=environment())"),envir = benv)
-        # system.time(clusterIDexport(benv$clctsem,c('cores','parlptext','sm')))
-        # clusterIDeval(clctsem,c(
-        #   'eval(parse(text=parlptext))'
-        # ))
-        
-      }
+      miraiNodes <- miraiClusterInit(cores)
+      on.exit(try({sapply(miraiNodes,function(x) daemons(0,.compute=x))},silent=TRUE),add=TRUE)
+      
+      if(standata$recompile > 0){
+        smfile <- file.path(tempdir(),paste0('ctsem_sm_',ceiling(runif(1,0,100000)),'.rda'))
+        save(sm,file=smfile,eval.promises = FALSE,precheck = FALSE)
+        on.exit(add = TRUE,expr = {file.remove(smfile)})
+      } else smfile <- ''
       
       
-      if(optimcores > 1) {
-        # #crazy trickery to avoid parallel communication pauses
-        # env <- new.env(parent = globalenv(),hash = TRUE)
-        # environment(parlp) <- env
-        # clusterIDexport(cl = clctsem,vars='parlp')
-        iter <-0
-        
-        target<-function(parm,gradnoise=FALSE) {
-          # whichframe <- which(sapply(lapply(sys.frames(),ls),function(x){ 'clctsem' %in% x}))
-          a=Sys.time()
-          # 
-          clusterIDexport(benv$clctsem,'parm')
-          if('list' %in% class(parm)){
-            out2 <- parallel::clusterEvalQ(cl = benv$clctsem,parlp(parm))
-            bestset <- which(unlist(out2)==max(unlist(out2)))
-            bestset <- bestset[1]
-            parm <- parm[[bestset]]
-            out <- out2[[bestset]]
-            attributes(out)$bestset <- bestset
-          } else {
-            # browser()
-            out2<-  parallel::clusterEvalQ(cl = benv$clctsem,parlp(parm))
-            error <- FALSE
-            tmp<-sapply(1:length(out2),function(x) {
-              if(!is.null(attributes(out2[[x]])$err)){
-                if(!error & length(out2) > 1 && as.logical(verbose)){
-                  message('Error on core ', x,' but continuing:')
-                  error <<- TRUE
-                  message(attributes(out2[[x]])$err)
-                }
+      
+      iter <-0
+      
+      parlpfull<-function(parm,gradnoise=FALSE) {
+        a=Sys.time()
+        if('list' %in% class(parm)){
+          out2<-  lapply(miraiNodes,function(nodeid) parlp(parm,nodeid))
+          out2 <- mirai::collect_mirai(out2)
+          bestset <- which(unlist(out2)==max(unlist(out2)))
+          bestset <- bestset[1]
+          parm <- parm[[bestset]]
+          out <- out2[[bestset]]
+          attributes(out)$bestset <- bestset
+        } else {
+          out2<-  lapply(miraiNodes,function(nodeid) mirai(parlp(parm,nodeid),.compute = nodeid,parm=parm))
+          out2 <- mirai::collect_mirai(out2)
+          error <- FALSE
+          tmp<-sapply(1:length(out2),function(x) {
+            if(!is.null(attributes(out2[[x]])$err)){
+              if(!error & length(out2) > 1 && as.logical(verbose)){
+                message('Error on core ', x,' but continuing:')
+                error <<- TRUE
+                message(attributes(out2[[x]])$err)
               }
-            })
-            # 
-            out <- try(sum(unlist(out2)),silent=TRUE)
-            coretimes <- sapply(out2,function(x) round(attributes(x)$time,3))
-            # attributes(out)$gradient <- try(apply(sapply(out2,function(x) attributes(x)$gradient,simplify='matrix'),1,sum))
-            
-            for(i in seq_along(out2)){
-              if(i==1) attributes(out)$gradient <- attributes(out2[[1]])$gradient
-              if(i>1) attributes(out)$gradient <- attributes(out)$gradient+attributes(out2[[i]])$gradient
             }
-          }
-          b=Sys.time()
-          b-a
+          })
           
-          if('try-error' %in% class(out) || is.nan(out)) {
-            out=-1e100
-            attributes(out) <- list(gradient=rep(0,length(parm)))
-          } 
+          out <- try(sum(unlist(out2)),silent=TRUE)
+          coretimes <- sapply(out2,function(x) round(attributes(x)$time,3))
           
-          if(plot > 0 && ( (!stochastic &&!carefulfit && nsubsets ==1))){
-            if(out[1] > (-1e99)) storedLp <<- c(storedLp,out[1])
-            iter <<- iter+1
-            # attributes(out)$gradient <- (1-gradmem)*attributes(out)$gradient + gradmem*gradstore
-            # gradstore <<- cbind(gradstore,attributes(out)$gradient)
-            # gstore <- log(abs(gradstore))*sign(gradstore)
-            g=log(abs(attributes(out)$gradient))*sign(attributes(out)$gradient)
-            # if(runif(1,0,1) > .9) {
-            if(iter %% plot == 0){
-              par(mfrow=c(1,3))
-              plot(parm,xlab='param',ylab='par value',col=1:length(parm))
-              plot(log(1+tail(-storedLp,500)-min(tail(-storedLp,500))),ylab='target',type='l')
-              plot(g,type='p',col=1:length(parm),ylab='gradient',xlab='param')
-            }
-            if(verbose==0) message(paste('\rlp= ',out,' ,    iter time = ',round(b-a,3), '; core times = ',paste0(coretimes,collapse=', ')),appendLF = FALSE) #if not verbose, print lp when plotting
+          for(i in seq_along(out2)){
+            if(i==1) attributes(out)$gradient <- attributes(out2[[1]])$gradient
+            if(i>1) attributes(out)$gradient <- attributes(out)$gradient+attributes(out2[[i]])$gradient
           }
-          storedPars <<- parm
-          # storedLp <<- c(storedLp,out[1])
-          if(verbose > 0) print(paste('lp= ',out,' ,    iter time = ',round(b-a,3), '; core times = ',paste0(coretimes,collapse=', '))) #if not verbose, print lp when plotting
-          if(gradnoise) attributes(out)$gradient <-attributes(out)$gradient * 
-            exp( rnorm(length(attributes(out)$gradient),0,1e-3))
-          return(out)
         }
+        b=Sys.time()
         
-      } #end multicore setup
+        if('try-error' %in% class(out) || is.nan(out)) {
+          out=-1e100
+          attributes(out) <- list(gradient=rep(0,length(parm)))
+        } 
+        
+        if(plot > 0 && ( (!stochastic &&!carefulfit && nsubsets ==1))){
+          if(out[1] > (-1e99)) storedLp <<- c(storedLp,out[1])
+          iter <<- iter+1
+          # attributes(out)$gradient <- (1-gradmem)*attributes(out)$gradient + gradmem*gradstore
+          # gradstore <<- cbind(gradstore,attributes(out)$gradient)
+          # gstore <- log(abs(gradstore))*sign(gradstore)
+          g=log(abs(attributes(out)$gradient))*sign(attributes(out)$gradient)
+          # if(runif(1,0,1) > .9) {
+          if(iter %% plot == 0){
+            par(mfrow=c(1,3))
+            plot(parm,xlab='param',ylab='par value',col=1:length(parm))
+            plot(log(1+tail(-storedLp,500)-min(tail(-storedLp,500))),ylab='target',type='l')
+            plot(g,type='p',col=1:length(parm),ylab='gradient',xlab='param')
+          }
+          if(verbose==0) message(paste('\rlp= ',out,' ,    iter time = ',round(b-a,3), '; core times = ',paste0(range(coretimes),collapse=', ')),appendLF = FALSE) #if not verbose, print lp when plotting
+        }
+        storedPars <<- parm
+        # storedLp <<- c(storedLp,out[1])
+        if(verbose > 0) print(paste('lp= ',out,' ,    iter time = ',round(b-a,3), '; core times range = ',paste0(range(coretimes),collapse=', '))) #if not verbose, print lp when plotting
+        if(gradnoise) attributes(out)$gradient <-attributes(out)$gradient * 
+          exp( rnorm(length(attributes(out)$gradient),0,1e-3))
+        return(out)
+      }
       
       
       
@@ -926,8 +814,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           decontrollist <- c(decontrol,DEoptim::DEoptim.control())
           decontrollist <- decontrollist[unique(names(decontrollist))]
           
-          lp2 = function(parm) {
-            out<- -target(parm)
+          parlpfullNeg = function(parm) {
+            out<- -parlpfull(parm)
             attributes(out)$gradient <- -attributes(out)$gradient
             return(out)
           }
@@ -941,12 +829,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           decontrollist$initialpop=deinit
           decontrollist$NP = NP
           
-          if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standata,split=parsets<2)
-          if(optimcores==1) smf<-stan_reinitsf(sm,standata)
+          parallelStanSetup(miraiNodes = miraiNodes,standata = standata,split=parsets<2)
           
-          optimfitde <- suppressWarnings(DEoptim::DEoptim(fn = lp2,lower = rep(-1e10, npars), upper=rep(1e10, npars),
+          optimfitde <- suppressWarnings(DEoptim::DEoptim(fn = parlpfullNeg,lower = rep(-1e10, npars), upper=rep(1e10, npars),
             control = decontrollist))
-          # init=constrain_pars(object = smf,optimfitde$optim$bestmem)
           init=optimfitde$optim$bestmem
           bestfit = -optimfitde$optim$bestval
         } else stop(paste0('use install.packages(\"DEoptim\") to use deoptim')) #end require deoptim
@@ -957,12 +843,12 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       mizelpg=list( #single core mize functions
         fg=function(pars){
-          r=-target(pars)
+          r=-parlpfull(pars)
           r=list(fn=r[1],gr= -attributes(r)$gradient)
           return(r)
         },
-        fn=function(x) -target(x),
-        gr=function(pars) -attributes(target(pars))$gradient
+        fn=function(x) -parlpfull(x),
+        gr=function(pars) -attributes(parlpfull(pars))$gradient
       )
       
       priorsbak <- standata$priors
@@ -989,13 +875,12 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # smlndat <- min(standatasml$ndatapoints,ceiling(max(standatasml$nsubjects * 10, standatasml$ndatapoints*.5)))
         # standatasml$dokalmanrows[sample(1:standatasml$ndatapoints,smlndat)] <- 0L
         # standatasml$dokalmanrows[match(unique(standatasml$subject),standatasml$subject)] <- 1L #ensure first obs is included for t0var consistency
-        if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standatasml,split=parsets<2,nsubsets = nsubsets)
-        if(optimcores==1) smf<-stan_reinitsf(sm,standatasml)
+        parallelStanSetup(miraiNodes = miraiNodes,standata = standatasml,split=parsets<2,nsubsets = nsubsets)
         
         
         if(stochastic) {
           
-          optimfit <- try(sgd(init, fitfunc = function(x) target(x),
+          optimfit <- try(sgd(init, fitfunc = function(x) parlpfull(x),
             parsets=parsets,
             nsubsets = nsubsets,
             whichignore = unlist(parsteps),nconvergeiter = 30,
@@ -1026,14 +911,14 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         
         #update init, making sure ignored parameters still have values in init
         if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else init=optimfit$par
-
+        
         if(length(parsteps) > 0){
           message('Freeing parameters...')
           finished <- FALSE
           while(!finished && length(parsteps)>0){
             if(length(parsteps)>1) parsteps <- parsteps[-1] else parsteps <- c()#parsteps[pstat> pcheck]
             
-            optimfit <- sgd(init, fitfunc = target,
+            optimfit <- sgd(init, fitfunc = parlpfull,
               parsets=parsets,
               nsubsets = nsubsets,
               itertol = tol*1000*stochasticTolAdjust,
@@ -1067,8 +952,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         while(!finished){
           if(found==0){
             if(!priors){ #then we need to reinitialise model
-              if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standata,split=parsets<2,nsubsets = nsubsets)
-              if(optimcores==1) smf<-stan_reinitsf(sm,standata)
+              parallelStanSetup(miraiNodes = miraiNodes,standata = standata,split=parsets<2,nsubsets = nsubsets)
             }
           }
           if(!is.null(standata$TIpredAuto) && standata$TIpredAuto){
@@ -1114,11 +998,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           }
           
           standata$nsubsets <- as.integer(nsubsets)
-          if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standata,split=parsets<2,nsubsets = nsubsets)
-          if(optimcores==1) smf<-stan_reinitsf(sm,standata)
+          parallelStanSetup(miraiNodes = miraiNodes,standata = standata,split=parsets<2,nsubsets = nsubsets)
           
-          
-          if(stochastic || nsubsets > 1) optimfit <- try(sgd(init, fitfunc = target,
+          if(stochastic || nsubsets > 1) optimfit <- try(sgd(init, fitfunc = parlpfull,
             parsets=parsets,
             nsubsets = nsubsets,
             whichignore = parsteps,
@@ -1146,12 +1028,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       finished <- TRUE
       standata$nsubsets <- nsubsets <- 1L
-      if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standata,split=parsets<2)
-      if(optimcores==1) smf<-stan_reinitsf(sm,standata)
+      parallelStanSetup(miraiNodes = miraiNodes,standata = standata,split=parsets<2)
       
       if(stochastic){
         message('Optimizing...')
-        optimfit <- try(sgd(init, fitfunc = target,
+        optimfit <- try(sgd(init, fitfunc = parlpfull,
           parsets=parsets,
           nsubsets = 1,
           itertol = tol*stochasticTolAdjust,
@@ -1185,46 +1066,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       bestfit <-optimfit$value
       est2=init #because init contains the fixed values #unconstrain_pars(smf, est1)
       if(length(parsteps)>0) est2[-parsteps] = optimfit$par else est2=optimfit$par
-      
-      # if(standata$nindvarying > 0 && standata$intoverpop==0){ #recompose into single model
-      #   # standata$doonesubject <- 0L
-      #   a1=standata$nparams+standata$nindvarying+
-      #     (standata$nindvarying^2-standata$nindvarying)/2
-      #   whichmcmcpars <- (a1+1):(a1+standata$nindvarying*standata$nsubjects)
-      #   est3=est2[-whichmcmcpars]
-      #   est3=c(est3,(optimfit$mcmcpars))
-      #   est2=est3
-      #   if(standata$ntipredeffects > 0) est3 <- c(est3,est2[(a1+1):length(a1)])
-      # }
       npars = length(est2)
     }
     
     if(!estonly){
-      # if(cores > 1){
-      #   suppressWarnings(rm(smf))
-      #   # parallelStanSetup(cl = clctsem,standata = standata,split=parsets<2)
-      #   hesscl <- NA
-      # }
-      # if(cores==1){
-      #   hesscl <- NA
-      #   # smf<-stan_reinitsf(sm,standata)
-      # }
-      
-      # standata$nsubsets <- 1L
-      # if(standata$nsubjects > cores){
-      #   hesscl <- NA
-      # } else {
-      #   hesscl <- benv$clctsem
-      #   if(cores > 1) {
-      #     suppressWarnings(rm(smf))
-      #     parallelStanSetup(cl = benv$clctsem,standata = standata,split=TRUE,nsubsets = 1)#,split=parsets<2)
-      #   }
-      #   if(cores==1) smf<-stan_reinitsf(sm,standata)
-      # }
-      
-      
-      
-      
       
       if(is.na(sampleinit[1])){
         
@@ -1234,7 +1079,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         
         if(length(parsteps)>0) grinit= est2[-parsteps] else grinit = est2
         
-        # browser()
         if(bootstrapUncertainty %in% 'auto'){
           if(standata$nsubjects < 50){
             bootstrapUncertainty <- FALSE
@@ -1292,10 +1136,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             
             
             
-            
-            
             gfunc <- function(params){
-              x=target(params)
+              x=parlpfull(params)
               return(c(attributes(x)$gradient))#,x[1]))
             }
             
@@ -1312,23 +1154,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               if('all' %in% whichpars) whichpars <- 1:length(pars)
               base <- optimfit$value
               
-              # if(cores > 1) target <- function(x){ #if cluster is passed, create target function, otherwise use old target
-              #   if(length(parsteps)>0){
-              #     pars <- est2
-              #     pars[-parsteps] <- x
-              #   } else pars <- x
-              #   fg=parlp(pars)
-              #   if(length(parsteps)>0){ 
-              #     attributes(fg)$gradient <- attributes(fg)$gradient[-parsteps]
-              #   }
-              #   # print(fg[1])
-              #   if(fg[1] < -1e99) class(fg) <- c('try-error',class(fg))
-              #   return(fg)
-              # }
               
               hessout <- sapply( whichpars, function(i){
                 
-                # if(is.na(cl[1])) fgfunc <- target
                 
                 # for(i in whichpars){
                 message(paste0("\rEstimating Hessian, par ",i,',', 
@@ -1355,7 +1183,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                     # if(count>8) stepsize=stepsize*-1 #is this good?
                     stepchangemultiplier <- max(stepchangemultiplier,.11)
                     count <- count + 1
-                    lp[[di]] <-  suppressMessages(suppressWarnings(target(pars+uppars*stepsize*directions[di])))
+                    lp[[di]] <-  suppressMessages(suppressWarnings(parlpfull(pars+uppars*stepsize*directions[di])))
                     accepted <- !'try-error' %in% class(lp[[di]]) && all(!is.na(attributes(lp[[di]])$gradient))
                     if(accepted){
                       lpdiff <- base[1] - lp[[di]][1]
@@ -1395,7 +1223,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                 grad<- attributes(lp[[1]])$gradient / steplist[[di]] * directions[di]
                 if(any(is.na(grad))){
                   warning('NA gradient encountered at param ',i,immediate. =TRUE)
-                  # browser()
                 }
                 if(length(directions) > 1) grad <- (grad + attributes(lp[[2]])$gradient / (steplist[[di]]*-1))/2
                 return(grad)
@@ -1522,14 +1349,15 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           log1p(sum(exp(x[-xmax] - x[xmax]))) + x[xmax]
         }
         
-        if(cores > 1)  parallelStanSetup(cl=benv$clctsem,standata,split=FALSE)
+        #configure each node with full dataset for adaptive sampling
+        if(cores > 1 & optimcores > 1)  parallelStanSetup(miraiNodes = miraiNodes,standata,split=FALSE)
         targetsamples <- finishsamples * finishmultiply
         # message('Adaptive importance sampling, loop:')
         j <- 0
         while(nrow(samples) < targetsamples){
           j<- j+1
           if(j==1){
-            samples <- mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = tdf)
+            samples <- newsamples <- mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = tdf)
           } else {
             delta[[j]]=colMeans(resamples)
             mcovl[[j]] = as.matrix(Matrix::nearPD(cov(resamples))$mat) #+diag(1e-12,ncol(samples))
@@ -1538,31 +1366,22 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               if(iteri==1) mcov=mcovl[[j]] else mcov = mcov*.5+mcovl[[j]]*.5 #smoothed covariance estimator
               if(iteri==1) mu=delta[[j]] else mu = mu*.5+delta[[j]]*.5 #smoothed means estimator
             }
-            samples <- rbind(samples,mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = tdf))
+            newsamples <- mvtnorm::rmvt(isloopsize, delta = mu, sigma = mcov,   df = tdf)
+            samples <- rbind(samples, newsamples)
           }
           
           prop_dens <- mvtnorm::dmvt(tail(samples,isloopsize), delta[[j]], mcovl[[j]], df = tdf,log = TRUE)
           
-          if(cores > 1) parallel::clusterExport(benv$clctsem,c('samples'),envir = environment())
+          #split evenly over cores
+          splitsamples <- lapply(
+            suppressWarnings(split(1:nrow(newsamples),ceiling(1:nrow(samples)/(nrow(samples)/cores)),drop=TRUE)),
+            function(spliti) samples[spliti,])
           
-          # if(cores==1) parlp <- function(parm){ #remove this duplication somehow
-          #   out <- try(log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
-          #   if('try-error' %in% class(out)) {
-          #     out[1] <- -1e100
-          #     attributes(out)$gradient <- rep(NaN, length(parm))
-          #   }
-          #   if(is.null(attributes(out)$gradient)) attributes(out)$gradient <- rep(NaN, length(parm))
-          #   attributes(out)$gradient[is.nan(attributes(out)$gradient)] <- 
-          #     rnorm(length(attributes(out)$gradient[is.nan(attributes(out)$gradient)]),0,100)
-          #   return(out)
-          # }
-          
-          # 
-          # clusterIDexport(clctsem, c('isloopsize'))
-          target_dens[[j]] <- unlist(flexlapplytext(cl = benv$clctsem, 
-            X = 1:isloopsize, 
-            fn = "function(x){parlp(samples[x,])}",cores=cores))
-          
+          target_dens[[j]] <- unlist(mirai::collect_mirai(lapply(1:length(splitsamples), function(nodei){
+            mirai({
+              apply(samples,1,function(x) parlp(x))
+            },samples=splitsamples[[nodei]], .compute=miraiNodes[nodei])
+            })))
           
           target_dens[[j]][is.na(target_dens[[j]])] <- -1e200
           if(all(target_dens[[j]] < -1e100)) stop('Could not sample from optimum! Try reparamaterizing?')
@@ -1637,7 +1456,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             nresamples <- finishsamples 
           }else nresamples = max(5000,nrow(samples)/5)
           
-          
+
           # points(target_dens2[sample_prob> (1/isloopsize * 10)], prop_dens[sample_prob> (1/isloopsize * 10)],col='red')
           resample_i <- sample(1:nrow(samples), size = nresamples, replace = ifelse(nrow(samples) > targetsamples,FALSE,TRUE),
             prob = sample_prob / sum(sample_prob))
@@ -1658,58 +1477,62 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             (max(sample_prob[resample_i][1:i])) / (sum(sample_prob[resample_i][1:i]) )
           })))
           
+          }
         }
       }
+    }#end while no better fit
+    if(!estonly){
+      if(!is) lpsamples <- NA else lpsamples <- unlist(target_dens)[resample_i]
+      
+      message('Computing posterior with ',nrow(resamples),' samples')
+      standata$savesubjectmatrices=savesubjectmatrices
+      
+      if(!savesubjectmatrices) sdat=standatact_specificsubjects(standata,1) #only use 1 subject
+      if(savesubjectmatrices) sdat=standata
+      
+      transformedpars=stan_constrainsamples(sm = sm,standata = sdat,
+        savesubjectmatrices = savesubjectmatrices, savescores = standata$savescores,
+        dokalman=as.logical(standata$savesubjectmatrices),
+        samples=resamples,cores=cores, 
+        # cl=benv$clctsem, 
+        quiet=TRUE)
+      
+      # if(cores > 1) {
+      #   parallel::stopCluster(benv$clctsem)
+      #   smf <- stan_reinitsf(sm,standata)
+      # }
+      
+      # transformedparsfull=stan_constrainsamples(sm = sm,standata = standata,
+      #   savesubjectmatrices = TRUE, dokalman=TRUE,savescores = TRUE,
+      #   samples=matrix(est2,nrow=1),cores=1, quiet = TRUE)
+      
+      
+      
+      sds=try(suppressWarnings(sqrt(diag(mcov))))  #try(sqrt(diag(solve(optimfit$hessian))))
+      if('try-error' %in% class(sds)[1]) sds <- rep(NA,length(est2))
+      lest= est2 - 1.96 * sds
+      uest= est2 + 1.96 * sds
+      
+      transformedpars_old=NA
+      try(transformedpars_old<-cbind(unlist(constrain_pars(smf, upars=lest)),
+        unlist(constrain_pars(smf, upars= est2)),
+        unlist(constrain_pars(smf, upars= uest))),silent=TRUE)
+      try(colnames(transformedpars_old)<-c('2.5%','mean','97.5%'),silent=TRUE)
+      stanfit=list(optimfit=optimfit,stanfit=stan_reinitsf(sm,standata), rawest=est2, rawposterior = resamples, cov=mcov,
+        transformedpars=transformedpars,transformedpars_old=transformedpars_old,
+        # transformedparsfull=transformedparsfull,
+        standata=list(TIPREDEFFECTsetup=standata$TIPREDEFFECTsetup,ntipredeffects = standata$ntipredeffects),
+        isdiags=list(cov=mcovl,means=delta,ess=ess,qdiag=qdiag,lpsamples=lpsamples ))
     }
-  }#end while no better fit
-  if(!estonly){
-    if(!is) lpsamples <- NA else lpsamples <- unlist(target_dens)[resample_i]
     
-    message('Computing posterior with ',nrow(resamples),' samples')
-    standata$savesubjectmatrices=savesubjectmatrices
-    
-    if(!savesubjectmatrices) sdat=standatact_specificsubjects(standata,1) #only use 1 subject
-    if(savesubjectmatrices) sdat=standata
-    
-    transformedpars=stan_constrainsamples(sm = sm,standata = sdat,
-      savesubjectmatrices = savesubjectmatrices, savescores = standata$savescores,
-      dokalman=as.logical(standata$savesubjectmatrices),
-      samples=resamples,cores=cores, cl=benv$clctsem, quiet=TRUE)
-    
-    if(cores > 1) {
-      parallel::stopCluster(benv$clctsem)
+    if(estonly) {
       smf <- stan_reinitsf(sm,standata)
+      stanfit=list(optimfit=optimfit,stanfit=smf, rawest=est2)
     }
-    
-    # transformedparsfull=stan_constrainsamples(sm = sm,standata = standata,
-    #   savesubjectmatrices = TRUE, dokalman=TRUE,savescores = TRUE,
-    #   samples=matrix(est2,nrow=1),cores=1, quiet = TRUE)
-    
-    
-    
-    sds=try(suppressWarnings(sqrt(diag(mcov))))  #try(sqrt(diag(solve(optimfit$hessian))))
-    if('try-error' %in% class(sds)[1]) sds <- rep(NA,length(est2))
-    lest= est2 - 1.96 * sds
-    uest= est2 + 1.96 * sds
-    
-    transformedpars_old=NA
-    try(transformedpars_old<-cbind(unlist(constrain_pars(smf, upars=lest)),
-      unlist(constrain_pars(smf, upars= est2)),
-      unlist(constrain_pars(smf, upars= uest))),silent=TRUE)
-    try(colnames(transformedpars_old)<-c('2.5%','mean','97.5%'),silent=TRUE)
-    stanfit=list(optimfit=optimfit,stanfit=stan_reinitsf(sm,standata), rawest=est2, rawposterior = resamples, cov=mcov,
-      transformedpars=transformedpars,transformedpars_old=transformedpars_old,
-      # transformedparsfull=transformedparsfull,
-      standata=list(TIPREDEFFECTsetup=standata$TIPREDEFFECTsetup,ntipredeffects = standata$ntipredeffects),
-      isdiags=list(cov=mcovl,means=delta,ess=ess,qdiag=qdiag,lpsamples=lpsamples ))
+    optimfinished <- TRUE #disable exit message re pars
+    return(stanfit)
   }
   
-  if(estonly) {
-    smf <- stan_reinitsf(sm,standata)
-    stanfit=list(optimfit=optimfit,stanfit=smf, rawest=est2)
-  }
-  optimfinished <- TRUE #disable exit message re pars
-  return(stanfit)
-}
-
-
+  
+  
+  

@@ -52,7 +52,8 @@ Imports:
     tools,
     utils,
     splines,
-    statmod
+    statmod,
+    mirai
 Encoding: UTF-8
 LazyData: true
 ByteCompile: true
