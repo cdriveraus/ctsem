@@ -474,7 +474,6 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   ctm$pars$transform[ctm$pars$param %in% 'stationary'] <- NA
   ctm$pars$param[ctm$pars$param %in% 'stationary'] <- NA
   
-  
   if(length(unique(datalong[,ctm$subjectIDname]))==1 && any(ctm$pars$indvarying[is.na(ctm$pars$value)]==TRUE)){
     # is.null(ctm$fixedrawpopmeans) && is.null(ctm$fixedsubpars) & is.null(ctm$forcemultisubject)) {
     ctm$pars$indvarying <- FALSE
@@ -580,7 +579,7 @@ T0MEANS=c("t0mPar","t0mPar"), #insert this parameter into the T0MEANS matrix as 
       ctm$pars$indvarying[errfix] <- FALSE
     }}
   
-  ctm$modelmats <- ctStanModelMatrices(ctm)
+  ctm$modelmats <- ctStanModelMatrices(ctm) #slow!
   ctm <- ctStanCalcsList(ctm,save=saveComplexPars) #get extra calculations and adjust model spec as needed???
   
   #store values in ctm
@@ -626,7 +625,7 @@ T0MEANS=c("t0mPar","t0mPar"), #insert this parameter into the T0MEANS matrix as 
   ctm$recompile <- recompile
   
   
-  standata <- ctStanData(ctm,datalong,optimize=optimize, sameInitialTimes=sameInitialTimes) 
+  standata <- ctStanData(ctm,datalong,optimize=optimize, sameInitialTimes=sameInitialTimes) #bit slow
   standata$verbose=as.integer(verbose)
   standata$savesubjectmatrices=as.integer(savesubjectmatrices)
   standata$gendata=as.integer(gendata)

@@ -1,6 +1,6 @@
-ctSummarise<-function(sf,name='ctSummary',cores=2, times=seq(0,10,.1),quantiles=c(.025,.5,.975),
+ctSummarise<-function(sf,name='',cores=2, times=seq(0,10,.1),quantiles=c(.025,.5,.975),
   folder = 'ctSummary/',nsamples=200,lags=1:3,
-  ctCheckFit = TRUE, ctStanPlotPost=TRUE, ctStanTIpredEffects = TRUE,IndDifCorrelations=TRUE,
+  ctCheckFit = FALSE, ctStanPlotPost=FALSE, ctStanTIpredEffects = TRUE,IndDifCorrelations=TRUE,
   latents=1:sf$ctstanmodelbase$n.latent, manifests=1:sf$ctstanmodelbase$n.manifest){
   
   Sig. <- NULL
@@ -36,25 +36,24 @@ ctSummarise<-function(sf,name='ctSummary',cores=2, times=seq(0,10,.1),quantiles=
     viscovf <- function(mat){
       matname <- mat
       if(mat %in% 'MANIFESTcov') {
-        matname <- 'Residual'
         varnames <- sf$ctstanmodelbase$manifestNames
       } else varnames <- sf$ctstanmodelbase$latentNames
       #correlation ci's
-      diffusion=sf$stanfit$transformedpars[[paste0('pop_',mat)]]
+      covmat=sf$stanfit$transformedpars[[paste0('pop_',mat)]]
       if(mat %in% 'T0cov' && sf$standata$nindvarying > 0 && sf$standata$intoverpop){
-        diffusion = diffusion[,latents,latents,drop=FALSE]
+        covmat = covmat[,latents,latents,drop=FALSE]
       }
-      diffindices <- unique(c(which(matrix(diffusion[1,,],nrow=dim(diffusion)[2],ncol=dim(diffusion)[3]) != 0,arr.ind = TRUE)))
-      if(length(diffindices) > 0){
-      diffusion <- plyr::aaply(diffusion,1,function(x) matrix(x[diffindices,diffindices,drop=FALSE],length(diffindices),length(diffindices)))
-      dimnames(diffusion) <- list(NULL,varnames[diffindices],varnames[diffindices])
-      dcor=plyr::aaply(diffusion,1, function(x) cov2cor(x))
+      matindices <- unique(c(which(matrix(covmat[1,,],nrow=dim(covmat)[2],ncol=dim(covmat)[3]) != 0,arr.ind = TRUE)))
+      if(length(matindices) > 0){
+        covmat <- plyr::aaply(covmat,1,function(x) matrix(x[matindices,matindices,drop=FALSE],length(matindices),length(matindices)))
+      dimnames(covmat) <- list(NULL,varnames[matindices],varnames[matindices])
+      dcor=plyr::aaply(covmat,1, function(x) cov2cor(x))
       dcorq=plyr::aaply(dcor,c(2,3),quantile,probs=c(.025,.5,.975))
       dcorm <- as.data.table(dcorq)
       dcorm <- dcast(dcorm,'V1+V2 ~ V3')
-      print(corplotmelt(meltcov(dcorq[,,1]),title = paste0(gsub('cov','',matname),' corr. 2.5% quantile')))
-      print(corplotmelt(meltcov(dcorq[,,2]),title = paste0(gsub('cov','',matname),' corr. 50% quantile')))
-      print(corplotmelt(meltcov(dcorq[,,3]),title = paste0(gsub('cov','',matname),' corr. 97.5% quantile')))
+      print(corplotmelt(meltcov(dcorq[,,1]),title = paste0(gsub('cov','',matname),' corr. 2.5% quantile'),limits=c(-1,1)))
+      print(corplotmelt(meltcov(dcorq[,,2]),title = paste0(gsub('cov','',matname),' corr. 50% quantile'),limits=c(-1,1)))
+      print(corplotmelt(meltcov(dcorq[,,3]),title = paste0(gsub('cov','',matname),' corr. 97.5% quantile'),limits=c(-1,1)))
       options(max.print=100000)
       cat(gsub('cov','',matname),' correlation matrix confidence intervals')
       print(dcorm,nrows = 10000)
@@ -70,7 +69,7 @@ ctSummarise<-function(sf,name='ctSummary',cores=2, times=seq(0,10,.1),quantiles=
     # print(corplotmelt(meltcov(cov2cor(cp$T0cov[latents,latents,drop=FALSE])),title =  'Initial latent correlations'))
     dr=cp$DRIFT[latents,latents,drop=FALSE]
     dr[diag(nrow(dr))==1] <- -dr[diag(nrow(dr))==1]
-    print(corplotmelt(meltcov(cov2cor(dr %*% t(dr))),title =  'Std. deterministic change relations'))
+    print(corplotmelt(meltcov(cov2cor(dr %*% t(dr))),title =  'Std. deterministic change relations',limits=c(-1,1)))
     dev.off()
     
     ### GENERATING OUTPUT ### 
@@ -296,8 +295,8 @@ if(requireNamespace('papaja')){
               scale_fill_gradient2(low = "blue", high = "red", mid = "white",
                 midpoint = 0, limits = c(-1,1), space = "Lab", 
                 name='Corr')  +
-              geom_point(mapping=aes(alpha=Sig.),stroke=0,size=.6)+
-              theme_minimal()+ theme(axis.text.y=element_text(size=8),
+              geom_point(mapping=aes(alpha=Sig.),stroke=0,size=.4)+
+              theme_minimal()+ theme(legend.position='bottom',axis.text.y=element_text(size=8),
                 axis.text.x = element_text(angle = 90,size=8)))
           dev.off()
         }) #end try
@@ -379,12 +378,39 @@ if(requireNamespace('papaja')){
         stat_summary( #center line
           fun.data = function(x) list(y=quantile(x,0.5)),
           geom = "line")+
-        xlab('Time interval in days')+
+        xlab('Time interval')+
         scale_colour_manual(values = c('red','blue'))+
         scale_fill_manual(values = c('red','blue'))+
         facet_grid(rows=vars(row),cols=vars(col))+
         theme(legend.position = 'bottom')
     )
+    if(length(unique(d$row))>1){
+      for(i in unique(d$col)){
+        print(
+          ggplot2::ggplot(data = d[col==i,],mapping=aes(y=value,x=Time.interval/4,
+            colour=Type,
+            fill=Type))+
+            theme_bw()+ylab(paste0("Temporal Effect of ",i))+
+            stat_summary( #ribbon
+              fun.data = function(x) list(
+                y=quantile(x,quantiles[2]),
+                ymin=quantile(x,quantiles[1]), 
+                ymax=quantile(x,quantiles[3])
+              ),
+              geom = "ribbon",
+              alpha= 0.3,
+              linetype=3)+
+            stat_summary( #center line
+              fun.data = function(x) list(y=quantile(x,0.5)),
+              geom = "line")+
+            xlab('Time interval in days')+
+            scale_colour_manual(values = c('red','blue'))+
+            scale_fill_manual(values = c('red','blue'))+
+            facet_wrap(vars(row))+
+            theme(legend.position = 'bottom')
+        )
+      }
+    }
     dev.off()
     
     

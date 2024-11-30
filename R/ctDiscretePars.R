@@ -305,7 +305,7 @@ ctStanDiscreteParsPlot<- function(x,indices='all',
   #   ifelse(cov,'correlated','uncorrelated'), 'shock of 1.0')
   
   g<-paste0('ggplot2::ggplot(data = ym,mapping=aes(y=value,x=`Time interval`,
-    colour=Effect,
+    colour=Effect,group=interaction(Effect, Subject),
     fill=Effect))+
     theme_bw()+ylab("',ylab,'")+
     ggplot2::labs(title = "',title,'")+  

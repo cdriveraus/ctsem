@@ -1,4 +1,98 @@
-ctLongToWideSF <- function(fit){
+#' @title ctCheckFit
+#' @description Visual model fit diagnostics for ctsem fit objects.
+#' @param fit ctStanFit object.
+#' @param cor Logical. If TRUE, the correlation matrix is used instead of the covariance matrix.
+#' @return data.table containing quantiles of the model implied covariance matrix based on generated samples of data, the sample covariance matrix values, and the difference between the two.
+ctFitCovCheck <- function(fit,cor=FALSE){
+  gencov <- ctCovMatGenerated(fit)
+  sampcov <- cov(ctLongtoWideFromFitted(fit),use='pairwise.complete.obs')
+  
+  if(cor){
+    gencov <- suppressWarnings(lapply(gencov,function(x) cov2cor(x)))
+    sampcov <- suppressWarnings(cov2cor(sampcov))
+  }
+  
+  msampcov <- melt(as.data.table(sampcov,keep.rownames=TRUE),id.vars = 'rn',variable.name = 'cn')
+  
+  #convert list of covariance matrices to melted data.table, with row and column names identifiers
+  mgencov <- melt(rbindlist(lapply(gencov,function(x) as.data.table(x,keep.rownames=TRUE)),idcol = 'iter'),id.vars = c('iter','rn'),variable.name = 'cn')
+  mgencov[,q025:=quantile(value,0.025,na.rm=TRUE),by=.(rn,cn)]
+  mgencov[,q975:=quantile(value,0.975,na.rm=TRUE),by=.(rn,cn)]
+  mgencov[,q50:=quantile(value,0.5,na.rm=TRUE),by=.(rn,cn)]
+  mgencov[,sd:=sd(value,na.rm=TRUE),by=.(rn,cn)]
+  mgencov[,mean:=mean(value,na.rm=TRUE),by=.(rn,cn)]
+  
+  msampcov <- merge(msampcov,mgencov[iter==1,.(rn,cn,q025,q50,q975,sd,mean)],by=c('rn','cn'))
+  #extrat trailing '_Tx' where x is digit to obtain observation number
+  msampcov[,.ObsRow:=gsub('^(.*)(\\d+)$','\\2',rn)]
+  msampcov[,.ObsCol:=gsub('^(.*)(\\d+)$','\\2',cn)]
+  
+  #extract variable name before trailing '_Tx' to obtain row and column variables
+  msampcov[,.RowVar:=gsub('^(.*)\\_T\\d+$','\\1',rn)]
+  msampcov[,.ColVar:=gsub('^(.*)\\_T\\d+$','\\1',cn)]
+  
+  msampcov[,.Sig:=ifelse(value>q975 | value<q025,TRUE,FALSE)]
+  
+  #for checking sig proportions:
+  msampcovlower <- copy(msampcov)
+  msampcovlower[, interaction_id := paste(pmin(as.character(rn), as.character(cn)), pmax(as.character(rn), as.character(cn)), sep = "_")]
+  msampcovlower <- msampcovlower[!duplicated(interaction_id)]
+  if(!cor) sigprop = mean(as.numeric(msampcovlower$.Sig),na.rm=T)
+  if(cor) sigprop = mean(as.numeric(msampcovlower$.Sig[msampcovlower$rn != msampcovlower$cn]),na.rm=T)
+  message(paste0('Proportion of model implied cov/cor cells outside 95% = ',sigprop))
+  
+  return(msampcov)
+}
+
+
+library(data.table)
+
+msampcov.plot <- function(msampcov, maxlag = 10) {
+  gg <- list()
+  msampcov <- as.data.table(msampcov)  # Ensure msampcov is a data.table
+  
+  for (rowvari in unique(msampcov$.RowVar)) {
+    # Filter data and calculate lag and observation count for each unique lag
+    filtered_data <- msampcov[.RowVar %in% rowvari & 
+        ((as.numeric(.ObsRow) - as.numeric(.ObsCol)) <= maxlag) & 
+        ((as.numeric(.ObsRow) - as.numeric(.ObsCol)) >= 0)]
+    filtered_data[, lag := as.numeric(.ObsRow) - as.numeric(.ObsCol)]
+    filtered_data[, count := .N, by = lag]  # Count number of observations for each lag
+    collapsed_data <- filtered_data[, lapply(.SD, function(x) {
+      if (is.numeric(x)) {
+        mean(x, na.rm = TRUE)  # Calculate the mean for numeric columns
+      } else if (is.character(x)) {
+        unique(x)[1]  # Keep the first unique value for character columns
+      } else {
+        x[1]  # Default to the first value for other types
+      }
+    }), by = .(.RowVar, .ColVar, lag)]
+    
+    gg[[rowvari]] <- ggplot(collapsed_data, aes(x = lag, y = value)) +
+      # Define red points for mean sample correlation with alpha representing the observation count
+      geom_point(aes(color = "Mean Sample Correlation", alpha = count))+
+      geom_errorbar(aes(color = "Model Implied 95% Confidence Interval", ymin = q025, ymax = q975,y=q50)) +
+      theme_bw() +
+      geom_hline(yintercept = 0, linetype = 'dotted') +
+      geom_vline(xintercept = 0, linetype = 'dotted') +
+      facet_wrap(~.ColVar) +
+      labs(x = 'Lag (Observations)', y = paste0('Correlation with ',rowvari), color = '', alpha = 'Observations') +
+      scale_color_manual(values = c("Mean Sample Correlation" = "red", "Model Implied 95% Confidence Interval" = "black")) +
+      scale_alpha_continuous(range = c(0.1, 1), limits = c(1, max(filtered_data$count))) + # Set alpha scale from 0.1 to 1
+      guides(alpha='none') +
+      theme(legend.position = 'bottom')  # Move legend to top of plot
+  }
+  
+  return(gg)
+}
+
+
+
+
+#create covariance matrix from raw data in ctfit object, by observation.
+#todo: add time discretization option using ctDiscretiseData
+ctLongtoWideFromFitted <- function(fit,time=FALSE,id=FALSE){
+  idname=fit$ctstanmodelbase$subjectIDname
   dat <- data.frame(standatatolong(standata = fit$standata,
     ctm = fit$ctstanmodel,origstructure = TRUE))
   dat <- dat[,c(fit$ctstanmodelbase$subjectIDname,
@@ -8,16 +102,33 @@ ctLongToWideSF <- function(fit){
     if(fit$ctstanmodelbase$n.TIpred > 0) fit$ctstanmodelbase$TIpredNames)]
   dat=data.table(dat)
   dat[ ,WhichObs:=0:(.N-1),by=eval(fit$ctstanmodelbase$subjectIDname)]
-  dat=melt(dat,id.vars = c(fit$ctstanmodelbase$subjectIDname,'WhichObs'))
+  dat=melt(dat,id.vars = c(idname,'WhichObs'))
   
   dat$WhichObs <- paste0('T',dat$WhichObs);
-  dat=dcast(dat,'id~variable+WhichObs')
+  dat=dcast(dat,paste0(idname,'~variable+WhichObs'))
   lapply(fit$ctstanmodelbase$TIpredNames, function(x){
     colnames(dat)[grep(paste0('\\b',x,'\\_T0'),colnames(dat))] <<- x
   })
   dat=data.frame(dat)
+  if(!time) dat <- dat[,-grep(paste0('\\b',fit$ctstanmodelbase$timeName,'_T'),colnames(dat))]
+  if(!id) dat <- dat[,-grep(paste0('\\b',fit$ctstanmodelbase$subjectIDname),colnames(dat))]
   return(dat)
 }
+
+ctCovMatGenerated <- function(fit){ #compute covariance over generated data
+  if(is.null(fit$generated)) fit <- ctStanGenerateFromFit(fit)
+  covlist <- list()
+  for(i in 1:dim(fit$generated$Y)[1]){ #for every set of generated data
+    fit$standata$Y <- fit$generated$Y[i,,]
+    covlist[[i]] <- cov(ctLongtoWideFromFitted(fit),use='pairwise.complete.obs')
+  }
+  covlist <- lapply(covlist,function(covmat){
+    covmat <- covmat[apply(covmat,1,function(covrow) any(!is.na(covrow))),
+      apply(covmat,2,function(covcol) any(!is.na(covcol)))]
+  })
+  return(covlist)
+}
+
 
 ctSaturatedFitConditional<-function(dat,ucols,reg,hmc=FALSE,covf=NA,verbose=0){
   o1 = ucols
@@ -76,9 +187,7 @@ ctSaturatedFitConditional<-function(dat,ucols,reg,hmc=FALSE,covf=NA,verbose=0){
 
 ctSaturatedFit <- function(fit,conditional=FALSE,reg=0, hmc=FALSE,
   time=FALSE, oos=TRUE, folds=10, cores=1,verbose=0){
-  dat <-ctLongToWideSF(fit)
-  dat=dat[,-1]
-  if(!time) dat <- dat[,-grep(paste0('\\b',fit$ctstanmodelbase$timeName,'_T'),colnames(dat))]
+  dat <-ctLongtoWideFromFitted(fit)
   
   if(!conditional){
     dat <- data.frame(dat)[,unique(c(sapply(fit$ctstanmodelbase$manifestNames,function(x){
@@ -264,7 +373,7 @@ ctStanFitMelt <- function(fit, maxsamples='all'){
   datasources <- c('Data','StatePred','Residuals')
   if(!is.null(fit$generated)) datasources <- c(datasources,'PostPred')
   if(!is.null(fit$priorpred)) datasources <- c(datasources,'PriorPred')
-
+  
   datbase <- data.table(standatatolong(standata = fit$standata,origstructure = TRUE,ctm = fit$ctstanmodel))
   datbase[ ,WhichObs:=(1:.N),by=eval(fit$ctstanmodelbase$subjectIDname)]
   datbase <- data.frame(datbase)
@@ -384,14 +493,14 @@ ctCheckFit <- function(fit,
   }
   
   if(lagcovplot) covplot<-TRUE
-
+  
   DataSource <-Sample<-Lag <- Row <- Sig. <- Sig <- NULL
   dat <- ctStanFitMelt(fit = fit,maxsamples = nsamples)
   
   
   byc=unique(c('Sample','WhichObs','DataSource',fit$ctstanmodel$timeName))
   bycid=c(fit$ctstanmodelbase$subjectIDname,byc)
-
+  
   if(is.na(combinevars[1])){
     combinevars = setNames(
       colnames(dat)[!colnames(dat) %in% bycid],colnames(dat)[!colnames(dat) %in% bycid])
@@ -400,10 +509,10 @@ ctCheckFit <- function(fit,
   dat <- ctDataMelt(dat=dat,id=fit$ctstanmodelbase$subjectIDname, by=byc,combinevars = combinevars)
   dat$Sample <- factor(dat$Sample)
   dat$DataSource <- factor(dat$DataSource)
-
-
+  
+  
   wdat=dcast(dat,paste0(
-   paste0(bycid,collapse='+'),
+    paste0(bycid,collapse='+'),
     '~variable'),value.var = 'value',fun.aggregate = mean,na.rm=TRUE)
   
   if(any(lag!=0)){ 
@@ -424,7 +533,7 @@ ctCheckFit <- function(fit,
     wdat[[paste0(by,'_split')]] <- wdat[[by]]
     by <- paste0(by,'_split')
   }
-
+  
   dat <- melt(wdat,id.vars=unique(c(bycid,by)))
   
   if(!data) dat<-dat[!DataSource %in% 'Data']
@@ -437,7 +546,7 @@ ctCheckFit <- function(fit,
   
   dat = dat[!is.na(value),]
   
-
+  
   
   breaks = min(breaks,length(unique(dat[[by]][!is.na(dat[[by]])])))
   # k = min(k,length(unique(dat[[by]][!is.na(dat[[by]])]))-1)
@@ -447,11 +556,11 @@ ctCheckFit <- function(fit,
     discdat[variable %in% TIpredNames & WhichObs > 1] <- NA #remove later tipreds to avoid duplicate cov columns
     
     nontivars <- unique(discdat$variable)[!unique(discdat$variable) %in% TIpredNames]
-
-      if(requireNamespace('arules')){
-        discdat[[paste0(by)]] <- arules::discretize(dat[[by]], #discretize
-          method='cluster',breaks = breaks,labels=FALSE)
-      } else stop('arules package needed for discretization!')
+    
+    if(requireNamespace('arules')){
+      discdat[[paste0(by)]] <- arules::discretize(dat[[by]], #discretize
+        method='cluster',breaks = breaks,labels=FALSE)
+    } else stop('arules package needed for discretization!')
     
     if(covplot){
       corlist <- list()
@@ -464,7 +573,7 @@ ctCheckFit <- function(fit,
             '+Sample',
             if(!aggregate) '+WhichObs', #this caused problems, why was it in?
             '~variable + ', by),fun.aggregate=aggfunc,na.rm=TRUE)
- 
+        
         
         #put loglik on one side
         if('LogLik_1' %in% colnames(wdat)) wdat <- cbind(wdat[,colnames(wdat) %in% paste0('LogLik_',1:breaks),with=FALSE],
@@ -514,37 +623,37 @@ ctCheckFit <- function(fit,
       if(corr) covplotlims <- c(-1,1) else covplotlims <- NA
       
       if(!lagcovplot){
-      for(i in seq_along(corlist)){ #regular corplots
-        cplot=corplotmelt(meltcov(covORcor(corlist[[datasources[i]]])),
-          label=paste0(ifelse(corr,'Corr.','Cov.')),limits=covplotlims)
-        cplot = cplot + ggplot2::labs(title=paste0(datasources[i],
-          ifelse(corr,' correlations',' covariances'),if(breaks > 1) paste0(', split by ', by)))
-        print(cplot)
-      }
-      for(i in seq_along(corlist)){
-        for(j in seq_along(corlist)){ #difference corplots
-          if(j > i){ #only plot unique differences
-            coli <- colnames(corlist[[datasources[i]]])[
-              colnames(corlist[[datasources[i]]]) %in% colnames(corlist[[datasources[j]]])
-            ]
-            cplot=corplotmelt(meltcov(corlist[[datasources[i]]][coli,coli,drop=FALSE] - 
-                corlist[[datasources[j]]][coli,coli,drop=FALSE]),
-              label=paste0(ifelse(corr,'Corr.','Cov.'),' diff.'),limits=covplotlims)
-            cplot = cplot + ggplot2::labs(title=paste0(datasources[i],' - ',datasources[j],
-              ifelse(corr,' correlations',' covariances'),if(breaks > 1) paste0(', split by ', by)))
-            print(cplot)
+        for(i in seq_along(corlist)){ #regular corplots
+          cplot=corplotmelt(meltcov(covORcor(corlist[[datasources[i]]])),
+            label=paste0(ifelse(corr,'Corr.','Cov.')),limits=covplotlims)
+          cplot = cplot + ggplot2::labs(title=paste0(datasources[i],
+            ifelse(corr,' correlations',' covariances'),if(breaks > 1) paste0(', split by ', by)))
+          print(cplot)
+        }
+        for(i in seq_along(corlist)){
+          for(j in seq_along(corlist)){ #difference corplots
+            if(j > i){ #only plot unique differences
+              coli <- colnames(corlist[[datasources[i]]])[
+                colnames(corlist[[datasources[i]]]) %in% colnames(corlist[[datasources[j]]])
+              ]
+              cplot=corplotmelt(meltcov(corlist[[datasources[i]]][coli,coli,drop=FALSE] - 
+                  corlist[[datasources[j]]][coli,coli,drop=FALSE]),
+                label=paste0(ifelse(corr,'Corr.','Cov.'),' diff.'),limits=covplotlims)
+              cplot = cplot + ggplot2::labs(title=paste0(datasources[i],' - ',datasources[j],
+                ifelse(corr,' correlations',' covariances'),if(breaks > 1) paste0(', split by ', by)))
+              print(cplot)
+            }
           }
         }
       }
-      }
-     
+      
       if(lagcovplot){
         for(ci in seq_along(corlist)){
           if(ci==1) lagdat <-data.frame(corlist[[ci]],DataSource = names(corlist)[ci], 
             Row=rownames(corlist[[ci]])) else{
-          lagdat <- rbind(lagdat,data.frame(corlist[[ci]],
-            DataSource = names(corlist)[ci],Row=rownames(corlist[[ci]])))
-          }
+              lagdat <- rbind(lagdat,data.frame(corlist[[ci]],
+                DataSource = names(corlist)[ci],Row=rownames(corlist[[ci]])))
+            }
         }
         lagdat$Lag <- 0
         l=regmatches(x = lagdat$Row,m = regexpr(pattern = '^lag\\d+_',lagdat$Row))
@@ -558,19 +667,19 @@ ctCheckFit <- function(fit,
         lagdat <- lagdat[!lagdat$Row %in% TIpredNames,]
         
         combinevars <- combinevars[!names(combinevars) %in% c(TIpredNames,by)] #because discretized / not in cov
-
+        
         for(vi in names(combinevars)){    
-g=ggplot(data = lagdat[lagdat$variable %in% vi,],
-  mapping = aes(x=Lag,y=value,colour=DataSource, linetype=DataSource))+geom_line(size=1)+
-  facet_wrap(facets = vars(Row))+theme_minimal()+ylab(label = ifelse(corr,'Correlation','Covariance'))+
-  scale_y_continuous(minor_breaks = c(-.5,.5),breaks=seq(-1,1,1))+
-  scale_x_continuous(minor_breaks=NULL,breaks=seq(0,max(lag), ceiling(max(lag)/5)))+
-    ggtitle(label = paste0(vi,' ',ifelse(corr,'Correlations','Covariances')))
-if(corr) g <- g+coord_cartesian(ylim=c(-1,1))
-print(g)
-# if('try-error' %in% class(g) ) browser()
+          g=ggplot(data = lagdat[lagdat$variable %in% vi,],
+            mapping = aes(x=Lag,y=value,colour=DataSource, linetype=DataSource))+geom_line(size=1)+
+            facet_wrap(facets = vars(Row))+theme_minimal()+ylab(label = ifelse(corr,'Correlation','Covariance'))+
+            scale_y_continuous(minor_breaks = c(-.5,.5),breaks=seq(-1,1,1))+
+            scale_x_continuous(minor_breaks=NULL,breaks=seq(0,max(lag), ceiling(max(lag)/5)))+
+            ggtitle(label = paste0(vi,' ',ifelse(corr,'Correlations','Covariances')))
+          if(corr) g <- g+coord_cartesian(ylim=c(-1,1))
+          print(g)
+          # if('try-error' %in% class(g) ) browser()
         }
-
+        
         
       }
       
@@ -619,13 +728,13 @@ print(g)
       
       g = g + geom_smooth(data=dat[manifest==TRUE 
         # & DataSource %in% c('Data','StatePred','Residuals')
-        ],
+      ],
         # aes(colour=DataSource,alpha=NULL),
         stat="smooth",se = TRUE,size=1,alpha=.3
         ,method='gam', formula= as.formula(paste0('y ~ s(x,bs="cr",k=',k,')')))
       
       
-  
+      
     }
     if(!smooth) {
       # if(nsamples > 1) g = g + stat_summary(fun=mean,geom = "line",size=1) #geom_line(stat=mean)
@@ -643,7 +752,7 @@ print(g)
       
       g = g +  stat_summary(data=dat[manifest==TRUE 
         # & DataSource %in% c('Data','StatePred','Residuals')
-        ],
+      ],
         fun.data = function(x) list(y=mean(x),
           ymin=mean(x,na.rm=TRUE)-sd(x)/sqrt(length(x)), 
           ymax=mean(x)+sd(x)/sqrt(length(x))),
@@ -669,7 +778,7 @@ print(g)
       )
       
     }
-    g=g+facet_wrap(facets = vars(variable),scales = 'free')
+    g=g+facet_wrap(facets = vars(variable),scales = 'free')+theme(legend.position = 'bottom')
     print(g)
   }
 }
@@ -683,7 +792,8 @@ corplotmelt <- function(corm, label='Coef.',limits=NA,title=''){
     scale_fill_gradient2(low = "blue", high = "red", mid = "white",
       midpoint = limits[2]-(limits[2]-limits[1])/2, limits = limits, space = "Lab", 
       name=label)  +
-    theme_minimal()+ theme(axis.text.x = element_text(angle = 90)) + ggtitle(title)
+    theme_minimal()+ theme(axis.text.x = element_text(angle = 90)) + ggtitle(title)+
+    scale_x_discrete(position = "top")+scale_y_discrete(limits=rev)
 }
 
 

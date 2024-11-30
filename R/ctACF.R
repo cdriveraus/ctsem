@@ -1,7 +1,7 @@
-ctACFpostpred <- function(fit,cores=ceiling(parallel::detectCores()/2),
-  nsamples=50,splitbycovs=TRUE,quantiles=c(.25,.5,.75),ylims=as.numeric(c(NA,NA)),xlims=as.numeric(c(NA,NA)),df='auto',...){
+ctACFpostpred <- function(fit,vars=fit$ctstanmodelbase$manifestNames,cores=ceiling(parallel::detectCores()/2),
+  Nsamples=50,splitbycovs=TRUE,quantiles=c(.25,.5,.75),ylims=as.numeric(c(NA,NA)),xlims=as.numeric(c(NA,NA)),df='auto',...){
   
-  v <- fit$ctstanmodelbase$manifestNames
+  v <- vars
   
   splitseq <- NA
   if(splitbycovs) splitseq <- c(NA,fit$ctstanmodelbase$TIpredNames)
@@ -27,7 +27,6 @@ ctACFpostpred <- function(fit,cores=ceiling(parallel::detectCores()/2),
     paste0('sample + id + time',ifelse(length(splitseq)>1,'+',''),paste0(splitseq[-1],collapse=' + '),' ~ V1')),
     value.var = 'value')
   gendatwide[,id:=interaction(sample,id)]
-  Nsamples <- 50
   
   compareDirection <- function(dir,v1,v2){ #function to do conditional greater / less than
     if(dir=='high') return(v1 > v2) else return(v1 <= v2)
