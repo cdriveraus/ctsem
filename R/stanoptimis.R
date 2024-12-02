@@ -725,14 +725,14 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     message('Stochastic optimizer used for data driven parameter inclusion') 
   }
   
-  parsets <- 1
+  # parsets <- 1
   optimcores <- ifelse(length(unique(standata$subject)) < cores, length(unique(standata$subject)),cores)
   
   betterfit<-TRUE
   bestfit <- -9999999999
   try2 <- FALSE
   
-  message('Using ',cores,'/', parallel::detectCores(),' CPU cores (see cores argument)')
+  message('Using ',cores,'/', parallel::detectCores(),' CPU cores')
   
   while(betterfit){ #repeat loop if importance sampling improves on optimized max
     betterfit <- FALSE
@@ -932,7 +932,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           decontrollist$initialpop=deinit
           decontrollist$NP = NP
           
-          if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standata,split=parsets<2)
+          if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standata,split=TRUE)
           if(optimcores==1) smf<-stan_reinitsf(sm,standata)
           
           optimfitde <- suppressWarnings(DEoptim::DEoptim(fn = lp2,lower = rep(-1e10, npars), upper=rep(1e10, npars),
@@ -980,14 +980,14 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # smlndat <- min(standatasml$ndatapoints,ceiling(max(standatasml$nsubjects * 10, standatasml$ndatapoints*.5)))
         # standatasml$dokalmanrows[sample(1:standatasml$ndatapoints,smlndat)] <- 0L
         # standatasml$dokalmanrows[match(unique(standatasml$subject),standatasml$subject)] <- 1L #ensure first obs is included for t0var consistency
-        if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standatasml,split=parsets<2,nsubsets = nsubsets)
+        if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standatasml,split=TRUE,nsubsets = nsubsets)
         if(optimcores==1) smf<-stan_reinitsf(sm,standatasml)
         
         
         if(stochastic) {
           
           optimfit <- try(sgd(init, fitfunc = function(x) target(x),
-            parsets=parsets,
+            # parsets=parsets,
             nsubsets = nsubsets,
             whichignore = unlist(parsteps),nconvergeiter = 30,
             plot=plot, 
@@ -1025,7 +1025,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             if(length(parsteps)>1) parsteps <- parsteps[-1] else parsteps <- c()#parsteps[pstat> pcheck]
             
             optimfit <- sgd(init, fitfunc = target,
-              parsets=parsets,
+              # parsets=parsets,
               nsubsets = nsubsets,
               itertol = tol*1000*stochasticTolAdjust,
               maxiter=5000,
@@ -1058,7 +1058,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         while(!finished){
           if(found==0){
             if(!priors){ #then we need to reinitialise model
-              if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standata,split=parsets<2,nsubsets = nsubsets)
+              if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standata,split=TRUE,nsubsets = nsubsets)
               if(optimcores==1) smf<-stan_reinitsf(sm,standata)
             }
           }
@@ -1105,12 +1105,12 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           }
           
           standata$nsubsets <- as.integer(nsubsets)
-          if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standata,split=parsets<2,nsubsets = nsubsets)
+          if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standata,split=TRUE,nsubsets = nsubsets)
           if(optimcores==1) smf<-stan_reinitsf(sm,standata)
           
           
           if(stochastic || nsubsets > 1) optimfit <- try(sgd(init, fitfunc = target,
-            parsets=parsets,
+            # parsets=parsets,
             nsubsets = nsubsets,
             whichignore = parsteps,
             plot=plot,
@@ -1137,13 +1137,13 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       finished <- TRUE
       standata$nsubsets <- nsubsets <- 1L
-      if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standata,split=parsets<2)
+      if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standata,split=TRUE)
       if(optimcores==1) smf<-stan_reinitsf(sm,standata)
       
       if(stochastic){
         message('Optimizing...')
         optimfit <- try(sgd(init, fitfunc = target,
-          parsets=parsets,
+          # parsets=parsets,
           nsubsets = 1,
           itertol = tol*stochasticTolAdjust,
           parrangetol=tol*100,
@@ -1193,7 +1193,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     if(!estonly){
       # if(cores > 1){
       #   suppressWarnings(rm(smf))
-      #   # parallelStanSetup(cl = clctsem,standata = standata,split=parsets<2)
+      #   # parallelStanSetup(cl = clctsem,standata = standata,split=TRUE)
       #   hesscl <- NA
       # }
       # if(cores==1){
@@ -1208,7 +1208,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       #   hesscl <- benv$clctsem
       #   if(cores > 1) {
       #     suppressWarnings(rm(smf))
-      #     parallelStanSetup(cl = benv$clctsem,standata = standata,split=TRUE,nsubsets = 1)#,split=parsets<2)
+      #     parallelStanSetup(cl = benv$clctsem,standata = standata,split=TRUE,nsubsets = 1)#,split=TRUE)
       #   }
       #   if(cores==1) smf<-stan_reinitsf(sm,standata)
       # }
@@ -1219,7 +1219,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       if(is.na(sampleinit[1])){
         
-        message('Estimating Hessian',appendLF = FALSE)
+        message('Estimating Hessian')#,appendLF = FALSE)
         plot=FALSE
         
         
@@ -1236,16 +1236,25 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           scores <- scorecalc(standata = standata,est = grinit,stanmodel = sm,
             subjectsonly = standata$nsubjects > 5,returnsubjectlist = F,cores=cores)
           
-          num_bootstrap_samples <- 10000
+          num_bootstrap_samples <- finishsamples
           gradsamples <- matrix(NA, num_bootstrap_samples, ncol(scores))
           
           # Step 3: Bootstrap sampling and gradient aggregation
-          for (i in 1:num_bootstrap_samples) {
-            # Resample score contributions with replacement
-            resampled_indices <- sample(1:nrow(scores), size = nrow(scores)*100, replace = TRUE)
-            gradsamples[i, ] <- colSums(scores[resampled_indices, , drop = FALSE])
-          }
+          # Create bootstrap sample indices in one step
+          bootstarttime=Sys.time()
+          resampled_indices <- matrix(
+            sample(1:nrow(scores), size = nrow(scores) * num_bootstrap_samples, replace = TRUE),
+            nrow = num_bootstrap_samples,
+            ncol = nrow(scores) 
+          )
           
+          # Sum up scores for each bootstrap sample
+          gradsamples <- apply(resampled_indices, 1, function(indices) {
+            colSums(scores[indices, , drop = FALSE])
+          })
+          gradsamples <- t(gradsamples)  # Transpose to match original output dimensions
+          
+          message(Sys.time()-bootstarttime)
           hess <- -cov(gradsamples)
         }
         
@@ -1380,7 +1389,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                 message('***These params "may" be not identified: ', probpars)
               }
             }
-        }
+        } #end classical hessian
         
         # cholcov = try(suppressWarnings(t(chol(solve(-hess)))),silent = TRUE)
         

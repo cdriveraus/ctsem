@@ -1,10 +1,9 @@
 logit = function(x) log(x)-log((1-x))
 
 sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,plot=FALSE,
-  stepbase=1e-3,gmeminit=ifelse(is.na(startnrows),.8,.8),gmemmax=.95, maxparchange = .50,
+  stepbase=1e-3,gmeminit=ifelse(is.na(startnrows),.6,.8),gmemmax=.95, maxparchange = .50,
   startnrows=NA,roughnessmemory=.9,groughnesstarget=.5,roughnesschangemulti = .2,
-  parsets=1,
-  lproughnesstarget=ifelse(parsets==1,.2,.5),
+  lproughnesstarget=.2,
   gsmoothroughnesstarget=.1,
   warmuplength=20,nstore=100,
   minparchange=1e-800,maxiter=50000,
@@ -123,8 +122,12 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,plot=FALSE,
         delta[abs(delta) > maxparchange] <- maxparchange*sign(delta[abs(delta) > maxparchange])
         # delta = delta +  delta/2 - deltaold/2
         
+        #include bestpars weighting, divide to set length until full reversion
+        if(nsubsets==1) delta = delta + (inv_logit((i-bestiter)/10)*2-1) * (bestpars-(pars+delta))
+        
         newpars = pars + delta
         
+
         
         #random jumping
         # if(nsubsets==1 && i %% ceiling(runif(1,1,30)) ==0){
@@ -140,27 +143,12 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,plot=FALSE,
       
       fullnewpars <- newpars
       
-      if(parsets > 1){
-        parmod <- (exp(1*((1:parsets)-(floor(parsets/2)))))
-        fullnewpars <- lapply(parmod,function(x) {
-          newpars <-  pars+x*(newpars-pars)
-          return(newpars)
-        })
-      }
-      
       if(nsubsets > 1){
         if(i > 1) subsetiold <- subseti
         subseti <- subsetorder[(i-1) %% (nsubsets) + 1]
       }
 
       lpg= fitfunc2(fullnewpars,subset=ifelse(nsubsets > 1, subseti, NA)) #fit function!
-      
-      if(!is.null(attributes(lpg)$bestset)){
-        bestset <- attributes(lpg)$bestset
-        if(bestset > ceiling(parsets/2)) lproughnesstarget <- lproughnesstarget +.01
-        if(bestset < floor(parsets/2)) lproughnesstarget <- lproughnesstarget -.01
-        newpars <- fullnewpars[[bestset]]
-      }
       
       
       if(lpg > -1e99 &&       #regular check

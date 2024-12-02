@@ -130,40 +130,79 @@ whichsubjectpars <- function(standata,subjects=NA){
 }
 
 
-scorecalc <- function(standata,est,stanmodel,subjectsonly=TRUE,
-  returnsubjectlist=TRUE,cores=2){
-  standata$priormod <- ifelse(subjectsonly, 1/standata$nsubjects,1/standata$ndatapoints)
+scorecalc <- function(standata, est, stanmodel, subjectsonly = TRUE, 
+  returnsubjectlist = TRUE, cores = 2) {
+  # Set prior modification factor based on whether we use subject-only data
+  standata$priormod <- ifelse(subjectsonly, 1 / standata$nsubjects, 1 / standata$ndatapoints)
   
-  scores <- list()
-  # browser()
-  sf <- suppressMessages(try(stan_reinitsf(stanmodel,standata,fast = TRUE)))
-  if('try-error' %in% class(sf)) fast=FALSE else fast=TRUE
-  for(i in 1:standata$nsubjects){
-    whichpars = whichsubjectpars(standata,i)
-    scores[[i]]<-matrix(NA,length(whichpars),ifelse(subjectsonly,1,sum(standata$subject==i)))
-    standata1 <- standatact_specificsubjects(standata,i)
-    for(j in 1:ncol(scores[[i]])){
-      standata1$llsinglerow=as.integer(ifelse(subjectsonly,0,j))
-      sf <- stan_reinitsf(stanmodel,standata1,fast = fast)
-      if(fast) scores[[i]][,j] <- sf$grad_log_prob(
-        upars=est[whichpars],
-        adjust_transform = TRUE)
-      if(!fast) scores[[i]][,j] <- rstan::grad_log_prob(sf,
-        upars=est[whichpars],
-        adjust_transform = TRUE)
+  # Try to initialize fast Stan function
+  sf <- suppressMessages(try(stan_reinitsf(stanmodel, standata, fast = TRUE)))
+  fast <- !inherits(sf, "try-error")
+  
+  # Function to compute gradients for a single subject
+  compute_subject_gradients <- function(subject_index) {
+    whichpars <- whichsubjectpars(standata, subject_index)  # Parameters for the subject
+    scores_subject <- matrix(NA, nrow = length(whichpars), 
+      ncol = ifelse(subjectsonly, 1, sum(standata$subject == subject_index)))
+    
+    # Create subject-specific data
+    standata1 <- standatact_specificsubjects(standata, subject_index)
+    
+    # Compute gradients for each data row (or overall for the subject)
+    for (j in seq_len(ncol(scores_subject))) {
+      standata1$llsinglerow <- as.integer(ifelse(subjectsonly, 0, j))
+      sf <- stan_reinitsf(stanmodel, standata1, fast = fast)
+      
+      if (fast) {
+        scores_subject[, j] <- sf$grad_log_prob(
+          upars = est[whichpars],
+          adjust_transform = TRUE
+        )
+      } else {
+        scores_subject[, j] <- rstan::grad_log_prob(
+          sf,
+          upars = est[whichpars],
+          adjust_transform = TRUE
+        )
+      }
+    }
+    return(scores_subject)
+  }
+  
+  # Parallel processing: compute gradients for all subjects
+  cl <- parallel::makeCluster(cores)
+  on.exit(parallel::stopCluster(cl), add = TRUE)
+  parallel::clusterExport(cl, c("standata", "est", "stanmodel", "subjectsonly", "compute_subject_gradients", 
+    "stan_reinitsf", "whichsubjectpars", "standatact_specificsubjects"),envir=environment())
+
+  group_size <- ceiling(standata$nsubjects / length(cl))
+  
+  # Create groups
+  task_chunks <- split(1:standata$nsubjects, ceiling(seq_along(1:standata$nsubjects) / group_size))
+  # Parallel execution
+  scores <- do.call(c, parallel::parLapply(cl, task_chunks, function(chunk) {
+    lapply(chunk, compute_subject_gradients)
+  }))
+  
+  
+  # Combine results if subjectsonly is TRUE
+  if (subjectsonly) {
+    scores <- matrix(unlist(scores), nrow = length(scores[[1]]))
+  }
+  
+  # Optionally return as data.table instead of list
+  if (!returnsubjectlist) {
+    if (is.list(scores)) {
+      scores <- lapply(scores, function(x) data.table(t(x)))
+      scores <- rbindlist(scores)
+    } else {
+      scores <- t(scores)
     }
   }
   
-  if(subjectsonly) scores <- matrix(unlist(scores),nrow=length(scores[[i]]))
-  if(!returnsubjectlist){ #return data.table
-    if('list' %in% class(scores)){
-      scores=lapply(scores,function(x) data.table(t(x)))
-      scores=rbindlist(scores)
-    } else scores <- t(scores)
-   
-  }
   return(scores)
 }
+
 
 ctTIauto <- function(fit,tipreds=NA){
   if(is.na(tipreds[1])) tipreds <- fit$standata$tipredsdata
