@@ -1241,7 +1241,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           
           # Step 3: Bootstrap sampling and gradient aggregation
           # Create bootstrap sample indices in one step
-          bootstarttime=Sys.time()
           resampled_indices <- matrix(
             sample(1:nrow(scores), size = nrow(scores) * num_bootstrap_samples, replace = TRUE),
             nrow = num_bootstrap_samples,
@@ -1254,7 +1253,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           })
           gradsamples <- t(gradsamples)  # Transpose to match original output dimensions
           
-          message(Sys.time()-bootstarttime)
           hess <- -cov(gradsamples)
         }
         
@@ -1299,7 +1297,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                     # if(count>8) stepsize=stepsize*-1 #is this good?
                     stepchangemultiplier <- max(stepchangemultiplier,.11)
                     count <- count + 1
-                    lp[[di]] <-  suppressMessages(suppressWarnings(parlpfull(pars+uppars*stepsize*directions[di])))
+                    lp[[di]] <-  suppressMessages(suppressWarnings(target(pars+uppars*stepsize*directions[di])))
                     accepted <- !'try-error' %in% class(lp[[di]]) && all(!is.na(attributes(lp[[di]])$gradient))
                     if(accepted){
                       lpdiff <- base[1] - lp[[di]][1]
@@ -1463,7 +1461,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         }
         
         #configure each node with full dataset for adaptive sampling
-        if(cores > 1 & optimcores > 1)  parallelStanSetup(miraiNodes = miraiNodes,standata,split=FALSE)
+        if(cores > 1 & optimcores > 1)   parallelStanSetup(cl=benv$clctsem,standata,split=FALSE)
         targetsamples <- finishsamples * finishmultiply
         # message('Adaptive importance sampling, loop:')
         j <- 0
@@ -1485,16 +1483,27 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           
           prop_dens <- mvtnorm::dmvt(tail(samples,isloopsize), delta[[j]], mcovl[[j]], df = tdf,log = TRUE)
           
-          #split evenly over cores
-          splitsamples <- lapply(
-            suppressWarnings(split(1:nrow(newsamples),ceiling(1:nrow(samples)/(nrow(samples)/cores)),drop=TRUE)),
-            function(spliti) samples[spliti,])
+          if(cores > 1) parallel::clusterExport(benv$clctsem,c('samples'),envir = environment())
           
-          target_dens[[j]] <- unlist(mirai::collect_mirai(lapply(1:length(splitsamples), function(nodei){
-            mirai({
-              apply(samples,1,function(x) parlp(x))
-            },samples=splitsamples[[nodei]], .compute=miraiNodes[nodei])
-          })))
+          # if(cores==1) parlp <- function(parm){ #remove this duplication somehow
+          #   out <- try(log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
+          #   if('try-error' %in% class(out)) {
+          #     out[1] <- -1e100
+          #     attributes(out)$gradient <- rep(NaN, length(parm))
+          #   }
+          #   if(is.null(attributes(out)$gradient)) attributes(out)$gradient <- rep(NaN, length(parm))
+          #   attributes(out)$gradient[is.nan(attributes(out)$gradient)] <- 
+          #     rnorm(length(attributes(out)$gradient[is.nan(attributes(out)$gradient)]),0,100)
+          #   return(out)
+          # }
+          
+          # 
+          # clusterIDexport(clctsem, c('isloopsize'))
+          target_dens[[j]] <- unlist(flexlapplytext(cl = benv$clctsem, 
+            X = 1:isloopsize, 
+            fn = "function(x){parlp(samples[x,])}",cores=cores))
+          
+         
           
           target_dens[[j]][is.na(target_dens[[j]])] <- -1e200
           if(all(target_dens[[j]] < -1e100)) stop('Could not sample from optimum! Try reparamaterizing?')
@@ -1606,14 +1615,14 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     transformedpars=stan_constrainsamples(sm = sm,standata = sdat,
       savesubjectmatrices = savesubjectmatrices, savescores = standata$savescores,
       dokalman=as.logical(standata$savesubjectmatrices),
-      samples=resamples,cores=cores, 
-      # cl=benv$clctsem, 
-      quiet=TRUE)
+      samples=resamples,cores=cores, cl=benv$clctsem, quiet=TRUE)
     
-    # if(cores > 1) {
-    #   parallel::stopCluster(benv$clctsem)
-    #   smf <- stan_reinitsf(sm,standata)
-    # }
+    if(cores > 1) {
+      parallel::stopCluster(benv$clctsem)
+      smf <- stan_reinitsf(sm,standata)
+    }
+    
+    
     
     # transformedparsfull=stan_constrainsamples(sm = sm,standata = standata,
     #   savesubjectmatrices = TRUE, dokalman=TRUE,savescores = TRUE,
