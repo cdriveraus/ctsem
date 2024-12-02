@@ -650,10 +650,7 @@ clusterIDeval <- function(cl,commands){
 #' @param nsubsets number of subsets for stochastic optimizer. Subsets are further split across cores, 
 #' but each subjects data remains whole -- processed by one core in one subset.
 #' @param stochasticTolAdjust Multiplier for stochastic optimizer tolerance. 
-#' @param hessianType either 'numerical' or 'stochastic', the latter is experimental at present.
-#' @param stochasticHessianSamples number of samples to use for stochastic Hessian, if selected.
-#' @param stochasticHessianEpsilon SD of random samples for stochastic hessian, if selected.
-#' @return list containing fit elementsF
+#' @return list containing fit elements
 #' @importFrom mize mize
 #' @importFrom utils head tail
 #' @importFrom Rcpp evalCpp
@@ -729,13 +726,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   }
   
   parsets <- 1
-  if(length(unique(standata$subject)) < cores){
-    if(1==99 && length(unique(standata$subject))==1){
-      optimcores <- cores
-      parsets <- cores
-      if(cores >1) stochastic=TRUE
-    } else  optimcores <- length(unique(standata$subject))
-  } else optimcores <- cores
+  optimcores <- ifelse(length(unique(standata$subject)) < cores, length(unique(standata$subject)),cores)
   
   betterfit<-TRUE
   bestfit <- -9999999999
@@ -1234,7 +1225,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         
         if(length(parsteps)>0) grinit= est2[-parsteps] else grinit = est2
         
-        # browser()
         if(bootstrapUncertainty %in% 'auto'){
           if(standata$nsubjects < 50){
             bootstrapUncertainty <- FALSE
@@ -1244,15 +1234,16 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         
         if(bootstrapUncertainty){
           scores <- scorecalc(standata = standata,est = grinit,stanmodel = sm,
-            subjectsonly = standata$nsubjects > 30,returnsubjectlist = F,cores=cores)
+            subjectsonly = standata$nsubjects > 5,returnsubjectlist = F,cores=cores)
           
-          # browser()
-          gradsamples <- matrix(NA,10000,ncol(scores))
-          for(i in 1:nrow(gradsamples)){
-            weights <- runif(1:nrow(scores),-2,2)
-            # weights <- rbinom(1:nrow(scores),size = 1,prob=.5)*2-1
-            gradsamples[i,] <- apply(scores[sample(1:nrow(scores),size = nrow(scores),replace = TRUE),,drop=FALSE],2,sum)
-            # gradsamples[i,] <- apply(scores*weights,2,sum)
+          num_bootstrap_samples <- 10000
+          gradsamples <- matrix(NA, num_bootstrap_samples, ncol(scores))
+          
+          # Step 3: Bootstrap sampling and gradient aggregation
+          for (i in 1:num_bootstrap_samples) {
+            # Resample score contributions with replacement
+            resampled_indices <- sample(1:nrow(scores), size = nrow(scores)*100, replace = TRUE)
+            gradsamples[i, ] <- colSums(scores[resampled_indices, , drop = FALSE])
           }
           
           hess <- -cov(gradsamples)
@@ -1265,70 +1256,14 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         
         
         if(!bootstrapUncertainty){
-          
-          if(hessianType %in% 'stochastic'){
-            
-            randomized_hessian_approximation <- function(gradient_func, params, num_samples, epsilon, regularization = 1e-6) {
-              n_params <- length(params)
-              hessian_approx <- matrix(0, n_params, n_params)
-              
-              for (i in 1:num_samples) {
-                random_params <- rnorm(n_params)  # Generate random parameter vector
-                
-                gradient_plus <- gradient_func(params + epsilon * random_params)
-                gradient_minus <- gradient_func(params - epsilon * random_params)
-                
-                hessian_approx <- hessian_approx + (gradient_plus - gradient_minus) %*% t(random_params)
-              }
-              
-              hessian_approx <- hessian_approx / (2 * epsilon * num_samples)
-              
-              # Add regularization to the diagonal elements of the Hessian matrix
-              hessian_approx <- hessian_approx + regularization * diag(n_params)
-              
-              return(hessian_approx)
-            }
-            
-            
-            
-            
-            
-            
-            gfunc <- function(params){
-              x=target(params)
-              return(c(attributes(x)$gradient))#,x[1]))
-            }
-            
-            hess <- randomized_hessian_approximation(gfunc,init,stochasticHessianSamples, stochasticHessianEpsilon)
-            diag(solve(-hess))
-            
-          } #end stochastic hessian
-          
-          
-          if(hessianType != 'stochastic') {
-            
             jac<-function(pars,step=1e-3,whichpars='all',
               lpdifmin=1e-5,lpdifmax=5, cl=NA,verbose=1,directions=c(-1,1),parsteps=c()){
               if('all' %in% whichpars) whichpars <- 1:length(pars)
               base <- optimfit$value
               
-              # if(cores > 1) target <- function(x){ #if cluster is passed, create target function, otherwise use old target
-              #   if(length(parsteps)>0){
-              #     pars <- est2
-              #     pars[-parsteps] <- x
-              #   } else pars <- x
-              #   fg=parlp(pars)
-              #   if(length(parsteps)>0){ 
-              #     attributes(fg)$gradient <- attributes(fg)$gradient[-parsteps]
-              #   }
-              #   # print(fg[1])
-              #   if(fg[1] < -1e99) class(fg) <- c('try-error',class(fg))
-              #   return(fg)
-              # }
               
               hessout <- sapply( whichpars, function(i){
                 
-                # if(is.na(cl[1])) fgfunc <- target
                 
                 # for(i in whichpars){
                 message(paste0("\rEstimating Hessian, par ",i,',', 
@@ -1355,7 +1290,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                     # if(count>8) stepsize=stepsize*-1 #is this good?
                     stepchangemultiplier <- max(stepchangemultiplier,.11)
                     count <- count + 1
-                    lp[[di]] <-  suppressMessages(suppressWarnings(target(pars+uppars*stepsize*directions[di])))
+                    lp[[di]] <-  suppressMessages(suppressWarnings(parlpfull(pars+uppars*stepsize*directions[di])))
                     accepted <- !'try-error' %in% class(lp[[di]]) && all(!is.na(attributes(lp[[di]])$gradient))
                     if(accepted){
                       lpdiff <- base[1] - lp[[di]][1]
@@ -1395,7 +1330,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                 grad<- attributes(lp[[1]])$gradient / steplist[[di]] * directions[di]
                 if(any(is.na(grad))){
                   warning('NA gradient encountered at param ',i,immediate. =TRUE)
-                  # browser()
                 }
                 if(length(directions) > 1) grad <- (grad + attributes(lp[[2]])$gradient / (steplist[[di]]*-1))/2
                 return(grad)
@@ -1446,9 +1380,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
                 message('***These params "may" be not identified: ', probpars)
               }
             }
-            
-            
-          } #end classical hessian
         }
         
         # cholcov = try(suppressWarnings(t(chol(solve(-hess)))),silent = TRUE)
@@ -1522,14 +1453,15 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           log1p(sum(exp(x[-xmax] - x[xmax]))) + x[xmax]
         }
         
-        if(cores > 1)  parallelStanSetup(cl=benv$clctsem,standata,split=FALSE)
+        #configure each node with full dataset for adaptive sampling
+        if(cores > 1 & optimcores > 1)  parallelStanSetup(miraiNodes = miraiNodes,standata,split=FALSE)
         targetsamples <- finishsamples * finishmultiply
         # message('Adaptive importance sampling, loop:')
         j <- 0
         while(nrow(samples) < targetsamples){
           j<- j+1
           if(j==1){
-            samples <- mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = tdf)
+            samples <- newsamples <- mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = tdf)
           } else {
             delta[[j]]=colMeans(resamples)
             mcovl[[j]] = as.matrix(Matrix::nearPD(cov(resamples))$mat) #+diag(1e-12,ncol(samples))
@@ -1538,31 +1470,22 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               if(iteri==1) mcov=mcovl[[j]] else mcov = mcov*.5+mcovl[[j]]*.5 #smoothed covariance estimator
               if(iteri==1) mu=delta[[j]] else mu = mu*.5+delta[[j]]*.5 #smoothed means estimator
             }
-            samples <- rbind(samples,mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]],   df = tdf))
+            newsamples <- mvtnorm::rmvt(isloopsize, delta = mu, sigma = mcov,   df = tdf)
+            samples <- rbind(samples, newsamples)
           }
           
           prop_dens <- mvtnorm::dmvt(tail(samples,isloopsize), delta[[j]], mcovl[[j]], df = tdf,log = TRUE)
           
-          if(cores > 1) parallel::clusterExport(benv$clctsem,c('samples'),envir = environment())
+          #split evenly over cores
+          splitsamples <- lapply(
+            suppressWarnings(split(1:nrow(newsamples),ceiling(1:nrow(samples)/(nrow(samples)/cores)),drop=TRUE)),
+            function(spliti) samples[spliti,])
           
-          # if(cores==1) parlp <- function(parm){ #remove this duplication somehow
-          #   out <- try(log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
-          #   if('try-error' %in% class(out)) {
-          #     out[1] <- -1e100
-          #     attributes(out)$gradient <- rep(NaN, length(parm))
-          #   }
-          #   if(is.null(attributes(out)$gradient)) attributes(out)$gradient <- rep(NaN, length(parm))
-          #   attributes(out)$gradient[is.nan(attributes(out)$gradient)] <- 
-          #     rnorm(length(attributes(out)$gradient[is.nan(attributes(out)$gradient)]),0,100)
-          #   return(out)
-          # }
-          
-          # 
-          # clusterIDexport(clctsem, c('isloopsize'))
-          target_dens[[j]] <- unlist(flexlapplytext(cl = benv$clctsem, 
-            X = 1:isloopsize, 
-            fn = "function(x){parlp(samples[x,])}",cores=cores))
-          
+          target_dens[[j]] <- unlist(mirai::collect_mirai(lapply(1:length(splitsamples), function(nodei){
+            mirai({
+              apply(samples,1,function(x) parlp(x))
+            },samples=splitsamples[[nodei]], .compute=miraiNodes[nodei])
+          })))
           
           target_dens[[j]][is.na(target_dens[[j]])] <- -1e200
           if(all(target_dens[[j]] < -1e100)) stop('Could not sample from optimum! Try reparamaterizing?')
@@ -1674,12 +1597,14 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     transformedpars=stan_constrainsamples(sm = sm,standata = sdat,
       savesubjectmatrices = savesubjectmatrices, savescores = standata$savescores,
       dokalman=as.logical(standata$savesubjectmatrices),
-      samples=resamples,cores=cores, cl=benv$clctsem, quiet=TRUE)
+      samples=resamples,cores=cores, 
+      # cl=benv$clctsem, 
+      quiet=TRUE)
     
-    if(cores > 1) {
-      parallel::stopCluster(benv$clctsem)
-      smf <- stan_reinitsf(sm,standata)
-    }
+    # if(cores > 1) {
+    #   parallel::stopCluster(benv$clctsem)
+    #   smf <- stan_reinitsf(sm,standata)
+    # }
     
     # transformedparsfull=stan_constrainsamples(sm = sm,standata = standata,
     #   savesubjectmatrices = TRUE, dokalman=TRUE,savescores = TRUE,
