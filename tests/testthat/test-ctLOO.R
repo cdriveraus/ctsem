@@ -37,19 +37,70 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       sum(sf$stanfit$transformedparsfull$llrow[sdat$subject==1]))
     
     loo=ctLOO(fit = sf,folds = 10,cores=cores,parallelFolds = T,subjectwise = T)
-    loo2=ctLOO(fit = sf,folds = 10,cores=cores,parallelFolds = F,subjectwise = T)
+    loo2=ctLOO(fit = sf,folds = 10,cores=cores,parallelFolds = T,subjectwise = T)
+    loo3=ctLOO(fit = sf,folds = sf$standata$nsubjects,cores=cores,parallelFolds = T,subjectwise = T,casewiseApproximation = T)
+    
+    if(F){
+    plot(loo3$outsampleLogLikRow-sf$stanfit$transformedparsfull$llrow[1,],loo$outsampleLogLikRow-sf$stanfit$transformedparsfull$llrow[1,])
+    abline(0,1)
+    
+    sd(apply(loo3$insampleLogLikRowFolds,2,sum,na.rm=T))
+    sd(apply(loo$insampleLogLikRowFolds,2,sum,na.rm=T))
+    
+    l3=melt(data.table(ll=loo3$insampleLogLikeRowFolds,obs=1:nrow(loo3$insampleLogLikeRowFolds)),id.vars='obs')
+    l3[,mean:=mean(value,na.rm=T),by=obs]
+    l3[,sd:=sd(value,na.rm=T),by=obs]
+
+    
+    l=melt(data.table(ll=loo$insampleLogLikRowFolds,obs=1:nrow(loo$insampleLogLikRowFolds)),id.vars='obs')
+    l[,mean:=mean(value,na.rm=T),by=obs]
+    l[,sd:=sd(value,na.rm=T),by=obs]
+    
+    ggplot(l3[variable %in% variable[1],],aes(x=obs,y=mean-l[variable %in% variable[1],]$mean))+
+      geom_line()+
+      # geom_errorbar(aes(ymin=mean-sd,ymax=mean+sd))+
+      # geom_line(data=l[variable %in% variable[1],],aes(x=obs,y=mean),color='red')+
+      # geom_errorbar(data=l[variable %in% variable[1],],aes(ymin=mean-sd,ymax=mean+sd),color='red')+
+      theme_bw()
+    
+    cor(loo3$outsampleLogLikRow-sf$stanfit$transformedparsfull$llrow[1,],loo$outsampleLogLikRow-sf$stanfit$transformedparsfull$llrow[1,])
+    cor(loo2$outsampleLogLikRow-sf$stanfit$transformedparsfull$llrow[1,],loo$outsampleLogLikRow-sf$stanfit$transformedparsfull$llrow[1,])
+    
+    pari = 6
+    range = range(c(loo$foldpars[pari,],loo3$foldpars[pari,]))
+    plot(loo$foldpars[pari,],loo3$foldpars[pari,],xlim=range,ylim=range)
+    
+    }
     
     test_isclose(
       mean(loo2$outsampleLogLikRow-loo$outsampleLogLikRow),
       0,tol=.01)
     
     test_isclose(
-      sum(loo$insampleLogLikRow),
-      sum(sf$stanfit$transformedparsfull$llrow),tol=.1)
+      mean(loo3$outsampleLogLikRow-loo$outsampleLogLikRow),
+      0,tol=.01)
     
     test_isclose(
-      sum(loo2$insampleLogLikRow),
-      sum(sf$stanfit$transformedparsfull$llrow),tol=.1)
+    mean(abs(loo3$outsampleLogLikRow -loo$outsampleLogLikRow)),
+      0,tol=.05)
+    
+    # test_isclose(
+    #   mean(c(apply(loo$insampleLogLikRowFolds,1,sum,na.rm=TRUE)/9-sf$stanfit$transformedparsfull$llrow)),
+    #   0,
+    #   tol=.1)
+    # 
+    # test_isclose(
+    #   mean(c(apply(loo2$insampleLogLikRowFolds,1,sum,na.rm=TRUE)/9-sf$stanfit$transformedparsfull$llrow)),
+    #   0,
+    #   tol=.1)
+    # 
+    # 
+    # test_isclose(
+    #   mean(c(apply(loo3$insampleLogLikRowFolds,1,sum,na.rm=TRUE)/9-sf$stanfit$transformedparsfull$llrow)),
+    #   0,
+    #   tol=.1)
+    
+    
     
   })
   

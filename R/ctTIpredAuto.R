@@ -207,8 +207,10 @@ scorecalc <- function(standata, est, stanmodel, subjectsonly = TRUE,
 ctTIauto <- function(fit,tipreds=NA){
   if(is.na(tipreds[1])) tipreds <- fit$standata$tipredsdata
   # colnames(tipreds) <- paste0('ti',1:ncol(tipreds))
-  scores <- scorecalc(standata = fit$standata,
+  
+  if(is.null(fit$stanfit$subjectscores)) scores <- scorecalc(standata = fit$standata,
     est = fit$stanfit$rawest,stanmodel = fit$stanmodel)
+  else scores <- fit$stanfit$subjectscores
   scores <- scores[1:fit$standata$nparams,,drop=FALSE]
   rownames(scores) <- paste0('p',1:nrow(scores))
   # matchindex <- match(1:fit$standata$nparams,fit$setup$matsetup$param)
