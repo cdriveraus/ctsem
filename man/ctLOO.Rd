@@ -9,10 +9,12 @@ ctLOO(
   folds = 10,
   cores = 2,
   parallelFolds = FALSE,
-  subjectwise = ifelse(length(unique(fit$standata$subject)) > folds, TRUE, FALSE),
+  tol = 1e-05,
+  subjectwise = ifelse(length(unique(fit$standata$subject)) >= folds, TRUE, FALSE),
   keepfirstobs = FALSE,
   leaveOutN = NA,
-  refit = TRUE
+  refit = TRUE,
+  casewiseApproximation = FALSE
 )
 }
 \arguments{
@@ -26,6 +28,8 @@ model is re-fit 10 times, each time to a data set with 1/10 of the observations 
 \item{parallelFolds}{compute folds in parallel or use cores to finish single folds faster. 
 parallelFolds will use folds times as much memory.}
 
+\item{tol}{tolerance for optimisation of refitted samples, can generally be more relaxed than the tolerance used for fitting initially.}
+
 \item{subjectwise}{drop random subjects instead of data rows?}
 
 \item{keepfirstobs}{do not drop first observation (more stable estimates)}
@@ -36,6 +40,8 @@ Leaving 2 out would result in 3 folds (starting at rows 1,2,3), each containing 
 
 \item{refit}{if FALSE, do not optimise parameters for the new data set, 
 just compute the likelihoods etc from the original parameters}
+
+\item{casewiseApproximation}{if TRUE, use a bootstrapped gradient contributions approach to approximate the cross validation parameters -- much faster but less reliable.}
 }
 \value{
 list

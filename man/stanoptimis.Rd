@@ -33,7 +33,7 @@ stanoptimis(
   verbose = 0,
   cores = 2,
   matsetup = NA,
-  nsubsets = 100,
+  nsubsets = 10,
   stochasticTolAdjust = 1000
 )
 }
@@ -78,12 +78,6 @@ as a first step, free them in second step.}
 
 \item{plot}{Logical. If TRUE, plot iteration details. Probably slower.}
 
-\item{hessianType}{either 'numerical' or 'stochastic', the latter is experimental at present.}
-
-\item{stochasticHessianSamples}{number of samples to use for stochastic Hessian, if selected.}
-
-\item{stochasticHessianEpsilon}{SD of random samples for stochastic hessian, if selected.}
-
 \item{is}{Logical. Use importance sampling, or just return map estimates?}
 
 \item{isloopsize}{Number of samples of approximating distribution per iteration of importance sampling.}
@@ -111,7 +105,7 @@ but each subjects data remains whole -- processed by one core in one subset.}
 \item{stochasticTolAdjust}{Multiplier for stochastic optimizer tolerance.}
 }
 \value{
-list containing fit elementsF
+list containing fit elements
 }
 \description{
 Optimize / importance sample a stan or ctStan model.
