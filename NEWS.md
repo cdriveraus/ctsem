@@ -1,4 +1,8 @@
 # ctsem News
+## 9/1/2025
+### 3.10.2
+- Stochastic optimizer improvements
+- Bootstrap uncertainty improvements -- when fitting, use argument optimcontrol=list(bootstrapUncertainty=TRUE)
 
 ## 12/8/2024
 ### 3.10.1

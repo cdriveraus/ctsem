@@ -3,16 +3,15 @@
 %\VignetteKeyword{SEM, time series, panel data, dynamic models}
 %\VignetteEngine{knitr::knitr_notangle}
 %\usepackage[utf8]{inputenc}
-\usepackage[T1]{fontenc} 
+\usepackage[T1]{fontenc}
 \usepackage{lmodern}
 \usepackage[utf8]{inputenc}
 \usepackage{rotating}
 
-\usepackage[style=apa,backend=biber,doi=true,natbib=true,url=true,sortcites=true,sorting=nyt]{biblatex}
+\usepackage[natbibapa]{apacite} % Use natbib with APA style
+\bibliographystyle{apacite}     % Set bibliography style
 \usepackage[british]{babel}
 \usepackage{csquotes}
-\DeclareLanguageMapping{british}{british-apa}
-\addbibresource{hierarchicalrefs.bib}
 
 \usepackage[margin=1in]{geometry}
 \usepackage{graphicx}
@@ -24,57 +23,32 @@
 \setlength{\parindent}{0cm}
 \setlength{\parskip}{1ex}
 
-%clear unnecessary citation stuff
-\AtEveryBibitem{
-  \clearfield{labelmonth}
-  \clearfield{labelday}
-  \clearfield{urldate}
-}
-
-\DeclareSourcemap{
-  \maps[datatype=bibtex]{
-    \map{
-      \step[fieldsource=url,
-        notmatch=\regexp{wiki},
-        final=1]
-      \step[fieldset=urldate, null]
-    }
-  }
-}
-\usepackage{amsmath} %for multiple line equations
-\usepackage{amsfonts} %for mathbb
+\usepackage{amsmath} % For multiple line equations
+\usepackage{amsfonts} % For mathbb
 
 \usepackage{caption}
-\captionsetup{justification=raggedright,singlelinecheck=false}
+\captionsetup{justification=raggedright, singlelinecheck=false}
 
 \newcommand{\vect}[1]{\boldsymbol{\mathbf{#1}}}
-  
-  
-  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    %% declarations for jss.cls %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    
-    %to redefine jss commands to no longer do anything
-  \newcommand{\pkg}[1]{#1}
-    \newcommand{\proglang}[1]{#1}
-      
-      %for wrapping long verbatim words
-      \makeatletter
-      \let\old@sverb\@sverb
-      \def\@sverb#1{\old@sverb{#1}\zz}
-      \def\zz#1{#1\ifx\@undefined#1\else\penalty\z@\expandafter\zz\fi}
-      \makeatother
-      
-      
-      %% almost as usual
-      \author{Charles C. Driver \\ Max Planck Institute for Human Development \And 
+
+% Redefine jss commands to do nothing
+\newcommand{\pkg}[1]{#1}
+\newcommand{\proglang}[1]{#1}
+
+% For wrapping long verbatim words
+\makeatletter
+\let\old@sverb\@sverb
+\def\@sverb#1{\old@sverb{#1}\zz}
+\def\zz#1{#1\ifx\@undefined#1\else\penalty\z@\expandafter\zz\fi}
+\makeatother
+
+\author{Charles C. Driver \\ Max Planck Institute for Human Development \And 
         Manuel C. Voelkle \\ Humboldt University Berlin \\ Max Planck Institute for Human Development}
-      \title{Introduction to Hierarchical Continuous Time Dynamic Modelling With ctsem}
-      
-      
-      \newcommand\numberthis{\addtocounter{equation}{1}\tag{\theequation}} %for adding numbers to specific lines
-      
-      
+\title{Introduction to Hierarchical Continuous Time Dynamic Modelling With ctsem}
+
+\newcommand\numberthis{\addtocounter{equation}{1}\tag{\theequation}} % For adding numbers to specific lines
+
+
       \begin{document}
       
       

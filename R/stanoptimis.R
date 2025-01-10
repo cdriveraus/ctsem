@@ -664,7 +664,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   subsamplesize=1,
   parsteps=c(),
   plot=FALSE,
-  hessianType='numerical',stochasticHessianSamples=50, stochasticHessianEpsilon=1e-5,
   is=FALSE, isloopsize=1000, finishsamples=1000, tdf=10,chancethreshold=100,finishmultiply=5,
   verbose=0,cores=2,matsetup=NA,nsubsets=10, stochasticTolAdjust=1000){
   
@@ -1250,7 +1249,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           p <- ncol(scores)  # Number of parameters
           
           # Step 1: Create a bootstrap resampling matrix
-          resample_matrix <- matrix(sample(1:n, size = ceiling(alpha * n * num_bootstrap_samples), replace = TRUE),
+          resample_matrix <- matrix(sample(1:n, size = round(alpha * n) * num_bootstrap_samples, replace = TRUE),
             nrow = num_bootstrap_samples, ncol = round(alpha * n))
           
           # Step 2: Generate random weights for smoothing
@@ -1418,7 +1417,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         mcov=try(solve(-hess),silent=TRUE)
         if('try-error' %in% class(mcov)){
           mcov=MASS::ginv(-hess) 
-          warning('***Generalized inverse required for Hessian inversion -- standard errors not trustworthy',call. = FALSE,immediate. = TRUE)
+          warning('***Generalized inverse required for Hessian inversion -- interpret standard errors with caution. Consider simplification, priors, or alternative uncertainty estimators',call. = FALSE,immediate. = TRUE)
           probpars=which(diag(hess) > -1e-6)
         }
         
@@ -1484,7 +1483,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         }
         
         #configure each node with full dataset for adaptive sampling
-        if(cores > 1 & optimcores > 1)   parallelStanSetup(cl=benv$clctsem,standata,split=FALSE)
+        # browser()
+        if(cores > 1)   parallelStanSetup(cl=benv$clctsem,standata,split=FALSE)
         targetsamples <- finishsamples * finishmultiply
         # message('Adaptive importance sampling, loop:')
         j <- 0

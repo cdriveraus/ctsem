@@ -54,18 +54,18 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
   
   # Precompute casewise gradients if subjectwise LOO is used
   if (subjectwise && is.null(fit$stanfit$subjectscores)) {
-    scores <- scorecalc(
+    fit$stanfit$subjectscores <- t(scorecalc(
       standata = sdat,
       est = init,
       stanmodel = smodel,
       subjectsonly = subjectwise,
       returnsubjectlist = TRUE,
       cores = cores
-    )
+    ))
   }
-  if (subjectwise && !is.null(fit$stanfit$subjectscores)) {
-    scores <- fit$stanfit$subjectscores
-  }
+  
+  if(subjectwise) scores <- fit$stanfit$subjectscores
+
   
   # Parallel setup
   if (parallelFolds && cores > 1) {
@@ -170,7 +170,7 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
     insampleSubjectwiseLogLikSD =  sd(llrowSubject,na.rm=TRUE),
     outsampleSubjectwiseLogLikSD =  sd(llrowoosSubject,na.rm=TRUE)
   )
-  # browser()
+
   if(!all(is.na(leaveOutN))) out$insampleLogProb=sum(sapply(folded,function(x) x$logprob))
   
   return( out)

@@ -14,6 +14,8 @@ ctFitCovCheck <- function(fit,cor=FALSE){
   
   msampcov <- melt(as.data.table(sampcov,keep.rownames=TRUE),id.vars = 'rn',variable.name = 'cn')
   
+  
+  q025 <- rn <- cn <- q975 <- q50 <- iter <- .ObsRow <- .ObsCol <- .RowVar <- .ColVar <- .Sig <- interaction_id <- NULL
   #convert list of covariance matrices to melted data.table, with row and column names identifiers
   mgencov <- melt(rbindlist(lapply(gencov,function(x) as.data.table(x,keep.rownames=TRUE)),idcol = 'iter'),id.vars = c('iter','rn'),variable.name = 'cn')
   mgencov[,q025:=quantile(value,0.025,na.rm=TRUE),by=.(rn,cn)]
@@ -50,6 +52,7 @@ library(data.table)
 msampcov.plot <- function(msampcov, maxlag = 10) {
   gg <- list()
   msampcov <- as.data.table(msampcov)  # Ensure msampcov is a data.table
+  .RowVar <- .ObsRow <- .ObsCol <- count <- .ColVar <- q025 <- q975 <- q50 <- NULL
   
   for (rowvari in unique(msampcov$.RowVar)) {
     # Filter data and calculate lag and observation count for each unique lag

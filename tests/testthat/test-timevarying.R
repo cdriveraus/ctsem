@@ -16,15 +16,12 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 &
     Tpoints=50
     lambdafactor = .3
     dt=1
-    
-    for(subi in 1:nsubjects){
-      gm=suppressMessages(ctModel(LAMBDA=diag(2), Tpoints=Tpoints, DRIFT=diag(-.2,2),T0MEANS = matrix(c(3,2)), 
-        DIFFUSION=diag(.5,2),
+
+      gm=suppressMessages(ctModel(LAMBDA=diag(2), Tpoints=Tpoints, DRIFT=diag(-.1,2),T0MEANS = matrix(c(3,2)), 
+        DIFFUSION=diag(.2,2),
         T0VAR=diag(2)))
-      d=suppressMessages(ctGenerate(gm,n.subjects = 1,burnin = 3,dtmean = dt))
-      d[,'id'] <- subi
-      if(subi==1) dat=d else dat=rbind(dat,d)
-    }
+      dat=suppressMessages(ctGenerate(gm,n.subjects = nsubjects,burnin = 3,dtmean = dt))
+
     dat <- as.matrix(dat)
     dat[,'Y1'] <-  dat[,'Y1'] * (1+ lambdafactor * dat[,'Y2']) #state dependent lambda
     dat[,c('Y1')] <- dat[,c('Y1')] + rnorm(nrow(dat),0,.1) #measurement error
@@ -43,7 +40,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 &
     dm$pars$indvarying <- FALSE
     
 
-    fct <- ctStanFit(datalong = dat,ctstanmodel = cm)
+    fct <- ctStanFit(datalong = dat,ctstanmodel = cm)#,optimcontrol=list(bootstrapUncertainty=TRUE))
     fdt <- ctStanFit(datalong = dat,ctstanmodel = dm)
     
     sct <- summary(fct,parmatrices=TRUE)

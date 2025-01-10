@@ -12,7 +12,7 @@ ctACFpostpred <- function(fit,vars=fit$ctstanmodelbase$manifestNames,cores=ceili
   
   if(is.null(fit$generated)) {
     message('No generated data found, generating -- for faster repeated performance use ctStanGenerateFromFit first')
-    fit <- ctStanGenerateFromFit(fit,cores=cores,nsamples = nsamples)
+    fit <- ctStanGenerateFromFit(fit,cores=cores,nsamples = Nsamples)
   }
   gendat <- as.data.table(fit$generated$Y)
   gendat[, row := as.integer(row)]
