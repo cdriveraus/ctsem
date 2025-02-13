@@ -625,7 +625,8 @@ ctModel<-function(LAMBDA, type='omx',n.manifest = 'auto', n.latent='auto', Tpoin
   
   if(type=='omx') class(completemodel)<-"ctsemInit"
   
-  completemodel<-ctStanModel(completemodel,type=type,tipredDefault= tipredDefault)
+  if(type %in% c('ct','dt','stanct','standt')) completemodel<-ctStanModel(completemodel,type=type,tipredDefault= tipredDefault)
+  if(!type %in% c('omx','ct','dt','stanct','standt')) stop('type must be either omx, ct, dt!')
   
   return(completemodel)
 }

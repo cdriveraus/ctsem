@@ -55,7 +55,6 @@ ctModelUnlist<-function(ctmodelobj,
 #' 
 #' 
 ctStanModel<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
-  
   if(type=='stanct' | type=='standt'){
     warning('type should now be specified as simply ct or dt, without the stan prefix')
     type <- gsub('stan','',type)
@@ -63,6 +62,8 @@ ctStanModel<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   
   if(type=='ct') continuoustime<-TRUE
   if(type=='dt') continuoustime<-FALSE
+  
+  if(!type %in% c('ct','dt')) stop('type must be either ct or dt!')
   
   ctm <- ctmodelobj
   
