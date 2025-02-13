@@ -150,7 +150,7 @@ bmatrix = function(x, digits=NULL,nottext=FALSE, ...) {
 #' @importFrom tools texi2pdf
 #'
 #' @examples
-#' ctmodel <- ctModel(type='stanct', 
+#' ctmodel <- ctModel(type='ct', 
 #' n.latent=2, n.manifest=1, 
 #' manifestNames='sunspots', 
 #' latentNames=c('ss_level', 'ss_velocity'),

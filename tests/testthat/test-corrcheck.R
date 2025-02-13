@@ -14,7 +14,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       DIFFUSION=matrix(c(2,1,1,0,4,-2,0,0,2),3,3),Tpoints=30)
     d <- ctGenerate(ctmodelobj = gm,n.subjects = 600,burnin = 0)
     
-    m <- ctModel(LAMBDA = diag(1,3),DRIFT=diag(-1,3),type='stanct',
+    m <- ctModel(LAMBDA = diag(1,3),DRIFT=diag(-1,3),type='ct',
       # MANIFESTMEANS = 0,
       MANIFESTVAR = 0)
     
@@ -77,7 +77,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     
     
-    m <- ctModel(LAMBDA = diag(1,10),DRIFT=diag(-1,10),type='standt',
+    m <- ctModel(LAMBDA = diag(1,10),DRIFT=diag(-1,10),type='dt',
       # MANIFESTMEANS = 0,
       DIFFUSION=diag(1,10),T0MEANS=0,
       TIpredNames = 'TI1',

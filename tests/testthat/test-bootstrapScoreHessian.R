@@ -44,7 +44,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
         tdat[2,'Y1'] <- NA
         # tdat[tdat[,'id']==2,'TI1'] <- NA
         
-        checkm<-suppressMessages(ctModel(type='stanct',Tpoints=Tpoints,
+        checkm<-suppressMessages(ctModel(type='ct',Tpoints=Tpoints,
           # MANIFESTVAR=diag(0.5,1),
           # DRIFT=matrix(c(-.3),nrow=1),
           # DIFFUSION=matrix(c(2),1),

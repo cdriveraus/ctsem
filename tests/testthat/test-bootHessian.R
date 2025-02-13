@@ -29,7 +29,7 @@ if(FALSE){
         if(subi==1) d <- dd else d <- rbind(d,dd)
       }
       
-      m <- ctModel(type='stanct',LAMBDA=matrix(1),CINT='cint',MANIFESTMEANS=0)
+      m <- ctModel(type='ct',LAMBDA=matrix(1),CINT='cint',MANIFESTMEANS=0)
       # m$pars$indvarying=F
       
       f <- ctStanFit(datalong = d,ctstanmodel = m,cores=1,priors=TRUE,optimcontrol=list(carefulfit=F,stochastic=F,finishsamples=5000))

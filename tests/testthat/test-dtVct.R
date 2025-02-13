@@ -29,12 +29,12 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
     
     colnames(dat)[1]='id'
     
-    cm <- ctModel(LAMBDA=diag(1), type='stanct',
+    cm <- ctModel(LAMBDA=diag(1), type='ct',
       CINT=matrix('cint'),
       MANIFESTMEANS = matrix(0)
       )
 
-    dm <- ctModel(LAMBDA=diag(1), type='standt',
+    dm <- ctModel(LAMBDA=diag(1), type='dt',
       CINT=matrix('cint'),
       MANIFESTMEANS = matrix(0)
       )
@@ -100,13 +100,13 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
       
       colnames(dat)[1]='id'
       
-      cm <- ctModel(LAMBDA=diag(1), type='stanct',
+      cm <- ctModel(LAMBDA=diag(1), type='ct',
         CINT=matrix('cint'),
         MANIFESTMEANS = matrix(0))
       
       cm$pars$indvarying <- FALSE
       
-      dm <- ctModel(LAMBDA=diag(1), type='standt',
+      dm <- ctModel(LAMBDA=diag(1), type='dt',
         CINT=matrix('cint'),
         MANIFESTMEANS = matrix(0))
       

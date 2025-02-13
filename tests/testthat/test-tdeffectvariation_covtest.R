@@ -33,7 +33,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     }
     
     #regular bw effect approach
-    m <- ctModel(silent=TRUE,type='stanct',
+    m <- ctModel(silent=TRUE,type='ct',
       LAMBDA=matrix(c(1,0),1,2), 
       DRIFT= c('drift',1,
         0,-0.5),
@@ -57,7 +57,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       TDPREDEFFECT = matrix(c(0,'state[4]',0,0)),
       MANIFESTMEANS='state[3]')
     m2$T0VAR[2,]=m2$T0VAR[,2]=0
-    m2=ctStanModel(m2,type='stanct')
+    m2=ctStanModel(m2,type='ct')
     m2$pars$indvarying=F
     
     f <- ctStanFit(datalong = dat,ctstanmodel = m,cores=cores)
@@ -158,7 +158,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     }
     
     #regular bw effect approach
-    m <- ctModel(silent=TRUE,type='stanct',
+    m <- ctModel(silent=TRUE,type='ct',
       LAMBDA=matrix(c(1,'tdpredeffect|param|TRUE'),1,2), 
       DRIFT= c('drift',0,
         0,-0.5),
@@ -182,7 +182,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       TDPREDEFFECT = matrix(c(0,1,0,0)),
       MANIFESTMEANS='state[3]')
     m2$T0VAR[2,]=m2$T0VAR[,2]=0
-    m2=ctStanModel(m2,type='stanct')
+    m2=ctStanModel(m2,type='ct')
     m2$pars$indvarying=F
     
     f <- ctStanFit(datalong = dat,ctstanmodel = m,cores=cores)
@@ -279,7 +279,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     }
     
     #regular bw effect approach
-    m <- ctModel(silent=TRUE,type='stanct',
+    m <- ctModel(silent=TRUE,type='ct',
       CINT='cint',MANIFESTMEANS=0,
       LAMBDA=matrix(1),DRIFT='drift|-log1p_exp(-param)|TRUE')
     
@@ -294,7 +294,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
         0,0,0),
       T0MEANS = c('t0m','drift','cint'),
       CINT=c('state[3]',0,0),MANIFESTMEANS=0)
-    m2=ctStanModel(m2,type='stanct')
+    m2=ctStanModel(m2,type='ct')
     m2$pars$indvarying=F
     
     f <- ctStanFit(datalong = dat,ctstanmodel = m,cores=cores)
@@ -400,7 +400,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       }
       
       #regular bw effect approach
-      m <- ctModel(silent=TRUE,type='stanct',
+      m <- ctModel(silent=TRUE,type='ct',
         T0MEANS='t0m|param',
         MANIFESTVAR=.5,
         MANIFESTMEANS=0,CINT='cint|param',
@@ -420,7 +420,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
         CINT=c('state[3]',0,0),
         MANIFESTMEANS=0)
       m2$T0VAR[diag(3)==1] <- paste0(m2$T0VAR[diag(3)==1] ,'|log1p_exp(2*param-1)')
-      m2=ctStanModel(m2,type='stanct')
+      m2=ctStanModel(m2,type='ct')
       m2$pars$indvarying=F
       
       f <- ctStanFit(datalong = dat,ctstanmodel = m,cores=cores)
@@ -529,7 +529,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     }
     
     #regular bw effect approach
-    m <- ctModel(silent=TRUE,type='stanct',
+    m <- ctModel(silent=TRUE,type='ct',
       T0MEANS='t0m|param',
       DIFFUSION=.5,
       MANIFESTMEANS=0,CINT='cint|param',
@@ -549,7 +549,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       CINT=c('state[3]',0,0),
       MANIFESTMEANS=0)
     m2$T0VAR[diag(3)==1] <- paste0(m2$T0VAR[diag(3)==1] ,'|log1p_exp(2*param-1)')
-    m2=ctStanModel(m2,type='stanct')
+    m2=ctStanModel(m2,type='ct')
     m2$pars$indvarying=F
     
     f <- ctStanFit(datalong = dat,ctstanmodel = m,cores=cores)

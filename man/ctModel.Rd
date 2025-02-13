@@ -11,6 +11,7 @@ ctModel(
   n.latent = "auto",
   Tpoints = NULL,
   manifestNames = "auto",
+  manifesttype = rep(0, nrow(LAMBDA)),
   latentNames = "auto",
   id = "id",
   time = "time",
@@ -18,9 +19,9 @@ ctModel(
   T0VAR = "auto",
   T0MEANS = "auto",
   MANIFESTMEANS = "auto",
-  MANIFESTVAR = "auto",
+  MANIFESTVAR = "diag",
   DRIFT = "auto",
-  CINT = "auto",
+  CINT = 0,
   DIFFUSION = "auto",
   n.TDpred = "auto",
   TDpredNames = "auto",
@@ -50,7 +51,7 @@ with latent processes 1:n.latent along the columns, and manifest variables
 1:n.manifest in the rows.}
 
 \item{type}{character string. If 'omx' (default) configures model for maximum likelihood fitting with ctFit, using OpenMx. 
-If 'stanct' or 'standt' configures either continuous ('stanct') or discrete ('standt') time 
+If 'ct' or 'dt' configures either continuous ('ct') or discrete ('dt') time 
 model for Bayesian fitting with \code{\link{ctStanFit}}, using Stan.}
 
 \item{n.manifest}{Number of manifest indicators per individual at each measurement occasion / time point.
@@ -65,6 +66,8 @@ see \code{\link{ctIntervalise}}.}
 
 \item{manifestNames}{n.manifest length vector of manifest variable names as they appear in the data structure, 
 without any _Tx time point suffix that may be present in wide data.  Defaults to Y1, Y2, etc.}
+
+\item{manifesttype}{n.manifest length vector of manifest variable types,defaults to 0 for continuous vars, 1 for binary vars is also possible.}
 
 \item{latentNames}{n.latent length vector of latent variable names 
 (used for naming parameters, defaults to eta1, eta2, etc).}
@@ -95,8 +98,7 @@ relating the processes over time.
 "auto" freely estimates all parameters.}
 
 \item{CINT}{n.latent * 1 matrix of latent process intercepts, allowing for non 0 
-asymptotic levels of the latent processes. Generally only necessary for additional trends and more complex dynamics.
-"auto" fixes all parameters to 0.}
+asymptotic levels of the latent processes. Generally only necessary for additional trends and more complex dynamics.}
 
 \item{DIFFUSION}{lower triangular n.latent*n.latent cholesky matrix of diffusion process 
 variance and covariance (latent error / dynamic innovation).
@@ -178,7 +180,7 @@ the overall process parameters.}
 matrix for all time independent predictors.
 "auto" (default) freely estimates all parameters.}
 
-\item{PARS}{for types 'stanct' and 'standt' only. May be of any structure, only needed to contain extra parameters for certain non-linear models.}
+\item{PARS}{for types 'ct' and 'dt' only. May be of any structure, only needed to contain extra parameters for certain non-linear models.}
 
 \item{startValues}{For type='omx' only. A named vector, where the names of each value must match a parameter in the specified model,
 and the value sets the starting value for that parameter during optimization.
@@ -214,7 +216,7 @@ which can then be fit to data with function \code{\link{ctStanFit}}.
  
  
 ###Bayesian example:
-model<-ctModel(type='stanct',
+model<-ctModel(type='ct',
 n.latent=2, latentNames=c('eta1','eta2'),
 n.manifest=2, manifestNames=c('Y1','Y2'),
 n.TDpred=1, TDpredNames='TD1', 

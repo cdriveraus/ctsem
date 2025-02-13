@@ -28,7 +28,7 @@ ctModelUnlist<-function(ctmodelobj,
 #' Convert a frequentist (omx) ctsem model specification to Bayesian (Stan).
 #'
 #' @param ctmodelobj ctsem model object of type 'omx' (default)
-#' @param type either 'stanct' for continuous time, or 'standt' for discrete time.
+#' @param type either 'ct' for continuous time, or 'dt' for discrete time.
 #' @param tipredDefault Logical. TRUE sets any parameters with unspecified time independent 
 #' predictor effects to have effects estimated, FALSE fixes the effect to zero unless individually specified.
 #'
@@ -54,9 +54,15 @@ ctModelUnlist<-function(ctmodelobj,
 #' stanmodel=ctStanModel(model)
 #' 
 #' 
-ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
-  if(type=='stanct') continuoustime<-TRUE
-  if(type=='standt') continuoustime<-FALSE
+ctStanModel<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
+  
+  if(type=='stanct' | type=='standt'){
+    warning('type should now be specified as simply ct or dt, without the stan prefix')
+    type <- gsub('stan','',type)
+  }
+  
+  if(type=='ct') continuoustime<-TRUE
+  if(type=='dt') continuoustime<-FALSE
   
   ctm <- ctmodelobj
   
@@ -256,7 +262,8 @@ ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
     TIpredNames=TIpredNames,TDpredNames=TDpredNames,
     subjectIDname=ctm$id,
     timeName=ctm$time,
-    continuoustime=continuoustime)
+    continuoustime=continuoustime,
+    manifesttype=ctmodelobj$manifesttype)
   class(out)<-'ctStanModel'
   
   out$tipredeffectscale <- 1
@@ -268,7 +275,6 @@ ctStanModel<-function(ctmodelobj, type='stanct',tipredDefault=TRUE){
   out$rawpopsdtransform <- 'log1p_exp(2*rawpopsdbase-1) .* sdscale' #'log(1+exp(2*rawpopsdbase)) .* sdscale' #'exp(rawpopsdbase * 2 -2) .* sdscale' # 'rawpopsdbase .* sdscale' #
   # out$stationarymeanprior <- NA
   # out$stationaryvarprior <- NA
-  out$manifesttype <- rep(0,n.manifest)
   out$covmattransform <- 'rawcorr'
   # out$NOrdinalIntegrationPoints <- 9L
   

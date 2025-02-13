@@ -18,7 +18,7 @@ d$Y2 <- d$Y2 + rnorm(nrow(d),0,.2) #gaussian measurement error
   # prob = ctsem::inv_logit(d$Y2))
 d$Y1 <- d$Y1 + rnorm(nrow(d),0,.2) #gaussian measurement error
 
-m <- ctModel(LAMBDA=diag(2),type='stanct',
+m <- ctModel(LAMBDA=diag(2),type='ct',
   manifestNames = c('Y1','Y2'))
 
 

@@ -8,7 +8,7 @@ ctFitMultiModel(
   mlist,
   datalong,
   prefix = "",
-  type = "stanct",
+  type = "ct",
   cores = 2,
   summaryOutput = TRUE,
   saveFits = TRUE,
@@ -25,7 +25,7 @@ ctFitMultiModel(
 
 \item{prefix}{prefix for output files.}
 
-\item{type}{'stanct' for continuous time or 'standt' for discrete time}
+\item{type}{'ct' for continuous time or 'dt' for discrete time}
 
 \item{cores}{number of cpu cores to use}
 

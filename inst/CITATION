@@ -10,7 +10,6 @@ bibentry(bibtype = "Article",
   number       = "4",
   pages        = "774-799",
   doi          = "10.1037/met0000168",
-
   header       = "To cite the current, hierarchical ctsem use:",
 )
 
@@ -42,7 +41,6 @@ bibentry(
   year = 2021,
   isbn = "978-0-12-813995-0",
   doi = "10.1016/B978-0-12-813995-0.00034-0",
-  url = "https://www.sciencedirect.com/science/article/pii/B9780128139950000340",
   author = c("Charles C. Driver", "Manuel C. Voelkle"),
   header       = "To cite the current manual use:",
 )

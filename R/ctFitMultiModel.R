@@ -2,7 +2,7 @@
 #'
 #' @param mlist Named list of models
 #' @param datalong ctsem long format data
-#' @param type 'stanct' for continuous time or 'standt' for discrete time
+#' @param type 'ct' for continuous time or 'dt' for discrete time
 #' @param cores number of cpu cores to use
 #' @param summaryOutput Generate summary output into ctSummary folder? Large datasets can take some time. 
 #' @param saveFits Save fit objects to working directory?
@@ -39,7 +39,7 @@
 #' }
  
  
-ctFitMultiModel <- function(mlist, datalong, prefix='',type='stanct',cores=2, summaryOutput=TRUE, 
+ctFitMultiModel <- function(mlist, datalong, prefix='',type='ct',cores=2, summaryOutput=TRUE, 
   saveFits = TRUE, summaryArgs = list(),cv=FALSE, cvArgs=list(),...){
   
   newfit <- function(model,name){ #function to convert old model to new form, fit with and without covariates, summarise, and save.

@@ -8,7 +8,7 @@ data frame with 2722 rows, 14 columns. Column Y1 represents anomia,
 Y2 Authoritarianism, dTx the time interval for measurement occasion x.
 }
 \source{
-See \url{https://psycnet.apa.org/record/2012-09124-001} for details.
+See \doi{10.1037/a0027543} for details.
 }
 \description{
 A dataset containing panel data assessments of individuals Anomia and Authoritarianism.

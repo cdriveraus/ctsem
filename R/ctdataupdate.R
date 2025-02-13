@@ -39,7 +39,7 @@ ctdataupdate<-function(forcerecompile=FALSE){
 
   ## now in zzz.R
   checkm<-ctModel(
-    type='stanct',
+    type='ct',
     n.latent=2,n.TDpred=1,n.TIpred=1,n.manifest=2,
     MANIFESTVAR=matrix(c('merror',0,0,'merror'),2,2),
     MANIFESTMEANS=0,

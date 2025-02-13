@@ -349,7 +349,8 @@ plot.ctKalmanDF<-function(x, subjects=unique(x$Subject), kalmanvec=c('y','yprior
     geom_line()+
     geom_point()+
     theme_minimal()+
-    guides(fill='none')
+    guides(fill='none')+
+    theme(legend.position = 'bottom')
   
   return(g)
   

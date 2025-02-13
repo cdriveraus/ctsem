@@ -188,10 +188,10 @@ Functions to convert between wide and long formats used by ctsem are available, 
 Missingness in the manifest variables is handled using the typical filtering / full information maximum likelihood approach. Missing values on the covariates -- either time dependent or independent -- are somewhat more problematic, and will cause an error by default. Various alternative approaches are available: In certain cases it may be reasonable to replace missing values with zeros, or to sample them as part of the model. See the ctStanFit help for more details.  
 
 \subsection{Model specification}
-Specify model using \verb}ctModel(type="stanct",...)}. \verb|"stanct"| specifies a continuous time model in Stan format, \verb|"standt"| specifies discrete time, while \verb|"omx"| is the original ctsem behaviour and prepares an OpenMx model \citet[discussed in][]{driver2017continuous}. Other arguments to \verb|ctModel| include the list of within-subject parameter matrices, with LAMBDA, the factor loading matrix, the only one that must be specified. All other matrices are set to the system dimensions implied by LAMBDA (number of columns representing latent processes, rows representing manifest indicators), and in general filled with free parameters. The CINT matrix is the only exception to this, it is filled with zero's by default for identification purposes. Such parameter matrices can be manually specified using either numeric values when an element of the model should be fixed, a character string when it should be estimated, or a character string containing at least one square bracket for deterministic relations between parameter matrices and or latent states. The following code demonstrates this by freeing the CINT matrix of latent intercepts, and instead fixing the MANIFESTMEANS matrix of manifest intercepts. See the help for \verb|ctModel|, available in R via \verb}?ctModel}, for more details.
+Specify model using \verb}ctModel(type="ct",...)}. \verb|"ct"| specifies a continuous time model in Stan format, \verb|"dt"| specifies discrete time, while \verb|"omx"| is the original ctsem behaviour and prepares an OpenMx model \citet[discussed in][]{driver2017continuous}. Other arguments to \verb|ctModel| include the list of within-subject parameter matrices, with LAMBDA, the factor loading matrix, the only one that must be specified. All other matrices are set to the system dimensions implied by LAMBDA (number of columns representing latent processes, rows representing manifest indicators), and in general filled with free parameters. The CINT matrix is one exception to this, it is filled with zero's by default for identification purposes, and the MANIFESTVAR is another exception, where only the diagonal is estimated freely. Such parameter matrices can be manually specified using either numeric values when an element of the model should be fixed, a character string when it should be estimated, or a character string containing at least one square bracket for deterministic relations between parameter matrices and or latent states. The following code demonstrates this by freeing the CINT matrix of latent intercepts, and instead fixing the MANIFESTMEANS matrix of manifest intercepts. See the help for \verb|ctModel|, available in R via \verb}?ctModel}, for more details.
   
   <<model>>=
-    model<-ctModel(type='stanct',
+    model<-ctModel(type='ct',
       latentNames=c('eta1','eta2'),
       manifestNames=c('Y1','Y2'),
       CINT=matrix(c('cint1','cint2 |||| TI1'),nrow=2,ncol=1),
@@ -204,7 +204,7 @@ Specify model using \verb}ctModel(type="stanct",...)}. \verb|"stanct"| specifies
       It is possible to simplify the specification of parameter matrices somewhat, by passing a vector of values and or parameters to be put row-wise (distinct from the R default of column-wise) into a matrix of the correct size. Singular values can also be used as a fill for the entire matrix. The above model in this shorter form is specified like:
       
       <<model2>>=
-      model<-ctModel(type='stanct',
+      model<-ctModel(type='ct',
         latentNames=c('eta1','eta2'),
         manifestNames=c('Y1','Y2'),
         CINT=c('cint1','cint2 |||| TI1'),
@@ -242,7 +242,7 @@ Specify model using \verb}ctModel(type="stanct",...)}. \verb|"stanct"| specifies
       T0VAR & $Q^*_1$ & free & lower tri n.latent $\times$ n.latent matrix of latent process initial covariance, specified with standard deviations on diagonal and covariance related parameters on lower triangle.\\
       T0MEANS & $\eta_1$ & free & n.latent $\times$ 1 matrix of latent process means at first time point, T0.\\
       MANIFESTMEANS & $\tau$ & free & n.manifest $\times$ 1 matrix of manifest intercepts.\\
-      MANIFESTVAR & $\Theta$ & free & diagonal matrix of var / cov between manifests, specified with standard deviations on diagonal and zeroes elsewhere.\\
+      MANIFESTVAR & $\Theta$ & free & typically diagonal matrix of var / cov between manifests, specified with standard deviations on diagonal and zeroes elsewhere.\\
       DRIFT & $A$ & free & n.latent $\times$ n.latent matrix of continuous auto and cross effects.\\
       CINT & $b$ & 0 & n.latent $\times$ 1 matrix of continuous intercepts.\\
       DIFFUSION & $Q$ & free & lower triangular n.latent $\times$ n.latent matrix containing standard deviations of latent process on diagonal, and covariance related parameters on lower off-diagonals.\\
@@ -373,7 +373,7 @@ Plotting the original prior implied by the model, making a change to the transfo
     model$pars$transform[7]<- '2 * param -1'
     
     #Change during model specification
-    model<-ctModel(type='stanct',
+    model<-ctModel(type='ct',
       DRIFT = matrix(c('drift_eta1_eta1 | 2 * param -1 | TRUE',
         'dr21','dr12','dr22'),2,2),
       latentNames=c('eta1','eta2'),
@@ -433,7 +433,7 @@ Plotting the original prior implied by the model, making a change to the transfo
       
       An alternative approach to specifying the tipredeffects is in the initial model specification, using the `|' separator notation. The following shows an example where the DRIFT[1,1] parameter is influenced by covariates TI1 and TI3,  DRIFT[1,2] is influenced by TI2, and there are no other time independent predictor effects (because \verb|tipredDefault=FALSE|)
 <<echo=TRUE,eval=FALSE,tipredspec>>=
-model<-ctModel(type='stanct', tipredDefault = FALSE,
+model<-ctModel(type='ct', tipredDefault = FALSE,
 	DRIFT = matrix(c(
 	  'drift_eta1_eta1||||TI1,TI3','dr21||||TI2',
 	  'dr12','dr22'),2,2),
@@ -471,7 +471,7 @@ The standard rstan output functions such as summary and extract are also availab
     datalong <- cbind(id, time, sunspots)
     
     #setup model
-    ssmodel <- ctModel(type='stanct', 
+    ssmodel <- ctModel(type='ct', 
       manifestNames='sunspots', 
       latentNames=c('ss_level', 'ss_velocity'),
       LAMBDA=c( 1, 'ma1| log(1+(exp(param)))'),
@@ -500,7 +500,7 @@ The standard rstan output functions such as summary and extract are also availab
     time <- 1749:1924
     datalong <- data.frame(id, time, sunspots)
     
-    m <- ctModel(type='stanct', 
+    m <- ctModel(type='ct', 
       manifestNames='sunspots', 
       latentNames=c('ss_level', 'ss_velocity'),
       LAMBDA=c( 1, 'ma1|log(1+exp(param))'),
@@ -614,6 +614,6 @@ The lower left plot shows the prior distribution for individual level parameters
 \section{Conclusion}
 With this work, we have described the basics of the hierarchical continuous time dynamic model, and provided detailed discussion on the usage of the R package ctsem \citep{driver2017continuous} for fitting such models to data. While the approach is necessarily somewhat complex, we believe it offers many interesting possibilities for understanding within-subject dynamics and their relation to between-subject differences, and hope that the overview of the software provided here encourages new and interesting applications of the model.. 
 
-\printbibliography
+\bibliography{hierarchicalrefs}
 
 \end{document}

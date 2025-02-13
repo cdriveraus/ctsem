@@ -12,7 +12,7 @@ sunspots<-sunspot.year
 datalong <- cbind(id, time, sunspots)
 
 #setup model
- ssmodel <- ctModel(type='stanct', n.latent=2, n.manifest=1, 
+ ssmodel <- ctModel(type='ct', n.latent=2, n.manifest=1, 
     # n.TDpred = 1,
   manifestNames='sunspots', 
   latentNames=c('ss_level', 'ss_velocity'),

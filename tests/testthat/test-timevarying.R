@@ -30,12 +30,12 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 &
     colnames(dat)[1]='id'
     
     cm <- ctModel(LAMBDA=matrix(c('lbystate * eta2 + 1',0,0,1),2,2),  T0MEANS=c('t0m1','t0m2|log1p_exp(param)'),
-      PARS=c('lbystate|log1p_exp(param)'),type='stanct')
+      PARS=c('lbystate|log1p_exp(param)'),type='ct')
     
     cm$pars$indvarying <- FALSE
     
     dm <- ctModel(LAMBDA=matrix(c('lbystate * eta2 + 1',0,0,1),2,2),  T0MEANS=c('t0m1','t0m2|log1p_exp(param)'),
-      PARS=c('lbystate|log1p_exp(param)'),type='standt')
+      PARS=c('lbystate|log1p_exp(param)'),type='dt')
     
     dm$pars$indvarying <- FALSE
     
@@ -78,7 +78,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 &
   }) 
   
   test_that("higherDimNonLinearCompileCheck", {
-    test_ <- ctModel(type='stanct',
+    test_ <- ctModel(type='ct',
       n.latent=3, n.manifest=3,
       manifestNames=c("X", "Y", "Z"),
       latentNames = c("X_", "Y_", "Z_"),

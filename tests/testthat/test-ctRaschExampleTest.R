@@ -29,7 +29,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       DIFFUSION='diff|log1p_exp(2*param)',
       T0MEANS='t0m|param|TRUE|.2',
       CINT = 'b|param|TRUE|1', #use standard normal for mean prior, individual variation = TRUE (default), default scale for sd
-      type = "stanct" )
+      type = "ct" )
     
         md <- ctModel( n.latent = 1,
       n.manifest = n.manifest,
@@ -38,7 +38,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       DIFFUSION='diff|log1p_exp(2*param)',
       T0MEANS='t0m|param|TRUE|.2',
       CINT = 'b|param|TRUE|1', #use standard normal for mean prior, individual variation = TRUE (default), default scale for sd
-      type = "standt" )
+      type = "dt" )
 
     m$manifesttype[]=md$manifesttype[]=1 #set type to binary
     

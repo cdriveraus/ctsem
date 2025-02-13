@@ -185,7 +185,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& !(.Platform$OS.type=="windows" &&
       )
     }
     
-    m1 <- ctModel(type = 'stanct',tipredDefault = FALSE,
+    m1 <- ctModel(type = 'ct',tipredDefault = FALSE,
       manifestNames = c('adjValue1',"adjValue2"),
       latentNames=latentNames,
       TIpredNames = 'zyg',

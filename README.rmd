@@ -79,7 +79,7 @@ library(ctsem)
 
 m <- ctModel(
   LAMBDA=diag(1), #Factor loading matrix of latent processes on measurements, fixed to 1
-  type = 'stanct', #Could specify 'standt' here for discrete time.
+  type = 'ct', #Could specify 'dt' here for discrete time.
   tipredDefault = FALSE, #limit covariate effects on parameters to those explicitly specified
   manifestNames='weight', #Observed measurements of the latent processes
   latentNames='Lweight', #Names here simply make parameters and plots more interpretable

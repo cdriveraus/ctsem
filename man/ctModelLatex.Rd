@@ -59,7 +59,7 @@ character string of latex code. Side effects include saving a .tex, .pdf, and di
 Generate and optionally compile latex equation of subject level ctsem model.
 }
 \examples{
-ctmodel <- ctModel(type='stanct', 
+ctmodel <- ctModel(type='ct', 
 n.latent=2, n.manifest=1, 
 manifestNames='sunspots', 
 latentNames=c('ss_level', 'ss_velocity'),
