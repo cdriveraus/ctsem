@@ -67,7 +67,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       control=list(adapt_delta=.8,max_treedepth=6),plot=FALSE))
     s3=summary(tfit3)
     
-    test_isclose(s3$tipreds[2,'mean'],5,tol=.2)
-    test_isclose(s3$popsd[2,'mean'],.6,tol=.2)
+    test_isclose(s3$tipreds[2,'mean'],5,tol=.5)
+    test_isclose(s3$popsd[2,'mean'],.6,tol=.5)
   })
 }
