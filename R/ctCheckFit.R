@@ -6,7 +6,6 @@
 ctFitCovCheck <- function(fit,cor=FALSE){
   gencov <- ctCovMatGenerated(fit)
   sampcov <- cov(ctLongtoWideFromFitted(fit),use='pairwise.complete.obs')
-  
   if(cor){
     gencov <- suppressWarnings(lapply(gencov,function(x) cov2cor(x)))
     sampcov <- suppressWarnings(cov2cor(sampcov))
@@ -26,8 +25,10 @@ ctFitCovCheck <- function(fit,cor=FALSE){
   
   msampcov <- merge(msampcov,mgencov[iter==1,.(rn,cn,q025,q50,q975,sd,mean)],by=c('rn','cn'))
   #extrat trailing '_Tx' where x is digit to obtain observation number
-  msampcov[,.ObsRow:=gsub('^(.*)(\\d+)$','\\2',rn)]
-  msampcov[,.ObsCol:=gsub('^(.*)(\\d+)$','\\2',cn)]
+  msampcov[, .ObsRow := sub('.*_T([0-9]+)$', '\\1', rn)]
+  msampcov[, .ObsCol := sub('.*_T([0-9]+)$', '\\1', cn)]
+  
+  
   
   #extract variable name before trailing '_Tx' to obtain row and column variables
   msampcov[,.RowVar:=gsub('^(.*)\\_T\\d+$','\\1',rn)]
