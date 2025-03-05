@@ -249,9 +249,8 @@ ctModel<-function(LAMBDA, type='omx',n.manifest = 'auto', n.latent='auto', Tpoin
   ###### RUN SEQUENCE
   
   if(type!='omx' && is.null(Tpoints)) Tpoints<-3
-  if(type=='omx' && is.null(Tpoints)) stop('Tpoints must be specified for type="omx"')
-  if(!(type %in% c('ct','dt','omx','stanct','standt'))) stop('type must be either omx, ct, or dt
-    !')
+  # if(type=='omx' && is.null(Tpoints)) stop('Tpoints must be specified for type="omx"')
+
   
   #names
   if(all(manifestNames=='auto')) manifestNames=paste0('Y',1:n.manifest)
