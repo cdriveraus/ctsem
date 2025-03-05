@@ -3,6 +3,12 @@
 #' @param fit ctStanFit object.
 #' @param cor Logical. If TRUE, the correlation matrix is used instead of the covariance matrix.
 #' @return data.table containing quantiles of the model implied covariance matrix based on generated samples of data, the sample covariance matrix values, and the difference between the two.
+#' @examples
+#' \dontrun{
+#' check <- ctCheckFit(ctstantestfit,cor=TRUE)
+#' plot.ctFitCovCheck(check,maxlag=3)
+#' }
+#' @export
 ctFitCovCheck <- function(fit,cor=FALSE){
   gencov <- ctCovMatGenerated(fit)
   sampcov <- cov(ctLongtoWideFromFitted(fit),use='pairwise.complete.obs')
@@ -11,7 +17,7 @@ ctFitCovCheck <- function(fit,cor=FALSE){
     sampcov <- suppressWarnings(cov2cor(sampcov))
   }
   
-  msampcov <- melt(as.data.table(sampcov,keep.rownames=TRUE),id.vars = 'rn',variable.name = 'cn')
+  checkfit <- melt(as.data.table(sampcov,keep.rownames=TRUE),id.vars = 'rn',variable.name = 'cn')
   
   
   q025 <- rn <- cn <- q975 <- q50 <- iter <- .ObsRow <- .ObsCol <- .RowVar <- .ColVar <- .Sig <- interaction_id <- NULL
@@ -23,41 +29,50 @@ ctFitCovCheck <- function(fit,cor=FALSE){
   mgencov[,sd:=sd(value,na.rm=TRUE),by=.(rn,cn)]
   mgencov[,mean:=mean(value,na.rm=TRUE),by=.(rn,cn)]
   
-  msampcov <- merge(msampcov,mgencov[iter==1,.(rn,cn,q025,q50,q975,sd,mean)],by=c('rn','cn'))
+  checkfit <- merge(checkfit,mgencov[iter==1,.(rn,cn,q025,q50,q975,sd,mean)],by=c('rn','cn'))
   #extrat trailing '_Tx' where x is digit to obtain observation number
-  msampcov[, .ObsRow := sub('.*_T([0-9]+)$', '\\1', rn)]
-  msampcov[, .ObsCol := sub('.*_T([0-9]+)$', '\\1', cn)]
+  checkfit[, .ObsRow := sub('.*_T([0-9]+)$', '\\1', rn)]
+  checkfit[, .ObsCol := sub('.*_T([0-9]+)$', '\\1', cn)]
   
   
   
   #extract variable name before trailing '_Tx' to obtain row and column variables
-  msampcov[,.RowVar:=gsub('^(.*)\\_T\\d+$','\\1',rn)]
-  msampcov[,.ColVar:=gsub('^(.*)\\_T\\d+$','\\1',cn)]
+  checkfit[,.RowVar:=gsub('^(.*)\\_T\\d+$','\\1',rn)]
+  checkfit[,.ColVar:=gsub('^(.*)\\_T\\d+$','\\1',cn)]
   
-  msampcov[,.Sig:=ifelse(value>q975 | value<q025,TRUE,FALSE)]
+  checkfit[,.Sig:=ifelse(value>q975 | value<q025,TRUE,FALSE)]
   
   #for checking sig proportions:
-  msampcovlower <- copy(msampcov)
-  msampcovlower[, interaction_id := paste(pmin(as.character(rn), as.character(cn)), pmax(as.character(rn), as.character(cn)), sep = "_")]
-  msampcovlower <- msampcovlower[!duplicated(interaction_id)]
-  if(!cor) sigprop = mean(as.numeric(msampcovlower$.Sig),na.rm=T)
-  if(cor) sigprop = mean(as.numeric(msampcovlower$.Sig[msampcovlower$rn != msampcovlower$cn]),na.rm=T)
+  checkfitlower <- copy(checkfit)
+  checkfitlower[, interaction_id := paste(pmin(as.character(rn), as.character(cn)), pmax(as.character(rn), as.character(cn)), sep = "_")]
+  checkfitlower <- checkfitlower[!duplicated(interaction_id)]
+  if(!cor) sigprop = mean(as.numeric(checkfitlower$.Sig),na.rm=T)
+  if(cor) sigprop = mean(as.numeric(checkfitlower$.Sig[checkfitlower$rn != checkfitlower$cn]),na.rm=T)
   message(paste0('Proportion of model implied cov/cor cells outside 95% = ',sigprop))
   
-  return(msampcov)
+  return(checkfit)
 }
 
+#' @title plot.ctFitCovCheck
+#' @description Plot the results of ctFitCovCheck.
+#' @param checkfit Output from ctFitCovCheck.
+#' @param maxlag Maximum lag to plot.
+#' @return ggplot object.
+#' @examples
+#' \dontrun{
+#' plot.ctFitCovCheck(ctCheckFit(ctstantestfit,cor=TRUE),maxlag=3)
+#' }
+#' @export
+#'  
 
-library(data.table)
-
-msampcov.plot <- function(msampcov, maxlag = 10) {
+plot.ctFitCovCheck <- function(checkfit, maxlag = 10) {
   gg <- list()
-  msampcov <- as.data.table(msampcov)  # Ensure msampcov is a data.table
+  checkfit <- as.data.table(checkfit)  # Ensure checkfit is a data.table
   .RowVar <- .ObsRow <- .ObsCol <- count <- .ColVar <- q025 <- q975 <- q50 <- NULL
   
-  for (rowvari in unique(msampcov$.RowVar)) {
+  for (rowvari in unique(checkfit$.RowVar)) {
     # Filter data and calculate lag and observation count for each unique lag
-    filtered_data <- msampcov[.RowVar %in% rowvari & 
+    filtered_data <- checkfit[.RowVar %in% rowvari & 
         ((as.numeric(.ObsRow) - as.numeric(.ObsCol)) <= maxlag) & 
         ((as.numeric(.ObsRow) - as.numeric(.ObsCol)) >= 0)]
     filtered_data[, lag := as.numeric(.ObsRow) - as.numeric(.ObsCol)]

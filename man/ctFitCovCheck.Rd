@@ -17,3 +17,9 @@ data.table containing quantiles of the model implied covariance matrix based on 
 \description{
 Visual model fit diagnostics for ctsem fit objects.
 }
+\examples{
+\dontrun{
+check <- ctCheckFit(ctstantestfit,cor=TRUE)
+plot.ctFitCovCheck(check,maxlag=3)
+}
+}
