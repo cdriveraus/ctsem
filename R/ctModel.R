@@ -250,7 +250,7 @@ ctModel<-function(LAMBDA, type='omx',n.manifest = 'auto', n.latent='auto', Tpoin
   
   if(type!='omx' && is.null(Tpoints)) Tpoints<-3
   if(type=='omx' && is.null(Tpoints)) stop('Tpoints must be specified for type="omx"')
-  if(!(type %in% c('ct','dt','omx'))) stop('type must be either omx, ct, or dt
+  if(!(type %in% c('ct','dt','omx','stanct','standt'))) stop('type must be either omx, ct, or dt
     !')
   
   #names
