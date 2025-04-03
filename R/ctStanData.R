@@ -161,7 +161,7 @@ ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
   standata <- list(
     Y=cbind(as.matrix(datalong[,ctm$manifestNames])),
     subject=array(as.integer(datalong[,ctm$subjectIDname])),
-    time=array(datalong[,ctm$timeName]), 
+    time=array(as.numeric(datalong[,ctm$timeName])), 
     ndatapoints=as.integer(nrow(datalong)),
     nobs_y=array(as.integer(apply(datalong[,ctm$manifestNames,drop=FALSE],1,function(x) length(x[x!=99999]))),dim=nrow(datalong)),
     whichobs_y=matrix(as.integer(t(apply(datalong[,ctm$manifestNames,drop=FALSE],1,function(x) {

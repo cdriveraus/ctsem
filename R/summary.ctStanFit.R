@@ -60,7 +60,7 @@ getparnames <- function(fit,reonly=FALSE, subjvariationonly=FALSE, popstatesonly
   ms <- fit$setup$matsetup
   
   if(popstatesonly)  indices=ms$param > 0 & ms$copyrow <1 & ms$matrix==1 & ms$indvarying > 0 & ms$row > fit$standata$nlatent
-  if(!popstatesonly)  indices=ms$when %in% c(0,-1) & ms$param > 0 & ms$copyrow < 1
+  if(!popstatesonly)  indices=ms$when %in% c(0,-1) & ms$param > 0 & ms$copyrow < 1 & !grepl('[',ms$parname,fixed=TRUE)
   if(subjvariationonly) indices = ms$when %in% c(0,-1) & ms$param > 0 & ms$copyrow < 1 & (ms$tipred >0 | ms$indvarying > 0)
   pars <- data.frame(parnames = ms$parname[indices],  parindices = ms$param[indices])
   
@@ -100,7 +100,6 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
     class(out) <- 'data.frame'
     return(out)
   }
-  
   
   out=list()
   monvars <- c('mean','sd','2.5%','50%','97.5%')
