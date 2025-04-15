@@ -49,14 +49,14 @@ ctStanFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
 }
 
 
-T0VARredundancies <- function(ctm) {
+T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (because indvarying t0means) and disable
   whichT0VAR_T0MEANSindvarying <- ctm$pars$matrix %in% 'T0VAR'  &  
     is.na(ctm$pars$value) &
     (ctm$pars$row %in% ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS' & ctm$pars$indvarying] |
         ctm$pars$col %in% ctm$pars$row[ctm$pars$matrix %in% 'T0MEANS' & ctm$pars$indvarying])
   if(any(whichT0VAR_T0MEANSindvarying)){
-    message('Free T0VAR parameters as well as indvarying T0MEANS -- fixing T0VAR pars to diag matrix of 1e-3')
-    ctm$pars$value[whichT0VAR_T0MEANSindvarying & ctm$pars$col == ctm$pars$row ] <- 1e-3
+    message('Free T0VAR parameters as well as indvarying T0MEANS -- fixing T0VAR pars to diag matrix of 1e-6')
+    ctm$pars$value[whichT0VAR_T0MEANSindvarying & ctm$pars$col == ctm$pars$row ] <- 1e-6
     ctm$pars$value[whichT0VAR_T0MEANSindvarying & ctm$pars$col != ctm$pars$row ] <- 0
     ctm$pars$param[whichT0VAR_T0MEANSindvarying] <- NA
     ctm$pars$transform[whichT0VAR_T0MEANSindvarying] <- NA
@@ -409,7 +409,7 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   if(any(!is.na(derrind))) warning('derrind argment is deprecated, computed automatically now')
   
   datalong <- data.frame(datalong)
-
+  
   if(!ctstanmodel$timeName %in% colnames(datalong) && !ctstanmodel$continuoustime) {
     dtable <- data.table(datalong)
     dtable[,.ObsCount:=1:.N,by=ctstanmodel$id]
@@ -460,18 +460,19 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   }
   
   #collect individual stationary elements and update ctm$pars
-  if(any(ctm$pars$param %in% 'stationary')) stop('Stationary option temporarily unavailable -- reductions needed to pass all CRAN checks')
-  ctm$t0varstationary <- as.matrix(rbind(ctm$pars[which(ctm$pars$param %in% 'stationary' & ctm$pars$matrix %in% 'T0VAR'),c('row','col')]))
-  if(nrow(ctm$t0varstationary) > 0){ #ensure upper tri is consistent with lower
-    for(i in 1:nrow(ctm$t0varstationary)){
-      if(ctm$t0varstationary[i,1] != ctm$t0varstationary[i,2]) ctm$t0varstationary <- rbind(ctm$t0varstationary,ctm$t0varstationary[i,c(2,1)])
-    }}
-  ctm$t0varstationary = unique(ctm$t0varstationary) #remove any duplicated rows
-  ctm$t0meansstationary <- as.matrix(rbind(ctm$pars[which(ctm$pars$param[ctm$pars$matrix %in% 'T0MEANS'] %in% 'stationary'),c('row','col')]))
-  ctm$pars$value[ctm$pars$param %in% 'stationary'] <- -99 #does this get inserted?
-  ctm$pars$indvarying[ctm$pars$param %in% 'stationary'] <- FALSE
-  ctm$pars$transform[ctm$pars$param %in% 'stationary'] <- NA
-  ctm$pars$param[ctm$pars$param %in% 'stationary'] <- NA
+  if(any(ctm$pars$param %in% 'stationary'))  stop('Stationary option temporarily unavailable -- reductions needed to pass all CRAN checks')
+    ctm$t0varstationary <- as.matrix(rbind(ctm$pars[which(ctm$pars$param %in% 'stationary' & ctm$pars$matrix %in% 'T0VAR'),c('row','col')]))
+    if(nrow(ctm$t0varstationary) > 0){ #ensure upper tri is consistent with lower
+      for(i in 1:nrow(ctm$t0varstationary)){
+        if(ctm$t0varstationary[i,1] != ctm$t0varstationary[i,2]) ctm$t0varstationary <- rbind(ctm$t0varstationary,ctm$t0varstationary[i,c(2,1)])
+      }}
+    ctm$t0varstationary = unique(ctm$t0varstationary) #remove any duplicated rows
+    ctm$t0meansstationary <- as.matrix(rbind(ctm$pars[which(ctm$pars$param[ctm$pars$matrix %in% 'T0MEANS'] %in% 'stationary'),c('row','col')]))
+    ctm$pars$value[ctm$pars$param %in% 'stationary'] <- -99 #does this get inserted?
+    ctm$pars$indvarying[ctm$pars$param %in% 'stationary'] <- FALSE
+    ctm$pars$transform[ctm$pars$param %in% 'stationary'] <- NA
+    ctm$pars$param[ctm$pars$param %in% 'stationary'] <- NA
+  
   
   if(length(unique(datalong[,ctm$subjectIDname]))==1 && any(ctm$pars$indvarying[is.na(ctm$pars$value)]==TRUE)){
     # is.null(ctm$fixedrawpopmeans) && is.null(ctm$fixedsubpars) & is.null(ctm$forcemultisubject)) {
@@ -483,12 +484,12 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
     # is.null(ctm$fixedrawpopmeans) & is.null(ctm$fixedsubpars) & is.null(ctm$forcemultisubject)) {
     for(ri in 1:nrow(ctm$pars)){
       if(is.na(ctm$pars$value[ri]) && ctm$pars$matrix[ri] %in% 'T0VAR'){
-        ctm$pars$value[ri] <- ifelse(ctm$pars$row[ri] == ctm$pars$col[ri], 1, 0)
+        ctm$pars$value[ri] <- ifelse(ctm$pars$row[ri] == ctm$pars$col[ri], 1e-3, 0)
       }
     }
-    message('Free T0VAR parameters fixed to diagonal matrix of 1 as only 1 subject - consider appropriateness!')
+    message('Free T0VAR parameters fixed to diagonal matrix of 0.001 as only 1 subject - consider appropriateness!')
   }
-
+  
   if(binomial){
     message('Binomial argument deprecated -- in future set manifesttype in the model object to 1 for binary indicators')
     intoverstates <- FALSE
@@ -515,22 +516,21 @@ ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intovers
   #   # message('No individual variation -- disabling intoverpop switch'); 
   #   intoverpop <- FALSE
   # }
-  
-  
+
   ctm <- ctModel0DRIFT(ctm, ctm$continuoustime) #offset 0 drift
   ctm$pars <- ctModelStatesAndPARS(ctm$pars,statenames = ctm$latentNames,tdprednames=ctm$TDpredNames) #replace latent states and PARS with state and PAR[] refs, need this early because we rely on [] detection
   if(intoverpop)   ctm <- ctStanModelIntOverPop(ctm) #extend system matrices for individual differences
   
-  #check this *after* replacing PARS references as needed
-  if(any(duplicated(ctm$pars$param[ctm$pars$matrix %in% 'T0MEANS' & 
-      !grepl('[',ctm$pars$param,fixed=TRUE) &
-      !is.na(ctm$pars$param)]))) stop(paste0(
-        'Unfortunately, duplicate T0MEANS parameters must be specified via inclusion of additional PARS matrix in ctModel: e.g.,
-ctModel(... #regular model code
-PARS=c("t0mPar||TRUE"), #specify an additional parameter called t0mPar, with random effects
-T0MEANS=c("t0mPar","t0mPar"), #insert this parameter into the T0MEANS matrix as many times as needed.
-... #regular model code)
-'))
+#   #check this *after* replacing PARS references as needed
+#   if(any(duplicated(ctm$pars$param[ctm$pars$matrix %in% 'T0MEANS' &
+#       !grepl('[',ctm$pars$param,fixed=TRUE) &
+#       !is.na(ctm$pars$param)]))) stop(paste0(
+#         'Unfortunately, duplicate T0MEANS parameters must be specified via inclusion of additional PARS matrix in ctModel: e.g.,
+# ctModel(... #regular model code
+# PARS=c("t0mPar||TRUE"), #specify an additional parameter called t0mPar, with random effects
+# T0MEANS=c("t0mPar","t0mPar"), #insert this parameter into the T0MEANS matrix as many times as needed.
+# ... #regular model code)
+# '))
   
   #jacobian addition
   ctm$jacobian <- try(ctJacobian(ctm))
@@ -691,8 +691,8 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
       if(!gendata) sm <- stanmodels$ctsm else sm <- stanmodels$ctsmgen
     }
     
-
-# configure inits ---------------------------------------------------------
+    
+    # configure inits ---------------------------------------------------------
     initOptim <- (length(inits)==1 && (inits=='optimize' || inits=='Optimize' || inits=='optimise' || inits=='Optimise'))
     if(optimize || initOptim){ #then set optimcontrol list
       optimcontrol$cores <- cores
@@ -704,7 +704,7 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
       optimcontrol$plot=plot
       optimcontrol$matsetup <- data.frame(ctm$modelmats$matsetup)
     }
-
+    
     if(!optimize && !is.null(inits)){
       if('list' %in% class(inits)){
         staninits=inits
@@ -716,16 +716,16 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
           if(!intoverpop & ! intoverstates) stop('Cannot initialize with optimization unless intoverpop and intoverstates are set to TRUE')
           inits <- do.call(stanoptimis,optimcontrol)$rawest
         }
-      sf <- stan_reinitsf(sm,standata)
-      staninits <- list() 
-      if(chains > 1){ #set all chains to same inits
-        for(i in 1:chains){
-          staninits[[i]]<-constrain_pars(sf,inits+rnorm(length(inits),0,.01))
+        sf <- stan_reinitsf(sm,standata)
+        staninits <- list() 
+        if(chains > 1){ #set all chains to same inits
+          for(i in 1:chains){
+            staninits[[i]]<-constrain_pars(sf,inits+rnorm(length(inits),0,.01))
+          }
         }
       }
-      }
-  }
-
+    }
+    
     
     if(!optimize){
       

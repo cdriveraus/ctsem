@@ -12,7 +12,7 @@ ctStanKalman(
   cores = 1,
   subjects = 1:max(fit$standata$subject),
   timestep = "asdata",
-  timerange = "asdata",
+  maxtime = "asdata",
   standardisederrors = FALSE,
   subjectpars = TRUE,
   tformsubjectpars = TRUE,
@@ -37,8 +37,7 @@ ctStanKalman(
 \item{timestep}{Either a positive numeric value, 'asdata' to use the times in the dataset, or 'auto' to select 
 a timestep automatically (resulting in some interpolation but not excessive computation).}
 
-\item{timerange}{only relevant if timestep is not 'asdata'. Positive numeric vector of length 2 denoting 
-time range for computations.}
+\item{maxtime}{only relevant if timestep is not 'asdata'. Positive numeric denoting max time for computations.}
 
 \item{standardisederrors}{If TRUE, computes standardised errors for prior, upd, smooth conditions.}
 

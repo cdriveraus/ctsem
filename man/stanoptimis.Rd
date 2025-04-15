@@ -20,6 +20,7 @@ stanoptimis(
   bootstrapUncertainty = FALSE,
   subsamplesize = 1,
   parsteps = c(),
+  parstepsAutoModel = FALSE,
   plot = FALSE,
   is = FALSE,
   isloopsize = 1000,
@@ -27,6 +28,7 @@ stanoptimis(
   tdf = 10,
   chancethreshold = 100,
   finishmultiply = 5,
+  lproughnesstarget = 0.2,
   verbose = 0,
   cores = 2,
   matsetup = NA,
@@ -89,6 +91,8 @@ importance sampling, at risk of truncating tails.}
 
 \item{finishmultiply}{Importance sampling stops once available samples reach \code{finishsamples * finishmultiply} , then the final samples are drawn
 without replacement from this set.}
+
+\item{lproughnesstarget}{target log posterior roughness for stochastic optimizer (suggest between .05 and .4).}
 
 \item{verbose}{Integer from 0 to 2. Higher values print more information during model fit -- for debugging.}
 

@@ -17,8 +17,7 @@
 #' @param subjects integer vector of subjects to compute for.
 #' @param timestep Either a positive numeric value, 'asdata' to use the times in the dataset, or 'auto' to select 
 #' a timestep automatically (resulting in some interpolation but not excessive computation).
-#' @param timerange only relevant if timestep is not 'asdata'. Positive numeric vector of length 2 denoting 
-#' time range for computations.
+#' @param maxtime only relevant if timestep is not 'asdata'. Positive numeric denoting max time for computations.
 #' @param ... additional arguments to collpsefunc.
 #'
 #' @return list containing Kalman filter elements, each element in array of
@@ -28,7 +27,7 @@
 #' @examples 
 #' k=ctStanKalman(ctstantestfit,subjectpars=TRUE,collapsefunc=mean)
 ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1, 
-  subjects=1:max(fit$standata$subject), timestep='asdata',timerange='asdata',
+  subjects=1:max(fit$standata$subject), timestep='asdata',maxtime='asdata',
   standardisederrors=FALSE, subjectpars=TRUE, tformsubjectpars=TRUE, indvarstates=FALSE,removeObs=F,...){
   
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
@@ -73,13 +72,13 @@ ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
     timediff <- timediff[timediff > 0]
     if(fit$standata$intoverstates==1) timestep=median(timediff)/5 else timestep ='asdata'
   }
-  if(all(timerange == 'asdata')) timerange <- range(fit$standata$time[fit$standata$subject %in% subjects]) 
-  if(is.na(timestep) && timerange[1]==timerange[2]) timestep=0
+  if(all(maxtime == 'asdata')) maxtime <- max(fit$standata$time[fit$standata$subject %in% subjects]) 
+  if(is.na(timestep)) timestep=0
   
   if(!'asdata' %in% timestep && fit$ctstanmodel$continuoustime) {
     if(fit$ctstanmodel$continuoustime != TRUE) stop('Discrete time model fits must use timestep = "asdata"')
-    times <- seq(timerange[1],timerange[2],timestep)
-    fit$standata <- standataFillTime(fit$standata,times,subject=subjects)
+    times <- seq(min(fit$standata$time[fit$standata$subject %in% subjects]) ,maxtime,timestep)
+    fit$standata <- standataFillTime(fit$standata,times,subject=subjects,maintainT0=TRUE)
   }
   
   #only do computations for rows of subjects requested, only really necessary for sampling approach because otherwise dropped from data

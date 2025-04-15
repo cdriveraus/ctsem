@@ -443,13 +443,16 @@ standatalongremerge <- function(long, standata){ #merge an updated long portion 
   return(standatamerged)
 }
 
-standataFillTime <- function(standata, times, subject){
+standataFillTime <- function(standata, times, subject, maintainT0=FALSE){
   long <- standatatolong(standata)
   
   if(any(!times %in% long$time)){ #if missing any times, add empty rows
     nlong <- do.call(rbind,
       lapply(subject, function(si){
-        stimes <- times[!round(times,10) %in% round(long$time,10)[long$subject==si]]
+        mintime <- min(long$time[long$subject==si])
+        originaltimes <- round(long$time[long$subject==si],10)
+        stimes <- times[(!times %in% originaltimes)]
+        if(maintainT0) stimes <-stimes[stimes > mintime]
         data.frame(subject=si,time=stimes)
       })
     )
@@ -650,6 +653,7 @@ clusterIDeval <- function(cl,commands){
 #' @param nsubsets number of subsets for stochastic optimizer. Subsets are further split across cores, 
 #' but each subjects data remains whole -- processed by one core in one subset.
 #' @param stochasticTolAdjust Multiplier for stochastic optimizer tolerance. 
+#' @param lproughnesstarget target log posterior roughness for stochastic optimizer (suggest between .05 and .4).
 #' @return list containing fit elements
 #' @importFrom mize mize
 #' @importFrom utils head tail
@@ -662,9 +666,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   priors=TRUE,carefulfit=TRUE,
   bootstrapUncertainty=FALSE,
   subsamplesize=1,
-  parsteps=c(),
+  parsteps=c(),parstepsAutoModel=FALSE,
   plot=FALSE,
   is=FALSE, isloopsize=1000, finishsamples=1000, tdf=10,chancethreshold=100,finishmultiply=5,
+  lproughnesstarget=.2,
   verbose=0,cores=2,matsetup=NA,nsubsets=10, stochasticTolAdjust=1000){
   
   if(!is.null(standata$verbose)) {
@@ -1003,42 +1008,15 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             abs_tol=1e-2,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)
           optimfit$value = optimfit$f
         }
-        
-        
-        # if(standata$ntipred ==0)
-        # standata$taylorheun <- as.integer(taylorheun)
-        # standata$sdscale <- sdscale
-        
-        carefulfit <- FALSE
-        iter <- 0
-        storedLp <- c()
-        # if(length(parsteps) <1 && (standata$ntipred ==0 || notipredsfirstpass ==FALSE)) finished <- TRUE
-        
-        #update init, making sure ignored parameters still have values in init
-        if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else init=optimfit$par
-        
-        if(length(parsteps) > 0){
-          message('Freeing parameters...')
-          finished <- FALSE
-          while(!finished && length(parsteps)>0){
-            if(length(parsteps)>1) parsteps <- parsteps[-1] else parsteps <- c()#parsteps[pstat> pcheck]
-            
-            optimfit <- sgd(init, fitfunc = target,
-              # parsets=parsets,
-              nsubsets = nsubsets,
-              itertol = tol*1000*stochasticTolAdjust,
-              maxiter=5000,
-              whichignore = unlist(parsteps),
-              plot=plot,worsecountconverge = 20)
-            
-            
-            if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else{
-              finished <- TRUE
-              init = optimfit$par
-            }
-          }
-        }
-      } #end carefulfit
+      } #end carefulfit  
+      
+      carefulfit <- FALSE
+      iter <- 0
+      storedLp <- c()
+      # if(length(parsteps) <1 && (standata$ntipred ==0 || notipredsfirstpass ==FALSE)) finished <- TRUE
+      
+      
+      
       
       
       
@@ -1107,11 +1085,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standata,split=TRUE,nsubsets = nsubsets)
           if(optimcores==1) smf<-stan_reinitsf(sm,standata)
           
-          
           if(stochastic || nsubsets > 1) optimfit <- try(sgd(init, fitfunc = target,
+            lproughnesstarget=lproughnesstarget,
             # parsets=parsets,
             nsubsets = nsubsets,
-            whichignore = parsteps,
+            whichignore = unlist(parsteps),
             plot=plot,
             maxiter=5000,
             itertol=tol*1000*stochasticTolAdjust,worsecountconverge = 20))
@@ -1125,7 +1103,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             optimfit$value = -optimfit$f
           }
           
-          if(length(parsteps)>0) init[-parsteps] = optimfit$par else init=optimfit$par
+          if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else init=optimfit$par
           
         }
         
@@ -1139,36 +1117,191 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standata,split=TRUE)
       if(optimcores==1) smf<-stan_reinitsf(sm,standata)
       
-      if(stochastic){
-        message('Optimizing...')
-        optimfit <- try(sgd(init, fitfunc = target,
-          # parsets=parsets,
-          nsubsets = 1,
-          itertol = tol*stochasticTolAdjust,
-          parrangetol=tol*100,
-          maxiter=5000,
-          whichignore = unlist(parsteps),
-          plot=plot))
+      
+      ##parameter stepwise / selection
+      #update init, making sure ignored parameters still have values in init
+      if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else init=optimfit$par
+      
+      if(length(parsteps) > 0){
+        if(!parstepsAutoModel){
+          message('Freeing parameters...')
+          finished <- FALSE
+          while(!finished && length(parsteps)>0){
+            if(length(parsteps)>1) parsteps <- parsteps[-1] else parsteps <- c()#parsteps[pstat> pcheck]
+            
+            optimfit <- sgd(init, fitfunc = target,
+              lproughnesstarget=lproughnesstarget,
+              # parsets=parsets,
+              nsubsets = nsubsets,
+              itertol = tol*1000*stochasticTolAdjust,
+              maxiter=5000,
+              whichignore = unlist(parsteps),
+              plot=plot,worsecountconverge = 20)
+            
+            
+            if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else{
+              finished <- TRUE
+              init = optimfit$par
+            }
+          }
+        }
+        if(parstepsAutoModel){
+          # -----------------------------
+          # Assume the following are available:
+          #   - parFreeList: a list of length 2
+          #         parFreeList[[1]]: vector of indices for basic parameters (always estimated)
+          #         parFreeList[[2]]: vector of candidate parameter indices that are initially fixed
+          #   - init: the current parameter vector (from the previous optimization stage)
+          #   - target: a function that returns the log probability, with an attribute "gradient"
+          #   - jac: a function to compute a finite-difference approximation of a parameter's Hessian (diagonal element)
+          #   - sgd: your stochastic optimizer that accepts an argument 'whichignore' (the parameters to keep fixed)
+          #   - tol, stochasticTolAdjust, nsubsets, plot: parameters as in your code.
+          #
+          # Set a Wald threshold:
+          wald_threshold <- 1.96  
+          
+          jacPars <- function(pars, step = 1e-3, whichpars) {
+            # Initialize a vector to store the Hessian diagonal estimates for the specified parameters.
+            hess_diag <- numeric(length(whichpars))
+            # Loop over each requested parameter index.
+            for (i in seq_along(whichpars)) {
+              idx <- whichpars[i]
+              # Create perturbed parameter vectors: one for the forward difference and one for the backward difference.
+              pars_forward <- pars
+              pars_backward <- pars
+              pars_forward[idx] <- pars_forward[idx] + step
+              pars_backward[idx] <- pars_backward[idx] - step
+              # Evaluate the target function at both perturbed vectors.
+              # It is assumed the 'target' function returns an object with the gradient as an attribute "gradient".
+              forward_val <- target(pars_forward)
+              backward_val <- target(pars_backward)
+              # Extract the gradient for the current parameter.
+              grad_forward <- attributes(forward_val)$gradient[idx]
+              grad_backward <- attributes(backward_val)$gradient[idx]
+              # Estimate the second derivative via the central difference formula.
+              hess_diag[i] <- (grad_forward - grad_backward) / (2 * step)
+            }
+            return(hess_diag)
+          }
+          
+          # Start with all candidate parameters fixed:
+          currentFixed <- parsteps[[1]]
+          # The permanently free parameter indices are:
+          freePars <- (1:length(init))[!parsteps[[1]] %in% (1:length(init))]
+          # Track which candidate parameters have been freed (initially, none)
+          freed_candidates <- c()
+          
+          continueFreeing <- TRUE
+          improvement_threshold <- 1.96
+          while (continueFreeing && length(currentFixed) > 0) {
+            
+            # Evaluate the current log probability and obtain the gradient.
+            obj_val <- target(init)
+            grad_vec <- attributes(obj_val)$gradient
+            
+            # For each candidate parameter currently fixed, compute expected improvement.
+            improvement_est <- numeric(length(currentFixed))
+            for (i in seq_along(currentFixed)) {
+              idx <- currentFixed[i]
+              
+              # Use our simple jacPars to compute the approximate second derivative for this parameter.
+              hess_est <- jacPars(init, step = 1e-6, whichpars = idx)
+              
+              # For stability, if the second derivative is NA or non-negative (which is
+              # unexpected at a maximum), force a small negative value.
+              if (is.na(hess_est) || hess_est >= 0) {
+                hess_val <- -1e-6
+              } else {
+                hess_val <- hess_est
+              }
+              
+              # Estimate expected improvement: 0.5 * (grad^2 / |H_ii|)
+              improvement_est[i] <- 0.5 * (grad_vec[idx]^2 / abs(hess_val))
+            }
+            
+            # Find the candidate with the highest expected improvement.
+            best_candidate_index <- which.max(improvement_est)
+            best_improvement <- improvement_est[best_candidate_index]
+            
+            if (best_improvement >= improvement_threshold) {
+              # browser()
+              best_param <- currentFixed[best_candidate_index]
+              ms=data.frame(standata$matsetup)
+              bestpar_ms <- ms[ms$param == best_param,,drop=FALSE][1,]
+              message(paste0("Freeing parameter ",names(sort(ctStanMatricesList()$all))[bestpar_ms$matrix],'[',
+                bestpar_ms$row,',',bestpar_ms$col,'] with expected improvement ',round(best_improvement,3)))
+              
+              # Mark the best candidate as freed.
+              freed_candidates <- c(freed_candidates, best_param)
+              # Remove it from the list of currently fixed candidate parameters.
+              currentFixed <- currentFixed[-best_candidate_index]
+              
+              # Create the list of indices to ignore in the next optimization step.
+              # If no candidates remain, use an empty vector.
+              ignore_indices <- if (length(currentFixed) > 0) currentFixed else integer(0)
+              
+              
+              # Now, re-run the optimization so that the newly freed parameter is estimated.
+              # Note that 'freePars' (the basic parameters) and the already freed candidates remain free.
+              optimfit <- sgd(init,
+                fitfunc = target,
+                nsubsets = nsubsets,
+                itertol = tol * 1000 * stochasticTolAdjust,
+                maxiter = 5000,
+                whichignore = ignore_indices,
+                plot = plot,
+                worsecountconverge = 20)
+              
+              # Update the current parameter vector with the new (optimized) estimates.
+              init[-ignore_indices] <- optimfit$par
+            } else {
+              message("No candidate parameter meets the improvement threshold. Terminating freeing sequence.")
+              continueFreeing <- FALSE
+              parsteps <- currentFixed
+            }
+          }
+          
+          # At this point, all parameters in `freePars` (the basic ones) and those in `freed_candidates`
+          # are free (and have been re–optimized), while those remaining in `currentFixed` are kept fixed.
+          # You can now proceed with the rest of your model estimation using 'init' as the final parameter estimate.
+          parsteps <- currentFixed
+        }
       }
       
       
       
-      if(!'try-error' %in% class(optimfit) & !'NULL' %in% class(optimfit)){
-        if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else init=optimfit$par
-      }
-      
-      #use bfgs to double check stochastic fit (or just use bfgs if requested)... 
-      message('Finishing optimization...')
-      optimfit <- mize(init, fg=mizelpg, max_iter=99999,
-        method="L-BFGS",memory=100,
-        line_search='Schmidt',c1=1e-4,c2=.9,step0='schmidt',ls_max_fn=999,
-        abs_tol=NULL,grad_tol=NULL,
-        rel_tol=tol,
-        step_tol=NULL,ginf_tol=NULL)
-      # if(verbose==0 && as.logical(plot)) message('')
-      optimfit$value = -optimfit$f
-      init = optimfit$par
-      
+      if(!parstepsAutoModel){
+        if(stochastic){
+          message('Optimizing...')
+          optimfit <- try(sgd(init, fitfunc = target,
+            lproughnesstarget=lproughnesstarget,
+            # parsets=parsets,
+            nsubsets = 1,
+            itertol = tol*stochasticTolAdjust,
+            parrangetol=tol*100,
+            maxiter=5000,
+            whichignore = unlist(parsteps),
+            plot=plot))
+        }
+        
+        
+        
+        if(!'try-error' %in% class(optimfit) & !'NULL' %in% class(optimfit)){
+          if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else init=optimfit$par
+        }
+        
+        #use bfgs to double check stochastic fit (or just use bfgs if requested)... 
+        message('Finishing optimization...')
+        optimfit <- mize(init, fg=mizelpg, max_iter=99999,
+          method="L-BFGS",memory=100,
+          line_search='Schmidt',c1=1e-4,c2=.9,step0='schmidt',ls_max_fn=999,
+          abs_tol=NULL,grad_tol=NULL,
+          rel_tol=tol,
+          step_tol=NULL,ginf_tol=NULL)
+        # if(verbose==0 && as.logical(plot)) message('')
+        optimfit$value = -optimfit$f
+        init = optimfit$par
+      } #end if not auto model 
       
       
       
@@ -1673,10 +1806,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   
   if(estonly) {
     smf <- stan_reinitsf(sm,standata)
-    stanfit=list(optimfit=optimfit,stanfit=smf, rawest=est2)
+    stanfit=list(optimfit=optimfit,stanfit=smf, rawest=est2,parsteps=parsteps)
   }
   optimfinished <- TRUE #disable exit message re pars
   return(stanfit)
 }
+
 
 
