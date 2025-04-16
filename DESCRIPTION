@@ -76,7 +76,9 @@ Suggests:
     arules,
     collapse,
     qgam,
-    papaja
+    papaja,
+    future,
+    future.apply
 VignetteBuilder: knitr
 RoxygenNote: 7.3.2
 SystemRequirements: GNU make
