@@ -1023,8 +1023,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       if(standata$ntipred > 0 && notipredsfirstpass){
         message('Including TI predictors...')
         
-        
-        
         # standata$tipredeffectscale <- tipredeffectscale
         standata$dokalmanrows[] <- 1L
         # init = optimfit$par
@@ -1103,14 +1101,12 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             optimfit$value = -optimfit$f
           }
           
-          if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else init=optimfit$par
+          
           
         }
-        
+        if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else init=optimfit$par
       } #end ti pred auto total loop
-      
-      
-      
+
       
       finished <- TRUE
       standata$nsubsets <- nsubsets <- 1L
@@ -1119,9 +1115,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       
       ##parameter stepwise / selection
-      #update init, making sure ignored parameters still have values in init
-      if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else init=optimfit$par
-      
       if(length(parsteps) > 0){
         if(!parstepsAutoModel){
           message('Freeing parameters...')
