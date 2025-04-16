@@ -137,7 +137,7 @@ ctFitAutoGroupModel <- function(m, dat, cores, DRIFT=TRUE, DIFFUSION=TRUE,groupF
     suppressMessages(ctFitAuto(m = m, dat=datsi,initialRestrictions=groupRestrictedPars, cores=1,fast=TRUE,...))
   },future.seed=TRUE)
   
-  individualProportions=ctFitAutoGetIndividualRestrictions(fits, f0,groupFreeThreshold=groupFreeThreshold)$individualStructure
+  individualProportions=ctFitAutoGetIndividualRestrictions(fits, f0,groupFreeThreshold=groupFreeThreshold)$individualProportions
   
   return(list(fits=refits,groupModel=groupm,individualProportions=individualProportions))
 }
