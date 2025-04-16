@@ -124,6 +124,8 @@ ctFitAutoGroupModel <- function(m, dat, cores, DRIFT=TRUE, DIFFUSION=TRUE,groupF
     suppressMessages(ctFitAuto(m = m, dat=datsi,DRIFT=DRIFT, DIFFUSION=DIFFUSION, cores=1,fast=TRUE,...))
   },future.seed=TRUE)
 
+  groupModelChanges=TRUE
+  while(groupModelChanges){
   # Get the parameter restrictions for each subject
   individualRestrictions=ctFitAutoGetIndividualRestrictions(fits,f0,groupFreeThreshold=groupFreeThreshold)
   
@@ -132,12 +134,15 @@ ctFitAutoGroupModel <- function(m, dat, cores, DRIFT=TRUE, DIFFUSION=TRUE,groupF
   groupm <- ctFitAutoRestrictPars(m, f0, groupRestrictedPars)
   message('Group model determined, with ', length(groupRestrictedPars), ' candidate parameters fixed and ', 
           length(individualRestrictions$possibleRestrictions) - length(groupRestrictedPars), ' parameters free. Refitting individual level models.')
-  refits <- future.apply::future_lapply(unique(dat[[m$subjectIDname]]), function(si){
+  fits <- future.apply::future_lapply(unique(dat[[m$subjectIDname]]), function(si){
     datsi <- dat[dat[[m$subjectIDname]]==si,]
     suppressMessages(ctFitAuto(m = m, dat=datsi,initialRestrictions=groupRestrictedPars, cores=1,fast=TRUE,...))
   },future.seed=TRUE)
   
   individualProportions=ctFitAutoGetIndividualRestrictions(fits, f0,groupFreeThreshold=groupFreeThreshold)$individualProportions
   
-  return(list(fits=refits,groupModel=groupm,individualProportions=individualProportions))
+  if(!any(individualProportions > groupFreeThreshold)) groupModelChanges=FALSE
+  }
+  
+  return(list(fits=fits,groupModel=groupm,individualProportions=individualProportions))
 }
