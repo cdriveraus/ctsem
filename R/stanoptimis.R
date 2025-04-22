@@ -648,6 +648,8 @@ clusterIDeval <- function(cl,commands){
 #' @param parsteps ordered list of vectors of integers denoting which parameters should begin fixed
 #' at zero, and freed sequentially (by list order). Useful for complex models, e.g. keep all cross couplings fixed to zero 
 #' as a first step, free them in second step. 
+#' @param parstepsAutoModel if TRUE, determines model structure for the parameters specified in parsteps automatically. If 'group', determines this on a group level first and then a subject level. Primarily for internal ctsem use, see \code{?ctFitAuto}.
+#' @param groupFreeThreshold threshold for determining whether a parameter is free in a group level model. If the proportion of subjects with a non-zero parameter is above this threshold, the parameter is considered free. Only used with parstepsAutoModel = 'group'.
 #' @param chancethreshold drop iterations of importance sampling where any samples are chancethreshold times more likely to be drawn than expected.
 #' @param matsetup subobject of ctStanFit output. If provided, parameter names instead of numbers are output for any problem indications.
 #' @param nsubsets number of subsets for stochastic optimizer. Subsets are further split across cores, 
@@ -666,7 +668,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   priors=TRUE,carefulfit=TRUE,
   bootstrapUncertainty=FALSE,
   subsamplesize=1,
-  parsteps=c(),parstepsAutoModel=FALSE,
+  parsteps=c(),parstepsAutoModel=FALSE,groupFreeThreshold=.5,
   plot=FALSE,
   is=FALSE, isloopsize=1000, finishsamples=1000, tdf=10,chancethreshold=100,finishmultiply=5,
   lproughnesstarget=.2,
@@ -728,6 +730,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     stochastic=TRUE
     message('Stochastic optimizer used for data driven parameter inclusion') 
   }
+  
+  if(cores<2 && parstepsAutoModel %in% 'group') stop('parstepsAutoModel = "group" requires cores > 1')
   
   # parsets <- 1
   optimcores <- ifelse(length(unique(standata$subject)) < cores, length(unique(standata$subject)),cores)
@@ -1106,17 +1110,18 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         }
         if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else init=optimfit$par
       } #end ti pred auto total loop
-
+      
       
       finished <- TRUE
       standata$nsubsets <- nsubsets <- 1L
+
       if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standata,split=TRUE)
       if(optimcores==1) smf<-stan_reinitsf(sm,standata)
       
       
       ##parameter stepwise / selection
       if(length(parsteps) > 0){
-        if(!parstepsAutoModel){
+        if(parstepsAutoModel %in% FALSE){
           message('Freeing parameters...')
           finished <- FALSE
           while(!finished && length(parsteps)>0){
@@ -1138,7 +1143,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             }
           }
         }
-        if(parstepsAutoModel){
+        if(parstepsAutoModel %in% TRUE){
           # -----------------------------
           # Assume the following are available:
           #   - parFreeList: a list of length 2
@@ -1238,8 +1243,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               # Note that 'freePars' (the basic parameters) and the already freed candidates remain free.
               optimfit <- sgd(init,
                 fitfunc = target,
-                nsubsets = nsubsets,
-                itertol = tol * 1000 * stochasticTolAdjust,
+                itertol = tol * stochasticTolAdjust,
                 maxiter = 5000,
                 whichignore = ignore_indices,
                 plot = plot,
@@ -1261,9 +1265,188 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         }
       }
       
+      if (parstepsAutoModel %in% 'group') {
+        # --------------------------------------------------
+        # Group‐level stepwise freeing, with per‐subject re‐fit and init averaging
+        
+        # thresholds
+        improvement_threshold <- 1.96   # per‐subject ΔLL must exceed this
+        
+        # initial fixed candidates and subjects
+        currentFixed <- parsteps[[1]]
+        subject_ids  <- unique(standata$subject)
+        
+        
+        parallel::clusterExport(benv$clctsem, c(
+          "tol", "stochasticTolAdjust",  "standatact_specificsubjects","subject_ids"
+        ), envir = environment())
+        
+        continueFreeing <- TRUE
+        subj_init <- matrix(rep(init, length(subject_ids)), nrow = length(subject_ids), byrow = TRUE)
+        while (continueFreeing && length(currentFixed) > 0) {
+          # export updated init and fixed set to workers
+          parallel::clusterExport(benv$clctsem, c("currentFixed",'subj_init'), envir = environment())
+          # 1) fit each subject with currentFixed held fixed
+          subj_pars <- parallel::parLapply(benv$clctsem, subject_ids, function(sid) {
+            sd    <- standatact_specificsubjects(standata, sid)
+            smf   <- stan_reinitsf(sm, sd)
+            parlp <- function(parm){
+              out <- try(rstan::log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
+              if("try-error" %in% class(out) || any(is.nan(attributes(out)$gradient))) {
+                outerr <- out
+                out <- -1e100
+                attributes(out)$gradient <- rep(NaN, length(parm))
+                attributes(out)$err <- outerr
+              }
+              if(is.null(attributes(out)$gradient)) attributes(out)$gradient <- rep(NaN, length(parm))
+              return(out)
+            }
+            fit   <- sgd(
+              init=subj_init[sid,],
+              fitfunc     = parlp,
+              itertol     = tol * stochasticTolAdjust,
+              maxiter     = 5000,
+              whichignore = currentFixed,
+              worsecountconverge = 20
+            )
+            as.numeric(fit$par)
+          })
+          subj_mat <- do.call(rbind, subj_pars)
+          subj_init[,-currentFixed] <- subj_mat # update init for next iteration
+          
+          # 2) average into init
+          init[-currentFixed] <- colMeans(subj_mat)
+          
+          # 3) compute per‐subject expected ΔLL for each candidate
+          subj_imp <- parallel::parLapply(benv$clctsem,seq_along(subject_ids), function(i) {
+            sid  <- subject_ids[i]
+            pvec <- init
+            pvec[-currentFixed] <- subj_mat[i, ]
+            sd   <- standatact_specificsubjects(standata, sid)
+            smf  <- stan_reinitsf(sm, sd)
+            tgt  <- function(p) log_prob(smf, upars = p, adjust_transform = TRUE, gradient = TRUE)
+            grad <- attributes(tgt(pvec))$gradient
+            # helper: finite‐difference Hessian diagonal
+            jacPars <- function(pars, step = 1e-3, whichpars) {
+              sapply(whichpars, function(idx) {
+                pf <- pars; pb <- pars
+                pf[idx] <- pf[idx] + step
+                pb[idx] <- pb[idx] - step
+                gf <- attributes(tgt(pf))$gradient[idx]
+                gb <- attributes(tgt(pb))$gradient[idx]
+                (gf - gb) / (2 * step)
+              })
+            }
+            sapply(currentFixed, function(idx) {
+              h <- jacPars(pvec, step = 1e-6, whichpars = idx)
+              if (is.na(h) || h >= 0) h <- -1e-6
+              0.5 * (grad[idx]^2 / abs(h))
+            })
+          })
+          # coerce to matrix if needed
+          imp_vecs <- lapply(subj_imp, as.numeric)
+          imp_mat  <- do.call(rbind, imp_vecs)
+          if (is.null(dim(imp_mat))) {
+            imp_mat <- matrix(imp_mat, nrow = length(imp_vecs), byrow = TRUE)
+          }
+          
+          # 4) identify group‐level candidates
+          prop_above  <- colMeans(imp_mat >= improvement_threshold)
+          group_cands <- currentFixed[prop_above > groupFreeThreshold]
+          
+          if (length(group_cands) == 0) {
+            message("No group‐level parameters exceed threshold; stopping.")
+            break
+          }
+          
+          # pick group candidate with highest mean ΔLL
+          means      <- colMeans(imp_mat[, currentFixed %in% group_cands, drop = FALSE])
+          best_param <- group_cands[which.max(means)]
+          
+          message(sprintf(
+            "Freeing parameter %d (%.0f%% subjects ΔLL ≥ %.2f)",
+            best_param,
+            100 * prop_above[currentFixed == best_param],
+            improvement_threshold
+          ))
+          
+          # update fixed set only
+          currentFixed <- setdiff(currentFixed, best_param)
+        }
+        groupFixed <- currentFixed
+        parallel::clusterExport(benv$clctsem, c("groupFixed", "subj_init"), envir = environment())
+  
+        subj_res <- parallel::parLapply(benv$clctsem, seq_along(subject_ids), function(i) {
+        # for(i in 1:length(subject_ids)){
+        # lapply(seq_along(subject_ids), function(i) {
+          sid    <- subject_ids[i]
+          sd     <- standatact_specificsubjects(standata, sid)
+          smf    <- stan_reinitsf(sm, sd)
+          p_i    <- subj_init[sid,]
+          free_i <- setdiff(seq_along(init), groupFixed)
+          subjFixed <- groupFixed
+          freed_i   <- integer(0)
+          parlp <- function(parm){
+            out <- try(rstan::log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
+            if("try-error" %in% class(out) || any(is.nan(attributes(out)$gradient))) {
+              outerr <- out
+              out <- -1e100
+              attributes(out)$gradient <- rep(NaN, length(parm))
+              attributes(out)$err <- outerr
+            }
+            if(is.null(attributes(out)$gradient)) attributes(out)$gradient <- rep(NaN, length(parm))
+            return(out)
+          }
+          repeat {
+            lpinit <- parlp(p_i)
+            grad <- attributes(lpinit)$gradient
+            impr <- sapply(subjFixed, function(idx) {
+              pf <- p_i; pb <- p_i
+              pf[idx] <- pf[idx] + 1e-6
+              pb[idx] <- pb[idx] - 1e-6
+              gf <- attributes(parlp(pf))$gradient[idx]
+              gb <- attributes(parlp(pb))$gradient[idx]
+              h  <- (gf - gb) / (2 * 1e-6)
+              if (is.na(h) || h >= 0) h <- -1e-6
+              0.5 * (grad[idx]^2 / abs(h))
+            })
+            if (all(impr < improvement_threshold)) break
+            best_idx  <- subjFixed[which.max(impr)]
+            freed_i   <- c(freed_i, best_idx)
+            subjFixed <- setdiff(subjFixed, freed_i)
+            if(length(subjFixed) == 0) break
+            fit <- sgd(
+              p_i+rnorm(length(p_i),0,.01), #init away from old max
+              fitfunc = parlp,
+              itertol     = tol * stochasticTolAdjust,
+              maxiter     = 5000,
+              whichignore = subjFixed,
+              worsecountconverge = 20
+            )
+            p_i[sort(c(free_i,freed_i))] <- fit$par
+          }
+          list(par = p_i, freed = freed_i)
+        })
+        
+        # build output matrices
+        subjPars  <- t(sapply(subj_res, `[[`, "par"))
+        subjFreed <- t(sapply(subj_res, function(x) groupFixed %in% x$freed))
+        rownames(subjFreed) <- subject_ids
+        colnames(subjFreed) <- as.character(groupFixed)
+        
+        # finalize
+        parsteps  <- groupFixed
+        optimfit  <- list(
+          par       = init[-parsteps],
+          subjPars  = subjPars,
+          subjFreed = subjFreed
+        )
+      }
       
       
-      if(!parstepsAutoModel){
+      
+      
+      if(parstepsAutoModel %in% FALSE){
         if(stochastic){
           message('Optimizing...')
           optimfit <- try(sgd(init, fitfunc = target,
@@ -1276,8 +1459,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             whichignore = unlist(parsteps),
             plot=plot))
         }
-        
-        
         
         if(!'try-error' %in% class(optimfit) & !'NULL' %in% class(optimfit)){
           if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else init=optimfit$par
@@ -1294,8 +1475,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # if(verbose==0 && as.logical(plot)) message('')
         optimfit$value = -optimfit$f
         init = optimfit$par
-      } #end if not auto model 
-      
+      } #end if not auto model parsteps
       
       
       bestfit <-optimfit$value

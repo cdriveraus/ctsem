@@ -104,6 +104,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,plot=FALSE,
       }
       
       if(i > 1){
+        step[step > 9999999999999999] <- 9999999999999999
         delta =   step * sign(gsmooth+dgsmooth/4) * (abs(gsmooth+dgsmooth/4))^(1/2)
         # deltadgdp= step * dgsmooth * sum(abs(gsmooth))/sum(abs(dgsmooth))# +dgsmooth *sum(abs(gsmooth))/sum(abs(dgsmooth)))   #* exp((rnorm(length(g),0,.02)))
         # delta=delta+deltadgdp
@@ -119,6 +120,7 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,plot=FALSE,
         #   parextra=sample(1:length(pars),floor(.05*length(pars)))
         #   delta[parextra] <- step*sqrt(abs(gsmooth[parextra]))*10
         # }
+        # if(any(is.na(abs(delta)))) browser()
         delta[abs(delta) > maxparchange] <- maxparchange*sign(delta[abs(delta) > maxparchange])
         # delta = delta +  delta/2 - deltaold/2
         
@@ -248,10 +250,12 @@ sgd <- function(init,fitfunc,whichignore=c(),nsubsets=1,nsubjects=NA,plot=FALSE,
     groughnessmod = ( ( ( (1/(-(groughness)-groughnesstarget)) / (1/-groughnesstarget) + .5) ) -1)
     
     if(i > warmuplength) {
+      oldstep=step
       if(nsubsets==1) step = step + roughnesschangemulti*(step* .5*lproughnessmod) #(ifelse(nsubsets > 0,0,1))
       step = step + roughnesschangemulti*step* 2*gsmoothroughnessmod #* min(sqrt(deltasmoothsq),1)
       if(nsubsets==1) step = step + roughnesschangemulti*step* .6*groughnessmod # * min(sqrt(deltasmoothsq),1)
       # + step * rmsstepmod
+      # if(any(is.na(step))) browser()
     }
     
     signdif= sign(gsmooth)!=sign(gmid)
