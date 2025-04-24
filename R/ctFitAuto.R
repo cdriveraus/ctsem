@@ -102,7 +102,7 @@ ctFitAuto <- function(m, dat, DRIFT=TRUE, DIFFUSION=TRUE,fast=FALSE,initialRestr
         # Save the current future plan and restore it when the function exits
         old_plan <- future::plan()
         on.exit(future::plan(old_plan), add = TRUE)
-        future::plan(multisession, workers = cores)
+        future::plan(future::multisession, workers = cores)
         
         ffinal$subjectfits <- lapply(1:nrow(f$stanfit$optimfit$subjFreed), function(si){
           subjinit <- f$stanfit$optimfit$subjPars[si,]
