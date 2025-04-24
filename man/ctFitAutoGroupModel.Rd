@@ -7,6 +7,7 @@
 ctFitAutoGroupModel(
   m,
   dat,
+  cores,
   DRIFT = TRUE,
   DIFFUSION = TRUE,
   groupFreeThreshold = 0.5,
@@ -17,6 +18,8 @@ ctFitAutoGroupModel(
 \item{m}{ctStan model object without time independent predictors.}
 
 \item{dat}{Data in long format}
+
+\item{cores}{Number of CPU cores to use}
 
 \item{DRIFT}{Logical, if TRUE, off diagonal drift parameters in the model are tested for inclusion}
 
@@ -41,7 +44,7 @@ testmodel <- ctstantestfit$ctstanmodelbase
 testmodel$pars$TI1_effect <- NULL
 testmodel$n.TIpred <- 0
 testmodel$TIpredNames <- NULL
-testfit <- ctFitAutoGroupModel(testmodel, dat = ctstantestdat, DRIFT = TRUE, DIFFUSION = TRUE)
+testfit <- ctFitAutoGroupModel(testmodel, dat = ctstantestdat, cores=2, DRIFT = TRUE, DIFFUSION = TRUE)
 ctModelLatex(testfit$groupModel)
 lapply(testfit$fits,function(x) print(ctStanContinuousPars(x)$DRIFT))
 }

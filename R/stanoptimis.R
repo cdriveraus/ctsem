@@ -1114,7 +1114,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       finished <- TRUE
       standata$nsubsets <- nsubsets <- 1L
-
+      
       if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standata,split=TRUE)
       if(optimcores==1) smf<-stan_reinitsf(sm,standata)
       
@@ -1137,7 +1137,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               plot=plot,worsecountconverge = 20)
             
             
-            if(length(parsteps)>0) init[-unlist(parsteps)] = optimfit$par else{
+            if(length(parsteps)>0){
+              init[-unlist(parsteps)] = optimfit$par
+            }else{
               finished <- TRUE
               init = optimfit$par
             }
@@ -1194,6 +1196,20 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           while (continueFreeing && length(currentFixed) > 0) {
             
             # Evaluate the current log probability and obtain the gradient.
+            optimfit <- sgd(init, fitfunc = target,
+              lproughnesstarget=lproughnesstarget,
+              # parsets=parsets,
+              nsubsets = nsubsets,
+              itertol = tol*1000*stochasticTolAdjust,
+              maxiter=5000,
+              whichignore = currentFixed,
+              plot=plot,worsecountconverge = 20)
+            
+            # Create the list of indices to ignore in the next optimization step.
+            # If no candidates remain, use an empty vector.
+            ignore_indices <- if (length(currentFixed) > 0) currentFixed else integer(0)
+            
+            init[-ignore_indices] = optimfit$par
             obj_val <- target(init)
             grad_vec <- attributes(obj_val)$gradient
             
@@ -1220,7 +1236,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             # Find the candidate with the highest expected improvement.
             best_candidate_index <- which.max(improvement_est)
             best_improvement <- improvement_est[best_candidate_index]
-            
+            # browser()
             if (best_improvement >= improvement_threshold) {
               # browser()
               best_param <- currentFixed[best_candidate_index]
@@ -1233,24 +1249,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               freed_candidates <- c(freed_candidates, best_param)
               # Remove it from the list of currently fixed candidate parameters.
               currentFixed <- currentFixed[-best_candidate_index]
-              
-              # Create the list of indices to ignore in the next optimization step.
-              # If no candidates remain, use an empty vector.
-              ignore_indices <- if (length(currentFixed) > 0) currentFixed else integer(0)
-              
-              
-              # Now, re-run the optimization so that the newly freed parameter is estimated.
-              # Note that 'freePars' (the basic parameters) and the already freed candidates remain free.
-              optimfit <- sgd(init,
-                fitfunc = target,
-                itertol = tol * stochasticTolAdjust,
-                maxiter = 5000,
-                whichignore = ignore_indices,
-                plot = plot,
-                worsecountconverge = 20)
-              
-              # Update the current parameter vector with the new (optimized) estimates.
-              init[-ignore_indices] <- optimfit$par
+
             } else {
               message("No candidate parameter meets the improvement threshold. Terminating freeing sequence.")
               continueFreeing <- FALSE
@@ -1375,10 +1374,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         }
         groupFixed <- currentFixed
         parallel::clusterExport(benv$clctsem, c("groupFixed", "subj_init"), envir = environment())
-  
+        
         subj_res <- parallel::parLapply(benv$clctsem, seq_along(subject_ids), function(i) {
-        # for(i in 1:length(subject_ids)){
-        # lapply(seq_along(subject_ids), function(i) {
+          # for(i in 1:length(subject_ids)){
+          # lapply(seq_along(subject_ids), function(i) {
           sid    <- subject_ids[i]
           sd     <- standatact_specificsubjects(standata, sid)
           smf    <- stan_reinitsf(sm, sd)

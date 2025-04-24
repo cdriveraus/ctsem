@@ -21,6 +21,7 @@ stanoptimis(
   subsamplesize = 1,
   parsteps = c(),
   parstepsAutoModel = FALSE,
+  groupFreeThreshold = 0.5,
   plot = FALSE,
   is = FALSE,
   isloopsize = 1000,
@@ -74,6 +75,10 @@ for computing standard errors or initializing importance sampling.}
 \item{parsteps}{ordered list of vectors of integers denoting which parameters should begin fixed
 at zero, and freed sequentially (by list order). Useful for complex models, e.g. keep all cross couplings fixed to zero 
 as a first step, free them in second step.}
+
+\item{parstepsAutoModel}{if TRUE, determines model structure for the parameters specified in parsteps automatically. If 'group', determines this on a group level first and then a subject level. Primarily for internal ctsem use, see \code{?ctFitAuto}.}
+
+\item{groupFreeThreshold}{threshold for determining whether a parameter is free in a group level model. If the proportion of subjects with a non-zero parameter is above this threshold, the parameter is considered free. Only used with parstepsAutoModel = 'group'.}
 
 \item{plot}{Logical. If TRUE, plot iteration details. Probably slower.}
 

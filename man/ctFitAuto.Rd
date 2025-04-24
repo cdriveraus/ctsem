@@ -4,7 +4,18 @@
 \alias{ctFitAuto}
 \title{ctFitAuto}
 \usage{
-ctFitAuto(m, dat, DRIFT = TRUE, DIFFUSION = TRUE, ...)
+ctFitAuto(
+  m,
+  dat,
+  DRIFT = TRUE,
+  DIFFUSION = TRUE,
+  fast = FALSE,
+  initialRestrictions = NA,
+  individuals = FALSE,
+  groupFreeThreshold = 0.5,
+  cores = 2,
+  ...
+)
 }
 \arguments{
 \item{m}{ctStan model object without time independent predictors.}
@@ -14,6 +25,16 @@ ctFitAuto(m, dat, DRIFT = TRUE, DIFFUSION = TRUE, ...)
 \item{DRIFT}{Logical, if TRUE, off diagonal drift parameters in the model are tested for inclusion}
 
 \item{DIFFUSION}{Logical, if TRUE, off diagonal diffusion parameters in the model are tested for inclusion}
+
+\item{fast}{Logical, if TRUE, do not compute uncertainty hessian / samples in individual level models.}
+
+\item{initialRestrictions}{Alternative to the DRIFT / DIFFUSION arguments -- specify explicitly which parameters should be fixed initially, vector of integers based on the $setup$matsetup element of the ctStanFit object, which gives the parameter numbers. Primarily for internal use.}
+
+\item{individuals}{Logical, if TRUE, fit individual level models and determine a group model based on the groupFreeThreshold argument.}
+
+\item{groupFreeThreshold}{Numeric, threshold for group model structure -- if a parameter improves fit in this proportion of individuals or greater, it is freed for all individuals.}
+
+\item{cores}{Number of CPU cores to use}
 
 \item{...}{Additional arguments passed to ctStanFit}
 }

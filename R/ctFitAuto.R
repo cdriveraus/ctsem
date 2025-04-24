@@ -43,7 +43,6 @@ ctFitAutoGetIndividualRestrictions <- function(fits,f0,groupFreeThreshold){
 #' @details This function is used to automatically select parameters in a ctStan model. Any specified DRIFT / DIFFUSION matrix off diagonals are only included if they significantly improve the likelihood, based on an estimated likelihood ratio test (relying on the Hessian).
 #' @return A ctStan fit object
 #' @export
-#' @importFrom future.apply future_lapply
 #' @examples
 #' #' \dontrun{
 #' testmodel <- ctstantestfit$ctstanmodelbase
@@ -138,7 +137,6 @@ ctFitAuto <- function(m, dat, DRIFT=TRUE, DIFFUSION=TRUE,fast=FALSE,initialRestr
 #' @details This function is used to automatically select parameters in a ctStan model. Any specified DRIFT / DIFFUSION matrix off diagonals are only included if they significantly improve the likelihood, based on an estimated likelihood ratio test (relying on the Hessian). Subjects are fit one by one, and a group model is determined based on the groupFreeThreshold parameter -- when the proportion of subjects with a parameter free is above this threshold, the parameter is freed in the group model.
 #' @return A list containing a list of ctStan fit objects for each subject, and a group model
 #' @export
-#' @importFrom future.apply future_lapply
 #' @examples
 #' \dontrun{
 #' testmodel <- ctstantestfit$ctstanmodelbase
@@ -159,7 +157,7 @@ ctFitAutoGroupModel <- function(m, dat, cores, DRIFT=TRUE, DIFFUSION=TRUE,groupF
   old_plan <- future::plan()
   on.exit(future::plan(old_plan), add = TRUE)
   
-  future::plan(multisession, workers = cores)
+  future::plan(future::multisession, workers = cores)
   
   dat=data.frame(dat)
   f0 <- ctStanFit(
