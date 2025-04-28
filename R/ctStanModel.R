@@ -248,7 +248,7 @@ ctStanModel<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   
   for(ri in 1:nrow(ctspec)){ #set NA's on complex params
     
-    if(grepl('\\W',gsub('.','',ctspec$param[ri],fixed=TRUE)) || ctspec$param[ri] %in% latentNames){
+    if(grepl('\\W',gsub('.','',ctspec$param[ri],fixed=TRUE)) || ctspec$param[ri] %in% latentNames){ #if non word chars or state ref
       ctspec$value[ri] <- NA
       if(!simpleStateCheck(ctspec$param[ri])) ctspec$transform[ri] <-NA #allow transforms for simplestates
       if(simpleStateCheck(ctspec$param[ri])) ctspec$transform[ri] <-'param' #allow transforms for simplestates

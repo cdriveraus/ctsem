@@ -13,11 +13,11 @@ ctModel0DRIFT <- function(ctm,continuoustime){
 }
 
 simpleStateCheck <- function(x){   #checks if system matrix elements that reference states are 'simple' -- don't contain operations
-  if(grepl('\\b(state)\\b\\[\\d+\\]',x)){ #if state based 
-    refmatches <- gregexpr('\\[(\\d+\\W*\\d*)\\]', x) #within sq brackets, find digits, possibly with non word chars, possibly with more digits.
-    simplestate <- refmatches[[1]][1] > 0 && #if state
-      length(unique(regmatches(x,refmatches)[[1]])) == 1 #reference 1 state only (possibly multiple times)
-  } else simplestate <- FALSE
+    if(grepl('\\b(state)\\b\\[\\d+\\]',x) & !grepl('tdpreds[',x,fixed=TRUE)){ #if state based and not referencing tdpreds
+      refmatches <- gregexpr('\\[(\\d+\\W*\\d*)\\]', x) #within sq brackets, find digits, possibly with non word chars, possibly with more digits.
+      simplestate <- refmatches[[1]][1] > 0 && #if state
+        length(unique(regmatches(x,refmatches)[[1]])) == 1 #reference 1 state only (possibly multiple times)
+  }else simplestate <- FALSE
   return(simplestate) 
 }
 
@@ -90,7 +90,7 @@ ctModelStatesAndPARS <- function(ctspec, statenames,tdprednames){ #replace laten
 ctModelTransformsToNum<-function(ctm){
   
   fit.eqs = function(e) {
-    # print(e)
+    print(e)
     # List the types of formulas we might encounter.
     types=c(tformshapes(singletext = TRUE))
     formula.types = data.frame(
@@ -216,7 +216,7 @@ ctModelTransformsToNum<-function(ctm){
     
     return(formula.types[which(formula.types$lsfit %in% min(formula.types$lsfit,na.rm=TRUE))[1],])
   }
-  # 
+  
   rownames(ctm$pars)=1:nrow(ctm$pars)
   newrows <- which(!is.na(ctm$pars$transform))
   if(length(newrows) ==0){
@@ -504,6 +504,7 @@ ctStanModelMatrices <-function(ctm){
           cpx <- ctspec[i,]
           cpx$transform <- gsub('\\b(state)\\b\\[\\d+\\]','param',cpx$param)
           cpx$multiplier <- cpx$offset <- cpx$meanscale <- cpx$inneroffset <- NULL
+
           ctspec[i,] <- ctModelTransformsToNum(list(pars=cpx))$pars
           if(is.na(suppressWarnings(as.integer(ctspec$transform[i])))) simplestate <- FALSE  #if couldn't convert to integer tform
         } #if any problems set simplestate FALSE
@@ -557,6 +558,7 @@ ctStanModelMatrices <-function(ctm){
           
           if(is.na(suppressWarnings(as.integer(ctspec$transform[i])))) { #extra tform needed
             # stop('extra transforms presently disabled -- use PARS matrix if necessary')
+            # browser()
             extratformcounter <- extratformcounter + 1
             extratforms <- paste0(extratforms,'if(transform==',-10-extratformcounter,') param = ',
               ctspec$transform[i],';')
