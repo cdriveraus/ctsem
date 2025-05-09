@@ -96,7 +96,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='popmean',
   
   if(subjects[1] != 'popmean' && any(!is.integer(as.integer(subjects)))) stop('
   subjects argument must be either "popmean" or an integer denoting specific subjects')
-
+  
   extractSubjects <- subjects
   if('popmean' %in% extractSubjects) extractSubjects <- 'all'
   e<-ctExtract(ctstanfitobj,subjectMatrices = subjects[1]!='popmean',cores=cores,
@@ -180,9 +180,9 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
       if(n==0) return(diag(1,nrow(m))) else{
         if(n>1){
           mo <-m
-        for(i in 2:n){
-          m <- m %*% mo
-        }
+          for(i in 2:n){
+            m <- m %*% mo
+          }
         }
         return(m)
       }}
@@ -237,7 +237,7 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
 #'@param ylim Custom ylim.
 #'@param facets May be 'Subject' or 'Effect'.
 #'@param colour Character string denoting how colour varies. 'Effect' or 'Subject'.
-#'@param title Character string.
+#'@param title Character string. 'auto' generates automatically, NULL can be used to disable title. 
 #'@param splitSubjects if TRUE, subjects are plotted separately, if FALSE they are combined.
 #'@param ggcode if TRUE, returns a list containing the data.table to plot, and a character string that can be
 #'evaluated (with the necessary arguments such as ylab etc filled in). For modifying plots.
@@ -257,13 +257,17 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
 ctStanDiscreteParsPlot<- function(x,indices='all',
   quantiles=c(.025,.5,.975), latentNames='auto',
   ylab='Coefficient',xlab='Time interval',ylim=NA,facets=NA,splitSubjects=TRUE,
-  colour='Effect',title='Temporal regressions | independent shock of 1.0',
-  polygonalpha=.1,ggcode=NA){
+  colour='Effect',title='auto',
+  polygonalpha=.1,ggcode=FALSE){
   
   if(is.data.frame(indices)) indices <- as.matrix(indices)
   
-  title= paste0('Temporal ',ifelse(attributes(x)$cov,'covariance','regressions'),
-    ' | ',ifelse(attributes(x)$observational,'correlated','independent'), ' shock of 1.0')
+  if(!is.null(title)){
+    if(title %in% 'auto'){
+      title= paste0('Temporal ',ifelse(attributes(x)$cov,'covariance','regressions'),
+        ' | ',ifelse(attributes(x)$observational,'correlated','independent'), ' shock of 1.0')
+    }
+  }else title=title
   
   nlatent=dim(x)[5]
   
@@ -307,7 +311,9 @@ ctStanDiscreteParsPlot<- function(x,indices='all',
   g<-paste0('ggplot2::ggplot(data = ym,mapping=aes(y=value,x=`Time interval`,
     colour=Effect,group=interaction(Effect, Subject),
     fill=Effect))+
-    theme_bw()+ylab("',ylab,'")+
+    theme_bw()+
+    ylab("',ylab,'")+
+    xlab("',xlab,'")+
     ggplot2::labs(title = "',title,'")+  
     stat_summary( #ribbon
       fun.data = function(x) list(
@@ -321,16 +327,16 @@ ctStanDiscreteParsPlot<- function(x,indices='all',
     stat_summary( #center line
       fun.data = function(x) list(y=quantile(x,',quantiles[2],')),
       geom = "line")')
-    
+  
   #needs data input as well...
-    # if(rug) g <- paste0(g,'+ geom_rug(data= as.data.table(hist(data.table(ym)[order(Subject,`Time interval`),][,.(timeDiff=c(diff(`Time interval`))),by=Subject]$timeDiff,plot=F)[2:4])[counts > 0,],
-    #  aes(x = mids,alpha=density,size=density/max(density)),inherit.aes=F,linetype=1,show.legend = FALSE)')
+  # if(rug) g <- paste0(g,'+ geom_rug(data= as.data.table(hist(data.table(ym)[order(Subject,`Time interval`),][,.(timeDiff=c(diff(`Time interval`))),by=Subject]$timeDiff,plot=F)[2:4])[counts > 0,],
+  #  aes(x = mids,alpha=density,size=density/max(density)),inherit.aes=F,linetype=1,show.legend = FALSE)')
   
   if(!is.na(facets)) g <- paste0(g,'+ facet_wrap(facets)')
   
   if(!is.na(ylim)) g <- paste0(g,' + ylim(ylim)')
   
-  if(is.na(ggcode)) g <- eval(parse(text=g)) else g <- list(dt=ym,ggcode=g)
+  if(!ggcode) g <- eval(parse(text=g)) else g <- list(dt=ym,ggcode=g)
   
   return(g)
 }

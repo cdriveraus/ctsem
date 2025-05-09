@@ -1358,9 +1358,12 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             break
           }
           
-          # pick group candidate with highest mean ΔLL
-          means      <- colMeans(imp_mat[, currentFixed %in% group_cands, drop = FALSE])
-          best_param <- group_cands[which.max(means)]
+          ## pick group candidate with highest mean ΔLL
+          # means      <- colMeans(imp_mat[, currentFixed %in% group_cands, drop = FALSE])
+          # best_param <- group_cands[which.max(means)]
+          
+          # pick group candidate with highest proportion significant
+          best_param <- currentFixed[which.max(prop_above)]
           
           message(sprintf(
             "Freeing parameter %d (%.0f%% subjects ΔLL ≥ %.2f)",
