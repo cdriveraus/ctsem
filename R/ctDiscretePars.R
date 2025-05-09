@@ -217,8 +217,7 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
 
 #'ctStanDiscreteParsPlot
 #'
-#'Plots model implied regression strengths at specified times for 
-#'continuous time models fit with ctStanFit.
+#'Plots the output from \code{\link{ctStanDiscretePars}}, for model implied regression strengths at specified times for continuous time models fit with ctStanFit.
 #'
 #'@param x list object returned from \code{\link{ctStanDiscretePars}}.
 #'@param indices Either a string specifying type of plot to create, or an n by 2
