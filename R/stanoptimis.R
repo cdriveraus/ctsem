@@ -266,8 +266,8 @@ parallelStanSetup <- function(cl, standata,split=TRUE,nsubsets=1){
     "smf=ctsem:::stan_reinitsf(sm,standata)"
   )
   
- parallel::clusterExport(cl,c('standata','stanindices','cores','commands'),envir=environment())
-parallel::clusterEvalQ(cl,eval(parse(text=paste0(commands,collapse=';'))))
+  parallel::clusterExport(cl,c('standata','stanindices','cores','commands'),envir=environment())
+  parallel::clusterEvalQ(cl,eval(parse(text=paste0(commands,collapse=';'))))
   parallel::clusterEvalQ(cl,sapply(commands,function(x) eval(parse(text=x))))
   NULL
 }
@@ -586,7 +586,7 @@ clusterIDeval <- function(cl,commands){
     recursive = FALSE)
 }
 
- 
+
 
 #' Optimize / importance sample a stan or ctStan model.
 #'
@@ -652,12 +652,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
   
   if(nsubsets > (standata$nsubjects/10)) nsubsets <- ceiling(standata$nsubjects/10)
   if(nsubsets > (standata$nsubjects/cores)) nsubsets <- max(1,ceiling(standata$nsubjects/cores))
-
+  
   if(is.null(init)) init <- 'random'
   if(init[1] !='random') carefulfit <- FALSE
   
-  benv <- new.env(parent=globalenv())
-  benv$clctsem <- NA #placeholder for flexsapply usage
   optimfit <- c() #placeholder
   
   notipredsfirstpass <- FALSE
@@ -754,19 +752,15 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     
     if(cores > 1){ #for parallelised computation after fitting, if only single subject
       
+      benv <- new.env(parent = globalenv()) #create blank environment to avoid copying all kinds of crap
       assign(x = 'clctsem',
-        parallel::makeCluster(spec = cores,type = "PSOCK",useXDR=FALSE,outfile='',user=NULL),
-        envir = benv)
-      benv$cores=cores
-      
-      eval(parse(text=
-          "parallel::parLapply(cl = clctsem,X = 1:cores,function(x){
+        parallel::makeCluster(spec = cores,type = "PSOCK",useXDR=FALSE,outfile='',user=NULL),envir=benv)
+      eval(parse(text="parallel::parLapply(cl = clctsem,X = 1:cores,function(x){
          assign('nodeid',x,envir=globalenv())
         })"),envir=benv)
+      clctsem <- benv$clctsem #copy parallel cluster to current environment. 
       
-      
-      # eval(clctsem <- makeClusterID(cores),envir = globalenv())
-      on.exit(try({parallel::stopCluster(benv$clctsem)},silent=TRUE),add=TRUE)
+      on.exit(try({parallel::stopCluster(clctsem)},silent=TRUE),add=TRUE)
       
       if(standata$recompile > 0){
         smfile <- file.path(tempdir(),paste0('ctsem_sm_',ceiling(runif(1,0,100000)),'.rda'))
@@ -774,17 +768,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         on.exit(add = TRUE,expr = {file.remove(smfile)})
       } else smfile <- ''
       
-      sapply(c('cores','parlptext','smfile'),function(x){
-        assign(x,get(x),envir = benv)
-        NULL
-      })
-      
-      eval(parse(text="parallel::clusterExport(clctsem,c('cores','parlptext','smfile'),envir=environment())"),envir = benv)
-      # system.time(clusterIDexport(benv$clctsem,c('cores','parlptext','sm')))
-      # clusterIDeval(clctsem,c(
-      #   'eval(parse(text=parlptext))'
-      # ))
-      
+      eval(parse(text="parallel::clusterExport(clctsem,c('cores','parlptext','smfile'),envir=environment())"))
     }
     
     
@@ -799,9 +783,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         # whichframe <- which(sapply(lapply(sys.frames(),ls),function(x){ 'clctsem' %in% x}))
         a=Sys.time()
         # 
-        clusterIDexport(benv$clctsem,'parm')
+        clusterIDexport(clctsem,'parm')
         if('list' %in% class(parm)){
-          out2 <- parallel::clusterEvalQ(cl = benv$clctsem,parlp(parm))
+          out2 <- parallel::clusterEvalQ(cl = clctsem,parlp(parm))
           bestset <- which(unlist(out2)==max(unlist(out2)))
           bestset <- bestset[1]
           parm <- parm[[bestset]]
@@ -809,7 +793,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           attributes(out)$bestset <- bestset
         } else {
           # browser()
-          out2<-  parallel::clusterEvalQ(cl = benv$clctsem,parlp(parm))
+          out2<-  parallel::clusterEvalQ(cl = clctsem,parlp(parm))
           error <- FALSE
           tmp<-sapply(1:length(out2),function(x) {
             if(!is.null(attributes(out2[[x]])$err)){
@@ -857,7 +841,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
     } #end multicore setup
     
-
+    
     mizelpg=list( #single core mize functions
       fg=function(pars){
         r=-target(pars)
@@ -872,8 +856,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     finished <- FALSE
     
     
-       carefulfitFunc <- function(standata, optimcores, mizelpg, target, stochastic, subsamplesize,nsubsets){
-     message('1st pass optimization (carefulfit)...')
+    carefulfitFunc <- function(standata, optimcores, mizelpg, target, stochastic, subsamplesize,nsubsets){
+      message('1st pass optimization (carefulfit)...')
       if(subsamplesize < 1){
         smlnsub <- min(standata$nsubjects,max(min(30,optimcores*2),ceiling(standata$nsubjects * subsamplesize)))
         standatasml <- standatact_specificsubjects(standata,
@@ -881,8 +865,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       } else standatasml <- standata
       standatasml$priors <- 1L
       standatasml$nsubsets <- as.integer(nsubsets)
-
-      if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standatasml,split=TRUE,nsubsets = nsubsets)
+      
+      if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standatasml,split=TRUE,nsubsets = nsubsets)
       if(optimcores==1) smf<-stan_reinitsf(sm,standatasml)
       
       if(stochastic) {
@@ -903,8 +887,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         optimfit$value = optimfit$f
       }
       return(optimfit)
-       }
-       
+    }
+    
     
     if(carefulfit) optimfit <- carefulfitFunc(standata=standata, optimcores=optimcores, mizelpg=mizelpg, target=target, stochastic=stochastic,nsubsets=nsubsets,subsamplesize=subsamplesize)
     
@@ -927,7 +911,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       while(!finished){
         if(found==0){
           if(!priors){ #then we need to reinitialise model
-            if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standata,split=TRUE,nsubsets = nsubsets)
+            if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standata,split=TRUE,nsubsets = nsubsets)
             if(optimcores==1) smf<-stan_reinitsf(sm,standata)
           }
         }
@@ -973,7 +957,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         }
         
         standata$nsubsets <- as.integer(nsubsets)
-        if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standata,split=TRUE,nsubsets = nsubsets)
+        if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standata,split=TRUE,nsubsets = nsubsets)
         if(optimcores==1) smf<-stan_reinitsf(sm,standata)
         
         if(stochastic || nsubsets > 1) optimfit <- try(sgd(init, fitfunc = target,
@@ -1004,7 +988,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     finished <- TRUE
     standata$nsubsets <- nsubsets <- 1L
     
-    if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standata,split=TRUE)
+    if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standata,split=TRUE)
     if(optimcores==1) smf<-stan_reinitsf(sm,standata)
     
     
@@ -1165,7 +1149,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       subject_ids  <- unique(standata$subject)
       
       
-      parallel::clusterExport(benv$clctsem, c(
+      parallel::clusterExport(clctsem, c(
         "tol", "stochasticTolAdjust",  "standatact_specificsubjects","subject_ids"
       ), envir = environment())
       
@@ -1173,9 +1157,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       subj_init <- matrix(rep(init, length(subject_ids)), nrow = length(subject_ids), byrow = TRUE)
       while (continueFreeing && length(currentFixed) > 0) {
         # export updated init and fixed set to workers
-        parallel::clusterExport(benv$clctsem, c("currentFixed",'subj_init'), envir = environment())
+        parallel::clusterExport(clctsem, c("currentFixed",'subj_init'), envir = environment())
         # 1) fit each subject with currentFixed held fixed
-        subj_pars <- parallel::parLapply(benv$clctsem, subject_ids, function(sid) {
+        subj_pars <- parallel::parLapply(clctsem, subject_ids, function(sid) {
           sd    <- standatact_specificsubjects(standata, sid)
           smf   <- stan_reinitsf(sm, sd)
           parlp <- function(parm){
@@ -1206,7 +1190,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         init[-currentFixed] <- colMeans(subj_mat)
         
         # 3) compute per‐subject expected ΔLL for each candidate
-        subj_imp <- parallel::parLapply(benv$clctsem,seq_along(subject_ids), function(i) {
+        subj_imp <- parallel::parLapply(clctsem,seq_along(subject_ids), function(i) {
           sid  <- subject_ids[i]
           pvec <- init
           pvec[-currentFixed] <- subj_mat[i, ]
@@ -1265,9 +1249,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         currentFixed <- setdiff(currentFixed, best_param)
       }
       groupFixed <- currentFixed
-      parallel::clusterExport(benv$clctsem, c("groupFixed", "subj_init"), envir = environment())
+      parallel::clusterExport(clctsem, c("groupFixed", "subj_init"), envir = environment())
       
-      subj_res <- parallel::parLapply(benv$clctsem, seq_along(subject_ids), function(i) {
+      subj_res <- parallel::parLapply(clctsem, seq_along(subject_ids), function(i) {
         # for(i in 1:length(subject_ids)){
         # lapply(seq_along(subject_ids), function(i) {
         sid    <- subject_ids[i]
@@ -1401,10 +1385,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     # if(standata$nsubjects > cores){
     #   hesscl <- NA
     # } else {
-    #   hesscl <- benv$clctsem
+    #   hesscl <- clctsem
     #   if(cores > 1) {
     #     suppressWarnings(rm(smf))
-    #     parallelStanSetup(cl = benv$clctsem,standata = standata,split=TRUE,nsubsets = 1)#,split=TRUE)
+    #     parallelStanSetup(cl = clctsem,standata = standata,split=TRUE,nsubsets = 1)#,split=TRUE)
     #   }
     #   if(cores==1) smf<-stan_reinitsf(sm,standata)
     # }
@@ -1681,7 +1665,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       
       #configure each node with full dataset for adaptive sampling
       # browser()
-      if(cores > 1)   parallelStanSetup(cl=benv$clctsem,standata,split=FALSE)
+      if(cores > 1)   parallelStanSetup(cl=clctsem,standata,split=FALSE)
       targetsamples <- finishsamples * finishmultiply
       # message('Adaptive importance sampling, loop:')
       j <- 0
@@ -1703,7 +1687,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         
         prop_dens <- mvtnorm::dmvt(tail(samples,isloopsize), delta[[j]], mcovl[[j]], df = tdf,log = TRUE)
         
-        if(cores > 1) parallel::clusterExport(benv$clctsem,c('samples'),envir = environment())
+        if(cores > 1) parallel::clusterExport(clctsem,c('samples'),envir = environment())
         
         # if(cores==1) parlp <- function(parm){ #remove this duplication somehow
         #   out <- try(log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
@@ -1719,7 +1703,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         
         # 
         # clusterIDexport(clctsem, c('isloopsize'))
-        target_dens[[j]] <- unlist(flexlapplytext(cl = benv$clctsem, 
+        target_dens[[j]] <- unlist(flexlapplytext(cl = clctsem, 
           X = 1:isloopsize, 
           fn = "function(x){parlp(samples[x,])}",cores=cores))
         
@@ -1835,10 +1819,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     transformedpars=stan_constrainsamples(sm = sm,standata = sdat,
       savesubjectmatrices = savesubjectmatrices, savescores = standata$savescores,
       dokalman=as.logical(standata$savesubjectmatrices),
-      samples=resamples,cores=cores, cl=benv$clctsem, quiet=TRUE)
+      samples=resamples,cores=cores, cl=clctsem, quiet=TRUE)
     
     if(cores > 1) {
-      parallel::stopCluster(benv$clctsem)
+      parallel::stopCluster(clctsem)
       smf <- stan_reinitsf(sm,standata)
     }
     
