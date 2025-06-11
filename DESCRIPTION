@@ -68,7 +68,6 @@ Suggests:
     knitr,
     testthat,
     devtools,
-    DEoptim,
     tinytex,
     lme4,
     shiny,

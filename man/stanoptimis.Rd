@@ -10,10 +10,8 @@ stanoptimis(
   init = "random",
   initsd = 0.01,
   sampleinit = NA,
-  deoptim = FALSE,
   estonly = FALSE,
   tol = 1e-08,
-  decontrol = list(),
   stochastic = TRUE,
   priors = TRUE,
   carefulfit = TRUE,
@@ -50,17 +48,11 @@ if init='random' .}
 
 \item{sampleinit}{either NA, or an niterations * nparams matrix of samples to initialise importance sampling.}
 
-\item{deoptim}{Do first pass optimization using differential evolution? Slower, but better for cases with multiple
-minima / difficult optimization.}
-
 \item{estonly}{if TRUE,just return point estimates under $rawest subobject.}
 
 \item{tol}{objective tolerance.}
 
-\item{decontrol}{List of control parameters for differential evolution step, to pass to \code{DEoptim.control}.}
-
-\item{stochastic}{Logical. Use stochastic gradient descent instead of mize (bfgs) optimizer.
-Still experimental, worth trying for either robustness checks or problematic, high dimensional, nonlinear, problems.}
+\item{stochastic}{Logical. Use stochastic gradient descent as main optimizer. Always finishes (double checks) with mize (bfgs) optimizer.}
 
 \item{priors}{logical. If TRUE, a priors integer is set to 1 (TRUE) in the standata object -- only has an effect if 
 the stan model uses this value.}
