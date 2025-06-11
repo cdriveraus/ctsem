@@ -611,6 +611,7 @@ clusterIDeval <- function(cl,commands){
     recursive = FALSE)
 }
 
+ 
 
 #' Optimize / importance sample a stan or ctStan model.
 #'
@@ -895,10 +896,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     priorsbak <- standata$priors
     finished <- FALSE
     
-    if(carefulfit){ #init using priors
-      message('1st pass optimization (carefulfit)...')
+    
+       carefulfitFunc <- function(standata, optimcores, mizelpg, target, stochastic, subsamplesize,nsubsets){
+     message('1st pass optimization (carefulfit)...')
       if(subsamplesize < 1){
-        smlnsub <- min(standata$nsubjects,max(min(30,cores*2),ceiling(standata$nsubjects * subsamplesize)))
+        smlnsub <- min(standata$nsubjects,max(min(30,optimcores*2),ceiling(standata$nsubjects * subsamplesize)))
         standatasml <- standatact_specificsubjects(standata,
           sample(unique(standata$subject),smlnsub))
       } else standatasml <- standata
@@ -908,16 +910,14 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       if(optimcores > 1) parallelStanSetup(cl = benv$clctsem,standata = standatasml,split=TRUE,nsubsets = nsubsets)
       if(optimcores==1) smf<-stan_reinitsf(sm,standatasml)
       
-      
       if(stochastic) {
-        optimfit <- try(sgd(init, fitfunc = function(x) target(x),
+        optimfit <- try(sgd(init, fitfunc = target,
           nsubsets = nsubsets,
           whichignore = unlist(parsteps),nconvergeiter = 30,
           plot=plot, 
           itertol=tol*1000*stochasticTolAdjust,
           worsecountconverge = 20,
           maxiter=ifelse(standata$ntipred > 0 && notipredsfirstpass, 500,5000)))
-        
       }
       
       if(!stochastic || 'try-error' %in% class(optimfit)) {
@@ -927,7 +927,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           abs_tol=1e-2,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)
         optimfit$value = optimfit$f
       }
-    } #end carefulfit  
+      return(optimfit)
+       }
+       
+    
+    if(carefulfit) optimfit <- carefulfitFunc(standata=standata, optimcores=optimcores, mizelpg=mizelpg, target=target, stochastic=stochastic,nsubsets=nsubsets,subsamplesize=subsamplesize)
     
     carefulfit <- FALSE
     iter <- 0
