@@ -252,16 +252,9 @@ parallelStanSetup <- function(cl, standata,split=TRUE,nsubsets=1){
   
   standata$nsubsets <- as.integer(nsubsets)
   if(!split) cores <- 1 #for prior mod
-  # clusterIDexport(cl,c('standata','stanindices','cores'))
-  benv <- new.env(parent = globalenv())
-  
-  sapply(c('standata','stanindices','cores','cl'),function(x){
-    assign(x,get(x),pos = benv)
-    NULL
-  })
   
   
-  benv$commands <- list(
+  commands <- list(
     "g = eval(parse(text=paste0('gl','obalenv()')))", #avoid spurious cran check -- assigning to global environment only on created parallel workers.
     "environment(parlptext) <- g",
     'if(standata$recompile > 0) load(file=smfile) else sm <- ctsem:::stanmodels$ctsm',
@@ -273,14 +266,9 @@ parallelStanSetup <- function(cl, standata,split=TRUE,nsubsets=1){
     "smf=ctsem:::stan_reinitsf(sm,standata)"
   )
   
-  eval(parse(text=
-      "parallel::clusterExport(cl,c('standata','stanindices','cores','commands'),envir=environment())"),
-    envir = benv)
-  eval(parse(text="parallel::clusterEvalQ(cl,eval(parse(text=paste0(commands,collapse=';'))))"),envir = benv)
-  eval(parse(text="parallel::clusterEvalQ(cl,sapply(commands,function(x) eval(parse(text=x))))"),envir = benv)
-  
-  # eval(parse(text="parallel::clusterEvalQ(cl,ls(envir=globalenv()))"),envir = benv)
-  
+ parallel::clusterExport(cl,c('standata','stanindices','cores','commands'),envir=environment())
+parallel::clusterEvalQ(cl,eval(parse(text=paste0(commands,collapse=';'))))
+  parallel::clusterEvalQ(cl,sapply(commands,function(x) eval(parse(text=x))))
   NULL
 }
 
@@ -580,34 +568,21 @@ tostanarray <- function(flesh, skeleton){
 # }
 
 makeClusterID <- function(cores){
-  # benv <- new.env(parent=globalenv())
-  # benv$cores <- cores
-  # benv$
   cl <- parallel::makeCluster(spec = cores,type = "PSOCK",useXDR=FALSE,outfile='',user=NULL)
   eval(parse(text="parallel::parLapply(cl = cl,X = 1:cores,function(x) assign('nodeid',x,envir=globalenv()))"))
   return(cl)
 }
 
 clusterIDexport <- function(cl, vars){
-  # benv <- new.env(parent=globalenv())
-  # benv$cl <- cl
-  # lookframe <- parent.frame()
-  # tmp<-lapply(vars,function(x) benv[[x]] <<- eval(parse(text=x),envir =lookframe))
-  # eval(
   parallel::clusterExport(cl,vars,envir = parent.frame())
-  # ,envir=globalenv())
 }
 
 clusterIDeval <- function(cl,commands){
-  # benv <- new.env(parent=globalenv())
-  # benv$cl <- cl
   clusterIDexport(cl,'commands')
-  # unlist(eval(
   unlist(parallel::clusterEvalQ(cl = cl, 
     lapply(commands,function(x){
       eval(parse(text=x),envir = globalenv())
     })),
-    #,envir =globalenv())
     recursive = FALSE)
 }
 
