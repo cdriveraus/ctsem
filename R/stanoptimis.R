@@ -604,10 +604,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       return(out)
     }
     
-    if(optimcores==1) {
-      lpgFunc = lpg_single #we use this for importance sampling
-      eval(parse(text=parlptext))
-    }
+    if(optimcores==1) eval(parse(text=parlptext))
+    
     
     
     lpg_parallel<-function(parm) {
@@ -817,8 +815,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
             pars_backward[idx] <- pars_backward[idx] - step
             # Evaluate the lpgFunc function at both perturbed vectors.
             # It is assumed the 'lpgFunc' function returns an object with the gradient as an attribute "gradient".
-            forward_val <- lpgFunc(pars_forward)
-            backward_val <- lpgFunc(pars_backward)
+            forward_val <- optimArgs$lpgFunc(pars_forward)
+            backward_val <- optimArgs$lpgFunc(pars_backward)
             # Extract the gradient for the current parameter.
             grad_forward <- attributes(forward_val)$gradient[idx]
             grad_backward <- attributes(backward_val)$gradient[idx]
@@ -849,7 +847,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
           ignore_indices <- if (length(currentFixed) > 0) currentFixed else integer(0)
           
           parstepsAutoModelOptimArgs$init[-ignore_indices] = optimfit$par
-          obj_val <- lpgFunc(parstepsAutoModelOptimArgs$init)
+          obj_val <- optimArgs$lpgFunc(parstepsAutoModelOptimArgs$init)
           grad_vec <- attributes(obj_val)$gradient
           
           # For each candidate parameter currently fixed, compute expected improvement.
@@ -1208,7 +1206,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
               )){ 
                 stepchangemultiplier <- max(stepchangemultiplier,.11)
                 count <- count + 1
-                lp[[di]] <-  suppressMessages(suppressWarnings(lpgFunc(pars+uppars*stepsize*directions[di])))
+                lp[[di]] <-  suppressMessages(suppressWarnings(optimArgs$lpgFunc(pars+uppars*stepsize*directions[di])))
                 accepted <- !'try-error' %in% class(lp[[di]]) && all(!is.na(attributes(lp[[di]])$gradient))
                 if(accepted){
                   lpdiff <- base[1] - lp[[di]][1]
