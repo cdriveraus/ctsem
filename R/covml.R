@@ -83,7 +83,7 @@ covdata <- function(ndat,reg,independent=FALSE,corpriortype=1L){
 }
 
 covml <- function(dat,reg=0,verbose=0,hmc=FALSE,
-  independent=FALSE,corpriortype=2L){
+  independent=FALSE,corpriortype=2L,tol=1e-8){
   
   covdata=covdata(dat,reg,independent,corpriortype)
   d=covdata$d
@@ -123,7 +123,7 @@ covml <- function(dat,reg=0,verbose=0,hmc=FALSE,
     # covfit=sgd(init = init,fitfunc = target,plot = 1)
   covfit=mize(par = init,fg=mizelist,memory=20,max_iter=10000,
   #   # line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
-    abs_tol=1e-10,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)
+    abs_tol=tol,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)
   } else{
     # browser()
     covfit=stanWplot(object = stanmodels$cov,iter=2000,chains=4,cores=4,check_data=FALSE,
