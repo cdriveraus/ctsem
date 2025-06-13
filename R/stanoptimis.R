@@ -32,6 +32,7 @@ ctAddSamples <- function(fit,nsamples,cores=2){
   return(fit)
 }
 
+
 parallelStanSetup <- function(cl, standata,split=TRUE,nsubsets=1){
   cores <- length(cl)
   if(split) stanindices <- split(unique(standata$subject),(unique(standata$subject) %% min(standata$nsubjects,cores))) #disabled sorting so subset works parallel
@@ -44,22 +45,33 @@ parallelStanSetup <- function(cl, standata,split=TRUE,nsubsets=1){
   
   standata$nsubsets <- as.integer(nsubsets)
   if(!split) cores <- 1 #for prior mod
+
+  parallel::clusterExport(cl,c('standata','stanindices','cores'),envir=environment())
   
-  
-  commands <- list(
-    "g = eval(parse(text=paste0('gl','obalenv()')))", #avoid spurious cran check -- assigning to global environment only on created parallel workers.
-    "environment(parlptext) <- g",
-    'if(standata$recompile > 0) load(file=smfile) else sm <- ctsem:::stanmodels$ctsm',
-    'eval(parse(text=parlptext))',
-    'assign("parlp",parlp,pos=g)',
-    "if(length(stanindices[[nodeid]]) < length(unique(standata$subject))) standata <- ctsem:::standatact_specificsubjects(standata,stanindices[[nodeid]])",
-    "standata$priormod <- 1/cores",
-    "if(FALSE) sm=99",
-    "smf=ctsem:::stan_reinitsf(sm,standata)"
-  )
-  parallel::clusterExport(cl,c('standata','stanindices','cores','commands'),envir=environment())
-  parallel::clusterEvalQ(cl,eval(parse(text=paste0(commands,collapse=';'))))
-  parallel::clusterEvalQ(cl,sapply(commands,function(x) eval(parse(text=x)))) #needed???
+  parallel::clusterEvalQ(cl,{
+    # g = eval(parse(text=paste0('gl','obalenv()'))) #avoid spurious cran check -- assigning to global environment only on created parallel workers.
+    # environment(parlptext) <- g
+    if(standata$recompile > 0) load(file=smfile) else sm <- ctsem:::stanmodels$ctsm
+    # eval(parse(text=parlptext))
+    # assign("parlp",parlp,pos=g)
+    parlp <- function(parm){
+     a=Sys.time()
+          out <- try(rstan::log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
+        if("try-error" %in% class(out) || any(is.nan(attributes(out)$gradient))) {
+          outerr <- out
+          out <- -1e100
+          attributes(out)$gradient <- rep(NaN, length(parm))
+          attributes(out)$err <- outerr
+        }
+        attributes(out)$time <- Sys.time()-a
+        if(is.null(attributes(out)$gradient)) attributes(out)$gradient <- rep(NaN, length(parm))
+        return(out)
+        }
+    if(length(stanindices[[nodeid]]) < length(unique(standata$subject))) standata <- ctsem:::standatact_specificsubjects(standata,stanindices[[nodeid]])
+    standata$priormod <- 1/cores
+    if(FALSE) sm=99
+    smf=ctsem:::stan_reinitsf(sm,standata)
+  })
   NULL
 }
 
@@ -343,11 +355,27 @@ tostanarray <- function(flesh, skeleton){
   return(out)
 }
 
-makeClusterID <- function(cores){
-  cl <- parallel::makeCluster(spec = cores,type = "PSOCK",useXDR=FALSE,outfile='',user=NULL)
-  print(1:cores)
-  parallel::parLapply(cl = cl,X = 1:cores,function(x) assign('nodeid',x,envir=globalenv()))
-  return(cl)
+#' @keywords internal
+
+
+#' @details assign random id's to each cluster, collect and order locally, match order on cluster (avoids copying function frame)
+makeClusterID <- function(cores = parallel::detectCores()) {
+  cl <- parallelly::makeClusterPSOCK(cores,
+    useXDR      = FALSE,
+    outfile     = "") 
+  duplicateNodeIDs <- TRUE
+  while(duplicateNodeIDs){ 
+    nodeids=unlist(parallel::clusterEvalQ(cl,{
+      assign('nodeid',runif(1,0,99999999),envir = globalenv())
+    }))
+    duplicateNodeIDs <- any(duplicated(nodeids))
+  }
+  nodeids <- cbind(nodeids,order(nodeids))
+  parallel::clusterExport(cl, varlist = "nodeids",envir   = environment())
+  nodeids=unlist(parallel::clusterEvalQ(cl,{
+    assign('nodeid',nodeids[nodeids[,1] %in% nodeid,2],envir = globalenv())
+  }))
+  return(invisible(cl))
 }
 
 clusterIDexport <- function(cl, vars){
@@ -394,7 +422,23 @@ ctOptim <- function(init, lpgFunc, tol, nsubsets, stochastic,stochasticTolAdjust
   return(f)
 }
 
-
+      carefulfitFunc <- function(cl, standata, optimcores, subsamplesize, nsubsets,optimArgs){
+        message('1st pass optimization (carefulfit)...')
+        if(subsamplesize < 1){
+          smlnsub <- min(standata$nsubjects,max(min(30,optimcores*2),ceiling(standata$nsubjects * subsamplesize)))
+          standatasml <- standatact_specificsubjects(standata,
+            sample(unique(standata$subject),smlnsub))
+        } else standatasml <- standata
+        standatasml$priors <- 1L
+        standatasml$nsubsets <- as.integer(nsubsets)
+        if(optimcores > 1) parallelStanSetup(cl = cl,standata = standatasml,split=TRUE,nsubsets = nsubsets)
+        if(optimcores==1) smf<-stan_reinitsf(sm,standatasml)
+        optimArgs$tol <- optimArgs$tol * 100 
+        optimArgs$maxiter <- 500
+        optimArgs$nsubsets= nsubsets
+        optimArgs$worsecountconverge <- 20
+        return(do.call(ctOptim,optimArgs))
+      }
 
 #' Optimize / importance sample a stan or ctStan model.
 #'
@@ -566,17 +610,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     
     # initialise cluster ------------------------------------------------------
     
-    if(cores > 1){ #for parallelised computation (even if only single subject, initialise cluster for hessian / importance sampling)
-      benv <- new.env(parent = globalenv()) #create blank environment to avoid copying all kinds of crap
-      assign(x = 'clctsem',
-        parallel::makeCluster(spec = cores,type = "PSOCK",useXDR=FALSE,outfile='',user=NULL),envir=benv)
-      
-      eval(parse(text=paste0("parallel::parLapply(cl = clctsem,X = 1:",cores,",function(nodeidi){
-         assign('nodeid',nodeidi,envir=globalenv())
-        })")),envir=benv) #assign nodeid to each core
-      
-      clctsem <- benv$clctsem #copy parallel cluster to current environment. 
-      
+    if(optimcores > 1){ #for parallelised computation
+      clctsem=makeClusterID(optimcores)
       on.exit(try({parallel::stopCluster(clctsem)},silent=TRUE),add=TRUE)
       
       if(standata$recompile > 0){
@@ -585,7 +620,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
         on.exit(add = TRUE,expr = {file.remove(smfile)})
       } else smfile <- ''
       
-      parallel::clusterExport(clctsem,c('cores','parlptext','smfile'),envir=environment())
+      parallel::clusterExport(clctsem,c('cores','smfile'),envir=environment())
     }
     
     ######log prob function setup#######
@@ -604,7 +639,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       return(out)
     }
     
-    if(optimcores==1) eval(parse(text=parlptext))
+    # if(optimcores==1) eval(parse(text=parlptext))
     
     
     
@@ -666,24 +701,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     iter <-0
     
     if(carefulfit) {
-      
-      carefulfitFunc <- function(cl, standata, optimcores, subsamplesize, nsubsets,optimArgs){
-        message('1st pass optimization (carefulfit)...')
-        if(subsamplesize < 1){
-          smlnsub <- min(standata$nsubjects,max(min(30,optimcores*2),ceiling(standata$nsubjects * subsamplesize)))
-          standatasml <- standatact_specificsubjects(standata,
-            sample(unique(standata$subject),smlnsub))
-        } else standatasml <- standata
-        standatasml$priors <- 1L
-        standatasml$nsubsets <- as.integer(nsubsets)
-        if(optimcores > 1) parallelStanSetup(cl = cl,standata = standatasml,split=TRUE,nsubsets = nsubsets)
-        if(optimcores==1) smf<-stan_reinitsf(sm,standatasml)
-        optimArgs$tol <- optimArgs$tol * 100 
-        optimArgs$maxiter <- 500
-        optimArgs$nsubsets= nsubsets
-        optimArgs$worsecountconverge <- 20
-        return(do.call(ctOptim,optimArgs))
-      }
       
       iter <-0
       storedLp <- c()
@@ -1345,6 +1362,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
     }
     message('')
     if(is){
+      
       message('Importance sampling...')
       
       log_sum_exp <- function(x) {
@@ -1353,6 +1371,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,sampleinit=NA,
       }
       
       #configure each node with full dataset for adaptive sampling
+      if(cores > optimcores) clctsem=makeClusterID(cores) #reinit cluster if more cores available than used for optimising
       if(cores > 1)   parallelStanSetup(cl=clctsem,standata,split=FALSE)
       targetsamples <- finishsamples * finishmultiply
       j <- 0

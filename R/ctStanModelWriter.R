@@ -90,7 +90,7 @@ ctModelStatesAndPARS <- function(ctspec, statenames,tdprednames){ #replace laten
 ctModelTransformsToNum<-function(ctm){
   
   fit.eqs = function(e) {
-    print(e)
+    # print(e)
     # List the types of formulas we might encounter.
     types=c(tformshapes(singletext = TRUE))
     formula.types = data.frame(
