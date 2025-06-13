@@ -40,10 +40,10 @@ sgd <- function(init,lpgFunc,whichignore=c(),nsubsets=1,nsubjects=NA,plot=FALSE,
   if(length(whichignore)>0) init=init[-whichignore]
   
   lpgFunc2 <- function(p,subset=NA){
-    ptemp=initfull
-    if(length(whichignore)>0) ptemp[-whichignore] <- p else ptemp <- p
-    if(!is.na(subset)) ptemp <- c(ptemp,subset)
-    lpg=lpgFunc(ptemp)
+    pars=initfull
+    if(length(whichignore)>0) pars[-whichignore] <- p else pars <- p
+    if(!is.na(subset)) pars <- c(pars,subset)
+    lpg=lpgFunc(pars)
     if(length(whichignore)>0) attributes(lpg)$gradient <- attributes(lpg)$gradient[-whichignore]
     if(nsubsets > 1) attributes(lpg)$gradient <- 
       attributes(lpg)$gradient[-length(attributes(lpg)$gradient)]

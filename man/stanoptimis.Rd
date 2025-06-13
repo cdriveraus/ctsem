@@ -9,7 +9,6 @@ stanoptimis(
   sm,
   init = "random",
   initsd = 0.01,
-  sampleinit = NA,
   estonly = FALSE,
   tol = 1e-08,
   stochastic = TRUE,
@@ -45,8 +44,6 @@ random values very close to zero.}
 
 \item{initsd}{positive numeric specifying sd of normal distribution governing random sample of init parameters,
 if init='random' .}
-
-\item{sampleinit}{either NA, or an niterations * nparams matrix of samples to initialise importance sampling.}
 
 \item{estonly}{if TRUE,just return point estimates under $rawest subobject.}
 

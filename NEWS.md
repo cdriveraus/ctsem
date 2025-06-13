@@ -1,4 +1,12 @@
 # ctsem News
+
+## 13/6/2025
+### 3.10.3
+- Include ctFitCovCheck function for checking empirical vs model implied covariance over time. 
+- Reduce parallel compute init overhead
+- Minor bug fixes to ctKalman
+- refactor stanoptimis, changes to carefulfit logic, remove DEoptim option.
+
 ## 9/1/2025
 ### 3.10.2
 - Stochastic optimizer improvements

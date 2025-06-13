@@ -78,6 +78,7 @@ checkTIauto <- function(){
     if(i>1) tdat <- rbind(tdat,ndat) else tdat <- ndat
   }
   colnames(tdat)[4] <- 'TI1'
+  tdat <- data.frame(tdat)
   tdat$TI2 <- rnorm(nrow(tdat))
   # colnames(tdat)[5] <- 'TI2'
   
@@ -104,7 +105,6 @@ checkTIauto <- function(){
     # savesubjectmatrices = F,plot=F,
     # init=init,
     # fit=F,
-    optimcontrol=list(is=FALSE,stochastic=T,subsamplesize=1,carefulfit=F),
     priors=T)
   summary(fit1)
 }
@@ -204,12 +204,12 @@ scorecalc <- function(standata, est, stanmodel, subjectsonly = TRUE,
 }
 
 
-ctTIauto <- function(fit,tipreds=NA){
+ctTIauto <- function(fit,tipreds=NA,cores=2){
   if(is.na(tipreds[1])) tipreds <- fit$standata$tipredsdata
   # colnames(tipreds) <- paste0('ti',1:ncol(tipreds))
   
   if(is.null(fit$stanfit$subjectscores)) scores <- scorecalc(standata = fit$standata,
-    est = fit$stanfit$rawest,stanmodel = fit$stanmodel)
+    est = fit$stanfit$rawest,stanmodel = fit$stanmodel,cores=cores)
   else scores <- fit$stanfit$subjectscores
   scores <- scores[1:fit$standata$nparams,,drop=FALSE]
   rownames(scores) <- paste0('p',1:nrow(scores))
