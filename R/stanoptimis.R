@@ -51,9 +51,10 @@ parallelStanSetup <- function(cl, standata,split=TRUE,nsubsets=1){
   parallel::clusterEvalQ(cl,{
     # g = eval(parse(text=paste0('gl','obalenv()'))) #avoid spurious cran check -- assigning to global environment only on created parallel workers.
     # environment(parlptext) <- g
-    if(standata$recompile > 0) load(file=smfile) else sm <- ctsem:::stanmodels$ctsm
+    if(standata$recompile > 0) load(file=smfile) else sm <- getFromNamespace("stanmodels", "ctsem")$ctsm#ctsem:::stanmodels$ctsm
     # eval(parse(text=parlptext))
     # assign("parlp",parlp,pos=g)
+    if(FALSE){ sm=99;smfile=NULL;nodeid=NULL} #global variables
     parlp <- function(parm){
       a=Sys.time()
       out <- try(rstan::log_prob(smf,upars=parm,adjust_transform=TRUE,gradient=TRUE),silent = FALSE)
@@ -67,10 +68,10 @@ parallelStanSetup <- function(cl, standata,split=TRUE,nsubsets=1){
       if(is.null(attributes(out)$gradient)) attributes(out)$gradient <- rep(NaN, length(parm))
       return(out)
     }
-    if(length(stanindices[[nodeid]]) < length(unique(standata$subject))) standata <- ctsem:::standatact_specificsubjects(standata,stanindices[[nodeid]])
+    if(length(stanindices[[nodeid]]) < length(unique(standata$subject))) standata <-  getFromNamespace("standatact_specificsubjects", "ctsem")(standata,stanindices[[nodeid]])#ctsem:::
     standata$priormod <- 1/cores
-    if(FALSE) sm=99
-    smf=ctsem:::stan_reinitsf(sm,standata)
+    
+    smf=getFromNamespace("stan_reinitsf", "ctsem")(sm,standata)#ctsem:::
   })
   NULL
 }
@@ -79,8 +80,8 @@ singlecoreStanSetup <-function(standata, nsubsets){
   cores <- 1
   standata$nsubsets <- as.integer(nsubsets)
   if(!is.null(standata$recompile)) standata$recompile <- 0 #no recompile on single core
-  smf <- ctsem:::stan_reinitsf(ctsem:::stanmodels$ctsm,standata)
-  return(eval(parse(text=ctsem:::parlptext)))#create parlp function)
+  smf <- stan_reinitsf(stanmodels$ctsm,standata)#ctsem::: ctsem:::
+  return(eval(parse(text=parlptext)))#create parlp function) #ctsem:::
 }
 
 #create as text because of parallel communication weirdness
@@ -367,18 +368,19 @@ tostanarray <- function(flesh, skeleton){
 makeClusterID <- function(cores = parallel::detectCores()) {
   cl <- parallelly::makeClusterPSOCK(cores,
     useXDR      = FALSE,
+    default_packages = c("datasets", "utils", "grDevices", "graphics", "stats", "methods",'ctsem'),
     outfile     = "") 
   duplicateNodeIDs <- TRUE
   while(duplicateNodeIDs){ 
     nodeids=unlist(parallel::clusterEvalQ(cl,{
-      assign('nodeid',runif(1,0,99999999),envir = globalenv())
+      assign('nodeid',runif(1,0,99999999))#,envir = globalenv())
     }))
     duplicateNodeIDs <- any(duplicated(nodeids))
   }
   nodeids <- cbind(nodeids,order(nodeids))
   parallel::clusterExport(cl, varlist = "nodeids",envir   = environment())
   nodeids=unlist(parallel::clusterEvalQ(cl,{
-    assign('nodeid',nodeids[nodeids[,1] %in% nodeid,2],envir = globalenv())
+    assign('nodeid',nodeids[nodeids[,1] %in% nodeid,2])#,envir = globalenv())
   }))
   return(invisible(cl))
 }
@@ -512,114 +514,450 @@ autoTIpredsFunc <- function(cl, standata, sm, optimArgs, parsteps, optimcores, c
 } # end ti pred auto function
 
 
- #’ Importance sampling for optimized ctstanfit
-  importanceSamplingFunc <- function(
+
+
+# Importance sampling for optimized ctstanfit
+importanceSamplingFunc <- function(
     samples, mcovl, delta,
-    finishsamples, finishmultiply, isloopsize, tdf,
-    cl, cores, parlp, flexlapplytext, chancethreshold
-  ) {
-    message('Importance sampling...')
-    log_sum_exp <- function(x) {
-      xmax <- which.max(x)
-      log1p(sum(exp(x[-xmax] - x[xmax]))) + x[xmax]
-    }
-    targetsamples <- finishsamples * finishmultiply
-    j <- 0L
-    sample_prob <- numeric(0)
-    ess <- numeric(0)
-    qdiag <- numeric(0)
-    target_dens_list <- list()
-    
-    while (nrow(samples) < targetsamples) {
-      j <- j + 1L
-      if (j == 1L) {
-        samples    <- mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]], df = tdf)
-        newsamples <- samples
-      } else {
-        delta[[j]] <- colMeans(resamples)
-        mcovl[[j]] <- as.matrix(Matrix::nearPD(cov(resamples))$mat)
-        for (iteri in seq_len(j)) {
-          if (iteri == 1L) {
-            mcov <- mcovl[[j]]; mu <- delta[[j]]
-          } else {
-            mcov <- mcov * .5 + mcovl[[j]] * .5
-            mu   <- mu   * .5 + delta[[j]]   * .5
-          }
-        }
-        newsamples <- mvtnorm::rmvt(isloopsize, delta = mu, sigma = mcov, df = tdf)
-        samples    <- rbind(samples, newsamples)
-      }
-      
-      prop_dens <- mvtnorm::dmvt(tail(samples, isloopsize), delta[[j]], mcovl[[j]], df = tdf, log = TRUE)
-      if (cores > 1) parallel::clusterExport(cl, 'samples', envir = environment())
-      
-      target_dens_list[[j]] <- unlist(
-        flexlapplytext(
-          cl    = cl,
-          X     = seq_len(isloopsize),
-          fn    = "function(x){parlp(samples[x,])}",
-          cores = cores
-        )
-      )
-      target_dens_list[[j]][is.na(target_dens_list[[j]])] <- -1e200
-      if (all(target_dens_list[[j]] < -1e100)) stop('Could not sample from optimum! Try reparamaterizing?')
-      
-      targ <- target_dens_list[[j]]
-      targ[!is.finite(targ)] <- -1e30
-      weighted <- targ - prop_dens
-      
-      newsampleprob <- exp(weighted - log_sum_exp(weighted))
-      sample_prob   <- c(sample_prob, newsampleprob)
-      sample_prob[!is.finite(sample_prob)] <- 0
-      sample_prob[is.na(sample_prob)]     <- 0
-      
-      if (nrow(samples) >= targetsamples && max(sample_prob)/sum(sample_prob) < chancethreshold) {
-        message('Finishing importance sampling...')
-        nresamples <- finishsamples
-      } else {
-        nresamples <- max(5000, nrow(samples)/5)
-      }
-      
-      resample_i <- sample(
-        seq_len(nrow(samples)),
-        size    = nresamples,
-        replace = nrow(samples) <= targetsamples,
-        prob    = sample_prob / sum(sample_prob)
-      )
-      message(sprintf(
-        'Importance sample loop %d: %d unique samples from %d resamples of %d; prob sd=%.4f, max chance=%.4f',
-        j, length(unique(resample_i)), nresamples, nrow(samples),
-        sd(sample_prob), max(sample_prob)*isloopsize
-      ))
-      if (length(unique(resample_i)) < 100) {
-        message('Sampling ineffective (<100 unique) — consider increasing isloopsize or using HMC.')
-      }
-      
-      resamples <- samples[resample_i, , drop = FALSE]
-      ess[j]    <- sum(sample_prob[resample_i])^2 / sum(sample_prob[resample_i]^2)
-      qdiag[j]  <- mean(vapply(
-        seq_len(500),
-        function(i) {
-          idx <- sample(sample_prob, size = i, replace = TRUE)
-          max(idx) / sum(idx)
-        },
-        numeric(1)
-      ))
-    }
-    
-    combined_target <- unlist(target_dens_list)
-    lpsamples <- combined_target[resample_i]
-    
-    list(
-      samples     = samples,
-      resamples   = resamples,
-      resample_i  = resample_i,
-      lpsamples   = lpsamples,
-      sample_prob = sample_prob,
-      ess         = ess,
-      qdiag       = qdiag
-    )
+  finishsamples, finishmultiply, isloopsize, tdf,
+  cl, cores, parlp, flexlapplytext, chancethreshold
+) {
+  message('Importance sampling...')
+  log_sum_exp <- function(x) {
+    xmax <- which.max(x)
+    log1p(sum(exp(x[-xmax] - x[xmax]))) + x[xmax]
   }
+  targetsamples <- finishsamples * finishmultiply
+  j <- 0L
+  sample_prob <- numeric(0)
+  ess <- numeric(0)
+  qdiag <- numeric(0)
+  target_dens_list <- list()
+  
+  while (nrow(samples) < targetsamples) {
+    j <- j + 1L
+    if (j == 1L) {
+      samples    <- mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]], df = tdf)
+      newsamples <- samples
+    } else {
+      delta[[j]] <- colMeans(resamples)
+      mcovl[[j]] <- as.matrix(Matrix::nearPD(cov(resamples))$mat)
+      for (iteri in seq_len(j)) {
+        if (iteri == 1L) {
+          mcov <- mcovl[[j]]; mu <- delta[[j]]
+        } else {
+          mcov <- mcov * .5 + mcovl[[j]] * .5
+          mu   <- mu   * .5 + delta[[j]]   * .5
+        }
+      }
+      newsamples <- mvtnorm::rmvt(isloopsize, delta = mu, sigma = mcov, df = tdf)
+      samples    <- rbind(samples, newsamples)
+    }
+    
+    prop_dens <- mvtnorm::dmvt(tail(samples, isloopsize), delta[[j]], mcovl[[j]], df = tdf, log = TRUE)
+    if (cores > 1) parallel::clusterExport(cl, 'samples', envir = environment())
+    
+    target_dens_list[[j]] <- unlist(
+      flexlapplytext(
+        cl    = cl,
+        X     = seq_len(isloopsize),
+        fn    = "function(x){parlp(samples[x,])}",
+        cores = cores
+      )
+    )
+    target_dens_list[[j]][is.na(target_dens_list[[j]])] <- -1e200
+    if (all(target_dens_list[[j]] < -1e100)) stop('Could not sample from optimum! Try reparamaterizing?')
+    
+    targ <- target_dens_list[[j]]
+    targ[!is.finite(targ)] <- -1e30
+    weighted <- targ - prop_dens
+    
+    newsampleprob <- exp(weighted - log_sum_exp(weighted))
+    sample_prob   <- c(sample_prob, newsampleprob)
+    sample_prob[!is.finite(sample_prob)] <- 0
+    sample_prob[is.na(sample_prob)]     <- 0
+    
+    if (nrow(samples) >= targetsamples && max(sample_prob)/sum(sample_prob) < chancethreshold) {
+      message('Finishing importance sampling...')
+      nresamples <- finishsamples
+    } else {
+      nresamples <- max(5000, nrow(samples)/5)
+    }
+    
+    resample_i <- sample(
+      seq_len(nrow(samples)),
+      size    = nresamples,
+      replace = nrow(samples) <= targetsamples,
+      prob    = sample_prob / sum(sample_prob)
+    )
+    message(sprintf(
+      'Importance sample loop %d: %d unique samples from %d resamples of %d; prob sd=%.4f, max chance=%.4f',
+      j, length(unique(resample_i)), nresamples, nrow(samples),
+      sd(sample_prob), max(sample_prob)*isloopsize
+    ))
+    if (length(unique(resample_i)) < 100) {
+      message('Sampling ineffective (<100 unique) - consider increasing isloopsize or using HMC.')
+    }
+    
+    resamples <- samples[resample_i, , drop = FALSE]
+    ess[j]    <- sum(sample_prob[resample_i])^2 / sum(sample_prob[resample_i]^2)
+    qdiag[j]  <- mean(vapply(
+      seq_len(500),
+      function(i) {
+        idx <- sample(sample_prob, size = i, replace = TRUE)
+        max(idx) / sum(idx)
+      },
+      numeric(1)
+    ))
+  }
+  
+  combined_target <- unlist(target_dens_list)
+  lpsamples <- combined_target[resample_i]
+  
+  list(
+    samples     = samples,
+    resamples   = resamples,
+    resample_i  = resample_i,
+    lpsamples   = lpsamples,
+    sample_prob = sample_prob,
+    ess         = ess,
+    qdiag       = qdiag
+  )
+}
+
+
+# # ---------------------------------------------------------------------------
+# # AMIS version – fixed denominator – interrupt-safe
+# # ---------------------------------------------------------------------------
+# adaptive_is <- function(parlp,
+#                         mu_hat,
+#                         Sigma_hat,
+#                         cl,
+#                         n_batch     = 1000,
+#                         target_ess  = 50,
+#                         max_iter    = 10,
+#                         scale_init  = 3,
+#                         cov_inflate = 1.3,
+#                         ridge       = 1e-8,
+#                         finishsamples = 1000,
+#                         use_t_df    = NULL,
+#                         verbose     = TRUE) {
+#   stopifnot(is.function(parlp),
+#             is.numeric(mu_hat),
+#             is.matrix(Sigma_hat))
+#   cores=length(cl)
+# 
+#   if (!requireNamespace("mvtnorm", quietly = TRUE))
+#     stop("Install the ‘mvtnorm’ package.")
+#   if (!requireNamespace("diagis", quietly = TRUE))
+#     stop("Install the ‘diagis’ package.")
+# 
+#   ## helpers -----------------------------------------------------------------
+#   rmv <- if (is.null(use_t_df)) mvtnorm::rmvnorm else
+#     function(n, mean, sigma) mvtnorm::rmvt(n, sigma, df = use_t_df, delta = mean)
+#   dmv_log <- if (is.null(use_t_df))
+#     function(x, m, S) mvtnorm::dmvnorm(x, m, S, log = TRUE) else
+#       function(x, m, S) mvtnorm::dmvt(x, S, df = use_t_df, delta = m, log = TRUE)
+#   ess  <- function(w) diagis::ess(w)
+# 
+#   logplus <- function(a, b) {                   # log(exp(a)+exp(b)), vectorised
+#     idx <- a > b
+#     res <- numeric(length(a))
+#     res[idx]  <- a[idx] + log1p(exp(b[idx] - a[idx]))
+#     res[!idx] <- b[!idx] + log1p(exp(a[!idx] - b[!idx]))
+#     res
+#   }
+# 
+#   ## storage -----------------------------------------------------------------
+#   samples      <- matrix(0, 0, length(mu_hat))
+#   log_p_target <- numeric(0)
+#   log_qsum     <- numeric(0)
+#   prop_mu_lst  <- list();  prop_cov_lst <- list()
+#   T_props      <- 0L
+#   ess_now      <- 0
+#   interrupted  <- FALSE                      # <- NEW flag
+# 
+#   ## main loop ---------------------------------------------------------------
+#   tryCatch({
+#     for (iter in seq_len(max_iter)) {
+# 
+#       ## build proposal ------------------------------------------------------
+#       if (iter == 1) {
+#         prop_mu  <- mu_hat
+#         prop_cov <- scale_init^2 * Sigma_hat
+#       } else {
+#         w_norm   <- w / sum(w)
+#         prop_mu  <- as.numeric(diagis::weighted_mean(samples, w_norm))
+#         prop_cov <- diagis::weighted_var(samples, w_norm) * cov_inflate
+#       }
+#       prop_cov <- prop_cov + diag(ridge, nrow(prop_cov))
+# 
+#       T_props <- T_props + 1L
+#       prop_mu_lst[[T_props]]  <- prop_mu
+#       prop_cov_lst[[T_props]] <- prop_cov
+# 
+#       ## update mixture for existing particles ------------------------------
+#       if (nrow(samples) > 0L) {
+#         lq_old  <- dmv_log(samples, prop_mu, prop_cov)
+#         log_qsum <- logplus(log_qsum, lq_old)
+#       }
+# 
+#       ## draw & score new batch ---------------------------------------------
+#       x_new <- rmv(n_batch, prop_mu, prop_cov)
+# 
+#       if (cores > 1)
+#         parallel::clusterExport(cl, 'x_new', envir = environment())
+# 
+#       lp_new <- unlist(
+#         flexlapplytext(
+#           cl    = cl,
+#           X     = 1:nrow(x_new),
+#           fn    = "function(i){parlp(x_new[i,])}",
+#           cores = cores
+#         ), use.names = FALSE
+#       )
+#       lp_new[is.na(lp_new)] <- -1e200
+#       if (all(lp_new < -1e100))
+#         stop("Could not sample from optimum! Try re-parameterising?")
+# 
+#       ## mixture denominator for new particles ------------------------------
+#       log_mix_new <- rep(-Inf, n_batch)
+#       if (T_props > 1L) {
+#         for (k in seq_len(T_props - 1L))
+#           log_mix_new <- logplus(
+#             log_mix_new,
+#             dmv_log(x_new, prop_mu_lst[[k]], prop_cov_lst[[k]])
+#           )
+#       }
+#       lq_new      <- dmv_log(x_new, prop_mu, prop_cov)
+#       log_mix_new <- logplus(log_mix_new, lq_new)
+# 
+#       ## append --------------------------------------------------------------
+#       samples      <- rbind(samples, x_new)
+#       log_p_target <- c(log_p_target, lp_new)
+#       log_qsum     <- c(log_qsum,    log_mix_new)
+# 
+#       ## weights & ESS -------------------------------------------------------
+#       log_mix <- log_qsum - log(T_props)
+#       log_w   <- log_p_target - log_mix
+#       log_w   <- log_w - max(log_w)
+#       w       <- exp(log_w)
+#       ess_now <- ess(w)
+# 
+#       if (verbose)
+#         message(sprintf("Importance sample iter %2d | n = %6d | ESS = %.1f",
+#                         iter, nrow(samples), ess_now))
+# 
+#       if (ess_now >= target_ess) break
+#     }
+#   }, interrupt = function(e) {               # <- NEW interrupt handler
+#        interrupted <<- TRUE
+#        if (verbose) message("⏹  interrupted – returning current state.")
+#      })
+# 
+#   if (length(log_p_target) == 0)
+#     stop("No samples collected before interrupt.")
+# 
+#   w_norm <- w / sum(w)
+# 
+#   ## resample equal-weight ---------------------------------------------------
+#   idx_post <- sample.int(length(w_norm),
+#                          size    = finishsamples,
+#                          replace = TRUE,
+#                          prob    = w_norm)
+# 
+#   list(theta       = samples[idx_post, , drop = FALSE],
+#        ess         = ess_now,
+#        interrupted = interrupted,           # <- flag for caller
+#        mean        = as.numeric(diagis::weighted_mean(samples, w_norm)),
+#        covariance  = diagis::weighted_var(samples, w_norm))
+# }
+adaptive_is <- function(parlp,
+                        mu_hat,
+                        Sigma_hat,
+                        cl,
+                        n_batch      = 1000,
+                        target_ess   = 50,
+                        max_iter     = 10,
+                        scale_init   = 3,
+                        cov_inflate  = 1.3,
+                        ridge        = 1e-8,
+                        finishsamples = 1000,
+                        use_t_df     = "auto",   # <-- now defaults to AUTO
+                        power_upd    = 0.8,
+                        verbose      = TRUE) {
+
+  stopifnot(is.function(parlp),
+            is.numeric(mu_hat),
+            is.matrix(Sigma_hat))
+
+  cores=length(cl)
+    message(paste0('Target ESS: ', target_ess, ' | max iter: ', max_iter,'| Hit esc to interrupt and output at current state.'))
+
+  for (pkg in c("mvtnorm", "diagis", "matrixStats"))
+    if (!requireNamespace(pkg, quietly = TRUE))
+      stop(sprintf("Install '%s' first.", pkg))
+
+  ## ── helpers ───────────────────────────────────────────────────────────────
+  safe_pd <- function(S, eps = ridge) {
+    for (f in c(1, 1e-4, 1e-3, 1e-2)) {
+      S2 <- S + diag(eps * f, nrow(S))
+      if (all(eigen(S2, symmetric = TRUE, only.values = TRUE)$values > 0))
+        return(S2)
+    }
+    diag(diag(S)) + diag(1e-2, nrow(S))
+  }
+
+  ## reusable wrappers built *inside* the loop once ν is known --------------
+  rmv_fn <- dmv_fn <- NULL          # will hold functions for this iteration
+  current_df <- if (is.numeric(use_t_df)) use_t_df else Inf
+
+  make_k_funcs <- function(df) {
+    if (is.finite(df)) {
+      rmv <- function(n, m, S) mvtnorm::rmvt(n, sigma = safe_pd(S),
+                                             df = df, delta = m)
+      dmv <- function(x, m, S) mvtnorm::dmvt(x, delta = m,
+                                             sigma = safe_pd(S),
+                                             df = df, log = TRUE)
+    } else {
+      rmv <- function(n, m, S) mvtnorm::rmvnorm(n, m, safe_pd(S))
+      dmv <- function(x, m, S) mvtnorm::dmvnorm(x, m, safe_pd(S), log = TRUE)
+    }
+    list(rmv = rmv, dmv = dmv)
+  }
+  kf <- make_k_funcs(current_df); rmv_fn <- kf$rmv; dmv_fn <- kf$dmv
+
+  ## other small helpers -----------------------------------------------------
+  ess  <- function(w) diagis::ess(w)
+
+  row_logsumexp <- function(mat) {
+    m   <- matrixStats::rowMaxs(mat)
+    bad <- is.infinite(m); res <- m
+    if (any(!bad)) {
+      mm <- m[!bad]; tmp <- mat[!bad,,drop=FALSE]
+      res[!bad] <- mm + log(rowSums(exp(tmp - mm)))
+    }
+    res
+  }
+
+  logplus <- function(a, b) { idx <- a > b
+    c((a+log1p(exp(b-a)))[idx], (b+log1p(exp(a-b)))[!idx])[order(c(which(idx), which(!idx)))]
+  }
+
+  stratified_rs <- function(w, N) {
+    cs <- cumsum(w / sum(w)); (findInterval((runif(1)+0:(N-1))/N, cs)+1L)
+  }
+
+  ## ── containers ───────────────────────────────────────────────────────────
+  samples      <- matrix(0, 0, length(mu_hat))
+  log_p_target <- numeric(0)
+  log_qsum     <- numeric(0)
+  prop_mu_lst  <- list(); prop_cov_lst <- list()
+  T_props      <- 0L;      w <- numeric(0);  ess_now <- 0
+  interrupted  <- FALSE
+
+  ## ── main loop ────────────────────────────────────────────────────────────
+  tryCatch({
+    for (iter in seq_len(max_iter)) {
+
+      ## ── proposal build (mean / cov) ────────────────────────────────────
+      if (iter == 1 || length(w) == 0) {
+        prop_mu  <- mu_hat
+        prop_cov <- scale_init^2 * Sigma_hat
+      } else {
+        w_upd <- (w^power_upd) / sum(w^power_upd)
+        prop_mu  <- as.numeric(diagis::weighted_mean(samples, w_upd))
+        prop_cov <- diagis::weighted_var(samples, w_upd) * cov_inflate
+      }
+
+      ## ── df auto-tune  (only when user asked for it) ────────────────────
+      if (identical(use_t_df, "auto") && nrow(samples) > 200) {
+        ##   weighted multivariate kurtosis → method-of-moments ν
+        mu_w  <- as.numeric(diagis::weighted_mean(samples, w/sum(w)))
+        S_w   <- diagis::weighted_var(samples, w/sum(w))
+        z     <- sweep(samples, 2, mu_w)            # centred
+        z2    <- z^2; z4 <- z^4
+        kurt  <- colSums(w * z4) / (colSums(w * z2)^2)   # univariate
+        k_bar <- mean(kurt, na.rm = TRUE)
+        if (k_bar > 3.1) {                          # >3 ⇒ heavier than Normal
+          est_df <- max(5, 4 + 18/(k_bar - 3))      # invert  k = 3(ν-2)/(ν-4)
+          current_df <- est_df
+        } else current_df <- Inf                    # close to Gaussian
+        kf <- make_k_funcs(current_df); rmv_fn <- kf$rmv; dmv_fn <- kf$dmv
+      }
+
+      ## save proposal
+      T_props <- T_props + 1L
+      prop_mu_lst[[T_props]]  <- prop_mu
+      prop_cov_lst[[T_props]] <- prop_cov
+
+      ## ── mixture update for old samples ────────────────────────────────
+      if (nrow(samples) > 0)
+        log_qsum <- logplus(log_qsum, dmv_fn(samples, prop_mu, prop_cov))
+
+      ## ── draw / evaluate new batch ─────────────────────────────────────
+      x_new <- rmv_fn(n_batch, prop_mu, prop_cov)
+
+      if (cores > 1)
+        parallel::clusterExport(cl, "x_new", envir = environment())
+
+      lp_new <- unlist(
+        flexlapplytext(cl, 1:nrow(x_new),
+          fn = "function(i){parlp(x_new[i,])}", cores = cores), use.names = FALSE)
+      lp_new[is.na(lp_new)] <- -1e200
+      if (all(lp_new < -1e100))
+        stop("All lp are -Inf – model mis-specified or proposal too narrow.")
+
+      ## mixture density for this batch (vectorised) ----------------------
+      log_mat <- vapply(seq_len(T_props),
+                        function(k) dmv_fn(x_new,
+                                           prop_mu_lst[[k]],
+                                           prop_cov_lst[[k]]),
+                        numeric(n_batch))
+      log_mix_new <- row_logsumexp(log_mat)
+
+      ## ── append & weights ───────────────────────────────────────────────
+      samples      <- rbind(samples, x_new)
+      log_p_target <- c(log_p_target, lp_new)
+      log_qsum     <- c(log_qsum,    log_mix_new)
+
+      log_mix <- log_qsum - log(T_props)
+      log_w   <- log_p_target - log_mix
+      log_w  <- log_w - max(log_w)
+      w      <- pmax(exp(log_w), 0)
+      ess_now <- ess(w)
+
+      if (verbose)
+        message(sprintf("iter %2d | df=%s | n=%5d | ESS=%.1f",
+                        iter,
+                        if (is.finite(current_df)) sprintf('%.1f', current_df)
+                        else 'Inf',
+                        nrow(samples), ess_now))
+
+      if (ess_now >= target_ess) break
+    }
+  }, interrupt = function(e) {
+       interrupted <<- TRUE
+       if (verbose) message("⏹  interrupted – returning current state.")
+  })
+
+  if (!length(w))
+    stop("No samples collected before interrupt.")
+
+  w_norm <- w / sum(w)
+  idx_post <- stratified_rs(w_norm, finishsamples)
+
+  list(theta          = samples[idx_post, , drop = FALSE],
+       weights        = rep(1/finishsamples, finishsamples),
+       full_theta     = samples,
+       full_weights   = w_norm,
+       ess            = ess_now,
+       interrupted    = interrupted,
+       mean           = as.numeric(diagis::weighted_mean(samples, w_norm)),
+       covariance     = diagis::weighted_var(samples, w_norm),
+       df_used        = current_df)
+}
+
 
 
 
@@ -647,16 +985,11 @@ autoTIpredsFunc <- function(cl, standata, sm, optimArgs, parsteps, optimcores, c
 #' @param isloopsize Number of samples of approximating distribution per iteration of importance sampling.
 #' @param finishsamples Number of samples to draw (either from hessian
 #' based covariance or posterior distribution) for final results computation.
-#' @param finishmultiply Importance sampling stops once available samples reach \code{finishsamples * finishmultiply} , then the final samples are drawn
-#' without replacement from this set.
-#' @param tdf degrees of freedom of multivariate t distribution. Higher (more normal) generally gives more efficent
-#' importance sampling, at risk of truncating tails.
 #' @param parsteps ordered list of vectors of integers denoting which parameters should begin fixed
 #' at zero, and freed sequentially (by list order). Useful for complex models, e.g. keep all cross couplings fixed to zero 
 #' as a first step, free them in second step. 
 #' @param parstepsAutoModel if TRUE, determines model structure for the parameters specified in parsteps automatically. If 'group', determines this on a group level first and then a subject level. Primarily for internal ctsem use, see \code{?ctFitAuto}.
 #' @param groupFreeThreshold threshold for determining whether a parameter is free in a group level model. If the proportion of subjects with a non-zero parameter is above this threshold, the parameter is considered free. Only used with parstepsAutoModel = 'group'.
-#' @param chancethreshold drop iterations of importance sampling where any samples are chancethreshold times more likely to be drawn than expected.
 #' @param matsetup subobject of ctStanFit output. If provided, parameter names instead of numbers are output for any problem indications.
 #' @param nsubsets number of subsets for stochastic optimizer. Subsets are further split across cores, 
 #' but each subjects data remains whole -- processed by one core in one subset.
@@ -666,6 +999,8 @@ autoTIpredsFunc <- function(cl, standata, sm, optimArgs, parsteps, optimcores, c
 #' @importFrom mize mize
 #' @importFrom utils head tail
 #' @importFrom Rcpp evalCpp
+#' @importFrom parallelly makeClusterPSOCK
+#' @importFrom diagis ess weighted_mean weighted_var
 
 stanoptimis <- function(standata, sm, init='random',initsd=.01,
   estonly=FALSE,tol=1e-8,
@@ -763,7 +1098,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
     if(length(parsteps)>0) optimArgs$init[unlist(parsteps)] <- 0 
   }
   
-  if(all(optimArgs$init == 0)) optimArgs$init <- rep(0,npars)
+  if(all(optimArgs$init %in% 0)) optimArgs$init <- rep(0,npars)
   
   if(length(optimArgs$init) != npars){
     warning('Initialisation vector length does not match number of parameters in model, extending with zeros')
@@ -890,7 +1225,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   if(standata$ntipred > 0 && !is.null(standata$TIpredAuto) && standata$TIpredAuto){
     if((length(parsteps) > 0)) stop('parsteps not supported with TIpredAuto')
     
-    # insert TI‐pred logic via our new function
+    # insert TI-pred logic via our new function
     ti_res <- autoTIpredsFunc(
       cl           = clctsem,
       standata     = standata,
@@ -1036,7 +1371,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
       }
       
       # At this point, all parameters in `freePars` (the basic ones) and those in `freed_candidates`
-      # are free (and have been re–optimized), while those remaining in `currentFixed` are kept fixed.
+      # are free (and have been re-optimized), while those remaining in `currentFixed` are kept fixed.
       # You can now proceed with the rest of your model estimation using 'init' as the final parameter estimate.
       parsteps <- currentFixed
     }
@@ -1044,10 +1379,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   
   if (parstepsAutoModel %in% 'group') {
     # --------------------------------------------------
-    # Group‐level stepwise freeing, with per‐subject re‐fit and init averaging
+    # Group-level stepwise freeing, with per-subject re-fit and init averaging
     groupParStepsOptimArgs <- optimArgs
     # thresholds
-    improvement_threshold <- 1.96   # per‐subject ΔLL must exceed this
+    improvement_threshold <- 1.96   # per-subject deltaLL must exceed this
     
     # initial fixed candidates and subjects
     currentFixed <- parsteps[[1]]
@@ -1090,7 +1425,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
       # 2) average into init
       groupParStepsOptimArgs$init[-currentFixed] <- colMeans(subj_mat)
       
-      # 3) compute per‐subject expected ΔLL for each candidate
+      # 3) compute per-subject expected deltaLL for each candidate
       subj_imp <- parallel::parLapply(clctsem,seq_along(subject_ids), function(i) {
         sid  <- subject_ids[i]
         pvec <- groupParStepsOptimArgs$init
@@ -1099,7 +1434,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
         smf  <- stan_reinitsf(sm, sd)
         tgt  <- function(p) log_prob(smf, upars = p, adjust_transform = TRUE, gradient = TRUE)
         grad <- attributes(tgt(pvec))$gradient
-        # helper: finite‐difference Hessian diagonal
+        # helper: finite-difference Hessian diagonal
         jacPars <- function(pars, step = 1e-3, whichpars) {
           sapply(whichpars, function(idx) {
             pf <- pars; pb <- pars
@@ -1123,16 +1458,16 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
         imp_mat <- matrix(imp_mat, nrow = length(imp_vecs), byrow = TRUE)
       }
       
-      # 4) identify group‐level candidates
+      # 4) identify group-level candidates
       prop_above  <- colMeans(imp_mat >= improvement_threshold)
       group_cands <- currentFixed[prop_above > groupFreeThreshold]
       
       if (length(group_cands) == 0) {
-        message("No group‐level parameters exceed threshold; stopping.")
+        message("No group-level parameters exceed threshold; stopping.")
         break
       }
       
-      ## pick group candidate with highest mean ΔLL
+      ## pick group candidate with highest mean deltaLL
       # means      <- colMeans(imp_mat[, currentFixed %in% group_cands, drop = FALSE])
       # best_param <- group_cands[which.max(means)]
       
@@ -1140,7 +1475,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
       best_param <- currentFixed[which.max(prop_above)]
       
       message(sprintf(
-        "Freeing parameter %d (%.0f%% subjects ΔLL ≥ %.2f)",
+        "Freeing parameter %d (%.0f%% subjects deltaLL >= %.2f)",
         best_param,
         100 * prop_above[currentFixed == best_param],
         improvement_threshold
@@ -1193,7 +1528,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
         if(length(subjFixed) == 0) break
         fit <- sgd(
           p_i+rnorm(length(p_i),0,.01), #init away from old max
-          fitfunc = parlp,
+          lpgFunc = parlp,
           itertol     = tol * stochasticTolAdjust,
           maxiter     = 5000,
           whichignore = subjFixed,
@@ -1246,7 +1581,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   } #end if not auto model parsteps
   
   
-  bestfit <-optimfit$value
   est2=optimArgs$init #because init contains the fixed values #unconstrain_pars(smf, est1)
   if(length(parsteps)>0) est2[-parsteps] = optimfit$par else est2=optimfit$par
   
@@ -1255,6 +1589,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   if(estonly) {
     smf <- stan_reinitsf(sm,standata)
     stanfit=list(optimfit=optimfit,stanfit=smf, rawest=est2,parsteps=parsteps)
+    optimfinished <- TRUE #disable exit message re pars
     return(stanfit)
   }
   
@@ -1488,37 +1823,179 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   if(cores > 1)   parallelStanSetup(cl=clctsem,standata,split=FALSE)    
   
   
- 
-  
-  # … in stanoptimis(), replace the old `if(is){ … }` block with:
   if (is) {
-    is_res <- importanceSamplingFunc(
-      samples         = samples,
-      mcovl           = mcovl,
-      delta           = delta,
-      finishsamples   = finishsamples,
-      finishmultiply  = finishmultiply,
-      isloopsize      = isloopsize,
-      tdf             = tdf,
-      cl              = clctsem,
-      cores           = cores,
-      parlp           = parlp,
-      flexlapplytext  = flexlapplytext,
-      chancethreshold = chancethreshold
-    )
-    samples      <- is_res$samples
-    resamples    <- is_res$resamples
-    resample_i   <- is_res$resample_i
+    
+  #   
+  #   # ---------------------------------------------------------------------------
+  #   # AMIS version – fixed denominator: every new particle sees *all* proposals
+  #   # ---------------------------------------------------------------------------
+  #   adaptive_is <- function(parlp,
+  #     mu_hat,
+  #     Sigma_hat,
+  #     cl,
+  #     n_batch     = 1000,
+  #     target_ess  = 50,
+  #     max_iter    = 10,
+  #     scale_init  = 3,
+  #     cov_inflate = 1.3,
+  #     ridge       = 1e-8,
+  #     finishsamples=1000,
+  #     use_t_df    = NULL,      
+  #     verbose     = TRUE) {
+  #     
+  #     stopifnot(is.function(parlp),
+  #       is.numeric(mu_hat),
+  #       is.matrix(Sigma_hat))
+  #     
+  #     if (!requireNamespace("mvtnorm", quietly = TRUE))
+  #       stop("Install the ‘mvtnorm’ package.")
+  #     if (!requireNamespace("diagis", quietly = TRUE))
+  #       stop("Install the ‘diagis’ package.")
+  #     
+  #     ## ---------------------------------------------------------------- helpers
+  #     rmv <- if (is.null(use_t_df)) mvtnorm::rmvnorm else
+  #       function(n, mean, sigma) mvtnorm::rmvt(n, sigma, df = use_t_df, delta = mean)
+  #     dmv_log <- if (is.null(use_t_df))
+  #       function(x, m, S) mvtnorm::dmvnorm(x, m, S, log = TRUE) else
+  #         function(x, m, S) mvtnorm::dmvt(x, S, df = use_t_df, delta = m, log = TRUE)
+  #     
+  #     ess  <- function(w) diagis::ess(w)
+  #     
+  #     # numerically-stable log(exp(a)+exp(b)), vectorised
+  #     logplus <- function(a, b) {
+  #       idx <- a > b
+  #       res <- numeric(length(a))
+  #       res[idx]  <- a[idx] + log1p(exp(b[idx] - a[idx]))
+  #       res[!idx] <- b[!idx] + log1p(exp(a[!idx] - b[!idx]))
+  #       res
+  #     }
+  #     
+  #     ## ------------------------------------------------------------- book-keeping
+  #     samples      <- matrix(0, 0, length(mu_hat))   # 
+  #     log_p_target <- numeric(0)                     # 
+  #     log_qsum     <- numeric(0)                     # 
+  #     prop_mu_lst  <- list();  prop_cov_lst <- list()# store every proposal
+  #     T_props      <- 0L
+  #     
+  #     ## ------------------------------------------------------------- main loop
+  #     for (iter in seq_len(max_iter)) {
+  #       
+  #       ## ---- build proposal -------------------------------------------------
+  #       if (iter == 1) {
+  #         prop_mu  <- mu_hat
+  #         prop_cov <- scale_init^2 * Sigma_hat
+  #       } else {
+  #         w_norm   <- w / sum(w)
+  #         prop_mu  <- as.numeric(diagis::weighted_mean(samples, w_norm))
+  #         prop_cov <- diagis::weighted_var(samples, w_norm) * cov_inflate
+  #       }
+  #       prop_cov <- prop_cov + diag(ridge, nrow(prop_cov))
+  #       
+  #       # remember it
+  #       T_props <- T_props + 1L
+  #       prop_mu_lst[[T_props]]  <- prop_mu
+  #       prop_cov_lst[[T_props]] <- prop_cov
+  #       
+  #       ## ---- update qmixture for *existing* particles ---------------------
+  #       if (nrow(samples) > 0L) {
+  #         lq_old <- dmv_log(samples, prop_mu, prop_cov)
+  #         log_qsum <- logplus(log_qsum, lq_old)
+  #       }
+  #       
+  #       ## ---- draw & evaluate new particles ---------------------------------
+  #       x_new <- rmv(n_batch, prop_mu, prop_cov)
+  #       
+  #       if (cores > 1)
+  #         parallel::clusterExport(cl, 'x_new', envir = environment())
+  #       
+  #       lp_new <- unlist(
+  #         flexlapplytext(
+  #           cl    = cl,
+  #           X     = 1:nrow(x_new),
+  #           fn    = "function(x){parlp(x_new[x,])}",
+  #           cores = cores
+  #         ), use.names = FALSE
+  #       )
+  #       lp_new[is.na(lp_new)] <- -1e200
+  #       if (all(lp_new < -1e100))
+  #         stop("Could not sample from optimum! Try re-parameterising?")
+  #       
+  #       ## mixture denominator for fresh points: need *all* previous proposals
+  #       log_mix_new <- rep(-Inf, n_batch)
+  #       if (T_props > 1L) {
+  #         for (k in seq_len(T_props - 1L)) {
+  #           log_mix_new <- logplus(
+  #             log_mix_new,
+  #             dmv_log(x_new, prop_mu_lst[[k]], prop_cov_lst[[k]])
+  #           )
+  #         }
+  #       }
+  #       lq_new <- dmv_log(x_new, prop_mu, prop_cov)
+  #       log_mix_new <- logplus(log_mix_new, lq_new)   # add current proposal
+  #       
+  #       ## ---- append everything ---------------------------------------------
+  #       samples      <- rbind(samples, x_new)
+  #       log_p_target <- c(log_p_target, lp_new)
+  #       log_qsum     <- c(log_qsum,    log_mix_new)
+  #       
+  #       ## ---- weights & ESS --------------------------------------------------
+  #       log_mix <- log_qsum - log(T_props)            
+  #       log_w   <- log_p_target - log_mix
+  #       log_w   <- log_w - max(log_w)
+  #       w       <- exp(log_w)
+  #       ess_now <- ess(w)
+  #       
+  #       if (verbose)
+  #         message(sprintf("Importance sample iter %2d | n = %6d | ESS = %.1f",
+  #           iter, nrow(samples), ess_now))
+  #       
+  #       if (ess_now >= target_ess) break
+  #     }
+  #     
+  #     w_norm <- w / sum(w)
+  #     
+  #       ## ---------- resample once, equal-weight ------------------------------
+  # idx_post <- sample.int(length(w_norm),
+  #                        size       = finishsamples,
+  #                        replace    = TRUE,
+  #                        prob       = w_norm)
+  #     
+  #     list(theta      = samples[idx_post,,drop=FALSE],
+  #       # weights    = w_norm,
+  #       ess        = ess_now,
+  #       mean       = as.numeric(diagis::weighted_mean(samples, w_norm)),
+  #       covariance = diagis::weighted_var(samples, w_norm))
+  #   }
+    
+
+    is_res <- adaptive_is(lpg_single, mu_hat = delta[[1]], Sigma_hat = mcovl[[1]], 
+      cl=clctsem,scale_init = 1.5,verbose = TRUE, target_ess = 50, cov_inflate = 1.3,
+      finishsamples=finishsamples, n_batch = isloopsize)
+    
+    # is_res <- importanceSamplingFunc(
+    #   samples         = samples,
+    #   mcovl           = mcovl,
+    #   delta           = delta,
+    #   finishsamples   = finishsamples,
+    #   finishmultiply  = finishmultiply,
+    #   isloopsize      = isloopsize,
+    #   tdf             = tdf,
+    #   cl              = clctsem,
+    #   cores           = cores,
+    #   parlp           = parlp,
+    #   flexlapplytext  = flexlapplytext,
+    #   chancethreshold = chancethreshold
+    # )
+    resamples      <- is_res$theta
+    # resamples    <- is_res$resamples
+    # resample_i   <- is_res$resample_i
     lpsamples    <- is_res$lpsamples
-    sample_prob  <- is_res$sample_prob
+    sample_prob  <- is_res$weights
     ess          <- is_res$ess
-    qdiag        <- is_res$qdiag
+    # qdiag        <- is_res$qdiag
   }
   
   
-  
-  
-  if(!is) lpsamples <- NA else lpsamples <- unlist(target_dens)[resample_i]
   
   message('Computing posterior with ',nrow(resamples),' samples')
   standata$savesubjectmatrices=savesubjectmatrices
