@@ -107,7 +107,7 @@ ctFitAuto <- function(m, dat, DRIFT=TRUE, DIFFUSION=TRUE,fast=FALSE,initialRestr
         ffinal$subjectfits <- future.apply::future_lapply(1:nrow(f$stanfit$optimfit$subjFreed), function(si){
           subjinit <- f$stanfit$optimfit$subjPars[si,]
           if(length(subjparsteps[[si]]) > 0) subjinit <- subjinit[-subjparsteps[[si]] ] #if there are any fixed parameters, remove them from the initial values
-          sfit <- ctStanFit(datalong = dat[dat[[m$subjectIDname]]==unique(dat[[m$subjectIDname]])[si],], ctstanmodel = ffinal$subjectmodels[[si]],init=subjinit,optimcontrol=list(carefulfit=F),cores=1,...)
+          sfit <- ctStanFit(datalong = dat[dat[[m$subjectIDname]]==unique(dat[[m$subjectIDname]])[si],], ctstanmodel = ffinal$subjectmodels[[si]],inits=subjinit,optimcontrol=list(carefulfit=F),cores=1,...)
         },future.seed=TRUE)
     } #end refit if not fast
   }#end individuals

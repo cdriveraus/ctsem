@@ -2,7 +2,7 @@ Package: ctsem
 Type: Package
 Title: Continuous Time Structural Equation Modelling
 Version: 3.10.3
-Date: 2025-4-9
+Date: 2025-6-17
 Authors@R: c(person("Charles", "Driver", role =
     c("aut","cre","cph"),email="charles.driver2@uzh.ch"),
     person("Manuel", "Voelkle", role = c("aut","cph")),
@@ -52,7 +52,8 @@ Imports:
     tools,
     utils,
     splines,
-    statmod
+    statmod,
+    parallelly
 Encoding: UTF-8
 LazyData: true
 ByteCompile: true
@@ -77,7 +78,8 @@ Suggests:
     qgam,
     papaja,
     future,
-    future.apply
+    future.apply,
+    diagis
 VignetteBuilder: knitr
 RoxygenNote: 7.3.2
 SystemRequirements: GNU make

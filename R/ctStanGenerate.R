@@ -104,17 +104,20 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
   args <- cts$args
   args$optimcontrol=optimcontrol
   args$optimize=TRUE
-  args$cores=cores #problem with multiple cores inside function?
+  args$cores=cores
   args$ctstanmodel <- cts
   args$intoverstates <- TRUE
   args$intoverpop <- TRUE
-  args$inits=1e-10
+  args$inits=0
   args$datalong=datadummy
   args$priors <- priors
+  args$optimcontrol=list(stochastic=FALSE,carefulfit=FALSE)
   if(!is.null(args$priors) && !as.logical(args$priors)) stop('Priors disabled, cannot sample from prior!')
 
   #fit to empty data 
   message('Fitting model to empty dataset...')
+  browser()
+
   pp<-do.call(ctStanFit,args)
   
   if(parsonly) dat <- pp else{

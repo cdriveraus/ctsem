@@ -25,8 +25,8 @@ ms <- ctStanModel(m)
 
 system.time({f <- ctStanFit(datalong = d,ctstanmodel = ms,cores=2,priors = F)})
 
-library(ctsemOMX)
-system.time({fo<-ctsemOMX::ctFit(ctmodelobj = m,dat = d,stationary = NULL)})
+# library(ctsemOMX)
+# system.time({fo<-ctsemOMX::ctFit(ctmodelobj = m,dat = d,stationary = NULL)})
 
 s=summary(f)
 s

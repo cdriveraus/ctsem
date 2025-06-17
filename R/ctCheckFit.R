@@ -57,6 +57,7 @@ ctFitCovCheck <- function(fit,cor=FALSE){
 #' @description Plot the results of ctFitCovCheck.
 #' @param checkfit Output from ctFitCovCheck.
 #' @param maxlag Maximum lag to plot.
+#' @param ... not used.
 #' @return ggplot object.
 #' @examples
 #' \dontrun{
@@ -65,7 +66,7 @@ ctFitCovCheck <- function(fit,cor=FALSE){
 #' @export
 #'  
 
-plot.ctFitCovCheck <- function(checkfit, maxlag = 10) {
+plot.ctFitCovCheck <- function(checkfit, maxlag = 10,...) {
   gg <- list()
   checkfit <- as.data.table(checkfit)  # Ensure checkfit is a data.table
   .RowVar <- .ObsRow <- .ObsCol <- count <- .ColVar <- q025 <- q975 <- q50 <- NULL

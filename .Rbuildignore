@@ -5,6 +5,7 @@
 ^R/old/*.
 ^R/dev/*.
 ^R/donotpackage/*.
+^R/ctGraph.R
 ^.git
 ^.gitignore
 ^README\.Rmd$

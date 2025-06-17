@@ -1,3 +1,4 @@
+#ignored in build!
 ctGraphPlot <- function(x,DRIFT=TRUE, DIFFUSION=TRUE){
   if('ctStanModel' %in% class(x)){
     model <- x

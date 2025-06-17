@@ -37,7 +37,7 @@ ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE,
 
   ps<-ps[order(ps$param),]
 
-  
+
   e<-ctExtract(obj)
   priors <- ctStanGenerate(cts = obj,parsonly=TRUE,nsamples=priorsamples,...)
   priors <- priors$stanfit$transformedpars

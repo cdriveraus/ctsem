@@ -4,12 +4,14 @@
 \alias{plot.ctFitCovCheck}
 \title{plot.ctFitCovCheck}
 \usage{
-\method{plot}{ctFitCovCheck}(checkfit, maxlag = 10)
+\method{plot}{ctFitCovCheck}(checkfit, maxlag = 10, ...)
 }
 \arguments{
 \item{checkfit}{Output from ctFitCovCheck.}
 
 \item{maxlag}{Maximum lag to plot.}
+
+\item{...}{not used.}
 }
 \value{
 ggplot object.
