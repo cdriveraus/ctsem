@@ -8,10 +8,10 @@
 \usepackage[utf8]{inputenc}
 \usepackage{rotating}
 
-% \usepackage[natbibapa]{apacite} % Use natbib with APA style
-% \bibliographystyle{apacite}     % Set bibliography style
-\usepackage{natbib}
-\bibliographystyle{apalike}
+\usepackage[natbibapa]{apacite} % Use natbib with APA style
+\bibliographystyle{apacite}     % Set bibliography style
+% \usepackage{natbib}
+% \bibliographystyle{apalike}
 \usepackage[british]{babel}
 \usepackage{csquotes}
 

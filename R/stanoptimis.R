@@ -402,6 +402,7 @@ clusterIDeval <- function(cl,commands){
 
 
 ctOptim <- function(init, lpgFunc, tol, nsubsets, stochastic, stochasticTolAdjust,bfgsType='mize',...){
+      browser()
   if(nsubsets > 1) stochastic <- TRUE #if nsubsets > 1, use stochastic
   if(stochastic){
     args <- list(...)
@@ -430,7 +431,7 @@ ctOptim <- function(init, lpgFunc, tol, nsubsets, stochastic, stochasticTolAdjus
         gr=function(pars) -attributes(lpgFunc(pars))$gradient
       )
       f=mize(init, fg=mizelpg, max_iter=99999,
-        method="BFGS",memory=20,store_progress=TRUE,
+        method="L-BFGS",memory=100,
         line_search='Schmidt',c1=1e-10,c2=.9,step0='schmidt',ls_max_fn=999,
         abs_tol=tol,grad_tol=0,rel_tol=0,step_tol=0,ginf_tol=0)
       f$value = -f$f #reverse because mize minimizes
@@ -1288,6 +1289,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   
   if(parstepsAutoModel %in% FALSE){
     message('Optimizing...')
+
     optimArgs$nsubsets <- 1
     optimArgs$parrangetol <- tol*100
     optimArgs$whichignore <- unlist(parsteps)

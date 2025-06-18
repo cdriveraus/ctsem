@@ -116,7 +116,6 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
 
   #fit to empty data 
   message('Fitting model to empty dataset...')
-  browser()
 
   pp<-do.call(ctStanFit,args)
   
