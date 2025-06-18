@@ -516,114 +516,114 @@ autoTIpredsFunc <- function(cl, standata, sm, optimArgs, parsteps, optimcores, c
 
 
 
-# Importance sampling for optimized ctstanfit
-importanceSamplingFunc <- function(
-    samples, mcovl, delta,
-  finishsamples, finishmultiply, isloopsize, tdf,
-  cl, cores, parlp, flexlapplytext, chancethreshold
-) {
-  message('Importance sampling...')
-  log_sum_exp <- function(x) {
-    xmax <- which.max(x)
-    log1p(sum(exp(x[-xmax] - x[xmax]))) + x[xmax]
-  }
-  targetsamples <- finishsamples * finishmultiply
-  j <- 0L
-  sample_prob <- numeric(0)
-  ess <- numeric(0)
-  qdiag <- numeric(0)
-  target_dens_list <- list()
-  
-  while (nrow(samples) < targetsamples) {
-    j <- j + 1L
-    if (j == 1L) {
-      samples    <- mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]], df = tdf)
-      newsamples <- samples
-    } else {
-      delta[[j]] <- colMeans(resamples)
-      mcovl[[j]] <- as.matrix(Matrix::nearPD(cov(resamples))$mat)
-      for (iteri in seq_len(j)) {
-        if (iteri == 1L) {
-          mcov <- mcovl[[j]]; mu <- delta[[j]]
-        } else {
-          mcov <- mcov * .5 + mcovl[[j]] * .5
-          mu   <- mu   * .5 + delta[[j]]   * .5
-        }
-      }
-      newsamples <- mvtnorm::rmvt(isloopsize, delta = mu, sigma = mcov, df = tdf)
-      samples    <- rbind(samples, newsamples)
-    }
-    
-    prop_dens <- mvtnorm::dmvt(tail(samples, isloopsize), delta[[j]], mcovl[[j]], df = tdf, log = TRUE)
-    if (cores > 1) parallel::clusterExport(cl, 'samples', envir = environment())
-    
-    target_dens_list[[j]] <- unlist(
-      flexlapplytext(
-        cl    = cl,
-        X     = seq_len(isloopsize),
-        fn    = "function(x){parlp(samples[x,])}",
-        cores = cores
-      )
-    )
-    target_dens_list[[j]][is.na(target_dens_list[[j]])] <- -1e200
-    if (all(target_dens_list[[j]] < -1e100)) stop('Could not sample from optimum! Try reparamaterizing?')
-    
-    targ <- target_dens_list[[j]]
-    targ[!is.finite(targ)] <- -1e30
-    weighted <- targ - prop_dens
-    
-    newsampleprob <- exp(weighted - log_sum_exp(weighted))
-    sample_prob   <- c(sample_prob, newsampleprob)
-    sample_prob[!is.finite(sample_prob)] <- 0
-    sample_prob[is.na(sample_prob)]     <- 0
-    
-    if (nrow(samples) >= targetsamples && max(sample_prob)/sum(sample_prob) < chancethreshold) {
-      message('Finishing importance sampling...')
-      nresamples <- finishsamples
-    } else {
-      nresamples <- max(5000, nrow(samples)/5)
-    }
-    
-    resample_i <- sample(
-      seq_len(nrow(samples)),
-      size    = nresamples,
-      replace = nrow(samples) <= targetsamples,
-      prob    = sample_prob / sum(sample_prob)
-    )
-    message(sprintf(
-      'Importance sample loop %d: %d unique samples from %d resamples of %d; prob sd=%.4f, max chance=%.4f',
-      j, length(unique(resample_i)), nresamples, nrow(samples),
-      sd(sample_prob), max(sample_prob)*isloopsize
-    ))
-    if (length(unique(resample_i)) < 100) {
-      message('Sampling ineffective (<100 unique) - consider increasing isloopsize or using HMC.')
-    }
-    
-    resamples <- samples[resample_i, , drop = FALSE]
-    ess[j]    <- sum(sample_prob[resample_i])^2 / sum(sample_prob[resample_i]^2)
-    qdiag[j]  <- mean(vapply(
-      seq_len(500),
-      function(i) {
-        idx <- sample(sample_prob, size = i, replace = TRUE)
-        max(idx) / sum(idx)
-      },
-      numeric(1)
-    ))
-  }
-  
-  combined_target <- unlist(target_dens_list)
-  lpsamples <- combined_target[resample_i]
-  
-  list(
-    samples     = samples,
-    resamples   = resamples,
-    resample_i  = resample_i,
-    lpsamples   = lpsamples,
-    sample_prob = sample_prob,
-    ess         = ess,
-    qdiag       = qdiag
-  )
-}
+# # Importance sampling for optimized ctstanfit
+# importanceSamplingFunc <- function(
+#     samples, mcovl, delta,
+#   finishsamples, finishmultiply, isloopsize, tdf,
+#   cl, cores, parlp, flexlapplytext, chancethreshold
+# ) {
+#   message('Importance sampling...')
+#   log_sum_exp <- function(x) {
+#     xmax <- which.max(x)
+#     log1p(sum(exp(x[-xmax] - x[xmax]))) + x[xmax]
+#   }
+#   targetsamples <- finishsamples * finishmultiply
+#   j <- 0L
+#   sample_prob <- numeric(0)
+#   ess <- numeric(0)
+#   qdiag <- numeric(0)
+#   target_dens_list <- list()
+#   
+#   while (nrow(samples) < targetsamples) {
+#     j <- j + 1L
+#     if (j == 1L) {
+#       samples    <- mvtnorm::rmvt(isloopsize, delta = delta[[j]], sigma = mcovl[[j]], df = tdf)
+#       newsamples <- samples
+#     } else {
+#       delta[[j]] <- colMeans(resamples)
+#       mcovl[[j]] <- as.matrix(Matrix::nearPD(cov(resamples))$mat)
+#       for (iteri in seq_len(j)) {
+#         if (iteri == 1L) {
+#           mcov <- mcovl[[j]]; mu <- delta[[j]]
+#         } else {
+#           mcov <- mcov * .5 + mcovl[[j]] * .5
+#           mu   <- mu   * .5 + delta[[j]]   * .5
+#         }
+#       }
+#       newsamples <- mvtnorm::rmvt(isloopsize, delta = mu, sigma = mcov, df = tdf)
+#       samples    <- rbind(samples, newsamples)
+#     }
+#     
+#     prop_dens <- mvtnorm::dmvt(tail(samples, isloopsize), delta[[j]], mcovl[[j]], df = tdf, log = TRUE)
+#     if (cores > 1) parallel::clusterExport(cl, 'samples', envir = environment())
+#     
+#     target_dens_list[[j]] <- unlist(
+#       flexlapplytext(
+#         cl    = cl,
+#         X     = seq_len(isloopsize),
+#         fn    = "function(x){parlp(samples[x,])}",
+#         cores = cores
+#       )
+#     )
+#     target_dens_list[[j]][is.na(target_dens_list[[j]])] <- -1e200
+#     if (all(target_dens_list[[j]] < -1e100)) stop('Could not sample from optimum! Try reparamaterizing?')
+#     
+#     targ <- target_dens_list[[j]]
+#     targ[!is.finite(targ)] <- -1e30
+#     weighted <- targ - prop_dens
+#     
+#     newsampleprob <- exp(weighted - log_sum_exp(weighted))
+#     sample_prob   <- c(sample_prob, newsampleprob)
+#     sample_prob[!is.finite(sample_prob)] <- 0
+#     sample_prob[is.na(sample_prob)]     <- 0
+#     
+#     if (nrow(samples) >= targetsamples && max(sample_prob)/sum(sample_prob) < chancethreshold) {
+#       message('Finishing importance sampling...')
+#       nresamples <- finishsamples
+#     } else {
+#       nresamples <- max(5000, nrow(samples)/5)
+#     }
+#     
+#     resample_i <- sample(
+#       seq_len(nrow(samples)),
+#       size    = nresamples,
+#       replace = nrow(samples) <= targetsamples,
+#       prob    = sample_prob / sum(sample_prob)
+#     )
+#     message(sprintf(
+#       'Importance sample loop %d: %d unique samples from %d resamples of %d; prob sd=%.4f, max chance=%.4f',
+#       j, length(unique(resample_i)), nresamples, nrow(samples),
+#       sd(sample_prob), max(sample_prob)*isloopsize
+#     ))
+#     if (length(unique(resample_i)) < 100) {
+#       message('Sampling ineffective (<100 unique) - consider increasing isloopsize or using HMC.')
+#     }
+#     
+#     resamples <- samples[resample_i, , drop = FALSE]
+#     ess[j]    <- sum(sample_prob[resample_i])^2 / sum(sample_prob[resample_i]^2)
+#     qdiag[j]  <- mean(vapply(
+#       seq_len(500),
+#       function(i) {
+#         idx <- sample(sample_prob, size = i, replace = TRUE)
+#         max(idx) / sum(idx)
+#       },
+#       numeric(1)
+#     ))
+#   }
+#   
+#   combined_target <- unlist(target_dens_list)
+#   lpsamples <- combined_target[resample_i]
+#   
+#   list(
+#     samples     = samples,
+#     resamples   = resamples,
+#     resample_i  = resample_i,
+#     lpsamples   = lpsamples,
+#     sample_prob = sample_prob,
+#     ess         = ess,
+#     qdiag       = qdiag
+#   )
+# }
 
 
 # # ---------------------------------------------------------------------------
@@ -783,7 +783,7 @@ adaptive_is <- function(parlp,
                         cov_inflate  = 1.3,
                         ridge        = 1e-8,
                         finishsamples = 1000,
-                        use_t_df     = "auto",   # <-- now defaults to AUTO
+                        use_t_df     = "auto",   
                         power_upd    = 0.8,
                         verbose      = TRUE) {
 
@@ -948,6 +948,7 @@ adaptive_is <- function(parlp,
   idx_post <- stratified_rs(w_norm, finishsamples)
 
   list(theta          = samples[idx_post, , drop = FALSE],
+    lpsamples= log_p_target[idx_post],
        weights        = rep(1/finishsamples, finishsamples),
        full_theta     = samples,
        full_weights   = w_norm,
@@ -1986,6 +1987,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
     #   flexlapplytext  = flexlapplytext,
     #   chancethreshold = chancethreshold
     # )
+    browser()
     resamples      <- is_res$theta
     # resamples    <- is_res$resamples
     # resample_i   <- is_res$resample_i
@@ -2034,8 +2036,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   stanfit=list(optimfit=optimfit,stanfit=stan_reinitsf(sm,standata), rawest=est2, rawposterior = resamples, cov=mcov,
     transformedpars=transformedpars,transformedpars_old=transformedpars_old,
     # transformedparsfull=transformedparsfull,
-    standata=list(TIPREDEFFECTsetup=standata$TIPREDEFFECTsetup,ntipredeffects = standata$ntipredeffects),
-    isdiags=list(cov=mcovl,means=delta,ess=ess,qdiag=qdiag,lpsamples=lpsamples ))
+    standata=list(TIPREDEFFECTsetup=standata$TIPREDEFFECTsetup,ntipredeffects = standata$ntipredeffects))
   if(bootstrapUncertainty) stanfit$subjectscores <- scores #subjectwise gradient contributions
   
   
