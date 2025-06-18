@@ -21,7 +21,8 @@ stanoptimis(
   groupFreeThreshold = 0.5,
   plot = FALSE,
   is = FALSE,
-  isloopsize = 1000,
+  isitersize = 1000,
+  isESS = 100,
   finishsamples = 1000,
   tdf = 10,
   chancethreshold = 100,
@@ -71,20 +72,14 @@ as a first step, free them in second step.}
 
 \item{plot}{Logical. If TRUE, plot iteration details. Probably slower.}
 
-\item{is}{Logical. Use importance sampling, or just return map estimates?}
+\item{is}{Logical. Use mixture importance sampling, or just return map estimates?}
 
-\item{isloopsize}{Number of samples of approximating distribution per iteration of importance sampling.}
+\item{isitersize}{Number of samples of approximating distribution per iteration of importance sampling.}
+
+\item{isESS}{target effective sample size for importance sampling. If is=TRUE, this is used to determine the number of samples to draw from the approximating distribution.}
 
 \item{finishsamples}{Number of samples to draw (either from hessian
 based covariance or posterior distribution) for final results computation.}
-
-\item{tdf}{degrees of freedom of multivariate t distribution. Higher (more normal) generally gives more efficent
-importance sampling, at risk of truncating tails.}
-
-\item{chancethreshold}{drop iterations of importance sampling where any samples are chancethreshold times more likely to be drawn than expected.}
-
-\item{finishmultiply}{Importance sampling stops once available samples reach \code{finishsamples * finishmultiply} , then the final samples are drawn
-without replacement from this set.}
 
 \item{lproughnesstarget}{target log posterior roughness for stochastic optimizer (suggest between .05 and .4).}
 

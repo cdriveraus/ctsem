@@ -48,8 +48,8 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     checkm$pars[c(-1,-7) ,c('TI1_effect')] <- FALSE
     
-    tfit1<-ctStanFit(tdat,checkm,cores=10,optimize=TRUE,
-      optimcontrol=list(is=TRUE,finishsamples=1000,isloopsize=1000),
+    tfit1<-ctStanFit(tdat,checkm,optimize=TRUE,
+      optimcontrol=list(is=TRUE,carefulfit=F),
       priors=TRUE,verbose=0)
     s1=summary(tfit1)
     
