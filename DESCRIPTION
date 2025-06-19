@@ -52,7 +52,6 @@ Imports:
     tools,
     utils,
     splines,
-    statmod,
     parallelly
 Encoding: UTF-8
 LazyData: true

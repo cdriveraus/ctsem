@@ -1,7 +1,8 @@
 # ctsem News
 
-## 13/6/2025
+## 18/6/2025
 ### 3.10.3
+- Major improvements to importance sampling. 
 - Include ctFitCovCheck function for checking empirical vs model implied covariance over time. 
 - Reduce parallel compute init overhead
 - Minor bug fixes to ctKalman

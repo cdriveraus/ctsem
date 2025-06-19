@@ -35,6 +35,7 @@ ctModelUnlist<-function(ctmodelobj,
 #' @return List object of class ctStanModel, with random effects specified for any intercept type parameters
 #' (T0MEANS, MANIFESTMEANS, and or CINT), and time independent predictor effects for all parameters. Adjust these
 #' after initial specification by directly editing the \code{pars} subobject, so \code{model$pars} . 
+#' @importFrom rstantools rstan_config
 #' @export
 #'
 #' @examples
@@ -55,6 +56,7 @@ ctModelUnlist<-function(ctmodelobj,
 #' 
 #' 
 ctStanModel<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
+  if(FALSE) rstanconfig() #placeholder to use rstantools
   if(type=='stanct' | type=='standt'){
     warning('type should now be specified as simply ct or dt, without the stan prefix')
     type <- gsub('stan','',type)

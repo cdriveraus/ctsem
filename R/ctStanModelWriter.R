@@ -1852,6 +1852,7 @@ paste0('
   array[3,savescores ? ndatapoints : 0] vector[nlatentpop] etaa;
   array[3,savescores ? ndatapoints : 0] vector[nmanifest] ya;
   array[ndatapoints] vector[nmanifest] Ygen;
+  array[',ifelse(is.null(ctm$modelmats$calcs$calcNames),0,'ndatapoints'),'] vector[',ifelse(is.null(ctm$modelmats$calcs$calcNames),0,length(ctm$modelmats$calcs$calcNames)),'] calcs;
   vector[nlatentpop*ndatapoints] etaupdbasestates = to_vector(normal_rng(rep_array(0.0,ndatapoints*nlatentpop),rep_array(1.0,ndatapoints*nlatentpop))); //sampled latent states posterior','
   ',subjectparaminit(pop=FALSE,smats=FALSE),'
   ',subjectparaminit(pop=TRUE,smats=FALSE)
