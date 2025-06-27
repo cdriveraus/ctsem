@@ -170,7 +170,7 @@ scorecalc <- function(standata, est, stanmodel, subjectsonly = TRUE,
   }
   
   # Parallel processing: compute gradients for all subjects
-  cl <- parallel::makeCluster(cores)
+  cl <- parallelly::makeClusterPSOCK(cores)
   on.exit(parallel::stopCluster(cl), add = TRUE)
   parallel::clusterExport(cl, c("standata", "est", "stanmodel", "subjectsonly", "compute_subject_gradients", 
     "stan_reinitsf", "whichsubjectpars", "standatact_specificsubjects"),envir=environment())

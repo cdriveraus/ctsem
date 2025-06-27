@@ -2,24 +2,34 @@
 % Please edit documentation in R/ctCheckFit.R
 \name{ctFitCovCheck}
 \alias{ctFitCovCheck}
-\title{ctCheckFit}
+\title{Visual model-fit diagnostics for ctsem fits, optionally split by the mean
+of a chosen observed variable.}
 \usage{
-ctFitCovCheck(fit, cor = FALSE)
+ctFitCovCheck(fit, cor = FALSE, plot = TRUE, splitby = NULL)
 }
 \arguments{
-\item{fit}{ctStanFit object.}
+\item{fit}{A `ctStanFit` object.}
 
-\item{cor}{Logical. If TRUE, the correlation matrix is used instead of the covariance matrix.}
+\item{cor}{Logical; if `TRUE` correlations are analysed instead of covariances.}
+
+\item{plot}{Logical; if `TRUE` (default) a `ggplot2` object (or list of plots) is 
+returned. If `FALSE`, the raw `data.table` with diagnostics is returned.}
+
+\item{splitby}{Optional character string giving the variable name on which to split subjects.}
 }
 \value{
-data.table containing quantiles of the model implied covariance matrix based on generated samples of data, the sample covariance matrix values, and the difference between the two.
+Either a plot/list of plots (default, given by `plot.ctFitCovCheck`) or a `data.table`.
 }
 \description{
-Visual model fit diagnostics for ctsem fit objects.
+Visual model-fit diagnostics for ctsem fits, optionally split by the mean
+of a chosen observed variable.
 }
 \examples{
-\dontrun{
-check <- ctCheckFit(ctstantestfit,cor=TRUE)
-plot.ctFitCovCheck(check,maxlag=3)
+\donttest{
+ctFitCovCheck(ctstantestfit, cor = TRUE, plot = TRUE)
+
+gg=ctFitCovCheck(ctstantestfit, cor = FALSE, plot = TRUE, splitby = "TI1")
+print(gg[[1]]+
+ggplot2::ggtitle("Covariance Check for Y1 with all other manifest variables, split by TI1"))
 }
 }

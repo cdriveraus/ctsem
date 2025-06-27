@@ -48,7 +48,7 @@ Fit a ctStan model with automatic parameter selection
 This function is used to automatically select parameters in a ctStan model. Any specified DRIFT / DIFFUSION matrix off diagonals are only included if they significantly improve the likelihood, based on an estimated likelihood ratio test (relying on the Hessian).
 }
 \examples{
-#' \dontrun{
+\dontrun{
 testmodel <- ctstantestfit$ctstanmodelbase
 testmodel$pars$TI1_effect <- NULL
 testmodel$n.TIpred <- 0

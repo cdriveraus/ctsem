@@ -69,7 +69,7 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
   
   # Parallel setup
   if (parallelFolds && cores > 1) {
-    clctsem <- parallel::makeCluster(spec = min(cores, folds))
+    clctsem <- parallelly::makeClusterPSOCK(min(cores, folds))
     on.exit({ parallel::stopCluster(clctsem) }, add = TRUE)
     
     # Export required data and load library once per worker

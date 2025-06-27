@@ -44,7 +44,8 @@ testmodel <- ctstantestfit$ctstanmodelbase
 testmodel$pars$TI1_effect <- NULL
 testmodel$n.TIpred <- 0
 testmodel$TIpredNames <- NULL
-testfit <- ctFitAutoGroupModel(testmodel, dat = ctstantestdat, cores=2, DRIFT = TRUE, DIFFUSION = TRUE)
+testfit <- ctFitAutoGroupModel(testmodel, 
+dat = ctstantestdat, cores=2, DRIFT = TRUE, DIFFUSION = TRUE)
 ctModelLatex(testfit$groupModel)
 lapply(testfit$fits,function(x) print(ctStanContinuousPars(x)$DRIFT))
 }

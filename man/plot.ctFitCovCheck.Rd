@@ -4,12 +4,16 @@
 \alias{plot.ctFitCovCheck}
 \title{plot.ctFitCovCheck}
 \usage{
-\method{plot}{ctFitCovCheck}(checkfit, maxlag = 10, ...)
+\method{plot}{ctFitCovCheck}(x, maxlag = 10, vars = NA, splitvar = NA, ...)
 }
 \arguments{
-\item{checkfit}{Output from ctFitCovCheck.}
+\item{x}{Output from ctFitCovCheck.}
 
 \item{maxlag}{Maximum lag to plot.}
+
+\item{vars}{Optional character vector of variable names to plot. If `NA`, all variables are plotted.}
+
+\item{splitvar}{Optional character string specifying a variable to split the plot by.}
 
 \item{...}{not used.}
 }

@@ -121,15 +121,13 @@ sgd <- function(init,lpgFunc,whichignore=c(),nsubsets=1,nsubjects=NA,plot=FALSE,
         #   delta[parextra] <- step*sqrt(abs(gsmooth[parextra]))*10
         # }
         # if(any(is.na(abs(delta)))) browser()
-        delta[abs(delta) > maxparchange] <- maxparchange*sign(delta[abs(delta) > maxparchange])
+        if(any((abs(delta) > maxparchange) %in% TRUE)) delta[(abs(delta) > maxparchange) %in% TRUE] <- maxparchange*sign(delta[abs(delta) > maxparchange])
         # delta = delta +  delta/2 - deltaold/2
         
         #include bestpars weighting, divide to set length until full reversion
         if(nsubsets==1) delta = delta + (inv_logit((i-bestiter)/10)*2-1) * (bestpars-(pars+delta))
         
         newpars = pars + delta
-        
-
         
         #random jumping
         # if(nsubsets==1 && i %% ceiling(runif(1,1,30)) ==0){
@@ -142,17 +140,14 @@ sgd <- function(init,lpgFunc,whichignore=c(),nsubsets=1,nsubjects=NA,plot=FALSE,
       
       if(any(is.na(newpars))) stop('NA in parameter proposal!') 
       if(i==1) itertime <- Sys.time()
-      
-      fullnewpars <- newpars
-      
+
       if(nsubsets > 1){
         if(i > 1) subsetiold <- subseti
-        subseti <- subsetorder[(i-1) %% (nsubsets) + 1]
+        subseti <- subsetorder[(i-1+notacceptedcount) %% (nsubsets) + 1]
       }
 
-      lpg= lpgFunc2(fullnewpars,subset=ifelse(nsubsets > 1, subseti, NA)) #fit function!
+      lpg= lpgFunc2(newpars,subset=ifelse(nsubsets > 1, subseti, NA)) #fit function!
  
-      
       if(lpg > -1e99 &&       #regular check
           !'try-error' %in% class(lpg) && 
           !is.nan(lpg[1]) && 
@@ -163,6 +158,7 @@ sgd <- function(init,lpgFunc,whichignore=c(),nsubsets=1,nsubjects=NA,plot=FALSE,
         accepted <- TRUE
       } 
       if(!accepted){
+        # browser()
         if(nsubsets==1 && i > warmuplength) gsmooth= gsmooth*gmemory2^2 + (1-gmemory2^2) * g #increase influence of last gradient at inflections
         step <- step / (exp(notacceptedcount))
         deltaold <- 0#deltaold * 0

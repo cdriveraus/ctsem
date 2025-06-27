@@ -87,7 +87,7 @@ testall<- function(cores=4,folder = '/tests/testthat',examples=TRUE){
   a=Sys.time()
 
   if(cores > 1){
-    cl <- parallel::makeCluster(cores,outfile='')
+    cl <- parallelly::makeClusterPSOCK(cores)
     on.exit(try(parallel::stopCluster(cl),silent=TRUE),add=TRUE)
     out <- parallel::parLapplyLB(cl,paste0(getwd(),folder,'/',tests),function(x){
       Sys.setenv(NOT_CRAN='true')
