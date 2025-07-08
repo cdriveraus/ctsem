@@ -83,6 +83,9 @@ ctFitCovCheck <- function(fit, cor = FALSE, plot = TRUE, splitby = NULL) {
   # Model-implied covariance list for the *full* sample -------------
   # -----------------------------------------------------------------
   gencov_full <- ctCovMatGenerated(fit)
+  if(cor) {
+    gencov_full <- lapply(gencov_full, function(x) cov2cor(x))
+  }
   
   # -----------------------------------------------------------------
   # Wide data (rows = subjects) --------------------------------------
@@ -174,6 +177,7 @@ ctFitCovCheck <- function(fit, cor = FALSE, plot = TRUE, splitby = NULL) {
 #' @param maxlag Maximum lag to plot.
 #' @param vars Optional character vector of variable names to plot. If `NA`, all variables are plotted.
 #' @param splitvar Optional character string specifying a variable to split the plot by.
+#' @param cor Logical; if `TRUE`, plot correlations instead of covariances. (label change)
 #' @param ... not used.
 #' @return ggplot object.
 #' @examples
@@ -183,7 +187,7 @@ ctFitCovCheck <- function(fit, cor = FALSE, plot = TRUE, splitby = NULL) {
 #' @export
 #'  
 
-plot.ctFitCovCheck <- function(x, maxlag = 10,vars=NA,splitvar=NA,...) {
+plot.ctFitCovCheck <- function(x, maxlag = 10,vars=NA,splitvar=NA,cor=FALSE,...) {
   
   gg <- list()
   checkfit <- as.data.table(x)  # Ensure checkfit is a data.table

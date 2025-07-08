@@ -1,5 +1,10 @@
 # ctsem News
 
+## 27/6/2025
+### 3.10.4
+
+- Fixed bug in initial optimizer stages for nonlinear models requiring compilation.
+
 ## 18/6/2025
 ### 3.10.3
 - Major improvements to importance sampling. 

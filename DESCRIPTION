@@ -1,8 +1,8 @@
 Package: ctsem
 Type: Package
 Title: Continuous Time Structural Equation Modelling
-Version: 3.10.3
-Date: 2025-6-17
+Version: 3.10.4
+Date: 2025-6-27
 Authors@R: c(person("Charles", "Driver", role =
     c("aut","cre","cph"),email="charles.driver2@uzh.ch"),
     person("Manuel", "Voelkle", role = c("aut","cph")),
@@ -17,11 +17,11 @@ Description: Hierarchical continuous (and discrete) time state space modelling, 
     are possible, using either max likelihood / max a posteriori optimization 
     (with optional importance sampling) or Stan's Hamiltonian Monte Carlo sampling. 
     See  <https://github.com/cdriveraus/ctsem/raw/master/vignettes/hierarchicalmanual.pdf>
-    for details. Priors may be used. For the conceptual overview of the hierarchical Bayesian 
+    for details. See <https://osf.io/preprints/psyarxiv/4q9ex_v2> for a detailed tutorial. 
+    Priors may be used. For the conceptual overview of the hierarchical Bayesian 
     linear SDE approach, 
     see <https://www.researchgate.net/publication/324093594_Hierarchical_Bayesian_Continuous_Time_Dynamic_Modeling>.
     Exogenous inputs may also be included, for an overview of such possibilities see <https://www.researchgate.net/publication/328221807_Understanding_the_Time_Course_of_Interventions_with_Continuous_Time_Dynamic_Models> .
-    Stan based functions are not available on 32 bit Windows systems at present. 
     <https://cdriver.netlify.app/> contains some tutorial blog posts.
 License: GPL-3
 Depends:
@@ -52,7 +52,8 @@ Imports:
     tools,
     utils,
     splines,
-    parallelly
+    parallelly,
+    corpcor
 Encoding: UTF-8
 LazyData: true
 ByteCompile: true

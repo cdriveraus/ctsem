@@ -1,4 +1,5 @@
 Version: 1.0
+ProjectId: 16027855-40e0-4869-bec6-92936d76012b
 
 RestoreWorkspace: Default
 SaveWorkspace: Default
@@ -16,9 +17,10 @@ AutoAppendNewline: Yes
 
 BuildType: Package
 PackageUseDevtools: Yes
+PackageCleanBeforeInstall: No
 PackageInstallArgs: --with-keep.source --no-multiarch
 PackageBuildArgs: --compact-vignettes=both
-PackageCheckArgs: --as-cran --compact-vignettes=both
+PackageCheckArgs: --as-cran
 PackageRoxygenize: rd,collate,namespace
 
 QuitChildProcessesOnExit: Yes
