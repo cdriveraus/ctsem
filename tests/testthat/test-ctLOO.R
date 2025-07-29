@@ -8,7 +8,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
   context('misc')
   test_that("loo", {    
     # for(cores in c(1,cores)){
-    #cores=6
+    #cores=10
     data(AnomAuth)
     
     AnomAuthmodel<-ctModel(LAMBDA=matrix(c(1, 0, 0, 1), nrow=2, ncol=2),  
@@ -28,6 +28,8 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     sf=ctStanFit(aa,
       ctstanmodel = sm, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores)
+    sfboot <- ctStanFit(aa,
+      ctstanmodel = sm, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores,optimcontrol=list(bootstrapUncertainty=T))
     
     sdat <- sf$standata
     sdat$dokalmanrows[sdat$subject==1] <- 0L #remove 1 subject
@@ -37,11 +39,20 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       sum(sf$stanfit$transformedparsfull$llrow[sdat$subject==1]))
     
     loo=ctLOO(fit = sf,folds = 10,cores=cores,parallelFolds = T,subjectwise = T)
-    loo2=ctLOO(fit = sf,folds = 10,cores=cores,parallelFolds = T,subjectwise = T)
+    loo2=ctLOO(fit = sf,folds = 10,cores=cores,parallelFolds = F,subjectwise = T)
     loo3=ctLOO(fit = sf,folds = sf$standata$nsubjects,cores=cores,parallelFolds = T,subjectwise = T,casewiseApproximation = T)
+    loo4=ctLOO(fit = sfboot,folds = sf$standata$nsubjects,cores=cores,parallelFolds = T,subjectwise = T,casewiseApproximation = T)
     
-    if(F){
-    plot(loo3$outsampleLogLikRow-sf$stanfit$transformedparsfull$llrow[1,],loo$outsampleLogLikRow-sf$stanfit$transformedparsfull$llrow[1,])
+    if(F){ #check casewise approx against leave one subject out
+      looFull=ctLOO(fit = sf,folds = sf$standata$nsubjects,cores=20,parallelFolds = T,subjectwise = T,casewiseApproximation = F)
+      plot(looFull$outsampleLogLikRow,loo3$outsampleLogLikRow)
+      points(looFull$outsampleLogLikRow,loo4$outsampleLogLikRow,col='red')
+      abline(0,1)
+      
+      sum(looFull$outsampleLogLikRow-loo4$outsampleLogLikRow)
+      sum(looFull$outsampleLogLikRow-loo3$outsampleLogLikRow)
+      
+      plot(sf$stanfit$transformedparsfull$llrow[1,]-loo3$outsampleLogLikRow,sf$stanfit$transformedparsfull$llrow[1,]-loo4$outsampleLogLikRow)
     abline(0,1)
     
     sd(apply(loo3$insampleLogLikRowFolds,2,sum,na.rm=T))
@@ -82,6 +93,14 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     test_isclose(
     mean(abs(loo3$outsampleLogLikRow -loo$outsampleLogLikRow)),
+      0,tol=.05)
+    
+    test_isclose(
+      mean(loo4$outsampleLogLikRow-loo$outsampleLogLikRow),
+      0,tol=.01)
+    
+    test_isclose(
+      mean(abs(loo4$outsampleLogLikRow -loo$outsampleLogLikRow)),
       0,tol=.05)
     
     # test_isclose(

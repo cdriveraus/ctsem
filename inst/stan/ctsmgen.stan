@@ -507,6 +507,7 @@ model{
   array[3,savescores ? ndatapoints : 0] vector[nlatentpop] etaa;
   array[3,savescores ? ndatapoints : 0] vector[nmanifest] ya;
   array[ndatapoints] vector[nmanifest] Ygen;
+  array[0] vector[0] calcs;
   vector[nlatentpop*ndatapoints] etaupdbasestates = to_vector(normal_rng(rep_array(0.0,ndatapoints*nlatentpop),rep_array(1.0,ndatapoints*nlatentpop))); //sampled latent states posterior
   array[ (savesubjectmatrices && (sum(whenmat[10,1:5]) || statedep[10])) ? nsubjects : 0]
       matrix[matrixdims[10, 1], matrixdims[10, 2] ] subj_PARS;array[ (savesubjectmatrices && (sum(whenmat[1,1:5]) || statedep[1])) ? nsubjects : 0]

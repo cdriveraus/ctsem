@@ -452,15 +452,6 @@ ctOptim <- function(init, lpgFunc, tol, nsubsets, stochastic, stochasticTolAdjus
 
 carefulfitFunc <- function(cl, standata, sm, optimcores, subsamplesize, nsubsets,optimArgs,notipredsfirstpass,smfile){
   
-  if(standata$ntipredeffects > 0 && notipredsfirstpass){
-    TIPREDEFFECTsetup <- standata$TIPREDEFFECTsetup
-    standata$TIPREDEFFECTsetup[,] <- 0L
-    ntipredeffects <- standata$ntipredeffects
-    standata$ntipredeffects <- 0L
-    ninit <- length(optimArgs$init)-max(TIPREDEFFECTsetup)
-    optimArgs$init <- optimArgs$init[1:ninit] #remove tipred inits
-  }
-  
   message('1st pass optimization (carefulfit)...')
   if(subsamplesize < 1){
     smlnsub <- min(standata$nsubjects,max(min(30,optimcores*2),ceiling(standata$nsubjects * subsamplesize)))
@@ -469,6 +460,16 @@ carefulfitFunc <- function(cl, standata, sm, optimcores, subsamplesize, nsubsets
   } else standatasml <- standata
   standatasml$priors <- 1L
   standatasml$nsubsets <- as.integer(nsubsets)
+  
+  if(standatasml$ntipredeffects > 0 && notipredsfirstpass){
+    TIPREDEFFECTsetup <- standatasml$TIPREDEFFECTsetup
+    standatasml$TIPREDEFFECTsetup[,] <- 0L
+    ntipredeffects <- standatasml$ntipredeffects
+    standatasml$ntipredeffects <- 0L
+    ninit <- length(optimArgs$init)-max(TIPREDEFFECTsetup)
+    optimArgs$init <- optimArgs$init[1:ninit] #remove tipred inits
+  }
+  
   if(optimcores > 1) parallelStanSetup(cl = cl,standata = standatasml,split=TRUE,nsubsets = nsubsets,smfile=smfile)
   if(optimcores==1) optimArgs$lpgFunc <- singlecoreStanSetup(standata = standatasml, nsubsets = nsubsets,sm=sm)
   optimArgs$tol <- optimArgs$tol * 100 
@@ -480,9 +481,11 @@ carefulfitFunc <- function(cl, standata, sm, optimcores, subsamplesize, nsubsets
   if(standata$ntipredeffects > 0 && notipredsfirstpass && !standata$TIpredAuto){
     message('Including tipred effects...')
     standata$TIPREDEFFECTsetup <- TIPREDEFFECTsetup
-    standata$TIPREDEFFECTsetup[,] 
     standata$ntipredeffects <- ntipredeffects
-    optimArgs$init <- c(optimArgs$init,rep(0,max(TIPREDEFFECTsetup)))
+    optimArgs$init <- c(fit$par,rep(0,max(TIPREDEFFECTsetup)))
+    if(optimcores > 1) parallelStanSetup(cl = cl,standata = standata,split=TRUE,nsubsets = nsubsets,smfile=smfile)
+    if(optimcores==1) optimArgs$lpgFunc <- singlecoreStanSetup(standata = standata, nsubsets = nsubsets,sm=sm)
+    fit = do.call(ctOptim,optimArgs)
   }
   
   return(fit)
@@ -533,6 +536,50 @@ autoTIpredsFunc <- function(cl, standata, sm, optimArgs, parsteps, optimcores, c
 
 
 
+#' Guaranteed-PD linear shrinkage of a covariance / Hessian inverse
+#'
+#' @param S   symmetric p×p matrix (may be indefinite)
+#' @param eps eigen-value floor (strictly > 0, default 1e-8)
+#' @return    list: PD matrix Sigma, alpha, eigenvalues before/after
+shrink_cov <- function(S, eps = 1e-8) {
+  stopifnot(is.matrix(S), nrow(S) == ncol(S), eps > 0)
+  
+  # 1. Symmetrise
+  if (!isSymmetric(S)) S <- 0.5 * (S + t(S))
+  
+  p <- nrow(S)
+  
+  # 2. Choose a strictly-PD target  μ·I
+  diag_pos <- diag(S)[diag(S) > 0]
+  mu <- if (length(diag_pos)) mean(diag_pos) else 1      # fallback
+  T  <- mu * diag(p)
+  
+  # 3. Eigen-decompose S
+  ev  <- eigen(S, symmetric = TRUE)
+  lam <- ev$values
+  lam_min <- min(lam)
+  
+  # 4. Smallest α that lifts lam_min to ≥ eps
+  if (lam_min > eps) {
+    alpha <- 0               # already PD
+  } else {
+    alpha <- (eps - lam_min) / (mu - lam_min)
+    alpha <- max(min(alpha, 1), 0)          # clamp to [0,1]
+  }
+  
+  # 5. Shrink
+  Sigma <- (1 - alpha) * S + alpha * T
+  
+  # 6. Sanity check (should be strictly PD)
+  if (min(eigen(Sigma, symmetric = TRUE)$values) <= 0)
+    stop("Shrinkage failed to make matrix PD – increase eps.")
+  
+  list(Sigma = Sigma,
+    alpha = alpha,
+    eig_before = lam,
+    eig_after  = eigen(Sigma, symmetric = TRUE)$values)
+}
+
 
 
 
@@ -543,8 +590,8 @@ imis_is <- function(parlp,
   n_batch       = 1000,
   target_ess    = 100,
   max_iter      = 10,
-  scale_init    = 1.0,
-  tail_scale    = 2,
+  scale_init    = 1.5,
+  tail_scale    = 1.2,
   ridge         = 1e-8,
   finishsamples = 1000,
   verbose       = TRUE,
@@ -583,7 +630,7 @@ imis_is <- function(parlp,
   
   ## ── containers ───────────────────────────────────────────────────────
   comp_mu  <- list(mu_hat)
-  comp_cov <- list(Sigma_hat * scale_init^2)
+  comp_cov <- list(Sigma_hat * (diag(scale_init^2-1,nrow(Sigma_hat)) + 1))
   T_comp   <- 1L
   
   samples   <- matrix(0, 0, length(mu_hat))
@@ -647,7 +694,7 @@ imis_is <- function(parlp,
         it + 1, nrow(samples), ess_now),
         appendLF = FALSE)
     
-      if (diag_plots) {
+      if (interactive() && diag_plots) {
         g <- diagis::weight_plot(w_raw)
         gridExtra::grid.arrange(
           g, top = grid::textGrob(
@@ -664,8 +711,8 @@ imis_is <- function(parlp,
       samples[top_idx,,drop=FALSE], w_raw[top_idx])
     comp_cov[[T_comp + 1L]] <- safe_pd(
       diagis::weighted_var(
-        samples[top_idx,,drop=FALSE], w_raw[top_idx])
-      * tail_scale^2)
+        samples[top_idx,,drop=FALSE], w_raw[top_idx]) *
+      (diag(tail_scale^2-1, nrow(Sigma_hat))+1))
     T_comp <- T_comp + 1L
     
     lq_newcomp <- mvtnorm::dmvnorm(samples, comp_mu[[T_comp]],
@@ -692,6 +739,47 @@ imis_is <- function(parlp,
     else matrix(NA_real_, length(mu_hat), length(mu_hat)),
     df_used      = Inf)
   
+}
+
+# Function to compute the Hessian using bootstrap resampling
+bootstrapHessian <- function(standata, sm, est, finishsamples, cores) {
+  scores <- scorecalc(standata = standata,est = est,stanmodel = sm,
+    subjectsonly = standata$nsubjects > 5,returnsubjectlist = F,cores=cores)
+  num_bootstrap_samples <- max(c(finishsamples,1000))
+  alpha_max = 100 # Maximum bootstrap sample size factor
+  alpha_min = 1 # Minimum bootstrap sample size factor
+  n_threshold=1000 # Threshold n for alpha correction
+  alpha <- alpha_max - (alpha_max - alpha_min) * (min(1000,nrow(scores))  / n_threshold)  # Bootstrap sample size factor
+  num_bootstrap_samples  # Total number of bootstrap samples
+  n <- nrow(scores)  # Number of observations
+  p <- ncol(scores)  # Number of parameters
+  
+  # Create a bootstrap resampling matrix
+  resample_matrix <- matrix(sample(1:n, size = round(alpha * n) * num_bootstrap_samples, replace = TRUE),
+    nrow = num_bootstrap_samples, ncol = round(alpha * n))
+  
+  # Generate random weights for smoothing
+  weights <- matrix(runif(length(resample_matrix), min = 0.1, max = 2),
+    nrow = num_bootstrap_samples)
+  
+  # Aggregate gradients using matrix multiplication
+  gradsamples <- matrix(0, nrow = num_bootstrap_samples, ncol = p)  # Initialize gradsamples
+  
+  # Compute the weighted sum of gradients for each bootstrap sample
+  for (i in 1:num_bootstrap_samples) {
+    gradsamples[i, ] <- colSums(scores[resample_matrix[i, ], , drop = FALSE] * weights[i, ])
+  }
+  
+  # Trim outliers
+  trim_percent <- 0#.05  # Proportion of outliers to trim
+  if (trim_percent > 0) {
+    lower <- apply(gradsamples, 2, quantile, probs = trim_percent, na.rm = TRUE)
+    upper <- apply(gradsamples, 2, quantile, probs = 1 - trim_percent, na.rm = TRUE)
+    gradsamples <- pmax(pmin(gradsamples, upper), lower)        }
+  
+  #  Compute the Hessian with alpha correction
+  hess <- -corpcor::cov.shrink(gradsamples,verbose=FALSE) / alpha
+  return(list(hess=hess,scores=scores))
 }
 
 
@@ -763,6 +851,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   
   # initial checks ----------------------------------------------------------
   
+  if(!interactive()) plot <- FALSE #if not interactive, don't plot
   
   if(!is.null(standata$verbose)) {
     if(verbose > 1) standata$verbose=as.integer(verbose) else standata$verbose=0L
@@ -807,7 +896,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   optimcores <- ifelse(length(unique(standata$subject)) < cores, length(unique(standata$subject)),cores)
   if(optimcores > 1) rm(smf)
   
-  if(plot > 0 && .Platform$OS.type=="windows") {
+  if(plot > 0 && .Platform$OS.type=="windows" && interactive()) {
     dev.new(noRStudioGD = TRUE)
     on.exit(expr = {try({dev.off()})},add = TRUE)
   }
@@ -905,7 +994,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
       out=-1e100
       attributes(out) <- list(gradient=rep(0,length(parm)))
     }
-    if(plot > 0 && ( (!stochastic &&!carefulfit && nsubsets ==1))){
+    if(plot > 0 && interactive() && ( (!stochastic &&!carefulfit && nsubsets ==1))){
       if(out[1] > (-1e99)) storedLp <<- c(storedLp,out[1])
       iter <<- iter+1
       g=log(abs(attributes(out)$gradient))*sign(attributes(out)$gradient)
@@ -945,12 +1034,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   
   # end subsetting / carefulfit -----------------------------------------
   
-  if(nsubsets > 1){ # need to reinit without subsets
     standata$nsubsets <- 1L
     optimArgs$nsubsets <- 1L
     if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standata,split=TRUE,smfile=smfile)
     if(optimcores==1) smf<-stan_reinitsf(sm,standata)
-  }
   
   
   # tipredauto --------------------------------------------------------------
@@ -1343,44 +1430,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   }
   
   if(bootstrapUncertainty){
-    scores <- scorecalc(standata = standata,est = grinit,stanmodel = sm,
-      subjectsonly = standata$nsubjects > 5,returnsubjectlist = F,cores=cores)
-    num_bootstrap_samples <- max(c(finishsamples,1000))
-    alpha_max = 100 # Maximum bootstrap sample size factor
-    alpha_min = 1 # Minimum bootstrap sample size factor
-    n_threshold=1000 # Threshold n for alpha correction
-    alpha <- alpha_max - (alpha_max - alpha_min) * (min(1000,nrow(scores))  / n_threshold)  # Bootstrap sample size factor
-    num_bootstrap_samples  # Total number of bootstrap samples
-    n <- nrow(scores)  # Number of observations
-    p <- ncol(scores)  # Number of parameters
-    
-    # Create a bootstrap resampling matrix
-    resample_matrix <- matrix(sample(1:n, size = round(alpha * n) * num_bootstrap_samples, replace = TRUE),
-      nrow = num_bootstrap_samples, ncol = round(alpha * n))
-    
-    # Generate random weights for smoothing
-    weights <- matrix(runif(length(resample_matrix), min = 0.1, max = 2),
-      nrow = num_bootstrap_samples)
-    
-    # Aggregate gradients using matrix multiplication
-    gradsamples <- matrix(0, nrow = num_bootstrap_samples, ncol = p)  # Initialize gradsamples
-    
-    # Compute the weighted sum of gradients for each bootstrap sample
-    for (i in 1:num_bootstrap_samples) {
-      gradsamples[i, ] <- colSums(scores[resample_matrix[i, ], , drop = FALSE] * weights[i, ])
-    }
-    
-    # Trim outliers
-    trim_percent <- 0.05  # Proportion of outliers to trim
-    if (trim_percent > 0) {
-      lower <- apply(gradsamples, 2, quantile, probs = trim_percent, na.rm = TRUE)
-      upper <- apply(gradsamples, 2, quantile, probs = 1 - trim_percent, na.rm = TRUE)
-      gradsamples <- pmax(pmin(gradsamples, upper), lower)        }
-    
-    #  Compute the Hessian with alpha correction
-    hess <- -cov(gradsamples) / alpha
-    
+    hessWithScores <- bootstrapHessian(standata = standata, sm = sm, est = grinit,
+      finishsamples = finishsamples, cores = cores)
+    hess <- hessWithScores$hess
   }
+    
   
   
   
@@ -1393,10 +1447,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
       if('all' %in% whichpars) whichpars <- 1:length(pars)
       base <- optimfit$value
       
-      
       hessout <- sapply( whichpars, function(i){
-        
-        
         
         message(paste0("\rEstimating Hessian, par ",i,',', 
           as.integer(i/length(pars)*50+ifelse(directions[1]==1,0,50)),
@@ -1522,46 +1573,29 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
     warning('***Generalized inverse required for Hessian inversion -- interpret standard errors with caution. Consider simplification, priors, or alternative uncertainty estimators',call. = FALSE,immediate. = TRUE)
     probpars=which(diag(hess) > -1e-6)
   }
+  message('') 
   
-  
-  mcovtmp=try({as.matrix(Matrix::nearPD(mcov,conv.norm.type = 'F')$mat)})
+  # mcovtmp=try({Matrix::nearPD(mcov,conv.norm.type = 'F',base.matrix = TRUE)})
+  mcovtmp=try({shrink_cov(mcov)$Sigma})
   if(any(class(mcovtmp) %in% 'try-error')) stop('Hessian could not be computed')
   mcov <- diag(1e-10,npars)
   if(length(parsteps)>0) mcov[-parsteps,-parsteps] <- mcovtmp else mcov <- mcovtmp
-  mchol = t(chol(mcov))
-  
-  mcovl<-list()
-  mcovl[[1]]=mcov
-  delta=list()
-  delta[[1]]=est2
-  samples <-matrix(NA)
-  resamples <- c()
-  prop_dens <-c()
-  target_dens<-c()
-  sample_prob<-c()
-  ess <- 0
-  qdiag<-0
-  
-  if(!is) {
-    nresamples = finishsamples
-    resamples <- matrix(unlist(lapply(1:nresamples,function(x){
-      delta[[1]] + (mchol) %*% t(matrix(rnorm(length(delta[[1]])),nrow=1))
-    } )),byrow=TRUE,ncol=length(delta[[1]]))
-  }
-  message('')
-  
   
   # finish split and sum across core approach, now importance sampling / par computations ----------------------------------
-  
-  #configure each node with full dataset for adaptive sampling
+  #configure each node with full dataset for importance sampling / draws from posterior
   if(cores > optimcores) clctsem=makeClusterID(cores) #reinit cluster if more cores available than used for optimising
   if(cores > 1)   parallelStanSetup(cl=clctsem,standata,split=FALSE,smfile=smfile)    
   
+  if(!is) resamples <- matrix(unlist(lapply(1:finishsamples,function(x){
+      est2 + t(chol(mcov)) %*% t(matrix(rnorm(length(est2)),nrow=1))
+    } )),byrow=TRUE,ncol=length(est2))
+
   
-  if (is) {
-      is_res <- imis_is(lpg_single, mu_hat = delta[[1]], Sigma_hat = mcovl[[1]],
+  if(is){
+    is_res <- imis_is(lpg_single, mu_hat = est2, Sigma_hat = mcov,
         max_iter = 50,diag_plots = T,#as.logical(plot),
-        cl=clctsem,scale_init = 1.5,verbose = TRUE, target_ess = isESS, #cov_inflate = 1,
+        cl=clctsem,scale_init = 1.1, tail_scale=1.1,
+        verbose = TRUE, target_ess = isESS, #cov_inflate = 1,
         finishsamples=finishsamples, n_batch = isitersize)
       resamples      <- is_res$theta
       lpsamples    <- is_res$lpsamples
@@ -1572,8 +1606,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   
   
   message('Computing posterior with ',nrow(resamples),' samples')
-  standata$savesubjectmatrices=savesubjectmatrices
-  
+      
+  standata$savesubjectmatrices=savesubjectmatrices #if we save subject matrices, we need to use the full standata
   if(!savesubjectmatrices) sdat=standatact_specificsubjects(standata,1) #only use 1 subject
   if(savesubjectmatrices) sdat=standata
   
@@ -1608,7 +1642,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
     transformedpars=transformedpars,transformedpars_old=transformedpars_old,
     # transformedparsfull=transformedparsfull,
     standata=list(TIPREDEFFECTsetup=standata$TIPREDEFFECTsetup,ntipredeffects = standata$ntipredeffects))
-  if(bootstrapUncertainty) stanfit$subjectscores <- scores #subjectwise gradient contributions
+  if(bootstrapUncertainty) stanfit$subjectscores <- hessWithScores$scores #subjectwise gradient contributions
   
   
   

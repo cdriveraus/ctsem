@@ -88,102 +88,175 @@ ctPostPredData <- function(fit,residuals=F){
 #     intervals (smoothed if there are many intervals).
 #   - A plot comparing the proportion of observed data greater than generated data by ID.
 # 
-#' @seealso Other ctsem functions for model fitting and analysis.
+#' @return a list of ggplot2 plots. 
 #'
 #' @examples
-#' ctPostPredPlots(ctstantestfit)
+#' print(ctPostPredPlots(ctstantestfit))
 #'
 #' @export
 ctPostPredPlots <- function(fit){
   dat <- ctPostPredData(fit)
   
+  # Calculate summary statistics for generated data
   dat[,mediandat:=median(value,na.rm=TRUE),by=interaction(variable,row)]
   dat[,highdat:=quantile(value,.975,na.rm=TRUE),by=interaction(variable,row)]
   dat[,lowdat:=quantile(value,.025,na.rm=TRUE),by=interaction(variable,row)]
   dat[,ObsVsGenRow:=sum(obsValue > value)/.N,by=interaction(variable,row)]
   dat[,ObsVsGenID:=sum(obsValue > value,na.rm=TRUE)/.N,by=interaction(variable,id)]
   
-  datsum<-dat[sample==1,.(row,mediandat,highdat,lowdat,obsValue,ObsVsGenRow,ObsVsGenID,variable,Time,TimeInterval,id)]
+  # Create combined dataset with DataType variable
+  dat_combined <- rbind(
+    dat[, .(value = value, variable, Time, TimeInterval, id, row, DataType = "Simulated")],
+    dat[sample == 1, .(value = obsValue, variable, Time, TimeInterval, id, row, DataType = "Observed")]
+  )
+  
+  # Summary data for specific plots
+  datsum <- dat[sample==1,.(row,mediandat,highdat,lowdat,obsValue,ObsVsGenRow,ObsVsGenID,variable,Time,TimeInterval,id)]
   datsum <- datsum[,mediandatRank:=rank(mediandat),by=variable]
   datsum[,OutOf95Row:=obsValue > highdat | obsValue < lowdat,by=interaction(row,variable)]
   
-  print(ggplot(dat,aes(y=value,x=Time))+ 
-    stat_summary(fun.data=mean_sdl,geom='ribbon',alpha=.3,fill='red')+
-    stat_summary(aes(y = value), fun.y=mean, colour="red", geom="line",size=1)+
-    geom_line(data=dat[sample %in% 1,],aes(y=obsValue,group=id),alpha=.1)+
-    stat_summary(data=dat[sample %in% 1,],aes(y = obsValue), fun.y=mean, geom="line",linetype='dashed',size=1)+
-    facet_wrap(vars(variable),scales = 'free')+
-    theme_bw())
+  gglist <- list()
   
+  # Density plot with legend
+  gglist$Density <- ggplot(dat_combined, aes(x=value, fill=DataType, color=DataType)) + 
+    geom_density(alpha=.3, linewidth=1) +
+    scale_fill_manual(values = c("Simulated" = "blue", "Observed" = "red")) +
+    scale_color_manual(values = c("Simulated" = "blue", "Observed" = "red")) +
+    facet_wrap(vars(variable), scales = 'free') +
+    theme_bw() + 
+    xlab('Value') + 
+    ylab('Density') + 
+    ggtitle('Density of generated data and observed values') +
+    theme(legend.position = "bottom")
   
-  print(ggplot(datsum,aes(x=mediandatRank,y=mediandat))+
-      # geom_ribbon(aes(ymin=lowdat, ymax=highdat),fill='red',alpha=.5)+
-      geom_point(data=datsum[sample(1:nrow(datsum),size=min(10000,nrow(datsum))),],aes(y=obsValue),alpha=.1)+
-      geom_line(mapping = aes(y=mediandat),colour='red',linewidth=1)+
-      geom_smooth(mapping = aes(y=highdat),colour='red',linewidth=.2,se=F)+
-      geom_smooth(mapping = aes(y=lowdat),colour='red',linewidth=.2,se=F)+
-      theme_bw()+xlab('Gen. Observations Ranked')+ylab('Obs. value / generated 95% CI')+
-      facet_wrap(vars(variable),scales = 'free'))
+  # Distribution over time with ribbon and lines
+  dat_summary <- dat[, .(
+    mean_val = mean(value, na.rm=TRUE),
+    sd_val = sd(value, na.rm=TRUE),
+    median_val = median(value, na.rm=TRUE),
+    lower = quantile(value, probs=c(.025),na.rm=TRUE),
+    upper = quantile(value, probs=c(.975),na.rm=TRUE)
+  ), by=.(Time, variable)]
   
-  print(ggplot(datsum,aes(x=mediandatRank,y=as.numeric(OutOf95Row)))+
-      # geom_ribbon(aes(ymin=lowdat, ymax=highdat),fill='red',alpha=.5)+
-      # geom_point(data=datsum[sample(1:nrow(datsum),size=min(10000,nrow(datsum))),],aes(y=obsValue),alpha=.1)+
-      # geom_line(mapping = aes(y=mediandat),colour='red',linewidth=1)+
-      geom_hline(yintercept=.05,linewidth=1.1)+
-      geom_smooth(fill='red',colour='red',linewidth=1,se=T)+
-      # geom_smooth(mapping = aes(y=lowdat),colour='red',linewidth=.2,se=F)+
-      theme_bw()+xlab('Gen. Observations Ranked')+ylab('Proportion of obs. out of 95% CI per row')+
-      coord_cartesian(ylim=c(0,1))+
-      facet_wrap(vars(variable),scales = 'free'))
+  dat_obs_summary <- dat[sample == 1, .(
+    mean_obs = mean(obsValue, na.rm=TRUE),
+    median_obs = median(obsValue, na.rm=TRUE),
+    lower = quantile(obsValue, probs=c(.025),na.rm=TRUE),
+    upper = quantile(obsValue, probs=c(.975),na.rm=TRUE)
+  ), by=.(Time, variable)]
   
+  gglist$DistributionOverTime <- ggplot() + 
+    geom_ribbon(data=dat_summary, aes(x=Time, ymin=lower, ymax=upper, fill="Simulated (95%)"), alpha=.3) +
+    geom_line(data=dat_summary, aes(x=Time, y=median_val, color="Simulated (Median)"), linewidth=1) +
+    geom_line(data=dat[sample == 1], aes(x=Time, y=obsValue, group=id, color="Observed (Individual)"), alpha=.1) +
+    geom_line(data=dat_obs_summary, aes(x=Time, y=median_obs, color="Observed (Median)"), linetype='dashed', linewidth=1) +
+    scale_fill_manual(name="", values = c("Simulated (±1SD)" = "red")) +
+    scale_color_manual(name="", values = c(
+      "Simulated (Median)" = "red",
+      "Observed (Individual)" = "black",
+      "Observed (Median)" = "black"
+    )) +
+    facet_wrap(vars(variable), scales = 'free') +
+    theme_bw() +
+    theme(legend.position = "bottom")
   
-  # print(ggplot(dat,aes(x=rank(mediandat),y=value))+
-  #     # geom_ribbon(aes(ymin=lowdat, ymax=highdat),fill='red',alpha=.5)+
-  #     geom_density2d_filled(contour=TRUE,h=.1,n=512)+
-  #     # geom_line(mapping = aes(y=mediandat),colour='red',linewidth=1)+
-  #     # geom_point(aes(y=obsValue),alpha=.1)+
-  #     theme_bw()+xlab('Gen. Observations Ranked')+ylab('Obs. value / generated 95% CI')+
-  #     facet_wrap(vars(variable),scales = 'free'))
+  # Distribution ranked plot
+  gglist$DistributionOverTime2 <- ggplot(datsum, aes(x=mediandatRank)) +
+    geom_point(data=datsum[sample(1:nrow(datsum), size=min(10000,nrow(datsum))),], 
+      aes(y=obsValue, color="Observed"), alpha=.1) +
+    geom_line(aes(y=mediandat, color="Simulated (Median)"), linewidth=1) +
+    geom_smooth(aes(y=highdat, color="Simulated (97.5%)"), linewidth=.5, se=F) +
+    geom_smooth(aes(y=lowdat, color="Simulated (2.5%)"), linewidth=.5, se=F) +
+    scale_color_manual(name="Data Type", values = c(
+      "Observed" = "black",
+      "Simulated (Median)" = "red",
+      "Simulated (97.5%)" = "red",
+      "Simulated (2.5%)" = "red"
+    )) +
+    theme_bw() +
+    xlab('Gen. Observations Ranked') +
+    ylab('Obs. value / generated 95% CI') +
+    facet_wrap(vars(variable), scales = 'free') +
+    theme(legend.position = "bottom")
   
-  print(ggplot(datsum,aes(x=ObsVsGenRow))+
-      geom_density(linewidth=1)+
-      geom_hline(yintercept=1)+
-      xlab('Quantile of observed data wrt generated')+
-      theme_bw()+
-      facet_wrap(vars(variable),scales = 'free'))
+  # Out of CI plot
+  gglist$OutOfCI <- ggplot(datsum, aes(x=mediandatRank, y=as.numeric(OutOf95Row))) +
+    geom_hline(aes(yintercept=.05, linetype="Expected (5%)"), linewidth=1.1) +
+    geom_smooth(aes(color="Observed", fill="Observed"), linewidth=1, se=T) +
+    scale_color_manual(name="", values = c("Observed" = "red")) +
+    scale_fill_manual(name="", values = c("Observed" = "red")) +
+    scale_linetype_manual(name="", values = c("Expected (5%)" = "solid")) +
+    theme_bw() +
+    xlab('Gen. Observations Ranked') +
+    ylab('Proportion of obs. out of 95% CI per row') +
+    coord_cartesian(ylim=c(0,1)) +
+    facet_wrap(vars(variable), scales = 'free') +
+    theme(legend.position = "bottom")
   
-  print(ggplot(datsum,aes(x=mediandatRank,y=ObsVsGenRow))+
-      # geom_smooth()+
-      geom_smooth(aes(x=Time))+
-      xlab('Time')+
-      ylab('Prop. observed data greater than generated')+
-      geom_hline(yintercept =.5,linewidth=1)+
-      coord_cartesian(ylim=c(0,1))+
-      theme_bw()+
-      facet_wrap(vars(variable),scales = 'free'))
+  # Density quantiles
+  gglist$DensityQuantiles <- ggplot(datsum, aes(x=ObsVsGenRow)) +
+    geom_density(aes(color="Observed", fill="Observed"), linewidth=1, adjust=.25, alpha=0.3) +
+    geom_hline(aes(yintercept=1, linetype="Uniform expectation"), color="black") +
+    scale_color_manual(name="", values = c("Observed" = "blue")) +
+    scale_fill_manual(name="", values = c("Observed" = "blue")) +
+    scale_linetype_manual(name="", values = c("Uniform expectation" = "solid")) +
+    xlab('Quantile of observed data wrt generated') +
+    theme_bw() +
+    facet_wrap(vars(variable), scales = 'free') +
+    theme(legend.position = "bottom")
   
+  # Observed vs Generated over time
+  gglist$ObservedVGenOverTime <- ggplot(datsum, aes(x=Time, y=ObsVsGenRow)) +
+    geom_smooth(aes(color="Observed trend", fill="Observed trend")) +
+    geom_hline(aes(yintercept=.5, linetype="Expected (50%)"), linewidth=1) +
+    scale_color_manual(name="", values = c("Observed trend" = "blue")) +
+    scale_fill_manual(name="", values = c("Observed trend" = "blue")) +
+    scale_linetype_manual(name="", values = c("Expected (50%)" = "solid")) +
+    xlab('Time') +
+    ylab('Prop. observed data greater than generated') +
+    coord_cartesian(ylim=c(0,1)) +
+    theme_bw() +
+    facet_wrap(vars(variable), scales = 'free') +
+    theme(legend.position = "bottom")
   
-  smoothedDT <- length(unique( datsum[!is.na(TimeInterval),TimeInterval])) > 50
-  datsum[,NobsDT:=.N,by=TimeInterval]
-  gg <- ggplot(datsum[!is.na(TimeInterval),],aes(x=TimeInterval,y=ObsVsGenRow))+
-    coord_cartesian(ylim=c(0,1))+
-    ylab('Prop. observed data greater than generated')+
-    geom_hline(yintercept =.5,linewidth=1)+
-    theme_bw()+
-    facet_wrap(vars(variable),scales = 'free')
-  if(smoothedDT) gg <- gg + geom_smooth() else gg <- gg + stat_summary(data=datsum[NobsDT > 10 & !is.na(TimeInterval),],fun.data = mean_cl_boot,geom='point')
-  print(gg)
+  # Observed vs Generated over TimeInterval
+  smoothedDT <- length(unique(datsum[!is.na(TimeInterval), TimeInterval])) > 50
+  datsum[, NobsDT:=.N, by=TimeInterval]
   
-  # browser()
-  print(ggplot(datsum,aes(x=id,y=ObsVsGenID,colour=factor(sample(id))))+
-      geom_point(alpha=.9)+
-      ylab('Prop. observed data greater than generated')+
-      # scale_color_manual(values = 
-          # rep(RColorBrewer::brewer.pal(10,name = 'RdBu'), length.out = length(unique(datsum$id))))+
-      coord_cartesian(ylim=c(0,1))+guides(colour='none')+
-      theme_bw()+
-      facet_wrap(vars(variable),scales = 'free'))
+  gg <- ggplot(datsum[!is.na(TimeInterval),], aes(x=TimeInterval, y=ObsVsGenRow)) +
+    coord_cartesian(ylim=c(0,1)) +
+    ylab('Prop. observed data greater than generated') +
+    geom_hline(aes(yintercept=.5, linetype="Expected (50%)"), linewidth=1) +
+    scale_linetype_manual(name="", values = c("Expected (50%)" = "solid")) +
+    theme_bw() +
+    facet_wrap(vars(variable), scales = 'free') +
+    theme(legend.position = "bottom")
   
+  if(smoothedDT) {
+    gg <- gg + geom_smooth(aes(color="Observed trend", fill="Observed trend")) +
+      scale_color_manual(name="", values = c("Observed trend" = "blue")) +
+      scale_fill_manual(name="", values = c("Observed trend" = "blue"))
+  } else {
+    gg <- gg + stat_summary(data=datsum[NobsDT > 10 & !is.na(TimeInterval),], 
+      aes(color="Observed points"), 
+      fun.data = median_hilow, geom='point') +
+      scale_color_manual(name="", values = c("Observed points" = "blue"))
+  }
+  gglist$ObservedVGenOverDT <- gg
+  
+  # Observed vs Generated by ID
+  gglist$ObservedVGenOverID <- ggplot(datsum, aes(x=id, y=ObsVsGenID)) +
+    geom_point(aes(color="Individual ID"), alpha=.9) +
+    geom_hline(aes(yintercept=0.5, linetype="Expected (50%)"), linewidth=1) +
+    scale_color_manual(name="", values = c("Individual ID" = "steelblue")) +
+    scale_linetype_manual(name="", values = c("Expected (50%)" = "solid")) +
+    ylab('Prop. observed data greater than generated') +
+    coord_cartesian(ylim=c(0,1)) +
+    theme_bw() +
+    facet_wrap(vars(variable), scales = 'free') +
+    theme(legend.position = "bottom")
+  
+  return(gglist)
 }
 
 
@@ -220,7 +293,7 @@ ctStanPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,
   
   if(is.null(fit$generated$Y) || dim(fit$generated$Y)[1] < nsamples){
     Ygen <- ctStanGenerateFromFit(fit,fullposterior=TRUE,nsamples=nsamples)$generated$Y
-    } else Ygen <- fit$generated$Y
+  } else Ygen <- fit$generated$Y
   
   # Ygen<-aperm(Ygen,c(2,1,3)) #previously necessary but fixed generator
   Ygen <- Ygen[,datarows,,drop=FALSE]
@@ -267,7 +340,7 @@ ctStanPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,
           if(subtypei=='Observation') x <- xmeasure
           if(subtypei=='Time') x <- time
           
-        
+          
           
           plots[[i]] <- c(plots[[i]],
             list(

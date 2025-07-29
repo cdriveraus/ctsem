@@ -17,7 +17,7 @@
 #' print(gg[[1]]+
 #' ggplot2::ggtitle("Covariance Check for Y1 with all other manifest variables, split by TI1"))
 #' }
-ctFitCovCheck <- function(fit, cor = FALSE, plot = TRUE, splitby = NULL) {
+ctFitCovCheck <- function(fit, cor = TRUE, plot = TRUE, splitby = NULL) {
 
   if(FALSE) .ColVar= .ObsCol= .ObsRow= .RowVar= .Sig= cn= pair_id= q025= q50= q975= rn=NULL
   
@@ -225,7 +225,7 @@ plot.ctFitCovCheck <- function(x, maxlag = 10,vars=NA,splitvar=NA,cor=FALSE,...)
         facet_wrap(~.ColVar) +
         labs(x = 'Lag (Observations)', y = paste0('Correlation with ',rowvari), color = '', alpha = 'Observations') +
         scale_color_manual(values = c("Mean Sample Correlation" = "red", "Model Implied 95% Confidence Interval" = "black")) +
-        scale_alpha_continuous(range = c(0.1, 1), limits = c(1, max(filtered_data$count))) + # Set alpha scale from 0.1 to 1
+        scale_alpha_continuous(range = c(0.3, 1), limits = c(1, max(filtered_data$count))) + # Set alpha scale from 0.1 to 1
         guides(alpha='none') +
         theme(legend.position = 'bottom')  # Move legend to top of plot
     }
@@ -280,6 +280,7 @@ plot.ctFitCovCheck <- function(x, maxlag = 10,vars=NA,splitvar=NA,cor=FALSE,...)
           values = c("Model implied 95%" = "solid"), # solid line
           breaks = "Model implied 95%"
         ) +
+        scale_alpha_continuous(range = c(0.3, 1), limits = c(1, max(filtered_data$count))) + # Set alpha scale from 0.3 to 1
         # dodge the colour legend first, then override legend keys for the 2nd block
         guides(
           colour   = guide_legend(title = splitvar, order = 1),
