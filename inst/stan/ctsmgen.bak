@@ -246,11 +246,11 @@ if(transform < 49 && shift != 0.0) param+=shift;
   }
   
   
-  matrix mcalc(matrix matin, vector tfpars, row_vector states, array[] int when, int m, array[,] int ms, data array[,] real mval, int subi){
+  matrix mcalc(matrix matin, vector tfpars, row_vector states, array[] int when, int m, array[,] int ms, data array[,] real mval, int subi,array[] int msrange){
     matrix[rows(matin),cols(matin)] matout;
     int changeMade=0;
-    
-    for(ri in 1:size(ms)){ //for each row of matrix setup
+    if(msrange[2] > 0){
+    for(ri in msrange[1]:msrange[2]){ //for each row of matrix setup
       if(m==ms[ri,7] && ( //if correct matrix
         subi ==0 ||  //and need to compute population parameter
         (ms[ri,3] > 0 && (ms[ri,5] > 0 || ms[ri,6] > 0 || ms[ri,8] > 0)) //or there is individual variation
@@ -269,6 +269,7 @@ if(transform < 49 && shift != 0.0) param+=shift;
           if(ms[ri,3] < 1) matout[ms[ri,1], ms[ri,2] ] = mval[ri, 1]; //doing this once over all subjects unless covariance matrix -- speed ups possible here, check properly!
         }
       }
+    }
     }
     if(changeMade){
       for(ri in 1:rows(matin)){ //fill holes with unchanged input matrix
@@ -348,6 +349,7 @@ data {
   array[nparams, ntipred] int TIPREDEFFECTsetup;
   int nrowmatsetup;
   array[nrowmatsetup,9] int matsetup;
+  array[54,2] int matsetupranges;
   array[nrowmatsetup,6] real matvalues;
   array[54,5] int whenmat;
   array[2,nparams]int whenvecp;
@@ -507,6 +509,7 @@ model{
   array[3,savescores ? ndatapoints : 0] vector[nlatentpop] etaa;
   array[3,savescores ? ndatapoints : 0] vector[nmanifest] ya;
   array[ndatapoints] vector[nmanifest] Ygen;
+  array[0] vector[0] calcs;
   vector[nlatentpop*ndatapoints] etaupdbasestates = to_vector(normal_rng(rep_array(0.0,ndatapoints*nlatentpop),rep_array(1.0,ndatapoints*nlatentpop))); //sampled latent states posterior
   array[ (savesubjectmatrices && (sum(whenmat[10,1:5]) || statedep[10])) ? nsubjects : 0]
       matrix[matrixdims[10, 1], matrixdims[10, 2] ] subj_PARS;array[ (savesubjectmatrices && (sum(whenmat[1,1:5]) || statedep[1])) ? nsubjects : 0]
@@ -723,34 +726,34 @@ model{
     0, matsetup, matvalues, si)';
      
   if(whenmat[1, 5] >= (si ? 1 : 0)) T0MEANS = 
-    mcalc(T0MEANS, indparams, state, {0}, 1, matsetup, matvalues, si); // base t0means to init
+    mcalc(T0MEANS, indparams, state, {0}, 1, matsetup, matvalues, si,matsetupranges[1,]); // base t0means to init
       
  // for(li in 1:nlatentpop) if(!is_nan(T0MEANS[li,1])) state[li] = T0MEANS[li,1]; //in case of t0 dependencies, may have missingness
   
   state=T0MEANS[,1]';
     
-  if(si==0 || sum(whenmat[10,{5,1}]) > 0 )PARS=mcalc(PARS,indparams, state,{0,1}, 10, matsetup, matvalues, si); 
+  if(si==0 || sum(whenmat[10,{5,1}]) > 0 )PARS=mcalc(PARS,indparams, state,{0,1}, 10, matsetup, matvalues, si,matsetupranges[10,]); 
  //initialise simple PARS then do complex PARS
   
     
-  if(si==0 || sum(whenmat[1,{5,1}]) > 0 )T0MEANS=mcalc(T0MEANS,indparams, state,{0,1}, 1, matsetup, matvalues, si); 
-if(si==0 || sum(whenmat[8,{5,1}]) > 0 )T0VAR=mcalc(T0VAR,indparams, state,{0,1}, 8, matsetup, matvalues, si); 
+  if(si==0 || sum(whenmat[1,{5,1}]) > 0 )T0MEANS=mcalc(T0MEANS,indparams, state,{0,1}, 1, matsetup, matvalues, si,matsetupranges[1,]); 
+if(si==0 || sum(whenmat[8,{5,1}]) > 0 )T0VAR=mcalc(T0VAR,indparams, state,{0,1}, 8, matsetup, matvalues, si,matsetupranges[8,]); 
       
   
     for(li in 1:nlatentpop) if(is_nan(state[li])) state[li] = T0MEANS[li,1]; //finish updating state
     
     //init other system matrices (already done PARS, redo t0means in case of PARS dependencies...)
-   if(si==0 || sum(whenmat[2,{5}]) > 0 )LAMBDA=mcalc(LAMBDA,indparams, state,{0}, 2, matsetup, matvalues, si); 
-if(si==0 || sum(whenmat[3,{5}]) > 0 )DRIFT=mcalc(DRIFT,indparams, state,{0}, 3, matsetup, matvalues, si); 
-if(si==0 || sum(whenmat[4,{5}]) > 0 )DIFFUSION=mcalc(DIFFUSION,indparams, state,{0}, 4, matsetup, matvalues, si); 
-if(si==0 || sum(whenmat[5,{5}]) > 0 )MANIFESTVAR=mcalc(MANIFESTVAR,indparams, state,{0}, 5, matsetup, matvalues, si); 
-if(si==0 || sum(whenmat[6,{5}]) > 0 )MANIFESTMEANS=mcalc(MANIFESTMEANS,indparams, state,{0}, 6, matsetup, matvalues, si); 
-if(si==0 || sum(whenmat[7,{5}]) > 0 )CINT=mcalc(CINT,indparams, state,{0}, 7, matsetup, matvalues, si); 
-if(si==0 || sum(whenmat[8,{5}]) > 0 )T0VAR=mcalc(T0VAR,indparams, state,{0}, 8, matsetup, matvalues, si); 
-if(si==0 || sum(whenmat[9,{5}]) > 0 )TDPREDEFFECT=mcalc(TDPREDEFFECT,indparams, state,{0}, 9, matsetup, matvalues, si); 
-if(si==0 || sum(whenmat[52,{5}]) > 0 )JAx=mcalc(JAx,indparams, state,{0}, 52, matsetup, matvalues, si); 
-if(si==0 || sum(whenmat[53,{5}]) > 0 )Jtd=mcalc(Jtd,indparams, state,{0}, 53, matsetup, matvalues, si); 
-if(si==0 || sum(whenmat[54,{5}]) > 0 )Jy=mcalc(Jy,indparams, state,{0}, 54, matsetup, matvalues, si); 
+   if(si==0 || sum(whenmat[2,{5}]) > 0 )LAMBDA=mcalc(LAMBDA,indparams, state,{0}, 2, matsetup, matvalues, si,matsetupranges[2,]); 
+if(si==0 || sum(whenmat[3,{5}]) > 0 )DRIFT=mcalc(DRIFT,indparams, state,{0}, 3, matsetup, matvalues, si,matsetupranges[3,]); 
+if(si==0 || sum(whenmat[4,{5}]) > 0 )DIFFUSION=mcalc(DIFFUSION,indparams, state,{0}, 4, matsetup, matvalues, si,matsetupranges[4,]); 
+if(si==0 || sum(whenmat[5,{5}]) > 0 )MANIFESTVAR=mcalc(MANIFESTVAR,indparams, state,{0}, 5, matsetup, matvalues, si,matsetupranges[5,]); 
+if(si==0 || sum(whenmat[6,{5}]) > 0 )MANIFESTMEANS=mcalc(MANIFESTMEANS,indparams, state,{0}, 6, matsetup, matvalues, si,matsetupranges[6,]); 
+if(si==0 || sum(whenmat[7,{5}]) > 0 )CINT=mcalc(CINT,indparams, state,{0}, 7, matsetup, matvalues, si,matsetupranges[7,]); 
+if(si==0 || sum(whenmat[8,{5}]) > 0 )T0VAR=mcalc(T0VAR,indparams, state,{0}, 8, matsetup, matvalues, si,matsetupranges[8,]); 
+if(si==0 || sum(whenmat[9,{5}]) > 0 )TDPREDEFFECT=mcalc(TDPREDEFFECT,indparams, state,{0}, 9, matsetup, matvalues, si,matsetupranges[9,]); 
+if(si==0 || sum(whenmat[52,{5}]) > 0 )JAx=mcalc(JAx,indparams, state,{0}, 52, matsetup, matvalues, si,matsetupranges[52,]); 
+if(si==0 || sum(whenmat[53,{5}]) > 0 )Jtd=mcalc(Jtd,indparams, state,{0}, 53, matsetup, matvalues, si,matsetupranges[53,]); 
+if(si==0 || sum(whenmat[54,{5}]) > 0 )Jy=mcalc(Jy,indparams, state,{0}, 54, matsetup, matvalues, si,matsetupranges[54,]); 
     
     if(verbose==2) print("DRIFT = ",DRIFT);
     if(verbose==2) print("indparams = ", indparams);
@@ -819,10 +822,10 @@ if(verbose > 1) print ("below t0 row ", rowi);
       if(statei>0)  state[statei] += Jstep;
           
         //initialise PARS first, and simple PARS before complex PARS
-        if(statedep[10] || whenmat[10,2]) PARS=mcalc(PARS,indparams, state,{2}, 10, matsetup, matvalues, si); 
+        if(statedep[10] || whenmat[10,2]) PARS=mcalc(PARS,indparams, state,{2}, 10, matsetup, matvalues, si,matsetupranges[10,]); 
         
-        if(statedep[3] || whenmat[3,2]) DRIFT=mcalc(DRIFT,indparams, state,{2}, 3, matsetup, matvalues, si); 
-        if(statedep[7] || whenmat[7,2]) CINT=mcalc(CINT,indparams, state,{2}, 7, matsetup, matvalues, si); 
+        if(statedep[3] || whenmat[3,2]) DRIFT=mcalc(DRIFT,indparams, state,{2}, 3, matsetup, matvalues, si,matsetupranges[3,]); 
+        if(statedep[7] || whenmat[7,2]) CINT=mcalc(CINT,indparams, state,{2}, 7, matsetup, matvalues, si,matsetupranges[7,]); 
         
       
       if(statei > 0) {
@@ -842,8 +845,8 @@ if(verbose > 1) print ("below t0 row ", rowi);
     }
     
     
-    if(statedep[4] || whenmat[4,2]) DIFFUSION=mcalc(DIFFUSION,indparams, state,{2}, 4, matsetup, matvalues, si); 
-    if(statedep[52] || whenmat[52,2]) JAx=mcalc(JAx,indparams, state,{2}, 52, matsetup, matvalues, si); 
+    if(statedep[4] || whenmat[4,2]) DIFFUSION=mcalc(DIFFUSION,indparams, state,{2}, 4, matsetup, matvalues, si,matsetupranges[4,]); 
+    if(statedep[52] || whenmat[52,2]) JAx=mcalc(JAx,indparams, state,{2}, 52, matsetup, matvalues, si,matsetupranges[52,]); 
     
     
     if(si==0 ||statedep[4] || whenmat[4,2] || ( T0check ==1 && whenmat[4,5])){
@@ -912,12 +915,12 @@ if(verbose > 1) print ("below t0 row ", rowi);
       if(si==0 ||nonzerotdpred){
           
         //initialise PARS first, and simple PARS before complex PARS
-        if(statedep[10] || whenmat[10,3]) PARS=mcalc(PARS,indparams, state,{3}, 10, matsetup, matvalues, si); 
+        if(statedep[10] || whenmat[10,3]) PARS=mcalc(PARS,indparams, state,{3}, 10, matsetup, matvalues, si,matsetupranges[10,]); 
         
         
       
-        if(statedep[9] || whenmat[9,3]) TDPREDEFFECT=mcalc(TDPREDEFFECT,indparams, state,{3}, 9, matsetup, matvalues, si); 
-        if(statedep[53] || whenmat[53,3]) Jtd=mcalc(Jtd,indparams, state,{3}, 53, matsetup, matvalues, si); 
+        if(statedep[9] || whenmat[9,3]) TDPREDEFFECT=mcalc(TDPREDEFFECT,indparams, state,{3}, 9, matsetup, matvalues, si,matsetupranges[9,]); 
+        if(statedep[53] || whenmat[53,3]) Jtd=mcalc(Jtd,indparams, state,{3}, 53, matsetup, matvalues, si,matsetupranges[53,]); 
         
         state[1:nlatent] +=   (TDPREDEFFECT * tdpreds[rowi])'; //tdpred effect only influences at observed time point
         etacov = quad_form_sym(makesym(etacov,verbose,1),Jtd');  //could speed up by detecting if non diagonal Jtd
@@ -949,12 +952,12 @@ if(verbose > 1) print("b");
       state = basestate; //reset state
       if(statei>0 && (dosmoother + intoverstates) > 0)  state[statei] += Jstep; //if doing finite difference, add step to statei
       //initialise PARS first, and simple PARS before complex PARS
-      if(statedep[10] || whenmat[10,4]) PARS=mcalc(PARS,indparams, state,{4}, 10, matsetup, matvalues, si); 
+      if(statedep[10] || whenmat[10,4]) PARS=mcalc(PARS,indparams, state,{4}, 10, matsetup, matvalues, si,matsetupranges[10,]); 
       
-      if(statedep[2] || whenmat[2,4]) LAMBDA=mcalc(LAMBDA,indparams, state,{4}, 2, matsetup, matvalues, si); 
-      if(statedep[5] || whenmat[5,4]) MANIFESTVAR=mcalc(MANIFESTVAR,indparams, state,{4}, 5, matsetup, matvalues, si); 
-      if(statedep[6] || whenmat[6,4]) MANIFESTMEANS=mcalc(MANIFESTMEANS,indparams, state,{4}, 6, matsetup, matvalues, si); 
-      if(statedep[54] || whenmat[54,4]) Jy=mcalc(Jy,indparams, state,{4}, 54, matsetup, matvalues, si); 
+      if(statedep[2] || whenmat[2,4]) LAMBDA=mcalc(LAMBDA,indparams, state,{4}, 2, matsetup, matvalues, si,matsetupranges[2,]); 
+      if(statedep[5] || whenmat[5,4]) MANIFESTVAR=mcalc(MANIFESTVAR,indparams, state,{4}, 5, matsetup, matvalues, si,matsetupranges[5,]); 
+      if(statedep[6] || whenmat[6,4]) MANIFESTMEANS=mcalc(MANIFESTMEANS,indparams, state,{4}, 6, matsetup, matvalues, si,matsetupranges[6,]); 
+      if(statedep[54] || whenmat[54,4]) Jy=mcalc(Jy,indparams, state,{4}, 54, matsetup, matvalues, si,matsetupranges[54,]); 
       
     
       syprior[o] =  LAMBDA[o] * state[1:nlatent]' + MANIFESTMEANS[o,1]; //compute new change
@@ -979,7 +982,7 @@ if(verbose > 1) print("b");
     if(intoverstates==1 || dosmoother==1) { //classic kalman
       ycov[o,o] = quad_form_sym(makesym(etacov,verbose,1), Jy[o,]')+ MANIFESTcov[o,o]; // add measurement error; 
       for(mi in 1:nmanifest){ 
-        if(manifesttype[mi]==2 && (Y[rowi,mi] != 99999  || dosmoother==1)) ycov[mi,mi] += (1-syprior[mi]) .* (syprior[mi]);
+        if(manifesttype[mi]==1 && (Y[rowi,mi] != 99999  || dosmoother==1)) ycov[mi,mi] += (1-syprior[mi]) .* (syprior[mi]);
       }
     } //problems in this loop when generating data, because data are not yet generated!
         

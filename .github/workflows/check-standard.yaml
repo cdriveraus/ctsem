@@ -5,16 +5,12 @@ on:
     branches: [main, master,rstantools]
   pull_request:
     branches: [main, master,rstantools]
-
 name: R-CMD-check
 
 jobs:
   R-CMD-check:
     runs-on: ${{ matrix.config.os }}
-
     name: ${{ matrix.config.os }} (${{ matrix.config.r }})
-
-
     strategy:
       fail-fast: false
       matrix:
@@ -24,15 +20,12 @@ jobs:
           - {os: ubuntu-latest,   r: 'devel', http-user-agent: 'release'}
           - {os: ubuntu-latest,   r: 'release'}
           - {os: ubuntu-latest,   r: 'oldrel-1'}
-
     env:
       R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       R_KEEP_PKG_SOURCE: yes
-
     steps:
       - uses: actions/checkout@v3
-
       - uses: r-lib/actions/setup-pandoc@v2
           
       - uses: r-lib/actions/setup-r@v2
@@ -40,7 +33,6 @@ jobs:
           r-version: ${{ matrix.config.r }}
           http-user-agent: ${{ matrix.config.http-user-agent }}
           use-public-rspm: true
-
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           extra-packages: any::rcmdcheck, local::.
@@ -49,7 +41,6 @@ jobs:
       - name: executable Permissions
         run: |
           chmod +x configure
-
       - uses: r-lib/actions/setup-tinytex@v2
         env: 
           TINYTEX_INSTALLER: TinyTeX
@@ -62,3 +53,21 @@ jobs:
         with:
           error-on: '"error"'
           upload-snapshots: true
+
+  check-success:
+    needs: R-CMD-check
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - uses: actions/github-script@v6
+        with:
+          script: |
+            const jobs = await github.rest.actions.listJobsForWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+            });
+            const checkJobs = jobs.data.jobs.filter(job => job.name.includes('R-CMD-check') && job.name !== 'check-success');
+            const successCount = checkJobs.filter(job => job.conclusion === 'success').length;
+            console.log(`${successCount} of ${checkJobs.length} jobs succeeded`);
+            if (successCount < 2) process.exit(1);

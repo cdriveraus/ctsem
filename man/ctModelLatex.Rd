@@ -17,7 +17,8 @@ ctModelLatex(
   compile = TRUE,
   open = TRUE,
   includeNote = TRUE,
-  minimal = FALSE
+  minimal = FALSE,
+  savepng = FALSE
 )
 }
 \arguments{
@@ -51,6 +52,8 @@ triangular matrices (which results in a covariance or Cholesky matrix) is shown 
 the latter is a more direct representation of the model, while the former is often simpler to convey.}
 
 \item{minimal}{if TRUE, outputs reduced form version displaying matrix dimensions and equation structure only.}
+
+\item{savepng}{Logical. If TRUE, renders the equation as a png file instead of a pdf, viewing the png in RStudio viewer when available.}
 }
 \value{
 character string of latex code. Side effects include saving a .tex, .pdf, and displaying the pdf.

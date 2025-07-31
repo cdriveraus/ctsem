@@ -144,6 +144,7 @@ bmatrix = function(x, digits=NULL,nottext=FALSE, ...) {
 #' @param includeNote Include text describing matrix transformations and subject notation?
 #' triangular matrices (which results in a covariance or Cholesky matrix) is shown -- 
 #' the latter is a more direct representation of the model, while the former is often simpler to convey.
+#' @param savepng Logical. If TRUE, renders the equation as a png file instead of a pdf, viewing the png in RStudio viewer when available.
 #'
 #' @return character string of latex code. Side effects include saving a .tex, .pdf, and displaying the pdf. 
 #' @export
@@ -166,9 +167,15 @@ bmatrix = function(x, digits=NULL,nottext=FALSE, ...) {
 #' cat(l)
 ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctStanFit',textsize='normalsize',folder=tempdir(),
   filename=paste0('ctsemTex',as.numeric(Sys.time())),tex=TRUE, equationonly=FALSE, compile=TRUE, open=TRUE, includeNote=TRUE,
-  minimal=FALSE){
+  minimal=FALSE, savepng=FALSE){
   #library(ctsem)
   dopopcov <- FALSE
+  
+  # When savepng is TRUE, force compilation settings
+  if(savepng) {
+    equationonly <- FALSE
+    compile <- TRUE
+  }
   
   if('ctStanFit' %in% class(x)){
     ms=ctMatsetupFreePars(x$setup$matsetup)
@@ -281,7 +288,7 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
   
   if(equationonly) compile <- FALSE
   
-
+  
   
   
   
@@ -413,9 +420,9 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
     #       ctmodel$DIFFUSION[upper.tri(ctmodel$DIFFUSION)] <- t(ctmodel$DIFFUSION)[upper.tri(ctmodel$DIFFUSION)]
     #     }
     # }
-          
-        
-        
+    
+    
+    
     
     out <- paste0(out, "
  \\setcounter{MaxMatrixCols}{200}
@@ -496,9 +503,9 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
       \\end{aligned} \\\\",
       if(includeNote) paste0("&\\textrm{Note: } UcorSDtoChol\\textrm{ converts lower tri matrix of standard deviations and unconstrained correlations to Cholesky factor,} \\\\
 &UcorSDtoCov =\\textrm{ transposed cross product of UcorSDtoChol, to give covariance, See Driver \\& Voelkle (2018) p11.} \\\\",
-if(dopop) paste0("&\\textrm{Individual specific notation (subscript i) only shown for subject parameter distribution -- pop. means shown elsewhere.} \\\\
+        if(dopop) paste0("&\\textrm{Individual specific notation (subscript i) only shown for subject parameter distribution -- pop. means shown elsewhere.} \\\\
 ",if(linearise) "&\\textrm{Linearised approximation of subject parameter distribution shown.} \\\\")),
-"\\end{flalign*}
+      "\\end{flalign*}
       ")
   }
   
@@ -526,10 +533,50 @@ if(dopop) paste0("&\\textrm{Individual specific notation (subscript i) only show
         }
       }
       
-      if(!'try-error' %in% class(a) && interactive() && open) try(openPDF(paste0(filename,'.pdf')))
-    }
-    
-  }
+      # Handle PNG rendering
+      if(!'try-error' %in% class(a)) {
+        if(requireNamespace('pdftools', quietly=TRUE)) {
+          bitmap <- pdftools::pdf_render_page(paste0(filename,'.pdf'), dpi=300)
+          
+          # Display PNG in RStudio viewer if available
+          if(interactive() && requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()) {
+            # Write bitmap to temp PNG file for viewer
+            temp_png <- tempfile(tmpdir = tempdir(), fileext = ".png")
+            png::writePNG(bitmap, temp_png)
+            # Use relative path from HTML file
+            temp_html <- tempfile(tmpdir = dirname(temp_png), fileext = ".html")
+            png_name <- basename(temp_png)
+            writeLines(paste0('<img src="', png_name, '" style="max-width:100%; height:auto;">'), temp_html)
+            rstudioapi::viewer(temp_html)
+          } else if(interactive()) {
+            # Fallback to plot device - convert bitmap to raster first
+            temp_png <- tempfile(fileext = ".png")
+            png::writePNG(bitmap, temp_png)
+            img <- png::readPNG(temp_png)
+            old_par <- par(mar=c(0,0,0,0))  # Save old settings
+            plot(as.raster(img), asp=1)
+            par(old_par)  # Restore original settings
+            unlink(temp_png)
+          }
+        } else {
+          message('pdftools package required for viewing output within R. Install with: install.packages("pdftools")')
+        }
+        
+        if(savepng){
+          if(requireNamespace('pdftools', quietly=TRUE)) {
+            # Save the bitmap as a PNG file
+            png_filename <- paste0(filename, '.png')
+            png::writePNG(bitmap, png_filename)
+            message(paste("PNG saved to", png_filename))
+          } else {
+            stop("pdftools package required for render_png=TRUE. Install with: install.packages('pdftools')")
+          }
+        }
+        
+        if(interactive() && open) try(openPDF(paste0(filename,'.pdf')))
+      } #end if succcessful compile
+    } #end if compile
+  }# end if tex
   return(invisible(out))
 }
 
