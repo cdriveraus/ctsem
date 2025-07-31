@@ -4,7 +4,7 @@
 \alias{plot.ctFitCovCheck}
 \title{plot.ctFitCovCheck}
 \usage{
-\method{plot}{ctFitCovCheck}(x, maxlag = 10, vars = NA, splitvar = NA, ...)
+\method{plot}{ctFitCovCheck}(x, maxlag = 10, vars = NA, splitvar = NA, cor = FALSE, ...)
 }
 \arguments{
 \item{x}{Output from ctFitCovCheck.}
@@ -14,6 +14,8 @@
 \item{vars}{Optional character vector of variable names to plot. If `NA`, all variables are plotted.}
 
 \item{splitvar}{Optional character string specifying a variable to split the plot by.}
+
+\item{cor}{Logical; if `TRUE`, plot correlations instead of covariances. (label change)}
 
 \item{...}{not used.}
 }

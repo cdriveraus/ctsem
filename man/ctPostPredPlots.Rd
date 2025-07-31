@@ -9,6 +9,9 @@ ctPostPredPlots(fit)
 \arguments{
 \item{fit}{A fitted ctsem model.}
 }
+\value{
+a list of ggplot2 plots.
+}
 \description{
 This function generates a set of diagnostic plots to assess the goodness-of-fit for
 a fitted ctsem model.
@@ -23,9 +26,6 @@ included are as follows:
   - A time series plot of the proportion of observed data greater than generated data.
 }
 \examples{
-ctPostPredPlots(ctstantestfit)
+print(ctPostPredPlots(ctstantestfit))
 
-}
-\seealso{
-Other ctsem functions for model fitting and analysis.
 }

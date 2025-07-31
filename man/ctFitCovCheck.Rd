@@ -5,7 +5,7 @@
 \title{Visual model-fit diagnostics for ctsem fits, optionally split by the mean
 of a chosen observed variable.}
 \usage{
-ctFitCovCheck(fit, cor = FALSE, plot = TRUE, splitby = NULL)
+ctFitCovCheck(fit, cor = TRUE, plot = TRUE, splitby = NULL)
 }
 \arguments{
 \item{fit}{A `ctStanFit` object.}
