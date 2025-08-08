@@ -694,14 +694,14 @@ imis_is <- function(parlp,
         it + 1, nrow(samples), ess_now),
         appendLF = FALSE)
     
-      if (interactive() && diag_plots) {
-        g <- diagis::weight_plot(w_raw)
-        gridExtra::grid.arrange(
-          g, top = grid::textGrob(
-            sprintf("IMIS diagnostics - ESS %.1f / %d",
-              ess_now, nrow(samples)),
-            gp = grid::gpar(fontface = "bold", fontsize = 14)))
-      }
+    if (interactive() && diag_plots) {
+      g <- diagis::weight_plot(w_raw)
+      gridExtra::grid.arrange(
+        g, top = grid::textGrob(
+          sprintf("IMIS diagnostics - ESS %.1f / %d",
+            ess_now, nrow(samples)),
+          gp = grid::gpar(fontface = "bold", fontsize = 14)))
+    }
     
     if (ess_now >= target_ess || it == max_iter) break
     
@@ -712,7 +712,7 @@ imis_is <- function(parlp,
     comp_cov[[T_comp + 1L]] <- safe_pd(
       diagis::weighted_var(
         samples[top_idx,,drop=FALSE], w_raw[top_idx]) *
-      (diag(tail_scale^2-1, nrow(Sigma_hat))+1))
+        (diag(tail_scale^2-1, nrow(Sigma_hat))+1))
     T_comp <- T_comp + 1L
     
     lq_newcomp <- mvtnorm::dmvnorm(samples, comp_mu[[T_comp]],
@@ -781,8 +781,6 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores) {
   hess <- -corpcor::cov.shrink(gradsamples,verbose=FALSE) / alpha
   return(list(hess=hess,scores=scores))
 }
-
-
 
 
 #' Optimize / importance sample a stan or ctStan model.
@@ -940,11 +938,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   
   # initialise cluster ------------------------------------------------------
   if(cores > 1){
-  if(standata$recompile > 0){
-    smfile <- file.path(tempdir(),paste0('ctsem_sm_',ceiling(runif(1,0,100000)),'.rda'))
-    save(sm,file=smfile,eval.promises = FALSE,precheck = FALSE)
-    on.exit(add = TRUE,expr = {file.remove(smfile)})
-  } else smfile <- ''
+    if(standata$recompile > 0){
+      smfile <- file.path(tempdir(),paste0('ctsem_sm_',ceiling(runif(1,0,100000)),'.rda'))
+      save(sm,file=smfile,eval.promises = FALSE,precheck = FALSE)
+      on.exit(add = TRUE,expr = {file.remove(smfile)})
+    } else smfile <- ''
   } #end smfile setup
   
   if(optimcores > 1){ #for parallelised computation
@@ -1015,7 +1013,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   
   if(optimcores > 1) optimArgs$lpgFunc <- lpg_parallel else optimArgs$lpgFunc <- lpg_single 
   iter <-0
-
+  
   if(carefulfit) {
     iter <-0
     storedLp <- c()
@@ -1034,10 +1032,10 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   
   # end subsetting / carefulfit -----------------------------------------
   
-    standata$nsubsets <- 1L
-    optimArgs$nsubsets <- 1L
-    if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standata,split=TRUE,smfile=smfile)
-    if(optimcores==1) smf<-stan_reinitsf(sm,standata)
+  standata$nsubsets <- 1L
+  optimArgs$nsubsets <- 1L
+  if(optimcores > 1) parallelStanSetup(cl = clctsem,standata = standata,split=TRUE,smfile=smfile)
+  if(optimcores==1) smf<-stan_reinitsf(sm,standata)
   
   
   # tipredauto --------------------------------------------------------------
@@ -1380,7 +1378,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   
   if(parstepsAutoModel %in% FALSE){
     message('Optimizing...')
-
+    
     optimArgs$nsubsets <- 1
     optimArgs$parrangetol <- tol*100
     optimArgs$whichignore <- unlist(parsteps)
@@ -1429,12 +1427,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
     } else bootstrapUncertainty=TRUE
   }
   
-  if(bootstrapUncertainty){
-    hessWithScores <- bootstrapHessian(standata = standata, sm = sm, est = grinit,
-      finishsamples = finishsamples, cores = cores)
-    hess <- hessWithScores$hess
-  }
-    
+  
   
   
   
@@ -1543,7 +1536,9 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
       onesided <- which(sum(is.na(diag(hess1) & is.na(diag(hess2)))) %in% 1)
     }
     
+    #make symmetric
     hess <- (t(hess)+hess)/2
+    hess[upper.tri(hess)] <- t(hess)[upper.tri(hess)] 
     
     
     if(length(c(probpars,onesided)) > 0){
@@ -1561,25 +1556,46 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
         message('***These params "may" be not identified: ', probpars)
       }
     }
+    
+    #hessian inversion / checks
+    mcov1 = try(suppressWarnings(solve(-hess)),silent = TRUE)
+    cholcheck=try(suppressWarnings(t(chol(mcov1))),silent = TRUE)
+    if('try-error' %in% class(cholcheck)){
+      if(standata$nsubjects >= 5){
+        bootstrapUncertainty <- TRUE
+        warning('Hessian inversion failed, switching to bootstrap uncertainty estimation',call.=FALSE,immediate. = TRUE)
+      } else {
+        mcov1=try({Matrix::nearPD(solve(-hess),conv.norm.type = 'F',base.matrix = TRUE)})
+        if('try-error' %in% class(mcov1)){
+          mcov1=MASS::ginv(-hess) 
+          mcov1=try({Matrix::nearPD(mcov1,conv.norm.type = 'F',base.matrix = TRUE)})
+          warning('***Generalized inverse required for Hessian inversion -- interpret standard errors with caution. Consider simplification, priors, or alternative uncertainty estimators',call. = FALSE,immediate. = TRUE)
+        } else warning('***Matrix nearPD used for Hessian inversion -- interpret standard errors with caution. Consider simplification, priors, or alternative uncertainty estimators',call. = FALSE,immediate. = TRUE)
+        probpars=which(diag(hess) > -1e-6)
+      }
+    }
+    message('') 
   } #end classical hessian
   
   # cholcov = try(suppressWarnings(t(chol(solve(-hess)))),silent = TRUE)
   
   # if('try-error' %in% class(cholcov) && !is) message('Approximate hessian used for std error estimation.')
   
-  mcov=try(solve(-hess),silent=TRUE)
-  if('try-error' %in% class(mcov)){
-    mcov=MASS::ginv(-hess) 
-    warning('***Generalized inverse required for Hessian inversion -- interpret standard errors with caution. Consider simplification, priors, or alternative uncertainty estimators',call. = FALSE,immediate. = TRUE)
-    probpars=which(diag(hess) > -1e-6)
+  
+  
+  if(bootstrapUncertainty){
+    
+    hessWithScores <- bootstrapHessian(standata = standata, sm = sm, est = grinit,
+      finishsamples = finishsamples, cores = cores)
+    hess <- hessWithScores$hess
+    mcov1=try(suppressWarnings(solve(-hess)),silent = TRUE)
   }
-  message('') 
   
   # mcovtmp=try({Matrix::nearPD(mcov,conv.norm.type = 'F',base.matrix = TRUE)})
-  mcovtmp=try({shrink_cov(mcov)$Sigma})
-  if(any(class(mcovtmp) %in% 'try-error')) stop('Hessian could not be computed')
+  # mcovtmp=try({shrink_cov(mcov)$Sigma})
+  if(any(class(mcov1) %in% 'try-error')) stop('Hessian could not be computed')
   mcov <- diag(1e-10,npars)
-  if(length(parsteps)>0) mcov[-parsteps,-parsteps] <- mcovtmp else mcov <- mcovtmp
+  if(length(parsteps)>0) mcov[-parsteps,-parsteps] <- mcov1 else mcov <- mcov1
   
   # finish split and sum across core approach, now importance sampling / par computations ----------------------------------
   #configure each node with full dataset for importance sampling / draws from posterior
@@ -1587,26 +1603,26 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   if(cores > 1)   parallelStanSetup(cl=clctsem,standata,split=FALSE,smfile=smfile)    
   
   if(!is) resamples <- matrix(unlist(lapply(1:finishsamples,function(x){
-      est2 + t(chol(mcov)) %*% t(matrix(rnorm(length(est2)),nrow=1))
-    } )),byrow=TRUE,ncol=length(est2))
-
+    est2 + t(chol(mcov)) %*% t(matrix(rnorm(length(est2)),nrow=1))
+  } )),byrow=TRUE,ncol=length(est2))
+  
   
   if(is){
     is_res <- imis_is(lpg_single, mu_hat = est2, Sigma_hat = mcov,
-        max_iter = 50,diag_plots = T,#as.logical(plot),
-        cl=clctsem,scale_init = 1.1, tail_scale=1.1,
-        verbose = TRUE, target_ess = isESS, #cov_inflate = 1,
-        finishsamples=finishsamples, n_batch = isitersize)
-      resamples      <- is_res$theta
-      lpsamples    <- is_res$lpsamples
-      sample_prob  <- is_res$weights
-      ess          <- is_res$ess
+      max_iter = 50,diag_plots = T,#as.logical(plot),
+      cl=clctsem,scale_init = 1.1, tail_scale=1.1,
+      verbose = TRUE, target_ess = isESS, #cov_inflate = 1,
+      finishsamples=finishsamples, n_batch = isitersize)
+    resamples      <- is_res$theta
+    lpsamples    <- is_res$lpsamples
+    sample_prob  <- is_res$weights
+    ess          <- is_res$ess
   }
   
   
   
   message('Computing posterior with ',nrow(resamples),' samples')
-      
+  
   standata$savesubjectmatrices=savesubjectmatrices #if we save subject matrices, we need to use the full standata
   if(!savesubjectmatrices) sdat=standatact_specificsubjects(standata,1) #only use 1 subject
   if(savesubjectmatrices) sdat=standata
@@ -1649,6 +1665,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   optimfinished <- TRUE #disable exit message re pars
   return(stanfit)
 }
+
 
 
 

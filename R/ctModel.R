@@ -243,6 +243,11 @@ ctModel<-function(LAMBDA, type='omx',n.manifest = 'auto', n.latent='auto', Tpoin
   if(type=='omx') message('Type "omx" is still supported but requires ctsemOMX package installation. "ct" or "dt" are recommended types.')
   if(type=='omx' & is.null(Tpoints)) stop('Type "omx" requires Tpoints specified!')
   
+  msg_matrix <- function(mat, label = "") {
+    lines <- capture.output(print(mat))
+    header <- if (nzchar(label)) paste0(label, ":\n") else ""
+    message(header, paste(lines, collapse = "\n"))
+  }
   
   
   
@@ -300,7 +305,7 @@ ctModel<-function(LAMBDA, type='omx',n.manifest = 'auto', n.latent='auto', Tpoin
           }
         }
         
-        if(!silent) print(mat,right=TRUE)
+        if(!silent) msg_matrix(mat)#,right=TRUE)
         assign(m, mat)
       }
     }

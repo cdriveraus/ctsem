@@ -10,21 +10,25 @@
 #' (e.g., list(boot = list(optimcontrol = list(bootstrapUncertainty = TRUE)), 
 #' hess = list(optimcontrol = list(bootstrapUncertainty = FALSE))))
 #' @param cores Number of cores to use for parallel processing
+#' @param plot_every Print plots every n iterations (default = 10)
 #' 
 #' @return A list containing the results data.table and final plots
 
 ctModelCoverage_check <- function(initialData, fitting_model, niter, fit_args, 
-  cores = 10) {
+  cores = 10, plot_every = max(c(10,cores))) {
 
   
   neededPacks = c('future','future.apply')
   sapply(neededPacks,function(x) {
     if(!requireNamespace(x, quietly = TRUE)) stop(paste("Package", x, "is required but not installed."))
-    })
+  })
   
   # Set up parallel processing
   future::plan(future::multisession, workers = cores)
-
+  
+  # Check if parallel setup worked
+  message(paste("Using", future::nbrOfWorkers(), "workers for parallel processing"))
+  
   
   # Default fit arguments
   default_fit_args <- list(
@@ -35,7 +39,7 @@ ctModelCoverage_check <- function(initialData, fitting_model, niter, fit_args,
   if(is.null(names(fit_args)) || any(names(fit_args) == "")) {
     stop("fit_args must be a named list (e.g., list(boot = list(...), hess = list(...)))")
   }
-
+  
   
   # Fit the model to get true parameters (use first fit_args configuration)
   initial_fit_args <- default_fit_args
@@ -46,7 +50,7 @@ ctModelCoverage_check <- function(initialData, fitting_model, niter, fit_args,
   # This ensures proper parameter specification for all iterations
   message("Generating samples for all iterations using ctStanGenerateFromFit...")
   generated_samples <- ctStanGenerateFromFit(fit = initial_fit, nsamples = niter, cores = cores)
-  
+
   # Define the function to run for each iteration
   run_iteration <- function(iter_idx) {
     tryCatch({
@@ -93,26 +97,73 @@ ctModelCoverage_check <- function(initialData, fitting_model, niter, fit_args,
     })
   }
   
-  # Run iterations in parallel
-  message("Running iterations in parallel...")
-  results_list <- future.apply::future_lapply(1:niter, run_iteration, future.seed = TRUE)
+  # Initialize results storage
+  all_results <- list()
   
-  # Remove NULL results (failed iterations)
-  results_list <- results_list[!sapply(results_list, is.null)]
+  # Run iterations in batches and plot every plot_every iterations
+  for(batch_start in seq(1, niter, by = plot_every)) {
+    batch_end <- min(batch_start + plot_every - 1, niter)
+    batch_indices <- batch_start:batch_end
+    
+    message(paste("Running iterations", batch_start, "to", batch_end))
+    
+    # Run batch in parallel
+    batch_results <- future.apply::future_lapply(batch_indices, run_iteration, future.seed = TRUE)
+    
+    # Remove NULL results (failed iterations)
+    batch_results <- batch_results[!sapply(batch_results, is.null)]
+    
+    # Add to all results
+    all_results <- c(all_results, batch_results)
+    
+    # Create plots if we have any results
+    if (length(all_results) > 0) {
+      # Combine all results so far
+      res <- do.call(rbind, all_results)
+      
+      # Convert to data.table and calculate coverage statistics
+      res2 <- data.table(res)
+      res2[, mean50 := mean(X50.), by = 'par']
+      res2[, coverage := mean(X2.5. <= truepars & X97.5. >= truepars), by = c('type', 'par')]
+      
+      # Create plots
+      g1 <- ggplot(res2, aes(x = factor(par), y = mean50 - truepars, colour = type)) +
+        geom_boxplot(outliers = FALSE) + 
+        geom_boxplot(aes(y = X2.5. - truepars), outliers = FALSE) +
+        geom_boxplot(aes(y = X97.5. - truepars), outliers = FALSE) +
+        theme_bw() +
+        geom_hline(yintercept = 0, linetype = 'dashed') +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = 'bottom') +
+        labs(title = paste("Parameter Estimation Bias (Iterations 1 -", batch_end, ")"), 
+             y = "Estimate - True Value")
+      
+      g2 <- ggplot(res2[iteration == 1,], aes(x = par, y = coverage, colour = type)) +
+        geom_point(alpha = 0.7) +
+        geom_segment(aes(xend = par, yend = 0.95), linetype = 'dotted') +
+        theme_bw() +
+        geom_hline(yintercept = 0.95, linetype = 'dashed') +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = 'bottom') +
+        labs(title = paste("Coverage Probability (Iterations 1 -", batch_end, ")"), 
+             y = "Coverage")
+      
+      # Print plots
+      print(gridExtra::grid.arrange(g1, g2, nrow = 2))
+    }
+  }
   
-  # Combine all results
-  if (length(results_list) > 0) {
-    res <- do.call(rbind, results_list)
+  # Final results compilation
+  if (length(all_results) > 0) {
+    res <- do.call(rbind, all_results)
   } else {
     stop("All iterations failed")
   }
   
-  # Convert to data.table and calculate coverage statistics
+  # Convert to data.table and calculate final coverage statistics
   res2 <- data.table(res)
   res2[, mean50 := mean(X50.), by = 'par']
   res2[, coverage := mean(X2.5. <= truepars & X97.5. >= truepars), by = c('type', 'par')]
   
-  # Create plots
+  # Create final plots
   g1 <- ggplot(res2, aes(x = factor(par), y = mean50 - truepars, colour = type)) +
     geom_boxplot(outliers = FALSE) + 
     geom_boxplot(aes(y = X2.5. - truepars), outliers = FALSE) +
@@ -126,7 +177,7 @@ ctModelCoverage_check <- function(initialData, fitting_model, niter, fit_args,
     geom_point(alpha = 0.7) +
     geom_segment(aes(xend = par, yend = 0.95),linetype = 'dotted') +
     theme_bw() +
-    geom_hline(yintercept = 0.95, linetype = 'dashed') + #dotted line between points of different type but same 
+    geom_hline(yintercept = 0.95, linetype = 'dashed') +
     theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = 'bottom') +
     labs(title = "Coverage Probability", y = "Coverage")
   
@@ -138,10 +189,7 @@ ctModelCoverage_check <- function(initialData, fitting_model, niter, fit_args,
     results = res2,
     bias_plot = g1,
     coverage_plot = g2,
-    successful_iterations = length(results_list),
+    successful_iterations = length(all_results),
     total_iterations = niter
   ))
 }
-
-
-
