@@ -47,7 +47,7 @@ and any time independent (not varying within subject) predictors.}
 models respectively.}
 
 \item{stanmodeltext}{already specified Stan model character string, generally leave NA unless modifying Stan model directly.
-(Possible after modification of output from fit=FALSE)}
+(Possible after modification of output from fitting with argument fit=FALSE)}
 
 \item{iter}{used when \code{optimize=FALSE}. number of iterations, half of which will be devoted to warmup by default when sampling.}
 
@@ -61,7 +61,7 @@ This now sets \code{intoverstates = FALSE} and the \code{manifesttype} of every 
 
 \item{intoverpop}{if 'auto', set to TRUE if optimizing and FALSE if using hmc. 
 if TRUE, integrates over population distribution of parameters rather than full sampling.
-Allows for optimization of non-linearities and random effects.}
+Allows for optimization of non-linearities and random effects, via state expansion.}
 
 \item{sameInitialTimes}{if TRUE, include an empty observation for every subject that has no observation 
 at the earliest observation time of the dataset. This ensures that the T0MEANS occurs for every subject at the same time,
@@ -78,7 +78,7 @@ May struggle with many (e.g., > 5000) parameters. For optimizing, various optimi
 \item{derrind}{deprecated, latents involved in dynamic error calculations are determined automatically now.}
 
 \item{optimize}{if TRUE, use \code{\link{stanoptimis}} function for maximum a posteriori / importance sampling estimates, 
-otherwise use the HMC sampler from Stan, which is (much) slower, but generally more robust, accurate, and informative.}
+otherwise use the HMC sampler from Stan, which is (much) slower, but generally more robust for complex individual differences.}
 
 \item{optimcontrol}{list of parameters sent to \code{\link{stanoptimis}} governing optimization / importance sampling.}
 

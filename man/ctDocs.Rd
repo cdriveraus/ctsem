@@ -7,7 +7,7 @@
 ctDocs()
 }
 \value{
-Nothing. Opens a pdf.
+Nothing. Opens a pdf when run interactively.
 }
 \description{
 Get documentation pdf for ctsem
