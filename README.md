@@ -7,6 +7,17 @@
 
 **See the NEWS file for recent updates, and below for quick start!**
 
+- Quick start: <https://github.com/cdriveraus/ctsem/>
+- Manual:
+  <https://github.com/cdriveraus/ctsem/raw/master/vignettes/hierarchicalmanual.pdf>
+- Tutorial: <https://osf.io/preprints/psyarxiv/4q9ex_v2>
+- Conceptual / Individual differences:
+  <https://www.researchgate.net/publication/324093594_Hierarchical_Bayesian_Continuous_Time_Dynamic_Modeling>
+- Interventions:
+  <https://www.researchgate.net/publication/328221807_Understanding_the_Time_Course_of_Interventions_with_Continuous_Time_Dynamic_Models>
+- Blog: <https://cdriver.netlify.app/>
+- Discussion: <https://github.com/cdriveraus/ctsem/discussions>
+
 ctsem allows for easy specification and fitting of a range of continuous
 and discrete time dynamic models, including multiple indicators (dynamic
 factor analysis), multiple, potentially higher order processes, and time
