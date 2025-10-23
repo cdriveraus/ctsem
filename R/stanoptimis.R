@@ -218,7 +218,7 @@ computeHessianCovariance <- function(hess, standata, bootstrapUncertainty, verbo
       bootstrapUncertainty <- TRUE
       warning('Hessian inversion failed, switching to bootstrap uncertainty estimation',call.=FALSE,immediate. = TRUE)
     } else {
-      mcov1=try({Matrix::nearPD(solve(-hess),conv.norm.type = 'F',base.matrix = TRUE)})
+      mcov1=try({Matrix::nearPD(solve(-hess),conv.norm.type = 'F',base.matrix = TRUE)})$mat
       if('try-error' %in% class(mcov1)){
         mcov1=MASS::ginv(-hess) 
         mcov1=try({Matrix::nearPD(mcov1,conv.norm.type = 'F',base.matrix = TRUE)})
@@ -1685,8 +1685,11 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   }
   
   if(any(class(mcov1) %in% 'try-error')) stop('Hessian could not be computed')
-  mcov <- diag(1e-10,npars)
-  if(length(parsteps)>0) mcov[-parsteps,-parsteps] <- mcov1 else mcov <- mcov1
+  
+  if(length(parsteps)>0) {
+    mcov <- diag(1e-10,npars)
+    mcov[-parsteps,-parsteps] <- mcov1
+    } else mcov <- mcov1
   
   # finish split and sum across core approach, now importance sampling / par computations ----------------------------------
   #configure each node with full dataset for importance sampling / draws from posterior
