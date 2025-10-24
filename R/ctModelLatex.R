@@ -441,7 +441,7 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
     ifelse(linearise,"","\\right\\}")," \\\\"),
       "\\parbox{10em}{\\centering{Initial\\linebreak latent\\linebreak state:}}
   &\\underbrace{",bmatrix(matrix(paste0(ctmodel$latentNames)))," 
-    \\big{(}t_0\\big{)}}_{\\vect{\\eta} (t_0)}	\\sim \\mathrm{N} \\left(
+    \\big(t_0\\big)}_{\\vect{\\eta} (t_0)}	\\sim \\mathrm{N} \\left(
               \\underbrace{
         ",bmatrix(ctmodel$T0MEANS),"
       ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{}}",ifelse(!matrixnames,"}","_\\textrm{T0MEANS}}"),",
@@ -452,12 +452,12 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
       \\parbox{10em}{\\centering{Deterministic\\linebreak change:}}
   &\\underbrace{",showd,"
     ",bmatrix(matrix(paste0(ctmodel$latentNames)))," 
-    \\big{(}t\\big{)}}_{",showd," \\vect{\\eta} (t)}	=  \\left(
+    \\big(t\\big)}_{",showd," \\vect{\\eta} (t)}	=  \\left(
       \\underbrace{
         ",bmatrix(ctmodel$DRIFT),"
       ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{A}}",ifelse(!matrixnames,"}","_\\textrm{DRIFT}}")," \\underbrace{
         ",bmatrix(matrix(paste0(ctmodel$latentNames)))," 
-        \\big{(}t\\big{)}
+        \\big(t\\big)
       }_{\\vect{\\eta} (t",ifelse(continuoustime,"","-1"),")}	+ \\underbrace{
         ",bmatrix(ctmodel$CINT),"
       ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{b}}",ifelse(!matrixnames,"}","_\\textrm{CINT}}"),

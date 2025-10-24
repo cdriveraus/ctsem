@@ -150,7 +150,7 @@ ctPostPredPlots <- function(fit){
     geom_line(data=dat_summary, aes(x=Time, y=median_val, color="Simulated (Median)"), linewidth=1) +
     geom_line(data=dat[sample == 1], aes(x=Time, y=obsValue, group=id, color="Observed (Individual)"), alpha=.1) +
     geom_line(data=dat_obs_summary, aes(x=Time, y=median_obs, color="Observed (Median)"), linetype='dashed', linewidth=1) +
-    scale_fill_manual(name="", values = c("Simulated (±1SD)" = "red")) +
+    scale_fill_manual(name="", values = c("Simulated (95%)" = "red")) +
     scale_color_manual(name="", values = c(
       "Simulated (Median)" = "red",
       "Observed (Individual)" = "black",
