@@ -218,12 +218,15 @@ computeHessianCovariance <- function(hess, standata, bootstrapUncertainty, verbo
       bootstrapUncertainty <- TRUE
       warning('Hessian inversion failed, switching to bootstrap uncertainty estimation',call.=FALSE,immediate. = TRUE)
     } else {
-      mcov1=try({Matrix::nearPD(solve(-hess),conv.norm.type = 'F',base.matrix = TRUE)})$mat
+      mcov1=try({Matrix::nearPD(solve(-hess),conv.norm.type = 'F',base.matrix = TRUE)})
       if('try-error' %in% class(mcov1)){
         mcov1=MASS::ginv(-hess) 
-        mcov1=try({Matrix::nearPD(mcov1,conv.norm.type = 'F',base.matrix = TRUE)})
+        mcov1=try({Matrix::nearPD(mcov1,conv.norm.type = 'F',base.matrix = TRUE)$mat})
         warning('***Generalized inverse required for Hessian inversion -- interpret standard errors with caution. Consider simplification, priors, or alternative uncertainty estimators',call. = FALSE,immediate. = TRUE)
-      } else warning('***Matrix nearPD used for Hessian inversion -- interpret standard errors with caution. Consider simplification, priors, or alternative uncertainty estimators',call. = FALSE,immediate. = TRUE)
+      } else {
+        mcov1 <- mcov1$mat
+        warning('***Matrix nearPD used for Hessian inversion -- interpret standard errors with caution. Consider simplification, priors, or alternative uncertainty estimators',call. = FALSE,immediate. = TRUE)
+      }
       probpars=which(diag(hess) > -1e-6)
     }
   }
