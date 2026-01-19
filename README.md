@@ -39,7 +39,7 @@ The current manual is at
 <https://cran.r-project.org/package=ctsem/vignettes/hierarchicalmanual.pdf>.
 The original ctsem is documented in a JSS publication (Driver, Voelkle,
 Oud, 2017), and in R vignette form at
-<https://cran.r-project.org/package=ctsemOMX/vignettes/ctsem.pdf>,
+<https://cran.r-project.org/package=ctsemOMX/vignettes/ctsemOMX.pdf>,
 however these OpenMx based functions have been split off into a sub
 package, ctsemOMX. For most use cases the newer formulation (with Kalman
 filtering coded in Stan) is faster, more robust, and more flexible, and

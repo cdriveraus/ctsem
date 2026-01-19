@@ -277,7 +277,7 @@ bootstrapHessian <- function(standata, sm, est, finishsamples, cores) {
 }
 
 # Function to handle parameter stepwise freeing with auto model
-handleParstepsAutoModel <- function(parsteps, optimArgs, standata, sm, clctsem, cores, 
+handleParstepsAutoModel <- function(parsteps, parstepsAutoModel, optimArgs, standata, sm, clctsem, cores, 
   groupFreeThreshold, tol, stochasticTolAdjust, verbose) {
   
   if(parstepsAutoModel %in% TRUE){
@@ -395,65 +395,65 @@ handleParstepsAutoModel <- function(parsteps, optimArgs, standata, sm, clctsem, 
   return(parsteps)
 }
 
-# Function to handle automatic parameter stepwise freeing
-handleParstepsAutoModel <- function(parsteps, optimArgs, standata, sm, clctsem, cores, 
-  groupFreeThreshold, tol, stochasticTolAdjust, verbose) {
-  
-  if (parstepsAutoModel %in% TRUE) {
-    # --------------------------------------------------
-    # Automatic stepwise freeing based on improvement thresholds
-    currentFixed <- parsteps[[1]]
-    improvement_threshold <- 1.96   # deltaLL must exceed this
-    
-    continueFreeing <- TRUE
-    while (continueFreeing && length(currentFixed) > 0) {
-      # Compute expected improvement for each candidate parameter
-      impr <- sapply(currentFixed, function(idx) {
-        pvec <- optimArgs$init
-        grad <- attributes(optimArgs$lpgFunc(pvec))$gradient
-        # helper: finite-difference Hessian diagonal
-        jacPars <- function(pars, step = 1e-3, whichpars) {
-          sapply(whichpars, function(idx) {
-            pf <- pars; pb <- pars
-            pf[idx] <- pf[idx] + step
-            pb[idx] <- pb[idx] - step
-            gf <- attributes(optimArgs$lpgFunc(pf))$gradient[idx]
-            gb <- attributes(optimArgs$lpgFunc(pb))$gradient[idx]
-            (gf - gb) / (2 * step)
-          })
-        }
-        h <- jacPars(pvec, step = 1e-6, whichpars = idx)
-        if (is.na(h) || h >= 0) h <- -1e-6
-        0.5 * (grad[idx]^2 / abs(h))
-      })
-      
-      # Find best candidate
-      if (all(impr < improvement_threshold)) {
-        message("No parameters exceed improvement threshold; stopping.")
-        break
-      }
-      
-      best_param <- currentFixed[which.max(impr)]
-      message(sprintf("Freeing parameter %d (expected improvement: %.2f)", best_param, max(impr)))
-      
-      # Update fixed set
-      currentFixed <- setdiff(currentFixed, best_param)
-      
-      # Refit with new parameter freed
-      optimArgs$whichignore <- currentFixed
-      iter <- 0
-      optimfit <- do.call(ctOptim, optimArgs)
-      optimArgs$init[-currentFixed] <- optimfit$par
-    }
-    
-    parsteps <- currentFixed
-  }
-  
-  return(parsteps)
-}
+# # Function to handle automatic parameter stepwise freeing
+# handleParstepsAutoModel <- function(parsteps, optimArgs, standata, sm, clctsem, cores, 
+#   groupFreeThreshold, tol, stochasticTolAdjust, verbose) {
+#   
+#   if (parstepsAutoModel %in% TRUE) {
+#     # --------------------------------------------------
+#     # Automatic stepwise freeing based on improvement thresholds
+#     currentFixed <- parsteps[[1]]
+#     improvement_threshold <- 1.96   # deltaLL must exceed this
+#     
+#     continueFreeing <- TRUE
+#     while (continueFreeing && length(currentFixed) > 0) {
+#       # Compute expected improvement for each candidate parameter
+#       impr <- sapply(currentFixed, function(idx) {
+#         pvec <- optimArgs$init
+#         grad <- attributes(optimArgs$lpgFunc(pvec))$gradient
+#         # helper: finite-difference Hessian diagonal
+#         jacPars <- function(pars, step = 1e-3, whichpars) {
+#           sapply(whichpars, function(idx) {
+#             pf <- pars; pb <- pars
+#             pf[idx] <- pf[idx] + step
+#             pb[idx] <- pb[idx] - step
+#             gf <- attributes(optimArgs$lpgFunc(pf))$gradient[idx]
+#             gb <- attributes(optimArgs$lpgFunc(pb))$gradient[idx]
+#             (gf - gb) / (2 * step)
+#           })
+#         }
+#         h <- jacPars(pvec, step = 1e-6, whichpars = idx)
+#         if (is.na(h) || h >= 0) h <- -1e-6
+#         0.5 * (grad[idx]^2 / abs(h))
+#       })
+#       
+#       # Find best candidate
+#       if (all(impr < improvement_threshold)) {
+#         message("No parameters exceed improvement threshold; stopping.")
+#         break
+#       }
+#       
+#       best_param <- currentFixed[which.max(impr)]
+#       message(sprintf("Freeing parameter %d (expected improvement: %.2f)", best_param, max(impr)))
+#       
+#       # Update fixed set
+#       currentFixed <- setdiff(currentFixed, best_param)
+#       
+#       # Refit with new parameter freed
+#       optimArgs$whichignore <- currentFixed
+#       iter <- 0
+#       optimfit <- do.call(ctOptim, optimArgs)
+#       optimArgs$init[-currentFixed] <- optimfit$par
+#     }
+#     
+#     parsteps <- currentFixed
+#   }
+#   
+#   return(parsteps)
+# }
 
 # Function to handle group-level parameter stepwise freeing
-handleGroupParstepsAutoModel <- function(parsteps, optimArgs, standata, sm, clctsem, cores, 
+handleGroupParstepsAutoModel <- function(parsteps, parstepsAutoModel,optimArgs, standata, sm, clctsem, cores, 
   groupFreeThreshold, tol, stochasticTolAdjust, verbose) {
   
   if (parstepsAutoModel %in% 'group') {
@@ -1593,13 +1593,13 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
     
     # Handle auto model parameter stepwise freeing
     if(parstepsAutoModel %in% TRUE){
-      parsteps <- handleParstepsAutoModel(parsteps, optimArgs, standata, sm, clctsem, cores, 
+      parsteps <- handleParstepsAutoModel(parsteps, parstepsAutoModel, optimArgs, standata, sm, clctsem, cores, 
         groupFreeThreshold, tol, stochasticTolAdjust, verbose)
     }
     
     # Handle group-level parameter stepwise freeing
     if(parstepsAutoModel %in% 'group'){
-      group_result <- handleGroupParstepsAutoModel(parsteps, optimArgs, standata, sm, clctsem, cores, 
+      group_result <- handleGroupParstepsAutoModel(parsteps, parstepsAutoModel, optimArgs, standata, sm, clctsem, cores, 
         groupFreeThreshold, tol, stochasticTolAdjust, verbose)
       parsteps <- group_result$parsteps
       optimfit <- group_result$optimfit

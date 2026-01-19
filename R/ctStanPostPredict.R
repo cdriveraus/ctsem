@@ -97,6 +97,8 @@ ctPostPredData <- function(fit,residuals=F){
 ctPostPredPlots <- function(fit){
   dat <- ctPostPredData(fit)
   
+  if(FALSE) lower <- upper <- median_val <- median_obs <- NULL
+  
   # Calculate summary statistics for generated data
   dat[,mediandat:=median(value,na.rm=TRUE),by=interaction(variable,row)]
   dat[,highdat:=quantile(value,.975,na.rm=TRUE),by=interaction(variable,row)]

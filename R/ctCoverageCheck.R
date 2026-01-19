@@ -17,6 +17,7 @@
 ctModelCoverage_check <- function(initialData, fitting_model, niter, fit_args, 
   cores = 10, plot_every = max(c(10,cores))) {
 
+  mean50 <- X50. <- coverage <- X2.5. <- X97.5. <- type <- iteration <- NULL   # To avoid R CMD check note about undefined global variable
   
   neededPacks = c('future','future.apply')
   sapply(neededPacks,function(x) {
@@ -69,7 +70,7 @@ ctModelCoverage_check <- function(initialData, fitting_model, niter, fit_args,
       
       for(fit_type in names(fit_args)) {
         # Merge default args with specific fit args
-        current_fit_args <- modifyList(default_fit_args, fit_args[[fit_type]])
+        current_fit_args <- utils::modifyList(default_fit_args, fit_args[[fit_type]])
         
         # Fit the model with current arguments
         current_fit <- do.call(ctStanFit, c(list(datalong = dat, ctstanmodel = fitting_model), current_fit_args))
