@@ -304,7 +304,7 @@ plot.ctKalmanDF<-function(x, subjects=unique(x$Subject), kalmanvec=c('y','yprior
   shapevec[ltyvec %in% 0] <- 19
   
   g <- ggplot(x,
-    aes_string(x='Time',y='Value',colour=colvec,linetype='Element',shape='Element')) +
+    aes(x=Time,y=Value,colour=.data[[colvec]],linetype=Element,shape=Element)) +
     scale_linetype_manual(breaks=names(ltyvec),values=ltyvec)+
     guides(linetype='none',shape='none')+
     scale_shape_manual(breaks=names(shapevec),values=shapevec)

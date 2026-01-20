@@ -18,7 +18,7 @@ returned. If `FALSE`, the raw `data.table` with diagnostics is returned.}
 \item{splitby}{Optional character string giving the variable name on which to split subjects.}
 }
 \value{
-Either a plot/list of plots (default, given by `plot.ctFitCovCheck`) or a `data.table`.
+Either a plot/list of plots (default, given by `ctFitCovCheckPlot`) or a `data.table`.
 }
 \description{
 Visual model-fit diagnostics for ctsem fits, optionally split by the mean

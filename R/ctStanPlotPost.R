@@ -93,7 +93,7 @@ ctStanPlotPost<-function(obj, rows='all', npp=6,priorwidth=TRUE,
         scale_fill_manual(values=c('red','blue')) +
         theme_minimal()+
         theme(legend.title = element_blank(),
-          panel.grid.minor = element_line(size = 0.1), panel.grid.major = element_line(size = .2),
+          panel.grid.minor = element_line(linewidth = 0.1), panel.grid.major = element_line(linewidth = .2),
           strip.text.x = element_text(margin = margin(.01, 0, .01, 0, "cm"))) +
           # coord_cartesian(xlim=c(min(dat$xmin),max(dat$xmax)))+
         facet_wrap(vars(type,param),scales='free')

@@ -7,7 +7,7 @@
 #' @param plot    Logical; if `TRUE` (default) a `ggplot2` object (or list of plots) is 
 #'   returned. If `FALSE`, the raw `data.table` with diagnostics is returned.
 #' @param splitby Optional character string giving the variable name on which to split subjects.
-#' @return Either a plot/list of plots (default, given by `plot.ctFitCovCheck`) or a `data.table`.
+#' @return Either a plot/list of plots (default, given by `ctFitCovCheckPlot`) or a `data.table`.
 #' @export
 #' @examples
 #' \donttest{
@@ -165,13 +165,13 @@ ctFitCovCheck <- function(fit, cor = TRUE, plot = TRUE, splitby = NULL) {
   } #end split setup
   
   if (plot){
-    return(plot.ctFitCovCheck(checkfit,vars= fit$ctstanmodelbase$manifestNames,splitvar = splitby))
+    return(ctFitCovCheckPlot(checkfit,vars= fit$ctstanmodelbase$manifestNames,splitvar = splitby))
   } else return(checkfit)
 }
 
 
 
-#' @title plot.ctFitCovCheck
+#' @title ctFitCovCheckPlot
 #' @description Plot the results of ctFitCovCheck.
 #' @param x Output from ctFitCovCheck.
 #' @param maxlag Maximum lag to plot.
@@ -182,12 +182,12 @@ ctFitCovCheck <- function(fit, cor = TRUE, plot = TRUE, splitby = NULL) {
 #' @return ggplot object.
 #' @examples
 #' \dontrun{
-#' plot.ctFitCovCheck(ctCheckFit(ctstantestfit,cor=TRUE),maxlag=3)
+#' ctFitCovCheckPlot(ctFitCovCheck(ctstantestfit,cor=TRUE,plot=FALSE),maxlag=3)
 #' }
 #' @export
 #'  
 
-plot.ctFitCovCheck <- function(x, maxlag = 10,vars=NA,splitvar=NA,cor=FALSE,...) {
+ctFitCovCheckPlot <- function(x, maxlag = 10,vars=NA,splitvar=NA,cor=FALSE,...) {
   
   gg <- list()
   checkfit <- as.data.table(x)  # Ensure checkfit is a data.table
@@ -267,7 +267,7 @@ plot.ctFitCovCheck <- function(x, maxlag = 10,vars=NA,splitvar=NA,cor=FALSE,...)
           linetype = "Model implied 95%"),
           position = dodge,
           width    = 0.15,
-          size     = 1,
+          linewidth     = 1,
           show.legend = TRUE) +
         # manual scales for shape & linetype
         scale_shape_manual(
@@ -287,13 +287,13 @@ plot.ctFitCovCheck <- function(x, maxlag = 10,vars=NA,splitvar=NA,cor=FALSE,...)
           shape    = guide_legend(order = 2,
             override.aes = list(
               linetype = 0,   # hide line in point key
-              size     = 3,
+              linewidth     = 3,
               colour   = "black"
             )),
           linetype = guide_legend(order = 2,
             override.aes = list(
               shape = NA,     # hide point in line key
-              size  = 1,
+              linewidth  = 1,
               colour = "black"
             )),
           alpha    = "none"
@@ -898,7 +898,7 @@ ctCheckFit <- function(fit,
         
         for(vi in names(combinevars)){    
           g=ggplot(data = lagdat[lagdat$variable %in% vi,],
-            mapping = aes(x=Lag,y=value,colour=DataSource, linetype=DataSource))+geom_line(size=1)+
+            mapping = aes(x=Lag,y=value,colour=DataSource, linetype=DataSource))+geom_line(linewidth=1)+
             facet_wrap(facets = vars(Row))+theme_minimal()+ylab(label = ifelse(corr,'Correlation','Covariance'))+
             scale_y_continuous(minor_breaks = c(-.5,.5),breaks=seq(-1,1,1))+
             scale_x_continuous(minor_breaks=NULL,breaks=seq(0,max(lag), ceiling(max(lag)/5)))+
@@ -932,10 +932,13 @@ ctCheckFit <- function(fit,
     dat$manifest <- dat$variable %in% vars
     
     
-    g=ggplot(data = dat[manifest==TRUE],
-      mapping = aes_string(x=by,y='value',
-        colour='DataSource'
-        ,fill='DataSource'
+    g=ggplot(
+      data = dat[manifest == TRUE],
+      mapping = aes(
+        x = .data[[by]],
+        y = value,
+        colour = DataSource,
+        fill   = DataSource
       )
     ) +theme_bw() +
       # scale_color_brewer(palette = 'Set1') +
@@ -951,21 +954,21 @@ ctCheckFit <- function(fit,
       #   alpha= max(.05,(.3/nsamples)),
       #   linetype=0,#3,#ifelse(nsamples==1,1,0),
       #   stat="smooth",#se = FALSE,#nsamples==1,
-      #   size=.1
+      #   linewidth=.1
       #   ,method='gam', formula= as.formula(paste0('y ~ s(x,bs="cr",k=',k,')')))
       
       g = g + geom_smooth(data=dat[manifest==TRUE 
         # & DataSource %in% c('Data','StatePred','Residuals')
       ],
         # aes(colour=DataSource,alpha=NULL),
-        stat="smooth",se = TRUE,size=1,alpha=.3
+        stat="smooth",se = TRUE,linewidth=1,alpha=.3
         ,method='gam', formula= as.formula(paste0('y ~ s(x,bs="cr",k=',k,')')))
       
       
       
     }
     if(!smooth) {
-      # if(nsamples > 1) g = g + stat_summary(fun=mean,geom = "line",size=1) #geom_line(stat=mean)
+      # if(nsamples > 1) g = g + stat_summary(fun=mean,geom = "line",linewidth=1) #geom_line(stat=mean)
       
       # if(nsamples ==1)
       # g = g +  stat_summary(data=dat[manifest==TRUE 
@@ -1001,7 +1004,7 @@ ctCheckFit <- function(fit,
         alpha= max(.2,(.8/sqrt(indlines))),
         linetype=1,#3,#ifelse(nsamples==1,1,0),
         # stat="smooth",#se = FALSE,#nsamples==1,
-        size=.1
+        linewidth=.1
         # ,method='gam', formula= as.formula(paste0('y ~ s(x,bs="cr",k=',k,')'))
       )
       
@@ -1015,7 +1018,7 @@ ctCheckFit <- function(fit,
 corplotmelt <- function(corm, label='Coef.',limits=NA,title=''){
   
   if(is.na(limits[1])) limits <- range(corm[,'value'],na.rm=TRUE)
-  ggplot(data=(corm),aes_string(x='Var1',y='Var2',fill=('value')))+ #ifelse(groups,NULL,'Group')))+
+  ggplot(data=(corm),aes(x=Var1,y=Var2,fill=(value)))+ #ifelse(groups,NULL,'Group')))+
     geom_tile( width=1,height=1,colour='black')+
     scale_fill_gradient2(low = "blue", high = "red", mid = "white",
       midpoint = limits[2]-(limits[2]-limits[1])/2, limits = limits, space = "Lab", 

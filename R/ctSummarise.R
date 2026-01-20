@@ -290,7 +290,7 @@ if(requireNamespace('papaja')){
           mcor$`Sig.` <- as.logical(mcor$sig)
           pdf(paste0(name,'_IndDifCorrelations.pdf'))
           print(ggplot(data=(mcor),
-            aes_string(x='Var1',y='Var2',fill=('value')))+ #ifelse(groups,NULL,'Group')))+
+            aes(x=Var1,y=Var2,fill=value))+ #ifelse(groups,NULL,'Group')))+
               geom_tile( width=1,height=1,colour='black')+
               scale_fill_gradient2(low = "blue", high = "red", mid = "white",
                 midpoint = 0, limits = c(-1,1), space = "Lab", 
