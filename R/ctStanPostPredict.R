@@ -22,6 +22,7 @@ ctPostPredData <- function(fit,residuals=F){
     id.vars = c('sample'),variable.name = 'row')[order(sample),]
   ll[['row']] <- as.numeric(ll[['row']])
   ll <- cbind(ll[,1:2],variable='LogLik',ll[,3])
+
   dat=fit$generated$Y
   dat <- as.data.table(dat,na.rm = FALSE)
   v1name <- colnames(dat)[!colnames(dat) %in% c('sample','row','value')]
@@ -33,8 +34,9 @@ ctPostPredData <- function(fit,residuals=F){
   dat <- rbind(dat,ll)
   colnames(fit$standata$Y) <- fit$ctstanmodelbase$manifestNames
   
-  dat[,id:=fit$setup$idmap$original[match(fit$standata$subject,fit$setup$idmap$new)],by=interaction(sample,variable)]
-  dat[,Time:=fit$standata$time,by=interaction(sample,variable)]
+  dat[,id:= fit$standata$subject[row]]
+  dat[,id:=fit$setup$idmap$original[match(id,fit$setup$idmap$new)]]
+  dat[,Time:=fit$standata$time[row]]
   dat[,TimeInterval:=c(NA,diff(Time)),by=interaction(sample,id,variable)]
   
   truedat <- fit$standata$Y
