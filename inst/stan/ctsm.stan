@@ -702,41 +702,39 @@ if(verbose > 1) print ("below t0 row ", rowi);
       while(intstepi < (dt-1e-10)){
         intstepi = intstepi + dtsmall;
         
-    {
+      {
     array[1] int zeroint;
     row_vector[nlatentpop] basestate = state;
     zeroint[1] = 0;
-    for(statei in append_array(JAxfinite,zeroint)){ //if some finite differences to do, compute these first
+    // baseline first, then finite diffs
+    for(statei in append_array(zeroint, JAxfinite)){ // baseline (0) first
       state = basestate;
       if(statei>0)  state[statei] += Jstep;
-          
-        //initialise PARS first, and simple PARS before complex PARS
-        if(statedep[10] || whenmat[10,2]) PARS=mcalc(PARS,indparams, state,{2}, 10, matsetup, matvalues, si); 
-        
-        if(statedep[3] || whenmat[3,2]) DRIFT=mcalc(DRIFT,indparams, state,{2}, 3, matsetup, matvalues, si); 
-        if(statedep[7] || whenmat[7,2]) CINT=mcalc(CINT,indparams, state,{2}, 7, matsetup, matvalues, si); 
-        
+      //initialise PARS first, and simple PARS before complex PARS
+      if(statedep[10] || whenmat[10,2]) PARS=mcalc(PARS,indparams, state,{2}, 10, matsetup, matvalues, si); 
       
-      if(statei > 0) {
-        JAx[1:nlatent,statei] =  DRIFT * state[1:nlatent]' + CINT[,1]; //compute new change
-         if(verbose>1) print("JAx ",JAx);
+      if(statedep[3] || whenmat[3,2]) DRIFT=mcalc(DRIFT,indparams, state,{2}, 3, matsetup, matvalues, si); 
+      if(statedep[7] || whenmat[7,2]) CINT=mcalc(CINT,indparams, state,{2}, 7, matsetup, matvalues, si); 
+      
+      // analytic JAx only at baseline (hybrid-safe)
+      if(statei==0){
+        if(statedep[4] || whenmat[4,2]) DIFFUSION=mcalc(DIFFUSION,indparams, state,{2}, 4, matsetup, matvalues, si); 
+        if(statedep[52] || whenmat[52,2]) JAx=mcalc(JAx,indparams, state,{2}, 52, matsetup, matvalues, si); 
+        
       }
-      if(statei== 0 && size(JAxfinite) ) { //only need these calcs if there are finite differences to do -- otherwise loop just performs system calcs.
+      // baseline drift/cint change
+      if(statei==0) {
         base = DRIFT * state[1:nlatent]' + CINT[,1];
         if(verbose>1) print("base = ",base,"    sjaxinit= ",JAx);
-        for(fi in JAxfinite){
-          JAx[1:nlatent,fi] -= base;
-          JAx[1:nlatent,fi] /= Jstep; //new - baseline change divided by stepsize
-        }
+      } else {
+        // overwrite FD column directly (no scratch + subtract pass)
+        JAx[1:nlatent,statei] = (DRIFT * state[1:nlatent]' + CINT[,1] - base) / Jstep;
+        if(verbose>1) print("JAx ",JAx);
       }
     }
     if(verbose>1) print("JAx ",JAx);
+    state = basestate;
     }
-    
-    
-    if(statedep[4] || whenmat[4,2]) DIFFUSION=mcalc(DIFFUSION,indparams, state,{2}, 4, matsetup, matvalues, si); 
-    if(statedep[52] || whenmat[52,2]) JAx=mcalc(JAx,indparams, state,{2}, 52, matsetup, matvalues, si); 
-    
     
     if(si==0 ||statedep[4] || whenmat[4,2] || ( T0check ==1 && whenmat[4,5])){
       DIFFUSIONcov[derrind,derrind] = sdcovsqrt2cov(DIFFUSION[derrind,derrind],choleskymats);
@@ -840,31 +838,31 @@ if(verbose > 1) print("a");
 if(verbose > 1) print("b");
     array[1] int zeroint;
     row_vector[nlatentpop] basestate = state; //needed because we modify state in each finite difference
+    vector[nmanifest] sy0; //baseline predicted means (only o used)
     zeroint[1] = 0;
-    for(statei in append_array(Jyfinite,zeroint)){ //if some finite differences to do, compute these first, then expected value
+    // baseline first, then finite diffs
+    for(statei in append_array(zeroint, Jyfinite)){ //baseline (0) first
       state = basestate; //reset state
       if(statei>0 && (dosmoother + intoverstates) > 0)  state[statei] += Jstep; //if doing finite difference, add step to statei
       //initialise PARS first, and simple PARS before complex PARS
       if(statedep[10] || whenmat[10,4]) PARS=mcalc(PARS,indparams, state,{4}, 10, matsetup, matvalues, si); 
       
       if(statedep[2] || whenmat[2,4]) LAMBDA=mcalc(LAMBDA,indparams, state,{4}, 2, matsetup, matvalues, si); 
-      if(statedep[5] || whenmat[5,4]) MANIFESTVAR=mcalc(MANIFESTVAR,indparams, state,{4}, 5, matsetup, matvalues, si); 
       if(statedep[6] || whenmat[6,4]) MANIFESTMEANS=mcalc(MANIFESTMEANS,indparams, state,{4}, 6, matsetup, matvalues, si); 
+      
+      // some matrices only needed at baseline (hybrid-safe)
+      if(statei==0){
+      if(statedep[5] || whenmat[5,4]) MANIFESTVAR=mcalc(MANIFESTVAR,indparams, state,{4}, 5, matsetup, matvalues, si);
       if(statedep[54] || whenmat[54,4]) Jy=mcalc(Jy,indparams, state,{4}, 54, matsetup, matvalues, si); 
       
+      }
     
       syprior[o] =  LAMBDA[o] * state[1:nlatent]' + MANIFESTMEANS[o,1]; //compute new change
       if(statei==0) sypred=syprior;//store expected value for predictor in case of binary or ordinal transform
       if(size(o1)) syprior[o1] = to_vector(inv_logit(to_array_1d(syprior[o1])));
-      
-      if(statei > 0) Jy[o,statei] = syprior[o]; //insert expected obs val (with step added to statei) to column statei of Jacobian
-      
-      if(statei==0 && size(Jyfinite)){ //only need these calcs if there are finite differences to do -- otherwise loop just performs system calcs.
-        for(fi in Jyfinite){
-          Jy[o,fi] -= syprior[o]; //subtract expected value from state fi column of Jy to attain difference
-          Jy[o,fi] /= Jstep; //new - baseline change divided by stepsize
-        }
-      }
+      // baseline store; FD overwrite columns directly
+      if(statei==0) sy0[o] = syprior[o];
+      if(statei > 0) Jy[o,statei] = (syprior[o] - sy0[o]) / Jstep;
       
     } //end finite difference and initialization loop
   } //end measurement init

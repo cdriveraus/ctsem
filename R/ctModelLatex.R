@@ -488,8 +488,8 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
           ",bmatrix(ctmodel$MANIFESTMEANS)," 
         ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\tau}}",ifelse(!matrixnames,"}","_\\textrm{MANIFESTMEANS}}")," + \\nonumber \\\\ \\\\
     \\parbox{10em}{\\centering{Observation\\linebreak noise:}}
-    & \\qquad \\qquad \\quad  \\underbrace{
-                ",bmatrix(ctmodel$MANIFESTVAR),"  
+    & \\qquad \\qquad \\quad  \\underbrace{UcorSDtoChol \\left\\{
+                ",bmatrix(ctmodel$MANIFESTVAR),"\\right\\}  
               ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\Theta}}",ifelse(!matrixnames,"}","_\\textrm{MANIFESTVAR}}"),"
               \\underbrace{
           ",bmatrix(matrix(paste0('\\epsilon_{',1:ctmodel$n.manifest,'}')))," 

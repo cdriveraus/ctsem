@@ -306,8 +306,8 @@ ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
   standata$JAxfinite <- ctm$JAxfinite
   standata$Jyfinite <- ctm$Jyfinite
   
-  standata$Jycolindexsize <- 1L
-  standata$Jycolindex <- array(1L)
+  # standata$Jycolindexsize <- 1L
+  # standata$Jycolindex <- array(1L)
   
   standata$difftype <- 0L;
   standata$dotipred <- 1L;
