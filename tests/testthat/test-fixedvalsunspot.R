@@ -9,7 +9,7 @@ if(1==0){
   
   TT=176
   
-  model1 <- ctModel(type='omx', n.latent = 2, n.manifest = 1, Tpoints = TT, 
+  model1 <- ctModel(type='ct', n.latent = 2, n.manifest = 1, Tpoints = TT, 
     LAMBDA = matrix(c(1, .6), nrow = 1, ncol = 2,byrow=TRUE),
     manifestNames = 'sunspot',
     DRIFT = matrix(c(
@@ -32,7 +32,7 @@ if(1==0){
   sqrt(fit1$mxobj$DIFFUSION$values[2,2]) 
   
   
-  sm <- ctStanModel(model1)
+  sm <- model1
   
   ssfit<-ctStanFit(datalong=datalong, ctstanmodel=sm, forcerecompile = T,
     verbose=0,optimize=T,#optimcontrol=list(estonly=T),

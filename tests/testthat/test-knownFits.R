@@ -20,7 +20,7 @@ test_that("anomauth", {
     MANIFESTVAR=diag(0,2),
     Tpoints=5)
 
-   sm1 <- ctStanModel(AnomAuthmodel)
+   sm1 <- AnomAuthmodel
   sm1$pars$indvarying<- FALSE
   a=Sys.time()
   # sink('bad.txt')
@@ -45,7 +45,7 @@ inits <- c(-39.5, -.5, .1, 1, 0, 1, 0.05, .9)
 names(inits) <- c("crosseffect","autoeffect", "diffusion",
   "T0var11", "T0var21", "T0var22","m1", "m2")
 
-oscillatingm <- ctModel(n.latent = 2, n.manifest = 1, Tpoints = 11, 
+oscillatingm <- ctModel(type='omx', n.latent = 2, n.manifest = 1, Tpoints = 11, 
   MANIFESTVAR = matrix(c(0), nrow = 1, ncol = 1),
   LAMBDA = matrix(c(1, 0), nrow = 1, ncol = 2),
   T0MEANS = matrix(c('m1', 'm2'), nrow = 2, ncol = 1), 
@@ -53,9 +53,7 @@ oscillatingm <- ctModel(n.latent = 2, n.manifest = 1, Tpoints = 11,
   DRIFT = matrix(c(1e-5, "crosseffect", 1, "autoeffect"), nrow = 2, ncol = 2), 
   CINT = matrix(0, ncol = 1, nrow = 2),
   DIFFUSION = matrix(c(0, 0, 0, "diffusion"), nrow = 2, ncol = 2))#,
-  # startValues = inits)
 
-if( .Machine$sizeof.pointer != 4){
   oscillatingm$DRIFT[2,1]="crosseffect|-log1p(exp(-param))-1e-5"
  sm <- ctStanModel(oscillatingm)
   sm$pars$indvarying<- FALSE
@@ -65,7 +63,6 @@ if( .Machine$sizeof.pointer != 4){
     ctstanmodel = sm, optimize=TRUE,savescores = FALSE,priors=FALSE)
   expect_equal(-3461.936,-2*sf$stanfit$optimfit$value,tolerance=.01)
   
-}
 
 })
 

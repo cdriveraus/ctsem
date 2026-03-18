@@ -702,41 +702,39 @@ if(verbose > 1) print ("below t0 row ", rowi);
       while(intstepi < (dt-1e-10)){
         intstepi = intstepi + dtsmall;
         
-    {
+      {
     array[1] int zeroint;
     row_vector[nlatentpop] basestate = state;
     zeroint[1] = 0;
-    for(statei in append_array(JAxfinite,zeroint)){ //if some finite differences to do, compute these first
+    // baseline first, then finite diffs
+    for(statei in append_array(zeroint, JAxfinite)){ // baseline (0) first
       state = basestate;
       if(statei>0)  state[statei] += Jstep;
-          
-        //initialise PARS first, and simple PARS before complex PARS
-        if(statedep[10] || whenmat[10,2]) PARS=mcalc(PARS,indparams, state,{2}, 10, matsetup, matvalues, si); 
-        
-        if(statedep[3] || whenmat[3,2]) DRIFT=mcalc(DRIFT,indparams, state,{2}, 3, matsetup, matvalues, si); 
-        if(statedep[7] || whenmat[7,2]) CINT=mcalc(CINT,indparams, state,{2}, 7, matsetup, matvalues, si); 
-        
+      //initialise PARS first, and simple PARS before complex PARS
+      if(statedep[10] || whenmat[10,2]) PARS=mcalc(PARS,indparams, state,{2}, 10, matsetup, matvalues, si); 
       
-      if(statei > 0) {
-        JAx[1:nlatent,statei] =  DRIFT * state[1:nlatent]' + CINT[,1]; //compute new change
-         if(verbose>1) print("JAx ",JAx);
+      if(statedep[3] || whenmat[3,2]) DRIFT=mcalc(DRIFT,indparams, state,{2}, 3, matsetup, matvalues, si); 
+      if(statedep[7] || whenmat[7,2]) CINT=mcalc(CINT,indparams, state,{2}, 7, matsetup, matvalues, si); 
+      
+      // analytic JAx only at baseline (hybrid-safe)
+      if(statei==0){
+        if(statedep[4] || whenmat[4,2]) DIFFUSION=mcalc(DIFFUSION,indparams, state,{2}, 4, matsetup, matvalues, si); 
+        if(statedep[52] || whenmat[52,2]) JAx=mcalc(JAx,indparams, state,{2}, 52, matsetup, matvalues, si); 
+        
       }
-      if(statei== 0 && size(JAxfinite) ) { //only need these calcs if there are finite differences to do -- otherwise loop just performs system calcs.
+      // baseline drift/cint change
+      if(statei==0) {
         base = DRIFT * state[1:nlatent]' + CINT[,1];
         if(verbose>1) print("base = ",base,"    sjaxinit= ",JAx);
-        for(fi in JAxfinite){
-          JAx[1:nlatent,fi] -= base;
-          JAx[1:nlatent,fi] /= Jstep; //new - baseline change divided by stepsize
-        }
+      } else {
+        // overwrite FD column directly (no scratch + subtract pass)
+        JAx[1:nlatent,statei] = (DRIFT * state[1:nlatent]' + CINT[,1] - base) / Jstep;
+        if(verbose>1) print("JAx ",JAx);
       }
     }
     if(verbose>1) print("JAx ",JAx);
+    state = basestate;
     }
-    
-    
-    if(statedep[4] || whenmat[4,2]) DIFFUSION=mcalc(DIFFUSION,indparams, state,{2}, 4, matsetup, matvalues, si); 
-    if(statedep[52] || whenmat[52,2]) JAx=mcalc(JAx,indparams, state,{2}, 52, matsetup, matvalues, si); 
-    
     
     if(si==0 ||statedep[4] || whenmat[4,2] || ( T0check ==1 && whenmat[4,5])){
       DIFFUSIONcov[derrind,derrind] = sdcovsqrt2cov(DIFFUSION[derrind,derrind],choleskymats);

@@ -16,7 +16,7 @@ ctStanFitUpdate(oldfit, data = NA, recompile = FALSE, refit = FALSE, ...)
 \item{refit}{if TRUE, refits the model using the old estimates as a starting point. Only applicable for
 optimized fits, not sampling.}
 
-\item{...}{extra arguments to pass to ctStanFit}
+\item{...}{extra arguments to pass to ctFit}
 }
 \value{
 updated ctStanFit object.

@@ -15,7 +15,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     effect <- rnorm(nsubjects, 5-baseline/3, 0.5)
     
     for(i in 1:nsubjects){
-      gm <- suppressMessages(ctModel(silent=TRUE,Tpoints=ntimes,
+      gm <- suppressMessages(ctModel(type='omx',silent=TRUE,Tpoints=ntimes,
         LAMBDA=matrix(c(1,0),1,2), 
         DRIFT= c(-1,1,
           0,-.5),
@@ -43,7 +43,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       TDPREDEFFECT = matrix(c(0,'tdpredeffect|param|TRUE')))
     
     #manual bw effects
-    m2 <- ctModel(silent=TRUE,type='omx',Tpoints=3,
+    m2 <- ctModel(silent=TRUE,type='ct',Tpoints=3,
       LAMBDA=matrix(c(1,0,0,0),1,4), 
       DRIFT= c('drift',1,0,0,
         0,-0.5,0,0,
@@ -53,11 +53,14 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
         0,0,0,0,
         0,0,0,0,
         0,0,0,0),
+      T0VAR=matrix(c(
+        't0v11',0,0,0,
+        0,0,0,0,
+        't0v31',0,'t0v33',0,
+        't0v41',0,'t0v43','t0v44'),4,4,byrow=TRUE),
       T0MEANS = c('t0m',0,'mm','tdpredeffect'),
       TDPREDEFFECT = matrix(c(0,'state[4]',0,0)),
       MANIFESTMEANS='state[3]')
-    m2$T0VAR[2,]=m2$T0VAR[,2]=0
-    m2=ctStanModel(m2,type='ct')
     m2$pars$indvarying=F
     
     f <- ctStanFit(datalong = dat,ctstanmodel = m,cores=cores)
@@ -140,7 +143,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     effect <- rnorm(nsubjects, 5-baseline/3, 0.5)
     
     for(i in 1:nsubjects){
-      gm <- suppressMessages(ctModel(silent=TRUE,Tpoints=ntimes,
+      gm <- suppressMessages(ctModel(type='omx',silent=TRUE,Tpoints=ntimes,
         LAMBDA=matrix(c(1,effect[i]),1,2), 
         DRIFT= c(-1,0,
           0,-.5),
@@ -168,7 +171,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       TDPREDEFFECT = matrix(c(0,1)))
     
     #manual bw effects
-    m2 <- ctModel(silent=TRUE,type='omx',Tpoints=3,
+    m2 <- ctModel(silent=TRUE,type='ct',Tpoints=3,
       LAMBDA=matrix(c(1,'state[4]',0,0),1,4), 
       DRIFT= c('drift',0,0,0,
         0,-0.5,0,0,
@@ -178,11 +181,14 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
         0,0,0,0,
         0,0,0,0,
         0,0,0,0),
+      T0VAR=matrix(c(
+        't0v11',0,0,0,
+        0,0,0,0,
+        't0v31',0,'t0v33',0,
+        't0v41',0,'t0v43','t0v44'),4,4,byrow=TRUE),
       T0MEANS = c('t0m',0,'mm','tdpredeffect'),
       TDPREDEFFECT = matrix(c(0,1,0,0)),
       MANIFESTMEANS='state[3]')
-    m2$T0VAR[2,]=m2$T0VAR[,2]=0
-    m2=ctStanModel(m2,type='ct')
     m2$pars$indvarying=F
     
     f <- ctStanFit(datalong = dat,ctstanmodel = m,cores=cores)
@@ -284,7 +290,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       LAMBDA=matrix(1),DRIFT='drift|-log1p_exp(-param)|TRUE')
     
     #manual bw effects
-    m2 <- ctModel(silent=TRUE,type='omx',Tpoints=3,
+    m2 <- ctModel(silent=TRUE,type='ct',Tpoints=3,
       LAMBDA=matrix(c(1,0,0),ncol=3), 
       DRIFT= c('-log1p_exp(-state[2])',0,0,
         0,-1e-6,0,
@@ -294,7 +300,6 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
         0,0,0),
       T0MEANS = c('t0m','drift','cint'),
       CINT=c('state[3]',0,0),MANIFESTMEANS=0)
-    m2=ctStanModel(m2,type='ct')
     m2$pars$indvarying=F
     
     f <- ctStanFit(datalong = dat,ctstanmodel = m,cores=cores)
@@ -407,7 +412,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
         LAMBDA=matrix(1),DIFFUSION='diffusion|log1p_exp(param)|TRUE')
       
       #manual bw effects
-      m2 <- ctModel(silent=TRUE,type='omx',Tpoints=3,
+      m2 <- ctModel(silent=TRUE,type='ct',Tpoints=3,
         LAMBDA=matrix(c(1,0,0),ncol=3), 
         DRIFT= c('drift',0,0,
           0,-1e-12,0,
@@ -417,10 +422,12 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
           0,0,0),
         MANIFESTVAR=.5,
         T0MEANS = c('t0m|param','diffusion|param','cint|param'),
+        T0VAR=matrix(c(
+          't0var11 | log1p_exp(2*param-1)',0,0,
+          't0var21','t0var22 | log1p_exp(2*param-1)',0,
+          't0var31','t0var32','t0var33 | log1p_exp(2*param-1)'),3,3,byrow=TRUE),
         CINT=c('state[3]',0,0),
         MANIFESTMEANS=0)
-      m2$T0VAR[diag(3)==1] <- paste0(m2$T0VAR[diag(3)==1] ,'|log1p_exp(2*param-1)')
-      m2=ctStanModel(m2,type='ct')
       m2$pars$indvarying=F
       
       f <- ctStanFit(datalong = dat,ctstanmodel = m,cores=cores)
@@ -536,7 +543,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       LAMBDA=matrix(1),MANIFESTVAR='errsd|log1p_exp(param)|TRUE')
     
     #manual bw effects
-    m2 <- ctModel(silent=TRUE,type='omx',Tpoints=3,
+    m2 <- ctModel(silent=TRUE,type='ct',Tpoints=3,
       LAMBDA=matrix(c(1,0,0),ncol=3), 
       DRIFT= c('drift',0,0,
         0,-1e-12,0,
@@ -546,10 +553,12 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
         0,0,0),
       MANIFESTVAR='log1p_exp(state[2])',
       T0MEANS = c('t0m|param','errsd|param','cint|param'),
+      T0VAR=matrix(c(
+        't0var11 | log1p_exp(2*param-1)',0,0,
+        't0var21','t0var22 | log1p_exp(2*param-1)',0,
+        't0var31','t0var32','t0var33 | log1p_exp(2*param-1)'),3,3,byrow=TRUE),
       CINT=c('state[3]',0,0),
       MANIFESTMEANS=0)
-    m2$T0VAR[diag(3)==1] <- paste0(m2$T0VAR[diag(3)==1] ,'|log1p_exp(2*param-1)')
-    m2=ctStanModel(m2,type='ct')
     m2$pars$indvarying=F
     
     f <- ctStanFit(datalong = dat,ctstanmodel = m,cores=cores)

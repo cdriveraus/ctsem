@@ -1,4 +1,4 @@
-#' Raise the order of a ctsem model object of type 'omx'.
+#' Raise the order of a ctsem model object.
 #'
 #' @param ctm ctModel
 #' @param indices Vector of integers, which latents to raise the order of.
@@ -12,13 +12,12 @@
 #'
 #' @examples
 #' om <- ctModel(LAMBDA=diag(1,2),DRIFT=0, 
-#'   MANIFESTMEANS=0,type='omx',Tpoints=4)
+#'   MANIFESTMEANS=0,type='ct',Tpoints=4)
 #'   
 #' om <- ctModelHigherOrder(om,1:2)
 #' print(om$DRIFT)
 #' 
-#' m <- ctStanModel(om)
-#' print(m$pars)
+#' print(om$pars)
 ctModelHigherOrder <- function(ctm, indices,diffusion=TRUE, crosseffects=FALSE,cint=FALSE, explosive=FALSE){
   ctm$latentNames <- c(ctm$latentNames,paste0('d',ctm$latentNames[indices]))
   nl <- ctm$n.latent

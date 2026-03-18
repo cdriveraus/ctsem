@@ -59,13 +59,12 @@ if(1==99){
 #' and time series (N = 1) data, using either a frequentist or Bayesian approach, or middle
 #' ground forms like maximum a posteriori. 
 #'  
-#' The general workflow begins by specifying a model using the \code{\link{ctModel}} function, 
-#' in which the \code{type} of model is also specified. Then the model is fit to data using 
-#' \code{\link{ctStanFit}}. The ctFit function which allows for fitting using the OpenMx / SEM form,
-#' as described in the original JSS ctsem paper, can now be found in the ctsemOMX package.  
-#' The omx forms are no longer in 
-#' development and for most purposes, the newer stan based forms are more robust and flexible.
-#' For examples, see  \code{\link{ctStanFit}}. 
+#' The general workflow begins by specifying a model using the \code{\link{ctModel}} function,
+#' then fitting it to data using \code{\link{ctFit}} (alias \code{\link{ctStanFit}}).
+#' For original OpenMx / SEM functionality from the first ctsem versions, use the
+#' \pkg{ctsemOMX} package.
+#' For most purposes, the Stan-based forms in \pkg{ctsem} are more robust and flexible.
+#' For examples, see \code{\link{ctFit}}.
 #' For citation info, please run \code{citation('ctsem')} .
 #'  
 #' @import grDevices methods stats graphics data.table ggplot2
@@ -131,30 +130,6 @@ ctDocs <- function(){
       destfile=pdfpath,mode='wb')
     try(openPDF(pdfpath))
   }
-}
-
-#' ctFit function placeholder
-#' 
-#' For the original ctsem OpenMx functionality, the package ctsemOMX should be loaded.
-#'
-#' @param ... arguments to pass to ctFit, if ctsemOMX is loaded.
-#'
-#' @return message or fit object.
-#' @export
-#'
-#' @examples
-#' \donttest{
-#' data(AnomAuth) 
-#' AnomAuthmodel <- ctModel(LAMBDA = matrix(c(1, 0, 0, 1), nrow = 2, ncol = 2), 
-#'   Tpoints = 5, n.latent = 2, n.manifest = 2, MANIFESTVAR=diag(0, 2), TRAITVAR = NULL) 
-#' AnomAuthfit <- ctFit(AnomAuth, AnomAuthmodel)
-#' }
-ctFit <- function(...){
-  if('ctsemOMX' %in% utils::installed.packages()[,1]){
-    if(!'ctsemOMX' %in% (.packages())){
-      message('for original ctsem functionality using OpenMx, please use: library(ctsemOMX)')
-    } else message('call ctFit from ctsemOMX package, e.g. ctsemOMX::ctFit(...)')
-  } else message('For original ctsem functionality using OpenMx, install.packages("ctsemOMX")')  
 }
 
 #' Tests if 2 values are close to each other

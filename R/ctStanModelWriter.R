@@ -924,6 +924,9 @@ if(verbose > 1) print ("below t0 row ", rowi);
 
     if(si==0 || (T0check>0)){ //for init or subsequent time steps when observations exist
       vector[nlatent] base;
+      vector[nlatent] x0;
+      vector[nlatent] f0;
+      vector[nlatent] affineCINT;
       real intstepi = 0;
       
       dtsmall = dt / ceil(dt / maxtimestep);
@@ -969,20 +972,26 @@ if(verbose > 1) print ("below t0 row ", rowi);
     if(verbose>1) print("JAx ",JAx);
     state = basestate;
     }
+    x0 = state[1:nlatent]\';
     
     if(si==0 ||statedep[4] || whenmat[4,2] || ( T0check ==1 && whenmat[4,5])){
       DIFFUSIONcov[derrind,derrind] = sdcovsqrt2cov(DIFFUSION[derrind,derrind],choleskymats);
       if(!continuoustime) discreteDIFFUSION=DIFFUSIONcov;
     }
     
-    if(continuoustime && (si==0 || dtchange==1 || statedep[3]|| statedep[52] || whenmat[3,2] || //if first sub or changing every state
-      (T0check == 1 && whenmat[3,5]))){ //or first time step of new sub with ind difs
+    if(continuoustime && (si==0 || dtchange==1 || statedep[3] || statedep[7] || statedep[52] ||
+      whenmat[3,2] || whenmat[7,2] || whenmat[52,2] || //if first sub or changing every state
+      (T0check == 1 && (whenmat[3,5] || whenmat[7,5] || whenmat[52,5])))){ //or first time step of new sub with ind difs
       
-      //discreteDRIFT = expm2(append_row(append_col(DRIFT[1:nlatent, 1:nlatent],CINT),nlplusonezerovec\') * dtsmall);
-      discreteDRIFT = expmSubsets(DRIFT * dtsmall,DRIFTsubsets);
-      if(!JAxDRIFTequiv){ 
-        eJAx =  expmSubsets(JAx * dtsmall,JAxsubsets);
-      } else eJAx[1:nlatent, 1:nlatent] = discreteDRIFT;
+      // Exact discrete-time transition of local affineized EKF model
+      eJAx = expmSubsets(JAx * dtsmall,JAxsubsets);
+      discreteDRIFT = eJAx[1:nlatent,1:nlatent];
+      f0 = DRIFT * x0 + CINT[,1];
+      affineCINT = f0 - JAx[1:nlatent,1:nlatent] * x0;
+      discreteCINT = mdivide_left(
+        JAx[1:nlatent,1:nlatent],
+        (discreteDRIFT - IIlatentpop[1:nlatent,1:nlatent]) * affineCINT
+      );
                              
       if(si==0 || statedep[3] || statedep[4]||statedep[52]||  //if first pass or state dependent
         whenmat[4,2] || whenmat[3,2] ||
@@ -991,7 +1000,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
       }
       
       discreteDIFFUSION[derrind,derrind] =  asymDIFFUSIONcov[derrind,derrind] - 
-        quad_form_sym( asymDIFFUSIONcov[derrind,derrind], eJAx[derrind,derrind]\' );
+        quad_form_sym( asymDIFFUSIONcov[derrind,derrind], discreteDRIFT[derrind,derrind]\' );
         
       for(li in 1:nlatent) if(is_nan(state[li]) || is_nan(sum(discreteDRIFT[li,]))) {
         print("Possible time step problem? Intervals too large? Try reduce maxtimestep");
@@ -1000,7 +1009,7 @@ if(verbose > 1) print ("below t0 row ", rowi);
     } //end discrete drift / diffusion coef calcs based on ct
           
           
-    if(continuoustime) state[1:nlatent] *= discreteDRIFT\'; 
+    if(continuoustime) state[1:nlatent] = (discreteDRIFT * x0 + discreteCINT)\'; 
     if(!continuoustime) state[1:nlatent] *= DRIFT\'; 
     
     if(intoverstates==1 || dosmoother==1){
@@ -1017,16 +1026,8 @@ if(verbose > 1) print ("below t0 row ", rowi);
     if(continuoustime && dosmoother && intstepi >= (dt-1e-10)) eJAxs[rowi,,] = expmSubsets(JAx * dt,JAxsubsets); //save approximate exponentiated jacobian for smoothing
     if(!continuoustime && dosmoother) eJAxs[rowi,,] = JAx;
     
-    if(size(CINTnonzero)){
-      if(continuoustime){
-        if(si==0 || dtchange==1 || statedep[3]|| statedep[7] || whenmat[3,2] || whenmat[7,2] || // state depenency
-          (T0check == 1 && (whenmat[7,5] || whenmat[3,5]))){ //or ind difs
-          discreteCINT = (DRIFT \\ (discreteDRIFT-IIlatentpop[1:nlatent,1:nlatent])) * CINT[,1];
-        }
-        state[1:nlatent] += discreteCINT\';
-      }
-    if(!continuoustime) state[CINTnonzero]+= CINT[CINTnonzero,1]\';
-    } // end cint section
+    if(size(CINTnonzero) && !continuoustime) state[CINTnonzero]+= CINT[CINTnonzero,1]\';
+    // end cint section
 
     } // end time step loop
   } // end non linear time update

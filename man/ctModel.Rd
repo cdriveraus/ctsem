@@ -6,7 +6,7 @@
 \usage{
 ctModel(
   LAMBDA,
-  type = "omx",
+  type = "ct",
   n.manifest = "auto",
   n.latent = "auto",
   Tpoints = NULL,
@@ -25,22 +25,12 @@ ctModel(
   DIFFUSION = "auto",
   n.TDpred = "auto",
   TDpredNames = "auto",
+  TDPREDEFFECT = "auto",
+  TDPREDMEANS = "auto",
+  TDPREDVAR = "auto",
   n.TIpred = "auto",
   TIpredNames = "auto",
   tipredDefault = TRUE,
-  TRAITVAR = NULL,
-  T0TRAITEFFECT = NULL,
-  MANIFESTTRAITVAR = NULL,
-  TDPREDMEANS = "auto",
-  TDPREDEFFECT = "auto",
-  T0TDPREDCOV = "auto",
-  TDPREDVAR = "auto",
-  TRAITTDPREDCOV = "auto",
-  TDTIPREDCOV = "auto",
-  TIPREDMEANS = "auto",
-  TIPREDEFFECT = "auto",
-  T0TIPREDEFFECT = "auto",
-  TIPREDVAR = "auto",
   PARS = NULL,
   startValues = NULL
 )
@@ -50,9 +40,10 @@ ctModel(
 with latent processes 1:n.latent along the columns, and manifest variables
 1:n.manifest in the rows.}
 
-\item{type}{character string. If 'omx' (default) configures model for maximum likelihood fitting with ctFit, using OpenMx. 
-If 'ct' or 'dt' configures either continuous ('ct') or discrete ('dt') time 
-model for Bayesian fitting with \code{\link{ctStanFit}}, using Stan.}
+\item{type}{character string. Use 'ct' (continuous time) or 'dt'
+(discrete time) for Stan-based fitting with \code{\link{ctFit}}.
+For legacy workflows, 'omx' returns a matrix-list model object that can
+be edited directly and then converted via \code{\link{ctStanModel}}.}
 
 \item{n.manifest}{Number of manifest indicators per individual at each measurement occasion / time point.
 Manifest variables are included as the first element of the wide data matrix, with all the 1:n.manifest manifest variables 
@@ -60,7 +51,7 @@ at time 1 followed by those of time 2, and so on.}
 
 \item{n.latent}{Number of latent processes.}
 
-\item{Tpoints}{For type='omx' only. Number of time points, or measurement occasions, in the data.  This will generally be the maximum 
+\item{Tpoints}{Number of time points, or measurement occasions, in the data.  This will generally be the maximum 
 number of time points for a single individual, but may be one extra if sample relative time intervals are used, 
 see \code{\link{ctIntervalise}}.}
 
@@ -110,6 +101,18 @@ variance and covariance (latent error / dynamic innovation).
 as they appear in the data structure, without any _Tx time point suffix that may appear in wide data.  
 Default names are TD1, TD2, etc.}
 
+\item{TDPREDEFFECT}{n.latent*n.TDpred matrix of effects from time dependent predictors to latent processes.
+Effects from 1:n.TDpred columns TDpredictors go to 1:n.latent rows of latent processes.
+"auto" freely estimates all parameters.}
+
+\item{TDPREDMEANS}{Legacy argument for time-dependent predictor means, mainly to
+support data generation workflows. Expected dimensions are
+(n.TDpred * Tpoints) rows and 1 column. "auto" creates a free-label matrix.}
+
+\item{TDPREDVAR}{Legacy argument for time-dependent predictor covariance
+structure, mainly to support data generation workflows. Expected dimensions are
+(n.TDpred * Tpoints) square. "auto" creates a free-label matrix.}
+
 \item{n.TIpred}{Number of time independent predictors. 
 Each TIpredictor is inserted at the right of the data matrix, after the time intervals.}
 
@@ -119,70 +122,9 @@ as they appear in the data structure.  Default names are TI1, TI2, etc.}
 \item{tipredDefault}{Logical. TRUE sets any parameters with unspecified time independent 
 predictor effects to have effects estimated, FALSE fixes the effect to zero unless individually specified.}
 
-\item{TRAITVAR}{For type='omx' only. Either NULL, if no trait / unobserved heterogeneity effect, 
-or lower triangular n.latent*n.latent cholesky matrix of trait variance / covariance across subjects.
-"auto" freely estimates all parameters.}
-
-\item{T0TRAITEFFECT}{For type='omx' only. Either NULL, if no trait / individual heterogeneity effect, 
-or lower triangular n.latent*n.latent cholesky matrix of initial trait variance / covariance.
-"auto" freely estimates all parametrers, if the TRAITVAR matrix is specified.}
-
-\item{MANIFESTTRAITVAR}{For type='omx' only. Either NULL (default) if no trait variance / individual heterogeneity in the level of
-the manifest indicators, otherwise a lower triangular n.manifest * n.manifest variance / covariance matrix. 
-Set to "auto" to include and free all parameters - but identification problems will arise if \code{TRAITVAR} is 
-also set.}
-
-\item{TDPREDMEANS}{For type='omx' only. (n.TDpred * (Tpoints - 1)) rows * 1 column matrix of time dependent predictor means.
-If 'auto', the means are freely estimated.  Otherwise, 
-the means for the Tpoints observations of your first time dependent predictor 
-are followed by those of TDpred 2, and so on.}
-
-\item{TDPREDEFFECT}{n.latent*n.TDpred matrix of effects from time dependent predictors to latent processes.
-Effects from 1:n.TDpred columns TDpredictors go to 1:n.latent rows of latent processes.
-"auto" freely estimates all parameters.}
-
-\item{T0TDPREDCOV}{For type='omx' only. n.latent rows * (Tpoints * n.TDpred) columns covariance matrix 
-between latents at T0 and time dependent predictors.
-Default of "auto" restricts covariance to 0, which is consistent with covariance to other time points. 
-To freely estimate parameters, specify either 'free', or the desired matrix.}
-
-\item{TDPREDVAR}{For type='omx' only. lower triangular (n.TDpred * Tpoints) rows 
-* (n.TDpred * Tpoints) columns variance / covariance
-cholesky matrix for time dependent predictors.
-"auto" (default) freely estimates all parameters.}
-
-\item{TRAITTDPREDCOV}{For type='omx' only. n.latent rows * (n.TDpred*Tpoints) columns covariance matrix of 
-latent traits and time dependent predictors. Defaults to zeroes, 
-assuming predictors are independent of subjects baseline levels. When predictors depend on the subjects,
-this should instead be set to 'free' or manually specified.
-The Tpoints columns of the first preditor are followed by those of the second and so on.
-Covariances with the trait variance of latent process 1 are specified in row 1, process 2 in row 2, etc.
-"auto" (default) sets this matrix to zeroes, (if both traits and time dependent predictors exist, otherwise this matrix is set to NULL, and ignored in any case).}
-
-\item{TDTIPREDCOV}{For type='omx' only. (n.TDpred * Tpoints) rows * n.TIpred columns covariance
-matrix between time dependent and time independent predictors.
-"auto" (default) freely estimates all parameters.}
-
-\item{TIPREDMEANS}{For type='omx' only. n.TIpred * 1 matrix of time independent predictor means.
-If 'auto', the means are freely estimated.}
-
-\item{TIPREDEFFECT}{For type='omx' only. n.latent*n.TIpred effect matrix of time independent predictors on latent processes.
-"auto" freely estimates all parameters and generates starting values. TIPREDEFFECT parameters for type='stan' are estimated
-by default on all subject level parameters, to restrict this, 
-manually edit the model object after creation.}
-
-\item{T0TIPREDEFFECT}{For type='omx' only.n.latent*n.TIpred effect matrix of time independent 
-predictors on latents at T0. "auto" freely estimates all parameters, though note that under the default 
-setting of \code{stationary} for ctFit, this matrix is ignored as the effects are determined based on
-the overall process parameters.}
-
-\item{TIPREDVAR}{For type='omx' only.lower triangular n.TIpred * n.TIpred Cholesky decomposed covariance
-matrix for all time independent predictors.
-"auto" (default) freely estimates all parameters.}
-
 \item{PARS}{for types 'ct' and 'dt' only. May be of any structure, only needed to contain extra parameters for certain non-linear models.}
 
-\item{startValues}{For type='omx' only. A named vector, where the names of each value must match a parameter in the specified model,
+\item{startValues}{A named vector, where the names of each value must match a parameter in the specified model,
 and the value sets the starting value for that parameter during optimization.
 If not set, random starting values representing relatively stable processes with small effects and 
 covariances are generated by ctFit.  
@@ -190,28 +132,25 @@ Better starting values may improve model fit speed and the chance of an appropri
 }
 \description{
 This function is used to specify a continuous time structural equation model, 
-which can then be fit to data with function \code{\link{ctStanFit}}.
+which can then be fit to data with function \code{\link{ctFit}}.
 }
 \examples{
  ### Frequentist example:
  ### impulse and level change time dependent predictor 
  ### example from Driver, Oud, Voelkle (2015)
  data('ctExample2')
- tdpredmodel <- ctModel(n.manifest = 2, n.latent = 3, n.TDpred = 1, 
+ tdpredmodel <- ctModel(type='omx', n.manifest = 2, n.latent = 3, n.TDpred = 1, 
  Tpoints = 8, manifestNames = c('LeisureTime', 'Happiness'), 
  TDpredNames = 'MoneyInt', 
  latentNames = c('LeisureTime', 'Happiness', 'MoneyIntLatent'),
- LAMBDA = matrix(c(1,0, 0,1, 0,0), ncol = 3), TRAITVAR = "auto")
+ LAMBDA = matrix(c(1,0, 0,1, 0,0), ncol = 3))
 
- tdpredmodel$TRAITVAR[3, ] <- 0
- tdpredmodel$TRAITVAR[, 3] <- 0
  tdpredmodel$DIFFUSION[, 3] <- 0
  tdpredmodel$DIFFUSION[3, ] <- 0
  tdpredmodel$T0VAR[3, ] <- 0
  tdpredmodel$T0VAR[, 3] <- 0
  tdpredmodel$CINT[3] <- 0
  tdpredmodel$T0MEANS[3] <- 0
- tdpredmodel$TDPREDEFFECT[3, ] <- 1
  tdpredmodel$DRIFT[3, ] <- 0
  
  

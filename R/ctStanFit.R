@@ -7,7 +7,7 @@
 #' @param recompile whether to force a recompile -- safer but slower and usually unnecessary.
 #' @param refit if TRUE, refits the model using the old estimates as a starting point. Only applicable for
 #' optimized fits, not sampling.
-#' @param ... extra arguments to pass to ctStanFit
+#' @param ... extra arguments to pass to ctFit
 #'
 #' @return updated ctStanFit object.
 #' @export
@@ -29,7 +29,7 @@ ctStanFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
   args$inits <- oldfit$stanfit$rawest
   args$ctstanmodel <- oldfit$ctstanmodelbase
   
-  newargs <- as.list(args(ctStanFit))
+  newargs <- as.list(args(ctFit))
   for(argi in names(args)){
     if(argi %in% names(args)) newargs[[argi]] <- args[[argi]] else message(argi, ' is no longer a valid argument, dropping...')
   }
@@ -37,7 +37,7 @@ ctStanFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
   
   if(length(data==1)) args$datalong <- standatatolong(oldfit$standata,origstructure = TRUE,ctm=oldfit$ctstanmodelbase)
   if(length(data) > 1) args$datalong <- data
-  newfit <- do.call(ctStanFit,args)
+  newfit <- do.call(ctFit,args)
   
   if(!refit){
     oldfit$standata <- newfit$standata
@@ -76,9 +76,10 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #   log_prob(sfr,sf$stanfit$rawest)
 # }
 
-#' ctStanFit
+#' Fit a ctsem model
 #'
 #' Fits a ctsem model specified via \code{\link{ctModel}} with type either 'ct' or 'dt'.
+#' \code{ctStanFit} is maintained as a backward-compatible alias.
 #' 
 #' @param datalong long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables, 
 #' any time dependent (i.e. varying within subject) predictors, 
@@ -389,7 +390,7 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' 
 #' }
 
-ctStanFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intoverstates=TRUE, binomial=FALSE,
+ctFit<-function(datalong, ctstanmodel, stanmodeltext=NA, iter=1000, intoverstates=TRUE, binomial=FALSE,
   fit=TRUE, intoverpop='auto', sameInitialTimes=FALSE, stationary=FALSE,plot=FALSE,  derrind=NA,
   optimize=TRUE,  optimcontrol=list(),
   nlcontrol = list(), nopriors=NA, priors=FALSE, chains=2,
@@ -817,4 +818,9 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
   
   return(out)
 }
+
+#' Backward-compatible alias for \code{ctFit}.
+#' @rdname ctFit
+#' @export
+ctStanFit <- ctFit
 

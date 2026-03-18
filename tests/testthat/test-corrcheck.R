@@ -8,11 +8,23 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
   #anomauth
   test_that("corrCheck", {
     set.seed(1)
-    gm <- ctModel(LAMBDA = diag(1,3),DRIFT=diag(-1,3),
+    nsubjects <- 600
+    manifestTraitChol <- matrix(c(2,-1,-1, 0,1,1,0,0,2),3,3)
+    gm <- ctModel(type='omx',LAMBDA = diag(1,3),DRIFT=diag(-1,3),
       T0VAR=matrix(c(5,-5,-5,0,1,-1,0,0,2),3,3),
-      MANIFESTTRAITVAR=matrix(c(2,-1,-1, 0,1,1,0,0,2),3,3),
       DIFFUSION=matrix(c(2,1,1,0,4,-2,0,0,2),3,3),Tpoints=30)
-    d <- ctGenerate(ctmodelobj = gm,n.subjects = 600,burnin = 0)
+    
+    subjectManifestMeans <- t(replicate(nsubjects, as.numeric(manifestTraitChol %*% rnorm(3))))
+    targetManifestCov <- stats::cov(subjectManifestMeans)
+    dlist <- vector("list", nsubjects)
+    for(i in seq_len(nsubjects)){
+      gm_i <- gm
+      gm_i$MANIFESTMEANS <- matrix(subjectManifestMeans[i, ], ncol = 1)
+      d_i <- ctGenerate(ctmodelobj = gm_i, n.subjects = 1, burnin = 0)
+      d_i[, "id"] <- i
+      dlist[[i]] <- d_i
+    }
+    d <- do.call(rbind, dlist)
     
     m <- ctModel(LAMBDA = diag(1,3),DRIFT=diag(-1,3),type='ct',
       # MANIFESTMEANS = 0,
@@ -30,8 +42,8 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     s=summary(f)
     s$rawpopcorr
     f$stanfit$transformedparsfull$rawpopcorr[1,,]
-    tcrossprod(gm$MANIFESTTRAITVAR)
-    cov2cor(tcrossprod(gm$MANIFESTTRAITVAR))
+    targetManifestCov
+    cov2cor(targetManifestCov)
     
     #check diagonal of 1's for corr
     test_isclose(diag(f$stanfit$transformedparsfull$rawpopcorr[1,,]),
@@ -39,11 +51,11 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     #cov check
     test_isclose(f$stanfit$transformedparsfull$popcov[1,4:6,4:6],
-      tcrossprod(gm$MANIFESTTRAITVAR),tol=1)
+      targetManifestCov,tol=1)
     
     #cor check
     test_isclose(f$stanfit$transformedparsfull$rawpopcorr[1,4:6,4:6],
-      cov2cor(tcrossprod(gm$MANIFESTTRAITVAR)),tol=.1)
+      cov2cor(targetManifestCov),tol=.1)
     
     
   })
@@ -59,12 +71,12 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     cmat2=t(chol(cmat2 %*% t(cmat2)))
     cov2cor(tcrossprod(cmat2))
     
-    gm <- ctModel(LAMBDA = diag(1,10),DRIFT=diag(-1,10),
+    gm <- ctModel(type='omx',LAMBDA = diag(1,10),DRIFT=diag(-1,10),
       T0VAR=cmat,
       DIFFUSION=diag(1,10),Tpoints=2)
     d1 <- data.frame(ctGenerate(ctmodelobj = gm,n.subjects = 1000,burnin = 0))
     
-    gm <- ctModel(LAMBDA = diag(1,10),DRIFT=diag(-1,10),
+    gm <- ctModel(type='omx',LAMBDA = diag(1,10),DRIFT=diag(-1,10),
       T0VAR=cmat2,
       DIFFUSION=diag(1,10),Tpoints=2)
     d2 <- data.frame(ctGenerate(ctmodelobj = gm,n.subjects = 1000,burnin = 0))

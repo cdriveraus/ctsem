@@ -39,7 +39,7 @@ ctModelUnlist<-function(ctmodelobj,
 #' @export
 #'
 #' @examples
-#' model <- ctModel(type='omx', Tpoints=50,
+#' model <- ctModel(type='ct', Tpoints=50,
 #' n.latent=2, n.manifest=1, 
 #' manifestNames='sunspots', 
 #' latentNames=c('ss_level', 'ss_velocity'),

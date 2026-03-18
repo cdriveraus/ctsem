@@ -32,21 +32,23 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     }
     
 
-    m1<-ctModel(type='omx',n.latent=4,n.manifest=n.manifest,Tpoints=Tpoints,
+    m1<-ctModel(type='ct',n.latent=4,n.manifest=n.manifest,Tpoints=Tpoints,
       LAMBDA=cbind(gm$LAMBDA,0,0),
+      DRIFT=matrix(c(
+        'dr11','dr12',1,0,
+        'dr21','dr22',0,1,
+        0,0,-1e-5,0,
+        0,0,0,-1e-5),4,4,byrow=TRUE),
+      DIFFUSION=matrix(c(
+        'diff11',0,0,0,
+        'diff21','diff22',0,0,
+        0,0,0,0,
+        0,0,0,0),4,4,byrow=TRUE),
       MANIFESTMEANS=matrix(0,nrow=n.manifest)
     )
-    m1$DRIFT[3:4,] <- 0
-    m1$DRIFT[,3:4] <- 0
-    diag(m1$DRIFT)[3:4] <- -1e-5
-    m1$DRIFT[1,3] = 1
-    m1$DRIFT[2,4] = 1
-    m1$DIFFUSION[3:4,] <- 0
-    m1$DIFFUSION[,3:4] <- 0
-    # m1$T0VAR[3:4,1:2] <- 0
     
     #model for ukf ctsem
-    m2<-ctModel(type='omx',n.latent=2,n.manifest=n.manifest,Tpoints=Tpoints,
+    m2<-ctModel(type='ct',n.latent=2,n.manifest=n.manifest,Tpoints=Tpoints,
       MANIFESTMEANS=matrix(0,n.manifest),
       CINT=matrix(paste0('cint',1:gm$n.latent)),
       LAMBDA=gm$LAMBDA
@@ -55,14 +57,14 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     
     #fit 1
-    sm1 <- ctStanModel(m1)
+    sm1 <- m1
     sm1$pars$indvarying <- FALSE
     sf1 <- ctStanFit(cd,sm1,cores=cores,verbose=0)
     sf1d=sf1$stanfit$transformedparsfull$pop_DRIFT[1,1:2,1:2]
     sf1ll=sf1$stanfit$optimfit$value
     
     #fit 2
-    sm2 <- ctStanModel(m2)
+    sm2 <- m2
     sm2$pars$sdscale <- .2
     sf2 <- ctStanFit(cd,sm2,cores=cores)
     sf2d=sf2$stanfit$transformedparsfull$pop_DRIFT[1,1:2,1:2]

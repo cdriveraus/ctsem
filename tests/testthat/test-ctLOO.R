@@ -16,14 +16,15 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       # TIpredNames = 'Y1',
       # DRIFT=c('dr1||||Y1','dr12||||Y1','dr21||||Y1','dr22||||Y1'),
       MANIFESTVAR=diag(0,2),
-      Tpoints=5)
+      Tpoints=5,
+      tipredDefault = FALSE)
     
     aa=ctDeintervalise(ctWideToLong(AnomAuth[1:500,],
       Tpoints = AnomAuthmodel$Tpoints,n.manifest = 2))
     aa[4:20,AnomAuthmodel$manifestNames] <- NA
     
     
-    sm <- ctStanModel(AnomAuthmodel,tipredDefault = FALSE)
+    sm <- AnomAuthmodel
     sm$pars$indvarying<- FALSE
     
     sf=ctStanFit(aa,
@@ -46,7 +47,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     if(F){ #check casewise approx against leave one subject out
       looFull=ctLOO(fit = sf,folds = sf$standata$nsubjects,cores=20,parallelFolds = T,subjectwise = T,casewiseApproximation = F)
       plot(looFull$outsampleLogLikRow,loo3$outsampleLogLikRow)
-      points(looFull$outsampleLogLikRow,loo4$outsampleLogLikRow,col='red')
+      points(looFull$outsampleLogLikRow,loo4$outsampleLogLikRow,col='red') #worse casewise approx when numerical hessian is used, at least in this example
       abline(0,1)
       
       sum(looFull$outsampleLogLikRow-loo4$outsampleLogLikRow)

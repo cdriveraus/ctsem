@@ -11,14 +11,13 @@ ctdataupdate<-function(forcerecompile=FALSE){
   n.TIpred=3
   n.latent=2
   n.subjects=30
-  gm<-ctModel(type='omx', Tpoints=Tpoints,n.latent=n.latent,
+  tipredEffect <- matrix(c(.5,0,0,-.7,0,2),nrow=2)
+  tipredVar <- matrix(c(1,-.2,0, 0,1,0, 0,0,.5),nrow=3)
+  gm<-ctModel(type='ct', Tpoints=Tpoints,n.latent=n.latent,
   n.TDpred=n.TDpred,
-    n.TIpred=n.TIpred,
+    n.TIpred=0,
     n.manifest=n.manifest,
     MANIFESTVAR=diag(0.5,2),
-    TIPREDEFFECT=matrix(c(.5,0,0,-.7,0,2),nrow=2),
-    TIPREDVAR=matrix(c(1,-.2,0, 0,1,0, 0,0,.5),nrow=3),
-    TDPREDVAR=matrix(0,nrow=n.TDpred*(Tpoints),ncol=n.TDpred*(Tpoints)),
     TDPREDMEANS=matrix(round(exp(rnorm(n.TDpred*(Tpoints),-1.9,1)),0),
      nrow=n.TDpred*(Tpoints)),
      TDPREDEFFECT = matrix(c(1,-1),ncol=1),
@@ -29,7 +28,16 @@ ctdataupdate<-function(forcerecompile=FALSE){
     T0MEANS=matrix(10,ncol=1,nrow=2),
     T0VAR=diag(1,2))
 
-  ctstantestdat<-ctGenerate(gm,n.subjects=n.subjects,burnin=3,logdtsd=.4,dtmean = .3)
+  for(i in seq_len(n.subjects)){
+    gm_i <- gm
+    tipreds_i <- tipredVar %*% rnorm(n.TIpred)
+    gm_i$CINT <- gm$CINT + tipredEffect %*% tipreds_i
+    dat_i <- ctGenerate(gm_i,n.subjects=1,burnin=3,logdtsd=.4,dtmean = .3)
+    dat_i[,'id'] <- i
+    dat_i <- cbind(dat_i, matrix(tipreds_i, nrow=nrow(dat_i), ncol=n.TIpred, byrow=TRUE))
+    if(i == 1) ctstantestdat <- dat_i else ctstantestdat <- rbind(ctstantestdat, dat_i)
+  }
+  colnames(ctstantestdat)[(ncol(ctstantestdat)-n.TIpred+1):ncol(ctstantestdat)] <- paste0('TI',1:n.TIpred)
 
   ctstantestdat[2,'Y1'] <- NA
   ctstantestdat[ctstantestdat[,'id']==2,'TI1'] <- NA

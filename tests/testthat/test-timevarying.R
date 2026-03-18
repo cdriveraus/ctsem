@@ -85,7 +85,6 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 &
       Tpoints = 4,
       time = "time",
       LAMBDA=diag(3),
-      TRAITVAR = "auto",
       DRIFT=matrix(c('a11', 'a12','a13',
         '(a + b * Z_)', 'a22', 'a23',
         'a31', 'a32', 'a33'), nrow=3, ncol=3, byrow=TRUE),
@@ -98,16 +97,25 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 &
       PARS=c('a', 'b'))
     
     
+    nsubjects <- 100
+    traitChol <- diag(.5,2)
+    subjectCint <- t(replicate(nsubjects, as.numeric(traitChol %*% rnorm(2))))
     gm <- ctModel(LAMBDA=diag(2), #diagonal factor loading, 2 latents 2 observables
       Tpoints = 5,
       DRIFT=matrix(c(-1,.5,0,-1),2,2), #temporal dynamics
-      TRAITVAR = diag(.5,2), #stable latent intercept variance (cholesky factor)
       DIFFUSION=diag(2)) #within person covariance 
     
-    d <- data.frame(ctGenerate(ctmodelobj = gm,n.subjects = 100,
-      burnin = 20,dtmean = 1))
-    
-    d<-data.frame(d)
+    dlist <- vector("list", nsubjects)
+    for(i in seq_len(nsubjects)){
+      gm_i <- gm
+      gm_i$CINT <- matrix(subjectCint[i, ], ncol = 1)
+      d_i <- suppressMessages(ctGenerate(ctmodelobj = gm_i,n.subjects = 1,
+        burnin = 20,dtmean = 1))
+      d_i[, "id"] <- i
+      dlist[[i]] <- d_i
+    }
+    d <- do.call(rbind, dlist)
+    d <- data.frame(d)
     d$Z <- d$Y1 + rnorm(nrow(d))
     d$X <- d$Y1
     d$Y <- d$Y2

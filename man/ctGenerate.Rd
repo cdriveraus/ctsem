@@ -11,6 +11,7 @@ ctGenerate(
   dtmean = 1,
   logdtsd = 0,
   dtmat = NA,
+  Tpoints = NULL,
   wide = FALSE
 )
 }
@@ -28,6 +29,10 @@ ctGenerate(
 \item{dtmat}{Either NA, or numeric matrix of n.subjects rows and Tpoints-1 columns, 
 containing positive numeric values for all time intervals between measurements. 
 If not NA, dtmean and logdtsd are ignored.}
+
+\item{Tpoints}{Optional number of time points to generate. If supplied, this overrides
+any \code{Tpoints} stored in \code{ctmodelobj}. If not supplied, \code{ctGenerate}
+uses \code{ctmodelobj$Tpoints} when available.}
 
 \item{wide}{Logical. Output in wide format?}
 }
@@ -48,11 +53,21 @@ generatingModel<-ctModel(Tpoints=8,n.latent=2,n.TDpred=0,n.TIpred=0,n.manifest=2
  MANIFESTVAR=diag(.1,2),
  LAMBDA=diag(1,2),
  DRIFT=matrix(c(-.2,-.05,-.1,-.1),nrow=2),
- TRAITVAR=matrix(c(.5,.2,0,.8),nrow=2),
  DIFFUSION=matrix(c(1,.2,0,4),2),
  CINT=matrix(c(1,0),nrow=2),
  T0MEANS=matrix(0,ncol=1,nrow=2),
  T0VAR=diag(1,2))
 
-data<-ctGenerate(generatingModel,n.subjects=15,burnin=10)
+nsubjects <- 15
+traitChol <- matrix(c(.5,.2,0,.8),nrow=2)
+subjectCint <- t(replicate(nsubjects, as.numeric(traitChol \%*\% rnorm(2))))
+datalist <- vector("list", nsubjects)
+for(i in seq_len(nsubjects)){
+  subjectModel <- generatingModel
+  subjectModel$CINT <- matrix(subjectCint[i,], ncol = 1)
+  d <- ctGenerate(subjectModel,n.subjects=1,burnin=10)
+  d[,'id'] <- i
+  datalist[[i]] <- d
+}
+data <- do.call(rbind, datalist)
 }

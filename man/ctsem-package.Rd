@@ -10,13 +10,12 @@ ctsem is an R package for continuous time structural equation modelling of panel
 and time series (N = 1) data, using either a frequentist or Bayesian approach, or middle
 ground forms like maximum a posteriori. 
  
-The general workflow begins by specifying a model using the \code{\link{ctModel}} function, 
-in which the \code{type} of model is also specified. Then the model is fit to data using 
-\code{\link{ctStanFit}}. The ctFit function which allows for fitting using the OpenMx / SEM form,
-as described in the original JSS ctsem paper, can now be found in the ctsemOMX package.  
-The omx forms are no longer in 
-development and for most purposes, the newer stan based forms are more robust and flexible.
-For examples, see  \code{\link{ctStanFit}}. 
+The general workflow begins by specifying a model using the \code{\link{ctModel}} function,
+then fitting it to data using \code{\link{ctFit}} (alias \code{\link{ctStanFit}}).
+For original OpenMx / SEM functionality from the first ctsem versions, use the
+\pkg{ctsemOMX} package.
+For most purposes, the Stan-based forms in \pkg{ctsem} are more robust and flexible.
+For examples, see \code{\link{ctFit}}.
 For citation info, please run \code{citation('ctsem')} .
 }
 \references{

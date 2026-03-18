@@ -12,13 +12,22 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     n.manifest=7
     
     #gen data
+    nsubjects <- 20
+    cint <- rnorm(nsubjects, mean = .1, sd = .3)
     gm <- ctModel(DRIFT=-.3, DIFFUSION=.3, CINT=.1,
-      TRAITVAR=diag(.3,1), #old approach to allow individual variation 
       LAMBDA= rep(1,each=n.manifest),
       n.latent=1,n.manifest=n.manifest,Tpoints=20,
       MANIFESTMEANS=c(0,rep(c(.5,-.5),each=(n.manifest-1)/2)),T0MEANS=-.3,T0VAR=.5)
     
-    d=ctGenerate(gm,n.subjects = 20,logdtsd=.2)
+    dlist <- vector("list", nsubjects)
+    for(i in seq_len(nsubjects)){
+      gm_i <- gm
+      gm_i$CINT[] <- cint[i]
+      d_i <- ctGenerate(gm_i, n.subjects = 1, logdtsd = .2)
+      d_i[, "id"] <- i
+      dlist[[i]] <- d_i
+    }
+    d <- do.call(rbind, dlist)
     d[,gm$manifestNames] <- rbinom(nrow(d)*gm$n.manifest,size=1,prob=invlog(d[,gm$manifestNames]))
     
     #model to fit

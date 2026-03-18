@@ -29,6 +29,9 @@ ctModeltoNumeric <- function(ctmodelobj){
 #' @param dtmat Either NA, or numeric matrix of n.subjects rows and Tpoints-1 columns, 
 #' containing positive numeric values for all time intervals between measurements. 
 #' If not NA, dtmean and logdtsd are ignored.
+#' @param Tpoints Optional number of time points to generate. If supplied, this overrides
+#' any \code{Tpoints} stored in \code{ctmodelobj}. If not supplied, \code{ctGenerate}
+#' uses \code{ctmodelobj$Tpoints} when available.
 #' @param wide Logical. Output in wide format?
 #' @details Covariance related matrices are treated as Cholesky factors. 
 #' TRAITTDPREDCOV and TIPREDCOV matrices are not accounted for, at present. 
@@ -42,21 +45,48 @@ ctModeltoNumeric <- function(ctmodelobj){
 #'  MANIFESTVAR=diag(.1,2),
 #'  LAMBDA=diag(1,2),
 #'  DRIFT=matrix(c(-.2,-.05,-.1,-.1),nrow=2),
-#'  TRAITVAR=matrix(c(.5,.2,0,.8),nrow=2),
 #'  DIFFUSION=matrix(c(1,.2,0,4),2),
 #'  CINT=matrix(c(1,0),nrow=2),
 #'  T0MEANS=matrix(0,ncol=1,nrow=2),
 #'  T0VAR=diag(1,2))
 #'
-#' data<-ctGenerate(generatingModel,n.subjects=15,burnin=10)
+#' nsubjects <- 15
+#' traitChol <- matrix(c(.5,.2,0,.8),nrow=2)
+#' subjectCint <- t(replicate(nsubjects, as.numeric(traitChol %*% rnorm(2))))
+#' datalist <- vector("list", nsubjects)
+#' for(i in seq_len(nsubjects)){
+#'   subjectModel <- generatingModel
+#'   subjectModel$CINT <- matrix(subjectCint[i,], ncol = 1)
+#'   d <- ctGenerate(subjectModel,n.subjects=1,burnin=10)
+#'   d[,'id'] <- i
+#'   datalist[[i]] <- d
+#' }
+#' data <- do.call(rbind, datalist)
 #' @export
 
 ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat=NA,
-  wide=FALSE){
+  Tpoints=NULL, wide=FALSE){
+  if('ctStanModel' %in% class(ctmodelobj)){
+    # Reconstruct matrix-style slots when a ctStanModel is supplied.
+    mlist <- listOfMatrices(ctmodelobj$pars)
+    for(nm in names(mlist)){
+      ctmodelobj[[nm]] <- mlist[[nm]]
+    }
+  }
   
   ctmodelobj <- ctModeltoNumeric(ctmodelobj)
   
   m <- ctmodelobj
+  
+  modelTpoints <- NULL
+  if(!is.null(m$Tpoints) && !is.na(m$Tpoints[1])) modelTpoints <- m$Tpoints[1]
+  if(!is.null(Tpoints) && !is.na(Tpoints[1])) modelTpoints <- Tpoints[1]
+  
+  if(is.null(modelTpoints)) stop('Tpoints not found in ctmodelobj and no Tpoints argument supplied. Provide Tpoints explicitly.')
+  if(length(modelTpoints) != 1 || !is.finite(modelTpoints) || modelTpoints < 1) stop('Tpoints must be a single finite value >= 1.')
+  
+  modelTpoints <- as.integer(modelTpoints)
+  m$Tpoints <- modelTpoints
   fullTpoints<-burnin+m$Tpoints
 
   for(si in 1:n.subjects){
@@ -68,7 +98,7 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
     
     if(m$n.TDpred > 0) {
       tdpreds <- rbind(matrix(0,nrow=1+(burnin),ncol=m$n.TDpred)[-1,,drop=FALSE], #additional row added then removed in case no burnin
-        matrix(m$TDPREDMEANS + m$TDPREDVAR %*% rnorm(nrow(m$TDPREDVAR),0,1),ncol=m$n.TDpred))
+        matrix(m$TDPREDMEANS,ncol=m$n.TDpred))
     }
     
     # #convert to triangular...
@@ -121,7 +151,7 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
         t(as.matrix(sdat[i,m$TDpredNames,drop=FALSE]))
     }
     
-    for(i in 1:nrow(sdat)){
+    for(i in seq_len(nrow(sdat))){
       sdat[i,m$manifestNames] <- sm$LAMBDA %*% latents[i,] + sm$MANIFESTMEANS + 
         sm$MANIFESTVAR %*% rnorm(m$n.manifest)
     }
