@@ -774,7 +774,6 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup, simplify=TRUE)
   matrix[taylorheun ? nlatentpop : 0, taylorheun ? nlatentpop : 0] Mth = Kth;'),'
 
   //linear continuous time calcs
-  matrix[nlatent,nlatent] discreteDRIFT;
   vector[nlatent] discreteCINT;
   matrix[nlatent,nlatent] discreteDIFFUSION = rep_matrix(0.0,nlatent,nlatent);
 
@@ -924,7 +923,6 @@ if(verbose > 1) print ("below t0 row ", rowi);
 
     if(si==0 || (T0check>0)){ //for init or subsequent time steps when observations exist
       vector[nlatent] base;
-      vector[nlatent] x0;
       vector[nlatent] f0;
       vector[nlatent] affineCINT;
       real intstepi = 0;
@@ -972,7 +970,6 @@ if(verbose > 1) print ("below t0 row ", rowi);
     if(verbose>1) print("JAx ",JAx);
     state = basestate;
     }
-    x0 = state[1:nlatent]\';
     
     if(si==0 ||statedep[4] || whenmat[4,2] || ( T0check ==1 && whenmat[4,5])){
       DIFFUSIONcov[derrind,derrind] = sdcovsqrt2cov(DIFFUSION[derrind,derrind],choleskymats);
@@ -983,15 +980,9 @@ if(verbose > 1) print ("below t0 row ", rowi);
       whenmat[3,2] || whenmat[7,2] || whenmat[52,2] || //if first sub or changing every state
       (T0check == 1 && (whenmat[3,5] || whenmat[7,5] || whenmat[52,5])))){ //or first time step of new sub with ind difs
       
-      // Exact discrete-time transition of local affineized EKF model
+      
       eJAx = expmSubsets(JAx * dtsmall,JAxsubsets);
-      discreteDRIFT = eJAx[1:nlatent,1:nlatent];
-      f0 = DRIFT * x0 + CINT[,1];
-      affineCINT = f0 - JAx[1:nlatent,1:nlatent] * x0;
-      discreteCINT = mdivide_left(
-        JAx[1:nlatent,1:nlatent],
-        (discreteDRIFT - IIlatentpop[1:nlatent,1:nlatent]) * affineCINT
-      );
+
                              
       if(si==0 || statedep[3] || statedep[4]||statedep[52]||  //if first pass or state dependent
         whenmat[4,2] || whenmat[3,2] ||
@@ -1000,16 +991,19 @@ if(verbose > 1) print ("below t0 row ", rowi);
       }
       
       discreteDIFFUSION[derrind,derrind] =  asymDIFFUSIONcov[derrind,derrind] - 
-        quad_form_sym( asymDIFFUSIONcov[derrind,derrind], discreteDRIFT[derrind,derrind]\' );
-        
-      for(li in 1:nlatent) if(is_nan(state[li]) || is_nan(sum(discreteDRIFT[li,]))) {
-        print("Possible time step problem? Intervals too large? Try reduce maxtimestep");
-      }
+        quad_form_sym( asymDIFFUSIONcov[derrind,derrind], eJAx[derrind,derrind]\' );
         
     } //end discrete drift / diffusion coef calcs based on ct
           
           
-    if(continuoustime) state[1:nlatent] = (discreteDRIFT * x0 + discreteCINT)\'; 
+    if(continuoustime){
+              // Exact discrete-time transition of local affineized EKF model
+      f0 = DRIFT * state[1:nlatent]\' + CINT[,1];
+      affineCINT = f0 - JAx[1:nlatent,] * state\';
+      discreteCINT = mdivide_left(JAx[1:nlatent,1:nlatent],
+        (eJAx[1:nlatent,1:nlatent] - IIlatentpop[1:nlatent,1:nlatent]) * affineCINT);
+    state[1:nlatent] = (eJAx[1:nlatent,] * state\' + discreteCINT)\'; 
+    }
     if(!continuoustime) state[1:nlatent] *= DRIFT\'; 
     
     if(intoverstates==1 || dosmoother==1){
@@ -1163,7 +1157,7 @@ if(verbose > 1) print("b");
           "  DRIFT =", DRIFT, " DIFFUSION =", DIFFUSION, 
           " CINT =", CINT, "  discreteCINT = ", discreteCINT, "MANIFESTVAR = ",MANIFESTVAR,"  MANIFESTcov ", (MANIFESTcov), "  MANIFESTMEANS ", MANIFESTMEANS, 
           "  T0cov", T0cov,  " T0MEANS ", T0MEANS, "LAMBDA = ", LAMBDA, "  Jy = ",Jy,
-          " discreteDRIFT = ", discreteDRIFT, "  discreteDIFFUSION ", discreteDIFFUSION, "  asymDIFFUSIONcov ", asymDIFFUSIONcov, 
+          " eJAx[1:nlatent,1:nlatent] = ", eJAx[1:nlatent,1:nlatent], "  discreteDIFFUSION ", discreteDIFFUSION, "  asymDIFFUSIONcov ", asymDIFFUSIONcov, 
           " DIFFUSIONcov = ", DIFFUSIONcov,
           " eJAx = ", eJAx,
           "  rawpopsd ", rawpopsd,  "  rawpopsdbase ", rawpopsdbase, "  rawpopmeans ", rawpopmeans );
@@ -1696,7 +1690,6 @@ data {
   int laplacetipreds;
   int CINTnonzerosize;
   array[CINTnonzerosize] int CINTnonzero;
-  int JAxDRIFTequiv;
   
   int nDRIFTsubsets;
   int nJAxsubsets;
