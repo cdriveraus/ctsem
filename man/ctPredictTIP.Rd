@@ -13,6 +13,7 @@ ctPredictTIP(
   plot = TRUE,
   quantiles = c(0.16, 0.5, 0.84),
   discreteTimeQuantiles = c(0.025, 0.5, 0.975),
+  dynamicsControl = list(),
   showUncertainty = TRUE,
   TIPvalues = NA
 )
@@ -36,6 +37,14 @@ Can be problematic for systems with many dimensions.}
 
 \item{discreteTimeQuantiles}{a numeric vector of length 3 specifying the quantiles of the discrete time points to plot, when 
 showUncertainty is TRUE.}
+
+\item{dynamicsControl}{A named list of additional arguments to pass to
+\code{\link{ctStanDiscretePars}} and \code{\link{ctStanDiscreteParsPlot}}
+when \code{doDynamics=TRUE}. Arguments matching
+\code{ctStanDiscreteParsPlot} are automatically routed to the plot call.
+Internally controlled arguments \code{ctstanfitobj}, \code{plot},
+\code{subjects}, \code{observational}, \code{x}, \code{quantiles}, and
+\code{splitSubjects} are ignored if supplied.}
 
 \item{showUncertainty}{A logical value indicating whether to plot the uncertainty of the predictions. Default is TRUE.}
 

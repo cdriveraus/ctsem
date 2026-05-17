@@ -26,3 +26,5 @@
 ^tests/testthat/Rplots.pdf
 ^vignettes/.*\.blg
 ^\.github$
+^\.positai$
+^\.claude$

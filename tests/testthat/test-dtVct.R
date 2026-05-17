@@ -40,10 +40,8 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
       )
 
     for(m in c('cm','dm')){
-
-        f = ctStanFit(datalong = dat,ctstanmodel = get(m),optimize=TRUE,
-          verbose=0,savescores = FALSE,priors=FALSE)
-      
+        # m = 'cm'
+        f = ctStanFit(datalong = dat,ctstanmodel = get(m))
       
         if(length(s)==0) s[[1]] = list()
         s[[1]][[m]] <- summary(f,parmatrices=TRUE)

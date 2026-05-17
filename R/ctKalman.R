@@ -13,6 +13,13 @@
 #' @param quantiles A numeric vector specifying the quantiles of the time independent predictors to plot. Default is 1SD either side and the median, c(.32,.5,.68).
 #' @param discreteTimeQuantiles a numeric vector of length 3 specifying the quantiles of the discrete time points to plot, when 
 #' showUncertainty is TRUE.
+#' @param dynamicsControl A named list of additional arguments to pass to
+#' \code{\link{ctStanDiscretePars}} and \code{\link{ctStanDiscreteParsPlot}}
+#' when \code{doDynamics=TRUE}. Arguments matching
+#' \code{ctStanDiscreteParsPlot} are automatically routed to the plot call.
+#' Internally controlled arguments \code{ctstanfitobj}, \code{plot},
+#' \code{subjects}, \code{observational}, \code{x}, \code{quantiles}, and
+#' \code{splitSubjects} are ignored if supplied.
 #' @param showUncertainty A logical value indicating whether to plot the uncertainty of the predictions. Default is TRUE.
 #' @param TIPvalues An nvalue * nTIpred numeric matrix specifying the fixed values for each time independent predictor effect to plot. 
 #' Default is NA, which instead relies on the quantiles specified in the quantiles argument.
@@ -29,8 +36,17 @@
 #' @export
 ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=TRUE, plot=TRUE,
   quantiles=c(.16,.5,.84), discreteTimeQuantiles=c(.025, .5, .975),
+  dynamicsControl=list(),
   showUncertainty=TRUE, 
   TIPvalues=NA){
+  if(!is.list(dynamicsControl)) stop('dynamicsControl must be a list')
+  if(length(dynamicsControl) > 0 && (is.null(names(dynamicsControl)) || any(names(dynamicsControl) == ''))){
+    stop('dynamicsControl must be a named list')
+  }
+  dynamicsControl[names(dynamicsControl) %in% c('ctstanfitobj','plot','subjects','observational','x',
+    'quantiles','splitSubjects')] <- NULL
+  dynamicsPlotControl <- dynamicsControl[names(dynamicsControl) %in% names(formals(ctStanDiscreteParsPlot))]
+  dynamicsControl <- dynamicsControl[!names(dynamicsControl) %in% names(dynamicsPlotControl)]
   if(tipreds[1] %in% 'all') tipreds <- sf$ctstanmodel$TIpredNames
   if(length(subject) > 1) stop('>1 subject!')
   if(length(unique(sf$standata$subject)) < 3) stop('With fewer than 3 subjects in the data, these predictions are not possible')
@@ -104,11 +120,15 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
       #include ctstandiscretepars plots
       if(doDynamics){
         for(typei in c('Independent','Correlated')){
-          ctd=ctStanDiscretePars(sf,plot=F,
+          discreteParsArgs <- c(dynamicsControl, list(
+            ctstanfitobj=sf,
+            plot=FALSE,
             subjects=(tipi-1)*nrow(TIPvalues) + 1:nrow(TIPvalues),
-            observational = !typei %in% 'Independent')
+            observational = !typei %in% 'Independent'))
+          ctd=do.call(ctStanDiscretePars, discreteParsArgs)
           if(showUncertainty) ctdQuantiles <- discreteTimeQuantiles else ctdQuantiles <- c(.5,.5,.5)
-          ctdp=ctStanDiscreteParsPlot(ctd,quantiles=ctdQuantiles,splitSubjects = TRUE)
+          ctdp=do.call(ctStanDiscreteParsPlot, c(dynamicsPlotControl,
+            list(x=ctd,quantiles=ctdQuantiles,splitSubjects = TRUE)))
           ctdp$data$CovariateValue <- factor(round(TIPvalues[ctdp$data$Subject,tipi],3))
           
           ctdp=ctdp+aes(colour=CovariateValue,fill=CovariateValue)+
