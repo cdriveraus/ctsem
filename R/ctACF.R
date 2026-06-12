@@ -11,8 +11,8 @@ ctACFpostpred <- function(fit,vars=fit$ctstanmodelbase$manifestNames,cores=ceili
     measure.vars = v, variable.name = 'V1', value.name = 'TrueValue')
   
   if(is.null(fit$generated)) {
-    message('No generated data found, generating -- for faster repeated performance use ctStanGenerateFromFit first')
-    fit <- ctStanGenerateFromFit(fit,cores=cores,nsamples = Nsamples)
+    message('No generated data found, generating -- for faster repeated performance use ctGenerateFromFit first')
+    fit <- ctGenerateFromFit(fit,cores=cores,nsamples = Nsamples)
   }
   gendat <- as.data.table(fit$generated$Y)
   gendat[, row := as.integer(row)]
@@ -394,10 +394,10 @@ plotctACF <- function(ctacfobj,df='auto',quantiles=c(.025,.5,.975),
 #' @return A data table containing the continuous time ACF estimates for standardized residuals.
 #'
 #' @details This function first extracts the standardized residuals from the fit object using
-#' the \code{\link{ctStanKalman}} function. Then, it calculates the continuous time ACF for these residuals
+#' the \code{\link{ctKalmanArray}} function. Then, it calculates the continuous time ACF for these residuals
 #' and returns the results as a data table.
 #'
-#' @seealso \code{\link{ctStanKalman}}
+#' @seealso \code{\link{ctKalmanArray}}
 #'
 #' @examples
 #' data.table::setDTthreads(1) #ignore this line
@@ -418,11 +418,11 @@ ctACFresiduals <- function(fit,...){
 #'
 #' @return A data table containing the standardized residuals for each subject and time point.
 #'
-#' @details This function uses the \code{\link{ctStanKalman}} function to calculate the standardized residuals
+#' @details This function uses the \code{\link{ctKalmanArray}} function to calculate the standardized residuals
 #' and then extracts and formats them as a data table. The standardized residuals represent the differences
 #' between the observed and predicted values, divided by the standard errors of the observations.
 #'
-#' @seealso \code{\link{ctStanKalman}}
+#' @seealso \code{\link{ctKalmanArray}}
 #'
 #' @examples
 #' data.table::setDTthreads(1) #ignore this line
@@ -432,7 +432,7 @@ ctACFresiduals <- function(fit,...){
 #' @export
 ctResiduals <- function(fit){
   if(F) Element=NULL
-  k = data.table(meltkalman(suppressMessages(ctStanKalman(fit, standardisederrors = TRUE))))
+  k = data.table(meltkalman(suppressMessages(ctKalmanArray(fit, standardisederrors = TRUE))))
   k = k[Element %in% 'errstdprior' & !is.na(value), ]
   k = dcast(k, formula = formula(Subject + Time ~ Row))
 }

@@ -58,9 +58,9 @@
 #' @examples
 #' \donttest{
 #' #generate and plot samples from prior predictive
-#' priorpred <- ctStanGenerate(cts = ctstantestfit,cores=2,nsamples = 50)
+#' priorpred <- ctGenerateFromPriors(cts = ctstantestfit,cores=2,nsamples = 50)
 #'}
-ctStanGenerate <- function(cts,datastruct=NA, is=FALSE, 
+ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
   fullposterior=TRUE, nsamples=200, parsonly=FALSE,cores=2){
   
   # includePreds <- FALSE #old argument, could reinstate some day...
@@ -117,7 +117,7 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
   #fit to empty data 
   message('Fitting model to empty dataset...')
 
-  pp<-do.call(ctStanFit,args)
+  pp<-do.call(ctFit,args)
   
   if(parsonly) dat <- pp else{
 
@@ -126,7 +126,7 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
     #get filled standata object
     pp$standata<-ctStanData(ctm=pp$ctstanmodel, datalong=datastruct,optimize=TRUE)
 
-    ppf <- ctStanGenerateFromFit(fit = pp,nsamples = nsamples,fullposterior = fullposterior,cores=cores)
+    ppf <- ctGenerateFromFit(fit = pp,nsamples = nsamples,fullposterior = fullposterior,cores=cores)
     
     #collect generated stuff
     dat <-list()
@@ -138,4 +138,9 @@ ctStanGenerate <- function(cts,datastruct=NA, is=FALSE,
   
   return(dat)
 }
+
+#' Backward-compatible alias for \code{ctGenerateFromPriors}.
+#' @rdname ctGenerateFromPriors
+#' @export
+ctStanGenerate <- ctGenerateFromPriors
 

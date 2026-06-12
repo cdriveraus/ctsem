@@ -27,9 +27,9 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     sm <- AnomAuthmodel
     sm$pars$indvarying<- FALSE
     
-    sf=ctStanFit(aa,
+    sf=ctFit(aa,
       ctstanmodel = sm, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores)
-    sfboot <- ctStanFit(aa,
+    sfboot <- ctFit(aa,
       ctstanmodel = sm, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores,optimcontrol=list(bootstrapUncertainty=T))
     
     sdat <- sf$standata

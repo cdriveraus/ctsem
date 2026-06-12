@@ -1,10 +1,10 @@
 
 
-#'ctStanContinuousPars
+#'ctContinuousPars
 #'
 #'Returns the continuous time parameter matrices of a ctStanFit fit object
 #'
-#'@param fit fit object from \code{\link{ctStanFit}}
+#'@param fit fit object from \code{\link{ctFit}}
 #'@param calcfunc Function to apply over samples, must return a single value. 
 #'By default the median over all samples is returned using the \code{\link[stats]{quantile}} function, 
 #'but one might also be interested in the \code{\link[base]{mean}} or \code{\link[stats]{sd}}, for instance.
@@ -15,10 +15,10 @@
 #'@examples
 #'\donttest{
 #'#posterior median over all subjects (also reflects mean of unconstrained pars)
-#'ctStanContinuousPars(ctstantestfit)
+#'ctContinuousPars(ctstantestfit)
 #'}
 #'@export
-ctStanContinuousPars <- function(fit,
+ctContinuousPars <- function(fit,
   calcfunc=quantile,calcfuncargs=list(probs=0.5),timeinterval=1){
 
   if(!'ctStanFit' %in% class(fit)) stop(paste0('Not an object of class ctStanFit! Instead is ',paste0(class(fit),collapse=', ')))
@@ -33,7 +33,7 @@ ctStanContinuousPars <- function(fit,
   mats <- c(names(mats$base), names(mats$asymptotic),names(mats$extra))
   if(fit$ctstanmodel$continuoustime){
     d=list(DRIFT=e$pop_DRIFT)
-    dd=ctStanDiscreteParsDrift(d,timeinterval,observational = FALSE,standardise = FALSE,cov = FALSE,quiet=TRUE)
+    dd=ctDiscreteParsDrift(d,timeinterval,observational = FALSE,standardise = FALSE,cov = FALSE,quiet=TRUE)
     e$pop_dtDRIFT <- array(dd,dim=dim(dd)[-2:-3])
     mats <- c(mats, 'dtDRIFT')
   }
@@ -91,4 +91,9 @@ ctStanContinuousPars <- function(fit,
   
   return(out)
 }
+
+#' Backward-compatible alias for \code{ctContinuousPars}.
+#' @rdname ctContinuousPars
+#' @export
+ctStanContinuousPars <- ctContinuousPars
 

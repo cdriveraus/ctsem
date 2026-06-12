@@ -27,7 +27,7 @@ ctFitAutoGroupModel(
 
 \item{groupFreeThreshold}{Numeric, threshold for group free parameter selection. Default is .5}
 
-\item{...}{Additional arguments passed to ctStanFit}
+\item{...}{Additional arguments passed to ctFit}
 }
 \value{
 A list containing a list of ctStan fit objects for each subject, and a group model
@@ -47,6 +47,6 @@ testmodel$TIpredNames <- NULL
 testfit <- ctFitAutoGroupModel(testmodel, 
 dat = ctstantestdat, cores=2, DRIFT = TRUE, DIFFUSION = TRUE)
 ctModelLatex(testfit$groupModel)
-lapply(testfit$fits,function(x) print(ctStanContinuousPars(x)$DRIFT))
+lapply(testfit$fits,function(x) print(ctContinuousPars(x)$DRIFT))
 }
 }

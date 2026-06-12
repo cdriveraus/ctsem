@@ -44,18 +44,18 @@ ctModelCoverage_check <- function(initialData, fitting_model, niter, fit_args,
   
   # Fit the model to get true parameters (use first fit_args configuration)
   initial_fit_args <- default_fit_args
-  initial_fit <- do.call(ctStanFit, c(list(datalong = initialData, ctstanmodel = fitting_model), initial_fit_args))
+  initial_fit <- do.call(ctFit, c(list(datalong = initialData, ctstanmodel = fitting_model), initial_fit_args))
   truepars <- initial_fit$stanfit$rawest
   
   # CRITICAL STEP: Generate new data samples from the fitted model
   # This ensures proper parameter specification for all iterations
-  message("Generating samples for all iterations using ctStanGenerateFromFit...")
-  generated_samples <- ctStanGenerateFromFit(fit = initial_fit, nsamples = niter, cores = cores)
+  message("Generating samples for all iterations using ctGenerateFromFit...")
+  generated_samples <- ctGenerateFromFit(fit = initial_fit, nsamples = niter, cores = cores)
 
   # Define the function to run for each iteration
   run_iteration <- function(iter_idx) {
     tryCatch({
-      # Extract generated data for this iteration from ctStanGenerateFromFit
+      # Extract generated data for this iteration from ctGenerateFromFit
       y <- array(generated_samples$generated$Y[iter_idx,,], 
         dim = dim(generated_samples$generated$Y[1,,,drop=FALSE])[-1])
       colnames(y) <- fitting_model$manifestNames
@@ -73,7 +73,7 @@ ctModelCoverage_check <- function(initialData, fitting_model, niter, fit_args,
         current_fit_args <- utils::modifyList(default_fit_args, fit_args[[fit_type]])
         
         # Fit the model with current arguments
-        current_fit <- do.call(ctStanFit, c(list(datalong = dat, ctstanmodel = fitting_model), current_fit_args))
+        current_fit <- do.call(ctFit, c(list(datalong = dat, ctstanmodel = fitting_model), current_fit_args))
         estimates <- t(apply(current_fit$stanfit$rawposterior, 2, quantile, probs = c(0.025, 0.5, 0.975)))
         
         # Compile results for this fit type

@@ -51,13 +51,13 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
         n.manifest=n.manifest,LAMBDA=diag(1)))
 
       
-      tfit1<-ctStanFit(tdat,checkm,cores=cores,optimize=TRUE,
+      tfit1<-ctFit(tdat,checkm,cores=cores,optimize=TRUE,
         optimcontrol=list(bootstrapUncertainty=TRUE))
       
       #use the estimates as true pars going forward
       truepars <- tfit1$stanfit$rawest
       
-      tfit1 <- ctStanGenerateFromFit(fit = tfit1, nsamples = niter, cores=cores)
+      tfit1 <- ctGenerateFromFit(fit = tfit1, nsamples = niter, cores=cores)
       
       
       for(iteri in 1:niter){
@@ -68,12 +68,12 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
         dat <- tdat
         dat[,checkm$manifestNames] <- y
         
-        fitboot<-ctStanFit(tdat,checkm,cores=cores,
+        fitboot<-ctFit(tdat,checkm,cores=cores,
           optimcontrol=list(bootstrapUncertainty=TRUE))
         sboot=summary(fitboot,parmatrices=F)
 
         
-        fithess<-ctStanFit(tdat,checkm,optimize=TRUE,cores=cores,inits=tfit1$stanfit$rawest,
+        fithess<-ctFit(tdat,checkm,optimize=TRUE,cores=cores,inits=tfit1$stanfit$rawest,
           optimcontrol=list(bootstrapUncertainty=F,stochastic=F))
         s2=summary(tfit2,parmatrices=F)
 

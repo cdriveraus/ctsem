@@ -8,7 +8,7 @@
 \method{plot}{ctStanFit}(x, types = "all", wait = TRUE, ...)
 }
 \arguments{
-\item{x}{Fit object from \code{\link{ctStanFit}}.}
+\item{x}{Fit object from \code{\link{ctFit}}.}
 
 \item{types}{Vector of character strings defining which plots to create.
 'all' plots all possible types, including: 'regression', 'kalman', 
@@ -28,14 +28,14 @@ Plots for ctStanFit objects
 \details{
 This function is just a wrapper calling the necessary functions for plotting - it 
 may be simpler in many cases to access those directly. They are:
- \code{\link{ctStanDiscretePars}},\code{\link{ctKalman}},
- \code{\link{ctStanPlotPost}},\code{stan_trace},
+ \code{\link{ctDiscretePars}},\code{\link{ctKalman}},
+ \code{\link{ctPlotPosterior}},\code{stan_trace},
  \code{stan_dens},\code{stan_plot}
  rstan offers many plotting possibilities not available here, to use that functionality
  one must simply call the relevant rstan plotting function. Use \code{x$stanfit} as the stan fit object
  (where x is the name of your ctStanFit object). Because a ctStanFit object has many 
- parameters, the additional argument \code{pars=ctStanParnames(x,'pop_')} is recommended.
- This denotes population means, but see \code{\link{ctStanParnames}} for
+ parameters, the additional argument \code{pars=ctRawParnames(x,'pop_')} is recommended.
+ This denotes population means, but see \code{\link{ctRawParnames}} for
  other options.
 }
 \examples{

@@ -28,11 +28,11 @@ datalong <- cbind(id, time, sunspots)
  
  # ssmodel$covmattransform='cholesky'
 
-ssfit1 <- ctStanFit(datalong, ssmodel,cores=1,verbose=0)
-# ssfit <- ctStanFit(datalong, ssmodel,cores=1,verbose=0,optimcontrol = list(hessianType='stochastic', stochasticHessianEpsilon=1e-1))
-ssfit2 <- ctStanFit(datalong, ssmodel,cores=2,verbose=0)
-ssfit3 <- ctStanFit(datalong, ssmodel,cores=1,nlcontrol=list(maxtimestep=.3))
-ssfit4 <- ctStanFit(datalong, ssmodel,chains=2,cores=2,iter=300,optimize=F,priors=F,
+ssfit1 <- ctFit(datalong, ssmodel,cores=1,verbose=0)
+# ssfit <- ctFit(datalong, ssmodel,cores=1,verbose=0,optimcontrol = list(hessianType='stochastic', stochasticHessianEpsilon=1e-1))
+ssfit2 <- ctFit(datalong, ssmodel,cores=2,verbose=0)
+ssfit3 <- ctFit(datalong, ssmodel,cores=1,nlcontrol=list(maxtimestep=.3))
+ssfit4 <- ctFit(datalong, ssmodel,chains=2,cores=2,iter=300,optimize=F,priors=F,
   control=list(max_treedepth=8),verbose=0,  
   inits='optimize',
   intoverpop = T)
@@ -44,8 +44,8 @@ for(i in 2:4){
 
 for(i in 2:4){
   test_isclose(
-      ctStanContinuousPars(get(paste0('ssfit',i)))$DRIFT,
-      ctStanContinuousPars(get(paste0('ssfit',i-1)))$DRIFT,tol=1e-1)
+      ctContinuousPars(get(paste0('ssfit',i)))$DRIFT,
+      ctContinuousPars(get(paste0('ssfit',i-1)))$DRIFT,tol=1e-1)
 }
 
 })

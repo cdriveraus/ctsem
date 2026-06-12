@@ -208,7 +208,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& !(.Platform$OS.type=="windows" &&
     m1$pars$sdscale[!grepl('drift',m1$pars$param)] <- 10
     
     # fit ---------------------------------------------------------------------
-    f <- ctStanFit(datalong = ltsData, ctstanmodel = m1,cores=cores,saveComplexPars = T,fit=T)#,optimcontrol=list(stochastic=F,carefulfit=F),init=rep(0,30)
+    f <- ctFit(datalong = ltsData, ctstanmodel = m1,cores=cores,saveComplexPars = T,fit=T)#,optimcontrol=list(stochastic=F,carefulfit=F),init=rep(0,30)
     
     testthat::expect_equivalent(class(f),'ctStanFit')
     

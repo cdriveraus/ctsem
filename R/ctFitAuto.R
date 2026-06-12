@@ -39,7 +39,7 @@ ctFitAutoGetIndividualRestrictions <- function(fits,f0,groupFreeThreshold){
 #' @param individuals Logical, if TRUE, fit individual level models and determine a group model based on the groupFreeThreshold argument.
 #' @param groupFreeThreshold Numeric, threshold for group model structure -- if a parameter improves fit in this proportion of individuals or greater, it is freed for all individuals.
 #' @param cores Number of CPU cores to use
-#' @param ... Additional arguments passed to ctStanFit
+#' @param ... Additional arguments passed to ctFit
 #' @details This function is used to automatically select parameters in a ctStan model. Any specified DRIFT / DIFFUSION matrix off diagonals are only included if they significantly improve the likelihood, based on an estimated likelihood ratio test (relying on the Hessian).
 #' @return A ctStan fit object
 #' @export
@@ -58,7 +58,7 @@ ctFitAuto <- function(m, dat, DRIFT=TRUE, DIFFUSION=TRUE,fast=FALSE,initialRestr
   
   if(individuals & cores > sum(!duplicated(dat[[m$subjectIDname]]))) cores <- sum(!duplicated(dat[[m$subjectIDname]]))
   if(individuals & !fast) message('Refitting individual level models, this may take some time -- consider specifying fast argument to avoid this!')
-  f0 <- ctStanFit(datalong = dat, ctstanmodel = m,fit=F) #fit structure without fitting
+  f0 <- ctFit(datalong = dat, ctstanmodel = m,fit=F) #fit structure without fitting
   
   ms=f0$setup$matsetup #matrix setup
   ms <- ms[!duplicated(ms$param) & ms$param > 0 & ms$when==0,] #with only estimated parameters
@@ -74,7 +74,7 @@ ctFitAuto <- function(m, dat, DRIFT=TRUE, DIFFUSION=TRUE,fast=FALSE,initialRestr
   ffinal=list()
   parsteps = list(ms$param[(ms$pass==2)]) #list containing the parameters to be fixed initially
   #fit to determine which parameters should be free / restricted
-  f  <- ctStanFit(datalong = dat, ctstanmodel = f0$ctstanmodelbase, cores=cores,
+  f  <- ctFit(datalong = dat, ctstanmodel = f0$ctstanmodelbase, cores=cores,
     optimcontrol=list(parsteps=parsteps,
       carefulfit=ifelse(individuals,FALSE,TRUE),
       parstepsAutoModel=ifelse(individuals,'group',TRUE),
@@ -107,7 +107,7 @@ ctFitAuto <- function(m, dat, DRIFT=TRUE, DIFFUSION=TRUE,fast=FALSE,initialRestr
         ffinal$subjectfits <- future.apply::future_lapply(1:nrow(f$stanfit$optimfit$subjFreed), function(si){
           subjinit <- f$stanfit$optimfit$subjPars[si,]
           if(length(subjparsteps[[si]]) > 0) subjinit <- subjinit[-subjparsteps[[si]] ] #if there are any fixed parameters, remove them from the initial values
-          sfit <- ctStanFit(datalong = dat[dat[[m$subjectIDname]]==unique(dat[[m$subjectIDname]])[si],], ctstanmodel = ffinal$subjectmodels[[si]],inits=subjinit,optimcontrol=list(carefulfit=F),cores=1,...)
+          sfit <- ctFit(datalong = dat[dat[[m$subjectIDname]]==unique(dat[[m$subjectIDname]])[si],], ctstanmodel = ffinal$subjectmodels[[si]],inits=subjinit,optimcontrol=list(carefulfit=F),cores=1,...)
         },future.seed=TRUE)
     } #end refit if not fast
   }#end individuals
@@ -117,7 +117,7 @@ ctFitAuto <- function(m, dat, DRIFT=TRUE, DIFFUSION=TRUE,fast=FALSE,initialRestr
   #final estimate using restructured model
   
   if(!individuals){
-    ffinal <- ctStanFit(datalong = dat, ctstanmodel = ffinal$model,optimcontrol=list(estonly=fast),...)
+    ffinal <- ctFit(datalong = dat, ctstanmodel = ffinal$model,optimcontrol=list(estonly=fast),...)
   ffinal$stanfit$parsteps <- f$stanfit$parsteps #append the parsteps to the final fit
   }
   return(ffinal)
@@ -133,7 +133,7 @@ ctFitAuto <- function(m, dat, DRIFT=TRUE, DIFFUSION=TRUE,fast=FALSE,initialRestr
 #' @param DRIFT Logical, if TRUE, off diagonal drift parameters in the model are tested for inclusion
 #' @param DIFFUSION Logical, if TRUE, off diagonal diffusion parameters in the model are tested for inclusion
 #' @param groupFreeThreshold Numeric, threshold for group free parameter selection. Default is .5
-#' @param ... Additional arguments passed to ctStanFit
+#' @param ... Additional arguments passed to ctFit
 #' @details This function is used to automatically select parameters in a ctStan model. Any specified DRIFT / DIFFUSION matrix off diagonals are only included if they significantly improve the likelihood, based on an estimated likelihood ratio test (relying on the Hessian). Subjects are fit one by one, and a group model is determined based on the groupFreeThreshold parameter -- when the proportion of subjects with a parameter free is above this threshold, the parameter is freed in the group model.
 #' @return A list containing a list of ctStan fit objects for each subject, and a group model
 #' @export
@@ -146,7 +146,7 @@ ctFitAuto <- function(m, dat, DRIFT=TRUE, DIFFUSION=TRUE,fast=FALSE,initialRestr
 #' testfit <- ctFitAutoGroupModel(testmodel, 
 #' dat = ctstantestdat, cores=2, DRIFT = TRUE, DIFFUSION = TRUE)
 #' ctModelLatex(testfit$groupModel)
-#' lapply(testfit$fits,function(x) print(ctStanContinuousPars(x)$DRIFT))
+#' lapply(testfit$fits,function(x) print(ctContinuousPars(x)$DRIFT))
 #' }
 ctFitAutoGroupModel <- function(m, dat, cores, DRIFT=TRUE, DIFFUSION=TRUE,groupFreeThreshold=.5,...){
   
@@ -161,7 +161,7 @@ ctFitAutoGroupModel <- function(m, dat, cores, DRIFT=TRUE, DIFFUSION=TRUE,groupF
   future::plan(future::multisession, workers = cores)
   
   dat=data.frame(dat)
-  f0 <- ctStanFit(
+  f0 <- ctFit(
     datalong = dat[ dat[[m$subjectIDname]] == dat[[m$subjectIDname]][1],], 
     ctstanmodel = m,fit=F) #fit structure without fitting
   

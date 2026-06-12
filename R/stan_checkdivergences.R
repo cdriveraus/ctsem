@@ -29,7 +29,7 @@
 #'  DIFFUSION=matrix(c(0, 0, 0, "diffusion"), ncol=2, nrow=2))
 #'
 #' #fit
-#' ssfit <- ctStanFit(datalong, ssmodel, iter=2, 
+#' ssfit <- ctFit(datalong, ssmodel, iter=2,
 #'   optimize=FALSE, chains=1)
 #'   
 #' stan_checkdivergences(ssfit$stanfit$stanfit) #stan object

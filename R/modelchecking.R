@@ -69,7 +69,7 @@ ctcorplots <- function(dlong, vars, maxlag, splitvar=NA, splitpoints=NA,varsPerP
 
 
 
-ctStanDataOut <- function(fit){
+ctDataOut <- function(fit){
   dat <- data.table(fit$standata$time)
   colnames(dat) <- fit$ctstanmodel$timeName
   dat[,(fit$ctstanmodel$subjectIDname) := data.table(fit$setup$idmap[fit$data$subject,1] ) ]
@@ -84,9 +84,9 @@ ctStanDataOut <- function(fit){
 
 compareCor <- function(fit,maxlag,N,...){
   vars=fit$ctstanmodel$manifestNames
-  newdat=data.table(ctStanDataOut(fit))
+  newdat=data.table(ctDataOut(fit))
   dl2=data.table(newdat,new=0)
-  if(is.null(fit$generate)) gendat=ctStanGenerateFromFit(fit,nsamples = N)$generate else gendat=fit$generate
+  if(is.null(fit$generate)) gendat=ctGenerateFromFit(fit,nsamples = N)$generate else gendat=fit$generate
   for(n in 1:N){
     ny=gendat$Y[,n,]
     newdat[,(vars) := data.table(ny)]

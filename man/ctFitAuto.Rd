@@ -36,7 +36,7 @@ ctFitAuto(
 
 \item{cores}{Number of CPU cores to use}
 
-\item{...}{Additional arguments passed to ctStanFit}
+\item{...}{Additional arguments passed to ctFit}
 }
 \value{
 A ctStan fit object

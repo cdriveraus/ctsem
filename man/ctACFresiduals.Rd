@@ -20,7 +20,7 @@ function (ACF) on the standardized residuals.
 }
 \details{
 This function first extracts the standardized residuals from the fit object using
-the \code{\link{ctStanKalman}} function. Then, it calculates the continuous time ACF for these residuals
+the \code{\link{ctKalmanArray}} function. Then, it calculates the continuous time ACF for these residuals
 and returns the results as a data table.
 }
 \examples{
@@ -30,5 +30,5 @@ ctACFresiduals(ctstantestfit, varnames='Y1',nboot=5)
 
 }
 \seealso{
-\code{\link{ctStanKalman}}
+\code{\link{ctKalmanArray}}
 }

@@ -1,6 +1,6 @@
 #' Get Kalman filter estimates from a ctStanFit object
 #'
-#' @param fit fit object from \code{\link{ctStanFit}}.
+#' @param fit fit object from \code{\link{ctFit}}.
 #' @param nsamples either NA (to extract all) or a positive integer from 1 to maximum samples in the fit.
 #' @param cores Integer number of cpu cores to use. Only needed if savescores was set to FALSE when fitting.
 #' @param collapsefunc function to apply over samples, such as \code{mean}
@@ -25,8 +25,8 @@
 #' @export
 #'
 #' @examples 
-#' k=ctStanKalman(ctstantestfit,subjectpars=TRUE,collapsefunc=mean)
-ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1, 
+#' k=ctKalmanArray(ctstantestfit,subjectpars=TRUE,collapsefunc=mean)
+ctKalmanArray <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
   subjects=1:max(fit$standata$subject), timestep='asdata',maxtime='asdata',
   standardisederrors=FALSE, subjectpars=TRUE, tformsubjectpars=TRUE, indvarstates=FALSE,removeObs=F,...){
   
@@ -199,6 +199,11 @@ ctStanKalman <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
   
   return(out)
 }
+
+#' Backward-compatible alias for \code{ctKalmanArray}.
+#' @rdname ctKalmanArray
+#' @export
+ctStanKalman <- ctKalmanArray
 
 
 

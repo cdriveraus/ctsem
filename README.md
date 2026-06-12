@@ -142,7 +142,7 @@ ctModelLatex(m)
 reported otherwise
 
 ``` r
-f <- ctStanFit(chickdata,m,priors=TRUE) 
+f <- ctFit(chickdata,m,priors=TRUE)
 ```
 
 \#’ Summarise fit, view covariate effects – Diets 3 and 4 seem most
@@ -173,7 +173,7 @@ ctKalman(f,plot=T,
 increases in this case!
 
 ``` r
-ctStanDiscretePars(f,plot=T) 
+ctDiscretePars(f,plot=T)
 ```
 
 \#’ Other useful functions:
@@ -185,20 +185,20 @@ ctStanDiscretePars(f,plot=T)
 \#’ Add samples to fit to increase estimate precision: ctAddSamples()
 
 \#’ Return dynamic system parameters in matrix forms:
-ctStanContinuousPars()
+ctContinuousPars()
 
 \#’ Compute cross validation statistics: ctLOO()
 
 \#’ Plot time independent predictor (covariate effects on parameters):
-ctStanTIpredEffects()
+ctTIpredEffects()
 
 \#’ Generate data from a specified model of fixed parameters:
 ctGenerate()
 
 \#’ Generate data from a specified model of fixed and free parameters /
-priors: ctStanGenerate()
+priors: ctGenerateFromPriors()
 
-\#’ Generate data from a fitted model: ctStanGenerateFromFit()
+\#’ Generate data from a fitted model: ctGenerateFromFit()
 
 \#’ Get samples from the fitted object: ctExtract()
 

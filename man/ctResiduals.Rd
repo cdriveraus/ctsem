@@ -16,7 +16,7 @@ A data table containing the standardized residuals for each subject and time poi
 This function takes a fit object from the ctsem package and extracts the standardized residuals.
 }
 \details{
-This function uses the \code{\link{ctStanKalman}} function to calculate the standardized residuals
+This function uses the \code{\link{ctKalmanArray}} function to calculate the standardized residuals
 and then extracts and formats them as a data table. The standardized residuals represent the differences
 between the observed and predicted values, divided by the standard errors of the observations.
 }
@@ -27,5 +27,5 @@ residuals <- ctResiduals(ctstantestfit)
 
 }
 \seealso{
-\code{\link{ctStanKalman}}
+\code{\link{ctKalmanArray}}
 }

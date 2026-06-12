@@ -63,13 +63,13 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       MANIFESTMEANS='state[3]')
     m2$pars$indvarying=F
     
-    f <- ctStanFit(datalong = dat,ctstanmodel = m,cores=cores)
+    f <- ctFit(datalong = dat,ctstanmodel = m,cores=cores)
     s=summary(f)
-    subjpars=ctStanSubjectPars(f)[1,,] #calculate subject specific parameter estimates
+    subjpars=ctSubjectPars(f)[1,,] #calculate subject specific parameter estimates
     
-    f2 <- ctStanFit(datalong = dat,ctstanmodel = m2,cores=cores)
+    f2 <- ctFit(datalong = dat,ctstanmodel = m2,cores=cores)
     s2=summary(f2)
-    cp2=ctStanContinuousPars(f2)
+    cp2=ctContinuousPars(f2)
     
     
     
@@ -191,13 +191,13 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       MANIFESTMEANS='state[3]')
     m2$pars$indvarying=F
     
-    f <- ctStanFit(datalong = dat,ctstanmodel = m,cores=cores)
+    f <- ctFit(datalong = dat,ctstanmodel = m,cores=cores)
     s=summary(f)
-    subjpars=ctStanSubjectPars(f)[1,,] #calculate subject specific parameter estimates
+    subjpars=ctSubjectPars(f)[1,,] #calculate subject specific parameter estimates
     
-    f2 <- ctStanFit(datalong = dat,ctstanmodel = m2,cores=cores)
+    f2 <- ctFit(datalong = dat,ctstanmodel = m2,cores=cores)
     s2=summary(f2)
-    cp2=ctStanContinuousPars(f2)
+    cp2=ctContinuousPars(f2)
     
     
     
@@ -302,15 +302,15 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       CINT=c('state[3]',0,0),MANIFESTMEANS=0)
     m2$pars$indvarying=F
     
-    f <- ctStanFit(datalong = dat,ctstanmodel = m,cores=cores)
+    f <- ctFit(datalong = dat,ctstanmodel = m,cores=cores)
     s=summary(f)
     s
-    subjpars=ctStanSubjectPars(f)[1,,c('T0m_eta1','drift','cint')] #calculate subject specific parameter estimates
+    subjpars=ctSubjectPars(f)[1,,c('T0m_eta1','drift','cint')] #calculate subject specific parameter estimates
     
-    f2 <- ctStanFit(datalong = dat,ctstanmodel = m2,cores=cores)
+    f2 <- ctFit(datalong = dat,ctstanmodel = m2,cores=cores)
     s2=summary(f2)
     s2
-    cp2=ctStanContinuousPars(f2)
+    cp2=ctContinuousPars(f2)
     
     
     
@@ -430,15 +430,15 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
         MANIFESTMEANS=0)
       m2$pars$indvarying=F
       
-      f <- ctStanFit(datalong = dat,ctstanmodel = m,cores=cores)
+      f <- ctFit(datalong = dat,ctstanmodel = m,cores=cores)
       s=summary(f)
       s
-      subjpars=ctStanSubjectPars(f)[1,,c('t0m','diffusion','cint')] #calculate subject specific parameter estimates
+      subjpars=ctSubjectPars(f)[1,,c('t0m','diffusion','cint')] #calculate subject specific parameter estimates
       
-      f2 <- ctStanFit(datalong = dat,ctstanmodel = m2,cores=cores)
+      f2 <- ctFit(datalong = dat,ctstanmodel = m2,cores=cores)
       s2=summary(f2)
       s2
-      cp2=ctStanContinuousPars(f2)
+      cp2=ctContinuousPars(f2)
       
       
       
@@ -561,15 +561,15 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       MANIFESTMEANS=0)
     m2$pars$indvarying=F
     
-    f <- ctStanFit(datalong = dat,ctstanmodel = m,cores=cores)
+    f <- ctFit(datalong = dat,ctstanmodel = m,cores=cores)
     s=summary(f)
     # s
-    subjpars=ctStanSubjectPars(f)[1,,c('t0m','errsd','cint')] #calculate subject specific parameter estimates
+    subjpars=ctSubjectPars(f)[1,,c('t0m','errsd','cint')] #calculate subject specific parameter estimates
     
-    f2 <- ctStanFit(datalong = dat,ctstanmodel = m2,cores=cores)
+    f2 <- ctFit(datalong = dat,ctstanmodel = m2,cores=cores)
     s2=summary(f2)
     # s2
-    cp2=ctStanContinuousPars(f2)
+    cp2=ctContinuousPars(f2)
     
     
     

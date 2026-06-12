@@ -25,7 +25,7 @@ ctModelUnlist<-function(ctmodelobj,
   return(out)
 }
 
-#' Convert a frequentist (omx) ctsem model specification to Bayesian (Stan).
+#' Convert an old 'omx' ctsem model into a modern ct or dt form with dataframe.
 #'
 #' @param ctmodelobj ctsem model object of type 'omx' (default)
 #' @param type either 'ct' for continuous time, or 'dt' for discrete time.
@@ -39,7 +39,7 @@ ctModelUnlist<-function(ctmodelobj,
 #' @export
 #'
 #' @examples
-#' model <- ctModel(type='ct', Tpoints=50,
+#' model <- ctModel(type='omx', Tpoints=50,
 #' n.latent=2, n.manifest=1, 
 #' manifestNames='sunspots', 
 #' latentNames=c('ss_level', 'ss_velocity'),

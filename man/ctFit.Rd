@@ -154,7 +154,7 @@ or time points, will increase file size substantially.}
 \item{savesubjectmatrices}{Logical. If TRUE, subject specific matrices are saved -- 
 only relevant when either time dependent predictors or individual differences are 
 used. Can increase memory usage dramatically in large models, and can be computed after fitting using ctExtract
-or ctStanSubjectPars .}
+or ctSubjectPars .}
 
 \item{saveComplexPars}{Logical. If TRUE, also save rowwise output of any complex parameters specified,
 i.e. combinations of parameters, functions and states.}
@@ -163,7 +163,7 @@ i.e. combinations of parameters, functions and states.}
 generates random data according to the specified model / priors. 
 Generated data is in the $Ygen subobject after running \code{extract} on the fit object.
 For datasets with many manifest variables or time points, file size may be large.
-To generate data based on the posterior of a fitted model, see \code{\link{ctStanGenerateFromFit}}.}
+To generate data based on the posterior of a fitted model, see \code{\link{ctGenerateFromFit}}.}
 
 \item{control}{Used when \code{optimize=FALSE}. List of arguments sent to \code{\link[rstan]{stan}} control argument, 
 regarding warmup / sampling behaviour. Unless specified, values used are:
@@ -191,7 +191,7 @@ model<-ctModel(type='ct',
   TIpredNames=c('TI1','TI2','TI3'),
   LAMBDA=diag(2)) 
 
-fit<-ctStanFit(ctstantestdat, model,priors=TRUE)
+fit<-ctFit(ctstantestdat, model,priors=TRUE)
 
 summary(fit) 
 
@@ -218,6 +218,7 @@ tdpredeffect <- rnorm(nsubjects,5,.3)+age*.5
 for(i in 1:nsubjects){
   #generating model
   gm<-ctModel(Tpoints=Tpoints,n.manifest = nmanifest,n.latent = nlatent,n.TDpred = 1,
+  type='omx',
     LAMBDA = matrix(c(1,0,0,0, 0,1,.8,1.3),nrow=nmanifest,ncol=nlatent),
     DRIFT=matrix(c(-.3, .2, 0, -.5),nlatent,nlatent),
     TDPREDMEANS=matrix(c(rep(0,Tpoints-10),1,rep(0,9)),ncol=1),
@@ -286,7 +287,7 @@ m1 <- ctModel(type = 'ct',
 ctModelLatex(m1)
 
 #fit
-f1 <- ctStanFit(datalong = dat2, ctstanmodel = m1, optimize=TRUE, priors=FALSE)
+f1 <- ctFit(datalong = dat2, ctstanmodel = m1, optimize=TRUE, priors=FALSE)
 
 summary(f1)
 
@@ -294,7 +295,7 @@ summary(f1)
 ctKalman(f1,plot=TRUE,subjects=1,kalmanvec=c('y','yprior'),timestep=.01)
 ctKalman(f1,plot=TRUE,subjects=1:3,kalmanvec=c('y','ysmooth'),timestep=.01,errorvec=NA)
 
-ctStanPostPredict(f1, wait=FALSE) #compare randomly generated data from posterior to observed data
+ctPostPredict(f1, wait=FALSE) #compare randomly generated data from posterior to observed data
 
 cf<-ctCheckFit(f1) #compare mean and covariance of randomly generated data to observed cov
 plot(cf,wait=FALSE)

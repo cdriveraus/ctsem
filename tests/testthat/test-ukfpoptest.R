@@ -59,14 +59,14 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     #fit 1
     sm1 <- m1
     sm1$pars$indvarying <- FALSE
-    sf1 <- ctStanFit(cd,sm1,cores=cores,verbose=0)
+    sf1 <- ctFit(cd,sm1,cores=cores,verbose=0)
     sf1d=sf1$stanfit$transformedparsfull$pop_DRIFT[1,1:2,1:2]
     sf1ll=sf1$stanfit$optimfit$value
     
     #fit 2
     sm2 <- m2
     sm2$pars$sdscale <- .2
-    sf2 <- ctStanFit(cd,sm2,cores=cores)
+    sf2 <- ctFit(cd,sm2,cores=cores)
     sf2d=sf2$stanfit$transformedparsfull$pop_DRIFT[1,1:2,1:2]
     sf2ll=sf2$stanfit$optimfit$value
     
@@ -111,7 +111,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     dtm$pars$indvarying <- FALSE
     dtm$pars$indvarying[dtm$pars$matrix %in% 'DRIFT'] <- TRUE
     
-    dtf = ctStanFit(datalong = dat,ctstanmodel = dtm,optimize=TRUE,
+    dtf = ctFit(datalong = dat,ctstanmodel = dtm,optimize=TRUE,
       verbose=0,optimcontrol=list(estonly=F),savescores = F)
     s1=summary(dtf,parmatrices = F,priorcheck = F,residualcov = F)
     
@@ -122,7 +122,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       MANIFESTMEANS = matrix(0))
     
     dtm2$pars$indvarying <- FALSE
-    dtf2=ctStanFit(datalong = dat,ctstanmodel = dtm2,optimize = TRUE)
+    dtf2=ctFit(datalong = dat,ctstanmodel = dtm2,optimize = TRUE)
     s2=summary(dtf2,parmatrices = F,priorcheck = F,residualcov = F)
     
     test_isclose(s1$ll,s2$ll,tol=1e-3)

@@ -101,7 +101,7 @@ NULL
 
 #' ctstantestdat
 #' 
-#' Generated dataset for testing \code{\link{ctStanFit}} from ctsem package.
+#' Generated dataset for testing \code{\link{ctFit}} from ctsem package.
 #' @format matrix
 #' @name ctstantestdat
 NULL

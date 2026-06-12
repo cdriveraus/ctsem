@@ -412,7 +412,7 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
     
     # if(covMatrices){
     #   if('ctStanFit' %in% class(m)){
-    #     cp <- ctStanContinuousPars(m)
+    #     cp <- ctContinuousPars(m)
     #     ctmodel$T0VAR <- cp$T0COV
     #     ctmodel$DIFFUSION <- cp$DIFFUSIONcov
     #     } else {

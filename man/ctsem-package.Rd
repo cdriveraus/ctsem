@@ -40,6 +40,7 @@ Useful links:
 
 Authors:
 \itemize{
+  \item Charles Driver \email{charles.driver2@uzh.ch} [copyright holder]
   \item Manuel Voelkle [copyright holder]
   \item Han Oud [copyright holder]
 }

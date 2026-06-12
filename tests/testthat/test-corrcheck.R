@@ -30,9 +30,9 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       # MANIFESTMEANS = 0,
       MANIFESTVAR = 0)
     
-    f <- ctStanFit(datalong = d,ctstanmodel = m,priors=T,verbose=0,cores=cores)
+    f <- ctFit(datalong = d,ctstanmodel = m,priors=T,verbose=0,cores=cores)
     
-    p <- ctStanContinuousPars(f)
+    p <- ctContinuousPars(f)
     
     diffcov <- p$DIFFUSIONcov
     diffcor <- cov2cor(p$DIFFUSIONcov)
@@ -96,9 +96,9 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       MANIFESTMEANS=0,
       MANIFESTVAR = 0)
     
-    f <- ctStanFit(datalong = d,ctstanmodel = m,priors=TRUE,cores=cores,verbose=0)
+    f <- ctFit(datalong = d,ctstanmodel = m,priors=TRUE,cores=cores,verbose=0)
     
-    p <- ctStanContinuousPars(f)
+    p <- ctContinuousPars(f)
     
     t0cov <- p$T0cov
     t0cor <- cov2cor(t0cov)

@@ -9,11 +9,11 @@ ctStanUpdModel(fit, datalong, ctstanmodel, ...)
 \arguments{
 \item{fit}{ctStanFit object}
 
-\item{datalong}{data as normally passed to \code{\link{ctStanFit}}}
+\item{datalong}{data as normally passed to \code{\link{ctFit}}}
 
-\item{ctstanmodel}{model as normally passed to \code{\link{ctStanFit}}}
+\item{ctstanmodel}{model as normally passed to \code{\link{ctFit}}}
 
-\item{...}{extra args for \code{\link{ctStanFit}}}
+\item{...}{extra args for \code{\link{ctFit}}}
 }
 \description{
 Allows one to change data and or model elements that don't require recompiling, then re fit.

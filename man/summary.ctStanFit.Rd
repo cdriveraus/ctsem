@@ -15,7 +15,7 @@
 )
 }
 \arguments{
-\item{object}{fit object from \code{\link{ctStanFit}}, of class ctStanFit.}
+\item{object}{fit object from \code{\link{ctFit}}, of class ctStanFit.}
 
 \item{timeinterval}{positive numeric indicating time interval to use for discrete time parameter calculations
 reported in summary.}
@@ -35,7 +35,7 @@ for large models with many samples.}
 List containing summary items.
 }
 \description{
-Summarise a ctStanFit object that was fit using \code{\link{ctStanFit}}.
+Summarise a ctStanFit object that was fit using \code{\link{ctFit}}.
 }
 \examples{
 summary(ctstantestfit)

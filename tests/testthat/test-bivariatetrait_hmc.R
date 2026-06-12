@@ -30,7 +30,7 @@ d$Y1 <- d$Y1 + rnorm(nrow(d),0,.2) #gaussian measurement error
 
 m <- ctModel(LAMBDA=diag(2),type='ct',TRAITVAR='auto',Tpoints=7,
   manifestNames = c('Y1','Y2'))
-system.time({f <- ctStanFit(datalong = d,ctstanmodel = m,cores=2,priors = F)})
+system.time({f <- ctFit(datalong = d,ctstanmodel = m,cores=2,priors = F)})
 
 # library(ctsemOMX)
 # system.time({fo<-ctsemOMX::ctFit(ctmodelobj = m,dat = d,stationary = NULL)})
@@ -38,8 +38,8 @@ system.time({f <- ctStanFit(datalong = d,ctstanmodel = m,cores=2,priors = F)})
 s=summary(f)
 s
 
-f2 <- ctStanFit(datalong = d,ctstanmodel = m,cores=6,optimize=F,chains=4,intoverpop = F)
+f2 <- ctFit(datalong = d,ctstanmodel = m,cores=6,optimize=F,chains=4,intoverpop = F)
 s2=summary(f2)
-f3 <- ctStanFit(datalong = d,ctstanmodel = m,cores=6,optimize=F,chains=4,intoverpop = F,intoverstates = F)
+f3 <- ctFit(datalong = d,ctstanmodel = m,cores=6,optimize=F,chains=4,intoverpop = F,intoverstates = F)
 s3=summary(f3)
 }

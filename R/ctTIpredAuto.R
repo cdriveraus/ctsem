@@ -1,4 +1,4 @@
-ctStanParnamesRaw <- function(fit){
+ctRawParnamesRaw <- function(fit){
   if(!class(fit) %in% 'ctStanFit' || !length(fit$stanfit$stanfit@sim)==0) stop('Not an optimized ctStanFit model!')
   ms <- fit$setup$matsetup
   ms <- ms[ms$param > 0 & ms$when %in% 0 & ms$copyrow < 1,]
@@ -99,7 +99,7 @@ checkTIauto <- function(){
   
   checkm$TIpredAuto <- 1L
   
-  fit1<-ctStanFit(tdat,checkm,chains=1,optimize=TRUE,cores=1,verbose=0,
+  fit1<-ctFit(tdat,checkm,chains=1,optimize=TRUE,cores=1,verbose=0,
     # intoverpop=F,
     plot=10,
     # savesubjectmatrices = F,plot=F,

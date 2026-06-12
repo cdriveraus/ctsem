@@ -20,7 +20,7 @@ ctsmupdate<-function(usecurrentwd=FALSE,scat=FALSE){
   
   #fit
   
-  sm <- ctStanFit(datalong, model,fit=FALSE,gendata=FALSE,forcerecompile=TRUE)$stanmodeltext
+  sm <- ctFit(datalong, model,fit=FALSE,gendata=FALSE,forcerecompile=TRUE)$stanmodeltext
   #replace multiple empty lines with single empty lines
   sm <- gsub("\\n+", "\n", sm)
   
@@ -28,7 +28,7 @@ ctsmupdate<-function(usecurrentwd=FALSE,scat=FALSE){
   
   stanc(model_code = sm,verbose = TRUE)
   
-  smgen <- ctStanFit(datalong, model,fit=FALSE,gendata=TRUE,forcerecompile=TRUE)$stanmodeltext
+  smgen <- ctFit(datalong, model,fit=FALSE,gendata=TRUE,forcerecompile=TRUE)$stanmodeltext
   smgen <- gsub("\\n+", "\n", smgen)
   stanc(model_code = smgen,verbose = TRUE)
   

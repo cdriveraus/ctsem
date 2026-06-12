@@ -34,7 +34,7 @@ Raise the order of a ctsem model object.
 }
 \examples{
 om <- ctModel(LAMBDA=diag(1,2),DRIFT=0, 
-  MANIFESTMEANS=0,type='ct',Tpoints=4)
+  MANIFESTMEANS=0,type='omx',Tpoints=4)
   
 om <- ctModelHigherOrder(om,1:2)
 print(om$DRIFT)

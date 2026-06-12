@@ -2,7 +2,7 @@
 % Please edit documentation in R/ctStanModel.R
 \name{ctStanModel}
 \alias{ctStanModel}
-\title{Convert a frequentist (omx) ctsem model specification to Bayesian (Stan).}
+\title{Convert an old 'omx' ctsem model into a modern ct or dt form with dataframe.}
 \usage{
 ctStanModel(ctmodelobj, type = "ct", tipredDefault = TRUE)
 }
@@ -20,10 +20,10 @@ List object of class ctStanModel, with random effects specified for any intercep
 after initial specification by directly editing the \code{pars} subobject, so \code{model$pars} .
 }
 \description{
-Convert a frequentist (omx) ctsem model specification to Bayesian (Stan).
+Convert an old 'omx' ctsem model into a modern ct or dt form with dataframe.
 }
 \examples{
-model <- ctModel(type='ct', Tpoints=50,
+model <- ctModel(type='omx', Tpoints=50,
 n.latent=2, n.manifest=1, 
 manifestNames='sunspots', 
 latentNames=c('ss_level', 'ss_velocity'),

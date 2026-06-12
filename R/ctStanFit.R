@@ -13,9 +13,9 @@
 #' @export
 #'
 #' @examples
-#' newfit <- ctStanFitUpdate(ctstantestfit,refit=FALSE)
+#' newfit <- ctFitUpdate(ctstantestfit,refit=FALSE)
 
-ctStanFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
+ctFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
   
   if(!refit) message('Trying to do a quick update -- if there are problems, try with refit=TRUE for more robustness')
   
@@ -48,6 +48,11 @@ ctStanFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
   return(oldfit)
 }
 
+#' Backward-compatible alias for \code{ctFitUpdate}.
+#' @rdname ctFitUpdate
+#' @export
+ctStanFitUpdate <- ctFitUpdate
+
 
 T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (because indvarying t0means) and disable
   whichT0VAR_T0MEANSindvarying <- ctm$pars$matrix %in% 'T0VAR'  &  
@@ -66,15 +71,6 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 }
 
 
-
-# verbosify<-function(sf,verbose=2){
-#   sm <- sf$stanmodel
-#   sd <- sf$standata
-#   sd$verbose=as.integer(verbose)
-#   
-#   sfr <- stan_reinitsf(sm,sd)
-#   log_prob(sfr,sf$stanfit$rawest)
-# }
 
 #' Fit a ctsem model
 #'
@@ -140,14 +136,14 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' @param savesubjectmatrices Logical. If TRUE, subject specific matrices are saved -- 
 #' only relevant when either time dependent predictors or individual differences are 
 #' used. Can increase memory usage dramatically in large models, and can be computed after fitting using ctExtract
-#' or ctStanSubjectPars .
+#' or ctSubjectPars .
 #' @param saveComplexPars Logical. If TRUE, also save rowwise output of any complex parameters specified,
 #' i.e. combinations of parameters, functions and states. 
 #' @param gendata Logical -- If TRUE, uses provided data for only covariates and a time and missingness structure, and 
 #' generates random data according to the specified model / priors. 
 #' Generated data is in the $Ygen subobject after running \code{extract} on the fit object.
 #' For datasets with many manifest variables or time points, file size may be large.
-#' To generate data based on the posterior of a fitted model, see \code{\link{ctStanGenerateFromFit}}.
+#' To generate data based on the posterior of a fitted model, see \code{\link{ctGenerateFromFit}}.
 #' @param vb Logical. Use variational Bayes algorithm from stan? Only kind of working, not recommended.
 #' @param compileArgs List of arguments to pass to \code{\link[rstan]{stan_model}} for compilation of the Stan model.
 #' @param ... additional arguments to pass to \code{\link[rstan]{stan}} function.
@@ -164,7 +160,7 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #'   TIpredNames=c('TI1','TI2','TI3'),
 #'   LAMBDA=diag(2)) 
 #' 
-#' fit<-ctStanFit(ctstantestdat, model,priors=TRUE)
+#' fit<-ctFit(ctstantestdat, model,priors=TRUE)
 #' 
 #' summary(fit) 
 #' 
@@ -191,6 +187,7 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' for(i in 1:nsubjects){
 #'   #generating model
 #'   gm<-ctModel(Tpoints=Tpoints,n.manifest = nmanifest,n.latent = nlatent,n.TDpred = 1,
+#'   type='omx',
 #'     LAMBDA = matrix(c(1,0,0,0, 0,1,.8,1.3),nrow=nmanifest,ncol=nlatent),
 #'     DRIFT=matrix(c(-.3, .2, 0, -.5),nlatent,nlatent),
 #'     TDPREDMEANS=matrix(c(rep(0,Tpoints-10),1,rep(0,9)),ncol=1),
@@ -259,7 +256,7 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' ctModelLatex(m1)
 #' 
 #' #fit
-#' f1 <- ctStanFit(datalong = dat2, ctstanmodel = m1, optimize=TRUE, priors=FALSE)
+#' f1 <- ctFit(datalong = dat2, ctstanmodel = m1, optimize=TRUE, priors=FALSE)
 #' 
 #' summary(f1)
 #' 
@@ -267,7 +264,7 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' ctKalman(f1,plot=TRUE,subjects=1,kalmanvec=c('y','yprior'),timestep=.01)
 #' ctKalman(f1,plot=TRUE,subjects=1:3,kalmanvec=c('y','ysmooth'),timestep=.01,errorvec=NA)
 #' 
-#' ctStanPostPredict(f1, wait=FALSE) #compare randomly generated data from posterior to observed data
+#' ctPostPredict(f1, wait=FALSE) #compare randomly generated data from posterior to observed data
 #' 
 #' cf<-ctCheckFit(f1) #compare mean and covariance of randomly generated data to observed cov
 #' plot(cf,wait=FALSE)
@@ -808,7 +805,7 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
       stanmodeltext=stanmodeltext, data=standataout, ctdatastruct=datalong[c(1,nrow(datalong)),],standata=standata, 
       ctstanmodelbase=ctstanmodel, ctstanmodel=ctm,stanmodel=sm, stanfit=stanfit)
     class(out) <- 'ctStanFit'
-    out$stanfit$kalman<-suppressMessages(ctStanKalman(out,pointest = TRUE))
+    out$stanfit$kalman<-suppressMessages(ctKalmanArray(out,pointest = TRUE))
   }
   
   if(!fit) out=list(args=args,setup=setup,

@@ -8,9 +8,9 @@
 #' @return Matrix of generated data -- one dataset per iteration, according to original time and missingness structure.
 #' @export
 #' @examples
-#' gen <- ctStanGenerateFromFit(ctstantestfit, nsamples=3,fullposterior=TRUE,cores=1)
+#' gen <- ctGenerateFromFit(ctstantestfit, nsamples=3,fullposterior=TRUE,cores=1)
 #' plot(gen$generated$Y[3,,2],type='l') #Third random data sample, 2nd manifest var, all time points. 
-ctStanGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErrors=FALSE,cores=2){
+ctGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErrors=FALSE,cores=2){
   
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object!')
   
@@ -57,3 +57,8 @@ ctStanGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErr
   
   return(fit)
 }
+
+#' Backward-compatible alias for \code{ctGenerateFromFit}.
+#' @rdname ctGenerateFromFit
+#' @export
+ctStanGenerateFromFit <- ctGenerateFromFit

@@ -39,9 +39,9 @@ Can be problematic for systems with many dimensions.}
 showUncertainty is TRUE.}
 
 \item{dynamicsControl}{A named list of additional arguments to pass to
-\code{\link{ctStanDiscretePars}} and \code{\link{ctStanDiscreteParsPlot}}
+\code{\link{ctDiscretePars}} and \code{\link{ctDiscreteParsPlot}}
 when \code{doDynamics=TRUE}. Arguments matching
-\code{ctStanDiscreteParsPlot} are automatically routed to the plot call.
+\code{ctDiscreteParsPlot} are automatically routed to the plot call.
 Internally controlled arguments \code{ctstanfitobj}, \code{plot},
 \code{subjects}, \code{observational}, \code{x}, \code{quantiles}, and
 \code{splitSubjects} are ignored if supplied.}

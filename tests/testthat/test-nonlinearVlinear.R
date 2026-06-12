@@ -30,10 +30,10 @@ datalong <- cbind(id, time, sunspots)
  datalong <- cbind(datalong,TD1)
  datalong[seq(10,150,10),'TD1'] = 1
 
-ssfitnl <- ctStanFit(datalong, ssmodel, iter=300, cores=1,optimize=T,verbose=0,maxtimestep = .3, priors=TRUE,deoptim=FALSE)
-ssfitl <- ctStanFit(datalong, ssmodel, iter=300, chains=1,optimize=T,verbose=0,priors=TRUE)
+ssfitnl <- ctFit(datalong, ssmodel, iter=300, cores=1,optimize=T,verbose=0,maxtimestep = .3, priors=TRUE,deoptim=FALSE)
+ssfitl <- ctFit(datalong, ssmodel, iter=300, chains=1,optimize=T,verbose=0,priors=TRUE)
 
-ssfitnlm <- ctStanFit(datalong, ssmodel, iter=300, chains=1,optimize=T,verbose=0,maxtimestep = 2,fit=T,priors=TRUE)
+ssfitnlm <- ctFit(datalong, ssmodel, iter=300, chains=1,optimize=T,verbose=0,maxtimestep = 2,fit=T,priors=TRUE)
 
 #output
 # snl=summary(ssfitnl)

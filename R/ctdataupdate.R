@@ -13,7 +13,7 @@ ctdataupdate<-function(forcerecompile=FALSE){
   n.subjects=30
   tipredEffect <- matrix(c(.5,0,0,-.7,0,2),nrow=2)
   tipredVar <- matrix(c(1,-.2,0, 0,1,0, 0,0,.5),nrow=3)
-  gm<-ctModel(type='ct', Tpoints=Tpoints,n.latent=n.latent,
+  gm<-ctModel(type='omx', Tpoints=Tpoints,n.latent=n.latent,
   n.TDpred=n.TDpred,
     n.TIpred=0,
     n.manifest=n.manifest,
@@ -56,10 +56,10 @@ ctdataupdate<-function(forcerecompile=FALSE){
     CINT=matrix(c('cint1||||TI1','cint2||||TI1'),ncol=1),
     LAMBDA=diag(2),tipredDefault=FALSE)
 
-  ctstantestfit<-ctStanFit(ctstantestdat,checkm,cores=1,inits=0,
+  ctstantestfit<-ctFit(ctstantestdat,checkm,cores=1,inits=0,
     optimize = TRUE,optimcontrol=list(finishsamples=20,stochastic=T,tol=1e-5),priors=TRUE)
 
-  ctstantestfit <- ctStanGenerateFromFit(ctstantestfit,nsamples = 20,fullposterior = TRUE,cores=1)
+  ctstantestfit <- ctGenerateFromFit(ctstantestfit,nsamples = 20,fullposterior = TRUE,cores=1)
 
   save(ctstantestfit,file='.\\data\\ctstantestfit.rda')
   

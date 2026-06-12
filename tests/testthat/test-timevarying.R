@@ -40,8 +40,8 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 &
     dm$pars$indvarying <- FALSE
     
 
-    fct <- ctStanFit(datalong = dat,ctstanmodel = cm)#,optimcontrol=list(bootstrapUncertainty=TRUE))
-    fdt <- ctStanFit(datalong = dat,ctstanmodel = dm)
+    fct <- ctFit(datalong = dat,ctstanmodel = cm)#,optimcontrol=list(bootstrapUncertainty=TRUE))
+    fdt <- ctFit(datalong = dat,ctstanmodel = dm)
     
     sct <- summary(fct,parmatrices=TRUE)
     sdt <- summary(fdt,parmatrices=TRUE)
@@ -120,7 +120,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 &
     d$X <- d$Y1
     d$Y <- d$Y2
     
-    f <- ctStanFit(datalong = d,ctstanmodel = test_)
+    f <- ctFit(datalong = d,ctstanmodel = test_)
     testthat::expect_equivalent(class(f),'ctStanFit')
   })
   

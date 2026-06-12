@@ -137,7 +137,7 @@ ctFitCovCheck <- function(fit, cor = TRUE, plot = TRUE, splitby = NULL) {
       if (sum(mask) < 2) return(rep(list(na_covmat), length(gencov_full)))
       
       # Ensure generated data exists once, keep separate object to avoid side-effects
-      if (is.null(fit$generated)) fit <- ctStanGenerateFromFit(fit)
+      if (is.null(fit$generated)) fit <- ctGenerateFromFit(fit)
       nsamp  <- dim(fit$generated$Y)[1]
       
       lapply(seq_len(nsamp), function(i) {
@@ -344,7 +344,7 @@ ctLongtoWideFromFitted <- function(fit,time=FALSE,id=FALSE){
 }
 
 ctCovMatGenerated <- function(fit){ #compute covariance over generated data
-  if(is.null(fit$generated)) fit <- ctStanGenerateFromFit(fit)
+  if(is.null(fit$generated)) fit <- ctGenerateFromFit(fit)
   covlist <- list()
   for(i in 1:dim(fit$generated$Y)[1]){ #for every set of generated data
     fit$standata$Y <- fit$generated$Y[i,,]
@@ -466,7 +466,7 @@ ctSaturatedFit <- function(fit,conditional=FALSE,reg=0, hmc=FALSE,
   covf$llindependent <- covfindep$ll
   
   #independence fit of residuals
-  err=ctStanKalman(fit = fit,collapsefunc = mean)$errprior
+  err=ctKalmanArray(fit = fit,collapsefunc = mean)$errprior
   err=data.table(data.frame(id=fit$standata$subject,matrix(err,ncol=dim(err)[3])))
   err[ ,WhichObs:=(1:.N),by=id]
   err = data.table::dcast(data = data.table(melt(err,id.vars = c('id','WhichObs'))),
@@ -596,7 +596,7 @@ meltcov <- function(covm){
   return(o)
 }
 
-ctStanFitMelt <- function(fit, maxsamples='all'){
+ctFitMelt <- function(fit, maxsamples='all'){
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
   datasources <- c('Data','StatePred','Residuals')
   if(!is.null(fit$generated)) datasources <- c(datasources,'PostPred')
@@ -723,7 +723,7 @@ ctCheckFit <- function(fit,
   if(lagcovplot) covplot<-TRUE
   
   DataSource <-Sample<-Lag <- Row <- Sig. <- Sig <- NULL
-  dat <- ctStanFitMelt(fit = fit,maxsamples = nsamples)
+  dat <- ctFitMelt(fit = fit,maxsamples = nsamples)
   
   
   byc=unique(c('Sample','WhichObs','DataSource',fit$ctstanmodel$timeName))

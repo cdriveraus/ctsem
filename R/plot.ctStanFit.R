@@ -2,7 +2,7 @@
 #'
 #' Plots for ctStanFit objects
 #'
-#' @param x Fit object from \code{\link{ctStanFit}}.
+#' @param x Fit object from \code{\link{ctFit}}.
 #' @param types Vector of character strings defining which plots to create.
 #' 'all' plots all possible types, including: 'regression', 'kalman', 
 #' 'priorcheck', 'trace', 'density','intervals'. 
@@ -11,14 +11,14 @@
 #' may occur if types='all'. For details see the specific functions generating each type of plot.
 #' @details This function is just a wrapper calling the necessary functions for plotting - it 
 #' may be simpler in many cases to access those directly. They are:
-#'  \code{\link{ctStanDiscretePars}},\code{\link{ctKalman}},
-#'  \code{\link{ctStanPlotPost}},\code{stan_trace},
+#'  \code{\link{ctDiscretePars}},\code{\link{ctKalman}},
+#'  \code{\link{ctPlotPosterior}},\code{stan_trace},
 #'  \code{stan_dens},\code{stan_plot}
 #'  rstan offers many plotting possibilities not available here, to use that functionality
 #'  one must simply call the relevant rstan plotting function. Use \code{x$stanfit} as the stan fit object
 #'  (where x is the name of your ctStanFit object). Because a ctStanFit object has many 
-#'  parameters, the additional argument \code{pars=ctStanParnames(x,'pop_')} is recommended.
-#'  This denotes population means, but see \code{\link{ctStanParnames}} for
+#'  parameters, the additional argument \code{pars=ctRawParnames(x,'pop_')} is recommended.
+#'  This denotes population means, but see \code{\link{ctRawParnames}} for
 #'  other options.
 #' @return Nothing. Generates plots.
 #' @aliases ctStanPlot plot.ctStanFit
@@ -47,9 +47,9 @@ plot.ctStanFit <- function(x, types='all',wait=TRUE,...){
   }
   
   if('regression' %in% types && continue){
-    message('Plotting model implied regression coeffcients conditional on time interval using ctStanDiscretePars')
+    message('Plotting model implied regression coeffcients conditional on time interval using ctDiscretePars')
     
-    print(ctStanDiscretePars(x, plot=TRUE,...))
+    print(ctDiscretePars(x, plot=TRUE,...))
     types=types[types!='regression']
     continue<-waitf()
   }
@@ -63,9 +63,9 @@ plot.ctStanFit <- function(x, types='all',wait=TRUE,...){
   }
   
   if('priorcheck' %in% types && continue && x$standata$priors==1){
-    message('Plotting prior and posterior densities using ctStanPlotPost')
+    message('Plotting prior and posterior densities using ctPlotPosterior')
     
-    ctStanPlotPost(x,wait = wait,...)
+    ctPlotPosterior(x,wait = wait,...)
     types=types[types!='priorcheck']
     continue<-waitf()
   }
@@ -73,17 +73,17 @@ plot.ctStanFit <- function(x, types='all',wait=TRUE,...){
   
   if('trace' %in% types && continue){
     message('Plotting sampling traces using stan_trace')
-    print(rstan::stan_trace(x$stanfit$stanfit,ctStanParnames(x,'pop_'),...))
+    print(rstan::stan_trace(x$stanfit$stanfit,ctRawParnames(x,'pop_'),...))
     continue<-waitf()
     
-    if(continue) p<-try(rstan::stan_trace(x$stanfit$stanfit,ctStanParnames(x,'popsd'),...),silent=TRUE)
+    if(continue) p<-try(rstan::stan_trace(x$stanfit$stanfit,ctRawParnames(x,'popsd'),...),silent=TRUE)
      if(class(p)[1]!='try-error') {
        print(p)
        continue<-waitf()
      }
     
     if(continue)  {
-      p<-try(rstan::stan_trace(x$stanfit$stanfit,ctStanParnames(x,'tipred_'),...),silent=TRUE)
+      p<-try(rstan::stan_trace(x$stanfit$stanfit,ctRawParnames(x,'tipred_'),...),silent=TRUE)
       types=types[types!='trace']
     }
     if(class(p)[1]!='try-error') {
@@ -94,10 +94,10 @@ plot.ctStanFit <- function(x, types='all',wait=TRUE,...){
   
   if('density' %in% types && continue){
     message('Plotting posterior density estimates using stan_dens')
-    print(rstan::stan_dens(x$stanfit$stanfit,ctStanParnames(x,'pop_'),...))
+    print(rstan::stan_dens(x$stanfit$stanfit,ctRawParnames(x,'pop_'),...))
     continue<-waitf()
     
-    if(continue)  p=try(rstan::stan_dens(x$stanfit$stanfit,ctStanParnames(x,'popsd'),...),silent=TRUE)
+    if(continue)  p=try(rstan::stan_dens(x$stanfit$stanfit,ctRawParnames(x,'popsd'),...),silent=TRUE)
     if(class(p)[1]!='try-error') {
       print(p)
       continue<-waitf()
@@ -107,17 +107,17 @@ plot.ctStanFit <- function(x, types='all',wait=TRUE,...){
   
   if('intervals' %in% types && continue){
     message('Plotting posterior intervals and point estimates using stan_plot')
-    print(rstan::stan_plot(x$stanfit$stanfit,ctStanParnames(x,'pop_'),...))
+    print(rstan::stan_plot(x$stanfit$stanfit,ctRawParnames(x,'pop_'),...))
     continue<-waitf()
     
-    if(continue)  p=try(rstan::stan_plot(x$stanfit$stanfit,ctStanParnames(x,'popsd'),...),silent=TRUE)
+    if(continue)  p=try(rstan::stan_plot(x$stanfit$stanfit,ctRawParnames(x,'popsd'),...),silent=TRUE)
     if(class(p)[1]!='try-error') {
       print(p)
       continue<-waitf()
     }
     # 
     # if(continue)  {
-    #   p=try(rstan::stan_plot(x$stanfit,ctStanParnames(x,'tipred_'),...),silent=TRUE)
+    #   p=try(rstan::stan_plot(x$stanfit,ctRawParnames(x,'tipred_'),...),silent=TRUE)
     #   types=types[types!='intervals']
     # }
     # if(class(p)[1]!='try-error') {

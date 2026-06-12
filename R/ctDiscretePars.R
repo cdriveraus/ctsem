@@ -1,4 +1,4 @@
-#' ctStanParnames
+#' ctRawParnames
 #' 
 #' Gets internal stan parameter names of a ctStanFit object sampled via stan based on specified substrings.
 #'
@@ -29,13 +29,13 @@
 #'  DIFFUSION=matrix(c(0, 0, 0, "diffusion"), ncol=2, nrow=2))
 #'
 #' #fit
-#' ssfit <- ctStanFit(datalong, ssmodel, iter=2, 
+#' ssfit <- ctFit(datalong, ssmodel, iter=2,
 #'   optimize=FALSE, chains=1)
-#' ctStanParnames(ssfit,substrings=c('pop_','popsd'))
+#' ctRawParnames(ssfit,substrings=c('pop_','popsd'))
 #' }
 #' 
 #' @export
-ctStanParnames <- function(x,substrings=c('pop_','popsd')){
+ctRawParnames <- function(x,substrings=c('pop_','popsd')){
   if(length(x$stanfit$stanfit@sim)==0) stop('Doesnt contain sampled stanfit object')
   out<-c()
   for(subsi in substrings){
@@ -44,9 +44,14 @@ ctStanParnames <- function(x,substrings=c('pop_','popsd')){
   return(out)
 }
 
+#' Backward-compatible alias for \code{ctRawParnames}.
+#' @rdname ctRawParnames
+#' @export
+ctStanParnames <- ctRawParnames
 
 
-#'ctStanDiscretePars
+
+#'ctDiscretePars
 #'
 #'Calculate model implied regressions for a sequence of time intervals (if ct) or steps (if dt) based on
 #'a ctStanFit object, for specified subjects. Wrap with print() when used inside for loops!
@@ -65,19 +70,19 @@ ctStanParnames <- function(x,substrings=c('pop_','popsd')){
 #'@param standardise Logical. If TRUE, output is standardised according to expected total within subject variance, given by the 
 #'asymDIFFUSIONcov matrix.
 #'@param cov Logical. If TRUE, covariances are returned instead of regression coefficients.
-#'@param plot Logical. If TRUE, ggplots output using \code{\link{ctStanDiscreteParsPlot}}
+#'@param plot Logical. If TRUE, ggplots output using \code{\link{ctDiscreteParsPlot}}
 #'instead of returning output. 
 #'@param cores Number of cpu cores to use for computing subject matrices. 
 #'If subject matrices were saved during fiting, not used. 
-#'@param ... additional plotting arguments to control \code{\link{ctStanDiscreteParsPlot}}
+#'@param ... additional plotting arguments to control \code{\link{ctDiscreteParsPlot}}
 #'@examples
 #' data.table::setDTthreads(1) #ignore this line
-#' ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
+#' ctDiscretePars(ctstantestfit,times=seq(.5,4,.1),
 #'  plot=TRUE,indices='CR')
 #'  
 #'#modify plot
 #'require(ggplot2)
-#'g=ctStanDiscretePars(ctstantestfit,times=seq(.5,4,.1), 
+#'g=ctDiscretePars(ctstantestfit,times=seq(.5,4,.1),
 #'  plot=TRUE,indices='CR')
 #'g= g+ labs(title='Cross effects')
 #'print(g)
@@ -85,7 +90,7 @@ ctStanParnames <- function(x,substrings=c('pop_','popsd')){
 #'(and hence needs to be printed if intended to display within a loop). 
 #'This can be modified by the various ggplot2 functions, or displayed using print(x).
 #'@export
-ctStanDiscretePars<-function(ctstanfitobj, subjects='popmean', 
+ctDiscretePars<-function(ctstanfitobj, subjects='popmean',
   times=seq(from=0,to=10,by=.1), 
   nsamples=200,observational=FALSE,standardise=FALSE, 
   cov=FALSE, plot=FALSE,cores=2,...){
@@ -137,7 +142,7 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='popmean',
   }
   
   
-  out <- ctStanDiscreteParsDrift(ctpars,times, observational, standardise, cov=cov,discreteInput = ctstanfitobj$ctstanmodel$continuoustime==FALSE)
+  out <- ctDiscreteParsDrift(ctpars,times, observational, standardise, cov=cov,discreteInput = ctstanfitobj$ctstanmodel$continuoustime==FALSE)
   
   dimnames(out)<- list(Sample=samples, Subject=subjects,
     `Time interval`=times, row=latentNames, col=latentNames)
@@ -147,16 +152,21 @@ ctStanDiscretePars<-function(ctstanfitobj, subjects='popmean',
   
   if(plot) {
     
-    out <- ctStanDiscreteParsPlot(out,
+    out <- ctDiscreteParsPlot(out,
       # latentNames=ctstanfitobj$ctstanmodel$latentNames,
       ...)
   } 
   return(out)
 }
 
+#' Backward-compatible alias for \code{ctDiscretePars}.
+#' @rdname ctDiscretePars
+#' @export
+ctStanDiscretePars <- ctDiscretePars
 
 
-ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=FALSE,
+
+ctDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=FALSE,
   types='dtDRIFT',discreteInput=FALSE, quiet=FALSE){
   
   nl=dim(ctpars$DRIFT)[3]
@@ -215,11 +225,13 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
   return(ctpars$dtDRIFT)
 }
 
-#'ctStanDiscreteParsPlot
+ctStanDiscreteParsDrift <- ctDiscreteParsDrift
+
+#'ctDiscreteParsPlot
 #'
-#'Plots the output from \code{\link{ctStanDiscretePars}}, for model implied regression strengths at specified times for continuous time models fit with ctStanFit.
+#'Plots the output from \code{\link{ctDiscretePars}}, for model implied regression strengths at specified times for continuous time models fit with ctStanFit.
 #'
-#'@param x list object returned from \code{\link{ctStanDiscretePars}}.
+#'@param x list object returned from \code{\link{ctDiscretePars}}.
 #'@param indices Either a string specifying type of plot to create, or an n by 2
 #'matrix specifying which indices of the output matrix to plot.
 #''AR' specifies all diagonals, for discrete time autoregression parameters.
@@ -243,17 +255,17 @@ ctStanDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=
 #'@return A ggplot2 object. This can be modified by the various ggplot2 functions, or displayed using print(x).
 #'@examples
 #' data.table::setDTthreads(1) #ignore this line
-#'x <- ctStanDiscretePars(ctstantestfit)
-#'ctStanDiscreteParsPlot(x, indices='CR')
+#'x <- ctDiscretePars(ctstantestfit)
+#'ctDiscreteParsPlot(x, indices='CR')
 #'
 #'#to modify plot:
-#'g <- ctStanDiscreteParsPlot(x, indices='CR') + 
+#'g <- ctDiscreteParsPlot(x, indices='CR') +
 #'  ggplot2::labs(title='My ggplot modification')
 #'print(g)
 #'
 #'@export
 
-ctStanDiscreteParsPlot<- function(x,indices='all',
+ctDiscreteParsPlot<- function(x,indices='all',
   quantiles=c(.025,.5,.975), latentNames='auto',
   ylab='Coefficient',xlab='Time interval',ylim=NA,facets=NA,splitSubjects=TRUE,
   colour='Effect',title='auto',
@@ -339,6 +351,11 @@ ctStanDiscreteParsPlot<- function(x,indices='all',
   
   return(g)
 }
+
+#' Backward-compatible alias for \code{ctDiscreteParsPlot}.
+#' @rdname ctDiscreteParsPlot
+#' @export
+ctStanDiscreteParsPlot <- ctDiscreteParsPlot
 # } else {
 
 #   

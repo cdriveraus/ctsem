@@ -39,7 +39,7 @@ ssmodel <- ctModel(type='ct', n.latent=2, n.manifest=1,
   DIFFUSION=matrix(c(0, 0, 0, "diffusion"), ncol=2, nrow=2))
 
 #fit
-ssfit <- ctStanFit(datalong, ssmodel, 
+ssfit <- ctFit(datalong, ssmodel,
   iter=200, chains=2,optimize=FALSE, priors=TRUE,control=list(max_treedepth=4))
 umat <- stan_unconstrainsamples(ssfit$stanfit$stanfit)
 }

@@ -23,10 +23,10 @@ ctStanRawSamples<-function(fit){
 #' @export
 #'
 #' @examples
-#' indpars <- ctStanSubjectPars(ctstantestfit)
+#' indpars <- ctSubjectPars(ctstantestfit)
 #' dimnames(indpars)
 #' plot(indpars[1,,'cint1'],indpars[1,,'cint2'])
-ctStanSubjectPars <- function(fit,pointest=TRUE,cores=2,nsamples='all'){
+ctSubjectPars <- function(fit,pointest=TRUE,cores=2,nsamples='all'){
   
   if(!nsamples[1] %in% 'all') fit$stanfit$rawposterior <- 
       fit$stanfit$rawposterior[sample(1:nrow(fit$stanfit$rawposterior),nsamples),,drop=FALSE]
@@ -55,6 +55,11 @@ ctStanSubjectPars <- function(fit,pointest=TRUE,cores=2,nsamples='all'){
   return(p)
 }
 
+#' Backward-compatible alias for \code{ctSubjectPars}.
+#' @rdname ctSubjectPars
+#' @export
+ctStanSubjectPars <- ctSubjectPars
+
 
 getparnames <- function(fit,reonly=FALSE, subjvariationonly=FALSE, popstatesonly=FALSE){
   ms <- fit$setup$matsetup
@@ -74,9 +79,9 @@ getparnames <- function(fit,reonly=FALSE, subjvariationonly=FALSE, popstatesonly
 
 #' summary.ctStanFit
 #'
-#' Summarise a ctStanFit object that was fit using \code{\link{ctStanFit}}. 
+#' Summarise a ctStanFit object that was fit using \code{\link{ctFit}}.
 #' 
-#' @param object fit object from \code{\link{ctStanFit}}, of class ctStanFit.
+#' @param object fit object from \code{\link{ctFit}}, of class ctStanFit.
 #' @param timeinterval positive numeric indicating time interval to use for discrete time parameter calculations
 #' reported in summary. 
 #' @param digits integer denoting number of digits to report.
@@ -181,11 +186,11 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
   
   
   if(parmatrices){
-    Mean=ctStanContinuousPars(object,calcfunc = mean,calcfuncargs=list(),timeinterval=timeinterval)
-    sd=ctStanContinuousPars(object,calcfunc = sd,calcfuncargs = list(na.rm=TRUE),timeinterval=timeinterval)
-    `2.5%` = ctStanContinuousPars(object,calcfunc = quantile,calcfuncargs = list(probs=.025),timeinterval=timeinterval)
-    `50%` = ctStanContinuousPars(object,calcfunc = quantile,calcfuncargs = list(probs=.5),timeinterval=timeinterval)
-    `97.5%` = ctStanContinuousPars(object,calcfunc = quantile,calcfuncargs = list(probs=.975),timeinterval=timeinterval)
+    Mean=ctContinuousPars(object,calcfunc = mean,calcfuncargs=list(),timeinterval=timeinterval)
+    sd=ctContinuousPars(object,calcfunc = sd,calcfuncargs = list(na.rm=TRUE),timeinterval=timeinterval)
+    `2.5%` = ctContinuousPars(object,calcfunc = quantile,calcfuncargs = list(probs=.025),timeinterval=timeinterval)
+    `50%` = ctContinuousPars(object,calcfunc = quantile,calcfuncargs = list(probs=.5),timeinterval=timeinterval)
+    `97.5%` = ctContinuousPars(object,calcfunc = quantile,calcfuncargs = list(probs=.975),timeinterval=timeinterval)
     
     d <- data.frame(ctModelUnlist(Mean,matnames = names(Mean)))
     colnames(d)[colnames(d) %in% 'value'] <- 'Mean'

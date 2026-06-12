@@ -1,6 +1,6 @@
 ctSummarise<-function(sf,name='',cores=2, times=seq(0,10,.1),quantiles=c(.025,.5,.975),
   folder = 'ctSummary/',nsamples=200,lags=1:3,
-  ctCheckFit = FALSE, ctStanPlotPost=FALSE, ctStanTIpredEffects = TRUE,IndDifCorrelations=TRUE,
+  ctCheckFit = FALSE, ctPlotPosterior=FALSE, ctTIpredEffects = TRUE,IndDifCorrelations=TRUE,
   latents=1:sf$ctstanmodelbase$n.latent, manifests=1:sf$ctstanmodelbase$n.manifest){
   
   Sig. <- NULL
@@ -21,10 +21,10 @@ ctSummarise<-function(sf,name='',cores=2, times=seq(0,10,.1),quantiles=c(.025,.5
     
     sm <- sf$ctstanmodelbase 
     summ=summary(sf)
-    if(is.null(sf$generated) && ctCheckFit) sf <- ctStanGenerateFromFit(fit = sf,nsamples = nsamples,fullposterior = FALSE,cores = cores)
-    cp <- ctStanContinuousPars(sf)
-    cpl <- ctStanContinuousPars(sf,calcfuncargs = list(probs=c(.025)))
-    cph <- ctStanContinuousPars(sf,calcfuncargs = list(probs=c(.975)))
+    if(is.null(sf$generated) && ctCheckFit) sf <- ctGenerateFromFit(fit = sf,nsamples = nsamples,fullposterior = FALSE,cores = cores)
+    cp <- ctContinuousPars(sf)
+    cpl <- ctContinuousPars(sf,calcfuncargs = list(probs=c(.025)))
+    cph <- ctContinuousPars(sf,calcfuncargs = list(probs=c(.975)))
     
     n<-sapply(unique(ydat[[sm$subjectIDname]]),function(x) sum(ydat[[sm$subjectIDname]] %in% x))
     whichsubfull <- unique(ydat[[sm$subjectIDname]])[order(n,decreasing = TRUE)][1:(min(10,length(n)))]
@@ -219,7 +219,7 @@ if(requireNamespace('papaja')){
     try(ctModelLatex(sm,folder = './',filename = paste0(name,'_tex_model'),open = FALSE))
     
     # #TI Correlations matrix plot
-    #   sub <- ctStanSubjectPars(sf)
+    #   sub <- ctSubjectPars(sf)
     #   pdf('TI_correlations.pdf')
     #   corm=meltcov(cov2cor(cov(
     #     cbind(sf$standata$tipredsdata,sub[1,,order(dimnames(sub)[[3]])]))))
@@ -239,7 +239,7 @@ if(requireNamespace('papaja')){
     if(IndDifCorrelations){
       if(sf$standata$ntipred > 0 || sf$standata$nindvarying > 0){
         try({
-          sp=ctStanSubjectPars(sf,pointest=FALSE,cores=cores,nsamples = nsamples)
+          sp=ctSubjectPars(sf,pointest=FALSE,cores=cores,nsamples = nsamples)
           
           if(sf$standata$ntipred > 0){
             tip <- array(rep(sf$standata$tipredsdata,each=dim(sp)[[1]]),dim=c(dim(sp)[1:2],ncol(sf$standata$tipredsdata)))
@@ -269,7 +269,7 @@ if(requireNamespace('papaja')){
           corssig <- cors[apply(cors,1,function(x) sum(sign(as.numeric(x[3:5])))==3),]
           
           #now do similar to point estimate
-          spp=ctStanSubjectPars(sf,pointest=TRUE,cores=1)
+          spp=ctSubjectPars(sf,pointest=TRUE,cores=1)
           
           if(sf$standata$ntipred > 0){
             tip <- array(rep(sf$standata$tipredsdata,each=dim(spp)[[1]]),dim=c(dim(spp)[1:2],ncol(sf$standata$tipredsdata)))
@@ -351,8 +351,8 @@ if(requireNamespace('papaja')){
     rm(k);rm(krem)
     
     #Discrete pars plots
-    ctd=ctStanDiscretePars(ctstanfitobj = sf,times = times,nsamples = 500,plot=T,ggcode=T)$dt
-    ctdo=ctStanDiscretePars(ctstanfitobj = sf,times = times,nsamples = 500,observational = T,plot=T,ggcode=T)$dt
+    ctd=ctDiscretePars(ctstanfitobj = sf,times = times,nsamples = 500,plot=T,ggcode=T)$dt
+    ctdo=ctDiscretePars(ctstanfitobj = sf,times = times,nsamples = 500,observational = T,plot=T,ggcode=T)$dt
     d=rbind(
       data.frame(Type='Intervention',ctd),
       data.frame(Type='Observation',ctdo)
@@ -415,12 +415,12 @@ if(requireNamespace('papaja')){
     
     
     #tipred effect plots
-    if(ctStanTIpredEffects){
+    if(ctTIpredEffects){
       try({
         if(sf$ctstanmodelbase$n.TIpred >0){
           pdf(paste0(name,'_TIpredEffects.pdf'))
           for(tip in 1:sf$ctstanmodelbase$n.TIpred){
-            tieffects <- ctStanTIpredeffects(sf,nsamples = 200,whichTIpreds = tip,timeinterval = 1)
+            tieffects <- ctTIpredEffects(sf,nsamples = 200,whichTIpreds = tip,timeinterval = 1)
             tieffects$y <- tieffects$y[, #drop unchanging parameters
               apply(tieffects$y[,,2,drop=FALSE],2,function(x) length(unique(x))>1),,drop=FALSE]
             matnames <- unique(unlist(sapply(colnames(tieffects$y),function(x) gsub(pattern = '\\[.*','',x))))
@@ -454,11 +454,11 @@ if(requireNamespace('papaja')){
       dev.off()
     }
     
-    if(ctStanPlotPost){
+    if(ctPlotPosterior){
       #paramter posterior plots
       if(sf$standata$priors){
         pdf(paste0(name,'_parameter_posterior.pdf'))
-        ctStanPlotPost(sf,priorwidth = TRUE,cores=cores)
+        ctPlotPosterior(sf,priorwidth = TRUE,cores=cores)
         dev.off()
       }
     }

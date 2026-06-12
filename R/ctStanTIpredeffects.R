@@ -1,4 +1,4 @@
-ctStanTIpredParMats <- function(fit, tipvalues){
+ctTIpredParMats <- function(fit, tipvalues){
   newpars <- fit$stanfit$rawest
   effect <- matrix(fit$stanfit$transformedparsfull$TIPREDEFFECT[1,,], fit$standata$nparams,fit$standata$ntipred)
   newpars[1:fit$standata$nparams] <- newpars[1:fit$standata$nparams] + effect %*% matrix(tipvalues)
@@ -11,7 +11,7 @@ ctStanTIpredParMats <- function(fit, tipvalues){
 #' Computes and plots combined effects and quantiles for effects of time independent predictors
 #' on subject level parameters of a ctStanFit object.
 #'
-#' @param fit fit object from \code{\link{ctStanFit}}
+#' @param fit fit object from \code{\link{ctFit}}
 #' @param returndifference logical. If FALSE, absolute parameter values are returned. 
 #' If TRUE, only the effect of the covariate (i.e. without the average value of the parameter)
 #' are returned. The former can be easier to interpret, but the latter are more likely to fit multiple plots together. 
@@ -52,9 +52,9 @@ ctStanTIpredParMats <- function(fit, tipvalues){
 #' @export
 #'
 #' @examples
-#' ctStanTIpredeffects(ctstantestfit,
+#' ctTIpredEffects(ctstantestfit,
 #'  whichpars=c('CINT','dtDIFFUSION[2,2]'), plot=TRUE)
-ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
+ctTIpredEffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   includeMeanUncertainty=FALSE,
   whichTIpreds=1,parmatrices=TRUE, whichpars='all', nsamples=100, timeinterval=1,
   nsubjects=20,filter=NA,plot=FALSE){
@@ -226,4 +226,9 @@ ctStanTIpredeffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
     return(g)
   }
 }
+
+#' Backward-compatible alias for \code{ctTIpredEffects}.
+#' @rdname ctTIpredEffects
+#' @export
+ctStanTIpredeffects <- ctTIpredEffects
 

@@ -41,7 +41,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
 
     for(m in c('cm','dm')){
         # m = 'cm'
-        f = ctStanFit(datalong = dat,ctstanmodel = get(m))
+        f = ctFit(datalong = dat,ctstanmodel = get(m))
       
         if(length(s)==0) s[[1]] = list()
         s[[1]][[m]] <- summary(f,parmatrices=TRUE)
@@ -116,7 +116,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true") & .Machine$sizeof.pointer != 4){
         
         
         for(argi in names(argslist)){
-          f = ctStanFit(datalong = dat,ctstanmodel = get(m))
+          f = ctFit(datalong = dat,ctstanmodel = get(m))
           if(is.null(s[[argi]])) s[[argi]] = list()
           s[[argi]][[m]] <- summary(f,parmatrices=TRUE)
         }

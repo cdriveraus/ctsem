@@ -27,14 +27,14 @@ simpleStateCheck <- function(x){   #checks if system matrix elements that refere
 #' Allows one to change data and or model elements that don't require recompiling, then re fit.
 #'
 #' @param fit ctStanFit object
-#' @param datalong data as normally passed to \code{\link{ctStanFit}}
-#' @param ctstanmodel model as normally passed to \code{\link{ctStanFit}}
-#' @param ... extra args for \code{\link{ctStanFit}}
+#' @param datalong data as normally passed to \code{\link{ctFit}}
+#' @param ctstanmodel model as normally passed to \code{\link{ctFit}}
+#' @param ... extra args for \code{\link{ctFit}}
 
 
 ctStanUpdModel <- function(fit, datalong, ctstanmodel,...){
   
-  new <-ctStanFit(datalong = datalong, ctstanmodel = ctstanmodel,fit=FALSE,...)
+  new <-ctFit(datalong = datalong, ctstanmodel = ctstanmodel,fit=FALSE,...)
   
   fit$standata <- new$standata
   fit$data <- new$data
@@ -720,7 +720,7 @@ ctStanCalcsList <- function(ctm, save=FALSE){  #extract any calcs from model int
 }
 
 ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup, simplify=TRUE){
-  #if arguments change make sure to change ctStanFit !
+  #if arguments change make sure to change ctFit !
   
   mats <- ctStanMatricesList()
   # #check when / if PARS needs to be computed

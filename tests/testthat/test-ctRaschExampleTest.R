@@ -52,7 +52,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     m$manifesttype[]=md$manifesttype[]=1 #set type to binary
     
         #fit with integration (linearised approximation)
-    ro <- ctStanFit( datalong = d,
+    ro <- ctFit( datalong = d,
       ctstanmodel = m,cores=cores,
       # plot=10,verbose=0,
       intoverstates = T,priors=F,
@@ -60,7 +60,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     so=summary(ro)
     
     
-        rod <- ctStanFit( datalong = d,
+        rod <- ctFit( datalong = d,
       ctstanmodel = md,cores=cores,
       # plot=10,verbose=0,
       intoverstates = T,priors=F,
@@ -68,7 +68,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     sod=summary(rod)
     
     #fit without integration
-    r <- ctStanFit( datalong = d,
+    r <- ctFit( datalong = d,
       #fit=FALSE, #set this to skip fitting and just get the standata and stanmodel objects
       ctstanmodel = m,
       iter = 300,verbose=0,

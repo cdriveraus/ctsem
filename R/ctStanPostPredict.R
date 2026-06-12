@@ -16,7 +16,7 @@
 #'
 #' @export
 ctPostPredData <- function(fit,residuals=F){
-  if(is.null(fit$generated))  fit <- ctStanGenerateFromFit(fit) 
+  if(is.null(fit$generated))  fit <- ctGenerateFromFit(fit)
   ll <- melt(
     data.table(sample=1:nrow(fit$generated$llrow),(fit$generated$llrow)),
     id.vars = c('sample'),variable.name = 'row')[order(sample),]
@@ -53,11 +53,11 @@ ctPostPredData <- function(fit,residuals=F){
     stderrprior <- list()
     for(i in 1:max(ll[['sample']])){
       ft$standata$Y <- matrix(fit$generated$Y[i,,],ncol=ncol(ft$standata$Y))
-      stderrprior[[i]] <- data.table(sample=i,suppressMessages(meltkalman(ctStanKalman(ft,standardisederrors = TRUE))))[Element %in% 'errstdprior',.(sample,Row,value,Obs)]
+      stderrprior[[i]] <- data.table(sample=i,suppressMessages(meltkalman(ctKalmanArray(ft,standardisederrors = TRUE))))[Element %in% 'errstdprior',.(sample,Row,value,Obs)]
     }
     stderrprior <- rbindlist(stderrprior)
     stderrpriorObs<-data.table(suppressMessages(
-      meltkalman(ctStanKalman(fit,standardisederrors = TRUE))))[Element %in% 'errstdprior',.(Row,value,Obs)]
+      meltkalman(ctKalmanArray(fit,standardisederrors = TRUE))))[Element %in% 'errstdprior',.(Row,value,Obs)]
     setnames(stderrpriorObs,'value','obsValue')
     stderrprior<-merge(stderrprior,stderrpriorObs)
     setnames(stderrprior,c('Row','Obs'),c('variable','row'))
@@ -67,7 +67,6 @@ ctPostPredData <- function(fit,residuals=F){
   
   return(dat)
 }
-
 
 #' Create diagnostic plots to assess the goodness-of-fit for a ctsem model.
 #'
@@ -284,9 +283,9 @@ ctPostPredPlots <- function(fit){
 #' and may be customized as desired.
 #' @examples
 #' \donttest{#'
-#' ctStanPostPredict(ctstantestfit,wait=FALSE, diffsize=2,resolution=100)
+#' ctPostPredict(ctstantestfit,wait=FALSE, diffsize=2,resolution=100)
 #' }
-ctStanPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,.5,.975),
+ctPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,.5,.975),
   datarows='all',nsamples=500,resolution=100,plot=TRUE){
   
   plots <-list()
@@ -296,7 +295,7 @@ ctStanPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,
   xmeasure= xmeasure[, count := seq(.N), by = .(id)]$count
   
   if(is.null(fit$generated$Y) || dim(fit$generated$Y)[1] < nsamples){
-    Ygen <- ctStanGenerateFromFit(fit,fullposterior=TRUE,nsamples=nsamples)$generated$Y
+    Ygen <- ctGenerateFromFit(fit,fullposterior=TRUE,nsamples=nsamples)$generated$Y
   } else Ygen <- fit$generated$Y
   
   # Ygen<-aperm(Ygen,c(2,1,3)) #previously necessary but fixed generator
@@ -496,3 +495,8 @@ ctStanPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,
   } else return(invisible(plots))
   
 }
+
+#' Backward-compatible alias for \code{ctPostPredict}.
+#' @rdname ctPostPredict
+#' @export
+ctStanPostPredict <- ctPostPredict
