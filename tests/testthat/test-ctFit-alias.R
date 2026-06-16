@@ -6,6 +6,7 @@ test_that("ctStanFit remains an alias for ctFit", {
 })
 
 test_that("ctStan-prefixed helper names remain aliases", {
+  expect_identical(ctStanModel, ctModelConvertOMX)
   expect_identical(ctStanContinuousPars, ctContinuousPars)
   expect_identical(ctStanDiscretePars, ctDiscretePars)
   expect_identical(ctStanDiscreteParsPlot, ctDiscreteParsPlot)

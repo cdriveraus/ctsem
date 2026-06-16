@@ -55,6 +55,55 @@ is below.
 
 To cite ctsem please use the citation(“ctsem”) command in R.
 
+### Function name update
+
+From version 3.11.0 (June 2026), ctsem documentation and examples use
+shorter function names that avoid Stan-specific wording in the main
+user-facing API. Existing code using the older names should continue to
+work because the old names remain as compatibility aliases.
+
+Use `ctFit()` as the main fitting function; `ctStanFit()` is now an
+alias. For model specification, the usual modern workflow is:
+
+``` r
+model <- ctModel(type = "ct", ...)
+fit <- ctFit(data, model)
+```
+
+or `ctModel(type = "dt", ...)` for discrete time models.
+`ctModel(type = "omx")` creates an old matrix-list object retained
+primarily for data generation and legacy workflows; these objects are not
+fitted directly by the current ctsem package. To adapt such an object to
+the modern fit-ready format, use:
+
+``` r
+model <- ctModelConvertOMX(omxmodel)
+```
+
+`ctStanModel()` remains an alias for `ctModelConvertOMX()`, but new
+material should use `ctModelConvertOMX()` when discussing conversion from
+old OpenMx-style model objects.
+
+Other common name updates are:
+
+- `ctStanGenerate()` -> `ctGenerateFromPriors()`
+- `ctStanGenerateFromFit()` -> `ctGenerateFromFit()`
+- `ctStanKalman()` -> `ctKalmanArray()`
+- `ctStanPlotPost()` -> `ctPlotPosterior()`
+- `ctStanPostPredict()` -> `ctPostPredict()`
+- `ctStanSubjectPars()` -> `ctSubjectPars()`
+- `ctStanTIpredeffects()` -> `ctTIpredEffects()`
+- `ctStanFitUpdate()` -> `ctFitUpdate()`
+- `ctStanDiscretePars()` -> `ctDiscretePars()`
+- `ctStanDiscreteParsPlot()` -> `ctDiscreteParsPlot()`
+- `ctStanContinuousPars()` -> `ctContinuousPars()`
+- `ctStanParnames()` -> `ctRawParnames()`
+
+Modern model objects can also be edited in matrix form via the
+pars-backed `model$matrices` view, for example
+`model$matrices$DRIFT[1, 2] <- "cross"`. See the ctsem GitHub repository
+for current details and examples: <https://github.com/cdriveraus/ctsem>.
+
 ### To install the github version, first install rstan and Rtools, then from a fresh R session:
 
 ``` r

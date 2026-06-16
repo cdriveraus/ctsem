@@ -42,7 +42,8 @@
 
 #' Generate data from a ctstanmodel object
 #'
-#' @param cts \code{\link{ctStanModel}} , or \code{\link{ctStanFit}},object.
+#' @param cts \code{\link{ctModelConvertOMX}}, \code{\link{ctModel}}, or
+#' \code{\link{ctStanFit}} object.
 #' @param datastruct long format data structure as used by ctsem. 
 #' Not used if cts is a ctStanFit object.
 #' @param is If optimizing, follow up with importance sampling? 

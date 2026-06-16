@@ -182,7 +182,7 @@ Fits a ctsem model specified via \code{\link{ctModel}} with type either 'ct' or 
 \examples{
 \donttest{
 
-#generate a ctStanModel relying heavily on defaults
+#generate a modern ctsem model relying heavily on defaults
 model<-ctModel(type='ct',
   latentNames=c('eta1','eta2'),
   manifestNames=c('Y1','Y2'),

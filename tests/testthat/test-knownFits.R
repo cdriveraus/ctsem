@@ -55,7 +55,7 @@ oscillatingm <- ctModel(type='omx', n.latent = 2, n.manifest = 1, Tpoints = 11,
   DIFFUSION = matrix(c(0, 0, 0, "diffusion"), nrow = 2, ncol = 2))#,
 
   oscillatingm$DRIFT[2,1]="crosseffect|-log1p(exp(-param))-1e-5"
- sm <- ctStanModel(oscillatingm)
+ sm <- ctModelConvertOMX(oscillatingm)
   sm$pars$indvarying<- FALSE
   sf=ctFit(ctDeintervalise(ctWideToLong(Oscillating,Tpoints = oscillatingm$Tpoints,n.manifest = 1)),
     cores=2,verbose=0,

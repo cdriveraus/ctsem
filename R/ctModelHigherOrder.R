@@ -1,4 +1,4 @@
-#' Raise the order of a ctsem model object.
+#' Raise the order of a ctsem type ='omx' model object.
 #'
 #' @param ctm ctModel
 #' @param indices Vector of integers, which latents to raise the order of.

@@ -25,16 +25,217 @@ ctModelUnlist<-function(ctmodelobj,
   return(out)
 }
 
-#' Convert an old 'omx' ctsem model into a modern ct or dt form with dataframe.
+ctStanModelDefaultFreePar <- function(matrix, row, col, continuoustime){
+  transform <- 0
+  multiplier <- 1
+  meanscale <- 1
+  offset <- 0
+  inneroffset <- 0
+
+  if(matrix %in% c('T0MEANS','MANIFESTMEANS','TDPREDEFFECT','CINT')) {
+    meanscale <- 10
+  }
+  if(matrix %in% c('LAMBDA')) {
+    offset <- 0.5
+    meanscale <- 5
+  }
+
+  if(matrix %in% c('DIFFUSION','MANIFESTVAR', 'T0VAR')) {
+    if(row != col){
+      transform <- 3
+      multiplier <- 2
+      offset <- -1
+      meanscale <- 1
+    }
+    if(row == col){
+      transform <- 1
+      meanscale <- 2
+      multiplier <- 5
+      offset <- 1e-10
+      if(matrix %in% c('DIFFUSION')) multiplier <- 10
+    }
+  }
+  if(matrix %in% c('DRIFT')) {
+    if(row == col){
+      if(continuoustime==TRUE) {
+        transform <- 1
+        meanscale <- -2
+        multiplier <- -2
+        offset <- -1e-6
+      }
+      if(continuoustime==FALSE) {
+        transform <- 3
+        meanscale <- 2
+        offset <- 0
+      }
+    }
+    if(row != col){
+      transform <- 0
+      meanscale <- 1
+    }
+  }
+
+  list(
+    transform = Simplify(tform(parin = 'param',
+      transform = as.integer(transform),
+      multiplier = multiplier,
+      meanscale = meanscale,
+      offset = offset,
+      inneroffset = inneroffset,
+      singletext = TRUE)),
+    indvarying = matrix %in% c('T0MEANS','MANIFESTMEANS','CINT'),
+    sdscale = 1
+  )
+}
+
+ctStanModelMatrixValue <- function(value){
+  if(length(value) != 1) stop('Matrix elements must have length 1')
+  if(is.factor(value)) value <- as.character(value)
+  if(is.na(value)) return(list(param=NA_character_, value=NA_real_))
+
+  numericvalue <- suppressWarnings(as.numeric(value))
+  if(!is.na(numericvalue)) {
+    return(list(param=NA_character_, value=numericvalue))
+  }
+  list(param=as.character(value), value=NA_real_)
+}
+
+ctStanModelMatricesPlaceholder <- function(){
+  'pars-backed matrix view -- use model$matrices or ctModelMatrices(model)'
+}
+
+ctStanModelUpdateParsFromMatrices <- function(ctm, matrices){
+  if(!'ctStanModel' %in% class(ctm)) stop('x must be a ctStanModel object')
+  if(!is.list(matrices) || is.null(names(matrices))) {
+    stop('matrices must be a named list of matrices')
+  }
+
+  pars <- ctm[['pars']]
+  tieffects <- colnames(pars)[grep('_effect', colnames(pars), fixed=TRUE)]
+
+  for(matrixname in names(matrices)){
+    mat <- matrices[[matrixname]]
+    if(!is.matrix(mat)) stop(matrixname, ' must be a matrix')
+
+    matrixrows <- pars$matrix %in% matrixname
+    if(!any(matrixrows)) stop(matrixname, ' is not present in x$pars')
+
+    expecteddim <- c(max(pars$row[matrixrows]), max(pars$col[matrixrows]))
+    if(!identical(dim(mat), expecteddim)) {
+      stop(matrixname, ' must have dimensions ', paste(expecteddim, collapse=' x '))
+    }
+
+    for(rowi in seq_len(nrow(mat))){
+      for(coli in seq_len(ncol(mat))){
+        parrow <- which(matrixrows & pars$row == rowi & pars$col == coli)
+        if(length(parrow) != 1) {
+          stop('Could not match one pars row for ', matrixname, '[', rowi, ',', coli, ']')
+        }
+
+        wasfixed <- !is.na(pars$value[parrow])
+        parsed <- ctStanModelMatrixValue(mat[rowi,coli])
+        pars$param[parrow] <- parsed$param
+        pars$value[parrow] <- parsed$value
+
+        if(!is.na(parsed$value)){
+          pars$transform[parrow] <- NA
+          pars$indvarying[parrow] <- FALSE
+          pars$sdscale[parrow] <- NA_real_
+          if(length(tieffects) > 0) pars[parrow,tieffects] <- FALSE
+        } else if(!is.na(parsed$param)){
+          defaults <- ctStanModelDefaultFreePar(
+            matrix=matrixname,
+            row=rowi,
+            col=coli,
+            continuoustime=ctm[['continuoustime']])
+          if(wasfixed || is.na(pars$transform[parrow])) pars$transform[parrow] <- defaults$transform
+          if(wasfixed || is.na(pars$sdscale[parrow])) pars$sdscale[parrow] <- defaults$sdscale
+          pars$indvarying[parrow] <- as.logical(pars$indvarying[parrow])
+          if(wasfixed || is.na(pars$indvarying[parrow])) pars$indvarying[parrow] <- defaults$indvarying
+        }
+      }
+    }
+  }
+
+  ctm[['pars']] <- pars
+  if(is.null(ctm[['matrices']])) ctm[['matrices']] <- ctStanModelMatricesPlaceholder()
+  ctm
+}
+
+#' Matrix view for ctStanModel objects
 #'
-#' @param ctmodelobj ctsem model object of type 'omx' (default)
-#' @param type either 'ct' for continuous time, or 'dt' for discrete time.
+#' Access or replace the matrix representation of a \code{ctStanModel} while
+#' keeping the \code{pars} data frame as the canonical model specification.
+#'
+#' @param x A \code{ctStanModel} object.
+#' @param value A named list of matrices, typically copied from
+#' \code{ctModelMatrices(x)} or \code{x$matrices}.
+#'
+#' @details
+#' \code{ctModelMatrices(x)} reconstructs matrices from \code{x$pars}. The
+#' replacement form updates matching \code{matrix}, \code{row}, and \code{col}
+#' entries in \code{x$pars}. Numeric matrix entries become fixed values;
+#' non-numeric entries become parameter labels. Metadata such as transforms and
+#' individual variation settings is preserved when possible and reset to
+#' fit-ready defaults when fixed/free status changes.
+#'
+#' The same view is available as \code{x$matrices}. Direct replacements such as
+#' \code{x$matrices$DRIFT[1, 2] <- "cross"} update \code{x$pars}; detached copies
+#' must be assigned back with \code{x$matrices <- mats}. A placeholder
+#' \code{matrices} element is stored in the object so the view is visible in
+#' \code{names(x)} and printed objects, but the matrix values are always derived
+#' from \code{x$pars}.
+#'
+#' @return \code{ctModelMatrices()} returns a named list of matrices. The
+#' replacement form returns the updated \code{ctStanModel}.
+#' @export
+ctModelMatrices <- function(x){
+  if(!'ctStanModel' %in% class(x)) stop('x must be a ctStanModel object')
+  listOfMatrices(x[['pars']])
+}
+
+#' @rdname ctModelMatrices
+#' @export
+`ctModelMatrices<-` <- function(x, value){
+  ctStanModelUpdateParsFromMatrices(x, value)
+}
+
+#' @export
+`$.ctStanModel` <- function(x, name){
+  nameindex <- pmatch(name, names(x), duplicates.ok=FALSE)
+  if(!is.na(nameindex) && identical(names(x)[nameindex], 'matrices')) return(ctModelMatrices(x))
+  x[[name, exact=FALSE]]
+}
+
+#' @export
+`$<-.ctStanModel` <- function(x, name, value){
+  if(identical(name, 'matrices')) return(ctStanModelUpdateParsFromMatrices(x, value))
+  x[[name]] <- value
+  x
+}
+
+#' Convert an old OpenMx-style ctsem model to the modern ctsem model format.
+#'
+#' @param ctmodelobj ctsem model object created by \code{\link{ctModel}} with
+#' \code{type='omx'}.
+#' @param type Either \code{'ct'} for continuous time, or \code{'dt'} for
+#' discrete time.
 #' @param tipredDefault Logical. TRUE sets any parameters with unspecified time independent 
 #' predictor effects to have effects estimated, FALSE fixes the effect to zero unless individually specified.
 #'
-#' @return List object of class ctStanModel, with random effects specified for any intercept type parameters
-#' (T0MEANS, MANIFESTMEANS, and or CINT), and time independent predictor effects for all parameters. Adjust these
-#' after initial specification by directly editing the \code{pars} subobject, so \code{model$pars} . 
+#' @return List object of class ctStanModel in the modern ctsem model format,
+#' with a \code{pars} data frame used by \code{\link{ctFit}}. Random effects are
+#' specified for any intercept type parameters (T0MEANS, MANIFESTMEANS, and or
+#' CINT), and time independent predictor effects are specified for all
+#' parameters. Adjust these after initial specification by directly editing the
+#' \code{pars} subobject, so \code{model$pars}, or by editing the pars-backed
+#' matrix view, so \code{model$matrices}.
+#' @details
+#' \code{ctModelConvertOMX()} is primarily a compatibility bridge for older
+#' workflows that first build a matrix-list model with \code{ctModel(type='omx')}.
+#' New Stan-based models can usually be created directly with
+#' \code{ctModel(type='ct')} or \code{ctModel(type='dt')}, which already return
+#' the modern format.
 #' @importFrom rstantools rstan_config
 #' @export
 #'
@@ -52,10 +253,10 @@ ctModelUnlist<-function(ctmodelobj,
 #'   0, 0,
 #'   0, "diffusion"), ncol=2, nrow=2, byrow=TRUE))
 #' 
-#' stanmodel=ctStanModel(model)
+#' modernmodel=ctModelConvertOMX(model)
 #' 
 #' 
-ctStanModel<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
+ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   if(FALSE) rstanconfig() #placeholder to use rstantools
   if(type=='stanct' | type=='standt'){
     warning('type should now be specified as simply ct or dt, without the stan prefix')
@@ -279,8 +480,13 @@ ctStanModel<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   # out$stationarymeanprior <- NA
   # out$stationaryvarprior <- NA
   out$covmattransform <- 'rawcorr'
+  out[['matrices']] <- ctStanModelMatricesPlaceholder()
   # out$NOrdinalIntegrationPoints <- 9L
   
   return(out)
 }
+
+#' @rdname ctModelConvertOMX
+#' @export
+ctStanModel <- ctModelConvertOMX
 

@@ -2,7 +2,7 @@
 % Please edit documentation in R/ctModelHigherOrder.R
 \name{ctModelHigherOrder}
 \alias{ctModelHigherOrder}
-\title{Raise the order of a ctsem model object.}
+\title{Raise the order of a ctsem type ='omx' model object.}
 \usage{
 ctModelHigherOrder(
   ctm,
@@ -30,7 +30,7 @@ ctModelHigherOrder(
 extended ctModel
 }
 \description{
-Raise the order of a ctsem model object.
+Raise the order of a ctsem type ='omx' model object.
 }
 \examples{
 om <- ctModel(LAMBDA=diag(1,2),DRIFT=0, 
