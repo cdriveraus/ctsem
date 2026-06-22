@@ -43,7 +43,7 @@ ctEBshiftTransform <- function(transform, rawmean, rawsd){
 
 ctEBadjustModel <- function(model, rawstats, sdscale=c('unit','rawsd'), minsd=1e-6){
   sdscale <- match.arg(sdscale)
-  adjusted <- model
+  adjusted <- ctModelTransformsToNum(model)
   rawstats <- rawstats[match(unique(rawstats$param), rawstats$param),,drop=FALSE]
   rownames(rawstats) <- rawstats$param
   rows <- ctEBfreeRows(adjusted$pars, rawstats$param)
@@ -52,7 +52,16 @@ ctEBadjustModel <- function(model, rawstats, sdscale=c('unit','rawsd'), minsd=1e
     p <- adjusted$pars$param[ri]
     rmean <- rawstats[p, 'mean']
     rsd <- max(rawstats[p, 'sd'], minsd, na.rm=TRUE)
-    adjusted$pars$transform[ri] <- ctEBshiftTransform(adjusted$pars$transform[ri], rmean, rsd)
+    transformnum <- suppressWarnings(as.numeric(adjusted$pars$transform[ri]))
+    if(!is.na(transformnum)){
+      if(is.na(adjusted$pars$meanscale[ri])) adjusted$pars$meanscale[ri] <- 1
+      if(is.na(adjusted$pars$inneroffset[ri])) adjusted$pars$inneroffset[ri] <- 0
+      adjusted$pars$inneroffset[ri] <- adjusted$pars$inneroffset[ri] +
+        adjusted$pars$meanscale[ri] * rmean
+      adjusted$pars$meanscale[ri] <- adjusted$pars$meanscale[ri] * rsd
+    } else {
+      adjusted$pars$transform[ri] <- ctEBshiftTransform(adjusted$pars$transform[ri], rmean, rsd)
+    }
     adjusted$pars$sdscale[ri] <- switch(sdscale,
       unit=1,
       rawsd=rsd)
@@ -231,6 +240,21 @@ ctEBprogressReporter <- function(stage, total, enabled=TRUE){
   }
 }
 
+ctEBworkerCall <- function(subi){
+  datalong <- get('.ctEBdatalong', envir=.GlobalEnv)
+  subjectIDname <- get('.ctEBsubjectIDname', envir=.GlobalEnv)
+  fitargs <- get('.ctEBfitargs', envir=.GlobalEnv)
+  verbose <- get('.ctEBverbose', envir=.GlobalEnv)
+  pass <- get('.ctEBpass', envir=.GlobalEnv)
+  if(verbose > 1) {
+    message('Fitting subject ', subi, if(nchar(pass)) paste0(' (', pass, ')') else '')
+  }
+  datasi <- datalong[datalong[[subjectIDname]] %in% subi,,drop=FALSE]
+  do.call(utils::getFromNamespace('ctFit', 'ctsem'),
+    c(list(datalong=datasi), fitargs))
+}
+environment(ctEBworkerCall) <- baseenv()
+
 ctEBfitSubjects <- function(subjects, datalong, subjectIDname, fitargs, cores=1,
   verbose=0, pass='', progress=TRUE){
   fitone <- function(subi){
@@ -255,24 +279,36 @@ ctEBfitSubjects <- function(subjects, datalong, subjectIDname, fitargs, cores=1,
   progressfun(0L)
   
   if(cores > 1){
-    cl <- parallelly::makeClusterPSOCK(cores)
+    cl <- parallelly::makeClusterPSOCK(cores, useXDR=FALSE)
     on.exit(try(parallel::stopCluster(cl), silent=TRUE), add=TRUE)
     parallel::clusterEvalQ(cl, suppressPackageStartupMessages(library(ctsem)))
+    .ctEBdatalong <- datalong
+    .ctEBsubjectIDname <- subjectIDname
+    .ctEBfitargs <- fitargs
+    .ctEBverbose <- verbose
+    .ctEBpass <- pass
+    parallel::clusterExport(cl, c('.ctEBdatalong', '.ctEBsubjectIDname',
+      '.ctEBfitargs', '.ctEBverbose', '.ctEBpass'), envir=environment())
     fits <- vector('list', length(subjects))
     nworkers <- min(cores, length(subjects))
     nextjob <- 1L
     for(worker in seq_len(nworkers)){
-      parallel:::sendCall(cl[[worker]], fitone, list(subjects[[nextjob]]),
+      parallel:::sendCall(cl[[worker]], ctEBworkerCall, list(subjects[[nextjob]]),
         tag=nextjob)
       nextjob <- nextjob + 1L
     }
     while(done < length(subjects)){
       result <- parallel:::recvOneResult(cl)
       done <- done + 1L
+      if(!is.null(result$success) && !as.logical(result$success)[1]){
+        stop('Subject fit failed for subject ', subjects[[result$tag]], ': ',
+          if(inherits(result$value, 'condition')) conditionMessage(result$value) else
+            as.character(result$value))
+      }
       fits[[result$tag]] <- result$value
       progressfun(done)
       if(nextjob <= length(subjects)){
-        parallel:::sendCall(cl[[result$node]], fitone,
+        parallel:::sendCall(cl[[result$node]], ctEBworkerCall,
           list(subjects[[nextjob]]), tag=nextjob)
         nextjob <- nextjob + 1L
       }

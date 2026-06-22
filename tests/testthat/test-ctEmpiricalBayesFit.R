@@ -48,8 +48,9 @@ test_that("ctEmpiricalBayesFit summary adjusts transforms from raw point estimat
   expect_equal(s$adjustedmodel$pars$sdscale[
     s$adjustedmodel$pars$param %in% c('drift','merror')], c(1, 1))
   expect_false(any(s$adjustedmodel$pars$indvarying))
-  expect_true(any(grepl('param', s$adjustedmodel$pars$transform[
-    s$adjustedmodel$pars$param %in% 'merror'])))
+  expect_false(is.na(suppressWarnings(as.numeric(
+    s$adjustedmodel$pars$transform[
+      s$adjustedmodel$pars$param %in% 'merror']))))
 })
 
 test_that("ctEmpiricalBayesFit summary can use raw empirical SDs for sdscale", {
@@ -97,6 +98,38 @@ test_that("ctEmpiricalBayesFit summary can use raw empirical SDs for sdscale", {
     s$adjustedmodel$pars$param %in% 'drift'], .001)
   expect_equal(s$adjustedmodel$pars$sdscale[
     s$adjustedmodel$pars$param %in% 'merror'], 2)
+})
+
+test_that("ctEmpiricalBayesFit EB adjustment keeps known transforms numeric", {
+  model <- ctModel(type='ct',
+    n.latent=1, latentNames='eta1',
+    n.manifest=1, manifestNames='Y1',
+    DRIFT=matrix('drift|-log1p_exp(-param)|FALSE',1,1),
+    DIFFUSION=matrix('diffusion|log1p_exp(param)|FALSE',1,1),
+    CINT=matrix(0,1,1),
+    T0MEANS=matrix('t0m|param|FALSE',1,1),
+    T0VAR=matrix(0,1,1),
+    LAMBDA=matrix(1,1,1),
+    MANIFESTMEANS=matrix(0,1,1),
+    MANIFESTVAR=matrix('merror|log1p_exp(param)|FALSE',1,1),
+    silent=TRUE)
+  rawstats <- data.frame(
+    param=c('t0m','drift','diffusion','merror'),
+    mean=c(.2, -.4, .1, .3),
+    sd=c(.7, .5, .8, .6))
+  
+  adjusted <- ctsem:::ctEBadjustModel(model, rawstats)
+  fitsetup <- ctsem:::ctModelTransformsToNum(adjusted)
+  rows <- fitsetup$pars$param %in% rawstats$param
+  
+  expect_true(all(!is.na(suppressWarnings(as.numeric(
+    fitsetup$pars$transform[rows])))))
+  expect_false(any(suppressWarnings(as.numeric(
+    fitsetup$pars$transform[rows])) < -10))
+  expect_equal(fitsetup$pars$meanscale[
+    fitsetup$pars$param %in% 'diffusion'], .8)
+  expect_equal(fitsetup$pars$inneroffset[
+    fitsetup$pars$param %in% 'diffusion'], .1)
 })
 
 test_that("ctEmpiricalBayesFit robust raw handling winsorizes or removes extremes", {

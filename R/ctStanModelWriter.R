@@ -89,6 +89,13 @@ ctModelStatesAndPARS <- function(ctspec, statenames,tdprednames){ #replace laten
 
 ctModelTransformsToNum<-function(ctm){
   
+  transformvaluecols <- c('multiplier','offset','meanscale','inneroffset')
+  if(all(c('transform', transformvaluecols) %in% colnames(ctm$pars))){
+    transformnumeric <- is.na(ctm$pars$transform) |
+      !is.na(suppressWarnings(as.numeric(ctm$pars$transform)))
+    if(all(transformnumeric)) return(ctm)
+  }
+  
   fit.eqs = function(e) {
     # print(e)
     # List the types of formulas we might encounter.
