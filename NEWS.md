@@ -5,6 +5,7 @@
 
 - Function names have been simplified to remove Stan-specific wording from the main user-facing API. Use `ctFit()` rather than `ctStanFit()`, `ctModelConvertOMX()` rather than `ctStanModel()` for converting legacy `type='omx'` matrix-list models, and the new non-`Stan` helper names such as `ctGenerateFromPriors()`, `ctGenerateFromFit()`, `ctPlotPosterior()`, `ctPostPredict()`, `ctSubjectPars()`, and `ctTIpredEffects()`. The old names remain as compatibility aliases for existing code. See the ctsem GitHub repository for further details: <https://github.com/cdriveraus/ctsem>.
 - Modern fitting workflows should generally use `ctModel(type='ct')` or `ctModel(type='dt')` followed by `ctFit()`. `ctModel(type='omx')` objects are retained primarily for data generation and legacy workflows; convert them with `ctModelConvertOMX()` before fitting in the modern ctsem format.
+- `ctEmpiricalBayesFit` is a new function that fits single subjects under the specified model, computes an empirical prior from those fits, then re-fits the subjects with that prior. 
 
 ## 27/6/2025
 ### 3.10.4
