@@ -1,0 +1,508 @@
+---
+title: "Optimized ctsem Uncertainty Approximations"
+format:
+  html:
+    toc: true
+    code-fold: false
+    embed-resources: true
+execute:
+  message: false
+  warning: false
+---
+
+```{r}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+library(ctsem)
+library(ggplot2)
+set.seed(12)
+```
+
+This example compares uncertainty approximations for an optimized ctsem fit.
+All methods start from the same optimized maximum likelihood or maximum a
+posteriori estimate and then refresh the approximate raw-parameter draws with
+`ctOptimUncertainty()`.
+
+For optimized fits, ctsem works on the raw unconstrained parameter scale.
+Let $ \hat\theta $ be the optimized raw parameter vector and let
+$\ell(\theta)$ be the active Stan log objective. For maximum likelihood fits
+this is the log likelihood plus transform adjustments; for MAP fits it also
+includes active priors. The same objective is used for log probabilities,
+gradients, Hessians, and score contributions. The default optimized-fit
+uncertainty is a local approximation around $ \hat\theta $. ctsem draws raw
+parameter samples from that approximation and then maps them through the
+transforms to obtain summaries on the usual ctsem parameter scales.
+
+These draws are not full MCMC draws. They are useful when an optimized ML or
+MAP fit is preferred for speed or stability, but their quality depends on the
+local shape of the optimized objective and on the approximation selected.
+
+## Methods
+
+The uncertainty method is selected by `uncertainty` in `optimcontrol` during
+`ctFit()`, or by `uncertainty` in `ctOptimUncertainty()` for an existing
+optimized fit.
+
+- `hessian`: finite-difference Hessian covariance with normal draws.
+- `opg`: OPG-style score information approximation.
+- `sandwich`: Hessian bread with score covariance meat.
+- `bootstrap`: one-step score bootstrap draws.
+- `fullbootstrap`: subject-resampling bootstrap with full re-optimization.
+- `surrogate`: local quadratic surrogate around the optimum.
+
+### Hessian
+
+`uncertainty = "hessian"` estimates the local curvature of the active log
+objective by finite differences of the gradient at the optimum. If $H$ is the
+Hessian of $\ell(\theta)$, the approximate covariance is
+
+$$
+\Sigma_\theta \approx (-H)^{-1}.
+$$
+
+This is the closest optimized-fit analogue to the usual normal approximation
+around an optimum. It is usually the right first choice when the optimum is
+well identified and the objective is close to quadratic on the raw parameter
+scale. It can be fragile when the Hessian is numerically unstable, parameters
+are weakly identified, or the objective has strong skew, boundaries, or
+multiple modes.
+
+Relevant controls:
+
+- `uncertaintyControl = list(hessianStep = ...)` changes the finite-difference
+  step size.
+- `uncertaintyControl = list(ridge = ...)` controls the minimum eigenvalue used
+  when stabilising covariance matrices.
+- `uncertaintyDraws = "normal"` or `draws = "normal"` draws from the resulting
+  multivariate normal approximation.
+
+### Surrogate
+
+`uncertainty = "surrogate"` fits a local quadratic approximation using gradient
+evaluations at points around the optimum. It still targets local curvature, but
+uses multiple nearby evaluations instead of only one finite-difference Hessian.
+This can be more stable than a direct Hessian when individual finite-difference
+directions are noisy.
+
+The design is dimension adjusted. By default, ctsem uses at least
+`max(4 * npars, 50)` local points, where `npars` is the number of optimized raw
+parameters. The initial point spread is also adjusted by dimension so that the
+expected log-objective drop from the optimum remains local rather than growing
+linearly with the number of parameters. Candidate points that are much too
+close to the optimum or too far into the tails are dropped, and additional
+points are sampled after global and parameterwise scale adjustments when
+needed.
+
+Surrogate uncertainty is still local. It will not discover remote modes and it
+will not repair a poor optimum. It is most useful when the Hessian is noisy but
+the objective is plausibly quadratic in the neighbourhood that matters.
+
+Relevant controls:
+
+- `uncertaintyControl = list(surrogateNpoints = ...)` sets the number of local
+  design points. If omitted, the default scales with the number of raw
+  parameters. Larger values are slower and usually more stable.
+- `uncertaintyControl = list(surrogateScale = ...)` controls how far the design
+  points are spread around the optimum, relative to the internally
+  dimension-adjusted starting scale.
+- `uncertaintyControl = list(initialCov = ...)` can provide a starting
+  covariance. `ctOptimUncertainty()` uses the existing fit covariance by
+  default when available.
+
+### One-step bootstrap
+
+`uncertainty = "bootstrap"` computes subject or case score contributions at the
+optimum and uses a one-step update,
+
+$$
+\theta^* \approx \hat\theta + \Sigma_\theta s^*,
+$$
+
+where $\Sigma_\theta$ is the Hessian covariance and $s^*$ is a resampled
+sum of centred score contributions. This preserves the local Hessian "bread"
+and perturbs the estimate using score variability. The score contributions are
+computed as Stan gradients of the same active objective used for fitting,
+including transform adjustments and active priors when present.
+
+This is the recommended bootstrap-style option for optimized fits. It is much
+cheaper than refitting a model for every bootstrap sample, but it is still a
+linear approximation. It can be useful when subject-level influence varies more
+than the local Hessian approximation suggests. With few subjects, score-based
+methods can be unstable because there are too few independent score
+contributions to resample.
+
+By default, `uncertaintyDraws = "auto"` and `draws = "auto"` use empirical
+one-step bootstrap draws for `uncertainty = "bootstrap"`.
+
+### Full Bootstrap
+
+`uncertainty = "fullbootstrap"` resamples subjects with replacement and
+re-optimizes the model for each bootstrap dataset. 
+
+This is the most literal bootstrap option and is usually much slower than the
+one-step bootstrap. It can capture some nonlinearity that the one-step update
+misses, but it still depends on the optimizer finding the relevant local
+optimum for each resampled dataset. It is mainly useful as a benchmark for the
+faster approximations or when the linear one-step update is suspect.
+
+For full bootstrap, `cores` is treated as the total core budget. By default,
+ctsem runs one core per bootstrap refit and parallelizes over bootstrap
+samples. Use `control = list(bootstrapFitCores = k)` when each refit should
+split log-probability and gradient evaluations across subjects; the number of
+parallel bootstrap workers is then reduced to avoid oversubscribing the
+machine. `control = list(bootstrapTol = ...)` controls the mize L-BFGS
+tolerance for each refit.
+
+### Sandwich
+
+`uncertainty = "sandwich"` also combines Hessian bread with score covariance
+meat:
+
+$$
+\Sigma_\theta \approx (-H)^{-1} \left(\sum_i s_i s_i^\top\right) (-H)^{-1}.
+$$
+
+This is a robust covariance approximation rather than a direct local-curvature
+approximation. It is mainly useful as a sensitivity check for misspecification
+or heterogeneous subject contributions. It can be wider than the Hessian
+curvature approximation, and that may be the intended frequentist behaviour
+rather than a bug.
+
+### OPG
+
+`uncertainty = "opg"` uses score variability itself as an information estimate.
+It is included as a diagnostic. The score contributions are gradients of the
+same active objective used for fitting, so active prior contributions are
+included. OPG differs because it does not use the local Hessian bread.
+Consequently it can behave differently from Hessian, bootstrap, and sandwich
+approximations when local curvature, including prior curvature in MAP fits, is
+important. Prefer `bootstrap` or `sandwich` when score contributions are of
+interest.
+
+## Draws And Arguments
+
+There are two separate decisions:
+
+- `uncertainty` chooses the covariance or empirical approximation.
+- `uncertaintyDraws` in `ctFit()` or `draws` in `ctOptimUncertainty()` chooses
+  how approximate raw-parameter samples are generated from that approximation.
+
+The available draw rules are:
+
+- `"auto"`: empirical draws for `uncertainty = "bootstrap"` and
+  `uncertainty = "fullbootstrap"`, normal draws otherwise.
+- `"normal"`: multivariate normal draws from the selected covariance.
+- `"empirical"`: empirical draws when the method provides them, otherwise falls
+  back to normal draws.
+- `"imis"`: importance sampling using the selected covariance as the proposal
+  scale.
+
+`finishsamples` controls the number of approximate raw-parameter samples stored in
+`fit$stanfit$rawposterior` and then transformed for summaries. Increase it when
+interval quantiles are noisy. `cores` controls both fitting and the uncertainty
+work inside a single `ctFit()` call; for coverage simulations, use
+`ctModelCoverage_check(cores = ..., fit_cores = ...)` to avoid accidental
+nested parallelism.
+
+Score-based methods use subject-level score contributions whenever there are
+at least two subjects. This is usually the appropriate target for
+multi-subject ctsem models because observations within a subject are not
+independent. Single-subject models fall back to case-level scores with a
+warning. Score-based methods also warn when there are fewer than ten
+independent subject-level score rows, or when there are no more score rows
+than raw parameters, because the covariance estimate is then unstable or rank
+limited. `fullbootstrap` resamples subjects and therefore requires at least
+two subjects; with fewer than ten subjects it runs with a warning because the
+bootstrap distribution can be unstable. Bootstrap-style methods also require
+at least two returned samples or refits so that a covariance can be estimated.
+
+The uncertainty methods use whatever objective the fit used. With
+`priors = FALSE`, this is the maximum likelihood objective plus transform
+adjustments. With `priors = TRUE`, priors are part of the objective and are
+included in log probabilities, gradients, Hessians, and score contributions.
+In `scorecalc()`, ctsem distributes active prior contributions across
+subject-level or case-level score components using `priormod`, so summed score
+contributions remain on the same objective scale. The distinction between
+methods is not whether priors are included in scores; they are. The distinction
+is whether the approximation uses local curvature, as in Hessian, surrogate,
+bootstrap, and sandwich methods, or only score variability, as in OPG.
+
+Useful fit-time arguments are:
+
+- `optimcontrol = list(uncertainty = "hessian")`
+- `optimcontrol = list(uncertaintyDraws = "auto")`
+- `optimcontrol = list(uncertaintyControl = list(...))`
+- `optimcontrol = list(finishsamples = 1000)`
+- `optimcontrol = list(is = TRUE, isESS = ..., isitersize = ...)` for the
+  existing importance-sampling path. `is = TRUE` is equivalent to requesting
+  importance-sampling draws.
+
+Useful post-hoc arguments are:
+
+- `ctOptimUncertainty(fit, uncertainty = "surrogate")`
+- `ctOptimUncertainty(fit, draws = "normal")`
+- `ctOptimUncertainty(fit, finishsamples = 1000, cores = 4)`
+- `ctOptimUncertainty(fit, control = list(surrogateNpoints = 100))`
+- `ctOptimUncertainty(fit, uncertainty = "fullbootstrap", control = list(bootstrapFitCores = 1))`
+
+Use post-hoc updates when the optimized point estimate is satisfactory but the
+uncertainty approximation needs comparison or refinement. `ctOptimUncertainty()`
+is for optimized `ctStanFit` objects. It is not needed for full MCMC fits,
+where uncertainty is already represented by the sampled posterior.
+
+## Generate Data
+
+```{r}
+n_subjects <- 10
+tpoints <- 16
+
+gen_model <- ctModel(
+  type = "omx",
+  Tpoints = tpoints,
+  n.latent = 1,
+  n.manifest = 1,
+  LAMBDA = matrix(1),
+  T0MEANS = matrix(0),
+  T0VAR = matrix(0.6),
+  DRIFT = matrix(-0.35),
+  DIFFUSION = matrix(0.5),
+  CINT = matrix(0.15),
+  MANIFESTMEANS = matrix(0),
+  MANIFESTVAR = matrix(0.25)
+)
+
+dat <- do.call(rbind, lapply(seq_len(n_subjects), function(id) {
+  d <- data.frame(ctGenerate(
+    ctmodelobj = gen_model,
+    n.subjects = 1,
+    burnin = 0,
+    dtmean = 0.4,
+    logdtsd = 0.1
+  ))
+  d$id <- id
+  d
+}))
+dat <- dat[order(dat$id, dat$time), ]
+```
+
+The fitted model estimates a continuous-time intercept, drift, and diffusion
+for a single latent process with fixed measurement scale.
+
+```{r}
+fit_model <- ctModel(
+  type = "ct",
+  Tpoints = tpoints,
+  n.latent = 1,
+  n.manifest = 1,
+  LAMBDA = matrix(1),
+  MANIFESTMEANS = matrix(0),
+  CINT = matrix("cint"),
+  DRIFT = matrix("drift"),
+  DIFFUSION = matrix("diffusion")
+)
+```
+
+## Fit Once
+
+The initial fit uses the existing Hessian-based optimized-fit approximation.
+Subsequent sections reuse its optimized estimate and compiled model.
+
+```{r}
+base_fit <- ctFit(
+  datalong = dat,
+  ctstanmodel = fit_model,
+  cores = 1,
+  priors = TRUE,
+  optimize = TRUE,
+  optimcontrol = list(
+    stochastic = FALSE,
+    carefulfit = FALSE,
+    finishsamples = 120,
+    uncertainty = "hessian"
+  )
+)
+```
+
+## Compare Methods
+
+```{r}
+raw_widths <- function(fit) {
+  raw <- fit$stanfit$rawposterior
+  q <- apply(raw, 2, quantile, probs = c(.025, .975), na.rm = TRUE)
+  data.frame(
+    parameter = paste0("raw", seq_len(ncol(raw))),
+    width = as.numeric(q[2, ] - q[1, ])
+  )
+}
+
+time_update <- function(method, draws = "auto", control = list(), finish = 120) {
+  elapsed <- system.time({
+    fit <- ctOptimUncertainty(
+      base_fit,
+      uncertainty = method,
+      draws = draws,
+      finishsamples = finish,
+      cores = 1,
+      control = control
+    )
+  })[["elapsed"]]
+  list(method = method, seconds = elapsed, fit = fit)
+}
+
+results <- list(
+  time_update("hessian"),
+  time_update("opg"),
+  time_update("sandwich"),
+  time_update("bootstrap"),
+  time_update("fullbootstrap", finish = 20, control = list(bootstrapTol = 1e-4)),
+  time_update("surrogate", control = list(surrogateNpoints = 30, surrogateScale = .6))
+)
+
+timings <- data.frame(
+  method = vapply(results, `[[`, character(1), "method"),
+  seconds = vapply(results, `[[`, numeric(1), "seconds")
+)
+
+widths <- do.call(rbind, lapply(results, function(x) {
+  data.frame(method = x$method, raw_widths(x$fit))
+}))
+```
+
+```{r}
+timings
+```
+
+```{r}
+ggplot(timings, aes(x = method, y = seconds)) +
+  geom_col(fill = "grey45") +
+  theme_bw() +
+  labs(x = NULL, y = "Elapsed seconds")
+```
+
+```{r}
+ggplot(widths, aes(x = parameter, y = width, colour = method, group = method)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  labs(x = "Raw parameter", y = "95% interval width")
+```
+
+## Direct Use During Fitting
+
+The same uncertainty types can be requested directly during `ctFit()` through
+`optimcontrol`.
+
+```{r, eval=FALSE}
+fit_surrogate <- ctFit(
+  datalong = dat,
+  ctstanmodel = fit_model,
+  cores = 1,
+  priors = TRUE,
+  optimize = TRUE,
+  optimcontrol = list(
+    stochastic = FALSE,
+    carefulfit = FALSE,
+    finishsamples = 120,
+    uncertainty = "surrogate",
+    uncertaintyControl = list(surrogateNpoints = 30)
+  )
+)
+```
+
+For fit-time use, select the method with `uncertainty`. The draw rule defaults
+to `uncertaintyDraws = "auto"`, which uses empirical one-step draws for
+`uncertainty = "bootstrap"` and normal draws otherwise.
+
+## Coverage Simulation
+
+`ctModelCoverage_check()` can run a small simulation study by first fitting the
+model once, generating repeated datasets from that fitted model, and then
+refitting each generated dataset under a set of named fitting options. This is
+more expensive than the single-dataset comparison above, so the chunk below is
+not evaluated during ordinary rendering. Set `eval=TRUE` and increase `niter`
+for a real coverage run.
+
+```{r, eval=FALSE}
+coverage_fit_args <- list(
+  hessian = list(
+    priors = TRUE,
+    optimize = TRUE,
+    optimcontrol = list(
+      stochastic = FALSE,
+      carefulfit = FALSE,
+      finishsamples = 100,
+      uncertainty = "hessian"
+    )
+  ),
+  opg = list(
+    priors = TRUE,
+    optimize = TRUE,
+    optimcontrol = list(
+      stochastic = FALSE,
+      carefulfit = FALSE,
+      finishsamples = 100,
+      uncertainty = "opg"
+    )
+  ),
+  sandwich = list(
+    priors = TRUE,
+    optimize = TRUE,
+    optimcontrol = list(
+      stochastic = FALSE,
+      carefulfit = FALSE,
+      finishsamples = 100,
+      uncertainty = "sandwich"
+    )
+  ),
+  bootstrap = list(
+    priors = TRUE,
+    optimize = TRUE,
+    optimcontrol = list(
+      stochastic = FALSE,
+      carefulfit = FALSE,
+      finishsamples = 100,
+      uncertainty = "bootstrap"
+    )
+  ),
+  surrogate = list(
+    priors = TRUE,
+    optimize = TRUE,
+    optimcontrol = list(
+      stochastic = FALSE,
+      carefulfit = FALSE,
+      finishsamples = 100,
+      uncertainty = "surrogate",
+      uncertaintyControl = list(
+        surrogateNpoints = 30,
+        surrogateScale = .6
+      )
+    )
+  )
+)
+
+coverage_check <- ctModelCoverage_check(
+  initialData = dat,
+  fitting_model = fit_model,
+  niter = 1000,
+  fit_args = coverage_fit_args,
+  cores = 20,
+  fit_cores = 1,
+  plot_every = 20
+)
+
+coverage_summary <- unique(data.frame(
+  coverage_check$results[, c("type", "par", "coverage"), with = FALSE]
+))
+coverage_summary
+```
+
+The returned object also contains the final plots:
+
+```{r, eval=FALSE}
+coverage_check$bias_plot
+coverage_check$coverage_plot
+```
+
+For publication-scale checks, use substantially larger `niter`, keep
+`finishsamples` large enough for stable interval estimates, and use separate
+sessions or cores for the outer simulation rather than increasing `ctFit()`
+cores inside each replicate.

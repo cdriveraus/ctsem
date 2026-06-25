@@ -52,7 +52,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
 
       
       tfit1<-ctFit(tdat,checkm,cores=cores,optimize=TRUE,
-        optimcontrol=list(bootstrapUncertainty=TRUE))
+        optimcontrol=list(uncertainty='bootstrap'))
       
       #use the estimates as true pars going forward
       truepars <- tfit1$stanfit$rawest
@@ -69,12 +69,12 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
         dat[,checkm$manifestNames] <- y
         
         fitboot<-ctFit(tdat,checkm,cores=cores,
-          optimcontrol=list(bootstrapUncertainty=TRUE))
+          optimcontrol=list(uncertainty='bootstrap'))
         sboot=summary(fitboot,parmatrices=F)
 
         
         fithess<-ctFit(tdat,checkm,optimize=TRUE,cores=cores,inits=tfit1$stanfit$rawest,
-          optimcontrol=list(bootstrapUncertainty=F,stochastic=F))
+          optimcontrol=list(uncertainty='hessian',stochastic=F))
         s2=summary(tfit2,parmatrices=F)
 
         r1 <- data.frame(iteration=iteri,type='boot',truepars=truepars,

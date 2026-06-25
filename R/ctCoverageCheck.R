@@ -7,15 +7,31 @@
 #' @param fitting_model A ctModel object used for fitting the data
 #' @param niter Number of iterations to run
 #' @param fit_args Named list of fit argument sets to test 
-#' (e.g., list(boot = list(optimcontrol = list(bootstrapUncertainty = TRUE)), 
-#' hess = list(optimcontrol = list(bootstrapUncertainty = FALSE))))
-#' @param cores Number of cores to use for parallel processing
+#' (e.g., list(boot = list(optimcontrol = list(uncertainty = 'bootstrap')), 
+#' hess = list(optimcontrol = list(uncertainty = 'hessian'))))
+#' @param cores Number of outer simulation iterations to run in parallel.
+#' Inner model fits use \code{fit_cores} by default to avoid nested
+#' parallelism.
+#' @param fit_cores Number of cores for each inner \code{\link{ctFit}} call.
+#' This is enforced after merging each \code{fit_args} entry so that outer
+#' simulation \code{cores} cannot accidentally be reused by worker fits.
+#' @param generate_cores Number of cores for \code{\link{ctGenerateFromFit}}
+#' when generating replicated datasets. Defaults to \code{fit_cores}; set it
+#' explicitly to use more cores for generation.
 #' @param plot_every Print plots every n iterations (default = 10)
 #' 
 #' @return A list containing the results data.table and final plots
+#' @export
 
 ctModelCoverage_check <- function(initialData, fitting_model, niter, fit_args, 
-  cores = 10, plot_every = max(c(10,cores))) {
+  cores = 10, fit_cores = 1, generate_cores = fit_cores,
+  plot_every = max(c(10,cores))) {
+  
+  ctCoverageFitArgs <- function(default_fit_args, fit_args, fit_cores){
+    out <- utils::modifyList(default_fit_args, fit_args)
+    out$cores <- fit_cores
+    out
+  }
 
   mean50 <- X50. <- coverage <- X2.5. <- X97.5. <- type <- iteration <- NULL   # To avoid R CMD check note about undefined global variable
   
@@ -24,33 +40,55 @@ ctModelCoverage_check <- function(initialData, fitting_model, niter, fit_args,
     if(!requireNamespace(x, quietly = TRUE)) stop(paste("Package", x, "is required but not installed."))
   })
   
-  # Set up parallel processing
-  future::plan(future::multisession, workers = cores)
+  cores <- suppressWarnings(as.integer(cores[1]))
+  fit_cores <- suppressWarnings(as.integer(fit_cores[1]))
+  generate_cores <- suppressWarnings(as.integer(generate_cores[1]))
+  if(!is.finite(cores) || is.na(cores) || cores < 1) cores <- 1L
+  if(!is.finite(fit_cores) || is.na(fit_cores) || fit_cores < 1) fit_cores <- 1L
+  if(!is.finite(generate_cores) || is.na(generate_cores) || generate_cores < 1) generate_cores <- 1L
+  cores <- min(cores, niter)
   
-  # Check if parallel setup worked
-  message(paste("Using", future::nbrOfWorkers(), "workers for parallel processing"))
   
-  
-  # Default fit arguments
-  default_fit_args <- list(
-    cores = 1
-  )
+  # Default fit arguments. Inner fits are single-core by default to avoid
+  # nested parallelism; fit_cores is enforced after merging fit_args below.
+  default_fit_args <- list()
   
   # Ensure fit_args is a named list
   if(is.null(names(fit_args)) || any(names(fit_args) == "")) {
     stop("fit_args must be a named list (e.g., list(boot = list(...), hess = list(...)))")
   }
+  fit_args_cores <- vapply(fit_args, function(x) !is.null(x$cores),
+    logical(1))
+  if(any(fit_args_cores)) {
+    warning('Ignoring top-level cores entries in fit_args; use fit_cores to control inner ctFit cores.',
+      call.=FALSE)
+  }
+  if(cores > 1 && fit_cores > 1) {
+    warning('ctModelCoverage_check is using outer parallelism and inner ctFit cores > 1. ',
+      'This can oversubscribe CPUs; prefer cores > 1 with fit_cores = 1 unless you have budgeted for nested workers.',
+      call.=FALSE)
+  }
   
   
   # Fit the model to get true parameters (use first fit_args configuration)
-  initial_fit_args <- default_fit_args
+  initial_fit_args <- ctCoverageFitArgs(default_fit_args, list(), fit_cores)
   initial_fit <- do.call(ctFit, c(list(datalong = initialData, ctstanmodel = fitting_model), initial_fit_args))
   truepars <- initial_fit$stanfit$rawest
   
   # CRITICAL STEP: Generate new data samples from the fitted model
   # This ensures proper parameter specification for all iterations
   message("Generating samples for all iterations using ctGenerateFromFit...")
-  generated_samples <- ctGenerateFromFit(fit = initial_fit, nsamples = niter, cores = cores)
+  generated_samples <- ctGenerateFromFit(fit = initial_fit, nsamples = niter,
+    cores = generate_cores)
+  
+  old_plan <- future::plan()
+  on.exit(future::plan(old_plan), add=TRUE)
+  
+  # Set up parallel processing over generated datasets.
+  future::plan(future::multisession, workers = cores)
+  
+  # Check if parallel setup worked
+  message(paste("Using", future::nbrOfWorkers(), "workers for coverage iterations"))
 
   # Define the function to run for each iteration
   run_iteration <- function(iter_idx) {
@@ -70,7 +108,8 @@ ctModelCoverage_check <- function(initialData, fitting_model, niter, fit_args,
       
       for(fit_type in names(fit_args)) {
         # Merge default args with specific fit args
-        current_fit_args <- utils::modifyList(default_fit_args, fit_args[[fit_type]])
+        current_fit_args <- ctCoverageFitArgs(default_fit_args,
+          fit_args[[fit_type]], fit_cores)
         
         # Fit the model with current arguments
         current_fit <- do.call(ctFit, c(list(datalong = dat, ctstanmodel = fitting_model), current_fit_args))
@@ -181,9 +220,6 @@ ctModelCoverage_check <- function(initialData, fitting_model, niter, fit_args,
     geom_hline(yintercept = 0.95, linetype = 'dashed') +
     theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = 'bottom') +
     labs(title = "Coverage Probability", y = "Coverage")
-  
-  # Clean up parallel processing
-  future::plan(future::sequential)
   
   # Return results
   return(list(

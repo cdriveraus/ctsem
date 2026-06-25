@@ -10,6 +10,8 @@ ctModelCoverage_check(
   niter,
   fit_args,
   cores = 10,
+  fit_cores = 1,
+  generate_cores = fit_cores,
   plot_every = max(c(10, cores))
 )
 }
@@ -21,10 +23,20 @@ ctModelCoverage_check(
 \item{niter}{Number of iterations to run}
 
 \item{fit_args}{Named list of fit argument sets to test 
-(e.g., list(boot = list(optimcontrol = list(bootstrapUncertainty = TRUE)), 
-hess = list(optimcontrol = list(bootstrapUncertainty = FALSE))))}
+(e.g., list(boot = list(optimcontrol = list(uncertainty = 'bootstrap')), 
+hess = list(optimcontrol = list(uncertainty = 'hessian'))))}
 
-\item{cores}{Number of cores to use for parallel processing}
+\item{cores}{Number of outer simulation iterations to run in parallel.
+Inner model fits use \code{fit_cores} by default to avoid nested
+parallelism.}
+
+\item{fit_cores}{Number of cores for each inner \code{\link{ctFit}} call.
+This is enforced after merging each \code{fit_args} entry so that outer
+simulation \code{cores} cannot accidentally be reused by worker fits.}
+
+\item{generate_cores}{Number of cores for \code{\link{ctGenerateFromFit}}
+when generating replicated datasets. Defaults to \code{fit_cores}; set it
+explicitly to use more cores for generation.}
 
 \item{plot_every}{Print plots every n iterations (default = 10)}
 }

@@ -40,7 +40,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4 &
     dm$pars$indvarying <- FALSE
     
 
-    fct <- ctFit(datalong = dat,ctstanmodel = cm)#,optimcontrol=list(bootstrapUncertainty=TRUE))
+    fct <- ctFit(datalong = dat,ctstanmodel = cm)
     fdt <- ctFit(datalong = dat,ctstanmodel = dm)
     
     sct <- summary(fct,parmatrices=TRUE)

@@ -38,7 +38,7 @@ if(FALSE){
       
       scores=t(ctsem:::scorecalc(standata = f$standata,est = f$stanfit$rawest,stanmodel = f$stanmodel,subjectsonly = T,cores=1))
       
-      fc <- ctFit(datalong = d,ctstanmodel = m,cores=1,priors=TRUE,optimcontrol=list(carefulfit=F,stochastic=F,finishsamples=5000,bootstrapUncertainty=F))
+      fc <- ctFit(datalong = d,ctstanmodel = m,cores=1,priors=TRUE,optimcontrol=list(carefulfit=F,stochastic=F,finishsamples=5000,uncertainty='hessian'))
       sc=summary(fc)
       # print(sc)
       

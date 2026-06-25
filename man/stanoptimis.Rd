@@ -14,7 +14,9 @@ stanoptimis(
   stochastic = TRUE,
   priors = TRUE,
   carefulfit = TRUE,
-  bootstrapUncertainty = FALSE,
+  uncertainty = "hessian",
+  uncertaintyDraws = "auto",
+  uncertaintyControl = list(),
   subsamplesize = 1,
   parsteps = c(),
   parstepsAutoModel = FALSE,
@@ -54,8 +56,27 @@ the stan model uses this value.}
 
 \item{carefulfit}{Logical. If TRUE, priors are always used for a rough first pass to obtain starting values when priors=FALSE}
 
-\item{bootstrapUncertainty}{Logical. If TRUE, subject wise gradient contributions are resampled to estimate the hessian, 
-for computing standard errors or initializing importance sampling.}
+\item{uncertainty}{Character string selecting the optimized-fit uncertainty
+approximation. Options are \code{'hessian'}, \code{'surrogate'},
+\code{'bootstrap'}, \code{'fullbootstrap'}, \code{'sandwich'}, and
+\code{'opg'}.}
+
+\item{uncertaintyDraws}{Character string controlling approximate
+raw-parameter draws
+from the approximate uncertainty. \code{'auto'} uses empirical draws for
+\code{uncertainty='bootstrap'} or \code{uncertainty='fullbootstrap'} and
+normal draws otherwise. \code{'normal'} draws from a multivariate normal
+using the selected covariance, \code{'empirical'} uses empirical draws when
+available, and \code{'imis'} runs importance sampling.}
+
+\item{uncertaintyControl}{List of method-specific options passed to
+\code{\link{ctOptimUncertainty}} internals. Score-based methods use
+subject-level score contributions when there are at least two subjects;
+single-subject models warn and use case-level contributions. Score-based
+methods warn when there are fewer than ten independent subjects or no more
+score rows than raw parameters. Full bootstrap requires at least two
+subjects and warns below ten independent subjects. Bootstrap-style methods
+require at least two returned samples / refits.}
 
 \item{subsamplesize}{value between 0 and 1 representing proportion of subjects to include in first pass fit.}
 
