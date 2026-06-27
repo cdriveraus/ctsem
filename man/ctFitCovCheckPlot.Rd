@@ -7,7 +7,8 @@
 ctFitCovCheckPlot(x, maxlag = 10, vars = NA, splitvar = NA, cor = FALSE, ...)
 }
 \arguments{
-\item{x}{Output from ctFitCovCheck.}
+\item{x}{Data output from `ctFitCovCheck(..., plot = FALSE)`. If a ggplot
+object or list of ggplot objects is supplied, it is returned unchanged.}
 
 \item{maxlag}{Maximum lag to plot.}
 
