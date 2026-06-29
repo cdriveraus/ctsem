@@ -35,7 +35,7 @@ test_that("ctEmpiricalBayesFit summary adjusts transforms from raw point estimat
       '3'=fakefit(c(11, 11))),
     parnames=c('drift','merror'),
     ebUse='rawest',
-    ctstanmodel=model,
+    model=model,
     subjectmodel=subjectmodel)
   class(eb) <- 'ctEmpiricalBayesFit'
   
@@ -88,7 +88,7 @@ test_that("ctEmpiricalBayesFit summary can use raw empirical SDs for sdscale", {
       '3'=fakefit(c(0, 4))),
     parnames=c('drift','merror'),
     ebUse='rawest',
-    ctstanmodel=model,
+    model=model,
     subjectmodel=subjectmodel)
   class(eb) <- 'ctEmpiricalBayesFit'
   
@@ -195,7 +195,7 @@ test_that("ctEmpiricalBayesFit summary uses final pass map and prior stats", {
       '3'=fakefit(c(1, 2))),
     parnames=c('drift','merror'),
     ebUse='rawest',
-    ctstanmodel=model,
+    model=model,
     subjectmodel=subjectmodel,
     passrawstats=list(
       data.frame(param=c('drift','merror'), mean=c(0, 0), sd=c(1, 1)),

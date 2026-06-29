@@ -63,7 +63,9 @@ user-facing API. Existing code using the older names should continue to
 work because the old names remain as compatibility aliases.
 
 Use `ctFit()` as the main fitting function; `ctStanFit()` is now an
-alias. For model specification, the usual modern workflow is:
+alias. The model argument to `ctFit()` is now called `model`; the older
+`ctstanmodel` argument is deprecated but still accepted for existing
+scripts. For model specification, the usual modern workflow is:
 
 ``` r
 model <- ctModel(type = "ct", ...)
@@ -96,7 +98,7 @@ Other common name updates are:
 - `ctStanFitUpdate()` -> `ctFitUpdate()`
 - `ctStanDiscretePars()` -> `ctDiscretePars()`
 - `ctStanDiscreteParsPlot()` -> `ctDiscreteParsPlot()`
-- `ctStanContinuousPars()` -> `ctContinuousPars()`
+- `ctStanContinuousPars()` -> `ctSummaryMatrices()`
 - `ctStanParnames()` -> `ctRawParnames()`
 
 Modern model objects can also be edited in matrix form via the
@@ -234,7 +236,7 @@ ctDiscretePars(f,plot=T)
 \#’ Add samples to fit to increase estimate precision: ctAddSamples()
 
 \#’ Return dynamic system parameters in matrix forms:
-ctContinuousPars()
+ctSummaryMatrices()
 
 \#’ Compute cross validation statistics: ctLOO()
 

@@ -60,31 +60,6 @@ ctMatsetupFreePars <- function(m,intoverpop){
   m = m[order(m$param),,drop=FALSE]
 }
 
-ctMatvalueFreePars <- function(ms,mv){
-  mv=mv[ms$when %in% c(0,-1) & ms$param > 0,,drop=FALSE]
-  ms=ms[ms$when %in% c(0,-1) & ms$param > 0,,drop=FALSE]
-  mv=mv[match(unique(ms$param),ms$param),,drop=FALSE]
-  mv = mv[order(ms$param),,drop=FALSE]
-}
-
-# ctCovTransform <- function(rawpopcov, rawpopmeans, ms, mv){
-#   mv <- ctMatvalueFreePars(ms,mv)
-#   ms <- ctMatsetupFreePars(ms)
-#   rawpopmeans=rawpopmeans[ms$param[ms$indvarying>0]]
-#   
-#   d=nrow(rawpopcov)
-#   n=10000
-#   mc <- t(chol(rawpopcov))
-#   
-#   x <- matrix(rnorm(n*d),n,d)
-#   x <- t(apply(x,1,function(y)  mc %*% (y) + rawpopmeans ))
-#   tx <- x
-#   for(i in 1:nrow(mc)){
-#       tx[,i] <- tform(x[,i],ms$transform[i],mv$multiplier[i], mv$meanscale[i], mv$offset[i],mv$inneroffset[i])
-#   }
-#   return(cov(tx))
-# }
-
 texPrep <- function(x){ #replaces certain characters with tex safe versions
   for(i in 1:length(x)){
     x[i]=gsub('_', '\\_',x[i],fixed=TRUE)
@@ -412,7 +387,7 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
     
     # if(covMatrices){
     #   if('ctStanFit' %in% class(m)){
-    #     cp <- ctContinuousPars(m)
+    #     cp <- ctSummaryMatrices(m)
     #     ctmodel$T0VAR <- cp$T0COV
     #     ctmodel$DIFFUSION <- cp$DIFFUSIONcov
     #     } else {

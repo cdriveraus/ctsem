@@ -99,7 +99,7 @@ NULL
 .onAttach <- function(libname, pkgname) {
   if(interactive()){
     # to show a startup message
-    packageStartupMessage("ctsem also changes in time, for manual run ctDocs(), see https://github.com/cdriveraus/ctsem/ for quick start / resources / discussion, for citation info run citation('ctsem'), for original OpenMx functionality install.packages('ctsemOMX'), and for discussion https://github.com/cdriveraus/ctsem/discussions")
+    packageStartupMessage("ctsem also changes in time, for manual run ctDocs(), see https://github.com/cdriveraus/ctsem/ for quick start / resources, for citation info run citation('ctsem'), for discussion https://github.com/cdriveraus/ctsem/discussions")
     
     try({
       a=sapply(c('rstan','ctsem'),utils::packageVersion)

@@ -11,8 +11,8 @@ ctGraphPlot <- function(x,DRIFT=TRUE, DIFFUSION=TRUE){
   }
   if('ctStanFit' %in% class(x)){
     model <-x$ctstanmodelbase
-    A <- x$stanfit$transformedparsfull$DRIFT[1,,]
-    G <- x$stanfit$transformedparsfull$DIFFUSION[1,,]
+    A <- x$stanfit$transformedparsfull$pop_DRIFT[1,,]
+    G <- x$stanfit$transformedparsfull$pop_DIFFUSION[1,,]
   }
   
   dimnames(A) <- list(model$latentNames,model$latentNames)
@@ -72,7 +72,7 @@ ctGraphPlot <- function(x,DRIFT=TRUE, DIFFUSION=TRUE){
   ggraph(graph_obj, layout = "fr", weights = layout_weight) +
     # Plot undirected G edges as dashed green arcs (no arrowheads)
     geom_edge_arc(aes(filter = .data$edge_type == "G"),
-      edge_colour = "green",
+      edge_colour = "orange",
       linetype = "dashed",
       edge_width = 0.8,
       edge_alpha = 0.8) +

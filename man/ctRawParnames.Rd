@@ -13,7 +13,7 @@ ctStanParnames(x, substrings = c("pop_", "popsd"))
 \item{x}{ctStanFit object}
 
 \item{substrings}{vector of character strings, parameter names of the stan model
-containing any of these strings will be returned. Useful strings may be 'pop_' for 
+containing any of these strings will be returned. Useful strings may be 'pop_' for
 population means, 'popsd' for population standard deviations,
  or specific combinations such as 'pop_DRIFT' for the population
 means of temporal dynamics parameters}
@@ -33,8 +33,8 @@ time <- 1749:1924
 datalong <- cbind(id, time, sunspots)
 
 #setup model
-ssmodel <- ctModel(type='ct', n.latent=2, n.manifest=1, 
- manifestNames='sunspots', 
+ssmodel <- ctModel(type='ct', n.latent=2, n.manifest=1,
+ manifestNames='sunspots',
  latentNames=c('ss_level', 'ss_velocity'),
  LAMBDA=matrix(c( 1, 'ma1| log(1+(exp(param)))' ), nrow=1, ncol=2),
  DRIFT=matrix(c(0, 'a21 | -log(1+exp(param))', 1, 'a22'), nrow=2, ncol=2),

@@ -42,11 +42,11 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     m$pars$indvarying=F
     
     #fit with integration (linearised approximation)
-    f <- ctFit( datalong = d, ctstanmodel = m,cores=cores,plot=10)
+    f <- ctFit( datalong = d, model= m,cores=cores,plot=10)
     
     #test if the estimated model pars 95% confidence intervals contain true pars
-    lowmats <- ctContinuousPars(f,calcfuncargs = list(probs=.025))
-    upmats <- ctContinuousPars(f,calcfuncargs = list(probs=.975))
+    lowmats <- ctSummaryMatrices(f,calcfuncargs = list(probs=.025))
+    upmats <- ctSummaryMatrices(f,calcfuncargs = list(probs=.975))
     
     gmn <- ctsem:::ctModeltoNumeric(gm)
     gmn$DIFFUSIONcov <- tcrossprod(gmn$DIFFUSION)

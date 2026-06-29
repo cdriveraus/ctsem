@@ -44,8 +44,8 @@ for(i in 2:4){
 
 for(i in 2:4){
   test_isclose(
-      ctContinuousPars(get(paste0('ssfit',i)))$DRIFT,
-      ctContinuousPars(get(paste0('ssfit',i-1)))$DRIFT,tol=1e-1)
+      ctSummaryMatrices(get(paste0('ssfit',i)))$DRIFT,
+      ctSummaryMatrices(get(paste0('ssfit',i-1)))$DRIFT,tol=1e-1)
 }
 
 })

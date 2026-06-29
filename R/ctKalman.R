@@ -17,7 +17,7 @@
 #' \code{\link{ctDiscretePars}} and \code{\link{ctDiscreteParsPlot}}
 #' when \code{doDynamics=TRUE}. Arguments matching
 #' \code{ctDiscreteParsPlot} are automatically routed to the plot call.
-#' Internally controlled arguments \code{ctstanfitobj}, \code{plot},
+#' Internally controlled arguments \code{fit}, \code{ctstanfitobj}, \code{plot},
 #' \code{subjects}, \code{observational}, \code{x}, \code{quantiles}, and
 #' \code{splitSubjects} are ignored if supplied.
 #' @param showUncertainty A logical value indicating whether to plot the uncertainty of the predictions. Default is TRUE.
@@ -43,7 +43,7 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
   if(length(dynamicsControl) > 0 && (is.null(names(dynamicsControl)) || any(names(dynamicsControl) == ''))){
     stop('dynamicsControl must be a named list')
   }
-  dynamicsControl[names(dynamicsControl) %in% c('ctstanfitobj','plot','subjects','observational','x',
+  dynamicsControl[names(dynamicsControl) %in% c('fit','ctstanfitobj','plot','subjects','observational','x',
     'quantiles','splitSubjects')] <- NULL
   dynamicsPlotControl <- dynamicsControl[names(dynamicsControl) %in% names(formals(ctDiscreteParsPlot))]
   dynamicsControl <- dynamicsControl[!names(dynamicsControl) %in% names(dynamicsPlotControl)]
@@ -121,7 +121,7 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
       if(doDynamics){
         for(typei in c('Independent','Correlated')){
           discreteParsArgs <- c(dynamicsControl, list(
-            ctstanfitobj=sf,
+            fit=sf,
             plot=FALSE,
             subjects=(tipi-1)*nrow(TIPvalues) + 1:nrow(TIPvalues),
             observational = !typei %in% 'Independent'))

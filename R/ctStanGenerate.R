@@ -106,7 +106,8 @@ ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
   args$optimcontrol=optimcontrol
   args$optimize=TRUE
   args$cores=cores
-  args$ctstanmodel <- cts
+  args$model <- cts
+  args$ctstanmodel <- NULL
   args$intoverstates <- TRUE
   args$intoverpop <- TRUE
   args$inits=0

@@ -34,7 +34,7 @@ if(1==0){
   
   sm <- model1
   
-  ssfit<-ctFit(datalong=datalong, ctstanmodel=sm, forcerecompile = T,
+  ssfit<-ctFit(datalong=datalong, model=sm, forcerecompile = T,
     verbose=0,optimize=T,#optimcontrol=list(estonly=T),
     # nlcontrol=list(nldynamics=F, nlmeasurement=F,ukffull=1,ukfspread=1e-1),
     chains=1,priors=TRUE)

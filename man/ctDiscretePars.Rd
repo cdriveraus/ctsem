@@ -6,7 +6,7 @@
 \title{ctDiscretePars}
 \usage{
 ctDiscretePars(
-  ctstanfitobj,
+  fit,
   subjects = "popmean",
   times = seq(from = 0, to = 10, by = 0.1),
   nsamples = 200,
@@ -15,11 +15,12 @@ ctDiscretePars(
   cov = FALSE,
   plot = FALSE,
   cores = 2,
-  ...
+  ...,
+  ctstanfitobj
 )
 
 ctStanDiscretePars(
-  ctstanfitobj,
+  fit,
   subjects = "popmean",
   times = seq(from = 0, to = 10, by = 0.1),
   nsamples = 200,
@@ -28,27 +29,28 @@ ctStanDiscretePars(
   cov = FALSE,
   plot = FALSE,
   cores = 2,
-  ...
+  ...,
+  ctstanfitobj
 )
 }
 \arguments{
-\item{ctstanfitobj}{model fit from \code{\link{ctStanFit}}}
+\item{fit}{model fit from \code{\link{ctFit}}}
 
 \item{subjects}{Either 'popmean', to use the population mean parameter, or a vector of integers denoting which
 subjects.}
 
-\item{times}{Numeric vector of positive values, discrete time parameters will be calculated for each. If the fit 
+\item{times}{Numeric vector of positive values, discrete time parameters will be calculated for each. If the fit
 object is a discrete time model, these should be positive integers.}
 
 \item{nsamples}{Number of samples from the stanfit to use for plotting. Higher values will
 increase smoothness / accuracy, at cost of plotting speed. Values greater than the total
 number of samples will be set to total samples.}
 
-\item{observational}{Logical. If TRUE, outputs expected change in processes *conditional on observing* a 1 unit change in each -- 
+\item{observational}{Logical. If TRUE, outputs expected change in processes *conditional on observing* a 1 unit change in each --
 this change is correlated according to the DIFFUSION matrix. If FALSE, outputs expected regression values -- also interpretable as
 an independent 1 unit change on each process, giving the expected response under a 1 unit experimental impulse.}
 
-\item{standardise}{Logical. If TRUE, output is standardised according to expected total within subject variance, given by the 
+\item{standardise}{Logical. If TRUE, output is standardised according to expected total within subject variance, given by the
 asymDIFFUSIONcov matrix.}
 
 \item{cov}{Logical. If TRUE, covariances are returned instead of regression coefficients.}
@@ -56,25 +58,27 @@ asymDIFFUSIONcov matrix.}
 \item{plot}{Logical. If TRUE, ggplots output using \code{\link{ctDiscreteParsPlot}}
 instead of returning output.}
 
-\item{cores}{Number of cpu cores to use for computing subject matrices. 
+\item{cores}{Number of cpu cores to use for computing subject matrices.
 If subject matrices were saved during fiting, not used.}
 
 \item{...}{additional plotting arguments to control \code{\link{ctDiscreteParsPlot}}}
+
+\item{ctstanfitobj}{Deprecated. Use \code{fit}.}
 }
 \description{
 Calculate model implied regressions for a sequence of time intervals (if ct) or steps (if dt) based on
 a ctStanFit object, for specified subjects. Wrap with print() when used inside for loops!
 }
 \details{
-If plot=TRUE, the function will return a ggplot2 object 
-(and hence needs to be printed if intended to display within a loop). 
+If plot=TRUE, the function will return a ggplot2 object
+(and hence needs to be printed if intended to display within a loop).
 This can be modified by the various ggplot2 functions, or displayed using print(x).
 }
 \examples{
 data.table::setDTthreads(1) #ignore this line
 ctDiscretePars(ctstantestfit,times=seq(.5,4,.1),
  plot=TRUE,indices='CR')
- 
+
 #modify plot
 require(ggplot2)
 g=ctDiscretePars(ctstantestfit,times=seq(.5,4,.1),

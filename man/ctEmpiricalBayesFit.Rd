@@ -6,7 +6,7 @@
 \usage{
 ctEmpiricalBayesFit(
   datalong,
-  ctstanmodel,
+  model,
   subjects = "all",
   priors = TRUE,
   optimize = TRUE,
@@ -27,7 +27,7 @@ ctEmpiricalBayesFit(
 \arguments{
 \item{datalong}{Long format data containing multiple subjects.}
 
-\item{ctstanmodel}{Model object from \code{\link{ctModel}}. Time independent
+\item{model}{Model object from \code{\link{ctModel}}. Time independent
 predictors are not supported. A random-effect-free copy of this model is used
 for the per-subject fits.}
 

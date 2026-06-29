@@ -25,7 +25,7 @@ test_that("anomauth", {
   a=Sys.time()
   # sink('bad.txt')
   sf=ctFit(ctDeintervalise(ctWideToLong(AnomAuth,Tpoints = AnomAuthmodel$Tpoints,n.manifest = 2)),
-    ctstanmodel = sm1, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores)
+    model= sm1, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores)
   # sink()
   print(Sys.time()-a)
   test_isclose(23415.929,-2*sf$stanfit$optimfit$value,tol=.01)
@@ -60,7 +60,7 @@ oscillatingm <- ctModel(type='omx', n.latent = 2, n.manifest = 1, Tpoints = 11,
   sf=ctFit(ctDeintervalise(ctWideToLong(Oscillating,Tpoints = oscillatingm$Tpoints,n.manifest = 1)),
     cores=2,verbose=0,
     # optimcontrol=list(carefulfit=T),
-    ctstanmodel = sm, optimize=TRUE,savescores = FALSE,priors=FALSE)
+    model= sm, optimize=TRUE,savescores = FALSE,priors=FALSE)
   expect_equal(-3461.936,-2*sf$stanfit$optimfit$value,tolerance=.01)
   
 

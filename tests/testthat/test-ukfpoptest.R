@@ -111,7 +111,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     dtm$pars$indvarying <- FALSE
     dtm$pars$indvarying[dtm$pars$matrix %in% 'DRIFT'] <- TRUE
     
-    dtf = ctFit(datalong = dat,ctstanmodel = dtm,optimize=TRUE,
+    dtf = ctFit(datalong = dat,model= dtm,optimize=TRUE,
       verbose=0,optimcontrol=list(estonly=F),savescores = F)
     s1=summary(dtf,parmatrices = F,priorcheck = F,residualcov = F)
     
@@ -122,7 +122,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
       MANIFESTMEANS = matrix(0))
     
     dtm2$pars$indvarying <- FALSE
-    dtf2=ctFit(datalong = dat,ctstanmodel = dtm2,optimize = TRUE)
+    dtf2=ctFit(datalong = dat,model= dtm2,optimize = TRUE)
     s2=summary(dtf2,parmatrices = F,priorcheck = F,residualcov = F)
     
     test_isclose(s1$ll,s2$ll,tol=1e-3)

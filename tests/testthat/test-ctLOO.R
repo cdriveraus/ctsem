@@ -28,9 +28,9 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     sm$pars$indvarying<- FALSE
     
     sf=ctFit(aa,
-      ctstanmodel = sm, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores)
+      model= sm, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores)
     sfboot <- ctFit(aa,
-      ctstanmodel = sm, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores,optimcontrol=list(uncertainty='bootstrap'))
+      model= sm, optimize=TRUE,verbose=0,savescores = FALSE,cores=cores,optimcontrol=list(uncertainty='bootstrap'))
     
     sdat <- sf$standata
     sdat$dokalmanrows[sdat$subject==1] <- 0L #remove 1 subject

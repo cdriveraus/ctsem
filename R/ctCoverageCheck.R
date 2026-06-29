@@ -72,7 +72,7 @@ ctModelCoverage_check <- function(initialData, fitting_model, niter, fit_args,
   
   # Fit the model to get true parameters (use first fit_args configuration)
   initial_fit_args <- ctCoverageFitArgs(default_fit_args, list(), fit_cores)
-  initial_fit <- do.call(ctFit, c(list(datalong = initialData, ctstanmodel = fitting_model), initial_fit_args))
+  initial_fit <- do.call(ctFit, c(list(datalong = initialData, model= fitting_model), initial_fit_args))
   truepars <- initial_fit$stanfit$rawest
   
   # CRITICAL STEP: Generate new data samples from the fitted model
@@ -112,7 +112,7 @@ ctModelCoverage_check <- function(initialData, fitting_model, niter, fit_args,
           fit_args[[fit_type]], fit_cores)
         
         # Fit the model with current arguments
-        current_fit <- do.call(ctFit, c(list(datalong = dat, ctstanmodel = fitting_model), current_fit_args))
+        current_fit <- do.call(ctFit, c(list(datalong = dat, model= fitting_model), current_fit_args))
         estimates <- t(apply(current_fit$stanfit$rawposterior, 2, quantile, probs = c(0.025, 0.5, 0.975)))
         
         # Compile results for this fit type

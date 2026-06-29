@@ -34,7 +34,7 @@ simpleStateCheck <- function(x){   #checks if system matrix elements that refere
 
 ctStanUpdModel <- function(fit, datalong, ctstanmodel,...){
   
-  new <-ctFit(datalong = datalong, ctstanmodel = ctstanmodel,fit=FALSE,...)
+  new <-ctFit(datalong = datalong, model= ctstanmodel,fit=FALSE,...)
   
   fit$standata <- new$standata
   fit$data <- new$data

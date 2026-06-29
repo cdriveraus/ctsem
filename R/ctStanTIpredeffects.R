@@ -6,7 +6,7 @@ ctTIpredParMats <- function(fit, tipvalues){
   cp=stan_constrainsamples(fit$stanmodel,standata = fit$standata,samples = matrix(newpars,1),cores = 1)
 }
 
-  #' Get time independent predictor effect estimates
+#' Get time independent predictor effect estimates
 #' 
 #' Computes and plots combined effects and quantiles for effects of time independent predictors
 #' on subject level parameters of a ctStanFit object.

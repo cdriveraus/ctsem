@@ -221,35 +221,6 @@ processHessianMatrices <- function(hess1, hess2, verbose, matsetup) {
   return(list(hess = hess, probpars = probpars, onesided = onesided))
 }
 
-# Function to handle Hessian inversion and covariance computation
-computeHessianCovariance <- function(hess, standata, useScoreFallback, verbose) {
-  #hessian inversion / checks
-  mcov1 = try(suppressWarnings(solve(-hess)),silent = TRUE)
-  cholcheck=try(suppressWarnings(t(chol(mcov1))),silent = TRUE)
-  if('try-error' %in% class(cholcheck)){
-    nsubjects <- ctOptimNSubjects(standata)
-    ndatapoints <- ctOptimNDataPoints(standata)
-    nscore <- if(!is.na(nsubjects) && nsubjects >= 2) nsubjects else ndatapoints
-    if(!is.na(nscore) && nscore >= 2){
-      useScoreFallback <- TRUE
-      warning('Hessian inversion failed, switching to score based uncertainty estimation',call.=FALSE,immediate. = TRUE)
-    } else {
-      mcov1=try({Matrix::nearPD(solve(-hess),conv.norm.type = 'F',base.matrix = TRUE)})
-      if('try-error' %in% class(mcov1)){
-        mcov1=MASS::ginv(-hess) 
-        mcov1=try({Matrix::nearPD(mcov1,conv.norm.type = 'F',base.matrix = TRUE)$mat})
-        warning('***Generalized inverse required for Hessian inversion -- interpret standard errors with caution. Consider simplification, priors, or alternative uncertainty estimators',call. = FALSE,immediate. = TRUE)
-      } else {
-        mcov1 <- mcov1$mat
-        warning('***Matrix nearPD used for Hessian inversion -- interpret standard errors with caution. Consider simplification, priors, or alternative uncertainty estimators',call. = FALSE,immediate. = TRUE)
-      }
-      probpars=which(diag(hess) > -1e-6)
-    }
-  }
-  message('') 
-  
-  return(list(mcov1 = mcov1, useScoreFallback = useScoreFallback))
-}
 
 # Function to compute the Hessian using bootstrap resampling
 bootstrapHessian <- function(standata, sm, est, finishsamples, cores) {

@@ -313,51 +313,6 @@ inv_logit<-function(x) {
 #' @export
 log1p_exp <- function(x) log1p(exp(x))
 
-#' ctDensity
-#'
-#' Wrapper for base R density function that removes outliers and computes 'reasonable' bandwidth and x and y limits.
-#' Used for ctsem density plots.
-#' 
-#' @param x numeric vector on which to compute density.
-#' @param bw either 'auto' or a numeric indicating bandwidth.
-#' @param plot logical to indicate whether or not to plot the output.
-#' @param ... Further args to density.
-#' 
-#' @examples
-#' y <- ctDensity(exp(rnorm(80)))
-#' plot(y$density,xlim=y$xlim,ylim=y$ylim)
-#' 
-#' #### Compare to base defaults:
-#' par(mfrow=c(1,2))
-#' y=exp(rnorm(10000))
-#' ctdens<-ctDensity(y)
-#' plot(ctdens$density, ylim=ctdens$ylim,xlim=ctdens$xlim)
-#' plot(density(y))
-#' @export
-
-ctDensity<-function(x,bw='auto',plot=FALSE,...){
-  xlims=stats::quantile(x,probs=c(.05,.95),na.rm=TRUE)
-  sd=sd(xlims)
-  xlims[1] = xlims[1] - sd
-  xlims[2] = xlims[2] + sd
-  # x=x[x>xlims[1]*1.2 & x<xlims[2]*1.2]
-  # bw=(max(x)-min(x))^1.2 / length(x)^.4 *.4
-  if(bw=='auto') bw=min(sd/100,1e-4)
-  
-  # xlims=stats::quantile(x,probs=c(.01,.99))
-  # mid=mean(c(xlims[2],xlims[1]))
-  # xlims[1] = xlims[1] - (mid-xlims[1])/8
-  # xlims[2] = xlims[2] + (xlims[2]-mid)/8
-  
-  out1<-stats::density(x,bw=bw,n=5000,from=xlims[1]-sd,to=xlims[2]+sd)
-  ylims=c(0,max(out1$y)*1.1)
-  
-  if(plot) plot(out1$x, out1$y,type='l', xlim=xlims,ylim=ylims,ylab='Density',xlab='Par. Value',...)
-  
-  return(list(density=out1,xlim=xlims,ylim=ylims))
-}
-
-
 
 ctDensityList<-function(x,xlimsindex='all',ylimsindex='all',cut=FALSE,plot=FALSE,
   grouplabels=names(x),
@@ -378,20 +333,15 @@ ctDensityList<-function(x,xlimsindex='all',ylimsindex='all',cut=FALSE,plot=FALSE
   sd=sd(xlims)
   xlims[1] = xlims[1] - sd/2
   xlims[2] = xlims[2] + sd/2
-# browser()
   bw=sapply(x,function(d) {
     out<-try(bw.SJ(na.omit(c(d))),silent=TRUE)
     if('try-error' %in% class(out)) out <- bw.nrd0(na.omit(c(d)))
     return(out)
     })
-  # browser()
-  # logbwmean = mean(logbw)# + ifelse(length(logbw) > 1,sd(logbw),0))
-# browser()
+
   denslist<-lapply(1:length(x),function(xi) {
     bw=exp(log(bw[xi]) + (mean(log(bw))-log(bw[xi]))*.3)
-    # print(bw)
     d=stats::density(x[[xi]],bw=bw,n=5000,from=xlims[1],to=xlims[2],na.rm=TRUE)
-    # d$y=d$y/ sum(d$y)/range(d$x)[2]*length(d$y)
     return(d)
   })
 if(xlimsindex[1] %in% 'all') xlimsindex <- 1:length(denslist)
@@ -431,7 +381,6 @@ if(ylimsindex[1] %in% 'all') ylimsindex <- 1:length(denslist)
     # pd$Source <- factor(pd$Source)
     
     if(1==99) x <- y <- Source <- NULL
-    # plot(denslist[[1]]$x, denslist[[1]]$y,type='l', xlim=xlims,ylim=ylims,ylab=ylab,xlab=xlab,col=colvec[1],lty=ltyvec[1],...)
 
     plots<- ggplot(pd,aes(x=x,y=y,group=Source,colour=Source)) +
       geom_line() +
@@ -441,21 +390,6 @@ if(ylimsindex[1] %in% 'all') ylimsindex <- 1:length(denslist)
       theme(legend.title = element_blank())
     if(!all(is.na(colvec))) plots <- plots + scale_colour_manual(values=setNames(colvec, names(x)))
 
-  #     
-  #   if(length(denslist)>1){
-  #     for(ci in 2:length(denslist)){
-  #       points(denslist[[ci]]$x, denslist[[ci]]$y,type='l', col=colvec[ci],lty=ltyvec[ci],...)
-  #     }
-  #   }
-  #   if(all(legend!=FALSE)) {
-  #     if(is.null(legendargs$col)) legendargs$col = colvec
-  #     if(is.null(legendargs$text.col)) legendargs$text.col = colvec
-  #     if(is.null(legendargs$lty)) legendargs$lty = ltyvec
-  #     if(is.null(legendargs$x)) legendargs$x='topright'
-  #     if(is.null(legendargs$bty)) legendargs$bty='n'
-  #     legendargs$legend = legend
-  #     do.call(graphics::legend,legendargs)
-  #   }
     
   }
   

@@ -1,8 +1,8 @@
 
 
-#'ctContinuousPars
+#' ctSummaryMatrices
 #'
-#'Returns the continuous time parameter matrices of a ctStanFit fit object
+#' Summarise model-implied parameter matrices from a ctsem fit object
 #'
 #'@param fit fit object from \code{\link{ctFit}}
 #'@param calcfunc Function to apply over samples, must return a single value. 
@@ -15,10 +15,10 @@
 #'@examples
 #'\donttest{
 #'#posterior median over all subjects (also reflects mean of unconstrained pars)
-#'ctContinuousPars(ctstantestfit)
+#'ctSummaryMatrices(ctstantestfit)
 #'}
 #'@export
-ctContinuousPars <- function(fit,
+ctSummaryMatrices <- function(fit,
   calcfunc=quantile,calcfuncargs=list(probs=0.5),timeinterval=1){
 
   if(!'ctStanFit' %in% class(fit)) stop(paste0('Not an object of class ctStanFit! Instead is ',paste0(class(fit),collapse=', ')))
@@ -92,8 +92,8 @@ ctContinuousPars <- function(fit,
   return(out)
 }
 
-#' Backward-compatible alias for \code{ctContinuousPars}.
-#' @rdname ctContinuousPars
+#' Backward-compatible alias for \code{ctSummaryMatrices}.
+#' @rdname ctSummaryMatrices
 #' @export
-ctStanContinuousPars <- ctContinuousPars
+ctStanContinuousPars <- ctSummaryMatrices
 

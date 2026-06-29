@@ -186,11 +186,11 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
   
   
   if(parmatrices){
-    Mean=ctContinuousPars(object,calcfunc = mean,calcfuncargs=list(),timeinterval=timeinterval)
-    sd=ctContinuousPars(object,calcfunc = sd,calcfuncargs = list(na.rm=TRUE),timeinterval=timeinterval)
-    `2.5%` = ctContinuousPars(object,calcfunc = quantile,calcfuncargs = list(probs=.025),timeinterval=timeinterval)
-    `50%` = ctContinuousPars(object,calcfunc = quantile,calcfuncargs = list(probs=.5),timeinterval=timeinterval)
-    `97.5%` = ctContinuousPars(object,calcfunc = quantile,calcfuncargs = list(probs=.975),timeinterval=timeinterval)
+    Mean=ctSummaryMatrices(object,calcfunc = mean,calcfuncargs=list(),timeinterval=timeinterval)
+    sd=ctSummaryMatrices(object,calcfunc = sd,calcfuncargs = list(na.rm=TRUE),timeinterval=timeinterval)
+    `2.5%` = ctSummaryMatrices(object,calcfunc = quantile,calcfuncargs = list(probs=.025),timeinterval=timeinterval)
+    `50%` = ctSummaryMatrices(object,calcfunc = quantile,calcfuncargs = list(probs=.5),timeinterval=timeinterval)
+    `97.5%` = ctSummaryMatrices(object,calcfunc = quantile,calcfuncargs = list(probs=.975),timeinterval=timeinterval)
     
     d <- data.frame(ctModelUnlist(Mean,matnames = names(Mean)))
     colnames(d)[colnames(d) %in% 'value'] <- 'Mean'

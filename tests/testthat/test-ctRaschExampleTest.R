@@ -53,7 +53,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
         #fit with integration (linearised approximation)
     ro <- ctFit( datalong = d,
-      ctstanmodel = m,cores=cores,
+      model= m,cores=cores,
       # plot=10,verbose=0,
       intoverstates = T,priors=F,
       optimize=T,intoverpop=T)#,optimcontrol=list(stochastic=F))
@@ -61,7 +61,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     
     
         rod <- ctFit( datalong = d,
-      ctstanmodel = md,cores=cores,
+      model= md,cores=cores,
       # plot=10,verbose=0,
       intoverstates = T,priors=F,
       optimize=T,intoverpop=T)#,optimcontrol=list(stochastic=F))
@@ -70,7 +70,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     #fit without integration
     r <- ctFit( datalong = d,
       #fit=FALSE, #set this to skip fitting and just get the standata and stanmodel objects
-      ctstanmodel = m,
+      model= m,
       iter = 300,verbose=0,
       control=list(max_treedepth=8),
       priors=TRUE,

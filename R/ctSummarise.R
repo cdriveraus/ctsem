@@ -22,9 +22,9 @@ ctSummarise<-function(sf,name='',cores=2, times=seq(0,10,.1),quantiles=c(.025,.5
     sm <- sf$ctstanmodelbase 
     summ=summary(sf)
     if(is.null(sf$generated) && ctCheckFit) sf <- ctGenerateFromFit(fit = sf,nsamples = nsamples,fullposterior = FALSE,cores = cores)
-    cp <- ctContinuousPars(sf)
-    cpl <- ctContinuousPars(sf,calcfuncargs = list(probs=c(.025)))
-    cph <- ctContinuousPars(sf,calcfuncargs = list(probs=c(.975)))
+    cp <- ctSummaryMatrices(sf)
+    cpl <- ctSummaryMatrices(sf,calcfuncargs = list(probs=c(.025)))
+    cph <- ctSummaryMatrices(sf,calcfuncargs = list(probs=c(.975)))
     
     n<-sapply(unique(ydat[[sm$subjectIDname]]),function(x) sum(ydat[[sm$subjectIDname]] %in% x))
     whichsubfull <- unique(ydat[[sm$subjectIDname]])[order(n,decreasing = TRUE)][1:(min(10,length(n)))]
@@ -351,8 +351,8 @@ if(requireNamespace('papaja')){
     rm(k);rm(krem)
     
     #Discrete pars plots
-    ctd=ctDiscretePars(ctstanfitobj = sf,times = times,nsamples = 500,plot=T,ggcode=T)$dt
-    ctdo=ctDiscretePars(ctstanfitobj = sf,times = times,nsamples = 500,observational = T,plot=T,ggcode=T)$dt
+    ctd=ctDiscretePars(fit = sf,times = times,nsamples = 500,plot=T,ggcode=T)$dt
+    ctdo=ctDiscretePars(fit = sf,times = times,nsamples = 500,observational = T,plot=T,ggcode=T)$dt
     d=rbind(
       data.frame(Type='Intervention',ctd),
       data.frame(Type='Observation',ctdo)

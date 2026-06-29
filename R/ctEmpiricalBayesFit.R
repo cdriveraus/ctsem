@@ -352,7 +352,7 @@ ctEBfitArgsOptimDefaults <- function(fitargs, stochastic=FALSE,
 #' again using the resulting empirical Bayes prior.
 #'
 #' @param datalong Long format data containing multiple subjects.
-#' @param ctstanmodel Model object from \code{\link{ctModel}}. Time independent
+#' @param model Model object from \code{\link{ctModel}}. Time independent
 #' predictors are not supported. A random-effect-free copy of this model is used
 #' for the per-subject fits.
 #' @param subjects Vector of subject identifiers to fit, or \code{'all'}.
@@ -403,22 +403,22 @@ ctEBfitArgsOptimDefaults <- function(fitargs, stochastic=FALSE,
 #'   subjectFitArgs=list(optimcontrol=list(finishsamples=20)))
 #' ebs <- summary(eb)
 #' }
-ctEmpiricalBayesFit <- function(datalong, ctstanmodel, subjects='all',
+ctEmpiricalBayesFit <- function(datalong, model, subjects='all',
   priors=TRUE, optimize=TRUE, cores=1, subjectFitArgs=list(), Npasses=2,
   ebUse=c('rawest','rawposterior'), ebRobust=TRUE, ebOutlierMAD=6, ebOutlierQuantiles=c(.025,.975),
   ebWinsorize=TRUE, minsd=1e-6, verbose=0, progress=TRUE, ...){
   
-  if(!'ctStanModel' %in% class(ctstanmodel)) stop('ctstanmodel must be a ctStanModel object')
-  if(ctstanmodel$n.TIpred > 0 || length(ctstanmodel$TIpredNames) > 0) {
+  if(!'ctStanModel' %in% class(model)) stop('model must be a ctStanModel object')
+  if(model$n.TIpred > 0 || length(model$TIpredNames) > 0) {
     stop('Time independent predictors are not supported for empirical Bayes subject-wise fitting')
   }
   
   datalong <- data.frame(datalong)
-  if(!ctstanmodel$subjectIDname %in% colnames(datalong)) {
-    stop('Subject id column ', ctstanmodel$subjectIDname, ' not found in data')
+  if(!model$subjectIDname %in% colnames(datalong)) {
+    stop('Subject id column ', model$subjectIDname, ' not found in data')
   }
   
-  allsubjects <- unique(datalong[[ctstanmodel$subjectIDname]])
+  allsubjects <- unique(datalong[[model$subjectIDname]])
   if(length(subjects) == 1 && subjects %in% 'all') subjects <- allsubjects
   missingsubjects <- subjects[!subjects %in% allsubjects]
   if(length(missingsubjects) > 0) {
@@ -431,14 +431,14 @@ ctEmpiricalBayesFit <- function(datalong, ctstanmodel, subjects='all',
     stop('Npasses must be an integer of at least 2')
   }
   
-  subjectmodel <- ctstanmodel
+  subjectmodel <- model
   subjectmodel$pars$indvarying <- FALSE
   tieffects <- colnames(subjectmodel$pars)[grep('_effect', colnames(subjectmodel$pars), fixed=TRUE)]
   if(length(tieffects) > 0) subjectmodel$pars[, tieffects] <- FALSE
   
   dots <- list(...)
   fitargs <- list(
-    ctstanmodel=subjectmodel,
+    model=subjectmodel,
     priors=priors,
     optimize=optimize,
     verbose=verbose)
@@ -451,7 +451,7 @@ ctEmpiricalBayesFit <- function(datalong, ctstanmodel, subjects='all',
     firstpass=TRUE)
   
   initialfits <- ctEBfitSubjects(subjects=subjects, datalong=datalong,
-    subjectIDname=ctstanmodel$subjectIDname, fitargs=initialfitargs,
+    subjectIDname=model$subjectIDname, fitargs=initialfitargs,
     cores=cores, verbose=verbose, pass='model prior', progress=progress)
   
   parnames <- ctEBrawParnames(initialfits[[1]])
@@ -498,12 +498,12 @@ ctEmpiricalBayesFit <- function(datalong, ctstanmodel, subjects='all',
     adjustedmodel <- ebsubjectmodel
     
     ebfitargs <- fitargs
-    ebfitargs$ctstanmodel <- ebsubjectmodel
+    ebfitargs$model <- ebsubjectmodel
     ebfitargs$inits <- NULL
     ebfitargs <- ctEBfitArgsOptimDefaults(ebfitargs, stochastic=FALSE,
       firstpass=FALSE)
     currentfits <- ctEBfitSubjects(subjects=subjects, datalong=datalong,
-      subjectIDname=ctstanmodel$subjectIDname, fitargs=ebfitargs,
+      subjectIDname=model$subjectIDname, fitargs=ebfitargs,
       cores=cores, verbose=verbose, pass=paste0('empirical Bayes prior ', passi),
       progress=progress)
     
@@ -548,7 +548,7 @@ ctEmpiricalBayesFit <- function(datalong, ctstanmodel, subjects='all',
     ebOutlierMAD=ebOutlierMAD,
     ebOutlierQuantiles=ebOutlierQuantiles,
     ebWinsorize=ebWinsorize,
-    ctstanmodel=ctstanmodel,
+    model=model,
     subjectmodel=subjectmodel,
     ebsubjectmodel=ebsubjectmodel,
     adjustedmodel=adjustedmodel,

@@ -49,7 +49,7 @@ matrix specifying which indices of the output matrix to plot.
 \item{quantiles}{numeric vector of length 3, with values between 0 and 1, specifying which quantiles to plot.
 The default plots 95\% credible intervals and the posterior median at 50\%.}
 
-\item{latentNames}{Vector of character strings denoting names for the latent variables. 
+\item{latentNames}{Vector of character strings denoting names for the latent variables.
 'auto' just uses eta1 eta2 etc.}
 
 \item{ylab}{y label.}
@@ -66,7 +66,7 @@ The default plots 95\% credible intervals and the posterior median at 50\%.}
 
 \item{title}{Character string. 'auto' generates automatically, NULL can be used to disable title.}
 
-\item{polygonalpha}{Numeric between 0 and 1 to multiply the alpha of 
+\item{polygonalpha}{Numeric between 0 and 1 to multiply the alpha of
 the fill.}
 
 \item{ggcode}{if TRUE, returns a list containing the data.table to plot, and a character string that can be
