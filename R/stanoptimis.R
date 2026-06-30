@@ -894,24 +894,26 @@ ctOptimFullBootstrapDraws <- function(est, standata, sm, n=1000, cores=1,
       'stan_reinitsf', 'getcxxfun', 'suppressOutput', 'makeClusterID',
       'parallelStanSetup', 'clusterIDexport', 'clusterIDeval',
       'singlecoreStanSetup', 'parlptext')
-    parallel::clusterExport(cl, bootHelpers,
+    parallel::clusterExport(cl, c('bootHelpers', bootHelpers),
       envir=environment(ctOptimFullBootstrapDraws))
     parallel::clusterEvalQ(cl, {
-      for(fn in c('ctOptimFullBootstrapOne', 'ctOptimBootstrapStandata',
-          'ctOptimDataLpgFunc', 'standatatolong', 'standatalongremerge',
-          'standatalongobjects', 'stan_reinitsf', 'getcxxfun',
-          'suppressOutput', 'makeClusterID', 'parallelStanSetup',
-          'clusterIDexport', 'clusterIDeval', 'singlecoreStanSetup')){
+      bootEnv <- new.env(parent=.GlobalEnv)
+      for(fn in bootHelpers){
         obj <- get(fn, envir=.GlobalEnv)
         if(is.function(obj)){
-          environment(obj) <- .GlobalEnv
-          assign(fn, obj, envir=.GlobalEnv)
+          environment(obj) <- bootEnv
         }
+        assign(fn, obj, envir=bootEnv)
       }
+      options(ctsem.bootstrap.env=bootEnv)
+      rm(list=c(bootHelpers, 'bootHelpers'), envir=.GlobalEnv)
+      rm(bootHelpers, bootEnv)
       NULL
     })
     out <- parallel::parLapplyLB(cl, seq_len(n), function(i){
-      ctOptimFullBootstrapOne(i=i, est=est, standata=standata,
+      bootEnv <- getOption('ctsem.bootstrap.env')
+      if(is.null(bootEnv)) stop('Missing ctsem bootstrap worker environment')
+      get('ctOptimFullBootstrapOne', envir=bootEnv)(i=i, est=est, standata=standata,
         sm=sm, fitCores=fitCores, tol=control$bootstrapTol,
         verbose=verbose)
     })

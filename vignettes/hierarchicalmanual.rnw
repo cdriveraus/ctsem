@@ -299,10 +299,10 @@ In the summary output, the free population mean parameters under \verb|$popmeans
 
 It is possible to represent the results for the within subject model using the Latex representation, running \verb|ctModelLatex(fit)| will show this.
 
-The function \verb}ctContinuousPars} can be used to return the population level parameter matrices in matrix form. Here we return the 97.5 quantile for each of the elements in the matrices:
+The function \verb}ctSummaryMatrices} can be used to return the population level parameter matrices in matrix form. Here we return the 97.5 quantile for each of the elements in the matrices:
 
-<<ctContinuousPars,eval=FALSE>>=
-ctContinuousPars(fit,calcfunc = quantile, calcfuncargs = list(probs=.975))
+<<ctSummaryMatrices,eval=FALSE>>=
+ctSummaryMatrices(fit,calcfunc = quantile, calcfuncargs = list(probs=.975))
 @
 
 

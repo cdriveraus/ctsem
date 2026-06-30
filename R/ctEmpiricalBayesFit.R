@@ -47,7 +47,7 @@ ctEBadjustModel <- function(model, rawstats, sdscale=c('unit','rawsd'), minsd=1e
   rawstats <- rawstats[match(unique(rawstats$param), rawstats$param),,drop=FALSE]
   rownames(rawstats) <- rawstats$param
   rows <- ctEBfreeRows(adjusted$pars, rawstats$param)
-  
+
   for(ri in rows){
     p <- adjusted$pars$param[ri]
     rmean <- rawstats[p, 'mean']
@@ -66,7 +66,7 @@ ctEBadjustModel <- function(model, rawstats, sdscale=c('unit','rawsd'), minsd=1e
       unit=1,
       rawsd=rsd)
   }
-  
+
   adjusted$empiricalbayes <- list(
     rawstats=rawstats,
     sdscale=sdscale,
@@ -77,7 +77,7 @@ ctEBadjustModel <- function(model, rawstats, sdscale=c('unit','rawsd'), minsd=1e
 
 ctEBrawMatrix <- function(fits, parnames, use=c('rawest','rawposterior')){
   use <- match.arg(use)
-  
+
   if(use == 'rawest'){
     raw <- do.call(rbind, lapply(fits, function(fit) fit$stanfit$rawest))
     if(ncol(raw) != length(parnames)) stop('Raw point estimates do not match parnames')
@@ -85,7 +85,7 @@ ctEBrawMatrix <- function(fits, parnames, use=c('rawest','rawposterior')){
     rownames(raw) <- names(fits)
     return(raw)
   }
-  
+
   raw <- do.call(rbind, lapply(seq_along(fits), function(i){
     fit <- fits[[i]]
     samples <- ctStanRawSamples(fit)
@@ -121,6 +121,51 @@ ctEBrawStats <- function(raw, probs, location=c('mean','median'),
   data.frame(out, qs, check.names=FALSE)
 }
 
+ctEBtransformedRaw <- function(raw, model, parnames=colnames(raw)){
+  model <- ctModelTransformsToNum(model)
+  rows <- ctEBfreeRows(model$pars, parnames)
+  rows <- rows[!duplicated(model$pars$param[rows])]
+  rows <- rows[match(parnames, model$pars$param[rows])]
+  rows <- rows[!is.na(rows)]
+  if(length(rows) < 1) return(matrix(numeric(0), nrow=nrow(raw), ncol=0))
+
+  out <- sapply(rows, function(ri){
+    p <- model$pars$param[ri]
+    transform <- model$pars$transform[ri]
+    multiplier <- model$pars$multiplier[ri]
+    meanscale <- model$pars$meanscale[ri]
+    offset <- model$pars$offset[ri]
+    inneroffset <- model$pars$inneroffset[ri]
+    if(is.na(transform)) transform <- 0
+    if(is.na(multiplier)) multiplier <- 1
+    if(is.na(meanscale)) meanscale <- 1
+    if(is.na(offset)) offset <- 0
+    if(is.na(inneroffset)) inneroffset <- 0
+    tform(parin=raw[,p],
+      transform=transform,
+      multiplier=multiplier,
+      meanscale=meanscale,
+      offset=offset,
+      inneroffset=inneroffset)
+  })
+  if(is.null(dim(out))) out <- matrix(out, ncol=1)
+  colnames(out) <- model$pars$param[rows]
+  rownames(out) <- rownames(raw)
+  out
+}
+
+ctEBtransformedStats <- function(x, probs){
+  out <- data.frame(
+    mean=as.numeric(apply(x, 2, mean, na.rm=TRUE)),
+    sd=as.numeric(apply(x, 2, stats::sd, na.rm=TRUE)),
+    stringsAsFactors=FALSE)
+  qs <- t(apply(x, 2, stats::quantile, probs=probs, na.rm=TRUE))
+  colnames(qs) <- paste0(probs * 100, '%')
+  out <- data.frame(out, qs, check.names=FALSE)
+  rownames(out) <- colnames(x)
+  out
+}
+
 ctEBrobustRaw <- function(raw, outlierMAD=6, outlierQuantiles=c(.025,.975),
   winsorize=TRUE){
   cleaned <- raw
@@ -133,15 +178,15 @@ ctEBrobustRaw <- function(raw, outlierMAD=6, outlierQuantiles=c(.025,.975),
     nchanged=0L,
     action=ifelse(winsorize, 'winsorized', 'removed'),
     stringsAsFactors=FALSE)
-  
+
   for(j in seq_len(ncol(raw))){
     x <- raw[,j]
     finite <- is.finite(x)
     if(!any(finite)) next
-    
+
     lower <- -Inf
     upper <- Inf
-    
+
     if(!is.null(outlierQuantiles) && length(outlierQuantiles) == 2 &&
         all(is.finite(outlierQuantiles))){
       qbounds <- stats::quantile(x[finite], probs=outlierQuantiles,
@@ -149,7 +194,7 @@ ctEBrobustRaw <- function(raw, outlierMAD=6, outlierQuantiles=c(.025,.975),
       lower <- max(lower, qbounds[1])
       upper <- min(upper, qbounds[2])
     }
-    
+
     if(!is.null(outlierMAD) && is.finite(outlierMAD) && outlierMAD > 0){
       center <- stats::median(x[finite], na.rm=TRUE)
       madsd <- stats::mad(x[finite], center=center, constant=1.4826,
@@ -162,7 +207,7 @@ ctEBrobustRaw <- function(raw, outlierMAD=6, outlierQuantiles=c(.025,.975),
         upper <- min(upper, center + outlierMAD * madsd)
       }
     }
-    
+
     low <- finite & x < lower
     high <- finite & x > upper
     report$lower[j] <- lower
@@ -170,7 +215,7 @@ ctEBrobustRaw <- function(raw, outlierMAD=6, outlierQuantiles=c(.025,.975),
     report$nlower[j] <- sum(low)
     report$nupper[j] <- sum(high)
     report$nchanged[j] <- sum(low) + sum(high)
-    
+
     if(report$nchanged[j] > 0){
       if(winsorize){
         cleaned[low,j] <- lower
@@ -180,7 +225,7 @@ ctEBrobustRaw <- function(raw, outlierMAD=6, outlierQuantiles=c(.025,.975),
       }
     }
   }
-  
+
   list(raw=cleaned, report=report)
 }
 
@@ -202,7 +247,7 @@ ctEBmapRaw <- function(raw, rawmap){
 ctEBpriorRawStats <- function(raw, ebRobust=TRUE, ebOutlierMAD=6,
   ebOutlierQuantiles=c(.025,.975), ebWinsorize=TRUE, minsd=1e-6,
   probs=c(.025,.5,.975)){
-  
+
   rawForEB <- raw
   outliers <- NULL
   if(ebRobust){
@@ -219,7 +264,7 @@ ctEBpriorRawStats <- function(raw, ebRobust=TRUE, ebOutlierMAD=6,
   badsd <- !is.finite(rawstats$sd) | rawstats$sd < minsd
   rawstats$sd[badsd] <- fallbackstats$sd[badsd]
   rawstats$sd[!is.finite(rawstats$sd) | rawstats$sd < minsd] <- minsd
-  
+
   list(raw=raw, rawForEB=rawForEB, rawstats=rawstats, outliers=outliers)
 }
 
@@ -233,8 +278,7 @@ ctEBprogressReporter <- function(stage, total, enabled=TRUE){
     pct <- floor(100 * done / total)
     line <- sprintf('%s: %d/%d subjects (%d%%)', stage, done, total, pct)
     padding <- strrep(' ', max(0L, lastwidth - nchar(line)))
-    cat('\r', line, padding, sep='', file=stderr())
-    if(finished) cat('\n', file=stderr())
+    message('\r', line, padding, appendLF=finished)
     lastwidth <<- nchar(line)
     invisible(NULL)
   }
@@ -264,7 +308,7 @@ ctEBfitSubjects <- function(subjects, datalong, subjectIDname, fitargs, cores=1,
     datasi <- datalong[datalong[[subjectIDname]] %in% subi,,drop=FALSE]
     do.call(ctFit, c(list(datalong=datasi), fitargs))
   }
-  
+
   cores <- suppressWarnings(as.integer(cores[1]))
   if(!is.finite(cores) || is.na(cores)) cores <- 1L
   cores <- min(length(subjects), max(1L, cores))
@@ -277,7 +321,7 @@ ctEBfitSubjects <- function(subjects, datalong, subjectIDname, fitargs, cores=1,
     if(isTRUE(progress) && !progressdone) progressfun(done, finished=TRUE)
   }, add=TRUE)
   progressfun(0L)
-  
+
   if(cores > 1){
     cl <- parallelly::makeClusterPSOCK(cores, useXDR=FALSE)
     on.exit(try(parallel::stopCluster(cl), silent=TRUE), add=TRUE)
@@ -289,29 +333,19 @@ ctEBfitSubjects <- function(subjects, datalong, subjectIDname, fitargs, cores=1,
     .ctEBpass <- pass
     parallel::clusterExport(cl, c('.ctEBdatalong', '.ctEBsubjectIDname',
       '.ctEBfitargs', '.ctEBverbose', '.ctEBpass'), envir=environment())
+    results <- parallel::clusterApplyLB(cl, seq_along(subjects), function(i){
+      value <- tryCatch(ctEBworkerCall(subjects[[i]]), error=identity)
+      list(index=i, value=value, error=inherits(value, 'error'))
+    })
     fits <- vector('list', length(subjects))
-    nworkers <- min(cores, length(subjects))
-    nextjob <- 1L
-    for(worker in seq_len(nworkers)){
-      parallel:::sendCall(cl[[worker]], ctEBworkerCall, list(subjects[[nextjob]]),
-        tag=nextjob)
-      nextjob <- nextjob + 1L
-    }
-    while(done < length(subjects)){
-      result <- parallel:::recvOneResult(cl)
+    for(result in results){
       done <- done + 1L
-      if(!is.null(result$success) && !as.logical(result$success)[1]){
-        stop('Subject fit failed for subject ', subjects[[result$tag]], ': ',
-          if(inherits(result$value, 'condition')) conditionMessage(result$value) else
-            as.character(result$value))
+      if(result$error){
+        stop('Subject fit failed for subject ', subjects[[result$index]], ': ',
+          conditionMessage(result$value))
       }
-      fits[[result$tag]] <- result$value
+      fits[[result$index]] <- result$value
       progressfun(done)
-      if(nextjob <= length(subjects)){
-        parallel:::sendCall(cl[[result$node]], ctEBworkerCall,
-          list(subjects[[nextjob]]), tag=nextjob)
-        nextjob <- nextjob + 1L
-      }
     }
   } else {
     fits <- vector('list', length(subjects))
@@ -336,12 +370,12 @@ ctEBfitArgsOptimDefaults <- function(fitargs, stochastic=FALSE,
   firstpass=FALSE){
   if(is.null(fitargs$optimcontrol)) fitargs$optimcontrol <- list()
   if(!is.list(fitargs$optimcontrol)) stop('optimcontrol must be a list')
-  
+
   if(is.null(fitargs$optimcontrol$stochastic)) {
     fitargs$optimcontrol$stochastic <- stochastic
   }
   if(firstpass) fitargs$optimcontrol$estonly <- TRUE
-  
+
   fitargs
 }
 
@@ -392,32 +426,32 @@ ctEBfitArgsOptimDefaults <- function(fitargs, stochastic=FALSE,
 #' fit lists and metadata. \code{$initialfits} contains the first-pass model
 #' prior fits, \code{$fits} contains the final empirical Bayes prior fits, and
 #' \code{$passfits} contains every pass. Use \code{summary()} to compute final
-#' raw-parameter means, SDs, covariance, and model summaries.
+#' transformed-parameter means, SDs, covariances, correlations, and outlier
+#' diagnostics.
 #' @export
 #'
 #' @examples
 #' \donttest{
-#' model <- ctModel(type='ct', manifestNames='Y1', latentNames='eta1',
-#'   LAMBDA=matrix(1), silent=TRUE)
-#' eb <- ctEmpiricalBayesFit(ctExample1, model,
+#' model <- ctModel(type='ct', manifestNames='Y1', LAMBDA=matrix(1))
+#' eb <- ctEmpiricalBayesFit(ctstantestdat, model, cores=2,
 #'   subjectFitArgs=list(optimcontrol=list(finishsamples=20)))
-#' ebs <- summary(eb)
+#' summary(eb)
 #' }
 ctEmpiricalBayesFit <- function(datalong, model, subjects='all',
-  priors=TRUE, optimize=TRUE, cores=1, subjectFitArgs=list(), Npasses=2,
+  priors=TRUE, optimize=TRUE, cores=2, subjectFitArgs=list(), Npasses=2,
   ebUse=c('rawest','rawposterior'), ebRobust=TRUE, ebOutlierMAD=6, ebOutlierQuantiles=c(.025,.975),
   ebWinsorize=TRUE, minsd=1e-6, verbose=0, progress=TRUE, ...){
-  
+
   if(!'ctStanModel' %in% class(model)) stop('model must be a ctStanModel object')
   if(model$n.TIpred > 0 || length(model$TIpredNames) > 0) {
     stop('Time independent predictors are not supported for empirical Bayes subject-wise fitting')
   }
-  
+
   datalong <- data.frame(datalong)
   if(!model$subjectIDname %in% colnames(datalong)) {
     stop('Subject id column ', model$subjectIDname, ' not found in data')
   }
-  
+
   allsubjects <- unique(datalong[[model$subjectIDname]])
   if(length(subjects) == 1 && subjects %in% 'all') subjects <- allsubjects
   missingsubjects <- subjects[!subjects %in% allsubjects]
@@ -430,12 +464,13 @@ ctEmpiricalBayesFit <- function(datalong, model, subjects='all',
   if(!is.finite(Npasses) || is.na(Npasses) || Npasses < 2) {
     stop('Npasses must be an integer of at least 2')
   }
-  
+  message(paste0('Fitting with ',cores,' of ',parallel::detectCores(),' cpu cores'))
+
   subjectmodel <- model
   subjectmodel$pars$indvarying <- FALSE
   tieffects <- colnames(subjectmodel$pars)[grep('_effect', colnames(subjectmodel$pars), fixed=TRUE)]
   if(length(tieffects) > 0) subjectmodel$pars[, tieffects] <- FALSE
-  
+
   dots <- list(...)
   fitargs <- list(
     model=subjectmodel,
@@ -449,17 +484,17 @@ ctEmpiricalBayesFit <- function(datalong, model, subjects='all',
     firstpass=FALSE)
   initialfitargs <- ctEBfitArgsOptimDefaults(fitargs, stochastic=FALSE,
     firstpass=TRUE)
-  
+
   initialfits <- ctEBfitSubjects(subjects=subjects, datalong=datalong,
     subjectIDname=model$subjectIDname, fitargs=initialfitargs,
     cores=cores, verbose=verbose, pass='model prior', progress=progress)
-  
+
   parnames <- ctEBrawParnames(initialfits[[1]])
   rawlengths <- vapply(initialfits, function(fit) length(fit$stanfit$rawest), numeric(1))
   if(any(rawlengths != length(parnames))) {
     stop('Subject fits returned differing raw parameter counts')
   }
-  
+
   passfits <- vector('list', Npasses)
   passmodels <- vector('list', Npasses)
   passraw <- vector('list', Npasses)
@@ -472,31 +507,31 @@ ctEmpiricalBayesFit <- function(datalong, model, subjects='all',
     names(passoriginalraw) <- names(passrawmaps) <- paste0('pass', seq_len(Npasses))
   names(passrawForEB) <- names(passrawstats) <- names(passoutliers) <-
     paste0('pass', seq_len(Npasses - 1))
-  
+
   passfits[[1]] <- initialfits
   passmodels[[1]] <- subjectmodel
   passrawmaps[[1]] <- ctEBidentityRawMap(parnames)
   currentfits <- initialfits
   currentrawmap <- passrawmaps[[1]]
   ebsubjectmodel <- adjustedmodel <- NULL
-  
+
   for(passi in seq_len(Npasses - 1)){
     rawlocal <- ctEBrawMatrix(currentfits, parnames=parnames, use=ebUse)
     raworiginal <- ctEBmapRaw(rawlocal, currentrawmap)
     priorstats <- ctEBpriorRawStats(raworiginal, ebRobust=ebRobust,
       ebOutlierMAD=ebOutlierMAD, ebOutlierQuantiles=ebOutlierQuantiles,
       ebWinsorize=ebWinsorize, minsd=minsd, probs=c(.025,.5,.975))
-    
+
     passraw[[passi]] <- rawlocal
     passoriginalraw[[passi]] <- raworiginal
     passrawForEB[[passi]] <- priorstats$rawForEB
     passrawstats[[passi]] <- priorstats$rawstats
     passoutliers[[passi]] <- priorstats$outliers
-    
+
     ebsubjectmodel <- ctEBadjustModel(subjectmodel, priorstats$rawstats,
       sdscale='unit', minsd=minsd)
     adjustedmodel <- ebsubjectmodel
-    
+
     ebfitargs <- fitargs
     ebfitargs$model <- ebsubjectmodel
     ebfitargs$inits <- NULL
@@ -506,23 +541,23 @@ ctEmpiricalBayesFit <- function(datalong, model, subjects='all',
       subjectIDname=model$subjectIDname, fitargs=ebfitargs,
       cores=cores, verbose=verbose, pass=paste0('empirical Bayes prior ', passi),
       progress=progress)
-    
+
     passfits[[passi + 1]] <- currentfits
     passmodels[[passi + 1]] <- ebsubjectmodel
     currentrawmap <- priorstats$rawstats[,c('param','mean','sd'),drop=FALSE]
     passrawmaps[[passi + 1]] <- currentrawmap
   }
-  
+
   fits <- currentfits
   finalrawlocal <- ctEBrawMatrix(fits, parnames=parnames, use=ebUse)
   passraw[[Npasses]] <- finalrawlocal
   passoriginalraw[[Npasses]] <- ctEBmapRaw(finalrawlocal, currentrawmap)
-  
+
   initialraw <- passoriginalraw[[1]]
   initialrawForEB <- passrawForEB[[1]]
   initialrawstats <- passrawstats[[1]]
   initialoutliers <- passoutliers[[1]]
-  
+
   out <- list(
     call=match.call(),
     subjects=subjects,
@@ -564,32 +599,33 @@ ctEmpiricalBayesFit <- function(datalong, model, subjects='all',
 #' @param object Object returned by \code{\link{ctEmpiricalBayesFit}}.
 #' @param use \code{'rawest'} to summarise final-pass subject point estimates,
 #' or \code{'rawposterior'} to pool final-pass subject raw posterior samples.
-#' @param probs Quantiles to report for raw parameters.
+#' @param probs Quantiles to report for transformed parameters.
 #' @param sdscale How to set \code{model$pars$sdscale} when reconstructing the
 #' adjusted single-subject empirical Bayes model from the final empirical
 #' raw distribution. \code{'unit'} keeps any later random-effect SDs on the
 #' EB-standardised raw scale. \code{'rawsd'} uses the final empirical raw
-#' SDs directly.
+#' SDs directly. Retained for compatibility; \code{summary()} no longer returns
+#' a reconstructed model.
 #' @param minsd Lower bound used for empirical raw SDs before model adjustment.
 #' @param digits Number of digits for printed summary tables.
 #' @param ... Unused.
 #'
-#' @return List containing final EB-prior raw estimates/samples, first-pass and
-#' final original-raw parameter summaries, first-pass outlier diagnostics,
-#' covariance/correlation matrices, the single-subject EB-adjusted model, and
-#' the subject fit lists. \code{$raw} is on the final pass local raw scale;
-#' \code{$originalraw} maps it back to the original model raw scale.
+#' @return Compact list containing fit settings, transformed-parameter
+#' summaries, outlier diagnostics, and transformed-parameter covariance /
+#' correlation matrices. The subject
+#' fit lists, raw estimate matrices, pass maps, and adjusted model remain on
+#' the original \code{ctEmpiricalBayesFit} object.
 #' @method summary ctEmpiricalBayesFit
 #' @export
 summary.ctEmpiricalBayesFit <- function(object, use=c('rawest','rawposterior'),
   probs=c(.025,.5,.975), sdscale=c('unit','rawsd'), minsd=1e-6, digits=4, ...){
-  
+
   if(!'ctEmpiricalBayesFit' %in% class(object)) {
     stop('Not a ctEmpiricalBayesFit object')
   }
   use <- match.arg(use)
   sdscale <- match.arg(sdscale)
-  
+
   parnames <- object$parnames
   if(is.null(parnames)) parnames <- ctEBrawParnames(object$fits[[1]])
   initialraw <- object$initialraw
@@ -604,64 +640,88 @@ summary.ctEmpiricalBayesFit <- function(object, use=c('rawest','rawposterior'),
   passrawstats <- object$passrawstats
   if(is.null(passrawstats)) passrawstats <- list(initialrawstats)
   lastpriorstats <- passrawstats[[length(passrawstats)]]
-  
+
   raw <- ctEBrawMatrix(object$fits, parnames=parnames, use=use)
   rawmap <- NULL
   if(!is.null(object$passrawmaps)) rawmap <- object$passrawmaps[[length(object$passrawmaps)]]
   originalraw <- ctEBmapRaw(raw, rawmap)
-  rawstats <- ctEBrawStats(originalraw, probs=probs)
-  rawstats$sd[!is.finite(rawstats$sd) | rawstats$sd < minsd] <- minsd
-  
-  adjustedmodel <- ctEBadjustModel(object$subjectmodel, lastpriorstats,
-    sdscale=sdscale, minsd=minsd)
-  
-  initialrawcov <- stats::cov(initialraw, use='pairwise.complete.obs')
-  initialrawcor <- suppressWarnings(stats::cor(initialraw, use='pairwise.complete.obs'))
-  rawcov <- stats::cov(originalraw, use='pairwise.complete.obs')
-  rawcor <- suppressWarnings(stats::cor(originalraw, use='pairwise.complete.obs'))
-  
-  out <- list(
-    raw=raw,
-    originalraw=originalraw,
-    rawstats=rawstats,
-    initialraw=initialraw,
-    initialrawForEB=initialrawForEB,
-    initialrawstats=initialrawstats,
-    initialoutliers=object$initialoutliers,
-    passraw=object$passraw,
-    passoriginalraw=object$passoriginalraw,
-    passrawForEB=object$passrawForEB,
-    passrawstats=passrawstats,
-    passoutliers=object$passoutliers,
-    passrawmaps=object$passrawmaps,
-    initialrawcov=initialrawcov,
-    initialrawcor=initialrawcor,
-    rawcov=rawcov,
-    rawcor=rawcor,
-    adjustedmodel=adjustedmodel,
-    ebsubjectmodel=adjustedmodel,
-    initialfits=object$initialfits,
-    fits=object$fits,
-    use=use,
-    ebUse=object$ebUse,
-    sdscale=sdscale,
-    note='passrawstats contains the original-raw marginal summaries used to build each subsequent EB prior. raw is on the final pass local raw scale; originalraw maps it back to the original model raw scale. adjustedmodel is the random-effect-free single-subject model used for the final EB fitting pass. EB covariance/correlation are reported for inspection but only marginal raw means/SDs are represented in adjustedmodel.')
-  class(out) <- 'summary.ctEmpiricalBayesFit'
-  
+
+  initialtransformed <- ctEBtransformedRaw(initialraw, object$subjectmodel, parnames)
+  finaltransformed <- ctEBtransformedRaw(originalraw, object$subjectmodel, parnames)
+  popmeans <- ctEBtransformedStats(finaltransformed, probs=probs)
+  initialpopmeans <- ctEBtransformedStats(initialtransformed, probs=probs)
+
+  initialcov <- stats::cov(initialtransformed, use='pairwise.complete.obs')
+  initialcor <- suppressWarnings(stats::cor(initialtransformed, use='pairwise.complete.obs'))
+  finalcov <- stats::cov(finaltransformed, use='pairwise.complete.obs')
+  finalcor <- suppressWarnings(stats::cor(finaltransformed, use='pairwise.complete.obs'))
+
   rounddf <- function(d){
     if(is.null(d)) return(NULL)
-    data.frame(lapply(d, function(x){
+    out <- data.frame(lapply(d, function(x){
       if(is.numeric(x)) round(x, digits) else x
     }), check.names=FALSE)
+    rownames(out) <- rownames(d)
+    out
   }
-  out$rawstats <- rounddf(out$rawstats)
-  out$initialrawstats <- rounddf(out$initialrawstats)
-  out$initialoutliers <- rounddf(out$initialoutliers)
-  out$passrawstats <- lapply(out$passrawstats, rounddf)
-  out$passoutliers <- lapply(out$passoutliers, rounddf)
-  out$initialrawcov <- round(out$initialrawcov, digits)
-  out$initialrawcor <- round(out$initialrawcor, digits)
-  out$rawcov <- round(out$rawcov, digits)
-  out$rawcor <- round(out$rawcor, digits)
+
+  nsubjects <- if(!is.null(object$subjects)) length(object$subjects) else length(object$fits)
+  overview <- data.frame(
+    subjects=nsubjects,
+    passes=ifelse(is.null(object$Npasses), NA_integer_, object$Npasses),
+    summaryUse=use,
+    ebPriorUse=object$ebUse,
+    robust=ifelse(is.null(object$ebRobust), NA, object$ebRobust),
+    stringsAsFactors=FALSE)
+
+  out <- list(
+    overview=overview,
+    popmeans=rounddf(popmeans),
+    initialpopmeans=rounddf(initialpopmeans),
+    outliers=list(
+      initial=rounddf(object$initialoutliers),
+      passes=lapply(object$passoutliers, rounddf)),
+    correlations=list(
+      initial=round(initialcor, digits),
+      final=round(finalcor, digits)),
+    covariances=list(
+      initial=round(initialcov, digits),
+      final=round(finalcov, digits)),
+    settings=list(
+      use=use,
+      ebUse=object$ebUse,
+      sdscale=sdscale,
+      minsd=minsd,
+      digits=digits),
+    note=paste(
+      'Summary contains compact transformed-parameter summaries, outlier diagnostics,',
+      'and transformed-parameter covariance/correlation matrices. Subject fits, raw estimate',
+      'matrices, pass maps, and adjusted EB models remain on the original',
+      'ctEmpiricalBayesFit object. Outlier handling and EB prior construction',
+      'are performed on the raw parameter scale.'))
+  class(out) <- 'summary.ctEmpiricalBayesFit'
   out
+}
+
+#' @export
+print.summary.ctEmpiricalBayesFit <- function(x, ...){
+  cat('Empirical Bayes subject-wise ctsem fit\n')
+  print(x$overview, row.names=FALSE)
+  cat('\nInitial model-prior transformed parameter summary:\n')
+  print(x$initialpopmeans)
+  cat('\nFinal EB-prior transformed parameter summary:\n')
+  print(x$popmeans)
+  changed <- NULL
+  if(!is.null(x$outliers$initial) && 'nchanged' %in% colnames(x$outliers$initial)) {
+    changed <- x$outliers$initial[x$outliers$initial$nchanged > 0,,drop=FALSE]
+  }
+  if(!is.null(changed) && nrow(changed) > 0){
+    cat('\nInitial pass outlier handling:\n')
+    print(changed, row.names=FALSE)
+  }
+  if(!is.null(x$correlations$final)){
+    cat('\nFinal transformed parameter correlation:\n')
+    print(x$correlations$final)
+  }
+  invisible(x)
 }

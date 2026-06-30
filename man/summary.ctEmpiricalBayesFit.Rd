@@ -20,13 +20,14 @@
 \item{use}{\code{'rawest'} to summarise final-pass subject point estimates,
 or \code{'rawposterior'} to pool final-pass subject raw posterior samples.}
 
-\item{probs}{Quantiles to report for raw parameters.}
+\item{probs}{Quantiles to report for transformed parameters.}
 
 \item{sdscale}{How to set \code{model$pars$sdscale} when reconstructing the
 adjusted single-subject empirical Bayes model from the final empirical
 raw distribution. \code{'unit'} keeps any later random-effect SDs on the
 EB-standardised raw scale. \code{'rawsd'} uses the final empirical raw
-SDs directly.}
+SDs directly. Retained for compatibility; \code{summary()} no longer returns
+a reconstructed model.}
 
 \item{minsd}{Lower bound used for empirical raw SDs before model adjustment.}
 
@@ -35,11 +36,11 @@ SDs directly.}
 \item{...}{Unused.}
 }
 \value{
-List containing final EB-prior raw estimates/samples, first-pass and
-final original-raw parameter summaries, first-pass outlier diagnostics,
-covariance/correlation matrices, the single-subject EB-adjusted model, and
-the subject fit lists. \code{$raw} is on the final pass local raw scale;
-\code{$originalraw} maps it back to the original model raw scale.
+Compact list containing fit settings, transformed-parameter
+summaries, outlier diagnostics, and transformed-parameter covariance /
+correlation matrices. The subject
+fit lists, raw estimate matrices, pass maps, and adjusted model remain on
+the original \code{ctEmpiricalBayesFit} object.
 }
 \description{
 Summarise empirical Bayes subject-wise ctsem fits

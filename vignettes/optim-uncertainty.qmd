@@ -8,6 +8,10 @@ format:
 execute:
   message: false
   warning: false
+vignette: >
+  %\VignetteIndexEntry{Optimized ctsem Uncertainty Approximations}
+  %\VignetteEngine{quarto::html}
+  %\VignetteEncoding{UTF-8}
 ---
 
 ```{r}
@@ -246,7 +250,7 @@ Useful post-hoc arguments are:
 
 Use post-hoc updates when the optimized point estimate is satisfactory but the
 uncertainty approximation needs comparison or refinement. `ctOptimUncertainty()`
-is for optimized `ctStanFit` objects. It is not needed for full MCMC fits,
+is for optimized `ctFit` objects. It is not needed for full MCMC fits,
 where uncertainty is already represented by the sampled posterior.
 
 ## Generate Data
@@ -309,7 +313,7 @@ Subsequent sections reuse its optimized estimate and compiled model.
 ```{r}
 base_fit <- ctFit(
   datalong = dat,
-  ctstanmodel = fit_model,
+  model = fit_model,
   cores = 1,
   priors = TRUE,
   optimize = TRUE,
@@ -394,7 +398,7 @@ The same uncertainty types can be requested directly during `ctFit()` through
 ```{r, eval=FALSE}
 fit_surrogate <- ctFit(
   datalong = dat,
-  ctstanmodel = fit_model,
+  model = fit_model,
   cores = 1,
   priors = TRUE,
   optimize = TRUE,

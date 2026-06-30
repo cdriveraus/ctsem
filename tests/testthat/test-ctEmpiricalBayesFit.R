@@ -1,6 +1,6 @@
 suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
 
-test_that("ctEmpiricalBayesFit summary adjusts transforms from raw point estimates", {
+test_that("ctEmpiricalBayesFit summary reports transformed parameter summaries", {
   model <- ctModel(type='ct',
     n.latent=1, latentNames='eta1',
     n.manifest=1, manifestNames='Y1',
@@ -42,15 +42,18 @@ test_that("ctEmpiricalBayesFit summary adjusts transforms from raw point estimat
   s <- summary(eb, use='rawest', sdscale='unit', digits=6)
   
   expect_s3_class(s, 'summary.ctEmpiricalBayesFit')
-  expect_equal(s$initialrawstats$mean, c(0, 1))
-  expect_equal(s$rawstats$mean, c(10, 10))
-  expect_equal(s$rawstats$sd, c(1, 1))
-  expect_equal(s$adjustedmodel$pars$sdscale[
-    s$adjustedmodel$pars$param %in% c('drift','merror')], c(1, 1))
-  expect_false(any(s$adjustedmodel$pars$indvarying))
-  expect_false(is.na(suppressWarnings(as.numeric(
-    s$adjustedmodel$pars$transform[
-      s$adjustedmodel$pars$param %in% 'merror']))))
+  expect_equal(s$initialpopmeans['drift', 'mean'], 0)
+  expect_equal(s$popmeans['drift', 'mean'], 10)
+  expect_equal(s$popmeans['drift', 'sd'], 1)
+  expect_false(any(is.na(s$popmeans$mean)))
+  expect_null(s$adjustedmodel)
+  expect_null(s$raw)
+  expect_null(s$originalraw)
+  expect_named(s, c('overview','popmeans','initialpopmeans','outliers',
+    'correlations','covariances','settings','note'))
+  printed <- capture.output(print(s))
+  expect_true(any(grepl('Final EB-prior transformed parameter summary', printed)))
+  expect_false(any(grepl('adjustedmodel', printed)))
 })
 
 test_that("ctEmpiricalBayesFit summary can use raw empirical SDs for sdscale", {
@@ -92,12 +95,17 @@ test_that("ctEmpiricalBayesFit summary can use raw empirical SDs for sdscale", {
     subjectmodel=subjectmodel)
   class(eb) <- 'ctEmpiricalBayesFit'
   
-  s <- summary(eb, use='rawest', sdscale='rawsd', minsd=.001, digits=6)
+  rawstats <- data.frame(
+    param=c('drift','merror'),
+    mean=c(0, 2),
+    sd=c(.001, 2))
+  adjustedmodel <- ctsem:::ctEBadjustModel(subjectmodel,
+    rawstats, sdscale='rawsd', minsd=.001)
   
-  expect_equal(s$adjustedmodel$pars$sdscale[
-    s$adjustedmodel$pars$param %in% 'drift'], .001)
-  expect_equal(s$adjustedmodel$pars$sdscale[
-    s$adjustedmodel$pars$param %in% 'merror'], 2)
+  expect_equal(adjustedmodel$pars$sdscale[
+    adjustedmodel$pars$param %in% 'drift'], .001)
+  expect_equal(adjustedmodel$pars$sdscale[
+    adjustedmodel$pars$param %in% 'merror'], 2)
 })
 
 test_that("ctEmpiricalBayesFit EB adjustment keeps known transforms numeric", {
@@ -208,11 +216,11 @@ test_that("ctEmpiricalBayesFit summary uses final pass map and prior stats", {
   
   s <- summary(eb, use='rawest', digits=6)
   
-  expect_equal(unname(s$originalraw[, 'drift']), c(8, 10, 12))
-  expect_equal(unname(s$originalraw[, 'merror']), c(20, 23, 26))
-  expect_equal(s$rawstats$mean, c(10, 23))
-  expect_equal(s$adjustedmodel$empiricalbayes$rawstats$mean, c(10, 20))
-  expect_equal(s$adjustedmodel$empiricalbayes$rawstats$sd, c(2, 3))
+  expect_equal(s$popmeans['drift', 'mean'], 10)
+  expect_equal(s$popmeans['merror', 'mean'], 23)
+  expect_equal(s$popmeans['drift', 'sd'], 2)
+  expect_equal(s$popmeans['merror', 'sd'], 3)
+  expect_equal(s$correlations$final[1, 2], 1)
 })
 
 test_that("ctEmpiricalBayesFit optimization defaults avoid stochastic first pass hessian", {
@@ -229,6 +237,32 @@ test_that("ctEmpiricalBayesFit optimization defaults avoid stochastic first pass
     firstpass=TRUE)
   expect_true(userargs$optimcontrol$stochastic)
   expect_true(userargs$optimcontrol$estonly)
+})
+
+test_that("ctEmpiricalBayesFit progress reporter uses R messages", {
+  progress <- ctsem:::ctEBprogressReporter('test stage', total=2,
+    enabled=TRUE)
+  messages <- character()
+  withCallingHandlers({
+    progress(0)
+    progress(1)
+    progress(2, finished=TRUE)
+  }, message=function(m){
+    messages <<- c(messages, conditionMessage(m))
+    invokeRestart('muffleMessage')
+  })
+  
+  expect_true(any(grepl('test stage: 1/2 subjects', messages, fixed=TRUE)))
+  expect_true(any(grepl('test stage: 2/2 subjects', messages, fixed=TRUE)))
+  
+  disabled <- ctsem:::ctEBprogressReporter('test stage', total=2,
+    enabled=FALSE)
+  disabledMessages <- character()
+  withCallingHandlers(disabled(1), message=function(m){
+    disabledMessages <<- c(disabledMessages, conditionMessage(m))
+    invokeRestart('muffleMessage')
+  })
+  expect_length(disabledMessages, 0)
 })
 
 test_that("ctEmpiricalBayesFit rejects TI predictor models", {

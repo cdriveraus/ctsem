@@ -40,6 +40,9 @@ utils::globalVariables(c("invDRIFT","II","DRIFTexp","vec2diag","diag2vec",
   ".ObsCount", ".splitmedian", ".timerange", "DataType", "Iter", "Split", "Time.interval",
   "Type", "condval", "ll", "var1",
   "lowdat", "lp", "mediandat", "mediandatRank", "np", "obsValue"))
+utils::globalVariables(c(".ObsCol", ".ObsRow", ".splitgroup",
+  ".splitscore", "Sig", "colvar", "empirical", "n", "n_empirical",
+  "q025", "q50", "q975", "rowvar"))
 
 if(1==99){
   `:=` = NULL

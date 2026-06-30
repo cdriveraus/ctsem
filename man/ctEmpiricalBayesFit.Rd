@@ -10,7 +10,7 @@ ctEmpiricalBayesFit(
   subjects = "all",
   priors = TRUE,
   optimize = TRUE,
-  cores = 1,
+  cores = 2,
   subjectFitArgs = list(),
   Npasses = 2,
   ebUse = c("rawest", "rawposterior"),
@@ -83,7 +83,8 @@ Object of class \code{ctEmpiricalBayesFit}, containing the subject
 fit lists and metadata. \code{$initialfits} contains the first-pass model
 prior fits, \code{$fits} contains the final empirical Bayes prior fits, and
 \code{$passfits} contains every pass. Use \code{summary()} to compute final
-raw-parameter means, SDs, covariance, and model summaries.
+transformed-parameter means, SDs, covariances, correlations, and outlier
+diagnostics.
 }
 \description{
 Fits one ctsem model per subject using the model prior, estimates the
@@ -92,10 +93,9 @@ again using the resulting empirical Bayes prior.
 }
 \examples{
 \donttest{
-model <- ctModel(type='ct', manifestNames='Y1', latentNames='eta1',
-  LAMBDA=matrix(1), silent=TRUE)
-eb <- ctEmpiricalBayesFit(ctExample1, model,
+model <- ctModel(type='ct', manifestNames='Y1', LAMBDA=matrix(1))
+eb <- ctEmpiricalBayesFit(ctstantestdat, model, cores=2,
   subjectFitArgs=list(optimcontrol=list(finishsamples=20)))
-ebs <- summary(eb)
+summary(eb)
 }
 }

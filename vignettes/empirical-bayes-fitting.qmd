@@ -1,0 +1,400 @@
+---
+title: "Empirical Bayes subject-wise fitting"
+format:
+  html:
+    toc: true
+    code-fold: false
+    embed-resources: true
+    self-contained-math: true
+vignette: >
+  %\VignetteIndexEntry{Empirical Bayes subject-wise fitting}
+  %\VignetteEngine{quarto::html}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.8,
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+This document demonstrates `ctEmpiricalBayesFit()` for a simple univariate
+continuous time process. The data contain 50 subjects, each with 80 equally
+spaced observations. The generating model varies across subjects in:
+
+* `T0MEANS`: subject-specific initial latent level
+* `DRIFT`: subject-specific autoregressive continuous time drift
+* `DIFFUSION`: subject-specific process noise scale
+* `MANIFESTMEANS`: subject-specific measurement intercept
+
+## Simulate data
+
+```{r simulate-data}
+library(ctsem)
+library(ggplot2)
+
+set.seed(49)
+
+n_subjects <- 20
+n_obs <- 80
+
+raw_param_names <- c("t0m", "drift", "diffusion", "mmean")
+raw_cor <- matrix(c(
+   1.00,  0.45, -0.25,  0.35,
+   0.45,  1.00, -0.55,  0.25,
+  -0.25, -0.55,  1.00, -0.20,
+   0.35,  0.25, -0.20,  1.00
+), nrow = 4, byrow = TRUE,
+dimnames = list(raw_param_names, raw_param_names))
+raw_sd <- c(t0m = .7, drift = .55, diffusion = .35, mmean = 2.45)
+raw_mean <- c(t0m = 0, drift = -.4, diffusion = log(exp(.45) - 1), mmean = 0)
+raw_cov <- diag(raw_sd) %*% raw_cor %*% diag(raw_sd)
+raw_truth_mat <- MASS::mvrnorm(
+  n = n_subjects,
+  mu = raw_mean,
+  Sigma = raw_cov)
+colnames(raw_truth_mat) <- raw_param_names
+raw_truth <- data.frame(id = seq_len(n_subjects), raw_truth_mat,
+  check.names = FALSE)
+
+softplus <- function(x) ifelse(x > 30, x, log1p(exp(x)))
+truth <- data.frame(
+  id = seq_len(n_subjects),
+  t0m = raw_truth$t0m,
+  drift = -softplus(-raw_truth$drift),
+  diffusion = softplus(raw_truth$diffusion),
+  mmean = raw_truth$mmean
+)
+
+datalist <- vector("list", n_subjects)
+for(i in seq_len(n_subjects)){
+  gm <- ctModel(
+    silent = TRUE,
+    Tpoints = n_obs,
+    latentNames = "eta",
+    manifestNames = "Y",
+    LAMBDA = matrix(1),
+    T0MEANS = matrix(truth$t0m[i], 1, 1),
+    DRIFT = matrix(truth$drift[i], 1, 1),
+    DIFFUSION = matrix(truth$diffusion[i], 1, 1),
+    CINT = matrix(0),
+    T0VAR = matrix(0),
+    MANIFESTMEANS = matrix(truth$mmean[i], 1, 1),
+    MANIFESTVAR = matrix(.35)
+  )
+
+  dat_i <- data.frame(ctGenerate(
+    ctmodelobj = gm,
+    n.subjects = 1,
+    burnin = 0,
+    dtmean = .1,
+    logdtsd = 0,
+    wide = FALSE))
+  dat_i$id <- i
+  datalist[[i]] <- dat_i
+}
+
+dat <- do.call(rbind, datalist)
+dat <- dat[, c("id", "time", "Y")]
+```
+
+```{r plot-data}
+ggplot(dat[dat$id <= 4, ], aes(time, Y, group = id, colour = factor(id))) +
+  geom_line(linewidth = .35) + theme_bw()+
+  labs(colour = "subject")
+```
+
+## Specify the fitted model
+
+The same model object is used for the empirical Bayes and random-effects
+workflows. Random effects are requested on the four generating parameters. The
+empirical Bayes function internally removes those random effects for the
+per-subject fits, because each subject fit contains only one subject.
+
+```{r model}
+fit_model <- ctModel(
+  type = "ct",
+  silent = TRUE,
+  latentNames = "eta",
+  manifestNames = "Y",
+  LAMBDA = matrix(1),
+  T0MEANS = matrix("t0m||TRUE", 1, 1),
+  DRIFT = matrix("drift||TRUE", 1, 1),
+  DIFFUSION = matrix("diffusion||TRUE", 1, 1),
+  MANIFESTMEANS = matrix("mmean||TRUE", 1, 1),
+  MANIFESTVAR = matrix("merror||FALSE", 1, 1)
+)
+```
+
+## Empirical Bayes subject-wise fits
+
+`ctEmpiricalBayesFit()` uses two subject-wise passes by default. First, it fits
+the model once per subject using the model prior. The raw estimates from these
+first-pass fits define the marginal empirical Bayes prior. Second, it rewrites
+the single-subject model transforms so raw `normal(0, 1)` parameters imply that
+empirical location and scale, then fits every subject again. The final `$fits`
+element contains the final EB-prior fits; `$initialfits` contains the
+model-prior fits, and `$passfits` contains every pass.
+
+The transform adjustment is on the unconstrained raw scale. If the original
+model transforms a raw parameter $q$ to the model parameter $\theta$ as
+
+$$
+\theta = f(q),
+$$
+
+then the EB-adjusted model uses a new local raw parameter $z \sim N(0, 1)$ and
+sets
+
+$$
+\theta = f(\mu_q + \sigma_q z),
+$$
+
+where $\mu_q$ and $\sigma_q$ are the empirical mean and standard deviation of
+the subject-level raw estimates. For example, a positive parameter with
+`log1p_exp(param)` becomes `log1p_exp(mu + sigma * param)`.
+
+If `Npasses > 2`, each later pass maps the local EB raw estimates back to the
+original raw scale before recomputing $\mu_q$ and $\sigma_q$. This gives an
+iterated marginal EB prior, but it still does not encode the empirical
+covariance among raw parameters.
+
+By default, the EB prior construction is robust to extreme first-pass raw
+estimates: raw values are winsorized using quantile and MAD bounds, then the
+prior location and scale are computed with the median and MAD. This protects the
+second pass from a single subject fit with a very unusual optimum. Set
+`ebRobust = FALSE`, or adjust `ebOutlierQuantiles`, `ebOutlierMAD`, and
+`ebWinsorize`, if you want different behavior.
+
+For optimized fits, the first pass uses `optimcontrol$estonly = TRUE`, because
+only point estimates are needed to build the EB prior. The stochastic optimizer
+is disabled by default for both passes; pass `optimcontrol =
+list(stochastic = TRUE)` if you want to override this.
+
+```{r eb-fit}
+cores=2
+
+eb_fit <- ctEmpiricalBayesFit(
+  datalong = dat,
+  model = fit_model,
+  priors = TRUE,
+  optimize = TRUE,
+  cores = cores,
+  Npasses = 2
+)
+
+eb_summary <- summary(eb_fit, use = "rawest", sdscale = "unit")
+
+eb_summary$initialpopmeans
+eb_summary$outliers$initial
+eb_summary$popmeans
+eb_summary$correlations$final
+```
+
+The summary is on the transformed parameter scale, matching the scale users
+usually inspect in `summary(ctFit(...))`. The EB covariance is summarized for
+inspection, but it is not encoded in the adjusted model. `eb_fit$adjustedmodel`
+is the random-effect-free single-subject model used for the final pass, with
+transforms based on marginal EB means and standard deviations only. The full
+subject fits and raw estimate matrices remain on `eb_fit`; `summary(eb_fit)`
+only returns compact summaries.
+
+```{r eb-adjusted-model}
+eb_fit$adjustedmodel$pars[
+  eb_fit$adjustedmodel$pars$param %in% c("t0m", "drift", "diffusion", "mmean"),
+  c("matrix", "param", "transform", "indvarying", "sdscale")]
+```
+
+## Standard random-effects fit
+
+For comparison, fit the same model as a conventional hierarchical
+random-effects model. This fit is independent of the empirical Bayes fits.
+
+```{r re-fit}
+re_fit <- ctFit(
+  datalong = dat,
+  model = fit_model,
+  priors = TRUE,
+  cores = cores
+)
+```
+
+## Compare subject-level recovery
+
+The empirical Bayes subject estimates below are separate per-subject estimates
+from the second pass, using the empirical prior learned from the first pass.
+The random-effects estimates are posterior subject parameters from the
+hierarchical fit.
+
+```{r comparison-helpers}
+extract_subject_point <- function(fit){
+  cp <- ctSummaryMatrices(fit)
+  c(
+    t0m = cp$T0MEANS["eta", 1],
+    drift = cp$DRIFT["eta", "eta"],
+    diffusion = cp$DIFFUSION["eta", "eta"],
+    mmean = cp$MANIFESTMEANS["Y", 1]
+  )
+}
+
+initial_subject <- do.call(rbind, lapply(eb_fit$initialfits,
+  extract_subject_point))
+eb_subject <- do.call(rbind, lapply(eb_fit$fits, extract_subject_point))
+
+re_subject <- ctSubjectPars(re_fit, pointest = TRUE)[1, ,
+  c("t0m", "drift", "diffusion", "mmean")]
+
+truth_mat <- as.matrix(truth[, c("t0m", "drift", "diffusion", "mmean")])
+
+recovery_summary <- function(est, truth){
+  data.frame(
+    param = colnames(truth),
+    correlation = diag(stats::cor(est, truth)),
+    rmse = sqrt(colMeans((est - truth)^2)),
+    estimate_sd = apply(est, 2, sd),
+    true_sd = apply(truth, 2, sd),
+    row.names = NULL
+  )
+}
+```
+
+## Initial and final EB subject recovery
+
+The first EB pass uses the model prior separately for each subject. The final
+EB pass uses the empirical marginal raw prior estimated from the preceding
+pass. This comparison isolates the effect of the EB prior update before adding
+the random-effects model to the comparison.
+
+```{r initial-final-eb-recovery}
+eb_pass_recovery <- rbind(
+  cbind(method = "Initial model-prior fits",
+    recovery_summary(initial_subject, truth_mat)),
+  cbind(method = "Final EB-prior fits",
+    recovery_summary(eb_subject, truth_mat))
+)
+
+knitr::kable(eb_pass_recovery, digits = 3)
+```
+
+```{r initial-final-eb-plot}
+eb_pass_plot_data <- rbind(
+  data.frame(method = "Initial model-prior fits", id = truth$id,
+    param = rep(colnames(truth_mat), each = n_subjects),
+    true = as.vector(truth_mat),
+    estimate = as.vector(initial_subject)),
+  data.frame(method = "Final EB-prior fits", id = truth$id,
+    param = rep(colnames(truth_mat), each = n_subjects),
+    true = as.vector(truth_mat),
+    estimate = as.vector(eb_subject))
+)
+
+ggplot(eb_pass_plot_data, aes(true, estimate, colour = method)) +
+  geom_abline(slope = 1, intercept = 0, linewidth = .3) +
+  geom_point(alpha = .55, size = 1.4) +
+  facet_wrap(~ param, scales = "free") +
+  labs(x = "Generating value", y = "Estimated subject value", colour = NULL)
+```
+
+## Correlation Recovery
+
+There are two distinct correlation targets. The population raw random-effects
+correlation is on the pre-transformation scale, so it should be compared with
+the generating raw parameter correlations and with raw estimates. Subject-level
+parameter correlations are on the actual transformed parameter scale, so they
+should be compared with correlations among the generated `truth` values.
+
+```{r correlation-recovery}
+lower_cor_table <- function(reference, estimates){
+  lower <- lower.tri(reference)
+  pair_index <- which(lower, arr.ind = TRUE)
+  out <- data.frame(
+    pair = paste(rownames(reference)[pair_index[, 1]],
+      colnames(reference)[pair_index[, 2]], sep = "__"),
+    truth = as.vector(reference[lower]),
+    check.names = FALSE)
+  for(nm in names(estimates)){
+    out[[nm]] <- as.vector(estimates[[nm]][lower])
+  }
+  out
+}
+
+true_raw_cor <- stats::cor(as.matrix(raw_truth[, raw_param_names]))
+initial_eb_raw_cor <- stats::cor(eb_fit$initialraw[, raw_param_names])
+final_eb_raw_cor <- stats::cor(
+  eb_fit$passoriginalraw[[length(eb_fit$passoriginalraw)]][, raw_param_names])
+
+re_raw_names <- ctsem:::getparnames(re_fit, reonly = TRUE)
+re_rawpopcorr <- re_fit$stanfit$transformedparsfull$rawpopcorr[1, , ]
+dimnames(re_rawpopcorr) <- list(re_raw_names, re_raw_names)
+re_rawpopcorr <- re_rawpopcorr[raw_param_names, raw_param_names]
+
+raw_cor_recovery <- lower_cor_table(true_raw_cor, list(
+  "Initial EB raw estimates" = initial_eb_raw_cor,
+  "Final EB raw estimates" = final_eb_raw_cor,
+  "Random-effects population raw" = re_rawpopcorr
+))
+
+knitr::kable(raw_cor_recovery, digits = 3)
+```
+
+```{r subject-correlation-recovery}
+true_subject_cor <- stats::cor(truth_mat)
+initial_subject_cor <- stats::cor(initial_subject)
+eb_subject_cor <- stats::cor(eb_subject)
+re_subject_cor <- stats::cor(re_subject)
+
+subject_cor_recovery <- lower_cor_table(true_subject_cor, list(
+  "Initial EB subject values" = initial_subject_cor,
+  "Final EB subject values" = eb_subject_cor,
+  "Random-effects subject values" = re_subject_cor
+))
+
+knitr::kable(subject_cor_recovery, digits = 3)
+```
+
+## Final EB and random-effects subject recovery
+
+This comparison uses the final EB subject fits and the hierarchical
+random-effects subject estimates on the transformed parameter scale.
+
+```{r final-eb-random-effects-recovery}
+recovery <- rbind(
+  cbind(method = "EB subject fits", recovery_summary(eb_subject, truth_mat)),
+  cbind(method = "Random effects", recovery_summary(re_subject, truth_mat))
+)
+
+knitr::kable(recovery, digits = 3)
+```
+
+Correlation and RMSE answer different questions. Correlation is mostly about
+whether subjects are ranked correctly, while RMSE also penalizes bias and
+miscalibrated spread. The EB fits can therefore show better correlation if the
+empirical prior stabilizes noisy individual estimates, but worse RMSE if the
+subject estimates are shifted or overshrunk relative to the generating values.
+The random-effects fit can have lower RMSE because it estimates the population
+distribution and covariance jointly with the subject deviations.
+
+```{r comparison-plot}
+plot_data <- rbind(
+  data.frame(method = "EB subject fits", id = truth$id,
+    param = rep(colnames(truth_mat), each = n_subjects),
+    true = as.vector(truth_mat),
+    estimate = as.vector(eb_subject)),
+  data.frame(method = "Random effects", id = truth$id,
+    param = rep(colnames(truth_mat), each = n_subjects),
+    true = as.vector(truth_mat),
+    estimate = as.vector(re_subject))
+)
+
+ggplot(plot_data, aes(true, estimate, colour = method)) +
+  geom_abline(slope = 1, intercept = 0, linewidth = .3) +
+  geom_point(alpha = .55, size = 1.4) +
+  facet_wrap(~ param, scales = "free") +
+  labs(x = "Generating value", y = "Estimated subject value", colour = NULL)
+```
+
