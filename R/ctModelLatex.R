@@ -54,6 +54,104 @@ ctModelBuildTIeffects <- function(ctm){ #for latex
   return(timat)
 }
 
+ctModelLatexT0Labels <- function(ctm){
+  nlatent <- ctm$n.latent
+  labels <- paste0('T0MEANS_', ctm$latentNames[seq_len(nlatent)])
+  t0pars <- ctm$pars[ctm$pars$matrix %in% 'T0MEANS' &
+      ctm$pars$row <= nlatent & ctm$pars$col == 1,,drop=FALSE]
+  t0pars <- t0pars[match(seq_len(nlatent), t0pars$row),,drop=FALSE]
+  named <- !is.na(t0pars$param) & nzchar(as.character(t0pars$param))
+  labels[named] <- as.character(t0pars$param[named])
+  labels
+}
+
+ctModelLatexT0DisplayCov <- function(t0var, digits=3){
+  t0var <- as.matrix(t0var)
+  d <- nrow(t0var)
+  if(d < 1) return(matrix(numeric(0), 0, 0))
+  num <- suppressWarnings(matrix(as.numeric(t0var), nrow=d, ncol=d))
+  if(!any(is.na(num))) return(round(sdpcor2cov(num), digits))
+  
+  out <- matrix(0, d, d)
+  dimnames(out) <- dimnames(t0var)
+  for(ri in seq_len(d)){
+    for(ci in seq_len(d)){
+      if(ri == ci){
+        out[ri,ci] <- if(!is.na(num[ri,ri]) && num[ri,ri] == 0) 0 else
+          paste0('T0cov_', ri, '_', ci)
+      } else {
+        lr <- max(ri, ci)
+        lc <- min(ri, ci)
+        out[ri,ci] <- if(!is.na(num[lr,lc]) && num[lr,lc] == 0) 0 else
+          paste0('T0cov_', ri, '_', ci)
+      }
+    }
+  }
+  out[upper.tri(out)] <- t(out)[upper.tri(out)]
+  out
+}
+
+ctModelLatexAugmentT0 <- function(popmeans, popcov, timat, ctm, digits=3,
+  t0means=NULL, t0cov=NULL, latentPopNames=NULL, t0covIsTotal=FALSE){
+  
+  nlatent <- ctm$n.latent
+  if(nlatent < 1) return(list(popmeans=popmeans, popcov=popcov, timat=timat))
+  labels <- ctModelLatexT0Labels(ctm)
+  if(is.null(t0means)) t0means <- as.matrix(ctm$T0MEANS)[seq_len(nlatent),1]
+  if(is.null(t0cov)) t0cov <- ctModelLatexT0DisplayCov(
+    as.matrix(ctm$T0VAR)[seq_len(nlatent), seq_len(nlatent), drop=FALSE],
+    digits=digits)
+  t0cov <- as.matrix(t0cov)
+  
+  labelsInPopcov <- labels %in% rownames(popcov)
+  
+  pars <- unique(c(rownames(popcov), labels))
+  newpopcov <- matrix(0, length(pars), length(pars), dimnames=list(pars, pars))
+  if(nrow(popcov) > 0) {
+    ii <- match(rownames(popcov), rownames(newpopcov))
+    newpopcov[ii, ii] <- popcov
+  }
+  if(t0covIsTotal) {
+    newpopcov[labels, labels] <- t0cov[seq_len(nlatent), seq_len(nlatent), drop=FALSE]
+  } else if(any(!labelsInPopcov)){
+    missingLabels <- labels[!labelsInPopcov]
+    missingIndex <- which(!labelsInPopcov)
+    newpopcov[missingLabels, missingLabels] <- t0cov[missingIndex, missingIndex, drop=FALSE]
+  }
+  
+  if(!is.null(latentPopNames) && length(latentPopNames) > 0 &&
+      nrow(t0cov) >= nlatent + length(latentPopNames)){
+    for(pi in seq_along(latentPopNames)){
+      pname <- latentPopNames[pi]
+      if(pname %in% rownames(newpopcov)){
+        newpopcov[labels, pname] <- t0cov[seq_len(nlatent), nlatent + pi]
+        newpopcov[pname, labels] <- t0cov[nlatent + pi, seq_len(nlatent)]
+      }
+    }
+  }
+  popcov <- newpopcov
+  
+  if(length(popmeans) > 0){
+    newpopmeans <- rep(NA, nrow(popcov))
+    names(newpopmeans) <- rownames(popcov)
+    oldnames <- names(popmeans)
+    if(is.null(oldnames)) oldnames <- rownames(popcov)[seq_along(popmeans)]
+    oldmatch <- match(oldnames, names(newpopmeans))
+    newpopmeans[oldmatch[!is.na(oldmatch)]] <- popmeans[!is.na(oldmatch)]
+    newpopmeans[labels] <- t0means
+    popmeans <- newpopmeans
+  }
+  
+  if(nrow(timat) > 0){
+    newtimat <- matrix(0, nrow(popcov), ncol(timat),
+      dimnames=list(rownames(popcov), colnames(timat)))
+    newtimat[rownames(timat),] <- timat
+    timat <- newtimat
+  }
+  
+  list(popmeans=popmeans, popcov=popcov, timat=timat)
+}
+
 ctMatsetupFreePars <- function(m,intoverpop){
   m=m[m$when %in% c(0,-1) & m$param > 0,,drop=FALSE]
   m=m[match(unique(m$param),m$param),,drop=FALSE]
@@ -98,6 +196,78 @@ bmatrix = function(x, digits=NULL,nottext=FALSE, ...) {
   return(out)
 }
 
+ctModelLatexDynamicsBlock <- function(ctmodel, showd, continuoustime, matrixnames=TRUE,
+  splitDynamics=TRUE){
+  drift <- paste0("\\underbrace{
+        ",bmatrix(ctmodel$DRIFT),"
+      ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{A}}",ifelse(!matrixnames,"}","_\\textrm{DRIFT}}")," \\underbrace{
+        ",bmatrix(matrix(paste0(ctmodel$latentNames)))," 
+        \\big(t\\big)
+      }_{\\vect{\\eta} (t",ifelse(continuoustime,"","-1"),")}	+ \\underbrace{
+        ",bmatrix(ctmodel$CINT),"
+      ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{b}}",ifelse(!matrixnames,"}","_\\textrm{CINT}}"),
+    if(ctmodel$n.TDpred > 0) paste0( "+ \\underbrace{
+        ",bmatrix(ctmodel$TDPREDEFFECT),"
+      ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{M}}",ifelse(!matrixnames,"}","_\\textrm{TDPREDEFFECT}}"),"
+      \\underbrace{
+        ",bmatrix(matrix(ctmodel$TDpredNames))," 
+      }_{\\vect{\\chi} (t)}"))
+  diffusion <- paste0("\\underbrace{UcorSDtoChol\\left\\{
+      ",bmatrix(ctmodel$DIFFUSION),"\\right\\}
+    ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{G}}",ifelse(!matrixnames,"}","_\\textrm{DIFFUSION}}"),"
+    \\underbrace{",showd,"
+      ",bmatrix(matrix(paste0('W_{',1:ctmodel$n.latent,'}')),nottext=TRUE)," 
+      (t)}_{",showd," \\vect{W}(t)}")
+  
+  if(splitDynamics) return(paste0("\\parbox{10em}{\\centering{Deterministic\\linebreak change:}}
+  &\\underbrace{",showd,"
+    ",bmatrix(matrix(paste0(ctmodel$latentNames)))," 
+    \\big(t\\big)}_{",showd," \\vect{\\eta} (t)}	=  \\left(
+      ",drift,"
+      \\right) ",ifelse(continuoustime,"\\mathrm{d}t","")," \\quad + \\nonumber \\\\ \\\\
+    \\parbox{10em}{\\centering{Random\\linebreak change:}}
+    & \\qquad \\qquad \\quad ",diffusion," \\\\ \\\\"))
+  
+  paste0("\\parbox{10em}{\\centering{Dynamics:}}
+  &\\underbrace{",showd,"
+    ",bmatrix(matrix(paste0(ctmodel$latentNames)))," 
+    \\big(t\\big)}_{",showd," \\vect{\\eta} (t)}	=  \\left(
+      ",drift,"
+      \\right) ",ifelse(continuoustime,"\\mathrm{d}t","")," \\quad + ",diffusion," \\\\ \\\\")
+}
+
+ctModelLatexMeasurementBlock <- function(ctmodel, matrixnames=TRUE,
+  splitMeasurement=TRUE){
+  observation <- paste0("\\underbrace{
+          ",bmatrix(ctmodel$LAMBDA)," 
+        ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\Lambda}}",ifelse(!matrixnames,"}","_\\textrm{LAMBDA}}")," \\underbrace{
+          ",bmatrix(matrix(ctmodel$latentNames))," 
+          (t)}_{\\vect{\\eta}(t)} +
+        \\underbrace{
+          ",bmatrix(ctmodel$MANIFESTMEANS)," 
+        ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\tau}}",ifelse(!matrixnames,"}","_\\textrm{MANIFESTMEANS}}"))
+  noise <- paste0("\\underbrace{UcorSDtoChol \\left\\{
+                ",bmatrix(ctmodel$MANIFESTVAR),"\\right\\}  
+              ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\Theta}}",ifelse(!matrixnames,"}","_\\textrm{MANIFESTVAR}}"),"
+              \\underbrace{
+          ",bmatrix(matrix(paste0('\\epsilon_{',1:ctmodel$n.manifest,'}')))," 
+          (t)}_{\\vect{\\epsilon}(t)}")
+  
+  if(splitMeasurement) return(paste0("\\parbox{10em}{\\centering{Observations:}}
+&\\underbrace{
+      ",bmatrix(matrix(ctmodel$manifestNames),nottext=FALSE),"  
+      (t)}_{\\vect{Y}(t)} = 
+        ",observation," + \\nonumber \\\\ \\\\
+    \\parbox{10em}{\\centering{Observation\\linebreak noise:}}
+    & \\qquad \\qquad \\quad  ",noise," \\\\ \\\\"))
+  
+  paste0("\\parbox{10em}{\\centering{Measurement:}}
+&\\underbrace{
+      ",bmatrix(matrix(ctmodel$manifestNames),nottext=FALSE),"  
+      (t)}_{\\vect{Y}(t)} = 
+        ",observation," + ",noise," \\\\ \\\\")
+}
+
 
 #' Generate and optionally compile latex equation of subject level ctsem model.
 #'
@@ -114,6 +284,10 @@ bmatrix = function(x, digits=NULL,nottext=FALSE, ...) {
 #' @param tex Save .tex file? Otherwise latex is simply returned within R as a string.
 #' @param equationonly Logical. If TRUE, output is only the latex relevant to the equation, not a compileable document.
 #' @param minimal if TRUE, outputs reduced form version displaying matrix dimensions and equation structure only.
+#' @param splitDynamics Logical. If TRUE, split latent process dynamics across deterministic and random change lines.
+#' If FALSE, show the full dynamics equation on one line.
+#' @param splitMeasurement Logical. If TRUE, split measurement equations across observation and observation noise lines.
+#' If FALSE, show the full measurement equation on one line.
 #' @param compile Compile to .pdf? (Depends on \code{tex = TRUE}) 
 #' @param open Open after compiling? (Depends on \code{compile = TRUE})
 #' @param includeNote Include text describing matrix transformations and subject notation?
@@ -142,9 +316,12 @@ bmatrix = function(x, digits=NULL,nottext=FALSE, ...) {
 #' cat(l)
 ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctStanFit',textsize='normalsize',folder=tempdir(),
   filename=paste0('ctsemTex',as.numeric(Sys.time())),tex=TRUE, equationonly=FALSE, compile=TRUE, open=TRUE, includeNote=TRUE,
-  minimal=FALSE, savepng=FALSE){
+  minimal=FALSE, splitDynamics=TRUE, splitMeasurement=TRUE, savepng=FALSE){
   #library(ctsem)
   dopopcov <- FALSE
+  t0cov <- NULL
+  t0means <- NULL
+  latentPopNames <- NULL
   
   # When savepng is TRUE, force compilation settings
   if(savepng) {
@@ -170,6 +347,9 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
         popcov <- stan_constrainsamples(x$stanmodel,x$standata,matrix(x$stanfit$rawest,nrow=1),
           cores=1,pcovn =1000,dokalman=FALSE,savesubjectmatrices = FALSE)$popcov
         popcov <- round(ctCollapse(e$popcov,1,mean),digits=digits)
+        if(!is.null(e$pop_T0cov)) t0cov <- round(ctCollapse(e$pop_T0cov,1,mean),digits=digits)
+        if(!is.null(e$pop_T0MEANS)) t0means <- round(ctCollapse(e$pop_T0MEANS,1,mean),digits=digits)
+        if(!is.null(x$ctstanmodel$latentPopNames)) latentPopNames <- x$ctstanmodel$latentPopNames
         if(x$standata$intoverpop==1){
           t0index <- ms$indvarying[ms$param > 0 & ms$row <= x$standata$nlatent & ms$matrix %in% 1 & ms$indvarying > 0]
           popcov[t0index,t0index] <- round(ctCollapse(e$pop_T0cov,1,mean),digits=digits)[
@@ -235,6 +415,26 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
         na.omit(match(rownames(popcov),rownames(newpopcov)))] <- popcov
       popcov <- newpopcov
       timat <- newtimat
+    }
+    
+    if(dopopcov || doti){
+      t0covIsTotal <- !is.null(t0cov)
+      if(exists('t0cov') && is.null(t0cov) && exists('ctmodel')) {
+        t0cov <- ctModelLatexT0DisplayCov(
+          as.matrix(ctmodel$T0VAR)[seq_len(ctmodel$n.latent), seq_len(ctmodel$n.latent), drop=FALSE],
+          digits=digits)
+      }
+      if(exists('t0means') && !is.null(t0means)) {
+        t0means <- as.matrix(t0means)[seq_len(ctmodel$n.latent),1]
+      }
+      t0aug <- ctModelLatexAugmentT0(popmeans=popmeans, popcov=popcov,
+        timat=timat, ctm=ctmodel, digits=digits, t0means=t0means,
+        t0cov=t0cov, latentPopNames=latentPopNames, t0covIsTotal=t0covIsTotal)
+      popmeans <- t0aug$popmeans
+      popcov <- t0aug$popcov
+      timat <- t0aug$timat
+      dopopcov <- as.logical(nrow(popcov))
+      doti <- as.logical(nrow(timat))
     }
     
     dopop <- doti||dopopcov
@@ -399,11 +599,23 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
     
     
     
+    initialStateLatex <- if(!dopop) paste0("\\parbox{10em}{\\centering{Initial\\linebreak latent\\linebreak state:}}
+  &\\underbrace{",bmatrix(matrix(paste0(ctmodel$latentNames)))," 
+    \\big(t_0\\big)}_{\\vect{\\eta} (t_0)}	\\sim \\mathrm{N} \\left(
+              \\underbrace{
+        ",bmatrix(ctmodel$T0MEANS),"
+      ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{}}",ifelse(!matrixnames,"}","_\\textrm{T0MEANS}}"),",
+      \\underbrace{UcorSDtoCov \\left\\{","
+        ",bmatrix(ctmodel$T0VAR),"\\right\\}"," 
+      ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{Q^{*}}_{t0}}",ifelse(!matrixnames,"}","_\\textrm{T0VAR}}"),"
+      \\right) \\\\
+") else ""
+    
     out <- paste0(out, "
  \\setcounter{MaxMatrixCols}{200}
  \\begin{flalign*}
   &\\begin{aligned}
-  ",if(dopop) paste0("\\parbox{10em}{\\centering{Subject\\linebreak parameter\\linebreak distribution:}}
+  ",if(dopop) paste0("\\parbox{10em}{\\centering{Initial\\linebreak and subject\\linebreak parameter\\linebreak distribution:}}
              &\\underbrace{",bmatrix(matrix(paste0('\\text{',
                texPrep(colnames(popcov)),'}_i')),nottext=TRUE)," 
             }_{\\vect{\\phi}(i)} ",ifelse(linearise,"\\approx","\\sim"),
@@ -413,63 +625,13 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
     if(doti) paste0(" + \\underbrace{",bmatrix(timat),"}_{\\vect{",ifelse(linearise,"\\hat",""),"\\beta}}","
   \\underbrace{
     ",bmatrix(matrix(colnames(timat))),"}_{\\vect{z}}"),
-    ifelse(linearise,"","\\right\\}")," \\\\"),
-      "\\parbox{10em}{\\centering{Initial\\linebreak latent\\linebreak state:}}
-  &\\underbrace{",bmatrix(matrix(paste0(ctmodel$latentNames)))," 
-    \\big(t_0\\big)}_{\\vect{\\eta} (t_0)}	\\sim \\mathrm{N} \\left(
-              \\underbrace{
-        ",bmatrix(ctmodel$T0MEANS),"
-      ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{}}",ifelse(!matrixnames,"}","_\\textrm{T0MEANS}}"),",
-      \\underbrace{UcorSDtoCov \\left\\{","
-        ",bmatrix(ctmodel$T0VAR),"\\right\\}","
-      ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{Q^{*}}_{t0}}",ifelse(!matrixnames,"}","_\\textrm{T0VAR}}"),"
-      \\right) \\\\
-      \\parbox{10em}{\\centering{Deterministic\\linebreak change:}}
-  &\\underbrace{",showd,"
-    ",bmatrix(matrix(paste0(ctmodel$latentNames)))," 
-    \\big(t\\big)}_{",showd," \\vect{\\eta} (t)}	=  \\left(
-      \\underbrace{
-        ",bmatrix(ctmodel$DRIFT),"
-      ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{A}}",ifelse(!matrixnames,"}","_\\textrm{DRIFT}}")," \\underbrace{
-        ",bmatrix(matrix(paste0(ctmodel$latentNames)))," 
-        \\big(t\\big)
-      }_{\\vect{\\eta} (t",ifelse(continuoustime,"","-1"),")}	+ \\underbrace{
-        ",bmatrix(ctmodel$CINT),"
-      ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{b}}",ifelse(!matrixnames,"}","_\\textrm{CINT}}"),
-      if(ctmodel$n.TDpred > 0) paste0( "+ \\underbrace{
-        ",bmatrix(ctmodel$TDPREDEFFECT),"
-      ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{M}}",ifelse(!matrixnames,"}","_\\textrm{TDPREDEFFECT}}"),"
-      \\underbrace{
-        ",bmatrix(matrix(ctmodel$TDpredNames))," 
-      }_{\\vect{\\chi} (t)}"),
-      "\\right) ",ifelse(continuoustime,"\\mathrm{d}t","")," \\quad + \\nonumber \\\\ \\\\
-    \\parbox{10em}{\\centering{Random\\linebreak change:}}
-    & \\qquad \\qquad \\quad \\underbrace{UcorSDtoChol\\left\\{
-      ",bmatrix(ctmodel$DIFFUSION),"\\right\\}
-    ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{G}}",ifelse(!matrixnames,"}","_\\textrm{DIFFUSION}}"),"
-    \\underbrace{",showd,"
-      ",bmatrix(matrix(paste0('W_{',1:ctmodel$n.latent,'}')),nottext=TRUE)," 
-      (t)}_{",showd," \\vect{W}(t)} \\\\ \\\\
-              \\parbox{10em}{\\centering{Observations:}}
-&\\underbrace{
-      ",bmatrix(matrix(ctmodel$manifestNames),nottext=FALSE),"  
-      (t)}_{\\vect{Y}(t)} = 
-        \\underbrace{
-          ",bmatrix(ctmodel$LAMBDA)," 
-        ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\Lambda}}",ifelse(!matrixnames,"}","_\\textrm{LAMBDA}}")," \\underbrace{
-          ",bmatrix(matrix(ctmodel$latentNames))," 
-          (t)}_{\\vect{\\eta}(t)} +
-        \\underbrace{
-          ",bmatrix(ctmodel$MANIFESTMEANS)," 
-        ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\tau}}",ifelse(!matrixnames,"}","_\\textrm{MANIFESTMEANS}}")," + \\nonumber \\\\ \\\\
-    \\parbox{10em}{\\centering{Observation\\linebreak noise:}}
-    & \\qquad \\qquad \\quad  \\underbrace{UcorSDtoChol \\left\\{
-                ",bmatrix(ctmodel$MANIFESTVAR),"\\right\\}  
-              ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\Theta}}",ifelse(!matrixnames,"}","_\\textrm{MANIFESTVAR}}"),"
-              \\underbrace{
-          ",bmatrix(matrix(paste0('\\epsilon_{',1:ctmodel$n.manifest,'}')))," 
-          (t)}_{\\vect{\\epsilon}(t)} \\\\ \\\\
-                \\parbox{10em}{\\centering{System noise\\linebreak distribution per time step:}}
+    ifelse(linearise,"","\\right\\}")," \\\\"), initialStateLatex,
+      ctModelLatexDynamicsBlock(ctmodel=ctmodel, showd=showd,
+        continuoustime=continuoustime, matrixnames=matrixnames,
+        splitDynamics=splitDynamics),
+      ctModelLatexMeasurementBlock(ctmodel=ctmodel, matrixnames=matrixnames,
+        splitMeasurement=splitMeasurement),
+      "\\parbox{10em}{\\centering{System noise\\linebreak distribution per time step:}}
           &",ifelse(continuoustime,'\\Delta ',''),"\\big[W_{j \\in [1,",ctmodel$n.latent,"]}\\big](t",
       ifelse(continuoustime,'-u',''),")   \\sim  \\mathrm{N}(0,",W,") \\quad
               \\parbox{10em}{\\centering{Observation noise\\linebreak distribution:}}

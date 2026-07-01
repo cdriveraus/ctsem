@@ -18,6 +18,8 @@ ctModelLatex(
   open = TRUE,
   includeNote = TRUE,
   minimal = FALSE,
+  splitDynamics = TRUE,
+  splitMeasurement = TRUE,
   savepng = FALSE
 )
 }
@@ -52,6 +54,12 @@ triangular matrices (which results in a covariance or Cholesky matrix) is shown 
 the latter is a more direct representation of the model, while the former is often simpler to convey.}
 
 \item{minimal}{if TRUE, outputs reduced form version displaying matrix dimensions and equation structure only.}
+
+\item{splitDynamics}{Logical. If TRUE, split latent process dynamics across deterministic and random change lines.
+If FALSE, show the full dynamics equation on one line.}
+
+\item{splitMeasurement}{Logical. If TRUE, split measurement equations across observation and observation noise lines.
+If FALSE, show the full measurement equation on one line.}
 
 \item{savepng}{Logical. If TRUE, renders the equation as a png file instead of a pdf, viewing the png in RStudio viewer when available.}
 }
