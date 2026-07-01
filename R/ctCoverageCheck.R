@@ -71,7 +71,7 @@ ctModelCoverage_check <- function(initialData, fitting_model, niter, fit_args,
   
   
   # Fit the model to get true parameters (use first fit_args configuration)
-  initial_fit_args <- ctCoverageFitArgs(default_fit_args, list(), fit_cores)
+  initial_fit_args <- ctCoverageFitArgs(default_fit_args, list(), cores)
   initial_fit <- do.call(ctFit, c(list(datalong = initialData, model= fitting_model), initial_fit_args))
   truepars <- initial_fit$stanfit$rawest
   

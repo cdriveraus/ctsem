@@ -14,7 +14,7 @@ ctGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErrors=
   
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object!')
   
-  if(nsamples > ncol(fit$stanfit$rawposterior) & fullposterior & is.null(fit$stanfit$stanfit)) fit <- ctAddSamples(fit,nsamples = nsamples,cores=1)
+  if(nsamples > ncol(fit$stanfit$rawposterior) & fullposterior & is.null(fit$stanfit$stanfit)) fit <- ctFitAddSamples(fit,nsamples = nsamples,cores=1)
   
   if(nsamples > ncol(fit$stanfit$rawposterior)) replace=TRUE else replace=FALSE #if nsamples still larger than available, use replacement
   

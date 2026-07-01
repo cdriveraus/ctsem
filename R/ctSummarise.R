@@ -340,8 +340,8 @@ if(requireNamespace('papaja')){
     }
 
     #subject expectation plots 
-    k<-ctKalman(sf,subjects = sf$setup$idmap[whichsubfull,1],realid = TRUE)
-    krem<-ctKalman(sf, subjects = whichsubfull,removeObs = TRUE,realid = TRUE)
+    k<-ctPredict(sf,subjects = sf$setup$idmap[whichsubfull,1],realid = TRUE)
+    krem<-ctPredict(sf, subjects = whichsubfull,removeObs = TRUE,realid = TRUE)
     pdf(paste0(name,'_subjectexpectations.pdf'))
     print(plot(krem,polygonsteps=FALSE, kalmanvec='etaprior',plot=FALSE)+ggtitle('Latent Expectations Conditional on Covariates'))
     print(plot(k,polygonsteps=FALSE, kalmanvec='etasmooth',plot=FALSE) +ggtitle('Latent Expectations Conditional on All Data'))

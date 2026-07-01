@@ -2,7 +2,7 @@
 % Please edit documentation in R/ctKalman.R
 \name{plot.ctKalmanDF}
 \alias{plot.ctKalmanDF}
-\title{Plots Kalman filter output from ctKalman.}
+\title{Plots prediction output from ctPredict.}
 \usage{
 \method{plot}{ctKalmanDF}(
   x,
@@ -13,14 +13,14 @@
   plot = TRUE,
   elementNames = NA,
   polygonsteps = 10,
-  polygonalpha = 0.1,
+  polygonalpha = 0.2,
   facets = "Variable",
   ...
 )
 }
 \arguments{
-\item{x}{Output from \code{\link{ctKalman}}. In general it is easier to call 
-\code{\link{ctKalman}} directly with the \code{plot=TRUE} argument, which calls this function.}
+\item{x}{Output from \code{\link{ctPredict}}. In general it is easier to call
+\code{\link{ctPredict}} directly with the \code{plot=TRUE} argument, which calls this function.}
 
 \item{subjects}{vector of integers denoting which subjects (from 1 to N) to plot predictions for.}
 
@@ -56,17 +56,17 @@ by variable type. This can be set to NA for no facets, or "Subject" for facettin
 A ggplot2 object. Side effect -- Generates plots.
 }
 \description{
-Plots Kalman filter output from ctKalman.
+Plots prediction output from ctPredict.
 }
 \examples{
-### Get output from ctKalman
-x<-ctKalman(ctstantestfit,subjects=2,timestep=.01)
+### Get output from ctPredict
+x<-ctPredict(ctstantestfit,subjects=2,timestep=.01)
 
 ### Plot with plot.ctKalmanDF
 plot(x, subjects=2)
 
 ###Single step procedure:
-ctKalman(ctstantestfit,subjects=2,
+ctPredict(ctstantestfit,subjects=2,
   kalmanvec=c('y','yprior'),
   elementNames=c('Y1','Y2'), 
   plot=TRUE,timestep=.01)

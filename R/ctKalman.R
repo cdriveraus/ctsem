@@ -291,7 +291,7 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
   }
   
   sf$standata <- suppressMessages(ctStanData(sf$ctstanmodel,fulldat,optimize=TRUE))
-  k=ctKalman(fit = sf,subjects=unique(fulldat[[sf$ctstanmodelbase$subjectIDname]]),realid=TRUE,timestep=timestep)
+  k=ctPredict(fit = sf,subjects=unique(fulldat[[sf$ctstanmodelbase$subjectIDname]]),realid=TRUE,timestep=timestep)
   k = k[k$Element %in% c('etaprior','yprior','ypriorcov','etapriorcov'),]
   k$V1 <- k$variable <- NULL
 
@@ -357,7 +357,7 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
   }
 }
 
-#' ctKalman 
+#' ctPredict
 #'
 #' Outputs predicted, updated, and smoothed estimates of manifest indicators and latent states, 
 #' with covariances, for specific subjects from data fit with \code{\link{ctFit}},
@@ -394,10 +394,10 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
 #' \donttest{
 #' 
 #' #Basic
-#' ctKalman(ctstantestfit, timerange=c(0,60), plot=TRUE)
+#' ctPredict(ctstantestfit, timerange=c(0,60), plot=TRUE)
 #' 
 #' #Multiple subjects, y and yprior, showing plot arguments
-#' plot1<-ctKalman(ctstantestfit, timerange=c(0,60), timestep=.1, plot=TRUE,
+#' plot1<-ctPredict(ctstantestfit, timerange=c(0,60), timestep=.1, plot=TRUE,
 #'   subjects=2:3, 
 #'   kalmanvec=c('y','yprior'),
 #'   errorvec=c(NA,'ypriorcov')) #'auto' would also have achieved this
@@ -406,7 +406,7 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
 #'  print(plot1+ggplot2::coord_cartesian(xlim=c(0,10)))
 #'  
 #'  #or generate custom plot from scratch:#'  
-#'  k=ctKalman(ctstantestfit, timerange=c(0,60), timestep=.1, subjects=2:3)
+#'  k=ctPredict(ctstantestfit, timerange=c(0,60), timestep=.1, subjects=2:3)
 #'  library(ggplot2)
 #'  ggplot(k[k$Element %in% 'yprior',],
 #'    aes(x=Time, y=value,colour=Subject,linetype=Row)) +
@@ -416,7 +416,7 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
 #'  }
 #' @export
 
-ctKalman<-function(fit, timerange='asdata', timestep='auto',
+ctPredict<-function(fit, timerange='asdata', timestep='auto',
   subjects=fit$standata$idmap[1,1], removeObs = FALSE, plot=FALSE, 
   standardisederrors=FALSE,realid=TRUE,...){
   
@@ -462,11 +462,16 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
 
 
 
+#' Backward-compatible alias for \code{ctPredict}.
+#' @rdname ctPredict
+#' @export
+ctKalman <- ctPredict
 
-#' Plots Kalman filter output from ctKalman.
+
+#' Plots prediction output from ctPredict.
 #'
-#' @param x Output from \code{\link{ctKalman}}. In general it is easier to call 
-#' \code{\link{ctKalman}} directly with the \code{plot=TRUE} argument, which calls this function.
+#' @param x Output from \code{\link{ctPredict}}. In general it is easier to call
+#' \code{\link{ctPredict}} directly with the \code{plot=TRUE} argument, which calls this function.
 #' @param subjects vector of integers denoting which subjects (from 1 to N) to plot predictions for. 
 #' @param kalmanvec string vector of names of any elements of the output you wish to plot, 
 #' the defaults of 'y' and 'ysmooth' plot the original data, 'y', 
@@ -492,20 +497,20 @@ ctKalman<-function(fit, timerange='asdata', timestep='auto',
 #' @export plot.ctKalmanDF
 #' @export
 #' @examples
-#' ### Get output from ctKalman
-#' x<-ctKalman(ctstantestfit,subjects=2,timestep=.01)
+#' ### Get output from ctPredict
+#' x<-ctPredict(ctstantestfit,subjects=2,timestep=.01)
 #' 
 #' ### Plot with plot.ctKalmanDF
 #' plot(x, subjects=2)
 #' 
 #' ###Single step procedure:
-#' ctKalman(ctstantestfit,subjects=2,
+#' ctPredict(ctstantestfit,subjects=2,
 #'   kalmanvec=c('y','yprior'),
 #'   elementNames=c('Y1','Y2'), 
 #'   plot=TRUE,timestep=.01)
 plot.ctKalmanDF<-function(x, subjects=unique(x$Subject), kalmanvec=c('y','yprior'),
   errorvec='auto', errormultiply=1.96,plot=TRUE,elementNames=NA,
-  polygonsteps=10,polygonalpha=.1,
+  polygonsteps=10,polygonalpha=.2,
   facets='Variable',
   ...){
   if(!'ctKalmanDF' %in% class(x)) stop('not a ctKalmanDF object')

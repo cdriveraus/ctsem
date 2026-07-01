@@ -168,12 +168,12 @@ print(s$tipreds )
 
 #' Predictions conditional on all earlier data
 ```r
-ctKalman(f,plot=TRUE,subjects=2:4,kalmanvec=c('yprior','ysmooth')) 
+ctPredict(f,plot=TRUE,subjects=2:4,kalmanvec=c('yprior','ysmooth'))
 ```
 
 #' Predictions conditional only on covariates, showing 1 chick from each diet
 ```r
-ctKalman(f,plot=T, 
+ctPredict(f,plot=T,
   subjects=as.numeric(chickdata$Chick[!duplicated(ChickWeight$Diet)]),
   removeObs = T,polygonalpha=0)
 ```

@@ -263,8 +263,8 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' summary(f1)
 #'
 #' #plots of individual subject models v data
-#' ctKalman(f1,plot=TRUE,subjects=1,kalmanvec=c('y','yprior'),timestep=.01)
-#' ctKalman(f1,plot=TRUE,subjects=1:3,kalmanvec=c('y','ysmooth'),timestep=.01,errorvec=NA)
+#' ctPredict(f1,plot=TRUE,subjects=1,kalmanvec=c('y','yprior'),timestep=.01)
+#' ctPredict(f1,plot=TRUE,subjects=1:3,kalmanvec=c('y','ysmooth'),timestep=.01,errorvec=NA)
 #'
 #' ctPostPredict(f1, wait=FALSE) #compare randomly generated data from posterior to observed data
 #'

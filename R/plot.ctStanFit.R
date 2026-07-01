@@ -11,7 +11,7 @@
 #' may occur if types='all'. For details see the specific functions generating each type of plot.
 #' @details This function is just a wrapper calling the necessary functions for plotting - it 
 #' may be simpler in many cases to access those directly. They are:
-#'  \code{\link{ctDiscretePars}},\code{\link{ctKalman}},
+#'  \code{\link{ctDiscretePars}},\code{\link{ctPredict}},
 #'  \code{\link{ctPlotPosterior}},\code{stan_trace},
 #'  \code{stan_dens},\code{stan_plot}
 #'  rstan offers many plotting possibilities not available here, to use that functionality
@@ -55,9 +55,9 @@ plot.ctStanFit <- function(x, types='all',wait=TRUE,...){
   }
   
   if('kalman' %in% types && continue){
-    message('Plotting expectations from Kalman filter using ctKalman')
+    message('Plotting expectations from ctPredict')
     
-    print(ctKalman(x, plot=TRUE,...))
+    print(ctPredict(x, plot=TRUE,...))
     types=types[types!='kalman']
     continue<-waitf()
   }

@@ -32,6 +32,56 @@ test_that("ctOptimNormalDraws returns requested dimensions", {
   expect_true(all(is.finite(draws)))
 })
 
+test_that("Hessian covariance reports numerical repairs", {
+  hess <- -diag(c(1, 0))
+  expect_warning(
+    cov <- ctsem:::ctOptimCovFromHessian(hess, ridge=1e-6,
+      context='test Hessian'),
+    'required numerical repair')
+  diagnostics <- attr(cov, 'ctOptimCovFromHessian')
+  expect_true(diagnostics$infoRidgeApplied)
+  expect_equal(diagnostics$ridge, 1e-6)
+})
+
+test_that("Hessian covariance tries raw inversion before repair", {
+  expect_silent(
+    cov <- ctsem:::ctOptimCovFromHessian(-diag(2), context='clean Hessian'))
+  diagnostics <- attr(cov, 'ctOptimCovFromHessian')
+  expect_equal(diagnostics$method, 'solve')
+  expect_true(diagnostics$rawSolveSucceeded)
+  expect_true(diagnostics$rawCholSucceeded)
+  expect_false(diagnostics$infoRidgeApplied)
+  expect_false(diagnostics$usedGinv)
+  
+  hess <- diag(c(-1, 1))
+  expect_warning(
+    cov <- ctsem:::ctOptimCovFromHessian(hess, context='indefinite Hessian'),
+    'nearPD')
+  diagnostics <- attr(cov, 'ctOptimCovFromHessian')
+  expect_equal(diagnostics$method, 'nearPD_cov')
+  expect_true(diagnostics$rawSolveSucceeded)
+  expect_false(diagnostics$rawCholSucceeded)
+  expect_true(diagnostics$usedNearPD)
+  expect_false(diagnostics$infoRidgeApplied)
+})
+
+test_that("Hessian processing reports one-sided and weak curvature parameters", {
+  h1 <- -diag(c(1, 2, .Machine$double.eps))
+  h2 <- h1
+  h2[2, 2] <- NA_real_
+  matsetup <- data.frame(param=1:3, when=0, parname=paste0('p', 1:3))
+  expect_message(
+    out <- ctsem:::processHessianMatrices(h1, h2, verbose=0,
+      matsetup=matsetup),
+    'One sided Hessian used for params: p2')
+  expect_message(
+    ctsem:::processHessianMatrices(h1, h2, verbose=0,
+      matsetup=matsetup),
+    'may.*not identified: p3')
+  expect_equal(out$onesided, 2)
+  expect_equal(out$probpars, 3)
+})
+
 test_that("surrogate design scales with dimension and filters lp outliers", {
   set.seed(1)
   p <- 12
@@ -48,6 +98,79 @@ test_that("surrogate design scales with dimension and filters lp outliers", {
   expect_true(all(surrogate$drops >= surrogate$dropRange[1]))
   expect_true(all(surrogate$drops <= surrogate$dropRange[2]))
   expect_equal(diag(surrogate$hessian), rep(-1, p), tolerance=.01)
+})
+
+test_that("surrogate whitening handles correlated proposal covariance", {
+  set.seed(2)
+  A <- matrix(c(2, .4, .4, 1), 2, 2)
+  lpg <- function(x){
+    out <- -0.5 * drop(t(x) %*% A %*% x)
+    attr(out, 'gradient') <- -drop(A %*% x)
+    out
+  }
+  propcov <- matrix(c(.8, .3, .3, .6), 2, 2)
+  surrogate <- ctsem:::ctOptimSurrogateHessian(c(0, 0), lpgFunc=lpg,
+    cov=propcov, npoints=60, scale=.5, verbose=0)
+  expect_equal(surrogate$hessian, -A, tolerance=.03)
+})
+
+test_that("surrogate profiles all fitted curvature directions", {
+  set.seed(4)
+  lpg <- function(x){
+    theta <- log1p(exp(x[1] - 8))
+    out <- -0.5 * (theta / .5)^2 - 0.5 * x[2]^2
+    grad <- c(-(theta / .25) * plogis(x[1] - 8), -x[2])
+    attr(out, 'gradient') <- grad
+    out
+  }
+  surrogate <- ctsem:::ctOptimSurrogateHessian(c(0, 0), lpgFunc=lpg,
+    cov=diag(c(100, 1)), npoints=40, scale=.5,
+    profile=TRUE, verbose=0)
+  cov <- ctsem:::ctOptimCovFromHessian(surrogate$hessian)
+  expect_equal(surrogate$profile$nProfiled, 2)
+  expect_gt(surrogate$profile$nAdjusted, 0)
+  expect_true(any(surrogate$profile$profiles$reached))
+  expect_true(all(is.finite(cov)))
+})
+
+test_that("surrogate profiling uses drop magnitude for flat directions", {
+  lpg <- function(x){
+    out <- -0.5 * .001 * x[1]^2
+    attr(out, 'gradient') <- -.001 * x
+    out
+  }
+  prof <- ctsem:::ctOptimSurrogateProfileDirections(est=0, lpgFunc=lpg,
+    cholcov=matrix(1), directions=matrix(1), targetDrop=2,
+    maxStep=64, verbose=0)
+  expect_true(all(prof$reached))
+  expect_equal(prof$step, rep(sqrt(2 * 2 / .001), 2), tolerance=1)
+})
+
+test_that("surrogate profiling expands to surrogate-implied flat target", {
+  lpg <- function(x){
+    out <- -0.5 * .00025 * x[1]^2
+    attr(out, 'gradient') <- -.00025 * x
+    out
+  }
+  profiled <- ctsem:::ctOptimSurrogateProfileCurvature(
+    hessWhite=matrix(-.00025), est=0, lpgFunc=lpg, cholcov=matrix(1),
+    targetDrop=2, maxStep=64, verbose=0)
+  expect_true(all(profiled$profiles$reached))
+  expect_gt(max(profiled$profiles$step), 64)
+})
+
+test_that("surrogate profiling keeps expanding when observed profile is flatter", {
+  lpg <- function(x){
+    out <- -0.5 * .00001 * x[1]^2
+    attr(out, 'gradient') <- -.00001 * x
+    out
+  }
+  profiled <- ctsem:::ctOptimSurrogateProfileCurvature(
+    hessWhite=matrix(-.00025), est=0, lpgFunc=lpg, cholcov=matrix(1),
+    targetDrop=2, maxStep=64, verbose=0)
+  expect_true(all(profiled$profiles$reached))
+  expect_gt(max(profiled$profiles$expansions), 0)
+  expect_gt(max(profiled$profiles$step), 250)
 })
 
 test_that("optimized uncertainty API uses explicit method and draw names", {
