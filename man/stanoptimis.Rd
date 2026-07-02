@@ -14,7 +14,8 @@ stanoptimis(
   stochastic = TRUE,
   priors = TRUE,
   carefulfit = TRUE,
-  uncertainty = "hessian",
+  uncertainty = c("hessian", "surrogate", "is", "bootstrap", "fullbootstrap", "sandwich",
+    "opg"),
   uncertaintyDraws = "auto",
   uncertaintyControl = list(),
   subsamplesize = 1,
@@ -22,9 +23,6 @@ stanoptimis(
   parstepsAutoModel = FALSE,
   groupFreeThreshold = 0.5,
   plot = FALSE,
-  is = FALSE,
-  isitersize = 1000,
-  isESS = 100,
   finishsamples = 1000,
   lproughnesstarget = 0.2,
   verbose = 0,
@@ -58,8 +56,8 @@ the stan model uses this value.}
 
 \item{uncertainty}{Character string selecting the optimized-fit uncertainty
 approximation. Options are \code{'hessian'}, \code{'surrogate'},
-\code{'bootstrap'}, \code{'fullbootstrap'}, \code{'sandwich'}, and
-\code{'opg'}.}
+\code{'is'}, \code{'bootstrap'}, \code{'fullbootstrap'}, \code{'sandwich'},
+and \code{'opg'}.}
 
 \item{uncertaintyDraws}{Character string controlling approximate
 raw-parameter draws
@@ -89,12 +87,6 @@ as a first step, free them in second step.}
 \item{groupFreeThreshold}{threshold for determining whether a parameter is free in a group level model. If the proportion of subjects with a non-zero parameter is above this threshold, the parameter is considered free. Only used with parstepsAutoModel = 'group'.}
 
 \item{plot}{Logical. If TRUE, plot iteration details. Probably slower.}
-
-\item{is}{Logical. Use mixture importance sampling, or just return map estimates?}
-
-\item{isitersize}{Number of samples of approximating distribution per iteration of importance sampling.}
-
-\item{isESS}{target effective sample size for importance sampling. If is=TRUE, this is used to determine the number of samples to draw from the approximating distribution.}
 
 \item{finishsamples}{Number of samples to draw (either from hessian
 based covariance or posterior distribution) for final results computation.}

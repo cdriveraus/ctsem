@@ -875,7 +875,7 @@ ctOptimSurrogateHessian <- function(est, lpgFunc, cov, npoints=NULL,
 }
 
 ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
-  uncertainty=c('hessian','surrogate','bootstrap','fullbootstrap',
+  uncertainty=c('hessian','surrogate','is','bootstrap','fullbootstrap',
     'sandwich','opg'),
   finishsamples=1000, cores=1, matsetup=NA, control=list(), verbose=0){
   
@@ -911,7 +911,7 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
     covavailable <- TRUE
   }
   
-  if(uncertainty %in% c('hessian','sandwich','bootstrap') ||
+  if(uncertainty %in% c('hessian','sandwich','bootstrap','is') ||
       (uncertainty == 'surrogate' && !covavailable)){
     message('Estimating Hessian')
     hess1 <- numericHessianFunc(pars=est, step=control$hessianStep,
@@ -1075,19 +1075,21 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' @param fit Optimized \code{ctStanFit} object.
 #' @param uncertainty Uncertainty approximation. \code{'hessian'} uses the
 #' finite-difference Hessian, \code{'surrogate'} fits a local quadratic
-#' surrogate around the optimum, \code{'bootstrap'} uses one-step score
-#' bootstrap draws with Hessian bread, \code{'fullbootstrap'} resamples
-#' subjects and fully re-optimizes each sample from the original maximum
-#' likelihood or MAP estimate using mize L-BFGS, \code{'sandwich'} uses
-#' Hessian bread with score covariance meat, and \code{'opg'} uses an
-#' OPG-style score information approximation.
+#' surrogate around the optimum, \code{'is'} uses Hessian-based importance
+#' sampling and computes uncertainty from the weighted importance-sampling
+#' distribution, \code{'bootstrap'} uses one-step score bootstrap draws with
+#' Hessian bread, \code{'fullbootstrap'} resamples subjects and fully
+#' re-optimizes each sample from the original maximum likelihood or MAP
+#' estimate using mize L-BFGS, \code{'sandwich'} uses Hessian bread with score
+#' covariance meat, and \code{'opg'} uses an OPG-style score information
+#' approximation.
 #' @param draws Approximate raw-parameter draw method. \code{'auto'} uses
 #' empirical draws for \code{uncertainty='bootstrap'} and
 #' \code{uncertainty='fullbootstrap'} and normal draws otherwise.
 #' \code{'normal'} draws from a multivariate normal using the selected
 #' covariance, \code{'empirical'} uses empirical draws when available, and
-#' \code{'imis'} runs the existing importance sampler using the selected
-#' covariance as proposal.
+#' \code{'imis'} runs the importance sampler using the selected covariance as
+#' proposal. For \code{uncertainty='is'}, \code{draws} is set to \code{'imis'}.
 #' @param finishsamples Number of approximate raw-parameter samples. If
 #' \code{NULL}, the existing number of rows in \code{fit$stanfit$rawposterior}
 #' is reused when available; otherwise 1000 samples are used.
@@ -1100,13 +1102,18 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \code{ridge}, \code{hessianStep}, \code{surrogateNpoints},
 #' \code{surrogateScale}, \code{surrogateProfile},
 #' \code{surrogateProfileTargetDrop}, \code{surrogateProfileMaxStep},
-#' \code{bootstrapFitCores}, and \code{bootstrapTol}. Omitted entries use
+#' \code{bootstrapFitCores}, \code{bootstrapTol}, \code{imisMaxIter},
+#' \code{imisScaleInit}, \code{imisTailScale}, \code{isESS}, and
+#' \code{isitersize}. Omitted entries use
 #' \code{ridge = 1e-8}, \code{hessianStep = 1e-3},
 #' \code{surrogateScale = .5}, \code{surrogateNpoints = NULL},
 #' \code{surrogateProfile = TRUE},
 #' \code{surrogateProfileTargetDrop = NULL},
 #' \code{surrogateProfileMaxStep = 64},
-#' \code{bootstrapFitCores = 1}, and \code{bootstrapTol = 1e-5}. When
+#' \code{bootstrapFitCores = 1}, \code{bootstrapTol = 1e-5},
+#' \code{imisMaxIter = 50}, \code{imisScaleInit = 1.1},
+#' \code{imisTailScale = 1.1}, \code{isESS = 100}, and
+#' \code{isitersize = 1000}. When
 #' \code{surrogateNpoints} is \code{NULL}, the
 #' surrogate uses at least \code{max(4 * npars, 50)} local directions. The
 #' surrogate is fit in whitened coordinates relative to the proposal covariance.
@@ -1143,7 +1150,7 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' @return Updated \code{ctStanFit} object.
 #' @export
 ctOptimUncertainty <- function(fit,
-  uncertainty=c('hessian','surrogate','bootstrap','fullbootstrap',
+  uncertainty=c('hessian','surrogate','is','bootstrap','fullbootstrap',
     'sandwich','opg'),
   draws=c('auto','normal','empirical','imis'), finishsamples=NULL,
   cores=NULL, control=list(), verbose=0, ...){
@@ -1154,10 +1161,20 @@ ctOptimUncertainty <- function(fit,
   }
   uncertainty <- match.arg(uncertainty)
   draws <- match.arg(draws)
-  if(draws == 'auto') {
-    draws <- if(uncertainty %in% c('bootstrap','fullbootstrap'))
-      'empirical' else 'normal'
+  if(uncertainty == 'is' && !draws %in% c('auto','imis')) {
+    warning("uncertainty='is' uses importance sampling; ignoring draws='",
+      draws, "' and using draws='imis'.", call.=FALSE)
   }
+  if(draws == 'auto') {
+    if(uncertainty == 'is') {
+      draws <- 'imis'
+    } else if(uncertainty %in% c('bootstrap','fullbootstrap')) {
+      draws <- 'empirical'
+    } else {
+      draws <- 'normal'
+    }
+  }
+  if(uncertainty == 'is') draws <- 'imis'
   if(is.null(finishsamples)) {
     finishsamples <- if(!is.null(fit$stanfit$rawposterior))
       nrow(fit$stanfit$rawposterior) else 1000
@@ -1249,7 +1266,20 @@ ctOptimUncertainty <- function(fit,
       target_ess=control$isESS, n_batch=control$isitersize, cl=NA,
       finishsamples=finishsamples, verbose=verbose > 0)
     samples <- is_res$theta
+    uncertaintyfit$proposal_cov <- uncertaintyfit$cov
+    if(!is.null(uncertaintyfit$details$covariance)) {
+      uncertaintyfit$details$proposal_covariance <-
+        uncertaintyfit$details$covariance
+      uncertaintyfit$details$covariance <- NULL
+    }
+    if(!is.null(is_res$covariance) && all(is.finite(is_res$covariance))) {
+      uncertaintyfit$cov <- ctOptimSafeCov(is_res$covariance)
+    } else if(nrow(samples) > 1) {
+      uncertaintyfit$cov <- ctOptimSafeCov(stats::cov(samples))
+    }
     uncertaintyfit$imis <- is_res
+    uncertaintyfit$details$importance_sampling <- list(ess=is_res$ess,
+      df_used=is_res$df_used, covariance='weighted importance-sampling covariance')
   } else {
     samples <- ctOptimNormalDraws(fit$stanfit$rawest, uncertaintyfit$cov,
       finishsamples)

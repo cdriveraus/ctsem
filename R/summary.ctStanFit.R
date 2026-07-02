@@ -1,3 +1,67 @@
+priorchecker <- function(sf,pars=c('rawpopmeans','rawpopsdbase','tipredeffectparams'),digits=2){
+  e=ctExtract(sf)
+  funcs <- c(base::mean,stats::sd)
+  pars=unlist(lapply(pars,function(x) if(!is.null(dim(e[[x]]))) x))
+  out=round(do.call(cbind,lapply(funcs, function(fn) do.call(c,
+    lapply(pars, function(obji) apply(e[[obji]],2,fn,na.rm=TRUE)) ))),digits)
+  rownames(out)=do.call(c,c(lapply(pars, function(obji) paste0(obji,'_',1:ncol(e[[obji]])))))
+  out=data.frame(out,do.call(c,c(lapply(pars, function(obji) 1:ncol(e[[obji]])))))
+  out=data.frame(out,do.call(c,c(lapply(pars, function(obji) rep(obji, ncol(e[[obji]]))))),stringsAsFactors = FALSE)
+  colnames(out)=c('mean','sd', 'param', 'object')
+  
+  
+  getparnamesfromraw <- function(priorcheck, sf){
+    newnames=rownames(priorcheck)
+    for(ni in 1:nrow(priorcheck)){
+      if(priorcheck$object[ni] %in% 'rawpopmeans'){
+        newnames[ni]=paste0('rawpop_',sf$setup$popsetup$parname[sf$setup$popsetup$param %in% priorcheck$param[ni]][1])
+      }
+      if(priorcheck$object[ni] %in% 'tipredeffectparams'){
+        newnames[ni]=paste0('rawtipredeffect_',paste0(
+          which(sf$standata$TIPREDEFFECTsetup == priorcheck$param[ni],arr.ind = TRUE),collapse='_'))
+      }
+    }
+    return(newnames)
+  }
+  
+  rownames(out) = getparnamesfromraw(priorcheck=out,sf=sf)
+  return(out)
+}
+
+ctFitgetparnamesfromraw <- function(sf){
+  names=list()
+  ms <- sf$setup$matsetup
+  names$popmeans <- unique(ms$parname[ms$when==0 & ms$param > 0 & ms$copyrow ==0])
+  if(sum(sf$ctstanmodelbase$pars$indvarying) > 0){
+    names$popsd <- paste0(ms$parname[ms$when==0 & ms$param > 0 & ms$copyrow == 0 & ms$indvarying > 0],'_SD')
+  } 
+  if(sum(sf$ctstanmodelbase$pars$indvarying) > 1){
+    popcorrmat <- matrix(paste0(gsub('_SD','',rep(names$popsd,times=length(names$popsd))), '_', gsub('_SD','',rep(names$popsd,each=length(names$popsd))),'_corr'),ncol=length(names$popsd),nrow=length(names$popsd))
+    names$popcorr <- as.vector(popcorrmat[lower.tri(popcorrmat)])
+  } 
+  
+  if(sf$ctstanmodelbase$n.TIpred > 0){
+    names$tipreds <- sapply(sf$standata$TIPREDEFFECTsetup[sf$standata$TIPREDEFFECTsetup!=0],function(x){
+      index <- which(sf$standata$TIPREDEFFECTsetup == x,arr.ind = TRUE)
+      paste0('rawtipredeffect_',paste0(
+        names$popmeans[index[1]],'_',sf$ctstanmodelbase$TIpredNames[index[2]]))
+    })
+  }
+  return(names)
+  
+}
+
+
+priorcheckreport <- function(sf, meanlim = 2, sdlim= .2,digits=2){
+  p=priorchecker(sf)
+  ps=sf$setup$popsetup
+  p=p[abs(p$mean) > meanlim | p$sd > sdlim,]
+  out<-p[,c('mean','sd')]
+  return(out)
+}
+
+
+
 ctStanRawSamples<-function(fit){
   if(length(fit$stanfit$stanfit@sim)==0) {
     samples = fit$stanfit$rawposterior
@@ -191,13 +255,13 @@ getparnames <- function(fit,reonly=FALSE, subjvariationonly=FALSE, popstatesonly
 #' @param priorcheck Whether or not to use \code{ctsem:::priorchecking} to compare posterior mean and sd to prior mean and sd.
 #' @param residualcov Whether or not to show standardised residual covariance. Takes a little longer to compute.
 #' @param ... Additional arguments to pass to \code{ctsem:::priorcheckreport}, such as \code{meanlim}, or \code{sdlim}.
-#' @return List containing summary items.
+#' @return List containing summary items, with a \code{print} method for readable console and knitr output.
 #' @examples
 #' summary(ctstantestfit)
 #' @method summary ctStanFit
 #' @export
 
-summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,priorcheck=TRUE,residualcov = TRUE,...){
+summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,priorcheck=TRUE,residualcov = TRUE,...){
   
   if(!'ctStanFit' %in% class(object)) stop('Not a ctStanFit object!')
   
@@ -227,10 +291,9 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
     narescov <- which(is.na(rescov))
     rescov[narescov] <- 0
     
-    out$residCovStd <- round(idobscov %*% rescov %*% idobscov ,3)
+    out$residCovStd <- round(idobscov %*% rescov %*% idobscov ,digits)
     out$residCovStd[narescov] <- NA
     dimnames(out$residCovStd) <- list(object$ctstanmodel$manifestNames,object$ctstanmodel$manifestNames)
-    out$resiCovStdNote <- 'Standardised covariance of residuals'
   }
   
   ms=object$setup$matsetup
@@ -259,12 +322,16 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
       colnames(rawpopcorrout)[ncol(rawpopcorrout)] <- 'z'
       
       out$rawpopcorr = round(rawpopcorrout,digits)
+      out$rawpopcorrNote = 'These reflect correlations between the raw / unconstrained parameters.'
     }
   }
   
   if(priorcheck && object$standata$priors) {
     priorcheckres <- priorcheckreport(object,...)
-    if(nrow(priorcheckres$priorcheck) > 0) out = c(out,priorcheckres)
+    if(nrow(priorcheckres) > 0){
+      out$priorcheck=priorcheckres
+      out$priorcheckNote='These posteriors exceeded arbitrary limits re normal(0,1) -- priors / transforms are likely somewhat informative (Not necessarily a problem).'
+    }
   }
   
   if(object$ctstanmodel$n.TIpred > 0) {
@@ -282,6 +349,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
     tipreds <- tipreds[c(object$data$TIPREDEFFECTsetup)>0,,drop=FALSE]
     z = tipreds[,'mean'] / tipreds[,'sd'] 
     out$tipreds= round(cbind(tipreds,z),digits) #[order(abs(z)),]
+    out$tipredsNote = 'Approximate (linearised) effects on the transformed parameters.'
   }
   
   
@@ -344,15 +412,15 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
   
   out$popmeans=round(popmeans,digits=digits)
   
-  out$popNote=paste0('covariance pars in sd / unconstrained cor form, see $parmatrices for cor/cov.')
+  out$popNote=paste0('covariance pars in sd / unconstrained cor form, see System Matrices (or ctSummaryMatrices function) for cor/cov.')
   
+  out$logposterior=logposterior
   if(optimize) {
-    
     out$loglik=loglik
     out$npars = npars
     out$aic = aic
   }
-  out$logposterior=logposterior
+
   if(optimize) out$nsamples <- nrow(object$stanfit$samples)
   
   if(!parmatrices) out$parmatNote <- 'For additional summary matrices, use argument: parmatrices = TRUE'
@@ -361,7 +429,116 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=4,parmatrices=TRUE,prio
     if('matrix' %in% class(x)){
       x <- data.frame(x,check.names=FALSE)
     }
+    x <- roundSummaryCtStanFitValue(x,digits=digits)
     x})
   
+  attr(out,'digits') <- digits
+  class(out) <- 'summary.ctStanFit'
   return(out)
+}
+
+roundSummaryCtStanFitValue <- function(x,digits){
+  if(is.data.frame(x)){
+    for(col in seq_along(x)){
+      if(is.numeric(x[[col]])) x[[col]] <- round(x[[col]],digits)
+    }
+    return(x)
+  }
+  
+  if(is.numeric(x)) return(round(x,digits))
+  x
+}
+
+summaryCtStanFitLabel <- function(x){
+  labels <- c(
+    residCovStd = 'Standardised residual covariance',
+    rawpopcorr = 'Random-effects correlations',
+    rawpopcorrNote = 'Note',
+    priorcheck = 'Prior check',
+    priorcheckNote = 'Note',
+    tipreds = 'Time-independent predictor effects',
+    tipredsNote = 'Note',
+    parmatrices = 'System Matrices',
+    popsd = 'Random-effects standard deviations',
+    popmeans = 'Fixed-effects / Population means',
+    popNote = 'Note',
+    loglik = 'Log likelihood',
+    npars = 'Number of parameters',
+    aic = 'AIC',
+    logposterior = 'Log posterior',
+    nsamples = 'Number of samples',
+    parmatNote = 'Summary matrices note')
+  if(x %in% names(labels)) return(unname(labels[x]))
+  gsub('([a-z])([A-Z])', '\\1 \\2', x)
+}
+
+printSummaryCtStanFitValue <- function(x,width,row.names,...){
+  if(is.character(x) && is.null(dim(x))){
+    wrapped <- unlist(strwrap(x,width=width),use.names=FALSE)
+    if(length(wrapped)) cat(paste(wrapped,collapse='\n'),'\n',sep='')
+    return(invisible(x))
+  }
+  
+  if(is.data.frame(x)){
+    print(x,row.names=row.names,...)
+    return(invisible(x))
+  }
+  
+  print(x,...)
+  invisible(x)
+}
+
+summaryCtStanFitIsScalar <- function(x){
+  is.atomic(x) && length(x)==1
+}
+
+summaryCtStanFitIsNote <- function(section){
+  grepl('Note$',section)
+}
+
+printSummaryCtStanFitScalar <- function(label,x,width){
+  prefix <- paste0(label,': ')
+  if(is.character(x)){
+    wrapped <- unlist(strwrap(x,width=width,initial=prefix,exdent=nchar(prefix)),use.names=FALSE)
+    if(length(wrapped)) cat(paste(wrapped,collapse='\n'),'\n',sep='')
+    return(invisible(x))
+  }
+  
+  cat(prefix,format(as.vector(x),trim=TRUE),'\n',sep='')
+  invisible(x)
+}
+
+#' Print ctStanFit summaries
+#'
+#' @param x Object returned by \code{\link{summary.ctStanFit}}.
+#' @param width Console width to use for wrapping note text and formatting tables.
+#' @param sections Optional character vector of summary sections to print.
+#' @param row.names Logical. Print row names for data frame sections?
+#' @param ... Additional arguments passed to \code{\link{print}} for individual sections.
+#' @return Invisibly returns \code{x}.
+#' @method print summary.ctStanFit
+#' @export
+print.summary.ctStanFit <- function(x,width=getOption('width'),sections=names(x),row.names=TRUE,...){
+  width <- suppressWarnings(as.integer(width)[1])
+  if(is.na(width)) width <- getOption('width')
+  width <- max(20,width)
+  oldwidth <- getOption('width')
+  options(width=width)
+  on.exit(options(width=oldwidth),add=TRUE)
+  
+  sections <- intersect(sections,names(x))
+  for(section in sections){
+    label <- summaryCtStanFitLabel(section)
+    if(summaryCtStanFitIsScalar(x[[section]])){
+      if(summaryCtStanFitIsNote(section)) cat('\n')
+      printSummaryCtStanFitScalar(label,x[[section]],width=width)
+      if(summaryCtStanFitIsNote(section)) {
+        cat(paste(rep('-',min(width,72)),collapse=''),'\n',sep='')
+      }
+      next
+    }
+    cat('\n',label,'\n',paste(rep('-',nchar(label)),collapse=''),'\n',sep='')
+    printSummaryCtStanFitValue(x[[section]],width=width,row.names=row.names,...)
+  }
+  invisible(x)
 }

@@ -7,7 +7,7 @@
 \method{summary}{ctStanFit}(
   object,
   timeinterval = 1,
-  digits = 4,
+  digits = 3,
   parmatrices = TRUE,
   priorcheck = TRUE,
   residualcov = TRUE,
@@ -32,7 +32,7 @@ for large models with many samples.}
 \item{...}{Additional arguments to pass to \code{ctsem:::priorcheckreport}, such as \code{meanlim}, or \code{sdlim}.}
 }
 \value{
-List containing summary items.
+List containing summary items, with a \code{print} method for readable console and knitr output.
 }
 \description{
 Summarise a ctStanFit object that was fit using \code{\link{ctFit}}.

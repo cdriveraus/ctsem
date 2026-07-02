@@ -24,6 +24,12 @@ test_that("ctOptimComputeUncertainty recovers quadratic covariance", {
     finishsamples=20, control=list(surrogateNpoints=20), verbose=0)
   expect_equal(diag(surrogate_from_hessian$cov), c(.5, .25),
     tolerance=.01)
+  
+  is_proposal <- ctsem:::ctOptimComputeUncertainty(c(0, 0),
+    list(nsubjects=1), sm=NULL, lpgFunc=lpg, uncertainty='is',
+    finishsamples=20, verbose=0)
+  expect_equal(diag(is_proposal$cov), c(.5, .25), tolerance=.01)
+  expect_equal(is_proposal$method, 'is')
 })
 
 test_that("ctOptimNormalDraws returns requested dimensions", {
@@ -178,9 +184,12 @@ test_that("optimized uncertainty API uses explicit method and draw names", {
   update_args <- names(formals(ctOptimUncertainty))
   
   expect_true(all(c('uncertainty', 'uncertaintyDraws') %in% fit_args))
+  expect_false(any(c('is', 'isESS', 'isitersize') %in% fit_args))
   expect_false('bootstrapUncertainty' %in% fit_args)
   expect_true(all(c('uncertainty', 'draws') %in% update_args))
   expect_false('sampleMethod' %in% update_args)
+  expect_true('is' %in% eval(formals(ctsem:::stanoptimis)$uncertainty))
+  expect_true('is' %in% eval(formals(ctOptimUncertainty)$uncertainty))
   expect_true('opg' %in% eval(formals(ctOptimUncertainty)$uncertainty))
   expect_true('fullbootstrap' %in% eval(formals(ctOptimUncertainty)$uncertainty))
   expect_false('score' %in% eval(formals(ctOptimUncertainty)$uncertainty))

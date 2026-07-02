@@ -6,7 +6,7 @@
 \usage{
 ctOptimUncertainty(
   fit,
-  uncertainty = c("hessian", "surrogate", "bootstrap", "fullbootstrap", "sandwich",
+  uncertainty = c("hessian", "surrogate", "is", "bootstrap", "fullbootstrap", "sandwich",
     "opg"),
   draws = c("auto", "normal", "empirical", "imis"),
   finishsamples = NULL,
@@ -21,20 +21,22 @@ ctOptimUncertainty(
 
 \item{uncertainty}{Uncertainty approximation. \code{'hessian'} uses the
 finite-difference Hessian, \code{'surrogate'} fits a local quadratic
-surrogate around the optimum, \code{'bootstrap'} uses one-step score
-bootstrap draws with Hessian bread, \code{'fullbootstrap'} resamples
-subjects and fully re-optimizes each sample from the original maximum
-likelihood or MAP estimate using mize L-BFGS, \code{'sandwich'} uses
-Hessian bread with score covariance meat, and \code{'opg'} uses an
-OPG-style score information approximation.}
+surrogate around the optimum, \code{'is'} uses Hessian-based importance
+sampling and computes uncertainty from the weighted importance-sampling
+distribution, \code{'bootstrap'} uses one-step score bootstrap draws with
+Hessian bread, \code{'fullbootstrap'} resamples subjects and fully
+re-optimizes each sample from the original maximum likelihood or MAP
+estimate using mize L-BFGS, \code{'sandwich'} uses Hessian bread with score
+covariance meat, and \code{'opg'} uses an OPG-style score information
+approximation.}
 
 \item{draws}{Approximate raw-parameter draw method. \code{'auto'} uses
 empirical draws for \code{uncertainty='bootstrap'} and
 \code{uncertainty='fullbootstrap'} and normal draws otherwise.
 \code{'normal'} draws from a multivariate normal using the selected
 covariance, \code{'empirical'} uses empirical draws when available, and
-\code{'imis'} runs the existing importance sampler using the selected
-covariance as proposal.}
+\code{'imis'} runs the importance sampler using the selected covariance as
+proposal. For \code{uncertainty='is'}, \code{draws} is set to \code{'imis'}.}
 
 \item{finishsamples}{Number of approximate raw-parameter samples. If
 \code{NULL}, the existing number of rows in \code{fit$stanfit$rawposterior}
@@ -50,13 +52,18 @@ calculations also use these cores.}
 \code{ridge}, \code{hessianStep}, \code{surrogateNpoints},
 \code{surrogateScale}, \code{surrogateProfile},
 \code{surrogateProfileTargetDrop}, \code{surrogateProfileMaxStep},
-\code{bootstrapFitCores}, and \code{bootstrapTol}. Omitted entries use
+\code{bootstrapFitCores}, \code{bootstrapTol}, \code{imisMaxIter},
+\code{imisScaleInit}, \code{imisTailScale}, \code{isESS}, and
+\code{isitersize}. Omitted entries use
 \code{ridge = 1e-8}, \code{hessianStep = 1e-3},
 \code{surrogateScale = .5}, \code{surrogateNpoints = NULL},
 \code{surrogateProfile = TRUE},
 \code{surrogateProfileTargetDrop = NULL},
 \code{surrogateProfileMaxStep = 64},
-\code{bootstrapFitCores = 1}, and \code{bootstrapTol = 1e-5}. When
+\code{bootstrapFitCores = 1}, \code{bootstrapTol = 1e-5},
+\code{imisMaxIter = 50}, \code{imisScaleInit = 1.1},
+\code{imisTailScale = 1.1}, \code{isESS = 100}, and
+\code{isitersize = 1000}. When
 \code{surrogateNpoints} is \code{NULL}, the
 surrogate uses at least \code{max(4 * npars, 50)} local directions. The
 surrogate is fit in whitened coordinates relative to the proposal covariance.

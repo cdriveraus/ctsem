@@ -1206,8 +1206,8 @@ imis_is <- function(parlp,
 #' @param cores Number of cpu cores to use, should be at least 2.
 #' @param uncertainty Character string selecting the optimized-fit uncertainty
 #' approximation. Options are \code{'hessian'}, \code{'surrogate'},
-#' \code{'bootstrap'}, \code{'fullbootstrap'}, \code{'sandwich'}, and
-#' \code{'opg'}.
+#' \code{'is'}, \code{'bootstrap'}, \code{'fullbootstrap'}, \code{'sandwich'},
+#' and \code{'opg'}.
 #' @param uncertaintyDraws Character string controlling approximate
 #' raw-parameter draws
 #' from the approximate uncertainty. \code{'auto'} uses empirical draws for
@@ -1223,9 +1223,6 @@ imis_is <- function(parlp,
 #' score rows than raw parameters. Full bootstrap requires at least two
 #' subjects and warns below ten independent subjects. Bootstrap-style methods
 #' require at least two returned samples / refits.
-#' @param is Logical. Use mixture importance sampling, or just return map estimates?
-#' @param isitersize Number of samples of approximating distribution per iteration of importance sampling.
-#' @param isESS target effective sample size for importance sampling. If is=TRUE, this is used to determine the number of samples to draw from the approximating distribution.
 #' @param finishsamples Number of samples to draw (either from hessian
 #' based covariance or posterior distribution) for final results computation.
 #' @param parsteps ordered list of vectors of integers denoting which parameters should begin fixed
@@ -1248,7 +1245,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   estonly=FALSE,tol=1e-8,
   stochastic = TRUE,
   priors=TRUE,carefulfit=TRUE,
-  uncertainty='hessian',
+  uncertainty=c('hessian','surrogate','is','bootstrap','fullbootstrap',
+    'sandwich','opg'),
   uncertaintyDraws='auto',
   uncertaintyControl=list(),
   subsamplesize=1,
@@ -1256,9 +1254,6 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   parstepsAutoModel=FALSE,
   groupFreeThreshold=.5,
   plot=FALSE,
-  is=FALSE, 
-  isitersize=1000,
-  isESS=100,
   finishsamples=1000,
   lproughnesstarget=.2,
   verbose=0,
@@ -1545,23 +1540,23 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   }
   
   uncertainty <- match.arg(uncertainty,
-    c('hessian','surrogate','bootstrap','fullbootstrap','sandwich','opg'))
+    c('hessian','surrogate','is','bootstrap','fullbootstrap','sandwich','opg'))
   if(length(parsteps) > 0 && uncertainty == 'fullbootstrap') {
     stop('fullbootstrap uncertainty is not currently supported with parsteps')
   }
   uncertaintyDraws <- match.arg(uncertaintyDraws,
     c('auto','normal','empirical','imis'))
   if(uncertaintyDraws == 'auto') {
-    uncertaintyDraws <- if(uncertainty %in% c('bootstrap','fullbootstrap'))
-      'empirical' else 'normal'
+    if(uncertainty == 'is') {
+      uncertaintyDraws <- 'imis'
+    } else if(uncertainty %in% c('bootstrap','fullbootstrap')) {
+      uncertaintyDraws <- 'empirical'
+    } else {
+      uncertaintyDraws <- 'normal'
+    }
   }
-  if(isTRUE(is)) uncertaintyDraws <- 'imis'
   standata$savesubjectmatrices=savesubjectmatrices #if we save subject matrices, we need to use the full standata
   uncertaintyControl$parsteps <- parsteps
-  if(isTRUE(is)) {
-    uncertaintyControl$isESS <- isESS
-    uncertaintyControl$isitersize <- isitersize
-  }
   stanfit=list(optimfit=optimfit,stanfit=stan_reinitsf(sm,standata),
     rawest=est2, rawposterior=NULL, cov=NULL,
     standata=list(TIPREDEFFECTsetup=standata$TIPREDEFFECTsetup,ntipredeffects = standata$ntipredeffects))
