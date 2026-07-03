@@ -10,6 +10,7 @@
 #' @param ... extra arguments to pass to ctFit
 #'
 #' @return updated ctStanFit object.
+#' @aliases ctStanFitUpdate
 #' @export
 #'
 #' @examples
@@ -49,8 +50,6 @@ ctFitUpdate <- function(oldfit, data=NA, recompile=FALSE,refit=FALSE,...){
   return(oldfit)
 }
 
-#' Backward-compatible alias for \code{ctFitUpdate}.
-#' @rdname ctFitUpdate
 #' @export
 ctStanFitUpdate <- ctFitUpdate
 
@@ -78,6 +77,7 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' Fits a ctsem model specified via \code{\link{ctModel}} with type either 'ct' or 'dt'.
 #' \code{ctStanFit} is maintained as a backward-compatible alias.
 #'
+#' @aliases ctStanFit
 #' @param datalong long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables,
 #' any time dependent (i.e. varying within subject) predictors,
 #' and any time independent (not varying within subject) predictors.
@@ -828,8 +828,6 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
   return(out)
 }
 
-#' Backward-compatible alias for \code{ctFit}.
-#' @rdname ctFit
 #' @export
 ctStanFit <- ctFit
 

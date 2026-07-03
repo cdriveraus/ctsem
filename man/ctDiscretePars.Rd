@@ -18,20 +18,6 @@ ctDiscretePars(
   ...,
   ctstanfitobj
 )
-
-ctStanDiscretePars(
-  fit,
-  subjects = "popmean",
-  times = seq(from = 0, to = 10, by = 0.1),
-  nsamples = 200,
-  observational = FALSE,
-  standardise = FALSE,
-  cov = FALSE,
-  plot = FALSE,
-  cores = 2,
-  ...,
-  ctstanfitobj
-)
 }
 \arguments{
 \item{fit}{model fit from \code{\link{ctFit}}}

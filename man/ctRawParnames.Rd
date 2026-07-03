@@ -6,8 +6,6 @@
 \title{ctRawParnames}
 \usage{
 ctRawParnames(x, substrings = c("pop_", "popsd"))
-
-ctStanParnames(x, substrings = c("pop_", "popsd"))
 }
 \arguments{
 \item{x}{ctStanFit object}

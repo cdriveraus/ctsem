@@ -276,6 +276,7 @@ ctPostPredPlots <- function(fit){
 #' @param resolution Positive integer, the number of rows and columns to split plots into for shading.
 #' @param plot logical. If FALSE, a list of ggplot objects is returned.
 #' @return If plot=FALSE, an array containing quantiles of generated data. If plot=TRUE, nothing, only plots.
+#' @aliases ctStanPostPredict
 #' @export
 #' @details This function relies on the data generated during each iteration of fitting to approximate the
 #' model implied distributions -- thus, when limited iterations are available, the approximation will be worse.
@@ -496,7 +497,5 @@ ctPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,.5,.
   
 }
 
-#' Backward-compatible alias for \code{ctPostPredict}.
-#' @rdname ctPostPredict
 #' @export
 ctStanPostPredict <- ctPostPredict

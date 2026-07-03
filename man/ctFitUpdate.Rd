@@ -6,8 +6,6 @@
 \title{Update a ctStanFit object}
 \usage{
 ctFitUpdate(oldfit, data = NA, recompile = FALSE, refit = FALSE, ...)
-
-ctStanFitUpdate(oldfit, data = NA, recompile = FALSE, refit = FALSE, ...)
 }
 \arguments{
 \item{oldfit}{fit object to be upgraded}

@@ -11,13 +11,6 @@ ctSummaryMatrices(
   calcfuncargs = list(probs = 0.5),
   timeinterval = 1
 )
-
-ctStanContinuousPars(
-  fit,
-  calcfunc = quantile,
-  calcfuncargs = list(probs = 0.5),
-  timeinterval = 1
-)
 }
 \arguments{
 \item{fit}{fit object from \code{\link{ctFit}}}

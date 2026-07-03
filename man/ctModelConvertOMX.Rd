@@ -6,8 +6,6 @@
 \title{Convert an old OpenMx-style ctsem model to the modern ctsem model format.}
 \usage{
 ctModelConvertOMX(ctmodelobj, type = "ct", tipredDefault = TRUE)
-
-ctStanModel(ctmodelobj, type = "ct", tipredDefault = TRUE)
 }
 \arguments{
 \item{ctmodelobj}{ctsem model object created by \code{\link{ctModel}} with

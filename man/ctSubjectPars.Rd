@@ -6,8 +6,6 @@
 \title{Extract an array of subject specific parameters from a ctStanFit object.}
 \usage{
 ctSubjectPars(fit, pointest = TRUE, cores = 2, nsamples = "all")
-
-ctStanSubjectPars(fit, pointest = TRUE, cores = 2, nsamples = "all")
 }
 \arguments{
 \item{fit}{fit object}
@@ -24,8 +22,6 @@ an nsamples by nsubjects by nparams array.
 }
 \description{
 Extract an array of subject specific parameters from a ctStanFit object.
-
-Backward-compatible alias for \code{ctSubjectPars}.
 }
 \details{
 This function returns the estimates of individual parameters, taking into account any

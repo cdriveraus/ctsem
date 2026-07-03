@@ -14,16 +14,6 @@ ctGenerateFromPriors(
   parsonly = FALSE,
   cores = 2
 )
-
-ctStanGenerate(
-  cts,
-  datastruct = NA,
-  is = FALSE,
-  fullposterior = TRUE,
-  nsamples = 200,
-  parsonly = FALSE,
-  cores = 2
-)
 }
 \arguments{
 \item{cts}{\code{\link{ctModelConvertOMX}}, \code{\link{ctModel}}, or
@@ -48,8 +38,6 @@ and llrow, an array of nsamples by data rows log likelihoods.
 }
 \description{
 Generate data from a ctstanmodel object
-
-Backward-compatible alias for \code{ctGenerateFromPriors}.
 }
 \examples{
 \donttest{

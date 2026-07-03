@@ -237,6 +237,7 @@ ctModelMatrices <- function(x){
 #' \code{ctModel(type='ct')} or \code{ctModel(type='dt')}, which already return
 #' the modern format.
 #' @importFrom rstantools rstan_config
+#' @aliases ctStanModel
 #' @export
 #'
 #' @examples
@@ -486,7 +487,6 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   return(out)
 }
 
-#' @rdname ctModelConvertOMX
 #' @export
 ctStanModel <- ctModelConvertOMX
 

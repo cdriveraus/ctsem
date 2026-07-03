@@ -6,8 +6,6 @@
 \title{Sample more values from an optimized ctstanfit object}
 \usage{
 ctFitAddSamples(fit, nsamples, cores = 2)
-
-ctAddSamples(fit, nsamples, cores = 2)
 }
 \arguments{
 \item{fit}{fit object}
@@ -21,8 +19,6 @@ fit object with extra samples
 }
 \description{
 Sample more values from an optimized ctstanfit object
-
-Backward-compatible alias for \code{ctFitAddSamples}.
 }
 \examples{
 \dontrun{

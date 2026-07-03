@@ -90,6 +90,7 @@ ctStanRawSamples<-function(fit){
 #'#posterior median over all subjects (also reflects mean of unconstrained pars)
 #'ctSummaryMatrices(ctstantestfit)
 #'}
+#'@aliases ctStanContinuousPars
 #'@export
 ctSummaryMatrices <- function(fit,
   calcfunc=quantile,calcfuncargs=list(probs=0.5),timeinterval=1){
@@ -165,8 +166,6 @@ ctSummaryMatrices <- function(fit,
   return(out)
 }
 
-#' Backward-compatible alias for \code{ctSummaryMatrices}.
-#' @rdname ctSummaryMatrices
 #' @export
 ctStanContinuousPars <- ctSummaryMatrices
 
@@ -185,6 +184,7 @@ ctStanContinuousPars <- ctSummaryMatrices
 #' covariates and random effects. 
 #'
 #' @return an nsamples by nsubjects by nparams array.
+#' @aliases ctStanSubjectPars
 #' @export
 #'
 #' @examples
@@ -220,8 +220,6 @@ ctSubjectPars <- function(fit,pointest=TRUE,cores=2,nsamples='all'){
   return(p)
 }
 
-#' Backward-compatible alias for \code{ctSubjectPars}.
-#' @rdname ctSubjectPars
 #' @export
 ctStanSubjectPars <- ctSubjectPars
 
@@ -422,9 +420,7 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   }
 
   if(optimize) out$nsamples <- nrow(object$stanfit$samples)
-  
-  if(!parmatrices) out$parmatNote <- 'For additional summary matrices, use argument: parmatrices = TRUE'
-  
+
   out <- lapply(out,function(x){
     if('matrix' %in% class(x)){
       x <- data.frame(x,check.names=FALSE)
@@ -467,7 +463,7 @@ summaryCtStanFitLabel <- function(x){
     aic = 'AIC',
     logposterior = 'Log posterior',
     nsamples = 'Number of samples',
-    parmatNote = 'Summary matrices note')
+    parmatNote = '')
   if(x %in% names(labels)) return(unname(labels[x]))
   gsub('([a-z])([A-Z])', '\\1 \\2', x)
 }

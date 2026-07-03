@@ -6,6 +6,7 @@
 #' @param verboseErrors if TRUE, print verbose output when errors in generation encountered.
 #' @param cores Number of cpu cores to use.
 #' @return Matrix of generated data -- one dataset per iteration, according to original time and missingness structure.
+#' @aliases ctStanGenerateFromFit
 #' @export
 #' @examples
 #' gen <- ctGenerateFromFit(ctstantestfit, nsamples=3,fullposterior=TRUE,cores=1)
@@ -58,7 +59,5 @@ ctGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErrors=
   return(fit)
 }
 
-#' Backward-compatible alias for \code{ctGenerateFromFit}.
-#' @rdname ctGenerateFromFit
 #' @export
 ctStanGenerateFromFit <- ctGenerateFromFit

@@ -49,6 +49,7 @@ ctTIpredParMats <- function(fit, tipvalues){
 #' to only calculate effects for subjects where the tipreds of the denoted index are less than 3).
 #' @return Either a three dimensional array of predictor effects, or nothing with a plot
 #' generated.
+#' @aliases ctStanTIpredeffects
 #' @export
 #'
 #' @examples
@@ -227,8 +228,6 @@ ctTIpredEffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   }
 }
 
-#' Backward-compatible alias for \code{ctTIpredEffects}.
-#' @rdname ctTIpredEffects
 #' @export
 ctStanTIpredeffects <- ctTIpredEffects
 

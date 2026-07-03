@@ -22,6 +22,7 @@
 #'
 #' @return list containing Kalman filter elements, each element in array of
 #' iterations, data row, variables. llrow is the log likelihood for each row of data.
+#' @aliases ctStanKalman
 #' @export
 #'
 #' @examples 
@@ -200,8 +201,6 @@ ctKalmanArray <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1
   return(out)
 }
 
-#' Backward-compatible alias for \code{ctKalmanArray}.
-#' @rdname ctKalmanArray
 #' @export
 ctStanKalman <- ctKalmanArray
 
@@ -414,6 +413,7 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
 #'    theme_bw()
 #'
 #'  }
+#' @aliases ctKalman
 #' @export
 
 ctPredict<-function(fit, timerange='asdata', timestep='auto',
@@ -462,8 +462,6 @@ ctPredict<-function(fit, timerange='asdata', timestep='auto',
 
 
 
-#' Backward-compatible alias for \code{ctPredict}.
-#' @rdname ctPredict
 #' @export
 ctKalman <- ctPredict
 

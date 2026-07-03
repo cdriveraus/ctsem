@@ -21,6 +21,7 @@
 #' \donttest{
 #' ctPlotPosterior(ctstantestfit, rows=3:4)
 #' }
+#' @aliases ctStanPlotPost
 #' @export
 
 ctPlotPosterior<-function(obj, rows='all', npp=6,priorwidth=TRUE,
@@ -113,8 +114,6 @@ ctPlotPosterior<-function(obj, rows='all', npp=6,priorwidth=TRUE,
   
 }
 
-#' Backward-compatible alias for \code{ctPlotPosterior}.
-#' @rdname ctPlotPosterior
 #' @export
 ctStanPlotPost <- ctPlotPosterior
 

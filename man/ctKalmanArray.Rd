@@ -21,23 +21,6 @@ ctKalmanArray(
   removeObs = F,
   ...
 )
-
-ctStanKalman(
-  fit,
-  nsamples = NA,
-  pointest = TRUE,
-  collapsefunc = NA,
-  cores = 1,
-  subjects = 1:max(fit$standata$subject),
-  timestep = "asdata",
-  maxtime = "asdata",
-  standardisederrors = FALSE,
-  subjectpars = TRUE,
-  tformsubjectpars = TRUE,
-  indvarstates = FALSE,
-  removeObs = F,
-  ...
-)
 }
 \arguments{
 \item{fit}{fit object from \code{\link{ctFit}}.}
@@ -79,8 +62,6 @@ iterations, data row, variables. llrow is the log likelihood for each row of dat
 }
 \description{
 Get Kalman filter estimates from a ctStanFit object
-
-Backward-compatible alias for \code{ctKalmanArray}.
 }
 \examples{
 k=ctKalmanArray(ctstantestfit,subjectpars=TRUE,collapsefunc=mean)

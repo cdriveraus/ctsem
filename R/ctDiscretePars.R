@@ -34,6 +34,7 @@
 #' ctRawParnames(ssfit,substrings=c('pop_','popsd'))
 #' }
 #'
+#' @aliases ctStanParnames
 #' @export
 ctRawParnames <- function(x,substrings=c('pop_','popsd')){
   if(length(x$stanfit$stanfit@sim)==0) stop('Doesnt contain sampled stanfit object')
@@ -44,8 +45,6 @@ ctRawParnames <- function(x,substrings=c('pop_','popsd')){
   return(out)
 }
 
-#' Backward-compatible alias for \code{ctRawParnames}.
-#' @rdname ctRawParnames
 #' @export
 ctStanParnames <- ctRawParnames
 
@@ -90,6 +89,7 @@ ctStanParnames <- ctRawParnames
 #'@details If plot=TRUE, the function will return a ggplot2 object
 #'(and hence needs to be printed if intended to display within a loop).
 #'This can be modified by the various ggplot2 functions, or displayed using print(x).
+#'@aliases ctStanDiscretePars
 #'@export
 ctDiscretePars<-function(fit, subjects='popmean',
   times=seq(from=0,to=10,by=.1),
@@ -168,8 +168,6 @@ ctDiscretePars<-function(fit, subjects='popmean',
   return(out)
 }
 
-#' Backward-compatible alias for \code{ctDiscretePars}.
-#' @rdname ctDiscretePars
 #' @export
 ctStanDiscretePars <- ctDiscretePars
 
@@ -272,6 +270,7 @@ ctStanDiscreteParsDrift <- ctDiscreteParsDrift
 #'  ggplot2::labs(title='My ggplot modification')
 #'print(g)
 #'
+#'@aliases ctStanDiscreteParsPlot
 #'@export
 
 ctDiscreteParsPlot<- function(x,indices='all',
@@ -361,8 +360,6 @@ ctDiscreteParsPlot<- function(x,indices='all',
   return(g)
 }
 
-#' Backward-compatible alias for \code{ctDiscreteParsPlot}.
-#' @rdname ctDiscreteParsPlot
 #' @export
 ctStanDiscreteParsPlot <- ctDiscreteParsPlot
 # } else {

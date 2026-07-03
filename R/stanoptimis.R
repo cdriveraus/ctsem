@@ -5,6 +5,7 @@
 #' @param cores number of cores to use
 #'
 #' @return fit object with extra samples
+#' @aliases ctAddSamples
 #' @export
 #'
 #' @examples
@@ -31,8 +32,6 @@ ctFitAddSamples <- function(fit,nsamples,cores=2){
   return(fit)
 }
 
-#' Backward-compatible alias for \code{ctFitAddSamples}.
-#' @rdname ctFitAddSamples
 #' @export
 ctAddSamples <- ctFitAddSamples
 

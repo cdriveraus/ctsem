@@ -12,14 +12,6 @@ ctGenerateFromFit(
   verboseErrors = FALSE,
   cores = 2
 )
-
-ctStanGenerateFromFit(
-  fit,
-  nsamples = 200,
-  fullposterior = FALSE,
-  verboseErrors = FALSE,
-  cores = 2
-)
 }
 \arguments{
 \item{fit}{ctstanfit object}
@@ -37,8 +29,6 @@ Matrix of generated data -- one dataset per iteration, according to original tim
 }
 \description{
 Add a \code{$generated} object to ctstanfit object, with random data generated from posterior of ctstanfit object
-
-Backward-compatible alias for \code{ctGenerateFromFit}.
 }
 \examples{
 gen <- ctGenerateFromFit(ctstantestfit, nsamples=3,fullposterior=TRUE,cores=1)

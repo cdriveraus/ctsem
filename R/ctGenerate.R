@@ -31,6 +31,7 @@ ctModeltoNumeric <- function(ctmodelobj){
 #'
 #' @return List contining Y, and array of nsamples by data rows by manifest variables, 
 #' and llrow, an array of nsamples by data rows log likelihoods.
+#' @aliases ctStanGenerate
 #' @export
 #'
 #' @examples
@@ -118,8 +119,6 @@ ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
   return(dat)
 }
 
-#' Backward-compatible alias for \code{ctGenerateFromPriors}.
-#' @rdname ctGenerateFromPriors
 #' @export
 ctStanGenerate <- ctGenerateFromPriors
 

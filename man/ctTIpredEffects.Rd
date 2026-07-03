@@ -19,21 +19,6 @@ ctTIpredEffects(
   filter = NA,
   plot = FALSE
 )
-
-ctStanTIpredeffects(
-  fit,
-  returndifference = FALSE,
-  probs = c(0.025, 0.5, 0.975),
-  includeMeanUncertainty = FALSE,
-  whichTIpreds = 1,
-  parmatrices = TRUE,
-  whichpars = "all",
-  nsamples = 100,
-  timeinterval = 1,
-  nsubjects = 20,
-  filter = NA,
-  plot = FALSE
-)
 }
 \arguments{
 \item{fit}{fit object from \code{\link{ctFit}}}

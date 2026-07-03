@@ -20,22 +20,6 @@ ctDiscreteParsPlot(
   polygonalpha = 0.1,
   ggcode = FALSE
 )
-
-ctStanDiscreteParsPlot(
-  x,
-  indices = "all",
-  quantiles = c(0.025, 0.5, 0.975),
-  latentNames = "auto",
-  ylab = "Coefficient",
-  xlab = "Time interval",
-  ylim = NA,
-  facets = NA,
-  splitSubjects = TRUE,
-  colour = "Effect",
-  title = "auto",
-  polygonalpha = 0.1,
-  ggcode = FALSE
-)
 }
 \arguments{
 \item{x}{list object returned from \code{\link{ctDiscretePars}}.}

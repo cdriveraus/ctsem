@@ -39,41 +39,6 @@ ctFit(
   ...,
   ctstanmodel
 )
-
-ctStanFit(
-  datalong,
-  model,
-  stanmodeltext = NA,
-  iter = 1000,
-  intoverstates = TRUE,
-  binomial = FALSE,
-  fit = TRUE,
-  intoverpop = "auto",
-  sameInitialTimes = FALSE,
-  stationary = FALSE,
-  plot = FALSE,
-  derrind = NA,
-  optimize = TRUE,
-  optimcontrol = list(),
-  nlcontrol = list(),
-  nopriors = NA,
-  priors = FALSE,
-  chains = 2,
-  cores = ifelse(optimize, getOption("mc.cores", 2L), "maxneeded"),
-  inits = NULL,
-  compileArgs = list(),
-  forcerecompile = FALSE,
-  saveCompile = TRUE,
-  savescores = FALSE,
-  savesubjectmatrices = FALSE,
-  saveComplexPars = FALSE,
-  gendata = FALSE,
-  control = list(),
-  verbose = 0,
-  vb = FALSE,
-  ...,
-  ctstanmodel
-)
 }
 \arguments{
 \item{datalong}{long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables,
