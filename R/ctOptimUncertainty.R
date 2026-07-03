@@ -1264,7 +1264,7 @@ ctOptimUncertainty <- function(fit,
       Sigma_hat=uncertaintyfit$cov, max_iter=control$imisMaxIter,
       scale_init=control$imisScaleInit, tail_scale=control$imisTailScale,
       target_ess=control$isESS, n_batch=control$isitersize, cl=NA,
-      finishsamples=finishsamples, verbose=verbose > 0)
+      finishsamples=finishsamples, verbose=TRUE)
     samples <- is_res$theta
     uncertaintyfit$proposal_cov <- uncertaintyfit$cov
     if(!is.null(uncertaintyfit$details$covariance)) {

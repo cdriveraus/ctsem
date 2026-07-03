@@ -49,15 +49,14 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     checkm$pars[c(-1,-7) ,c('TI1_effect')] <- FALSE
     
     tfit1<-ctFit(tdat,checkm,optimize=TRUE,
-      optimcontrol=list(is=TRUE,carefulfit=F),
+      optimcontrol=list(uncertainty='is',carefulfit=F),
       priors=TRUE,verbose=0)
     s1=summary(tfit1)
     
     test_isclose(s1$tipreds[2,'mean'],5,tol=.2)
     test_isclose(s1$popsd[2,'50%'],.6,tol=.2)
     
-    tfit2<-ctFit(tdat,checkm,optimize=TRUE,cores=2,verbose=0,
-      optimcontrol=list(is=FALSE),priors=TRUE)
+    tfit2<-ctFit(tdat,checkm,optimize=TRUE,cores=2,verbose=0,priors=TRUE)
     s2=summary(tfit2)
     
     test_isclose(s2$tipreds[2,'mean'],5,tol=.2)
