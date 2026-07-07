@@ -22,25 +22,41 @@ simpleStateCheck <- function(x){   #checks if system matrix elements that refere
 }
 
 
-#' Update an already compiled and fit ctStanFit object
+#' Update model/data for an already compiled and fit ctsem object
 #' 
 #' Allows one to change data and or model elements that don't require recompiling, then re fit.
 #'
 #' @param fit ctStanFit object
 #' @param datalong data as normally passed to \code{\link{ctFit}}
-#' @param ctstanmodel model as normally passed to \code{\link{ctFit}}
+#' @param model model as normally passed to \code{\link{ctFit}}
 #' @param ... extra args for \code{\link{ctFit}}
+#' @param ctstanmodel Deprecated. Use \code{model}.
+#' @aliases ctStanUpdModel
+#' @usage ctFitUpdateModel(fit, datalong, model, ...)
+#' @export
 
-
-ctStanUpdModel <- function(fit, datalong, ctstanmodel,...){
+ctFitUpdateModel <- function(fit, datalong, model,..., ctstanmodel){
+  if(missing(model)){
+    if(missing(ctstanmodel)) stop('model must be supplied')
+    warning('ctstanmodel argument is deprecated, use model instead')
+    model <- ctstanmodel
+  } else if(!missing(ctstanmodel)) {
+    stop('Use only one of model or deprecated ctstanmodel')
+  }
   
-  new <-ctFit(datalong = datalong, model= ctstanmodel,fit=FALSE,...)
+  new <-ctFit(datalong = datalong, model= model,fit=FALSE,...)
   
   fit$standata <- new$standata
   fit$data <- new$data
   fit$setup <- new$setup
   fit$args <- match.call()
   return(fit)
+}
+
+#' @export
+ctStanUpdModel <- function(fit, datalong, ctstanmodel,...){
+  .Deprecated('ctFitUpdateModel')
+  ctFitUpdateModel(fit=fit, datalong=datalong, model=ctstanmodel,...)
 }
 
 

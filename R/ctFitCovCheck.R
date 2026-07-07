@@ -363,12 +363,12 @@ ctFitCovCheckPlot <- function(x, maxlag = 10,vars=NA,splitvar=NA,cor=FALSE,...) 
       gg[[rowvari]] <- ggplot(filtered_data,
           aes(x = lag, colour = factor(get(splitcol)),
             group = factor(get(splitcol)))) +
-        geom_point(aes(y = empirical, alpha = n_empirical,
+        geom_point(aes(y = empirical, #alpha = n_empirical,
             shape = "Empirical"),
           position = dodge, size = 3, show.legend = TRUE) +
         geom_errorbar(aes(ymin = q025, ymax = q975, y = q50,
             linetype = "Model implied 95%"),
-          position = dodge, width = 0.15, linewidth = .2,
+          position = dodge, width = 0.15, linewidth = .4,
           show.legend = TRUE) +
         scale_shape_manual(name = NULL, values = c("Empirical" = 16),
           breaks = "Empirical") +
@@ -393,11 +393,10 @@ ctFitCovCheckPlot <- function(x, maxlag = 10,vars=NA,splitvar=NA,cor=FALSE,...) 
     } else {
       gg[[rowvari]] <- ggplot(filtered_data,
           aes(x = lag, y = empirical)) +
-        geom_point(aes(color = "Mean sample estimate",
-            alpha = n_empirical), size = 2) +
+        geom_point(aes(color = "Mean sample estimate"), size = 2) +
         geom_errorbar(aes(color = "Model implied 95%",
             ymin = q025, ymax = q975, y = q50),
-          width = 0.15, linewidth = .2) +
+          width = 0.15, linewidth = .4) +
         theme_bw() +
         geom_hline(yintercept = 0, linetype = 'dotted') +
         geom_vline(xintercept = 0, linetype = 'dotted') +
