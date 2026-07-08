@@ -763,7 +763,7 @@ ctStanModelWriter <- function(ctm, gendata, extratforms,matsetup, simplify=TRUE)
   
   
   
-  ukfilterfunc<-function(ppchecking){
+  ekfFunc<-function(ppchecking){
     out<-paste0('
   int prevrow=0;
   real prevdt=0;
@@ -1832,7 +1832,7 @@ transformed parameters{
 
   {
 ',
-if(!gendata) ukfilterfunc(ppchecking=FALSE),'
+if(!gendata) ekfFunc(ppchecking=FALSE),'
   }
 }
 ',
@@ -1966,7 +1966,7 @@ paste0('
     }
   }
 {
-',if(gendata) ukfilterfunc(ppchecking=TRUE),
+',if(gendata) ekfFunc(ppchecking=TRUE),
   '
 
 }}

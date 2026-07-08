@@ -166,6 +166,16 @@ texPrep <- function(x){ #replaces certain characters with tex safe versions
   return(x)
 }
 
+ctModelLatexMathElement <- function(x){
+  for(i in seq_along(x)){
+    if(is.na(suppressWarnings(as.numeric(x[i]))) &&
+        grepl('\\',x[i],fixed=TRUE) == FALSE) {
+      x[i] <- paste0('\\text{',texPrep(x[i]),'}')
+    }
+  }
+  x
+}
+
 bmatrix = function(x, digits=NULL,nottext=FALSE, ...) {
   if(!is.null(x)){
     if(!nottext){
@@ -238,7 +248,15 @@ ctModelLatexDynamicsBlock <- function(ctmodel, showd, continuoustime, matrixname
 
 ctModelLatexMeasurementBlock <- function(ctmodel, matrixnames=TRUE,
   splitMeasurement=TRUE){
-  observation <- paste0("\\underbrace{
+  manifesttype <- rep(0, ctmodel$n.manifest)
+  if(!is.null(ctmodel$manifesttype)) manifesttype <- as.integer(ctmodel$manifesttype)
+  binary <- manifesttype == 1
+  manifestNames <- ctmodel$manifestNames
+  manifestIndex <- seq_along(manifestNames)
+  binaryIndex <- which(binary)
+  
+  if(!any(manifesttype != 0)){
+    observation <- paste0("\\underbrace{
           ",bmatrix(ctmodel$LAMBDA)," 
         ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\Lambda}}",ifelse(!matrixnames,"}","_\\textrm{LAMBDA}}")," \\underbrace{
           ",bmatrix(matrix(ctmodel$latentNames))," 
@@ -246,26 +264,82 @@ ctModelLatexMeasurementBlock <- function(ctmodel, matrixnames=TRUE,
         \\underbrace{
           ",bmatrix(ctmodel$MANIFESTMEANS)," 
         ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\tau}}",ifelse(!matrixnames,"}","_\\textrm{MANIFESTMEANS}}"))
-  noise <- paste0("\\underbrace{UcorSDtoChol \\left\\{
+    noise <- paste0("\\underbrace{UcorSDtoChol \\left\\{
                 ",bmatrix(ctmodel$MANIFESTVAR),"\\right\\}  
               ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\Theta}}",ifelse(!matrixnames,"}","_\\textrm{MANIFESTVAR}}"),"
               \\underbrace{
           ",bmatrix(matrix(paste0('\\epsilon_{',1:ctmodel$n.manifest,'}')))," 
           (t)}_{\\vect{\\epsilon}(t)}")
-  
-  if(splitMeasurement) return(paste0("\\parbox{10em}{\\centering{Observations:}}
+    
+    if(splitMeasurement) return(paste0("\\parbox{10em}{\\centering{Observations:}}
 &\\underbrace{
       ",bmatrix(matrix(ctmodel$manifestNames),nottext=FALSE),"  
       (t)}_{\\vect{Y}(t)} = 
         ",observation," + \\nonumber \\\\ \\\\
     \\parbox{10em}{\\centering{Observation\\linebreak noise:}}
     & \\qquad \\qquad \\quad  ",noise," \\\\ \\\\"))
-  
-  paste0("\\parbox{10em}{\\centering{Measurement:}}
+    
+    return(paste0("\\parbox{10em}{\\centering{Measurement:}}
 &\\underbrace{
       ",bmatrix(matrix(ctmodel$manifestNames),nottext=FALSE),"  
       (t)}_{\\vect{Y}(t)} = 
-        ",observation," + ",noise," \\\\ \\\\")
+        ",observation," + ",noise," \\\\ \\\\"))
+  }
+  
+  linearPredictor <- paste0("\\underbrace{
+          ",bmatrix(ctmodel$LAMBDA)," 
+        ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\Lambda}}",ifelse(!matrixnames,"}","_\\textrm{LAMBDA}}")," \\underbrace{
+          ",bmatrix(matrix(ctmodel$latentNames))," 
+          (t)}_{\\vect{\\eta}(t)} +
+        \\underbrace{
+          ",bmatrix(ctmodel$MANIFESTMEANS)," 
+        ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\tau}}",ifelse(!matrixnames,"}","_\\textrm{MANIFESTMEANS}}"))
+  predictorLine <- paste0("\\parbox{10em}{\\centering{Linear\\linebreak predictor:}}
+&\\underbrace{",bmatrix(matrix(paste0('\\nu_{',manifestIndex,'}(t)')),nottext=TRUE),"
+      }_{\\vect{\\nu}(t)} =
+        ",linearPredictor," \\\\ \\\\")
+  yhat <- matrix(paste0('\\nu_{',manifestIndex,'}(t)'))
+  yhat[binary] <- paste0('\\operatorname{logit}^{-1}\\left(\\nu_{',binaryIndex,'}(t)\\right)')
+  predictedLine <- paste0("\\parbox{10em}{\\centering{Predicted\\linebreak observations:}}
+&\\underbrace{",bmatrix(matrix(paste0('\\hat{Y}_{',manifestIndex,'}(t)')),nottext=TRUE),"
+      }_{\\widehat{\\vect{Y}}(t)} =
+        ",bmatrix(yhat,nottext=TRUE)," \\\\ \\\\")
+  observationLine <- paste0("\\parbox{10em}{\\centering{Observations:}}
+&\\underbrace{
+      ",bmatrix(matrix(manifestNames),nottext=FALSE),"  
+      (t)}_{\\vect{Y}(t)} = 
+        \\widehat{\\vect{Y}}(t) + \\vect{\\epsilon}(t) \\\\ \\\\")
+  
+  errorCov <- as.matrix(ctmodel$MANIFESTVAR)
+  errorCovNumeric <- suppressWarnings(matrix(as.numeric(errorCov),
+    nrow=nrow(errorCov), ncol=ncol(errorCov)))
+  diagonalErrorCov <- !any(is.na(errorCovNumeric[row(errorCovNumeric) != col(errorCovNumeric)])) &&
+    all(errorCovNumeric[row(errorCovNumeric) != col(errorCovNumeric)] == 0)
+  errorCov <- ctModelLatexMathElement(errorCov)
+  diag(errorCov)[!binary] <- paste0('\\left[',diag(errorCov)[!binary],'\\right]^2')
+  diag(errorCov)[binary] <- paste0('\\hat{Y}_{',binaryIndex,'}(t)\\left(1-\\hat{Y}_{',
+    binaryIndex,'}(t)\\right)')
+  errorCovNote <- if(!diagonalErrorCov) paste0(" \\\\ 
+&\\textrm{Note: off-diagonal entries in }\\vect{\\Theta}\\textrm{ are shown as specified; binary diagonal entries are conditional approximations.}") else ""
+  errorLine <- paste0("\\parbox{10em}{\\centering{Observation\\linebreak error:}}
+& \\qquad \\qquad \\quad \\vect{\\epsilon}(t) \\sim \\mathrm{N}\\left(\\mathbf{0},
+      \\underbrace{",bmatrix(errorCov,nottext=TRUE),"
+              ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\Theta}}",ifelse(!matrixnames,"}","_\\textrm{effective measurement covariance}}"),"\\right)",errorCovNote," \\\\ \\\\")
+  
+  if(splitMeasurement) return(paste0(
+    predictorLine,predictedLine,observationLine,errorLine))
+  
+  paste0("\\parbox{10em}{\\centering{Measurement:}}
+& \\underbrace{",bmatrix(matrix(paste0('\\nu_{',manifestIndex,'}(t)')),nottext=TRUE),"
+      }_{\\vect{\\nu}(t)} = ",linearPredictor," \\\\ \\\\
+& \\underbrace{",bmatrix(matrix(manifestNames),nottext=FALSE),"
+      (t)}_{\\vect{Y}(t)} =
+      \\widehat{\\vect{Y}}(t) + \\vect{\\epsilon}(t),\\quad
+      \\widehat{\\vect{Y}}(t) = ",bmatrix(yhat,nottext=TRUE),
+    " \\\\ \\\\
+& \\vect{\\epsilon}(t) \\sim \\mathrm{N}\\left(\\mathbf{0},
+      \\underbrace{",bmatrix(errorCov,nottext=TRUE),"
+              ",ifelse(!matrixnames,"}_{{", "}_{\\underbrace{"),"\\vect{\\Theta}}",ifelse(!matrixnames,"}","_\\textrm{effective measurement covariance}}"),"\\right)",errorCovNote," \\\\ \\\\")
 }
 
 
@@ -556,23 +630,64 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
       equationcont = paste0(equationcont,'\\mathbf{G} d\\mathbf{W}(t)')
     }
     
-    tabledim = tabledim = paste0(tabledim,'|c|c')
-    tablecont1 = paste0(tablecont1,'& $\\mathbf{y}$ & $\\Lambda $')
-    tablecont2 = paste0(tablecont2,'& $',c,'$','& $',nu,'\\times', c,'$')
-    equationcont = paste0(equationcont,'\\\\','\n', '\\mathbf{y}(t) &= \\Lambda \\eta(t)')
+    manifesttype <- rep(0, ctmodel$n.manifest)
+    if(!is.null(ctmodel$manifesttype)) manifesttype <- as.integer(ctmodel$manifesttype)
+    nbinary <- sum(manifesttype == 1)
     
-    if (dict[['tau']]){
-      tabledim = paste0(tabledim,'|c')
-      tablecont1 = paste0(tablecont1,'& $\\tau$')
-      tablecont2 = paste0(tablecont2,'& $',c,'$')
-      equationcont = paste0(equationcont,'+ \\tau')
+    if(!any(manifesttype != 0)){
+      tabledim = tabledim = paste0(tabledim,'|c|c')
+      tablecont1 = paste0(tablecont1,'& $\\mathbf{y}$ & $\\Lambda $')
+      tablecont2 = paste0(tablecont2,'& $',c,'$','& $',nu,'\\times', c,'$')
+      equationcont = paste0(equationcont,'\\\\','\n', '\\mathbf{y}(t) &= \\Lambda \\eta(t)')
+      
+      if (dict[['tau']]){
+        tabledim = paste0(tabledim,'|c')
+        tablecont1 = paste0(tablecont1,'& $\\tau$')
+        tablecont2 = paste0(tablecont2,'& $',c,'$')
+        equationcont = paste0(equationcont,'+ \\tau')
+      }
+      
+      tabledim = tabledim = paste0(tabledim,'|c|c}')
+      tablecont1 = paste0(tablecont1,'& $\\epsilon(t)$ & $\\Theta$ \\\\','\n', '\\hline')
+      tablecont2 = paste0(tablecont2,'& $',c,'$','& $',c,'\\times', c,'$')
+      noisestring = paste0(noisestring,'\\epsilon(t) &\\sim N(\\mathbf{0},\\Theta) \\\\','\n' )
+      equationcont = paste0(equationcont,'+ \\epsilon(t)')
+    } else {
+      tabledim = tabledim = paste0(tabledim,'|c|c|c')
+      tablecont1 = paste0(tablecont1,'& $\\nu(t)$ & $\\hat{Y}(t)$ & $\\Lambda $')
+      tablecont2 = paste0(tablecont2,'& $',c,'$','& $',c,'$','& $',nu,'\\times', c,'$')
+      equationcont = paste0(equationcont,'\\\\','\n',
+        '\\nu(t) &= \\Lambda \\eta(t)')
+      
+      if (dict[['tau']]){
+        tabledim = paste0(tabledim,'|c')
+        tablecont1 = paste0(tablecont1,'& $\\tau$')
+        tablecont2 = paste0(tablecont2,'& $',c,'$')
+        equationcont = paste0(equationcont,'+ \\tau')
+      }
+      
+      binaryIndex <- which(manifesttype == 1)
+      yhat <- paste0('\\nu_{',seq_len(c),'}(t)')
+      yhat[binaryIndex] <- paste0('\\operatorname{logit}^{-1}(\\nu_{',binaryIndex,'}(t))')
+      yhatString <- paste0('\\begin{bmatrix}',paste(yhat,collapse=' \\\\ '),'\\end{bmatrix}')
+      equationcont = paste0(equationcont,'\\\\','\n',
+        '\\hat{Y}(t) &= ',yhatString)
+      equationcont = paste0(equationcont,'\\\\','\n',
+        '\\mathbf{y}(t) &= \\hat{Y}(t) + \\epsilon(t)')
+      
+      tabledim = paste0(tabledim,'|c|c')
+      tablecont1 = paste0(tablecont1,'& $\\epsilon(t)$ & $\\Theta$')
+      tablecont2 = paste0(tablecont2,'& $',c,'$','& $',c,'\\times', c,'$')
+      noisestring = paste0(noisestring,'\\epsilon(t) &\\sim N(\\mathbf{0},\\Theta) \\\\','\n' )
+      if(nbinary > 0){
+        noisestring = paste0(noisestring,'\\Theta_{',binaryIndex,',',binaryIndex,'} &= \\hat{Y}_{',
+          binaryIndex,'}(t)(1-\\hat{Y}_{',binaryIndex,'}(t)) \\\\','\n',
+          collapse='')
+      }
+      
+      tabledim = paste0(tabledim,'}')
+      tablecont1 = paste0(tablecont1,' \\\\','\n', '\\hline')
     }
-    
-    tabledim = tabledim = paste0(tabledim,'|c|c}')
-    tablecont1 = paste0(tablecont1,'& $\\epsilon(t)$ & $\\Theta$ \\\\','\n', '\\hline')
-    tablecont2 = paste0(tablecont2,'& $',c,'$','& $',c,'\\times', c,'$')
-    noisestring = paste0(noisestring,'\\epsilon(t) &\\sim N(\\mathbf{0},\\Theta) \\\\','\n' )
-    equationcont = paste0(equationcont,'+ \\epsilon(t)')
     
     
     tablestring = paste0(tablestring,tabledim,'\n',tablecont1,'\n',tablecont2,'\n','\\end{tabular}','\n','\\end{center}')
@@ -633,10 +748,7 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
         splitMeasurement=splitMeasurement),
       "\\parbox{10em}{\\centering{System noise\\linebreak distribution per time step:}}
           &",ifelse(continuoustime,'\\Delta ',''),"\\big[W_{j \\in [1,",ctmodel$n.latent,"]}\\big](t",
-      ifelse(continuoustime,'-u',''),")   \\sim  \\mathrm{N}(0,",W,") \\quad
-              \\parbox{10em}{\\centering{Observation noise\\linebreak distribution:}}
-            ",bmatrix(matrix(paste0('\\epsilon_{j \\in [1,',ctmodel$n.latent,']}')))," 
-            (t) \\sim  \\mathrm{N}(0,1) \\\\ \\\\
+      ifelse(continuoustime,'-u',''),")   \\sim  \\mathrm{N}(0,",W,") \\\\ \\\\
       \\end{aligned} \\\\",
       if(includeNote) paste0("&\\textrm{Note: } UcorSDtoChol\\textrm{ converts lower tri matrix of standard deviations and unconstrained correlations to Cholesky factor,} \\\\
 &UcorSDtoCov =\\textrm{ transposed cross product of UcorSDtoChol, to give covariance, See Driver \\& Voelkle (2018) p11.} \\\\",
