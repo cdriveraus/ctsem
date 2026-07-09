@@ -1,6 +1,10 @@
 ctModelBuildPopCov <- function(ctm,linearise){ #for latex
   ctm <- T0VARredundancies(ctm)
-  pars <- unique(ctm$pars$param[ctm$pars$indvarying])
+  ctm$pars <- ctStanModelCleanctspec(ctm$pars)
+  freepars <- !is.na(ctm$pars$param) &
+    !grepl('\\W', gsub('.', '', ctm$pars$param, fixed=TRUE)) &
+    !ctm$pars$param %in% ctm$latentNames
+  pars <- unique(ctm$pars$param[ctm$pars$indvarying & freepars])
   d=length(pars)
   m <- matrix(paste0(ifelse(linearise,'','raw'),'PCov_',rep(1:d,d),'_',rep(1:d,each=d)),d,d,dimnames = list(pars,pars))
   m[upper.tri(m)]=t(m)[upper.tri(m)]
@@ -40,15 +44,19 @@ ctModelBuildPopCov <- function(ctm,linearise){ #for latex
 ctModelBuildTIeffects <- function(ctm){ #for latex
   ctm$pars <- ctStanModelCleanctspec(ctm$pars)
   tieffects <- unique(colnames(ctm$pars)[grep('_effect',colnames(ctm$pars),fixed=TRUE)])
-  pars <- unique(ctm$pars$param[apply(ctm$pars[,tieffects,drop=FALSE],1,any)])
+  freepars <- !is.na(ctm$pars$param) &
+    !grepl('\\W', gsub('.', '', ctm$pars$param, fixed=TRUE)) &
+    !ctm$pars$param %in% ctm$latentNames
+  pars <- unique(ctm$pars$param[
+    freepars & apply(ctm$pars[,tieffects,drop=FALSE],1,any)])
   timat <- matrix(0,length(pars),length(tieffects),dimnames = list(pars,gsub('_effect','',tieffects)))
   if(length(tieffects)){
-    for(p in 1:length(pars)){
+    for(p in seq_along(pars)){
       timat[p,] <- unlist(ctm$pars[match(x = pars[p],ctm$pars$param),tieffects,drop=FALSE])
     }
   }
-  for(i in 1:nrow(timat)){
-    for(j in 1:ncol(timat)){
+  for(i in seq_len(nrow(timat))){
+    for(j in seq_len(ncol(timat))){
       if(timat[i,j] !=0) timat[i,j] = paste0(pars[i],'_',gsub('_effect','',tieffects[j],fixed=TRUE))
     }}
   return(timat)
