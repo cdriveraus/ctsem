@@ -1,3 +1,6 @@
+suppressWarnings(suppressPackageStartupMessages(library(ctsem)))
+library(testthat)
+
 test_that("ctModelLatex subject distribution excludes calculated pars", {
   m <- suppressWarnings(suppressMessages(ctModel(
     type='ct',
@@ -30,4 +33,9 @@ test_that("ctModelLatex subject distribution excludes calculated pars", {
   expect_match(latex, 'boundary\\\\_raw\\\\_t0')
   expect_match(latex, 'ndt\\\\_raw\\\\_t0')
   expect_no_match(latex, 'exp\\\\(gamma_v\\\\).*_i')
+})
+
+test_that("ctModelLatex handles scalar numeric T0VAR display covariance", {
+  m <- suppressMessages(ctModel(type='ct', manifestNames='Y1', LAMBDA=diag(1)))
+  expect_error(ctModelLatex(m, tex=FALSE, compile=FALSE, open=FALSE), NA)
 })

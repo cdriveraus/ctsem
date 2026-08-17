@@ -121,7 +121,7 @@ ctDiscretePars<-function(fit, subjects='popmean',
   if(is.null(nsubjects)) nsubjects=1
   if('popmean' %in% subjects) subjects='popmean'
 
-  if(is.null(e$subj_DRIFT) && any(!subjects %in% 'popmean')) stop('No individual variation in DRIFT matrix found?? Try subjects="all"')
+  if(is.null(e$subj_DRIFT) && any(!subjects %in% 'popmean')) stop('No individual variation in DRIFT matrix found?? Try subjects="popmean"')
 
   niter=dim(e$pop_DRIFT)[1]
   nlatent=fit$standata$nlatent#outdims[3]

@@ -32,7 +32,7 @@ simpleStateCheck <- function(x){   #checks if system matrix elements that refere
 #' @param ... extra args for \code{\link{ctFit}}
 #' @param ctstanmodel Deprecated. Use \code{model}.
 #' @aliases ctStanUpdModel
-#' @usage ctFitUpdateModel(fit, datalong, model, ...)
+#' @usage ctFitUpdateModel(fit, datalong, model, ..., ctstanmodel)
 #' @export
 
 ctFitUpdateModel <- function(fit, datalong, model,..., ctstanmodel){

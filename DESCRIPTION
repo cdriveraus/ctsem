@@ -1,8 +1,8 @@
 Package: ctsem
 Type: Package
 Title: Continuous Time Structural Equation Modelling
-Version: 3.11.0
-Date: 2026-6-30
+Version: 3.11.1
+Date: 2026-7-10
 Authors@R: c(person("Charles", "Driver", role =
     c("aut","cre","cph"),email="charles.driver2@uzh.ch"),
     person("Manuel", "Voelkle", role = c("aut","cph")),

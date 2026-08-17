@@ -31,7 +31,7 @@ sdpcor2cov <- function(mat, coronly=FALSE, cholesky=FALSE){
   }
   
   if(!coronly){
-    mscale=diag(diag(mat))
+    mscale=diag(diag(mat), nrow=ndim, ncol=ndim)
     out= mscale %*% mcholcor
   } else out = mcholcor
   if(!cholesky) out = out %*% t(out)

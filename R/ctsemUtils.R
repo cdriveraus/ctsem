@@ -76,9 +76,20 @@ ctstantestfitfunc<-function(){
 
 
 testall<- function(cores=4,folder = '/tests/testthat',examples=TRUE){
-  requireNamespace('testthat')
+  if(!requireNamespace('testthat', quietly=TRUE)){
+    stop("Package 'testthat' is required to run testall().", call.=FALSE)
+  }
+  .testall_setup <- function(testfolder){
+    Sys.setenv(NOT_CRAN='true')
+    suppressPackageStartupMessages(library(ctsem))
+    supportfiles <- list.files(testfolder, pattern='^(helper|setup).*\\.[rR]$',
+      full.names=TRUE)
+    for(supportfile in supportfiles) sys.source(supportfile, envir=globalenv())
+    pdf(NULL)
+    invisible(TRUE)
+  }
+  testfolder <- normalizePath(paste0('.',folder))
   Sys.setenv(NOT_CRAN='true')
-  pdf(NULL)
   tests <- dir(paste0('.',folder))
   tests <- tests[grepl('^test',tests)]
   runex <- grep('runExamples',tests)
@@ -89,15 +100,20 @@ testall<- function(cores=4,folder = '/tests/testthat',examples=TRUE){
   if(cores > 1){
     cl <- parallelly::makeClusterPSOCK(cores)
     on.exit(try(parallel::stopCluster(cl),silent=TRUE),add=TRUE)
-    out <- parallel::parLapplyLB(cl,paste0(getwd(),folder,'/',tests),function(x){
+    out <- parallel::parLapplyLB(cl,paste0(getwd(),folder,'/',tests),function(x, testfolder){
       Sys.setenv(NOT_CRAN='true')
+      suppressPackageStartupMessages(library(ctsem))
+      supportfiles <- list.files(testfolder, pattern='^(helper|setup).*\\.[rR]$',
+        full.names=TRUE)
+      for(supportfile in supportfiles) sys.source(supportfile, envir=globalenv())
       pdf(NULL)
-    out<-testthat::test_file(x, reporter = "minimal")
-    dev.off()
-    return(out)
-  })
+      on.exit(dev.off(), add=TRUE)
+      out<-testthat::test_file(x, reporter = "minimal")
+      return(out)
+  }, testfolder=testfolder)
   }
   if(cores==1){
+    .testall_setup(testfolder)
     out <- lapply(paste0(getwd(),folder,'/',tests),function(x){
       cat(x)
       out<-testthat::test_file(x, reporter = "minimal")
@@ -106,7 +122,7 @@ testall<- function(cores=4,folder = '/tests/testthat',examples=TRUE){
     })
   }
   out2 <- do.call(what = rbind,lapply(out,utils::getS3method('as.data.frame','testthat_results')))
-  dev.off()
+  if(dev.cur() > 1) dev.off()
   print(out2[,colnames(out2)!='result'])
   print(Sys.time()-a)
   if(cores > 1) parallel::stopCluster(cl)

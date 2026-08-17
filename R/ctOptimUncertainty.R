@@ -1130,7 +1130,8 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' small magnitude-adjusted expansion budget is used before reporting a missed
 #' target. \code{parsteps} may be supplied internally to keep stepwise-fixed
 #' raw parameters fixed while estimating uncertainty for the remaining
-#' parameters.
+#' parameters; existing fixed indices from a previous uncertainty calculation
+#' are retained when no new \code{parsteps} are supplied.
 #' Hessian-based covariance construction first attempts the unmodified
 #' \code{solve(-hessian)} covariance and a Cholesky check. It warns when
 #' numerical repair is needed, such as positive-definite projection, ridge
@@ -1147,7 +1148,9 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' @param verbose Integer controlling progress detail.
 #' @param ... Unused.
 #'
-#' @return Updated \code{ctStanFit} object.
+#' @return Updated \code{ctStanFit} object. The resolved method, draw strategy,
+#' sample count, cores, and non-internal controls are recorded in
+#' \code{fit$stanfit$uncertainty$settings}.
 #' @export
 ctOptimUncertainty <- function(fit,
   uncertainty=c('hessian','surrogate','is','bootstrap','fullbootstrap',
@@ -1194,6 +1197,10 @@ ctOptimUncertainty <- function(fit,
   if(uncertainty == 'surrogate' && is.null(control$initialCov) &&
       !is.null(fit$stanfit$cov)) {
     control$initialCov <- fit$stanfit$cov
+  }
+  if(is.null(control$parsteps) &&
+      !is.null(fit$stanfit$uncertainty$fixedpars)) {
+    control$parsteps <- fit$stanfit$uncertainty$fixedpars
   }
   parsteps <- integer()
   if(!is.null(control$parsteps)) {
@@ -1289,6 +1296,16 @@ ctOptimUncertainty <- function(fit,
   fit$stanfit$rawposterior <- samples
   fit$stanfit$uncertainty <- uncertaintyfit
   fit$stanfit$uncertainty$draws <- draws
+  storedControl <- control
+  storedControl$initialCov <- NULL
+  storedControl$parsteps <- NULL
+  fit$stanfit$uncertainty$settings <- list(
+    method=uncertainty,
+    draws=draws,
+    finishsamples=finishsamples,
+    cores=cores,
+    control=storedControl
+  )
   if(!is.null(uncertaintyfit$scores)) fit$stanfit$subjectscores <- uncertaintyfit$scores
   message('Computing posterior approximation with ', nrow(samples), ' samples')
   fit <- ctOptimUpdateTransformed(fit, samples=samples, cores=cores)

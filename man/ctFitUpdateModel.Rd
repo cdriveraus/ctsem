@@ -5,7 +5,7 @@
 \alias{ctStanUpdModel}
 \title{Update model/data for an already compiled and fit ctsem object}
 \usage{
-ctFitUpdateModel(fit, datalong, model, ...)
+ctFitUpdateModel(fit, datalong, model, ..., ctstanmodel)
 }
 \arguments{
 \item{fit}{ctStanFit object}

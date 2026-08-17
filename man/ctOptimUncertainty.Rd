@@ -80,7 +80,8 @@ observed profile is still flatter than the fitted surrogate predicted, a
 small magnitude-adjusted expansion budget is used before reporting a missed
 target. \code{parsteps} may be supplied internally to keep stepwise-fixed
 raw parameters fixed while estimating uncertainty for the remaining
-parameters.
+parameters; existing fixed indices from a previous uncertainty calculation
+are retained when no new \code{parsteps} are supplied.
 Hessian-based covariance construction first attempts the unmodified
 \code{solve(-hessian)} covariance and a Cholesky check. It warns when
 numerical repair is needed, such as positive-definite projection, ridge
@@ -100,7 +101,9 @@ refits.}
 \item{...}{Unused.}
 }
 \value{
-Updated \code{ctStanFit} object.
+Updated \code{ctStanFit} object. The resolved method, draw strategy,
+sample count, cores, and non-internal controls are recorded in
+\code{fit$stanfit$uncertainty$settings}.
 }
 \description{
 Recomputes the approximate raw-parameter uncertainty for an optimized
