@@ -1316,6 +1316,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   }
   
   message('Using ',cores,'/', parallel::detectCores(),' CPU cores')
+  if(cores > parallel::detectCores()) warning('More cores requested than available, if errors occur, try reducing cores')
   
   storedPars <- as.numeric(c())
   storedLp <- c()
