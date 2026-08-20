@@ -83,7 +83,9 @@ Suggests:
     diagis,
     pdftools,
     rstudioapi,
-    quarto
+    quarto,
+    JuliaConnectoR,
+    digest
 VignetteBuilder: 
     knitr, 
     quarto

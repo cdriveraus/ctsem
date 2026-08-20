@@ -12,7 +12,10 @@
 #' e = ctExtract(ctstantestfit)
 #' }
 #' @export
-ctExtract <- function(object,subjectMatrices=FALSE,cores=2,nsamples='all', subjects='all'){
+ctExtract <- function(object, subjectMatrices=FALSE, cores=2, nsamples='all', subjects='all', ...) UseMethod("ctExtract")
+
+#' @export
+ctExtract.ctStanFit <- function(object,subjectMatrices=FALSE,cores=2,nsamples='all', subjects='all'){
   if(!class(object) %in% c('ctStanFit', 'stanfit')) stop('Not a ctStanFit or stanfit object')
   
   

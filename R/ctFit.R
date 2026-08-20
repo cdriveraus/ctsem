@@ -392,6 +392,7 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE, binomial=FALSE,
   fit=TRUE, intoverpop='auto', sameInitialTimes=FALSE, stationary=FALSE,plot=FALSE,  derrind=NA,
   optimize=TRUE,  optimcontrol=list(),
+  backend=c('stan','julia'), backendcontrol=list(),
   nlcontrol = list(), nopriors=NA, priors=FALSE, chains=2,
   cores=ifelse(optimize,getOption("mc.cores", 2L),'maxneeded'),
   inits=NULL,
@@ -409,6 +410,13 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     stop('Use only one of model or deprecated ctstanmodel')
   }
   ctstanmodel <- model
+  backend <- match.arg(backend)
+  if(backend %in% 'julia') {
+    .ctJuliaUnsupported(ctstanmodel, optimize=optimize, priors=priors,
+      intoverpop=intoverpop, vb=vb, gendata=gendata,
+      stanmodeltext=stanmodeltext, compileArgs=compileArgs,
+      forcerecompile=forcerecompile)
+  }
 
   if(!is.na(nopriors)){
     warning('nopriors argument is deprecated, use priors argument in future')
@@ -642,6 +650,15 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   if(standata$savesubjectmatrices==1L) savescores = TRUE
   standata$savescores=as.integer(savescores)
 
+  if(backend %in% 'julia') {
+    .ctJuliaUnsupported(ctm, optimize=optimize, priors=priors,
+      intoverpop=intoverpop, vb=vb, gendata=gendata,
+      stanmodeltext=stanmodeltext, compileArgs=compileArgs,
+      forcerecompile=forcerecompile)
+    return(ctFitJuliaBackend(datalong=datalong, model=ctm, prepared_data=standata, inits=inits,
+      cores=cores, backendcontrol=backendcontrol, verbose=verbose, fit=fit))
+  }
+
   # print(standata$savesubjectmatrices)
 
   #####post model / data checks
@@ -816,7 +833,8 @@ install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption
       setup=setup,
       stanmodeltext=stanmodeltext, data=standataout, ctdatastruct=datalong[c(1,nrow(datalong)),],standata=standata,
       ctstanmodelbase=ctstanmodel, ctstanmodel=ctm,stanmodel=sm, stanfit=stanfit)
-    class(out) <- 'ctStanFit'
+    out$backend <- 'stan'
+    class(out) <- c('ctStanFit','ctFit')
     out$stanfit$kalman<-suppressMessages(ctKalmanArray(out,pointest = TRUE))
   }
 

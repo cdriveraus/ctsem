@@ -20,6 +20,8 @@ ctFit(
   derrind = NA,
   optimize = TRUE,
   optimcontrol = list(),
+  backend = c("stan", "julia"),
+  backendcontrol = list(),
   nlcontrol = list(),
   nopriors = NA,
   priors = FALSE,

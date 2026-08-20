@@ -1,0 +1,6 @@
+{
+  "url": "https://gitlab.uzh.ch/psyquantimet/continuoustimesem.git",
+  "revision": "ctsem-backend",
+  "subdir": "ContinuousTimeSEM",
+  "julia": "1.12"
+}

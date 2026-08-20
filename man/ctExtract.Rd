@@ -10,7 +10,8 @@ ctExtract(
   subjectMatrices = FALSE,
   cores = 2,
   nsamples = "all",
-  subjects = "all"
+  subjects = "all",
+  ...
 )
 }
 \arguments{

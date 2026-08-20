@@ -93,6 +93,10 @@ ctStanRawSamples<-function(fit){
 #'@aliases ctStanContinuousPars
 #'@export
 ctSummaryMatrices <- function(fit,
+  calcfunc=quantile, calcfuncargs=list(probs=0.5), timeinterval=1, ...) UseMethod("ctSummaryMatrices")
+
+#' @export
+ctSummaryMatrices.ctStanFit <- function(fit,
   calcfunc=quantile,calcfuncargs=list(probs=0.5),timeinterval=1){
   
   if(!'ctStanFit' %in% class(fit)) stop(paste0('Not an object of class ctStanFit! Instead is ',paste0(class(fit),collapse=', ')))

@@ -9,7 +9,8 @@ ctSummaryMatrices(
   fit,
   calcfunc = quantile,
   calcfuncargs = list(probs = 0.5),
-  timeinterval = 1
+  timeinterval = 1,
+  ...
 )
 }
 \arguments{
