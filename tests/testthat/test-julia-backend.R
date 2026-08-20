@@ -160,11 +160,10 @@ test_that("Julia preparation rejects non-constant TI predictors", {
   )
 })
 
-test_that("Julia completes the AnomAuth initial optimization step", {
+test_that("Julia completes a full AnomAuth optimization", {
   skip_if_not_installed("JuliaConnectoR")
-  project <- Sys.getenv("CTSEM_JULIA_PROJECT", unset = "")
-  skip_if(!nzchar(project) || !dir.exists(project),
-    "Set CTSEM_JULIA_PROJECT to run Julia end-to-end fit tests.")
+  skip_if(Sys.getenv("CTSEM_RUN_JULIA_E2E", unset = "") != "true",
+    "Set CTSEM_RUN_JULIA_E2E=true to run the full Julia fit regression.")
 
   data(AnomAuth, package = "ctsem")
   model <- ctModel(LAMBDA = diag(2), n.latent = 2, n.manifest = 2,
@@ -175,9 +174,8 @@ test_that("Julia completes the AnomAuth initial optimization step", {
 
   set.seed(20260820)
   fit <- suppressMessages(ctFit(dat, model, backend = "julia", optimize = TRUE,
-    savescores = FALSE, cores = 1,
-    backendcontrol = list(julia_project = project, maxiter = 2)))
+    savescores = FALSE, cores = 1))
   expect_s3_class(fit, "ctJuliaFit")
   expect_true(is.finite(fit$estimate$loglik))
-  expect_gte(fit$estimate$iterations, 1L)
+  expect_true(fit$estimate$converged)
 })
