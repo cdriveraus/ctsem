@@ -51,6 +51,40 @@ test_that("Stan and Julia agree for a linear augmented random effect", {
   expect_equal(as.numeric(julia_value$gradient), as.numeric(attributes(stan_value)$gradient), tolerance = 1e-7)
 })
 
+test_that("Stan and Julia agree for a row with partial (not total) missingness", {
+  skip_if_not_installed("rstan")
+  skip_if_not_installed("JuliaConnectoR")
+  project <- Sys.getenv("CTSEM_JULIA_PROJECT", unset = "")
+  skip_if(!nzchar(project) || !dir.exists(project),
+    "Set CTSEM_JULIA_PROJECT to the local ContinuousTimeSEM project to run backend parity tests.")
+
+  # This exercises _ekf_update_observed!()'s partial-observation branch (some,
+  # but not all, manifest variables observed in a row) -- the branch that
+  # previously double-applied S^{-1} in the Kalman gain state update
+  # (`gain * (factor \ innovation)` instead of `gain * innovation`), which the
+  # other parity tests here never reached because their rows are always fully
+  # observed or fully missing.
+  model <- suppressWarnings(ctModel(
+    type = "ct", n.latent = 2, LAMBDA = diag(2), PARS = matrix("cross||TRUE", 1, 1),
+    DRIFT = matrix(c("d11", "PARS[1,1]", "d21", "d22"), 2, 2, byrow = TRUE),
+    DIFFUSION = diag(c(.2, .15)), MANIFESTVAR = diag(c(.1, .1)),
+    MANIFESTMEANS = matrix(0, 2, 1), T0VAR = diag(2), T0MEANS = matrix(0, 2, 1)
+  ))
+  data <- data.frame(id = rep(1:2, each = 3), time = rep(c(0, .5, 1.5), 2),
+    Y1 = c(0, .1, .2, .1, 0, -.1), Y2 = c(0, -.1, .1, .2, NA, 0))
+  stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE))
+  stan_model <- rstan::stan_model(model_code = stan_spec$stanmodeltext)
+  stan_fit <- ctsem:::stan_reinitsf(stan_model, stan_spec$standata)
+  julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
+    priors = FALSE, backendcontrol = list(julia_project = project)))
+  raw <- c(-1, .1, -1, .2, -.4)
+
+  stan_value <- rstan::log_prob(stan_fit, upars = raw, adjust_transform = FALSE, gradient = TRUE)
+  julia_value <- ctJuliaEvaluate(julia_spec, raw, gradient = TRUE)
+  expect_equal(as.numeric(julia_value$value), as.numeric(stan_value), tolerance = 1e-8)
+  expect_equal(as.numeric(julia_value$gradient), as.numeric(attributes(stan_value)$gradient), tolerance = 1e-7)
+})
+
 test_that("Stan and Julia agree for nonlinear predictors and augmented states", {
   skip_if_not_installed("rstan")
   skip_if_not_installed("JuliaConnectoR")
