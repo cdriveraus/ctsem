@@ -272,3 +272,51 @@ test_that("Stan and Julia agree for a moderate-dimensional model mixing both kin
   expect_equal(as.numeric(julia_value$value), as.numeric(stan_value), tolerance = 1e-6)
   expect_equal(as.numeric(julia_value$gradient), as.numeric(attributes(stan_value)$gradient), tolerance = 1e-6)
 })
+
+test_that("Stan and Julia agree for a state/TD-dependent measurement equation with partial missingness", {
+  skip_if_not_installed("rstan")
+  skip_if_not_installed("JuliaConnectoR")
+  project <- Sys.getenv("CTSEM_JULIA_PROJECT", unset = "")
+  skip_if(!nzchar(project) || !dir.exists(project),
+    "Set CTSEM_JULIA_PROJECT to the local ContinuousTimeSEM project to run backend parity tests.")
+
+  # `_ekf_masked_update_step!`'s partial-observation branch must use LAMBDA
+  # for the innovation/mean but its Jacobian (pars.Jy) for covariance
+  # propagation -- these coincide for a fixed/linear LAMBDA (every other
+  # test here, and the model that motivated this fix, use one), so a bug
+  # specific to *nonlinear* LAMBDA combined with missingness would not have
+  # been caught anywhere else. This was flagged as an untested combination
+  # in HANDOFF.md rather than a known bug; this test confirms it's actually
+  # correct (Stan and Julia agree here) rather than leaving it unverified.
+  model <- suppressWarnings(ctModel(
+    type = "ct", n.latent = 2, LAMBDA = matrix(c(
+      "1", "0",
+      "1 + .1 * eta1 + .05 * dose", "1"
+    ), 2, 2, byrow = TRUE),
+    PARS = matrix("cross||TRUE", 1, 1),
+    DRIFT = matrix(c("d11", "PARS[1,1]", "d21", "d22"), 2, 2, byrow = TRUE),
+    DIFFUSION = diag(c(.2, .15)), MANIFESTVAR = diag(c(.1, .1)),
+    MANIFESTMEANS = matrix(0, 2, 1), T0VAR = diag(2), T0MEANS = matrix(0, 2, 1),
+    n.TDpred = 1, TDpredNames = "dose", TDPREDEFFECT = matrix(c("impulse", 0), 2, 1)
+  ))
+  data <- data.frame(
+    id = rep(1:2, each = 3), time = rep(c(0, .5, 1.5), 2),
+    Y1 = c(0, .1, .2, .1, 0, -.1), Y2 = c(0, -.1, .1, .2, NA, 0),
+    dose = c(0, 1, 0, 1, 0, 1)
+  )
+  stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE,
+    priors = FALSE, nlcontrol = list(maxtimestep = .25)))
+  stan_fit <- .compiled_stan_fit(stan_spec)
+  julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
+    priors = FALSE, nlcontrol = list(maxtimestep = .25),
+    backendcontrol = list(julia_project = project)))
+  raw <- c(-0.1773093, 0.007978311, -0.4549659, -0.408796, 0.3535467, -0.2802454)
+  expect_equal(rstan::get_num_upars(stan_fit), length(raw))
+
+  stan_value <- rstan::log_prob(stan_fit, upars = raw, adjust_transform = FALSE, gradient = TRUE)
+  julia_value <- ctJuliaEvaluate(julia_spec, raw, gradient = TRUE)
+  # Same sub-micro nonlinear-EKF-linearisation tolerance as the other
+  # nonlinear-model test above.
+  expect_equal(as.numeric(julia_value$value), as.numeric(stan_value), tolerance = 2e-5)
+  expect_equal(as.numeric(julia_value$gradient), as.numeric(attributes(stan_value)$gradient), tolerance = 1e-5)
+})
