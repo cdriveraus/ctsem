@@ -438,3 +438,50 @@ test_that("Stan and Julia's actual optimizers converge to the same fit for TD/TI
   expect_equal(jf$estimate$loglik, -sf$stanfit$optimfit$f, tolerance = 1e-3)
   expect_equal(jf$estimate$raw, sf$stanfit$rawest, tolerance = 1e-2)
 })
+
+test_that("Julia's adjoint gradient matches its forward gradient and Stan", {
+  skip_if_not_installed("rstan")
+  skip_if_not_installed("JuliaConnectoR")
+  project <- Sys.getenv("CTSEM_JULIA_PROJECT", unset = "")
+  skip_if(!nzchar(project) || !dir.exists(project),
+    "Set CTSEM_JULIA_PROJECT to the local ContinuousTimeSEM project to run backend parity tests.")
+
+  # The Julia-side suite already checks the adjoint against ForwardDiff and
+  # finite differences across every model shape
+  # (`test_adjoint_gradient_validation.jl`). What this adds is the part only
+  # the R side can check: that `gradient_method` actually survives the
+  # JuliaConnectoR boundary (R marshals character vectors to Julia `String`,
+  # not `Symbol`), and that the adjoint agrees with *Stan* -- the independent
+  # ground truth -- and not merely with the other Julia gradient, which shares
+  # the same forward filter and so could in principle share a misreading of it.
+  model <- ctModel(type = "ct", LAMBDA = diag(2),
+    DRIFT = matrix(c("drift11", "drift21", "drift12", "drift22"), 2, 2),
+    DIFFUSION = matrix(c("diff11", "diff21", 0, "diff22"), 2, 2),
+    MANIFESTVAR = matrix(c(.1, 0, 0, .1), 2, 2),
+    MANIFESTMEANS = matrix(c("mm1", "mm2"), 2, 1),
+    T0VAR = matrix(c(1, 0, 0, 1), 2, 2), T0MEANS = matrix(c("t0m1", "t0m2"), 2, 1),
+    CINT = matrix(c("cint1", 0), 2, 1))
+  set.seed(3)
+  data <- data.frame(id = rep(1:4, each = 4), time = rep(c(0, .4, 1.1, 2.0), 4),
+    Y1 = rnorm(16, 0, .5), Y2 = rnorm(16, 0, .5))
+
+  stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE))
+  stan_fit <- .compiled_stan_fit(stan_spec)
+  julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
+    priors = FALSE, backendcontrol = list(julia_project = project)))
+
+  npar <- max(c(julia_spec$parameter_table$parnumber,
+    julia_spec$ti_effects$coefficient), na.rm = TRUE)
+  set.seed(7)
+  raw <- rnorm(npar, 0, .3)
+
+  stan_value <- rstan::log_prob(stan_fit, upars = raw, adjust_transform = FALSE, gradient = TRUE)
+  forward <- ctJuliaEvaluate(julia_spec, raw, gradient = TRUE, gradient_method = "forward")
+  adjoint <- ctJuliaEvaluate(julia_spec, raw, gradient = TRUE, gradient_method = "adjoint")
+
+  expect_equal(as.numeric(adjoint$value), as.numeric(forward$value), tolerance = 1e-12)
+  expect_equal(as.numeric(adjoint$gradient), as.numeric(forward$gradient), tolerance = 1e-9)
+  expect_equal(as.numeric(adjoint$value), as.numeric(stan_value), tolerance = 1e-8)
+  expect_equal(as.numeric(adjoint$gradient), as.numeric(attributes(stan_value)$gradient),
+    tolerance = 1e-7)
+})
