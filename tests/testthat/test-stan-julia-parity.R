@@ -320,3 +320,121 @@ test_that("Stan and Julia agree for a state/TD-dependent measurement equation wi
   expect_equal(as.numeric(julia_value$value), as.numeric(stan_value), tolerance = 2e-5)
   expect_equal(as.numeric(julia_value$gradient), as.numeric(attributes(stan_value)$gradient), tolerance = 1e-5)
 })
+
+test_that("Stan and Julia agree for 3 original (not just augmented) latents", {
+  skip_if_not_installed("rstan")
+  skip_if_not_installed("JuliaConnectoR")
+  project <- Sys.getenv("CTSEM_JULIA_PROJECT", unset = "")
+  skip_if(!nzchar(project) || !dir.exists(project),
+    "Set CTSEM_JULIA_PROJECT to the local ContinuousTimeSEM project to run backend parity tests.")
+
+  # The "moderate-dimensional" test above has 5 *augmented* states but only
+  # 2 *original* latents -- this checks the core EKF math (matrix-exponential
+  # discretization, Lyapunov solve, Kalman recursion) directly at 3+ original
+  # latents, fully cross-coupled DRIFT/DIFFUSION/T0VAR, with no indvarying
+  # parameters or state-dependent calcs so this isolates dimensionality from
+  # the random-effects machinery already covered elsewhere.
+  model <- suppressWarnings(ctModel(
+    type = "ct", n.latent = 3,
+    LAMBDA = matrix(c(
+      1, 0, 0,
+      0, 1, 0,
+      0, "cross32", 1
+    ), 3, 3, byrow = TRUE),
+    DRIFT = matrix(c(
+      "d11", "d12", "d13",
+      "d21", "d22", "d23",
+      "d31", "d32", "d33"
+    ), 3, 3, byrow = TRUE),
+    DIFFUSION = matrix(c(
+      "diff11", 0, 0,
+      "diff21", "diff22", 0,
+      "diff31", "diff32", "diff33"
+    ), 3, 3, byrow = TRUE),
+    MANIFESTVAR = diag(c(.1, .1, .1)),
+    MANIFESTMEANS = matrix(0, 3, 1),
+    T0VAR = matrix(c(
+      "t0v11", 0, 0,
+      "t0v21", "t0v22", 0,
+      "t0v31", "t0v32", "t0v33"
+    ), 3, 3, byrow = TRUE),
+    T0MEANS = matrix(0, 3, 1)
+  ))
+  data <- data.frame(
+    id = rep(1:2, each = 4), time = rep(c(0, .5, 1, 1.5), 2),
+    Y1 = c(0, .1, .2, .1, 0, -.1, -.05, .05),
+    Y2 = c(0, -.1, .1, .2, .1, 0, .1, -.05),
+    Y3 = c(0, .05, -.05, .1, -.1, .05, 0, .1)
+  )
+  stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE))
+  stan_fit <- .compiled_stan_fit(stan_spec)
+  julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
+    priors = FALSE, backendcontrol = list(julia_project = project)))
+  raw <- c(-0.28858, -0.08775772, 0.07763646, -0.3456396, 0.05873485, 0.009037183,
+    0.02562532, 0.3349831, -0.3656572, 0.3802106, -0.2234345, -0.3393656,
+    -0.2149075, 0.07579571, 0.04561371, -0.09229693, -0.2859052, -0.1944728,
+    0.3672941, 0.05994348, -0.1735451, -0.2826902)
+  expect_equal(rstan::get_num_upars(stan_fit), length(raw))
+
+  stan_value <- rstan::log_prob(stan_fit, upars = raw, adjust_transform = FALSE, gradient = TRUE)
+  julia_value <- ctJuliaEvaluate(julia_spec, raw, gradient = TRUE)
+  expect_equal(as.numeric(julia_value$value), as.numeric(stan_value), tolerance = 1e-8)
+  expect_equal(as.numeric(julia_value$gradient), as.numeric(attributes(stan_value)$gradient), tolerance = 1e-7)
+})
+
+test_that("Stan and Julia's actual optimizers converge to the same fit for TD/TI + individual differences", {
+  skip_if_not_installed("rstan")
+  skip_if_not_installed("JuliaConnectoR")
+  project <- Sys.getenv("CTSEM_JULIA_PROJECT", unset = "")
+  skip_if(!nzchar(project) || !dir.exists(project),
+    "Set CTSEM_JULIA_PROJECT to the local ContinuousTimeSEM project to run backend parity tests.")
+
+  # Every other test here checks log_prob/gradient agreement at one fixed
+  # raw-parameter point -- necessary but not sufficient, since that's exactly
+  # what the T0-SD meanscale bug could still pass (both backends reached the
+  # *same maximum likelihood* from *different* raw parameters; a fixed-point
+  # check at either backend's own optimum wouldn't by itself reveal that
+  # unless you specifically evaluated at the *other* backend's point, as the
+  # investigation that found it had to do). This test instead runs each
+  # backend's own real optimizer (ctsem_optimize's Optim.LBFGS for Julia,
+  # Stan's L-BFGS) on the combined TD/TI-predictor + both-kinds-of-
+  # individual-differences model from the "moderate-dimensional" test above,
+  # and checks that they land on matching loglik *and* matching raw
+  # parameters -- the actual end-to-end guarantee a fixed point can't give.
+  # Data is deliberately minimal (6 subjects, 4 waves) to keep this fast;
+  # this model shape has standata$recompile==0, so no C++ compile is needed.
+  model <- suppressWarnings(ctModel(
+    type = "ct", n.latent = 2, LAMBDA = diag(1, 2),
+    MANIFESTVAR = diag(c(.1, .1)), MANIFESTMEANS = matrix(0, 2, 1),
+    T0VAR = diag(2),
+    T0MEANS = c("t0a||TRUE", "t0b||TRUE"),
+    CINT = c("B1||TRUE", "B2||TRUE"),
+    DRIFT = matrix(c("auto1", "cross21||TRUE", "cross21||TRUE", "auto2"), 2, 2, byrow = TRUE),
+    DIFFUSION = diag(c(.2, .15)),
+    n.TDpred = 1, TDpredNames = "dose", TDPREDEFFECT = matrix(c("impulse", 0), 2, 1),
+    n.TIpred = 1, TIpredNames = "group", tipredDefault = FALSE
+  ))
+  model$pars$group_effect[model$pars$param == "B1"] <- TRUE
+
+  set.seed(21)
+  NSubjects <- 6
+  times <- c(0, .5, 1, 1.5)
+  data <- data.frame()
+  for (i in 1:NSubjects) {
+    data <- rbind(data, data.frame(
+      id = i, time = times,
+      Y1 = rnorm(length(times), 0, .5), Y2 = rnorm(length(times), 0, .5),
+      dose = c(0, 1, 0, 1),
+      group = rep(rnorm(1), length(times))
+    ))
+  }
+
+  jf <- suppressMessages(ctFit(data, model = model, backend = "julia",
+    backendcontrol = list(julia_project = project), verbose = 0))
+  sf <- suppressMessages(ctFit(data, model = model, backend = "stan",
+    optimcontrol = list(carefulfit = FALSE, stochastic = FALSE),
+    optimize = TRUE, verbose = 0, savescores = FALSE, cores = 1))
+
+  expect_equal(jf$estimate$loglik, -sf$stanfit$optimfit$f, tolerance = 1e-3)
+  expect_equal(jf$estimate$raw, sf$stanfit$rawest, tolerance = 1e-2)
+})
