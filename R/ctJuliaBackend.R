@@ -654,16 +654,16 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 #' @param pars Unconstrained parameters; defaults to the fitted estimate.
 #' @param gradient Return an analytic/automatic-differentiation gradient.
 #' @param contributions Return subject and row contribution details when available.
-#' @param gradient_method Either "forward" (ForwardDiff, the default) or
-#'   "adjoint" (reverse mode). Both compute the same gradient. "adjoint" costs
+#' @param gradient_method Either "adjoint" (reverse mode, the default) or
+#'   "forward" (ForwardDiff). Both compute the same gradient. "adjoint" costs
 #'   the same regardless of how many free parameters a model has, and is
 #'   faster than "forward" at every model size measured, by a margin that
-#'   grows with the parameter count. See \code{backendcontrol$gradient} in
+#'   grows with the parameter count. See \code{optimcontrol$gradient} in
 #'   \code{ctFit}.
 #' @return A list containing log likelihood and, when requested, gradient.
 #' @export
 ctJuliaEvaluate <- function(object, pars = NULL, gradient = TRUE, contributions = FALSE,
-  gradient_method = c("forward", "adjoint")) {
+  gradient_method = c("adjoint", "forward")) {
   gradient_method <- match.arg(gradient_method)
   if (!inherits(object, c("ctJuliaModel", "ctJuliaFit"))) stop("object must be a ctJuliaModel or ctJuliaFit", call. = FALSE)
   if (is.null(pars)) {
@@ -696,11 +696,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, ...) {
 }
 
 ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NULL, cores = 1L,
-  backendcontrol = list(), verbose = 0L, fit = TRUE) {
+  backendcontrol = list(), optimcontrol = list(), verbose = 0L, fit = TRUE) {
   if (isTRUE(backendcontrol$restart_session)) .ctJuliaClearSession()
   project <- .ctJuliaOr(backendcontrol$julia_project, NULL)
-  gradient <- .ctJuliaOr(backendcontrol$gradient, "forward")
-  if (!gradient %in% c("forward", "adjoint")) stop("backendcontrol$gradient must be 'forward' or 'adjoint'", call. = FALSE)
+  # `optimcontrol$gradient` is the documented control; `backendcontrol$gradient`
+  # is still honoured because it was the only way to set this before, and
+  # silently ignoring it would change results for anyone already passing it.
+  gradient <- .ctJuliaOr(optimcontrol$gradient, .ctJuliaOr(backendcontrol$gradient, "adjoint"))
+  if (!gradient %in% c("forward", "adjoint")) stop("gradient must be 'forward' or 'adjoint'", call. = FALSE)
   # 'adjoint' selects the Julia engine's reverse-mode gradient. Its cost is
   # independent of the free-parameter count (one traced forward sweep plus one
   # reverse sweep per subject), where 'forward' (ForwardDiff) costs one dual

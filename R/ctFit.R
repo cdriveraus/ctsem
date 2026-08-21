@@ -103,6 +103,12 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' @param optimize if TRUE, use \code{\link{stanoptimis}} function for maximum a posteriori / importance sampling estimates,
 #' otherwise use the HMC sampler from Stan, which is (much) slower, but generally more robust for complex individual differences.
 #' @param optimcontrol list of parameters sent to \code{\link{stanoptimis}} governing optimization / importance sampling.
+#' With \code{backend='julia'}, \code{optimcontrol$gradient} selects the
+#' gradient method: \code{'adjoint'} (reverse mode, the default) or
+#' \code{'forward'} (ForwardDiff). Both compute the same gradient; 'adjoint'
+#' costs the same regardless of the number of free parameters, so it is
+#' dramatically faster for larger models and marginally slower for very small
+#' ones.
 #' @param nopriors deprecated, use priors argument. logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.
 #' @param priors if TRUE, priors are included in computations, otherwise specified priors are ignored.
 #' @param iter used when \code{optimize=FALSE}. number of iterations, half of which will be devoted to warmup by default when sampling.
@@ -656,7 +662,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       stanmodeltext=stanmodeltext, compileArgs=compileArgs,
       forcerecompile=forcerecompile)
     return(ctFitJuliaBackend(datalong=datalong, model=ctm, prepared_data=standata, inits=inits,
-      cores=cores, backendcontrol=backendcontrol, verbose=verbose, fit=fit))
+      cores=cores, backendcontrol=backendcontrol, optimcontrol=optimcontrol,
+      verbose=verbose, fit=fit))
   }
 
   # print(standata$savesubjectmatrices)
