@@ -1,3 +1,36 @@
+# Reuse ctsem's own precompiled generic Stan binary (`stanmodels$ctsm`) when
+# `standata$recompile` says it's safe to, exactly the way `ctFit`'s own Stan
+# backend decides this (see `stanoptimis.R`: `if(standata$recompile==0)
+# smf <- stan_reinitsf(stanmodels$ctsm, standata)`). `recompile` is set in
+# `ctFit.R` based on genuine structural requirements -- e.g. any state- or
+# TD/TI-dependent calc not already expressible via `JAx[...]` (`ncalcsNoJ`,
+# which includes the PARS-substituted-into-DRIFT and nonlinear-DRIFT models
+# below) forces it to 1, because those need an analytic Jacobian the generic
+# binary's finite-difference fallback doesn't have. An earlier version of
+# this file called `stan_reinitsf(stanmodels$ctsm, ...)` unconditionally,
+# which happened to work for the simpler models here but silently produced
+# `multi_normal_cholesky_lpdf: Location parameter is nan`/`quad_form_sym: A
+# is not symmetric, Inf` for the `recompile==1` ones -- checking the flag
+# `ctFit` itself computes, instead of reimplementing (badly) a guess at when
+# reuse is safe, is what actually fixes that.
+#
+# When `recompile==1`, several tests/calls here happen to reuse the exact
+# same model definition (only `standata` differs -- e.g. test 4 builds two
+# specs from one `model` object, and tests 2/3 share a model entirely), so
+# the actual compile is additionally cached by generated-code hash to avoid
+# paying for it more than once per distinct model.
+.parity_stan_cache <- new.env(parent = emptyenv())
+.compiled_stan_fit <- function(stan_spec) {
+  if (identical(stan_spec$standata$recompile, 0L)) {
+    return(ctsem:::stan_reinitsf(ctsem:::stanmodels$ctsm, stan_spec$standata))
+  }
+  key <- digest::digest(stan_spec$stanmodeltext)
+  if (!exists(key, envir = .parity_stan_cache, inherits = FALSE)) {
+    assign(key, rstan::stan_model(model_code = stan_spec$stanmodeltext), envir = .parity_stan_cache)
+  }
+  ctsem:::stan_reinitsf(get(key, envir = .parity_stan_cache, inherits = FALSE), stan_spec$standata)
+}
+
 test_that("Stan and Julia agree for a linear likelihood", {
   skip_if_not_installed("rstan")
   skip_if_not_installed("JuliaConnectoR")
@@ -11,8 +44,7 @@ test_that("Stan and Julia agree for a linear likelihood", {
   data <- data.frame(id = rep(1:2, each = 3), time = rep(c(0, .5, 1.5), 2),
     Y1 = c(0, .1, .2, .1, 0, -.1))
   stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE))
-  stan_model <- rstan::stan_model(model_code = stan_spec$stanmodeltext)
-  stan_fit <- ctsem:::stan_reinitsf(stan_model, stan_spec$standata)
+  stan_fit <- .compiled_stan_fit(stan_spec)
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
     priors = FALSE, backendcontrol = list(julia_project = project)))
   raw <- -.7
@@ -39,8 +71,7 @@ test_that("Stan and Julia agree for a linear augmented random effect", {
   data <- data.frame(id = rep(1:2, each = 3), time = rep(c(0, .5, 1.5), 2),
     Y1 = c(0, .1, .2, .1, 0, -.1), Y2 = c(0, -.1, .1, .2, .1, 0))
   stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE))
-  stan_model <- rstan::stan_model(model_code = stan_spec$stanmodeltext)
-  stan_fit <- ctsem:::stan_reinitsf(stan_model, stan_spec$standata)
+  stan_fit <- .compiled_stan_fit(stan_spec)
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
     priors = FALSE, backendcontrol = list(julia_project = project)))
   raw <- c(-1, .1, -1, .2, -.4)
@@ -73,8 +104,7 @@ test_that("Stan and Julia agree for a row with partial (not total) missingness",
   data <- data.frame(id = rep(1:2, each = 3), time = rep(c(0, .5, 1.5), 2),
     Y1 = c(0, .1, .2, .1, 0, -.1), Y2 = c(0, -.1, .1, .2, NA, 0))
   stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE))
-  stan_model <- rstan::stan_model(model_code = stan_spec$stanmodeltext)
-  stan_fit <- ctsem:::stan_reinitsf(stan_model, stan_spec$standata)
+  stan_fit <- .compiled_stan_fit(stan_spec)
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
     priors = FALSE, backendcontrol = list(julia_project = project)))
   raw <- c(-1, .1, -1, .2, -.4)
@@ -113,8 +143,7 @@ test_that("Stan and Julia agree for nonlinear predictors and augmented states", 
 
   stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE,
     priors = FALSE, nlcontrol = list(maxtimestep = .25)))
-  stan_model <- rstan::stan_model(model_code = stan_spec$stanmodeltext)
-  stan_fit <- ctsem:::stan_reinitsf(stan_model, stan_spec$standata)
+  stan_fit <- .compiled_stan_fit(stan_spec)
 
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
     priors = FALSE, nlcontrol = list(maxtimestep = .25),
@@ -129,7 +158,7 @@ test_that("Stan and Julia agree for nonlinear predictors and augmented states", 
   zero_predictors$group <- 0
   zero_stan_spec <- suppressMessages(ctFit(zero_predictors, model, backend = "stan", fit = FALSE,
     priors = FALSE, nlcontrol = list(maxtimestep = .25)))
-  zero_stan_fit <- ctsem:::stan_reinitsf(stan_model, zero_stan_spec$standata)
+  zero_stan_fit <- .compiled_stan_fit(zero_stan_spec)
   zero_julia_spec <- suppressMessages(ctFit(zero_predictors, model, backend = "julia", fit = FALSE,
     priors = FALSE, nlcontrol = list(maxtimestep = .25),
     backendcontrol = list(julia_project = project)))
@@ -149,4 +178,97 @@ test_that("Stan and Julia agree for nonlinear predictors and augmented states", 
   expect_equal(as.numeric(julia_value$value), as.numeric(stan_value), tolerance = 2e-6)
   expect_equal(as.numeric(julia_value$gradient),
     as.numeric(attributes(stan_value)$gradient), tolerance = 1e-7)
+})
+
+test_that("Stan and Julia agree for a T0MEANS-indvarying population SD with non-unit meanscale", {
+  skip_if_not_installed("rstan")
+  skip_if_not_installed("JuliaConnectoR")
+  project <- Sys.getenv("CTSEM_JULIA_PROJECT", unset = "")
+  skip_if(!nzchar(project) || !dir.exists(project),
+    "Set CTSEM_JULIA_PROJECT to the local ContinuousTimeSEM project to run backend parity tests.")
+
+  # Stan builds the population covariance in raw-parameter units, then
+  # explicitly rescales each indvarying T0MEANS row/column by that parameter's
+  # `multiplier*meanscale` to convert to state-space units before it's used as
+  # a covariance (ctModelWriter.R: `T0cov[matsetup[ri,1], ] *= matvalues[ri,2]
+  # * matvalues[ri,3]` and the matching column update). T0MEANS/CINT-type
+  # custom pars default to meanscale=10 (`ctStanModelDefaultFreePar`), so any
+  # T0MEANS-indvarying parameter -- like `t0m||TRUE` below -- exercises this.
+  # The Julia port originally omitted this rescaling entirely, so its fitted
+  # population SD came out ~10x too large relative to Stan's (same maximum
+  # likelihood, different raw parameter, since the two backends' unconstrained
+  # spaces disagreed) -- this is the model shape that surfaced it, distilled
+  # from ctsemTutorial.qmd's individual-differences example.
+  model <- suppressWarnings(ctModel(
+    type = "ct", n.latent = 1, LAMBDA = matrix(1, 1, 1),
+    DRIFT = matrix("drift", 1, 1),
+    DIFFUSION = matrix(.2, 1, 1), MANIFESTVAR = matrix(.1, 1, 1),
+    MANIFESTMEANS = matrix(0, 1, 1), T0VAR = matrix(1, 1, 1),
+    T0MEANS = matrix("t0m||TRUE", 1, 1)
+  ))
+  data <- data.frame(id = rep(1:2, each = 3), time = rep(c(0, .5, 1.5), 2),
+    Y1 = c(0, .1, .2, .1, 0, -.1))
+  stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE))
+  stan_fit <- .compiled_stan_fit(stan_spec)
+  julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
+    priors = FALSE, backendcontrol = list(julia_project = project)))
+  raw <- c(0.4112875, -0.1694095, 0.1089385)
+  expect_equal(rstan::get_num_upars(stan_fit), length(raw))
+
+  stan_value <- rstan::log_prob(stan_fit, upars = raw, adjust_transform = FALSE, gradient = TRUE)
+  julia_value <- ctJuliaEvaluate(julia_spec, raw, gradient = TRUE)
+  expect_equal(as.numeric(julia_value$value), as.numeric(stan_value), tolerance = 1e-8)
+  expect_equal(as.numeric(julia_value$gradient), as.numeric(attributes(stan_value)$gradient), tolerance = 1e-7)
+})
+
+test_that("Stan and Julia agree for a moderate-dimensional model mixing both kinds of random effect", {
+  skip_if_not_installed("rstan")
+  skip_if_not_installed("JuliaConnectoR")
+  project <- Sys.getenv("CTSEM_JULIA_PROJECT", unset = "")
+  skip_if(!nzchar(project) || !dir.exists(project),
+    "Set CTSEM_JULIA_PROJECT to the local ContinuousTimeSEM project to run backend parity tests.")
+
+  # Distilled from ctsemTutorial.qmd's individual-differences example, which
+  # originally crashed Julia outright with a LAPACKException from the
+  # Schur-based Lyapunov solver (`_lyap_solve_factorized!`/`trsyl!`) before
+  # `dynamic_state_indices` was fixed in `.ctJuliaAugmentRandomEffects`
+  # (ctsem/R/ctJuliaBackend.R), and separately mismatched Stan's T0VAR
+  # population SD before the `multiplier*meanscale` rescaling above was
+  # added. This model combines *both* kinds of population-varying state that
+  # `augmented_indices`/`intoverpopindvaryingindex` conflates: two original,
+  # still-dynamic states with directly indvarying T0MEANS (`t0a`, `t0b`) and
+  # two newly-created static carrier states for non-T0MEANS random effects
+  # (`cross21` on DRIFT, `B1`/`B2` on CINT) -- five augmented states total,
+  # one more than the `n > 4` threshold that selects the Schur solver over
+  # the small-system `ksolve!` path. If either fix regresses, this either
+  # throws (dynamic_state_indices) or the value/gradient checks below fail
+  # (meanscale rescaling).
+  model <- suppressWarnings(ctModel(
+    type = "ct", n.latent = 2, LAMBDA = diag(1, 2),
+    MANIFESTVAR = diag(c(.1, .1)), MANIFESTMEANS = matrix(0, 2, 1),
+    T0VAR = diag(2),
+    T0MEANS = c("t0a||TRUE", "t0b||TRUE"),
+    CINT = c("B1||TRUE", "B2||TRUE"),
+    DRIFT = matrix(c("auto1", "cross21||TRUE", "cross21||TRUE", "auto2"), 2, 2, byrow = TRUE),
+    DIFFUSION = diag(c(.2, .15))
+  ))
+  data <- data.frame(id = rep(1:2, each = 3), time = rep(c(0, .5, 1.5), 2),
+    Y1 = c(0, .1, .2, .1, 0, -.1), Y2 = c(0, -.1, .1, .2, .1, 0))
+  stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE))
+  stan_fit <- .compiled_stan_fit(stan_spec)
+  julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
+    priors = FALSE, backendcontrol = list(julia_project = project)))
+  expect_equal(julia_spec$nlatent_augmented, 5L)
+  expect_equal(julia_spec$dynamic_state_indices, 1:2)
+
+  raw <- c(0.6861741, -0.3590315, -0.2082878, -0.1236879, -0.291202, -0.284184,
+    0.2244418, -0.03508657, 0.04579729, 0.6569934, 0.1070959, 0.8150255,
+    0.6844356, 0.09720616, 0.5688201, 0.1403042, -0.2681402, -0.09219849,
+    -0.001446727, 0.2964492, 0.2519251, 0.2116025)
+  expect_equal(rstan::get_num_upars(stan_fit), length(raw))
+
+  stan_value <- rstan::log_prob(stan_fit, upars = raw, adjust_transform = FALSE, gradient = TRUE)
+  julia_value <- ctJuliaEvaluate(julia_spec, raw, gradient = TRUE)
+  expect_equal(as.numeric(julia_value$value), as.numeric(stan_value), tolerance = 1e-6)
+  expect_equal(as.numeric(julia_value$gradient), as.numeric(attributes(stan_value)$gradient), tolerance = 1e-6)
 })
