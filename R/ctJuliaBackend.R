@@ -408,6 +408,25 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 
   next_parameter <- max(table$parnumber, na.rm = TRUE)
   random_sd_scale <- rep(1, length(augmented_indices))
+  # Stan's population covariance is built entirely in raw-parameter units
+  # (`rawpopcovbase`/`rawpopsd`, via `sdscale`), then explicitly rescaled to
+  # state units: for every indvarying T0MEANS row, `ctModelWriter.R` multiplies
+  # T0cov's corresponding row *and* column by that row's `multiplier*meanscale`
+  # (see `T0cov[matsetup[ri,1], ] *= matvalues[ri,2] * matvalues[ri,3]` and the
+  # matching column update, ctModelWriter.R:903-910). That doubles-up to a
+  # `k_i*k_j` scaling of every population-covariance entry, where
+  # `k_i = multiplier_i*meanscale_i` comes from state i's own T0MEANS
+  # transform. Without it, a state whose T0MEANS uses a non-unit
+  # multiplier/meanscale (e.g. the default `10*param` for T0MEANS/CINT-type
+  # customs pars) gets a population SD that's wrong by a factor of `k_i`
+  # relative to Stan -- exactly the T0VAR population-SD mismatch seen for
+  # ctsemTutorial.qmd's individual-differences model. Folding `k_i` into the
+  # diagonal (SD) transform here reproduces Stan's row+column rescaling
+  # exactly, since sdcovsqrt2cov later builds T0cov[i,j] = sd_i*sd_j*corr_ij:
+  # scaling sd_i by k_i and sd_j by k_j automatically scales every entry
+  # (including off-diagonals) by k_i*k_j, with no separate adjustment needed
+  # for the correlation parameters themselves (they stay dimensionless).
+  t0means_state_scale <- rep(1, length(augmented_indices))
   if (!is.null(expanded$modelmats$matsetup)) {
     setup <- as.data.frame(expanded$modelmats$matsetup)
     values <- as.data.frame(expanded$modelmats$matvalues)
@@ -415,6 +434,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     varying_parameters <- varying_parameters[varying_parameters > 0L]
     random_sd_scale <- values$sdscale[match(varying_parameters, setup$param)]
     random_sd_scale[is.na(random_sd_scale)] <- 1
+    t0means_code <- ctsem:::ctStanMatricesList()$all[["T0MEANS"]]
+    t0means_rows <- setup$matrix == t0means_code & setup$col == 1L
+    match_position <- match(augmented_indices, setup$row[t0means_rows])
+    t0means_setup_rows <- which(t0means_rows)[match_position]
+    t0means_state_scale <- values$multiplier[t0means_setup_rows] * values$meanscale[t0means_setup_rows]
+    t0means_state_scale[is.na(t0means_state_scale)] <- 1
   }
   if (length(random_sd_scale) != length(augmented_indices)) {
     stop("Prepared random-effect covariance metadata does not match the augmented state layout.", call. = FALSE)
@@ -431,8 +456,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     table$param[index] <- sprintf("julia_popcov_%d_%d", row, col)
     table$parnumber[index] <- next_parameter
     table$value[index] <- NA_real_
-    table$transform[index] <- sprintf("1e-10 + %.17g * log1p_exp(2 * param[%d] - 1)",
-      random_sd_scale[position], next_parameter)
+    table$transform[index] <- sprintf("%.17g * (1e-10 + %.17g * log1p_exp(2 * param[%d] - 1))",
+      t0means_state_scale[position], random_sd_scale[position], next_parameter)
     covariance_rows[[length(covariance_rows) + 1L]] <- data.frame(
       row = row, col = col, parameter = next_parameter,
       type = "sd"
@@ -461,9 +486,32 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     grepl("state\\[", update_transform) |
     grepl("state\\[", td_transform),
     c("matrix", "row", "col"), drop = FALSE]
+  # `augmented_indices` (= Stan's `intoverpopindvaryingindex`) is every state
+  # with population-varying T0VAR: both the newly-created carrier states for
+  # non-T0MEANS random effects (DRIFT/CINT/etc., always appended contiguously
+  # after the original states -- see `extralatents` in
+  # ctModelWriter.R::ctStanModelIntOverPop) AND any *original* state whose
+  # own T0MEANS is directly indvarying (e.g. a random initial value). Only the
+  # former are static/no-own-dynamics carriers; the latter are still genuine
+  # dynamic states that need their own diffusion/Lyapunov treatment, exactly
+  # like Stan's own `derrind` (ctData.R) explicitly excludes only indices
+  # beyond `standata$nlatent` ("stable individual differences"), not every
+  # index with population-varying T0VAR. `setdiff(seq_len(nlatent_augmented),
+  # augmented_indices)` conflated these two groups, silently emptying
+  # dynamic_state_indices (and forcing the Lyapunov solve over the *entire*
+  # augmented state space, including static carriers with structurally zero
+  # diffusion) for any model combining T0MEANS random effects with other
+  # (DRIFT/CINT/etc.) random effects -- exactly the combination in
+  # ctsemTutorial.qmd's individual-differences example, which failed with a
+  # LAPACKException from the Schur-based Lyapunov solver once the augmented
+  # dimension exceeded 4. This does not yet replicate Stan's further
+  # optimization of also excluding original states with structurally zero,
+  # uncoupled diffusion (`derrind`'s first two steps) -- it conservatively
+  # includes every original state, which is correct but not maximally
+  # reduced.
   list(parameter_table = table, nlatent = original_nlatent,
     nlatent_augmented = nlatent_augmented,
-    dynamic_state_indices = setdiff(seq_len(nlatent_augmented), augmented_indices),
+    dynamic_state_indices = seq_len(original_nlatent),
     random_effects = do.call(rbind, covariance_rows), rewritten_cells = rewritten)
 }
 
