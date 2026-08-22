@@ -179,41 +179,78 @@ The state-dependent models put `DRIFT[1,2] = PARS[1,1] * (1 + .05 * eta1)` and
 
 | latents | free params | Stan | Julia forward | Julia adjoint | **C++** |
 |---|---|---|---|---|---|
-| 2 | 23 | 0.00110 s | 0.00456 s | 0.00489 s | **0.00054 s** |
-| 6 | 153 | 0.00321 s | 0.0625 s | 0.0177 s | **0.00242 s** |
-| 20 | 1490 | 0.0404 s | 63.1 s | 0.162 s | **0.0285 s** |
+| 2 | 23 | 0.00112 s | 0.00351 s | 0.00359 s | **0.00054 s** |
+| 6 | 153 | 0.00322 s | 0.0535 s | 0.00950 s | **0.00240 s** |
+| 20 | 1490 | 0.0410 s | 60.6 s | 0.0671 s | **0.0289 s** |
 
 **State-dependent DRIFT + DIFFUSION**
 
 | latents | free params | Stan | Julia forward | Julia adjoint | **C++** |
 |---|---|---|---|---|---|
-| 2 | 23 | 0.00159 s | 0.00626 s | 0.00711 s | **0.00084 s** |
-| 6 | 153 | 0.00822 s | 0.0975 s | 0.0245 s | **0.00527 s** |
-| 20 | 1490 | 0.266 s | 270.5 s | 0.183 s | **0.0899 s** |
+| 2 | 23 | 0.00150 s | 0.00539 s | 0.00646 s | **0.00084 s** |
+| 6 | 153 | 0.00850 s | 0.0917 s | 0.0186 s | **0.00526 s** |
+| 20 | 1490 | 0.269 s | 245.4 s | 0.116 s | **0.0897 s** |
 
 **C++ is the fastest engine at every size, on both model families**: 1.3x to 3.0x
-Stan, and 2x to 9x the Julia adjoint. The margin over Stan is largest exactly
-where it matters most — a 20-latent state-dependent model, where Stan is 2.95x
+Stan, and 1.3x to 6.6x the Julia adjoint. The margin over Stan is largest exactly
+where it matters most — a 20-latent state-dependent model, where Stan is 3.0x
 slower and also needs a three-minute compile.
+
+The Julia adjoint column reflects two changes made *after* the first version of
+this document, both prompted by profiling done for this port and both now
+committed; see "what the comparison found in the other backend" below. Against
+the originally measured Julia adjoint the C++ margin was 2x to 9x, so treat any
+earlier statement of that ratio as superseded.
 
 Three things worth reading off the table beyond the headline:
 
-1. **The Julia adjoint's flatness under nonlinearity is real, and it is not
-   enough.** Going from linear to state-dependent at 20 latents costs Stan 6.6x
-   (0.0404 -> 0.266 s) and the Julia adjoint 1.13x (0.162 -> 0.183 s). That is
-   the genuinely interesting property the adjoint roadmap identified, and it
-   holds. But C++ degrades only 3.2x from a base three times lower, so it is
-   still twice as fast as Julia in absolute terms on the very model shape where
-   Julia's scaling argument is strongest.
-2. **ForwardDiff is unusable at scale, and worse than previously recorded.** 270
-   seconds for one gradient of a 20-latent state-dependent model. An L-BFGS fit
-   of that model is out of reach on the forward path.
+1. **The Julia adjoint's flatness under nonlinearity is real, and it is why the
+   two adjoints converge at scale.** Going from linear to state-dependent at 20
+   latents costs Stan 6.6x (0.0410 -> 0.269 s), C++ 3.1x, and the Julia adjoint
+   1.7x. C++ still wins there, but by 1.3x rather than the 3.0x it enjoys over
+   Stan on the same model.
+2. **ForwardDiff is unusable at scale.** 245 seconds for one gradient of a
+   20-latent state-dependent model. An L-BFGS fit of that model is out of reach
+   on the forward path.
 3. **The adjoint costs a normal multiple of the primal.** C++ value-only times
    are 0.00017 / 0.00071 / 0.0086 s (linear) and 0.00026 / 0.0016 / 0.021 s
-   (state-dependent), so the gradient is 3.2-4.2x the primal at every size. That
-   is the ratio a well-behaved reverse mode should have, and it is the same band
-   as the Julia adjoint's 2.7-3.0x — Julia's remaining gap to C++ is in its
-   primal, not in its reverse pass.
+   (state-dependent), so the gradient is 3.2-4.2x the primal at every size —
+   the ratio a well-behaved reverse mode should have.
+
+### Engine-only timings, and a measurement artefact worth knowing about
+
+Everything above is end-to-end from R, which is what a user experiences. It is
+*not* a clean engine comparison: JuliaConnectoR's round trip is charged to
+Julia and `.Call`'s microseconds are charged to C++. Timing `ctsem_evaluate`
+**inside** Julia removes that.
+
+| model | free params | Julia engine, before | Julia engine, after | **C++** | Julia primal | C++ primal |
+|---|---|---|---|---|---|---|
+| linear 2 | 23 | 0.00136 s | 0.00109 s | **0.00054 s** | 0.00028 s | 0.00017 s |
+| linear 6 | 153 | 0.00493 s | 0.00342 s | **0.00240 s** | 0.00063 s | 0.00071 s |
+| linear 20 | 1490 | 0.0710 s | 0.0454 s | **0.0286 s** | 0.00737 s | 0.00858 s |
+| statedep 2 | 23 | 0.00259 s | 0.00279 s | **0.00084 s** | 0.00122 s | 0.00026 s |
+| statedep 6 | 153 | 0.0110 s | 0.0108 s | **0.00525 s** | 0.00522 s | 0.00156 s |
+| statedep 20 | 1490 | 0.0913 s | 0.0921 s | **0.0902 s** | 0.0207 s | 0.0212 s |
+
+Two findings here matter more than the ratios:
+
+- **Julia's primal filter is at parity with the C++ one** — marginally *faster*
+  at 20 latents on both families. The whole engine-level gap is in the reverse
+  pass, and on the 20-latent state-dependent model even that closes to a dead
+  heat (0.0921 s against 0.0902 s). Any argument for preferring one engine over
+  the other on raw numerical speed is much weaker than the end-to-end table
+  suggests.
+- **The Julia backend's published timings were 50-80% JuliaConnectoR.**
+  `.ctJuliaNumericVector()` marshalled the parameter vector as an R *list*,
+  which JuliaConnectoR sends element by element: 0.0013 s at 23 parameters,
+  0.0073 s at 153 and **0.069 s at 1490**, against **0.0002 s, flat**, for the
+  same vector sent as a plain numeric. Both arrive as `Vector{Float64}`; only a
+  length-one vector needs the list form, since a bare length-one numeric arrives
+  as a scalar. That is a 344x difference on a function called once per objective
+  evaluation, i.e. in the optimizer's inner loop. Fixed in `R/ctJuliaBackend.R`
+  on this branch; `docs/src/adjoint-roadmap.md`'s claim that "the RPC floor is
+  0.00026 s, so it only matters in the first row" is corrected there.
 
 ### Per-model setup cost
 
@@ -229,7 +266,7 @@ changes. The C++ objective is built in milliseconds: parse each transform string
 into an AST once, copy the data, done. The Julia figures include JIT compilation
 and are dominated by it at 20 latents.
 
-### Where the time goes, and the one optimisation worth transplanting
+### Where the time goes, and what the comparison found in the other backend
 
 Profiling the reverse pass by tape-record kind at 20 latents put **66% of it in a
 single operation**: the matrix-exponential Fréchet derivative, which is an
@@ -256,10 +293,23 @@ between every pair of prediction substeps in an otherwise entirely linear model.
 A first attempt that flushed before every group therefore batched nothing at
 all, and looked like a 3% win.
 
-**The Julia adjoint has the same structure and the same missing optimisation**
-(`_reverse_predict!` in `adjoint_ekf.jl` calls `_ctsem_exp_frechet_adjoint` once
-per substep). Transplanting it should be worth a large fraction of the Julia
-adjoint's linear-model time, independently of anything decided about C++.
+**Transplanted to the Julia adjoint** — `_flush_frechet!` in `adjoint_ekf.jl` on
+`ctsem-backend`, which had the same structure and the same missing optimisation
+— it is worth **1.24x / 1.44x / 1.56x** engine-only on the linear models at
+n = 2 / 6 / 20, and nothing on the state-dependent ones, where the batch never
+forms exactly as designed. Smaller than C++'s 2.8x because the operation was a
+smaller share of Julia's reverse pass to begin with: Julia's `Base.exp` on a
+`2n x 2n` block is considerably faster than the equivalent under R's default
+compile flags, which is also why the C++ primal is *not* faster than Julia's
+despite being hand-tuned.
+
+Combined with the marshalling fix, the Julia adjoint's end-to-end time improved
+by **1.10x to 2.41x** across the six models, most of it at the large end where
+both the block exponential and the parameter-vector marshalling scale worst.
+
+Both improvements land on the *existing* backend regardless of whether the C++
+one is ever adopted, which is worth weighing below: a benchmark comparison is a
+debugging tool for the thing it is compared against, not only for the new thing.
 
 ### What is *not* claimed
 
@@ -285,13 +335,29 @@ adjoint's linear-model time, independently of anything decided about C++.
    above — and the hand-written adjoint is faster than the Stan backend at every
    size measured, not merely equal to it.
 3. *"A C++ engine cannot beat the Julia adjoint on nonlinear models."* It beats
-   it by 2.0x at 20 latents, 4.7x at 6, and 8.5x at 2.
+   it end-to-end by 1.3x at 20 latents, 3.5x at 6 and 7.7x at 2 — but see the
+   qualification below, because at 20 latents that margin is almost entirely
+   the R boundary rather than the engine.
 
-So the case is stronger than "the win is compile time". The compile-time win is
-real and large (three minutes per distinct nonlinear model, versus
-milliseconds), but it is not the only one: this is also the fastest per-gradient
-engine ctsem has, and it removes a language and an out-of-process dependency
-from the stack rather than adding one.
+So the case is stronger than "the win is compile time" — but **less strong than
+the first version of this document claimed**, and the correction is worth
+stating plainly rather than burying. The two changes made to the Julia backend
+in the course of this comparison (batching the block exponential, and fixing the
+parameter-vector marshalling) removed most of the C++ engine's apparent
+advantage on the largest state-dependent model: engine-to-engine there it is now
+0.0902 s against 0.0921 s, which is a tie. Julia's primal filter is already at
+parity, and slightly ahead at 20 latents.
+
+What survives, and what the decision should actually rest on:
+
+- **Compile time.** Three minutes per distinct state-dependent model for Stan,
+  against milliseconds. Unchanged and large.
+- **Deployment.** No Julia install, no `Pkg.add` from a pinned gitlab revision,
+  no out-of-process session, no multi-minute first-run precompilation, no second
+  repository to keep in lock-step. This is the argument that did not move.
+- **Speed.** Still fastest at every size measured, decisively so against Stan
+  and against Julia on small and medium models, but only marginally against the
+  Julia engine on the largest state-dependent one.
 
 ### The retirement criterion
 
@@ -310,15 +376,19 @@ A recommendation, for the user's decision rather than mine:
 > the only one that does HMC, priors, importance sampling and uncertainty
 > quantification, and none of that is in scope for either optimisation engine.
 
-The argument for retiring Julia rather than C++ is not that Julia is slow. It is
-that C++ is faster on the same models, ships inside the package, has no
-out-of-process session, no `Pkg.add` from a pinned gitlab revision, no
+The argument for retiring Julia rather than C++ is **not** that Julia is slow —
+after the two fixes above the engines are close, and on the largest
+state-dependent model they are level. It is that C++ ships inside the package,
+has no out-of-process session, no `Pkg.add` from a pinned gitlab revision, no
 multi-minute first-run precompilation and no separate repository to keep in
-sync — and that its reason for existing (a reverse-mode gradient whose cost is
-flat in the parameter count) is fully reproduced here.
+sync, and that Julia's reason for existing (a reverse-mode gradient whose cost
+is flat in the parameter count) is fully reproduced here.
 
-The argument *against* doing it soon is mileage: the Julia adjoint has been
-exercised on real fits and this has not. Nothing here needs deciding today.
+The arguments *against* doing it soon: mileage, since the Julia adjoint has been
+exercised on real fits and this has not; and the fact that the speed case just
+got weaker, which is a reason to decide on deployment grounds deliberately
+rather than on a benchmark that has now moved twice. Nothing here needs deciding
+today.
 
 ### What is missing relative to the Julia backend
 

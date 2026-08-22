@@ -151,9 +151,18 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 .ctJuliaNumericVector <- function(values) {
   values <- as.numeric(values)
   if (!length(values)) return(JuliaConnectoR::juliaEval("Float64[]"))
-  # JuliaConnectoR maps an R length-one numeric to a scalar.  A list keeps the
-  # intended vector shape for Julia functions that require AbstractVector.
-  JuliaConnectoR::juliaPut(as.list(values))
+  # JuliaConnectoR maps an R length-one numeric to a scalar, so a length-one
+  # vector has to go across as a list to arrive as an AbstractVector. Every
+  # other length must NOT: `juliaPut` marshals a plain numeric vector as a
+  # binary block and a list element by element, and both arrive as the same
+  # `Vector{Float64}`. Measured on this machine, marshalling the parameter
+  # vector of a 1490-parameter model took 0.069 s as a list against 0.0002 s
+  # as a vector -- 344x, and *half the total wall time of a gradient call*,
+  # which made every published Julia backend timing mostly JuliaConnectoR
+  # rather than Julia. This function is called once per objective evaluation,
+  # so it sits directly in the optimizer's inner loop.
+  if (length(values) == 1L) return(JuliaConnectoR::juliaPut(list(values)))
+  JuliaConnectoR::juliaPut(values)
 }
 
 .ctJuliaInitialValues <- function(npar, inits = NULL) {
