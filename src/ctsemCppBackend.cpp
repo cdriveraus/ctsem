@@ -98,6 +98,29 @@ List ctsemCppOptimize(SEXP handle, NumericVector start, int maxiter = 1000,
                       _["converged"] = result.converged);
 }
 
+// Per-subject gradient contributions: the score matrix the OPG, sandwich and
+// score-bootstrap uncertainty methods consume. Rows are subjects, columns are
+// free parameters, and the rows sum to the full gradient.
+// [[Rcpp::export(.ctsemCppSubjectGradients)]]
+List ctsemCppSubjectGradients(SEXP handle, NumericVector pars) {
+  ctsemcpp::CppObjective* objective = fromPtr(handle);
+  const int p = objective->nvalues();
+  if (pars.size() != p) {
+    stop("ctsem C++ backend: expected %d free parameters, got %d.", p,
+         static_cast<int>(pars.size()));
+  }
+  const int nsubject = static_cast<int>(objective->subjects.size());
+  std::vector<double> rowmajor(static_cast<std::size_t>(nsubject) * p);
+  const double value = objective->subjectGradients(pars.begin(), rowmajor.data());
+  NumericMatrix scores(nsubject, p);
+  for (int s = 0; s < nsubject; ++s) {
+    for (int j = 0; j < p; ++j) {
+      scores(s, j) = rowmajor[static_cast<std::size_t>(s) * p + j];
+    }
+  }
+  return List::create(_["value"] = value, _["scores"] = scores);
+}
+
 // Diagnostic: report the flat layout the engine derived from a parameter table,
 // so an R-side test can check the C++ and Julia views of a model agree without
 // evaluating anything.

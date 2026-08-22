@@ -133,6 +133,26 @@ inline std::unique_ptr<CppObjective> buildObjective(const Rcpp::List& spec) {
         ntipred > 0 ? objective->tipreds.data() + static_cast<std::size_t>(s) * ntipred : nullptr;
   }
 
+  // Optional prior specification: index/scale pairs over the raw parameter
+  // vector, decided on the R side (see .ctBackendPriorSpec).
+  if (spec.containsElementNamed("prior_index")) {
+    std::vector<int> index1 = asIntVector(spec["prior_index"]);
+    NumericVector scale = spec["prior_scale"];
+    if (static_cast<R_xlen_t>(index1.size()) != scale.size()) {
+      Rcpp::stop("ctsem C++ backend: prior_index and prior_scale must have equal length.");
+    }
+    for (std::size_t k = 0; k < index1.size(); ++k) {
+      if (index1[k] < 1 || index1[k] > objective->model.nvalues) {
+        Rcpp::stop("ctsem C++ backend: a prior index is outside the free parameter range.");
+      }
+      objective->priorIndex.push_back(index1[k] - 1);
+      objective->priorScale.push_back(scale[static_cast<R_xlen_t>(k)]);
+    }
+    if (spec.containsElementNamed("prior_weight")) {
+      objective->priorWeight = as<double>(spec["prior_weight"]);
+    }
+  }
+
   objective->prepare();
   return objective;
 }

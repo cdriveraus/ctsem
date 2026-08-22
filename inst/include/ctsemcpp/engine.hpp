@@ -36,7 +36,40 @@ struct CppObjective {
   AdjointWorkspace aws;
   AdjointTape tape;
 
+  // Prior specification, as index/scale pairs over the raw parameter vector.
+  // Deliberately data rather than logic: which raw parameter carries which
+  // prior is ctsem semantics the R side already knows, and all the engine has
+  // to do is evaluate a normal log-density and its derivative.
+  std::vector<int> priorIndex;      // 0-based
+  std::vector<double> priorScale;
+  double priorWeight = 1.0;
+
   int nvalues() const { return model.nvalues; }
+
+  // Matches the generated Stan model term for term: `normal_lpdf(x/scale|0,1)`,
+  // i.e. -x^2/(2 scale^2) - log(2pi)/2. The missing -log(scale) is missing in
+  // Stan too -- it takes the density of the scaled quantity -- and while that
+  // is a constant, dropping it here would leave this engine's log probability a
+  // constant away from Stan's, which the parity tests would report as a
+  // mismatch.
+  double logPrior(const double* values) const {
+    double total = 0.0;
+    for (std::size_t k = 0; k < priorIndex.size(); ++k) {
+      const double scaled = values[priorIndex[k]] / priorScale[k];
+      total += -0.5 * scaled * scaled - 0.5 * kLog2Pi;
+    }
+    return priorWeight * total;
+  }
+
+  void addLogPriorGradient(const double* values, double* gradient_out,
+                           double weight = 1.0) const {
+    const double scaled_weight = priorWeight * weight;
+    for (std::size_t k = 0; k < priorIndex.size(); ++k) {
+      const int idx = priorIndex[k];
+      const double scale = priorScale[k];
+      gradient_out[idx] -= scaled_weight * values[idx] / (scale * scale);
+    }
+  }
 
   void prepare() {
     fws.resize(model);
@@ -56,7 +89,7 @@ struct CppObjective {
       if (!std::isfinite(ll)) return std::nan("");
       total += ll;
     }
-    return total;
+    return total + logPrior(values);
   }
 
   // Returns the value; `gradient` is overwritten. An invalid trial point
@@ -94,6 +127,10 @@ struct CppObjective {
     if (shared && lastSubjectValues != nullptr) {
       parameterLayer(model, aws, *lastSubjectValues, lastTipreds, gradient_out);
     }
+    // The prior is a closed-form function of the raw parameters alone, so it is
+    // added once rather than per subject.
+    total += logPrior(values);
+    addLogPriorGradient(values, gradient_out);
 
     // The deferred matrix-exponential Frechet contribution, pushed through the
     // parameter layer in one extra pass. It only ever touches JAx cells, and
@@ -109,6 +146,53 @@ struct CppObjective {
       parameterLayer(model, aws, *lastSubjectValues, lastTipreds, gradient_out);
     }
     return total;
+  }
+
+  // Per-subject gradient contributions -- the score matrix `scorecalc()`
+  // produces for the Stan backend, and what the OPG, sandwich and
+  // score-bootstrap uncertainty methods consume. `scores` is nsubjects x
+  // nvalues, row-major.
+  //
+  // The summed gradient takes two shortcuts that have to be switched off for
+  // the rows to be individually correct: the shared parameter layer, which
+  // unwinds the transform layer once for all subjects, and the deferred
+  // Frechet contribution, which is batched across them. Both are flags.
+  double subjectGradients(const double* values, double* scores) {
+    const int p = model.nvalues;
+    const int nsubject = static_cast<int>(subjects.size());
+    std::fill(scores, scores + static_cast<std::size_t>(nsubject) * p, 0.0);
+    const bool defer = aws.deferFrechet;
+    aws.deferFrechet = false;
+    double total = 0.0;
+    for (int s = 0; s < nsubject; ++s) {
+      aws.frechetPending = false;
+      tape.reset();
+      const double ll = filterSubject(model, fws, values, subjects[s], &tape);
+      if (!std::isfinite(ll)) {
+        aws.deferFrechet = defer;
+        std::fill(scores, scores + static_cast<std::size_t>(nsubject) * p,
+                  std::nan(""));
+        return ll;
+      }
+      total += ll;
+      std::fill(aws.theta_bar.begin(), aws.theta_bar.end(), 0.0);
+      reverseTape(model, aws, tape);
+      parameterLayer(model, aws, tape.subject_values, subjects[s].tipreds,
+                     scores + static_cast<std::size_t>(s) * p);
+    }
+    aws.deferFrechet = defer;
+
+    // Each subject's row carries 1/nsubjects of the prior, matching what
+    // `scorecalc()` does on the Stan side (it sets priormod = 1/nsubjects
+    // before taking per-subject gradients). The rows then still sum to the
+    // full posterior gradient.
+    if (!priorIndex.empty() && nsubject > 0) {
+      const double share = 1.0 / nsubject;
+      for (int s = 0; s < nsubject; ++s) {
+        addLogPriorGradient(values, scores + static_cast<std::size_t>(s) * p, share);
+      }
+    }
+    return total + logPrior(values);
   }
 };
 
