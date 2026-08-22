@@ -8,6 +8,7 @@ ctJuliaSetup(
   project = NULL,
   revision = "locked",
   julia_bin = NULL,
+  threads = NULL,
   force = FALSE
 )
 }
@@ -19,6 +20,12 @@ the vendored copy, for engine development.}
 revision is whatever is vendored, and is reported by \code{ctJuliaStatus()}.}
 
 \item{julia_bin}{Optional Julia binary directory.}
+
+\item{threads}{Number of Julia threads. The engine splits its subject loop
+across them. Julia fixes its thread count at process start, so this only
+takes effect if no Julia session is running yet -- pass \code{force = TRUE}
+to restart one. \code{NULL} leaves it to Julia's own default (one thread
+unless \code{JULIA_NUM_THREADS} is already set).}
 
 \item{force}{Reconfigure an existing Julia session.}
 }

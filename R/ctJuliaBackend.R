@@ -91,6 +91,13 @@
     fixed = TRUE)
 }
 
+# Whether a Julia session already exists. JuliaConnectoR starts one lazily on
+# the first call, so "has anything talked to Julia yet" is the question.
+.ctJuliaSessionRunning <- function() {
+  !is.null(.ct_julia_cache$module) ||
+    isTRUE(tryCatch(JuliaConnectoR::juliaEval("true"), error = function(e) FALSE))
+}
+
 .ctJuliaCheckAvailable <- function() {
   ok <- tryCatch(JuliaConnectoR::juliaSetupOk(), error = function(e) FALSE)
   if (isTRUE(ok)) return(invisible(TRUE))
@@ -116,15 +123,37 @@
 #' @param revision Ignored; retained for backward compatibility. The engine
 #'   revision is whatever is vendored, and is reported by \code{ctJuliaStatus()}.
 #' @param julia_bin Optional Julia binary directory.
+#' @param threads Number of Julia threads. The engine splits its subject loop
+#'   across them. Julia fixes its thread count at process start, so this only
+#'   takes effect if no Julia session is running yet -- pass \code{force = TRUE}
+#'   to restart one. \code{NULL} leaves it to Julia's own default (one thread
+#'   unless \code{JULIA_NUM_THREADS} is already set).
 #' @param force Reconfigure an existing Julia session.
 #' @return A Julia-engine status list, invisibly.
 #' @export
 ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
-  force = FALSE) {
+  threads = NULL, force = FALSE) {
   .ctJuliaRequire()
   if (isTRUE(force)) .ctJuliaClearSession()
   julia_bin <- .ctJuliaBin(julia_bin)
   if (!is.null(julia_bin)) Sys.setenv(JULIA_BINDIR = julia_bin)
+  if (!is.null(threads)) {
+    threads <- max(1L, as.integer(threads)[1L])
+    # Julia fixes Threads.nthreads() at process start and JuliaConnectoR's
+    # subprocess inherits this environment, so it has to be set before the
+    # session exists. Warning rather than silently doing nothing matters here:
+    # a user asking for 8 threads and getting 1 would otherwise just see a
+    # disappointing benchmark.
+    if (.ctJuliaSessionRunning()) {
+      if (!identical(Sys.getenv("JULIA_NUM_THREADS", unset = ""), as.character(threads))) {
+        warning("A Julia session is already running, so threads=", threads,
+          " has no effect. Use ctJuliaSetup(threads=", threads,
+          ", force=TRUE) to restart it.", call. = FALSE)
+      }
+    } else {
+      Sys.setenv(JULIA_NUM_THREADS = as.character(threads))
+    }
+  }
   .ctJuliaCheckAvailable()
   lock <- .ctJuliaEngineLock()
 
@@ -182,9 +211,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     TRUE
   }, error = function(e) FALSE)
   lock <- .ctJuliaEngineLock()
+  threads <- if (available) {
+    tryCatch(as.integer(JuliaConnectoR::juliaEval("Threads.nthreads()")),
+      error = function(e) NA_integer_)
+  } else NA_integer_
   list(available = available, project = .ctJuliaOr(project, .ct_julia_cache$project),
     revision = .ctJuliaOr(.ct_julia_cache$revision, lock$revision),
-    lock = lock)
+    threads = threads, lock = lock)
 }
 
 .ctJuliaModule <- function(project = NULL) {
@@ -827,6 +860,16 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
   backendcontrol = list(), optimcontrol = list(), verbose = 0L, fit = TRUE) {
   if (isTRUE(backendcontrol$restart_session)) .ctJuliaClearSession()
   project <- .ctJuliaOr(backendcontrol$julia_project, NULL)
+  # `cores` splits the engine's subject loop. It is requested as a Julia thread
+  # count before the session starts (which is the only time that can be set),
+  # and capped per fit afterwards, so a session started with more threads is not
+  # forced to use them all.
+  cores <- max(1L, suppressWarnings(as.integer(cores)[1L]))
+  if (is.na(cores)) cores <- 1L
+  if (cores > 1L && !.ctJuliaSessionRunning() &&
+      !nzchar(Sys.getenv("JULIA_NUM_THREADS", unset = ""))) {
+    Sys.setenv(JULIA_NUM_THREADS = as.character(cores))
+  }
   # `optimcontrol$gradient` is the documented control; `backendcontrol$gradient`
   # is still honoured because it was the only way to set this before, and
   # silently ignoring it would change results for anyone already passing it.
@@ -854,6 +897,9 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
   npar <- max(c(model_spec$parameter_table$parnumber, model_spec$ti_effects$coefficient), na.rm = TRUE)
   start <- .ctJuliaInitialValues(npar, inits)
   module <- .ctJuliaModule(project)
+  # Called by name rather than through the imported module: the Julia function
+  # ends in `!`, which is not a syntactic R name.
+  JuliaConnectoR::juliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!", cores)
   result <- JuliaConnectoR::juliaGet(module$ctsem_optimize(objective, .ctJuliaNumericVector(start),
     maxiter = as.integer(.ctJuliaOr(backendcontrol$maxiter, 1000L)),
     g_tol = .ctJuliaOr(backendcontrol$g_tol, 1e-8),

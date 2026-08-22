@@ -224,10 +224,68 @@ path does and what `ctsem_optimize`'s `fg!` guards expect. There is deliberately
 no silent fallback to ForwardDiff.
 """
 function ctsem_adjoint_gradient(objective::CTSEMObjective, values::AbstractVector{T}) where {T}
-    aws = _get_or_init_adjoint_workspace!(objective, T, length(values))
-    gradient = zeros(T, length(values))
+    subjects = objective.subject_objectives
+    nsubjects = length(subjects)
+    nchunks = _ctsem_nchunks(nsubjects)
+    workspaces = _get_or_init_adjoint_workspaces!(objective, T, length(values), nchunks)
+    ranges = _ctsem_chunk_ranges(nsubjects, nchunks)
+
+    # Per-chunk accumulators, summed at the end. Each chunk is independently a
+    # valid sub-objective: the parameter layer and the deferred Frechet
+    # contribution are both unwound within the chunk that produced them, so
+    # summing chunk gradients is exactly summing subject gradients, only in a
+    # different order.
+    gradients = [zeros(T, length(values)) for _ in 1:nchunks]
+    totals = zeros(T, nchunks)
+    valid = fill(true, nchunks)
+    badvalue = fill(T(NaN), nchunks)
+
+    if nchunks <= 1
+        _ctsem_adjoint_chunk!(gradients[1], totals, valid, badvalue, 1,
+            ranges[1], subjects, objective.params, workspaces[1], values)
+    else
+        Threads.@sync for c in 1:nchunks
+            Threads.@spawn _ctsem_adjoint_chunk!(gradients[c], totals, valid,
+                badvalue, c, ranges[c], subjects, objective.params,
+                workspaces[c], values)
+        end
+    end
+
+    @inbounds for c in 1:nchunks
+        if !valid[c]
+            # One invalid subject invalidates the whole evaluation, exactly as
+            # in the serial path: a non-finite value *and* a non-finite
+            # gradient, so an optimizer's finiteness guards reject the trial
+            # point rather than accepting a partial gradient.
+            return (value=badvalue[c], gradient=fill(T(NaN), length(values)))
+        end
+    end
+
     total = zero(T)
-    invalid = fill(T(NaN), length(values))
+    gradient = gradients[1]
+    @inbounds for c in 1:nchunks
+        total += totals[c]
+        if c > 1
+            gradient .+= gradients[c]
+        end
+    end
+    return (value=total, gradient=gradient)
+end
+
+"""
+    _ctsem_adjoint_chunk!(gradient, totals, valid, badvalue, c, range, subjects,
+                          params, aws, values)
+
+Accumulate one contiguous chunk of subjects into its own gradient and workspace.
+
+This is the serial adjoint loop, scoped to `range`. Everything it touches --
+`aws` and its tape, `gradient`, and slot `c` of the shared result vectors -- is
+private to this chunk, so no synchronisation is needed beyond the enclosing
+`@sync`.
+"""
+function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
+    valid::Vector{Bool}, badvalue::Vector{T}, c::Int, range::UnitRange{Int},
+    subjects, params, aws, values::AbstractVector{T}) where {T}
 
     shared = aws.parameter_layer_shareable
     shared && fill!(aws.theta_bar, zero(T))
@@ -237,8 +295,10 @@ function ctsem_adjoint_gradient(objective::CTSEMObjective, values::AbstractVecto
     fill!(aws.jax_bar_deferred, zero(T))
     last_subject_values = nothing
     last_tipreds = nothing
+    total = zero(T)
 
-    for subject_objective in objective.subject_objectives
+    @inbounds for i in range
+        subject_objective = subjects[i]
         ws = _get_or_init_objective_workspace!(subject_objective, T)
         tape = _tape_reset!(aws.tape)
         resize!(aws.tipreds, length(subject_objective.tipreds))
@@ -249,7 +309,11 @@ function ctsem_adjoint_gradient(objective::CTSEMObjective, values::AbstractVecto
             subject_objective.params, subject_objective.tdpreds,
             subject_objective.tipreds, subject_objective.subject,
             subject_objective.max_timestep, tape)
-        isfinite(loglik) || return (value=loglik, gradient=invalid)
+        if !isfinite(loglik)
+            valid[c] = false
+            badvalue[c] = loglik
+            return nothing
+        end
         total += loglik
 
         shared || fill!(aws.theta_bar, zero(T))
@@ -266,17 +330,17 @@ function ctsem_adjoint_gradient(objective::CTSEMObjective, values::AbstractVecto
     end
 
     if shared && last_subject_values !== nothing
-        # Every subject shares one parameter layer; unwind it once.
+        # Every subject in this chunk shares one parameter layer; unwind once.
         _ctsem_parameter_layer!(gradient, aws.theta_bar, last_subject_values,
-            objective.params, aws, last_tipreds)
+            params, aws, last_tipreds)
     end
 
     # The deferred matrix-exponential Frechet contribution (see
     # `_flush_frechet!`), pushed through the parameter layer in one extra pass.
     # It only ever touches JAx cells, and `defer_frechet` guarantees every
     # subject shares the same parameter layer for those, so one pass covers all
-    # of them. `jax_positions` lists the JAx component's flat positions in the
-    # same column-major order the matrix is stored in.
+    # of this chunk's subjects. `jax_positions` lists the JAx component's flat
+    # positions in the same column-major order the matrix is stored in.
     if aws.defer_frechet && last_subject_values !== nothing
         _flush_frechet!(aws)
         fill!(aws.theta_bar, zero(T))
@@ -284,21 +348,29 @@ function ctsem_adjoint_gradient(objective::CTSEMObjective, values::AbstractVecto
             aws.theta_bar[aws.jax_positions[k]] = aws.jax_bar_deferred[k]
         end
         _ctsem_parameter_layer!(gradient, aws.theta_bar, last_subject_values,
-            objective.params, aws, last_tipreds)
+            params, aws, last_tipreds)
     end
-    return (value=total, gradient=gradient)
+
+    totals[c] = total
+    return nothing
 end
 
 """Return a cached adjoint workspace for `objective`, building it on first use."""
-function _get_or_init_adjoint_workspace!(objective::CTSEMObjective, ::Type{T},
-    nvalues::Integer) where {T}
+function _get_or_init_adjoint_workspaces!(objective::CTSEMObjective, ::Type{T},
+    nvalues::Integer, nchunks::Integer) where {T}
     cached = objective.adjoint_ws
-    if cached isa CTSEMAdjointWorkspace{T} && length(cached.regular_dual_scratch) == nvalues
+    if cached isa Vector{Any} && length(cached) >= nchunks &&
+        all(w -> w isa CTSEMAdjointWorkspace{T} &&
+            length(w.regular_dual_scratch) == nvalues, view(cached, 1:nchunks))
         return cached
     end
     ntdpred = isempty(objective.subject_objectives) ? 0 :
         size(first(objective.subject_objectives).tdpreds, 1)
-    built = CTSEMAdjointWorkspace(T, objective.params, nvalues, ntdpred)
+    # One workspace per chunk, owned by that chunk's task. Not indexed by
+    # `threadid()`: a task can migrate between threads at any yield point, so
+    # thread-indexed mutable scratch is a race rather than an optimisation.
+    built = Any[CTSEMAdjointWorkspace(T, objective.params, nvalues, ntdpred)
+                for _ in 1:nchunks]
     objective.adjoint_ws = built
     return built
 end

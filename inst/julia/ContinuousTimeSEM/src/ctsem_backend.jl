@@ -82,15 +82,95 @@ ctsem_objective(params::EKFParameters, subject_starts, timesteps, data,
     tipred_data=zeros(eltype(data), length(subject_starts), 0), max_timestep::Real=Inf) =
     CTSEMObjective(params, subject_starts, timesteps, data, tdpred_data, tipred_data, max_timestep)
 
-function (objective::CTSEMObjective)(values::AbstractVector)
-    total = zero(eltype(values))
-    # Deliberately serial for now: each subject objective owns mutable primal and
-    # dual workspaces. Parallel reduction is added only with isolated worker
-    # workspaces, rather than sharing these caches across threads.
-    @inbounds for subject_objective in objective.subject_objectives
-        total += subject_objective(values)
+################################################################################
+# Threading
+################################################################################
+#
+# The subject loop is the only parallelism here, and it is the natural one: the
+# log-likelihood is a sum over subjects, each subject's `ContinuousEKFObjective`
+# already owns its own primal and dual workspaces, and nothing is shared between
+# them but the read-only `EKFParameters`.
+#
+# Work is split into contiguous *chunks* handed to `Threads.@spawn`, with each
+# chunk owning the workspace it uses, rather than indexing workspaces by
+# `threadid()`. That distinction matters: a task can migrate between threads at
+# any yield point, so `threadid()` is not stable for the duration of a task and
+# indexing mutable scratch by it is a data race waiting to happen.
+#
+# Threading changes the summation order, so a threaded result differs from a
+# serial one at the last bits. `test_threading.jl` asserts agreement to 1e-12
+# rather than bitwise, which is the correct gate for a floating-point reduction.
+
+"""Cap on the number of chunks; 0 means "use `Threads.nthreads()`"."""
+const _CTSEM_MAX_CHUNKS = Ref(0)
+
+export ctsem_set_max_chunks!, ctsem_max_chunks
+"""
+    ctsem_set_max_chunks!(n)
+
+Limit how many chunks the subject loop is split into. `0` (the default) means
+use `Threads.nthreads()`, i.e. whatever the Julia process was started with.
+Setting `1` forces the serial path, which is what the threading tests compare
+against; the process-level thread count cannot be changed after startup.
+"""
+function ctsem_set_max_chunks!(n::Integer)
+    n >= 0 || throw(ArgumentError("max chunks must be non-negative"))
+    _CTSEM_MAX_CHUNKS[] = Int(n)
+    return Int(n)
+end
+
+"""Current chunk cap, and the thread count it is resolved against."""
+ctsem_max_chunks() = (max_chunks=_CTSEM_MAX_CHUNKS[], nthreads=Threads.nthreads())
+
+@inline function _ctsem_nchunks(nsubjects::Int)
+    requested = _CTSEM_MAX_CHUNKS[]
+    available = requested == 0 ? Threads.nthreads() : min(requested, Threads.nthreads())
+    return max(1, min(available, nsubjects))
+end
+
+"""Contiguous, near-equal partition of `1:n` into `nchunks` ranges."""
+function _ctsem_chunk_ranges(n::Int, nchunks::Int)
+    nchunks = max(1, min(nchunks, n))
+    base, extra = divrem(n, nchunks)
+    ranges = Vector{UnitRange{Int}}(undef, nchunks)
+    start = 1
+    @inbounds for c in 1:nchunks
+        len = base + (c <= extra ? 1 : 0)
+        ranges[c] = start:(start + len - 1)
+        start += len
     end
-    total
+    return ranges
+end
+
+function (objective::CTSEMObjective)(values::AbstractVector)
+    subjects = objective.subject_objectives
+    nsubjects = length(subjects)
+    T = eltype(values)
+    nchunks = _ctsem_nchunks(nsubjects)
+    if nchunks <= 1
+        total = zero(T)
+        @inbounds for subject_objective in subjects
+            total += subject_objective(values)
+        end
+        return total
+    end
+
+    ranges = _ctsem_chunk_ranges(nsubjects, nchunks)
+    partials = Vector{T}(undef, nchunks)
+    Threads.@sync for c in 1:nchunks
+        Threads.@spawn begin
+            accumulator = zero(T)
+            @inbounds for i in ranges[c]
+                accumulator += subjects[i](values)
+            end
+            partials[c] = accumulator
+        end
+    end
+    total = zero(T)
+    @inbounds for c in 1:nchunks
+        total += partials[c]
+    end
+    return total
 end
 
 """
