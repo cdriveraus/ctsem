@@ -435,6 +435,103 @@ result. Worth a look on the Julia side.
 
 ---
 
+---
+
+## The Julia backend's deployment, and what was done about it
+
+Since the speed comparison levelled out, deployment was the only remaining
+argument for the C++ engine. That made it worth measuring rather than asserting.
+
+**What was actually wrong, verified rather than inferred:**
+
+- **`backend='julia'` could not be installed by anyone outside one GitLab
+  project.** `inst/julia/engine.json` pointed `ctJuliaSetup()` at
+  `https://gitlab.uzh.ch/psyquantimet/continuoustimesem.git`, and an
+  unauthenticated `git ls-remote` on it returns *HTTP Basic: Access denied*. It
+  worked locally only because of an access token beside the checkout. This is
+  not friction, it is a wall — and invisible from inside the group, which is
+  why nothing caught it.
+- **`revision` was a branch name**, so the "lock file" locked nothing.
+- **The engine lived only in a second repository** that had to stay in lock-step
+  with `R/ctJuliaBackend.R`'s parameter-table contract by hand.
+- **111-package dependency closure, 268 MB in a fresh depot, ~73 s of install,
+  and 8.7 s for `using ContinuousTimeSEM` in every R session.** Most of it was
+  DataFrames, used only as a row container in the R interface, plus four
+  dependencies with no call sites at all that were loaded because the module
+  opened with `@reexport using` over all of them.
+
+**What changed** (in `ctsem` on `cppBackend`, and in `ContinuousTimeSEM` on
+`ctsem-backend`):
+
+| | before | after |
+|---|---|---|
+| install source | `Pkg.add` from a private URL | vendored in `inst/julia/` |
+| credentials / network at setup | required | none |
+| pinned to | a branch | the exact commit, plus a vendored `Manifest.toml` |
+| dependency closure | 111 packages | **67** |
+| fresh depot | 268 MB | **124 MB** |
+| dependency install | ~73 s | **~20 s** |
+| `using ContinuousTimeSEM` | 8.7 s **per R session** | **3.86 s** |
+| cold `ctJuliaSetup()` | network + auth + resolve | **10.7 s, offline** |
+
+`ctJuliaSetup()` now copies the vendored package into a writable,
+revision-keyed project under `R_user_dir("ctsem", "cache")` and instantiates it
+there — activating it in place would fail on a read-only R library. If the
+vendored manifest is unsatisfiable on the user's Julia version it falls back to
+a fresh resolve rather than refusing to run. `tools/sync-julia-engine.sh`
+refreshes the copy, refuses to run against a dirty tree, and records the source
+commit in `engine.json`, which is now provenance rather than an install spec.
+
+`ekf_from_columns` replaced `ekf_from_data_frame`, taking the parameter table as
+plain column vectors with sentinels (`0`, `NaN`, `""`) instead of `missing`.
+DataFrames stays as a *test-only* dependency, because a `DataFrame` literal is
+still the clearest way to write a small table in a test; `test/table_helpers.jl`
+adapts. The Julia suite passes 237/237 unchanged, and the twelve-scenario
+C++/Julia comparison still agrees to ~1e-15.
+
+Two smaller things the work surfaced, both now fixed: `.ctJuliaString` did not
+escape backslashes, so a Windows path in a Julia string literal failed to parse
+as "invalid unicode escape" and said nothing about the real problem; and
+JuliaConnectoR *hangs* marshalling an empty vector, so the optional table
+columns are Julia keyword arguments passed only when they have entries.
+
+### Spinning the engine out as a standalone Julia package
+
+The vendored tree is laid out exactly as a **root-level Julia package** —
+`Project.toml`, `Manifest.toml`, `src/`, `test/`, and nothing else. That is
+deliberate, and it is what makes each of these possible without rearranging
+anything:
+
+- **Work on it in place.** `inst/julia/ContinuousTimeSEM/` is a complete
+  package: `julia --project=inst/julia/ContinuousTimeSEM -e 'using Pkg;
+  Pkg.test()'` runs the whole Julia suite against the vendored copy.
+- **Work on it as its own repository.** `ctJuliaSetup(project = "<checkout>")`
+  still points ctsem at a development checkout instead of the vendored copy,
+  which is how the engine has been developed throughout.
+- **Register it as a Julia package.** A root-level package with a UUID and
+  compat bounds is exactly what the General registry wants, so a pure-Julia
+  user could eventually `Pkg.add("ContinuousTimeSEM")` with no R involved.
+
+The one structural step still outstanding is upstream, not here: the
+`ContinuousTimeSEM` repository keeps the package in a `ContinuousTimeSEM/`
+subdirectory alongside unrelated scratch files. Move it to the repository root
+and `tools/sync-julia-engine.sh` can be deleted in favour of
+
+```
+git subtree pull --prefix=inst/julia/ContinuousTimeSEM <remote> <branch> --squash
+git subtree push --prefix=inst/julia/ContinuousTimeSEM <remote> <branch>
+```
+
+which makes the relationship two-way: edits made in ctsem can be pushed back
+upstream, and upstream edits pulled in, with real history on both sides.
+
+A **submodule** would be the wrong tool here, and it is worth saying why since
+it is the more obvious reach. Submodule contents are not part of the parent
+repository's tree and are not included in an R package tarball, so a released
+ctsem would ship an empty directory and users would be back to needing network
+access and credentials — the exact problem being fixed. Subtree vendors the
+content while keeping the two-way link; submodule vendors only a pointer.
+
 ## Appendix: reproducing the benchmark
 
 Requires `rstan`, `JuliaConnectoR` and a local ContinuousTimeSEM checkout for
