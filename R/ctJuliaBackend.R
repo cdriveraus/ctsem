@@ -13,6 +13,11 @@
       grepl("\r", value, fixed = TRUE) || grepl("\n", value, fixed = TRUE)) {
     stop("Julia string literal must be one non-empty-line value.", call. = FALSE)
   }
+  # Backslashes must be escaped, not merely tolerated: a Windows path pasted
+  # into a Julia string literal otherwise becomes an escape sequence, and
+  # a path like ...\Users\... fails to parse as "invalid unicode escape"
+  # rather than as anything that points at the real problem.
+  value <- gsub("\\", "\\\\", value, fixed = TRUE)
   paste0('"', value, '"')
 }
 
@@ -50,7 +55,10 @@
     stop("ctsem Julia engine lock file is unavailable; reinstall ctsem.", call. = FALSE)
   }
   json <- paste(readLines(path, warn = FALSE), collapse = "\n")
-  fields <- c("url", "revision", "subdir", "julia")
+  # Provenance for the vendored engine in inst/julia/, not an install spec: the
+  # url/branch/revision say which upstream commit the vendored copy was taken
+  # from, so the two can be compared. tools/sync-julia-engine.sh writes it.
+  fields <- c("url", "branch", "revision", "subdir", "julia")
   out <- lapply(fields, function(field) {
     hit <- regmatches(json, regexec(paste0('"', field, '"\\s*:\\s*"([^"]+)"'), json))[[1]]
     if (length(hit) < 2L) stop("Malformed ctsem Julia engine lock file.", call. = FALSE)
@@ -60,12 +68,53 @@
   out
 }
 
+# Path to the copy of ContinuousTimeSEM.jl shipped inside this ctsem install.
+.ctJuliaEnginePath <- function() {
+  path <- system.file("julia", "ContinuousTimeSEM", package = "ctsem")
+  if (!nzchar(path) || !file.exists(file.path(path, "Project.toml"))) {
+    stop("The Julia engine is missing from this ctsem installation; reinstall ctsem.", call. = FALSE)
+  }
+  normalizePath(path, winslash = "/", mustWork = TRUE)
+}
+
+# A writable project directory for the engine, keyed by the vendored revision so
+# a ctsem upgrade gets a fresh environment instead of reusing a stale manifest.
+#
+# The vendored tree is *copied* here rather than activated in place: activating a
+# project writes to its Manifest.toml, and an R library directory is frequently
+# read-only. The copy is under 400 KB.
+.ctJuliaEnvDir <- function(lock) {
+  base <- tools::R_user_dir("ctsem", which = "cache")
+  # Forward slashes throughout: this path is used by R and also embedded in
+  # Julia source, and Julia accepts them on every platform.
+  gsub("\\", "/", file.path(base, "julia", paste0("engine-", substr(lock$revision, 1, 12))),
+    fixed = TRUE)
+}
+
+.ctJuliaCheckAvailable <- function() {
+  ok <- tryCatch(JuliaConnectoR::juliaSetupOk(), error = function(e) FALSE)
+  if (isTRUE(ok)) return(invisible(TRUE))
+  stop("Julia was not found. backend='julia' needs a Julia installation (1.10 or newer).\n",
+    "  Install it from https://julialang.org/downloads/ (or `juliaup add release`), then either\n",
+    "  put the Julia binary directory on PATH or set JULIA_BINDIR, e.g.\n",
+    "    Sys.setenv(JULIA_BINDIR = \"/path/to/julia/bin\")\n",
+    "  and call ctJuliaSetup() again. backend='cpp' and backend='stan' need no external toolchain.",
+    call. = FALSE)
+}
+
 #' Configure the Julia engine used by ctsem
 #'
-#' Installs or instantiates the version of ContinuousTimeSEM.jl pinned by this
-#' ctsem source tree. This is explicit: ctFit never downloads Julia packages.
-#' @param project Optional local ContinuousTimeSEM.jl project for development.
-#' @param revision Engine revision, normally \code{"locked"}.
+#' Prepares the copy of ContinuousTimeSEM.jl that ships inside this ctsem
+#' installation. No network access and no repository credentials are involved:
+#' the engine source is vendored in \code{inst/julia/}, and this only creates a
+#' Julia project for it and instantiates its dependencies.
+#'
+#' The first call downloads and precompiles those dependencies (roughly 120 MB
+#' and a minute or two); later calls in new sessions reuse them.
+#' @param project Optional local ContinuousTimeSEM.jl checkout to use instead of
+#'   the vendored copy, for engine development.
+#' @param revision Ignored; retained for backward compatibility. The engine
+#'   revision is whatever is vendored, and is reported by \code{ctJuliaStatus()}.
 #' @param julia_bin Optional Julia binary directory.
 #' @param force Reconfigure an existing Julia session.
 #' @return A Julia-engine status list, invisibly.
@@ -76,24 +125,46 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
   if (isTRUE(force)) .ctJuliaClearSession()
   julia_bin <- .ctJuliaBin(julia_bin)
   if (!is.null(julia_bin)) Sys.setenv(JULIA_BINDIR = julia_bin)
+  .ctJuliaCheckAvailable()
   lock <- .ctJuliaEngineLock()
-  if (!is.null(project)) project <- normalizePath(project, winslash = "/", mustWork = TRUE)
-  if (identical(revision, "locked")) revision <- lock$revision
 
-  # JuliaConnectoR discovers Julia from JULIA_BINDIR/PATH. Its setup is
-  # intentionally left to the user rather than triggering a download here.
-  JuliaConnectoR::juliaEval("using Pkg")
   if (!is.null(project)) {
-    cmd <- sprintf("Pkg.activate(%s); Pkg.resolve(); Pkg.instantiate()", .ctJuliaString(project))
+    # Developer override: use the checkout as its own project, in place.
+    project <- normalizePath(project, winslash = "/", mustWork = TRUE)
+    env_dir <- project
   } else {
-    spec <- sprintf("Pkg.PackageSpec(url=%s, rev=%s, subdir=%s)",
-      .ctJuliaString(lock$url), .ctJuliaString(revision), .ctJuliaString(lock$subdir))
-    cmd <- sprintf("Pkg.add(%s); Pkg.resolve(); Pkg.instantiate()", spec)
+    env_dir <- .ctJuliaEnvDir(lock)
+    if (!file.exists(file.path(env_dir, "Project.toml"))) {
+      dir.create(dirname(env_dir), recursive = TRUE, showWarnings = FALSE)
+      unlink(env_dir, recursive = TRUE)
+      # copy the vendored tree, then rename to the target so an interrupted
+      # copy cannot leave a half-populated environment behind
+      staging <- paste0(env_dir, "-partial")
+      unlink(staging, recursive = TRUE)
+      dir.create(staging, recursive = TRUE, showWarnings = FALSE)
+      file.copy(list.files(.ctJuliaEnginePath(), full.names = TRUE), staging,
+        recursive = TRUE)
+      file.rename(staging, env_dir)
+    }
   }
-  JuliaConnectoR::juliaEval(cmd)
+
+  JuliaConnectoR::juliaEval("using Pkg")
+  activate <- sprintf("Pkg.activate(%s)", .ctJuliaString(env_dir))
+  instantiated <- tryCatch({
+    JuliaConnectoR::juliaEval(paste0(activate, "; Pkg.instantiate()"))
+    TRUE
+  }, error = function(e) FALSE)
+  if (!instantiated) {
+    # The vendored manifest pins the versions this ctsem release was tested
+    # against, but it can be unsatisfiable on a different Julia version. Falling
+    # back to a fresh resolve is better than refusing to run; the compat bounds
+    # in Project.toml still apply.
+    unlink(file.path(env_dir, "Manifest.toml"))
+    JuliaConnectoR::juliaEval(paste0(activate, "; Pkg.resolve(); Pkg.instantiate()"))
+  }
   JuliaConnectoR::juliaEval("using ContinuousTimeSEM")
   .ct_julia_cache$project <- project
-  .ct_julia_cache$revision <- revision
+  .ct_julia_cache$revision <- lock$revision
   .ct_julia_cache$module <- JuliaConnectoR::juliaImport("ContinuousTimeSEM")
   invisible(ctJuliaStatus())
 }
@@ -161,6 +232,27 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # which made every published Julia backend timing mostly JuliaConnectoR
   # rather than Julia. This function is called once per objective evaluation,
   # so it sits directly in the optimizer's inner loop.
+  if (length(values) == 1L) return(JuliaConnectoR::juliaPut(list(values)))
+  JuliaConnectoR::juliaPut(values)
+}
+
+# Replace NA with the sentinel the engine's column API expects. Done here rather
+# than in Julia so every column arrives concretely typed, with no
+# `Union{Missing,T}` in the model constructor.
+.ctJuliaNoNA <- function(values, sentinel) {
+  values[is.na(values)] <- sentinel
+  values
+}
+
+# Marshal an atomic vector, preserving vector-ness. JuliaConnectoR maps a
+# length-one R vector to a Julia scalar, so that case has to go across as a
+# list; every other length must not, because a list is marshalled element by
+# element (see .ctJuliaNumericVector).
+.ctJuliaVector <- function(values) {
+  if (!length(values)) {
+    stop("Internal error: an empty vector cannot be marshalled to Julia; ",
+      "omit the argument instead.", call. = FALSE)
+  }
   if (length(values) == 1L) return(JuliaConnectoR::juliaPut(list(values)))
   JuliaConnectoR::juliaPut(values)
 }
@@ -644,12 +736,39 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     return(get(key, envir = .ct_julia_cache$objectives, inherits = FALSE))
   }
   module <- .ctJuliaModule(spec$project)
-  # DataFrames is a dependency of ContinuousTimeSEM, not necessarily of
-  # Julia's active global environment. Construct through the engine module.
-  df <- module$DataFrame(spec$parameter_table)
-  effects <- module$DataFrame(spec$ti_effects)
-  params <- module$ekf_from_data_frame(df, effects,
-    .ctJuliaNumericVector(spec$dynamic_state_indices))
+  # Plain column vectors, not a DataFrame. The engine dropped DataFrames as a
+  # dependency (it was its most expensive one and was used only as a row
+  # container here), so absent entries arrive as sentinels -- 0 for parnumber,
+  # NaN for value, "" for a transform -- rather than as NA/missing. This also
+  # removes two RPC round trips per objective build.
+  table <- as.data.frame(spec$parameter_table, stringsAsFactors = FALSE)
+  effects <- spec$ti_effects
+  if (is.null(effects) || !nrow(effects)) {
+    effects <- data.frame(parameter = integer(), predictor = integer(), coefficient = integer())
+  }
+  # The optional columns are Julia keyword arguments and are passed only when
+  # they have entries: JuliaConnectoR hangs marshalling an empty vector, so a
+  # model with no TI predictors must not send one at all.
+  arguments <- list(
+    .ctJuliaVector(as.character(table$matrix)),
+    .ctJuliaVector(as.integer(table$row)),
+    .ctJuliaVector(as.integer(table$col)),
+    .ctJuliaVector(.ctJuliaNoNA(as.integer(table$parnumber), 0L)),
+    .ctJuliaVector(.ctJuliaNoNA(as.numeric(table$value), NaN)),
+    .ctJuliaVector(.ctJuliaNoNA(as.character(table$transform), "")),
+    .ctJuliaVector(.ctJuliaNoNA(as.character(table$predicttransform), "")),
+    .ctJuliaVector(.ctJuliaNoNA(as.character(table$updatetransform), "")),
+    .ctJuliaVector(.ctJuliaNoNA(as.character(table$tdtransform), "")))
+  if (nrow(effects)) {
+    arguments$ti_parameter <- .ctJuliaVector(as.integer(effects$parameter))
+    arguments$ti_predictor <- .ctJuliaVector(as.integer(effects$predictor))
+    arguments$ti_coefficient <- .ctJuliaVector(as.integer(effects$coefficient))
+  }
+  if (length(spec$dynamic_state_indices)) {
+    arguments$diffusion_state_indices <-
+      .ctJuliaVector(as.integer(spec$dynamic_state_indices))
+  }
+  params <- do.call(module$ekf_from_columns, arguments)
   objective <- module$ctsem_objective(params, JuliaConnectoR::juliaPut(spec$subject_starts),
     JuliaConnectoR::juliaPut(spec$times), JuliaConnectoR::juliaPut(spec$manifest_data),
     JuliaConnectoR::juliaPut(spec$tdpred_data), JuliaConnectoR::juliaPut(spec$tipred_data),

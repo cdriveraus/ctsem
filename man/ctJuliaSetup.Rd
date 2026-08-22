@@ -12,9 +12,11 @@ ctJuliaSetup(
 )
 }
 \arguments{
-\item{project}{Optional local ContinuousTimeSEM.jl project for development.}
+\item{project}{Optional local ContinuousTimeSEM.jl checkout to use instead of
+the vendored copy, for engine development.}
 
-\item{revision}{Engine revision, normally \code{"locked"}.}
+\item{revision}{Ignored; retained for backward compatibility. The engine
+revision is whatever is vendored, and is reported by \code{ctJuliaStatus()}.}
 
 \item{julia_bin}{Optional Julia binary directory.}
 
@@ -24,6 +26,12 @@ ctJuliaSetup(
 A Julia-engine status list, invisibly.
 }
 \description{
-Installs or instantiates the version of ContinuousTimeSEM.jl pinned by this
-ctsem source tree. This is explicit: ctFit never downloads Julia packages.
+Prepares the copy of ContinuousTimeSEM.jl that ships inside this ctsem
+installation. No network access and no repository credentials are involved:
+the engine source is vendored in \code{inst/julia/}, and this only creates a
+Julia project for it and instantiates its dependencies.
+}
+\details{
+The first call downloads and precompiles those dependencies (roughly 120 MB
+and a minute or two); later calls in new sessions reuse them.
 }

@@ -31,3 +31,4 @@
 ^\.claude$
 .*\.bak
 ^CPP-BACKEND\.md$
+^tools$
