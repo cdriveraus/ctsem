@@ -1,0 +1,124 @@
+// Rcpp entry points for the hand-written C++ ctsem backend.
+//
+// The engine itself is header-only under `inst/include/ctsemcpp/`, so it can be
+// compiled standalone (via Rcpp::sourceCpp with that directory on the include
+// path) without reinstalling the package. This file is only the R boundary.
+
+// [[Rcpp::depends(RcppEigen)]]
+#include <Rcpp.h>
+
+#include "ctsemcpp/rinterface.hpp"
+
+using namespace Rcpp;
+
+namespace {
+
+ctsemcpp::CppObjective* fromPtr(SEXP ptr) {
+  XPtr<ctsemcpp::CppObjective> handle(ptr);
+  if (!handle) stop("ctsem C++ backend: the objective handle is no longer valid; rebuild it.");
+  return handle.get();
+}
+
+}  // namespace
+
+// [[Rcpp::export(.ctsemCppBuild)]]
+SEXP ctsemCppBuild(List spec) {
+  std::unique_ptr<ctsemcpp::CppObjective> objective = ctsemcpp::buildObjective(spec);
+  XPtr<ctsemcpp::CppObjective> ptr(objective.release(), true);
+  return ptr;
+}
+
+// [[Rcpp::export(.ctsemCppNpars)]]
+int ctsemCppNpars(SEXP handle) { return fromPtr(handle)->nvalues(); }
+
+// [[Rcpp::export(.ctsemCppEvaluate)]]
+List ctsemCppEvaluate(SEXP handle, NumericVector pars, bool gradient = true,
+                      bool contributions = false) {
+  ctsemcpp::CppObjective* objective = fromPtr(handle);
+  const int p = objective->nvalues();
+  if (pars.size() != p) {
+    stop("ctsem C++ backend: expected %d free parameters, got %d.", p,
+         static_cast<int>(pars.size()));
+  }
+  List out;
+  if (gradient) {
+    NumericVector grad(p);
+    const double value = objective->gradient(pars.begin(), grad.begin());
+    out = List::create(_["value"] = value, _["gradient"] = grad);
+  } else {
+    out = List::create(_["value"] = objective->value(pars.begin()),
+                       _["gradient"] = R_NilValue);
+  }
+  if (contributions) {
+    NumericVector subject(objective->subjects.size());
+    for (std::size_t s = 0; s < objective->subjects.size(); ++s) {
+      subject[static_cast<R_xlen_t>(s)] =
+          ctsemcpp::filterSubject(objective->model, objective->fws, pars.begin(),
+                                  objective->subjects[s], nullptr);
+    }
+    out["subject_loglik"] = subject;
+  }
+  return out;
+}
+
+// [[Rcpp::export(.ctsemCppOptimize)]]
+List ctsemCppOptimize(SEXP handle, NumericVector start, int maxiter = 1000,
+                      double gtol = 1e-8) {
+  ctsemcpp::CppObjective* objective = fromPtr(handle);
+  const int p = objective->nvalues();
+  if (start.size() != p) {
+    stop("ctsem C++ backend: expected %d starting values, got %d.", p,
+         static_cast<int>(start.size()));
+  }
+  std::vector<double> x0(start.begin(), start.end());
+  // The optimizer minimizes, so it drives the negative log-likelihood.
+  auto fg = [objective, p](const double* x, double* g) {
+    const double value = objective->gradient(x, g);
+    for (int i = 0; i < p; ++i) g[i] = -g[i];
+    return -value;
+  };
+  ctsemcpp::LbfgsResult result = ctsemcpp::lbfgs(fg, x0, maxiter, gtol);
+
+  NumericVector minimizer(p), gradient(p);
+  for (int i = 0; i < p; ++i) {
+    minimizer[i] = result.minimizer[static_cast<std::size_t>(i)];
+    gradient[i] = -result.gradient[static_cast<std::size_t>(i)];
+  }
+  NumericVector subject(objective->subjects.size());
+  for (std::size_t s = 0; s < objective->subjects.size(); ++s) {
+    subject[static_cast<R_xlen_t>(s)] =
+        ctsemcpp::filterSubject(objective->model, objective->fws, minimizer.begin(),
+                                objective->subjects[s], nullptr);
+  }
+  return List::create(_["minimizer"] = minimizer,
+                      _["maximum_loglik"] = -result.value,
+                      _["gradient"] = gradient,
+                      _["subject_loglik"] = subject,
+                      _["iterations"] = result.iterations,
+                      _["converged"] = result.converged);
+}
+
+// Diagnostic: report the flat layout the engine derived from a parameter table,
+// so an R-side test can check the C++ and Julia views of a model agree without
+// evaluating anything.
+// [[Rcpp::export(.ctsemCppLayout)]]
+List ctsemCppLayout(SEXP handle) {
+  ctsemcpp::CppObjective* objective = fromPtr(handle);
+  const ctsemcpp::CppModel& model = objective->model;
+  CharacterVector names(model.layouts.size());
+  IntegerVector nrow(model.layouts.size()), ncol(model.layouts.size()), offset(model.layouts.size());
+  for (std::size_t i = 0; i < model.layouts.size(); ++i) {
+    names[static_cast<R_xlen_t>(i)] = model.layouts[i].name;
+    nrow[static_cast<R_xlen_t>(i)] = model.layouts[i].nrow;
+    ncol[static_cast<R_xlen_t>(i)] = model.layouts[i].ncol;
+    offset[static_cast<R_xlen_t>(i)] = model.layouts[i].offset;
+  }
+  return List::create(_["matrix"] = names, _["nrow"] = nrow, _["ncol"] = ncol,
+                      _["offset"] = offset, _["nall"] = model.nall,
+                      _["nlatent"] = model.nlatent, _["nmanifest"] = model.nmanifest,
+                      _["ntdpred"] = model.ntdpred, _["nvalues"] = model.nvalues,
+                      _["npredict"] = static_cast<int>(model.predict.size()),
+                      _["nupdate"] = static_cast<int>(model.update.size()),
+                      _["ntd"] = static_cast<int>(model.td.size()),
+                      _["parameter_layer_shareable"] = model.parameterLayerShareable());
+}

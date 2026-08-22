@@ -23,10 +23,11 @@
 ^vignettes/compactPDF.R
 ^vignettes/optim-uncertainty.qmd
 ^docs
-^src/((?!RcppExports\.cpp).)*$
+^src/((?!RcppExports\.cpp|ctsemCppBackend\.cpp).)*$
 ^tests/testthat/Rplots.pdf
 ^vignettes/.*\.blg
 ^\.github$
 ^\.positai$
 ^\.claude$
 .*\.bak
+^CPP-BACKEND\.md$
