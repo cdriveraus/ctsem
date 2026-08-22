@@ -351,3 +351,69 @@ state-dependent, which is every model either backend has a test for. This engine
 builds it after the update group on every row, including the first — a one-line
 divergence that is a strict improvement and cannot change any currently tested
 result. Worth a look on the Julia side.
+
+---
+
+## Appendix: reproducing the benchmark
+
+Requires `rstan`, `JuliaConnectoR` and a local ContinuousTimeSEM checkout for
+the Julia rows. Drop the Julia rows and it needs only `rstan`.
+
+```r
+library(ctsem); library(rstan)
+JULIA_PROJECT <- "<path to>/julia/ContinuousTimeSEM"
+
+linmodel <- function(n) suppressWarnings(ctModel(type = "ct", LAMBDA = diag(n)))
+
+nlmodel <- function(n) {
+  drift <- matrix("", n, n)
+  for (i in 1:n) for (j in 1:n) drift[i, j] <- paste0("dr", i, "_", j)
+  drift[1, 2] <- "PARS[1,1] * (1 + .05 * eta1)"
+  diffusion <- matrix("0", n, n)
+  for (i in 1:n) for (j in 1:i) diffusion[i, j] <- paste0("df", i, "_", j)
+  diffusion[1, 1] <- "PARS[2,1] * (1 + .03 * eta1)"
+  suppressWarnings(ctModel(type = "ct", LAMBDA = diag(n), DRIFT = drift,
+    DIFFUSION = diffusion, PARS = matrix(c("nlp1", "nlp2"), 2, 1)))
+}
+
+makeData <- function(n, nsub = 20, waves = 5, seed = 42) {
+  set.seed(seed)
+  d <- data.frame(id = rep(seq_len(nsub), each = waves),
+                  time = rep(seq_len(waves) - 1, nsub))
+  for (i in seq_len(n)) d[[paste0("Y", i)]] <- rnorm(nsub * waves, 0, .5)
+  d
+}
+
+# Minimum over repeated batches; a single call is far too noisy at these sizes.
+timeit <- function(f, batch = 20, reps = 5) {
+  best <- Inf
+  for (r in seq_len(reps)) {
+    t0 <- Sys.time()
+    for (b in seq_len(batch)) f()
+    best <- min(best, as.numeric(difftime(Sys.time(), t0, units = "secs")) / batch)
+  }
+  best
+}
+
+n <- 20; model <- linmodel(n); data <- makeData(n)
+
+stan_spec <- ctFit(data, model, backend = "stan", fit = FALSE, priors = FALSE)
+stan_fit <- if (identical(stan_spec$standata$recompile, 0L)) {
+  ctsem:::stan_reinitsf(ctsem:::stanmodels$ctsm, stan_spec$standata)
+} else {
+  ctsem:::stan_reinitsf(rstan::stan_model(model_code = stan_spec$stanmodeltext),
+                        stan_spec$standata)
+}
+set.seed(9); raw <- rnorm(rstan::get_num_upars(stan_fit), 0, .2)
+
+cpp_spec <- ctFit(data, model, backend = "cpp", fit = FALSE, priors = FALSE)
+julia_spec <- ctFit(data, model, backend = "julia", fit = FALSE, priors = FALSE,
+                    backendcontrol = list(julia_project = JULIA_PROJECT))
+
+timeit(function() rstan::log_prob(stan_fit, upars = raw,
+                                  adjust_transform = FALSE, gradient = TRUE))
+timeit(function() ctCppEvaluate(cpp_spec, raw, gradient = TRUE))
+timeit(function() ctJuliaEvaluate(julia_spec, raw, gradient_method = "adjoint"))
+timeit(function() ctJuliaEvaluate(julia_spec, raw, gradient_method = "forward"),
+       batch = 1, reps = 1)   # 63 s per call at n = 20
+```
