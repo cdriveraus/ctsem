@@ -1072,7 +1072,13 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \code{\link{ctFit}} object and refreshes the approximate raw-parameter
 #' samples.
 #'
-#' @param fit Optimized \code{ctStanFit} object.
+#' @param fit Optimized \code{ctStanFit}, \code{ctJuliaFit} or
+#' \code{ctCppFit} object. For the latter two, \code{uncertainty} is limited
+#' to \code{'hessian'}, \code{'surrogate'} and \code{'is'} -- the score-based
+#' and full-bootstrap methods need per-subject scores or subject resampling
+#' with refits, which those engines do not expose yet -- and no
+#' transformed-parameter summary is produced, since that needs the Stan model
+#' object.
 #' @param uncertainty Uncertainty approximation. \code{'hessian'} uses the
 #' finite-difference Hessian, \code{'surrogate'} fits a local quadratic
 #' surrogate around the optimum, \code{'is'} uses Hessian-based importance
@@ -1158,12 +1164,26 @@ ctOptimUncertainty <- function(fit,
   draws=c('auto','normal','empirical','imis'), finishsamples=NULL,
   cores=NULL, control=list(), verbose=0, ...){
   
+  uncertainty <- match.arg(uncertainty)
+  draws <- match.arg(draws)
+  # backend='julia' and backend='cpp' fits reach the same
+  # ctOptimComputeUncertainty() below, through a log-probability/gradient
+  # function built from their own engine; see R/ctBackendUncertainty.R.
+  if(inherits(fit, 'ctJuliaFit') || inherits(fit, 'ctCppFit')) {
+    if(draws == 'auto') draws <- if(uncertainty == 'is') 'imis' else 'normal'
+    if(uncertainty == 'is') draws <- 'imis'
+    if(is.null(finishsamples)) finishsamples <- 1000
+    if(is.null(cores)) cores <- 1L
+    cores <- max(1L, suppressWarnings(as.integer(cores[1])))
+    if(is.na(cores)) cores <- 1L
+    return(.ctBackendUncertainty(fit=fit, uncertainty=uncertainty, draws=draws,
+      finishsamples=finishsamples, cores=cores, control=control,
+      verbose=verbose))
+  }
   if(!'ctStanFit' %in% class(fit)) stop('fit must be a ctStanFit object')
   if(length(fit$stanfit$stanfit@sim) > 0) {
     stop('ctOptimUncertainty currently applies to optimized ctStanFit objects')
   }
-  uncertainty <- match.arg(uncertainty)
-  draws <- match.arg(draws)
   if(uncertainty == 'is' && !draws %in% c('auto','imis')) {
     warning("uncertainty='is' uses importance sampling; ignoring draws='",
       draws, "' and using draws='imis'.", call.=FALSE)
