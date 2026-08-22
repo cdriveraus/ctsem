@@ -13,10 +13,57 @@ mutable struct CTSEMObjective{P,O}
     # one-off model inspection it does -- discovering each transform's read set
     # -- happens once per objective rather than once per gradient evaluation.
     adjoint_ws::Any
+    # Prior specification, as index/scale pairs over the raw parameter vector.
+    # Deliberately *data*, not logic: which raw parameters carry which prior is
+    # ctsem semantics that the R side already knows (it reads `laplaceprior`,
+    # `tipredeffectscale`, `rawpopsdbase` and the parameter ordering out of
+    # `standata`), while all the engine needs to do is evaluate a normal
+    # log-density and its derivative. Keeping the decision on the R side also
+    # keeps one copy of it rather than three.
+    prior_index::Vector{Int}
+    prior_scale::Vector{Float64}
+    prior_weight::Float64
 end
 
 CTSEMObjective(params, subject_objectives) =
-    CTSEMObjective(params, subject_objectives, nothing)
+    CTSEMObjective(params, subject_objectives, nothing, Int[], Float64[], 1.0)
+
+"""
+    _ctsem_log_prior(objective, values)
+
+The prior contribution to the log posterior, and its gradient.
+
+Matches the generated Stan model's `model` block term for term:
+`normal_lpdf(x / scale | 0, 1)`, i.e. `-x^2/(2 scale^2) - log(2pi)/2`, summed
+over the parameters the R side flagged. Note the missing `-log(scale)`: Stan
+takes the density *of the scaled quantity*, so that Jacobian term is absent
+there too. It is a constant and so irrelevant to optimisation, but including it
+would put this engine's log probability a constant away from Stan's, which is
+exactly what the parity tests would then report as a mismatch.
+"""
+function _ctsem_log_prior(objective::CTSEMObjective, values::AbstractVector{T}) where {T}
+    isempty(objective.prior_index) && return zero(T)
+    total = zero(T)
+    weight = objective.prior_weight
+    @inbounds for k in eachindex(objective.prior_index)
+        scaled = values[objective.prior_index[k]] / objective.prior_scale[k]
+        total += -0.5 * scaled * scaled - 0.5 * log(2 * pi)
+    end
+    return weight * total
+end
+
+"""Accumulate the prior's gradient contribution into `gradient`."""
+function _ctsem_log_prior_gradient!(gradient::AbstractVector{T},
+    objective::CTSEMObjective, values::AbstractVector{T}, weight::Real=1.0) where {T}
+    isempty(objective.prior_index) && return gradient
+    scale_weight = objective.prior_weight * weight
+    @inbounds for k in eachindex(objective.prior_index)
+        idx = objective.prior_index[k]
+        scale = objective.prior_scale[k]
+        gradient[idx] -= scale_weight * values[idx] / (scale * scale)
+    end
+    return gradient
+end
 
 export CTSEMObjective, ctsem_objective, ctsem_evaluate, ctsem_optimize
 
@@ -62,7 +109,8 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
     timesteps::AbstractVector, data::AbstractMatrix,
     tdpred_data::AbstractMatrix=zeros(eltype(data), 0, size(data, 2)),
     tipred_data::AbstractMatrix=zeros(eltype(data), length(subject_starts), 0),
-    max_timestep::Real=Inf)
+    max_timestep::Real=Inf; prior_index=Int[], prior_scale=Float64[],
+    prior_weight::Real=1.0)
     ranges = _ctsem_subject_ranges(subject_starts, timesteps, data)
     size(tdpred_data, 2) == size(data, 2) || throw(DimensionMismatch("TD predictor columns must match observations"))
     size(tipred_data, 1) == length(ranges) || throw(DimensionMismatch("TI predictor rows must match subjects"))
@@ -74,13 +122,19 @@ function CTSEMObjective(params::EKFParameters, subject_starts::AbstractVector,
             max_timestep=max_timestep)
         for (i, r) in enumerate(ranges)
     ]
-    return CTSEMObjective(params, objects)
+    length(prior_index) == length(prior_scale) ||
+        throw(DimensionMismatch("prior index and scale vectors must have equal length"))
+    return CTSEMObjective(params, objects, nothing, Int.(prior_index),
+        Float64.(prior_scale), Float64(prior_weight))
 end
 
 ctsem_objective(params::EKFParameters, subject_starts, timesteps, data,
     tdpred_data=zeros(eltype(data), 0, size(data, 2)),
-    tipred_data=zeros(eltype(data), length(subject_starts), 0), max_timestep::Real=Inf) =
-    CTSEMObjective(params, subject_starts, timesteps, data, tdpred_data, tipred_data, max_timestep)
+    tipred_data=zeros(eltype(data), length(subject_starts), 0), max_timestep::Real=Inf;
+    prior_index=Int[], prior_scale=Float64[], prior_weight::Real=1.0) =
+    CTSEMObjective(params, subject_starts, timesteps, data, tdpred_data, tipred_data,
+        max_timestep; prior_index=prior_index, prior_scale=prior_scale,
+        prior_weight=prior_weight)
 
 ################################################################################
 # Threading
@@ -152,7 +206,7 @@ function (objective::CTSEMObjective)(values::AbstractVector)
         @inbounds for subject_objective in subjects
             total += subject_objective(values)
         end
-        return total
+        return total + _ctsem_log_prior(objective, values)
     end
 
     ranges = _ctsem_chunk_ranges(nsubjects, nchunks)
@@ -170,7 +224,7 @@ function (objective::CTSEMObjective)(values::AbstractVector)
     @inbounds for c in 1:nchunks
         total += partials[c]
     end
-    return total
+    return total + _ctsem_log_prior(objective, values)
 end
 
 """

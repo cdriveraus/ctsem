@@ -1,6 +1,9 @@
 # Function to compute the Hessian using bootstrap resampling
-bootstrapHessian <- function(standata, sm, est, finishsamples, cores) {
-  scores <- scorecalc(standata = standata,est = est,stanmodel = sm,
+bootstrapHessian <- function(standata, sm, est, finishsamples, cores, scores=NULL) {
+  # `scores` may be supplied by a backend that computes per-subject gradients
+  # itself (see .ctBackendScoreMatrix); only the Stan path has to reconstruct
+  # them a subject at a time.
+  if(is.null(scores)) scores <- scorecalc(standata = standata,est = est,stanmodel = sm,
     subjectsonly = ctOptimNSubjects(standata) >= 2,
     returnsubjectlist = F,cores=cores)
   num_bootstrap_samples <- max(c(finishsamples,1000))
@@ -240,7 +243,8 @@ ctOptimNormalDraws <- function(mean, cov, n, df=Inf){
   sweep(draws, 2, mean, '+')
 }
 
-ctOptimScoreMatrix <- function(standata, sm, est, cores=1){
+ctOptimScoreMatrix <- function(standata, sm, est, cores=1, scores=NULL){
+  if(!is.null(scores)) return(scores)
   scorecalc(standata=standata, est=est, stanmodel=sm,
     subjectsonly=ctOptimNSubjects(standata) >= 2,
     returnsubjectlist=FALSE,
@@ -877,7 +881,8 @@ ctOptimSurrogateHessian <- function(est, lpgFunc, cov, npoints=NULL,
 ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
   uncertainty=c('hessian','surrogate','is','bootstrap','fullbootstrap',
     'sandwich','opg'),
-  finishsamples=1000, cores=1, matsetup=NA, control=list(), verbose=0){
+  finishsamples=1000, cores=1, matsetup=NA, control=list(), verbose=0,
+  scores=NULL){
   
   uncertainty <- match.arg(uncertainty)
   ctOptimCheckUncertaintyData(standata=standata, uncertainty=uncertainty,
@@ -930,7 +935,7 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
   if(uncertainty == 'opg'){
     message('Estimating score / OPG covariance')
     score_hessian <- bootstrapHessian(standata=standata, sm=sm, est=est,
-      finishsamples=finishsamples, cores=cores)
+      finishsamples=finishsamples, cores=cores, scores=scores)
     hess <- score_hessian$hess
     scoremat <- score_hessian$scores
     cov <- ctOptimCovFromHessian(hess, ridge=control$ridge)
@@ -953,7 +958,7 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
   if(uncertainty %in% c('sandwich','bootstrap')){
     message('Computing score contributions')
     scoremat <- ctOptimScoreMatrix(standata=standata, sm=sm, est=est,
-      cores=cores)
+      cores=cores, scores=scores)
     centered <- scale(scoremat, center=TRUE, scale=FALSE)
     meat <- crossprod(centered)
     if(uncertainty == 'sandwich'){

@@ -669,7 +669,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       forcerecompile=forcerecompile)
     return(ctFitJuliaBackend(datalong=datalong, model=ctm, prepared_data=standata, inits=inits,
       cores=cores, backendcontrol=backendcontrol, optimcontrol=optimcontrol,
-      verbose=verbose, fit=fit))
+      verbose=verbose, fit=fit, priors=priors))
   }
 
   # backend='cpp' branches at the same point and from the same canonical model
@@ -682,7 +682,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       forcerecompile=forcerecompile)
     return(ctFitCppBackend(datalong=datalong, model=ctm, prepared_data=standata, inits=inits,
       cores=cores, backendcontrol=backendcontrol, optimcontrol=optimcontrol,
-      verbose=verbose, fit=fit))
+      verbose=verbose, fit=fit, priors=priors))
   }
 
   # print(standata$savesubjectmatrices)

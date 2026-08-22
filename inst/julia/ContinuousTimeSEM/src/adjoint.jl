@@ -269,7 +269,118 @@ function ctsem_adjoint_gradient(objective::CTSEMObjective, values::AbstractVecto
             gradient .+= gradients[c]
         end
     end
+    # The prior is a closed-form function of the raw parameters alone, so it is
+    # added once here rather than inside a chunk.
+    total += _ctsem_log_prior(objective, values)
+    _ctsem_log_prior_gradient!(gradient, objective, values)
     return (value=total, gradient=gradient)
+end
+
+export ctsem_subject_gradients
+"""
+    ctsem_subject_gradients(objective, values)
+
+Return `(value = ..., scores = ...)` where `scores[i, :]` is subject `i`'s own
+gradient contribution.
+
+This is the score matrix the R side's `scorecalc()` produces for the Stan
+backend, and it is what the OPG, sandwich and score-bootstrap uncertainty
+methods consume. The adjoint already computes exactly this and then adds it up,
+so producing it costs one ordinary gradient evaluation rather than the
+per-subject model re-initialisation the Stan path needs.
+
+Two shortcuts of the summed gradient have to be switched off for the rows to be
+individually correct, and both are per-subject flags rather than changes to the
+reverse pass:
+
+  * the shared parameter layer, which unwinds the transform layer once for a
+    whole chunk of subjects, is unwound per subject instead;
+  * the deferred matrix-exponential Frechet contribution, which is normally
+    batched across subjects, is flushed within each subject.
+
+`sum(scores, dims=1)` therefore equals `ctsem_adjoint_gradient`'s gradient, and
+`test_subject_gradients.jl` asserts that -- which is the natural check, since
+the two routes share every primitive but differ in where they accumulate.
+"""
+function ctsem_subject_gradients(objective::CTSEMObjective, values::AbstractVector{T}) where {T}
+    subjects = objective.subject_objectives
+    nsubjects = length(subjects)
+    npars = length(values)
+    scores = zeros(T, nsubjects, npars)
+    nchunks = _ctsem_nchunks(nsubjects)
+    workspaces = _get_or_init_adjoint_workspaces!(objective, T, npars, nchunks)
+    ranges = _ctsem_chunk_ranges(nsubjects, nchunks)
+    totals = zeros(T, nchunks)
+    valid = fill(true, nchunks)
+    badvalue = fill(T(NaN), nchunks)
+
+    if nchunks <= 1
+        _ctsem_subject_gradient_chunk!(scores, totals, valid, badvalue, 1,
+            ranges[1], subjects, workspaces[1], values)
+    else
+        Threads.@sync for c in 1:nchunks
+            Threads.@spawn _ctsem_subject_gradient_chunk!(scores, totals, valid,
+                badvalue, c, ranges[c], subjects, workspaces[c], values)
+        end
+    end
+
+    @inbounds for c in 1:nchunks
+        valid[c] || return (value=badvalue[c], scores=fill(T(NaN), nsubjects, npars))
+    end
+
+    # Each subject's row carries 1/nsubjects of the prior, which is what the R
+    # side's `scorecalc()` does for the Stan backend (it sets
+    # `standata$priormod = 1/nsubjects` before taking per-subject gradients).
+    # The rows then still sum to the full posterior gradient.
+    if !isempty(objective.prior_index) && nsubjects > 0
+        share = 1 / nsubjects
+        @inbounds for i in 1:nsubjects
+            _ctsem_log_prior_gradient!(view(scores, i, :), objective, values, share)
+        end
+    end
+    return (value=sum(totals) + _ctsem_log_prior(objective, values), scores=scores)
+end
+
+"""Per-subject gradients for one contiguous chunk, written into `scores`."""
+function _ctsem_subject_gradient_chunk!(scores::Matrix{T}, totals::Vector{T},
+    valid::Vector{Bool}, badvalue::Vector{T}, c::Int, range::UnitRange{Int},
+    subjects, aws, values::AbstractVector{T}) where {T}
+
+    deferred = aws.defer_frechet
+    aws.defer_frechet = false
+    total = zero(T)
+    try
+        @inbounds for i in range
+            subject_objective = subjects[i]
+            ws = _get_or_init_objective_workspace!(subject_objective, T)
+            tape = _tape_reset!(aws.tape)
+            resize!(aws.tipreds, length(subject_objective.tipreds))
+            copyto!(aws.tipreds, subject_objective.tipreds)
+            aws.frechet_pending = false
+
+            loglik = _extended_kalman_filter_continuous!(ws, values,
+                subject_objective.data, subject_objective.timesteps,
+                subject_objective.params, subject_objective.tdpreds,
+                subject_objective.tipreds, subject_objective.subject,
+                subject_objective.max_timestep, tape)
+            if !isfinite(loglik)
+                valid[c] = false
+                badvalue[c] = loglik
+                return nothing
+            end
+            total += loglik
+
+            fill!(aws.theta_bar, zero(T))
+            _ctsem_reverse_tape!(tape, subject_objective.params, aws, aws.n, aws.m)
+            _ctsem_parameter_layer!(view(scores, i, :), aws.theta_bar,
+                tape.subject_values, subject_objective.params, aws,
+                subject_objective.tipreds)
+        end
+    finally
+        aws.defer_frechet = deferred
+    end
+    totals[c] = total
+    return nothing
 end
 
 """

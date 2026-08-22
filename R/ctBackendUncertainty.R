@@ -62,7 +62,12 @@
       times = diff(c(spec$subject_starts, ndatapoints + 1L))))
 }
 
-.ctBackendUncertaintySupported <- c("hessian", "surrogate", "is")
+# `fullbootstrap` is the one method still out of reach: it resamples subjects
+# and re-optimises each sample, which needs the model rebuilt per resample
+# rather than just re-evaluated. Everything else these engines can serve, now
+# that they produce per-subject scores directly (see .ctBackendScoreMatrix).
+.ctBackendUncertaintySupported <- c("hessian", "surrogate", "is", "opg",
+  "sandwich", "bootstrap")
 
 .ctBackendUncertainty <- function(fit, uncertainty, draws, finishsamples,
   cores, control, verbose) {
@@ -70,10 +75,10 @@
   if (!uncertainty %in% .ctBackendUncertaintySupported) {
     stop("uncertainty='", uncertainty, "' is not available for backend='",
       fit$backend, "' fits. ",
-      "The score-based methods (opg, sandwich, bootstrap) need per-subject ",
-      "score contributions and fullbootstrap needs subject resampling with ",
-      "refits, neither of which these engines expose yet. Available: ",
-      paste(.ctBackendUncertaintySupported, collapse = ", "), ".", call. = FALSE)
+      "fullbootstrap resamples subjects and re-optimises each sample, which ",
+      "needs the model rebuilt per resample rather than re-evaluated. ",
+      "Available: ", paste(.ctBackendUncertaintySupported, collapse = ", "),
+      ".", call. = FALSE)
   }
 
   est <- as.numeric(fit$estimate$raw)
@@ -91,10 +96,16 @@
       as.integer(cores)), silent = TRUE)
   }
 
+  # The engines produce per-subject scores from one traced pass, so they are
+  # computed here and handed in rather than reconstructed a subject at a time.
+  scores <- if (uncertainty %in% c("opg", "sandwich", "bootstrap")) {
+    .ctBackendScoreMatrix(fit, est)
+  } else NULL
+
   uncertaintyfit <- ctOptimComputeUncertainty(est = est, standata = shape,
     sm = NULL, lpgFunc = lpgFunc, uncertainty = uncertainty,
     finishsamples = finishsamples, cores = cores, matsetup = NA,
-    control = control, verbose = verbose)
+    control = control, verbose = verbose, scores = scores)
 
   if (draws == "imis") {
     if (is.null(control$imisMaxIter)) control$imisMaxIter <- 50
@@ -139,4 +150,110 @@
   # covariance and draws are complete and usable; anything on the transformed
   # scale would have to be reconstructed, not merely relabelled.
   fit
+}
+
+# --- priors ----------------------------------------------------------------
+#
+# The generated Stan model's prior block is a sum of `normal_lpdf(x/scale|0,1)`
+# terms over the raw parameter vector, and the Julia and C++ engines use that
+# same vector in that same order (which is why the parity tests can hand the
+# identical `raw` to all three). So the whole of ctsem's prior semantics reduces
+# to a list of (index, scale) pairs, decided here where the semantics live, and
+# evaluated in the engine as a normal log-density.
+#
+# The layout, from `ctModelWriter.R`'s model block and `ctData.R`:
+#   1..nparams                     rawpopmeans          scale 1
+#   next nindvarying               rawpopsdbase         scale 1
+#   next nindvaryingoffdiagonals   sqrtpcov             scale 1
+#   TI effect coefficients         tipredeffectparams   scale tipredeffectscale
+#
+# `.ctJuliaAugmentRandomEffects` appends the population SD and correlation
+# parameters in exactly that order, and `.ctJuliaTIEffects` appends the TI
+# coefficients after them, so the indices line up without a separate mapping.
+.ctBackendPriorSpec <- function(standata, npar) {
+  if (is.null(standata)) {
+    stop("priors=TRUE needs the prepared model data; this fit was built without it.",
+      call. = FALSE)
+  }
+  laplace <- as.integer(standata$laplaceprior)
+  if (length(laplace) && any(laplace == 1L)) {
+    stop("Laplace priors are not implemented for backend='julia'/'cpp'. ",
+      "The generated Stan model uses a smoothed double-exponential density for ",
+      "these, which these engines do not evaluate; use backend='stan', or drop ",
+      "laplaceprior for the affected matrices.", call. = FALSE)
+  }
+  if (isTRUE(as.integer(standata$laplacetipreds)[1L] == 1L)) {
+    stop("Laplace priors on TI predictor effects are not implemented for ",
+      "backend='julia'/'cpp'; use backend='stan'.", call. = FALSE)
+  }
+  if (isTRUE(as.integer(standata$laplaceprioronly)[1L] == 1L)) {
+    stop("laplaceprioronly is not implemented for backend='julia'/'cpp'; ",
+      "use backend='stan'.", call. = FALSE)
+  }
+
+  nparams <- as.integer(standata$nparams)[1L]
+  nindvarying <- as.integer(standata$nindvarying)[1L]
+  noffdiagonals <- as.integer(standata$nindvaryingoffdiagonals)[1L]
+  if (is.na(nparams)) nparams <- 0L
+  if (is.na(nindvarying)) nindvarying <- 0L
+  if (is.na(noffdiagonals)) noffdiagonals <- 0L
+
+  index <- seq_len(nparams)
+  scale <- rep(1, nparams)
+  position <- nparams
+  if (nindvarying > 0L) {
+    index <- c(index, position + seq_len(nindvarying))
+    scale <- c(scale, rep(1, nindvarying))
+    position <- position + nindvarying
+    if (nindvarying > 1L && noffdiagonals > 0L) {
+      index <- c(index, position + seq_len(noffdiagonals))
+      scale <- c(scale, rep(1, noffdiagonals))
+      position <- position + noffdiagonals
+    }
+  }
+  ntipredeffects <- as.integer(standata$ntipredeffects)[1L]
+  if (!is.na(ntipredeffects) && ntipredeffects > 0L) {
+    tipredscale <- as.numeric(standata$tipredeffectscale)[1L]
+    if (!is.finite(tipredscale) || tipredscale <= 0) tipredscale <- 1
+    index <- c(index, position + seq_len(ntipredeffects))
+    scale <- c(scale, rep(tipredscale, ntipredeffects))
+    position <- position + ntipredeffects
+  }
+
+  # If the engine's free-parameter count and the Stan-side layout disagree, the
+  # indices are meaningless and a silently mis-scaled posterior is far worse
+  # than a refusal.
+  if (position != npar) {
+    stop("Cannot map ctsem's priors onto this model's raw parameters: the Stan ",
+      "layout accounts for ", position, " of ", npar, " free parameters. ",
+      "Please report this model shape.", call. = FALSE)
+  }
+  priormod <- as.numeric(standata$priormod)[1L]
+  if (!is.finite(priormod)) priormod <- 1
+  nsubsets <- as.numeric(standata$nsubsets)[1L]
+  if (!is.finite(nsubsets) || nsubsets <= 0) nsubsets <- 1
+  list(index = as.integer(index), scale = as.numeric(scale),
+    weight = priormod / nsubsets)
+}
+
+# --- per-subject scores -----------------------------------------------------
+
+# The score matrix `ctOptimScoreMatrix()`/`bootstrapHessian()` consume, from the
+# engines' own per-subject adjoint contributions rather than by re-initialising
+# a model per subject the way `scorecalc()` must for Stan.
+.ctBackendScoreMatrix <- function(fit, est) {
+  if (inherits(fit, "ctJuliaFit")) {
+    module <- .ctJuliaModule(fit$model_spec$project)
+    result <- JuliaConnectoR::juliaGet(module$ctsem_subject_gradients(
+      .ctJuliaObjective(fit), .ctJuliaVector(as.numeric(est))))
+    scores <- result$scores
+  } else {
+    scores <- .ctsemCppSubjectGradients(.ctCppObjective(fit), as.numeric(est))$scores
+  }
+  scores <- as.matrix(scores)
+  if (any(!is.finite(scores))) {
+    stop("The engine returned non-finite per-subject scores at the estimate; ",
+      "score-based uncertainty cannot be computed here.", call. = FALSE)
+  }
+  scores
 }

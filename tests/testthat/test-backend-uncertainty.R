@@ -106,11 +106,13 @@ test_that("unsupported uncertainty methods are refused by name, not silently", {
   data <- .backend_uncertainty_data()[1:24, ]
   cpp_fit <- suppressMessages(ctFit(data, model, backend = "cpp", verbose = 0))
 
-  # The score-based and full-bootstrap methods need per-subject scores or
-  # refits, which these engines do not expose. Refusing by name beats producing
-  # a plausible-looking covariance from a method that did not actually run.
-  for (method in c("opg", "sandwich", "bootstrap", "fullbootstrap")) {
-    expect_error(ctOptimUncertainty(cpp_fit, uncertainty = method),
-      "not available for backend", fixed = FALSE)
-  }
+  # The score-based methods are supported now that the engines produce
+  # per-subject gradients directly; `fullbootstrap` is not, because it
+  # re-optimises each resample and so needs the model rebuilt rather than
+  # re-evaluated. Refusing by name beats producing a plausible-looking
+  # covariance from a method that did not actually run.
+  expect_error(ctOptimUncertainty(cpp_fit, uncertainty = "fullbootstrap"),
+    "not available for backend")
+  expect_true(all(c("opg", "sandwich", "bootstrap") %in%
+      ctsem:::.ctBackendUncertaintySupported))
 })

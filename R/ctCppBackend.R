@@ -21,7 +21,6 @@
   stanmodeltext, compileArgs, forcerecompile) {
   failures <- character()
   if (!isTRUE(optimize)) failures <- c(failures, "optimize=FALSE (HMC)")
-  if (isTRUE(priors)) failures <- c(failures, "priors=TRUE")
   if (!isTRUE(model$continuoustime)) failures <- c(failures, "discrete-time model")
   if (any(model$manifesttype > 0)) failures <- c(failures, "non-Gaussian manifest variables")
   if (isTRUE(vb)) failures <- c(failures, "variational Bayes")
@@ -34,11 +33,12 @@
   }
 }
 
-.ctCppPrepare <- function(datalong, model, prepared_data = NULL) {
+.ctCppPrepare <- function(datalong, model, prepared_data = NULL, priors = FALSE) {
   # Same canonical specification as backend='julia'; the C++ and Julia engines
   # differ only in what they do with the transform strings (interpret an AST
   # vs. `Meta.parse` + `eval`), not in what they are given.
-  spec <- .ctJuliaPrepare(datalong, model, prepared_data = prepared_data, project = NULL)
+  spec <- .ctJuliaPrepare(datalong, model, prepared_data = prepared_data,
+    project = NULL, priors = priors)
   spec$project <- NULL
   spec$engine <- NULL
   spec$class <- "ctCppModel"
@@ -53,7 +53,8 @@
   if (!requireNamespace("digest", quietly = TRUE)) return(NULL)
   digest::digest(list(spec$parameter_table, spec$subject_starts, spec$times,
     spec$manifest_data, spec$tdpred_data, spec$tipred_data,
-    spec$ti_effects, spec$max_timestep, spec$dynamic_state_indices), algo = "sha256")
+    spec$ti_effects, spec$priors, spec$max_timestep, spec$dynamic_state_indices),
+    algo = "sha256")
 }
 
 .ctCppSpecForEngine <- function(spec) {
@@ -85,7 +86,10 @@
       nrow = nrow(spec$tdpred_data), ncol = ncol(spec$tdpred_data)),
     tipred_data = matrix(as.numeric(spec$tipred_data),
       nrow = nrow(spec$tipred_data), ncol = ncol(spec$tipred_data)),
-    max_timestep = as.numeric(spec$max_timestep)[1L]
+    max_timestep = as.numeric(spec$max_timestep)[1L],
+    prior_index = if (is.null(spec$priors)) integer() else as.integer(spec$priors$index),
+    prior_scale = if (is.null(spec$priors)) numeric() else as.numeric(spec$priors$scale),
+    prior_weight = if (is.null(spec$priors)) 1 else as.numeric(spec$priors$weight)
   )
 }
 
@@ -134,8 +138,10 @@ ctCppEvaluate <- function(object, pars = NULL, gradient = TRUE, contributions = 
 }
 
 ctFitCppBackend <- function(datalong, model, prepared_data = NULL, inits = NULL, cores = 1L,
-  backendcontrol = list(), optimcontrol = list(), verbose = 0L, fit = TRUE) {
-  model_spec <- .ctCppPrepare(datalong, model, prepared_data = prepared_data)
+  backendcontrol = list(), optimcontrol = list(), verbose = 0L, fit = TRUE,
+  priors = FALSE) {
+  model_spec <- .ctCppPrepare(datalong, model, prepared_data = prepared_data,
+    priors = priors)
   if (!fit) return(structure(model_spec, class = c("ctCppModel", "ctFitModel")))
 
   handle <- .ctCppObjective(structure(model_spec, class = c("ctCppModel", "ctFitModel")))

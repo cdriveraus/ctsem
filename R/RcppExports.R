@@ -17,6 +17,10 @@
     .Call(`_ctsem_ctsemCppOptimize`, handle, start, maxiter, gtol)
 }
 
+.ctsemCppSubjectGradients <- function(handle, pars) {
+    .Call(`_ctsem_ctsemCppSubjectGradients`, handle, pars)
+}
+
 .ctsemCppLayout <- function(handle) {
     .Call(`_ctsem_ctsemCppLayout`, handle)
 }

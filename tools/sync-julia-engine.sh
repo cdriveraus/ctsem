@@ -46,7 +46,14 @@ if [ -n "$dirty" ]; then
   exit 1
 fi
 
-rm -rf "$target"
+# Delete the files rather than the directory tree. On a repository inside a
+# synced folder (Dropbox, OneDrive) `rm -rf` on a directory intermittently fails
+# with "Device or resource busy" because the syncing client holds a handle to
+# it; removing the files leaves no stale content either way, and any empty
+# directory left behind is immediately repopulated below.
+if [ -d "$target" ]; then
+  find "$target" -type f -delete
+fi
 mkdir -p "$target"
 cp "$source_repo/$package_subdir/Project.toml" "$target/"
 cp -r "$source_repo/$package_subdir/src" "$target/"

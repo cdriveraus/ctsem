@@ -243,7 +243,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   }
   digest::digest(list(spec$parameter_table, spec$subject_starts, spec$times,
     spec$manifest_data, spec$tdpred_data, spec$tipred_data,
-    spec$ti_effects, spec$max_timestep, spec$project, spec$engine), algo = "sha256")
+    spec$ti_effects, spec$priors, spec$max_timestep, spec$project, spec$engine),
+    algo = "sha256")
 }
 
 .ctJuliaSubjectStarts <- function(ids) {
@@ -306,7 +307,6 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   stanmodeltext, compileArgs, forcerecompile) {
   failures <- character()
   if (!isTRUE(optimize)) failures <- c(failures, "optimize=FALSE (HMC)")
-  if (isTRUE(priors)) failures <- c(failures, "priors=TRUE")
   if (!isTRUE(model$continuoustime)) failures <- c(failures, "discrete-time model")
   if (any(model$manifesttype > 0)) failures <- c(failures, "non-Gaussian manifest variables")
   if (isTRUE(vb)) failures <- c(failures, "variational Bayes")
@@ -714,7 +714,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   do.call(rbind, entries)
 }
 
-.ctJuliaPrepare <- function(datalong, model, prepared_data = NULL, project = NULL) {
+.ctJuliaPrepare <- function(datalong, model, prepared_data = NULL, project = NULL,
+  priors = FALSE) {
   dat <- data.frame(datalong)
   dat <- dat[order(dat[[model$subjectIDname]], dat[[model$timeName]]), , drop = FALSE]
   .ctJuliaValidateTIConstancy(dat, model)
@@ -737,6 +738,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (!is.finite(max_timestep) || max_timestep <= 0) stop("Julia maxtimestep must be a positive finite number.", call. = FALSE)
   augmented <- .ctJuliaAugmentRandomEffects(model)
   parameter_table <- augmented$parameter_table
+  ti_effects <- .ctJuliaTIEffects(parameter_table, model)
+  npar <- max(c(parameter_table$parnumber, ti_effects$coefficient), na.rm = TRUE)
+  prior_spec <- if (isTRUE(priors)) .ctBackendPriorSpec(prepared_data, npar) else NULL
   list(
     class = "ctJuliaModel",
     model = model,
@@ -747,7 +751,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     manifest_data = t(as.matrix(dat[, model$manifestNames, drop = FALSE])),
     tdpred_data = t(tdpred_data),
     tipred_data = as.matrix(tipred_data),
-    ti_effects = .ctJuliaTIEffects(parameter_table, model),
+    ti_effects = ti_effects,
+    priors = prior_spec,
     max_timestep = max_timestep,
     TDpredNames = model$TDpredNames,
     TIpredNames = model$TIpredNames,
@@ -802,10 +807,16 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       .ctJuliaVector(as.integer(spec$dynamic_state_indices))
   }
   params <- do.call(module$ekf_from_columns, arguments)
-  objective <- module$ctsem_objective(params, JuliaConnectoR::juliaPut(spec$subject_starts),
+  objective_args <- list(params, JuliaConnectoR::juliaPut(spec$subject_starts),
     JuliaConnectoR::juliaPut(spec$times), JuliaConnectoR::juliaPut(spec$manifest_data),
     JuliaConnectoR::juliaPut(spec$tdpred_data), JuliaConnectoR::juliaPut(spec$tipred_data),
     spec$max_timestep)
+  if (!is.null(spec$priors) && length(spec$priors$index)) {
+    objective_args$prior_index <- .ctJuliaVector(spec$priors$index)
+    objective_args$prior_scale <- .ctJuliaVector(spec$priors$scale)
+    objective_args$prior_weight <- spec$priors$weight
+  }
+  objective <- do.call(module$ctsem_objective, objective_args)
   assign(key, objective, envir = .ct_julia_cache$objectives)
   objective
 }
@@ -857,7 +868,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, ...) {
 }
 
 ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NULL, cores = 1L,
-  backendcontrol = list(), optimcontrol = list(), verbose = 0L, fit = TRUE) {
+  backendcontrol = list(), optimcontrol = list(), verbose = 0L, fit = TRUE,
+  priors = FALSE) {
   if (isTRUE(backendcontrol$restart_session)) .ctJuliaClearSession()
   project <- .ctJuliaOr(backendcontrol$julia_project, NULL)
   # `cores` splits the engine's subject loop. It is requested as a Julia thread
@@ -890,7 +902,8 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
   # bound with the parameter count. 'forward' remains the default because it
   # is the longer-tested path, not because it is faster; there is no silent
   # fallback between them in either direction.
-  model_spec <- .ctJuliaPrepare(datalong, model, prepared_data = prepared_data, project = project)
+  model_spec <- .ctJuliaPrepare(datalong, model, prepared_data = prepared_data,
+    project = project, priors = priors)
   if (!fit) return(structure(model_spec, class = c("ctJuliaModel", "ctFitModel")))
 
   objective <- .ctJuliaObjective(structure(model_spec, class = c("ctJuliaModel", "ctFitModel")))
