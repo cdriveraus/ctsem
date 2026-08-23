@@ -80,10 +80,19 @@
   } else {
     spec <- .ctBackendSpec(fit)
     module <- .ctJuliaModule(spec$project)
-    raw <- .ctBackendJuliaValue(module$ctsem_parameter_layout(.ctJuliaObjective(fit)))
-    statedep <- data.frame(matrix = as.character(raw$statedep_matrix),
-      row = as.integer(raw$statedep_row), col = as.integer(raw$statedep_col),
-      stringsAsFactors = FALSE)
+    objective <- .ctJuliaObjective(fit)
+    raw <- .ctBackendJuliaValue(module$ctsem_parameter_layout(objective))
+    # Fetched separately, and only when there are any: JuliaConnectoR hangs
+    # marshalling a zero-length vector, and a model with no state-dependent
+    # cells is the common case, not an edge one.
+    statedep <- if (as.integer(raw$n_statedep)[1L] > 0L) {
+      cells <- .ctBackendJuliaValue(module$ctsem_state_dependent_cells(objective))
+      data.frame(matrix = as.character(cells$matrix), row = as.integer(cells$row),
+        col = as.integer(cells$col), stringsAsFactors = FALSE)
+    } else {
+      data.frame(matrix = character(), row = integer(), col = integer(),
+        stringsAsFactors = FALSE)
+    }
   }
   list(matrix = as.character(raw$matrix), nrow = as.integer(raw$nrow),
     ncol = as.integer(raw$ncol), offset = as.integer(raw$offset),

@@ -17,8 +17,8 @@ using LinearAlgebra
 #     latent state. They are evaluated at a caller-supplied state, defaulting to
 #     T0MEANS, with TD predictors fixed at zero. For a linear model this is
 #     exact (no cell depends on the state); for a nonlinear one it is a value
-#     conditional on that state, and `ctsem_parameter_layout` reports which
-#     cells those are so a caller can say so.
+#     conditional on that state, and `ctsem_state_dependent_cells` names those
+#     cells so a caller can say so.
 #
 #   * The derived matrices follow the generated Stan code's definitions,
 #     including its restriction of the diffusion-related ones to the states
@@ -29,7 +29,7 @@ using LinearAlgebra
 # bridge marshals nested containers element by element. A whole posterior of
 # parameter matrices is one array transfer, not one call per sample.
 
-export ctsem_parameter_layout, ctsem_parameter_matrices
+export ctsem_parameter_layout, ctsem_parameter_matrices, ctsem_state_dependent_cells
 
 const _CTSEM_DERIVED_MATRICES = (:DIFFUSIONcov, :MANIFESTcov, :T0cov,
     :asymDIFFUSIONcov, :asymCINT)
@@ -65,8 +65,15 @@ Describe what `ctsem_parameter_matrices` returns.
 
 Returns a named tuple of flat vectors: `matrix`, `nrow`, `ncol` and `offset`
 (zero based) for each matrix, the total flat `size`, the latent and manifest
-dimensions, and `statedep_matrix`/`statedep_row`/`statedep_col` naming the cells
-whose values are conditional on the state they were evaluated at.
+dimensions, and `n_statedep`, the number of cells whose values are conditional
+on the state they were evaluated at.
+
+The state-dependent cells themselves come from `ctsem_state_dependent_cells`
+rather than from here, and only that count is reported. That is a bridge
+constraint, not a design preference: JuliaConnectoR hangs marshalling a
+zero-length vector, and a linear model has no state-dependent cells at all, so
+returning those vectors unconditionally would deadlock every caller who has the
+simplest kind of model.
 """
 function ctsem_parameter_layout(objective::CTSEMObjective)
     sp = objective.params
@@ -89,12 +96,32 @@ function ctsem_parameter_layout(objective::CTSEMObjective)
         position += r * c
     end
 
-    statedep = sort!(unique(vcat(findall(sp.predict_transforms_indices),
+    return (matrix=matrix, nrow=nrow, ncol=ncol, offset=offset, size=position,
+        nlatent=nlatent, nmanifest=nmanifest,
+        n_statedep=length(_ctsem_state_dependent_positions(sp)))
+end
+
+_ctsem_state_dependent_positions(sp::EKFParameters) =
+    sort!(unique(vcat(findall(sp.predict_transforms_indices),
         findall(sp.update_transforms_indices), findall(sp.td_transforms_indices))))
+
+"""
+    ctsem_state_dependent_cells(objective)
+
+Name the cells whose values are conditional on the state they were evaluated at,
+as `(matrix, row, col)` rather than as flat engine offsets.
+
+Only call this when `ctsem_parameter_layout(objective).n_statedep` is positive;
+with no such cells the returned vectors are empty, and the R bridge hangs
+marshalling those.
+"""
+function ctsem_state_dependent_cells(objective::CTSEMObjective)
+    sp = objective.params
+    names, nrows, ncols, offsets, _ = _ctsem_base_layout(sp)
     sdmat = String[]
     sdrow = Int[]
     sdcol = Int[]
-    for flat in statedep
+    for flat in _ctsem_state_dependent_positions(sp)
         for k in eachindex(names)
             first = offsets[k] + 1
             last = offsets[k] + nrows[k] * ncols[k]
@@ -106,10 +133,7 @@ function ctsem_parameter_layout(objective::CTSEMObjective)
             break
         end
     end
-
-    return (matrix=matrix, nrow=nrow, ncol=ncol, offset=offset, size=position,
-        nlatent=nlatent, nmanifest=nmanifest,
-        statedep_matrix=sdmat, statedep_row=sdrow, statedep_col=sdcol)
+    return (matrix=sdmat, row=sdrow, col=sdcol)
 end
 
 """

@@ -127,9 +127,11 @@ end
     values = [0.7, 0.3, -0.2, 0.05]
 
     layout = ctsem_parameter_layout(objective)
-    @test layout.statedep_matrix == ["JAx"]
-    @test layout.statedep_row == [1]
-    @test layout.statedep_col == [1]
+    @test layout.n_statedep == 1
+    cells = ctsem_state_dependent_cells(objective)
+    @test cells.matrix == ["JAx"]
+    @test cells.row == [1]
+    @test cells.col == [1]
 
     jax = findfirst(==("JAx"), layout.matrix)
     drift = findfirst(==("DRIFT"), layout.matrix)
@@ -143,6 +145,33 @@ end
     # Only the state-dependent cell moved.
     moved = findall(k -> !isapprox(at_default[k, 1], at_state[k, 1]), 1:layout.size)
     @test moved == [layout.offset[jax] + 1]
+end
+
+@testset "a linear model reports no state-dependent cells, and says so by count" begin
+    # `ctsem_parameter_layout` must never hand the R bridge a zero-length vector:
+    # JuliaConnectoR hangs marshalling one, and a model with no state-dependent
+    # cells -- which is most models -- is exactly when that would happen. So the
+    # layout carries a count and the cells come from a separate call.
+    df = DataFrame(
+        matrix = [:T0MEANS, :LAMBDA, :DRIFT, :DIFFUSION, :MANIFESTVAR,
+                  :MANIFESTMEANS, :CINT, :T0VAR, :JAx, :Jy, :PARS],
+        row = fill(1, 11), col = fill(1, 11),
+        parnumber = Union{Missing,Int}[1, missing, 2, 3, missing, 4, missing,
+            missing, missing, missing, missing],
+        value = Union{Missing,Float64}[missing, 1.0, missing, missing, 0.1,
+            missing, 0.0, 1.0, -0.5, 1.0, 0.0],
+        transform = Union{Missing,String}["param[1]", missing, "-log1p_exp(param[2])",
+            "log1p_exp(param[3])", missing, "param[4]", missing, missing,
+            missing, missing, missing],
+        predicttransform = fill(missing, 11),
+        updatetransform = fill(missing, 11),
+    )
+    sp = ekf_from_data_frame(df)
+    objective = ctsem_objective(sp, [1], [0.0, 0.4, 1.1], reshape([0.1, -0.2, 0.3], 1, 3))
+    layout = ctsem_parameter_layout(objective)
+    @test layout.n_statedep == 0
+    @test !any(isempty, (layout.matrix, layout.nrow, layout.ncol, layout.offset))
+    @test isempty(ctsem_state_dependent_cells(objective).matrix)
 end
 
 @testset "a batch of parameter vectors matches one at a time" begin

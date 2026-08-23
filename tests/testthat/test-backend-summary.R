@@ -105,6 +105,30 @@ test_that("Julia and C++ produce identical pop_* arrays", {
   }
 })
 
+test_that("a Julia model with no state-dependent cells summarises", {
+  skip_if_not_installed("JuliaConnectoR")
+  skip_if(!isTRUE(tryCatch(JuliaConnectoR::juliaSetupOk(), error = function(e) FALSE)),
+    "Julia is not available.")
+  skip_on_cran()
+  # Regression: the engine used to return the state-dependent cells as vectors
+  # from the layout call, and JuliaConnectoR *hangs* -- not errors -- marshalling
+  # a zero-length one. A linear model with no random effects has no such cells,
+  # which makes the simplest possible model the one that deadlocked.
+  model <- suppressWarnings(ctModel(type = "ct", LAMBDA = matrix(1, 1, 1),
+    DRIFT = matrix("drift", 1, 1), DIFFUSION = matrix("diff", 1, 1),
+    MANIFESTVAR = matrix("mvar", 1, 1), MANIFESTMEANS = matrix("mmean||FALSE", 1, 1),
+    T0VAR = matrix("t0v", 1, 1), T0MEANS = matrix(0, 1, 1), CINT = matrix(0, 1, 1)))
+  data <- data.frame(id = rep(1:6, each = 4), time = rep(c(0, .5, 1.2, 2), 6),
+    Y1 = stats::rnorm(24, 0, .5))
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  fit <- .summary_pointfit(spec, model, rep(0.1, 5), "julia")
+
+  matrices <- ctBackendParMatrices(fit)
+  expect_equal(nrow(attr(matrices, "stateDependent")), 0L)
+  expect_equal(dim(matrices$DRIFT), c(1L, 1L))
+  expect_true(matrices$DRIFT[1, 1] < 0)
+})
+
 test_that("state-dependent cells are named and follow the state they are given", {
   model <- .summary_model()
   data <- .summary_data()
