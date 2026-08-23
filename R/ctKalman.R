@@ -1,6 +1,117 @@
+# Assembling the ctKalman output from per-row filter scores.
+#
+# Factored out of ctKalmanArray() unchanged so that the stan, julia and cpp
+# backends produce their prediction output from one implementation rather than
+# three. Everything above this point differs between backends -- Stan runs its
+# generated model, the engines run their own filter -- and everything below it
+# is arithmetic on the same four arrays, so this is where the split belongs.
+#
+# `e` carries ya/ycova/etaa/etacova/llrow in Stan's shape: iteration, then
+# 1 = prior / 2 = updated / 3 = smoothed, then data row.
+.ctKalmanArrayAssemble <- function(e, time, Y, id, nlatent, latentNames, manifestNames,
+  standardisederrors = FALSE){
+  nsamples <- dim(e$etaa)[1]
+  e$yprior <- array(e$ya[,1,,,drop=FALSE],dim=dim(e$ya)[-2])
+  e$yupd <-  array(e$ya[,2,,,drop=FALSE],dim=dim(e$ya)[-2])
+  e$ysmooth<-  array(e$ya[,3,,,drop=FALSE],dim=dim(e$ya)[-2])
+  e$etaprior <-  array(e$etaa[,1,,,drop=FALSE],dim=dim(e$etaa)[-2])
+  e$etaupd <-  array(e$etaa[,2,,,drop=FALSE],dim=dim(e$etaa)[-2])
+  e$etasmooth <-  array(e$etaa[,3,,,drop=FALSE],dim=dim(e$etaa)[-2])
+  e$ypriorcov <-  array(e$ycova[,1,,,,drop=FALSE],dim=dim(e$ycova)[-2])
+  e$yupdcov <-  array(e$ycova[,2,,,,drop=FALSE],dim=dim(e$ycova)[-2])
+  e$ysmoothcov <-  array(e$ycova[,3,,,,drop=FALSE],dim=dim(e$ycova)[-2])
+  e$etapriorcov <-  array(e$etacova[,1,,,,drop=FALSE],dim=dim(e$etacova)[-2])
+  e$etaupdcov <-  array(e$etacova[,2,,,,drop=FALSE],dim=dim(e$etacova)[-2])
+  e$etasmoothcov <-  array(e$etacova[,3,,,,drop=FALSE],dim=dim(e$etacova)[-2])
+  
+  
+  
+  
+  
+  
+  out=list(time=cbind(time), 
+    y=matrix(Y,ncol=ncol(Y),dimnames=list(NULL,manifestNames)), 
+    llrow=e$llrow)
+  out$y[out$y==99999] <- NA
+  for(basei in c('y','eta')){
+    for(typei in c('prior','upd','smooth')){
+      for(typex in c('','cov')){
+        ref=paste0(basei,typei,typex)
+        out[[ref]] <- e[[ref]]
+        out[[ref]][out[[ref]] == 99999] <- NA
+        if(basei=='y') {
+          dimnames(out[[ref]]) <- list(NULL, NULL, manifestNames) 
+        } 
+        if(basei=='eta'){
+          if(typex=='') {
+            out[[ref]] <- out[[ref]][,,1:nlatent,drop=FALSE] 
+            dimnames(out[[ref]]) <- list(NULL, NULL, latentNames)
+          } else { #for cov
+            out[[ref]] <- out[[ref]][,,1:nlatent,1:nlatent,drop=FALSE]
+          }
+        }
+      }
+    }
+  }
+  
+  for(typei in c('prior','upd','smooth')){
+    out[[paste0('err',typei)]] <- aaply(out[[paste0('y',typei)]],1, function(yp) array(out$y-yp,dim=dim(out$y)),.drop=FALSE,.inform=TRUE)
+  } 
+  # 
+  if(standardisederrors){
+    for(typei in c('prior','upd','smooth')){
+      arr <- array(sapply(1:dim(out$yprior)[1], function(i){
+        array(sapply(1:nrow(out$y), function(r){
+          tmp <- matrix(NA,length(manifestNames))
+          if(sum(!is.na(out$y[r,])) > 0) tmp[which(!is.na(out$y[r,]))] <- 
+              matrix(solve(
+                t(chol(matrix(out[[paste0('ypriorcov')]][i,r,,],ncol=length(manifestNames)) + diag(1e-10,length(manifestNames))))[
+                  !is.na(out$y[r,]),!is.na(out$y[r,])], 
+                out[[paste0('err',typei)]][i,r,!is.na(out$y[r,])]), nrow=sum(!is.na(out$y[r,])))
+          return(tmp)
+        },simplify = 'array'), dim=c(length(manifestNames),1,nrow(out$y)))
+      },simplify = 'array'), dim=c(length(manifestNames),1,nrow(out$y),nsamples))
+      
+      out[[paste0('errstd',typei)]] <- array(aperm(arr, c(4,3,1,2)),dim=dim(arr)[c(4,3,1)])
+    }
+  }
+  
+  mindex <- grep('(^y)|(^err)|(^ll)',names(out))
+  lindex <- grep('^eta',names(out))
+  nosampindex <- which(names(out) %in% c('time','y'))
+  out$llrow <- matrix(out$llrow,dim(out$llrow)[1],dim(out$llrow)[2])
+  
+  for(i in 1:length(out)){
+    d<-list()
+    if(!i %in% nosampindex){
+      ds <- 1:dim(out[[i]])[1]
+      d <- c(d,Sample=list(ds))
+    }
+    do <- 1:dim(out[[i]])[ifelse(i %in% nosampindex,1,2)]#obs
+    d <- c(d,Obs=list(do))
+    
+    if(names(out)[i] %in% 'time') d <- c(d,Row=list('Time'))
+    if(names(out)[i] %in% 'y') d <- c(d,Row = list(manifestNames))
+    
+    
+    if(length(dim(out[[i]])) > 2){
+      if(i %in% mindex) dr <- manifestNames
+      if(i %in% lindex) dr <- latentNames
+      d <- c(d,Row=list(dr))
+      if(length(dim(out[[i]])) > 3) d <- c(d,Col=list(dr))
+    }
+    
+    dimnames(out[[i]]) <- d
+  }
+  out$id <- id
+  
+  return(out)
+}
+
+
 #' Get Kalman filter estimates from a ctStanFit object
 #'
-#' @param fit fit object from \code{\link{ctFit}}.
+#' @param fit fit object from \code{\link{ctFit}}, from any backend.
 #' @param nsamples either NA (to extract all) or a positive integer from 1 to maximum samples in the fit.
 #' @param cores Integer number of cpu cores to use. Only needed if savescores was set to FALSE when fitting.
 #' @param collapsefunc function to apply over samples, such as \code{mean}
@@ -14,7 +125,7 @@
 #' are set to NA, so only expectations based on parameters and covariates are returned. If a positive integer N, 
 #' every N observations are retained while others are set NA for computing model expectations -- useful for observing prediction performance
 #' forward further in time than one observation.
-#' @param subjects integer vector of subjects to compute for.
+#' @param subjects 'all' (the default), or an integer vector of subjects to compute for.
 #' @param timestep Either a positive numeric value, 'asdata' to use the times in the dataset, or 'auto' to select 
 #' a timestep automatically (resulting in some interpolation but not excessive computation).
 #' @param maxtime only relevant if timestep is not 'asdata'. Positive numeric denoting max time for computations.
@@ -28,10 +139,20 @@
 #' @examples 
 #' k=ctKalmanArray(ctstantestfit,subjectpars=TRUE,collapsefunc=mean)
 ctKalmanArray <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1,
-  subjects=1:max(fit$standata$subject), timestep='asdata',maxtime='asdata',
+  subjects='all', timestep='asdata',maxtime='asdata',
   standardisederrors=FALSE, subjectpars=TRUE, tformsubjectpars=TRUE, indvarstates=FALSE,removeObs=F,...){
   
+  # The julia and cpp engines produce the same four arrays from their own
+  # forward pass; everything downstream of that is shared (see
+  # .ctKalmanArrayAssemble below and R/ctBackendKalman.R).
+  if(inherits(fit,'ctCppFit') || inherits(fit,'ctJuliaFit')){
+    return(ctBackendKalman(fit,subjects=subjects,timestep=timestep,maxtime=maxtime,
+      removeObs=removeObs,pointest=pointest,nsamples=nsamples,collapsefunc=collapsefunc,
+      standardisederrors=standardisederrors,subjectpars=subjectpars,
+      indvarstates=indvarstates,...))
+  }
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
+  if(identical(subjects,'all')) subjects <- 1:max(fit$standata$subject)
   if(fit$standata$intoverstates==0){
     warning('Kalman filter operation unreliable when states were sampled -- system noise represents prior while point estimates represent posterior / smoothed')
   }
@@ -96,108 +217,20 @@ ctKalmanArray <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1
   e$etaa <- e$etaa[,,fit$standata$dokalmanrows==1,,drop=FALSE]
   e$etacova <- e$etacova[,,fit$standata$dokalmanrows==1,,,drop=FALSE]
   
-  nsamples <-nrow(samples) #in case it was set NA, compute nsamples
-  e$yprior <- array(e$ya[,1,,,drop=FALSE],dim=dim(e$ya)[-2])
-  e$yupd <-  array(e$ya[,2,,,drop=FALSE],dim=dim(e$ya)[-2])
-  e$ysmooth<-  array(e$ya[,3,,,drop=FALSE],dim=dim(e$ya)[-2])
-  e$etaprior <-  array(e$etaa[,1,,,drop=FALSE],dim=dim(e$etaa)[-2])
-  e$etaupd <-  array(e$etaa[,2,,,drop=FALSE],dim=dim(e$etaa)[-2])
-  e$etasmooth <-  array(e$etaa[,3,,,drop=FALSE],dim=dim(e$etaa)[-2])
-  e$ypriorcov <-  array(e$ycova[,1,,,,drop=FALSE],dim=dim(e$ycova)[-2])
-  e$yupdcov <-  array(e$ycova[,2,,,,drop=FALSE],dim=dim(e$ycova)[-2])
-  e$ysmoothcov <-  array(e$ycova[,3,,,,drop=FALSE],dim=dim(e$ycova)[-2])
-  e$etapriorcov <-  array(e$etacova[,1,,,,drop=FALSE],dim=dim(e$etacova)[-2])
-  e$etaupdcov <-  array(e$etacova[,2,,,,drop=FALSE],dim=dim(e$etacova)[-2])
-  e$etasmoothcov <-  array(e$etacova[,3,,,,drop=FALSE],dim=dim(e$etacova)[-2])
-  
-  
-  
   nlatent <- ifelse(!indvarstates, fit$standata$nlatent,fit$standata$nlatentpop)
   latentNames <- fit$ctstanmodel$latentNames
   if(indvarstates) latentNames <- c(latentNames,
-    # paste0('indvar',1:(fit$standata$nlatentpop-fit$standata$nlatent))
     getparnames(fit,popstatesonly=TRUE)
   )
-  nmanifest <- fit$standata$nmanifest
-  
-  
-  
-  out=list(time=cbind(fit$standata$time[fit$standata$dokalmanrows==1]), 
-    y=matrix(fit$standata$Y[fit$standata$dokalmanrows==1,,drop=FALSE],ncol=ncol(fit$standata$Y),dimnames = list(NULL,fit$ctstanmodel$manifestNames)), 
-    llrow=e$llrow[,fit$standata$dokalmanrows==1,drop=FALSE])
-  out$y[out$y==99999] <- NA
-  for(basei in c('y','eta')){
-    for(typei in c('prior','upd','smooth')){
-      for(typex in c('','cov')){
-        ref=paste0(basei,typei,typex)
-        out[[ref]] <- e[[ref]]
-        out[[ref]][out[[ref]] == 99999] <- NA
-        if(basei=='y') {
-          dimnames(out[[ref]]) <- list(NULL, NULL, fit$ctstanmodel$manifestNames) 
-        } 
-        if(basei=='eta'){
-          if(typex=='') {
-            out[[ref]] <- out[[ref]][,,1:nlatent,drop=FALSE] 
-            dimnames(out[[ref]]) <- list(NULL, NULL, latentNames)
-          } else { #for cov
-            out[[ref]] <- out[[ref]][,,1:nlatent,1:nlatent,drop=FALSE]
-          }
-        }
-      }
-    }
-  }
-  
-  for(typei in c('prior','upd','smooth')){
-    out[[paste0('err',typei)]] <- aaply(out[[paste0('y',typei)]],1, function(yp) array(out$y-yp,dim=dim(out$y)),.drop=FALSE,.inform=TRUE)
-  } 
-  # 
-  if(standardisederrors){
-    for(typei in c('prior','upd','smooth')){
-      arr <- array(sapply(1:dim(out$yprior)[1], function(i){
-        array(sapply(1:nrow(out$y), function(r){
-          tmp <- matrix(NA,nmanifest)
-          if(sum(!is.na(out$y[r,])) > 0) tmp[which(!is.na(out$y[r,]))] <- 
-              matrix(solve(
-                t(chol(matrix(out[[paste0('ypriorcov')]][i,r,,],ncol=nmanifest) + diag(1e-10,nmanifest)))[
-                  !is.na(out$y[r,]),!is.na(out$y[r,])], 
-                out[[paste0('err',typei)]][i,r,!is.na(out$y[r,])]), nrow=sum(!is.na(out$y[r,])))
-          return(tmp)
-        },simplify = 'array'), dim=c(nmanifest,1,nrow(out$y)))
-      },simplify = 'array'), dim=c(nmanifest,1,nrow(out$y),nsamples))
-      
-      out[[paste0('errstd',typei)]] <- array(aperm(arr, c(4,3,1,2)),dim=dim(arr)[c(4,3,1)])
-    }
-  }
-  
-  mindex <- grep('(^y)|(^err)|(^ll)',names(out))
-  lindex <- grep('^eta',names(out))
-  nosampindex <- which(names(out) %in% c('time','y'))
-  out$llrow <- matrix(out$llrow,dim(out$llrow)[1],dim(out$llrow)[2])
-  
-  for(i in 1:length(out)){
-    d<-list()
-    if(!i %in% nosampindex){
-      ds <- 1:dim(out[[i]])[1]
-      d <- c(d,Sample=list(ds))
-    }
-    do <- 1:dim(out[[i]])[ifelse(i %in% nosampindex,1,2)]#obs
-    d <- c(d,Obs=list(do))
-    
-    if(names(out)[i] %in% 'time') d <- c(d,Row=list('Time'))
-    if(names(out)[i] %in% 'y') d <- c(d,Row = list(fit$ctstanmodelbase$manifestNames))
-    
-    
-    if(length(dim(out[[i]])) > 2){
-      if(i %in% mindex) dr <- fit$ctstanmodelbase$manifestNames
-      if(i %in% lindex) dr <- latentNames
-      d <- c(d,Row=list(dr))
-      if(length(dim(out[[i]])) > 3) d <- c(d,Col=list(dr))
-    }
-    
-    dimnames(out[[i]]) <- d
-  }
-  out$id <- fit$standata$subject[fit$standata$dokalmanrows==1]
-  
+
+  out <- .ctKalmanArrayAssemble(e,
+    time = fit$standata$time[fit$standata$dokalmanrows==1],
+    Y = fit$standata$Y[fit$standata$dokalmanrows==1,,drop=FALSE],
+    id = fit$standata$subject[fit$standata$dokalmanrows==1],
+    nlatent = nlatent, latentNames = latentNames,
+    manifestNames = fit$ctstanmodelbase$manifestNames,
+    standardisederrors = standardisederrors)
+
   return(out)
 }
 
@@ -369,10 +402,12 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
 #' (which also requires 'asdata' for timerange) or a positive numeric value
 #' indicating the time step to use for interpolating values. Lower values give a more accurate / smooth representation,
 #' but take a little more time to calculate. 
-#' @param subjects vector of integers denoting which subjects (from 1 to N) to plot predictions for. 
+#' @param subjects subject ids to predict for, or NULL (the default) for the first
+#' subject in the data. With \code{realid=FALSE}, integers denoting subjects from 1 to N.
 #' @param removeObs Logical or integer. If TRUE, observations (but not covariates)
-#' are set to NA, so only expectations based on parameters and covariates are returned. If a positive integer N, 
-#' every N observations are retained while others are set NA for computing model expectations -- useful for observing prediction performance
+#' are withheld from the filter, so only expectations based on parameters and covariates are returned
+#' (the observations themselves are still reported, for comparison). If a positive integer N, 
+#' every N observations are retained while others are withheld -- useful for observing prediction performance
 #' forward further in time than one observation.
 #' @param standardisederrors if TRUE, also include standardised error output (based on covariance
 #' per time point).
@@ -417,15 +452,16 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
 #' @export
 
 ctPredict<-function(fit, timerange='asdata', timestep='auto',
-  subjects=fit$standata$idmap[1,1], removeObs = FALSE, plot=FALSE, 
+  subjects=NULL, removeObs = FALSE, plot=FALSE, 
   standardisederrors=FALSE,realid=TRUE,...){
   
   
   if('ctsemFit' %in% class(fit)) stop('This function is no longer supported with ctsemOMX, try ctsem')
-  if(!'ctStanFit' %in% class(fit)) stop('fit object is not from ctStanFit!')
+  if(!inherits(fit,c('ctStanFit','ctCppFit','ctJuliaFit'))) stop('fit object is not a ctsem fit!')
   
   # get subjects ------------------------------------------------------------
-  idmap <- fit$standata$idmap #store now because we may reduce it
+  idmap <- .ctFitIdMap(fit) #store now because we may reduce it
+  if(is.null(subjects)) subjects <- idmap[1,1]
   if('factor' %in% class(idmap$original)) idmap$original <- as.character(idmap$original)
   if('factor' %in% class(subjects)) subjects <- as.character(subjects)
   subjectsarg <- subjects

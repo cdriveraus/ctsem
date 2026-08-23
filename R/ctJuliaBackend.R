@@ -807,8 +807,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       .ctJuliaVector(as.integer(spec$dynamic_state_indices))
   }
   params <- do.call(module$ekf_from_columns, arguments)
-  objective_args <- list(params, JuliaConnectoR::juliaPut(spec$subject_starts),
-    JuliaConnectoR::juliaPut(spec$times), JuliaConnectoR::juliaPut(spec$manifest_data),
+  # .ctJuliaVector, not juliaPut, for the vectors: JuliaConnectoR marshals a
+  # length-one R vector as a *scalar*, so a single-subject model would hand the
+  # objective constructor an Int where it wants an AbstractVector. That never
+  # showed up while every caller was a whole fitted dataset; ctPredict() on one
+  # subject is a caller where it does.
+  objective_args <- list(params, .ctJuliaVector(spec$subject_starts),
+    .ctJuliaVector(spec$times), JuliaConnectoR::juliaPut(spec$manifest_data),
     JuliaConnectoR::juliaPut(spec$tdpred_data), JuliaConnectoR::juliaPut(spec$tipred_data),
     spec$max_timestep)
   if (!is.null(spec$priors) && length(spec$priors$index)) {

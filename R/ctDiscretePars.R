@@ -146,7 +146,7 @@ ctDiscretePars<-function(fit, subjects='popmean',
     if('popmean' %in% subjects || is.null(e[[paste0('subj_',matname)]])){
       ctpars[[matname]] <- e[[paste0('pop_',matname)]][samples,,,drop=FALSE]
     } else {
-      if(dim(e[[paste0('subj_',matname)]])[2] != length(unique(fit$standata$subject))){ #if we computed subject parameters for only the specified subjects
+      if(dim(e[[paste0('subj_',matname)]])[2] != .ctFitNsubjects(fit)){ #if we computed subject parameters for only the specified subjects
         parsubjects <- 1:length(subjects)
       } else parsubjects <- subjects
       ctpars[[matname]] <- e[[paste0('subj_',matname)]][samples,parsubjects,,,drop=FALSE]

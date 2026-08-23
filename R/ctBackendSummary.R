@@ -53,8 +53,21 @@
 # into either layout directly.
 .ctFitModelObject <- function(fit) {
   if (!is.null(fit$ctstanmodel)) return(fit$ctstanmodel)
+  # The specification's own model, ahead of the fit's, because that is the
+  # object the parameter table was actually derived from. It matters when
+  # something re-prepares the data (ctPredict interpolating a time grid, say):
+  # ctFit hands the backends a model that has already been through
+  # ctStanModelIntOverPop, and re-deriving the augmentation from a model that
+  # has not been produces an algebraically equivalent but differently written
+  # parameter table -- with a different mapping from the raw vector.
+  if (!is.null(fit$model_spec$model)) return(fit$model_spec$model)
   if (!is.null(fit$model)) return(fit$model)
   stop("The fit does not carry the model it was built from.", call. = FALSE)
+}
+
+.ctFitNsubjects <- function(fit) {
+  if (!is.null(fit$standata$subject)) return(length(unique(fit$standata$subject)))
+  length(.ctBackendSpec(fit)$subject_starts)
 }
 
 .ctFitNsamples <- function(fit) {
@@ -253,14 +266,6 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 
 .ctBackendExtract <- function(object, subjectMatrices = FALSE, nsamples = "all",
   subjects = "all", ...) {
-  if (isTRUE(subjectMatrices)) {
-    stop("Subject matrices are not yet available for julia / cpp backend fits.",
-      call. = FALSE)
-  }
-  if (!identical(subjects, "all")) {
-    stop("Subject-specific extraction is not yet available for julia / cpp backend fits.",
-      call. = FALSE)
-  }
   samples <- .ctBackendRawSamples(object)
   if (!identical(nsamples, "all")) {
     wanted <- min(nrow(samples), as.integer(nsamples)[1L])
@@ -268,9 +273,26 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   }
   arrays <- .ctBackendPopArrays(object, samples = samples, ...)
   popmeans <- .ctBackendPopMeanSamples(object, samples = samples)
-  c(list(rawpars = samples, popmeans = popmeans$values,
+  out <- c(list(rawpars = samples, popmeans = popmeans$values,
     loglik = object$estimate$loglik, gradient = object$estimate$gradient,
     subject_loglik = object$estimate$subject_loglik), arrays)
+
+  # Subject matrices need the filter, not just the transforms: an individually
+  # varying parameter is an augmented latent state, so a subject's value for it
+  # is only known once that subject's data has been filtered and smoothed.
+  if (isTRUE(subjectMatrices)) {
+    spec <- .ctBackendKalmanSpec(object, subjects = subjects)
+    flat <- NULL
+    for (iteration in seq_len(nrow(samples))) {
+      scores <- .ctBackendKalmanRaw(spec, samples[iteration, ], subjectmatrices = TRUE)
+      if (is.null(flat)) {
+        flat <- array(0, dim = c(nrow(samples), dim(scores$subject_matrices)))
+      }
+      flat[iteration, , ] <- scores$subject_matrices
+    }
+    out <- c(out, .ctBackendSubjectMatrices(spec, flat))
+  }
+  out
 }
 
 .ctBackendNameMatrices <- function(out, model) {

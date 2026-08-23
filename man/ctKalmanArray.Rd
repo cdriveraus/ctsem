@@ -11,7 +11,7 @@ ctKalmanArray(
   pointest = TRUE,
   collapsefunc = NA,
   cores = 1,
-  subjects = 1:max(fit$standata$subject),
+  subjects = "all",
   timestep = "asdata",
   maxtime = "asdata",
   standardisederrors = FALSE,
@@ -23,7 +23,7 @@ ctKalmanArray(
 )
 }
 \arguments{
-\item{fit}{fit object from \code{\link{ctFit}}.}
+\item{fit}{fit object from \code{\link{ctFit}}, from any backend.}
 
 \item{nsamples}{either NA (to extract all) or a positive integer from 1 to maximum samples in the fit.}
 
@@ -33,7 +33,7 @@ ctKalmanArray(
 
 \item{cores}{Integer number of cpu cores to use. Only needed if savescores was set to FALSE when fitting.}
 
-\item{subjects}{integer vector of subjects to compute for.}
+\item{subjects}{'all' (the default), or an integer vector of subjects to compute for.}
 
 \item{timestep}{Either a positive numeric value, 'asdata' to use the times in the dataset, or 'auto' to select 
 a timestep automatically (resulting in some interpolation but not excessive computation).}

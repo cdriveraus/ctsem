@@ -33,3 +33,7 @@
     .Call(`_ctsem_ctsemCppParMatrices`, handle, pars, tipreds, state, time, dt)
 }
 
+.ctsemCppKalman <- function(handle, pars, subjectmatrices = TRUE) {
+    .Call(`_ctsem_ctsemCppKalman`, handle, pars, subjectmatrices)
+}
+

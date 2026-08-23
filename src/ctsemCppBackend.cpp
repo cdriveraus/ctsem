@@ -9,6 +9,7 @@
 
 #include "ctsemcpp/rinterface.hpp"
 #include "ctsemcpp/summary.hpp"
+#include "ctsemcpp/kalman.hpp"
 
 using namespace Rcpp;
 
@@ -245,6 +246,91 @@ NumericMatrix ctsemCppParMatrices(SEXP handle, NumericMatrix pars, SEXP tipreds,
     ctsemcpp::parameterMatrices(model, ws, layout, raw.data(), tivalues.data(), statepointer,
                                 time, dt, column.data());
     for (int i = 0; i < layout.size; ++i) out(i, s) = column[static_cast<std::size_t>(i)];
+  }
+  return out;
+}
+
+// Per-row Kalman output for one raw parameter vector: prior, filtered and
+// smoothed states and observations, plus each subject's own model matrices.
+//
+// The array shapes mirror Stan's `etaa`/`etacova`/`ya`/`ycova` exactly --
+// leading dimension 3 for prior/updated/smoothed, then data row -- so the R
+// side that already unpacks those needs no second code path for this backend.
+// [[Rcpp::export(.ctsemCppKalman)]]
+List ctsemCppKalman(SEXP handle, NumericVector pars, bool subjectmatrices = true) {
+  ctsemcpp::CppObjective* objective = fromPtr(handle);
+  const ctsemcpp::CppModel& model = objective->model;
+  const int p = objective->nvalues();
+  if (pars.size() != p) {
+    stop("ctsem C++ backend: expected %d free parameters, got %d.", p,
+         static_cast<int>(pars.size()));
+  }
+
+  ctsemcpp::KalmanTrace trace;
+  std::vector<double> subjectloglik = ctsemcpp::runKalman(*objective, pars.begin(), trace);
+
+  const int kinds = ctsemcpp::KalmanTrace::nKinds;
+  const int rows = trace.nrows;
+  const int n = trace.nlatent;
+  const int m = trace.nmanifest;
+
+  NumericVector eta(static_cast<R_xlen_t>(kinds) * rows * n);
+  NumericVector etacov(static_cast<R_xlen_t>(kinds) * rows * n * n);
+  NumericVector y(static_cast<R_xlen_t>(kinds) * rows * m);
+  NumericVector ycov(static_cast<R_xlen_t>(kinds) * rows * m * m);
+  for (int kind = 0; kind < kinds; ++kind) {
+    for (int row = 0; row < rows; ++row) {
+      const std::size_t at = trace.at(kind, row);
+      const std::size_t base = static_cast<std::size_t>(kind) + kinds * row;
+      for (int i = 0; i < n; ++i) {
+        eta[static_cast<R_xlen_t>(base + static_cast<std::size_t>(kinds) * rows * i)] =
+            trace.eta[at](i);
+        for (int j = 0; j < n; ++j) {
+          etacov[static_cast<R_xlen_t>(
+              base + static_cast<std::size_t>(kinds) * rows * (i + static_cast<std::size_t>(n) * j))] =
+              trace.etacov[at](i, j);
+        }
+      }
+      for (int i = 0; i < m; ++i) {
+        y[static_cast<R_xlen_t>(base + static_cast<std::size_t>(kinds) * rows * i)] =
+            trace.y[at](i);
+        for (int j = 0; j < m; ++j) {
+          ycov[static_cast<R_xlen_t>(
+              base + static_cast<std::size_t>(kinds) * rows * (i + static_cast<std::size_t>(m) * j))] =
+              trace.ycov[at](i, j);
+        }
+      }
+    }
+  }
+  eta.attr("dim") = IntegerVector::create(kinds, rows, n);
+  etacov.attr("dim") = IntegerVector::create(kinds, rows, n, n);
+  y.attr("dim") = IntegerVector::create(kinds, rows, m);
+  ycov.attr("dim") = IntegerVector::create(kinds, rows, m, m);
+
+  NumericVector llrow(rows);
+  IntegerVector subject(rows);
+  for (int row = 0; row < rows; ++row) {
+    llrow[row] = trace.llrow[static_cast<std::size_t>(row)];
+    subject[row] = trace.rowSubject[static_cast<std::size_t>(row)];
+  }
+
+  List out = List::create(_["eta"] = eta, _["etacov"] = etacov, _["y"] = y, _["ycov"] = ycov,
+                          _["llrow"] = llrow, _["subject"] = subject,
+                          _["subject_loglik"] = NumericVector(subjectloglik.begin(),
+                                                              subjectloglik.end()));
+
+  if (subjectmatrices) {
+    const ctsemcpp::SummaryLayout layout = ctsemcpp::summaryLayout(model);
+    ctsemcpp::FilterWorkspace ws;
+    ws.resize(model);
+    const int nsubject = trace.nsubjects;
+    NumericMatrix matrices(layout.size, nsubject);
+    std::vector<double> column(static_cast<std::size_t>(layout.size));
+    for (int s = 0; s < nsubject; ++s) {
+      ctsemcpp::subjectMatrices(model, ws, layout, trace, s, column.data());
+      for (int i = 0; i < layout.size; ++i) matrices(i, s) = column[static_cast<std::size_t>(i)];
+    }
+    out["subject_matrices"] = matrices;
   }
   return out;
 }

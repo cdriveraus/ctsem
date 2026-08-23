@@ -9,7 +9,7 @@ ctPredict(
   fit,
   timerange = "asdata",
   timestep = "auto",
-  subjects = fit$standata$idmap[1, 1],
+  subjects = NULL,
   removeObs = FALSE,
   plot = FALSE,
   standardisederrors = FALSE,
@@ -28,11 +28,13 @@ allowing for estimates outside the range of observed data. Ranges smaller than t
 indicating the time step to use for interpolating values. Lower values give a more accurate / smooth representation,
 but take a little more time to calculate.}
 
-\item{subjects}{vector of integers denoting which subjects (from 1 to N) to plot predictions for.}
+\item{subjects}{subject ids to predict for, or NULL (the default) for the first
+subject in the data. With \code{realid=FALSE}, integers denoting subjects from 1 to N.}
 
 \item{removeObs}{Logical or integer. If TRUE, observations (but not covariates)
-are set to NA, so only expectations based on parameters and covariates are returned. If a positive integer N, 
-every N observations are retained while others are set NA for computing model expectations -- useful for observing prediction performance
+are withheld from the filter, so only expectations based on parameters and covariates are returned
+(the observations themselves are still reported, for comparison). If a positive integer N, 
+every N observations are retained while others are withheld -- useful for observing prediction performance
 forward further in time than one observation.}
 
 \item{plot}{Logical. If TRUE, plots output instead of returning it. 

@@ -231,26 +231,43 @@ function ctsem_parameter_matrices(objective::CTSEMObjective, values::AbstractMat
         apply_complex_transforms_at_indices!(getdata(pars), update_indices,
             sp.update_transforms, context)
 
-        out[1:nall, column] .= getdata(pars)
-
-        nlatent = layout.nlatent
-        dyn = isempty(sp.diffusion_state_indices) ? collect(1:nlatent) :
-              sp.diffusion_state_indices
-        diffusioncov = zeros(Float64, nlatent, nlatent)
-        diffusioncov[dyn, dyn] .= Matrix(sdcovsqrt2cov(pars.DIFFUSION, 0))[dyn, dyn]
-        manifestcov = Matrix(sdcovsqrt2cov(pars.MANIFESTVAR, 0))
-        t0cov = Matrix(sdcovsqrt2cov(pars.T0VAR, 0))
-        asym_diffusion, asym_cint = _ctsem_asymptotics(pars.DRIFT, diffusioncov,
-            pars.CINT, dyn, nlatent)
-
-        derived = (diffusioncov, manifestcov, t0cov, asym_diffusion, asym_cint)
-        for (k, block) in enumerate(derived)
-            slot = length(names) + k
-            first = layout.offset[slot] + 1
-            out[first:(first+length(block)-1), column] .= vec(block)
-        end
+        _ctsem_pack_matrices!(view(out, :, column), pars, sp, layout)
     end
     return out
+end
+
+"""
+    _ctsem_pack_matrices!(column, pars, sp, layout)
+
+Write one materialized parameter vector, plus the covariance and asymptotic
+matrices derived from it, into one column of the flat layout.
+
+Split out because there are two ways to arrive at a materialized parameter
+vector -- transform it from a raw vector, or take the one a subject's filter
+pass ended with (see `kalman_trace.jl`) -- and only the first half differs.
+"""
+function _ctsem_pack_matrices!(column, pars, sp::EKFParameters, layout)
+    nall = length(getdata(pars))
+    column[1:nall] .= getdata(pars)
+
+    nlatent = layout.nlatent
+    dyn = isempty(sp.diffusion_state_indices) ? collect(1:nlatent) :
+          sp.diffusion_state_indices
+    diffusioncov = zeros(Float64, nlatent, nlatent)
+    diffusioncov[dyn, dyn] .= Matrix(sdcovsqrt2cov(pars.DIFFUSION, 0))[dyn, dyn]
+    manifestcov = Matrix(sdcovsqrt2cov(pars.MANIFESTVAR, 0))
+    t0cov = Matrix(sdcovsqrt2cov(pars.T0VAR, 0))
+    asym_diffusion, asym_cint = _ctsem_asymptotics(pars.DRIFT, diffusioncov,
+        pars.CINT, dyn, nlatent)
+
+    derived = (diffusioncov, manifestcov, t0cov, asym_diffusion, asym_cint)
+    nbase = length(layout.matrix) - length(_CTSEM_DERIVED_MATRICES)
+    for (k, block) in enumerate(derived)
+        slot = nbase + k
+        first = layout.offset[slot] + 1
+        column[first:(first+length(block)-1)] .= vec(block)
+    end
+    return column
 end
 
 ctsem_parameter_matrices(objective::CTSEMObjective, values::AbstractVector; kwargs...) =

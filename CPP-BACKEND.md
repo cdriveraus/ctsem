@@ -406,13 +406,10 @@ already. Nothing here needs deciding today.
 Nothing in the likelihood or the gradient — the twelve-scenario comparison above
 is the whole feature surface. What is missing is peripheral:
 
-- Subject-specific matrix reconstruction (`ctExtract(subjectMatrices=TRUE)`),
-  and everything downstream of the Kalman filter's *states* rather than its
-  parameters: `ctPredict()`, `ctKalman()`, `ctPredictTIP()`, `ctACFresiduals()`,
-  `ctPostPredPlots()`, `ctFitCovCheck()`, `ctGenerateFromFit()`. These need an
-  engine entry point that returns per-row filtered and smoothed states and
-  covariances, which neither engine has; the parameter-matrix work below does
-  not get them for free. (Also missing for `ctJuliaFit`.)
+- Data *generation*: `ctGenerateFromFit()` and `ctPostPredPlots()`, which need
+  the engines to simulate from the fitted model rather than to filter given
+  data. `ctPredictTIP()` and `ctFitCovCheck()` are untested against these
+  backends. (Also missing for `ctJuliaFit`.)
 - Multi-start or restart robustness in the optimizer (also missing in
   `ctsem_optimize`; the Julia handoff lists it as the top open item).
 - The `v1` refusals are the same list as Julia's: no HMC, no priors, no
@@ -484,6 +481,71 @@ Three things are worth knowing:
 Intervals appear only when they have been earned: a fit without
 `ctOptimUncertainty()` has one "sample", and the interval columns are omitted
 rather than filled with a zero-width interval that would read as certainty.
+
+### Prediction: ctKalman, ctPredict, and subject parameters
+
+`ctKalmanArray()`, `ctPredict()` and `ctExtract(subjectMatrices=TRUE)` work for
+`ctCppFit` and `ctJuliaFit`.
+
+Those functions read four arrays -- prior, filtered and smoothed states and
+observations for every data row -- and every one of them is a byproduct of the
+forward pass the likelihood already makes. So this rides on that pass rather
+than adding a second filter "for prediction", which is precisely how the
+prediction output and the likelihood would drift apart. The mechanism is the
+recorder hook the filter already carries for the adjoint tape:
+
+- **C++** gains a second nullable out-parameter, `KalmanTrace*`, threaded
+  exactly as `AdjointTape*` already is. All four `if (trace)` branches are in
+  `filterSubject`; none is in `predictStep`, `computeDiscreteTimeForm`,
+  `maskedUpdateStep` or `updateObserved`, so the per-row cost when not tracing
+  is four predictable branches against O(n^3) of matrix work.
+- **Julia** does it by *dispatch* rather than branching: a trace is whatever
+  implements the `_record_*!` hooks, and `CTSEMKalmanTrace` implements the ones
+  it needs while every adjoint hook resolves to an inlined no-op for it (and
+  vice versa). Nothing in the primal or adjoint path changed shape.
+
+Three hooks are new in both, because the adjoint has no use for what they
+capture and so never needed a call site. They sit in the filter *loop*, not
+inside the measurement update, so they see the row index and fire on a fully
+missing row -- which the update returns early from, and which is exactly where a
+recorder placed one level down would silently skip.
+
+Smoothing is a genuinely separate backward pass. It needs a subject's last row
+before it can produce the first, so it is written as one rather than disguised
+as part of the forward loop.
+
+**Subject-level parameters** fall out of the same pass. ctsem represents an
+individually varying parameter as an augmented latent state with no drift and no
+diffusion, so a subject's value for it *is* its smoothed t0 estimate; a
+subject's matrices are the parameter vector its filter ended with, T0MEANS
+replaced by that smoothed state. This is Stan's construction, comment included
+("t0means updated, other pars as per final time point").
+
+Verification is against `stan_constrainsamples(savescores=TRUE)` at a fixed raw
+vector, so the optimizer is out of the comparison: all three passes match to
+1e-8 on a linear model with partial and total missingness, subject matrices
+match to 1e-6 on an intoverpop model with TI predictors, and C++ and Julia match
+each other to 1e-11. End to end -- `ctPredict()` on one subject over an
+interpolated time grid, standardised residuals included -- the two backends
+agree with Stan to 4e-8.
+
+Two details follow Stan rather than improving on it, so that the same model
+predicts the same way whichever backend ran it. Manifest quantities are recorded
+over *all* manifest variables and are not re-evaluated at the updated state; and
+with bounded substeps the interval transition handed to the smoother is
+`exp(JAx*dt)` from the last substep, not the product of the substep transitions.
+The product is the exact Jacobian of what the filter actually did and Stan calls
+its own version an approximation, so this is a one-line change to make if Stan
+makes it.
+
+`removeObs` withholds observations from the filter but not from the report,
+which is the point of it: what comes back is a prediction next to the
+observations it was not given.
+
+`ctResiduals()` and `ctACFresiduals()` come along for free, since they are built
+on `ctKalmanArray(standardisederrors=TRUE)`. Their standardised residuals have
+sd 1.00 at the estimate of a correctly specified model, which is an independent
+check on the whole chain that no comparison against Stan provides.
 
 ### One latent difference from the Julia backend, deliberately not copied
 

@@ -117,6 +117,7 @@ inline std::unique_ptr<CppObjective> buildObjective(const Rcpp::List& spec) {
     data.times = objective->times.data() + begin;
     data.nobs = end - begin;
     data.subject = s + 1;
+    data.firstRow = begin;
   }
 
   // tipred_data arrives as subjects x predictors, which R stores column-major,

@@ -81,40 +81,17 @@ inline std::vector<int> stateDependentPositions(const CppModel& model) {
   return out;
 }
 
-// `out` must have room for layout.size doubles. `tipreds` must have
-// model.ntipred entries (all zero gives the population values); `stateIn` may
-// be null, in which case T0MEANS is used.
-inline void parameterMatrices(const CppModel& model, FilterWorkspace& ws,
-                              const SummaryLayout& layout, const double* values,
-                              const double* tipreds, const double* stateIn, double time,
-                              double dt, double* out) {
+// Pack whatever is currently in `ws.all_params` into the flat summary layout,
+// deriving the covariance and asymptotic matrices from it.
+//
+// Split out from parameterMatrices() because there are two ways to arrive at a
+// materialized parameter vector -- transform it from a raw vector, or take the
+// one a subject's filter pass ended with -- and only the first half differs.
+// `out` must have room for layout.size doubles.
+inline void packMatrices(const CppModel& model, FilterWorkspace& ws,
+                         const SummaryLayout& layout, double* out) {
   const int n = model.nlatent;
   const int m = model.nmanifest;
-
-  materializeParameters(model, ws, values, tipreds);
-
-  if (stateIn != nullptr) {
-    for (int i = 0; i < n; ++i) ws.state(i) = stateIn[i];
-  } else {
-    for (int i = 0; i < n; ++i) ws.state(i) = ws.all_params[model.offT0MEANS + i];
-  }
-
-  std::fill(ws.tdrow.begin(), ws.tdrow.end(), 0.0);
-  ExprContext base;
-  base.cells = ws.all_params.data();
-  base.ncells = model.nall;
-  base.state = ws.state.data();
-  base.nstate = n;
-  base.tdpreds = ws.tdrow.data();
-  base.ntdpred = model.ntdpred;
-  base.tipreds = tipreds;
-  base.ntipred = model.ntipred;
-  base.time = time;
-  base.dt = dt;
-  // All three groups, in filter order, so every Jacobian block is populated.
-  applyGroup(model, ws, model.predict, base);
-  applyGroup(model, ws, model.td, base);
-  applyGroup(model, ws, model.update, base);
 
   for (int i = 0; i < layout.nbase; ++i) {
     const MatrixLayout& L = model.layouts[static_cast<std::size_t>(i)];
@@ -193,6 +170,42 @@ inline void parameterMatrices(const CppModel& model, FilterWorkspace& ws,
     std::copy(source->data(), source->data() + source->size(),
               out + layout.offset[static_cast<std::size_t>(i)]);
   }
+}
+
+// `tipreds` must have model.ntipred entries (all zero gives the population
+// values); `stateIn` may be null, in which case T0MEANS is used.
+inline void parameterMatrices(const CppModel& model, FilterWorkspace& ws,
+                              const SummaryLayout& layout, const double* values,
+                              const double* tipreds, const double* stateIn, double time,
+                              double dt, double* out) {
+  const int n = model.nlatent;
+
+  materializeParameters(model, ws, values, tipreds);
+
+  if (stateIn != nullptr) {
+    for (int i = 0; i < n; ++i) ws.state(i) = stateIn[i];
+  } else {
+    for (int i = 0; i < n; ++i) ws.state(i) = ws.all_params[model.offT0MEANS + i];
+  }
+
+  std::fill(ws.tdrow.begin(), ws.tdrow.end(), 0.0);
+  ExprContext base;
+  base.cells = ws.all_params.data();
+  base.ncells = model.nall;
+  base.state = ws.state.data();
+  base.nstate = n;
+  base.tdpreds = ws.tdrow.data();
+  base.ntdpred = model.ntdpred;
+  base.tipreds = tipreds;
+  base.ntipred = model.ntipred;
+  base.time = time;
+  base.dt = dt;
+  // All three groups, in filter order, so every Jacobian block is populated.
+  applyGroup(model, ws, model.predict, base);
+  applyGroup(model, ws, model.td, base);
+  applyGroup(model, ws, model.update, base);
+
+  packMatrices(model, ws, layout, out);
 }
 
 }  // namespace ctsemcpp

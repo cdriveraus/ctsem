@@ -25,6 +25,7 @@
 #include <limits>
 #include <vector>
 
+#include "kalmantrace.hpp"
 #include "linalg.hpp"
 #include "model.hpp"
 #include "tape.hpp"
@@ -65,6 +66,10 @@ struct SubjectData {
   const double* times = nullptr;
   int nobs = 0;
   int subject = 1;
+  // Index of this subject's first observation in the whole dataset, so a
+  // KalmanTrace can be addressed by global data row and every subject writes
+  // its own slice of one allocation.
+  int firstRow = 0;
 };
 
 struct FilterWorkspace {
@@ -436,16 +441,121 @@ inline bool updateObserved(const CppModel& model, FilterWorkspace& ws, const dou
   return maskedUpdateStep(model, ws, ws.observed, yrow, loglik);
 }
 
+// Backward RTS pass over one subject, plus the subject-level parameter
+// snapshot, run once the forward filter has reached the subject's last row.
+//
+// Smoothing is a fixed-interval operation, so it cannot be folded into the
+// forward loop -- it needs the last row before it can produce the first. That
+// is why it is a separate function rather than another `if (trace)` inside the
+// loop: the alternative would be a second pass over the data that pretends to
+// be part of the first.
+//
+// The subject-level parameters are the point of the whole exercise for models
+// with random effects. ctsem represents an individually-varying parameter as an
+// augmented latent state with zero drift and zero diffusion, so a subject's
+// parameters are read out of its smoothed t0 state. The rest of its matrices
+// are taken as of its last row, where the carrier states have already absorbed
+// every observation -- matching Stan, whose comment for the same step reads
+// "t0means updated, other pars as per final time point".
+inline void smoothSubject(const CppModel& model, FilterWorkspace& ws,
+                          const SubjectData& data, KalmanTrace& trace) {
+  const int n = model.nlatent;
+  const int first = data.firstRow;
+  const int last = first + data.nobs - 1;
+
+  MatrixXd Pnext(n, n), cross(n, n), gain(n, n), scratch(n, n);
+  for (int r = last; r >= first; --r) {
+    const std::size_t sm = trace.at(KalmanTrace::Smooth, r);
+    const std::size_t up = trace.at(KalmanTrace::Upd, r);
+    if (r == last) {
+      trace.eta[sm] = trace.eta[up];
+      trace.etacov[sm] = trace.etacov[up];
+      trace.y[sm] = trace.y[up];
+      trace.ycov[sm] = trace.ycov[up];
+      continue;
+    }
+    const std::size_t pn = trace.at(KalmanTrace::Prior, r + 1);
+    const std::size_t snext = trace.at(KalmanTrace::Smooth, r + 1);
+
+    // gain = P_upd[r] A[r+1]' inv(P_prior[r+1]), with Stan's makesym() ridge on
+    // the matrix being inverted; solved rather than inverted.
+    Pnext = trace.etacov[pn];
+    detail::symmetrize(Pnext);
+    for (int i = 0; i < n; ++i) Pnext(i, i) += kRidge;
+    cross.noalias() = trace.etacov[up] * trace.transition[static_cast<std::size_t>(r + 1)]
+                          .transpose();
+    gain = Pnext.ldlt().solve(cross.transpose()).transpose();
+
+    trace.eta[sm] = trace.eta[up];
+    trace.eta[sm].noalias() += gain * (trace.eta[snext] - trace.eta[pn]);
+
+    scratch.noalias() = gain * (trace.etacov[snext] - trace.etacov[pn]);
+    trace.etacov[sm] = trace.etacov[up];
+    trace.etacov[sm].noalias() += scratch * gain.transpose();
+
+    const MatrixXd& Jyrow = trace.Jy[static_cast<std::size_t>(r)];
+    trace.y[sm] = trace.y[up];
+    trace.y[sm].noalias() += Jyrow * (trace.eta[sm] - trace.eta[up]);
+    MatrixXd JC(model.nmanifest, n);
+    JC.noalias() = Jyrow * (trace.etacov[sm] - trace.etacov[up]);
+    trace.ycov[sm] = trace.ycov[up];
+    trace.ycov[sm].noalias() += JC * Jyrow.transpose();
+  }
+
+  const std::size_t slot = static_cast<std::size_t>(data.subject - 1);
+  if (slot < trace.subjectParams.size()) {
+    trace.subjectParams[slot] = ws.all_params;
+    trace.subjectT0[slot] = trace.eta[trace.at(KalmanTrace::Smooth, first)];
+  }
+}
+
 // Evaluate one subject's log-likelihood, optionally recording the tape.
 // Returns NaN for an invalid trial point (a failed innovation Cholesky), which
 // poisons the total and the gradient rather than producing a finite-but-wrong
 // answer the optimizer would accept.
 inline double filterSubject(const CppModel& model, FilterWorkspace& ws,
                             const double* values, const SubjectData& data,
-                            AdjointTape* tape) {
+                            AdjointTape* tape, KalmanTrace* trace = nullptr) {
   const int n = model.nlatent;
   const int m = model.nmanifest;
   const int ntd = model.ntdpred;
+  const int firstRow = data.firstRow;
+
+  // The Kalman recorders. Same contract as the adjoint tape above them: null
+  // means the loop runs exactly as it did before this existed, and everything
+  // the prediction path needs is taken from the one forward pass rather than
+  // from a second one written to mirror it.
+  //
+  // What is recorded is what Stan's `dosmoother` branch records, including two
+  // places where Stan is deliberately approximate and this follows it rather
+  // than improving on it -- see the transition note in the substep loop and the
+  // `Jy`/`LAMBDA` note here. Diverging would make the same model report
+  // different predictions from different backends, which is worse than
+  // reproducing a documented approximation.
+  //
+  // LAMBDA (evaluated at the predicted state) gives the manifest mean and Jy
+  // its Jacobian gives the covariance, the same split the update uses. Neither
+  // is re-evaluated at the updated state, matching Stan.
+  auto recordManifest = [&](int kind, int row, const VectorXd& state,
+                            const MatrixXd& statecov) {
+    const std::size_t k = trace->at(kind, row);
+    Eigen::Map<const MatrixXd> LAMBDA(ws.all_params.data() + model.offLAMBDA, m, n);
+    Eigen::Map<const MatrixXd> Jyrow(ws.all_params.data() + model.offJy, m, n);
+    Eigen::Map<const MatrixXd> MANIFESTMEANS(ws.all_params.data() + model.offMANIFESTMEANS,
+                                             m, 1);
+    trace->eta[k] = state;
+    trace->etacov[k] = statecov;
+    trace->y[k].noalias() = LAMBDA * state;
+    trace->y[k] += MANIFESTMEANS.col(0);
+    MatrixXd JP(m, n);
+    JP.noalias() = Jyrow * statecov;
+    trace->ycov[k].noalias() = JP * Jyrow.transpose();
+    trace->ycov[k] += ws.Theta;
+    if (kind == KalmanTrace::Prior) {
+      trace->Jy[row] = Jyrow;
+      trace->rowSubject[row] = data.subject;
+    }
+  };
 
   materializeParameters(model, ws, values, data.tipreds);
   if (tape) {
@@ -498,8 +608,13 @@ inline double filterSubject(const CppModel& model, FilterWorkspace& ws,
 
   double ll = 0.0;
   double rowll = 0.0;
+  if (trace) recordManifest(KalmanTrace::Prior, firstRow, ws.state, ws.P_predict);
   if (!updateObserved(model, ws, data.y, tape, rowll)) return std::nan("");
   ll += rowll;
+  if (trace) {
+    recordManifest(KalmanTrace::Upd, firstRow, ws.state, ws.P_update);
+    trace->llrow[static_cast<std::size_t>(firstRow)] = rowll;
+  }
 
   double prev = data.times[0];
   for (int t = 1; t < data.nobs; ++t) {
@@ -514,6 +629,7 @@ inline double filterSubject(const CppModel& model, FilterWorkspace& ws,
       nsub = static_cast<int>(std::ceil(dt / model.maxTimestep));
     }
     const double sdt = dt / nsub;
+    MatrixXd transition;
     for (int s = 1; s <= nsub; ++s) {
       base.time = prev + s * sdt;
       base.dt = sdt;
@@ -521,8 +637,25 @@ inline double filterSubject(const CppModel& model, FilterWorkspace& ws,
       recordGroup(tape, model, ws, model.predict, 0, base, t + 1);
       applyGroup(model, ws, model.predict, base);
       predictStep(model, ws, sdt, tape);
+      // The smoother needs the Jacobian of the whole interval. With one substep
+      // that is the transition just computed. With several, the exact answer is
+      // the product of the substep transitions, but Stan instead recomputes
+      // exp(JAx * dt) from the *last* substep's Jacobian and calls it an
+      // approximation; this follows Stan so that the same nonlinear model does
+      // not smooth differently under different backends. The product is the
+      // better quantity and is the obvious thing to switch to if Stan does.
+      if (trace) {
+        if (nsub == 1) {
+          transition = ws.eJAx;
+        } else if (s == nsub) {
+          Eigen::Map<const MatrixXd> JAx(ws.all_params.data() + model.offJAx, n, n);
+          MatrixXd scaled = JAx * dt;
+          expm(scaled, transition);
+        }
+      }
       ws.P_update = ws.P_predict;  // the next bounded step starts from this one
     }
+    if (trace) trace->transition[static_cast<std::size_t>(firstRow + t)] = transition;
 
     base.time = now;
     base.dt = dt;
@@ -540,12 +673,19 @@ inline double filterSubject(const CppModel& model, FilterWorkspace& ws,
       if (tape) tape->newTheta().MANIFESTVAR = MANIFESTVAR;
     }
 
+    if (trace) recordManifest(KalmanTrace::Prior, firstRow + t, ws.state, ws.P_predict);
     if (!updateObserved(model, ws, data.y + static_cast<std::size_t>(t) * m, tape, rowll)) {
       return std::nan("");
     }
     ll += rowll;
+    if (trace) {
+      recordManifest(KalmanTrace::Upd, firstRow + t, ws.state, ws.P_update);
+      trace->llrow[static_cast<std::size_t>(firstRow + t)] = rowll;
+    }
     prev = now;
   }
+
+  if (trace) smoothSubject(model, ws, data, *trace);
   return ll;
 }
 

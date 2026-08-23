@@ -446,8 +446,10 @@ function _extended_kalman_filter_continuous!(
     _record_group!(trace, 3, ws.update_param_indices, all_params, update_context)
     apply_complex_transforms_at_indices!(all_params, ws.update_param_indices, sp.update_transforms, update_context)
     log2π_const = log(2π)
+    _record_row_prior!(trace, ws, pars, 1)
     ll = _ekf_update_observed!(ws, pars, data, 1, log2π_const, trace)
     ll === nothing && return _invalid_ekf_loglikelihood(ws)
+    _record_row_update!(trace, ws, pars, 1, ll)
 
     # Main EKF loop for t >= 2:
     #   (1) predict from t-1 to t using Δt
@@ -472,6 +474,7 @@ function _extended_kalman_filter_continuous!(
             predict_snapshot = _begin_predict!(trace, ws, _val(ws.state_dim))
             _ekf_predict_step!(ws, pars, substep_dt)
             _record_predict!(trace, ws, pars, predict_snapshot, substep_dt, _val(ws.state_dim))
+            _record_transition!(trace, ws, pars, t_idx, substep, n_substeps, Δt)
             # The next bounded step begins from this step's predicted covariance.
             copyto!(ws.P_update.data, ws.P_predict.data)
         end
@@ -489,8 +492,10 @@ function _extended_kalman_filter_continuous!(
         apply_complex_transforms_at_indices!(all_params, ws.update_param_indices, sp.update_transforms, measurement_context)
         ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, 0, ws.manifest_dim)
         _record_theta!(trace, pars, _val(ws.manifest_dim))
+        _record_row_prior!(trace, ws, pars, t_idx)
         row_ll = _ekf_update_observed!(ws, pars, data, t_idx, log2π_const, trace)
         row_ll === nothing && return _invalid_ekf_loglikelihood(ws)
+        _record_row_update!(trace, ws, pars, t_idx, row_ll)
         ll += row_ll
 
         prev_timestep = curr_timestep
