@@ -307,7 +307,6 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   stanmodeltext, compileArgs, forcerecompile) {
   failures <- character()
   if (!isTRUE(optimize)) failures <- c(failures, "optimize=FALSE (HMC)")
-  if (!isTRUE(model$continuoustime)) failures <- c(failures, "discrete-time model")
   if (any(model$manifesttype > 0)) failures <- c(failures, "non-Gaussian manifest variables")
   if (isTRUE(vb)) failures <- c(failures, "variational Bayes")
   if (isTRUE(gendata)) failures <- c(failures, "generation")
@@ -754,6 +753,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     ti_effects = ti_effects,
     priors = prior_spec,
     max_timestep = max_timestep,
+    # A discrete-time model is the same filter with a different discretization:
+    # DRIFT, CINT and DIFFUSION are already the one-step quantities, so the
+    # exponential, the Lyapunov solve and the intercept solve all collapse.
+    continuoustime = isTRUE(model$continuoustime),
     TDpredNames = model$TDpredNames,
     TIpredNames = model$TIpredNames,
     nlatent = augmented$nlatent,
@@ -806,6 +809,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     arguments$diffusion_state_indices <-
       .ctJuliaVector(as.integer(spec$dynamic_state_indices))
   }
+  arguments$continuous_time <- isTRUE(spec$continuoustime)
   params <- do.call(module$ekf_from_columns, arguments)
   # .ctJuliaVector, not juliaPut, for the vectors: JuliaConnectoR marshals a
   # length-one R vector as a *scalar*, so a single-subject model would hand the

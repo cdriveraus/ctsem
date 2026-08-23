@@ -226,3 +226,43 @@ function _compute_discrete_time_form!(discrete_ca, buffer, DIFFUSIONcov, pars, Î
     end
     return 
 end
+
+"""
+    _compute_one_step_form!(discrete_ca, DIFFUSIONcov, pars, state,
+                            diffusion_state_indices, dim)
+
+The discrete-time case, where there is nothing to discretize.
+
+A discrete-time model's DRIFT, CINT and DIFFUSION are already the one-step
+quantities, so the three expensive pieces of the continuous form collapse: the
+transition is `JAx` itself, the process noise is the diffusion covariance, and
+the intercept is the local affine offset with no solve around it. `Î”t` plays no
+part -- a discrete model advances one step per row whatever the recorded
+interval, which is also what Stan does.
+
+The affine offset is formed over every state rather than only the diffusing
+ones: with no solve to keep away from the singular augmented block there is no
+reason to restrict it, and it is zero on the static states in any case.
+"""
+function _compute_one_step_form!(discrete_ca, DIFFUSIONcov, pars, state,
+    diffusion_state_indices, dim::Val{d}) where {d}
+    copyto!(discrete_ca.eJAx, pars.JAx)
+    copyto!(discrete_ca.dDRIFT, pars.JAx)
+
+    @inbounds for i in 1:d
+        affine = pars.CINT[i]
+        for j in 1:d
+            affine += (pars.DRIFT[i, j] - pars.JAx[i, j]) * state[j]
+        end
+        discrete_ca.dINT[i] = affine
+    end
+
+    fill!(discrete_ca.dDIFFUSION, zero(eltype(discrete_ca.dDIFFUSION)))
+    kdim = length(diffusion_state_indices)
+    @inbounds for j in 1:kdim, i in 1:kdim
+        ii = diffusion_state_indices[i]
+        jj = diffusion_state_indices[j]
+        discrete_ca.dDIFFUSION[ii, jj] = DIFFUSIONcov[ii, jj]
+    end
+    return discrete_ca
+end

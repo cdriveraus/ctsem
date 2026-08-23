@@ -244,7 +244,7 @@ ctStanKalman <- ctKalmanArray
 #' 
 #' Outputs the estimated effect of time independent predictors (covariate moderators) on the expected observations.
 #' 
-#' @param sf A fitted ctStanFit object from the ctsem package.
+#' @param sf A fitted object from \code{\link{ctFit}}, from any backend.
 #' @param tipreds A character vector specifying which time independent predictors to use. Default is 'all', which uses all time independent predictors in the model.
 #' @param subject An integer value specifying the internal ctsem subject ID (mapping visible under myfit$setup$idmap) for which predictions are made. 
 #' This is relevant only when time dependent predictors are also included in the model. 
@@ -289,22 +289,27 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
     'quantiles','splitSubjects')] <- NULL
   dynamicsPlotControl <- dynamicsControl[names(dynamicsControl) %in% names(formals(ctDiscreteParsPlot))]
   dynamicsControl <- dynamicsControl[!names(dynamicsControl) %in% names(dynamicsPlotControl)]
-  if(tipreds[1] %in% 'all') tipreds <- sf$ctstanmodel$TIpredNames
+  # Everything below reads the fit through accessors rather than through
+  # `standata`, so this works for stan, julia and cpp fits alike; the covariate
+  # grid it builds is a *dataset*, which is what all three consume.
+  ctmb <- .ctFitModelObject(sf)
+  if(tipreds[1] %in% 'all') tipreds <- ctmb$TIpredNames
+  if(!length(tipreds)) stop('The model has no time independent predictors')
   if(length(subject) > 1) stop('>1 subject!')
-  if(length(unique(sf$standata$subject)) < 3) stop('With fewer than 3 subjects in the data, these predictions are not possible')
+  if(.ctFitNsubjects(sf) < 3) stop('With fewer than 3 subjects in the data, these predictions are not possible')
   
   if(all(is.na(TIPvalues))){
-    TIPvalues = apply(sf$standata$tipredsdata[,tipreds,drop=FALSE],2,quantile,probs=quantiles)
+    TIPvalues = apply(.ctFitTIpredData(sf)[,tipreds,drop=FALSE],2,quantile,probs=quantiles)
   }
   #check for duplicates in columns of TIPvalues and stop if found
   if(!all(apply(TIPvalues,2,function(x) length(unique(x))==length(x)))){
     stop('Duplicate values for TI predictors -- if using categorical / dummy predictors, specify values using TIPvalues arg')
   }
   
-  sdat <- standatact_specificsubjects(standata = sf$standata,subjects = subject)
-  
-  dat <- standatatolong(sdat,origstructure = TRUE,ctm=sf$ctstanmodelbase)
-  dat[,sf$ctstanmodelbase$manifestNames] <- NA #set all manifest obs to missing
+  dat <- data.frame(.ctFitLongData(sf))
+  subjectids <- unique(dat[[ctmb$subjectIDname]])
+  dat <- dat[dat[[ctmb$subjectIDname]] %in% subjectids[subject],,drop=FALSE]
+  dat[,ctmb$manifestNames] <- NA #set all manifest obs to missing
   
   TIPvalues <- matrix(apply(TIPvalues,2,function(x) sort(x)),ncol=ncol(TIPvalues)) #sort ascending to get plot colours correct
   
@@ -312,9 +317,9 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
   for(tipi in 1:length(tipreds)){ #for each tipred
     for(vali in 1:nrow(TIPvalues)){ #for each tipred value
       tdat <- dat #copy the data
-      tdat[,sf$ctstanmodelbase$TIpredNames] <- 0 #set all covariates to zero
+      tdat[,ctmb$TIpredNames] <- 0 #set all covariates to zero
       tipvali <- TIPvalues[vali,tipi] #get the tipred value
-      tdat[[sf$ctstanmodelbase$subjectIDname]] <- paste0(tipreds[tipi],' = ',round(tipvali,2)) #modify the subject ID
+      tdat[[ctmb$subjectIDname]] <- paste0(tipreds[tipi],' = ',round(tipvali,2)) #modify the subject ID
       tdat[,tipreds[tipi]] <- tipvali #set the tipred value to the quantile or value specified
       if(nrow(fulldat)==0){
         fulldat <- tdat #output to full dataset
@@ -322,8 +327,8 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
     }
   }
   
-  sf$standata <- suppressMessages(ctStanData(sf$ctstanmodel,fulldat,optimize=TRUE))
-  k=ctPredict(fit = sf,subjects=unique(fulldat[[sf$ctstanmodelbase$subjectIDname]]),realid=TRUE,timestep=timestep)
+  sf <- .ctFitReplaceData(sf, fulldat)
+  k=ctPredict(fit = sf,subjects=unique(fulldat[[ctmb$subjectIDname]]),realid=TRUE,timestep=timestep)
   k = k[k$Element %in% c('etaprior','yprior','ypriorcov','etapriorcov'),]
   k$V1 <- k$variable <- NULL
 

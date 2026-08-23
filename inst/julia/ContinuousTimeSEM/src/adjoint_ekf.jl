@@ -362,6 +362,16 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     Ad = A[dyn, dyn]
     JAxd = JAx[dyn, dyn]
 
+    # The discrete-time reverse pass is the continuous one with its three hard
+    # pieces removed rather than a second implementation of it: A is JAx (no
+    # Frechet derivative of an exponential), dDIFFUSION is the diffusion
+    # covariance itself (no Lyapunov pullback), and dINT is the affine offset
+    # (no linear solve). Written out separately rather than branched inside the
+    # shared recursion, which would put a test in every step of it.
+    if !aws.sp.continuous_time
+        return _reverse_predict_discrete!(x̄, P̄, θ̄ca, record, dyn, n)
+    end
+
     Ā = zeros(T, n, n)
     JAx_bar = zeros(T, n, n)
 
@@ -703,5 +713,81 @@ function _reverse_group!(θ̄::Vector{T}, x̄::Vector{T}, record::CTSEMGroupReco
         record.time, record.dt, 1, record.row)
     _ctsem_complex_group_pullback!(θ̄, x̄, transforms, indices, supports, ctx,
         relevant, aws.dual_context)
+    return nothing
+end
+
+"""
+    _reverse_predict_discrete!(xbar, Pbar, thetabar_ca, record, dyn, n)
+
+Undo one prediction step of a discrete-time model.
+
+Forward:
+
+    A          = JAx
+    dINT[i]    = CINT[i] + sum_j (DRIFT[i,j] - JAx[i,j]) x[j]
+    dDIFF[D,D] = Qc[D,D]
+    x_next     = A x + dINT
+    P_next     = A (P + eps I) A' + dDIFF
+
+which is the continuous form with the exponential, the Lyapunov solve and the
+intercept solve all collapsed -- a discrete model's DRIFT, CINT and DIFFUSION
+are already the one-step quantities. The affine offset runs over every state
+rather than only the diffusing ones, matching the forward pass: with no solve to
+keep away from the singular augmented block there is no reason to restrict it.
+"""
+function _reverse_predict_discrete!(XBAR::Vector{T}, PBAR::Matrix{T}, THETA,
+    record::CTSEMPredictRecord{T}, dyn::AbstractVector{Int}, n::Int) where {T}
+    A = record.A
+    JAx = record.JAx
+    x = record.state_in
+    k = length(dyn)
+
+    JAx_bar = zeros(T, n, n)
+
+    # --- mean: x_next = A x + dINT
+    Abar = XBAR * transpose(x)
+    dINT_bar = copy(XBAR)
+    xbar_new = transpose(A) * XBAR
+
+    # --- covariance: P_next = A (P + eps I) A' + dDIFF
+    Ps = _symmetrized(PBAR)
+    Ptilde = copy(record.P_in)
+    _ridge_diagonal!(Ptilde, n, _CTSEM_RIDGE)
+    Abar .+= 2 .* (Ps * A * Ptilde)
+    Pbar_new = transpose(A) * Ps * A
+
+    # --- dDIFF[D,D] = Qc[D,D]: the cotangent passes straight through.
+    Qcd_bar = _symmetrized(Ps[dyn, dyn])
+
+    # --- dINT[i] = CINT[i] + sum_j (DRIFT[i,j] - JAx[i,j]) x[j]
+    @inbounds for i in 1:n
+        THETA.CINT[i] += dINT_bar[i]
+    end
+    @inbounds for j in 1:n, i in 1:n
+        contribution = dINT_bar[i] * x[j]
+        THETA.DRIFT[i, j] += contribution
+        JAx_bar[i, j] -= contribution
+        xbar_new[j] += (record.DRIFT[i, j] - JAx[i, j]) * dINT_bar[i]
+    end
+
+    # --- A is JAx itself, so its cotangent simply adds.
+    JAx_bar .+= Abar
+    @inbounds for j in 1:n, i in 1:n
+        THETA.JAx[i, j] += JAx_bar[i, j]
+    end
+
+    # --- Qc = sdcovsqrt2cov(DIFFUSION); only the dynamic block was consumed.
+    Qc_bar = zeros(T, n, n)
+    @inbounds for j in 1:k, i in 1:k
+        Qc_bar[dyn[i], dyn[j]] = Qcd_bar[i, j]
+    end
+    diffusion_bar = zeros(T, n, n)
+    _sdcovsqrt2cov_pullback!(diffusion_bar, record.DIFFUSION, Qc_bar, n)
+    @inbounds for j in 1:n, i in 1:n
+        THETA.DIFFUSION[i, j] += diffusion_bar[i, j]
+    end
+
+    copyto!(XBAR, xbar_new)
+    copyto!(PBAR, Pbar_new)
     return nothing
 end

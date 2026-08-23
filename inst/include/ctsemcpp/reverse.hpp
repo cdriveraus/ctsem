@@ -197,6 +197,71 @@ inline void reversePredict(const CppModel& model, AdjointWorkspace& aws,
   const MatrixXd& JAx = rec.JAx;
   const VectorXd& x = rec.state_in;
 
+  double* thetaAll = aws.theta_bar.data();
+
+  // The discrete-time reverse pass is the continuous one with its three hard
+  // pieces removed rather than a second implementation of it: A is JAx (no
+  // Frechet derivative of an exponential), dDIFFUSION is the diffusion
+  // covariance itself (no Lyapunov pullback), and dINT is the affine offset
+  // (no linear solve). What remains is the same mean/covariance recursion,
+  // written out here because sharing it with the continuous branch would mean
+  // branching inside every step of it.
+  if (!model.continuousTime) {
+    sc.Abar.noalias() = aws.x_bar * x.transpose();
+    sc.dINTbar = aws.x_bar;
+    sc.xbarNew.noalias() = A.transpose() * aws.x_bar;
+
+    detail::symmetrizeInto(sc.Ps, aws.P_bar);
+    sc.Pr = rec.P_in;
+    for (int i = 0; i < n; ++i) sc.Pr(i, i) += kRidge;
+    sc.tmpNN.noalias() = sc.Ps * A;
+    sc.Abar.noalias() += 2.0 * (sc.tmpNN * sc.Pr);
+    sc.tmpNN2.noalias() = A.transpose() * sc.Ps;
+    sc.PbarNew.noalias() = sc.tmpNN2 * A;
+
+    // dDIFFUSION[D,D] = Qc[D,D], so its cotangent passes straight through.
+    for (int j = 0; j < k; ++j) {
+      for (int i = 0; i < k; ++i) {
+        sc.Qcdbar(i, j) = 0.5 * (sc.Ps(dyn[i], dyn[j]) + sc.Ps(dyn[j], dyn[i]));
+      }
+    }
+
+    // dINT[i] = CINT[i] + sum_j (DRIFT[i,j] - JAx[i,j]) x[j], over every state.
+    sc.JAxbar.setZero();
+    for (int i = 0; i < n; ++i) thetaAll[model.offCINT + i] += sc.dINTbar(i);
+    for (int j = 0; j < n; ++j) {
+      double* driftCol = thetaAll + model.offDRIFT + j * n;
+      double acc = 0.0;
+      for (int i = 0; i < n; ++i) {
+        const double contribution = sc.dINTbar(i) * x(j);
+        driftCol[i] += contribution;
+        sc.JAxbar(i, j) -= contribution;
+        acc += (rec.DRIFT(i, j) - JAx(i, j)) * sc.dINTbar(i);
+      }
+      sc.xbarNew(j) += acc;
+    }
+    // A *is* JAx here, so its cotangent simply adds.
+    sc.JAxbar += sc.Abar;
+    for (int j = 0; j < n; ++j) {
+      for (int i = 0; i < n; ++i) thetaAll[model.offJAx + j * n + i] += sc.JAxbar(i, j);
+    }
+
+    sc.QcBar.setZero();
+    for (int j = 0; j < k; ++j)
+      for (int i = 0; i < k; ++i) sc.QcBar(dyn[i], dyn[j]) = sc.Qcdbar(i, j);
+    sc.diffusionBar.setZero();
+    sdcovsqrt2covPullback(sc.diffusionBar, rec.DIFFUSION, sc.QcBar, n);
+    for (int j = 0; j < n; ++j) {
+      for (int i = 0; i < n; ++i) {
+        thetaAll[model.offDIFFUSION + j * n + i] += sc.diffusionBar(i, j);
+      }
+    }
+
+    aws.x_bar = sc.xbarNew;
+    aws.P_bar = sc.PbarNew;
+    return;
+  }
+
   for (int j = 0; j < k; ++j)
     for (int i = 0; i < k; ++i) { sc.Ad(i, j) = A(dyn[i], dyn[j]); sc.JAxd(i, j) = JAx(dyn[i], dyn[j]); }
 

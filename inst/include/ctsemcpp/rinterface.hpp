@@ -76,10 +76,12 @@ inline std::unique_ptr<CppObjective> buildObjective(const Rcpp::List& spec) {
 
   NumericMatrix tipredData = spec["tipred_data"];
   const double maxTimestep = as<double>(spec["max_timestep"]);
+  const bool continuousTime = as<int>(spec["continuous_time"]) != 0;
 
   auto objective = std::unique_ptr<CppObjective>(new CppObjective());
   objective->model = buildModel(rows, tiPar, tiPred, tiCoef, dyn,
-                                static_cast<int>(tipredData.ncol()), maxTimestep);
+                                static_cast<int>(tipredData.ncol()), maxTimestep,
+                                continuousTime);
 
   NumericMatrix manifest = spec["manifest_data"];      // manifest x observations
   NumericMatrix tdpred = spec["tdpred_data"];          // tdpred x observations

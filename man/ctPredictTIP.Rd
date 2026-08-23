@@ -19,7 +19,7 @@ ctPredictTIP(
 )
 }
 \arguments{
-\item{sf}{A fitted ctStanFit object from the ctsem package.}
+\item{sf}{A fitted object from \code{\link{ctFit}}, from any backend.}
 
 \item{tipreds}{A character vector specifying which time independent predictors to use. Default is 'all', which uses all time independent predictors in the model.}
 

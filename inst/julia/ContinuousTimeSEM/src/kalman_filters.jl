@@ -115,10 +115,15 @@ prediction is written back into `ws.state` and `ws.P_predict`.
     # Discretization provides:
     #   A_d = dDRIFT, b_d = dINT, Q_d = dDIFFUSION
     ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.DIFFUSION, 0, ws.state_dim)
-    _compute_discrete_time_form!(ws.discrete_ca, ws.bufferQ, ws.bufferQ.out, pars, Δt,
-        ws.exp_buffer, ws.lyap_buffer, ws.state, ws.diffusion_state_indices,
-        ws.diffusion_buffer, ws.discretization_buffer, ws.state_dim,
-        ws.discretization_cache)
+    if ws.continuous_time
+        _compute_discrete_time_form!(ws.discrete_ca, ws.bufferQ, ws.bufferQ.out, pars, Δt,
+            ws.exp_buffer, ws.lyap_buffer, ws.state, ws.diffusion_state_indices,
+            ws.diffusion_buffer, ws.discretization_buffer, ws.state_dim,
+            ws.discretization_cache)
+    else
+        _compute_one_step_form!(ws.discrete_ca, ws.bufferQ.out, pars, ws.state,
+            ws.diffusion_state_indices, ws.state_dim)
+    end
 
     # Predict mean and covariance.
     #   x_{t|t-1} = A_d * x_{t-1|t-1} + b_d

@@ -214,6 +214,25 @@ inline void computeDiscreteTimeForm(const CppModel& model, FilterWorkspace& ws, 
   Eigen::Map<const MatrixXd> DRIFT(ws.all_params.data() + model.offDRIFT, n, n);
   Eigen::Map<const MatrixXd> CINT(ws.all_params.data() + model.offCINT, n, 1);
 
+  // A discrete-time model's parameters are already the one-step quantities, so
+  // every piece of this routine collapses: the transition is JAx itself, the
+  // process noise is DIFFUSIONcov, and the intercept is the local affine offset
+  // with no solve around it. `dt` plays no part -- a discrete model advances one
+  // step per row whatever the recorded interval, which is also what Stan does.
+  if (!model.continuousTime) {
+    ws.eJAx = JAx;
+    // The affine offset over every state, not only the diffusing ones: with no
+    // solve to keep away from the singular augmented block there is no reason
+    // to restrict it, and it is zero on the static states anyway.
+    ws.dINT = CINT.col(0);
+    ws.dINT.noalias() += (DRIFT - JAx) * ws.state;
+    ws.dDIFFUSION.setZero();
+    for (int j = 0; j < k; ++j) {
+      for (int i = 0; i < k; ++i) ws.dDIFFUSION(dyn[i], dyn[j]) = ws.Qc(dyn[i], dyn[j]);
+    }
+    return;
+  }
+
   if (ws.cache.expValid && ws.cache.expDt == dt && detail::blocksIdentical(ws.cache.expJAx, JAx)) {
     ws.eJAx = ws.cache.expOut;
   } else {

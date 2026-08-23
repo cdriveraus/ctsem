@@ -147,7 +147,8 @@ the parameter value, not an error in the caller, so it comes back as `NaN`
 rather than thrown: one non-stationary posterior sample should not abort the
 summary of the other 199.
 """
-function _ctsem_asymptotics(DRIFT, DIFFUSIONcov, CINT, dyn, nlatent)
+function _ctsem_asymptotics(DRIFT, DIFFUSIONcov, CINT, dyn, nlatent,
+    continuous_time::Bool=true)
     asym_diffusion = zeros(Float64, nlatent, nlatent)
     asym_cint = zeros(Float64, nlatent, 1)
     isempty(dyn) && return (asym_diffusion, asym_cint)
@@ -156,11 +157,18 @@ function _ctsem_asymptotics(DRIFT, DIFFUSIONcov, CINT, dyn, nlatent)
     Q = Matrix{Float64}(DIFFUSIONcov[dyn, dyn])
     k = length(dyn)
     solved = try
-        X = zeros(Float64, k, k)
-        ntri = (k * (k + 1)) ÷ 2
-        ksolve!(X, A, Q, zeros(Float64, ntri, ntri), zeros(Float64, ntri),
-            Vector{Int}(undef, ntri))
-        all(isfinite, X) ? X : nothing
+        if continuous_time
+            X = zeros(Float64, k, k)
+            ntri = (k * (k + 1)) ÷ 2
+            ksolve!(X, A, Q, zeros(Float64, ntri, ntri), zeros(Float64, ntri),
+                Vector{Int}(undef, ntri))
+            all(isfinite, X) ? X : nothing
+        else
+            # Discrete time solves X = A X A' + Q, i.e.
+            # (I - A kron A) vec(X) = vec(Q).
+            X = reshape((I - kron(A, A)) \ vec(Q), k, k)
+            all(isfinite, X) ? X : nothing
+        end
     catch
         nothing
     end
@@ -171,7 +179,9 @@ function _ctsem_asymptotics(DRIFT, DIFFUSIONcov, CINT, dyn, nlatent)
     end
 
     intercept = try
-        value = (-A) \ Vector{Float64}(CINT[dyn, 1])
+        # Continuous: -A x = c. Discrete: (I - A) x = c.
+        system = continuous_time ? -A : (I - A)
+        value = system \ Vector{Float64}(CINT[dyn, 1])
         all(isfinite, value) ? value : nothing
     catch
         nothing
@@ -258,7 +268,7 @@ function _ctsem_pack_matrices!(column, pars, sp::EKFParameters, layout)
     manifestcov = Matrix(sdcovsqrt2cov(pars.MANIFESTVAR, 0))
     t0cov = Matrix(sdcovsqrt2cov(pars.T0VAR, 0))
     asym_diffusion, asym_cint = _ctsem_asymptotics(pars.DRIFT, diffusioncov,
-        pars.CINT, dyn, nlatent)
+        pars.CINT, dyn, nlatent, sp.continuous_time)
 
     derived = (diffusioncov, manifestcov, t0cov, asym_diffusion, asym_cint)
     nbase = length(layout.matrix) - length(_CTSEM_DERIVED_MATRICES)

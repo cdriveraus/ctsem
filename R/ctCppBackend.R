@@ -21,7 +21,6 @@
   stanmodeltext, compileArgs, forcerecompile) {
   failures <- character()
   if (!isTRUE(optimize)) failures <- c(failures, "optimize=FALSE (HMC)")
-  if (!isTRUE(model$continuoustime)) failures <- c(failures, "discrete-time model")
   if (any(model$manifesttype > 0)) failures <- c(failures, "non-Gaussian manifest variables")
   if (isTRUE(vb)) failures <- c(failures, "variational Bayes")
   if (isTRUE(gendata)) failures <- c(failures, "generation")
@@ -87,6 +86,7 @@
     tipred_data = matrix(as.numeric(spec$tipred_data),
       nrow = nrow(spec$tipred_data), ncol = ncol(spec$tipred_data)),
     max_timestep = as.numeric(spec$max_timestep)[1L],
+    continuous_time = as.integer(isTRUE(spec$continuoustime)),
     prior_index = if (is.null(spec$priors)) integer() else as.integer(spec$priors$index),
     prior_scale = if (is.null(spec$priors)) numeric() else as.numeric(spec$priors$scale),
     prior_weight = if (is.null(spec$priors)) 1 else as.numeric(spec$priors$weight)

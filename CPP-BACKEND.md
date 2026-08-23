@@ -406,14 +406,10 @@ already. Nothing here needs deciding today.
 Nothing in the likelihood or the gradient — the twelve-scenario comparison above
 is the whole feature surface. What is missing is peripheral:
 
-- `ctPredictTIP()`, which manipulates `standata` directly to build its covariate
-  grid; the datalong-level equivalent is straightforward on top of the
-  prediction work above but is not written. (Also missing for `ctJuliaFit`.)
 - Multi-start or restart robustness in the optimizer (also missing in
   `ctsem_optimize`; the Julia handoff lists it as the top open item).
-- The `v1` refusals are the same list as Julia's: no HMC, no priors, no
-  discrete-time models, no non-Gaussian manifests, no variational Bayes, no data
-  generation.
+- The remaining refusals are the same list as Julia's: no HMC, no non-Gaussian
+  manifests, no variational Bayes.
 - CI does not exercise `test-stan-cpp-parity.R`, for the same reason it does not
   exercise the Julia one: the workflow installs neither rstan nor a Stan
   toolchain. Unlike the Julia suite, though, this one needs *only* rstan — no
@@ -618,6 +614,44 @@ One pre-existing bug turned up on the way. `ctPostPredData(residuals=TRUE)`
 could never run on *any* backend, stan included -- the residual rows lacked the
 id/time columns the rbind below them requires. Fixed, and guarded by a test that
 covers the stan path too.
+
+### Discrete time
+
+`type='dt'` models work.
+
+Discrete time is not a second filter here, only a different discretization. A
+discrete model's DRIFT, CINT and DIFFUSION *are* the one-step quantities, so
+every expensive piece of the continuous form collapses: the transition is `JAx`,
+the process noise is the diffusion covariance, and the intercept is the local
+affine offset with no solve around it. Both the forward and the reverse pass
+come out **shorter** than their continuous counterparts, not longer, and
+everything downstream -- the measurement update, the smoother, subject
+parameters, prediction, generation -- is untouched.
+
+The two branches are written out separately rather than shared with a test
+inside the recursion, which would put a branch in every step of it.
+
+The asymptotic forms follow suit: `(I - A) x = c` for the intercept, and the
+discrete Lyapunov equation `X = A X A' + Q` for the asymptotic diffusion.
+`dtDRIFT` is absent from the summary, because there is nothing to discretise.
+
+Verified against Stan at a fixed raw vector -- likelihood and gradient to 1e-8,
+per-row Kalman output to 1e-7 -- and against the adjoint's own finite
+differences. The property that separates discrete from continuous is asserted
+directly: stretching the recorded times changes nothing, because each row
+advances exactly one step, while a continuous reading of the same data does
+change (so the comparison is not vacuous).
+
+### ctPredictTIP
+
+Works, dynamics panels included.
+
+`ctPredictTIP()` predicts at chosen covariate values by building a dataset of
+pseudo-subjects, one per value, and asking the fitted model for its expectation
+on it. That is a *data* operation, so once a fit can be re-prepared against a new
+data frame the whole function follows -- and its dynamics panels route through
+`ctDiscretePars()` with per-subject matrices, so they exercise the
+subject-parameter path as well. Predictions match Stan's to 1e-6.
 
 ### One latent difference from the Julia backend, deliberately not copied
 

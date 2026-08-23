@@ -397,15 +397,9 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
     fit$standata$Y <- matrix(Y, ncol = ncol(fit$standata$Y))
     return(fit)
   }
-  model <- .ctFitModelObject(fit)
-  spec <- .ctBackendSpec(fit)
-  data <- spec$data
-  data[, model$manifestNames] <- Y
-  prepared <- if (identical(.ctBackendEngineKind(fit), "cpp")) {
-    .ctCppPrepare(data, model)
-  } else .ctJuliaPrepare(data, model, project = spec$project)
-  fit$model_spec <- prepared
-  fit
+  data <- .ctBackendSpec(fit)$data
+  data[, .ctFitModelObject(fit)$manifestNames] <- Y
+  .ctFitReplaceData(fit, data)
 }
 
 # The observed data as a long data frame in its original structure. A ctStanFit
@@ -417,4 +411,32 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
       origstructure = TRUE))
   }
   .ctBackendSpec(fit)$data
+}
+
+# TI predictor values per subject, for whichever backend. ctPredictTIP() reads
+# these to pick the covariate values it predicts at.
+.ctFitTIpredData <- function(fit) {
+  model <- .ctFitModelObject(fit)
+  values <- if (!is.null(fit$standata$tipredsdata)) {
+    as.matrix(fit$standata$tipredsdata)
+  } else as.matrix(.ctBackendSpec(fit)$tipred_data)
+  if (ncol(values) == length(model$TIpredNames)) colnames(values) <- model$TIpredNames
+  values
+}
+
+# A copy of the fit re-prepared against a different long data frame. This is
+# what lets ctPredictTIP() build its covariate grid: it constructs a dataset of
+# pseudo-subjects, one per covariate value, and asks the fitted model to predict
+# for them.
+.ctFitReplaceData <- function(fit, datalong) {
+  if (!is.null(fit$standata)) {
+    fit$standata <- suppressMessages(ctStanData(fit$ctstanmodel, datalong, optimize = TRUE))
+    return(fit)
+  }
+  model <- .ctFitModelObject(fit)
+  spec <- .ctBackendSpec(fit)
+  fit$model_spec <- if (identical(.ctBackendEngineKind(fit), "cpp")) {
+    .ctCppPrepare(datalong, model)
+  } else .ctJuliaPrepare(datalong, model, project = spec$project)
+  fit
 }

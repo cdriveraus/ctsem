@@ -135,9 +135,29 @@ inline void packMatrices(const CppModel& model, FilterWorkspace& ws,
     // of the parameter value, not an error in the caller, so it comes back NaN
     // rather than thrown: a posterior sample that happens to be non-stationary
     // should not abort the summary of the other 199.
+    //
+    // Discrete time solves the discrete Lyapunov equation X = A X A' + Q via
+    // (I - A (x) A) vec(X) = vec(Q), and the asymptotic intercept becomes
+    // (I - A)^-1 c. Both are Stan's own definitions for a discrete model.
     bool ok = true;
     try {
-      lyapSolve(Ad, Qd, X, ws.lyapws);
+      if (model.continuousTime) {
+        lyapSolve(Ad, Qd, X, ws.lyapws);
+      } else {
+        const int kk = k * k;
+        MatrixXd system = MatrixXd::Identity(kk, kk);
+        for (int b = 0; b < k; ++b)
+          for (int a = 0; a < k; ++a)
+            for (int j = 0; j < k; ++j)
+              for (int i = 0; i < k; ++i) {
+                system(i + k * j, a + k * b) -= Ad(i, a) * Ad(j, b);
+              }
+        Eigen::Map<const VectorXd> q(Qd.data(), kk);
+        Eigen::FullPivLU<MatrixXd> lyaplu(system);
+        if (!lyaplu.isInvertible()) throw std::runtime_error("singular");
+        VectorXd solved = lyaplu.solve(q);
+        X = Eigen::Map<const MatrixXd>(solved.data(), k, k);
+      }
     } catch (...) {
       ok = false;
     }
@@ -148,7 +168,11 @@ inline void packMatrices(const CppModel& model, FilterWorkspace& ws,
       asymdiffusion.setConstant(std::nan(""));
     }
 
-    Eigen::FullPivLU<MatrixXd> lu(-Ad);
+    MatrixXd intercept = -Ad;
+    if (!model.continuousTime) {
+      for (int i = 0; i < k; ++i) intercept(i, i) += 1.0;
+    }
+    Eigen::FullPivLU<MatrixXd> lu(intercept);
     if (lu.isInvertible()) {
       VectorXd solved = lu.solve(cintd);
       for (int i = 0; i < k; ++i) asymcint(dyn[i], 0) = solved(i);

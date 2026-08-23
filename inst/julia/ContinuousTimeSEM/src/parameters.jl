@@ -29,6 +29,11 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
     ti_predictor_indices::Vector{Int}
     ti_coefficient_indices::Vector{Int}
     diffusion_state_indices::Vector{Int}
+    # Discrete time is not a different filter, only a different discretization:
+    # DRIFT, CINT and DIFFUSION are already the one-step quantities, so the
+    # matrix exponential, the Lyapunov solve and the intercept solve that turn
+    # continuous parameters into per-interval ones all collapse to identities.
+    continuous_time::Bool
 
     # The constructor ensures that the provided vectors are of the correct types and converts them if necessary.
     function EKFParameters(
@@ -49,6 +54,7 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
         ti_predictor_indices=Int[],
         ti_coefficient_indices=Int[],
         diffusion_state_indices=Int[],
+        continuous_time::Bool=true,
     )
         regular_transforms_tuple = Tuple(regular_transforms)
         predict_transforms_tuple = Tuple(predict_transforms)
@@ -82,6 +88,7 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
             Vector{Int}(ti_predictor_indices),
             Vector{Int}(ti_coefficient_indices),
             Vector{Int}(diffusion_state_indices),
+            continuous_time,
         )
     end
 end

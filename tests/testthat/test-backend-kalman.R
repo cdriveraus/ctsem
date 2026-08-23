@@ -445,3 +445,64 @@ test_that("the improved reports differ from Stan only where Stan is approximate"
   }, numeric(dim(traced$y)[3])))
   expect_equal(stalecheck, stan$ya[1, 2, , ], tolerance = 1e-6)
 })
+
+test_that("ctPredictTIP builds its covariate grid on a backend fit", {
+  skip_if_not_installed("rstan")
+  skip_on_cran()
+  # ctPredictTIP predicts at chosen covariate values by constructing a dataset
+  # of pseudo-subjects, one per value, and asking the fitted model for its
+  # expectation. That is a *data* operation, so once the fit can be re-prepared
+  # against a new data frame it works for any backend -- and its dynamics panels
+  # go through ctDiscretePars with per-subject matrices, which exercises the
+  # subject-parameter path as well.
+  set.seed(5)
+  data <- do.call(rbind, lapply(1:20, function(i) {
+    group <- stats::rnorm(1)
+    data.frame(id = i, time = c(0, .6, 1.4, 2.5, 3.3),
+      Y1 = stats::rnorm(5, group * .5, .5), group = group)
+  }))
+  model <- suppressWarnings(ctModel(type = "ct", n.latent = 1, LAMBDA = matrix(1, 1, 1),
+    MANIFESTVAR = matrix(.1, 1, 1), MANIFESTMEANS = matrix("mm||FALSE", 1, 1),
+    T0MEANS = matrix("t0||TRUE", 1, 1), CINT = matrix("b||TRUE", 1, 1),
+    DRIFT = matrix("drift", 1, 1), DIFFUSION = matrix("diff", 1, 1),
+    n.TIpred = 1, TIpredNames = "group", tipredDefault = FALSE))
+  model$pars$group_effect[model$pars$param == "b"] <- TRUE
+
+  stan_fit <- suppressMessages(ctFit(data, model, backend = "stan", optimize = TRUE,
+    optimcontrol = list(carefulfit = FALSE, stochastic = FALSE, finishsamples = 10),
+    cores = 1, verbose = 0))
+  cpp_fit <- suppressMessages(ctFit(data, model, backend = "cpp", verbose = 0))
+  # Compare the predictions, not the optimizers.
+  cpp_fit$estimate$raw <- stan_fit$stanfit$rawest
+
+  stan <- suppressWarnings(suppressMessages(ctPredictTIP(stan_fit, tipreds = "group",
+    doDynamics = FALSE, plot = FALSE, timestep = .5)))
+  cpp <- suppressWarnings(suppressMessages(ctPredictTIP(cpp_fit, tipreds = "group",
+    doDynamics = FALSE, plot = FALSE, timestep = .5)))
+  expect_equal(nrow(cpp), nrow(stan))
+
+  key <- intersect(c("Element", "Time", "Row", "Col", "Subject"), names(stan))
+  stan <- stan[do.call(order, as.list(stan[key])), ]
+  cpp <- cpp[do.call(order, as.list(cpp[key])), ]
+  expect_identical(lapply(cpp[key], as.character), lapply(stan[key], as.character))
+  expect_equal(as.numeric(cpp[["value"]]), as.numeric(stan[["value"]]),
+    tolerance = 1e-6)
+  expect_equal(as.numeric(cpp[["sd"]]), as.numeric(stan[["sd"]]), tolerance = 1e-6)
+
+  # One pseudo-subject per requested covariate value, named by it.
+  expect_equal(length(unique(cpp$Subject)), 3L)
+  expect_true(all(grepl("^group = ", as.character(unique(cpp$Subject)))))
+
+  # The dynamics panels need per-subject matrices, so this covers that path too.
+  plots <- suppressWarnings(suppressMessages(ctPredictTIP(cpp_fit, tipreds = "group",
+    doDynamics = TRUE, plot = TRUE, timestep = .5)))
+  expect_true(all(c("Process", "Dynamics") %in% names(plots)))
+  expect_true(inherits(plots$Process$Observed[[1]], "ggplot"))
+  expect_true(length(plots$Dynamics$Independent) > 0)
+
+  # A model without TI predictors is refused by name rather than failing
+  # somewhere inside the grid construction.
+  plain <- suppressMessages(ctFit(.kalman_linear_data(), .kalman_linear_model(),
+    backend = "cpp", verbose = 0))
+  expect_error(ctPredictTIP(plain, plot = FALSE), "no time independent predictors")
+})

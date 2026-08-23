@@ -47,6 +47,11 @@ struct CppModel {
   int nmanifest = 0;  // rows of LAMBDA
   int ntdpred = 0;    // columns of TDPREDEFFECT
   int ntipred = 0;
+  // Discrete time is not a different filter, only a different discretization:
+  // DRIFT, CINT and DIFFUSION are already the one-step quantities, so the
+  // matrix exponential, the Lyapunov solve and the intercept solve that turn
+  // continuous parameters into per-interval ones all collapse to identities.
+  bool continuousTime = true;
   int nvalues = 0;    // free parameters, including TI-effect coefficients
 
   int offT0MEANS = -1, offT0VAR = -1, offDRIFT = -1, offDIFFUSION = -1;
@@ -141,7 +146,7 @@ inline CppModel buildModel(const std::vector<ParameterTableRow>& rows,
                            const std::vector<int>& tiPredictor1,
                            const std::vector<int>& tiCoefficient1,
                            const std::vector<int>& diffusionStates1,
-                           int ntipred, double maxTimestep) {
+                           int ntipred, double maxTimestep, bool continuousTime) {
   CppModel model;
 
   // Matrix order follows first appearance in the table, and dimensions come
@@ -174,6 +179,7 @@ inline CppModel buildModel(const std::vector<ParameterTableRow>& rows,
 
   model.nlatent = model.layout("DRIFT").nrow;
   model.nmanifest = model.layout("LAMBDA").nrow;
+  model.continuousTime = continuousTime;
   model.offT0MEANS = model.offsetOf("T0MEANS");
   model.offT0VAR = model.offsetOf("T0VAR");
   model.offDRIFT = model.offsetOf("DRIFT");

@@ -95,6 +95,7 @@ struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF
     discretization_buffer::DBUF
     discretization_cache::DCACHE
     diffusion_state_indices::DSI
+    continuous_time::Bool
     ỹ::Vector{T}
     S::Cholesky{T, Matrix{T}}
     K::Matrix{T}
@@ -175,6 +176,7 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         discretization_buffer,
         discretization_cache,
         diffusion_state_indices,
+        sp.continuous_time,
         ỹ,
         S,
         K,
