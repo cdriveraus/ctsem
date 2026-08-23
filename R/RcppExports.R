@@ -25,3 +25,11 @@
     .Call(`_ctsem_ctsemCppLayout`, handle)
 }
 
+.ctsemCppSummaryLayout <- function(handle) {
+    .Call(`_ctsem_ctsemCppSummaryLayout`, handle)
+}
+
+.ctsemCppParMatrices <- function(handle, pars, tipreds, state, time = 0.0, dt = 0.0) {
+    .Call(`_ctsem_ctsemCppParMatrices`, handle, pars, tipreds, state, time, dt)
+}
+

@@ -1,5 +1,5 @@
 ctRawParnamesRaw <- function(fit){
-  if(!class(fit) %in% 'ctStanFit' || !length(fit$stanfit$stanfit@sim)==0) stop('Not an optimized ctStanFit model!')
+  if(!inherits(fit, 'ctStanFit') || !length(fit$stanfit$stanfit@sim)==0) stop('Not an optimized ctStanFit model!')
   ms <- fit$setup$matsetup
   ms <- ms[ms$param > 0 & ms$when %in% 0 & ms$copyrow < 1,]
   ms <- ms[order(ms$param),]

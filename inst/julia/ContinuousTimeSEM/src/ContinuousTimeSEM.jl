@@ -64,6 +64,7 @@ include("adjoint_primitives.jl")
 include("adjoint_parameters.jl")
 include("adjoint_ekf.jl")
 include("adjoint.jl")
+include("summary_matrices.jl")
 
 
 end # module ContinuousTimeSEM

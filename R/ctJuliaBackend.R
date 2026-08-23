@@ -849,22 +849,23 @@ ctJuliaEvaluate <- function(object, pars = NULL, gradient = TRUE, contributions 
 }
 
 #' @export
-ctExtract.ctJuliaFit <- function(object, subjectMatrices = FALSE, cores = 2,
-  nsamples = "all", subjects = "all", ...) {
-  if (isTRUE(subjectMatrices)) {
-    stop("Subject matrices are not yet available for ctJuliaFit objects.", call. = FALSE)
-  }
-  if (!identical(nsamples, "all") || !identical(subjects, "all")) {
-    stop("ctJuliaFit contains a point estimate, not posterior samples.", call. = FALSE)
-  }
-  list(rawpars = object$estimate$raw, loglik = object$estimate$loglik,
-    gradient = object$estimate$gradient,
-    subject_loglik = object$estimate$subject_loglik)
+summary.ctJuliaFit <- function(object, timeinterval = 1, digits = 3, parmatrices = TRUE, ...) {
+  .ctBackendSummary(object, timeinterval = timeinterval, digits = digits,
+    parmatrices = parmatrices, ...)
 }
 
 #' @export
-ctSummaryMatrices.ctJuliaFit <- function(fit, ...) {
-  stop("ctSummaryMatrices() for ctJuliaFit requires the Julia parameter-matrix reconstruction API, which is not yet implemented.", call. = FALSE)
+ctExtract.ctJuliaFit <- function(object, subjectMatrices = FALSE, cores = 2,
+  nsamples = "all", subjects = "all", ...) {
+  .ctBackendExtract(object, subjectMatrices = subjectMatrices, nsamples = nsamples,
+    subjects = subjects, ...)
+}
+
+#' @export
+ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
+  calcfuncargs = list(probs = 0.5), timeinterval = 1, ...) {
+  .ctBackendSummaryMatrices(fit, calcfunc = calcfunc, calcfuncargs = calcfuncargs,
+    timeinterval = timeinterval, ...)
 }
 
 ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NULL, cores = 1L,
@@ -944,29 +945,4 @@ coef.ctJuliaFit <- function(object, ...) object$estimate$raw
 #' @export
 logLik.ctJuliaFit <- function(object, ...) {
   structure(object$estimate$loglik, df = length(object$estimate$raw), nobs = nrow(object$data), class = "logLik")
-}
-
-#' @export
-summary.ctJuliaFit <- function(object, ...) {
-  parameter_table <- object$model_spec$parameter_table
-  free_rows <- parameter_table[!is.na(parameter_table$parnumber), , drop = FALSE]
-  free_rows <- free_rows[match(seq_len(length(object$estimate$raw)), free_rows$parnumber), , drop = FALSE]
-  coefficients <- stats::setNames(object$estimate$raw, free_rows$param)
-  standard_errors <- if (!is.null(object$estimate$se)) {
-    stats::setNames(as.numeric(object$estimate$se), names(coefficients))
-  } else NULL
-  list(backend = "julia", loglik = object$estimate$loglik,
-    coefficients = coefficients,
-    se = standard_errors,
-    ci = if (is.null(standard_errors)) NULL else cbind(
-      `2.5%` = coefficients - 1.96 * standard_errors,
-      `97.5%` = coefficients + 1.96 * standard_errors),
-    uncertainty = if (is.null(object$uncertainty)) NULL else
-      object$uncertainty$settings,
-    gradient = object$estimate$gradient, converged = object$estimate$converged,
-    iterations = object$estimate$iterations, note = if (is.null(standard_errors))
-      "Point estimates only. Run ctOptimUncertainty() for raw-scale standard errors."
-    else paste0("Raw-scale uncertainty from ctOptimUncertainty(uncertainty='",
-      object$uncertainty$settings$method,
-      "'). Transformed-parameter summaries are not available for these fits."))
 }

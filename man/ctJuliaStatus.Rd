@@ -7,7 +7,8 @@
 ctJuliaStatus(project = NULL, julia_bin = NULL)
 }
 \arguments{
-\item{project}{Optional local ContinuousTimeSEM.jl project for development.}
+\item{project}{Optional local ContinuousTimeSEM.jl checkout to use instead of
+the vendored copy, for engine development.}
 
 \item{julia_bin}{Optional Julia binary directory.}
 }

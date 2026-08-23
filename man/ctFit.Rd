@@ -20,7 +20,7 @@ ctFit(
   derrind = NA,
   optimize = TRUE,
   optimcontrol = list(),
-  backend = c("stan", "julia"),
+  backend = c("stan", "julia", "cpp"),
   backendcontrol = list(),
   nlcontrol = list(),
   nopriors = NA,
@@ -84,7 +84,13 @@ May struggle with many (e.g., > 5000) parameters. For optimizing, various optimi
 \item{optimize}{if TRUE, use \code{\link{stanoptimis}} function for maximum a posteriori / importance sampling estimates,
 otherwise use the HMC sampler from Stan, which is (much) slower, but generally more robust for complex individual differences.}
 
-\item{optimcontrol}{list of parameters sent to \code{\link{stanoptimis}} governing optimization / importance sampling.}
+\item{optimcontrol}{list of parameters sent to \code{\link{stanoptimis}} governing optimization / importance sampling.
+With \code{backend='julia'}, \code{optimcontrol$gradient} selects the
+gradient method: \code{'adjoint'} (reverse mode, the default) or
+\code{'forward'} (ForwardDiff). Both compute the same gradient; 'adjoint'
+costs the same regardless of the number of free parameters, so it is
+dramatically faster for larger models and marginally slower for very small
+ones.}
 
 \item{nlcontrol}{List of non-linear control parameters.
 \code{maxtimestep} must be a positive numeric,  specifying the largest time

@@ -102,72 +102,16 @@ ctSummaryMatrices.ctStanFit <- function(fit,
   if(!'ctStanFit' %in% class(fit)) stop(paste0('Not an object of class ctStanFit! Instead is ',paste0(class(fit),collapse=', ')))
   
   e<-ctExtract(fit,cores=1) #Qfit$stanfit$transformedpars #first dim of subobjects is iter, 2nd subjects
-  niter=dim(e$pop_DRIFT)[1]
   
-  
-  
-  
-  mats <- ctStanMatricesList()
-  mats <- c(names(mats$base), names(mats$asymptotic),names(mats$extra))
-  if(fit$ctstanmodel$continuoustime){
-    d=list(DRIFT=e$pop_DRIFT)
-    dd=ctDiscreteParsDrift(d,timeinterval,observational = FALSE,standardise = FALSE,cov = FALSE,quiet=TRUE)
-    e$pop_dtDRIFT <- array(dd,dim=dim(dd)[-2:-3])
-    mats <- c(mats, 'dtDRIFT')
-  }
-  
-  out <- list()
-  for(matname in (mats)){
-    try({
-      calcfuncargs$collapsemargin = 1
-      calcfuncargs$collapsefunc=calcfunc
-      calcfuncargs$na.rm=TRUE
-      
-      calcfuncargs$inarray = e[[paste0('pop_',matname)]]
-      out[[matname]] <- array(do.call(ctCollapse,calcfuncargs),
-        dim=dim(calcfuncargs$inarray)[-1])
-    },silent=TRUE)
-  }
-  
-  if(nrow(out$T0MEANS) > nrow(out$CINT)){ #then intoverpop used...
-    nlatent <- nrow(out$CINT)
-    out$T0MEANS <- out$T0MEANS[1:nlatent,1,drop=FALSE]
-    out$DRIFT <- out$DRIFT[1:nlatent,1:nlatent,drop=FALSE]
-    out$T0VAR <- out$T0VAR[1:nlatent,1:nlatent,drop=FALSE]
-    out$T0cov <- out$T0cov[1:nlatent,1:nlatent,drop=FALSE]
-  }
-  
-  ln=fit$ctstanmodel$latentNames
-  mn=fit$ctstanmodel$manifestNames
-  tdn=fit$ctstanmodel$TDpredNames
-  dimnames(out$DRIFT)=list(ln,ln)
-  dimnames(out$DIFFUSIONcov)=list(ln,ln)
-  dimnames(out$DIFFUSION)=list(ln,ln)
-  dimnames(out$T0cov)=list(ln,ln)
-  dimnames(out$asymDIFFUSIONcov)=list(ln,ln)
-  rownames(out$CINT)=ln
-  rownames(out$MANIFESTMEANS)=mn
-  rownames(out$T0MEANS)=ln
-  
-  dimnames(out$T0VAR)=list(ln,ln)
-  dimnames(out$LAMBDA)=list(mn,ln)
-  
-  
-  if(!is.null(e$pop_MANIFESTVAR)) {
-    dimnames(out$MANIFESTVAR)=list(mn,mn)
-    dimnames(out$MANIFESTcov)=list(mn,mn)
-    # out$MANIFESTVAR=out$MANIFESTVAR %*% t(out$MANIFESTVAR) #cholesky factor inside stanfit...
-    
-  }
-  
-  if(!is.null(e$pop_TDPREDEFFECT)) {
-    dimnames(out$TDPREDEFFECT)=list(ln,tdn)
-  }
-  
-  out$MANIFESTVAR <- NULL ; 
-  
-  
-  return(out)
+  # The collapse itself lives in .ctSummaryMatricesFromArrays (ctBackendSummary.R)
+  # so that the stan, julia and cpp backends summarise identical pop_* arrays
+  # with identical code rather than with three copies that can drift.
+  .ctSummaryMatricesFromArrays(e,
+    continuoustime = fit$ctstanmodel$continuoustime,
+    latentNames = fit$ctstanmodel$latentNames,
+    manifestNames = fit$ctstanmodel$manifestNames,
+    TDpredNames = fit$ctstanmodel$TDpredNames,
+    calcfunc = calcfunc, calcfuncargs = calcfuncargs, timeinterval = timeinterval)
 }
 
 #' @export
@@ -467,7 +411,9 @@ summaryCtStanFitLabel <- function(x){
     aic = 'AIC',
     logposterior = 'Log posterior',
     nsamples = 'Number of samples',
-    parmatNote = '')
+    backendNote = 'Note',
+    uncertaintyNote = 'Note',
+    parmatNote = 'Note')
   if(x %in% names(labels)) return(unname(labels[x]))
   gsub('([a-z])([A-Z])', '\\1 \\2', x)
 }

@@ -72,9 +72,13 @@ test_that("C++ fits get Hessian uncertainty matching Stan's", {
   expect_equal(dim(cpp_unc$estimate$rawposterior), c(200L, length(cpp_se)))
   expect_equal(cpp_unc$estimate$se, cpp_se)
   expect_identical(cpp_unc$uncertainty$settings$method, "hessian")
+  # The summary reports on the transformed scale (see test-backend-summary.R),
+  # so the raw-scale standard errors this test compares against Stan live on the
+  # fit rather than in the printed summary; what the summary must show is an
+  # interval per free parameter, earned from the draws.
   summarised <- summary(cpp_unc)
-  expect_equal(dim(summarised$ci), c(length(cpp_se), 2L))
-  expect_false(is.null(summarised$se))
+  expect_equal(nrow(summarised$popmeans), length(cpp_se))
+  expect_true(all(c("2.5%", "97.5%") %in% colnames(summarised$popmeans)))
 })
 
 test_that("Julia fits get Hessian uncertainty matching Stan's", {

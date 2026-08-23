@@ -24,6 +24,6 @@ Evaluate a prepared C++ ctsem likelihood
 }
 \details{
 The gradient is a hand-written reverse-mode adjoint over doubles and
-Eigen: one traced forward filter plus one reverse sweep per subject, so its
-cost does not grow with the number of free parameters.
+  Eigen: one traced forward filter plus one reverse sweep per subject, so its
+  cost does not grow with the number of free parameters.
 }

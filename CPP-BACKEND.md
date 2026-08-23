@@ -406,8 +406,13 @@ already. Nothing here needs deciding today.
 Nothing in the likelihood or the gradient — the twelve-scenario comparison above
 is the whole feature surface. What is missing is peripheral:
 
-- `ctSummaryMatrices()` / subject-matrix reconstruction (also missing for
-  `ctJuliaFit`).
+- Subject-specific matrix reconstruction (`ctExtract(subjectMatrices=TRUE)`),
+  and everything downstream of the Kalman filter's *states* rather than its
+  parameters: `ctPredict()`, `ctKalman()`, `ctPredictTIP()`, `ctACFresiduals()`,
+  `ctPostPredPlots()`, `ctFitCovCheck()`, `ctGenerateFromFit()`. These need an
+  engine entry point that returns per-row filtered and smoothed states and
+  covariances, which neither engine has; the parameter-matrix work below does
+  not get them for free. (Also missing for `ctJuliaFit`.)
 - Multi-start or restart robustness in the optimizer (also missing in
   `ctsem_optimize`; the Julia handoff lists it as the top open item).
 - The `v1` refusals are the same list as Julia's: no HMC, no priors, no
@@ -418,6 +423,67 @@ is the whole feature surface. What is missing is peripheral:
   toolchain. Unlike the Julia suite, though, this one needs *only* rstan — no
   Julia install, no `CTSEM_JULIA_PROJECT` — so wiring it up is a much smaller
   decision.
+
+### Transformed-parameter summaries
+
+`summary()`, `ctSummaryMatrices()` and `ctDiscretePars()` work for `ctCppFit`
+and `ctJuliaFit`, and they are not reimplementations — they are the same code
+Stan fits use, reading the same input.
+
+Every one of those functions consumes samples of the *model matrices* implied by
+a raw parameter vector, as `pop_DRIFT`, `pop_DIFFUSIONcov` and so on, each an
+`[iteration, row, column]` array. So the whole architecture is one engine
+primitive and a thin stack on it:
+
+| layer | what it does |
+| --- | --- |
+| `ctsem_parameter_matrices` / `.ctsemCppParMatrices` | materialize every model matrix for an `npar x nsamples` block of raw vectors |
+| `ctBackendParMatrices()` | the same, named and reshaped, for one vector |
+| `ctExtract()` | the same over the posterior, as `pop_*` arrays |
+| `ctSummaryMatrices()` | collapse those arrays — literally `ctSummaryMatrices.ctStanFit`'s body, factored into `.ctSummaryMatricesFromArrays()` |
+| `summary()` | fixed effects plus the system matrices |
+
+The primitive runs **inside the engine**. The engine already materializes every
+matrix from the raw vector on its way to a log likelihood, so asking it for that
+same materialization is the only way to guarantee a summary reports what the
+likelihood used; a second, R-side implementation of ctsem's transforms is
+exactly the kind of duplication that has let this package's backends drift apart
+before. The derived matrices (`DIFFUSIONcov`, `MANIFESTcov`, `T0cov`,
+`asymDIFFUSIONcov`, `asymCINT`) are computed there too, following the generated
+Stan code's definitions.
+
+The batch shape is not incidental. The Julia bridge marshals a numeric array in
+one transfer but a list element by element, which was the 344x cost found
+earlier in this work; a 200-draw posterior is one call, not 200.
+
+Three things are worth knowing:
+
+- **Verification is against Stan's own constrain step**, not against a second
+  fit: `stan_constrainsamples()` at a fixed raw vector, on a model with an
+  `intoverpop` augmentation, TI predictors and a state-dependent DRIFT. Every
+  `pop_*` array agrees to 1e-8 or better, and C++ and Julia agree with each
+  other to 1e-12. That removes the optimizer from the comparison entirely.
+
+- **`pop_T0VAR` is the one exception, and it is a parameterisation difference,
+  not a disagreement.** Stan computes `T0cov = sdcovsqrt2cov(T0VAR)` and *then*
+  rescales `T0cov`'s indvarying-T0MEANS rows and columns by the parameter's
+  multiplier and meanscale, leaving `T0VAR` itself unscaled. The engines fold
+  that scale into `T0VAR`, so theirs is the one whose `sdcovsqrt2cov` actually
+  equals the reported `T0cov`. Both give an identical `T0cov` — which is the
+  quantity summaries report, and `summary()` drops `T0VAR` from the system
+  matrices table for exactly this reason.
+
+- **State-dependent cells are reported as conditional, not as constants.** They
+  are functions of the latent state, so there is no single number to report.
+  They are evaluated at a state — T0MEANS by default, `state=` for anything
+  else — and `attr(ctBackendParMatrices(fit), 'stateDependent')` names them, as
+  does a note in `summary()`. Note that ctsem implements individually-varying
+  parameters as a state dependence on augmented carrier states, so this applies
+  to any model with random effects, not only to explicitly nonlinear ones.
+
+Intervals appear only when they have been earned: a fit without
+`ctOptimUncertainty()` has one "sample", and the interval columns are omitted
+rather than filled with a zero-width interval that would read as certainty.
 
 ### One latent difference from the Julia backend, deliberately not copied
 

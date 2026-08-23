@@ -16,7 +16,10 @@ ctExtract <- function(object, subjectMatrices=FALSE, cores=2, nsamples='all', su
 
 #' @export
 ctExtract.ctStanFit <- function(object,subjectMatrices=FALSE,cores=2,nsamples='all', subjects='all'){
-  if(!class(object) %in% c('ctStanFit', 'stanfit')) stop('Not a ctStanFit or stanfit object')
+  # inherits(), not class() %in%: a fit carries both 'ctStanFit' and 'ctFit'
+  # since the ctFit rename, and `if` on a length-2 condition is an error in
+  # R >= 4.2 -- so this guard used to reject every fit it was given.
+  if(!inherits(object, c('ctStanFit', 'stanfit'))) stop('Not a ctStanFit or stanfit object')
   
   
   

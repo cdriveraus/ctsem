@@ -104,7 +104,12 @@ ctDiscretePars<-function(fit, subjects='popmean',
     stop('Use only one of fit or deprecated ctstanfitobj')
   }
 
-  if(!fit$ctstanmodel$continuoustime) times <- unique(round(times))
+  # `fit` may be a ctStanFit, a ctJuliaFit or a ctCppFit. Everything this
+  # function needs is either the pop_* arrays that ctExtract() now returns for
+  # all three, or model metadata; .ctFitModelObject() supplies the latter so the
+  # body no longer reaches into $ctstanmodel and $standata directly.
+  ctm <- .ctFitModelObject(fit)
+  if(!ctm$continuoustime) times <- unique(round(times))
   type='discreteDRIFT'
   collapseSubjects=TRUE #consider this for a switch
 
@@ -114,7 +119,7 @@ ctDiscretePars<-function(fit, subjects='popmean',
   extractSubjects <- subjects
   if('popmean' %in% extractSubjects) extractSubjects <- 'all'
   e<-ctExtract(fit,subjectMatrices = subjects[1]!='popmean',cores=cores,
-    nsamples = min(nsamples,dim(fit$stanfit$transformedpars$pop_DRIFT)[1]),
+    nsamples = min(nsamples,.ctFitNsamples(fit)),
     subjects=extractSubjects)
 
   nsubjects <- dim(e$subj_DRIFT)[2]
@@ -124,8 +129,8 @@ ctDiscretePars<-function(fit, subjects='popmean',
   if(is.null(e$subj_DRIFT) && any(!subjects %in% 'popmean')) stop('No individual variation in DRIFT matrix found?? Try subjects="popmean"')
 
   niter=dim(e$pop_DRIFT)[1]
-  nlatent=fit$standata$nlatent#outdims[3]
-  latentNames=fit$ctstanmodel$latentNames
+  latentNames=ctm$latentNames
+  nlatent=length(latentNames)
 
   if(nsamples > niter) nsamples <- niter
 
@@ -141,7 +146,7 @@ ctDiscretePars<-function(fit, subjects='popmean',
     if('popmean' %in% subjects || is.null(e[[paste0('subj_',matname)]])){
       ctpars[[matname]] <- e[[paste0('pop_',matname)]][samples,,,drop=FALSE]
     } else {
-      if(dim(e[[paste0('subj_',matname)]])[2] != fit$standata$nsubjects){ #if we computed subject parameters for only the specified subjects
+      if(dim(e[[paste0('subj_',matname)]])[2] != length(unique(fit$standata$subject))){ #if we computed subject parameters for only the specified subjects
         parsubjects <- 1:length(subjects)
       } else parsubjects <- subjects
       ctpars[[matname]] <- e[[paste0('subj_',matname)]][samples,parsubjects,,,drop=FALSE]
@@ -151,7 +156,7 @@ ctDiscretePars<-function(fit, subjects='popmean',
   }
 
 
-  out <- ctDiscreteParsDrift(ctpars,times, observational, standardise, cov=cov,discreteInput = fit$ctstanmodel$continuoustime==FALSE)
+  out <- ctDiscreteParsDrift(ctpars,times, observational, standardise, cov=cov,discreteInput = ctm$continuoustime==FALSE)
 
   dimnames(out)<- list(Sample=samples, Subject=subjects,
     `Time interval`=times, row=latentNames, col=latentNames)

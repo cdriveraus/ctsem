@@ -4,7 +4,13 @@
 \alias{ctJuliaEvaluate}
 \title{Evaluate a prepared Julia ctsem likelihood}
 \usage{
-ctJuliaEvaluate(object, pars = NULL, gradient = TRUE, contributions = FALSE)
+ctJuliaEvaluate(
+  object,
+  pars = NULL,
+  gradient = TRUE,
+  contributions = FALSE,
+  gradient_method = c("adjoint", "forward")
+)
 }
 \arguments{
 \item{object}{A \code{ctJuliaModel} or \code{ctJuliaFit}.}
@@ -14,6 +20,13 @@ ctJuliaEvaluate(object, pars = NULL, gradient = TRUE, contributions = FALSE)
 \item{gradient}{Return an analytic/automatic-differentiation gradient.}
 
 \item{contributions}{Return subject and row contribution details when available.}
+
+\item{gradient_method}{Either "adjoint" (reverse mode, the default) or
+"forward" (ForwardDiff). Both compute the same gradient. "adjoint" costs
+the same regardless of how many free parameters a model has, and is
+faster than "forward" at every model size measured, by a margin that
+grows with the parameter count. See \code{optimcontrol$gradient} in
+\code{ctFit}.}
 }
 \value{
 A list containing log likelihood and, when requested, gradient.

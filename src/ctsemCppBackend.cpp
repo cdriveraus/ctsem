@@ -8,6 +8,7 @@
 #include <Rcpp.h>
 
 #include "ctsemcpp/rinterface.hpp"
+#include "ctsemcpp/summary.hpp"
 
 using namespace Rcpp;
 
@@ -144,4 +145,106 @@ List ctsemCppLayout(SEXP handle) {
                       _["nupdate"] = static_cast<int>(model.update.size()),
                       _["ntd"] = static_cast<int>(model.td.size()),
                       _["parameter_layer_shareable"] = model.parameterLayerShareable());
+}
+
+// Layout of the matrices `.ctsemCppParMatrices` returns, plus which cells are
+// state dependent. Queried once per model; the R side reshapes the flat columns
+// with it.
+// [[Rcpp::export(.ctsemCppSummaryLayout)]]
+List ctsemCppSummaryLayout(SEXP handle) {
+  ctsemcpp::CppObjective* objective = fromPtr(handle);
+  const ctsemcpp::CppModel& model = objective->model;
+  const ctsemcpp::SummaryLayout layout = ctsemcpp::summaryLayout(model);
+  const R_xlen_t nmat = static_cast<R_xlen_t>(layout.name.size());
+
+  CharacterVector names(nmat);
+  IntegerVector nrow(nmat), ncol(nmat), offset(nmat);
+  for (R_xlen_t i = 0; i < nmat; ++i) {
+    names[i] = layout.name[static_cast<std::size_t>(i)];
+    nrow[i] = layout.nrow[static_cast<std::size_t>(i)];
+    ncol[i] = layout.ncol[static_cast<std::size_t>(i)];
+    offset[i] = layout.offset[static_cast<std::size_t>(i)];
+  }
+
+  // State-dependent cells reported as (matrix, row, col) rather than as flat
+  // engine offsets, because the caller thinks in model matrices and should not
+  // have to reimplement the engine's addressing to find out which entries of a
+  // summary are conditional on a state.
+  const std::vector<int> statedep = ctsemcpp::stateDependentPositions(model);
+  CharacterVector sdmat(statedep.size());
+  IntegerVector sdrow(statedep.size()), sdcol(statedep.size());
+  for (std::size_t s = 0; s < statedep.size(); ++s) {
+    const int position = statedep[s];
+    for (std::size_t i = 0; i < model.layouts.size(); ++i) {
+      const ctsemcpp::MatrixLayout& L = model.layouts[i];
+      if (position < L.offset || position >= L.offset + L.nrow * L.ncol) continue;
+      const int local = position - L.offset;
+      sdmat[static_cast<R_xlen_t>(s)] = L.name;
+      sdrow[static_cast<R_xlen_t>(s)] = local % L.nrow + 1;
+      sdcol[static_cast<R_xlen_t>(s)] = local / L.nrow + 1;
+      break;
+    }
+  }
+
+  return List::create(_["matrix"] = names, _["nrow"] = nrow, _["ncol"] = ncol,
+                      _["offset"] = offset, _["size"] = layout.size,
+                      _["nlatent"] = model.nlatent, _["nmanifest"] = model.nmanifest,
+                      _["ntipred"] = model.ntipred,
+                      _["statedep"] = List::create(_["matrix"] = sdmat, _["row"] = sdrow,
+                                                   _["col"] = sdcol));
+}
+
+// Materialize every model matrix for one or many raw parameter vectors.
+//
+// `pars` is npar x nsamples so that a whole posterior costs one call rather
+// than one call per sample; the returned matrix is (flat layout) x nsamples.
+// [[Rcpp::export(.ctsemCppParMatrices)]]
+NumericMatrix ctsemCppParMatrices(SEXP handle, NumericMatrix pars, SEXP tipreds, SEXP state,
+                                  double time = 0.0, double dt = 0.0) {
+  ctsemcpp::CppObjective* objective = fromPtr(handle);
+  const ctsemcpp::CppModel& model = objective->model;
+  const int p = objective->nvalues();
+  if (pars.nrow() != p) {
+    stop("ctsem C++ backend: expected %d free parameters per column, got %d.", p,
+         static_cast<int>(pars.nrow()));
+  }
+
+  std::vector<double> tivalues(static_cast<std::size_t>(std::max(model.ntipred, 0)), 0.0);
+  if (!Rf_isNull(tipreds)) {
+    NumericVector supplied(tipreds);
+    if (supplied.size() != model.ntipred) {
+      stop("ctsem C++ backend: expected %d TI predictor values, got %d.", model.ntipred,
+           static_cast<int>(supplied.size()));
+    }
+    for (int i = 0; i < model.ntipred; ++i) tivalues[static_cast<std::size_t>(i)] = supplied[i];
+  }
+
+  std::vector<double> statevalues;
+  const double* statepointer = nullptr;
+  if (!Rf_isNull(state)) {
+    NumericVector supplied(state);
+    if (supplied.size() != model.nlatent) {
+      stop("ctsem C++ backend: expected %d latent state values, got %d.", model.nlatent,
+           static_cast<int>(supplied.size()));
+    }
+    statevalues.assign(supplied.begin(), supplied.end());
+    statepointer = statevalues.data();
+  }
+
+  const ctsemcpp::SummaryLayout layout = ctsemcpp::summaryLayout(model);
+  // A private workspace: this must not disturb the cached filter workspace the
+  // objective uses for likelihoods and gradients.
+  ctsemcpp::FilterWorkspace ws;
+  ws.resize(model);
+
+  NumericMatrix out(layout.size, pars.ncol());
+  std::vector<double> column(static_cast<std::size_t>(layout.size));
+  for (R_xlen_t s = 0; s < pars.ncol(); ++s) {
+    NumericMatrix::Column values = pars(_, s);
+    std::vector<double> raw(values.begin(), values.end());
+    ctsemcpp::parameterMatrices(model, ws, layout, raw.data(), tivalues.data(), statepointer,
+                                time, dt, column.data());
+    for (int i = 0; i < layout.size; ++i) out(i, s) = column[static_cast<std::size_t>(i)];
+  }
+  return out;
 }
