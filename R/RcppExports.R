@@ -37,3 +37,7 @@
     .Call(`_ctsem_ctsemCppKalman`, handle, pars, subjectmatrices)
 }
 
+.ctsemCppGenerate <- function(handle, pars, base) {
+    .Call(`_ctsem_ctsemCppGenerate`, handle, pars, base)
+}
+

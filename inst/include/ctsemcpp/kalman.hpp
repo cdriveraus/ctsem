@@ -45,6 +45,31 @@ inline std::vector<double> runKalman(CppObjective& objective, const double* valu
   return loglik;
 }
 
+// One posterior-predictive dataset.
+//
+// `base` holds one standard normal per manifest per row; `out` receives the
+// generated observations and is left untouched wherever the original data was
+// missing, so the generated dataset has the same missingness as the real one.
+// Returns each subject's log likelihood *of the generated data*, which is what
+// a posterior predictive check compares against the observed one.
+inline std::vector<double> runGenerate(CppObjective& objective, const double* values,
+                                       const double* base, double* out, double* llrow) {
+  const CppModel& model = objective.model;
+  GenerateSpec generate;
+  generate.base = base;
+  generate.out = out;
+  generate.llrow = llrow;
+
+  FilterWorkspace ws;
+  ws.resize(model);
+  std::vector<double> loglik(objective.subjects.size(), 0.0);
+  for (std::size_t s = 0; s < objective.subjects.size(); ++s) {
+    loglik[s] = filterSubject(model, ws, values, objective.subjects[s], nullptr, nullptr,
+                              &generate);
+  }
+  return loglik;
+}
+
 // One subject's model matrices: the parameter vector its filter pass ended
 // with, with T0MEANS replaced by its smoothed initial state.
 //

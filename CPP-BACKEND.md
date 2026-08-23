@@ -406,10 +406,9 @@ already. Nothing here needs deciding today.
 Nothing in the likelihood or the gradient — the twelve-scenario comparison above
 is the whole feature surface. What is missing is peripheral:
 
-- Data *generation*: `ctGenerateFromFit()` and `ctPostPredPlots()`, which need
-  the engines to simulate from the fitted model rather than to filter given
-  data. `ctPredictTIP()` and `ctFitCovCheck()` are untested against these
-  backends. (Also missing for `ctJuliaFit`.)
+- `ctPredictTIP()`, which manipulates `standata` directly to build its covariate
+  grid; the datalong-level equivalent is straightforward on top of the
+  prediction work above but is not written. (Also missing for `ctJuliaFit`.)
 - Multi-start or restart robustness in the optimizer (also missing in
   `ctsem_optimize`; the Julia handoff lists it as the top open item).
 - The `v1` refusals are the same list as Julia's: no HMC, no priors, no
@@ -529,14 +528,44 @@ each other to 1e-11. End to end -- `ctPredict()` on one subject over an
 interpolated time grid, standardised residuals included -- the two backends
 agree with Stan to 4e-8.
 
-Two details follow Stan rather than improving on it, so that the same model
-predicts the same way whichever backend ran it. Manifest quantities are recorded
-over *all* manifest variables and are not re-evaluated at the updated state; and
-with bounded substeps the interval transition handed to the smoother is
-`exp(JAx*dt)` from the last substep, not the product of the substep transitions.
-The product is the exact Jacobian of what the filter actually did and Stan calls
-its own version an approximation, so this is a one-line change to make if Stan
-makes it.
+**Three things Stan does approximately are done exactly here.** None of them
+touches the likelihood or the gradient -- all three change only what is
+*reported* -- and each is verified by an identity rather than by a comparison
+against the code that produced the numbers.
+
+1. **The measurement model is re-evaluated at the updated state** before the
+   filtered observation estimate is recorded. Stan applies LAMBDA and
+   MANIFESTMEANS as the *prior* state left them, and its own comment on that
+   block reads "these could be improved by recomputing all state dependent pars,
+   error covariances etc. at each step". This is the ordinary case rather than
+   an exotic one: ctsem represents an individually varying parameter as an
+   augmented latent state, and MANIFESTMEANS is individually varying *by
+   default*, so the measurement intercept is a latent state whose pre-update
+   value Stan reports. On a two-process model with ctsem's defaults the reported
+   `yupd`/`ysmooth` move by ~1 unit.
+
+   The test: when the measurement equation is linear in the augmented state --
+   which every intoverpop model's is -- `y = Jy x` exactly, at prior, filtered
+   *and* smoothed. That holds now and did not before.
+
+2. **The interval transition composes the substeps.** The filter propagates
+   `x <- A_s x + b_s` at each bounded substep, so the interval Jacobian is
+   `A_S ... A_1`. Stan instead recomputes `exp(JAx dt)` from the last substep's
+   Jacobian. For a state-independent JAx the two agree exactly; for a
+   state-dependent one only the product is the derivative of what was actually
+   computed. Composing is also cheaper -- one matrix multiply per substep rather
+   than an extra exponential.
+
+3. **The transition includes the TD impulse Jacobian.** An impulse sits between
+   the previous row's posterior and this row's prior and maps the covariance
+   through `Jtd`, so it belongs in the transition the smoother uses. Stan saves
+   only the exponential. `Jtd` is the identity in the common case; the
+   non-identity case, which a state-dependent TDPREDEFFECT produces, is tested
+   in the engine suite.
+
+Manifest quantities are still recorded over *all* manifest variables, observed
+or not, as Stan does -- that one is a reporting convention, not an
+approximation.
 
 `removeObs` withholds observations from the filter but not from the report,
 which is the point of it: what comes back is a prediction next to the
@@ -546,6 +575,49 @@ observations it was not given.
 on `ctKalmanArray(standardisederrors=TRUE)`. Their standardised residuals have
 sd 1.00 at the estimate of a correctly specified model, which is an independent
 check on the whole chain that no comparison against Stan provides.
+
+### Data generation
+
+`ctGenerateFromFit()` works, and with it `ctPostPredData()`, `ctPostPredPlots()`
+and `ctFitCovCheck()`.
+
+Generation is the one thing here that is not a passive recorder: it *changes*
+what the filter consumes. Each row's observation is drawn from its own prior
+predictive as the filter reaches it, and the filter then carries on as though
+that draw had been read from the data -- so the state it propagates is
+conditioned on the drawn history, not the real one. That is exactly what makes
+the result a draw from the model rather than a sequence of independent one-step
+predictions, and it is also the easy thing to get wrong: a simulator that
+predicted each row from the *real* history would produce data that looks
+perfectly plausible and is a draw from nothing.
+
+The draw is taken from the innovation covariance the update is about to use,
+*after* it has already been factorized, so the drawn innovation is `L z` by
+construction and cannot come apart from the covariance the filter then
+conditions on.
+
+The standard normals are drawn in R rather than by an engine RNG. That makes
+`set.seed()` mean what a user expects and lets the two engines be compared by
+equality rather than in distribution -- they agree to 1e-16.
+
+Two properties are asserted rather than assumed:
+
+- **The defining identity.** Re-running the ordinary likelihood on the generated
+  dataset reproduces the likelihood reported while generating it. Nothing that
+  drew from the wrong covariance, or conditioned on the wrong history, satisfies
+  that.
+- **Calibration.** Over 200 generated datasets the observed data's log
+  likelihood sits at the 54th percentile -- an unremarkable draw from the fitted
+  model, which is what it should be at the maximum.
+
+Missingness is preserved: an entry that was not observed is returned NA rather
+than invented, because a posterior predictive check compares against the
+observations that exist.
+
+One pre-existing bug turned up on the way. `ctPostPredData(residuals=TRUE)`
+could never run on *any* backend, stan included -- the residual rows lacked the
+id/time columns the rbind below them requires. Fixed, and guarded by a test that
+covers the stan path too.
 
 ### One latent difference from the Julia backend, deliberately not copied
 

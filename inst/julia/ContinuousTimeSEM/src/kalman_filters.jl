@@ -207,7 +207,7 @@ distinct, `UnitRange`-specialised method for the former that is exactly as
 allocation-free and BLAS-eligible as a hand-written fast path would be.
 """
 function _ekf_update_observed!(ws::ContinuousEKFWorkspace, pars,
-    data::AbstractMatrix, obs_col::Int, log2π_const, trace=nothing)
+    data::AbstractMatrix, obs_col::Int, log2π_const, trace=nothing, generate=nothing)
     m_full = _val(ws.manifest_dim)
     n_observed = 0
     @inbounds for i in 1:m_full
@@ -241,7 +241,7 @@ function _ekf_update_observed!(ws::ContinuousEKFWorkspace, pars,
     _record_update!(trace, ws, pars, data, obs_col, observed,
         ws.state, ws.P_predict.data, _val(ws.state_dim))
 
-    factor = _ekf_masked_update_step!(ws, pars, data, obs_col, observed)
+    factor = _ekf_masked_update_step!(ws, pars, data, obs_col, observed, generate)
     factor === nothing && return nothing
     return _kalman_loglikelihood_cholesky!(view(ws.ll_buffer, 1:n_observed),
         factor, view(ws.ỹ, 1:n_observed), log2π_const)
@@ -265,7 +265,7 @@ covariance -- these coincide for models with a fixed/linear LAMBDA but can
 differ for state-dependent measurement models.
 """
 function _ekf_masked_update_step!(ws::ContinuousEKFWorkspace, pars,
-    data::AbstractMatrix, obs_col::Int, observed::AbstractVector{Int})
+    data::AbstractMatrix, obs_col::Int, observed::AbstractVector{Int}, generate=nothing)
     m = length(observed)
     n = _val(ws.state_dim)
 
@@ -317,6 +317,15 @@ function _ekf_masked_update_step!(ws::ContinuousEKFWorkspace, pars,
     _symmetrize_and_ridge!(Sv, m)
     factor = cholesky!(Sv, check=false)
     issuccess(factor) || return nothing
+
+    # Data generation, if asked for: draw this row's observation from its own
+    # prior predictive and carry on as though it had been read. Taken here
+    # rather than earlier because S is the innovation covariance the update is
+    # about to use, already factorized -- so the drawn innovation is L z by
+    # construction and cannot drift from the covariance the filter then
+    # conditions on.
+    generate === nothing ||
+        _generate_row!(generate, ws, factor, yv, predview, μv, observed, obs_col)
 
     # State update: x_{t|t} = x_{t|t-1} + PHt * (S^{-1} * ỹ)
     row_sq = view(ws.bufferΘ.row_sq, 1:m)
@@ -405,6 +414,7 @@ function _extended_kalman_filter_continuous!(
     subject::Integer=1,
     max_timestep::Real=Inf,
     trace=nothing,
+    generate=nothing,
 )::T where {T}
     # Materialize transformed/free/fixed values into the full parameter vector.
     _materialize_subject_values!(ws.subject_values, params, sp, tipreds)
@@ -447,9 +457,10 @@ function _extended_kalman_filter_continuous!(
     apply_complex_transforms_at_indices!(all_params, ws.update_param_indices, sp.update_transforms, update_context)
     log2π_const = log(2π)
     _record_row_prior!(trace, ws, pars, 1)
-    ll = _ekf_update_observed!(ws, pars, data, 1, log2π_const, trace)
+    ll = _ekf_update_observed!(ws, pars, data, 1, log2π_const, trace, generate)
     ll === nothing && return _invalid_ekf_loglikelihood(ws)
-    _record_row_update!(trace, ws, pars, 1, ll)
+    generate === nothing || (generate.llrow[generate.offset+1] = ll)
+    _record_row_update!(trace, ws, pars, sp, update_context, 1, ll)
 
     # Main EKF loop for t >= 2:
     #   (1) predict from t-1 to t using Δt
@@ -485,6 +496,7 @@ function _extended_kalman_filter_continuous!(
         apply_complex_transforms_at_indices!(all_params, ws.td_param_indices, sp.td_transforms, td_context)
         _record_td!(trace, ws, pars, td_context.tdpreds, _val(ws.state_dim))
         _apply_td_impulse!(ws, pars, td_context.tdpreds)
+        _record_td_transition!(trace, pars, t_idx, size(tdpreds, 1))
 
         measurement_context = CTSEMRowContext(ws.state, pars, td_context.tdpreds, tipreds,
             curr_timestep, Δt, Int(subject), t_idx)
@@ -493,9 +505,10 @@ function _extended_kalman_filter_continuous!(
         ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, 0, ws.manifest_dim)
         _record_theta!(trace, pars, _val(ws.manifest_dim))
         _record_row_prior!(trace, ws, pars, t_idx)
-        row_ll = _ekf_update_observed!(ws, pars, data, t_idx, log2π_const, trace)
+        row_ll = _ekf_update_observed!(ws, pars, data, t_idx, log2π_const, trace, generate)
         row_ll === nothing && return _invalid_ekf_loglikelihood(ws)
-        _record_row_update!(trace, ws, pars, t_idx, row_ll)
+        generate === nothing || (generate.llrow[generate.offset+t_idx] = row_ll)
+        _record_row_update!(trace, ws, pars, sp, measurement_context, t_idx, row_ll)
         ll += row_ll
 
         prev_timestep = curr_timestep

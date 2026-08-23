@@ -291,3 +291,130 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   names(out) <- paste0("subj_", layout$matrix)
   out
 }
+
+
+# Posterior-predictive data generation ----------------------------------------
+#
+# The engines draw each row's observation from its own prior predictive as the
+# filter reaches it, so the generated data is a draw from the model rather than
+# a sequence of independent one-step predictions. The standard normals are drawn
+# *here*, with R's RNG, so that `set.seed()` means what a user expects and the
+# two engines produce identical data for the same seed.
+
+.ctBackendGenerate <- function(fit, raw, base) {
+  if (identical(.ctBackendEngineKind(fit), "cpp")) {
+    return(.ctsemCppGenerate(.ctCppObjective(fit), as.numeric(raw), base))
+  }
+  spec <- .ctBackendSpec(fit)
+  module <- .ctJuliaModule(spec$project)
+  .ctBackendJuliaValue(module$ctsem_generate(.ctJuliaObjective(fit),
+    .ctJuliaNumericVector(as.numeric(raw)), JuliaConnectoR::juliaPut(base)))
+}
+
+.ctBackendGenerateFromFit <- function(fit, nsamples = 200, fullposterior = FALSE,
+  cores = 2) {
+  spec <- .ctBackendSpec(fit)
+  model <- .ctFitModelObject(fit)
+  manifestNames <- model$manifestNames
+  nmanifest <- length(manifestNames)
+  nrows <- length(spec$times)
+
+  if (isTRUE(fullposterior)) {
+    posterior <- fit$estimate$rawposterior
+    if (is.null(posterior)) {
+      stop("fullposterior=TRUE needs posterior draws; run ctOptimUncertainty() first, ",
+        "or use fullposterior=FALSE to generate from the point estimate.", call. = FALSE)
+    }
+    rows <- sample(seq_len(nrow(posterior)), nsamples, replace = nsamples > nrow(posterior))
+    samples <- posterior[rows, , drop = FALSE]
+  } else {
+    samples <- matrix(as.numeric(fit$estimate$raw), nrow = nsamples,
+      ncol = length(fit$estimate$raw), byrow = TRUE)
+  }
+
+  generated <- array(NA_real_, dim = c(nsamples, nrows, nmanifest))
+  llrow <- matrix(0, nsamples, nrows)
+  for (iteration in seq_len(nsamples)) {
+    base <- matrix(stats::rnorm(nmanifest * nrows), nmanifest, nrows)
+    drawn <- .ctBackendGenerate(fit, samples[iteration, ], base)
+    generated[iteration, , ] <- t(matrix(as.numeric(drawn$Y), nmanifest, nrows))
+    llrow[iteration, ] <- as.numeric(drawn$llrow)
+  }
+  dimnames(generated) <- list(sample = seq_len(nsamples), row = seq_len(nrows),
+    manifestNames)
+  llrow[llrow == 0] <- NA
+  fit$generated <- list(Y = generated, llrow = llrow)
+  fit
+}
+
+
+# Accessors the posterior-predictive machinery needs, for whichever backend ----
+#
+# ctPostPredData() reaches into `standata` for the observed data, the row-to-
+# subject map and the fitted row likelihoods. These give the same four things
+# from either a ctStanFit or a backend fit, so that function has one body.
+
+.ctFitObservedY <- function(fit) {
+  if (!is.null(fit$standata$Y)) {
+    observed <- fit$standata$Y
+    observed[observed == 99999] <- NA
+    colnames(observed) <- .ctFitModelObject(fit)$manifestNames
+    return(observed)
+  }
+  spec <- .ctBackendSpec(fit)
+  observed <- t(spec$manifest_data)
+  observed[!is.finite(observed)] <- NA
+  colnames(observed) <- .ctFitModelObject(fit)$manifestNames
+  observed
+}
+
+.ctFitRowSubject <- function(fit) {
+  if (!is.null(fit$standata$subject)) return(as.integer(fit$standata$subject))
+  spec <- .ctBackendSpec(fit)
+  starts <- spec$subject_starts
+  rep(seq_along(starts), diff(c(starts, length(spec$times) + 1L)))
+}
+
+.ctFitRowTime <- function(fit) {
+  if (!is.null(fit$standata$time)) return(as.numeric(fit$standata$time))
+  as.numeric(.ctBackendSpec(fit)$times)
+}
+
+# Each row's log likelihood at the fitted estimate -- the quantity a posterior
+# predictive check compares the generated ones against.
+.ctFitObservedRowLoglik <- function(fit) {
+  if (!is.null(fit$stanfit$transformedparsfull$llrow)) {
+    return(as.numeric(fit$stanfit$transformedparsfull$llrow[1, ]))
+  }
+  spec <- .ctBackendAsModel(.ctBackendSpec(fit), .ctBackendEngineKind(fit))
+  as.numeric(.ctBackendKalmanRaw(spec, fit$estimate$raw, subjectmatrices = FALSE)$llrow)
+}
+
+# A copy of the fit whose observed data has been replaced, so that the residual
+# branch of ctPostPredData() can filter a generated dataset.
+.ctFitReplaceY <- function(fit, Y) {
+  if (!is.null(fit$standata$Y)) {
+    fit$standata$Y <- matrix(Y, ncol = ncol(fit$standata$Y))
+    return(fit)
+  }
+  model <- .ctFitModelObject(fit)
+  spec <- .ctBackendSpec(fit)
+  data <- spec$data
+  data[, model$manifestNames] <- Y
+  prepared <- if (identical(.ctBackendEngineKind(fit), "cpp")) {
+    .ctCppPrepare(data, model)
+  } else .ctJuliaPrepare(data, model, project = spec$project)
+  fit$model_spec <- prepared
+  fit
+}
+
+# The observed data as a long data frame in its original structure. A ctStanFit
+# has to reconstruct it from `standata`; the backends were handed one and kept
+# it, so this is where those two roads meet.
+.ctFitLongData <- function(fit) {
+  if (!is.null(fit$standata)) {
+    return(standatatolong(standata = fit$standata, ctm = fit$ctstanmodel,
+      origstructure = TRUE))
+  }
+  .ctBackendSpec(fit)$data
+}

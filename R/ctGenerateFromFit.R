@@ -13,6 +13,13 @@
 #' plot(gen$generated$Y[3,,2],type='l') #Third random data sample, 2nd manifest var, all time points. 
 ctGenerateFromFit<-function(fit,nsamples=200,fullposterior=FALSE, verboseErrors=FALSE,cores=2){
   
+  # The julia and cpp engines generate from the same forward pass they filter
+  # with, drawing each row from its own prior predictive (see
+  # R/ctBackendKalman.R and the engines' kalman_trace.jl / filter.hpp).
+  if(inherits(fit,c('ctCppFit','ctJuliaFit'))){
+    return(.ctBackendGenerateFromFit(fit,nsamples=nsamples,
+      fullposterior=fullposterior,cores=cores))
+  }
   if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object!')
   
   if(nsamples > ncol(fit$stanfit$rawposterior) & fullposterior & is.null(fit$stanfit$stanfit)) fit <- ctFitAddSamples(fit,nsamples = nsamples,cores=1)

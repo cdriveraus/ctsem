@@ -313,3 +313,135 @@ test_that("standardised residuals feed ctResiduals and ctACFresiduals", {
   expect_equal(stats::sd(as.numeric(residuals[["Y1"]])), 1, tolerance = .1)
   expect_equal(mean(as.numeric(residuals[["Y1"]])), 0, tolerance = .1)
 })
+
+# Three things the engines now do exactly where Stan is knowingly approximate.
+# Each is checked by an identity the exact version satisfies rather than by a
+# comparison against the code that produced the numbers, and each is checked to
+# leave the likelihood alone -- none of them is allowed to reach it.
+
+.kalman_indvarmeans_model <- function() {
+  # MANIFESTMEANS is individually varying, which is ctsem's default. That makes
+  # the measurement intercept an augmented latent state, so the measurement
+  # equation is linear in the augmented state: y = Jy x, exactly.
+  suppressWarnings(ctModel(type = "ct", n.latent = 2, LAMBDA = diag(2),
+    MANIFESTVAR = diag(c(.1, .1)), T0VAR = diag(2), T0MEANS = matrix(0, 2, 1),
+    CINT = matrix(0, 2, 1), DIFFUSION = diag(c(.2, .15)),
+    DRIFT = matrix(c("auto1", "cross12", "cross21", "auto2"), 2, 2, byrow = TRUE)))
+}
+
+.kalman_indvarmeans_data <- function() {
+  set.seed(5)
+  do.call(rbind, lapply(1:8, function(i) data.frame(id = i, time = c(0, .5, 1.5, 2.4),
+    Y1 = stats::rnorm(4, 0, .5), Y2 = stats::rnorm(4, 0, .5))))
+}
+
+test_that("the measurement model is re-evaluated at the updated state", {
+  skip_on_cran()
+  model <- .kalman_indvarmeans_model()
+  data <- .kalman_indvarmeans_data()
+  expect_true(all(model$pars$indvarying[model$pars$matrix == "MANIFESTMEANS"]))
+
+  spec <- suppressMessages(ctFit(data, model, backend = "cpp", fit = FALSE))
+  npar <- max(spec$parameter_table$parnumber, na.rm = TRUE)
+  set.seed(8)
+  raw <- stats::rnorm(npar, 0, .3)
+  asmodel <- ctsem:::.ctBackendAsModel(spec, "cpp")
+  traced <- ctsem:::.ctBackendKalmanRaw(asmodel, raw)
+  Jy <- ctBackendParMatrices(asmodel, raw, trim = FALSE)$Jy
+
+  # y = Jy x has to hold at prior, filtered *and* smoothed. Reporting the
+  # filtered observation with a pre-update measurement intercept -- which is
+  # what Stan does -- breaks it at the last two.
+  for (kind in 1:3) {
+    implied <- t(apply(traced$eta[kind, , , drop = TRUE], 1, function(x) Jy %*% x))
+    expect_equal(as.numeric(traced$y[kind, , ]), as.numeric(implied), tolerance = 1e-10,
+      info = kind)
+  }
+
+  # And it is not a rounding-level difference: the intercept state moves at the
+  # update, so the stale version is wrong by LAMBDA-free carrier terms.
+  nrows <- dim(traced$eta)[2]
+  stale <- vapply(seq_len(nrows), function(r) {
+    max(abs(traced$y[2, r, ] - (Jy %*% traced$eta[1, r, ] +
+        Jy[, 1:2] %*% (traced$eta[2, r, 1:2] - traced$eta[1, r, 1:2]))))
+  }, numeric(1))
+  expect_true(max(stale) > 1e-6)
+
+  # None of which may touch the likelihood.
+  expect_equal(sum(traced$subject_loglik),
+    ctCppEvaluate(asmodel, raw, gradient = FALSE)$value, tolerance = 1e-12)
+})
+
+test_that("the interval transition is the Jacobian of the interval", {
+  skip_on_cran()
+  skip_if_not_installed("Matrix")
+  model <- .kalman_indvarmeans_model()
+  data <- .kalman_indvarmeans_data()
+  spec <- suppressMessages(ctFit(data, model, backend = "cpp", fit = FALSE))
+  npar <- max(spec$parameter_table$parnumber, na.rm = TRUE)
+  set.seed(8)
+  raw <- stats::rnorm(npar, 0, .3)
+  asmodel <- ctsem:::.ctBackendAsModel(spec, "cpp")
+  traced <- ctsem:::.ctBackendKalmanRaw(asmodel, raw)
+  matrices <- ctBackendParMatrices(asmodel, raw, trim = FALSE)
+
+  times <- spec$times
+  starts <- spec$subject_starts
+  naug <- nrow(matrices$JAx)
+  # This model has no TD predictors, so Jtd is the identity and the factor is
+  # invisible here; the non-identity case, which is where dropping it changes
+  # the answer, is covered in the engine suite (test_kalman_trace.jl).
+  Jtd <- if (is.null(matrices$Jtd)) diag(naug) else unname(matrices$Jtd)
+  for (row in seq_along(times)) {
+    if (row %in% starts) {
+      # Nothing precedes a subject's first row.
+      expect_equal(traced$transition[row, , ], diag(naug), info = row)
+      next
+    }
+    expected <- Jtd %*%
+      as.matrix(Matrix::expm(unname(matrices$JAx) * (times[row] - times[row - 1])))
+    expect_equal(traced$transition[row, , ], unname(expected), tolerance = 1e-10,
+      info = row)
+  }
+})
+
+test_that("the improved reports differ from Stan only where Stan is approximate", {
+  skip_if_not_installed("rstan")
+  skip_on_cran()
+  # The divergence is deliberate, so it is asserted rather than tolerated: the
+  # prior estimates and the likelihood still match Stan exactly, and only the
+  # filtered and smoothed observation estimates move -- by the amount the stale
+  # measurement intercept accounts for.
+  model <- .kalman_indvarmeans_model()
+  data <- .kalman_indvarmeans_data()
+  spec <- suppressMessages(ctFit(data, model, backend = "cpp", fit = FALSE))
+  npar <- max(spec$parameter_table$parnumber, na.rm = TRUE)
+  set.seed(8)
+  raw <- stats::rnorm(npar, 0, .3)
+  asmodel <- ctsem:::.ctBackendAsModel(spec, "cpp")
+  traced <- ctsem:::.ctBackendKalmanRaw(asmodel, raw)
+  stan <- .kalman_stan_scores(model, data, raw)
+
+  # Latent states and the likelihood are untouched -- the filter itself did not
+  # change.
+  for (kind in 1:3) {
+    expect_equal(traced$eta[kind, , ], stan$etaa[1, kind, , ], tolerance = 1e-6,
+      info = kind)
+  }
+  expect_equal(as.numeric(traced$llrow), as.numeric(stan$llrow[1, ]), tolerance = 1e-6)
+  expect_equal(traced$y[1, , ], stan$ya[1, 1, , ], tolerance = 1e-6)
+
+  # The reported observations do differ, and by enough to matter.
+  expect_false(isTRUE(all.equal(traced$y[2, , ], stan$ya[1, 2, , ], tolerance = 1e-3)))
+  expect_false(isTRUE(all.equal(traced$y[3, , ], stan$ya[1, 3, , ], tolerance = 1e-3)))
+
+  # Stan's filtered estimate is the prior intercept plus the updated process,
+  # which is exactly the stale quantity this replaced.
+  Jy <- ctBackendParMatrices(asmodel, raw, trim = FALSE)$Jy
+  nlatent <- spec$nlatent
+  stalecheck <- t(vapply(seq_len(dim(traced$eta)[2]), function(r) {
+    as.numeric(Jy[, -(1:nlatent), drop = FALSE] %*% traced$eta[1, r, -(1:nlatent)] +
+        Jy[, 1:nlatent, drop = FALSE] %*% traced$eta[2, r, 1:nlatent])
+  }, numeric(dim(traced$y)[3])))
+  expect_equal(stalecheck, stan$ya[1, 2, , ], tolerance = 1e-6)
+})

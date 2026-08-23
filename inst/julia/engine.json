@@ -2,7 +2,7 @@
   "source": "vendored",
   "url": "https://gitlab.uzh.ch/psyquantimet/continuoustimesem.git",
   "branch": "ctsem-backend",
-  "revision": "b7ff0f28f635996857291c3d04248bcb9d2587fe",
+  "revision": "cfb62365a64653c28fddc44fc134fbb1f01bc421",
   "subdir": "ContinuousTimeSEM",
   "julia": "1.10"
 }

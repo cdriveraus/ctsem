@@ -89,6 +89,7 @@ struct FilterWorkspace {
 
   MatrixXd Pr, PHt, S, Kgain, Mjoseph, Ptmp;
   VectorXd innovation, alpha;
+  VectorXd genmean, gendraw;      // only touched when generating data
   Eigen::LLT<MatrixXd> llt;
 
   LyapWorkspace lyapws;
@@ -125,6 +126,8 @@ struct FilterWorkspace {
     Pr.setZero(n, n);
     Ptmp.setZero(n, n);
     Mjoseph.setZero(n, n);
+    genmean.setZero(m);
+    gendraw.setZero(m);
     tdrow.assign(model.ntdpred, 0.0);
     cache.invalidate();
     lyapws.reset();
@@ -336,7 +339,8 @@ inline void applyTdImpulse(const CppModel& model, FilterWorkspace& ws,
 // own generated code always operates on the observed subset.
 inline bool maskedUpdateStep(const CppModel& model, FilterWorkspace& ws,
                              const std::vector<int>& observed, const double* yrow,
-                             double& loglik) {
+                             double& loglik, GenerateSpec* generate = nullptr,
+                             std::size_t rowOffset = 0) {
   const int n = model.nlatent;
   const int mo = static_cast<int>(observed.size());
   Eigen::Map<const MatrixXd> LAMBDA(ws.all_params.data() + model.offLAMBDA, model.nmanifest, n);
@@ -356,9 +360,12 @@ inline bool maskedUpdateStep(const CppModel& model, FilterWorkspace& ws,
   // innovation, while Jy (its Jacobian) propagates covariance. These coincide
   // for a fixed or linear LAMBDA but differ for a state-dependent one.
   ws.innovation.noalias() = Lv * ws.state;
-  for (int i = 0; i < mo; ++i) {
-    ws.innovation(i) = yv(i) - (ws.innovation(i) + MANIFESTMEANS(observed[i], 0));
-  }
+  for (int i = 0; i < mo; ++i) ws.innovation(i) += MANIFESTMEANS(observed[i], 0);
+  // The predicted mean, kept only when a generated observation will be built
+  // around it. The branch is outside the loops, so the ordinary path is the
+  // same three passes it was.
+  if (generate) for (int i = 0; i < mo; ++i) ws.genmean(i) = ws.innovation(i);
+  for (int i = 0; i < mo; ++i) ws.innovation(i) = yv(i) - ws.innovation(i);
 
   ws.Pr = ws.P_predict;
   for (int i = 0; i < n; ++i) ws.Pr(i, i) += kRidge;
@@ -371,6 +378,23 @@ inline bool maskedUpdateStep(const CppModel& model, FilterWorkspace& ws,
 
   ws.llt.compute(ws.S);
   if (ws.llt.info() != Eigen::Success) return false;
+
+  // Draw this row's observation from its own prior predictive, N(mean, S), and
+  // carry on as though it had been read from the data. Taking the draw here
+  // rather than before the update is what makes it exact: S is the innovation
+  // covariance the update is about to use, already factorized, so the drawn
+  // innovation is L z by construction and cannot drift from the covariance the
+  // filter then conditions on.
+  if (generate) {
+    for (int i = 0; i < mo; ++i) {
+      ws.gendraw(i) = generate->base[rowOffset + static_cast<std::size_t>(observed[i])];
+    }
+    ws.innovation.noalias() = ws.llt.matrixL() * ws.gendraw.head(mo);
+    for (int i = 0; i < mo; ++i) {
+      generate->out[rowOffset + static_cast<std::size_t>(observed[i])] =
+          ws.genmean(i) + ws.innovation(i);
+    }
+  }
 
   ws.alpha = ws.llt.solve(ws.innovation);
   ws.state.noalias() += ws.PHt * ws.alpha;
@@ -403,7 +427,8 @@ inline bool isObserved(double x) { return std::isfinite(x); }
 // `if(si==0 || nobs_y[rowi] > 0 || dosmoother)` gate around the whole
 // measurement block.
 inline bool updateObserved(const CppModel& model, FilterWorkspace& ws, const double* yrow,
-                           AdjointTape* tape, double& loglik) {
+                           AdjointTape* tape, double& loglik,
+                           GenerateSpec* generate = nullptr, std::size_t rowOffset = 0) {
   const int m = model.nmanifest;
   const int n = model.nlatent;
   ws.observed.clear();
@@ -438,7 +463,7 @@ inline bool updateObserved(const CppModel& model, FilterWorkspace& ws, const dou
       rec.y(i) = yrow[oi];
     }
   }
-  return maskedUpdateStep(model, ws, ws.observed, yrow, loglik);
+  return maskedUpdateStep(model, ws, ws.observed, yrow, loglik, generate, rowOffset);
 }
 
 // Backward RTS pass over one subject, plus the subject-level parameter
@@ -493,6 +518,10 @@ inline void smoothSubject(const CppModel& model, FilterWorkspace& ws,
     trace.etacov[sm] = trace.etacov[up];
     trace.etacov[sm].noalias() += scratch * gain.transpose();
 
+    // The measurement correction is taken about the *updated* state, where the
+    // filter recorded Jy and where y_upd was evaluated. For a measurement
+    // equation linear in the augmented state -- every intoverpop model's -- the
+    // two together are exact: y_upd = Jy x_upd, so y_sm = Jy x_sm.
     const MatrixXd& Jyrow = trace.Jy[static_cast<std::size_t>(r)];
     trace.y[sm] = trace.y[up];
     trace.y[sm].noalias() += Jyrow * (trace.eta[sm] - trace.eta[up]);
@@ -515,7 +544,8 @@ inline void smoothSubject(const CppModel& model, FilterWorkspace& ws,
 // answer the optimizer would accept.
 inline double filterSubject(const CppModel& model, FilterWorkspace& ws,
                             const double* values, const SubjectData& data,
-                            AdjointTape* tape, KalmanTrace* trace = nullptr) {
+                            AdjointTape* tape, KalmanTrace* trace = nullptr,
+                            GenerateSpec* generate = nullptr) {
   const int n = model.nlatent;
   const int m = model.nmanifest;
   const int ntd = model.ntdpred;
@@ -526,16 +556,17 @@ inline double filterSubject(const CppModel& model, FilterWorkspace& ws,
   // the prediction path needs is taken from the one forward pass rather than
   // from a second one written to mirror it.
   //
-  // What is recorded is what Stan's `dosmoother` branch records, including two
-  // places where Stan is deliberately approximate and this follows it rather
-  // than improving on it -- see the transition note in the substep loop and the
-  // `Jy`/`LAMBDA` note here. Diverging would make the same model report
-  // different predictions from different backends, which is worse than
-  // reproducing a documented approximation.
+  // What is recorded is what Stan's `dosmoother` branch records, except at three
+  // points where Stan is knowingly approximate and this is not; each is called
+  // out where it happens (the substep transition, the TD impulse in the
+  // transition, and re-evaluating the measurement model at the updated state).
+  // None of them touches the likelihood or the gradient -- they change only
+  // what is *reported*, and only for models where the approximation bites.
   //
-  // LAMBDA (evaluated at the predicted state) gives the manifest mean and Jy
-  // its Jacobian gives the covariance, the same split the update uses. Neither
-  // is re-evaluated at the updated state, matching Stan.
+  // LAMBDA (evaluated at the state being reported) gives the manifest mean and
+  // Jy its Jacobian gives the covariance, the same split the update uses.
+  std::vector<double> paramSnapshot;
+  MatrixXd thetaSnapshot;
   auto recordManifest = [&](int kind, int row, const VectorXd& state,
                             const MatrixXd& statecov) {
     const std::size_t k = trace->at(kind, row);
@@ -551,10 +582,49 @@ inline double filterSubject(const CppModel& model, FilterWorkspace& ws,
     JP.noalias() = Jyrow * statecov;
     trace->ycov[k].noalias() = JP * Jyrow.transpose();
     trace->ycov[k] += ws.Theta;
-    if (kind == KalmanTrace::Prior) {
-      trace->Jy[row] = Jyrow;
-      trace->rowSubject[row] = data.subject;
+    if (kind == KalmanTrace::Prior) trace->rowSubject[row] = data.subject;
+    // Jy from the *updated* state, because that is the Jacobian the smoother's
+    // measurement correction is taken about.
+    if (kind == KalmanTrace::Upd) trace->Jy[row] = Jyrow;
+  };
+
+  // The updated observation estimate, with the measurement model re-evaluated
+  // at the updated state.
+  //
+  // Stan does not do this: it applies LAMBDA and MANIFESTMEANS as the *prior*
+  // state left them to the updated state, and its own comment on the block says
+  // "these could be improved by recomputing all state dependent pars, error
+  // covariances etc. at each step". It matters more than it sounds, because
+  // ctsem represents an individually varying parameter as an augmented latent
+  // state: with ctsem's default of individually varying MANIFESTMEANS, the
+  // measurement intercept *is* a latent state, and Stan reports the updated
+  // observation using that state's pre-update value.
+  //
+  // The test of it is an identity rather than a comparison. When the
+  // measurement equation is linear in the augmented state -- which every
+  // intoverpop model's is -- y = Jy x exactly, at each of prior, updated and
+  // smoothed. This version satisfies that; Stan's does not.
+  //
+  // Nothing here escapes: the parameter vector and the manifest covariance are
+  // restored, so the filter continues from exactly where it was and the
+  // likelihood is untouched.
+  auto recordUpdated = [&](int row, ExprContext ctx) {
+    paramSnapshot = ws.all_params;
+    thetaSnapshot = ws.Theta;
+    ctx.cells = ws.all_params.data();
+    ctx.ncells = model.nall;
+    ctx.state = ws.state.data();
+    ctx.nstate = n;
+    applyGroup(model, ws, model.predict, ctx);  // PARS the measurement cells may read
+    applyGroup(model, ws, model.update, ctx);
+    {
+      Eigen::Map<const MatrixXd> MANIFESTVAR(ws.all_params.data() + model.offMANIFESTVAR,
+                                             m, m);
+      sdcovsqrt2cov(MANIFESTVAR, m, ws.Theta, ws.covO, ws.covB);
     }
+    recordManifest(KalmanTrace::Upd, row, ws.state, ws.P_update);
+    ws.all_params = paramSnapshot;
+    ws.Theta = thetaSnapshot;
   };
 
   materializeParameters(model, ws, values, data.tipreds);
@@ -609,10 +679,15 @@ inline double filterSubject(const CppModel& model, FilterWorkspace& ws,
   double ll = 0.0;
   double rowll = 0.0;
   if (trace) recordManifest(KalmanTrace::Prior, firstRow, ws.state, ws.P_predict);
-  if (!updateObserved(model, ws, data.y, tape, rowll)) return std::nan("");
+  if (!updateObserved(model, ws, data.y, tape, rowll, generate,
+                      static_cast<std::size_t>(firstRow) * m)) {
+    return std::nan("");
+  }
   ll += rowll;
+  if (generate && generate->llrow) generate->llrow[firstRow] = rowll;
   if (trace) {
-    recordManifest(KalmanTrace::Upd, firstRow, ws.state, ws.P_update);
+    base.state = ws.state.data();
+    recordUpdated(firstRow, base);
     trace->llrow[static_cast<std::size_t>(firstRow)] = rowll;
   }
 
@@ -637,25 +712,22 @@ inline double filterSubject(const CppModel& model, FilterWorkspace& ws,
       recordGroup(tape, model, ws, model.predict, 0, base, t + 1);
       applyGroup(model, ws, model.predict, base);
       predictStep(model, ws, sdt, tape);
-      // The smoother needs the Jacobian of the whole interval. With one substep
-      // that is the transition just computed. With several, the exact answer is
-      // the product of the substep transitions, but Stan instead recomputes
-      // exp(JAx * dt) from the *last* substep's Jacobian and calls it an
-      // approximation; this follows Stan so that the same nonlinear model does
-      // not smooth differently under different backends. The product is the
-      // better quantity and is the obvious thing to switch to if Stan does.
+      // The smoother needs the Jacobian of the whole interval, which is what
+      // the substeps actually composed to: the filter propagates
+      // x <- A_s x + b_s at each substep, so d x_{k+1} / d x_k = A_S ... A_1.
+      //
+      // Stan instead recomputes exp(JAx * dt) from the *last* substep's
+      // Jacobian and labels it an approximation. For a state-independent JAx
+      // the two agree exactly (the exponential of a constant composes); for a
+      // state-dependent one the product is the derivative of the computation
+      // that was actually performed and Stan's is not. Composing also costs one
+      // matrix multiply per substep instead of a whole extra exponential.
       if (trace) {
-        if (nsub == 1) {
-          transition = ws.eJAx;
-        } else if (s == nsub) {
-          Eigen::Map<const MatrixXd> JAx(ws.all_params.data() + model.offJAx, n, n);
-          MatrixXd scaled = JAx * dt;
-          expm(scaled, transition);
-        }
+        if (s == 1) transition = ws.eJAx;
+        else transition = (ws.eJAx * transition).eval();
       }
       ws.P_update = ws.P_predict;  // the next bounded step starts from this one
     }
-    if (trace) trace->transition[static_cast<std::size_t>(firstRow + t)] = transition;
 
     base.time = now;
     base.dt = dt;
@@ -663,6 +735,19 @@ inline double filterSubject(const CppModel& model, FilterWorkspace& ws,
     recordGroup(tape, model, ws, model.td, 1, base, t + 1);
     applyGroup(model, ws, model.td, base);
     applyTdImpulse(model, ws, ws.tdrow.data(), tape);
+    // A TD impulse sits between the previous row's posterior and this row's
+    // prior, and it maps the covariance through Jtd -- so it is part of the
+    // interval transition the smoother needs. Stan saves only the exponential
+    // and drops Jtd, which biases the smoother for any model whose Jtd is not
+    // the identity. Jtd is the identity in the common case, where this changes
+    // nothing.
+    if (trace) {
+      if (model.ntdpred > 0) {
+        Eigen::Map<const MatrixXd> Jtd(ws.all_params.data() + model.offJtd, n, n);
+        transition = (Jtd * transition).eval();
+      }
+      trace->transition[static_cast<std::size_t>(firstRow + t)] = transition;
+    }
 
     base.state = ws.state.data();
     recordGroup(tape, model, ws, model.update, 2, base, t + 1);
@@ -674,12 +759,15 @@ inline double filterSubject(const CppModel& model, FilterWorkspace& ws,
     }
 
     if (trace) recordManifest(KalmanTrace::Prior, firstRow + t, ws.state, ws.P_predict);
-    if (!updateObserved(model, ws, data.y + static_cast<std::size_t>(t) * m, tape, rowll)) {
+    if (!updateObserved(model, ws, data.y + static_cast<std::size_t>(t) * m, tape, rowll,
+                        generate, static_cast<std::size_t>(firstRow + t) * m)) {
       return std::nan("");
     }
     ll += rowll;
+    if (generate && generate->llrow) generate->llrow[firstRow + t] = rowll;
     if (trace) {
-      recordManifest(KalmanTrace::Upd, firstRow + t, ws.state, ws.P_update);
+      base.state = ws.state.data();
+      recordUpdated(firstRow + t, base);
       trace->llrow[static_cast<std::size_t>(firstRow + t)] = rowll;
     }
     prev = now;

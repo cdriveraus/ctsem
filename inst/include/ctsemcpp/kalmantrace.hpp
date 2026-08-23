@@ -84,6 +84,30 @@ struct KalmanTrace {
   }
 };
 
+// Posterior-predictive data generation: the same filter, drawing each row's
+// observation from its own prior predictive instead of reading it.
+//
+// This is not a recorder -- it changes what the filter consumes, so the state
+// it carries forward is conditioned on the drawn data rather than the real
+// data, which is exactly what makes the result a draw from the model. It rides
+// on the same pass for the same reason the recorders do: a separate "simulator"
+// would have to re-derive the prior predictive at every row, and would be free
+// to disagree with the filter about it.
+//
+// The standard normal draws come from the caller rather than from an engine
+// RNG, so that a seed set in R gives the same data whichever engine ran it, and
+// so that `set.seed()` means what a user expects.
+//
+// `base` and `out` are nmanifest-by-nrows in the same layout as the observed
+// data. Missing entries are never generated: the generated dataset keeps the
+// original missingness, since the point of it is comparison against the
+// observations that are actually there.
+struct GenerateSpec {
+  const double* base = nullptr;   // standard normal draws, one per manifest per row
+  double* out = nullptr;          // generated observations; untouched where missing
+  double* llrow = nullptr;        // per-row log likelihood of the generated data
+};
+
 }  // namespace ctsemcpp
 
 #endif  // CTSEMCPP_KALMANTRACE_HPP

@@ -314,8 +314,24 @@ List ctsemCppKalman(SEXP handle, NumericVector pars, bool subjectmatrices = true
     subject[row] = trace.rowSubject[static_cast<std::size_t>(row)];
   }
 
+  // The interval Jacobian that reached each row. Returned because it is the
+  // quantity a smoother is easiest to get wrong in, and it should be checkable
+  // from outside rather than only through its effect on the smoothed estimates.
+  NumericVector transition(static_cast<R_xlen_t>(rows) * n * n);
+  for (int row = 0; row < rows; ++row) {
+    const ctsemcpp::MatrixXd& A = trace.transition[static_cast<std::size_t>(row)];
+    for (int i = 0; i < n; ++i) {
+      for (int j = 0; j < n; ++j) {
+        transition[static_cast<R_xlen_t>(row + rows * (i + static_cast<std::size_t>(n) * j))] =
+            A(i, j);
+      }
+    }
+  }
+  transition.attr("dim") = IntegerVector::create(rows, n, n);
+
   List out = List::create(_["eta"] = eta, _["etacov"] = etacov, _["y"] = y, _["ycov"] = ycov,
                           _["llrow"] = llrow, _["subject"] = subject,
+                          _["transition"] = transition,
                           _["subject_loglik"] = NumericVector(subjectloglik.begin(),
                                                               subjectloglik.end()));
 
@@ -333,4 +349,42 @@ List ctsemCppKalman(SEXP handle, NumericVector pars, bool subjectmatrices = true
     out["subject_matrices"] = matrices;
   }
   return out;
+}
+
+// One posterior-predictive dataset, drawn row by row from each row's own prior
+// predictive as the filter reaches it.
+//
+// `base` is nmanifest x nrows standard normals supplied by the caller rather
+// than drawn here, so that a seed set in R gives the same data whichever engine
+// runs it. The generated data keeps the original missingness: an entry that was
+// not observed is returned NA rather than invented, because the point of a
+// posterior predictive check is comparison against the observations that exist.
+// [[Rcpp::export(.ctsemCppGenerate)]]
+List ctsemCppGenerate(SEXP handle, NumericVector pars, NumericMatrix base) {
+  ctsemcpp::CppObjective* objective = fromPtr(handle);
+  const ctsemcpp::CppModel& model = objective->model;
+  const int p = objective->nvalues();
+  if (pars.size() != p) {
+    stop("ctsem C++ backend: expected %d free parameters, got %d.", p,
+         static_cast<int>(pars.size()));
+  }
+  int nrows = 0;
+  for (std::size_t s = 0; s < objective->subjects.size(); ++s) {
+    const ctsemcpp::SubjectData& subject = objective->subjects[s];
+    nrows = std::max(nrows, subject.firstRow + subject.nobs);
+  }
+  if (base.nrow() != model.nmanifest || base.ncol() != nrows) {
+    stop("ctsem C++ backend: expected a %d x %d matrix of standard normal draws.",
+         model.nmanifest, nrows);
+  }
+
+  NumericMatrix generated(model.nmanifest, nrows);
+  std::fill(generated.begin(), generated.end(), NA_REAL);
+  NumericVector llrow(nrows);
+  std::vector<double> loglik =
+      ctsemcpp::runGenerate(*objective, pars.begin(), base.begin(), generated.begin(),
+                            llrow.begin());
+
+  return List::create(_["Y"] = generated, _["llrow"] = llrow,
+                      _["subject_loglik"] = NumericVector(loglik.begin(), loglik.end()));
 }

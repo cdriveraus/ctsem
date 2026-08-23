@@ -32,16 +32,20 @@ ctPostPredData <- function(fit,residuals=F){
   setorder(dat,'sample','row')
   setorder(ll,'sample','row')
   dat <- rbind(dat,ll)
-  colnames(fit$standata$Y) <- fit$ctstanmodelbase$manifestNames
   
-  dat[,id:= fit$standata$subject[row]]
-  dat[,id:=fit$setup$idmap$original[match(id,fit$setup$idmap$new)]]
-  dat[,Time:=fit$standata$time[row]]
+  # The observed data, the row-to-subject map, the times and the fitted row
+  # likelihoods, from whichever backend produced the fit.
+  idmap <- .ctFitIdMap(fit)
+  rowsubject <- .ctFitRowSubject(fit)
+  rowtime <- .ctFitRowTime(fit)
+  truedat <- .ctFitObservedY(fit)
+  
+  dat[,id:= rowsubject[row]]
+  dat[,id:=idmap[[1]][match(id,idmap[[2]])]]
+  dat[,Time:=rowtime[row]]
   dat[,TimeInterval:=c(NA,diff(Time)),by=interaction(sample,id,variable)]
   
-  truedat <- fit$standata$Y
-  truedat[truedat==99999]<-NA #set missings to NA
-  truell <- fit$stanfit$transformedparsfull$llrow[1,]
+  truell <- .ctFitObservedRowLoglik(fit)
   truell[apply(truedat,1,function(x) all(is.na(x)))] <- NA #ensure missings propagate to likelihood also
   dat=merge(dat, #generated
     melt(data.table(row=1:max(dat$row),cbind(truedat, #true
@@ -52,7 +56,7 @@ ctPostPredData <- function(fit,residuals=F){
     ft <- fit
     stderrprior <- list()
     for(i in 1:max(ll[['sample']])){
-      ft$standata$Y <- matrix(fit$generated$Y[i,,],ncol=ncol(ft$standata$Y))
+      ft <- .ctFitReplaceY(fit, matrix(fit$generated$Y[i,,],ncol=ncol(truedat)))
       stderrprior[[i]] <- data.table(sample=i,suppressMessages(meltkalman(ctKalmanArray(ft,standardisederrors = TRUE))))[Element %in% 'errstdprior',.(sample,Row,value,Obs)]
     }
     stderrprior <- rbindlist(stderrprior)
@@ -62,6 +66,14 @@ ctPostPredData <- function(fit,residuals=F){
     stderrprior<-merge(stderrprior,stderrpriorObs)
     setnames(stderrprior,c('Row','Obs'),c('variable','row'))
     stderrprior[,variable:=paste0(variable,' std. res.')]
+    # The residual rows need the same id/time columns the rest of `dat` carries,
+    # derived from the row index the same way. Without them the rbind below has
+    # never been able to run -- this branch was broken for every backend,
+    # including stan.
+    stderrprior[,id:= rowsubject[row]]
+    stderrprior[,id:=idmap[[1]][match(id,idmap[[2]])]]
+    stderrprior[,Time:=rowtime[row]]
+    stderrprior[,TimeInterval:=c(NA,diff(Time)),by=interaction(sample,id,variable)]
     dat <- rbind(dat,stderrprior[,colnames(dat),with=FALSE])
   }
   

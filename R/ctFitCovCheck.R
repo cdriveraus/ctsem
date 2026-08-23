@@ -70,7 +70,8 @@ ctFitCovCheck <- function(fit, cor = TRUE, plot = TRUE, splitby = NULL,
   breaks = 2, nsamples = NULL, minpairn = 10, cores = 1,
   keep = c("summary", "samples")) {
 
-  if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
+  if(!inherits(fit,c('ctStanFit','ctCppFit','ctJuliaFit'))) stop('Not a ctsem fit object')
+  ctmb <- .ctFitModelObject(fit)
   keep <- match.arg(keep)
   if(is.null(split)) split <- if(is.null(splitby)) "none" else NA_character_
   if(!is.na(split)) split <- match.arg(split,
@@ -78,8 +79,8 @@ ctFitCovCheck <- function(fit, cor = TRUE, plot = TRUE, splitby = NULL,
   
   lags <- unique(as.integer(lags))
   if(any(is.na(lags)) || any(lags < 0)) stop('lags must be non-negative integers')
-  variables <- if(is.null(variables)) fit$ctstanmodelbase$manifestNames else variables
-  if(!all(variables %in% fit$ctstanmodelbase$manifestNames)) {
+  variables <- if(is.null(variables)) ctmb$manifestNames else variables
+  if(!all(variables %in% ctmb$manifestNames)) {
     stop('variables must be manifest variables in the fitted model')
   }
   cores <- suppressWarnings(as.integer(cores[1]))
@@ -87,12 +88,11 @@ ctFitCovCheck <- function(fit, cor = TRUE, plot = TRUE, splitby = NULL,
   minpairn <- suppressWarnings(as.integer(minpairn[1]))
   if(!is.finite(minpairn) || is.na(minpairn) || minpairn < 2) minpairn <- 2L
   
-  idname <- fit$ctstanmodelbase$subjectIDname
-  timename <- fit$ctstanmodelbase$timeName
+  idname <- ctmb$subjectIDname
+  timename <- ctmb$timeName
   
   .fit_data <- function(){
-    as.data.table(standatatolong(standata = fit$standata,
-      ctm = fit$ctstanmodel, origstructure = TRUE))
+    as.data.table(.ctFitLongData(fit))
   }
   
   .prepare_data <- function(d){
@@ -248,7 +248,7 @@ ctFitCovCheck <- function(fit, cor = TRUE, plot = TRUE, splitby = NULL,
   samples <- seq_len(available_samples)
   if(!is.null(nsamples)) samples <- samples[seq_len(min(as.integer(nsamples[1]), available_samples))]
   varidx <- match(variables, dimnames(fit$generated$Y)[[3]])
-  if(any(is.na(varidx))) varidx <- match(variables, fit$ctstanmodelbase$manifestNames)
+  if(any(is.na(varidx))) varidx <- match(variables, ctmb$manifestNames)
   
   basedat <- dat[, c(idname, 'WhichObs', '.splitgroup'), with = FALSE]
   .generated_one <- function(i){
@@ -419,26 +419,26 @@ ctFitCovCheckPlot <- function(x, maxlag = 10,vars=NA,splitvar=NA,cor=FALSE,...) 
 #create covariance matrix from raw data in ctfit object, by observation.
 #todo: add time discretization option using ctDiscretiseData
 ctLongtoWideFromFitted <- function(fit,time=FALSE,id=FALSE){
-  idname=fit$ctstanmodelbase$subjectIDname
-  dat <- data.frame(standatatolong(standata = fit$standata,
-    ctm = fit$ctstanmodel,origstructure = TRUE))
-  dat <- dat[,c(fit$ctstanmodelbase$subjectIDname,
-    fit$ctstanmodelbase$timeName,
-    fit$ctstanmodelbase$manifestNames,
-    if(fit$ctstanmodelbase$n.TDpred > 0) fit$ctstanmodelbase$TDpredNames,
-    if(fit$ctstanmodelbase$n.TIpred > 0) fit$ctstanmodelbase$TIpredNames)]
+  ctmb <- .ctFitModelObject(fit)
+  idname=ctmb$subjectIDname
+  dat <- data.frame(.ctFitLongData(fit))
+  dat <- dat[,c(ctmb$subjectIDname,
+    ctmb$timeName,
+    ctmb$manifestNames,
+    if(ctmb$n.TDpred > 0) ctmb$TDpredNames,
+    if(ctmb$n.TIpred > 0) ctmb$TIpredNames)]
   dat=data.table(dat)
-  dat[ ,WhichObs:=0:(.N-1),by=eval(fit$ctstanmodelbase$subjectIDname)]
+  dat[ ,WhichObs:=0:(.N-1),by=eval(ctmb$subjectIDname)]
   dat=melt(dat,id.vars = c(idname,'WhichObs'))
   
   dat$WhichObs <- paste0('T',dat$WhichObs);
   dat=dcast(dat,paste0(idname,'~variable+WhichObs'))
-  lapply(fit$ctstanmodelbase$TIpredNames, function(x){
+  lapply(ctmb$TIpredNames, function(x){
     colnames(dat)[grep(paste0('\\b',x,'\\_T0'),colnames(dat))] <<- x
   })
   dat=data.frame(dat)
-  if(!time) dat <- dat[,-grep(paste0('\\b',fit$ctstanmodelbase$timeName,'_T'),colnames(dat))]
-  if(!id) dat <- dat[,-grep(paste0('\\b',fit$ctstanmodelbase$subjectIDname),colnames(dat))]
+  if(!time) dat <- dat[,-grep(paste0('\\b',ctmb$timeName,'_T'),colnames(dat))]
+  if(!id) dat <- dat[,-grep(paste0('\\b',ctmb$subjectIDname),colnames(dat))]
   return(dat)
 }
 
