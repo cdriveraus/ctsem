@@ -41,4 +41,12 @@ Julia project for it and instantiates its dependencies.
 \details{
 The first call downloads and precompiles those dependencies (roughly 120 MB
 and a minute or two); later calls in new sessions reuse them.
+
+If \pkg{JuliaConnectoR} or Julia itself is missing, this offers to install it
+rather than failing -- the same thing \code{\link{ctJuliaInstall}} does, which
+is the function to reach for when setting the backend up deliberately, or
+from a script.
+}
+\seealso{
+\code{\link{ctJuliaInstall}}, \code{\link{ctJuliaStatus}}
 }

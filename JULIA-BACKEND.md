@@ -16,6 +16,55 @@ with Stan.
 
 ---
 
+## Getting started
+
+```r
+ctJuliaInstall()
+ctFit(data, model, backend = 'julia')
+```
+
+`ctJuliaInstall()` supplies whatever is missing — the `JuliaConnectoR` bridge
+package, a Julia installation, and the vendored engine's Julia dependencies —
+and skips whatever is not. Each step that installs something asks first, naming
+the download and where it goes. Nothing needs a restart, and there is no
+`JULIA_BINDIR` to set: a package installed into the running session's library is
+visible immediately, and a Julia that ctsem installs lands under
+`R_user_dir("ctsem", "data")`, which every later session searches.
+
+`ctFit(backend='julia')` on a machine with none of this offers the same setup at
+the point of failure rather than erroring, before it prepares any data — so the
+first thing a user does with the backend is the thing they meant to do.
+
+The three steps used to be four manual ones across two R sessions: install
+`JuliaConnectoR`, install Julia, set `JULIA_BINDIR`, restart R, call
+`ctJuliaSetup()`. Each was reported only as the error text of whichever call hit
+it first.
+
+Two things are worth knowing about the mechanism:
+
+- **Nothing reaches the network without consent, which is what keeps this
+  CRAN-legal and `R CMD check` offline.** An interactive session is asked; a
+  non-interactive one *declines by default* and says how to consent in advance
+  (`ctJuliaInstall(agree = TRUE)`, or `CTSEM_JULIA_AGREE=yes`). Refusal is the
+  default rather than the fallback, so a scripted or automated run never
+  downloads a quarter of a gigabyte by surprise.
+
+- **The Julia version is pinned, not resolved at run time.** That is what lets
+  the archive's sha256 ship inside the package and be checked before anything is
+  unpacked, and the pin is the version the vendored `Manifest.toml` was resolved
+  under, so the engine's dependencies instantiate as tested rather than being
+  re-resolved on a user's machine. `ctJuliaInstall(version=)` overrides it, with
+  a message saying the download went unverified.
+
+Julia is downloaded only when none can be found. The search runs `JULIA_BINDIR`,
+then a Julia ctsem installed itself, then `PATH`, then juliaup's own
+installations — that last one because R started from a launcher rather than a
+shell does not inherit juliaup's `PATH` entry, which is the normal case on
+Windows. `ctJuliaStatus()` reports which one was chosen and what version it is,
+and installs nothing, so it still works on the machine where nothing else does.
+
+---
+
 ## The one thing that keeps the backends honest
 
 Every backend consumes the *same canonical model specification*:
@@ -299,6 +348,7 @@ one step, while a continuous reading of the same data does change.
 | `test-backend-uncertainty.R` | Hessian standard errors against Stan's |
 | `test-backend-priors-scores.R` | `priors=TRUE` against Stan; scores sum to the gradient |
 | `test-julia-engine-vendored.R` | `ctJuliaSetup()` from the vendored copy, offline |
+| `test-julia-install.R` | download URLs, archive unpacking, and that consent is refused rather than assumed when there is nobody to ask |
 | `inst/julia/ContinuousTimeSEM/test/` | the engine's own suite, including the adjoint against ForwardDiff |
 
 Two habits worth keeping. Comparisons against Stan are made **at a fixed raw
@@ -343,6 +393,7 @@ with `Pkg.add` from a private GitLab URL, which meant:
 | dependency install | ~73 s | **~20 s** |
 | `using ContinuousTimeSEM` | 8.7 s **per R session** | **3.86 s** |
 | cold `ctJuliaSetup()` | network + auth + resolve | **10.7 s, offline** |
+| user steps from nothing to a fit | 4, across 2 R sessions | **1, `ctJuliaInstall()`** |
 
 Most of the dependency weight was DataFrames, used only as a row container in
 the R interface, plus four dependencies with no call sites at all that were

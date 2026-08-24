@@ -21,32 +21,38 @@
   paste0('"', value, '"')
 }
 
+# Where Julia is, in order of authority: what the caller named, what the user
+# configured, what ctsem installed itself, what is on the PATH, and finally
+# juliaup's own installs -- which R started from a launcher rather than a shell
+# will not have inherited a PATH entry for. NULL means "nowhere we can see",
+# which is what makes ctJuliaInstall() offer to fetch one.
 .ctJuliaBin <- function(julia_bin = NULL) {
   if (!is.null(julia_bin)) {
     return(normalizePath(julia_bin, winslash = "/", mustWork = TRUE))
   }
   configured <- Sys.getenv("JULIA_BINDIR", unset = "")
-  if (nzchar(configured) && file.exists(file.path(configured, "julia.exe"))) {
+  if (.ctJuliaIsBinDir(configured)) {
     return(normalizePath(configured, winslash = "/", mustWork = TRUE))
   }
-  if (.Platform$OS.type == "windows") {
-    profiles <- unique(c(Sys.getenv("USERPROFILE", unset = ""), path.expand("~")))
-    for (profile in profiles[nzchar(profiles)]) {
-      juliaup <- file.path(profile, ".julia", "juliaup")
-      installs <- list.dirs(juliaup, recursive = FALSE, full.names = TRUE)
-      bins <- file.path(installs, "bin")
-      bins <- bins[file.exists(file.path(bins, "julia.exe"))]
-      if (length(bins)) return(normalizePath(bins[[length(bins)]], winslash = "/", mustWork = TRUE))
-    }
+  managed <- .ctJuliaManagedBin()
+  if (!is.null(managed)) return(managed)
+  onpath <- Sys.which("julia")[[1]]
+  if (nzchar(onpath)) {
+    return(normalizePath(dirname(onpath), winslash = "/", mustWork = TRUE))
   }
-  NULL
+  .ctJuliaJuliaupBin()
 }
 
 .ctJuliaRequire <- function() {
-  if (!requireNamespace("JuliaConnectoR", quietly = TRUE)) {
-    stop("backend='julia' requires the suggested package JuliaConnectoR. Install it, install Julia, then call ctJuliaSetup().", call. = FALSE)
+  if (requireNamespace("JuliaConnectoR", quietly = TRUE)) return(invisible(TRUE))
+  # Offered rather than demanded: this is one CRAN package away from working,
+  # and sending the user off to install it by hand and come back is the friction
+  # ctJuliaInstall() exists to remove.
+  if (isTRUE(tryCatch(.ctJuliaInstallConnectoR(), error = function(e) FALSE))) {
+    return(invisible(TRUE))
   }
-  invisible(TRUE)
+  stop("backend='julia' needs the JuliaConnectoR package, which is not installed.\n",
+    .ctJuliaDeclined(), call. = FALSE)
 }
 
 .ctJuliaEngineLock <- function() {
@@ -101,11 +107,17 @@
 .ctJuliaCheckAvailable <- function() {
   ok <- tryCatch(JuliaConnectoR::juliaSetupOk(), error = function(e) FALSE)
   if (isTRUE(ok)) return(invisible(TRUE))
-  stop("Julia was not found. backend='julia' needs a Julia installation (1.10 or newer).\n",
-    "  Install it from https://julialang.org/downloads/ (or `juliaup add release`), then either\n",
-    "  put the Julia binary directory on PATH or set JULIA_BINDIR, e.g.\n",
-    "    Sys.setenv(JULIA_BINDIR = \"/path/to/julia/bin\")\n",
-    "  and call ctJuliaSetup() again. backend='stan' needs no external toolchain.",
+  # Same reasoning as .ctJuliaRequire(): ask, rather than end the session's work
+  # with an instruction to install something and start again.
+  if (isTRUE(tryCatch(.ctJuliaOfferJulia(), error = function(e) FALSE)) &&
+      isTRUE(tryCatch(JuliaConnectoR::juliaSetupOk(), error = function(e) FALSE))) {
+    return(invisible(TRUE))
+  }
+  stop("Julia was not found, and backend='julia' needs it (", .ct_julia_minimum, " or newer).\n",
+    .ctJuliaDeclined(), "\n",
+    "  ctJuliaInstall() downloads the official build into ", .ctJuliaInstallRoot(), ".\n",
+    "  To use a Julia you already have, set JULIA_BINDIR, e.g.\n",
+    "    Sys.setenv(JULIA_BINDIR = \"/path/to/julia/bin\")",
     call. = FALSE)
 }
 
@@ -118,6 +130,11 @@
 #'
 #' The first call downloads and precompiles those dependencies (roughly 120 MB
 #' and a minute or two); later calls in new sessions reuse them.
+#'
+#' If \pkg{JuliaConnectoR} or Julia itself is missing, this offers to install it
+#' rather than failing -- the same thing \code{\link{ctJuliaInstall}} does, which
+#' is the function to reach for when setting the backend up deliberately, or
+#' from a script.
 #' @param project Optional local ContinuousTimeSEM.jl checkout to use instead of
 #'   the vendored copy, for engine development.
 #' @param revision Ignored; retained for backward compatibility. The engine
@@ -130,6 +147,7 @@
 #'   unless \code{JULIA_NUM_THREADS} is already set).
 #' @param force Reconfigure an existing Julia session.
 #' @return A Julia-engine status list, invisibly.
+#' @seealso \code{\link{ctJuliaInstall}}, \code{\link{ctJuliaStatus}}
 #' @export
 ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
   threads = NULL, force = FALSE) {
@@ -199,23 +217,39 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
 }
 
 #' Report Julia backend availability
+#'
+#' Reports what \code{backend='julia'} would find, and installs nothing: it is
+#' safe to call on a machine with no Julia and no \pkg{JuliaConnectoR}, where it
+#' says so rather than erroring. \code{\link{ctJuliaInstall}} supplies whatever
+#' it reports as missing.
+#'
 #' @inheritParams ctJuliaSetup
-#' @return A list describing the selected Julia engine.
+#' @return A list describing the selected Julia engine: whether it is
+#'   \code{available}, whether the \code{connectoR} bridge package is installed,
+#'   the \code{julia_bin} directory in use and the \code{julia} version there,
+#'   the engine \code{revision}, the number of \code{threads} in a running
+#'   session, and the engine provenance \code{lock}.
 #' @export
 ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
-  .ctJuliaRequire()
+  connectoR <- requireNamespace("JuliaConnectoR", quietly = TRUE)
   julia_bin <- .ctJuliaBin(julia_bin)
   if (!is.null(julia_bin)) Sys.setenv(JULIA_BINDIR = julia_bin)
-  available <- tryCatch({
-    JuliaConnectoR::juliaEval("VERSION")
-    TRUE
-  }, error = function(e) FALSE)
+  # A running session can be asked its own version; only a Julia that has never
+  # started needs a subprocess spawned to find out.
+  version <- if (connectoR) {
+    tryCatch(as.character(JuliaConnectoR::juliaEval("string(VERSION)")),
+      error = function(e) NA_character_)
+  } else NA_character_
+  available <- !is.na(version)
+  if (!available) version <- .ctJuliaBinVersion(julia_bin)
   lock <- .ctJuliaEngineLock()
   threads <- if (available) {
     tryCatch(as.integer(JuliaConnectoR::juliaEval("Threads.nthreads()")),
       error = function(e) NA_integer_)
   } else NA_integer_
-  list(available = available, project = .ctJuliaOr(project, .ct_julia_cache$project),
+  list(available = available, connectoR = connectoR,
+    julia_bin = .ctJuliaOr(julia_bin, NA_character_), julia = version,
+    project = .ctJuliaOr(project, .ct_julia_cache$project),
     revision = .ctJuliaOr(.ct_julia_cache$revision, lock$revision),
     threads = threads, lock = lock)
 }

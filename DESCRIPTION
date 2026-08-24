@@ -85,7 +85,8 @@ Suggests:
     rstudioapi,
     quarto,
     JuliaConnectoR,
-    digest
+    digest,
+    withr
 VignetteBuilder: 
     knitr, 
     quarto

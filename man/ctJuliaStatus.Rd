@@ -13,8 +13,15 @@ the vendored copy, for engine development.}
 \item{julia_bin}{Optional Julia binary directory.}
 }
 \value{
-A list describing the selected Julia engine.
+A list describing the selected Julia engine: whether it is
+  \code{available}, whether the \code{connectoR} bridge package is installed,
+  the \code{julia_bin} directory in use and the \code{julia} version there,
+  the engine \code{revision}, the number of \code{threads} in a running
+  session, and the engine provenance \code{lock}.
 }
 \description{
-Report Julia backend availability
+Reports what \code{backend='julia'} would find, and installs nothing: it is
+safe to call on a machine with no Julia and no \pkg{JuliaConnectoR}, where it
+says so rather than erroring. \code{\link{ctJuliaInstall}} supplies whatever
+it reports as missing.
 }

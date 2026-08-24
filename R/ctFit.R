@@ -422,6 +422,11 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       intoverpop=intoverpop, vb=vb, gendata=gendata,
       stanmodeltext=stanmodeltext, compileArgs=compileArgs,
       forcerecompile=forcerecompile)
+    # Before any data preparation, so that a first-time user is asked about the
+    # setup they need rather than being told about it after a wait. Only when
+    # the fit will actually run: preparation is pure R, and stays usable -- and
+    # testable -- on a machine with no Julia at all.
+    if(isTRUE(fit)) .ctJuliaEnsureInstalled()
   }
 
   if(!is.na(nopriors)){
