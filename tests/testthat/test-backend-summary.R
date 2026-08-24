@@ -1,4 +1,4 @@
-# Transformed-parameter summaries for backend='julia' and backend='cpp'.
+# Transformed-parameter summaries for backend='julia'.
 #
 # The load-bearing claim of this architecture is that the engines produce the
 # *same* pop_* arrays Stan does, so that ctSummaryMatrices(), summary() and
@@ -39,16 +39,17 @@
 .summary_pointfit <- function(spec, model, raw, backend) {
   structure(list(model_spec = spec, model = model, backend = backend,
     estimate = list(raw = raw, loglik = NA_real_)),
-    class = c(if (identical(backend, "cpp")) "ctCppFit" else "ctJuliaFit", "ctFit"))
+    class = c("ctJuliaFit", "ctFit"))
 }
 
-test_that("C++ pop_* arrays match Stan's constrained parameters", {
+test_that("Julia pop_* arrays match Stan's constrained parameters", {
   skip_if_not_installed("rstan")
   skip_on_cran()
+  skip_without_julia()
   model <- .summary_model()
   data <- .summary_data()
 
-  spec <- suppressMessages(ctFit(data, model, backend = "cpp", fit = FALSE))
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
   npar <- max(c(spec$parameter_table$parnumber, spec$ti_effects$coefficient), na.rm = TRUE)
   set.seed(8)
   raw <- stats::rnorm(npar, 0, .3)
@@ -58,7 +59,7 @@ test_that("C++ pop_* arrays match Stan's constrained parameters", {
     standata = stan_spec$standata, samples = matrix(raw, nrow = 1), cores = 1,
     pcovn = 10, dokalman = FALSE, savesubjectmatrices = FALSE))
 
-  fit <- .summary_pointfit(spec, model, raw, "cpp")
+  fit <- .summary_pointfit(spec, model, raw, "julia")
   backend_pop <- ctsem:::.ctBackendPopArrays(fit)
 
   compared <- setdiff(intersect(grep("^pop_", names(stan_pop), value = TRUE),
@@ -82,34 +83,10 @@ test_that("C++ pop_* arrays match Stan's constrained parameters", {
     diag(drop(backend_pop$pop_T0VAR)), tolerance = 1e-4)
 })
 
-test_that("Julia and C++ produce identical pop_* arrays", {
-  skip_if_not_installed("JuliaConnectoR")
-  skip_if(!isTRUE(tryCatch(JuliaConnectoR::juliaSetupOk(), error = function(e) FALSE)),
-    "Julia is not available.")
-  skip_on_cran()
-  model <- .summary_model()
-  data <- .summary_data()
-
-  cpp_spec <- suppressMessages(ctFit(data, model, backend = "cpp", fit = FALSE))
-  julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
-  npar <- max(c(cpp_spec$parameter_table$parnumber, cpp_spec$ti_effects$coefficient),
-    na.rm = TRUE)
-  set.seed(8)
-  raw <- stats::rnorm(npar, 0, .3)
-
-  cpp_pop <- ctsem:::.ctBackendPopArrays(.summary_pointfit(cpp_spec, model, raw, "cpp"))
-  julia_pop <- ctsem:::.ctBackendPopArrays(.summary_pointfit(julia_spec, model, raw, "julia"))
-  expect_identical(names(cpp_pop), names(julia_pop))
-  for (name in names(cpp_pop)) {
-    expect_equal(cpp_pop[[name]], julia_pop[[name]], tolerance = 1e-12, info = name)
-  }
-})
-
 test_that("a Julia model with no state-dependent cells summarises", {
-  skip_if_not_installed("JuliaConnectoR")
-  skip_if(!isTRUE(tryCatch(JuliaConnectoR::juliaSetupOk(), error = function(e) FALSE)),
-    "Julia is not available.")
+  skip_without_julia()
   skip_on_cran()
+  skip_without_julia()
   # Regression: the engine used to return the state-dependent cells as vectors
   # from the layout call, and JuliaConnectoR *hangs* -- not errors -- marshalling
   # a zero-length one. A linear model with no random effects has no such cells,
@@ -132,11 +109,11 @@ test_that("a Julia model with no state-dependent cells summarises", {
 test_that("state-dependent cells are named and follow the state they are given", {
   model <- .summary_model()
   data <- .summary_data()
-  spec <- suppressMessages(ctFit(data, model, backend = "cpp", fit = FALSE))
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
   npar <- max(c(spec$parameter_table$parnumber, spec$ti_effects$coefficient), na.rm = TRUE)
   set.seed(8)
   raw <- stats::rnorm(npar, 0, .3)
-  fit <- .summary_pointfit(spec, model, raw, "cpp")
+  fit <- .summary_pointfit(spec, model, raw, "julia")
 
   at_default <- ctBackendParMatrices(fit)
   statedep <- attr(at_default, "stateDependent")
@@ -158,6 +135,7 @@ test_that("state-dependent cells are named and follow the state they are given",
 
 test_that("summary reports fixed effects and system matrices, with intervals only when earned", {
   skip_on_cran()
+  skip_without_julia()
   set.seed(5)
   data <- do.call(rbind, lapply(1:30, function(i) data.frame(id = i,
     time = c(0, .5, 1.5, 2.4, 3.5), Y1 = stats::rnorm(5, 0, .5),
@@ -166,7 +144,7 @@ test_that("summary reports fixed effects and system matrices, with intervals onl
     MANIFESTVAR = diag(c(.1, .1)), MANIFESTMEANS = matrix(0, 2, 1),
     T0MEANS = matrix(0, 2, 1), CINT = matrix(0, 2, 1),
     DRIFT = matrix(c("auto1", "cross12", "cross21", "auto2"), 2, 2, byrow = TRUE)))
-  fit <- suppressMessages(ctFit(data, model, backend = "cpp", verbose = 0))
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
 
   point <- summary(fit)
   expect_s3_class(point, "summary.ctStanFit")
@@ -221,12 +199,13 @@ test_that("summary reports fixed effects and system matrices, with intervals onl
 
 test_that("summary reports transformed values, not the raw parameters", {
   skip_on_cran()
+  skip_without_julia()
   data <- .summary_ou_data()
   model <- suppressWarnings(ctModel(type = "ct", LAMBDA = matrix(1, 1, 1),
     DRIFT = matrix("drift", 1, 1), DIFFUSION = matrix("diff", 1, 1),
     MANIFESTVAR = matrix("mvar", 1, 1), MANIFESTMEANS = matrix("mmean||FALSE", 1, 1),
     T0VAR = matrix("t0v", 1, 1), T0MEANS = matrix(0, 1, 1), CINT = matrix(0, 1, 1)))
-  fit <- suppressMessages(ctFit(data, model, backend = "cpp", verbose = 0))
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
 
   popmeans <- summary(fit)$popmeans
   expect_identical(rownames(popmeans), c("drift", "diff", "mvar", "mmean", "t0v"))
@@ -244,6 +223,7 @@ test_that("summary reports transformed values, not the raw parameters", {
 
 test_that("ctSummaryMatrices and ctDiscretePars work on backend fits", {
   skip_on_cran()
+  skip_without_julia()
   set.seed(5)
   data <- do.call(rbind, lapply(1:30, function(i) data.frame(id = i,
     time = c(0, .5, 1.5, 2.4, 3.5), Y1 = stats::rnorm(5, 0, .5),
@@ -252,7 +232,7 @@ test_that("ctSummaryMatrices and ctDiscretePars work on backend fits", {
     MANIFESTVAR = diag(c(.1, .1)), MANIFESTMEANS = matrix(0, 2, 1),
     T0MEANS = matrix(0, 2, 1), CINT = matrix(0, 2, 1),
     DRIFT = matrix(c("auto1", "cross12", "cross21", "auto2"), 2, 2, byrow = TRUE)))
-  fit <- suppressMessages(ctFit(data, model, backend = "cpp", verbose = 0))
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
 
   matrices <- ctSummaryMatrices(fit)
   expect_true(all(c("DRIFT", "DIFFUSIONcov", "T0cov", "asymDIFFUSIONcov", "dtDRIFT") %in%
@@ -280,12 +260,13 @@ test_that("ctSummaryMatrices and ctDiscretePars work on backend fits", {
 
 test_that("ctExtract returns pop_* arrays sized by the posterior", {
   skip_on_cran()
+  skip_without_julia()
   data <- .summary_ou_data()
   model <- suppressWarnings(ctModel(type = "ct", LAMBDA = matrix(1, 1, 1),
     DRIFT = matrix("drift", 1, 1), DIFFUSION = matrix("diff", 1, 1),
     MANIFESTVAR = matrix("mvar", 1, 1), MANIFESTMEANS = matrix("mmean||FALSE", 1, 1),
     T0VAR = matrix("t0v", 1, 1), T0MEANS = matrix(0, 1, 1), CINT = matrix(0, 1, 1)))
-  fit <- suppressMessages(ctFit(data, model, backend = "cpp", verbose = 0))
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
 
   point <- ctExtract(fit)
   expect_equal(dim(point$pop_DRIFT), c(1L, 1L, 1L))
@@ -302,6 +283,7 @@ test_that("ctExtract returns pop_* arrays sized by the posterior", {
 
 test_that("the Stan summary path is unchanged by the shared refactor", {
   skip_on_cran()
+  skip_without_julia()
   # ctSummaryMatrices.ctStanFit and ctDiscretePars now route through shared
   # helpers; this is the regression guard that they still work for Stan fits.
   matrices <- ctSummaryMatrices(ctstantestfit)

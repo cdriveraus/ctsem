@@ -12,7 +12,7 @@
 # (Project.toml + src/ + test/), so it is also what a standalone
 # ContinuousTimeSEM repository or a registered Julia package would contain.
 # That is deliberate -- see the "spinning the engine out" section of
-# CPP-BACKEND.md. Once the upstream repository has the package at its root, this
+# JULIA-BACKEND.md. Once the upstream repository has the package at its root, this
 # script can be replaced wholesale by:
 #
 #     git subtree pull --prefix=inst/julia/ContinuousTimeSEM <remote> <branch> --squash

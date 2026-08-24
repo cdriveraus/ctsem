@@ -2,7 +2,7 @@
 % Please edit documentation in R/ctBackendKalman.R
 \name{ctBackendKalman}
 \alias{ctBackendKalman}
-\title{Kalman filter and smoother estimates from a julia or cpp backend fit}
+\title{Kalman filter and smoother estimates from a julia backend fit}
 \usage{
 ctBackendKalman(
   fit,
@@ -20,7 +20,7 @@ ctBackendKalman(
 )
 }
 \arguments{
-\item{fit}{A \code{ctJuliaFit} or \code{ctCppFit}.}
+\item{fit}{A \code{ctJuliaFit}.}
 
 \item{subjects}{\code{'all'}, a vector of subject ids, or integer positions
 into the fitted subjects.}

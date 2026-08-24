@@ -1,4 +1,4 @@
-# Transformed-parameter summaries for backend='julia' and backend='cpp' -------
+# Transformed-parameter summaries for backend='julia' ------------------------
 #
 # ctsem's summary and plot functions all read the same thing: samples of the
 # *model matrices* implied by the raw parameter vector, as `pop_DRIFT`,
@@ -36,21 +36,15 @@
 #     number describes them. They are evaluated at a state (T0MEANS by default)
 #     and reported as conditional on it, not as if they were constants.
 
-.ctBackendEngineKind <- function(fit) {
-  if (inherits(fit, "ctCppFit") || inherits(fit, "ctCppModel")) return("cpp")
-  if (inherits(fit, "ctJuliaFit") || inherits(fit, "ctJuliaModel")) return("julia")
-  stop("Not a ctsem julia or cpp backend object.", call. = FALSE)
-}
-
 .ctBackendSpec <- function(fit) {
   if (!is.null(fit$model_spec)) fit$model_spec else fit
 }
 
 # Model metadata and sample count, for the summary and plot functions that are
 # shared across backends. A ctStanFit keeps the model in `$ctstanmodel` and its
-# samples in `$stanfit`; the julia and cpp fits keep them in `$model` and
-# `$estimate`. These two accessors are what let those functions stop reaching
-# into either layout directly.
+# samples in `$stanfit`; a julia fit keeps them in `$model` and `$estimate`.
+# These two accessors are what let those functions stop reaching into either
+# layout directly.
 .ctFitModelObject <- function(fit) {
   if (!is.null(fit$ctstanmodel)) return(fit$ctstanmodel)
   # The specification's own model, ahead of the fit's, because that is the
@@ -85,27 +79,20 @@
 # cells are state dependent. Cheap, but queried once per call rather than per
 # sample; it is a property of the model, not of the parameter values.
 .ctBackendSummaryLayout <- function(fit) {
-  if (identical(.ctBackendEngineKind(fit), "cpp")) {
-    raw <- .ctsemCppSummaryLayout(.ctCppObjective(fit))
-    statedep <- data.frame(matrix = as.character(raw$statedep$matrix),
-      row = as.integer(raw$statedep$row), col = as.integer(raw$statedep$col),
-      stringsAsFactors = FALSE)
+  spec <- .ctBackendSpec(fit)
+  module <- .ctJuliaModule(spec$project)
+  objective <- .ctJuliaObjective(fit)
+  raw <- .ctBackendJuliaValue(module$ctsem_parameter_layout(objective))
+  # Fetched separately, and only when there are any: JuliaConnectoR hangs
+  # marshalling a zero-length vector, and a model with no state-dependent cells
+  # is the common case, not an edge one.
+  statedep <- if (as.integer(raw$n_statedep)[1L] > 0L) {
+    cells <- .ctBackendJuliaValue(module$ctsem_state_dependent_cells(objective))
+    data.frame(matrix = as.character(cells$matrix), row = as.integer(cells$row),
+      col = as.integer(cells$col), stringsAsFactors = FALSE)
   } else {
-    spec <- .ctBackendSpec(fit)
-    module <- .ctJuliaModule(spec$project)
-    objective <- .ctJuliaObjective(fit)
-    raw <- .ctBackendJuliaValue(module$ctsem_parameter_layout(objective))
-    # Fetched separately, and only when there are any: JuliaConnectoR hangs
-    # marshalling a zero-length vector, and a model with no state-dependent
-    # cells is the common case, not an edge one.
-    statedep <- if (as.integer(raw$n_statedep)[1L] > 0L) {
-      cells <- .ctBackendJuliaValue(module$ctsem_state_dependent_cells(objective))
-      data.frame(matrix = as.character(cells$matrix), row = as.integer(cells$row),
-        col = as.integer(cells$col), stringsAsFactors = FALSE)
-    } else {
-      data.frame(matrix = character(), row = integer(), col = integer(),
-        stringsAsFactors = FALSE)
-    }
+    data.frame(matrix = character(), row = integer(), col = integer(),
+      stringsAsFactors = FALSE)
   }
   list(matrix = as.character(raw$matrix), nrow = as.integer(raw$nrow),
     ncol = as.integer(raw$ncol), offset = as.integer(raw$offset),
@@ -121,12 +108,6 @@
   time = 0, dt = 0) {
   raw <- if (is.matrix(raw)) raw else matrix(as.numeric(raw), ncol = 1L)
   storage.mode(raw) <- "double"
-  if (identical(.ctBackendEngineKind(fit), "cpp")) {
-    return(.ctsemCppParMatrices(.ctCppObjective(fit), raw,
-      if (is.null(tipreds)) NULL else as.numeric(tipreds),
-      if (is.null(state)) NULL else as.numeric(state),
-      as.numeric(time)[1L], as.numeric(dt)[1L]))
-  }
   spec <- .ctBackendSpec(fit)
   module <- .ctJuliaModule(spec$project)
   arguments <- list(.ctJuliaObjective(fit), JuliaConnectoR::juliaPut(raw),
@@ -183,13 +164,13 @@
     c(3L, 1L, 2L))
 }
 
-#' Model-implied parameter matrices from a julia or cpp backend fit
+#' Model-implied parameter matrices from a julia backend fit
 #'
 #' Materialise every model matrix -- and the covariance and asymptotic matrices
 #' derived from them -- from a raw (unconstrained) parameter vector, using the
 #' same engine code the likelihood uses.
 #'
-#' @param fit A \code{ctJuliaFit}, \code{ctCppFit}, or a prepared model from
+#' @param fit A \code{ctJuliaFit}, or a prepared model from
 #'   \code{ctFit(..., fit=FALSE)}.
 #' @param raw Raw parameter vector. Defaults to the fitted estimate.
 #' @param tipreds Time-independent predictor values for the subject to
@@ -321,8 +302,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 
 # Shared summary-matrix collapse ---------------------------------------------
 #
-# Factored out of `ctSummaryMatrices.ctStanFit()` unchanged so that the Stan,
-# Julia and C++ backends collapse identical inputs with identical code. Anything
+# Factored out of `ctSummaryMatrices.ctStanFit()` unchanged so that the Stan
+# and Julia backends collapse identical inputs with identical code. Anything
 # that changes about how ctsem summarises system matrices changes here, once.
 
 .ctSummaryMatricesFromArrays <- function(e, continuoustime, latentNames, manifestNames,
@@ -462,7 +443,6 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 
 .ctBackendSummary <- function(object, timeinterval = 1, digits = 3, parmatrices = TRUE,
   ...) {
-  backend <- if (identical(.ctBackendEngineKind(object), "cpp")) "C++" else "Julia"
   has_posterior <- !is.null(object$estimate$rawposterior)
 
   out <- list()
@@ -517,10 +497,10 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   out$aic <- 2 * out$npars - 2 * out$loglik
   if (has_posterior) out$nsamples <- nrow(object$estimate$rawposterior)
   out$uncertaintyNote <- if (has_posterior) {
-    paste0(backend, " backend; intervals from ctOptimUncertainty(uncertainty='",
+    paste0("Julia backend; intervals from ctOptimUncertainty(uncertainty='",
       object$uncertainty$settings$method, "') draws pushed through the transforms.")
   } else {
-    paste0(backend, " backend; point estimates only. ",
+    paste0("Julia backend; point estimates only. ",
       "Run ctOptimUncertainty() for standard errors and intervals.")
   }
 

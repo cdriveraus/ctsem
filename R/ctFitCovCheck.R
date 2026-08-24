@@ -70,7 +70,7 @@ ctFitCovCheck <- function(fit, cor = TRUE, plot = TRUE, splitby = NULL,
   breaks = 2, nsamples = NULL, minpairn = 10, cores = 1,
   keep = c("summary", "samples")) {
 
-  if(!inherits(fit,c('ctStanFit','ctCppFit','ctJuliaFit'))) stop('Not a ctsem fit object')
+  if(!inherits(fit,c('ctStanFit','ctJuliaFit'))) stop('Not a ctsem fit object')
   ctmb <- .ctFitModelObject(fit)
   keep <- match.arg(keep)
   if(is.null(split)) split <- if(is.null(splitby)) "none" else NA_character_

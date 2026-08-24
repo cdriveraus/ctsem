@@ -1,4 +1,4 @@
-# Prediction and Kalman output for backend='julia' and backend='cpp' ---------
+# Prediction and Kalman output for backend='julia' ---------------------------
 #
 # `ctKalman()` / `ctPredict()` read four arrays: prior, filtered and smoothed
 # states and observations for every data row. The engines now produce those from
@@ -32,9 +32,6 @@
 
 .ctBackendKalmanRaw <- function(fit, raw, subjectmatrices = TRUE) {
   raw <- as.numeric(raw)
-  if (identical(.ctBackendEngineKind(fit), "cpp")) {
-    return(.ctsemCppKalman(.ctCppObjective(fit), raw, isTRUE(subjectmatrices)))
-  }
   spec <- .ctBackendSpec(fit)
   module <- .ctJuliaModule(spec$project)
   result <- .ctBackendJuliaValue(module$ctsem_kalman(.ctJuliaObjective(fit),
@@ -55,7 +52,7 @@
   # nothing is the safer default.
   if (identical(subjects, "all") && identical(timestep, "asdata") &&
       (identical(removeObs, FALSE) || identical(removeObs, 0))) {
-    return(.ctBackendAsModel(spec, .ctBackendEngineKind(fit)))
+    return(.ctBackendAsModel(spec))
   }
   model <- .ctFitModelObject(fit)
   idname <- model$subjectIDname
@@ -106,20 +103,13 @@
     dat[setdiff(seq_len(nrow(dat)), keep), model$manifestNames] <- NA
   }
 
-  kind <- .ctBackendEngineKind(fit)
-  prepared <- if (identical(kind, "cpp")) {
-    .ctCppPrepare(dat, model)
-  } else {
-    .ctJuliaPrepare(dat, model, project = spec$project)
-  }
-  prepared <- .ctBackendAsModel(prepared, kind)
+  prepared <- .ctBackendAsModel(.ctJuliaPrepare(dat, model, project = spec$project))
   if (withhold) attr(prepared, "reportManifest") <- reported
   prepared
 }
 
-.ctBackendAsModel <- function(spec, kind) {
-  structure(spec,
-    class = c(if (identical(kind, "cpp")) "ctCppModel" else "ctJuliaModel", "ctFitModel"))
+.ctBackendAsModel <- function(spec) {
+  structure(spec, class = c("ctJuliaModel", "ctFitModel"))
 }
 
 # Extra rows at the requested times, with every manifest missing and every TD
@@ -156,13 +146,13 @@
   samples
 }
 
-#' Kalman filter and smoother estimates from a julia or cpp backend fit
+#' Kalman filter and smoother estimates from a julia backend fit
 #'
 #' Prior, filtered and smoothed estimates of the latent states and the
 #' observations, for every row of data, from the same forward pass the engine
 #' uses for the likelihood.
 #'
-#' @param fit A \code{ctJuliaFit} or \code{ctCppFit}.
+#' @param fit A \code{ctJuliaFit}.
 #' @param subjects \code{'all'}, a vector of subject ids, or integer positions
 #'   into the fitted subjects.
 #' @param timestep \code{'asdata'} to use the observed times, \code{'auto'} to
@@ -302,9 +292,6 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 # two engines produce identical data for the same seed.
 
 .ctBackendGenerate <- function(fit, raw, base) {
-  if (identical(.ctBackendEngineKind(fit), "cpp")) {
-    return(.ctsemCppGenerate(.ctCppObjective(fit), as.numeric(raw), base))
-  }
   spec <- .ctBackendSpec(fit)
   module <- .ctJuliaModule(spec$project)
   .ctBackendJuliaValue(module$ctsem_generate(.ctJuliaObjective(fit),
@@ -386,7 +373,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   if (!is.null(fit$stanfit$transformedparsfull$llrow)) {
     return(as.numeric(fit$stanfit$transformedparsfull$llrow[1, ]))
   }
-  spec <- .ctBackendAsModel(.ctBackendSpec(fit), .ctBackendEngineKind(fit))
+  spec <- .ctBackendAsModel(.ctBackendSpec(fit))
   as.numeric(.ctBackendKalmanRaw(spec, fit$estimate$raw, subjectmatrices = FALSE)$llrow)
 }
 
@@ -433,10 +420,8 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
     fit$standata <- suppressMessages(ctStanData(fit$ctstanmodel, datalong, optimize = TRUE))
     return(fit)
   }
-  model <- .ctFitModelObject(fit)
   spec <- .ctBackendSpec(fit)
-  fit$model_spec <- if (identical(.ctBackendEngineKind(fit), "cpp")) {
-    .ctCppPrepare(datalong, model)
-  } else .ctJuliaPrepare(datalong, model, project = spec$project)
+  fit$model_spec <- .ctJuliaPrepare(datalong, .ctFitModelObject(fit),
+    project = spec$project)
   fit
 }

@@ -1,4 +1,4 @@
-# Prediction and Kalman output for backend='julia' and backend='cpp'.
+# Prediction and Kalman output for backend='julia'.
 #
 # The design claim is that prediction rides on the pass the likelihood already
 # makes, and that everything downstream of the engine is the code Stan fits
@@ -57,11 +57,11 @@
   data
 }
 
-.kalman_pointfit <- function(spec, model, raw, backend = "cpp") {
+.kalman_pointfit <- function(spec, model, raw, backend = "julia") {
   structure(list(model_spec = spec, model = model, backend = backend,
     estimate = list(raw = raw, rawposterior = matrix(raw, nrow = 1),
       loglik = NA_real_)),
-    class = c(if (identical(backend, "cpp")) "ctCppFit" else "ctJuliaFit", "ctFit"))
+    class = c("ctJuliaFit", "ctFit"))
 }
 
 .kalman_stan_scores <- function(model, data, raw) {
@@ -71,52 +71,54 @@
     pcovn = 5, savescores = TRUE, savesubjectmatrices = TRUE))
 }
 
-test_that("C++ per-row Kalman output matches Stan's", {
+test_that("Julia per-row Kalman output matches Stan's", {
   skip_if_not_installed("rstan")
   skip_on_cran()
+  skip_without_julia()
   model <- .kalman_linear_model()
   data <- .kalman_linear_data()
-  spec <- suppressMessages(ctFit(data, model, backend = "cpp", fit = FALSE))
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
   npar <- max(spec$parameter_table$parnumber, na.rm = TRUE)
   set.seed(8)
   raw <- stats::rnorm(npar, 0, .3)
 
   stan <- .kalman_stan_scores(model, data, raw)
-  cpp <- ctsem:::.ctBackendKalmanRaw(
-    ctsem:::.ctBackendAsModel(spec, "cpp"), raw)
+  julia <- ctsem:::.ctBackendKalmanRaw(
+    ctsem:::.ctBackendAsModel(spec), raw)
 
   # Prior, filtered and smoothed, all three, at every row -- checked separately
   # rather than as one array so a failure names which pass is wrong.
   for (kind in 1:3) {
-    expect_equal(cpp$eta[kind, , ], stan$etaa[1, kind, , ], tolerance = 1e-8,
+    expect_equal(julia$eta[kind, , ], stan$etaa[1, kind, , ], tolerance = 1e-8,
       info = kind)
-    expect_equal(cpp$etacov[kind, , , ], stan$etacova[1, kind, , , ],
+    expect_equal(julia$etacov[kind, , , ], stan$etacova[1, kind, , , ],
       tolerance = 1e-8, info = kind)
-    expect_equal(cpp$y[kind, , ], stan$ya[1, kind, , ], tolerance = 1e-8, info = kind)
-    expect_equal(cpp$ycov[kind, , , ], stan$ycova[1, kind, , , ], tolerance = 1e-8,
+    expect_equal(julia$y[kind, , ], stan$ya[1, kind, , ], tolerance = 1e-8, info = kind)
+    expect_equal(julia$ycov[kind, , , ], stan$ycova[1, kind, , , ], tolerance = 1e-8,
       info = kind)
   }
-  expect_equal(as.numeric(cpp$llrow), as.numeric(stan$llrow[1, ]), tolerance = 1e-8)
+  expect_equal(as.numeric(julia$llrow), as.numeric(stan$llrow[1, ]), tolerance = 1e-8)
 })
 
 test_that("tracing does not change the filter", {
   skip_on_cran()
+  skip_without_julia()
   model <- .kalman_linear_model()
   data <- .kalman_linear_data()
-  spec <- suppressMessages(ctFit(data, model, backend = "cpp", fit = FALSE))
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
   npar <- max(spec$parameter_table$parnumber, na.rm = TRUE)
   set.seed(8)
   raw <- stats::rnorm(npar, 0, .3)
-  asmodel <- ctsem:::.ctBackendAsModel(spec, "cpp")
+  asmodel <- ctsem:::.ctBackendAsModel(spec)
 
-  plain <- ctCppEvaluate(asmodel, raw, gradient = FALSE)$value
+  plain <- ctJuliaEvaluate(asmodel, raw, gradient = FALSE)$value
   traced <- ctsem:::.ctBackendKalmanRaw(asmodel, raw)
   # Same likelihood two ways: summed per subject, and summed per row.
   expect_equal(sum(traced$subject_loglik), plain, tolerance = 1e-12)
   expect_equal(sum(traced$llrow), plain, tolerance = 1e-10)
 
   # And the gradient is untouched by the recording code existing at all.
-  expect_equal(ctCppEvaluate(asmodel, raw, gradient = TRUE)$value, plain,
+  expect_equal(ctJuliaEvaluate(asmodel, raw, gradient = TRUE)$value, plain,
     tolerance = 1e-14)
 
   # A row with nothing observed cannot update anything, and must contribute
@@ -129,107 +131,86 @@ test_that("tracing does not change the filter", {
   expect_equal(traced$llrow[missingrow], 0)
 })
 
-test_that("Julia and C++ produce identical Kalman output", {
-  skip_if_not_installed("JuliaConnectoR")
-  skip_if(!isTRUE(tryCatch(JuliaConnectoR::juliaSetupOk(), error = function(e) FALSE)),
-    "Julia is not available.")
-  skip_on_cran()
-  model <- .kalman_indvar_model()
-  data <- .kalman_indvar_data()
-  cpp_spec <- suppressMessages(ctFit(data, model, backend = "cpp", fit = FALSE))
-  julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
-  npar <- max(c(cpp_spec$parameter_table$parnumber, cpp_spec$ti_effects$coefficient),
-    na.rm = TRUE)
-  set.seed(8)
-  raw <- stats::rnorm(npar, 0, .3)
-
-  cpp <- ctsem:::.ctBackendKalmanRaw(ctsem:::.ctBackendAsModel(cpp_spec, "cpp"), raw)
-  julia <- ctsem:::.ctBackendKalmanRaw(ctsem:::.ctBackendAsModel(julia_spec, "julia"), raw)
-  for (name in c("eta", "etacov", "y", "ycov", "llrow", "subject_loglik",
-    "subject_matrices")) {
-    expect_equal(as.numeric(cpp[[name]]), as.numeric(julia[[name]]),
-      tolerance = 1e-11, info = name)
-  }
-  expect_identical(as.integer(cpp$subject), as.integer(julia$subject))
-})
-
 test_that("ctKalmanArray matches Stan through the whole R path", {
   skip_if_not_installed("rstan")
   skip_on_cran()
+  skip_without_julia()
   model <- .kalman_indvar_model()
   data <- .kalman_indvar_data()
 
   stan_fit <- suppressMessages(ctFit(data, model, backend = "stan", optimize = TRUE,
     optimcontrol = list(carefulfit = FALSE, stochastic = FALSE, finishsamples = 10),
     cores = 1, verbose = 0))
-  cpp_fit <- suppressMessages(ctFit(data, model, backend = "cpp", verbose = 0))
+  julia_fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
   # Compare the filters, not the optimizers: run both at Stan's estimate.
-  cpp_fit$estimate$raw <- stan_fit$stanfit$rawest
+  julia_fit$estimate$raw <- stan_fit$stanfit$rawest
 
   stan <- suppressMessages(ctKalmanArray(stan_fit, subjects = seq_len(10),
     standardisederrors = TRUE))
-  cpp <- suppressMessages(ctKalmanArray(cpp_fit, subjects = "all",
+  julia <- suppressMessages(ctKalmanArray(julia_fit, subjects = "all",
     standardisederrors = TRUE))
 
-  expect_identical(names(stan)[names(stan) %in% names(cpp)],
-    names(cpp)[names(cpp) %in% names(stan)])
+  expect_identical(names(stan)[names(stan) %in% names(julia)],
+    names(julia)[names(julia) %in% names(stan)])
   # This model's augmented filter differs from Stan's at the 1e-7 level in the
-  # likelihood itself (see test-stan-cpp-parity.R), so the states it implies
+  # likelihood itself (see test-stan-julia-parity.R), so the states it implies
   # cannot be closer than that.
   for (name in c("yprior", "yupd", "ysmooth", "etaprior", "etaupd", "etasmooth",
     "errprior", "errupd", "errsmooth", "errstdprior", "errstdupd", "errstdsmooth")) {
-    expect_equal(as.numeric(cpp[[name]]), as.numeric(stan[[name]]), tolerance = 1e-5,
+    expect_equal(as.numeric(julia[[name]]), as.numeric(stan[[name]]), tolerance = 1e-5,
       info = name)
   }
   for (name in c("ypriorcov", "yupdcov", "ysmoothcov", "etapriorcov", "etaupdcov",
     "etasmoothcov")) {
-    expect_equal(as.numeric(cpp[[name]]), as.numeric(stan[[name]]), tolerance = 1e-4,
+    expect_equal(as.numeric(julia[[name]]), as.numeric(stan[[name]]), tolerance = 1e-4,
       info = name)
   }
-  expect_equal(as.numeric(cpp$time), as.numeric(stan$time))
-  expect_equal(as.numeric(cpp$id), as.numeric(stan$id))
-  expect_equal(as.numeric(cpp$y), as.numeric(stan$y))
+  expect_equal(as.numeric(julia$time), as.numeric(stan$time))
+  expect_equal(as.numeric(julia$id), as.numeric(stan$id))
+  expect_equal(as.numeric(julia$y), as.numeric(stan$y))
 })
 
 test_that("ctPredict interpolates a time grid the same way Stan does", {
   skip_if_not_installed("rstan")
   skip_on_cran()
+  skip_without_julia()
   model <- .kalman_indvar_model()
   data <- .kalman_indvar_data()
   stan_fit <- suppressMessages(ctFit(data, model, backend = "stan", optimize = TRUE,
     optimcontrol = list(carefulfit = FALSE, stochastic = FALSE, finishsamples = 10),
     cores = 1, verbose = 0))
-  cpp_fit <- suppressMessages(ctFit(data, model, backend = "cpp", verbose = 0))
-  cpp_fit$estimate$raw <- stan_fit$stanfit$rawest
+  julia_fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
+  julia_fit$estimate$raw <- stan_fit$stanfit$rawest
 
   stan <- suppressMessages(ctPredict(stan_fit, subjects = 4, timestep = .3))
-  cpp <- suppressMessages(ctPredict(cpp_fit, subjects = 4, timestep = .3))
-  expect_equal(nrow(cpp), nrow(stan))
+  julia <- suppressMessages(ctPredict(julia_fit, subjects = 4, timestep = .3))
+  expect_equal(nrow(julia), nrow(stan))
 
   key <- intersect(c("Element", "Time", "Row", "Col", "Subject"), names(stan))
   stan <- stan[do.call(order, as.list(stan[key])), ]
-  cpp <- cpp[do.call(order, as.list(cpp[key])), ]
-  expect_identical(lapply(cpp[key], as.character), lapply(stan[key], as.character))
-  expect_equal(cpp$value, stan$value, tolerance = 1e-5)
+  julia <- julia[do.call(order, as.list(julia[key])), ]
+  expect_identical(lapply(julia[key], as.character), lapply(stan[key], as.character))
+  expect_equal(julia$value, stan$value, tolerance = 1e-5)
 
   # The grid is what makes this a prediction rather than a refit: times that are
   # not in the data must be there, with the model's expectation and no
   # observation.
-  expect_true(any(!round(unique(cpp$Time), 8) %in% round(data$time, 8)))
-  interpolated <- cpp[cpp$Element == "y" & !round(cpp$Time, 8) %in% round(data$time, 8), ]
+  expect_true(any(!round(unique(julia$Time), 8) %in% round(data$time, 8)))
+  interpolated <- julia[julia$Element == "y" & !round(julia$Time, 8) %in% round(data$time, 8), ]
   expect_true(nrow(interpolated) > 0)
   expect_true(all(is.na(interpolated$value)))
-  predicted <- cpp[cpp$Element == "ysmooth" &
-      !round(cpp$Time, 8) %in% round(data$time, 8), ]
+  predicted <- julia[julia$Element == "ysmooth" &
+      !round(julia$Time, 8) %in% round(data$time, 8), ]
   expect_true(all(is.finite(predicted$value)))
 })
 
 test_that("subject matrices match Stan's, and only the varying ones vary", {
   skip_if_not_installed("rstan")
   skip_on_cran()
+  skip_without_julia()
   model <- .kalman_indvar_model()
   data <- .kalman_indvar_data()
-  spec <- suppressMessages(ctFit(data, model, backend = "cpp", fit = FALSE))
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
   npar <- max(c(spec$parameter_table$parnumber, spec$ti_effects$coefficient),
     na.rm = TRUE)
   set.seed(8)
@@ -259,9 +240,10 @@ test_that("subject matrices match Stan's, and only the varying ones vary", {
 
 test_that("removeObs withholds observations without withholding covariates", {
   skip_on_cran()
+  skip_without_julia()
   model <- .kalman_linear_model()
   data <- .kalman_linear_data()
-  fit <- suppressMessages(ctFit(data, model, backend = "cpp", verbose = 0))
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
 
   kept <- suppressMessages(ctKalmanArray(fit, subjects = "all"))
   withheld <- suppressMessages(ctKalmanArray(fit, subjects = "all", removeObs = TRUE))
@@ -278,6 +260,7 @@ test_that("removeObs withholds observations without withholding covariates", {
 
 test_that("standardised residuals feed ctResiduals and ctACFresiduals", {
   skip_on_cran()
+  skip_without_julia()
   # ctResiduals() and everything on top of it (ctACFresiduals, and the residual
   # diagnostics in the tutorial) go through ctKalmanArray(standardisederrors=
   # TRUE), so they work for these backends without their own code path. The
@@ -305,7 +288,7 @@ test_that("standardised residuals feed ctResiduals and ctACFresiduals", {
     DRIFT = matrix("drift", 1, 1), DIFFUSION = matrix("diff", 1, 1),
     MANIFESTVAR = matrix("mvar", 1, 1), MANIFESTMEANS = matrix("mmean||FALSE", 1, 1),
     T0VAR = matrix("t0v", 1, 1), T0MEANS = matrix(0, 1, 1), CINT = matrix(0, 1, 1)))
-  fit <- suppressMessages(ctFit(data, model, backend = "cpp", verbose = 0))
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
 
   residuals <- suppressMessages(ctsem:::ctResiduals(fit))
   expect_equal(nrow(residuals), nrow(data))
@@ -337,15 +320,16 @@ test_that("standardised residuals feed ctResiduals and ctACFresiduals", {
 
 test_that("the measurement model is re-evaluated at the updated state", {
   skip_on_cran()
+  skip_without_julia()
   model <- .kalman_indvarmeans_model()
   data <- .kalman_indvarmeans_data()
   expect_true(all(model$pars$indvarying[model$pars$matrix == "MANIFESTMEANS"]))
 
-  spec <- suppressMessages(ctFit(data, model, backend = "cpp", fit = FALSE))
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
   npar <- max(spec$parameter_table$parnumber, na.rm = TRUE)
   set.seed(8)
   raw <- stats::rnorm(npar, 0, .3)
-  asmodel <- ctsem:::.ctBackendAsModel(spec, "cpp")
+  asmodel <- ctsem:::.ctBackendAsModel(spec)
   traced <- ctsem:::.ctBackendKalmanRaw(asmodel, raw)
   Jy <- ctBackendParMatrices(asmodel, raw, trim = FALSE)$Jy
 
@@ -369,19 +353,20 @@ test_that("the measurement model is re-evaluated at the updated state", {
 
   # None of which may touch the likelihood.
   expect_equal(sum(traced$subject_loglik),
-    ctCppEvaluate(asmodel, raw, gradient = FALSE)$value, tolerance = 1e-12)
+    ctJuliaEvaluate(asmodel, raw, gradient = FALSE)$value, tolerance = 1e-12)
 })
 
 test_that("the interval transition is the Jacobian of the interval", {
   skip_on_cran()
+  skip_without_julia()
   skip_if_not_installed("Matrix")
   model <- .kalman_indvarmeans_model()
   data <- .kalman_indvarmeans_data()
-  spec <- suppressMessages(ctFit(data, model, backend = "cpp", fit = FALSE))
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
   npar <- max(spec$parameter_table$parnumber, na.rm = TRUE)
   set.seed(8)
   raw <- stats::rnorm(npar, 0, .3)
-  asmodel <- ctsem:::.ctBackendAsModel(spec, "cpp")
+  asmodel <- ctsem:::.ctBackendAsModel(spec)
   traced <- ctsem:::.ctBackendKalmanRaw(asmodel, raw)
   matrices <- ctBackendParMatrices(asmodel, raw, trim = FALSE)
 
@@ -408,17 +393,18 @@ test_that("the interval transition is the Jacobian of the interval", {
 test_that("the improved reports differ from Stan only where Stan is approximate", {
   skip_if_not_installed("rstan")
   skip_on_cran()
+  skip_without_julia()
   # The divergence is deliberate, so it is asserted rather than tolerated: the
   # prior estimates and the likelihood still match Stan exactly, and only the
   # filtered and smoothed observation estimates move -- by the amount the stale
   # measurement intercept accounts for.
   model <- .kalman_indvarmeans_model()
   data <- .kalman_indvarmeans_data()
-  spec <- suppressMessages(ctFit(data, model, backend = "cpp", fit = FALSE))
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
   npar <- max(spec$parameter_table$parnumber, na.rm = TRUE)
   set.seed(8)
   raw <- stats::rnorm(npar, 0, .3)
-  asmodel <- ctsem:::.ctBackendAsModel(spec, "cpp")
+  asmodel <- ctsem:::.ctBackendAsModel(spec)
   traced <- ctsem:::.ctBackendKalmanRaw(asmodel, raw)
   stan <- .kalman_stan_scores(model, data, raw)
 
@@ -449,6 +435,7 @@ test_that("the improved reports differ from Stan only where Stan is approximate"
 test_that("ctPredictTIP builds its covariate grid on a backend fit", {
   skip_if_not_installed("rstan")
   skip_on_cran()
+  skip_without_julia()
   # ctPredictTIP predicts at chosen covariate values by constructing a dataset
   # of pseudo-subjects, one per value, and asking the fitted model for its
   # expectation. That is a *data* operation, so once the fit can be re-prepared
@@ -471,30 +458,30 @@ test_that("ctPredictTIP builds its covariate grid on a backend fit", {
   stan_fit <- suppressMessages(ctFit(data, model, backend = "stan", optimize = TRUE,
     optimcontrol = list(carefulfit = FALSE, stochastic = FALSE, finishsamples = 10),
     cores = 1, verbose = 0))
-  cpp_fit <- suppressMessages(ctFit(data, model, backend = "cpp", verbose = 0))
+  julia_fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
   # Compare the predictions, not the optimizers.
-  cpp_fit$estimate$raw <- stan_fit$stanfit$rawest
+  julia_fit$estimate$raw <- stan_fit$stanfit$rawest
 
   stan <- suppressWarnings(suppressMessages(ctPredictTIP(stan_fit, tipreds = "group",
     doDynamics = FALSE, plot = FALSE, timestep = .5)))
-  cpp <- suppressWarnings(suppressMessages(ctPredictTIP(cpp_fit, tipreds = "group",
+  julia <- suppressWarnings(suppressMessages(ctPredictTIP(julia_fit, tipreds = "group",
     doDynamics = FALSE, plot = FALSE, timestep = .5)))
-  expect_equal(nrow(cpp), nrow(stan))
+  expect_equal(nrow(julia), nrow(stan))
 
   key <- intersect(c("Element", "Time", "Row", "Col", "Subject"), names(stan))
   stan <- stan[do.call(order, as.list(stan[key])), ]
-  cpp <- cpp[do.call(order, as.list(cpp[key])), ]
-  expect_identical(lapply(cpp[key], as.character), lapply(stan[key], as.character))
-  expect_equal(as.numeric(cpp[["value"]]), as.numeric(stan[["value"]]),
+  julia <- julia[do.call(order, as.list(julia[key])), ]
+  expect_identical(lapply(julia[key], as.character), lapply(stan[key], as.character))
+  expect_equal(as.numeric(julia[["value"]]), as.numeric(stan[["value"]]),
     tolerance = 1e-6)
-  expect_equal(as.numeric(cpp[["sd"]]), as.numeric(stan[["sd"]]), tolerance = 1e-6)
+  expect_equal(as.numeric(julia[["sd"]]), as.numeric(stan[["sd"]]), tolerance = 1e-6)
 
   # One pseudo-subject per requested covariate value, named by it.
-  expect_equal(length(unique(cpp$Subject)), 3L)
-  expect_true(all(grepl("^group = ", as.character(unique(cpp$Subject)))))
+  expect_equal(length(unique(julia$Subject)), 3L)
+  expect_true(all(grepl("^group = ", as.character(unique(julia$Subject)))))
 
   # The dynamics panels need per-subject matrices, so this covers that path too.
-  plots <- suppressWarnings(suppressMessages(ctPredictTIP(cpp_fit, tipreds = "group",
+  plots <- suppressWarnings(suppressMessages(ctPredictTIP(julia_fit, tipreds = "group",
     doDynamics = TRUE, plot = TRUE, timestep = .5)))
   expect_true(all(c("Process", "Dynamics") %in% names(plots)))
   expect_true(inherits(plots$Process$Observed[[1]], "ggplot"))
@@ -503,6 +490,6 @@ test_that("ctPredictTIP builds its covariate grid on a backend fit", {
   # A model without TI predictors is refused by name rather than failing
   # somewhere inside the grid construction.
   plain <- suppressMessages(ctFit(.kalman_linear_data(), .kalman_linear_model(),
-    backend = "cpp", verbose = 0))
+    backend = "julia", verbose = 0))
   expect_error(ctPredictTIP(plain, plot = FALSE), "no time independent predictors")
 })

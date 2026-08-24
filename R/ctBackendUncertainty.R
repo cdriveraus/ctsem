@@ -1,4 +1,4 @@
-# Uncertainty for optimisation-backend fits (backend='julia', backend='cpp').
+# Uncertainty for optimisation-backend fits (backend='julia').
 #
 # `ctOptimUncertainty()` was written against `ctStanFit`, but almost none of its
 # machinery is Stan-specific: `ctOptimComputeUncertainty()` needs a raw parameter
@@ -7,7 +7,7 @@
 # object, `standata` -- is used only by the score and bootstrap methods.
 #
 # So this file does not reimplement any of it. It builds those three things from
-# a `ctJuliaFit` or `ctCppFit` and calls the same `ctOptimComputeUncertainty()`,
+# a `ctJuliaFit` and calls the same `ctOptimComputeUncertainty()`,
 # `ctOptimNormalDraws()` and `imis_is()` the Stan path uses. A second
 # implementation of a Hessian or an importance sampler is exactly the kind of
 # duplicated numerical surface this project has already been bitten by.
@@ -18,7 +18,7 @@
 # ctsem declares every Stan parameter as an unconstrained `vector` (see the
 # `parameters` block of inst/stan/ctsm.stan) -- the parameter transforms live
 # inside the model, not in Stan's constraint syntax -- so there is no Jacobian
-# adjustment to include. The Stan/Julia and Stan/C++ parity suites compare
+# adjustment to include. The Stan/Julia parity suite compares
 # against `adjust_transform = FALSE` for the same reason.
 
 # Wrap a backend's evaluate function as the `lpgFunc` contract
@@ -26,13 +26,10 @@
 # gradient as an attribute, and a finite fallback rather than an error at a
 # point the Hessian's finite differences happen to wander into.
 .ctBackendLpgFunc <- function(fit) {
-  evaluate <- if (inherits(fit, "ctJuliaFit")) {
-    function(parm) ctJuliaEvaluate(fit, parm, gradient = TRUE)
-  } else if (inherits(fit, "ctCppFit")) {
-    function(parm) ctCppEvaluate(fit, parm, gradient = TRUE)
-  } else {
+  if (!inherits(fit, "ctJuliaFit")) {
     stop("Unsupported fit class for backend uncertainty.", call. = FALSE)
   }
+  evaluate <- function(parm) ctJuliaEvaluate(fit, parm, gradient = TRUE)
   function(parm) {
     result <- try(evaluate(as.numeric(parm)), silent = TRUE)
     value <- if (inherits(result, "try-error")) NaN else as.numeric(result$value)[1L]
@@ -50,7 +47,7 @@
   }
 }
 
-# The two counts `ctOptimCheckUncertaintyData` needs. The Julia/C++ spec has no
+# The two counts `ctOptimCheckUncertaintyData` needs. The Julia spec has no
 # `standata`, but it does carry the subject starts and the observation times,
 # which is the same information.
 .ctBackendDataShape <- function(fit) {
@@ -155,7 +152,7 @@
 # --- priors ----------------------------------------------------------------
 #
 # The generated Stan model's prior block is a sum of `normal_lpdf(x/scale|0,1)`
-# terms over the raw parameter vector, and the Julia and C++ engines use that
+# terms over the raw parameter vector, and the Julia engine uses that
 # same vector in that same order (which is why the parity tests can hand the
 # identical `raw` to all three). So the whole of ctsem's prior semantics reduces
 # to a list of (index, scale) pairs, decided here where the semantics live, and
@@ -177,17 +174,17 @@
   }
   laplace <- as.integer(standata$laplaceprior)
   if (length(laplace) && any(laplace == 1L)) {
-    stop("Laplace priors are not implemented for backend='julia'/'cpp'. ",
+    stop("Laplace priors are not implemented for backend='julia'. ",
       "The generated Stan model uses a smoothed double-exponential density for ",
       "these, which these engines do not evaluate; use backend='stan', or drop ",
       "laplaceprior for the affected matrices.", call. = FALSE)
   }
   if (isTRUE(as.integer(standata$laplacetipreds)[1L] == 1L)) {
     stop("Laplace priors on TI predictor effects are not implemented for ",
-      "backend='julia'/'cpp'; use backend='stan'.", call. = FALSE)
+      "backend='julia'; use backend='stan'.", call. = FALSE)
   }
   if (isTRUE(as.integer(standata$laplaceprioronly)[1L] == 1L)) {
-    stop("laplaceprioronly is not implemented for backend='julia'/'cpp'; ",
+    stop("laplaceprioronly is not implemented for backend='julia'; ",
       "use backend='stan'.", call. = FALSE)
   }
 
@@ -242,15 +239,10 @@
 # engines' own per-subject adjoint contributions rather than by re-initialising
 # a model per subject the way `scorecalc()` must for Stan.
 .ctBackendScoreMatrix <- function(fit, est) {
-  if (inherits(fit, "ctJuliaFit")) {
-    module <- .ctJuliaModule(fit$model_spec$project)
-    result <- JuliaConnectoR::juliaGet(module$ctsem_subject_gradients(
-      .ctJuliaObjective(fit), .ctJuliaVector(as.numeric(est))))
-    scores <- result$scores
-  } else {
-    scores <- .ctsemCppSubjectGradients(.ctCppObjective(fit), as.numeric(est))$scores
-  }
-  scores <- as.matrix(scores)
+  module <- .ctJuliaModule(fit$model_spec$project)
+  result <- JuliaConnectoR::juliaGet(module$ctsem_subject_gradients(
+    .ctJuliaObjective(fit), .ctJuliaVector(as.numeric(est))))
+  scores <- as.matrix(result$scores)
   if (any(!is.finite(scores))) {
     stop("The engine returned non-finite per-subject scores at the estimate; ",
       "score-based uncertainty cannot be computed here.", call. = FALSE)

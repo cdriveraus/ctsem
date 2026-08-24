@@ -104,8 +104,8 @@ ctSummaryMatrices.ctStanFit <- function(fit,
   e<-ctExtract(fit,cores=1) #Qfit$stanfit$transformedpars #first dim of subobjects is iter, 2nd subjects
   
   # The collapse itself lives in .ctSummaryMatricesFromArrays (ctBackendSummary.R)
-  # so that the stan, julia and cpp backends summarise identical pop_* arrays
-  # with identical code rather than with three copies that can drift.
+  # so that the stan and julia backends summarise identical pop_* arrays with
+  # identical code rather than with two copies that can drift.
   .ctSummaryMatricesFromArrays(e,
     continuoustime = fit$ctstanmodel$continuoustime,
     latentNames = fit$ctstanmodel$latentNames,

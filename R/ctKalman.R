@@ -1,10 +1,10 @@
 # Assembling the ctKalman output from per-row filter scores.
 #
-# Factored out of ctKalmanArray() unchanged so that the stan, julia and cpp
-# backends produce their prediction output from one implementation rather than
-# three. Everything above this point differs between backends -- Stan runs its
-# generated model, the engines run their own filter -- and everything below it
-# is arithmetic on the same four arrays, so this is where the split belongs.
+# Factored out of ctKalmanArray() unchanged so that the stan and julia backends
+# produce their prediction output from one implementation rather than two.
+# Everything above this point differs between backends -- Stan runs its
+# generated model, the engine runs its own filter -- and everything below it is
+# arithmetic on the same four arrays, so this is where the split belongs.
 #
 # `e` carries ya/ycova/etaa/etacova/llrow in Stan's shape: iteration, then
 # 1 = prior / 2 = updated / 3 = smoothed, then data row.
@@ -142,10 +142,10 @@ ctKalmanArray <- function(fit,nsamples=NA,pointest=TRUE, collapsefunc=NA,cores=1
   subjects='all', timestep='asdata',maxtime='asdata',
   standardisederrors=FALSE, subjectpars=TRUE, tformsubjectpars=TRUE, indvarstates=FALSE,removeObs=F,...){
   
-  # The julia and cpp engines produce the same four arrays from their own
-  # forward pass; everything downstream of that is shared (see
-  # .ctKalmanArrayAssemble below and R/ctBackendKalman.R).
-  if(inherits(fit,'ctCppFit') || inherits(fit,'ctJuliaFit')){
+  # The julia engine produces the same four arrays from its own forward pass;
+  # everything downstream of that is shared (see .ctKalmanArrayAssemble below
+  # and R/ctBackendKalman.R).
+  if(inherits(fit,'ctJuliaFit')){
     return(ctBackendKalman(fit,subjects=subjects,timestep=timestep,maxtime=maxtime,
       removeObs=removeObs,pointest=pointest,nsamples=nsamples,collapsefunc=collapsefunc,
       standardisederrors=standardisederrors,subjectpars=subjectpars,
@@ -290,7 +290,7 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
   dynamicsPlotControl <- dynamicsControl[names(dynamicsControl) %in% names(formals(ctDiscreteParsPlot))]
   dynamicsControl <- dynamicsControl[!names(dynamicsControl) %in% names(dynamicsPlotControl)]
   # Everything below reads the fit through accessors rather than through
-  # `standata`, so this works for stan, julia and cpp fits alike; the covariate
+  # `standata`, so this works for stan and julia fits alike; the covariate
   # grid it builds is a *dataset*, which is what all three consume.
   ctmb <- .ctFitModelObject(sf)
   if(tipreds[1] %in% 'all') tipreds <- ctmb$TIpredNames
@@ -462,7 +462,7 @@ ctPredict<-function(fit, timerange='asdata', timestep='auto',
   
   
   if('ctsemFit' %in% class(fit)) stop('This function is no longer supported with ctsemOMX, try ctsem')
-  if(!inherits(fit,c('ctStanFit','ctCppFit','ctJuliaFit'))) stop('fit object is not a ctsem fit!')
+  if(!inherits(fit,c('ctStanFit','ctJuliaFit'))) stop('fit object is not a ctsem fit!')
   
   # get subjects ------------------------------------------------------------
   idmap <- .ctFitIdMap(fit) #store now because we may reduce it

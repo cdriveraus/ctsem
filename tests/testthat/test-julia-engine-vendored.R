@@ -39,9 +39,7 @@ test_that("the vendored engine declares no heavyweight dependencies", {
 })
 
 test_that("ctJuliaSetup works from the vendored copy, with no project argument", {
-  skip_if_not_installed("JuliaConnectoR")
-  skip_if(!isTRUE(tryCatch(JuliaConnectoR::juliaSetupOk(), error = function(e) FALSE)),
-    "Julia is not available.")
+  skip_without_julia()
   skip_on_cran()
 
   status <- ctJuliaSetup()
@@ -58,13 +56,22 @@ test_that("ctJuliaSetup works from the vendored copy, with no project argument",
 
   julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
     priors = FALSE))
-  cpp_spec <- suppressMessages(ctFit(data, model, backend = "cpp", fit = FALSE,
-    priors = FALSE))
 
   # A one-element parameter vector also exercises the scalar-marshalling branch
   # of .ctJuliaVector, which is the one length that must go across as a list.
   julia_value <- ctJuliaEvaluate(julia_spec, -.7, gradient = TRUE)
-  cpp_value <- ctCppEvaluate(cpp_spec, -.7, gradient = TRUE)
-  expect_equal(as.numeric(julia_value$value), cpp_value$value, tolerance = 1e-10)
-  expect_equal(as.numeric(julia_value$gradient), cpp_value$gradient, tolerance = 1e-8)
+  expect_true(is.finite(as.numeric(julia_value$value)))
+  expect_length(as.numeric(julia_value$gradient), 1L)
+
+  # And the vendored engine computes the same thing Stan does, which is what
+  # makes it a usable copy rather than merely an importable one.
+  skip_if_not_installed("rstan")
+  stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE,
+    priors = FALSE))
+  stan_value <- rstan::log_prob(
+    ctsem:::stan_reinitsf(ctsem:::stanmodels$ctsm, stan_spec$standata),
+    upars = -.7, adjust_transform = FALSE, gradient = TRUE)
+  expect_equal(as.numeric(julia_value$value), as.numeric(stan_value), tolerance = 1e-8)
+  expect_equal(as.numeric(julia_value$gradient),
+    as.numeric(attributes(stan_value)$gradient), tolerance = 1e-8)
 })

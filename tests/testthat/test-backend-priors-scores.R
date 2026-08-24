@@ -1,4 +1,4 @@
-# priors=TRUE and per-subject scores for backend='julia' and backend='cpp'.
+# priors=TRUE and per-subject scores for backend='julia'.
 #
 # Priors are checked against Stan rather than against a hand-computed density,
 # because the thing that can actually go wrong is not the normal log-density --
@@ -63,7 +63,7 @@
     group = rep(stats::rnorm(1), 3))))
 }
 
-test_that("Stan and C++ agree with priors=TRUE, without random effects", {
+test_that("Stan and Julia agree with priors=TRUE, without random effects", {
   skip_if_not_installed("rstan")
   skip_if_not_installed("digest")
   model <- .prior_simple_model()
@@ -74,31 +74,31 @@ test_that("Stan and C++ agree with priors=TRUE, without random effects", {
     priors = TRUE))
   stan_value <- rstan::log_prob(.prior_stan_fit(stan_spec), upars = raw,
     adjust_transform = FALSE, gradient = TRUE)
-  cpp_spec <- suppressMessages(ctFit(data, model, backend = "cpp", fit = FALSE,
+  julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
     priors = TRUE))
-  cpp_value <- ctCppEvaluate(cpp_spec, raw, gradient = TRUE)
+  julia_value <- ctJuliaEvaluate(julia_spec, raw, gradient = TRUE)
 
-  expect_equal(as.numeric(cpp_value$value), as.numeric(stan_value), tolerance = 1e-8)
-  expect_equal(as.numeric(cpp_value$gradient), as.numeric(attributes(stan_value)$gradient),
+  expect_equal(as.numeric(julia_value$value), as.numeric(stan_value), tolerance = 1e-8)
+  expect_equal(as.numeric(julia_value$gradient), as.numeric(attributes(stan_value)$gradient),
     tolerance = 1e-7)
 
   # The prior has to actually change the answer, or the test above would pass
   # just as well with priors ignored entirely.
-  nopriors <- suppressMessages(ctFit(data, model, backend = "cpp", fit = FALSE,
+  nopriors <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
     priors = FALSE))
-  expect_false(isTRUE(all.equal(ctCppEvaluate(nopriors, raw, gradient = FALSE)$value,
-    cpp_value$value)))
+  expect_false(isTRUE(all.equal(ctJuliaEvaluate(nopriors, raw, gradient = FALSE)$value,
+    julia_value$value)))
 })
 
-test_that("Stan and C++ agree with priors=TRUE, with random effects and a TI predictor", {
+test_that("Stan and Julia agree with priors=TRUE, with random effects and a TI predictor", {
   skip_if_not_installed("rstan")
   skip_if_not_installed("digest")
   model <- .prior_full_model()
   data <- .prior_full_data()
 
-  cpp_spec <- suppressMessages(ctFit(data, model, backend = "cpp", fit = FALSE,
+  julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
     priors = TRUE))
-  npar <- max(c(cpp_spec$parameter_table$parnumber, cpp_spec$ti_effects$coefficient),
+  npar <- max(c(julia_spec$parameter_table$parnumber, julia_spec$ti_effects$coefficient),
     na.rm = TRUE)
   set.seed(8)
   raw <- stats::rnorm(npar, 0, .3)
@@ -109,12 +109,12 @@ test_that("Stan and C++ agree with priors=TRUE, with random effects and a TI pre
   expect_equal(rstan::get_num_upars(stan_fit), npar)
   stan_value <- rstan::log_prob(stan_fit, upars = raw, adjust_transform = FALSE,
     gradient = TRUE)
-  cpp_value <- ctCppEvaluate(cpp_spec, raw, gradient = TRUE)
+  julia_value <- ctJuliaEvaluate(julia_spec, raw, gradient = TRUE)
 
   # Same tolerance as this model shape achieves without priors: the residual is
   # the augmented/nonlinear filter difference, not the prior term.
-  expect_equal(as.numeric(cpp_value$value), as.numeric(stan_value), tolerance = 1e-7)
-  expect_equal(as.numeric(cpp_value$gradient), as.numeric(attributes(stan_value)$gradient),
+  expect_equal(as.numeric(julia_value$value), as.numeric(stan_value), tolerance = 1e-7)
+  expect_equal(as.numeric(julia_value$gradient), as.numeric(attributes(stan_value)$gradient),
     tolerance = 1e-7)
 })
 
@@ -150,17 +150,17 @@ test_that("per-subject scores sum to the gradient, with and without priors", {
   data <- .prior_full_data()
 
   for (priors in c(FALSE, TRUE)) {
-    spec <- suppressMessages(ctFit(data, model, backend = "cpp", fit = FALSE,
+    spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE,
       priors = priors))
     npar <- max(c(spec$parameter_table$parnumber, spec$ti_effects$coefficient),
       na.rm = TRUE)
     set.seed(8)
     raw <- stats::rnorm(npar, 0, .3)
-    fit <- structure(list(model_spec = spec, backend = "cpp"),
-      class = c("ctCppFit", "ctFit"))
+    fit <- structure(list(model_spec = spec, backend = "julia"),
+      class = c("ctJuliaFit", "ctFit"))
 
     scores <- ctsem:::.ctBackendScoreMatrix(fit, raw)
-    gradient <- ctCppEvaluate(spec, raw, gradient = TRUE)$gradient
+    gradient <- ctJuliaEvaluate(spec, raw, gradient = TRUE)$gradient
     expect_equal(dim(scores), c(length(spec$subject_starts), npar))
     expect_equal(colSums(scores), gradient, tolerance = 1e-9)
     # Every subject contributes something; an all-zero row would mean a subject
@@ -171,6 +171,7 @@ test_that("per-subject scores sum to the gradient, with and without priors", {
 
 test_that("score-based uncertainty methods work for backend fits", {
   skip_on_cran()
+  skip_without_julia()
   model <- .prior_full_model()
   # More subjects than parameters, so the score covariance is not rank limited.
   set.seed(9)
@@ -178,7 +179,7 @@ test_that("score-based uncertainty methods work for backend fits", {
     time = c(0, .5, 1.2, 2), Y1 = stats::rnorm(4, 0, .5), Y2 = stats::rnorm(4, 0, .5),
     group = rep(stats::rnorm(1), 4))))
 
-  fit <- suppressMessages(ctFit(data, model, backend = "cpp", verbose = 0))
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
   for (method in c("opg", "sandwich", "bootstrap")) {
     updated <- suppressWarnings(suppressMessages(
       ctOptimUncertainty(fit, uncertainty = method, finishsamples = 50, verbose = 0)))

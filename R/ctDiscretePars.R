@@ -104,7 +104,7 @@ ctDiscretePars<-function(fit, subjects='popmean',
     stop('Use only one of fit or deprecated ctstanfitobj')
   }
 
-  # `fit` may be a ctStanFit, a ctJuliaFit or a ctCppFit. Everything this
+  # `fit` may be a ctStanFit or a ctJuliaFit. Everything this
   # function needs is either the pop_* arrays that ctExtract() now returns for
   # all three, or model metadata; .ctFitModelObject() supplies the latter so the
   # body no longer reaches into $ctstanmodel and $standata directly.

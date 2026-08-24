@@ -105,7 +105,7 @@
     "  Install it from https://julialang.org/downloads/ (or `juliaup add release`), then either\n",
     "  put the Julia binary directory on PATH or set JULIA_BINDIR, e.g.\n",
     "    Sys.setenv(JULIA_BINDIR = \"/path/to/julia/bin\")\n",
-    "  and call ctJuliaSetup() again. backend='cpp' and backend='stan' need no external toolchain.",
+    "  and call ctJuliaSetup() again. backend='stan' needs no external toolchain.",
     call. = FALSE)
 }
 

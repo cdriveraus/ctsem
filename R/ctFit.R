@@ -398,7 +398,7 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE, binomial=FALSE,
   fit=TRUE, intoverpop='auto', sameInitialTimes=FALSE, stationary=FALSE,plot=FALSE,  derrind=NA,
   optimize=TRUE,  optimcontrol=list(),
-  backend=c('stan','julia','cpp'), backendcontrol=list(),
+  backend=c('stan','julia'), backendcontrol=list(),
   nlcontrol = list(), nopriors=NA, priors=FALSE, chains=2,
   cores=ifelse(optimize,getOption("mc.cores", 2L),'maxneeded'),
   inits=NULL,
@@ -419,12 +419,6 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   backend <- match.arg(backend)
   if(backend %in% 'julia') {
     .ctJuliaUnsupported(ctstanmodel, optimize=optimize, priors=priors,
-      intoverpop=intoverpop, vb=vb, gendata=gendata,
-      stanmodeltext=stanmodeltext, compileArgs=compileArgs,
-      forcerecompile=forcerecompile)
-  }
-  if(backend %in% 'cpp') {
-    .ctCppUnsupported(ctstanmodel, optimize=optimize, priors=priors,
       intoverpop=intoverpop, vb=vb, gendata=gendata,
       stanmodeltext=stanmodeltext, compileArgs=compileArgs,
       forcerecompile=forcerecompile)
@@ -668,19 +662,6 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       stanmodeltext=stanmodeltext, compileArgs=compileArgs,
       forcerecompile=forcerecompile)
     return(ctFitJuliaBackend(datalong=datalong, model=ctm, prepared_data=standata, inits=inits,
-      cores=cores, backendcontrol=backendcontrol, optimcontrol=optimcontrol,
-      verbose=verbose, fit=fit, priors=priors))
-  }
-
-  # backend='cpp' branches at the same point and from the same canonical model
-  # object as backend='julia', so all three backends share every model
-  # preparation step up to here and diverge only in the numerical engine.
-  if(backend %in% 'cpp') {
-    .ctCppUnsupported(ctm, optimize=optimize, priors=priors,
-      intoverpop=intoverpop, vb=vb, gendata=gendata,
-      stanmodeltext=stanmodeltext, compileArgs=compileArgs,
-      forcerecompile=forcerecompile)
-    return(ctFitCppBackend(datalong=datalong, model=ctm, prepared_data=standata, inits=inits,
       cores=cores, backendcontrol=backendcontrol, optimcontrol=optimcontrol,
       verbose=verbose, fit=fit, priors=priors))
   }

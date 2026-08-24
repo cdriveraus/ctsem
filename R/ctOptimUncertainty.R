@@ -1077,13 +1077,10 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' \code{\link{ctFit}} object and refreshes the approximate raw-parameter
 #' samples.
 #'
-#' @param fit Optimized \code{ctStanFit}, \code{ctJuliaFit} or
-#' \code{ctCppFit} object. For the latter two, \code{uncertainty} is limited
-#' to \code{'hessian'}, \code{'surrogate'} and \code{'is'} -- the score-based
-#' and full-bootstrap methods need per-subject scores or subject resampling
-#' with refits, which those engines do not expose yet -- and no
-#' transformed-parameter summary is produced, since that needs the Stan model
-#' object.
+#' @param fit Optimized \code{ctStanFit} or \code{ctJuliaFit} object. For a
+#' \code{ctJuliaFit}, every \code{uncertainty} method except
+#' \code{'fullbootstrap'} is available; that one re-optimises each resample and
+#' so needs the model rebuilt rather than re-evaluated.
 #' @param uncertainty Uncertainty approximation. \code{'hessian'} uses the
 #' finite-difference Hessian, \code{'surrogate'} fits a local quadratic
 #' surrogate around the optimum, \code{'is'} uses Hessian-based importance
@@ -1171,10 +1168,10 @@ ctOptimUncertainty <- function(fit,
   
   uncertainty <- match.arg(uncertainty)
   draws <- match.arg(draws)
-  # backend='julia' and backend='cpp' fits reach the same
-  # ctOptimComputeUncertainty() below, through a log-probability/gradient
-  # function built from their own engine; see R/ctBackendUncertainty.R.
-  if(inherits(fit, 'ctJuliaFit') || inherits(fit, 'ctCppFit')) {
+  # backend='julia' fits reach the same ctOptimComputeUncertainty() below,
+  # through a log-probability/gradient function built from their own engine;
+  # see R/ctBackendUncertainty.R.
+  if(inherits(fit, 'ctJuliaFit')) {
     if(draws == 'auto') draws <- if(uncertainty == 'is') 'imis' else 'normal'
     if(uncertainty == 'is') draws <- 'imis'
     if(is.null(finishsamples)) finishsamples <- 1000

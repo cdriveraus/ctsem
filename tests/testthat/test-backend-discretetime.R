@@ -1,4 +1,4 @@
-# Discrete-time models for backend='julia' and backend='cpp'.
+# Discrete-time models for backend='julia'.
 #
 # Discrete time is not a second filter in these engines, only a different
 # discretization: a discrete model's DRIFT, CINT and DIFFUSION are already the
@@ -34,21 +34,22 @@
 test_that("discrete-time likelihood and gradient match Stan", {
   skip_if_not_installed("rstan")
   skip_on_cran()
+  skip_without_julia()
   model <- .discrete_model()
   data <- .discrete_data()
   expect_false(model$continuoustime)
 
-  spec <- suppressMessages(ctFit(data, model, backend = "cpp", fit = FALSE))
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
   expect_false(spec$continuoustime)
   raw <- .discrete_raw(spec)
 
   stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE))
   stan <- rstan::log_prob(ctsem:::stan_reinitsf(ctsem:::stanmodels$ctsm,
     stan_spec$standata), upars = raw, adjust_transform = FALSE, gradient = TRUE)
-  cpp <- ctCppEvaluate(spec, raw, gradient = TRUE)
+  julia <- ctJuliaEvaluate(spec, raw, gradient = TRUE)
 
-  expect_equal(as.numeric(cpp$value), as.numeric(stan), tolerance = 1e-8)
-  expect_equal(as.numeric(cpp$gradient), as.numeric(attributes(stan)$gradient),
+  expect_equal(as.numeric(julia$value), as.numeric(stan), tolerance = 1e-8)
+  expect_equal(as.numeric(julia$gradient), as.numeric(attributes(stan)$gradient),
     tolerance = 1e-8)
 
   # The adjoint's discrete branch against central differences of its own
@@ -56,69 +57,54 @@ test_that("discrete-time likelihood and gradient match Stan", {
   finite <- vapply(seq_along(raw), function(i) {
     step <- rep(0, length(raw))
     step[i] <- 1e-5
-    (ctCppEvaluate(spec, raw + step, gradient = FALSE)$value -
-        ctCppEvaluate(spec, raw - step, gradient = FALSE)$value) / 2e-5
+    (ctJuliaEvaluate(spec, raw + step, gradient = FALSE)$value -
+        ctJuliaEvaluate(spec, raw - step, gradient = FALSE)$value) / 2e-5
   }, numeric(1))
-  expect_equal(as.numeric(cpp$gradient), finite, tolerance = 1e-6)
-})
-
-test_that("Julia and C++ agree in discrete time", {
-  skip_if_not_installed("JuliaConnectoR")
-  skip_if(!isTRUE(tryCatch(JuliaConnectoR::juliaSetupOk(), error = function(e) FALSE)),
-    "Julia is not available.")
-  skip_on_cran()
-  model <- .discrete_model()
-  data <- .discrete_data()
-  cpp_spec <- suppressMessages(ctFit(data, model, backend = "cpp", fit = FALSE))
-  julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
-  raw <- .discrete_raw(cpp_spec)
-
-  cpp <- ctCppEvaluate(cpp_spec, raw, gradient = TRUE)
-  julia <- ctJuliaEvaluate(julia_spec, raw, gradient = TRUE)
-  expect_equal(as.numeric(cpp$value), as.numeric(julia$value), tolerance = 1e-12)
-  expect_equal(as.numeric(cpp$gradient), as.numeric(julia$gradient), tolerance = 1e-12)
+  expect_equal(as.numeric(julia$gradient), finite, tolerance = 1e-6)
 })
 
 test_that("in discrete time the recorded intervals do not matter", {
   skip_on_cran()
+  skip_without_julia()
   # The property that distinguishes a discrete model from a continuous one: each
   # row advances exactly one step whatever the interval says. This is also the
   # check that `dt` really has been taken out of the discretization rather than
   # left in somewhere.
   model <- .discrete_model()
-  even <- suppressMessages(ctFit(.discrete_data(0:4), model, backend = "cpp",
+  even <- suppressMessages(ctFit(.discrete_data(0:4), model, backend = "julia",
     fit = FALSE))
   uneven <- suppressMessages(ctFit(.discrete_data(c(0, 2.5, 7, 9, 20)), model,
-    backend = "cpp", fit = FALSE))
+    backend = "julia", fit = FALSE))
   raw <- .discrete_raw(even)
 
-  expect_equal(ctCppEvaluate(even, raw, gradient = TRUE)$value,
-    ctCppEvaluate(uneven, raw, gradient = TRUE)$value, tolerance = 1e-12)
-  expect_equal(ctCppEvaluate(even, raw, gradient = TRUE)$gradient,
-    ctCppEvaluate(uneven, raw, gradient = TRUE)$gradient, tolerance = 1e-10)
+  expect_equal(ctJuliaEvaluate(even, raw, gradient = TRUE)$value,
+    ctJuliaEvaluate(uneven, raw, gradient = TRUE)$value, tolerance = 1e-12)
+  expect_equal(ctJuliaEvaluate(even, raw, gradient = TRUE)$gradient,
+    ctJuliaEvaluate(uneven, raw, gradient = TRUE)$gradient, tolerance = 1e-10)
 
   # And a continuous reading of the same data does depend on them, so the
   # comparison above is not vacuous.
   continuous <- suppressWarnings(ctModel(type = "ct", n.latent = 2, LAMBDA = diag(2),
     MANIFESTVAR = diag(c(.1, .1)), MANIFESTMEANS = matrix(0, 2, 1),
     T0MEANS = matrix(0, 2, 1), CINT = matrix(0, 2, 1)))
-  even_ct <- suppressMessages(ctFit(.discrete_data(0:4), continuous, backend = "cpp",
+  even_ct <- suppressMessages(ctFit(.discrete_data(0:4), continuous, backend = "julia",
     fit = FALSE))
   uneven_ct <- suppressMessages(ctFit(.discrete_data(c(0, 2.5, 7, 9, 20)), continuous,
-    backend = "cpp", fit = FALSE))
+    backend = "julia", fit = FALSE))
   rawct <- .discrete_raw(even_ct)
-  expect_false(isTRUE(all.equal(ctCppEvaluate(even_ct, rawct, gradient = FALSE)$value,
-    ctCppEvaluate(uneven_ct, rawct, gradient = FALSE)$value)))
+  expect_false(isTRUE(all.equal(ctJuliaEvaluate(even_ct, rawct, gradient = FALSE)$value,
+    ctJuliaEvaluate(uneven_ct, rawct, gradient = FALSE)$value)))
 })
 
 test_that("discrete-time prediction matches Stan and the asymptotics are discrete", {
   skip_if_not_installed("rstan")
   skip_on_cran()
+  skip_without_julia()
   model <- .discrete_model()
   data <- .discrete_data()
-  spec <- suppressMessages(ctFit(data, model, backend = "cpp", fit = FALSE))
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
   raw <- .discrete_raw(spec)
-  asmodel <- ctsem:::.ctBackendAsModel(spec, "cpp")
+  asmodel <- ctsem:::.ctBackendAsModel(spec)
 
   stan_spec <- suppressMessages(ctFit(data, model, backend = "stan", fit = FALSE))
   stan <- suppressMessages(ctsem:::stan_constrainsamples(sm = ctsem:::stanmodels$ctsm,
@@ -152,9 +138,10 @@ test_that("discrete-time prediction matches Stan and the asymptotics are discret
 
 test_that("summary, ctKalmanArray and generation work in discrete time", {
   skip_on_cran()
+  skip_without_julia()
   model <- .discrete_model()
   data <- .discrete_data()
-  fit <- suppressMessages(ctFit(data, model, backend = "cpp", verbose = 0))
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
 
   summarised <- summary(fit)
   expect_true("DRIFT" %in% summarised$parmatrices$matrix)

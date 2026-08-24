@@ -1,4 +1,4 @@
-# Posterior-predictive data generation for backend='julia' and backend='cpp'.
+# Posterior-predictive data generation for backend='julia'.
 #
 # Generation is not a recorder: it changes what the filter consumes, so the
 # state carried forward is conditioned on the drawn data rather than the real
@@ -43,9 +43,10 @@
 
 test_that("generated data is a draw from the model the filter conditions on", {
   skip_on_cran()
+  skip_without_julia()
   model <- .generate_model()
   data <- .generate_data()
-  fit <- suppressMessages(ctFit(data, model, backend = "cpp", verbose = 0))
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
   spec <- fit$model_spec
   nrows <- length(spec$times)
 
@@ -58,8 +59,8 @@ test_that("generated data is a draw from the model the filter conditions on", {
   # data is the likelihood it reported while generating it.
   refit <- data
   refit$Y1 <- as.numeric(drawn$Y)
-  respec <- suppressMessages(ctFit(refit, model, backend = "cpp", fit = FALSE))
-  regenerated <- ctCppEvaluate(ctsem:::.ctBackendAsModel(respec, "cpp"),
+  respec <- suppressMessages(ctFit(refit, model, backend = "julia", fit = FALSE))
+  regenerated <- ctJuliaEvaluate(ctsem:::.ctBackendAsModel(respec),
     fit$estimate$raw, gradient = FALSE)$value
   expect_equal(sum(drawn$subject_loglik), regenerated, tolerance = 1e-10)
   expect_equal(sum(drawn$llrow), regenerated, tolerance = 1e-10)
@@ -77,6 +78,7 @@ test_that("generated data is a draw from the model the filter conditions on", {
 
 test_that("the observed data is an unremarkable draw from the fitted model", {
   skip_on_cran()
+  skip_without_julia()
   # The calibration check the identity above cannot make: at the maximum
   # likelihood estimate, the observed data's log likelihood should sit somewhere
   # ordinary in the distribution of generated ones. A generator that drew from
@@ -84,7 +86,7 @@ test_that("the observed data is an unremarkable draw from the fitted model", {
   # instead of the drawn one, would put the observed value far into a tail.
   model <- .generate_model()
   data <- .generate_data()
-  fit <- suppressMessages(ctFit(data, model, backend = "cpp", verbose = 0))
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
   nrows <- length(fit$model_spec$times)
 
   set.seed(2)
@@ -97,38 +99,12 @@ test_that("the observed data is an unremarkable draw from the fitted model", {
   expect_gt(stats::sd(generated), 1)
 })
 
-test_that("Julia and C++ generate identical data from the same draws", {
-  skip_if_not_installed("JuliaConnectoR")
-  skip_if(!isTRUE(tryCatch(JuliaConnectoR::juliaSetupOk(), error = function(e) FALSE)),
-    "Julia is not available.")
-  skip_on_cran()
-  model <- .generate_model()
-  data <- .generate_data()
-  cpp_spec <- suppressMessages(ctFit(data, model, backend = "cpp", fit = FALSE))
-  julia_spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
-  npar <- max(cpp_spec$parameter_table$parnumber, na.rm = TRUE)
-  set.seed(8)
-  raw <- stats::rnorm(npar, 0, .3)
-  nrows <- length(cpp_spec$times)
-  set.seed(1)
-  base <- matrix(stats::rnorm(nrows), 1, nrows)
-
-  # The normals come from R rather than an engine RNG precisely so that this can
-  # be an equality rather than a distributional comparison.
-  cpp <- ctsem:::.ctBackendGenerate(ctsem:::.ctBackendAsModel(cpp_spec, "cpp"), raw, base)
-  julia <- ctsem:::.ctBackendGenerate(ctsem:::.ctBackendAsModel(julia_spec, "julia"),
-    raw, base)
-  expect_equal(as.numeric(cpp$Y), as.numeric(julia$Y), tolerance = 1e-12)
-  expect_equal(as.numeric(cpp$llrow), as.numeric(julia$llrow), tolerance = 1e-12)
-  expect_equal(as.numeric(cpp$subject_loglik), as.numeric(julia$subject_loglik),
-    tolerance = 1e-12)
-})
-
 test_that("ctGenerateFromFit returns what the posterior predictive tools expect", {
   skip_on_cran()
+  skip_without_julia()
   model <- .generate_model()
   data <- .generate_data()
-  fit <- suppressMessages(ctFit(data, model, backend = "cpp", verbose = 0))
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
   nrows <- length(fit$model_spec$times)
 
   set.seed(7)
@@ -154,9 +130,10 @@ test_that("ctGenerateFromFit returns what the posterior predictive tools expect"
 
 test_that("the posterior predictive tools run on a backend fit", {
   skip_on_cran()
+  skip_without_julia()
   model <- .generate_model()
   data <- .generate_data()
-  fit <- suppressMessages(ctFit(data, model, backend = "cpp", verbose = 0))
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
   set.seed(7)
   generated <- ctGenerateFromFit(fit, nsamples = 20, cores = 1)
 
@@ -181,12 +158,13 @@ test_that("the posterior predictive tools run on a backend fit", {
 
 test_that("ctPostPredData(residuals=TRUE) works, for stan too", {
   skip_on_cran()
+  skip_without_julia()
   # This branch could never run: the residual rows lacked the id/time columns
   # the rbind below them needs, on every backend including stan. Fixed here, so
   # guarded here.
   model <- .generate_model()
   data <- .generate_data()
-  fit <- suppressMessages(ctFit(data, model, backend = "cpp", verbose = 0))
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
   set.seed(7)
   generated <- ctGenerateFromFit(fit, nsamples = 3, cores = 1)
 

@@ -1,4 +1,4 @@
-# ctOptimUncertainty() for backend='julia' and backend='cpp' fits.
+# ctOptimUncertainty() for backend='julia' fits.
 #
 # The point of these tests is that the backends do not get their *own*
 # uncertainty machinery: they build a log-probability/gradient function and hand
@@ -44,49 +44,10 @@
     CINT = matrix(0, 1, 1)))
 }
 
-test_that("C++ fits get Hessian uncertainty matching Stan's", {
-  skip_if_not_installed("rstan")
-  skip_on_cran()
-
-  model <- .backend_uncertainty_model()
-  data <- .backend_uncertainty_data()
-
-  cpp_fit <- suppressMessages(ctFit(data, model, backend = "cpp", verbose = 0))
-  stan_fit <- suppressMessages(ctFit(data, model, backend = "stan", optimize = TRUE,
-    optimcontrol = list(carefulfit = FALSE, stochastic = FALSE), cores = 1, verbose = 0))
-
-  # The two optimizers must have landed in the same place, or the Hessians are
-  # not comparable and a failure below would say nothing about uncertainty.
-  expect_equal(cpp_fit$estimate$raw, stan_fit$stanfit$rawest, tolerance = 1e-3)
-
-  cpp_unc <- suppressWarnings(suppressMessages(
-    ctOptimUncertainty(cpp_fit, uncertainty = "hessian", finishsamples = 200, verbose = 0)))
-  stan_unc <- suppressWarnings(suppressMessages(
-    ctOptimUncertainty(stan_fit, uncertainty = "hessian", finishsamples = 200, verbose = 0)))
-
-  cpp_se <- sqrt(diag(cpp_unc$estimate$cov))
-  stan_se <- sqrt(diag(stan_unc$stanfit$cov))
-  expect_equal(cpp_se, stan_se, tolerance = 1e-3)
-
-  # The fit carries usable uncertainty afterwards, not just a covariance.
-  expect_equal(dim(cpp_unc$estimate$rawposterior), c(200L, length(cpp_se)))
-  expect_equal(cpp_unc$estimate$se, cpp_se)
-  expect_identical(cpp_unc$uncertainty$settings$method, "hessian")
-  # The summary reports on the transformed scale (see test-backend-summary.R),
-  # so the raw-scale standard errors this test compares against Stan live on the
-  # fit rather than in the printed summary; what the summary must show is an
-  # interval per free parameter, earned from the draws.
-  summarised <- summary(cpp_unc)
-  expect_equal(nrow(summarised$popmeans), length(cpp_se))
-  expect_true(all(c("2.5%", "97.5%") %in% colnames(summarised$popmeans)))
-})
-
 test_that("Julia fits get Hessian uncertainty matching Stan's", {
   skip_if_not_installed("rstan")
-  skip_if_not_installed("JuliaConnectoR")
-  skip_if(!isTRUE(tryCatch(JuliaConnectoR::juliaSetupOk(), error = function(e) FALSE)),
-    "Julia is not available.")
   skip_on_cran()
+  skip_without_julia()
 
   model <- .backend_uncertainty_model()
   data <- .backend_uncertainty_data()
@@ -94,6 +55,9 @@ test_that("Julia fits get Hessian uncertainty matching Stan's", {
   julia_fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
   stan_fit <- suppressMessages(ctFit(data, model, backend = "stan", optimize = TRUE,
     optimcontrol = list(carefulfit = FALSE, stochastic = FALSE), cores = 1, verbose = 0))
+
+  # The two optimizers must have landed in the same place, or the Hessians are
+  # not comparable and a failure below would say nothing about uncertainty.
   expect_equal(julia_fit$estimate$raw, stan_fit$stanfit$rawest, tolerance = 1e-3)
 
   julia_unc <- suppressWarnings(suppressMessages(
@@ -101,21 +65,34 @@ test_that("Julia fits get Hessian uncertainty matching Stan's", {
   stan_unc <- suppressWarnings(suppressMessages(
     ctOptimUncertainty(stan_fit, uncertainty = "hessian", finishsamples = 200, verbose = 0)))
 
-  expect_equal(sqrt(diag(julia_unc$estimate$cov)), sqrt(diag(stan_unc$stanfit$cov)),
-    tolerance = 1e-3)
+  julia_se <- sqrt(diag(julia_unc$estimate$cov))
+  stan_se <- sqrt(diag(stan_unc$stanfit$cov))
+  expect_equal(julia_se, stan_se, tolerance = 1e-3)
+
+  # The fit carries usable uncertainty afterwards, not just a covariance.
+  expect_equal(dim(julia_unc$estimate$rawposterior), c(200L, length(julia_se)))
+  expect_equal(julia_unc$estimate$se, julia_se)
+  expect_identical(julia_unc$uncertainty$settings$method, "hessian")
+  # The summary reports on the transformed scale (see test-backend-summary.R),
+  # so the raw-scale standard errors this test compares against Stan live on the
+  # fit rather than in the printed summary; what the summary must show is an
+  # interval per free parameter, earned from the draws.
+  summarised <- summary(julia_unc)
+  expect_equal(nrow(summarised$popmeans), length(julia_se))
+  expect_true(all(c("2.5%", "97.5%") %in% colnames(summarised$popmeans)))
 })
 
 test_that("unsupported uncertainty methods are refused by name, not silently", {
   model <- .backend_uncertainty_model()
   data <- .backend_uncertainty_data()[1:24, ]
-  cpp_fit <- suppressMessages(ctFit(data, model, backend = "cpp", verbose = 0))
+  julia_fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
 
   # The score-based methods are supported now that the engines produce
   # per-subject gradients directly; `fullbootstrap` is not, because it
   # re-optimises each resample and so needs the model rebuilt rather than
   # re-evaluated. Refusing by name beats producing a plausible-looking
   # covariance from a method that did not actually run.
-  expect_error(ctOptimUncertainty(cpp_fit, uncertainty = "fullbootstrap"),
+  expect_error(ctOptimUncertainty(julia_fit, uncertainty = "fullbootstrap"),
     "not available for backend")
   expect_true(all(c("opg", "sandwich", "bootstrap") %in%
       ctsem:::.ctBackendUncertaintySupported))

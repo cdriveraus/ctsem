@@ -17,13 +17,10 @@ ctOptimUncertainty(
 )
 }
 \arguments{
-\item{fit}{Optimized \code{ctStanFit}, \code{ctJuliaFit} or
-\code{ctCppFit} object. For the latter two, \code{uncertainty} is limited
-to \code{'hessian'}, \code{'surrogate'} and \code{'is'} -- the score-based
-and full-bootstrap methods need per-subject scores or subject resampling
-with refits, which those engines do not expose yet -- and no
-transformed-parameter summary is produced, since that needs the Stan model
-object.}
+\item{fit}{Optimized \code{ctStanFit} or \code{ctJuliaFit} object. For a
+\code{ctJuliaFit}, every \code{uncertainty} method except
+\code{'fullbootstrap'} is available; that one re-optimises each resample and
+so needs the model rebuilt rather than re-evaluated.}
 
 \item{uncertainty}{Uncertainty approximation. \code{'hessian'} uses the
 finite-difference Hessian, \code{'surrogate'} fits a local quadratic

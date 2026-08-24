@@ -2,7 +2,7 @@
 % Please edit documentation in R/ctBackendSummary.R
 \name{ctBackendParMatrices}
 \alias{ctBackendParMatrices}
-\title{Model-implied parameter matrices from a julia or cpp backend fit}
+\title{Model-implied parameter matrices from a julia backend fit}
 \usage{
 ctBackendParMatrices(
   fit,
@@ -15,7 +15,7 @@ ctBackendParMatrices(
 )
 }
 \arguments{
-\item{fit}{A \code{ctJuliaFit}, \code{ctCppFit}, or a prepared model from
+\item{fit}{A \code{ctJuliaFit}, or a prepared model from
 \code{ctFit(..., fit=FALSE)}.}
 
 \item{raw}{Raw parameter vector. Defaults to the fitted estimate.}
