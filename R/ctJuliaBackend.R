@@ -291,7 +291,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   }
   digest::digest(list(spec$parameter_table, spec$subject_starts, spec$times,
     spec$manifest_data, spec$tdpred_data, spec$tipred_data,
-    spec$ti_effects, spec$priors, spec$max_timestep, spec$project, spec$engine),
+    spec$ti_effects, spec$priors, spec$max_timestep, spec$project, spec$engine,
+    # Two fits differing only in how random effects are integrated share every
+    # field above and are not the same objective.
+    spec$intoverpop, spec$laplace),
     algo = "sha256")
 }
 
@@ -547,6 +550,82 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   table
 }
 
+# Which parameter cells are written by a state-dependent expression. Shared by
+# both random-effect routes, which need the same answer for the same reason:
+# a cell whose value depends on the current state cannot be treated as a
+# constant of the filter.
+.ctJuliaRewrittenCells <- function(table) {
+  predict_transform <- replace(table$predicttransform, is.na(table$predicttransform), "")
+  update_transform <- replace(table$updatetransform, is.na(table$updatetransform), "")
+  td_transform <- replace(table$tdtransform, is.na(table$tdtransform), "")
+  table[grepl("state\\[", predict_transform) |
+    grepl("state\\[", update_transform) |
+    grepl("state\\[", td_transform),
+    c("matrix", "row", "col"), drop = FALSE]
+}
+
+# The Laplace route's counterpart to `.ctJuliaAugmentRandomEffects`.
+#
+# Where the augmented route grows the latent state, so that the ordinary filter
+# integrates the random effects out alongside the dynamic states, this route
+# leaves the model's state space alone and describes the random effects to the
+# engine as *indices*: which raw parameters vary between subjects, and which
+# raw parameters say how much. The engine then integrates them out per subject.
+#
+# The raw vector's layout is Stan's, deliberately: population means, then
+# population scales, then lower-triangular correlation coordinates, then TI
+# predictor effects. `.ctBackendPriorSpec` maps ctsem's priors onto exactly
+# that layout, and `.ctJuliaAugmentRandomEffects` already reproduces it, so
+# reusing it means priors, uncertainty and the summary need no Laplace-specific
+# case -- and the two routes' raw vectors are directly comparable, which is
+# what makes an augmented-versus-Laplace check meaningful at all.
+.ctJuliaLaplaceSpec <- function(model, table, prepared_data = NULL) {
+  base_npar <- suppressWarnings(max(c(0L, as.integer(table$parnumber)), na.rm = TRUE))
+  varying <- integer()
+  sdscale <- numeric()
+  if (length(prepared_data$indvaryingindex)) {
+    # Stan's own `indvaryingindex`, built by ctStanData from the same matsetup.
+    # Preferred when present so both backends agree on the set and its order.
+    varying <- as.integer(prepared_data$indvaryingindex)
+    sdscale <- as.numeric(prepared_data$sdscale)
+  } else if (!is.null(model$modelmats$matsetup)) {
+    setup <- as.data.frame(model$modelmats$matsetup)
+    values <- as.data.frame(model$modelmats$matvalues)
+    rows <- which(as.integer(setup$indvarying) > 0L & as.integer(setup$param) > 0L)
+    rows <- rows[!duplicated(as.integer(setup$param)[rows])]
+    varying <- as.integer(setup$param)[rows]
+    sdscale <- as.numeric(values$sdscale)[rows]
+  }
+  if (length(sdscale) != length(varying)) sdscale <- rep(1, length(varying))
+  usable <- !is.na(varying) & varying > 0L & varying <= base_npar
+  varying <- varying[usable]
+  sdscale <- sdscale[usable]
+  sdscale[!is.finite(sdscale)] <- 1
+
+  k <- length(varying)
+  noffdiagonals <- as.integer(k * (k - 1L) / 2L)
+  list(
+    re_index = as.integer(varying),
+    sd_index = if (k) as.integer(base_npar + seq_len(k)) else integer(),
+    cor_index = if (noffdiagonals) as.integer(base_npar + k + seq_len(noffdiagonals)) else integer(),
+    sd_scale = as.numeric(sdscale),
+    param = .ctJuliaLaplaceNames(table, varying),
+    nrandom = as.integer(k),
+    base_npar = as.integer(base_npar),
+    npar = as.integer(base_npar + k + noffdiagonals)
+  )
+}
+
+# The model's own name for each varying parameter, so every later report can
+# say which parameter a random effect belongs to without re-deriving it.
+.ctJuliaLaplaceNames <- function(table, varying) {
+  vapply(as.integer(varying), function(parameter) {
+    hit <- which(!is.na(table$parnumber) & table$parnumber == parameter &
+      !is.na(table$param))
+    if (!length(hit)) NA_character_ else as.character(table$param[hit[1L]])
+  }, character(1L))
+}
+
 .ctJuliaAugmentRandomEffects <- function(model) {
   original_nlatent <- model$n.latent
   prepared_augmentation <- !is.null(model$intoverpopindvaryingindex)
@@ -677,13 +756,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       )
     }
   }
-  predict_transform <- replace(table$predicttransform, is.na(table$predicttransform), "")
-  update_transform <- replace(table$updatetransform, is.na(table$updatetransform), "")
-  td_transform <- replace(table$tdtransform, is.na(table$tdtransform), "")
-  rewritten <- table[grepl("state\\[", predict_transform) |
-    grepl("state\\[", update_transform) |
-    grepl("state\\[", td_transform),
-    c("matrix", "row", "col"), drop = FALSE]
+  rewritten <- .ctJuliaRewrittenCells(table)
   # `augmented_indices` (= Stan's `intoverpopindvaryingindex`) is every state
   # with population-varying T0VAR: both the newly-created carrier states for
   # non-T0MEANS random effects (DRIFT/CINT/etc., always appended contiguously
@@ -750,7 +823,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   invisible(NULL)
 }
 
-.ctJuliaTIEffects <- function(table, model) {
+# `offset` is where the TI-predictor coefficients start in the raw vector. It
+# defaults to the last parameter the table itself uses, which is right for the
+# augmented route because that route puts its population-covariance parameters
+# *in* the table. The Laplace route's population parameters are not in any
+# matrix cell, so it passes the end of its own block instead; without that the
+# coefficients would silently alias the population scales.
+.ctJuliaTIEffects <- function(table, model, offset = NULL) {
   if (!model$n.TIpred) {
     return(data.frame(parameter = integer(), predictor = integer(), coefficient = integer()))
   }
@@ -761,7 +840,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   }
   direct <- !is.na(table$parnumber) & !grepl("[", table$param, fixed = TRUE)
   entries <- list()
-  coefficient <- max(table$parnumber, na.rm = TRUE)
+  coefficient <- if (is.null(offset)) max(table$parnumber, na.rm = TRUE) else as.integer(offset)
   for (predictor in seq_along(model$TIpredNames)) {
     column <- effect_columns[predictor]
     if (!column %in% available) next
@@ -779,7 +858,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 }
 
 .ctJuliaPrepare <- function(datalong, model, prepared_data = NULL, project = NULL,
-  priors = FALSE) {
+  priors = FALSE, intoverpop = "augmented") {
+  intoverpop <- match.arg(as.character(intoverpop)[1L], c("augmented", "laplace"))
   dat <- data.frame(datalong)
   dat <- dat[order(dat[[model$subjectIDname]], dat[[model$timeName]]), , drop = FALSE]
   .ctJuliaValidateTIConstancy(dat, model)
@@ -800,13 +880,34 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     as.numeric(model$nlcontrol$maxtimestep)[1L]
   } else 999999
   if (!is.finite(max_timestep) || max_timestep <= 0) stop("Julia maxtimestep must be a positive finite number.", call. = FALSE)
-  augmented <- .ctJuliaAugmentRandomEffects(model)
-  parameter_table <- augmented$parameter_table
-  ti_effects <- .ctJuliaTIEffects(parameter_table, model)
-  npar <- max(c(parameter_table$parnumber, ti_effects$coefficient), na.rm = TRUE)
+  laplace <- NULL
+  if (identical(intoverpop, "laplace")) {
+    # No state augmentation at all: the model the engine filters is the plain
+    # per-subject one, and the random effects are described alongside it.
+    parameter_table <- .ctJuliaParameterTable(model)
+    laplace <- .ctJuliaLaplaceSpec(model, parameter_table, prepared_data)
+    if (!laplace$nrandom) {
+      stop("intoverpop='laplace' was requested but no parameters are marked ",
+        "indvarying, so there is nothing to integrate over. Mark parameters as ",
+        "varying in the model, or leave intoverpop at its default.", call. = FALSE)
+    }
+    augmented <- list(nlatent = model$n.latent, nlatent_augmented = model$n.latent,
+      dynamic_state_indices = seq_len(model$n.latent),
+      random_effects = data.frame(),
+      rewritten_cells = .ctJuliaRewrittenCells(parameter_table))
+    ti_effects <- .ctJuliaTIEffects(parameter_table, model, offset = laplace$npar)
+  } else {
+    augmented <- .ctJuliaAugmentRandomEffects(model)
+    parameter_table <- augmented$parameter_table
+    ti_effects <- .ctJuliaTIEffects(parameter_table, model)
+  }
+  npar <- max(c(parameter_table$parnumber, laplace$sd_index, laplace$cor_index,
+    ti_effects$coefficient), na.rm = TRUE)
   prior_spec <- if (isTRUE(priors)) .ctBackendPriorSpec(prepared_data, npar) else NULL
   list(
     class = "ctJuliaModel",
+    intoverpop = intoverpop,
+    laplace = laplace,
     model = model,
     data = dat,
     parameter_table = parameter_table,
@@ -891,6 +992,22 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     objective_args$prior_weight <- spec$priors$weight
   }
   objective <- do.call(module$ctsem_objective, objective_args)
+  # The Laplace route wraps the ordinary objective rather than replacing it:
+  # the process likelihood, the parameter layer and the TI-predictor effects
+  # are all still the same code, evaluated per subject at a shifted parameter
+  # vector. Only zero-length index vectors are withheld, because JuliaConnectoR
+  # deadlocks marshalling one -- `cor_index` is empty whenever a model has a
+  # single random effect.
+  if (!is.null(spec$laplace)) {
+    laplace_args <- list(objective,
+      re_index = .ctJuliaVector(as.integer(spec$laplace$re_index)),
+      sd_index = .ctJuliaVector(as.integer(spec$laplace$sd_index)),
+      sd_scale = .ctJuliaVector(as.numeric(spec$laplace$sd_scale)))
+    if (length(spec$laplace$cor_index)) {
+      laplace_args$cor_index <- .ctJuliaVector(as.integer(spec$laplace$cor_index))
+    }
+    objective <- do.call(module$ctsem_laplace_objective, laplace_args)
+  }
   assign(key, objective, envir = .ct_julia_cache$objectives)
   objective
 }
@@ -955,26 +1072,37 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # the way a fit does -- same tolerances, same gradient method, same thread cap.
 # A second copy of this call would be a second set of defaults to keep in step.
 .ctJuliaOptimise <- function(model_spec, start, backendcontrol = list(),
-  gradient = "adjoint", cores = 1L, verbose = 0L, tol = NULL) {
+  gradient = "adjoint", cores = 1L, verbose = 0L, tol = NULL,
+  laplacegradient = "exact") {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   objective <- .ctJuliaObjective(spec)
   module <- .ctJuliaModule(model_spec$project)
   # Called by name rather than through the imported module: the Julia function
   # ends in `!`, which is not a syntactic R name.
   JuliaConnectoR::juliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!", as.integer(cores))
-  JuliaConnectoR::juliaGet(module$ctsem_optimize(objective,
-    .ctJuliaNumericVector(start),
-    maxiter = as.integer(.ctJuliaOr(backendcontrol$maxiter, 1000L)),
+  common <- list(maxiter = as.integer(.ctJuliaOr(backendcontrol$maxiter, 1000L)),
     g_tol = .ctJuliaOr(tol, .ctJuliaOr(backendcontrol$g_tol, 1e-8)),
     f_tol = .ctJuliaOr(backendcontrol$f_tol, 0),
     x_tol = .ctJuliaOr(backendcontrol$x_tol, 0),
-    verbose = verbose > 0L,
-    gradient_method = gradient))
+    verbose = verbose > 0L)
+  if (!is.null(model_spec$laplace)) {
+    # `gradient` selects how the *process* likelihood's gradient is taken and
+    # does not apply here: the Laplace objective's gradient is a forward sweep
+    # over that reverse pass either way. `laplacegradient` selects whether the
+    # log-determinant's dependence on the parameters is included, which is the
+    # choice that actually changes the answer.
+    return(JuliaConnectoR::juliaGet(do.call(module$ctsem_laplace_optimize,
+      c(list(objective, .ctJuliaNumericVector(start)), common,
+        list(gradient_method = laplacegradient)))))
+  }
+  JuliaConnectoR::juliaGet(do.call(module$ctsem_optimize,
+    c(list(objective, .ctJuliaNumericVector(start)), common,
+      list(gradient_method = gradient))))
 }
 
 ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NULL, cores = 1L,
   backendcontrol = list(), optimcontrol = list(), verbose = 0L, fit = TRUE,
-  priors = FALSE) {
+  priors = FALSE, intoverpop = "augmented") {
   if (isTRUE(backendcontrol$restart_session)) .ctJuliaClearSession()
   project <- .ctJuliaOr(backendcontrol$julia_project, NULL)
   # `cores` splits the engine's subject loop. It is requested as a Julia thread
@@ -1007,14 +1135,25 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
   # bound with the parameter count. 'forward' remains the default because it
   # is the longer-tested path, not because it is faster; there is no silent
   # fallback between them in either direction.
+  # `optimcontrol$laplacegradient` chooses between the exact outer gradient and
+  # the cheaper one that drops the log-determinant's parameter dependence. It
+  # is only consulted on the Laplace route, and the choice is recorded on the
+  # fit, because an approximate gradient converges somewhere slightly different
+  # and nothing downstream should have to guess which was used.
+  laplacegradient <- .ctJuliaOr(optimcontrol$laplacegradient, "exact")
+  if (!laplacegradient %in% c("exact", "approximate")) {
+    stop("optimcontrol$laplacegradient must be 'exact' or 'approximate'.", call. = FALSE)
+  }
   model_spec <- .ctJuliaPrepare(datalong, model, prepared_data = prepared_data,
-    project = project, priors = priors)
+    project = project, priors = priors, intoverpop = intoverpop)
   if (!fit) return(structure(model_spec, class = c("ctJuliaModel", "ctFitModel")))
 
-  npar <- max(c(model_spec$parameter_table$parnumber, model_spec$ti_effects$coefficient), na.rm = TRUE)
+  npar <- max(c(model_spec$parameter_table$parnumber, model_spec$laplace$sd_index,
+    model_spec$laplace$cor_index, model_spec$ti_effects$coefficient), na.rm = TRUE)
   start <- .ctJuliaInitialValues(npar, inits)
   result <- .ctJuliaOptimise(model_spec, start, backendcontrol = backendcontrol,
-    gradient = gradient, cores = cores, verbose = verbose)
+    gradient = gradient, cores = cores, verbose = verbose,
+    laplacegradient = laplacegradient)
   # The engine maximises the log posterior, so its `maximum_loglik` is the log
   # posterior and the per-subject objectives (which carry no prior term) sum to
   # the log likelihood. Without priors the two are the same number; with them
@@ -1030,7 +1169,26 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
       subject_loglik = result$subject_loglik, converged = isTRUE(result$converged),
       iterations = as.integer(result$iterations)), engine = model_spec$engine,
     args = list(backend = "julia", backendcontrol = backendcontrol,
-      optimcontrol = optimcontrol, cores = cores, priors = priors))
+      optimcontrol = optimcontrol, cores = cores, priors = priors,
+      intoverpop = intoverpop))
+  if (!is.null(model_spec$laplace)) {
+    # The inner solve is part of the objective, so its status is part of
+    # whether the fit means anything. Kept on the fit rather than printed and
+    # discarded, since a subject whose mode did not converge contributes a term
+    # that is not the integral it is supposed to approximate.
+    out$laplace <- list(
+      gradient = laplacegradient,
+      approximate = isTRUE(result$approximate),
+      nrandom = model_spec$laplace$nrandom,
+      param = model_spec$laplace$param,
+      inner_converged = isTRUE(result$inner_converged),
+      inner_iterations = as.integer(result$inner_iterations),
+      hessian_repaired = as.logical(result$hessian_repaired))
+    if (!isTRUE(result$inner_converged)) {
+      warning("The random-effect mode did not converge for every subject; ",
+        "see fit$laplace$inner_converged.", call. = FALSE)
+    }
+  }
   class(out) <- c("ctJuliaFit", "ctFit")
 
   # Uncertainty is part of fitting, not a separate step the user has to know to
@@ -1056,7 +1214,15 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
   # The filter output at the estimate, cached as the Stan path caches
   # `stanfit$kalman`: summary()'s standardised residual covariance reads it, and
   # recomputing it per summary call would repeat a whole filter pass.
-  out$kalman <- suppressMessages(ctKalmanArray(out, pointest = TRUE))
+  #
+  # Not on the Laplace route: filtering there needs each subject's own random
+  # effects, which is a per-subject parameter vector the trace entry point does
+  # not yet take. Caching the population-level filter under the same name would
+  # make every consumer of `fit$kalman` silently report the typical subject, so
+  # the field is left absent and the summary omits what depends on it.
+  if (is.null(model_spec$laplace)) {
+    out$kalman <- suppressMessages(ctKalmanArray(out, pointest = TRUE))
+  }
   out
 }
 

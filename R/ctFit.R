@@ -91,9 +91,19 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' @param binomial Deprecated. Logical indicating the use of binary rather than Gaussian data, as with IRT analyses.
 #' This now sets \code{intoverstates = FALSE} and the \code{manifesttype} of every indicator to 1, for binary.
 #' @param fit If TRUE, fit specified model using Stan, if FALSE, return stan model object without fitting.
-#' @param intoverpop if 'auto', set to TRUE if optimizing and FALSE if using hmc.
+#' @param intoverpop how to handle declared individual differences. If 'auto',
+#' set to TRUE if optimizing and FALSE if using hmc.
 #' if TRUE, integrates over population distribution of parameters rather than full sampling.
 #' Allows for optimization of non-linearities and random effects, via state expansion.
+#' 'augmented' names that state-expansion method explicitly. 'laplace' instead
+#' integrates the random effects out subject by subject with a Laplace
+#' approximation, leaving each subject's filtered state space at its
+#' single-subject size, so the cost of a random effect stops growing cubically
+#' with the number of varying parameters. 'laplace' requires
+#' \code{backend='julia'} and \code{optimize=TRUE}, and is exact whenever the
+#' varying parameters enter the state mean linearly; elsewhere it is an
+#' approximation, and \code{summary()} says so. See
+#' \code{optimcontrol$laplacegradient} for its speed/exactness control.
 #' @param sameInitialTimes if TRUE, include an empty observation for every subject that has no observation
 #' at the earliest observation time of the dataset. This ensures that the T0MEANS occurs for every subject at the same time,
 #' rather than just at the earliest observation for that subject. Important when modelling trends over time, age, etc.
@@ -103,6 +113,12 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' @param optimize if TRUE, use \code{\link{stanoptimis}} function for maximum a posteriori / importance sampling estimates,
 #' otherwise use the HMC sampler from Stan, which is (much) slower, but generally more robust for complex individual differences.
 #' @param optimcontrol list of parameters sent to \code{\link{stanoptimis}} governing optimization / importance sampling.
+#' \code{laplacegradient} is consulted only when \code{intoverpop='laplace'}:
+#' 'exact' (the default) differentiates the whole Laplace objective, including
+#' the log-determinant's dependence on the parameters, and 'approximate' drops
+#' that term for a cheaper gradient. The objective value is the same either way,
+#' but an approximate gradient converges somewhere slightly different, so which
+#' was used is recorded on the fit and reported by \code{summary()}.
 #' With \code{backend='julia'}, \code{optimcontrol$gradient} selects the
 #' gradient method: \code{'adjoint'} (reverse mode, the default) or
 #' \code{'forward'} (ForwardDiff). Both compute the same gradient; 'adjoint'
@@ -537,8 +553,41 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   }
   if(optimize && !intoverstates) warning('intoverstates=TRUE required for sensible optimization! Proceed onwards to weird output at own risk!')
 
-  if(intoverpop == 'auto')  intoverpop <-
-    ifelse(optimize && any(ctm$pars$indvarying[is.na(ctm$pars$value)]),TRUE,FALSE)
+  # `intoverpop` selects how declared individual differences are handled.
+  # TRUE, FALSE and 'auto' keep their existing meanings exactly. The two
+  # character forms name the two methods: 'augmented' is the existing
+  # state-augmentation, which appends a static latent state per varying
+  # parameter and lets the ordinary filter integrate them out; 'laplace'
+  # integrates them out per subject instead, so each subject keeps the
+  # single-subject state space and the cost of a random effect stops being
+  # cubic in the augmented dimension.
+  #
+  # `intoverpopmethod` carries that choice onwards. `intoverpop` itself stays
+  # the logical that drives augmentation everywhere downstream, so the Laplace
+  # route reaches the backend with an unaugmented model and every existing
+  # `if(intoverpop)` keeps meaning what it meant.
+  intoverpopmethod <- 'none'
+  if(is.character(intoverpop)){
+    intoverpop <- match.arg(intoverpop[1], c('auto','augmented','laplace'))
+    if(intoverpop %in% 'auto'){
+      intoverpop <- isTRUE(optimize) && any(ctm$pars$indvarying[is.na(ctm$pars$value)])
+    } else {
+      intoverpopmethod <- intoverpop
+      intoverpop <- identical(intoverpopmethod,'augmented')
+    }
+  }
+  intoverpop <- isTRUE(intoverpop)
+  if(intoverpop) intoverpopmethod <- 'augmented'
+
+  if(identical(intoverpopmethod,'laplace')){
+    if(!backend %in% 'julia') stop(
+      "intoverpop='laplace' requires backend='julia'; the generated Stan model ",
+      "does not provide the higher-order derivatives it needs.", call.=FALSE)
+    if(!optimize) stop("intoverpop='laplace' requires optimize=TRUE.", call.=FALSE)
+    if(!any(ctm$pars$indvarying[is.na(ctm$pars$value)])) stop(
+      "intoverpop='laplace' was requested but no free parameters are marked ",
+      "indvarying, so there is nothing to integrate over.", call.=FALSE)
+  }
 
   # if(optimize && !intoverpop && any(ctm$pars$indvarying[is.na(ctm$pars$value)]) &&
   #     is.null(ctm$fixedrawpopchol) && is.null(ctm$fixedsubpars)){
@@ -673,7 +722,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       forcerecompile=forcerecompile)
     return(ctFitJuliaBackend(datalong=datalong, model=ctm, prepared_data=standata, inits=inits,
       cores=cores, backendcontrol=backendcontrol, optimcontrol=optimcontrol,
-      verbose=verbose, fit=fit, priors=priors))
+      verbose=verbose, fit=fit, priors=priors,
+      intoverpop=ifelse(identical(intoverpopmethod,'laplace'),'laplace','augmented')))
   }
 
   # print(standata$savesubjectmatrices)

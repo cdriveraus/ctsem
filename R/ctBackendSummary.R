@@ -564,6 +564,46 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # a shared node induces between them never enters an answer.
 .ctBackendRandomEffectDraws <- function(fit, samples, cells, layout, flat) {
   spec <- .ctBackendSpec(fit)
+  population <- if (!is.null(spec$laplace)) {
+    .ctBackendLaplacePopulation(fit, spec, samples)
+  } else {
+    .ctBackendAugmentedPopulation(spec, samples, layout, flat)
+  }
+  if (is.null(population)) return(NULL)
+  parnumber <- population$parnumber
+  parname <- population$param
+  rawsd <- population$rawsd
+
+  out <- list()
+  column <- match(parnumber, cells$parnumber)
+  quadrature <- .ctBackendGaussHermite()
+  displaced <- lapply(quadrature$node, function(node) {
+    perturbed <- samples
+    perturbed[, parnumber] <- perturbed[, parnumber, drop = FALSE] + rawsd * node
+    .ctBackendPopCellValues(fit, perturbed, cells, layout)[, column, drop = FALSE]
+  })
+  centre <- Reduce(`+`, Map(function(value, weight) value * weight,
+    displaced, quadrature$weight))
+  spread <- Reduce(`+`, Map(function(value, weight) weight * (value - centre)^2,
+    displaced, quadrature$weight))
+  spread <- matrix(sqrt(pmax(spread, 0)), nrow = nrow(samples))
+  colnames(spread) <- parname
+  out$popsd <- spread
+
+  if (!is.null(population$rawcorr) && ncol(population$rawcorr)) {
+    lower <- which(lower.tri(diag(length(parnumber))), arr.ind = TRUE)
+    correlation <- population$rawcorr
+    colnames(correlation) <- paste0(parname[lower[, 1L]], "__", parname[lower[, 2L]])
+    out$rawpopcorr <- correlation
+  }
+  out
+}
+
+# The augmented route's population scales and correlations, read out of the
+# filtered T0 covariance the carrier states live in. `scale` divides out the
+# state-unit factor `.ctJuliaAugmentRandomEffects` folded into the sd transform,
+# because what is wanted here is the sd on the *raw parameter* scale.
+.ctBackendAugmentedPopulation <- function(spec, samples, layout, flat) {
   effects <- spec$random_effects
   if (is.null(effects) || !length(effects) || !nrow(effects)) return(NULL)
   sds <- effects[effects$type %in% "sd", , drop = FALSE]
@@ -580,37 +620,37 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   t0cov <- .ctBackendReshape(flat, layout, match("T0cov", layout$matrix))
   variance <- matrix(vapply(sds$row, function(row) t0cov[, row, row],
     numeric(nrow(samples))), nrow = nrow(samples))
-
-  out <- list()
-
   scale <- if (is.null(sds$scale)) rep(1, nrow(sds)) else as.numeric(sds$scale)
   rawsd <- sweep(sqrt(pmax(variance, 0)), 2L, scale, "/")
-  column <- match(parnumber, cells$parnumber)
-  quadrature <- .ctBackendGaussHermite()
-  displaced <- lapply(quadrature$node, function(node) {
-    perturbed <- samples
-    perturbed[, parnumber] <- perturbed[, parnumber, drop = FALSE] + rawsd * node
-    .ctBackendPopCellValues(fit, perturbed, cells, layout)[, column, drop = FALSE]
-  })
-  centre <- Reduce(`+`, Map(function(value, weight) value * weight,
-    displaced, quadrature$weight))
-  spread <- Reduce(`+`, Map(function(value, weight) weight * (value - centre)^2,
-    displaced, quadrature$weight))
-  spread <- matrix(sqrt(pmax(spread, 0)), nrow = nrow(samples))
-  colnames(spread) <- parname
-  out$popsd <- spread
 
+  rawcorr <- NULL
   if (nrow(sds) > 1L) {
     lower <- which(lower.tri(diag(nrow(sds))), arr.ind = TRUE)
-    correlation <- matrix(vapply(seq_len(nrow(lower)), function(entry) {
+    rawcorr <- matrix(vapply(seq_len(nrow(lower)), function(entry) {
       i <- sds$row[lower[entry, 1L]]
       j <- sds$row[lower[entry, 2L]]
       t0cov[, i, j] / sqrt(t0cov[, i, i] * t0cov[, j, j])
     }, numeric(nrow(samples))), nrow = nrow(samples))
-    colnames(correlation) <- paste0(parname[lower[, 1L]], "__", parname[lower[, 2L]])
-    out$rawpopcorr <- correlation
   }
-  out
+  list(parnumber = parnumber, param = parname, rawsd = rawsd, rawcorr = rawcorr)
+}
+
+# The Laplace route's population scales and correlations. There is no carrier
+# state to read them off, and no state-unit rescaling to undo: the population
+# covariance is built on the raw parameter scale in the first place, so the
+# engine is asked for it directly, once for the whole posterior sample.
+.ctBackendLaplacePopulation <- function(fit, spec, samples) {
+  laplace <- spec$laplace
+  if (is.null(laplace) || !laplace$nrandom) return(NULL)
+  module <- .ctJuliaModule(spec$project)
+  result <- JuliaConnectoR::juliaGet(module$ctsem_laplace_population(
+    .ctJuliaObjective(fit), JuliaConnectoR::juliaPut(as.matrix(samples))))
+  parname <- as.character(laplace$param)
+  parname[is.na(parname)] <- paste0("param", laplace$re_index[is.na(parname)])
+  rawsd <- matrix(as.numeric(result$sd), nrow = nrow(samples))
+  rawcorr <- matrix(as.numeric(result$correlation), nrow = nrow(samples))
+  list(parnumber = as.integer(laplace$re_index), param = parname,
+    rawsd = rawsd, rawcorr = rawcorr)
 }
 
 # Time-independent predictor effects, on the transformed parameters -- Stan's

@@ -66,6 +66,7 @@ include("adjoint_ekf.jl")
 include("adjoint.jl")
 include("summary_matrices.jl")
 include("kalman_trace.jl")
+include("laplace.jl")
 
 
 end # module ContinuousTimeSEM
