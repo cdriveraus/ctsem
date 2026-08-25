@@ -564,17 +564,40 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # a shared node induces between them never enters an answer.
 .ctBackendRandomEffectDraws <- function(fit, samples, cells, layout, flat) {
   spec <- .ctBackendSpec(fit)
-  population <- if (!is.null(spec$laplace)) {
-    .ctBackendLaplacePopulation(fit, spec, samples)
+  populations <- if (!is.null(spec$laplace)) {
+    .ctBackendLaplacePopulations(fit, spec, samples)
   } else {
-    .ctBackendAugmentedPopulation(spec, samples, layout, flat)
+    p <- .ctBackendAugmentedPopulation(spec, samples, layout, flat)
+    if (is.null(p)) NULL else list(p)
   }
-  if (is.null(population)) return(NULL)
+  if (is.null(populations) || !length(populations)) return(NULL)
+
+  # One set of results per level. With a single level this is the ordinary
+  # random-effects summary and `levels` has one entry; with a study level above
+  # the subjects it has two, and each is a population in its own right -- a
+  # study sd is the spread between studies, not between subjects, and averaging
+  # them together would describe neither.
+  out <- list(levels = list())
+  for (population in populations) {
+    out$levels[[length(out$levels) + 1L]] <-
+      .ctBackendRandomEffectLevel(fit, population, cells, layout, samples)
+  }
+  # The innermost level stays at the top level of the result, so every existing
+  # single-level caller of `$popsd` and `$rawpopcorr` keeps working unchanged.
+  out$popsd <- out$levels[[1]]$popsd
+  out$rawpopcorr <- out$levels[[1]]$rawpopcorr
+  return(out)
+}
+
+# The quadrature for one level. Split out because it is identical at every
+# level: what differs is only which raw parameters vary and how spread out they
+# are, both of which arrive in `population`.
+.ctBackendRandomEffectLevel <- function(fit, population, cells, layout, samples) {
   parnumber <- population$parnumber
   parname <- population$param
   rawsd <- population$rawsd
 
-  out <- list()
+  out <- list(level = population$level)
   column <- match(parnumber, cells$parnumber)
   quadrature <- .ctBackendGaussHermite()
   displaced <- lapply(quadrature$node, function(node) {
@@ -632,7 +655,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       t0cov[, i, j] / sqrt(t0cov[, i, i] * t0cov[, j, j])
     }, numeric(nrow(samples))), nrow = nrow(samples))
   }
-  list(parnumber = parnumber, param = parname, rawsd = rawsd, rawcorr = rawcorr)
+  list(parnumber = parnumber, param = parname, rawsd = rawsd, rawcorr = rawcorr,
+    level = spec$model$subjectIDname)
 }
 
 # Subject parameters on the Laplace route.
@@ -690,18 +714,27 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # state to read them off, and no state-unit rescaling to undo: the population
 # covariance is built on the raw parameter scale in the first place, so the
 # engine is asked for it directly, once for the whole posterior sample.
-.ctBackendLaplacePopulation <- function(fit, spec, samples) {
+.ctBackendLaplacePopulations <- function(fit, spec, samples) {
   laplace <- spec$laplace
   if (is.null(laplace) || !laplace$nrandom) return(NULL)
   module <- .ctJuliaModule(spec$project)
-  result <- JuliaConnectoR::juliaGet(module$ctsem_laplace_population(
-    .ctJuliaObjective(fit), JuliaConnectoR::juliaPut(as.matrix(samples))))
-  parname <- as.character(laplace$param)
-  parname[is.na(parname)] <- paste0("param", laplace$re_index[is.na(parname)])
-  rawsd <- matrix(as.numeric(result$sd), nrow = nrow(samples))
-  rawcorr <- matrix(as.numeric(result$correlation), nrow = nrow(samples))
-  list(parnumber = as.integer(laplace$re_index), param = parname,
-    rawsd = rawsd, rawcorr = rawcorr)
+  objective <- .ctJuliaObjective(fit)
+  draws <- JuliaConnectoR::juliaPut(as.matrix(samples))
+  out <- list()
+  for (l in seq_along(laplace$levels)) {
+    level <- laplace$levels[[l]]
+    if (!level$nrandom) next
+    result <- JuliaConnectoR::juliaGet(module$ctsem_laplace_population(
+      objective, draws, as.integer(l)))
+    parname <- as.character(level$param)
+    parname[is.na(parname)] <- paste0("param", level$re_index[is.na(parname)])
+    out[[length(out) + 1L]] <- list(
+      parnumber = as.integer(level$re_index), param = parname,
+      rawsd = matrix(as.numeric(result$sd), nrow = nrow(samples)),
+      rawcorr = matrix(as.numeric(result$correlation), nrow = nrow(samples)),
+      level = level$name)
+  }
+  if (!length(out)) NULL else out
 }
 
 # Time-independent predictor effects, on the transformed parameters -- Stan's
@@ -847,6 +880,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     layout = layout, flat = flat)
   list(samples = samples, layout = layout, cells = cells, flat = flat,
     popsd = randomeffects$popsd, rawpopcorr = randomeffects$rawpopcorr,
+    randomeffectlevels = randomeffects$levels,
     tipreds = .ctBackendTipredDraws(fit, samples = samples, cells = cells,
       layout = layout))
 }
@@ -879,7 +913,20 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     if (!is.null(residCovStd)) out$residCovStd <- residCovStd
   }
 
-  if (!is.null(constrained$rawpopcorr)) {
+  if (length(constrained$randomeffectlevels) > 1L) {
+    # More than one level, so nothing goes in the unlabelled slot: a bare
+    # "Random-effects correlations" table would leave the reader guessing
+    # whether it described spread between subjects or between studies. Each
+    # level gets its own named section instead, and `$randomEffects` carries
+    # them all for programmatic use.
+    out$randomEffects <- constrained$randomeffectlevels
+    for (lv in constrained$randomeffectlevels) {
+      if (!is.null(lv$rawpopcorr)) {
+        out[[paste0("rawpopcorr.", lv$level)]] <-
+          .ctBackendSampleSummary(lv$rawpopcorr, digits = digits)
+      }
+    }
+  } else if (!is.null(constrained$rawpopcorr)) {
     out$rawpopcorr <- .ctBackendSampleSummary(constrained$rawpopcorr,
       digits = digits, z = nrow(samples) > 1L)
     out$rawpopcorrNote <-
@@ -932,7 +979,14 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     }
   }
 
-  if (!is.null(constrained$popsd)) {
+  if (length(constrained$randomeffectlevels) > 1L) {
+    for (lv in constrained$randomeffectlevels) {
+      if (!is.null(lv$popsd)) {
+        out[[paste0("popsd.", lv$level)]] <-
+          .ctBackendSampleSummary(lv$popsd, digits = digits)
+      }
+    }
+  } else if (!is.null(constrained$popsd)) {
     out$popsd <- .ctBackendSampleSummary(constrained$popsd, digits = digits)
   }
 

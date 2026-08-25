@@ -76,39 +76,43 @@ export CTSEMLaplaceSpec, CTSEMLaplaceObjective, ctsem_laplace_objective,
     ctsem_laplace_popcov
 
 """
-    CTSEMLaplaceSpec(re_index, sd_index, cor_index, sd_scale)
+    CTSEMLaplaceLevel(re_index, sd_index, cor_index, sd_scale, group, ngroups)
 
-Which raw parameters vary between subjects, and which raw parameters describe
-how much they vary.
+One level of the hierarchy: which raw parameters vary at it, which raw
+parameters say how much, and which group each subject belongs to.
 
-All four fields index the *same* flat raw parameter vector the rest of the
-engine already works in; the population covariance parameters simply live in a
-tail of that vector which no model matrix cell reads. Keeping them there rather
-than in a separate vector means the outer optimizer, the prior term, the
-gradient and the Hessian all keep operating on one contiguous parameter vector,
-with no packing and unpacking anywhere.
+The subject level is the case `group == 1:nsubjects`; a study level assigns
+several subjects the same group. Levels are ordered innermost first, so
+`levels[1]` is the subject level whenever there is one.
 
-  * `re_index[j]`: raw position of the `j`-th varying parameter. This is Stan's
-    `indvaryingindex`.
-  * `sd_index[j]`: raw position of that parameter's population scale parameter,
-    before transformation (Stan's `rawpopsdbase`).
-  * `cor_index`: raw positions of the unconstrained correlation parameters
-    (Stan's `sqrtpcov`), in *column-major lower-triangular* order -- the order
-    Stan's own `counter` walks, so the two parameter vectors correspond
-    element for element.
+All the index fields point into the *same* flat raw parameter vector the rest
+of the engine works in; the population covariance parameters live in a tail of
+that vector which no model matrix cell reads. That keeps one contiguous
+parameter vector for the outer optimizer, the prior term and the Hessian, with
+no packing anywhere.
+
+  * `re_index[j]`: raw position of the `j`-th parameter varying at this level.
+  * `sd_index[j]`: raw position of its population scale, before transformation.
+  * `cor_index`: raw positions of the unconstrained correlation parameters, in
+    column-major lower-triangular order -- the order Stan's own counter walks.
   * `sd_scale[j]`: the model's `sdscale` multiplier for that parameter.
+  * `group[i]`: which group at this level subject `i` belongs to.
 """
-struct CTSEMLaplaceSpec
+struct CTSEMLaplaceLevel
     re_index::Vector{Int}
     sd_index::Vector{Int}
     cor_index::Vector{Int}
     sd_scale::Vector{Float64}
+    group::Vector{Int}
+    ngroups::Int
 
-    function CTSEMLaplaceSpec(re_index, sd_index, cor_index, sd_scale)
+    function CTSEMLaplaceLevel(re_index, sd_index, cor_index, sd_scale, group,
+        ngroups::Integer)
         re = Vector{Int}(collect(re_index))
         sd = Vector{Int}(collect(sd_index))
         cor = Vector{Int}(collect(cor_index))
         scale = Vector{Float64}(collect(sd_scale))
+        grp = Vector{Int}(collect(group))
         k = length(re)
         length(sd) == k ||
             throw(DimensionMismatch("one population scale parameter per random effect is required"))
@@ -117,18 +121,117 @@ struct CTSEMLaplaceSpec
         expected = div(k * (k - 1), 2)
         length(cor) == expected || throw(DimensionMismatch(
             "expected $(expected) correlation parameters for $(k) random effects, got $(length(cor))"))
-        allunique(re) || throw(ArgumentError("random-effect parameter indices must be distinct"))
-        return new(re, sd, cor, scale)
+        allunique(re) || throw(ArgumentError("random-effect parameter indices must be distinct within a level"))
+        isempty(grp) || (minimum(grp) >= 1 && maximum(grp) <= ngroups) ||
+            throw(ArgumentError("group ids must lie in 1:ngroups"))
+        return new(re, sd, cor, scale, grp, Int(ngroups))
     end
 end
 
-"""Number of random effects per subject."""
-nrandomeffects(spec::CTSEMLaplaceSpec) = length(spec.re_index)
+"""Number of random effects carried by one level."""
+nrandomeffects(level::CTSEMLaplaceLevel) = length(level.re_index)
+
+"""
+    CTSEMLaplaceSpec(levels)
+
+The whole hierarchy: one `CTSEMLaplaceLevel` per level, innermost first.
+
+A single-level spec is the ordinary subject-random-effects case and is what the
+four-vector constructor below builds.
+"""
+struct CTSEMLaplaceSpec
+    levels::Vector{CTSEMLaplaceLevel}
+end
+
+"""Single-level convenience form: subject-level effects, one group per subject."""
+function CTSEMLaplaceSpec(re_index, sd_index, cor_index, sd_scale,
+    nsubjects::Integer=0)
+    group = collect(1:Int(nsubjects))
+    return CTSEMLaplaceSpec([CTSEMLaplaceLevel(re_index, sd_index, cor_index,
+        sd_scale, group, Int(nsubjects))])
+end
+
+"""Total number of random effects across every level, per subject."""
+nrandomeffects(spec::CTSEMLaplaceSpec) = sum(nrandomeffects(l) for l in spec.levels; init=0)
+
+nlevels(spec::CTSEMLaplaceSpec) = length(spec.levels)
+
+"""
+    CTSEMLaplaceUnits
+
+How the integral factorises.
+
+Subjects sharing an outer random effect cannot be integrated separately: the
+effect couples them. The *unit* is therefore the group at the outermost level
+-- a study, when subjects are nested in studies -- and the latent vector `u` a
+unit integrates over stacks one block per (level, group) it contains: the
+study's own effects, and each of its subjects' effects.
+
+With one level this degenerates to one subject per unit and `u == z`, which is
+exactly the two-level-free case and costs nothing extra.
+
+  * `members[U]`: subject indices in unit `U`.
+  * `offsets[U][m][l]`: where level `l`'s block for `members[U][m]` starts in
+    `u`, zero-based. Members of the same study share the study-level offset,
+    which is precisely how the coupling is expressed.
+  * `dims[U]`: length of `u` for unit `U`.
+"""
+struct CTSEMLaplaceUnits
+    members::Vector{Vector{Int}}
+    offsets::Vector{Vector{Vector{Int}}}
+    dims::Vector{Int}
+end
+
+"""
+    _laplace_build_units(spec, nsubjects)
+
+Group subjects into integration units and lay out each unit's latent vector.
+
+Strict nesting is assumed and checked by the R side; here the outermost level's
+grouping simply defines the units, and every inner level's groups are placed
+inside whichever unit its subjects fall in.
+"""
+function _laplace_build_units(spec::CTSEMLaplaceSpec, nsubjects::Integer)
+    levels = spec.levels
+    nlev = length(levels)
+    if nlev == 0 || nsubjects == 0
+        return CTSEMLaplaceUnits([[i] for i in 1:nsubjects],
+            [[Int[] for _ in 1:1] for _ in 1:nsubjects], zeros(Int, nsubjects))
+    end
+    outer = levels[end]
+    nunits = outer.ngroups
+    members = [Int[] for _ in 1:nunits]
+    for i in 1:nsubjects
+        push!(members[outer.group[i]], i)
+    end
+    offsets = Vector{Vector{Vector{Int}}}(undef, nunits)
+    dims = zeros(Int, nunits)
+    for U in 1:nunits
+        cursor = 0
+        seen = Dict{Tuple{Int,Int},Int}()
+        offsets[U] = [zeros(Int, nlev) for _ in eachindex(members[U])]
+        for (m, i) in enumerate(members[U])
+            for l in 1:nlev
+                k = nrandomeffects(levels[l])
+                key = (l, levels[l].group[i])
+                slot = get(seen, key, -1)
+                if slot < 0
+                    slot = cursor
+                    seen[key] = slot
+                    cursor += k
+                end
+                offsets[U][m][l] = slot
+            end
+        end
+        dims[U] = cursor
+    end
+    return CTSEMLaplaceUnits(members, offsets, dims)
+end
 
 """
     CTSEMLaplaceObjective(objective, spec; inner_maxiter, inner_tol)
 
-A `CTSEMObjective` plus the random-effect structure to integrate out of it.
+A `CTSEMObjective` plus the hierarchy to integrate out of it.
 
 The inner modes are *state*, not output: they are retained between calls and
 warm-start the next evaluation's Newton solve. Across an outer optimizer's
@@ -138,11 +241,13 @@ converges in one or two steps after the first evaluation.
 mutable struct CTSEMLaplaceObjective{O}
     objective::O
     spec::CTSEMLaplaceSpec
-    # k x nsubjects. Column `i` is subject `i`'s current inner mode.
-    modes::Matrix{Float64}
+    units::CTSEMLaplaceUnits
+    # One mode vector per unit; ragged, because units differ in size whenever
+    # studies do.
+    modes::Vector{Vector{Float64}}
     inner_maxiter::Int
     inner_tol::Float64
-    # Adjoint workspaces: one dictionary per chunk of the subject loop, each
+    # Adjoint workspaces: one dictionary per chunk of the unit loop, each
     # mapping a scalar type to its workspace. The engine's own cache lives on
     # the CTSEMObjective and holds one type at a time, which would thrash badly
     # here -- an exact outer gradient uses Float64 and two nested dual types
@@ -154,7 +259,7 @@ mutable struct CTSEMLaplaceObjective{O}
     # ("Multiple concurrent writes to Dict detected!") rather than silently
     # returning wrong numbers, which is how this was found.
     workspaces::Vector{Dict{Any,Any}}
-    # Filled by the last evaluation; see `ctsem_laplace_diagnostics`.
+    # Per unit, filled by the last evaluation; see `ctsem_laplace_diagnostics`.
     inner_iterations::Vector{Int}
     inner_gradient::Vector{Float64}
     inner_converged::Vector{Bool}
@@ -164,11 +269,12 @@ end
 function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec;
     inner_maxiter::Integer=50, inner_tol::Real=1e-10)
     nsubjects = length(objective.subject_objectives)
-    k = nrandomeffects(spec)
-    return CTSEMLaplaceObjective{typeof(objective)}(objective, spec,
-        zeros(Float64, k, nsubjects), Int(inner_maxiter), Float64(inner_tol),
-        [Dict{Any,Any}()], zeros(Int, nsubjects), zeros(Float64, nsubjects),
-        falses(nsubjects), falses(nsubjects))
+    units = _laplace_build_units(spec, nsubjects)
+    nunits = length(units.members)
+    return CTSEMLaplaceObjective{typeof(objective)}(objective, spec, units,
+        [zeros(Float64, units.dims[U]) for U in 1:nunits],
+        Int(inner_maxiter), Float64(inner_tol), [Dict{Any,Any}()],
+        zeros(Int, nunits), zeros(Float64, nunits), falses(nunits), falses(nunits))
 end
 
 """
@@ -180,19 +286,47 @@ R side sends across the bridge.
 The index vectors are *keyword* arguments with empty defaults because of that
 bridge: JuliaConnectoR deadlocks marshalling a zero-length vector, so R must be
 able to omit one rather than send it. `cor_index` is empty for exactly one real
-model shape -- a single random effect, which has no correlations -- and that
-shape is common enough that it cannot be an error.
+model shape -- a single random effect at a level, which has no correlations --
+and that shape is common enough that it cannot be an error.
+
+For more than one level, the vectors are concatenated innermost level first and
+split by `level_nre` (random effects per level). `group` is likewise
+concatenated, `nsubjects` entries per level, and `level_ngroups` says how many
+groups each level has. With one level all of that collapses to the
+single-level form and none of it needs sending.
 """
 function ctsem_laplace_objective(objective::CTSEMObjective; re_index=Int[],
-    sd_index=Int[], cor_index=Int[], sd_scale=Float64[],
-    inner_maxiter::Integer=50, inner_tol::Real=1e-10)
-    spec = CTSEMLaplaceSpec(Int.(re_index), Int.(sd_index), Int.(cor_index),
-        Float64.(sd_scale))
-    return CTSEMLaplaceObjective(objective, spec; inner_maxiter=inner_maxiter,
-        inner_tol=inner_tol)
+    sd_index=Int[], cor_index=Int[], sd_scale=Float64[], level_nre=Int[],
+    group=Int[], level_ngroups=Int[], inner_maxiter::Integer=50,
+    inner_tol::Real=1e-10)
+    nsubjects = length(objective.subject_objectives)
+    counts = isempty(level_nre) ? [length(re_index)] : Vector{Int}(Int.(level_nre))
+    ngroups = isempty(level_ngroups) ? [nsubjects] : Vector{Int}(Int.(level_ngroups))
+    length(counts) == length(ngroups) || throw(DimensionMismatch(
+        "level_nre and level_ngroups must describe the same number of levels"))
+    groups = isempty(group) ? collect(1:nsubjects) : Vector{Int}(Int.(group))
+    length(groups) == nsubjects * length(counts) || throw(DimensionMismatch(
+        "group must hold one entry per subject per level"))
+
+    levels = CTSEMLaplaceLevel[]
+    re_at = 0; cor_at = 0
+    for l in eachindex(counts)
+        k = counts[l]
+        ncor = div(k * (k - 1), 2)
+        push!(levels, CTSEMLaplaceLevel(
+            Int.(re_index[(re_at + 1):(re_at + k)]),
+            Int.(sd_index[(re_at + 1):(re_at + k)]),
+            Int.(cor_index[(cor_at + 1):(cor_at + ncor)]),
+            Float64.(sd_scale[(re_at + 1):(re_at + k)]),
+            groups[((l - 1) * nsubjects + 1):(l * nsubjects)],
+            ngroups[l]))
+        re_at += k; cor_at += ncor
+    end
+    return CTSEMLaplaceObjective(objective, CTSEMLaplaceSpec(levels);
+        inner_maxiter=inner_maxiter, inner_tol=inner_tol)
 end
 
-"""Positional convenience form, for calls written in Julia."""
+"""Positional convenience form, for single-level calls written in Julia."""
 ctsem_laplace_objective(objective::CTSEMObjective, re_index, sd_index, cor_index,
     sd_scale; kwargs...) =
     ctsem_laplace_objective(objective; re_index=re_index, sd_index=sd_index,
@@ -203,9 +337,9 @@ ctsem_laplace_objective(objective::CTSEMObjective, re_index, sd_index, cor_index
 ################################################################################
 
 """
-    _laplace_popchol(values, spec)
+    _laplace_popchol(values, level)
 
-The Cholesky factor of the raw-scale population covariance.
+The Cholesky factor of one level's raw-scale population covariance.
 
 Term for term the generated Stan model's construction (`ctModelWriter.R`
 around `rawpopsd = ...` through `rawpopcovchol = cholesky_decompose(...)`),
@@ -217,12 +351,13 @@ describing the same population distribution rather than two similar ones.
 scales sitting on the diagonal of `base` are inert there; they are written in
 anyway to keep the correspondence with Stan's `rawpopcovbase` literal.
 """
-function _laplace_popchol(values::AbstractVector{T}, spec::CTSEMLaplaceSpec) where {T}
-    k = nrandomeffects(spec)
+function _laplace_popchol(values::AbstractVector{T}, level::CTSEMLaplaceLevel) where {T}
+    k = nrandomeffects(level)
+    k == 0 && return zeros(T, 0, 0)
     scales = Vector{T}(undef, k)
     @inbounds for j in 1:k
-        raw = values[spec.sd_index[j]]
-        scales[j] = log1p_exp(2 * raw - 1) * spec.sd_scale[j] + 1e-10
+        raw = values[level.sd_index[j]]
+        scales[j] = log1p_exp(2 * raw - 1) * level.sd_scale[j] + 1e-10
     end
     base = zeros(T, k, k)
     counter = 0
@@ -231,7 +366,7 @@ function _laplace_popchol(values::AbstractVector{T}, spec::CTSEMLaplaceSpec) whe
         for i in 1:k
             if i > j
                 counter += 1
-                base[i, j] = 2 / (1 + exp(-values[spec.cor_index[counter]])) - 1
+                base[i, j] = 2 / (1 + exp(-values[level.cor_index[counter]])) - 1
             end
         end
     end
@@ -243,42 +378,78 @@ function _laplace_popchol(values::AbstractVector{T}, spec::CTSEMLaplaceSpec) whe
     return Matrix(cholesky(Symmetric(symmetric)).L)
 end
 
-"""
-    ctsem_laplace_popcov(laplace, values)
+"""Every level's Cholesky factor, innermost first."""
+_laplace_popchols(values::AbstractVector{T}, spec::CTSEMLaplaceSpec) where {T} =
+    [_laplace_popchol(values, level) for level in spec.levels]
 
-The raw-scale population covariance matrix implied by `values`. Reporting
-helper; the fit itself only ever needs its Cholesky factor.
+"""Single-level shorthand, kept for the seeded gradient path."""
+_laplace_popchol(values::AbstractVector, spec::CTSEMLaplaceSpec) =
+    _laplace_popchol(values, spec.levels[1])
+
 """
-function ctsem_laplace_popcov(laplace::CTSEMLaplaceObjective, values::AbstractVector)
-    L = _laplace_popchol(collect(Float64, values), laplace.spec)
+    ctsem_laplace_popcov(laplace, values, level=1)
+
+The raw-scale population covariance matrix implied by `values` at one level.
+Reporting helper; the fit itself only ever needs the Cholesky factor.
+"""
+function ctsem_laplace_popcov(laplace::CTSEMLaplaceObjective, values::AbstractVector,
+    level::Integer=1)
+    L = _laplace_popchol(collect(Float64, values), laplace.spec.levels[level])
     return L * transpose(L)
+end
+
+"""
+    _laplace_member_values(values, spec, Ls, u, offsets)
+
+The raw parameter vector one subject is filtered with: the population vector,
+shifted at every level by that level's effects for the group this subject
+belongs to.
+
+The engine's own per-subject parameter layer then adds TI-predictor effects on
+top, exactly as it does without random effects. Every shift is additive on the
+raw scale, so none of them has to know about the others.
+"""
+function _laplace_member_values(values::AbstractVector{T}, spec::CTSEMLaplaceSpec,
+    Ls::Vector{<:AbstractMatrix}, u::AbstractVector, offsets::Vector{Int}) where {T}
+    S = promote_type(T, eltype(u), eltype(eltype(Ls)))
+    shifted = Vector{S}(undef, length(values))
+    copyto!(shifted, values)
+    @inbounds for l in eachindex(spec.levels)
+        level = spec.levels[l]
+        k = nrandomeffects(level)
+        k == 0 && continue
+        base = offsets[l]
+        L = Ls[l]
+        for p in 1:k
+            acc = zero(S)
+            for q in 1:k
+                acc += L[p, q] * u[base + q]
+            end
+            shifted[level.re_index[p]] += acc
+        end
+    end
+    return shifted
 end
 
 """
     _laplace_subject_values(values, spec, L, z)
 
-The raw parameter vector subject `i` is filtered with: the population vector,
-shifted on the varying positions by `L * z`.
-
-The engine's own per-subject parameter layer then adds TI-predictor effects to
-this on top, exactly as it does without random effects. Both shifts are
-additive on the raw scale, so neither has to know about the other.
+Single-level shorthand: the population vector shifted by one subject's own
+effects. Retained because the seeded gradient path is specialised to one level
+and reads more clearly in those terms.
 """
 function _laplace_subject_values(values::AbstractVector{T}, spec::CTSEMLaplaceSpec,
     L::AbstractMatrix, z::AbstractVector) where {T}
     S = promote_type(T, eltype(L), eltype(z))
     shifted = Vector{S}(undef, length(values))
     copyto!(shifted, values)
+    level = spec.levels[1]
     offset = L * z
-    @inbounds for j in eachindex(spec.re_index)
-        shifted[spec.re_index[j]] += offset[j]
+    @inbounds for j in eachindex(level.re_index)
+        shifted[level.re_index[j]] += offset[j]
     end
     return shifted
 end
-
-################################################################################
-# One subject, one parameter vector
-################################################################################
 
 """
     _laplace_workspace!(laplace, ::Type{T}, nvalues, slot)
@@ -351,136 +522,6 @@ function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
 end
 
 """
-    _laplace_inner_objective_gradient(laplace, i, values, L, z, aws)
-
-`(g_i(z), dg_i/dz)` for subject `i`: the process log likelihood at the shifted
-parameter vector less `z'z/2`, and its gradient with respect to `z`.
-
-The chain rule through the shift is one matrix-vector product: the likelihood's
-gradient with respect to the shifted raw vector, restricted to the varying
-positions, pushed back through `L`.
-"""
-function _laplace_inner_objective_gradient(laplace::CTSEMLaplaceObjective, i::Integer,
-    values::AbstractVector{T}, L::AbstractMatrix{T}, z::AbstractVector{T},
-    aws) where {T}
-    spec = laplace.spec
-    shifted = _laplace_subject_values(values, spec, L, z)
-    gradient = Vector{T}(undef, length(shifted))
-    loglik = _laplace_subject_value_gradient!(gradient, laplace.objective.subject_objectives[i],
-        aws, shifted)
-    isfinite(loglik) || return (value=loglik, gradient=fill(T(NaN), length(z)))
-    restricted = Vector{T}(undef, length(spec.re_index))
-    @inbounds for j in eachindex(spec.re_index)
-        restricted[j] = gradient[spec.re_index[j]]
-    end
-    inner = transpose(L) * restricted .- z
-    value = loglik - dot(z, z) / 2
-    return (value=value, gradient=inner)
-end
-
-"""
-    _laplace_inner_hessian(laplace, i, values, L, z, ...)
-
-`d2 g_i / dz dz` -- the `k x k` inner curvature, by forward-mode differentiation
-of the inner gradient above.
-
-Only `k` forward directions are seeded, not one per model parameter: the
-integral is over `z` alone, so this is the small block the whole design exists
-to keep small. Its cost is `k` chunked dual sweeps of one subject, whatever the
-model's parameter count.
-"""
-function _laplace_inner_hessian(laplace::CTSEMLaplaceObjective, i::Integer,
-    values::AbstractVector{T}, L::AbstractMatrix{T}, z::AbstractVector{T},
-    slot::Integer=1) where {T}
-    k = length(z)
-    k == 0 && return zeros(T, 0, 0)
-    inner_of = function (zz)
-        S = eltype(zz)
-        aws = _laplace_workspace!(laplace, S, length(values), slot)
-        vs = convert(Vector{S}, values)
-        Ls = convert(Matrix{S}, L)
-        return _laplace_inner_objective_gradient(laplace, i, vs, Ls, zz, aws).gradient
-    end
-    H = ForwardDiff.jacobian(inner_of, collect(z))
-    return (H .+ transpose(H)) ./ 2
-end
-
-################################################################################
-# The inner mode
-################################################################################
-
-"""
-    _laplace_solve_mode!(laplace, i, values, L)
-
-Newton's method on `g_i`, warm-started from the retained mode for subject `i`.
-
-`g_i` is a log likelihood minus a quadratic, so its curvature is negative
-definite near the mode and Newton is the right method; away from the mode, and
-for a nonlinear process model, it need not be. Two guards, both visible in the
-diagnostics rather than silent:
-
-  * a curvature that is not negative definite is shifted until it is, and the
-    subject is flagged as repaired;
-  * a step that does not improve `g_i` is halved, up to a fixed number of
-    times, before the iteration gives up.
-
-The mode is written back into `laplace.modes` so the next outer evaluation
-starts from it.
-"""
-function _laplace_solve_mode!(laplace::CTSEMLaplaceObjective, i::Integer,
-    values::AbstractVector{Float64}, L::AbstractMatrix{Float64}, slot::Integer=1)
-    spec = laplace.spec
-    k = nrandomeffects(spec)
-    z = Vector{Float64}(laplace.modes[:, i])
-    aws = _laplace_workspace!(laplace, Float64, length(values), slot)
-    repaired = false
-    converged = false
-    iterations = 0
-    current = _laplace_inner_objective_gradient(laplace, i, values, L, z, aws)
-    if !isfinite(current.value)
-        # A warm start can be stranded outside the support after a large outer
-        # step. The origin is always inside it: z = 0 is the population mean.
-        fill!(z, 0.0)
-        current = _laplace_inner_objective_gradient(laplace, i, values, L, z, aws)
-    end
-    H = zeros(Float64, k, k)
-    for iteration in 1:laplace.inner_maxiter
-        iterations = iteration
-        if maximum(abs, current.gradient) < laplace.inner_tol
-            converged = true
-            break
-        end
-        H = _laplace_inner_hessian(laplace, i, values, L, z, slot)
-        negative_definite, H = _laplace_negate_definite(H)
-        repaired |= !negative_definite
-        step = H \ current.gradient        # H here is already -curvature
-        accepted = false
-        scale = 1.0
-        for _ in 1:20
-            candidate = z .+ scale .* step
-            trial = _laplace_inner_objective_gradient(laplace, i, values, L, candidate, aws)
-            if isfinite(trial.value) && trial.value >= current.value - 1e-12
-                z = candidate
-                current = trial
-                accepted = true
-                break
-            end
-            scale /= 2
-        end
-        accepted || break
-    end
-    if maximum(abs, current.gradient) < laplace.inner_tol
-        converged = true
-    end
-    laplace.modes[:, i] = z
-    laplace.inner_iterations[i] = iterations
-    laplace.inner_gradient[i] = k == 0 ? 0.0 : maximum(abs, current.gradient)
-    laplace.inner_converged[i] = converged
-    laplace.hessian_repaired[i] = repaired
-    return (z=z, value=current.value, converged=converged)
-end
-
-"""
     _laplace_negate_definite(H)
 
 `(-H, was_negative_definite)` with `-H` made positive definite if it was not.
@@ -511,10 +552,155 @@ function _laplace_negate_definite(H::AbstractMatrix{T}) where {T}
     return (false, negated + (scale + one(scale)) * I)
 end
 
-"""
-    _laplace_dual_mode(laplace, i, values, zhat, Hneg, L, aws)
+################################################################################
+# One unit, one latent vector
+################################################################################
 
-The inner mode as a function of the outer parameters, to first order.
+"""
+    _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws)
+
+`(g_U(u), dg_U/du)` for unit `U`: the summed process log likelihood of its
+subjects at their shifted parameter vectors, less `u'u/2`, and its gradient
+with respect to `u`.
+
+The chain rule through the shifts is one matrix-vector product per subject per
+level: the likelihood's gradient with respect to that subject's shifted raw
+vector, restricted to the level's varying positions, pushed back through that
+level's Cholesky factor and accumulated into the level's block of `u`. Two
+subjects in the same study accumulate into the *same* study block, which is
+exactly the coupling that makes the study a single integration unit.
+"""
+function _laplace_unit_objective_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
+    aws) where {T}
+    spec = laplace.spec
+    units = laplace.units
+    members = units.members[U]
+    inner = zeros(T, length(u))
+    total = zero(T)
+    gradient = Vector{T}(undef, length(values))
+    @inbounds for (m, i) in enumerate(members)
+        offsets = units.offsets[U][m]
+        shifted = _laplace_member_values(values, spec, Ls, u, offsets)
+        loglik = _laplace_subject_value_gradient!(gradient,
+            laplace.objective.subject_objectives[i], aws, shifted)
+        isfinite(loglik) || return (value=loglik, gradient=fill(T(NaN), length(u)))
+        total += loglik
+        for l in eachindex(spec.levels)
+            level = spec.levels[l]
+            k = nrandomeffects(level)
+            k == 0 && continue
+            base = offsets[l]
+            L = Ls[l]
+            for q in 1:k
+                acc = zero(T)
+                for p in 1:k
+                    acc += L[p, q] * gradient[level.re_index[p]]
+                end
+                inner[base + q] += acc
+            end
+        end
+    end
+    @inbounds for a in eachindex(u)
+        inner[a] -= u[a]
+    end
+    return (value=total - dot(u, u) / 2, gradient=inner)
+end
+
+"""
+    _laplace_unit_hessian(laplace, U, values, Ls, u, slot)
+
+`d2 g_U / du du` -- the unit's inner curvature, by forward-mode differentiation
+of the inner gradient above.
+
+Only `length(u)` forward directions are seeded, whatever the model's parameter
+count. For one level that is the `k x k` block the whole design exists to keep
+small. For a study of `n` subjects it is `k_study + n * k_subject`, which is
+the price of the coupling: the subjects are no longer separable.
+"""
+function _laplace_unit_hessian(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
+    slot::Integer=1) where {T}
+    d = length(u)
+    d == 0 && return zeros(T, 0, 0)
+    inner_of = function (uu)
+        S = eltype(uu)
+        ws = _laplace_workspace!(laplace, S, length(values), slot)
+        vs = convert(Vector{S}, values)
+        Lss = [convert(Matrix{S}, L) for L in Ls]
+        return _laplace_unit_objective_gradient(laplace, U, vs, Lss, uu, ws).gradient
+    end
+    H = ForwardDiff.jacobian(inner_of, collect(u))
+    return (H .+ transpose(H)) ./ 2
+end
+
+"""
+    _laplace_solve_unit_mode!(laplace, U, values, Ls, slot)
+
+Newton's method on `g_U`, warm-started from the retained mode for unit `U`.
+
+`g_U` is a log likelihood minus a quadratic, so its curvature is negative
+definite near the mode and Newton is the right method; away from the mode, and
+for a nonlinear process model, it need not be. Two guards, both visible in the
+diagnostics rather than silent: a curvature that is not negative definite is
+shifted until it is and the unit flagged as repaired, and a step that does not
+improve `g_U` is halved before the iteration gives up.
+"""
+function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, slot::Integer=1)
+    d = laplace.units.dims[U]
+    u = copy(laplace.modes[U])
+    aws = _laplace_workspace!(laplace, Float64, length(values), slot)
+    repaired = false
+    converged = false
+    iterations = 0
+    current = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws)
+    if !isfinite(current.value)
+        # A warm start can be stranded outside the support after a large outer
+        # step. The origin is always inside it: u = 0 is the population mean.
+        fill!(u, 0.0)
+        current = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws)
+    end
+    for iteration in 1:laplace.inner_maxiter
+        iterations = iteration
+        if d == 0 || maximum(abs, current.gradient) < laplace.inner_tol
+            converged = true
+            break
+        end
+        H = _laplace_unit_hessian(laplace, U, values, Ls, u, slot)
+        negative_definite, Hneg = _laplace_negate_definite(H)
+        repaired |= !negative_definite
+        step = Hneg \ current.gradient
+        accepted = false
+        scale = 1.0
+        for _ in 1:20
+            candidate = u .+ scale .* step
+            trial = _laplace_unit_objective_gradient(laplace, U, values, Ls, candidate, aws)
+            if isfinite(trial.value) && trial.value >= current.value - 1e-12
+                u = candidate
+                current = trial
+                accepted = true
+                break
+            end
+            scale /= 2
+        end
+        accepted || break
+    end
+    if d == 0 || maximum(abs, current.gradient) < laplace.inner_tol
+        converged = true
+    end
+    laplace.modes[U] = u
+    laplace.inner_iterations[U] = iterations
+    laplace.inner_gradient[U] = d == 0 ? 0.0 : maximum(abs, current.gradient)
+    laplace.inner_converged[U] = converged
+    laplace.hessian_repaired[U] = repaired
+    return (u=u, value=current.value, converged=converged)
+end
+
+"""
+    _laplace_dual_unit_mode(laplace, U, values, Ls, uhat, Hneg, aws)
+
+The unit's inner mode as a function of the outer parameters, to first order.
 
 One Newton step from the converged primal mode, taken with dual parameters.
 The inner gradient's *primal* part is zero there, so the step's primal part is
@@ -524,37 +710,32 @@ theorem, without forming that cross-derivative explicitly. Using the primal
 same reason -- any dual part of the inverse would multiply a zero primal
 gradient.
 """
-function _laplace_dual_mode(laplace::CTSEMLaplaceObjective, i::Integer,
-    values::AbstractVector{T}, zhat::AbstractVector{Float64},
-    Hneg::AbstractMatrix{Float64}, L::AbstractMatrix{T}, aws) where {T}
-    isempty(zhat) && return Vector{T}(undef, 0)
-    z0 = convert(Vector{T}, zhat)
-    inner = _laplace_inner_objective_gradient(laplace, i, values, L, z0, aws)
-    return z0 .+ (Hneg \ inner.gradient)
+function _laplace_dual_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix},
+    uhat::Vector{Float64}, Hneg::Matrix{Float64}, aws) where {T}
+    isempty(uhat) && return Vector{T}(undef, 0)
+    u0 = convert(Vector{T}, uhat)
+    inner = _laplace_unit_objective_gradient(laplace, U, values, Ls, u0, aws)
+    return u0 .+ (Hneg \ inner.gradient)
 end
 
-################################################################################
-# The Laplace objective
-################################################################################
-
 """
-    _laplace_subject_term(laplace, i, values, L, z)
+    _laplace_unit_term(laplace, U, values, Ls, u, aws, slot)
 
-`g_i(z) - logdet(-d2 g_i/dz dz) / 2`: subject `i`'s contribution to the
+`g_U(u) - logdet(-d2 g_U/du du) / 2`: unit `U`'s contribution to the
 approximated log marginal likelihood.
 
-The `(2*pi)^(k/2)` the Laplace approximation produces cancels the
-`(2*pi)^(-k/2)` in the standard-normal density of `z`, so no dimension-dependent
-constant appears here. `test_laplace.jl` pins that against a Gaussian integrand
-whose integral is known in closed form.
+The `(2*pi)^(d/2)` the Laplace approximation produces cancels the
+`(2*pi)^(-d/2)` in the standard-normal density of `u`, so no dimension-dependent
+constant appears here whatever the unit's size.
 """
-function _laplace_subject_term(laplace::CTSEMLaplaceObjective, i::Integer,
-    values::AbstractVector{T}, L::AbstractMatrix{T}, z::AbstractVector{T},
+function _laplace_unit_term(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
     aws, slot::Integer=1) where {T}
-    inner = _laplace_inner_objective_gradient(laplace, i, values, L, z, aws)
+    inner = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws)
     isfinite(inner.value) || return inner.value
-    isempty(z) && return inner.value
-    H = _laplace_inner_hessian(laplace, i, values, L, z, slot)
+    isempty(u) && return inner.value
+    H = _laplace_unit_hessian(laplace, U, values, Ls, u, slot)
     negated = -(H .+ transpose(H)) ./ 2
     factorization = cholesky(Symmetric(negated); check=false)
     issuccess(factorization) || return T(NaN)
@@ -681,8 +862,8 @@ rather than once per subject.
 """
 function _laplace_popchol_derivatives(values::AbstractVector{Float64},
     spec::CTSEMLaplaceSpec)
-    positions = vcat(spec.sd_index, spec.cor_index)
-    k = nrandomeffects(spec)
+    positions = vcat(spec.levels[1].sd_index, spec.levels[1].cor_index)
+    k = nrandomeffects(spec.levels[1])
     isempty(positions) && return (positions, Matrix{Float64}[])
     chol_of = function (p)
         v = convert(Vector{eltype(p)}, values)
@@ -727,7 +908,7 @@ function _laplace_seeded_subject_gradient!(out::Vector{Float64},
     z::Vector{Float64}, Mneg::Matrix{Float64}, slot::Integer=1)
 
     spec = laplace.spec
-    rho = spec.re_index
+    rho = spec.levels[1].re_index
     k = length(z)
     npar = length(values)
     base = _laplace_subject_values(values, spec, L, z)
@@ -832,7 +1013,8 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     gradient::Bool=true, contributions::Bool=false, nested_gradient::Bool=false)
     theta = collect(Float64, values)
     nsubjects = length(laplace.objective.subject_objectives)
-    k = nrandomeffects(laplace.spec)
+    nunits = length(laplace.units.members)
+    single_level = nlevels(laplace.spec) == 1
 
     # 1. Inner modes and the value at them, in primal arithmetic, warm-started
     #    from the last call. Each subject's term is its own approximated log
@@ -844,8 +1026,10 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     #    `_laplace_dual_mode` below. It is the most expensive primal quantity
     #    here, so recomputing it for each of those would be a third of the
     #    primal pass thrown away.
-    L = _laplace_popchol(theta, laplace.spec)
-    primal_hessians = Vector{Matrix{Float64}}(undef, nsubjects)
+    Ls = _laplace_popchols(theta, laplace.spec)
+    L = Ls[1]
+    primal_hessians = Vector{Matrix{Float64}}(undef, nunits)
+    unit_loglik = zeros(Float64, nunits)
     subject_loglik = zeros(Float64, nsubjects)
     value = 0.0
 
@@ -854,25 +1038,25 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     # nothing is shared but the read-only parameter vector. Chunk count comes
     # from `ctsem_set_max_chunks!`, which is what the R side sets from `cores`,
     # so it is the same control the non-Laplace path uses.
-    nchunks = _ctsem_nchunks(nsubjects)
+    nchunks = _ctsem_nchunks(nunits)
     # Grow the per-chunk workspace stores serially, before anything is spawned.
     while length(laplace.workspaces) < nchunks
         push!(laplace.workspaces, Dict{Any,Any}())
     end
-    ranges = _ctsem_chunk_ranges(nsubjects, nchunks)
+    ranges = _ctsem_chunk_ranges(nunits, nchunks)
     chunk_ok = fill(true, nchunks)
     chunk_bad = fill(NaN, nchunks)
     run_primal = function (c)
         aws = _laplace_workspace!(laplace, Float64, length(theta), c)
-        @inbounds for i in ranges[c]
-            _laplace_solve_mode!(laplace, i, theta, L, c)
-            z = Vector{Float64}(laplace.modes[:, i])
-            H = k == 0 ? zeros(Float64, 0, 0) :
-                _laplace_inner_hessian(laplace, i, theta, L, z, c)
+        @inbounds for U in ranges[c]
+            _laplace_solve_unit_mode!(laplace, U, theta, Ls, c)
+            u = laplace.modes[U]
+            H = isempty(u) ? zeros(Float64, 0, 0) :
+                _laplace_unit_hessian(laplace, U, theta, Ls, u, c)
             _, negated = _laplace_negate_definite(H)
-            primal_hessians[i] = negated
-            inner = _laplace_inner_objective_gradient(laplace, i, theta, L, z, aws)
-            term = if !isfinite(inner.value) || k == 0
+            primal_hessians[U] = negated
+            inner = _laplace_unit_objective_gradient(laplace, U, theta, Ls, u, aws)
+            term = if !isfinite(inner.value) || isempty(u)
                 inner.value
             else
                 factorization = cholesky(Symmetric(negated); check=false)
@@ -883,7 +1067,16 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
                 chunk_bad[c] = term
                 return nothing
             end
-            subject_loglik[i] = term
+            unit_loglik[U] = term
+            # A unit's term is the marginal likelihood of all its subjects
+            # jointly, and with a study level it does not decompose over them:
+            # the study effect is shared. Attributing it to the first member
+            # would be a fiction, so it is spread evenly and the honest
+            # per-unit figures are what the diagnostics expose.
+            share = term / length(laplace.units.members[U])
+            for i in laplace.units.members[U]
+                subject_loglik[i] = share
+            end
         end
         return nothing
     end
@@ -899,7 +1092,7 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             gradient=gradient ? fill(NaN, length(theta)) : nothing,
             subject_loglik=subject_loglik, converged=all(laplace.inner_converged))
     end
-    value = sum(subject_loglik) + _ctsem_log_prior(laplace.objective, theta)
+    value = sum(unit_loglik) + _ctsem_log_prior(laplace.objective, theta)
 
     gradient || return (value=value, gradient=nothing,
         subject_loglik=subject_loglik, converged=all(laplace.inner_converged))
@@ -913,7 +1106,12 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     # assembly, which has a lot of chain rule in it. Set
     # `nested_gradient = true` to use it.
     grad = zeros(Float64, length(theta))
-    if !nested_gradient
+    # The seeded scheme is specialised to one level: it factors the inner
+    # curvature per subject and seeds directions in that subject's parameter
+    # space. With a study level the units couple subjects and that
+    # factorisation is not the right one, so the general route is used until
+    # the seeded one is generalised.
+    if !nested_gradient && single_level
         positions, dL = _laplace_popchol_derivatives(theta, laplace.spec)
         # One accumulator per chunk rather than one shared vector: the subject
         # contributions are a sum, and summing per chunk and then across chunks
@@ -922,7 +1120,7 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
         fill!(chunk_ok, true)
         run_gradient = function (c)
             @inbounds for i in ranges[c]
-                z = Vector{Float64}(laplace.modes[:, i])
+                z = laplace.modes[i]
                 if !_laplace_seeded_subject_gradient!(partials[c], laplace, i, theta,
                         L, positions, dL, z, primal_hessians[i], c)
                     chunk_ok[c] = false
@@ -949,10 +1147,10 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             # return a partial sum: fall back to the route that does not need
             # those factorizations.
             fill!(grad, 0.0)
-            grad .= _laplace_nested_gradient(laplace, theta, L, primal_hessians)
+            grad .= _laplace_nested_gradient(laplace, theta, Ls, primal_hessians)
         end
     else
-        grad .= _laplace_nested_gradient(laplace, theta, L, primal_hessians)
+        grad .= _laplace_nested_gradient(laplace, theta, Ls, primal_hessians)
     end
     return (value=value, gradient=grad, subject_loglik=subject_loglik,
         converged=all(laplace.inner_converged))
@@ -969,17 +1167,18 @@ seeded path is tested against, and as its fallback when a factorization the
 seeded path needs is not available.
 """
 function _laplace_nested_gradient(laplace::CTSEMLaplaceObjective,
-    theta::Vector{Float64}, L::Matrix{Float64}, hessians::Vector{Matrix{Float64}})
-    nsubjects = length(laplace.objective.subject_objectives)
+    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}},
+    hessians::Vector{Matrix{Float64}})
+    nunits = length(laplace.units.members)
     total_of = function (x)
         S = eltype(x)
         wsd = _laplace_workspace!(laplace, S, length(x))
-        Ld = _laplace_popchol(x, laplace.spec)
+        Lsd = _laplace_popchols(x, laplace.spec)
         accumulated = zero(S)
-        for i in 1:nsubjects
-            zhat = Vector{Float64}(laplace.modes[:, i])
-            zd = _laplace_dual_mode(laplace, i, x, zhat, hessians[i], Ld, wsd)
-            accumulated += _laplace_subject_term(laplace, i, x, Ld, zd, wsd)
+        for U in 1:nunits
+            uhat = laplace.modes[U]
+            ud = _laplace_dual_unit_mode(laplace, U, x, Lsd, uhat, hessians[U], wsd)
+            accumulated += _laplace_unit_term(laplace, U, x, Lsd, ud, wsd)
         end
         return accumulated + _ctsem_log_prior(laplace.objective, x)
     end
@@ -1006,17 +1205,20 @@ to get that subject's parameter matrices.
 function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
     values::AbstractVector)
     theta = collect(Float64, values)
-    L = _laplace_popchol(theta, laplace.spec)
+    Ls = _laplace_popchols(theta, laplace.spec)
     nsubjects = length(laplace.objective.subject_objectives)
     out = zeros(Float64, nsubjects, length(theta))
     buffer = Float64[]
-    for i in 1:nsubjects
-        _laplace_solve_mode!(laplace, i, theta, L)
-        z = Vector{Float64}(laplace.modes[:, i])
-        shifted = _laplace_subject_values(theta, laplace.spec, L, z)
-        subject = laplace.objective.subject_objectives[i]
-        _materialize_subject_values!(buffer, shifted, subject.params, subject.tipreds)
-        out[i, :] = buffer
+    for U in eachindex(laplace.units.members)
+        _laplace_solve_unit_mode!(laplace, U, theta, Ls)
+        u = laplace.modes[U]
+        for (m, i) in enumerate(laplace.units.members[U])
+            shifted = _laplace_member_values(theta, laplace.spec, Ls, u,
+                laplace.units.offsets[U][m])
+            subject = laplace.objective.subject_objectives[i]
+            _materialize_subject_values!(buffer, shifted, subject.params, subject.tipreds)
+            out[i, :] = buffer
+        end
     end
     return out
 end
@@ -1035,14 +1237,16 @@ correlations come back in the same column-major lower-triangular order as the
 parameters that produced them, which is the order `sdcovsqrt2cov`'s and Stan's
 own correlation coordinates use.
 """
-function ctsem_laplace_population(laplace::CTSEMLaplaceObjective, values::AbstractMatrix)
+function ctsem_laplace_population(laplace::CTSEMLaplaceObjective, values::AbstractMatrix,
+    level::Integer=1)
     nsamples = size(values, 1)
-    k = nrandomeffects(laplace.spec)
+    lv = laplace.spec.levels[level]
+    k = nrandomeffects(lv)
     noffdiagonals = div(k * (k - 1), 2)
     sd = zeros(Float64, nsamples, k)
     correlation = zeros(Float64, nsamples, noffdiagonals)
     for s in 1:nsamples
-        L = _laplace_popchol(collect(Float64, view(values, s, :)), laplace.spec)
+        L = _laplace_popchol(collect(Float64, view(values, s, :)), lv)
         covariance = L * transpose(L)
         scales = sqrt.(max.(diag(covariance), 0.0))
         sd[s, :] = scales
@@ -1069,31 +1273,50 @@ the mode, which is the same matrix the log determinant is taken of, so this
 costs nothing that the objective did not already compute. On the raw scale it
 is `L * cov * L'`: the same change of variables the model itself applies.
 """
-function ctsem_laplace_modes(laplace::CTSEMLaplaceObjective, values::AbstractVector)
+function ctsem_laplace_modes(laplace::CTSEMLaplaceObjective, values::AbstractVector,
+    level::Integer=1)
     theta = collect(Float64, values)
-    nsubjects = length(laplace.objective.subject_objectives)
-    k = nrandomeffects(laplace.spec)
-    L = _laplace_popchol(theta, laplace.spec)
-    z = zeros(Float64, nsubjects, k)
-    raw = zeros(Float64, nsubjects, k)
-    zsd = zeros(Float64, nsubjects, k)
-    rawsd = zeros(Float64, nsubjects, k)
-    for i in 1:nsubjects
-        _laplace_solve_mode!(laplace, i, theta, L)
-        zi = Vector{Float64}(laplace.modes[:, i])
-        z[i, :] = zi
-        raw[i, :] = L * zi
-        if k > 0
-            H = _laplace_inner_hessian(laplace, i, theta, L, zi)
+    spec = laplace.spec
+    lv = spec.levels[level]
+    k = nrandomeffects(lv)
+    Ls = _laplace_popchols(theta, spec)
+    L = Ls[level]
+    ngroups = lv.ngroups
+    z = zeros(Float64, ngroups, k)
+    raw = zeros(Float64, ngroups, k)
+    zsd = zeros(Float64, ngroups, k)
+    rawsd = zeros(Float64, ngroups, k)
+    filled = falses(ngroups)
+    for U in eachindex(laplace.units.members)
+        _laplace_solve_unit_mode!(laplace, U, theta, Ls)
+        u = laplace.modes[U]
+        covariance = if isempty(u)
+            zeros(Float64, 0, 0)
+        else
+            H = _laplace_unit_hessian(laplace, U, theta, Ls, u)
             _, negated = _laplace_negate_definite(H)
-            covariance = inv(Symmetric(negated))
-            zsd[i, :] = sqrt.(max.(diag(covariance), 0.0))
-            rawcov = L * covariance * transpose(L)
-            rawsd[i, :] = sqrt.(max.(diag(rawcov), 0.0))
+            inv(Symmetric(negated))
+        end
+        for (m, i) in enumerate(laplace.units.members[U])
+            g = lv.group[i]
+            # Several subjects share a group at an outer level; its mode is one
+            # vector, not one per subject, so it is written once.
+            filled[g] && continue
+            filled[g] = true
+            k == 0 && continue
+            base = laplace.units.offsets[U][m][level]
+            slice = (base + 1):(base + k)
+            zi = u[slice]
+            z[g, :] = zi
+            raw[g, :] = L * zi
+            block = covariance[slice, slice]
+            zsd[g, :] = sqrt.(max.(diag(block), 0.0))
+            rawcov = L * block * transpose(L)
+            rawsd[g, :] = sqrt.(max.(diag(rawcov), 0.0))
         end
     end
-    return (z=z, raw=raw, z_sd=zsd, raw_sd=rawsd,
-        parameter=laplace.spec.re_index,
+    return (z=z, raw=raw, z_sd=zsd, raw_sd=rawsd, parameter=lv.re_index,
+        group=lv.group, ngroups=ngroups,
         converged=copy(laplace.inner_converged),
         iterations=copy(laplace.inner_iterations))
 end
@@ -1160,12 +1383,32 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     if verbose
         chunks = ctsem_max_chunks()
         println("Laplace: ", length(laplace.objective.subject_objectives),
-            " subjects, ", nrandomeffects(laplace.spec),
+            " subjects in ", length(laplace.units.members), " unit(s), ",
+            nlevels(laplace.spec), " level(s), ", nrandomeffects(laplace.spec),
             " random effects, ", min(max(chunks.max_chunks == 0 ? chunks.nthreads :
-                chunks.max_chunks, 1), length(laplace.objective.subject_objectives)),
+                chunks.max_chunks, 1), length(laplace.units.members)),
             " chunk(s) over ", chunks.nthreads, " thread(s)")
     end
-    result = Optim.optimize(Optim.only_fg!(fg!), start_values, Optim.LBFGS(), options)
+    # Optim's default Hager-Zhang line search asserts its own bracketing
+    # invariant (`B > A`) and *throws* when an evaluation it is handed is
+    # invalid -- which happens here whenever a trial point makes an inner mode
+    # solve or a curvature factorization fail, since those return a sentinel
+    # objective with a zero gradient and a zero directional derivative breaks
+    # the bracket. Backtracking makes no such assumption: it simply shrinks the
+    # step. Falling back to it turns a crashed fit into a slower one, which is
+    # the right trade, and `linesearch` on the result says which was used
+    # rather than leaving it to be guessed.
+    linesearch = "hagerzhang"
+    result = try
+        Optim.optimize(Optim.only_fg!(fg!), start_values, Optim.LBFGS(), options)
+    catch err
+        err isa InterruptException && rethrow()
+        linesearch = "backtracking"
+        verbose && println("Laplace: Hager-Zhang line search failed (",
+            sprint(showerror, err), "); retrying with backtracking")
+        Optim.optimize(Optim.only_fg!(fg!), start_values,
+            Optim.LBFGS(linesearch=Optim.LineSearches.BackTracking()), options)
+    end
     if verbose
         println("Laplace: inner modes ",
             count(laplace.inner_converged), "/", length(laplace.inner_converged),
@@ -1181,6 +1424,7 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
         gradient=collect(final.gradient),
         subject_loglik=collect(final.subject_loglik),
         iterations=Optim.iterations(result),
+        linesearch=linesearch,
         converged=Optim.converged(result),
         g_converged=Optim.g_converged(result),
         f_converged=Optim.f_converged(result),
@@ -1305,44 +1549,48 @@ function ctsem_subject_gradients(laplace::CTSEMLaplaceObjective,
     values::AbstractVector)
     theta = collect(Float64, values)
     nsubjects = length(laplace.objective.subject_objectives)
-    k = nrandomeffects(laplace.spec)
+    nunits = length(laplace.units.members)
 
-    L = _laplace_popchol(theta, laplace.spec)
-    primal_hessians = Vector{Matrix{Float64}}(undef, nsubjects)
-    for i in 1:nsubjects
-        _laplace_solve_mode!(laplace, i, theta, L)
-        z = Vector{Float64}(laplace.modes[:, i])
-        H = k == 0 ? zeros(Float64, 0, 0) : _laplace_inner_hessian(laplace, i, theta, L, z)
+    Ls = _laplace_popchols(theta, laplace.spec)
+    primal_hessians = Vector{Matrix{Float64}}(undef, nunits)
+    for U in 1:nunits
+        _laplace_solve_unit_mode!(laplace, U, theta, Ls)
+        u = laplace.modes[U]
+        H = isempty(u) ? zeros(Float64, 0, 0) :
+            _laplace_unit_hessian(laplace, U, theta, Ls, u)
         _, negated = _laplace_negate_definite(H)
-        primal_hessians[i] = negated
+        primal_hessians[U] = negated
     end
 
     terms_of = function (x)
         S = eltype(x)
         wsd = _laplace_workspace!(laplace, S, length(x))
-        Ld = _laplace_popchol(x, laplace.spec)
-        out = Vector{S}(undef, nsubjects)
-        for i in 1:nsubjects
-            zhat = Vector{Float64}(laplace.modes[:, i])
-            zd = _laplace_dual_mode(laplace, i, x, zhat, primal_hessians[i], Ld, wsd)
-            out[i] = _laplace_subject_term(laplace, i, x, Ld, zd, wsd)
+        Lsd = _laplace_popchols(x, laplace.spec)
+        out = Vector{S}(undef, nunits)
+        for U in 1:nunits
+            uhat = laplace.modes[U]
+            ud = _laplace_dual_unit_mode(laplace, U, x, Lsd, uhat, primal_hessians[U], wsd)
+            out[U] = _laplace_unit_term(laplace, U, x, Lsd, ud, wsd)
         end
         return out
     end
+    # Rows are *units*, and with a study level a unit is a study rather than a
+    # subject: the study effect is shared, so the marginal likelihood does not
+    # decompose over its members and there is no per-subject score to report.
     scores = ForwardDiff.jacobian(terms_of, theta)
 
     # Each subject carries its share of the prior, so the rows still sum to the
     # full posterior gradient -- the same convention `ctsem_subject_gradients`
     # uses without random effects.
-    if !isempty(laplace.objective.prior_index) && nsubjects > 0
-        share = 1 / nsubjects
-        for i in 1:nsubjects
-            _ctsem_log_prior_gradient!(view(scores, i, :), laplace.objective, theta, share)
+    if !isempty(laplace.objective.prior_index) && nunits > 0
+        share = 1 / nunits
+        for U in 1:nunits
+            _ctsem_log_prior_gradient!(view(scores, U, :), laplace.objective, theta, share)
         end
     end
-    value = sum(_laplace_subject_term(laplace, i, theta, L,
-        Vector{Float64}(laplace.modes[:, i]),
-        _laplace_workspace!(laplace, Float64, length(theta))) for i in 1:nsubjects)
+    aws = _laplace_workspace!(laplace, Float64, length(theta))
+    value = sum(_laplace_unit_term(laplace, U, theta, Ls, laplace.modes[U], aws)
+                for U in 1:nunits; init=0.0)
     return (value=value + _ctsem_log_prior(laplace.objective, theta), scores=scores)
 end
 

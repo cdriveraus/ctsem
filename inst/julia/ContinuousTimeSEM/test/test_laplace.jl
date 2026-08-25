@@ -225,9 +225,140 @@ function _value_finite_difference(laplace, values; step=1e-5, )
     return out
 end
 
+
+# --- two levels: subjects nested in studies ----------------------------------
+#
+# Six subjects in three studies. The subject level carries T0MEANS and CINT,
+# the study level carries MANIFESTMEANS -- all identity transforms on the
+# shared linear objective, so the integrand is exactly Gaussian in the unit
+# latent vector and Laplace is exact here too, which is what makes the
+# closed-form reference below available for the *coupled* case.
+#
+# Raw layout: 1-5 the model parameters, 6-7 the subject scales, 8 their
+# correlation, 9 the study scale.
+_TWOLEVEL_GROUP = [1, 1, 2, 2, 3, 3]
+_fresh_twolevel() = (ctsem_laplace_objective(_LAPLACE_LINEAR_OBJECTIVE;
+    re_index=[1, 2, 5], sd_index=[6, 7, 9], cor_index=[8],
+    sd_scale=[1.0, 1.0, 1.0], level_nre=[2, 1],
+    group=vcat(1:6, _TWOLEVEL_GROUP), level_ngroups=[6, 3]),
+    [0.2, -0.1, 0.3, -0.2, 0.05, -0.3, -0.15, 0.4, -0.25])
+
+"""Unit `U`'s log likelihood at latent vector `u`, through the primal only."""
+function _unit_loglik(laplace, U, values, u)
+    spec = laplace.spec
+    Ls = ContinuousTimeSEM._laplace_popchols(collect(Float64, values), spec)
+    total = 0.0
+    for (m, i) in enumerate(laplace.units.members[U])
+        shifted = ContinuousTimeSEM._laplace_member_values(collect(Float64, values),
+            spec, Ls, collect(Float64, u), laplace.units.offsets[U][m])
+        total += laplace.objective.subject_objectives[i](shifted)
+    end
+    return total
+end
+
+"""
+Closed-form `log integral exp(ll_U(u)) N(u|0,I) du` for a unit whose log
+likelihood is exactly quadratic in `u`, recovered from the log likelihood by
+evaluation rather than assumed.
+"""
+function _unit_gaussian_reference(laplace, U, values)
+    d = laplace.units.dims[U]
+    ll(u) = _unit_loglik(laplace, U, values, u)
+    c = ll(zeros(d))
+    b = zeros(d); A = zeros(d, d)
+    for j in 1:d
+        e = zeros(d); e[j] = 1.0
+        plus = ll(e); minus = ll(-e)
+        b[j] = (plus - minus) / 2
+        A[j, j] = (plus + minus) / 2 - c
+    end
+    for j in 1:d, l in (j + 1):d
+        e = zeros(d); e[j] = 1.0; e[l] = 1.0
+        off = ll(e) - c - b[j] - b[l] - A[j, j] - A[l, l]
+        A[j, l] = off / 2; A[l, j] = off / 2
+    end
+    P = Matrix(I / 2 - A)
+    return c + dot(b, P \ b) / 4 - logdet(2 .* P) / 2
+end
+
 ################################################################################
 # Tests
 ################################################################################
+
+@testset "two levels: units couple the subjects that share a study" begin
+    laplace, values = _fresh_twolevel()
+    units = laplace.units
+    # Three studies of two subjects each, so three units rather than six.
+    @test length(units.members) == 3
+    @test sort(vcat(units.members...)) == collect(1:6)
+    for U in 1:3
+        @test length(units.members[U]) == 2
+        # Two subject blocks of 2 plus one shared study block of 1.
+        @test units.dims[U] == 2 * 2 + 1
+        # Both members point at the *same* study block -- that sharing is the
+        # coupling, and it is the thing that makes a study one integration unit.
+        @test units.offsets[U][1][2] == units.offsets[U][2][2]
+        # ...and at different subject blocks.
+        @test units.offsets[U][1][1] != units.offsets[U][2][1]
+    end
+end
+
+@testset "two levels: Laplace is exact for a Gaussian integrand" begin
+    # The same argument as the single-level exactness test, but over a unit
+    # latent vector that mixes two subject blocks and a shared study block. If
+    # the offsets, the per-level Cholesky factors or the shared block were
+    # wrong, this is where it shows.
+    laplace, values = _fresh_twolevel()
+    result = ctsem_laplace_evaluate(laplace, values; gradient=false)
+    @test isfinite(result.value)
+    @test result.converged
+
+    reference = sum(_unit_gaussian_reference(laplace, U, values) for U in 1:3)
+    @test isapprox(result.value, reference; rtol=1e-8)
+end
+
+@testset "two levels: the outer gradient is the gradient of the value" begin
+    laplace, values = _fresh_twolevel()
+    result = ctsem_laplace_evaluate(laplace, values; gradient=true)
+    reference = _value_finite_difference(laplace, values)
+    @test norm(result.gradient - reference) / norm(reference) < 1e-6
+end
+
+@testset "two levels: an empty outer level reduces to one level" begin
+    # A study level carrying no random effects is a hierarchy that does not do
+    # anything, and it must not change the answer -- only how the subjects are
+    # grouped for integration. This is the degenerate case that catches an
+    # offset or dimension bug in the unit layout.
+    single, values = _fresh_linear()
+    grouped = ctsem_laplace_objective(_LAPLACE_LINEAR_OBJECTIVE;
+        re_index=[1, 2], sd_index=[6, 7], cor_index=[8], sd_scale=[1.0, 1.0],
+        level_nre=[2, 0], group=vcat(1:6, _TWOLEVEL_GROUP), level_ngroups=[6, 3])
+
+    a = ctsem_laplace_evaluate(single, values; gradient=true, nested_gradient=true)
+    b = ctsem_laplace_evaluate(grouped, values; gradient=true)
+    @test isapprox(a.value, b.value; rtol=1e-9)
+    @test norm(a.gradient - b.gradient) / norm(a.gradient) < 1e-7
+end
+
+@testset "two levels: modes are reported per level and per group" begin
+    laplace, values = _fresh_twolevel()
+    ctsem_laplace_evaluate(laplace, values; gradient=false)
+
+    subject = ctsem_laplace_modes(laplace, values, 1)
+    study = ctsem_laplace_modes(laplace, values, 2)
+    # One row per subject at level 1, one per *study* at level 2 -- a study
+    # effect is one vector shared by its members, not one per member.
+    @test size(subject.z) == (6, 2)
+    @test size(study.z) == (3, 1)
+    @test study.ngroups == 3
+    @test study.group == _TWOLEVEL_GROUP
+    @test all(isfinite, subject.z)
+    @test all(isfinite, study.z)
+    @test all(study.z_sd .> 0)
+    # Studies differ; a collapsed study mode would mean the level is doing
+    # nothing.
+    @test maximum(abs, diff(study.z; dims=1)) > 1e-8
+end
 
 @testset "Laplace is exact for a Gaussian integrand" begin
     laplace, values = _fresh_linear()
@@ -262,7 +393,7 @@ end
     spec = laplace.spec
     k = ContinuousTimeSEM.nrandomeffects(spec)
     for i in 1:length(laplace.objective.subject_objectives)
-        zhat = Vector{Float64}(laplace.modes[:, i])
+        zhat = laplace.modes[i]
         at_mode = _subject_loglik(laplace, i, values, zhat) - dot(zhat, zhat) / 2
         for j in 1:k, delta in (-0.05, 0.05)
             probe = copy(zhat); probe[j] += delta
@@ -317,8 +448,8 @@ end
     spec = laplace.spec
     for shift in (0.4, -0.6, 1.1)
         probe = collect(values)
-        probe[spec.sd_index] .+= shift
-        probe[spec.cor_index] .-= shift / 2
+        probe[spec.levels[1].sd_index] .+= shift
+        probe[spec.levels[1].cor_index] .-= shift / 2
         seeded = ctsem_laplace_evaluate(laplace, probe; gradient=true)
         nested = ctsem_laplace_evaluate(laplace, probe; gradient=true,
             nested_gradient=true)
@@ -360,11 +491,11 @@ end
     # Reconstructed here the way ctModelWriter.R writes it, so a change to
     # either parameterisation shows up as a disagreement rather than as a
     # quietly different population distribution.
-    scales = [ContinuousTimeSEM.log1p_exp(2 * values[spec.sd_index[j]] - 1) *
-              spec.sd_scale[j] + 1e-10 for j in 1:2]
+    scales = [ContinuousTimeSEM.log1p_exp(2 * values[spec.levels[1].sd_index[j]] - 1) *
+              spec.levels[1].sd_scale[j] + 1e-10 for j in 1:2]
     base = zeros(2, 2)
     base[1, 1] = scales[1]; base[2, 2] = scales[2]
-    base[2, 1] = 2 / (1 + exp(-values[spec.cor_index[1]])) - 1
+    base[2, 1] = 2 / (1 + exp(-values[spec.levels[1].cor_index[1]])) - 1
     corsqrt = ContinuousTimeSEM.constraincorsqrt1(base)
     correlation = corsqrt * corsqrt'
     scaled = scales .+ 1e-8
@@ -460,7 +591,7 @@ end
     # unidentified; the run must still produce a finite value and say what
     # happened, rather than returning a silently meaningless number.
     degenerate = copy(values)
-    degenerate[laplace.spec.sd_index] .= -40.0
+    degenerate[laplace.spec.levels[1].sd_index] .= -40.0
     result = ctsem_laplace_evaluate(laplace, degenerate; gradient=false)
     @test isfinite(result.value)
     diagnostics = ctsem_laplace_diagnostics(laplace)

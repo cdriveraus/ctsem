@@ -579,7 +579,52 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # reusing it means priors, uncertainty and the summary need no Laplace-specific
 # case -- and the two routes' raw vectors are directly comparable, which is
 # what makes an augmented-versus-Laplace check meaningful at all.
-.ctJuliaLaplaceSpec <- function(model, table, prepared_data = NULL) {
+# Which parameters vary at a given level, and the column that says so.
+#
+# The subject level keeps `indvarying`, unchanged and backward compatible. Each
+# grouping level above it gets `indvarying_<idname>` -- explicit rather than
+# positional, so a model carrying three levels reads as three named columns
+# rather than as a matrix nobody can check by eye.
+.ctJuliaLevelColumn <- function(model, level) {
+  if (level == 1L) return("indvarying")
+  paste0("indvarying_", model$groupIDnames[level - 1L])
+}
+
+# Each subject's group at each level, and a check that the nesting is strict.
+#
+# Strict nesting is what makes the hierarchy a tree, and a tree is what lets the
+# integral factorise into one unit per outermost group. A subject appearing in
+# two studies is not a hierarchy this method can integrate, so it is refused
+# here rather than producing a quietly wrong answer later.
+.ctJuliaHierarchy <- function(dat, model) {
+  subjects <- unique(dat[[model$subjectIDname]])
+  levels <- list(list(name = model$subjectIDname,
+    group = seq_along(subjects), ngroups = length(subjects),
+    labels = subjects))
+  for (nm in model$groupIDnames) {
+    if (!nm %in% colnames(dat)) {
+      stop("Grouping id column '", nm, "' not found in the data.", call. = FALSE)
+    }
+    rows <- match(subjects, dat[[model$subjectIDname]])
+    labels <- dat[[nm]][rows]
+    # One group per subject, and the same one on every row of that subject.
+    perrow <- split(dat[[nm]], dat[[model$subjectIDname]])
+    ambiguous <- names(perrow)[vapply(perrow, function(x) length(unique(x)) > 1L, logical(1))]
+    if (length(ambiguous)) {
+      stop("Subject(s) ", paste(utils::head(ambiguous, 5), collapse = ", "),
+        " have more than one value of '", nm, "'. The hierarchy must be strictly ",
+        "nested: each subject belongs to exactly one group at every level.",
+        call. = FALSE)
+    }
+    unique_labels <- unique(labels)
+    levels[[length(levels) + 1L]] <- list(name = nm,
+      group = match(labels, unique_labels), ngroups = length(unique_labels),
+      labels = unique_labels)
+  }
+  levels
+}
+
+.ctJuliaLaplaceSpec <- function(model, table, prepared_data = NULL, dat = NULL) {
   base_npar <- suppressWarnings(max(c(0L, as.integer(table$parnumber)), na.rm = TRUE))
   varying <- integer()
   sdscale <- numeric()
@@ -602,17 +647,59 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   sdscale <- sdscale[usable]
   sdscale[!is.finite(sdscale)] <- 1
 
-  k <- length(varying)
-  noffdiagonals <- as.integer(k * (k - 1L) / 2L)
+  hierarchy <- if (is.null(dat)) .ctJuliaHierarchy(
+    data.frame(setNames(list(seq_along(unique(varying))), model$subjectIDname)),
+    model) else .ctJuliaHierarchy(dat, model)
+
+  # Level 1 is the subject level and uses the `indvarying` set found above.
+  # Outer levels read their own column.
+  setup <- if (!is.null(model$modelmats$matsetup)) as.data.frame(model$modelmats$matsetup) else NULL
+  cursor <- base_npar
+  levels <- list()
+  for (l in seq_along(hierarchy)) {
+    if (l == 1L) {
+      lv_varying <- varying; lv_scale <- sdscale
+    } else {
+      column <- .ctJuliaLevelColumn(model, l)
+      lv_varying <- integer(); lv_scale <- numeric()
+      if (column %in% names(model$pars)) {
+        names_at_level <- unique(model$pars$param[model$pars[[column]] %in% TRUE &
+          !is.na(model$pars$param) & is.na(model$pars$value)])
+        hit <- which(!is.na(table$parnumber) & table$param %in% names_at_level)
+        lv_varying <- sort(unique(as.integer(table$parnumber[hit])))
+        lv_varying <- lv_varying[lv_varying <= base_npar]
+        lv_scale <- rep(1, length(lv_varying))
+      }
+    }
+    k <- length(lv_varying)
+    noff <- as.integer(k * (k - 1L) / 2L)
+    levels[[l]] <- list(
+      name = hierarchy[[l]]$name,
+      re_index = as.integer(lv_varying),
+      sd_index = if (k) as.integer(cursor + seq_len(k)) else integer(),
+      cor_index = if (noff) as.integer(cursor + k + seq_len(noff)) else integer(),
+      sd_scale = as.numeric(lv_scale),
+      param = .ctJuliaLaplaceNames(table, lv_varying),
+      nrandom = as.integer(k),
+      group = as.integer(hierarchy[[l]]$group),
+      ngroups = as.integer(hierarchy[[l]]$ngroups),
+      labels = hierarchy[[l]]$labels)
+    cursor <- cursor + k + noff
+  }
+
+  total <- sum(vapply(levels, function(x) x$nrandom, integer(1)))
   list(
-    re_index = as.integer(varying),
-    sd_index = if (k) as.integer(base_npar + seq_len(k)) else integer(),
-    cor_index = if (noffdiagonals) as.integer(base_npar + k + seq_len(noffdiagonals)) else integer(),
-    sd_scale = as.numeric(sdscale),
-    param = .ctJuliaLaplaceNames(table, varying),
-    nrandom = as.integer(k),
+    levels = levels,
+    # Level-one fields kept at the top for every existing single-level caller.
+    re_index = levels[[1]]$re_index,
+    sd_index = levels[[1]]$sd_index,
+    cor_index = levels[[1]]$cor_index,
+    sd_scale = levels[[1]]$sd_scale,
+    param = levels[[1]]$param,
+    nrandom = as.integer(total),
+    nlevels = length(levels),
     base_npar = as.integer(base_npar),
-    npar = as.integer(base_npar + k + noffdiagonals)
+    npar = as.integer(cursor)
   )
 }
 
@@ -885,7 +972,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     # No state augmentation at all: the model the engine filters is the plain
     # per-subject one, and the random effects are described alongside it.
     parameter_table <- .ctJuliaParameterTable(model)
-    laplace <- .ctJuliaLaplaceSpec(model, parameter_table, prepared_data)
+    laplace <- .ctJuliaLaplaceSpec(model, parameter_table, prepared_data, dat)
     if (!laplace$nrandom) {
       stop("intoverpop='laplace' was requested but no parameters are marked ",
         "indvarying, so there is nothing to integrate over. Mark parameters as ",
@@ -901,8 +988,14 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     parameter_table <- augmented$parameter_table
     ti_effects <- .ctJuliaTIEffects(parameter_table, model)
   }
-  npar <- max(c(parameter_table$parnumber, laplace$sd_index, laplace$cor_index,
-    ti_effects$coefficient), na.rm = TRUE)
+  # `laplace$npar` already counts every level's scales and correlations. Taking
+  # the maximum over the *level-one* index vectors instead sized the raw vector
+  # to the subject level alone, so an outer level's scale sat past the end of
+  # it: every evaluation threw a bounds error, was swallowed by the optimizer's
+  # invalid-point guard, and the level stayed pinned at its starting value while
+  # reporting a plausible-looking number.
+  npar <- if (!is.null(laplace)) laplace$npar else
+    max(c(parameter_table$parnumber, ti_effects$coefficient), na.rm = TRUE)
   prior_spec <- if (isTRUE(priors)) .ctBackendPriorSpec(prepared_data, npar) else NULL
   list(
     class = "ctJuliaModel",
@@ -999,12 +1092,24 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # deadlocks marshalling one -- `cor_index` is empty whenever a model has a
   # single random effect.
   if (!is.null(spec$laplace)) {
+    levels <- spec$laplace$levels
+    grab <- function(field) unlist(lapply(levels, function(x) x[[field]]), use.names = FALSE)
     laplace_args <- list(objective,
-      re_index = .ctJuliaVector(as.integer(spec$laplace$re_index)),
-      sd_index = .ctJuliaVector(as.integer(spec$laplace$sd_index)),
-      sd_scale = .ctJuliaVector(as.numeric(spec$laplace$sd_scale)))
-    if (length(spec$laplace$cor_index)) {
-      laplace_args$cor_index <- .ctJuliaVector(as.integer(spec$laplace$cor_index))
+      re_index = .ctJuliaVector(as.integer(grab("re_index"))),
+      sd_index = .ctJuliaVector(as.integer(grab("sd_index"))),
+      sd_scale = .ctJuliaVector(as.numeric(grab("sd_scale"))))
+    if (length(grab("cor_index"))) {
+      laplace_args$cor_index <- .ctJuliaVector(as.integer(grab("cor_index")))
+    }
+    if (length(levels) > 1L) {
+      # Concatenated innermost level first, split on the far side by the
+      # per-level counts. Flat vectors because the bridge marshals those and
+      # not nested structures.
+      laplace_args$level_nre <- .ctJuliaVector(as.integer(vapply(levels,
+        function(x) x$nrandom, integer(1))))
+      laplace_args$group <- .ctJuliaVector(as.integer(grab("group")))
+      laplace_args$level_ngroups <- .ctJuliaVector(as.integer(vapply(levels,
+        function(x) x$ngroups, integer(1))))
     }
     objective <- do.call(module$ctsem_laplace_objective, laplace_args)
   }
@@ -1135,8 +1240,9 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
     project = project, priors = priors, intoverpop = intoverpop)
   if (!fit) return(structure(model_spec, class = c("ctJuliaModel", "ctFitModel")))
 
-  npar <- max(c(model_spec$parameter_table$parnumber, model_spec$laplace$sd_index,
-    model_spec$laplace$cor_index, model_spec$ti_effects$coefficient), na.rm = TRUE)
+  npar <- if (!is.null(model_spec$laplace)) model_spec$laplace$npar else
+    max(c(model_spec$parameter_table$parnumber,
+      model_spec$ti_effects$coefficient), na.rm = TRUE)
   start <- .ctJuliaInitialValues(npar, inits)
   result <- .ctJuliaOptimise(model_spec, start, backendcontrol = backendcontrol,
     gradient = gradient, cores = cores, verbose = verbose)
@@ -1165,6 +1271,12 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
     out$laplace <- list(
       nrandom = model_spec$laplace$nrandom,
       param = model_spec$laplace$param,
+      nlevels = model_spec$laplace$nlevels,
+      levels = lapply(model_spec$laplace$levels, function(x)
+        list(name = x$name, param = x$param, nrandom = x$nrandom,
+          ngroups = x$ngroups)),
+      linesearch = if (is.null(result$linesearch)) NA_character_ else
+        as.character(result$linesearch),
       inner_converged = isTRUE(result$inner_converged),
       inner_iterations = as.integer(result$inner_iterations),
       hessian_repaired = as.logical(result$hessian_repaired))

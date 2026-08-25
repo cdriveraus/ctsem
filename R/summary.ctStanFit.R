@@ -421,6 +421,14 @@ summaryCtStanFitLabel <- function(x){
     uncertaintyNote = 'Note',
     parmatNote = 'Note')
   if(x %in% names(labels)) return(unname(labels[x]))
+  # A hierarchy names its levels, so a section can be `popsd.study`. The label
+  # is the base label with the level in brackets, which keeps a multilevel
+  # summary readable without a separate print method for it.
+  if(grepl('.', x, fixed=TRUE)){
+    base <- sub('\\..*$', '', x)
+    level <- sub('^[^.]*\\.', '', x)
+    if(base %in% names(labels)) return(paste0(unname(labels[base]), ' (', level, ')'))
+  }
   gsub('([a-z])([A-Z])', '\\1 \\2', x)
 }
 

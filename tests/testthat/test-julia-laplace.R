@@ -201,6 +201,119 @@ test_that("verbose reports the optimiser trace and the inner solve", {
   expect_false(any(grepl("Laplace: inner modes", quiet, fixed = TRUE)))
 })
 
+# --- subjects nested in studies ----------------------------------------------
+
+.laplace_nested_model <- function() {
+  model <- suppressWarnings(suppressMessages(ctModel(
+    type = "ct", manifestNames = "Y1", latentNames = "eta1",
+    LAMBDA = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
+    T0VAR = matrix(0.5), MANIFESTMEANS = matrix("mmean"),
+    id = c("subject", "study"))))
+  model$pars$indvarying <- FALSE
+  model$pars$indvarying[model$pars$param %in% "mmean"] <- TRUE
+  # A grouping level above the subject declares its varying parameters in
+  # `indvarying_<idname>`, the same way the subject level uses `indvarying`.
+  model$pars$indvarying_study <- FALSE
+  model$pars$indvarying_study[model$pars$param %in% "mmean"] <- TRUE
+  model
+}
+
+.laplace_nested_data <- function(nstudy = 8, npersub = 5, nobs = 5) {
+  set.seed(20260825)
+  rows <- list(); sid <- 0
+  for (g in seq_len(nstudy)) {
+    studyeffect <- stats::rnorm(1, 0, 0.10)
+    for (j in seq_len(npersub)) {
+      sid <- sid + 1
+      intercept <- 10 * (0.15 + studyeffect + stats::rnorm(1, 0, 0.06))
+      state <- stats::rnorm(1, 0, 0.5); out <- numeric(nobs)
+      for (t in seq_len(nobs)) {
+        if (t > 1) {
+          decay <- exp(-0.4)
+          state <- decay * state + stats::rnorm(1, 0, sqrt(0.36 / 0.8 * (1 - decay^2)))
+        }
+        out[t] <- state + intercept + stats::rnorm(1, 0, 0.3)
+      }
+      rows[[length(rows) + 1L]] <- data.frame(subject = sid, study = g,
+        time = seq_len(nobs) - 1, Y1 = out)
+    }
+  }
+  do.call(rbind, rows)
+}
+
+test_that("a vector of id columns builds one level per id", {
+  model <- .laplace_nested_model()
+  dat <- .laplace_nested_data()
+  spec <- suppressMessages(ctFit(dat, model, backend = "julia",
+    intoverpop = "laplace", fit = FALSE))
+  laplace <- spec$laplace
+
+  expect_equal(laplace$nlevels, 2L)
+  expect_equal(vapply(laplace$levels, function(x) x$name, character(1)),
+    c("subject", "study"))
+  expect_equal(laplace$levels[[1]]$ngroups, 40L)   # subjects
+  expect_equal(laplace$levels[[2]]$ngroups, 8L)    # studies
+  expect_equal(laplace$levels[[1]]$param, "mmean")
+  expect_equal(laplace$levels[[2]]$param, "mmean")
+
+  # Every level's scale gets its own slot in the raw vector, and `npar` counts
+  # them all. Sizing the raw vector from the subject level alone left the study
+  # scale past its end, where it silently never moved.
+  expect_equal(laplace$levels[[1]]$sd_index, laplace$base_npar + 1L)
+  expect_equal(laplace$levels[[2]]$sd_index, laplace$base_npar + 2L)
+  expect_equal(laplace$npar, laplace$base_npar + 2L)
+  expect_length(ctsem:::.ctJuliaInitialValues(laplace$npar), laplace$npar)
+})
+
+test_that("strict nesting is required, and said so when it is not", {
+  model <- .laplace_nested_model()
+  dat <- .laplace_nested_data()
+  dat$study[dat$subject == 1][1] <- 99   # one subject in two studies
+  expect_error(suppressMessages(ctFit(dat, model, backend = "julia",
+    intoverpop = "laplace", fit = FALSE)), "strictly nested")
+
+  missingcol <- .laplace_nested_data()
+  missingcol$study <- NULL
+  expect_error(suppressMessages(ctFit(missingcol, model, backend = "julia",
+    intoverpop = "laplace", fit = FALSE)), "not found in the data")
+})
+
+test_that("both levels of a nested fit are estimated and reported separately", {
+  skip_without_julia()
+  model <- .laplace_nested_model()
+  dat <- .laplace_nested_data(nstudy = 12, npersub = 5)
+
+  fit <- suppressMessages(suppressWarnings(ctFit(dat, model, backend = "julia",
+    intoverpop = "laplace", optimcontrol = list(finishsamples = 60))))
+  expect_true(fit$laplace$inner_converged)
+  expect_equal(fit$laplace$nlevels, 2L)
+
+  summarised <- summary(fit, residualcov = FALSE)
+  # With more than one level nothing goes in the unlabelled `popsd` slot: a bare
+  # table would leave the reader guessing whether it described spread between
+  # subjects or between studies.
+  expect_null(summarised$popsd)
+  expect_true("popsd.subject" %in% names(summarised))
+  expect_true("popsd.study" %in% names(summarised))
+  expect_true(!is.null(summarised$randomEffects))
+  expect_equal(length(summarised$randomEffects), 2L)
+
+  # Simulated with a subject sd of 0.6 and a study sd of 1.0 on the transformed
+  # scale. A recovery check, not a precision claim: it fails if a level is read
+  # off the wrong parameter, on the wrong scale, or -- as it did -- pinned at
+  # its starting value because the raw vector was too short to hold it.
+  subject <- summarised$popsd.subject["mmean", "mean"]
+  study <- summarised$popsd.study["mmean", "mean"]
+  expect_gt(subject, 0.3); expect_lt(subject, 1.1)
+  expect_gt(study, 0.4);   expect_lt(study, 2.2)
+
+  # The two levels must not be reported as the *same* number, which is what a
+  # mis-wired level index would produce. Requiring them to differ by some
+  # margin instead would be wrong: two genuinely distinct levels can land close
+  # together by chance, and this assertion is about wiring, not about spacing.
+  expect_false(isTRUE(all.equal(subject, study)))
+})
+
 test_that("unsupported ways of asking for Laplace fail rather than doing something else", {
   model <- .laplace_test_model()
   dat <- .laplace_test_data(nsubjects = 4, nobs = 4)

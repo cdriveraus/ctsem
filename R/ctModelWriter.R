@@ -271,7 +271,12 @@ ctModelTransformsToNum<-function(ctm){
     
     nctspec <- nctspec[,c('matrix','row','col','param','value','transform','multiplier',
       'offset','meanscale','inneroffset','indvarying','sdscale',
-      colnames(ctm$pars)[grep('_effect',colnames(ctm$pars),fixed=TRUE)]) ]
+      colnames(ctm$pars)[grep('_effect',colnames(ctm$pars),fixed=TRUE)],
+      # `indvarying_<level>` says which parameters vary at a grouping level
+      # above the subject, and is exactly as much a part of the specification as
+      # `indvarying` is. Dropping it here silently produced a study level with
+      # no random effects in it.
+      colnames(ctm$pars)[grep('^indvarying_',colnames(ctm$pars))]) ]
     # 
     if(any(rl(suppressWarnings(as.numeric(nctspec$transform)) >= 6))){ #if any are jacobian calcs length(tformshapes(singletext = TRUE))))) {
       nctspec$transform[rl(suppressWarnings(as.numeric(nctspec$transform)) >= 6)] <- #adjust jacobian gradients

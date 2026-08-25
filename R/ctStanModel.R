@@ -465,7 +465,13 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   out<-list(pars=ctspec,n.latent=n.latent,n.manifest=n.manifest,n.TIpred=n.TIpred,n.TDpred=n.TDpred,
     latentNames=latentNames,manifestNames=manifestNames,
     TIpredNames=TIpredNames,TDpredNames=TDpredNames,
-    subjectIDname=ctm$id,
+    # `id` may name a hierarchy rather than a single column: innermost
+    # (subject) first, then any grouping levels above it -- e.g.
+    # id = c('subject','study'). `subjectIDname` stays the scalar every
+    # existing code path expects, and the rest is carried alongside so nothing
+    # downstream has to learn about vectors it does not use.
+    subjectIDname=ctm$id[1],
+    groupIDnames=if(length(ctm$id) > 1) ctm$id[-1] else character(),
     timeName=ctm$time,
     continuoustime=continuoustime,
     manifesttype=ctmodelobj$manifesttype)
