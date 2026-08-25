@@ -305,6 +305,40 @@ end
     @test norm(exact.gradient - approximate.gradient) / norm(exact.gradient) > 1e-6
 end
 
+@testset "the envelope gradient is the forward sweep it replaces" begin
+    # The approximate gradient is assembled by hand from one reverse sweep per
+    # subject plus the population-covariance Jacobian, rather than by
+    # differentiating the summed inner objective in forward mode. The hand
+    # assembly is what makes it cheap; this checks it is the same number.
+    #
+    # The referee holds the modes fixed, exactly as the envelope theorem
+    # licenses, and differentiates the sum of inner objectives directly.
+    laplace, values = _fresh_linear()
+    result = ctsem_laplace_evaluate(laplace, values; gradient=true,
+        gradient_method=:approximate)
+
+    modes = [Vector{Float64}(laplace.modes[:, i])
+             for i in 1:length(laplace.objective.subject_objectives)]
+    summed_inner = function (x)
+        S = eltype(x)
+        ws = ContinuousTimeSEM._laplace_workspace!(laplace, S, length(x))
+        Ld = ContinuousTimeSEM._laplace_popchol(x, laplace.spec)
+        total = zero(S)
+        for i in eachindex(modes)
+            z = convert(Vector{S}, modes[i])
+            total += ContinuousTimeSEM._laplace_inner_objective_gradient(
+                laplace, i, x, Ld, z, ws).value
+        end
+        return total
+    end
+    reference = ForwardDiff.gradient(summed_inner, collect(values))
+    @test norm(result.gradient - reference) / norm(reference) < 1e-9
+
+    # And it is not accidentally the exact gradient: the dropped term is real.
+    exact = ctsem_laplace_evaluate(laplace, values; gradient=true, gradient_method=:exact)
+    @test norm(exact.gradient - result.gradient) / norm(exact.gradient) > 1e-6
+end
+
 @testset "the population covariance follows the Stan parameterisation" begin
     laplace, values = _fresh_linear()
     spec = laplace.spec

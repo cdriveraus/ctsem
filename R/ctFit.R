@@ -116,9 +116,12 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' \code{laplacegradient} is consulted only when \code{intoverpop='laplace'}:
 #' 'exact' (the default) differentiates the whole Laplace objective, including
 #' the log-determinant's dependence on the parameters, and 'approximate' drops
-#' that term for a cheaper gradient. The objective value is the same either way,
-#' but an approximate gradient converges somewhere slightly different, so which
-#' was used is recorded on the fit and reported by \code{summary()}.
+#' that term for a much cheaper gradient. The objective value is the same either
+#' way, so the two are directly comparable, but 'approximate' converges to a
+#' materially different point -- the dropped term depends on the population
+#' scales, which are exactly the parameters it then gets wrong. Treat it as a
+#' way to get quickly to a starting point, not as a cheaper route to the same
+#' estimates. Which was used is recorded on the fit.
 #' With \code{backend='julia'}, \code{optimcontrol$gradient} selects the
 #' gradient method: \code{'adjoint'} (reverse mode, the default) or
 #' \code{'forward'} (ForwardDiff). Both compute the same gradient; 'adjoint'

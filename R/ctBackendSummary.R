@@ -635,6 +635,57 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   list(parnumber = parnumber, param = parname, rawsd = rawsd, rawcorr = rawcorr)
 }
 
+# Subject parameters on the Laplace route.
+#
+# The augmented route reads these off the filter, because there the random
+# effects *are* states and the filter estimates them. Here they come from the
+# inner modes instead, which is the same conditional-mode quantity by a
+# different route: the engine assembles each subject's raw vector -- population
+# values, plus its own random effects, plus its own TI-predictor effects -- and
+# it is pushed through the model's transforms by the same code that produces the
+# population values, so a subject's parameter and the population parameter are
+# reported on the same scale by construction.
+#
+# Point estimate only. Posterior draws would need the inner mode re-solved at
+# every draw, which is a real computation rather than a lookup, and returning
+# the point-estimate modes against varying population draws would silently
+# understate the spread it is being asked for.
+.ctBackendLaplaceSubjectPars <- function(fit, spec, pointest = TRUE) {
+  if (!isTRUE(pointest)) {
+    stop("Subject parameters for intoverpop='laplace' are available at the point ",
+      "estimate only: each posterior draw implies a different random-effect mode, ",
+      "which has to be solved for rather than looked up. Use pointest=TRUE.",
+      call. = FALSE)
+  }
+  cells <- .ctBackendFreeParameterCells(fit)
+  cells <- cells[!cells$randomeffect, , drop = FALSE]
+  varying <- as.integer(spec$laplace$re_index)
+  if (!is.null(spec$ti_effects) && nrow(spec$ti_effects)) {
+    varying <- c(varying, as.integer(spec$ti_effects$parameter))
+  }
+  varying <- sort(unique(varying[!is.na(varying)]))
+  varying <- varying[varying %in% cells$parnumber]
+  if (!length(varying)) stop("No individually varying parameters in model!", call. = FALSE)
+
+  module <- .ctJuliaModule(spec$project)
+  subject_raw <- JuliaConnectoR::juliaGet(module$ctsem_laplace_subject_values(
+    .ctJuliaObjective(fit), .ctJuliaNumericVector(fit$estimate$raw)))
+  subject_raw <- matrix(as.numeric(subject_raw), ncol = length(fit$estimate$raw))
+
+  index <- match(varying, cells$parnumber)
+  selected <- cells[index, , drop = FALSE]
+  layout <- .ctBackendSummaryLayout(fit)
+  values <- .ctBackendPopCellValues(fit, subject_raw, selected, layout)
+
+  parnames <- .ctBackendParameterNames(cells)[index]
+  alphabetical <- order(parnames)
+  out <- array(as.numeric(values[, alphabetical, drop = FALSE]),
+    dim = c(1L, nrow(subject_raw), length(varying)))
+  dimnames(out) <- list(iter = 1L, subject = seq_len(nrow(subject_raw)),
+    param = parnames[alphabetical])
+  out
+}
+
 # The Laplace route's population scales and correlations. There is no carrier
 # state to read them off, and no state-unit rescaling to undo: the population
 # covariance is built on the raw parameter scale in the first place, so the
@@ -698,6 +749,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # CINT`, transform applied, rather than from its raw carrier state.
 .ctBackendSubjectPars <- function(fit, pointest = TRUE, nsamples = "all") {
   spec <- .ctBackendSpec(fit)
+  if (!is.null(spec$laplace)) return(.ctBackendLaplaceSubjectPars(fit, spec, pointest))
   cells <- .ctBackendFreeParameterCells(fit)
   cells <- cells[!cells$randomeffect, , drop = FALSE]
 

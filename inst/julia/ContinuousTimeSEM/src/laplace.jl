@@ -67,10 +67,18 @@ to the primal and exactly `-H^-1 dg/dtheta` to the dual -- which is the implicit
 function theorem, obtained without ever forming `dH/dtheta` by hand.
 
 `gradient_method = :approximate` drops the log-determinant's dependence on
-`theta` and keeps only the envelope term. That is roughly the cost of an
-ordinary gradient rather than of a Hessian, and it is useful for exploratory
-fits, but it converges to a slightly wrong point: it is reported as approximate
-in the diagnostics rather than presented as the same thing.
+`theta` and keeps only the envelope term, which costs one reverse sweep per
+subject instead of one per parameter chunk per subject.
+
+It is a warm-start and exploration tool, not a cheaper route to the same
+answer. The dropped term is `-tr(H^-1 dH/dtheta)/2`, and `H` depends on the
+population scales directly, so those are precisely the parameters whose
+gradient is most wrong without it. On the linear test model in
+`tests/testthat/test-julia-laplace.R` the approximate route settles some 35 log
+likelihood units short of the exact one. The *value* reported is the true
+Laplace value in both cases -- only the gradient differs -- so the two are
+directly comparable, and which was used is carried through to the fit rather
+than left to be inferred.
 """
 
 using LinearAlgebra
@@ -554,6 +562,84 @@ function _laplace_subject_term(laplace::CTSEMLaplaceObjective, i::Integer,
 end
 
 """
+    _laplace_popchol_jacobian(values, spec)
+
+`(positions, jacobian)`: where the population covariance parameters sit in the
+raw vector, and the derivative of `vec(L)` with respect to them.
+
+Cheap regardless of the model, because `L` is a `k x k` Cholesky of something
+built only from those parameters -- no filter, no data, no process model. This
+is what lets the envelope gradient stay at one reverse sweep per subject: the
+random effects' dependence on the population parameters is `(dL/dp) * z`, and
+`dL/dp` is the same for every subject.
+"""
+function _laplace_popchol_jacobian(values::AbstractVector{Float64},
+    spec::CTSEMLaplaceSpec)
+    positions = vcat(spec.sd_index, spec.cor_index)
+    isempty(positions) && return (positions, zeros(Float64, 0, 0))
+    chol_of = function (p)
+        v = convert(Vector{eltype(p)}, values)
+        @inbounds for (slot, position) in enumerate(positions)
+            v[position] = p[slot]
+        end
+        return vec(_laplace_popchol(v, spec))
+    end
+    return (positions, ForwardDiff.jacobian(chol_of, values[positions]))
+end
+
+"""
+    _laplace_envelope_gradient(laplace, values, L, hessians)
+
+The approximate outer gradient: the log determinant's parameter dependence
+dropped, the mode held fixed, everything else exact.
+
+    dL/dtheta ~= sum_i [ dll_i/dv  +  (dL/dp * zhat_i)' restricted(dll_i/dv) ]
+
+The first term is the engine's own reverse pass at subject `i`'s shifted
+parameter vector; the second is how that subject's shift moves when the
+population scales and correlations move, which is `dL/dp` -- computed once for
+all subjects -- contracted with the same gradient. One reverse sweep per
+subject, and no forward directions over the model parameters at all.
+"""
+function _laplace_envelope_gradient(laplace::CTSEMLaplaceObjective,
+    values::AbstractVector{Float64}, L::AbstractMatrix{Float64},
+    hessians::Vector{Matrix{Float64}})
+    spec = laplace.spec
+    k = nrandomeffects(spec)
+    npar = length(values)
+    nsubjects = length(laplace.objective.subject_objectives)
+    aws = _laplace_workspace!(laplace, Float64, npar)
+    positions, chol_jacobian = _laplace_popchol_jacobian(values, spec)
+
+    total = zeros(Float64, npar)
+    subject_gradient = Vector{Float64}(undef, npar)
+    for i in 1:nsubjects
+        z = Vector{Float64}(laplace.modes[:, i])
+        shifted = _laplace_subject_values(values, spec, L, z)
+        loglik = _laplace_subject_value_gradient!(subject_gradient,
+            laplace.objective.subject_objectives[i], aws, shifted)
+        isfinite(loglik) || return fill(NaN, npar)
+        total .+= subject_gradient
+        k == 0 && continue
+        # (dL/dp_j * z) . restricted gradient, for each population parameter.
+        @inbounds for slot in eachindex(positions)
+            derivative = reshape(view(chol_jacobian, :, slot), k, k)
+            accumulated = 0.0
+            for a in 1:k
+                shift = 0.0
+                for b in 1:k
+                    shift += derivative[a, b] * z[b]
+                end
+                accumulated += subject_gradient[spec.re_index[a]] * shift
+            end
+            total[positions[slot]] += accumulated
+        end
+    end
+    _ctsem_log_prior_gradient!(total, laplace.objective, values)
+    return total
+end
+
+"""
     ctsem_laplace_evaluate(laplace, values; gradient=true, gradient_method=:exact)
 
 The approximated log marginal likelihood, and optionally its gradient.
@@ -568,10 +654,13 @@ from `_laplace_dual_mode`.
   * `:exact` differentiates the complete per-subject term, log determinant and
     implicit mode dependence included. This is the third-order path.
   * `:approximate` keeps the log determinant out of the differentiation, so the
-    gradient omits `-tr(H^-1 dH/dtheta)/2`. The *value* returned is the same
-    true Laplace value in both cases; only the gradient differs, and
-    `approximate = true` is returned alongside it so no caller has to infer
-    which one it got.
+    gradient omits `-tr(H^-1 dH/dtheta)/2` and the mode is held fixed (which
+    costs nothing extra: the envelope theorem makes that term vanish anyway).
+    The *value* returned is the same true Laplace value in both cases; only the
+    gradient differs, and `approximate = true` is returned alongside it so no
+    caller has to infer which one it got. It converges somewhere materially
+    different -- see the note at the top of this file -- so it is for warm
+    starts and exploration, not for final estimates.
 """
 function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     gradient::Bool=true, gradient_method=:exact, contributions::Bool=false)
@@ -582,26 +671,36 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     nsubjects = length(laplace.objective.subject_objectives)
     k = nrandomeffects(laplace.spec)
 
-    # 1. Inner modes, in primal arithmetic, warm-started from the last call.
+    # 1. Inner modes and the value at them, in primal arithmetic, warm-started
+    #    from the last call. Each subject's term is its own approximated log
+    #    marginal likelihood, which is the per-subject quantity that means the
+    #    same thing here as `subject_loglik` does without random effects.
+    #
+    #    The curvature is computed once and used three times -- for the
+    #    definiteness check, for the log determinant, and as the primal solve in
+    #    `_laplace_dual_mode` below. It is the most expensive primal quantity
+    #    here, so recomputing it for each of those would be a third of the
+    #    primal pass thrown away.
     L = _laplace_popchol(theta, laplace.spec)
     primal_hessians = Vector{Matrix{Float64}}(undef, nsubjects)
+    subject_loglik = zeros(Float64, nsubjects)
     aws = _laplace_workspace!(laplace, Float64, length(theta))
+    value = 0.0
     for i in 1:nsubjects
         _laplace_solve_mode!(laplace, i, theta, L)
         z = Vector{Float64}(laplace.modes[:, i])
         H = k == 0 ? zeros(Float64, 0, 0) : _laplace_inner_hessian(laplace, i, theta, L, z)
         _, negated = _laplace_negate_definite(H)
         primal_hessians[i] = negated
-    end
-
-    # 2. The value, at those modes. Each subject's term is its own approximated
-    #    log marginal likelihood, which is the per-subject quantity that means
-    #    the same thing here as `subject_loglik` does without random effects.
-    subject_loglik = zeros(Float64, nsubjects)
-    value = 0.0
-    for i in 1:nsubjects
-        z = Vector{Float64}(laplace.modes[:, i])
-        term = _laplace_subject_term(laplace, i, theta, L, z, aws)
+        inner = _laplace_inner_objective_gradient(laplace, i, theta, L, z, aws)
+        term = if !isfinite(inner.value)
+            inner.value
+        elseif k == 0
+            inner.value
+        else
+            factorization = cholesky(Symmetric(negated); check=false)
+            issuccess(factorization) ? inner.value - logdet(factorization) / 2 : NaN
+        end
         isfinite(term) || return (value=term, gradient=gradient ? fill(NaN, length(theta)) : nothing,
             subject_loglik=subject_loglik, approximate=method === :approximate,
             converged=all(laplace.inner_converged))
@@ -613,7 +712,22 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     gradient || return (value=value, gradient=nothing, subject_loglik=subject_loglik,
         approximate=method === :approximate, converged=all(laplace.inner_converged))
 
-    # 3. The gradient, by one forward sweep over the whole per-subject term.
+    # 3. The gradient.
+    #
+    # The approximate route does not need the forward sweep at all. With the
+    # mode held fixed -- which the envelope theorem says costs nothing, since
+    # `dg/dz` is zero there -- what is left is `dll_i/dtheta` at the shifted
+    # parameter vector, which is exactly what the engine's reverse pass already
+    # returns. That is *one reverse sweep per subject* rather than one per
+    # parameter chunk per subject, and on a 4-latent model with 44 parameters
+    # the difference is the whole reason the cheap mode exists.
+    if method === :approximate
+        return (value=value,
+            gradient=_laplace_envelope_gradient(laplace, theta, L, primal_hessians),
+            subject_loglik=subject_loglik, approximate=true,
+            converged=all(laplace.inner_converged))
+    end
+
     total_of = function (x)
         S = eltype(x)
         wsd = _laplace_workspace!(laplace, S, length(x))
@@ -622,11 +736,7 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
         for i in 1:nsubjects
             zhat = Vector{Float64}(laplace.modes[:, i])
             zd = _laplace_dual_mode(laplace, i, x, zhat, primal_hessians[i], Ld, wsd)
-            if method === :exact
-                accumulated += _laplace_subject_term(laplace, i, x, Ld, zd, wsd)
-            else
-                accumulated += _laplace_inner_objective_gradient(laplace, i, x, Ld, zd, wsd).value
-            end
+            accumulated += _laplace_subject_term(laplace, i, x, Ld, zd, wsd)
         end
         return accumulated + _ctsem_log_prior(laplace.objective, x)
     end
@@ -634,6 +744,43 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     return (value=value, gradient=grad, subject_loglik=subject_loglik,
         approximate=method === :approximate, converged=all(laplace.inner_converged))
 end
+
+"""
+    ctsem_laplace_subject_values(laplace, values)
+
+Each subject's own raw parameter vector at the current inner modes: the
+population vector shifted by that subject's random effects, and then by its
+TI-predictor effects.
+
+Both shifts come from the code that already applies them during fitting --
+`_laplace_subject_values` and the engine's own `_materialize_subject_values!`
+-- rather than being reconstructed by the caller. That matters because the
+caller is the R side's subject-parameter reporting, and a second, slightly
+different copy of "what parameters does this subject have" is exactly the kind
+of divergence that shows up as a summary disagreeing with the fit.
+
+Returns `nsubjects x length(values)`; push a row through the model's transforms
+to get that subject's parameter matrices.
+"""
+function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
+    values::AbstractVector)
+    theta = collect(Float64, values)
+    L = _laplace_popchol(theta, laplace.spec)
+    nsubjects = length(laplace.objective.subject_objectives)
+    out = zeros(Float64, nsubjects, length(theta))
+    buffer = Float64[]
+    for i in 1:nsubjects
+        _laplace_solve_mode!(laplace, i, theta, L)
+        z = Vector{Float64}(laplace.modes[:, i])
+        shifted = _laplace_subject_values(theta, laplace.spec, L, z)
+        subject = laplace.objective.subject_objectives[i]
+        _materialize_subject_values!(buffer, shifted, subject.params, subject.tipreds)
+        out[i, :] = buffer
+    end
+    return out
+end
+
+export ctsem_laplace_subject_values
 
 """
     ctsem_laplace_population(laplace, values)
