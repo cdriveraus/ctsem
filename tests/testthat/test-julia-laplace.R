@@ -145,7 +145,6 @@ test_that("Laplace and augmented agree where the integrand is exactly Gaussian",
   # routes can agree on the likelihood to eight digits while sitting at
   # different points on it. The log likelihood is the claim being made.
 
-  expect_false(laplace$laplace$approximate)
   expect_true(laplace$laplace$inner_converged)
   expect_false(any(laplace$laplace$hessian_repaired))
 })
@@ -166,38 +165,6 @@ test_that("the random-effect population sd is reported and recovers its value", 
   expect_lt(summarised$popsd["mmean", "97.5%"], 3.0)
 })
 
-test_that("the approximate outer gradient shares the objective but is labelled", {
-  skip_without_julia()
-  model <- .laplace_test_model()
-  dat <- .laplace_test_data()
-
-  approximate <- suppressMessages(ctFit(dat, model, backend = "julia",
-    intoverpop = "laplace",
-    optimcontrol = list(estonly = TRUE, laplacegradient = "approximate")))
-
-  expect_true(approximate$laplace$approximate)
-  expect_equal(approximate$laplace$gradient, "approximate")
-  expect_true(is.finite(approximate$estimate$loglik))
-
-  # The dropped term is not a rounding detail. `-logdet(-H)/2` depends on the
-  # population scales through `H` itself, so those are exactly the parameters
-  # whose gradient is most wrong without it, and on this model the approximate
-  # route settles some 35 log likelihood units short of the exact one. The
-  # cheap mode is therefore an exploration and warm-start tool, not a cheaper
-  # way to get the same answer, and the honest assertion is the inequality
-  # rather than an approximate equality with a generous tolerance.
-  exact <- .laplace_exact_fit()
-  expect_gte(exact$estimate$loglik, approximate$estimate$loglik)
-
-  # Both are values of the *same* objective, so the exact route evaluated at
-  # the approximate route's estimate must reproduce the approximate route's
-  # reported value: they differ in where they stop, not in what they compute.
-  reevaluated <- ctsem:::ctJuliaEvaluate(approximate, approximate$estimate$raw,
-    gradient = FALSE)
-  expect_equal(as.numeric(reevaluated$value), approximate$estimate$loglik,
-    tolerance = 1e-6)
-})
-
 test_that("unsupported ways of asking for Laplace fail rather than doing something else", {
   model <- .laplace_test_model()
   dat <- .laplace_test_data(nsubjects = 4, nobs = 4)
@@ -210,9 +177,6 @@ test_that("unsupported ways of asking for Laplace fail rather than doing somethi
   expect_error(suppressMessages(ctFit(dat, nonvarying, backend = "julia",
     intoverpop = "laplace", fit = FALSE)), "nothing to integrate over")
 
-  expect_error(suppressMessages(ctFit(dat, model, backend = "julia",
-    intoverpop = "laplace", optimcontrol = list(laplacegradient = "cheap"),
-    fit = FALSE)), "'exact' or 'approximate'")
 })
 
 test_that("existing intoverpop values keep their existing meanings", {

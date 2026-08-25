@@ -66,19 +66,6 @@ inner gradient's primal part is zero at the mode, that step contributes nothing
 to the primal and exactly `-H^-1 dg/dtheta` to the dual -- which is the implicit
 function theorem, obtained without ever forming `dH/dtheta` by hand.
 
-`gradient_method = :approximate` drops the log-determinant's dependence on
-`theta` and keeps only the envelope term, which costs one reverse sweep per
-subject instead of one per parameter chunk per subject.
-
-It is a warm-start and exploration tool, not a cheaper route to the same
-answer. The dropped term is `-tr(H^-1 dH/dtheta)/2`, and `H` depends on the
-population scales directly, so those are precisely the parameters whose
-gradient is most wrong without it. On the linear test model in
-`tests/testthat/test-julia-laplace.R` the approximate route settles some 35 log
-likelihood units short of the exact one. The *value* reported is the true
-Laplace value in both cases -- only the gradient differs -- so the two are
-directly comparable, and which was used is carried through to the fit rather
-than left to be inferred.
 """
 
 using LinearAlgebra
@@ -562,85 +549,7 @@ function _laplace_subject_term(laplace::CTSEMLaplaceObjective, i::Integer,
 end
 
 """
-    _laplace_popchol_jacobian(values, spec)
-
-`(positions, jacobian)`: where the population covariance parameters sit in the
-raw vector, and the derivative of `vec(L)` with respect to them.
-
-Cheap regardless of the model, because `L` is a `k x k` Cholesky of something
-built only from those parameters -- no filter, no data, no process model. This
-is what lets the envelope gradient stay at one reverse sweep per subject: the
-random effects' dependence on the population parameters is `(dL/dp) * z`, and
-`dL/dp` is the same for every subject.
-"""
-function _laplace_popchol_jacobian(values::AbstractVector{Float64},
-    spec::CTSEMLaplaceSpec)
-    positions = vcat(spec.sd_index, spec.cor_index)
-    isempty(positions) && return (positions, zeros(Float64, 0, 0))
-    chol_of = function (p)
-        v = convert(Vector{eltype(p)}, values)
-        @inbounds for (slot, position) in enumerate(positions)
-            v[position] = p[slot]
-        end
-        return vec(_laplace_popchol(v, spec))
-    end
-    return (positions, ForwardDiff.jacobian(chol_of, values[positions]))
-end
-
-"""
-    _laplace_envelope_gradient(laplace, values, L, hessians)
-
-The approximate outer gradient: the log determinant's parameter dependence
-dropped, the mode held fixed, everything else exact.
-
-    dL/dtheta ~= sum_i [ dll_i/dv  +  (dL/dp * zhat_i)' restricted(dll_i/dv) ]
-
-The first term is the engine's own reverse pass at subject `i`'s shifted
-parameter vector; the second is how that subject's shift moves when the
-population scales and correlations move, which is `dL/dp` -- computed once for
-all subjects -- contracted with the same gradient. One reverse sweep per
-subject, and no forward directions over the model parameters at all.
-"""
-function _laplace_envelope_gradient(laplace::CTSEMLaplaceObjective,
-    values::AbstractVector{Float64}, L::AbstractMatrix{Float64},
-    hessians::Vector{Matrix{Float64}})
-    spec = laplace.spec
-    k = nrandomeffects(spec)
-    npar = length(values)
-    nsubjects = length(laplace.objective.subject_objectives)
-    aws = _laplace_workspace!(laplace, Float64, npar)
-    positions, chol_jacobian = _laplace_popchol_jacobian(values, spec)
-
-    total = zeros(Float64, npar)
-    subject_gradient = Vector{Float64}(undef, npar)
-    for i in 1:nsubjects
-        z = Vector{Float64}(laplace.modes[:, i])
-        shifted = _laplace_subject_values(values, spec, L, z)
-        loglik = _laplace_subject_value_gradient!(subject_gradient,
-            laplace.objective.subject_objectives[i], aws, shifted)
-        isfinite(loglik) || return fill(NaN, npar)
-        total .+= subject_gradient
-        k == 0 && continue
-        # (dL/dp_j * z) . restricted gradient, for each population parameter.
-        @inbounds for slot in eachindex(positions)
-            derivative = reshape(view(chol_jacobian, :, slot), k, k)
-            accumulated = 0.0
-            for a in 1:k
-                shift = 0.0
-                for b in 1:k
-                    shift += derivative[a, b] * z[b]
-                end
-                accumulated += subject_gradient[spec.re_index[a]] * shift
-            end
-            total[positions[slot]] += accumulated
-        end
-    end
-    _ctsem_log_prior_gradient!(total, laplace.objective, values)
-    return total
-end
-
-"""
-    ctsem_laplace_evaluate(laplace, values; gradient=true, gradient_method=:exact)
+    ctsem_laplace_evaluate(laplace, values; gradient=true)
 
 The approximated log marginal likelihood, and optionally its gradient.
 
@@ -649,24 +558,11 @@ are the solution of an optimization problem, and an optimizer's iterates carry
 no useful derivative information. Only the converged mode does, and it gets it
 from `_laplace_dual_mode`.
 
-`gradient_method`:
-
-  * `:exact` differentiates the complete per-subject term, log determinant and
-    implicit mode dependence included. This is the third-order path.
-  * `:approximate` keeps the log determinant out of the differentiation, so the
-    gradient omits `-tr(H^-1 dH/dtheta)/2` and the mode is held fixed (which
-    costs nothing extra: the envelope theorem makes that term vanish anyway).
-    The *value* returned is the same true Laplace value in both cases; only the
-    gradient differs, and `approximate = true` is returned alongside it so no
-    caller has to infer which one it got. It converges somewhere materially
-    different -- see the note at the top of this file -- so it is for warm
-    starts and exploration, not for final estimates.
+The gradient differentiates the complete per-subject term, log determinant and
+implicit mode dependence included.
 """
 function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::AbstractVector;
-    gradient::Bool=true, gradient_method=:exact, contributions::Bool=false)
-    method = Symbol(gradient_method)
-    method in (:exact, :approximate) ||
-        throw(ArgumentError("gradient_method must be :exact or :approximate, got :$(method)"))
+    gradient::Bool=true, contributions::Bool=false)
     theta = collect(Float64, values)
     nsubjects = length(laplace.objective.subject_objectives)
     k = nrandomeffects(laplace.spec)
@@ -686,10 +582,6 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     subject_loglik = zeros(Float64, nsubjects)
     aws = _laplace_workspace!(laplace, Float64, length(theta))
     value = 0.0
-    # The same sum without the log-determinant. This is the objective the
-    # envelope gradient is actually the gradient *of*, and `ctsem_laplace_optimize`
-    # needs the pair to agree -- see the note there.
-    penalised = 0.0
     for i in 1:nsubjects
         _laplace_solve_mode!(laplace, i, theta, L)
         z = Vector{Float64}(laplace.modes[:, i])
@@ -705,38 +597,24 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             factorization = cholesky(Symmetric(negated); check=false)
             issuccess(factorization) ? inner.value - logdet(factorization) / 2 : NaN
         end
-        isfinite(term) || return (value=term, penalised_value=term,
+        isfinite(term) || return (value=term,
             gradient=gradient ? fill(NaN, length(theta)) : nothing,
-            subject_loglik=subject_loglik, approximate=method === :approximate,
-            converged=all(laplace.inner_converged))
+            subject_loglik=subject_loglik, converged=all(laplace.inner_converged))
         subject_loglik[i] = term
         value += term
-        penalised += inner.value
     end
-    prior = _ctsem_log_prior(laplace.objective, theta)
-    value += prior
-    penalised += prior
+    value += _ctsem_log_prior(laplace.objective, theta)
 
-    gradient || return (value=value, penalised_value=penalised, gradient=nothing,
-        subject_loglik=subject_loglik, approximate=method === :approximate,
-        converged=all(laplace.inner_converged))
+    gradient || return (value=value, gradient=nothing,
+        subject_loglik=subject_loglik, converged=all(laplace.inner_converged))
 
-    # 3. The gradient.
+    # 3. The gradient, by one forward sweep over the whole per-subject term.
     #
-    # The approximate route does not need the forward sweep at all. With the
-    # mode held fixed -- which the envelope theorem says costs nothing, since
-    # `dg/dz` is zero there -- what is left is `dll_i/dtheta` at the shifted
-    # parameter vector, which is exactly what the engine's reverse pass already
-    # returns. That is *one reverse sweep per subject* rather than one per
-    # parameter chunk per subject, and on a 4-latent model with 44 parameters
-    # the difference is the whole reason the cheap mode exists.
-    if method === :approximate
-        return (value=value, penalised_value=penalised,
-            gradient=_laplace_envelope_gradient(laplace, theta, L, primal_hessians),
-            subject_loglik=subject_loglik, approximate=true,
-            converged=all(laplace.inner_converged))
-    end
-
+    # This is the `O(npar * k)` step: `npar` forward directions over the outer
+    # sweep, each carrying `k` more for the inner curvature. It is the dominant
+    # cost of a Laplace fit and it is reducible -- see
+    # `multilevelLaplace/benchmarks/laplace-vs-augmented.md` for the seeded
+    # second-order dual scheme that would make it `O(k)`.
     total_of = function (x)
         S = eltype(x)
         wsd = _laplace_workspace!(laplace, S, length(x))
@@ -750,8 +628,7 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
         return accumulated + _ctsem_log_prior(laplace.objective, x)
     end
     grad = ForwardDiff.gradient(total_of, theta)
-    return (value=value, penalised_value=penalised, gradient=grad,
-        subject_loglik=subject_loglik, approximate=method === :approximate,
+    return (value=value, gradient=grad, subject_loglik=subject_loglik,
         converged=all(laplace.inner_converged))
 end
 
@@ -887,42 +764,30 @@ export ctsem_laplace_diagnostics
 Maximize with L-BFGS, mirroring `ctsem_optimize`'s contract so the R side can
 treat the two the same way.
 
-Which objective is maximized depends on `gradient_method`, and this is the one
-place where that matters beyond speed.
+The Laplace value and the Laplace gradient are a consistent pair, so the line
+search behaves and convergence means something.
 
-`:exact` maximizes the Laplace value with the Laplace gradient: a consistent
-pair, so the line search behaves and convergence means something.
-
-`:approximate` maximizes the *penalised* objective `sum_i g_i(zhat_i)` -- the
-Laplace value without its log-determinant -- because that is the objective the
-envelope gradient is the gradient of. Pairing the envelope gradient with the
-full Laplace value instead, which is what this did first, gives L-BFGS a
-descent direction that does not match the function it is evaluating; the
-Hager-Zhang line search then rejects step after step and the fit runs to
-`maxiter` without converging. On the 50-subject recovery model that turned a
-four-second fit into one that had not finished in ten minutes. The reported
-`maximum_loglik` is still the true Laplace value at the point reached, so the
-two methods remain directly comparable -- they optimize different objectives
-and are scored on the same one.
+There used to be a second mode here that maximized the value without its
+log-determinant, using the cheaper envelope gradient. It is gone. Dropping the
+log-determinant leaves the PQL-shaped objective, which is degenerate in the
+variance components -- nothing in it penalises the population scales growing,
+so they run away. A nine-replication recovery study put its population sd at
+19.6 against a truth of 1.0, and one replication failed outright. It was not a
+cheaper route to the same answer, so there is no version of it worth keeping.
 """
 function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractVector;
     maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0, x_tol::Real=0.0,
-    verbose::Bool=false, gradient_method=:exact)
+    verbose::Bool=false)
     start_values = collect(Float64, start)
     invalid_objective = floatmax(Float64) / 1e8
     gradient_limit = sqrt(floatmax(Float64))
-    penalised = Symbol(gradient_method) === :approximate
     fg! = function (F, G, x)
         result = try
-            ctsem_laplace_evaluate(laplace, x; gradient=G !== nothing,
-                gradient_method=gradient_method)
+            ctsem_laplace_evaluate(laplace, x; gradient=G !== nothing)
         catch
             nothing
         end
-        # The objective the line search sees has to be the one the gradient
-        # differentiates; see the note above.
-        objective = result === nothing ? NaN :
-            (penalised ? result.penalised_value : result.value)
+        objective = result === nothing ? NaN : result.value
         valid = result !== nothing && isfinite(objective)
         if valid && G !== nothing
             valid = all(isfinite, result.gradient) &&
@@ -939,14 +804,12 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
         x_abstol=x_tol, show_trace=verbose, store_trace=false)
     result = Optim.optimize(Optim.only_fg!(fg!), start_values, Optim.LBFGS(), options)
     minimizer = collect(Optim.minimizer(result))
-    final = ctsem_laplace_evaluate(laplace, minimizer; gradient=true,
-        gradient_method=gradient_method)
+    final = ctsem_laplace_evaluate(laplace, minimizer; gradient=true)
     return (
         minimizer=minimizer,
         maximum_loglik=final.value,
         gradient=collect(final.gradient),
         subject_loglik=collect(final.subject_loglik),
-        approximate=final.approximate,
         iterations=Optim.iterations(result),
         converged=Optim.converged(result),
         g_converged=Optim.g_converged(result),
@@ -973,7 +836,7 @@ there is evidence the difference matters, and this route is the one whose
 error is at least bounded and reportable.
 """
 function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractVector;
-    step::Real=1e-4, gradient_method=:exact)
+    step::Real=1e-4)
     x = collect(Float64, values)
     n = length(x)
     H = zeros(Float64, n, n)
@@ -981,8 +844,8 @@ function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractV
         h = step * max(1.0, abs(x[j]))
         plus = copy(x); plus[j] += h
         minus = copy(x); minus[j] -= h
-        gp = ctsem_laplace_evaluate(laplace, plus; gradient=true, gradient_method=gradient_method).gradient
-        gm = ctsem_laplace_evaluate(laplace, minus; gradient=true, gradient_method=gradient_method).gradient
+        gp = ctsem_laplace_evaluate(laplace, plus; gradient=true).gradient
+        gm = ctsem_laplace_evaluate(laplace, minus; gradient=true).gradient
         H[:, j] = (gp .- gm) ./ (2h)
     end
     return (H .+ transpose(H)) ./ 2
@@ -1028,14 +891,11 @@ Evaluate a Laplace objective through the generic entry point.
 Returns the approximated log *marginal* likelihood and its gradient. The
 `gradient_method` names the process gradient elsewhere in the engine and has no
 meaning here -- the Laplace gradient is a forward sweep over the reverse pass
-either way -- so it is accepted and ignored rather than rejected, and the
-choice that does matter is `laplace_gradient`.
+regardless -- so it is accepted and ignored rather than rejected.
 """
 function ctsem_evaluate(laplace::CTSEMLaplaceObjective, values::AbstractVector;
-    gradient::Bool=true, contributions::Bool=false, gradient_method=:adjoint,
-    laplace_gradient=:exact)
-    result = ctsem_laplace_evaluate(laplace, values; gradient=gradient,
-        gradient_method=laplace_gradient)
+    gradient::Bool=true, contributions::Bool=false, gradient_method=:adjoint)
+    result = ctsem_laplace_evaluate(laplace, values; gradient=gradient)
     contributions || return (value=result.value, gradient=result.gradient)
     # No `row_loglik`: the integral is over a whole subject's trajectory, so a
     # single row has no marginal contribution to report. Returning the subject

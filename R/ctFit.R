@@ -102,8 +102,7 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' with the number of varying parameters. 'laplace' requires
 #' \code{backend='julia'} and \code{optimize=TRUE}, and is exact whenever the
 #' varying parameters enter the state mean linearly; elsewhere it is an
-#' approximation, and \code{summary()} says so. See
-#' \code{optimcontrol$laplacegradient} for its speed/exactness control.
+#' approximation, and \code{summary()} says so.
 #' @param sameInitialTimes if TRUE, include an empty observation for every subject that has no observation
 #' at the earliest observation time of the dataset. This ensures that the T0MEANS occurs for every subject at the same time,
 #' rather than just at the earliest observation for that subject. Important when modelling trends over time, age, etc.
@@ -113,15 +112,6 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' @param optimize if TRUE, use \code{\link{stanoptimis}} function for maximum a posteriori / importance sampling estimates,
 #' otherwise use the HMC sampler from Stan, which is (much) slower, but generally more robust for complex individual differences.
 #' @param optimcontrol list of parameters sent to \code{\link{stanoptimis}} governing optimization / importance sampling.
-#' \code{laplacegradient} is consulted only when \code{intoverpop='laplace'}:
-#' 'exact' (the default) differentiates the whole Laplace objective, including
-#' the log-determinant's dependence on the parameters, and 'approximate' drops
-#' that term for a much cheaper gradient. The objective value is the same either
-#' way, so the two are directly comparable, but 'approximate' converges to a
-#' materially different point -- the dropped term depends on the population
-#' scales, which are exactly the parameters it then gets wrong. Treat it as a
-#' way to get quickly to a starting point, not as a cheaper route to the same
-#' estimates. Which was used is recorded on the fit.
 #' With \code{backend='julia'}, \code{optimcontrol$gradient} selects the
 #' gradient method: \code{'adjoint'} (reverse mode, the default) or
 #' \code{'forward'} (ForwardDiff). Both compute the same gradient; 'adjoint'

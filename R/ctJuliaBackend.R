@@ -1072,8 +1072,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # the way a fit does -- same tolerances, same gradient method, same thread cap.
 # A second copy of this call would be a second set of defaults to keep in step.
 .ctJuliaOptimise <- function(model_spec, start, backendcontrol = list(),
-  gradient = "adjoint", cores = 1L, verbose = 0L, tol = NULL,
-  laplacegradient = "exact") {
+  gradient = "adjoint", cores = 1L, verbose = 0L, tol = NULL) {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   objective <- .ctJuliaObjective(spec)
   module <- .ctJuliaModule(model_spec$project)
@@ -1088,12 +1087,9 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   if (!is.null(model_spec$laplace)) {
     # `gradient` selects how the *process* likelihood's gradient is taken and
     # does not apply here: the Laplace objective's gradient is a forward sweep
-    # over that reverse pass either way. `laplacegradient` selects whether the
-    # log-determinant's dependence on the parameters is included, which is the
-    # choice that actually changes the answer.
+    # over that reverse pass regardless.
     return(JuliaConnectoR::juliaGet(do.call(module$ctsem_laplace_optimize,
-      c(list(objective, .ctJuliaNumericVector(start)), common,
-        list(gradient_method = laplacegradient)))))
+      c(list(objective, .ctJuliaNumericVector(start)), common))))
   }
   JuliaConnectoR::juliaGet(do.call(module$ctsem_optimize,
     c(list(objective, .ctJuliaNumericVector(start)), common,
@@ -1135,15 +1131,6 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
   # bound with the parameter count. 'forward' remains the default because it
   # is the longer-tested path, not because it is faster; there is no silent
   # fallback between them in either direction.
-  # `optimcontrol$laplacegradient` chooses between the exact outer gradient and
-  # the cheaper one that drops the log-determinant's parameter dependence. It
-  # is only consulted on the Laplace route, and the choice is recorded on the
-  # fit, because an approximate gradient converges somewhere slightly different
-  # and nothing downstream should have to guess which was used.
-  laplacegradient <- .ctJuliaOr(optimcontrol$laplacegradient, "exact")
-  if (!laplacegradient %in% c("exact", "approximate")) {
-    stop("optimcontrol$laplacegradient must be 'exact' or 'approximate'.", call. = FALSE)
-  }
   model_spec <- .ctJuliaPrepare(datalong, model, prepared_data = prepared_data,
     project = project, priors = priors, intoverpop = intoverpop)
   if (!fit) return(structure(model_spec, class = c("ctJuliaModel", "ctFitModel")))
@@ -1152,8 +1139,7 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
     model_spec$laplace$cor_index, model_spec$ti_effects$coefficient), na.rm = TRUE)
   start <- .ctJuliaInitialValues(npar, inits)
   result <- .ctJuliaOptimise(model_spec, start, backendcontrol = backendcontrol,
-    gradient = gradient, cores = cores, verbose = verbose,
-    laplacegradient = laplacegradient)
+    gradient = gradient, cores = cores, verbose = verbose)
   # The engine maximises the log posterior, so its `maximum_loglik` is the log
   # posterior and the per-subject objectives (which carry no prior term) sum to
   # the log likelihood. Without priors the two are the same number; with them
@@ -1177,8 +1163,6 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
     # discarded, since a subject whose mode did not converge contributes a term
     # that is not the integral it is supposed to approximate.
     out$laplace <- list(
-      gradient = laplacegradient,
-      approximate = isTRUE(result$approximate),
       nrandom = model_spec$laplace$nrandom,
       param = model_spec$laplace$param,
       inner_converged = isTRUE(result$inner_converged),

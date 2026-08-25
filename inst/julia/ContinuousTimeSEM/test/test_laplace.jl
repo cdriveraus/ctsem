@@ -211,15 +211,15 @@ function _assert_quadratic(laplace, i, values, reference)
 end
 
 """Central difference of the Laplace *value*, the referee for its gradient."""
-function _value_finite_difference(laplace, values; step=1e-5, gradient_method=:exact)
+function _value_finite_difference(laplace, values; step=1e-5, )
     x = collect(Float64, values)
     out = similar(x)
     for j in eachindex(x)
         h = step * max(1.0, abs(x[j]))
         plus = copy(x); plus[j] += h
         minus = copy(x); minus[j] -= h
-        vp = ctsem_laplace_evaluate(laplace, plus; gradient=false, gradient_method=gradient_method).value
-        vm = ctsem_laplace_evaluate(laplace, minus; gradient=false, gradient_method=gradient_method).value
+        vp = ctsem_laplace_evaluate(laplace, plus; gradient=false).value
+        vm = ctsem_laplace_evaluate(laplace, minus; gradient=false).value
         out[j] = (vp - vm) / (2h)
     end
     return out
@@ -274,8 +274,7 @@ end
 
 @testset "the exact outer gradient is the gradient of the value" begin
     laplace, values = _fresh_linear()
-    result = ctsem_laplace_evaluate(laplace, values; gradient=true, gradient_method=:exact)
-    @test !result.approximate
+    result = ctsem_laplace_evaluate(laplace, values; gradient=true)
     reference = _value_finite_difference(laplace, values)
     @test norm(result.gradient - reference) / norm(reference) < 1e-6
 end
@@ -285,87 +284,10 @@ end
     # in z. The gradient still has to be the gradient *of that value*, which is
     # what makes the outer optimizer's convergence meaningful.
     laplace, values = _fresh_nonlinear()
-    result = ctsem_laplace_evaluate(laplace, values; gradient=true, gradient_method=:exact)
+    result = ctsem_laplace_evaluate(laplace, values; gradient=true)
     @test isfinite(result.value)
     reference = _value_finite_difference(laplace, values)
     @test norm(result.gradient - reference) / norm(reference) < 1e-5
-end
-
-@testset "the approximate gradient shares the value but drops the trace term" begin
-    laplace, values = _fresh_linear()
-    exact = ctsem_laplace_evaluate(laplace, values; gradient=true, gradient_method=:exact)
-    approximate = ctsem_laplace_evaluate(laplace, values; gradient=true, gradient_method=:approximate)
-
-    # Same objective, so the same value -- only the gradient is cheaper.
-    @test isapprox(exact.value, approximate.value; rtol=1e-12)
-    @test approximate.approximate
-    @test !exact.approximate
-    # And it is genuinely a different gradient, not a silently identical one:
-    # if these agreed, the exact path would not be computing anything extra.
-    @test norm(exact.gradient - approximate.gradient) / norm(exact.gradient) > 1e-6
-end
-
-@testset "the envelope gradient is the forward sweep it replaces" begin
-    # The approximate gradient is assembled by hand from one reverse sweep per
-    # subject plus the population-covariance Jacobian, rather than by
-    # differentiating the summed inner objective in forward mode. The hand
-    # assembly is what makes it cheap; this checks it is the same number.
-    #
-    # The referee holds the modes fixed, exactly as the envelope theorem
-    # licenses, and differentiates the sum of inner objectives directly.
-    laplace, values = _fresh_linear()
-    result = ctsem_laplace_evaluate(laplace, values; gradient=true,
-        gradient_method=:approximate)
-
-    modes = [Vector{Float64}(laplace.modes[:, i])
-             for i in 1:length(laplace.objective.subject_objectives)]
-    summed_inner = function (x)
-        S = eltype(x)
-        ws = ContinuousTimeSEM._laplace_workspace!(laplace, S, length(x))
-        Ld = ContinuousTimeSEM._laplace_popchol(x, laplace.spec)
-        total = zero(S)
-        for i in eachindex(modes)
-            z = convert(Vector{S}, modes[i])
-            total += ContinuousTimeSEM._laplace_inner_objective_gradient(
-                laplace, i, x, Ld, z, ws).value
-        end
-        return total
-    end
-    reference = ForwardDiff.gradient(summed_inner, collect(values))
-    @test norm(result.gradient - reference) / norm(reference) < 1e-9
-
-    # And it is not accidentally the exact gradient: the dropped term is real.
-    exact = ctsem_laplace_evaluate(laplace, values; gradient=true, gradient_method=:exact)
-    @test norm(exact.gradient - result.gradient) / norm(exact.gradient) > 1e-6
-end
-
-@testset "the approximate pair is self-consistent" begin
-    # The envelope gradient is the gradient of the *penalised* objective, not of
-    # the Laplace value, and `ctsem_laplace_optimize` therefore hands L-BFGS the
-    # penalised value when it hands it the envelope gradient. If those two ever
-    # drift apart the line search gets a descent direction for a function it is
-    # not evaluating, which does not fail loudly -- it just stops converging.
-    laplace, values = _fresh_linear()
-    result = ctsem_laplace_evaluate(laplace, values; gradient=true,
-        gradient_method=:approximate)
-
-    step = 1e-5
-    fd = similar(collect(values))
-    for j in eachindex(fd)
-        h = step * max(1.0, abs(values[j]))
-        plus = collect(values); plus[j] += h
-        minus = collect(values); minus[j] -= h
-        vp = ctsem_laplace_evaluate(laplace, plus; gradient=false,
-            gradient_method=:approximate).penalised_value
-        vm = ctsem_laplace_evaluate(laplace, minus; gradient=false,
-            gradient_method=:approximate).penalised_value
-        fd[j] = (vp - vm) / (2h)
-    end
-    @test norm(result.gradient - fd) / norm(fd) < 1e-6
-
-    # And the penalised value is the Laplace value less the log determinants,
-    # so the two describe the same fit rather than two unrelated numbers.
-    @test result.penalised_value > result.value
 end
 
 @testset "the population covariance follows the Stan parameterisation" begin
