@@ -84,7 +84,10 @@ function _ctsem_exp_frechet_block(A::AbstractMatrix, E::AbstractMatrix)
         block[1:n, (n + 1):2n] .= E ./ scale
         block[(n + 1):2n, (n + 1):2n] .= A
     end
-    return Matrix(@view exp(block)[1:n, (n + 1):2n]) .* scale
+    # `_ctsem_expm`, not `Base.exp`: for Float64 the two are the same call, but
+    # `Base.exp` has no method for a matrix of duals, which is what this sees
+    # when the gradient itself is being differentiated (see `ctsem_hessian`).
+    return Matrix(@view _ctsem_expm(block)[1:n, (n + 1):2n]) .* scale
 end
 
 """

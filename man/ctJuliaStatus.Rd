@@ -16,8 +16,9 @@ the vendored copy, for engine development.}
 A list describing the selected Julia engine: whether it is
   \code{available}, whether the \code{connectoR} bridge package is installed,
   the \code{julia_bin} directory in use and the \code{julia} version there,
-  the engine \code{revision}, the number of \code{threads} in a running
-  session, and the engine provenance \code{lock}.
+  the \code{engine} version (a hash of the engine source shipped with this
+  ctsem, which is also what its cached project directory is keyed on), and
+  the number of \code{threads} in a running session.
 }
 \description{
 Reports what \code{backend='julia'} would find, and installs nothing: it is

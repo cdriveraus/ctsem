@@ -1,5 +1,19 @@
 # ctsem News
 
+## 25/8/2026
+### 3.12.0
+
+- New `backend='julia'` option for `ctFit()`, using a Julia extended-Kalman-filter engine with a hand-written reverse-mode adjoint for the gradient. `ctJuliaInstall()` supplies whatever is missing -- the bridge package, Julia itself, and the engine's dependencies -- asking before it downloads anything. The engine ships inside ctsem, so no repository access is needed.
+- The julia backend covers continuous and discrete time, individually varying parameters, time-independent and time-dependent predictors, state-dependent (nonlinear) model matrices, and priors. Threading splits the subject loop, giving 2-4x on six threads.
+- `ctFit(backend='julia')` estimates uncertainty as part of fitting, as the stan backend does, and reads the same `optimcontrol` settings for it (`uncertainty`, `uncertaintyDraws`, `finishsamples`, `uncertaintyControl`, and `estonly` to skip). `summary()` therefore reports standard errors and intervals rather than point estimates alone.
+- Uncertainty for julia fits uses an exact Hessian, obtained by differentiating the engine's reverse-mode gradient in forward mode rather than by finite differences. It agrees with the analytic result to machine precision, needs no step size, and costs `npar/chunksize` sweeps instead of `2*npar`.
+- `summary()` for julia fits reports the same sections as an optimized stan fit, in the same order: standardised residual covariance, random-effects correlations, time-independent predictor effects (linearised onto the transformed parameters), system matrices, random-effects standard deviations, fixed effects, and log posterior.
+- Julia fits carry their constrained draws on the fit object, as stan fits carry `transformedpars`, so summarising is a collapse over something already computed rather than a fresh pass through the transforms.
+- `ctLOO()` works with julia fits, including `subjectwise`, `leaveOutN`, `keepfirstobs`, `refit=FALSE` and `casewiseApproximation`.
+- `plot()`, `ctSubjectPars()`, `ctPredict()`, `ctKalman()`, `ctPredictTIP()`, `ctResiduals()`, `ctACFresiduals()`, `ctDiscretePars()`, `ctSummaryMatrices()`, `ctExtract()`, `ctGenerateFromFit()`, `ctPostPredPlots()` and `ctFitCovCheck()` all accept julia fits.
+- The julia engine improves on three reported quantities: the measurement model is re-evaluated at the updated state before the filtered observation is recorded, the interval transition composes its substeps rather than recomputing an exponential from the last one, and the transition includes the time-dependent predictor impulse Jacobian.
+- Fixed: population values and standard deviations for individually varying parameters implemented as state expansions were reported from the raw carrier state, without the parameter's own transform applied.
+
 ## 29/6/2026
 ### 3.11.0
 

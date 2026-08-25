@@ -90,7 +90,12 @@ gradient method: \code{'adjoint'} (reverse mode, the default) or
 \code{'forward'} (ForwardDiff). Both compute the same gradient; 'adjoint'
 costs the same regardless of the number of free parameters, so it is
 dramatically faster for larger models and marginally slower for very small
-ones.}
+ones.
+\code{backend='julia'} also finishes by estimating uncertainty, as the stan
+backend does, and reads the same \code{stanoptimis} control names for it:
+\code{uncertainty} (default \code{'hessian'}), \code{uncertaintyDraws},
+\code{finishsamples}, and \code{uncertaintyControl}. Set
+\code{optimcontrol$estonly = TRUE} for point estimates only.}
 
 \item{nlcontrol}{List of non-linear control parameters.
 \code{maxtimestep} must be a positive numeric,  specifying the largest time

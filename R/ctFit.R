@@ -109,6 +109,11 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' costs the same regardless of the number of free parameters, so it is
 #' dramatically faster for larger models and marginally slower for very small
 #' ones.
+#' \code{backend='julia'} also finishes by estimating uncertainty, as the stan
+#' backend does, and reads the same \code{stanoptimis} control names for it:
+#' \code{uncertainty} (default \code{'hessian'}), \code{uncertaintyDraws},
+#' \code{finishsamples}, and \code{uncertaintyControl}. Set
+#' \code{optimcontrol$estonly = TRUE} for point estimates only.
 #' @param nopriors deprecated, use priors argument. logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.
 #' @param priors if TRUE, priors are included in computations, otherwise specified priors are ignored.
 #' @param iter used when \code{optimize=FALSE}. number of iterations, half of which will be devoted to warmup by default when sampling.

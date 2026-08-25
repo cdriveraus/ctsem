@@ -260,8 +260,17 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 # parameters themselves.
 .ctBackendCarrierNames <- function(spec, count) {
   effects <- spec$random_effects
-  if (!is.null(effects) && nrow(effects) >= count && !is.null(effects$param)) {
-    return(as.character(effects$param)[seq_len(count)])
+  # Only the states beyond the real latent processes are carriers: a random
+  # effect on T0MEANS varies a genuine state, and has a `random_effects` row
+  # too, so taking the first `count` rows named the wrong parameters whenever
+  # both kinds were present.
+  if (!is.null(effects) && length(effects) && !is.null(effects$param) &&
+      !is.null(spec$nlatent)) {
+    carriers <- effects[effects$type %in% "sd" & effects$row > spec$nlatent, , drop = FALSE]
+    carriers <- carriers[order(carriers$row), , drop = FALSE]
+    if (nrow(carriers) == count && !anyNA(carriers$param)) {
+      return(as.character(carriers$param))
+    }
   }
   paste0("indvar", seq_len(count))
 }
@@ -421,7 +430,17 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
     return(fit)
   }
   spec <- .ctBackendSpec(fit)
-  fit$model_spec <- .ctJuliaPrepare(datalong, .ctFitModelObject(fit),
+  prepared <- .ctJuliaPrepare(datalong, .ctFitModelObject(fit),
     project = spec$project)
+  # Carry across the two things that are properties of the *fit* rather than of
+  # the data, and that re-preparation would otherwise silently drop: the prior
+  # specification (a function of the model, and `priors` defaults to FALSE
+  # here) and the integration step. Prediction does not notice either, but
+  # cross-validation re-optimises against a re-prepared specification, and a
+  # refit that quietly lost its priors or its step size would not be the same
+  # model.
+  prepared$priors <- spec$priors
+  prepared$max_timestep <- spec$max_timestep
+  fit$model_spec <- prepared
   fit
 }

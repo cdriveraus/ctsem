@@ -311,19 +311,21 @@ input costs `O(1)` rather than rebuilding the whole context. Entries outside a
 transform's recorded read set are never consulted, so only the read set and the
 state need to be kept in sync with the primal.
 """
-mutable struct CTSEMDualContext{D,PD,ST}
+mutable struct CTSEMDualContext{D,PD,ST,T}
     data::Vector{D}
     pars::PD
     state::ST
     row_context::Any
     # Scratch for the forward replay in `_ctsem_complex_group_pullback!`,
-    # grown on demand to the largest group seen. `Float64` because the adjoint
-    # path is only ever entered with `Float64` parameters (R hands in doubles);
-    # values round-trip through this buffer, so a wider scalar type would lose
-    # precision here rather than fail loudly.
-    written::Vector{Float64}
+    # grown on demand to the largest group seen. Typed `T` -- the scalar the
+    # surrounding reverse pass works in -- and not `Float64`. It used to be
+    # `Float64` on the reasoning that the adjoint is only ever entered with
+    # doubles from R, which stopped being true the moment the gradient itself
+    # became something to differentiate: `ctsem_hessian` runs this whole pass
+    # at `T = ForwardDiff.Dual`, and parameter values round-trip through here.
+    written::Vector{T}
     # Pre-group values of the cells a group writes, for the reverse walk.
-    saved::Vector{Float64}
+    saved::Vector{T}
 end
 
 function CTSEMDualContext(::Type{T}, sp::EKFParameters, state_like) where {T}
@@ -333,8 +335,8 @@ function CTSEMDualContext(::Type{T}, sp::EKFParameters, state_like) where {T}
     pars = ComponentVector(data, sp.parameter_axis)
     state = similar(state_like, D)
     fill!(state, zero_dual)
-    return CTSEMDualContext{D,typeof(pars),typeof(state)}(data, pars, state, nothing,
-        Float64[], Float64[])
+    return CTSEMDualContext{D,typeof(pars),typeof(state),T}(data, pars, state, nothing,
+        T[], T[])
 end
 
 """Scratch vector of at least `n` slots for one group's replayed writes."""

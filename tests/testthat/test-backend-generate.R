@@ -118,12 +118,14 @@ test_that("ctGenerateFromFit returns what the posterior predictive tools expect"
   expect_true(all(is.na(generated$generated$Y[, which(is.na(data$Y1)), 1])))
 
   # fullposterior needs draws, and says so rather than silently using the mode.
-  expect_error(ctGenerateFromFit(fit, nsamples = 5, fullposterior = TRUE, cores = 1),
+  # A default fit has them, since ctFit() finishes with ctOptimUncertainty(), so
+  # the refusal is only reachable for a fit that deliberately skipped it.
+  estonly <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
+    optimcontrol = list(estonly = TRUE)))
+  expect_error(ctGenerateFromFit(estonly, nsamples = 5, fullposterior = TRUE, cores = 1),
     "ctOptimUncertainty")
 
-  uncertain <- suppressWarnings(suppressMessages(
-    ctOptimUncertainty(fit, uncertainty = "hessian", finishsamples = 50, verbose = 0)))
-  fromposterior <- ctGenerateFromFit(uncertain, nsamples = 10, fullposterior = TRUE,
+  fromposterior <- ctGenerateFromFit(fit, nsamples = 10, fullposterior = TRUE,
     cores = 1)
   expect_equal(dim(fromposterior$generated$Y), c(10L, nrows, 1L))
 })

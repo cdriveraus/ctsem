@@ -16,8 +16,9 @@ ctJuliaSetup(
 \item{project}{Optional local ContinuousTimeSEM.jl checkout to use instead of
 the vendored copy, for engine development.}
 
-\item{revision}{Ignored; retained for backward compatibility. The engine
-revision is whatever is vendored, and is reported by \code{ctJuliaStatus()}.}
+\item{revision}{Ignored; retained for backward compatibility. The engine is
+part of ctsem, and the version \code{ctJuliaStatus()} reports is a hash of
+its source rather than something selectable.}
 
 \item{julia_bin}{Optional Julia binary directory.}
 

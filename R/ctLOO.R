@@ -16,6 +16,20 @@
 #' @param casewiseApproximation if TRUE, use a bootstrapped gradient contributions approach to approximate the cross validation parameters -- much faster but less reliable. 
 #' @param tol tolerance for optimisation of refitted samples, can generally be more relaxed than the tolerance used for fitting initially. 
 #' 
+#' @details Works for \code{backend='julia'} fits as well as stan ones. There,
+#' a held-out row is withheld by setting its manifest observations to missing
+#' and re-preparing, which is a row the filter propagates through without an
+#' update and without a likelihood contribution -- the same thing
+#' \code{standata$dokalmanrows} does for the stan backend. \code{parallelFolds}
+#' is ignored for julia fits, because the engine already threads its own
+#' subject loop and each fold therefore uses every core.
+#'
+#' Be aware that each fold is an independent re-optimisation, and neither
+#' backend's optimizer restarts from a flat direction. On a weakly identified
+#' model, or one where withholding a fold leaves a parameter poorly determined,
+#' two folds -- or two backends -- can converge to noticeably different raw
+#' parameters for a similar likelihood.
+#'
 #' @return list
 #' @export
 #'
@@ -24,12 +38,21 @@
 #' ctLOO(ctstantestfit)
 #' }
 ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
-  subjectwise = ifelse(length(unique(fit$standata$subject)) >= folds, TRUE, FALSE),
+  subjectwise = ifelse(length(unique(.ctFitRowSubject(fit))) >= folds, TRUE, FALSE),
   keepfirstobs = FALSE, leaveOutN = NA, refit = TRUE, casewiseApproximation = FALSE) {
   
+  if(is.na(as.integer(folds))) stop('Folds must be an integer')
+
+  # backend='julia' withholds rows at the data level rather than through
+  # `standata$dokalmanrows`, and refits with the engine's own optimizer; see
+  # .ctBackendLOO at the foot of this file.
+  if(inherits(fit, 'ctJuliaFit')) return(.ctBackendLOO(fit=fit, folds=folds,
+    cores=cores, tol=tol, subjectwise=subjectwise, keepfirstobs=keepfirstobs,
+    leaveOutN=leaveOutN, refit=refit,
+    casewiseApproximation=casewiseApproximation, parallelFolds=parallelFolds))
+
   if (!'ctStanFit' %in% class(fit) || !length(fit$stanfit$stanfit@sim) == 0) 
     stop('Not an optimized ctStanFit object')
-  if(is.na(as.integer(folds))) stop('Folds must be an integer')
   
   message('Using ', cores, '/', parallel::detectCores(), ' available CPU cores')
   if(all(is.na(leaveOutN))){
@@ -180,3 +203,173 @@ ctLOO <- function(fit, folds = 10, cores = 2, parallelFolds = FALSE, tol = 1e-5,
 
 
 
+
+# K-fold cross validation for backend='julia' fits ---------------------------
+#
+# The Stan path withholds rows by zeroing `standata$dokalmanrows`, refits with
+# `stanoptimis`, and reads `llrow` back out of `constrain_pars`. None of those
+# three exist here, but all three have exact equivalents, and the middle one is
+# the only one that needed anything new:
+#
+#   withhold a row  ->  set its manifests to NA and re-prepare. A fully missing
+#                       row is one the filter propagates through without an
+#                       update and without a likelihood contribution, which is
+#                       precisely what `dokalmanrows = 0` means. It is also what
+#                       `removeObs` already does for prediction, so it is a
+#                       tested path rather than a new one.
+#   refit           ->  `.ctJuliaOptimise()`, the same call `ctFit()` makes.
+#   row likelihoods ->  the filter's own `llrow`, which the Kalman trace
+#                       produces as a byproduct of the forward pass.
+#
+# Withholding at the *data* level rather than by a flag is what makes this
+# short, and it is also stricter: there is no way for a withheld row to leak
+# into the likelihood, because the engine never sees its value.
+#
+# What is deliberately not reproduced: `parallelFolds`. The engine threads its
+# own subject loop, so folds run one at a time with every thread on each, rather
+# than spawning R workers that would each need their own Julia process.
+
+.ctBackendLOOFolds <- function(rowsubject, folds, subjectwise, keepfirstobs,
+  leaveOutN) {
+  nsubjects <- length(unique(rowsubject))
+  # `c(1, diff(subject)) < 1` keeps only rows that are not a subject's first;
+  # `< 999` keeps everything. Same expression as the Stan path, so the two
+  # produce the same folds from the same seed.
+  eligible <- which(c(1, diff(rowsubject)) < ifelse(keepfirstobs, 1, 999))
+  if (!all(is.na(leaveOutN))) {
+    out <- lapply(seq_len(leaveOutN + 1L), function(start) {
+      eligible[seq(start, length(eligible), leaveOutN + 1L)]
+    })
+    return(out)
+  }
+  units <- if (subjectwise) seq_len(nsubjects) else eligible
+  units <- sample(units, length(units), replace = FALSE)
+  out <- split(units, sort(seq_along(units) %% folds))
+  if (subjectwise) out <- lapply(out, function(x) which(rowsubject %in% x))
+  out
+}
+
+# Each row's log likelihood at a given raw parameter vector, from the filter.
+.ctBackendRowLoglik <- function(fit, pars) {
+  spec <- .ctBackendAsModel(.ctBackendSpec(fit))
+  as.numeric(.ctBackendKalmanRaw(spec, pars, subjectmatrices = FALSE)$llrow)
+}
+
+.ctBackendLOO <- function(fit, folds, cores, tol, subjectwise, keepfirstobs,
+  leaveOutN, refit, casewiseApproximation, parallelFolds) {
+  if (isTRUE(parallelFolds)) {
+    warning("parallelFolds is ignored for backend='julia': the engine threads ",
+      "its own subject loop, so each fold already uses every core.", call. = FALSE)
+  }
+  spec <- .ctBackendSpec(fit)
+  model <- .ctFitModelObject(fit)
+  rowsubject <- .ctFitRowSubject(fit)
+  ndatapoints <- length(rowsubject)
+  subjects <- unique(rowsubject)
+  est <- as.numeric(fit$estimate$raw)
+
+  message("Using ", cores, "/", parallel::detectCores(), " available CPU cores")
+  samplerows <- .ctBackendLOOFolds(rowsubject, folds, subjectwise, keepfirstobs,
+    leaveOutN)
+  if (!all(is.na(leaveOutN))) {
+    folds <- length(samplerows)
+    message(folds, " folds prepared...")
+  }
+
+  # Score-based approximation, when asked for: one Newton step away from the
+  # estimate using the held-out subjects' own score contributions and the
+  # fitted covariance. Same construction as the Stan path, and the engine
+  # produces the scores directly rather than by re-initialising per subject.
+  scores <- NULL
+  if (isTRUE(casewiseApproximation) || (subjectwise && isTRUE(refit))) {
+    scores <- try(.ctBackendScoreMatrix(fit, est), silent = TRUE)
+    if (inherits(scores, "try-error")) scores <- NULL
+  }
+  covariance <- fit$estimate$cov
+
+  folded <- lapply(seq_len(folds), function(foldi) {
+    heldout <- samplerows[[foldi]]
+    pars <- est
+    if (isTRUE(refit)) {
+      start <- est
+      if (!is.null(scores) && !is.null(covariance)) {
+        held <- unique(rowsubject[heldout])
+        held <- held[held <= nrow(scores)]
+        if (length(held)) {
+          start <- as.numeric(est - covariance %*% colSums(scores[held, , drop = FALSE]))
+        }
+      }
+      if (isTRUE(casewiseApproximation)) {
+        pars <- start
+      } else {
+        training <- spec$data
+        # `[-heldout, ]` would drop the rows; setting them missing keeps the
+        # subject's timeline intact, so the filter still propagates across the
+        # gap exactly as it will when the row is scored out of sample.
+        training[heldout, model$manifestNames] <- NA
+        trainingfit <- .ctFitReplaceData(fit, training)
+        result <- try(.ctJuliaOptimise(trainingfit$model_spec, start,
+          backendcontrol = fit$args$backendcontrol, cores = cores, tol = tol),
+          silent = TRUE)
+        if (inherits(result, "try-error")) return(NULL)
+        pars <- as.numeric(result$minimizer)
+      }
+    }
+    # Scored against the *full* data, so the held-out rows have a likelihood to
+    # report; the Stan path restores `dokalmanrows` before this step for the
+    # same reason. When `leaveOutN` is used without refitting, the in-sample
+    # likelihoods are the ones wanted, and they are the same call.
+    list(llrow = .ctBackendRowLoglik(fit, pars), pars = pars)
+  })
+
+  usable <- !vapply(folded, is.null, logical(1L))
+  if (!any(usable)) stop("Every cross-validation fold failed to refit.", call. = FALSE)
+  if (any(!usable)) {
+    warning(sum(!usable), " of ", folds, " folds failed to refit and are dropped.",
+      call. = FALSE)
+  }
+
+  llrowoos <- rep(NA_real_, ndatapoints)
+  for (foldi in which(usable)) {
+    rows <- samplerows[[foldi]]
+    llrowoos[rows] <- folded[[foldi]]$llrow[rows]
+  }
+  llrowoosSubject <- vapply(subjects, function(s)
+    sum(llrowoos[rowsubject == s], na.rm = FALSE), numeric(1L))
+
+  llrow <- .ctBackendRowLoglik(fit, est)
+  llrow[llrow == 0] <- NA
+  llrowSubject <- vapply(subjects, function(s)
+    sum(llrow[rowsubject == s], na.rm = TRUE), numeric(1L))
+
+  llrowFolds <- data.table::as.data.table(lapply(folded[usable], function(x) {
+    value <- x$llrow
+    value[value == 0] <- NA
+    value
+  }))
+
+  out <- list(
+    foldrows = samplerows,
+    foldpars = do.call(cbind, lapply(folded[usable], function(x) x$pars)),
+    # A 1-row matrix, not a vector: that is the shape the Stan path returns
+    # (it comes straight out of `transformedparsfull$llrow`), and code that
+    # subsets it as `[1, ]` should not care which backend produced the fit.
+    insampleLogLikRow = matrix(llrow, nrow = 1L),
+    LogLikRowFolds = llrowFolds,
+    outsampleLogLikRow = llrowoos,
+    insampleLogLik = sum(llrow, na.rm = TRUE),
+    outsampleLogLik = sum(llrowoos, na.rm = TRUE),
+
+    insampleRowwiseEntropy = -sum(llrow, na.rm = TRUE) / ndatapoints,
+    outsampleRowwiseEntropy = -sum(llrowoos, na.rm = TRUE) / ndatapoints,
+
+    insampleSubjectwiseEntropy = -sum(llrow, na.rm = TRUE) / length(subjects),
+    outsampleSubjectwiseEntropy = -sum(llrowoos, na.rm = TRUE) / length(subjects),
+
+    insampleRowwiseLogLikSD = stats::sd(llrow, na.rm = TRUE),
+    outsampleRowwiseLogLikSD = stats::sd(llrowoos, na.rm = TRUE),
+    insampleSubjectwiseLogLikSD = stats::sd(llrowSubject, na.rm = TRUE),
+    outsampleSubjectwiseLogLikSD = stats::sd(llrowoosSubject, na.rm = TRUE)
+  )
+  out
+}

@@ -140,8 +140,14 @@ ctStanContinuousPars <- ctSummaryMatrices
 #' dimnames(indpars)
 #' plot(indpars[1,,'cint1'],indpars[1,,'cint2'])
 ctSubjectPars <- function(fit,pointest=TRUE,cores=2,nsamples='all'){
-  
-  if(!nsamples[1] %in% 'all') fit$stanfit$rawposterior <- 
+
+  # backend='julia' fits reach the same quantity by the same route -- the
+  # subject matrices ctExtract() returns -- but reach the model metadata through
+  # the spec rather than through matsetup; see R/ctBackendSummary.R.
+  if(inherits(fit,'ctJuliaFit')) return(.ctBackendSubjectPars(fit,
+    pointest=pointest, nsamples=nsamples))
+
+  if(!nsamples[1] %in% 'all') fit$stanfit$rawposterior <-
       fit$stanfit$rawposterior[sample(1:nrow(fit$stanfit$rawposterior),nsamples),,drop=FALSE]
   pnames <- getparnames(fit,subjvariationonly = TRUE)
   if(length(pnames)==0) stop('No individually varying parameters in model!')

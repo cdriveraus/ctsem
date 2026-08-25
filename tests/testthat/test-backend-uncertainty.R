@@ -82,6 +82,35 @@ test_that("Julia fits get Hessian uncertainty matching Stan's", {
   expect_true(all(c("2.5%", "97.5%") %in% colnames(summarised$popmeans)))
 })
 
+test_that("the Hessian is exact, and agrees with the finite difference it replaces", {
+  skip_on_cran()
+  skip_without_julia()
+
+  model <- .backend_uncertainty_model()
+  data <- .backend_uncertainty_data()
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
+    optimcontrol = list(estonly = TRUE)))
+
+  exact <- suppressWarnings(suppressMessages(ctOptimUncertainty(fit,
+    uncertainty = "hessian", finishsamples = 100, verbose = 0)))
+  finite <- suppressWarnings(suppressMessages(ctOptimUncertainty(fit,
+    uncertainty = "hessian", finishsamples = 100, verbose = 0,
+    control = list(analyticHessian = FALSE))))
+
+  # Agreement is the check that the exact one is right; the finite difference
+  # is the independent referee, since it knows only the gradient's outputs.
+  expect_equal(exact$uncertainty$hessian, finite$uncertainty$hessian,
+    tolerance = 1e-4)
+  expect_equal(sqrt(diag(exact$estimate$cov)), sqrt(diag(finite$estimate$cov)),
+    tolerance = 1e-4)
+
+  expect_identical(exact$uncertainty$hessian, t(exact$uncertainty$hessian))
+
+  # And it is recorded as exact, so a fit says which one produced its intervals.
+  expect_match(exact$uncertainty$details$hessian$source, "forward-mode")
+  expect_null(finite$uncertainty$details$hessian)
+})
+
 test_that("unsupported uncertainty methods are refused by name, not silently", {
   model <- .backend_uncertainty_model()
   data <- .backend_uncertainty_data()[1:24, ]

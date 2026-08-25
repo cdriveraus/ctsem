@@ -1,8 +1,8 @@
-# The Julia engine ships inside ctsem, so `ctJuliaSetup()` needs no network
-# access and no repository credentials.
+# The Julia engine is part of ctsem, so `ctJuliaSetup()` needs no network access
+# and no repository credentials.
 #
-# This exists because the previous arrangement -- `Pkg.add` from a URL pinned in
-# inst/julia/engine.json -- pointed at a private GitLab repository, which meant
+# This exists because the original arrangement -- `Pkg.add` from a URL pinned in
+# a lock file -- pointed at a private GitLab repository, which meant
 # backend='julia' could not be installed by anyone outside that project. That
 # was invisible from inside it, and no test or CI job would have caught it,
 # because every check ran against a checkout that was already there. These
@@ -17,12 +17,26 @@ test_that("the Julia engine is vendored inside the installed package", {
   expect_true(file.exists(file.path(engine, "src", "r_interface.jl")))
 })
 
-test_that("the engine lock records provenance rather than an install source", {
-  lock <- ctsem:::.ctJuliaEngineLock()
-  # A commit, not a branch name: a branch would move under a released ctsem.
-  expect_match(lock$revision, "^[0-9a-f]{40}$")
-  expect_true(nzchar(lock$branch))
-  expect_true(nzchar(lock$url))
+test_that("the engine version is a hash of the engine source", {
+  # Identity by content, not by a maintained version string. The cached project
+  # directory is keyed on this and is only populated when empty, so an
+  # identifier that had to be updated by hand would leave anyone who had already
+  # run the backend on a stale engine after an edit -- silently. Editing the
+  # engine has to change this, which is what the second half asserts.
+  version <- ctsem:::.ctJuliaEngineVersion()
+  expect_match(version, "^[0-9a-f]{12}$")
+  expect_true(grepl(version, ctsem:::.ctJuliaEnvDir(), fixed = TRUE))
+
+  engine <- system.file("julia", "ContinuousTimeSEM", package = "ctsem")
+  altered <- file.path(tempdir(), "ContinuousTimeSEM-altered")
+  unlink(altered, recursive = TRUE)
+  dir.create(altered, recursive = TRUE)
+  file.copy(list.files(engine, full.names = TRUE), altered, recursive = TRUE)
+  expect_identical(ctsem:::.ctJuliaEngineVersion(altered), version)
+  cat("
+# a change", file = file.path(altered, "src", "r_interface.jl"), append = TRUE)
+  expect_false(identical(ctsem:::.ctJuliaEngineVersion(altered), version))
+  unlink(altered, recursive = TRUE)
 })
 
 test_that("the vendored engine declares no heavyweight dependencies", {
@@ -44,7 +58,7 @@ test_that("ctJuliaSetup works from the vendored copy, with no project argument",
 
   status <- ctJuliaSetup()
   expect_true(status$available)
-  expect_match(status$revision, "^[0-9a-f]{40}$")
+  expect_match(status$engine, "^[0-9a-f]{12}$")
 
   # A model with no TI predictors, so the optional table columns are omitted
   # rather than sent as empty vectors -- JuliaConnectoR hangs on those.

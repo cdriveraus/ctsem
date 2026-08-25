@@ -25,12 +25,13 @@
 #
 # Two properties of these fits shape what can honestly be reported:
 #
-#   * They are point estimates unless `ctOptimUncertainty()` has been run. With
-#     uncertainty they carry `estimate$rawposterior`, and every interval below
+#   * They carry `estimate$rawposterior`, because `ctFit()` finishes with
+#     `ctOptimUncertainty()` as `stanoptimis()` does, and every interval below
 #     comes from pushing those draws through the transforms -- which is what
-#     Stan's own optimized-and-sampled path does too. Without it there is one
-#     "sample", and the interval columns are omitted rather than filled with a
-#     zero-width interval that would read as certainty.
+#     Stan's own optimized-and-sampled path does too. A fit built with
+#     `optimcontrol$estonly=TRUE` has one "sample" instead, and the interval
+#     columns are omitted rather than filled with a zero-width interval that
+#     would read as certainty.
 #
 #   * State-dependent cells are functions of the latent state, so no single
 #     number describes them. They are evaluated at a state (T0MEANS by default)
@@ -230,19 +231,35 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 }
 
 # The `pop_*` arrays every downstream summary reads, in Stan's shape.
-.ctBackendPopArrays <- function(fit, samples = NULL, tipreds = NULL, state = NULL,
-  time = 0, dt = 0) {
-  layout <- .ctBackendSummaryLayout(fit)
-  if (is.null(samples)) samples <- .ctBackendRawSamples(fit)
-  flat <- .ctBackendParMatricesFlat(fit, t(samples), tipreds = tipreds, state = state,
-    time = time, dt = dt)
-  spec <- .ctBackendSpec(fit)
+#
+# Split from the engine call because a summary needs the same arrays collapsed
+# five different ways, and materializing them is the expensive half: ~2 s per
+# thousand draws, against ~0.1 s for a collapse. `summary()` therefore calls the
+# engine once and reshapes five times.
+.ctBackendPopArraysFromFlat <- function(flat, layout, spec) {
   out <- lapply(seq_along(layout$matrix), function(index) {
     .ctBackendTrimAugmented(.ctBackendReshape(flat, layout, index), layout$matrix[index],
       spec, margin = c(2L, 3L))
   })
   names(out) <- paste0("pop_", layout$matrix)
   out
+}
+
+.ctBackendPopArrays <- function(fit, samples = NULL, tipreds = NULL, state = NULL,
+  time = 0, dt = 0) {
+  # The fit's cached constrain step covers the default evaluation point only:
+  # asking for another `state`, `tipreds`, `time` or `dt` is asking for
+  # different matrices, so those go to the engine.
+  if (is.null(tipreds) && is.null(state) && identical(time, 0) && identical(dt, 0)) {
+    constrained <- .ctBackendConstrained(fit, samples)
+    return(.ctBackendPopArraysFromFlat(constrained$flat, constrained$layout,
+      .ctBackendSpec(fit)))
+  }
+  layout <- .ctBackendSummaryLayout(fit)
+  if (is.null(samples)) samples <- .ctBackendRawSamples(fit)
+  flat <- .ctBackendParMatricesFlat(fit, t(samples), tipreds = tipreds, state = state,
+    time = time, dt = dt)
+  .ctBackendPopArraysFromFlat(flat, layout, .ctBackendSpec(fit))
 }
 
 .ctBackendExtract <- function(object, subjectMatrices = FALSE, nsamples = "all",
@@ -252,28 +269,41 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     wanted <- min(nrow(samples), as.integer(nsamples)[1L])
     samples <- samples[round(seq(1, nrow(samples), length.out = wanted)), , drop = FALSE]
   }
-  arrays <- .ctBackendPopArrays(object, samples = samples, ...)
-  popmeans <- .ctBackendPopMeanSamples(object, samples = samples)
-  out <- c(list(rawpars = samples, popmeans = popmeans$values,
-    loglik = object$estimate$loglik, gradient = object$estimate$gradient,
-    subject_loglik = object$estimate$subject_loglik), arrays)
-
   # Subject matrices need the filter, not just the transforms: an individually
   # varying parameter is an augmented latent state, so a subject's value for it
   # is only known once that subject's data has been filtered and smoothed.
+  #
+  # A draw from a normal approximation can land somewhere the filter cannot go
+  # -- a prior covariance the smoother's solve finds singular, say -- and one
+  # such draw must not take the whole extract with it. `stan_constrainsamples()`
+  # has always dropped inadmissable samples and reported the proportion; this
+  # does the same, and drops them from the rest of the extract too, so every
+  # array it returns is over the same surviving draws.
+  subject <- NULL
   if (isTRUE(subjectMatrices)) {
     spec <- .ctBackendKalmanSpec(object, subjects = subjects)
-    flat <- NULL
-    for (iteration in seq_len(nrow(samples))) {
-      scores <- .ctBackendKalmanRaw(spec, samples[iteration, ], subjectmatrices = TRUE)
-      if (is.null(flat)) {
-        flat <- array(0, dim = c(nrow(samples), dim(scores$subject_matrices)))
-      }
-      flat[iteration, , ] <- scores$subject_matrices
+    computed <- lapply(seq_len(nrow(samples)), function(iteration) {
+      scores <- try(.ctBackendKalmanRaw(spec, samples[iteration, ],
+        subjectmatrices = TRUE), silent = TRUE)
+      if (inherits(scores, "try-error")) NULL else scores$subject_matrices
+    })
+    admissable <- !vapply(computed, is.null, logical(1L))
+    if (!any(admissable)) stop("No admissable samples!?", call. = FALSE)
+    if (any(!admissable)) {
+      message(round(mean(!admissable) * 100, 1), "% of samples inadmissable")
+      samples <- samples[admissable, , drop = FALSE]
+      computed <- computed[admissable]
     }
-    out <- c(out, .ctBackendSubjectMatrices(spec, flat))
+    flat <- array(0, dim = c(length(computed), dim(computed[[1L]])))
+    for (iteration in seq_along(computed)) flat[iteration, , ] <- computed[[iteration]]
+    subject <- .ctBackendSubjectMatrices(spec, flat)
   }
-  out
+
+  arrays <- .ctBackendPopArrays(object, samples = samples, ...)
+  popmeans <- .ctBackendPopMeanSamples(object, samples = samples)
+  c(list(rawpars = samples, popmeans = popmeans$values,
+    loglik = object$estimate$loglik, gradient = object$estimate$gradient,
+    subject_loglik = object$estimate$subject_loglik), arrays, subject)
 }
 
 .ctBackendNameMatrices <- function(out, model) {
@@ -383,25 +413,91 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # cell to read when a parameter is shared across several, and any of them gives
 # the same number by construction.
 
+# Jacobian blocks are derivatives of the model matrices, not model matrices, so
+# a cell in one of these never reports a parameter's own value.
+.ctBackendJacobianMatrices <- c("JAx", "Jy", "Jtd")
+
+# The model-matrix cell whose value *is* each free parameter's population value.
+#
+# For most parameters that is the first cell the parameter occupies. An
+# `intoverpop` random effect is the exception, and not a rare one: ctsem
+# represents such a parameter as a carrier latent state, so the cell the
+# parameter itself occupies is `T0MEANS[k]` -- the *raw* value, carrying none of
+# the parameter's transform -- while the transform lives in whichever model
+# matrix reads `state[k]`. Reading the carrier cell reports a raw number where
+# the transformed one belongs: a random-effects CINT parameter came back ten
+# times too small, its `10*param` transform missing. Stan resolves the same
+# ambiguity the same way, following its `pr2` reference from the parameter's own
+# matsetup row to the state-dependent one before applying `tform`.
 .ctBackendFreeParameterCells <- function(fit) {
   spec <- .ctBackendSpec(fit)
   table <- as.data.frame(spec$parameter_table, stringsAsFactors = FALSE)
   free <- table[!is.na(table$parnumber), , drop = FALSE]
   free <- free[!duplicated(free$parnumber), , drop = FALSE]
-  free[order(free$parnumber), , drop = FALSE]
+  free <- free[order(free$parnumber), , drop = FALSE]
+
+  nlatent <- spec$nlatent
+  carrier <- if (is.null(nlatent)) rep(FALSE, nrow(free)) else {
+    free$matrix %in% "T0MEANS" & free$row > nlatent
+  }
+  if (any(carrier)) {
+    blank <- function(x) if (is.null(x)) rep("", nrow(table)) else replace(x, is.na(x), "")
+    expressions <- paste(blank(table$predicttransform), blank(table$updatetransform),
+      blank(table$tdtransform))
+    reportable <- !table$matrix %in% .ctBackendJacobianMatrices
+    references <- paste0("state[", free$row, "]")
+    for (index in which(carrier)) {
+      candidates <- which(reportable & grepl(references[index], expressions, fixed = TRUE))
+      if (!length(candidates)) next
+      free[index, c("matrix", "row", "col")] <- table[candidates[1L], c("matrix", "row", "col")]
+    }
+  }
+  # The population sd / correlation parameters `.ctJuliaAugmentRandomEffects`
+  # appends are free parameters too, but they belong in the random-effects
+  # sections rather than among the fixed effects -- as they do for Stan, whose
+  # `popmeans` covers only `nparams`.
+  free$randomeffect <- free$parnumber %in% .ctBackendRandomEffectParameters(spec)
+  free
 }
 
-.ctBackendPopMeanSamples <- function(fit, samples = NULL, ...) {
-  cells <- .ctBackendFreeParameterCells(fit)
-  layout <- .ctBackendSummaryLayout(fit)
-  if (is.null(samples)) samples <- .ctBackendRawSamples(fit)
-  flat <- .ctBackendParMatricesFlat(fit, t(samples), ...)
+.ctBackendRandomEffectParameters <- function(spec) {
+  effects <- spec$random_effects
+  if (is.null(effects) || !length(effects) || !nrow(effects)) return(integer())
+  as.integer(effects$parameter)
+}
 
+.ctBackendParameterNames <- function(cells) {
+  ifelse(is.na(cells$param), paste0("param", cells$parnumber), as.character(cells$param))
+}
+
+# The value of every parameter's population cell, for a whole matrix of raw
+# vectors: nsamples x nrow(cells). One engine call, whatever the sample count.
+.ctBackendPopCellValues <- function(fit, samples, cells, layout, ...) {
+  flat <- .ctBackendParMatricesFlat(fit, t(samples), ...)
+  .ctBackendPopCellsFromFlat(flat, cells, layout)
+}
+
+.ctBackendPopCellsFromFlat <- function(flat, cells, layout) {
   index <- match(cells$matrix, layout$matrix)
   position <- layout$offset[index] + (cells$col - 1L) * layout$nrow[index] + cells$row
   values <- t(flat[position, , drop = FALSE])
-  colnames(values) <- ifelse(is.na(cells$param), paste0("param", cells$parnumber),
-    as.character(cells$param))
+  colnames(values) <- .ctBackendParameterNames(cells)
+  values
+}
+
+.ctBackendPopMeanSamples <- function(fit, samples = NULL, ...) {
+  if (!length(list(...))) {
+    constrained <- .ctBackendConstrained(fit, samples)
+    cells <- constrained$cells[!constrained$cells$randomeffect, , drop = FALSE]
+    return(list(
+      values = .ctBackendPopCellsFromFlat(constrained$flat, cells, constrained$layout),
+      parnumber = as.integer(cells$parnumber)))
+  }
+  cells <- .ctBackendFreeParameterCells(fit)
+  cells <- cells[!cells$randomeffect, , drop = FALSE]
+  layout <- .ctBackendSummaryLayout(fit)
+  if (is.null(samples)) samples <- .ctBackendRawSamples(fit)
+  values <- .ctBackendPopCellValues(fit, samples, cells, layout, ...)
   list(values = values, parnumber = as.integer(cells$parnumber))
 }
 
@@ -409,7 +505,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # base R rather than rstan's `monitor()`: with one point-estimate "sample" there
 # is nothing to monitor, and with a normal-approximation posterior the
 # convergence diagnostics `monitor()` adds would be meaningless anyway.
-.ctBackendSampleSummary <- function(values, digits = 3) {
+.ctBackendSampleSummary <- function(values, digits = 3, z = FALSE) {
   if (nrow(values) < 2L) {
     out <- data.frame(mean = as.numeric(values[1L, ]), row.names = colnames(values))
     return(round(out, digits))
@@ -420,56 +516,308 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     sd = apply(values, 2L, stats::sd, na.rm = TRUE),
     quantiles, check.names = FALSE, row.names = colnames(values))
   colnames(out) <- c("mean", "sd", "2.5%", "50%", "97.5%")
+  if (isTRUE(z)) out$z <- out$mean / out$sd
   round(out, digits)
 }
 
-# Raw-scale TI predictor effects, the analogue of Stan's `tipreds` section.
-.ctBackendTipredSummary <- function(fit, digits = 3) {
+# Gauss-Hermite nodes and weights for a standard normal, by Golub-Welsch on the
+# probabilists' Hermite recurrence. Used to integrate a parameter's transform
+# over its population distribution (see .ctBackendRandomEffectSummary), where a
+# fixed quadrature is both cheaper and steadier than Stan's 5000 random draws.
+#
+# Five nodes integrates a degree-9 polynomial exactly, which for a second moment
+# of a smooth transform is far inside Stan's own Monte Carlo error; each node
+# costs one engine call over the whole posterior, so this is also the term that
+# sets what a summary costs.
+.ctBackendGaussHermite <- function(nodes = 5L) {
+  index <- seq_len(nodes - 1L)
+  jacobi <- matrix(0, nodes, nodes)
+  jacobi[cbind(index, index + 1L)] <- sqrt(index)
+  jacobi[cbind(index + 1L, index)] <- sqrt(index)
+  decomposition <- eigen(jacobi, symmetric = TRUE)
+  list(node = decomposition$values, weight = decomposition$vectors[1L, ]^2)
+}
+
+# Random-effects standard deviations and raw correlations -- Stan's `popsd` and
+# `rawpopcorr` sections.
+#
+# Both come from the population covariance of the carrier states, `T0cov`, but
+# they report it on different scales, and that is the whole subtlety:
+#
+#   * The **correlations** are between the *raw* parameters, so the state
+#     scaling `.ctJuliaAugmentRandomEffects` folds into the sd transform cancels
+#     and `cov2cor(T0cov)` is already the reported quantity.
+#
+#   * The **standard deviations** are of the *transformed* parameter, which for
+#     a nonlinear transform is not the transform of the standard deviation. Stan
+#     draws 5000 subjects from the raw population distribution, pushes each
+#     through the transform and takes the sd; this does the same integral by
+#     Gauss-Hermite quadrature over the same distribution, so a linear transform
+#     is exact and a nonlinear one is far steadier than a random cloud. The
+#     quadrature displaces the *raw* parameter and reads the population cell
+#     back through the engine, so whatever the transform is, it is applied once,
+#     by the code that owns it.
+#
+# All the varying parameters are displaced together on a shared node, which is
+# what keeps this to one engine call per node rather than one per parameter:
+# only each parameter's own marginal spread is read, so the perfect correlation
+# a shared node induces between them never enters an answer.
+.ctBackendRandomEffectDraws <- function(fit, samples, cells, layout, flat) {
+  spec <- .ctBackendSpec(fit)
+  effects <- spec$random_effects
+  if (is.null(effects) || !length(effects) || !nrow(effects)) return(NULL)
+  sds <- effects[effects$type %in% "sd", , drop = FALSE]
+  if (!nrow(sds)) return(NULL)
+
+  table <- as.data.frame(spec$parameter_table, stringsAsFactors = FALSE)
+  t0means <- table[table$matrix %in% "T0MEANS" & table$col == 1L, , drop = FALSE]
+  position <- match(sds$row, t0means$row)
+  parnumber <- as.integer(t0means$parnumber[position])
+  if (any(is.na(parnumber))) return(NULL)
+  parname <- as.character(t0means$param[position])
+  parname[is.na(parname)] <- paste0("param", parnumber[is.na(parname)])
+
+  t0cov <- .ctBackendReshape(flat, layout, match("T0cov", layout$matrix))
+  variance <- matrix(vapply(sds$row, function(row) t0cov[, row, row],
+    numeric(nrow(samples))), nrow = nrow(samples))
+
+  out <- list()
+
+  scale <- if (is.null(sds$scale)) rep(1, nrow(sds)) else as.numeric(sds$scale)
+  rawsd <- sweep(sqrt(pmax(variance, 0)), 2L, scale, "/")
+  column <- match(parnumber, cells$parnumber)
+  quadrature <- .ctBackendGaussHermite()
+  displaced <- lapply(quadrature$node, function(node) {
+    perturbed <- samples
+    perturbed[, parnumber] <- perturbed[, parnumber, drop = FALSE] + rawsd * node
+    .ctBackendPopCellValues(fit, perturbed, cells, layout)[, column, drop = FALSE]
+  })
+  centre <- Reduce(`+`, Map(function(value, weight) value * weight,
+    displaced, quadrature$weight))
+  spread <- Reduce(`+`, Map(function(value, weight) weight * (value - centre)^2,
+    displaced, quadrature$weight))
+  spread <- matrix(sqrt(pmax(spread, 0)), nrow = nrow(samples))
+  colnames(spread) <- parname
+  out$popsd <- spread
+
+  if (nrow(sds) > 1L) {
+    lower <- which(lower.tri(diag(nrow(sds))), arr.ind = TRUE)
+    correlation <- matrix(vapply(seq_len(nrow(lower)), function(entry) {
+      i <- sds$row[lower[entry, 1L]]
+      j <- sds$row[lower[entry, 2L]]
+      t0cov[, i, j] / sqrt(t0cov[, i, i] * t0cov[, j, j])
+    }, numeric(nrow(samples))), nrow = nrow(samples))
+    colnames(correlation) <- paste0(parname[lower[, 1L]], "__", parname[lower[, 2L]])
+    out$rawpopcorr <- correlation
+  }
+  out
+}
+
+# Time-independent predictor effects, on the transformed parameters -- Stan's
+# `linearTIPREDEFFECT`.
+#
+# The raw coefficient is an effect on the *unconstrained* parameter, which is
+# not a quantity anyone reads off a summary. Stan reports the effect the
+# covariate has on the parameter itself, linearised at the population mean: the
+# transform evaluated a hundredth of an effect either side of the raw mean,
+# differenced, and scaled back up. This does exactly that, through the engine's
+# own transforms rather than a second copy of them, and one predictor at a time
+# so the cost is two engine calls per predictor rather than two per effect.
+.ctBackendTipredDraws <- function(fit, samples, cells, layout) {
   spec <- .ctBackendSpec(fit)
   effects <- spec$ti_effects
   if (is.null(effects) || !nrow(effects)) return(NULL)
-  samples <- .ctBackendRawSamples(fit)
-  cells <- .ctBackendFreeParameterCells(fit)
-  parameter_names <- stats::setNames(as.character(cells$param), cells$parnumber)
   predictor_names <- .ctBackendModel(fit)$TIpredNames
+  parameter_names <- stats::setNames(.ctBackendParameterNames(cells), cells$parnumber)
 
-  values <- samples[, effects$coefficient, drop = FALSE]
-  colnames(values) <- paste0("tip_", predictor_names[effects$predictor], "_",
-    ifelse(is.na(parameter_names[as.character(effects$parameter)]),
-      paste0("param", effects$parameter),
-      parameter_names[as.character(effects$parameter)]))
-  .ctBackendSampleSummary(values, digits = digits)
+  linear <- lapply(sort(unique(effects$predictor)), function(predictor) {
+    rows <- effects[effects$predictor %in% predictor, , drop = FALSE]
+    step <- samples[, rows$coefficient, drop = FALSE] * .01
+    column <- match(rows$parameter, cells$parnumber)
+    displaced <- lapply(c(1, -1), function(direction) {
+      perturbed <- samples
+      perturbed[, rows$parameter] <- perturbed[, rows$parameter, drop = FALSE] +
+        direction * step
+      .ctBackendPopCellValues(fit, perturbed, cells, layout)[, column, drop = FALSE]
+    })
+    values <- matrix((displaced[[1L]] - displaced[[2L]]) / .02, nrow = nrow(samples))
+    colnames(values) <- paste0("tip_", predictor_names[predictor], "_",
+      parameter_names[as.character(rows$parameter)])
+    values
+  })
+  do.call(cbind, linear)
+}
+
+# Per-subject parameter values -- ctSubjectPars() for a julia backend fit.
+#
+# Every parameter that varies over subjects, for every subject, read out of the
+# `subj_*` matrices the filter already produced. Which parameters those are is a
+# property of the specification (a random effect, a TI predictor effect, or
+# both), and where each one lives is the same population cell the fixed-effects
+# summary reads -- so a random-effects CINT parameter is reported from `subj_
+# CINT`, transform applied, rather than from its raw carrier state.
+.ctBackendSubjectPars <- function(fit, pointest = TRUE, nsamples = "all") {
+  spec <- .ctBackendSpec(fit)
+  cells <- .ctBackendFreeParameterCells(fit)
+  cells <- cells[!cells$randomeffect, , drop = FALSE]
+
+  varying <- integer()
+  effects <- spec$random_effects
+  if (!is.null(effects) && length(effects) && nrow(effects)) {
+    table <- as.data.frame(spec$parameter_table, stringsAsFactors = FALSE)
+    t0means <- table[table$matrix %in% "T0MEANS" & table$col == 1L, , drop = FALSE]
+    sds <- effects[effects$type %in% "sd", , drop = FALSE]
+    varying <- c(varying, as.integer(t0means$parnumber[match(sds$row, t0means$row)]))
+  }
+  if (!is.null(spec$ti_effects) && nrow(spec$ti_effects)) {
+    varying <- c(varying, as.integer(spec$ti_effects$parameter))
+  }
+  varying <- sort(unique(varying[!is.na(varying)]))
+  varying <- varying[varying %in% cells$parnumber]
+  if (!length(varying)) stop("No individually varying parameters in model!", call. = FALSE)
+
+  if (isTRUE(pointest)) fit$estimate$rawposterior <- NULL
+  extracted <- .ctBackendExtract(fit, subjectMatrices = TRUE, nsamples = nsamples)
+
+  index <- match(varying, cells$parnumber)
+  parnames <- .ctBackendParameterNames(cells)[index]
+  reference <- extracted[[paste0("subj_", cells$matrix[index[1L]])]]
+  out <- array(NA_real_, dim = c(dim(reference)[1L], dim(reference)[2L], length(varying)))
+  for (position in seq_along(index)) {
+    cell <- index[position]
+    values <- extracted[[paste0("subj_", cells$matrix[cell])]]
+    out[, , position] <- values[, , cells$row[cell], cells$col[cell]]
+  }
+  alphabetical <- order(parnames)
+  out <- out[, , alphabetical, drop = FALSE]
+  dimnames(out) <- list(iter = seq_len(dim(out)[1L]), subject = seq_len(dim(out)[2L]),
+    param = parnames[alphabetical])
+  out
+}
+
+
+# Standardised residual covariance -- Stan's `residCovStd`, from the same
+# quantity (the filter's prior errors at the estimate) reached through the
+# backend-neutral accessors.
+.ctBackendResidCovStd <- function(object, digits = 3) {
+  kalman <- object$kalman
+  if (is.null(kalman)) {
+    kalman <- try(suppressMessages(ctKalmanArray(object, pointest = TRUE)), silent = TRUE)
+    if (inherits(kalman, "try-error")) return(NULL)
+  }
+  if (is.null(kalman$errprior)) return(NULL)
+  observed <- .ctFitObservedY(object)
+  obscov <- stats::cov(observed, use = "pairwise.complete.obs")
+  standardise <- diag(1 / sqrt(diag(obscov)), ncol(obscov))
+  rescov <- stats::cov(matrix(kalman$errprior, ncol = ncol(obscov)),
+    use = "pairwise.complete.obs")
+  unavailable <- which(is.na(rescov))
+  rescov[unavailable] <- 0
+  out <- round(standardise %*% rescov %*% standardise, digits)
+  out[unavailable] <- NA
+  manifest <- .ctBackendModel(object)$manifestNames
+  dimnames(out) <- list(manifest, manifest)
+  out
+}
+
+# The constrain step, done once ------------------------------------------------
+#
+# A Stan fit carries `stanfit$transformedpars`: its draws pushed through the
+# model's transforms once, at fit time, so `summary()` is a collapse over
+# something already computed. This is the same thing for the julia backend, and
+# for the same reason -- without it every `summary()` call re-materialized every
+# model matrix for every draw, which on a 28-parameter model was about sixteen
+# seconds, every time.
+#
+# What it holds is everything downstream reads that costs an engine call:
+#
+#   flat        every model matrix for every draw, in the engine's flat layout
+#   popsd       the population sd of each varying parameter, per draw
+#   rawpopcorr  the raw population correlations, per draw
+#   tipreds     the linearised TI predictor effects, per draw
+#
+# The last two are here rather than derived on demand because they are read at
+# *displaced* parameter values -- the quadrature nodes and the linearisation
+# steps -- so they cannot be recovered from `flat` afterwards. Stan computes its
+# equivalents (`popsd`, `linearTIPREDEFFECT`) in generated quantities at the
+# same moment, for the same reason.
+#
+# `samples` is kept alongside so the cache can be checked rather than trusted:
+# anything that changes the posterior (a fresh `ctOptimUncertainty()`, say)
+# leaves a cache that no longer matches, and is recomputed rather than silently
+# describing the previous draws.
+.ctBackendConstrain <- function(fit, samples = NULL) {
+  if (is.null(samples)) samples <- .ctBackendRawSamples(fit)
+  layout <- .ctBackendSummaryLayout(fit)
+  cells <- .ctBackendFreeParameterCells(fit)
+  flat <- .ctBackendParMatricesFlat(fit, t(samples))
+  randomeffects <- .ctBackendRandomEffectDraws(fit, samples = samples, cells = cells,
+    layout = layout, flat = flat)
+  list(samples = samples, layout = layout, cells = cells, flat = flat,
+    popsd = randomeffects$popsd, rawpopcorr = randomeffects$rawpopcorr,
+    tipreds = .ctBackendTipredDraws(fit, samples = samples, cells = cells,
+      layout = layout))
+}
+
+# The cached constrain step if it describes these draws, otherwise a fresh one.
+.ctBackendConstrained <- function(fit, samples = NULL) {
+  if (is.null(samples)) samples <- .ctBackendRawSamples(fit)
+  cached <- fit$transformedpars
+  if (!is.null(cached) && identical(dim(cached$samples), dim(samples)) &&
+      isTRUE(all.equal(cached$samples, samples, check.attributes = FALSE))) {
+    return(cached)
+  }
+  .ctBackendConstrain(fit, samples)
 }
 
 .ctBackendSummary <- function(object, timeinterval = 1, digits = 3, parmatrices = TRUE,
-  ...) {
+  residualcov = TRUE, ...) {
   has_posterior <- !is.null(object$estimate$rawposterior)
 
   out <- list()
 
-  popmeans <- .ctBackendPopMeanSamples(object)
-  out$popmeans <- .ctBackendSampleSummary(popmeans$values, digits = digits)
-  out$popNote <- paste0("Population values on the transformed scale. ",
-    "Covariance parameters appear in sd / unconstrained correlation form; ",
-    "see System Matrices (or ctSummaryMatrices()) for cor/cov.")
+  constrained <- .ctBackendConstrained(object)
+  samples <- constrained$samples
+  cells <- constrained$cells
+  layout <- constrained$layout
+  flat <- constrained$flat
 
-  tipreds <- .ctBackendTipredSummary(object, digits = digits)
-  if (!is.null(tipreds)) {
-    out$tipreds <- tipreds
-    out$tipredsNote <- "Raw-scale effects on the unconstrained parameters."
+  if (isTRUE(residualcov)) {
+    residCovStd <- .ctBackendResidCovStd(object, digits = digits)
+    if (!is.null(residCovStd)) out$residCovStd <- residCovStd
+  }
+
+  if (!is.null(constrained$rawpopcorr)) {
+    out$rawpopcorr <- .ctBackendSampleSummary(constrained$rawpopcorr,
+      digits = digits, z = nrow(samples) > 1L)
+    out$rawpopcorrNote <-
+      "These reflect correlations between the raw / unconstrained parameters."
+  }
+
+  if (!is.null(constrained$tipreds)) {
+    out$tipreds <- .ctBackendSampleSummary(constrained$tipreds, digits = digits,
+      z = nrow(samples) > 1L)
+    out$tipredsNote <- "Approximate (linearised) effects on the transformed parameters."
   }
 
   if (isTRUE(parmatrices)) {
-    collapsed <- list(
-      Mean = .ctBackendSummaryMatrices(object, calcfunc = mean, calcfuncargs = list(),
-        timeinterval = timeinterval))
+    # One materialization, five collapses -- not five calls to
+    # .ctBackendSummaryMatrices(), each of which would ask the engine for the
+    # same arrays again.
+    model <- .ctBackendModel(object)
+    arrays <- .ctBackendPopArraysFromFlat(flat, layout, .ctBackendSpec(object))
+    collapse <- function(calcfunc, calcfuncargs) {
+      .ctSummaryMatricesFromArrays(arrays, continuoustime = model$continuoustime,
+        latentNames = model$latentNames, manifestNames = model$manifestNames,
+        TDpredNames = model$TDpredNames, calcfunc = calcfunc,
+        calcfuncargs = calcfuncargs, timeinterval = timeinterval)
+    }
+    collapsed <- list(Mean = collapse(mean, list()))
     if (has_posterior) {
-      collapsed$sd <- .ctBackendSummaryMatrices(object, calcfunc = stats::sd,
-        calcfuncargs = list(na.rm = TRUE), timeinterval = timeinterval)
+      collapsed$sd <- collapse(stats::sd, list(na.rm = TRUE))
       for (probability in c(.025, .5, .975)) {
-        collapsed[[paste0(probability * 100, "%")]] <- .ctBackendSummaryMatrices(object,
-          calcfunc = stats::quantile, calcfuncargs = list(probs = probability),
-          timeinterval = timeinterval)
+        collapsed[[paste0(probability * 100, "%")]] <-
+          collapse(stats::quantile, list(probs = probability))
       }
       names(collapsed) <- c("Mean", "sd", "2.5%", "50%", "97.5%")
     }
@@ -483,7 +831,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     d <- d[!d$matrix %in% c("DIFFUSION", "T0VAR"), ]
     out$parmatrices <- d
 
-    statedep <- attr(ctBackendParMatrices(object), "stateDependent")
+    statedep <- layout$statedep
     if (!is.null(statedep) && nrow(statedep)) {
       out$parmatNote <- paste0("State-dependent cells (",
         paste0(unique(statedep$matrix), collapse = ", "),
@@ -492,6 +840,20 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     }
   }
 
+  if (!is.null(constrained$popsd)) {
+    out$popsd <- .ctBackendSampleSummary(constrained$popsd, digits = digits)
+  }
+
+  fixed <- cells[!cells$randomeffect, , drop = FALSE]
+  out$popmeans <- .ctBackendSampleSummary(
+    .ctBackendPopCellsFromFlat(flat, fixed, layout), digits = digits)
+  out$popNote <- paste0("Population values on the transformed scale. ",
+    "Covariance parameters appear in sd / unconstrained correlation form; ",
+    "see System Matrices (or ctSummaryMatrices()) for cor/cov.")
+
+  logposterior <- object$estimate$logposterior
+  if (is.null(logposterior)) logposterior <- object$estimate$loglik
+  out$logposterior <- logposterior
   out$loglik <- object$estimate$loglik
   out$npars <- length(object$estimate$raw)
   out$aic <- 2 * out$npars - 2 * out$loglik
@@ -504,7 +866,13 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
       "Run ctOptimUncertainty() for standard errors and intervals.")
   }
 
-  out <- lapply(out, function(x) roundSummaryCtStanFitValue(x, digits = digits))
+  # Matrices become data frames exactly as summary.ctStanFit does, so the shared
+  # print method treats a one-manifest residual covariance as a table rather
+  # than as a bare scalar.
+  out <- lapply(out, function(x) {
+    if ("matrix" %in% class(x)) x <- data.frame(x, check.names = FALSE)
+    roundSummaryCtStanFitValue(x, digits = digits)
+  })
   attr(out, "digits") <- digits
   # Two classes, one print method: the sections are named as
   # print.summary.ctStanFit expects, so it prints these unchanged and there is

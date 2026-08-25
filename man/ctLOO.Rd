@@ -10,7 +10,7 @@ ctLOO(
   cores = 2,
   parallelFolds = FALSE,
   tol = 1e-05,
-  subjectwise = ifelse(length(unique(fit$standata$subject)) >= folds, TRUE, FALSE),
+  subjectwise = ifelse(length(unique(.ctFitRowSubject(fit))) >= folds, TRUE, FALSE),
   keepfirstobs = FALSE,
   leaveOutN = NA,
   refit = TRUE,
@@ -48,6 +48,21 @@ list
 }
 \description{
 K fold cross validation for ctStanFit objects
+}
+\details{
+Works for \code{backend='julia'} fits as well as stan ones. There,
+a held-out row is withheld by setting its manifest observations to missing
+and re-preparing, which is a row the filter propagates through without an
+update and without a likelihood contribution -- the same thing
+\code{standata$dokalmanrows} does for the stan backend. \code{parallelFolds}
+is ignored for julia fits, because the engine already threads its own
+subject loop and each fold therefore uses every core.
+
+Be aware that each fold is an independent re-optimisation, and neither
+backend's optimizer restarts from a flat direction. On a weakly identified
+model, or one where withholding a fold leaves a parameter poorly determined,
+two folds -- or two backends -- can converge to noticeably different raw
+parameters for a similar likelihood.
 }
 \examples{
 \donttest{ 

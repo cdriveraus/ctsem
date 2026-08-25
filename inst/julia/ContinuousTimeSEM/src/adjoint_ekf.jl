@@ -227,30 +227,40 @@ function _record_group!(tape::CTSEMAdjointTape{T}, group::Int,
     @inbounds for j in eachindex(relevant)
         compact[j] = all_params[relevant[j]]
     end
-    push!(tape.groups, CTSEMGroupRecord(group, compact, collect(vec(ctx.state)),
-        collect(ctx.tdpreds), float(ctx.time), float(ctx.dt), ctx.row))
+    # Explicit `{T}` for the same reason as in `_record_update!`: the TD
+    # predictors and the time/interval are data, so they arrive as Float64
+    # whatever the tape's element type is, and the record requires every field
+    # to share it.
+    push!(tape.groups, CTSEMGroupRecord{T}(group, compact, collect(vec(ctx.state)),
+        T[x for x in ctx.tdpreds], T(ctx.time), T(ctx.dt), ctx.row))
     _tape_push!(tape, :group, length(tape.groups))
     return nothing
 end
 
-function _record_td!(tape::CTSEMAdjointTape, ws, pars, tdpreds, n::Int)
+function _record_td!(tape::CTSEMAdjointTape{T}, ws, pars, tdpreds, n::Int) where {T}
     # Mirrors `_apply_td_impulse!`'s own early return: with no TD predictors
     # the impulse is a no-op and contributes nothing to reverse.
     isempty(tdpreds) && return nothing
-    push!(tape.tds, CTSEMTDRecord(Matrix(ws.P_predict.data[1:n, 1:n]),
-        Matrix(pars.Jtd[1:n, 1:n]), collect(tdpreds)))
+    push!(tape.tds, CTSEMTDRecord{T}(Matrix(ws.P_predict.data[1:n, 1:n]),
+        Matrix(pars.Jtd[1:n, 1:n]), T[x for x in tdpreds]))
     _tape_push!(tape, :td, length(tape.tds))
     return nothing
 end
 
-function _record_update!(tape::CTSEMAdjointTape, ws, pars, data, obs_col::Int,
-    observed::AbstractVector{Int}, state_in, P_in, n::Int)
+function _record_update!(tape::CTSEMAdjointTape{T}, ws, pars, data, obs_col::Int,
+    observed::AbstractVector{Int}, state_in, P_in, n::Int) where {T}
     o = collect(observed)
-    push!(tape.updates, CTSEMUpdateRecord(
+    # `T[...]` rather than `[float(...)]`: the observed data is a constant with
+    # respect to the parameters, so it is Float64 whatever the tape's element
+    # type is. Every other field is `T`, and `CTSEMUpdateRecord{T}` requires
+    # them all to agree -- which they did as long as `T` was `Float64` too.
+    # Differentiating this gradient (see `ctsem_hessian`) makes `T` a dual, and
+    # the record then has to carry the data as a dual with zero partials.
+    push!(tape.updates, CTSEMUpdateRecord{T}(
         o, collect(vec(state_in)), Matrix(P_in),
         Matrix(pars.LAMBDA[o, 1:n]), collect(pars.MANIFESTMEANS[o]),
         Matrix(pars.Jy[o, 1:n]), Matrix(ws.bufferΘ.out[o, o]),
-        [float(data[i, obs_col]) for i in o]))
+        T[data[i, obs_col] for i in o]))
     _tape_push!(tape, :update, length(tape.updates))
     return nothing
 end
@@ -260,11 +270,12 @@ function _begin_predict!(tape::CTSEMAdjointTape{T}, ws, n::Int) where {T}
     return (collect(vec(ws.state))::Vector{T}, Matrix(ws.P_update.data[1:n, 1:n])::Matrix{T})
 end
 
-function _record_predict!(tape::CTSEMAdjointTape, ws, pars, snapshot, Δt, n::Int)
+function _record_predict!(tape::CTSEMAdjointTape{T}, ws, pars, snapshot, Δt,
+    n::Int) where {T}
     state_in, P_in = snapshot
     dyn = ws.diffusion_state_indices
     k = length(dyn)
-    push!(tape.predicts, CTSEMPredictRecord(
+    push!(tape.predicts, CTSEMPredictRecord{T}(
         state_in, P_in,
         Matrix(ws.discrete_ca.eJAx[1:n, 1:n]),
         Matrix(pars.JAx[1:n, 1:n]), Matrix(pars.DRIFT[1:n, 1:n]),
@@ -272,7 +283,7 @@ function _record_predict!(tape::CTSEMAdjointTape, ws, pars, snapshot, Δt, n::In
         Matrix(ws.diffusion_buffer.out[1:k, 1:k]),
         collect(ws.diffusion_buffer.r[1:k]),
         collect(ws.discrete_ca.dINT[dyn]),
-        float(Δt)))
+        T(Δt)))
     _tape_push!(tape, :predict, length(tape.predicts))
     return nothing
 end

@@ -144,7 +144,11 @@ test_that("summary reports fixed effects and system matrices, with intervals onl
     MANIFESTVAR = diag(c(.1, .1)), MANIFESTMEANS = matrix(0, 2, 1),
     T0MEANS = matrix(0, 2, 1), CINT = matrix(0, 2, 1),
     DRIFT = matrix(c("auto1", "cross12", "cross21", "auto2"), 2, 2, byrow = TRUE)))
-  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
+  # estonly: ctFit() now finishes with ctOptimUncertainty() as the Stan path
+  # does, and these assertions are about the point-estimate-only fit -- the
+  # one whose summary must not print an interval it has not earned.
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
+    optimcontrol = list(estonly = TRUE)))
 
   point <- summary(fit)
   expect_s3_class(point, "summary.ctStanFit")
@@ -171,6 +175,35 @@ test_that("summary reports fixed effects and system matrices, with intervals onl
 
   expect_output(print(interval), "System Matrices")
   expect_output(print(interval), "Fixed-effects")
+})
+
+test_that("a default julia fit carries uncertainty, as an optimized Stan fit does", {
+  skip_on_cran()
+  skip_without_julia()
+  set.seed(5)
+  data <- do.call(rbind, lapply(1:30, function(i) data.frame(id = i,
+    time = c(0, .5, 1.5, 2.4, 3.5), Y1 = stats::rnorm(5, 0, .5),
+    Y2 = stats::rnorm(5, 0, .5))))
+  model <- suppressWarnings(ctModel(type = "ct", n.latent = 2, LAMBDA = diag(2),
+    MANIFESTVAR = diag(c(.1, .1)), MANIFESTMEANS = matrix(0, 2, 1),
+    T0MEANS = matrix(0, 2, 1), CINT = matrix(0, 2, 1),
+    DRIFT = matrix(c("auto1", "cross12", "cross21", "auto2"), 2, 2, byrow = TRUE)))
+  # No optimcontrol: the point of this test is what a user gets by default.
+  fit <- suppressWarnings(suppressMessages(
+    ctFit(data, model, backend = "julia", verbose = 0,
+      optimcontrol = list(finishsamples = 50))))
+
+  expect_equal(nrow(fit$estimate$rawposterior), 50L)
+  expect_equal(fit$uncertainty$settings$method, "hessian")
+  expect_true(all(is.finite(fit$estimate$se)))
+
+  out <- summary(fit, parmatrices = FALSE)
+  expect_identical(colnames(out$popmeans), c("mean", "sd", "2.5%", "50%", "97.5%"))
+  expect_false(is.null(out$residCovStd))
+  expect_false(is.null(out$logposterior))
+  # The filter output summary() reads for that is cached at fit time, as the
+  # Stan path caches stanfit$kalman.
+  expect_false(is.null(fit$kalman$errprior))
 })
 
 # An actual OU process, so the variance parameters sit in the interior. Fitting
@@ -205,7 +238,8 @@ test_that("summary reports transformed values, not the raw parameters", {
     DRIFT = matrix("drift", 1, 1), DIFFUSION = matrix("diff", 1, 1),
     MANIFESTVAR = matrix("mvar", 1, 1), MANIFESTMEANS = matrix("mmean||FALSE", 1, 1),
     T0VAR = matrix("t0v", 1, 1), T0MEANS = matrix(0, 1, 1), CINT = matrix(0, 1, 1)))
-  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
+    optimcontrol = list(estonly = TRUE)))
 
   popmeans <- summary(fit)$popmeans
   expect_identical(rownames(popmeans), c("drift", "diff", "mvar", "mmean", "t0v"))
@@ -232,7 +266,8 @@ test_that("ctSummaryMatrices and ctDiscretePars work on backend fits", {
     MANIFESTVAR = diag(c(.1, .1)), MANIFESTMEANS = matrix(0, 2, 1),
     T0MEANS = matrix(0, 2, 1), CINT = matrix(0, 2, 1),
     DRIFT = matrix(c("auto1", "cross12", "cross21", "auto2"), 2, 2, byrow = TRUE)))
-  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
+    optimcontrol = list(estonly = TRUE)))
 
   matrices <- ctSummaryMatrices(fit)
   expect_true(all(c("DRIFT", "DIFFUSIONcov", "T0cov", "asymDIFFUSIONcov", "dtDRIFT") %in%
@@ -266,7 +301,8 @@ test_that("ctExtract returns pop_* arrays sized by the posterior", {
     DRIFT = matrix("drift", 1, 1), DIFFUSION = matrix("diff", 1, 1),
     MANIFESTVAR = matrix("mvar", 1, 1), MANIFESTMEANS = matrix("mmean||FALSE", 1, 1),
     T0VAR = matrix("t0v", 1, 1), T0MEANS = matrix(0, 1, 1), CINT = matrix(0, 1, 1)))
-  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0,
+    optimcontrol = list(estonly = TRUE)))
 
   point <- ctExtract(fit)
   expect_equal(dim(point$pop_DRIFT), c(1L, 1L, 1L))

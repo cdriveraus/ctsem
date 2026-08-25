@@ -83,7 +83,7 @@ follows the same principle:
 | model preparation | `.ctJuliaPrepare()` — one parameter table |
 | system-matrix summaries | `.ctSummaryMatricesFromArrays()`, factored out of `ctSummaryMatrices.ctStanFit()` |
 | prediction output | `.ctKalmanArrayAssemble()`, factored out of `ctKalmanArray()` |
-| uncertainty | `ctOptimComputeUncertainty()` — the Stan path's own |
+| uncertainty | `ctOptimComputeUncertainty()` — the Stan path's own, run at the end of `ctFit()` as `stanoptimis()` runs it |
 | posterior predictive | `ctPostPredData()` / `ctFitCovCheck()` via `.ctFit*()` accessors |
 
 Where a function needed backend-specific data it now reaches through an
@@ -103,24 +103,39 @@ accessor (`.ctFitModelObject`, `.ctFitLongData`, `.ctFitIdMap`,
   `threadid()`, because a task can migrate between threads at any yield point.
   2.0–4.3x on six threads. `ctJuliaSetup(threads=n)` must run *before* the Julia
   session exists; `ctFit(cores=n)` caps it per fit.
-- **Uncertainty**: `ctOptimUncertainty()` for `hessian`, `surrogate`, `is`,
-  `opg`, `sandwich`, `bootstrap`. Not `fullbootstrap`, which re-optimises each
-  resample and so needs the model rebuilt rather than re-evaluated.
+- **Uncertainty**: `hessian`, `surrogate`, `is`, `opg`, `sandwich`,
+  `bootstrap` — **run as part of fitting**, as `stanoptimis()` runs them for an
+  optimized Stan fit, and controlled by the same `optimcontrol` names
+  (`uncertainty`, `uncertaintyDraws`, `finishsamples`, `uncertaintyControl`,
+  `estonly`). `ctOptimUncertainty()` re-runs it with different settings. The
+  Hessian is **exact**, not finite-differenced — see below. Not
+  `fullbootstrap`, which re-optimises each resample and so needs the model
+  rebuilt rather than re-evaluated.
+- **Cross validation**: `ctLOO()`, including `subjectwise`, `leaveOutN`,
+  `keepfirstobs`, `refit=FALSE` and `casewiseApproximation`. Not
+  `parallelFolds`, which is ignored: the engine threads its own subject loop,
+  so each fold already uses every core.
 - **Per-subject scores**: the adjoint already computes them; the rows sum to the
   full gradient to 1e-16.
 - **Summaries**: `summary()`, `ctSummaryMatrices()`, `ctExtract()`,
-  `ctDiscretePars()`.
+  `ctDiscretePars()`, `ctSubjectPars()`.
 - **Prediction**: `ctKalmanArray()`, `ctPredict()` / `ctKalman()`,
   `ctPredictTIP()`, `ctResiduals()`, `ctACFresiduals()`,
-  `ctExtract(subjectMatrices=TRUE)`.
+  `ctExtract(subjectMatrices=TRUE)`, `plot()`.
 - **Generation**: `ctGenerateFromFit()`, and with it `ctPostPredData()`,
   `ctPostPredPlots()`, `ctFitCovCheck()`.
 
 **Not supported**: HMC (`optimize=FALSE`), non-Gaussian manifest variables,
-variational Bayes, `fullbootstrap` uncertainty, and multi-start/restart
-robustness in the optimizer — both `ctsem_optimize` and Stan's `stanoptimis`
-can walk to `|raw| ~ 1e4` on a weakly identified model, and only Stan's has any
-defence against it.
+variational Bayes, `fullbootstrap` uncertainty, `summary(priorcheck=)`
+(accepted and ignored — it compares posteriors against the *Stan* model's
+prior block), the prior/posterior-density, trace and interval panels of
+`plot()`, and multi-start/restart robustness in the optimizer — both
+`ctsem_optimize` and Stan's `stanoptimis` can walk to `|raw| ~ 1e4` on a weakly
+identified model, and only Stan's has any defence against it. That last one
+deserves more attention now that `ctLOO()` works, because every fold is an
+independent re-optimisation: on a model where withholding a fold leaves a
+parameter poorly determined, two folds — or two backends — can converge to
+raw parameters several units apart for a likelihood difference of a percent.
 
 ---
 
@@ -175,9 +190,179 @@ Three things are worth knowing:
   to explicitly nonlinear ones, because ctsem implements an individually varying
   parameter as a state dependence on an augmented carrier state.
 
-Intervals appear only when earned: a fit without `ctOptimUncertainty()` has one
-"sample", and the interval columns are omitted rather than filled with a
-zero-width interval that would read as certainty.
+Intervals appear only when earned: a fit built with `optimcontrol$estonly=TRUE`
+has one "sample", and the interval columns are omitted rather than filled with a
+zero-width interval that would read as certainty. An ordinary fit has 1000
+draws, because `ctFit()` finishes with `ctOptimUncertainty()`.
+
+---
+
+## What `summary()` reports, and why each section is where it is
+
+The sections are the same as an optimized Stan fit's, in the same order, with
+the same names — `residCovStd`, `rawpopcorr`, `tipreds`, `parmatrices`, `popsd`,
+`popmeans`, `logposterior`, `loglik` — because a script that reads
+`summary(fit)$tipreds` should not have to know which backend produced the fit.
+Getting there needed four things beyond the `pop_*` arrays above, and three of
+them are the same trick: **displace the raw vector and read the population cell
+back through the engine**, so the transform is applied once, by the code that
+owns it, rather than reimplemented in R.
+
+- **Which cell is a parameter's population value.** For most parameters it is
+  the first cell they occupy. An `intoverpop` random effect is the exception,
+  and not a rare one: the parameter's own cell is the carrier state's
+  `T0MEANS[k]`, which holds the *raw* value and none of the transform, while the
+  transform lives in whichever matrix reads `state[k]`. Reading the carrier cell
+  reported a random-effects `CINT` parameter ten times too small, its `10*param`
+  transform missing. Stan resolves the same ambiguity the same way, following
+  its `pr2` reference before applying `tform`.
+
+- **`popsd`** is the standard deviation of the *transformed* parameter over the
+  population, which for a nonlinear transform is not the transform of the
+  standard deviation. Stan draws 5000 subjects from the raw population
+  distribution, pushes each through the transform and takes the sd. This does
+  the same integral by 5-node Gauss-Hermite quadrature over the same
+  distribution: exact for a linear transform, and steadier than a random cloud
+  for a nonlinear one. All the varying parameters are displaced together on a
+  shared node, so it costs one engine call per node rather than per parameter —
+  only each parameter's own marginal spread is read, so the correlation a shared
+  node induces between them never enters an answer.
+
+- **`tipreds`** reports the effect on the *transformed* parameter, not the raw
+  coefficient, which is what Stan's `linearTIPREDEFFECT` is: the transform
+  evaluated a hundredth of an effect either side of the raw mean, differenced,
+  and scaled back up. One predictor at a time, so it is two engine calls per
+  predictor rather than two per effect.
+
+- **`rawpopcorr`** is the one that needs no displacement. It is a correlation
+  between *raw* parameters, so the state scaling folded into the sd transform
+  cancels and `cov2cor(T0cov)` is already the reported quantity.
+
+`residCovStd` comes from the filter rather than the transforms: the prior errors
+at the estimate, standardised by the observed covariance. `ctFit()` caches the
+filter output on the fit (`fit$kalman`) exactly as the Stan path caches
+`stanfit$kalman`, so summarising does not repeat a whole filter pass.
+
+**What a summary costs.** Nothing, now: about half a second on the model
+above, against Stan's 0.8. It used to be sixteen seconds, because every call
+re-materialized every model matrix for every draw. Stan was faster for a
+structural reason rather than a clever one — it constrains its draws *once*,
+at fit time, and `summary()` reads the cached `transformedpars` — and the fix
+was to do the same. `ctFit()` now stores the constrained draws on the fit, and
+`ctOptimUncertainty()` refreshes them when it changes the posterior; the cache
+carries the draws it was built from, so it is checked rather than trusted.
+
+That moves the cost rather than removing it: the constrain step is about
+sixteen seconds at fit time on this model, paid once. Seven of its eight engine
+calls are displaced reads — the five quadrature nodes behind `popsd` and the
+two linearisation steps behind `tipreds` — and each of those materializes
+*every* matrix, including the covariance factorizations and the solves behind
+`asymDIFFUSIONcov` and `asymCINT`, when all it reads back is a handful of
+scalar cells. An entry point that returns only the requested cells is the
+obvious next reduction; it has not been measured against, so the size of the
+win is unknown.
+
+Measured against a Stan fit of the same model — five random effects, a TI
+predictor, `intoverpop` — `residCovStd` agrees to the printed digits, `popsd`
+and `popmeans` to ~1%, `rawpopcorr` to ~0.02, and `ctSubjectPars()` to 1e-4. The
+residual differences are the two optimizers' own, plus Stan's Monte Carlo where
+this uses quadrature.
+
+Two consequences of fitting with uncertainty are worth stating, because both
+are visible to a user who is only comparing backends.
+
+**It costs.** The Hessian is 2 gradient evaluations per parameter, and it now
+runs on every fit: the tutorial's 28-parameter individual-differences model went
+from ~30 s to ~106 s. That is the same trade the Stan backend has always made,
+and `optimcontrol$estonly=TRUE` opts out of it.
+
+**Everything downstream now runs on the posterior**, where it used to run on a
+single point estimate — and a draw from a normal approximation can land
+somewhere the filter cannot go, e.g. a prior covariance the smoother's solve
+finds singular. `ctExtract()` therefore drops inadmissable draws and reports the
+proportion, which is what `stan_constrainsamples()` has always done; without
+that, one bad draw in two hundred took the whole call with it.
+
+---
+
+## The Hessian, and cross validation
+
+Two things the Stan backend does that this one reached for last, and that turned
+out to need opposite kinds of work: one was a gap in the *engine*, the other a
+gap in the *translation*.
+
+### The Hessian is exact
+
+`ctOptimComputeUncertainty()` gets its Hessian by central-differencing the
+gradient: `2 * npar` reverse sweeps, accurate to about the square root of
+machine precision, and only if the step suits the parameter's scale "—" which
+one global step cannot do for a vector mixing log standard deviations with
+unconstrained correlations. The engine can do better, because it can
+differentiate its own gradient: `ctsem_hessian` runs `ForwardDiff` in forward
+mode *over the reverse-mode adjoint*.
+
+Forward-over-reverse rather than forward-over-forward because the reverse pass
+is where the engine's work already is. `ForwardDiff.hessian` of the primal costs
+`O(npar^2 / chunksize)` passes; differentiating the adjoint costs
+`O(npar / chunksize)`, each one a traced forward sweep plus its reverse.
+
+| | finite difference | forward-over-reverse |
+| --- | --- | --- |
+| relative error vs `ForwardDiff.hessian` | 2e-6 | **2e-16** |
+| sweeps | `2 * npar` | `ceil(npar / chunksize)` |
+| 28-parameter model, warm | 0.78 s | **0.08 s** |
+| 28-parameter model, first call | 0.78 s | 10.6 s |
+
+That last row is the one to know about. The first call on a given model spends
+about ten seconds in Julia compiling the whole reverse pass for dual numbers,
+and it is paid once per model shape per session "—" so a single fit in a fresh
+session is slower, and everything after it is an order of magnitude faster. It
+is announced (`Computing exact Hessian`) rather than left as a mysterious pause,
+and `ctOptimUncertainty(control = list(analyticHessian = FALSE))` returns to the
+finite difference. If the engine cannot differentiate at a point, the fallback
+is automatic and warned about, because a worse covariance beats no fit.
+
+**Making the reverse pass differentiable took four changes**, all of the same
+kind: things that were `Float64` because nothing had ever asked them not to be.
+The tape's records held the observed data, the TD predictors and the time step
+as `Float64` beside `T`-typed siblings; the group-replay scratch in the dual
+context was `Float64` with a comment explaining that the adjoint is only ever
+entered with doubles; and the Fréchet block called `Base.exp`, which has no
+method for a matrix of duals, where the engine's own `_ctsem_expm` already
+dispatched correctly. None of it changes a `Float64` result "—" the engine's
+815 existing tests pass unchanged "—" and `test_hessian.jl` adds the identity
+that matters, plus a check that an ordinary gradient still works afterwards
+(the workspace cache is keyed on the scalar type, so a Hessian call swaps it out
+and the next gradient swaps it back).
+
+### Cross validation
+
+`ctLOO()` needed nothing from the engine. The Stan path withholds rows by
+zeroing `standata$dokalmanrows`, refits with `stanoptimis`, and reads `llrow`
+out of `constrain_pars`; none of those exist here, but each has an exact
+equivalent, and only the middle one needed a function extracted:
+
+| Stan | julia |
+| --- | --- |
+| `dokalmanrows[i] <- 0` | set row `i`'s manifests to `NA` and re-prepare |
+| `stanoptimis(estonly=TRUE)` | `.ctJuliaOptimise()`, the call `ctFit()` makes |
+| `constrain_pars(...)$llrow` | the filter's own `llrow`, a byproduct of the forward pass |
+
+Withholding at the *data* level is what makes this short, and it is also
+stricter than a flag: a withheld row cannot leak into the likelihood, because
+the engine never receives its value. It is the same mechanism `removeObs`
+already uses for prediction, so it is a tested path rather than a new one.
+
+The identity worth asserting is the one with no optimizer in it: with
+`refit=FALSE` every fold scores the same parameters against the same full data,
+so assembling the out-of-sample vector fold by fold must reconstruct the
+in-sample one exactly. Any error in which rows a fold owns shows up there with
+nothing to hide behind. The comparison against Stan is made at `refit=FALSE`
+for the same reason "—" with refitting, each fold is an independent
+optimisation, and on a fold that withholds a third of the data the two
+optimizers land up to 6 raw units apart in one parameter for a ~2% likelihood
+difference. That is the known multi-start weakness, not a disagreement about
+cross validation.
 
 ---
 
@@ -211,6 +396,11 @@ diffusion, so a subject's value for it *is* its smoothed t0 estimate; a
 subject's matrices are the parameter vector its filter ended with, T0MEANS
 replaced by that state. This is Stan's construction, comment included ("t0means
 updated, other pars as per final time point").
+
+`ctSubjectPars()` reads those matrices, and reads each parameter from the same
+population cell the fixed-effects summary uses — so a random-effects `CINT`
+parameter comes back from `subj_CINT` with its transform applied, not from its
+raw carrier state. It agrees with Stan's to 1e-4 on a five-random-effect model.
 
 `removeObs` withholds observations from the filter but not from the report,
 which is the point of it: what comes back is a prediction next to the
@@ -341,15 +531,16 @@ one step, while a continuous reading of the same data does change.
 | suite | what it checks |
 | --- | --- |
 | `tests/testthat/test-stan-julia-parity.R` | likelihood and gradient against Stan across model shapes |
-| `test-backend-summary.R` | `pop_*` arrays against `stan_constrainsamples()` at a fixed raw vector |
+| `test-backend-summary.R` | `pop_*` arrays against `stan_constrainsamples()` at a fixed raw vector; that a default fit carries uncertainty and reports the Stan sections |
 | `test-backend-kalman.R` | per-row prior/filtered/smoothed output, subject matrices, `ctPredict`, `ctPredictTIP` |
 | `test-backend-generate.R` | the generation identity and calibration |
 | `test-backend-discretetime.R` | discrete time against Stan, and the interval-independence identity |
-| `test-backend-uncertainty.R` | Hessian standard errors against Stan's |
+| `test-backend-uncertainty.R` | Hessian standard errors against Stan's; the exact Hessian against the finite difference it replaces |
+| `test-backend-loo.R` | `ctLOO()` folds, the no-refit identity, and agreement with Stan |
 | `test-backend-priors-scores.R` | `priors=TRUE` against Stan; scores sum to the gradient |
 | `test-julia-engine-vendored.R` | `ctJuliaSetup()` from the vendored copy, offline |
 | `test-julia-install.R` | download URLs, archive unpacking, and that consent is refused rather than assumed when there is nobody to ask |
-| `inst/julia/ContinuousTimeSEM/test/` | the engine's own suite, including the adjoint against ForwardDiff |
+| `inst/julia/ContinuousTimeSEM/test/` | the engine's own suite, including the adjoint against ForwardDiff and `test_hessian.jl` |
 
 Two habits worth keeping. Comparisons against Stan are made **at a fixed raw
 parameter vector** rather than between two fits, so the optimizer is not part of
@@ -371,8 +562,9 @@ changes before vendoring them.
 
 ## Deployment
 
-The engine ships **vendored** in `inst/julia/`. Before that it was installed
-with `Pkg.add` from a private GitLab URL, which meant:
+The engine **is part of ctsem**: `inst/julia/ContinuousTimeSEM/` is its source,
+edited in place like any other file in this repository. Originally it was
+installed with `Pkg.add` from a private GitLab URL, which meant:
 
 - **`backend='julia'` could not be installed by anyone outside one project.**
   An unauthenticated `git ls-remote` returned *HTTP Basic: Access denied*. It
@@ -383,17 +575,26 @@ with `Pkg.add` from a private GitLab URL, which meant:
 - **The engine lived only in a second repository** that had to stay in lock-step
   with `R/ctJuliaBackend.R`'s parameter-table contract by hand.
 
-| | before | after |
-|---|---|---|
-| install source | `Pkg.add` from a private URL | vendored in `inst/julia/` |
-| credentials / network at setup | required | none |
-| pinned to | a branch | the exact commit, plus a vendored `Manifest.toml` |
-| dependency closure | 111 packages | **67** |
-| fresh depot | 268 MB | **124 MB** |
-| dependency install | ~73 s | **~20 s** |
-| `using ContinuousTimeSEM` | 8.7 s **per R session** | **3.86 s** |
-| cold `ctJuliaSetup()` | network + auth + resolve | **10.7 s, offline** |
-| user steps from nothing to a fit | 4, across 2 R sessions | **1, `ctJuliaInstall()`** |
+The first fix copied the engine in and recorded the upstream commit in
+`inst/julia/engine.json`, refreshed by a `tools/sync-julia-engine.sh` script.
+That removed the credentials problem but kept the two-repository one, and added
+a worse failure of its own: the cached engine project is keyed on that recorded
+revision and only populated when empty, so editing the engine without also
+running the sync script left everyone who had already used the backend running
+new R code against their old cached engine, silently. An identifier that has to
+be maintained by hand is an identifier that will eventually be wrong.
+
+Both are now gone. There is one repository, no lock file, and no sync step:
+
+| | originally | vendored + lock | now |
+|---|---|---|---|
+| install source | `Pkg.add` from a private URL | copy + `engine.json` | part of ctsem |
+| credentials / network at setup | required | none | none |
+| engine identity | a branch name | a recorded commit | a hash of the engine source |
+| keeping the copy current | n/a | `tools/sync-julia-engine.sh`, by hand | nothing to do |
+| dependency closure | 111 packages | **67** | **67** |
+| fresh depot | 268 MB | **124 MB** | **124 MB** |
+| user steps from nothing to a fit | 4, across 2 R sessions | **1** | **1, `ctJuliaInstall()`** |
 
 Most of the dependency weight was DataFrames, used only as a row container in
 the R interface, plus four dependencies with no call sites at all that were
@@ -403,13 +604,32 @@ plain column vectors with sentinels (`0`, `NaN`, `""`) instead of `missing`;
 DataFrames stays as a *test-only* dependency, because a `DataFrame` literal is
 still the clearest way to write a small table in a test.
 
-`ctJuliaSetup()` copies the vendored package into a writable, revision-keyed
-project under `R_user_dir("ctsem", "cache")` and instantiates it there —
-activating it in place would fail on a read-only R library. If the vendored
-manifest is unsatisfiable on the user's Julia version it falls back to a fresh
-resolve rather than refusing to run. `tools/sync-julia-engine.sh` refreshes the
-copy, refuses to run against a dirty tree, and records the source commit in
-`engine.json`, which is now provenance rather than an install spec.
+`ctJuliaSetup()` copies the engine into a writable project under
+`R_user_dir("ctsem", "cache")` and instantiates it there — activating it in
+place would fail on a read-only R library. If the manifest is unsatisfiable on
+the user's Julia version it falls back to a fresh resolve rather than refusing
+to run.
+
+**That project directory is keyed on `.ctJuliaEngineVersion()`, a hash of the
+engine's own source.** This is the piece that makes editing the engine safe:
+change any file under `inst/julia/ContinuousTimeSEM/` and the key changes, so
+the next `ctJuliaSetup()` builds a fresh project instead of reusing a stale one.
+Nothing has to be remembered, which is the only property that survives contact
+with actual use. `ctJuliaStatus()$engine` reports it.
+
+### Working on the engine
+
+Edit `inst/julia/ContinuousTimeSEM/` and commit it with the rest of ctsem.
+Nothing else is required — no sync, no version bump.
+
+```bash
+# run the engine's own Julia suite against the tree you are editing
+julia --project=inst/julia/ContinuousTimeSEM -e 'using Pkg; Pkg.test()'
+```
+
+`ctJuliaSetup(project = "<path>")` points ctsem at a different checkout, which
+is useful for comparing against another copy but is not needed for ordinary
+work.
 
 ### Two bridge behaviours to know about
 
@@ -425,33 +645,27 @@ copy, refuses to run against a dirty tree, and records the source commit in
 
 ### Spinning the engine out as a standalone Julia package
 
-The vendored tree is laid out exactly as a **root-level Julia package** —
-`Project.toml`, `Manifest.toml`, `src/`, `test/`, and nothing else. That makes
-each of these possible without rearranging anything:
+`inst/julia/ContinuousTimeSEM/` is laid out exactly as a **root-level Julia
+package** — `Project.toml`, `Manifest.toml`, `src/`, `test/`, and nothing else.
+That is deliberate, and it is what keeps the single-repository arrangement from
+being a one-way door. Because the directory is a package root and its contents
+live in ctsem's own git history, `git subtree` can publish it to a separate
+remote whenever that becomes useful, and pull changes back:
 
-- **Work on it in place.** `julia --project=inst/julia/ContinuousTimeSEM -e
-  'using Pkg; Pkg.test()'` runs the whole Julia suite against the vendored copy.
-- **Work on it as its own repository.** `ctJuliaSetup(project = "<checkout>")`
-  points ctsem at a development checkout instead, which is how the engine has
-  been developed throughout.
-- **Register it as a Julia package.** A root-level package with a UUID and
-  compat bounds is what the General registry wants, so a pure-Julia user could
-  eventually `Pkg.add("ContinuousTimeSEM")` with no R involved.
-
-The one structural step still outstanding is upstream: the `ContinuousTimeSEM`
-repository keeps the package in a subdirectory alongside unrelated scratch
-files. Move it to the repository root and `tools/sync-julia-engine.sh` can be
-deleted in favour of
-
-```
-git subtree pull --prefix=inst/julia/ContinuousTimeSEM <remote> <branch> --squash
-git subtree push --prefix=inst/julia/ContinuousTimeSEM <remote> <branch>
+```bash
+git subtree split --prefix=inst/julia/ContinuousTimeSEM -b julia-engine
+git subtree push --prefix=inst/julia/ContinuousTimeSEM <remote> main
+git subtree pull --prefix=inst/julia/ContinuousTimeSEM <remote> main --squash
 ```
 
-which makes the relationship two-way. A **submodule** would be the wrong tool,
-and it is worth saying why since it is the more obvious reach: submodule
-contents are not part of the parent repository's tree and are not included in an
-R package tarball, so a released ctsem would ship an empty directory and users
-would be back to needing network access and credentials — the exact problem
-being fixed. Subtree vendors the content while keeping the two-way link;
-submodule vendors only a pointer.
+Someone can then fork or `Pkg.add` the engine on its own, with no R involved,
+while ctsem development stays a single-repository affair. Nobody has to run any
+of this to work on ctsem — it is available if the engine ever wants a life of
+its own.
+
+A **submodule** would be the wrong tool here, and it is worth saying why since
+it is the more obvious reach: submodule contents are not part of the parent
+repository's tree and are not included in an R package tarball, so a released
+ctsem would ship an empty directory and users would be back to needing network
+access and credentials — the exact problem this arrangement exists to avoid.
+Subtree keeps the content in the tree while leaving the two-way link available.

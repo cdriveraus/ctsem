@@ -5,7 +5,6 @@
 
 .ct_julia_cache <- new.env(parent = emptyenv())
 .ct_julia_cache$objectives <- new.env(parent = emptyenv())
-.ct_julia_engine_file <- function() system.file("julia", "engine.json", package = "ctsem")
 .ctJuliaOr <- function(x, default) if (is.null(x)) default else x
 .ctJuliaString <- function(value) {
   value <- as.character(value)
@@ -55,23 +54,34 @@
     .ctJuliaDeclined(), call. = FALSE)
 }
 
-.ctJuliaEngineLock <- function() {
-  path <- .ct_julia_engine_file()
-  if (!nzchar(path) || !file.exists(path)) {
-    stop("ctsem Julia engine lock file is unavailable; reinstall ctsem.", call. = FALSE)
-  }
-  json <- paste(readLines(path, warn = FALSE), collapse = "\n")
-  # Provenance for the vendored engine in inst/julia/, not an install spec: the
-  # url/branch/revision say which upstream commit the vendored copy was taken
-  # from, so the two can be compared. tools/sync-julia-engine.sh writes it.
-  fields <- c("url", "branch", "revision", "subdir", "julia")
-  out <- lapply(fields, function(field) {
-    hit <- regmatches(json, regexec(paste0('"', field, '"\\s*:\\s*"([^"]+)"'), json))[[1]]
-    if (length(hit) < 2L) stop("Malformed ctsem Julia engine lock file.", call. = FALSE)
-    hit[[2]]
-  })
-  names(out) <- fields
-  out
+# The engine's identity: a hash of its own source.
+#
+# This used to be a git commit recorded in `inst/julia/engine.json` by a script
+# that copied the engine in from a separate repository. The engine is now simply
+# part of ctsem -- `inst/julia/ContinuousTimeSEM/` is the source, edited in place
+# like any other file here -- so there is no upstream commit to record, and no
+# bookkeeping step that can be forgotten.
+#
+# Hashing the content rather than maintaining a version is what makes the cached
+# project self-invalidating. That cache is keyed on this and is only populated
+# when empty, so any identifier that has to be *updated by hand* strands a user
+# on a stale engine the moment someone edits the source without bumping it: they
+# upgrade ctsem, get the new R code, and run it against the old engine, silently.
+# A content hash cannot be forgotten.
+# Deliberately not memoized. Hashing 45 files takes 5.6 ms against 1.1 ms for a
+# cached lookup, and the saving is invisible next to anything that asks for it
+# -- but a cache keyed on the path alone would report a stale version after an
+# edit within the same session, which is precisely the property this exists to
+# provide. A guarantee with an exception is not a guarantee.
+.ctJuliaEngineVersion <- function(path = .ctJuliaEnginePath()) {
+  files <- sort(list.files(path, recursive = TRUE, full.names = TRUE))
+  manifest <- paste(substring(files, nchar(path) + 2L), tools::md5sum(files),
+    collapse = "
+")
+  handle <- tempfile(fileext = ".txt")
+  on.exit(unlink(handle), add = TRUE)
+  writeLines(manifest, handle)
+  substr(unname(tools::md5sum(handle)), 1L, 12L)
 }
 
 # Path to the copy of ContinuousTimeSEM.jl shipped inside this ctsem install.
@@ -83,18 +93,19 @@
   normalizePath(path, winslash = "/", mustWork = TRUE)
 }
 
-# A writable project directory for the engine, keyed by the vendored revision so
-# a ctsem upgrade gets a fresh environment instead of reusing a stale manifest.
+# A writable project directory for the engine, keyed by the engine's content
+# hash so that any change to it -- a ctsem upgrade, or an edit made while
+# working on the engine -- gets a fresh environment instead of reusing a stale
+# one.
 #
-# The vendored tree is *copied* here rather than activated in place: activating a
+# The engine tree is *copied* here rather than activated in place: activating a
 # project writes to its Manifest.toml, and an R library directory is frequently
 # read-only. The copy is under 400 KB.
-.ctJuliaEnvDir <- function(lock) {
+.ctJuliaEnvDir <- function(version = .ctJuliaEngineVersion()) {
   base <- tools::R_user_dir("ctsem", which = "cache")
   # Forward slashes throughout: this path is used by R and also embedded in
   # Julia source, and Julia accepts them on every platform.
-  gsub("\\", "/", file.path(base, "julia", paste0("engine-", substr(lock$revision, 1, 12))),
-    fixed = TRUE)
+  gsub("\\", "/", file.path(base, "julia", paste0("engine-", version)), fixed = TRUE)
 }
 
 # Whether a Julia session already exists. JuliaConnectoR starts one lazily on
@@ -136,9 +147,11 @@
 #' is the function to reach for when setting the backend up deliberately, or
 #' from a script.
 #' @param project Optional local ContinuousTimeSEM.jl checkout to use instead of
-#'   the vendored copy, for engine development.
-#' @param revision Ignored; retained for backward compatibility. The engine
-#'   revision is whatever is vendored, and is reported by \code{ctJuliaStatus()}.
+#'   the copy that ships with ctsem. Rarely needed: the engine is part of ctsem
+#'   and is edited in place under \code{inst/julia/}.
+#' @param revision Ignored; retained for backward compatibility. The engine is
+#'   part of ctsem, and the version \code{ctJuliaStatus()} reports is a hash of
+#'   its source rather than something selectable.
 #' @param julia_bin Optional Julia binary directory.
 #' @param threads Number of Julia threads. The engine splits its subject loop
 #'   across them. Julia fixes its thread count at process start, so this only
@@ -173,14 +186,14 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
     }
   }
   .ctJuliaCheckAvailable()
-  lock <- .ctJuliaEngineLock()
+  engineversion <- .ctJuliaEngineVersion()
 
   if (!is.null(project)) {
     # Developer override: use the checkout as its own project, in place.
     project <- normalizePath(project, winslash = "/", mustWork = TRUE)
     env_dir <- project
   } else {
-    env_dir <- .ctJuliaEnvDir(lock)
+    env_dir <- .ctJuliaEnvDir(engineversion)
     if (!file.exists(file.path(env_dir, "Project.toml"))) {
       dir.create(dirname(env_dir), recursive = TRUE, showWarnings = FALSE)
       unlink(env_dir, recursive = TRUE)
@@ -211,7 +224,7 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
   }
   JuliaConnectoR::juliaEval("using ContinuousTimeSEM")
   .ct_julia_cache$project <- project
-  .ct_julia_cache$revision <- lock$revision
+  .ct_julia_cache$engine <- engineversion
   .ct_julia_cache$module <- JuliaConnectoR::juliaImport("ContinuousTimeSEM")
   invisible(ctJuliaStatus())
 }
@@ -227,8 +240,9 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
 #' @return A list describing the selected Julia engine: whether it is
 #'   \code{available}, whether the \code{connectoR} bridge package is installed,
 #'   the \code{julia_bin} directory in use and the \code{julia} version there,
-#'   the engine \code{revision}, the number of \code{threads} in a running
-#'   session, and the engine provenance \code{lock}.
+#'   the \code{engine} version (a hash of the engine source shipped with this
+#'   ctsem, which is also what its cached project directory is keyed on), and
+#'   the number of \code{threads} in a running session.
 #' @export
 ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   connectoR <- requireNamespace("JuliaConnectoR", quietly = TRUE)
@@ -242,7 +256,6 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   } else NA_character_
   available <- !is.na(version)
   if (!available) version <- .ctJuliaBinVersion(julia_bin)
-  lock <- .ctJuliaEngineLock()
   threads <- if (available) {
     tryCatch(as.integer(JuliaConnectoR::juliaEval("Threads.nthreads()")),
       error = function(e) NA_integer_)
@@ -250,8 +263,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   list(available = available, connectoR = connectoR,
     julia_bin = .ctJuliaOr(julia_bin, NA_character_), julia = version,
     project = .ctJuliaOr(project, .ct_julia_cache$project),
-    revision = .ctJuliaOr(.ct_julia_cache$revision, lock$revision),
-    threads = threads, lock = lock)
+    engine = .ctJuliaOr(.ct_julia_cache$engine,
+      tryCatch(.ctJuliaEngineVersion(), error = function(e) NA_character_)),
+    threads = threads)
 }
 
 .ctJuliaModule <- function(project = NULL) {
@@ -266,7 +280,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   }
   .ct_julia_cache$module <- NULL
   .ct_julia_cache$project <- NULL
-  .ct_julia_cache$revision <- NULL
+  .ct_julia_cache$engine <- NULL
   .ct_julia_cache$objectives <- new.env(parent = emptyenv())
   invisible(NULL)
 }
@@ -612,6 +626,16 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     stop("Prepared random-effect covariance metadata does not match the augmented state layout.", call. = FALSE)
   }
   covariance_rows <- list()
+  # The name of the parameter each varying state carries, read from its T0MEANS
+  # cell before that cell is rewritten below. Everything downstream that has to
+  # say which parameter a random effect belongs to -- the summary's popsd and
+  # rawpopcorr rows, the carrier state names in ctKalman output, ctSubjectPars
+  # -- gets it from here rather than re-deriving the augmentation.
+  varying_names <- vapply(augmented_indices, function(row) {
+    entry <- which(table$matrix == "T0MEANS" & table$row == row & table$col == 1L)
+    if (!length(entry) || is.na(table$param[entry[1L]])) NA_character_ else
+      as.character(table$param[entry[1L]])
+  }, character(1L))
   # Match Stan's unconstrained parameter order exactly: all population scales,
   # then lower-triangular correlation coordinates column by column.
   for (position in seq_along(augmented_indices)) {
@@ -627,7 +651,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       t0means_state_scale[position], random_sd_scale[position], next_parameter)
     covariance_rows[[length(covariance_rows) + 1L]] <- data.frame(
       row = row, col = col, parameter = next_parameter,
-      type = "sd"
+      type = "sd", param = varying_names[position],
+      # The factor folded into the sd transform above, kept so the summary can
+      # divide it back out: T0cov is in state units, and the random-effects
+      # summary needs the raw-parameter sd to perturb the raw vector by (see
+      # .ctBackendRandomEffectSummary).
+      scale = t0means_state_scale[position]
     )
   }
   if (length(augmented_indices) > 1L) for (column_position in seq_len(length(augmented_indices) - 1L)) {
@@ -642,7 +671,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       table$value[index] <- NA_real_
       table$transform[index] <- sprintf("2 / (1 + exp(-param[%d])) - 1", next_parameter)
       covariance_rows[[length(covariance_rows) + 1L]] <- data.frame(
-        row = row, col = col, parameter = next_parameter, type = "correlation"
+        row = row, col = col, parameter = next_parameter, type = "correlation",
+        param = paste0(varying_names[row_position], "__", varying_names[column_position]),
+        scale = 1
       )
     }
   }
@@ -799,7 +830,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     random_effects = augmented$random_effects,
     rewritten_cells = augmented$rewritten_cells,
     project = project,
-    engine = .ctJuliaEngineLock()
+    engine = .ctJuliaEngineVersion()
   )
 }
 
@@ -892,9 +923,15 @@ ctJuliaEvaluate <- function(object, pars = NULL, gradient = TRUE, contributions 
 }
 
 #' @export
-summary.ctJuliaFit <- function(object, timeinterval = 1, digits = 3, parmatrices = TRUE, ...) {
+summary.ctJuliaFit <- function(object, timeinterval = 1, digits = 3, parmatrices = TRUE,
+  priorcheck = TRUE, residualcov = TRUE, ...) {
+  # `priorcheck` is accepted and ignored rather than rejected: it is part of
+  # summary.ctStanFit's signature, and a script that summarises whichever fit it
+  # was handed should not fail on the argument. What it reports -- posterior
+  # means and sds against ctsem's normal(0,1) raw priors -- would need the Stan
+  # model's own prior block, which this backend does not carry.
   .ctBackendSummary(object, timeinterval = timeinterval, digits = digits,
-    parmatrices = parmatrices, ...)
+    parmatrices = parmatrices, residualcov = residualcov, ...)
 }
 
 #' @export
@@ -909,6 +946,30 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   calcfuncargs = list(probs = 0.5), timeinterval = 1, ...) {
   .ctBackendSummaryMatrices(fit, calcfunc = calcfunc, calcfuncargs = calcfuncargs,
     timeinterval = timeinterval, ...)
+}
+
+# Run the engine's optimizer over a prepared specification.
+#
+# Factored out of ctFitJuliaBackend() because cross-validation re-optimises the
+# same model against held-out data (see .ctBackendLOO) and must do it exactly
+# the way a fit does -- same tolerances, same gradient method, same thread cap.
+# A second copy of this call would be a second set of defaults to keep in step.
+.ctJuliaOptimise <- function(model_spec, start, backendcontrol = list(),
+  gradient = "adjoint", cores = 1L, verbose = 0L, tol = NULL) {
+  spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
+  objective <- .ctJuliaObjective(spec)
+  module <- .ctJuliaModule(model_spec$project)
+  # Called by name rather than through the imported module: the Julia function
+  # ends in `!`, which is not a syntactic R name.
+  JuliaConnectoR::juliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!", as.integer(cores))
+  JuliaConnectoR::juliaGet(module$ctsem_optimize(objective,
+    .ctJuliaNumericVector(start),
+    maxiter = as.integer(.ctJuliaOr(backendcontrol$maxiter, 1000L)),
+    g_tol = .ctJuliaOr(tol, .ctJuliaOr(backendcontrol$g_tol, 1e-8)),
+    f_tol = .ctJuliaOr(backendcontrol$f_tol, 0),
+    x_tol = .ctJuliaOr(backendcontrol$x_tol, 0),
+    verbose = verbose > 0L,
+    gradient_method = gradient))
 }
 
 ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NULL, cores = 1L,
@@ -950,27 +1011,52 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
     project = project, priors = priors)
   if (!fit) return(structure(model_spec, class = c("ctJuliaModel", "ctFitModel")))
 
-  objective <- .ctJuliaObjective(structure(model_spec, class = c("ctJuliaModel", "ctFitModel")))
   npar <- max(c(model_spec$parameter_table$parnumber, model_spec$ti_effects$coefficient), na.rm = TRUE)
   start <- .ctJuliaInitialValues(npar, inits)
-  module <- .ctJuliaModule(project)
-  # Called by name rather than through the imported module: the Julia function
-  # ends in `!`, which is not a syntactic R name.
-  JuliaConnectoR::juliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!", cores)
-  result <- JuliaConnectoR::juliaGet(module$ctsem_optimize(objective, .ctJuliaNumericVector(start),
-    maxiter = as.integer(.ctJuliaOr(backendcontrol$maxiter, 1000L)),
-    g_tol = .ctJuliaOr(backendcontrol$g_tol, 1e-8),
-    f_tol = .ctJuliaOr(backendcontrol$f_tol, 0),
-    x_tol = .ctJuliaOr(backendcontrol$x_tol, 0),
-    verbose = verbose > 0L,
-    gradient_method = gradient))
+  result <- .ctJuliaOptimise(model_spec, start, backendcontrol = backendcontrol,
+    gradient = gradient, cores = cores, verbose = verbose)
+  # The engine maximises the log posterior, so its `maximum_loglik` is the log
+  # posterior and the per-subject objectives (which carry no prior term) sum to
+  # the log likelihood. Without priors the two are the same number; with them
+  # they are not, and the summary reports both, as it does for Stan.
+  subject_loglik <- as.numeric(result$subject_loglik)
+  loglik <- if (length(subject_loglik)) sum(subject_loglik) else
+    as.numeric(result$maximum_loglik)
   out <- list(backend = "julia", model = model, model_spec = model_spec,
     data = datalong, estimate = list(raw = as.numeric(result$minimizer),
-      loglik = as.numeric(result$maximum_loglik), gradient = as.numeric(result$gradient),
+      loglik = loglik,
+      logposterior = as.numeric(result$maximum_loglik),
+      gradient = as.numeric(result$gradient),
       subject_loglik = result$subject_loglik, converged = isTRUE(result$converged),
       iterations = as.integer(result$iterations)), engine = model_spec$engine,
-    args = list(backend = "julia", backendcontrol = backendcontrol, cores = cores))
+    args = list(backend = "julia", backendcontrol = backendcontrol,
+      optimcontrol = optimcontrol, cores = cores, priors = priors))
   class(out) <- c("ctJuliaFit", "ctFit")
+
+  # Uncertainty is part of fitting, not a separate step the user has to know to
+  # take -- `stanoptimis()` finishes every optimized Stan fit the same way, and
+  # a `summary()` that silently reported point estimates only, purely because of
+  # the backend chosen, is the difference this exists to remove. The control
+  # names are `stanoptimis()`'s, so `optimcontrol` means the same thing to both
+  # backends; `optimcontrol$estonly` skips it, as it does there.
+  if (!isTRUE(optimcontrol$estonly)) {
+    uncertainty <- .ctJuliaOr(optimcontrol$uncertainty, "hessian")
+    out <- ctOptimUncertainty(fit = out, uncertainty = uncertainty,
+      draws = .ctJuliaOr(optimcontrol$uncertaintyDraws, "auto"),
+      finishsamples = .ctJuliaOr(optimcontrol$finishsamples, 1000L),
+      cores = cores, control = .ctJuliaOr(optimcontrol$uncertaintyControl, list()),
+      verbose = verbose)
+  }
+
+  # The draws pushed through the model's transforms, once, exactly as the Stan
+  # path stores `stanfit$transformedpars` at fit time. Every summary, extract
+  # and system-matrix collapse reads this rather than asking the engine again.
+  out$transformedpars <- .ctBackendConstrain(out)
+
+  # The filter output at the estimate, cached as the Stan path caches
+  # `stanfit$kalman`: summary()'s standardised residual covariance reads it, and
+  # recomputing it per summary call would repeat a whole filter pass.
+  out$kalman <- suppressMessages(ctKalmanArray(out, pointest = TRUE))
   out
 }
 
@@ -980,6 +1066,59 @@ print.ctJuliaFit <- function(x, ...) {
   cat("  log likelihood:", format(x$estimate$loglik), "\n")
   cat("  converged:", x$estimate$converged, " iterations:", x$estimate$iterations, "\n")
   invisible(x)
+}
+
+#' Plots for ctJuliaFit objects
+#'
+#' The \code{backend='julia'} counterpart of \code{\link{plot.ctStanFit}}, and a
+#' subset of it: the two plot types that describe a fitted model rather than a
+#' sampler. \code{'regression'} plots model implied regression coefficients
+#' against the time interval via \code{\link{ctDiscretePars}}, and
+#' \code{'kalman'} plots expectations via \code{\link{ctPredict}}. The remaining
+#' types \code{plot.ctStanFit} offers -- prior/posterior densities, traces,
+#' intervals -- all read Stan's own sample object, which an optimized julia fit
+#' has no analogue of.
+#'
+#' @param x Fit object from \code{ctFit(..., backend='julia')}.
+#' @param types Vector of plot types: 'all', 'regression', 'kalman'.
+#' @param wait Logical. Pause between plots?
+#' @param ... Passed through to \code{\link{ctDiscretePars}} and
+#'   \code{\link{ctPredict}}. Beware clashes when \code{types='all'}.
+#' @return Nothing. Generates plots.
+#' @method plot ctJuliaFit
+#' @examples
+#' \donttest{
+#' # plot(fit, wait=FALSE)
+#' }
+#' @export
+plot.ctJuliaFit <- function(x, types = "all", wait = TRUE, ...) {
+  available <- c("regression", "kalman")
+  if (identical(types[1L], "all")) {
+    types <- available
+    if (!isTRUE(.ctFitModelObject(x)$continuoustime)) types <- "kalman"
+  }
+  unknown <- setdiff(types, available)
+  if (length(unknown)) {
+    stop("plot types ", paste0("'", unknown, "'", collapse = ", "),
+      " need Stan's sample object; backend='julia' offers ",
+      paste0("'", available, "'", collapse = ", "), ".", call. = FALSE)
+  }
+  waitf <- function() {
+    if (!isTRUE(wait) || !length(types)) return(TRUE)
+    answer <- readline("Input [s] to stop, or leave blank and press [return] for next plot.")
+    !answer %in% c("s", "S")
+  }
+  if ("regression" %in% types) {
+    message("Plotting model implied regression coeffcients conditional on time interval using ctDiscretePars")
+    print(ctDiscretePars(x, plot = TRUE, ...))
+    types <- types[types != "regression"]
+    if (!waitf()) return(invisible(NULL))
+  }
+  if ("kalman" %in% types) {
+    message("Plotting expectations from ctPredict")
+    print(ctPredict(x, plot = TRUE, ...))
+  }
+  invisible(NULL)
 }
 
 #' @export

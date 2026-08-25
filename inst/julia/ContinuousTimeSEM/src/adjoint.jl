@@ -540,3 +540,48 @@ function ctsem_validate_forward_gradient(objective, values::AbstractVector;
             norm(adjoint_gradient - forward) / denom,
     )
 end
+
+export ctsem_hessian
+
+"""
+    ctsem_hessian(objective, values; chunk=0)
+
+The Hessian of the log posterior, by forward-mode differentiation *of the
+reverse-mode gradient*.
+
+The alternative the R side used before this existed is a central finite
+difference of the same gradient, which costs `2 * npar` reverse sweeps and is
+accurate to roughly the square root of machine precision -- and only if the
+step happens to suit the parameter's scale, which one global step cannot do for
+a vector mixing log standard deviations with unconstrained correlations. Nesting
+forward over reverse costs `ceil(npar / chunksize)` sweeps instead of `2 * npar`,
+and is exact to machine precision: no step to choose, and nothing to tune.
+
+Forward-over-reverse rather than forward-over-forward because the reverse pass
+is where this engine's work already is. `ForwardDiff.hessian` would need
+`O(npar^2 / chunksize)` primal passes; differentiating the adjoint needs
+`O(npar / chunksize)`, each one a single traced forward sweep plus its reverse.
+
+The nesting works because every layer below is generic in its element type: the
+workspace is `CTSEMAdjointWorkspace{T}`, built for whatever `T` the values
+arrive as, and the transform layer's own dual scratch is
+`Dual{Nothing,T,1}` -- so with a dual `T` it simply becomes a nested dual. The
+workspace cache is keyed on `T`, so a Hessian call rebuilds it once and the
+next ordinary gradient rebuilds it back; that is one model-inspection pass, not
+a per-evaluation cost.
+
+The result is symmetrised. The exact Hessian is symmetric, and each entry is
+computed once, so the two triangles differ only by floating-point association
+order; averaging them is free and keeps the matrix usable by a Cholesky.
+"""
+function ctsem_hessian(objective::CTSEMObjective, values::AbstractVector;
+    chunk::Integer=0)
+    x = collect(Float64, values)
+    n = length(x)
+    n == 0 && return zeros(Float64, 0, 0)
+    gradient_of = y -> ctsem_adjoint_gradient(objective, y).gradient
+    chunksize = chunk > 0 ? min(Int(chunk), n) : ForwardDiff.pickchunksize(n)
+    config = ForwardDiff.JacobianConfig(gradient_of, x, ForwardDiff.Chunk{chunksize}())
+    hessian = ForwardDiff.jacobian(gradient_of, x, config)
+    return (hessian .+ transpose(hessian)) ./ 2
+end

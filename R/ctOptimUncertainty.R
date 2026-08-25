@@ -882,7 +882,7 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
   uncertainty=c('hessian','surrogate','is','bootstrap','fullbootstrap',
     'sandwich','opg'),
   finishsamples=1000, cores=1, matsetup=NA, control=list(), verbose=0,
-  scores=NULL){
+  scores=NULL, hessian=NULL){
   
   uncertainty <- match.arg(uncertainty)
   ctOptimCheckUncertaintyData(standata=standata, uncertainty=uncertainty,
@@ -918,16 +918,24 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
   
   if(uncertainty %in% c('hessian','sandwich','bootstrap','is') ||
       (uncertainty == 'surrogate' && !covavailable)){
-    message('Estimating Hessian')
-    hess1 <- numericHessianFunc(pars=est, step=control$hessianStep,
-      verbose=verbose, directions=1, lpgFunc=lpgFunc,
-      base_value=base[1], base_gradient=base_gradient)
-    hess2 <- numericHessianFunc(pars=est, step=control$hessianStep,
-      verbose=verbose, directions=-1, lpgFunc=lpgFunc,
-      base_value=base[1], base_gradient=base_gradient)
-    message('')
-    hessian_result <- processHessianMatrices(hess1, hess2, verbose, matsetup)
-    hess <- hessian_result$hess
+    if(!is.null(hessian)){
+      # An exact Hessian supplied by the caller -- see .ctBackendHessian(),
+      # which gets one from the julia engine by differentiating its own
+      # reverse-mode gradient. There is nothing to difference, so there is no
+      # step to choose and no pair of one-sided estimates to reconcile.
+      hess <- hessian
+    } else {
+      message('Estimating Hessian')
+      hess1 <- numericHessianFunc(pars=est, step=control$hessianStep,
+        verbose=verbose, directions=1, lpgFunc=lpgFunc,
+        base_value=base[1], base_gradient=base_gradient)
+      hess2 <- numericHessianFunc(pars=est, step=control$hessianStep,
+        verbose=verbose, directions=-1, lpgFunc=lpgFunc,
+        base_value=base[1], base_gradient=base_gradient)
+      message('')
+      hessian_result <- processHessianMatrices(hess1, hess2, verbose, matsetup)
+      hess <- hessian_result$hess
+    }
     cov <- ctOptimCovFromHessian(hess, ridge=control$ridge)
     covavailable <- TRUE
   }
@@ -987,6 +995,8 @@ ctOptimComputeUncertainty <- function(est, standata, sm, lpgFunc,
   covDiagnostics <- attr(cov, 'ctOptimCovFromHessian')
   if(!is.null(covDiagnostics)) method_details$covariance <- covDiagnostics
   
+  if(!is.null(hessian)) method_details$hessian <- list(
+    source='exact, by forward-mode differentiation of the reverse-mode gradient')
   list(method=uncertainty, cov=cov, hessian=if(exists('hess')) hess else NULL,
     scores=scoremat, draws=draws, base_value=base[1],
     base_gradient=base_gradient, details=method_details)

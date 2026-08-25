@@ -163,5 +163,5 @@ test_that("ctJuliaStatus reports rather than errors, and installs nothing", {
   status <- ctJuliaStatus()
   expect_type(status$available, "logical")
   expect_type(status$connectoR, "logical")
-  expect_match(status$revision, "^[0-9a-f]{40}$")
+  expect_match(status$engine, "^[0-9a-f]{12}$")
 })
