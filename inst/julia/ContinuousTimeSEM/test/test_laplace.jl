@@ -339,6 +339,35 @@ end
     @test norm(exact.gradient - result.gradient) / norm(exact.gradient) > 1e-6
 end
 
+@testset "the approximate pair is self-consistent" begin
+    # The envelope gradient is the gradient of the *penalised* objective, not of
+    # the Laplace value, and `ctsem_laplace_optimize` therefore hands L-BFGS the
+    # penalised value when it hands it the envelope gradient. If those two ever
+    # drift apart the line search gets a descent direction for a function it is
+    # not evaluating, which does not fail loudly -- it just stops converging.
+    laplace, values = _fresh_linear()
+    result = ctsem_laplace_evaluate(laplace, values; gradient=true,
+        gradient_method=:approximate)
+
+    step = 1e-5
+    fd = similar(collect(values))
+    for j in eachindex(fd)
+        h = step * max(1.0, abs(values[j]))
+        plus = collect(values); plus[j] += h
+        minus = collect(values); minus[j] -= h
+        vp = ctsem_laplace_evaluate(laplace, plus; gradient=false,
+            gradient_method=:approximate).penalised_value
+        vm = ctsem_laplace_evaluate(laplace, minus; gradient=false,
+            gradient_method=:approximate).penalised_value
+        fd[j] = (vp - vm) / (2h)
+    end
+    @test norm(result.gradient - fd) / norm(fd) < 1e-6
+
+    # And the penalised value is the Laplace value less the log determinants,
+    # so the two describe the same fit rather than two unrelated numbers.
+    @test result.penalised_value > result.value
+end
+
 @testset "the population covariance follows the Stan parameterisation" begin
     laplace, values = _fresh_linear()
     spec = laplace.spec

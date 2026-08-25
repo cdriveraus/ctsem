@@ -686,6 +686,10 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     subject_loglik = zeros(Float64, nsubjects)
     aws = _laplace_workspace!(laplace, Float64, length(theta))
     value = 0.0
+    # The same sum without the log-determinant. This is the objective the
+    # envelope gradient is actually the gradient *of*, and `ctsem_laplace_optimize`
+    # needs the pair to agree -- see the note there.
+    penalised = 0.0
     for i in 1:nsubjects
         _laplace_solve_mode!(laplace, i, theta, L)
         z = Vector{Float64}(laplace.modes[:, i])
@@ -701,16 +705,21 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             factorization = cholesky(Symmetric(negated); check=false)
             issuccess(factorization) ? inner.value - logdet(factorization) / 2 : NaN
         end
-        isfinite(term) || return (value=term, gradient=gradient ? fill(NaN, length(theta)) : nothing,
+        isfinite(term) || return (value=term, penalised_value=term,
+            gradient=gradient ? fill(NaN, length(theta)) : nothing,
             subject_loglik=subject_loglik, approximate=method === :approximate,
             converged=all(laplace.inner_converged))
         subject_loglik[i] = term
         value += term
+        penalised += inner.value
     end
-    value += _ctsem_log_prior(laplace.objective, theta)
+    prior = _ctsem_log_prior(laplace.objective, theta)
+    value += prior
+    penalised += prior
 
-    gradient || return (value=value, gradient=nothing, subject_loglik=subject_loglik,
-        approximate=method === :approximate, converged=all(laplace.inner_converged))
+    gradient || return (value=value, penalised_value=penalised, gradient=nothing,
+        subject_loglik=subject_loglik, approximate=method === :approximate,
+        converged=all(laplace.inner_converged))
 
     # 3. The gradient.
     #
@@ -722,7 +731,7 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     # parameter chunk per subject, and on a 4-latent model with 44 parameters
     # the difference is the whole reason the cheap mode exists.
     if method === :approximate
-        return (value=value,
+        return (value=value, penalised_value=penalised,
             gradient=_laplace_envelope_gradient(laplace, theta, L, primal_hessians),
             subject_loglik=subject_loglik, approximate=true,
             converged=all(laplace.inner_converged))
@@ -741,8 +750,9 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
         return accumulated + _ctsem_log_prior(laplace.objective, x)
     end
     grad = ForwardDiff.gradient(total_of, theta)
-    return (value=value, gradient=grad, subject_loglik=subject_loglik,
-        approximate=method === :approximate, converged=all(laplace.inner_converged))
+    return (value=value, penalised_value=penalised, gradient=grad,
+        subject_loglik=subject_loglik, approximate=method === :approximate,
+        converged=all(laplace.inner_converged))
 end
 
 """
@@ -874,8 +884,26 @@ export ctsem_laplace_diagnostics
 """
     ctsem_laplace_optimize(laplace, start; ...)
 
-Maximize the approximated log marginal likelihood with L-BFGS, mirroring
-`ctsem_optimize`'s contract so the R side can treat the two the same way.
+Maximize with L-BFGS, mirroring `ctsem_optimize`'s contract so the R side can
+treat the two the same way.
+
+Which objective is maximized depends on `gradient_method`, and this is the one
+place where that matters beyond speed.
+
+`:exact` maximizes the Laplace value with the Laplace gradient: a consistent
+pair, so the line search behaves and convergence means something.
+
+`:approximate` maximizes the *penalised* objective `sum_i g_i(zhat_i)` -- the
+Laplace value without its log-determinant -- because that is the objective the
+envelope gradient is the gradient of. Pairing the envelope gradient with the
+full Laplace value instead, which is what this did first, gives L-BFGS a
+descent direction that does not match the function it is evaluating; the
+Hager-Zhang line search then rejects step after step and the fit runs to
+`maxiter` without converging. On the 50-subject recovery model that turned a
+four-second fit into one that had not finished in ten minutes. The reported
+`maximum_loglik` is still the true Laplace value at the point reached, so the
+two methods remain directly comparable -- they optimize different objectives
+and are scored on the same one.
 """
 function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractVector;
     maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0, x_tol::Real=0.0,
@@ -883,6 +911,7 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     start_values = collect(Float64, start)
     invalid_objective = floatmax(Float64) / 1e8
     gradient_limit = sqrt(floatmax(Float64))
+    penalised = Symbol(gradient_method) === :approximate
     fg! = function (F, G, x)
         result = try
             ctsem_laplace_evaluate(laplace, x; gradient=G !== nothing,
@@ -890,7 +919,11 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
         catch
             nothing
         end
-        valid = result !== nothing && isfinite(result.value)
+        # The objective the line search sees has to be the one the gradient
+        # differentiates; see the note above.
+        objective = result === nothing ? NaN :
+            (penalised ? result.penalised_value : result.value)
+        valid = result !== nothing && isfinite(objective)
         if valid && G !== nothing
             valid = all(isfinite, result.gradient) &&
                 all(abs(value) < gradient_limit for value in result.gradient)
@@ -900,7 +933,7 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
             return F === nothing ? nothing : invalid_objective
         end
         G !== nothing && (G .= -result.gradient)
-        return F === nothing ? nothing : -result.value
+        return F === nothing ? nothing : -objective
     end
     options = Optim.Options(iterations=Int(maxiter), g_tol=g_tol, f_reltol=f_tol,
         x_abstol=x_tol, show_trace=verbose, store_trace=false)
