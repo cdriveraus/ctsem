@@ -290,6 +290,66 @@ end
     @test norm(result.gradient - reference) / norm(reference) < 1e-5
 end
 
+@testset "the seeded gradient matches the nested one it replaces" begin
+    # The production gradient assembles `dT/dtheta` from `k + 1` seeded reverse
+    # sweeps plus a good deal of chain rule. The nested route computes the same
+    # quantity by running ForwardDiff over the entire per-subject term. They
+    # share the primal and nothing else -- no seeding, no hand-written
+    # assembly, no popchol derivatives -- so agreement to machine precision is
+    # a real check on every term of that assembly, and much sharper than the
+    # finite-difference comparison can be.
+    for (label, fresh) in (("linear", _fresh_linear), ("nonlinear", _fresh_nonlinear))
+        laplace, values = fresh()
+        seeded = ctsem_laplace_evaluate(laplace, values; gradient=true)
+        nested = ctsem_laplace_evaluate(laplace, values; gradient=true,
+            nested_gradient=true)
+        @test seeded.value == nested.value
+        @test norm(seeded.gradient - nested.gradient) / norm(nested.gradient) < 1e-8
+    end
+end
+
+@testset "the seeded gradient is exercised away from the optimum" begin
+    # A single test point can hide a term that happens to vanish there. These
+    # perturb the population scales and correlations, which are the parameters
+    # the assembly treats specially -- they move `v` through `L` as well as
+    # directly, and they are the only ones with an explicit `psi` term.
+    laplace, values = _fresh_linear()
+    spec = laplace.spec
+    for shift in (0.4, -0.6, 1.1)
+        probe = collect(values)
+        probe[spec.sd_index] .+= shift
+        probe[spec.cor_index] .-= shift / 2
+        seeded = ctsem_laplace_evaluate(laplace, probe; gradient=true)
+        nested = ctsem_laplace_evaluate(laplace, probe; gradient=true,
+            nested_gradient=true)
+        @test norm(seeded.gradient - nested.gradient) / norm(nested.gradient) < 1e-8
+    end
+end
+
+@testset "chunking the subject loop does not change the answer" begin
+    # `cores` reaches this path as a chunk count, and each chunk owns its own
+    # adjoint workspace rather than indexing one by thread id -- a task can
+    # migrate between threads at any yield point, so thread-indexed scratch
+    # would be a race. Splitting only reorders a sum, so the tolerance is
+    # floating-point association, not an approximation.
+    laplace, values = _fresh_linear()
+    original = ctsem_max_chunks().max_chunks
+    try
+        ctsem_set_max_chunks!(1)
+        serial = ctsem_laplace_evaluate(laplace, values; gradient=true)
+        for chunks in (2, 3, 8)
+            fresh, _ = _fresh_linear()
+            ctsem_set_max_chunks!(chunks)
+            split = ctsem_laplace_evaluate(fresh, values; gradient=true)
+            @test isapprox(split.value, serial.value; rtol=1e-12)
+            @test isapprox(split.gradient, serial.gradient; rtol=1e-9)
+            @test isapprox(split.subject_loglik, serial.subject_loglik; rtol=1e-12)
+        end
+    finally
+        ctsem_set_max_chunks!(original)
+    end
+end
+
 @testset "the population covariance follows the Stan parameterisation" begin
     laplace, values = _fresh_linear()
     spec = laplace.spec

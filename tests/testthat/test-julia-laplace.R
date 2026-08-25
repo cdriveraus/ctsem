@@ -165,6 +165,42 @@ test_that("the random-effect population sd is reported and recovers its value", 
   expect_lt(summarised$popsd["mmean", "97.5%"], 3.0)
 })
 
+test_that("cores splits the Laplace subject loop without changing the answer", {
+  skip_without_julia()
+  model <- .laplace_test_model()
+  dat <- .laplace_test_data()
+
+  # `cores` reaches the Laplace path the same way it reaches the ordinary one,
+  # as a chunk count for the subject loop. Splitting only reorders a sum, so
+  # the two runs differ by floating-point association and nothing else -- if
+  # they differed by more, chunks would be sharing scratch they should own.
+  serial <- suppressMessages(ctFit(dat, model, backend = "julia",
+    intoverpop = "laplace", cores = 1, optimcontrol = list(estonly = TRUE)))
+  split <- suppressMessages(ctFit(dat, model, backend = "julia",
+    intoverpop = "laplace", cores = 2, optimcontrol = list(estonly = TRUE)))
+
+  expect_equal(split$estimate$loglik, serial$estimate$loglik, tolerance = 1e-8)
+  expect_equal(split$estimate$raw, serial$estimate$raw, tolerance = 1e-6)
+  expect_true(split$laplace$inner_converged)
+})
+
+test_that("verbose reports the optimiser trace and the inner solve", {
+  skip_without_julia()
+  model <- .laplace_test_model()
+  dat <- .laplace_test_data(nsubjects = 8, nobs = 5)
+
+  chatter <- capture.output(suppressMessages(ctFit(dat, model, backend = "julia",
+    intoverpop = "laplace", verbose = 1, optimcontrol = list(estonly = TRUE))))
+  # The inner solve is part of the objective, so its status belongs in the
+  # trace rather than only on the fit object.
+  expect_true(any(grepl("Laplace: inner modes", chatter, fixed = TRUE)))
+  expect_true(any(grepl("Iter", chatter, fixed = TRUE)))
+
+  quiet <- capture.output(suppressMessages(ctFit(dat, model, backend = "julia",
+    intoverpop = "laplace", verbose = 0, optimcontrol = list(estonly = TRUE))))
+  expect_false(any(grepl("Laplace: inner modes", quiet, fixed = TRUE)))
+})
+
 test_that("unsupported ways of asking for Laplace fail rather than doing something else", {
   model <- .laplace_test_model()
   dat <- .laplace_test_data(nsubjects = 4, nobs = 4)

@@ -142,11 +142,18 @@ mutable struct CTSEMLaplaceObjective{O}
     modes::Matrix{Float64}
     inner_maxiter::Int
     inner_tol::Float64
-    # Adjoint workspaces, one per scalar type in flight. The engine's own cache
-    # lives on the CTSEMObjective and holds one type at a time, which would
-    # thrash badly here: an exact outer gradient alternates between Float64 and
-    # two levels of nested Dual within a single evaluation.
-    workspaces::Dict{Any,Any}
+    # Adjoint workspaces: one dictionary per chunk of the subject loop, each
+    # mapping a scalar type to its workspace. The engine's own cache lives on
+    # the CTSEMObjective and holds one type at a time, which would thrash badly
+    # here -- an exact outer gradient uses Float64 and two nested dual types
+    # within a single evaluation.
+    #
+    # A dictionary *per chunk* rather than one shared dictionary keyed by chunk:
+    # the workspaces were already private, but the container was not, and
+    # concurrent inserts into one `Dict` corrupt it. Julia catches that
+    # ("Multiple concurrent writes to Dict detected!") rather than silently
+    # returning wrong numbers, which is how this was found.
+    workspaces::Vector{Dict{Any,Any}}
     # Filled by the last evaluation; see `ctsem_laplace_diagnostics`.
     inner_iterations::Vector{Int}
     inner_gradient::Vector{Float64}
@@ -160,7 +167,7 @@ function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec
     k = nrandomeffects(spec)
     return CTSEMLaplaceObjective{typeof(objective)}(objective, spec,
         zeros(Float64, k, nsubjects), Int(inner_maxiter), Float64(inner_tol),
-        Dict{Any,Any}(), zeros(Int, nsubjects), zeros(Float64, nsubjects),
+        [Dict{Any,Any}()], zeros(Int, nsubjects), zeros(Float64, nsubjects),
         falses(nsubjects), falses(nsubjects))
 end
 
@@ -274,7 +281,7 @@ end
 ################################################################################
 
 """
-    _laplace_workspace!(laplace, ::Type{T}, nvalues)
+    _laplace_workspace!(laplace, ::Type{T}, nvalues, slot)
 
 An adjoint workspace for scalar type `T`, cached on the Laplace object.
 
@@ -285,15 +292,20 @@ solve and nested duals for the outer sweep, interleaved per subject. Caching
 per type turns that thrash into one build per type per model.
 """
 function _laplace_workspace!(laplace::CTSEMLaplaceObjective, ::Type{T},
-    nvalues::Integer) where {T}
+    nvalues::Integer, slot::Integer=1) where {T}
+    # `slot` is the chunk index, not the thread id. A task can migrate between
+    # threads at any yield point, so thread-indexed mutable scratch is a race
+    # rather than an optimisation -- the same reason `_get_or_init_adjoint_
+    # workspaces!` hands one workspace to each chunk.
+    store = laplace.workspaces[slot]
     key = (T, Int(nvalues))
-    cached = get(laplace.workspaces, key, nothing)
+    cached = get(store, key, nothing)
     cached === nothing || return cached
     objective = laplace.objective
     ntdpred = isempty(objective.subject_objectives) ? 0 :
         size(first(objective.subject_objectives).tdpreds, 1)
     built = CTSEMAdjointWorkspace(T, objective.params, Int(nvalues), ntdpred)
-    laplace.workspaces[key] = built
+    store[key] = built
     return built
 end
 
@@ -378,12 +390,13 @@ to keep small. Its cost is `k` chunked dual sweeps of one subject, whatever the
 model's parameter count.
 """
 function _laplace_inner_hessian(laplace::CTSEMLaplaceObjective, i::Integer,
-    values::AbstractVector{T}, L::AbstractMatrix{T}, z::AbstractVector{T}) where {T}
+    values::AbstractVector{T}, L::AbstractMatrix{T}, z::AbstractVector{T},
+    slot::Integer=1) where {T}
     k = length(z)
     k == 0 && return zeros(T, 0, 0)
     inner_of = function (zz)
         S = eltype(zz)
-        aws = _laplace_workspace!(laplace, S, length(values))
+        aws = _laplace_workspace!(laplace, S, length(values), slot)
         vs = convert(Vector{S}, values)
         Ls = convert(Matrix{S}, L)
         return _laplace_inner_objective_gradient(laplace, i, vs, Ls, zz, aws).gradient
@@ -415,11 +428,11 @@ The mode is written back into `laplace.modes` so the next outer evaluation
 starts from it.
 """
 function _laplace_solve_mode!(laplace::CTSEMLaplaceObjective, i::Integer,
-    values::AbstractVector{Float64}, L::AbstractMatrix{Float64})
+    values::AbstractVector{Float64}, L::AbstractMatrix{Float64}, slot::Integer=1)
     spec = laplace.spec
     k = nrandomeffects(spec)
     z = Vector{Float64}(laplace.modes[:, i])
-    aws = _laplace_workspace!(laplace, Float64, length(values))
+    aws = _laplace_workspace!(laplace, Float64, length(values), slot)
     repaired = false
     converged = false
     iterations = 0
@@ -437,7 +450,7 @@ function _laplace_solve_mode!(laplace::CTSEMLaplaceObjective, i::Integer,
             converged = true
             break
         end
-        H = _laplace_inner_hessian(laplace, i, values, L, z)
+        H = _laplace_inner_hessian(laplace, i, values, L, z, slot)
         negative_definite, H = _laplace_negate_definite(H)
         repaired |= !negative_definite
         step = H \ current.gradient        # H here is already -curvature
@@ -537,15 +550,269 @@ whose integral is known in closed form.
 """
 function _laplace_subject_term(laplace::CTSEMLaplaceObjective, i::Integer,
     values::AbstractVector{T}, L::AbstractMatrix{T}, z::AbstractVector{T},
-    aws) where {T}
+    aws, slot::Integer=1) where {T}
     inner = _laplace_inner_objective_gradient(laplace, i, values, L, z, aws)
     isfinite(inner.value) || return inner.value
     isempty(z) && return inner.value
-    H = _laplace_inner_hessian(laplace, i, values, L, z)
+    H = _laplace_inner_hessian(laplace, i, values, L, z, slot)
     negated = -(H .+ transpose(H)) ./ 2
     factorization = cholesky(Symmetric(negated); check=false)
     issuccess(factorization) || return T(NaN)
     return inner.value - logdet(factorization) / 2
+end
+
+################################################################################
+# The exact outer gradient, in k + 1 reverse sweeps per subject
+################################################################################
+#
+# The straightforward way to differentiate the Laplace term is to run
+# `ForwardDiff` over the whole of it, which is what `_laplace_nested_gradient`
+# below still does. That costs `O(npar * k)` reverse sweeps per subject --
+# `npar` outer forward directions, each carrying `k` more for the inner
+# curvature -- and it is the dominant cost of a Laplace fit.
+#
+# It is avoidable, and the identity that avoids it is worth stating plainly.
+# Write `M = -H` and `C = inv(M)`, and note that for *fixed* vectors `q_r` with
+# `sum_r q_r q_r' = C`,
+#
+#     tr(C dH/dx) = sum_r  q_r' (dH/dx) q_r  =  sum_r d/dx ( q_r' H q_r )
+#
+# Holding `q_r` fixed is legitimate: the identity needs `C`'s value at the
+# current point, not its derivative. And `q' H q` is a *directional* second
+# derivative -- so seeding one direction with a second-order dual and running
+# the engine's ordinary reverse pass returns its gradient with respect to every
+# parameter at once, because reverse differentiation in the parameters and
+# forward differentiation in the seed commute.
+#
+# Concretely, with `H = L' A L - I` for `A` the log likelihood's Hessian block
+# on the varying positions, `psi := tr(C H) = tr(W A) - tr(C)` where
+# `W = L C L'`. Factoring `W = Q Q'` puts the seeded directions in *parameter*
+# space rather than in `z` space, which matters: a direction in `z` space moves
+# with `L(theta)` while a parameter-space direction does not, and that is what
+# keeps the bookkeeping below finite.
+#
+# So: `k` sweeps seeded along the columns of `Q`, one more along `L s` for the
+# term carrying the mode's own dependence, and the whole gradient falls out.
+
+struct _LaplaceSeedInner end
+struct _LaplaceSeedOuter end
+
+"""
+    _laplace_directional_pass(laplace, i, base, direction, order)
+
+One reverse sweep of subject `i` at `base`, with the parameter vector seeded
+along `direction` by a dual of the given order.
+
+Returns the seed-order coefficients of the gradient the sweep produces:
+
+  * `d0` -- the ordinary gradient at `base`;
+  * `d1` -- its first derivative along `direction`, i.e. the log likelihood's
+    Hessian contracted with `direction`;
+  * `d2` -- its second derivative along `direction` (order 2 only), i.e. the
+    gradient of the directional second derivative.
+
+`d2` is the point of the whole exercise. Obtaining it from a single sweep, for
+every parameter simultaneously, is what replaces `npar` forward directions.
+
+Nesting two one-dimensional duals rather than using a single second-order
+partial is deliberate: with `x = a + d1 + d2`, the cross term `d1*d2` of `f(x)`
+is exactly `f''(a)`, with no factorial to remember and no chunking to
+configure.
+"""
+function _laplace_directional_pass(laplace::CTSEMLaplaceObjective, i::Integer,
+    base::Vector{Float64}, direction::Vector{Float64}, order::Integer,
+    slot::Integer=1)
+    npar = length(base)
+    subject = laplace.objective.subject_objectives[i]
+    failure = (ok=false, d0=Float64[], d1=Float64[], d2=Float64[])
+    if order == 2
+        seed = ForwardDiff.Dual{_LaplaceSeedOuter}(
+            ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 1.0),
+            ForwardDiff.Dual{_LaplaceSeedInner}(1.0, 0.0))
+        S = typeof(seed)
+        x = Vector{S}(undef, npar)
+        @inbounds for m in 1:npar
+            x[m] = base[m] + seed * direction[m]
+        end
+        aws = _laplace_workspace!(laplace, S, npar, slot)
+        g = Vector{S}(undef, npar)
+        loglik = _laplace_subject_value_gradient!(g, subject, aws, x)
+        isfinite(ForwardDiff.value(ForwardDiff.value(loglik))) || return failure
+        d0 = Vector{Float64}(undef, npar)
+        d1 = Vector{Float64}(undef, npar)
+        d2 = Vector{Float64}(undef, npar)
+        @inbounds for m in 1:npar
+            inner = ForwardDiff.value(g[m])
+            d0[m] = ForwardDiff.value(inner)
+            d1[m] = ForwardDiff.partials(inner)[1]
+            d2[m] = ForwardDiff.partials(ForwardDiff.partials(g[m])[1])[1]
+        end
+        return (ok=true, d0=d0, d1=d1, d2=d2)
+    end
+    seed = ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 1.0)
+    S = typeof(seed)
+    x = Vector{S}(undef, npar)
+    @inbounds for m in 1:npar
+        x[m] = base[m] + seed * direction[m]
+    end
+    aws = _laplace_workspace!(laplace, S, npar, slot)
+    g = Vector{S}(undef, npar)
+    loglik = _laplace_subject_value_gradient!(g, subject, aws, x)
+    isfinite(ForwardDiff.value(loglik)) || return failure
+    d0 = Vector{Float64}(undef, npar)
+    d1 = Vector{Float64}(undef, npar)
+    @inbounds for m in 1:npar
+        d0[m] = ForwardDiff.value(g[m])
+        d1[m] = ForwardDiff.partials(g[m])[1]
+    end
+    return (ok=true, d0=d0, d1=d1, d2=Float64[])
+end
+
+"""
+    _laplace_popchol_derivatives(values, spec)
+
+`(positions, dL)`: where the population covariance parameters sit in the raw
+vector, and `dL[t]` the derivative of `L` with respect to `values[positions[t]]`.
+
+Cheap whatever the model, because `L` is a `k x k` Cholesky of something built
+only from those parameters -- no filter, no data, no process model. Every
+subject uses the same derivatives, so this is computed once per evaluation
+rather than once per subject.
+"""
+function _laplace_popchol_derivatives(values::AbstractVector{Float64},
+    spec::CTSEMLaplaceSpec)
+    positions = vcat(spec.sd_index, spec.cor_index)
+    k = nrandomeffects(spec)
+    isempty(positions) && return (positions, Matrix{Float64}[])
+    chol_of = function (p)
+        v = convert(Vector{eltype(p)}, values)
+        @inbounds for (slot, position) in enumerate(positions)
+            v[position] = p[slot]
+        end
+        return vec(_laplace_popchol(v, spec))
+    end
+    jacobian = ForwardDiff.jacobian(chol_of, values[positions])
+    dL = [Matrix{Float64}(reshape(view(jacobian, :, t), k, k))
+          for t in eachindex(positions)]
+    return (positions, dL)
+end
+
+"""
+    _laplace_seeded_subject_gradient!(out, laplace, i, values, L, positions, dL, z, Mneg)
+
+Accumulate subject `i`'s exact contribution to `dT/dtheta` into `out`.
+
+With `v(theta, z) = theta + S(L(theta) z)`, `g = ll(v) - z'z/2`, and the mode
+`zhat(theta)` defined by `dg/dz = 0`,
+
+    dT/dtheta = dg/dtheta + [ dpsi/dtheta + s' B ] / 2
+
+where `psi = tr(C H)`, `s = C dpsi/dz`, and `B = d2g/dz dtheta` carries the
+mode's own dependence through `dzhat/dtheta = C B`. The envelope theorem is
+what removes `zhat` from the first term and leaves it only inside `psi`.
+
+Every likelihood-dependent piece comes from the `k + 1` sweeps: the envelope
+gradient from the seed-order-zero coefficient, `dpsi/dtheta` and `dpsi/dz` from
+the second-order ones, and the likelihood half of `s' B` from the extra sweep
+along `L s`. The only terms not from a sweep are `L`'s own derivatives, which
+are the `k x k` matrices in `dL`.
+
+Returns `false` if a factorization or a sweep failed, leaving `out` untouched
+in the caller's judgement -- the caller falls back rather than proceeding with
+a partial answer.
+"""
+function _laplace_seeded_subject_gradient!(out::Vector{Float64},
+    laplace::CTSEMLaplaceObjective, i::Integer, values::Vector{Float64},
+    L::Matrix{Float64}, positions::Vector{Int}, dL::Vector{Matrix{Float64}},
+    z::Vector{Float64}, Mneg::Matrix{Float64}, slot::Integer=1)
+
+    spec = laplace.spec
+    rho = spec.re_index
+    k = length(z)
+    npar = length(values)
+    base = _laplace_subject_values(values, spec, L, z)
+
+    if k == 0
+        pass = _laplace_directional_pass(laplace, i, base, zeros(Float64, npar), 1, slot)
+        pass.ok || return false
+        out .+= pass.d0
+        return true
+    end
+
+    Mfact = cholesky(Symmetric(Mneg); check=false)
+    issuccess(Mfact) || return false
+    C = inv(Mfact); C = (C .+ transpose(C)) ./ 2
+    W = L * C * transpose(L)
+    Wfact = cholesky(Symmetric((W .+ transpose(W)) ./ 2); check=false)
+    issuccess(Wfact) || return false
+    Q = Matrix(Wfact.L)
+
+    # k second-order sweeps, one per column of Q. Their d2 parts sum to
+    # grad_v tr(W A), which is grad_v psi up to the constant tr(C).
+    llv = Vector{Float64}(undef, npar)
+    P = zeros(Float64, npar)
+    direction = zeros(Float64, npar)
+    for r in 1:k
+        fill!(direction, 0.0)
+        @inbounds for p in 1:k
+            direction[rho[p]] = Q[p, r]
+        end
+        pass = _laplace_directional_pass(laplace, i, base, direction, 2, slot)
+        pass.ok || return false
+        r == 1 && copyto!(llv, pass.d0)
+        P .+= pass.d2
+    end
+
+    Prho = Vector{Float64}(undef, k)
+    llrho = Vector{Float64}(undef, k)
+    @inbounds for p in 1:k
+        Prho[p] = P[rho[p]]
+        llrho[p] = llv[rho[p]]
+    end
+    s = C * (transpose(L) * Prho)
+
+    # One more sweep, along L s: its d1 part is the likelihood factor of s' B.
+    u = L * s
+    fill!(direction, 0.0)
+    @inbounds for p in 1:k
+        direction[rho[p]] = u[p]
+    end
+    extra = _laplace_directional_pass(laplace, i, base, direction, 1, slot)
+    extra.ok || return false
+    Ds = extra.d1
+
+    # dv/dtheta is the identity away from the population parameters, so for
+    # every other parameter the contribution is a plain read-off.
+    @inbounds for j in 1:npar
+        out[j] += llv[j] + (P[j] + Ds[j]) / 2
+    end
+
+    # The population parameters move v through L as well, and move psi through
+    # L explicitly. `H + I = L' A L`, so `tr(C (H+I) inv(L) dL)` gives the
+    # explicit term without ever forming A.
+    if !isempty(positions)
+        K = C * (Matrix{Float64}(LinearAlgebra.I, k, k) .- Mneg)
+        @inbounds for t in eachindex(positions)
+            j = positions[t]
+            shift = dL[t] * z
+            chain = 0.0
+            for p in 1:k
+                chain += (llrho[p] + (Prho[p] + Ds[rho[p]]) / 2) * shift[p]
+            end
+            sshift = dL[t] * s
+            bpart = 0.0
+            for p in 1:k
+                bpart += llrho[p] * sshift[p]
+            end
+            solved = L \ dL[t]
+            trace = 0.0
+            for a in 1:k, b in 1:k
+                trace += K[a, b] * solved[b, a]
+            end
+            out[j] += chain + (2 * trace + bpart) / 2
+        end
+    end
+    return true
 end
 
 """
@@ -562,7 +829,7 @@ The gradient differentiates the complete per-subject term, log determinant and
 implicit mode dependence included.
 """
 function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::AbstractVector;
-    gradient::Bool=true, contributions::Bool=false)
+    gradient::Bool=true, contributions::Bool=false, nested_gradient::Bool=false)
     theta = collect(Float64, values)
     nsubjects = length(laplace.objective.subject_objectives)
     k = nrandomeffects(laplace.spec)
@@ -580,41 +847,130 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     L = _laplace_popchol(theta, laplace.spec)
     primal_hessians = Vector{Matrix{Float64}}(undef, nsubjects)
     subject_loglik = zeros(Float64, nsubjects)
-    aws = _laplace_workspace!(laplace, Float64, length(theta))
     value = 0.0
-    for i in 1:nsubjects
-        _laplace_solve_mode!(laplace, i, theta, L)
-        z = Vector{Float64}(laplace.modes[:, i])
-        H = k == 0 ? zeros(Float64, 0, 0) : _laplace_inner_hessian(laplace, i, theta, L, z)
-        _, negated = _laplace_negate_definite(H)
-        primal_hessians[i] = negated
-        inner = _laplace_inner_objective_gradient(laplace, i, theta, L, z, aws)
-        term = if !isfinite(inner.value)
-            inner.value
-        elseif k == 0
-            inner.value
-        else
-            factorization = cholesky(Symmetric(negated); check=false)
-            issuccess(factorization) ? inner.value - logdet(factorization) / 2 : NaN
+
+    # The subject loop is the parallelism here, and it is the natural one: each
+    # subject's mode solve, curvature and value are completely independent, and
+    # nothing is shared but the read-only parameter vector. Chunk count comes
+    # from `ctsem_set_max_chunks!`, which is what the R side sets from `cores`,
+    # so it is the same control the non-Laplace path uses.
+    nchunks = _ctsem_nchunks(nsubjects)
+    # Grow the per-chunk workspace stores serially, before anything is spawned.
+    while length(laplace.workspaces) < nchunks
+        push!(laplace.workspaces, Dict{Any,Any}())
+    end
+    ranges = _ctsem_chunk_ranges(nsubjects, nchunks)
+    chunk_ok = fill(true, nchunks)
+    chunk_bad = fill(NaN, nchunks)
+    run_primal = function (c)
+        aws = _laplace_workspace!(laplace, Float64, length(theta), c)
+        @inbounds for i in ranges[c]
+            _laplace_solve_mode!(laplace, i, theta, L, c)
+            z = Vector{Float64}(laplace.modes[:, i])
+            H = k == 0 ? zeros(Float64, 0, 0) :
+                _laplace_inner_hessian(laplace, i, theta, L, z, c)
+            _, negated = _laplace_negate_definite(H)
+            primal_hessians[i] = negated
+            inner = _laplace_inner_objective_gradient(laplace, i, theta, L, z, aws)
+            term = if !isfinite(inner.value) || k == 0
+                inner.value
+            else
+                factorization = cholesky(Symmetric(negated); check=false)
+                issuccess(factorization) ? inner.value - logdet(factorization) / 2 : NaN
+            end
+            if !isfinite(term)
+                chunk_ok[c] = false
+                chunk_bad[c] = term
+                return nothing
+            end
+            subject_loglik[i] = term
         end
-        isfinite(term) || return (value=term,
+        return nothing
+    end
+    if nchunks <= 1
+        run_primal(1)
+    else
+        Threads.@sync for c in 1:nchunks
+            Threads.@spawn run_primal(c)
+        end
+    end
+    @inbounds for c in 1:nchunks
+        chunk_ok[c] || return (value=chunk_bad[c],
             gradient=gradient ? fill(NaN, length(theta)) : nothing,
             subject_loglik=subject_loglik, converged=all(laplace.inner_converged))
-        subject_loglik[i] = term
-        value += term
     end
-    value += _ctsem_log_prior(laplace.objective, theta)
+    value = sum(subject_loglik) + _ctsem_log_prior(laplace.objective, theta)
 
     gradient || return (value=value, gradient=nothing,
         subject_loglik=subject_loglik, converged=all(laplace.inner_converged))
 
-    # 3. The gradient, by one forward sweep over the whole per-subject term.
+    # 3. The gradient, by `k + 1` seeded reverse sweeps per subject.
     #
-    # This is the `O(npar * k)` step: `npar` forward directions over the outer
-    # sweep, each carrying `k` more for the inner curvature. It is the dominant
-    # cost of a Laplace fit and it is reducible -- see
-    # `multilevelLaplace/benchmarks/laplace-vs-augmented.md` for the seeded
-    # second-order dual scheme that would make it `O(k)`.
+    # `_laplace_nested_gradient` computes the same thing by running ForwardDiff
+    # over the whole per-subject term. It is kept because `test_laplace.jl`
+    # checks the two against each other: they share the primal and nothing
+    # else, so agreement to machine precision is a real check on the seeded
+    # assembly, which has a lot of chain rule in it. Set
+    # `nested_gradient = true` to use it.
+    grad = zeros(Float64, length(theta))
+    if !nested_gradient
+        positions, dL = _laplace_popchol_derivatives(theta, laplace.spec)
+        # One accumulator per chunk rather than one shared vector: the subject
+        # contributions are a sum, and summing per chunk and then across chunks
+        # is the same sum in a different order.
+        partials = [zeros(Float64, length(theta)) for _ in 1:nchunks]
+        fill!(chunk_ok, true)
+        run_gradient = function (c)
+            @inbounds for i in ranges[c]
+                z = Vector{Float64}(laplace.modes[:, i])
+                if !_laplace_seeded_subject_gradient!(partials[c], laplace, i, theta,
+                        L, positions, dL, z, primal_hessians[i], c)
+                    chunk_ok[c] = false
+                    return nothing
+                end
+            end
+            return nothing
+        end
+        if nchunks <= 1
+            run_gradient(1)
+        else
+            Threads.@sync for c in 1:nchunks
+                Threads.@spawn run_gradient(c)
+            end
+        end
+        ok = all(chunk_ok)
+        if ok
+            for c in 1:nchunks
+                grad .+= partials[c]
+            end
+            _ctsem_log_prior_gradient!(grad, laplace.objective, theta)
+        else
+            # A failed factorization or a non-finite sweep is not a licence to
+            # return a partial sum: fall back to the route that does not need
+            # those factorizations.
+            fill!(grad, 0.0)
+            grad .= _laplace_nested_gradient(laplace, theta, L, primal_hessians)
+        end
+    else
+        grad .= _laplace_nested_gradient(laplace, theta, L, primal_hessians)
+    end
+    return (value=value, gradient=grad, subject_loglik=subject_loglik,
+        converged=all(laplace.inner_converged))
+end
+
+"""
+    _laplace_nested_gradient(laplace, theta, L, hessians)
+
+The exact outer gradient by ForwardDiff over the whole per-subject term.
+
+`O(npar * k)` reverse sweeps per subject, which is what
+`_laplace_seeded_subject_gradient!` exists to avoid. Retained as the oracle the
+seeded path is tested against, and as its fallback when a factorization the
+seeded path needs is not available.
+"""
+function _laplace_nested_gradient(laplace::CTSEMLaplaceObjective,
+    theta::Vector{Float64}, L::Matrix{Float64}, hessians::Vector{Matrix{Float64}})
+    nsubjects = length(laplace.objective.subject_objectives)
     total_of = function (x)
         S = eltype(x)
         wsd = _laplace_workspace!(laplace, S, length(x))
@@ -622,14 +978,12 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
         accumulated = zero(S)
         for i in 1:nsubjects
             zhat = Vector{Float64}(laplace.modes[:, i])
-            zd = _laplace_dual_mode(laplace, i, x, zhat, primal_hessians[i], Ld, wsd)
+            zd = _laplace_dual_mode(laplace, i, x, zhat, hessians[i], Ld, wsd)
             accumulated += _laplace_subject_term(laplace, i, x, Ld, zd, wsd)
         end
         return accumulated + _ctsem_log_prior(laplace.objective, x)
     end
-    grad = ForwardDiff.gradient(total_of, theta)
-    return (value=value, gradient=grad, subject_loglik=subject_loglik,
-        converged=all(laplace.inner_converged))
+    return ForwardDiff.gradient(total_of, theta)
 end
 
 """
@@ -777,13 +1131,14 @@ cheaper route to the same answer, so there is no version of it worth keeping.
 """
 function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractVector;
     maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0, x_tol::Real=0.0,
-    verbose::Bool=false)
+    verbose::Bool=false, nested_gradient::Bool=false)
     start_values = collect(Float64, start)
     invalid_objective = floatmax(Float64) / 1e8
     gradient_limit = sqrt(floatmax(Float64))
     fg! = function (F, G, x)
         result = try
-            ctsem_laplace_evaluate(laplace, x; gradient=G !== nothing)
+            ctsem_laplace_evaluate(laplace, x; gradient=G !== nothing,
+                nested_gradient=nested_gradient)
         catch
             nothing
         end
@@ -802,7 +1157,22 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     end
     options = Optim.Options(iterations=Int(maxiter), g_tol=g_tol, f_reltol=f_tol,
         x_abstol=x_tol, show_trace=verbose, store_trace=false)
+    if verbose
+        chunks = ctsem_max_chunks()
+        println("Laplace: ", length(laplace.objective.subject_objectives),
+            " subjects, ", nrandomeffects(laplace.spec),
+            " random effects, ", min(max(chunks.max_chunks == 0 ? chunks.nthreads :
+                chunks.max_chunks, 1), length(laplace.objective.subject_objectives)),
+            " chunk(s) over ", chunks.nthreads, " thread(s)")
+    end
     result = Optim.optimize(Optim.only_fg!(fg!), start_values, Optim.LBFGS(), options)
+    if verbose
+        println("Laplace: inner modes ",
+            count(laplace.inner_converged), "/", length(laplace.inner_converged),
+            " converged, max |dg/dz| ",
+            isempty(laplace.inner_gradient) ? 0.0 : maximum(laplace.inner_gradient),
+            ", curvature repaired for ", count(laplace.hessian_repaired), " subject(s)")
+    end
     minimizer = collect(Optim.minimizer(result))
     final = ctsem_laplace_evaluate(laplace, minimizer; gradient=true)
     return (
