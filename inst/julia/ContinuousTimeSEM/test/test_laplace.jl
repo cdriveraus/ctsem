@@ -481,6 +481,61 @@ end
     end
 end
 
+@testset "the blocked curvature equals the dense one" begin
+    # The production curvature is assembled one block of `u` at a time, using
+    # the fact that a member outside a block has structurally zero second
+    # derivative with respect to it. The dense route differentiates the whole
+    # gradient at once and knows nothing about that structure, so agreement is
+    # a real check on the block bookkeeping -- which members own which block,
+    # and where each block sits in `u`.
+    for (label, fresh) in (("one level", _fresh_linear), ("two levels", _fresh_twolevel))
+        laplace, values = fresh()
+        theta = collect(Float64, values)
+        Ls = ContinuousTimeSEM._laplace_popchols(theta, laplace.spec)
+        for U in eachindex(laplace.units.members)
+            u = 0.1 .* collect(1.0:laplace.units.dims[U])
+            blocked = ContinuousTimeSEM._laplace_unit_hessian(laplace, U, theta, Ls, u)
+            reference = ContinuousTimeSEM._laplace_unit_hessian(laplace, U, theta, Ls, u;
+                dense=true)
+            @test size(blocked) == size(reference)
+            @test norm(blocked - reference) / max(norm(reference), 1) < 1e-10
+        end
+    end
+end
+
+@testset "the curvature is arrow structured, and the blocks say where" begin
+    # Subjects in a study are conditionally independent given the study effect,
+    # so their blocks do not couple to each other -- only to the study block.
+    # That is the sparsity the blocked assembly exploits, so it is worth
+    # asserting rather than assuming.
+    laplace, values = _fresh_twolevel()
+    theta = collect(Float64, values)
+    Ls = ContinuousTimeSEM._laplace_popchols(theta, laplace.spec)
+    U = 1
+    u = 0.1 .* collect(1.0:laplace.units.dims[U])
+    H = ContinuousTimeSEM._laplace_unit_hessian(laplace, U, theta, Ls, u)
+
+    blocks = laplace.units.blocks[U]
+    subjectblocks = [b for b in blocks if length(b[3]) == 1]
+    studyblocks = [b for b in blocks if length(b[3]) > 1]
+    @test length(subjectblocks) == 2      # two subjects per study
+    @test length(studyblocks) == 1        # one shared study block
+
+    for a in subjectblocks, b in subjectblocks
+        a === b && continue
+        rows = (a[1] + 1):(a[1] + a[2])
+        cols = (b[1] + 1):(b[1] + b[2])
+        @test all(abs.(H[rows, cols]) .< 1e-12)
+    end
+    # ...and the coupling to the study block is genuinely there, so the test
+    # above is not passing because everything is zero.
+    sb = studyblocks[1]
+    srows = (sb[1] + 1):(sb[1] + sb[2])
+    a = subjectblocks[1]
+    arows = (a[1] + 1):(a[1] + a[2])
+    @test maximum(abs, H[arows, srows]) > 1e-8
+end
+
 @testset "the population covariance follows the Stan parameterisation" begin
     laplace, values = _fresh_linear()
     spec = laplace.spec

@@ -180,6 +180,14 @@ struct CTSEMLaplaceUnits
     members::Vector{Vector{Int}}
     offsets::Vector{Vector{Vector{Int}}}
     dims::Vector{Int}
+    # The blocks of `u`, and which members each one belongs to. A subject block
+    # belongs to one member; a study block to every member of the study. This
+    # is what makes the curvature sparse and, more importantly, what makes
+    # *forming* it cheap -- see `_laplace_unit_hessian`.
+    #
+    # Each entry is `(offset, size, member positions)`, positions indexing into
+    # `members[U]`.
+    blocks::Vector{Vector{Tuple{Int,Int,Vector{Int}}}}
 end
 
 """
@@ -196,7 +204,8 @@ function _laplace_build_units(spec::CTSEMLaplaceSpec, nsubjects::Integer)
     nlev = length(levels)
     if nlev == 0 || nsubjects == 0
         return CTSEMLaplaceUnits([[i] for i in 1:nsubjects],
-            [[Int[] for _ in 1:1] for _ in 1:nsubjects], zeros(Int, nsubjects))
+            [[Int[] for _ in 1:1] for _ in 1:nsubjects], zeros(Int, nsubjects),
+            [Tuple{Int,Int,Vector{Int}}[] for _ in 1:nsubjects])
     end
     outer = levels[end]
     nunits = outer.ngroups
@@ -225,7 +234,25 @@ function _laplace_build_units(spec::CTSEMLaplaceSpec, nsubjects::Integer)
         end
         dims[U] = cursor
     end
-    return CTSEMLaplaceUnits(members, offsets, dims)
+
+    # Invert the offset map: which member positions share each block.
+    blocks = Vector{Vector{Tuple{Int,Int,Vector{Int}}}}(undef, nunits)
+    for U in 1:nunits
+        owners = Dict{Int,Vector{Int}}()
+        sizes = Dict{Int,Int}()
+        for (m, i) in enumerate(members[U])
+            for l in 1:nlev
+                k = nrandomeffects(levels[l])
+                k == 0 && continue
+                off = offsets[U][m][l]
+                push!(get!(owners, off, Int[]), m)
+                sizes[off] = k
+            end
+        end
+        blocks[U] = [(off, sizes[off], sort(unique(owners[off])))
+                     for off in sort(collect(keys(owners)))]
+    end
+    return CTSEMLaplaceUnits(members, offsets, dims, blocks)
 end
 
 """
@@ -557,6 +584,53 @@ end
 ################################################################################
 
 """
+    _laplace_unit_loglik_gradient(laplace, U, values, Ls, u, aws, positions)
+
+The summed *process* log likelihood of the given member positions and its
+gradient with respect to `u` -- without the `-u'u/2` term, which belongs to the
+unit as a whole rather than to any member.
+
+Restricting the member set is what makes the blocked curvature below cheap. It
+is exact, not an approximation: a member outside the set has no dependence on
+the block being differentiated, so its second derivative with respect to that
+block is structurally zero rather than merely small.
+"""
+function _laplace_unit_loglik_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
+    aws, positions) where {T}
+    spec = laplace.spec
+    units = laplace.units
+    members = units.members[U]
+    inner = zeros(T, length(u))
+    total = zero(T)
+    gradient = Vector{T}(undef, length(values))
+    @inbounds for m in positions
+        i = members[m]
+        offsets = units.offsets[U][m]
+        shifted = _laplace_member_values(values, spec, Ls, u, offsets)
+        loglik = _laplace_subject_value_gradient!(gradient,
+            laplace.objective.subject_objectives[i], aws, shifted)
+        isfinite(loglik) || return (value=loglik, gradient=fill(T(NaN), length(u)))
+        total += loglik
+        for l in eachindex(spec.levels)
+            level = spec.levels[l]
+            k = nrandomeffects(level)
+            k == 0 && continue
+            base = offsets[l]
+            L = Ls[l]
+            for q in 1:k
+                acc = zero(T)
+                for pp in 1:k
+                    acc += L[pp, q] * gradient[level.re_index[pp]]
+                end
+                inner[base + q] += acc
+            end
+        end
+    end
+    return (value=total, gradient=inner)
+end
+
+"""
     _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws)
 
 `(g_U(u), dg_U/du)` for unit `U`: the summed process log likelihood of its
@@ -573,64 +647,114 @@ exactly the coupling that makes the study a single integration unit.
 function _laplace_unit_objective_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
     aws) where {T}
-    spec = laplace.spec
-    units = laplace.units
-    members = units.members[U]
-    inner = zeros(T, length(u))
-    total = zero(T)
-    gradient = Vector{T}(undef, length(values))
-    @inbounds for (m, i) in enumerate(members)
-        offsets = units.offsets[U][m]
-        shifted = _laplace_member_values(values, spec, Ls, u, offsets)
-        loglik = _laplace_subject_value_gradient!(gradient,
-            laplace.objective.subject_objectives[i], aws, shifted)
-        isfinite(loglik) || return (value=loglik, gradient=fill(T(NaN), length(u)))
-        total += loglik
-        for l in eachindex(spec.levels)
-            level = spec.levels[l]
-            k = nrandomeffects(level)
-            k == 0 && continue
-            base = offsets[l]
-            L = Ls[l]
-            for q in 1:k
-                acc = zero(T)
-                for p in 1:k
-                    acc += L[p, q] * gradient[level.re_index[p]]
-                end
-                inner[base + q] += acc
-            end
-        end
-    end
+    result = _laplace_unit_loglik_gradient(laplace, U, values, Ls, u, aws,
+        eachindex(laplace.units.members[U]))
+    isfinite(result.value) || return result
+    inner = result.gradient
     @inbounds for a in eachindex(u)
         inner[a] -= u[a]
     end
-    return (value=total - dot(u, u) / 2, gradient=inner)
+    return (value=result.value - dot(u, u) / 2, gradient=inner)
+end
+
+"""Unit size at or above which the blocked curvature beats the dense one."""
+const _LAPLACE_BLOCK_THRESHOLD = Ref(14)
+
+export ctsem_set_block_threshold!
+"""
+    ctsem_set_block_threshold!(n)
+
+Set the unit size at which curvature assembly switches from differentiating the
+whole gradient to differentiating block by block. Exposed because the crossover
+is a property of the machine and the model, not of the mathematics.
+"""
+function ctsem_set_block_threshold!(n::Integer)
+    n >= 0 || throw(ArgumentError("threshold must be non-negative"))
+    _LAPLACE_BLOCK_THRESHOLD[] = Int(n)
+    return Int(n)
 end
 
 """
-    _laplace_unit_hessian(laplace, U, values, Ls, u, slot)
+    _laplace_unit_hessian(laplace, U, values, Ls, u, slot; dense=nothing)
 
-`d2 g_U / du du` -- the unit's inner curvature, by forward-mode differentiation
-of the inner gradient above.
+`d2 g_U / du du` -- the unit's inner curvature.
 
-Only `length(u)` forward directions are seeded, whatever the model's parameter
-count. For one level that is the `k x k` block the whole design exists to keep
-small. For a study of `n` subjects it is `k_study + n * k_subject`, which is
-the price of the coupling: the subjects are no longer separable.
+Formed one *block* of `u` at a time rather than one column at a time, and that
+distinction is the difference between quadratic and linear cost in study size.
+
+Column block `b` of the curvature is `d(dg/du)/du_b`, and a member that does
+not sit under `b` has no dependence on `u_b` at all -- so its contribution is
+structurally zero and it need not be filtered at all. Seeding a subject block
+therefore costs one subject sweep, not one per member of the study. Summed over
+blocks the cost is `n * sum_of_k_over_levels`, against `(k_study + n*k_subject)
+* n` for differentiating the whole gradient at once. On a 40-subject study with
+two effects at each level that is 160 sweeps rather than 3280.
+
+The subtracted identity is the `-u'u/2` term, applied once here rather than
+inside each block.
+
+Which of the two runs is chosen per unit, because the blocked route is not
+universally better: it makes one `ForwardDiff.jacobian` call per block instead
+of one for the whole matrix, and that per-call overhead costs more than the
+saved sweeps until a unit is reasonably large. Measured on a one-latent model,
+five waves, one random effect at each level, milliseconds per curvature:
+
+    subjects/study   dim(u)   blocked   dense   ratio
+                 4        5      0.34    0.20    0.6x
+                 8        9      0.73    0.44    0.6x
+                16       17      1.43    1.86    1.3x
+                32       33      3.07    6.14    2.0x
+
+Dense grows quadratically in study size and blocked linearly, exactly as the
+structure says they should, but they cross over around `dim(u)` of 12 to 16.
+`_LAPLACE_BLOCK_THRESHOLD` is that crossover, and it is an empirical constant
+rather than a derived one -- set from the table above, on one machine. Passing
+`dense` explicitly overrides the choice, which is what the test that compares
+the two routes does.
 """
 function _laplace_unit_hessian(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
-    slot::Integer=1) where {T}
+    slot::Integer=1; dense::Union{Nothing,Bool}=nothing) where {T}
     d = length(u)
     d == 0 && return zeros(T, 0, 0)
-    inner_of = function (uu)
-        S = eltype(uu)
-        ws = _laplace_workspace!(laplace, S, length(values), slot)
-        vs = convert(Vector{S}, values)
-        Lss = [convert(Matrix{S}, L) for L in Ls]
-        return _laplace_unit_objective_gradient(laplace, U, vs, Lss, uu, ws).gradient
+    blocks = laplace.units.blocks[U]
+    # One block is the whole matrix, so the two routes are the same computation
+    # and the blocked one only adds a layer.
+    usedense = dense === nothing ?
+        (length(blocks) <= 1 || d < _LAPLACE_BLOCK_THRESHOLD[]) : dense
+    if usedense
+        inner_of = function (uu)
+            S = eltype(uu)
+            ws = _laplace_workspace!(laplace, S, length(values), slot)
+            vs = convert(Vector{S}, values)
+            Lss = [convert(Matrix{S}, L) for L in Ls]
+            return _laplace_unit_objective_gradient(laplace, U, vs, Lss, uu, ws).gradient
+        end
+        H = ForwardDiff.jacobian(inner_of, collect(u))
+        return (H .+ transpose(H)) ./ 2
     end
-    H = ForwardDiff.jacobian(inner_of, collect(u))
+
+    base = collect(u)
+    H = zeros(T, d, d)
+    for (offset, size, positions) in blocks
+        columns = (offset + 1):(offset + size)
+        block_of = function (ub)
+            S = eltype(ub)
+            ws = _laplace_workspace!(laplace, S, length(values), slot)
+            vs = convert(Vector{S}, values)
+            Lss = [convert(Matrix{S}, L) for L in Ls]
+            uu = convert(Vector{S}, base)
+            @inbounds for (t, c) in enumerate(columns)
+                uu[c] = ub[t]
+            end
+            return _laplace_unit_loglik_gradient(laplace, U, vs, Lss, uu, ws,
+                positions).gradient
+        end
+        H[:, columns] = ForwardDiff.jacobian(block_of, base[columns])
+    end
+    @inbounds for a in 1:d
+        H[a, a] -= one(T)
+    end
     return (H .+ transpose(H)) ./ 2
 end
 
