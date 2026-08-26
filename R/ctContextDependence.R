@@ -403,15 +403,15 @@ NULL
 
 # The population T0MEANS at engine (augmented) length, used both as the default
 # and as the padding for a shorter supplied state.
-.ctContextBaseState <- function(fit) {
+.ctContextBaseState <- function(fit, tipreds = NULL) {
   # suppressMessages: this is a lookup on the way to choosing an evaluation
   # point, not a report of one, and the note belongs to the caller's choice.
   as.numeric(suppressMessages(
-    ctBackendParMatrices(fit, trim = FALSE))$T0MEANS[, 1])
+    ctBackendParMatrices(fit, tipreds = tipreds, trim = FALSE))$T0MEANS[, 1])
 }
 
-.ctContextPadState <- function(fit, state) {
-  base <- .ctContextBaseState(fit)
+.ctContextPadState <- function(fit, state, tipreds = NULL) {
+  base <- .ctContextBaseState(fit, tipreds)
   state <- as.numeric(state)
   if (length(state) == length(base)) return(state)
   nlatent <- .ctFitNlatent(fit)
@@ -443,12 +443,14 @@ NULL
 # differences -- JAx is exactly d(drift)/d(state), so one engine call per
 # iteration does the whole step. For a linear model this lands on asymCINT in a
 # single iteration, which is the invariant the test checks.
-.ctContextAsymptoticState <- function(fit, tolerance = 1e-8, maxiter = 50L) {
+.ctContextAsymptoticState <- function(fit, tolerance = 1e-8, maxiter = 50L,
+  tipreds = NULL) {
   nlatent <- .ctFitNlatent(fit)
-  x <- .ctContextBaseState(fit)
+  x <- .ctContextBaseState(fit, tipreds)
   discrete <- !isTRUE(.ctFitModelObject(fit)$continuoustime)
   for (iteration in seq_len(maxiter)) {
-    mats <- suppressMessages(ctBackendParMatrices(fit, state = x, trim = FALSE))
+    mats <- suppressMessages(ctBackendParMatrices(fit, state = x,
+      tipreds = tipreds, trim = FALSE))
     drift <- mats$DRIFT[seq_len(nlatent), seq_len(nlatent), drop = FALSE]
     cint <- as.numeric(mats$CINT[seq_len(nlatent), 1])
     jacobian <- mats$JAx[seq_len(nlatent), seq_len(nlatent), drop = FALSE]
@@ -476,7 +478,7 @@ NULL
 #' @return list(state = NULL or numeric at engine length, label = character).
 #'   A NULL state means "the engine's own default", which is T0MEANS.
 #' @noRd
-.ctResolveState <- function(fit, state = NULL) {
+.ctResolveState <- function(fit, state = NULL, tipreds = NULL) {
   if (is.null(state)) return(list(state = NULL, label = .ctContextPopLabel))
   if (is.character(state)) {
     state <- match.arg(state, .ctContextStateOptions)
@@ -487,8 +489,8 @@ NULL
       return(list(state = .ctContextMeanState(fit),
         label = "the mean smoothed latent state"))
     }
-    return(list(state = .ctContextAsymptoticState(fit),
+    return(list(state = .ctContextAsymptoticState(fit, tipreds = tipreds),
       label = "the system's asymptotic (fixed point) state"))
   }
-  list(state = .ctContextPadState(fit, state), label = "the supplied state")
+  list(state = .ctContextPadState(fit, state, tipreds), label = "the supplied state")
 }

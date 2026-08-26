@@ -133,3 +133,44 @@ test_that("method='simulate' is refused where it cannot be honoured", {
   expect_error(ctDiscretePars(ctstantestfit, times = 1, method = 'simulate'),
     "backend='julia'")
 })
+
+test_that('the covariate dynamics panel is built from each level\'s own state', {
+  tipfit <- local({
+    set.seed(2)
+    generating <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
+      manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+      LAMBDA = diag(2), DRIFT = matrix(c(-.4, .1, 0, -.3), 2, 2),
+      CINT = matrix(c(.2, .1), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
+      MANIFESTVAR = diag(.2, 2), DIFFUSION = matrix(c(.5, 0, 0, .4), 2, 2)))
+    datalong <- as.data.frame(suppressMessages(ctGenerate(generating,
+      n.subjects = 30, burnin = 5, dtmean = 1, logdtsd = .1, wide = FALSE,
+      Tpoints = 10)))
+    set.seed(3)
+    values <- rnorm(length(unique(datalong$id)))
+    datalong$TI1 <- values[match(datalong$id, unique(datalong$id))]
+    model <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
+      n.TIpred = 1, manifestNames = c('Y1', 'Y2'),
+      latentNames = c('eta1', 'eta2'), TIpredNames = 'TI1', LAMBDA = diag(2),
+      PARS = c('dr11|-log1p_exp(param)'),
+      DRIFT = matrix(c('dr11 * (1 + 0.2 * eta2)', 'd21', 0, 'd22'), 2, 2),
+      CINT = matrix(c('c1', 'c2'), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
+      MANIFESTVAR = diag(.2, 2), DIFFUSION = matrix(c('df1', 0, 0, 'df2'), 2, 2)))
+    model$pars$indvarying <- FALSE
+    ctFit(datalong, model, backend = 'julia', cores = 1, verbose = 0)
+  })
+
+  panel <- suppressMessages(ctsem:::.ctPredictTIPDynamics(tipfit, tipredIndex = 1,
+    values = c(-1, 0, 1), times = c(0, 1, 2, 4), ntipred = 1, nsamples = 3,
+    latentNames = c('eta1', 'eta2')))
+  median <- apply(panel, c(2, 3, 4, 5), stats::median)
+
+  # The reading the linear panel has, preserved: a one unit impulse starts at
+  # one and decays to zero for a stable process -- at every covariate level,
+  # even though each level is evaluated at a different state.
+  for (level in 1:3) expect_equal(unname(median[level, 1, , ]), diag(2),
+    tolerance = 1e-8)
+  expect_true(all(abs(median[, 4, 1, 1]) < abs(median[, 1, 1, 1])))
+
+  # And the levels differ, which is what the panel is for.
+  expect_true(diff(range(median[, 3, 1, 1])) > 1e-6)
+})

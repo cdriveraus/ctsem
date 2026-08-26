@@ -164,3 +164,69 @@
   attr(out, 'stateLabel') <- resolved$label
   out
 }
+
+# ctPredictTIP's dynamics panel, for a context-dependent model ----------------
+#
+# The linear panel is built by fabricating a dataset with every manifest set to
+# missing, one pseudo-subject per covariate level, refitting the data and
+# reading each pseudo-subject's matrices. For a linear model that is the right
+# design: it is the simplest and most interpretable way to isolate the
+# covariate's effect, and the dynamics do not depend on where the trajectory
+# went, so the fabrication costs nothing.
+#
+# For a model whose matrices depend on the state it costs everything: what gets
+# read is the DRIFT at the last row of a dataset with no observations at all,
+# i.e. wherever that pseudo-subject's unconstrained prior trajectory happened to
+# drift to over the full time range. The covariate effect is then confounded
+# with a fabrication artefact.
+#
+# The analogue that does work: for each covariate level, evaluate at the state
+# that level implies -- its own asymptote -- and take the impulse response as a
+# difference from it. So a one unit impulse still starts at 1 and decays to zero
+# for a stable process, reading exactly as the linear panel does, while the
+# level-to-level differences are the covariate's real effect on the dynamics
+# rather than an effect of where each fabricated trajectory ended up.
+#
+# It also does away with the fabricated data: covariate values go to the engine
+# directly as `tipreds`, so nothing depends on a pseudo-subject at all.
+.ctPredictTIPDynamics <- function(fit, tipredIndex, values, times, ntipred,
+  nsamples = 5, latentNames, quiet = FALSE) {
+
+  draws <- .ctBackendRawSamples(fit)
+  nsamples <- max(1L, min(as.integer(nsamples), nrow(draws)))
+  if (nsamples < nrow(draws)) {
+    draws <- draws[round(seq(1, nrow(draws), length.out = nsamples)), , drop = FALSE]
+  }
+  times <- sort(unique(c(0, as.numeric(times))))
+  nlatent <- length(latentNames)
+  out <- array(NA_real_, dim = c(nsamples, length(values), length(times),
+    nlatent, nlatent))
+
+  if (!quiet) message('Model matrices depend on the latent state, so the ',
+    'dynamics for each covariate level are simulated from that level\'s own ',
+    'asymptotic state rather than read off a frozen DRIFT.')
+
+  for (level in seq_along(values)) {
+    tipreds <- rep(0, ntipred)
+    tipreds[tipredIndex] <- values[level]
+    state <- try(.ctContextAsymptoticState(fit, tipreds = tipreds), silent = TRUE)
+    if (inherits(state, 'try-error')) {
+      # No fixed point at this covariate level: report nothing for it rather
+      # than silently substituting a different level's state.
+      warning(call. = FALSE, 'No asymptotic state at covariate value ',
+        signif(values[level], 3), '; its dynamics are not shown.')
+      next
+    }
+    for (draw in seq_len(nsamples)) {
+      out[draw, level, , , ] <- .ctNonlinearImpulseResponse(fit, state, times,
+        tipreds = tipreds, raw = draws[draw, ])
+    }
+  }
+
+  dimnames(out) <- list(Sample = seq_len(nsamples), Subject = seq_along(values),
+    `Time interval` = times, row = latentNames, col = latentNames)
+  attributes(out)$observational <- FALSE
+  attributes(out)$cov <- FALSE
+  attributes(out)$method <- 'simulate'
+  out
+}
