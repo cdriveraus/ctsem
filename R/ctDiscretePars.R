@@ -81,6 +81,16 @@ ctStanParnames <- ctRawParnames
 #'system's own fixed point; or supply a numeric state vector. Requires
 #'\code{backend='julia'} and \code{subjects='popmean'}. For a linear model the
 #'argument makes no difference, since no cell depends on the state.
+#'@param method How the interval regressions are obtained. \code{'linearise'}
+#'(the default) exponentiates the DRIFT matrix, \code{expm(DRIFT*t)} -- exact
+#'for a linear model, and for a model whose DRIFT depends on the state, the
+#'response of the model linearised at \code{state}. \code{'simulate'}
+#'integrates the nonlinear system from \code{state} and from \code{state} plus
+#'one unit on each process and differences the trajectories, which is the actual
+#'model implied regression; it starts at 1 and decays to 0 for a stable process,
+#'and reduces exactly to \code{'linearise'} when no cell depends on the state.
+#'\code{'simulate'} requires \code{backend='julia'} and is far slower, so it
+#'uses \code{nsamples} posterior draws with a small default.
 #'@param ... additional plotting arguments to control \code{\link{ctDiscreteParsPlot}}
 #'@examples
 #' data.table::setDTthreads(1) #ignore this line
@@ -101,7 +111,7 @@ ctStanParnames <- ctRawParnames
 ctDiscretePars<-function(fit, subjects='popmean',
   times=seq(from=0,to=10,by=.1),
   nsamples=200,observational=FALSE,standardise=FALSE,
-  cov=FALSE, plot=FALSE,cores=2,state=NULL,..., ctstanfitobj){
+  cov=FALSE, plot=FALSE,cores=2,state=NULL,method='linearise',..., ctstanfitobj){
 
   if(missing(fit)){
     if(missing(ctstanfitobj)) stop('fit must be supplied')
@@ -109,6 +119,31 @@ ctDiscretePars<-function(fit, subjects='popmean',
     fit <- ctstanfitobj
   } else if(!missing(ctstanfitobj)) {
     stop('Use only one of fit or deprecated ctstanfitobj')
+  }
+
+  method <- match.arg(method, c('linearise','simulate'))
+
+  # method='simulate' answers a different question and takes a different route
+  # to it: integrate the nonlinear system from a state and from that state plus
+  # one unit, and difference. It reduces exactly to the linearised answer when
+  # no cell depends on the state, so it is safe to ask for either way.
+  if(method %in% 'simulate'){
+    if(!'popmean' %in% subjects) stop(call.=FALSE,
+      "method='simulate' applies to subjects='popmean' only.")
+    ctmS <- .ctFitModelObject(fit)
+    if(!ctmS$continuoustime) stop(call.=FALSE,
+      "method='simulate' is for continuous time models.")
+    out <- .ctDiscreteParsSimulate(fit, times=times,
+      state=if(is.null(state)) 'asymptotic' else state, nsamples=nsamples)
+    times <- attr(out,'times')
+    dimnames(out) <- list(Sample=seq_len(dim(out)[1]), Subject='popmean',
+      `Time interval`=times, row=ctmS$latentNames, col=ctmS$latentNames)
+    attributes(out)$observational <- FALSE
+    attributes(out)$cov <- FALSE
+    attributes(out)$method <- 'simulate'
+    out <- .ctContextAttach(out, fit)
+    if(plot) out <- ctDiscreteParsPlot(out, ...)
+    return(out)
   }
 
   # `fit` may be a ctStanFit or a ctJuliaFit. Everything this
@@ -192,6 +227,7 @@ ctDiscretePars<-function(fit, subjects='popmean',
 
   attributes(out)$observational <- observational
   attributes(out)$cov <- cov
+  attributes(out)$method <- 'linearise'
   out <- .ctContextAttach(out, fit)
 
   if(plot) {

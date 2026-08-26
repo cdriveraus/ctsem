@@ -16,6 +16,7 @@ ctDiscretePars(
   plot = FALSE,
   cores = 2,
   state = NULL,
+  method = "linearise",
   ...,
   ctstanfitobj
 )
@@ -47,6 +48,17 @@ instead of returning output.}
 
 \item{cores}{Number of cpu cores to use for computing subject matrices.
 If subject matrices were saved during fiting, not used.}
+
+\item{method}{How the interval regressions are obtained. \code{'linearise'}
+(the default) exponentiates the DRIFT matrix, \code{expm(DRIFT*t)} -- exact
+for a linear model, and for a model whose DRIFT depends on the state, the
+response of the model linearised at \code{state}. \code{'simulate'}
+integrates the nonlinear system from \code{state} and from \code{state} plus
+one unit on each process and differences the trajectories, which is the actual
+model implied regression; it starts at 1 and decays to 0 for a stable process,
+and reduces exactly to \code{'linearise'} when no cell depends on the state.
+\code{'simulate'} requires \code{backend='julia'} and is far slower, so it
+uses \code{nsamples} posterior draws with a small default.}
 
 \item{state}{Evaluation point for any matrix cell that depends on the latent
 state or a time dependent predictor -- see \code{\link{ctContextDependence}}.
