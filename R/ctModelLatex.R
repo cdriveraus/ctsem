@@ -174,6 +174,106 @@ texPrep <- function(x){ #replaces certain characters with tex safe versions
   return(x)
 }
 
+# Rendering a fitted model's context-dependent cells ---------------------------
+#
+# For an ordinary cell, substituting the fitted number is exactly right. For a
+# cell written as an expression referencing a latent process or a time dependent
+# predictor it is not: collapsing `-log1p(exp(dr11)) * eta2` to a single number
+# produces the equation of a *linear* model, and a reader documenting a
+# nonlinear fit from this output would publish the wrong model.
+#
+# So such a cell keeps its structure and loses only its labels: each free
+# parameter is replaced by its estimated value, latent references become
+# subscripted etas and TD predictor references keep their names. The result
+# reads as the model that was fitted -- numbers where the estimates are,
+# structure where the structure is.
+
+# The estimated raw value of every free parameter, by name. Raw, not
+# transformed: inside a cell expression a parameter appears before its
+# transform has been applied, so the transformed value would be wrong there.
+.ctLatexRawEstimates <- function(fit, e = NULL) {
+  if (inherits(fit, 'ctJuliaFit')) {
+    cells <- .ctBackendFreeParameterCells(fit)
+    values <- as.numeric(fit$estimate$raw)[cells$parnumber]
+    names(values) <- .ctBackendParameterNames(cells)
+    return(values[!is.na(names(values))])
+  }
+  if (is.null(e)) e <- ctExtract(fit)
+  values <- as.numeric(ctCollapse(e$rawpopmeans, 1, mean))
+  names(values) <- getparnames(fit)
+  values[!is.na(names(values))]
+}
+
+# The expression a cell was actually written as.
+#
+# Two spec syntaxes reach the same place. A bare expression lives in `param`
+# and `listOfMatrices` already returns it. A `name | transform` cell keeps only
+# the name there, with the expression in `transform` and the name written as
+# `param` inside it -- so the expression has to be reassembled before it can be
+# rendered, or the cell collapses to a single estimate again.
+.ctLatexCellExpression <- function(pars, mi, i, j) {
+  row <- which(pars$matrix %in% mi & pars$row %in% i & pars$col %in% j)
+  if (!length(row)) return(NA_character_)
+  row <- row[1L]
+  transform <- pars$transform[row]
+  written <- !is.na(transform) && nzchar(as.character(transform)) &&
+    is.na(suppressWarnings(as.numeric(transform)))
+  if (written) return(gsub('\\bparam\\b', as.character(pars$param[row]),
+    as.character(transform), perl = TRUE))
+  as.character(pars$param[row])
+}
+
+# One cell's expression, with estimates for labels and math for references.
+.ctLatexRenderExpression <- function(expression, estimates, latentNames,
+  TDpredNames, digits = 3) {
+
+  if (length(expression) != 1 || is.na(expression) || !nzchar(expression)) return(expression)
+  quoted <- function(x) paste0('\\b\\Q', x, '\\E\\b')
+
+  # Longest names first, so that a parameter called `a1` cannot eat part of
+  # `a12` before `a12` has had its turn.
+  named <- names(estimates)[order(nchar(names(estimates)), decreasing = TRUE)]
+  for (nm in named) {
+    expression <- gsub(quoted(nm), format(round(estimates[[nm]], digits), trim = TRUE),
+      expression, perl = TRUE)
+  }
+
+  for (k in seq_along(latentNames)) {
+    expression <- gsub(quoted(latentNames[k]), paste0('\\\\eta_{', k, '}'),
+      expression, perl = TRUE)
+  }
+  expression <- gsub('\\bstate\\s*\\[\\s*([0-9]+)\\s*\\]', '\\\\eta_{\\1}',
+    expression, perl = TRUE)
+
+  for (k in seq_along(TDpredNames)) {
+    expression <- gsub(quoted(TDpredNames[k]),
+      paste0('\\\\text{', texPrep(TDpredNames[k]), '}'), expression, perl = TRUE)
+  }
+  expression <- gsub('tdpreds\\s*\\[\\s*rowi\\s*,\\s*([0-9]+)\\s*\\]',
+    '\\\\text{TD}_{\\1}', expression, perl = TRUE)
+
+  expression <- gsub('*', ' \\cdot ', expression, fixed = TRUE)
+
+  # Function names set upright, so `log1p(...)` does not render as a product of
+  # the letters l, o, g and the number 1p. Done name by name rather than with
+  # one replacement pattern because the name needs tex-escaping on the way in,
+  # and an underscore must be escaped there while the one in `\eta_{2}` must
+  # not. `\text` and `\mathrm` are never caught: they are followed by a brace,
+  # not a parenthesis.
+  # The lookbehind keeps the `\cdot` just inserted above from being read as a
+  # function name when the next token happens to be a parenthesis.
+  notmacro <- '(?<![\\\\A-Za-z0-9_.])'
+  functions <- unique(regmatches(expression,
+    gregexpr(paste0(notmacro, '[A-Za-z][A-Za-z0-9_.]*(?=\\s*\\()'),
+      expression, perl = TRUE))[[1L]])
+  for (fn in functions) {
+    replacement <- gsub('\\', '\\\\', paste0('\\mathrm{', texPrep(fn), '}'), fixed = TRUE)
+    expression <- gsub(paste0(notmacro, '\\Q', fn, '\\E\\b(\\s*\\()'),
+      paste0(replacement, '\\1'), expression, perl = TRUE)
+  }
+  trimws(gsub(' {2,}', ' ', expression))
+}
+
 ctModelLatexMathElement <- function(x){
   for(i in seq_along(x)){
     if(is.na(suppressWarnings(as.numeric(x[i]))) &&
@@ -404,6 +504,8 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
   t0cov <- NULL
   t0means <- NULL
   latentPopNames <- NULL
+  # Only a fit can have these; an unfitted model shows its expressions anyway.
+  contextcells <- NULL
   
   # When savepng is TRUE, force compilation settings
   if(savepng) {
@@ -458,14 +560,29 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
     ctmodelmats <- listOfMatrices((x$ctstanmodelbase$pars))
     ctmodel <- x$ctstanmodelbase
     ####################################################################
+    # Cells written as expressions over the state or the TD predictors keep
+    # their structure; see .ctLatexRenderExpression above. Detected from the
+    # *base* model, so the coordinates match ctmodelmats and so that an
+    # intoverpop carrier state -- which is a parameter, not a reference to the
+    # dynamics -- is not caught up in it.
+    contextcells <- try(.ctFitContextDependentCells(x$ctstanmodelbase), silent = TRUE)
+    if(inherits(contextcells,'try-error')) contextcells <- NULL
+    estimates <- if(!is.null(contextcells) && nrow(contextcells)){
+      try(.ctLatexRawEstimates(x, e), silent = TRUE)
+    } else NULL
+    if(inherits(estimates,'try-error')) estimates <- numeric()
+    isContextCell <- function(mi,i,j) !is.null(contextcells) &&
+      any(contextcells$matrix %in% mi & contextcells$row %in% i & contextcells$col %in% j)
+
     for(mi in names(ctmodelmats)){
       mimean <- ctCollapse(e[[paste0('pop_',mi)]],1,mean)
       for(i in 1:nrow(ctmodelmats[[mi]])){
         for(j in 1:ncol(ctmodelmats[[mi]])){
-          ctmodelmats[[mi]][i,j] <- round(mimean[i,j],digits)
-          # if(ctmodel$pars$matrix[i] %in% parmats$matrix){
-          #   try(ctmodel$pars$value[i] <- parmats[parmats$matrix %in% ctmodel$pars$matrix[i] & 
-          #       ctmodel$pars$row[i] == parmats$Row & ctmodel$pars$col[i]==parmats$Col,'Mean'],silent=TRUE)
+          if(isContextCell(mi,i,j)){
+            ctmodelmats[[mi]][i,j] <- .ctLatexRenderExpression(
+              .ctLatexCellExpression(x$ctstanmodelbase$pars,mi,i,j), estimates,
+              ctmodel$latentNames, ctmodel$TDpredNames, digits)
+          } else ctmodelmats[[mi]][i,j] <- round(mimean[i,j],digits)
         }
       }
     }
@@ -761,7 +878,10 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
       if(includeNote) paste0("&\\textrm{Note: } UcorSDtoChol\\textrm{ converts lower tri matrix of standard deviations and unconstrained correlations to Cholesky factor,} \\\\
 &UcorSDtoCov =\\textrm{ transposed cross product of UcorSDtoChol, to give covariance, See Driver \\& Voelkle (2018) p11.} \\\\",
         if(dopop) paste0("&\\textrm{Individual specific notation (subscript i) only shown for subject parameter distribution -- pop. means shown elsewhere.} \\\\
-",if(linearise) "&\\textrm{Linearised approximation of subject parameter distribution shown.} \\\\")),
+",if(linearise) "&\\textrm{Linearised approximation of subject parameter distribution shown.} \\\\"),
+        # Only for a model that has such cells: for every other model this line
+        # would be a caveat about something the reader cannot see.
+        if(isTRUE(nrow(contextcells) > 0)) "&\\textrm{Cells depending on the latent state or a time dependent predictor keep their expression, with estimates substituted for parameter labels.} \\\\"),
       "\\end{flalign*}
       ")
   }
