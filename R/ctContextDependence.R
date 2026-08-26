@@ -380,3 +380,106 @@ ctModelIsNonlinear <- function(x) {
 #' @name ctContextDependence
 #' @seealso \code{\link{ctModelIsNonlinear}}, \code{\link{ctBackendParMatrices}}
 NULL
+
+
+# Choosing an evaluation point ------------------------------------------------
+#
+# Reporting at the T0MEANS state is a default, not a finding, and for many
+# nonlinear models it is a poor one -- T0 is often nowhere near where the data
+# lives. These resolve the shorthands a caller can pass instead.
+#
+# Everything here returns the *augmented* state vector the engine indexes, with
+# carrier entries left at their population values: 'mean' and 'asymptotic' are
+# statements about where the dynamic processes are, and moving a carrier would
+# silently change which parameter values the matrices were built from.
+
+.ctContextStateOptions <- c("T0MEANS", "mean", "asymptotic")
+
+# The population T0MEANS at engine (augmented) length, used both as the default
+# and as the padding for a shorter supplied state.
+.ctContextBaseState <- function(fit) {
+  as.numeric(ctBackendParMatrices(fit, trim = FALSE)$T0MEANS[, 1])
+}
+
+.ctContextPadState <- function(fit, state) {
+  base <- .ctContextBaseState(fit)
+  state <- as.numeric(state)
+  if (length(state) == length(base)) return(state)
+  nlatent <- .ctFitNlatent(fit)
+  if (length(state) != nlatent) {
+    stop("state must have ", nlatent, " entries (one per latent process)",
+      if (length(base) != nlatent) paste0(", or ", length(base),
+        " for the augmented state the filter uses") else "",
+      "; got ", length(state), ".", call. = FALSE)
+  }
+  # Carrier entries keep their population values: see the header.
+  base[seq_len(nlatent)] <- state
+  base
+}
+
+# Mean smoothed latent state over every row of every subject.
+#
+# Where the data actually is, as opposed to where the process started. Read
+# from the filter rather than derived, so it is the same quantity ctKalman
+# plots.
+.ctContextMeanState <- function(fit) {
+  smoothed <- suppressMessages(ctKalmanArray(fit, pointest = TRUE)$etasmooth)
+  .ctContextPadState(fit, apply(smoothed, 3L, mean, na.rm = TRUE))
+}
+
+# The system's own fixed point: the state at which the deterministic change is
+# zero, DRIFT(x) x + CINT(x) = 0.
+#
+# Newton, using the engine's own JAx as the Jacobian rather than finite
+# differences -- JAx is exactly d(drift)/d(state), so one engine call per
+# iteration does the whole step. For a linear model this lands on asymCINT in a
+# single iteration, which is the invariant the test checks.
+.ctContextAsymptoticState <- function(fit, tolerance = 1e-8, maxiter = 50L) {
+  nlatent <- .ctFitNlatent(fit)
+  x <- .ctContextBaseState(fit)
+  discrete <- !isTRUE(.ctFitModelObject(fit)$continuoustime)
+  for (iteration in seq_len(maxiter)) {
+    mats <- ctBackendParMatrices(fit, state = x, trim = FALSE)
+    drift <- mats$DRIFT[seq_len(nlatent), seq_len(nlatent), drop = FALSE]
+    cint <- as.numeric(mats$CINT[seq_len(nlatent), 1])
+    jacobian <- mats$JAx[seq_len(nlatent), seq_len(nlatent), drop = FALSE]
+    if (all(!is.finite(jacobian)) || all(jacobian == 0)) jacobian <- drift
+    # Discrete time asks where x = A x + c, i.e. (A - I) x + c = 0.
+    if (discrete) {
+      drift <- drift - diag(nlatent)
+      jacobian <- jacobian - diag(nlatent)
+    }
+    residual <- as.numeric(drift %*% x[seq_len(nlatent)]) + cint
+    if (max(abs(residual)) < tolerance) return(x)
+    step <- try(solve(jacobian, residual), silent = TRUE)
+    if (inherits(step, "try-error")) {
+      stop("No asymptotic state: the system is singular at the current iterate. ",
+        "Use state='mean' or supply a state.", call. = FALSE)
+    }
+    x[seq_len(nlatent)] <- x[seq_len(nlatent)] - step
+  }
+  stop("No asymptotic state found in ", maxiter, " iterations -- the system may ",
+    "have no stable fixed point. Use state='mean' or supply a state.", call. = FALSE)
+}
+
+#' Resolve a state argument to an evaluation point
+#'
+#' @return list(state = NULL or numeric at engine length, label = character).
+#'   A NULL state means "the engine's own default", which is T0MEANS.
+#' @noRd
+.ctResolveState <- function(fit, state = NULL) {
+  if (is.null(state)) return(list(state = NULL, label = .ctContextPopLabel))
+  if (is.character(state)) {
+    state <- match.arg(state, .ctContextStateOptions)
+    if (identical(state, "T0MEANS")) {
+      return(list(state = NULL, label = .ctContextPopLabel))
+    }
+    if (identical(state, "mean")) {
+      return(list(state = .ctContextMeanState(fit),
+        label = "the mean smoothed latent state"))
+    }
+    return(list(state = .ctContextAsymptoticState(fit),
+      label = "the system's asymptotic (fixed point) state"))
+  }
+  list(state = .ctContextPadState(fit, state), label = "the supplied state")
+}

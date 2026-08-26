@@ -157,3 +157,26 @@ test_that('a linear random-effects fit is not reported as nonlinear', {
   expect_equal(nrow(ctsem:::.ctFitConditionalCells(ctstantestfit)), 0)
   expect_null(summary(ctstantestfit, priorcheck = FALSE)$parmatNote)
 })
+
+# Previously a hard stop(), which meant ctDiscretePars(standardise=TRUE) aborted
+# on ctsem's own bundled example fit -- a linear model -- whenever a posterior
+# draw happened to be non-stationary. For a model whose DRIFT depends on the
+# state it aborts far more often, and blames the model rather than the point the
+# model was linearised at.
+test_that('a non-stationary standardisation returns NaN rather than aborting', {
+  pars <- list(
+    DRIFT = array(c(.5, 0, 0, .5), dim = c(1, 2, 2)),
+    DIFFUSIONcov = array(diag(2), dim = c(1, 2, 2)),
+    asymDIFFUSIONcov = array(c(-1, 0, 0, -1), dim = c(1, 2, 2)))
+  expect_message(
+    out <- ctsem:::ctDiscreteParsDrift(pars, times = 1, observational = FALSE,
+      standardise = TRUE, quiet = FALSE),
+    'no stationary variance')
+  expect_true(all(is.nan(out)))
+})
+
+test_that('ctDiscretePars refuses state= for a stan fit, with a reason', {
+  skip_if_not(exists('ctstantestfit'))
+  expect_error(ctDiscretePars(ctstantestfit, times = 1, state = 'mean'),
+    "backend='julia'")
+})

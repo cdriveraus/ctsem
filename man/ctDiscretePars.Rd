@@ -15,6 +15,7 @@ ctDiscretePars(
   cov = FALSE,
   plot = FALSE,
   cores = 2,
+  state = NULL,
   ...,
   ctstanfitobj
 )
@@ -46,6 +47,14 @@ instead of returning output.}
 
 \item{cores}{Number of cpu cores to use for computing subject matrices.
 If subject matrices were saved during fiting, not used.}
+
+\item{state}{Evaluation point for any matrix cell that depends on the latent
+state or a time dependent predictor -- see \code{\link{ctContextDependence}}.
+\code{NULL} (the default) or \code{'T0MEANS'} uses the population initial
+state, \code{'mean'} the mean smoothed latent state, \code{'asymptotic'} the
+system's own fixed point; or supply a numeric state vector. Requires
+\code{backend='julia'} and \code{subjects='popmean'}. For a linear model the
+argument makes no difference, since no cell depends on the state.}
 
 \item{...}{additional plotting arguments to control \code{\link{ctDiscreteParsPlot}}}
 

@@ -74,6 +74,13 @@ ctStanParnames <- ctRawParnames
 #'instead of returning output.
 #'@param cores Number of cpu cores to use for computing subject matrices.
 #'If subject matrices were saved during fiting, not used.
+#'@param state Evaluation point for any matrix cell that depends on the latent
+#'state or a time dependent predictor -- see \code{\link{ctContextDependence}}.
+#'\code{NULL} (the default) or \code{'T0MEANS'} uses the population initial
+#'state, \code{'mean'} the mean smoothed latent state, \code{'asymptotic'} the
+#'system's own fixed point; or supply a numeric state vector. Requires
+#'\code{backend='julia'} and \code{subjects='popmean'}. For a linear model the
+#'argument makes no difference, since no cell depends on the state.
 #'@param ... additional plotting arguments to control \code{\link{ctDiscreteParsPlot}}
 #'@examples
 #' data.table::setDTthreads(1) #ignore this line
@@ -94,7 +101,7 @@ ctStanParnames <- ctRawParnames
 ctDiscretePars<-function(fit, subjects='popmean',
   times=seq(from=0,to=10,by=.1),
   nsamples=200,observational=FALSE,standardise=FALSE,
-  cov=FALSE, plot=FALSE,cores=2,..., ctstanfitobj){
+  cov=FALSE, plot=FALSE,cores=2,state=NULL,..., ctstanfitobj){
 
   if(missing(fit)){
     if(missing(ctstanfitobj)) stop('fit must be supplied')
@@ -118,9 +125,22 @@ ctDiscretePars<-function(fit, subjects='popmean',
 
   extractSubjects <- subjects
   if('popmean' %in% extractSubjects) extractSubjects <- 'all'
-  e<-ctExtract(fit,subjectMatrices = subjects[1]!='popmean',cores=cores,
+  # An explicit evaluation point only means something for the population
+  # matrices: a subject's are the ones its own filter pass ended with.
+  stateArgs <- list()
+  if(!is.null(state)){
+    if(!inherits(fit,'ctJuliaFit')) stop(call.=FALSE,
+      paste0("state= requires backend='julia'. ",
+        "The stan model materialises its matrices during the fit, at T0MEANS, ",
+        "and cannot be asked for another point afterwards."))
+    if(!'popmean' %in% subjects) stop(call.=FALSE,
+      paste0("state= applies to subjects='popmean' only; a subject's matrices ",
+        "come from its own filter pass."))
+    stateArgs$state <- .ctResolveState(fit,state)$state
+  }
+  e<-do.call(ctExtract,c(list(fit,subjectMatrices = subjects[1]!='popmean',cores=cores,
     nsamples = min(nsamples,.ctFitNsamples(fit)),
-    subjects=extractSubjects)
+    subjects=extractSubjects),stateArgs))
 
   nsubjects <- dim(e$subj_DRIFT)[2]
   if(is.null(nsubjects)) nsubjects=1
@@ -160,7 +180,8 @@ ctDiscretePars<-function(fit, subjects='popmean',
   # from -- the population pass, or each subject's own filter pass. They are
   # different points and the reader is told which one they got.
   .ctContextMessage(fit,
-    if('popmean' %in% subjects) .ctContextPopLabel else .ctContextSubjectLabel,
+    if(!'popmean' %in% subjects) .ctContextSubjectLabel else
+      if(is.null(state)) .ctContextPopLabel else .ctResolveState(fit,state)$label,
     paste0("expm(DRIFT*t) is therefore the transition of the model linearised ",
       "there, not the nonlinear system's own interval regression."))
 
@@ -204,6 +225,8 @@ ctDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=FALS
   nsubs <- lapply(ctpars,function(x) dim(x)[2])
 
 
+  nonstationary <- 0L
+
   if('dtDRIFT' %in% types){
     ctpars$dtDRIFT <- array(NA, dim=c(dim(ctpars$DRIFT)[1],max(unlist(nsubs)),length(times),dim(ctpars$DRIFT)[3:4]))
 
@@ -224,8 +247,17 @@ ctDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=FALS
           if(!discreteInput) ctpars$dtDRIFT[i,j,ti,,] <- expm::expm(as.matrix(ctpars$DRIFT[i,min(j,nsubs$DRIFT),,] * times[ti]))
           if(discreteInput) ctpars$dtDRIFT[i,j,ti,,] <- mpow(as.matrix(ctpars$DRIFT[i,min(j,nsubs$DRIFT),,]),times[ti])
           if(standardise) {
-            if(any(diag(ctpars$asymDIFFUSIONcov[i,min(j,nsubs$asymDIFFUSIONcov),,]) < 0)) stop(
-              "Asymptotic diffusion matrix has negative diagonals -- I don't know what non stationary standardization looks like")
+            # A frozen DRIFT can be non-stationary at the point it was frozen at
+            # while the nonlinear system it came from is perfectly well behaved
+            # -- that is often the point of the nonlinearity. So this reports
+            # NaN for the affected sample and names the likely cause, rather
+            # than aborting and blaming the model. Julia's own
+            # `_ctsem_asymptotics` already declines the same way.
+            if(any(diag(ctpars$asymDIFFUSIONcov[i,min(j,nsubs$asymDIFFUSIONcov),,]) < 0)){
+              nonstationary <- nonstationary + 1L
+              ctpars$dtDRIFT[i,j,ti,,] <- NaN
+              next
+            }
             ctpars$dtDRIFT[i,j,ti,,] <- ctpars$dtDRIFT[i,j,ti,,] *
               matrix(rep(sqrt(diag(ctpars$asymDIFFUSIONcov[i,min(j,nsubs$asymDIFFUSIONcov),,])+1e-10),each=nl) /
                   rep((sqrt(diag(ctpars$asymDIFFUSIONcov[i,min(j,nsubs$asymDIFFUSIONcov),,]))),times=nl),nl)
@@ -242,6 +274,13 @@ ctDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=FALS
     }
   } #end dtdrift
 
+  if(nonstationary > 0 && !quiet) message(
+    nonstationary, ' of ', length(ctpars$dtDRIFT)/prod(dim(ctpars$DRIFT)[3:4]),
+    ' standardisations returned NaN: the asymptotic diffusion has negative ',
+    'diagonals, so there is no stationary variance to standardise by. For a ',
+    'model whose DRIFT depends on the state this usually reflects the point it ',
+    'was linearised at rather than the model -- try another state, or ',
+    'standardise=FALSE.')
 
   return(ctpars$dtDRIFT)
 }
