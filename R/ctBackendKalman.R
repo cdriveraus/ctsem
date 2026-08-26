@@ -92,6 +92,14 @@
   result
 }
 
+# How a fit integrates its random effects, so that re-preparing a specification
+# keeps doing what the fit did. `.ctJuliaPrepare` defaults to "augmented",
+# which for a Laplace fit is not a slower path to the same answer -- it is a
+# different model, with the random effects carried as latent states.
+.ctBackendIntOverPop <- function(spec) {
+  if (!is.null(spec$laplace)) "laplace" else "augmented"
+}
+
 # Rebuild the prepared specification over the subjects, times and observations a
 # prediction call asks for.
 .ctBackendKalmanSpec <- function(fit, subjects = "all", timestep = "asdata",
@@ -155,7 +163,8 @@
     dat[setdiff(seq_len(nrow(dat)), keep), model$manifestNames] <- NA
   }
 
-  prepared <- .ctBackendAsModel(.ctJuliaPrepare(dat, model, project = spec$project))
+  prepared <- .ctBackendAsModel(.ctJuliaPrepare(dat, model, project = spec$project,
+    intoverpop = .ctBackendIntOverPop(spec)))
   if (withhold) attr(prepared, "reportManifest") <- reported
   prepared
 }
@@ -499,7 +508,7 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   }
   spec <- .ctBackendSpec(fit)
   prepared <- .ctJuliaPrepare(datalong, .ctFitModelObject(fit),
-    project = spec$project)
+    project = spec$project, intoverpop = .ctBackendIntOverPop(spec))
   # Carry across the two things that are properties of the *fit* rather than of
   # the data, and that re-preparation would otherwise silently drop: the prior
   # specification (a function of the model, and `priors` defaults to FALSE

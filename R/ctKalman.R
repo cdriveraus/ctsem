@@ -419,6 +419,10 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
 #' @param plot Logical. If TRUE, plots output instead of returning it. 
 #' See \code{\link{plot.ctKalmanDF}} 
 #' (Stan based fit) for the possible arguments.
+#' @param randomEffects For an \code{intoverpop='laplace'} fit, which levels
+#'   of random effect the trajectories are built from -- one of the model's id
+#'   columns, or \code{'population'} for none. Defaults to the innermost id.
+#'   See \code{\link{ctBackendKalman}}. Ignored for other fits.
 #' @param realid use original (not necessarily integer sequence) subject id's? Otherwise use integers 1:N.
 #' @param ... additional arguments to pass to \code{\link{plot.ctKalmanDF}}.
 #' @return Returns a list containing matrix objects etaprior, etaupd, etasmooth, y, yprior, 
@@ -458,7 +462,7 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
 
 ctPredict<-function(fit, timerange='asdata', timestep='auto',
   subjects=NULL, removeObs = FALSE, plot=FALSE, 
-  standardisederrors=FALSE,realid=TRUE,...){
+  standardisederrors=FALSE,realid=TRUE,randomEffects=NULL,...){
   
   
   if('ctsemFit' %in% class(fit)) stop('This function is no longer supported with ctsemOMX, try ctsem')
@@ -481,9 +485,14 @@ ctPredict<-function(fit, timerange='asdata', timestep='auto',
   }
   subjects <- sort(subjects) #in case not entered in ascending order
   
-  out <- ctKalmanArray(fit,pointest=TRUE,
+  # `randomEffects` is a named argument rather than part of `...`, which goes
+  # to plot(). Only passed on when set, so a Stan fit never sees an argument
+  # that means nothing to it.
+  kalmanargs <- list(fit,pointest=TRUE,
     removeObs=removeObs, subjects=subjects,timestep = timestep,maxtime=max(timerange),
-    collapsefunc=mean, indvarstates = FALSE,standardisederrors = standardisederrors) #extract state predictions
+    collapsefunc=mean, indvarstates = FALSE,standardisederrors = standardisederrors)
+  if(!is.null(randomEffects)) kalmanargs$randomEffects <- randomEffects
+  out <- do.call(ctKalmanArray, kalmanargs) #extract state predictions
   
   out <- meltkalman(out)
   out[['Subject']] <- factor(subjects[out[['Subject']]]) #correct for subjects being set 1:Nsub by ctKalmanArray

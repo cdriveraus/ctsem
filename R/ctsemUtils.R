@@ -160,6 +160,12 @@ if(1==99) Row <- Col <- NULL
   Subject <- data.table(Subject=factor(l$id),Obs=seq_along(l$time))
   l$id <- NULL
   l$time <- NULL
+  # Everything melted below has to be a numeric array. `ctKalmanArray` also
+  # returns `subjectMatrices`, a list of per-subject model matrices, and
+  # melting that folds a list into `value`, which then poisons the whole
+  # column through the `rbind(fill=TRUE)` at the end -- silently, so the
+  # failure surfaces later as a ggplot that will not print.
+  l <- l[!vapply(l, is.list, logical(1))]
   TimeSubject <- merge(Time,Subject)
   
   dout <- NULL

@@ -479,6 +479,7 @@ printSummaryCtStanFitScalar <- function(label,x,width){
 #' @method print summary.ctStanFit
 #' @export
 print.summary.ctStanFit <- function(x,width=getOption('width'),sections=names(x),row.names=TRUE,...){
+  defaultsections <- missing(sections)
   width <- suppressWarnings(as.integer(width)[1])
   if(is.na(width)) width <- getOption('width')
   width <- max(20,width)
@@ -487,6 +488,12 @@ print.summary.ctStanFit <- function(x,width=getOption('width'),sections=names(x)
   on.exit(options(width=oldwidth),add=TRUE)
   
   sections <- intersect(sections,names(x))
+  # `randomEffects` is the machine-readable payload behind the
+  # `popsd.<level>` and `rawpopcorr.<level>` tables -- one entry per level,
+  # each holding the raw draws. Reachable as `summary(fit)$randomEffects`, but
+  # printing it means thousands of rows of draws ahead of the tables that
+  # summarise them, so it is skipped unless asked for by name.
+  if(defaultsections) sections <- setdiff(sections,'randomEffects')
   for(section in sections){
     label <- summaryCtStanFitLabel(section)
     if(summaryCtStanFitIsScalar(x[[section]])){

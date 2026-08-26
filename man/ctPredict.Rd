@@ -14,6 +14,7 @@ ctPredict(
   plot = FALSE,
   standardisederrors = FALSE,
   realid = TRUE,
+  randomEffects = NULL,
   ...
 )
 }
@@ -43,6 +44,11 @@ See \code{\link{plot.ctKalmanDF}}
 
 \item{standardisederrors}{if TRUE, also include standardised error output (based on covariance
 per time point).}
+
+\item{randomEffects}{For an \code{intoverpop='laplace'} fit, which levels
+of random effect the trajectories are built from -- one of the model's id
+columns, or \code{'population'} for none. Defaults to the innermost id.
+See \code{\link{ctBackendKalman}}. Ignored for other fits.}
 
 \item{realid}{use original (not necessarily integer sequence) subject id's? Otherwise use integers 1:N.}
 
