@@ -243,6 +243,26 @@ _fresh_twolevel() = (ctsem_laplace_objective(_LAPLACE_LINEAR_OBJECTIVE;
     group=vcat(1:6, _TWOLEVEL_GROUP), level_ngroups=[6, 3]),
     [0.2, -0.1, 0.3, -0.2, 0.05, -0.3, -0.15, 0.4, -0.25])
 
+
+# --- three levels: subjects in studies in regions ----------------------------
+#
+# The same six subjects, their three studies grouped into two regions. Nothing
+# about the assembly is specific to two levels -- a block simply acquires one
+# cross term per ancestor -- but "one ancestor" and "a chain of ancestors" are
+# different code paths through the selected inverse and through the explicit
+# `dL` terms, so the depth that exercises both is tested rather than assumed.
+#
+# Raw layout: 1-5 the model parameters, 6-7 the subject scales, 8 their
+# correlation, 9 the study scale, 10 the region scale.
+_THREELEVEL_STUDY = [1, 1, 2, 2, 3, 3]
+_THREELEVEL_REGION = [1, 1, 1, 1, 2, 2]
+_fresh_threelevel() = (ctsem_laplace_objective(_LAPLACE_LINEAR_OBJECTIVE;
+    re_index=[1, 2, 5, 3], sd_index=[6, 7, 9, 10], cor_index=[8],
+    sd_scale=[1.0, 1.0, 1.0, 1.0], level_nre=[2, 1, 1],
+    group=vcat(1:6, _THREELEVEL_STUDY, _THREELEVEL_REGION),
+    level_ngroups=[6, 3, 2]),
+    [0.2, -0.1, 0.3, -0.2, 0.05, -0.3, -0.15, 0.4, -0.25, 0.1])
+
 """Unit `U`'s log likelihood at latent vector `u`, through the primal only."""
 function _unit_loglik(laplace, U, values, u)
     spec = laplace.spec
@@ -669,6 +689,47 @@ end
                 end
             end
         end
+    end
+end
+
+@testset "the seeded nested gradient matches the nested oracle" begin
+    # The production route for a hierarchy assembles `dT/dtheta` from
+    # `O(members)` seeded sweeps plus the selected inverse. The nested route
+    # computes the same quantity by running ForwardDiff over the whole
+    # per-unit term, at a cost that scales with the parameter count. They
+    # share the primal and nothing else, so agreement pins every term of the
+    # assembly.
+    for (label, fresh) in (("two levels", _fresh_twolevel),
+                           ("three levels", _fresh_threelevel))
+    laplace, values = fresh()
+    theta = collect(Float64, values)
+    Ls = ContinuousTimeSEM._laplace_popchols(theta, laplace.spec)
+    dL = ContinuousTimeSEM._laplace_level_chol_derivatives(theta, laplace.spec)
+
+    nunits = length(laplace.units.members)
+    Ms = Vector{Any}(undef, nunits)
+    curv = Vector{Any}(undef, nunits)
+    for U in 1:nunits
+        ContinuousTimeSEM._laplace_solve_unit_mode!(laplace, U, theta, Ls)
+        M = ContinuousTimeSEM._laplace_unit_curvature(laplace, U, theta, Ls,
+            laplace.modes[U])
+        ContinuousTimeSEM._laplace_repair_blocks!(M, laplace.units.blocks[U])
+        ok, _, f, e = ContinuousTimeSEM._laplace_block_factor(M, laplace.units.blocks[U])
+        @test ok
+        Ms[U] = M; curv[U] = (f, e)
+    end
+
+    seeded = zeros(Float64, length(theta))
+    allok = true
+    for U in 1:nunits
+        allok &= ContinuousTimeSEM._laplace_seeded_unit_gradient!(seeded, laplace, U,
+            theta, Ls, dL, Ms[U], curv[U][1], curv[U][2])
+    end
+    @test allok
+    ContinuousTimeSEM._ctsem_log_prior_gradient!(seeded, laplace.objective, theta)
+
+    nested = ContinuousTimeSEM._laplace_nested_gradient(laplace, theta, Ls, curv)
+    @test (label, norm(seeded - nested) / norm(nested) < 1e-8) == (label, true)
     end
 end
 

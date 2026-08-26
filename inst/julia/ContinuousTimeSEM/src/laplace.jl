@@ -1331,14 +1331,14 @@ function _laplace_unit_term(laplace::CTSEMLaplaceObjective, U::Integer,
 end
 
 ################################################################################
-# The exact outer gradient, in k + 1 reverse sweeps per subject
+# The exact outer gradient, in O(members) reverse sweeps per unit
 ################################################################################
 #
 # The straightforward way to differentiate the Laplace term is to run
 # `ForwardDiff` over the whole of it, which is what `_laplace_nested_gradient`
-# below still does. That costs `O(npar * k)` reverse sweeps per subject --
-# `npar` outer forward directions, each carrying `k` more for the inner
-# curvature -- and it is the dominant cost of a Laplace fit.
+# below still does. That costs `O(npar * k)` reverse sweeps per unit -- `npar`
+# outer forward directions, each carrying `k` more for the inner curvature --
+# and it is the dominant cost of a Laplace fit.
 #
 # It is avoidable, and the identity that avoids it is worth stating plainly.
 # Write `M = -H` and `C = inv(M)`, and note that for *fixed* vectors `q_r` with
@@ -1353,236 +1353,411 @@ end
 # parameter at once, because reverse differentiation in the parameters and
 # forward differentiation in the seed commute.
 #
-# Concretely, with `H = L' A L - I` for `A` the log likelihood's Hessian block
-# on the varying positions, `psi := tr(C H) = tr(W A) - tr(C)` where
-# `W = L C L'`. Factoring `W = Q Q'` puts the seeded directions in *parameter*
-# space rather than in `z` space, which matters: a direction in `z` space moves
-# with `L(theta)` while a parameter-space direction does not, and that is what
-# keeps the bookkeeping below finite.
+# With one level that is the whole story. `C` is a `k x k` block per subject,
+# `psi := tr(C H) = tr(W A) - tr(C)` for `W = L C L'` and `A` the log
+# likelihood's Hessian on the varying positions, and factoring `W = Q Q'` gives
+# `k` sweeps along the columns of `Q` plus one more along `L s` for the term
+# carrying the mode's own dependence.
 #
-# So: `k` sweeps seeded along the columns of `Q`, one more along `L s` for the
-# term carrying the mode's own dependence, and the whole gradient falls out.
+# Across a *unit* the piece that made that work does not survive unaltered. `C`
+# is now the inverse of an arrow matrix and is dense: a direction built from it
+# has mass in every member's block, so seeding one would cost a sweep per
+# member and the saving would evaporate.
+#
+# What rescues it is that `dH/dtheta` is block *sparse* even though `C` is not.
+# With `A = I - M` the log likelihood's curvature in `u` space,
+#
+#     psi := tr(C A) = sum_b tr(C[b,b] A[b,b]) + 2 sum_b sum_a tr(C[a,b] A[b,a])
+#
+# so only the selected entries of `C` appear -- exactly what
+# `_laplace_selected_inverse` returns -- and every term involving block `b`
+# needs only `b`'s own members. A member outside `b` has no dependence on `u_b`
+# at all, so its contribution to both `A[b,b]` and `A[b,a]` is structurally
+# zero. Seeding a subject block therefore costs one sweep however large the
+# study is, and one level is just the case where every unit is a single block
+# with no ancestors and the cross terms vanish.
+#
+# The cross terms need a *mixed* second derivative rather than a directional
+# one. Polarisation identities would give it and are where sign errors live;
+# seeding two *independent* duals gives it directly. With
+# `x = base + d1*eps1 + d2*eps2` the `eps1*eps2` coefficient is the mixed
+# derivative, and it degenerates to the pure one when the directions coincide,
+# so one primitive covers both.
+#
+# Directions are taken in *parameter* space throughout, and that is not a
+# detail: a direction in `u` space moves with `L(theta)` while a
+# parameter-space one does not, which is what keeps the bookkeeping finite. The
+# price is that `L`'s own derivative reappears as an explicit set of trace
+# terms, handled at the end of the assembly.
 
+# Distinct tags, so the two seeds are independent nilpotents rather than one
+# nested perturbation: `eps1 * eps2` is then the mixed derivative and each
+# `eps^2` still vanishes.
 struct _LaplaceSeedInner end
 struct _LaplaceSeedOuter end
 
 """
-    _laplace_directional_pass(laplace, i, base, direction, order)
+    _laplace_unit_seeded_gradient(laplace, U, values, Ls, u, members, d1, d2, order)
 
-One reverse sweep of subject `i` at `base`, with the parameter vector seeded
-along `direction` by a dual of the given order.
+One reverse sweep over the given members, each evaluated at *its own* shifted
+parameter vector with two independent seed directions added.
 
-Returns the seed-order coefficients of the gradient the sweep produces:
+The per-member shift is the whole reason this cannot seed a single shared
+vector: members of a unit differ precisely by their random effects. The seed
+directions are in raw-parameter space and are the same for every member, which
+is what lets one sweep serve them all.
 
-  * `d0` -- the ordinary gradient at `base`;
-  * `d1` -- its first derivative along `direction`, i.e. the log likelihood's
-    Hessian contracted with `direction`;
-  * `d2` -- its second derivative along `direction` (order 2 only), i.e. the
-    gradient of the directional second derivative.
+Results are returned *per member* rather than summed, as `npar x length(members)`
+matrices whose columns follow `members`. Summing is what the caller usually
+wants, but not always: every quantity attached to a block needs the members
+under that block and no others, and once summed they cannot be separated again.
 
-`d2` is the point of the whole exercise. Obtaining it from a single sweep, for
-every parameter simultaneously, is what replaces `npar` forward directions.
-
-Nesting two one-dimensional duals rather than using a single second-order
-partial is deliberate: with `x = a + d1 + d2`, the cross term `d1*d2` of `f(x)`
-is exactly `f''(a)`, with no factorial to remember and no chunking to
-configure.
+`d0` is the ordinary gradient, `d1c` its derivative along the first direction,
+and `d12` the mixed derivative along both -- the pure second directional
+derivative when the two directions coincide. `order = 1` seeds only the first
+direction and leaves `d12` empty.
 """
-function _laplace_directional_pass(laplace::CTSEMLaplaceObjective, i::Integer,
-    base::Vector{Float64}, direction::Vector{Float64}, order::Integer,
+function _laplace_unit_seeded_gradient(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::Vector{Float64}, Ls::Vector{Matrix{Float64}}, u::Vector{Float64},
+    members, d1::Vector{Float64}, d2::Vector{Float64}, order::Integer,
     slot::Integer=1)
-    npar = length(base)
-    subject = laplace.objective.subject_objectives[i]
-    failure = (ok=false, d0=Float64[], d1=Float64[], d2=Float64[])
-    if order == 2
-        seed = ForwardDiff.Dual{_LaplaceSeedOuter}(
-            ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 1.0),
-            ForwardDiff.Dual{_LaplaceSeedInner}(1.0, 0.0))
+
+    spec = laplace.spec
+    units = laplace.units
+    unitmembers = units.members[U]
+    npar = length(values)
+    nm = length(members)
+    empty = zeros(Float64, 0, 0)
+    failure = (ok=false, d0=empty, d1c=empty, d12=empty)
+
+    d0 = zeros(Float64, npar, nm)
+    d1c = zeros(Float64, npar, nm)
+
+    if order == 1
+        seed = ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 1.0)
         S = typeof(seed)
-        x = Vector{S}(undef, npar)
-        @inbounds for m in 1:npar
-            x[m] = base[m] + seed * direction[m]
-        end
         aws = _laplace_workspace!(laplace, S, npar, slot)
-        g = Vector{S}(undef, npar)
-        loglik = _laplace_subject_value_gradient!(g, subject, aws, x)
-        isfinite(ForwardDiff.value(ForwardDiff.value(loglik))) || return failure
-        d0 = Vector{Float64}(undef, npar)
-        d1 = Vector{Float64}(undef, npar)
-        d2 = Vector{Float64}(undef, npar)
-        @inbounds for m in 1:npar
-            inner = ForwardDiff.value(g[m])
-            d0[m] = ForwardDiff.value(inner)
-            d1[m] = ForwardDiff.partials(inner)[1]
-            d2[m] = ForwardDiff.partials(ForwardDiff.partials(g[m])[1])[1]
+        gradient = Vector{S}(undef, npar)
+        x = Vector{S}(undef, npar)
+        for (c, m) in enumerate(members)
+            shifted = _laplace_member_values(values, spec, Ls, u, units.offsets[U][m])
+            @inbounds for t in 1:npar
+                x[t] = shifted[t] + seed * d1[t]
+            end
+            loglik = _laplace_subject_value_gradient!(gradient,
+                laplace.objective.subject_objectives[unitmembers[m]], aws, x)
+            _laplace_finite(loglik) || return failure
+            @inbounds for t in 1:npar
+                d0[t, c] = ForwardDiff.value(gradient[t])
+                d1c[t, c] = ForwardDiff.partials(gradient[t])[1]
+            end
         end
-        return (ok=true, d0=d0, d1=d1, d2=d2)
+        return (ok=true, d0=d0, d1c=d1c, d12=empty)
     end
-    seed = ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 1.0)
-    S = typeof(seed)
-    x = Vector{S}(undef, npar)
-    @inbounds for m in 1:npar
-        x[m] = base[m] + seed * direction[m]
-    end
+
+    # Two independent nilpotents, one per tag, so the eps1*eps2 coefficient is
+    # the mixed derivative directly rather than through a polarisation identity.
+    e1 = ForwardDiff.Dual{_LaplaceSeedOuter}(
+        ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 1.0),
+        ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 0.0))
+    e2 = ForwardDiff.Dual{_LaplaceSeedOuter}(
+        ForwardDiff.Dual{_LaplaceSeedInner}(0.0, 0.0),
+        ForwardDiff.Dual{_LaplaceSeedInner}(1.0, 0.0))
+    S = typeof(e1)
     aws = _laplace_workspace!(laplace, S, npar, slot)
-    g = Vector{S}(undef, npar)
-    loglik = _laplace_subject_value_gradient!(g, subject, aws, x)
-    isfinite(ForwardDiff.value(loglik)) || return failure
-    d0 = Vector{Float64}(undef, npar)
-    d1 = Vector{Float64}(undef, npar)
-    @inbounds for m in 1:npar
-        d0[m] = ForwardDiff.value(g[m])
-        d1[m] = ForwardDiff.partials(g[m])[1]
-    end
-    return (ok=true, d0=d0, d1=d1, d2=Float64[])
-end
-
-"""
-    _laplace_popchol_derivatives(values, spec)
-
-`(positions, dL)`: where the population covariance parameters sit in the raw
-vector, and `dL[t]` the derivative of `L` with respect to `values[positions[t]]`.
-
-Cheap whatever the model, because `L` is a `k x k` Cholesky of something built
-only from those parameters -- no filter, no data, no process model. Every
-subject uses the same derivatives, so this is computed once per evaluation
-rather than once per subject.
-"""
-function _laplace_popchol_derivatives(values::AbstractVector{Float64},
-    spec::CTSEMLaplaceSpec)
-    positions = vcat(spec.levels[1].sd_index, spec.levels[1].cor_index)
-    k = nrandomeffects(spec.levels[1])
-    isempty(positions) && return (positions, Matrix{Float64}[])
-    chol_of = function (p)
-        v = convert(Vector{eltype(p)}, values)
-        @inbounds for (slot, position) in enumerate(positions)
-            v[position] = p[slot]
+    gradient = Vector{S}(undef, npar)
+    x = Vector{S}(undef, npar)
+    d12 = zeros(Float64, npar, nm)
+    for (c, m) in enumerate(members)
+        shifted = _laplace_member_values(values, spec, Ls, u, units.offsets[U][m])
+        @inbounds for t in 1:npar
+            x[t] = shifted[t] + e1 * d1[t] + e2 * d2[t]
         end
-        return vec(_laplace_popchol(v, spec))
+        loglik = _laplace_subject_value_gradient!(gradient,
+            laplace.objective.subject_objectives[unitmembers[m]], aws, x)
+        _laplace_finite(loglik) || return failure
+        @inbounds for t in 1:npar
+            inner = ForwardDiff.value(gradient[t])
+            d0[t, c] = ForwardDiff.value(inner)
+            d1c[t, c] = ForwardDiff.partials(inner)[1]
+            d12[t, c] = ForwardDiff.partials(ForwardDiff.partials(gradient[t])[1])[1]
+        end
     end
-    jacobian = ForwardDiff.jacobian(chol_of, values[positions])
-    dL = [Matrix{Float64}(reshape(view(jacobian, :, t), k, k))
-          for t in eachindex(positions)]
-    return (positions, dL)
+    return (ok=true, d0=d0, d1c=d1c, d12=d12)
 end
 
+@inline _laplace_finite(x::Real) = isfinite(x)
+@inline _laplace_finite(x::ForwardDiff.Dual) = _laplace_finite(ForwardDiff.value(x))
+
 """
-    _laplace_seeded_subject_gradient!(out, laplace, i, values, L, positions, dL, z, Mneg)
+    _laplace_seeded_unit_gradient!(out, laplace, U, values, Ls, dL, M, factors, elim)
 
-Accumulate subject `i`'s exact contribution to `dT/dtheta` into `out`.
-
-With `v(theta, z) = theta + S(L(theta) z)`, `g = ll(v) - z'z/2`, and the mode
-`zhat(theta)` defined by `dg/dz = 0`,
+Accumulate unit `U`'s exact contribution to `dT/dtheta` into `out`, in a number
+of sweeps proportional to the unit's members rather than to the parameter count.
 
     dT/dtheta = dg/dtheta + [ dpsi/dtheta + s' B ] / 2
 
-where `psi = tr(C H)`, `s = C dpsi/dz`, and `B = d2g/dz dtheta` carries the
-mode's own dependence through `dzhat/dtheta = C B`. The envelope theorem is
-what removes `zhat` from the first term and leaves it only inside `psi`.
+with `psi = tr(C A)`, `s = C dpsi/du` and `B = d2g/du dtheta` carrying the
+mode's own dependence through `duhat/dtheta = C B`. The envelope theorem is what
+removes `uhat` from the first term and leaves it only inside `psi`.
 
-Every likelihood-dependent piece comes from the `k + 1` sweeps: the envelope
-gradient from the seed-order-zero coefficient, `dpsi/dtheta` and `dpsi/dz` from
-the second-order ones, and the likelihood half of `s' B` from the extra sweep
-along `L s`. The only terms not from a sweep are `L`'s own derivatives, which
-are the `k x k` matrices in `dL`.
+Two facts make the assembly finite. Directions are taken in *parameter* space,
+because a direction in `u` space moves with `L(theta)` and a parameter-space one
+does not; the price is that `L`'s own derivative reappears as the explicit terms
+at the end. And every quantity that belongs to a block is built from that
+block's members alone -- a member outside block `b` has no dependence on `u_b`,
+so it contributes nothing to `A[b,b]` or `A[b,a]`, and folding it in is simply
+wrong rather than merely wasteful. That is why the sweeps return per-member
+results: summed, they could not be taken apart again.
 
-Returns `false` if a factorization or a sweep failed, leaving `out` untouched
-in the caller's judgement -- the caller falls back rather than proceeding with
-a partial answer.
+Returns `false` if any sweep or factorization failed, so the caller can fall
+back rather than proceed on a partial answer.
 """
-function _laplace_seeded_subject_gradient!(out::Vector{Float64},
-    laplace::CTSEMLaplaceObjective, i::Integer, values::Vector{Float64},
-    L::Matrix{Float64}, positions::Vector{Int}, dL::Vector{Matrix{Float64}},
-    z::Vector{Float64}, Mneg::Matrix{Float64}, slot::Integer=1)
+function _laplace_seeded_unit_gradient!(out::Vector{Float64},
+    laplace::CTSEMLaplaceObjective, U::Integer, values::Vector{Float64},
+    Ls::Vector{Matrix{Float64}}, dL::Vector{Vector{Matrix{Float64}}},
+    M::CTSEMBlockMatrix{Float64}, factors, elim, slot::Integer=1)
 
     spec = laplace.spec
-    rho = spec.levels[1].re_index
-    k = length(z)
+    units = laplace.units
+    blocks = units.blocks[U]
     npar = length(values)
-    base = _laplace_subject_values(values, spec, L, z)
+    d = units.dims[U]
+    nmem = length(units.members[U])
+    uhat = laplace.modes[U]
+    zerodir = zeros(Float64, npar)
 
-    if k == 0
-        pass = _laplace_directional_pass(laplace, i, base, zeros(Float64, npar), 1, slot)
+    # No random effects anywhere in this unit: there is no integral, the term
+    # is the plain log likelihood, and one ordinary reverse sweep is the whole
+    # gradient. Returning early without it would silently contribute nothing.
+    if d == 0
+        pass = _laplace_unit_seeded_gradient(laplace, U, values, Ls, uhat,
+            1:nmem, zerodir, zerodir, 1, slot)
         pass.ok || return false
-        out .+= pass.d0
+        @inbounds for m in 1:nmem, t in 1:npar
+            out[t] += pass.d0[t, m]
+        end
         return true
     end
 
-    Mfact = cholesky(Symmetric(Mneg); check=false)
-    issuccess(Mfact) || return false
-    C = inv(Mfact); C = (C .+ transpose(C)) ./ 2
-    W = L * C * transpose(L)
-    Wfact = cholesky(Symmetric((W .+ transpose(W)) ./ 2); check=false)
-    issuccess(Wfact) || return false
-    Q = Matrix(Wfact.L)
+    Cdiag, Ccoup = _laplace_selected_inverse(factors, elim, blocks)
+    sweep = (mm, a1, a2, order) -> _laplace_unit_seeded_gradient(laplace, U,
+        values, Ls, uhat, mm, a1, a2, order, slot)
 
-    # k second-order sweeps, one per column of Q. Their d2 parts sum to
-    # grad_v tr(W A), which is grad_v psi up to the constant tr(C).
-    llv = Vector{Float64}(undef, npar)
-    P = zeros(Float64, npar)
-    direction = zeros(Float64, npar)
-    for r in 1:k
-        fill!(direction, 0.0)
-        @inbounds for p in 1:k
-            direction[rho[p]] = Q[p, r]
+    # Scatter a level-space vector onto the raw parameter vector. The local name
+    # must not collide with anything in the enclosing scope: a Julia closure
+    # rebinds an enclosing local rather than shadowing it, so assigning `out`
+    # here would silently replace the caller's accumulator.
+    function scatter(level::Int, w::AbstractVector)
+        dir = zeros(Float64, npar)
+        rho = spec.levels[level].re_index
+        @inbounds for p in eachindex(rho); dir[rho[p]] = w[p]; end
+        return dir
+    end
+
+    Pm = zeros(Float64, npar, nmem)     # d psi / d v_m
+    llvm = zeros(Float64, npar, nmem)   # d loglik_m / d v_m
+    Bsm = zeros(Float64, npar, nmem)    # member share of s' B
+    seen = falses(nmem)
+
+    for (b, block) in enumerate(blocks)
+        l = block.level
+        L = Ls[l]
+        k = block.size
+        k == 0 && continue
+        # Diagonal term. tr(C[b,b] A[b,b]) = tr(W H) with W = L C[b,b] L', so a
+        # Cholesky of W turns the trace into k pure second directional
+        # derivatives whose directions live in parameter space.
+        W = _laplace_symmetrise(L * Cdiag[b] * transpose(L))
+        F = cholesky(Symmetric(W); check=false)
+        issuccess(F) || return false
+        Q = Matrix(F.L)
+        for r in 1:k
+            dir = scatter(l, Q[:, r])
+            pass = sweep(block.members, dir, dir, 2)
+            pass.ok || return false
+            @inbounds for (c, m) in enumerate(block.members)
+                for t in 1:npar
+                    Pm[t, m] += pass.d12[t, c]
+                    seen[m] || (llvm[t, m] = pass.d0[t, c])
+                end
+                seen[m] = true
+            end
         end
-        pass = _laplace_directional_pass(laplace, i, base, direction, 2, slot)
+        # Cross terms with each ancestor, twice over as the trace requires.
+        # tr(C[a,b] A[b,a]) = tr(V H) with V = L_a C[a,b] L_b', which has
+        # absorbed *both* Cholesky factors -- so the first direction is a bare
+        # basis vector, and applying L to it again would count it twice.
+        for (t, a) in enumerate(block.ancestors)
+            la = blocks[a].level
+            V = Ls[la] * transpose(Ccoup[b][t]) * transpose(L)
+            for q in 1:k
+                e = zeros(Float64, k); e[q] = 1.0
+                pass = sweep(block.members, scatter(l, e), scatter(la, V[:, q]), 2)
+                pass.ok || return false
+                @inbounds for (c, m) in enumerate(block.members)
+                    for tt in 1:npar
+                        Pm[tt, m] += 2 * pass.d12[tt, c]
+                    end
+                end
+            end
+        end
+    end
+
+    # Any member no block covered, which happens only for empty blocks.
+    if !all(seen)
+        pass = sweep(1:nmem, zerodir, zerodir, 1)
         pass.ok || return false
-        r == 1 && copyto!(llv, pass.d0)
-        P .+= pass.d2
+        @inbounds for m in 1:nmem
+            seen[m] && continue
+            for t in 1:npar; llvm[t, m] = pass.d0[t, m]; end
+        end
     end
 
-    Prho = Vector{Float64}(undef, k)
-    llrho = Vector{Float64}(undef, k)
-    @inbounds for p in 1:k
-        Prho[p] = P[rho[p]]
-        llrho[p] = llv[rho[p]]
+    # dpsi/du_b runs through this block's members only, then s = C dpsi/du.
+    gradu = zeros(Float64, d)
+    for (b, block) in enumerate(blocks)
+        l = block.level
+        rho = spec.levels[l].re_index
+        k = block.size
+        k == 0 && continue
+        acc = zeros(Float64, k)
+        for m in block.members, p in 1:k
+            acc[p] += Pm[rho[p], m]
+        end
+        contribution = transpose(Ls[l]) * acc
+        @inbounds for q in 1:k
+            gradu[block.offset + q] += contribution[q]
+        end
     end
-    s = C * (transpose(L) * Prho)
+    s = _laplace_block_solve(factors, elim, blocks, gradu)
 
-    # One more sweep, along L s: its d1 part is the likelihood factor of s' B.
-    u = L * s
-    fill!(direction, 0.0)
-    @inbounds for p in 1:k
-        direction[rho[p]] = u[p]
+    # s' B: one sweep per block, along that block's share of L s. Summed over
+    # blocks this is one directional derivative per member along the total shift
+    # its own block and its ancestors impose, which is what the product needs.
+    for (b, block) in enumerate(blocks)
+        k = block.size
+        k == 0 && continue
+        sb = [s[block.offset + q] for q in 1:k]
+        dir = scatter(block.level, Ls[block.level] * sb)
+        pass = sweep(block.members, dir, dir, 1)
+        pass.ok || return false
+        @inbounds for (c, m) in enumerate(block.members)
+            for t in 1:npar; Bsm[t, m] += pass.d1c[t, c]; end
+        end
     end
-    extra = _laplace_directional_pass(laplace, i, base, direction, 1, slot)
-    extra.ok || return false
-    Ds = extra.d1
 
     # dv/dtheta is the identity away from the population parameters, so for
     # every other parameter the contribution is a plain read-off.
     @inbounds for j in 1:npar
-        out[j] += llv[j] + (P[j] + Ds[j]) / 2
+        acc = 0.0
+        for m in 1:nmem
+            acc += llvm[j, m] + (Pm[j, m] + Bsm[j, m]) / 2
+        end
+        out[j] += acc
     end
 
-    # The population parameters move v through L as well, and move psi through
-    # L explicitly. `H + I = L' A L`, so `tr(C (H+I) inv(L) dL)` gives the
-    # explicit term without ever forming A.
-    if !isempty(positions)
-        K = C * (Matrix{Float64}(LinearAlgebra.I, k, k) .- Mneg)
-        @inbounds for t in eachindex(positions)
-            j = positions[t]
-            shift = dL[t] * z
-            chain = 0.0
-            for p in 1:k
-                chain += (llrho[p] + (Prho[p] + Ds[rho[p]]) / 2) * shift[p]
+    # The population parameters move every member's v through L, and move psi
+    # through L explicitly. A[b,b] = I - M.diag[b] and A[b,a] = -M.coupling[b][t]
+    # give the curvature blocks with no further sweeps, and writing each trace
+    # through A rather than through the v-space Hessian needs only one
+    # triangular solve X = L \ dL.
+    Gb = Vector{Vector{Float64}}(undef, length(blocks))
+    Fb = Vector{Vector{Float64}}(undef, length(blocks))
+    for (b, block) in enumerate(blocks)
+        k = block.size
+        rho = spec.levels[block.level].re_index
+        Gb[b] = zeros(Float64, k)
+        Fb[b] = zeros(Float64, k)
+        for m in block.members, p in 1:k
+            Gb[b][p] += llvm[rho[p], m] + (Pm[rho[p], m] + Bsm[rho[p], m]) / 2
+            Fb[b][p] += llvm[rho[p], m]
+        end
+    end
+
+    for l in eachindex(spec.levels)
+        isempty(dL[l]) && continue
+        levelpositions = _laplace_level_positions(spec, l)
+        for (t, j) in enumerate(levelpositions)
+            X = Ls[l] \ dL[l][t]
+            total = 0.0
+            for (b, block) in enumerate(blocks)
+                k = block.size
+                if block.level == l && k > 0
+                    ub = [uhat[block.offset + q] for q in 1:k]
+                    sb = [s[block.offset + q] for q in 1:k]
+                    shift = dL[l][t] * ub
+                    sshift = dL[l][t] * sb
+                    for p in 1:k
+                        total += Gb[b][p] * shift[p] + Fb[b][p] * sshift[p] / 2
+                    end
+                    KB = Cdiag[b] * (Matrix{Float64}(LinearAlgebra.I, k, k) .- M.diag[b])
+                    for x in 1:k, y in 1:k
+                        total += KB[x, y] * X[y, x]
+                    end
+                    # tr(X' A[b,a] C[a,b]): this block's own factor moving.
+                    for (tt, a) in enumerate(block.ancestors)
+                        Z = (.-M.coupling[b][tt]) * transpose(Ccoup[b][tt])
+                        for x in 1:k, y in 1:k
+                            total += X[y, x] * Z[y, x]
+                        end
+                    end
+                end
+                # tr(C[a,b] A[b,a] X): an ancestor's factor moving.
+                for (tt, a) in enumerate(block.ancestors)
+                    blocks[a].level == l || continue
+                    ka = blocks[a].size
+                    Z = transpose(Ccoup[b][tt]) * (.-M.coupling[b][tt])
+                    for x in 1:ka, y in 1:ka
+                        total += Z[x, y] * X[y, x]
+                    end
+                end
             end
-            sshift = dL[t] * s
-            bpart = 0.0
-            for p in 1:k
-                bpart += llrho[p] * sshift[p]
-            end
-            solved = L \ dL[t]
-            trace = 0.0
-            for a in 1:k, b in 1:k
-                trace += K[a, b] * solved[b, a]
-            end
-            out[j] += chain + (2 * trace + bpart) / 2
+            out[j] += total
         end
     end
     return true
 end
+
+"""Raw positions of one level's population parameters, scales then correlations."""
+_laplace_level_positions(spec::CTSEMLaplaceSpec, l::Integer) =
+    vcat(spec.levels[l].sd_index, spec.levels[l].cor_index)
+
+"""
+    _laplace_level_chol_derivatives(values, spec)
+
+`dL_l / d values[p]` for every level `l` and every population parameter `p` of
+that level, in the order `_laplace_level_positions` gives them.
+
+Cheap whatever the model: each `L_l` is a small Cholesky built only from that
+level's own scales and correlations, with no data in it. Shared by every unit,
+so it is computed once per evaluation rather than once per unit.
+"""
+function _laplace_level_chol_derivatives(values::AbstractVector{Float64},
+    spec::CTSEMLaplaceSpec)
+    out = Vector{Vector{Matrix{Float64}}}(undef, length(spec.levels))
+    for l in eachindex(spec.levels)
+        level = spec.levels[l]
+        positions = _laplace_level_positions(spec, l)
+        k = length(level.re_index)
+        if isempty(positions) || k == 0
+            out[l] = Matrix{Float64}[]
+            continue
+        end
+        chol_of = function (p)
+            v = convert(Vector{eltype(p)}, values)
+            @inbounds for (slot, position) in enumerate(positions)
+                v[position] = p[slot]
+            end
+            return vec(_laplace_popchol(v, level))
+        end
+        J = ForwardDiff.jacobian(chol_of, values[positions])
+        out[l] = [Matrix{Float64}(reshape(collect(view(J, :, t)), k, k))
+                  for t in eachindex(positions)]
+    end
+    return out
+end
+
 
 """
     ctsem_laplace_evaluate(laplace, values; gradient=true)
@@ -1621,7 +1796,12 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     # subjects a dense one is over a hundred megabytes, and one is held per unit
     # for the whole evaluation; the factors are kilobytes.
     primal_curvature = Vector{Any}(undef, nunits)
-    primal_blocks = Vector{Matrix{Float64}}(undef, nunits)
+    # The seeded assembly needs the curvature itself as well as its factors:
+    # `A[b,b] = I - M.diag[b]` and `A[b,a] = -M.coupling[b][t]` are where the
+    # explicit population-parameter terms come from, and recovering them from
+    # the factors would cost more than keeping them. Block form, so this is
+    # kilobytes per unit rather than the megabytes a dense one would be.
+    primal_matrices = Vector{CTSEMBlockMatrix{Float64}}(undef, nunits)
     unit_loglik = zeros(Float64, nunits)
     subject_loglik = zeros(Float64, nsubjects)
     value = 0.0
@@ -1650,10 +1830,7 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             isempty(u) || _laplace_repair_blocks!(M, blocks)
             ok, logdetM, factors, coupling = _laplace_block_factor(M, blocks)
             primal_curvature[U] = (factors, coupling)
-            # The single-level seeded gradient wants the dense `k x k` form. A
-            # single-level unit is one block, so that is just its diagonal.
-            primal_blocks[U] = (single_level && !isempty(M.diag)) ? M.diag[1] :
-                zeros(Float64, 0, 0)
+            primal_matrices[U] = M
             inner = _laplace_unit_objective_gradient(laplace, U, theta, Ls, u, aws)
             term = if !isfinite(inner.value) || isempty(u)
                 inner.value
@@ -1697,32 +1874,32 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     gradient || return (value=value, gradient=nothing,
         subject_loglik=subject_loglik, converged=all(laplace.inner_converged))
 
-    # 3. The gradient, by `k + 1` seeded reverse sweeps per subject.
+    # 3. The gradient, by a number of seeded reverse sweeps proportional to a
+    #    unit's members rather than to the parameter count.
     #
     # `_laplace_nested_gradient` computes the same thing by running ForwardDiff
-    # over the whole per-subject term. It is kept because `test_laplace.jl`
-    # checks the two against each other: they share the primal and nothing
-    # else, so agreement to machine precision is a real check on the seeded
-    # assembly, which has a lot of chain rule in it. Set
+    # over the whole per-unit term. It is kept because `test_laplace.jl` checks
+    # the two against each other at one, two and three levels: they share the
+    # primal and nothing else, so agreement to machine precision is a real
+    # check on the seeded assembly, which has a lot of chain rule in it. Set
     # `nested_gradient = true` to use it.
     grad = zeros(Float64, length(theta))
-    # The seeded scheme is specialised to one level: it factors the inner
-    # curvature per subject and seeds directions in that subject's parameter
-    # space. With a study level the units couple subjects and that
-    # factorisation is not the right one, so the general route is used until
-    # the seeded one is generalised.
-    if !nested_gradient && single_level
-        positions, dL = _laplace_popchol_derivatives(theta, laplace.spec)
-        # One accumulator per chunk rather than one shared vector: the subject
+    # One route at every depth. A one-level unit is a single block with no
+    # ancestors, so the cross terms and the selected inverse degenerate to
+    # nothing and the assembly reduces to the `k + 1` sweeps per subject that
+    # the specialised single-level version used to do by hand.
+    if !nested_gradient
+        dLlevels = _laplace_level_chol_derivatives(theta, laplace.spec)
+        # One accumulator per chunk rather than one shared vector: the unit
         # contributions are a sum, and summing per chunk and then across chunks
         # is the same sum in a different order.
         partials = [zeros(Float64, length(theta)) for _ in 1:nchunks]
         fill!(chunk_ok, true)
         run_gradient = function (c)
-            @inbounds for i in ranges[c]
-                z = laplace.modes[i]
-                if !_laplace_seeded_subject_gradient!(partials[c], laplace, i, theta,
-                        L, positions, dL, z, primal_blocks[i], c)
+            @inbounds for U in ranges[c]
+                factors, elim = primal_curvature[U]
+                if !_laplace_seeded_unit_gradient!(partials[c], laplace, U, theta,
+                        Ls, dLlevels, primal_matrices[U], factors, elim, c)
                     chunk_ok[c] = false
                     return nothing
                 end
@@ -1757,14 +1934,14 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
 end
 
 """
-    _laplace_nested_gradient(laplace, theta, L, hessians)
+    _laplace_nested_gradient(laplace, theta, Ls, curvature)
 
-The exact outer gradient by ForwardDiff over the whole per-subject term.
+The exact outer gradient by ForwardDiff over the whole per-unit term.
 
-`O(npar * k)` reverse sweeps per subject, which is what
-`_laplace_seeded_subject_gradient!` exists to avoid. Retained as the oracle the
-seeded path is tested against, and as its fallback when a factorization the
-seeded path needs is not available.
+`O(npar * k)` reverse sweeps per unit, which is what
+`_laplace_seeded_unit_gradient!` exists to avoid. Retained as the oracle the
+seeded path is tested against at one, two and three levels, and as its fallback
+when a factorization the seeded path needs is not available.
 """
 function _laplace_nested_gradient(laplace::CTSEMLaplaceObjective,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, curvature::Vector{Any})
