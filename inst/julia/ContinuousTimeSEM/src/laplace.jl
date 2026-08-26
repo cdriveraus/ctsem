@@ -2031,7 +2031,7 @@ function _laplace_restrict_levels(laplace::CTSEMLaplaceObjective, U::Integer,
 end
 
 """
-    ctsem_kalman(laplace, values; from_level=1, subject_matrices=true)
+    ctsem_kalman(laplace, values; from_level=1, subject_matrices=true, subject_values=nothing)
 
 Filter a Laplace fit with each subject at its own realized parameters.
 
@@ -2045,10 +2045,33 @@ data at once. That makes these the smoothed-equivalent trajectories, not
 filtered ones: an augmented fit's carrier states are updated observation by
 observation, so its filtered output shows a random effect being learned, and
 this cannot. The R side says so when it is used.
+
+`subject_values` supplies those per-subject vectors instead of solving for them
+here, as an `nsubjects x length(values)` matrix in this objective's subject
+order. It exists because a prediction call may filter over different rows than
+the fit did -- a subset of subjects, an interpolated time grid, observations
+withheld -- and a mode re-solved against those rows is not the fitted one. In
+the extreme it is not even close: withhold every observation and there is
+nothing left to condition on, so the mode collapses to zero and every subject
+silently reverts to the population parameters. The caller holds the fitted
+objective and can compute the modes against the data they were fitted to, so
+that is where they come from.
 """
 function ctsem_kalman(laplace::CTSEMLaplaceObjective, values::AbstractVector;
-    from_level::Integer=1, subject_matrices::Bool=true)
-    persubject = ctsem_laplace_subject_values(laplace, values; from_level=from_level)
+    from_level::Integer=1, subject_matrices::Bool=true,
+    subject_values::Union{Nothing,AbstractMatrix}=nothing)
+    persubject = if subject_values === nothing
+        ctsem_laplace_subject_values(laplace, values; from_level=from_level)
+    else
+        nsubjects = length(laplace.objective.subject_objectives)
+        size(subject_values, 1) == nsubjects || throw(ArgumentError(
+            "subject_values has $(size(subject_values, 1)) rows for " *
+            "$nsubjects subjects."))
+        size(subject_values, 2) == length(values) || throw(ArgumentError(
+            "subject_values has $(size(subject_values, 2)) columns for " *
+            "$(length(values)) parameters."))
+        subject_values
+    end
     return ctsem_kalman(laplace.objective, persubject;
         subject_matrices=subject_matrices)
 end

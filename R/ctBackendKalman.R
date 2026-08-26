@@ -85,9 +85,26 @@
       "equivalent rather than filtered. randomEffects='",
       as.character(randomEffects), "'.")
   }
-  result <- .ctBackendJuliaValue(module$ctsem_kalman(.ctJuliaObjective(fit),
-    .ctJuliaNumericVector(raw), from_level = as.integer(from),
-    subject_matrices = isTRUE(subjectmatrices)))
+  # Modes from the fit, not from whatever rows this call happens to filter
+  # over. `.ctBackendKalmanSpec` attaches the fitted specification when it
+  # rebuilds; without one, this specification *is* the fit's and there is
+  # nothing to carry.
+  source <- attr(fit, "laplaceSource")
+  values <- if (is.null(source)) NULL else {
+    subjects <- attr(fit, "laplaceSubjects")
+    fitted <- .ctBackendJuliaValue(module$ctsem_laplace_subject_values(
+      .ctJuliaObjective(source), .ctJuliaNumericVector(raw),
+      from_level = as.integer(from)))
+    JuliaConnectoR::juliaPut(fitted[subjects, , drop = FALSE])
+  }
+  result <- .ctBackendJuliaValue(if (is.null(values)) {
+    module$ctsem_kalman(.ctJuliaObjective(fit), .ctJuliaNumericVector(raw),
+      from_level = as.integer(from), subject_matrices = isTRUE(subjectmatrices))
+  } else {
+    module$ctsem_kalman(.ctJuliaObjective(fit), .ctJuliaNumericVector(raw),
+      from_level = as.integer(from), subject_matrices = isTRUE(subjectmatrices),
+      subject_values = values)
+  })
   result$subject <- as.integer(result$subject)
   result
 }
@@ -166,6 +183,20 @@
   prepared <- .ctBackendAsModel(.ctJuliaPrepare(dat, model, project = spec$project,
     intoverpop = .ctBackendIntOverPop(spec)))
   if (withhold) attr(prepared, "reportManifest") <- reported
+
+  # A Laplace fit's random effects are conditional modes, and a mode is only
+  # defined relative to the data it was estimated from. This specification
+  # filters over different rows than the fit did, so re-solving here would
+  # answer a different question -- and with `removeObs` it would answer none at
+  # all, because a subject with no observations left has nothing to condition
+  # on and its mode collapses to zero. The fitted specification is carried
+  # along so the modes can be taken from it instead, together with the map from
+  # this specification's subjects back to its own.
+  if (!is.null(spec$laplace)) {
+    attr(prepared, "laplaceSource") <- .ctBackendAsModel(spec)
+    attr(prepared, "laplaceSubjects") <- match(
+      unique(dat[[idname]]), unique(spec$data[[idname]]))
+  }
   prepared
 }
 
@@ -255,6 +286,14 @@
 #'   augmented fit -- whose carrier states are updated observation by
 #'   observation -- there is no version of them from before a subject's later
 #'   data arrived. A message says so at the point of use.
+#'
+#'   The modes are the ones the fit arrived at, and they stay fixed however
+#'   this call changes the rows being filtered. Selecting subjects,
+#'   interpolating a time grid or withholding observations with
+#'   \code{removeObs} therefore leaves each subject's parameters alone: a
+#'   prediction with every observation withheld still uses that subject's own
+#'   random effects, which is what makes it a prediction *for that subject*
+#'   rather than for the average one.
 #' @export
 ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   maxtime = "asdata", removeObs = FALSE, pointest = TRUE, nsamples = NA,

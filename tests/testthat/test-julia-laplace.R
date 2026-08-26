@@ -558,3 +558,182 @@ test_that("existing intoverpop values keep their existing meanings", {
   expect_null(auto_spec$laplace)
   expect_equal(logical_spec$intoverpop, "augmented")
 })
+
+# ---------------------------------------------------------------------------
+# The user-facing surface
+# ---------------------------------------------------------------------------
+#
+# Everything above this point asserts on numbers the engine returns. That left
+# a gap: four defects shipped in the path between a fit and what a user
+# actually sees, and none of them was a wrong number. Each produced a
+# well-formed object that was wrong in a way only visible on use -- a
+# specification quietly rebuilt as a different model, a data frame whose
+# `value` column became a list, a print method that emitted thousands of rows
+# of draws, an argument that was documented but never wired up.
+#
+# The tests below are the invariants that would have caught them, and they are
+# deliberately structural rather than numeric: the failures were all "right
+# shape, wrong content" or "wrong shape, no error", which value assertions on
+# the engine cannot see.
+
+.laplace_nested_fit <- function() .laplace_cached("nested", suppressMessages(
+  ctFit(.laplace_nested_data(), .laplace_nested_model(), backend = "julia",
+    intoverpop = "laplace", optimcontrol = list(finishsamples = 100))))
+
+test_that("re-preparing a specification preserves what the fit is", {
+  skip_without_julia()
+  fit <- .laplace_nested_fit()
+  fitted <- ctsem:::.ctBackendSpec(fit)
+  # Any non-default `subjects` or `timestep` makes `.ctBackendKalmanSpec`
+  # rebuild the specification from the data rather than reuse the fit's. That
+  # rebuild is the one step in prediction that can disagree with the fit, and
+  # it silently did: `.ctJuliaPrepare` defaults to augmenting the state, so a
+  # Laplace fit came back as a different model.
+  rebuilt <- ctsem:::.ctBackendKalmanSpec(fit, subjects = 1:5)
+
+  expect_false(is.null(rebuilt$laplace))
+  expect_equal(ctsem:::.ctBackendIntOverPop(rebuilt),
+    ctsem:::.ctBackendIntOverPop(fitted))
+  expect_equal(rebuilt$nlatent_augmented, rebuilt$nlatent)
+
+  # Group membership is allowed to change -- five subjects are not thirty --
+  # but nothing describing the *model* may.
+  for (l in seq_along(fitted$laplace$levels)) {
+    for (field in c("name", "re_index", "sd_index", "cor_index", "sd_scale",
+        "param", "nrandom")) {
+      expect_equal(rebuilt$laplace$levels[[l]][[field]],
+        fitted$laplace$levels[[l]][[field]],
+        info = paste("level", l, field))
+    }
+  }
+  expect_equal(rebuilt$laplace$npar, fitted$laplace$npar)
+})
+
+test_that("a prediction does not depend on how it was asked for", {
+  skip_without_julia()
+  fit <- .laplace_nested_fit()
+  # The whole-fit path returns the fit's own specification; naming subjects
+  # rebuilds one. Asking the same question two ways has to give one answer, and
+  # this is the cheapest assertion that covers every property re-preparation
+  # could drop -- present and future, without naming them.
+  all <- suppressMessages(ctPredict(fit, subjects = 1:40, timestep = "asdata"))
+  some <- suppressMessages(ctPredict(fit, subjects = c(2, 9, 31), timestep = "asdata"))
+
+  keep <- all[all$Subject %in% c(2, 9, 31) & all$Element %in% "yprior", ]
+  got <- some[some$Element %in% "yprior", ]
+  keep <- keep[order(keep$Subject, keep$Time), ]
+  got <- got[order(got$Subject, got$Time), ]
+  expect_equal(nrow(got), nrow(keep))
+  expect_equal(got$value, keep$value, tolerance = 1e-8)
+})
+
+test_that("the random effects used are the fitted ones, whatever is filtered", {
+  skip_without_julia()
+  fit <- .laplace_nested_fit()
+  pars <- ctSubjectPars(fit)
+  subs <- c(1, 12, 27)
+
+  # At a subject's first row the expectation is driven by its parameters and
+  # not yet by its data, so it reports the random effects the trajectory was
+  # built from. Withholding observations must not change them: a mode is
+  # defined relative to the data it was *estimated* from, and re-solving it
+  # against withheld data collapses it to zero -- which silently turned every
+  # subject into the average one, exactly when a per-subject prediction was
+  # what was being asked for.
+  firstrow <- function(...) {
+    k <- suppressMessages(ctPredict(fit, subjects = subs, ...))
+    v <- k[k$Element %in% "yprior", ]
+    v <- v[order(v$Subject, v$Time), ]
+    unlist(lapply(split(v, v$Subject), function(d) d$value[1L]))
+  }
+  baseline <- firstrow(timestep = "asdata")
+  expect_equal(firstrow(timestep = 0.5, timerange = c(0, 4)), baseline,
+    tolerance = 1e-8)
+  expect_equal(firstrow(timestep = "asdata", removeObs = TRUE), baseline,
+    tolerance = 1e-8)
+  expect_equal(firstrow(timestep = 0.5, timerange = c(0, 4), removeObs = TRUE),
+    baseline, tolerance = 1e-8)
+
+  # And they are the same effects `ctSubjectPars` reports, rather than a second
+  # copy computed some other way.
+  mm <- pars[1, subs, "mmean"]
+  expect_equal(unname(baseline), unname(mm), tolerance = 1e-6)
+})
+
+test_that("randomEffects reaches the engine and selects a level", {
+  skip_without_julia()
+  fit <- .laplace_nested_fit()
+  # It was documented on `ctBackendKalman` and unreachable from `ctPredict`,
+  # which sends `...` to plot(). A test that only called the inner function
+  # would have passed.
+  subs <- c(1, 6, 11, 16)
+  first <- function(lev) {
+    k <- suppressMessages(ctPredict(fit, subjects = subs, timestep = "asdata",
+      randomEffects = lev))
+    v <- k[k$Element %in% "yprior", ]
+    v <- v[order(v$Subject, v$Time), ]
+    unname(unlist(lapply(split(v, v$Subject), function(d) d$value[1L])))
+  }
+  subject <- first("subject"); study <- first("study"); population <- first("population")
+
+  # Subject effects give every subject its own; population gives them all one.
+  expect_gt(stats::sd(subject), 0)
+  expect_equal(population, rep(population[1L], length(population)),
+    tolerance = 1e-8)
+  # The study level sits between: not the subject answer, and these four
+  # subjects are in four different studies, so not the population one either.
+  expect_false(isTRUE(all.equal(study, subject)))
+  expect_false(isTRUE(all.equal(study, population)))
+
+  expect_error(suppressMessages(ctPredict(fit, subjects = 1,
+    randomEffects = "nosuchlevel")), "not 'nosuchlevel'")
+})
+
+test_that("a prediction data frame is numeric and its plot prints", {
+  skip_without_julia()
+  skip_if_not_installed("ggplot2")
+  fit <- .laplace_nested_fit()
+  # `meltkalman` melts everything it is handed, and `ctKalmanArray` also
+  # returns a list of per-subject matrices. Melting that made `value` a list
+  # column, which the final rbind then spread over the whole frame. It only
+  # happened with more than one subject, and `plot()` still *returned* a
+  # ggplot -- only printing it failed -- so nothing noticed.
+  for (subs in list(1L, c(1L, 2L, 3L))) {
+    k <- suppressMessages(ctPredict(fit, subjects = subs, timestep = "asdata"))
+    expect_true(is.numeric(k$value),
+      info = paste(length(subs), "subject(s)"))
+    expect_false(is.list(k$value))
+    p <- plot(k)
+    expect_s3_class(p, "ggplot")
+    # Rendering, not merely constructing: a list `value` column builds a
+    # ggplot happily and only fails when something tries to draw it. Warnings
+    # are expected -- interpolated rows carry no observation.
+    tmp <- tempfile(fileext = ".png")
+    expect_error(suppressWarnings(suppressMessages(
+      ggplot2::ggsave(tmp, p, width = 5, height = 3))), NA)
+    expect_true(file.exists(tmp))
+    unlink(tmp)
+  }
+})
+
+test_that("a multilevel summary prints its tables and not its payload", {
+  skip_without_julia()
+  fit <- .laplace_nested_fit()
+  s <- summary(fit)
+  # `$randomEffects` is the machine-readable per-level payload. It stayed
+  # reachable, and the printed summary stayed a summary: printing the draws put
+  # thousands of lines ahead of the tables that summarise them.
+  expect_false(is.null(s$randomEffects))
+  expect_equal(length(s$randomEffects), 2L)
+
+  out <- utils::capture.output(print(s))
+  expect_lt(length(out), 200L)
+  expect_true(any(grepl("Random-effects standard deviations (subject)", out,
+    fixed = TRUE)))
+  expect_true(any(grepl("Random-effects standard deviations (study)", out,
+    fixed = TRUE)))
+  # Asked for by name it is still printable, which is what keeps the exclusion
+  # a display choice rather than a removal.
+  expect_gt(length(utils::capture.output(
+    print(s, sections = "randomEffects"))), 10L)
+})

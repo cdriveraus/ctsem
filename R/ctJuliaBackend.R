@@ -1041,8 +1041,15 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   do.call(rbind, entries)
 }
 
+# `intoverpop` deliberately has no default. It selects which *model* is
+# prepared -- random effects as latent states, or integrated by Laplace -- and a
+# default meant a caller could omit it and silently get the other one. That is
+# what happened to prediction and to cross-validation, both of which rebuild a
+# specification from a fit and neither of which said which kind of fit it was.
+# Making it mandatory turns that from a silent wrong answer into a stop at the
+# call site.
 .ctJuliaPrepare <- function(datalong, model, prepared_data = NULL, project = NULL,
-  priors = FALSE, intoverpop = "augmented") {
+  priors = FALSE, intoverpop) {
   intoverpop <- match.arg(as.character(intoverpop)[1L], c("augmented", "laplace"))
   dat <- data.frame(datalong)
   dat <- dat[order(dat[[model$subjectIDname]], dat[[model$timeName]]), , drop = FALSE]

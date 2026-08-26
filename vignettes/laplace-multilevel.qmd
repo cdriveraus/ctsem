@@ -362,10 +362,25 @@ subject's later data arrived, so even `yprior` is conditional on the complete
 series. Comparisons that depend on genuine out-of-sample filtering — a
 prediction at $t$ that has not seen $t$ — are not what these give.
 
-Relatedly, `removeObs` withholds observations from the filter, and on a Laplace
-fit that also removes what the modes are estimated from: with no data left to
-condition on, the modes collapse to zero and the trajectories fall back to the
-population parameters whatever `randomEffects` asks for.
+What the modes are *not* is recomputed. They are the ones the fit arrived at,
+against the data the fit saw, and they stay fixed however a prediction call
+changes the rows being filtered — selecting subjects, interpolating onto a time
+grid, or withholding observations with `removeObs`. So a prediction with every
+observation withheld still uses that subject's own random effects, which is
+what makes it a prediction *for that subject* rather than for the average one:
+
+```{r fixedmodes}
+firstrow <- function(...) {
+  k <- ctPredict(fit, subjects = c(1, 7, 13), ...)
+  v <- k[k$Element %in% 'yprior', ]
+  v <- v[order(v$Subject, v$Time), ]
+  round(unlist(lapply(split(v, v$Subject), function(d) d$value[1])), 3)
+}
+rbind(
+  `as observed` = firstrow(timestep = 'asdata'),
+  interpolated  = firstrow(timestep = .5, timerange = c(0, 9)),
+  `no data`     = firstrow(timestep = .5, timerange = c(0, 9), removeObs = TRUE))
+```
 
 # Practical notes
 
