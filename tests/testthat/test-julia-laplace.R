@@ -372,6 +372,79 @@ test_that("a grouping id creates its level columns, defaulting sensibly", {
   expect_true(any(plain$pars$indvarying %in% TRUE))
 })
 
+test_that("a TI predictor operates at a grouping level when it varies there", {
+  skip_without_julia()
+  # A covariate constant within study and varying between studies is a
+  # study-level predictor: ctsem applies TI effects additively to each
+  # subject's raw vector, so a study-constant shift *is* a study-level fixed
+  # effect. Nothing special is needed for that -- but the raw vector has to be
+  # long enough to hold the coefficient, which sits after every level's
+  # population block, and it was not.
+  set.seed(31)
+  nstudy <- 10; npersub <- 4; nobs <- 5
+  rows <- list(); sid <- 0
+  for (g in seq_len(nstudy)) {
+    Z <- stats::rnorm(1)
+    studyeffect <- 1.2 * Z + stats::rnorm(1, 0, 0.04)
+    for (j in seq_len(npersub)) {
+      sid <- sid + 1
+      intercept <- 10 * (0.15 + studyeffect + stats::rnorm(1, 0, 0.06))
+      x <- stats::rnorm(1, 0, 0.5); out <- numeric(nobs)
+      for (t in seq_len(nobs)) {
+        if (t > 1) {
+          decay <- exp(-0.4)
+          x <- decay * x + stats::rnorm(1, 0, sqrt(0.36 / 0.8 * (1 - decay^2)))
+        }
+        out[t] <- x + intercept + stats::rnorm(1, 0, 0.3)
+      }
+      rows[[length(rows) + 1L]] <- data.frame(subject = sid, study = g,
+        time = seq_len(nobs) - 1, Y1 = out, Z = Z)
+    }
+  }
+  dat <- do.call(rbind, rows)
+
+  build <- function(withZ) {
+    model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+      manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1),
+      T0MEANS = matrix(0), CINT = matrix(0), T0VAR = matrix(0.5),
+      MANIFESTMEANS = matrix("mmean"), id = c("subject", "study"),
+      TIpredNames = if (withZ) "Z" else NULL)))
+    model$pars$indvarying <- FALSE
+    model$pars$indvarying[model$pars$param %in% "mmean"] <- TRUE
+    model$pars$indvarying_study[model$pars$param %in% "mmean"] <- TRUE
+    if (withZ) {
+      model$pars$Z_effect <- FALSE
+      model$pars$Z_effect[model$pars$param %in% "mmean"] <- TRUE
+    }
+    model
+  }
+
+  spec <- suppressMessages(ctFit(dat, build(TRUE), backend = "julia",
+    intoverpop = "laplace", fit = FALSE))
+  # The coefficient sits past every level's population block, and the raw
+  # vector must reach it.
+  expect_gt(spec$ti_effects$coefficient, spec$laplace$npar)
+  expect_length(ctsem:::.ctJuliaInitialValues(
+    max(spec$laplace$npar, spec$ti_effects$coefficient)),
+    spec$ti_effects$coefficient)
+
+  fits <- lapply(c(FALSE, TRUE), function(withZ)
+    suppressMessages(suppressWarnings(ctFit(dat, build(withZ), backend = "julia",
+      intoverpop = "laplace", optimcontrol = list(estonly = TRUE)))))
+  sdof <- function(fit, level) {
+    lv <- fit$model_spec$laplace$levels[[level]]
+    10 * (log1p(exp(2 * fit$estimate$raw[lv$sd_index] - 1)) + 1e-10) * lv$sd_scale
+  }
+
+  # The substantive check: a real study-level predictor soaks up between-study
+  # variance, so the *study* random-effect sd collapses while the subject one
+  # does not. Asserting only that the fit ran would not distinguish a predictor
+  # that works from one silently applied at the wrong level.
+  expect_lt(sdof(fits[[2]], 2), sdof(fits[[1]], 2) / 4)
+  expect_equal(sdof(fits[[2]], 1), sdof(fits[[1]], 1), tolerance = 0.3)
+  expect_gt(fits[[2]]$estimate$loglik, fits[[1]]$estimate$loglik)
+})
+
 test_that("unsupported ways of asking for Laplace fail rather than doing something else", {
   model <- .laplace_test_model()
   dat <- .laplace_test_data(nsubjects = 4, nobs = 4)

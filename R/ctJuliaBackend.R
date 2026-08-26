@@ -1052,8 +1052,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # it: every evaluation threw a bounds error, was swallowed by the optimizer's
   # invalid-point guard, and the level stayed pinned at its starting value while
   # reporting a plausible-looking number.
-  npar <- if (!is.null(laplace)) laplace$npar else
-    max(c(parameter_table$parnumber, ti_effects$coefficient), na.rm = TRUE)
+  # `laplace$npar` counts the model parameters and every level's scales and
+  # correlations; the TI-predictor coefficients sit after all of that, so the
+  # raw vector is as long as whichever reaches furthest. Taking `laplace$npar`
+  # alone left the coefficients past the end of it -- the same failure the
+  # level scales had, one block further along.
+  npar <- max(c(parameter_table$parnumber, laplace$npar,
+    ti_effects$coefficient), na.rm = TRUE)
   prior_spec <- if (!isTRUE(priors)) NULL else if (!is.null(laplace)) {
     .ctBackendLaplacePriorSpec(prepared_data, laplace, npar)
   } else .ctBackendPriorSpec(prepared_data, npar)
@@ -1300,9 +1305,8 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
     project = project, priors = priors, intoverpop = intoverpop)
   if (!fit) return(structure(model_spec, class = c("ctJuliaModel", "ctFitModel")))
 
-  npar <- if (!is.null(model_spec$laplace)) model_spec$laplace$npar else
-    max(c(model_spec$parameter_table$parnumber,
-      model_spec$ti_effects$coefficient), na.rm = TRUE)
+  npar <- max(c(model_spec$parameter_table$parnumber, model_spec$laplace$npar,
+    model_spec$ti_effects$coefficient), na.rm = TRUE)
   start <- .ctJuliaInitialValues(npar, inits)
   result <- .ctJuliaOptimise(model_spec, start, backendcontrol = backendcontrol,
     gradient = gradient, cores = cores, verbose = verbose)
