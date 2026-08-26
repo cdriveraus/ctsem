@@ -157,6 +157,26 @@ nrandomeffects(spec::CTSEMLaplaceSpec) = sum(nrandomeffects(l) for l in spec.lev
 nlevels(spec::CTSEMLaplaceSpec) = length(spec.levels)
 
 """
+    CTSEMLaplaceBlock(offset, size, members, level, ancestors)
+
+One block of a unit's latent vector: where it sits, how big it is, which
+members of the unit own it, which level it belongs to, and which blocks sit
+above it in the hierarchy.
+
+`ancestors` is what makes the curvature's sparsity usable. Two blocks couple
+only if some member depends on both, and with strict nesting that happens only
+when one contains the other -- so a block's nonzero couplings are exactly its
+ancestors, and the elimination that exploits this produces no fill-in at all.
+"""
+struct CTSEMLaplaceBlock
+    offset::Int
+    size::Int
+    members::Vector{Int}
+    level::Int
+    ancestors::Vector{Int}
+end
+
+"""
     CTSEMLaplaceUnits
 
 How the integral factorises.
@@ -187,7 +207,7 @@ struct CTSEMLaplaceUnits
     #
     # Each entry is `(offset, size, member positions)`, positions indexing into
     # `members[U]`.
-    blocks::Vector{Vector{Tuple{Int,Int,Vector{Int}}}}
+    blocks::Vector{Vector{CTSEMLaplaceBlock}}
 end
 
 """
@@ -205,7 +225,7 @@ function _laplace_build_units(spec::CTSEMLaplaceSpec, nsubjects::Integer)
     if nlev == 0 || nsubjects == 0
         return CTSEMLaplaceUnits([[i] for i in 1:nsubjects],
             [[Int[] for _ in 1:1] for _ in 1:nsubjects], zeros(Int, nsubjects),
-            [Tuple{Int,Int,Vector{Int}}[] for _ in 1:nsubjects])
+            [CTSEMLaplaceBlock[] for _ in 1:nsubjects])
     end
     outer = levels[end]
     nunits = outer.ngroups
@@ -236,10 +256,11 @@ function _laplace_build_units(spec::CTSEMLaplaceSpec, nsubjects::Integer)
     end
 
     # Invert the offset map: which member positions share each block.
-    blocks = Vector{Vector{Tuple{Int,Int,Vector{Int}}}}(undef, nunits)
+    blocks = Vector{Vector{CTSEMLaplaceBlock}}(undef, nunits)
     for U in 1:nunits
         owners = Dict{Int,Vector{Int}}()
         sizes = Dict{Int,Int}()
+        blocklevel = Dict{Int,Int}()
         for (m, i) in enumerate(members[U])
             for l in 1:nlev
                 k = nrandomeffects(levels[l])
@@ -247,10 +268,30 @@ function _laplace_build_units(spec::CTSEMLaplaceSpec, nsubjects::Integer)
                 off = offsets[U][m][l]
                 push!(get!(owners, off, Int[]), m)
                 sizes[off] = k
+                blocklevel[off] = l
             end
         end
-        blocks[U] = [(off, sizes[off], sort(unique(owners[off])))
-                     for off in sort(collect(keys(owners)))]
+        # Innermost level first. The elimination below depends on that order:
+        # a block is eliminated only once every block beneath it has been, which
+        # is what keeps the factorization free of fill-in.
+        ordered = sort(collect(keys(owners)); by = off -> (blocklevel[off], off))
+        position = Dict(off => t for (t, off) in enumerate(ordered))
+        blocks[U] = CTSEMLaplaceBlock[]
+        for off in ordered
+            members_here = sort(unique(owners[off]))
+            l = blocklevel[off]
+            # Ancestors: the blocks this one's members share at every outer
+            # level. Strict nesting makes them the same for every member, so
+            # reading them off the first is enough.
+            m = members_here[1]
+            ancestors = Int[]
+            for outer in (l + 1):nlev
+                nrandomeffects(levels[outer]) == 0 && continue
+                push!(ancestors, position[offsets[U][m][outer]])
+            end
+            push!(blocks[U], CTSEMLaplaceBlock(off, sizes[off], members_here, l,
+                ancestors))
+        end
     end
     return CTSEMLaplaceUnits(members, offsets, dims, blocks)
 end
@@ -633,6 +674,158 @@ function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
     end
 end
 
+################################################################################
+# Factorizing a unit's curvature without forming it
+################################################################################
+#
+# A unit's curvature couples two blocks only when some member depends on both,
+# and with strict nesting that happens only when one block contains the other.
+# So the nonzero couplings of a block are exactly its ancestors, the sparsity
+# pattern is a tree, and eliminating blocks innermost-first produces *no
+# fill-in*: every Schur update lands on ancestor-ancestor couplings that were
+# already nonzero.
+#
+# That gives `sum_b k_b^3` work instead of `dim(u)^3`, which for a study of `n`
+# subjects is linear rather than cubic in `n`. The larger gain is memory: a
+# study of 2000 subjects with two effects each has `dim(u) ~ 4000`, and a dense
+# curvature for it is 128 MB *per unit*, held for every unit across the whole
+# fit. The block form stores `sum_b k_b^2` plus the couplings, which is
+# kilobytes.
+#
+# `CTSEMBlockMatrix` is symmetric and only the lower side is kept: `diag[b]` is
+# the block's own `k_b x k_b` piece and `coupling[b][t]` is the coupling to
+# `blocks[b].ancestors[t]`, stored as `k_b x k_a`.
+
+"""Symmetric block curvature for one unit, stored by block rather than densely."""
+struct CTSEMBlockMatrix
+    diag::Vector{Matrix{Float64}}
+    coupling::Vector{Vector{Matrix{Float64}}}
+end
+
+"""An all-zero block matrix shaped for one unit."""
+function CTSEMBlockMatrix(blocks::Vector{CTSEMLaplaceBlock})
+    diag = [zeros(Float64, b.size, b.size) for b in blocks]
+    coupling = [[zeros(Float64, b.size, blocks[a].size) for a in b.ancestors]
+                for b in blocks]
+    return CTSEMBlockMatrix(diag, coupling)
+end
+
+"""Reassemble a block matrix densely. Testing and small-unit use only."""
+function _laplace_block_dense(M::CTSEMBlockMatrix, blocks::Vector{CTSEMLaplaceBlock},
+    dim::Integer)
+    out = zeros(Float64, dim, dim)
+    for (b, block) in enumerate(blocks)
+        rows = (block.offset + 1):(block.offset + block.size)
+        out[rows, rows] .= M.diag[b]
+        for (t, a) in enumerate(block.ancestors)
+            cols = (blocks[a].offset + 1):(blocks[a].offset + blocks[a].size)
+            out[rows, cols] .= M.coupling[b][t]
+            out[cols, rows] .= transpose(M.coupling[b][t])
+        end
+    end
+    return out
+end
+
+"""Take the block form of a dense symmetric matrix. Testing use only."""
+function _laplace_block_of(dense::AbstractMatrix, blocks::Vector{CTSEMLaplaceBlock})
+    M = CTSEMBlockMatrix(blocks)
+    for (b, block) in enumerate(blocks)
+        rows = (block.offset + 1):(block.offset + block.size)
+        M.diag[b] .= dense[rows, rows]
+        for (t, a) in enumerate(block.ancestors)
+            cols = (blocks[a].offset + 1):(blocks[a].offset + blocks[a].size)
+            M.coupling[b][t] .= dense[rows, cols]
+        end
+    end
+    return M
+end
+
+"""
+    _laplace_block_factor(M, blocks)
+
+Eliminate the blocks innermost-first, returning `(ok, logdet, factors)`.
+
+`factors` holds, per block, the Cholesky of its diagonal *after* every
+descendant has been eliminated into it, and the couplings that were used --
+enough to solve with. `ok` is false if any diagonal failed to factorize, which
+is how a curvature that is not positive definite reports itself here.
+
+The Schur update `A -= B' D^-1 B` is applied to the ancestor couplings, and
+because a block's ancestors form a chain, every entry it touches is one that
+was already nonzero. That is the no-fill-in property, and it is why this stays
+linear in the number of members.
+"""
+function _laplace_block_factor(M::CTSEMBlockMatrix, blocks::Vector{CTSEMLaplaceBlock})
+    nb = length(blocks)
+    diag = [copy(d) for d in M.diag]
+    coupling = [[copy(c) for c in row] for row in M.coupling]
+    factors = Vector{Any}(undef, nb)
+    total = 0.0
+    for b in 1:nb
+        f = cholesky(Symmetric(_laplace_symmetrise(diag[b])); check=false)
+        issuccess(f) || return (false, NaN, factors, coupling)
+        factors[b] = f
+        total += logdet(f)
+        ancestors = blocks[b].ancestors
+        isempty(ancestors) && continue
+        # W = D^-1 B for this block's couplings, then push B' W into the
+        # ancestor-ancestor entries.
+        W = [f \ coupling[b][t] for t in eachindex(ancestors)]
+        for t in eachindex(ancestors)
+            a = ancestors[t]
+            update = transpose(coupling[b][t]) * W[t]
+            diag[a] .-= _laplace_symmetrise(update)
+            for s in eachindex(ancestors)
+                s == t && continue
+                c = ancestors[s]
+                # Where does the (a, c) coupling live? One of them is an
+                # ancestor of the other; the update belongs on the lower one's
+                # row.
+                slot = findfirst(==(c), blocks[a].ancestors)
+                if slot !== nothing
+                    coupling[a][slot] .-= transpose(coupling[b][t]) * W[s]
+                end
+            end
+        end
+    end
+    return (true, total, factors, coupling)
+end
+
+@inline _laplace_symmetrise(A) = (A .+ transpose(A)) ./ 2
+
+"""
+    _laplace_block_solve(factors, coupling, blocks, rhs)
+
+Solve `M x = rhs` using the factorization above, by forward substitution over
+the elimination order and back substitution against it.
+"""
+function _laplace_block_solve(factors, coupling, blocks::Vector{CTSEMLaplaceBlock},
+    rhs::Vector{Float64})
+    nb = length(blocks)
+    y = [rhs[(blocks[b].offset + 1):(blocks[b].offset + blocks[b].size)] for b in 1:nb]
+    # Forward: subtract each eliminated block's contribution from its ancestors.
+    for b in 1:nb
+        w = factors[b] \ y[b]
+        for (t, a) in enumerate(blocks[b].ancestors)
+            y[a] .-= transpose(coupling[b][t]) * w
+        end
+    end
+    # Back: solve outermost-first, substituting into the blocks beneath.
+    x = [zeros(Float64, blocks[b].size) for b in 1:nb]
+    for b in nb:-1:1
+        acc = copy(y[b])
+        for (t, a) in enumerate(blocks[b].ancestors)
+            acc .-= coupling[b][t] * x[a]
+        end
+        x[b] = factors[b] \ acc
+    end
+    out = zeros(Float64, sum(b.size for b in blocks; init=0))
+    for b in 1:nb
+        out[(blocks[b].offset + 1):(blocks[b].offset + blocks[b].size)] .= x[b]
+    end
+    return out
+end
+
 """
     _laplace_negate_definite(H)
 
@@ -821,7 +1014,8 @@ function _laplace_unit_hessian(laplace::CTSEMLaplaceObjective, U::Integer,
 
     base = collect(u)
     H = zeros(T, d, d)
-    for (offset, size, positions) in blocks
+    for block in blocks
+        offset = block.offset; size = block.size; positions = block.members
         columns = (offset + 1):(offset + size)
         block_of = function (ub)
             S = eltype(ub)

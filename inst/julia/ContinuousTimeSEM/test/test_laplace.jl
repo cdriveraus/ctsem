@@ -516,23 +516,23 @@ end
     H = ContinuousTimeSEM._laplace_unit_hessian(laplace, U, theta, Ls, u)
 
     blocks = laplace.units.blocks[U]
-    subjectblocks = [b for b in blocks if length(b[3]) == 1]
-    studyblocks = [b for b in blocks if length(b[3]) > 1]
+    subjectblocks = [b for b in blocks if length(b.members) == 1]
+    studyblocks = [b for b in blocks if length(b.members) > 1]
     @test length(subjectblocks) == 2      # two subjects per study
     @test length(studyblocks) == 1        # one shared study block
 
     for a in subjectblocks, b in subjectblocks
         a === b && continue
-        rows = (a[1] + 1):(a[1] + a[2])
-        cols = (b[1] + 1):(b[1] + b[2])
+        rows = (a.offset + 1):(a.offset + a.size)
+        cols = (b.offset + 1):(b.offset + b.size)
         @test all(abs.(H[rows, cols]) .< 1e-12)
     end
     # ...and the coupling to the study block is genuinely there, so the test
     # above is not passing because everything is zero.
     sb = studyblocks[1]
-    srows = (sb[1] + 1):(sb[1] + sb[2])
+    srows = (sb.offset + 1):(sb.offset + sb.size)
     a = subjectblocks[1]
-    arows = (a[1] + 1):(a[1] + a[2])
+    arows = (a.offset + 1):(a.offset + a.size)
     @test maximum(abs, H[arows, srows]) > 1e-8
 end
 
@@ -593,6 +593,46 @@ end
     @test errors[1] < 1e-3
     # Second order: halving the step should cut the error by roughly four.
     @test errors[2] < errors[1] / 3
+end
+
+@testset "the block factorization equals the dense one" begin
+    # The elimination exploits that a block couples only to its ancestors, so
+    # it must reproduce what a dense Cholesky of the same matrix gives -- both
+    # the log determinant and the solve. The dense route knows nothing about
+    # the block tree, which is what makes agreement meaningful.
+    laplace, values = _fresh_twolevel()
+    theta = collect(Float64, values)
+    Ls = ContinuousTimeSEM._laplace_popchols(theta, laplace.spec)
+    for U in eachindex(laplace.units.members)
+        blocks = laplace.units.blocks[U]
+        u = 0.1 .* collect(1.0:laplace.units.dims[U])
+        H = ContinuousTimeSEM._laplace_unit_hessian(laplace, U, theta, Ls, u)
+        _, M = ContinuousTimeSEM._laplace_negate_definite(H)
+
+        blocked = ContinuousTimeSEM._laplace_block_of(M, blocks)
+        # Round tripping through the block form must not lose anything: if it
+        # did, the sparsity pattern would be wrong rather than the arithmetic.
+        @test ContinuousTimeSEM._laplace_block_dense(blocked, blocks,
+            size(M, 1)) ≈ M
+
+        ok, ld, factors, coupling = ContinuousTimeSEM._laplace_block_factor(blocked, blocks)
+        @test ok
+        @test ld ≈ logdet(cholesky(Symmetric(M)))
+
+        rhs = collect(1.0:size(M, 1)) ./ size(M, 1)
+        x = ContinuousTimeSEM._laplace_block_solve(factors, coupling, blocks, rhs)
+        @test norm(M * x - rhs) / norm(rhs) < 1e-9
+    end
+end
+
+@testset "the block factorization reports a curvature it cannot factor" begin
+    laplace, values = _fresh_twolevel()
+    blocks = laplace.units.blocks[1]
+    M = ContinuousTimeSEM.CTSEMBlockMatrix(blocks)
+    for d in M.diag; d .= -Matrix(I, size(d)...); end   # negative definite
+    ok, ld, _, _ = ContinuousTimeSEM._laplace_block_factor(M, blocks)
+    @test !ok
+    @test isnan(ld)
 end
 
 @testset "the population covariance follows the Stan parameterisation" begin
