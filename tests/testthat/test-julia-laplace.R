@@ -445,6 +445,50 @@ test_that("a TI predictor operates at a grouping level when it varies there", {
   expect_gt(fits[[2]]$estimate$loglik, fits[[1]]$estimate$loglik)
 })
 
+test_that("subject parameters are available at draws, with spread", {
+  skip_without_julia()
+  fit <- .laplace_exact_fit()
+
+  point <- ctsem:::.ctBackendSubjectPars(fit, pointest = TRUE)
+  draws <- ctsem:::.ctBackendSubjectPars(fit, pointest = FALSE)
+  expect_equal(dim(point)[1], 1L)
+  expect_gt(dim(draws)[1], 1L)
+  expect_equal(dim(draws)[2:3], dim(point)[2:3])
+  expect_equal(dimnames(draws)$param, dimnames(point)$param)
+
+  # The draw distribution should sit around the point estimate...
+  centres <- apply(draws[, , 1, drop = FALSE], 2, mean)
+  expect_lt(max(abs(centres - point[1, , 1])), 0.5)
+  # ...and actually have spread. Reporting only the point estimate was the gap:
+  # a subject parameter carries uncertainty from the population parameters as
+  # well as from its own conditional distribution.
+  expect_true(all(apply(draws[, , 1, drop = FALSE], 2, sd) > 0))
+})
+
+test_that("the raw vector reaches every index the layout references", {
+  # Three separate bugs of this shape have shipped into this branch: a level's
+  # population scales, then the TI-predictor coefficients, each indexed past
+  # the end of a vector sized from only part of the layout. Neither failed
+  # usefully. The invariant is asserted directly so the next one cannot.
+  model <- .laplace_nested_model()
+  dat <- .laplace_nested_data()
+  spec <- suppressMessages(ctFit(dat, model, backend = "julia",
+    intoverpop = "laplace", fit = FALSE))
+  laplace <- spec$laplace
+
+  reach <- c(spec$parameter_table$parnumber, spec$ti_effects$coefficient,
+    unlist(lapply(laplace$levels, function(x)
+      c(x$re_index, x$sd_index, x$cor_index))))
+  expect_lte(max(reach, na.rm = TRUE),
+    max(laplace$npar, spec$ti_effects$coefficient, na.rm = TRUE))
+
+  # And the check itself fires rather than sitting inert.
+  broken <- laplace
+  broken$levels[[2]]$sd_index <- 999L
+  expect_error(ctsem:::.ctJuliaCheckLayout(spec$parameter_table, broken,
+    spec$ti_effects, laplace$npar), "reach raw parameter 999")
+})
+
 test_that("unsupported ways of asking for Laplace fail rather than doing something else", {
   model <- .laplace_test_model()
   dat <- .laplace_test_data(nsubjects = 4, nobs = 4)

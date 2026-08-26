@@ -622,6 +622,45 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (inherits(value, "try-error")) 5.2933 else as.numeric(value)[1L]
 }
 
+# Every index the specification references must lie inside the raw parameter
+# vector the fit will actually allocate.
+#
+# This invariant is here because breaking it has been the single recurring bug
+# of this feature, three times over: a level's population scales, and then the
+# TI-predictor coefficients, each indexed past the end of a vector sized from
+# only part of the layout. Neither failed usefully. The first left a level
+# pinned at its starting value while the summary printed the transform of that
+# value as though it were an estimate -- the same number for every dataset. The
+# second threw a bounds error that the optimizer's invalid-point guard
+# swallowed, which then surfaced as a line search crashing on an unrelated
+# assertion. Both were found by recovery studies, days later.
+#
+# Checking it costs nothing and turns that whole class into an immediate,
+# specific error.
+.ctJuliaCheckLayout <- function(table, laplace, ti_effects, npar) {
+  used <- list(
+    `model parameters` = as.integer(table$parnumber),
+    `TI-predictor coefficients` = as.integer(ti_effects$coefficient))
+  if (!is.null(laplace)) {
+    for (level in laplace$levels) {
+      used[[paste0("'", level$name, "' population scales")]] <- as.integer(level$sd_index)
+      used[[paste0("'", level$name, "' correlations")]] <- as.integer(level$cor_index)
+      used[[paste0("'", level$name, "' varying parameters")]] <- as.integer(level$re_index)
+    }
+  }
+  for (what in names(used)) {
+    index <- used[[what]]
+    index <- index[!is.na(index)]
+    if (length(index) && max(index) > npar) {
+      stop("Internal layout error: the ", what, " reach raw parameter ",
+        max(index), " but the raw vector holds ", npar,
+        ". This is a bug in ctsem rather than in the model; please report it.",
+        call. = FALSE)
+    }
+  }
+  invisible(TRUE)
+}
+
 .ctJuliaLevelColumn <- function(model, level) {
   if (level == 1L) return("indvarying")
   paste0("indvarying_", model$groupIDnames[level - 1L])
@@ -1059,6 +1098,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # level scales had, one block further along.
   npar <- max(c(parameter_table$parnumber, laplace$npar,
     ti_effects$coefficient), na.rm = TRUE)
+  .ctJuliaCheckLayout(parameter_table, laplace, ti_effects, npar)
   prior_spec <- if (!isTRUE(priors)) NULL else if (!is.null(laplace)) {
     .ctBackendLaplacePriorSpec(prepared_data, laplace, npar)
   } else .ctBackendPriorSpec(prepared_data, npar)

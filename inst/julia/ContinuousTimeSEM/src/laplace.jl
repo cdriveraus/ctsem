@@ -424,6 +424,30 @@ function ctsem_laplace_boundary(laplace::CTSEMLaplaceObjective, values::Abstract
 end
 
 """
+    _laplace_check_indices(laplace, npar)
+
+Refuse a parameter vector too short to hold every index the spec references.
+
+The R side checks the same invariant when it builds the specification, so this
+should be unreachable; it exists because the failure it replaces is a
+`BoundsError` raised deep inside a filter, which the optimizer's invalid-point
+guard turns into a silently wrong fit rather than an error.
+"""
+function _laplace_check_indices(laplace::CTSEMLaplaceObjective, npar::Integer)
+    for (l, level) in enumerate(laplace.spec.levels)
+        for (what, index) in (("varying parameter", level.re_index),
+                              ("population scale", level.sd_index),
+                              ("correlation", level.cor_index))
+            isempty(index) && continue
+            maximum(index) <= npar || throw(ArgumentError(string(
+                "level ", l, " references ", what, " ", maximum(index),
+                " but the parameter vector holds ", npar)))
+        end
+    end
+    return nothing
+end
+
+"""
     _laplace_popchol(values, level)
 
 The Cholesky factor of one level's raw-scale population covariance.
@@ -1197,6 +1221,7 @@ implicit mode dependence included.
 function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     gradient::Bool=true, contributions::Bool=false, nested_gradient::Bool=false)
     theta = collect(Float64, values)
+    _laplace_check_indices(laplace, length(theta))
     nsubjects = length(laplace.objective.subject_objectives)
     nunits = length(laplace.units.members)
     single_level = nlevels(laplace.spec) == 1
@@ -1409,6 +1434,111 @@ function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
 end
 
 export ctsem_laplace_subject_values
+
+"""
+    ctsem_laplace_mode_jacobian(laplace, values)
+
+`dzhat/dtheta` for every unit: how each unit's inner mode moves when the
+population parameters move.
+
+The mode is defined implicitly by `dg/dz = 0`, so differentiating that gives
+`dzhat/dtheta = C * d2g/dz dtheta`, and `_laplace_dual_mode` already produces
+exactly that -- one Newton step from the converged mode taken in dual
+arithmetic. Seeding `theta` with a full set of forward directions turns the
+single directional answer into the whole Jacobian.
+
+Costs one forward sweep per parameter chunk over each unit, once, which is why
+it is worth computing here and reusing across every posterior draw rather than
+re-solving a mode per draw.
+
+Returns a vector of `dim(u) x npar` matrices, one per unit.
+"""
+function ctsem_laplace_mode_jacobian(laplace::CTSEMLaplaceObjective,
+    values::AbstractVector)
+    theta = collect(Float64, values)
+    _laplace_check_indices(laplace, length(theta))
+    nunits = length(laplace.units.members)
+    Ls = _laplace_popchols(theta, laplace.spec)
+    hessians = Vector{Matrix{Float64}}(undef, nunits)
+    for U in 1:nunits
+        _laplace_solve_unit_mode!(laplace, U, theta, Ls)
+        u = laplace.modes[U]
+        H = isempty(u) ? zeros(Float64, 0, 0) :
+            _laplace_unit_hessian(laplace, U, theta, Ls, u)
+        _, negated = _laplace_negate_definite(H)
+        hessians[U] = negated
+    end
+    out = Vector{Matrix{Float64}}(undef, nunits)
+    for U in 1:nunits
+        d = laplace.units.dims[U]
+        if d == 0
+            out[U] = zeros(Float64, 0, length(theta))
+            continue
+        end
+        uhat = laplace.modes[U]
+        mode_of = function (x)
+            S = eltype(x)
+            wsd = _laplace_workspace!(laplace, S, length(x))
+            Lsd = _laplace_popchols(x, laplace.spec)
+            return _laplace_dual_unit_mode(laplace, U, x, Lsd, uhat, hessians[U], wsd)
+        end
+        out[U] = ForwardDiff.jacobian(mode_of, theta)
+    end
+    return out
+end
+
+export ctsem_laplace_mode_jacobian
+
+"""
+    ctsem_laplace_subject_values(laplace, draws, thetahat)
+
+Each subject's own raw parameter vector at every posterior draw.
+
+The population Cholesky factors are rebuilt exactly at each draw, because they
+are `k x k` and cost nothing. Only the *mode* is approximated, by
+
+    uhat(theta) ~= uhat + (duhat/dtheta) (theta - thetahat)
+
+rather than re-solved. That is deliberate and it is an approximation: solving a
+mode per draw is a Newton iteration per unit per draw, where this is a
+matrix-vector product, and the linearisation is accurate exactly where a
+normal-approximation posterior puts its draws. It degrades for draws far from
+the estimate, which is also where the normal approximation the draws come from
+is itself least trustworthy.
+
+Returns `ndraws x nsubjects x npar`.
+"""
+function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
+    draws::AbstractMatrix, thetahat::AbstractVector)
+    # The Jacobian is computed here rather than handed in: it is a vector of
+    # matrices, and round-tripping one through the R bridge only to send it
+    # straight back costs two marshalling steps for no gain.
+    jacobians = ctsem_laplace_mode_jacobian(laplace, thetahat)
+    ndraws = size(draws, 1)
+    npar = size(draws, 2)
+    nsubjects = length(laplace.objective.subject_objectives)
+    centre = collect(Float64, thetahat)
+    out = zeros(Float64, ndraws, nsubjects, npar)
+    buffer = Float64[]
+    for s in 1:ndraws
+        theta = collect(Float64, view(draws, s, :))
+        Ls = _laplace_popchols(theta, laplace.spec)
+        step = theta .- centre
+        for U in eachindex(laplace.units.members)
+            u = laplace.units.dims[U] == 0 ? Float64[] :
+                laplace.modes[U] .+ jacobians[U] * step
+            for (m, i) in enumerate(laplace.units.members[U])
+                shifted = _laplace_member_values(theta, laplace.spec, Ls, u,
+                    laplace.units.offsets[U][m])
+                subject = laplace.objective.subject_objectives[i]
+                _materialize_subject_values!(buffer, shifted, subject.params,
+                    subject.tipreds)
+                out[s, i, :] = buffer
+            end
+        end
+    end
+    return out
+end
 
 """
     ctsem_laplace_population(laplace, values)

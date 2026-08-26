@@ -563,6 +563,38 @@ end
     @test isempty(ctsem_laplace_boundary(laplace, below).level)
 end
 
+@testset "the mode Jacobian is the derivative it claims to be" begin
+    # Subject parameters at posterior draws linearise the mode rather than
+    # re-solving it. That is only defensible if the Jacobian is right and the
+    # error is second order, so both are checked rather than asserted: halving
+    # the step should quarter the discrepancy against a re-solved mode.
+    laplace, values = _fresh_twolevel()
+    theta = collect(Float64, values)
+    J = ctsem_laplace_mode_jacobian(laplace, theta)
+    base = [copy(laplace.modes[U]) for U in eachindex(laplace.units.members)]
+
+    direction = normalize(collect(1.0:length(theta)))
+    errors = Float64[]
+    for step in (0.02, 0.01)
+        probe = theta .+ step .* direction
+        Ls = ContinuousTimeSEM._laplace_popchols(probe, laplace.spec)
+        worst = 0.0
+        for U in eachindex(laplace.units.members)
+            linear = base[U] .+ J[U] * (probe .- theta)
+            # Re-solve from scratch at the probe, not warm-started from the
+            # linearised guess, so the two are genuinely independent.
+            laplace.modes[U] = zeros(length(base[U]))
+            ContinuousTimeSEM._laplace_solve_unit_mode!(laplace, U, probe, Ls)
+            worst = max(worst, maximum(abs, linear .- laplace.modes[U]))
+        end
+        push!(errors, worst)
+        for U in eachindex(base); laplace.modes[U] = copy(base[U]); end
+    end
+    @test errors[1] < 1e-3
+    # Second order: halving the step should cut the error by roughly four.
+    @test errors[2] < errors[1] / 3
+end
+
 @testset "the population covariance follows the Stan parameterisation" begin
     laplace, values = _fresh_linear()
     spec = laplace.spec

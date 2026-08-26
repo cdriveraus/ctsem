@@ -674,13 +674,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # every draw, which is a real computation rather than a lookup, and returning
 # the point-estimate modes against varying population draws would silently
 # understate the spread it is being asked for.
-.ctBackendLaplaceSubjectPars <- function(fit, spec, pointest = TRUE) {
-  if (!isTRUE(pointest)) {
-    stop("Subject parameters for intoverpop='laplace' are available at the point ",
-      "estimate only: each posterior draw implies a different random-effect mode, ",
-      "which has to be solved for rather than looked up. Use pointest=TRUE.",
-      call. = FALSE)
-  }
+.ctBackendLaplaceSubjectPars <- function(fit, spec, pointest = TRUE,
+  nsamples = "all") {
   cells <- .ctBackendFreeParameterCells(fit)
   cells <- cells[!cells$randomeffect, , drop = FALSE]
   varying <- as.integer(spec$laplace$re_index)
@@ -692,20 +687,52 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   if (!length(varying)) stop("No individually varying parameters in model!", call. = FALSE)
 
   module <- .ctJuliaModule(spec$project)
-  subject_raw <- JuliaConnectoR::juliaGet(module$ctsem_laplace_subject_values(
-    .ctJuliaObjective(fit), .ctJuliaNumericVector(fit$estimate$raw)))
-  subject_raw <- matrix(as.numeric(subject_raw), ncol = length(fit$estimate$raw))
-
+  objective <- .ctJuliaObjective(fit)
+  estimate <- .ctJuliaNumericVector(fit$estimate$raw)
   index <- match(varying, cells$parnumber)
   selected <- cells[index, , drop = FALSE]
   layout <- .ctBackendSummaryLayout(fit)
-  values <- .ctBackendPopCellValues(fit, subject_raw, selected, layout)
-
   parnames <- .ctBackendParameterNames(cells)[index]
   alphabetical <- order(parnames)
-  out <- array(as.numeric(values[, alphabetical, drop = FALSE]),
-    dim = c(1L, nrow(subject_raw), length(varying)))
-  dimnames(out) <- list(iter = 1L, subject = seq_len(nrow(subject_raw)),
+
+  draws <- if (isTRUE(pointest)) NULL else .ctBackendRawSamples(fit)
+  if (!is.null(draws) && identical(nrow(draws), 1L)) draws <- NULL
+  if (!is.null(draws) && !identical(nsamples, "all")) {
+    keep <- unique(round(seq(1, nrow(draws), length.out = min(nrow(draws),
+      as.integer(nsamples)))))
+    draws <- draws[keep, , drop = FALSE]
+  }
+
+  if (is.null(draws)) {
+    subject_raw <- .ctBackendJuliaValue(module$ctsem_laplace_subject_values(
+      objective, estimate))
+    subject_raw <- matrix(as.numeric(subject_raw), ncol = length(fit$estimate$raw))
+    values <- .ctBackendPopCellValues(fit, subject_raw, selected, layout)
+    out <- array(as.numeric(values[, alphabetical, drop = FALSE]),
+      dim = c(1L, nrow(subject_raw), length(varying)))
+    dimnames(out) <- list(iter = 1L, subject = seq_len(nrow(subject_raw)),
+      param = parnames[alphabetical])
+    return(out)
+  }
+
+  # Draws. The population factors are rebuilt exactly at every draw; only the
+  # random-effect mode is linearised around the estimate, which is what makes
+  # this a matrix-vector product per draw rather than a Newton solve. See
+  # `ctsem_laplace_subject_values`: it is an approximation, and it is documented
+  # as one wherever it surfaces.
+  raw <- .ctBackendJuliaValue(module$ctsem_laplace_subject_values(objective,
+    JuliaConnectoR::juliaPut(as.matrix(draws)), estimate))
+  nsubjects <- length(spec$subject_starts)
+  raw <- array(as.numeric(raw), dim = c(nrow(draws), nsubjects,
+    length(fit$estimate$raw)))
+  flat <- matrix(aperm(raw, c(2L, 1L, 3L)), nrow = nsubjects * nrow(draws))
+  values <- .ctBackendPopCellValues(fit, flat, selected, layout)
+  out <- array(NA_real_, dim = c(nrow(draws), nsubjects, length(varying)))
+  for (position in seq_along(alphabetical)) {
+    out[, , position] <- matrix(values[, alphabetical[position]],
+      nrow = nrow(draws), ncol = nsubjects, byrow = TRUE)
+  }
+  dimnames(out) <- list(iter = seq_len(nrow(draws)), subject = seq_len(nsubjects),
     param = parnames[alphabetical])
   out
 }
@@ -782,7 +809,9 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # CINT`, transform applied, rather than from its raw carrier state.
 .ctBackendSubjectPars <- function(fit, pointest = TRUE, nsamples = "all") {
   spec <- .ctBackendSpec(fit)
-  if (!is.null(spec$laplace)) return(.ctBackendLaplaceSubjectPars(fit, spec, pointest))
+  if (!is.null(spec$laplace)) {
+    return(.ctBackendLaplaceSubjectPars(fit, spec, pointest, nsamples))
+  }
   cells <- .ctBackendFreeParameterCells(fit)
   cells <- cells[!cells$randomeffect, , drop = FALSE]
 
