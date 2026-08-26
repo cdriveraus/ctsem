@@ -30,12 +30,64 @@
   data.frame(original = ids, new = seq_along(ids), stringsAsFactors = FALSE)
 }
 
-.ctBackendKalmanRaw <- function(fit, raw, subjectmatrices = TRUE) {
+# Which levels of random effect a Laplace trajectory is built from.
+#
+# Naming a level means "this level and every level outside it": the innermost
+# id gives each subject its own trajectory, an outer id gives the group mean --
+# every subject in a study sharing one -- and 'population' gives the trajectory
+# implied by the population parameters alone. The rule is the same one
+# `_laplace_restrict_levels` applies, stated once here in the user's terms.
+.ctBackendLaplaceLevel <- function(spec, effects) {
+  laplace <- spec$laplace
+  if (is.null(laplace)) return(1L)
+  names <- vapply(laplace$levels, function(x) x$name, character(1))
+  if (identical(effects, "population")) return(length(names) + 1L)
+  position <- match(effects, names)
+  if (is.na(position)) {
+    stop("randomEffects must be 'population' or one of the model's id names (",
+      paste(names, collapse = ", "), "), not '", effects, "'.", call. = FALSE)
+  }
+  as.integer(position)
+}
+
+# The chosen level, wrapped so `.ctBackendKalmanRaw` does not repeat its
+# message for every posterior draw of the same call.
+.ctBackendQuietLevel <- function(spec, randomEffects) {
+  if (is.null(spec$laplace)) return(randomEffects)
+  if (is.null(randomEffects)) randomEffects <- spec$laplace$levels[[1L]]$name
+  structure(randomEffects, quiet = TRUE)
+}
+
+.ctBackendKalmanRaw <- function(fit, raw, subjectmatrices = TRUE,
+  randomEffects = NULL) {
   raw <- as.numeric(raw)
   spec <- .ctBackendSpec(fit)
   module <- .ctJuliaModule(spec$project)
+  if (is.null(spec$laplace)) {
+    result <- .ctBackendJuliaValue(module$ctsem_kalman(.ctJuliaObjective(fit),
+      .ctJuliaNumericVector(raw), subject_matrices = isTRUE(subjectmatrices)))
+    result$subject <- as.integer(result$subject)
+    return(result)
+  }
+
+  if (is.null(randomEffects)) randomEffects <- spec$laplace$levels[[1L]]$name
+  from <- .ctBackendLaplaceLevel(spec, randomEffects)
+  # Said once per call rather than buried in the documentation, because the
+  # difference is easy to miss and changes what the picture means. An augmented
+  # fit's random effects are carrier *states*, updated observation by
+  # observation, so its filtered output shows an effect being learned. A
+  # Laplace mode is estimated from all of a subject's data at once, so these
+  # trajectories are the smoothed equivalent throughout -- there is no
+  # "before this subject's later data arrived" version of them.
+  if (!isTRUE(attr(randomEffects, "quiet"))) {
+    message("Laplace fit: trajectories are conditional on random effects ",
+      "estimated from each subject's whole record, so they are the smoothed ",
+      "equivalent rather than filtered. randomEffects='",
+      as.character(randomEffects), "'.")
+  }
   result <- .ctBackendJuliaValue(module$ctsem_kalman(.ctJuliaObjective(fit),
-    .ctJuliaNumericVector(raw), subject_matrices = isTRUE(subjectmatrices)))
+    .ctJuliaNumericVector(raw), from_level = as.integer(from),
+    subject_matrices = isTRUE(subjectmatrices)))
   result$subject <- as.integer(result$subject)
   result
 }
@@ -181,11 +233,24 @@
 #' \donttest{
 #' # ctBackendKalman(fit, timestep = .1)
 #' }
+#' @param randomEffects For an `intoverpop='laplace'` fit, which levels of
+#'   random effect the trajectories are built from. Naming one of the model's
+#'   id columns includes that level and every level outside it, so the
+#'   innermost id gives each subject its own trajectory and an outer id gives
+#'   the group mean, shared by every subject in the group. `'population'`
+#'   includes none, giving the trajectory implied by the population parameters
+#'   alone. Defaults to the innermost id. Ignored for other fits.
+#'
+#'   These are the *smoothed* equivalent whichever level is chosen: the random
+#'   effects are modes estimated from each subject's whole record, so unlike an
+#'   augmented fit -- whose carrier states are updated observation by
+#'   observation -- there is no version of them from before a subject's later
+#'   data arrived. A message says so at the point of use.
 #' @export
 ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   maxtime = "asdata", removeObs = FALSE, pointest = TRUE, nsamples = NA,
   collapsefunc = NA, standardisederrors = FALSE, subjectpars = FALSE,
-  indvarstates = FALSE, ...) {
+  indvarstates = FALSE, randomEffects = NULL, ...) {
 
   spec <- .ctBackendKalmanSpec(fit, subjects = subjects, timestep = timestep,
     maxtime = maxtime, removeObs = removeObs)
@@ -207,7 +272,10 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 
   for (iteration in seq_len(iterations)) {
     scores <- .ctBackendKalmanRaw(spec, samples[iteration, ],
-      subjectmatrices = isTRUE(subjectpars))
+      subjectmatrices = isTRUE(subjectpars),
+      # Said once per call, not once per posterior draw.
+      randomEffects = if (iteration == 1L) randomEffects else
+        .ctBackendQuietLevel(spec, randomEffects))
     etaa[iteration, , , ] <- scores$eta
     etacova[iteration, , , , ] <- scores$etacov
     ya[iteration, , , ] <- scores$y

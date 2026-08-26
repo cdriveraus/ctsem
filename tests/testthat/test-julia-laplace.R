@@ -489,6 +489,41 @@ test_that("the raw vector reaches every index the layout references", {
     spec$ti_effects, laplace$npar), "reach raw parameter 999")
 })
 
+test_that("ctKalman on a Laplace fit selects which levels it conditions on", {
+  skip_without_julia()
+  model <- .laplace_nested_model()
+  dat <- .laplace_nested_data(nstudy = 5, npersub = 4)
+  fit <- suppressMessages(suppressWarnings(ctFit(dat, model, backend = "julia",
+    intoverpop = "laplace", optimcontrol = list(estonly = TRUE))))
+
+  # `fit$kalman` is populated again: a Laplace fit can be filtered now.
+  expect_false(is.null(fit$kalman))
+
+  study <- dat$study[match(unique(dat$subject), dat$subject)]
+  first_of <- function(k) { first <- !duplicated(k$id); k$yprior[1, first, 1] }
+  # The *prior* prediction at each subject's first row, because that is driven
+  # by the parameters alone. The smoothed one uses the subject's own data
+  # whatever the parameters, so it would look nearly identical at every level
+  # and would not test anything.
+  levels <- lapply(c("subject", "study", "population"), function(lv)
+    first_of(suppressMessages(ctKalmanArray(fit, pointest = TRUE,
+      randomEffects = lv))))
+  names(levels) <- c("subject", "study", "population")
+
+  # Naming a level includes it and everything outside it, and zeroes what is
+  # inside: subjects differ; study-level trajectories are shared within a study
+  # but differ between them; population is one trajectory for everyone.
+  expect_gt(stats::sd(levels$subject), 0)
+  expect_equal(max(tapply(levels$study, study, function(x) diff(range(x)))), 0)
+  expect_gt(stats::sd(levels$study), 0)
+  expect_equal(stats::sd(levels$population), 0)
+  # Including the subject level must actually add something over the study one.
+  expect_gt(stats::sd(levels$subject - levels$study[match(study, study)]), 0)
+
+  expect_error(suppressMessages(ctKalmanArray(fit, pointest = TRUE,
+    randomEffects = "nope")), "must be 'population' or one of the model's id")
+})
+
 test_that("unsupported ways of asking for Laplace fail rather than doing something else", {
   model <- .laplace_test_model()
   dat <- .laplace_test_data(nsubjects = 4, nobs = 4)

@@ -1413,7 +1413,7 @@ Returns `nsubjects x length(values)`; push a row through the model's transforms
 to get that subject's parameter matrices.
 """
 function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
-    values::AbstractVector)
+    values::AbstractVector; from_level::Integer=1)
     theta = collect(Float64, values)
     Ls = _laplace_popchols(theta, laplace.spec)
     nsubjects = length(laplace.objective.subject_objectives)
@@ -1421,7 +1421,7 @@ function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
     buffer = Float64[]
     for U in eachindex(laplace.units.members)
         _laplace_solve_unit_mode!(laplace, U, theta, Ls)
-        u = laplace.modes[U]
+        u = _laplace_restrict_levels(laplace, U, laplace.modes[U], from_level)
         for (m, i) in enumerate(laplace.units.members[U])
             shifted = _laplace_member_values(theta, laplace.spec, Ls, u,
                 laplace.units.offsets[U][m])
@@ -1434,6 +1434,58 @@ function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
 end
 
 export ctsem_laplace_subject_values
+
+"""
+    _laplace_restrict_levels(laplace, U, u, from_level)
+
+A copy of the unit's latent vector with every level inside `from_level` zeroed.
+
+Naming a level means "this level and everything outside it": `from_level = 1`
+keeps all of them, which is the ordinary subject-level answer; a value one past
+the last level keeps none, which is the population answer. Zeroing rather than
+dropping keeps the vector's layout intact, so nothing downstream has to know a
+restriction happened.
+"""
+function _laplace_restrict_levels(laplace::CTSEMLaplaceObjective, U::Integer,
+    u::Vector{Float64}, from_level::Integer)
+    from_level <= 1 && return copy(u)
+    out = copy(u)
+    units = laplace.units
+    for (m, _) in enumerate(units.members[U])
+        for l in 1:min(from_level - 1, nlevels(laplace.spec))
+            k = nrandomeffects(laplace.spec.levels[l])
+            k == 0 && continue
+            base = units.offsets[U][m][l]
+            @inbounds for q in 1:k
+                out[base + q] = 0.0
+            end
+        end
+    end
+    return out
+end
+
+"""
+    ctsem_kalman(laplace, values; from_level=1, subject_matrices=true)
+
+Filter a Laplace fit with each subject at its own realized parameters.
+
+`from_level` selects which levels of random effect are included: 1 (the
+default) gives each subject its own estimate, 2 gives study-level effects only
+so every subject in a study shares its mean trajectory, and one past the last
+level gives the population trajectory with no random effects at all.
+
+The random effects used are the *modes* -- estimated from all of a subject's
+data at once. That makes these the smoothed-equivalent trajectories, not
+filtered ones: an augmented fit's carrier states are updated observation by
+observation, so its filtered output shows a random effect being learned, and
+this cannot. The R side says so when it is used.
+"""
+function ctsem_kalman(laplace::CTSEMLaplaceObjective, values::AbstractVector;
+    from_level::Integer=1, subject_matrices::Bool=true)
+    persubject = ctsem_laplace_subject_values(laplace, values; from_level=from_level)
+    return ctsem_kalman(laplace.objective, persubject;
+        subject_matrices=subject_matrices)
+end
 
 """
     ctsem_laplace_mode_jacobian(laplace, values)
@@ -1909,7 +1961,7 @@ function ctsem_subject_gradients(laplace::CTSEMLaplaceObjective,
     return (value=value + _ctsem_log_prior(laplace.objective, theta), scores=scores)
 end
 
-for (f, what) in ((:ctsem_kalman, "Filtering"), (:ctsem_generate, "Data generation"))
+for (f, what) in ((:ctsem_generate, "Data generation"),)
     @eval function $f(laplace::CTSEMLaplaceObjective, args...; kwargs...)
         throw(ArgumentError(string($what, " is not implemented for the Laplace ",
             "random-effect route yet. It needs a per-subject parameter vector ",

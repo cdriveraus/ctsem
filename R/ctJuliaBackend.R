@@ -1429,14 +1429,10 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
   # `stanfit$kalman`: summary()'s standardised residual covariance reads it, and
   # recomputing it per summary call would repeat a whole filter pass.
   #
-  # Not on the Laplace route: filtering there needs each subject's own random
-  # effects, which is a per-subject parameter vector the trace entry point does
-  # not yet take. Caching the population-level filter under the same name would
-  # make every consumer of `fit$kalman` silently report the typical subject, so
-  # the field is left absent and the summary omits what depends on it.
-  if (is.null(model_spec$laplace)) {
-    out$kalman <- suppressMessages(ctKalmanArray(out, pointest = TRUE))
-  }
+  # The Laplace route filters each subject at its own estimated random effects,
+  # which is the smoothed equivalent of what the augmented route's carrier
+  # states give -- see `.ctBackendKalmanRaw`, which says so at the point of use.
+  out$kalman <- suppressMessages(ctKalmanArray(out, pointest = TRUE))
   out
 }
 

@@ -292,7 +292,10 @@ end
 Prior, filtered and smoothed states and observations for every data row, plus
 each subject's own model matrices.
 
-`values` is one raw parameter vector. The returned named tuple carries `eta`,
+`values` is one raw parameter vector, used for every subject -- or a matrix
+whose row `i` is subject `i`'s own. The second form is what a Laplace fit needs,
+where each subject is filtered at its own realized parameters rather than at a
+shared population vector. The returned named tuple carries `eta`,
 `etacov`, `y`, `ycov` with leading dimension 1 = prior, 2 = updated, 3 =
 smoothed; `llrow`; `subject`; `subject_loglik`; `transition` (the interval
 Jacobian that reached each row, `nrows` by `n` by `n`); and, unless
@@ -305,11 +308,15 @@ come out: ctsem carries an individually varying parameter as an augmented
 latent state with no drift and no diffusion, so the smoothed t0 estimate of that
 state is the subject's value for it.
 """
-function ctsem_kalman(objective::CTSEMObjective, values::AbstractVector;
+function ctsem_kalman(objective::CTSEMObjective, values::AbstractVecOrMat;
     subject_matrices::Bool=true)
 
     sp = objective.params
-    raw = Vector{Float64}(values)
+    persubject = values isa AbstractMatrix
+    persubject && size(values, 1) == length(objective.subject_objectives) ||
+        persubject && throw(DimensionMismatch(
+            "one row of parameters per subject is required"))
+    raw = persubject ? Vector{Float64}(view(values, 1, :)) : Vector{Float64}(values)
     ws = _init_continuous_ekf_workspace(Float64, sp)
     n = _val(ws.state_dim)
     m = _val(ws.manifest_dim)
@@ -325,6 +332,7 @@ function ctsem_kalman(objective::CTSEMObjective, values::AbstractVector;
         nobs = size(sub.data, 2)
         trace.offset = offset
         trace.current_subject = i
+        persubject && copyto!(raw, view(values, i, :))
         value = _extended_kalman_filter_continuous!(ws, raw, sub.data,
             collect(sub.timesteps), sp, sub.tdpreds, sub.tipreds, i, sub.max_timestep,
             trace)
