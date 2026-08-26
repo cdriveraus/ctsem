@@ -156,6 +156,14 @@ ctDiscretePars<-function(fit, subjects='popmean',
   }
 
 
+  # Which evaluation point the DRIFT being exponentiated below actually came
+  # from -- the population pass, or each subject's own filter pass. They are
+  # different points and the reader is told which one they got.
+  .ctContextMessage(fit,
+    if('popmean' %in% subjects) .ctContextPopLabel else .ctContextSubjectLabel,
+    paste0("expm(DRIFT*t) is therefore the transition of the model linearised ",
+      "there, not the nonlinear system's own interval regression."))
+
   out <- ctDiscreteParsDrift(ctpars,times, observational, standardise, cov=cov,discreteInput = ctm$continuoustime==FALSE)
 
   dimnames(out)<- list(Sample=samples, Subject=subjects,
@@ -163,6 +171,7 @@ ctDiscretePars<-function(fit, subjects='popmean',
 
   attributes(out)$observational <- observational
   attributes(out)$cov <- cov
+  out <- .ctContextAttach(out, fit)
 
   if(plot) {
 

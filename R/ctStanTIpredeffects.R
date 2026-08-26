@@ -134,6 +134,13 @@ ctTIpredEffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   
   
   if(parmatrices)  {
+    # stan_constrainsamples() below runs with dokalman=FALSE, so every matrix it
+    # returns comes from the population pass -- state-dependent cells at
+    # T0MEANS, TD predictors at zero -- for every TI predictor level alike.
+    .ctContextMessage(fit, .ctContextPopLabel,
+      paste0("The covariate effect shown for those cells is therefore the effect ",
+        "at that one point, not across the range of states the covariate implies."))
+
     rawpopmeans <- rawpopmeans[rep(1:nrow(rawpopmeans),each=nsubjects),] #match rows of rawpopmeans and raweffect
     raweffect <- matrix(raweffect,ncol=dim(raweffect)[4])
     

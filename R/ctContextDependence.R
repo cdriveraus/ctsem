@@ -237,6 +237,26 @@
   cells[cells$kind %in% .ctContextProblemKinds, , drop = FALSE]
 }
 
+# Cells referencing *both* a carrier state and something dynamic.
+#
+# These are the one case that cannot be reported as a subject parameter at all.
+# A carrier-only cell is that subject's parameter, exactly; a dynamic-only cell
+# is not a parameter and is excluded from subject parameter reporting anyway.
+# A cell that is both looks like a parameter and reports a number that also
+# moves with the trajectory, so its last-row value silently conflates the
+# individual difference with wherever that subject happened to end up.
+.ctContextConflatedCells <- function(fit) {
+  cells <- .ctFitContextDependentCells(fit)
+  if (!nrow(cells)) return(cells[0L, , drop = FALSE])
+  key <- paste(cells$matrix, cells$row, cells$col, sep = "\r")
+  carrier <- unique(key[cells$kind %in% "carrier"])
+  dynamic <- unique(key[cells$kind %in% .ctContextProblemKinds])
+  both <- intersect(carrier, dynamic)
+  out <- unique(cells[key %in% both, c("matrix", "row", "col"), drop = FALSE])
+  rownames(out) <- NULL
+  out
+}
+
 #' The one sentence every context-dependence message uses
 #'
 #' @param cells As returned by \code{.ctFitConditionalCells}.
@@ -250,17 +270,45 @@
   matrices <- paste0(unique(cells$matrix), collapse = ", ")
   kinds <- paste0(unique(unname(.ctContextKindLabels[unique(cells$kind)])), collapse = " and ")
   paste0("Cells of ", matrices, " depend on the ", kinds,
-    ", so they have no single value; the values reported here were evaluated at ",
-    label, " and are conditional on it.",
+    ", so they have no single value. The values reported here were evaluated at ",
+    label, ", and are conditional on that.",
     if (!is.null(remedy)) paste0(" ", remedy) else "")
 }
 
-# Emit .ctContextNote() once per call site. Silent for a linear model, and
-# silent for a model whose only context dependence is carrier states.
-.ctContextMessage <- function(fit, label, remedy = NULL) {
+# The two evaluation points the package actually uses, named once so that every
+# message spells them the same way.
+.ctContextPopLabel <- "the T0MEANS state, with time dependent predictors at zero"
+.ctContextSubjectLabel <- "each subject's last observed row"
+
+# What the reader can do about it, which differs by backend: only the julia
+# engine can materialise the matrices at a caller-chosen point. Retrofitting
+# that into Stan's generated code is a large change to a backend that is no
+# longer the development line, so its message says so rather than pretending.
+.ctContextRemedy <- function(fit) {
+  if (inherits(fit, "ctJuliaFit")) {
+    "Pass state= (or 'mean', 'asymptotic') to evaluate them elsewhere."
+  } else {
+    "Evaluating them at another point requires backend='julia'."
+  }
+}
+
+# Emit .ctContextNote() from a user-facing entry point. Silent for a linear
+# model, and silent for a model whose only context dependence is carrier
+# states. Internal callers attach the attribute without messaging, so that one
+# summary() does not print the same sentence five times.
+.ctContextMessage <- function(fit, label, remedy = .ctContextRemedy(fit)) {
   note <- .ctContextNote(.ctFitConditionalCells(fit), label, remedy)
   if (!is.null(note)) message(note)
   invisible(note)
+}
+
+# Attach the cells to a returned object so a caller can act on them
+# programmatically rather than by parsing a message.
+.ctContextAttach <- function(x, fit) {
+  cells <- try(.ctFitContextDependentCells(fit), silent = TRUE)
+  if (inherits(cells, "try-error")) return(x)
+  attr(x, "contextDependent") <- cells
+  x
 }
 
 #' Does a model or fit have context-dependent (nonlinear) matrix cells?
@@ -286,3 +334,49 @@ ctModelIsNonlinear <- function(x) {
   if (inherits(cells, "try-error")) return(NA)
   nrow(cells) > 0L
 }
+
+#' Context dependence of reported model matrices
+#'
+#' @description
+#' A ctsem matrix cell may be written as an expression referencing a latent
+#' process or a time dependent predictor -- for instance
+#' \code{DRIFT[1,1] = '-log1p(exp(param)) * eta2'}. Such a cell has no single
+#' value. It has a value \emph{at} an evaluation context: a latent state, a set
+#' of time dependent predictor values, a time and an interval.
+#'
+#' @details
+#' ctsem's summaries and plots report a number for every cell, so for a model
+#' like this they must pick a point. There are two, and which one you get
+#' depends on what you asked for:
+#'
+#' \itemize{
+#'   \item \strong{Population matrices} (\code{summary}, \code{ctSummaryMatrices},
+#'     \code{ctDiscretePars(subjects='popmean')}, \code{ctTIpredEffects}) are
+#'     evaluated at the population \code{T0MEANS} state, with time dependent
+#'     predictors at zero.
+#'   \item \strong{Subject matrices} (\code{ctSubjectPars},
+#'     \code{ctDiscretePars(subjects=)}) are evaluated at each subject's last
+#'     observed row.
+#' }
+#'
+#' Only \code{\link{ctKalman}} and \code{\link{ctPredict}} avoid the choice
+#' entirely, because they run the filter and re-evaluate every cell at every
+#' step.
+#'
+#' A reference to an \emph{individually varying} parameter is not affected by
+#' any of this. ctsem represents such a parameter as a carrier latent state
+#' with no drift and no diffusion, so a cell reading that state simply is the
+#' parameter, and the estimate at the subject's last row is the one that has
+#' seen all of that subject's data -- the best available, not an arbitrary
+#' point. Only references to real dynamic processes, and to time dependent
+#' predictors, make a reported value conditional.
+#'
+#' Functions affected by this attach the cells in question as
+#' \code{attr(x, 'contextDependent')}, and say so once in a message.
+#' \code{\link{ctModelIsNonlinear}} answers the question directly. With
+#' \code{backend='julia'} the evaluation point can be chosen; see the
+#' \code{state} argument of \code{\link{ctBackendParMatrices}}.
+#'
+#' @name ctContextDependence
+#' @seealso \code{\link{ctModelIsNonlinear}}, \code{\link{ctBackendParMatrices}}
+NULL

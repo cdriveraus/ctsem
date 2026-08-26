@@ -106,12 +106,14 @@ ctSummaryMatrices.ctStanFit <- function(fit,
   # The collapse itself lives in .ctSummaryMatricesFromArrays (ctBackendSummary.R)
   # so that the stan and julia backends summarise identical pop_* arrays with
   # identical code rather than with two copies that can drift.
-  .ctSummaryMatricesFromArrays(e,
+  out <- .ctSummaryMatricesFromArrays(e,
     continuoustime = fit$ctstanmodel$continuoustime,
     latentNames = fit$ctstanmodel$latentNames,
     manifestNames = fit$ctstanmodel$manifestNames,
     TDpredNames = fit$ctstanmodel$TDpredNames,
     calcfunc = calcfunc, calcfuncargs = calcfuncargs, timeinterval = timeinterval)
+  .ctContextMessage(fit, .ctContextPopLabel)
+  .ctContextAttach(out, fit)
 }
 
 #' @export
@@ -140,6 +142,20 @@ ctStanContinuousPars <- ctSummaryMatrices
 #' dimnames(indpars)
 #' plot(indpars[1,,'cint1'],indpars[1,,'cint2'])
 ctSubjectPars <- function(fit,pointest=TRUE,cores=2,nsamples='all'){
+
+  # A cell that reads a carrier state *is* that subject's parameter, and the
+  # last row is the fully informed estimate of it -- nothing to warn about, and
+  # nothing here evaluates it anywhere else. A cell that reads a carrier state
+  # *and* something dynamic is the exception: its last-row value conflates the
+  # individual difference with wherever that subject's trajectory ended.
+  conflated <- .ctContextConflatedCells(fit)
+  if(nrow(conflated)) warning(call.=FALSE, paste0(
+    'Cells of ', paste0(unique(conflated$matrix),collapse=', '),
+    ' reference both an individually varying parameter and the latent state or a ',
+    'time dependent predictor. Their values here mix the individual difference ',
+    'with the state at each subject\'s last observed row, and are not subject ',
+    'parameters. Read them with ctSummaryMatrices() at an explicit evaluation ',
+    'point instead.'))
 
   # backend='julia' fits reach the same quantity by the same route -- the
   # subject matrices ctExtract() returns -- but reach the model metadata through
@@ -307,11 +323,13 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   
   
   if(parmatrices){
-    Mean=ctSummaryMatrices(object,calcfunc = mean,calcfuncargs=list(),timeinterval=timeinterval)
-    sd=ctSummaryMatrices(object,calcfunc = sd,calcfuncargs = list(na.rm=TRUE),timeinterval=timeinterval)
-    `2.5%` = ctSummaryMatrices(object,calcfunc = quantile,calcfuncargs = list(probs=.025),timeinterval=timeinterval)
-    `50%` = ctSummaryMatrices(object,calcfunc = quantile,calcfuncargs = list(probs=.5),timeinterval=timeinterval)
-    `97.5%` = ctSummaryMatrices(object,calcfunc = quantile,calcfuncargs = list(probs=.975),timeinterval=timeinterval)
+    # Five collapses of the same arrays, so the context note is emitted once
+    # here as a summary section rather than five times as a message.
+    Mean=suppressMessages(ctSummaryMatrices(object,calcfunc = mean,calcfuncargs=list(),timeinterval=timeinterval))
+    sd=suppressMessages(ctSummaryMatrices(object,calcfunc = sd,calcfuncargs = list(na.rm=TRUE),timeinterval=timeinterval))
+    `2.5%` = suppressMessages(ctSummaryMatrices(object,calcfunc = quantile,calcfuncargs = list(probs=.025),timeinterval=timeinterval))
+    `50%` = suppressMessages(ctSummaryMatrices(object,calcfunc = quantile,calcfuncargs = list(probs=.5),timeinterval=timeinterval))
+    `97.5%` = suppressMessages(ctSummaryMatrices(object,calcfunc = quantile,calcfuncargs = list(probs=.975),timeinterval=timeinterval))
     
     d <- data.frame(ctModelUnlist(Mean,matnames = names(Mean)))
     colnames(d)[colnames(d) %in% 'value'] <- 'Mean'
@@ -322,8 +340,10 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
     d$Mean <- round(d$Mean,digits)
     rm(sd)
     d <- d[!d$matrix %in% c('DIFFUSION','T0VAR'),]
-    
+
     out$parmatrices=d
+    out$parmatNote <- .ctContextNote(.ctFitConditionalCells(object),
+      .ctContextPopLabel, .ctContextRemedy(object))
   }
   
   

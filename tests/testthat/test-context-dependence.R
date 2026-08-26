@@ -101,3 +101,59 @@ test_that('the shared note names the matrices and the evaluation point', {
   expect_match(note, 'the T0MEANS state')
   expect_match(note, 'Use state= for another')
 })
+
+test_that('cells mixing a carrier and a dynamic reference are detected', {
+  mixed <- structure(list(
+    standata = list(nlatent = 2L),
+    setup = list(matsetup = data.frame(parname = c('state[9]*state[1]', 'd22'),
+      row = c(1L, 2L), col = c(1L, 2L), matrix = c(3L, 3L)))),
+    class = c('ctStanFit', 'ctFit'))
+  expect_equal(nrow(ctsem:::.ctContextConflatedCells(mixed)), 1)
+
+  carrier <- structure(list(
+    standata = list(nlatent = 2L),
+    setup = list(matsetup = data.frame(parname = 'param*state[9]', row = 1L, col = 1L,
+      matrix = 7L))),
+    class = c('ctStanFit', 'ctFit'))
+  expect_equal(nrow(ctsem:::.ctContextConflatedCells(carrier)), 0)
+})
+
+test_that('the message fires for dynamic and TD dependence and not otherwise', {
+  mk <- function(parname, matrix) structure(list(
+    standata = list(nlatent = 2L),
+    setup = list(matsetup = data.frame(parname = parname, row = 1L, col = 1L,
+      matrix = matrix))),
+    class = c('ctStanFit', 'ctFit'))
+
+  expect_message(ctsem:::.ctContextMessage(mk('log1p(exp(state[1]))', 3L),
+    ctsem:::.ctContextPopLabel), 'latent state')
+  expect_message(ctsem:::.ctContextMessage(mk('b*tdpreds[rowi, 1]', 3L),
+    ctsem:::.ctContextPopLabel), 'time dependent predictor')
+  expect_silent(ctsem:::.ctContextMessage(mk('param*state[9]', 7L),
+    ctsem:::.ctContextPopLabel))
+  expect_silent(ctsem:::.ctContextMessage(mk('d11', 3L), ctsem:::.ctContextPopLabel))
+})
+
+test_that('the remedy names the julia backend only for a julia fit', {
+  cells <- mk <- structure(list(
+    standata = list(nlatent = 2L),
+    setup = list(matsetup = data.frame(parname = 'log1p(exp(state[1]))', row = 1L,
+      col = 1L, matrix = 3L))),
+    class = c('ctStanFit', 'ctFit'))
+  expect_match(ctsem:::.ctContextRemedy(mk), "backend='julia'")
+  class(mk) <- c('ctJuliaFit', 'ctFit')
+  expect_match(ctsem:::.ctContextRemedy(mk), 'state=')
+})
+
+# The bundled fit is linear, but its individually varying CINT parameters are
+# carried as latent states -- so its DRIFT/CINT expressions do contain
+# `state[k]`. A detector that looked only for that string would warn about
+# every ordinary random-effects model in the package.
+test_that('a linear random-effects fit is not reported as nonlinear', {
+  skip_if_not(exists('ctstantestfit'))
+  cells <- ctsem:::.ctFitContextDependentCells(ctstantestfit)
+  expect_true(all(cells$kind == 'carrier'))
+  expect_false(ctModelIsNonlinear(ctstantestfit))
+  expect_equal(nrow(ctsem:::.ctFitConditionalCells(ctstantestfit)), 0)
+  expect_null(summary(ctstantestfit, priorcheck = FALSE)$parmatNote)
+})

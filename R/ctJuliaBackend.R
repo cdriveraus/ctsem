@@ -1271,8 +1271,11 @@ ctExtract.ctJuliaFit <- function(object, subjectMatrices = FALSE, cores = 2,
 #' @export
 ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   calcfuncargs = list(probs = 0.5), timeinterval = 1, ...) {
-  .ctBackendSummaryMatrices(fit, calcfunc = calcfunc, calcfuncargs = calcfuncargs,
+  out <- .ctBackendSummaryMatrices(fit, calcfunc = calcfunc, calcfuncargs = calcfuncargs,
     timeinterval = timeinterval, ...)
+  # Silent when the caller chose the evaluation point themselves.
+  if (!"state" %in% names(list(...))) .ctContextMessage(fit, .ctContextPopLabel)
+  .ctContextAttach(out, fit)
 }
 
 # Run the engine's optimizer over a prepared specification.
