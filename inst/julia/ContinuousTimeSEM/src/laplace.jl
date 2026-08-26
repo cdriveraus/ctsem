@@ -805,6 +805,90 @@ end
 @inline _laplace_symmetrise(A) = (A .+ transpose(A)) ./ 2
 
 """
+    _laplace_selected_inverse(factors, coupling, blocks)
+
+The entries of `C = inv(M)` that lie in `M`'s own sparsity pattern: every
+block's diagonal, and every block's coupling to each of its ancestors.
+
+This is the Takahashi recursion. Writing the factorization as `M = L D L'` with
+unit lower `L`, the below-diagonal entries for block `b` are
+`L[a,b] = B[b,a]' inv(D_b)` over `a` in `anc(b)`, and then, taking blocks from
+the outermost inwards,
+
+    C[anc(b), b] = -C[anc(b), anc(b)] L[anc(b), b]
+    C[b, b]      = inv(D_b) - L[anc(b), b]' C[anc(b), b]
+
+The recursion closes on the stored pattern rather than spilling outside it: the
+ancestors of a block form a chain, so for two of them one is an ancestor of the
+other and their coupling is already a stored entry. Nothing dense is ever
+formed, which is the whole point -- `C` itself is dense for an arrow matrix,
+and only these selected entries are wanted.
+
+They are wanted because `dH/dtheta` is block sparse, so
+
+    tr(C dH/dtheta) = sum_b tr(C[b,b] dH[b,b]/dtheta)
+                    + 2 sum_b sum_{a in anc(b)} tr(C[a,b] dH[b,a]/dtheta)
+
+and every term needs only an entry this returns.
+
+Returns `(diag, coupling)` shaped exactly like the `CTSEMBlockMatrix` it
+inverts: `diag[b]` is `C[b,b]` and `coupling[b][t]` is `C[b, anc(b)[t]]`.
+"""
+function _laplace_selected_inverse(factors, elim, blocks::Vector{CTSEMLaplaceBlock})
+    nb = length(blocks)
+    Cdiag = [zeros(Float64, b.size, b.size) for b in blocks]
+    Ccoup = [[zeros(Float64, b.size, blocks[a].size) for a in b.ancestors]
+             for b in blocks]
+
+    # Where block `a`'s coupling to block `c` is stored, and whether it needs
+    # transposing to read as `C[a, c]`.
+    function entry(a::Int, c::Int)
+        a == c && return (:diag, a, 0, false)
+        slot = findfirst(==(c), blocks[a].ancestors)
+        slot !== nothing && return (:coup, a, slot, false)
+        slot = findfirst(==(a), blocks[c].ancestors)
+        slot !== nothing && return (:coup, c, slot, true)
+        return (:none, 0, 0, false)
+    end
+    function readC(a::Int, c::Int)
+        kind, i, t, flip = entry(a, c)
+        kind === :diag && return Cdiag[i]
+        kind === :coup && return flip ? transpose(Ccoup[i][t]) : Ccoup[i][t]
+        # Outside the pattern. Two blocks with no ancestor relation never
+        # couple in `M`, and no term of the trace above asks for them.
+        return zeros(Float64, blocks[a].size, blocks[c].size)
+    end
+
+    for b in nb:-1:1
+        ancestors = blocks[b].ancestors
+        Dinv = inv(factors[b])
+        if isempty(ancestors)
+            Cdiag[b] .= _laplace_symmetrise(Dinv)
+            continue
+        end
+        # L[a, b] = B[b,a]' inv(D_b), as a k_a x k_b block.
+        Lb = [transpose(elim[b][t]) * Dinv for t in eachindex(ancestors)]
+        # C[anc, b] = -C[anc, anc] L[anc, b], accumulated over the ancestor set.
+        for t in eachindex(ancestors)
+            a = ancestors[t]
+            acc = zeros(Float64, blocks[a].size, blocks[b].size)
+            for sidx in eachindex(ancestors)
+                c = ancestors[sidx]
+                acc .+= readC(a, c) * Lb[sidx]
+            end
+            Ccoup[b][t] .= .-transpose(acc)
+        end
+        # C[b,b] = inv(D_b) - L[anc,b]' C[anc,b]
+        acc = copy(Dinv)
+        for t in eachindex(ancestors)
+            acc .-= transpose(Lb[t]) * transpose(Ccoup[b][t])
+        end
+        Cdiag[b] .= _laplace_symmetrise(acc)
+    end
+    return (Cdiag, Ccoup)
+end
+
+"""
     _laplace_block_solve(factors, coupling, blocks, rhs)
 
 Solve `M x = rhs` using the factorization above, by forward substitution over

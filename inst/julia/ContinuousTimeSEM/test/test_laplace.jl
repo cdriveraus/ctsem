@@ -635,6 +635,43 @@ end
     @test isnan(ld)
 end
 
+@testset "the selected inverse matches the dense inverse on the pattern" begin
+    # Only the entries inside `M`'s own sparsity pattern are produced, because
+    # the full inverse of an arrow matrix is dense and is exactly what must not
+    # be formed. Those entries have to be right, so they are compared with the
+    # dense inverse of the same matrix.
+    for (label, fresh) in (("one level", _fresh_linear), ("two levels", _fresh_twolevel))
+        laplace, values = fresh()
+        theta = collect(Float64, values)
+        Ls = ContinuousTimeSEM._laplace_popchols(theta, laplace.spec)
+        for U in eachindex(laplace.units.members)
+            blocks = laplace.units.blocks[U]
+            isempty(blocks) && continue
+            u = 0.1 .* collect(1.0:laplace.units.dims[U])
+            M = ContinuousTimeSEM._laplace_unit_curvature(laplace, U, theta, Ls, u)
+            ContinuousTimeSEM._laplace_repair_blocks!(M, blocks)
+            ok, _, factors, elim = ContinuousTimeSEM._laplace_block_factor(M, blocks)
+            @test ok
+
+            dense = ContinuousTimeSEM._laplace_block_dense(M, blocks,
+                laplace.units.dims[U])
+            reference = inv(Symmetric(dense))
+            Cd, Cc = ContinuousTimeSEM._laplace_selected_inverse(factors, elim, blocks)
+
+            for (b, block) in enumerate(blocks)
+                rows = (block.offset + 1):(block.offset + block.size)
+                @test norm(Cd[b] - reference[rows, rows]) /
+                      max(norm(reference[rows, rows]), 1) < 1e-8
+                for (t, a) in enumerate(block.ancestors)
+                    cols = (blocks[a].offset + 1):(blocks[a].offset + blocks[a].size)
+                    @test norm(Cc[b][t] - reference[rows, cols]) /
+                          max(norm(reference[rows, cols]), 1) < 1e-8
+                end
+            end
+        end
+    end
+end
+
 @testset "the population covariance follows the Stan parameterisation" begin
     laplace, values = _fresh_linear()
     spec = laplace.spec
