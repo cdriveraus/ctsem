@@ -536,6 +536,33 @@ end
     @test maximum(abs, H[arows, srows]) > 1e-8
 end
 
+@testset "correlations are capped at the boundary, and the cap is reported" begin
+    # Driving the coordinate far past the cap must give the same covariance as
+    # sitting exactly on it: that is what "capped" means, and it is what stops
+    # the covariance running to singularity on a design that cannot identify
+    # the correlation.
+    laplace, values = _fresh_linear()
+    cap = ContinuousTimeSEM._LAPLACE_COR_CAP[]
+    spec = laplace.spec.levels[1]
+
+    at = collect(values); at[spec.cor_index[1]] = cap
+    past = collect(values); past[spec.cor_index[1]] = cap * 20
+    @test ContinuousTimeSEM._laplace_popchol(at, spec) ≈
+          ContinuousTimeSEM._laplace_popchol(past, spec)
+
+    # And it is reported rather than silently applied.
+    @test isempty(ctsem_laplace_boundary(laplace, values).level)
+    flagged = ctsem_laplace_boundary(laplace, past)
+    @test flagged.level == [1]
+    @test flagged.position == [1]
+
+    # Below the cap nothing is touched.
+    below = collect(values); below[spec.cor_index[1]] = cap / 2
+    @test !(ContinuousTimeSEM._laplace_popchol(below, spec) ≈
+            ContinuousTimeSEM._laplace_popchol(at, spec))
+    @test isempty(ctsem_laplace_boundary(laplace, below).level)
+end
+
 @testset "the population covariance follows the Stan parameterisation" begin
     laplace, values = _fresh_linear()
     spec = laplace.spec

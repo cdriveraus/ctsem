@@ -181,6 +181,90 @@
 # `.ctJuliaAugmentRandomEffects` appends the population SD and correlation
 # parameters in exactly that order, and `.ctJuliaTIEffects` appends the TI
 # coefficients after them, so the indices line up without a separate mapping.
+# Priors for the Laplace route, built from *its* raw layout rather than Stan's.
+#
+# `.ctBackendPriorSpec` below encodes the generated Stan model's ordering:
+# population means, one block of population scales, one block of correlations,
+# then TI-predictor effects. That is right for a single level and wrong for a
+# hierarchy, where there is a scale block and a correlation block *per level* --
+# it refuses rather than mis-assigning, which is how the gap surfaced.
+#
+# Every level gets the prior shape the subject level has: `normal(0,1)` on the
+# untransformed scales and on the unconstrained correlation coordinates, which
+# is what `rawpopsdbase` and `sqrtpcov` carry in the generated model. That is a
+# deliberate choice rather than an inherited one -- the parameterisation is
+# identical at every level, so the prior should be too, while noting that the
+# same nominal prior does far more work over six studies than over three
+# hundred subjects.
+#
+# `.ctBackendLaplacePriorSpec` reproduces `.ctBackendPriorSpec` exactly when
+# there is one level, and `test-julia-laplace.R` asserts that rather than
+# trusting it.
+.ctBackendLaplacePriorSpec <- function(standata, laplace, npar) {
+  if (is.null(standata)) {
+    stop("priors=TRUE needs the prepared model data; this fit was built without it.",
+      call. = FALSE)
+  }
+  .ctBackendRejectLaplacePriors(standata)
+
+  nparams <- as.integer(standata$nparams)[1L]
+  if (is.na(nparams)) nparams <- 0L
+  index <- seq_len(nparams)
+  scale <- rep(1, nparams)
+
+  for (level in laplace$levels) {
+    if (length(level$sd_index)) {
+      index <- c(index, as.integer(level$sd_index))
+      scale <- c(scale, rep(1, length(level$sd_index)))
+    }
+    if (length(level$cor_index)) {
+      index <- c(index, as.integer(level$cor_index))
+      scale <- c(scale, rep(1, length(level$cor_index)))
+    }
+  }
+
+  ntipredeffects <- as.integer(standata$ntipredeffects)[1L]
+  if (!is.na(ntipredeffects) && ntipredeffects > 0L) {
+    tipredscale <- as.numeric(standata$tipredeffectscale)[1L]
+    if (!is.finite(tipredscale) || tipredscale <= 0) tipredscale <- 1
+    index <- c(index, laplace$npar + seq_len(ntipredeffects))
+    scale <- c(scale, rep(tipredscale, ntipredeffects))
+  }
+
+  if (length(index) != npar) {
+    stop("Cannot map ctsem's priors onto this model's raw parameters: the ",
+      "Laplace layout accounts for ", length(index), " of ", npar,
+      " free parameters. Please report this model shape.", call. = FALSE)
+  }
+  priormod <- as.numeric(standata$priormod)[1L]
+  if (!is.finite(priormod)) priormod <- 1
+  nsubsets <- as.numeric(standata$nsubsets)[1L]
+  if (!is.finite(nsubsets) || nsubsets <= 0) nsubsets <- 1
+  list(index = as.integer(index), scale = as.numeric(scale),
+    weight = priormod / nsubsets)
+}
+
+# The prior families these engines cannot evaluate, refused identically
+# whichever layout is in use.
+.ctBackendRejectLaplacePriors <- function(standata) {
+  laplaceprior <- as.integer(standata$laplaceprior)
+  if (length(laplaceprior) && any(laplaceprior == 1L)) {
+    stop("Laplace priors are not implemented for backend='julia'. ",
+      "The generated Stan model uses a smoothed double-exponential density for ",
+      "these, which these engines do not evaluate; use backend='stan', or drop ",
+      "laplaceprior for the affected matrices.", call. = FALSE)
+  }
+  if (isTRUE(as.integer(standata$laplacetipreds)[1L] == 1L)) {
+    stop("Laplace priors on TI predictor effects are not implemented for ",
+      "backend='julia'; use backend='stan'.", call. = FALSE)
+  }
+  if (isTRUE(as.integer(standata$laplaceprioronly)[1L] == 1L)) {
+    stop("laplaceprioronly is not implemented for backend='julia'; ",
+      "use backend='stan'.", call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
 .ctBackendPriorSpec <- function(standata, npar) {
   if (is.null(standata)) {
     stop("priors=TRUE needs the prepared model data; this fit was built without it.",

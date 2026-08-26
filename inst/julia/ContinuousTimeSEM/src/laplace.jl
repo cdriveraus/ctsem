@@ -364,6 +364,66 @@ ctsem_laplace_objective(objective::CTSEMObjective, re_index, sd_index, cor_index
 ################################################################################
 
 """
+Largest unconstrained correlation coordinate allowed, and the correlation it
+maps to: `2/(1+exp(-p)) - 1`, so `p = 5.2933` is a correlation of `0.99`.
+
+A random-effect correlation can be driven to the boundary by a design that
+cannot identify it -- a level estimates `k + k(k-1)/2` parameters from as many
+draws as it has groups, and there are usually far fewer studies than subjects.
+Left alone the coordinate runs off to infinity, the covariance approaches
+singularity, and the curvature factorizations start failing for reasons that
+have nothing to do with the model.
+
+Capping keeps the fit alive and bounded. It is a real restriction of the
+parameter space, not a numerical detail, so `ctsem_laplace_boundary` reports
+which coordinates are sitting on it and the R side warns naming them. A prior
+would also solve this, but it would change the estimator silently; a cap that
+announces itself does not.
+"""
+const _LAPLACE_COR_CAP = Ref(5.2933)
+
+export ctsem_set_correlation_cap!, ctsem_laplace_boundary
+"""
+    ctsem_set_correlation_cap!(p)
+
+Set the largest unconstrained correlation coordinate. `0` removes the cap.
+"""
+function ctsem_set_correlation_cap!(p::Real)
+    p >= 0 || throw(ArgumentError("correlation cap must be non-negative"))
+    _LAPLACE_COR_CAP[] = Float64(p)
+    return Float64(p)
+end
+
+"""Clamp one correlation coordinate, leaving other scalar types alone."""
+@inline function _laplace_cap_correlation(x)
+    cap = _LAPLACE_COR_CAP[]
+    cap <= 0 && return x
+    return clamp(x, -cap, cap)
+end
+
+"""
+    ctsem_laplace_boundary(laplace, values)
+
+Which unconstrained correlation coordinates are sitting on the cap, as
+`(level, position, value)` triples. Empty when none are, which is the ordinary
+case.
+"""
+function ctsem_laplace_boundary(laplace::CTSEMLaplaceObjective, values::AbstractVector)
+    cap = _LAPLACE_COR_CAP[]
+    levels = Int[]; positions = Int[]; found = Float64[]
+    cap <= 0 && return (level=levels, position=positions, value=found)
+    theta = collect(Float64, values)
+    for (l, level) in enumerate(laplace.spec.levels)
+        for (t, idx) in enumerate(level.cor_index)
+            if abs(theta[idx]) >= cap - 1e-8
+                push!(levels, l); push!(positions, t); push!(found, theta[idx])
+            end
+        end
+    end
+    return (level=levels, position=positions, value=found)
+end
+
+"""
     _laplace_popchol(values, level)
 
 The Cholesky factor of one level's raw-scale population covariance.
@@ -393,7 +453,8 @@ function _laplace_popchol(values::AbstractVector{T}, level::CTSEMLaplaceLevel) w
         for i in 1:k
             if i > j
                 counter += 1
-                base[i, j] = 2 / (1 + exp(-values[level.cor_index[counter]])) - 1
+                base[i, j] = 2 / (1 + exp(-_laplace_cap_correlation(
+                    values[level.cor_index[counter]]))) - 1
             end
         end
     end

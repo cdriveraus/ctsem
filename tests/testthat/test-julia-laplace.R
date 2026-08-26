@@ -314,6 +314,64 @@ test_that("both levels of a nested fit are estimated and reported separately", {
   expect_false(isTRUE(all.equal(subject, study)))
 })
 
+test_that("the Laplace prior layout reproduces the Stan one at a single level", {
+  # `.ctBackendPriorSpec` encodes the generated Stan model's raw ordering and is
+  # what every single-level fit has used. The Laplace construction builds the
+  # same thing from its own layout so it can carry more than one level. Where
+  # both apply they must agree exactly, or a fit would silently change its
+  # priors depending on which route built them.
+  standata <- list(nparams = 4L, nindvarying = 2L, nindvaryingoffdiagonals = 1L,
+    ntipredeffects = 2L, tipredeffectscale = 0.5, priormod = 1, nsubsets = 1,
+    laplaceprior = 0L, laplacetipreds = 0L, laplaceprioronly = 0L)
+  laplace <- list(npar = 7L, levels = list(list(sd_index = 5:6, cor_index = 7L)))
+
+  stanform <- ctsem:::.ctBackendPriorSpec(standata, 9L)
+  laplaceform <- ctsem:::.ctBackendLaplacePriorSpec(standata, laplace, 9L)
+  expect_equal(laplaceform, stanform)
+})
+
+test_that("every level gets the same prior shape, and its own sdscale", {
+  standata <- list(nparams = 4L, nindvarying = 1L, nindvaryingoffdiagonals = 0L,
+    ntipredeffects = 0L, priormod = 1, nsubsets = 1,
+    laplaceprior = 0L, laplacetipreds = 0L, laplaceprioronly = 0L)
+  # Two levels, one effect each: a scale slot per level, no correlations.
+  laplace <- list(npar = 6L, levels = list(list(sd_index = 5L, cor_index = integer()),
+    list(sd_index = 6L, cor_index = integer())))
+  spec <- ctsem:::.ctBackendLaplacePriorSpec(standata, laplace, 6L)
+  expect_equal(spec$index, 1:6)
+  # The same shape at both levels -- the parameterisation is identical, so the
+  # prior is. That it does more work over few studies than over many subjects
+  # is a property of the design, not something the prior should try to fix.
+  expect_equal(spec$scale, rep(1, 6))
+
+  # And a level scales its own population sd rather than borrowing level one's.
+  model <- .laplace_nested_model()
+  model$pars$sdscale_study[model$pars$param %in% "mmean"] <- 3
+  dat <- .laplace_nested_data()
+  levels <- suppressMessages(ctFit(dat, model, backend = "julia",
+    intoverpop = "laplace", fit = FALSE))$laplace$levels
+  expect_equal(levels[[1]]$sd_scale, 1)
+  expect_equal(levels[[2]]$sd_scale, 3)
+})
+
+test_that("a grouping id creates its level columns, defaulting sensibly", {
+  model <- .laplace_nested_model()
+  expect_true("sdscale_study" %in% names(model$pars))
+  expect_true("indvarying_study" %in% names(model$pars))
+  # sdscale defaults to the subject level's, which is 1 for free parameters.
+  free <- !is.na(model$pars$param) & is.na(model$pars$value)
+  expect_true(all(model$pars$sdscale_study[free] == 1))
+
+  # An outer level varies only where asked. Defaulting it the way `indvarying`
+  # defaults -- TRUE for T0MEANS, MANIFESTMEANS and CINT -- would make every
+  # model with a grouping id enormously parameterised without the user asking.
+  plain <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1),
+    id = c("subject", "study"))))
+  expect_false(any(plain$pars$indvarying_study %in% TRUE))
+  expect_true(any(plain$pars$indvarying %in% TRUE))
+})
+
 test_that("unsupported ways of asking for Laplace fail rather than doing something else", {
   model <- .laplace_test_model()
   dat <- .laplace_test_data(nsubjects = 4, nobs = 4)

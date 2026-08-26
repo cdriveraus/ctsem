@@ -585,9 +585,53 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # grouping level above it gets `indvarying_<idname>` -- explicit rather than
 # positional, so a model carrying three levels reads as three named columns
 # rather than as a matrix nobody can check by eye.
+# Which random-effect correlations, if any, ended the fit on their cap.
+#
+# Reported as a data frame naming the parameter pair and the level, because
+# "a correlation hit the boundary" is only actionable if you know which one.
+.ctJuliaBoundaryReport <- function(fit, model_spec, result) {
+  empty <- data.frame(level = character(), param = character(),
+    correlation = numeric(), stringsAsFactors = FALSE)
+  laplace <- model_spec$laplace
+  if (is.null(laplace)) return(empty)
+  module <- .ctJuliaModule(model_spec$project)
+  hit <- try(.ctBackendJuliaValue(module$ctsem_laplace_boundary(
+    .ctJuliaObjective(fit), .ctJuliaNumericVector(fit$estimate$raw))), silent = TRUE)
+  if (inherits(hit, "try-error") || !length(hit$level)) return(empty)
+  rows <- lapply(seq_along(hit$level), function(i) {
+    level <- laplace$levels[[hit$level[i]]]
+    names <- level$param
+    lower <- which(lower.tri(diag(max(1L, length(names)))), arr.ind = TRUE)
+    pair <- if (hit$position[i] <= nrow(lower))
+      paste0(names[lower[hit$position[i], 1L]], "__", names[lower[hit$position[i], 2L]])
+      else paste0("correlation", hit$position[i])
+    # The capped value, which is what the model used -- transforming the raw
+    # coordinate as it stands would report the correlation the optimizer was
+    # heading for rather than the one it was held at.
+    capped <- max(-.ctJuliaCorrelationCap(), min(.ctJuliaCorrelationCap(), hit$value[i]))
+    data.frame(level = level$name, param = pair,
+      correlation = 2 / (1 + exp(-capped)) - 1, stringsAsFactors = FALSE)
+  })
+  do.call(rbind, rows)
+}
+
+# The engine's correlation cap, read rather than duplicated.
+.ctJuliaCorrelationCap <- function() {
+  value <- try(JuliaConnectoR::juliaEval("ContinuousTimeSEM._LAPLACE_COR_CAP[]"),
+    silent = TRUE)
+  if (inherits(value, "try-error")) 5.2933 else as.numeric(value)[1L]
+}
+
 .ctJuliaLevelColumn <- function(model, level) {
   if (level == 1L) return("indvarying")
   paste0("indvarying_", model$groupIDnames[level - 1L])
+}
+
+# The matching sdscale column. One value per id element, so a level scales its
+# own population sd rather than borrowing the subject level's.
+.ctJuliaLevelScaleColumn <- function(model, level) {
+  if (level == 1L) return("sdscale")
+  paste0("sdscale_", model$groupIDnames[level - 1L])
 }
 
 # Each subject's group at each level, and a check that the nesting is strict.
@@ -668,7 +712,21 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
         hit <- which(!is.na(table$parnumber) & table$param %in% names_at_level)
         lv_varying <- sort(unique(as.integer(table$parnumber[hit])))
         lv_varying <- lv_varying[lv_varying <= base_npar]
+        # This level's own sdscale, not the subject level's: `sdscale` is one
+        # value per id element and each level uses its own.
+        scalecolumn <- .ctJuliaLevelScaleColumn(model, l)
         lv_scale <- rep(1, length(lv_varying))
+        if (scalecolumn %in% names(model$pars)) {
+          for (position in seq_along(lv_varying)) {
+            row <- which(!is.na(table$parnumber) & table$parnumber == lv_varying[position])
+            name <- if (length(row)) as.character(table$param[row[1L]]) else NA_character_
+            match_row <- which(model$pars$param %in% name)
+            if (length(match_row)) {
+              value <- as.numeric(model$pars[[scalecolumn]][match_row[1L]])
+              if (is.finite(value)) lv_scale[position] <- value
+            }
+          }
+        }
       }
     }
     k <- length(lv_varying)
@@ -996,7 +1054,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # reporting a plausible-looking number.
   npar <- if (!is.null(laplace)) laplace$npar else
     max(c(parameter_table$parnumber, ti_effects$coefficient), na.rm = TRUE)
-  prior_spec <- if (isTRUE(priors)) .ctBackendPriorSpec(prepared_data, npar) else NULL
+  prior_spec <- if (!isTRUE(priors)) NULL else if (!is.null(laplace)) {
+    .ctBackendLaplacePriorSpec(prepared_data, laplace, npar)
+  } else .ctBackendPriorSpec(prepared_data, npar)
   list(
     class = "ctJuliaModel",
     intoverpop = intoverpop,
@@ -1283,6 +1343,20 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
     if (!isTRUE(result$inner_converged)) {
       warning("The random-effect mode did not converge for every subject; ",
         "see fit$laplace$inner_converged.", call. = FALSE)
+    }
+    # A correlation sitting on its cap means the data could not locate it --
+    # usually a level with too few groups for the number of effects asked of
+    # it. The fit is still a fit; the estimate for that pair is not.
+    boundary <- .ctJuliaBoundaryReport(out, model_spec, result)
+    out$laplace$boundary <- boundary
+    if (nrow(boundary)) {
+      warning("Random-effect correlation", if (nrow(boundary) > 1) "s" else "",
+        " reached the boundary and ", if (nrow(boundary) > 1) "were" else "was",
+        " capped at |r| = ", signif(boundary$correlation[1L], 3), ": ",
+        paste(sprintf("%s (%s level)", boundary$param, boundary$level),
+          collapse = ", "),
+        ". This usually means the level has too few groups to identify that ",
+        "correlation. See fit$laplace$boundary.", call. = FALSE)
     }
   }
   class(out) <- c("ctJuliaFit", "ctFit")

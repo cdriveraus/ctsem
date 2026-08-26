@@ -376,6 +376,22 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   
   ctspec$sdscale<-NA
   ctspec$sdscale[is.na(ctspec$value)]<-1
+
+  # One sdscale per id element, defaulting to 1. `sdscale` is the subject
+  # level's; each grouping level above it gets `sdscale_<idname>`, the same
+  # rectangular encoding `indvarying_<idname>` uses. A genuine list column
+  # would be a more literal "one vector per parameter" but would break every
+  # consumer of `pars`, which indexes it as an ordinary data frame.
+  #
+  # `indvarying_<idname>` is created here too, defaulting to FALSE. Defaulting
+  # an outer level the way `indvarying` defaults -- TRUE for T0MEANS,
+  # MANIFESTMEANS and CINT -- would silently make every model with a grouping
+  # id enormously parameterised, so an outer level varies only where it is
+  # asked to.
+  for(nm in if(length(ctm$id) > 1) ctm$id[-1] else character()){
+    ctspec[[paste0('sdscale_', nm)]] <- ctspec$sdscale
+    ctspec[[paste0('indvarying_', nm)]] <- FALSE
+  }
   
   
   

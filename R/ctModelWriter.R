@@ -276,7 +276,8 @@ ctModelTransformsToNum<-function(ctm){
       # above the subject, and is exactly as much a part of the specification as
       # `indvarying` is. Dropping it here silently produced a study level with
       # no random effects in it.
-      colnames(ctm$pars)[grep('^indvarying_',colnames(ctm$pars))]) ]
+      colnames(ctm$pars)[grep('^indvarying_',colnames(ctm$pars))],
+      colnames(ctm$pars)[grep('^sdscale_',colnames(ctm$pars))]) ]
     # 
     if(any(rl(suppressWarnings(as.numeric(nctspec$transform)) >= 6))){ #if any are jacobian calcs length(tformshapes(singletext = TRUE))))) {
       nctspec$transform[rl(suppressWarnings(as.numeric(nctspec$transform)) >= 6)] <- #adjust jacobian gradients
