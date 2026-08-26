@@ -267,7 +267,13 @@
 #' @noRd
 .ctContextNote <- function(cells, label, remedy = NULL) {
   if (is.null(cells) || !nrow(cells)) return(NULL)
-  matrices <- paste0(unique(cells$matrix), collapse = ", ")
+  # Jacobian blocks are derivatives of the model matrices, not matrices anyone
+  # is shown, so naming them here would send the reader looking for output that
+  # does not exist. They stay in the cells table, which is the programmatic
+  # answer, and out of the sentence, which is the human one.
+  reportable <- setdiff(unique(cells$matrix), .ctBackendJacobianMatrices)
+  if (!length(reportable)) reportable <- unique(cells$matrix)
+  matrices <- paste0(reportable, collapse = ", ")
   kinds <- paste0(unique(unname(.ctContextKindLabels[unique(cells$kind)])), collapse = " and ")
   paste0("Cells of ", matrices, " depend on the ", kinds,
     ", so they have no single value. The values reported here were evaluated at ",
@@ -398,7 +404,10 @@ NULL
 # The population T0MEANS at engine (augmented) length, used both as the default
 # and as the padding for a shorter supplied state.
 .ctContextBaseState <- function(fit) {
-  as.numeric(ctBackendParMatrices(fit, trim = FALSE)$T0MEANS[, 1])
+  # suppressMessages: this is a lookup on the way to choosing an evaluation
+  # point, not a report of one, and the note belongs to the caller's choice.
+  as.numeric(suppressMessages(
+    ctBackendParMatrices(fit, trim = FALSE))$T0MEANS[, 1])
 }
 
 .ctContextPadState <- function(fit, state) {
@@ -439,7 +448,7 @@ NULL
   x <- .ctContextBaseState(fit)
   discrete <- !isTRUE(.ctFitModelObject(fit)$continuoustime)
   for (iteration in seq_len(maxiter)) {
-    mats <- ctBackendParMatrices(fit, state = x, trim = FALSE)
+    mats <- suppressMessages(ctBackendParMatrices(fit, state = x, trim = FALSE))
     drift <- mats$DRIFT[seq_len(nlatent), seq_len(nlatent), drop = FALSE]
     cint <- as.numeric(mats$CINT[seq_len(nlatent), 1])
     jacobian <- mats$JAx[seq_len(nlatent), seq_len(nlatent), drop = FALSE]
