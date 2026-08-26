@@ -696,24 +696,33 @@ end
 # the block's own `k_b x k_b` piece and `coupling[b][t]` is the coupling to
 # `blocks[b].ancestors[t]`, stored as `k_b x k_a`.
 
-"""Symmetric block curvature for one unit, stored by block rather than densely."""
-struct CTSEMBlockMatrix
-    diag::Vector{Matrix{Float64}}
-    coupling::Vector{Vector{Matrix{Float64}}}
+"""
+Symmetric block curvature for one unit, stored by block rather than densely.
+
+Generic in its element type because the outer gradient differentiates through
+the factorization: the nested route evaluates the log determinant with dual
+numbers, so every step below has to work for those as readily as for `Float64`.
+"""
+struct CTSEMBlockMatrix{T}
+    diag::Vector{Matrix{T}}
+    coupling::Vector{Vector{Matrix{T}}}
 end
 
 """An all-zero block matrix shaped for one unit."""
-function CTSEMBlockMatrix(blocks::Vector{CTSEMLaplaceBlock})
-    diag = [zeros(Float64, b.size, b.size) for b in blocks]
-    coupling = [[zeros(Float64, b.size, blocks[a].size) for a in b.ancestors]
+function CTSEMBlockMatrix(::Type{T}, blocks::Vector{CTSEMLaplaceBlock}) where {T}
+    diag = [zeros(T, b.size, b.size) for b in blocks]
+    coupling = [[zeros(T, b.size, blocks[a].size) for a in b.ancestors]
                 for b in blocks]
-    return CTSEMBlockMatrix(diag, coupling)
+    return CTSEMBlockMatrix{T}(diag, coupling)
 end
 
+CTSEMBlockMatrix(blocks::Vector{CTSEMLaplaceBlock}) =
+    CTSEMBlockMatrix(Float64, blocks)
+
 """Reassemble a block matrix densely. Testing and small-unit use only."""
-function _laplace_block_dense(M::CTSEMBlockMatrix, blocks::Vector{CTSEMLaplaceBlock},
-    dim::Integer)
-    out = zeros(Float64, dim, dim)
+function _laplace_block_dense(M::CTSEMBlockMatrix{T},
+    blocks::Vector{CTSEMLaplaceBlock}, dim::Integer) where {T}
+    out = zeros(T, dim, dim)
     for (b, block) in enumerate(blocks)
         rows = (block.offset + 1):(block.offset + block.size)
         out[rows, rows] .= M.diag[b]
@@ -727,8 +736,9 @@ function _laplace_block_dense(M::CTSEMBlockMatrix, blocks::Vector{CTSEMLaplaceBl
 end
 
 """Take the block form of a dense symmetric matrix. Testing use only."""
-function _laplace_block_of(dense::AbstractMatrix, blocks::Vector{CTSEMLaplaceBlock})
-    M = CTSEMBlockMatrix(blocks)
+function _laplace_block_of(dense::AbstractMatrix{T},
+    blocks::Vector{CTSEMLaplaceBlock}) where {T}
+    M = CTSEMBlockMatrix(T, blocks)
     for (b, block) in enumerate(blocks)
         rows = (block.offset + 1):(block.offset + block.size)
         M.diag[b] .= dense[rows, rows]
@@ -755,15 +765,16 @@ because a block's ancestors form a chain, every entry it touches is one that
 was already nonzero. That is the no-fill-in property, and it is why this stays
 linear in the number of members.
 """
-function _laplace_block_factor(M::CTSEMBlockMatrix, blocks::Vector{CTSEMLaplaceBlock})
+function _laplace_block_factor(M::CTSEMBlockMatrix{T},
+    blocks::Vector{CTSEMLaplaceBlock}) where {T}
     nb = length(blocks)
     diag = [copy(d) for d in M.diag]
     coupling = [[copy(c) for c in row] for row in M.coupling]
     factors = Vector{Any}(undef, nb)
-    total = 0.0
+    total = zero(T)
     for b in 1:nb
         f = cholesky(Symmetric(_laplace_symmetrise(diag[b])); check=false)
-        issuccess(f) || return (false, NaN, factors, coupling)
+        issuccess(f) || return (false, T(NaN), factors, coupling)
         factors[b] = f
         total += logdet(f)
         ancestors = blocks[b].ancestors
@@ -800,7 +811,7 @@ Solve `M x = rhs` using the factorization above, by forward substitution over
 the elimination order and back substitution against it.
 """
 function _laplace_block_solve(factors, coupling, blocks::Vector{CTSEMLaplaceBlock},
-    rhs::Vector{Float64})
+    rhs::Vector{T}) where {T}
     nb = length(blocks)
     y = [rhs[(blocks[b].offset + 1):(blocks[b].offset + blocks[b].size)] for b in 1:nb]
     # Forward: subtract each eliminated block's contribution from its ancestors.
@@ -811,7 +822,7 @@ function _laplace_block_solve(factors, coupling, blocks::Vector{CTSEMLaplaceBloc
         end
     end
     # Back: solve outermost-first, substituting into the blocks beneath.
-    x = [zeros(Float64, blocks[b].size) for b in 1:nb]
+    x = [zeros(T, blocks[b].size) for b in 1:nb]
     for b in nb:-1:1
         acc = copy(y[b])
         for (t, a) in enumerate(blocks[b].ancestors)
@@ -819,7 +830,7 @@ function _laplace_block_solve(factors, coupling, blocks::Vector{CTSEMLaplaceBloc
         end
         x[b] = factors[b] \ acc
     end
-    out = zeros(Float64, sum(b.size for b in blocks; init=0))
+    out = zeros(T, sum(b.size for b in blocks; init=0))
     for b in 1:nb
         out[(blocks[b].offset + 1):(blocks[b].offset + blocks[b].size)] .= x[b]
     end
@@ -971,24 +982,12 @@ two effects at each level that is 160 sweeps rather than 3280.
 The subtracted identity is the `-u'u/2` term, applied once here rather than
 inside each block.
 
-Which of the two runs is chosen per unit, because the blocked route is not
-universally better: it makes one `ForwardDiff.jacobian` call per block instead
-of one for the whole matrix, and that per-call overhead costs more than the
-saved sweeps until a unit is reasonably large. Measured on a one-latent model,
-five waves, one random effect at each level, milliseconds per curvature:
-
-    subjects/study   dim(u)   blocked   dense   ratio
-                 4        5      0.34    0.20    0.6x
-                 8        9      0.73    0.44    0.6x
-                16       17      1.43    1.86    1.3x
-                32       33      3.07    6.14    2.0x
-
-Dense grows quadratically in study size and blocked linearly, exactly as the
-structure says they should, but they cross over around `dim(u)` of 12 to 16.
-`_LAPLACE_BLOCK_THRESHOLD` is that crossover, and it is an empirical constant
-rather than a derived one -- set from the table above, on one machine. Passing
-`dense` explicitly overrides the choice, which is what the test that compares
-the two routes does.
+Nothing in the fitting path calls this any more: the production route is
+`_laplace_unit_curvature`, which produces the same curvature negated and in
+block form without materializing a dense matrix. It is kept because it computes
+that quantity by a route knowing nothing about the block structure, which is
+what makes it a usable reference for the tests that check the block assembly
+and the block factorization.
 """
 function _laplace_unit_hessian(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
@@ -996,10 +995,7 @@ function _laplace_unit_hessian(laplace::CTSEMLaplaceObjective, U::Integer,
     d = length(u)
     d == 0 && return zeros(T, 0, 0)
     blocks = laplace.units.blocks[U]
-    # One block is the whole matrix, so the two routes are the same computation
-    # and the blocked one only adds a layer.
-    usedense = dense === nothing ?
-        (length(blocks) <= 1 || d < _LAPLACE_BLOCK_THRESHOLD[]) : dense
+    usedense = dense === nothing ? true : dense
     if usedense
         inner_of = function (uu)
             S = eltype(uu)
@@ -1038,6 +1034,108 @@ function _laplace_unit_hessian(laplace::CTSEMLaplaceObjective, U::Integer,
 end
 
 """
+    _laplace_unit_curvature(laplace, U, values, Ls, u, slot)
+
+`-d2g/du du` for a unit, in block form, assembled without ever building the
+dense matrix.
+
+Column block `b` of the log-likelihood's curvature is `d(dll/du)/du_b`, and a
+member that does not sit under `b` has no dependence on `u_b`, so one Jacobian
+per block gives that block's diagonal *and* its couplings to its ancestors --
+which, by the tree sparsity, is every nonzero entry in its row. The `-u'u/2`
+term contributes the identity, added once here.
+
+Returned negated (`M = -H`) because that is the positive definite matrix
+everything downstream wants: the precision of the Gaussian being fitted, whose
+determinant is the approximation's normalizing constant.
+
+There is one representation downstream, always the block one, but two ways of
+filling it. Per-block assembly is `O(n)` in unit size where a single Jacobian
+over the whole gradient is `O(n^2)`, but it makes one `ForwardDiff.jacobian`
+call per block instead of one, and below roughly a dozen members that overhead
+costs more than the sweeps it saves -- measured at two to three times more.
+Small units are therefore assembled with one dense Jacobian and split into
+blocks afterwards, which is the same matrix by a cheaper route at that size.
+`_LAPLACE_BLOCK_THRESHOLD` is the crossover, and it is empirical rather than
+derived; `ctsem_set_block_threshold!` moves it.
+"""
+function _laplace_unit_curvature(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
+    slot::Integer=1) where {T}
+    blocks = laplace.units.blocks[U]
+    base = collect(u)
+    if length(blocks) <= 1 || length(u) < _LAPLACE_BLOCK_THRESHOLD[]
+        gradient_of = function (uu)
+            S = eltype(uu)
+            ws = _laplace_workspace!(laplace, S, length(values), slot)
+            vs = convert(Vector{S}, values)
+            Lss = [convert(Matrix{S}, L) for L in Ls]
+            return _laplace_unit_loglik_gradient(laplace, U, vs, Lss, uu, ws,
+                eachindex(laplace.units.members[U])).gradient
+        end
+        A = ForwardDiff.jacobian(gradient_of, base)
+        dense = Matrix{T}(LinearAlgebra.I, length(u), length(u)) .-
+            _laplace_symmetrise(A)
+        return _laplace_block_of(dense, blocks)
+    end
+    M = CTSEMBlockMatrix(T, blocks)
+    for (b, block) in enumerate(blocks)
+        columns = (block.offset + 1):(block.offset + block.size)
+        block_of = function (ub)
+            S = eltype(ub)
+            ws = _laplace_workspace!(laplace, S, length(values), slot)
+            vs = convert(Vector{S}, values)
+            Lss = [convert(Matrix{S}, L) for L in Ls]
+            uu = convert(Vector{S}, base)
+            @inbounds for (t, c) in enumerate(columns)
+                uu[c] = ub[t]
+            end
+            return _laplace_unit_loglik_gradient(laplace, U, vs, Lss, uu, ws,
+                block.members).gradient
+        end
+        J = ForwardDiff.jacobian(block_of, base[columns])
+        # M = I - d2(sum ll)/du du, block by block.
+        M.diag[b] .= Matrix{T}(LinearAlgebra.I, block.size, block.size) .-
+            J[columns, :]
+        for (t, a) in enumerate(block.ancestors)
+            rows = (blocks[a].offset + 1):(blocks[a].offset + blocks[a].size)
+            M.coupling[b][t] .= .-transpose(J[rows, :])
+        end
+    end
+    return M
+end
+
+"""
+    _laplace_repair_blocks!(M, blocks)
+
+Shift the block diagonals until the whole matrix factorizes, reporting whether
+anything had to be done.
+
+The block equivalent of `_laplace_negate_definite`: the curvature has to be
+negative definite for the approximation to mean anything, and it need not be on
+the way to a mode or at one for a badly identified model. Shifting is the
+standard repair; reporting it is what stops it being a silent change of
+objective.
+"""
+function _laplace_repair_blocks!(M::CTSEMBlockMatrix{T},
+    blocks::Vector{CTSEMLaplaceBlock}) where {T}
+    ok, _, _, _ = _laplace_block_factor(M, blocks)
+    ok && return false
+    scale = maximum((maximum(abs, d) for d in M.diag); init=one(real(T)))
+    scale = isfinite(scale) && scale > 0 ? scale : one(real(T))
+    shift = sqrt(eps(real(float(one(T)))))
+    for _ in 1:30
+        for d in M.diag
+            for i in axes(d, 1); d[i, i] += shift * scale; end
+        end
+        ok, _, _, _ = _laplace_block_factor(M, blocks)
+        ok && return true
+        shift *= 10
+    end
+    return true
+end
+
+"""
     _laplace_solve_unit_mode!(laplace, U, values, Ls, slot)
 
 Newton's method on `g_U`, warm-started from the retained mode for unit `U`.
@@ -1070,10 +1168,12 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
             converged = true
             break
         end
-        H = _laplace_unit_hessian(laplace, U, values, Ls, u, slot)
-        negative_definite, Hneg = _laplace_negate_definite(H)
-        repaired |= !negative_definite
-        step = Hneg \ current.gradient
+        M = _laplace_unit_curvature(laplace, U, values, Ls, u, slot)
+        repaired |= _laplace_repair_blocks!(M, laplace.units.blocks[U])
+        ok, _, factors, coupling = _laplace_block_factor(M, laplace.units.blocks[U])
+        ok || break
+        step = _laplace_block_solve(factors, coupling, laplace.units.blocks[U],
+            current.gradient)
         accepted = false
         scale = 1.0
         for _ in 1:20
@@ -1115,11 +1215,13 @@ gradient.
 """
 function _laplace_dual_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix},
-    uhat::Vector{Float64}, Hneg::Matrix{Float64}, aws) where {T}
+    uhat::Vector{Float64}, curvature, aws) where {T}
     isempty(uhat) && return Vector{T}(undef, 0)
     u0 = convert(Vector{T}, uhat)
     inner = _laplace_unit_objective_gradient(laplace, U, values, Ls, u0, aws)
-    return u0 .+ (Hneg \ inner.gradient)
+    factors, coupling = curvature
+    return u0 .+ _laplace_block_solve(factors, coupling, laplace.units.blocks[U],
+        inner.gradient)
 end
 
 """
@@ -1138,11 +1240,10 @@ function _laplace_unit_term(laplace::CTSEMLaplaceObjective, U::Integer,
     inner = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws)
     isfinite(inner.value) || return inner.value
     isempty(u) && return inner.value
-    H = _laplace_unit_hessian(laplace, U, values, Ls, u, slot)
-    negated = -(H .+ transpose(H)) ./ 2
-    factorization = cholesky(Symmetric(negated); check=false)
-    issuccess(factorization) || return T(NaN)
-    return inner.value - logdet(factorization) / 2
+    M = _laplace_unit_curvature(laplace, U, values, Ls, u, slot)
+    ok, logdetM, _, _ = _laplace_block_factor(M, laplace.units.blocks[U])
+    ok || return T(NaN)
+    return inner.value - logdetM / 2
 end
 
 ################################################################################
@@ -1432,7 +1533,11 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     #    primal pass thrown away.
     Ls = _laplace_popchols(theta, laplace.spec)
     L = Ls[1]
-    primal_hessians = Vector{Matrix{Float64}}(undef, nunits)
+    # Factorizations rather than dense curvatures. On a study of a few thousand
+    # subjects a dense one is over a hundred megabytes, and one is held per unit
+    # for the whole evaluation; the factors are kilobytes.
+    primal_curvature = Vector{Any}(undef, nunits)
+    primal_blocks = Vector{Matrix{Float64}}(undef, nunits)
     unit_loglik = zeros(Float64, nunits)
     subject_loglik = zeros(Float64, nsubjects)
     value = 0.0
@@ -1455,16 +1560,23 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
         @inbounds for U in ranges[c]
             _laplace_solve_unit_mode!(laplace, U, theta, Ls, c)
             u = laplace.modes[U]
-            H = isempty(u) ? zeros(Float64, 0, 0) :
-                _laplace_unit_hessian(laplace, U, theta, Ls, u, c)
-            _, negated = _laplace_negate_definite(H)
-            primal_hessians[U] = negated
+            blocks = laplace.units.blocks[U]
+            M = isempty(u) ? CTSEMBlockMatrix(Float64, blocks) :
+                _laplace_unit_curvature(laplace, U, theta, Ls, u, c)
+            isempty(u) || _laplace_repair_blocks!(M, blocks)
+            ok, logdetM, factors, coupling = _laplace_block_factor(M, blocks)
+            primal_curvature[U] = (factors, coupling)
+            # The single-level seeded gradient wants the dense `k x k` form. A
+            # single-level unit is one block, so that is just its diagonal.
+            primal_blocks[U] = (single_level && !isempty(M.diag)) ? M.diag[1] :
+                zeros(Float64, 0, 0)
             inner = _laplace_unit_objective_gradient(laplace, U, theta, Ls, u, aws)
             term = if !isfinite(inner.value) || isempty(u)
                 inner.value
+            elseif ok
+                inner.value - logdetM / 2
             else
-                factorization = cholesky(Symmetric(negated); check=false)
-                issuccess(factorization) ? inner.value - logdet(factorization) / 2 : NaN
+                NaN
             end
             if !isfinite(term)
                 chunk_ok[c] = false
@@ -1526,7 +1638,7 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             @inbounds for i in ranges[c]
                 z = laplace.modes[i]
                 if !_laplace_seeded_subject_gradient!(partials[c], laplace, i, theta,
-                        L, positions, dL, z, primal_hessians[i], c)
+                        L, positions, dL, z, primal_blocks[i], c)
                     chunk_ok[c] = false
                     return nothing
                 end
@@ -1551,10 +1663,10 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             # return a partial sum: fall back to the route that does not need
             # those factorizations.
             fill!(grad, 0.0)
-            grad .= _laplace_nested_gradient(laplace, theta, Ls, primal_hessians)
+            grad .= _laplace_nested_gradient(laplace, theta, Ls, primal_curvature)
         end
     else
-        grad .= _laplace_nested_gradient(laplace, theta, Ls, primal_hessians)
+        grad .= _laplace_nested_gradient(laplace, theta, Ls, primal_curvature)
     end
     return (value=value, gradient=grad, subject_loglik=subject_loglik,
         converged=all(laplace.inner_converged))
@@ -1571,8 +1683,7 @@ seeded path is tested against, and as its fallback when a factorization the
 seeded path needs is not available.
 """
 function _laplace_nested_gradient(laplace::CTSEMLaplaceObjective,
-    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}},
-    hessians::Vector{Matrix{Float64}})
+    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, curvature::Vector{Any})
     nunits = length(laplace.units.members)
     total_of = function (x)
         S = eltype(x)
@@ -1581,7 +1692,7 @@ function _laplace_nested_gradient(laplace::CTSEMLaplaceObjective,
         accumulated = zero(S)
         for U in 1:nunits
             uhat = laplace.modes[U]
-            ud = _laplace_dual_unit_mode(laplace, U, x, Lsd, uhat, hessians[U], wsd)
+            ud = _laplace_dual_unit_mode(laplace, U, x, Lsd, uhat, curvature[U], wsd)
             accumulated += _laplace_unit_term(laplace, U, x, Lsd, ud, wsd)
         end
         return accumulated + _ctsem_log_prior(laplace.objective, x)
@@ -1682,6 +1793,32 @@ function ctsem_kalman(laplace::CTSEMLaplaceObjective, values::AbstractVector;
 end
 
 """
+    _laplace_primal_curvature(laplace, theta, Ls)
+
+Solve every unit's mode and factorize its curvature, returning the factors.
+
+Shared by the places that need a primal solve later -- the nested gradient, the
+per-unit scores, the mode Jacobian -- so that "solve the modes, then factorize"
+is written once.
+"""
+function _laplace_primal_curvature(laplace::CTSEMLaplaceObjective,
+    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}})
+    nunits = length(laplace.units.members)
+    out = Vector{Any}(undef, nunits)
+    for U in 1:nunits
+        _laplace_solve_unit_mode!(laplace, U, theta, Ls)
+        u = laplace.modes[U]
+        blocks = laplace.units.blocks[U]
+        M = isempty(u) ? CTSEMBlockMatrix(Float64, blocks) :
+            _laplace_unit_curvature(laplace, U, theta, Ls, u)
+        isempty(u) || _laplace_repair_blocks!(M, blocks)
+        _, _, factors, coupling = _laplace_block_factor(M, blocks)
+        out[U] = (factors, coupling)
+    end
+    return out
+end
+
+"""
     ctsem_laplace_mode_jacobian(laplace, values)
 
 `dzhat/dtheta` for every unit: how each unit's inner mode moves when the
@@ -1705,15 +1842,7 @@ function ctsem_laplace_mode_jacobian(laplace::CTSEMLaplaceObjective,
     _laplace_check_indices(laplace, length(theta))
     nunits = length(laplace.units.members)
     Ls = _laplace_popchols(theta, laplace.spec)
-    hessians = Vector{Matrix{Float64}}(undef, nunits)
-    for U in 1:nunits
-        _laplace_solve_unit_mode!(laplace, U, theta, Ls)
-        u = laplace.modes[U]
-        H = isempty(u) ? zeros(Float64, 0, 0) :
-            _laplace_unit_hessian(laplace, U, theta, Ls, u)
-        _, negated = _laplace_negate_definite(H)
-        hessians[U] = negated
-    end
+    hessians = _laplace_primal_curvature(laplace, theta, Ls)
     out = Vector{Matrix{Float64}}(undef, nunits)
     for U in 1:nunits
         d = laplace.units.dims[U]
@@ -1851,12 +1980,24 @@ function ctsem_laplace_modes(laplace::CTSEMLaplaceObjective, values::AbstractVec
     for U in eachindex(laplace.units.members)
         _laplace_solve_unit_mode!(laplace, U, theta, Ls)
         u = laplace.modes[U]
-        covariance = if isempty(u)
-            zeros(Float64, 0, 0)
-        else
-            H = _laplace_unit_hessian(laplace, U, theta, Ls, u)
-            _, negated = _laplace_negate_definite(H)
-            inv(Symmetric(negated))
+        blocks = laplace.units.blocks[U]
+        factors = nothing; coupling = nothing
+        if !isempty(u)
+            M = _laplace_unit_curvature(laplace, U, theta, Ls, u)
+            _laplace_repair_blocks!(M, blocks)
+            _, _, factors, coupling = _laplace_block_factor(M, blocks)
+        end
+        # Only the diagonal block of the inverse is wanted, so it is solved for
+        # a column at a time rather than by inverting the whole curvature --
+        # which for a large study would be the dense matrix this file exists to
+        # avoid forming.
+        conditional = function (slice)
+            out = zeros(Float64, length(slice), length(slice))
+            for (t, column) in enumerate(slice)
+                e = zeros(Float64, length(u)); e[column] = 1.0
+                out[:, t] = _laplace_block_solve(factors, coupling, blocks, e)[slice]
+            end
+            return out
         end
         for (m, i) in enumerate(laplace.units.members[U])
             g = lv.group[i]
@@ -1870,7 +2011,7 @@ function ctsem_laplace_modes(laplace::CTSEMLaplaceObjective, values::AbstractVec
             zi = u[slice]
             z[g, :] = zi
             raw[g, :] = L * zi
-            block = covariance[slice, slice]
+            block = conditional(slice)
             zsd[g, :] = sqrt.(max.(diag(block), 0.0))
             rawcov = L * block * transpose(L)
             rawsd[g, :] = sqrt.(max.(diag(rawcov), 0.0))
@@ -2113,15 +2254,7 @@ function ctsem_subject_gradients(laplace::CTSEMLaplaceObjective,
     nunits = length(laplace.units.members)
 
     Ls = _laplace_popchols(theta, laplace.spec)
-    primal_hessians = Vector{Matrix{Float64}}(undef, nunits)
-    for U in 1:nunits
-        _laplace_solve_unit_mode!(laplace, U, theta, Ls)
-        u = laplace.modes[U]
-        H = isempty(u) ? zeros(Float64, 0, 0) :
-            _laplace_unit_hessian(laplace, U, theta, Ls, u)
-        _, negated = _laplace_negate_definite(H)
-        primal_hessians[U] = negated
-    end
+    primal_curvature = _laplace_primal_curvature(laplace, theta, Ls)
 
     terms_of = function (x)
         S = eltype(x)
@@ -2130,7 +2263,7 @@ function ctsem_subject_gradients(laplace::CTSEMLaplaceObjective,
         out = Vector{S}(undef, nunits)
         for U in 1:nunits
             uhat = laplace.modes[U]
-            ud = _laplace_dual_unit_mode(laplace, U, x, Lsd, uhat, primal_hessians[U], wsd)
+            ud = _laplace_dual_unit_mode(laplace, U, x, Lsd, uhat, primal_curvature[U], wsd)
             out[U] = _laplace_unit_term(laplace, U, x, Lsd, ud, wsd)
         end
         return out
