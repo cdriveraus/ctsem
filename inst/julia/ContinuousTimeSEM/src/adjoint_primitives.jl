@@ -113,7 +113,23 @@ For `Float64` this is `Base.exp`; other scalar types (notably
 primitive) go through the package's own buffered `my_exp!`, so both paths
 compute the same Padé approximant.
 """
-_ctsem_expm(A::Matrix{Float64}) = exp(A)
+function _ctsem_expm(A::Matrix{Float64})
+    # `Base.exp` picks its Pade degree adaptively from the matrix norm and is
+    # the faster of the two on one core -- but it bottoms out in LAPACK, and
+    # LAPACK takes a process-global lock per call (see `small_linalg.jl`). This
+    # runs once per Frechet flush in the reverse pass, which is why the reverse
+    # tape was the last part of the subject loop that would not thread.
+    #
+    # `my_exp!` reaches the same Pade approximant through `mul!` and the
+    # engine's own LU, neither of which contends, so above one chunk it wins by
+    # more than the fixed degree costs.
+    n = size(A, 1)
+    n <= _CTSEM_SMALL_CHOLESKY[] || return exp(A)
+    Y = Matrix{Float64}(undef, n, n)
+    scratch = Matrix{Float64}(undef, n, n)
+    my_exp!(Y, copy(A), scratch, ExpBuffer{Float64}(n), Val(n))
+    return Y
+end
 
 function _ctsem_expm(A::AbstractMatrix)
     T = eltype(A)
@@ -198,9 +214,20 @@ function _ctsem_lyap_pullback(A::AbstractMatrix, X::AbstractMatrix, X̄::Abstrac
         rhs[i, j] = (X̄[i, j] + X̄[j, i]) / 2
     end
     W = Matrix{T}(undef, size(X, 1), size(X, 2))
-    my_lyap!(W, Matrix{T}(adjoint(A)), rhs, buffer)
-    Ā = W * adjoint(X) + adjoint(W) * X
-    return Matrix(Ā), W
+    # `Matrix{T}(adjoint(A))` materialises the transpose, which is right --
+    # `my_lyap!` wants a plain matrix. `W * adjoint(X) + adjoint(W) * X` is not:
+    # a product with an `adjoint` operand does not reach `gemm` and does not
+    # thread (0.18x on 23 threads at this size), which left this the last
+    # serialised piece of the reverse tape. See `small_linalg.jl`.
+    At = Matrix{T}(undef, size(A, 2), size(A, 1))
+    @inbounds for j in axes(A, 2), i in axes(A, 1)
+        At[j, i] = A[i, j]
+    end
+    my_lyap!(W, At, rhs, buffer)
+    Ā = Matrix{T}(undef, size(X, 1), size(X, 2))
+    _ctsem_mulNT!(Ā, W, X)
+    _ctsem_mulTN!(Ā, W, X, one(T), one(T))
+    return Ā, W
 end
 
 function ChainRulesCore.rrule(::typeof(_ctsem_lyap), A::AbstractMatrix, Q::AbstractMatrix)

@@ -82,6 +82,9 @@ mutable struct CTSEMAdjointWorkspace{T,SP,LB}
     groups_write_jax::Bool
     # Flat `all_params` positions belonging to the JAx component.
     jax_positions::Vector{Int}
+    # Working storage for the reverse pass; see `CTSEMReverseScratch` for why
+    # the temporaries come from here rather than from the heap.
+    reverse_scratch::CTSEMReverseScratch{T}
     tape::CTSEMAdjointTape{T}
 end
 
@@ -136,6 +139,7 @@ function CTSEMAdjointWorkspace(::Type{T}, sp::EKFParameters, nvalues::Integer,
         _ctsem_parameter_layer_shareable(sp, predict_indices, update_indices, td_indices),
         false, zero(T), zeros(T, n, n), zeros(T, n, n), zeros(T, n, n),
         defer_frechet, groups_write_jax, jax_positions,
+        CTSEMReverseScratch(T, n, m, length(ws.diffusion_state_indices)),
         CTSEMAdjointTape(T, group_relevant),
     )
 end

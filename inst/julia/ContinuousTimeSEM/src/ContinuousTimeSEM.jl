@@ -46,6 +46,7 @@ function scalar_square(x)
 end
 
 # Includes
+include("small_linalg.jl")
 include("parameters.jl")
 include("constrain_cor_sqrt.jl")
 include("r_interface.jl")
@@ -62,11 +63,13 @@ include("benchmark_setup.jl")
 include("ctsem_backend.jl")
 include("adjoint_primitives.jl")
 include("adjoint_parameters.jl")
+include("reverse_scratch.jl")
 include("adjoint_ekf.jl")
 include("adjoint.jl")
 include("summary_matrices.jl")
 include("kalman_trace.jl")
 include("laplace.jl")
+include("quadrature.jl")
 
 
 end # module ContinuousTimeSEM

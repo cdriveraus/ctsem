@@ -73,6 +73,60 @@ function generate_complex_transform_string(s)
 end
 
 """
+    _transform_closure(source)
+
+The compiled closure for one transform expression, reused across models.
+
+`Meta.parse |> eval` mints a *new anonymous function type* every time it runs,
+and that type is a type parameter of `EKFParameters`. So two models with
+identical transform strings are, to the compiler, different types -- and the
+whole EKF pipeline, which is generic in that type, specialises again for each
+of them. Measured on a one-latent model: the first `ctsem_laplace_evaluate`
+took 34.5 s where the second took 0.02 s, and a second model built from the
+same strings but a fresh `ekf_from_columns` call paid 28.6 s more. A
+replication study fitting the same model to a hundred datasets paid that a
+hundred times.
+
+Caching by the *source string* removes it. The same string yields the same
+closure object, so `typeof` agrees, so `EKFParameters` agrees, so the compiled
+code is reused: the second model of a shape is free.
+
+The lock is not decoration. `ekf_from_columns` is ordinarily called from one
+thread, but nothing in its contract says so, and a `Dict` torn by two
+concurrent inserts fails in ways that look like a model error.
+"""
+function _transform_closure(source::AbstractString)
+    key = String(source)
+    lock(_TRANSFORM_CACHE_LOCK) do
+        cached = get(_TRANSFORM_CACHE, key, nothing)
+        cached === nothing || return cached
+        built = eval(Meta.parse(key))
+        _TRANSFORM_CACHE[key] = built
+        return built
+    end
+end
+
+const _TRANSFORM_CACHE = Dict{String,Function}()
+const _TRANSFORM_CACHE_LOCK = ReentrantLock()
+
+export ctsem_transform_cache_size, ctsem_clear_transform_cache!
+
+"""How many distinct transform expressions have been compiled this session."""
+ctsem_transform_cache_size() = lock(() -> length(_TRANSFORM_CACHE), _TRANSFORM_CACHE_LOCK)
+
+"""
+Empty the transform closure cache.
+
+Only useful for measuring compilation, since the cached closures are immutable
+and shared safely; dropping them does not free the code that was compiled for
+them.
+"""
+function ctsem_clear_transform_cache!()
+    lock(() -> empty!(_TRANSFORM_CACHE), _TRANSFORM_CACHE_LOCK)
+    return nothing
+end
+
+"""
     map_fixed_values!(target, val_pos, values)
 
 Write `values` into `target[val_pos]` in place and return `nothing`.
@@ -210,7 +264,9 @@ column vectors, one entry per model-matrix cell.
     DIFFUSION are already the one-step quantities.
 
 Expression strings are `Meta.parse`d and `eval`ed into closures here, once per
-model. That is what makes this engine model-agnostic without a compile step.
+*distinct expression* rather than once per model -- see `_transform_closure`
+for why that distinction is worth tens of seconds. That is what makes this
+engine model-agnostic without a compile step.
 """
 function ekf_from_columns(matrix, row, col, parnumber, value, transform,
     predicttransform, updatetransform, tdtransform;
@@ -247,7 +303,7 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
         pn == 0 && continue
         expression = isempty(transform[i]) ? "param[$(pn)]" : String(transform[i])
         @view(reg_tfs[Symbol(matrix[i])])[Int(row[i]), Int(col[i])] =
-            expression |> generate_transform_string |> Meta.parse |> eval
+            _transform_closure(generate_transform_string(expression))
     end
     tfs_pos = par_pos
     reg_tfs = getdata(reg_tfs)[tfs_pos]
@@ -263,15 +319,15 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
         name = Symbol(matrix[i])
         if !isempty(predicttransform[i])
             @view(predict_tfs[name])[target_row, target_col] =
-                String(predicttransform[i]) |> generate_complex_transform_string |> Meta.parse |> eval
+                _transform_closure(generate_complex_transform_string(String(predicttransform[i])))
         end
         if !isempty(updatetransform[i])
             @view(update_tfs[name])[target_row, target_col] =
-                String(updatetransform[i]) |> generate_complex_transform_string |> Meta.parse |> eval
+                _transform_closure(generate_complex_transform_string(String(updatetransform[i])))
         end
         if !isempty(tdtransform[i])
             @view(td_tfs[name])[target_row, target_col] =
-                String(tdtransform[i]) |> generate_complex_transform_string |> Meta.parse |> eval
+                _transform_closure(generate_complex_transform_string(String(tdtransform[i])))
         end
     end
 

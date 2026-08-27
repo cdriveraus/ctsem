@@ -320,7 +320,12 @@ function _ekf_masked_update_step!(ws::ContinuousEKFWorkspace, pars,
     Sv .+= Rv
     _ridge_diagonal!(ws.P_predict.data, n, -1e-10)
     _symmetrize_and_ridge!(Sv, m)
-    factor = cholesky!(Sv, check=false)
+    # Hand-written rather than LAPACK: see `small_linalg.jl`. This runs once per
+    # observed row, and `potrf` on a matrix this size is almost entirely the
+    # process-global lock OpenBLAS takes to get its scratch buffer -- which is
+    # what stopped the subject loop from threading.
+    factor = m <= _CTSEM_SMALL_CHOLESKY[] ? _ctsem_cholesky(Sv, m) :
+        cholesky!(Sv, check=false)
     issuccess(factor) || return nothing
 
     # Data generation, if asked for: draw this row's observation from its own

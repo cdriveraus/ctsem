@@ -332,6 +332,14 @@ mutable struct CTSEMLaplaceObjective{O}
     inner_gradient::Vector{Float64}
     inner_converged::Vector{Bool}
     hessian_repaired::Vector{Bool}
+    # Repair *at the reported mode*, as distinct from `hessian_repaired`, which
+    # is true if any Newton iterate needed shifting on the way there. Those mean
+    # different things and only one of them is a reason to doubt the answer:
+    # Newton away from a mode routinely passes through a point where the
+    # curvature is not negative definite, and on a 40-subject model at the
+    # generating parameters that happened for twelve subjects while every one of
+    # their final curvatures was fine.
+    mode_repaired::Vector{Bool}
 end
 
 function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec;
@@ -342,7 +350,8 @@ function CTSEMLaplaceObjective(objective::CTSEMObjective, spec::CTSEMLaplaceSpec
     return CTSEMLaplaceObjective{typeof(objective)}(objective, spec, units,
         [zeros(Float64, units.dims[U]) for U in 1:nunits],
         Int(inner_maxiter), Float64(inner_tol), [Dict{Any,Any}()],
-        zeros(Int, nunits), zeros(Float64, nunits), falses(nunits), falses(nunits))
+        zeros(Int, nunits), zeros(Float64, nunits), falses(nunits), falses(nunits),
+        falses(nunits))
 end
 
 """
@@ -750,6 +759,16 @@ function _laplace_block_of(dense::AbstractMatrix{T},
     return M
 end
 
+"""The Cholesky type `_laplace_block_factor` produces for element type `T`."""
+const _LaplaceCholesky{T} = LinearAlgebra.Cholesky{T,Matrix{T}}
+
+"""One unit's factorized curvature: the per-block Choleskys and the eliminated
+couplings, exactly what `_laplace_block_solve` and `_laplace_selected_inverse`
+consume. Named because it is held one per unit for a whole evaluation and a
+`Vector{Any}` of them makes every solve a dynamic dispatch."""
+const _LaplaceFactorization{T} =
+    Tuple{Vector{_LaplaceCholesky{T}},Vector{Vector{Matrix{T}}}}
+
 """
     _laplace_block_factor(M, blocks)
 
@@ -770,7 +789,11 @@ function _laplace_block_factor(M::CTSEMBlockMatrix{T},
     nb = length(blocks)
     diag = [copy(d) for d in M.diag]
     coupling = [[copy(c) for c in row] for row in M.coupling]
-    factors = Vector{Any}(undef, nb)
+    # Concretely typed, not `Vector{Any}`: `factors[b] \ x` and `logdet(factors[b])`
+    # are called once per block per solve, and through an `Any` element every one
+    # of them is a dynamic dispatch. A unit with one block per subject makes that
+    # two dispatches per subject per Newton step.
+    factors = Vector{_LaplaceCholesky{T}}(undef, nb)
     total = zero(T)
     for b in 1:nb
         f = cholesky(Symmetric(_laplace_symmetrise(diag[b])); check=false)
@@ -1203,8 +1226,26 @@ objective.
 """
 function _laplace_repair_blocks!(M::CTSEMBlockMatrix{T},
     blocks::Vector{CTSEMLaplaceBlock}) where {T}
-    ok, _, _, _ = _laplace_block_factor(M, blocks)
-    ok && return false
+    return _laplace_factor_repaired!(M, blocks).repaired
+end
+
+"""
+    _laplace_factor_repaired!(M, blocks)
+
+Repair `M` if it needs it and return the factorization that proved it did not,
+as `(repaired, ok, logdet, factors, coupling)`.
+
+The same work as `_laplace_repair_blocks!` followed by `_laplace_block_factor`,
+minus one whole factorization. The repair has to factorize to find out whether
+anything is wrong, and every caller then factorized again to get the factors --
+so the ordinary case, where nothing needs repairing, was paying for two
+eliminations per Newton step and two more per evaluation.
+"""
+function _laplace_factor_repaired!(M::CTSEMBlockMatrix{T},
+    blocks::Vector{CTSEMLaplaceBlock}) where {T}
+    ok, logdetM, factors, coupling = _laplace_block_factor(M, blocks)
+    ok && return (repaired=false, ok=true, logdet=logdetM, factors=factors,
+        coupling=coupling)
     scale = maximum((maximum(abs, d) for d in M.diag); init=one(real(T)))
     scale = isfinite(scale) && scale > 0 ? scale : one(real(T))
     shift = sqrt(eps(real(float(one(T)))))
@@ -1212,11 +1253,13 @@ function _laplace_repair_blocks!(M::CTSEMBlockMatrix{T},
         for d in M.diag
             for i in axes(d, 1); d[i, i] += shift * scale; end
         end
-        ok, _, _, _ = _laplace_block_factor(M, blocks)
-        ok && return true
+        ok, logdetM, factors, coupling = _laplace_block_factor(M, blocks)
+        ok && return (repaired=true, ok=true, logdet=logdetM, factors=factors,
+            coupling=coupling)
         shift *= 10
     end
-    return true
+    return (repaired=true, ok=false, logdet=T(NaN), factors=factors,
+        coupling=coupling)
 end
 
 """
@@ -1234,15 +1277,60 @@ improve `g_U` is halved before the iteration gives up.
 function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, slot::Integer=1)
     d = laplace.units.dims[U]
-    u = copy(laplace.modes[U])
     aws = _laplace_workspace!(laplace, Float64, length(values), slot)
+    warm = _laplace_newton_unit_mode(laplace, U, values, Ls, aws,
+        copy(laplace.modes[U]), slot)
+    best = warm
+    # The retained mode is a *warm start*, not part of the definition of the
+    # objective. If Newton reached the tolerance from it, the mode it found is
+    # the mode, and where the previous evaluation happened to leave the warm
+    # start cannot matter. If it did not, the value about to be returned does
+    # depend on that history -- and then the objective the outer optimizer sees
+    # is not a function of theta at all.
+    #
+    # That is not hypothetical. On a 40-subject model, an outer line search that
+    # visited a distant point left the modes stranded, and the *same* parameter
+    # vector then evaluated to -170856 where a fresh object gave -967. The
+    # optimizer stopped at its starting values and reported convergence.
+    #
+    # So a warm start that fails is retried from the origin, which is the same
+    # for every caller and always inside the support: u = 0 is the population
+    # mean. The better of the two is kept, so a cold retry can only help.
+    if !warm.converged && any(!iszero, laplace.modes[U])
+        cold = _laplace_newton_unit_mode(laplace, U, values, Ls, aws,
+            zeros(Float64, d), slot)
+        if cold.converged || (isfinite(cold.value) &&
+                (!isfinite(best.value) || cold.value > best.value))
+            best = cold
+        end
+    end
+    laplace.modes[U] = best.u
+    laplace.inner_iterations[U] = best.iterations
+    laplace.inner_gradient[U] = d == 0 ? 0.0 : maximum(abs, best.gradient)
+    laplace.inner_converged[U] = best.converged
+    laplace.hessian_repaired[U] = best.repaired
+    return (u=best.u, value=best.value, converged=best.converged)
+end
+
+"""
+    _laplace_newton_unit_mode(laplace, U, values, Ls, aws, start, slot)
+
+Newton on `g_U` from one given starting point, reporting what happened rather
+than writing anything back.
+
+Split out of `_laplace_solve_unit_mode!` so that the same iteration can be run
+twice from different starts -- see the cold retry there.
+"""
+function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
+    values::AbstractVector{Float64}, Ls::Vector{Matrix{Float64}}, aws,
+    start::Vector{Float64}, slot::Integer)
+    d = laplace.units.dims[U]
+    u = start
     repaired = false
     converged = false
     iterations = 0
     current = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws)
-    if !isfinite(current.value)
-        # A warm start can be stranded outside the support after a large outer
-        # step. The origin is always inside it: u = 0 is the population mean.
+    if !isfinite(current.value) && any(!iszero, u)
         fill!(u, 0.0)
         current = _laplace_unit_objective_gradient(laplace, U, values, Ls, u, aws)
     end
@@ -1253,11 +1341,11 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
             break
         end
         M = _laplace_unit_curvature(laplace, U, values, Ls, u, slot)
-        repaired |= _laplace_repair_blocks!(M, laplace.units.blocks[U])
-        ok, _, factors, coupling = _laplace_block_factor(M, laplace.units.blocks[U])
-        ok || break
-        step = _laplace_block_solve(factors, coupling, laplace.units.blocks[U],
-            current.gradient)
+        fac = _laplace_factor_repaired!(M, laplace.units.blocks[U])
+        repaired |= fac.repaired
+        fac.ok || break
+        step = _laplace_block_solve(fac.factors, fac.coupling,
+            laplace.units.blocks[U], current.gradient)
         accepted = false
         scale = 1.0
         for _ in 1:20
@@ -1276,12 +1364,8 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
     if d == 0 || maximum(abs, current.gradient) < laplace.inner_tol
         converged = true
     end
-    laplace.modes[U] = u
-    laplace.inner_iterations[U] = iterations
-    laplace.inner_gradient[U] = d == 0 ? 0.0 : maximum(abs, current.gradient)
-    laplace.inner_converged[U] = converged
-    laplace.hessian_repaired[U] = repaired
-    return (u=u, value=current.value, converged=converged)
+    return (u=u, value=current.value, gradient=current.gradient,
+        converged=converged, iterations=iterations, repaired=repaired)
 end
 
 """
@@ -1760,6 +1844,25 @@ end
 
 
 """
+    _laplace_unit_weights(laplace)
+
+Roughly what each unit costs, for load balancing.
+
+A unit's evaluation walks its members once per block of `u`, and the number of
+blocks grows with the members, so the cost is superlinear in unit size. Rows
+times members captures both without measuring anything: it is a relative
+weight, and only its ordering and rough scale matter to the assignment.
+"""
+function _laplace_unit_weights(laplace::CTSEMLaplaceObjective)
+    subjects = laplace.objective.subject_objectives
+    return [begin
+        members = laplace.units.members[U]
+        rows = sum(size(subjects[i].data, 2) for i in members; init=0)
+        Float64(rows) * max(1, length(members))
+    end for U in eachindex(laplace.units.members)]
+end
+
+"""
     ctsem_laplace_evaluate(laplace, values; gradient=true)
 
 The approximated log marginal likelihood, and optionally its gradient.
@@ -1795,7 +1898,7 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     # Factorizations rather than dense curvatures. On a study of a few thousand
     # subjects a dense one is over a hundred megabytes, and one is held per unit
     # for the whole evaluation; the factors are kilobytes.
-    primal_curvature = Vector{Any}(undef, nunits)
+    primal_curvature = Vector{_LaplaceFactorization{Float64}}(undef, nunits)
     # The seeded assembly needs the curvature itself as well as its factors:
     # `A[b,b] = I - M.diag[b]` and `A[b,a] = -M.coupling[b][t]` are where the
     # explicit population-parameter terms come from, and recovering them from
@@ -1816,7 +1919,12 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     while length(laplace.workspaces) < nchunks
         push!(laplace.workspaces, Dict{Any,Any}())
     end
-    ranges = _ctsem_chunk_ranges(nunits, nchunks)
+    # Cost-weighted rather than contiguous. A unit's cost is roughly its
+    # observations times its members -- the members enter twice, once through
+    # the sweeps and once through the block count -- and with studies of
+    # different sizes an equal-count split leaves one chunk holding most of the
+    # work while the rest wait at the barrier.
+    ranges = _ctsem_chunk_assignment(_laplace_unit_weights(laplace), nchunks)
     chunk_ok = fill(true, nchunks)
     chunk_bad = fill(NaN, nchunks)
     run_primal = function (c)
@@ -1827,8 +1935,9 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             blocks = laplace.units.blocks[U]
             M = isempty(u) ? CTSEMBlockMatrix(Float64, blocks) :
                 _laplace_unit_curvature(laplace, U, theta, Ls, u, c)
-            isempty(u) || _laplace_repair_blocks!(M, blocks)
-            ok, logdetM, factors, coupling = _laplace_block_factor(M, blocks)
+            fac = _laplace_factor_repaired!(M, blocks)
+            laplace.mode_repaired[U] = fac.repaired
+            ok, logdetM, factors, coupling = fac.ok, fac.logdet, fac.factors, fac.coupling
             primal_curvature[U] = (factors, coupling)
             primal_matrices[U] = M
             inner = _laplace_unit_objective_gradient(laplace, U, theta, Ls, u, aws)
@@ -1944,7 +2053,8 @@ seeded path is tested against at one, two and three levels, and as its fallback
 when a factorization the seeded path needs is not available.
 """
 function _laplace_nested_gradient(laplace::CTSEMLaplaceObjective,
-    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}}, curvature::Vector{Any})
+    theta::Vector{Float64}, Ls::Vector{Matrix{Float64}},
+    curvature::AbstractVector)
     nunits = length(laplace.units.members)
     total_of = function (x)
         S = eltype(x)
@@ -2088,16 +2198,16 @@ is written once.
 function _laplace_primal_curvature(laplace::CTSEMLaplaceObjective,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}})
     nunits = length(laplace.units.members)
-    out = Vector{Any}(undef, nunits)
+    out = Vector{_LaplaceFactorization{Float64}}(undef, nunits)
     for U in 1:nunits
         _laplace_solve_unit_mode!(laplace, U, theta, Ls)
         u = laplace.modes[U]
         blocks = laplace.units.blocks[U]
         M = isempty(u) ? CTSEMBlockMatrix(Float64, blocks) :
             _laplace_unit_curvature(laplace, U, theta, Ls, u)
-        isempty(u) || _laplace_repair_blocks!(M, blocks)
-        _, _, factors, coupling = _laplace_block_factor(M, blocks)
-        out[U] = (factors, coupling)
+        fac = _laplace_factor_repaired!(M, blocks)
+        laplace.mode_repaired[U] = fac.repaired
+        out[U] = (fac.factors, fac.coupling)
     end
     return out
 end
@@ -2268,8 +2378,8 @@ function ctsem_laplace_modes(laplace::CTSEMLaplaceObjective, values::AbstractVec
         factors = nothing; coupling = nothing
         if !isempty(u)
             M = _laplace_unit_curvature(laplace, U, theta, Ls, u)
-            _laplace_repair_blocks!(M, blocks)
-            _, _, factors, coupling = _laplace_block_factor(M, blocks)
+            fac = _laplace_factor_repaired!(M, blocks)
+            factors = fac.factors; coupling = fac.coupling
         end
         # Only the diagonal block of the inverse is wanted, so it is solved for
         # a column at a time rather than by inverting the whole curvature --
@@ -2317,6 +2427,7 @@ ctsem_laplace_diagnostics(laplace::CTSEMLaplaceObjective) = (
     max_gradient=copy(laplace.inner_gradient),
     converged=copy(laplace.inner_converged),
     hessian_repaired=copy(laplace.hessian_repaired),
+    mode_repaired=copy(laplace.mode_repaired),
 )
 
 export ctsem_laplace_diagnostics
@@ -2340,7 +2451,7 @@ cheaper route to the same answer, so there is no version of it worth keeping.
 """
 function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractVector;
     maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0, x_tol::Real=0.0,
-    verbose::Bool=false, nested_gradient::Bool=false)
+    verbose::Bool=false, nested_gradient::Bool=false, tune_chunks::Bool=true)
     start_values = collect(Float64, start)
     invalid_objective = floatmax(Float64) / 1e8
     gradient_limit = sqrt(floatmax(Float64))
@@ -2352,7 +2463,14 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
             nothing
         end
         objective = result === nothing ? NaN : result.value
-        valid = result !== nothing && isfinite(objective)
+        # A unit whose inner Newton did not reach `inner_tol` has not produced
+        # the mode the term is defined at, so the number is not the objective
+        # -- it is whatever the iteration happened to stop on. Treating the
+        # trial point as invalid makes the line search shrink towards a point
+        # where the inner problem is solvable, which is the right response;
+        # accepting it lets the outer optimizer follow a function that is not
+        # a function of theta.
+        valid = result !== nothing && isfinite(objective) && result.converged
         if valid && G !== nothing
             valid = all(isfinite, result.gradient) &&
                 all(abs(value) < gradient_limit for value in result.gradient)
@@ -2366,6 +2484,13 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     end
     options = Optim.Options(iterations=Int(maxiter), g_tol=g_tol, f_reltol=f_tol,
         x_abstol=x_tol, show_trace=verbose, store_trace=false)
+    # Measure the chunk count rather than trusting `cores`. See
+    # `ctsem_tune_chunks!`: on small models the wide split is slower than the
+    # serial one, by up to 3.7x, and no rule from the model shape alone
+    # predicts where the crossover is.
+    tuning = tune_chunks ? ctsem_tune_chunks!(
+        () -> ctsem_laplace_evaluate(laplace, start_values; gradient=true,
+            nested_gradient=nested_gradient); verbose=verbose) : nothing
     if verbose
         chunks = ctsem_max_chunks()
         println("Laplace: ", length(laplace.objective.subject_objectives),
@@ -2400,24 +2525,44 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
             count(laplace.inner_converged), "/", length(laplace.inner_converged),
             " converged, max |dg/dz| ",
             isempty(laplace.inner_gradient) ? 0.0 : maximum(laplace.inner_gradient),
-            ", curvature repaired for ", count(laplace.hessian_repaired), " subject(s)")
+            ", curvature repaired at the mode for ", count(laplace.mode_repaired),
+            " unit(s) (", count(laplace.hessian_repaired), " somewhere on the way)")
     end
     minimizer = collect(Optim.minimizer(result))
     final = ctsem_laplace_evaluate(laplace, minimizer; gradient=true)
+    # A fit that ends where it started, with a gradient nowhere near zero, has
+    # not converged whatever Optim says. Optim's own verdict is the disjunction
+    # of three criteria, and a line search that fails on its first try
+    # satisfies the `f` one trivially: the objective did not change because
+    # nothing was accepted. Two fits in thirteen returned their starting values
+    # this way, reporting success, which in a simulation study is silently
+    # wrong rather than loudly broken.
+    moved = isempty(minimizer) ? 0.0 : maximum(abs, minimizer .- start_values)
+    stalled = moved == 0 && (!isfinite(final.value) ||
+        (!isempty(final.gradient) &&
+         maximum(abs, final.gradient) > max(g_tol, 1e-6)))
+    verbose && stalled && println("Laplace: the optimizer made no progress from ",
+        "its starting values; reporting this as not converged")
     return (
         minimizer=minimizer,
         maximum_loglik=final.value,
         gradient=collect(final.gradient),
         subject_loglik=collect(final.subject_loglik),
         iterations=Optim.iterations(result),
+        f_calls=Optim.f_calls(result),
+        g_calls=Optim.g_calls(result),
         linesearch=linesearch,
-        converged=Optim.converged(result),
+        stalled=stalled,
+        chunks=ctsem_max_chunks().max_chunks,
+        chunk_timings=tuning === nothing ? Tuple{Int,Float64}[] : tuning.timings,
+        converged=Optim.converged(result) && !stalled,
         g_converged=Optim.g_converged(result),
         f_converged=Optim.f_converged(result),
         x_converged=Optim.x_converged(result),
         inner_converged=all(laplace.inner_converged),
         inner_iterations=copy(laplace.inner_iterations),
         hessian_repaired=copy(laplace.hessian_repaired),
+        mode_repaired=copy(laplace.mode_repaired),
     )
 end
 

@@ -182,6 +182,125 @@ ctsem_max_chunks() = (max_chunks=_CTSEM_MAX_CHUNKS[], nthreads=Threads.nthreads(
     return max(1, min(available, nsubjects))
 end
 
+"""
+    ctsem_tune_chunks!(evaluate; ceiling=0, verbose=false)
+
+Pick the chunk count that is actually fastest for this model, and pin it.
+
+`cores` is a *ceiling*, not an instruction. Splitting the subject loop wider is
+not free and it is not even monotone: the reverse sweep allocates on the order
+of ten thousand small arrays per subject, and above roughly ten million
+allocations a second the allocator, not the arithmetic, is what the threads are
+queueing for. Measured on a 23-core machine, one 24-row subject of a
+one-latent, one-indicator model runs **3.7x slower on 23 threads than on one**,
+while the same code on a twenty-latent model runs 2.7x *faster*. Both are the
+same subject loop; what differs is how much arithmetic sits between two
+allocations.
+
+So the count cannot be chosen from `cores` alone, and it cannot be derived from
+the model shape without a constant nobody has measured for the machine in
+front of them. It can be measured, and cheaply: a handful of evaluations
+against a fit that will do thousands. The ladder doubles from one, stops as
+soon as two successive candidates fail to beat the best by a clear margin, and
+leaves `_CTSEM_MAX_CHUNKS` at the winner.
+
+`evaluate` is a zero-argument closure doing one representative evaluation --
+whatever the caller's inner loop will actually be doing.
+"""
+function ctsem_tune_chunks!(evaluate; ceiling::Integer=0, verbose::Bool=false)
+    limit = ceiling <= 0 ? _CTSEM_MAX_CHUNKS[] : Int(ceiling)
+    limit = limit <= 0 ? Threads.nthreads() : min(limit, Threads.nthreads())
+    if limit <= 1
+        _CTSEM_MAX_CHUNKS[] = 1
+        return (chunks=1, timings=[(1, NaN)])
+    end
+    previous = _CTSEM_MAX_CHUNKS[]
+    timings = Tuple{Int,Float64}[]
+    best_chunks = 1
+    best_time = Inf
+    misses = 0
+    try
+        # One untimed pass at the serial setting so compilation, workspace
+        # construction and the first mode solve are not charged to chunk 1.
+        _CTSEM_MAX_CHUNKS[] = 1
+        evaluate()
+        serial = @elapsed evaluate()
+        # The ladder is doubled from one, but only while an evaluation is cheap
+        # enough that trying six settings is free against the fit. A model whose
+        # evaluation takes a second is also a model with enough arithmetic
+        # between allocations to thread well, so the ladder collapses to its
+        # ends and the tuning costs four evaluations rather than a dozen.
+        candidates = if serial > 1.0
+            limit > 3 ? [1, max(2, limit ÷ 2), limit] : [1, limit]
+        else
+            built = Int[]; c = 1
+            while c < limit; push!(built, c); c *= 2; end
+            push!(built, limit); built
+        end
+        for n in candidates
+            _CTSEM_MAX_CHUNKS[] = n
+            evaluate()                       # warm this chunk count's workspaces
+            elapsed = @elapsed evaluate()
+            push!(timings, (n, elapsed))
+            verbose && println("Chunk tuning: ", n, " chunk(s) ",
+                round(elapsed; digits=4), " s")
+            if elapsed < best_time * 0.95
+                best_time = min(best_time, elapsed)
+                best_chunks = n
+                misses = 0
+            else
+                best_time = min(best_time, elapsed)
+                misses += 1
+                misses >= 2 && break
+            end
+        end
+    catch err
+        err isa InterruptException && rethrow()
+        _CTSEM_MAX_CHUNKS[] = previous
+        rethrow()
+    end
+    _CTSEM_MAX_CHUNKS[] = best_chunks
+    verbose && println("Chunk tuning: using ", best_chunks, " chunk(s) of at most ", limit)
+    return (chunks=best_chunks, timings=timings)
+end
+
+export ctsem_tune_chunks!
+
+"""
+    _ctsem_chunk_assignment(weights, nchunks)
+
+Assign `1:length(weights)` to `nchunks` chunks, heaviest first into whichever
+chunk is currently lightest.
+
+Contiguous equal-count ranges are the right split when every element costs the
+same, which is true of subjects and false of *units*: with subjects nested in
+studies a unit is a study, and three studies of 200, 20 and 20 subjects split
+three ways leave one chunk doing five times the work of the others while they
+wait at the barrier. Sorting by cost first removes that, and for equal weights
+it reproduces the same balance the contiguous split gives.
+
+The chunks are returned as index vectors rather than ranges, since they are no
+longer contiguous. Summation order across chunks changes with the assignment,
+which is why `test_threading.jl` compares to a tolerance rather than bitwise.
+"""
+function _ctsem_chunk_assignment(weights::AbstractVector{<:Real}, nchunks::Int)
+    n = length(weights)
+    nchunks = max(1, min(nchunks, n))
+    chunks = [Int[] for _ in 1:nchunks]
+    nchunks == 1 && (append!(chunks[1], 1:n); return chunks)
+    load = zeros(Float64, nchunks)
+    for i in sortperm(weights; rev=true)
+        c = argmin(load)
+        push!(chunks[c], i)
+        load[c] += max(0.0, Float64(weights[i]))
+    end
+    # Ascending within a chunk, so that a chunk still walks its units in the
+    # order the serial loop would -- warm starts and diagnostics read better,
+    # and nothing downstream depends on the order.
+    for c in 1:nchunks; sort!(chunks[c]); end
+    return chunks
+end
+
 """Contiguous, near-equal partition of `1:n` into `nchunks` ranges."""
 function _ctsem_chunk_ranges(n::Int, nchunks::Int)
     nchunks = max(1, min(nchunks, n))
@@ -270,7 +389,8 @@ end
 """Optimize a prepared likelihood entirely within Julia using L-BFGS."""
 function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
     maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0,
-    x_tol::Real=0.0, verbose::Bool=false, gradient_method=:adjoint)
+    x_tol::Real=0.0, verbose::Bool=false, gradient_method=:adjoint,
+    tune_chunks::Bool=true)
     start_values = collect(start)
     invalid_objective = floatmax(eltype(start_values)) / 1e8
     gradient_limit = sqrt(floatmax(eltype(start_values)))
@@ -296,6 +416,12 @@ function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
     end
     options = Optim.Options(iterations=Int(maxiter), g_tol=g_tol,
         f_reltol=f_tol, x_abstol=x_tol, show_trace=verbose, store_trace=false)
+    # See `ctsem_tune_chunks!`: the subject loop is not monotone in the chunk
+    # count, so the count is measured on this model rather than taken from
+    # `cores`.
+    tuning = tune_chunks ? ctsem_tune_chunks!(
+        () -> ctsem_evaluate(objective, start_values; gradient=true,
+            gradient_method=gradient_method); verbose=verbose) : nothing
     result = Optim.optimize(Optim.only_fg!(fg!), start_values, Optim.LBFGS(), options)
     final = ctsem_evaluate(objective, Optim.minimizer(result); gradient=true,
         contributions=true, gradient_method=gradient_method)
@@ -306,6 +432,10 @@ function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
         subject_loglik=collect(final.subject_loglik),
         row_loglik=final.row_loglik,
         iterations=Optim.iterations(result),
+        f_calls=Optim.f_calls(result),
+        g_calls=Optim.g_calls(result),
+        chunks=ctsem_max_chunks().max_chunks,
+        chunk_timings=tuning === nothing ? Tuple{Int,Float64}[] : tuning.timings,
         converged=Optim.converged(result),
         g_converged=Optim.g_converged(result),
         f_converged=Optim.f_converged(result),

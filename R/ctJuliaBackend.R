@@ -110,9 +110,29 @@
 
 # Whether a Julia session already exists. JuliaConnectoR starts one lazily on
 # the first call, so "has anything talked to Julia yet" is the question.
+# Is a Julia session live? *Without* starting one.
+#
+# This used to fall back to `JuliaConnectoR::juliaEval("true")`, which starts a
+# session rather than reporting on one -- so the predicate created the situation
+# it was asked about. Two things followed, both silent:
+#
+#   * `ctJuliaSetup(threads = 10, force = TRUE)` cleared the session, then asked
+#     this question, then warned that a session was already running and refused
+#     to apply `threads`. `force` could not work.
+#   * `ctFit(backend = 'julia', cores = n)` sets `JULIA_NUM_THREADS` only when no
+#     session is running. The check started one first, so the variable was never
+#     set and every fit ran single-threaded whatever `cores` said.
+#
+# JuliaConnectoR exports no non-starting predicate, so its connection is read
+# directly and defensively: if that internal ever moves, the answer degrades to
+# "not running", which is the safe direction -- we then set the thread count,
+# which is a no-op when it was already right.
 .ctJuliaSessionRunning <- function() {
-  !is.null(.ct_julia_cache$module) ||
-    isTRUE(tryCatch(JuliaConnectoR::juliaEval("true"), error = function(e) FALSE))
+  if (!is.null(.ct_julia_cache$module)) return(TRUE)
+  isTRUE(tryCatch({
+    connection <- get("pkgLocal", envir = asNamespace("JuliaConnectoR"))$con
+    !is.null(connection) && isOpen(connection)
+  }, error = function(e) FALSE))
 }
 
 .ctJuliaCheckAvailable <- function() {
@@ -1370,10 +1390,25 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
       logposterior = as.numeric(result$maximum_loglik),
       gradient = as.numeric(result$gradient),
       subject_loglik = result$subject_loglik, converged = isTRUE(result$converged),
-      iterations = as.integer(result$iterations)), engine = model_spec$engine,
+      iterations = as.integer(result$iterations),
+      # Evaluation counts, because "how many times did it call the likelihood"
+      # is the first question about a fit that took longer than expected, and
+      # it was previously only obtainable by timing one evaluation and dividing.
+      f_calls = if (is.null(result$f_calls)) NA_integer_ else as.integer(result$f_calls),
+      g_calls = if (is.null(result$g_calls)) NA_integer_ else as.integer(result$g_calls),
+      stalled = isTRUE(result$stalled)), engine = model_spec$engine,
     args = list(backend = "julia", backendcontrol = backendcontrol,
       optimcontrol = optimcontrol, cores = cores, priors = priors,
       intoverpop = intoverpop))
+  # An optimizer that ends where it started has not fitted anything, whatever
+  # its convergence flags say -- and Optim's own verdict is a disjunction that a
+  # failed first line search satisfies trivially. Saying so here is what stops a
+  # simulation study from averaging over starting values it never left.
+  if (isTRUE(result$stalled)) {
+    warning("The optimizer made no progress from its starting values, and the ",
+      "gradient there is not zero. Treat this fit as failed: check the starting ",
+      "values, and see fit$estimate$stalled.", call. = FALSE)
+  }
   if (!is.null(model_spec$laplace)) {
     # The inner solve is part of the objective, so its status is part of
     # whether the fit means anything. Kept on the fit rather than printed and
@@ -1390,7 +1425,14 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
         as.character(result$linesearch),
       inner_converged = isTRUE(result$inner_converged),
       inner_iterations = as.integer(result$inner_iterations),
-      hessian_repaired = as.logical(result$hessian_repaired))
+      # Two different things. `hessian_repaired` is true if *any* Newton iterate
+      # for that unit needed its curvature shifted, which is ordinary behaviour
+      # for a nonlinear model on the way to a mode. `mode_repaired` is true if
+      # the curvature at the reported mode needed it, which is the one that
+      # says the approximation there is questionable.
+      hessian_repaired = as.logical(result$hessian_repaired),
+      mode_repaired = if (is.null(result$mode_repaired)) NA
+        else as.logical(result$mode_repaired))
     if (!isTRUE(result$inner_converged)) {
       warning("The random-effect mode did not converge for every subject; ",
         "see fit$laplace$inner_converged.", call. = FALSE)

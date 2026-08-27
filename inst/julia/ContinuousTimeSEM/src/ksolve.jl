@@ -114,9 +114,26 @@ function _solve_square_system!(A::AbstractMatrix{T}, B::AbstractVecOrMat{T}, piv
     return B
 end
 
-function _solve_square_system!(A::AbstractMatrix{T}, B::AbstractVecOrMat{T}, piv::AbstractVector{Int}, ::Val) where {T<:LinearAlgebra.BlasFloat}
+"""
+Size-dispatched form. Below `_CTSEM_SMALL_CHOLESKY` the generic LU above is
+used even for BLAS element types, and that is not a compromise: `getrf!` on a
+matrix this size is almost entirely the process-global lock OpenBLAS takes to
+acquire its scratch buffer, so the plain loop is both faster on one core and
+the difference between a subject loop that threads and one that does not. See
+`small_linalg.jl`, which makes the same trade for the Cholesky.
+"""
+function _solve_square_system!(A::AbstractMatrix{T}, B::AbstractVecOrMat{T},
+    piv::AbstractVector{Int}, size_hint::Val{n}) where {T<:LinearAlgebra.BlasFloat, n}
+    n <= _CTSEM_SMALL_CHOLESKY[] &&
+        return _solve_square_system_generic!(A, B, piv, size_hint)
     return _solve_square_system!(A, B, piv)
 end
+
+"""Every other scalar type -- `ForwardDiff.Dual` above all -- has no LAPACK
+route at any size, so it goes straight to the generic loops."""
+_solve_square_system!(A::AbstractMatrix{T}, B::AbstractVecOrMat{T},
+    piv::AbstractVector{Int}, size_hint::Val) where {T} =
+    _solve_square_system_generic!(A, B, piv, size_hint)
 
 """
     _solve_square_system!(A, B::AbstractMatrix, piv)
@@ -125,7 +142,7 @@ Solve `A * X = B` in place for `ForwardDiff.Dual` matrix right-hand sides.
 
 This custom LU path avoids BLAS/LAPACK calls that do not support dual numbers.
 """
-function _solve_square_system!(A::AbstractMatrix{T}, B::AbstractMatrix{T}, piv::AbstractVector{Int}, ::Val{n}) where {T<:ForwardDiff.Dual, n}
+function _solve_square_system_generic!(A::AbstractMatrix{T}, B::AbstractMatrix{T}, piv::AbstractVector{Int}, ::Val{n}) where {T,n}
     # n = size(A, 1)
     nrhs = size(B, 2)
     @boundscheck begin
@@ -183,7 +200,7 @@ end
 
 Solve `A * x = b` in place for `ForwardDiff.Dual` vector right-hand sides.
 """
-function _solve_square_system!(A::AbstractMatrix{T}, B::AbstractVector{T}, piv::AbstractVector{Int}, ::Val{n}) where {T<:ForwardDiff.Dual, n}
+function _solve_square_system_generic!(A::AbstractMatrix{T}, B::AbstractVector{T}, piv::AbstractVector{Int}, ::Val{n}) where {T,n}
     # n = size(A, 1)
     @boundscheck begin
         size(A, 2) == n || throw(DimensionMismatch("A must be square"))

@@ -51,7 +51,7 @@ const _CTSEM_RIDGE = 1e-10
 ################################################################################
 
 """One prediction substep: everything the reverse pass needs to undo it."""
-struct CTSEMPredictRecord{T}
+mutable struct CTSEMPredictRecord{T}
     state_in::Vector{T}      # state entering the substep
     P_in::Matrix{T}          # posterior covariance entering the substep (unridged)
     A::Matrix{T}             # eJAx = exp(JAx * dt), also the discrete drift
@@ -65,7 +65,7 @@ struct CTSEMPredictRecord{T}
 end
 
 """One TD-predictor impulse."""
-struct CTSEMTDRecord{T}
+mutable struct CTSEMTDRecord{T}
     P_in::Matrix{T}
     Jtd::Matrix{T}
     tdpreds::Vector{T}
@@ -79,7 +79,7 @@ factor are cheap to recompute from these and doing so keeps the primal's
 `_ekf_masked_update_step!` free of tracing code (it reuses `ws.K` as scratch
 partway through, so its intermediates are not all live at the end anyway).
 """
-struct CTSEMUpdateRecord{T}
+mutable struct CTSEMUpdateRecord{T}
     observed::Vector{Int}
     state_in::Vector{T}
     P_in::Matrix{T}          # prior covariance, unridged
@@ -114,7 +114,7 @@ and made state-dependent models allocate ~50 MB per gradient. `params_before`
 therefore holds just the values at `tape.group_relevant[group]`, in that
 order.
 """
-struct CTSEMGroupRecord{T}
+mutable struct CTSEMGroupRecord{T}
     group::Int               # 1 = predict, 2 = td, 3 = update
     params_before::Vector{T} # values at `group_relevant[group]`, pre-group
     state::Vector{T}
@@ -125,12 +125,12 @@ struct CTSEMGroupRecord{T}
 end
 
 """Construction of Θ from MANIFESTVAR."""
-struct CTSEMThetaRecord{T}
+mutable struct CTSEMThetaRecord{T}
     MANIFESTVAR::Matrix{T}
 end
 
 """The `t = 1` prior: state from T0MEANS, covariance from T0VAR."""
-struct CTSEMInitRecord{T}
+mutable struct CTSEMInitRecord{T}
     T0VAR::Matrix{T}
 end
 
@@ -150,6 +150,17 @@ mutable struct CTSEMAdjointTape{T}
     groups::Vector{CTSEMGroupRecord{T}}
     thetas::Vector{CTSEMThetaRecord{T}}
     inits::Vector{CTSEMInitRecord{T}}
+    # How many of each vector the *current* pass has written. The vectors are
+    # never emptied, so a subject after the first writes into records that
+    # already exist and already have arrays of the right shape -- see
+    # `_tape_reset!`. `program` is the exception: `empty!` keeps a Vector's
+    # capacity, so pushing into it again allocates nothing.
+    npredicts::Int
+    ntds::Int
+    nupdates::Int
+    ngroups::Int
+    nthetas::Int
+    ninits::Int
     subject_values::Vector{T}
     # For each transform group (1 = predict, 2 = td, 3 = update), the
     # `all_params` indices that group can read or write: the union of its
@@ -162,17 +173,58 @@ CTSEMAdjointTape(::Type{T}, group_relevant=[Int[], Int[], Int[]]) where {T} =
     CTSEMAdjointTape{T}(
         Tuple{Symbol,Int}[], CTSEMPredictRecord{T}[], CTSEMTDRecord{T}[],
         CTSEMUpdateRecord{T}[], CTSEMGroupRecord{T}[], CTSEMThetaRecord{T}[],
-        CTSEMInitRecord{T}[], T[], group_relevant)
+        CTSEMInitRecord{T}[], 0, 0, 0, 0, 0, 0, T[], group_relevant)
 
+"""
+    _tape_reset!(tape)
+
+Begin a new pass, keeping the records the last one built.
+
+Emptying the record vectors is correct and was what this did; it is also why a
+24-row subject of a one-latent model allocated 1,263 arrays in its forward
+sweep alone, every one of them a 1x1 `Matrix{Float64}` that the previous
+subject had already allocated at exactly that shape. The tape is per chunk and
+a chunk's subjects share a model, so after the first subject every shape is
+already there.
+
+Resetting counts instead means the records are *reused*: `_record_predict!` and
+friends copy into `tape.predicts[i]` when `i` is within reach and only build
+when the tape has to grow. Nothing outside the recording hooks reads past the
+count, and the reverse pass reads records by the index `program` recorded, so a
+stale record beyond the count is unreachable rather than merely unread.
+"""
 function _tape_reset!(tape::CTSEMAdjointTape)
-    empty!(tape.program); empty!(tape.predicts); empty!(tape.tds)
-    empty!(tape.updates); empty!(tape.groups); empty!(tape.thetas)
-    empty!(tape.inits)
+    empty!(tape.program)
+    tape.npredicts = 0; tape.ntds = 0; tape.nupdates = 0
+    tape.ngroups = 0; tape.nthetas = 0; tape.ninits = 0
     return tape
 end
 
 @inline _tape_push!(tape::CTSEMAdjointTape, kind::Symbol, index::Int) =
     push!(tape.program, (kind, index))
+
+"""
+    _tape_fill!(destination, source)
+
+Overwrite a pooled record field, reallocating only when the shape changed.
+
+A vector is `resize!`d, which keeps its capacity across resets and so is free
+after the first pass. A matrix cannot be reshaped in place, so a genuine shape
+change -- which for these records means a row with a different set of observed
+manifests -- builds a new one and the caller stores it back. That is why the
+records are mutable.
+"""
+@inline function _tape_fill!(destination::Vector{T}, source) where {T}
+    resize!(destination, length(source))
+    copyto!(destination, source)
+    return destination
+end
+
+@inline function _tape_fill!(destination::Matrix{T}, source::AbstractMatrix) where {T}
+    size(destination) == size(source) || return Matrix{T}(source)
+    copyto!(destination, source)
+    return destination
+end
 
 ################################################################################
 # Recording hooks
@@ -200,15 +252,29 @@ function _record_subject_values!(tape::CTSEMAdjointTape, subject_values)
     return nothing
 end
 
-function _record_init!(tape::CTSEMAdjointTape, pars, n::Int)
-    push!(tape.inits, CTSEMInitRecord(Matrix(pars.T0VAR[1:n, 1:n])))
-    _tape_push!(tape, :init, length(tape.inits))
+function _record_init!(tape::CTSEMAdjointTape{T}, pars, n::Int) where {T}
+    index = (tape.ninits += 1)
+    source = view(pars.T0VAR, 1:n, 1:n)
+    if index <= length(tape.inits)
+        record = tape.inits[index]
+        record.T0VAR = _tape_fill!(record.T0VAR, source)
+    else
+        push!(tape.inits, CTSEMInitRecord{T}(Matrix{T}(source)))
+    end
+    _tape_push!(tape, :init, index)
     return nothing
 end
 
-function _record_theta!(tape::CTSEMAdjointTape, pars, m::Int)
-    push!(tape.thetas, CTSEMThetaRecord(Matrix(pars.MANIFESTVAR[1:m, 1:m])))
-    _tape_push!(tape, :theta, length(tape.thetas))
+function _record_theta!(tape::CTSEMAdjointTape{T}, pars, m::Int) where {T}
+    index = (tape.nthetas += 1)
+    source = view(pars.MANIFESTVAR, 1:m, 1:m)
+    if index <= length(tape.thetas)
+        record = tape.thetas[index]
+        record.MANIFESTVAR = _tape_fill!(record.MANIFESTVAR, source)
+    else
+        push!(tape.thetas, CTSEMThetaRecord{T}(Matrix{T}(source)))
+    end
+    _tape_push!(tape, :theta, index)
     return nothing
 end
 
@@ -223,17 +289,36 @@ function _record_group!(tape::CTSEMAdjointTape{T}, group::Int,
     # snapshot there keeps the tape out of the common case entirely.
     isempty(indices) && return nothing
     relevant = tape.group_relevant[group]
-    compact = Vector{T}(undef, length(relevant))
-    @inbounds for j in eachindex(relevant)
-        compact[j] = all_params[relevant[j]]
-    end
+    index = (tape.ngroups += 1)
     # Explicit `{T}` for the same reason as in `_record_update!`: the TD
     # predictors and the time/interval are data, so they arrive as Float64
     # whatever the tape's element type is, and the record requires every field
     # to share it.
-    push!(tape.groups, CTSEMGroupRecord{T}(group, compact, collect(vec(ctx.state)),
-        T[x for x in ctx.tdpreds], T(ctx.time), T(ctx.dt), ctx.row))
-    _tape_push!(tape, :group, length(tape.groups))
+    if index <= length(tape.groups)
+        record = tape.groups[index]
+        record.group = group
+        # `params_before` is as long as the group's relevant set, and the three
+        # groups have different sets -- so this is the one pooled field whose
+        # length genuinely varies between neighbouring records. `resize!` keeps
+        # the capacity, so it still costs nothing after the first pass.
+        resize!(record.params_before, length(relevant))
+        @inbounds for j in eachindex(relevant)
+            record.params_before[j] = all_params[relevant[j]]
+        end
+        _tape_fill!(record.state, vec(ctx.state))
+        _tape_fill!(record.tdpreds, ctx.tdpreds)
+        record.time = T(ctx.time)
+        record.dt = T(ctx.dt)
+        record.row = ctx.row
+    else
+        compact = Vector{T}(undef, length(relevant))
+        @inbounds for j in eachindex(relevant)
+            compact[j] = all_params[relevant[j]]
+        end
+        push!(tape.groups, CTSEMGroupRecord{T}(group, compact, collect(vec(ctx.state)),
+            T[x for x in ctx.tdpreds], T(ctx.time), T(ctx.dt), ctx.row))
+    end
+    _tape_push!(tape, :group, index)
     return nothing
 end
 
@@ -241,50 +326,100 @@ function _record_td!(tape::CTSEMAdjointTape{T}, ws, pars, tdpreds, n::Int) where
     # Mirrors `_apply_td_impulse!`'s own early return: with no TD predictors
     # the impulse is a no-op and contributes nothing to reverse.
     isempty(tdpreds) && return nothing
-    push!(tape.tds, CTSEMTDRecord{T}(Matrix(ws.P_predict.data[1:n, 1:n]),
-        Matrix(pars.Jtd[1:n, 1:n]), T[x for x in tdpreds]))
-    _tape_push!(tape, :td, length(tape.tds))
+    index = (tape.ntds += 1)
+    P_in = view(ws.P_predict.data, 1:n, 1:n)
+    Jtd = view(pars.Jtd, 1:n, 1:n)
+    if index <= length(tape.tds)
+        record = tape.tds[index]
+        record.P_in = _tape_fill!(record.P_in, P_in)
+        record.Jtd = _tape_fill!(record.Jtd, Jtd)
+        _tape_fill!(record.tdpreds, tdpreds)
+    else
+        push!(tape.tds, CTSEMTDRecord{T}(Matrix{T}(P_in), Matrix{T}(Jtd),
+            T[x for x in tdpreds]))
+    end
+    _tape_push!(tape, :td, index)
     return nothing
 end
 
 function _record_update!(tape::CTSEMAdjointTape{T}, ws, pars, data, obs_col::Int,
     observed::AbstractVector{Int}, state_in, P_in, n::Int) where {T}
-    o = collect(observed)
+    index = (tape.nupdates += 1)
     # `T[...]` rather than `[float(...)]`: the observed data is a constant with
     # respect to the parameters, so it is Float64 whatever the tape's element
     # type is. Every other field is `T`, and `CTSEMUpdateRecord{T}` requires
     # them all to agree -- which they did as long as `T` was `Float64` too.
     # Differentiating this gradient (see `ctsem_hessian`) makes `T` a dual, and
     # the record then has to carry the data as a dual with zero partials.
-    push!(tape.updates, CTSEMUpdateRecord{T}(
-        o, collect(vec(state_in)), Matrix(P_in),
-        Matrix(pars.LAMBDA[o, 1:n]), collect(pars.MANIFESTMEANS[o]),
-        Matrix(pars.Jy[o, 1:n]), Matrix(ws.bufferΘ.out[o, o]),
-        T[data[i, obs_col] for i in o]))
-    _tape_push!(tape, :update, length(tape.updates))
+    if index > length(tape.updates)
+        o = collect(observed)
+        push!(tape.updates, CTSEMUpdateRecord{T}(
+            o, collect(vec(state_in)), Matrix(P_in),
+            Matrix(pars.LAMBDA[o, 1:n]), collect(pars.MANIFESTMEANS[o]),
+            Matrix(pars.Jy[o, 1:n]), Matrix(ws.bufferΘ.out[o, o]),
+            T[data[i, obs_col] for i in o]))
+        _tape_push!(tape, :update, index)
+        return nothing
+    end
+    record = tape.updates[index]
+    o = _tape_fill!(record.observed, observed)
+    # Views rather than slices throughout: `pars.LAMBDA[o, 1:n]` materialises a
+    # matrix only to copy it and throw it away, and this runs once per row.
+    _tape_fill!(record.state_in, state_in)
+    record.P_in = _tape_fill!(record.P_in, P_in)
+    record.Lambda = _tape_fill!(record.Lambda, view(pars.LAMBDA, o, 1:n))
+    _tape_fill!(record.manifestmeans, view(pars.MANIFESTMEANS, o))
+    record.H = _tape_fill!(record.H, view(pars.Jy, o, 1:n))
+    record.R = _tape_fill!(record.R, view(ws.bufferΘ.out, o, o))
+    resize!(record.y, length(o))
+    @inbounds for j in eachindex(o)
+        record.y[j] = T(data[o[j], obs_col])
+    end
+    _tape_push!(tape, :update, index)
     return nothing
 end
 
-"""Snapshot the substep inputs, which `_ekf_predict_step!` overwrites."""
+"""An all-zero predict record shaped for `n` states and `k` dynamic states."""
+_empty_predict_record(::Type{T}, n::Int, k::Int) where {T} =
+    CTSEMPredictRecord{T}(zeros(T, n), zeros(T, n, n), zeros(T, n, n),
+        zeros(T, n, n), zeros(T, n, n), zeros(T, n, n), zeros(T, k, k),
+        zeros(T, k), zeros(T, k), zero(T))
+
+"""
+Snapshot the substep inputs, which `_ekf_predict_step!` overwrites.
+
+Returns the pooled record the matching `_record_predict!` will finish, rather
+than a fresh tuple -- the two are called in lockstep around one
+`_ekf_predict_step!`, so the slot is known here and the snapshot can go straight
+into it. Growing the tape here rather than there keeps the return type a plain
+`CTSEMPredictRecord`, so the filter's local stays concrete.
+"""
 function _begin_predict!(tape::CTSEMAdjointTape{T}, ws, n::Int) where {T}
-    return (collect(vec(ws.state))::Vector{T}, Matrix(ws.P_update.data[1:n, 1:n])::Matrix{T})
+    index = tape.npredicts + 1
+    if index > length(tape.predicts)
+        push!(tape.predicts,
+            _empty_predict_record(T, n, length(ws.diffusion_state_indices)))
+    end
+    record = tape.predicts[index]
+    _tape_fill!(record.state_in, ws.state)
+    record.P_in = _tape_fill!(record.P_in, view(ws.P_update.data, 1:n, 1:n))
+    return record
 end
 
-function _record_predict!(tape::CTSEMAdjointTape{T}, ws, pars, snapshot, Δt,
-    n::Int) where {T}
-    state_in, P_in = snapshot
+function _record_predict!(tape::CTSEMAdjointTape{T}, ws, pars,
+    record::CTSEMPredictRecord{T}, Δt, n::Int) where {T}
     dyn = ws.diffusion_state_indices
     k = length(dyn)
-    push!(tape.predicts, CTSEMPredictRecord{T}(
-        state_in, P_in,
-        Matrix(ws.discrete_ca.eJAx[1:n, 1:n]),
-        Matrix(pars.JAx[1:n, 1:n]), Matrix(pars.DRIFT[1:n, 1:n]),
-        Matrix(pars.DIFFUSION[1:n, 1:n]),
-        Matrix(ws.diffusion_buffer.out[1:k, 1:k]),
-        collect(ws.diffusion_buffer.r[1:k]),
-        collect(ws.discrete_ca.dINT[dyn]),
-        T(Δt)))
-    _tape_push!(tape, :predict, length(tape.predicts))
+    index = (tape.npredicts += 1)
+    record.A = _tape_fill!(record.A, view(ws.discrete_ca.eJAx, 1:n, 1:n))
+    record.JAx = _tape_fill!(record.JAx, view(pars.JAx, 1:n, 1:n))
+    record.DRIFT = _tape_fill!(record.DRIFT, view(pars.DRIFT, 1:n, 1:n))
+    record.DIFFUSION = _tape_fill!(record.DIFFUSION, view(pars.DIFFUSION, 1:n, 1:n))
+    record.Xlyap = _tape_fill!(record.Xlyap, view(ws.diffusion_buffer.out, 1:k, 1:k))
+    _tape_fill!(record.affine, view(ws.diffusion_buffer.r, 1:k))
+    _tape_fill!(record.dINT_dynamic, view(ws.discrete_ca.dINT, dyn))
+    record.dt = T(Δt)
+    _tape_push!(tape, :predict, index)
     return nothing
 end
 
@@ -383,40 +518,88 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
         return _reverse_predict_discrete!(x̄, P̄, θ̄ca, record, dyn, n)
     end
 
-    Ā = zeros(T, n, n)
-    JAx_bar = zeros(T, n, n)
+    # Every temporary is a view of a scratch buffer; see `CTSEMReverseScratch`.
+    # The derivation below is unchanged -- what changed is only where the memory
+    # comes from. Buffers are shared with `_reverse_update!`, which is safe
+    # because the two are called at different points of the tape walk and
+    # neither is ever live while the other runs.
+    sc = aws.reverse_scratch
+    Ā          = _rs(sc.Abar, n, n)
+    JAx_bar    = _rs(sc.nn3, n, n)
+    P̄_new      = _rs(sc.Pbar_new, n, n)
+    Ps         = _rs(sc.Ps, n, n)
+    Ptilde     = _rs(sc.Pr, n, n)
+    nn1        = _rs(sc.nn1, n, n)
+    nn2        = _rs(sc.nn2, n, n)
+    scaled     = _rs(sc.nn4, n, n)
+    Qc_bar     = _rs(sc.nn5, n, n)
+    diffusion_bar = _rs(sc.nn6, n, n)
+    Ad         = _rs(sc.kk1, k, k)
+    JAxd       = _rs(sc.kk2, k, k)
+    Qb         = _rs(sc.kk3, k, k)
+    X̄          = _rs(sc.kk4, k, k)
+    Ād         = _rs(sc.kk5, k, k)
+    kk6        = _rs(sc.kk6, k, k)
+    x̄_new      = _rs(sc.xbar_new, n)
+    dINT_bar   = _rs(sc.nv1, n)
+    s̄          = _rs(sc.kv1, k)
+    affine_bar = _rs(sc.kv2, k)
+
+    @inbounds for j in 1:k, i in 1:k
+        Ad[i, j] = A[dyn[i], dyn[j]]
+        JAxd[i, j] = JAx[dyn[i], dyn[j]]
+    end
+    fill!(Ā, zero(T))
+    fill!(JAx_bar, zero(T))
 
     # --- mean: x⁺ = A x + dINT
-    mul!(Ā, x̄, transpose(x), one(T), one(T))
-    dINT_bar = copy(x̄)
-    x̄_new = transpose(A) * x̄
+    _ctsem_outer!(Ā, x̄, x, one(T), one(T))
+    copyto!(dINT_bar, x̄)
+    _ctsem_mulTvec!(x̄_new, A, x̄)
 
     # --- covariance: P⁺ = A (P + εI) A' + dDIFF
-    Ps = _symmetrized(P̄)
-    Ptilde = copy(record.P_in)
+    _symmetrize_into!(Ps, P̄)
+    copyto!(Ptilde, record.P_in)
     _ridge_diagonal!(Ptilde, n, _CTSEM_RIDGE)
     # d(A P̃ A')/dA contracted with P̄ is P̄ A P̃' + P̄' A P̃; both P̄ (symmetrised
     # just above) and P̃ are symmetric, so that collapses to twice one term.
-    Ā .+= 2 .* (Ps * A * Ptilde)
-    P̄_new = transpose(A) * Ps * A
-    dDIFF_bar = Ps
+    _ctsem_mul!(nn1, Ps, A)
+    _ctsem_mul!(Ā, nn1, Ptilde, T(2), one(T))
+    _ctsem_mulTN!(nn2, A, Ps)
+    _ctsem_mul!(P̄_new, nn2, A)
+    # `dDIFF_bar` is `Ps`, so `Ps` has to survive until `Qb` is taken from it.
 
     # --- dDIFF[D,D] = X - Ad X Ad'
     X = record.Xlyap
-    Qb = _symmetrized(dDIFF_bar[dyn, dyn])
-    X̄ = Qb .- transpose(Ad) * Qb * Ad
-    Ād = -(Qb * Ad * transpose(X) .+ transpose(Qb) * Ad * X)
+    @inbounds for j in 1:k, i in 1:k
+        Qb[i, j] = (Ps[dyn[i], dyn[j]] + Ps[dyn[j], dyn[i]]) / 2
+    end
+    _ctsem_mulTN!(kk6, Ad, Qb)
+    _ctsem_mul!(X̄, kk6, Ad)
+    X̄ .= Qb .- X̄                                   # X̄ = Qb - Ad' Qb Ad
+    _ctsem_mul!(kk6, Qb, Ad)
+    _ctsem_mulNT!(Ād, kk6, X)
+    _ctsem_mulTN!(kk6, Qb, Ad)
+    _ctsem_mul!(Ād, kk6, X, one(T), one(T))
+    Ād .= .-Ād                                     # Ād = -(Qb Ad X' + Qb' Ad X)
 
     # --- X = lyap(JAx[D,D], Qc[D,D])
     JAxd_bar, Qcd_bar = _ctsem_lyap_pullback(JAxd, X, X̄, lyap_buffer)
 
     # --- dINT[D] = JAx[D,D] \ s   (a linear solve: s̄ = JAxd⁻ᵀ dINT_bar, M̄ = -s̄ dINT')
-    s̄ = transpose(JAxd) \ dINT_bar[dyn]
-    JAxd_bar .-= s̄ * transpose(record.dINT_dynamic)
+    @inbounds for i in 1:k; s̄[i] = dINT_bar[dyn[i]]; end
+    # `transpose(JAxd) \ s̄` would be a LAPACK `getrf!`/`getrs!` pair, once per
+    # prediction substep, on a matrix of the dynamic-state size. At that size
+    # the call is mostly OpenBLAS's process-global buffer lock -- see
+    # `small_linalg.jl` -- so it goes through the engine's own LU instead.
+    @inbounds for j in 1:k, i in 1:k; kk6[i, j] = JAxd[j, i]; end
+    _solve_square_system_generic!(kk6, s̄, sc.piv, Val(k))
+    _ctsem_outer!(JAxd_bar, s̄, record.dINT_dynamic, -one(T), one(T))
 
     # --- s = -affine + Ad affine
-    affine_bar = -s̄ .+ transpose(Ad) * s̄
-    Ād .+= s̄ * transpose(record.affine)
+    _ctsem_mulTvec!(affine_bar, Ad, s̄)
+    affine_bar .-= s̄
+    _ctsem_outer!(Ād, s̄, record.affine, one(T), one(T))
 
     # --- affine[i] = CINT[Dᵢ] + Σⱼ (DRIFT[Dᵢ,j] - JAx[Dᵢ,j]) x[j]
     @inbounds for i in 1:k
@@ -448,10 +631,10 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     # models, because `my_exp!` always runs the degree-13 Padé approximant
     # while `Base.exp` picks a lower degree adaptively from the matrix norm,
     # and `JAx * dt` is typically small-norm.
-    scaled = record.dt .* JAx
-    # `==` on two `Matrix{T}` is an elementwise comparison and allocates
-    # nothing; a `Val(n)`-dispatched helper would, because `n` is a runtime
-    # value here and constructing the `Val` costs a dynamic dispatch per row.
+    scaled .= record.dt .* JAx
+    # `==` on two matrices is an elementwise comparison and allocates nothing;
+    # a `Val(n)`-dispatched helper would, because `n` is a runtime value here
+    # and constructing the `Val` costs a dynamic dispatch per row.
     if aws.frechet_pending && aws.frechet_dt == record.dt && aws.frechet_A == scaled
         aws.frechet_accum .+= Ā
     else
@@ -463,11 +646,11 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     end
 
     # --- Qc = sdcovsqrt2cov(DIFFUSION); only the dynamic block was consumed.
-    Qc_bar = zeros(T, n, n)
+    fill!(Qc_bar, zero(T))
     @inbounds for j in 1:k, i in 1:k
         Qc_bar[dyn[i], dyn[j]] = Qcd_bar[i, j]
     end
-    diffusion_bar = zeros(T, n, n)
+    fill!(diffusion_bar, zero(T))
     _sdcovsqrt2cov_pullback!(diffusion_bar, record.DIFFUSION, Qc_bar, n)
     @inbounds for j in 1:n, i in 1:n
         θ̄ca.DIFFUSION[i, j] += diffusion_bar[i, j]
@@ -517,7 +700,7 @@ The seed for `ll` is 1: the reverse pass differentiates the summed
 log-likelihood, so every row contributes with unit weight.
 """
 function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄ca,
-    record::CTSEMUpdateRecord{T}, n::Int) where {T}
+    record::CTSEMUpdateRecord{T}, n::Int, sc::CTSEMReverseScratch{T}) where {T}
     o = record.observed
     m = length(o)
     H = record.H
@@ -525,63 +708,130 @@ function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄c
     R = record.R
     x = record.state_in
 
+    # Every temporary is a view of a scratch buffer; see `CTSEMReverseScratch`.
+    # The names and the order are the derivation's, unchanged -- what changed is
+    # only where the memory comes from.
+    Pr     = _rs(sc.Pr, n, n)
+    PHt    = _rs(sc.PHt, n, m)
+    S      = _rs(sc.S, m, m)
+    Sinv   = _rs(sc.Sinv, m, m)
+    G      = _rs(sc.G, n, m)
+    M      = _rs(sc.M, n, n)
+    S̄      = _rs(sc.Sbar, m, m)
+    S̄0     = _rs(sc.Sbar0, m, m)
+    R̄      = _rs(sc.Rbar, m, m)
+    M̄      = _rs(sc.Mbar, n, n)
+    P̄_new  = _rs(sc.Pnew, n, n)
+    Ps     = _rs(sc.Ps, n, n)
+    Ḡ      = _rs(sc.Gbar, n, m)
+    H̄      = _rs(sc.Hbar, m, n)
+    Λ̄      = _rs(sc.Lbar, m, n)
+    PHt_bar = _rs(sc.PHtbar, n, m)
+    ỹ      = _rs(sc.ytilde, m)
+    ỹ̄      = _rs(sc.ybar, m)
+    α      = _rs(sc.alpha, m)
+    ᾱ      = _rs(sc.alphabar, m)
+    β      = _rs(sc.beta, m)
+    x̄_new  = _rs(sc.xnew, n)
+    nn1    = _rs(sc.nn1, n, n)
+    nn2    = _rs(sc.nn2, n, n)
+    nm1    = _rs(sc.nm1, n, m)
+    mm1    = _rs(sc.mm1, m, m)
+    mm2    = _rs(sc.mm2, m, m)
+
     # Recompute the forward intermediates, in the same order and with the same
     # ridges as `_ekf_masked_update_step!`, so the derivative is taken at the
     # values the primal actually used.
-    Pr = copy(record.P_in)
+    copyto!(Pr, record.P_in)
     _ridge_diagonal!(Pr, n, _CTSEM_RIDGE)
-    PHt = Pr * transpose(H)
-    S = _symmetrized(H * PHt .+ R)
+    _ctsem_mulNT!(PHt, Pr, H)                       # PHt = Pr H'
+    _ctsem_mul!(mm1, H, PHt)                                 # mm1 = H PHt
+    mm1 .+= R
+    _symmetrize_into!(S, mm1)                         # S = sym(H PHt + R)
     _ridge_diagonal!(S, m, _CTSEM_RIDGE)
-    Sinv = inv(S)                     # m is the manifest count: small and dense
-    ỹ = record.y .- (Λ * x .+ record.manifestmeans)
-    α = Sinv * ỹ
-    G = PHt * Sinv
-    M = Matrix{T}(I, n, n) .- G * H
+    # `S` is the innovation covariance: symmetric, positive definite, and the
+    # size of the manifest vector. `inv` on it is a LAPACK `getrf!`/`getri!`
+    # pair, which at this size is mostly OpenBLAS's process-global buffer lock
+    # -- it was 6.4% of the reverse pass's samples and it does not thread. The
+    # engine's own Cholesky plus `m` triangular solves is the same inverse
+    # without the lock. See `small_linalg.jl`.
+    copyto!(mm2, S)
+    if _ctsem_cholesky!(mm2, m)
+        F = CTSEMCholesky(mm2, m, true)
+        @inbounds for j in 1:m
+            column = view(Sinv, :, j)
+            fill!(column, zero(T))
+            column[j] = one(T)
+            ldiv!(column, F, column)
+        end
+    else
+        copyto!(Sinv, inv(S))
+    end
+    copyto!(ỹ, record.manifestmeans)
+    _ctsem_mulvec!(ỹ, Λ, x, one(T), one(T))                     # ỹ = Λ x + μ
+    ỹ .= record.y .- ỹ
+    _ctsem_mulvec!(α, Sinv, ỹ)
+    _ctsem_mul!(G, PHt, Sinv)
+    _ctsem_mul!(M, G, H)                                     # M = I - G H
+    M .= .-M
+    @inbounds for i in 1:n; M[i, i] += one(T); end
 
     # --- log-likelihood contribution (unit seed)
-    S̄ = -0.5 .* (Sinv .- α * transpose(α))
-    ỹ̄ = -α
+    _ctsem_outer!(mm1, α, α)
+    S̄ .= -0.5 .* (Sinv .- mm1)
+    ỹ̄ .= .-α
 
     # --- x⁺ = x + PHt α
-    x̄_new = copy(x̄)
-    PHt_bar = x̄ * transpose(α)
-    ᾱ = transpose(PHt) * x̄
+    copyto!(x̄_new, x̄)
+    _ctsem_outer!(PHt_bar, x̄, α)
+    _ctsem_mulTvec!(ᾱ, PHt, x̄)
 
     # --- α = S⁻¹ ỹ
-    β = Sinv * ᾱ
-    ỹ̄ = ỹ̄ .+ β
-    S̄ .-= β * transpose(α)
+    _ctsem_mulvec!(β, Sinv, ᾱ)
+    ỹ̄ .+= β
+    _ctsem_outer!(mm1, β, α)
+    S̄ .-= mm1
 
     # --- P⁺ = M P M' + G R G'
-    Ps = _symmetrized(P̄)
+    _symmetrize_into!(Ps, P̄)
     P_in = record.P_in
-    M̄ = Ps * M * transpose(P_in) .+ transpose(Ps) * M * P_in
-    P̄_new = transpose(M) * Ps * M
-    Ḡ = Ps * G * transpose(R) .+ transpose(Ps) * G * R
-    R̄ = transpose(G) * Ps * G
+    _ctsem_mul!(nn1, Ps, M)                           # nn1 = Ps M
+    _ctsem_mulNT!(M̄, nn1, P_in)
+    _ctsem_mulTN!(nn2, Ps, M)
+    _ctsem_mul!(M̄, nn2, P_in, one(T), one(T))                # M̄ = Ps M P' + Ps' M P
+    _ctsem_mulTN!(nn1, M, Ps)
+    _ctsem_mul!(P̄_new, nn1, M)                               # P̄_new = M' Ps M
+    _ctsem_mul!(nm1, Ps, G)
+    _ctsem_mulNT!(Ḡ, nm1, R)
+    _ctsem_mulTN!(nm1, Ps, G)
+    _ctsem_mul!(Ḡ, nm1, R, one(T), one(T))                   # Ḡ = Ps G R' + Ps' G R
+    _ctsem_mul!(nm1, Ps, G)
+    _ctsem_mulTN!(R̄, G, nm1)                        # R̄ = G' Ps G
 
     # --- M = I - G H
-    Ḡ .-= M̄ * transpose(H)
-    H̄ = -transpose(G) * M̄
+    _ctsem_mulNT!(Ḡ, M̄, H, -one(T), one(T))
+    _ctsem_mulTN!(H̄, G, M̄)
+    H̄ .= .-H̄
 
     # --- G = PHt S⁻¹
-    PHt_bar .+= Ḡ * Sinv
-    S̄ .-= transpose(G) * Ḡ * Sinv
+    _ctsem_mul!(PHt_bar, Ḡ, Sinv, one(T), one(T))
+    _ctsem_mulTN!(mm1, G, Ḡ)
+    _ctsem_mul!(S̄, mm1, Sinv, -one(T), one(T))
 
     # --- S = sym(H PHt + R) + εI
-    S̄0 = _symmetrized(S̄)
-    H̄ .+= S̄0 * transpose(PHt)
-    PHt_bar .+= transpose(H) * S̄0
+    _symmetrize_into!(S̄0, S̄)
+    _ctsem_mulNT!(H̄, S̄0, PHt, one(T), one(T))
+    _ctsem_mulTN!(PHt_bar, H, S̄0, one(T), one(T))
     R̄ .+= S̄0
 
     # --- PHt = Pr H'
-    P̄_new .+= PHt_bar * H
-    H̄ .+= transpose(PHt_bar) * Pr
+    _ctsem_mul!(P̄_new, PHt_bar, H, one(T), one(T))
+    _ctsem_mulTN!(H̄, PHt_bar, Pr, one(T), one(T))
 
     # --- ỹ = y - (Λ x + μ)
-    Λ̄ = -ỹ̄ * transpose(x)
-    x̄_new .-= transpose(Λ) * ỹ̄
+    _ctsem_outer!(Λ̄, ỹ̄, x)
+    Λ̄ .= .-Λ̄
+    _ctsem_mulTvec!(x̄_new, Λ, ỹ̄, -one(T), one(T))
 
     # --- scatter back into the full-size parameter and Θ cotangents
     @inbounds for i in 1:m
@@ -637,7 +887,7 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
     for entry_index in length(tape.program):-1:1
         kind, index = tape.program[entry_index]
         if kind === :update
-            _reverse_update!(x̄, P̄, Θ̄, θ̄ca, tape.updates[index], n)
+            _reverse_update!(x̄, P̄, Θ̄, θ̄ca, tape.updates[index], n, aws.reverse_scratch)
         elseif kind === :td
             _reverse_td!(x̄, P̄, θ̄ca, tape.tds[index], n)
         elseif kind === :predict
