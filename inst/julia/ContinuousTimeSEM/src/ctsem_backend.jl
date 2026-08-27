@@ -423,10 +423,35 @@ function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
         () -> ctsem_evaluate(objective, start_values; gradient=true,
             gradient_method=gradient_method); verbose=verbose) : nothing
     result = Optim.optimize(Optim.only_fg!(fg!), start_values, Optim.LBFGS(), options)
-    final = ctsem_evaluate(objective, Optim.minimizer(result); gradient=true,
+    minimizer = collect(Optim.minimizer(result))
+    final = ctsem_evaluate(objective, minimizer; gradient=true,
         contributions=true, gradient_method=gradient_method)
+
+    # The same convergence verdict `ctsem_laplace_optimize` reaches, and for the
+    # same reasons -- this route was simply left behind when that one was fixed,
+    # which is worse than it sounds because this is ctsem's *default* route.
+    #
+    # Optim's own `converged` is the disjunction of three criteria, and a line
+    # search that fails on its first try satisfies the `f` one trivially: the
+    # objective did not change because nothing was accepted. Measured on a
+    # 100-subject model, this route stopped with `g_converged=false` and a
+    # largest gradient of 3.5e-7 against `g_tol=1e-8` and reported success.
+    #
+    # `g_tol` is an *absolute* bound, so a log likelihood of order 1e3 puts 1e-8
+    # out of reach however good the fit is. `scaled_tolerance` is the criterion
+    # that scales with the problem; it is an addition to the strict test, never
+    # a loosening of it, and `stalled` is what stops a fit that never moved from
+    # passing either.
+    moved = isempty(minimizer) ? 0.0 : maximum(abs, minimizer .- start_values)
+    gradient_norm = isempty(final.gradient) ? 0.0 : maximum(abs, final.gradient)
+    stalled = moved == 0 && (!isfinite(final.value) || gradient_norm > max(g_tol, 1e-6))
+    scaled_tolerance = max(g_tol, 1e-6 * max(one(gradient_norm), abs(final.value)))
+    converged_enough = isfinite(final.value) && gradient_norm <= scaled_tolerance
+    verbose && stalled && println("ctsem_optimize: the optimizer made no progress ",
+        "from its starting values; reporting this as not converged")
+
     return (
-        minimizer=collect(Optim.minimizer(result)),
+        minimizer=minimizer,
         maximum_loglik=final.value,
         gradient=collect(final.gradient),
         subject_loglik=collect(final.subject_loglik),
@@ -434,9 +459,12 @@ function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
         iterations=Optim.iterations(result),
         f_calls=Optim.f_calls(result),
         g_calls=Optim.g_calls(result),
+        stalled=stalled,
         chunks=ctsem_max_chunks().max_chunks,
         chunk_timings=tuning === nothing ? Tuple{Int,Float64}[] : tuning.timings,
-        converged=Optim.converged(result),
+        gradient_norm=gradient_norm,
+        scaled_tolerance=scaled_tolerance,
+        converged=!stalled && (Optim.converged(result) || converged_enough),
         g_converged=Optim.g_converged(result),
         f_converged=Optim.f_converged(result),
         x_converged=Optim.x_converged(result),

@@ -708,6 +708,20 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   if(standata$savesubjectmatrices==1L) savescores = TRUE
   standata$savescores=as.integer(savescores)
 
+  # Resolved here rather than after the julia branch below, which returns before
+  # ever reaching the old resolution site: `cores='maxneeded'` arrived at
+  # ctFitJuliaBackend() as a string, `as.integer()` made it NA, and the NA guard
+  # there turned it into 1. So the documented default whenever `optimize=FALSE`
+  # silently meant single-core for the julia backend.
+  #
+  # `chains` does not cap the julia backend -- it has no MCMC chains. Its
+  # parallelism is over subject chunks, and `ctsem_tune_chunks!` measures within
+  # whatever ceiling it is given, so the ceiling is simply the machine.
+  if(is.character(cores) && cores=='maxneeded') {
+    cores <- if(backend %in% 'julia') max(1, parallel::detectCores()-1) else
+      max(1,min(c(chains,parallel::detectCores()-1)))
+  }
+
   if(backend %in% 'julia') {
     .ctJuliaUnsupported(ctm, optimize=optimize, priors=priors,
       intoverpop=intoverpop, vb=vb, gendata=gendata,
@@ -722,7 +736,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   # print(standata$savesubjectmatrices)
 
   #####post model / data checks
-  if(cores=='maxneeded') cores=max(1,min(c(chains,parallel::detectCores()-1)))
+  # (`cores='maxneeded'` is resolved above, before the julia backend returns.)
 
   if(is.logical(stanmodeltext)) {
     stanmodeltext<- ctStanModelWriter(ctm, gendata, ctm$modelmats$extratforms,ctm$modelmats$matsetup)

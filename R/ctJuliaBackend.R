@@ -1403,8 +1403,18 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
   # count before the session starts (which is the only time that can be set),
   # and capped per fit afterwards, so a session started with more threads is not
   # forced to use them all.
-  cores <- max(1L, suppressWarnings(as.integer(cores)[1L]))
-  if (is.na(cores)) cores <- 1L
+  requested <- cores
+  cores <- suppressWarnings(as.integer(cores)[1L])
+  if (is.na(cores)) {
+    # Silently falling back to one core is how `cores='maxneeded'` went
+    # unnoticed: a fit that should have used the machine used a single thread
+    # and said nothing. ctFit() resolves that keyword now, so anything still
+    # arriving unparseable here is a caller mistake worth hearing about.
+    warning("cores=", deparse(requested)[1L], " is not a number of cores; ",
+      "using 1. Pass an integer.", call. = FALSE)
+    cores <- 1L
+  }
+  cores <- max(1L, cores)
   if (cores > 1L && !.ctJuliaSessionRunning() &&
       !nzchar(Sys.getenv("JULIA_NUM_THREADS", unset = ""))) {
     Sys.setenv(JULIA_NUM_THREADS = as.character(cores))
@@ -1547,7 +1557,16 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
   # The draws pushed through the model's transforms, once, exactly as the Stan
   # path stores `stanfit$transformedpars` at fit time. Every summary, extract
   # and system-matrix collapse reads this rather than asking the engine again.
-  out$transformedpars <- .ctBackendConstrain(out)
+  #
+  # `.ctBackendConstrained`, not `.ctBackendConstrain`: `ctOptimUncertainty()`
+  # has already done exactly this work for exactly these draws a few lines
+  # above, and calling the uncached form here repeated it in full. That was
+  # 4.5 s of a 16.7 s fit -- 27% of it -- computed twice and thrown away once,
+  # and it is the single largest reason a julia fit was slower end to end than
+  # the Stan path whose numerics it beats. The cached form recomputes only when
+  # the draws differ, which is what happens when uncertainty was skipped and
+  # `out$transformedpars` is still NULL.
+  out$transformedpars <- .ctBackendConstrained(out)
 
   # The filter output at the estimate, cached as the Stan path caches
   # `stanfit$kalman`: summary()'s standardised residual covariance reads it, and

@@ -71,5 +71,8 @@ include("kalman_trace.jl")
 include("laplace.jl")
 include("quadrature.jl")
 
+# Last, because it exercises everything above it.
+include("precompile_workload.jl")
+
 
 end # module ContinuousTimeSEM
