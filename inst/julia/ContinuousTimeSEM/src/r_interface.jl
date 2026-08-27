@@ -106,6 +106,61 @@ function _transform_closure(source::AbstractString)
     end
 end
 
+"""
+    _regular_transform_closure(source)
+
+The compiled closure for one *regular* transform, with its parameter index
+carried as a value rather than baked into the code.
+
+`ctModelWriter` writes the index into the expression -- `param[3]`, `param[7]` --
+so every cell of every model compiles to its own anonymous function *type*, and
+`EKFParameters` is parameterised by a tuple of them. Two models are then
+different types however similar they are, and the whole EKF pipeline specialises
+again for each: measured at 20-70 s on the first evaluation of a model shape,
+paid again for the next model.
+
+Rewriting `param[3]` to `param[i]` under a closure over `i` collapses that. All
+cells sharing a *template* now share one type and differ only in a field, so a
+model is typed by which templates it uses and how many free parameters it has,
+not by which index each one happens to read. The engine's own transforms come
+from a handful of templates, so a second model of the same shape reuses the
+first one's compiled code.
+
+A regular transform reads exactly one free parameter -- `_ctsem_regular_
+transform_supports` asserts it, and the adjoint's parameter layer depends on it
+-- so there is exactly one index to lift out. Anything that does not match that
+shape falls through to `_transform_closure` unchanged rather than being guessed
+at.
+"""
+function _regular_transform_closure(expression::AbstractString)
+    text = String(expression)
+    index = _regular_transform_index(text)
+    index === nothing && return _transform_closure(generate_transform_string(text))
+    # `invokelatest` because the maker may have been `eval`ed into this module a
+    # moment ago, and a method compiled after the current frame started is not
+    # visible to it. This runs once per model cell, so the dynamic call costs
+    # nothing worth measuring -- and the closure it returns is called normally.
+    return Base.invokelatest(_transform_closure(_regular_transform_key(text)), index)
+end
+
+"""The single parameter index a regular transform reads, or `nothing`."""
+function _regular_transform_index(text::AbstractString)
+    indices = Set{Int}()
+    for m in eachmatch(r"param\[\s*(\d+)\s*\]", text)
+        push!(indices, parse(Int, m.captures[1]))
+    end
+    return length(indices) == 1 ? first(indices) : nothing
+end
+
+"""The cache key for a regular transform: its source with the index lifted out."""
+function _regular_transform_key(expression::AbstractString)
+    text = String(expression)
+    _regular_transform_index(text) === nothing &&
+        return generate_transform_string(text)
+    template = replace(text, r"param\[\s*\d+\s*\]" => "param[ctsem_index]")
+    return "ctsem_index -> (param -> " * template * ")"
+end
+
 const _TRANSFORM_CACHE = Dict{String,Function}()
 const _TRANSFORM_CACHE_LOCK = ReentrantLock()
 
@@ -135,7 +190,11 @@ function ctsem_transforms_cached(regular, complex=String[])
         for source in regular
             expression = String(source)
             isempty(expression) && continue
-            haskey(_TRANSFORM_CACHE, generate_transform_string(expression)) ||
+            # Regular transforms are cached by *template*, with the parameter
+            # index lifted out -- see `_regular_transform_closure` -- so the
+            # question is whether this expression's template is known, not
+            # whether this exact expression has been seen.
+            haskey(_TRANSFORM_CACHE, _regular_transform_key(expression)) ||
                 return false
         end
         for source in complex
@@ -337,7 +396,7 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
         pn == 0 && continue
         expression = isempty(transform[i]) ? "param[$(pn)]" : String(transform[i])
         @view(reg_tfs[Symbol(matrix[i])])[Int(row[i]), Int(col[i])] =
-            _transform_closure(generate_transform_string(expression))
+            _regular_transform_closure(expression)
     end
     tfs_pos = par_pos
     reg_tfs = getdata(reg_tfs)[tfs_pos]
