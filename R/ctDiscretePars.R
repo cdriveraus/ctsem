@@ -134,11 +134,12 @@ ctDiscretePars<-function(fit, subjects='popmean',
     if(!ctmS$continuoustime) stop(call.=FALSE,
       "method='simulate' is for continuous time models.")
     out <- .ctDiscreteParsSimulate(fit, times=times,
-      state=if(is.null(state)) 'asymptotic' else state, nsamples=nsamples)
+      state=if(is.null(state)) 'asymptotic' else state, nsamples=nsamples,
+      observational=observational, standardise=standardise)
     times <- attr(out,'times')
     dimnames(out) <- list(Sample=seq_len(dim(out)[1]), Subject='popmean',
       `Time interval`=times, row=ctmS$latentNames, col=ctmS$latentNames)
-    attributes(out)$observational <- FALSE
+    attributes(out)$observational <- observational
     attributes(out)$cov <- FALSE
     attributes(out)$method <- 'simulate'
     out <- .ctContextAttach(out, fit)
@@ -282,27 +283,45 @@ ctDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=FALS
         for(ti in 1:length(times)){
           if(!discreteInput) ctpars$dtDRIFT[i,j,ti,,] <- expm::expm(as.matrix(ctpars$DRIFT[i,min(j,nsubs$DRIFT),,] * times[ti]))
           if(discreteInput) ctpars$dtDRIFT[i,j,ti,,] <- mpow(as.matrix(ctpars$DRIFT[i,min(j,nsubs$DRIFT),,]),times[ti])
-          if(standardise) {
+          if(standardise || observational){
+            # Both options need the processes' own scales: `standardise` to
+            # express the answer in them, `observational` because a correlated
+            # shock has no meaning without them.
+            #
             # A frozen DRIFT can be non-stationary at the point it was frozen at
             # while the nonlinear system it came from is perfectly well behaved
             # -- that is often the point of the nonlinearity. So this reports
             # NaN for the affected sample and names the likely cause, rather
             # than aborting and blaming the model. Julia's own
             # `_ctsem_asymptotics` already declines the same way.
-            if(any(diag(ctpars$asymDIFFUSIONcov[i,min(j,nsubs$asymDIFFUSIONcov),,]) < 0)){
+            asym <- matrix(ctpars$asymDIFFUSIONcov[i,min(j,nsubs$asymDIFFUSIONcov),,],nl,nl)
+            if(any(diag(asym) < 0)){
               nonstationary <- nonstationary + 1L
               ctpars$dtDRIFT[i,j,ti,,] <- NaN
               next
             }
-            ctpars$dtDRIFT[i,j,ti,,] <- ctpars$dtDRIFT[i,j,ti,,] *
-              matrix(rep(sqrt(diag(ctpars$asymDIFFUSIONcov[i,min(j,nsubs$asymDIFFUSIONcov),,])+1e-10),each=nl) /
-                  rep((sqrt(diag(ctpars$asymDIFFUSIONcov[i,min(j,nsubs$asymDIFFUSIONcov),,]))),times=nl),nl)
+            sdv <- sqrt(diag(asym) + 1e-10)
           }
+
           if(observational){
-            Qcor<-cov2cor(matrix(ctpars$DIFFUSIONcov[i,min(j,nsubs$DIFFUSIONcov),,],nl,nl)+diag(1e-8,nl))
-            Qcor <- Qcor #* sign(Qcor) #why was this squared before?
-            # browser()
-            ctpars$dtDRIFT[i,j,ti,,]  <- ctpars$dtDRIFT[i,j,ti,,]  %*% Qcor
+            # An observed one unit change in process c does not imply a one unit
+            # change in the processes correlated with it -- it implies
+            # rho_rc * sd_r / sd_c, the conditional expectation. Multiplying by
+            # the bare correlation matrix, as this did, treats a correlation as
+            # a regression coefficient and is only right when every process
+            # happens to share a scale.
+            Qcor <- cov2cor(matrix(ctpars$DIFFUSIONcov[i,min(j,nsubs$DIFFUSIONcov),,],nl,nl)+diag(1e-8,nl))
+            companions <- (sdv %*% t(1/sdv)) * Qcor   # [r,c] = rho_rc * sd_r/sd_c
+            ctpars$dtDRIFT[i,j,ti,,] <- ctpars$dtDRIFT[i,j,ti,,] %*% companions
+          }
+
+          if(standardise) {
+            # Response of r per one sd_c shock to c, in sd_r units: S^-1 M S.
+            # Applied after the observational step, so that the two together
+            # give S^-1 A S Qcor -- unchanged from before for that combination,
+            # which was already the dimensionally consistent one.
+            ctpars$dtDRIFT[i,j,ti,,] <- ctpars$dtDRIFT[i,j,ti,,] *
+              matrix(rep(sdv,each=nl) / rep(sdv,times=nl),nl)
           }
           if(cov) ctpars$dtDRIFT[i,j,ti,,]  <- tcrossprod(ctpars$dtDRIFT[i,j,ti,,] )
         }

@@ -376,25 +376,20 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
           if(contextdependent){
             # See .ctPredictTIPDynamics: reading a pseudo-subject's frozen
             # DRIFT would report where its fabricated trajectory drifted to,
-            # not what the covariate does.
-            # The 'Correlated' variant premultiplies by the diffusion
-            # correlation, which for a simulated response means perturbing by a
-            # correlated unit change rather than a unit vector -- a further
-            # design question rather than a translation, so it is left out and
-            # said so rather than drawn from the wrong quantity.
-            if(typei %in% 'Correlated'){
-              if(tipi==1) message('The correlated-change dynamics panel is not ',
-                'available for a model whose matrices depend on the latent state; ',
-                'only the independent (experimental impulse) panel is shown.')
-              next
-            }
+            # not what the covariate does. The correlated variant shocks each
+            # process by one standard deviation together with the correlated
+            # changes in the others, rather than premultiplying by a bare
+            # correlation matrix.
             ctd <- .ctPredictTIPDynamics(originalfit,
               tipredIndex = match(tipreds[tipi], ctmb$TIpredNames),
               values = TIPvalues[,tipi], times = if(!is.null(dynamicsControl$times))
                 dynamicsControl$times else seq(0,10,.5),
               ntipred = length(ctmb$TIpredNames),
               nsamples = if(!is.null(dynamicsControl$nsamples)) dynamicsControl$nsamples else 5,
-              latentNames = ctmb$latentNames)
+              latentNames = ctmb$latentNames,
+              observational = !typei %in% 'Independent',
+              standardise = isTRUE(dynamicsControl$standardise),
+              quiet = tipi > 1 || !typei %in% 'Independent')
           } else {
           discreteParsArgs <- c(dynamicsControl, list(
             fit=sf,

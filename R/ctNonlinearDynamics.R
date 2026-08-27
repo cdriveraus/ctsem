@@ -91,35 +91,80 @@
 
 #' Model implied regression by simulation, for a nonlinear system
 #'
-#' The response to a one unit impulse on each process, as a difference from the
-#' unperturbed trajectory: integrate from \code{state}, integrate again from
-#' \code{state} with one unit added to process j, and subtract. Column j of the
-#' result at time t is what a one unit change in process j is worth, t later.
+#' The response to a shock on each process, as a difference from the unperturbed
+#' trajectory: integrate from \code{state}, integrate again from \code{state}
+#' plus \code{shock[, j]}, and subtract.
 #'
 #' Taking the difference rather than the perturbed trajectory itself is what
 #' makes this readable: the unperturbed run carries the system's own drift
-#' towards its attractor, which is not an effect of the impulse. Differenced,
-#' the response starts at exactly 1 on the diagonal and decays to 0 for a stable
-#' process, the same shape the linear panel has.
+#' towards its attractor, which is not an effect of the shock. Differenced, the
+#' response decays to 0 for a stable process, the same shape the linear panel
+#' has.
 #'
+#' @param shock nlatent by nlatent matrix, column j the perturbation applied for
+#'   impulse j, in the processes' own units. Defaults to the identity, one unit
+#'   on process j alone. **The magnitude matters**: a nonlinear system's
+#'   response to a shock of size 2 is not twice its response to a shock of size
+#'   1, so the caller has to choose a magnitude that means something rather than
+#'   inherit an arbitrary 1.
 #' @return length(times) by nlatent by nlatent array, [time, response, impulse].
 #' @noRd
 .ctNonlinearImpulseResponse <- function(fit, state, times, tipreds = NULL,
-  maxstep = 0.1, raw = NULL) {
+  maxstep = 0.1, raw = NULL, shock = NULL) {
 
   nlatent <- .ctFitNlatent(fit)
   times <- sort(unique(c(0, as.numeric(times))))
+  if (is.null(shock)) shock <- diag(nlatent)
   baseline <- .ctNonlinearTrajectory(fit, state, times, tipreds, maxstep, raw)
   out <- array(NA_real_, dim = c(length(times), nlatent, nlatent))
   for (impulse in seq_len(nlatent)) {
     perturbed <- state
-    perturbed[impulse] <- perturbed[impulse] + 1
+    perturbed[seq_len(nlatent)] <- perturbed[seq_len(nlatent)] + shock[, impulse]
     out[, , impulse] <- .ctNonlinearTrajectory(fit, perturbed, times, tipreds,
       maxstep, raw) - baseline
   }
   dimnames(out) <- list(NULL, .ctFitModelObject(fit)$latentNames,
     .ctFitModelObject(fit)$latentNames)
   out
+}
+
+# The shock applied for each process, and what to divide the response by.
+#
+# A nonlinear response does not scale with the shock, so "one unit" is not a
+# neutral choice -- it is a choice, and for a process whose natural spread is
+# 0.02 or 200 it is a bad one. The shock is therefore one *standard deviation*
+# of the process, taken from the stationary within-subject covariance at the
+# evaluation point: a magnitude the model itself supplies.
+#
+# With `observational` the shock is not confined to one process. Observing a
+# one sd_c change in process c implies an expected rho_rc * sd_r change in
+# process r -- the conditional expectation under the diffusion covariance --
+# and that correlated companion is the whole difference between "an
+# experimental impulse on c alone" and "c was observed to move".
+#
+# The response is divided so the panel reads as the linear one does: by sd_r
+# when standardising, giving the diffusion correlation at t = 0; by sd_c
+# otherwise, giving the raw-unit regression matrix at t = 0. Both are the
+# identity at t = 0 when there is no correlated shock.
+.ctNonlinearShockSpec <- function(mats, nlatent, observational, standardise,
+  magnitude = 1) {
+
+  index <- seq_len(nlatent)
+  variance <- diag(as.matrix(mats$asymDIFFUSIONcov[index, index, drop = FALSE]))
+  if (any(!is.finite(variance)) || any(variance < 0)) return(NULL)
+  sdv <- sqrt(variance + 1e-10)
+
+  if (isTRUE(observational)) {
+    diffusion <- as.matrix(mats$DIFFUSIONcov[index, index, drop = FALSE])
+    correlation <- suppressWarnings(stats::cov2cor(diffusion + diag(1e-8, nlatent)))
+    correlation[!is.finite(correlation)] <- 0
+    shock <- (sdv %o% rep(1, nlatent)) * correlation   # [r,c] = sd_r * rho_rc
+  } else {
+    shock <- diag(sdv, nlatent)
+  }
+
+  divisor <- if (isTRUE(standardise)) sdv %o% rep(1, nlatent) else rep(1, nlatent) %o% sdv
+  list(shock = shock * magnitude, divisor = divisor * magnitude, sd = sdv)
 }
 
 # ctDiscretePars(method='simulate') ------------------------------------------
@@ -133,7 +178,8 @@
 # stated rather than silently inherited from a plotting argument sized for a
 # cheap computation.
 .ctDiscreteParsSimulate <- function(fit, times, state = 'asymptotic',
-  nsamples = 10, maxstep = 0.1, quiet = FALSE) {
+  nsamples = 10, maxstep = 0.1, quiet = FALSE, observational = FALSE,
+  standardise = FALSE, magnitude = 1) {
 
   if (!inherits(fit, 'ctJuliaFit')) stop(call. = FALSE,
     paste0("method='simulate' requires backend='julia': integrating the ",
@@ -156,10 +202,23 @@
   times <- sort(unique(c(0, as.numeric(times))))
   nlatent <- .ctFitNlatent(fit)
   out <- array(NA_real_, dim = c(nsamples, 1L, length(times), nlatent, nlatent))
+  nonstationary <- 0L
   for (draw in seq_len(nsamples)) {
-    out[draw, 1L, , , ] <- .ctNonlinearImpulseResponse(fit, start, times,
-      maxstep = maxstep, raw = draws[draw, ])
+    # Per draw: the shock's own scale is a function of the parameters, so it
+    # moves with them rather than being fixed from the point estimate.
+    mats <- suppressMessages(ctBackendParMatrices(fit, raw = draws[draw, ],
+      state = start, trim = FALSE))
+    spec <- .ctNonlinearShockSpec(mats, nlatent, observational, standardise,
+      magnitude)
+    if (is.null(spec)) { nonstationary <- nonstationary + 1L; next }
+    response <- .ctNonlinearImpulseResponse(fit, start, times, maxstep = maxstep,
+      raw = draws[draw, ], shock = spec$shock)
+    for (k in seq_along(times)) out[draw, 1L, k, , ] <- response[k, , ] / spec$divisor
   }
+  if (nonstationary > 0 && !quiet) message(nonstationary, ' of ', nsamples,
+    ' draws had no stationary variance at this state, so no shock magnitude ',
+    'could be derived from the model; those draws are NA.')
+
   attr(out, 'times') <- times
   attr(out, 'stateLabel') <- resolved$label
   out
@@ -190,7 +249,8 @@
 # It also does away with the fabricated data: covariate values go to the engine
 # directly as `tipreds`, so nothing depends on a pseudo-subject at all.
 .ctPredictTIPDynamics <- function(fit, tipredIndex, values, times, ntipred,
-  nsamples = 5, latentNames, quiet = FALSE) {
+  nsamples = 5, latentNames, quiet = FALSE, observational = FALSE,
+  standardise = FALSE) {
 
   draws <- .ctBackendRawSamples(fit)
   nsamples <- max(1L, min(as.integer(nsamples), nrow(draws)))
@@ -218,14 +278,21 @@
       next
     }
     for (draw in seq_len(nsamples)) {
-      out[draw, level, , , ] <- .ctNonlinearImpulseResponse(fit, state, times,
-        tipreds = tipreds, raw = draws[draw, ])
+      mats <- suppressMessages(ctBackendParMatrices(fit, raw = draws[draw, ],
+        state = state, tipreds = tipreds, trim = FALSE))
+      spec <- .ctNonlinearShockSpec(mats, nlatent, observational, standardise)
+      if (is.null(spec)) next
+      response <- .ctNonlinearImpulseResponse(fit, state, times,
+        tipreds = tipreds, raw = draws[draw, ], shock = spec$shock)
+      for (k in seq_along(times)) {
+        out[draw, level, k, , ] <- response[k, , ] / spec$divisor
+      }
     }
   }
 
   dimnames(out) <- list(Sample = seq_len(nsamples), Subject = seq_along(values),
     `Time interval` = times, row = latentNames, col = latentNames)
-  attributes(out)$observational <- FALSE
+  attributes(out)$observational <- observational
   attributes(out)$cov <- FALSE
   attributes(out)$method <- 'simulate'
   out
