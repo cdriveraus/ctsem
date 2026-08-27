@@ -180,3 +180,39 @@ test_that('ctDiscretePars refuses state= for a stan fit, with a reason', {
   expect_error(ctDiscretePars(ctstantestfit, times = 1, state = 'mean'),
     "backend='julia'")
 })
+
+# Phase portrait, on the linear side where no engine is needed and the answers
+# are all in closed form.
+test_that('the phase portrait field and fixed point agree with each other', {
+  skip_if_not(exists('ctstantestfit'))
+  portrait <- ctPhasePortrait(ctstantestfit, gridsize = 7, plot = FALSE)
+  expect_true(all(is.finite(portrait$field$dx)))
+  expect_true(all(is.finite(portrait$field$dy)))
+
+  # The marked fixed point must be where the drawn field actually vanishes --
+  # not merely near it. Reading asymCINT from the summary does not satisfy
+  # this, because the summary collapses each matrix over draws separately.
+  field <- ctsem:::.ctFieldFunction(ctstantestfit)
+  point <- as.numeric(unlist(portrait$fixedpoint))
+  expect_lt(max(abs(field(point))), 1e-8)
+
+  # A linear model's nullclines are straight, so each is a single piece.
+  expect_equal(length(unique(portrait$nullclines$piece)), 2)
+})
+
+test_that('the phase portrait refuses a nonlinear stan fit', {
+  skip_if_not(exists('ctstantestfit'))
+  fit <- ctstantestfit
+  setup <- fit$setup$matsetup
+  cell <- setup$matrix == 3 & setup$row == 1 & setup$col == 1
+  fit$setup$matsetup$parname[cell] <- 'log1p(exp(state[1]))'
+  expect_true(ctModelIsNonlinear(fit))
+  expect_error(ctPhasePortrait(fit, gridsize = 3), "backend='julia'")
+})
+
+test_that('the phase portrait validates its latents argument', {
+  skip_if_not(exists('ctstantestfit'))
+  expect_error(ctPhasePortrait(ctstantestfit, latents = 1), 'exactly two')
+  expect_error(ctPhasePortrait(ctstantestfit, latents = c('nope', 'eta2')),
+    'exactly two')
+})
