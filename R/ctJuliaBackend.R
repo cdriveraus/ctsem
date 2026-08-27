@@ -294,14 +294,32 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   .ct_julia_cache$module
 }
 
+# Drop every Julia proxy *before* stopping Julia, and collect them while the
+# session that issued them is still there to hear it.
+#
+# JuliaConnectoR hands R proxy objects that hold a reference counted on the
+# Julia side, and releases them from an R finalizer. Stopping Julia first and
+# clearing the cache afterwards leaves those proxies alive with nothing to talk
+# to: their finalizers run whenever R next collects, which may be after a new
+# session has started, and the decrement then names a reference that session
+# never issued. That surfaces as
+#
+#     KeyError: key 0x0000... not found
+#       decrefcount!(communicator, ref) at sharing.jl:134
+#
+# from inside an unrelated later call. Order is the whole fix -- release, then
+# collect, then stop.
 .ctJuliaClearSession <- function() {
-  if (requireNamespace("JuliaConnectoR", quietly = TRUE)) {
-    try(JuliaConnectoR::stopJulia(), silent = TRUE)
-  }
   .ct_julia_cache$module <- NULL
   .ct_julia_cache$project <- NULL
   .ct_julia_cache$engine <- NULL
   .ct_julia_cache$objectives <- new.env(parent = emptyenv())
+  # Two passes: the first frees the proxies, the second any proxy a finalizer
+  # from the first pass happened to drop.
+  gc(verbose = FALSE); gc(verbose = FALSE)
+  if (requireNamespace("JuliaConnectoR", quietly = TRUE)) {
+    try(JuliaConnectoR::stopJulia(), silent = TRUE)
+  }
   invisible(NULL)
 }
 
@@ -1396,6 +1414,13 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
       # it was previously only obtainable by timing one evaluation and dividing.
       f_calls = if (is.null(result$f_calls)) NA_integer_ else as.integer(result$f_calls),
       g_calls = if (is.null(result$g_calls)) NA_integer_ else as.integer(result$g_calls),
+      # The gradient at the estimate, and the tolerance it was judged against.
+      # `converged` is one bit and a fit that stops just short of a tolerance
+      # looks the same as one that never moved; these are what tell them apart.
+      gradient_norm = if (is.null(result$gradient_norm)) NA_real_ else
+        as.numeric(result$gradient_norm),
+      gradient_tolerance = if (is.null(result$scaled_tolerance)) NA_real_ else
+        as.numeric(result$scaled_tolerance),
       stalled = isTRUE(result$stalled)), engine = model_spec$engine,
     args = list(backend = "julia", backendcontrol = backendcontrol,
       optimcontrol = optimcontrol, cores = cores, priors = priors,
@@ -1408,6 +1433,13 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
     warning("The optimizer made no progress from its starting values, and the ",
       "gradient there is not zero. Treat this fit as failed: check the starting ",
       "values, and see fit$estimate$stalled.", call. = FALSE)
+  } else if (!isTRUE(result$converged)) {
+    warning("The optimizer stopped without meeting its convergence criterion: ",
+      "largest gradient ", signif(as.numeric(result$gradient_norm), 3),
+      " against a tolerance of ",
+      signif(as.numeric(result$scaled_tolerance), 3),
+      ". The estimate may still be usable -- compare the two, and see ",
+      "fit$estimate$gradient_norm.", call. = FALSE)
   }
   if (!is.null(model_spec$laplace)) {
     # The inner solve is part of the objective, so its status is part of

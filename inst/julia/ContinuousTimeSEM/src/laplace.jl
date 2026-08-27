@@ -2538,9 +2538,20 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     # this way, reporting success, which in a simulation study is silently
     # wrong rather than loudly broken.
     moved = isempty(minimizer) ? 0.0 : maximum(abs, minimizer .- start_values)
-    stalled = moved == 0 && (!isfinite(final.value) ||
-        (!isempty(final.gradient) &&
-         maximum(abs, final.gradient) > max(g_tol, 1e-6)))
+    gradient_norm = isempty(final.gradient) ? 0.0 : maximum(abs, final.gradient)
+    stalled = moved == 0 && (!isfinite(final.value) || gradient_norm > max(g_tol, 1e-6))
+    # Optim's `g_tol` is an *absolute* bound on the gradient, and a log
+    # likelihood of order 1e3 puts 1e-8 out of reach however good the fit is --
+    # L-BFGS runs out of line search first and reports nothing converged. So
+    # convergence is also allowed on a criterion that scales with the problem.
+    #
+    # This is deliberately not a loosening of the strict test, because that is
+    # how the failure this replaced stayed hidden: on one 12-subject model the
+    # old code stopped after a single iteration with a gradient of 1.2e9 and a
+    # log likelihood of -7.7e6, and reported success. That point fails the
+    # scaled criterion by eight orders of magnitude.
+    scaled_tolerance = max(g_tol, 1e-6 * max(one(gradient_norm), abs(final.value)))
+    converged_enough = isfinite(final.value) && gradient_norm <= scaled_tolerance
     verbose && stalled && println("Laplace: the optimizer made no progress from ",
         "its starting values; reporting this as not converged")
     return (
@@ -2555,7 +2566,9 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
         stalled=stalled,
         chunks=ctsem_max_chunks().max_chunks,
         chunk_timings=tuning === nothing ? Tuple{Int,Float64}[] : tuning.timings,
-        converged=Optim.converged(result) && !stalled,
+        gradient_norm=gradient_norm,
+        scaled_tolerance=scaled_tolerance,
+        converged=!stalled && (Optim.converged(result) || converged_enough),
         g_converged=Optim.g_converged(result),
         f_converged=Optim.f_converged(result),
         x_converged=Optim.x_converged(result),
