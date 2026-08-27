@@ -88,9 +88,20 @@
   # `cores` here means engine threads, not R processes: the Julia engine splits
   # its own subject loop, so each log-probability evaluation is parallel and
   # there is nothing for an R cluster to do.
-  if (inherits(fit, "ctJuliaFit") && cores > 1L) {
-    try(JuliaConnectoR::juliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!",
-      as.integer(cores)), silent = TRUE)
+  #
+  # The count is the one the fit's chunk tuner measured, not `cores` itself.
+  # The subject loop is not monotone in the chunk count -- that is why
+  # `ctsem_tune_chunks!` exists -- and on this model at ceiling 4 the tuner
+  # picks 2 (measured 0.0292 s against 0.0311 s at 4). Setting `cores` here
+  # overrode that with the value the tuner had just rejected. The tuner never
+  # exceeds its ceiling, so this still respects `cores`.
+  if (inherits(fit, "ctJuliaFit")) {
+    tuned <- suppressWarnings(as.integer(fit$estimate$chunks)[1L])
+    if (is.na(tuned) || tuned < 1L) tuned <- cores
+    if (tuned > 1L) {
+      try(JuliaConnectoR::juliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!",
+        as.integer(min(tuned, cores))), silent = TRUE)
+    }
   }
 
   # The engines produce per-subject scores from one traced pass, so they are

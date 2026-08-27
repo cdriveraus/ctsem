@@ -230,8 +230,16 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
 
   JuliaConnectoR::juliaEval("using Pkg")
   activate <- sprintf("Pkg.activate(%s)", .ctJuliaString(env_dir))
+  # `Pkg.instantiate()` precompiles the environment, and then `using` precompiles
+  # the engine again -- two full builds of the same package on every fresh
+  # session with a cold cache. That was cheap until the engine started
+  # precompiling model shapes; now it is a hundred seconds paid twice.
+  # `JULIA_PKG_PRECOMPILE_AUTO` turns off only Pkg's automatic pass, so `using`
+  # still builds whatever is stale, and `withenv` puts it back rather than
+  # leaving the session's Pkg quietly reconfigured.
+  quiet_instantiate <- 'withenv("JULIA_PKG_PRECOMPILE_AUTO" => "0") do; Pkg.instantiate(); end'
   instantiated <- tryCatch({
-    JuliaConnectoR::juliaEval(paste0(activate, "; Pkg.instantiate()"))
+    JuliaConnectoR::juliaEval(paste0(activate, "; ", quiet_instantiate))
     TRUE
   }, error = function(e) FALSE)
   if (!instantiated) {
@@ -240,7 +248,7 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
     # back to a fresh resolve is better than refusing to run; the compat bounds
     # in Project.toml still apply.
     unlink(file.path(env_dir, "Manifest.toml"))
-    JuliaConnectoR::juliaEval(paste0(activate, "; Pkg.resolve(); Pkg.instantiate()"))
+    JuliaConnectoR::juliaEval(paste0(activate, "; Pkg.resolve(); ", quiet_instantiate))
   }
   JuliaConnectoR::juliaEval("using ContinuousTimeSEM")
   .ct_julia_cache$project <- project
@@ -1346,8 +1354,15 @@ summary.ctJuliaFit <- function(object, timeinterval = 1, digits = 3, parmatrices
 #' @export
 ctExtract.ctJuliaFit <- function(object, subjectMatrices = FALSE, cores = 2,
   nsamples = "all", subjects = "all", ...) {
-  .ctBackendExtract(object, subjectMatrices = subjectMatrices, nsamples = nsamples,
-    subjects = subjects, ...)
+  # `cores` was accepted and dropped. It is the engine's subject-chunk ceiling
+  # here, not a number of R processes -- there is no cluster on this path -- and
+  # it is restored afterwards so an extract does not leave the session
+  # reconfigured. Note that `subjectMatrices=TRUE` is dominated by moving the
+  # filter output back across the bridge rather than by computing it, so this
+  # bounds the work rather than speeding it up much.
+  .ctBackendWithMaxChunks(cores,
+    .ctBackendExtract(object, subjectMatrices = subjectMatrices, nsamples = nsamples,
+      subjects = subjects, ...))
 }
 
 #' @export
@@ -1363,6 +1378,30 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   .ctContextAttach(out, fit)
 }
 
+# Run `expr` with the engine's subject-chunk ceiling set to `chunks`, and put
+# the previous ceiling back afterwards.
+#
+# `_CTSEM_MAX_CHUNKS` is session-global Julia state, and three call sites wrote
+# it and none restored it: after a `cores=8` fit the session read 8, after a
+# `cores=1` fit it read 1, and every later ctKalman(), ctJuliaEvaluate(),
+# ctExtract() or ctLOO() in that session inherited whichever fit came last. That
+# is performance-only, but it makes a timing depend on history, which is exactly
+# what makes one impossible to reproduce.
+.ctBackendWithMaxChunks <- function(chunks, expr) {
+  chunks <- suppressWarnings(as.integer(chunks)[1L])
+  previous <- tryCatch(as.integer(.ctBackendJuliaValue(JuliaConnectoR::juliaEval(
+    "ContinuousTimeSEM.ctsem_max_chunks().max_chunks"))), error = function(e) NA_integer_)
+  if (!is.na(chunks) && chunks >= 1L) {
+    try(JuliaConnectoR::juliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!",
+      max(1L, chunks)), silent = TRUE)
+    if (!is.na(previous)) {
+      on.exit(try(JuliaConnectoR::juliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!",
+        previous), silent = TRUE), add = TRUE)
+    }
+  }
+  expr
+}
+
 # Run the engine's optimizer over a prepared specification.
 #
 # Factored out of ctFitJuliaBackend() because cross-validation re-optimises the
@@ -1374,24 +1413,27 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   objective <- .ctJuliaObjective(spec)
   module <- .ctJuliaModule(model_spec$project)
-  # Called by name rather than through the imported module: the Julia function
-  # ends in `!`, which is not a syntactic R name.
-  JuliaConnectoR::juliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!", as.integer(cores))
   common <- list(maxiter = as.integer(.ctJuliaOr(backendcontrol$maxiter, 1000L)),
     g_tol = .ctJuliaOr(tol, .ctJuliaOr(backendcontrol$g_tol, 1e-8)),
     f_tol = .ctJuliaOr(backendcontrol$f_tol, 0),
     x_tol = .ctJuliaOr(backendcontrol$x_tol, 0),
     verbose = verbose > 0L)
-  if (!is.null(model_spec$laplace)) {
-    # `gradient` selects how the *process* likelihood's gradient is taken and
-    # does not apply here: the Laplace objective's gradient is a forward sweep
-    # over that reverse pass regardless.
-    return(JuliaConnectoR::juliaGet(do.call(module$ctsem_laplace_optimize,
-      c(list(objective, .ctJuliaNumericVector(start)), common))))
-  }
-  JuliaConnectoR::juliaGet(do.call(module$ctsem_optimize,
-    c(list(objective, .ctJuliaNumericVector(start)), common,
-      list(gradient_method = gradient))))
+  # `cores` is the ceiling; `ctsem_tune_chunks!` measures the count to use
+  # within it, and the fit records what it picked. Restored afterwards so the
+  # session does not carry this fit's ceiling into the next thing that runs.
+  .ctBackendWithMaxChunks(cores, {
+    if (!is.null(model_spec$laplace)) {
+      # `gradient` selects how the *process* likelihood's gradient is taken and
+      # does not apply here: the Laplace objective's gradient is a forward sweep
+      # over that reverse pass regardless.
+      JuliaConnectoR::juliaGet(do.call(module$ctsem_laplace_optimize,
+        c(list(objective, .ctJuliaNumericVector(start)), common)))
+    } else {
+      JuliaConnectoR::juliaGet(do.call(module$ctsem_optimize,
+        c(list(objective, .ctJuliaNumericVector(start)), common,
+          list(gradient_method = gradient))))
+    }
+  })
 }
 
 ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NULL, cores = 1L,
@@ -1415,9 +1457,21 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
     cores <- 1L
   }
   cores <- max(1L, cores)
-  if (cores > 1L && !.ctJuliaSessionRunning() &&
-      !nzchar(Sys.getenv("JULIA_NUM_THREADS", unset = ""))) {
-    Sys.setenv(JULIA_NUM_THREADS = as.character(cores))
+  if (cores > 1L && !.ctJuliaSessionRunning()) {
+    existing <- Sys.getenv("JULIA_NUM_THREADS", unset = "")
+    # An existing value is respected unless *this* function set it for an
+    # earlier fit. Without that distinction a `cores=8` fit left the variable
+    # behind, and the next `ctFit(cores=2)` in a restarted session started
+    # eight threads while asking for two -- the subject loop still honoured
+    # `cores`, but the process held cores the user had not asked for. A value
+    # from ctJuliaSetup(threads=) or from the user's own environment is
+    # deliberate and still wins.
+    ours <- nzchar(existing) &&
+      identical(existing, .ct_julia_cache$threads_from_cores)
+    if (!nzchar(existing) || ours) {
+      Sys.setenv(JULIA_NUM_THREADS = as.character(cores))
+      .ct_julia_cache$threads_from_cores <- as.character(cores)
+    }
   }
   # `optimcontrol$gradient` is the documented control; `backendcontrol$gradient`
   # is still honoured because it was the only way to set this before, and
@@ -1465,6 +1519,12 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
       # Evaluation counts, because "how many times did it call the likelihood"
       # is the first question about a fit that took longer than expected, and
       # it was previously only obtainable by timing one evaluation and dividing.
+      # What `ctsem_tune_chunks!` measured as the best subject-chunk count
+      # within the `cores` ceiling. Carried onto the fit because the uncertainty
+      # phase reads it rather than re-deriving it from `cores`: the subject loop
+      # is not monotone in the chunk count, which is the whole reason the tuner
+      # exists.
+      chunks = if (is.null(result$chunks)) NA_integer_ else as.integer(result$chunks),
       f_calls = if (is.null(result$f_calls)) NA_integer_ else as.integer(result$f_calls),
       g_calls = if (is.null(result$g_calls)) NA_integer_ else as.integer(result$g_calls),
       # The gradient at the estimate, and the tolerance it was judged against.

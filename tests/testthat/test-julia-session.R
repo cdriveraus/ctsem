@@ -84,3 +84,37 @@ test_that("a model and a data frame fit end to end", {
     expect_true(is.list(summ) || is.data.frame(summ), label = route)
   }
 })
+
+# The engine's subject-chunk ceiling is session-global Julia state. Three call
+# sites wrote it and none put it back, so after a `cores=8` fit the session read
+# 8 and after a `cores=1` fit it read 1 -- and every later ctKalman(),
+# ctExtract() or ctLOO() inherited whichever fit came last. Performance-only,
+# but it makes a timing depend on history, which is what makes one impossible to
+# reproduce.
+test_that("a fit leaves the engine's chunk ceiling as it found it", {
+  skip_without_julia()
+  ceiling <- function() as.integer(JuliaConnectoR::juliaEval(
+    "ContinuousTimeSEM.ctsem_max_chunks().max_chunks"))
+  JuliaConnectoR::juliaEval("ContinuousTimeSEM.ctsem_set_max_chunks!(3)")
+  before <- ceiling()
+  expect_equal(before, 3L)
+
+  set.seed(9)
+  dat <- do.call(rbind, lapply(1:8, function(i)
+    data.frame(id = i, time = 0:4, Y1 = cumsum(stats::rnorm(5)) * .5)))
+  model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1))))
+  fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
+    cores = 2, optimcontrol = list(estonly = TRUE))))
+
+  expect_equal(ceiling(), before)
+  # And the tuner's answer is still recorded on the fit, which is what the
+  # uncertainty phase reads instead of `cores`.
+  expect_true(is.numeric(fit$estimate$chunks) || is.integer(fit$estimate$chunks))
+  expect_lte(as.integer(fit$estimate$chunks), 2L)
+
+  # A diagnostic must not reconfigure the session either.
+  JuliaConnectoR::juliaEval("ContinuousTimeSEM.ctsem_set_max_chunks!(3)")
+  suppressWarnings(suppressMessages(try(ctExtract(fit, cores = 2), silent = TRUE)))
+  expect_equal(ceiling(), 3L)
+})
