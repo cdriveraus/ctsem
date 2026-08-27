@@ -34,9 +34,32 @@ object is a discrete time model, these should be positive integers.}
 increase smoothness / accuracy, at cost of plotting speed. Values greater than the total
 number of samples will be set to total samples.}
 
-\item{observational}{Logical. If TRUE, outputs expected change in processes *conditional on observing* a 1 unit change in each --
-this change is correlated according to the DIFFUSION matrix. If FALSE, outputs expected regression values -- also interpretable as
-an independent 1 unit change on each process, giving the expected response under a 1 unit experimental impulse.}
+\item{observational}{What a "one unit change in process c" is taken to bring
+with it. Every variant is \code{dtDRIFT(t) \%*\% C} for a different companion
+matrix \code{C}, whose column c says what else moves.
+\describe{
+  \item{\code{FALSE}, \code{'experimental'}}{\code{C = I}. Nothing else
+    moves, because the change was imposed. This is the \emph{partial}
+    regression \code{E[x(t+u)|x(t)]}, and the only variant that is a property
+    of the dynamics alone.}
+  \item{\code{TRUE}, \code{'observational'}}{\code{C = Sigma diag(Sigma)^-1}
+    with \code{Sigma = asymDIFFUSIONcov}. Process c is \emph{observed} one
+    unit above expectation and the others are not held fixed, so they move by
+    \code{Sigma_rc/Sigma_cc}. This is the \emph{simple} regression -- what
+    regressing the observed data on x_c alone recovers.}
+  \item{\code{'shock'}}{\code{C = Q diag(Q)^-1} with
+    \code{Q = DIFFUSIONcov}. One hypothetical system noise innovation arrives
+    in c, with companion innovations \code{Q_rc/Q_cc}. An impulse response
+    rather than a regression.}
+  \item{\code{'orthogonal'}}{From the Cholesky factor of DIFFUSION, so
+    shocks are uncorrelated. Depends on the order of the latent processes,
+    which is a modelling assumption rather than a property of the fit.}
+}
+The companion matrices are asymmetric, and must be: a one unit move in a
+wide-spread process implies more movement in a narrow one than the reverse.
+\code{'observational'} and \code{'shock'} use different covariance matrices
+because they ask different questions, and coincide only under isotropic decay
+with no cross effects.}
 
 \item{standardise}{Logical. If TRUE, output is standardised according to expected total within subject variance, given by the
 asymDIFFUSIONcov matrix.}

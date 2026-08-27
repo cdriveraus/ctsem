@@ -216,3 +216,89 @@ test_that('the phase portrait validates its latents argument', {
   expect_error(ctPhasePortrait(ctstantestfit, latents = c('nope', 'eta2')),
     'exactly two')
 })
+
+
+# Every interpretation of "a one unit change in process c" is dtDRIFT %*% C for
+# a different companion matrix C. These are pure linear algebra and need no
+# fit, which is the point: the whole family can be pinned in a couple of
+# seconds rather than by refitting models.
+test_that('each companion matrix is what it claims to be', {
+  drift <- matrix(c(-.4, .15, .05, -.3), 2, 2)
+  diffusion <- matrix(c(1, 1.6, 1.6, 16), 2, 2)   # innovation sds 1 and 4
+  stationary <- matrix(solve(kronecker(diag(2), drift) + kronecker(drift, diag(2)),
+    -as.vector(diffusion)), 2, 2)
+  companion <- function(type) ctsem:::.ctCompanionMatrix(type, diffusion,
+    stationary, 2)
+
+  # experimental: nothing else moves.
+  expect_equal(companion('experimental'), diag(2))
+  # observational: the conditional expectation under the STATE covariance.
+  expect_equal(companion('observational'),
+    stationary %*% diag(1 / diag(stationary)))
+  # shock: the conditional expectation under the INNOVATION covariance.
+  expect_equal(companion('shock'), diffusion %*% diag(1 / diag(diffusion)))
+  # These are different questions and must give different answers whenever the
+  # state and innovation correlations differ.
+  expect_false(isTRUE(all.equal(companion('observational'), companion('shock'))))
+
+  # Every one has a unit diagonal -- "process c moves by one unit" -- and is
+  # asymmetric, because E[x_2|x_1=1] and E[x_1|x_2=1] are different numbers
+  # unless the variances match. A correlation matrix is symmetric and so can
+  # never be any of these.
+  for (type in c('observational', 'shock')) {
+    expect_equal(diag(companion(type)), c(1, 1))
+    expect_false(isTRUE(all.equal(companion(type), t(companion(type)))))
+  }
+
+  # orthogonal: the Cholesky factor, so the implied shock covariance recovers
+  # the diffusion correlation.
+  orthogonal <- companion('orthogonal')
+  scale <- diag(diag(chol(diffusion))^2)
+  expect_equal(cov2cor(orthogonal %*% scale %*% t(orthogonal)),
+    cov2cor(diffusion), tolerance = 1e-8)
+
+  expect_error(ctsem:::.ctCompanionMatrix('nonsense', diffusion, stationary, 2))
+})
+
+test_that('the historical logical argument still selects the right two', {
+  expect_equal(ctsem:::.ctCompanionType(FALSE), 'experimental')
+  expect_equal(ctsem:::.ctCompanionType(TRUE), 'observational')
+  expect_equal(ctsem:::.ctCompanionType('shock'), 'shock')
+})
+
+test_that('ctDiscreteParsDrift applies the companion matrix it was asked for', {
+  drift <- matrix(c(-.4, .15, .05, -.3), 2, 2)
+  diffusion <- matrix(c(1, 1.6, 1.6, 16), 2, 2)
+  stationary <- matrix(solve(kronecker(diag(2), drift) + kronecker(drift, diag(2)),
+    -as.vector(diffusion)), 2, 2)
+  pars <- list(DRIFT = array(drift, dim = c(1, 2, 2)),
+    DIFFUSIONcov = array(diffusion, dim = c(1, 2, 2)),
+    asymDIFFUSIONcov = array(stationary, dim = c(1, 2, 2)))
+  scales <- diag(sqrt(diag(stationary)))
+  transition <- as.matrix(Matrix::expm(drift * 1.5))
+
+  for (type in ctsem:::.ctCompanionTypes) {
+    got <- ctsem:::ctDiscreteParsDrift(pars, times = 1.5, observational = type,
+      standardise = FALSE, quiet = TRUE)
+    expect_equal(got[1, 1, 1, , ],
+      transition %*% ctsem:::.ctCompanionMatrix(type, diffusion, stationary, 2),
+      ignore_attr = TRUE)
+  }
+
+  # Standardising composes on top: S^-1 (dtA C) S. For 'observational' that is
+  # the standardised simple regression, S^-1 dtA S R.
+  std <- ctsem:::ctDiscreteParsDrift(pars, times = 1.5, observational = TRUE,
+    standardise = TRUE, quiet = TRUE)
+  expect_equal(std[1, 1, 1, , ],
+    solve(scales) %*% transition %*% scales %*% cov2cor(stationary),
+    ignore_attr = TRUE)
+})
+
+test_that('a process with no diffusion gets no companions rather than NaN', {
+  pars <- list(DRIFT = array(matrix(c(-.4, .1, 0, -.3), 2, 2), dim = c(1, 2, 2)),
+    DIFFUSIONcov = array(matrix(c(1, 0, 0, 0), 2, 2), dim = c(1, 2, 2)),
+    asymDIFFUSIONcov = array(matrix(c(1, .5, .5, 4), 2, 2), dim = c(1, 2, 2)))
+  out <- ctsem:::ctDiscreteParsDrift(pars, times = 1, observational = 'shock',
+    standardise = FALSE, quiet = TRUE)
+  expect_true(all(is.finite(out)))
+})

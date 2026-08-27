@@ -3,24 +3,38 @@ library(testthat)
 
 context('nonlinearreportingjulia')
 
-# One nonlinear julia fit, reused by everything below: fitting is the expensive
-# part and the questions here are all about what gets *reported* from it.
-nlfit <- local({
-  skip_without_julia()
-  set.seed(1)
+# Fitting is by far the expensive part of this file and none of the questions
+# here are about fitting, so each model is built once, on first use, and shared.
+# Two fits cover everything: one state dependent, one linear with correlated
+# diffusion and unequal process scales -- the linear one has to be correlated,
+# because a diagonal diffusion never exercises the companion-shock path at all
+# and would let a wrong companion matrix pass every reduction check.
+.ctTestFit <- local({
+  store <- list()
+  function(name, builder) {
+    if (is.null(store[[name]])) store[[name]] <<- builder()
+    store[[name]]
+  }
+})
+
+.ctTestData <- function(seed, diffusion, nsubjects = 25, Tpoints = 12) {
+  set.seed(seed)
   generating <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
     manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
     LAMBDA = diag(2), DRIFT = matrix(c(-.4, .1, 0, -.3), 2, 2),
     CINT = matrix(c(.2, .1), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
-    MANIFESTVAR = diag(.2, 2), DIFFUSION = matrix(c(.5, 0, 0, .4), 2, 2)))
-  datalong <- as.data.frame(suppressMessages(ctGenerate(generating, n.subjects = 25,
-    burnin = 5, dtmean = 1, logdtsd = .1, wide = FALSE, Tpoints = 12)))
+    MANIFESTVAR = diag(.2, 2), DIFFUSION = diffusion))
+  as.data.frame(suppressMessages(ctGenerate(generating, n.subjects = nsubjects,
+    burnin = 5, dtmean = 1, logdtsd = .1, wide = FALSE, Tpoints = Tpoints)))
+}
 
+# State dependent: eta1's own decay depends on where eta2 is.
+nonlinearFit <- function() .ctTestFit('nonlinear', function() {
+  skip_without_julia()
+  datalong <- .ctTestData(1, matrix(c(.5, 0, 0, .4), 2, 2))
   model <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
     manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
-    LAMBDA = diag(2),
-    # eta1's own decay depends on where eta2 is.
-    PARS = c('dr11|-log1p_exp(param)'),
+    LAMBDA = diag(2), PARS = c('dr11|-log1p_exp(param)'),
     DRIFT = matrix(c('dr11 * (1 + 0.2 * eta2)', 'd21', 0, 'd22'), 2, 2),
     CINT = matrix(c('c1', 'c2'), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
     MANIFESTVAR = diag(.2, 2), DIFFUSION = matrix(c('df1', 0, 0, 'df2'), 2, 2)))
@@ -28,9 +42,41 @@ nlfit <- local({
   ctFit(datalong, model, backend = 'julia', cores = 1, verbose = 0)
 })
 
+# Linear, with correlated diffusion and processes on different scales.
+linearFit <- function() .ctTestFit('linear', function() {
+  skip_without_julia()
+  datalong <- .ctTestData(5, matrix(c(1.0, 0.8, 0, 1.2), 2, 2), nsubjects = 30)
+  model <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
+    manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+    LAMBDA = diag(2), DRIFT = matrix(c('d11', 'd21', 0, 'd22'), 2, 2),
+    CINT = matrix(c('c1', 'c2'), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
+    MANIFESTVAR = diag(.2, 2),
+    DIFFUSION = matrix(c('df11', 'df21', 0, 'df22'), 2, 2)))
+  model$pars$indvarying <- FALSE
+  ctFit(datalong, model, backend = 'julia', cores = 1, verbose = 0)
+})
+
+# State dependent, with a time independent predictor, for the covariate panel.
+tipredFit <- function() .ctTestFit('tipred', function() {
+  skip_without_julia()
+  datalong <- .ctTestData(2, matrix(c(.5, 0, 0, .4), 2, 2), nsubjects = 30, Tpoints = 10)
+  set.seed(3)
+  values <- rnorm(length(unique(datalong$id)))
+  datalong$TI1 <- values[match(datalong$id, unique(datalong$id))]
+  model <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
+    n.TIpred = 1, manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+    TIpredNames = 'TI1', LAMBDA = diag(2), PARS = c('dr11|-log1p_exp(param)'),
+    DRIFT = matrix(c('dr11 * (1 + 0.2 * eta2)', 'd21', 0, 'd22'), 2, 2),
+    CINT = matrix(c('c1', 'c2'), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
+    MANIFESTVAR = diag(.2, 2), DIFFUSION = matrix(c('df1', 0, 0, 'df2'), 2, 2)))
+  model$pars$indvarying <- FALSE
+  ctFit(datalong, model, backend = 'julia', cores = 1, verbose = 0)
+})
+
+
 test_that('the state-dependent cell is found, and only it', {
-  cells <- ctsem:::.ctFitContextDependentCells(nlfit)
-  expect_true(ctModelIsNonlinear(nlfit))
+  cells <- ctsem:::.ctFitContextDependentCells(nonlinearFit())
+  expect_true(ctModelIsNonlinear(nonlinearFit()))
   expect_true(all(cells$kind == 'state'))
   expect_true('DRIFT' %in% cells$matrix)
   expect_true(any(cells$matrix == 'DRIFT' & cells$row == 1 & cells$col == 1))
@@ -39,10 +85,10 @@ test_that('the state-dependent cell is found, and only it', {
 })
 
 test_that('the evaluation point changes the dependent cell and nothing else', {
-  t0 <- suppressMessages(ctSummaryMatrices(nlfit))
-  mean <- suppressMessages(ctSummaryMatrices(nlfit, state = 'mean'))
-  asymptotic <- suppressMessages(ctSummaryMatrices(nlfit, state = 'asymptotic'))
-  explicit <- suppressMessages(ctSummaryMatrices(nlfit, state = c(0, 5)))
+  t0 <- suppressMessages(ctSummaryMatrices(nonlinearFit()))
+  mean <- suppressMessages(ctSummaryMatrices(nonlinearFit(), state = 'mean'))
+  asymptotic <- suppressMessages(ctSummaryMatrices(nonlinearFit(), state = 'asymptotic'))
+  explicit <- suppressMessages(ctSummaryMatrices(nonlinearFit(), state = c(0, 5)))
 
   expect_false(isTRUE(all.equal(t0$DRIFT[1, 1], mean$DRIFT[1, 1])))
   expect_false(isTRUE(all.equal(t0$DRIFT[1, 1], explicit$DRIFT[1, 1])))
@@ -53,43 +99,26 @@ test_that('the evaluation point changes the dependent cell and nothing else', {
 
   # DRIFT[1,1] is dr11 * (1 + 0.2 * eta2), so doubling the multiplier by
   # setting eta2 = 5 must double the cell relative to eta2 = 0.
-  atzero <- suppressMessages(ctSummaryMatrices(nlfit, state = c(0, 0)))
+  atzero <- suppressMessages(ctSummaryMatrices(nonlinearFit(), state = c(0, 0)))
   expect_equal(explicit$DRIFT[1, 1], 2 * atzero$DRIFT[1, 1], tolerance = 1e-6)
 })
 
 test_that('the summary names the point, and does not name Jacobian blocks', {
-  note <- summary(nlfit)$parmatNote
+  note <- summary(nonlinearFit())$parmatNote
   expect_match(note, 'DRIFT')
   expect_match(note, 'T0MEANS state')
   expect_false(grepl('JAx', note, fixed = TRUE))
 })
 
 test_that('a supplied state is validated and padded', {
-  expect_error(suppressMessages(ctSummaryMatrices(nlfit, state = c(1, 2, 3, 4, 5))),
+  expect_error(suppressMessages(ctSummaryMatrices(nonlinearFit(), state = c(1, 2, 3, 4, 5))),
     'must have 2 entries')
-  expect_length(ctsem:::.ctResolveState(nlfit, 'mean')$state,
-    length(ctsem:::.ctContextBaseState(nlfit)))
+  expect_length(ctsem:::.ctResolveState(nonlinearFit(), 'mean')$state,
+    length(ctsem:::.ctContextBaseState(nonlinearFit())))
 })
 
 test_that("method='simulate' reduces exactly to the linearised answer when linear", {
-  linear <- local({
-    set.seed(1)
-    generating <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
-      manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
-      LAMBDA = diag(2), DRIFT = matrix(c(-.4, .1, 0, -.3), 2, 2),
-      CINT = matrix(c(.2, .1), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
-      MANIFESTVAR = diag(.2, 2), DIFFUSION = matrix(c(.5, 0, 0, .4), 2, 2)))
-    datalong <- as.data.frame(suppressMessages(ctGenerate(generating,
-      n.subjects = 25, burnin = 5, dtmean = 1, logdtsd = .1, wide = FALSE,
-      Tpoints = 12)))
-    model <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
-      manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
-      LAMBDA = diag(2), DRIFT = matrix(c('d11', 'd21', 0, 'd22'), 2, 2),
-      CINT = matrix(c('c1', 'c2'), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
-      MANIFESTVAR = diag(.2, 2), DIFFUSION = matrix(c('df1', 0, 0, 'df2'), 2, 2)))
-    model$pars$indvarying <- FALSE
-    ctFit(datalong, model, backend = 'julia', cores = 1, verbose = 0)
-  })
+  linear <- linearFit()
   expect_false(ctModelIsNonlinear(linear))
 
   times <- c(0, .5, 1, 2, 4)
@@ -113,9 +142,9 @@ test_that("method='simulate' reduces exactly to the linearised answer when linea
 
 test_that("method='simulate' finds an effect the linearisation reports as zero", {
   times <- c(0, 1, 4)
-  simulated <- suppressMessages(ctDiscretePars(nlfit, times = times,
+  simulated <- suppressMessages(ctDiscretePars(nonlinearFit(), times = times,
     method = 'simulate', nsamples = 3))
-  linearised <- suppressMessages(ctDiscretePars(nlfit, times = times,
+  linearised <- suppressMessages(ctDiscretePars(nonlinearFit(), times = times,
     state = 'asymptotic', nsamples = 3))
 
   # The impulse response starts at the identity by construction.
@@ -135,29 +164,7 @@ test_that("method='simulate' is refused where it cannot be honoured", {
 })
 
 test_that('the covariate dynamics panel is built from each level\'s own state', {
-  tipfit <- local({
-    set.seed(2)
-    generating <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
-      manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
-      LAMBDA = diag(2), DRIFT = matrix(c(-.4, .1, 0, -.3), 2, 2),
-      CINT = matrix(c(.2, .1), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
-      MANIFESTVAR = diag(.2, 2), DIFFUSION = matrix(c(.5, 0, 0, .4), 2, 2)))
-    datalong <- as.data.frame(suppressMessages(ctGenerate(generating,
-      n.subjects = 30, burnin = 5, dtmean = 1, logdtsd = .1, wide = FALSE,
-      Tpoints = 10)))
-    set.seed(3)
-    values <- rnorm(length(unique(datalong$id)))
-    datalong$TI1 <- values[match(datalong$id, unique(datalong$id))]
-    model <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
-      n.TIpred = 1, manifestNames = c('Y1', 'Y2'),
-      latentNames = c('eta1', 'eta2'), TIpredNames = 'TI1', LAMBDA = diag(2),
-      PARS = c('dr11|-log1p_exp(param)'),
-      DRIFT = matrix(c('dr11 * (1 + 0.2 * eta2)', 'd21', 0, 'd22'), 2, 2),
-      CINT = matrix(c('c1', 'c2'), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
-      MANIFESTVAR = diag(.2, 2), DIFFUSION = matrix(c('df1', 0, 0, 'df2'), 2, 2)))
-    model$pars$indvarying <- FALSE
-    ctFit(datalong, model, backend = 'julia', cores = 1, verbose = 0)
-  })
+  tipfit <- tipredFit()
 
   panel <- suppressMessages(ctsem:::.ctPredictTIPDynamics(tipfit, tipredIndex = 1,
     values = c(-1, 0, 1), times = c(0, 1, 2, 4), ntipred = 1, nsamples = 3,
@@ -179,25 +186,7 @@ test_that('every observational and standardise combination reduces when linear',
   # Correlated diffusion and unequal process scales: the case that exposes a
   # correlation being used where a regression coefficient belongs. Both earlier
   # test models have diagonal diffusion and never exercise the companion path.
-  correlated <- local({
-    set.seed(5)
-    generating <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
-      manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
-      LAMBDA = diag(2), DRIFT = matrix(c(-.4, .1, 0, -.3), 2, 2),
-      CINT = matrix(c(.2, .1), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
-      MANIFESTVAR = diag(.2, 2), DIFFUSION = matrix(c(1.0, 0.8, 0, 1.2), 2, 2)))
-    datalong <- as.data.frame(suppressMessages(ctGenerate(generating,
-      n.subjects = 30, burnin = 5, dtmean = 1, logdtsd = .1, wide = FALSE,
-      Tpoints = 12)))
-    model <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
-      manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
-      LAMBDA = diag(2), DRIFT = matrix(c('d11', 'd21', 0, 'd22'), 2, 2),
-      CINT = matrix(c('c1', 'c2'), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
-      MANIFESTVAR = diag(.2, 2),
-      DIFFUSION = matrix(c('df11', 'df21', 0, 'df22'), 2, 2)))
-    model$pars$indvarying <- FALSE
-    ctFit(datalong, model, backend = 'julia', cores = 1, verbose = 0)
-  })
+  correlated <- linearFit()
 
   mats <- suppressMessages(ctSummaryMatrices(correlated))
   expect_gt(abs(stats::cov2cor(mats$DIFFUSIONcov)[2, 1]), .2)
@@ -205,7 +194,11 @@ test_that('every observational and standardise combination reduces when linear',
   expect_gt(max(scales) / min(scales), 1.3)
 
   times <- c(0, .5, 1, 2, 4)
-  for (observational in c(FALSE, TRUE)) for (standardise in c(FALSE, TRUE)) {
+  # Every interpretation, both scalings. Simulating a linear system and
+  # exponentiating its drift are the same calculation whichever companion
+  # matrix is applied, so any of these failing means the two paths disagree
+  # about what was asked for.
+  for (observational in ctsem:::.ctCompanionTypes) for (standardise in c(FALSE, TRUE)) {
     simulated <- suppressMessages(ctDiscretePars(correlated, times = times,
       method = 'simulate', nsamples = 3, observational = observational,
       standardise = standardise))
@@ -217,13 +210,13 @@ test_that('every observational and standardise combination reduces when linear',
 })
 
 test_that('the phase portrait recovers the fixed point and the curved nullcline', {
-  portrait <- suppressMessages(ctPhasePortrait(nlfit, latents = c('eta1', 'eta2'),
+  portrait <- suppressMessages(ctPhasePortrait(nonlinearFit(), latents = c('eta1', 'eta2'),
     gridsize = 11, extent = 'sd', plot = FALSE))
   expect_true(all(is.finite(portrait$field$dx)))
 
   # The marked point is where the field vanishes, to solver tolerance.
-  field <- ctsem:::.ctFieldFunction(nlfit)
-  state <- ctsem:::.ctResolveState(nlfit, 'asymptotic')$state
+  field <- ctsem:::.ctFieldFunction(nonlinearFit())
+  state <- ctsem:::.ctResolveState(nonlinearFit(), 'asymptotic')$state
   expect_lt(max(abs(field(state))), 1e-6)
 
   # DRIFT[1,1] depends on eta2 while DRIFT[2,] does not depend on anything, so
@@ -243,7 +236,7 @@ test_that('the state dependence plot recovers the specified relationship', {
   # DRIFT[1,1] was specified as dr11 * (1 + 0.2 * eta2), so its value must be
   # exactly linear in eta2 with slope 0.2 * dr11. Recovering that from the
   # fitted engine is a check on the whole materialise-at-a-state path.
-  values <- suppressMessages(ctStateDependencePlot(nlfit, along = 'eta2',
+  values <- suppressMessages(ctStateDependencePlot(nonlinearFit(), along = 'eta2',
     gridsize = 11, nsamples = 5, plot = FALSE))
   expect_equal(unique(values$cell), 'DRIFT[1,1]')
 
@@ -257,23 +250,6 @@ test_that('the state dependence plot recovers the specified relationship', {
 })
 
 test_that('the state dependence plot declines a linear model rather than drawing nothing', {
-  linear <- local({
-    set.seed(1)
-    generating <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
-      manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
-      LAMBDA = diag(2), DRIFT = matrix(c(-.4, .1, 0, -.3), 2, 2),
-      CINT = matrix(c(.2, .1), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
-      MANIFESTVAR = diag(.2, 2), DIFFUSION = matrix(c(.5, 0, 0, .4), 2, 2)))
-    datalong <- as.data.frame(suppressMessages(ctGenerate(generating,
-      n.subjects = 20, burnin = 5, dtmean = 1, logdtsd = .1, wide = FALSE,
-      Tpoints = 8)))
-    model <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
-      manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
-      LAMBDA = diag(2), DRIFT = matrix(c('d11', 'd21', 0, 'd22'), 2, 2),
-      CINT = matrix(c('c1', 'c2'), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
-      MANIFESTVAR = diag(.2, 2), DIFFUSION = matrix(c('df1', 0, 0, 'df2'), 2, 2)))
-    model$pars$indvarying <- FALSE
-    ctFit(datalong, model, backend = 'julia', cores = 1, verbose = 0)
-  })
+  linear <- linearFit()
   expect_error(ctStateDependencePlot(linear), 'nothing to plot')
 })

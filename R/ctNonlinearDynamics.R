@@ -131,21 +131,22 @@
 # The shock applied for each process, and what to divide the response by.
 #
 # A nonlinear response does not scale with the shock, so "one unit" is not a
-# neutral choice -- it is a choice, and for a process whose natural spread is
-# 0.02 or 200 it is a bad one. The shock is therefore one *standard deviation*
-# of the process, taken from the stationary within-subject covariance at the
-# evaluation point: a magnitude the model itself supplies.
+# neutral default -- it is a choice, and a bad one for a process whose natural
+# spread is 0.02 or 200. The shock is therefore one *standard deviation* of the
+# process, from the stationary within-subject covariance at the evaluation
+# point: a magnitude the model itself supplies, in the processes' own units.
 #
-# With `observational` the shock is not confined to one process. Observing a
-# one sd_c change in process c implies an expected rho_rc * sd_r change in
-# process r -- the conditional expectation under the diffusion covariance --
-# and that correlated companion is the whole difference between "an
-# experimental impulse on c alone" and "c was observed to move".
+# What comes along with that shock is the companion matrix, and which one is
+# the caller's choice -- see R/ctCompanionShock.R. Note that the magnitude and
+# the pattern come from different places on purpose: the magnitude from the
+# stationary covariance, because that is what puts a shock on the scale of the
+# process, and the pattern from whichever covariance the chosen interpretation
+# is about.
 #
 # The response is divided so the panel reads as the linear one does: by sd_r
-# when standardising, giving the diffusion correlation at t = 0; by sd_c
-# otherwise, giving the raw-unit regression matrix at t = 0. Both are the
-# identity at t = 0 when there is no correlated shock.
+# when standardising, by sd_c otherwise. Both reduce exactly to the linearised
+# answer for a linear model, whichever companion matrix is in use -- the
+# scalings cancel in the same way.
 .ctNonlinearShockSpec <- function(mats, nlatent, observational, standardise,
   magnitude = 1) {
 
@@ -154,14 +155,15 @@
   if (any(!is.finite(variance)) || any(variance < 0)) return(NULL)
   sdv <- sqrt(variance + 1e-10)
 
-  if (isTRUE(observational)) {
-    diffusion <- as.matrix(mats$DIFFUSIONcov[index, index, drop = FALSE])
-    correlation <- suppressWarnings(stats::cov2cor(diffusion + diag(1e-8, nlatent)))
-    correlation[!is.finite(correlation)] <- 0
-    shock <- (sdv %o% rep(1, nlatent)) * correlation   # [r,c] = sd_r * rho_rc
-  } else {
-    shock <- diag(sdv, nlatent)
-  }
+  companion <- .ctCompanionMatrix(.ctCompanionType(observational),
+    mats$DIFFUSIONcov, mats$asymDIFFUSIONcov, nlatent)
+  if (is.null(companion)) return(NULL)
+  # Column c: a shock of one sd_c in process c, times the companion ratios, so
+  # shock[c,c] = sd_c and shock[r,c] = sd_c * C[r,c]. The magnitude comes from
+  # the stationary covariance because that is what puts a shock on the scale of
+  # the process; the pattern comes from whichever covariance the chosen
+  # interpretation asks about. Different questions, different matrices.
+  shock <- companion %*% diag(sdv, nlatent)
 
   divisor <- if (isTRUE(standardise)) sdv %o% rep(1, nlatent) else rep(1, nlatent) %o% sdv
   list(shock = shock * magnitude, divisor = divisor * magnitude, sd = sdv)

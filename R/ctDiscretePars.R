@@ -64,9 +64,32 @@ ctStanParnames <- ctRawParnames
 #'@param nsamples Number of samples from the stanfit to use for plotting. Higher values will
 #'increase smoothness / accuracy, at cost of plotting speed. Values greater than the total
 #'number of samples will be set to total samples.
-#'@param observational Logical. If TRUE, outputs expected change in processes *conditional on observing* a 1 unit change in each --
-#'this change is correlated according to the DIFFUSION matrix. If FALSE, outputs expected regression values -- also interpretable as
-#'an independent 1 unit change on each process, giving the expected response under a 1 unit experimental impulse.
+#'@param observational What a "one unit change in process c" is taken to bring
+#'with it. Every variant is \code{dtDRIFT(t) \%*\% C} for a different companion
+#'matrix \code{C}, whose column c says what else moves.
+#'\describe{
+#'  \item{\code{FALSE}, \code{'experimental'}}{\code{C = I}. Nothing else
+#'    moves, because the change was imposed. This is the \emph{partial}
+#'    regression \code{E[x(t+u)|x(t)]}, and the only variant that is a property
+#'    of the dynamics alone.}
+#'  \item{\code{TRUE}, \code{'observational'}}{\code{C = Sigma diag(Sigma)^-1}
+#'    with \code{Sigma = asymDIFFUSIONcov}. Process c is \emph{observed} one
+#'    unit above expectation and the others are not held fixed, so they move by
+#'    \code{Sigma_rc/Sigma_cc}. This is the \emph{simple} regression -- what
+#'    regressing the observed data on x_c alone recovers.}
+#'  \item{\code{'shock'}}{\code{C = Q diag(Q)^-1} with
+#'    \code{Q = DIFFUSIONcov}. One hypothetical system noise innovation arrives
+#'    in c, with companion innovations \code{Q_rc/Q_cc}. An impulse response
+#'    rather than a regression.}
+#'  \item{\code{'orthogonal'}}{From the Cholesky factor of DIFFUSION, so
+#'    shocks are uncorrelated. Depends on the order of the latent processes,
+#'    which is a modelling assumption rather than a property of the fit.}
+#'}
+#'The companion matrices are asymmetric, and must be: a one unit move in a
+#'wide-spread process implies more movement in a narrow one than the reverse.
+#'\code{'observational'} and \code{'shock'} use different covariance matrices
+#'because they ask different questions, and coincide only under isotropic decay
+#'with no cross effects.
 #'@param standardise Logical. If TRUE, output is standardised according to expected total within subject variance, given by the
 #'asymDIFFUSIONcov matrix.
 #'@param cov Logical. If TRUE, covariances are returned instead of regression coefficients.
@@ -263,6 +286,7 @@ ctDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=FALS
 
 
   nonstationary <- 0L
+  companionType <- .ctCompanionType(observational)
 
   if('dtDRIFT' %in% types){
     ctpars$dtDRIFT <- array(NA, dim=c(dim(ctpars$DRIFT)[1],max(unlist(nsubs)),length(times),dim(ctpars$DRIFT)[3:4]))
@@ -283,17 +307,31 @@ ctDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=FALS
         for(ti in 1:length(times)){
           if(!discreteInput) ctpars$dtDRIFT[i,j,ti,,] <- expm::expm(as.matrix(ctpars$DRIFT[i,min(j,nsubs$DRIFT),,] * times[ti]))
           if(discreteInput) ctpars$dtDRIFT[i,j,ti,,] <- mpow(as.matrix(ctpars$DRIFT[i,min(j,nsubs$DRIFT),,]),times[ti])
-          if(standardise || observational){
-            # Both options need the processes' own scales: `standardise` to
-            # express the answer in them, `observational` because a correlated
-            # shock has no meaning without them.
+          if(!identical(companionType,'experimental')){
+            # Every variant is dtDRIFT %*% C; only the companion matrix C
+            # differs. See R/ctCompanionShock.R for what each one means.
+            C <- .ctCompanionMatrix(companionType,
+              matrix(ctpars$DIFFUSIONcov[i,min(j,nsubs$DIFFUSIONcov),,],nl,nl),
+              matrix(ctpars$asymDIFFUSIONcov[i,min(j,nsubs$asymDIFFUSIONcov),,],nl,nl),
+              nl)
+            if(is.null(C)){
+              nonstationary <- nonstationary + 1L
+              ctpars$dtDRIFT[i,j,ti,,] <- NaN
+              next
+            }
+            ctpars$dtDRIFT[i,j,ti,,] <- ctpars$dtDRIFT[i,j,ti,,] %*% C
+          }
+
+          if(standardise) {
+            # Response of r per one sd_c change in c, in sd_r units: S^-1 M S,
+            # with the sds of the processes themselves (asymDIFFUSION). Applied
+            # after the companion step so the two compose.
             #
             # A frozen DRIFT can be non-stationary at the point it was frozen at
             # while the nonlinear system it came from is perfectly well behaved
-            # -- that is often the point of the nonlinearity. So this reports
-            # NaN for the affected sample and names the likely cause, rather
-            # than aborting and blaming the model. Julia's own
-            # `_ctsem_asymptotics` already declines the same way.
+            # -- often the point of the nonlinearity -- so this reports NaN for
+            # the affected draw and names the likely cause rather than aborting
+            # and blaming the model, as julia's _ctsem_asymptotics already does.
             asym <- matrix(ctpars$asymDIFFUSIONcov[i,min(j,nsubs$asymDIFFUSIONcov),,],nl,nl)
             if(any(diag(asym) < 0)){
               nonstationary <- nonstationary + 1L
@@ -301,25 +339,6 @@ ctDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=FALS
               next
             }
             sdv <- sqrt(diag(asym) + 1e-10)
-          }
-
-          if(observational){
-            # An observed one unit change in process c does not imply a one unit
-            # change in the processes correlated with it -- it implies
-            # rho_rc * sd_r / sd_c, the conditional expectation. Multiplying by
-            # the bare correlation matrix, as this did, treats a correlation as
-            # a regression coefficient and is only right when every process
-            # happens to share a scale.
-            Qcor <- cov2cor(matrix(ctpars$DIFFUSIONcov[i,min(j,nsubs$DIFFUSIONcov),,],nl,nl)+diag(1e-8,nl))
-            companions <- (sdv %*% t(1/sdv)) * Qcor   # [r,c] = rho_rc * sd_r/sd_c
-            ctpars$dtDRIFT[i,j,ti,,] <- ctpars$dtDRIFT[i,j,ti,,] %*% companions
-          }
-
-          if(standardise) {
-            # Response of r per one sd_c shock to c, in sd_r units: S^-1 M S.
-            # Applied after the observational step, so that the two together
-            # give S^-1 A S Qcor -- unchanged from before for that combination,
-            # which was already the dimensionally consistent one.
             ctpars$dtDRIFT[i,j,ti,,] <- ctpars$dtDRIFT[i,j,ti,,] *
               matrix(rep(sdv,each=nl) / rep(sdv,times=nl),nl)
           }
