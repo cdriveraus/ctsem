@@ -173,6 +173,7 @@ function ctsem_sample_density!(gradient::Vector{Float64}, sampler::CTSEMSampler,
         # on the subject would be shared and silently corrupted.
         ekf = _laplace_ekf_workspace!(laplace, Float64, slot)
         gsub = Vector{Float64}(undef, npar)
+        shifted = Vector{Float64}(undef, npar)
         gtheta = chunk_theta[c]
         total = 0.0
         @inbounds for U in ranges[c]
@@ -181,7 +182,7 @@ function ctsem_sample_density!(gradient::Vector{Float64}, sampler::CTSEMSampler,
             uview = view(x, urange)
             for (m, i) in enumerate(members)
                 offsets = laplace.units.offsets[U][m]
-                shifted = _laplace_member_values(theta, spec, Ls, uview, offsets)
+                _laplace_member_values!(shifted, theta, spec, Ls, uview, offsets)
                 loglik = _laplace_subject_value_gradient!(gsub,
                     laplace.objective.subject_objectives[i], aws, shifted;
                     ekf_workspace=ekf)

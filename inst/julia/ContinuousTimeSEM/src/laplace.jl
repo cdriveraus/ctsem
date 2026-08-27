@@ -575,6 +575,23 @@ function _laplace_member_values(values::AbstractVector{T}, spec::CTSEMLaplaceSpe
     Ls::Vector{<:AbstractMatrix}, u::AbstractVector, offsets::Vector{Int}) where {T}
     S = promote_type(T, eltype(u), eltype(eltype(Ls)))
     shifted = Vector{S}(undef, length(values))
+    return _laplace_member_values!(shifted, values, spec, Ls, u, offsets)
+end
+
+"""
+    _laplace_member_values!(shifted, values, spec, Ls, u, offsets)
+
+The same shift, into a buffer the caller owns.
+
+The sampler evaluates this once per subject per gradient and does hundreds of
+thousands of gradients, so the allocating form's vector-per-subject is worth
+removing there. Everywhere else the allocating form reads better and the
+allocation is lost in the adjoint sweep that follows it.
+"""
+function _laplace_member_values!(shifted::AbstractVector, values::AbstractVector,
+    spec::CTSEMLaplaceSpec, Ls::Vector{<:AbstractMatrix}, u::AbstractVector,
+    offsets::Vector{Int})
+    S = eltype(shifted)
     copyto!(shifted, values)
     @inbounds for l in eachindex(spec.levels)
         level = spec.levels[l]
