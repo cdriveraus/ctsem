@@ -70,6 +70,10 @@ include("summary_matrices.jl")
 include("kalman_trace.jl")
 include("laplace.jl")
 include("quadrature.jl")
+include("sample_density.jl")
+include("sample_nuts.jl")
+include("sample_adapt.jl")
+include("sample_run.jl")
 
 # Last, because it exercises everything above it.
 include("precompile_workload.jl")
