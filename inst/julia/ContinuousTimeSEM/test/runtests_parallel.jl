@@ -48,6 +48,57 @@ workers = parse(Int, get(ENV, "CTSEM_TEST_WORKERS", string(Sys.CPU_THREADS)))
 workers = clamp(workers, 1, length(files))
 @printf("%d files over %d processes\n", length(files), workers)
 
+"""
+    shards(file, count)
+
+Split one test file's top-level `@testset` blocks into `count` groups.
+
+The wall clock of the whole suite is one file: `test_laplace.jl` runs for ten
+minutes while twenty other processes sit idle, so spreading files across cores
+stops helping long before the cores run out. Its testsets are independent -- each
+takes a fresh Laplace wrapper over a shared model -- so they can be split too.
+
+The scan is lexical rather than a parse: a top-level testset in these files opens
+with `@testset` in column one and closes with `end` in column one. Everything
+outside those blocks is setup (helper functions, includes) and is kept in *every*
+shard, since a shard that dropped it would not run. If the scan finds nothing to
+split, the file is returned whole and nothing is lost.
+
+Returns a vector of `(first_line, last_line)` ranges to keep, one per shard.
+"""
+function shards(file::AbstractString, count::Int)
+    lines = readlines(file)
+    starts = findall(l -> startswith(l, "@testset"), lines)
+    length(starts) >= 2 * count || return [Int[]]
+    stops = Int[]
+    for s in starts
+        stop = findfirst(i -> lines[i] == "end", s:length(lines))
+        stop === nothing && return [Int[]]
+        push!(stops, s + stop - 1)
+    end
+    blocks = collect(zip(starts, stops))
+    # Round-robin rather than contiguous: neighbouring testsets in these files
+    # tend to share a model, so consecutive ones cost about the same and dealing
+    # them out spreads the expensive ones evenly.
+    return [[i for i in eachindex(blocks) if mod1(i, count) == c] for c in 1:count]
+end
+
+"""The source of `file` with only the listed testset blocks kept."""
+function shard_source(file::AbstractString, keep::Vector{Int})
+    lines = readlines(file)
+    isempty(keep) && return join(lines, "
+")
+    starts = findall(l -> startswith(l, "@testset"), lines)
+    stops = [s + findfirst(i -> lines[i] == "end", s:length(lines)) - 1 for s in starts]
+    drop = falses(length(lines))
+    for (b, (s, e)) in enumerate(zip(starts, stops))
+        b in keep && continue
+        drop[s:e] .= true
+    end
+    return join(lines[.!drop], "
+")
+end
+
 # Each file runs the same preamble `runtests.jl` uses, then just that file.
 const PREAMBLE = """
 using Test, ContinuousTimeSEM
@@ -57,17 +108,62 @@ cd(raw"$HERE")
 include(joinpath(raw"$HERE", "table_helpers.jl"))
 """
 
+# Split only the file that dominates the wall clock, and only in two.
+#
+# A shard is a fresh process, so it recompiles the fixtures it touches -- about
+# two minutes of the ten this suite takes. That fixed cost is paid per shard, so
+# splitting `test_laplace.jl` four ways cost four compilations to save three
+# quarters of one file's arithmetic and came out no faster. Two is where the
+# arithmetic saved still exceeds the compilation added.
+#
+# The real lever is not here: it is that a new model shape specialises the whole
+# filter, so every process that touches a different model pays again. Removing
+# that would shorten this suite and the first fit of a session alike.
+# Empty on purpose. Splitting a file across processes was tried at two and four
+# ways and neither was faster: a shard is a fresh process, so it recompiles the
+# fixtures it touches -- roughly two minutes -- and that fixed cost cancels the
+# arithmetic saved. The machinery is kept because it is correct and costs
+# nothing while this is empty, but the lever is elsewhere: a new model shape
+# specialises the whole filter, so every process touching a different model pays
+# again. Fix that and this suite and the first fit of a session both get shorter.
+const SHARD_INTO = Dict{String,Int}()
+
+units = Tuple{String,Vector{Int},String}[]
+for file in files
+    count = get(SHARD_INTO, file, 1)
+    groups = count > 1 ? shards(joinpath(HERE, file), count) : [Int[]]
+    for (k, keep) in enumerate(groups)
+        label = length(groups) > 1 ? "$(file) [$k/$(length(groups))]" : file
+        push!(units, (file, keep, label))
+    end
+end
+@printf("%d units over %d processes
+", length(units), workers)
+
 results = Dict{String,Tuple{Bool,Float64,String}}()
 lock = ReentrantLock()
-queue = Channel{String}(length(files))
-foreach(f -> put!(queue, f), files)
+queue = Channel{Tuple{String,Vector{Int},String}}(length(units))
+foreach(u -> put!(queue, u), units)
 close(queue)
 
 @sync for _ in 1:workers
-    Threads.@spawn for file in queue
+    Threads.@spawn for (file, keep, label) in queue
+        # Written out and `include`d rather than inlined into the script: a test
+        # file declares `const`s at top level, and pasting it inside a `begin`
+        # block turns those into local declarations, which is a syntax error.
+        # `include` keeps the file's contents at top level, exactly as
+        # `runtests.jl` does.
+        # The shard goes *beside* its siblings, not in a temp directory: test
+        # files reach their fixtures with `include(joinpath(@__DIR__, ...))`,
+        # and `@__DIR__` is wherever the file being run happens to live.
+        path = joinpath(HERE, file)
+        if !isempty(keep)
+            path = joinpath(HERE, ".shard-$(getpid())-$(hash(label))-$(file)")
+            write(path, shard_source(joinpath(HERE, file), keep))
+        end
         script = PREAMBLE * """
-        @testset "$(file)" begin
-            include(joinpath(raw"$HERE", "$(file)"))
+        @testset "$(label)" begin
+            include(raw"$(path)")
         end
         """
         output = IOBuffer()
@@ -80,6 +176,7 @@ close(queue)
             false
         end
         elapsed = time() - started
+        isempty(keep) || rm(path; force = true)
         Base.lock(lock) do
             results[file] = (ok, elapsed, String(take!(output)))
             @printf("%-42s %s %6.1f s\n", file, ok ? "ok  " : "FAIL", elapsed)

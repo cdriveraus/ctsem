@@ -114,6 +114,40 @@ export ctsem_transform_cache_size, ctsem_clear_transform_cache!
 """How many distinct transform expressions have been compiled this session."""
 ctsem_transform_cache_size() = lock(() -> length(_TRANSFORM_CACHE), _TRANSFORM_CACHE_LOCK)
 
+export ctsem_transforms_cached
+"""
+    ctsem_transforms_cached(sources)
+
+Whether every one of these transform expressions already has a closure.
+
+This is how the R side knows, *before* it builds anything, whether a model is a
+shape this session has compiled for. A model whose transforms are all cached
+reuses the compiled filter and evaluates immediately; one with a new expression
+mints new closure types and specialises the whole pipeline again, which takes
+tens of seconds and is worth saying out loud rather than looking like a hang.
+"""
+function ctsem_transforms_cached(regular, complex=String[])
+    lock(_TRANSFORM_CACHE_LOCK) do
+        # The cache is keyed by the *lambda* the builder compiles, not by the
+        # expression the caller wrote, so the same wrapping has to be applied
+        # here -- and it differs between the two kinds. Asking with the raw
+        # expression finds nothing, always, which reads as "never compiled".
+        for source in regular
+            expression = String(source)
+            isempty(expression) && continue
+            haskey(_TRANSFORM_CACHE, generate_transform_string(expression)) ||
+                return false
+        end
+        for source in complex
+            expression = String(source)
+            isempty(expression) && continue
+            haskey(_TRANSFORM_CACHE,
+                generate_complex_transform_string(expression)) || return false
+        end
+        return true
+    end
+end
+
 """
 Empty the transform closure cache.
 

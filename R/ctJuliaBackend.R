@@ -1178,6 +1178,37 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   )
 }
 
+# Say so, once, when a model shape is about to be compiled for.
+#
+# `ctsem_transforms_cached()` reports whether every transform expression in this
+# model already has a closure. If they all do, the compiled filter is reused and
+# the first evaluation is immediate; if any is new, the specialisation happens
+# on the first evaluation and takes tens of seconds.
+.ctJuliaAnnounceCompilation <- function(module, table) {
+  free <- .ctJuliaNoNA(as.integer(table$parnumber), 0L) > 0L
+  # A free cell with no transform of its own compiles `param[n]`, exactly as
+  # `ekf_from_columns` writes it -- so the query has to say the same thing.
+  regular <- .ctJuliaNoNA(as.character(table$transform), "")[free]
+  numbers <- .ctJuliaNoNA(as.integer(table$parnumber), 0L)[free]
+  regular <- ifelse(nzchar(regular), regular, paste0("param[", numbers, "]"))
+  complex <- c(.ctJuliaNoNA(as.character(table$predicttransform), ""),
+    .ctJuliaNoNA(as.character(table$updatetransform), ""),
+    .ctJuliaNoNA(as.character(table$tdtransform), ""))
+  regular <- unique(regular[nzchar(regular)])
+  complex <- unique(complex[nzchar(complex)])
+  if (!length(regular) && !length(complex)) return(invisible(FALSE))
+  cached <- isTRUE(tryCatch(
+    .ctBackendJuliaValue(module$ctsem_transforms_cached(
+      .ctJuliaVector(if (length(regular)) regular else ""),
+      .ctJuliaVector(if (length(complex)) complex else ""))),
+    error = function(e) FALSE))
+  if (cached) return(invisible(FALSE))
+  message("Compiling the Julia engine for this model shape. This happens once ",
+    "per shape per session and usually takes 20-60 seconds; fits of the same ",
+    "shape afterwards skip it.")
+  invisible(TRUE)
+}
+
 .ctJuliaObjective <- function(object) {
   stopifnot(inherits(object, "ctJuliaModel") || inherits(object, "ctJuliaFit"))
   spec <- if (inherits(object, "ctJuliaFit")) object$model_spec else object
@@ -1219,6 +1250,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       .ctJuliaVector(as.integer(spec$dynamic_state_indices))
   }
   arguments$continuous_time <- isTRUE(spec$continuoustime)
+  # A model shape Julia has not seen mints new closure types for its transform
+  # expressions, and the whole filter specialises again for them -- tens of
+  # seconds, once, and indistinguishable from a hang if nothing says so. The
+  # engine is asked first so the message comes before the wait rather than
+  # after it.
+  .ctJuliaAnnounceCompilation(module, table)
   params <- do.call(module$ekf_from_columns, arguments)
   # .ctJuliaVector, not juliaPut, for the vectors: JuliaConnectoR marshals a
   # length-one R vector as a *scalar*, so a single-subject model would hand the
