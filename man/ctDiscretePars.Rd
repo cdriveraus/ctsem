@@ -100,6 +100,14 @@ Calculate model implied regressions for a sequence of time intervals (if ct) or 
 a ctStanFit object, for specified subjects. Wrap with print() when used inside for loops!
 }
 \details{
+Two of these combinations are quantities you may already know under other
+names. \code{observational=FALSE} is the discrete time autoregression and
+cross-lagged matrix, \code{expm(DRIFT*t)}. \code{observational=TRUE} with
+\code{standardise=TRUE} is the model implied \emph{cross-correlation
+function}, \code{Cor(x_r(t+u), x_c(t))} -- the model's counterpart to the
+empirical autocorrelations \code{\link{ctACF}} computes from the data, and
+equal to the latent correlation matrix at \code{t=0}.
+
 If plot=TRUE, the function will return a ggplot2 object
 (and hence needs to be printed if intended to display within a loop).
 This can be modified by the various ggplot2 functions, or displayed using print(x).

@@ -302,3 +302,32 @@ test_that('a process with no diffusion gets no companions rather than NaN', {
     standardise = FALSE, quiet = TRUE)
   expect_true(all(is.finite(out)))
 })
+
+# observational + standardise is the model implied cross-correlation function,
+# Cor(x_r(t+u), x_c(t)) -- the counterpart to what ctACF computes from data.
+# Verified against a simulated series separately; pinned here algebraically so
+# it runs in milliseconds.
+test_that('observational and standardise together give the cross-correlation', {
+  drift <- matrix(c(-.4, .15, .05, -.3), 2, 2)
+  diffusion <- matrix(c(1, 1.6, 1.6, 16), 2, 2)
+  stationary <- matrix(solve(kronecker(diag(2), drift) + kronecker(drift, diag(2)),
+    -as.vector(diffusion)), 2, 2)
+  pars <- list(DRIFT = array(drift, dim = c(1, 2, 2)),
+    DIFFUSIONcov = array(diffusion, dim = c(1, 2, 2)),
+    asymDIFFUSIONcov = array(stationary, dim = c(1, 2, 2)))
+
+  for (lag in c(0, 1.5, 4)) {
+    got <- ctsem:::ctDiscreteParsDrift(pars, times = lag, observational = TRUE,
+      standardise = TRUE, quiet = TRUE)[1, 1, 1, , ]
+    # Cor(x_r(t+u), x_c(t)) = [dtA %*% Sigma]_rc / (sd_r sd_c)
+    sdv <- sqrt(diag(stationary))
+    expected <- (as.matrix(Matrix::expm(drift * lag)) %*% stationary) /
+      outer(sdv, sdv)
+    expect_equal(got, expected, ignore_attr = TRUE)
+  }
+
+  # At lag zero that is just the latent correlation matrix.
+  at0 <- ctsem:::ctDiscreteParsDrift(pars, times = 0, observational = TRUE,
+    standardise = TRUE, quiet = TRUE)[1, 1, 1, , ]
+  expect_equal(at0, cov2cor(stationary), ignore_attr = TRUE)
+})

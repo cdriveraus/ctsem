@@ -44,6 +44,14 @@
 # ask different questions. How states covary in the long run is not how one
 # innovation relates to another; they coincide only under isotropic decay with
 # no cross effects.
+#
+# Finally, two of these are quantities that already have names. With C = I the
+# result is the discrete time autoregression/cross-lagged matrix. With
+# C = Sigma diag(Sigma)^-1 and the standardisation applied, the result is the
+# model implied cross-correlation function Cor(x_r(t+u), x_c(t)) -- the
+# counterpart to what ctACF() computes from the data, and the latent
+# correlation matrix at t = 0. Nothing further is missing from the family;
+# `cov=TRUE` changes the output type rather than the interpretation.
 
 .ctCompanionTypes <- c("experimental", "observational", "shock", "orthogonal")
 
