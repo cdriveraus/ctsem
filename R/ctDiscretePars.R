@@ -64,9 +64,32 @@ ctStanParnames <- ctRawParnames
 #'@param nsamples Number of samples from the stanfit to use for plotting. Higher values will
 #'increase smoothness / accuracy, at cost of plotting speed. Values greater than the total
 #'number of samples will be set to total samples.
-#'@param observational Logical. If TRUE, outputs expected change in processes *conditional on observing* a 1 unit change in each --
-#'this change is correlated according to the DIFFUSION matrix. If FALSE, outputs expected regression values -- also interpretable as
-#'an independent 1 unit change on each process, giving the expected response under a 1 unit experimental impulse.
+#'@param observational What a "one unit change in process c" is taken to bring
+#'with it. Every variant is \code{dtDRIFT(t) \%*\% C} for a different companion
+#'matrix \code{C}, whose column c says what else moves.
+#'\describe{
+#'  \item{\code{FALSE}, \code{'experimental'}}{\code{C = I}. Nothing else
+#'    moves, because the change was imposed. This is the \emph{partial}
+#'    regression \code{E[x(t+u)|x(t)]}, and the only variant that is a property
+#'    of the dynamics alone.}
+#'  \item{\code{TRUE}, \code{'observational'}}{\code{C = Sigma diag(Sigma)^-1}
+#'    with \code{Sigma = asymDIFFUSIONcov}. Process c is \emph{observed} one
+#'    unit above expectation and the others are not held fixed, so they move by
+#'    \code{Sigma_rc/Sigma_cc}. This is the \emph{simple} regression -- what
+#'    regressing the observed data on x_c alone recovers.}
+#'  \item{\code{'shock'}}{\code{C = Q diag(Q)^-1} with
+#'    \code{Q = DIFFUSIONcov}. One hypothetical system noise innovation arrives
+#'    in c, with companion innovations \code{Q_rc/Q_cc}. An impulse response
+#'    rather than a regression.}
+#'  \item{\code{'orthogonal'}}{From the Cholesky factor of DIFFUSION, so
+#'    shocks are uncorrelated. Depends on the order of the latent processes,
+#'    which is a modelling assumption rather than a property of the fit.}
+#'}
+#'The companion matrices are asymmetric, and must be: a one unit move in a
+#'wide-spread process implies more movement in a narrow one than the reverse.
+#'\code{'observational'} and \code{'shock'} use different covariance matrices
+#'because they ask different questions, and coincide only under isotropic decay
+#'with no cross effects.
 #'@param standardise Logical. If TRUE, output is standardised according to expected total within subject variance, given by the
 #'asymDIFFUSIONcov matrix.
 #'@param cov Logical. If TRUE, covariances are returned instead of regression coefficients.
@@ -74,6 +97,23 @@ ctStanParnames <- ctRawParnames
 #'instead of returning output.
 #'@param cores Number of cpu cores to use for computing subject matrices.
 #'If subject matrices were saved during fiting, not used.
+#'@param state Evaluation point for any matrix cell that depends on the latent
+#'state or a time dependent predictor -- see \code{\link{ctContextDependence}}.
+#'\code{NULL} (the default) or \code{'T0MEANS'} uses the population initial
+#'state, \code{'mean'} the mean smoothed latent state, \code{'asymptotic'} the
+#'system's own fixed point; or supply a numeric state vector. Requires
+#'\code{backend='julia'} and \code{subjects='popmean'}. For a linear model the
+#'argument makes no difference, since no cell depends on the state.
+#'@param method How the interval regressions are obtained. \code{'linearise'}
+#'(the default) exponentiates the DRIFT matrix, \code{expm(DRIFT*t)} -- exact
+#'for a linear model, and for a model whose DRIFT depends on the state, the
+#'response of the model linearised at \code{state}. \code{'simulate'}
+#'integrates the nonlinear system from \code{state} and from \code{state} plus
+#'one unit on each process and differences the trajectories, which is the actual
+#'model implied regression; it starts at 1 and decays to 0 for a stable process,
+#'and reduces exactly to \code{'linearise'} when no cell depends on the state.
+#'\code{'simulate'} requires \code{backend='julia'} and is far slower, so it
+#'uses \code{nsamples} posterior draws with a small default.
 #'@param ... additional plotting arguments to control \code{\link{ctDiscreteParsPlot}}
 #'@examples
 #' data.table::setDTthreads(1) #ignore this line
@@ -86,7 +126,16 @@ ctStanParnames <- ctRawParnames
 #'  plot=TRUE,indices='CR')
 #'g= g+ labs(title='Cross effects')
 #'print(g)
-#'@details If plot=TRUE, the function will return a ggplot2 object
+#'@details
+#'Two of these combinations are quantities you may already know under other
+#'names. \code{observational=FALSE} is the discrete time autoregression and
+#'cross-lagged matrix, \code{expm(DRIFT*t)}. \code{observational=TRUE} with
+#'\code{standardise=TRUE} is the model implied \emph{cross-correlation
+#'function}, \code{Cor(x_r(t+u), x_c(t))} -- the model's counterpart to the
+#'empirical autocorrelations \code{\link{ctACF}} computes from the data, and
+#'equal to the latent correlation matrix at \code{t=0}.
+#'
+#'If plot=TRUE, the function will return a ggplot2 object
 #'(and hence needs to be printed if intended to display within a loop).
 #'This can be modified by the various ggplot2 functions, or displayed using print(x).
 #'@aliases ctStanDiscretePars
@@ -94,7 +143,7 @@ ctStanParnames <- ctRawParnames
 ctDiscretePars<-function(fit, subjects='popmean',
   times=seq(from=0,to=10,by=.1),
   nsamples=200,observational=FALSE,standardise=FALSE,
-  cov=FALSE, plot=FALSE,cores=2,..., ctstanfitobj){
+  cov=FALSE, plot=FALSE,cores=2,state=NULL,method='linearise',..., ctstanfitobj){
 
   if(missing(fit)){
     if(missing(ctstanfitobj)) stop('fit must be supplied')
@@ -102,6 +151,32 @@ ctDiscretePars<-function(fit, subjects='popmean',
     fit <- ctstanfitobj
   } else if(!missing(ctstanfitobj)) {
     stop('Use only one of fit or deprecated ctstanfitobj')
+  }
+
+  method <- match.arg(method, c('linearise','simulate'))
+
+  # method='simulate' answers a different question and takes a different route
+  # to it: integrate the nonlinear system from a state and from that state plus
+  # one unit, and difference. It reduces exactly to the linearised answer when
+  # no cell depends on the state, so it is safe to ask for either way.
+  if(method %in% 'simulate'){
+    if(!'popmean' %in% subjects) stop(call.=FALSE,
+      "method='simulate' applies to subjects='popmean' only.")
+    ctmS <- .ctFitModelObject(fit)
+    if(!ctmS$continuoustime) stop(call.=FALSE,
+      "method='simulate' is for continuous time models.")
+    out <- .ctDiscreteParsSimulate(fit, times=times,
+      state=if(is.null(state)) 'asymptotic' else state, nsamples=nsamples,
+      observational=observational, standardise=standardise)
+    times <- attr(out,'times')
+    dimnames(out) <- list(Sample=seq_len(dim(out)[1]), Subject='popmean',
+      `Time interval`=times, row=ctmS$latentNames, col=ctmS$latentNames)
+    attributes(out)$observational <- observational
+    attributes(out)$cov <- FALSE
+    attributes(out)$method <- 'simulate'
+    out <- .ctContextAttach(out, fit)
+    if(plot) out <- ctDiscreteParsPlot(out, ...)
+    return(out)
   }
 
   # `fit` may be a ctStanFit or a ctJuliaFit. Everything this
@@ -118,9 +193,22 @@ ctDiscretePars<-function(fit, subjects='popmean',
 
   extractSubjects <- subjects
   if('popmean' %in% extractSubjects) extractSubjects <- 'all'
-  e<-ctExtract(fit,subjectMatrices = subjects[1]!='popmean',cores=cores,
+  # An explicit evaluation point only means something for the population
+  # matrices: a subject's are the ones its own filter pass ended with.
+  stateArgs <- list()
+  if(!is.null(state)){
+    if(!inherits(fit,'ctJuliaFit')) stop(call.=FALSE,
+      paste0("state= requires backend='julia'. ",
+        "The stan model materialises its matrices during the fit, at T0MEANS, ",
+        "and cannot be asked for another point afterwards."))
+    if(!'popmean' %in% subjects) stop(call.=FALSE,
+      paste0("state= applies to subjects='popmean' only; a subject's matrices ",
+        "come from its own filter pass."))
+    stateArgs$state <- .ctResolveState(fit,state)$state
+  }
+  e<-do.call(ctExtract,c(list(fit,subjectMatrices = subjects[1]!='popmean',cores=cores,
     nsamples = min(nsamples,.ctFitNsamples(fit)),
-    subjects=extractSubjects)
+    subjects=extractSubjects),stateArgs))
 
   nsubjects <- dim(e$subj_DRIFT)[2]
   if(is.null(nsubjects)) nsubjects=1
@@ -156,6 +244,15 @@ ctDiscretePars<-function(fit, subjects='popmean',
   }
 
 
+  # Which evaluation point the DRIFT being exponentiated below actually came
+  # from -- the population pass, or each subject's own filter pass. They are
+  # different points and the reader is told which one they got.
+  .ctContextMessage(fit,
+    if(!'popmean' %in% subjects) .ctContextSubjectLabel else
+      if(is.null(state)) .ctContextPopLabel else .ctResolveState(fit,state)$label,
+    paste0("expm(DRIFT*t) is therefore the transition of the model linearised ",
+      "there, not the nonlinear system's own interval regression."))
+
   out <- ctDiscreteParsDrift(ctpars,times, observational, standardise, cov=cov,discreteInput = ctm$continuoustime==FALSE)
 
   dimnames(out)<- list(Sample=samples, Subject=subjects,
@@ -163,6 +260,8 @@ ctDiscretePars<-function(fit, subjects='popmean',
 
   attributes(out)$observational <- observational
   attributes(out)$cov <- cov
+  attributes(out)$method <- 'linearise'
+  out <- .ctContextAttach(out, fit)
 
   if(plot) {
 
@@ -195,6 +294,9 @@ ctDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=FALS
   nsubs <- lapply(ctpars,function(x) dim(x)[2])
 
 
+  nonstationary <- 0L
+  companionType <- .ctCompanionType(observational)
+
   if('dtDRIFT' %in% types){
     ctpars$dtDRIFT <- array(NA, dim=c(dim(ctpars$DRIFT)[1],max(unlist(nsubs)),length(times),dim(ctpars$DRIFT)[3:4]))
 
@@ -214,18 +316,40 @@ ctDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=FALS
         for(ti in 1:length(times)){
           if(!discreteInput) ctpars$dtDRIFT[i,j,ti,,] <- expm::expm(as.matrix(ctpars$DRIFT[i,min(j,nsubs$DRIFT),,] * times[ti]))
           if(discreteInput) ctpars$dtDRIFT[i,j,ti,,] <- mpow(as.matrix(ctpars$DRIFT[i,min(j,nsubs$DRIFT),,]),times[ti])
-          if(standardise) {
-            if(any(diag(ctpars$asymDIFFUSIONcov[i,min(j,nsubs$asymDIFFUSIONcov),,]) < 0)) stop(
-              "Asymptotic diffusion matrix has negative diagonals -- I don't know what non stationary standardization looks like")
-            ctpars$dtDRIFT[i,j,ti,,] <- ctpars$dtDRIFT[i,j,ti,,] *
-              matrix(rep(sqrt(diag(ctpars$asymDIFFUSIONcov[i,min(j,nsubs$asymDIFFUSIONcov),,])+1e-10),each=nl) /
-                  rep((sqrt(diag(ctpars$asymDIFFUSIONcov[i,min(j,nsubs$asymDIFFUSIONcov),,]))),times=nl),nl)
+          if(!identical(companionType,'experimental')){
+            # Every variant is dtDRIFT %*% C; only the companion matrix C
+            # differs. See R/ctCompanionShock.R for what each one means.
+            C <- .ctCompanionMatrix(companionType,
+              matrix(ctpars$DIFFUSIONcov[i,min(j,nsubs$DIFFUSIONcov),,],nl,nl),
+              matrix(ctpars$asymDIFFUSIONcov[i,min(j,nsubs$asymDIFFUSIONcov),,],nl,nl),
+              nl)
+            if(is.null(C)){
+              nonstationary <- nonstationary + 1L
+              ctpars$dtDRIFT[i,j,ti,,] <- NaN
+              next
+            }
+            ctpars$dtDRIFT[i,j,ti,,] <- ctpars$dtDRIFT[i,j,ti,,] %*% C
           }
-          if(observational){
-            Qcor<-cov2cor(matrix(ctpars$DIFFUSIONcov[i,min(j,nsubs$DIFFUSIONcov),,],nl,nl)+diag(1e-8,nl))
-            Qcor <- Qcor #* sign(Qcor) #why was this squared before?
-            # browser()
-            ctpars$dtDRIFT[i,j,ti,,]  <- ctpars$dtDRIFT[i,j,ti,,]  %*% Qcor
+
+          if(standardise) {
+            # Response of r per one sd_c change in c, in sd_r units: S^-1 M S,
+            # with the sds of the processes themselves (asymDIFFUSION). Applied
+            # after the companion step so the two compose.
+            #
+            # A frozen DRIFT can be non-stationary at the point it was frozen at
+            # while the nonlinear system it came from is perfectly well behaved
+            # -- often the point of the nonlinearity -- so this reports NaN for
+            # the affected draw and names the likely cause rather than aborting
+            # and blaming the model, as julia's _ctsem_asymptotics already does.
+            asym <- matrix(ctpars$asymDIFFUSIONcov[i,min(j,nsubs$asymDIFFUSIONcov),,],nl,nl)
+            if(any(diag(asym) < 0)){
+              nonstationary <- nonstationary + 1L
+              ctpars$dtDRIFT[i,j,ti,,] <- NaN
+              next
+            }
+            sdv <- sqrt(diag(asym) + 1e-10)
+            ctpars$dtDRIFT[i,j,ti,,] <- ctpars$dtDRIFT[i,j,ti,,] *
+              matrix(rep(sdv,each=nl) / rep(sdv,times=nl),nl)
           }
           if(cov) ctpars$dtDRIFT[i,j,ti,,]  <- tcrossprod(ctpars$dtDRIFT[i,j,ti,,] )
         }
@@ -233,6 +357,13 @@ ctDiscreteParsDrift<-function(ctpars,times, observational,  standardise,cov=FALS
     }
   } #end dtdrift
 
+  if(nonstationary > 0 && !quiet) message(
+    nonstationary, ' of ', length(ctpars$dtDRIFT)/prod(dim(ctpars$DRIFT)[3:4]),
+    ' standardisations returned NaN: the asymptotic diffusion has negative ',
+    'diagonals, so there is no stationary variance to standardise by. For a ',
+    'model whose DRIFT depends on the state this usually reflects the point it ',
+    'was linearised at rather than the model -- try another state, or ',
+    'standardise=FALSE.')
 
   return(ctpars$dtDRIFT)
 }

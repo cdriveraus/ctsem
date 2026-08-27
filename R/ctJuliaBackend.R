@@ -1315,9 +1315,15 @@ ctExtract.ctJuliaFit <- function(object, subjectMatrices = FALSE, cores = 2,
 
 #' @export
 ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
-  calcfuncargs = list(probs = 0.5), timeinterval = 1, ...) {
-  .ctBackendSummaryMatrices(fit, calcfunc = calcfunc, calcfuncargs = calcfuncargs,
-    timeinterval = timeinterval, ...)
+  calcfuncargs = list(probs = 0.5), timeinterval = 1, state = NULL, ...) {
+  # 'T0MEANS' (the default), 'mean', 'asymptotic', or a state vector. Resolved
+  # here rather than passed on raw so that the message below can name the point
+  # in the same words whichever form the caller used.
+  resolved <- .ctResolveState(fit, state)
+  out <- .ctBackendSummaryMatrices(fit, calcfunc = calcfunc, calcfuncargs = calcfuncargs,
+    timeinterval = timeinterval, state = resolved$state, ...)
+  .ctContextMessage(fit, resolved$label)
+  .ctContextAttach(out, fit)
 }
 
 # Run the engine's optimizer over a prepared specification.

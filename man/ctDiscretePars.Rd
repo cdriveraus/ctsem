@@ -15,6 +15,8 @@ ctDiscretePars(
   cov = FALSE,
   plot = FALSE,
   cores = 2,
+  state = NULL,
+  method = "linearise",
   ...,
   ctstanfitobj
 )
@@ -32,9 +34,32 @@ object is a discrete time model, these should be positive integers.}
 increase smoothness / accuracy, at cost of plotting speed. Values greater than the total
 number of samples will be set to total samples.}
 
-\item{observational}{Logical. If TRUE, outputs expected change in processes *conditional on observing* a 1 unit change in each --
-this change is correlated according to the DIFFUSION matrix. If FALSE, outputs expected regression values -- also interpretable as
-an independent 1 unit change on each process, giving the expected response under a 1 unit experimental impulse.}
+\item{observational}{What a "one unit change in process c" is taken to bring
+with it. Every variant is \code{dtDRIFT(t) \%*\% C} for a different companion
+matrix \code{C}, whose column c says what else moves.
+\describe{
+  \item{\code{FALSE}, \code{'experimental'}}{\code{C = I}. Nothing else
+    moves, because the change was imposed. This is the \emph{partial}
+    regression \code{E[x(t+u)|x(t)]}, and the only variant that is a property
+    of the dynamics alone.}
+  \item{\code{TRUE}, \code{'observational'}}{\code{C = Sigma diag(Sigma)^-1}
+    with \code{Sigma = asymDIFFUSIONcov}. Process c is \emph{observed} one
+    unit above expectation and the others are not held fixed, so they move by
+    \code{Sigma_rc/Sigma_cc}. This is the \emph{simple} regression -- what
+    regressing the observed data on x_c alone recovers.}
+  \item{\code{'shock'}}{\code{C = Q diag(Q)^-1} with
+    \code{Q = DIFFUSIONcov}. One hypothetical system noise innovation arrives
+    in c, with companion innovations \code{Q_rc/Q_cc}. An impulse response
+    rather than a regression.}
+  \item{\code{'orthogonal'}}{From the Cholesky factor of DIFFUSION, so
+    shocks are uncorrelated. Depends on the order of the latent processes,
+    which is a modelling assumption rather than a property of the fit.}
+}
+The companion matrices are asymmetric, and must be: a one unit move in a
+wide-spread process implies more movement in a narrow one than the reverse.
+\code{'observational'} and \code{'shock'} use different covariance matrices
+because they ask different questions, and coincide only under isotropic decay
+with no cross effects.}
 
 \item{standardise}{Logical. If TRUE, output is standardised according to expected total within subject variance, given by the
 asymDIFFUSIONcov matrix.}
@@ -47,6 +72,25 @@ instead of returning output.}
 \item{cores}{Number of cpu cores to use for computing subject matrices.
 If subject matrices were saved during fiting, not used.}
 
+\item{method}{How the interval regressions are obtained. \code{'linearise'}
+(the default) exponentiates the DRIFT matrix, \code{expm(DRIFT*t)} -- exact
+for a linear model, and for a model whose DRIFT depends on the state, the
+response of the model linearised at \code{state}. \code{'simulate'}
+integrates the nonlinear system from \code{state} and from \code{state} plus
+one unit on each process and differences the trajectories, which is the actual
+model implied regression; it starts at 1 and decays to 0 for a stable process,
+and reduces exactly to \code{'linearise'} when no cell depends on the state.
+\code{'simulate'} requires \code{backend='julia'} and is far slower, so it
+uses \code{nsamples} posterior draws with a small default.}
+
+\item{state}{Evaluation point for any matrix cell that depends on the latent
+state or a time dependent predictor -- see \code{\link{ctContextDependence}}.
+\code{NULL} (the default) or \code{'T0MEANS'} uses the population initial
+state, \code{'mean'} the mean smoothed latent state, \code{'asymptotic'} the
+system's own fixed point; or supply a numeric state vector. Requires
+\code{backend='julia'} and \code{subjects='popmean'}. For a linear model the
+argument makes no difference, since no cell depends on the state.}
+
 \item{...}{additional plotting arguments to control \code{\link{ctDiscreteParsPlot}}}
 
 \item{ctstanfitobj}{Deprecated. Use \code{fit}.}
@@ -56,6 +100,14 @@ Calculate model implied regressions for a sequence of time intervals (if ct) or 
 a ctStanFit object, for specified subjects. Wrap with print() when used inside for loops!
 }
 \details{
+Two of these combinations are quantities you may already know under other
+names. \code{observational=FALSE} is the discrete time autoregression and
+cross-lagged matrix, \code{expm(DRIFT*t)}. \code{observational=TRUE} with
+\code{standardise=TRUE} is the model implied \emph{cross-correlation
+function}, \code{Cor(x_r(t+u), x_c(t))} -- the model's counterpart to the
+empirical autocorrelations \code{\link{ctACF}} computes from the data, and
+equal to the latent correlation matrix at \code{t=0}.
+
 If plot=TRUE, the function will return a ggplot2 object
 (and hence needs to be printed if intended to display within a loop).
 This can be modified by the various ggplot2 functions, or displayed using print(x).

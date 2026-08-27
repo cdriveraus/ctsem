@@ -217,6 +217,9 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   names(out) <- layout$matrix
   out <- .ctBackendNameMatrices(out, .ctBackendModel(fit))
   attr(out, "stateDependent") <- layout$statedep
+  out <- .ctContextAttach(out, fit)
+  # Only when the caller did not choose the point themselves.
+  if (is.null(state)) .ctContextMessage(fit, .ctContextPopLabel)
   out
 }
 
@@ -999,13 +1002,13 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     d <- d[!d$matrix %in% c("DIFFUSION", "T0VAR"), ]
     out$parmatrices <- d
 
-    statedep <- layout$statedep
-    if (!is.null(statedep) && nrow(statedep)) {
-      out$parmatNote <- paste0("State-dependent cells (",
-        paste0(unique(statedep$matrix), collapse = ", "),
-        ") were evaluated at the T0MEANS state and are conditional on it; ",
-        "use ctBackendParMatrices(fit, state=) for another.")
-    }
+    # The note comes from the shared classifier (R/ctContextDependence.R)
+    # rather than from the engine's `statedep` count, because that count does
+    # not distinguish an individually varying parameter's carrier state -- which
+    # is reported exactly and needs no caveat -- from a genuinely dynamic
+    # reference, which does.
+    out$parmatNote <- .ctContextNote(.ctFitConditionalCells(object),
+      .ctContextPopLabel, .ctContextRemedy(object))
   }
 
   if (length(constrained$randomeffectlevels) > 1L) {

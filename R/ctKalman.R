@@ -306,6 +306,12 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
     stop('Duplicate values for TI predictors -- if using categorical / dummy predictors, specify values using TIPvalues arg')
   }
   
+  # Kept before .ctFitReplaceData() below swaps in the fabricated dataset: the
+  # nonlinear dynamics panel needs the fit as estimated, not the one refitted
+  # against all-missing data.
+  originalfit <- sf
+  contextdependent <- isTRUE(ctModelIsNonlinear(sf))
+
   dat <- data.frame(.ctFitLongData(sf))
   subjectids <- unique(dat[[ctmb$subjectIDname]])
   dat <- dat[dat[[ctmb$subjectIDname]] %in% subjectids[subject],,drop=FALSE]
@@ -367,12 +373,31 @@ ctPredictTIP <- function(sf,tipreds='all',subject=1,timestep='auto',doDynamics=T
       #include ctstandiscretepars plots
       if(doDynamics){
         for(typei in c('Independent','Correlated')){
+          if(contextdependent){
+            # See .ctPredictTIPDynamics: reading a pseudo-subject's frozen
+            # DRIFT would report where its fabricated trajectory drifted to,
+            # not what the covariate does. The correlated variant shocks each
+            # process by one standard deviation together with the correlated
+            # changes in the others, rather than premultiplying by a bare
+            # correlation matrix.
+            ctd <- .ctPredictTIPDynamics(originalfit,
+              tipredIndex = match(tipreds[tipi], ctmb$TIpredNames),
+              values = TIPvalues[,tipi], times = if(!is.null(dynamicsControl$times))
+                dynamicsControl$times else seq(0,10,.5),
+              ntipred = length(ctmb$TIpredNames),
+              nsamples = if(!is.null(dynamicsControl$nsamples)) dynamicsControl$nsamples else 5,
+              latentNames = ctmb$latentNames,
+              observational = !typei %in% 'Independent',
+              standardise = isTRUE(dynamicsControl$standardise),
+              quiet = tipi > 1 || !typei %in% 'Independent')
+          } else {
           discreteParsArgs <- c(dynamicsControl, list(
             fit=sf,
             plot=FALSE,
             subjects=(tipi-1)*nrow(TIPvalues) + 1:nrow(TIPvalues),
             observational = !typei %in% 'Independent'))
           ctd=do.call(ctDiscretePars, discreteParsArgs)
+          }
           if(showUncertainty) ctdQuantiles <- discreteTimeQuantiles else ctdQuantiles <- c(.5,.5,.5)
           ctdp=do.call(ctDiscreteParsPlot, c(dynamicsPlotControl,
             list(x=ctd,quantiles=ctdQuantiles,splitSubjects = TRUE)))
