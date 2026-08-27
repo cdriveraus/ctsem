@@ -73,6 +73,12 @@ function _sample_initial_point(sampler::CTSEMSampler, values::AbstractVector,
     return (x, logdensity!(gradient, x))
 end
 
+"""The largest or smallest finite entry, or NaN when there is none."""
+function _finite_extremum(values::AbstractVector{Float64}, reduce)
+    finite = filter(isfinite, values)
+    return isempty(finite) ? NaN : reduce(finite)
+end
+
 """One chain's output, before the chains are stitched together."""
 struct _ChainResult
     draws::Matrix{Float64}      # ndim x ndraws
@@ -270,7 +276,10 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
         max_depth=Int(maxdepth),
         nsaturated=count(==(Int(maxdepth)), depth),
         ebfmi=_ebfmi(energy, nchains),
-        worst_rhat=maximum(filter(isfinite, diagnostics.rhat); init=NaN),
-        min_ess=minimum(filter(isfinite, diagnostics.ess); init=NaN),
+        # `init=NaN` would be wrong rather than defensive: Julia's `min` and
+        # `max` propagate NaN, so it poisons every result instead of only the
+        # empty one.
+        worst_rhat=_finite_extremum(diagnostics.rhat, maximum),
+        min_ess=_finite_extremum(diagnostics.ess, minimum),
     )
 end

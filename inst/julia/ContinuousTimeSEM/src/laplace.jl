@@ -643,6 +643,31 @@ function _laplace_workspace!(laplace::CTSEMLaplaceObjective, ::Type{T},
 end
 
 """
+    _laplace_ekf_workspace!(laplace, T, slot)
+
+The filter's own workspace, per chunk rather than per subject.
+
+`ContinuousEKFObjective` caches one workspace on itself, which is right when the
+only parallelism partitions subjects -- the Laplace unit loop does, so no two
+tasks ever filter the same subject at once. It is *wrong* for a sampler running
+several chains at once, where every chain filters every subject: they would
+share one set of buffers and quietly corrupt each other's filters.
+
+The workspace depends only on the shared `EKFParameters`, never on the subject,
+so one per chunk covers all of them.
+"""
+function _laplace_ekf_workspace!(laplace::CTSEMLaplaceObjective, ::Type{T},
+    slot::Integer=1) where {T}
+    store = laplace.workspaces[slot]
+    key = (:ekf_workspace, T)
+    cached = get(store, key, nothing)
+    cached === nothing || return cached
+    built = _init_continuous_ekf_workspace(T, laplace.objective.params)
+    store[key] = built
+    return built
+end
+
+"""
     _laplace_subject_value_gradient!(gradient, subject_objective, aws, values)
 
 Subject `i`'s log likelihood at `values`, and its gradient with respect to
@@ -657,8 +682,13 @@ for the same reason they are in `ctsem_subject_gradients`, so the Frechet batch
 is flushed within the subject here too.
 """
 function _laplace_subject_value_gradient!(gradient::AbstractVector{T},
-    subject_objective, aws, values::AbstractVector{T}) where {T}
-    ws = _get_or_init_objective_workspace!(subject_objective, T)
+    subject_objective, aws, values::AbstractVector{T};
+    ekf_workspace=nothing) where {T}
+    # `ekf_workspace` overrides the one cached on the subject. See
+    # `_laplace_ekf_workspace!`: the cached one is shared between tasks that
+    # filter the same subject, which only a sampler does.
+    ws = ekf_workspace === nothing ?
+        _get_or_init_objective_workspace!(subject_objective, T) : ekf_workspace
     tape = _tape_reset!(aws.tape)
     resize!(aws.tipreds, length(subject_objective.tipreds))
     copyto!(aws.tipreds, subject_objective.tipreds)

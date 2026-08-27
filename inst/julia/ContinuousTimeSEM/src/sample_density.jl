@@ -166,7 +166,12 @@ function ctsem_sample_density!(gradient::Vector{Float64}, sampler::CTSEMSampler,
     chunk_ok = fill(true, nchunks)
 
     run = function (c)
-        aws = _laplace_workspace!(laplace, Float64, npar, first(slots) + c - 1)
+        slot = first(slots) + c - 1
+        aws = _laplace_workspace!(laplace, Float64, npar, slot)
+        # Per slot, not per subject: several chains filter the *same* subject at
+        # the same time, where the unit loop never does, so the workspace cached
+        # on the subject would be shared and silently corrupted.
+        ekf = _laplace_ekf_workspace!(laplace, Float64, slot)
         gsub = Vector{Float64}(undef, npar)
         gtheta = chunk_theta[c]
         total = 0.0
@@ -178,7 +183,8 @@ function ctsem_sample_density!(gradient::Vector{Float64}, sampler::CTSEMSampler,
                 offsets = laplace.units.offsets[U][m]
                 shifted = _laplace_member_values(theta, spec, Ls, uview, offsets)
                 loglik = _laplace_subject_value_gradient!(gsub,
-                    laplace.objective.subject_objectives[i], aws, shifted)
+                    laplace.objective.subject_objectives[i], aws, shifted;
+                    ekf_workspace=ekf)
                 if !isfinite(loglik)
                     chunk_ok[c] = false
                     return nothing

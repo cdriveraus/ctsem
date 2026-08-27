@@ -170,6 +170,43 @@ function _metric_from_covariances(ranges::Vector{UnitRange{Int}},
 end
 
 """
+    _bounded_inverse(information; rtol)
+
+Invert a symmetric information matrix along the directions it actually
+identifies, flooring the rest.
+
+A plain `inv` here is not merely inaccurate, it is unusable. On a weakly
+identified fit the outer Hessian has eigenvalues at 1e-83 and, from numerical
+error, sometimes small *positive* ones where it should be negative definite --
+measured on a six-subject fixture whose population scales had collapsed. The
+inverse then has variances of 1e83, the initial draw lands there, and the chain
+cannot start.
+
+Flooring the eigenvalues at `rtol` times the largest gives a metric that is
+merely uninformative in those directions rather than catastrophic. That is the
+right failure mode: the metric only ever affects efficiency, so a bad one costs
+time, while an infinite one costs the run.
+"""
+function _bounded_inverse(information::Symmetric{Float64}; rtol::Real=1e-8)
+    n = size(information, 1)
+    n == 0 && return zeros(0, 0)
+    decomposition = try
+        eigen(information)
+    catch err
+        err isa InterruptException && rethrow()
+        return Matrix(1.0I, n, n)
+    end
+    lambda = decomposition.values
+    scale = maximum(abs, lambda)
+    (!isfinite(scale) || scale <= 0) && return Matrix(1.0I, n, n)
+    floor = rtol * scale
+    inverted = [1.0 / max(l, floor) for l in lambda]
+    out = decomposition.vectors * Diagonal(inverted) * transpose(decomposition.vectors)
+    all(isfinite, out) || return Matrix(1.0I, n, n)
+    return (out .+ transpose(out)) ./ 2
+end
+
+"""
     ctsem_sample_metric(sampler, values; regularize)
 
 The initial metric, read off the Laplace approximation at `values`.
@@ -192,12 +229,7 @@ function ctsem_sample_metric(sampler::CTSEMSampler, values::AbstractVector;
     # Population block.
     H = hessian === nothing ? ctsem_laplace_hessian(laplace, theta) : Matrix(hessian)
     information = Symmetric((-(H .+ transpose(H)) ./ 2))
-    popcov = try
-        Matrix(inv(information))
-    catch err
-        err isa InterruptException && rethrow()
-        Matrix(1.0I, sampler.npar, sampler.npar)
-    end
+    popcov = _bounded_inverse(information)
     push!(ranges, 1:sampler.npar)
     push!(covariances, popcov)
 
@@ -221,8 +253,14 @@ function ctsem_sample_metric(sampler::CTSEMSampler, values::AbstractVector;
             block.size == 0 && continue
             start = sampler.uoffsets[U] + block.offset + 1
             push!(ranges, start:(start + block.size - 1))
-            push!(covariances, Cdiag === nothing ?
-                Matrix(1.0I, block.size, block.size) : Matrix(Cdiag[b]))
+            candidate = Cdiag === nothing ? Matrix(1.0I, block.size, block.size) :
+                Matrix(Cdiag[b])
+            # Same guard as the population block: a repaired curvature can give
+            # a conditional covariance that is not usable as a metric.
+            if !all(isfinite, candidate) || any(candidate[i, i] <= 0 for i in 1:block.size)
+                candidate = Matrix(1.0I, block.size, block.size)
+            end
+            push!(covariances, candidate)
         end
     end
 
