@@ -174,3 +174,106 @@ test_that('the covariate dynamics panel is built from each level\'s own state', 
   # And the levels differ, which is what the panel is for.
   expect_true(diff(range(median[, 3, 1, 1])) > 1e-6)
 })
+
+test_that('every observational and standardise combination reduces when linear', {
+  # Correlated diffusion and unequal process scales: the case that exposes a
+  # correlation being used where a regression coefficient belongs. Both earlier
+  # test models have diagonal diffusion and never exercise the companion path.
+  correlated <- local({
+    set.seed(5)
+    generating <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
+      manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+      LAMBDA = diag(2), DRIFT = matrix(c(-.4, .1, 0, -.3), 2, 2),
+      CINT = matrix(c(.2, .1), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
+      MANIFESTVAR = diag(.2, 2), DIFFUSION = matrix(c(1.0, 0.8, 0, 1.2), 2, 2)))
+    datalong <- as.data.frame(suppressMessages(ctGenerate(generating,
+      n.subjects = 30, burnin = 5, dtmean = 1, logdtsd = .1, wide = FALSE,
+      Tpoints = 12)))
+    model <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
+      manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+      LAMBDA = diag(2), DRIFT = matrix(c('d11', 'd21', 0, 'd22'), 2, 2),
+      CINT = matrix(c('c1', 'c2'), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
+      MANIFESTVAR = diag(.2, 2),
+      DIFFUSION = matrix(c('df11', 'df21', 0, 'df22'), 2, 2)))
+    model$pars$indvarying <- FALSE
+    ctFit(datalong, model, backend = 'julia', cores = 1, verbose = 0)
+  })
+
+  mats <- suppressMessages(ctSummaryMatrices(correlated))
+  expect_gt(abs(stats::cov2cor(mats$DIFFUSIONcov)[2, 1]), .2)
+  scales <- sqrt(diag(mats$asymDIFFUSIONcov))
+  expect_gt(max(scales) / min(scales), 1.3)
+
+  times <- c(0, .5, 1, 2, 4)
+  for (observational in c(FALSE, TRUE)) for (standardise in c(FALSE, TRUE)) {
+    simulated <- suppressMessages(ctDiscretePars(correlated, times = times,
+      method = 'simulate', nsamples = 3, observational = observational,
+      standardise = standardise))
+    linearised <- suppressMessages(ctDiscretePars(correlated, times = times,
+      nsamples = 3, observational = observational, standardise = standardise))
+    expect_equal(apply(simulated, c(3, 4, 5), stats::median),
+      apply(linearised, c(3, 4, 5), stats::median), tolerance = 1e-9)
+  }
+})
+
+test_that('the phase portrait recovers the fixed point and the curved nullcline', {
+  portrait <- suppressMessages(ctPhasePortrait(nlfit, latents = c('eta1', 'eta2'),
+    gridsize = 11, extent = 'sd', plot = FALSE))
+  expect_true(all(is.finite(portrait$field$dx)))
+
+  # The marked point is where the field vanishes, to solver tolerance.
+  field <- ctsem:::.ctFieldFunction(nlfit)
+  state <- ctsem:::.ctResolveState(nlfit, 'asymptotic')$state
+  expect_lt(max(abs(field(state))), 1e-6)
+
+  # DRIFT[1,1] depends on eta2 while DRIFT[2,] does not depend on anything, so
+  # eta1's nullcline must bend and eta2's must not. Straightness is measured as
+  # the residual of a straight line fit through the contour.
+  straightness <- vapply(split(portrait$nullclines, portrait$nullclines$process),
+    function(piece) {
+      if (nrow(piece) < 4) return(NA_real_)
+      max(abs(stats::residuals(stats::lm(y ~ x, data = piece)))) /
+        max(diff(range(piece$y)), 1e-8)
+    }, numeric(1))
+  expect_lt(straightness[['eta2']], 1e-6)
+  expect_gt(straightness[['eta1']], straightness[['eta2']])
+})
+
+test_that('the state dependence plot recovers the specified relationship', {
+  # DRIFT[1,1] was specified as dr11 * (1 + 0.2 * eta2), so its value must be
+  # exactly linear in eta2 with slope 0.2 * dr11. Recovering that from the
+  # fitted engine is a check on the whole materialise-at-a-state path.
+  values <- suppressMessages(ctStateDependencePlot(nlfit, along = 'eta2',
+    gridsize = 11, nsamples = 5, plot = FALSE))
+  expect_equal(unique(values$cell), 'DRIFT[1,1]')
+
+  straight <- stats::lm(middle ~ along, data = values)
+  # suppressWarnings: R objects to an essentially perfect fit, which is the
+  # property being tested.
+  expect_gt(suppressWarnings(summary(straight))$r.squared, 1 - 1e-9)
+  intercept <- unname(stats::coef(straight)[1])
+  slope <- unname(stats::coef(straight)[2])
+  expect_equal(slope, 0.2 * intercept, tolerance = 1e-6)
+})
+
+test_that('the state dependence plot declines a linear model rather than drawing nothing', {
+  linear <- local({
+    set.seed(1)
+    generating <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
+      manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+      LAMBDA = diag(2), DRIFT = matrix(c(-.4, .1, 0, -.3), 2, 2),
+      CINT = matrix(c(.2, .1), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
+      MANIFESTVAR = diag(.2, 2), DIFFUSION = matrix(c(.5, 0, 0, .4), 2, 2)))
+    datalong <- as.data.frame(suppressMessages(ctGenerate(generating,
+      n.subjects = 20, burnin = 5, dtmean = 1, logdtsd = .1, wide = FALSE,
+      Tpoints = 8)))
+    model <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
+      manifestNames = c('Y1', 'Y2'), latentNames = c('eta1', 'eta2'),
+      LAMBDA = diag(2), DRIFT = matrix(c('d11', 'd21', 0, 'd22'), 2, 2),
+      CINT = matrix(c('c1', 'c2'), 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
+      MANIFESTVAR = diag(.2, 2), DIFFUSION = matrix(c('df1', 0, 0, 'df2'), 2, 2)))
+    model$pars$indvarying <- FALSE
+    ctFit(datalong, model, backend = 'julia', cores = 1, verbose = 0)
+  })
+  expect_error(ctStateDependencePlot(linear), 'nothing to plot')
+})
