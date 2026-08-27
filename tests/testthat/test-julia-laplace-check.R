@@ -185,3 +185,45 @@ test_that("the fit records how hard the optimizer worked", {
   expect_gte(fit$estimate$f_calls, fit$estimate$iterations)
   expect_true(is.finite(fit$estimate$g_calls))
 })
+
+# The first-order correction is `delta = -H^-1 g`, and on a model where Laplace
+# is exact `g` is a central difference of two nearly equal quadrature values --
+# so it sits at floating-point noise. If `H` is also near-singular, which it is
+# whenever a population scale is weakly identified, that solve multiplies the
+# noise by 1/lambda_min and returns a number rather than an error.
+#
+# Measured on the nested fixture before this was guarded: two consecutive checks
+# on the *same fit* reported largest corrections of 3.3e+08 and 3.5e-10 standard
+# errors. One was absurd, one looked fine, both were meaningless, and nothing on
+# the result distinguished them. The eigen-truncated solve reports zero along
+# directions the data does not identify and counts them in
+# `dropped_directions`.
+test_that("a correction is not invented along directions the data cannot identify", {
+  skip_without_julia()
+  fit <- suppressMessages(ctFit(.check_nested_data(), .check_nested_model(),
+    backend = "julia", intoverpop = "laplace",
+    optimcontrol = list(finishsamples = 50)))
+
+  # Twice, because the failure was that these two disagreed by eighteen orders
+  # of magnitude while describing the same fit.
+  first <- ctLaplaceCheck(fit, nodes = 3)
+  second <- ctLaplaceCheck(fit, nodes = 3)
+  for (check in list(first, second)) {
+    expect_lt(max(abs(check$parameters$delta_se)), 0.05)
+    expect_true(all(is.finite(check$parameters$delta)))
+  }
+  # Same fit, same estimate: the corrections must agree, not merely both be small.
+  expect_equal(first$parameters$delta, second$parameters$delta, tolerance = 1e-6)
+  expect_true(is.integer(first$dropped_directions))
+
+  # A deliberately singular information matrix must produce no correction at
+  # all rather than an arbitrarily large one.
+  module <- ctsem:::.ctJuliaModule(NULL)
+  est <- ctsem:::.ctJuliaNumericVector(as.numeric(fit$estimate$raw))
+  singular <- matrix(0, length(fit$estimate$raw), length(fit$estimate$raw))
+  result <- JuliaConnectoR::juliaGet(module$ctsem_laplace_correction(
+    ctsem:::.ctJuliaObjective(fit), est, JuliaConnectoR::juliaPut(singular),
+    nodes = 3L))
+  expect_true(all(as.numeric(result$delta) == 0))
+  expect_equal(as.integer(result$dropped_directions), length(fit$estimate$raw))
+})

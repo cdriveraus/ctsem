@@ -225,6 +225,14 @@ function ctsem_tune_chunks!(evaluate; ceiling::Integer=0, verbose::Bool=false)
         _CTSEM_MAX_CHUNKS[] = 1
         evaluate()
         serial = @elapsed evaluate()
+        # A short evaluation cannot be timed once. Measured on a 100-subject
+        # model whose evaluation is ~12 ms, three consecutive ladders gave chunk
+        # 2 as 0.076 s, 0.0125 s and 0.0129 s -- a sixfold swing on the same
+        # work, enough to pick a different winner each run. The minimum of a few
+        # repeats is the right statistic under contention (a scheduler can only
+        # ever make a timing longer), and three repeats of a 12 ms evaluation
+        # cost nothing against the fit that follows.
+        repeats = serial < 0.05 ? 3 : 1
         # The ladder is doubled from one, but only while an evaluation is cheap
         # enough that trying six settings is free against the fit. A model whose
         # evaluation takes a second is also a model with enough arithmetic
@@ -240,7 +248,10 @@ function ctsem_tune_chunks!(evaluate; ceiling::Integer=0, verbose::Bool=false)
         for n in candidates
             _CTSEM_MAX_CHUNKS[] = n
             evaluate()                       # warm this chunk count's workspaces
-            elapsed = @elapsed evaluate()
+            elapsed = Inf
+            for _ in 1:repeats
+                elapsed = min(elapsed, @elapsed evaluate())
+            end
             push!(timings, (n, elapsed))
             verbose && println("Chunk tuning: ", n, " chunk(s) ",
                 round(elapsed; digits=4), " s")

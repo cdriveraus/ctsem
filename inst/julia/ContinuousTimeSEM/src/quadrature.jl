@@ -483,17 +483,61 @@ function ctsem_laplace_correction(laplace::CTSEMLaplaceObjective,
     theta = collect(Float64, values)
     gap = _quadrature_gap_gradient(laplace, theta, nodes, step)
     H = Symmetric((hessian .+ transpose(hessian)) ./ 2)
-    delta = try
-        -(H \ gap)
-    catch err
-        err isa InterruptException && rethrow()
-        fill(NaN, length(theta))
-    end
+    delta, dropped = _correction_step(H, gap)
     quadrature = ctsem_laplace_quadrature(laplace, theta; nodes=nodes).value
     laplacevalue = ctsem_laplace_evaluate(laplace, theta; gradient=false).value
     return (delta=delta, corrected=theta .+ delta, gap_gradient=gap,
         quadrature=quadrature, laplace=laplacevalue,
-        gap=quadrature - laplacevalue, nodes=Int(nodes))
+        gap=quadrature - laplacevalue, nodes=Int(nodes),
+        dropped_directions=dropped)
+end
+
+"""
+    _correction_step(H, gap) -> (delta, dropped)
+
+Solve `-H \\ gap` along the directions `H` actually identifies, and report how
+many it did not.
+
+A plain solve here is wrong in a way that produces a number rather than an
+error. The gap gradient is a central difference of the quadrature value, so on a
+model where Laplace is exact it sits at floating-point noise -- measured at
+7e-12 and 2e-11 on two runs of the same three-level fixture. If `H` is also
+near-singular, and it is whenever a population scale is weakly identified (six
+studies, in that fixture), `H \\ gap` multiplies that noise by 1/lambda_min.
+The two runs returned corrections of 3.3e+08 and 3.5e-10 standard errors from
+the same fit: one absurd, one fine, both meaningless, and nothing distinguished
+them.
+
+Truncating at `sqrt(eps)` relative to the largest eigenvalue is the standard
+answer and the right one here: a first-order correction along a direction the
+data does not identify is not estimable, and reporting zero for it is honest
+where reporting 3e+08 is not. `dropped_directions` on the result says when it
+happened rather than leaving it to be inferred.
+"""
+function _correction_step(H::Symmetric, gap::AbstractVector)
+    n = length(gap)
+    n == 0 && return (Float64[], 0)
+    decomposition = try
+        eigen(H)
+    catch err
+        err isa InterruptException && rethrow()
+        return (fill(NaN, n), 0)
+    end
+    lambda = decomposition.values
+    scale = maximum(abs, lambda)
+    (!isfinite(scale) || scale == 0) && return (zeros(n), n)
+    tolerance = sqrt(eps(Float64)) * scale
+    projected = transpose(decomposition.vectors) * gap
+    dropped = 0
+    for i in eachindex(lambda)
+        if abs(lambda[i]) <= tolerance
+            projected[i] = 0.0
+            dropped += 1
+        else
+            projected[i] /= lambda[i]
+        end
+    end
+    return (-(decomposition.vectors * projected), dropped)
 end
 
 """

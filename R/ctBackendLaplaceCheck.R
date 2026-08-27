@@ -139,6 +139,13 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
     stringsAsFactors = FALSE)
   out$corrected <- est + delta
   out$gap_gradient <- as.numeric(result$gap_gradient)
+  # How many directions the information matrix did not identify well enough to
+  # correct along. Reported rather than silently absorbed: a dropped direction
+  # means "no estimable correction here", which is a different statement from
+  # "the correction is zero", and the difference matters to anyone reading the
+  # table to decide whether the estimate is approximation-limited.
+  out$dropped_directions <- if (is.null(result$dropped_directions)) 0L else
+    as.integer(result$dropped_directions)
 
   if (refine) {
     if (verbose > 0) message("Refitting against the quadrature objective")
@@ -164,6 +171,13 @@ print.ctLaplaceCheck <- function(x, ...) {
     cat("  largest first-order corrections, in standard errors:\n")
     print(utils::head(worst[, c("parameter", "estimate", "corrected", "se",
       "delta_se")], 6), row.names = FALSE, digits = 3)
+    if (isTRUE(x$dropped_directions > 0L)) {
+      cat("  ", x$dropped_directions, " direction(s) of the information matrix ",
+        "were too weakly
+  identified to correct along, and are reported as zero.
+",
+        sep = "")
+    }
     if (max(abs(worst$delta_se), na.rm = TRUE) > 0.5) {
       cat("  A correction near or above one standard error means the point ",
         "estimate is\n  limited by the approximation, not by the data.\n", sep = "")

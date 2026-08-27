@@ -174,7 +174,40 @@ end
     H = ctsem_laplace_hessian(laplace, result.minimizer)
     correction = ctsem_laplace_correction(laplace, result.minimizer, H; nodes=3)
     @test all(isfinite, correction.delta)
-    @test -(Symmetric(H) * correction.delta) ≈ correction.gap_gradient rtol = 1e-7
+
+    # Not `-H * delta == gap` any more, and the reason is the sentence below
+    # about `inv(-H)` being "big enough to carry it": on this fixture the gap
+    # gradient is entirely floating-point noise (Laplace is exact here) and the
+    # information matrix is near-singular, so an exact solve amplifies the noise
+    # by 1/lambda_min. Two consecutive corrections on the same fit returned
+    # largest steps of 3.3e+08 and 3.5e-10 standard errors. `_correction_step`
+    # truncates at sqrt(eps) relative to the largest eigenvalue, so the residual
+    # now lives in the directions it declined to correct along.
+    #
+    # Three properties replace the one, and together they are stronger.
+
+    # 1. Where the curvature *is* identified, the solve is still exact --
+    #    truncation must be a no-op on a well-conditioned problem, or it has
+    #    quietly broken every model that did not need it.
+    n = length(result.minimizer)
+    wellposed = ctsem_laplace_correction(laplace, result.minimizer,
+        Matrix(-1.0I, n, n); nodes=3)
+    @test wellposed.dropped_directions == 0
+    @test -(Symmetric(Matrix(-1.0I, n, n)) * wellposed.delta) ≈
+        wellposed.gap_gradient rtol = 1e-7
+
+    # 2. A singular information matrix yields no correction rather than an
+    #    arbitrarily large one.
+    singular = ctsem_laplace_correction(laplace, result.minimizer,
+        zeros(n, n); nodes=3)
+    @test all(iszero, singular.delta)
+    @test singular.dropped_directions == n
+
+    # 3. The correction on the real Hessian is reproducible. This is what
+    #    actually failed before: the two calls disagreed by eighteen orders of
+    #    magnitude while describing the same fit.
+    again = ctsem_laplace_correction(laplace, result.minimizer, H; nodes=3)
+    @test correction.delta ≈ again.delta atol = 1e-9
     # Laplace is exact for this model, so there is nothing to correct. The step
     # is measured against the standard errors rather than against zero: the gap
     # it differences is ~1e-9 here, a 1e-3 finite-difference step turns that

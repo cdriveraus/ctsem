@@ -95,6 +95,13 @@ test_that("a fit leaves the engine's chunk ceiling as it found it", {
   skip_without_julia()
   ceiling <- function() as.integer(JuliaConnectoR::juliaEval(
     "ContinuousTimeSEM.ctsem_max_chunks().max_chunks"))
+  # Put it back on the way out. This test is about session state not leaking,
+  # and leaving a ceiling of 3 behind for every later test file would be a poor
+  # way to make that point -- it did, and it changed which chunk count the next
+  # file's fits ran at.
+  original <- ceiling()
+  on.exit(JuliaConnectoR::juliaEval(sprintf(
+    "ContinuousTimeSEM.ctsem_set_max_chunks!(%d)", original)), add = TRUE)
   JuliaConnectoR::juliaEval("ContinuousTimeSEM.ctsem_set_max_chunks!(3)")
   before <- ceiling()
   expect_equal(before, 3L)
