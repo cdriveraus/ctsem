@@ -386,11 +386,38 @@ function ctsem_evaluate(objective::CTSEMObjective, values::AbstractVector;
     return (value=value, gradient=grad)
 end
 
+"""
+How many curvature pairs L-BFGS keeps.
+
+Optim's default is 10; ctsem's Stan path (`mize`) uses 100. Measured twice on a
+100-subject, 50-wave model, once through the engine from zero starts and once
+end to end through `ctFit`:
+
+    m     engine, s   iters   |g| at stop   met g_tol      ctFit, s   iters
+    10       4.08      42       3.5e-07        no            5.59      66
+    20       3.73      38       4.7e-10        yes           5.35      57
+    50       3.77      37       6.7e-10        yes           5.14      54
+    100      3.82      37       6.7e-10        yes            --       --
+
+Both runs reach the same optimum (log likelihood identical to four decimals)
+and both say the same thing about direction: more memory, fewer iterations,
+less time, and the gains flatten by twenty. They disagree about ten. The first
+run stopped there with a gradient of 3.5e-07 against a `g_tol` of 1e-8 --
+converged on the `f` test after the line search ran out, which is precisely the
+false "converged" this route used to report -- and the second run met the
+criterion at ten perfectly well. So "ten silently fails" is not a property of
+the setting; it is a thing that *can* happen at ten and did not happen twice.
+
+Twenty is the knee on both. The `lbfgs_memory` keyword overrides it, and R
+reaches that through `backendcontrol`.
+"""
+const _CTSEM_LBFGS_MEMORY = 20
+
 """Optimize a prepared likelihood entirely within Julia using L-BFGS."""
 function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
     maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0,
     x_tol::Real=0.0, verbose::Bool=false, gradient_method=:adjoint,
-    tune_chunks::Bool=true)
+    tune_chunks::Bool=true, lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY)
     start_values = collect(start)
     invalid_objective = floatmax(eltype(start_values)) / 1e8
     gradient_limit = sqrt(floatmax(eltype(start_values)))
@@ -422,7 +449,8 @@ function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
     tuning = tune_chunks ? ctsem_tune_chunks!(
         () -> ctsem_evaluate(objective, start_values; gradient=true,
             gradient_method=gradient_method); verbose=verbose) : nothing
-    result = Optim.optimize(Optim.only_fg!(fg!), start_values, Optim.LBFGS(), options)
+    result = Optim.optimize(Optim.only_fg!(fg!), start_values,
+        Optim.LBFGS(m=Int(lbfgs_memory)), options)
     minimizer = collect(Optim.minimizer(result))
     final = ctsem_evaluate(objective, minimizer; gradient=true,
         contributions=true, gradient_method=gradient_method)

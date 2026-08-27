@@ -1418,6 +1418,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     f_tol = .ctJuliaOr(backendcontrol$f_tol, 0),
     x_tol = .ctJuliaOr(backendcontrol$x_tol, 0),
     verbose = verbose > 0L)
+  # Exposed because it is the one optimiser knob that measurably changed both
+  # speed and whether the gradient criterion was met; the engine's default is
+  # documented at `_CTSEM_LBFGS_MEMORY`.
+  if (!is.null(backendcontrol$lbfgs_memory)) {
+    common$lbfgs_memory <- as.integer(backendcontrol$lbfgs_memory)[1L]
+  }
   # `cores` is the ceiling; `ctsem_tune_chunks!` measures the count to use
   # within it, and the fit records what it picked. Restored afterwards so the
   # session does not carry this fit's ceiling into the next thing that runs.

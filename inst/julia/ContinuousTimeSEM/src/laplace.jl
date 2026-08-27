@@ -2451,7 +2451,8 @@ cheaper route to the same answer, so there is no version of it worth keeping.
 """
 function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractVector;
     maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0, x_tol::Real=0.0,
-    verbose::Bool=false, nested_gradient::Bool=false, tune_chunks::Bool=true)
+    verbose::Bool=false, nested_gradient::Bool=false, tune_chunks::Bool=true,
+    lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY)
     start_values = collect(Float64, start)
     invalid_objective = floatmax(Float64) / 1e8
     gradient_limit = sqrt(floatmax(Float64))
@@ -2511,14 +2512,16 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     # rather than leaving it to be guessed.
     linesearch = "hagerzhang"
     result = try
-        Optim.optimize(Optim.only_fg!(fg!), start_values, Optim.LBFGS(), options)
+        Optim.optimize(Optim.only_fg!(fg!), start_values,
+            Optim.LBFGS(m=Int(lbfgs_memory)), options)
     catch err
         err isa InterruptException && rethrow()
         linesearch = "backtracking"
         verbose && println("Laplace: Hager-Zhang line search failed (",
             sprint(showerror, err), "); retrying with backtracking")
         Optim.optimize(Optim.only_fg!(fg!), start_values,
-            Optim.LBFGS(linesearch=Optim.LineSearches.BackTracking()), options)
+            Optim.LBFGS(m=Int(lbfgs_memory),
+                linesearch=Optim.LineSearches.BackTracking()), options)
     end
     if verbose
         println("Laplace: inner modes ",
