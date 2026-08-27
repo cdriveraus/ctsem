@@ -106,7 +106,7 @@
 # one transfer but a list element by element, and per-sample calls were the
 # single largest avoidable cost measured in this backend.
 .ctBackendParMatricesFlat <- function(fit, raw, tipreds = NULL, state = NULL,
-  time = 0, dt = 0) {
+  time = 0, dt = 0, rows = NULL) {
   raw <- if (is.matrix(raw)) raw else matrix(as.numeric(raw), ncol = 1L)
   storage.mode(raw) <- "double"
   spec <- .ctBackendSpec(fit)
@@ -117,6 +117,11 @@
   # marshalling a zero-length vector.
   if (length(tipreds)) arguments$tipreds <- .ctJuliaVector(as.numeric(tipreds))
   if (length(state)) arguments$state <- .ctJuliaVector(as.numeric(state))
+  # `rows` selects flat positions engine-side. The materialization is under
+  # 0.02 s either way; what this saves is the bridge, which moves about 1 MB/s
+  # and does not care that 98% of what it is carrying will be dropped on
+  # arrival.
+  if (length(rows)) arguments$rows <- .ctJuliaVector(as.integer(rows))
   result <- .ctBackendJuliaValue(do.call(module$ctsem_parameter_matrices, arguments))
   matrix(as.numeric(result), nrow = nrow(result), ncol = ncol(result))
 }
@@ -476,14 +481,25 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # The value of every parameter's population cell, for a whole matrix of raw
 # vectors: nsamples x nrow(cells). One engine call, whatever the sample count.
 .ctBackendPopCellValues <- function(fit, samples, cells, layout, ...) {
-  flat <- .ctBackendParMatricesFlat(fit, t(samples), ...)
-  .ctBackendPopCellsFromFlat(flat, cells, layout)
+  # Only these cells' rows cross the bridge. Callers ask for a handful of cells
+  # out of the eighty-odd a model has, and the whole array used to come back
+  # every time: five nodes of the random-effect quadrature spent 3.7 s
+  # transferring 3.3 MB to keep 66 KB of it.
+  flat <- .ctBackendParMatricesFlat(fit, t(samples),
+    rows = .ctBackendCellPositions(cells, layout), ...)
+  values <- t(flat)
+  colnames(values) <- .ctBackendParameterNames(cells)
+  values
+}
+
+# Where each cell sits in the flat parameter-matrix column.
+.ctBackendCellPositions <- function(cells, layout) {
+  index <- match(cells$matrix, layout$matrix)
+  layout$offset[index] + (cells$col - 1L) * layout$nrow[index] + cells$row
 }
 
 .ctBackendPopCellsFromFlat <- function(flat, cells, layout) {
-  index <- match(cells$matrix, layout$matrix)
-  position <- layout$offset[index] + (cells$col - 1L) * layout$nrow[index] + cells$row
-  values <- t(flat[position, , drop = FALSE])
+  values <- t(flat[.ctBackendCellPositions(cells, layout), , drop = FALSE])
   colnames(values) <- .ctBackendParameterNames(cells)
   values
 }
@@ -603,10 +619,14 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   out <- list(level = population$level)
   column <- match(parnumber, cells$parnumber)
   quadrature <- .ctBackendGaussHermite()
+  # Narrowed before the call, not after: asking for every cell and keeping
+  # `column` was five full transfers of the whole parameter-matrix array per
+  # level, ~97% of it discarded on arrival.
+  wanted <- cells[column, , drop = FALSE]
   displaced <- lapply(quadrature$node, function(node) {
     perturbed <- samples
     perturbed[, parnumber] <- perturbed[, parnumber, drop = FALSE] + rawsd * node
-    .ctBackendPopCellValues(fit, perturbed, cells, layout)[, column, drop = FALSE]
+    .ctBackendPopCellValues(fit, perturbed, wanted, layout)
   })
   centre <- Reduce(`+`, Map(function(value, weight) value * weight,
     displaced, quadrature$weight))
@@ -787,12 +807,15 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   linear <- lapply(sort(unique(effects$predictor)), function(predictor) {
     rows <- effects[effects$predictor %in% predictor, , drop = FALSE]
     step <- samples[, rows$coefficient, drop = FALSE] * .01
-    column <- match(rows$parameter, cells$parnumber)
+    # Narrowed before the call for the same reason as the random-effect
+    # quadrature: two full transfers of the whole parameter-matrix array per
+    # predictor, to keep this predictor's parameters out of them.
+    wanted <- cells[match(rows$parameter, cells$parnumber), , drop = FALSE]
     displaced <- lapply(c(1, -1), function(direction) {
       perturbed <- samples
       perturbed[, rows$parameter] <- perturbed[, rows$parameter, drop = FALSE] +
         direction * step
-      .ctBackendPopCellValues(fit, perturbed, cells, layout)[, column, drop = FALSE]
+      .ctBackendPopCellValues(fit, perturbed, wanted, layout)
     })
     values <- matrix((displaced[[1L]] - displaced[[2L]]) / .02, nrow = nrow(samples))
     colnames(values) <- paste0("tip_", predictor_names[predictor], "_",

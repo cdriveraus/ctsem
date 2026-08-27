@@ -202,9 +202,16 @@ Materialize every model matrix for one or many raw parameter vectors.
 `values` is `npar` by `nsamples` -- a whole posterior costs one call rather than
 one per sample -- and the returned `Matrix{Float64}` is `size` by `nsamples`,
 with `size` and the block offsets given by `ctsem_parameter_layout`.
+
+`rows` selects flat positions to return, and exists because of what happens
+*after* this function: JuliaConnectoR moves about 1 MB/s, and a caller wanting
+two cells of a 5-node quadrature was paying for the whole 82-by-1000 array five
+times over -- 3.7s of a 16.7s fit, to keep two percent of what crossed. The
+materialization itself costs under 0.02s either way, so this is purely about
+what goes back over the bridge. Empty means all of them.
 """
 function ctsem_parameter_matrices(objective::CTSEMObjective, values::AbstractMatrix;
-    tipreds=Float64[], state=Float64[], time::Real=0.0, dt::Real=0.0)
+    tipreds=Float64[], state=Float64[], time::Real=0.0, dt::Real=0.0, rows=Int[])
 
     sp = objective.params
     layout = ctsem_parameter_layout(objective)
@@ -243,7 +250,10 @@ function ctsem_parameter_matrices(objective::CTSEMObjective, values::AbstractMat
 
         _ctsem_pack_matrices!(view(out, :, column), pars, sp, layout)
     end
-    return out
+    isempty(rows) && return out
+    selected = Int.(rows)
+    all(r -> 1 <= r <= layout.size, selected) || throw(BoundsError(out, selected))
+    return out[selected, :]
 end
 
 """

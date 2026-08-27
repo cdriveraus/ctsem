@@ -332,3 +332,46 @@ test_that("the Stan summary path is unchanged by the shared refactor", {
   expect_equal(unname(drop(discrete[1, 1, 1, , ])),
     diag(length(ctstantestfit$ctstanmodel$latentNames)), tolerance = 1e-10)
 })
+
+# The constrain step asks the engine for the value of a handful of parameter
+# cells, several times over -- five nodes of a Gauss-Hermite quadrature per
+# random-effect level, two more per TI predictor. It used to ask for *every*
+# cell each time and keep the two it wanted, which was ~97% waste on a bridge
+# that moves about 1 MB/s: 3.7 s of a 16.7 s fit, transferring 3.3 MB to use
+# 66 KB of it. `ctsem_parameter_matrices(rows = ...)` selects engine-side now.
+#
+# The risk in that change is an off-by-one in the flat position arithmetic,
+# which would not error -- it would return a neighbouring cell's value and be
+# visible only as a wrong number in a summary. So the test is that selecting
+# engine-side gives bit-for-bit what selecting in R off the full array gives.
+test_that("engine-side cell selection returns exactly what full transfer did", {
+  skip_on_cran()
+  skip_without_julia()
+  set.seed(11)
+  data <- do.call(rbind, lapply(1:15, function(i)
+    data.frame(id = i, time = 0:5, Y1 = cumsum(stats::rnorm(6)) * .5)))
+  model <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1))))
+  fit <- suppressWarnings(suppressMessages(ctFit(data, model, backend = "julia",
+    cores = 1, optimcontrol = list(finishsamples = 20))))
+
+  cells <- ctsem:::.ctBackendFreeParameterCells(fit)
+  layout <- ctsem:::.ctBackendSummaryLayout(fit)
+  samples <- ctsem:::.ctBackendRawSamples(fit)
+  full <- ctsem:::.ctBackendParMatricesFlat(fit, t(samples))
+
+  # Every cell, and then a scattered subset -- a contiguous one would pass even
+  # if the offsets were wrong by a constant.
+  for (selection in list(cells, cells[c(2L, 5L), , drop = FALSE],
+    cells[rev(seq_len(nrow(cells))), , drop = FALSE])) {
+    expect_equal(
+      ctsem:::.ctBackendPopCellValues(fit, samples, selection, layout),
+      ctsem:::.ctBackendPopCellsFromFlat(full, selection, layout))
+  }
+
+  # And the narrowing is real, not just harmless.
+  narrow <- ctsem:::.ctBackendParMatricesFlat(fit, t(samples),
+    rows = ctsem:::.ctBackendCellPositions(cells[2L, , drop = FALSE], layout))
+  expect_equal(nrow(narrow), 1L)
+  expect_lt(nrow(narrow), nrow(full))
+})
