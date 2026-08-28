@@ -214,7 +214,15 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, warn=TRUE,
     # `sqrt(eps)` is where a symmetric eigendecomposition stops being able to
     # tell a small eigenvalue from zero, so below it the repair is arithmetic
     # rather than a statement about the model.
-    infoRepairNegligible=is.finite(infoEigenRatio) &&
+    #
+    # The sign is half the test, and leaving it out was wrong. Rounding error
+    # takes an eigenvalue that should be positive and makes it slightly
+    # *negative*; it does not make it exactly zero. So a zero -- or a positive
+    # value small enough to have needed the ridge -- is a genuinely singular
+    # direction, which is the most serious case rather than the least, and the
+    # ratio test alone classified it as negligible. `-diag(c(1, 0))` is the
+    # minimal example, and it stopped warning.
+    infoRepairNegligible=is.finite(infoEigenRatio) && minInfoEig < 0 &&
       infoEigenRatio < sqrt(.Machine$double.eps),
     rawSolveSucceeded=rawSolveSucceeded,
     rawCholSucceeded=rawCholSucceeded,
@@ -255,11 +263,21 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, warn=TRUE,
     # process *should* warn here.
     if(isTRUE(diagnostics$infoRepairNegligible) &&
         !isTRUE(diagnostics$usedGinv) && !isTRUE(diagnostics$infoNearPD)) {
+      # Deliberately not "arithmetic, not a statement about the model", which
+      # is what this said and could not support. A smallest eigenvalue of
+      # -1e-12 relative to the largest is what rounding does to a
+      # positive-definite matrix, and it is *also* what rounding does to a
+      # genuinely singular one -- the two are indistinguishable from this
+      # number alone. Usually the first, so a message rather than a warning;
+      # never certainly the first, so it says which is which is checkable
+      # elsewhere rather than pronouncing.
       message(context, ' covariance: the information matrix needed a numerical ',
         'nudge before inversion (smallest eigenvalue ',
         signif(minInfoEig, 3), ', ', signif(infoEigenRatio, 3),
         ' of the largest, which is indistinguishable from zero at machine ',
-        'precision). Arithmetic, not a statement about the model.')
+        'precision). Usually rounding rather than a flat direction, but the ',
+        'two look the same at this magnitude; fit$identifiability names the ',
+        'parameters if it is the latter.')
     } else {
       warning(context, ' covariance from Hessian required numerical repair: ',
         paste(issues, collapse='; '),

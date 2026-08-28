@@ -869,11 +869,31 @@ tostanarray <- function(flesh, skeleton){
   return(out)
 }
 
+# Workers, quietly.
+#
+# Two sources of console noise, both fixed here rather than downstream.
+#
+# `outfile = ""` forwards every worker's stdout and stderr to the console, so a
+# two-core fit announced `starting worker pid=...` twice per optimisation pass
+# and nothing else ever used the channel. `ctsem` in `default_packages` loaded
+# it before any code could run, so its dependencies' startup warnings -- most
+# visibly `package 'Rcpp' was built under R version ...` -- arrived through that
+# same channel, once per worker per pass. Measured on a two-core fit: six
+# copies of one warning.
+#
+# Loading ctsem through `clusterEvalQ` instead puts it inside something that can
+# be silenced, and the workers have it before any work is dispatched either way.
+# `options(ctsem.cluster.outfile = "")` restores the old behaviour for anyone
+# debugging a worker, which is the only thing it was useful for.
 makeClusterID <- function(cores = parallel::detectCores()) {
-  cl <- parallelly::makeClusterPSOCK(cores,
-    useXDR      = FALSE,
-    default_packages = c("datasets", "utils", "grDevices", "graphics", "stats", "methods",'ctsem'),
-    outfile     = "") 
+  outfile <- getOption("ctsem.cluster.outfile", NULL)
+  arguments <- list(cores, useXDR = FALSE,
+    default_packages = c("datasets", "utils", "grDevices", "graphics",
+      "stats", "methods"))
+  if (!is.null(outfile)) arguments$outfile <- outfile
+  cl <- do.call(parallelly::makeClusterPSOCK, arguments)
+  invisible(parallel::clusterEvalQ(cl,
+    suppressWarnings(suppressPackageStartupMessages(library(ctsem)))))
   duplicateNodeIDs <- TRUE
   while(duplicateNodeIDs){ 
     nodeids=unlist(parallel::clusterEvalQ(cl,{
