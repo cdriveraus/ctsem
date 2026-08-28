@@ -568,7 +568,9 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   }
 
   if(binomial){
-    message('Binomial argument deprecated -- in future set manifesttype in the model object to 1 for binary indicators')
+    # A warning, as the other two deprecations are. A message is easy to miss,
+    # and this one silently changes `intoverstates` and every indicator's type.
+    warning('binomial argument is deprecated -- set manifesttype in the model object to 1 for binary indicators instead. It has set intoverstates=FALSE and manifesttype=1 for every indicator.', call.=FALSE)
     intoverstates <- FALSE
     ctm$manifesttype[] <- 1
   }
