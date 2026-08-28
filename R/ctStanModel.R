@@ -110,8 +110,18 @@ ctStanModelUpdateParsFromMatrices <- function(ctm, matrices){
     stop('matrices must be a named list of matrices')
   }
 
+  # POPCOV is not a system matrix and has no rows in `pars`; it is stored on
+  # the model and taken out here before the loop below, which requires every
+  # matrix it sees to be present in `pars`.
+  if('POPCOV' %in% names(matrices)){
+    ctm <- .ctModelPopCovAssign(ctm, matrices[['POPCOV']])
+    matrices[['POPCOV']] <- NULL
+  }
+
   pars <- ctm[['pars']]
   tieffects <- colnames(pars)[grep('_effect', colnames(pars), fixed=TRUE)]
+
+  if(!length(matrices)) return(ctm)
 
   for(matrixname in names(matrices)){
     mat <- matrices[[matrixname]]
@@ -191,7 +201,13 @@ ctStanModelUpdateParsFromMatrices <- function(ctm, matrices){
 #' @export
 ctModelMatrices <- function(x){
   if(!'ctStanModel' %in% class(x)) stop('x must be a ctStanModel object')
-  listOfMatrices(x[['pars']])
+  out <- listOfMatrices(x[['pars']])
+  # Rebuilt on read rather than trusted: `indvarying` is routinely set directly
+  # after the model is built, and a POPCOV describing a different set of random
+  # effects than the model currently has would be worse than none.
+  synced <- .ctModelPopCovSync(x)
+  if(!is.null(synced[['POPCOV']])) out$POPCOV <- synced[['POPCOV']]
+  out
 }
 
 #' @rdname ctModelMatrices
@@ -525,6 +541,12 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   # out$stationarymeanprior <- NA
   # out$stationaryvarprior <- NA
   out$covmattransform <- 'rawcorr'
+  # The population covariance, one row and column per varying parameter. Held
+  # beside `pars` rather than in it, deliberately: everything that enumerates
+  # free parameters walks `pars`, and the population covariance is not one of
+  # those -- both backends build it from their own parameterisation. See
+  # R/ctModelPopCov.R.
+  out <- .ctModelPopCovSync(out)
   out[['matrices']] <- ctStanModelMatricesPlaceholder()
   # out$NOrdinalIntegrationPoints <- 9L
   
