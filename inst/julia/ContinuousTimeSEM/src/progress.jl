@@ -157,3 +157,106 @@ function _progress_header(enabled::Bool, text::AbstractString)
     flush(stdout)
     return nothing
 end
+
+# ---------------------------------------------------------------------------
+# The trace, and the callback out to R
+#
+# Two consumers, two costs, so two mechanisms rather than one.
+#
+# The *trace* is what a convergence plot is drawn from, and it wants every
+# iteration. Recording one is a push onto a vector in Julia -- free -- and the
+# whole thing crosses the bridge once at the end, where a thousand iterations
+# of three numbers is 24 kB and takes no measurable time.
+#
+# The *callback* is an R function invoked while the fit is still running, which
+# is the only way a front end can show anything live. Measured through
+# JuliaConnectoR it costs 0.5 ms per call: negligible occasionally, and 17% of a
+# three-second fit if called every iteration. So it fires on the same time
+# cadence as the printed line rather than on the iteration count -- what a
+# watcher wants is a roughly constant update rate, not one update per unit of
+# the engine's internal work.
+
+"""
+    CTSEMTrace(keys...)
+
+Per-iteration record of whatever the caller thinks describes progress. Keys are
+fixed at construction so the vectors stay type-stable.
+"""
+struct CTSEMTrace
+    iteration::Vector{Int}
+    values::Dict{Symbol,Vector{Float64}}
+    keys::Vector{Symbol}
+end
+
+CTSEMTrace(keys::Symbol...) = CTSEMTrace(Int[],
+    Dict(k => Float64[] for k in keys), collect(keys))
+
+"""Append one iteration. Values are positional, in the key order given."""
+function _record!(t::CTSEMTrace, iteration::Integer, values::Real...)
+    length(values) == length(t.keys) ||
+        throw(ArgumentError("trace expects $(length(t.keys)) values"))
+    push!(t.iteration, Int(iteration))
+    for (k, v) in zip(t.keys, values)
+        push!(t.values[k], Float64(v))
+    end
+    return nothing
+end
+
+"""
+Flat vectors rather than a matrix or a table: JuliaConnectoR moves a
+`Vector{Float64}` without ceremony, and the R side rebuilds a data frame from
+them in one step.
+"""
+function _trace_result(t::CTSEMTrace)
+    out = Dict{Symbol,Any}(:iteration => t.iteration)
+    for k in t.keys
+        out[k] = t.values[k]
+    end
+    return (; (k => out[k] for k in vcat(:iteration, t.keys))...)
+end
+
+"""
+    _invoke_callback(f, fields...)
+
+Call R, and never let its failure take the fit with it. A callback is a
+reporting convenience; an error inside one -- a plotting device that has gone
+away, a typo in a user's function -- must not lose an optimisation that is
+otherwise fine. It is reported once and then disabled.
+"""
+mutable struct CTSEMCallback
+    f::Any
+    alive::Bool
+    every::Float64
+    last::Float64
+end
+CTSEMCallback(f; every::Real=0.4) =
+    CTSEMCallback(f, f !== nothing, Float64(every), 0.0)
+
+"""
+Its own clock, deliberately not the printed line's.
+
+The two were shared at first and the callback then never fired: `_due` checks
+`enabled`, which follows `verbose`, so a caller who passed a callback and left
+`verbose = 0` -- the obvious combination for a front end that draws rather than
+prints -- got nothing at all. A callback is a programmatic consumer and has no
+reason to depend on whether anything is being printed.
+"""
+function _callback_due(cb::CTSEMCallback, force::Bool=false)
+    cb.alive || return false
+    now = time()
+    (force || now - cb.last >= cb.every) || return false
+    cb.last = now
+    return true
+end
+
+function _invoke_callback(cb::CTSEMCallback, values...; force::Bool=false)
+    _callback_due(cb, force) || return nothing
+    try
+        cb.f(values...)
+    catch err
+        cb.alive = false
+        println("  progress callback failed and was disabled: ", err)
+        flush(stdout)
+    end
+    return nothing
+end

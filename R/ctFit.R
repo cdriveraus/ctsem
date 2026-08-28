@@ -108,6 +108,10 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' rather than just at the earliest observation for that subject. Important when modelling trends over time, age, etc.
 #' @param plot if TRUE, for sampling, a Shiny program is launched upon fitting to interactively plot samples.
 #' May struggle with many (e.g., > 5000) parameters. For optimizing, various optimization details are plotted -- in development.
+#' With \code{backend='julia'} the trace is plotted once the fit returns
+#' rather than during it: a julia fit is a single blocking call into the
+#' engine, so there is no point at which R could draw anything while it runs.
+#' For genuinely live output use \code{optimcontrol$callback}.
 #' @param derrind deprecated, latents involved in dynamic error calculations are determined automatically now.
 #' @param optimize if TRUE, use \code{\link{stanoptimis}} function for maximum a posteriori / importance sampling estimates,
 #' otherwise use the HMC sampler from Stan, which is (much) slower, but generally more robust for complex individual differences.
@@ -118,6 +122,15 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' costs the same regardless of the number of free parameters, so it is
 #' dramatically faster for larger models and marginally slower for very small
 #' ones.
+#' With \code{backend='julia'}, \code{optimcontrol$callback} is a function
+#' called while the fit runs, with \code{(iteration, total, objective,
+#' gradient_norm)}. It is for a front end that wants to draw progress live:
+#' the engine calls it on a time cadence rather than once per iteration,
+#' because a callback costs about half a millisecond through the Julia
+#' bridge, and always once more at the end. An error inside it disables it
+#' and warns, leaving the fit unaffected. If output after the fit is enough,
+#' \code{fit$trace} holds every iteration and \code{\link{ctTracePlot}}
+#' draws it.
 #' \code{backend='julia'} also finishes by estimating uncertainty, as the stan
 #' backend does, and reads the same \code{stanoptimis} control names for it:
 #' \code{uncertainty} (default \code{'hessian'}), \code{uncertaintyDraws},
@@ -764,11 +777,24 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       if(intoverpop) 'augmented' else
         if(!optimize && any(ctm$pars$indvarying[is.na(ctm$pars$value)])) 'none' else
           'augmented'
-    return(ctFitJuliaBackend(datalong=datalong, model=ctm, prepared_data=standata, inits=inits,
+    juliafit <- ctFitJuliaBackend(datalong=datalong, model=ctm, prepared_data=standata, inits=inits,
       cores=cores, backendcontrol=backendcontrol, optimcontrol=optimcontrol,
       verbose=verbose, fit=fit, priors=priors, optimize=optimize,
       chains=chains, iter=iter, control=control,
-      intoverpop=juliaintoverpop))
+      intoverpop=juliaintoverpop)
+    # `plot` draws the trace *after* the fit here, not during it.
+    #
+    # The Stan path can plot live because it writes sample files a second
+    # process reads. A julia fit is one blocking call into the engine, so R
+    # cannot draw anything until it returns -- there is no point in this
+    # function where a live plot could be made. What is drawn is the same
+    # information, recorded every iteration and handed back on the fit; for
+    # genuinely live output, `optimcontrol$callback` is called while the fit
+    # runs and can draw whatever it likes.
+    if(isTRUE(fit) && !identical(plot, FALSE) && !is.null(juliafit$trace)) {
+      try(ctTracePlot(juliafit), silent=TRUE)
+    }
+    return(juliafit)
   }
 
   # print(standata$savesubjectmatrices)

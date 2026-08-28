@@ -2521,7 +2521,8 @@ cheaper route to the same answer, so there is no version of it worth keeping.
 function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractVector;
     maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0, x_tol::Real=0.0,
     verbose::Bool=false, nested_gradient::Bool=false, tune_chunks::Bool=true,
-    lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY, progress_overwrite::Bool=true)
+    lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY, progress_overwrite::Bool=true,
+    progress_callback=nothing)
     start_values = collect(Float64, start)
     invalid_objective = floatmax(Float64) / 1e8
     gradient_limit = sqrt(floatmax(Float64))
@@ -2559,15 +2560,25 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     # up as a stall that the objective alone does not explain.
     reporter = CTSEMProgress(verbose; label="optimise",
         overwrite=progress_overwrite)
+    # Recorded every iteration whatever `verbose` says; see `ctsem_optimize`.
+    # `inner` is traced too, because a Laplace fit that stalls usually stalls
+    # in the inner solve and the outer objective alone does not show it.
+    trace = CTSEMTrace(:objective, :gradient_norm, :inner_converged)
+    watcher = CTSEMCallback(progress_callback)
     watch = function (state)
+        latest = state isa AbstractVector ? last(state) : state
+        inner = count(laplace.inner_converged)
+        _record!(trace, latest.iteration, -latest.value, latest.g_norm, inner)
         if _due(reporter)
-            latest = state isa AbstractVector ? last(state) : state
             _progress_line(reporter, latest.iteration, Int(maxiter),
                 @sprintf("logpost %11.2f", -latest.value),
                 @sprintf("|g| %9.2e", latest.g_norm),
-                @sprintf("inner %d/%d", count(laplace.inner_converged),
+                @sprintf("inner %d/%d", inner,
                     length(laplace.inner_converged)))
         end
+        # Its own cadence; see `ctsem_optimize`.
+        _invoke_callback(watcher, latest.iteration, Int(maxiter),
+            -latest.value, latest.g_norm)
         return false
     end
     options = Optim.Options(iterations=Int(maxiter), g_tol=g_tol, f_reltol=f_tol,
@@ -2667,6 +2678,7 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
         inner_iterations=copy(laplace.inner_iterations),
         hessian_repaired=copy(laplace.hessian_repaired),
         mode_repaired=copy(laplace.mode_repaired),
+        trace=_trace_result(trace),
     )
 end
 

@@ -429,7 +429,7 @@ function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
     maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0,
     x_tol::Real=0.0, verbose::Bool=false, gradient_method=:adjoint,
     tune_chunks::Bool=true, lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY,
-    progress_overwrite::Bool=true)
+    progress_overwrite::Bool=true, progress_callback=nothing)
     start_values = collect(start)
     invalid_objective = floatmax(eltype(start_values)) / 1e8
     gradient_limit = sqrt(floatmax(eltype(start_values)))
@@ -461,13 +461,24 @@ function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
     # visible here long before the convergence flags are set.
     reporter = CTSEMProgress(verbose; label="optimise",
         overwrite=progress_overwrite)
+    # The trace records every iteration whatever `verbose` says: it costs a
+    # push onto a vector, and a fit that turns out to have gone somewhere odd
+    # is exactly the one nobody thought to turn reporting on for.
+    trace = CTSEMTrace(:objective, :gradient_norm)
+    watcher = CTSEMCallback(progress_callback)
     watch = function (state)
+        latest = state isa AbstractVector ? last(state) : state
+        _record!(trace, latest.iteration, -latest.value, latest.g_norm)
         if _due(reporter)
-            latest = state isa AbstractVector ? last(state) : state
             _progress_line(reporter, latest.iteration, Int(maxiter),
                 @sprintf("logpost %11.2f", -latest.value),
                 @sprintf("|g| %9.2e", latest.g_norm))
         end
+        # Its own cadence, so passing a callback with `verbose = 0` -- the
+        # obvious combination for a front end that draws rather than prints --
+        # still reports.
+        _invoke_callback(watcher, latest.iteration, Int(maxiter),
+            -latest.value, latest.g_norm)
         return false
     end
     options = Optim.Options(iterations=Int(maxiter), g_tol=g_tol,
@@ -506,6 +517,11 @@ function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
         @sprintf("%d iterations", Optim.iterations(result)),
         @sprintf("logpost %.4f", final.value),
         @sprintf("|g| %.2e", gradient_norm))
+    # Forced, whatever the cadence says: a rate-limited callback on a fit that
+    # finishes inside one interval would otherwise never fire at all, and the
+    # final state is the one a live plot most needs.
+    _invoke_callback(watcher, Optim.iterations(result), Int(maxiter),
+        final.value, gradient_norm; force=true)
     stalled = moved == 0 && (!isfinite(final.value) || gradient_norm > max(g_tol, 1e-6))
     scaled_tolerance = max(g_tol, 1e-6 * max(one(gradient_norm), abs(final.value)))
     converged_enough = isfinite(final.value) && gradient_norm <= scaled_tolerance
@@ -530,5 +546,6 @@ function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
         g_converged=Optim.g_converged(result),
         f_converged=Optim.f_converged(result),
         x_converged=Optim.x_converged(result),
+        trace=_trace_result(trace),
     )
 end

@@ -77,7 +77,11 @@ by instead setting parameter names of T0MEANS and T0VAR matrices in the input mo
 elements that should be fixed to stationarity.}
 
 \item{plot}{if TRUE, for sampling, a Shiny program is launched upon fitting to interactively plot samples.
-May struggle with many (e.g., > 5000) parameters. For optimizing, various optimization details are plotted -- in development.}
+May struggle with many (e.g., > 5000) parameters. For optimizing, various optimization details are plotted -- in development.
+With \code{backend='julia'} the trace is plotted once the fit returns rather
+than during it: a julia fit is a single blocking call into the engine, so
+there is no point at which R could draw anything while it runs. For genuinely
+live output use \code{optimcontrol$callback}.}
 
 \item{derrind}{deprecated, latents involved in dynamic error calculations are determined automatically now.}
 
@@ -91,6 +95,14 @@ gradient method: \code{'adjoint'} (reverse mode, the default) or
 costs the same regardless of the number of free parameters, so it is
 dramatically faster for larger models and marginally slower for very small
 ones.
+With \code{backend='julia'}, \code{optimcontrol$callback} is a function
+called while the fit runs, with \code{(iteration, total, objective,
+gradient_norm)}. It is for a front end that wants to draw progress live: the
+engine calls it on a time cadence rather than once per iteration, because a
+callback costs about half a millisecond through the Julia bridge, and always
+once more at the end. An error inside it disables it and warns, leaving the
+fit unaffected. If output after the fit is enough, \code{fit$trace} holds
+every iteration and \code{\link{ctTracePlot}} draws it.
 \code{backend='julia'} also finishes by estimating uncertainty, as the stan
 backend does, and reads the same \code{stanoptimis} control names for it:
 \code{uncertainty} (default \code{'hessian'}), \code{uncertaintyDraws},

@@ -1503,8 +1503,27 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # same model against held-out data (see .ctBackendLOO) and must do it exactly
 # the way a fit does -- same tolerances, same gradient method, same thread cap.
 # A second copy of this call would be a second set of defaults to keep in step.
+# The engine's per-iteration record, as a data frame.
+#
+# Flat vectors cross the bridge; the shape is rebuilt here. A missing or
+# malformed trace is NULL rather than an error: nothing downstream requires it,
+# and an old cached engine environment predating this will simply not send one.
+#' @keywords internal
+.ctBackendTrace <- function(trace) {
+  if (is.null(trace)) return(NULL)
+  columns <- lapply(trace, as.numeric)
+  columns <- columns[vapply(columns, length, integer(1)) > 0L]
+  if (!length(columns) || is.null(columns$iteration)) return(NULL)
+  n <- length(columns$iteration)
+  if (!all(vapply(columns, length, integer(1)) == n)) return(NULL)
+  out <- as.data.frame(columns, stringsAsFactors = FALSE)
+  out$iteration <- as.integer(out$iteration)
+  out
+}
+
 .ctJuliaOptimise <- function(model_spec, start, backendcontrol = list(),
-  gradient = "adjoint", cores = 1L, verbose = 0L, tol = NULL) {
+  gradient = "adjoint", cores = 1L, verbose = 0L, tol = NULL,
+  callback = NULL) {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   objective <- .ctJuliaObjective(spec)
   module <- .ctJuliaModule(model_spec$project)
@@ -1518,6 +1537,39 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # chunk, where a carriage return is not a cursor movement. `verbose = 2`
     # keeps the history too, because at that point the point is the history.
     progress_overwrite = .ctProgressOverwrite(verbose))
+  # A live callback into R, for a front end that wants to draw the trace as it
+  # happens rather than read it afterwards. The engine calls it on the same time
+  # cadence as the printed line, not once per iteration: measured through
+  # JuliaConnectoR a callback costs 0.5 ms, which is nothing occasionally and
+  # 17% of a three-second fit at every iteration.
+  failure <- NULL
+  if (!is.null(callback)) {
+    if (!is.function(callback)) {
+      stop("optimcontrol$callback must be a function of (iteration, total, ",
+        "objective, gradient_norm).", call. = FALSE)
+    }
+    # Caught here rather than in the engine, because an error thrown out of an
+    # R callback does not reach the engine at all: it aborts before a reply is
+    # sent, JuliaConnectoR reports "Message type not supported (yet)", and the
+    # bridge is left desynchronised -- the fit is lost to a fault in a
+    # *reporting* function. A callback is a convenience and must never be able
+    # to do that, so it is wrapped to swallow everything and disable itself.
+    #
+    # The message is stored rather than warned immediately: `options(warn = 2)`
+    # would turn the warning into exactly the error this exists to prevent.
+    alive <- TRUE
+    common$progress_callback <- function(iteration, total, objective,
+      gradient_norm) {
+      if (alive) {
+        tryCatch(callback(iteration, total, objective, gradient_norm),
+          error = function(e) {
+            alive <<- FALSE
+            failure <<- conditionMessage(e)
+          })
+      }
+      NULL
+    }
+  }
   # Exposed because it is the one optimiser knob that measurably changed both
   # speed and whether the gradient criterion was met; the engine's default is
   # documented at `_CTSEM_LBFGS_MEMORY`.
@@ -1527,7 +1579,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   # `cores` is the ceiling; `ctsem_tune_chunks!` measures the count to use
   # within it, and the fit records what it picked. Restored afterwards so the
   # session does not carry this fit's ceiling into the next thing that runs.
-  .ctBackendWithMaxChunks(cores, {
+  result <- .ctBackendWithMaxChunks(cores, {
     if (!is.null(model_spec$laplace)) {
       # `gradient` selects how the *process* likelihood's gradient is taken and
       # does not apply here: the Laplace objective's gradient is a forward sweep
@@ -1540,6 +1592,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
           list(gradient_method = gradient))))
     }
   })
+  if (!is.null(failure)) {
+    warning("The progress callback failed and was disabled after the first ",
+      "error; the fit itself is unaffected. The error was: ", failure,
+      call. = FALSE)
+  }
+  result
 }
 
 ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NULL, cores = 1L,
@@ -1619,7 +1677,8 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
     model_spec$ti_effects$coefficient), na.rm = TRUE)
   start <- .ctJuliaInitialValues(npar, inits)
   result <- .ctJuliaOptimise(model_spec, start, backendcontrol = backendcontrol,
-    gradient = gradient, cores = cores, verbose = verbose)
+    gradient = gradient, cores = cores, verbose = verbose,
+    callback = optimcontrol$callback)
   # The engine maximises the log posterior, so its `maximum_loglik` is the log
   # posterior and the per-subject objectives (which carry no prior term) sum to
   # the log likelihood. Without priors the two are the same number; with them
@@ -1653,6 +1712,11 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
       gradient_tolerance = if (is.null(result$scaled_tolerance)) NA_real_ else
         as.numeric(result$scaled_tolerance),
       stalled = isTRUE(result$stalled)), engine = model_spec$engine,
+    # Every iteration, recorded whatever `verbose` said. It costs a push onto a
+    # vector in Julia and one transfer at the end, and the fit whose trace turns
+    # out to be worth looking at is exactly the one nobody thought to turn
+    # reporting on for.
+    trace = .ctBackendTrace(result$trace),
     args = list(backend = "julia", backendcontrol = backendcontrol,
       optimcontrol = optimcontrol, cores = cores, priors = priors,
       intoverpop = intoverpop))
