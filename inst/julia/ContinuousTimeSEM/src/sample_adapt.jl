@@ -149,13 +149,21 @@ what lets a `k x k` block be estimated from fewer than `k` draws: the shrinkage
 holds it positive definite until there are enough draws to say otherwise. That
 matters more here than in a diagonal sampler, because the blocks are the point.
 """
-function _estimate_metric(draws::Vector{Vector{Float64}},
-    ranges::Vector{UnitRange{Int}})
+function _estimate_metric(draws::Vector{Vector{Float64}}, base::CTSEMMetric;
+    adapt::Union{Nothing,Vector{Bool}}=nothing)
+    ranges = base.ranges
     n = length(draws)
     covariances = Vector{Matrix{Float64}}(undef, length(ranges))
+    factors = Vector{Union{Nothing,Matrix{Float64}}}(nothing, length(ranges))
     for b in eachindex(ranges)
         r = ranges[b]
         k = length(r)
+        # A block the caller declined to adapt keeps the factor it came in with.
+        if adapt !== nothing && !adapt[b]
+            factors[b] = base.factors[b]
+            covariances[b] = Matrix(1.0I, k, k)
+            continue
+        end
         if n < 2
             covariances[b] = Matrix(1.0I, k, k)
             continue
@@ -184,7 +192,11 @@ function _estimate_metric(draws::Vector{Vector{Float64}},
         end
         covariances[b] = S
     end
-    return _metric_from_covariances(ranges, covariances)
+    estimated = _metric_from_covariances(ranges, covariances)
+    adapt === nothing && return estimated
+    kept = [factors[b] === nothing ? estimated.factors[b] : factors[b]
+            for b in eachindex(ranges)]
+    return CTSEMMetric(ranges, kept)
 end
 
 ################################################################################

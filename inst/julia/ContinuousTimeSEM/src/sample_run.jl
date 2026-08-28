@@ -93,7 +93,8 @@ end
 function _run_chain(sampler::CTSEMSampler, values::AbstractVector,
     metric::CTSEMMetric, rng::AbstractRNG, slot::Union{Nothing,Int},
     nwarmup::Int, ndraws::Int, maxdepth::Int, target_accept::Float64,
-    maxdelta::Float64, init_scale::Float64, adapt_metric::Bool)
+    maxdelta::Float64, init_scale::Float64, adapt_metric::Bool,
+    adapt_effects::Bool)
 
     ndim = sampler.ndim
     logdensity! = (g, x) -> ctsem_sample_density!(g, sampler, x; workspace_slot=slot)
@@ -106,6 +107,14 @@ function _run_chain(sampler::CTSEMSampler, values::AbstractVector,
     eps = _init_stepsize(logdensity!, current, rng, x, g, logp, ws)
     da = _DualAverage(eps, target_accept)
     windows = adapt_metric ? _adapt_windows(nwarmup) : Int[]
+    # Which blocks warmup is allowed to re-estimate. The population block always
+    # benefits: its Laplace value is a local quadratic fit and the posterior is
+    # not quadratic. The effect blocks are a different case -- they come from a
+    # conditional covariance that is *exact* for a linear model, and replacing
+    # one with a k x k estimate from a few hundred draws is as likely to add
+    # noise as to remove bias.
+    adapt = adapt_effects ? nothing :
+        [b == 1 for b in eachindex(metric.ranges)]
     window_draws = Vector{Vector{Float64}}()
     warmup_divergent = 0
 
@@ -122,7 +131,7 @@ function _run_chain(sampler::CTSEMSampler, values::AbstractVector,
                 # under a different metric and a different step size, and
                 # pooling them biases the estimate toward wherever the chain
                 # used to be rather than where it is.
-                current = _estimate_metric(window_draws, metric.ranges)
+                current = _estimate_metric(window_draws, current; adapt=adapt)
                 empty!(window_draws)
                 eps = _dual_restart!(da, _init_stepsize(logdensity!, current,
                     rng, x, g, logp, ws))
@@ -174,7 +183,7 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     npar::Integer=length(values), nchains::Integer=4, nwarmup::Integer=500,
     ndraws::Integer=500, maxdepth::Integer=10, target_accept::Real=0.8,
     maxdelta::Real=1000.0, seed::Integer=20260828, init_scale::Real=1.0,
-    adapt_metric::Bool=true, save_effects::Bool=false,
+    adapt_metric::Bool=true, adapt_effects::Bool=false, save_effects::Bool=false,
     hessian::Union{Nothing,AbstractMatrix}=nothing, verbose::Bool=false)
 
     nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
@@ -207,7 +216,7 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
         results[c] = _run_chain(sampler, start, metric,
             Random.Xoshiro(UInt64(seed) + UInt64(c)), parallel ? c : nothing,
             nwarmup, ndraws, Int(maxdepth), Float64(target_accept),
-            Float64(maxdelta), Float64(init_scale), adapt_metric)
+            Float64(maxdelta), Float64(init_scale), adapt_metric, adapt_effects)
         return nothing
     end
     if parallel

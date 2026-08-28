@@ -48,8 +48,13 @@
 #'   longer than many fits do.
 #' @param seed Random seed; each chain uses \code{seed + chain}.
 #' @param control A list of sampler settings: \code{maxdepth} (default 10),
-#'   \code{target_accept} (0.8), \code{adapt_metric} (TRUE), \code{init_scale}
-#'   (1), \code{maxdelta} (1000).
+#'   \code{target_accept} (0.8), \code{adapt_metric} (TRUE),
+#'   \code{adapt_effects} (FALSE), \code{init_scale} (1), \code{maxdelta}
+#'   (1000). \code{adapt_effects} controls whether warmup re-estimates the
+#'   random-effect blocks of the metric as well as the population block; they
+#'   start from a conditional covariance that is exact for a linear model, so
+#'   replacing one with an estimate from a few hundred draws can add more noise
+#'   than it removes.
 #' @param verbose Print the sampler's configuration before it starts.
 #'
 #' @return The fit, with \code{estimate$rawposterior} holding the draws and
@@ -101,7 +106,8 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
     target_accept = as.numeric(.ctJuliaOr(control$target_accept, 0.8)),
     maxdelta = as.numeric(.ctJuliaOr(control$maxdelta, 1000)),
     init_scale = as.numeric(.ctJuliaOr(control$init_scale, 1)),
-    adapt_metric = isTRUE(.ctJuliaOr(control$adapt_metric, TRUE)))
+    adapt_metric = isTRUE(.ctJuliaOr(control$adapt_metric, TRUE)),
+    adapt_effects = isTRUE(.ctJuliaOr(control$adapt_effects, FALSE)))
   if (!is.null(hessian)) {
     arguments$hessian <- JuliaConnectoR::juliaPut(as.matrix(hessian))
   }
