@@ -285,9 +285,32 @@ mode as well -- the effects are standardised, so the modes are order one and the
 chain is already in the typical set. That is the point of starting a sampler
 from an optimised fit rather than from a random draw.
 """
-function ctsem_sample_start(sampler::CTSEMSampler, values::AbstractVector)
+function ctsem_sample_start(sampler::CTSEMSampler, values::AbstractVector;
+    use_modes::Bool=true)
     x = zeros(Float64, sampler.ndim)
     copyto!(view(x, 1:sampler.npar), view(collect(Float64, values), 1:sampler.npar))
+    use_modes || return x
+    # The effects at their conditional modes rather than at zero.
+    #
+    # Zero is the prior mean and a defensible start, but the Laplace fit that
+    # produced `values` has already solved for where each unit's effects
+    # actually sit given those parameters, and that is a strictly better place
+    # to begin: it is the mode of the very conditional distribution the metric's
+    # effect blocks describe. Starting at zero asks the chain to travel there
+    # first, through the part of warmup that is also adapting the step size.
+    #
+    # Guarded on length because `modes` is only populated once the Laplace
+    # objective has been evaluated; an unevaluated one leaves them empty and
+    # zero remains the honest answer.
+    laplace = sampler.laplace
+    @inbounds for U in 1:sampler.nunits
+        mode = laplace.modes[U]
+        length(mode) == sampler.udims[U] || continue
+        all(isfinite, mode) || continue
+        for q in eachindex(mode)
+            x[sampler.uoffsets[U] + q] = mode[q]
+        end
+    end
     return x
 end
 

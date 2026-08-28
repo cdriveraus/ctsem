@@ -403,7 +403,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 .ctJuliaUnsupported <- function(model, optimize, priors, intoverpop, vb, gendata,
   stanmodeltext, compileArgs, forcerecompile) {
   failures <- character()
-  if (!isTRUE(optimize)) failures <- c(failures, "optimize=FALSE (HMC)")
+  # `optimize=FALSE` is supported now: the engine has its own No-U-Turn sampler,
+  # and which target it samples is decided by `intoverpop`. See
+  # `.ctJuliaSampleFit`.
   if (any(model$manifesttype > 0)) failures <- c(failures, "non-Gaussian manifest variables")
   if (isTRUE(vb)) failures <- c(failures, "variational Bayes")
   if (isTRUE(gendata)) failures <- c(failures, "generation")
@@ -750,7 +752,44 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       group = match(labels, unique_labels), ngroups = length(unique_labels),
       labels = unique_labels)
   }
+  .ctJuliaCheckNesting(levels)
   levels
+}
+
+# Every level must nest inside the next one out.
+#
+# The per-level check above catches a subject that spans two groups at one
+# level. It does not catch two levels that cross *each other* -- pupils in
+# classes and in neighbourhoods, where a class draws from several
+# neighbourhoods -- and that is the case the engine cannot represent at all.
+#
+# Nesting is what makes a unit's curvature a tree: a block couples to another
+# only when a member depends on both, and with nesting that means one contains
+# the other, so eliminating innermost-first produces no fill-in and the cost is
+# linear rather than cubic in a group's members. Crossing puts a cycle in that
+# graph, and the block factorisation and the nested quadrature both stop being
+# the right decomposition. Refusing is honest; silently treating one grouping
+# as nested inside the other would not be.
+.ctJuliaCheckNesting <- function(levels) {
+  if (length(levels) < 2L) return(invisible(NULL))
+  for (inner in seq_len(length(levels) - 1L)) {
+    for (outer in seq(inner + 1L, length(levels))) {
+      split_outer <- split(levels[[outer]]$group, levels[[inner]]$group)
+      crossed <- vapply(split_outer, function(x) length(unique(x)) > 1L, logical(1))
+      if (any(crossed)) {
+        offending <- levels[[inner]]$labels[as.integer(names(which(crossed)))]
+        stop("Grouping '", levels[[inner]]$name, "' is not nested within '",
+          levels[[outer]]$name, "': ", sum(crossed), " group(s) of '",
+          levels[[inner]]$name, "' span more than one '", levels[[outer]]$name,
+          "' (for example ", paste(utils::head(offending, 3), collapse = ", "),
+          "). The julia backend represents strictly nested hierarchies only -- ",
+          "that is what makes each unit's curvature a tree and its cost linear ",
+          "rather than cubic in group size. Crossed designs need a different ",
+          "factorisation and are not supported.", call. = FALSE)
+      }
+    }
+  }
+  invisible(NULL)
 }
 
 .ctJuliaLaplaceSpec <- function(model, table, prepared_data = NULL, dat = NULL) {
@@ -1096,7 +1135,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # call site.
 .ctJuliaPrepare <- function(datalong, model, prepared_data = NULL, project = NULL,
   priors = FALSE, intoverpop) {
-  intoverpop <- match.arg(as.character(intoverpop)[1L], c("augmented", "laplace"))
+  # "none" prepares exactly as "laplace" does. The Laplace specification is what
+  # *describes* the random effects -- which raw parameters vary, at which level,
+  # with which population scale -- and that description is needed whether they
+  # are integrated out or sampled. The two differ only in what the fit then does
+  # with it, so they must not differ in how the model is built.
+  intoverpop <- match.arg(as.character(intoverpop)[1L],
+    c("augmented", "laplace", "none"))
   dat <- data.frame(datalong)
   dat <- dat[order(dat[[model$subjectIDname]], dat[[model$timeName]]), , drop = FALSE]
   .ctJuliaValidateTIConstancy(dat, model)
@@ -1118,13 +1163,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   } else 999999
   if (!is.finite(max_timestep) || max_timestep <= 0) stop("Julia maxtimestep must be a positive finite number.", call. = FALSE)
   laplace <- NULL
-  if (identical(intoverpop, "laplace")) {
+  if (intoverpop %in% c("laplace", "none")) {
     # No state augmentation at all: the model the engine filters is the plain
     # per-subject one, and the random effects are described alongside it.
     parameter_table <- .ctJuliaParameterTable(model)
     laplace <- .ctJuliaLaplaceSpec(model, parameter_table, prepared_data, dat)
     if (!laplace$nrandom) {
-      stop("intoverpop='laplace' was requested but no parameters are marked ",
+      stop("intoverpop='", intoverpop, "' was requested but no parameters are marked ",
         "indvarying, so there is nothing to integrate over. Mark parameters as ",
         "varying in the model, or leave intoverpop at its default.", call. = FALSE)
     }
@@ -1417,7 +1462,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     g_tol = .ctJuliaOr(tol, .ctJuliaOr(backendcontrol$g_tol, 1e-8)),
     f_tol = .ctJuliaOr(backendcontrol$f_tol, 0),
     x_tol = .ctJuliaOr(backendcontrol$x_tol, 0),
-    verbose = verbose > 0L)
+    verbose = verbose > 0L,
+    # Overwrite one line in place when someone is watching, and print
+    # occasional separate lines when the output is going to a file or a knitr
+    # chunk, where a carriage return is not a cursor movement. `verbose = 2`
+    # keeps the history too, because at that point the point is the history.
+    progress_overwrite = interactive() && verbose < 2L)
   # Exposed because it is the one optimiser knob that measurably changed both
   # speed and whether the gradient criterion was met; the engine's default is
   # documented at `_CTSEM_LBFGS_MEMORY`.
@@ -1444,7 +1494,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 
 ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NULL, cores = 1L,
   backendcontrol = list(), optimcontrol = list(), verbose = 0L, fit = TRUE,
-  priors = FALSE, intoverpop = "augmented") {
+  priors = FALSE, intoverpop = "augmented", optimize = TRUE, chains = 4L,
+  iter = 2000L, control = list()) {
   if (isTRUE(backendcontrol$restart_session)) .ctJuliaClearSession()
   project <- .ctJuliaOr(backendcontrol$julia_project, NULL)
   # `cores` splits the engine's subject loop. It is requested as a Julia thread
@@ -1502,6 +1553,17 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
   model_spec <- .ctJuliaPrepare(datalong, model, prepared_data = prepared_data,
     project = project, priors = priors, intoverpop = intoverpop)
   if (!fit) return(structure(model_spec, class = c("ctJuliaModel", "ctFitModel")))
+
+  # `optimize=FALSE` fits by sampling. Which sampler is decided by
+  # `intoverpop`, which says what has already been integrated out; see
+  # `.ctJuliaSampleFit`.
+  if (!isTRUE(optimize)) {
+    return(.ctJuliaSampleFit(model_spec, datalong = datalong, model = model,
+      inits = inits, cores = cores, backendcontrol = backendcontrol,
+      optimcontrol = optimcontrol, chains = chains, iter = iter,
+      control = control, priors = priors, intoverpop = intoverpop,
+      gradient = gradient, verbose = verbose))
+  }
 
   npar <- max(c(model_spec$parameter_table$parnumber, model_spec$laplace$npar,
     model_spec$ti_effects$coefficient), na.rm = TRUE)

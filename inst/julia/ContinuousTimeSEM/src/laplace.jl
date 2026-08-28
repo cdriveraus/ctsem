@@ -69,6 +69,7 @@ function theorem, obtained without ever forming `dH/dtheta` by hand.
 """
 
 using LinearAlgebra
+using Printf
 using ForwardDiff
 
 export CTSEMLaplaceSpec, CTSEMLaplaceObjective, ctsem_laplace_objective,
@@ -180,6 +181,27 @@ end
     CTSEMLaplaceUnits
 
 How the integral factorises.
+
+# Nesting is required, and is not an oversight
+
+The hierarchy must be strictly nested: every group at an inner level belongs to
+exactly one group at each outer level. Crossed designs -- subjects seen by
+several raters, pupils in both a class and a neighbourhood that cut across each
+other -- cannot be expressed here.
+
+That is a consequence of what makes this fast rather than a missing feature. A
+unit's curvature couples two blocks only when some member depends on both, and
+with strict nesting that happens exactly when one block contains the other. The
+sparsity pattern is then a *tree*, eliminating innermost-first produces no
+fill-in, and the cost is `sum_b k_b^3` instead of `dim(u)^3` -- linear rather
+than cubic in the members of a group. Crossing two levels puts a cycle in that
+graph: the elimination fills in, the tree recursion in `quadrature.jl` no longer
+enumerates the integral correctly, and the per-unit factorisation stops being
+the right decomposition at all.
+
+Supporting crossed effects means a different factorisation, not a relaxed check
+here. Until then, the R side refuses such a model rather than silently treating
+one grouping as nested inside the other.
 
 Subjects sharing an outer random effect cannot be integrated separately: the
 effect couples them. The *unit* is therefore the group at the outermost level
@@ -2499,7 +2521,7 @@ cheaper route to the same answer, so there is no version of it worth keeping.
 function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractVector;
     maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0, x_tol::Real=0.0,
     verbose::Bool=false, nested_gradient::Bool=false, tune_chunks::Bool=true,
-    lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY)
+    lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY, progress_overwrite::Bool=true)
     start_values = collect(Float64, start)
     invalid_objective = floatmax(Float64) / 1e8
     gradient_limit = sqrt(floatmax(Float64))
@@ -2530,8 +2552,27 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
         G !== nothing && (G .= -result.gradient)
         return F === nothing ? nothing : -objective
     end
+    # See `ctsem_optimize` for why this is a callback rather than `show_trace`.
+    # The inner mode count is worth reporting here and not there: a Laplace
+    # iteration that is re-solving every unit's mode from scratch costs an order
+    # of magnitude more than one that is warm-starting, and the difference shows
+    # up as a stall that the objective alone does not explain.
+    reporter = CTSEMProgress(verbose; label="optimise",
+        overwrite=progress_overwrite)
+    watch = function (state)
+        if _due(reporter)
+            latest = state isa AbstractVector ? last(state) : state
+            _progress_line(reporter, latest.iteration, Int(maxiter),
+                @sprintf("logpost %11.2f", -latest.value),
+                @sprintf("|g| %9.2e", latest.g_norm),
+                @sprintf("inner %d/%d", count(laplace.inner_converged),
+                    length(laplace.inner_converged)))
+        end
+        return false
+    end
     options = Optim.Options(iterations=Int(maxiter), g_tol=g_tol, f_reltol=f_tol,
-        x_abstol=x_tol, show_trace=verbose, store_trace=false)
+        x_abstol=x_tol, show_trace=false, store_trace=false, callback=watch,
+        extended_trace=false)
     # Measure the chunk count rather than trusting `cores`. See
     # `ctsem_tune_chunks!`: on small models the wide split is slower than the
     # serial one, by up to 3.7x, and no rule from the model shape alone

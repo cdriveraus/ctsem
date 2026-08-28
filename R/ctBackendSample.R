@@ -207,12 +207,25 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
     arguments$hessian <- JuliaConnectoR::juliaPut(as.matrix(hessian))
   }
 
+  arguments$progress_overwrite <- interactive() && !isTRUE(verbose)
   result <- .ctBackendWithMaxChunks(cores,
     JuliaConnectoR::juliaGet(do.call(module$ctsem_sample, arguments)))
+  .ctBackendSampleAssemble(fit, result, npar, saveEffects, chains, warmup,
+    as.integer(result$ndraws), hessian, estimate)
+}
 
-  # The engine returns draws parameter-major; every R-side consumer wants them
-  # draw-major, which is also the shape `ctOptimUncertainty` leaves behind.
-  #
+# Turn an engine sample result into a fit object.
+#
+# Shared by `ctSample()` and by `ctFit(optimize = FALSE)`, which differ only in
+# which engine entry point produced the draws: the joint sampler returns
+# population parameters and effects, the marginal ones return population
+# parameters with the effects already integrated out. Everything after that --
+# where the draws go, what becomes the point estimate, which diagnostics warn --
+# is the same, and was worth having in one place rather than two that drift.
+#' @keywords internal
+.ctBackendSampleAssemble <- function(fit, result, npar, saveEffects, chains,
+  warmup, draws, hessian, startvalues) {
+
   # The row count is `ndim` when the effects were saved and `npar` when they
   # were not, so it is read off the result rather than assumed -- reshaping an
   # effects-carrying matrix to `npar` rows would silently interleave parameters
@@ -224,10 +237,10 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
 
   out <- fit
   out$estimate$rawposterior <- posterior
-  # The posterior mean, not the Laplace mode, is now the point estimate: it is
-  # what the draws describe, and leaving `raw` at the mode would make ctKalman()
-  # and the system matrices report a different fit from the one summarised.
-  out$estimate$laplace_raw <- estimate
+  # The posterior mean, not the mode, is now the point estimate: it is what the
+  # draws describe, and leaving `raw` at the mode would make ctKalman() and the
+  # system matrices report a different fit from the one summarised.
+  out$estimate$laplace_raw <- as.numeric(startvalues)
   out$estimate$raw <- as.numeric(colMeans(posterior))
   out$estimate$cov <- stats::cov(posterior)
   out$estimate$se <- sqrt(diag(out$estimate$cov))
@@ -249,20 +262,17 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
     energy = as.numeric(result$energy),
     effect_mean = as.numeric(result$effect_mean),
     effect_sd = as.numeric(result$effect_sd),
-    start = estimate)
-  # The effects, labelled. A flat vector of `nsubjects * neffects` numbers with
-  # no mapping back to (subject, level, parameter) is not usable without
-  # reconstructing the engine's layout by hand, which is exactly the sort of
-  # thing a caller should not have to know.
-  out$sample$effectIndex <- .ctBackendEffectIndex(fit)
-  if (!is.null(out$sample$effectIndex)) {
+    marginal = identical(as.integer(result$ndim), as.integer(result$npar)),
+    start = as.numeric(startvalues))
+  if (length(out$sample$effect_mean)) {
+    out$sample$effectIndex <- .ctBackendEffectIndex(fit)
     labels <- out$sample$effectIndex$label
     if (length(labels) == length(out$sample$effect_mean)) {
       names(out$sample$effect_mean) <- labels
       names(out$sample$effect_sd) <- labels
     }
   }
-  if (isTRUE(saveEffects)) {
+  if (isTRUE(saveEffects) && kept > npar) {
     out$sample$effects <- t(raw[-seq_len(npar), , drop = FALSE])
     if (!is.null(out$sample$effectIndex) &&
         ncol(out$sample$effects) == nrow(out$sample$effectIndex)) {
@@ -332,4 +342,137 @@ print.ctSampleDiagnostics <- function(x, ...) {
     rhat = round(x$rhat[worst], 4), ess = round(x$ess[worst])),
     row.names = FALSE)
   invisible(x)
+}
+
+# `ctFit(backend='julia', optimize=FALSE)`: fit by sampling rather than by
+# maximising.
+#
+# Which sampler depends on `intoverpop`, and the three are genuinely different
+# targets rather than three settings of one:
+#
+#   'none'       the joint posterior over population parameters *and* every
+#                subject's random effects. Exact whatever the model, and
+#                `npar + sum_U dim(u_U)` dimensions, so the dimension grows
+#                with the subject count.
+#   'laplace'    the population parameters, with the effects integrated by the
+#                Laplace approximation. `npar` dimensions.
+#   'augmented'  the population parameters, with the effects integrated by the
+#                filter itself. `npar` dimensions, and the cheapest gradient of
+#                the three.
+#
+# Measured on a model where all three are exact, 4 chains of 1000 warmup and
+# 1000 draws: at 40 subjects the joint sampler is the more efficient (0.28
+# effective draws per second against the Laplace marginal's 0.23), and at 200
+# subjects the marginal is (1.19 against 0.59). Dimension is why -- the joint
+# target grows from 47 coordinates to 207 while the marginal stays at 7 -- so
+# the crossover moves with the subject count and neither is right everywhere.
+#
+# An optimisation runs first regardless, and is not merely a convenience: the
+# sampler reads its metric from the fit's curvature, which is the difference
+# between a chain that starts well conditioned and one that spends its warmup
+# discovering what the model could have told it.
+#
+# What is optimised is always an *integrated* objective, never the joint one,
+# and that distinction matters more than it looks. Maximising over individual
+# random effects is not a defensible thing to do: the joint density of
+# parameters and effects has no interior maximum in the scale direction --
+# drive a population standard deviation to zero with the effects at their
+# centre and it diverges -- so a joint mode is an artefact of where the
+# optimiser stopped rather than a location worth starting from.
+#
+# For `intoverpop='none'`, which samples the effects, the metric therefore
+# comes from the *Laplace* fit of the same specification. That works because
+# 'none' and 'laplace' prepare identically -- same parameters, same ordering,
+# same number of them -- and differ only in whether the effects are integrated
+# or sampled afterwards. So the population block of the metric is a Laplace
+# outer curvature, the effect blocks are the per-unit conditional curvatures,
+# and the parameter vector they index is the one being sampled. The integration
+# approach used for the metric is deliberately not the one being sampled, and
+# it does not have to be.
+#' @keywords internal
+.ctJuliaSampleFit <- function(model_spec, datalong, model, inits, cores,
+  backendcontrol, optimcontrol, chains, iter, control, priors, intoverpop,
+  gradient, verbose) {
+
+  npar <- max(c(model_spec$parameter_table$parnumber, model_spec$laplace$npar,
+    model_spec$ti_effects$coefficient), na.rm = TRUE)
+  start <- .ctJuliaInitialValues(npar, inits)
+
+  # Stan's vocabulary, because these are Stan's arguments: `iter` counts warmup
+  # and sampling together and warmup is half of it unless said otherwise.
+  warmup <- as.integer(.ctJuliaOr(control$warmup, max(1L, floor(iter / 2))))
+  draws <- max(1L, as.integer(iter) - warmup)
+  maxdepth <- as.integer(.ctJuliaOr(control$max_treedepth, 10L))
+  target <- as.numeric(.ctJuliaOr(control$adapt_delta, 0.8))
+  seed <- as.integer(.ctJuliaOr(control$seed, 20260828L))
+  saveEffects <- isTRUE(optimcontrol$saveEffects)
+
+  if (verbose > 0L) {
+    message("Optimising the ",
+      if (identical(intoverpop, "augmented")) "augmented" else "Laplace",
+      " objective to initialise the sampler and its metric",
+      if (identical(intoverpop, "none"))
+        " (the effects are integrated for this step, and sampled after it)"
+      else "", ".")
+  }
+  optimised <- .ctJuliaOptimise(model_spec, start, backendcontrol = backendcontrol,
+    gradient = gradient, cores = cores, verbose = verbose)
+  estimate <- as.numeric(optimised$minimizer)
+
+  spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
+  module <- .ctJuliaModule(model_spec$project)
+  objective <- .ctJuliaObjective(spec)
+  hessian <- try(.ctBackendHessian(list(model_spec = model_spec,
+    estimate = list(raw = estimate), backend = "julia"), estimate,
+    verbose = verbose), silent = TRUE)
+  if (inherits(hessian, "try-error")) hessian <- NULL
+
+  arguments <- list(objective, .ctJuliaNumericVector(estimate),
+    nchains = as.integer(chains), nwarmup = warmup, ndraws = draws,
+    maxdepth = maxdepth, target_accept = target, seed = seed,
+    verbose = verbose > 0L,
+    progress_overwrite = interactive() && verbose < 2L)
+  # Sampling targets, when asked for. Left at zero the sampler takes exactly the
+  # draws it was told to; set, it keeps going until the effective sample size is
+  # there or the budget runs out, which is usually what a user wanted from a
+  # draw count they had to guess at.
+  if (!is.null(control$minEss)) arguments$min_ess <- as.numeric(control$minEss)
+  if (!is.null(control$meanEss)) arguments$mean_ess <- as.numeric(control$meanEss)
+  if (!is.null(control$maxDraws)) arguments$max_draws <- as.integer(control$maxDraws)
+  if (!is.null(control$rhatTarget)) arguments$rhat_target <- as.numeric(control$rhatTarget)
+  if (!is.null(control$settleTol)) arguments$settle_tol <- as.numeric(control$settleTol)
+  if (!is.null(hessian)) {
+    arguments$hessian <- JuliaConnectoR::juliaPut(as.matrix(hessian))
+  }
+  joint <- identical(intoverpop, "none")
+  if (joint) {
+    arguments$npar <- as.integer(npar)
+    arguments$save_effects <- saveEffects
+    arguments$adapt_effects <- isTRUE(control$adapt_effects)
+  }
+  entry <- if (joint) module$ctsem_sample else module$ctsem_sample_marginal
+
+  result <- .ctBackendWithMaxChunks(cores,
+    JuliaConnectoR::juliaGet(do.call(entry, arguments)))
+
+  # The shell the assembler fills, matching what an optimised fit carries so
+  # that everything downstream reads a sampled fit the same way.
+  subject_loglik <- as.numeric(optimised$subject_loglik)
+  out <- list(backend = "julia", model = model, model_spec = model_spec,
+    data = datalong,
+    estimate = list(raw = estimate,
+      loglik = if (length(subject_loglik)) sum(subject_loglik) else
+        as.numeric(optimised$maximum_loglik),
+      logposterior = as.numeric(optimised$maximum_loglik),
+      converged = TRUE, chunks = as.integer(optimised$chunks)),
+    engine = model_spec$engine,
+    args = list(backend = "julia", backendcontrol = backendcontrol,
+      optimcontrol = optimcontrol, cores = cores, priors = priors,
+      intoverpop = intoverpop, optimize = FALSE))
+  class(out) <- c("ctJuliaFit", "ctFitModel")
+  out <- .ctBackendSampleAssemble(out, result, npar, saveEffects && joint,
+    as.integer(chains), warmup, draws, hessian, estimate)
+  out$identifiability <- .ctBackendIdentifiability(hessian,
+    .ctBackendRawParameterNames(out, npar))
+  out
 }

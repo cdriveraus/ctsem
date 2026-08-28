@@ -428,7 +428,8 @@ const _CTSEM_LBFGS_MEMORY = 20
 function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
     maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0,
     x_tol::Real=0.0, verbose::Bool=false, gradient_method=:adjoint,
-    tune_chunks::Bool=true, lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY)
+    tune_chunks::Bool=true, lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY,
+    progress_overwrite::Bool=true)
     start_values = collect(start)
     invalid_objective = floatmax(eltype(start_values)) / 1e8
     gradient_limit = sqrt(floatmax(eltype(start_values)))
@@ -452,8 +453,26 @@ function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
         end
         return F === nothing ? nothing : -result.value
     end
+    # A callback rather than Optim's `show_trace`, which prints one dense line
+    # per iteration whatever the model costs -- thousands on a fast one, and on
+    # a slow one nothing for minutes. The objective and the gradient norm are
+    # what say whether this is going anywhere: a log posterior that has stopped
+    # moving while the gradient is still large is a fit in trouble, and that is
+    # visible here long before the convergence flags are set.
+    reporter = CTSEMProgress(verbose; label="optimise",
+        overwrite=progress_overwrite)
+    watch = function (state)
+        if _due(reporter)
+            latest = state isa AbstractVector ? last(state) : state
+            _progress_line(reporter, latest.iteration, Int(maxiter),
+                @sprintf("logpost %11.2f", -latest.value),
+                @sprintf("|g| %9.2e", latest.g_norm))
+        end
+        return false
+    end
     options = Optim.Options(iterations=Int(maxiter), g_tol=g_tol,
-        f_reltol=f_tol, x_abstol=x_tol, show_trace=verbose, store_trace=false)
+        f_reltol=f_tol, x_abstol=x_tol, show_trace=false, store_trace=false,
+        callback=watch, extended_trace=false)
     # See `ctsem_tune_chunks!`: the subject loop is not monotone in the chunk
     # count, so the count is measured on this model rather than taken from
     # `cores`.
@@ -483,6 +502,10 @@ function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
     # passing either.
     moved = isempty(minimizer) ? 0.0 : maximum(abs, minimizer .- start_values)
     gradient_norm = isempty(final.gradient) ? 0.0 : maximum(abs, final.gradient)
+    verbose && _progress_done(reporter,
+        @sprintf("%d iterations", Optim.iterations(result)),
+        @sprintf("logpost %.4f", final.value),
+        @sprintf("|g| %.2e", gradient_norm))
     stalled = moved == 0 && (!isfinite(final.value) || gradient_norm > max(g_tol, 1e-6))
     scaled_tolerance = max(g_tol, 1e-6 * max(one(gradient_norm), abs(final.value)))
     converged_enough = isfinite(final.value) && gradient_norm <= scaled_tolerance

@@ -1,18 +1,45 @@
 ctModeltoNumeric <- function(ctmodelobj){
   ###read in model
   #set any matrices to numeric elements
-  domessage<-FALSE
+  #
+  # Free parameters need *a* value before anything can be simulated, and zero is
+  # the wrong one nearly everywhere. A zero DRIFT is singular, so `fQinf()`
+  # cannot solve for the asymptotic covariance and generation fails outright; a
+  # zero DIFFUSION is a process with no innovation; a zero MANIFESTVAR is
+  # noiseless measurement; a zero LAMBDA disconnects a manifest from its latent.
+  # Only the location matrices -- means and intercepts -- are naturally zero.
+  #
+  # `.ctGenerateDefaults()` holds the per-matrix choices, shared with the julia
+  # generation path so both produce the same kind of data from an underspecified
+  # model. They are defaults for *simulation*, not estimates: the point is that
+  # generated data looks like data rather than like an artefact, and anything a
+  # user cares about they should set.
+  defaults <- .ctGenerateDefaults()
+  filled <- character()
   sapply(names(ctmodelobj), function(x){
     if(is.matrix(ctmodelobj[[x]])){
       m <- ctmodelobj[[x]]
-      if(any(suppressWarnings(is.na(as.numeric(m))))){
-        domessage <<-TRUE
+      free <- suppressWarnings(is.na(as.numeric(m)))
+      dim(free) <- dim(m)
+      if(any(free)){
+        spec <- defaults[[x]]
+        idx <- which(free, arr.ind=TRUE)
+        for(k in seq_len(nrow(idx))){
+          i <- idx[k,1]; j <- idx[k,2]
+          value <- if(is.null(spec)) 0 else
+            if(i == j) spec$diagonal else spec$offdiagonal
+          m[i,j] <- value
+          if(value != 0) filled <<- c(filled, sprintf('%s[%d,%d]=%s', x, i, j,
+            format(value)))
+        }
       }
-      m[suppressWarnings(is.na(as.numeric(m)))] <- 0
       ctmodelobj[[x]] <<- matrix(as.numeric(m),nrow=nrow(m), ncol=ncol(m))
     }
   })
-  if(domessage) message('Some free parameters in matrices set to zero!')
+  if(length(filled)) message('Free parameters were given generating values: ',
+    paste(utils::head(filled, 8), collapse=', '),
+    if(length(filled) > 8) ', ...' else '',
+    '. Others were set to zero. Set them in the model if they matter.')
   
   return(ctmodelobj)
 }
@@ -172,7 +199,58 @@ ctStanGenerate <- ctGenerateFromPriors
 #' @export
 
 ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat=NA,
-  Tpoints=NULL, wide=FALSE){
+  Tpoints=NULL, wide=FALSE, backend=c('auto','r','julia')){
+  backend <- match.arg(backend)
+  # `auto` routes to julia only what the generator below cannot do. That
+  # generator integrates the linear system with a matrix exponential, which is
+  # exact for a linear model and simply inapplicable to a state-dependent one;
+  # the engine filters and generates both. Defaulting to julia for everything
+  # would change the numbers under every existing caller for no gain on the
+  # models they use, so the split is by capability rather than by preference.
+  nonlinear <- isTRUE(try(ctModelIsNonlinear(ctmodelobj), silent=TRUE))
+  if(backend == 'auto') backend <- if(nonlinear) 'julia' else 'r'
+  if(backend == 'r' && nonlinear) {
+    stop("This model is nonlinear, and ctGenerate's own generator integrates a ",
+      "linear system: it has no way to apply a state-dependent specification. ",
+      "Use backend='julia' (the default for such models), which generates ",
+      "through the same filter that fits them.", call.=FALSE)
+  }
+  if(backend == 'julia'){
+    if(!'ctStanModel' %in% class(ctmodelobj)) {
+      stop("backend='julia' generation needs a ctModel(type='ct'/'dt') object, ",
+        "which carries the parameter specification the engine reads. The ",
+        "matrix-list form does not.", call.=FALSE)
+    }
+    modelTpoints <- if(!is.null(Tpoints) && !is.na(Tpoints[1])) Tpoints[1] else
+      if(!is.null(ctmodelobj$Tpoints) && !is.na(ctmodelobj$Tpoints[1]))
+        ctmodelobj$Tpoints[1] else
+          stop('Tpoints not found in ctmodelobj and no Tpoints argument supplied. Provide Tpoints explicitly.')
+    fullTpoints <- burnin + as.integer(modelTpoints)
+    times <- lapply(seq_len(n.subjects), function(si){
+      dtvec <- if(is.na(dtmat[1])) exp(rnorm(fullTpoints,log(dtmean),logdtsd)) else
+        c(rep(1,burnin), dtmat[si,,drop=TRUE])
+      tv <- numeric(fullTpoints)
+      for(t in 2:fullTpoints) tv[t] <- round(tv[t-1] + dtvec[t-1], 6)
+      tv
+    })
+    out <- .ctGenerateJulia(ctmodelobj, n.subjects, times)
+    if(burnin > 0){
+      keep <- unlist(lapply(seq_len(n.subjects), function(si)
+        (si-1)*fullTpoints + (burnin+1):fullTpoints))
+      out <- out[keep, , drop=FALSE]
+      # Time restarts at zero for each subject once the burnin is dropped, as
+      # the generator below does. Leaving it running from the burnin would make
+      # the first observed interval look like the whole burnin period.
+      for(si in seq_len(n.subjects)){
+        rows <- (si-1)*(fullTpoints-burnin) + seq_len(fullTpoints-burnin)
+        out[rows,'time'] <- out[rows,'time'] - out[rows[1],'time']
+      }
+    }
+    if(wide) return(ctLongToWide(out, id='id', time='time',
+      manifestNames=ctmodelobj$manifestNames,
+      TDpredNames=ctmodelobj$TDpredNames, TIpredNames=ctmodelobj$TIpredNames))
+    return(out)
+  }
   if('ctStanModel' %in% class(ctmodelobj)){
     # Reconstruct matrix-style slots when a ctStanModel is supplied.
     mlist <- listOfMatrices(ctmodelobj$pars)

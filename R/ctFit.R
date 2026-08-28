@@ -588,7 +588,6 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     if(!backend %in% 'julia') stop(
       "intoverpop='laplace' requires backend='julia'; the generated Stan model ",
       "does not provide the higher-order derivatives it needs.", call.=FALSE)
-    if(!optimize) stop("intoverpop='laplace' requires optimize=TRUE.", call.=FALSE)
     if(!any(ctm$pars$indvarying[is.na(ctm$pars$value)])) stop(
       "intoverpop='laplace' was requested but no free parameters are marked ",
       "indvarying, so there is nothing to integrate over.", call.=FALSE)
@@ -739,10 +738,31 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       intoverpop=intoverpop, vb=vb, gendata=gendata,
       stanmodeltext=stanmodeltext, compileArgs=compileArgs,
       forcerecompile=forcerecompile)
+    # `optimize` and `intoverpop` are orthogonal here. `intoverpop` says which
+    # random effects are integrated out and how; `optimize` says whether the
+    # remaining parameters are maximised or sampled. Every combination is
+    # meaningful for this backend:
+    #
+    #   optimize  intoverpop     what runs                 sampled dimension
+    #   TRUE      'laplace'      Laplace ML                --
+    #   TRUE      TRUE           augmented ML              --
+    #   FALSE     'laplace'      NUTS, Laplace marginal    npar
+    #   FALSE     TRUE           NUTS, filter marginal     npar
+    #   FALSE     FALSE          NUTS over parameters      npar + effects
+    #                            *and* effects
+    #
+    # Only 'laplace' is julia-only; the guard for that is above. `'none'` is
+    # the third route the engine needs, and it prepares the Laplace structure
+    # -- which is what says *which* parameters vary -- without integrating.
+    juliaintoverpop <- if(identical(intoverpopmethod,'laplace')) 'laplace' else
+      if(intoverpop) 'augmented' else
+        if(!optimize && any(ctm$pars$indvarying[is.na(ctm$pars$value)])) 'none' else
+          'augmented'
     return(ctFitJuliaBackend(datalong=datalong, model=ctm, prepared_data=standata, inits=inits,
       cores=cores, backendcontrol=backendcontrol, optimcontrol=optimcontrol,
-      verbose=verbose, fit=fit, priors=priors,
-      intoverpop=ifelse(identical(intoverpopmethod,'laplace'),'laplace','augmented')))
+      verbose=verbose, fit=fit, priors=priors, optimize=optimize,
+      chains=chains, iter=iter, control=control,
+      intoverpop=juliaintoverpop))
   }
 
   # print(standata$savesubjectmatrices)

@@ -46,6 +46,8 @@ function scalar_square(x)
 end
 
 # Includes
+# First, so that `using Printf` is in scope for every file that reports.
+include("progress.jl")
 include("small_linalg.jl")
 include("parameters.jl")
 include("constrain_cor_sqrt.jl")

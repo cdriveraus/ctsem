@@ -77,6 +77,16 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, warn=TRUE,
   infoEig <- try(eigen(info, symmetric=TRUE, only.values=TRUE), silent=TRUE)
   minInfoEig <- if('try-error' %in% class(infoEig)) NA_real_ else
     min(infoEig$values)
+  # The largest as well, because the smallest on its own says nothing. A
+  # minimum of -7e-11 is rounding when the largest is 2.6e4 and a real rank
+  # deficiency when the largest is 1e-9, and the repair warning below could not
+  # tell those apart: it reported a magnitude with no scale to read it against.
+  # A warning that fires identically on both is one people learn to ignore,
+  # which is the worst outcome, because the text is the same when it mattered.
+  maxInfoEig <- if('try-error' %in% class(infoEig)) NA_real_ else
+    max(infoEig$values)
+  infoEigenRatio <- if(is.finite(maxInfoEig) && maxInfoEig > 0 &&
+      is.finite(minInfoEig)) abs(minInfoEig) / maxInfoEig else NA_real_
   covOk <- function(x){
     if('try-error' %in% class(x) || any(!is.finite(x))) return(FALSE)
     cholcheck <- try(suppressWarnings(chol((x + t(x)) / 2)), silent=TRUE)
@@ -199,6 +209,13 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, warn=TRUE,
   }
   diagnostics <- list(context=context, ridge=ridge,
     minInfoEigenOriginal=minInfoEig,
+    maxInfoEigenOriginal=maxInfoEig,
+    infoEigenRatio=infoEigenRatio,
+    # `sqrt(eps)` is where a symmetric eigendecomposition stops being able to
+    # tell a small eigenvalue from zero, so below it the repair is arithmetic
+    # rather than a statement about the model.
+    infoRepairNegligible=is.finite(infoEigenRatio) &&
+      infoEigenRatio < sqrt(.Machine$double.eps),
     rawSolveSucceeded=rawSolveSucceeded,
     rawCholSucceeded=rawCholSucceeded,
     infoNearPD=infoNearPD,
@@ -219,7 +236,9 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, warn=TRUE,
     'nearPD was needed for the information matrix')
   if(isTRUE(diagnostics$infoRidgeApplied)) issues <- c(issues,
     paste0('information eigenvalues were floored at ridge=', ridge,
-      ' (minimum original eigenvalue=', signif(minInfoEig, 4), ')'))
+      ' (minimum original eigenvalue=', signif(minInfoEig, 4),
+      if(is.finite(infoEigenRatio))
+        paste0(', ', signif(infoEigenRatio, 3), ' of the largest)') else ')'))
   if(isTRUE(diagnostics$usedGinv)) issues <- c(issues,
     'MASS::ginv() was used')
   if(isTRUE(diagnostics$covNearPD) || isTRUE(diagnostics$covRidgeApplied)) {
@@ -227,8 +246,31 @@ ctOptimCovFromHessian <- function(hess, ridge=1e-8, warn=TRUE,
       'the resulting covariance required positive-definite cleanup')
   }
   if(warn && length(issues) > 0) {
-    warning(context, ' covariance from Hessian required numerical repair: ',
-      paste(issues, collapse='; '), call.=FALSE)
+    # Graded. A repair that floored an eigenvalue indistinguishable from zero is
+    # arithmetic, and is reported as such; one that floored a substantively
+    # negative or tiny eigenvalue is a statement about what the data can
+    # determine, and keeps the warning. Making that distinction is the point --
+    # the same text for both is what taught people to ignore it, and the cases
+    # it currently conflates are genuinely different. A near-integrated trend
+    # process *should* warn here.
+    if(isTRUE(diagnostics$infoRepairNegligible) &&
+        !isTRUE(diagnostics$usedGinv) && !isTRUE(diagnostics$infoNearPD)) {
+      message(context, ' covariance: the information matrix needed a numerical ',
+        'nudge before inversion (smallest eigenvalue ',
+        signif(minInfoEig, 3), ', ', signif(infoEigenRatio, 3),
+        ' of the largest, which is indistinguishable from zero at machine ',
+        'precision). Arithmetic, not a statement about the model.')
+    } else {
+      warning(context, ' covariance from Hessian required numerical repair: ',
+        paste(issues, collapse='; '),
+        if(is.finite(infoEigenRatio) &&
+            infoEigenRatio >= sqrt(.Machine$double.eps))
+          paste0('. The floored eigenvalue is ', signif(infoEigenRatio, 3),
+            ' of the largest, too large to be rounding: some direction of this ',
+            'model is close to unidentified and the standard errors along it ',
+            'are not trustworthy') else '',
+        call.=FALSE)
+    }
   }
   cov
 }
