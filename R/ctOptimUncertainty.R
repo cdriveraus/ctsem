@@ -1170,6 +1170,29 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' sample count, cores, and non-internal controls are recorded in
 #' \code{fit$stanfit$uncertainty$settings}.
 #' @export
+# How samples are produced, given how the covariance was estimated.
+#
+# `uncertainty` and `draws` are not independent, and pretending otherwise is
+# what made this confusing: `uncertainty='is'` *is* importance sampling, so
+# `draws='normal'` alongside it was accepted, warned about, and then overridden
+# -- the argument appeared to be a choice and was not. It is now derived, and an
+# incompatible request is an error rather than a warning about something the
+# code went on to ignore.
+.ctResolveDraws <- function(uncertainty, draws) {
+  implied <- switch(uncertainty,
+    is = 'imis',
+    bootstrap = 'empirical',
+    fullbootstrap = 'empirical',
+    'normal')
+  if(identical(draws, 'auto')) return(implied)
+  if(!identical(draws, implied)) {
+    stop("uncertainty='", uncertainty, "' produces draws by '", implied,
+      "', so draws='", draws, "' cannot be honoured. Pass draws='auto' (the ",
+      "default) or draws='", implied, "'.", call.=FALSE)
+  }
+  draws
+}
+
 ctOptimUncertainty <- function(fit,
   uncertainty=c('hessian','surrogate','is','bootstrap','fullbootstrap',
     'sandwich','opg'),
@@ -1181,9 +1204,8 @@ ctOptimUncertainty <- function(fit,
   # backend='julia' fits reach the same ctOptimComputeUncertainty() below,
   # through a log-probability/gradient function built from their own engine;
   # see R/ctBackendUncertainty.R.
+  draws <- .ctResolveDraws(uncertainty, draws)
   if(inherits(fit, 'ctJuliaFit')) {
-    if(draws == 'auto') draws <- if(uncertainty == 'is') 'imis' else 'normal'
-    if(uncertainty == 'is') draws <- 'imis'
     if(is.null(finishsamples)) finishsamples <- 1000
     if(is.null(cores)) cores <- 1L
     cores <- max(1L, suppressWarnings(as.integer(cores[1])))
@@ -1196,20 +1218,6 @@ ctOptimUncertainty <- function(fit,
   if(length(fit$stanfit$stanfit@sim) > 0) {
     stop('ctOptimUncertainty currently applies to optimized ctStanFit objects')
   }
-  if(uncertainty == 'is' && !draws %in% c('auto','imis')) {
-    warning("uncertainty='is' uses importance sampling; ignoring draws='",
-      draws, "' and using draws='imis'.", call.=FALSE)
-  }
-  if(draws == 'auto') {
-    if(uncertainty == 'is') {
-      draws <- 'imis'
-    } else if(uncertainty %in% c('bootstrap','fullbootstrap')) {
-      draws <- 'empirical'
-    } else {
-      draws <- 'normal'
-    }
-  }
-  if(uncertainty == 'is') draws <- 'imis'
   if(is.null(finishsamples)) {
     finishsamples <- if(!is.null(fit$stanfit$rawposterior))
       nrow(fit$stanfit$rawposterior) else 1000

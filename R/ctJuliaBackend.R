@@ -1641,7 +1641,20 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
   # The Laplace route filters each subject at its own estimated random effects,
   # which is the smoothed equivalent of what the augmented route's carrier
   # states give -- see `.ctBackendKalmanRaw`, which says so at the point of use.
-  out$kalman <- suppressMessages(ctKalmanArray(out, pointest = TRUE))
+  # Only the prior prediction errors, not the whole filter pass. Every summary
+  # that reads a cached filter reads exactly `errprior`; the other seventeen
+  # arrays were transferred and stored so that one could be. See
+  # `.ctBackendPriorErrors`.
+  out$priorerrors <- .ctBackendPriorErrors(out)
+
+  # What the fit can honestly say about its own credibility. Not a verdict on
+  # whether the answer is sensible -- that is a judgement about the model and
+  # the data -- but a statement of which directions the data does not determine,
+  # and therefore which reported intervals do not mean what they appear to.
+  out$identifiability <- .ctBackendIdentifiability(out$uncertainty$hessian,
+    .ctBackendRawParameterNames(out, length(out$estimate$raw)))
+  out$collapsedScales <- .ctBackendCollapsedScales(out)
+  .ctBackendIdentifyWarn(out$identifiability, out$collapsedScales)
   out
 }
 

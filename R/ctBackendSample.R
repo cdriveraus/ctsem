@@ -15,6 +15,57 @@
 # it and warmup refines rather than discovers. Sampling from scratch would work
 # and would be substantially slower.
 
+# Which (subject, parameter) each entry of the flat effect vector belongs to.
+#
+# The engine lays the effects out unit by unit, and a unit's own layout is its
+# block tree -- one block per (level, group) it contains. With a single level
+# that degenerates to one unit per subject and `k` effects each, in subject
+# order, which is determinable from the R side alone.
+#
+# With more than one level it is not: the blocks interleave a group's own
+# effects with its members', and reconstructing that here would mean
+# reimplementing `_laplace_build_units` in R and keeping the two in step.
+# Returning nothing is better than returning a plausible mislabelling, which
+# would attach the wrong subject's name to a number and never announce itself.
+#' @keywords internal
+.ctBackendEffectIndex <- function(fit) {
+  laplace <- fit$model_spec$laplace
+  if (is.null(laplace) || is.null(laplace$levels)) return(NULL)
+  if (length(laplace$levels) != 1L) return(NULL)
+  level <- laplace$levels[[1L]]
+  parameters <- as.character(level$param)
+  if (!length(parameters)) return(NULL)
+  subjects <- fit$model_spec$subject_starts
+  nsubjects <- if (is.null(subjects)) 0L else length(subjects)
+  if (nsubjects < 1L) return(NULL)
+  ids <- .ctBackendSubjectIds(fit, nsubjects)
+  index <- expand.grid(parameter = parameters, subject = seq_len(nsubjects),
+    stringsAsFactors = FALSE)
+  if (is.null(ids)) {
+    index$label <- paste0(index$parameter, "_subject", index$subject)
+    return(index[, c("subject", "parameter", "label")])
+  }
+  index$id <- ids[index$subject]
+  index$label <- paste0(index$parameter, "_", index$id)
+  index[, c("subject", "id", "parameter", "label")]
+}
+
+# The user's own identifiers, when the fit kept them, and the internal index
+# otherwise. A label of "mmean_7" is only useful if 7 is the id the user knows.
+#' @keywords internal
+.ctBackendSubjectIds <- function(fit, nsubjects) {
+  # In first-appearance order, which is the order the engine numbers subjects.
+  if (!is.null(fit$data) && !is.null(fit$data$id)) {
+    original <- unique(fit$data$id)
+    if (length(original) == nsubjects) return(as.character(original))
+  }
+  ids <- fit$model_spec$subject_ids
+  if (!is.null(ids) && length(ids) == nsubjects) return(as.character(ids))
+  # No map found. The internal index is still a correct label, and calling it
+  # `id` when it is not the user's id would be worse than not having one.
+  NULL
+}
+
 #' Sample the posterior of a julia backend fit
 #'
 #' Draws from the joint posterior over population parameters and random effects
@@ -199,15 +250,31 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
     effect_mean = as.numeric(result$effect_mean),
     effect_sd = as.numeric(result$effect_sd),
     start = estimate)
+  # The effects, labelled. A flat vector of `nsubjects * neffects` numbers with
+  # no mapping back to (subject, level, parameter) is not usable without
+  # reconstructing the engine's layout by hand, which is exactly the sort of
+  # thing a caller should not have to know.
+  out$sample$effectIndex <- .ctBackendEffectIndex(fit)
+  if (!is.null(out$sample$effectIndex)) {
+    labels <- out$sample$effectIndex$label
+    if (length(labels) == length(out$sample$effect_mean)) {
+      names(out$sample$effect_mean) <- labels
+      names(out$sample$effect_sd) <- labels
+    }
+  }
   if (isTRUE(saveEffects)) {
     out$sample$effects <- t(raw[-seq_len(npar), , drop = FALSE])
+    if (!is.null(out$sample$effectIndex) &&
+        ncol(out$sample$effects) == nrow(out$sample$effectIndex)) {
+      colnames(out$sample$effects) <- out$sample$effectIndex$label
+    }
   }
   class(out$sample) <- "ctSampleDiagnostics"
 
   # Constrained draws describe the *new* draws, so the cached ones are stale.
   out$transformedpars <- NULL
   out$transformedpars <- .ctBackendConstrained(out)
-  out$kalman <- suppressMessages(ctKalmanArray(out, pointest = TRUE))
+  out$priorerrors <- .ctBackendPriorErrors(out)
 
   .ctSampleWarn(out$sample)
   out

@@ -2215,7 +2215,7 @@ objective and can compute the modes against the data they were fitted to, so
 that is where they come from.
 """
 function ctsem_kalman(laplace::CTSEMLaplaceObjective, values::AbstractVector;
-    from_level::Integer=1, subject_matrices::Bool=true,
+    from_level::Integer=1, subject_matrices::Bool=true, fields=String[],
     subject_values::Union{Nothing,AbstractMatrix}=nothing)
     persubject = if subject_values === nothing
         ctsem_laplace_subject_values(laplace, values; from_level=from_level)
@@ -2230,7 +2230,7 @@ function ctsem_kalman(laplace::CTSEMLaplaceObjective, values::AbstractVector;
         subject_values
     end
     return ctsem_kalman(laplace.objective, persubject;
-        subject_matrices=subject_matrices)
+        subject_matrices=subject_matrices, fields=fields)
 end
 
 """

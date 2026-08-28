@@ -1032,6 +1032,7 @@ imis_is <- function(parlp,
   max_iter      = 10,
   scale_init    = 1.5,
   tail_scale    = 1.2,
+  df            = Inf,
   ridge         = 1e-8,
   finishsamples = 1000,
   verbose       = TRUE,
@@ -1080,14 +1081,48 @@ imis_is <- function(parlp,
   ess_now   <- 0
   interrupted <- FALSE
   
+  # A multivariate t rather than a normal, when `df` is finite.
+  #
+  # Available, and not the default, because it was measured and did not help.
+  # The theory says an importance-sampling proposal wants heavier tails than its
+  # target; on a 40-subject ctsem model the t was consistently *worse* than the
+  # normal at the same scale -- mean standard error 0.70 of a reference sample's
+  # against the normal's 0.75 -- and matched it only at a scale wide enough to
+  # drop the effective sample size from 411 to 76, which is not a trade worth
+  # making. Kept as a knob because that is one model.
+  #
+  # `Sigma` is the t's *scale* matrix here, not rescaled so its covariance
+  # equals `Sigma`. That rescaling by `(df-2)/df` is the obvious-looking move
+  # and it is wrong: it shrinks the bulk to pay for the heavy tails, which is
+  # the opposite of the point. The first version did it and came out narrower
+  # than the normal it was meant to widen on.
+  #
+  # Importance sampling needs a proposal with *heavier* tails than the target,
+  # because a region the proposal never visits cannot be upweighted however
+  # large its weight would have been. A normal proposal fitted to the Laplace
+  # curvature has lighter tails than the posterior it is approximating, which is
+  # exactly backwards, and the failure is quiet: the effective sample size looks
+  # healthy because the draws that exist agree with each other, while the
+  # answer stays close to the proposal. Measured on a 40-subject model, a normal
+  # proposal at scale 1.1 returned standard errors within 10% of the Hessian's
+  # where the true posterior was up to twice as wide.
+  rprop <- function(n, mu, Sigma) {
+    if (!is.finite(df)) return(mvtnorm::rmvnorm(n, mu, Sigma))
+    mvtnorm::rmvt(n, sigma = Sigma, df = df, delta = mu, type = "shifted")
+  }
+  dprop <- function(x, mu, Sigma) {
+    if (!is.finite(df)) return(mvtnorm::dmvnorm(x, mu, Sigma, log = TRUE))
+    mvtnorm::dmvt(x, delta = mu, sigma = Sigma, df = df, log = TRUE,
+      type = "shifted")
+  }
   draw_mix <- function(n) {
     if (T_comp == 1L)
-      mvtnorm::rmvnorm(n, comp_mu[[1]], comp_cov[[1]])
+      rprop(n, comp_mu[[1]], comp_cov[[1]])
     else {
       sel <- sample.int(T_comp, n, TRUE)
       do.call(rbind, lapply(seq_len(T_comp), function(k) {
         m <- sum(sel == k)
-        if (m) mvtnorm::rmvnorm(m, comp_mu[[k]], comp_cov[[k]])
+        if (m) rprop(m, comp_mu[[k]], comp_cov[[k]])
       }))
     }
   }
@@ -1115,9 +1150,7 @@ imis_is <- function(parlp,
     ## ---------- mixture log-q -----------------------------------------
     lq_new <- rep.int(-Inf, n_batch)
     for (k in seq_len(T_comp))
-      lq_new <- logplus(
-        lq_new,
-        mvtnorm::dmvnorm(x_new, comp_mu[[k]], comp_cov[[k]], log = TRUE))
+      lq_new <- logplus(lq_new, dprop(x_new, comp_mu[[k]], comp_cov[[k]]))
     
     samples   <- rbind(samples, x_new)
     log_p_all <- c(log_p_all, log_p_new)
@@ -1177,7 +1210,7 @@ imis_is <- function(parlp,
     covariance   = if (length(w_norm))
       diagis::weighted_var(samples, w_norm)
     else matrix(NA_real_, length(mu_hat), length(mu_hat)),
-    df_used      = Inf)
+    df_used      = df)
   
 }
 

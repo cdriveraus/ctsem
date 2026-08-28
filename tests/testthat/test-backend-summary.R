@@ -202,8 +202,18 @@ test_that("a default julia fit carries uncertainty, as an optimized Stan fit doe
   expect_false(is.null(out$residCovStd))
   expect_false(is.null(out$logposterior))
   # The filter output summary() reads for that is cached at fit time, as the
-  # Stan path caches stanfit$kalman.
-  expect_false(is.null(fit$kalman$errprior))
+  # Only the prior prediction errors are cached now, not a whole filter pass:
+  # every summary that reads one reads exactly `errprior`, and on the julia
+  # backend the rest is a bridge transfer rather than a memory cost.
+  expect_false(is.null(fit$priorerrors))
+  expect_null(fit$kalman)
+  expect_equal(dim(fit$priorerrors), dim(ctsem:::.ctFitObservedY(fit)))
+  # The narrow path must agree with the filter it replaces, exactly. An
+  # off-by-one in the prior/updated/smoothed stacking would otherwise show up
+  # only as a quietly wrong residual covariance.
+  full <- suppressMessages(ctKalmanArray(fit, pointest = TRUE))
+  expect_equal(as.numeric(fit$priorerrors), as.numeric(full$errprior))
+  expect_true(nzchar(attr(fit$priorerrors, "conditioning")))
 })
 
 # An actual OU process, so the variance parameters sit in the interior. Fitting

@@ -496,8 +496,12 @@ test_that("ctKalman on a Laplace fit selects which levels it conditions on", {
   fit <- suppressMessages(suppressWarnings(ctFit(dat, model, backend = "julia",
     intoverpop = "laplace", optimcontrol = list(estonly = TRUE))))
 
-  # `fit$kalman` is populated again: a Laplace fit can be filtered now.
-  expect_false(is.null(fit$kalman))
+  # A Laplace fit can be filtered, so its prior residuals are available -- and
+  # they are conditioned on each subject's mode from their whole record, which
+  # is a different quantity from the augmented route's filtered residuals and
+  # is labelled as such.
+  expect_false(is.null(fit$priorerrors))
+  expect_match(attr(fit$priorerrors, "conditioning"), "whole record")
 
   study <- dat$study[match(unique(dat$subject), dat$subject)]
   first_of <- function(k) { first <- !duplicated(k$id); k$yprior[1, first, 1] }

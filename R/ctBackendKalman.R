@@ -59,14 +59,16 @@
 }
 
 .ctBackendKalmanRaw <- function(fit, raw, subjectmatrices = TRUE,
-  randomEffects = NULL) {
+  randomEffects = NULL, fields = NULL) {
   raw <- as.numeric(raw)
   spec <- .ctBackendSpec(fit)
   module <- .ctJuliaModule(spec$project)
   if (is.null(spec$laplace)) {
-    result <- .ctBackendJuliaValue(module$ctsem_kalman(.ctJuliaObjective(fit),
-      .ctJuliaNumericVector(raw), subject_matrices = isTRUE(subjectmatrices)))
-    result$subject <- as.integer(result$subject)
+    result <- .ctBackendJuliaValue(do.call(module$ctsem_kalman, c(
+      list(.ctJuliaObjective(fit), .ctJuliaNumericVector(raw),
+        subject_matrices = isTRUE(subjectmatrices)),
+      if (length(fields)) list(fields = .ctJuliaVector(as.character(fields))))))
+    if (!is.null(result$subject)) result$subject <- as.integer(result$subject)
     return(result)
   }
 
@@ -97,15 +99,12 @@
       from_level = as.integer(from)))
     JuliaConnectoR::juliaPut(fitted[subjects, , drop = FALSE])
   }
-  result <- .ctBackendJuliaValue(if (is.null(values)) {
-    module$ctsem_kalman(.ctJuliaObjective(fit), .ctJuliaNumericVector(raw),
-      from_level = as.integer(from), subject_matrices = isTRUE(subjectmatrices))
-  } else {
-    module$ctsem_kalman(.ctJuliaObjective(fit), .ctJuliaNumericVector(raw),
-      from_level = as.integer(from), subject_matrices = isTRUE(subjectmatrices),
-      subject_values = values)
-  })
-  result$subject <- as.integer(result$subject)
+  arguments <- list(.ctJuliaObjective(fit), .ctJuliaNumericVector(raw),
+    from_level = as.integer(from), subject_matrices = isTRUE(subjectmatrices))
+  if (length(fields)) arguments$fields <- .ctJuliaVector(as.character(fields))
+  if (!is.null(values)) arguments$subject_values <- values
+  result <- .ctBackendJuliaValue(do.call(module$ctsem_kalman, arguments))
+  if (!is.null(result$subject)) result$subject <- as.integer(result$subject)
   result
 }
 

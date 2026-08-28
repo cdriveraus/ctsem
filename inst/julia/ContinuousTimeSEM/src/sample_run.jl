@@ -38,17 +38,16 @@ different starts that are nonetheless all in the typical set, which is what the
 approximation is *for*. Falling back toward the mode on a non-finite draw keeps
 a bad approximation from preventing a start altogether.
 """
-function _sample_initial_point(sampler::CTSEMSampler, values::AbstractVector,
+function _sample_initial_point(centre::Vector{Float64},
     metric::CTSEMMetric, rng::AbstractRNG, scale::Float64, logdensity!,
     gradient::Vector{Float64})
-    centre = ctsem_sample_start(sampler, values)
     x = copy(centre)
     logp = logdensity!(gradient, x)
     isfinite(logp) || throw(ArgumentError(
         "the log density is not finite at the supplied parameter values, so no " *
         "chain can start there; check the estimate the sample was asked to start from"))
     scale <= 0 && return (x, logp)
-    draw = zeros(sampler.ndim)
+    draw = zeros(length(centre))
     for attempt in 0:6
         shrink = scale * 0.5^attempt
         for b in eachindex(metric.ranges)
@@ -90,31 +89,22 @@ struct _ChainResult
     warmup_divergent::Int
 end
 
-function _run_chain(sampler::CTSEMSampler, values::AbstractVector,
-    metric::CTSEMMetric, rng::AbstractRNG, slot::Union{Nothing,Int},
+function _run_chain(logdensity!, centre::Vector{Float64},
+    metric::CTSEMMetric, rng::AbstractRNG,
     nwarmup::Int, ndraws::Int, maxdepth::Int, target_accept::Float64,
     maxdelta::Float64, init_scale::Float64, adapt_metric::Bool,
-    adapt_effects::Bool)
+    adapt::Union{Nothing,Vector{Bool}})
 
-    ndim = sampler.ndim
-    logdensity! = (g, x) -> ctsem_sample_density!(g, sampler, x; workspace_slot=slot)
+    ndim = length(centre)
     ws = _NUTSWorkspace(ndim, maxdepth)
     g = zeros(ndim)
-    x, logp = _sample_initial_point(sampler, values, metric, rng, init_scale,
+    x, logp = _sample_initial_point(centre, metric, rng, init_scale,
         logdensity!, g)
 
     current = metric
     eps = _init_stepsize(logdensity!, current, rng, x, g, logp, ws)
     da = _DualAverage(eps, target_accept)
     windows = adapt_metric ? _adapt_windows(nwarmup) : Int[]
-    # Which blocks warmup is allowed to re-estimate. The population block always
-    # benefits: its Laplace value is a local quadratic fit and the posterior is
-    # not quadratic. The effect blocks are a different case -- they come from a
-    # conditional covariance that is *exact* for a linear model, and replacing
-    # one with a k x k estimate from a few hundred draws is as likely to add
-    # noise as to remove bias.
-    adapt = adapt_effects ? nothing :
-        [b == 1 for b in eachindex(metric.ranges)]
     window_draws = Vector{Vector{Float64}}()
     warmup_divergent = 0
 
@@ -158,6 +148,40 @@ function _run_chain(sampler::CTSEMSampler, values::AbstractVector,
         energy[iteration] = step.energy
     end
     return _ChainResult(draws, accept, divergent, depth, energy, eps, warmup_divergent)
+end
+
+"""
+    _sample_chains(nchains, parallel, seed, centre, metric, ..., density_for)
+
+Run the chains, concurrently when there are threads for them.
+
+`density_for(c)` builds chain `c`'s log-density closure. It is a function of the
+chain rather than one shared closure because a target may need per-chain
+scratch: the joint sampler hands each chain its own adjoint workspace, since
+every chain filters every subject and they would otherwise share buffers.
+"""
+function _sample_chains(nchains::Int, parallel::Bool, seed::Integer,
+    centre::Vector{Float64}, metric::CTSEMMetric, nwarmup::Int, ndraws::Int,
+    maxdepth::Int, target_accept::Float64, maxdelta::Float64,
+    init_scale::Float64, adapt_metric::Bool, adapt::Union{Nothing,Vector{Bool}},
+    density_for)
+    results = Vector{_ChainResult}(undef, nchains)
+    runner = function (c)
+        results[c] = _run_chain(density_for(c), centre, metric,
+            Random.Xoshiro(UInt64(seed) + UInt64(c)), nwarmup, ndraws, maxdepth,
+            target_accept, maxdelta, init_scale, adapt_metric, adapt)
+        return nothing
+    end
+    if parallel
+        Threads.@sync for c in 1:nchains
+            Threads.@spawn runner(c)
+        end
+    else
+        for c in 1:nchains
+            runner(c)
+        end
+    end
+    return results
 end
 
 """
@@ -211,23 +235,19 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
         parallel ? "one thread each" : "unit-parallel", ", metric in ",
         length(metric.ranges), " block(s)")
 
-    results = Vector{_ChainResult}(undef, nchains)
-    runner = function (c)
-        results[c] = _run_chain(sampler, start, metric,
-            Random.Xoshiro(UInt64(seed) + UInt64(c)), parallel ? c : nothing,
-            nwarmup, ndraws, Int(maxdepth), Float64(target_accept),
-            Float64(maxdelta), Float64(init_scale), adapt_metric, adapt_effects)
-        return nothing
-    end
-    if parallel
-        Threads.@sync for c in 1:nchains
-            Threads.@spawn runner(c)
-        end
-    else
-        for c in 1:nchains
-            runner(c)
-        end
-    end
+    # Which metric blocks warmup may re-estimate. The population block always
+    # benefits: its Laplace value is a local quadratic fit and the posterior is
+    # not quadratic. The effect blocks come from a conditional covariance that
+    # is *exact* for a linear model, and replacing one with a k x k estimate
+    # from a few hundred draws is as likely to add noise as to remove bias --
+    # measured at 356 effective draws keeping them against 261 re-estimating.
+    adapt = adapt_effects ? nothing : [b == 1 for b in eachindex(metric.ranges)]
+    centre = ctsem_sample_start(sampler, start)
+    results = _sample_chains(nchains, parallel, seed, centre, metric,
+        nwarmup, ndraws, Int(maxdepth), Float64(target_accept), Float64(maxdelta),
+        Float64(init_scale), adapt_metric, adapt,
+        c -> ((g, x) -> ctsem_sample_density!(g, sampler, x;
+            workspace_slot=parallel ? c : nothing)))
 
     ndim = sampler.ndim
     total = nchains * ndraws
@@ -288,6 +308,138 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
         # `init=NaN` would be wrong rather than defensive: Julia's `min` and
         # `max` propagate NaN, so it poisons every result instead of only the
         # empty one.
+        worst_rhat=_finite_extremum(diagnostics.rhat, maximum),
+        min_ess=_finite_extremum(diagnostics.ess, minimum),
+    )
+end
+
+export ctsem_sample_marginal
+
+"""
+    ctsem_sample_marginal(objective, values; kwargs...)
+
+Sample the population parameters with the random effects already integrated out.
+
+The counterpart to `ctsem_sample`, and usually the faster one. Where that
+samples `theta` and every subject's effects jointly -- `npar + sum_U dim(u_U)`
+coordinates, so 207 for two hundred subjects with one effect each -- this
+samples `theta` alone, because the objective it is given has already done the
+integral. The dimension therefore does not grow with the subject count at all.
+
+Two objectives qualify and both work here unchanged, because `ctsem_evaluate`
+and `ctsem_hessian` are defined for each:
+
+  * a `CTSEMObjective` built from an augmented model, where the filter carries
+    the effects as states and integrates them analytically;
+  * a `CTSEMLaplaceObjective`, where the Laplace approximation does it.
+
+The geometry is much kinder. The joint target has a `L(theta) u` product in it,
+which is the funnel that leaves E-BFMI at 0.16-0.49 and costs most of the
+sampling efficiency; a `theta`-only target has no such product. Measured against
+Stan on identical data, Stan samples the augmented marginal in 674s where the
+joint sampler takes 1114s at two hundred subjects -- and the two agree on every
+posterior mean and standard deviation to three decimals, which is what says the
+difference is dimension rather than correctness.
+
+# Chains run one after another here
+
+The joint sampler gives each chain its own adjoint workspace, because every
+chain filters every subject and they would otherwise share buffers. `ctsem_
+evaluate` has no such per-chain slot: its workspaces are per *chunk*, and chunks
+partition subjects, which is safe for one caller and a race for several. So
+chains are sequential and each gradient uses the subject-loop parallelism
+instead. That is the smaller of the two axes -- about twofold against linear --
+and it is a real cost, but the dimension collapse is worth far more than the
+axis is.
+
+# The Laplace objective is stateful, and that matters more here
+
+`CTSEMLaplaceObjective` retains each unit's inner mode between calls and
+warm-starts the next solve from it. Across an optimizer's trajectory that is
+free accuracy; across a sampler's it makes the density a function of where the
+chain has *been* as well as where it is. The inner problem is concave in `u` for
+these models, so the warm start converges to the same mode either way and the
+dependence does not bite -- but it is an assumption rather than a guarantee, and
+`test_sampler.jl` pins it by evaluating the same `theta` from two different
+histories and requiring the same answer.
+"""
+function ctsem_sample_marginal(objective, values::AbstractVector;
+    nchains::Integer=4, nwarmup::Integer=500, ndraws::Integer=500,
+    maxdepth::Integer=10, target_accept::Real=0.8, maxdelta::Real=1000.0,
+    seed::Integer=20260828, init_scale::Real=1.0, adapt_metric::Bool=true,
+    hessian::Union{Nothing,AbstractMatrix}=nothing, gradient_method=:adjoint,
+    verbose::Bool=false)
+
+    nchains = Int(nchains); nwarmup = Int(nwarmup); ndraws = Int(ndraws)
+    nchains >= 1 || throw(ArgumentError("nchains must be positive"))
+    ndraws >= 1 || throw(ArgumentError("ndraws must be positive"))
+    nwarmup >= 0 || throw(ArgumentError("nwarmup must be non-negative"))
+    0 < target_accept < 1 || throw(ArgumentError("target_accept must be in (0, 1)"))
+
+    centre = collect(Float64, values)
+    npar = length(centre)
+    logdensity! = function (g, x)
+        result = try
+            ctsem_evaluate(objective, x; gradient=true,
+                gradient_method=gradient_method)
+        catch err
+            err isa InterruptException && rethrow()
+            nothing
+        end
+        if result === nothing || !isfinite(result.value) ||
+            result.gradient === nothing || !all(isfinite, result.gradient)
+            fill!(g, 0.0)
+            return -Inf
+        end
+        copyto!(g, result.gradient)
+        return result.value
+    end
+
+    # One dense block: at this dimension the whole covariance is affordable to
+    # estimate and to factorize, and there is no sparsity to exploit -- the
+    # population parameters are all coupled.
+    H = hessian === nothing ? ctsem_hessian(objective, centre) : Matrix(hessian)
+    information = Symmetric((-(H .+ transpose(H))) ./ 2)
+    metric = _metric_from_covariances([1:npar], [_bounded_inverse(information)])
+
+    verbose && println("Sampling: ", nchains, " chain(s), ", npar,
+        " dimensions (effects integrated out), chains sequential, ",
+        "metric in 1 block")
+
+    results = _sample_chains(nchains, false, seed, centre, metric, nwarmup,
+        ndraws, Int(maxdepth), Float64(target_accept), Float64(maxdelta),
+        Float64(init_scale), adapt_metric, nothing, _ -> logdensity!)
+
+    total = nchains * ndraws
+    draws = Matrix{Float64}(undef, npar, total)
+    accept = Vector{Float64}(undef, total)
+    divergent = Vector{Bool}(undef, total)
+    depth = Vector{Int}(undef, total)
+    energy = Vector{Float64}(undef, total)
+    for c in 1:nchains
+        r = results[c]
+        for t in 1:ndraws
+            column = (c - 1) * ndraws + t
+            @inbounds for j in 1:npar
+                draws[j, column] = r.draws[j, t]
+            end
+            accept[column] = r.accept[t]
+            divergent[column] = r.divergent[t]
+            depth[column] = r.depth[t]
+            energy[column] = r.energy[t]
+        end
+    end
+    diagnostics = ctsem_sample_diagnostics(draws, nchains)
+    return (
+        draws=draws, npar=npar, ndim=npar, nchains=nchains, ndraws=ndraws,
+        saved_effects=false, effect_mean=Float64[], effect_sd=Float64[],
+        rhat=diagnostics.rhat, ess=diagnostics.ess,
+        accept=accept, divergent=divergent, depth=depth, energy=energy,
+        stepsize=[r.stepsize for r in results],
+        warmup_divergent=[r.warmup_divergent for r in results],
+        ndivergent=count(divergent), max_depth=Int(maxdepth),
+        nsaturated=count(==(Int(maxdepth)), depth),
+        ebfmi=_ebfmi(energy, nchains),
         worst_rhat=_finite_extremum(diagnostics.rhat, maximum),
         min_ess=_finite_extremum(diagnostics.ess, minimum),
     )

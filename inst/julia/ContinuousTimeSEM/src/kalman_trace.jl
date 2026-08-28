@@ -309,7 +309,7 @@ latent state with no drift and no diffusion, so the smoothed t0 estimate of that
 state is the subject's value for it.
 """
 function ctsem_kalman(objective::CTSEMObjective, values::AbstractVecOrMat;
-    subject_matrices::Bool=true)
+    subject_matrices::Bool=true, fields=String[])
 
     sp = objective.params
     persubject = values isa AbstractMatrix
@@ -361,6 +361,26 @@ function ctsem_kalman(objective::CTSEMObjective, values::AbstractVecOrMat;
     result = (eta=trace.eta, etacov=trace.etacov, y=trace.y, ycov=trace.ycov,
         llrow=trace.llrow, subject=trace.subject, subject_loglik=loglik,
         transition=transitions)
+    # `fields` keeps only the named arrays. The covariance and transition
+    # arrays are the bulk -- `etacov` alone is `nrows * nlatent^2` -- and a
+    # caller that wants only the prior prediction error needs `y` and nothing
+    # else. That matters because the cost of this call is almost entirely
+    # moving the result to R at about 1 MB/s, not computing it: measured at
+    # 2.5 s across the bridge against 0.07 s in the engine.
+    if !isempty(fields)
+        # A length-one character vector crosses the bridge as a bare `String`,
+        # not a one-element vector, so `Symbol.(fields)` would broadcast over a
+        # scalar and hand `Set` something it cannot iterate. Asking for exactly
+        # one field is the common case here, which is why this is the first
+        # thing that breaks rather than an edge case.
+        names = fields isa AbstractString ? [Symbol(fields)] :
+            [Symbol(f) for f in fields]
+        wanted = Set(names)
+        missing_fields = setdiff(wanted, Set(keys(result)))
+        isempty(missing_fields) || throw(ArgumentError(
+            "unknown kalman field(s): " * join(sort(collect(missing_fields)), ", ")))
+        result = NamedTuple{Tuple(k for k in keys(result) if k in wanted)}(result)
+    end
     subject_matrices || return result
     return merge(result, (subject_matrices=_ctsem_subject_matrices(objective, trace),))
 end

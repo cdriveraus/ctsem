@@ -880,16 +880,12 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 # quantity (the filter's prior errors at the estimate) reached through the
 # backend-neutral accessors.
 .ctBackendResidCovStd <- function(object, digits = 3) {
-  kalman <- object$kalman
-  if (is.null(kalman)) {
-    kalman <- try(suppressMessages(ctKalmanArray(object, pointest = TRUE)), silent = TRUE)
-    if (inherits(kalman, "try-error")) return(NULL)
-  }
-  if (is.null(kalman$errprior)) return(NULL)
+  errors <- .ctFitPriorErrors(object)
+  if (is.null(errors)) return(NULL)
   observed <- .ctFitObservedY(object)
   obscov <- stats::cov(observed, use = "pairwise.complete.obs")
   standardise <- diag(1 / sqrt(diag(obscov)), ncol(obscov))
-  rescov <- stats::cov(matrix(kalman$errprior, ncol = ncol(obscov)),
+  rescov <- stats::cov(matrix(errors, ncol = ncol(obscov)),
     use = "pairwise.complete.obs")
   unavailable <- which(is.na(rescov))
   rescov[unavailable] <- 0
@@ -897,6 +893,8 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   out[unavailable] <- NA
   manifest <- .ctBackendModel(object)$manifestNames
   dimnames(out) <- list(manifest, manifest)
+  # Carried on the result so `print.summary` can say it without recomputing it.
+  attr(out, "conditioning") <- attr(errors, "conditioning")
   out
 }
 
@@ -965,7 +963,17 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
 
   if (isTRUE(residualcov)) {
     residCovStd <- .ctBackendResidCovStd(object, digits = digits)
-    if (!is.null(residCovStd)) out$residCovStd <- residCovStd
+    if (!is.null(residCovStd)) {
+      out$residCovStd <- residCovStd
+      # As a field rather than only an attribute on the matrix: attributes do
+      # not reliably survive the way a summary is assembled and printed, and
+      # this is not decoration. The augmented, Laplace and sampled routes
+      # condition the residuals on different things -- effects learned
+      # observation by observation, effects from a subject's whole record, and
+      # the posterior mean respectively -- so the same table means three
+      # different quantities and a reader comparing fits needs to know which.
+      out$residCovStdConditioning <- attr(residCovStd, "conditioning")
+    }
   }
 
   if (length(constrained$randomeffectlevels) > 1L) {
@@ -1082,4 +1090,72 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # from a normal approximation rather than from HMC.
   class(out) <- c("summary.ctBackendFit", "summary.ctStanFit")
   out
+}
+
+# Prior prediction errors, and what they were conditioned on.
+#
+# `errprior = y - yprior` is the only part of a filter pass any summary reads --
+# `.ctBackendResidCovStd()` here and `summary.ctStanFit()` are the two callers,
+# and both want exactly this. Caching the whole filter output for it was 18
+# arrays where one was wanted, and on the julia backend that is a bridge
+# transfer rather than a memory cost: `etacov` alone is `nrows * nlatent^2`.
+#' @keywords internal
+.ctBackendPriorErrors <- function(fit) {
+  observed <- .ctFitObservedY(fit)
+  # `y` from the engine is the *prior prediction*; the observations are already
+  # on this side. So only that one array need cross, not the covariances.
+  raw <- try(.ctBackendKalmanRaw(fit, as.numeric(fit$estimate$raw),
+    subjectmatrices = FALSE, fields = "y"), silent = TRUE)
+  if (inherits(raw, "try-error") || is.null(raw$y)) return(NULL)
+  # The engine hands this back manifest-major, and sometimes with a leading
+  # sample dimension, so the shape is rebuilt from the length rather than
+  # trusted. `.ctBackendPriorErrors` is checked against a full filter pass in
+  # the test suite, which is what pins the ordering.
+  # The engine stacks three predictions -- prior, updated, smoothed -- as
+  # `3 x nrows x nmanifest`. The first is the one a prior residual is defined
+  # against.
+  predicted <- raw$y
+  if (length(dim(predicted)) == 3L) {
+    predicted <- predicted[1L, , , drop = TRUE]
+  }
+  predicted <- matrix(as.numeric(predicted), nrow = nrow(observed))
+  if (!identical(dim(predicted), dim(observed))) return(NULL)
+  errors <- observed - predicted
+  attr(errors, "conditioning") <- .ctFitResidualConditioning(fit)
+  errors
+}
+
+# Whichever backend and route produced the fit, say what the residuals are
+# conditional on. The three answers are genuinely different quantities and a
+# reader comparing them across fits needs to know which they have.
+#' @keywords internal
+.ctFitResidualConditioning <- function(fit) {
+  sampled <- !is.null(fit$sample) ||
+    identical(fit$uncertainty$settings$method, "sampling")
+  laplace <- !is.null(fit$model_spec$laplace)
+  if (sampled && laplace) {
+    return(paste("at the posterior mean of the population parameters, with each",
+      "subject's random effects re-estimated from their whole record"))
+  }
+  if (laplace) {
+    return(paste("on each subject's random effects estimated from their whole",
+      "record, so these are smoothed rather than filtered residuals"))
+  }
+  paste("on random effects carried as states and learned observation by",
+    "observation, so early residuals for a subject are larger than late ones")
+}
+
+# The prior errors, from wherever this fit keeps them.
+#' @keywords internal
+.ctFitPriorErrors <- function(fit) {
+  if (!is.null(fit$priorerrors)) return(fit$priorerrors)
+  # Older objects, and the Stan path, keep a whole filter pass.
+  cached <- if (!is.null(fit$kalman)) fit$kalman else fit$stanfit$kalman
+  if (!is.null(cached$errprior)) {
+    errors <- matrix(cached$errprior, ncol = ncol(.ctFitObservedY(fit)))
+    attr(errors, "conditioning") <- .ctFitResidualConditioning(fit)
+    return(errors)
+  }
+  if (inherits(fit, "ctJuliaFit")) return(.ctBackendPriorErrors(fit))
+  NULL
 }

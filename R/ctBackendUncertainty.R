@@ -140,13 +140,25 @@
 
   if (draws == "imis") {
     if (is.null(control$imisMaxIter)) control$imisMaxIter <- 50
-    if (is.null(control$imisScaleInit)) control$imisScaleInit <- 1.1
-    if (is.null(control$imisTailScale)) control$imisTailScale <- 1.1
+    # Wider than the curvature says. The
+    # proposal starts from the Hessian covariance, which on a modest sample is
+    # *narrower* than the posterior -- the very thing importance sampling is
+    # being asked to correct -- and a proposal narrower than its target cannot
+    # correct it, because the region carrying the missing mass is never
+    # visited. This previously defaulted to 1.1, and returned standard errors
+    # within 10% of the Hessian's where the posterior was up to twice as wide.
+    if (is.null(control$imisScaleInit)) control$imisScaleInit <- 1.5
+    if (is.null(control$imisTailScale)) control$imisTailScale <- 1.2
+    # Normal, not t. See `imis_is`: the heavier-tailed proposal was measured
+    # and was worse at equal scale, and only competitive at a scale that
+    # collapsed the effective sample size.
+    if (is.null(control$imisDf)) control$imisDf <- Inf
     if (is.null(control$isESS)) control$isESS <- 100
     if (is.null(control$isitersize)) control$isitersize <- 1000
     is_res <- imis_is(lpgFunc, mu_hat = est, Sigma_hat = uncertaintyfit$cov,
       max_iter = control$imisMaxIter, scale_init = control$imisScaleInit,
-      tail_scale = control$imisTailScale, target_ess = control$isESS,
+      tail_scale = control$imisTailScale, df = control$imisDf,
+      target_ess = control$isESS,
       n_batch = control$isitersize, cl = NA, finishsamples = finishsamples,
       verbose = verbose > 0)
     samples <- is_res$theta
