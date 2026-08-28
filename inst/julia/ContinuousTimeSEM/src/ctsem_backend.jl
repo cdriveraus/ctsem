@@ -429,7 +429,8 @@ function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
     maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0,
     x_tol::Real=0.0, verbose::Bool=false, gradient_method=:adjoint,
     tune_chunks::Bool=true, lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY,
-    progress_overwrite::Bool=true, progress_callback=nothing)
+    progress_overwrite::Bool=true, progress_callback=nothing,
+    progress::Bool=verbose)
     start_values = collect(start)
     invalid_objective = floatmax(eltype(start_values)) / 1e8
     gradient_limit = sqrt(floatmax(eltype(start_values)))
@@ -459,7 +460,11 @@ function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
     # what say whether this is going anywhere: a log posterior that has stopped
     # moving while the gradient is still large is a fit in trouble, and that is
     # visible here long before the convergence flags are set.
-    reporter = CTSEMProgress(verbose; label="optimise",
+    # Progress is not verbosity. Someone watching a fit wants to know it is
+    # going somewhere; they do not thereby want the chunk-tuning timings and
+    # the model-shape summary that `verbose` also turns on. Separating them is
+    # what lets progress be the default without making the default noisy.
+    reporter = CTSEMProgress(progress; label="optimise",
         overwrite=progress_overwrite)
     # The trace records every iteration whatever `verbose` says: it costs a
     # push onto a vector, and a fit that turns out to have gone somewhere odd
@@ -513,7 +518,7 @@ function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
     # passing either.
     moved = isempty(minimizer) ? 0.0 : maximum(abs, minimizer .- start_values)
     gradient_norm = isempty(final.gradient) ? 0.0 : maximum(abs, final.gradient)
-    verbose && _progress_done(reporter,
+    progress && _progress_done(reporter,
         @sprintf("%d iterations", Optim.iterations(result)),
         @sprintf("logpost %.4f", final.value),
         @sprintf("|g| %.2e", gradient_norm))

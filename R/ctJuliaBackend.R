@@ -278,8 +278,19 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
     }
   }
 
-  JuliaConnectoR::juliaEval("using Pkg")
-  activate <- sprintf("Pkg.activate(%s)", .ctJuliaString(env_dir))
+  JuliaConnectoR::juliaEval("using Pkg, Logging")
+  # Quietly. `Pkg.activate()` announces itself, and the environment is ctsem's
+  # own vendored one -- the first thing a user saw was
+  # `Activating project at C:\Users\...\engine-4f87c9793c9f`, naming a cache
+  # path, followed by a three-line Pkg warning recommending `Pkg.resolve()` on a
+  # manifest they did not write. Alarming, and about a situation this code
+  # already handles: the resolve fallback below is exactly that recommendation,
+  # taken automatically.
+  #
+  # `io=devnull` silences the announcements and a NullLogger the warnings.
+  # Failures are exceptions rather than logs, so they still propagate to the
+  # fallback and to the user.
+  activate <- sprintf("Pkg.activate(%s; io=devnull)", .ctJuliaString(env_dir))
   # `Pkg.instantiate()` precompiles the environment, and then `using` precompiles
   # the engine again -- two full builds of the same package on every fresh
   # session with a cold cache. That was cheap until the engine started
@@ -287,9 +298,12 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
   # `JULIA_PKG_PRECOMPILE_AUTO` turns off only Pkg's automatic pass, so `using`
   # still builds whatever is stale, and `withenv` puts it back rather than
   # leaving the session's Pkg quietly reconfigured.
-  quiet_instantiate <- 'withenv("JULIA_PKG_PRECOMPILE_AUTO" => "0") do; Pkg.instantiate(); end'
+  quiet_instantiate <- paste0('withenv("JULIA_PKG_PRECOMPILE_AUTO" => "0") do; ',
+    'Pkg.instantiate(io=devnull); end')
+  silently <- function(code) paste0(
+    "Logging.with_logger(Logging.NullLogger()) do; ", code, "; end")
   instantiated <- tryCatch({
-    JuliaConnectoR::juliaEval(paste0(activate, "; ", quiet_instantiate))
+    JuliaConnectoR::juliaEval(silently(paste0(activate, "; ", quiet_instantiate)))
     TRUE
   }, error = function(e) FALSE)
   if (!instantiated) {
@@ -298,7 +312,8 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
     # back to a fresh resolve is better than refusing to run; the compat bounds
     # in Project.toml still apply.
     unlink(file.path(env_dir, "Manifest.toml"))
-    JuliaConnectoR::juliaEval(paste0(activate, "; Pkg.resolve(); ", quiet_instantiate))
+    JuliaConnectoR::juliaEval(silently(paste0(activate,
+      "; Pkg.resolve(io=devnull); ", quiet_instantiate)))
   }
   JuliaConnectoR::juliaEval("using ContinuousTimeSEM")
   .ct_julia_cache$project <- project
@@ -1536,7 +1551,16 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # occasional separate lines when the output is going to a file or a knitr
     # chunk, where a carriage return is not a cursor movement. `verbose = 2`
     # keeps the history too, because at that point the point is the history.
-    progress_overwrite = .ctProgressOverwrite(verbose))
+    progress_overwrite = .ctProgressOverwrite(verbose),
+    # On when someone is watching, which is not the same question as how
+    # verbose to be. A default fit used to print two lines and then nothing at
+    # all however long it ran, because progress was tied to `verbose` and
+    # `verbose` defaults to 0 -- so the reporting existed and almost nobody
+    # saw it. Keyed on the same console detection the overwriting uses, so a
+    # script or a knitr chunk still gets nothing, and overridable with
+    # `optimcontrol$progress`.
+    progress = isTRUE(.ctJuliaOr(backendcontrol$progress,
+      verbose > 0L || .ctProgressConsole())))
   # A live callback into R, for a front end that wants to draw the trace as it
   # happens rather than read it afterwards. The engine calls it on the same time
   # cadence as the printed line, not once per iteration: measured through

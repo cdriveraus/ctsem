@@ -42,6 +42,11 @@ ctFit(
   ctstanmodel
 )
 }
+\seealso{
+\code{\link{ctIdentify}} reports which parameters the data can inform,
+before a fit is spent finding out; \code{\link{ctTracePlot}} draws the
+optimisation trace a julia fit records.
+}
 \arguments{
 \item{datalong}{long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables,
 any time dependent (i.e. varying within subject) predictors,

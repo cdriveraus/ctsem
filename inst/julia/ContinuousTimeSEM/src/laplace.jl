@@ -2522,7 +2522,7 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0, x_tol::Real=0.0,
     verbose::Bool=false, nested_gradient::Bool=false, tune_chunks::Bool=true,
     lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY, progress_overwrite::Bool=true,
-    progress_callback=nothing)
+    progress_callback=nothing, progress::Bool=verbose)
     start_values = collect(Float64, start)
     invalid_objective = floatmax(Float64) / 1e8
     gradient_limit = sqrt(floatmax(Float64))
@@ -2558,7 +2558,8 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     # iteration that is re-solving every unit's mode from scratch costs an order
     # of magnitude more than one that is warm-starting, and the difference shows
     # up as a stall that the objective alone does not explain.
-    reporter = CTSEMProgress(verbose; label="optimise",
+    # See `ctsem_optimize`: progress is not verbosity.
+    reporter = CTSEMProgress(progress; label="optimise",
         overwrite=progress_overwrite)
     # Recorded every iteration whatever `verbose` says; see `ctsem_optimize`.
     # `inner` is traced too, because a Laplace fit that stalls usually stalls

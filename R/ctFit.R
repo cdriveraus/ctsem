@@ -78,6 +78,9 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' \code{ctStanFit} is maintained as a backward-compatible alias.
 #'
 #' @aliases ctStanFit
+#' @seealso \code{\link{ctIdentify}} reports which parameters the data can
+#' inform, before a fit is spent finding out; \code{\link{ctTracePlot}} draws
+#' the optimisation trace a julia fit records.
 #' @param datalong long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables,
 #' any time dependent (i.e. varying within subject) predictors,
 #' and any time independent (not varying within subject) predictors.

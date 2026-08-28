@@ -109,7 +109,8 @@
       "are still whatever the optimiser found, but the standard errors along ",
       "those directions are arbitrary rather than small or large, and any ",
       "interval built from them will be too. Parameters involved: ", involved,
-      ". See fit$identifiability.", call. = FALSE)
+      ". See fit$identifiability, and ctIdentify(data, model) to check this ",
+      "before spending a fit next time.", call. = FALSE)
   }
   if (!is.null(identify) && isTRUE(identify$negative > 0L)) {
     warning(identify$negative, " direction",

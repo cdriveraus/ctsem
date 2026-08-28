@@ -388,12 +388,18 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   
   out$logposterior=logposterior
   if(optimize) {
-    out$loglik=loglik
+    # Identical whenever there are no priors, and printing one number twice
+    # under two names invites the reader to look for a difference.
+    if(!isTRUE(all.equal(as.numeric(loglik), as.numeric(logposterior)))){
+      out$loglik=loglik
+    }
     out$npars = npars
     out$aic = aic
   }
 
-  if(optimize) out$nsamples <- nrow(object$stanfit$samples)
+  # `Number of samples` on an optimised fit meant the uncertainty draws, and
+  # read as MCMC samples. Named for what it is.
+  if(optimize) out$ndraws <- nrow(object$stanfit$samples)
 
   out <- lapply(out,function(x){
     if('matrix' %in% class(x)){
@@ -437,6 +443,7 @@ summaryCtStanFitLabel <- function(x){
     aic = 'AIC',
     logposterior = 'Log posterior',
     nsamples = 'Number of samples',
+    ndraws = 'Uncertainty draws',
     backendNote = 'Note',
     uncertaintyNote = 'Note',
     parmatNote = 'Note')

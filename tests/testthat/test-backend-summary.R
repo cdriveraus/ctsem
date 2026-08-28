@@ -169,7 +169,10 @@ test_that("summary reports fixed effects and system matrices, with intervals onl
   interval <- summary(uncertain)
   expect_identical(colnames(interval$popmeans), c("mean", "sd", "2.5%", "50%", "97.5%"))
   expect_true(all(c("Mean", "sd", "2.5%", "50%", "97.5%") %in% colnames(interval$parmatrices)))
-  expect_equal(interval$nsamples, 100)
+  # `ndraws`, not `nsamples`: an optimised fit never sampled, and reporting a
+  # sample count for uncertainty draws read as MCMC output.
+  expect_equal(interval$ndraws, 100)
+  expect_null(interval$nsamples)
   # The intervals come from the draws, so they must have width.
   expect_true(all(interval$popmeans[, "97.5%"] > interval$popmeans[, "2.5%"]))
 

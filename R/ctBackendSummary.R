@@ -1031,6 +1031,15 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     d$param <- NULL
     d$Mean <- round(d$Mean, digits)
     d <- d[!d$matrix %in% c("DIFFUSION", "T0VAR"), ]
+    # A model with no PARS still carries a 1x1 PARS matrix, which printed as a
+    # row of zeros among the estimates -- a matrix the user never mentioned,
+    # reported as though it were a result. Dropped when it says nothing.
+    parsrows <- d$matrix %in% "PARS"
+    if (any(parsrows)) {
+      values <- as.matrix(d[parsrows, intersect(names(d),
+        c("Mean", "sd", "2.5%", "50%", "97.5%")), drop = FALSE])
+      if (all(!is.finite(values) | values == 0)) d <- d[!parsrows, , drop = FALSE]
+    }
     out$parmatrices <- d
 
     # The note comes from the shared classifier (R/ctContextDependence.R)
@@ -1063,10 +1072,22 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   logposterior <- object$estimate$logposterior
   if (is.null(logposterior)) logposterior <- object$estimate$loglik
   out$logposterior <- logposterior
-  out$loglik <- object$estimate$loglik
+  # Without priors these are the same number, and printing one value twice
+  # under two names invites the reader to hunt for a difference that is not
+  # there. The likelihood is still on the fit object either way.
+  if (!isTRUE(all.equal(as.numeric(object$estimate$loglik),
+      as.numeric(logposterior)))) {
+    out$loglik <- object$estimate$loglik
+  }
   out$npars <- length(object$estimate$raw)
-  out$aic <- 2 * out$npars - 2 * out$loglik
-  if (has_posterior) out$nsamples <- nrow(object$estimate$rawposterior)
+  out$aic <- 2 * out$npars - 2 * object$estimate$loglik
+  # Named for what they are. "Number of samples" on an optimised fit meant the
+  # uncertainty draws and read as MCMC samples -- a fit that never sampled
+  # reporting a sample count.
+  if (has_posterior) {
+    out[[if (isTRUE(object$args$optimize %in% FALSE)) "nsamples" else "ndraws"]] <-
+      nrow(object$estimate$rawposterior)
+  }
   out$uncertaintyNote <- if (has_posterior) {
     paste0("Julia backend; intervals from ctOptimUncertainty(uncertainty='",
       object$uncertainty$settings$method, "') draws pushed through the transforms.")
