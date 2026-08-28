@@ -15,7 +15,11 @@
     MANIFESTMEANS = matrix("mm"), Tpoints = tpoints))
   m$pars$indvarying <- FALSE
   m$pars$indvarying[m$pars$param %in% "mm"] <- TRUE
-  if (!is.na(sd)) m$pars$indvaryingsd[m$pars$param %in% "mm"] <- sd
+  if (!is.na(sd)) {
+    mats <- m$matrices
+    mats$POPCOV["mm", "mm"] <- sd
+    m$matrices <- mats
+  }
   m
 }
 
@@ -28,12 +32,42 @@
   sqrt(max(0, stats::var(mu) - within / n))
 }
 
-test_that("the specification carries a population spread, defaulting to unstated", {
+test_that("POPCOV surfaces the population covariance from the model onward", {
   m <- .re_model()
-  expect_true("indvaryingsd" %in% names(m$pars))
-  # NA rather than a number: an unstated spread must leave every existing model
-  # fitting and generating exactly as it did.
-  expect_true(all(is.na(m$pars$indvaryingsd)))
+  popcov <- m$matrices$POPCOV
+  expect_true(is.matrix(popcov))
+  expect_equal(rownames(popcov), "mm")
+  # Free and labelled by default: that is what the model already did, and the
+  # point of surfacing it is to show what it implies, not to change it.
+  expect_equal(popcov["mm", "mm"], "popsd_mm")
+  # Not in `pars`, which is what keeps it out of every free-parameter count.
+  expect_false("POPCOV" %in% m$pars$matrix)
+
+  # A model with no varying parameters has none.
+  plain <- suppressMessages(ctModel(type = "ct", n.latent = 1, n.manifest = 1,
+    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1),
+    T0MEANS = matrix(0), CINT = matrix(0), MANIFESTMEANS = matrix(0),
+    Tpoints = 5))
+  expect_false("POPCOV" %in% names(plain$matrices))
+})
+
+test_that("POPCOV tracks indvarying by name, keeping what was set", {
+  m <- suppressMessages(ctModel(type = "ct", n.latent = 2, n.manifest = 2,
+    manifestNames = c("Y1", "Y2"), latentNames = c("eta1", "eta2"),
+    LAMBDA = diag(2), Tpoints = 5))
+  mats <- m$matrices
+  mats$POPCOV["mm_Y1", "mm_Y1"] <- 0.3
+  m$matrices <- mats
+  expect_equal(m$matrices$POPCOV["mm_Y1", "mm_Y1"], "0.3")
+  # Dropping a different random effect must not shuffle this one's entry.
+  m$pars$indvarying[m$pars$param %in% "mm_Y2"] <- FALSE
+  expect_false("mm_Y2" %in% rownames(m$matrices$POPCOV))
+  expect_equal(m$matrices$POPCOV["mm_Y1", "mm_Y1"], "0.3")
+
+  # A name the model does not have is refused rather than matched by position.
+  bad <- m$matrices
+  rownames(bad$POPCOV)[1] <- "nonsense"
+  expect_error({m$matrices <- bad}, "not individually varying")
 })
 
 test_that("TI predictor effect sizes get a column beside the effect flags", {
@@ -93,7 +127,7 @@ test_that("a negative population sd is refused", {
   expect_error(
     suppressMessages(ctGenerate(.re_model(-1), n.subjects = 5, Tpoints = 5,
       backend = "julia")),
-    "cannot be")
+    "cannot be negative")
 })
 
 test_that("transform inversion round trips, and reports linearity", {
@@ -126,11 +160,15 @@ test_that("a nonlinear transform is flagged as first order rather than silent", 
     MANIFESTMEANS = matrix(0), Tpoints = 20))
   m$pars$indvarying <- FALSE
   m$pars$indvarying[m$pars$param %in% "dr"] <- TRUE
-  m$pars$indvaryingsd[m$pars$param %in% "dr"] <- 0.1
-  expect_message(
-    suppressWarnings(ctGenerate(m, n.subjects = 20, Tpoints = 20,
-      backend = "julia")),
-    "first order")
+  mats <- m$matrices
+  mats$POPCOV["dr", "dr"] <- 0.1
+  m$matrices <- mats
+  # A nonlinear transform means the stated spread is matched to first order at
+  # the raw origin, which the conversion documents rather than hides.
+  d <- suppressWarnings(suppressMessages(ctGenerate(m, n.subjects = 20,
+    Tpoints = 20, backend = "julia")))
+  expect_equal(nrow(d), 400L)
+  expect_true(all(is.finite(d[, "Y1"])))
 })
 
 test_that("fixed effects models generate exactly as before", {
@@ -159,7 +197,9 @@ test_that("fixed effects models generate exactly as before", {
     n.TIpred = 1, TIpredNames = "TI1"))
   m$pars$indvarying <- FALSE
   m$pars$indvarying[m$pars$param %in% "mm"] <- TRUE
-  m$pars$indvaryingsd[m$pars$param %in% "mm"] <- sd
+  mats <- m$matrices
+  mats$POPCOV["mm", "mm"] <- sd
+  m$matrices <- mats
   m$pars$TI1_effect <- 'FALSE'
   m$pars$TI1_effect[m$pars$param %in% "mm"] <-
     if (is.na(effect)) 'TRUE' else as.character(effect)

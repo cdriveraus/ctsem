@@ -148,3 +148,22 @@
   model[["POPCOV"]] <- current
   model
 }
+
+# The derivative of a varying parameter's own transform, which converts between
+# the scale a POPCOV entry is written on and the state scale the augmented
+# T0VAR holds.
+#
+# One for anything it cannot work out, which leaves the entry on the state scale
+# rather than guessing at a conversion.
+#' @keywords internal
+.ctJuliaPopCovSlope <- function(model, param) {
+  if (is.na(param)) return(1)
+  pars <- model$pars
+  row <- which(!is.na(pars$param) & as.character(pars$param) == as.character(param))
+  if (!length(row)) return(1)
+  transform <- as.character(pars$transform[row[1L]])
+  if (is.na(transform) || !nzchar(transform)) return(1)
+  slope <- .ctGenerateTransformSlope(transform, 0)
+  if (!is.finite(slope) || slope == 0) return(1)
+  abs(slope)
+}

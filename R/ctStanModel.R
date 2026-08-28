@@ -393,18 +393,6 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
   ctspec$sdscale<-NA
   ctspec$sdscale[is.na(ctspec$value)]<-1
 
-  # How large the individual differences actually are, for generation.
-  #
-  # `indvarying` says a parameter varies and `sdscale` scales its *prior*;
-  # neither is a size. Fitting never needs one -- the population standard
-  # deviation is itself estimated -- but generating data does, and there was
-  # nowhere to put it. NA means "not stated", and generation then draws the
-  # spread from the same prior a fit would use, so every existing model keeps
-  # behaving exactly as it does. Stated, it is a standard deviation on the
-  # parameter's *natural* scale, matching `TRAITVAR` and `MANIFESTTRAITVAR` in
-  # `ctGenerate()`'s own path rather than the unconstrained scale the engine
-  # works on. See `.ctGenerateRandomRaw()`.
-  ctspec$indvaryingsd <- NA_real_
 
   # One sdscale per id element, defaulting to 1. `sdscale` is the subject
   # level's; each grouping level above it gets `sdscale_<idname>`, the same

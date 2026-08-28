@@ -19,7 +19,7 @@
 # The natural scale of the parameter, matching `ctGenerate()`'s own path, where
 # `TRAITVAR`, `MANIFESTTRAITVAR` and `TIPREDEFFECT` are all natural-scale
 # matrices applied directly to CINT and MANIFESTMEANS. Someone who writes
-# `TRAITVAR = 0.3` there and `indvaryingsd = 0.3` here should get the same
+# `TRAITVAR = 0.3` there and `POPCOV[p, p] = 0.3` here should get the same
 # spread, and asking them to think in unconstrained units for one path and not
 # the other would be gratuitous.
 #
@@ -130,9 +130,7 @@
 .ctGenerateRandomRaw <- function(model, spec, raw, quiet = FALSE) {
   effects <- spec$random_effects
   pars <- model$pars
-  stated <- character()
-  approximate <- character()
-  unreachable <- character()
+  drawn <- character()
 
   # The population mean first, because the transform's slope is taken there and
   # the answer depends on where "there" is. A varying parameter stays free
@@ -154,76 +152,28 @@
     if (is.finite(value)) raw[index] <- value
   }
 
-  if (!is.null(effects) && nrow(effects) && !is.null(pars$indvaryingsd)) {
-    sds <- effects[as.character(effects$type) == "sd", , drop = FALSE]
-    for (i in seq_len(nrow(sds))) {
-      param <- as.character(sds$param[i])
-      row <- which(!is.na(pars$param) & as.character(pars$param) == param)
-      if (!length(row)) next
-      target <- suppressWarnings(as.numeric(pars$indvaryingsd[row[1L]]))
-      if (is.finite(target) && target < 0) {
-        stop("indvaryingsd for '", param, "' is negative. A population ",
-          "standard deviation cannot be.", call. = FALSE)
-      }
-      index <- as.integer(sds$parameter[i])
+  # Population spreads.
+  #
+  # A cell the model fixed in POPCOV arrives in the prepared table as a value
+  # with no parameter number, so there is nothing here to set -- the engine
+  # already has it. A free one is drawn from its own prior: `rawpopsdbase` is
+  # standard normal and `sdscale` sits inside the slot's transform, so one
+  # standard normal here *is* the prior draw, scaled as the model asked.
+  if (!is.null(effects) && nrow(effects)) {
+    for (i in seq_len(nrow(effects))) {
+      index <- as.integer(effects$parameter[i])
       if (is.na(index) || index < 1L || index > length(raw)) next
-      if (!is.finite(target)) {
-        # Unstated: draw the spread from its own prior. `rawpopsdbase` is
-        # standard normal and the slot's transform carries `sdscale`, so a
-        # standard normal here *is* the prior draw.
-        raw[index] <- stats::rnorm(1)
-        next
-      }
-
-      # The requested spread is on the parameter's natural scale; the engine
-      # holds it on the raw scale. The transform's slope at the population mean
-      # converts between them.
-      transform <- as.character(pars$transform[row[1L]])
-      slope <- if (is.na(transform) || !nzchar(transform)) 1 else
-        .ctGenerateTransformSlope(transform,
-          .ctGenerateMeanRaw(spec, raw, param))
-      if (!is.finite(slope) || slope == 0) slope <- 1
-      rawsd <- target / abs(slope)
-
-      # And the population SD is itself transformed, so the raw entry is the
-      # inverse of *that* transform at the raw-scale spread.
-      table <- spec$parameter_table
-      cell <- which(!is.na(table$parnumber) &
-        as.integer(table$parnumber) == index)
-      sdtransform <- if (length(cell)) as.character(table$transform[cell[1L]]) else NA
-      value <- if (is.na(sdtransform) || !nzchar(sdtransform)) rawsd else
-        .ctGenerateTransformInvert(sdtransform, rawsd, index)
-      if (!is.finite(value)) {
-        unreachable <- c(unreachable, sprintf("%s=%s", param, format(target)))
-        next
-      }
-      raw[index] <- value
-      stated <- c(stated, sprintf("%s=%s", param, format(target)))
-      # Linear means exact. Anything else is the delta method, and saying which
-      # is the difference between a documented approximation and a silent one.
-      if (!.ctGenerateTransformIsLinear(transform)) {
-        approximate <- c(approximate, param)
-      }
+      raw[index] <- stats::rnorm(1)
+      drawn <- c(drawn, as.character(effects$param[i]))
     }
   }
 
   raw <- .ctGenerateTiEffectRaw(model, spec, raw)
 
-  if (!quiet && length(unreachable)) {
-    warning("A population standard deviation was outside the range its ",
-      "transform can produce and was left at its default: ",
-      paste(unreachable, collapse = ", "), ".", call. = FALSE)
-  }
-  if (!quiet && length(approximate)) {
-    message("Population spread for ", paste(approximate, collapse = ", "),
-      " is set to first order: these parameters have nonlinear transforms, so ",
-      "the requested standard deviation is matched at the population mean ",
-      "rather than exactly, and the induced population distribution is not ",
-      "normal on the natural scale. Measure what was produced if it matters.")
-  }
-  if (!quiet && length(stated)) {
-    message("Population standard deviations set for generation: ",
-      paste(stated, collapse = ", "), ".")
+  if (!quiet && length(drawn)) {
+    message("Population spread drawn from the prior for ",
+      paste(unique(drawn), collapse = ", "),
+      ". Set model$matrices$POPCOV to choose it.")
   }
   raw
 }

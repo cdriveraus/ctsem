@@ -1068,14 +1068,50 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     col <- row
     index <- which(table$matrix == "T0VAR" & table$row == row & table$col == col)
     length(index) == 1L || stop("Internal Julia augmentation error: missing T0VAR entry.", call. = FALSE)
-    next_parameter <- next_parameter + 1L
-    table$param[index] <- sprintf("julia_popcov_%d_%d", row, col)
-    table$parnumber[index] <- next_parameter
-    table$value[index] <- NA_real_
-    table$transform[index] <- sprintf("%.17g * (1e-10 + %.17g * log1p_exp(2 * param[%d] - 1))",
-      t0means_state_scale[position], random_sd_scale[position], next_parameter)
+    # What the model says about this population sd, if anything. POPCOV is the
+    # specification surface (see R/ctModelPopCov.R); a number there fixes the
+    # cell and a label names the parameter, in place of the positional
+    # `julia_popcov_i_j` this used to invent.
+    spec <- .ctModelPopCovEntry(model, varying_names[position])
+    fixedvalue <- .ctModelPopCovValue(spec)
+    if (is.finite(fixedvalue)) {
+      if (fixedvalue < 0) {
+        stop("POPCOV['", varying_names[position], "', '",
+          varying_names[position], "'] is ", fixedvalue,
+          ". A population standard deviation cannot be negative.",
+          call. = FALSE)
+      }
+      # Converted from the parameter's natural scale to the state scale this
+      # cell is in.
+      #
+      # The free branch produces `k_i * raw_sd`, and the natural-scale spread is
+      # `slope * raw_sd` where `slope` is the derivative of the parameter's own
+      # transform -- for a mean parameter, `10 * param`, that is the constant
+      # 10. So a requested natural spread `v` needs `v * k_i / slope` here.
+      # Getting this wrong is silent and large: placing `v` directly produced a
+      # spread ten times what was asked for.
+      #
+      # Exact for a linear transform, which is every mean parameter. For a
+      # nonlinear one the slope depends on the population mean and this is a
+      # first-order match at the raw origin.
+      table$param[index] <- NA_character_
+      table$parnumber[index] <- NA_integer_
+      table$value[index] <- fixedvalue *
+        t0means_state_scale[position] / .ctJuliaPopCovSlope(model,
+          varying_names[position])
+      table$transform[index] <- NA_character_
+    } else {
+      next_parameter <- next_parameter + 1L
+      table$param[index] <- if (is.na(spec) || !nzchar(spec))
+        sprintf("julia_popcov_%d_%d", row, col) else spec
+      table$parnumber[index] <- next_parameter
+      table$value[index] <- NA_real_
+      table$transform[index] <- sprintf("%.17g * (1e-10 + %.17g * log1p_exp(2 * param[%d] - 1))",
+        t0means_state_scale[position], random_sd_scale[position], next_parameter)
+    }
     covariance_rows[[length(covariance_rows) + 1L]] <- data.frame(
-      row = row, col = col, parameter = next_parameter,
+      row = row, col = col,
+      parameter = if (is.finite(fixedvalue)) NA_integer_ else next_parameter,
       type = "sd", param = varying_names[position],
       # The factor folded into the sd transform above, kept so the summary can
       # divide it back out: T0cov is in state units, and the random-effects
@@ -1090,13 +1126,32 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       col <- augmented_indices[column_position]
       index <- which(table$matrix == "T0VAR" & table$row == row & table$col == col)
       length(index) == 1L || stop("Internal Julia augmentation error: missing T0VAR entry.", call. = FALSE)
-      next_parameter <- next_parameter + 1L
-      table$param[index] <- sprintf("julia_popcov_%d_%d", row, col)
-      table$parnumber[index] <- next_parameter
-      table$value[index] <- NA_real_
-      table$transform[index] <- sprintf("2 / (1 + exp(-param[%d])) - 1", next_parameter)
+      spec <- .ctModelPopCovEntry(model, varying_names[row_position],
+        varying_names[column_position])
+      fixedvalue <- .ctModelPopCovValue(spec)
+      if (is.finite(fixedvalue)) {
+        if (abs(fixedvalue) > 1) {
+          stop("POPCOV['", varying_names[row_position], "', '",
+            varying_names[column_position], "'] is ", fixedvalue,
+            ". Off-diagonal entries are correlations and must lie in [-1, 1].",
+            call. = FALSE)
+        }
+        table$param[index] <- NA_character_
+        table$parnumber[index] <- NA_integer_
+        table$value[index] <- fixedvalue
+        table$transform[index] <- NA_character_
+      } else {
+        next_parameter <- next_parameter + 1L
+        table$param[index] <- if (is.na(spec) || !nzchar(spec))
+          sprintf("julia_popcov_%d_%d", row, col) else spec
+        table$parnumber[index] <- next_parameter
+        table$value[index] <- NA_real_
+        table$transform[index] <- sprintf("2 / (1 + exp(-param[%d])) - 1", next_parameter)
+      }
       covariance_rows[[length(covariance_rows) + 1L]] <- data.frame(
-        row = row, col = col, parameter = next_parameter, type = "correlation",
+        row = row, col = col,
+        parameter = if (is.finite(fixedvalue)) NA_integer_ else next_parameter,
+        type = "correlation",
         param = paste0(varying_names[row_position], "__", varying_names[column_position]),
         scale = 1
       )
