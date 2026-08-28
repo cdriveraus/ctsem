@@ -44,6 +44,32 @@
   defaults <- .ctGenerateDefaults()
   pars <- model$pars
   free <- which(is.na(pars$value))
+  # An individually varying parameter must stay *free*, and this is the whole
+  # reason generation with random effects did not work.
+  #
+  # Giving it a value makes it fixed, and a fixed parameter is not augmented:
+  # the state that would have carried its individual deviations is never
+  # created, its population standard deviation never becomes an entry of T0VAR,
+  # and the prepared model ends up with no free parameters at all. The symptom
+  # was `npar = -Inf` and a between-subject spread that ignored every number the
+  # user set, because there was no slot left to write one into.
+  #
+  # So the intended value is recorded rather than assigned, and applied later to
+  # the *population mean* slot of the raw vector instead.
+  varying <- if (is.null(pars$indvarying)) rep(FALSE, nrow(pars)) else
+    !is.na(pars$indvarying) & pars$indvarying
+  intended <- stats::setNames(numeric(0), character(0))
+  for (i in free[varying[free]]) {
+    matrix_name <- as.character(pars$matrix[i])
+    spec <- defaults[[matrix_name]]
+    value <- if (is.null(spec)) 0 else
+      if (isTRUE(pars$row[i] == pars$col[i])) spec$diagonal else spec$offdiagonal
+    if (!is.na(pars$param[i])) {
+      intended[[as.character(pars$param[i])]] <- value
+    }
+  }
+  free <- free[!varying[free]]
+  attr(model, "ctGenerateMeans") <- intended
   if (!length(free)) return(model)
   filled <- character()
   for (i in free) {
@@ -101,17 +127,7 @@
       call. = FALSE)
   }
   model <- .ctGenerateResolveFree(model, quiet = quiet)
-  # Individual differences are not generated here yet. Silently producing data
-  # with no between-subject variation from a model that asks for it would be a
-  # wrong answer rather than a missing feature, so it is refused.
   varying <- !is.null(model$pars$indvarying) && any(model$pars$indvarying)
-  if (varying) {
-    stop("Generating from a model with individually varying parameters is not ",
-      "supported through backend='julia' yet: the specification does not carry ",
-      "the population distribution generation would have to draw from. Set ",
-      "indvarying to FALSE to generate a fixed-effects dataset, or use ",
-      "backend='r'.", call. = FALSE)
-  }
 
   skeleton <- .ctGenerateSkeleton(model, n.subjects, times)
   spec <- .ctJuliaPrepare(skeleton, model, project = project, priors = FALSE,
@@ -124,6 +140,15 @@
   # model legitimately has no free parameters, so a single unread element is
   # sent instead of nothing.
   raw <- if (npar < 1L) 0 else numeric(npar)
+  # Individual differences need no drawing machinery here: with the augmented
+  # layout a varying parameter *is* a state, its population standard deviation
+  # is an ordinary entry of T0VAR, and the engine's own T0 draw produces the
+  # between-subject spread. All that is required is putting the right number in
+  # the right slot -- and leaving the slot alone where the model states nothing,
+  # which is what makes the prior the fallback.
+  if (varying && npar >= 1L) {
+    raw <- .ctGenerateRandomRaw(model, spec, raw, quiet = quiet)
+  }
 
   nmanifest <- length(model$manifestNames)
   base <- matrix(stats::rnorm(nmanifest * nrow(skeleton)), nmanifest,

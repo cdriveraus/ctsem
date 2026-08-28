@@ -318,20 +318,33 @@ ctStanModelIntOverPop <- function(m){
       t0m$transform <- 'param'
       t0m$indvarying <- TRUE
       
-      #new t0var 
-      t0v <- m$pars[m$pars$matrix %in% 'T0VAR' & m$pars$row==1 & m$pars$col==1,,drop=FALSE]
+      #new t0var
+      # Built by copying a template row and assigning by *name*, not by
+      # position. The positional form -- c('T0VAR',ri,ci,NA,0,NA,FALSE,1,...) --
+      # encoded the column order of `pars` as a literal, so adding any column
+      # anywhere before the tipred block silently misaligned every field and
+      # rbind warned about a length mismatch rather than failing. Copying the
+      # template also inherits whatever columns exist without naming them.
+      template <- m$pars[m$pars$matrix %in% 'T0VAR' & m$pars$row==1 & m$pars$col==1,,drop=FALSE]
+      newt0v <- list()
       for(ri in 1:(m$n.latent+nindvaryingsmall)){
         for(ci in 1:(m$n.latent+nindvaryingsmall)){
           if(!(ri %in% t0mnotvarying && ci %in% t0mnotvarying)){
-            t0v <- rbind(t0v,c('T0VAR',ri,ci,
-              NA,  #param
-              0,  #value
-              NA, #transform,
-              FALSE,1,rep(FALSE,m$n.TIpred)))
+            row <- template
+            row$matrix <- 'T0VAR'
+            row$row <- ri
+            row$col <- ci
+            row$param <- NA
+            row$value <- 0
+            row$transform <- NA
+            row$indvarying <- FALSE
+            row$sdscale <- 1
+            if(m$n.TIpred > 0) row[,paste0(m$TIpredNames,'_effect')] <- FALSE
+            newt0v[[length(newt0v)+1L]] <- row
             m$pars <- m$pars[!(m$pars$matrix %in% 'T0VAR' & m$pars$row==ri & m$pars$col==ci),,drop=FALSE] #remove old t0var line
           }
         }}
-      t0v=t0v[-1,,drop=FALSE] #remove initialisation row
+      t0v <- do.call(rbind, newt0v)
       
       
       
