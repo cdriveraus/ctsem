@@ -163,7 +163,13 @@ Julia session before fitting.}
 regarding warmup / sampling behaviour. Unless specified, values used are:
 list(adapt_delta = .8, adapt_window=2, max_treedepth=10, adapt_init_buffer=2, stepsize = .001)}
 
-\item{verbose}{Integer from 0 to 2. Higher values print more information during model fit -- for debugging.}
+\item{verbose}{Integer from 0 to 2. 1 reports progress while the model
+fits; 2 additionally keeps every progress line rather than overwriting one
+in place, and prints more for debugging. Whether overwriting is possible is
+detected from where the output is going; set
+\code{options(ctsem.progress.overwrite = FALSE)} if that detection is wrong
+for your front end -- a Shiny app capturing stdout, for instance -- or
+\code{TRUE} to force it on.}
 
 \item{vb}{Logical. Use variational Bayes algorithm from stan? Only kind of working, not recommended.}
 

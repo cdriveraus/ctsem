@@ -194,7 +194,12 @@ test_that("verbose reports the optimiser trace and the inner solve", {
   # The inner solve is part of the objective, so its status belongs in the
   # trace rather than only on the fit object.
   expect_true(any(grepl("Laplace: inner modes", chatter, fixed = TRUE)))
-  expect_true(any(grepl("Iter", chatter, fixed = TRUE)))
+  # The progress reporter replaced Optim's own trace, so the assertion is on
+  # what it emits: a labelled line carrying the objective. `Iter` was the old
+  # format's column heading and says nothing about whether the fit is going
+  # anywhere.
+  expect_true(any(grepl("optimise", chatter, fixed = TRUE)))
+  expect_true(any(grepl("logpost", chatter, fixed = TRUE)))
 
   quiet <- capture.output(suppressMessages(ctFit(dat, model, backend = "julia",
     intoverpop = "laplace", verbose = 0, optimcontrol = list(estonly = TRUE))))

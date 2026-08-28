@@ -156,7 +156,13 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' the integration is nested within an Euler like loop.
 #' Smaller values may offer greater accuracy, but are slower and not always necessary. Given the exponential integration,
 #' linear model elements are fit exactly with only a single step.
-#' @param verbose Integer from 0 to 2. Higher values print more information during model fit -- for debugging.
+#' @param verbose Integer from 0 to 2. 1 reports progress while the model
+#'   fits; 2 additionally keeps every progress line rather than overwriting one
+#'   in place, and prints more for debugging. Whether overwriting is possible is
+#'   detected from where the output is going; set
+#'   \code{options(ctsem.progress.overwrite = FALSE)} if that detection is wrong
+#'   for your front end -- a Shiny app capturing stdout, for instance -- or
+#'   \code{TRUE} to force it on.
 #' @param stationary Logical. If TRUE, T0VAR and T0MEANS input matrices are ignored,
 #' the parameters are instead fixed to long run expectations. More control over this can be achieved
 #' by instead setting parameter names of T0MEANS and T0VAR matrices in the input model to 'stationary', for

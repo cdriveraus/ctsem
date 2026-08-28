@@ -125,7 +125,11 @@
 #'   start from a conditional covariance that is exact for a linear model, so
 #'   replacing one with an estimate from a few hundred draws can add more noise
 #'   than it removes.
-#' @param verbose Print the sampler's configuration before it starts.
+#' @param verbose Print the sampler's configuration before it starts, and
+#'   report progress while it runs. Progress overwrites a single line where the
+#'   output is going to a console and prints occasional separate lines where it
+#'   is not; set \code{options(ctsem.progress.overwrite = FALSE)} if that
+#'   detection is wrong for your front end, or \code{TRUE} to force it on.
 #'
 #' @return The fit, with \code{estimate$rawposterior} holding the draws and
 #'   \code{$sample} holding the diagnostics: split R-hat and effective sample
@@ -207,7 +211,7 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
     arguments$hessian <- JuliaConnectoR::juliaPut(as.matrix(hessian))
   }
 
-  arguments$progress_overwrite <- interactive() && !isTRUE(verbose)
+  arguments$progress_overwrite <- .ctProgressOverwrite(verbose)
   result <- .ctBackendWithMaxChunks(cores,
     JuliaConnectoR::juliaGet(do.call(module$ctsem_sample, arguments)))
   .ctBackendSampleAssemble(fit, result, npar, saveEffects, chains, warmup,
@@ -431,7 +435,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
     nchains = as.integer(chains), nwarmup = warmup, ndraws = draws,
     maxdepth = maxdepth, target_accept = target, seed = seed,
     verbose = verbose > 0L,
-    progress_overwrite = interactive() && verbose < 2L)
+    progress_overwrite = .ctProgressOverwrite(verbose))
   # Sampling targets, when asked for. Left at zero the sampler takes exactly the
   # draws it was told to; set, it keeps going until the effective sample size is
   # there or the budget runs out, which is usually what a user wanted from a
@@ -440,6 +444,12 @@ print.ctSampleDiagnostics <- function(x, ...) {
   if (!is.null(control$meanEss)) arguments$mean_ess <- as.numeric(control$meanEss)
   if (!is.null(control$maxDraws)) arguments$max_draws <- as.integer(control$maxDraws)
   if (!is.null(control$rhatTarget)) arguments$rhat_target <- as.numeric(control$rhatTarget)
+  # `settleTol` ends warmup early once the metric stops moving between windows.
+  # It is off by default and should stay off: measured on the N=200 augmented
+  # marginal route it cost 1795 s for min ESS 142.8 where the fixed schedule
+  # spent 559 s for min ESS 246.3, a factor of 5.5 against. A settled metric is
+  # not a good metric, and the sampling phase pays for the shortened warmup on
+  # every draw.
   if (!is.null(control$settleTol)) arguments$settle_tol <- as.numeric(control$settleTol)
   if (!is.null(hessian)) {
     arguments$hessian <- JuliaConnectoR::juliaPut(as.matrix(hessian))

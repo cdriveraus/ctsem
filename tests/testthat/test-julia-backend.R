@@ -49,11 +49,24 @@ test_that("Julia backend rejects unsupported capabilities before session startup
     MANIFESTMEANS = matrix(0, 1, 1), T0VAR = matrix(1, 1, 1),
     T0MEANS = matrix(0, 1, 1)
   )
-  dat <- data.frame(id = 1, time = 0, Y1 = 0)
-  expect_error(
-    suppressMessages(ctFit(dat, model, backend = "julia", optimize = FALSE)),
-    "optimize=FALSE"
-  )
+  # Overriding one entry at a time, rather than passing through `...`, because
+  # `...` would supply a second value for a formal the defaults already name.
+  unsupported <- function(...) do.call(ctsem:::.ctJuliaUnsupported,
+    utils::modifyList(list(model = model, optimize = TRUE, priors = FALSE,
+      intoverpop = FALSE, vb = FALSE, gendata = FALSE, stanmodeltext = NA,
+      compileArgs = list(), forcerecompile = FALSE), list(...)))
+  binary <- model
+  binary$manifesttype <- 1L
+  expect_error(unsupported(vb = TRUE), "variational Bayes")
+  expect_error(unsupported(gendata = TRUE), "generation")
+  expect_error(unsupported(forcerecompile = TRUE), "Stan compilation controls")
+  expect_error(unsupported(model = binary), "non-Gaussian manifest variables")
+
+  # `optimize = FALSE` used to be on that list and is not any more: the engine
+  # has its own sampler, so the combination has to pass the capability check
+  # rather than be rejected by it. Asserting the absence of the old error keeps
+  # the lifted limitation from quietly coming back.
+  expect_no_error(unsupported(optimize = FALSE))
 })
 
 test_that("Julia parameter preparation emits state and Jacobian expressions", {

@@ -47,7 +47,11 @@ start from a conditional covariance that is exact for a linear model, so
 replacing one with an estimate from a few hundred draws can add more noise
 than it removes.}
 
-\item{verbose}{Print the sampler's configuration before it starts.}
+\item{verbose}{Print the sampler's configuration before it starts, and
+report progress while it runs. Progress overwrites a single line where the
+output is going to a console and prints occasional separate lines where it
+is not; set \code{options(ctsem.progress.overwrite = FALSE)} if that
+detection is wrong for your front end, or \code{TRUE} to force it on.}
 }
 \value{
 The fit, with \code{estimate$rawposterior} holding the draws and

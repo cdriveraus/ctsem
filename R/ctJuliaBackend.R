@@ -6,6 +6,56 @@
 .ct_julia_cache <- new.env(parent = emptyenv())
 .ct_julia_cache$objectives <- new.env(parent = emptyenv())
 .ctJuliaOr <- function(x, default) if (is.null(x)) default else x
+
+# Can a carriage return move the cursor here?
+#
+# The progress reporter overwrites one line in place, which requires that `\r`
+# reaches something that treats it as a cursor movement. A console does; a log
+# file, a knitr chunk and a captured stream do not, and there the same updates
+# have to be rarer and on their own lines or the output becomes one long line of
+# accumulated garbage.
+#
+# `interactive()` was the test and is the wrong one: it asks whether a human is
+# at a prompt, not whether output reaches a console. Under Shiny it is TRUE
+# while stdout is being captured for a log pane -- the case that motivated
+# replacing it -- and it is FALSE in a plain `R -f` run whose output is going
+# straight to a terminal that handles `\r` perfectly well.
+#
+# So: detect the cases that are actually known to capture, and let
+# `options(ctsem.progress.overwrite = )` settle it outright for anything this
+# does not know about. A front end that captures output should set it to FALSE
+# once at startup rather than passing an argument through every fitting call.
+#' @keywords internal
+.ctProgressConsole <- function() {
+  option <- getOption("ctsem.progress.overwrite")
+  if (is.logical(option) && length(option) == 1L && !is.na(option)) return(option)
+  # Inside a Shiny session: a non-NULL reactive domain is the reliable signal,
+  # and reaching it through the namespace keeps shiny a suggestion rather than
+  # a dependency.
+  if ("shiny" %in% loadedNamespaces()) {
+    domain <- try(get("getDefaultReactiveDomain",
+      envir = asNamespace("shiny"))(), silent = TRUE)
+    if (!inherits(domain, "try-error") && !is.null(domain)) return(FALSE)
+  }
+  # sink() and capture.output() divert stdout to a connection; knitr collects
+  # chunk output. Both keep the carriage return as a character.
+  if (sink.number() > 0L) return(FALSE)
+  if (isTRUE(getOption("knitr.in.progress"))) return(FALSE)
+  interactive()
+}
+
+# Whether to overwrite, which is the console question and the history question
+# together. `verbose >= 2` asks to keep every update, and at that point the
+# history is the reason it was turned on.
+#' @keywords internal
+.ctProgressOverwrite <- function(verbose = 0) {
+  # `verbose` is a level on the fitting paths and a flag on `ctSample()`; a
+  # flag means level one, which still overwrites.
+  level <- if (is.numeric(verbose) && length(verbose) == 1L && !is.na(verbose)) {
+    verbose
+  } else if (isTRUE(verbose)) 1 else 0
+  .ctProgressConsole() && level < 2
+}
 .ctJuliaString <- function(value) {
   value <- as.character(value)
   if (length(value) != 1L || is.na(value) || grepl('"', value, fixed = TRUE) ||
@@ -1467,7 +1517,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # occasional separate lines when the output is going to a file or a knitr
     # chunk, where a carriage return is not a cursor movement. `verbose = 2`
     # keeps the history too, because at that point the point is the history.
-    progress_overwrite = interactive() && verbose < 2L)
+    progress_overwrite = .ctProgressOverwrite(verbose))
   # Exposed because it is the one optimiser knob that measurably changed both
   # speed and whether the gradient criterion was met; the engine's default is
   # documented at `_CTSEM_LBFGS_MEMORY`.

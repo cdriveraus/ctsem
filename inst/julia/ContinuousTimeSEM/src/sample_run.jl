@@ -168,6 +168,19 @@ function _run_chain(logdensity!, centre::Vector{Float64},
         # metric read off its curvature. Two consecutive windows that agree to
         # within `settle_tol` mean the remaining windows would re-estimate the
         # same matrix, so the terminal buffer is run and warmup ends.
+        #
+        # **Measured, and it loses badly.** On the N=200 augmented marginal
+        # route: adaptive warmup took 1795 s to reach min ESS 142.8 (hitting an
+        # 8000-draw budget without meeting its targets), against 559 s for min
+        # ESS 246.3 on the fixed schedule -- 0.080 against 0.441 ESS/s, a factor
+        # of 5.5 the wrong way. The reason the reasoning above is wrong: a
+        # metric that has stopped *moving* is not the same as a metric that is
+        # *good*. Two agreeing windows early mean the estimate has converged to
+        # what a few hundred draws can say, and that estimate is then used for
+        # every remaining draw, so the sampling phase pays for the whole run
+        # what the warmup saved once. Hence `settle_tol = 0` -- off -- as the
+        # default, and this comment rather than a removal, so the idea is not
+        # re-invented and re-measured.
         if settle_tol > 0 && _metric_settled(previous, current, settle_tol)
             settled += 1
             if settled >= 2
