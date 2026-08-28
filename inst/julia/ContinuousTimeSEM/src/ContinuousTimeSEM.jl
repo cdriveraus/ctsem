@@ -72,6 +72,9 @@ include("summary_matrices.jl")
 include("kalman_trace.jl")
 include("laplace.jl")
 include("quadrature.jl")
+# After quadrature.jl: the binary measurement update integrates the
+# observation with the Gauss-Hermite rule defined there.
+include("binary_measurement.jl")
 include("sample_density.jl")
 include("sample_nuts.jl")
 include("sample_adapt.jl")
