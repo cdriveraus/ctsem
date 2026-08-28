@@ -141,7 +141,7 @@ ctStanModelUpdateParsFromMatrices <- function(ctm, matrices){
           pars$transform[parrow] <- NA
           pars$indvarying[parrow] <- FALSE
           pars$sdscale[parrow] <- NA_real_
-          if(length(tieffects) > 0) pars[parrow,tieffects] <- FALSE
+          if(length(tieffects) > 0) pars[parrow,tieffects] <- 'FALSE'
         } else if(!is.na(parsed$param)){
           defaults <- ctStanModelDefaultFreePar(
             matrix=matrixname,
@@ -413,16 +413,12 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
     tipredspec<-matrix(TRUE,ncol=n.TIpred,nrow=1)
     colnames(tipredspec)<-paste0(TIpredNames,'_effect')
     ctspec<-cbind(ctspec,tipredspec,stringsAsFactors=FALSE)
-    ctspec[,paste0(TIpredNames,'_effect')]<-tipredDefault
+    # Character, not logical. An effect can now be free ('TRUE'), free and named
+    # ('myeffect', so two parameters can share one), fixed ('4.3') or absent
+    # ('FALSE'); see R/ctTipredEffect.R. A logical could say only the first and
+    # last of those, and a numeric could not tell 'free' from 'fixed at 1'.
     for(predi in TIpredNames){
-      class(ctspec[,paste0(predi,'_effect')])<-'logical'
-    }
-    # The size of each effect, for generation. `<name>_effect` says an effect
-    # exists; `<name>_effectsize` says how big it is, on the parameter's natural
-    # scale, and NA means "not stated" so a fit is unaffected and generation
-    # falls back to the prior. See `.ctGenerateTiEffectRaw()`.
-    for(predi in TIpredNames){
-      ctspec[[paste0(predi,'_effectsize')]] <- NA_real_
+      ctspec[[paste0(predi,'_effect')]] <- as.character(tipredDefault)
     }
   }
   
@@ -460,21 +456,27 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
       whichtipreds <- c()
       timessage <- c()
       if(!is.na(tisplit)){
-        tisplit <- strsplit(getwords(tisplit),split = ',')[[1]]
-        ctspec[pi,paste0(TIpredNames,'_effect')] <- FALSE #first set all FALSE
-        if(!tisplit[1] %in% ''){
-          for(ti in TIpredNames){ #check which tipreds were included
-            for(spliti in tisplit){
-              if(!spliti %in% TIpredNames) stop (spliti,' is not a time independent predictor!')
-              if(grepl(paste0('\\b(',ti,')\\b'),spliti)) whichtipreds <- c(whichtipreds,ti)
-            }
-          }
+        # `TI1, TI2=4.3, TI3=myeffect` -- a bare name is a free effect as it
+        # always was, `=` gives it a value or a name of its own.
+        #
+        # Deliberately not `getwords()`, which every other field here uses:
+        # it replaces each non-word character with a comma, so `TI1=4.3` came
+        # out as `TI1,4,3` and there was no way to write a value at all.
+        tisplit <- trimws(strsplit(tisplit, ',', fixed=TRUE)[[1]])
+        ctspec[pi,paste0(TIpredNames,'_effect')] <- 'FALSE' #first set all off
+        for(entry in tisplit){
+          if(!nzchar(entry)) next
+          parts <- trimws(strsplit(entry, '=', fixed=TRUE)[[1]])
+          ti <- parts[1]
+          if(!ti %in% TIpredNames) stop(ti,' is not a time independent predictor!')
+          spec <- if(length(parts) > 1 && nzchar(parts[2])) parts[2] else 'TRUE'
+          ctspec[pi,paste0(ti,'_effect')] <- spec
+          whichtipreds <- c(whichtipreds,
+            if(identical(spec,'TRUE')) ti else paste0(ti,'=',spec))
         }
-        
-        if(!is.null(whichtipreds))  ctspec[pi,paste0(whichtipreds,'_effect')] <- TRUE #set those effects TRUE
         if(is.null(whichtipreds)) whichtipreds <- 'NULL'
         timessage <- paste0(ctspec$param[pi],' tipred effects from: ', paste0(whichtipreds,collapse=', '))
-        
+
       }
       
       
@@ -484,7 +486,7 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
     }
   }
   
-  if(n.TIpred > 0 && sum(unlist(ctspec[,paste0(TIpredNames,'_effect')]))==0) warning('TI predictors included but no effects specified!')
+  if(n.TIpred > 0 && !any(.ctTipredEffectActive(ctspec[,paste0(TIpredNames,'_effect')]))) warning('TI predictors included but no effects specified!')
   
   for(ri in 1:nrow(ctspec)){ #set NA's on complex params
     

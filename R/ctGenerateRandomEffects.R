@@ -116,13 +116,16 @@
 
 # Fill the raw vector's population-SD and TI-effect entries from the model.
 #
-# Anything the model does not state is left where it is: the raw vector arrives
-# at zero, which is the centre of ctsem's prior on the population standard
-# deviation, so an unstated spread is the one that prior considers typical.
-# Deliberately the prior's centre rather than a draw from it -- a draw would
-# make two generations from one specification differ in a way `set.seed()` hides
-# rather than controls, and the point of the fallback is that an unspecified
-# model still produces something sensible, not something random.
+# An unstated spread is *drawn from its own prior*, which is
+# `rawpopsdbase ~ normal(0, 1)` mapped through
+# `log1p_exp(2 * rawpopsdbase - 1) .* sdscale`. So the draw is a standard normal
+# into the raw slot and the transform does the rest -- `sdscale` is already
+# inside it, which is what makes `sdscale` the knob for how large an unstated
+# population spread should be.
+#
+# Drawn rather than fixed at the prior's centre, and it costs nothing in
+# reproducibility to do so: the draw comes from R's own generator, so
+# `set.seed()` governs it exactly as it governs the observation noise.
 #' @keywords internal
 .ctGenerateRandomRaw <- function(model, spec, raw, quiet = FALSE) {
   effects <- spec$random_effects
@@ -158,13 +161,19 @@
       row <- which(!is.na(pars$param) & as.character(pars$param) == param)
       if (!length(row)) next
       target <- suppressWarnings(as.numeric(pars$indvaryingsd[row[1L]]))
-      if (!is.finite(target)) next
-      if (target < 0) {
+      if (is.finite(target) && target < 0) {
         stop("indvaryingsd for '", param, "' is negative. A population ",
           "standard deviation cannot be.", call. = FALSE)
       }
       index <- as.integer(sds$parameter[i])
       if (is.na(index) || index < 1L || index > length(raw)) next
+      if (!is.finite(target)) {
+        # Unstated: draw the spread from its own prior. `rawpopsdbase` is
+        # standard normal and the slot's transform carries `sdscale`, so a
+        # standard normal here *is* the prior draw.
+        raw[index] <- stats::rnorm(1)
+        next
+      }
 
       # The requested spread is on the parameter's natural scale; the engine
       # holds it on the raw scale. The transform's slope at the population mean
@@ -255,11 +264,14 @@
     if (is.na(parameter) || parameter < 1L || parameter > length(order)) next
     if (is.na(predictor) || predictor < 1L || predictor > length(names)) next
     param <- order[parameter]
-    column <- paste0(names[predictor], "_effectsize")
+    column <- paste0(names[predictor], "_effect")
     if (is.null(pars[[column]])) next
     row <- which(!is.na(pars$param) & as.character(pars$param) == param)
     if (!length(row)) next
-    target <- suppressWarnings(as.numeric(pars[[column]][row[1L]]))
+    # The size lives in the effect column itself: 'TI1=4.3' in the spec. A free
+    # effect ('TRUE', or a name) has no stated size and keeps whatever the raw
+    # vector already holds.
+    target <- .ctTipredEffectValue(pars[[column]][row[1L]])
     if (!is.finite(target)) next
     transform <- as.character(pars$transform[row[1L]])
     slope <- if (is.na(transform) || !nzchar(transform)) 1 else

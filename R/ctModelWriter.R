@@ -339,7 +339,7 @@ ctStanModelIntOverPop <- function(m){
             row$transform <- NA
             row$indvarying <- FALSE
             row$sdscale <- 1
-            if(m$n.TIpred > 0) row[,paste0(m$TIpredNames,'_effect')] <- FALSE
+            if(m$n.TIpred > 0) row[,paste0(m$TIpredNames,'_effect')] <- 'FALSE'
             newt0v[[length(newt0v)+1L]] <- row
             m$pars <- m$pars[!(m$pars$matrix %in% 'T0VAR' & m$pars$row==ri & m$pars$col==ci),,drop=FALSE] #remove old t0var line
           }
@@ -351,7 +351,7 @@ ctStanModelIntOverPop <- function(m){
       #reference new states
       for(ivi in ivnames){
         m$pars$indvarying[m$pars$param %in% ivi] <- FALSE
-        m$pars[m$pars$param %in% ivi,paste0(m$TIpredNames,rep('_effect',m$n.TIpred))] <- FALSE
+        m$pars[m$pars$param %in% ivi,paste0(m$TIpredNames,rep('_effect',m$n.TIpred))] <- 'FALSE'
         m$pars$param[m$pars$param %in% ivi] <- sapply(which(m$pars$param %in% ivi), function(ri){
           gsub('param',paste0( 'state[',m$n.latent+match(ivi,ivnames),']'),m$pars$transform[ri]) 
         })
@@ -609,9 +609,16 @@ ctStanModelMatrices <-function(ctm){
           }
           
           if(n.TIpred > 0) {
-            TIPREDEFFECTsetup[freepar,][ ctspec[i,paste0(ctm$TIpredNames,'_effect')]==TRUE ] <- 
-              tipredcounter: (tipredcounter + sum(as.integer(suppressWarnings(ctspec[i,paste0(ctm$TIpredNames,'_effect')]))) -1)
-            tipredcounter<- tipredcounter + sum(as.integer(suppressWarnings(ctspec[i,paste0(ctm$TIpredNames,'_effect')])))
+            # Only the *free* effects are numbered. A fixed one carries its
+            # value rather than a parameter slot, so counting it here would
+            # shift every index after it.
+            freeeffects <- .ctTipredEffectFree(ctspec[i,paste0(ctm$TIpredNames,'_effect')])
+            nfree <- sum(freeeffects)
+            if(nfree > 0){
+              TIPREDEFFECTsetup[freepar,][ freeeffects ] <-
+                tipredcounter:(tipredcounter + nfree - 1)
+              tipredcounter <- tipredcounter + nfree
+            }
             tipred <- as.integer( any(TIPREDEFFECTsetup[freepar,] > 0))
           }
         }#end not duplicated loop

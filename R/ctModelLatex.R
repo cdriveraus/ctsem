@@ -48,11 +48,17 @@ ctModelBuildTIeffects <- function(ctm){ #for latex
     !grepl('\\W', gsub('.', '', ctm$pars$param, fixed=TRUE)) &
     !ctm$pars$param %in% ctm$latentNames
   pars <- unique(ctm$pars$param[
-    freepars & apply(ctm$pars[,tieffects,drop=FALSE],1,any)])
+    freepars & apply(ctm$pars[,tieffects,drop=FALSE],1,
+      function(r) any(.ctTipredEffectActive(r)))])
   timat <- matrix(0,length(pars),length(tieffects),dimnames = list(pars,gsub('_effect','',tieffects)))
   if(length(tieffects)){
     for(p in seq_along(pars)){
-      timat[p,] <- unlist(ctm$pars[match(x = pars[p],ctm$pars$param),tieffects,drop=FALSE])
+      # Active as 1, absent as 0: the loop below turns anything non-zero into
+      # a label. A fixed effect shows its value instead of a generated name.
+      row <- ctm$pars[match(x = pars[p],ctm$pars$param),tieffects,drop=FALSE]
+      value <- .ctTipredEffectValue(row)
+      timat[p,] <- ifelse(.ctTipredEffectActive(row),
+        ifelse(is.na(value), 1, value), 0)
     }
   }
   for(i in seq_len(nrow(timat))){

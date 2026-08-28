@@ -457,6 +457,15 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # and which target it samples is decided by `intoverpop`. See
   # `.ctJuliaSampleFit`.
   if (any(model$manifesttype > 0)) failures <- c(failures, "non-Gaussian manifest variables")
+  # A TI effect fixed to a value ('TI1=4.3') is honoured by generation and not
+  # by fitting: the coefficient it occupies is an ordinary free parameter to
+  # the optimiser, so a fit would estimate it and silently ignore the value.
+  fixedeffects <- .ctTipredFixedEffects(model)
+  if (length(fixedeffects)) {
+    failures <- c(failures, paste0("time independent predictor effects fixed ",
+      "to a value (", paste(utils::head(fixedeffects, 4), collapse = ", "),
+      ") -- these are for generation; use TRUE for an effect to estimate"))
+  }
   if (isTRUE(vb)) failures <- c(failures, "variational Bayes")
   if (isTRUE(gendata)) failures <- c(failures, "generation")
   if (!is.na(stanmodeltext)[1] || length(compileArgs) > 0L || isTRUE(forcerecompile)) failures <- c(failures, "Stan compilation controls")
@@ -1019,6 +1028,24 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     t0means_setup_rows <- which(t0means_rows)[match_position]
     t0means_state_scale <- values$multiplier[t0means_setup_rows] * values$meanscale[t0means_setup_rows]
     t0means_state_scale[is.na(t0means_state_scale)] <- 1
+  } else if (!is.null(expanded$pars$sdscale)) {
+    # `modelmats` is built by ctFit on its way to a backend, so the branch above
+    # covers every fit. It is *not* built when a specification is prepared
+    # directly -- which is what generation does -- and the fallback of 1 then
+    # discarded `sdscale` without saying so: a model asking for a population
+    # spread a fifth of the default generated data with the default spread.
+    #
+    # Reading it from `pars` costs a name lookup and makes the two routes agree.
+    scale <- vapply(augmented_indices, function(row) {
+      entry <- which(table$matrix == "T0MEANS" & table$row == row & table$col == 1L)
+      if (!length(entry) || is.na(table$param[entry[1L]])) return(1)
+      match_row <- which(!is.na(expanded$pars$param) &
+        as.character(expanded$pars$param) == as.character(table$param[entry[1L]]))
+      if (!length(match_row)) return(1)
+      value <- suppressWarnings(as.numeric(expanded$pars$sdscale[match_row[1L]]))
+      if (!is.finite(value)) 1 else value
+    }, numeric(1L))
+    random_sd_scale <- scale
   }
   if (length(random_sd_scale) != length(augmented_indices)) {
     stop("Prepared random-effect covariance metadata does not match the augmented state layout.", call. = FALSE)
@@ -1163,7 +1190,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   for (predictor in seq_along(model$TIpredNames)) {
     column <- effect_columns[predictor]
     if (!column %in% available) next
-    parameters <- sort(unique(table$parnumber[direct & (table[[column]] %in% TRUE)]))
+    parameters <- sort(unique(table$parnumber[direct & .ctTipredEffectActive(table[[column]])]))
     for (parameter in parameters) {
       coefficient <- coefficient + 1L
       entries[[length(entries) + 1L]] <- data.frame(

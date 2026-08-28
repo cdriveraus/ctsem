@@ -349,7 +349,7 @@ ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
   for(mati in mats$base){
     if( (!ctm$intoverpop && any(ctm$pars$indvarying[ctm$pars$matrix %in% names(mats$base)[mati]])) || 
         (ctm$n.TIpred >0 && (
-          any(unlist(ctm$pars[ctm$pars$matrix %in%  names(mats$base)[mati],paste0(ctm$TIpredNames,'_effect')])) || 
+          any(.ctTipredEffectActive(ctm$pars[ctm$pars$matrix %in%  names(mats$base)[mati],paste0(ctm$TIpredNames,'_effect')])) || 
             any(ctm$pars$matrix %in%  names(mats$base)[mati] & grepl('[',ctm$pars$param,fixed=TRUE))  )
         )) subindex <- 1 else subindex <- 0
         subindices[[names(mats$base)[mati]]] <- subindex

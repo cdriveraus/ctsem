@@ -41,8 +41,11 @@ test_that("TI predictor effect sizes get a column beside the effect flags", {
     manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1),
     n.TIpred = 2, TIpredNames = c("TI1", "TI2"), Tpoints = 5))
   expect_true(all(c("TI1_effect", "TI2_effect") %in% names(m$pars)))
-  expect_true(all(c("TI1_effectsize", "TI2_effectsize") %in% names(m$pars)))
-  expect_true(all(is.na(m$pars$TI1_effectsize)))
+  # Character, so an effect can be free ('TRUE'), free and named, fixed at a
+  # value, or absent -- four states a logical column could not hold.
+  expect_type(m$pars$TI1_effect, "character")
+  expect_true(all(ctsem:::.ctTipredEffectActive(m$pars$TI1_effect)))
+  expect_true(all(is.na(ctsem:::.ctTipredEffectValue(m$pars$TI1_effect))))
 })
 
 test_that("a varying model generates rather than being refused", {
@@ -157,11 +160,54 @@ test_that("fixed effects models generate exactly as before", {
   m$pars$indvarying <- FALSE
   m$pars$indvarying[m$pars$param %in% "mm"] <- TRUE
   m$pars$indvaryingsd[m$pars$param %in% "mm"] <- sd
-  m$pars$TI1_effect <- FALSE
-  m$pars$TI1_effect[m$pars$param %in% "mm"] <- TRUE
-  if (!is.na(effect)) m$pars$TI1_effectsize[m$pars$param %in% "mm"] <- effect
+  m$pars$TI1_effect <- 'FALSE'
+  m$pars$TI1_effect[m$pars$param %in% "mm"] <-
+    if (is.na(effect)) 'TRUE' else as.character(effect)
   m
 }
+
+test_that("a TI effect can be free, named, fixed, or absent", {
+  m <- suppressMessages(ctModel(type = "ct", n.latent = 1, n.manifest = 1,
+    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1),
+    MANIFESTMEANS = matrix("mm||||TI1=4.3, TI2=myti2effect, TI3"),
+    n.TIpred = 3, TIpredNames = c("TI1", "TI2", "TI3"), Tpoints = 5))
+  row <- m$pars[m$pars$param %in% "mm", ]
+  expect_equal(row$TI1_effect, "4.3")
+  expect_equal(row$TI2_effect, "myti2effect")
+  expect_equal(row$TI3_effect, "TRUE")
+  # Fixed: has a value, is not free.
+  expect_equal(ctsem:::.ctTipredEffectValue(row$TI1_effect), 4.3)
+  expect_false(ctsem:::.ctTipredEffectFree(row$TI1_effect))
+  # Named free: no value, carries a label another parameter can share.
+  expect_true(ctsem:::.ctTipredEffectFree(row$TI2_effect))
+  expect_equal(ctsem:::.ctTipredEffectLabel(row$TI2_effect), "myti2effect")
+  # Bare name: free, named automatically, which is what it always meant.
+  expect_true(ctsem:::.ctTipredEffectFree(row$TI3_effect))
+  expect_true(is.na(ctsem:::.ctTipredEffectLabel(row$TI3_effect)))
+  # All three are effects; the rest of the model has none.
+  expect_true(all(ctsem:::.ctTipredEffectActive(
+    row[, c("TI1_effect", "TI2_effect", "TI3_effect")])))
+  expect_error(suppressMessages(ctModel(type = "ct", n.latent = 1,
+    n.manifest = 1, manifestNames = "Y1", latentNames = "eta1",
+    LAMBDA = matrix(1), MANIFESTMEANS = matrix("mm||||NOTAPRED"),
+    n.TIpred = 1, TIpredNames = "TI1", Tpoints = 5)),
+    "not a time independent predictor")
+})
+
+test_that("a TI effect fixed to a value is refused for fitting, not ignored", {
+  skip_on_cran()
+  skip_without_julia()
+  # Fitting does not honour the value: the coefficient it occupies is an
+  # ordinary free parameter to the optimiser, so a fit would estimate it and
+  # quietly disregard what was written.
+  m <- .ti_model(effect = 1.5)
+  d <- suppressMessages(ctGenerate(m, n.subjects = 10, Tpoints = 6,
+    backend = "julia"))
+  expect_error(
+    suppressWarnings(suppressMessages(ctFit(d, m, backend = "julia",
+      cores = 1, optimcontrol = list(estonly = TRUE)))),
+    "fixed")
+})
 
 test_that("time independent predictors are drawn per subject, not left at zero", {
   skip_on_cran()
@@ -203,7 +249,7 @@ test_that("TI coefficients are counted when sizing the raw vector", {
   # parameter table, so counting the table alone left the raw vector short and
   # the engine raised a BoundsError from inside its own state assembly -- an
   # error that says nothing about the mistake.
-  m <- .ti_model(effect = 1)
+  m <- .ti_model()
   sk <- ctsem:::.ctGenerateSkeleton(ctsem:::.ctGenerateResolveFree(m, quiet = TRUE),
     3, lapply(1:3, function(i) 0:5))
   spec <- ctsem:::.ctJuliaPrepare(sk, ctsem:::.ctGenerateResolveFree(m, quiet = TRUE),
@@ -214,4 +260,45 @@ test_that("TI coefficients are counted when sizing the raw vector", {
     as.integer(spec$laplace$npar), as.integer(spec$ti_effects$coefficient)),
     na.rm = TRUE))
   expect_gt(full, fromtable)
+})
+
+test_that("an unstated spread is drawn from its prior, scaled by sdscale", {
+  skip_on_cran()
+  skip_without_julia()
+  scaled <- function(sdscale, seed) {
+    m <- .re_model()
+    m$pars$sdscale[m$pars$param %in% "mm"] <- sdscale
+    set.seed(seed)
+    .re_between(suppressMessages(ctGenerate(m, n.subjects = 250,
+      Tpoints = 20, backend = "julia")))
+  }
+  small <- mean(vapply(1:3, function(s) scaled(0.2, s), numeric(1)))
+  unit <- mean(vapply(1:3, function(s) scaled(1, s), numeric(1)))
+  large <- mean(vapply(1:3, function(s) scaled(5, s), numeric(1)))
+  # `sdscale` is inside the population sd's own transform, so it scales the
+  # drawn spread linearly. It used to be discarded: `modelmats` is built by
+  # ctFit on the way to a backend and is absent when a specification is
+  # prepared directly, and the fallback of 1 silently ignored what was asked.
+  expect_lt(small, unit)
+  expect_gt(large, unit)
+  expect_equal(small / unit, 0.2, tolerance = 0.15)
+  expect_equal(large / unit, 5, tolerance = 0.15)
+})
+
+test_that("the drawn spread is governed by set.seed", {
+  skip_on_cran()
+  skip_without_julia()
+  # Drawn rather than fixed at the prior's centre, which costs nothing in
+  # reproducibility because the draw comes from R's own generator.
+  set.seed(11)
+  a <- suppressMessages(ctGenerate(.re_model(), n.subjects = 40, Tpoints = 10,
+    backend = "julia"))
+  set.seed(11)
+  b <- suppressMessages(ctGenerate(.re_model(), n.subjects = 40, Tpoints = 10,
+    backend = "julia"))
+  expect_identical(a, b)
+  set.seed(12)
+  c <- suppressMessages(ctGenerate(.re_model(), n.subjects = 40, Tpoints = 10,
+    backend = "julia"))
+  expect_false(identical(a, c))
 })
