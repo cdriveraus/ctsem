@@ -109,12 +109,24 @@
   # on the draw, never on what was there. An all-NA skeleton therefore produces
   # an all-NA result, which is what it did before this line said zero.
   for (nm in model$manifestNames) rows[[nm]] <- 0
-  # Predictors at zero. A time-dependent predictor that is never non-zero has
-  # no effect on the generated data, which is the honest default for a value
-  # the caller did not supply; `ctGenerate`'s own path uses TDPREDMEANS and
-  # this could too once the specification carries them.
+  # Time-dependent predictors at zero. One that is never non-zero has no effect
+  # on the generated data, which is the honest default for a value the caller
+  # did not supply; `ctGenerate`'s own path uses TDPREDMEANS and this could too
+  # once the specification carries them.
   for (nm in model$TDpredNames) rows[[nm]] <- 0
-  for (nm in model$TIpredNames) rows[[nm]] <- 0
+  # Time-independent predictors are *drawn*, one value per subject, held
+  # constant across that subject's rows -- which is what makes them time
+  # independent. Zeros would have been consistent with the line above and wrong
+  # here: a predictor column that is constant carries no information, so an
+  # effect on it could not show up in the data and a fit to that data could not
+  # identify one. Standard normal because the specification carries no
+  # distribution for them (`ctGenerate`'s own path has TIPREDMEANS and
+  # TIPREDVAR; a `ctModel` of type 'ct' has neither), and because a predictor on
+  # that scale makes an effect size directly readable as "change per standard
+  # deviation". Drawn on the R side so `set.seed()` governs them.
+  for (nm in model$TIpredNames) {
+    rows[[nm]] <- stats::rnorm(n.subjects)[rows$id]
+  }
   rows
 }
 
@@ -134,7 +146,14 @@
     intoverpop = "augmented")
   handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
 
-  npar <- suppressWarnings(max(c(0L, as.integer(spec$parameter_table$parnumber)),
+  # Every source of a raw index, not just the parameter table. TI-predictor
+  # coefficients and the Laplace block are numbered past the end of it, so
+  # counting the table alone produced a raw vector two short and the engine
+  # raised a BoundsError from deep inside `_materialize_subject_values!` --
+  # which says nothing about the actual mistake. This matches how `ctFit()`
+  # counts them.
+  npar <- suppressWarnings(max(c(0L, as.integer(spec$parameter_table$parnumber),
+    as.integer(spec$laplace$npar), as.integer(spec$ti_effects$coefficient)),
     na.rm = TRUE))
   # A zero-length vector deadlocks the JuliaConnectoR bridge, and a fully fixed
   # model legitimately has no free parameters, so a single unread element is
