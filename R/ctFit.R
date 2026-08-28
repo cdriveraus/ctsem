@@ -723,20 +723,33 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     #  10 indicators   0.107   (0.67)
     #  30 indicators   0.073   (0.46)
     #
-    # DRIFT and CINT are recovered throughout; it is specifically the process
-    # noise, and it gets *worse* with more indicators, which is the signature of
-    # a systematic bias rather than sampling error -- more data makes it more
+    # DRIFT and CINT survive as long as the latent has few binary indicators;
+    # the bias gets *worse* with more of them, which is the signature of a
+    # systematic error rather than sampling noise -- more data makes it more
     # confidently wrong. A latent that also has a continuous indicator is
     # unaffected in the same fit.
+    #
+    # The sharpest evidence is `test-ctRaschExampleTest.R`, which fits the same
+    # data twice -- linearised, and sampling the states exactly by HMC -- and
+    # compares. The item parameters agree to within 0.012. The dynamics do not:
+    #
+    #   diff  (process noise)   0.254  linearised   0.373  exact
+    #   drift_eta1             -0.095  linearised  -0.935  exact
+    #
+    # A drift of -0.095 against -0.935 is not a small bias: the linearised fit
+    # describes a near random walk where the exact one finds strong mean
+    # reversion. That test has been failing, and it is this.
     message('Binary indicators use a linearised (moment-matched Gaussian) ',
       'measurement update, and it is biased for any latent observed only ',
       'through them -- more so the more indicators load on that latent. ',
       'Process noise comes back low (measured at 0.71 of truth with 5 ',
       'indicators, 0.46 with 30), and with many indicators the bias reaches ',
-      'the dynamics too: on an all-binary two-process model it produced a ',
-      'cross-effect of 0.059 with an interval excluding zero where the true ',
-      'value was 0. Treat process noise as a lower bound, and treat a weak ',
-      'cross-effect on a heavily-indicated latent with suspicion.')
+      'the dynamics too -- against an exact state-sampled fit of the same data ',
+      'the item parameters agreed to 0.012 while drift came back -0.095 ',
+      'against -0.935. Item/measurement parameters are trustworthy here; ',
+      'treat DRIFT and DIFFUSION from a latent with many binary indicators as ',
+      'indicative only, and check against intoverstates=FALSE with optimize=',
+      'FALSE if they matter.')
 
     binaryrows <- which(ctm$pars$matrix %in% 'MANIFESTVAR' &
         ctm$pars$row %in% which(ctm$manifesttype==1) &
