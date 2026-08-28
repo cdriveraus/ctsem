@@ -381,6 +381,20 @@ function ctsem_evaluate(objective::CTSEMObjective, values::AbstractVector;
     method = Symbol(gradient_method)
     method in (:forward, :adjoint) ||
         throw(ArgumentError("gradient_method must be :forward or :adjoint, got :$(method)"))
+    # The reverse pass does not know the binary measurement branch, and a
+    # reverse pass that does not know a branch does not fail -- it returns a
+    # confidently wrong number. Measured against finite differences on a
+    # three-indicator binary model: forward mode agreed to 4e-8, the adjoint
+    # was out by 4e6, and an optimiser given that walks away from the optimum
+    # rather than to it.
+    #
+    # So binary models take the forward path until the adjoint learns the
+    # branch. Silently, because there is nothing for a user to decide: the
+    # gradient is the same gradient, computed the only way that is currently
+    # correct.
+    if gradient && method === :adjoint && _has_binary_manifest(objective)
+        method = :forward
+    end
     if gradient && method === :adjoint
         result = ctsem_adjoint_gradient(objective, collect(values))
         value = result.value
@@ -527,11 +541,31 @@ function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
     # final state is the one a live plot most needs.
     _invoke_callback(watcher, Optim.iterations(result), Int(maxiter),
         final.value, gradient_norm; force=true)
+    # A saturated transform reports a zero gradient, and a zero gradient is
+    # indistinguishable from an optimum.
+    #
+    # Every transform ctsem writes -- `log1p_exp(2x)`, `-(1e-6 + 2log1p_exp(-2x))`,
+    # `2/(1+exp(-x))-1` -- is flat to machine precision by |x| ~ 20: the
+    # exponential underflows and the derivative is *exactly* zero, not merely
+    # small. An optimiser that oversteps into that region then finds
+    # `gradient_norm = 4e-16`, satisfies any tolerance, and reports success.
+    # Observed on a binary model: one L-BFGS iteration to raw 20.9, declared
+    # converged, log likelihood -730.7 where the profile peak is -714.5.
+    #
+    # `stalled` does not catch it, because the optimiser did move -- it moved
+    # too far. So saturation is its own verdict: past this point the parameter
+    # is not identified by the data but by the transform's floating-point
+    # limit, and calling that converged is the wrong answer confidently
+    # delivered.
+    saturated = isempty(minimizer) ? false : maximum(abs, minimizer) >= _CTSEM_SATURATION[]
     stalled = moved == 0 && (!isfinite(final.value) || gradient_norm > max(g_tol, 1e-6))
     scaled_tolerance = max(g_tol, 1e-6 * max(one(gradient_norm), abs(final.value)))
     converged_enough = isfinite(final.value) && gradient_norm <= scaled_tolerance
     verbose && stalled && println("ctsem_optimize: the optimizer made no progress ",
         "from its starting values; reporting this as not converged")
+    verbose && saturated && println("ctsem_optimize: a parameter reached ",
+        maximum(abs, minimizer), " on the unconstrained scale, where its ",
+        "transform is flat to machine precision; reporting this as not converged")
 
     return (
         minimizer=minimizer,
@@ -547,7 +581,8 @@ function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
         chunk_timings=tuning === nothing ? Tuple{Int,Float64}[] : tuning.timings,
         gradient_norm=gradient_norm,
         scaled_tolerance=scaled_tolerance,
-        converged=!stalled && (Optim.converged(result) || converged_enough),
+        converged=!stalled && !saturated && (Optim.converged(result) || converged_enough),
+        saturated=saturated,
         g_converged=Optim.g_converged(result),
         f_converged=Optim.f_converged(result),
         x_converged=Optim.x_converged(result),

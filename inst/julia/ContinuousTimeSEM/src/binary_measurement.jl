@@ -171,11 +171,16 @@ function _ekf_binary_update!(ws, λ, μ, y::Real, n::Int)
 
     # c = P λ and s² = λ'Pλ, the predicted mean and variance of η.
     c = view(ws.bufferQ.r, 1:n)
-    _matvec_mul!(c, ws.P_predict.data, λ)
+    P = ws.P_predict.data
     s2 = zero(T)
     ηbar = μ
     @inbounds for i in 1:n
-        s2 += λ[i] * c[i]
+        acc = zero(T)
+        for j in 1:n
+            acc += P[i, j] * λ[j]
+        end
+        c[i] = acc
+        s2 += λ[i] * acc
         ηbar += λ[i] * ws.state[i]
     end
     s2 = max(s2, zero(T))
@@ -202,3 +207,94 @@ function _ekf_binary_update!(ws, λ, μ, y::Real, n::Int)
     _copy_lower_to_upper!(ws.P_predict.data, ws.state_dim)
     return logZ
 end
+
+"""
+    _binary_moment_derivatives(ηbar, s2, y)
+
+`(logZ, m, v, dlogZ_da, dlogZ_db, dm_da, dm_db, dv_da, dv_db)` where `a = ηbar`
+and `b = s²`.
+
+The derivatives are exact, not differentiated code. Writing the Gaussian's own
+derivatives inside the integral,
+
+    ∂φ/∂a = φ (η-a)/b        ∂φ/∂b = φ [ (η-a)²/(2b²) - 1/(2b) ]
+
+turns every derivative of the tilted moments into a moment of the same tilted
+distribution, which the quadrature is already computing. With `d = m - a` and
+central moments `v`, `κ₃`, `κ₄` of the posterior:
+
+    ∂logZ/∂a = d/b                    ∂logZ/∂b = (v + d² - b)/(2b²)
+    ∂m/∂a    = v/b                    ∂m/∂b    = (κ₃ + 2dv)/(2b²)
+    ∂v/∂a    = κ₃/b                   ∂v/∂b    = (κ₄ + 2dκ₃ - v²)/(2b²)
+
+Each collapses correctly when the likelihood is flat: then `m = a`, `v = b`,
+`κ₃ = 0`, `κ₄ = 3b²`, giving `∂m/∂a = 1`, `∂v/∂b = 1` and the rest zero, which
+is the linear-Gaussian answer.
+
+Closed forms rather than nested automatic differentiation because this runs
+inside a reverse pass that is itself differentiated for Hessians -- a third
+layer of duals there is both slow and a good way to meet a world-age or
+type-stability problem far from where it was caused.
+"""
+function _binary_moment_derivatives(ηbar::T, s2::T, y::Real) where {T}
+    nodes, weights = _gauss_hermite(_CTSEM_BINARY_NODES[])
+    s = sqrt(s2)
+    logZ, m, v = _binary_moments(ηbar, s, y, nodes, weights)
+    if !isfinite(logZ) || s2 <= zero(T)
+        z = zero(T)
+        return (logZ, m, v, z, z, one(T), z, z, one(T))
+    end
+
+    # Third and fourth central moments, from the same mode-centred rule.
+    mode, curvature = _binary_mode(ηbar, s2, y)
+    scale = sqrt(T(2) / curvature)
+    observed_one = y > 0.5
+    halfprec = inv(T(2) * s2)
+    Z = zero(T); M3 = zero(T); M4 = zero(T)
+    @inbounds for i in eachindex(nodes)
+        t = T(nodes[i])
+        η = mode + scale * t
+        likelihood = observed_one ? inv(one(T) + exp(-η)) : inv(one(T) + exp(η))
+        deviation = η - ηbar
+        w = T(weights[i]) * exp(t * t - deviation * deviation * halfprec) * likelihood
+        centred = η - m
+        Z += w
+        M3 += w * centred^3
+        M4 += w * centred^4
+    end
+    Z > zero(T) || return (T(-Inf), m, v, zero(T), zero(T), one(T), zero(T), zero(T), one(T))
+    κ3 = M3 / Z
+    κ4 = M4 / Z
+
+    d = m - ηbar
+    twob2 = T(2) * s2 * s2
+    return (logZ, m, v,
+        d / s2,                              # ∂logZ/∂a
+        (v + d * d - s2) / twob2,            # ∂logZ/∂b
+        v / s2,                              # ∂m/∂a
+        (κ3 + T(2) * d * v) / twob2,         # ∂m/∂b
+        κ3 / s2,                             # ∂v/∂a
+        (κ4 + T(2) * d * κ3 - v * v) / twob2 # ∂v/∂b
+    )
+end
+
+"""Whether any manifest variable in this objective is binary."""
+function _has_binary_manifest(objective)
+    params = objective.params
+    isdefined(params, :manifesttype) || return false
+    types = params.manifesttype
+    isempty(types) && return false
+    return any(==(1), types)
+end
+
+"""
+Unconstrained magnitude past which ctsem's transforms are numerically flat.
+
+`log1p_exp(2x)` and friends saturate once `exp(-2|x|)` underflows relative to
+one, which is around `|x| = 18`; twenty gives a little room without reaching
+into any region a real estimate occupies. Nothing ctsem parameterises has a
+meaningful value out there -- a drift of `-1e-9` and a drift of `-1e-15` are
+the same model -- so a fit that lands beyond it has stopped for arithmetic
+reasons rather than statistical ones.
+"""
+const _CTSEM_SATURATION = Ref(20.0)

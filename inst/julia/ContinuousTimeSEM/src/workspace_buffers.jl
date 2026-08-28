@@ -104,6 +104,12 @@ struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF
     P_update::Symmetric{T, Matrix{T}}
     P_predict::Symmetric{T, Matrix{T}}
     ll_buffer::Vector{T}
+    # 1 for a binary manifest variable, 0 for Gaussian. Copied from the
+    # `EKFParameters` at construction because the filter's `pars` is the
+    # evaluated matrix ComponentVector -- LAMBDA, DRIFT and so on -- and has
+    # nowhere for model-level metadata to live. Concrete, so it costs no extra
+    # type parameter. Empty means every variable is Gaussian.
+    manifesttype::Vector{Int}
 end
 
 """
@@ -157,6 +163,7 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
 
     # Scratch vector for log-likelihood solve.
     ll_buffer = zeros(T, m)
+    manifesttype = isdefined(sp, :manifesttype) ? copy(sp.manifesttype) : Int[]
 
     return ContinuousEKFWorkspace(
         all_params,
@@ -185,6 +192,7 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         P_update,
         P_predict,
         ll_buffer,
+        manifesttype,
     )
 end
 

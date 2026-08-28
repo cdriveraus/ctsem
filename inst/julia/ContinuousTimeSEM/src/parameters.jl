@@ -34,6 +34,15 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
     # matrix exponential, the Lyapunov solve and the intercept solve that turn
     # continuous parameters into per-interval ones all collapse to identities.
     continuous_time::Bool
+    # Which manifest variables are binary (1) rather than Gaussian (0). Last
+    # because the constructor takes it last: a field declared in one order and
+    # supplied in another put a Bool into this slot and failed with a convert
+    # error pointing at neither.
+    #
+    # Empty for the Gaussian-only models that were all this engine handled
+    # before, so the filter can skip the branch rather than test a vector of
+    # zeros on every row.
+    manifesttype::Vector{Int}
 
     # The constructor ensures that the provided vectors are of the correct types and converts them if necessary.
     function EKFParameters(
@@ -55,6 +64,7 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
         ti_coefficient_indices=Int[],
         diffusion_state_indices=Int[],
         continuous_time::Bool=true,
+        manifesttype=Int[],
     )
         regular_transforms_tuple = Tuple(regular_transforms)
         predict_transforms_tuple = Tuple(predict_transforms)
@@ -89,6 +99,7 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
             Vector{Int}(ti_coefficient_indices),
             Vector{Int}(diffusion_state_indices),
             continuous_time,
+            Vector{Int}(manifesttype),
         )
     end
 end

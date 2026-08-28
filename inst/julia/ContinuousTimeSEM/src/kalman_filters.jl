@@ -246,10 +246,67 @@ function _ekf_update_observed!(ws::ContinuousEKFWorkspace, pars,
     _record_update!(trace, ws, pars, data, obs_col, observed,
         ws.state, ws.P_predict.data, _val(ws.state_dim))
 
-    factor = _ekf_masked_update_step!(ws, pars, data, obs_col, observed, generate)
+    # Binary rows first, on the predicted covariance, then the Gaussian ones
+    # from there. The two groups are conditionally independent given the state,
+    # so the order is statistically irrelevant, and taking binary first means
+    # the Gaussian block still reads its prior from `P_predict` exactly as it
+    # always has -- no change at all to a model without binary indicators.
+    binary_loglik = _ekf_binary_rows!(ws, pars, data, obs_col, observed)
+    binary_loglik === nothing && return nothing
+    gaussian = _ekf_gaussian_subset(ws, observed)
+
+    if isempty(gaussian)
+        # Every observed row was binary: nothing for the Kalman update to do,
+        # but `P_update` is what the next predict step reads.
+        copyto!(ws.P_update.data, ws.P_predict.data)
+        return binary_loglik
+    end
+
+    factor = _ekf_masked_update_step!(ws, pars, data, obs_col, gaussian, generate)
     factor === nothing && return nothing
-    return _kalman_loglikelihood_cholesky!(view(ws.ll_buffer, 1:n_observed),
-        factor, view(ws.ỹ, 1:n_observed), log2π_const)
+    return binary_loglik + _kalman_loglikelihood_cholesky!(
+        view(ws.ll_buffer, 1:length(gaussian)),
+        factor, view(ws.ỹ, 1:length(gaussian)), log2π_const)
+end
+
+"""Which of `observed` are Gaussian. `observed` itself when none are binary."""
+@inline function _ekf_gaussian_subset(ws::ContinuousEKFWorkspace, observed)
+    types = ws.manifesttype
+    isempty(types) && return observed
+    any_binary = false
+    @inbounds for i in observed
+        if i <= length(types) && types[i] == 1
+            any_binary = true
+            break
+        end
+    end
+    any_binary || return observed
+    return Int[i for i in observed if !(i <= length(types) && types[i] == 1)]
+end
+
+"""
+    _ekf_binary_rows!(ws, pars, data, obs_col, observed)
+
+Apply every binary observation in this row, one at a time, returning their total
+log marginal likelihood. Zero when the model has no binary indicators, which is
+the branch every existing model takes.
+"""
+function _ekf_binary_rows!(ws::ContinuousEKFWorkspace, pars,
+    data::AbstractMatrix, obs_col::Int, observed)
+    T = eltype(ws.state)
+    types = ws.manifesttype
+    isempty(types) && return zero(T)
+    n = _val(ws.state_dim)
+    total = zero(T)
+    @inbounds for i in observed
+        (i <= length(types) && types[i] == 1) || continue
+        λ = view(pars.LAMBDA, i, :)
+        contribution = _ekf_binary_update!(ws, λ, pars.MANIFESTMEANS[i],
+            data[i, obs_col], n)
+        isfinite(contribution) || return nothing
+        total += contribution
+    end
+    return total
 end
 
 """

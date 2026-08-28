@@ -471,7 +471,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # `optimize=FALSE` is supported now: the engine has its own No-U-Turn sampler,
   # and which target it samples is decided by `intoverpop`. See
   # `.ctJuliaSampleFit`.
-  if (any(model$manifesttype > 0)) failures <- c(failures, "non-Gaussian manifest variables")
+  # Binary manifest variables are supported now: the filter integrates the
+  # observation rather than linearising it, which is why it is worth having
+  # here at all. See inst/julia/ContinuousTimeSEM/src/binary_measurement.jl.
+  if (any(model$manifesttype > 1)) {
+    failures <- c(failures, "manifest types beyond binary (manifesttype > 1)")
+  }
   if (isTRUE(vb)) failures <- c(failures, "variational Bayes")
   if (isTRUE(gendata)) failures <- c(failures, "generation")
   if (!is.na(stanmodeltext)[1] || length(compileArgs) > 0L || isTRUE(forcerecompile)) failures <- c(failures, "Stan compilation controls")
@@ -1286,6 +1291,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     continuoustime = isTRUE(model$continuoustime),
     TDpredNames = model$TDpredNames,
     TIpredNames = model$TIpredNames,
+    # 1 for a binary manifest variable, 0 for Gaussian. Carried on the spec so
+    # a fit rebuilt from a saved object knows its own measurement model.
+    manifesttype = if (is.null(model$manifesttype)) integer(0) else
+      as.integer(model$manifesttype),
     nlatent = augmented$nlatent,
     nlatent_augmented = augmented$nlatent_augmented,
     dynamic_state_indices = augmented$dynamic_state_indices,
@@ -1368,6 +1377,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       .ctJuliaVector(as.integer(spec$dynamic_state_indices))
   }
   arguments$continuous_time <- isTRUE(spec$continuoustime)
+  # Only when something is actually binary: an empty vector lets the engine
+  # skip the branch, and a zero-length vector deadlocks the bridge, so the two
+  # reasons to omit it agree.
+  if (any(spec$manifesttype > 0)) {
+    arguments$manifesttype <- .ctJuliaVector(as.integer(spec$manifesttype))
+  }
   # A model shape Julia has not seen mints new closure types for its transform
   # expressions, and the whole filter specialises again for them -- tens of
   # seconds, once, and indistinguishable from a hang if nothing says so. The

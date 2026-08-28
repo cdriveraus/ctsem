@@ -353,6 +353,9 @@ column vectors, one entry per model-matrix cell.
     does well.
   * `diffusion_state_indices` — the states carrying their own diffusion,
     defaulting to all of them.
+  * `manifesttype` — `1` for a binary manifest variable, `0` for a Gaussian
+    one. Empty (the default) means every variable is Gaussian, which lets the
+    filter skip the branch entirely rather than test a vector of zeros.
   * `continuous_time` — `false` for a discrete-time model, whose DRIFT, CINT and
     DIFFUSION are already the one-step quantities.
 
@@ -364,7 +367,8 @@ engine model-agnostic without a compile step.
 function ekf_from_columns(matrix, row, col, parnumber, value, transform,
     predicttransform, updatetransform, tdtransform;
     ti_parameter=Int[], ti_predictor=Int[], ti_coefficient=Int[],
-    diffusion_state_indices=Int[], continuous_time::Bool=true)
+    diffusion_state_indices=Int[], continuous_time::Bool=true,
+    manifesttype=Int[])
 
     n = length(matrix)
     length(row) == n && length(col) == n ||
@@ -447,5 +451,5 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
         reg_tfs, predict_tfs, update_tfs, td_tfs, map_from, axis,
         fixed_positions, fixed_values, Int.(ti_parameter),
         Int.(ti_predictor), Int.(ti_coefficient), Int.(diffusion_state_indices),
-        continuous_time)
+        continuous_time, Int.(manifesttype))
 end
