@@ -33,6 +33,25 @@
 #' system-matrix helpers all read it the way they read an optimised fit's
 #' normal-approximation draws.
 #'
+#' The reported \code{estimate$se} of an optimised fit is the curvature of the
+#' approximated marginal posterior at its mode, so it describes a normal
+#' approximation rather than the posterior itself. That approximation is what a
+#' sample replaces, and the two differ most where the posterior is skewed --
+#' variance-like parameters at modest subject counts. Measured on a model whose
+#' Laplace integral is exact, the sampled standard deviations were 1.1 to 2.3
+#' times the reported standard errors at forty subjects and within 13\% of them
+#' at two hundred.
+#'
+#' @section Diagnostics:
+#' Divergent transitions, R-hat above 1.01 and effective sample sizes below 100
+#' warn rather than pass quietly. A divergence means the sampler could not
+#' follow the posterior's geometry somewhere, most often a population standard
+#' deviation near zero, and draws that miss such a region are wrong in a way
+#' averaging does not fix. \code{fit$sample} carries the per-parameter R-hat and
+#' effective sample size, the per-draw acceptance statistic, tree depth and
+#' energy, and the per-chain step size and E-BFMI. An E-BFMI below about 0.3
+#' indicates a funnel the metric could not straighten.
+#'
 #' @param fit A \code{ctJuliaFit} made with \code{intoverpop='laplace'}.
 #' @param chains Number of chains. Run concurrently when the Julia session has
 #'   at least that many threads; see \code{\link{ctJuliaSetup}}.
@@ -60,6 +79,31 @@
 #' @return The fit, with \code{estimate$rawposterior} holding the draws and
 #'   \code{$sample} holding the diagnostics: split R-hat and effective sample
 #'   size per parameter, divergences, tree depths, step sizes and E-BFMI.
+#'
+#' @seealso \code{\link{ctLaplaceCheck}} measures the Laplace approximation's
+#'   error and corrects it to first order, at a small fraction of the cost;
+#'   \code{\link{ctFit}} for the fit this starts from, and
+#'   \code{\link{ctJuliaSetup}} for the thread count that decides whether
+#'   chains run concurrently.
+#'
+#' @examples
+#' \dontrun{
+#' data <- ctstantestdat
+#' model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
+#'   LAMBDA = matrix(1))
+#' model$pars$indvarying <- model$pars$matrix %in% 'MANIFESTMEANS'
+#'
+#' # Four threads so the four chains run together rather than in turn.
+#' ctJuliaSetup(threads = 4, force = TRUE)
+#' fit <- ctFit(data, model, backend = 'julia', intoverpop = 'laplace')
+#'
+#' sampled <- ctSample(fit, chains = 4, warmup = 1000, draws = 1000, cores = 4)
+#' sampled$sample                  # convergence and geometry diagnostics
+#' summary(sampled)                # reads the draws, not a normal approximation
+#'
+#' # How far the Laplace approximation itself is from exact, for comparison.
+#' ctLaplaceCheck(fit)
+#' }
 #' @export
 ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   saveEffects = FALSE, seed = 20260828L, control = list(), verbose = FALSE) {

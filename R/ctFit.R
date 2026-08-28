@@ -134,6 +134,18 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' the maximum available minus one. Irrelevant when \code{optimize=TRUE}.
 #' @param cores number of cpu cores to use. Either 'maxneeded' to use as many as available minus one,
 #' up to the number of chains, or a positive integer. If \code{optimize=TRUE}, more cores are generally faster.
+#' @param backend Either 'stan' (the default) or 'julia'. The julia backend is a
+#' separate maximum-likelihood engine with the same model definitions and the
+#' same summaries; it takes its own reverse-mode gradient, supports
+#' \code{intoverpop='laplace'} for random effects, and can be sampled afterwards
+#' with \code{\link{ctSample}}. It needs a working Julia -- see
+#' \code{\link{ctJuliaSetup}} and \code{\link{ctJuliaInstall}}.
+#' @param backendcontrol Used when \code{backend='julia'}. List of engine
+#' settings: \code{maxiter}, \code{g_tol}, \code{f_tol}, \code{x_tol} for the
+#' optimizer's stopping rules, \code{lbfgs_memory} for how many curvature pairs
+#' L-BFGS keeps, \code{gradient} ('adjoint' or 'forward'), \code{julia_project}
+#' to point at a local engine checkout, and \code{restart_session} to clear the
+#' Julia session before fitting.
 #' @param control Used when \code{optimize=FALSE}. List of arguments sent to \code{\link[rstan]{stan}} control argument,
 #' regarding warmup / sampling behaviour. Unless specified, values used are:
 #' list(adapt_delta = .8, adapt_window=2, max_treedepth=10, adapt_init_buffer=2, stepsize = .001)

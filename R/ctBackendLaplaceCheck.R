@@ -70,6 +70,30 @@
 #'   row per raw parameter giving \code{estimate}, \code{delta},
 #'   \code{corrected}, \code{se} and \code{delta_se}. With \code{refine} it also
 #'   carries \code{refined}.
+#'
+#'   \code{dropped_directions} counts the directions of the information matrix
+#'   too weakly identified to correct along, which are reported as zero rather
+#'   than as the arbitrarily large step an unguarded solve would produce. On a
+#'   model where the Laplace approximation is already exact the gap gradient is
+#'   floating-point noise, and dividing that by a near-singular curvature is how
+#'   a meaningless correction gets a plausible-looking number.
+#'
+#' @seealso \code{\link{ctSample}} removes the approximation instead of
+#'   measuring it, by sampling the joint posterior; much slower, and the right
+#'   answer when \code{delta_se} says a linear correction is not credible.
+#'
+#' @examples
+#' \dontrun{
+#' data <- ctstantestdat
+#' model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
+#'   LAMBDA = matrix(1))
+#' model$pars$indvarying <- model$pars$matrix %in% 'MANIFESTMEANS'
+#' fit <- ctFit(data, model, backend = 'julia', intoverpop = 'laplace')
+#'
+#' check <- ctLaplaceCheck(fit)
+#' check                     # gap, and the largest corrections in standard errors
+#' check$parameters          # the full per-parameter table
+#' }
 #' @export
 ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
   refine = FALSE, maxiter = 50L, cores = NULL, verbose = 0L) {

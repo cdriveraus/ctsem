@@ -145,6 +145,20 @@ Generated data is in the $Ygen subobject after running \code{extract} on the fit
 For datasets with many manifest variables or time points, file size may be large.
 To generate data based on the posterior of a fitted model, see \code{\link{ctGenerateFromFit}}.}
 
+\item{backend}{Either 'stan' (the default) or 'julia'. The julia backend is a
+separate maximum-likelihood engine with the same model definitions and the
+same summaries; it takes its own reverse-mode gradient, supports
+\code{intoverpop='laplace'} for random effects, and can be sampled afterwards
+with \code{\link{ctSample}}. It needs a working Julia -- see
+\code{\link{ctJuliaSetup}} and \code{\link{ctJuliaInstall}}.}
+
+\item{backendcontrol}{Used when \code{backend='julia'}. List of engine
+settings: \code{maxiter}, \code{g_tol}, \code{f_tol}, \code{x_tol} for the
+optimizer's stopping rules, \code{lbfgs_memory} for how many curvature pairs
+L-BFGS keeps, \code{gradient} ('adjoint' or 'forward'), \code{julia_project}
+to point at a local engine checkout, and \code{restart_session} to clear the
+Julia session before fitting.}
+
 \item{control}{Used when \code{optimize=FALSE}. List of arguments sent to \code{\link[rstan]{stan}} control argument,
 regarding warmup / sampling behaviour. Unless specified, values used are:
 list(adapt_delta = .8, adapt_window=2, max_treedepth=10, adapt_init_buffer=2, stepsize = .001)}
