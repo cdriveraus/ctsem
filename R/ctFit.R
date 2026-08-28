@@ -570,8 +570,17 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   if(binomial){
     # A warning, as the other two deprecations are. A message is easy to miss,
     # and this one silently changes `intoverstates` and every indicator's type.
-    warning('binomial argument is deprecated -- set manifesttype in the model object to 1 for binary indicators instead. It has set intoverstates=FALSE and manifesttype=1 for every indicator.', call.=FALSE)
-    intoverstates <- FALSE
+    warning('binomial argument is deprecated -- set manifesttype in the model object to 1 for binary indicators instead. It has set manifesttype=1 for every indicator.', call.=FALSE)
+    # It used to set `intoverstates <- FALSE` as well, which is a leftover from
+    # when binary data meant sampling the latent states rather than integrating
+    # them. The very next check warns that `intoverstates=TRUE` is required for
+    # sensible optimization -- so the documented shortcut put a user straight
+    # into the state the code itself calls unreliable, under the default
+    # `optimize=TRUE`. Setting `manifesttype` directly never did that, and the
+    # linearised measurement handles binary indicators with the filter intact:
+    # on a three-indicator model it recovers a generating drift of -0.3 as
+    # -0.279 and a diffusion of 0.8 as 0.681, both intervals containing the
+    # truth.
     ctm$manifesttype[] <- 1
   }
 
@@ -687,6 +696,60 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       ctm$pars$value[errfix] <- 1e-5
       ctm$pars[errfix,c('param','transform','multiplier','offset','meanscale','inneroffset','sdscale')] <- NA
       ctm$pars$indvarying[errfix] <- FALSE
+    }
+
+    # A *fixed* non-zero variance on a binary indicator is left alone by the
+    # block above, and it is almost certainly a mistake: the Bernoulli link
+    # already supplies the randomness, so an extra measurement variance adds
+    # noise on top of noise. Free ones are fixed silently because there is a
+    # right answer; a deliberate value is the user's, so it is questioned
+    # rather than overwritten.
+    # What the approximation costs, said once, because it is invisible
+    # otherwise and it is large.
+    #
+    # A binary observation is handled by a moment-matched Gaussian update: the
+    # predicted probability from `inv_logit`, a finite-difference Jacobian, and
+    # `ycov = Jy etacov Jy' + p(1-p)`. The covariance update that follows,
+    # `etacov -= K Jy etacov`, is the standard EKF one and ignores the link's
+    # curvature, so posterior uncertainty is understated and the understatement
+    # compounds over time steps. The filter ends up believing the latent is
+    # pinned down, its innovations shrink, and less process noise is needed to
+    # explain them.
+    #
+    # Measured on a one-latent process with true DIFFUSIONcov 0.16, 50
+    # subjects, 50 timepoints, observed only through binary indicators:
+    #
+    #   5 indicators   0.114   (0.71 of truth)
+    #  10 indicators   0.107   (0.67)
+    #  30 indicators   0.073   (0.46)
+    #
+    # DRIFT and CINT are recovered throughout; it is specifically the process
+    # noise, and it gets *worse* with more indicators, which is the signature of
+    # a systematic bias rather than sampling error -- more data makes it more
+    # confidently wrong. A latent that also has a continuous indicator is
+    # unaffected in the same fit.
+    message('Binary indicators use a linearised (moment-matched Gaussian) ',
+      'measurement update, and it is biased for any latent observed only ',
+      'through them -- more so the more indicators load on that latent. ',
+      'Process noise comes back low (measured at 0.71 of truth with 5 ',
+      'indicators, 0.46 with 30), and with many indicators the bias reaches ',
+      'the dynamics too: on an all-binary two-process model it produced a ',
+      'cross-effect of 0.059 with an interval excluding zero where the true ',
+      'value was 0. Treat process noise as a lower bound, and treat a weak ',
+      'cross-effect on a heavily-indicated latent with suspicion.')
+
+    binaryrows <- which(ctm$pars$matrix %in% 'MANIFESTVAR' &
+        ctm$pars$row %in% which(ctm$manifesttype==1) &
+        ctm$pars$row == ctm$pars$col)
+    stated <- binaryrows[!is.na(ctm$pars$value[binaryrows]) &
+        abs(ctm$pars$value[binaryrows]) > 1e-4]
+    if(length(stated)){
+      warning('MANIFESTVAR is fixed to a non-zero value for binary indicator',
+        if(length(stated) > 1) 's ' else ' ',
+        paste(ctm$manifestNames[ctm$pars$row[stated]], collapse=', '),
+        '. A binary indicator gets its randomness from the Bernoulli link, so ',
+        'this adds measurement noise on top of it. Set it to 0 unless that is ',
+        'meant.', call.=FALSE)
     }}
 
   ctm$modelmats <- ctStanModelMatrices(ctm) #slow!

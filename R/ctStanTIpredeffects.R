@@ -60,6 +60,15 @@ ctTIpredEffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   whichTIpreds=1,parmatrices=TRUE, whichpars='all', nsamples=100, timeinterval=1,
   nsubjects=20,filter=NA,plot=FALSE){
   
+  # Nothing to report on, said plainly. Indexing straight into `tipredsdata`
+  # gave "subscript out of bounds", which names an internal and not the
+  # problem -- and this is a function someone reaches for while exploring, so
+  # the model having no predictors is an ordinary thing to run into.
+  if(is.null(fit$ctstanmodel$n.TIpred) || fit$ctstanmodel$n.TIpred < 1){
+    stop('This model has no time independent predictors, so there are no ',
+      'effects to report. Add them with n.TIpred and TIpredNames in ctModel().',
+      call.=FALSE)
+  }
   ctspec <- fit$ctstanmodel$pars
   e<-ctExtract(fit)
   rawpopmeans <- e$rawpopmeans
