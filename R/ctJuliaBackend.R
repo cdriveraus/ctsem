@@ -552,6 +552,16 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     ctsem:::tform("param", transform, multiplier, meanscale, offset,
       inneroffset, singletext = TRUE)
   }
+  # The model's own transform text, matched by cell rather than by row order.
+  # `ctFit` records it before `ctModelTransformsToNum` reduces each transform
+  # to four fitted numbers; see the comment there for what that reduction
+  # loses and why it matters.
+  exact <- rep(NA_character_, nrow(p))
+  if (!is.null(ctm$transformtext)) {
+    recorded <- ctm$transformtext
+    exact <- recorded$text[match(paste(p$matrix, p$row, p$col, sep = ""),
+      paste(recorded$matrix, recorded$row, recorded$col, sep = ""))]
+  }
   numeric_transform <- !is.na(suppressWarnings(as.integer(p$transform)))
   for (i in which(numeric_transform)) {
     rendered <- render_transform(p$transform[i], p$multiplier[i],
@@ -569,6 +579,22 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     is.na(suppressWarnings(as.numeric(p$value)))
   parnames <- unique(as.character(p$param[free]))
   p$parnumber[free] <- match(as.character(p$param[free]), parnames)
+
+  # The exact transform text wherever it survived, for the free parameters only.
+  #
+  # `ctModelTransformsToNum` turns each transform string into four numbers by a
+  # grid search and keeps the string beside them as `transformtext`;
+  # re-rendering from the numbers loses any constant the search could not see,
+  # which is every variance diagonal's `1e-10` floor -- see the comment there
+  # for what a floorless variance does to the filter.
+  #
+  # Free parameters only, because a cell that is not one has no `param[k]` to
+  # write and its text still says `param`. Under `intoverpop` the CINT cells
+  # become references to augmented states and are exactly that: substituting
+  # there left `10 * param` in the table with no index on it, which the engine
+  # compiled into a closure over the whole parameter vector.
+  substitute_exact <- free & !is.na(exact)
+  p$transform[substitute_exact] <- exact[substitute_exact]
   if (!is.null(ctm$modelmats$matsetup)) {
     matrix_codes <- ctsem:::ctStanMatricesList()$all
     setup <- as.data.frame(ctm$modelmats$matsetup)
@@ -584,16 +610,39 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     # Stan transforms each raw population coordinate once, using the first
     # matching base/PARS setup row. Reusing a parameter in another matrix must
     # not reapply that cell's local transform.
+    #
+    # Which row is canonical comes from `matsetup`, but the transform *text*
+    # comes from the model, and re-rendering it from `matvalues` instead is
+    # lossy. `ctModelTransformsToNum` recovers `matvalues` from the model's
+    # transform string by fitting the four numbers to it by least squares and
+    # then rounding to six decimal places, so any constant below 5e-7 is gone:
+    # every variance diagonal carries a `1e-10` floor -- `1e-10 + 5 *
+    # log1p_exp(2 * param)` -- and re-rendering gives `0 + 5 * (...)` back.
+    # DRIFT's `1e-06` floor survives the rounding, which is why this showed up
+    # only in the variances.
+    #
+    # A variance with no floor reaches *exactly* zero, because `log1p_exp(x)`
+    # is exactly zero once `1 + exp(x)` rounds to one, at about `x = -37` --
+    # which one subject's TI-predictor offset is quite enough to reach. What
+    # follows is division by that zero and derivatives of `sqrt` at it, and
+    # since `isfinite` on a dual number tests only its value, the NaN travels
+    # in the partials with nothing to stop it. It surfaced as trial points
+    # rejected for a non-finite gradient -- 64 of 229 in one Laplace fit --
+    # and a fit that stopped 0.6 log units short.
     setup_parameter <- as.integer(setup$param)
     setup_when <- as.integer(setup$when)
     candidate <- which(setup_parameter > 0L & setup_when %in% c(0L, 100L))
     canonical <- rep(NA_character_, max(c(0L, setup_parameter), na.rm = TRUE))
+    own_row <- match(setup_key, parameter_key)
     for (row in candidate) {
       parameter <- setup_parameter[row]
       if (!is.na(canonical[parameter])) next
-      canonical[parameter] <- render_transform(setup$transform[row],
-        values$multiplier[row], values$meanscale[row], values$offset[row],
-        values$inneroffset[row])
+      own <- own_row[row]
+      text <- if (!is.na(own) && !is.na(p$transform[own]))
+        as.character(p$transform[own]) else NA_character_
+      canonical[parameter] <- if (!is.na(text)) text else
+        render_transform(setup$transform[row], values$multiplier[row],
+          values$meanscale[row], values$offset[row], values$inneroffset[row])
     }
     use_canonical <- free & !is.na(p$parnumber) & p$parnumber <= length(canonical) &
       !is.na(canonical[p$parnumber])

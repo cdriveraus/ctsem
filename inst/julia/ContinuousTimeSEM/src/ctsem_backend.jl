@@ -434,25 +434,28 @@ function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
     start_values = collect(start)
     invalid_objective = floatmax(eltype(start_values)) / 1e8
     gradient_limit = sqrt(floatmax(eltype(start_values)))
+    # `evaluated`, not `result`: see `ctsem_laplace_optimize`. A closure's
+    # assignment binds to the enclosing local of the same name, and the outer
+    # Optim result below is called `result`.
     fg! = function (F, G, x)
-        result = try
+        evaluated = try
             ctsem_evaluate(objective, x; gradient=G !== nothing,
                 gradient_method=gradient_method)
         catch
             nothing
         end
-        valid = result !== nothing && isfinite(result.value)
+        valid = evaluated !== nothing && isfinite(evaluated.value)
         if valid && G !== nothing
-            valid = all(isfinite, result.gradient) && all(abs(value) < gradient_limit for value in result.gradient)
+            valid = all(isfinite, evaluated.gradient) && all(abs(value) < gradient_limit for value in evaluated.gradient)
         end
         if !valid
             G !== nothing && fill!(G, zero(eltype(G)))
             return F === nothing ? nothing : invalid_objective
         end
         if G !== nothing
-            G .= -result.gradient
+            G .= -evaluated.gradient
         end
-        return F === nothing ? nothing : -result.value
+        return F === nothing ? nothing : -evaluated.value
     end
     # A callback rather than Optim's `show_trace`, which prints one dense line
     # per iteration whatever the model costs -- thousands on a fast one, and on
@@ -563,7 +566,11 @@ function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
     saturated = isempty(minimizer) ? false : maximum(abs, minimizer) >= _CTSEM_SATURATION[]
     stalled = moved == 0 && (!isfinite(final.value) || gradient_norm > max(g_tol, 1e-6))
     scaled_tolerance = max(g_tol, 1e-6 * max(one(gradient_norm), abs(final.value)))
-    converged_enough = isfinite(final.value) && gradient_norm <= scaled_tolerance
+    # See `ctsem_laplace_optimize`: a NaN gradient is not convergence, and
+    # Optim's own criterion can be true at one.
+    finite_gradient = isfinite(gradient_norm)
+    converged_enough = isfinite(final.value) && finite_gradient &&
+        gradient_norm <= scaled_tolerance
     verbose && stalled && println("ctsem_optimize: the optimizer made no progress ",
         "from its starting values; reporting this as not converged")
     verbose && saturated && println("ctsem_optimize: a parameter reached ",
@@ -584,7 +591,11 @@ function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
         chunk_timings=tuning === nothing ? Tuple{Int,Float64}[] : tuning.timings,
         gradient_norm=gradient_norm,
         scaled_tolerance=scaled_tolerance,
-        converged=!stalled && !saturated && (Optim.converged(result) || converged_enough),
+        # See `ctsem_laplace_optimize`: `Optim.converged` includes the x and
+        # f criteria, which a line search that stops making progress satisfies
+        # trivially, so convergence is judged on the gradient alone.
+        converged=!stalled && !saturated && finite_gradient &&
+            (Optim.g_converged(result) || converged_enough),
         saturated=saturated,
         g_converged=Optim.g_converged(result),
         f_converged=Optim.f_converged(result),

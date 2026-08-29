@@ -334,3 +334,70 @@ test_that("the print method names the ordinal variables and their categories", {
   expect_true(grepl("o1 (ordinal, 5 categories)", out, fixed = TRUE))
   expect_true(grepl("b1 (binary)", out, fixed = TRUE))
 })
+
+test_that("a degenerate predicted variance costs its likelihood, not nothing", {
+  skip_on_cran()
+  skip_without_julia()
+  # T0VAR fixed at zero makes the first occasion's linear predictor known
+  # exactly, so the observation there contributes `log P(y | eta)` and moves
+  # nothing. Returning zero instead -- as a likelihood of one -- is not a
+  # harmless edge case: it makes a collapsing variance *pay*, so an optimiser
+  # with a free T0VAR is rewarded for driving it to zero and the objective is
+  # discontinuous at the point it is driving towards.
+  #
+  # One subject, one occasion, everything fixed, so the whole log likelihood is
+  # that single term and can be written down.
+  d <- data.frame(id = 1L, time = 0, o1 = 2L)
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
+    n.manifest = 1, manifestNames = "o1", latentNames = "eta1",
+    manifesttype = 2L, ncategories = 4L, LAMBDA = matrix(1),
+    MANIFESTMEANS = matrix(0), CINT = matrix(0), T0MEANS = matrix(0),
+    MANIFESTVAR = matrix(0), DRIFT = matrix(-0.3), DIFFUSION = matrix(0.8),
+    T0VAR = matrix(0))))
+  m$pars$indvarying <- FALSE
+  gaps <- c(.jord_thresholds[1], diff(.jord_thresholds))
+  sel <- m$pars$matrix %in% "THRESHOLDS"
+  m$pars$value[sel] <- gaps[m$pars$col[sel]]
+  m$pars$param[sel] <- NA
+  m$pars$transform[sel] <- NA
+
+  handle <- .jord_spec(d, m)
+  value <- as.numeric(ctJuliaEvaluate(handle, numeric(0))$value)
+  # eta is exactly zero, so category 2 has probability
+  # plogis(tau2) - plogis(tau1).
+  expected <- log(stats::plogis(.jord_thresholds[2]) -
+      stats::plogis(.jord_thresholds[1]))
+  expect_equal(value, expected, tolerance = 1e-10)
+  expect_lt(value, 0)
+})
+
+test_that("the gradient stays finite as a threshold gap closes", {
+  skip_on_cran()
+  skip_without_julia()
+  # The interval probability is computed as a product of tails rather than a
+  # difference of CDFs, so a gap far below the point where the difference would
+  # lose its digits still gives a usable score. A gap is a free parameter under
+  # a positive transform, so an optimiser reaches these values by itself.
+  d <- .jord_data(nsubjects = 15, nobs = 8, nindicators = 1)
+  m <- .jord_model(nindicators = 1)
+  handle <- .jord_spec(d, m)
+  tab <- handle$parameter_table
+  npar <- max(tab$parnumber, na.rm = TRUE)
+  gappar <- unique(tab$parnumber[tab$matrix %in% "THRESHOLDS" & tab$col > 1 &
+      !is.na(tab$parnumber)])
+  expect_gt(length(gappar), 0L)
+  # Down to -15, which is a gap of about 1e-13. Below that the *cumulated*
+  # thresholds stop resolving the gap at all -- `tau + 1e-35` is `tau` -- and
+  # the category between two numerically identical thresholds genuinely has
+  # probability zero. `_CTSEM_SATURATION` already reports a raw magnitude of 20
+  # as not converged, so the optimiser is told about that region rather than
+  # being expected to work in it.
+  for (raw in c(-5, -10, -15)) {
+    at <- rep(0.1, npar)
+    at[gappar] <- raw          # gaps of roughly 9e-5 down to 2e-13
+    got <- ctJuliaEvaluate(handle, at, gradient = TRUE)
+    expect_true(is.finite(as.numeric(got$value)), info = paste("raw", raw))
+    expect_true(all(is.finite(as.numeric(got$gradient))),
+      info = paste("raw", raw))
+  }
+})

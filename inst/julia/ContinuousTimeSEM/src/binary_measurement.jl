@@ -103,6 +103,7 @@ least.
 """
 const _CTSEM_BINARY_NODES = Ref(21)
 
+
 """Newton steps for the scalar mode. Log-concave, so this converges hard."""
 const _CTSEM_BINARY_NEWTON = Ref(6)
 
@@ -112,19 +113,43 @@ const _CTSEM_BINARY_NEWTON = Ref(6)
 `(d log P(y|η)/dη, -d² log P(y|η)/dη²)`, the score and observed information of
 one categorical observation.
 
-Both branches of the ordinal case collapse to something short because
-`f = F(1-F)` for the logistic: in an end category the ratio `f/F` is just the
-opposite tail, so the score is a probability and the curvature a variance. Only
-an interior category needs the difference quotient, and there the second term
-uses `f'(z) = f(z)(1 - 2F(z))`.
+# Why there is no division here
 
-Binary with a threshold at zero is the `K = 2` case of this and gives exactly
+Write the interval probability as a product rather than a difference. With
+`a = τ_{k-1} - η` and `b = τ_k - η`, and `F` the logistic CDF,
+
+    P = F(b) - F(a) = F(-a) F(b) (1 - exp(-(b - a)))
+
+and `b - a` is the *gap between adjacent thresholds*, which is what the model
+parameterises. Differentiating the logarithm of that product term by term
+gives, with no cancellation and no quotient anywhere,
+
+    d log P / dη  =  F(a) - F(-b)
+    -d² log P/dη² =  f(a) + f(b)
+
+both bounded, both continuous as the gap closes. The end categories are the
+same formulas with the missing tail set to zero, which is why there is no
+branch on `k` beyond fetching the thresholds that exist.
+
+The obvious implementation instead computes `(f(a) - f(b)) / (F(b) - F(a))`,
+and that is what this was. It is correct and it is unusable: the denominator is
+a difference of two nearly equal numbers, so it loses every significant digit
+as the gap closes, and the curvature squares the result. A threshold gap is a
+free parameter under a positive transform, so an optimizer reaches tiny gaps
+routinely -- measured at a raw value of -7.5, giving a gap of 6e-7, the
+gradient came back with eight of twenty-one entries NaN while the objective was
+a perfectly ordinary -785. Sixty-eight trial points in one fit were thrown away
+for it, the line search ran out of room, and the fit stopped 0.6 log units
+short with a gradient of 11.
+
+The *value* is large near a closed gap -- `d log P / dΔ` really is about `1/Δ`
+-- but that is a true derivative, not an artefact, and the transform's own
+Jacobian cancels it exactly: a gap of `2 log1p_exp(2x)` has `dΔ/dx ≈ 2Δ` when
+`Δ` is small, so the raw gradient stays of order one.
+
+Binary with a threshold at zero is the `K = 2` case and gives exactly
 `(y - p, p(1-p))`, which is what the Bernoulli fast path computes -- they agree
 identically, not just numerically, which is why the fast path can stay.
-
-The curvature is positive wherever the likelihood is log-concave, and a
-difference of logistic CDFs is; the floor guards the arithmetic, not the maths,
-for a category so improbable that `P` underflows.
 """
 @inline function _category_score(η::T, y::Real, thresholds) where {T}
     if isempty(thresholds)
@@ -133,28 +158,23 @@ for a category so improbable that `P` underflows.
     end
     k = Int(y)
     n = length(thresholds)
-    if k <= 1
-        Fb = inv(one(T) + exp(η - thresholds[1]))
-        return (Fb - one(T), max(Fb * (one(T) - Fb), floatmin(T)))
-    elseif k > n
-        Fa = inv(one(T) + exp(η - thresholds[n]))
-        return (Fa, max(Fa * (one(T) - Fa), floatmin(T)))
-    end
-    Fb = inv(one(T) + exp(η - thresholds[k]))
-    Fa = inv(one(T) + exp(η - thresholds[k - 1]))
-    fb = Fb * (one(T) - Fb)
-    fa = Fa * (one(T) - Fa)
-    P = max(Fb - Fa, floatmin(T))
-    g = (fa - fb) / P
-    dfb = fb * (one(T) - T(2) * Fb)
-    dfa = fa * (one(T) - T(2) * Fa)
-    return (g, max(g * g - (dfb - dfa) / P, floatmin(T)))
+    # `F(a)`, zero below the first threshold, and `F(-b)`, zero above the last.
+    Fa = k <= 1 ? zero(T) : inv(one(T) + exp(η - thresholds[k - 1]))
+    Fnb = k > n ? zero(T) : inv(one(T) + exp(thresholds[k] - η))
+    information = Fa * (one(T) - Fa) + Fnb * (one(T) - Fnb)
+    return (Fa - Fnb, max(information, floatmin(T)))
 end
 
 """
     _binary_mode(ηbar, s2, y, thresholds)
 
-`(mode, curvature)` of `log N(η; ηbar, s²) + log P(y | η)`.
+`(mode - ηbar, curvature)` of `log N(η; ηbar, s²) + log P(y | η)`.
+
+The *offset* rather than the mode, because everything downstream wants the
+offset and forming it by subtraction afterwards throws away exactly the digits
+that matter. When the prior is tight the mode sits a hair from `ηbar`, and
+`mode - ηbar` computed from two numbers of order `ηbar` keeps only the digits
+`ηbar` has to spare.
 
 Strictly concave -- the prior contributes `-1/s²` and the observation a
 non-positive term, since both the Bernoulli likelihood and a difference of
@@ -164,16 +184,19 @@ which bounds the step and keeps this well behaved even when `s` is large and
 the observation is nearly deterministic.
 """
 @inline function _binary_mode(ηbar::T, s2::T, y::Real, thresholds = ()) where {T}
-    η = ηbar
+    offset = zero(T)
     precision = inv(s2)
     curvature = precision
     @inbounds for _ in 1:_CTSEM_BINARY_NEWTON[]
-        score, information = _category_score(η, y, thresholds)
-        gradient = -(η - ηbar) * precision + score
+        score, information = _category_score(ηbar + offset, y, thresholds)
+        # `-offset * precision`, not `-(η - ηbar) * precision`: the prior's
+        # score is exact this way rather than a difference of two numbers of
+        # order ηbar.
+        gradient = -offset * precision + score
         curvature = precision + information
-        η += gradient / curvature   # Newton on a concave objective
+        offset += gradient / curvature   # Newton on a concave objective
     end
-    return (η, curvature)
+    return (offset, curvature)
 end
 
 """
@@ -188,9 +211,12 @@ with `τ_0 = -Inf` and `τ_K = +Inf`. Binary is the two-category case with a
 single threshold at zero, and gives `inv_logit(η)` for a one -- which is why
 `thresholds` being empty means binary and needs no separate code path.
 
-Written as a difference of two logistic tails rather than of two CDFs: at large
+Written as a product of tails rather than as a difference of CDFs: at large
 `|η|` one CDF rounds to one and the difference to zero, losing the category's
-probability entirely, while the tails stay representable.
+probability entirely, and as the gap between two thresholds closes the
+difference loses its significant digits long before the probability itself
+stops being representable. The product form has neither problem -- see
+`_category_score`, which needs the same identity for its derivatives.
 """
 @inline function _category_likelihood(η::T, y::Real, thresholds) where {T}
     isempty(thresholds) && return y > 0.5 ? inv(one(T) + exp(-η)) :
@@ -200,9 +226,13 @@ probability entirely, while the tails stay representable.
     # Below the first threshold, or above the last: one tail, no subtraction.
     k <= 1 && return inv(one(T) + exp(η - thresholds[1]))
     k > n && return inv(one(T) + exp(thresholds[n] - η))
-    upper = inv(one(T) + exp(η - thresholds[k]))
-    lower = inv(one(T) + exp(η - thresholds[k - 1]))
-    return max(upper - lower, zero(T))
+    # F(-a) F(b) (1 - exp(-gap)), not F(b) - F(a): see `_category_score` for
+    # what the difference costs. `expm1` keeps the last factor accurate for a
+    # gap far below the point where `1 - exp(-gap)` would round to zero.
+    gap = thresholds[k] - thresholds[k - 1]
+    Fna = inv(one(T) + exp(thresholds[k - 1] - η))
+    Fb = inv(one(T) + exp(η - thresholds[k]))
+    return Fna * Fb * (-expm1(-gap))
 end
 
 """
@@ -227,7 +257,31 @@ The `Tuple{}` method is what keeps a binary observation free of all of it.
 """
     _binary_moments(ηbar, s, y, nodes, weights)
 
-`(logZ, mean, variance)` of `η` given one Bernoulli observation.
+`(logZ, mean - ηbar, variance)` of `η` given one categorical observation.
+
+# Why the mean comes back as an offset, and the variance about the mode
+
+The filter never wants the posterior mean; it wants `(mean - ηbar)/s²`, and it
+wants `(1 - variance/s²)/s²`. Both are differences that vanish as `s²` does,
+and computing them from a mean and a variance of order one destroys them.
+
+The variance is the worse of the two. Accumulated as `E[η²] - E[η]²` it is a
+difference of two numbers near `ηbar²`, so it carries a relative error of about
+`eps * ηbar²/v`; when `v` is `1e-8` and `ηbar` is `0.3` that is one part in
+`4e-9`, and `1 - v/s²` -- itself of size `v * h` -- comes out with no correct
+digits at all. Measured before this change, on a real fit's numbers: at
+`s² = 1e-8` the covariance shrink came out as `1.024` where the answer is
+`0.439`, and at `1e-10` as **`-2215`**. A negative shrink makes the filter
+*widen* the covariance on an observation, which is not an approximation of
+anything.
+
+Accumulating the second moment about the mode instead, and the first as an
+offset from `ηbar`, removes both cancellations: the quantities summed are the
+small ones to begin with. A near-zero `T0VAR` is an ordinary place for an
+optimizer to look, so this is not a corner case -- it was reached on eight of
+ten starting draws of a 25-subject fit, and the Laplace route, which
+differentiates all of this twice more, turned it into NaN gradients and a
+line search with nothing left to accept.
 
 Adaptive Gauss-Hermite: the rule is centred on the mode of the scalar posterior
 and scaled by its curvature, so the integrand it sees is close to the Gaussian
@@ -242,37 +296,82 @@ re-centring turns that into `∫h(η)dη ≈ √2σ̂ Σ wᵢ exp(tᵢ²) h(η̂
 @inline function _binary_moments(ηbar::T, s::T, y::Real, nodes, weights,
     thresholds = ()) where {T}
     s2 = s * s
-    s2 > zero(T) || return (zero(T), ηbar, zero(T))
-    mode, curvature = _binary_mode(ηbar, s2, y, thresholds)
+    # A degenerate prior in this direction: `η` is known exactly, so the
+    # observation contributes its likelihood *at that point* and moves nothing.
+    #
+    # Returning `logZ = 0` here instead -- as this did -- says the observation
+    # was certain, and that is not a harmless edge case. It makes a vanishing
+    # predicted variance *pay*: every categorical observation whose prior
+    # variance collapses stops costing anything, so on a model whose T0VAR is
+    # free the optimizer is rewarded for driving it to zero, and buys about
+    # seventy log units of nothing on twenty-five subjects with two indicators
+    # at the first occasion. The objective is also discontinuous there, jumping
+    # from `log P(y | η̂)` to `0` the moment the variance underflows, which is a
+    # cliff for a line search to fall off rather than a region to search.
+    #
+    # `log P(y | η̂)` is both the right answer and the continuous limit of the
+    # integral, so nothing has to know where the boundary is.
+    if !(s2 > zero(T))
+        certain = _category_likelihood(ηbar, y, thresholds)
+        return (certain > zero(T) ? log(certain) : T(-Inf), zero(T), zero(T))
+    end
+    mode_offset, curvature = _binary_mode(ηbar, s2, y, thresholds)
     scale = sqrt(T(2) / curvature)
 
+    # Accumulated relative to the largest weight seen so far, so the sums are
+    # of numbers no larger than one and `Z` is never smaller than one.
+    #
+    # Unnormalised, the weights are `exp(t² - deviation²/2s²)` times a category
+    # probability, and both factors range over many orders of magnitude: a wide
+    # prior with a likelihood that confines `η` to one category puts the far
+    # nodes' weights near the bottom of the floating point range. `logZ`
+    # survives that, because it takes a logarithm; `M1/Z` does not, because the
+    # derivative of a quotient divides by `Z²`, which underflows to zero while
+    # `Z` is still representable. The result is a finite value with NaN
+    # partials -- observed at a predicted variance of 23, where nothing looks
+    # extreme at all.
+    #
+    # Rescaling costs one comparison per node and a multiply on the three
+    # accumulators each time the maximum moves, which for a mode-centred rule
+    # is a handful of times at most. It is exact algebra, so it changes no
+    # value and no derivative.
     Z = zero(T)
     M1 = zero(T)
     M2 = zero(T)
+    wmax = zero(T)
     halfprec = inv(T(2) * s2)
     @inbounds for i in eachindex(nodes)
         t = T(nodes[i])
-        η = mode + scale * t
-        likelihood = _category_likelihood(η, y, thresholds)
-        deviation = η - ηbar
+        centred = scale * t              # η - mode
+        deviation = mode_offset + centred  # η - ηbar
+        likelihood = _category_likelihood(ηbar + deviation, y, thresholds)
         # The `exp(t²)` undoes the rule's own kernel; the prior density is then
         # carried explicitly rather than folded into the nodes.
         w = T(weights[i]) * exp(t * t - deviation * deviation * halfprec) *
             likelihood
-        Z += w
-        M1 += w * η
-        M2 += w * η * η
+        if w > wmax
+            ratio = iszero(wmax) ? zero(T) : wmax / w
+            Z *= ratio
+            M1 *= ratio
+            M2 *= ratio
+            wmax = w
+        end
+        u = iszero(wmax) ? zero(T) : w / wmax
+        Z += u
+        M1 += u * deviation
+        M2 += u * centred * centred
     end
     # A zero means every node put zero probability on the observation, which is
     # a state so far from the data that the row carries no usable information.
     # The caller treats it as an invalid evaluation.
-    Z > zero(T) || return (T(-Inf), ηbar, s2)
-    mean = M1 / Z
-    variance = M2 / Z - mean * mean
+    Z > zero(T) || return (T(-Inf), zero(T), s2)
+    offset = M1 / Z                      # posterior mean - ηbar
+    spread = offset - mode_offset        # posterior mean - mode
+    variance = M2 / Z - spread * spread
     # Z above is √(2π)s times the marginal likelihood: the scale factor and the
     # prior's normalising constant are both outside the sum.
-    logZ = log(Z) + log(scale) - log(sqrt(T(2) * T(pi)) * s)
-    return (logZ, mean, max(variance, zero(T)))
+    logZ = log(Z) + log(wmax) + log(scale) - log(sqrt(T(2) * T(pi)) * s)
+    return (logZ, offset, max(variance, zero(T)))
 end
 
 """
@@ -345,7 +444,8 @@ function _ekf_binary_update!(ws, λ, μ, y::Real, n::Int, thresholds = ())
     s2 = max(s2, zero(T))
     s = sqrt(s2)
 
-    logZ, ηpost, vpost = _binary_moments(ηbar, s, y, nodes, weights, thresholds)
+    logZ, ηoffset, vpost = _binary_moments(ηbar, s, y, nodes, weights,
+        thresholds)
     isfinite(logZ) || return T(-Inf)
 
     # With no predicted variance in this direction the observation cannot move
@@ -353,7 +453,7 @@ function _ekf_binary_update!(ws, λ, μ, y::Real, n::Int, thresholds = ())
     # counts.
     s2 > zero(T) || return logZ
 
-    shift = (ηpost - ηbar) / s2
+    shift = ηoffset / s2
     shrink = (one(T) - vpost / s2) / s2
     @inbounds for i in 1:n
         ws.state[i] += c[i] * shift
@@ -371,7 +471,8 @@ end
     _binary_moment_derivatives(ηbar, s2, y)
 
 `(logZ, m, v, dlogZ_da, dlogZ_db, dm_da, dm_db, dv_da, dv_db)` where `a = ηbar`
-and `b = s²`.
+and `b = s²`, and `m` is the posterior mean's *offset* from `a` -- see
+`_binary_moments` for why nothing here works with the mean itself.
 
 # Why this differentiates the quadrature rather than the moments
 
@@ -401,7 +502,7 @@ function _binary_moment_derivatives(ηbar::T, s2::T, y::Real,
     nodes, weights = _gauss_hermite(_CTSEM_BINARY_NODES[])
     if s2 <= zero(T)
         z = zero(T)
-        return (z, ηbar, z, z, z, one(T), z, z, one(T))
+        return (z, z, z, z, z, one(T), z, z, one(T))
     end
     triple = function (ab)
         τ = _as_scalar_type(eltype(ab), thresholds)

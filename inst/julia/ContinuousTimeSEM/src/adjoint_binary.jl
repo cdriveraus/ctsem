@@ -5,8 +5,8 @@ The forward update (see `binary_measurement.jl`) applies each binary
 observation as an exact scalar conditioning:
 
     c = Pλ,  b = λ'Pλ,  a = λ'x + μ
-    (logZ, m, v) = moments(a, b, y)
-    x ← x + c (m - a)/b
+    (logZ, m, v) = moments(a, b, y)   # m is the mean's offset from a
+    x ← x + c m/b
     P ← P - c c' (1 - v/b)/b
 
 so the reverse is the differential of that, with the moment function's own
@@ -118,7 +118,7 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
         b <= zero(T) && continue
         g = _binary_moment_derivatives(a, b, record.y[j], record.thresholds[j])
         m, v = g[2], g[3]
-        shift = (m - a) / b
+        shift = m / b
         shrink = (one(T) - v / b) / b
         @inbounds for i in 1:n
             x[i] += c[i] * shift
@@ -147,7 +147,7 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
         dlogZ_da, dlogZ_db = g[4], g[5]
         dm_da, dm_db = g[6], g[7]
         dv_da, dv_db = g[8], g[9]
-        shift = (m - a) / b
+        shift = m / b
         shrink = (one(T) - v / b) / b
 
         # Cotangents of the two things this step wrote.
@@ -183,10 +183,12 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
             cbar[i] -= shrink * acc
         end
 
-        # Through shift = (m - a)/b and shrink = 1/b - v/b².
+        # Through shift = m/b and shrink = 1/b - v/b². `m` is the posterior
+        # mean's *offset* from `a` now, so the explicit `-a` that used to sit
+        # here is gone: its derivative lives inside `dm_da` instead.
         mbar = shiftbar / b
-        abar = -shiftbar / b
-        bbar = -shiftbar * (m - a) / (b * b)
+        abar = zero(T)
+        bbar = -shiftbar * m / (b * b)
         vbar = -shrinkbar / (b * b)
         bbar += shrinkbar * (-one(T) / (b * b) + T(2) * v / (b * b * b))
 

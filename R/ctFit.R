@@ -674,6 +674,28 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
 
   ctm$pars <- ctModelStatesAndPARS(ctm$pars,statenames = ctm$latentNames,tdprednames=ctm$TDpredNames) #replace any new state and par refs with square bracket refs
 
+  # The transform text as the model states it, keyed by cell, kept before
+  # `ctModelTransformsToNum` replaces it with four numbers recovered from it by
+  # a grid search. That search scores candidates by squared residual, so it
+  # cannot see a constant small enough not to move the residual: every variance
+  # diagonal carries a `1e-10` floor -- `1e-10 + 5 * log1p_exp(2 * param)` --
+  # and the `round(x, 6)` that follows finishes it off. DRIFT's floor is `1e-06`
+  # and survives, which is why only the variances lost theirs.
+  #
+  # A floorless variance reaches *exactly* zero, since `log1p_exp` is exactly
+  # zero once `1 + exp(x)` rounds to one, and a zero variance is then divided
+  # by and differentiated through. The julia backend reads this rather than
+  # re-rendering the numbers; see `.ctJuliaParameterTable`.
+  #
+  # Keyed by cell and kept *off* `ctm$pars`, because parts of the Stan pipeline
+  # read that frame's columns by position -- carrying it there as a character
+  # column turned Stan's `pop_CINT` into NaN.
+  if(is.null(ctm$transformtext) && is.character(ctm$pars$transform)){
+    ctm$transformtext <- data.frame(
+      matrix = as.character(ctm$pars$matrix),
+      row = as.integer(ctm$pars$row), col = as.integer(ctm$pars$col),
+      text = as.character(ctm$pars$transform), stringsAsFactors = FALSE)
+  }
   ctm <- ctModelTransformsToNum(ctm)
 
   ctm$pars <- ctStanModelCleanctspec(ctm$pars)

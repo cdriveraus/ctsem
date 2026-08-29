@@ -867,6 +867,27 @@ function _laplace_block_factor(M::CTSEMBlockMatrix{T},
     for b in 1:nb
         f = cholesky(Symmetric(_laplace_symmetrise(diag[b])); check=false)
         issuccess(f) || return (false, T(NaN), factors, coupling)
+        # Numerically singular counts as failure, so the caller shifts it.
+        #
+        # `issuccess` asks whether the matrix is positive definite, not whether
+        # it can be inverted usefully, and a block that is barely definite
+        # factorizes happily and then gives an enormous inverse. The outer
+        # gradient goes through exactly that inverse -- the implicit function
+        # theorem step in `_laplace_dual_unit_mode` -- so the *value* at such a
+        # point is fine while the *gradient* overflows to Inf. Trial points
+        # were then rejected for a non-finite gradient, 67 of them in one
+        # 25-subject fit, and the line search ran out of room and stopped 0.6
+        # log units short with a gradient of 11.
+        #
+        # The test is on the Cholesky diagonal, which costs one pass over it,
+        # and the threshold corresponds to a condition number around 1e15 --
+        # so this fires where the inverse has no significant digits left, and
+        # not on a merely awkward model.
+        let dg = LinearAlgebra.diag(f.factors)
+            lo, hi = extrema(abs, dg)
+            hi > 0 && lo <= sqrt(eps(real(float(one(T))))) * hi &&
+                return (false, T(NaN), factors, coupling)
+        end
         factors[b] = f
         total += logdet(f)
         ancestors = blocks[b].ancestors
@@ -1382,6 +1403,32 @@ function _laplace_solve_unit_mode!(laplace::CTSEMLaplaceObjective, U::Integer,
 end
 
 """
+    _laplace_inner_tolerance(laplace, value)
+
+How small the inner gradient has to be for the mode to count as found.
+
+`inner_tol` alone is an absolute bound, and an absolute bound on a gradient is
+the same mistake the outer `g_tol` makes: it asks for a number of digits that
+depends on how large the unit's objective happens to be. On a 25-subject
+ordinal model one unit stalled at `1.009e-10` against a tolerance of `1e-10` --
+missing by one percent -- and because a unit that misses makes the *whole*
+trial point invalid, the outer line search lost 50 of its 89 evaluations to it
+and stopped after three iterations, 129 log units short.
+
+What actually has to be true is that the mode is precise enough for the value
+and the gradient to be reproducible. At a maximum the value error is second
+order in the mode error, so stopping at `|g| = ε` costs about `ε²/2λ` in the
+value -- 2e-17 at `ε = 1e-8`, which is below the last bit of a log likelihood
+of order 1e3. The outer gradient's error is first order, about `ε` times a
+cross-derivative of order ten, so 1e-7 at the same `ε`; the outer tolerance
+this feeds is `1e-6 * |value|`, around 1e-3 here, so that is four orders of
+margin. A relative floor of `1e-10` with the absolute one kept underneath it
+sits comfortably inside all of that.
+"""
+@inline _laplace_inner_tolerance(laplace::CTSEMLaplaceObjective, value::Real) =
+    max(laplace.inner_tol, 1e-10 * (one(value) + abs(value)))
+
+"""
     _laplace_newton_unit_mode(laplace, U, values, Ls, aws, start, slot)
 
 Newton on `g_U` from one given starting point, reporting what happened rather
@@ -1405,7 +1452,8 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
     end
     for iteration in 1:laplace.inner_maxiter
         iterations = iteration
-        if d == 0 || maximum(abs, current.gradient) < laplace.inner_tol
+        if d == 0 || maximum(abs, current.gradient) <
+                _laplace_inner_tolerance(laplace, current.value)
             converged = true
             break
         end
@@ -1430,7 +1478,8 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
         end
         accepted || break
     end
-    if d == 0 || maximum(abs, current.gradient) < laplace.inner_tol
+    if d == 0 || maximum(abs, current.gradient) <
+            _laplace_inner_tolerance(laplace, current.value)
         converged = true
     end
     return (u=u, value=current.value, gradient=current.gradient,
@@ -2526,14 +2575,29 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     start_values = collect(Float64, start)
     invalid_objective = floatmax(Float64) / 1e8
     gradient_limit = sqrt(floatmax(Float64))
+    # Why trial points were rejected, counted rather than guessed at. A fit
+    # that stops short of a stationary point almost always did so because its
+    # line search ran out of points it was allowed to accept, and these say
+    # which of the three reasons was doing it.
+    rejected_nonfinite = 0
+    rejected_inner = 0
+    rejected_gradient = 0
+    accepted_calls = 0
+    # `evaluated`, not `result`: Julia binds an assignment inside a closure to
+    # the enclosing scope's local of the same name, and the outer Optim result
+    # below is called `result`. Every objective call was overwriting it. That
+    # was invisible while the outer one was only read after `Optim.optimize`
+    # returned, and stopped being invisible the moment anything read it
+    # between runs -- the restart loop below did, and `Optim.minimum` was
+    # handed an evaluation named tuple.
     fg! = function (F, G, x)
-        result = try
+        evaluated = try
             ctsem_laplace_evaluate(laplace, x; gradient=G !== nothing,
                 nested_gradient=nested_gradient)
         catch
             nothing
         end
-        objective = result === nothing ? NaN : result.value
+        objective = evaluated === nothing ? NaN : evaluated.value
         # A unit whose inner Newton did not reach `inner_tol` has not produced
         # the mode the term is defined at, so the number is not the objective
         # -- it is whatever the iteration happened to stop on. Treating the
@@ -2541,16 +2605,45 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
         # where the inner problem is solvable, which is the right response;
         # accepting it lets the outer optimizer follow a function that is not
         # a function of theta.
-        valid = result !== nothing && isfinite(objective) && result.converged
+        finite_value = evaluated !== nothing && isfinite(objective)
+        inner_ok = evaluated !== nothing && evaluated.converged
+        valid = finite_value && inner_ok
         if valid && G !== nothing
-            valid = all(isfinite, result.gradient) &&
-                all(abs(value) < gradient_limit for value in result.gradient)
+            valid = all(isfinite, evaluated.gradient) &&
+                all(abs(value) < gradient_limit for value in evaluated.gradient)
+            if !valid
+                rejected_gradient += 1
+                if verbose && rejected_gradient == 1
+                    finite_part = filter(isfinite, evaluated.gradient)
+                    println("Laplace probe: first gradient rejection, objective ",
+                        objective, ", ", count(!isfinite, evaluated.gradient),
+                        " of ", length(evaluated.gradient),
+                        " entries non-finite, largest finite ",
+                        isempty(finite_part) ? 0.0 : maximum(abs, finite_part))
+                    println("Laplace probe: at x = ", collect(x))
+                    println("Laplace probe: gradient = ", collect(evaluated.gradient))
+                end
+            end
         end
+        finite_value || (rejected_nonfinite += 1)
+        (finite_value && !inner_ok) && (rejected_inner += 1)
+        valid && (accepted_calls += 1)
         if !valid
+            # Zeros, and deliberately not the last valid gradient.
+            #
+            # Handing back the previous gradient at a new point was tried, on
+            # the reasoning that it keeps the search direction pointing back
+            # toward the feasible region. It does, and it also feeds L-BFGS a
+            # secant pair whose gradient never belonged to that point, which
+            # corrupts the curvature history and sends later directions
+            # somewhere arbitrary: one fit in ten came back after a single
+            # iteration with a NaN gradient, and the next spent half an hour
+            # not finishing. The sentinel objective is what makes the line
+            # search shrink, and it does that on the value alone.
             G !== nothing && fill!(G, zero(eltype(G)))
             return F === nothing ? nothing : invalid_objective
         end
-        G !== nothing && (G .= -result.gradient)
+        G !== nothing && (G .= -evaluated.gradient)
         return F === nothing ? nothing : -objective
     end
     # See `ctsem_optimize` for why this is a callback rather than `show_trace`.
@@ -2610,20 +2703,48 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     # step. Falling back to it turns a crashed fit into a slower one, which is
     # the right trade, and `linesearch` on the result says which was used
     # rather than leaving it to be guessed.
+    # `alphaguess` for the same reason `ctsem_optimize` has it, which this
+    # route was simply left out of. L-BFGS has no curvature history on its
+    # first iteration, so it goes downhill with whatever the initial step guess
+    # gives, and Optim's default `InitialStatic()` is an unscaled alpha of one
+    # -- a first step as long as the gradient. On this objective the gradient
+    # at the starting values is routinely in the hundreds, so the first step
+    # was hundreds of units into a region where every ctsem transform is flat
+    # to machine precision and the inner mode solve has nothing to work with.
+    #
+    # It shows up as extreme sensitivity to the starting draw, which is only
+    # `rnorm(npar, 0, 0.01)` and cannot itself explain anything. Ten seeds on
+    # one 25-subject ordinal model before this line: two converged, six stopped
+    # short with gradients between 5.6 and 82, one threw, and one reported
+    # convergence 146 log units below the answer.
+    #
+    # `scaled=true` divides alpha by the gradient norm, so the first step has
+    # length one in parameter space however steep the objective is.
+    lbfgs = Optim.LBFGS(m=Int(lbfgs_memory),
+        alphaguess=Optim.LineSearches.InitialStatic(scaled=true))
     linesearch = "hagerzhang"
-    result = try
-        Optim.optimize(Optim.only_fg!(fg!), start_values,
-            Optim.LBFGS(m=Int(lbfgs_memory)), options)
-    catch err
-        err isa InterruptException && rethrow()
-        linesearch = "backtracking"
-        verbose && println("Laplace: Hager-Zhang line search failed (",
-            sprint(showerror, err), "); retrying with backtracking")
-        Optim.optimize(Optim.only_fg!(fg!), start_values,
-            Optim.LBFGS(m=Int(lbfgs_memory),
-                linesearch=Optim.LineSearches.BackTracking()), options)
+    run_from = function (from, method)
+        try
+            (Optim.optimize(Optim.only_fg!(fg!), from, method, options), true)
+        catch err
+            err isa InterruptException && rethrow()
+            verbose && println("Laplace: Hager-Zhang line search failed (",
+                sprint(showerror, err), "); retrying with backtracking")
+            (Optim.optimize(Optim.only_fg!(fg!), from,
+                Optim.LBFGS(m=Int(lbfgs_memory),
+                    alphaguess=Optim.LineSearches.InitialStatic(scaled=true),
+                    linesearch=Optim.LineSearches.BackTracking()), options),
+                false)
+        end
     end
+    result, hz = run_from(start_values, lbfgs)
+    hz || (linesearch = "backtracking")
+
     if verbose
+        println("Laplace: ", accepted_calls, " objective evaluations accepted, ",
+            rejected_nonfinite, " rejected as non-finite, ", rejected_inner,
+            " for an inner mode solve that did not converge, ",
+            rejected_gradient, " for the gradient")
         println("Laplace: inner modes ",
             count(laplace.inner_converged), "/", length(laplace.inner_converged),
             " converged, max |dg/dz| ",
@@ -2654,9 +2775,34 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     # log likelihood of -7.7e6, and reported success. That point fails the
     # scaled criterion by eight orders of magnitude.
     scaled_tolerance = max(g_tol, 1e-6 * max(one(gradient_norm), abs(final.value)))
-    converged_enough = isfinite(final.value) && gradient_norm <= scaled_tolerance
+    # `isfinite(gradient_norm)` explicitly: `Optim.g_converged` can be true at
+    # a point whose gradient is NaN, since it was set on an earlier iterate,
+    # and `NaN <= tolerance` is false so the scaled test alone would not have
+    # caught it. One draw in ten reported convergence with a NaN gradient.
+    finite_gradient = isfinite(gradient_norm)
+    converged_enough = isfinite(final.value) && finite_gradient &&
+        gradient_norm <= scaled_tolerance
+    # Convergence needs a small gradient, and nothing else counts as one.
+    #
+    # `Optim.converged` is the disjunction of its x, f and g criteria, and the
+    # first two are satisfied by a line search that stops making progress: the
+    # step went to zero, so x did not move and f did not change. That is the
+    # signature of giving up, not of arriving. Measured on a 25-subject ordinal
+    # model, one starting draw in ten stopped after three iterations with a
+    # gradient of 681 and a log likelihood 146 units below the optimum, and
+    # `Optim.converged` said true. `stalled` did not catch it because the
+    # optimizer had moved.
+    #
+    # `g_converged` is kept as an alternative to the scaled test because it is
+    # a genuine gradient criterion; it is just an absolute one, and `g_tol` is
+    # out of reach on a log likelihood of order 1e3 however good the fit.
     verbose && stalled && println("Laplace: the optimizer made no progress from ",
         "its starting values; reporting this as not converged")
+    verbose && !stalled && !(finite_gradient &&
+        (Optim.g_converged(result) || converged_enough)) &&
+        println("Laplace: the optimizer stopped with a largest gradient of ",
+            gradient_norm, " against a tolerance of ", scaled_tolerance,
+            "; reporting this as not converged")
     return (
         minimizer=minimizer,
         maximum_loglik=final.value,
@@ -2671,11 +2817,19 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
         chunk_timings=tuning === nothing ? Tuple{Int,Float64}[] : tuning.timings,
         gradient_norm=gradient_norm,
         scaled_tolerance=scaled_tolerance,
-        converged=!stalled && (Optim.converged(result) || converged_enough),
+        converged=!stalled && finite_gradient &&
+            (Optim.g_converged(result) || converged_enough),
         g_converged=Optim.g_converged(result),
         f_converged=Optim.f_converged(result),
         x_converged=Optim.x_converged(result),
         inner_converged=all(laplace.inner_converged),
+        inner_failures=count(!, laplace.inner_converged),
+        rejected_nonfinite=rejected_nonfinite,
+        rejected_inner=rejected_inner,
+        rejected_gradient=rejected_gradient,
+        accepted_calls=accepted_calls,
+        inner_worst_gradient=isempty(laplace.inner_gradient) ? 0.0 :
+            maximum(laplace.inner_gradient),
         inner_iterations=copy(laplace.inner_iterations),
         hessian_repaired=copy(laplace.hessian_repaired),
         mode_repaired=copy(laplace.mode_repaired),

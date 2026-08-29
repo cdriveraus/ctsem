@@ -62,6 +62,22 @@ end
 function my_exp!(Y::AbstractMatrix{TYPE}, A::AbstractMatrix{TYPE}, W1::AbstractMatrix{TYPE}, buffer::ExpBuffer{TYPE}, dim::Val{d}) where {TYPE<:Number, d}
     # Higham (2008) scaling-and-squaring with [13/13] Pade approximant.
     a1 = _opnorm1_noalloc(A, dim)
+    # A matrix with a non-finite entry has no exponential, and saying so with
+    # NaN is the only way to say it that the callers can act on.
+    #
+    # Without this the squaring count `ceil(Int, log2(a1/θ13))` is `Int(NaN)`,
+    # which throws an `InexactError` from six frames inside the reverse pass.
+    # An optimizer trial point that produces a non-finite DRIFT is an ordinary
+    # event -- it is what a line search is for -- and every caller already
+    # treats a non-finite objective as an invalid point and shrinks the step.
+    # A thrown error instead ends the whole fit, and it ended it in R, where
+    # `InexactError: Int64(NaN)` names neither the matrix nor the parameter
+    # that produced it. Seen on one starting draw in ten of a 25-subject
+    # Laplace fit.
+    if !isfinite(a1)
+        fill!(Y, TYPE(NaN))
+        return Y
+    end
     θ13 = _custom_abs(TYPE(5.371920351148152))
     s = a1 <= θ13 ? 0 : ceil(Int, log2(a1 / θ13))
     factor = inv(TYPE(2)^s)
