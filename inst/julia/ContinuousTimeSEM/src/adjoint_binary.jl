@@ -43,7 +43,18 @@ end
 # exist first. Annotating `::CTSEMAdjointTape` here would make that circular.
 # The `::Nothing` method above is what keeps an untraced pass free of dispatch.
 function _record_binary!(tape, ws, pars, data, obs_col, rows, state_in, P_in, n)
+    # Two different tracing mechanisms reach this: the adjoint tape, and the
+    # Kalman trace that `ctKalman`/`ctPredict` use to collect filtered states.
+    # Only the first wants a record, and only the first has anywhere to put one.
+    # Tested by field rather than by type because this file is included before
+    # the tape's own -- the tape holds a vector of these records, so the record
+    # type has to exist first, and naming `CTSEMAdjointTape` here would make
+    # that circular. Dropping the annotation entirely was the first attempt and
+    # it turned a dispatch error into a `FieldError` on the Kalman trace, which
+    # is worse: it surfaced in `ctKalman`, `ctPredict`, `ctLOO`,
+    # `ctACFresiduals` and `ctPostPredPlots` all at once, far from the cause.
     tape === nothing && return nothing
+    hasproperty(tape, :nbinaries) || return nothing
     isempty(rows) && return nothing
     T = eltype(state_in)
     n = Int(n)

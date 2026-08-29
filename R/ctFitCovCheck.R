@@ -556,7 +556,19 @@ meltcov <- function(covm){
 }
 
 ctFitMelt <- function(fit, maxsamples='all'){
-  if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
+  # Named rather than asserted. "Not a ctStanFit object" is opaque when the
+  # caller is plainly holding a fit; what it means is that this function reads
+  # `standata`, `ctstanmodelbase` and the posterior-predictive draws in
+  # `$generated`, none of which a julia fit carries.
+  if(!'ctStanFit' %in% class(fit)){
+    if(inherits(fit, 'ctJuliaFit')) stop(
+      'This function is not available for julia backend fits yet: it reads the ',
+      'stan fit structures (standata, ctstanmodelbase, posterior predictive ',
+      'draws) that a julia fit does not carry. ctFitCovCheck(), ',
+      'ctACFresiduals() and ctPostPredPlots() do work on a julia fit.',
+      call.=FALSE)
+    stop('Not a ctStanFit object', call.=FALSE)
+  }
   datasources <- c('Data','StatePred','Residuals')
   if(!is.null(fit$generated)) datasources <- c(datasources,'PostPred')
   if(!is.null(fit$priorpred)) datasources <- c(datasources,'PriorPred')
@@ -674,7 +686,19 @@ ctCheckFit <- function(fit,
   groupbysplit=FALSE, byNA=TRUE,lag=0,
   smooth=TRUE, k=4,breaks=4,entropy=FALSE,reg=FALSE,verbose=0, indlines=30){
   
-  if(!'ctStanFit' %in% class(fit)) stop('Not a ctStanFit object')
+  # Named rather than asserted. "Not a ctStanFit object" is opaque when the
+  # caller is plainly holding a fit; what it means is that this function reads
+  # `standata`, `ctstanmodelbase` and the posterior-predictive draws in
+  # `$generated`, none of which a julia fit carries.
+  if(!'ctStanFit' %in% class(fit)){
+    if(inherits(fit, 'ctJuliaFit')) stop(
+      'This function is not available for julia backend fits yet: it reads the ',
+      'stan fit structures (standata, ctstanmodelbase, posterior predictive ',
+      'draws) that a julia fit does not carry. ctFitCovCheck(), ',
+      'ctACFresiduals() and ctPostPredPlots() do work on a julia fit.',
+      call.=FALSE)
+    stop('Not a ctStanFit object', call.=FALSE)
+  }
   covORcor <- function(m){
     if(corr) return(cov2cor(m)) else return(m)
   }

@@ -151,3 +151,162 @@ test_that("a saturated optimum is not reported as converged", {
   expect_gt(max(abs(fit$estimate$raw)), 20)
   expect_false(isTRUE(fit$estimate$converged))
 })
+
+# --- integration, found by exercising the package rather than the filter -----
+
+.jbin_mixed <- function() {
+  m <- suppressMessages(ctModel(type = "ct", n.latent = 1, n.manifest = 4,
+    manifestNames = c("b1", "b2", "b3", "y1"), latentNames = "eta1",
+    LAMBDA = matrix(1, 4, 1), MANIFESTMEANS = matrix(0, 4, 1),
+    CINT = matrix(0), T0MEANS = matrix(0),
+    MANIFESTVAR = diag(c(0, 0, 0, 1), 4)))
+  m$manifesttype <- c(1L, 1L, 1L, 0L)
+  m$pars$indvarying <- FALSE
+  mm <- m$matrices; mm$MANIFESTVAR[4, 4] <- "mvar"; m$matrices <- mm
+  m
+}
+
+.jbin_mixed_data <- function(nsubjects = 30) {
+  invlog <- function(x) exp(x) / (1 + exp(x))
+  set.seed(11)
+  gen <- suppressMessages(ctModel(type = "ct", n.latent = 1, n.manifest = 1,
+    manifestNames = "eta", latentNames = "eta1", LAMBDA = matrix(1),
+    DRIFT = matrix(-0.3), DIFFUSION = matrix(0.8), MANIFESTVAR = matrix(0.001),
+    T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
+    MANIFESTMEANS = matrix(0), Tpoints = 12))
+  d <- data.frame(ctGenerate(gen, n.subjects = nsubjects, Tpoints = 12,
+    backend = "r"))
+  for (i in 1:3) d[[paste0("b", i)]] <- stats::rbinom(nrow(d), 1, invlog(d$eta))
+  d$y1 <- d$eta + stats::rnorm(nrow(d), 0, 0.5)
+  d$eta <- NULL
+  d
+}
+
+test_that("mixed binary and gaussian indicators fit together", {
+  skip_on_cran()
+  skip_without_julia()
+  fit <- suppressWarnings(suppressMessages(
+    ctFit(.jbin_mixed_data(), .jbin_mixed(), backend = "julia", cores = 2,
+      optimcontrol = list(estonly = TRUE))))
+  expect_true(isTRUE(fit$estimate$converged))
+  est <- summary(fit)$popmeans
+  expect_equal(unname(est["drift_eta1", "mean"]), -0.3, tolerance = 0.2)
+  expect_equal(unname(est["diff_eta1", "mean"]), 0.8, tolerance = 0.35)
+})
+
+test_that("the functions that re-run the filter work on a binary fit", {
+  skip_on_cran()
+  skip_without_julia()
+  # These all pass a `CTSEMKalmanTrace` rather than the adjoint tape, and the
+  # binary recorder accepted it and then reached for a field it does not have.
+  # One missing guard broke five functions at once, far from the cause.
+  fit <- suppressWarnings(suppressMessages(
+    ctFit(.jbin_mixed_data(), .jbin_mixed(), backend = "julia", cores = 2,
+      optimcontrol = list(estonly = TRUE))))
+  works <- function(expr) !inherits(
+    try(suppressWarnings(suppressMessages(expr)), silent = TRUE), "try-error")
+  expect_true(works(ctKalman(fit, subjects = 1)))
+  expect_true(works(ctPredict(fit, subjects = 1)))
+  expect_true(works(ctACFresiduals(fit)))
+  expect_true(works(ctPostPredPlots(fit)))
+  expect_true(works(ctLOO(fit, folds = 2, cores = 1)))
+})
+
+test_that("generation draws binary indicators as zeros and ones", {
+  skip_on_cran()
+  skip_without_julia()
+  # The generate hook was passed only to the gaussian block, so binary columns
+  # came back all NaN -- data that looks like a missing-data problem rather
+  # than a bug in the generator.
+  set.seed(4)
+  d <- suppressWarnings(suppressMessages(
+    ctGenerate(.jbin_mixed(), n.subjects = 30, Tpoints = 10,
+      backend = "julia")))
+  for (nm in c("b1", "b2", "b3")) {
+    expect_true(all(d[, nm] %in% c(0, 1)), info = nm)
+    # Not degenerate: a mean-zero latent should give a mix.
+    expect_gt(mean(d[, nm]), 0.2)
+    expect_lt(mean(d[, nm]), 0.8)
+  }
+  expect_false(all(d[, "y1"] %in% c(0, 1)))
+})
+
+test_that("a binary model is routed away from the r generator", {
+  # The r generator integrates a linear gaussian system and has no link, so it
+  # produced continuous values for a manifest declared binary -- silently.
+  m <- .jbin_mixed()
+  expect_warning(
+    suppressMessages(ctGenerate(m, n.subjects = 3, Tpoints = 4,
+      backend = "r")),
+    "no measurement link")
+})
+
+test_that("state dependent measurement works alongside binary indicators", {
+  skip_on_cran()
+  skip_without_julia()
+  d <- .jbin_mixed_data(nsubjects = 20)
+  build <- function(lambda, means, mvar) {
+    m <- suppressMessages(ctModel(type = "ct", n.latent = 1, n.manifest = 2,
+      manifestNames = c("b1", "b2"), latentNames = "eta1",
+      LAMBDA = lambda, MANIFESTMEANS = means, CINT = matrix(0),
+      T0MEANS = matrix(0), MANIFESTVAR = mvar))
+    m$manifesttype <- c(1L, 1L)
+    m$pars$indvarying <- FALSE
+    m
+  }
+  cases <- list(
+    `state dependent LAMBDA` = build(matrix(c("1 + 0.2 * eta1", "1"), 2, 1),
+      matrix(0, 2, 1), diag(0, 2)),
+    `state dependent MANIFESTMEANS` = build(matrix(1, 2, 1),
+      matrix(c("0.1 * eta1", "0"), 2, 1), diag(0, 2)),
+    `state dependent MANIFESTVAR` = build(matrix(1, 2, 1), matrix(0, 2, 1),
+      matrix(c("0.1 + 0.05 * eta1", "0", "0", "0"), 2, 2)))
+  for (nm in names(cases)) {
+    fit <- try(suppressWarnings(suppressMessages(
+      ctFit(d, cases[[nm]], backend = "julia", cores = 2,
+        optimcontrol = list(estonly = TRUE)))), silent = TRUE)
+    expect_false(inherits(fit, "try-error"), info = nm)
+    if (!inherits(fit, "try-error")) {
+      expect_true(is.finite(fit$estimate$loglik), info = nm)
+    }
+  }
+})
+
+test_that("binary works with random effects and with laplace", {
+  skip_on_cran()
+  skip_without_julia()
+  d <- .jbin_mixed_data(nsubjects = 25)
+  d$age <- rep(stats::rnorm(25), each = 12)
+  m <- suppressMessages(ctModel(type = "ct", n.latent = 1, n.manifest = 3,
+    manifestNames = c("b1", "b2", "b3"), latentNames = "eta1",
+    LAMBDA = matrix(1, 3, 1), MANIFESTMEANS = matrix(0, 3, 1),
+    CINT = matrix("cint"), T0MEANS = matrix(0), MANIFESTVAR = diag(0, 3),
+    n.TIpred = 1, TIpredNames = "age"))
+  m$manifesttype[] <- 1L
+  m$pars$indvarying <- FALSE
+  m$pars$indvarying[m$pars$param %in% "cint"] <- TRUE
+  for (approach in c("augmented", "laplace")) {
+    fit <- try(suppressWarnings(suppressMessages(
+      ctFit(d, m, backend = "julia", cores = 2, intoverpop = approach,
+        optimcontrol = list(estonly = TRUE)))), silent = TRUE)
+    expect_false(inherits(fit, "try-error"), info = approach)
+    if (!inherits(fit, "try-error")) {
+      expect_true(is.finite(fit$estimate$loglik), info = approach)
+    }
+  }
+})
+
+test_that("ctModelLatex renders the link for binary indicators only", {
+  m <- .jbin_mixed()
+  txt <- paste(as.character(ctModelLatex(m, compile = FALSE)), collapse = "\n")
+  # Three binary indicators get an inverse logit; the gaussian one does not.
+  hits <- gregexpr("operatorname{logit}", txt, fixed = TRUE)[[1]]
+  expect_equal(sum(hits > 0), 3L)
+  expect_true(grepl("nu_", txt, fixed = TRUE))
+
+  gaussian <- m
+  gaussian$manifesttype <- rep(0L, 4)
+  plain <- paste(as.character(ctModelLatex(gaussian, compile = FALSE)),
+    collapse = "\n")
+  expect_false(grepl("operatorname{logit}", plain, fixed = TRUE))
+})

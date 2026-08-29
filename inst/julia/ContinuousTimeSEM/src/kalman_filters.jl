@@ -253,7 +253,7 @@ function _ekf_update_observed!(ws::ContinuousEKFWorkspace, pars,
     binary_rows = _ekf_binary_subset(ws, observed)
     _record_binary!(trace, ws, pars, data, obs_col, binary_rows,
         ws.state, ws.P_predict.data, _val(ws.state_dim))
-    binary_loglik = _ekf_binary_rows!(ws, pars, data, obs_col, observed)
+    binary_loglik = _ekf_binary_rows!(ws, pars, data, obs_col, observed, generate)
     binary_loglik === nothing && return nothing
     gaussian = _ekf_gaussian_subset(ws, observed)
 
@@ -307,7 +307,7 @@ log marginal likelihood. Zero when the model has no binary indicators, which is
 the branch every existing model takes.
 """
 function _ekf_binary_rows!(ws::ContinuousEKFWorkspace, pars,
-    data::AbstractMatrix, obs_col::Int, observed)
+    data::AbstractMatrix, obs_col::Int, observed, generate=nothing)
     T = eltype(ws.state)
     types = ws.manifesttype
     isempty(types) && return zero(T)
@@ -316,12 +316,50 @@ function _ekf_binary_rows!(ws::ContinuousEKFWorkspace, pars,
     @inbounds for i in observed
         (i <= length(types) && types[i] == 1) || continue
         λ = view(pars.LAMBDA, i, :)
-        contribution = _ekf_binary_update!(ws, λ, pars.MANIFESTMEANS[i],
-            data[i, obs_col], n)
+        y = generate === nothing ? data[i, obs_col] :
+            _generate_binary!(generate, ws, pars, λ, i, obs_col, n)
+        contribution = _ekf_binary_update!(ws, λ, pars.MANIFESTMEANS[i], y, n)
         isfinite(contribution) || return nothing
         total += contribution
     end
     return total
+end
+
+"""
+    _generate_binary!(gen, ws, pars, λ, row, obs_col, n)
+
+Draw one binary observation from its own prior predictive, write it out, and
+return it so the filter conditions on what it drew.
+
+The marginal probability of a one is `∫ inv_logit(η) φ(η; η̂, s²) dη`, which the
+quadrature already computes as the `y = 1` marginal likelihood -- so the draw
+needs no extra integration, only a uniform. That comes from the same
+standard normal R supplied for this cell, through `Φ`, which keeps generation
+entirely governed by `set.seed()`.
+"""
+function _generate_binary!(gen, ws::ContinuousEKFWorkspace, pars, λ,
+    row::Int, obs_col::Int, n::Int)
+    T = eltype(ws.state)
+    nodes, weights = _gauss_hermite(_CTSEM_BINARY_NODES[])
+    P = ws.P_predict.data
+    s2 = zero(T)
+    ηbar = pars.MANIFESTMEANS[row]
+    @inbounds for i in 1:n
+        acc = zero(T)
+        for j in 1:n
+            acc += P[i, j] * λ[j]
+        end
+        s2 += λ[i] * acc
+        ηbar += λ[i] * ws.state[i]
+    end
+    s2 = max(s2, zero(T))
+    logZ, _, _ = _binary_moments(ηbar, sqrt(s2), one(T), nodes, weights)
+    p = isfinite(logZ) ? exp(logZ) : inv(one(T) + exp(-ηbar))
+    r = gen.offset + obs_col
+    u = _standard_normal_cdf(gen.base[row, r])
+    y = u < p ? one(T) : zero(T)
+    gen.out[row, r] = y
+    return y
 end
 
 """

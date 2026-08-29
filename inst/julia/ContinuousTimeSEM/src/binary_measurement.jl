@@ -267,3 +267,25 @@ the same model -- so a fit that lands beyond it has stopped for arithmetic
 reasons rather than statistical ones.
 """
 const _CTSEM_SATURATION = Ref(20.0)
+
+"""
+    _standard_normal_cdf(z)
+
+Φ(z), by the Zelen & Severo rational approximation (A&S 26.2.17).
+
+Needed to turn one of the standard normals R supplies into the uniform a
+Bernoulli draw wants. `Random` is a dependency and `rand()` would be simpler,
+but the whole point of taking the base normals from R is that `set.seed()`
+governs generation; drawing here would put half the randomness outside the
+user's control.
+
+Absolute error below 8e-8, which is nothing against a Bernoulli threshold, and
+this is generation rather than likelihood so it is never differentiated.
+"""
+@inline function _standard_normal_cdf(z::Real)
+    t = inv(1 + 0.2316419 * abs(z))
+    poly = t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 +
+        t * (-1.821255978 + t * 1.330274429))))
+    tail = exp(-z * z / 2) / sqrt(2 * pi) * poly
+    return z >= 0 ? 1 - tail : tail
+end
