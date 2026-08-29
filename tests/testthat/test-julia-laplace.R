@@ -746,3 +746,31 @@ test_that("a multilevel summary prints its tables and not its payload", {
   expect_gt(length(utils::capture.output(
     print(s, sections = "randomEffects"))), 10L)
 })
+
+test_that("optimising without integrating the random effects is refused", {
+  skip_on_cran()
+  # `intoverpop=FALSE` leaves each subject's random effects as free parameters
+  # of the objective, so maximising it maximises over those effects too and the
+  # population variance it lands on is whatever makes them most likely --
+  # zero, or as near as the data allow. Sampling is what handles that model,
+  # which is why `intoverpop='auto'` resolves to FALSE exactly when `optimize`
+  # is. Refused rather than silently corrected, because both readings of the
+  # request are plausible and guessing answers a different question.
+  set.seed(3)
+  d <- do.call(rbind, lapply(1:8, function(i) data.frame(id = i,
+    time = 0:4, Y1 = stats::rnorm(5))))
+  m <- suppressMessages(ctModel(type = "ct", n.latent = 1, n.manifest = 1,
+    manifestNames = "Y1", latentNames = "eta1", LAMBDA = matrix(1),
+    MANIFESTMEANS = matrix(0), CINT = matrix("cint"), T0MEANS = matrix(0)))
+  m$pars$indvarying <- FALSE
+  m$pars$indvarying[m$pars$param %in% "cint"] <- TRUE
+  expect_error(suppressWarnings(suppressMessages(
+    ctFit(d, m, backend = "julia", cores = 1, intoverpop = FALSE,
+      optimcontrol = list(estonly = TRUE)))),
+    "intoverpop=FALSE with optimize=TRUE")
+  # The same model with the effects integrated is fine, which is what makes
+  # the refusal a guard rather than a limitation.
+  expect_error(suppressWarnings(suppressMessages(
+    ctFit(d, m, backend = "julia", cores = 1, intoverpop = "augmented",
+      optimcontrol = list(estonly = TRUE)))), NA)
+})

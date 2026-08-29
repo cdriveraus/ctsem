@@ -626,6 +626,27 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       "indvarying, so there is nothing to integrate over.", call.=FALSE)
   }
 
+  # Optimizing without integrating over the population distribution is not a
+  # combination that means anything. `intoverpop=FALSE` leaves each subject's
+  # random effects as free parameters of the objective, so maximizing it
+  # maximizes over the effects as well as over the population parameters, and
+  # the population variance it lands on is the one that makes those particular
+  # effects most likely -- which is zero, or as near as the data allow. Sampling
+  # is what handles that model, which is why `intoverpop='auto'` resolves to
+  # FALSE exactly when `optimize` is FALSE.
+  #
+  # It is refused rather than quietly corrected because both readings of the
+  # request are plausible -- integrate them, or sample instead -- and guessing
+  # would silently answer a different question. Before this it died inside a
+  # transform rendering with `invalid format '%.17g'`, which named neither.
+  if(isTRUE(optimize) && !intoverpop && identical(intoverpopmethod,'none') &&
+      any(ctm$pars$indvarying[is.na(ctm$pars$value)])) stop(
+    "intoverpop=FALSE with optimize=TRUE leaves each subject's random effects ",
+    "as free parameters to be maximized over, which drives the population ",
+    "variance to zero rather than estimating it. Use intoverpop='augmented' ",
+    "or 'laplace' to integrate them out, or optimize=FALSE to sample.",
+    call.=FALSE)
+
   # if(optimize && !intoverpop && any(ctm$pars$indvarying[is.na(ctm$pars$value)]) &&
   #     is.null(ctm$fixedrawpopchol) && is.null(ctm$fixedsubpars)){
   #   intoverpop <- TRUE
