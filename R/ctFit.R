@@ -739,17 +739,38 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     # A drift of -0.095 against -0.935 is not a small bias: the linearised fit
     # describes a near random walk where the exact one finds strong mean
     # reversion. That test has been failing, and it is this.
-    message('Binary indicators use a linearised (moment-matched Gaussian) ',
-      'measurement update, and it is biased for any latent observed only ',
-      'through them -- more so the more indicators load on that latent. ',
-      'Process noise comes back low (measured at 0.71 of truth with 5 ',
-      'indicators, 0.46 with 30), and with many indicators the bias reaches ',
-      'the dynamics too -- against an exact state-sampled fit of the same data ',
-      'the item parameters agreed to 0.012 while drift came back -0.095 ',
-      'against -0.935. Item/measurement parameters are trustworthy here; ',
-      'treat DRIFT and DIFFUSION from a latent with many binary indicators as ',
-      'indicative only, and check against intoverstates=FALSE with optimize=',
-      'FALSE if they matter.')
+    # Backend specific, because they no longer do the same thing. The julia
+    # engine integrates the Bernoulli observation against the predicted state
+    # (a mode-centred Gauss-Hermite rule on the scalar linear predictor); the
+    # stan model moment-matches it to a Gaussian and linearises. On 40
+    # replications with 50 subjects and 12 timepoints, RMSE for a true
+    # DIFFUSION of 0.8:
+    #
+    #   indicators   julia   stan
+    #            3   0.134   0.449
+    #           10   0.075   0.297
+    #           30   0.045   0.229
+    #
+    # Paired on the same data, every cell favours julia (p <= 0.014). Note the
+    # shape of it: stan's *bias* is modest, its RMSE is three to five times
+    # worse -- the linearised estimate is unstable rather than uniformly low,
+    # which is why single-dataset comparisons looked so different from each
+    # other.
+    if(backend %in% 'julia'){
+      message('Binary indicators are integrated rather than linearised on ',
+        'this backend: the Bernoulli observation is taken against the ',
+        'predicted state by quadrature, so DRIFT and DIFFUSION are estimated ',
+        'without the linearisation bias the stan path carries.')
+    } else {
+      message('Binary indicators use a linearised (moment-matched Gaussian) ',
+        'measurement update on the stan backend, which makes DRIFT and ',
+        'especially DIFFUSION unreliable for a latent seen only through them. ',
+        'Over 40 replications with a true diffusion of 0.8, RMSE was 0.45 with ',
+        '3 indicators and 0.23 with 30, against 0.13 and 0.04 for ',
+        "backend='julia', which integrates the observation instead. Prefer ",
+        'the julia backend for binary data, or treat process noise as ',
+        'indicative.')
+    }
 
     binaryrows <- which(ctm$pars$matrix %in% 'MANIFESTVAR' &
         ctm$pars$row %in% which(ctm$manifesttype==1) &
