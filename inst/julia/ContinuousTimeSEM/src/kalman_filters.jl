@@ -277,34 +277,42 @@ function _ekf_update_observed!(ws::ContinuousEKFWorkspace, pars,
         factor, view(ws.ỹ, 1:length(gaussian)), log2π_const)
 end
 
-"""Which of `observed` are binary. Empty when the model has none."""
+"""Whether manifest variable `i` is integrated rather than filtered linearly."""
+@inline _ekf_is_categorical(types, i::Int) = i <= length(types) && types[i] > 0
+
+"""Which of `observed` are categorical. Empty when the model has none."""
 @inline function _ekf_binary_subset(ws::ContinuousEKFWorkspace, observed)
     types = ws.manifesttype
     isempty(types) && return Int[]
-    return Int[i for i in observed if i <= length(types) && types[i] == 1]
+    return Int[i for i in observed if _ekf_is_categorical(types, i)]
 end
 
-"""Which of `observed` are Gaussian. `observed` itself when none are binary."""
+"""Which of `observed` are Gaussian. `observed` itself when none are not."""
 @inline function _ekf_gaussian_subset(ws::ContinuousEKFWorkspace, observed)
     types = ws.manifesttype
     isempty(types) && return observed
-    any_binary = false
+    any_categorical = false
     @inbounds for i in observed
-        if i <= length(types) && types[i] == 1
-            any_binary = true
+        if _ekf_is_categorical(types, i)
+            any_categorical = true
             break
         end
     end
-    any_binary || return observed
-    return Int[i for i in observed if !(i <= length(types) && types[i] == 1)]
+    any_categorical || return observed
+    return Int[i for i in observed if !_ekf_is_categorical(types, i)]
 end
 
 """
     _ekf_binary_rows!(ws, pars, data, obs_col, observed)
 
-Apply every binary observation in this row, one at a time, returning their total
-log marginal likelihood. Zero when the model has no binary indicators, which is
-the branch every existing model takes.
+Apply every categorical observation in this row, one at a time, returning their
+total log marginal likelihood. Zero when the model has no categorical
+indicators, which is the branch every existing model takes.
+
+Several categorical indicators at one row are conditionally independent given
+the state, so applying them in sequence -- each an exact scalar update, with a
+Gaussian projection between -- is both cheaper and more accurate than one joint
+linearisation.
 """
 function _ekf_binary_rows!(ws::ContinuousEKFWorkspace, pars,
     data::AbstractMatrix, obs_col::Int, observed, generate=nothing)
@@ -314,11 +322,12 @@ function _ekf_binary_rows!(ws::ContinuousEKFWorkspace, pars,
     n = _val(ws.state_dim)
     total = zero(T)
     @inbounds for i in observed
-        (i <= length(types) && types[i] == 1) || continue
+        _ekf_is_categorical(types, i) || continue
         λ = view(pars.LAMBDA, i, :)
+        τ = _ordinal_thresholds!(ws, pars, i)
         y = generate === nothing ? data[i, obs_col] :
-            _generate_binary!(generate, ws, pars, λ, i, obs_col, n)
-        contribution = _ekf_binary_update!(ws, λ, pars.MANIFESTMEANS[i], y, n)
+            _generate_binary!(generate, ws, pars, λ, i, obs_col, n, τ)
+        contribution = _ekf_binary_update!(ws, λ, pars.MANIFESTMEANS[i], y, n, τ)
         isfinite(contribution) || return nothing
         total += contribution
     end
@@ -326,19 +335,23 @@ function _ekf_binary_rows!(ws::ContinuousEKFWorkspace, pars,
 end
 
 """
-    _generate_binary!(gen, ws, pars, λ, row, obs_col, n)
+    _generate_binary!(gen, ws, pars, λ, row, obs_col, n, thresholds)
 
-Draw one binary observation from its own prior predictive, write it out, and
-return it so the filter conditions on what it drew.
+Draw one categorical observation from its own prior predictive, write it out,
+and return it so the filter conditions on what it drew.
 
-The marginal probability of a one is `∫ inv_logit(η) φ(η; η̂, s²) dη`, which the
-quadrature already computes as the `y = 1` marginal likelihood -- so the draw
-needs no extra integration, only a uniform. That comes from the same
+The marginal probability of each category is `∫ P(k | η) φ(η; η̂, s²) dη`, which
+the quadrature already computes as that category's marginal likelihood -- so the
+draw needs no extra integration, only a uniform. That comes from the same
 standard normal R supplied for this cell, through `Φ`, which keeps generation
 entirely governed by `set.seed()`.
+
+Binary keeps its own two-outcome branch because its data are `0`/`1` while
+ordinal categories are `1..K`; sharing the loop would mean subtracting one on
+the way out and is not worth the confusion.
 """
 function _generate_binary!(gen, ws::ContinuousEKFWorkspace, pars, λ,
-    row::Int, obs_col::Int, n::Int)
+    row::Int, obs_col::Int, n::Int, thresholds = ())
     T = eltype(ws.state)
     nodes, weights = _gauss_hermite(_CTSEM_BINARY_NODES[])
     P = ws.P_predict.data
@@ -353,11 +366,31 @@ function _generate_binary!(gen, ws::ContinuousEKFWorkspace, pars, λ,
         ηbar += λ[i] * ws.state[i]
     end
     s2 = max(s2, zero(T))
-    logZ, _, _ = _binary_moments(ηbar, sqrt(s2), one(T), nodes, weights)
-    p = isfinite(logZ) ? exp(logZ) : inv(one(T) + exp(-ηbar))
+    s = sqrt(s2)
     r = gen.offset + obs_col
     u = _standard_normal_cdf(gen.base[row, r])
-    y = u < p ? one(T) : zero(T)
+
+    local y::T
+    if isempty(thresholds)
+        logZ, _, _ = _binary_moments(ηbar, s, one(T), nodes, weights)
+        p = isfinite(logZ) ? exp(logZ) : inv(one(T) + exp(-ηbar))
+        y = u < p ? one(T) : zero(T)
+    else
+        # Walk the categories accumulating marginal mass until it passes `u`.
+        # The last category is the fallback, which also absorbs whatever the
+        # quadrature left of the total short of one.
+        K = length(thresholds) + 1
+        y = T(K)
+        cumulative = zero(T)
+        @inbounds for k in 1:(K - 1)
+            logZ, _, _ = _binary_moments(ηbar, s, k, nodes, weights, thresholds)
+            cumulative += isfinite(logZ) ? exp(logZ) : zero(T)
+            if u < cumulative
+                y = T(k)
+                break
+            end
+        end
+    end
     gen.out[row, r] = y
     return y
 end

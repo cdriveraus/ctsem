@@ -468,8 +468,14 @@ ctStanModelCleanctspec <-  function(ctspec){ #clean ctspec structure, non numeri
 }
 
 ctStanMatricesList <- function(unsafe=FALSE){
+  # THRESHOLDS exists only on models with an ordinal manifest variable, which
+  # only the julia backend accepts -- ctFit refuses them for stan, and the
+  # julia branch returns before ctStanModelWriter is reached, so no .stan file
+  # ever sees code 11. It has to be registered here all the same: parameter
+  # numbers come from matsetup, and a matrix missing from this list would fall
+  # back to a separate numbering that collides with it.
   base <- c(PARS=10, T0MEANS=1,LAMBDA=2,DRIFT=3,DIFFUSION=4,MANIFESTVAR=5,MANIFESTMEANS=6, CINT=7,
-    T0VAR=8,TDPREDEFFECT=9)
+    T0VAR=8,TDPREDEFFECT=9,THRESHOLDS=11)
   jacobian = c(JAx=52,Jtd=53,Jy=54) #J0=51,
   asymptotic = c(asymCINT=21,asymDIFFUSIONcov=22)
   extra <- c(DIFFUSIONcov=31,MANIFESTcov=32,T0cov=33)

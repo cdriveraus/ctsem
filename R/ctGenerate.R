@@ -208,19 +208,20 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
   # would change the numbers under every existing caller for no gain on the
   # models they use, so the split is by capability rather than by preference.
   nonlinear <- isTRUE(try(ctModelIsNonlinear(ctmodelobj), silent=TRUE))
-  # A binary indicator is the same situation as a nonlinear one: the generator
-  # below integrates a linear Gaussian system and has no notion of a link, so
-  # it produces continuous values for a manifest the model declares binary --
-  # silently, which is the worst of both. Measured before this line existed: a
-  # model with `manifesttype = 1` generated values with a mean of 0.063 and no
-  # zeros or ones among them.
-  binary <- !is.null(ctmodelobj$manifesttype) && any(ctmodelobj$manifesttype > 0)
-  if(backend == 'auto') backend <- if(nonlinear || binary) 'julia' else 'r'
-  if(backend == 'r' && binary){
-    warning('This model declares binary indicators (manifesttype = 1) and ',
-      "backend='r' generates continuous values for them: the R generator has ",
-      'no measurement link. Use backend="julia" for binary data.',
-      call.=FALSE)
+  # A categorical indicator is the same situation as a nonlinear one: the
+  # generator below integrates a linear Gaussian system and has no notion of a
+  # link, so it produces continuous values for a manifest the model declares
+  # binary or ordinal -- silently, which is the worst of both. Measured before
+  # this line existed: a model with `manifesttype = 1` generated values with a
+  # mean of 0.063 and no zeros or ones among them.
+  categorical <- !is.null(ctmodelobj$manifesttype) &&
+    any(ctmodelobj$manifesttype > 0)
+  if(backend == 'auto') backend <- if(nonlinear || categorical) 'julia' else 'r'
+  if(backend == 'r' && categorical){
+    warning('This model declares binary or ordinal indicators (manifesttype ',
+      "1 or 2) and backend='r' generates continuous values for them: the R ",
+      'generator has no measurement link. Use backend="julia" for ',
+      'categorical data.', call.=FALSE)
   }
   if(backend == 'r' && nonlinear) {
     stop("This model is nonlinear, and ctGenerate's own generator integrates a ",

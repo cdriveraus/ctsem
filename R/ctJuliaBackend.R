@@ -471,11 +471,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # `optimize=FALSE` is supported now: the engine has its own No-U-Turn sampler,
   # and which target it samples is decided by `intoverpop`. See
   # `.ctJuliaSampleFit`.
-  # Binary manifest variables are supported now: the filter integrates the
-  # observation rather than linearising it, which is why it is worth having
-  # here at all. See inst/julia/ContinuousTimeSEM/src/binary_measurement.jl.
-  if (any(model$manifesttype > 1)) {
-    failures <- c(failures, "manifest types beyond binary (manifesttype > 1)")
+  # Binary and ordinal manifest variables are supported now: the filter
+  # integrates the observation rather than linearising it, which is why it is
+  # worth having here at all. See
+  # inst/julia/ContinuousTimeSEM/src/binary_measurement.jl.
+  if (any(!model$manifesttype %in% 0:2)) {
+    failures <- c(failures, "manifest types beyond ordinal (manifesttype > 2)")
   }
   if (isTRUE(vb)) failures <- c(failures, "variational Bayes")
   if (isTRUE(gendata)) failures <- c(failures, "generation")
@@ -1318,10 +1319,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     continuoustime = isTRUE(model$continuoustime),
     TDpredNames = model$TDpredNames,
     TIpredNames = model$TIpredNames,
-    # 1 for a binary manifest variable, 0 for Gaussian. Carried on the spec so
-    # a fit rebuilt from a saved object knows its own measurement model.
+    # 0 Gaussian, 1 binary, 2 ordinal, with the category count alongside for
+    # the ordinal ones. Carried on the spec so a fit rebuilt from a saved
+    # object knows its own measurement model.
     manifesttype = if (is.null(model$manifesttype)) integer(0) else
       as.integer(model$manifesttype),
+    ncategories = if (is.null(model$ncategories)) integer(0) else
+      as.integer(model$ncategories),
     nlatent = augmented$nlatent,
     nlatent_augmented = augmented$nlatent_augmented,
     dynamic_state_indices = augmented$dynamic_state_indices,
@@ -1409,6 +1413,9 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # reasons to omit it agree.
   if (any(spec$manifesttype > 0)) {
     arguments$manifesttype <- .ctJuliaVector(as.integer(spec$manifesttype))
+  }
+  if (any(spec$manifesttype %in% 2)) {
+    arguments$ncategories <- .ctJuliaVector(as.integer(spec$ncategories))
   }
   # A model shape Julia has not seen mints new closure types for its transform
   # expressions, and the whole filter specialises again for them -- tens of

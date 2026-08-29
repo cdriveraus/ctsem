@@ -63,9 +63,14 @@ test_that("Julia backend rejects unsupported capabilities before session startup
   # Binary is supported now -- the filter integrates the observation rather
   # than linearising it -- so what is refused is anything beyond it.
   expect_no_error(unsupported(model = binary))
+  # Ordinal is supported too, by the same quadrature with a cumulative logit
+  # in place of the Bernoulli likelihood.
   ordinal <- model
   ordinal$manifesttype <- 2L
-  expect_error(unsupported(model = ordinal), "beyond binary")
+  expect_no_error(unsupported(model = ordinal))
+  beyond <- model
+  beyond$manifesttype <- 3L
+  expect_error(unsupported(model = beyond), "beyond ordinal")
 
   # `optimize = FALSE` used to be on that list and is not any more: the engine
   # has its own sampler, so the combination has to pass the capability check

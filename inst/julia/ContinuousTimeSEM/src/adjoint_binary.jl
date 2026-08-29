@@ -36,6 +36,10 @@ mutable struct CTSEMBinaryRecord{T}
     Lambda::Matrix{T}         # LAMBDA[rows, :]
     manifestmeans::Vector{T}  # MANIFESTMEANS[rows]
     y::Vector{T}              # the observations themselves
+    # Cumulated thresholds per observation, empty for a binary one. Copied
+    # rather than referenced: `_ordinal_thresholds!` hands back a view into a
+    # workspace scratch that the next observation overwrites.
+    thresholds::Vector{Vector{T}}
 end
 
 # Deliberately untyped in `tape`: this file is included before the tape's own,
@@ -65,7 +69,8 @@ function _record_binary!(tape, ws, pars, data, obs_col, rows, state_in, P_in, n)
         push!(tape.binaries, CTSEMBinaryRecord{T}(
             r, collect(vec(state_in)), Matrix(P_in),
             Matrix(pars.LAMBDA[r, 1:n]), collect(pars.MANIFESTMEANS[r]),
-            T[data[i, obs_col] for i in r]))
+            T[data[i, obs_col] for i in r],
+            Vector{T}[collect(T, _ordinal_thresholds!(ws, pars, i)) for i in r]))
     else
         record = tape.binaries[index]
         record.rows = r
@@ -74,6 +79,8 @@ function _record_binary!(tape, ws, pars, data, obs_col, rows, state_in, P_in, n)
         record.Lambda = Matrix(pars.LAMBDA[r, 1:n])
         record.manifestmeans = collect(pars.MANIFESTMEANS[r])
         record.y = T[data[i, obs_col] for i in r]
+        record.thresholds =
+            Vector{T}[collect(T, _ordinal_thresholds!(ws, pars, i)) for i in r]
     end
     push!(tape.program, (:binary, index))
     return nothing
@@ -109,7 +116,7 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
             a += λ[i] * x[i]
         end
         b <= zero(T) && continue
-        g = _binary_moment_derivatives(a, b, record.y[j])
+        g = _binary_moment_derivatives(a, b, record.y[j], record.thresholds[j])
         m, v = g[2], g[3]
         shift = (m - a) / b
         shrink = (one(T) - v / b) / b
@@ -134,7 +141,8 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
             a += λ[i] * x0[i]
         end
         b <= zero(T) && continue
-        g = _binary_moment_derivatives(a, b, record.y[j])
+        τ = record.thresholds[j]
+        g = _binary_moment_derivatives(a, b, record.y[j], τ)
         m, v = g[2], g[3]
         dlogZ_da, dlogZ_db = g[4], g[5]
         dm_da, dm_db = g[6], g[7]
@@ -155,14 +163,24 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
         @inbounds for jj in 1:n, ii in 1:n
             shrinkbar -= P̄[ii, jj] * c[ii] * c[jj]
         end
-        # P -= shrink c c' contributes -shrink (P̄ + P̄') c to c̄; P̄ is symmetric
-        # here, so that is -2 shrink P̄ c.
+        # P -= shrink c c' contributes -shrink (P̄ + P̄') c to c̄.
+        #
+        # Written out rather than as -2 shrink P̄ c, because P̄ is *not*
+        # symmetric: `c = Pλ` two blocks below adds `c̄ λ'` to it, which is a
+        # rank-one term with no reason to be. With one latent state that makes
+        # no difference and every gradient test the binary path had used one;
+        # with two -- a second latent, or a random effect under
+        # `intoverpop='augmented'`, which expands the state by one per varying
+        # parameter -- the adjoint came back about 1% wrong on DRIFT and
+        # DIFFUSION and 12% on the random effect's own variance, against
+        # forward mode. Small enough to look like quadrature error and quite
+        # large enough to stop an optimiser short.
         @inbounds for i in 1:n
             acc = zero(T)
             for jj in 1:n
-                acc += P̄[i, jj] * c[jj]
+                acc += (P̄[i, jj] + P̄[jj, i]) * c[jj]
             end
-            cbar[i] -= T(2) * shrink * acc
+            cbar[i] -= shrink * acc
         end
 
         # Through shift = (m - a)/b and shrink = 1/b - v/b².
@@ -177,8 +195,19 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
         abar += logZbar * dlogZ_da + mbar * dm_da + vbar * dv_da
         bbar += logZbar * dlogZ_db + mbar * dm_db + vbar * dv_db
 
-        # a = λ'x + μ.
+        # Thresholds, when this observation has any. THRESHOLDS holds gaps and
+        # the forward pass cumulates them, so the cotangent on gap `i` is the
+        # sum of the cotangents on every threshold at or after it.
         row = record.rows[j]
+        if !isempty(τ)
+            Jτ = _binary_threshold_derivatives(a, b, record.y[j], τ)
+            running = zero(T)
+            @inbounds for i in length(τ):-1:1
+                running += logZbar * Jτ[1, i] + mbar * Jτ[2, i] + vbar * Jτ[3, i]
+                θ̄ca.THRESHOLDS[row, i] += running
+            end
+        end
+
         @inbounds for i in 1:n
             x̄[i] += abar * λ[i]
             θ̄ca.LAMBDA[row, i] += abar * x0[i]

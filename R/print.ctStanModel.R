@@ -89,9 +89,18 @@ print.ctStanModel <- function(x, matrices = NULL, ...) {
       "\n", sep = "")
   }
   if (any(x$manifesttype > 0)) {
+    described <- character()
     binary <- x$manifestNames[x$manifesttype == 1]
-    cat("  non-Gaussian indicators: ", paste(binary, collapse = ", "),
-      " (binary)\n", sep = "")
+    if (length(binary)) described <- c(described,
+      paste0(paste(binary, collapse = ", "), " (binary)"))
+    # Named one at a time, because the category count differs per variable and
+    # is the thing a reader most wants to check against their data.
+    ordinal <- which(x$manifesttype == 2)
+    if (length(ordinal)) described <- c(described,
+      paste0(x$manifestNames[ordinal], " (ordinal, ",
+        x$ncategories[ordinal], " categories)"))
+    cat("  non-Gaussian indicators: ", paste(described, collapse = ", "),
+      "\n", sep = "")
   }
 
   free <- .ctModelFreeNames(pars)

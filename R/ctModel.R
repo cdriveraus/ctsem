@@ -23,7 +23,15 @@
 #' @param manifestNames n.manifest length vector of manifest variable names as they appear in the data structure, 
 #' without any _Tx time point suffix that may be present in wide data.  Defaults to Y1, Y2, etc.
 #' 
-#' @param manifesttype n.manifest length vector of manifest variable types,defaults to 0 for continuous vars, 1 for binary vars is also possible. 
+#' @param manifesttype n.manifest length vector of manifest variable types. 0 (the
+#' default) is a continuous, Gaussian variable; 1 is binary, coded 0/1; 2 is
+#' ordinal, coded as consecutive integers from 1. Binary and ordinal variables
+#' are supported by the julia backend only, and binary additionally by stan.
+#' @param ncategories n.manifest length integer vector, giving the number of
+#' categories of each ordinal manifest variable and ignored for the others.
+#' Required when any \code{manifesttype} is 2, because the model has to know how
+#' many thresholds to estimate before it sees any data -- \code{ctGenerate} needs
+#' it too.
 #' 
 #' @param latentNames n.latent length vector of latent variable names 
 #' (used for naming parameters, defaults to eta1, eta2, etc).
@@ -121,7 +129,8 @@
 #' @export
 
 ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoints=NULL, 
-  manifestNames='auto', manifesttype=rep(0,nrow(LAMBDA)),latentNames='auto', id='id',time='time', silent=FALSE,
+  manifestNames='auto', manifesttype=rep(0,nrow(LAMBDA)), ncategories=NULL,
+  latentNames='auto', id='id',time='time', silent=FALSE,
   T0VAR="auto", T0MEANS="auto", MANIFESTMEANS="auto", MANIFESTVAR="diag", 
   DRIFT="auto", CINT=0, DIFFUSION="auto",
   n.TDpred='auto', TDpredNames='auto', TDPREDEFFECT="auto", TDPREDMEANS="auto", TDPREDVAR="auto",
@@ -385,6 +394,15 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
   }
   
   if(any(manifesttype>0 ) && all(CINT %in% 0)) warning('CINT usually needs to be specified for non-continuous variables -- consider fixing relevant MANIFESTMEANS to zero instead')
+
+  if(any(!manifesttype %in% 0:2)) stop('manifesttype must be 0 (continuous), 1 (binary) or 2 (ordinal)')
+  THRESHOLDS <- NULL
+  ncategories <- .ctCheckNcategories(ncategories, manifesttype, manifestNames)
+  if(any(manifesttype %in% 2)){
+    THRESHOLDS <- .ctThresholdMatrix(ncategories, manifesttype, manifestNames)
+    if(!all(MANIFESTMEANS[manifesttype %in% 2] %in% 0)) warning(
+      'An ordinal variable has both a free MANIFESTMEANS and free thresholds, which are not separately identified -- consider fixing the relevant MANIFESTMEANS to zero')
+  }
   
   
   
@@ -395,7 +413,8 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
     `TDpredNames`=TDpredNames, `TIpredNames`=TIpredNames, `T0VAR`=T0VAR, `T0MEANS`=T0MEANS, 
     `MANIFESTMEANS`=MANIFESTMEANS, `MANIFESTVAR`=MANIFESTVAR, `DRIFT`=DRIFT, `CINT`=CINT, 
     `DIFFUSION`=DIFFUSION, `TDPREDEFFECT`=TDPREDEFFECT, `TDPREDMEANS`=TDPREDMEANS, `TDPREDVAR`=TDPREDVAR, `PARS`=PARS, 
-     `id`=id, `time`=time, `manifesttype`=manifesttype)
+     `id`=id, `time`=time, `manifesttype`=manifesttype,
+     `ncategories`=ncategories, `THRESHOLDS`=THRESHOLDS)
   
   
   

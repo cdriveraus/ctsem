@@ -51,15 +51,22 @@ test_that("a binary model recovers what generated it", {
   expect_gt(est["diff_eta1", "97.5%"], 0.8)
 })
 
-test_that("the julia backend refuses binary indicators by name", {
+test_that("the julia backend fits binary indicators rather than refusing them", {
   skip_on_cran()
   skip_without_julia()
-  # Refused rather than silently treated as Gaussian, which would produce a fit
-  # that looks fine and answers a different question.
-  expect_error(
-    suppressMessages(ctFit(.binary_data(nsubjects = 5, nobs = 4),
-      .binary_model(), backend = "julia", cores = 1)),
-    "non-Gaussian manifest")
+  # This asserted a refusal, from back when the julia filter had no measurement
+  # link and treating a binary indicator as Gaussian would have produced a fit
+  # that looked fine and answered a different question. The filter integrates
+  # the observation now, so the contract is the opposite one: it fits, and what
+  # is refused is a manifest type beyond ordinal (test-julia-backend.R).
+  #
+  # Small and degenerate on purpose -- five subjects and four occasions is
+  # where the marshalling of integer manifest columns used to fail.
+  fit <- suppressWarnings(suppressMessages(
+    ctFit(.binary_data(nsubjects = 5, nobs = 4), .binary_model(),
+      backend = "julia", cores = 1)))
+  expect_s3_class(fit, "ctJuliaFit")
+  expect_true(is.finite(fit$estimate$loglik))
 })
 
 test_that("a fixed non-zero measurement variance on a binary indicator warns", {
@@ -70,7 +77,7 @@ test_that("a fixed non-zero measurement variance on a binary indicator warns", {
   expect_warning(
     suppressMessages(ctFit(.binary_data(nsubjects = 5, nobs = 4),
       .binary_model(manifestvar = 0.5), cores = 1, fit = FALSE)),
-    "Bernoulli link")
+    "measurement link")
 })
 
 test_that("the deprecated binomial argument no longer disables the filter", {

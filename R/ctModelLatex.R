@@ -359,9 +359,11 @@ ctModelLatexMeasurementBlock <- function(ctmodel, matrixnames=TRUE,
   manifesttype <- rep(0, ctmodel$n.manifest)
   if(!is.null(ctmodel$manifesttype)) manifesttype <- as.integer(ctmodel$manifesttype)
   binary <- manifesttype == 1
+  ordinal <- manifesttype == 2
   manifestNames <- ctmodel$manifestNames
   manifestIndex <- seq_along(manifestNames)
   binaryIndex <- which(binary)
+  ordinalIndex <- which(ordinal)
   
   if(!any(manifesttype != 0)){
     observation <- paste0("\\underbrace{
@@ -408,6 +410,12 @@ ctModelLatexMeasurementBlock <- function(ctmodel, matrixnames=TRUE,
         ",linearPredictor," \\\\ \\\\")
   yhat <- matrix(paste0('\\nu_{',manifestIndex,'}(t)'))
   yhat[binary] <- paste0('\\operatorname{logit}^{-1}\\left(\\nu_{',binaryIndex,'}(t)\\right)')
+  # An ordinal row's predicted quantity is a set of cumulative probabilities
+  # rather than a single number, so the cell carries the cumulative form and
+  # the reader differences adjacent entries to get a category probability.
+  yhat[ordinal] <- paste0('\\Pr\\left(Y_{',ordinalIndex,
+    '}(t)\\leq k\\right)=\\operatorname{logit}^{-1}\\left(\\tau_{',
+    ordinalIndex,',k}-\\nu_{',ordinalIndex,'}(t)\\right)')
   predictedLine <- paste0("\\parbox{10em}{\\centering{Predicted\\linebreak observations:}}
 &\\underbrace{",bmatrix(matrix(paste0('\\hat{Y}_{',manifestIndex,'}(t)')),nottext=TRUE),"
       }_{\\widehat{\\vect{Y}}(t)} =
@@ -424,11 +432,19 @@ ctModelLatexMeasurementBlock <- function(ctmodel, matrixnames=TRUE,
   diagonalErrorCov <- !any(is.na(errorCovNumeric[row(errorCovNumeric) != col(errorCovNumeric)])) &&
     all(errorCovNumeric[row(errorCovNumeric) != col(errorCovNumeric)] == 0)
   errorCov <- ctModelLatexMathElement(errorCov)
-  diag(errorCov)[!binary] <- paste0('\\left[',diag(errorCov)[!binary],'\\right]^2')
+  diag(errorCov)[!binary & !ordinal] <-
+    paste0('\\left[',diag(errorCov)[!binary & !ordinal],'\\right]^2')
   diag(errorCov)[binary] <- paste0('\\hat{Y}_{',binaryIndex,'}(t)\\left(1-\\hat{Y}_{',
     binaryIndex,'}(t)\\right)')
-  errorCovNote <- if(!diagonalErrorCov) paste0(" \\\\ 
-&\\textrm{Note: off-diagonal entries in }\\vect{\\Theta}\\textrm{ are shown as specified; binary diagonal entries are conditional approximations.}") else ""
+  # An ordinal observation has no Gaussian error term at all: the julia filter
+  # integrates the categorical likelihood over the latent rather than matching
+  # it to a normal, so there is nothing to put in this cell.
+  diag(errorCov)[ordinal] <- '\\textrm{--}'
+  errorCovNote <- paste0(
+    if(!diagonalErrorCov) paste0(" \\\\ 
+&\\textrm{Note: off-diagonal entries in }\\vect{\\Theta}\\textrm{ are shown as specified; binary diagonal entries are conditional approximations.}") else "",
+    if(any(ordinal)) paste0(" \\\\ 
+&\\textrm{Note: ordinal observations carry no measurement error term -- the likelihood is integrated over }\\vect{\\eta}\\textrm{ directly.}") else "")
   errorLine <- paste0("\\parbox{10em}{\\centering{Observation\\linebreak error:}}
 & \\qquad \\qquad \\quad \\vect{\\epsilon}(t) \\sim \\mathrm{N}\\left(\\mathbf{0},
       \\underbrace{",bmatrix(errorCov,nottext=TRUE),"
@@ -792,8 +808,11 @@ ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctS
       }
       
       binaryIndex <- which(manifesttype == 1)
+      ordinalIndex <- which(manifesttype == 2)
       yhat <- paste0('\\nu_{',seq_len(c),'}(t)')
       yhat[binaryIndex] <- paste0('\\operatorname{logit}^{-1}(\\nu_{',binaryIndex,'}(t))')
+      yhat[ordinalIndex] <- paste0('\\operatorname{logit}^{-1}(\\tau_{',
+        ordinalIndex,',k}-\\nu_{',ordinalIndex,'}(t))')
       yhatString <- paste0('\\begin{bmatrix}',paste(yhat,collapse=' \\\\ '),'\\end{bmatrix}')
       equationcont = paste0(equationcont,'\\\\','\n',
         '\\hat{Y}(t) &= ',yhatString)

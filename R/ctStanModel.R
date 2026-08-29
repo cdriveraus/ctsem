@@ -1,5 +1,5 @@
 ctModelUnlist<-function(ctmodelobj,
-  matnames=c('T0MEANS','LAMBDA','DRIFT','DIFFUSION','MANIFESTVAR','MANIFESTMEANS', 'CINT', 'TDPREDEFFECT', 'T0VAR','PARS')){
+  matnames=c('T0MEANS','LAMBDA','DRIFT','DIFFUSION','MANIFESTVAR','MANIFESTMEANS', 'CINT', 'TDPREDEFFECT', 'T0VAR','PARS','THRESHOLDS')){
   out<-data.frame(matrix=as.character(NA), row=as.integer(NA), col=as.integer(NA), param=as.character(NA), value=as.numeric(NA),
     stringsAsFactors =FALSE) 
   out[1:sum(sapply(ctmodelobj[names(ctmodelobj) %in% matnames],length)),]=out
@@ -38,6 +38,18 @@ ctStanModelDefaultFreePar <- function(matrix, row, col, continuoustime){
   if(matrix %in% c('LAMBDA')) {
     offset <- 0.5
     meanscale <- 5
+  }
+  # Column 1 is the first threshold, free on the real line like any intercept.
+  # Later columns are gaps to the previous threshold and must be positive, so
+  # they take the same positive transform the variances use. At a raw value of
+  # zero a gap is log(2)*2 = 1.39, which is a sane spacing on a logit scale.
+  if(matrix %in% c('THRESHOLDS')) {
+    if(col == 1) meanscale <- 10
+    if(col > 1) {
+      transform <- 1
+      meanscale <- 2
+      multiplier <- 2
+    }
   }
 
   if(matrix %in% c('DIFFUSION','MANIFESTVAR', 'T0VAR')) {
@@ -310,6 +322,14 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
         ctspec$offset[pi] <- 0.5
         ctspec$meanscale[pi] <- 5
       }
+      if(ctspec$matrix[pi] %in% c('THRESHOLDS')) {
+        if(ctspec$col[pi] == 1) ctspec$meanscale[pi] <- 10
+        if(ctspec$col[pi] > 1) {
+          ctspec$transform[pi] <- 1
+          ctspec$meanscale[pi] <- 2
+          ctspec$multiplier[pi] <- 2
+        }
+      }
       
       if(ctspec$matrix[pi] %in% c('DIFFUSION','MANIFESTVAR', 'T0VAR')) {
         if(ctspec$row[pi] != ctspec$col[pi]){
@@ -490,7 +510,11 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
     groupIDnames=if(length(ctm$id) > 1) ctm$id[-1] else character(),
     timeName=ctm$time,
     continuoustime=continuoustime,
-    manifesttype=ctmodelobj$manifesttype)
+    manifesttype=ctmodelobj$manifesttype,
+    # Zero for every non-ordinal variable, so `any(manifesttype %in% 2)` is the
+    # only thing that ever has to be tested before reading it.
+    ncategories=if(is.null(ctmodelobj$ncategories))
+      rep(0L, n.manifest) else as.integer(ctmodelobj$ncategories))
   class(out)<-'ctStanModel'
   
   out$tipredeffectscale <- 1

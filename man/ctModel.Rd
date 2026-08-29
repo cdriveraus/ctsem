@@ -12,6 +12,7 @@ ctModel(
   Tpoints = NULL,
   manifestNames = "auto",
   manifesttype = rep(0, nrow(LAMBDA)),
+  ncategories = NULL,
   latentNames = "auto",
   id = "id",
   time = "time",
@@ -59,7 +60,16 @@ see \code{\link{ctIntervalise}}.}
 \item{manifestNames}{n.manifest length vector of manifest variable names as they appear in the data structure, 
 without any _Tx time point suffix that may be present in wide data.  Defaults to Y1, Y2, etc.}
 
-\item{manifesttype}{n.manifest length vector of manifest variable types,defaults to 0 for continuous vars, 1 for binary vars is also possible.}
+\item{manifesttype}{n.manifest length vector of manifest variable types. 0 (the
+default) is a continuous, Gaussian variable; 1 is binary, coded 0/1; 2 is
+ordinal, coded as consecutive integers from 1. Binary and ordinal variables
+are supported by the julia backend only, and binary additionally by stan.}
+
+\item{ncategories}{n.manifest length integer vector, giving the number of
+categories of each ordinal manifest variable and ignored for the others.
+Required when any \code{manifesttype} is 2, because the model has to know how
+many thresholds to estimate before it sees any data -- \code{ctGenerate} needs
+it too.}
 
 \item{latentNames}{n.latent length vector of latent variable names 
 (used for naming parameters, defaults to eta1, eta2, etc).}

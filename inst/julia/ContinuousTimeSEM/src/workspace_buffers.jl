@@ -104,12 +104,16 @@ struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF
     P_update::Symmetric{T, Matrix{T}}
     P_predict::Symmetric{T, Matrix{T}}
     ll_buffer::Vector{T}
-    # 1 for a binary manifest variable, 0 for Gaussian. Copied from the
-    # `EKFParameters` at construction because the filter's `pars` is the
-    # evaluated matrix ComponentVector -- LAMBDA, DRIFT and so on -- and has
-    # nowhere for model-level metadata to live. Concrete, so it costs no extra
-    # type parameter. Empty means every variable is Gaussian.
+    # 0 Gaussian, 1 binary, 2 ordinal. Copied from the `EKFParameters` at
+    # construction because the filter's `pars` is the evaluated matrix
+    # ComponentVector -- LAMBDA, DRIFT and so on -- and has nowhere for
+    # model-level metadata to live. Concrete, so it costs no extra type
+    # parameter. Empty means every variable is Gaussian.
     manifesttype::Vector{Int}
+    ncategories::Vector{Int}
+    # Scratch for one ordinal variable's cumulated thresholds. Length is the
+    # widest THRESHOLDS row in the model, zero when there is no such matrix.
+    thresholds::Vector{T}
 end
 
 """
@@ -164,6 +168,9 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
     # Scratch vector for log-likelihood solve.
     ll_buffer = zeros(T, m)
     manifesttype = isdefined(sp, :manifesttype) ? copy(sp.manifesttype) : Int[]
+    ncategories = isdefined(sp, :ncategories) ? copy(sp.ncategories) : Int[]
+    thresholds = zeros(T, hasproperty(pars, :THRESHOLDS) ?
+        size(pars.THRESHOLDS, 2) : 0)
 
     return ContinuousEKFWorkspace(
         all_params,
@@ -193,6 +200,8 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         P_predict,
         ll_buffer,
         manifesttype,
+        ncategories,
+        thresholds,
     )
 end
 

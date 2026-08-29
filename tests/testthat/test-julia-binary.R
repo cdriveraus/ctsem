@@ -90,6 +90,39 @@ test_that("the gradient matches finite differences, both ways of computing it", 
   }
 })
 
+test_that("the binary adjoint is exact with more than one latent state", {
+  skip_on_cran()
+  skip_without_julia()
+  # Every earlier gradient test used one latent state, and with one state the
+  # covariance cotangent is a scalar and trivially symmetric. The binary
+  # reverse assumed that symmetry in general, and `c = P lambda` breaks it --
+  # so with two states the adjoint was about 1% wrong on DRIFT and DIFFUSION
+  # and 12% wrong on the second state's variance, small enough to pass for
+  # quadrature error. Forward mode is the comparison rather than a finite
+  # difference because it is exact: a disagreement is then unambiguously the
+  # reverse pass.
+  d <- .jbin_data(nsubjects = 15, nobs = 12, nindicators = 2)
+  d$v <- rep(stats::rnorm(15), each = 12)
+  m <- suppressMessages(ctModel(type = "ct", n.latent = 1, n.manifest = 2,
+    manifestNames = c("b1", "b2"), latentNames = "eta1",
+    LAMBDA = matrix(1, 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
+    CINT = matrix("cint"), T0MEANS = matrix(0), MANIFESTVAR = diag(0, 2)))
+  m$manifesttype[] <- 1L
+  m$pars$indvarying <- FALSE
+  # A random CINT expands the state by one under 'augmented', which is the
+  # cheapest way to get a second state without changing the measurement model.
+  m$pars$indvarying[m$pars$param %in% "cint"] <- TRUE
+  handle <- .jbin_spec(d, m)
+  npar <- max(handle$parameter_table$parnumber, na.rm = TRUE)
+  set.seed(3)
+  at <- stats::rnorm(npar, 0, 0.3)
+  adjoint <- as.numeric(ctJuliaEvaluate(handle, at, gradient = TRUE,
+    gradient_method = "adjoint")$gradient)
+  forward <- as.numeric(ctJuliaEvaluate(handle, at, gradient = TRUE,
+    gradient_method = "forward")$gradient)
+  expect_equal(adjoint, forward, tolerance = 1e-9)
+})
+
 test_that("the two gradient methods agree with each other", {
   skip_on_cran()
   skip_without_julia()

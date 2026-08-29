@@ -133,6 +133,14 @@
 #'
 #' @return list containing Kalman filter elements, each element in array of
 #' iterations, data row, variables. llrow is the log likelihood for each row of data.
+#'
+#' For a binary or ordinal manifest variable the returned manifest quantities are
+#' the *linear predictor* \eqn{\nu = \Lambda \eta + \tau}, on the logit scale,
+#' not a probability and not a category. Turn one into a probability with
+#' \code{plogis(nu)} for binary, or into cumulative category probabilities with
+#' \code{plogis(tau_k - nu)} for ordinal, taking the thresholds from
+#' \code{summary(fit)$popmeans}. The manifest covariance for such a variable is
+#' likewise the covariance of the linear predictor.
 #' @aliases ctStanKalman
 #' @export
 #'

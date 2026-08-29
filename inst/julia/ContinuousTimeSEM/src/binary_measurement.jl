@@ -1,5 +1,5 @@
 """
-Binary observations, integrated rather than linearised.
+Categorical observations, integrated rather than linearised.
 
 # Why not the usual extended-Kalman treatment
 
@@ -47,6 +47,23 @@ the Gaussian path. Several binary indicators observed at one row are
 conditionally independent given the state, so they are applied one at a time,
 each an exact scalar update with a Gaussian projection between, which is both
 cheaper and more accurate than one joint linearisation.
+
+# Ordinal
+
+Nothing above is Bernoulli-specific except `P(y | η)` itself, so an ordinal
+variable is the same machinery with the cumulative logit in that slot:
+
+    P(y <= k | η) = inv_logit(τ_k - η)
+
+Binary is its `K = 2` case with a single threshold at zero, and the two agree
+to the last bit -- which is why `_category_likelihood` and `_category_score`
+carry both and the binary fast path is an optimisation rather than a separate
+model. The reverse pass generalises unchanged apart from one extra cotangent,
+for the thresholds themselves.
+
+The same substitution would admit a Poisson or a censored observation. What it
+will not admit is nonlinear *dynamics*: those are multivariate in the
+prediction step, and none of this applies to them.
 """
 
 """
@@ -68,6 +85,17 @@ the parameters are still poor -- exactly when a bad likelihood does most damage.
 Twenty-one costs twenty-one logistic evaluations against a Cholesky for the
 Gaussian path, which is not a trade worth economising on.
 
+Ordinal is easier at the same node count, measured the same way over the four
+categories of a `τ = (-1.0, 0.4, 1.9)` variable:
+
+    nodes    s=0.5    s=1      s=2      s=4      s=8
+        7   8.4e-08  2.1e-05  7.7e-04  1.9e-02  1.3e-01
+       21   5.5e-14  7.6e-11  7.1e-08  5.3e-06  3.7e-04
+       41   5.3e-14  8.2e-14  3.8e-11  9.2e-08  3.8e-05
+
+An interior category is a bump rather than a step, and a mode-centred rule has
+less work to do on a bump. The end categories are the binary case again.
+
 Large `s` is where this is hardest: the posterior is then dominated by the
 likelihood and genuinely skewed, so a mode-centred Gaussian rule has real work
 to do. It is also where the answer is least determined, so the error matters
@@ -79,29 +107,122 @@ const _CTSEM_BINARY_NODES = Ref(21)
 const _CTSEM_BINARY_NEWTON = Ref(6)
 
 """
-    _binary_mode(ηbar, s2, y)
+    _category_score(η, y, thresholds)
+
+`(d log P(y|η)/dη, -d² log P(y|η)/dη²)`, the score and observed information of
+one categorical observation.
+
+Both branches of the ordinal case collapse to something short because
+`f = F(1-F)` for the logistic: in an end category the ratio `f/F` is just the
+opposite tail, so the score is a probability and the curvature a variance. Only
+an interior category needs the difference quotient, and there the second term
+uses `f'(z) = f(z)(1 - 2F(z))`.
+
+Binary with a threshold at zero is the `K = 2` case of this and gives exactly
+`(y - p, p(1-p))`, which is what the Bernoulli fast path computes -- they agree
+identically, not just numerically, which is why the fast path can stay.
+
+The curvature is positive wherever the likelihood is log-concave, and a
+difference of logistic CDFs is; the floor guards the arithmetic, not the maths,
+for a category so improbable that `P` underflows.
+"""
+@inline function _category_score(η::T, y::Real, thresholds) where {T}
+    if isempty(thresholds)
+        p = inv(one(T) + exp(-η))
+        return (T(y > 0.5 ? 1 : 0) - p, p * (one(T) - p))
+    end
+    k = Int(y)
+    n = length(thresholds)
+    if k <= 1
+        Fb = inv(one(T) + exp(η - thresholds[1]))
+        return (Fb - one(T), max(Fb * (one(T) - Fb), floatmin(T)))
+    elseif k > n
+        Fa = inv(one(T) + exp(η - thresholds[n]))
+        return (Fa, max(Fa * (one(T) - Fa), floatmin(T)))
+    end
+    Fb = inv(one(T) + exp(η - thresholds[k]))
+    Fa = inv(one(T) + exp(η - thresholds[k - 1]))
+    fb = Fb * (one(T) - Fb)
+    fa = Fa * (one(T) - Fa)
+    P = max(Fb - Fa, floatmin(T))
+    g = (fa - fb) / P
+    dfb = fb * (one(T) - T(2) * Fb)
+    dfa = fa * (one(T) - T(2) * Fa)
+    return (g, max(g * g - (dfb - dfa) / P, floatmin(T)))
+end
+
+"""
+    _binary_mode(ηbar, s2, y, thresholds)
 
 `(mode, curvature)` of `log N(η; ηbar, s²) + log P(y | η)`.
 
-Strictly concave -- the prior contributes `-1/s²` and the Bernoulli
-`-p(1-p)`, both negative -- so Newton from the prior mean converges quickly and
-cannot diverge. The gradient of the likelihood term is bounded by one, which
-bounds the step and keeps this well behaved even when `s` is large and the
-observation is nearly deterministic.
+Strictly concave -- the prior contributes `-1/s²` and the observation a
+non-positive term, since both the Bernoulli likelihood and a difference of
+logistic CDFs are log-concave -- so Newton from the prior mean converges
+quickly and cannot diverge. The score is bounded by one in absolute value,
+which bounds the step and keeps this well behaved even when `s` is large and
+the observation is nearly deterministic.
 """
-@inline function _binary_mode(ηbar::T, s2::T, y::Real) where {T}
-    target = T(y > 0.5 ? 1 : 0)
+@inline function _binary_mode(ηbar::T, s2::T, y::Real, thresholds = ()) where {T}
     η = ηbar
     precision = inv(s2)
     curvature = precision
     @inbounds for _ in 1:_CTSEM_BINARY_NEWTON[]
-        p = inv(one(T) + exp(-η))
-        gradient = -(η - ηbar) * precision + (target - p)
-        curvature = precision + p * (one(T) - p)
-        η -= -gradient / curvature   # Newton on a concave objective
+        score, information = _category_score(η, y, thresholds)
+        gradient = -(η - ηbar) * precision + score
+        curvature = precision + information
+        η += gradient / curvature   # Newton on a concave objective
     end
     return (η, curvature)
 end
+
+"""
+    _category_likelihood(η, y, thresholds)
+
+`P(y | η)` for an ordinal observation under the cumulative logit model:
+
+    P(y <= k | η) = inv_logit(τ_k - η)
+
+so category `k` has probability `inv_logit(τ_k - η) - inv_logit(τ_{k-1} - η)`,
+with `τ_0 = -Inf` and `τ_K = +Inf`. Binary is the two-category case with a
+single threshold at zero, and gives `inv_logit(η)` for a one -- which is why
+`thresholds` being empty means binary and needs no separate code path.
+
+Written as a difference of two logistic tails rather than of two CDFs: at large
+`|η|` one CDF rounds to one and the difference to zero, losing the category's
+probability entirely, while the tails stay representable.
+"""
+@inline function _category_likelihood(η::T, y::Real, thresholds) where {T}
+    isempty(thresholds) && return y > 0.5 ? inv(one(T) + exp(-η)) :
+        inv(one(T) + exp(η))
+    k = Int(y)
+    n = length(thresholds)
+    # Below the first threshold, or above the last: one tail, no subtraction.
+    k <= 1 && return inv(one(T) + exp(η - thresholds[1]))
+    k > n && return inv(one(T) + exp(thresholds[n] - η))
+    upper = inv(one(T) + exp(η - thresholds[k]))
+    lower = inv(one(T) + exp(η - thresholds[k - 1]))
+    return max(upper - lower, zero(T))
+end
+
+"""
+    _as_scalar_type(T, thresholds)
+
+The thresholds as element type `T`.
+
+The two derivative helpers each differentiate one of `_binary_moments`' two
+kinds of argument while holding the other fixed, so they call it with a dual
+predictor and plain thresholds, or the reverse. Resolving that by promotion
+does not work: under `intoverpop='laplace'` the fixed side is *already* a dual
+carrying the Laplace seed tags, ForwardDiff's `promote_rule` has to order two
+unrelated tags to combine them, and it throws rather than guess. Converting
+instead needs no ordering -- widening a value into a dual is always defined --
+and each caller knows which side is which.
+
+The `Tuple{}` method is what keeps a binary observation free of all of it.
+"""
+@inline _as_scalar_type(::Type{T}, thresholds) where {T} = T.(thresholds)
+@inline _as_scalar_type(::Type{T}, thresholds::Tuple{}) where {T} = thresholds
 
 """
     _binary_moments(ηbar, s, y, nodes, weights)
@@ -118,24 +239,21 @@ measured error was.
 `_gauss_hermite` returns physicists' nodes, so `∫f(t)e^{-t²}dt ≈ Σ wᵢf(tᵢ)`;
 re-centring turns that into `∫h(η)dη ≈ √2σ̂ Σ wᵢ exp(tᵢ²) h(η̂ + √2σ̂tᵢ)`.
 """
-@inline function _binary_moments(ηbar::T, s::T, y::Real, nodes, weights) where {T}
+@inline function _binary_moments(ηbar::T, s::T, y::Real, nodes, weights,
+    thresholds = ()) where {T}
     s2 = s * s
     s2 > zero(T) || return (zero(T), ηbar, zero(T))
-    mode, curvature = _binary_mode(ηbar, s2, y)
+    mode, curvature = _binary_mode(ηbar, s2, y, thresholds)
     scale = sqrt(T(2) / curvature)
 
     Z = zero(T)
     M1 = zero(T)
     M2 = zero(T)
-    observed_one = y > 0.5
     halfprec = inv(T(2) * s2)
     @inbounds for i in eachindex(nodes)
         t = T(nodes[i])
         η = mode + scale * t
-        # `p` for a one, `1-p` for a zero, written so neither saturates: at
-        # large |η| one underflows to zero and the other to one, and computing
-        # the small one directly keeps its logarithm finite.
-        likelihood = observed_one ? inv(one(T) + exp(-η)) : inv(one(T) + exp(η))
+        likelihood = _category_likelihood(η, y, thresholds)
         deviation = η - ηbar
         # The `exp(t²)` undoes the rule's own kernel; the prior density is then
         # carried explicitly rather than folded into the nodes.
@@ -158,14 +276,55 @@ re-centring turns that into `∫h(η)dη ≈ √2σ̂ Σ wᵢ exp(tᵢ²) h(η̂
 end
 
 """
-    _ekf_binary_update!(ws, λ, μ, y, n)
+    _ordinal_thresholds!(ws, pars, row)
 
-One Bernoulli observation, applied exactly in the scalar direction it informs.
+The cumulated thresholds for manifest variable `row`, as a view into the
+workspace scratch. Empty for a Gaussian or binary variable, which is what makes
+the binary path fall through to its own two-outcome branch everywhere.
+
+# Why the matrix holds gaps rather than thresholds
+
+Thresholds must increase, and an optimiser handed `K-1` unconstrained cells
+will cross them -- at which point the category between the crossed pair has
+probability zero, the likelihood is `-Inf`, and there is no gradient pointing
+back out. So THRESHOLDS holds `τ₁` in its first column and the *gap to the
+previous threshold* in the rest, each gap passed through a positive transform
+on the R side, and this function accumulates them. Ordering then holds by
+construction and no constraint has to be enforced anywhere.
+
+The alternative -- writing `τ₁ + exp(δ₂) + ...` into each cell's transform
+string -- keeps thresholds in the matrix but makes a transform read several
+free parameters, which the adjoint's parameter layer does not support and which
+would cost every model a ForwardDiff gradient per cell to support. A running
+sum here costs a handful of additions on a vector of length `K-1`.
+"""
+@inline function _ordinal_thresholds!(ws, pars, row::Int)
+    hasproperty(pars, :THRESHOLDS) || return view(ws.thresholds, 1:0)
+    types = ws.manifesttype
+    (row <= length(types) && types[row] == 2) ||
+        return view(ws.thresholds, 1:0)
+    ncat = row <= length(ws.ncategories) ? ws.ncategories[row] : 0
+    k = min(max(ncat - 1, 0), size(pars.THRESHOLDS, 2))
+    k == 0 && return view(ws.thresholds, 1:0)
+    raw = view(pars.THRESHOLDS, row, :)
+    @inbounds begin
+        ws.thresholds[1] = raw[1]
+        for j in 2:k
+            ws.thresholds[j] = ws.thresholds[j - 1] + raw[j]
+        end
+    end
+    return view(ws.thresholds, 1:k)
+end
+
+"""
+    _ekf_binary_update!(ws, λ, μ, y, n, thresholds)
+
+One categorical observation, applied exactly in the scalar direction it informs.
 
 Returns the log marginal likelihood of the observation, or `-Inf` if the
 predicted state gives it no support.
 """
-function _ekf_binary_update!(ws, λ, μ, y::Real, n::Int)
+function _ekf_binary_update!(ws, λ, μ, y::Real, n::Int, thresholds = ())
     T = eltype(ws.state)
     nodes, weights = _gauss_hermite(_CTSEM_BINARY_NODES[])
 
@@ -186,7 +345,7 @@ function _ekf_binary_update!(ws, λ, μ, y::Real, n::Int)
     s2 = max(s2, zero(T))
     s = sqrt(s2)
 
-    logZ, ηpost, vpost = _binary_moments(ηbar, s, y, nodes, weights)
+    logZ, ηpost, vpost = _binary_moments(ηbar, s, y, nodes, weights, thresholds)
     isfinite(logZ) || return T(-Inf)
 
     # With no predicted variance in this direction the observation cannot move
@@ -237,14 +396,16 @@ and it is exactly consistent with the forward pass by construction, which is the
 property that matters here. Consistency beats elegance: a slightly-wrong
 gradient is worse than a slightly-expensive one.
 """
-function _binary_moment_derivatives(ηbar::T, s2::T, y::Real) where {T}
+function _binary_moment_derivatives(ηbar::T, s2::T, y::Real,
+    thresholds = ()) where {T}
     nodes, weights = _gauss_hermite(_CTSEM_BINARY_NODES[])
     if s2 <= zero(T)
         z = zero(T)
         return (z, ηbar, z, z, z, one(T), z, z, one(T))
     end
     triple = function (ab)
-        logZ, m, v = _binary_moments(ab[1], sqrt(ab[2]), y, nodes, weights)
+        τ = _as_scalar_type(eltype(ab), thresholds)
+        logZ, m, v = _binary_moments(ab[1], sqrt(ab[2]), y, nodes, weights, τ)
         return [logZ, m, v]
     end
     at = [ηbar, s2]
@@ -254,6 +415,34 @@ function _binary_moment_derivatives(ηbar::T, s2::T, y::Real) where {T}
     J = ForwardDiff.jacobian(triple, at)
     return (value[1], value[2], value[3],
         J[1, 1], J[1, 2], J[2, 1], J[2, 2], J[3, 1], J[3, 2])
+end
+
+"""
+    _binary_threshold_derivatives(ηbar, s2, y, thresholds)
+
+`∂(logZ, m, v)/∂τ` as a `3 x length(thresholds)` matrix.
+
+Separate from `_binary_moment_derivatives` rather than folded into it so the
+binary and Gaussian paths pay nothing for ordinal support: this is called only
+when a variable actually has thresholds. Differentiating the quadrature rather
+than the exact moments, for the same reason given there -- the reverse pass has
+to differentiate the function the forward pass computed, not the one it
+approximates.
+"""
+function _binary_threshold_derivatives(ηbar::T, s2::T, y::Real,
+    thresholds) where {T}
+    k = length(thresholds)
+    (k == 0 || s2 <= zero(T)) && return zeros(T, 3, k)
+    nodes, weights = _gauss_hermite(_CTSEM_BINARY_NODES[])
+    s = sqrt(s2)
+    triple = function (τ)
+        D = eltype(τ)
+        logZ, m, v = _binary_moments(D(ηbar), D(s), y, nodes, weights, τ)
+        return [logZ, m, v]
+    end
+    at = collect(T, thresholds)
+    isfinite(triple(at)[1]) || return zeros(T, 3, k)
+    return ForwardDiff.jacobian(triple, at)
 end
 
 """

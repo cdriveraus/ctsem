@@ -684,15 +684,25 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
 
   #fix binary manifestvariance
 
+  if(any(ctm$manifesttype %in% 2) && !identical(backend, 'julia')){
+    stop('Ordinal manifest variables (manifesttype 2) need backend="julia". ',
+      'The stan model has no ordinal measurement, so its thresholds would ',
+      'never be read; the julia filter integrates the observation over the ',
+      'latent instead. Ordinal variable(s): ',
+      paste(ctm$manifestNames[ctm$manifesttype %in% 2], collapse=', '), '.',
+      call.=FALSE)
+  }
+  if(any(ctm$manifesttype %in% 2)) .ctDataCategories(datalong, ctm)
+
   if(any(ctm$manifesttype > 0)){ #if any non continuous variables, (with free parameters)...
     errfix <- which(ctm$pars$matrix %in% 'MANIFESTVAR' &
-        (ctm$pars$row %in% which(ctm$manifesttype==1) |
-            ctm$pars$col %in% which(ctm$manifesttype==1)) &
+        (ctm$pars$row %in% which(ctm$manifesttype > 0) |
+            ctm$pars$col %in% which(ctm$manifesttype > 0)) &
         is.na(suppressWarnings(as.numeric(
           ctm$pars$value))))
 
     if(length(errfix) > 0){
-      message('Fixing any free MANIFESTVAR parameters for binary indicators to deterministic calculation')
+      message('Fixing any free MANIFESTVAR parameters for binary / ordinal indicators to deterministic calculation')
       ctm$pars$value[errfix] <- 1e-5
       ctm$pars[errfix,c('param','transform','multiplier','offset','meanscale','inneroffset','sdscale')] <- NA
       ctm$pars$indvarying[errfix] <- FALSE
@@ -757,10 +767,14 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     # which is why single-dataset comparisons looked so different from each
     # other.
     if(backend %in% 'julia'){
-      message('Binary indicators are integrated rather than linearised on ',
-        'this backend: the Bernoulli observation is taken against the ',
+      message('Binary and ordinal indicators are integrated rather than ',
+        'linearised on this backend: the observation is taken against the ',
         'predicted state by quadrature, so DRIFT and DIFFUSION are estimated ',
         'without the linearisation bias the stan path carries.')
+      if(any(ctm$manifesttype %in% 2)) message(
+        'Ordinal thresholds are reported as the first threshold followed by ',
+        'the gap to each subsequent one, which is what keeps them ordered; ',
+        'cumulate them to read the thresholds themselves.')
     } else {
       message('Binary indicators use a linearised (moment-matched Gaussian) ',
         'measurement update on the stan backend, which makes DRIFT and ',
@@ -773,15 +787,17 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     }
 
     binaryrows <- which(ctm$pars$matrix %in% 'MANIFESTVAR' &
-        ctm$pars$row %in% which(ctm$manifesttype==1) &
+        ctm$pars$row %in% which(ctm$manifesttype > 0) &
         ctm$pars$row == ctm$pars$col)
     stated <- binaryrows[!is.na(ctm$pars$value[binaryrows]) &
         abs(ctm$pars$value[binaryrows]) > 1e-4]
     if(length(stated)){
-      warning('MANIFESTVAR is fixed to a non-zero value for binary indicator',
+      warning('MANIFESTVAR is fixed to a non-zero value for categorical indicator',
         if(length(stated) > 1) 's ' else ' ',
         paste(ctm$manifestNames[ctm$pars$row[stated]], collapse=', '),
-        '. A binary indicator gets its randomness from the Bernoulli link, so ',
+        '. A categorical indicator gets its randomness from its measurement ',
+        'link -- the Bernoulli link for binary, the cumulative logit for ',
+        'ordinal -- so ',
         'this adds measurement noise on top of it. Set it to 0 unless that is ',
         'meant.', call.=FALSE)
     }}
