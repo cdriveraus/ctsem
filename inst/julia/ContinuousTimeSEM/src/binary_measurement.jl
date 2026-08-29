@@ -211,6 +211,15 @@ with `τ_0 = -Inf` and `τ_K = +Inf`. Binary is the two-category case with a
 single threshold at zero, and gives `inv_logit(η)` for a one -- which is why
 `thresholds` being empty means binary and needs no separate code path.
 
+`_category_loglikelihood` is the same identity with `log F(z) = -log1p_exp(-z)`
+substituted, and it is the one the quadrature uses. A category probability
+underflows to zero once the linear predictor is a few hundred away from the
+threshold that bounds it, which an optimiser reaches while its parameters are
+still poor; the probability form then makes the whole observation impossible
+and the row invalid, where the log form is merely a large negative number. On
+one 25-subject Laplace fit that difference was 38 of 78 trial points whose
+inner mode solve had nothing to work with.
+
 Written as a product of tails rather than as a difference of CDFs: at large
 `|η|` one CDF rounds to one and the difference to zero, losing the category's
 probability entirely, and as the gap between two thresholds closes the
@@ -218,6 +227,20 @@ difference loses its significant digits long before the probability itself
 stops being representable. The product form has neither problem -- see
 `_category_score`, which needs the same identity for its derivatives.
 """
+@inline function _category_loglikelihood(η::T, y::Real, thresholds) where {T}
+    if isempty(thresholds)
+        return y > 0.5 ? -log1p_exp(-η) : -log1p_exp(η)
+    end
+    k = Int(y)
+    n = length(thresholds)
+    k <= 1 && return -log1p_exp(η - thresholds[1])
+    k > n && return -log1p_exp(thresholds[n] - η)
+    gap = thresholds[k] - thresholds[k - 1]
+    gap > zero(gap) || return T(-Inf)
+    return -log1p_exp(thresholds[k - 1] - η) - log1p_exp(η - thresholds[k]) +
+        log(-expm1(-gap))
+end
+
 @inline function _category_likelihood(η::T, y::Real, thresholds) where {T}
     isempty(thresholds) && return y > 0.5 ? inv(one(T) + exp(-η)) :
         inv(one(T) + exp(η))
@@ -312,8 +335,7 @@ re-centring turns that into `∫h(η)dη ≈ √2σ̂ Σ wᵢ exp(tᵢ²) h(η̂
     # `log P(y | η̂)` is both the right answer and the continuous limit of the
     # integral, so nothing has to know where the boundary is.
     if !(s2 > zero(T))
-        certain = _category_likelihood(ηbar, y, thresholds)
-        return (certain > zero(T) ? log(certain) : T(-Inf), zero(T), zero(T))
+        return (_category_loglikelihood(ηbar, y, thresholds), zero(T), zero(T))
     end
     mode_offset, curvature = _binary_mode(ηbar, s2, y, thresholds)
     scale = sqrt(T(2) / curvature)
@@ -335,32 +357,46 @@ re-centring turns that into `∫h(η)dη ≈ √2σ̂ Σ wᵢ exp(tᵢ²) h(η̂
     # accumulators each time the maximum moves, which for a mode-centred rule
     # is a handful of times at most. It is exact algebra, so it changes no
     # value and no derivative.
+    # Log-sum-exp over the nodes, rescaled to the largest exponent seen so far.
+    #
+    # Two underflows are being avoided at once. The likelihood itself vanishes
+    # when the linear predictor is far from every threshold, and multiplying it
+    # in would make the whole node -- and often the whole observation -- zero;
+    # carried as a logarithm it is just a large negative number, and the
+    # observation stays usable. And the accumulated sums have to stay away from
+    # the bottom of the range because `M1/Z` divides by `Z²` under
+    # differentiation, which underflows while `Z` is still representable and
+    # leaves a finite value with NaN partials.
+    #
+    # The rescaling is exact algebra, so it changes no value and no derivative,
+    # and it costs a comparison per node plus a multiply on three accumulators
+    # each time the maximum moves.
     Z = zero(T)
     M1 = zero(T)
     M2 = zero(T)
-    wmax = zero(T)
+    emax = T(-Inf)
     halfprec = inv(T(2) * s2)
     @inbounds for i in eachindex(nodes)
         t = T(nodes[i])
         centred = scale * t              # η - mode
         deviation = mode_offset + centred  # η - ηbar
-        likelihood = _category_likelihood(ηbar + deviation, y, thresholds)
-        # The `exp(t²)` undoes the rule's own kernel; the prior density is then
+        # The `t²` undoes the rule's own kernel; the prior density is then
         # carried explicitly rather than folded into the nodes.
-        w = T(weights[i]) * exp(t * t - deviation * deviation * halfprec) *
-            likelihood
-        if w > wmax
-            ratio = iszero(wmax) ? zero(T) : wmax / w
+        e = t * t - deviation * deviation * halfprec +
+            _category_loglikelihood(ηbar + deviation, y, thresholds)
+        if e > emax
+            ratio = isfinite(emax) ? exp(emax - e) : zero(T)
             Z *= ratio
             M1 *= ratio
             M2 *= ratio
-            wmax = w
+            emax = e
         end
-        u = iszero(wmax) ? zero(T) : w / wmax
+        u = T(weights[i]) * exp(e - emax)
         Z += u
         M1 += u * deviation
         M2 += u * centred * centred
     end
+    isfinite(emax) || return (T(-Inf), zero(T), s2)
     # A zero means every node put zero probability on the observation, which is
     # a state so far from the data that the row carries no usable information.
     # The caller treats it as an invalid evaluation.
@@ -370,7 +406,7 @@ re-centring turns that into `∫h(η)dη ≈ √2σ̂ Σ wᵢ exp(tᵢ²) h(η̂
     variance = M2 / Z - spread * spread
     # Z above is √(2π)s times the marginal likelihood: the scale factor and the
     # prior's normalising constant are both outside the sum.
-    logZ = log(Z) + log(wmax) + log(scale) - log(sqrt(T(2) * T(pi)) * s)
+    logZ = log(Z) + emax + log(scale) - log(sqrt(T(2) * T(pi)) * s)
     return (logZ, offset, max(variance, zero(T)))
 end
 

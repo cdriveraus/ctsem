@@ -1980,6 +1980,9 @@ function _laplace_unit_weights(laplace::CTSEMLaplaceObjective)
     end for U in eachindex(laplace.units.members)]
 end
 
+"""How often the seeded gradient assembly was abandoned for the nested route."""
+const _CTSEM_LAPLACE_FALLBACKS = Ref(0)
+
 """
     ctsem_laplace_evaluate(laplace, values; gradient=true)
 
@@ -2130,6 +2133,24 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
                     chunk_ok[c] = false
                     return nothing
                 end
+                # A sweep can return success and still have accumulated a
+                # non-finite contribution: it reports whether its
+                # factorizations worked, not whether the numbers that came out
+                # of them are usable. One NaN here is the whole gradient, and
+                # the trial point is then rejected with a perfectly good
+                # objective value attached to it -- 54 of one fit's 267
+                # evaluations went that way, and the fit stopped 0.14 log units
+                # short with a gradient of 3.2.
+                #
+                # The fallback below exists for exactly this and was reachable
+                # only through a failed factorization. It computes the same
+                # quantity by ForwardDiff over the whole per-unit term, sharing
+                # only the primal, so it is a genuinely different route rather
+                # than a retry.
+                if !all(isfinite, partials[c])
+                    chunk_ok[c] = false
+                    return nothing
+                end
             end
             return nothing
         end
@@ -2152,6 +2173,7 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
             # those factorizations.
             fill!(grad, 0.0)
             grad .= _laplace_nested_gradient(laplace, theta, Ls, primal_curvature)
+            _CTSEM_LAPLACE_FALLBACKS[] += 1
         end
     else
         grad .= _laplace_nested_gradient(laplace, theta, Ls, primal_curvature)
@@ -2579,6 +2601,7 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     # that stops short of a stationary point almost always did so because its
     # line search ran out of points it was allowed to accept, and these say
     # which of the three reasons was doing it.
+    _CTSEM_LAPLACE_FALLBACKS[] = 0
     rejected_nonfinite = 0
     rejected_inner = 0
     rejected_gradient = 0
@@ -2744,7 +2767,9 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
         println("Laplace: ", accepted_calls, " objective evaluations accepted, ",
             rejected_nonfinite, " rejected as non-finite, ", rejected_inner,
             " for an inner mode solve that did not converge, ",
-            rejected_gradient, " for the gradient")
+            rejected_gradient, " for the gradient; ",
+            _CTSEM_LAPLACE_FALLBACKS[],
+            " gradient(s) fell back to the nested route")
         println("Laplace: inner modes ",
             count(laplace.inner_converged), "/", length(laplace.inner_converged),
             " converged, max |dg/dz| ",

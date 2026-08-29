@@ -401,3 +401,36 @@ test_that("the gradient stays finite as a threshold gap closes", {
       info = paste("raw", raw))
   }
 })
+
+test_that("an unlikely observation is a large penalty, not an impossible row", {
+  skip_on_cran()
+  skip_without_julia()
+  # Push the first threshold to about 300, so every observed category above the
+  # first has a probability around exp(-300). Computed as a probability that
+  # underflows to zero, the row becomes impossible, the subject's likelihood is
+  # -Inf and the whole trial point is invalid -- which is what a Laplace inner
+  # mode solve then has nothing to work with. Computed as a log likelihood it is
+  # merely a large negative number, and the optimiser can walk back out.
+  d <- .jord_data(nsubjects = 10, nobs = 8, nindicators = 1)
+  m <- .jord_model(nindicators = 1)
+  handle <- .jord_spec(d, m)
+  tab <- handle$parameter_table
+  npar <- max(tab$parnumber, na.rm = TRUE)
+  first <- unique(tab$parnumber[tab$matrix %in% "THRESHOLDS" & tab$col == 1 &
+      !is.na(tab$parnumber)])
+  expect_equal(length(first), 1L)
+  for (raw in c(5, 30, 70)) {
+    at <- rep(0.1, npar)
+    at[first] <- raw
+    got <- ctJuliaEvaluate(handle, at, gradient = TRUE)
+    expect_true(is.finite(as.numeric(got$value)), info = paste("raw", raw))
+    expect_true(all(is.finite(as.numeric(got$gradient))),
+      info = paste("raw", raw))
+  }
+  # And it really is a penalty: a threshold that far out must be much worse
+  # than a sane one, or the test is passing on an answer that ignores the data.
+  sane <- rep(0.1, npar); sane[first] <- 0
+  far <- rep(0.1, npar); far[first] <- 30
+  expect_lt(as.numeric(ctJuliaEvaluate(handle, far)$value),
+    as.numeric(ctJuliaEvaluate(handle, sane)$value) - 100)
+})

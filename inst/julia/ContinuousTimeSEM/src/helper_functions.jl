@@ -16,6 +16,21 @@ differentiation.
 @inline _custom_abs(x) = abs(x)
 
 """
+    _finite_deep(x)
+
+Whether `x` is finite *including its derivatives*.
+
+`isfinite` on a `ForwardDiff.Dual` tests only the value, so a NaN in the
+partials passes every validity guard in this package and surfaces much later as
+a rejected trial point with a finite objective and an unusable gradient. This
+walks the whole dual tree instead.
+"""
+_finite_deep(x::Real) = isfinite(x)
+_finite_deep(x::ForwardDiff.Dual) = _finite_deep(ForwardDiff.value(x)) &&
+    all(_finite_deep, ForwardDiff.partials(x))
+_finite_deep(x::AbstractArray) = all(_finite_deep, x)
+
+"""
     _custom_abs(x::ForwardDiff.Dual)
 
 Return the absolute value of the primal part of a dual number.
