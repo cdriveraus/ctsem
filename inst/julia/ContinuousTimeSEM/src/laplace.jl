@@ -2877,6 +2877,16 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     # and `NaN <= tolerance` is false so the scaled test alone would not have
     # caught it. One draw in ten reported convergence with a NaN gradient.
     finite_gradient = isfinite(gradient_norm)
+    # The same guard `ctsem_optimize` has, which this route was left out of.
+    #
+    # Every ctsem transform is flat to machine precision by |raw| ~ 20: the
+    # exponential underflows and the derivative is *exactly* zero. A parameter
+    # that walks out there therefore reports a zero gradient, satisfies any
+    # tolerance, and is indistinguishable from an optimum -- while being pinned
+    # by the transform's floating-point limit rather than by the data. A
+    # variance going to zero is the usual way in.
+    saturated = isempty(minimizer) ? false :
+        maximum(abs, minimizer) >= _CTSEM_SATURATION[]
     converged_enough = isfinite(final.value) && finite_gradient &&
         gradient_norm <= scaled_tolerance
     # Convergence needs a small gradient, and nothing else counts as one.
@@ -2895,6 +2905,9 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     # out of reach on a log likelihood of order 1e3 however good the fit.
     verbose && stalled && println("Laplace: the optimizer made no progress from ",
         "its starting values; reporting this as not converged")
+    verbose && saturated && println("Laplace: a parameter reached ",
+        maximum(abs, minimizer), " on the unconstrained scale, where its ",
+        "transform is flat to machine precision; reporting this as not converged")
     verbose && !stalled && !(finite_gradient &&
         (Optim.g_converged(result) || converged_enough)) &&
         println("Laplace: the optimizer stopped with a largest gradient of ",
@@ -2914,7 +2927,8 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
         chunk_timings=tuning === nothing ? Tuple{Int,Float64}[] : tuning.timings,
         gradient_norm=gradient_norm,
         scaled_tolerance=scaled_tolerance,
-        converged=!stalled && finite_gradient &&
+        saturated=saturated,
+        converged=!stalled && !saturated && finite_gradient &&
             (Optim.g_converged(result) || converged_enough),
         g_converged=Optim.g_converged(result),
         f_converged=Optim.f_converged(result),

@@ -1833,6 +1833,16 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
         as.numeric(result$gradient_norm),
       gradient_tolerance = if (is.null(result$scaled_tolerance)) NA_real_ else
         as.numeric(result$scaled_tolerance),
+      # A parameter that reached the flat region of its transform is the other
+      # reason a fit is not converged, and it is invisible in the gradient --
+      # a saturated transform reports a gradient of zero, which passes every
+      # tolerance. Without this the warning below described such a fit by its
+      # gradient alone and read as though it had passed.
+      saturated = isTRUE(result$saturated),
+      # Which line search produced the answer. "hagerzhang+backtracking" means
+      # Hager-Zhang stopped short and the fit was finished by the fallback.
+      linesearch = if (is.null(result$linesearch)) NA_character_ else
+        as.character(result$linesearch),
       stalled = isTRUE(result$stalled)), engine = model_spec$engine,
     # Every iteration, recorded whatever `verbose` said. It costs a push onto a
     # vector in Julia and one transfer at the end, and the fit whose trace turns
@@ -1850,6 +1860,20 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
     warning("The optimizer made no progress from its starting values, and the ",
       "gradient there is not zero. Treat this fit as failed: check the starting ",
       "values, and see fit$estimate$stalled.", call. = FALSE)
+  } else if (isTRUE(result$saturated)) {
+    # Reported separately because the gradient says nothing useful here. Past
+    # |raw| ~ 20 every ctsem transform is flat to machine precision, so the
+    # gradient underflows to zero and the fit looks converged by any tolerance
+    # -- one such fit stopped with a largest gradient of 1.7e-06 against a
+    # tolerance of 1.1e-03. What went wrong is that the parameter is pinned by
+    # the transform's floating-point limit rather than by the data.
+    warning("A parameter reached ", signif(max(abs(as.numeric(
+      result$minimizer))), 4), " on the unconstrained scale, where its ",
+      "transform is flat to machine precision. The gradient there is ",
+      "uninformative, so this is reported as not converged. Usually it means ",
+      "that parameter is not identified by the data -- a variance going to ",
+      "zero is the common case. See fit$estimate$saturated and $raw.",
+      call. = FALSE)
   } else if (!isTRUE(result$converged)) {
     warning("The optimizer stopped without meeting its convergence criterion: ",
       "largest gradient ", signif(as.numeric(result$gradient_norm), 3),
