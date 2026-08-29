@@ -66,6 +66,9 @@ include("ctsem_backend.jl")
 include("adjoint_primitives.jl")
 include("adjoint_parameters.jl")
 include("reverse_scratch.jl")
+# Before adjoint_ekf.jl: the tape holds a vector of binary records, so the
+# record type must exist when `CTSEMAdjointTape` is defined.
+include("adjoint_binary.jl")
 include("adjoint_ekf.jl")
 include("adjoint.jl")
 include("summary_matrices.jl")

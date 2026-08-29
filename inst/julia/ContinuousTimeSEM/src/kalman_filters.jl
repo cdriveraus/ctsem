@@ -241,19 +241,27 @@ function _ekf_update_observed!(ws::ContinuousEKFWorkspace, pars,
         end
     end
 
-    # Recorded before the update runs: `_ekf_masked_update_step!` overwrites
-    # ws.state in place, and the reverse pass needs the prior mean.
-    _record_update!(trace, ws, pars, data, obs_col, observed,
-        ws.state, ws.P_predict.data, _val(ws.state_dim))
-
     # Binary rows first, on the predicted covariance, then the Gaussian ones
     # from there. The two groups are conditionally independent given the state,
     # so the order is statistically irrelevant, and taking binary first means
     # the Gaussian block still reads its prior from `P_predict` exactly as it
     # always has -- no change at all to a model without binary indicators.
+    #
+    # It also means the update record, taken *after* the binary block, holds
+    # exactly what the Gaussian block saw, so `_reverse_update!` needed no
+    # changes at all. The binary chain gets its own record, from the true prior.
+    binary_rows = _ekf_binary_subset(ws, observed)
+    _record_binary!(trace, ws, pars, data, obs_col, binary_rows,
+        ws.state, ws.P_predict.data, _val(ws.state_dim))
     binary_loglik = _ekf_binary_rows!(ws, pars, data, obs_col, observed)
     binary_loglik === nothing && return nothing
     gaussian = _ekf_gaussian_subset(ws, observed)
+
+    # Recorded after the binary block and before the Gaussian one:
+    # `_ekf_masked_update_step!` overwrites ws.state in place, and the reverse
+    # pass needs the mean it started from.
+    _record_update!(trace, ws, pars, data, obs_col, gaussian,
+        ws.state, ws.P_predict.data, _val(ws.state_dim))
 
     if isempty(gaussian)
         # Every observed row was binary: nothing for the Kalman update to do,
@@ -267,6 +275,13 @@ function _ekf_update_observed!(ws::ContinuousEKFWorkspace, pars,
     return binary_loglik + _kalman_loglikelihood_cholesky!(
         view(ws.ll_buffer, 1:length(gaussian)),
         factor, view(ws.ỹ, 1:length(gaussian)), log2π_const)
+end
+
+"""Which of `observed` are binary. Empty when the model has none."""
+@inline function _ekf_binary_subset(ws::ContinuousEKFWorkspace, observed)
+    types = ws.manifesttype
+    isempty(types) && return Int[]
+    return Int[i for i in observed if i <= length(types) && types[i] == 1]
 end
 
 """Which of `observed` are Gaussian. `observed` itself when none are binary."""

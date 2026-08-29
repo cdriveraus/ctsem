@@ -381,20 +381,6 @@ function ctsem_evaluate(objective::CTSEMObjective, values::AbstractVector;
     method = Symbol(gradient_method)
     method in (:forward, :adjoint) ||
         throw(ArgumentError("gradient_method must be :forward or :adjoint, got :$(method)"))
-    # The reverse pass does not know the binary measurement branch, and a
-    # reverse pass that does not know a branch does not fail -- it returns a
-    # confidently wrong number. Measured against finite differences on a
-    # three-indicator binary model: forward mode agreed to 4e-8, the adjoint
-    # was out by 4e6, and an optimiser given that walks away from the optimum
-    # rather than to it.
-    #
-    # So binary models take the forward path until the adjoint learns the
-    # branch. Silently, because there is nothing for a user to decide: the
-    # gradient is the same gradient, computed the only way that is currently
-    # correct.
-    if gradient && method === :adjoint && _has_binary_manifest(objective)
-        method = :forward
-    end
     if gradient && method === :adjoint
         result = ctsem_adjoint_gradient(objective, collect(values))
         value = result.value

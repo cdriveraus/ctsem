@@ -214,77 +214,46 @@ end
 `(logZ, m, v, dlogZ_da, dlogZ_db, dm_da, dm_db, dv_da, dv_db)` where `a = ηbar`
 and `b = s²`.
 
-The derivatives are exact, not differentiated code. Writing the Gaussian's own
-derivatives inside the integral,
+# Why this differentiates the quadrature rather than the moments
 
-    ∂φ/∂a = φ (η-a)/b        ∂φ/∂b = φ [ (η-a)²/(2b²) - 1/(2b) ]
+The tilted moments have exact derivatives, obtained by writing the Gaussian's
+own derivatives inside the integral: with `d = m - a` and central moments `v`,
+`κ₃`, `κ₄`,
 
-turns every derivative of the tilted moments into a moment of the same tilted
-distribution, which the quadrature is already computing. With `d = m - a` and
-central moments `v`, `κ₃`, `κ₄` of the posterior:
+    ∂logZ/∂a = d/b            ∂m/∂a = v/b          ∂v/∂a = κ₃/b
+    ∂logZ/∂b = (v+d²-b)/(2b²) ∂m/∂b = (κ₃+2dv)/(2b²) ∂v/∂b = (κ₄+2dκ₃-v²)/(2b²)
 
-    ∂logZ/∂a = d/b                    ∂logZ/∂b = (v + d² - b)/(2b²)
-    ∂m/∂a    = v/b                    ∂m/∂b    = (κ₃ + 2dv)/(2b²)
-    ∂v/∂a    = κ₃/b                   ∂v/∂b    = (κ₄ + 2dκ₃ - v²)/(2b²)
+Those were implemented first and they are correct -- for the *exact* moments.
+The forward pass does not return the exact moments, it returns a quadrature
+approximation of them, and a reverse pass has to differentiate the function the
+forward pass actually computed. Where the quadrature is imperfect the two come
+apart: on a one-observation model with a predicted sd near 2.6, the exact-moment
+derivative disagreed with a finite difference of the objective by 2%, which is
+not an error an optimiser should be asked to work around.
 
-Each collapses correctly when the likelihood is flat: then `m = a`, `v = b`,
-`κ₃ = 0`, `κ₄ = 3b²`, giving `∂m/∂a = 1`, `∂v/∂b = 1` and the rest zero, which
-is the linear-Gaussian answer.
-
-Closed forms rather than nested automatic differentiation because this runs
-inside a reverse pass that is itself differentiated for Hessians -- a third
-layer of duals there is both slow and a good way to meet a world-age or
-type-stability problem far from where it was caused.
+So the rule is differentiated directly, in two dual components over a scalar
+loop. That is a small cost -- one extra evaluation of a 21-node logistic sum --
+and it is exactly consistent with the forward pass by construction, which is the
+property that matters here. Consistency beats elegance: a slightly-wrong
+gradient is worse than a slightly-expensive one.
 """
 function _binary_moment_derivatives(ηbar::T, s2::T, y::Real) where {T}
     nodes, weights = _gauss_hermite(_CTSEM_BINARY_NODES[])
-    s = sqrt(s2)
-    logZ, m, v = _binary_moments(ηbar, s, y, nodes, weights)
-    if !isfinite(logZ) || s2 <= zero(T)
+    if s2 <= zero(T)
         z = zero(T)
-        return (logZ, m, v, z, z, one(T), z, z, one(T))
+        return (z, ηbar, z, z, z, one(T), z, z, one(T))
     end
-
-    # Third and fourth central moments, from the same mode-centred rule.
-    mode, curvature = _binary_mode(ηbar, s2, y)
-    scale = sqrt(T(2) / curvature)
-    observed_one = y > 0.5
-    halfprec = inv(T(2) * s2)
-    Z = zero(T); M3 = zero(T); M4 = zero(T)
-    @inbounds for i in eachindex(nodes)
-        t = T(nodes[i])
-        η = mode + scale * t
-        likelihood = observed_one ? inv(one(T) + exp(-η)) : inv(one(T) + exp(η))
-        deviation = η - ηbar
-        w = T(weights[i]) * exp(t * t - deviation * deviation * halfprec) * likelihood
-        centred = η - m
-        Z += w
-        M3 += w * centred^3
-        M4 += w * centred^4
+    triple = function (ab)
+        logZ, m, v = _binary_moments(ab[1], sqrt(ab[2]), y, nodes, weights)
+        return [logZ, m, v]
     end
-    Z > zero(T) || return (T(-Inf), m, v, zero(T), zero(T), one(T), zero(T), zero(T), one(T))
-    κ3 = M3 / Z
-    κ4 = M4 / Z
-
-    d = m - ηbar
-    twob2 = T(2) * s2 * s2
-    return (logZ, m, v,
-        d / s2,                              # ∂logZ/∂a
-        (v + d * d - s2) / twob2,            # ∂logZ/∂b
-        v / s2,                              # ∂m/∂a
-        (κ3 + T(2) * d * v) / twob2,         # ∂m/∂b
-        κ3 / s2,                             # ∂v/∂a
-        (κ4 + T(2) * d * κ3 - v * v) / twob2 # ∂v/∂b
-    )
-end
-
-"""Whether any manifest variable in this objective is binary."""
-function _has_binary_manifest(objective)
-    params = objective.params
-    isdefined(params, :manifesttype) || return false
-    types = params.manifesttype
-    isempty(types) && return false
-    return any(==(1), types)
+    at = [ηbar, s2]
+    value = triple(at)
+    isfinite(value[1]) || return (T(-Inf), value[2], value[3],
+        zero(T), zero(T), one(T), zero(T), zero(T), one(T))
+    J = ForwardDiff.jacobian(triple, at)
+    return (value[1], value[2], value[3],
+        J[1, 1], J[1, 2], J[2, 1], J[2, 2], J[3, 1], J[3, 2])
 end
 
 """

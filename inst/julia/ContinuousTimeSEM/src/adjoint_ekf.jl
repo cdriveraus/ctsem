@@ -150,6 +150,7 @@ mutable struct CTSEMAdjointTape{T}
     groups::Vector{CTSEMGroupRecord{T}}
     thetas::Vector{CTSEMThetaRecord{T}}
     inits::Vector{CTSEMInitRecord{T}}
+    binaries::Vector{CTSEMBinaryRecord{T}}
     # How many of each vector the *current* pass has written. The vectors are
     # never emptied, so a subject after the first writes into records that
     # already exist and already have arrays of the right shape -- see
@@ -161,6 +162,7 @@ mutable struct CTSEMAdjointTape{T}
     ngroups::Int
     nthetas::Int
     ninits::Int
+    nbinaries::Int
     subject_values::Vector{T}
     # For each transform group (1 = predict, 2 = td, 3 = update), the
     # `all_params` indices that group can read or write: the union of its
@@ -173,7 +175,8 @@ CTSEMAdjointTape(::Type{T}, group_relevant=[Int[], Int[], Int[]]) where {T} =
     CTSEMAdjointTape{T}(
         Tuple{Symbol,Int}[], CTSEMPredictRecord{T}[], CTSEMTDRecord{T}[],
         CTSEMUpdateRecord{T}[], CTSEMGroupRecord{T}[], CTSEMThetaRecord{T}[],
-        CTSEMInitRecord{T}[], 0, 0, 0, 0, 0, 0, T[], group_relevant)
+        CTSEMInitRecord{T}[], CTSEMBinaryRecord{T}[], 0, 0, 0, 0, 0, 0, 0,
+        T[], group_relevant)
 
 """
     _tape_reset!(tape)
@@ -197,6 +200,7 @@ function _tape_reset!(tape::CTSEMAdjointTape)
     empty!(tape.program)
     tape.npredicts = 0; tape.ntds = 0; tape.nupdates = 0
     tape.ngroups = 0; tape.nthetas = 0; tape.ninits = 0
+    tape.nbinaries = 0
     return tape
 end
 
@@ -888,6 +892,10 @@ function _ctsem_reverse_tape!(tape::CTSEMAdjointTape{T},
         kind, index = tape.program[entry_index]
         if kind === :update
             _reverse_update!(x̄, P̄, Θ̄, θ̄ca, tape.updates[index], n, aws.reverse_scratch)
+        elseif kind === :binary
+            # After the Gaussian block of the same row, because the forward
+            # applied binary observations before it.
+            _reverse_binary!(x̄, P̄, θ̄ca, tape.binaries[index], n)
         elseif kind === :td
             _reverse_td!(x̄, P̄, θ̄ca, tape.tds[index], n)
         elseif kind === :predict
