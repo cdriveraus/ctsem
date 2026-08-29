@@ -60,7 +60,12 @@ test_that("Julia backend rejects unsupported capabilities before session startup
   expect_error(unsupported(vb = TRUE), "variational Bayes")
   expect_error(unsupported(gendata = TRUE), "generation")
   expect_error(unsupported(forcerecompile = TRUE), "Stan compilation controls")
-  expect_error(unsupported(model = binary), "non-Gaussian manifest variables")
+  # Binary is supported now -- the filter integrates the observation rather
+  # than linearising it -- so what is refused is anything beyond it.
+  expect_no_error(unsupported(model = binary))
+  ordinal <- model
+  ordinal$manifesttype <- 2L
+  expect_error(unsupported(model = ordinal), "beyond binary")
 
   # `optimize = FALSE` used to be on that list and is not any more: the engine
   # has its own sampler, so the combination has to pass the capability check

@@ -509,8 +509,25 @@ function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
     tuning = tune_chunks ? ctsem_tune_chunks!(
         () -> ctsem_evaluate(objective, start_values; gradient=true,
             gradient_method=gradient_method); verbose=verbose) : nothing
+    # A first step of unit *length*, not of unit alpha.
+    #
+    # L-BFGS has no curvature history on its first iteration, so it takes the
+    # steepest-descent direction with whatever the initial step guess gives.
+    # Optim's default is `InitialStatic()`, an unscaled alpha of one -- which
+    # means the first step is as long as the gradient, and ctsem's gradients
+    # are routinely of magnitude tens. Watched on a binary model: one step from
+    # raw 0 to raw 20.9. That step *improved* the objective, so the line search
+    # was right to take it, but it overshot the optimum at raw ~1 and landed
+    # where every ctsem transform is flat to machine precision, and a zero
+    # gradient ends the optimisation.
+    #
+    # `scaled=true` divides alpha by the gradient norm, so the first step has
+    # length one in parameter space regardless of how steep the objective is.
+    # That is the standard remedy and it is what the saturation guard below
+    # would otherwise spend its life reporting.
     result = Optim.optimize(Optim.only_fg!(fg!), start_values,
-        Optim.LBFGS(m=Int(lbfgs_memory)), options)
+        Optim.LBFGS(m=Int(lbfgs_memory),
+            alphaguess=Optim.LineSearches.InitialStatic(scaled=true)), options)
     minimizer = collect(Optim.minimizer(result))
     final = ctsem_evaluate(objective, minimizer; gradient=true,
         contributions=true, gradient_method=gradient_method)
