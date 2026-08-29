@@ -434,3 +434,38 @@ test_that("an unlikely observation is a large penalty, not an impossible row", {
   expect_lt(as.numeric(ctJuliaEvaluate(handle, far)$value),
     as.numeric(ctJuliaEvaluate(handle, sane)$value) - 100)
 })
+
+test_that("the adjoint is exact where the predicted variance is degenerate", {
+  skip_on_cran()
+  skip_without_julia()
+  # T0VAR at zero makes the first occasion's linear predictor known exactly.
+  # The forward update is then skipped and the observation contributes
+  # `log P(y | eta)`, which still depends on the state, LAMBDA, MANIFESTMEANS
+  # and the thresholds -- so the reverse pass has to contribute those terms
+  # rather than skip the observation. It skipped it, which is a silently
+  # missing piece of gradient exactly where a variance is collapsing.
+  d <- .jord_data(nsubjects = 20, nobs = 8, nindicators = 2)
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
+    n.manifest = 2, manifestNames = c("o1", "o2"), latentNames = "eta1",
+    manifesttype = c(2L, 2L), ncategories = c(4L, 4L),
+    LAMBDA = matrix(1, 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
+    CINT = matrix(0), T0MEANS = matrix(0), MANIFESTVAR = diag(0, 2),
+    T0VAR = matrix(0))))
+  m$pars$indvarying <- FALSE
+  handle <- .jord_spec(d, m)
+  npar <- max(handle$parameter_table$parnumber, na.rm = TRUE)
+  set.seed(11)
+  at <- stats::rnorm(npar, 0, 0.3)
+  adjoint <- as.numeric(ctJuliaEvaluate(handle, at, gradient = TRUE,
+    gradient_method = "adjoint")$gradient)
+  forward <- as.numeric(ctJuliaEvaluate(handle, at, gradient = TRUE,
+    gradient_method = "forward")$gradient)
+  expect_true(all(is.finite(adjoint)))
+  expect_equal(adjoint, forward, tolerance = 1e-9)
+  # The thresholds must carry gradient here too, or the degenerate branch has
+  # dropped exactly the term this test exists for.
+  tab <- handle$parameter_table
+  thresholds <- unique(tab$parnumber[tab$matrix %in% "THRESHOLDS" &
+      !is.na(tab$parnumber)])
+  expect_true(all(abs(adjoint[thresholds]) > 1e-8))
+})

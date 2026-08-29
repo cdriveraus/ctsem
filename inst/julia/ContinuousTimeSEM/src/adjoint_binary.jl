@@ -115,7 +115,7 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
             b += λ[i] * c[i]
             a += λ[i] * x[i]
         end
-        b <= zero(T) && continue
+        b > T(_CTSEM_MIN_VARIANCE[]) || continue
         g = _binary_moment_derivatives(a, b, record.y[j], record.thresholds[j])
         m, v = g[2], g[3]
         shift = m / b
@@ -140,8 +140,34 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
             b += λ[i] * c[i]
             a += λ[i] * x0[i]
         end
-        b <= zero(T) && continue
         τ = record.thresholds[j]
+        row = record.rows[j]
+        if !(b > T(_CTSEM_MIN_VARIANCE[]))
+            # The forward left the state and covariance alone here and added
+            # `log P(y | a)`. That term is not nothing: it depends on the
+            # linear predictor, and so on the state, LAMBDA, MANIFESTMEANS and
+            # the thresholds. Skipping the whole observation -- which is what
+            # `continue` did -- drops all of it, and drops it exactly where a
+            # variance is collapsing, which is where an optimiser most needs
+            # the gradient to point somewhere sensible.
+            score, _ = _category_score(a, record.y[j], τ)
+            @inbounds for i in 1:n
+                x̄[i] += score * λ[i]
+                θ̄ca.LAMBDA[row, i] += score * x0[i]
+            end
+            θ̄ca.MANIFESTMEANS[row] += score
+            if !isempty(τ)
+                dτ = ForwardDiff.gradient(
+                    t -> _category_loglikelihood(a, record.y[j], t),
+                    collect(T, τ))
+                running = zero(T)
+                @inbounds for i in length(τ):-1:1
+                    running += dτ[i]
+                    θ̄ca.THRESHOLDS[row, i] += running
+                end
+            end
+            continue
+        end
         g = _binary_moment_derivatives(a, b, record.y[j], τ)
         m, v = g[2], g[3]
         dlogZ_da, dlogZ_db = g[4], g[5]
@@ -200,7 +226,6 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
         # Thresholds, when this observation has any. THRESHOLDS holds gaps and
         # the forward pass cumulates them, so the cotangent on gap `i` is the
         # sum of the cotangents on every threshold at or after it.
-        row = record.rows[j]
         if !isempty(τ)
             Jτ = _binary_threshold_derivatives(a, b, record.y[j], τ)
             running = zero(T)

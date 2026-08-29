@@ -1688,8 +1688,12 @@ function _laplace_unit_seeded_gradient(laplace::CTSEMLaplaceObjective, U::Intege
     return (ok=true, d0=d0, d1c=d1c, d12=d12)
 end
 
+# Deep: `isfinite` on a dual tests only its value, and a sweep's whole point
+# is the partials. Testing the value alone is what let a NaN derivative travel
+# from a unit whose predicted variance had collapsed all the way into the
+# assembled gradient, where it was indistinguishable from a bad trial point.
 @inline _laplace_finite(x::Real) = isfinite(x)
-@inline _laplace_finite(x::ForwardDiff.Dual) = _laplace_finite(ForwardDiff.value(x))
+@inline _laplace_finite(x::ForwardDiff.Dual) = _finite_deep(x)
 
 """
     _laplace_seeded_unit_gradient!(out, laplace, U, values, Ls, dL, M, factors, elim)
@@ -1743,6 +1747,12 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
     end
 
     Cdiag, Ccoup = _laplace_selected_inverse(factors, elim, blocks)
+    # The selected inverse of the curvature is where a badly conditioned unit
+    # first shows, and every sweep below is scaled by it.
+    if !(all(x -> all(isfinite, x), Cdiag) &&
+            all(r -> all(x -> all(isfinite, x), r), Ccoup))
+        return false
+    end
     sweep = (mm, a1, a2, order) -> _laplace_unit_seeded_gradient(laplace, U,
         values, Ls, uhat, mm, a1, a2, order, slot)
 
@@ -1778,6 +1788,13 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
             dir = scatter(l, Q[:, r])
             pass = sweep(block.members, dir, dir, 2)
             pass.ok || return false
+            # The second-order sweep is where this fails when it fails: it is a
+            # third derivative of the process model once the reverse pass is
+            # counted, and a unit whose predicted variance has collapsed can
+            # produce a NaN there with a perfectly finite log likelihood and
+            # first derivative. Caught here so the caller can take the nested
+            # route rather than carry the NaN into the sum.
+            (all(isfinite, pass.d12) && all(isfinite, pass.d0)) || return false
             @inbounds for (c, m) in enumerate(block.members)
                 for t in 1:npar
                     Pm[t, m] += pass.d12[t, c]
@@ -1797,6 +1814,7 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
                 e = zeros(Float64, k); e[q] = 1.0
                 pass = sweep(block.members, scatter(l, e), scatter(la, V[:, q]), 2)
                 pass.ok || return false
+                all(isfinite, pass.d12) || return false
                 @inbounds for (c, m) in enumerate(block.members)
                     for tt in 1:npar
                         Pm[tt, m] += 2 * pass.d12[tt, c]
@@ -1833,6 +1851,7 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
         end
     end
     s = _laplace_block_solve(factors, elim, blocks, gradu)
+    all(isfinite, s) || return false
 
     # s' B: one sweep per block, along that block's share of L s. Summed over
     # blocks this is one directional derivative per member along the total shift
@@ -1844,6 +1863,7 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
         dir = scatter(block.level, Ls[block.level] * sb)
         pass = sweep(block.members, dir, dir, 1)
         pass.ok || return false
+        all(isfinite, pass.d1c) || return false
         @inbounds for (c, m) in enumerate(block.members)
             for t in 1:npar; Bsm[t, m] += pass.d1c[t, c]; end
         end
@@ -1851,6 +1871,8 @@ function _laplace_seeded_unit_gradient!(out::Vector{Float64},
 
     # dv/dtheta is the identity away from the population parameters, so for
     # every other parameter the contribution is a plain read-off.
+    (all(isfinite, llvm) && all(isfinite, Pm) && all(isfinite, Bsm)) ||
+        return false
     @inbounds for j in 1:npar
         acc = 0.0
         for m in 1:nmem

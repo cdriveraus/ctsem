@@ -108,6 +108,30 @@ const _CTSEM_BINARY_NODES = Ref(21)
 const _CTSEM_BINARY_NEWTON = Ref(6)
 
 """
+Predicted variance below which the observation is treated as exact.
+
+The scalar update divides by `s²` once for the mean shift and twice for the
+covariance shrink, and the reverse pass divides by `s²` cubed. A variance that
+is *positive but tiny* passes a `> 0` test and then overflows those: `b³`
+underflows to zero at `b = 6e-103` and `1/b²` overflows at `7.5e-155`, so a
+denormal variance produces `Inf - Inf` and a NaN cotangent. It arrives by
+ordinary means -- one subject's TI-predictor shift on a variance parameter is
+quite enough -- and the NaN then lands on that parameter and every threshold
+sharing the row.
+
+Below this the exact update is replaced by its `s² -> 0` limit, which is the
+Fisher-scoring form `shift = score`, `shrink = information`: both bounded, both
+continuous, and *more* accurate here than the exact expression, whose
+cancellation costs it about half a percent by `s² = 1e-12`. The error the
+substitution introduces is `O(s² h)`, so 4e-11 relative at the boundary.
+
+Used by the forward update and the reverse pass alike. They have to agree on
+where the boundary is, or the adjoint differentiates a function the forward
+never computed.
+"""
+const _CTSEM_MIN_VARIANCE = Ref(1e-100)
+
+"""
     _category_score(η, y, thresholds)
 
 `(d log P(y|η)/dη, -d² log P(y|η)/dη²)`, the score and observed information of
@@ -334,7 +358,7 @@ re-centring turns that into `∫h(η)dη ≈ √2σ̂ Σ wᵢ exp(tᵢ²) h(η̂
     #
     # `log P(y | η̂)` is both the right answer and the continuous limit of the
     # integral, so nothing has to know where the boundary is.
-    if !(s2 > zero(T))
+    if !(s2 > T(_CTSEM_MIN_VARIANCE[]))
         return (_category_loglikelihood(ηbar, y, thresholds), zero(T), zero(T))
     end
     mode_offset, curvature = _binary_mode(ηbar, s2, y, thresholds)
@@ -487,7 +511,7 @@ function _ekf_binary_update!(ws, λ, μ, y::Real, n::Int, thresholds = ())
     # With no predicted variance in this direction the observation cannot move
     # the state, and the division below would be 0/0. The likelihood still
     # counts.
-    s2 > zero(T) || return logZ
+    s2 > T(_CTSEM_MIN_VARIANCE[]) || return logZ
 
     shift = ηoffset / s2
     shrink = (one(T) - vpost / s2) / s2
