@@ -56,11 +56,22 @@ are merely slow again. `ctsem_shape_is_precompiled` reads this.
 """
 const _PRECOMPILE_SHAPE_TYPES = Dict{Symbol,Any}()
 
-"""Build the `EKFParameters` for one captured shape."""
-function _precompile_spec(name::Symbol)
+"""
+Build the `EKFParameters` for one captured shape.
+
+`manifesttype` selects the measurement branch, and it is a *field of the spec*,
+so a binary model is a different type to compile the filter for -- not merely a
+different value flowing through the same one. Without a binary variant here,
+every binary fit paid full shape compilation at first use, which is what made
+the first timing comparison look 14x worse than the steady state.
+"""
+function _precompile_spec(name::Symbol; binary::Bool=false)
     s = _PRECOMPILE_SHAPES[name]
+    nmanifest = maximum(s.row[i] for i in eachindex(s.matrix) if s.matrix[i] == "LAMBDA")
+    manifesttype = binary ? fill(1, nmanifest) : Int[]
     spec = ekf_from_columns(s.matrix, s.row, s.col, s.parnumber, s.value,
-        s.transform, s.predicttransform, s.updatetransform, s.tdtransform)
+        s.transform, s.predicttransform, s.updatetransform, s.tdtransform;
+        manifesttype=manifesttype)
     _PRECOMPILE_SHAPE_TYPES[name] = typeof(spec)
     return spec, s
 end
@@ -82,7 +93,12 @@ function _precompile_evaluate(spec, s)
     nrows = nsubjects * nobs
     subject_starts = [1 + (i - 1) * nobs for i in 1:nsubjects]
     times = repeat(collect(0.0:(nobs - 1)), nsubjects)
-    data = [0.3 * sin(1.7 * t + 0.4 * m) for m in 1:nmanifest, t in 1:nrows]
+    # Zeros and ones when the branch under compilation is the binary one: the
+    # quadrature reads the observation, and a value that is neither would take
+    # a path no real fit takes.
+    data = isempty(spec.manifesttype) ?
+        [0.3 * sin(1.7 * t + 0.4 * m) for m in 1:nmanifest, t in 1:nrows] :
+        [Float64((m + t) % 2) for m in 1:nmanifest, t in 1:nrows]
 
     objective = ctsem_objective(spec, subject_starts, times, data)
     values = fill(0.1, s.npar)
@@ -149,13 +165,13 @@ using PrecompileTools: @compile_workload
 # The applicable method may be too new`, which the `try` then swallowed.
 @compile_workload begin
     if get(ENV, "JULIA_CTSEM_PRECOMPILE", "1") != "0"
-        for name in keys(_PRECOMPILE_SHAPES)
+        for name in keys(_PRECOMPILE_SHAPES), binary in (false, true)
             try
-                built = Base.invokelatest(_precompile_spec, name)
+                built = Base.invokelatest(_precompile_spec, name; binary=binary)
                 Base.invokelatest(_precompile_evaluate, built...)
             catch err
                 err isa InterruptException && rethrow()
-                @debug "ContinuousTimeSEM: precompile workload skipped" name err
+                @debug "ContinuousTimeSEM: precompile workload skipped" name binary err
             end
         end
     end
