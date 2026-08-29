@@ -514,9 +514,46 @@ function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
     # length one in parameter space regardless of how steep the objective is.
     # That is the standard remedy and it is what the saturation guard below
     # would otherwise spend its life reporting.
+    linesearch = "hagerzhang"
     result = Optim.optimize(Optim.only_fg!(fg!), start_values,
         Optim.LBFGS(m=Int(lbfgs_memory),
             alphaguess=Optim.LineSearches.InitialStatic(scaled=true)), options)
+    # Hager-Zhang can run out of line search and return the iterate it had
+    # reached, which Optim presents as a finished optimisation. See
+    # `ctsem_laplace_optimize`, where the same failure was measured: two
+    # iterations, 68 objective evaluations, a final gradient of 475, and the
+    # last step uphill. The verdict below already refuses to call that
+    # converged; this is what stops it happening.
+    #
+    # Backtracking asks only for sufficient decrease, so it cannot fail to
+    # bracket. It resumes from Hager-Zhang's minimizer -- already downhill, and
+    # with none of the curvature history that led there -- and is kept only if
+    # the log likelihood actually improved, so the fallback can never make a
+    # fit worse than not having it. It is not the default because Armijo alone
+    # stops polishing sooner: measured on this objective, 47 iterations to
+    # Hager-Zhang's 36, finishing near 1e-5 where Hager-Zhang reaches 1e-9.
+    let reached = collect(Optim.minimizer(result))
+        probe = ctsem_evaluate(objective, reached; gradient=true,
+            gradient_method=gradient_method)
+        gnorm = isempty(probe.gradient) ? 0.0 : maximum(abs, probe.gradient)
+        if (!isfinite(gnorm) || gnorm > max(g_tol,
+                1e-6 * max(one(gnorm), abs(probe.value)))) &&
+                maximum(abs, reached; init=0.0) < _CTSEM_SATURATION[]
+            verbose && println("ctsem_optimize: Hager-Zhang stopped after ",
+                Optim.iterations(result), " iteration(s) with |g| ", gnorm,
+                "; continuing with backtracking")
+            retry = Optim.optimize(Optim.only_fg!(fg!), reached,
+                Optim.LBFGS(m=Int(lbfgs_memory),
+                    alphaguess=Optim.LineSearches.InitialStatic(scaled=true),
+                    linesearch=Optim.LineSearches.BackTracking()), options)
+            after = ctsem_evaluate(objective, collect(Optim.minimizer(retry));
+                gradient=true, gradient_method=gradient_method)
+            if isfinite(after.value) && after.value >= probe.value
+                result = retry
+                linesearch = "hagerzhang+backtracking"
+            end
+        end
+    end
     minimizer = collect(Optim.minimizer(result))
     final = ctsem_evaluate(objective, minimizer; gradient=true,
         contributions=true, gradient_method=gradient_method)
@@ -591,6 +628,7 @@ function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
         chunk_timings=tuning === nothing ? Tuple{Int,Float64}[] : tuning.timings,
         gradient_norm=gradient_norm,
         scaled_tolerance=scaled_tolerance,
+        linesearch=linesearch,
         # See `ctsem_laplace_optimize`: `Optim.converged` includes the x and
         # f criteria, which a line search that stops making progress satisfies
         # trivially, so convergence is judged on the gradient alone.

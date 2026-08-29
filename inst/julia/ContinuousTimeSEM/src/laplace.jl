@@ -2784,6 +2784,56 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     end
     result, hz = run_from(start_values, lbfgs)
     hz || (linesearch = "backtracking")
+    # Hager-Zhang has a second way to fail, and it is quieter than throwing: it
+    # runs out of line search, returns whatever iterate it had reached, and
+    # Optim reports that as a finished optimisation. Watched on a 60-subject
+    # ordinal model, it stopped after two iterations having gone -2503.9 ->
+    # -2500.2 -> -2501.3, uphill on the last one, with 68 objective evaluations
+    # spent for those two steps and a final gradient of 475. Nothing was
+    # rejected and every inner mode solve converged; the objective is simply
+    # curved enough here that the Wolfe bracketing gives up. The verdict below
+    # calls that not converged, correctly, but a correct verdict on a failed
+    # fit is still a failed fit.
+    #
+    # The `catch` above already treats a Hager-Zhang failure as a reason to
+    # switch line searches. This is the same failure without the exception, so
+    # it gets the same answer. Backtracking asks only for sufficient decrease,
+    # so it cannot fail to bracket -- on the eight fits that reproduced this
+    # stall it converged every time, from the same starting values.
+    #
+    # It resumes from Hager-Zhang's own minimizer rather than the starting
+    # values: that point is already downhill, and a fresh L-BFGS there has no
+    # stale curvature history from the steps that went wrong.
+    #
+    # Backtracking is not simply made the default because it is worse when
+    # nothing has gone wrong. Armijo alone imposes no curvature condition, so
+    # it stops polishing sooner: over those same eight fits it took 47
+    # iterations against Hager-Zhang's 36 and finished at gradients around
+    # 1e-5 where Hager-Zhang reaches 1e-9. Fast and precise where that works,
+    # robust where it does not.
+    if hz
+        reached = collect(Optim.minimizer(result))
+        probe = ctsem_laplace_evaluate(laplace, reached; gradient=true)
+        gnorm = isempty(probe.gradient) ? 0.0 : maximum(abs, probe.gradient)
+        if !isfinite(gnorm) || gnorm > max(g_tol,
+                1e-6 * max(one(gnorm), abs(probe.value)))
+            verbose && println("Laplace: Hager-Zhang stopped after ",
+                Optim.iterations(result), " iteration(s) with |g| ", gnorm,
+                "; continuing with backtracking")
+            retry = Optim.optimize(Optim.only_fg!(fg!), reached,
+                Optim.LBFGS(m=Int(lbfgs_memory),
+                    alphaguess=Optim.LineSearches.InitialStatic(scaled=true),
+                    linesearch=Optim.LineSearches.BackTracking()), options)
+            after = ctsem_laplace_evaluate(laplace,
+                collect(Optim.minimizer(retry)); gradient=true)
+            # Only if it actually helped. Keeping the better of the two points
+            # means the fallback can never make a fit worse than not having it.
+            if isfinite(after.value) && after.value >= probe.value
+                result = retry
+                linesearch = "hagerzhang+backtracking"
+            end
+        end
+    end
 
     if verbose
         println("Laplace: ", accepted_calls, " objective evaluations accepted, ",
