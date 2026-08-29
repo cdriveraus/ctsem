@@ -151,28 +151,57 @@ end
 
 using PrecompileTools: @compile_workload
 
-# `@compile_workload` rather than a bare call, because a bare call is not
-# enough: running the workload at build time *compiles* the code but does not
-# mark it for serialisation, so the image would get the transform cache and none
-# of the machine code. The macro opens Julia's newly-inferred collection window
-# around the block and attaches what it catches.
+# Build the specs in their own top-level statement, then compile in the next.
 #
-# Two `invokelatest` calls, not one, and this is the whole trick. `eval`ing the
-# transform closures inside `_precompile_spec` defines methods in a world newer
-# than the frame that called it, and `invokelatest` fixes the world at *call*
-# time -- so a single wrapping call cannot see the closures its own callee just
-# created. The first version did exactly that and failed with `MethodError: ...
-# The applicable method may be too new`, which the `try` then swallowed.
-@compile_workload begin
+# `ekf_from_columns` *evals* the transform closures, which defines methods in a
+# world newer than the frame that called it -- so a function that both builds a
+# spec and uses it cannot see its own closures. That was previously solved with
+# two `Base.invokelatest` calls inside the `@compile_workload` block. Julia
+# advances the world age between top-level statements, so building here and
+# evaluating below removes the need for them, and the calls in the workload are
+# ordinary static ones the collector can follow.
+#
+# **This did not fix the first-fit cost, and the reason is worth recording so
+# nobody re-tries it.** The theory was that `invokelatest` is a dynamic dispatch
+# and `@compile_workload` attaches newly *inferred* method instances, so there
+# would be nothing to infer through. Removing it changed the first fit from
+# 12.8 s to 14.9 s -- that is, not at all.
+#
+# The workload is in fact fine. In a pure Julia session the captured shape's
+# first `ctsem_evaluate` with gradient takes 0.017 s and its first
+# `ctsem_optimize` 0.033 s, so everything is compiled and serialised as
+# intended. The cost appears only through R, where the *closure types differ*:
+# `var"#317#318"` in the image against `var"#365#366"` at runtime. The transform
+# strings are not the same. `precompile_shapes.jl` holds them unsimplified --
+# `0 + 10 * (param[1] * 1 + 0)` -- and the live fit path sends the simplified
+# `10 * param[1]`. Different strings, different `eval`, different closure type,
+# and nothing in the image applies.
+#
+# The fix belongs in `tools/generate-precompile-shapes.R`: it must capture what
+# the fit path actually sends. Left as its own task rather than folded in here.
+const _PRECOMPILE_BUILT = let built = Vector{Any}()
     if get(ENV, "JULIA_CTSEM_PRECOMPILE", "1") != "0"
         for name in keys(_PRECOMPILE_SHAPES), binary in (false, true)
             try
-                built = Base.invokelatest(_precompile_spec, name; binary=binary)
-                Base.invokelatest(_precompile_evaluate, built...)
+                push!(built, _precompile_spec(name; binary=binary))
             catch err
                 err isa InterruptException && rethrow()
-                @debug "ContinuousTimeSEM: precompile workload skipped" name binary err
+                @debug "ContinuousTimeSEM: precompile shape skipped" name binary err
             end
+        end
+    end
+    built
+end
+
+# This is an optimisation: a broken workload must degrade to "nothing was
+# precompiled", never to a package that will not load. Hence the `try`.
+@compile_workload begin
+    for built in _PRECOMPILE_BUILT
+        try
+            _precompile_evaluate(built...)
+        catch err
+            err isa InterruptException && rethrow()
+            @debug "ContinuousTimeSEM: precompile workload skipped" err
         end
     end
 end

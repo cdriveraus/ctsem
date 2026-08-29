@@ -1279,7 +1279,34 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     parameter_table = parameter_table,
     subject_starts = as.integer(subject_starts),
     times = as.numeric(dat[[model$timeName]]),
-    manifest_data = t(as.matrix(dat[, model$manifestNames, drop = FALSE])),
+    # Doubles with NaN for missing, never a union type.
+    #
+    # `as.matrix` on a data frame of integers with NAs marshals to
+    # `Matrix{Union{Missing,Int64}}`, and on doubles with NAs to
+    # `Matrix{Union{Missing,Float64}}` -- a *different element type per
+    # dataset*, and none of them the `Matrix{Float64}` the precompile workload
+    # built. The filter is specialised on that type, so every real fit
+    # recompiled it however well the model shape matched: in a pure Julia
+    # session the captured shape's first evaluate took 0.017 s, through R it
+    # took twelve seconds.
+    #
+    # `_ctsem_observed` is `!ismissing(x) && isfinite(x)`, so NaN already means
+    # missing to the engine and nothing is lost by saying it that way. A union
+    # element type is also boxed on every access in the hot loop.
+    #
+    # This takes the first evaluation from 12.8 s to 3.5 s. It does not close the
+    # gap: the same shape in a pure Julia session is 0.017 s, so about 3.5 s of
+    # shape compilation survives. That remainder has a separate cause -- the
+    # captured shapes hold unsimplified transform strings (`0 + 10 * (param[1] *
+    # 1 + 0)`) where the fit path sends simplified ones (`10 * param[1]`), so the
+    # cached closure types differ from the ones in the image and the pipeline
+    # specialises again. The fix belongs in tools/generate-precompile-shapes.R.
+    manifest_data = {
+      d <- t(as.matrix(dat[, model$manifestNames, drop = FALSE]))
+      storage.mode(d) <- "double"
+      d[is.na(d)] <- NaN
+      d
+    },
     tdpred_data = t(tdpred_data),
     tipred_data = as.matrix(tipred_data),
     ti_effects = ti_effects,
