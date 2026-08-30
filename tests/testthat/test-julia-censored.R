@@ -188,3 +188,22 @@ test_that("ctGenerate respects the censoring limits", {
   expect_gt(sum(values <= 1e-8 | values >= 3 - 1e-8), 0)
   expect_gt(sum(values > 1e-8 & values < 3 - 1e-8), 0)
 })
+
+test_that("ctKalman reports a censored prediction on the response scale", {
+  skip_without_julia()
+  # The same correction the other non-Gaussian types get, and for a censored
+  # variable it is not simply the linear predictor: the mean of what the
+  # instrument can record is pulled away from the limits, so reporting the
+  # latent mean would put predictions outside the range the data can take.
+  d <- .censored_data(nsubjects = 30, nobs = 8, lower = 0, upper = 5)
+  fit <- suppressWarnings(suppressMessages(ctFit(d, .censored_model(),
+    backend = "julia", intoverpop = "augmented",
+    optimcontrol = list(estonly = TRUE))))
+  k <- suppressWarnings(suppressMessages(ctKalman(fit)))
+  predicted <- k$value[k$Element %in% "yprior"]
+  predicted <- predicted[is.finite(predicted)]
+  expect_gt(length(predicted), 0)
+  expect_true(all(predicted >= 0))
+  expect_true(all(predicted <= 5))
+  expect_equal(mean(predicted), mean(d$y), tolerance = 0.5)
+})
