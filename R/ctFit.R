@@ -133,6 +133,15 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' make a fit worse, and it does not run at all when the first attempt
 #' converged. Set \code{optimcontrol$priorwarmup = FALSE} to switch it off, and
 #' see \code{fit$estimate$prior_warmup} for whether it was used.
+#' Setting \code{optimcontrol$priorwarmup} to a number instead runs a capped
+#' prior pass of that many iterations before \emph{every} fit, not only failed
+#' ones. This does not make fits faster -- measured over 800 fits, total
+#' iterations came to 0.91-1.14 times a plain fit at ten prior iterations and
+#' 1.47-1.64 at forty -- but the warmed start was never worse and is sometimes
+#' much better, since a plain fit can converge to a local optimum and report
+#' success. Ten is a reasonable cap; more pulls the start toward the prior
+#' mode. Consider it for models where a wrong answer would be costly, or where
+#' the population distribution parameters are weakly identified.
 #' With \code{backend='julia'}, \code{optimcontrol$callback} is a function
 #' called while the fit runs, with \code{(iteration, total, objective,
 #' gradient_norm)}. It is for a front end that wants to draw progress live:
