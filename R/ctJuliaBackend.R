@@ -1815,7 +1815,7 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
   # `carefulfit`, the same argument `stanoptimis` takes and with the same
   # meaning: a rough first pass with the priors on, to get starting values,
   # when priors are otherwise off. Stan's version caps that pass at 50
-  # iterations and loosens its tolerance; this one caps it at 20, which the
+  # iterations and loosens its tolerance; this one caps it at 10, which the
   # measurements below settled, and lets the cap do the work rather than also
   # loosening the tolerance.
   #
@@ -1836,14 +1836,28 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
   # condition's RMSE to 0.88 in the recorded study. Warmed, the same data give
   # 0.544.
   #
-  # A longer pass is not a safer one: on that model ten prior iterations found
-  # the good optimum outright while twenty and forty landed elsewhere, still
-  # ahead of the plain fit but by one log unit rather than eighty-nine. The
-  # prior pass pulls toward the prior mode, and past a point that is what it
-  # gives you.
+  # A longer pass is not a safer one, and the cap is 10 rather than 20 or 50
+  # because of it. Over 720 fits of three measurement types on both routes,
+  # judged on the random-effect SD against a truth of 0.5 rather than on the
+  # log likelihood -- a higher likelihood in the wrong basin is still the wrong
+  # answer:
+  #
+  #   cap 10   240/240 converged, RMSE 0.190, worst error 0.547
+  #   cap 20   240/240 converged, RMSE 0.550, worst error 7.991
+  #   off      236/240 converged, RMSE 0.478, worst error 6.732
+  #
+  # Both caps fix convergence and the two are identical to four decimals on
+  # every condition but one. All of the difference is the mixed-indicator model
+  # under state augmentation, where a cap of 20 is *worse than not warming up
+  # at all* -- it leaves the local optimum with the SD of 8.0 in place, where a
+  # cap of 10 removes it outright. Median wall time is the same either way: 20
+  # buys back its extra prior iterations in the second stage and no more.
+  #
+  # The prior pass pulls the start toward the prior mode, and past about ten
+  # iterations that is what it hands the likelihood.
   careful <- optimcontrol$carefulfit
   if (is.null(careful)) careful <- TRUE
-  warmiter <- if (isTRUE(careful)) 20L else
+  warmiter <- if (isTRUE(careful)) 10L else
     if (is.numeric(careful) && length(careful) == 1L && careful >= 1)
       as.integer(careful) else 0L
   # `stanoptimis` turns `carefulfit` off when starting values were supplied,

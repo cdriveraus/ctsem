@@ -129,17 +129,19 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' for Stan: when \code{priors=FALSE}, a rough first pass is run \emph{with}
 #' ctsem's \code{normal(0,1)} raw priors to obtain starting values, and the
 #' likelihood is then maximised from there. It defaults to \code{TRUE}, capped
-#' at 20 iterations, and is skipped when \code{inits} are supplied. Set
+#' at 10 iterations, and is skipped when \code{inits} are supplied. Set
 #' \code{optimcontrol$carefulfit = FALSE} to switch it off or to a number to
 #' choose the cap.
 #'
 #' It does not make fits faster: measured over 800 fits, total iterations came
 #' to 0.91-1.14 times a plain fit at ten prior iterations, 1.09-1.50 at twenty
 #' and 1.47-1.64 at forty. It is on by default for where the fit lands rather
-#' than how quickly it gets there. Across those fits the warmed start was never
-#' worse and was sometimes much better, the case of interest being a fit that
-#' converges, reports success, and returns a random-effect SD of 7.23 against a
-#' truth of 0.5; warmed, the same data give 0.544.
+#' than how quickly it gets there. Over 720 fits judged on a random-effect SD
+#' with a true value of 0.5, a cap of 10 gave an RMSE of 0.190 and a worst
+#' error of 0.547, against 0.478 and 6.73 with the pass switched off. A longer
+#' pass is not a safer one -- a cap of 20 scored 0.550 and 7.99, worse than not
+#' warming up at all -- because the prior pass pulls the start toward the prior
+#' mode and past about ten iterations that is what it hands the likelihood.
 #'
 #' If the fit still does not converge it is retried once from a full prior
 #' optimisation, kept only if that converges or beats the first attempt.
