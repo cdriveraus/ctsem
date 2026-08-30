@@ -3108,3 +3108,57 @@ for (f, what) in ((:ctsem_generate, "Data generation"),)
             "for. Use intoverpop=TRUE for this.")))
     end
 end
+
+"""
+    ctsem_laplace_effect_layout(laplace)
+
+Where each entry of the flat random-effect vector comes from.
+
+The sampler returns the effects as one vector per draw, laid out unit by unit
+and, within a unit, by block offset. With a single level that degenerates to one
+unit per subject with `k` effects each, which the R side can and does work out
+for itself. With more than one level it cannot: a unit's blocks interleave a
+group's own effects with its members', and the arrangement is decided here.
+
+Rather than have R reimplement `_laplace_build_units` and keep the two in step,
+the engine says what it did. One entry per position, giving the unit, the level
+the block belongs to, the block's first member as a global subject index, how
+many members the block covers, and which effect within the block it is -- from
+which R can attach a subject or a group label and the parameter's own name.
+
+`level` is 1 for the subject level and increases outwards. A block covering more
+than one member is a grouping block, and belongs to the group those members
+share at that level.
+"""
+function ctsem_laplace_effect_layout(laplace::CTSEMLaplaceObjective)
+    units = laplace.units
+    nunits = length(units.members)
+    position = Int[]
+    unit = Int[]
+    level = Int[]
+    first_member = Int[]
+    nmembers = Int[]
+    within = Int[]
+    base = 0
+    for U in 1:nunits
+        for block in units.blocks[U]
+            # `offset` is zero-based inside the unit and units concatenate in
+            # order, which is the arithmetic every other consumer of these
+            # blocks already does.
+            for k in 1:block.size
+                push!(position, base + block.offset + k)
+                push!(unit, U)
+                push!(level, block.level)
+                push!(first_member, isempty(block.members) ? 0 :
+                    units.members[U][block.members[1]])
+                push!(nmembers, length(block.members))
+                push!(within, k)
+            end
+        end
+        base += units.dims[U]
+    end
+    order = sortperm(position)
+    return (position=position[order], unit=unit[order], level=level[order],
+        first_member=first_member[order], nmembers=nmembers[order],
+        within=within[order])
+end

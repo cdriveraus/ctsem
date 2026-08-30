@@ -23,15 +23,18 @@
 # order, which is determinable from the R side alone.
 #
 # With more than one level it is not: the blocks interleave a group's own
-# effects with its members', and reconstructing that here would mean
-# reimplementing `_laplace_build_units` in R and keeping the two in step.
-# Returning nothing is better than returning a plausible mislabelling, which
-# would attach the wrong subject's name to a number and never announce itself.
+# effects with its members'. Reconstructing that here would mean reimplementing
+# `_laplace_build_units` in R and keeping the two in step, so the engine is
+# asked instead -- `ctsem_laplace_effect_layout` reports, for each position,
+# which unit and level it belongs to and which subject the block starts at.
+# That is the same information without the second implementation, and a
+# plausible mislabelling would attach the wrong subject's name to a number and
+# never announce itself.
 #' @keywords internal
 .ctBackendEffectIndex <- function(fit) {
   laplace <- fit$model_spec$laplace
   if (is.null(laplace) || is.null(laplace$levels)) return(NULL)
-  if (length(laplace$levels) != 1L) return(NULL)
+  if (length(laplace$levels) != 1L) return(.ctBackendEffectIndexNested(fit))
   level <- laplace$levels[[1L]]
   parameters <- as.character(level$param)
   if (!length(parameters)) return(NULL)
@@ -48,6 +51,80 @@
   index$id <- ids[index$subject]
   index$label <- paste0(index$parameter, "_", index$id)
   index[, c("subject", "id", "parameter", "label")]
+}
+
+# The nested case, from the engine's own account of the layout.
+#
+# A block covering one member is that subject's; a block covering several is the
+# group's, and the group is named by the grouping id its members share. The
+# level's parameter names come from the fit, and `within` says which of them a
+# position is -- so a label is the parameter, the level, and whose it is.
+#' @keywords internal
+.ctBackendEffectIndexNested <- function(fit) {
+  laplace <- fit$model_spec$laplace
+  layout <- try(JuliaConnectoR::juliaGet(
+    .ctJuliaModule(fit$model_spec$project)$ctsem_laplace_effect_layout(
+      .ctJuliaObjective(fit))), silent = TRUE)
+  if (inherits(layout, "try-error") || is.null(layout$position)) return(NULL)
+  level_index <- as.integer(layout$level)
+  # A level the fit does not describe means the two have gone out of step, and
+  # an unlabelled effect vector is better than a confidently wrong one.
+  if (any(level_index < 1L) || any(level_index > length(laplace$levels))) return(NULL)
+  within <- as.integer(layout$within)
+  subject <- as.integer(layout$first_member)
+  nmembers <- as.integer(layout$nmembers)
+
+  parameter <- vapply(seq_along(within), function(i) {
+    pars <- as.character(laplace$levels[[level_index[i]]]$param)
+    if (within[i] >= 1L && within[i] <= length(pars)) pars[within[i]] else
+      paste0("effect", within[i])
+  }, character(1))
+  levelname <- vapply(level_index, function(l) {
+    nm <- laplace$levels[[l]]$name
+    if (is.null(nm) || !nzchar(nm)) paste0("level", l) else as.character(nm)
+  }, character(1))
+
+  nsubjects <- length(fit$model_spec$subject_starts)
+  ids <- .ctBackendSubjectIds(fit, nsubjects)
+  who <- ifelse(subject >= 1L & subject <= nsubjects,
+    if (is.null(ids)) as.character(subject) else ids[pmax(subject, 1L)],
+    NA_character_)
+  # For a grouping block the label should name the group, not one of its
+  # members, so the group's own identifier is looked up from the data where the
+  # fit kept it.
+  group <- .ctBackendGroupIds(fit, laplace, levelname, subject, nmembers)
+  label <- ifelse(nmembers > 1L,
+    paste0(parameter, "_", levelname, "_", group),
+    paste0(parameter, "_", who))
+  data.frame(position = as.integer(layout$position), level = level_index,
+    levelname = levelname, subject = ifelse(nmembers > 1L, NA_integer_, subject),
+    id = ifelse(nmembers > 1L, NA_character_, who), group = group,
+    parameter = parameter, label = label, stringsAsFactors = FALSE)
+}
+
+# The grouping identifier a block's members share, when the fit kept the column.
+#' @keywords internal
+.ctBackendGroupIds <- function(fit, laplace, levelname, subject, nmembers) {
+  out <- rep(NA_character_, length(subject))
+  d <- fit$data
+  if (is.null(d)) return(out)
+  # The subject identifier is not always called `id`: a nested model names its
+  # levels, and the first level's name *is* the subject column. Looking only
+  # for `id` is what left every group labelled NA.
+  idname <- if (length(laplace$levels)) laplace$levels[[1L]]$name else NULL
+  idcol <- if (!is.null(d$id)) d$id else
+    if (!is.null(idname) && idname %in% names(d)) d[[idname]] else NULL
+  if (is.null(idcol)) return(out)
+  for (l in unique(levelname)) {
+    if (!l %in% names(d)) next
+    # First appearance order, which is how the engine numbers subjects.
+    firstrow <- match(unique(idcol), idcol)
+    bysubject <- as.character(d[[l]][firstrow])
+    take <- levelname == l & nmembers > 1L & subject >= 1L &
+      subject <= length(bysubject)
+    out[take] <- bysubject[subject[take]]
+  }
+  out
 }
 
 # The user's own identifiers, when the fit kept them, and the internal index
