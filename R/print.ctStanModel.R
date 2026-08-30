@@ -99,6 +99,9 @@ print.ctStanModel <- function(x, matrices = NULL, ...) {
     if (length(ordinal)) described <- c(described,
       paste0(x$manifestNames[ordinal], " (ordinal, ",
         x$ncategories[ordinal], " categories)"))
+    counts <- x$manifestNames[x$manifesttype == 3]
+    if (length(counts)) described <- c(described,
+      paste0(paste(counts, collapse = ", "), " (count, Poisson log link)"))
     cat("  non-Gaussian indicators: ", paste(described, collapse = ", "),
       "\n", sep = "")
   }

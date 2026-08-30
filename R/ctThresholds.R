@@ -98,3 +98,31 @@ NULL
   }
   invisible(NULL)
 }
+
+#' Count data checked against the model that declares it.
+#'
+#' A Poisson observation is a non-negative integer, and the two ways of getting
+#' that wrong are worth separating. A negative value or a fraction is a coding
+#' error and cannot be fitted at all. All-zero or near-constant counts fit
+#' perfectly well but say the rate is not identified by that variable, which is
+#' worth hearing before rather than after.
+#' @noRd
+.ctDataCounts <- function(datalong, ctm) {
+  counts <- which(ctm$manifesttype %in% 3)
+  if (!length(counts)) return(invisible(NULL))
+  for (i in counts) {
+    name <- ctm$manifestNames[i]
+    v <- datalong[[name]]
+    if (is.null(v)) next
+    v <- v[!is.na(v)]
+    if (!length(v)) next
+    if (any(v < 0)) stop('count variable ', name, ' has negative values (min ',
+      min(v), '); a count must be zero or more', call. = FALSE)
+    if (any(v != round(v))) stop('count variable ', name, ' has non-integer ',
+      'values; a count must be a whole number. Model it as manifesttype 0 if ',
+      'it is a rate or a continuous measure', call. = FALSE)
+    if (all(v == v[1])) warning('count variable ', name, ' takes the single ',
+      'value ', v[1], ', so its rate is not identified by the data')
+  }
+  invisible(NULL)
+}

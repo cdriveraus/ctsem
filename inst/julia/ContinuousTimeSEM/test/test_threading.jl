@@ -182,9 +182,15 @@ end
     # `fg!` catches by wrapping the whole evaluation; mirror that here rather
     # than asserting a specific exception type, which differs between the
     # serial path (the error itself) and the threaded one (wrapped by @sync).
+    #
+    # A non-finite result counts as failure as much as a thrown one does. The
+    # matrix exponential used to throw `InexactError` on an infinite drift and
+    # now returns NaN deliberately, so that every caller can treat a bad trial
+    # point as an invalid point rather than an exception -- which is what this
+    # test's own comment above describes wanting. Asserting only on the throw
+    # left this failing three times over once that change landed.
     failed(values) = try
-        ctsem_adjoint_gradient(objective, values)
-        false
+        !isfinite(ctsem_adjoint_gradient(objective, values).value)
     catch
         true
     end

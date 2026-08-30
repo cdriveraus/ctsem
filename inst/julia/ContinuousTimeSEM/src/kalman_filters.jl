@@ -326,8 +326,10 @@ function _ekf_binary_rows!(ws::ContinuousEKFWorkspace, pars,
         λ = view(pars.LAMBDA, i, :)
         τ = _ordinal_thresholds!(ws, pars, i)
         y = generate === nothing ? data[i, obs_col] :
-            _generate_binary!(generate, ws, pars, λ, i, obs_col, n, τ)
-        contribution = _ekf_binary_update!(ws, λ, pars.MANIFESTMEANS[i], y, n, τ)
+            _generate_binary!(generate, ws, pars, λ, i, obs_col, n, τ,
+                Int(types[i]))
+        contribution = _ekf_binary_update!(ws, λ, pars.MANIFESTMEANS[i], y, n,
+            τ, Int(types[i]))
         isfinite(contribution) || return nothing
         total += contribution
     end
@@ -335,7 +337,7 @@ function _ekf_binary_rows!(ws::ContinuousEKFWorkspace, pars,
 end
 
 """
-    _generate_binary!(gen, ws, pars, λ, row, obs_col, n, thresholds)
+    _generate_binary!(gen, ws, pars, λ, row, obs_col, n, thresholds, kind)
 
 Draw one categorical observation from its own prior predictive, write it out,
 and return it so the filter conditions on what it drew.
@@ -351,7 +353,7 @@ ordinal categories are `1..K`; sharing the loop would mean subtracting one on
 the way out and is not worth the confusion.
 """
 function _generate_binary!(gen, ws::ContinuousEKFWorkspace, pars, λ,
-    row::Int, obs_col::Int, n::Int, thresholds = ())
+    row::Int, obs_col::Int, n::Int, thresholds, kind::Int)
     T = eltype(ws.state)
     nodes, weights = _gauss_hermite(_CTSEM_BINARY_NODES[])
     P = ws.P_predict.data
@@ -371,8 +373,34 @@ function _generate_binary!(gen, ws::ContinuousEKFWorkspace, pars, λ,
     u = _standard_normal_cdf(gen.base[row, r])
 
     local y::T
-    if isempty(thresholds)
-        logZ, _, _ = _binary_moments(ηbar, s, one(T), nodes, weights)
+    if kind == CTSEM_OBS_COUNT
+        # The same inversion the ordinal branch does, over 0, 1, 2, ... rather
+        # than a fixed set of categories. Each term is the *marginal*
+        # probability of that count, with the state's own uncertainty
+        # integrated out, which is what makes one uniform enough and keeps the
+        # draw reproducible from `gen.base` alone.
+        #
+        # Capped, because a count is unbounded and the walk is linear in the
+        # value drawn. The cap scales with the marginal mean rather than being
+        # fixed: past it the accumulated mass is one to floating point, so
+        # exhausting the loop means `u` fell in a tail with no representable
+        # mass left and the last value is the honest answer.
+        mean_rate = exp(min(ηbar + 4 * s, T(_CTSEM_COUNT_MAX_LOG_RATE[])))
+        kmax = min(_CTSEM_COUNT_GENERATE_MAX[],
+            Int(ceil(mean_rate + 10 * sqrt(mean_rate) + 20)))
+        y = zero(T)
+        cumulative = zero(T)
+        @inbounds for k in 0:kmax
+            logZ, _, _ = _binary_moments(ηbar, s, k, nodes, weights, (), kind)
+            cumulative += isfinite(logZ) ? exp(logZ) : zero(T)
+            y = T(k)
+            if u < cumulative
+                break
+            end
+        end
+    elseif kind == CTSEM_OBS_BINARY || isempty(thresholds)
+        logZ, _, _ = _binary_moments(ηbar, s, one(T), nodes, weights, (),
+            CTSEM_OBS_BINARY)
         p = isfinite(logZ) ? exp(logZ) : inv(one(T) + exp(-ηbar))
         y = u < p ? one(T) : zero(T)
     else
@@ -383,7 +411,8 @@ function _generate_binary!(gen, ws::ContinuousEKFWorkspace, pars, λ,
         y = T(K)
         cumulative = zero(T)
         @inbounds for k in 1:(K - 1)
-            logZ, _, _ = _binary_moments(ηbar, s, k, nodes, weights, thresholds)
+            logZ, _, _ = _binary_moments(ηbar, s, k, nodes, weights,
+                thresholds, CTSEM_OBS_ORDINAL)
             cumulative += isfinite(logZ) ? exp(logZ) : zero(T)
             if u < cumulative
                 y = T(k)

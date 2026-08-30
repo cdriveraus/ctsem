@@ -62,7 +62,8 @@ test_that("ctModel refuses an ordinal specification it cannot act on", {
   # ctGenerate needs it as much as ctFit does.
   expect_error(build(manifesttype = 2L), "ncategories")
   expect_error(build(manifesttype = 2L, ncategories = 2L), "at least 3")
-  expect_error(build(manifesttype = 3L), "must be 0")
+  # 3 is a count, which is a supported type; 4 is not one at all.
+  expect_error(build(manifesttype = 4L), "must be 0")
   m <- build(manifesttype = 2L, ncategories = 4L)
   # ctModel returns the converted model, so the matrix is in `pars` rather
   # than sitting on the object under its own name.

@@ -143,10 +143,8 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' warming up at all -- because the prior pass pulls the start toward the prior
 #' mode and past about ten iterations that is what it hands the likelihood.
 #'
-#' If the fit still does not converge it is retried once from a full prior
-#' optimisation, kept only if that converges or beats the first attempt.
-#' \code{fit$estimate$carefulfit} records whether the first pass ran and
-#' \code{fit$estimate$prior_warmup} whether the retry did.
+#' \code{fit$estimate$carefulfit} records whether the pass ran, and
+#' \code{$carefulfit_iterations} how long it was allowed.
 #' With \code{backend='julia'}, \code{optimcontrol$callback} is a function
 #' called while the fit runs, with \code{(iteration, total, objective,
 #' gradient_norm)}. It is for a front end that wants to draw progress live:
@@ -757,7 +755,20 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       paste(ctm$manifestNames[ctm$manifesttype %in% 2], collapse=', '), '.',
       call.=FALSE)
   }
+  # Same reason as ordinal, and stated separately because the reason a stan fit
+  # would be wrong is different: stan has no Poisson measurement at all, so it
+  # would treat a count as a Gaussian observation of the log rate and return
+  # numbers that look entirely reasonable.
+  if(any(ctm$manifesttype %in% 3) && !identical(backend, 'julia')){
+    stop('Count manifest variables (manifesttype 3) need backend="julia". ',
+      'The stan model has no count measurement, so the observation would be ',
+      'treated as Gaussian; the julia filter integrates it against the ',
+      'predicted state under a Poisson log link instead. Count variable(s): ',
+      paste(ctm$manifestNames[ctm$manifesttype %in% 3], collapse=', '), '.',
+      call.=FALSE)
+  }
   if(any(ctm$manifesttype %in% 2)) .ctDataCategories(datalong, ctm)
+  if(any(ctm$manifesttype %in% 3)) .ctDataCounts(datalong, ctm)
 
   if(any(ctm$manifesttype > 0)){ #if any non continuous variables, (with free parameters)...
     errfix <- which(ctm$pars$matrix %in% 'MANIFESTVAR' &

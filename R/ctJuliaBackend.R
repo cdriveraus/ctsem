@@ -475,8 +475,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # integrates the observation rather than linearising it, which is why it is
   # worth having here at all. See
   # inst/julia/ContinuousTimeSEM/src/binary_measurement.jl.
-  if (any(!model$manifesttype %in% 0:2)) {
-    failures <- c(failures, "manifest types beyond ordinal (manifesttype > 2)")
+  if (any(!model$manifesttype %in% 0:3)) {
+    failures <- c(failures, "manifest types beyond count (manifesttype > 3)")
   }
   if (isTRUE(vb)) failures <- c(failures, "variational Bayes")
   if (isTRUE(gendata)) failures <- c(failures, "generation")
@@ -1883,55 +1883,17 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
   result <- .ctJuliaOptimise(model_spec, start, backendcontrol = backendcontrol,
     gradient = gradient, cores = cores, verbose = verbose,
     callback = optimcontrol$callback)
-  # A maximum likelihood fit that failed gets one more attempt, warmed by the
-  # priors.
+  # There is deliberately no second, after-the-fact prior restart here.
   #
-  # ctsem's priors are normal(0,1) on the raw scale, so they add curvature
-  # exactly where a maximum likelihood objective has least -- near raw zero,
-  # which is where fits start. Optimising the posterior first and then handing
-  # that estimate to the likelihood starts the real fit inside the basin rather
-  # than at a random draw.
-  #
-  # Measured on 120 Laplace fits of ordinal and binary models with random
-  # intercepts: maximum likelihood alone converged 117 and needed the
-  # backtracking rescue on 8; warmed by priors it converged 120 and needed the
-  # rescue on none. Priors alone also converge 120, but they are not the same
-  # estimator -- their random-effect SD carried a bias of 0.10 to 0.13 against
-  # 0.01 to 0.02 for the two-stage fit, which is the shrinkage doing its job
-  # and the reason this hands back to the likelihood rather than stopping at
-  # the posterior mode.
-  #
-  # It runs only when the plain fit did not converge, so it costs nothing on
-  # the fits that worked, and the result is kept only if it is actually better.
-  # `optimcontrol$priorwarmup = FALSE` switches it off.
-  if (!isTRUE(result$converged) && !isTRUE(priors) &&
-      !identical(careful, FALSE) && !is.null(prepared_data)) {
-    wspec <- warmspec()
-    if (!is.null(wspec)) {
-      if (isTRUE(verbose > 0)) message(
-        "The fit did not converge; retrying warmed by the priors.")
-      warmed <- try(.ctJuliaOptimise(wspec, start,
-        backendcontrol = backendcontrol, gradient = gradient, cores = cores,
-        verbose = verbose, callback = optimcontrol$callback), silent = TRUE)
-      if (!inherits(warmed, "try-error")) {
-        retry <- try(.ctJuliaOptimise(model_spec, as.numeric(warmed$minimizer),
-          backendcontrol = backendcontrol, gradient = gradient, cores = cores,
-          verbose = verbose, callback = optimcontrol$callback), silent = TRUE)
-        # Both objectives here carry no prior term, so their log likelihoods
-        # are on the same scale and can simply be compared. A converged fit
-        # wins over one that is merely higher, since a higher likelihood at a
-        # point the optimizer was still moving away from is not an estimate.
-        if (!inherits(retry, "try-error") &&
-            (isTRUE(retry$converged) ||
-              (!isTRUE(result$converged) &&
-                isTRUE(as.numeric(retry$maximum_loglik) >
-                  as.numeric(result$maximum_loglik))))) {
-          result <- retry
-          result$prior_warmup <- TRUE
-        }
-      }
-    }
-  }
+  # An earlier version retried a non-converged fit from a full prior
+  # optimisation. `carefulfit` above makes that redundant: it warms every fit
+  # from the priors already, and over 720 fits at a cap of ten it converged
+  # 240 out of 240 in each condition, so the retry had nothing left to rescue.
+  # What it did instead was move answers. A fit deliberately capped at one
+  # iteration from supplied starting values came back from raw 24 at raw 12.8 --
+  # not the fit that was asked for, and reported without comment. Two
+  # mechanisms for one job, where the second can only act in cases the first
+  # did not fix, is a way to be surprised rather than a safety net.
   # The engine maximises the log posterior, so its `maximum_loglik` is the log
   # posterior and the per-subject objectives (which carry no prior term) sum to
   # the log likelihood. Without priors the two are the same number; with them
@@ -1972,10 +1934,6 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
       saturated = isTRUE(result$saturated),
       # Whether the first pass with priors ran, and how long it was allowed.
       carefulfit = warmiter >= 1, carefulfit_iterations = as.integer(warmiter),
-      # TRUE when the fit *still* failed and was retried warmed by the priors.
-      # Recorded because that is a second optimisation, not the same one, and a
-      # fit that needed it is worth a second look.
-      prior_warmup = isTRUE(result$prior_warmup),
       # Which line search produced the answer. "hagerzhang+backtracking" means
       # Hager-Zhang stopped short and the fit was finished by the fallback.
       linesearch = if (is.null(result$linesearch)) NA_character_ else

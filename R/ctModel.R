@@ -25,8 +25,10 @@
 #' 
 #' @param manifesttype n.manifest length vector of manifest variable types. 0 (the
 #' default) is a continuous, Gaussian variable; 1 is binary, coded 0/1; 2 is
-#' ordinal, coded as consecutive integers from 1. Binary and ordinal variables
-#' are supported by the julia backend only, and binary additionally by stan.
+#' ordinal, coded as consecutive integers from 1; 3 is a count, coded as
+#' non-negative integers and modelled as Poisson with a log link, so the latent
+#' process gives the log rate. Non-Gaussian variables are supported by the julia
+#' backend only, and binary additionally by stan.
 #' @param ncategories n.manifest length integer vector, giving the number of
 #' categories of each ordinal manifest variable and ignored for the others.
 #' Required when any \code{manifesttype} is 2, because the model has to know how
@@ -395,7 +397,7 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
   
   if(any(manifesttype>0 ) && all(CINT %in% 0)) warning('CINT usually needs to be specified for non-continuous variables -- consider fixing relevant MANIFESTMEANS to zero instead')
 
-  if(any(!manifesttype %in% 0:2)) stop('manifesttype must be 0 (continuous), 1 (binary) or 2 (ordinal)')
+  if(any(!manifesttype %in% 0:3)) stop('manifesttype must be 0 (continuous), 1 (binary), 2 (ordinal) or 3 (count)')
   THRESHOLDS <- NULL
   ncategories <- .ctCheckNcategories(ncategories, manifesttype, manifestNames)
   if(any(manifesttype %in% 2)){

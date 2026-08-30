@@ -40,6 +40,11 @@ mutable struct CTSEMBinaryRecord{T}
     # rather than referenced: `_ordinal_thresholds!` hands back a view into a
     # workspace scratch that the next observation overwrites.
     thresholds::Vector{Vector{T}}
+    # Which kind of observation each row is, in the same order. The forward
+    # pass reads it from the workspace; the reverse has no workspace to read,
+    # and inferring it from `thresholds` being empty would make a count look
+    # like a Bernoulli -- the one confusion this whole argument exists to stop.
+    kinds::Vector{Int}
 end
 
 # Deliberately untyped in `tape`: this file is included before the tape's own,
@@ -70,7 +75,8 @@ function _record_binary!(tape, ws, pars, data, obs_col, rows, state_in, P_in, n)
             r, collect(vec(state_in)), Matrix(P_in),
             Matrix(pars.LAMBDA[r, 1:n]), collect(pars.MANIFESTMEANS[r]),
             T[data[i, obs_col] for i in r],
-            Vector{T}[collect(T, _ordinal_thresholds!(ws, pars, i)) for i in r]))
+            Vector{T}[collect(T, _ordinal_thresholds!(ws, pars, i)) for i in r],
+            Int[Int(ws.manifesttype[i]) for i in r]))
     else
         record = tape.binaries[index]
         record.rows = r
@@ -81,6 +87,7 @@ function _record_binary!(tape, ws, pars, data, obs_col, rows, state_in, P_in, n)
         record.y = T[data[i, obs_col] for i in r]
         record.thresholds =
             Vector{T}[collect(T, _ordinal_thresholds!(ws, pars, i)) for i in r]
+        record.kinds = Int[Int(ws.manifesttype[i]) for i in r]
     end
     push!(tape.program, (:binary, index))
     return nothing
@@ -116,7 +123,8 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
             a += λ[i] * x[i]
         end
         b > T(_CTSEM_MIN_VARIANCE[]) || continue
-        g = _binary_moment_derivatives(a, b, record.y[j], record.thresholds[j])
+        g = _binary_moment_derivatives(a, b, record.y[j], record.thresholds[j],
+            record.kinds[j])
         m, v = g[2], g[3]
         shift = m / b
         shrink = (one(T) - v / b) / b
@@ -150,7 +158,7 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
             # `continue` did -- drops all of it, and drops it exactly where a
             # variance is collapsing, which is where an optimiser most needs
             # the gradient to point somewhere sensible.
-            score, _ = _category_score(a, record.y[j], τ)
+            score, _ = _category_score(a, record.y[j], τ, record.kinds[j])
             @inbounds for i in 1:n
                 x̄[i] += score * λ[i]
                 θ̄ca.LAMBDA[row, i] += score * x0[i]
@@ -158,7 +166,8 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
             θ̄ca.MANIFESTMEANS[row] += score
             if !isempty(τ)
                 dτ = ForwardDiff.gradient(
-                    t -> _category_loglikelihood(a, record.y[j], t),
+                    t -> _category_loglikelihood(a, record.y[j], t,
+                        record.kinds[j]),
                     collect(T, τ))
                 running = zero(T)
                 @inbounds for i in length(τ):-1:1
@@ -168,7 +177,7 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
             end
             continue
         end
-        g = _binary_moment_derivatives(a, b, record.y[j], τ)
+        g = _binary_moment_derivatives(a, b, record.y[j], τ, record.kinds[j])
         m, v = g[2], g[3]
         dlogZ_da, dlogZ_db = g[4], g[5]
         dm_da, dm_db = g[6], g[7]
@@ -227,7 +236,8 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
         # the forward pass cumulates them, so the cotangent on gap `i` is the
         # sum of the cotangents on every threshold at or after it.
         if !isempty(τ)
-            Jτ = _binary_threshold_derivatives(a, b, record.y[j], τ)
+            Jτ = _binary_threshold_derivatives(a, b, record.y[j], τ,
+                record.kinds[j])
             running = zero(T)
             @inbounds for i in length(τ):-1:1
                 running += logZbar * Jτ[1, i] + mbar * Jτ[2, i] + vbar * Jτ[3, i]

@@ -132,7 +132,77 @@ never computed.
 const _CTSEM_MIN_VARIANCE = Ref(1e-100)
 
 """
-    _category_score(η, y, thresholds)
+The observation kinds the scalar quadrature path handles, matching ctsem's
+`manifesttype`: 1 binary, 2 ordinal, 3 count.
+
+The kind travels as an integer beside the thresholds rather than being inferred
+from them. Inferring worked while there were two kinds -- no thresholds meant
+Bernoulli -- and it is exactly the wrong shape for a third, because a count
+also has no thresholds and would have been silently treated as binary. Every
+call site passes it explicitly for the same reason: a default here would put
+that failure back.
+"""
+const CTSEM_OBS_BINARY = 1
+const CTSEM_OBS_ORDINAL = 2
+const CTSEM_OBS_COUNT = 3
+
+"""
+Largest linear predictor a count observation is allowed to reach.
+
+The Poisson rate is `exp(η)`, which overflows to `Inf` at `η = 710`, and an
+infinite rate is worse than a large one: the score becomes `y - Inf` and the
+information `Inf`, so Newton's step is `-Inf/Inf` and the mode solve returns
+NaN rather than walking back. Clamping the exponent keeps both finite and the
+step bounded, so a trial point out here is merely bad rather than poisonous.
+
+Two hundred rather than seven hundred so that the rate squares without
+overflowing as well. For real data it never binds: a rate of `exp(20)` is
+already half a billion events, and a parameter that reaches this is caught by
+the saturation guard long before.
+"""
+const _CTSEM_COUNT_MAX_LOG_RATE = Ref(200.0)
+
+"""
+Hard ceiling on the count-generation walk.
+
+Generating a count inverts its marginal distribution one value at a time, so
+the work is linear in the value drawn. A rate large enough for this to bind is
+already far outside what these models are for, and an unbounded loop on a bad
+parameter draw is worse than a capped one.
+"""
+const _CTSEM_COUNT_GENERATE_MAX = Ref(100000)
+
+"""
+    _log_factorial(y)
+
+`log(y!)`, for the Poisson normalising constant.
+
+Constant in the linear predictor, so it changes no mode, no score and no
+posterior moment -- but it *is* part of the log likelihood the fit reports, and
+leaving it out would make counts incomparable with every other likelihood in
+the package. Computed rather than taken from SpecialFunctions, which the engine
+does not otherwise depend on; the observation is data, so this never needs a
+derivative.
+"""
+@inline function _log_factorial(y::Real)
+    n = Int(round(y))
+    n <= 1 && return 0.0
+    if n < 16
+        acc = 0.0
+        for i in 2:n
+            acc += log(i)
+        end
+        return acc
+    end
+    # Stirling with the first two correction terms: better than 1e-12 relative
+    # from n = 16 up, which is far finer than a constant offset needs.
+    x = float(n)
+    return 0.5 * log(2 * pi * x) + x * log(x) - x +
+        inv(12 * x) - inv(360 * x^3)
+end
+
+"""
+    _category_score(η, y, thresholds, kind)
 
 `(d log P(y|η)/dη, -d² log P(y|η)/dη²)`, the score and observed information of
 one categorical observation.
@@ -175,8 +245,15 @@ Binary with a threshold at zero is the `K = 2` case and gives exactly
 `(y - p, p(1-p))`, which is what the Bernoulli fast path computes -- they agree
 identically, not just numerically, which is why the fast path can stay.
 """
-@inline function _category_score(η::T, y::Real, thresholds) where {T}
-    if isempty(thresholds)
+@inline function _category_score(η::T, y::Real, thresholds,
+    kind::Int) where {T}
+    if kind == CTSEM_OBS_COUNT
+        # `y - λ` and `λ`. Log-concave in η like the others, so the Newton
+        # solve above it is unchanged; the clamp is what keeps λ finite.
+        λ = exp(min(η, T(_CTSEM_COUNT_MAX_LOG_RATE[])))
+        return (T(y) - λ, max(λ, floatmin(T)))
+    end
+    if kind == CTSEM_OBS_BINARY || isempty(thresholds)
         p = inv(one(T) + exp(-η))
         return (T(y > 0.5 ? 1 : 0) - p, p * (one(T) - p))
     end
@@ -190,7 +267,7 @@ identically, not just numerically, which is why the fast path can stay.
 end
 
 """
-    _binary_mode(ηbar, s2, y, thresholds)
+    _binary_mode(ηbar, s2, y, thresholds, kind)
 
 `(mode - ηbar, curvature)` of `log N(η; ηbar, s²) + log P(y | η)`.
 
@@ -207,12 +284,13 @@ quickly and cannot diverge. The score is bounded by one in absolute value,
 which bounds the step and keeps this well behaved even when `s` is large and
 the observation is nearly deterministic.
 """
-@inline function _binary_mode(ηbar::T, s2::T, y::Real, thresholds = ()) where {T}
+@inline function _binary_mode(ηbar::T, s2::T, y::Real, thresholds,
+    kind::Int) where {T}
     offset = zero(T)
     precision = inv(s2)
     curvature = precision
     @inbounds for _ in 1:_CTSEM_BINARY_NEWTON[]
-        score, information = _category_score(ηbar + offset, y, thresholds)
+        score, information = _category_score(ηbar + offset, y, thresholds, kind)
         # `-offset * precision`, not `-(η - ηbar) * precision`: the prior's
         # score is exact this way rather than a difference of two numbers of
         # order ηbar.
@@ -224,7 +302,7 @@ the observation is nearly deterministic.
 end
 
 """
-    _category_likelihood(η, y, thresholds)
+    _category_likelihood(η, y, thresholds, kind)
 
 `P(y | η)` for an ordinal observation under the cumulative logit model:
 
@@ -251,8 +329,16 @@ difference loses its significant digits long before the probability itself
 stops being representable. The product form has neither problem -- see
 `_category_score`, which needs the same identity for its derivatives.
 """
-@inline function _category_loglikelihood(η::T, y::Real, thresholds) where {T}
-    if isempty(thresholds)
+@inline function _category_loglikelihood(η::T, y::Real, thresholds,
+    kind::Int) where {T}
+    if kind == CTSEM_OBS_COUNT
+        # `y η - λ - log y!`. The clamp matches `_category_score`: the two have
+        # to describe the same function or the mode solve chases a likelihood
+        # the quadrature is not integrating.
+        λ = exp(min(η, T(_CTSEM_COUNT_MAX_LOG_RATE[])))
+        return T(y) * η - λ - T(_log_factorial(y))
+    end
+    if kind == CTSEM_OBS_BINARY || isempty(thresholds)
         return y > 0.5 ? -log1p_exp(-η) : -log1p_exp(η)
     end
     k = Int(y)
@@ -265,9 +351,12 @@ stops being representable. The product form has neither problem -- see
         log(-expm1(-gap))
 end
 
-@inline function _category_likelihood(η::T, y::Real, thresholds) where {T}
-    isempty(thresholds) && return y > 0.5 ? inv(one(T) + exp(-η)) :
-        inv(one(T) + exp(η))
+@inline function _category_likelihood(η::T, y::Real, thresholds,
+    kind::Int) where {T}
+    kind == CTSEM_OBS_COUNT &&
+        return exp(_category_loglikelihood(η, y, thresholds, kind))
+    (kind == CTSEM_OBS_BINARY || isempty(thresholds)) &&
+        return y > 0.5 ? inv(one(T) + exp(-η)) : inv(one(T) + exp(η))
     k = Int(y)
     n = length(thresholds)
     # Below the first threshold, or above the last: one tail, no subtraction.
@@ -302,7 +391,7 @@ The `Tuple{}` method is what keeps a binary observation free of all of it.
 @inline _as_scalar_type(::Type{T}, thresholds::Tuple{}) where {T} = thresholds
 
 """
-    _binary_moments(ηbar, s, y, nodes, weights)
+    _binary_moments(ηbar, s, y, nodes, weights, thresholds, kind)
 
 `(logZ, mean - ηbar, variance)` of `η` given one categorical observation.
 
@@ -341,7 +430,7 @@ measured error was.
 re-centring turns that into `∫h(η)dη ≈ √2σ̂ Σ wᵢ exp(tᵢ²) h(η̂ + √2σ̂tᵢ)`.
 """
 @inline function _binary_moments(ηbar::T, s::T, y::Real, nodes, weights,
-    thresholds = ()) where {T}
+    thresholds, kind::Int) where {T}
     s2 = s * s
     # A degenerate prior in this direction: `η` is known exactly, so the
     # observation contributes its likelihood *at that point* and moves nothing.
@@ -359,9 +448,10 @@ re-centring turns that into `∫h(η)dη ≈ √2σ̂ Σ wᵢ exp(tᵢ²) h(η̂
     # `log P(y | η̂)` is both the right answer and the continuous limit of the
     # integral, so nothing has to know where the boundary is.
     if !(s2 > T(_CTSEM_MIN_VARIANCE[]))
-        return (_category_loglikelihood(ηbar, y, thresholds), zero(T), zero(T))
+        return (_category_loglikelihood(ηbar, y, thresholds, kind),
+            zero(T), zero(T))
     end
-    mode_offset, curvature = _binary_mode(ηbar, s2, y, thresholds)
+    mode_offset, curvature = _binary_mode(ηbar, s2, y, thresholds, kind)
     scale = sqrt(T(2) / curvature)
 
     # Accumulated relative to the largest weight seen so far, so the sums are
@@ -407,7 +497,7 @@ re-centring turns that into `∫h(η)dη ≈ √2σ̂ Σ wᵢ exp(tᵢ²) h(η̂
         # The `t²` undoes the rule's own kernel; the prior density is then
         # carried explicitly rather than folded into the nodes.
         e = t * t - deviation * deviation * halfprec +
-            _category_loglikelihood(ηbar + deviation, y, thresholds)
+            _category_loglikelihood(ηbar + deviation, y, thresholds, kind)
         if e > emax
             ratio = isfinite(emax) ? exp(emax - e) : zero(T)
             Z *= ratio
@@ -476,14 +566,15 @@ sum here costs a handful of additions on a vector of length `K-1`.
 end
 
 """
-    _ekf_binary_update!(ws, λ, μ, y, n, thresholds)
+    _ekf_binary_update!(ws, λ, μ, y, n, thresholds, kind)
 
 One categorical observation, applied exactly in the scalar direction it informs.
 
 Returns the log marginal likelihood of the observation, or `-Inf` if the
 predicted state gives it no support.
 """
-function _ekf_binary_update!(ws, λ, μ, y::Real, n::Int, thresholds = ())
+function _ekf_binary_update!(ws, λ, μ, y::Real, n::Int, thresholds,
+    kind::Int)
     T = eltype(ws.state)
     nodes, weights = _gauss_hermite(_CTSEM_BINARY_NODES[])
 
@@ -505,7 +596,7 @@ function _ekf_binary_update!(ws, λ, μ, y::Real, n::Int, thresholds = ())
     s = sqrt(s2)
 
     logZ, ηoffset, vpost = _binary_moments(ηbar, s, y, nodes, weights,
-        thresholds)
+        thresholds, kind)
     isfinite(logZ) || return T(-Inf)
 
     # With no predicted variance in this direction the observation cannot move
@@ -528,7 +619,7 @@ function _ekf_binary_update!(ws, λ, μ, y::Real, n::Int, thresholds = ())
 end
 
 """
-    _binary_moment_derivatives(ηbar, s2, y)
+    _binary_moment_derivatives(ηbar, s2, y, thresholds, kind)
 
 `(logZ, m, v, dlogZ_da, dlogZ_db, dm_da, dm_db, dv_da, dv_db)` where `a = ηbar`
 and `b = s²`, and `m` is the posterior mean's *offset* from `a` -- see
@@ -558,7 +649,7 @@ property that matters here. Consistency beats elegance: a slightly-wrong
 gradient is worse than a slightly-expensive one.
 """
 function _binary_moment_derivatives(ηbar::T, s2::T, y::Real,
-    thresholds = ()) where {T}
+    thresholds, kind::Int) where {T}
     nodes, weights = _gauss_hermite(_CTSEM_BINARY_NODES[])
     if s2 <= zero(T)
         z = zero(T)
@@ -566,7 +657,8 @@ function _binary_moment_derivatives(ηbar::T, s2::T, y::Real,
     end
     triple = function (ab)
         τ = _as_scalar_type(eltype(ab), thresholds)
-        logZ, m, v = _binary_moments(ab[1], sqrt(ab[2]), y, nodes, weights, τ)
+        logZ, m, v = _binary_moments(ab[1], sqrt(ab[2]), y, nodes, weights,
+            τ, kind)
         return [logZ, m, v]
     end
     at = [ηbar, s2]
@@ -579,7 +671,7 @@ function _binary_moment_derivatives(ηbar::T, s2::T, y::Real,
 end
 
 """
-    _binary_threshold_derivatives(ηbar, s2, y, thresholds)
+    _binary_threshold_derivatives(ηbar, s2, y, thresholds, kind)
 
 `∂(logZ, m, v)/∂τ` as a `3 x length(thresholds)` matrix.
 
@@ -591,14 +683,14 @@ to differentiate the function the forward pass computed, not the one it
 approximates.
 """
 function _binary_threshold_derivatives(ηbar::T, s2::T, y::Real,
-    thresholds) where {T}
+    thresholds, kind::Int) where {T}
     k = length(thresholds)
     (k == 0 || s2 <= zero(T)) && return zeros(T, 3, k)
     nodes, weights = _gauss_hermite(_CTSEM_BINARY_NODES[])
     s = sqrt(s2)
     triple = function (τ)
         D = eltype(τ)
-        logZ, m, v = _binary_moments(D(ηbar), D(s), y, nodes, weights, τ)
+        logZ, m, v = _binary_moments(D(ηbar), D(s), y, nodes, weights, τ, kind)
         return [logZ, m, v]
     end
     at = collect(T, thresholds)
