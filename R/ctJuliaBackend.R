@@ -1812,26 +1812,45 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
       return(NULL)
     spec
   }
-  # `priorwarmup = <n>` asks for a capped pass against the posterior before the
-  # likelihood, for every fit rather than only failed ones.
+  # `carefulfit`, the same argument `stanoptimis` takes and with the same
+  # meaning: a rough first pass with the priors on, to get starting values,
+  # when priors are otherwise off. Stan's version caps that pass at 50
+  # iterations and loosens its tolerance; this one caps it at 20, which the
+  # measurements below settled, and lets the cap do the work rather than also
+  # loosening the tolerance.
   #
-  # This is not faster, and is not the default for that reason. Measured over
-  # 800 fits across both routes and four measurement types, total iterations
-  # against a plain fit came to 0.91-1.14 at ten prior iterations, 1.09-1.50 at
-  # twenty and 1.47-1.64 at forty: break-even at best.
+  # It does not make fits faster. Measured over 800 fits across both engine
+  # routes and four measurement types, total iterations against a plain fit
+  # came to 0.91-1.14 at ten prior iterations, 1.09-1.50 at twenty and
+  # 1.47-1.64 at forty. The second stage does converge in fewer iterations --
+  # 40 to 26 on ordinal Laplace at a cap of twenty -- but not by enough to pay
+  # for the first stage.
   #
   # What it buys is where the fit lands. Over those 800 fits the warmed start
-  # was never worse -- not one cell lost log likelihood -- and sometimes much
-  # better: a mixed-indicator model that converged at -1922.81 unwarmed
-  # converged at -1833.42 warmed, which is the local optimum that put a
-  # random-effect SD of 7.2 into a simulation study against a truth of 0.5, and
-  # nothing in the plain fit flags it because it converged.
+  # was never worse in any cell, and three cells were better: an ordinal
+  # Laplace fit that failed at -2498.24 and warmed reaches -2207.06; two binary
+  # fits by about two log units; and a mixed-indicator model that *converged*
+  # at -1922.81 unwarmed and at -1833.42 warmed. That last one is the case this
+  # is for -- it reports success while returning a random-effect SD of 7.23
+  # against a truth of 0.5, and it was the single replication inflating that
+  # condition's RMSE to 0.88 in the recorded study. Warmed, the same data give
+  # 0.544.
   #
-  # Ten is the suggested cap rather than forty because the prior pass pulls
-  # toward the prior mode: on that same model ten iterations found the good
-  # optimum and twenty or forty landed elsewhere.
-  warmiter <- optimcontrol$priorwarmup
-  if (is.numeric(warmiter) && length(warmiter) == 1L && warmiter >= 1) {
+  # A longer pass is not a safer one: on that model ten prior iterations found
+  # the good optimum outright while twenty and forty landed elsewhere, still
+  # ahead of the plain fit but by one log unit rather than eighty-nine. The
+  # prior pass pulls toward the prior mode, and past a point that is what it
+  # gives you.
+  careful <- optimcontrol$carefulfit
+  if (is.null(careful)) careful <- TRUE
+  warmiter <- if (isTRUE(careful)) 20L else
+    if (is.numeric(careful) && length(careful) == 1L && careful >= 1)
+      as.integer(careful) else 0L
+  # `stanoptimis` turns `carefulfit` off when starting values were supplied,
+  # since the point of the pass is to produce some. Overriding a starting value
+  # the caller chose would be worse than surprising.
+  if (!is.null(inits) && !identical(inits, "random")) warmiter <- 0L
+  if (warmiter >= 1) {
     spec <- warmspec()
     if (!is.null(spec)) {
       warmcontrol <- backendcontrol
@@ -1872,7 +1891,7 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
   # the fits that worked, and the result is kept only if it is actually better.
   # `optimcontrol$priorwarmup = FALSE` switches it off.
   if (!isTRUE(result$converged) && !isTRUE(priors) &&
-      !identical(optimcontrol$priorwarmup, FALSE) && !is.null(prepared_data)) {
+      !identical(careful, FALSE) && !is.null(prepared_data)) {
     wspec <- warmspec()
     if (!is.null(wspec)) {
       if (isTRUE(verbose > 0)) message(
@@ -1937,8 +1956,10 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
       # tolerance. Without this the warning below described such a fit by its
       # gradient alone and read as though it had passed.
       saturated = isTRUE(result$saturated),
-      # TRUE when the fit above it failed and this one was warmed by the
-      # priors. Recorded because the two are not the same optimisation and a
+      # Whether the first pass with priors ran, and how long it was allowed.
+      carefulfit = warmiter >= 1, carefulfit_iterations = as.integer(warmiter),
+      # TRUE when the fit *still* failed and was retried warmed by the priors.
+      # Recorded because that is a second optimisation, not the same one, and a
       # fit that needed it is worth a second look.
       prior_warmup = isTRUE(result$prior_warmup),
       # Which line search produced the answer. "hagerzhang+backtracking" means

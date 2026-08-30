@@ -125,23 +125,26 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' costs the same regardless of the number of free parameters, so it is
 #' dramatically faster for larger models and marginally slower for very small
 #' ones.
-#' With \code{backend='julia'}, a maximum likelihood fit that does not converge
-#' is retried once, warmed by the priors: ctsem's \code{normal(0,1)} raw priors
-#' are optimised first and the likelihood is then maximised from that estimate,
-#' which starts the real fit inside the basin rather than at a random draw. The
-#' retry is kept only if it converges or beats the first attempt, so it cannot
-#' make a fit worse, and it does not run at all when the first attempt
-#' converged. Set \code{optimcontrol$priorwarmup = FALSE} to switch it off, and
-#' see \code{fit$estimate$prior_warmup} for whether it was used.
-#' Setting \code{optimcontrol$priorwarmup} to a number instead runs a capped
-#' prior pass of that many iterations before \emph{every} fit, not only failed
-#' ones. This does not make fits faster -- measured over 800 fits, total
-#' iterations came to 0.91-1.14 times a plain fit at ten prior iterations and
-#' 1.47-1.64 at forty -- but the warmed start was never worse and is sometimes
-#' much better, since a plain fit can converge to a local optimum and report
-#' success. Ten is a reasonable cap; more pulls the start toward the prior
-#' mode. Consider it for models where a wrong answer would be costly, or where
-#' the population distribution parameters are weakly identified.
+#' \code{optimcontrol$carefulfit} works for \code{backend='julia'} as it does
+#' for Stan: when \code{priors=FALSE}, a rough first pass is run \emph{with}
+#' ctsem's \code{normal(0,1)} raw priors to obtain starting values, and the
+#' likelihood is then maximised from there. It defaults to \code{TRUE}, capped
+#' at 20 iterations, and is skipped when \code{inits} are supplied. Set
+#' \code{optimcontrol$carefulfit = FALSE} to switch it off or to a number to
+#' choose the cap.
+#'
+#' It does not make fits faster: measured over 800 fits, total iterations came
+#' to 0.91-1.14 times a plain fit at ten prior iterations, 1.09-1.50 at twenty
+#' and 1.47-1.64 at forty. It is on by default for where the fit lands rather
+#' than how quickly it gets there. Across those fits the warmed start was never
+#' worse and was sometimes much better, the case of interest being a fit that
+#' converges, reports success, and returns a random-effect SD of 7.23 against a
+#' truth of 0.5; warmed, the same data give 0.544.
+#'
+#' If the fit still does not converge it is retried once from a full prior
+#' optimisation, kept only if that converges or beats the first attempt.
+#' \code{fit$estimate$carefulfit} records whether the first pass ran and
+#' \code{fit$estimate$prior_warmup} whether the retry did.
 #' With \code{backend='julia'}, \code{optimcontrol$callback} is a function
 #' called while the fit runs, with \code{(iteration, total, objective,
 #' gradient_norm)}. It is for a front end that wants to draw progress live:
