@@ -27,8 +27,17 @@
 #' default) is a continuous, Gaussian variable; 1 is binary, coded 0/1; 2 is
 #' ordinal, coded as consecutive integers from 1; 3 is a count, coded as
 #' non-negative integers and modelled as Poisson with a log link, so the latent
-#' process gives the log rate. Non-Gaussian variables are supported by the julia
-#' backend only, and binary additionally by stan.
+#' process gives the log rate; 4 is censored, a Gaussian variable observed only
+#' within \code{censormin} and \code{censormax}, with values at a limit
+#' contributing the probability of being there rather than a density.
+#' Non-Gaussian variables are supported by the julia backend only, and binary
+#' additionally by stan.
+#' @param censormin,censormax n.manifest length numeric vectors giving the lower
+#' and upper censoring limits of each \code{manifesttype = 4} variable, and
+#' ignored for the others. Defaults are \code{-Inf} and \code{Inf}; a variable
+#' censored on one side only leaves the other infinite. Unlike thresholds these
+#' are known constants rather than parameters -- a scale's floor and ceiling are
+#' properties of the instrument, and the data cannot inform them.
 #' @param ncategories n.manifest length integer vector, giving the number of
 #' categories of each ordinal manifest variable and ignored for the others.
 #' Required when any \code{manifesttype} is 2, because the model has to know how
@@ -132,6 +141,7 @@
 
 ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoints=NULL, 
   manifestNames='auto', manifesttype=rep(0,nrow(LAMBDA)), ncategories=NULL,
+  censormin=NULL, censormax=NULL,
   latentNames='auto', id='id',time='time', silent=FALSE,
   T0VAR="auto", T0MEANS="auto", MANIFESTMEANS="auto", MANIFESTVAR="diag", 
   DRIFT="auto", CINT=0, DIFFUSION="auto",
@@ -397,7 +407,11 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
   
   if(any(manifesttype>0 ) && all(CINT %in% 0)) warning('CINT usually needs to be specified for non-continuous variables -- consider fixing relevant MANIFESTMEANS to zero instead')
 
-  if(any(!manifesttype %in% 0:3)) stop('manifesttype must be 0 (continuous), 1 (binary), 2 (ordinal) or 3 (count)')
+  if(any(!manifesttype %in% 0:4)) stop('manifesttype must be 0 (continuous), 1 (binary), 2 (ordinal), 3 (count) or 4 (censored)')
+  censorlimits <- .ctCheckCensorLimits(censormin, censormax, manifesttype,
+    manifestNames)
+  censormin <- censorlimits$min
+  censormax <- censorlimits$max
   THRESHOLDS <- NULL
   ncategories <- .ctCheckNcategories(ncategories, manifesttype, manifestNames)
   if(any(manifesttype %in% 2)){
@@ -416,6 +430,7 @@ ctModel<-function(LAMBDA, type='ct',n.manifest = 'auto', n.latent='auto', Tpoint
     `MANIFESTMEANS`=MANIFESTMEANS, `MANIFESTVAR`=MANIFESTVAR, `DRIFT`=DRIFT, `CINT`=CINT, 
     `DIFFUSION`=DIFFUSION, `TDPREDEFFECT`=TDPREDEFFECT, `TDPREDMEANS`=TDPREDMEANS, `TDPREDVAR`=TDPREDVAR, `PARS`=PARS, 
      `id`=id, `time`=time, `manifesttype`=manifesttype,
+     `censormin`=censormin, `censormax`=censormax,
      `ncategories`=ncategories, `THRESHOLDS`=THRESHOLDS)
   
   

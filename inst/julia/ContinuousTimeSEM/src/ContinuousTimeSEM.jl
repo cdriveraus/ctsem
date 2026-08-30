@@ -16,7 +16,7 @@ module ContinuousTimeSEM
 # in the R interface, and is now a test-only dependency. The closure went from
 # 111 packages to 56, a fresh install from 268 MB to 124 MB, and `using
 # ContinuousTimeSEM` from ~8.7 s to ~3.8 s -- paid in every R session.
-using ComponentArrays, ForwardDiff, LinearAlgebra, Optim
+using ComponentArrays, ForwardDiff, LinearAlgebra, Optim, SpecialFunctions
 
 export hello
 """

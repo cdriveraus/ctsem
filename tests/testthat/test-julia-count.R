@@ -56,7 +56,7 @@ test_that("ctModel takes manifesttype 3 and needs no categories for it", {
   expect_null(m$THRESHOLDS)
   expect_error(suppressWarnings(suppressMessages(ctModel(type = "ct",
     n.latent = 1, n.manifest = 1, manifestNames = "y", latentNames = "eta1",
-    manifesttype = 4L, LAMBDA = matrix(1)))), "manifesttype must be")
+    manifesttype = 5L, LAMBDA = matrix(1)))), "manifesttype must be")
 })
 
 test_that("print names counts and the link they use", {

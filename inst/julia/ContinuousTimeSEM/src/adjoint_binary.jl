@@ -169,10 +169,20 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
                     t -> _category_loglikelihood(a, record.y[j], t,
                         record.kinds[j]),
                     collect(T, τ))
-                running = zero(T)
-                @inbounds for i in length(τ):-1:1
-                    running += dτ[i]
-                    θ̄ca.THRESHOLDS[row, i] += running
+                if record.kinds[j] == CTSEM_OBS_CENSORED
+                    # A censored row's extras are its two limits, which are
+                    # constants and take no cotangent, and its standard
+                    # deviation, which is MANIFESTVAR's own diagonal entry. It
+                    # goes straight back there: the forward pass read it from
+                    # the matrix rather than from the assembled covariance, so
+                    # there is no `sdcovsqrt2cov` to unwind.
+                    @inbounds θ̄ca.MANIFESTVAR[row, row] += dτ[3]
+                else
+                    running = zero(T)
+                    @inbounds for i in length(τ):-1:1
+                        running += dτ[i]
+                        θ̄ca.THRESHOLDS[row, i] += running
+                    end
                 end
             end
             continue
@@ -238,10 +248,18 @@ function _reverse_binary!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
         if !isempty(τ)
             Jτ = _binary_threshold_derivatives(a, b, record.y[j], τ,
                 record.kinds[j])
-            running = zero(T)
-            @inbounds for i in length(τ):-1:1
-                running += logZbar * Jτ[1, i] + mbar * Jτ[2, i] + vbar * Jτ[3, i]
-                θ̄ca.THRESHOLDS[row, i] += running
+            if record.kinds[j] == CTSEM_OBS_CENSORED
+                # See the degenerate branch above: only the third extra is a
+                # parameter, and it belongs to MANIFESTVAR.
+                @inbounds θ̄ca.MANIFESTVAR[row, row] +=
+                    logZbar * Jτ[1, 3] + mbar * Jτ[2, 3] + vbar * Jτ[3, 3]
+            else
+                running = zero(T)
+                @inbounds for i in length(τ):-1:1
+                    running += logZbar * Jτ[1, i] + mbar * Jτ[2, i] +
+                        vbar * Jτ[3, i]
+                    θ̄ca.THRESHOLDS[row, i] += running
+                end
             end
         end
 

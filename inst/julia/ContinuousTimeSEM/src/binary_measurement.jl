@@ -145,6 +145,91 @@ that failure back.
 const CTSEM_OBS_BINARY = 1
 const CTSEM_OBS_ORDINAL = 2
 const CTSEM_OBS_COUNT = 3
+const CTSEM_OBS_CENSORED = 4
+
+"""
+    _norm_logcdf(z)
+
+`log Phi(z)`, accurate into the tail.
+
+A censored observation at its limit contributes exactly this, and the tail is
+where it matters: an observation pinned at a floor while the model predicts
+well above it has `z` far negative, and `Phi(z)` underflows to zero long before
+the log of it stops being a perfectly ordinary number. The engine's own
+`_standard_normal_cdf` is an Abramowitz-Stegun approximation good to about
+7.5e-08 *absolute*, which is no relative accuracy at all once `Phi` is 1e-20 --
+and a likelihood needs the relative kind.
+
+`logerfc` gives it directly and differentiably. Checked against the asymptotic
+expansion: at `z = -100` this returns -5005.524209 where the series gives
+-5005.524209, and its first three derivatives are finite there, which the
+Laplace path needs because it differentiates this twice more.
+"""
+@inline _norm_logcdf(z::Real) = logerfc(-z / sqrt(oftype(float(z), 2))) -
+    log(oftype(float(z), 2))
+
+"""`log phi(z)`, the standard normal log density."""
+@inline _norm_logpdf(z::Real) = -z * z / 2 - log(sqrt(2 * oftype(float(z), pi)))
+
+"""
+    _mills(z)
+
+`phi(z) / Phi(z)`, the inverse Mills ratio, as the exponential of a difference
+of logarithms rather than a quotient.
+
+Formed directly, the quotient is `0/0` in the tail: both parts underflow at
+around `z = -38`, where the ratio itself is a perfectly well behaved `38.03`.
+Through the logarithms each part stays of moderate size and the exponential is
+taken of their difference, which tends to `log(-z)`.
+"""
+@inline _mills(z::Real) = exp(_norm_logpdf(z) - _norm_logcdf(z))
+
+"""
+    _censored_at(y, limit, upper::Bool)
+
+Whether an observation sits at a censoring limit, decided on values alone.
+
+ForwardDiff breaks comparison ties lexicographically on the partials, so a limit
+that happens to carry a derivative seed does not compare equal to the number it
+equals. Measured: `5.0 >= 5.0` is true, and `5.0 >= Dual(5.0, [0,1,0])` is
+false. That is exactly the case here -- the limits share a vector with the
+standard deviation, so they get seeded whenever it does -- and the effect was
+that an observation *at* the upper limit silently took the interior branch
+during differentiation, contributing a Gaussian density where the forward pass
+had contributed a tail probability. The gradient for MANIFESTVAR came out 1%
+wrong with two censored observations and 263% wrong with two hundred and
+eighty-nine.
+
+Censoring is a property of the data and of limits that are constants, so the
+comparison has no business seeing derivative information at all.
+"""
+@inline _primal(x::Real) = x
+@inline _primal(x::ForwardDiff.Dual) = _primal(ForwardDiff.value(x))
+@inline _censored_at(y::Real, limit, upper::Bool) =
+    upper ? y >= _primal(limit) : y <= _primal(limit)
+
+"""
+    _censor_limits(extras, ::Type{T})
+
+The `(lower, upper, sd)` a censored row carries, from the same slot the ordinal
+thresholds use.
+
+A censored observation is the only non-Gaussian kind with a measurement error
+of its own, so its parameters do not fit in `manifesttype` and `ncategories`
+alone. They ride in the extras view because that view already flows everywhere
+the kernel does -- through the quadrature, through the mode solve, and into the
+adjoint's record -- so the standard deviation is differentiated with everything
+else rather than needing a second channel.
+"""
+@inline function _censor_limits(extras, ::Type{T}) where {T}
+    length(extras) >= 3 || return (T(-Inf), T(Inf), one(T))
+    # Returned as they are rather than converted to `T`. `T` is the linear
+    # predictor's type, and converting to it truncates whenever the extras
+    # carry derivative information the predictor does not -- which is exactly
+    # the case when the standard deviation is being differentiated. Arithmetic
+    # against the predictor promotes correctly on its own.
+    return (extras[1], extras[2], extras[3])
+end
 
 """
 Largest linear predictor a count observation is allowed to reach.
@@ -253,6 +338,25 @@ identically, not just numerically, which is why the fast path can stay.
         λ = exp(min(η, T(_CTSEM_COUNT_MAX_LOG_RATE[])))
         return (T(y) - λ, max(λ, floatmin(T)))
     end
+    if kind == CTSEM_OBS_CENSORED
+        lower, upper, sd = _censor_limits(thresholds, T)
+        prec = inv(sd * sd)
+        # For a censored value the score is the inverse Mills ratio and the
+        # information is `lambda(z)(z + lambda(z))`, which is the standard
+        # truncated-normal result and is non-negative for every `z` -- so the
+        # scalar posterior stays log-concave and the Newton solve above still
+        # cannot diverge. Uncensored, both collapse to the Gaussian forms.
+        if _censored_at(y, lower, false)
+            z = (lower - η) / sd
+            λ = _mills(z)
+            return (-λ / sd, max(λ * (z + λ) * prec, floatmin(T)))
+        elseif _censored_at(y, upper, true)
+            w = (η - upper) / sd
+            λ = _mills(w)
+            return (λ / sd, max(λ * (w + λ) * prec, floatmin(T)))
+        end
+        return ((T(y) - η) * prec, prec)
+    end
     if kind == CTSEM_OBS_BINARY || isempty(thresholds)
         p = inv(one(T) + exp(-η))
         return (T(y > 0.5 ? 1 : 0) - p, p * (one(T) - p))
@@ -338,6 +442,20 @@ stops being representable. The product form has neither problem -- see
         λ = exp(min(η, T(_CTSEM_COUNT_MAX_LOG_RATE[])))
         return T(y) * η - λ - T(_log_factorial(y))
     end
+    if kind == CTSEM_OBS_CENSORED
+        lower, upper, sd = _censor_limits(thresholds, T)
+        # An observation at or beyond a limit is the probability of being there
+        # at all; one inside is the ordinary Gaussian density. Compared with
+        # `<=` and `>=` so a value sitting exactly on the limit counts as
+        # censored, which is how censored data is recorded.
+        if _censored_at(y, lower, false)
+            return _norm_logcdf((lower - η) / sd)
+        elseif _censored_at(y, upper, true)
+            return _norm_logcdf((η - upper) / sd)
+        end
+        z = (T(y) - η) / sd
+        return -z * z / 2 - log(sd) - log(sqrt(2 * T(pi)))
+    end
     if kind == CTSEM_OBS_BINARY || isempty(thresholds)
         return y > 0.5 ? -log1p_exp(-η) : -log1p_exp(η)
     end
@@ -353,7 +471,7 @@ end
 
 @inline function _category_likelihood(η::T, y::Real, thresholds,
     kind::Int) where {T}
-    kind == CTSEM_OBS_COUNT &&
+    (kind == CTSEM_OBS_COUNT || kind == CTSEM_OBS_CENSORED) &&
         return exp(_category_loglikelihood(η, y, thresholds, kind))
     (kind == CTSEM_OBS_BINARY || isempty(thresholds)) &&
         return y > 0.5 ? inv(one(T) + exp(-η)) : inv(one(T) + exp(η))
@@ -548,8 +666,27 @@ would cost every model a ForwardDiff gradient per cell to support. A running
 sum here costs a handful of additions on a vector of length `K-1`.
 """
 @inline function _ordinal_thresholds!(ws, pars, row::Int)
-    hasproperty(pars, :THRESHOLDS) || return view(ws.thresholds, 1:0)
     types = ws.manifesttype
+    # A censored row carries its limits and its own standard deviation in the
+    # same slot. The standard deviation is `MANIFESTVAR`'s diagonal entry,
+    # which is a standard deviation before `sdcovsqrt2cov` turns the matrix
+    # into a covariance -- and taking it from there rather than from the
+    # assembled covariance is what lets the reverse pass hand its cotangent
+    # straight back to `MANIFESTVAR` without going through that construction.
+    # Legitimate because a censored row is updated on its own, sequentially, so
+    # it is never correlated with another row anyway.
+    if row <= length(types) && types[row] == 4
+        length(ws.thresholds) >= 3 || return view(ws.thresholds, 1:0)
+        @inbounds begin
+            ws.thresholds[1] = row <= length(ws.censormin) ?
+                ws.censormin[row] : -Inf
+            ws.thresholds[2] = row <= length(ws.censormax) ?
+                ws.censormax[row] : Inf
+            ws.thresholds[3] = pars.MANIFESTVAR[row, row]
+        end
+        return view(ws.thresholds, 1:3)
+    end
+    hasproperty(pars, :THRESHOLDS) || return view(ws.thresholds, 1:0)
     (row <= length(types) && types[row] == 2) ||
         return view(ws.thresholds, 1:0)
     ncat = row <= length(ws.ncategories) ? ws.ncategories[row] : 0

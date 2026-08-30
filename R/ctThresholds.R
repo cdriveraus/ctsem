@@ -126,3 +126,73 @@ NULL
   }
   invisible(NULL)
 }
+
+#' Check and normalise the censoring limits.
+#'
+#' Limits are known constants, so the checking is about coherence rather than
+#' estimability: a censored variable needs at least one finite limit, since a
+#' variable censored nowhere is simply Gaussian, and the lower must be below the
+#' upper. Non-censored variables carry infinities so that nothing downstream has
+#' to remember to ignore them.
+#' @noRd
+.ctCheckCensorLimits <- function(censormin, censormax, manifesttype,
+  manifestNames) {
+  n <- length(manifesttype)
+  censored <- manifesttype %in% 4
+  expand <- function(x, default) {
+    if (is.null(x)) return(rep(default, n))
+    if (length(x) == 1L) x <- rep(x, n)
+    if (length(x) != n) stop('censormin and censormax must have one entry per ',
+      'manifest variable (', n, '), or be a single value', call. = FALSE)
+    x <- as.numeric(x)
+    x[is.na(x)] <- default
+    x
+  }
+  lower <- expand(censormin, -Inf)
+  upper <- expand(censormax, Inf)
+  # Only the censored entries mean anything; the rest are neutralised so that
+  # a limit left over from an edited model cannot quietly apply.
+  lower[!censored] <- -Inf
+  upper[!censored] <- Inf
+  if (any(censored & !(lower < upper))) stop('censormin must be below ',
+    'censormax. Check: ', paste(manifestNames[censored & !(lower < upper)],
+      collapse = ', '), call. = FALSE)
+  bad <- censored & !is.finite(lower) & !is.finite(upper)
+  if (any(bad)) stop('a censored variable (manifesttype 4) needs at least one ',
+    'finite limit in censormin or censormax -- censored nowhere is just a ',
+    'Gaussian variable, which is manifesttype 0. Check: ',
+    paste(manifestNames[bad], collapse = ', '), call. = FALSE)
+  list(min = lower, max = upper)
+}
+
+#' Censored data checked against the limits the model declares.
+#' @noRd
+.ctDataCensored <- function(datalong, ctm) {
+  censored <- which(ctm$manifesttype %in% 4)
+  if (!length(censored)) return(invisible(NULL))
+  for (i in censored) {
+    name <- ctm$manifestNames[i]
+    v <- datalong[[name]]
+    if (is.null(v)) next
+    v <- v[!is.na(v)]
+    if (!length(v)) next
+    lower <- ctm$censormin[i]
+    upper <- ctm$censormax[i]
+    # Beyond a limit is not censoring, it is a contradiction: the model says
+    # the instrument could not record such a value.
+    if (any(v < lower - 1e-8)) stop('censored variable ', name, ' has values ',
+      'below its censormin of ', lower, ' (min ', min(v), '). A censored ',
+      'value is recorded *at* the limit, not past it', call. = FALSE)
+    if (any(v > upper + 1e-8)) stop('censored variable ', name, ' has values ',
+      'above its censormax of ', upper, ' (max ', max(v), '). A censored ',
+      'value is recorded *at* the limit, not past it', call. = FALSE)
+    atlimit <- sum(v <= lower + 1e-8) + sum(v >= upper - 1e-8)
+    if (atlimit == 0) warning('censored variable ', name, ' has no ',
+      'observations at either limit, so the censoring never applies and the ',
+      'fit is the same as manifesttype 0')
+    if (atlimit == length(v)) warning('censored variable ', name, ' has every ',
+      'observation at a limit, so it carries no information about the ',
+      'location of the latent process beyond which side it fell')
+  }
+  invisible(NULL)
+}

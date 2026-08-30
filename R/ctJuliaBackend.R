@@ -475,8 +475,8 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # integrates the observation rather than linearising it, which is why it is
   # worth having here at all. See
   # inst/julia/ContinuousTimeSEM/src/binary_measurement.jl.
-  if (any(!model$manifesttype %in% 0:3)) {
-    failures <- c(failures, "manifest types beyond count (manifesttype > 3)")
+  if (any(!model$manifesttype %in% 0:4)) {
+    failures <- c(failures, "manifest types beyond censored (manifesttype > 4)")
   }
   if (isTRUE(vb)) failures <- c(failures, "variational Bayes")
   if (isTRUE(gendata)) failures <- c(failures, "generation")
@@ -1375,6 +1375,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       as.integer(model$manifesttype),
     ncategories = if (is.null(model$ncategories)) integer(0) else
       as.integer(model$ncategories),
+    censormin = if (is.null(model$censormin)) numeric(0) else
+      as.numeric(model$censormin),
+    censormax = if (is.null(model$censormax)) numeric(0) else
+      as.numeric(model$censormax),
     nlatent = augmented$nlatent,
     nlatent_augmented = augmented$nlatent_augmented,
     dynamic_state_indices = augmented$dynamic_state_indices,
@@ -1465,6 +1469,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   }
   if (any(spec$manifesttype %in% 2)) {
     arguments$ncategories <- .ctJuliaVector(as.integer(spec$ncategories))
+  }
+  if (any(spec$manifesttype %in% 4)) {
+    arguments$censormin <- .ctJuliaVector(as.numeric(spec$censormin))
+    arguments$censormax <- .ctJuliaVector(as.numeric(spec$censormax))
   }
   # A model shape Julia has not seen mints new closure types for its transform
   # expressions, and the whole filter specialises again for them -- tens of

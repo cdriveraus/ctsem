@@ -514,7 +514,13 @@ ctModelConvertOMX<-function(ctmodelobj, type='ct',tipredDefault=TRUE){
     # Zero for every non-ordinal variable, so `any(manifesttype %in% 2)` is the
     # only thing that ever has to be tested before reading it.
     ncategories=if(is.null(ctmodelobj$ncategories))
-      rep(0L, n.manifest) else as.integer(ctmodelobj$ncategories))
+      rep(0L, n.manifest) else as.integer(ctmodelobj$ncategories),
+    # Infinite for every non-censored variable, so a limit cannot apply where
+    # it was not asked for.
+    censormin=if(is.null(ctmodelobj$censormin))
+      rep(-Inf, n.manifest) else as.numeric(ctmodelobj$censormin),
+    censormax=if(is.null(ctmodelobj$censormax))
+      rep(Inf, n.manifest) else as.numeric(ctmodelobj$censormax))
   class(out)<-'ctStanModel'
   
   out$tipredeffectscale <- 1

@@ -361,11 +361,13 @@ ctModelLatexMeasurementBlock <- function(ctmodel, matrixnames=TRUE,
   binary <- manifesttype == 1
   ordinal <- manifesttype == 2
   count <- manifesttype == 3
+  censored <- manifesttype == 4
   manifestNames <- ctmodel$manifestNames
   manifestIndex <- seq_along(manifestNames)
   binaryIndex <- which(binary)
   ordinalIndex <- which(ordinal)
   countIndex <- which(count)
+  censoredIndex <- which(censored)
   
   if(!any(manifesttype != 0)){
     observation <- paste0("\\underbrace{
@@ -421,6 +423,10 @@ ctModelLatexMeasurementBlock <- function(ctmodel, matrixnames=TRUE,
   # A count's predicted quantity is its rate, and the link is the exponential:
   # the linear predictor is the log rate.
   yhat[count] <- paste0('\\exp\\left(\\nu_{',countIndex,'}(t)\\right)')
+  # A censored variable's predicted quantity is its uncensored mean; what the
+  # censoring changes is which values can be recorded, which the note explains
+  # rather than the cell.
+  yhat[censored] <- paste0('\\nu_{',censoredIndex,'}(t)')
   predictedLine <- paste0("\\parbox{10em}{\\centering{Predicted\\linebreak observations:}}
 &\\underbrace{",bmatrix(matrix(paste0('\\hat{Y}_{',manifestIndex,'}(t)')),nottext=TRUE),"
       }_{\\widehat{\\vect{Y}}(t)} =
@@ -437,8 +443,11 @@ ctModelLatexMeasurementBlock <- function(ctmodel, matrixnames=TRUE,
   diagonalErrorCov <- !any(is.na(errorCovNumeric[row(errorCovNumeric) != col(errorCovNumeric)])) &&
     all(errorCovNumeric[row(errorCovNumeric) != col(errorCovNumeric)] == 0)
   errorCov <- ctModelLatexMathElement(errorCov)
-  diag(errorCov)[!binary & !ordinal & !count] <-
-    paste0('\\left[',diag(errorCov)[!binary & !ordinal & !count],'\\right]^2')
+  # Censored keeps the Gaussian form: it is the one non-Gaussian type with a
+  # measurement error of its own, and that error is what MANIFESTVAR holds.
+  gaussianerror <- !binary & !ordinal & !count
+  diag(errorCov)[gaussianerror] <-
+    paste0('\\left[',diag(errorCov)[gaussianerror],'\\right]^2')
   diag(errorCov)[binary] <- paste0('\\hat{Y}_{',binaryIndex,'}(t)\\left(1-\\hat{Y}_{',
     binaryIndex,'}(t)\\right)')
   # An ordinal observation has no Gaussian error term at all: the julia filter

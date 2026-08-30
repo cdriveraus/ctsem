@@ -104,7 +104,8 @@ struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF
     P_update::Symmetric{T, Matrix{T}}
     P_predict::Symmetric{T, Matrix{T}}
     ll_buffer::Vector{T}
-    # 0 Gaussian, 1 binary, 2 ordinal. Copied from the `EKFParameters` at
+    # 0 Gaussian, 1 binary, 2 ordinal, 3 count, 4 censored. Copied from the
+    # `EKFParameters` at
     # construction because the filter's `pars` is the evaluated matrix
     # ComponentVector -- LAMBDA, DRIFT and so on -- and has nowhere for
     # model-level metadata to live. Concrete, so it costs no extra type
@@ -114,6 +115,8 @@ struct ContinuousEKFWorkspace{T, N, M, PARS, BQ, BTHETA, DCA, EBUF, LBUF, DIFBUF
     # Scratch for one ordinal variable's cumulated thresholds. Length is the
     # widest THRESHOLDS row in the model, zero when there is no such matrix.
     thresholds::Vector{T}
+    censormin::Vector{Float64}
+    censormax::Vector{Float64}
 end
 
 """
@@ -169,8 +172,13 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
     ll_buffer = zeros(T, m)
     manifesttype = isdefined(sp, :manifesttype) ? copy(sp.manifesttype) : Int[]
     ncategories = isdefined(sp, :ncategories) ? copy(sp.ncategories) : Int[]
-    thresholds = zeros(T, hasproperty(pars, :THRESHOLDS) ?
-        size(pars.THRESHOLDS, 2) : 0)
+    censormin = isdefined(sp, :censormin) ? copy(sp.censormin) : Float64[]
+    censormax = isdefined(sp, :censormax) ? copy(sp.censormax) : Float64[]
+    # At least three, because a censored row borrows this same scratch to carry
+    # its lower limit, upper limit and standard deviation -- one row at a time,
+    # exactly as an ordinal row borrows it for its cumulated thresholds.
+    thresholds = zeros(T, max(hasproperty(pars, :THRESHOLDS) ?
+        size(pars.THRESHOLDS, 2) : 0, any(==(4), manifesttype) ? 3 : 0))
 
     return ContinuousEKFWorkspace(
         all_params,
@@ -202,6 +210,8 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         manifesttype,
         ncategories,
         thresholds,
+        censormin,
+        censormax,
     )
 end
 

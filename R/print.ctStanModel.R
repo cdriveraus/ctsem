@@ -102,6 +102,15 @@ print.ctStanModel <- function(x, matrices = NULL, ...) {
     counts <- x$manifestNames[x$manifesttype == 3]
     if (length(counts)) described <- c(described,
       paste0(paste(counts, collapse = ", "), " (count, Poisson log link)"))
+    # Named one at a time with their limits, which are the thing a reader most
+    # wants to check against the range their data actually takes.
+    censored <- which(x$manifesttype == 4)
+    if (length(censored)) described <- c(described,
+      paste0(x$manifestNames[censored], " (censored, ",
+        ifelse(is.finite(x$censormin[censored]),
+          paste0("min ", signif(x$censormin[censored], 4)), "no min"), ", ",
+        ifelse(is.finite(x$censormax[censored]),
+          paste0("max ", signif(x$censormax[censored], 4)), "no max"), ")"))
     cat("  non-Gaussian indicators: ", paste(described, collapse = ", "),
       "\n", sep = "")
   }

@@ -767,13 +767,32 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       paste(ctm$manifestNames[ctm$manifesttype %in% 3], collapse=', '), '.',
       call.=FALSE)
   }
+  # Censored is refused on stan for the same reason as the others: stan has no
+  # censored measurement, so a value pinned at a limit would be treated as an
+  # ordinary observation of that number and the censoring simply ignored.
+  if(any(ctm$manifesttype %in% 4) && !identical(backend, 'julia')){
+    stop('Censored manifest variables (manifesttype 4) need backend="julia". ',
+      'The stan model has no censored measurement, so a value at its limit ',
+      'would be read as an ordinary observation; the julia filter integrates ',
+      'the censored likelihood against the predicted state instead. Censored ',
+      'variable(s): ',
+      paste(ctm$manifestNames[ctm$manifesttype %in% 4], collapse=', '), '.',
+      call.=FALSE)
+  }
   if(any(ctm$manifesttype %in% 2)) .ctDataCategories(datalong, ctm)
   if(any(ctm$manifesttype %in% 3)) .ctDataCounts(datalong, ctm)
+  if(any(ctm$manifesttype %in% 4)) .ctDataCensored(datalong, ctm)
 
   if(any(ctm$manifesttype > 0)){ #if any non continuous variables, (with free parameters)...
+    # Censored variables are excluded: a censored observation is Gaussian
+    # within its limits, so its measurement standard deviation is the scale of
+    # the whole thing and has to stay free. Every other non-Gaussian type
+    # supplies its own randomness through the link and would be adding noise on
+    # top of noise.
+    deterministic <- which(ctm$manifesttype > 0 & ctm$manifesttype != 4)
     errfix <- which(ctm$pars$matrix %in% 'MANIFESTVAR' &
-        (ctm$pars$row %in% which(ctm$manifesttype > 0) |
-            ctm$pars$col %in% which(ctm$manifesttype > 0)) &
+        (ctm$pars$row %in% deterministic |
+            ctm$pars$col %in% deterministic) &
         is.na(suppressWarnings(as.numeric(
           ctm$pars$value))))
 

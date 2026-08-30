@@ -48,6 +48,12 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
     # THRESHOLDS and ignores the rest, so variables with different numbers of
     # categories can share one rectangular matrix.
     ncategories::Vector{Int}
+    # Censoring limits per manifest variable, read only by the censored ones.
+    # Known constants rather than parameters: a scale's floor and ceiling are
+    # properties of the instrument, not things the data can inform. Empty means
+    # no variable is censored, which is every model that does not ask for it.
+    censormin::Vector{Float64}
+    censormax::Vector{Float64}
 
     # The constructor ensures that the provided vectors are of the correct types and converts them if necessary.
     function EKFParameters(
@@ -71,6 +77,8 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
         continuous_time::Bool=true,
         manifesttype=Int[],
         ncategories=Int[],
+        censormin=Float64[],
+        censormax=Float64[],
     )
         regular_transforms_tuple = Tuple(regular_transforms)
         predict_transforms_tuple = Tuple(predict_transforms)
@@ -107,6 +115,8 @@ struct EKFParameters{RT,PT,UT,TT,AX,FV}
             continuous_time,
             Vector{Int}(manifesttype),
             Vector{Int}(ncategories),
+            Vector{Float64}(censormin),
+            Vector{Float64}(censormax),
         )
     end
 end

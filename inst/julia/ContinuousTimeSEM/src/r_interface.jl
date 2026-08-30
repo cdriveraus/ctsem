@@ -372,7 +372,8 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
     predicttransform, updatetransform, tdtransform;
     ti_parameter=Int[], ti_predictor=Int[], ti_coefficient=Int[],
     diffusion_state_indices=Int[], continuous_time::Bool=true,
-    manifesttype=Int[], ncategories=Int[])
+    manifesttype=Int[], ncategories=Int[], censormin=Float64[],
+    censormax=Float64[])
 
     n = length(matrix)
     length(row) == n && length(col) == n ||
@@ -455,5 +456,6 @@ function ekf_from_columns(matrix, row, col, parnumber, value, transform,
         reg_tfs, predict_tfs, update_tfs, td_tfs, map_from, axis,
         fixed_positions, fixed_values, Int.(ti_parameter),
         Int.(ti_predictor), Int.(ti_coefficient), Int.(diffusion_state_indices),
-        continuous_time, Int.(manifesttype), Int.(ncategories))
+        continuous_time, Int.(manifesttype), Int.(ncategories),
+        Float64.(censormin), Float64.(censormax))
 end

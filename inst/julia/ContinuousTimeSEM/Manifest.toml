@@ -2,7 +2,7 @@
 
 julia_version = "1.12.5"
 manifest_format = "2.0"
-project_hash = "aa8ee4a237357e5fc047590358b88ef10884a1a6"
+project_hash = "e33ca2c0c1bc25c250a85eaa7108b6c09bbf4525"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "5970c86505ae9c07bf5bc521ef2bbbb3849e8b7b"
@@ -164,7 +164,7 @@ version = "1.6.0"
     StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [[deps.ContinuousTimeSEM]]
-deps = ["ChainRulesCore", "ComponentArrays", "DiffResults", "ForwardDiff", "LinearAlgebra", "Optim", "PrecompileTools", "Random"]
+deps = ["ChainRulesCore", "ComponentArrays", "DiffResults", "ForwardDiff", "LinearAlgebra", "Optim", "PrecompileTools", "Printf", "Random", "SpecialFunctions"]
 path = "."
 uuid = "f9893156-9a63-4c15-8aa2-620c153f8331"
 version = "0.1.0"

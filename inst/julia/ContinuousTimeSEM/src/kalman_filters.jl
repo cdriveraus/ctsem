@@ -373,7 +373,16 @@ function _generate_binary!(gen, ws::ContinuousEKFWorkspace, pars, λ,
     u = _standard_normal_cdf(gen.base[row, r])
 
     local y::T
-    if kind == CTSEM_OBS_COUNT
+    if kind == CTSEM_OBS_CENSORED
+        # No inversion needed and no quadrature: within its limits a censored
+        # observation is Gaussian, so the marginal is `N(ηbar, s² + σ²)` in
+        # closed form and censoring is what the instrument does to the draw.
+        # The standard normal deviate is used directly rather than through its
+        # own CDF, which keeps the draw exact rather than approximated.
+        lower, upper, sd = _censor_limits(thresholds, T)
+        draw = ηbar + sqrt(s2 + sd * sd) * T(gen.base[row, r])
+        y = min(max(draw, lower), upper)
+    elseif kind == CTSEM_OBS_COUNT
         # The same inversion the ordinal branch does, over 0, 1, 2, ... rather
         # than a fixed set of categories. Each term is the *marginal*
         # probability of that count, with the state's own uncertainty
