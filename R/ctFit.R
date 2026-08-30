@@ -125,6 +125,14 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' costs the same regardless of the number of free parameters, so it is
 #' dramatically faster for larger models and marginally slower for very small
 #' ones.
+#' With \code{backend='julia'}, a maximum likelihood fit that does not converge
+#' is retried once, warmed by the priors: ctsem's \code{normal(0,1)} raw priors
+#' are optimised first and the likelihood is then maximised from that estimate,
+#' which starts the real fit inside the basin rather than at a random draw. The
+#' retry is kept only if it converges or beats the first attempt, so it cannot
+#' make a fit worse, and it does not run at all when the first attempt
+#' converged. Set \code{optimcontrol$priorwarmup = FALSE} to switch it off, and
+#' see \code{fit$estimate$prior_warmup} for whether it was used.
 #' With \code{backend='julia'}, \code{optimcontrol$callback} is a function
 #' called while the fit runs, with \code{(iteration, total, objective,
 #' gradient_norm)}. It is for a front end that wants to draw progress live:
