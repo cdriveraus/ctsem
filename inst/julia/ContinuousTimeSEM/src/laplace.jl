@@ -2851,6 +2851,13 @@ function ctsem_laplace_optimize(laplace::CTSEMLaplaceObjective, start::AbstractV
     end
     minimizer = collect(Optim.minimizer(result))
     final = ctsem_laplace_evaluate(laplace, minimizer; gradient=true)
+    # `ctsem_optimize` has always closed its progress line and this route never
+    # did, so an in-place update was left open and whatever R printed next
+    # landed on the same line -- reported as "inner 100/100Computing exact
+    # Hessian".
+    progress && _progress_done(reporter,
+        @sprintf("%d iterations", Optim.iterations(result)),
+        @sprintf("logpost %.4f", final.value))
     # A fit that ends where it started, with a gradient nowhere near zero, has
     # not converged whatever Optim says. Optim's own verdict is the disjunction
     # of three criteria, and a line search that fails on its first try

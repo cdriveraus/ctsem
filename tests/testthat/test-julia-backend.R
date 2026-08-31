@@ -68,9 +68,14 @@ test_that("Julia backend rejects unsupported capabilities before session startup
   ordinal <- model
   ordinal$manifesttype <- 2L
   expect_no_error(unsupported(model = ordinal))
+  # Count (3) and censored (4) are supported now as well, so what is refused
+  # is anything past them.
+  count <- model
+  count$manifesttype <- 3L
+  expect_no_error(unsupported(model = count))
   beyond <- model
-  beyond$manifesttype <- 3L
-  expect_error(unsupported(model = beyond), "beyond ordinal")
+  beyond$manifesttype <- 5L
+  expect_error(unsupported(model = beyond), "beyond censored")
 
   # `optimize = FALSE` used to be on that list and is not any more: the engine
   # has its own sampler, so the combination has to pass the capability check

@@ -197,7 +197,19 @@
 #' @param control A list of sampler settings: \code{maxdepth} (default 10),
 #'   \code{target_accept} (0.8), \code{adapt_metric} (TRUE),
 #'   \code{adapt_effects} (FALSE), \code{init_scale} (1), \code{maxdelta}
-#'   (1000). \code{adapt_effects} controls whether warmup re-estimates the
+#'   (1000).
+#'
+#'   Sampling takes exactly the draws it was asked for unless it is given a
+#'   target to reach: \code{minEss} and \code{meanEss} are effective sample
+#'   sizes to keep drawing towards, \code{rhatTarget} (1.01) the R-hat to reach
+#'   alongside them, and \code{maxDraws} the budget that stops it. All are off
+#'   by default, so nothing runs longer than asked without being told to, and
+#'   setting \code{minEss} without \code{maxDraws} does nothing -- the budget
+#'   is what the loop checks it against. Worth setting when a draw count had to
+#'   be guessed at; not worth setting when a warning says a parameter is
+#'   unidentified, because no number of draws fixes an improper posterior.
+#'
+#'   \code{adapt_effects} controls whether warmup re-estimates the
 #'   random-effect blocks of the metric as well as the population block; they
 #'   start from a conditional covariance that is exact for a linear model, so
 #'   replacing one with an estimate from a few hundred draws can add more noise
@@ -367,8 +379,29 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   out$transformedpars <- .ctBackendConstrained(out)
   out$priorerrors <- .ctBackendPriorErrors(out)
 
+  # Which sampled coordinates reached the flat region of their transform.
+  # Computed here because the warner sees only the diagnostics, and the draws
+  # and the parameter names both live at this level.
+  out$sample$unidentified <- .ctBackendFlatParameters(out, npar)
   .ctSampleWarn(out$sample)
   out
+}
+
+# Past |raw| ~ 20 every ctsem transform is flat to machine precision. A sampled
+# coordinate that gets there is not mixing badly, it has no posterior to mix
+# over: the likelihood cannot separate those values and, without a prior, the
+# density is improper in that direction.
+#' @keywords internal
+.ctBackendFlatParameters <- function(fit, npar) {
+  draws <- fit$estimate$rawposterior
+  if (is.null(draws) || !length(draws)) return(character(0))
+  reach <- suppressWarnings(apply(abs(as.matrix(draws)), 2, max, na.rm = TRUE))
+  flat <- which(is.finite(reach) & reach >= 20)
+  flat <- flat[flat <= npar]
+  if (!length(flat)) return(character(0))
+  labels <- .ctBackendRawParameterNames(fit, npar)
+  if (length(labels) < npar) labels <- paste0("par", seq_len(npar))
+  labels[flat]
 }
 
 # The three failures worth interrupting for, in the order a user should read
@@ -384,11 +417,38 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
       "standard deviation near zero. Raising control$target_accept towards ",
       "0.95 shortens the steps and often clears it.", call. = FALSE)
   }
+  # Checked before R-hat, because it changes what a bad R-hat means.
+  #
+  # Past |raw| ~ 20 every ctsem transform is flat to machine precision, so the
+  # likelihood cannot distinguish one value from another and, with no prior to
+  # hold it, the posterior is improper in that direction. A chain does the only
+  # thing it can: it random-walks away. Measured on a model sampled with
+  # priors=FALSE, two of six parameters had per-chain means of -1439, -672865
+  # and -546340 while the other four returned R-hat 1.000 at an effective size
+  # of 3000 -- so the fit was perfectly good apart from directions that had no
+  # posterior at all.
+  #
+  # Reported separately because R-hat sends the reader to the wrong problem.
+  # Running longer cannot fix an improper posterior, and neither can a smaller
+  # step size; a prior can, and so can removing the parameter.
+  flat <- if (is.null(diagnostics$unidentified)) character(0) else
+    diagnostics$unidentified
+  if (length(flat)) {
+    warning(length(flat), " sampled parameter(s) reached the region where ",
+      "their transform is flat to machine precision: ",
+      paste(utils::head(flat, 5), collapse = ", "),
+      if (length(flat) > 5) ", ..." else "",
+      ". The likelihood cannot tell those values apart, so with no prior the ",
+      "posterior is improper there and the chains wander rather than mix. ",
+      "More draws will not help. Set priors=TRUE, or fix or remove the ",
+      "parameter. See fit$estimate$rawposterior.", call. = FALSE)
+  }
   worst <- suppressWarnings(max(diagnostics$rhat, na.rm = TRUE))
   if (is.finite(worst) && worst > 1.01) {
     warning("Largest R-hat is ", signif(worst, 4), ". The chains have not ",
       "agreed on the same distribution, so the draws are not yet a posterior. ",
-      "Run longer, and see fit$sample$rhat.", call. = FALSE)
+      if (length(flat)) "That is expected given the unidentified parameter(s) reported above; for the rest, run longer" else "Run longer",
+      ", and see fit$sample$rhat.", call. = FALSE)
   }
   fewest <- suppressWarnings(min(diagnostics$ess, na.rm = TRUE))
   if (is.finite(fewest) && fewest < 100) {

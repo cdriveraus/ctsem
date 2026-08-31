@@ -396,6 +396,31 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   invisible(NULL)
 }
 
+# Julia's bridge is a request/response socket, and an interrupt does not reach
+# it. Pressing Escape between R sending a request and reading the reply leaves
+# that reply sitting unread: the connection is not merely interrupted, it is
+# *desynchronised*, and every later call reads the answer to the call before it.
+# Reported from a real session as "can't do any more fits" -- the whole R
+# session is unusable for ctsem until it is restarted.
+#
+# Dropping the connection here costs the Julia session, and with it the engine's
+# compiled shapes, so the next fit pays a recompile. That is a far better trade
+# than an R session that silently returns the wrong answers, or refuses to fit
+# at all, until someone thinks to restart it.
+#
+# `withCallingHandlers` rather than `tryCatch`: the handler runs and the
+# interrupt then carries on unwinding, so Escape still aborts the fit. It only
+# stops leaving wreckage behind.
+#' @keywords internal
+.ctJuliaInterruptSafe <- function(expr) {
+  withCallingHandlers(expr, interrupt = function(cnd) {
+    message("Interrupted. Restarting the Julia session, because a half-finished ",
+      "request would leave every later fit in this session reading the wrong ",
+      "reply. The next fit will recompile the engine for its model shape.")
+    try(.ctJuliaClearSession(), silent = TRUE)
+  })
+}
+
 .ctJuliaObjectiveKey <- function(spec) {
   if (!requireNamespace("digest", quietly = TRUE)) {
     stop("Julia objective caching requires the suggested package digest.", call. = FALSE)
@@ -1731,6 +1756,19 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 }
 
 ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NULL, cores = 1L,
+  backendcontrol = list(), optimcontrol = list(), verbose = 0L, fit = TRUE,
+  priors = FALSE, intoverpop = "augmented", optimize = TRUE, chains = 4L,
+  iter = 2000L, control = list()) {
+  .ctJuliaInterruptSafe(.ctFitJuliaBackendImpl(datalong = datalong,
+    model = model, prepared_data = prepared_data, inits = inits, cores = cores,
+    backendcontrol = backendcontrol, optimcontrol = optimcontrol,
+    verbose = verbose, fit = fit, priors = priors, intoverpop = intoverpop,
+    optimize = optimize, chains = chains, iter = iter, control = control))
+}
+
+#' @keywords internal
+.ctFitJuliaBackendImpl <- function(datalong, model, prepared_data = NULL,
+  inits = NULL, cores = 1L,
   backendcontrol = list(), optimcontrol = list(), verbose = 0L, fit = TRUE,
   priors = FALSE, intoverpop = "augmented", optimize = TRUE, chains = 4L,
   iter = 2000L, control = list()) {

@@ -104,7 +104,13 @@ function _progress_line(p::CTSEMProgress, done::Integer, total::Integer,
     p.lines += 1
     parts = [@sprintf("%s %5d/%-5d", p.label, done, total),
              @sprintf("%5.1f/s", rate),
-             @sprintf("%7s left", _duration(remaining))]
+             # "at this rate", not "left". For an optimiser the two are very
+             # different: the run below stopped four iterations after reporting
+             # "15m 06s left", because its gradient was already 9.28e-09 and it
+             # was about to converge -- the extrapolation assumes every one of
+             # `maxiter` iterations will be taken, and convergence is precisely
+             # the thing that stops that being true.
+             @sprintf("%7s at this rate", _duration(remaining))]
     _emit(p, "  " * join(vcat(parts, collect(fields)), " | "))
     return nothing
 end
@@ -125,6 +131,15 @@ function _emit(p::CTSEMProgress, text::AbstractString)
         println(text)
         flush(stdout)
         return nothing
+    end
+    # The first in-place update opens with a newline. A carriage return only
+    # returns to the start of the current line, and that line may already hold
+    # something written by R: the engine's progress goes to stdout while R's
+    # messages go to stderr, the two are interleaved by the terminal, and the
+    # result was "...afterwards skip it.  optimise 39/1000" on one line. One
+    # newline costs nothing and guarantees the progress line starts on its own.
+    if p.lines <= 1
+        print(NEWLINE)
     end
     p.width = max(p.width, length(text))
     print(CARRIAGE, rpad(text, p.width))
