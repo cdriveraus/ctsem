@@ -445,16 +445,29 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   }
   worst <- suppressWarnings(max(diagnostics$rhat, na.rm = TRUE))
   if (is.finite(worst) && worst > 1.01) {
+    # Naming the arguments, because "run longer" is advice the reader then has
+    # to go and look up. Both entry points land here and they are controlled
+    # differently: `ctFit` takes `iter`, which counts warmup and sampling
+    # together, and `ctSample` takes `draws` directly.
     warning("Largest R-hat is ", signif(worst, 4), ". The chains have not ",
       "agreed on the same distribution, so the draws are not yet a posterior. ",
-      if (length(flat)) "That is expected given the unidentified parameter(s) reported above; for the rest, run longer" else "Run longer",
-      ", and see fit$sample$rhat.", call. = FALSE)
+      if (length(flat))
+        "That is expected for the unidentified parameter(s) named above, which more draws cannot fix. For the rest, "
+      else "",
+      if (length(flat)) "raise" else "Raise", " the draw count -- iter in ctFit (now ",
+      diagnostics$warmup + diagnostics$draws, ", of which ",
+      diagnostics$warmup, " is warmup, leaving ", diagnostics$draws,
+      " per chain) or draws in ctSample -- or set control$minEss together with ",
+      "control$maxDraws to keep sampling until an effective size is reached. ",
+      "See fit$sample$rhat.", call. = FALSE)
   }
   fewest <- suppressWarnings(min(diagnostics$ess, na.rm = TRUE))
   if (is.finite(fewest) && fewest < 100) {
     warning("Smallest effective sample size is ", round(fewest), ", from ",
-      total, " draws. Interval estimates from this few are unreliable; see ",
-      "fit$sample$ess.", call. = FALSE)
+      total, " draws. Interval estimates from this few are unreliable. Raise ",
+      "the draw count (iter in ctFit, draws in ctSample), or set ",
+      "control$minEss with control$maxDraws to keep sampling until an ",
+      "effective size is reached. See fit$sample$ess.", call. = FALSE)
   }
   if (diagnostics$saturated > 0L) {
     message(diagnostics$saturated, " of ", total, " transitions hit the maximum ",
@@ -558,12 +571,8 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # behind `verbose > 0`, which is not the default.
   announce <- verbose > 0L || .ctProgressConsole()
   if (announce) {
-    message("Sampling: first optimising the ",
-      if (identical(intoverpop, "augmented")) "augmented" else "Laplace",
-      " objective to place the sampler and build its metric",
-      if (identical(intoverpop, "none"))
-        " (the random effects are integrated for this step, and sampled after it)"
-      else "", ". The sampler itself starts after this.")
+    message("Sampling: optimising first, to place the sampler and build its ",
+      "metric. Sampling follows.")
   }
   optimised <- .ctJuliaOptimise(model_spec, start, backendcontrol = backendcontrol,
     gradient = gradient, cores = cores, verbose = verbose)

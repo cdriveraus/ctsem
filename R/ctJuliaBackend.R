@@ -1439,9 +1439,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
       .ctJuliaVector(if (length(complex)) complex else ""))),
     error = function(e) FALSE))
   if (cached) return(invisible(FALSE))
-  message("Compiling the Julia engine for this model shape. This happens once ",
-    "per shape per session and usually takes 20-60 seconds; fits of the same ",
-    "shape afterwards skip it.")
+  # No duration promised. It ranges from a few seconds when the precompiled
+  # image covers the shape to a couple of minutes when it does not, and a
+  # message that says "20-60 seconds" is wrong at both ends -- alarming for the
+  # quick case and misleading for the slow one.
+  message("Compiling the julia engine for this model shape (once per shape ",
+    "per session).")
   invisible(TRUE)
 }
 
