@@ -509,15 +509,23 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     # workspace vector is a race, and one chain per slot is the whole reason
     # chains can run at all.
     parallel = nchains > 1 && Threads.nthreads() > 1
+    # Chains first, then the unit loop with whatever threads remain. Two chains
+    # on ten threads previously used two; they now take five apiece. Bounded by
+    # `ctsem_set_max_chunks!` as well, so `cores` still caps the total.
+    per_chain = parallel ?
+        max(1, min(ctsem_max_chunks().max_chunks,
+                   Threads.nthreads() ÷ nchains)) : 1
     if parallel
-        while length(laplace.workspaces) < nchains
+        while length(laplace.workspaces) < nchains * per_chain
             push!(laplace.workspaces, Dict{Any,Any}())
         end
     end
     verbose && println("Sampling: ", nchains, " chain(s), ", ctsem_sample_dimension(sampler),
         " dimensions (", sampler.npar, " population + ",
         ctsem_sample_dimension(sampler) - sampler.npar, " effects), ",
-        parallel ? "one thread each" : "unit-parallel", ", metric in ",
+        parallel ? (per_chain > 1 ?
+            string(per_chain, " threads each") : "one thread each") :
+            "unit-parallel", ", metric in ",
         length(metric.ranges), " block(s)")
 
     # Which metric blocks warmup may re-estimate. The population block always
@@ -530,7 +538,8 @@ function ctsem_sample(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     centre = ctsem_sample_start(sampler, start)
     run = _sample_to_target(
         c -> ((g, x) -> ctsem_sample_density!(g, sampler, x;
-            workspace_slot=parallel ? c : nothing)),
+            workspace_slot=parallel ? (c - 1) * per_chain + 1 : nothing,
+            workspace_chunks=per_chain)),
         centre, metric, nchains, parallel, seed, nwarmup, ndraws, Int(maxdepth),
         Float64(target_accept), Float64(maxdelta), Float64(init_scale),
         adapt_metric, adapt, Float64(settle_tol), Float64(min_ess),

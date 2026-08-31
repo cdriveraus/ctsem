@@ -122,7 +122,8 @@ is disjoint, so those gradients are written straight into `gradient`; only the
 `ndim`.
 """
 function ctsem_sample_density!(gradient::Vector{Float64}, sampler::CTSEMSampler,
-    x::AbstractVector{Float64}; workspace_slot::Union{Nothing,Integer}=nothing)
+    x::AbstractVector{Float64}; workspace_slot::Union{Nothing,Integer}=nothing,
+    workspace_chunks::Integer=1)
     length(gradient) == sampler.ndim ||
         throw(DimensionMismatch("gradient must have $(sampler.ndim) entries"))
     length(x) == sampler.ndim ||
@@ -147,18 +148,31 @@ function ctsem_sample_density!(gradient::Vector{Float64}, sampler::CTSEMSampler,
     end
 
     fill!(gradient, 0.0)
-    # `workspace_slot` is how a *chain* claims a workspace. Several chains
-    # running at once is the better parallel axis than several chunks within one
-    # gradient -- chains share nothing and scale flat, where the unit loop
-    # scales about twofold -- but they would then all be chunk 1 and race for
-    # the same adjoint workspace. Given a slot, this runs serially inside it.
+    # `workspace_slot` is where a *chain*'s block of workspaces begins, and
+    # `workspace_chunks` is how many it owns. Chains are the better parallel
+    # axis -- they share nothing and scale flat, where the unit loop scales
+    # about twofold -- so chains are filled first and the unit loop takes
+    # whatever threads are left over.
+    #
+    # A block per chain rather than a slot per chain is what makes that
+    # possible. Both axes index the same workspace vector, so one slot each
+    # forced every chain to run its unit loop serially: two chains on ten
+    # threads used two of them and left eight idle. Disjoint blocks let a chain
+    # chunk inside its own without any chance of two chains reaching for the
+    # same adjoint workspace, which is the corruption this indexing exists to
+    # prevent.
     parallel = workspace_slot === nothing
-    nchunks = parallel ? _ctsem_nchunks(nunits) : 1
-    slots = parallel ? (1:nchunks) : (Int(workspace_slot):Int(workspace_slot))
+    nchunks = parallel ? _ctsem_nchunks(nunits) :
+        max(1, min(Int(workspace_chunks), nunits))
+    slots = parallel ? (1:nchunks) :
+        (Int(workspace_slot):(Int(workspace_slot) + nchunks - 1))
     while length(laplace.workspaces) < maximum(slots)
         push!(laplace.workspaces, Dict{Any,Any}())
     end
-    ranges = parallel ?
+    # Keyed on the chunk count, not on which axis produced it: a chain with a
+    # block of workspaces splits its units exactly as the unit-parallel path
+    # does.
+    ranges = nchunks > 1 ?
         _ctsem_chunk_assignment(_laplace_unit_weights(laplace), nchunks) :
         [1:nunits]
     chunk_value = zeros(Float64, nchunks)
@@ -266,10 +280,11 @@ end
 Allocating form, for tests and for one-off checks.
 """
 function ctsem_sample_density(sampler::CTSEMSampler, x::AbstractVector;
-    workspace_slot::Union{Nothing,Integer}=nothing)
+    workspace_slot::Union{Nothing,Integer}=nothing,
+    workspace_chunks::Integer=1)
     g = zeros(Float64, sampler.ndim)
     value = ctsem_sample_density!(g, sampler, collect(Float64, x);
-        workspace_slot=workspace_slot)
+        workspace_slot=workspace_slot, workspace_chunks=workspace_chunks)
     return (value=value, gradient=g)
 end
 
