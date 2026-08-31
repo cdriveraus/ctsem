@@ -560,7 +560,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
   if (announce) {
     message("Sampling: first optimising the ",
       if (identical(intoverpop, "augmented")) "augmented" else "Laplace",
-      " objective to initialise the sampler and its metric",
+      " objective to place the sampler and build its metric",
       if (identical(intoverpop, "none"))
         " (the random effects are integrated for this step, and sampled after it)"
       else "", ". The sampler itself starts after this.")
@@ -572,9 +572,15 @@ print.ctSampleDiagnostics <- function(x, ...) {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   module <- .ctJuliaModule(model_spec$project)
   objective <- .ctJuliaObjective(spec)
-  hessian <- try(.ctBackendHessian(list(model_spec = model_spec,
-    estimate = list(raw = estimate), backend = "julia"), estimate,
-    verbose = verbose), silent = TRUE)
+  # `spec`, not a bare list carrying `model_spec`: .ctBackendHessian() reaches
+  # the objective through .ctJuliaObjective(), which requires a classed
+  # ctJuliaModel/ctJuliaFit and errors on anything else. An unclassed list made
+  # that error every time, and .ctBackendHessian() catches its own errors and
+  # returns NULL -- so every sampled fit warned that the engine could not
+  # differentiate its gradient, when nothing had been asked of the engine at
+  # all. `spec` is the same object the objective is already cached under.
+  hessian <- try(.ctBackendHessian(spec, estimate, verbose = verbose),
+    silent = TRUE)
   if (inherits(hessian, "try-error")) hessian <- NULL
 
   arguments <- list(objective, .ctJuliaNumericVector(estimate),

@@ -111,6 +111,45 @@ test_that("the effects come back summarised, or in full when asked for", {
   expect_true(all(is.finite(full$sample$effects)))
 })
 
+test_that("a sampled fit keeps the exact Hessian it was built from", {
+  skip_on_cran()
+  skip_without_julia()
+  fit <- .sample_fixture()
+  npar <- length(fit$estimate$raw)
+
+  # The sampler asks the engine for the exact Hessian at the Laplace estimate,
+  # and it is not only the metric's starting point: it is what the fit carries
+  # as `uncertainty$hessian` and what the identifiability report reads. The
+  # call site used to hand `.ctBackendHessian()` an unclassed list, which the
+  # objective lookup rejects, so the request errored before the engine saw it
+  # -- and because that failure is caught and warned about, every sampled fit
+  # said the engine could not differentiate its gradient and then carried no
+  # Hessian at all. The warning is asserted against because it is the only
+  # thing that was ever visible.
+  # Collected rather than `expect_no_warning`d, because a 40-draw chain warns
+  # about its own R-hat and effective sample size and those are expected here.
+  warnings <- character()
+  sampled <- withCallingHandlers(suppressMessages(
+    ctSample(fit, chains = 1, warmup = 40, draws = 40, cores = 1)),
+    warning = function(w) {
+      warnings <<- c(warnings, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    })
+  expect_false(any(grepl("could not differentiate", warnings)))
+
+  hessian <- sampled$uncertainty$hessian
+  expect_true(is.matrix(hessian))
+  expect_equal(dim(hessian), c(npar, npar))
+  expect_true(all(is.finite(hessian)))
+  # Exact rather than differenced, so the two triangles agree exactly.
+  expect_identical(hessian, t(hessian))
+
+  # And the identifiability report is the Hessian's, not the empty one that a
+  # NULL silently produces.
+  expect_false(is.null(sampled$identifiability))
+  expect_true(is.finite(sampled$identifiability$condition))
+})
+
 test_that("ctSample refuses what it cannot sample", {
   skip_on_cran()
   skip_without_julia()

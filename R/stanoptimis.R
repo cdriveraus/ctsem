@@ -1254,6 +1254,15 @@ imis_is <- function(parlp,
 #' @param priors logical. If TRUE, a priors integer is set to 1 (TRUE) in the standata object -- only has an effect if 
 #' the stan model uses this value. 
 #' @param carefulfit Logical. If TRUE, priors are always used for a rough first pass to obtain starting values when priors=FALSE
+#' @param stallretries Integer. Number of times to restart the optimizer from fresh random
+#' values when it finishes somewhere that is not a maximum -- see \code{stalltol}. Only applies
+#' when \code{init='random'}; with supplied inits a failed fit is reported but not retried.
+#' Set to 0 to disable retrying.
+#' @param stalltol Gradient per data point above which the optimizer is taken to have stopped
+#' short rather than converged. Rough likelihoods -- binary indicators are the case this was
+#' built for -- can leave both optimizers unable to find an improving step, which they report as
+#' convergence, returning the starting values as the estimate. Converged fits sit near 1e-5 per
+#' data point, stalled ones at 1 or more.
 #' @param subsamplesize value between 0 and 1 representing proportion of subjects to include in first pass fit. 
 #' @param cores Number of cpu cores to use, should be at least 2.
 #' @param uncertainty Character string selecting the optimized-fit uncertainty
@@ -1297,6 +1306,7 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   estonly=FALSE,tol=1e-8,
   stochastic = TRUE,
   priors=TRUE,carefulfit=TRUE,
+  stallretries=2,stalltol=1e-2,
   uncertainty=c('hessian','surrogate','is','bootstrap','fullbootstrap',
     'sandwich','opg'),
   uncertaintyDraws='auto',
@@ -1384,7 +1394,8 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
   
   # initial values ----------------------------------------------------------
   
-  if(all(optimArgs$init %in% 'random')){
+  randominit <- all(optimArgs$init %in% 'random')
+  if(randominit){
     optimArgs$init <- rnorm(npars, 0, initsd)
     if(length(parsteps)>0) optimArgs$init[unlist(parsteps)] <- 0 
   }
@@ -1577,6 +1588,62 @@ stanoptimis <- function(standata, sm, init='random',initsd=.01,
       optimfit <- do.call(ctOptim,optimArgs)
     }
     optimArgs$init = optimfit$par
+    
+    # A fit can finish exactly where it started. Where the likelihood is rough --
+    # binary indicators found this: the linearised measurement update lets the
+    # filtered states run out to |eta| ~ 100, the logit saturates, and the log
+    # likelihood then swings by hundreds over parameter changes of 1e-4 -- the
+    # step acceptance in sgd rejects every proposal and permanently collapses its
+    # step size, and the L-BFGS pass that follows stops on an unchanged log
+    # probability. Both report success, so the starting values come back as the
+    # estimate with a Hessian computed about them. The gradient tells the two
+    # apart with orders of magnitude to spare: measured over converged fits it is
+    # ~1e-5 per data point, and 1 to 100 per data point when the fit has stalled.
+    if(length(parsteps)==0){
+      stallthreshold <- max(1, stalltol * standata$ndatapoints)
+      stallstate <- function(pars){
+        lpg <- suppressWarnings(try(optimArgs$lpgFunc(pars),silent=TRUE))
+        g <- attributes(lpg)$gradient
+        if('try-error' %in% class(lpg) || is.null(g) || any(!is.finite(g))) 
+          return(list(lp=-Inf, maxg=Inf))
+        list(lp=lpg[1], maxg=max(abs(g)))
+      }
+      best <- stallstate(optimArgs$init)
+      bestfit <- optimfit
+      attempt <- 0
+      while(best$maxg > stallthreshold && randominit && attempt < stallretries){
+        attempt <- attempt + 1
+        message('Optimization stopped with a gradient of ',signif(best$maxg,3),
+          ' -- that is not a maximum. Restarting from new values (',attempt,' of ',stallretries,')...')
+        optimArgs$init <- rnorm(npars, 0, initsd)
+        optimArgs$stochastic <- stochastic
+        iter <- 0
+        newfit <- try(do.call(ctOptim,optimArgs))
+        if(!'try-error' %in% class(newfit) && !'NULL' %in% class(newfit) && stochastic){
+          optimArgs$init <- newfit$par
+          optimArgs$stochastic <- FALSE
+          iter <- 0
+          newfit <- try(do.call(ctOptim,optimArgs))
+        }
+        if('try-error' %in% class(newfit) || 'NULL' %in% class(newfit)) next
+        new <- stallstate(newfit$par)
+        if(new$maxg <= stallthreshold || new$lp > best$lp){
+          best <- new
+          bestfit <- newfit
+        }
+      }
+      optimfit <- bestfit
+      optimArgs$init <- optimfit$par
+      if(best$maxg > stallthreshold) warning(paste0(
+        'Optimization finished with a gradient of ',signif(best$maxg,3),
+        ', which is not a maximum -- the estimates are wherever the optimizer stopped, ',
+        'and the uncertainty is computed about that point. ',
+        ifelse(randominit,
+          'Restarting from new values did not help. ',
+          'Supplied inits are not retried automatically -- try init="random". '),
+        'Rough likelihoods do this; with binary indicators, backend="julia" integrates ',
+        'the observation instead of linearising it and does not.'),immediate. = TRUE)
+    }
   } #end if not auto model parsteps
   
   

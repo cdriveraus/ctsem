@@ -23,6 +23,6 @@ individually varying parameters imply, rather than printing the underlying
 list.
 }
 \details{
-\code{x$pars} remains the canonical specification and can be printed
-directly; \code{\link{ctModelMatrices}} gives the matrix view.
+\code{x$pars} remains the canonical specification and can be
+  printed directly; \code{\link{ctModelMatrices}} gives the matrix view.
 }

@@ -42,18 +42,18 @@ large enough that a linear correction is not credible.}
 }
 \value{
 A list with \code{gap} (quadrature minus Laplace log marginal at the
-estimate), \code{gap_per_subject}, \code{nodes}, and, when
-\code{correction} is \code{TRUE}, a \code{parameters} data frame with one
-row per raw parameter giving \code{estimate}, \code{delta},
-\code{corrected}, \code{se} and \code{delta_se}. With \code{refine} it also
-carries \code{refined}.
+  estimate), \code{gap_per_subject}, \code{nodes}, and, when
+  \code{correction} is \code{TRUE}, a \code{parameters} data frame with one
+  row per raw parameter giving \code{estimate}, \code{delta},
+  \code{corrected}, \code{se} and \code{delta_se}. With \code{refine} it also
+  carries \code{refined}.
 
-\code{dropped_directions} counts the directions of the information matrix
-too weakly identified to correct along, which are reported as zero rather
-than as the arbitrarily large step an unguarded solve would produce. On a
-model where the Laplace approximation is already exact the gap gradient is
-floating-point noise, and dividing that by a near-singular curvature is how
-a meaningless correction gets a plausible-looking number.
+  \code{dropped_directions} counts the directions of the information matrix
+  too weakly identified to correct along, which are reported as zero rather
+  than as the arbitrarily large step an unguarded solve would produce. On a
+  model where the Laplace approximation is already exact the gap gradient is
+  floating-point noise, and dividing that by a near-singular curvature is how
+  a meaningless correction gets a plausible-looking number.
 }
 \description{
 Recomputes a \code{backend='julia'}, \code{intoverpop='laplace'} fit's log
@@ -96,6 +96,6 @@ check$parameters          # the full per-parameter table
 }
 \seealso{
 \code{\link{ctSample}} removes the approximation instead of
-measuring it, by sampling the joint posterior; much slower, and the right
-answer when \code{delta_se} says a linear correction is not credible.
+  measuring it, by sampling the joint posterior; much slower, and the right
+  answer when \code{delta_se} says a linear correction is not credible.
 }

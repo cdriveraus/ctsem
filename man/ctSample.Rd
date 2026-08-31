@@ -55,8 +55,8 @@ detection is wrong for your front end, or \code{TRUE} to force it on.}
 }
 \value{
 The fit, with \code{estimate$rawposterior} holding the draws and
-\code{$sample} holding the diagnostics: split R-hat and effective sample
-size per parameter, divergences, tree depths, step sizes and E-BFMI.
+  \code{$sample} holding the diagnostics: split R-hat and effective sample
+  size per parameter, divergences, tree depths, step sizes and E-BFMI.
 }
 \description{
 Draws from the joint posterior over population parameters and random effects
@@ -118,8 +118,8 @@ ctLaplaceCheck(fit)
 }
 \seealso{
 \code{\link{ctLaplaceCheck}} measures the Laplace approximation's
-error and corrects it to first order, at a small fraction of the cost;
-\code{\link{ctFit}} for the fit this starts from, and
-\code{\link{ctJuliaSetup}} for the thread count that decides whether chains
-run concurrently.
+  error and corrects it to first order, at a small fraction of the cost;
+  \code{\link{ctFit}} for the fit this starts from, and
+  \code{\link{ctJuliaSetup}} for the thread count that decides whether
+  chains run concurrently.
 }

@@ -4,7 +4,8 @@
 \alias{ctsem-options}
 \title{Options ctsem reads}
 \value{
-Nothing; this page documents options rather than defining a function.
+Nothing; this page documents options rather than defining a
+  function.
 }
 \description{
 Settings that change how ctsem behaves across a session, rather than
@@ -44,3 +45,4 @@ The Julia backend is located through the environment rather than options:
 \code{backendcontrol$julia_project} points a single fit at a different
 engine environment. See \code{\link{ctJuliaSetup}}.
 }
+

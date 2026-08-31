@@ -30,9 +30,10 @@ Builds the \code{|}-separated cell specification ctsem's model matrices use,
 from named arguments rather than positional fields.
 }
 \details{
-The output is the same string the \code{|} syntax produces, so this is a way
-of writing one rather than an alternative to it. Fields left at their default
-are emitted empty, which is what the parser reads as "unspecified".
+The output is the same string the \code{|} syntax produces, so this
+  is a way of writing one rather than an alternative to it. Fields left at
+  their default are emitted empty, which is what the parser reads as
+  "unspecified".
 }
 \examples{
 ctPar('mm', indvarying = TRUE)

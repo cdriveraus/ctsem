@@ -19,8 +19,6 @@ ctExtract(
 
 \item{subjectMatrices}{Calculate subject specific system matrices?}
 
-\item{...}{Passed to the backend-specific method.}
-
 \item{cores}{Only used if subjectMatrices = TRUE . For faster computation use more cores.}
 
 \item{nsamples}{either 'all' or an integer denoting number of random samples to extract.}

@@ -167,18 +167,31 @@ using PrecompileTools: @compile_workload
 # would be nothing to infer through. Removing it changed the first fit from
 # 12.8 s to 14.9 s -- that is, not at all.
 #
-# The workload is in fact fine. In a pure Julia session the captured shape's
-# first `ctsem_evaluate` with gradient takes 0.017 s and its first
-# `ctsem_optimize` 0.033 s, so everything is compiled and serialised as
-# intended. The cost appears only through R, where the *closure types differ*:
-# `var"#317#318"` in the image against `var"#365#366"` at runtime. The transform
-# strings are not the same. `precompile_shapes.jl` holds them unsimplified --
-# `0 + 10 * (param[1] * 1 + 0)` -- and the live fit path sends the simplified
-# `10 * param[1]`. Different strings, different `eval`, different closure type,
-# and nothing in the image applies.
+# The transform strings were a second cause, and that one is fixed. The captured
+# shapes held them unsimplified -- `0 + 10 * (param[1] * 1 + 0)` -- where the fit
+# path sends the simplified `10 * param[1]`, so the closures were `eval`ed from
+# different sources and were different types (`var"#317#318"` in the image
+# against `var"#365#366"` at runtime), and nothing in the image applied. The
+# generator was never at fault: `ctFitJuliaBackend(fit=FALSE)` returns the same
+# `model_spec` the fit path hands to `.ctJuliaObjective`, so it captures exactly
+# what is sent. `precompile_shapes.jl` was simply stale -- generated before
+# `.ctJuliaParameterTable` began substituting the model's own transform text
+# (the `transformtext` mechanism) in place of re-rendering it from `matvalues`.
+# Regenerating it fixed the mismatch: the R path's `EKFParameters`, its
+# `CTSEMObjective` and its per-subject `ContinuousEKFObjective` now print
+# identically to the ones built here, closure gensyms included, and
+# `ctsem_shape_is_precompiled` answers TRUE for the live strings and FALSE for
+# the stale ones.
 #
-# The fix belongs in `tools/generate-precompile-shapes.R`: it must capture what
-# the fit path actually sends. Left as its own task rather than folded in here.
+# **It still did not make the first fit fast, so a third cause remains.** With
+# the types matching exactly, the first `ctsem_evaluate` through R costs about
+# 6 s without a gradient and 14 s with one, and the second costs nothing. That
+# is compilation, and it is once per *session*, not once per objective: a second
+# and third objective of the same shape built from different data evaluate in
+# 0.01-0.09 s. So the image holds code for these types and the runtime is not
+# reaching it -- which is a different question from which strings were captured,
+# and is where anyone continuing this should start. Measured on a loaded
+# machine, so read the ratios rather than the seconds.
 const _PRECOMPILE_BUILT = let built = Vector{Any}()
     if get(ENV, "JULIA_CTSEM_PRECOMPILE", "1") != "0"
         for name in keys(_PRECOMPILE_SHAPES), binary in (false, true)

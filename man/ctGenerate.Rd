@@ -12,7 +12,8 @@ ctGenerate(
   logdtsd = 0,
   dtmat = NA,
   Tpoints = NULL,
-  wide = FALSE
+  wide = FALSE,
+  backend = c("auto", "r", "julia")
 )
 }
 \arguments{

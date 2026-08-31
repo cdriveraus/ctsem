@@ -30,7 +30,7 @@ T0MEANS, or supply a list of two numeric ranges.}
 \item{gridsize}{Arrows per side. The field costs one engine call per point,
 so cost is quadratic in this.}
 
-\item{state}{Where the \emph{other} latent processes are held, as in
+\item{state}{Where the *other* latent processes are held, as in
 \code{\link{ctDiscretePars}}: \code{'asymptotic'}, \code{'mean'},
 \code{'T0MEANS'}, or a numeric state.}
 

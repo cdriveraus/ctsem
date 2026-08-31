@@ -41,7 +41,17 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     m$manifesttype[2:11]=1 #set type to binary
     m$pars$indvarying=F
     
-    #fit with integration (linearised approximation)
+    # Fit with integration (linearised approximation).
+    #
+    # This model is the one that found the stan optimizer's stall: with ten
+    # binary indicators on one latent the likelihood near raw zero is rough
+    # enough that neither optimizer can find a step, and both used to report
+    # that as convergence, leaving DRIFT at -1.3955 (the transform of raw zero)
+    # with an interval 0.0008 wide. `stanoptimis` now checks the gradient where
+    # it stopped and restarts; the fit below takes one restart to get there. If
+    # this test fails again, read the fit messages first -- a restart that did
+    # not happen, or one that landed on the other stationary point at raw ~11,
+    # looks the same from here.
     f <- ctFit( datalong = d, model= m,cores=cores,plot=10)
   
     #test if the estimated model pars 95% confidence intervals contain true pars

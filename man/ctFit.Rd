@@ -42,11 +42,6 @@ ctFit(
   ctstanmodel
 )
 }
-\seealso{
-\code{\link{ctIdentify}} reports which parameters the data can inform,
-before a fit is spent finding out; \code{\link{ctTracePlot}} draws the
-optimisation trace a julia fit records.
-}
 \arguments{
 \item{datalong}{long format data containing columns for subject id (numeric values, 1 to max subjects), manifest variables,
 any time dependent (i.e. varying within subject) predictors,
@@ -68,9 +63,18 @@ This now sets \code{intoverstates = FALSE} and the \code{manifesttype} of every 
 
 \item{fit}{If TRUE, fit specified model using Stan, if FALSE, return stan model object without fitting.}
 
-\item{intoverpop}{if 'auto', set to TRUE if optimizing and FALSE if using hmc.
+\item{intoverpop}{how to handle declared individual differences. If 'auto',
+set to TRUE if optimizing and FALSE if using hmc.
 if TRUE, integrates over population distribution of parameters rather than full sampling.
-Allows for optimization of non-linearities and random effects, via state expansion.}
+Allows for optimization of non-linearities and random effects, via state expansion.
+'augmented' names that state-expansion method explicitly. 'laplace' instead
+integrates the random effects out subject by subject with a Laplace
+approximation, leaving each subject's filtered state space at its
+single-subject size, so the cost of a random effect stops growing cubically
+with the number of varying parameters. 'laplace' requires
+\code{backend='julia'} and \code{optimize=TRUE}, and is exact whenever the
+varying parameters enter the state mean linearly; elsewhere it is an
+approximation, and \code{summary()} says so.}
 
 \item{sameInitialTimes}{if TRUE, include an empty observation for every subject that has no observation
 at the earliest observation time of the dataset. This ensures that the T0MEANS occurs for every subject at the same time,
@@ -83,10 +87,10 @@ elements that should be fixed to stationarity.}
 
 \item{plot}{if TRUE, for sampling, a Shiny program is launched upon fitting to interactively plot samples.
 May struggle with many (e.g., > 5000) parameters. For optimizing, various optimization details are plotted -- in development.
-With \code{backend='julia'} the trace is plotted once the fit returns rather
-than during it: a julia fit is a single blocking call into the engine, so
-there is no point at which R could draw anything while it runs. For genuinely
-live output use \code{optimcontrol$callback}.}
+With \code{backend='julia'} the trace is plotted once the fit returns
+rather than during it: a julia fit is a single blocking call into the
+engine, so there is no point at which R could draw anything while it runs.
+For genuinely live output use \code{optimcontrol$callback}.}
 
 \item{derrind}{deprecated, latents involved in dynamic error calculations are determined automatically now.}
 
@@ -100,19 +104,62 @@ gradient method: \code{'adjoint'} (reverse mode, the default) or
 costs the same regardless of the number of free parameters, so it is
 dramatically faster for larger models and marginally slower for very small
 ones.
+\code{optimcontrol$carefulfit} works for \code{backend='julia'} as it does
+for Stan: when \code{priors=FALSE}, a rough first pass is run \emph{with}
+ctsem's \code{normal(0,1)} raw priors to obtain starting values, and the
+likelihood is then maximised from there. It defaults to \code{TRUE}, capped
+at 10 iterations, and is skipped when \code{inits} are supplied. Set
+\code{optimcontrol$carefulfit = FALSE} to switch it off or to a number to
+choose the cap.
+
+It does not make fits faster: measured over 800 fits, total iterations came
+to 0.91-1.14 times a plain fit at ten prior iterations, 1.09-1.50 at twenty
+and 1.47-1.64 at forty. It is on by default for where the fit lands rather
+than how quickly it gets there. Over 720 fits judged on a random-effect SD
+with a true value of 0.5, a cap of 10 gave an RMSE of 0.190 and a worst
+error of 0.547, against 0.478 and 6.73 with the pass switched off. A longer
+pass is not a safer one -- a cap of 20 scored 0.550 and 7.99, worse than not
+warming up at all -- because the prior pass pulls the start toward the prior
+mode and past about ten iterations that is what it hands the likelihood.
+
+\code{fit$estimate$carefulfit} records whether the pass ran, and
+\code{$carefulfit_iterations} how long it was allowed.
 With \code{backend='julia'}, \code{optimcontrol$callback} is a function
 called while the fit runs, with \code{(iteration, total, objective,
-gradient_norm)}. It is for a front end that wants to draw progress live: the
-engine calls it on a time cadence rather than once per iteration, because a
-callback costs about half a millisecond through the Julia bridge, and always
-once more at the end. An error inside it disables it and warns, leaving the
-fit unaffected. If output after the fit is enough, \code{fit$trace} holds
-every iteration and \code{\link{ctTracePlot}} draws it.
+gradient_norm)}. It is for a front end that wants to draw progress live:
+the engine calls it on a time cadence rather than once per iteration,
+because a callback costs about half a millisecond through the Julia
+bridge, and always once more at the end. An error inside it disables it
+and warns, leaving the fit unaffected. If output after the fit is enough,
+\code{fit$trace} holds every iteration and \code{\link{ctTracePlot}}
+draws it.
 \code{backend='julia'} also finishes by estimating uncertainty, as the stan
 backend does, and reads the same \code{stanoptimis} control names for it:
 \code{uncertainty} (default \code{'hessian'}), \code{uncertaintyDraws},
 \code{finishsamples}, and \code{uncertaintyControl}. Set
-\code{optimcontrol$estonly = TRUE} for point estimates only.}
+\code{optimcontrol$estonly = TRUE} for point estimates only.
+
+\code{optimcontrol$stallretries} and \code{optimcontrol$stalltol} govern what happens
+when the stan optimizer stops somewhere that is not a maximum. A rough likelihood can
+leave it unable to find any improving step, which it reports as convergence -- returning
+the starting values with the uncertainty computed about them. The gradient where it
+stopped separates the two cases by orders of magnitude, so the fit is restarted from
+fresh values (twice by default) when it exceeds \code{stalltol} per data point, and warns
+if it still ends up there.}
+
+\item{backend}{Either 'stan' (the default) or 'julia'. The julia backend is a
+separate maximum-likelihood engine with the same model definitions and the
+same summaries; it takes its own reverse-mode gradient, supports
+\code{intoverpop='laplace'} for random effects, and can be sampled afterwards
+with \code{\link{ctSample}}. It needs a working Julia -- see
+\code{\link{ctJuliaSetup}} and \code{\link{ctJuliaInstall}}.}
+
+\item{backendcontrol}{Used when \code{backend='julia'}. List of engine
+settings: \code{maxiter}, \code{g_tol}, \code{f_tol}, \code{x_tol} for the
+optimizer's stopping rules, \code{lbfgs_memory} for how many curvature pairs
+L-BFGS keeps, \code{gradient} ('adjoint' or 'forward'), \code{julia_project}
+to point at a local engine checkout, and \code{restart_session} to clear the
+Julia session before fitting.}
 
 \item{nlcontrol}{List of non-linear control parameters.
 \code{maxtimestep} must be a positive numeric,  specifying the largest time
@@ -161,20 +208,6 @@ generates random data according to the specified model / priors.
 Generated data is in the $Ygen subobject after running \code{extract} on the fit object.
 For datasets with many manifest variables or time points, file size may be large.
 To generate data based on the posterior of a fitted model, see \code{\link{ctGenerateFromFit}}.}
-
-\item{backend}{Either 'stan' (the default) or 'julia'. The julia backend is a
-separate maximum-likelihood engine with the same model definitions and the
-same summaries; it takes its own reverse-mode gradient, supports
-\code{intoverpop='laplace'} for random effects, and can be sampled afterwards
-with \code{\link{ctSample}}. It needs a working Julia -- see
-\code{\link{ctJuliaSetup}} and \code{\link{ctJuliaInstall}}.}
-
-\item{backendcontrol}{Used when \code{backend='julia'}. List of engine
-settings: \code{maxiter}, \code{g_tol}, \code{f_tol}, \code{x_tol} for the
-optimizer's stopping rules, \code{lbfgs_memory} for how many curvature pairs
-L-BFGS keeps, \code{gradient} ('adjoint' or 'forward'), \code{julia_project}
-to point at a local engine checkout, and \code{restart_session} to clear the
-Julia session before fitting.}
 
 \item{control}{Used when \code{optimize=FALSE}. List of arguments sent to \code{\link[rstan]{stan}} control argument,
 regarding warmup / sampling behaviour. Unless specified, values used are:
@@ -436,4 +469,9 @@ m3df <- ctModel(type = 'ct',
   MANIFESTVAR=matrix(c('Y2residual',0,0,'Y3residual'),nrow=2,ncol=2))
 
 }
+}
+\seealso{
+\code{\link{ctIdentify}} reports which parameters the data can
+inform, before a fit is spent finding out; \code{\link{ctTracePlot}} draws
+the optimisation trace a julia fit records.
 }

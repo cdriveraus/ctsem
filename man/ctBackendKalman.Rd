@@ -16,6 +16,7 @@ ctBackendKalman(
   standardisederrors = FALSE,
   subjectpars = FALSE,
   indvarstates = FALSE,
+  randomEffects = NULL,
   ...
 )
 }
@@ -47,6 +48,28 @@ observation covariance.}
 
 \item{indvarstates}{Keep the augmented individual-difference states in the
 latent output rather than trimming to the real processes.}
+
+\item{randomEffects}{For an `intoverpop='laplace'` fit, which levels of
+  random effect the trajectories are built from. Naming one of the model's
+  id columns includes that level and every level outside it, so the
+  innermost id gives each subject its own trajectory and an outer id gives
+  the group mean, shared by every subject in the group. `'population'`
+  includes none, giving the trajectory implied by the population parameters
+  alone. Defaults to the innermost id. Ignored for other fits.
+
+  These are the *smoothed* equivalent whichever level is chosen: the random
+  effects are modes estimated from each subject's whole record, so unlike an
+  augmented fit -- whose carrier states are updated observation by
+  observation -- there is no version of them from before a subject's later
+  data arrived. A message says so at the point of use.
+
+  The modes are the ones the fit arrived at, and they stay fixed however
+  this call changes the rows being filtered. Selecting subjects,
+  interpolating a time grid or withholding observations with
+  \code{removeObs} therefore leaves each subject's parameters alone: a
+  prediction with every observation withheld still uses that subject's own
+  random effects, which is what makes it a prediction *for that subject*
+  rather than for the average one.}
 
 \item{...}{Passed to \code{collapsefunc}.}
 }

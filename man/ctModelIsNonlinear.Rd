@@ -28,6 +28,3 @@ parameters, not dynamics, and are reported exactly.
 \examples{
 ctModelIsNonlinear(ctstantestfit)
 }
-\seealso{
-\code{\link{ctContextDependence}}
-}

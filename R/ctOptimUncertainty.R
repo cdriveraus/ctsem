@@ -1141,6 +1141,34 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
   ctOptimDataLpgFunc(sm=fit$stanmodel, standata=standata, cores=cores)
 }
 
+# Defined above that block, not between it and the function it documents.
+# Roxygen attaches a block to whatever definition follows it, so sitting
+# below it cost `ctOptimUncertainty` its export: a regenerated NAMESPACE
+# carried `export(.ctResolveDraws)` in its place, un-exporting a documented
+# user-facing function that three error messages tell people to call.
+# How samples are produced, given how the covariance was estimated.
+#
+# `uncertainty` and `draws` are not independent, and pretending otherwise is
+# what made this confusing: `uncertainty='is'` *is* importance sampling, so
+# `draws='normal'` alongside it was accepted, warned about, and then overridden
+# -- the argument appeared to be a choice and was not. It is now derived, and an
+# incompatible request is an error rather than a warning about something the
+# code went on to ignore.
+.ctResolveDraws <- function(uncertainty, draws) {
+  implied <- switch(uncertainty,
+    is = 'imis',
+    bootstrap = 'empirical',
+    fullbootstrap = 'empirical',
+    'normal')
+  if(identical(draws, 'auto')) return(implied)
+  if(!identical(draws, implied)) {
+    stop("uncertainty='", uncertainty, "' produces draws by '", implied,
+      "', so draws='", draws, "' cannot be honoured. Pass draws='auto' (the ",
+      "default) or draws='", implied, "'.", call.=FALSE)
+  }
+  draws
+}
+
 #' Update optimized ctsem uncertainty estimates
 #'
 #' Recomputes the approximate raw-parameter uncertainty for an optimized
@@ -1230,29 +1258,6 @@ ctOptimFitLpgFunc <- function(fit, cores=1){
 #' sample count, cores, and non-internal controls are recorded in
 #' \code{fit$stanfit$uncertainty$settings}.
 #' @export
-# How samples are produced, given how the covariance was estimated.
-#
-# `uncertainty` and `draws` are not independent, and pretending otherwise is
-# what made this confusing: `uncertainty='is'` *is* importance sampling, so
-# `draws='normal'` alongside it was accepted, warned about, and then overridden
-# -- the argument appeared to be a choice and was not. It is now derived, and an
-# incompatible request is an error rather than a warning about something the
-# code went on to ignore.
-.ctResolveDraws <- function(uncertainty, draws) {
-  implied <- switch(uncertainty,
-    is = 'imis',
-    bootstrap = 'empirical',
-    fullbootstrap = 'empirical',
-    'normal')
-  if(identical(draws, 'auto')) return(implied)
-  if(!identical(draws, implied)) {
-    stop("uncertainty='", uncertainty, "' produces draws by '", implied,
-      "', so draws='", draws, "' cannot be honoured. Pass draws='auto' (the ",
-      "default) or draws='", implied, "'.", call.=FALSE)
-  }
-  draws
-}
-
 ctOptimUncertainty <- function(fit,
   uncertainty=c('hessian','surrogate','is','bootstrap','fullbootstrap',
     'sandwich','opg'),

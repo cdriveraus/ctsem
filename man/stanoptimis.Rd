@@ -14,6 +14,8 @@ stanoptimis(
   stochastic = TRUE,
   priors = TRUE,
   carefulfit = TRUE,
+  stallretries = 2,
+  stalltol = 0.01,
   uncertainty = c("hessian", "surrogate", "is", "bootstrap", "fullbootstrap", "sandwich",
     "opg"),
   uncertaintyDraws = "auto",
@@ -53,6 +55,17 @@ if init='random' .}
 the stan model uses this value.}
 
 \item{carefulfit}{Logical. If TRUE, priors are always used for a rough first pass to obtain starting values when priors=FALSE}
+
+\item{stallretries}{Integer. Number of times to restart the optimizer from fresh random
+values when it finishes somewhere that is not a maximum -- see \code{stalltol}. Only applies
+when \code{init='random'}; with supplied inits a failed fit is reported but not retried.
+Set to 0 to disable retrying.}
+
+\item{stalltol}{Gradient per data point above which the optimizer is taken to have stopped
+short rather than converged. Rough likelihoods -- binary indicators are the case this was
+built for -- can leave both optimizers unable to find an improving step, which they report as
+convergence, returning the starting values as the estimate. Converged fits sit near 1e-5 per
+data point, stalled ones at 1 or more.}
 
 \item{uncertainty}{Character string selecting the optimized-fit uncertainty
 approximation. Options are \code{'hessian'}, \code{'surrogate'},

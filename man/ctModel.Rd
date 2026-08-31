@@ -13,6 +13,8 @@ ctModel(
   manifestNames = "auto",
   manifesttype = rep(0, nrow(LAMBDA)),
   ncategories = NULL,
+  censormin = NULL,
+  censormax = NULL,
   latentNames = "auto",
   id = "id",
   time = "time",
@@ -62,14 +64,26 @@ without any _Tx time point suffix that may be present in wide data.  Defaults to
 
 \item{manifesttype}{n.manifest length vector of manifest variable types. 0 (the
 default) is a continuous, Gaussian variable; 1 is binary, coded 0/1; 2 is
-ordinal, coded as consecutive integers from 1. Binary and ordinal variables
-are supported by the julia backend only, and binary additionally by stan.}
+ordinal, coded as consecutive integers from 1; 3 is a count, coded as
+non-negative integers and modelled as Poisson with a log link, so the latent
+process gives the log rate; 4 is censored, a Gaussian variable observed only
+within \code{censormin} and \code{censormax}, with values at a limit
+contributing the probability of being there rather than a density.
+Non-Gaussian variables are supported by the julia backend only, and binary
+additionally by stan.}
 
 \item{ncategories}{n.manifest length integer vector, giving the number of
 categories of each ordinal manifest variable and ignored for the others.
 Required when any \code{manifesttype} is 2, because the model has to know how
 many thresholds to estimate before it sees any data -- \code{ctGenerate} needs
 it too.}
+
+\item{censormin, censormax}{n.manifest length numeric vectors giving the lower
+and upper censoring limits of each \code{manifesttype = 4} variable, and
+ignored for the others. Defaults are \code{-Inf} and \code{Inf}; a variable
+censored on one side only leaves the other infinite. Unlike thresholds these
+are known constants rather than parameters -- a scale's floor and ceiling are
+properties of the instrument, and the data cannot inform them.}
 
 \item{latentNames}{n.latent length vector of latent variable names 
 (used for naming parameters, defaults to eta1, eta2, etc).}

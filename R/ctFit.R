@@ -159,6 +159,15 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' \code{uncertainty} (default \code{'hessian'}), \code{uncertaintyDraws},
 #' \code{finishsamples}, and \code{uncertaintyControl}. Set
 #' \code{optimcontrol$estonly = TRUE} for point estimates only.
+#'
+#' \code{optimcontrol$stallretries} and \code{optimcontrol$stalltol} govern what happens
+#' when the stan optimizer stops somewhere that is not a maximum. A rough likelihood can
+#' leave it unable to find any improving step, which it reports as convergence -- returning
+#' the starting values with the uncertainty computed about them. The gradient where it
+#' stopped separates the two cases by orders of magnitude, so the fit is restarted from
+#' fresh values (twice by default) when it exceeds \code{stalltol} per data point, and warns
+#' if it still ends up there.
+#'
 #' @param nopriors deprecated, use priors argument. logical. If TRUE, any priors are disabled -- sometimes desirable for optimization.
 #' @param priors if TRUE, priors are included in computations, otherwise specified priors are ignored.
 #' @param iter used when \code{optimize=FALSE}. number of iterations, half of which will be devoted to warmup by default when sampling.

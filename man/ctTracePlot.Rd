@@ -22,7 +22,7 @@ Draws the log posterior and the gradient norm against iteration, from the
 record the engine kept while fitting.
 }
 \details{
-Available on the Julia backend, which records the trace during the fit and
-returns it as \code{fit$trace}. For output while a fit is still running, see
-\code{optimcontrol$callback} in \code{\link{ctFit}}.
+Available on the Julia backend, which records the trace during the
+  fit and returns it as \code{fit$trace}. For output while a fit is still
+  running, see \code{optimcontrol$callback} in \code{\link{ctFit}}.
 }

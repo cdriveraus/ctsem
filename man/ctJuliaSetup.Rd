@@ -14,7 +14,8 @@ ctJuliaSetup(
 }
 \arguments{
 \item{project}{Optional local ContinuousTimeSEM.jl checkout to use instead of
-the vendored copy, for engine development.}
+the copy that ships with ctsem. Rarely needed: the engine is part of ctsem
+and is edited in place under \code{inst/julia/}.}
 
 \item{revision}{Ignored; retained for backward compatibility. The engine is
 part of ctsem, and the version \code{ctJuliaStatus()} reports is a hash of

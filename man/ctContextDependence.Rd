@@ -16,14 +16,13 @@ like this they must pick a point. There are two, and which one you get
 depends on what you asked for:
 
 \itemize{
-  \item \strong{Population matrices} (\code{summary},
-    \code{\link{ctSummaryMatrices}},
-    \code{\link{ctDiscretePars}(subjects='popmean')},
-    \code{\link{ctTIpredEffects}}) are evaluated at the population
-    \code{T0MEANS} state, with time dependent predictors at zero.
-  \item \strong{Subject matrices} (\code{\link{ctSubjectPars}},
-    \code{\link{ctDiscretePars}(subjects=)}) are evaluated at each subject's
-    last observed row.
+  \item \strong{Population matrices} (\code{summary}, \code{ctSummaryMatrices},
+    \code{ctDiscretePars(subjects='popmean')}, \code{ctTIpredEffects}) are
+    evaluated at the population \code{T0MEANS} state, with time dependent
+    predictors at zero.
+  \item \strong{Subject matrices} (\code{ctSubjectPars},
+    \code{ctDiscretePars(subjects=)}) are evaluated at each subject's last
+    observed row.
 }
 
 Only \code{\link{ctKalman}} and \code{\link{ctPredict}} avoid the choice

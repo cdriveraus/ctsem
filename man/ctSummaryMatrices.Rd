@@ -14,8 +14,6 @@ ctSummaryMatrices(
 )
 }
 \arguments{
-\item{...}{Passed to the backend-specific method.}
-
 \item{fit}{fit object from \code{\link{ctFit}}}
 
 \item{calcfunc}{Function to apply over samples, must return a single value. 

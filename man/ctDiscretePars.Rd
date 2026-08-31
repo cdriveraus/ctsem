@@ -38,22 +38,22 @@ number of samples will be set to total samples.}
 with it. Every variant is \code{dtDRIFT(t) \%*\% C} for a different companion
 matrix \code{C}, whose column c says what else moves.
 \describe{
-  \item{\code{FALSE}, \code{'experimental'}}{\code{C = I}. Nothing else
-    moves, because the change was imposed. This is the \emph{partial}
-    regression \code{E[x(t+u)|x(t)]}, and the only variant that is a property
-    of the dynamics alone.}
-  \item{\code{TRUE}, \code{'observational'}}{\code{C = Sigma diag(Sigma)^-1}
-    with \code{Sigma = asymDIFFUSIONcov}. Process c is \emph{observed} one
-    unit above expectation and the others are not held fixed, so they move by
-    \code{Sigma_rc/Sigma_cc}. This is the \emph{simple} regression -- what
-    regressing the observed data on x_c alone recovers.}
-  \item{\code{'shock'}}{\code{C = Q diag(Q)^-1} with
-    \code{Q = DIFFUSIONcov}. One hypothetical system noise innovation arrives
-    in c, with companion innovations \code{Q_rc/Q_cc}. An impulse response
-    rather than a regression.}
-  \item{\code{'orthogonal'}}{From the Cholesky factor of DIFFUSION, so
-    shocks are uncorrelated. Depends on the order of the latent processes,
-    which is a modelling assumption rather than a property of the fit.}
+ \item{\code{FALSE}, \code{'experimental'}}{\code{C = I}. Nothing else
+   moves, because the change was imposed. This is the \emph{partial}
+   regression \code{E[x(t+u)|x(t)]}, and the only variant that is a property
+   of the dynamics alone.}
+ \item{\code{TRUE}, \code{'observational'}}{\code{C = Sigma diag(Sigma)^-1}
+   with \code{Sigma = asymDIFFUSIONcov}. Process c is \emph{observed} one
+   unit above expectation and the others are not held fixed, so they move by
+   \code{Sigma_rc/Sigma_cc}. This is the \emph{simple} regression -- what
+   regressing the observed data on x_c alone recovers.}
+ \item{\code{'shock'}}{\code{C = Q diag(Q)^-1} with
+   \code{Q = DIFFUSIONcov}. One hypothetical system noise innovation arrives
+   in c, with companion innovations \code{Q_rc/Q_cc}. An impulse response
+   rather than a regression.}
+ \item{\code{'orthogonal'}}{From the Cholesky factor of DIFFUSION, so
+   shocks are uncorrelated. Depends on the order of the latent processes,
+   which is a modelling assumption rather than a property of the fit.}
 }
 The companion matrices are asymmetric, and must be: a one unit move in a
 wide-spread process implies more movement in a narrow one than the reverse.
@@ -72,6 +72,14 @@ instead of returning output.}
 \item{cores}{Number of cpu cores to use for computing subject matrices.
 If subject matrices were saved during fiting, not used.}
 
+\item{state}{Evaluation point for any matrix cell that depends on the latent
+state or a time dependent predictor -- see \code{\link{ctContextDependence}}.
+\code{NULL} (the default) or \code{'T0MEANS'} uses the population initial
+state, \code{'mean'} the mean smoothed latent state, \code{'asymptotic'} the
+system's own fixed point; or supply a numeric state vector. Requires
+\code{backend='julia'} and \code{subjects='popmean'}. For a linear model the
+argument makes no difference, since no cell depends on the state.}
+
 \item{method}{How the interval regressions are obtained. \code{'linearise'}
 (the default) exponentiates the DRIFT matrix, \code{expm(DRIFT*t)} -- exact
 for a linear model, and for a model whose DRIFT depends on the state, the
@@ -82,14 +90,6 @@ model implied regression; it starts at 1 and decays to 0 for a stable process,
 and reduces exactly to \code{'linearise'} when no cell depends on the state.
 \code{'simulate'} requires \code{backend='julia'} and is far slower, so it
 uses \code{nsamples} posterior draws with a small default.}
-
-\item{state}{Evaluation point for any matrix cell that depends on the latent
-state or a time dependent predictor -- see \code{\link{ctContextDependence}}.
-\code{NULL} (the default) or \code{'T0MEANS'} uses the population initial
-state, \code{'mean'} the mean smoothed latent state, \code{'asymptotic'} the
-system's own fixed point; or supply a numeric state vector. Requires
-\code{backend='julia'} and \code{subjects='popmean'}. For a linear model the
-argument makes no difference, since no cell depends on the state.}
 
 \item{...}{additional plotting arguments to control \code{\link{ctDiscreteParsPlot}}}
 
