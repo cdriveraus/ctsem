@@ -10,6 +10,7 @@ output: github_document
 
 **See the NEWS file for recent updates, and below for quick start!**
 
+- Graphical interface for model specification and fitting: https://github.com/cdriveraus/ctsemgui
 - Quick start: https://github.com/cdriveraus/ctsem/
 - Manual: https://github.com/cdriveraus/ctsem/raw/master/vignettes/hierarchicalmanual.pdf
 - Tutorial: https://osf.io/preprints/psyarxiv/4q9ex_v2

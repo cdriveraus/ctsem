@@ -7,6 +7,8 @@
 
 **See the NEWS file for recent updates, and below for quick start!**
 
+- Graphical interface for model specification and fitting:
+  <https://github.com/cdriveraus/ctsemgui>
 - Quick start: <https://github.com/cdriveraus/ctsem/>
 - Manual:
   <https://github.com/cdriveraus/ctsem/raw/master/vignettes/hierarchicalmanual.pdf>
@@ -74,32 +76,32 @@ fit <- ctFit(data, model)
 
 or `ctModel(type = "dt", ...)` for discrete time models.
 `ctModel(type = "omx")` creates an old matrix-list object retained
-primarily for data generation and legacy workflows; these objects are not
-fitted directly by the current ctsem package. To adapt such an object to
-the modern fit-ready format, use:
+primarily for data generation and legacy workflows; these objects are
+not fitted directly by the current ctsem package. To adapt such an
+object to the modern fit-ready format, use:
 
 ``` r
 model <- ctModelConvertOMX(omxmodel)
 ```
 
 `ctStanModel()` remains an alias for `ctModelConvertOMX()`, but new
-material should use `ctModelConvertOMX()` when discussing conversion from
-old OpenMx-style model objects.
+material should use `ctModelConvertOMX()` when discussing conversion
+from old OpenMx-style model objects.
 
 Other common name updates are:
 
-- `ctStanGenerate()` -> `ctGenerateFromPriors()`
-- `ctStanGenerateFromFit()` -> `ctGenerateFromFit()`
-- `ctStanKalman()` -> `ctKalmanArray()`
-- `ctStanPlotPost()` -> `ctPlotPosterior()`
-- `ctStanPostPredict()` -> `ctPostPredict()`
-- `ctStanSubjectPars()` -> `ctSubjectPars()`
-- `ctStanTIpredeffects()` -> `ctTIpredEffects()`
-- `ctStanFitUpdate()` -> `ctFitUpdate()`
-- `ctStanDiscretePars()` -> `ctDiscretePars()`
-- `ctStanDiscreteParsPlot()` -> `ctDiscreteParsPlot()`
-- `ctStanContinuousPars()` -> `ctSummaryMatrices()`
-- `ctStanParnames()` -> `ctRawParnames()`
+- `ctStanGenerate()` -\> `ctGenerateFromPriors()`
+- `ctStanGenerateFromFit()` -\> `ctGenerateFromFit()`
+- `ctStanKalman()` -\> `ctKalmanArray()`
+- `ctStanPlotPost()` -\> `ctPlotPosterior()`
+- `ctStanPostPredict()` -\> `ctPostPredict()`
+- `ctStanSubjectPars()` -\> `ctSubjectPars()`
+- `ctStanTIpredeffects()` -\> `ctTIpredEffects()`
+- `ctStanFitUpdate()` -\> `ctFitUpdate()`
+- `ctStanDiscretePars()` -\> `ctDiscretePars()`
+- `ctStanDiscreteParsPlot()` -\> `ctDiscreteParsPlot()`
+- `ctStanContinuousPars()` -\> `ctSummaryMatrices()`
+- `ctStanParnames()` -\> `ctRawParnames()`
 
 Modern model objects can also be edited in matrix form via the
 pars-backed `model$matrices` view, for example
