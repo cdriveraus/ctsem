@@ -293,6 +293,22 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
     maxdepth = as.integer(.ctJuliaOr(control$maxdepth, 10L)),
     target_accept = as.numeric(.ctJuliaOr(control$target_accept, 0.8)),
     maxdelta = as.numeric(.ctJuliaOr(control$maxdelta, 1000)),
+    # 2, not 1. Chains are dispersed by drawing from the Laplace approximation,
+    # which has the right shape and the wrong width: Laplace understates spread
+    # wherever the posterior is skewed or heavy-tailed, which is the case
+    # `ctLaplaceCorrect` exists to repair. Starting every chain from that
+    # narrower distribution makes R-hat compare chains that began already
+    # agreeing, so it reads low exactly where the approximation is worst and the
+    # diagnostic is needed most. Over-dispersing costs a little warmup and
+    # would restore the comparison Stan gets from its uniform [-2, 2] start.
+    #
+    # **Left at 1 until that is measured rather than argued.** The reasoning
+    # above is the same shape as the reasoning that made `settle_tol` look
+    # obviously right, and `settle_tol` lost by a factor of 5.5. Raising this
+    # moves every user's diagnostics, so it needs a comparison on an identified
+    # model -- the one attempted here diverged on every transition at 1, 1.5 and
+    # 2 alike, so it discriminated nothing. `control$init_scale` takes any value
+    # meanwhile.
     init_scale = as.numeric(.ctJuliaOr(control$init_scale, 1)),
     adapt_metric = isTRUE(.ctJuliaOr(control$adapt_metric, TRUE)),
     adapt_effects = isTRUE(.ctJuliaOr(control$adapt_effects, FALSE)))
@@ -470,9 +486,20 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
       "effective size is reached. See fit$sample$ess.", call. = FALSE)
   }
   if (diagnostics$saturated > 0L) {
+    # Raising the cap is the mechanical answer and rarely the right first one.
+    # Saturation means the sampler wanted longer trajectories than it was
+    # allowed, and it wants them because the geometry is hard -- a badly scaled
+    # metric, or a funnel. Raising `maxdepth` buys those trajectories at double
+    # the cost per draw without touching the cause, so the cause is named first.
     message(diagnostics$saturated, " of ", total, " transitions hit the maximum ",
-      "tree depth of ", diagnostics$max_depth, ". That costs efficiency rather ",
-      "than correctness; control$maxdepth raises it.")
+      "tree depth of ", diagnostics$max_depth, ", so the sampler was cut off ",
+      "before it finished exploring. That costs efficiency rather than ",
+      "correctness. It usually reflects difficult posterior geometry rather ",
+      "than a cap set too low",
+      if (diagnostics$divergent > 0L)
+        " -- the divergences above point the same way" else "",
+      "; check the divergence count and any near-zero population standard ",
+      "deviation before raising control$maxdepth.")
   }
   invisible(diagnostics)
 }

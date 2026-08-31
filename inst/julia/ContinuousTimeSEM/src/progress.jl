@@ -111,7 +111,10 @@ function _progress_line(p::CTSEMProgress, done::Integer, total::Integer,
              # `maxiter` iterations will be taken, and convergence is precisely
              # the thing that stops that being true.
              @sprintf("%7s at this rate", _duration(remaining))]
-    _emit(p, "  " * join(vcat(parts, collect(fields)), " | "))
+    # Empty fields are dropped rather than joined: a caller with a field that
+    # only sometimes applies passes "" for it, and joining that leaves a
+    # separator with nothing after it.
+    _emit(p, "  " * join(vcat(parts, filter(!isempty, collect(fields))), " | "))
     return nothing
 end
 

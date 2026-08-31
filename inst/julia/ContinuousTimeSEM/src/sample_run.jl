@@ -101,6 +101,16 @@ struct _ChainResult
     metric::CTSEMMetric
 end
 
+# How often warmup re-examines its divergence rate, what rate counts as
+# persisting, and how far the acceptance target may be pushed. The rate is
+# deliberately well above zero: an isolated divergence early in warmup, at a
+# step size dual averaging is still moving, says nothing worth acting on.
+const _ACCEPT_CHECK_STRIDE = 50
+const _ACCEPT_DIVERGENCE_RATE = 0.05
+const _ACCEPT_STEP = 0.05
+const _ACCEPT_MAX = 0.95
+const _ACCEPT_MAX_RAISES = 3
+
 function _run_chain(logdensity!, centre::Vector{Float64},
     metric::CTSEMMetric, rng::AbstractRNG,
     nwarmup::Int, ndraws::Int, maxdepth::Int, target_accept::Float64,
@@ -126,6 +136,10 @@ function _run_chain(logdensity!, centre::Vector{Float64},
     current = metric
     eps = _init_stepsize(logdensity!, current, rng, x, g, logp, ws)
     da = _DualAverage(eps, target_accept)
+    # Divergences since the last checkpoint, for the automatic raise below.
+    check_divergent = 0
+    check_start = 0
+    raises = 0
     windows = adapt_metric ? _adapt_windows(nwarmup) : Int[]
     window_draws = Vector{Vector{Float64}}()
     warmup_divergent = 0
@@ -141,12 +155,45 @@ function _run_chain(logdensity!, centre::Vector{Float64},
         logp = step.logp
         depths += step.depth
         step.divergent && (warmup_divergent += 1)
+        step.divergent && (check_divergent += 1)
         eps = _dual_update!(da, step.accept)
+        # Raise `target_accept` rather than only reporting divergences.
+        #
+        # A divergence means the integrator could not follow the geometry at the
+        # step size it was using, and the standard remedy -- a higher acceptance
+        # target, hence shorter steps -- was until now something the user had to
+        # apply by hand, after the run, having read a warning about it. Warmup
+        # already holds what is needed to apply it *during* the run, which is
+        # when it is worth something: the draws a too-large step size ruined are
+        # warmup draws, discarded either way.
+        #
+        # Checked on a fixed stride rather than at the metric windows, so it
+        # still works when warmup is too short to hold a window and the Laplace
+        # metric is used as it stands. Bounded at 0.95 and at three raises: past
+        # that the steps are short enough that trajectories lengthen to
+        # compensate, and geometry surviving 0.95 wants a reparameterisation
+        # rather than a smaller step. `_dual_restart!` because the averaging is
+        # chasing a new target from here, and its accumulated `hbar` is evidence
+        # about the old one.
+        if iteration - check_start >= _ACCEPT_CHECK_STRIDE
+            rate = check_divergent / (iteration - check_start)
+            if rate > _ACCEPT_DIVERGENCE_RATE && da.target < _ACCEPT_MAX &&
+                    raises < _ACCEPT_MAX_RAISES
+                da.target = min(_ACCEPT_MAX, da.target + _ACCEPT_STEP)
+                raises += 1
+                eps = _dual_restart!(da, eps)
+            end
+            check_divergent = 0
+            check_start = iteration
+        end
         if _due(progress)
             _progress_line(progress, iteration, nwarmup,
                 @sprintf("logp %11.2f", logp), @sprintf("eps %8.2e", eps),
                 @sprintf("depth %4.1f", depths / iteration),
-                @sprintf("div %d", warmup_divergent))
+                @sprintf("div %d", warmup_divergent),
+                # Shown only once it has moved, so the ordinary run reads as it
+                # always did.
+                raises > 0 ? @sprintf("accept %.2f", da.target) : "")
         end
         isempty(windows) && continue
         push!(window_draws, copy(x))
@@ -310,6 +357,7 @@ function _sample_to_target(density_for, centre, metric, nchains::Int,
     end
     total = ndraws
     attempt = 0
+    was_met = false
     while min_ess > 0 || mean_ess > 0
         pooled = _pool_draws(results, npar)
         diagnostics = ctsem_sample_diagnostics(pooled, nchains)
@@ -319,13 +367,21 @@ function _sample_to_target(density_for, centre, metric, nchains::Int,
         average = isempty(finite_ess) ? 0.0 : sum(finite_ess) / length(finite_ess)
         rhat = isempty(finite_rhat) ? Inf : maximum(finite_rhat)
         met = worst >= min_ess && average >= mean_ess && rhat <= rhat_target
+        # Confirmed once before stopping. Stopping the moment a target is first
+        # met is a rule correlated with the quantity it tests: effective size is
+        # estimated with error, so a first crossing is more often a favourable
+        # error than a real one, and the realised size settles below target. One
+        # extra batch removes most of that, and costs one batch.
+        confirmed = met && was_met
         if verbose
             println("  ", total, " draws per chain: min ESS ",
                 round(worst; digits=1), ", mean ESS ", round(average; digits=1),
                 ", worst R-hat ", round(rhat; digits=3),
-                met ? " -- targets met" : "")
+                confirmed ? " -- targets met" :
+                met ? " -- targets met, confirming" : "")
         end
-        met && break
+        was_met = met
+        confirmed && break
         if total >= max_draws
             verbose && println("  draw budget of ", max_draws,
                 " per chain reached before the targets were met")
