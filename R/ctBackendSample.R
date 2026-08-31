@@ -488,13 +488,22 @@ print.ctSampleDiagnostics <- function(x, ...) {
   seed <- as.integer(.ctJuliaOr(control$seed, 20260828L))
   saveEffects <- isTRUE(optimcontrol$saveEffects)
 
-  if (verbose > 0L) {
-    message("Optimising the ",
+  # Whenever the progress line below it will be drawn, not only at `verbose`.
+  #
+  # Sampling begins with an optimisation, to place the sampler and build its
+  # metric, and that optimisation prints a progress line labelled "optimise".
+  # Without this sentence in front of it a user who asked for HMC watches an
+  # optimiser run and concludes the sampler never started -- which is exactly
+  # what was reported. The explanation costs one line and was previously hidden
+  # behind `verbose > 0`, which is not the default.
+  announce <- verbose > 0L || .ctProgressConsole()
+  if (announce) {
+    message("Sampling: first optimising the ",
       if (identical(intoverpop, "augmented")) "augmented" else "Laplace",
       " objective to initialise the sampler and its metric",
       if (identical(intoverpop, "none"))
-        " (the effects are integrated for this step, and sampled after it)"
-      else "", ".")
+        " (the random effects are integrated for this step, and sampled after it)"
+      else "", ". The sampler itself starts after this.")
   }
   optimised <- .ctJuliaOptimise(model_spec, start, backendcontrol = backendcontrol,
     gradient = gradient, cores = cores, verbose = verbose)
@@ -511,7 +520,13 @@ print.ctSampleDiagnostics <- function(x, ...) {
   arguments <- list(objective, .ctJuliaNumericVector(estimate),
     nchains = as.integer(chains), nwarmup = warmup, ndraws = draws,
     maxdepth = maxdepth, target_accept = target, seed = seed,
-    verbose = verbose > 0L,
+    # On when someone is watching, matching the optimiser rather than differing
+    # from it. The two run one after the other in this same call, and having the
+    # first print progress by default while the second stayed silent is what
+    # made a running sampler look like a finished optimisation: the visible
+    # output stopped at "Computing exact Hessian" and nothing followed it for
+    # several minutes.
+    verbose = verbose > 0L || .ctProgressConsole(),
     progress_overwrite = .ctProgressOverwrite(verbose))
   # Sampling targets, when asked for. Left at zero the sampler takes exactly the
   # draws it was told to; set, it keeps going until the effective sample size is

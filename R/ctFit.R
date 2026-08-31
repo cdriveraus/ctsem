@@ -545,7 +545,13 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   if(optimize && !priors) message("Maximum likelihood estimation requested")
   if(optimize && priors && (is.null(optimcontrol$is)  || optimcontrol$is %in% FALSE)) message("Maximum a posteriori estimation requested")
   if(optimize && priors && (!is.null(optimcontrol$is)  && optimcontrol$is %in% TRUE)) message("Bayesian estimation via optimization and importance sampling requested")
-  if(!optimize) message("Bayesian estimation via Stan's NUTS sampler requested")
+  # Naming stan here was wrong for half the fits it described: with
+  # backend='julia' the engine runs its own NUTS over the joint posterior of
+  # parameters and random effects, and a user reading "Stan's NUTS sampler" on a
+  # julia fit has no reason to believe the julia sampler ran at all.
+  if(!optimize) message("Bayesian estimation via ",
+    if(identical(backend,'julia')) "the julia engine's" else "Stan's",
+    " NUTS sampler requested")
 
 
   ###stationarity
