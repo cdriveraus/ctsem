@@ -463,7 +463,9 @@ ctModelLatexMeasurementBlock <- function(ctmodel, matrixnames=TRUE,
     if(any(ordinal)) paste0(" \\\\ 
 &\\textrm{Note: ordinal observations carry no measurement error term -- the likelihood is integrated over }\\vect{\\eta}\\textrm{ directly.}") else "",
     if(any(count)) paste0(" \\\\ 
-&\\textrm{Note: count observations are Poisson with a log link -- the variance shown is the predicted rate rather than a free parameter, and the rate is the exponential of the linear predictor in }\\vect{\\eta}\\textrm{ .}") else "")
+&\\textrm{Note: count observations are Poisson with a log link -- the variance shown is the predicted rate rather than a free parameter, and the rate is the exponential of the linear predictor in }\\vect{\\eta}\\textrm{ .}") else "",
+    if(any(censored)) paste0(" \\\\ 
+&\\textrm{Note: a censored observation is recorded as the value above clamped to its limits, so the equation gives the uncensored mean and observations pile up at censormin and censormax rather than passing them; the error term shown is real for this kind, unlike the others, and applies to }\\vect{\\eta}\\textrm{ .}") else "")
   errorLine <- paste0("\\parbox{10em}{\\centering{Observation\\linebreak error:}}
 & \\qquad \\qquad \\quad \\vect{\\epsilon}(t) \\sim \\mathrm{N}\\left(\\mathbf{0},
       \\underbrace{",bmatrix(errorCov,nottext=TRUE),"
