@@ -1723,6 +1723,57 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   expr
 }
 
+# Say so when the chunk tuner used materially fewer chunks than `cores` allowed.
+#
+# `cores` is a ceiling, not an instruction: `ctsem_tune_chunks!` times a ladder
+# of chunk counts within it and pins the fastest, because the subject loop is
+# not monotone in the count -- one model measured 3.7x *slower* on 23 threads
+# than on one. That is the right behaviour, and it was entirely silent, so
+# `ctFit(cores = 12)` could run on two chunks with nothing said: no way to tell
+# that ten cores went unused, and no way to tell whether asking for more would
+# have helped or hurt.
+#
+# Two things keep it from becoming noise. It fires only where the tuner itself
+# left the headroom -- the ceiling is `min(cores, threads)`, so a session with
+# fewer threads than `cores` says nothing here rather than blaming the tuner
+# for a limit it never saw -- and each limit-and-count pair is said once per
+# session, so a simulation study looping a hundred fits gets one line.
+#
+# `threads` is the session's thread count and is asked for when not supplied.
+# It is a parameter so the gate can be exercised at a thread count the test
+# machine does not have to be restarted into: the alternative was a test that
+# skipped itself whenever an earlier file had left the session narrow, which is
+# a test that reports nothing and looks like a pass.
+.ctBackendReportChunks <- function(cores, picked, threads = NULL) {
+  cores <- suppressWarnings(as.integer(cores)[1L])
+  picked <- suppressWarnings(as.integer(picked)[1L])
+  if (is.na(cores) || is.na(picked) || picked < 1L) return(invisible(NULL))
+  # Cheap test first. A fit that used what it asked for is the usual case and
+  # must not pay a bridge call to establish that.
+  if (picked * 2L > cores || cores - picked < 2L) return(invisible(NULL))
+  # Guarded, because `juliaEval` *starts* a session when none is running rather
+  # than failing, and a function whose whole job is to report must never be the
+  # thing that launches the engine. In its own call site a fit has just
+  # finished, so the session is up and this is one cheap bridge call.
+  if (is.null(threads)) {
+    threads <- if (!.ctJuliaSessionRunning()) NA_integer_ else
+      tryCatch(as.integer(JuliaConnectoR::juliaEval("Threads.nthreads()")),
+        error = function(e) NA_integer_)
+  }
+  threads <- suppressWarnings(as.integer(threads)[1L])
+  limit <- if (is.na(threads)) cores else min(cores, threads)
+  if (picked * 2L > limit || limit - picked < 2L) return(invisible(NULL))
+  key <- paste0(limit, ":", picked)
+  if (key %in% .ct_julia_cache$chunks_reported) return(invisible(NULL))
+  .ct_julia_cache$chunks_reported <- c(.ct_julia_cache$chunks_reported, key)
+  message("cores = ", cores, " was requested, but ", picked, " chunk(s) of ",
+    "the subject loop timed fastest on this model, so that is what ran. The ",
+    "loop is not monotone in the chunk count -- past a point the threads queue ",
+    "on the allocator rather than on arithmetic -- so a wider split is not ",
+    "reliably faster; the count used is recorded at fit$estimate$chunks.")
+  invisible(NULL)
+}
+
 # Run the engine's optimizer over a prepared specification.
 #
 # Factored out of ctFitJuliaBackend() because cross-validation re-optimises the
@@ -1830,6 +1881,8 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
           list(gradient_method = gradient))))
     }
   })
+  # What the tuner settled on, when that is well short of what was asked for.
+  .ctBackendReportChunks(cores, result$chunks)
   if (!is.null(failure)) {
     warning("The progress callback failed and was disabled after the first ",
       "error; the fit itself is unaffected. The error was: ", failure,
