@@ -2099,9 +2099,21 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
     if (!is.null(spec)) {
       warmcontrol <- backendcontrol
       warmcontrol$maxiter <- as.integer(warmiter)
+      # No callback here, deliberately. This stage is a starting-value device,
+      # not the fit: it optimises a *different* objective (the posterior rather
+      # than the likelihood) and its result is used only as `start` below.
+      #
+      # Passing the user's callback through gave it two runs of iteration
+      # numbers -- 1..10 from here, then 1..N from the fit -- so a front end
+      # drawing a live trace saw the counter restart, and
+      # `max(seen$iterations)` reported this stage's cap rather than the fit's
+      # iteration count. That broke the contract the callback shares with
+      # `fit$trace` and `fit$estimate$iterations`, both of which describe the
+      # fit alone. Reported as test-julia-trace.R expecting 8 and seeing 10,
+      # which is exactly `warmiter`.
       warmed <- try(.ctJuliaOptimise(spec, start, backendcontrol = warmcontrol,
         gradient = gradient, cores = cores, verbose = verbose,
-        callback = optimcontrol$callback), silent = TRUE)
+        callback = NULL), silent = TRUE)
       # A warm start is only a starting value: if it produced numbers the fit
       # can use, use them, and otherwise start where we would have anyway.
       if (!inherits(warmed, "try-error")) {
