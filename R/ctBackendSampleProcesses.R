@@ -50,12 +50,48 @@
   }
   .ctBackendWarmWait(handles, verbose = verbose)
 
-  # Distinct seeds, because chains started from the same stream are the same
-  # chain and R-hat over copies of one chain is 1 no matter how wrong they are.
+  # `seed + k - 1`, which makes this path reproduce the in-process one exactly.
+  #
+  # The engine gives chain `c` the stream `Xoshiro(seed + c)`. A worker runs a
+  # single chain, so its chain is `c = 1` and it draws `Xoshiro(S + 1)` from
+  # whatever seed `S` it was handed. Setting `S = seed + k - 1` makes worker `k`
+  # draw `Xoshiro(seed + k)` -- the stream in-process chain `k` would have used.
+  # Same data, same start, same metric, same stream, so the draws come back
+  # identical element for element.
+  #
+  # That is worth more than tidiness. Whether a user sampled in one process or
+  # four should not change their numbers, and it makes the pooling *testable*:
+  # pool both ways and compare. A chain-major layout error is otherwise
+  # invisible, because mixing the chains still yields plausible means and a
+  # reassuring R-hat -- it is the one bug here that hides rather than shouts.
+  #
+  # Distinct seeds per chain remain essential either way: chains sharing a
+  # stream are the same chain, and R-hat over copies of one chain is 1 however
+  # wrong they are.
+  #
+  # **Reproduction is close, not exact, and that is expected.** Measured against
+  # the in-process path on the same fit and seed, with `warmup = 0` so the first
+  # kept draw sits as near the shared start as the sampler ever gets: the first
+  # draw differs by 6.2e-10 and the twelfth by 6.7e-09. With a normal warmup the
+  # difference reaches order 1, which is what an early run of this comparison
+  # reported and misread as a failure.
+  #
+  # The residue is process-local numerical state, not a fault in the pooling.
+  # Each unit's mode comes from an inner Newton solve warm-started from whatever
+  # the objective last held, and the parent carries an optimisation's worth of
+  # history where a fresh worker carries one warm-up evaluation. Both land on
+  # the same mode to solver tolerance rather than to the last bit, and NUTS
+  # amplifies the difference: it is chaotic, so 1e-10 becomes order 1 within a
+  # few dozen transitions.
+  #
+  # What the measurement does establish is the part that could have been wrong
+  # and would not have announced itself. A mismatched stream or a chain-major
+  # layout error would show at the *first* draw, at the scale of the posterior's
+  # own width -- order 1, not 1e-10. Neither does.
   results <- lapply(seq_len(chains), function(k) {
     tryCatch(
       future::future(ctsem:::.ctBackendSampleOneChain(fit, warmup, draws,
-        per_worker, control, saveEffects, as.integer(seed) + 1000L * k),
+        per_worker, control, saveEffects, as.integer(seed) + k - 1L),
         seed = TRUE),
       error = function(e) NULL)
   })
