@@ -109,25 +109,15 @@
   # picks 2 (measured 0.0292 s against 0.0311 s at 4). Setting `cores` here
   # overrode that with the value the tuner had just rejected. The tuner never
   # exceeds its ceiling, so this still respects `cores`.
-  if (inherits(fit, "ctJuliaFit")) {
-    tuned <- suppressWarnings(as.integer(fit$estimate$chunks)[1L])
-    if (is.na(tuned) || tuned < 1L) tuned <- cores
-    if (tuned > 1L) {
-      # Restored on exit, like the optimiser's. This runs *after* the
-      # optimiser has put its own ceiling back, so without a restore here the
-      # session still ended a fit reconfigured -- measured at 4 after a
-      # `cores=4` Laplace fit, where the optimiser alone had correctly left it
-      # at whatever it found.
-      previous <- tryCatch(as.integer(.ctBackendJuliaValue(JuliaConnectoR::juliaEval(
-        "ContinuousTimeSEM.ctsem_max_chunks().max_chunks"))),
-        error = function(e) NA_integer_)
-      try(JuliaConnectoR::juliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!",
-        as.integer(min(tuned, cores))), silent = TRUE)
-      if (!is.na(previous)) {
-        on.exit(try(JuliaConnectoR::juliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!",
-          previous), silent = TRUE), add = TRUE)
-      }
-    }
+  tuned <- suppressWarnings(as.integer(fit$estimate$chunks)[1L])
+  if (is.na(tuned) || tuned < 1L) tuned <- cores
+  if (tuned > 1L) {
+    # Restored on exit, like the optimiser's. This runs *after* the optimiser
+    # has put its own ceiling back, so without a restore here the session still
+    # ended a fit reconfigured -- measured at 4 after a `cores=4` Laplace fit,
+    # where the optimiser alone had correctly left it at whatever it found.
+    previous <- .ctBackendSetMaxChunks(min(tuned, cores))
+    on.exit(.ctBackendRestoreMaxChunks(previous), add = TRUE)
   }
 
   # The engines produce per-subject scores from one traced pass, so they are

@@ -112,14 +112,8 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
   # Restored on exit: this is a diagnostic, and it has no business changing how
   # fast everything else in the session runs afterwards.
   if (!is.null(cores)) {
-    previous <- tryCatch(as.integer(.ctBackendJuliaValue(JuliaConnectoR::juliaEval(
-      "ContinuousTimeSEM.ctsem_max_chunks().max_chunks"))), error = function(e) NA_integer_)
-    JuliaConnectoR::juliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!",
-      as.integer(max(1L, cores)))
-    if (!is.na(previous)) {
-      on.exit(try(JuliaConnectoR::juliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!",
-        previous), silent = TRUE), add = TRUE)
-    }
+    previous <- .ctBackendSetMaxChunks(max(1L, cores))
+    on.exit(.ctBackendRestoreMaxChunks(previous), add = TRUE)
   }
 
   if (verbose > 0) message("Quadrature at the estimate (", nodes, " nodes)")

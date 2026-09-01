@@ -1707,18 +1707,42 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 # is performance-only, but it makes a timing depend on history, which is exactly
 # what makes one impossible to reproduce.
 .ctBackendWithMaxChunks <- function(chunks, expr) {
+  previous <- .ctBackendSetMaxChunks(chunks)
+  on.exit(.ctBackendRestoreMaxChunks(previous), add = TRUE)
+  expr
+}
+
+# Set the ceiling, and report the one that was there.
+#
+# Three places cap the ceiling for the duration of some work and put it back:
+# the wrapper above, the uncertainty phase, and ctLaplaceCheck. Each had its own
+# copy of read-set-restore and the copies had drifted -- one set only for
+# `chunks >= 1`, one only for `chunks > 1`, one for any non-NULL `cores`; two
+# wrapped the set in `try` and the third let a failure abort the caller. The
+# restore half stays the caller's own `on.exit`, because two of the three cap
+# for the rest of their function rather than for a single expression.
+#
+# NA back means the previous ceiling could not be read, and so that there is
+# nothing to put back. It is read only when there is a ceiling to set, because
+# reading it is a `juliaEval` and `juliaEval` *starts* a session when none is
+# running -- capping nothing must not be the thing that launches the engine.
+.ctBackendSetMaxChunks <- function(chunks) {
   chunks <- suppressWarnings(as.integer(chunks)[1L])
+  if (is.na(chunks) || chunks < 1L) return(NA_integer_)
   previous <- tryCatch(as.integer(.ctBackendJuliaValue(JuliaConnectoR::juliaEval(
     "ContinuousTimeSEM.ctsem_max_chunks().max_chunks"))), error = function(e) NA_integer_)
-  if (!is.na(chunks) && chunks >= 1L) {
+  try(JuliaConnectoR::juliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!", chunks),
+    silent = TRUE)
+  previous
+}
+
+.ctBackendRestoreMaxChunks <- function(previous) {
+  previous <- suppressWarnings(as.integer(previous)[1L])
+  if (!is.na(previous)) {
     try(JuliaConnectoR::juliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!",
-      max(1L, chunks)), silent = TRUE)
-    if (!is.na(previous)) {
-      on.exit(try(JuliaConnectoR::juliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!",
-        previous), silent = TRUE), add = TRUE)
-    }
+      previous), silent = TRUE)
   }
-  expr
+  invisible(NULL)
 }
 
 # Say so when the chunk tuner used materially fewer chunks than `cores` allowed.
