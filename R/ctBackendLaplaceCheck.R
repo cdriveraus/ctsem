@@ -217,8 +217,7 @@ print.ctLaplaceCheck <- function(x, ...) {
   if (!is.null(table) && nrow(table)) {
     free <- !is.na(table$parnumber) & table$parnumber > 0
     number <- as.integer(table$parnumber[free])
-    label <- ifelse(is.na(table$param[free]), paste0("param", number),
-      as.character(table$param[free]))
+    label <- .ctBackendParamLabel(table$param[free], number)
     keep <- !duplicated(number) & number <= npar
     names[number[keep]] <- label[keep]
   }

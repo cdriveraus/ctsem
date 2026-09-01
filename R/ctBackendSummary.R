@@ -474,8 +474,20 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   as.integer(effects$parameter)
 }
 
+# A parameter's own name, or `paramN` when the model gave the cell none.
+#
+# Four places wanted this rule and had three spellings of it, differing only in
+# where the number came from -- `parnumber` here and in the raw-label table,
+# `re_index` at a Laplace level. Same rule, one place.
+.ctBackendParamLabel <- function(param, number) {
+  label <- as.character(param)
+  unnamed <- is.na(label)
+  label[unnamed] <- paste0("param", as.integer(number)[unnamed])
+  label
+}
+
 .ctBackendParameterNames <- function(cells) {
-  ifelse(is.na(cells$param), paste0("param", cells$parnumber), as.character(cells$param))
+  .ctBackendParamLabel(cells$param, cells$parnumber)
 }
 
 # The value of every parameter's population cell, for a whole matrix of raw
@@ -660,8 +672,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   position <- match(sds$row, t0means$row)
   parnumber <- as.integer(t0means$parnumber[position])
   if (any(is.na(parnumber))) return(NULL)
-  parname <- as.character(t0means$param[position])
-  parname[is.na(parname)] <- paste0("param", parnumber[is.na(parname)])
+  parname <- .ctBackendParamLabel(t0means$param[position], parnumber)
 
   t0cov <- .ctBackendReshape(flat, layout, match("T0cov", layout$matrix))
   variance <- matrix(vapply(sds$row, function(row) t0cov[, row, row],
@@ -776,8 +787,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     if (!level$nrandom) next
     result <- JuliaConnectoR::juliaGet(module$ctsem_laplace_population(
       objective, draws, as.integer(l)))
-    parname <- as.character(level$param)
-    parname[is.na(parname)] <- paste0("param", level$re_index[is.na(parname)])
+    parname <- .ctBackendParamLabel(level$param, level$re_index)
     out[[length(out) + 1L]] <- list(
       parnumber = as.integer(level$re_index), param = parname,
       rawsd = matrix(as.numeric(result$sd), nrow = nrow(samples)),
