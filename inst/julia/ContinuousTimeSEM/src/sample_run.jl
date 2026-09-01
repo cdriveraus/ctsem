@@ -1,14 +1,48 @@
 """
 Running the sampler: chains, warmup, and what comes back.
 
-# Chains are the parallel axis
+# Two parallel axes, and which gets the threads
 
-The gradient parallelises over units and gains about twofold; chains share
-nothing at all and gain linearly. So with several chains asked for, each takes a
-thread and evaluates its own gradient serially in its own adjoint workspace, and
-the unit-level chunking is switched off inside it. One chain gets the unit-level
-parallelism instead. Nothing needs deciding by the caller: `workspace_slot` on
-`ctsem_sample_density!` is present exactly when chains are running concurrently.
+The gradient parallelises over units -- the log likelihood is a sum over them,
+so each chunk accumulates a partial value and partial gradient and they are
+summed. Chains parallelise too, and share nothing at all.
+
+Threads go to chains first, and the unit loop takes what is left. **The
+measurement that policy was based on no longer holds.** It read "the gradient
+parallelises over units and gains about twofold; chains gain linearly", and the
+unit half is wrong for any model big enough to care: one gradient on a
+6-latent, 200-subject, 153-parameter model, minimum of five runs each,
+
+    threads   1        2        4        8
+    gradient  2.736 s  1.244 s  0.726 s  0.463 s
+    speedup   --       2.20x    3.77x    5.91x
+
+which is 74% efficiency at eight threads, not a ceiling of two. The old figure
+was presumably taken on a model with few enough subjects that there was little
+to divide.
+
+The chain half has not been re-measured against it, and is now the doubtful
+one: nested chain/unit threading came out at 1.39x for two chains on a smaller
+model, where linear would be 2. That figure is not a controlled comparison --
+different model, and other work in the same timing -- so it is a reason to
+measure rather than a reason to swap the priority. **What decides it is one
+comparison on a single model: two chains on one thread each, against one chain
+on two, for the same number of draws.** Until that exists, the ordering here is
+inherited, not justified.
+
+Nothing needs deciding by the caller either way: `workspace_slot` on
+`ctsem_sample_density!` is present exactly when chains are running concurrently,
+and a chain given a block of slots chunks its units inside it.
+
+Splitting units across *processes* rather than threads is a different question
+and the answer differs by phase. Sampling does on the order of `draws x
+(2^depth - 1)` gradients, each needing a scatter of `theta` and a gather of the
+gradient, so a per-gradient barrier is paid ~10^5 times; chains, which need no
+barrier at all until the end, are the better process axis there. Optimisation
+does hundreds to low thousands of gradients at seconds apiece, where a round
+trip carrying `2 x npar` doubles is lost in the noise -- so if the unit axis
+ever does hit a ceiling on threads, that is the phase where moving it to
+processes would pay, and it would cut per-worker memory rather than multiply it.
 
 # What crosses the bridge
 
