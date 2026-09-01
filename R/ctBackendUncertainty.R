@@ -52,11 +52,12 @@
 # which is the same information.
 .ctBackendDataShape <- function(fit) {
   spec <- fit$model_spec
-  nsubjects <- length(spec$subject_starts)
-  ndatapoints <- length(spec$times)
-  list(nsubjects = nsubjects, ndatapoints = ndatapoints,
-    subject = rep(seq_len(max(1L, nsubjects)),
-      times = diff(c(spec$subject_starts, ndatapoints + 1L))))
+  list(nsubjects = length(spec$subject_starts), ndatapoints = length(spec$times),
+    # `.ctFitRowSubject()` rather than a second spelling of the same expansion.
+    # This one wrote `seq_len(max(1L, nsubjects))` where that writes
+    # `seq_along(starts)`; they agree on every input either can be given, but
+    # two spellings of one index map is how they come to disagree.
+    subject = .ctFitRowSubject(fit))
 }
 
 # `fullbootstrap` is the one method still out of reach: it resamples subjects
@@ -109,25 +110,15 @@
   # picks 2 (measured 0.0292 s against 0.0311 s at 4). Setting `cores` here
   # overrode that with the value the tuner had just rejected. The tuner never
   # exceeds its ceiling, so this still respects `cores`.
-  if (inherits(fit, "ctJuliaFit")) {
-    tuned <- suppressWarnings(as.integer(fit$estimate$chunks)[1L])
-    if (is.na(tuned) || tuned < 1L) tuned <- cores
-    if (tuned > 1L) {
-      # Restored on exit, like the optimiser's. This runs *after* the
-      # optimiser has put its own ceiling back, so without a restore here the
-      # session still ended a fit reconfigured -- measured at 4 after a
-      # `cores=4` Laplace fit, where the optimiser alone had correctly left it
-      # at whatever it found.
-      previous <- tryCatch(as.integer(.ctBackendJuliaValue(JuliaConnectoR::juliaEval(
-        "ContinuousTimeSEM.ctsem_max_chunks().max_chunks"))),
-        error = function(e) NA_integer_)
-      try(JuliaConnectoR::juliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!",
-        as.integer(min(tuned, cores))), silent = TRUE)
-      if (!is.na(previous)) {
-        on.exit(try(JuliaConnectoR::juliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!",
-          previous), silent = TRUE), add = TRUE)
-      }
-    }
+  tuned <- suppressWarnings(as.integer(fit$estimate$chunks)[1L])
+  if (is.na(tuned) || tuned < 1L) tuned <- cores
+  if (tuned > 1L) {
+    # Restored on exit, like the optimiser's. This runs *after* the optimiser
+    # has put its own ceiling back, so without a restore here the session still
+    # ended a fit reconfigured -- measured at 4 after a `cores=4` Laplace fit,
+    # where the optimiser alone had correctly left it at whatever it found.
+    previous <- .ctBackendSetMaxChunks(min(tuned, cores))
+    on.exit(.ctBackendRestoreMaxChunks(previous), add = TRUE)
   }
 
   # The engines produce per-subject scores from one traced pass, so they are
@@ -319,21 +310,7 @@
     stop("priors=TRUE needs the prepared model data; this fit was built without it.",
       call. = FALSE)
   }
-  laplace <- as.integer(standata$laplaceprior)
-  if (length(laplace) && any(laplace == 1L)) {
-    stop("Laplace priors are not implemented for backend='julia'. ",
-      "The generated Stan model uses a smoothed double-exponential density for ",
-      "these, which these engines do not evaluate; use backend='stan', or drop ",
-      "laplaceprior for the affected matrices.", call. = FALSE)
-  }
-  if (isTRUE(as.integer(standata$laplacetipreds)[1L] == 1L)) {
-    stop("Laplace priors on TI predictor effects are not implemented for ",
-      "backend='julia'; use backend='stan'.", call. = FALSE)
-  }
-  if (isTRUE(as.integer(standata$laplaceprioronly)[1L] == 1L)) {
-    stop("laplaceprioronly is not implemented for backend='julia'; ",
-      "use backend='stan'.", call. = FALSE)
-  }
+  .ctBackendRejectLaplacePriors(standata)
 
   nparams <- as.integer(standata$nparams)[1L]
   nindvarying <- as.integer(standata$nindvarying)[1L]

@@ -63,46 +63,48 @@
   raw <- as.numeric(raw)
   spec <- .ctBackendSpec(fit)
   module <- .ctJuliaModule(spec$project)
-  if (is.null(spec$laplace)) {
-    result <- .ctBackendJuliaValue(do.call(module$ctsem_kalman, c(
-      list(.ctJuliaObjective(fit), .ctJuliaNumericVector(raw),
-        subject_matrices = isTRUE(subjectmatrices)),
-      if (length(fields)) list(fields = .ctJuliaVector(as.character(fields))))))
-    if (!is.null(result$subject)) result$subject <- as.integer(result$subject)
-    return(result)
+  arguments <- list(.ctJuliaObjective(fit), .ctJuliaNumericVector(raw),
+    subject_matrices = isTRUE(subjectmatrices))
+  if (length(fields)) arguments$fields <- .ctJuliaVector(as.character(fields))
+
+  # The Laplace route is the same call with two more keywords: which levels of
+  # random effect to build the trajectory from, and -- when this specification
+  # filters different rows than the fit did -- the fitted modes to use. The
+  # engine dispatches on the objective type, so `from_level` must not be sent
+  # on the augmented route at all, which is what the branch is for; everything
+  # else about the call is shared and used to be written out twice.
+  if (!is.null(spec$laplace)) {
+    if (is.null(randomEffects)) randomEffects <- spec$laplace$levels[[1L]]$name
+    from <- .ctBackendLaplaceLevel(spec, randomEffects)
+    # Said once per call rather than buried in the documentation, because the
+    # difference is easy to miss and changes what the picture means. An
+    # augmented fit's random effects are carrier *states*, updated observation
+    # by observation, so its filtered output shows an effect being learned. A
+    # Laplace mode is estimated from all of a subject's data at once, so these
+    # trajectories are the smoothed equivalent throughout -- there is no
+    # "before this subject's later data arrived" version of them.
+    if (!isTRUE(attr(randomEffects, "quiet"))) {
+      message("Laplace fit: trajectories are conditional on random effects ",
+        "estimated from each subject's whole record, so they are the smoothed ",
+        "equivalent rather than filtered. randomEffects='",
+        as.character(randomEffects), "'.")
+    }
+    arguments$from_level <- as.integer(from)
+    # Modes from the fit, not from whatever rows this call happens to filter
+    # over. `.ctBackendKalmanSpec` attaches the fitted specification when it
+    # rebuilds; without one, this specification *is* the fit's and there is
+    # nothing to carry.
+    source <- attr(fit, "laplaceSource")
+    if (!is.null(source)) {
+      subjects <- attr(fit, "laplaceSubjects")
+      fitted <- .ctBackendJuliaValue(module$ctsem_laplace_subject_values(
+        .ctJuliaObjective(source), .ctJuliaNumericVector(raw),
+        from_level = as.integer(from)))
+      arguments$subject_values <- JuliaConnectoR::juliaPut(
+        fitted[subjects, , drop = FALSE])
+    }
   }
 
-  if (is.null(randomEffects)) randomEffects <- spec$laplace$levels[[1L]]$name
-  from <- .ctBackendLaplaceLevel(spec, randomEffects)
-  # Said once per call rather than buried in the documentation, because the
-  # difference is easy to miss and changes what the picture means. An augmented
-  # fit's random effects are carrier *states*, updated observation by
-  # observation, so its filtered output shows an effect being learned. A
-  # Laplace mode is estimated from all of a subject's data at once, so these
-  # trajectories are the smoothed equivalent throughout -- there is no
-  # "before this subject's later data arrived" version of them.
-  if (!isTRUE(attr(randomEffects, "quiet"))) {
-    message("Laplace fit: trajectories are conditional on random effects ",
-      "estimated from each subject's whole record, so they are the smoothed ",
-      "equivalent rather than filtered. randomEffects='",
-      as.character(randomEffects), "'.")
-  }
-  # Modes from the fit, not from whatever rows this call happens to filter
-  # over. `.ctBackendKalmanSpec` attaches the fitted specification when it
-  # rebuilds; without one, this specification *is* the fit's and there is
-  # nothing to carry.
-  source <- attr(fit, "laplaceSource")
-  values <- if (is.null(source)) NULL else {
-    subjects <- attr(fit, "laplaceSubjects")
-    fitted <- .ctBackendJuliaValue(module$ctsem_laplace_subject_values(
-      .ctJuliaObjective(source), .ctJuliaNumericVector(raw),
-      from_level = as.integer(from)))
-    JuliaConnectoR::juliaPut(fitted[subjects, , drop = FALSE])
-  }
-  arguments <- list(.ctJuliaObjective(fit), .ctJuliaNumericVector(raw),
-    from_level = as.integer(from), subject_matrices = isTRUE(subjectmatrices))
-  if (length(fields)) arguments$fields <- .ctJuliaVector(as.character(fields))
-  if (!is.null(values)) arguments$subject_values <- values
   result <- .ctBackendJuliaValue(do.call(module$ctsem_kalman, arguments))
   if (!is.null(result$subject)) result$subject <- as.integer(result$subject)
   result

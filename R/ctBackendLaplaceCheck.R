@@ -112,14 +112,8 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
   # Restored on exit: this is a diagnostic, and it has no business changing how
   # fast everything else in the session runs afterwards.
   if (!is.null(cores)) {
-    previous <- tryCatch(as.integer(.ctBackendJuliaValue(JuliaConnectoR::juliaEval(
-      "ContinuousTimeSEM.ctsem_max_chunks().max_chunks"))), error = function(e) NA_integer_)
-    JuliaConnectoR::juliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!",
-      as.integer(max(1L, cores)))
-    if (!is.na(previous)) {
-      on.exit(try(JuliaConnectoR::juliaCall("ContinuousTimeSEM.ctsem_set_max_chunks!",
-        previous), silent = TRUE), add = TRUE)
-    }
+    previous <- .ctBackendSetMaxChunks(max(1L, cores))
+    on.exit(.ctBackendRestoreMaxChunks(previous), add = TRUE)
   }
 
   if (verbose > 0) message("Quadrature at the estimate (", nodes, " nodes)")
@@ -134,11 +128,12 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
     nodes = as.integer(nodes), nsubjects = nsubjects)
   class(out) <- "ctLaplaceCheck"
 
-  # Backend fits keep their uncertainty at `fit$uncertainty` and their raw
-  # covariance at `fit$estimate$cov`; the Stan path uses `fit$stanfit$...`.
-  # Both are checked so this reads either without the caller knowing which.
+  # Where `ctOptimUncertainty()` leaves it. A `fit$stanfit$uncertainty$hessian`
+  # fallback used to sit here "so this reads either without the caller knowing
+  # which" -- but the caller is known: this function refuses anything that is
+  # not a ctJuliaFit thirty lines above, and nothing ever puts a `$stanfit` on
+  # one, so the fallback could not fire.
   hessian <- fit$uncertainty$hessian
-  if (is.null(hessian)) hessian <- fit$stanfit$uncertainty$hessian
   if (!correction) return(out)
   if (is.null(hessian)) {
     warning("No Hessian on the fit, so the correction cannot be formed. ",
@@ -153,7 +148,6 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
     JuliaConnectoR::juliaPut(as.matrix(hessian)),
     nodes = as.integer(nodes), step = as.numeric(step)))
   covariance <- fit$estimate$cov
-  if (is.null(covariance)) covariance <- fit$stanfit$cov
   se <- sqrt(abs(diag(as.matrix(covariance))))
   delta <- as.numeric(result$delta)
   out$parameters <- data.frame(
@@ -223,8 +217,7 @@ print.ctLaplaceCheck <- function(x, ...) {
   if (!is.null(table) && nrow(table)) {
     free <- !is.na(table$parnumber) & table$parnumber > 0
     number <- as.integer(table$parnumber[free])
-    label <- ifelse(is.na(table$param[free]), paste0("param", number),
-      as.character(table$param[free]))
+    label <- .ctBackendParamLabel(table$param[free], number)
     keep <- !duplicated(number) & number <= npar
     names[number[keep]] <- label[keep]
   }

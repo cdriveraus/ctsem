@@ -474,8 +474,20 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   as.integer(effects$parameter)
 }
 
+# A parameter's own name, or `paramN` when the model gave the cell none.
+#
+# Four places wanted this rule and had three spellings of it, differing only in
+# where the number came from -- `parnumber` here and in the raw-label table,
+# `re_index` at a Laplace level. Same rule, one place.
+.ctBackendParamLabel <- function(param, number) {
+  label <- as.character(param)
+  unnamed <- is.na(label)
+  label[unnamed] <- paste0("param", as.integer(number)[unnamed])
+  label
+}
+
 .ctBackendParameterNames <- function(cells) {
-  ifelse(is.na(cells$param), paste0("param", cells$parnumber), as.character(cells$param))
+  .ctBackendParamLabel(cells$param, cells$parnumber)
 }
 
 # The value of every parameter's population cell, for a whole matrix of raw
@@ -645,23 +657,57 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   out
 }
 
+# The augmented route's population sds, and the raw parameter each one belongs
+# to. NULL when the model has none.
+#
+# `.ctJuliaAugmentRandomEffects` records an sd against its carrier state's
+# T0VAR row, so the parameter that state varies is whatever its T0MEANS cell
+# holds. The random-effects summary and ctSubjectPars both need that lookup and
+# had a copy each, which is one lookup too many for a mapping this indirect.
+.ctBackendAugmentedSds <- function(spec) {
+  effects <- spec$random_effects
+  if (is.null(effects) || !length(effects) || !nrow(effects)) return(NULL)
+  sds <- effects[effects$type %in% "sd", , drop = FALSE]
+  if (!nrow(sds)) return(NULL)
+  table <- as.data.frame(spec$parameter_table, stringsAsFactors = FALSE)
+  t0means <- table[table$matrix %in% "T0MEANS" & table$col == 1L, , drop = FALSE]
+  position <- match(sds$row, t0means$row)
+  list(sds = sds, parnumber = as.integer(t0means$parnumber[position]),
+    param = t0means$param[position])
+}
+
+# Which parameters this fit can report per subject.
+#
+# The two routes reach the same set from different starting points -- the
+# augmented one through its carrier states, the Laplace one through its own
+# `re_index` -- and both then added the TI-predictor effects, filtered against
+# the reportable cells, and raised the same message when nothing survived. Only
+# the first line differs, so only the first line is written twice.
+.ctBackendVaryingParameters <- function(spec, cells) {
+  varying <- if (!is.null(spec$laplace)) as.integer(spec$laplace$re_index) else {
+    augmented <- .ctBackendAugmentedSds(spec)
+    if (is.null(augmented)) integer() else augmented$parnumber
+  }
+  if (!is.null(spec$ti_effects) && nrow(spec$ti_effects)) {
+    varying <- c(varying, as.integer(spec$ti_effects$parameter))
+  }
+  varying <- sort(unique(varying[!is.na(varying)]))
+  varying <- varying[varying %in% cells$parnumber]
+  if (!length(varying)) stop("No individually varying parameters in model!", call. = FALSE)
+  varying
+}
+
 # The augmented route's population scales and correlations, read out of the
 # filtered T0 covariance the carrier states live in. `scale` divides out the
 # state-unit factor `.ctJuliaAugmentRandomEffects` folded into the sd transform,
 # because what is wanted here is the sd on the *raw parameter* scale.
 .ctBackendAugmentedPopulation <- function(spec, samples, layout, flat) {
-  effects <- spec$random_effects
-  if (is.null(effects) || !length(effects) || !nrow(effects)) return(NULL)
-  sds <- effects[effects$type %in% "sd", , drop = FALSE]
-  if (!nrow(sds)) return(NULL)
-
-  table <- as.data.frame(spec$parameter_table, stringsAsFactors = FALSE)
-  t0means <- table[table$matrix %in% "T0MEANS" & table$col == 1L, , drop = FALSE]
-  position <- match(sds$row, t0means$row)
-  parnumber <- as.integer(t0means$parnumber[position])
+  augmented <- .ctBackendAugmentedSds(spec)
+  if (is.null(augmented)) return(NULL)
+  sds <- augmented$sds
+  parnumber <- augmented$parnumber
   if (any(is.na(parnumber))) return(NULL)
-  parname <- as.character(t0means$param[position])
-  parname[is.na(parname)] <- paste0("param", parnumber[is.na(parname)])
+  parname <- .ctBackendParamLabel(augmented$param, parnumber)
 
   t0cov <- .ctBackendReshape(flat, layout, match("T0cov", layout$matrix))
   variance <- matrix(vapply(sds$row, function(row) t0cov[, row, row],
@@ -701,13 +747,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   nsamples = "all") {
   cells <- .ctBackendFreeParameterCells(fit)
   cells <- cells[!cells$randomeffect, , drop = FALSE]
-  varying <- as.integer(spec$laplace$re_index)
-  if (!is.null(spec$ti_effects) && nrow(spec$ti_effects)) {
-    varying <- c(varying, as.integer(spec$ti_effects$parameter))
-  }
-  varying <- sort(unique(varying[!is.na(varying)]))
-  varying <- varying[varying %in% cells$parnumber]
-  if (!length(varying)) stop("No individually varying parameters in model!", call. = FALSE)
+  varying <- .ctBackendVaryingParameters(spec, cells)
 
   module <- .ctJuliaModule(spec$project)
   objective <- .ctJuliaObjective(fit)
@@ -776,8 +816,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
     if (!level$nrandom) next
     result <- JuliaConnectoR::juliaGet(module$ctsem_laplace_population(
       objective, draws, as.integer(l)))
-    parname <- as.character(level$param)
-    parname[is.na(parname)] <- paste0("param", level$re_index[is.na(parname)])
+    parname <- .ctBackendParamLabel(level$param, level$re_index)
     out[[length(out) + 1L]] <- list(
       parnumber = as.integer(level$re_index), param = parname,
       rawsd = matrix(as.numeric(result$sd), nrow = nrow(samples)),
@@ -840,21 +879,7 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   }
   cells <- .ctBackendFreeParameterCells(fit)
   cells <- cells[!cells$randomeffect, , drop = FALSE]
-
-  varying <- integer()
-  effects <- spec$random_effects
-  if (!is.null(effects) && length(effects) && nrow(effects)) {
-    table <- as.data.frame(spec$parameter_table, stringsAsFactors = FALSE)
-    t0means <- table[table$matrix %in% "T0MEANS" & table$col == 1L, , drop = FALSE]
-    sds <- effects[effects$type %in% "sd", , drop = FALSE]
-    varying <- c(varying, as.integer(t0means$parnumber[match(sds$row, t0means$row)]))
-  }
-  if (!is.null(spec$ti_effects) && nrow(spec$ti_effects)) {
-    varying <- c(varying, as.integer(spec$ti_effects$parameter))
-  }
-  varying <- sort(unique(varying[!is.na(varying)]))
-  varying <- varying[varying %in% cells$parnumber]
-  if (!length(varying)) stop("No individually varying parameters in model!", call. = FALSE)
+  varying <- .ctBackendVaryingParameters(spec, cells)
 
   if (isTRUE(pointest)) fit$estimate$rawposterior <- NULL
   extracted <- .ctBackendExtract(fit, subjectMatrices = TRUE, nsamples = nsamples)
