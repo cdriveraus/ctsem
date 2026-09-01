@@ -2024,7 +2024,6 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     _laplace_check_indices(laplace, length(theta))
     nsubjects = length(laplace.objective.subject_objectives)
     nunits = length(laplace.units.members)
-    single_level = nlevels(laplace.spec) == 1
 
     # 1. Inner modes and the value at them, in primal arithmetic, warm-started
     #    from the last call. Each subject's term is its own approximated log
@@ -2037,7 +2036,6 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     #    here, so recomputing it for each of those would be a third of the
     #    primal pass thrown away.
     Ls = _laplace_popchols(theta, laplace.spec)
-    L = Ls[1]
     # Factorizations rather than dense curvatures. On a study of a few thousand
     # subjects a dense one is over a hundred megabytes, and one is held per unit
     # for the whole evaluation; the factors are kilobytes.

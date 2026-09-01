@@ -489,7 +489,6 @@ subject and so are the ones the filter finished with.
 function _kalman_smooth!(trace::CTSEMKalmanTrace{T}, ws, first::Int,
     nobs::Int) where {T}
     n = trace.nlatent
-    m = trace.nmanifest
     last = first + nobs - 1
     P = Matrix{T}(undef, n, n)
     for r in last:-1:first
