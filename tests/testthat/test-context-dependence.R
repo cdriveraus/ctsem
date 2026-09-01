@@ -41,6 +41,42 @@ test_that('dependence propagates through PARS references', {
   expect_true('carrier' %in% cells$kind[cells$matrix == 'CINT'])
 })
 
+# `.ctContextCellTable()` scans the transform column by handing
+# `ctModelStatesAndPARS()` a shim whose `param` holds the transform text, so
+# every PARS cell without a transform reaches the PARS-expansion loop as "".
+# An empty label matched every row and collected every PARS cell into one
+# `parmatch`, and the vectorised `PARS[row,col]` replacement that followed
+# warned once per candidate row -- around fifty times per ctGenerate call on a
+# model with two PARS cells. A blank is not a parameter name.
+test_that('a blank PARS label is not treated as a parameter name', {
+  model <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
+    manifestNames = c('Y1', 'Y2'), latentNames = c('D', 'A'), LAMBDA = diag(2),
+    CINT = matrix(0, 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
+    MANIFESTVAR = diag(.2, 2), T0MEANS = matrix(0, 2, 1), T0VAR = diag(1, 2),
+    Tpoints = 8, PARS = matrix(c('A', 'D'), 2, 1),
+    DRIFT = matrix(c('-0.5 * (1 + 0.2 * PARS[1,1]) + 0.01 * PARS[2,1]', 0.1,
+      0, -0.3), 2, 2),
+    DIFFUSION = matrix(c(.3, 0, 0, .4), 2, 2)))
+
+  expect_silent(cells <- ctsem:::.ctContextCellTable(model))
+  expect_true(ctsem:::ctModelIsNonlinear(model))
+
+  # And the rewrite a real label drives is untouched: `dr11` still resolves to
+  # the PARS cell that holds it.
+  named <- suppressMessages(ctModel(type = 'ct', n.latent = 2, n.manifest = 2,
+    manifestNames = c('Y1', 'Y2'), latentNames = c('D', 'A'), LAMBDA = diag(2),
+    CINT = matrix(0, 2, 1), MANIFESTMEANS = matrix(0, 2, 1),
+    MANIFESTVAR = diag(.2, 2), T0MEANS = matrix(0, 2, 1), T0VAR = diag(1, 2),
+    Tpoints = 8, PARS = c('dr11|-log1p_exp(param)'),
+    DRIFT = matrix(c('dr11 * (1 + 0.2 * A)', 'd21', 0, 'd22'), 2, 2),
+    DIFFUSION = matrix(c('df1', 0, 0, 'df2'), 2, 2)))
+  rewritten <- ctsem:::ctModelStatesAndPARS(named$pars,
+    statenames = named$latentNames, tdprednames = named$TDpredNames)
+  drift11 <- rewritten$param[rewritten$matrix == 'DRIFT' &
+      rewritten$row == 1 & rewritten$col == 1]
+  expect_equal(drift11, 'PARS[1,1] * (1 + 0.2 * state[2])')
+})
+
 # This is the regression that protects the augmented approach. A cell that
 # references a carrier state IS the individually varying parameter, and the
 # subject's last row is the fully informed estimate of it -- not an arbitrary

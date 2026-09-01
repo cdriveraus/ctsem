@@ -210,7 +210,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& !(.Platform$OS.type=="windows" &&
     # fit ---------------------------------------------------------------------
     f <- ctFit(datalong = ltsData, model= m1,cores=cores,saveComplexPars = T,fit=T)#,optimcontrol=list(stochastic=F,carefulfit=F),init=rep(0,30)
     
-    testthat::expect_equivalent(class(f),'ctStanFit')
+    testthat::expect_s3_class(f, 'ctStanFit')
     
     
     

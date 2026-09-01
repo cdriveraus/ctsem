@@ -13,7 +13,8 @@ ctGenerate(
   dtmat = NA,
   Tpoints = NULL,
   wide = FALSE,
-  backend = c("auto", "r", "julia")
+  backend = c("auto", "r", "julia"),
+  intoverstates = "auto"
 )
 }
 \arguments{
@@ -23,9 +24,14 @@ ctGenerate(
 
 \item{burnin}{Number of initial time points to discard (to simulate stationary data)}
 
-\item{dtmean}{Positive numeric. Average time interval (delta T) to use.}
+\item{dtmean}{Positive numeric. Median time interval (delta T) to use.
+Intervals are drawn as \code{exp(rnorm(n, log(dtmean), logdtsd))}, so
+\code{dtmean} is the median rather than the mean whenever \code{logdtsd}
+is non-zero: the mean interval is \code{dtmean * exp(logdtsd^2/2)}, which
+at \code{logdtsd = 0.6} is about 20 percent longer than \code{dtmean}.}
 
-\item{logdtsd}{Numeric. Standard deviation for variability of the time interval.}
+\item{logdtsd}{Numeric. Standard deviation of the log time interval. Zero
+gives an equal-interval design.}
 
 \item{dtmat}{Either NA, or numeric matrix of n.subjects rows and Tpoints-1 columns, 
 containing positive numeric values for all time intervals between measurements. 
@@ -36,6 +42,29 @@ any \code{Tpoints} stored in \code{ctmodelobj}. If not supplied, \code{ctGenerat
 uses \code{ctmodelobj$Tpoints} when available.}
 
 \item{wide}{Logical. Output in wide format?}
+
+\item{intoverstates}{For \code{backend='julia'}: \code{'auto'} (the
+default), \code{TRUE} or \code{FALSE}, choosing how the latent states are
+handled while generating.
+
+\code{TRUE} draws each row from the filter's own one-step-ahead predictive
+and lets the filter condition on the draw, so the dataset is an exact draw
+from the density a fit maximises. \code{FALSE} samples the latent
+trajectory from the process and then each observation from its conditional
+distribution given the state at its row -- a draw from the model rather than
+from the filter's approximation of it.
+
+\code{'auto'} picks \code{TRUE} exactly when the filter's predictive is
+the model's: linear dynamics and Gaussian indicators. There the two agree in
+distribution, and \code{TRUE} keeps the output every existing caller gets
+for a given seed. Otherwise it picks \code{FALSE}. A categorical indicator
+makes the measurement update an assumed-density projection, which moves the
+state it conditions on -- and with an unbounded indicator (a count) an
+improbable draw can move it far enough that the following rows are drawn
+from a rate that has already run away. A state-dependent drift makes the
+prediction a moment approximation in the same way.
+
+\code{backend='r'} already generates this way and ignores the argument.}
 }
 \description{
 This function generates data according to the specified ctsem model object.

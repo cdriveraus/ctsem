@@ -181,3 +181,57 @@ test_that("ctPostPredData(residuals=TRUE) works, for stan too", {
     residuals = TRUE))
   expect_true(any(grepl("std. res.", stanpredictive$variable)))
 })
+
+# `.ctGenerateResolveFree()` fills in free parameters that generation needs a
+# value for. A cell written as an expression -- `LAMBDA[2,1] = '0.9 + 0.35 *
+# eta1'` -- has no value either, and is not a free parameter: it is the
+# specification, and it is exactly the specification `backend='julia'`
+# generation exists to reach. Filled with the matrix default it becomes a
+# constant, and the state dependence disappears from the generated data with
+# nothing to say so -- measured, an off-diagonal LAMBDA expression was
+# overwritten with zero and the indicator came back pure noise.
+test_that("an expression cell survives generation rather than being filled", {
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
+    n.manifest = 2, manifestNames = c("y1", "y2"), latentNames = "eta1",
+    LAMBDA = matrix(c(1, "0.9 + 0.35 * eta1"), 2, 1),
+    MANIFESTVAR = matrix(c("exp(-0.7 + 0.3 * eta1)", 0, 0, 0.8), 2, 2),
+    DRIFT = matrix(-0.4), DIFFUSION = matrix(1.5), T0VAR = matrix(1.7),
+    T0MEANS = matrix(0), CINT = matrix(0),
+    MANIFESTMEANS = matrix(c(0, 0.5), 2, 1), Tpoints = 5)))
+
+  resolved <- ctsem:::.ctGenerateResolveFree(m, quiet = TRUE)
+  expression_cells <- resolved$pars$param %in%
+    c("0.9 + 0.35 * eta1", "exp(-0.7 + 0.3 * eta1)")
+  expect_equal(sum(expression_cells), 2L)
+  expect_true(all(is.na(resolved$pars$value[expression_cells])))
+
+  # A genuine free parameter in the same model is still filled, since that is
+  # what the function is for.
+  free <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
+    n.manifest = 1, manifestNames = "y1", latentNames = "eta1",
+    LAMBDA = matrix(1), T0MEANS = matrix(0), CINT = matrix(0))))
+  filled <- ctsem:::.ctGenerateResolveFree(free, quiet = TRUE)
+  expect_false(any(is.na(filled$pars$value)))
+})
+
+test_that("state dependent generation carries the dependence into the data", {
+  skip_on_cran()
+  skip_without_julia()
+  m <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 1,
+    n.manifest = 2, manifestNames = c("y1", "y2"), latentNames = "eta1",
+    LAMBDA = matrix(c(1, "0.9 + 0.35 * eta1"), 2, 1),
+    MANIFESTVAR = matrix(c(0.3, 0, 0, 0.3), 2, 2),
+    DRIFT = matrix(-0.4), DIFFUSION = matrix(1.5), T0VAR = matrix(1.7),
+    T0MEANS = matrix(0), CINT = matrix(0),
+    MANIFESTMEANS = matrix(c(0, 0), 2, 1), Tpoints = 8)))
+  set.seed(9)
+  d <- data.frame(suppressMessages(ctGenerate(m, n.subjects = 40, Tpoints = 8,
+    backend = "julia")))
+
+  # The loading on y2 rises with the state, so regressing y2 on y1 where y1 is
+  # high must give a steeper slope than where it is low. A filled-in constant
+  # loading gives the same slope in both halves.
+  high <- d$y1 > stats::median(d$y1)
+  slope <- function(rows) unname(stats::coef(stats::lm(y2 ~ y1, d[rows, ]))[2])
+  expect_gt(slope(high), slope(!high) + 0.2)
+})

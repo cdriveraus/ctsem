@@ -1,4 +1,22 @@
 """
+    CTSEMOptimisable
+
+Anything `ctsem_optimize` can maximise: a prepared likelihood over a vector,
+answering `ctsem_evaluate(objective, x; gradient, gradient_method)`.
+
+There are two. `CTSEMObjective` is the marginal one, over the parameters alone
+with the latent states integrated out by the filter. `CTSEMJointObjective`
+(`state_sampling.jl`) is the state-explicit one, over the parameters *and* the
+innovations that build the states. The optimiser needs to know nothing about
+the difference, and does not: it asks for a value and a gradient at a vector,
+and both answer.
+
+An abstract type rather than a `Union` because the second is defined several
+files later -- a signature naming it here could not be parsed.
+"""
+abstract type CTSEMOptimisable end
+
+"""
     CTSEMObjective(params, subject_starts, timesteps, data)
 
 Prepared continuous-time likelihood for the R `ctsem` backend. `data` is
@@ -6,7 +24,7 @@ stored as manifest variables by observation. Subject starts are prepared by R,
 which owns data ordering and predictor preprocessing. This type retains only
 the numerical per-subject EKF workspaces needed for repeated evaluation.
 """
-mutable struct CTSEMObjective{P,O}
+mutable struct CTSEMObjective{P,O} <: CTSEMOptimisable
     params::P
     subject_objectives::O
     # Lazily built reverse-mode workspace (see adjoint.jl). Cached here so the
@@ -424,8 +442,15 @@ reaches that through `backendcontrol`.
 """
 const _CTSEM_LBFGS_MEMORY = 20
 
+"""
+Which coordinates of a minimizer carry ctsem parameter transforms, and so can
+saturate. Every one of them, for the marginal objective; `state_sampling.jl`
+gives its own answer.
+"""
+_ctsem_saturation_range(::CTSEMOptimisable, minimizer) = eachindex(minimizer)
+
 """Optimize a prepared likelihood entirely within Julia using L-BFGS."""
-function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
+function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     maxiter::Integer=1000, g_tol::Real=1e-8, f_tol::Real=0.0,
     x_tol::Real=0.0, verbose::Bool=false, gradient_method=:adjoint,
     tune_chunks::Bool=true, lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY,
@@ -600,7 +625,15 @@ function ctsem_optimize(objective::CTSEMObjective, start::AbstractVector;
     # is not identified by the data but by the transform's floating-point
     # limit, and calling that converged is the wrong answer confidently
     # delivered.
-    saturated = isempty(minimizer) ? false : maximum(abs, minimizer) >= _CTSEM_SATURATION[]
+    # Over the *transformed* coordinates only. Saturation is a statement about
+    # ctsem's parameter transforms going flat, and the joint target's vector
+    # also carries state innovations, which have no transform and no flat
+    # region -- a trajectory five standard deviations out is unusual data, not
+    # an unidentified parameter, and reading it as saturation would report
+    # every such fit as failed.
+    saturation_range = _ctsem_saturation_range(objective, minimizer)
+    saturated = isempty(saturation_range) ? false :
+        maximum(abs, view(minimizer, saturation_range)) >= _CTSEM_SATURATION[]
     stalled = moved == 0 && (!isfinite(final.value) || gradient_norm > max(g_tol, 1e-6))
     scaled_tolerance = max(g_tol, 1e-6 * max(one(gradient_norm), abs(final.value)))
     # See `ctsem_laplace_optimize`: a NaN gradient is not convergence, and

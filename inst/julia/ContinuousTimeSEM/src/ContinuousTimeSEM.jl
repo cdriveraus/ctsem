@@ -78,6 +78,11 @@ include("quadrature.jl")
 # After quadrature.jl: the binary measurement update integrates the
 # observation with the Gauss-Hermite rule defined there.
 include("binary_measurement.jl")
+# After binary_measurement.jl: the conditional observation model it defines --
+# the log likelihood of one observation at a *known* linear predictor -- is
+# exactly what a sampled state supplies, so the state path evaluates the same
+# kernels the filter integrates.
+include("state_sampling.jl")
 include("sample_density.jl")
 include("sample_nuts.jl")
 include("sample_adapt.jl")

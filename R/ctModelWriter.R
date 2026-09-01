@@ -82,10 +82,26 @@ ctModelStatesAndPARS <- function(ctspec, statenames,tdprednames){ #replace laten
   
   #expand pars
   
+  # A blank label is not a parameter. `.ctContextCellTable()` runs this function
+  # over a shim whose `param` column holds the *transform* text, so every PARS
+  # cell without a transform arrives here as "". Treated as a name, "" matches
+  # a word-boundary pattern with nothing between the boundaries -- i.e. every
+  # row -- and `parmatch` then picks up every PARS cell at once, which is what
+  # produced ~50 copies of "argument 'replacement' has
+  # length > 1" on any model with more than one PARS cell. Nothing downstream
+  # was wrong (the vectorised replacement was discarded along with the
+  # meaningless match), but a name has to be a name for any of this to be
+  # meaningful, so blanks are dropped before the loop rather than survived
+  # inside it.
   ln <- ctspec$param[ctspec$matrix %in% 'PARS' & !is.na(ctspec$param)] #get extra pars
+  ln <- unique(ln[nzchar(trimws(ln))])
   
   for(li in seq_along(ln)){ #for every extra par
-    parmatch <- which(ctspec$param %in% ln[li] & ctspec$matrix %in% 'PARS') #which row is the par itself
+    # Repeating one label across PARS cells is ctsem's equality constraint: the
+    # cells hold the same parameter, so a reference to it can resolve to any of
+    # them and the first is as good as the last. Taking it explicitly keeps the
+    # replacement a single string.
+    parmatch <- which(ctspec$param %in% ln[li] & ctspec$matrix %in% 'PARS')[1] #which row is the par itself
     # if(grepl('beep2',ln[li])) browser()
     for(ri in grep(paste0('\\b',ln[li],'\\b'),ctspec$param)){ #which rows contain the par
       if(!(ctspec$param[ri] == ln[li] & ctspec$matrix[ri]=='PARS')){ #that are not the par itself in the pars matrix# #removed limitation of referencing within PARS matrices

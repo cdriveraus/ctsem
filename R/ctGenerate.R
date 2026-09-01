@@ -158,8 +158,13 @@ ctStanGenerate <- ctGenerateFromPriors
 #' @param ctmodelobj ctsem model object from \code{\link{ctModel}}.
 #' @param n.subjects Number of subjects to output.
 #' @param burnin Number of initial time points to discard (to simulate stationary data)
-#' @param dtmean Positive numeric. Average time interval (delta T) to use.
-#' @param logdtsd Numeric. Standard deviation for variability of the time interval.
+#' @param dtmean Positive numeric. Median time interval (delta T) to use.
+#' Intervals are drawn as \code{exp(rnorm(n, log(dtmean), logdtsd))}, so
+#' \code{dtmean} is the median rather than the mean whenever \code{logdtsd}
+#' is non-zero: the mean interval is \code{dtmean * exp(logdtsd^2/2)}, which
+#' at \code{logdtsd = 0.6} is about 20 percent longer than \code{dtmean}.
+#' @param logdtsd Numeric. Standard deviation of the log time interval. Zero
+#' gives an equal-interval design.
 #' @param dtmat Either NA, or numeric matrix of n.subjects rows and Tpoints-1 columns, 
 #' containing positive numeric values for all time intervals between measurements. 
 #' If not NA, dtmean and logdtsd are ignored.
@@ -167,7 +172,29 @@ ctStanGenerate <- ctGenerateFromPriors
 #' any \code{Tpoints} stored in \code{ctmodelobj}. If not supplied, \code{ctGenerate}
 #' uses \code{ctmodelobj$Tpoints} when available.
 #' @param wide Logical. Output in wide format?
-#' @details Covariance related matrices are treated as Cholesky factors. 
+#' @param intoverstates For \code{backend='julia'}: \code{'auto'} (the
+#' default), \code{TRUE} or \code{FALSE}, choosing how the latent states are
+#' handled while generating.
+#'
+#' \code{TRUE} draws each row from the filter's own one-step-ahead predictive
+#' and lets the filter condition on the draw, so the dataset is an exact draw
+#' from the density a fit maximises. \code{FALSE} samples the latent
+#' trajectory from the process and then each observation from its conditional
+#' distribution given the state at its row -- a draw from the model rather than
+#' from the filter's approximation of it.
+#'
+#' \code{'auto'} picks \code{TRUE} exactly when the filter's predictive *is*
+#' the model's: linear dynamics and Gaussian indicators. There the two agree in
+#' distribution, and \code{TRUE} keeps the output every existing caller gets
+#' for a given seed. Otherwise it picks \code{FALSE}. A categorical indicator
+#' makes the measurement update an assumed-density projection, which moves the
+#' state it conditions on -- and with an unbounded indicator (a count) an
+#' improbable draw can move it far enough that the following rows are drawn
+#' from a rate that has already run away. A state-dependent drift makes the
+#' prediction a moment approximation in the same way.
+#'
+#' \code{backend='r'} already generates this way and ignores the argument.
+#' @details Covariance related matrices are treated as Cholesky factors.
 #' TRAITTDPREDCOV and TIPREDCOV matrices are not accounted for, at present. 
 #' The first 1:n.TDpred rows and columns of TDPREDVAR are used for generating
 #' tdpreds at each time point. 
@@ -199,7 +226,7 @@ ctStanGenerate <- ctGenerateFromPriors
 #' @export
 
 ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat=NA,
-  Tpoints=NULL, wide=FALSE, backend=c('auto','r','julia')){
+  Tpoints=NULL, wide=FALSE, backend=c('auto','r','julia'), intoverstates='auto'){
   backend <- match.arg(backend)
   # `auto` routes to julia only what the generator below cannot do. That
   # generator integrates the linear system with a matrix exponential, which is
@@ -217,6 +244,24 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
   categorical <- !is.null(ctmodelobj$manifesttype) &&
     any(ctmodelobj$manifesttype > 0)
   if(backend == 'auto') backend <- if(nonlinear || categorical) 'julia' else 'r'
+  # `intoverstates='auto'` asks the same question the backend choice asks, one
+  # level down: is the filter's one-step-ahead predictive the model's own?
+  #
+  # It is exactly when the dynamics are linear and every indicator Gaussian.
+  # There the filter's predictive is exact, the two routes agree in
+  # distribution, and TRUE is kept -- it preserves the seed-for-seed output
+  # every existing caller gets, and the round-trip identity that a generated
+  # dataset's likelihood is the one reported while generating it.
+  #
+  # It is not, for anything else. A categorical indicator makes the update an
+  # assumed-density projection, which moves the state it conditions on and
+  # can run away on an unbounded one -- the count case this route exists for.
+  # A state-dependent drift makes the *prediction* a moment approximation in
+  # the same way. In both, sampling the trajectory and then the observations
+  # given it is a draw from the model where the filter route is a draw from
+  # the filter's approximation of it.
+  if(identical(intoverstates,'auto')) intoverstates <- !(nonlinear || categorical)
+  intoverstates <- isTRUE(as.logical(intoverstates)[1])
   if(backend == 'r' && categorical){
     warning('This model declares non-Gaussian indicators (manifesttype ',
       "1, 2 or 3) and backend='r' generates continuous values for them: the R ",
@@ -247,7 +292,8 @@ ctGenerate<-function(ctmodelobj,n.subjects=100,burnin=0,dtmean=1,logdtsd=0,dtmat
       for(t in 2:fullTpoints) tv[t] <- round(tv[t-1] + dtvec[t-1], 6)
       tv
     })
-    out <- .ctGenerateJulia(ctmodelobj, n.subjects, times)
+    out <- .ctGenerateJulia(ctmodelobj, n.subjects, times,
+      intoverstates = intoverstates)
     if(burnin > 0){
       keep <- unlist(lapply(seq_len(n.subjects), function(si)
         (si-1)*fullTpoints + (burnin+1):fullTpoints))

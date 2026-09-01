@@ -573,10 +573,19 @@ print.ctSampleDiagnostics <- function(x, ...) {
 #' @keywords internal
 .ctJuliaSampleFit <- function(model_spec, datalong, model, inits, cores,
   backendcontrol, optimcontrol, chains, iter, control, priors, intoverpop,
-  gradient, verbose) {
+  gradient, verbose, intoverstates = TRUE) {
 
-  npar <- max(c(model_spec$parameter_table$parnumber, model_spec$laplace$npar,
+  npar <- max(c(0L, model_spec$parameter_table$parnumber, model_spec$laplace$npar,
     model_spec$ti_effects$coefficient), na.rm = TRUE)
+  # As in the optimising path: the zero keeps `max` from warning and returning
+  # -Inf on a fully fixed model, and the refusal replaces the "invalid
+  # arguments" that -Inf produced two lines later. A sampler with no
+  # dimensions to move in is worse than a sentence saying so.
+  if (npar < 1L) {
+    stop("This model has no free parameters, so there is nothing to sample. ",
+      "Free a parameter, or use fit = FALSE to prepare the model without ",
+      "fitting it.", call. = FALSE)
+  }
   start <- .ctJuliaInitialValues(npar, inits)
 
   # Stan's vocabulary, because these are Stan's arguments: `iter` counts warmup
@@ -601,8 +610,22 @@ print.ctSampleDiagnostics <- function(x, ...) {
     message("Sampling: optimising first, to place the sampler and build its ",
       "metric. Sampling follows.")
   }
+  # The state-explicit target, when asked for. This is the estimator the path
+  # is really for: NUTS over the parameters *and* the states is the exact
+  # posterior of both, with no Gaussian assumption about the state anywhere,
+  # where optimising the same density gives its joint mode and the downward
+  # bias in the variances that comes with maximising over what should be
+  # integrated.
+  jointobjective <- NULL
+  nstate <- 0L
+  if (!isTRUE(intoverstates)) {
+    jointobjective <- .ctJuliaJointObjective(model_spec, npar)
+    nstate <- .ctJuliaStateDimension(model_spec)
+    start <- c(start, numeric(nstate))
+  }
   optimised <- .ctJuliaOptimise(model_spec, start, backendcontrol = backendcontrol,
-    gradient = gradient, cores = cores, verbose = verbose)
+    gradient = gradient, cores = cores, verbose = verbose,
+    objective = jointobjective)
   estimate <- as.numeric(optimised$minimizer)
 
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
@@ -615,11 +638,21 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # returns NULL -- so every sampled fit warned that the engine could not
   # differentiate its gradient, when nothing had been asked of the engine at
   # all. `spec` is the same object the objective is already cached under.
-  hessian <- try(.ctBackendHessian(spec, estimate, verbose = verbose),
-    silent = TRUE)
+  # The metric's curvature. On the state-explicit target that is the whole
+  # arrow-shaped joint Hessian rather than the profiled one the standard
+  # errors use: the sampler moves in every coordinate, so it needs the
+  # curvature of every coordinate.
+  hessian <- if (is.null(jointobjective)) {
+    try(.ctBackendHessian(spec, estimate, verbose = verbose), silent = TRUE)
+  } else {
+    try(matrix(as.numeric(.ctBackendJuliaValue(module$ctsem_joint_hessian(
+      jointobjective, .ctJuliaNumericVector(estimate), profile = FALSE))),
+      nrow = length(estimate), ncol = length(estimate)), silent = TRUE)
+  }
   if (inherits(hessian, "try-error")) hessian <- NULL
 
-  arguments <- list(objective, .ctJuliaNumericVector(estimate),
+  arguments <- list(.ctJuliaOr(jointobjective, objective),
+    .ctJuliaNumericVector(estimate),
     nchains = as.integer(chains), nwarmup = warmup, ndraws = draws,
     maxdepth = maxdepth, target_accept = target, seed = seed,
     # On when someone is watching, matching the optimiser rather than differing
@@ -662,9 +695,13 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # The shell the assembler fills, matching what an optimised fit carries so
   # that everything downstream reads a sampled fit the same way.
   subject_loglik <- as.numeric(optimised$subject_loglik)
+  # The population block alone, as everywhere else: `estimate$raw` means the
+  # parameters on every fit, and the assembler overwrites it with the
+  # posterior mean of exactly those.
+  theta <- estimate[seq_len(npar)]
   out <- list(backend = "julia", model = model, model_spec = model_spec,
     data = datalong,
-    estimate = list(raw = estimate,
+    estimate = list(raw = theta,
       loglik = if (length(subject_loglik)) sum(subject_loglik) else
         as.numeric(optimised$maximum_loglik),
       logposterior = as.numeric(optimised$maximum_loglik),
@@ -672,11 +709,29 @@ print.ctSampleDiagnostics <- function(x, ...) {
     engine = model_spec$engine,
     args = list(backend = "julia", backendcontrol = backendcontrol,
       optimcontrol = optimcontrol, cores = cores, priors = priors,
-      intoverpop = intoverpop, optimize = FALSE))
+      intoverpop = intoverpop, optimize = FALSE,
+      intoverstates = isTRUE(intoverstates)))
   class(out) <- c("ctJuliaFit", "ctFitModel")
   out <- .ctBackendSampleAssemble(out, result, npar, saveEffects && joint,
-    as.integer(chains), warmup, draws, hessian, estimate)
-  out$identifiability <- .ctBackendIdentifiability(hessian,
+    as.integer(chains), warmup, draws, hessian, theta)
+  # The identifiability report is about the parameters, so it is given the
+  # parameter block's own curvature -- the profiled one on the state route,
+  # not the corner of the joint matrix, which describes the parameters at a
+  # trajectory held fixed.
+  identhessian <- hessian
+  if (!is.null(jointobjective)) {
+    identhessian <- try(matrix(as.numeric(.ctBackendJuliaValue(
+      module$ctsem_joint_hessian(jointobjective,
+        .ctJuliaNumericVector(estimate), profile = TRUE))),
+      nrow = npar, ncol = npar), silent = TRUE)
+    if (inherits(identhessian, "try-error")) identhessian <- NULL
+    out$estimate$innovations <- estimate[npar + seq_len(nstate)]
+    out$estimate$states <- try(.ctJuliaJointStates(model_spec,
+      jointobjective, estimate), silent = TRUE)
+    if (inherits(out$estimate$states, "try-error")) out$estimate$states <- NULL
+    out$estimate$loglik_type <- "joint"
+  }
+  out$identifiability <- .ctBackendIdentifiability(identhessian,
     .ctBackendRawParameterNames(out, npar))
   out
 }

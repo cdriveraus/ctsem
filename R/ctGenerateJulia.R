@@ -43,7 +43,20 @@
 .ctGenerateResolveFree <- function(model, quiet = FALSE) {
   defaults <- .ctGenerateDefaults()
   pars <- model$pars
-  free <- which(is.na(pars$value))
+  # A cell whose label is an expression rather than a parameter name is not a
+  # free parameter waiting for a value -- it *is* the specification, and the
+  # state-dependent forms this route exists to reach are written that way.
+  # Filling it destroys them silently: measured, a LAMBDA cell written
+  # `0.9 + 0.35 * eta1` was overwritten with the off-diagonal default of zero
+  # and the generated indicator came back pure noise, with nothing in the data
+  # or the message to say the loading had gone. So only a plain label is a
+  # candidate, and a label that names a latent process or a predictor is a
+  # reference to it rather than a parameter of its own.
+  reserved <- c(model$latentNames, model$manifestNames, model$TDpredNames,
+    model$TIpredNames)
+  label <- !is.na(pars$param) & grepl('^[A-Za-z.][A-Za-z0-9._]*$', pars$param) &
+    !pars$param %in% reserved
+  free <- which(is.na(pars$value) & (is.na(pars$param) | label))
   if (!length(free)) return(model)
   filled <- character()
   for (i in free) {
@@ -94,7 +107,7 @@
 
 #' @keywords internal
 .ctGenerateJulia <- function(model, n.subjects, times, project = NULL,
-  quiet = FALSE) {
+  quiet = FALSE, intoverstates = TRUE) {
 
   if (!requireNamespace("JuliaConnectoR", quietly = TRUE)) {
     stop("Generating with backend='julia' needs the JuliaConnectoR package.",
@@ -126,11 +139,27 @@
   raw <- if (npar < 1L) 0 else numeric(npar)
 
   nmanifest <- length(model$manifestNames)
-  base <- matrix(stats::rnorm(nmanifest * nrow(skeleton)), nmanifest,
-    nrow(skeleton))
-  # `ctsem_generate` returns the draws alongside the row likelihoods, and hands
-  # them back manifest-major.
-  generated <- .ctBackendGenerate(handle, raw, base)
+  if (isTRUE(intoverstates)) {
+    base <- matrix(stats::rnorm(nmanifest * nrow(skeleton)), nmanifest,
+      nrow(skeleton))
+    # `ctsem_generate` returns the draws alongside the row likelihoods, and
+    # hands them back manifest-major.
+    generated <- .ctBackendGenerate(handle, raw, base)
+  } else {
+    # The state-explicit route: sample the trajectory, then each observation
+    # given the state at its row. The engine says how many latent innovations
+    # the design needs -- one per state at each subject's first row and one per
+    # diffusing state per bounded substep after it -- because it is the side
+    # that knows how the intervals were split.
+    #
+    # Innovations first, then the observation deviates, so the two blocks are
+    # drawn in a fixed order from one seed.
+    nz <- .ctBackendStateDimension(handle)
+    z <- stats::rnorm(nz)
+    base <- matrix(stats::rnorm(nmanifest * nrow(skeleton)), nmanifest,
+      nrow(skeleton))
+    generated <- .ctBackendGenerateStates(handle, raw, z, base)
+  }
   drawn <- if (is.list(generated)) generated$Y else generated
   drawn <- as.numeric(drawn)
   if (length(drawn) != nmanifest * nrow(skeleton)) {

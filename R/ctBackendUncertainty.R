@@ -78,6 +78,20 @@
       ".", call. = FALSE)
   }
 
+  # A state-explicit fit has one uncertainty route and not five. The others
+  # all reach for `lpgFunc`, which evaluates the *marginal* likelihood over
+  # the parameters -- a different objective from the one this fit maximised,
+  # and using it here would produce standard errors for a model that was not
+  # fitted. `hessian` needs only the curvature, which the engine supplies
+  # correctly for this target.
+  if (isFALSE(fit$args$intoverstates) && !identical(uncertainty, "hessian")) {
+    stop("uncertainty='", uncertainty, "' is not available for an ",
+      "intoverstates=FALSE fit: it would score the marginal likelihood, ",
+      "which is not what this fit maximised. Use uncertainty='hessian', ",
+      "which profiles the states out, or fit with optimize=FALSE to sample ",
+      "the states and read the posterior directly.", call. = FALSE)
+  }
+
   est <- as.numeric(fit$estimate$raw)
   if (!length(est) || any(!is.finite(est))) {
     stop("The fit has no finite raw parameter estimate to work from.", call. = FALSE)
@@ -383,6 +397,9 @@
 # back to the finite-difference Hessian: a worse covariance is a better outcome
 # than no fit at all, and the two are interchangeable at this seam.
 .ctBackendHessian <- function(fit, est, verbose = 0) {
+  # A state-explicit fit maximised a different object, so its curvature is a
+  # different object too. See `.ctBackendJointHessian`.
+  if (isFALSE(fit$args$intoverstates)) return(.ctBackendJointHessian(fit, est))
   module <- .ctJuliaModule(.ctBackendSpec(fit)$project)
   # A user whose cached engine environment predates `ctsem_hessian` has no such
   # function, and that is a silent fallback rather than an error: the engine
@@ -429,4 +446,38 @@
       "score-based uncertainty cannot be computed here.", call. = FALSE)
   }
   scores
+}
+
+# The Hessian of an `intoverstates=FALSE` fit.
+#
+# Not the second derivative of the joint density in the parameter block: that
+# is the curvature at *fixed* states, which treats a trajectory that was
+# estimated as though it had been observed and gives intervals far too
+# narrow. What a standard error needs here is the curvature of the profile,
+# which is the Schur complement of the joint Hessian -- equivalently the
+# Laplace approximation to the observed information with the states
+# integrated back out. The engine forms it per subject, so no matrix of the
+# full state dimension is ever built; see `ctsem_joint_hessian`.
+.ctBackendJointHessian <- function(fit, est) {
+  spec <- .ctBackendSpec(fit)
+  module <- .ctJuliaModule(spec$project)
+  innovations <- as.numeric(fit$estimate$innovations)
+  if (!length(innovations)) return(NULL)
+  joint <- try(.ctJuliaJointObjective(fit, length(est)), silent = TRUE)
+  if (inherits(joint, "try-error")) return(NULL)
+  message("Computing exact Hessian, with the states profiled out")
+  result <- try(.ctBackendJuliaValue(module$ctsem_joint_hessian(joint,
+    .ctJuliaNumericVector(c(as.numeric(est), innovations)),
+    profile = TRUE)), silent = TRUE)
+  if (inherits(result, "try-error") || is.null(result)) {
+    warning("The profiled Hessian could not be formed at the estimate -- ",
+      "usually a subject whose trajectory the data does not determine. ",
+      "Falling back to the finite-difference Hessian, which differentiates ",
+      "the marginal likelihood and so does not describe this fit.",
+      call. = FALSE)
+    return(NULL)
+  }
+  hessian <- matrix(as.numeric(result), nrow = length(est), ncol = length(est))
+  if (any(!is.finite(hessian))) return(NULL)
+  hessian
 }

@@ -3106,7 +3106,11 @@ function ctsem_subject_gradients(laplace::CTSEMLaplaceObjective,
     return (value=value + _ctsem_log_prior(laplace.objective, theta), scores=scores)
 end
 
-for (f, what) in ((:ctsem_generate, "Data generation"),)
+for (f, what) in ((:ctsem_generate, "Data generation"),
+    (:ctsem_generate_states, "Data generation"),
+    (:ctsem_state_dimension, "The state-explicit path"),
+    (:ctsem_joint_loglikelihood, "The state-explicit path"),
+    (:ctsem_joint_evaluate, "The state-explicit path"))
     @eval function $f(laplace::CTSEMLaplaceObjective, args...; kwargs...)
         throw(ArgumentError(string($what, " is not implemented for the Laplace ",
             "random-effect route yet. It needs a per-subject parameter vector ",

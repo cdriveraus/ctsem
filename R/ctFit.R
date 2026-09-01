@@ -89,7 +89,21 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' @param ctstanmodel Deprecated. Use \code{model}.
 #' @param stanmodeltext already specified Stan model character string, generally leave NA unless modifying Stan model directly.
 #' (Possible after modification of output from fitting with argument fit=FALSE)
-#' @param intoverstates logical indicating whether or not to integrate over latent states using a Kalman filter.
+#' @param intoverstates logical indicating whether or not to integrate over
+#' latent states using a Kalman filter. \code{FALSE} instead makes the
+#' latent states part of what is estimated: the target becomes the joint
+#' density of the data and the states, and the fit reports the trajectory
+#' alongside the parameters in \code{fit$estimate$states}.
+#'
+#' With \code{backend='julia'} that route is exact -- no Gaussian
+#' assumption is made about the state anywhere, where the filter's update
+#' for a binary, ordinal or count indicator is an assumed-density
+#' projection. Pair it with \code{optimize=FALSE}: sampling the joint
+#' density gives the posterior of parameters and states together, while
+#' \code{optimize=TRUE} gives its joint mode, whose variance parameters
+#' are biased downward. Standard errors for an optimised fit come from the
+#' Hessian with the states profiled out, and \code{uncertainty} is
+#' restricted to \code{'hessian'} for that reason.
 #' Generally recommended to set TRUE unless using non-gaussian measurement model.
 #' @param binomial Deprecated. Logical indicating the use of binary rather than Gaussian data, as with IRT analyses.
 #' This now sets \code{intoverstates = FALSE} and the \code{manifesttype} of every indicator to 1, for binary.
@@ -125,6 +139,31 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' costs the same regardless of the number of free parameters, so it is
 #' dramatically faster for larger models and marginally slower for very small
 #' ones.
+#' \code{optimcontrol$datastart} (\code{backend='julia'}, default \code{TRUE})
+#' takes the starting values for the diagonals of \code{DRIFT},
+#' \code{DIFFUSION}, \code{T0VAR} and \code{MANIFESTVAR} from the data
+#' instead of from the fixed point every fit used to start at. That point put
+#' \code{DIFFUSION} at 6.93 and the variances at 3.47 whatever the data were
+#' measured in, and starting far above the data's scale lets the optimiser
+#' collapse the latent process to zero variance and call the whole signal
+#' measurement error. Each process's scale is read off the indicators loading
+#' on it -- on the scale its link puts them, so a count is read through
+#' \code{log1p} and a binary or ordinal indicator, whose logit fixes the
+#' latent scale by itself, contributes none -- and each cell's own transform is
+#' then inverted numerically to get the raw value. Everything is clamped, and a
+#' cell that cannot be solved keeps the old default.
+#'
+#' Measured on a three-indicator factor model with the data rescaled, over
+#' four starting-jitter seeds each: at x0.01 the fit converged 0 times out of
+#' 4 with this off and 4 out of 4 with it on, reaching 4565.60 against
+#' 4203.69-4237.21 and recovering the first free loading at 0.808 against
+#' -844 to -1206, for a generating value of 0.8. At x1 the two are identical.
+#' At x100 it is neutral: that model is near a basin boundary at that scale
+#' and converges twice in four either way, decided by the jitter on the
+#' parameters this does not set rather than by the derived ones. Supplied
+#' \code{inits} are never overridden, and \code{optimcontrol$datastart =
+#' FALSE} restores the fixed start.
+#'
 #' \code{optimcontrol$carefulfit} works for \code{backend='julia'} as it does
 #' for Stan: when \code{priors=FALSE}, a rough first pass is run \emph{with}
 #' ctsem's \code{normal(0,1)} raw priors to obtain starting values, and the
@@ -624,7 +663,46 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     message('HMC sampling requested, but priors disabled -- are you sure? consider setting priors=TRUE')
     # !priors <- FALSE
   }
-  if(optimize && !intoverstates) warning('intoverstates=TRUE required for sensible optimization! Proceed onwards to weird output at own risk!')
+  # Maximising over the states rather than integrating them out biases the
+  # variance parameters downward -- a variance whose own realisations are
+  # being chosen at the same time can always be made to look smaller -- so
+  # the joint mode is not the maximum likelihood estimate. That is a property
+  # of the estimator and not of a backend, so the warning stands for both.
+  # Sampling the same density has no such problem, which is why it points
+  # there.
+  if(optimize && !intoverstates){
+    warning(
+      'intoverstates=FALSE maximises over the latent states rather than ',
+      'integrating them out, which biases variance parameters downward: the ',
+      'joint mode is not the maximum likelihood estimate. Use ',
+      'intoverstates=TRUE, or optimize=FALSE to sample the states instead.',
+      call.=FALSE)
+    # And for a Gaussian indicator with free measurement error it is worse
+    # than biased: the joint density is *unbounded*. Send the measurement
+    # variance to zero and let the trajectory interpolate the data exactly,
+    # and the density diverges -- there is no maximum to find, and an
+    # optimiser correctly runs off toward the boundary. Measured on a
+    # one-indicator model: MANIFESTVAR reached a raw value of -10.6 with a
+    # gradient of 3e9, reported as not converged.
+    #
+    # Said here rather than left to that non-convergence, which describes
+    # the symptom and not the cause. A categorical indicator has no such
+    # parameter and is unaffected; so is a Gaussian one whose MANIFESTVAR
+    # is fixed.
+    freevar <- ctm$pars$matrix %in% 'MANIFESTVAR' &
+      ctm$pars$row == ctm$pars$col & is.na(ctm$pars$value)
+    if(any(freevar)){
+      gaussian <- ctm$manifesttype[ctm$pars$row[freevar]] %in% 0
+      if(any(gaussian)) warning(
+        'With intoverstates=FALSE the joint density is unbounded for a ',
+        'Gaussian indicator whose MANIFESTVAR is free: the measurement ',
+        'variance goes to zero and the latent trajectory interpolates the ',
+        'data exactly. The optimiser will run to that boundary and report ',
+        'not converged. Fix MANIFESTVAR for ',
+        paste(ctm$manifestNames[unique(ctm$pars$row[freevar][gaussian])],
+          collapse=', '), ', or use optimize=FALSE.', call.=FALSE)
+    }
+  }
 
   # `intoverpop` selects how declared individual differences are handled.
   # TRUE, FALSE and 'auto' keep their existing meanings exactly. The two
@@ -984,7 +1062,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     .ctJuliaUnsupported(ctm, optimize=optimize, priors=priors,
       intoverpop=intoverpop, vb=vb, gendata=gendata,
       stanmodeltext=stanmodeltext, compileArgs=compileArgs,
-      forcerecompile=forcerecompile)
+      forcerecompile=forcerecompile, intoverstates=intoverstates)
     # `optimize` and `intoverpop` are orthogonal here. `intoverpop` says which
     # random effects are integrated out and how; `optimize` says whether the
     # remaining parameters are maximised or sampled. Every combination is
@@ -1009,7 +1087,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       cores=cores, backendcontrol=backendcontrol, optimcontrol=optimcontrol,
       verbose=verbose, fit=fit, priors=priors, optimize=optimize,
       chains=chains, iter=iter, control=control,
-      intoverpop=juliaintoverpop)
+      intoverpop=juliaintoverpop, intoverstates=intoverstates)
     # `plot` draws the trace *after* the fit here, not during it.
     #
     # The Stan path can plot live because it writes sample files a second

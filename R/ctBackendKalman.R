@@ -422,6 +422,50 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
     .ctJuliaNumericVector(as.numeric(raw)), JuliaConnectoR::juliaPut(base)))
 }
 
+
+# The state-explicit route -----------------------------------------------------
+#
+# `intoverstates=FALSE`. Rather than drawing each row from the filter's
+# one-step-ahead predictive and conditioning on the draw, this samples the
+# latent trajectory from the process itself and then each observation from its
+# conditional distribution given the state at its row.
+#
+# For a linear Gaussian model the two agree in distribution, because the
+# filter's predictive is then exact. For a non-Gaussian one they do not: the
+# filter's categorical update is an assumed-density projection that moves the
+# state it conditions on, and with an unbounded indicator -- a count -- an
+# improbable draw moves it far enough that the next row is drawn from a rate
+# that has already run. Nothing of the kind can happen here, because no
+# observation touches a state.
+#
+# Two blocks of standard normals, both drawn on the R side so `set.seed()`
+# governs the result: one per latent innovation, and one per manifest cell.
+
+.ctBackendStateDimension <- function(fit) {
+  spec <- .ctBackendSpec(fit)
+  module <- .ctJuliaModule(spec$project)
+  as.integer(.ctBackendJuliaValue(
+    module$ctsem_state_dimension(.ctJuliaObjective(fit))))
+}
+
+.ctBackendGenerateStates <- function(fit, raw, z, base) {
+  spec <- .ctBackendSpec(fit)
+  module <- .ctJuliaModule(spec$project)
+  .ctBackendJuliaValue(module$ctsem_generate_states(.ctJuliaObjective(fit),
+    .ctJuliaNumericVector(as.numeric(raw)),
+    .ctJuliaNumericVector(as.numeric(z)), JuliaConnectoR::juliaPut(base)))
+}
+
+# The joint density of states and data, and its gradient with respect to the
+# two of them stacked. `z` is `.ctBackendStateDimension()` long.
+.ctBackendJointDensity <- function(fit, raw, z, gradient = TRUE) {
+  spec <- .ctBackendSpec(fit)
+  module <- .ctJuliaModule(spec$project)
+  .ctBackendJuliaValue(module$ctsem_joint_evaluate(.ctJuliaObjective(fit),
+    .ctJuliaNumericVector(as.numeric(raw)),
+    .ctJuliaNumericVector(as.numeric(z)), gradient = isTRUE(gradient)))
+}
+
 .ctBackendGenerateFromFit <- function(fit, nsamples = 200, fullposterior = FALSE,
   cores = 2) {
   spec <- .ctBackendSpec(fit)
@@ -445,9 +489,20 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
 
   generated <- array(NA_real_, dim = c(nsamples, nrows, nmanifest))
   llrow <- matrix(0, nsamples, nrows)
+  # A state-explicit fit gets a state-explicit posterior predictive.
+  # Generating through the filter at its estimate would be a draw from a
+  # density this fit did not maximise -- the very substitution the route
+  # exists to avoid -- and it would look entirely reasonable.
+  statepath <- isFALSE(fit$args$intoverstates)
+  nz <- if (statepath) .ctBackendStateDimension(fit) else 0L
   for (iteration in seq_len(nsamples)) {
+    # Innovations first, then the observation deviates, matching the order
+    # `.ctGenerateJulia` draws them in.
+    z <- if (statepath) stats::rnorm(nz) else NULL
     base <- matrix(stats::rnorm(nmanifest * nrows), nmanifest, nrows)
-    drawn <- .ctBackendGenerate(fit, samples[iteration, ], base)
+    drawn <- if (statepath) {
+      .ctBackendGenerateStates(fit, samples[iteration, ], z, base)
+    } else .ctBackendGenerate(fit, samples[iteration, ], base)
     generated[iteration, , ] <- t(matrix(as.numeric(drawn$Y), nmanifest, nrows))
     llrow[iteration, ] <- as.numeric(drawn$llrow)
   }

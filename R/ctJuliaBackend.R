@@ -491,8 +491,17 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 }
 
 .ctJuliaUnsupported <- function(model, optimize, priors, intoverpop, vb, gendata,
-  stanmodeltext, compileArgs, forcerecompile) {
+  stanmodeltext, compileArgs, forcerecompile, intoverstates = TRUE) {
   failures <- character()
+  # `intoverstates=FALSE` fits over the joint density of parameters and states
+  # (see `state_sampling.jl`), which composes with the default `intoverpop` --
+  # augmented random effects are extra states, so they are sampled along with
+  # every other one -- and does not compose with the Laplace route, which wraps
+  # the likelihood in an inner problem the state path replaces.
+  if (!isTRUE(intoverstates) && identical(as.character(intoverpop)[1L], "laplace")) {
+    failures <- c(failures,
+      "intoverstates=FALSE together with intoverpop='laplace'")
+  }
   # `optimize=FALSE` is supported now: the engine has its own No-U-Turn sampler,
   # and which target it samples is decided by `intoverpop`. See
   # `.ctJuliaSampleFit`.
@@ -584,8 +593,10 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   exact <- rep(NA_character_, nrow(p))
   if (!is.null(ctm$transformtext)) {
     recorded <- ctm$transformtext
-    exact <- recorded$text[match(paste(p$matrix, p$row, p$col, sep = ""),
-      paste(recorded$matrix, recorded$row, recorded$col, sep = ""))]
+    exact <- recorded$text[match(paste(p$matrix, p$row, p$col, sep = "
+"),
+      paste(recorded$matrix, recorded$row, recorded$col, sep = "
+"))]
   }
   numeric_transform <- !is.na(suppressWarnings(as.integer(p$transform)))
   for (i in which(numeric_transform)) {
@@ -1339,7 +1350,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # raw vector is as long as whichever reaches furthest. Taking `laplace$npar`
   # alone left the coefficients past the end of it -- the same failure the
   # level scales had, one block further along.
-  npar <- max(c(parameter_table$parnumber, laplace$npar,
+  # The leading zero is the count of a model with nothing free. Every index
+  # vector here is NA-filled for a fixed cell, so a fully fixed model -- what
+  # `ctGenerate` prepares, having resolved every free parameter to a value --
+  # leaves `max` nothing to take a maximum over: it warns and returns -Inf.
+  npar <- max(c(0L, parameter_table$parnumber, laplace$npar,
     ti_effects$coefficient), na.rm = TRUE)
   .ctJuliaCheckLayout(parameter_table, laplace, ti_effects, npar)
   prior_spec <- if (!isTRUE(priors)) NULL else if (!is.null(laplace)) {
@@ -1556,6 +1571,68 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   objective
 }
 
+# The state-explicit objective ------------------------------------------------
+#
+# `intoverstates=FALSE`: the target is the joint density of the parameters and
+# the innovations that build the latent states, over `x = [theta; z]`. The
+# engine's optimiser and sampler both take it exactly as they take the marginal
+# one -- they ask for a value and a gradient at a vector, and this answers --
+# so nothing about the fit's control flow changes, only which objective it is
+# handed.
+#
+# Cached beside the marginal objective and keyed on the same spec plus the
+# parameter count, because building it walks the design to count innovations.
+
+.ctJuliaJointObjective <- function(object, npar) {
+  # A fit, a classed model, or the bare spec `.ctJuliaPrepare` returns -- the
+  # fit path holds the last of those and classing it at every call site is how
+  # a caller ends up passing the wrong one.
+  spec <- if (inherits(object, "ctJuliaFit")) object$model_spec else object
+  if (!inherits(spec, "ctJuliaModel")) {
+    if (!is.list(spec) || is.null(spec$parameter_table)) {
+      stop("object must be a ctJuliaModel, a ctJuliaFit, or a prepared spec.",
+        call. = FALSE)
+    }
+    spec <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
+  }
+  if (!is.null(spec$laplace)) {
+    stop("intoverstates=FALSE cannot be combined with intoverpop='laplace' or ",
+      "'none': the Laplace route wraps the likelihood in a per-subject inner ",
+      "problem over the random effects, and the state path replaces the ",
+      "likelihood itself. Use the default intoverpop, which carries random ",
+      "effects as augmented states and so is sampled along with them.",
+      call. = FALSE)
+  }
+  npar <- max(1L, as.integer(npar)[1L])
+  key <- paste0(.ctJuliaObjectiveKey(spec), "|joint|", npar)
+  if (exists(key, envir = .ct_julia_cache$objectives, inherits = FALSE)) {
+    return(get(key, envir = .ct_julia_cache$objectives, inherits = FALSE))
+  }
+  module <- .ctJuliaModule(spec$project)
+  objective <- module$ctsem_joint_objective(.ctJuliaObjective(spec), npar)
+  assign(key, objective, envir = .ct_julia_cache$objectives)
+  objective
+}
+
+# How many innovations this design needs, which is what the parameter vector is
+# extended by.
+.ctJuliaStateDimension <- function(spec) {
+  handle <- structure(spec, class = c("ctJuliaModel", "ctFitModel"))
+  .ctBackendStateDimension(handle)
+}
+
+# The latent trajectory an estimate implies, as rows by latents -- the thing a
+# state-explicit fit has that a marginal one has to run a smoother for.
+.ctJuliaJointStates <- function(spec, joint, x) {
+  module <- .ctJuliaModule(spec$project)
+  states <- .ctBackendJuliaValue(module$ctsem_joint_states(joint,
+    .ctJuliaNumericVector(as.numeric(x))))
+  nlatent <- length(spec$model$latentNames)
+  out <- t(matrix(as.numeric(states), nrow = nlatent))
+  colnames(out) <- spec$model$latentNames
+  out
+}
+
 #' Evaluate a prepared Julia ctsem likelihood
 #' @param object A \code{ctJuliaModel} or \code{ctJuliaFit}.
 #' @param pars Unconstrained parameters; defaults to the fitted estimate.
@@ -1672,9 +1749,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 
 .ctJuliaOptimise <- function(model_spec, start, backendcontrol = list(),
   gradient = "adjoint", cores = 1L, verbose = 0L, tol = NULL,
-  callback = NULL) {
+  callback = NULL, objective = NULL) {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
-  objective <- .ctJuliaObjective(spec)
+  # A caller may hand in the objective to maximise. `intoverstates=FALSE` does,
+  # passing the joint one over `[theta; z]`; everything below is unchanged by
+  # that, because `ctsem_optimize` is typed on what the two have in common.
+  if (is.null(objective)) objective <- .ctJuliaObjective(spec)
   module <- .ctJuliaModule(model_spec$project)
   common <- list(maxiter = as.integer(.ctJuliaOr(backendcontrol$maxiter, 1000L)),
     g_tol = .ctJuliaOr(tol, .ctJuliaOr(backendcontrol$g_tol, 1e-8)),
@@ -1761,12 +1841,13 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NULL, cores = 1L,
   backendcontrol = list(), optimcontrol = list(), verbose = 0L, fit = TRUE,
   priors = FALSE, intoverpop = "augmented", optimize = TRUE, chains = 4L,
-  iter = 2000L, control = list()) {
+  iter = 2000L, control = list(), intoverstates = TRUE) {
   .ctJuliaInterruptSafe(.ctFitJuliaBackendImpl(datalong = datalong,
     model = model, prepared_data = prepared_data, inits = inits, cores = cores,
     backendcontrol = backendcontrol, optimcontrol = optimcontrol,
     verbose = verbose, fit = fit, priors = priors, intoverpop = intoverpop,
-    optimize = optimize, chains = chains, iter = iter, control = control))
+    optimize = optimize, chains = chains, iter = iter, control = control,
+    intoverstates = intoverstates))
 }
 
 #' @keywords internal
@@ -1774,7 +1855,7 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
   inits = NULL, cores = 1L,
   backendcontrol = list(), optimcontrol = list(), verbose = 0L, fit = TRUE,
   priors = FALSE, intoverpop = "augmented", optimize = TRUE, chains = 4L,
-  iter = 2000L, control = list()) {
+  iter = 2000L, control = list(), intoverstates = TRUE) {
   if (isTRUE(backendcontrol$restart_session)) .ctJuliaClearSession()
   project <- .ctJuliaOr(backendcontrol$julia_project, NULL)
   # `cores` splits the engine's subject loop. It is requested as a Julia thread
@@ -1841,12 +1922,53 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
       inits = inits, cores = cores, backendcontrol = backendcontrol,
       optimcontrol = optimcontrol, chains = chains, iter = iter,
       control = control, priors = priors, intoverpop = intoverpop,
-      gradient = gradient, verbose = verbose))
+      gradient = gradient, verbose = verbose,
+      intoverstates = intoverstates))
   }
 
-  npar <- max(c(model_spec$parameter_table$parnumber, model_spec$laplace$npar,
+  npar <- max(c(0L, model_spec$parameter_table$parnumber, model_spec$laplace$npar,
     model_spec$ti_effects$coefficient), na.rm = TRUE)
+  # A fully fixed model has nothing to maximise over. Without the zero above,
+  # `max` warned and returned -Inf, and `rnorm(-Inf, ...)` then failed with
+  # "invalid arguments", which says nothing about the model. Refused rather
+  # than run: a zero-length start would put the engine's L-BFGS on a
+  # zero-dimensional problem, which nothing here tests. Evaluating a fixed
+  # model's likelihood is a fair thing to want, and `fit = FALSE` still
+  # returns the prepared model to evaluate.
+  if (npar < 1L) {
+    stop("This model has no free parameters, so there is nothing to optimise. ",
+      "Free a parameter, or use fit = FALSE to prepare the model without ",
+      "fitting it.", call. = FALSE)
+  }
   start <- .ctJuliaInitialValues(npar, inits)
+  # Starting values read off the data, for the diagonals whose defaults are
+  # guesses about the data's scale. See R/ctDataStart.R for what is derived and
+  # why; `optimcontrol$datastart = FALSE` restores the fixed start. Supplied
+  # `inits` are never overridden -- a starting value the caller chose is the
+  # one thing here that is not a guess.
+  datastart <- .ctJuliaOr(optimcontrol$datastart, TRUE)
+  if (isTRUE(datastart) && is.null(inits) && !is.null(datalong)) {
+    derived <- try(.ctDataStart(datalong, model, model_spec, npar), silent = TRUE)
+    if (!inherits(derived, "try-error") && !is.null(derived)) {
+      use <- is.finite(derived)
+      # Exactly, not jittered: where the data decided the value, two runs of
+      # the same fit should start in the same place.
+      start[use] <- derived[use]
+      if (verbose > 0) message("Starting values derived from the data for ",
+        sum(use), " of ", npar, " parameters.")
+    }
+  }
+  # The state-explicit target, when asked for: the same optimiser over a longer
+  # vector. The innovations start at zero, which is both their prior mode and
+  # the trajectory the parameters alone imply -- there is nothing better to
+  # start them at and nothing arbitrary about it.
+  jointobjective <- NULL
+  nstate <- 0L
+  if (!isTRUE(intoverstates)) {
+    jointobjective <- .ctJuliaJointObjective(model_spec, npar)
+    nstate <- .ctJuliaStateDimension(model_spec)
+    start <- c(start, numeric(nstate))
+  }
   # The prior-warmed spec, or NULL when priors cannot be mapped onto this
   # model's raw layout. `.ctBackendLaplacePriorSpec` refuses shapes it cannot
   # map rather than mis-assigning priors across levels, so this is allowed to
@@ -1913,6 +2035,12 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
   # since the point of the pass is to produce some. Overriding a starting value
   # the caller chose would be worse than surprising.
   if (!is.null(inits) && !identical(inits, "random")) warmiter <- 0L
+  # And not at all on the state-explicit target. The warm-up exists to place
+  # the *population* parameters from the priors; the innovations already
+  # start at their own prior mode, and running a second optimisation over
+  # the whole extended vector to rediscover that would cost as much as the
+  # fit it is warming.
+  if (!isTRUE(intoverstates)) warmiter <- 0L
   if (warmiter >= 1) {
     spec <- warmspec()
     if (!is.null(spec)) {
@@ -1931,7 +2059,7 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
   }
   result <- .ctJuliaOptimise(model_spec, start, backendcontrol = backendcontrol,
     gradient = gradient, cores = cores, verbose = verbose,
-    callback = optimcontrol$callback)
+    callback = optimcontrol$callback, objective = jointobjective)
   # There is deliberately no second, after-the-fact prior restart here.
   #
   # An earlier version retried a non-converged fit from a full prior
@@ -1950,11 +2078,26 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
   subject_loglik <- as.numeric(result$subject_loglik)
   loglik <- if (length(subject_loglik)) sum(subject_loglik) else
     as.numeric(result$maximum_loglik)
+  # `[theta; z]` comes back as one vector and is split here, so that
+  # `estimate$raw` means the same thing on every fit: the population
+  # parameters, and nothing else. Everything downstream -- the summary, the
+  # transforms, prediction -- reads that and needs no notion of a state
+  # block. The trajectory is kept beside it rather than folded in.
+  minimizer <- as.numeric(result$minimizer)
+  gradientvec <- as.numeric(result$gradient)
+  states <- NULL
+  innovations <- NULL
+  if (!isTRUE(intoverstates)) {
+    innovations <- minimizer[npar + seq_len(nstate)]
+    states <- .ctJuliaJointStates(model_spec, jointobjective, minimizer)
+    minimizer <- minimizer[seq_len(npar)]
+    gradientvec <- gradientvec[seq_len(npar)]
+  }
   out <- list(backend = "julia", model = model, model_spec = model_spec,
-    data = datalong, estimate = list(raw = as.numeric(result$minimizer),
+    data = datalong, estimate = list(raw = minimizer,
       loglik = loglik,
       logposterior = as.numeric(result$maximum_loglik),
-      gradient = as.numeric(result$gradient),
+      gradient = gradientvec,
       subject_loglik = result$subject_loglik, converged = isTRUE(result$converged),
       iterations = as.integer(result$iterations),
       # Evaluation counts, because "how many times did it call the likelihood"
@@ -1987,7 +2130,20 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
       # Hager-Zhang stopped short and the fit was finished by the fallback.
       linesearch = if (is.null(result$linesearch)) NA_character_ else
         as.character(result$linesearch),
-      stalled = isTRUE(result$stalled)), engine = model_spec$engine,
+      stalled = isTRUE(result$stalled),
+      # State-explicit fits only. `states` is the trajectory at the
+      # estimate, rows by latents, and `innovations` the standard normal
+      # vector it was built from -- the same thing `ctGenerate` is handed,
+      # so a fitted trajectory can be replayed.
+      #
+      # `loglik_type` says what `loglik` is. On the marginal route it is a
+      # marginal log likelihood; here it is the *joint* density of the data
+      # and the states, which is a different quantity and is not comparable
+      # with one -- an information criterion computed across the two would
+      # be meaningless, and this is what says so.
+      states = states, innovations = innovations,
+      loglik_type = if (isTRUE(intoverstates)) "marginal" else "joint"),
+    engine = model_spec$engine,
     # Every iteration, recorded whatever `verbose` said. It costs a push onto a
     # vector in Julia and one transfer at the end, and the fit whose trace turns
     # out to be worth looking at is exactly the one nobody thought to turn
@@ -1995,7 +2151,7 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
     trace = .ctBackendTrace(result$trace),
     args = list(backend = "julia", backendcontrol = backendcontrol,
       optimcontrol = optimcontrol, cores = cores, priors = priors,
-      intoverpop = intoverpop))
+      intoverpop = intoverpop, intoverstates = isTRUE(intoverstates)))
   # An optimizer that ends where it started has not fitted anything, whatever
   # its convergence flags say -- and Optim's own verdict is a disjunction that a
   # failed first line search satisfies trivially. Saying so here is what stops a
@@ -2077,7 +2233,28 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
   # the backend chosen, is the difference this exists to remove. The control
   # names are `stanoptimis()`'s, so `optimcontrol` means the same thing to both
   # backends; `optimcontrol$estonly` skips it, as it does there.
-  if (!isTRUE(optimcontrol$estonly)) {
+  # Not for an optimised state-explicit fit. The only curvature available
+  # there is the profile's, and with about as many innovations as
+  # observations the profile is nearly flat: the states re-optimise to
+  # absorb almost any change in the parameters, which is what profiling
+  # does and is why it is not an observed information. The term that
+  # identifies the parameters -- the log determinant the Laplace marginal
+  # carries -- is exactly the one profiling drops. Measured on fifteen
+  # subjects of six Gaussian rows with four free parameters, the largest
+  # eigenvalue of the profiled curvature was 0.05.
+  #
+  # Reporting intervals from that would be numbers that look like standard
+  # errors and are not, which is worse than saying so. The matrix is kept
+  # on the fit for anyone who wants to look, and an explicit
+  # ctOptimUncertainty(fit) still computes from it.
+  if (!isTRUE(intoverstates)) {
+    profiled <- try(.ctBackendJointHessian(out, out$estimate$raw),
+      silent = TRUE)
+    if (!inherits(profiled, "try-error")) out$estimate$hessian_profile <- profiled
+    message("No standard errors: an optimised intoverstates=FALSE fit has ",
+      "only the profile curvature, which the states flatten. Use ",
+      "optimize=FALSE to sample them, or intoverstates=TRUE.")
+  } else if (!isTRUE(optimcontrol$estonly)) {
     uncertainty <- .ctJuliaOr(optimcontrol$uncertainty, "hessian")
     out <- ctOptimUncertainty(fit = out, uncertainty = uncertainty,
       draws = .ctJuliaOr(optimcontrol$uncertaintyDraws, "auto"),
