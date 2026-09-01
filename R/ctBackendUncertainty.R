@@ -52,11 +52,12 @@
 # which is the same information.
 .ctBackendDataShape <- function(fit) {
   spec <- fit$model_spec
-  nsubjects <- length(spec$subject_starts)
-  ndatapoints <- length(spec$times)
-  list(nsubjects = nsubjects, ndatapoints = ndatapoints,
-    subject = rep(seq_len(max(1L, nsubjects)),
-      times = diff(c(spec$subject_starts, ndatapoints + 1L))))
+  list(nsubjects = length(spec$subject_starts), ndatapoints = length(spec$times),
+    # `.ctFitRowSubject()` rather than a second spelling of the same expansion.
+    # This one wrote `seq_len(max(1L, nsubjects))` where that writes
+    # `seq_along(starts)`; they agree on every input either can be given, but
+    # two spellings of one index map is how they come to disagree.
+    subject = .ctFitRowSubject(fit))
 }
 
 # `fullbootstrap` is the one method still out of reach: it resamples subjects
