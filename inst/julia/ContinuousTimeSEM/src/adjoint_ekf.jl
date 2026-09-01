@@ -509,8 +509,6 @@ function _reverse_predict!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
     JAx = record.JAx
     x = record.state_in
     k = length(dyn)
-    Ad = A[dyn, dyn]
-    JAxd = JAx[dyn, dyn]
 
     # The discrete-time reverse pass is the continuous one with its three hard
     # pieces removed rather than a second implementation of it: A is JAx (no
