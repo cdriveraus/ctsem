@@ -158,8 +158,6 @@
   gsub("\\", "/", file.path(base, "julia", paste0("engine-", version)), fixed = TRUE)
 }
 
-# Whether a Julia session already exists. JuliaConnectoR starts one lazily on
-# the first call, so "has anything talked to Julia yet" is the question.
 # Is a Julia session live? *Without* starting one.
 #
 # This used to fall back to `JuliaConnectoR::juliaEval("true")`, which starts a
@@ -768,27 +766,6 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     c("matrix", "row", "col"), drop = FALSE]
 }
 
-# The Laplace route's counterpart to `.ctJuliaAugmentRandomEffects`.
-#
-# Where the augmented route grows the latent state, so that the ordinary filter
-# integrates the random effects out alongside the dynamic states, this route
-# leaves the model's state space alone and describes the random effects to the
-# engine as *indices*: which raw parameters vary between subjects, and which
-# raw parameters say how much. The engine then integrates them out per subject.
-#
-# The raw vector's layout is Stan's, deliberately: population means, then
-# population scales, then lower-triangular correlation coordinates, then TI
-# predictor effects. `.ctBackendPriorSpec` maps ctsem's priors onto exactly
-# that layout, and `.ctJuliaAugmentRandomEffects` already reproduces it, so
-# reusing it means priors, uncertainty and the summary need no Laplace-specific
-# case -- and the two routes' raw vectors are directly comparable, which is
-# what makes an augmented-versus-Laplace check meaningful at all.
-# Which parameters vary at a given level, and the column that says so.
-#
-# The subject level keeps `indvarying`, unchanged and backward compatible. Each
-# grouping level above it gets `indvarying_<idname>` -- explicit rather than
-# positional, so a model carrying three levels reads as three named columns
-# rather than as a matrix nobody can check by eye.
 # Which random-effect correlations, if any, ended the fit on their cap.
 #
 # Reported as a data frame naming the parameter pair and the level, because
@@ -865,6 +842,12 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   invisible(TRUE)
 }
 
+# Which parameters vary at a given level, and the column that says so.
+#
+# The subject level keeps `indvarying`, unchanged and backward compatible. Each
+# grouping level above it gets `indvarying_<idname>` -- explicit rather than
+# positional, so a model carrying three levels reads as three named columns
+# rather than as a matrix nobody can check by eye.
 .ctJuliaLevelColumn <- function(model, level) {
   if (level == 1L) return("indvarying")
   paste0("indvarying_", model$groupIDnames[level - 1L])
@@ -948,6 +931,21 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   invisible(NULL)
 }
 
+# The Laplace route's counterpart to `.ctJuliaAugmentRandomEffects`.
+#
+# Where the augmented route grows the latent state, so that the ordinary filter
+# integrates the random effects out alongside the dynamic states, this route
+# leaves the model's state space alone and describes the random effects to the
+# engine as *indices*: which raw parameters vary between subjects, and which
+# raw parameters say how much. The engine then integrates them out per subject.
+#
+# The raw vector's layout is Stan's, deliberately: population means, then
+# population scales, then lower-triangular correlation coordinates, then TI
+# predictor effects. `.ctBackendPriorSpec` maps ctsem's priors onto exactly
+# that layout, and `.ctJuliaAugmentRandomEffects` already reproduces it, so
+# reusing it means priors, uncertainty and the summary need no Laplace-specific
+# case -- and the two routes' raw vectors are directly comparable, which is
+# what makes an augmented-versus-Laplace check meaningful at all.
 .ctJuliaLaplaceSpec <- function(model, table, prepared_data = NULL, dat = NULL) {
   base_npar <- suppressWarnings(max(c(0L, as.integer(table$parnumber)), na.rm = TRUE))
   varying <- integer()
@@ -1774,12 +1772,6 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   invisible(NULL)
 }
 
-# Run the engine's optimizer over a prepared specification.
-#
-# Factored out of ctFitJuliaBackend() because cross-validation re-optimises the
-# same model against held-out data (see .ctBackendLOO) and must do it exactly
-# the way a fit does -- same tolerances, same gradient method, same thread cap.
-# A second copy of this call would be a second set of defaults to keep in step.
 # The engine's per-iteration record, as a data frame.
 #
 # Flat vectors cross the bridge; the shape is rebuilt here. A missing or
@@ -1798,6 +1790,12 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   out
 }
 
+# Run the engine's optimizer over a prepared specification.
+#
+# Factored out of ctFitJuliaBackend() because cross-validation re-optimises the
+# same model against held-out data (see .ctBackendLOO) and must do it exactly
+# the way a fit does -- same tolerances, same gradient method, same thread cap.
+# A second copy of this call would be a second set of defaults to keep in step.
 .ctJuliaOptimise <- function(model_spec, start, backendcontrol = list(),
   gradient = "adjoint", cores = 1L, verbose = 0L, tol = NULL,
   callback = NULL, objective = NULL, progress_label = NULL) {
@@ -2173,15 +2171,15 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
       gradient = gradientvec,
       subject_loglik = result$subject_loglik, converged = isTRUE(result$converged),
       iterations = as.integer(result$iterations),
-      # Evaluation counts, because "how many times did it call the likelihood"
-      # is the first question about a fit that took longer than expected, and
-      # it was previously only obtainable by timing one evaluation and dividing.
       # What `ctsem_tune_chunks!` measured as the best subject-chunk count
       # within the `cores` ceiling. Carried onto the fit because the uncertainty
       # phase reads it rather than re-deriving it from `cores`: the subject loop
       # is not monotone in the chunk count, which is the whole reason the tuner
       # exists.
       chunks = if (is.null(result$chunks)) NA_integer_ else as.integer(result$chunks),
+      # Evaluation counts, because "how many times did it call the likelihood"
+      # is the first question about a fit that took longer than expected, and
+      # it was previously only obtainable by timing one evaluation and dividing.
       f_calls = if (is.null(result$f_calls)) NA_integer_ else as.integer(result$f_calls),
       g_calls = if (is.null(result$g_calls)) NA_integer_ else as.integer(result$g_calls),
       # The gradient at the estimate, and the tolerance it was judged against.
