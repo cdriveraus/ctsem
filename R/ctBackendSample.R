@@ -214,6 +214,17 @@
 #'   start from a conditional covariance that is exact for a linear model, so
 #'   replacing one with an estimate from a few hundred draws can add more noise
 #'   than it removes.
+#' @param processes Run each chain in its own R process rather than its own
+#'   thread. Off by default, and worth turning on only for long runs: a worker
+#'   must start Julia and compile the engine for this model's dimensions before
+#'   it can draw anything, which measured at 26-43 seconds per worker and cannot
+#'   be avoided or shared between processes. Called on an already-fitted object
+#'   there is nothing to hide that behind, so it is repaid only when the
+#'   sampling itself runs for materially longer than the startup. What it buys
+#'   is chains that share no allocator or garbage collector. Draws are identical
+#'   to the in-process path up to the arithmetic (see
+#'   \code{.ctBackendSampleProcesses}). Needs the \pkg{future} package; without
+#'   it, or if a worker fails, sampling falls back to this session.
 #' @param verbose Print the sampler's configuration before it starts, and
 #'   report progress while it runs. Progress overwrites a single line where the
 #'   output is going to a console and prints occasional separate lines where it
@@ -250,7 +261,8 @@
 #' }
 #' @export
 ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
-  saveEffects = FALSE, seed = 20260828L, control = list(), verbose = FALSE) {
+  saveEffects = FALSE, seed = 20260828L, control = list(), verbose = FALSE,
+  processes = FALSE) {
 
   if (!inherits(fit, "ctJuliaFit")) {
     stop("ctSample applies to fits made with ctFit(backend='julia').", call. = FALSE)
@@ -264,6 +276,30 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   warmup <- max(0L, as.integer(warmup)[1L])
   draws <- max(1L, as.integer(draws)[1L])
   cores <- max(1L, as.integer(cores)[1L])
+
+  # Chains in separate processes, when asked for and when there is more than one
+  # chain to separate. Dispatched here rather than deeper because the process
+  # path does not share the engine call below at all: each worker runs this same
+  # function with `chains = 1`, and the parent pools what comes back.
+  #
+  # A `NULL` back means it could not run and sampling continues here rather than
+  # failing -- a slower answer beats none. The missing-package case is checked
+  # separately because it is the only one that would otherwise be silent: a
+  # failing worker warns on its way out, but an absent `future` just returns
+  # nothing, and someone who asked for processes should be told why they did not
+  # get them.
+  if (isTRUE(processes) && chains > 1L) {
+    if (!.ctBackendCanWarm()) {
+      message("processes = TRUE needs the future package, which is not ",
+        "installed. Sampling in this session instead.")
+    } else {
+      out <- .ctBackendSampleProcesses(fit, chains = chains, warmup = warmup,
+        draws = draws, cores = cores, control = control,
+        saveEffects = saveEffects, seed = seed, verbose = verbose)
+      if (!is.null(out)) return(out)
+      message("Sampling in this session instead.")
+    }
+  }
 
   module <- .ctJuliaModule(fit$model_spec$project)
   objective <- .ctJuliaObjective(fit)
