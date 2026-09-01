@@ -504,10 +504,7 @@ function _kalman_smooth!(trace::CTSEMKalmanTrace{T}, ws, first::Int,
         # gain = P_upd[r] A[r+1]' inv(P_prior[r+1]), with Stan's makesym() ridge
         # on the matrix being inverted, solved rather than inverted.
         @inbounds P .= trace.etacov[_CTSEM_KALMAN_PRIOR, r+1, :, :]
-        P .= (P .+ P') ./ 2
-        @inbounds for i in 1:n
-            P[i, i] += 1e-10
-        end
+        _symmetrize_and_ridge!(P, n)
         Pupd = @inbounds trace.etacov[_CTSEM_KALMAN_UPD, r, :, :]
         cross = Pupd * trace.transition[r+1]'
         gain = (Symmetric(P) \ cross')'

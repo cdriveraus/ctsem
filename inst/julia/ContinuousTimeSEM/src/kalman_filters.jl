@@ -139,10 +139,7 @@ prediction is written back into `ws.state` and `ws.P_predict`.
     # (either by the measurement update or by a copy from ws.P_predict for the
     # next substep), so ridging it in place here is safe and matches Stan row
     # for row rather than only at the final innovation-covariance Cholesky.
-    n = _val(ws.state_dim)
-    @inbounds for i in 1:n
-        ws.P_update.data[i, i] += 1e-10
-    end
+    _ridge_diagonal!(ws.P_update.data, _val(ws.state_dim), 1e-10)
 
     mul!(ws.bufferQ.intermediate, ws.discrete_ca.dDRIFT, ws.P_update)
     _mul_right_transpose!(ws.P_predict.data, ws.bufferQ.intermediate, ws.discrete_ca.dDRIFT, ws.state_dim, ws.state_dim, ws.state_dim)
