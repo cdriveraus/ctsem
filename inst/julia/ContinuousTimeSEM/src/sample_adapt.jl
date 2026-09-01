@@ -70,8 +70,16 @@ mutable struct _DualAverage
     logepsbar::Float64
 end
 
+# `logepsbar` starts at `log(eps)` rather than at zero, and that is a fix
+# rather than a preference. `_dual_final` returns `exp(logepsbar)`, so a zero
+# start means "step size 1" for as long as no update has been taken -- and one
+# update is enough to erase it, since the first update's weight is
+# `1^(-kappa) = 1`. The only way to reach sampling with zero updates is to
+# restart on the last warmup iteration or to ask for no warmup at all, and both
+# happen: see `_dual_restart!`.
 _DualAverage(eps::Float64, target::Float64) =
-    _DualAverage(log(10 * eps), target, 0.05, 10.0, 0.75, 0, 0.0, log(eps), 0.0)
+    _DualAverage(log(10 * eps), target, 0.05, 10.0, 0.75, 0, 0.0, log(eps),
+        log(eps))
 
 """Take one acceptance statistic and return the next step size to use."""
 function _dual_update!(da::_DualAverage, accept::Float64)
@@ -84,13 +92,29 @@ function _dual_update!(da::_DualAverage, accept::Float64)
     return exp(da.logeps)
 end
 
-"""Restart the averaging around a new centre, after the metric has changed."""
+"""
+Restart the averaging around a new centre, after the metric has changed.
+
+`logepsbar = log(eps)`, not zero, for the reason given at the constructor: the
+averaged step size is what sampling uses, and a restart that is never followed
+by an update would otherwise hand sampling `exp(0) = 1`.
+
+That is not hypothetical. The divergence-triggered acceptance raise in
+`_run_chain` checks on a fixed stride of 50, so on a 500-iteration warmup it
+fires *on iteration 500* -- and a raise there restarts the averaging with no
+iteration left to update it. The chain then samples at step size 1 on a target whose adapted step
+size is around 0.03, diverges on every transition, and returns 500 draws of a
+stuck chain: one such chain in a four-chain run took R-hat to 4.11 and the
+minimum effective size to 2.2. The same zero also explains why `nwarmup = 0`
+appeared to be useless -- it was not that the step size went unadapted, it was
+that `_init_stepsize`'s answer was discarded and replaced by 1.
+"""
 function _dual_restart!(da::_DualAverage, eps::Float64)
     da.mu = log(10 * eps)
     da.counter = 0
     da.hbar = 0.0
     da.logeps = log(eps)
-    da.logepsbar = 0.0
+    da.logepsbar = log(eps)
     return eps
 end
 
