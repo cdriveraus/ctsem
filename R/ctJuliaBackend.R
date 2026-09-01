@@ -946,7 +946,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # reusing it means priors, uncertainty and the summary need no Laplace-specific
 # case -- and the two routes' raw vectors are directly comparable, which is
 # what makes an augmented-versus-Laplace check meaningful at all.
-.ctJuliaLaplaceSpec <- function(model, table, prepared_data = NULL, dat = NULL) {
+.ctJuliaLaplaceSpec <- function(model, table, prepared_data = NULL, dat) {
   base_npar <- suppressWarnings(max(c(0L, as.integer(table$parnumber)), na.rm = TRUE))
   varying <- integer()
   sdscale <- numeric()
@@ -969,9 +969,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   sdscale <- sdscale[usable]
   sdscale[!is.finite(sdscale)] <- 1
 
-  hierarchy <- if (is.null(dat)) .ctJuliaHierarchy(
-    data.frame(setNames(list(seq_along(unique(varying))), model$subjectIDname)),
-    model) else .ctJuliaHierarchy(dat, model)
+  hierarchy <- .ctJuliaHierarchy(dat, model)
 
   # Level 1 is the subject level and uses the `indvarying` set found above.
   # Outer levels read their own column.
@@ -1220,13 +1218,13 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
     if (anyNA(subject_values)) {
       stop("Julia backend currently requires complete TI predictors; missing values must be handled before fitting.", call. = FALSE)
     }
-    first <- subject_values[1L, ]
-    if (any(vapply(seq_len(ncol(subject_values)), function(j) {
-      any(subject_values[, j] != first[j])
-    }, logical(1)))) {
-      stop("Julia backend requires TI predictors to be constant within subject.", call. = FALSE)
-    }
-    values[i, ] <- first
+    # Constancy within subject is not re-tested here: `.ctJuliaPrepare` calls
+    # `.ctJuliaValidateTIConstancy` on the same frame first, and unlike this it
+    # runs on the prepared-data path too. What is left is the completeness
+    # check above, which that one deliberately does not make -- it ignores NAs
+    # so that a partly-recorded predictor is reported as missing rather than as
+    # varying.
+    values[i, ] <- subject_values[1L, ]
   }
   values
 }

@@ -128,11 +128,12 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
     nodes = as.integer(nodes), nsubjects = nsubjects)
   class(out) <- "ctLaplaceCheck"
 
-  # Backend fits keep their uncertainty at `fit$uncertainty` and their raw
-  # covariance at `fit$estimate$cov`; the Stan path uses `fit$stanfit$...`.
-  # Both are checked so this reads either without the caller knowing which.
+  # Where `ctOptimUncertainty()` leaves it. A `fit$stanfit$uncertainty$hessian`
+  # fallback used to sit here "so this reads either without the caller knowing
+  # which" -- but the caller is known: this function refuses anything that is
+  # not a ctJuliaFit thirty lines above, and nothing ever puts a `$stanfit` on
+  # one, so the fallback could not fire.
   hessian <- fit$uncertainty$hessian
-  if (is.null(hessian)) hessian <- fit$stanfit$uncertainty$hessian
   if (!correction) return(out)
   if (is.null(hessian)) {
     warning("No Hessian on the fit, so the correction cannot be formed. ",
@@ -147,7 +148,6 @@ ctLaplaceCheck <- function(fit, nodes = 5L, correction = TRUE, step = 1e-3,
     JuliaConnectoR::juliaPut(as.matrix(hessian)),
     nodes = as.integer(nodes), step = as.numeric(step)))
   covariance <- fit$estimate$cov
-  if (is.null(covariance)) covariance <- fit$stanfit$cov
   se <- sqrt(abs(diag(as.matrix(covariance))))
   delta <- as.numeric(result$delta)
   out$parameters <- data.frame(
