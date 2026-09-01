@@ -630,8 +630,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
   backendcontrol, optimcontrol, chains, iter, control, priors, intoverpop,
   gradient, verbose, intoverstates = TRUE) {
 
-  npar <- max(c(0L, model_spec$parameter_table$parnumber, model_spec$laplace$npar,
-    model_spec$ti_effects$coefficient), na.rm = TRUE)
+  npar <- .ctBackendNpar(model_spec)
   # As in the optimising path: the zero keeps `max` from warning and returning
   # -Inf on a fully fixed model, and the refusal replaces the "invalid
   # arguments" that -Inf produced two lines later. A sampler with no

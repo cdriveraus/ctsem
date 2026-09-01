@@ -52,7 +52,7 @@
   workers <- suppressWarnings(as.integer(workers))
   if (!.ctBackendCanWarm() || !isTRUE(workers >= 1L)) return(NULL)
   if (!inherits(object, c("ctJuliaModel", "ctJuliaFit"))) return(NULL)
-  npar <- .ctBackendWarmNpar(object)
+  npar <- .ctBackendNpar(object)
   if (!isTRUE(npar >= 1L)) return(NULL)
   if (is.null(values)) values <- rep(0, npar)
   values <- as.numeric(values)
@@ -147,12 +147,7 @@
   invisible(NULL)
 }
 
-# The same expression the backend uses. The parameter table alone undercounts:
-# the random-effect population scales sit above it in the raw vector.
+# Was a sixth copy of the parameter count. `.ctBackendNpar` is the one
+# definition; this stays as a name because tests and scratch scripts call it.
 #' @keywords internal
-.ctBackendWarmNpar <- function(object) {
-  spec <- if (!is.null(object$model_spec)) object$model_spec else object
-  n <- suppressWarnings(max(c(0L, spec$parameter_table$parnumber,
-    spec$laplace$npar, spec$ti_effects$coefficient), na.rm = TRUE))
-  if (!is.finite(n)) 0L else as.integer(n)
-}
+.ctBackendWarmNpar <- function(object) .ctBackendNpar(object)

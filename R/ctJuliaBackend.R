@@ -1354,8 +1354,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # vector here is NA-filled for a fixed cell, so a fully fixed model -- what
   # `ctGenerate` prepares, having resolved every free parameter to a value --
   # leaves `max` nothing to take a maximum over: it warns and returns -Inf.
-  npar <- max(c(0L, parameter_table$parnumber, laplace$npar,
-    ti_effects$coefficient), na.rm = TRUE)
+  # The pieces are still loose here -- this is where the spec is assembled --
+  # so they are handed over as one rather than the count being written out a
+  # sixth time.
+  npar <- .ctBackendNpar(list(parameter_table = parameter_table,
+    laplace = laplace, ti_effects = ti_effects))
   .ctJuliaCheckLayout(parameter_table, laplace, ti_effects, npar)
   prior_spec <- if (!isTRUE(priors)) NULL else if (!is.null(laplace)) {
     .ctBackendLaplacePriorSpec(prepared_data, laplace, npar)
@@ -1461,6 +1464,30 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   message("Compiling the julia engine for this model shape (once per shape ",
     "per session).")
   invisible(TRUE)
+}
+
+# How many raw parameters a model has.
+#
+# The parameter table alone undercounts, and that has already caused a bug: the
+# random-effect population scales sit above it in the raw vector and the
+# TI-predictor coefficients above those, so `max(parnumber)` gives a number that
+# looks plausible and is short by however many random effects the model has. The
+# engine then refuses the vector with "level 1 references population scale 17
+# but the parameter vector holds 13".
+#
+# Written out in five places before this, in three variants: some guarded a
+# fully fixed model with a leading `0L` (without which `max` warns and returns
+# -Inf), some omitted it and tested `is.finite` afterwards instead, and only one
+# unwrapped `model_spec` for callers holding a fit rather than a spec. Variants
+# that differ are worse than plain duplication, because the difference is
+# invisible at each site.
+#
+# Accepts a spec, a prepared model, or a fit.
+.ctBackendNpar <- function(x) {
+  spec <- if (!is.null(x$model_spec)) x$model_spec else x
+  n <- suppressWarnings(max(c(0L, spec$parameter_table$parnumber,
+    spec$laplace$npar, spec$ti_effects$coefficient), na.rm = TRUE))
+  if (!is.finite(n)) 0L else as.integer(n)
 }
 
 .ctJuliaObjective <- function(object) {
@@ -1987,8 +2014,7 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
       intoverstates = intoverstates))
   }
 
-  npar <- max(c(0L, model_spec$parameter_table$parnumber, model_spec$laplace$npar,
-    model_spec$ti_effects$coefficient), na.rm = TRUE)
+  npar <- .ctBackendNpar(model_spec)
   # A fully fixed model has nothing to maximise over. Without the zero above,
   # `max` warned and returned -Inf, and `rnorm(-Inf, ...)` then failed with
   # "invalid arguments", which says nothing about the model. Refused rather

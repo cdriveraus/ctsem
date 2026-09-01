@@ -157,8 +157,7 @@ ctIdentify <- function(datalong, ctstanmodel, inits = NULL, nstart = 3L,
 
   spec <- ctFitJuliaBackend(datalong, ctstanmodel, fit = FALSE,
     priors = priors, intoverpop = intoverpop, cores = cores, verbose = verbose)
-  npar <- suppressWarnings(max(c(spec$parameter_table$parnumber,
-    spec$laplace$npar, spec$ti_effects$coefficient), na.rm = TRUE))
+  npar <- .ctBackendNpar(spec)
   if (!is.finite(npar) || npar < 1L) {
     stop("This model has no free parameters, so there is nothing to identify.",
       call. = FALSE)
