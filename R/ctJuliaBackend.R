@@ -1800,7 +1800,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 
 .ctJuliaOptimise <- function(model_spec, start, backendcontrol = list(),
   gradient = "adjoint", cores = 1L, verbose = 0L, tol = NULL,
-  callback = NULL, objective = NULL) {
+  callback = NULL, objective = NULL, progress_label = NULL) {
   spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   # A caller may hand in the objective to maximise. `intoverstates=FALSE` does,
   # passing the joint one over `[theta; z]`; everything below is unchanged by
@@ -1817,6 +1817,14 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # chunk, where a carriage return is not a cursor movement. `verbose = 2`
     # keeps the history too, because at that point the point is the history.
     progress_overwrite = .ctProgressOverwrite(verbose),
+    # Names the stage on the progress line, defaulting to the engine's own
+    # "optimise" when unset. `carefulfit` runs an optimisation before the fit's
+    # and both carried that same label, so the counter ran up to the warm-up's
+    # cap and then restarted from one -- which reads as a run that finished and
+    # began again. The callback had the same fault, fixed separately; this is
+    # its printed twin.
+    progress_label = if (is.null(progress_label)) "optimise" else
+      as.character(progress_label)[1L],
     # On when someone is watching, which is not the same question as how
     # verbose to be. A default fit used to print two lines and then nothing at
     # all however long it ran, because progress was tied to `verbose` and
@@ -2113,7 +2121,7 @@ ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NUL
       # which is exactly `warmiter`.
       warmed <- try(.ctJuliaOptimise(spec, start, backendcontrol = warmcontrol,
         gradient = gradient, cores = cores, verbose = verbose,
-        callback = NULL), silent = TRUE)
+        callback = NULL, progress_label = "prior warm-up"), silent = TRUE)
       # A warm start is only a starting value: if it produced numbers the fit
       # can use, use them, and otherwise start where we would have anyway.
       if (!inherits(warmed, "try-error")) {

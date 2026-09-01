@@ -455,7 +455,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     x_tol::Real=0.0, verbose::Bool=false, gradient_method=:adjoint,
     tune_chunks::Bool=true, lbfgs_memory::Integer=_CTSEM_LBFGS_MEMORY,
     progress_overwrite::Bool=true, progress_callback=nothing,
-    progress::Bool=verbose)
+    progress::Bool=verbose, progress_label::AbstractString="optimise")
     start_values = collect(start)
     invalid_objective = floatmax(eltype(start_values)) / 1e8
     gradient_limit = sqrt(floatmax(eltype(start_values)))
@@ -492,7 +492,7 @@ function ctsem_optimize(objective::CTSEMOptimisable, start::AbstractVector;
     # going somewhere; they do not thereby want the chunk-tuning timings and
     # the model-shape summary that `verbose` also turns on. Separating them is
     # what lets progress be the default without making the default noisy.
-    reporter = CTSEMProgress(progress; label="optimise",
+    reporter = CTSEMProgress(progress; label=progress_label,
         overwrite=progress_overwrite)
     # The trace records every iteration whatever `verbose` says: it costs a
     # push onto a vector, and a fit that turns out to have gone somewhere odd
