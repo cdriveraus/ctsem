@@ -34,11 +34,37 @@ Both matter, and neither is a formality:
 `logposterior` came back as -11644.64 from every one of those fits, at every
 chunk count. The split is over a sum, so it should be exact, and it is.
 
-The chain half of this policy -- that chains gain linearly, which is why they
-are served first -- is *not* measured. The comparison that would settle it is
-two chains on one thread each against one chain on two, same draws, same model,
-repeated, order reversed. Until someone runs it the ordering here is inherited
-rather than justified.
+**Chains do not gain linearly, and the reason for serving them first is not the
+one that used to be written here.** Measured on the same model, one converged
+fit reused so that every run starts from an identical estimate and Hessian,
+`maxdepth = 3` so both configurations do equal work, order balanced A B B A A B
+B A, and each cell repeated: two chains at once on T/2 chunks against the same
+two chains in turn on T chunks.
+
+    threads    8       16
+    gain     1.12x   1.20x
+
+against a baseline spread of 0.9-4.3%. Nowhere near the 2x that "linearly"
+implies.
+
+The ordering survives anyway, because the *other* axis has already stopped
+paying. Per-gradient cost from the same runs: one chain on 8 chunks 0.0122 s,
+one chain on 16 chunks 0.0134 s -- **10% slower on twice the threads**. So
+threads nine to sixteen are worth 1.20x given to a second chain and 0.91x given
+to the subject loop. That is the argument for the policy; the crossover sits
+where the unit loop saturates, between 8 and 16 chunks for this 200-subject
+target, and it will sit elsewhere for a different one.
+
+Two things temper it. The advantage is contingent on the chains being balanced,
+and **it inverts when they are not**: on the chain pair NUTS produced at the
+first seed tried, one chain adapted to a degenerate step size of 3.7e-9 while
+the other saturated `maxdepth`, a 2.08:1 imbalance, and running them at once was
+12% *slower* at 8 threads because the light chain finished early and left half
+the threads idle. One chain in 13 probed failed to adapt a usable step size, so
+roughly 15% of two-chain runs and 27% of four-chain runs are lopsided like that,
+and milder imbalance is universal. And capping `maxdepth` at 3 to equalise the
+work also removes most of the natural per-draw variation, so at the default of
+10 the imbalance -- and the loss to it -- is larger than measured here.
 
 Splitting units across *processes* instead was tried and is not worth it. Eight
 processes on disjoint subject groups came out at 2.60x where eight threads give
