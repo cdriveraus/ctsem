@@ -250,7 +250,13 @@ function ctsem_tune_chunks!(evaluate; ceiling::Integer=0, verbose::Bool=false)
         # repeats is the right statistic under contention (a scheduler can only
         # ever make a timing longer), and three repeats of a 12 ms evaluation
         # cost nothing against the fit that follows.
-        repeats = serial < 0.05 ? 3 : 1
+        repeats = serial < 0.005 ? 5 : serial < 0.05 ? 3 : 1
+        # The largest relative spread seen between repeats of one candidate,
+        # which is this machine's noise floor for this evaluation, measured
+        # rather than assumed. A candidate has to beat the incumbent by more
+        # than this to be believed. Starts at 5%, the fixed margin this
+        # replaces, so it can only ever become more demanding.
+        noise = 0.05
         # The ladder is doubled from one, but only while an evaluation is cheap
         # enough that trying six settings is free against the fit. A model whose
         # evaluation takes a second is also a model with enough arithmetic
@@ -267,13 +273,32 @@ function ctsem_tune_chunks!(evaluate; ceiling::Integer=0, verbose::Bool=false)
             _CTSEM_MAX_CHUNKS[] = n
             evaluate()                       # warm this chunk count's workspaces
             elapsed = Inf
+            slowest = 0.0
             for _ in 1:repeats
-                elapsed = min(elapsed, @elapsed evaluate())
+                one = @elapsed evaluate()
+                elapsed = min(elapsed, one)
+                slowest = max(slowest, one)
+            end
+            if repeats > 1 && elapsed > 0
+                noise = max(noise, (slowest - elapsed) / elapsed)
             end
             push!(timings, (n, elapsed))
             verbose && println("Chunk tuning: ", n, " chunk(s) ",
                 round(elapsed; digits=4), " s")
-            if elapsed < best_time * 0.95
+            # `1 - noise`, not a fixed 0.95. Splitting a small model's subject
+            # loop finely is close to free either way, so the ladder was picking
+            # between candidates that differ by less than the timing varies:
+            # three identical 12-subject fits at `cores = 12` chose 12, 12 and
+            # then 4. Whichever it lands on is then pinned for the whole fit, and
+            # the wrong end of that is not harmless -- one chunk per subject is
+            # where the allocator contention this tuner exists to avoid begins.
+            #
+            # Requiring a candidate to beat the incumbent by more than the
+            # observed run-to-run spread means an unmeasurable difference cannot
+            # decide the answer. Where nothing clears the bar the earliest
+            # candidate stands, and the ladder climbs from one, so ties resolve
+            # toward fewer chunks -- the conservative direction.
+            if elapsed < best_time * (1 - noise)
                 best_time = min(best_time, elapsed)
                 best_chunks = n
                 misses = 0
