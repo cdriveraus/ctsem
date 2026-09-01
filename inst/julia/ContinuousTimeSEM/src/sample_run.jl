@@ -7,28 +7,46 @@ The gradient parallelises over units -- the log likelihood is a sum over them,
 so each chunk accumulates a partial value and partial gradient and they are
 summed. Chains parallelise too, and share nothing at all.
 
-Threads go to chains first, and the unit loop takes what is left. **The
-measurement that policy was based on no longer holds.** It read "the gradient
-parallelises over units and gains about twofold; chains gain linearly", and the
-unit half is wrong for any model big enough to care: one gradient on a
-6-latent, 200-subject, 153-parameter model, minimum of five runs each,
+Threads go to chains first, and the unit loop takes what is left.
 
-    threads   1        2        4        8
-    gradient  2.736 s  1.244 s  0.726 s  0.463 s
-    speedup   --       2.20x    3.77x    5.91x
+The unit axis, measured on a fit rather than on a warm re-evaluation: a
+5-latent, 200-subject, 12-occasion, 110-parameter model, `inits` fixed so every
+run starts from the same point, `estonly` so the uncertainty phase is not
+included, iterations capped at 15.
 
-which is 74% efficiency at eight threads, not a ceiling of two. The old figure
-was presumably taken on a model with few enough subjects that there was little
-to divide.
+    cores      1        2        4        8       16
+    fit      160.7 s  63.4 s   43.0 s   32.2 s   29.4 s
+    speedup    --      1.72x    2.53x    3.38x    3.70x
 
-The chain half has not been re-measured against it, and is now the doubtful
-one: nested chain/unit threading came out at 1.39x for two chains on a smaller
-model, where linear would be 2. That figure is not a controlled comparison --
-different model, and other work in the same timing -- so it is a reason to
-measure rather than a reason to swap the priority. **What decides it is one
-comparison on a single model: two chains on one thread each, against one chain
-on two, for the same number of draws.** Until that exists, the ordering here is
-inherited, not justified.
+Three repeats of `cores = 1` agreed to 7%, and the sweep was run *descending*
+so that a speedup could not be confused with having run later in the session.
+Both matter, and neither is a formality:
+
+  - Run ascending on a contended machine, three identical `cores = 1` fits gave
+    271 s, 301 s and 125 s -- a 140% spread, wider than any effect being looked
+    for. Every fit-level number taken while another job shared the machine is
+    worthless, and several were.
+  - Times also fall with position in the session even when the work is
+    identical, so an ascending sweep confounds "more cores" with "ran later".
+    Ascending gave 4.18x at sixteen where descending gives 3.70x; the direction
+    survives the reversal, which is what makes it real.
+
+`logposterior` came back as -11644.64 from every one of those fits, at every
+chunk count. The split is over a sum, so it should be exact, and it is.
+
+The chain half of this policy -- that chains gain linearly, which is why they
+are served first -- is *not* measured. The comparison that would settle it is
+two chains on one thread each against one chain on two, same draws, same model,
+repeated, order reversed. Until someone runs it the ordering here is inherited
+rather than justified.
+
+Splitting units across *processes* instead was tried and is not worth it. Eight
+processes on disjoint subject groups came out at 2.60x where eight threads give
+3.38x, so the ceiling is not the shared allocator -- separate heaps did not lift
+it -- and it is not worth a scatter/gather barrier per gradient to find out what
+else it is. That measurement was taken during the noisy window, so it is weak
+evidence for the exact figure and strong evidence for the sign: processes did
+not do dramatically better, and only dramatically better would justify them.
 
 Nothing needs deciding by the caller either way: `workspace_slot` on
 `ctsem_sample_density!` is present exactly when chains are running concurrently,
