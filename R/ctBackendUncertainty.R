@@ -319,21 +319,7 @@
     stop("priors=TRUE needs the prepared model data; this fit was built without it.",
       call. = FALSE)
   }
-  laplace <- as.integer(standata$laplaceprior)
-  if (length(laplace) && any(laplace == 1L)) {
-    stop("Laplace priors are not implemented for backend='julia'. ",
-      "The generated Stan model uses a smoothed double-exponential density for ",
-      "these, which these engines do not evaluate; use backend='stan', or drop ",
-      "laplaceprior for the affected matrices.", call. = FALSE)
-  }
-  if (isTRUE(as.integer(standata$laplacetipreds)[1L] == 1L)) {
-    stop("Laplace priors on TI predictor effects are not implemented for ",
-      "backend='julia'; use backend='stan'.", call. = FALSE)
-  }
-  if (isTRUE(as.integer(standata$laplaceprioronly)[1L] == 1L)) {
-    stop("laplaceprioronly is not implemented for backend='julia'; ",
-      "use backend='stan'.", call. = FALSE)
-  }
+  .ctBackendRejectLaplacePriors(standata)
 
   nparams <- as.integer(standata$nparams)[1L]
   nindvarying <- as.integer(standata$nindvarying)[1L]
