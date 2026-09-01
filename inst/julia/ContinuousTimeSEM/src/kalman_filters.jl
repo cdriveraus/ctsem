@@ -194,7 +194,7 @@ end
 @inline _ctsem_observed(x) = !ismissing(x) && isfinite(x)
 
 """
-    _ekf_update_observed!(ws, pars, data, obs_col, log2π_const)
+    _ekf_update_observed!(ws, pars, data, obs_col, log2π_const, trace, generate)
 
 Update the filter using only observed manifest entries in one row.
 
@@ -300,7 +300,7 @@ end
 end
 
 """
-    _ekf_binary_rows!(ws, pars, data, obs_col, observed)
+    _ekf_binary_rows!(ws, pars, data, obs_col, observed, generate)
 
 Apply every categorical observation in this row, one at a time, returning their
 total log marginal likelihood. Zero when the model has no categorical
@@ -431,7 +431,7 @@ function _generate_binary!(gen, ws::ContinuousEKFWorkspace, pars, λ,
 end
 
 """
-    _ekf_masked_update_step!(ws, pars, data, obs_col, observed)
+    _ekf_masked_update_step!(ws, pars, data, obs_col, observed, generate)
 
 Apply one EKF measurement update using only the manifest rows listed in
 `observed` (an arbitrary subset, or `1:manifest_dim` for full observation).
@@ -583,7 +583,9 @@ end
     -one(eltype(ws.state)) * NaN
 
 """
-    _extended_kalman_filter_continuous!(ws, params, data, timesteps, sp)
+    _extended_kalman_filter_continuous!(ws, params, data, timesteps, sp, tdpreds,
+                                        tipreds, subject, max_timestep, trace,
+                                        generate)
 
 Evaluate the continuous-time EKF log-likelihood using a preallocated workspace.
 

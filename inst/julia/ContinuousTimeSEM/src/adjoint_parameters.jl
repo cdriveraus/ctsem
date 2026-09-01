@@ -112,7 +112,7 @@ function _ctsem_regular_transform_supports(sp::EKFParameters, nvalues::Integer)
 end
 
 """
-    _ctsem_complex_transform_supports(transforms, indices, sp, state_dim)
+    _ctsem_complex_transform_supports(transforms, indices, sp, state_dim, ntdpred)
 
 Return a `Vector{Vector{Int}}` giving, for each state-dependent transform, the
 `all_params` indices it reads.
@@ -205,7 +205,8 @@ end
 ################################################################################
 
 """
-    _ctsem_complex_group_pullback!(all_params_bar, state_bar, transforms, indices, supports, ctx, dual_ctx)
+    _ctsem_complex_group_pullback!(all_params_bar, state_bar, transforms, indices,
+                                   supports, ctx, relevant, dual_ctx)
 
 Reverse one group of state-dependent transforms (the `predict`, `td`, or
 `update` group at one row).

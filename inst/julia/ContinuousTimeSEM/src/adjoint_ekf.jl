@@ -479,7 +479,7 @@ function _flush_frechet!(aws)
 end
 
 """
-    _reverse_predict!(x̄, P̄, θ̄ca, record, dyn, n)
+    _reverse_predict!(x̄, P̄, θ̄ca, record, dyn, n, lyap_buffer, aws)
 
 Undo one prediction substep.
 
@@ -682,7 +682,7 @@ function _reverse_td!(x̄::Vector{T}, P̄::Matrix{T}, θ̄ca,
 end
 
 """
-    _reverse_update!(x̄, P̄, Θ̄, θ̄ca, record, n)
+    _reverse_update!(x̄, P̄, Θ̄, θ̄ca, record, n, sc)
 
 Undo one measurement update, including its log-likelihood contribution.
 
@@ -984,7 +984,7 @@ function _reverse_group!(θ̄::Vector{T}, x̄::Vector{T}, record::CTSEMGroupReco
 end
 
 """
-    _reverse_predict_discrete!(xbar, Pbar, thetabar_ca, record, dyn, n)
+    _reverse_predict_discrete!(XBAR, PBAR, THETA, record, dyn, n)
 
 Undo one prediction step of a discrete-time model.
 
