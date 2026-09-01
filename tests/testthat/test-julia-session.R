@@ -125,3 +125,62 @@ test_that("a fit leaves the engine's chunk ceiling as it found it", {
   suppressWarnings(suppressMessages(try(ctExtract(fit, cores = 2), silent = TRUE)))
   expect_equal(ceiling(), 3L)
 })
+
+# `cores` is a ceiling, and `ctsem_tune_chunks!` may measure a much smaller
+# chunk count as fastest within it -- rightly, since the subject loop is not
+# monotone in the count. That was silent, so `ctFit(cores = 12)` could run on
+# two chunks with nothing said. What is tested here is the gate rather than the
+# wording: it must not fire when the tuner used the headroom, and it must not
+# blame the tuner for a shortfall that was really the session's thread count.
+#
+# `threads` is passed rather than taken from the session, so the case exercised
+# does not depend on what an earlier file left the session at -- the test above
+# leaves it at two, where the gate can never fire and this would have skipped.
+test_that("a fit says so when the tuner used far fewer chunks than cores allowed", {
+  cache <- ctsem:::.ct_julia_cache
+  # The 'said once' record is session state like the ceiling above, so it is put
+  # back rather than left for the next file to inherit.
+  original <- cache$chunks_reported
+  on.exit(cache$chunks_reported <- original, add = TRUE)
+  said <- function(cores, picked, threads = 12L) {
+    seen <- character()
+    withCallingHandlers(
+      ctsem:::.ctBackendReportChunks(cores, picked, threads = threads),
+      message = function(m) {
+        seen <<- c(seen, conditionMessage(m)); invokeRestart("muffleMessage")
+      })
+    any(grepl("^cores = ", seen))
+  }
+  # Each probe starts from a clean 'said once' record.
+  fired <- function(...) { cache$chunks_reported <- NULL; said(...) }
+
+  # Materially short of the ceiling, so worth a line -- and the line names both
+  # numbers and where the count it used is recorded.
+  cache$chunks_reported <- NULL
+  expect_message(
+    ctsem:::.ctBackendReportChunks(12L, 2L, threads = 12L),
+    "cores = 12.*2 chunk.*fit\\$estimate\\$chunks")
+
+  # The tuner used what it was given, or nearly, or the shortfall is one core:
+  # nothing worth interrupting for.
+  expect_false(fired(12L, 12L))
+  expect_false(fired(12L, 7L))
+  expect_false(fired(2L, 1L))
+  expect_false(fired(1L, 1L))
+  # And nothing to report from a fit whose engine did not say what it used.
+  expect_false(fired(12L, NA_integer_))
+
+  # Asking for more cores than the session has threads is a different story --
+  # one about `ctJuliaSetup(threads=)`, not about the tuner, which never saw the
+  # wider setting and so never rejected it. Reporting it here would misattribute
+  # it, and would name a ceiling the tuner had not measured against.
+  expect_false(fired(24L, 4L, threads = 4L))
+  expect_true(fired(24L, 4L, threads = 24L))
+
+  # Said once, so a simulation study looping a hundred fits gets one line.
+  expect_true(fired(12L, 2L))
+  expect_false(said(12L, 2L))
+  expect_false(said(12L, 2L))
+  # A different answer from the tuner is a different thing to say, though.
+  expect_true(said(12L, 4L))
+})
