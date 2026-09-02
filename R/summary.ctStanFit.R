@@ -392,11 +392,10 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   
   out$logposterior=logposterior
   if(optimize) {
-    # Identical whenever there are no priors, and printing one number twice
-    # under two names invites the reader to look for a difference.
-    if(!isTRUE(all.equal(as.numeric(loglik), as.numeric(logposterior)))){
-      out$loglik=loglik
-    }
+    # Identical whenever there are no priors -- the print method (not this
+    # builder) skips the duplicate row, so summary(fit)$loglik is always
+    # present. See summaryCtStanFitLoglikDuplicatesPosterior() below.
+    out$loglik=loglik
     out$npars = npars
     out$aic = aic
   }
@@ -500,6 +499,18 @@ printSummaryCtStanFitScalar <- function(label,x,width){
   invisible(x)
 }
 
+# Log likelihood and log posterior are identical whenever there are no
+# priors -- true of essentially every default-argument fit, since ctFit()
+# defaults to priors=FALSE. Printing one number twice under two names
+# invites the reader to look for a difference that is not there, so the
+# print method skips the row; the value itself is always returned by
+# summary(). Shared by both summary.ctStanFit() and .ctBackendSummary(),
+# which produce objects of the same print class.
+summaryCtStanFitLoglikDuplicatesPosterior <- function(x){
+  !is.null(x$loglik) && !is.null(x$logposterior) &&
+    isTRUE(all.equal(as.numeric(x$loglik), as.numeric(x$logposterior)))
+}
+
 #' Print ctStanFit summaries
 #'
 #' @param x Object returned by \code{\link{summary.ctStanFit}}.
@@ -526,7 +537,9 @@ print.summary.ctStanFit <- function(x,width=getOption('width'),sections=names(x)
   # printing it means thousands of rows of draws ahead of the tables that
   # summarise them, so it is skipped unless asked for by name.
   if(defaultsections) sections <- setdiff(sections,'randomEffects')
+  loglikDuplicatesPosterior <- summaryCtStanFitLoglikDuplicatesPosterior(x)
   for(section in sections){
+    if(identical(section,'loglik') && loglikDuplicatesPosterior) next
     label <- summaryCtStanFitLabel(section)
     if(summaryCtStanFitIsScalar(x[[section]])){
       if(summaryCtStanFitIsNote(section)) cat('\n')
