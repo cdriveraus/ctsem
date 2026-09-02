@@ -1168,13 +1168,11 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   logposterior <- object$estimate$logposterior
   if (is.null(logposterior)) logposterior <- object$estimate$loglik
   out$logposterior <- logposterior
-  # Without priors these are the same number, and printing one value twice
-  # under two names invites the reader to hunt for a difference that is not
-  # there. The likelihood is still on the fit object either way.
-  if (!isTRUE(all.equal(as.numeric(object$estimate$loglik),
-      as.numeric(logposterior)))) {
-    out$loglik <- object$estimate$loglik
-  }
+  # Without priors these are the same number; the shared print method (not
+  # this builder) skips the duplicate row -- see
+  # summaryCtStanFitLoglikDuplicatesPosterior() in R/summary.ctStanFit.R.
+  # The likelihood is always returned, priors or not.
+  out$loglik <- object$estimate$loglik
   out$npars <- length(object$estimate$raw)
   out$aic <- 2 * out$npars - 2 * object$estimate$loglik
   # Named for what they are. "Number of samples" on an optimised fit meant the
