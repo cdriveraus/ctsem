@@ -493,3 +493,50 @@ test_that("ctPredictTIP builds its covariate grid on a backend fit", {
     backend = "julia", verbose = 0))
   expect_error(ctPredictTIP(plain, plot = FALSE), "no time independent predictors")
 })
+
+test_that("prediction warns for an intoverstates=FALSE julia fit, as Stan's does", {
+  skip_on_cran()
+  skip_without_julia()
+  # The smallest intoverstates=FALSE julia fit already used in the suite
+  # (tests/testthat/test-julia-intoverstates.R, "a fit over the joint density
+  # runs and carries its trajectory"), reused here rather than built fresh: a
+  # state-explicit fit's point estimate is the mode of the joint density of
+  # states and data, not of the marginal the Kalman filter below computes, so
+  # filtering through it looks like an ordinary result and is not one.
+  model <- suppressWarnings(suppressMessages(ctModel(type = "ct", n.latent = 2,
+    n.manifest = 3, manifestNames = c("o1", "b1", "c1"),
+    latentNames = c("eta1", "eta2"),
+    manifesttype = c(2L, 1L, 3L), ncategories = c(4L, 0L, 0L),
+    LAMBDA = matrix(c(1, 0, 1, 0, 0, 1), 3, 2, byrow = TRUE),
+    DRIFT = matrix(c(-0.4, 0.25, -0.15, -0.7), 2, 2, byrow = TRUE),
+    DIFFUSION = diag(1, 2), T0VAR = diag(1, 2),
+    T0MEANS = matrix(0, 2, 1), CINT = matrix(0, 2, 1),
+    MANIFESTVAR = diag(0, 3),
+    MANIFESTMEANS = matrix(c(0, 0, 0.8), 3, 1), Tpoints = 10)))
+  rows <- model$pars$matrix %in% "THRESHOLDS" & model$pars$row %in% 1L
+  model$pars$value[rows] <- c(-1, 1, 1)[model$pars$col[rows]]
+  model$pars$indvarying <- FALSE
+  set.seed(2)
+  data <- data.frame(suppressMessages(ctGenerate(model, n.subjects = 12,
+    Tpoints = 8, backend = "julia", intoverstates = FALSE)))
+
+  fitmodel <- suppressWarnings(suppressMessages(ctModel(type = "ct",
+    n.latent = 2, n.manifest = 3, manifestNames = c("o1", "b1", "c1"),
+    latentNames = c("eta1", "eta2"), manifesttype = c(2L, 1L, 3L),
+    ncategories = c(4L, 0L, 0L),
+    LAMBDA = matrix(c(1, 0, 1, 0, 0, 1), 3, 2, byrow = TRUE),
+    T0MEANS = matrix(0, 2, 1), CINT = matrix(0, 2, 1),
+    MANIFESTVAR = diag(0, 3),
+    MANIFESTMEANS = matrix(c(0, 0, "cmean"), 3, 1), Tpoints = 8)))
+  fitmodel$pars$indvarying <- FALSE
+
+  fit <- suppressWarnings(suppressMessages(ctFit(data, fitmodel,
+    backend = "julia", intoverstates = FALSE, verbose = 0,
+    optimcontrol = list(estonly = TRUE))))
+  expect_identical(fit$args$intoverstates, FALSE)
+
+  expect_warning(suppressMessages(ctPredict(fit, subjects = 1)),
+    "system noise represents prior")
+  expect_warning(suppressMessages(ctKalman(fit, subjects = 1)),
+    "system noise represents prior")
+})
