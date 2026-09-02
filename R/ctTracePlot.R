@@ -54,7 +54,7 @@ ctTracePlot <- function(fit, which = NULL, ...) {
     graphics::plot(trace$iteration, values, type = "l",
       log = if (logscale) "y" else "",
       xlab = "iteration",
-      ylab = .ctJuliaOr(labels[[column]], column), ...)
+      ylab = if (column %in% names(labels)) labels[[column]] else column, ...)
     graphics::points(trace$iteration[nrow(trace)], values[nrow(trace)],
       pch = 16, cex = 0.8)
   }
