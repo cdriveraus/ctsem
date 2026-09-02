@@ -104,22 +104,42 @@
   # its own subject loop, so each log-probability evaluation is parallel and
   # there is nothing for an R cluster to do.
   #
-  # The count is the one the fit's chunk tuner measured, not `cores` itself.
-  # The subject loop is not monotone in the chunk count -- that is why
-  # `ctsem_tune_chunks!` exists -- and on this model at ceiling 4 the tuner
-  # picks 2 (measured 0.0292 s against 0.0311 s at 4). Setting `cores` here
-  # overrode that with the value the tuner had just rejected. The tuner never
-  # exceeds its ceiling, so this still respects `cores`.
-  tuned <- suppressWarnings(as.integer(fit$estimate$chunks)[1L])
-  if (is.na(tuned) || tuned < 1L) tuned <- cores
-  if (tuned > 1L) {
-    # Restored on exit, like the optimiser's. This runs *after* the optimiser
-    # has put its own ceiling back, so without a restore here the session still
-    # ended a fit reconfigured -- measured at 4 after a `cores=4` Laplace fit,
-    # where the optimiser alone had correctly left it at whatever it found.
-    previous <- .ctBackendSetMaxChunks(min(tuned, cores))
-    on.exit(.ctBackendRestoreMaxChunks(previous), add = TRUE)
-  }
+  # One chunk, and deliberately *not* the count the fit's tuner measured.
+  #
+  # This used to inherit `fit$estimate$chunks`, reasoning that the subject loop
+  # is not monotone in the chunk count -- true, and why `ctsem_tune_chunks!`
+  # exists -- so a measured choice beats raw `cores`. The unexamined step was
+  # assuming a count measured on one workload transfers to a different one. It
+  # does not. The tuner times the *optimisation* objective; this phase computes
+  # per-subject scores, an exact Hessian and constrained draws, and the subject
+  # loop is a smaller share of it.
+  #
+  # Measured by forcing the count on one already-optimised fit, so nothing but
+  # the chunking varies, on two model shapes:
+  #
+  #     chunks              1       2       4       8       1 again
+  #     4 latents, 120 subj  31.2 s  68.9 s  43.0 s  30.8 s  31.5 s
+  #     2 latents, 300 subj   5.0 s  11.3 s   7.3 s   5.3 s   5.4 s
+  #
+  # Chunking never wins here: eight only matches serial, and two costs 2.2x on
+  # both shapes. The repeat of one at the end drifts 1%, so the sequence is
+  # readable. Worse, the counts the tuner tends to pick are the bad ones -- it
+  # chose 4 on the second model, costing 46%, and the comment this replaces
+  # recorded it choosing 2 at ceiling 4, which is the worst setting measured.
+  #
+  # This phase is about half of a fit's wall time, so that was roughly a
+  # doubling of half the fit whenever the tuner landed on 2.
+  #
+  # Set explicitly rather than left alone, because the session may carry a
+  # ceiling from elsewhere. If a model is ever found where chunking this phase
+  # helps, the principled fix is to run `ctsem_tune_chunks!` against an
+  # uncertainty evaluation rather than to inherit a number or to hard-code one.
+  previous <- .ctBackendSetMaxChunks(1L)
+  # Restored on exit, like the optimiser's. This runs *after* the optimiser has
+  # put its own ceiling back, so without a restore here the session still ended
+  # a fit reconfigured -- measured at 4 after a `cores=4` Laplace fit, where the
+  # optimiser alone had correctly left it at whatever it found.
+  on.exit(.ctBackendRestoreMaxChunks(previous), add = TRUE)
 
   # The engines produce per-subject scores from one traced pass, so they are
   # computed here and handed in rather than reconstructed a subject at a time.
