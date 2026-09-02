@@ -137,7 +137,9 @@ ctDocs <- function(){
 
 #' Tests if 2 values are close to each other
 #'
-#' @param ... values to compare
+#' @param ... values to compare. At least two, and none of them empty:
+#'   comparing a zero-length or NULL value is an error rather than a pass,
+#'   because there is nothing to compare.
 #' @param tol tolerance
 #'
 #' @return Logical or testthat output.
@@ -148,6 +150,15 @@ ctDocs <- function(){
 test_isclose <- function(..., tol = 1e-8) {
   values <- list(...)
   n <- length(values)
+  # A zero-length or NULL argument used to make every comparison against it
+  # vacuously true, because `any(numeric(0) >= tol)` is FALSE. That reported
+  # success for a comparison never made, and it is how a test comparing a
+  # summary field that does not exist passed for years.
+  if (n < 2L) stop('test_isclose needs at least two values to compare.')
+  empty <- vapply(values, function(v) length(v) == 0L, logical(1))
+  if (any(empty)) stop('test_isclose was given a zero-length or NULL value ',
+    'in position(s) ', paste(which(empty), collapse = ', '),
+    ': there is nothing to compare.')
   out <- TRUE
   for (i in 1:(n-1)) {
     for (j in (i+1):n) {
