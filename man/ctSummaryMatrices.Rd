@@ -27,7 +27,8 @@ the probs argument is needed to ensure only a single value is returned.}
 \item{timeinterval}{time interval for discrete time parameter matrix computation.}
 }
 \description{
-Summarise model-implied parameter matrices from a ctsem fit object
+Summarise model-implied parameter matrices from a ctsem fit object.
+\code{ctStanContinuousPars} is maintained as a backward-compatible alias.
 }
 \examples{
 \donttest{

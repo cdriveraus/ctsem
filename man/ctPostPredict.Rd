@@ -45,6 +45,7 @@ and may be customized as desired.
 }
 \description{
 Compares model implied density and values to observed, for a ctStanFit object.
+\code{ctStanPostPredict} is maintained as a backward-compatible alias.
 }
 \details{
 This function relies on the data generated during each iteration of fitting to approximate the

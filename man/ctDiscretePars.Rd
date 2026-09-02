@@ -98,6 +98,7 @@ uses \code{nsamples} posterior draws with a small default.}
 \description{
 Calculate model implied regressions for a sequence of time intervals (if ct) or steps (if dt) based on
 a ctStanFit object, for specified subjects. Wrap with print() when used inside for loops!
+\code{ctStanDiscretePars} is maintained as a backward-compatible alias.
 }
 \details{
 Two of these combinations are quantities you may already know under other

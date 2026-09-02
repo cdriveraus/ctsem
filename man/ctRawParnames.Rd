@@ -21,6 +21,7 @@ vector of character strings.
 }
 \description{
 Gets internal stan parameter names of a ctStanFit object sampled via stan based on specified substrings.
+\code{ctStanParnames} is maintained as a backward-compatible alias.
 }
 \examples{
 \donttest{

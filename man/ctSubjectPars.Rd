@@ -22,6 +22,7 @@ an nsamples by nsubjects by nparams array.
 }
 \description{
 Extract an array of subject specific parameters from a ctStanFit object.
+\code{ctStanSubjectPars} is maintained as a backward-compatible alias.
 }
 \details{
 This function returns the estimates of individual parameters, taking into account any

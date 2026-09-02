@@ -75,7 +75,8 @@ ctStanRawSamples<-function(fit){
 
 #' ctSummaryMatrices
 #'
-#' Summarise model-implied parameter matrices from a ctsem fit object
+#' Summarise model-implied parameter matrices from a ctsem fit object.
+#' \code{ctStanContinuousPars} is maintained as a backward-compatible alias.
 #'
 #'@param fit fit object from \code{\link{ctFit}}
 #'@param calcfunc Function to apply over samples, must return a single value. 
@@ -123,6 +124,9 @@ ctStanContinuousPars <- ctSummaryMatrices
 
 
 #' Extract an array of subject specific parameters from a ctStanFit object.
+#'
+#' Extract an array of subject specific parameters from a ctStanFit object.
+#' \code{ctStanSubjectPars} is maintained as a backward-compatible alias.
 #'
 #' @param fit fit object
 #' @param pointest if TRUE, returns only the set of individual difference parameters

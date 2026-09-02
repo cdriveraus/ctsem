@@ -111,6 +111,9 @@
 
 #' Get Kalman filter estimates from a ctStanFit object
 #'
+#' Get Kalman filter estimates from a ctStanFit object.
+#' \code{ctStanKalman} is maintained as a backward-compatible alias.
+#'
 #' @param fit fit object from \code{\link{ctFit}}, from any backend.
 #' @param nsamples either NA (to extract all) or a positive integer from 1 to maximum samples in the fit.
 #' @param cores Integer number of cpu cores to use. Only needed if savescores was set to FALSE when fitting.

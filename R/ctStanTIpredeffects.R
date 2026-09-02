@@ -10,6 +10,7 @@ ctTIpredParMats <- function(fit, tipvalues){
 #' 
 #' Computes and plots combined effects and quantiles for effects of time independent predictors
 #' on subject level parameters of a ctStanFit object.
+#' \code{ctStanTIpredeffects} is maintained as a backward-compatible alias.
 #'
 #' @param fit fit object from \code{\link{ctFit}}
 #' @param returndifference logical. If FALSE, absolute parameter values are returned. 

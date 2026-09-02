@@ -37,7 +37,8 @@ List contining Y, and array of nsamples by data rows by manifest variables,
 and llrow, an array of nsamples by data rows log likelihoods.
 }
 \description{
-Generate data from a ctstanmodel object
+Generate data from a ctstanmodel object.
+\code{ctStanGenerate} is maintained as a backward-compatible alias.
 }
 \examples{
 \donttest{

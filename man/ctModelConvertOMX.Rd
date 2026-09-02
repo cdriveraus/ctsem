@@ -28,6 +28,7 @@ matrix view, so \code{model$matrices}.
 }
 \description{
 Convert an old OpenMx-style ctsem model to the modern ctsem model format.
+\code{ctStanModel} is maintained as a backward-compatible alias.
 }
 \details{
 \code{ctModelConvertOMX()} is primarily a compatibility bridge for older

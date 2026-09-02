@@ -69,7 +69,8 @@ not a probability and not a category. Turn one into a probability with
 likewise the covariance of the linear predictor.
 }
 \description{
-Get Kalman filter estimates from a ctStanFit object
+Get Kalman filter estimates from a ctStanFit object.
+\code{ctStanKalman} is maintained as a backward-compatible alias.
 }
 \examples{
 k=ctKalmanArray(ctstantestfit,subjectpars=TRUE,collapsefunc=mean)

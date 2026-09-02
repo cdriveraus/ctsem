@@ -228,6 +228,9 @@ ctModelMatrices <- function(x){
 
 #' Convert an old OpenMx-style ctsem model to the modern ctsem model format.
 #'
+#' Convert an old OpenMx-style ctsem model to the modern ctsem model format.
+#' \code{ctStanModel} is maintained as a backward-compatible alias.
+#'
 #' @param ctmodelobj ctsem model object created by \code{\link{ctModel}} with
 #' \code{type='omx'}.
 #' @param type Either \code{'ct'} for continuous time, or \code{'dt'} for
