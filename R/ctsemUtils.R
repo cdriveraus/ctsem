@@ -92,9 +92,14 @@ testall<- function(cores=4,folder = '/tests/testthat',examples=TRUE){
   Sys.setenv(NOT_CRAN='true')
   tests <- dir(paste0('.',folder))
   tests <- tests[grepl('^test',tests)]
-  runex <- grep('runExamples',tests)
-  tests <- c(tests[runex],tests[-runex]) #do examples first
-  if(!examples) tests <- tests[-grep('runExamples',tests)]
+  # `x[-integer(0)]` is empty, not everything, so an unmatched grep here
+  # silently reduced the whole list to nothing. That is what happened when
+  # test-runExamples.R moved out of tests/testthat: this helper ran zero
+  # tests in every mode and said so only by finishing instantly.
+  runex <- grep('runExamples', tests)
+  if(length(runex)) {
+    tests <- if(examples) c(tests[runex], tests[-runex]) else tests[-runex]
+  }
   a=Sys.time()
 
   if(cores > 1){
