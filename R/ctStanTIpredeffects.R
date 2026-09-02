@@ -60,6 +60,17 @@ ctTIpredEffects<-function(fit,returndifference=FALSE, probs=c(.025,.5,.975),
   whichTIpreds=1,parmatrices=TRUE, whichpars='all', nsamples=100, timeinterval=1,
   nsubjects=20,filter=NA,plot=FALSE){
   
+  # Named rather than asserted. A julia fit carries no $ctstanmodel (see
+  # .ctFitModelObject()), so without this check every julia fit would fall
+  # through to the check below and always report "no time independent
+  # predictors", whether or not the model has any.
+  if(inherits(fit, 'ctJuliaFit')) stop(
+    'This function is not available for julia backend fits yet: it reads the ',
+    'stan fit structures ($ctstanmodel, $stanfit$rawest, stan_constrainsamples) ',
+    'that a julia fit does not carry. ctPredictTIP() and summary() do report ',
+    'time-independent predictor effects on a julia fit.',
+    call.=FALSE)
+
   # Nothing to report on, said plainly. Indexing straight into `tipredsdata`
   # gave "subscript out of bounds", which names an internal and not the
   # problem -- and this is a function someone reaches for while exploring, so

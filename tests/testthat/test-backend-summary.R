@@ -83,6 +83,21 @@ test_that("Julia pop_* arrays match Stan's constrained parameters", {
     diag(drop(backend_pop$pop_T0VAR)), tolerance = 1e-4)
 })
 
+test_that("ctTIpredEffects refuses a julia fit by name", {
+  skip_on_cran()
+  skip_without_julia()
+  # A julia fit carries no $ctstanmodel (see .ctFitModelObject()), so without
+  # an explicit guard this would fall through to ctTIpredEffects' own
+  # "no time independent predictors" check and always report that -- even
+  # though .summary_model() has one, which is exactly the point.
+  model <- .summary_model()
+  data <- .summary_data()
+  spec <- suppressMessages(ctFit(data, model, backend = "julia", fit = FALSE))
+  fit <- .summary_pointfit(spec, model, rep(0.1, 5), "julia")
+
+  expect_error(ctTIpredEffects(fit), "not available for julia backend fits")
+})
+
 test_that("a Julia model with no state-dependent cells summarises", {
   skip_without_julia()
   skip_on_cran()
