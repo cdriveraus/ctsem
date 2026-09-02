@@ -316,9 +316,23 @@ end
         Ls = ContinuousTimeSEM._laplace_popchols(theta, laplace.spec)
         for U in eachindex(laplace.units.members)
             u = 0.1 .* collect(1.0:laplace.units.dims[U])
-            blocked = ContinuousTimeSEM._laplace_unit_hessian(laplace, U, theta, Ls, u)
-            reference = ContinuousTimeSEM._laplace_unit_hessian(laplace, U, theta, Ls, u;
-                dense=true)
+            # `_laplace_unit_curvature`, which is what production calls, against
+            # the dense Hessian. Both arguments used to be
+            # `_laplace_unit_hessian` -- once with the default and once with a
+            # `dense=true` keyword whose ternary made both the same path, so the
+            # test compared a value with itself and passed without checking
+            # anything. That keyword and its unreachable branch are gone; the
+            # Hessian is deliberately structure-blind now, which is what makes
+            # it a reference worth comparing the blocked assembly against.
+            #
+            # The curvature is the negated Hessian, and it comes back as a
+            # block matrix, so it is densified before comparing.
+            blocks = laplace.units.blocks[U]
+            curvature = ContinuousTimeSEM._laplace_unit_curvature(
+                laplace, U, theta, Ls, u, 1)
+            blocked = ContinuousTimeSEM._laplace_block_dense(curvature, blocks,
+                laplace.units.dims[U])
+            reference = -ContinuousTimeSEM._laplace_unit_hessian(laplace, U, theta, Ls, u)
             @test size(blocked) == size(reference)
             @test norm(blocked - reference) / max(norm(reference), 1) < 1e-10
         end

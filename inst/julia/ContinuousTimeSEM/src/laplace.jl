@@ -1164,7 +1164,7 @@ function ctsem_set_block_threshold!(n::Integer)
 end
 
 """
-    _laplace_unit_hessian(laplace, U, values, Ls, u, slot; dense=nothing)
+    _laplace_unit_hessian(laplace, U, values, Ls, u, slot)
 
 `d2 g_U / du du` -- the unit's inner curvature.
 
@@ -1191,45 +1191,17 @@ and the block factorization.
 """
 function _laplace_unit_hessian(laplace::CTSEMLaplaceObjective, U::Integer,
     values::AbstractVector{T}, Ls::Vector{<:AbstractMatrix}, u::AbstractVector{T},
-    slot::Integer=1; dense::Union{Nothing,Bool}=nothing) where {T}
+    slot::Integer=1) where {T}
     d = length(u)
     d == 0 && return zeros(T, 0, 0)
-    blocks = laplace.units.blocks[U]
-    usedense = dense === nothing ? true : dense
-    if usedense
-        inner_of = function (uu)
-            S = eltype(uu)
-            ws = _laplace_workspace!(laplace, S, length(values), slot)
-            vs = convert(Vector{S}, values)
-            Lss = [convert(Matrix{S}, L) for L in Ls]
-            return _laplace_unit_objective_gradient(laplace, U, vs, Lss, uu, ws).gradient
-        end
-        H = ForwardDiff.jacobian(inner_of, collect(u))
-        return (H .+ transpose(H)) ./ 2
+    inner_of = function (uu)
+        S = eltype(uu)
+        ws = _laplace_workspace!(laplace, S, length(values), slot)
+        vs = convert(Vector{S}, values)
+        Lss = [convert(Matrix{S}, L) for L in Ls]
+        return _laplace_unit_objective_gradient(laplace, U, vs, Lss, uu, ws).gradient
     end
-
-    base = collect(u)
-    H = zeros(T, d, d)
-    for block in blocks
-        offset = block.offset; size = block.size; positions = block.members
-        columns = (offset + 1):(offset + size)
-        block_of = function (ub)
-            S = eltype(ub)
-            ws = _laplace_workspace!(laplace, S, length(values), slot)
-            vs = convert(Vector{S}, values)
-            Lss = [convert(Matrix{S}, L) for L in Ls]
-            uu = convert(Vector{S}, base)
-            @inbounds for (t, c) in enumerate(columns)
-                uu[c] = ub[t]
-            end
-            return _laplace_unit_loglik_gradient(laplace, U, vs, Lss, uu, ws,
-                positions).gradient
-        end
-        H[:, columns] = ForwardDiff.jacobian(block_of, base[columns])
-    end
-    @inbounds for a in 1:d
-        H[a, a] -= one(T)
-    end
+    H = ForwardDiff.jacobian(inner_of, collect(u))
     return (H .+ transpose(H)) ./ 2
 end
 
