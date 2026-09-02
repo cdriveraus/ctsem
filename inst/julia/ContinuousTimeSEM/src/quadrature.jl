@@ -133,6 +133,30 @@ end
 const _GH_GRID_CACHE = Dict{Tuple{Int,Int},Tuple{Vector{Vector{Float64}},Vector{Float64}}}()
 
 """
+    _quadrature_warm_caches(laplace, nodes)
+
+Populate the Gauss-Hermite caches for every size this evaluation will ask for.
+
+Called from single-threaded code before the chunk loop spawns, so that
+`_gauss_hermite` and `_gh_grid` are pure reads inside the threads. The set is
+small and known in advance: one node count for the whole call, and one block
+dimension per distinct block size in the unit tree.
+"""
+function _quadrature_warm_caches(laplace::CTSEMLaplaceObjective, nodes::Integer)
+    m = Int(nodes)
+    _gauss_hermite(m)
+    # `_CTSEM_BINARY_NODES` is what the measurement kernels ask for, and it is
+    # a different count from the quadrature's own.
+    _gauss_hermite(_CTSEM_BINARY_NODES[])
+    seen = Set{Int}()
+    for blocks in laplace.units.blocks, block in blocks
+        k = block.size
+        k >= 1 && !(k in seen) && (push!(seen, k); _gh_grid(k, m))
+    end
+    return nothing
+end
+
+"""
     _quadrature_children(blocks)
 
 For each block, the blocks immediately beneath it, and the blocks with nothing
@@ -342,6 +366,24 @@ function ctsem_laplace_quadrature(laplace::CTSEMLaplaceObjective,
     end
     ranges = _ctsem_chunk_assignment(_laplace_unit_weights(laplace), nchunks)
     failed = fill(false, nchunks)
+
+    # Fill the quadrature caches here, before anything is spawned.
+    #
+    # `_gauss_hermite` and `_gh_grid` memoise into plain global `Dict`s, and the
+    # chunks below call both -- `_gh_grid` once per block, `_gauss_hermite` once
+    # per row through the measurement kernels. Concurrent `setindex!` during a
+    # rehash corrupts a `Dict`; `laplace.jl` already carries the note about
+    # finding exactly that on the workspace store, where Julia caught it with
+    # "Multiple concurrent writes to Dict detected!" rather than returning wrong
+    # numbers. There is nothing here that makes these two safer, only rarer:
+    # they are hit by every thread on the first row it touches.
+    #
+    # Warming rather than locking, because the read is on the per-row path and a
+    # lock there would be paid on every row of every subject for a write that
+    # happens at most a handful of times per session. After this loop the caches
+    # are read-only for the rest of the call, which needs no synchronisation at
+    # all.
+    _quadrature_warm_caches(laplace, nodes)
 
     # A trial point can be invalid in ways that *throw* rather than return a
     # non-finite number -- a parameter vector an optimizer wandered into can
