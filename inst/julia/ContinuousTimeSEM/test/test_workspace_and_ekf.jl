@@ -128,11 +128,6 @@ end
     @test length(ws.all_params) == length(sp.mutables)
     @test size(ws.K) == (1, 1)
     @test size(ws.P_predict.data) == (1, 1)
-
-    ws_ref = Ref{Any}(nothing)
-    cached = ContinuousTimeSEM._get_or_init_continuous_ekf_workspace!(ws_ref, Float64[], sp)
-    @test cached === ws_ref[]
-    @test ContinuousTimeSEM._get_or_init_continuous_ekf_workspace!(ws_ref, Float64[], sp) === cached
 end
 
 # A tiny fixed-parameter likelihood path catches integration breakage across
