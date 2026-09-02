@@ -594,7 +594,7 @@ ctFitMelt <- function(fit, maxsamples='all'){
     }
     if(dsi=='PostPred'){
       dexists<-TRUE
-      d <- fit$generate
+      d <- fit$generated
     }
     
     if(dsi== 'StatePred'){ #use kalman predictions
