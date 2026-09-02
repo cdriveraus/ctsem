@@ -651,10 +651,30 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # `column` was five full transfers of the whole parameter-matrix array per
   # level, ~97% of it discarded on arrival.
   wanted <- cells[column, , drop = FALSE]
-  displaced <- lapply(quadrature$node, function(node) {
+  # One engine call for all five nodes, not one per node.
+  #
+  # Every node asks for the same cells of the same posterior, displaced by a
+  # different multiple of the same sd, so the five calls differ only in the
+  # numbers they send. `ctsem_parameter_matrices` already takes a matrix of
+  # raw vectors and treats each column independently, so stacking the five
+  # displaced posteriors and splitting the result afterwards computes exactly
+  # the same values in exactly the same way.
+  #
+  # It is worth doing because this phase is not compute bound. Measured on
+  # dev1: a `ctsem_parameter_matrices` call costs about 0.25 s of which about
+  # 0.01 s is the engine -- the rest is JuliaConnectoR round trips, whose cost
+  # is per call and nearly independent of how much is in each. Five narrow
+  # calls cost 1.27 s; one call five times as wide costs about a fifth of
+  # that. `rows` keeps the reply narrow either way.
+  ndraws <- nrow(samples)
+  stacked <- do.call(rbind, lapply(quadrature$node, function(node) {
     perturbed <- samples
     perturbed[, parnumber] <- perturbed[, parnumber, drop = FALSE] + rawsd * node
-    .ctBackendPopCellValues(fit, perturbed, wanted, layout)
+    perturbed
+  }))
+  together <- .ctBackendPopCellValues(fit, stacked, wanted, layout)
+  displaced <- lapply(seq_along(quadrature$node), function(index) {
+    together[seq_len(ndraws) + (index - 1L) * ndraws, , drop = FALSE]
   })
   centre <- Reduce(`+`, Map(function(value, weight) value * weight,
     displaced, quadrature$weight))
