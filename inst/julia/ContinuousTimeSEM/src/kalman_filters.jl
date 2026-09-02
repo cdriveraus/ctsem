@@ -139,10 +139,7 @@ prediction is written back into `ws.state` and `ws.P_predict`.
     # (either by the measurement update or by a copy from ws.P_predict for the
     # next substep), so ridging it in place here is safe and matches Stan row
     # for row rather than only at the final innovation-covariance Cholesky.
-    n = _val(ws.state_dim)
-    @inbounds for i in 1:n
-        ws.P_update.data[i, i] += 1e-10
-    end
+    _ridge_diagonal!(ws.P_update.data, _val(ws.state_dim), 1e-10)
 
     mul!(ws.bufferQ.intermediate, ws.discrete_ca.dDRIFT, ws.P_update)
     _mul_right_transpose!(ws.P_predict.data, ws.bufferQ.intermediate, ws.discrete_ca.dDRIFT, ws.state_dim, ws.state_dim, ws.state_dim)
@@ -197,7 +194,7 @@ end
 @inline _ctsem_observed(x) = !ismissing(x) && isfinite(x)
 
 """
-    _ekf_update_observed!(ws, pars, data, obs_col, log2π_const)
+    _ekf_update_observed!(ws, pars, data, obs_col, log2π_const, trace, generate)
 
 Update the filter using only observed manifest entries in one row.
 
@@ -303,7 +300,7 @@ end
 end
 
 """
-    _ekf_binary_rows!(ws, pars, data, obs_col, observed)
+    _ekf_binary_rows!(ws, pars, data, obs_col, observed, generate)
 
 Apply every categorical observation in this row, one at a time, returning their
 total log marginal likelihood. Zero when the model has no categorical
@@ -434,7 +431,7 @@ function _generate_binary!(gen, ws::ContinuousEKFWorkspace, pars, λ,
 end
 
 """
-    _ekf_masked_update_step!(ws, pars, data, obs_col, observed)
+    _ekf_masked_update_step!(ws, pars, data, obs_col, observed, generate)
 
 Apply one EKF measurement update using only the manifest rows listed in
 `observed` (an arbitrary subset, or `1:manifest_dim` for full observation).
@@ -586,7 +583,9 @@ end
     -one(eltype(ws.state)) * NaN
 
 """
-    _extended_kalman_filter_continuous!(ws, params, data, timesteps, sp)
+    _extended_kalman_filter_continuous!(ws, params, data, timesteps, sp, tdpreds,
+                                        tipreds, subject, max_timestep, trace,
+                                        generate)
 
 Evaluate the continuous-time EKF log-likelihood using a preallocated workspace.
 

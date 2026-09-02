@@ -189,7 +189,7 @@ function ChainRulesCore.rrule(::typeof(_ctsem_expm), A::AbstractMatrix)
 end
 
 """
-    _ctsem_lyap_pullback(A, X, X̄)
+    _ctsem_lyap_pullback(A, X, X̄, buffer)
 
 Return `(Ā, Q̄)` for `X = _ctsem_lyap(A, Q)`.
 

@@ -566,7 +566,8 @@ end
 _laplace_popchols(values::AbstractVector{T}, spec::CTSEMLaplaceSpec) where {T} =
     [_laplace_popchol(values, level) for level in spec.levels]
 
-"""Single-level shorthand, kept for the seeded gradient path."""
+"""Single-level shorthand. The fitting path takes every level through
+`_laplace_popchols`; only `test_laplace.jl` reaches for this one."""
 _laplace_popchol(values::AbstractVector, spec::CTSEMLaplaceSpec) =
     _laplace_popchol(values, spec.levels[1])
 
@@ -636,8 +637,9 @@ end
     _laplace_subject_values(values, spec, L, z)
 
 Single-level shorthand: the population vector shifted by one subject's own
-effects. Retained because the seeded gradient path is specialised to one level
-and reads more clearly in those terms.
+effects. The fitting path shifts through `_laplace_member_values`, which takes
+any number of levels; this one is reached only by `test_laplace.jl`, as the
+readable statement of what that shift is at one level.
 """
 function _laplace_subject_values(values::AbstractVector{T}, spec::CTSEMLaplaceSpec,
     L::AbstractMatrix, z::AbstractVector) where {T}
@@ -841,7 +843,8 @@ const _LaplaceFactorization{T} =
 """
     _laplace_block_factor(M, blocks)
 
-Eliminate the blocks innermost-first, returning `(ok, logdet, factors)`.
+Eliminate the blocks innermost-first, returning
+`(ok, logdet, factors, coupling)`.
 
 `factors` holds, per block, the Cholesky of its diagonal *after* every
 descendant has been eliminated into it, and the couplings that were used --
@@ -918,7 +921,7 @@ end
 @inline _laplace_symmetrise(A) = (A .+ transpose(A)) ./ 2
 
 """
-    _laplace_selected_inverse(factors, coupling, blocks)
+    _laplace_selected_inverse(factors, elim, blocks)
 
 The entries of `C = inv(M)` that lie in `M`'s own sparsity pattern: every
 block's diagonal, and every block's coupling to each of its ancestors.
@@ -1487,7 +1490,7 @@ function _laplace_newton_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
 end
 
 """
-    _laplace_dual_unit_mode(laplace, U, values, Ls, uhat, Hneg, aws)
+    _laplace_dual_unit_mode(laplace, U, values, Ls, uhat, curvature, aws)
 
 The unit's inner mode as a function of the outer parameters, to first order.
 
@@ -1495,8 +1498,8 @@ One Newton step from the converged primal mode, taken with dual parameters.
 The inner gradient's *primal* part is zero there, so the step's primal part is
 zero and its dual part is exactly `-H^-1 dg/dtheta`: the implicit function
 theorem, without forming that cross-derivative explicitly. Using the primal
-`Hneg` for the solve rather than a dual one is not an approximation for the
-same reason -- any dual part of the inverse would multiply a zero primal
+`curvature` for the solve rather than a dual one is not an approximation for
+the same reason -- any dual part of the inverse would multiply a zero primal
 gradient.
 """
 function _laplace_dual_unit_mode(laplace::CTSEMLaplaceObjective, U::Integer,
@@ -1599,7 +1602,8 @@ struct _LaplaceSeedInner end
 struct _LaplaceSeedOuter end
 
 """
-    _laplace_unit_seeded_gradient(laplace, U, values, Ls, u, members, d1, d2, order)
+    _laplace_unit_seeded_gradient(laplace, U, values, Ls, u, members, d1, d2,
+                                  order, slot)
 
 One reverse sweep over the given members, each evaluated at *its own* shifted
 parameter vector with two independent seed directions added.
@@ -1696,7 +1700,8 @@ end
 @inline _laplace_finite(x::ForwardDiff.Dual) = _finite_deep(x)
 
 """
-    _laplace_seeded_unit_gradient!(out, laplace, U, values, Ls, dL, M, factors, elim)
+    _laplace_seeded_unit_gradient!(out, laplace, U, values, Ls, dL, M, factors,
+                                   elim, slot)
 
 Accumulate unit `U`'s exact contribution to `dT/dtheta` into `out`, in a number
 of sweeps proportional to the unit's members rather than to the parameter count.
@@ -2024,7 +2029,6 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     _laplace_check_indices(laplace, length(theta))
     nsubjects = length(laplace.objective.subject_objectives)
     nunits = length(laplace.units.members)
-    single_level = nlevels(laplace.spec) == 1
 
     # 1. Inner modes and the value at them, in primal arithmetic, warm-started
     #    from the last call. Each subject's term is its own approximated log
@@ -2037,7 +2041,6 @@ function ctsem_laplace_evaluate(laplace::CTSEMLaplaceObjective, values::Abstract
     #    here, so recomputing it for each of those would be a third of the
     #    primal pass thrown away.
     Ls = _laplace_popchols(theta, laplace.spec)
-    L = Ls[1]
     # Factorizations rather than dense curvatures. On a study of a few thousand
     # subjects a dense one is over a hundred megabytes, and one is held per unit
     # for the whole evaluation; the factors are kilobytes.
@@ -2241,7 +2244,7 @@ population vector shifted by that subject's random effects, and then by its
 TI-predictor effects.
 
 Both shifts come from the code that already applies them during fitting --
-`_laplace_subject_values` and the engine's own `_materialize_subject_values!`
+`_laplace_member_values` and the engine's own `_materialize_subject_values!`
 -- rather than being reconstructed by the caller. That matters because the
 caller is the R side's subject-parameter reporting, and a second, slightly
 different copy of "what parameters does this subject have" is exactly the kind
@@ -2472,7 +2475,7 @@ function ctsem_laplace_subject_values(laplace::CTSEMLaplaceObjective,
 end
 
 """
-    ctsem_laplace_population(laplace, values)
+    ctsem_laplace_population(laplace, values, level=1)
 
 Raw-scale population standard deviations and correlations, for a whole matrix
 of raw parameter vectors at once (`values[s, :]` is one draw).
@@ -2509,7 +2512,7 @@ end
 export ctsem_laplace_population
 
 """
-    ctsem_laplace_modes(laplace, values)
+    ctsem_laplace_modes(laplace, values, level=1)
 
 The per-subject random-effect modes at `values`, on both the standardized
 `z` scale and the raw parameter scale, with their conditional standard errors.

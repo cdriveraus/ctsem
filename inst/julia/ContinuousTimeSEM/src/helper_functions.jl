@@ -170,40 +170,6 @@ function _matvec_mul!(
 end
 
 """
-    _matmat_mul!(C, A, B)
-
-Compute `C .= A * B` without allocating temporaries.
-"""
-function _matmat_mul!(C::AbstractMatrix, A::AbstractMatrix, B::AbstractMatrix)
-    return _matmat_mul!(C, A, B, Val(size(C, 1)), Val(size(C, 2)), Val(size(A, 2)))
-end
-
-function _matmat_mul!(
-    C::AbstractMatrix{T},
-    A::AbstractMatrix{T},
-    B::AbstractMatrix{T},
-    ::Val{rows},
-    ::Val{cols},
-    ::Val{inner},
-) where {T<:Number, rows, cols, inner}
-    @boundscheck begin
-        size(C, 1) == rows && size(A, 1) == rows || throw(DimensionMismatch("A row count must match C row count"))
-        size(C, 2) == cols && size(B, 2) == cols || throw(DimensionMismatch("B column count must match C column count"))
-        size(A, 2) == inner && size(B, 1) == inner || throw(DimensionMismatch("A columns must match B rows"))
-    end
-    @inbounds for j in 1:cols
-        for i in 1:rows
-            acc = zero(T)
-            for k in 1:inner
-                acc += A[i, k] * B[k, j]
-            end
-            C[i, j] = acc
-        end
-    end
-    return C
-end
-
-"""
     _mul_right_transpose!(C, A, B)
 
 Compute `C .= A * B'` for BLAS-compatible strided matrices.
