@@ -104,37 +104,43 @@
   # its own subject loop, so each log-probability evaluation is parallel and
   # there is nothing for an R cluster to do.
   #
-  # One chunk, and deliberately *not* the count the fit's tuner measured.
+  # The ceiling the caller asked for.
   #
-  # This used to inherit `fit$estimate$chunks`, reasoning that the subject loop
-  # is not monotone in the chunk count -- true, and why `ctsem_tune_chunks!`
-  # exists -- so a measured choice beats raw `cores`. The unexamined step was
-  # assuming a count measured on one workload transfers to a different one. It
-  # does not. The tuner times the *optimisation* objective; this phase computes
-  # per-subject scores, an exact Hessian and constrained draws, and the subject
-  # loop is a smaller share of it.
-  #
-  # Measured by forcing the count on one already-optimised fit, so nothing but
-  # the chunking varies, on two model shapes:
+  # This forced one chunk, to mitigate a penalty that does not reproduce. The
+  # record it carried, swept in one direction on one machine, was:
   #
   #     chunks              1       2       4       8       1 again
   #     4 latents, 120 subj  31.2 s  68.9 s  43.0 s  30.8 s  31.5 s
   #     2 latents, 300 subj   5.0 s  11.3 s   7.3 s   5.3 s   5.4 s
   #
-  # Chunking never wins here: eight only matches serial, and two costs 2.2x on
-  # both shapes. The repeat of one at the end drifts 1%, so the sequence is
-  # readable. Worse, the counts the tuner tends to pick are the bad ones -- it
-  # chose 4 on the second model, costing 46%, and the comment this replaces
-  # recorded it choosing 2 at ceiling 4, which is the worst setting measured.
+  # Re-measured on dev1 -- 23 homogeneous cores, no SMT -- with the sweep run
+  # up and back down rather than in one direction, on the same two shapes.
+  # Whole-phase seconds, minimum of three:
   #
-  # This phase is about half of a fit's wall time, so that was roughly a
-  # doubling of half the fit whenever the tuner landed on 2.
+  #     chunks               1     2     4     8     8     4     2     1
+  #     4 latents, 120 subj 3.68  3.73  3.58  3.69  3.68  3.64  3.65  3.63
+  #     2 latents, 300 subj 2.94  2.98  2.96  2.95  2.98  2.97  2.99  2.90
+  #
+  # The chunk count moves the phase by 4% and 3%, against a baseline that
+  # repeats to 2.9% and 0.1%. There is no penalty here to mitigate.
+  #
+  # The mechanism agrees. This phase spends almost all of its wall time in
+  # JuliaConnectoR round trips rather than in the subject loop: one gradient
+  # costs 0.417 s called from R and 0.005 s measured inside the engine, and a
+  # round trip costs 40-80 ms whatever it carries. Chunking the subject loop
+  # cannot move a number that is one percent subject loop, in either
+  # direction. Whatever produced the first table, it was not the chunking.
+  #
+  # What the chunk count does change is the exact Hessian, the one component
+  # here with enough work in it to divide: 0.40 s to 0.22 s at eight chunks on
+  # the first shape, 0.21 s to 0.16 s on the second. Forcing one chunk gave
+  # that up and bought nothing.
   #
   # Set explicitly rather than left alone, because the session may carry a
-  # ceiling from elsewhere. If a model is ever found where chunking this phase
-  # helps, the principled fix is to run `ctsem_tune_chunks!` against an
-  # uncertainty evaluation rather than to inherit a number or to hard-code one.
-  previous <- .ctBackendSetMaxChunks(1L)
+  # ceiling from elsewhere; the engine still caps it at its own thread count.
+  chunks <- suppressWarnings(as.integer(cores)[1L])
+  if (is.na(chunks) || chunks < 1L) chunks <- 1L
+  previous <- .ctBackendSetMaxChunks(chunks)
   # Restored on exit, like the optimiser's. This runs *after* the optimiser has
   # put its own ceiling back, so without a restore here the session still ended
   # a fit reconfigured -- measured at 4 after a `cores=4` Laplace fit, where the
