@@ -331,6 +331,9 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   for (iteration in seq_len(iterations)) {
     scores <- .ctBackendKalmanRaw(spec, samples[iteration, ],
       subjectmatrices = isTRUE(subjectpars),
+      # Every field this loop reads, and nothing else -- in particular not
+      # `transition`, which nothing here or downstream looks at.
+      fields = c("eta", "etacov", "y", "ycov", "llrow", "subject", "subject_loglik"),
       # Said once per call, not once per posterior draw.
       randomEffects = if (iteration == 1L) randomEffects else
         .ctBackendQuietLevel(spec, randomEffects))
@@ -564,7 +567,8 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
     return(as.numeric(fit$stanfit$transformedparsfull$llrow[1, ]))
   }
   spec <- .ctBackendAsModel(.ctBackendSpec(fit))
-  as.numeric(.ctBackendKalmanRaw(spec, fit$estimate$raw, subjectmatrices = FALSE)$llrow)
+  as.numeric(.ctBackendKalmanRaw(spec, fit$estimate$raw, subjectmatrices = FALSE,
+    fields = "llrow")$llrow)
 }
 
 # A copy of the fit whose observed data has been replaced, so that the residual
