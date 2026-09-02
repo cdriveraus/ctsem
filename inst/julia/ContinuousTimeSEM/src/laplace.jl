@@ -2336,15 +2336,50 @@ function _laplace_primal_curvature(laplace::CTSEMLaplaceObjective,
     theta::Vector{Float64}, Ls::Vector{Matrix{Float64}})
     nunits = length(laplace.units.members)
     out = Vector{_LaplaceFactorization{Float64}}(undef, nunits)
-    for U in 1:nunits
-        _laplace_solve_unit_mode!(laplace, U, theta, Ls)
-        u = laplace.modes[U]
-        blocks = laplace.units.blocks[U]
-        M = isempty(u) ? CTSEMBlockMatrix(Float64, blocks) :
-            _laplace_unit_curvature(laplace, U, theta, Ls, u)
-        fac = _laplace_factor_repaired!(M, blocks)
-        laplace.mode_repaired[U] = fac.repaired
-        out[U] = (fac.factors, fac.coupling)
+
+    # Chunked, like the identical work inside `run_primal`.
+    #
+    # This loop is every unit's mode solve followed by its curvature and
+    # factorization -- the same six lines `ctsem_laplace_evaluate` runs across
+    # chunks. Here it ran serially, and worse, it omitted the `slot` argument
+    # that both inner calls take, so every unit shared adjoint workspace 1.
+    # That is what made it unthreadable rather than merely unthreaded:
+    # `_laplace_solve_unit_mode!` and `_laplace_unit_curvature` both default
+    # `slot` to 1, and two units on one slot corrupt each other's workspace.
+    #
+    # Its two callers, `ctsem_laplace_mode_jacobian` and
+    # `ctsem_subject_gradients`, are top-level entry points rather than
+    # anything reached from inside a chunk, so there is no nesting to worry
+    # about. Each unit is written by exactly one chunk -- `out[U]`,
+    # `laplace.modes[U]`, `laplace.mode_repaired[U]` -- so the only sharing was
+    # the workspace, and a slot per chunk removes it.
+    nchunks = _ctsem_nchunks(nunits)
+    while length(laplace.workspaces) < nchunks
+        push!(laplace.workspaces, Dict{Any,Any}())
+    end
+    ranges = nchunks > 1 ?
+        _ctsem_chunk_assignment(_laplace_unit_weights(laplace), nchunks) :
+        [1:nunits]
+
+    run = function (c)
+        @inbounds for U in ranges[c]
+            _laplace_solve_unit_mode!(laplace, U, theta, Ls, c)
+            u = laplace.modes[U]
+            blocks = laplace.units.blocks[U]
+            M = isempty(u) ? CTSEMBlockMatrix(Float64, blocks) :
+                _laplace_unit_curvature(laplace, U, theta, Ls, u, c)
+            fac = _laplace_factor_repaired!(M, blocks)
+            laplace.mode_repaired[U] = fac.repaired
+            out[U] = (fac.factors, fac.coupling)
+        end
+        return nothing
+    end
+    if nchunks <= 1
+        run(1)
+    else
+        Threads.@sync for c in 1:nchunks
+            Threads.@spawn run(c)
+        end
     end
     return out
 end
