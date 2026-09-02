@@ -474,6 +474,14 @@ each subject**, the manifest covariance is built from MANIFESTVAR *after* the
 update-group transforms rather than before, so a state-dependent MANIFESTVAR is
 not read before its transform has ever written it.
 
+The first row also runs all three transform groups -- predict, td, update -- in
+the order the main loop runs them, even though it has no prediction interval. A
+group supplies values as well as a prediction: PARS is in the predict group, and
+an update-group or td-group cell may be written by a transform that reads a PARS
+cell. Their contexts carry a zero interval, which no transform can observe --
+`generate_complex_transform_string` substitutes only states, PARS and the model
+matrices, so no transform expression can name the interval or the time.
+
 ---
 
 ## Data generation

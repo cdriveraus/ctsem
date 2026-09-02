@@ -631,10 +631,25 @@ function _extended_kalman_filter_continuous!(
     copyto!(ws.state, pars.T0MEANS)
     _record_init!(trace, pars, _val(ws.state_dim))
 
-    # Each row follows one contract: prediction, TD impulse, measurement.
-    # The first row has no prediction interval but can still contain an impulse.
+    # Each row follows one contract: prediction, TD impulse, measurement, and
+    # the three transform groups run in that order. The first row has no
+    # prediction interval, but it runs all three groups anyway, because a group
+    # supplies *values* as well as a prediction: PARS is in the predict group
+    # and an update-group cell -- LAMBDA, MANIFESTMEANS, MANIFESTVAR, Jy -- may
+    # be written by a transform that reads one. Skipping the group here left
+    # that read pointing at a parameter slot nothing had written, so it took
+    # the zero the buffer is filled with: 11.5 log units against stan at one
+    # occasion per subject, where every row is a row 1.
+    #
+    # One context serves all three, as it did for the last two. Its interval is
+    # zero, which is the only thing about it a predict-group transform could
+    # object to, and none can: generate_complex_transform_string substitutes
+    # only state, PARS and the model matrices, so no transform expression can
+    # reference ctx.dt or ctx.time at all.
     first_context = CTSEMRowContext(ws.state, pars, view(tdpreds, :, 1), tipreds,
         timesteps[1], zero(eltype(params)), Int(subject), 1)
+    _record_group!(trace, 1, ws.predict_param_indices, all_params, first_context)
+    apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices, sp.predict_transforms, first_context)
     _record_group!(trace, 2, ws.td_param_indices, all_params, first_context)
     apply_complex_transforms_at_indices!(all_params, ws.td_param_indices, sp.td_transforms, first_context)
     _record_td!(trace, ws, pars, first_context.tdpreds, _val(ws.state_dim))
