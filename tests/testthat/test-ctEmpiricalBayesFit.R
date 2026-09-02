@@ -273,6 +273,17 @@ test_that("ctEmpiricalBayesFit rejects TI predictor models", {
     LAMBDA=matrix(1,1,1),
     silent=TRUE)
   dat <- data.frame(id=c(1,1,2,2), time=c(0,1,0,1), Y1=rnorm(4), x=0)
-  
+
   expect_error(ctEmpiricalBayesFit(dat, model), 'Time independent predictors')
+})
+
+test_that("ctEmpiricalBayesFit post-processing rejects julia backend fits with an informative error", {
+  # Building a real backend='julia' fit here is expensive, so a minimal object
+  # carrying just the class is used to reach the guard directly.
+  juliafit <- list()
+  class(juliafit) <- c('ctJuliaFit', 'list')
+
+  expect_error(
+    ctsem:::ctEBrawMatrix(fits=list('1'=juliafit), parnames='drift', use='rawest'),
+    "backend='stan'")
 })

@@ -562,6 +562,13 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     # the fit will actually run: preparation is pure R, and stays usable -- and
     # testable -- on a machine with no Julia at all.
     if(isTRUE(fit)) .ctJuliaEnsureInstalled()
+  } else if(!is.null(optimcontrol$is)) {
+    # `optimcontrol$is` selected Stan's optimization-plus-importance-sampling
+    # route before the `uncertainty` argument replaced it. stanoptimis() has
+    # no `is` parameter and no `...` catch-all, so leaving this in place would
+    # reach `do.call(stanoptimis, optimcontrol)` and fail with a raw "unused
+    # argument" error. Caught here, before any work happens.
+    stop("optimcontrol$is is no longer supported; use optimcontrol$uncertainty='is' instead.", call.=FALSE)
   }
 
   if(!is.na(nopriors)){

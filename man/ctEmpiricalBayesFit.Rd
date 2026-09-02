@@ -91,6 +91,10 @@ Fits one ctsem model per subject using the model prior, estimates the
 empirical marginal distribution of the raw parameters, then fits each subject
 again using the resulting empirical Bayes prior.
 }
+\details{
+This function currently requires \code{backend='stan'}: its post-processing
+reads stan fit structures that a julia fit does not carry.
+}
 \examples{
 \donttest{
 model <- ctModel(type='ct', manifestNames='Y1', LAMBDA=matrix(1))
