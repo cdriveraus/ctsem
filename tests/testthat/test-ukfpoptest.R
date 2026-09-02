@@ -125,7 +125,7 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     dtf2=ctFit(datalong = dat,model= dtm2,optimize = TRUE)
     s2=summary(dtf2,parmatrices = F,priorcheck = F,residualcov = F)
     
-    test_isclose(s1$ll,s2$ll,tol=1e-3)
+    test_isclose(s1$loglik,s2$loglik,tol=1e-3)
     test_isclose(sort(dtf2$stanfit$rawest),sort(dtf$stanfit$rawest),tol=1e-3) #sorting is an ugly hack! could improve...
     
   })
