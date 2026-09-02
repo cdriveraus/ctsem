@@ -197,7 +197,9 @@
 #' @param control A list of sampler settings: \code{maxdepth} (default 10),
 #'   \code{target_accept} (0.8), \code{adapt_metric} (TRUE),
 #'   \code{adapt_effects} (FALSE), \code{init_scale} (1), \code{maxdelta}
-#'   (1000).
+#'   (1000). Stan's spellings \code{max_treedepth} and \code{adapt_delta},
+#'   which \code{\link{ctFit}} takes for the same two settings, are
+#'   accepted here as well.
 #'
 #'   Sampling takes exactly the draws it was asked for unless it is given a
 #'   target to reach: \code{minEss} and \code{meanEss} are effective sample
@@ -320,7 +322,6 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
     }
   }
 
-  module <- .ctJuliaModule(fit$model_spec$project)
   objective <- .ctJuliaObjective(fit)
   estimate <- as.numeric(fit$estimate$raw)
   npar <- length(estimate)
@@ -341,12 +342,27 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   # The fit's Hessian, when it has one: the sampler would otherwise recompute
   # it to build the metric, at 2n gradient evaluations it need not spend.
   hessian <- fit$uncertainty$hessian
-  arguments <- list(objective, .ctJuliaNumericVector(estimate),
-    npar = as.integer(npar), nchains = chains, nwarmup = warmup,
-    ndraws = draws, seed = as.integer(seed)[1L],
-    save_effects = isTRUE(saveEffects), verbose = isTRUE(verbose),
-    maxdepth = as.integer(.ctJuliaOr(control$maxdepth, 10L)),
-    target_accept = as.numeric(.ctJuliaOr(control$target_accept, 0.8)),
+  .ctBackendSampleRun(fit, objective, estimate, npar, chains = chains,
+    warmup = warmup, draws = draws, cores = cores, saveEffects = saveEffects,
+    seed = seed, control = control, verbose = verbose, hessian = hessian)
+}
+
+# The sampler settings, from either spelling of the control list.
+#
+# `ctFit(optimize = FALSE)` took Stan's names for two of these and `ctSample()`
+# takes the engine's, so both are read here rather than each entry point
+# quietly ignoring what the other documents. The rest are spelled the same on
+# both, and the whole list is assembled in one place so that a knob added for
+# one cannot go missing from the other -- which is how `minEss` and its three
+# companions came to be documented on `ctSample()` and passed only by `ctFit()`.
+#' @keywords internal
+.ctBackendSampleControl <- function(control) {
+  control <- .ctJuliaOr(control, list())
+  settings <- list(
+    maxdepth = as.integer(.ctJuliaOr(control$maxdepth,
+      .ctJuliaOr(control$max_treedepth, 10L))),
+    target_accept = as.numeric(.ctJuliaOr(control$target_accept,
+      .ctJuliaOr(control$adapt_delta, 0.8))),
     maxdelta = as.numeric(.ctJuliaOr(control$maxdelta, 1000)),
     # 2, not 1. Chains are dispersed by drawing from the Laplace approximation,
     # which has the right shape and the wrong width: Laplace understates spread
@@ -367,15 +383,90 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
     init_scale = as.numeric(.ctJuliaOr(control$init_scale, 1)),
     adapt_metric = isTRUE(.ctJuliaOr(control$adapt_metric, TRUE)),
     adapt_effects = isTRUE(.ctJuliaOr(control$adapt_effects, FALSE)))
+
+  # Sampling targets, when asked for, and absent from the call when not: the
+  # engine reads zero as "no target", so an unset element here and an omitted
+  # argument there mean the same thing. Left unset the sampler takes exactly
+  # the draws it was told to; set, it keeps going until the effective sample
+  # size is there or the budget runs out, which is usually what a user wanted
+  # from a draw count they had to guess at.
+  #
+  # `settleTol` ends warmup early once the metric stops moving between windows.
+  # It is off by default and should stay off: measured on the N=200 augmented
+  # marginal route it cost 1795 s for min ESS 142.8 where the fixed schedule
+  # spent 559 s for min ESS 246.3, a factor of 5.5 against. A settled metric is
+  # not a good metric, and the sampling phase pays for the shortened warmup on
+  # every draw.
+  if (!is.null(control$minEss)) settings$min_ess <- as.numeric(control$minEss)
+  if (!is.null(control$meanEss)) settings$mean_ess <- as.numeric(control$meanEss)
+  if (!is.null(control$maxDraws)) settings$max_draws <- as.integer(control$maxDraws)
+  if (!is.null(control$rhatTarget)) settings$rhat_target <- as.numeric(control$rhatTarget)
+  if (!is.null(control$settleTol)) settings$settle_tol <- as.numeric(control$settleTol)
+  settings
+}
+
+# Call the engine's sampler and assemble the fit it produced.
+#
+# The one place either entry point reaches the sampler from. `ctSample()` comes
+# here with a fit it was handed and `ctFit(optimize = FALSE)` with a shell it
+# has just optimised, and that -- which object gets filled, and what placed the
+# sampler -- is the whole difference between them. Everything after it was
+# duplicated until it drifted: the two argument lists had diverged over five
+# settings, and the ones only `ctFit()` passed were documented on `ctSample()`
+# as though they worked.
+#
+# `marginal` selects `ctsem_sample_marginal` over `ctsem_sample`: the
+# parameters alone, with whatever integration the objective already does,
+# against the joint posterior over parameters and random effects. It is the
+# only structural difference in the call, because `npar`, `save_effects` and
+# `adapt_effects` all describe an effect block the marginal entry does not
+# have.
+#
+# `estimate` may be longer than `npar` -- the state-explicit route samples the
+# trajectory alongside the parameters -- so the parameter block is sliced out
+# for the assembler rather than assumed to be the whole vector.
+#
+# `progress` is separate from `verbose` because the two paths decide it
+# differently: a flag on `ctSample()`, and on the fitting path anyone watching
+# a console, since sampling there follows an optimisation that has already been
+# printing and silence after it reads as a finished run rather than a running
+# one.
+#' @keywords internal
+.ctBackendSampleRun <- function(fit, objective, estimate, npar, chains, warmup,
+  draws, cores, saveEffects, seed, control, verbose, hessian, marginal = FALSE,
+  progress = isTRUE(verbose)) {
+
+  settings <- .ctBackendSampleControl(control)
+  module <- .ctJuliaModule(fit$model_spec$project)
+  arguments <- list(objective, .ctJuliaNumericVector(estimate),
+    nchains = as.integer(chains), nwarmup = as.integer(warmup),
+    ndraws = as.integer(draws), seed = as.integer(seed)[1L],
+    maxdepth = settings$maxdepth, target_accept = settings$target_accept,
+    maxdelta = settings$maxdelta, init_scale = settings$init_scale,
+    adapt_metric = settings$adapt_metric,
+    verbose = isTRUE(progress),
+    progress_overwrite = .ctProgressOverwrite(verbose))
+  for (name in c("min_ess", "mean_ess", "max_draws", "rhat_target", "settle_tol")) {
+    if (!is.null(settings[[name]])) arguments[[name]] <- settings[[name]]
+  }
+  if (!marginal) {
+    arguments$npar <- as.integer(npar)
+    arguments$save_effects <- isTRUE(saveEffects)
+    arguments$adapt_effects <- settings$adapt_effects
+  }
   if (!is.null(hessian)) {
     arguments$hessian <- JuliaConnectoR::juliaPut(as.matrix(hessian))
   }
+  entry <- if (marginal) module$ctsem_sample_marginal else module$ctsem_sample
 
-  arguments$progress_overwrite <- .ctProgressOverwrite(verbose)
   result <- .ctBackendWithMaxChunks(cores,
-    JuliaConnectoR::juliaGet(do.call(module$ctsem_sample, arguments)))
-  .ctBackendSampleAssemble(fit, result, npar, saveEffects, chains, warmup,
-    as.integer(result$ndraws), hessian, estimate)
+    JuliaConnectoR::juliaGet(do.call(entry, arguments)))
+  # `result$ndraws` rather than the count asked for: with an effective sample
+  # size target the sampler decides when to stop, and reporting the request
+  # would describe a run that did not happen.
+  .ctBackendSampleAssemble(fit, result, npar, isTRUE(saveEffects) && !marginal,
+    as.integer(chains), warmup, as.integer(result$ndraws), hessian,
+    as.numeric(estimate)[seq_len(npar)])
 }
 
 # Turn an engine sample result into a fit object.
@@ -646,8 +737,6 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # and sampling together and warmup is half of it unless said otherwise.
   warmup <- as.integer(.ctJuliaOr(control$warmup, max(1L, floor(iter / 2))))
   draws <- max(1L, as.integer(iter) - warmup)
-  maxdepth <- as.integer(.ctJuliaOr(control$max_treedepth, 10L))
-  target <- as.numeric(.ctJuliaOr(control$adapt_delta, 0.8))
   seed <- as.integer(.ctJuliaOr(control$seed, 20260828L))
   saveEffects <- isTRUE(optimcontrol$saveEffects)
 
@@ -705,46 +794,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
   }
   if (inherits(hessian, "try-error")) hessian <- NULL
 
-  arguments <- list(.ctJuliaOr(jointobjective, objective),
-    .ctJuliaNumericVector(estimate),
-    nchains = as.integer(chains), nwarmup = warmup, ndraws = draws,
-    maxdepth = maxdepth, target_accept = target, seed = seed,
-    # On when someone is watching, matching the optimiser rather than differing
-    # from it. The two run one after the other in this same call, and having the
-    # first print progress by default while the second stayed silent is what
-    # made a running sampler look like a finished optimisation: the visible
-    # output stopped at "Computing exact Hessian" and nothing followed it for
-    # several minutes.
-    verbose = verbose > 0L || .ctProgressConsole(),
-    progress_overwrite = .ctProgressOverwrite(verbose))
-  # Sampling targets, when asked for. Left at zero the sampler takes exactly the
-  # draws it was told to; set, it keeps going until the effective sample size is
-  # there or the budget runs out, which is usually what a user wanted from a
-  # draw count they had to guess at.
-  if (!is.null(control$minEss)) arguments$min_ess <- as.numeric(control$minEss)
-  if (!is.null(control$meanEss)) arguments$mean_ess <- as.numeric(control$meanEss)
-  if (!is.null(control$maxDraws)) arguments$max_draws <- as.integer(control$maxDraws)
-  if (!is.null(control$rhatTarget)) arguments$rhat_target <- as.numeric(control$rhatTarget)
-  # `settleTol` ends warmup early once the metric stops moving between windows.
-  # It is off by default and should stay off: measured on the N=200 augmented
-  # marginal route it cost 1795 s for min ESS 142.8 where the fixed schedule
-  # spent 559 s for min ESS 246.3, a factor of 5.5 against. A settled metric is
-  # not a good metric, and the sampling phase pays for the shortened warmup on
-  # every draw.
-  if (!is.null(control$settleTol)) arguments$settle_tol <- as.numeric(control$settleTol)
-  if (!is.null(hessian)) {
-    arguments$hessian <- JuliaConnectoR::juliaPut(as.matrix(hessian))
-  }
   joint <- identical(intoverpop, "none")
-  if (joint) {
-    arguments$npar <- as.integer(npar)
-    arguments$save_effects <- saveEffects
-    arguments$adapt_effects <- isTRUE(control$adapt_effects)
-  }
-  entry <- if (joint) module$ctsem_sample else module$ctsem_sample_marginal
-
-  result <- .ctBackendWithMaxChunks(cores,
-    JuliaConnectoR::juliaGet(do.call(entry, arguments)))
 
   # The shell the assembler fills, matching what an optimised fit carries so
   # that everything downstream reads a sampled fit the same way.
@@ -766,8 +816,17 @@ print.ctSampleDiagnostics <- function(x, ...) {
       intoverpop = intoverpop, optimize = FALSE,
       intoverstates = isTRUE(intoverstates)))
   class(out) <- c("ctJuliaFit", "ctFitModel")
-  out <- .ctBackendSampleAssemble(out, result, npar, saveEffects && joint,
-    as.integer(chains), warmup, draws, hessian, theta)
+  out <- .ctBackendSampleRun(out, .ctJuliaOr(jointobjective, objective),
+    estimate, npar, chains = chains, warmup = warmup, draws = draws,
+    cores = cores, saveEffects = saveEffects, seed = seed, control = control,
+    verbose = verbose, hessian = hessian, marginal = !joint,
+    # On when someone is watching, matching the optimiser rather than
+    # differing from it. The two run one after the other in this same call,
+    # and having the first print progress by default while the second stayed
+    # silent is what made a running sampler look like a finished
+    # optimisation: the visible output stopped at "Computing exact Hessian"
+    # and nothing followed it for several minutes.
+    progress = verbose > 0L || .ctProgressConsole())
   # The identifiability report is about the parameters, so it is given the
   # parameter block's own curvature -- the profiled one on the state route,
   # not the corner of the joint matrix, which describes the parameters at a

@@ -111,7 +111,7 @@
       .ctBackendFirstError(drawn), call. = FALSE)
     return(NULL)
   }
-  .ctBackendPoolChains(fit, drawn, chains, warmup, draws)
+  .ctBackendPoolChains(fit, drawn, chains, warmup, draws, saveEffects)
 }
 
 # One chain, in a worker. Deliberately the ordinary entry point: a separate
@@ -127,71 +127,141 @@
     # Only what pooling needs. Returning the whole fit would send the data and
     # the model back across for every chain, having already sent them out.
     list(posterior = s$estimate$rawposterior,
+      # The effect draws only when they were asked for -- they are the one
+      # field here big enough for the bridge to notice -- but their summary
+      # always, because a pooled fit that reported no random effects at all is
+      # what dropping it produced.
+      effects = s$sample$effects,
+      effect_mean = s$sample$effect_mean,
+      effect_sd = s$sample$effect_sd,
       divergent = s$sample$divergent,
       warmup_divergent = s$sample$warmup_divergent,
       saturated = s$sample$saturated,
       max_depth = s$sample$max_depth,
       stepsize = s$sample$stepsize,
       ebfmi = s$sample$ebfmi,
-      accept = s$sample$accept)
+      accept = s$sample$accept,
+      depth = s$sample$depth,
+      energy = s$sample$energy)
   }, error = function(e) structure(list(), error = conditionMessage(e)))
 }
 
-# Pool the chains and recompute what only the pool can say.
+# Pool the chains, then hand them to the ordinary assembler.
+#
+# What only the pool can say is R-hat and effective sample size, which are
+# properties of the whole run rather than averages of per-chain values, and the
+# effect summaries, which have to be recombined rather than concatenated.
+# Everything after that -- where the draws go, what becomes the point estimate,
+# which diagnostics warn, what class the object carries -- is what the
+# single-process path already does, so this builds the engine's own result shape
+# and calls `.ctBackendSampleAssemble()` rather than filling the fit in again by
+# hand.
+#
+# It was written the other way first, and four things went missing in the copy:
+# the diagnostics carried no class, so `print()` fell back to printing a list;
+# the Laplace start was absent; the constrained draws still described the
+# optimised fit's; and the effect summaries were dropped entirely, so every
+# multi-chain fit -- which is the default -- reported no random effects at all.
 #' @keywords internal
-.ctBackendPoolChains <- function(fit, drawn, chains, warmup, draws) {
-  # `saveEffects` does not reach here: `rawposterior` holds the population part
-  # only, whether or not the effects were kept, so pooling is the same either
-  # way.
+.ctBackendPoolChains <- function(fit, drawn, chains, warmup, draws,
+  saveEffects = FALSE) {
   posteriors <- lapply(drawn, function(d) as.matrix(d$posterior))
   npar <- ncol(posteriors[[1]])
   if (!all(vapply(posteriors, ncol, integer(1)) == npar)) return(NULL)
 
-  # `rbind` stacks chain 1's draws, then chain 2's, so the transpose below is
-  # `npar x (nchains * ndraws)` with column `(c-1)*ndraws + t` holding chain
-  # `c`'s draw `t` -- the chain-major layout `ctsem_sample_diagnostics` indexes.
-  # Every chain must have contributed the same number of draws for that to hold.
-  if (length(unique(vapply(posteriors, nrow, integer(1)))) != 1L) return(NULL)
-  pooled <- do.call(rbind, posteriors)
-  colnames(pooled) <- colnames(posteriors[[1]])
+  # Every chain must have contributed the same number of draws for the layout
+  # below to hold, and an effective-sample-size target can break that: a chain
+  # that reached `minEss` early stops before one that did not. Truncating to the
+  # shortest is the honest repair -- these are all post-warmup draws from the
+  # same stationary distribution, so dropping the tail of the longer chains
+  # costs a little precision and nothing else, where refusing to pool would
+  # discard every chain and sample the whole run again in this session.
+  counts <- vapply(posteriors, nrow, integer(1))
+  ndraws <- min(counts)
+  if (ndraws < 1L) return(NULL)
+  if (any(counts != ndraws)) {
+    message("Chains returned ", paste(counts, collapse = ", "),
+      " draws, so the first ", ndraws, " of each were pooled.")
+  }
+  rows <- function(x) {
+    if (is.null(x) || !length(x)) return(NULL)
+    x <- as.matrix(x)
+    x[seq_len(ndraws), , drop = FALSE]
+  }
+  perdraw <- function(field) unlist(lapply(drawn, function(d) {
+    v <- as.numeric(d[[field]])
+    if (length(v) >= ndraws) v[seq_len(ndraws)] else v
+  }))
 
-  # Chain-major, `ndim x (nchains * ndraws)`, which is the layout
-  # `ctsem_sample_diagnostics` documents and the one the single-process path
-  # hands it. Getting this wrong would not error -- it would silently mix the
-  # chains and report R-hat over the mixture, which is always reassuring.
+  # `rbind` stacks chain 1's draws, then chain 2's, so the transpose below is
+  # `ndim x (nchains * ndraws)` with column `(c-1)*ndraws + t` holding chain
+  # `c`'s draw `t` -- the chain-major layout `ctsem_sample_diagnostics` indexes
+  # and the assembler reshapes. Getting this wrong would not error -- it would
+  # silently mix the chains and report R-hat over the mixture, which is always
+  # reassuring.
+  pooled <- do.call(rbind, lapply(posteriors, rows))
+  colnames(pooled) <- colnames(posteriors[[1]])
+  effectdraws <- lapply(drawn, function(d) rows(d$effects))
+  pooledeffects <- if (all(vapply(effectdraws, is.matrix, logical(1))))
+    do.call(rbind, effectdraws) else NULL
+
+  # The effect summaries recombine rather than concatenate. The pooled mean is
+  # the mean of the chains' means; the pooled variance is the within-chain sum
+  # of squares plus the between-chain one, over the pooled degrees of freedom.
+  # Averaging the chains' standard deviations instead would understate the
+  # spread by exactly the part between chains -- the part R-hat is about.
+  means <- do.call(rbind, lapply(drawn, function(d) as.numeric(d$effect_mean)))
+  sds <- do.call(rbind, lapply(drawn, function(d) as.numeric(d$effect_sd)))
+  effectmean <- numeric(0)
+  effectsd <- numeric(0)
+  if (!is.null(means) && ncol(means) > 0L && identical(dim(means), dim(sds))) {
+    effectmean <- colMeans(means)
+    total <- (ndraws - 1) * colSums(sds^2) +
+      ndraws * colSums(sweep(means, 2, effectmean)^2)
+    effectsd <- sqrt(total / max(1L, ndraws * nrow(means) - 1L))
+  }
+  neffects <- max(length(effectmean),
+    if (is.null(pooledeffects)) 0L else ncol(pooledeffects))
+  # The draws themselves can only be returned if every chain actually sent
+  # them; asking the assembler to reshape to a width the matrix does not have
+  # would interleave parameters and effects into plausible-looking nonsense.
+  keepeffects <- isTRUE(saveEffects) && !is.null(pooledeffects) &&
+    ncol(pooledeffects) == neffects
+
   module <- .ctJuliaModule(fit$model_spec$project)
-  # Not `diag`: that shadows `base::diag`, which is called a few lines below to
-  # take standard errors off the covariance, and the failure would read as
-  # "could not find function" rather than as anything about names.
+  # Not `diag`, which would shadow `base::diag` for the rest of the function.
   pooldiag <- JuliaConnectoR::juliaGet(module$ctsem_sample_diagnostics(
     JuliaConnectoR::juliaPut(t(pooled)), as.integer(chains)))
 
-  out <- fit
-  out$estimate$laplace_raw <- as.numeric(fit$estimate$raw)
-  out$estimate$rawposterior <- pooled
-  out$estimate$raw <- as.numeric(colMeans(pooled))
-  out$estimate$cov <- stats::cov(pooled)
-  out$estimate$se <- sqrt(diag(out$estimate$cov))
-  out$uncertainty <- list(method = "sampling", hessian = fit$uncertainty$hessian,
-    settings = list(chains = chains, warmup = warmup, draws = draws,
-      processes = TRUE))
-  out$sample <- list(
-    chains = chains, warmup = warmup, draws = draws,
-    rhat = stats::setNames(as.numeric(pooldiag$rhat)[seq_len(npar)], colnames(pooled)),
-    ess = stats::setNames(as.numeric(pooldiag$ess)[seq_len(npar)], colnames(pooled)),
+  # The engine's own result shape, so that one assembler serves both paths.
+  result <- list(
+    draws = if (keepeffects) t(cbind(pooled, pooledeffects)) else t(pooled),
+    npar = as.integer(npar),
+    # Above `npar` whenever the chains summarised any effects, which is what
+    # tells the assembler this was the joint sampler and not a marginal one.
+    ndim = as.integer(npar + neffects),
+    ndraws = as.integer(ndraws),
+    rhat = as.numeric(pooldiag$rhat), ess = as.numeric(pooldiag$ess),
     # Summed across chains, because they count events; the step size and E-BFMI
     # are per chain and stay per chain.
-    divergent = sum(vapply(drawn, function(d) as.integer(d$divergent), integer(1))),
+    ndivergent = sum(vapply(drawn, function(d) as.integer(d$divergent), integer(1))),
     warmup_divergent = sum(vapply(drawn,
       function(d) as.integer(d$warmup_divergent), integer(1))),
-    saturated = sum(vapply(drawn, function(d) as.integer(d$saturated), integer(1))),
+    nsaturated = sum(vapply(drawn, function(d) as.integer(d$saturated), integer(1))),
     max_depth = max(vapply(drawn, function(d) as.integer(d$max_depth), integer(1))),
     stepsize = unlist(lapply(drawn, function(d) as.numeric(d$stepsize))),
     ebfmi = unlist(lapply(drawn, function(d) as.numeric(d$ebfmi))),
-    accept = unlist(lapply(drawn, function(d) as.numeric(d$accept))),
-    processes = TRUE)
-  out$sample$unidentified <- .ctBackendFlatParameters(out, npar)
-  .ctSampleWarn(out$sample)
+    accept = perdraw("accept"), depth = perdraw("depth"),
+    energy = perdraw("energy"),
+    effect_mean = effectmean, effect_sd = effectsd)
+
+  out <- .ctBackendSampleAssemble(fit, result, npar, keepeffects,
+    as.integer(chains), warmup, ndraws, fit$uncertainty$hessian,
+    as.numeric(fit$estimate$raw))
+  # Recorded after the fact because it changes nothing about the draws and
+  # everything about how they were produced.
+  out$uncertainty$settings$processes <- TRUE
+  out$sample$processes <- TRUE
   out
 }
 
