@@ -207,3 +207,89 @@ test_that("Julia completes a full AnomAuth optimization", {
   expect_true(is.finite(fit$estimate$loglik))
   expect_true(fit$estimate$converged)
 })
+
+# Row 1 used to build the manifest covariance before the update-group transform
+# that owns the cell had run, so a state-dependent MANIFESTVAR was read from a
+# parameter slot nothing had written. It needs no Stan to pin: with one
+# occasion per subject the state at the measurement is T0MEANS, which is fixed
+# here, so the state-dependent cell must give exactly what the same model gives
+# with that cell fixed at the transform's value there.
+test_that("a state-dependent MANIFESTVAR is transformed before row 1 reads it", {
+  skip_on_cran()
+  skip_without_julia()
+
+  t0 <- 1.5
+  fixedsd <- .3 + .05 * t0   # what the expression yields at the initial state
+
+  .m <- function(manifestvar) suppressWarnings(ctModel(
+    type = "ct",
+    LAMBDA = diag(1),
+    DRIFT = matrix("drift", 1, 1),
+    DIFFUSION = matrix("diffusion", 1, 1),
+    MANIFESTVAR = matrix(manifestvar, 1, 1),
+    MANIFESTMEANS = matrix(0, 1, 1),
+    T0VAR = matrix(1, 1, 1),
+    T0MEANS = matrix(t0, 1, 1)))
+
+  statedep <- .m(paste0(".3 + .05 * eta1"))
+  equivalent <- .m(as.character(fixedsd))
+
+  # One row per subject, so every row is a row 1.
+  set.seed(11)
+  dat <- data.frame(id = 1:8, time = 0, Y1 = stats::rnorm(8, t0, 1))
+
+  specA <- suppressMessages(ctFit(dat, statedep, backend = "julia", fit = FALSE))
+  specB <- suppressMessages(ctFit(dat, equivalent, backend = "julia", fit = FALSE))
+
+  npar <- max(specA$parameter_table$parnumber, na.rm = TRUE)
+  expect_equal(npar, max(specB$parameter_table$parnumber, na.rm = TRUE))
+
+  set.seed(12)
+  raw <- stats::rnorm(npar, 0, .3)
+  a <- ctJuliaEvaluate(specA, raw, gradient = FALSE)$value
+  b <- ctJuliaEvaluate(specB, raw, gradient = FALSE)$value
+
+  expect_true(is.finite(as.numeric(a)))
+  expect_equal(as.numeric(a), as.numeric(b), tolerance = 1e-10)
+
+  # And the transform must actually be doing something: a cell fixed at a
+  # different value has to disagree, or the test above would pass on a model
+  # where MANIFESTVAR never varied at all.
+  specC <- suppressMessages(ctFit(dat, .m(as.character(fixedsd * 3)),
+    backend = "julia", fit = FALSE))
+  cc <- ctJuliaEvaluate(specC, raw, gradient = FALSE)$value
+  expect_false(isTRUE(all.equal(as.numeric(a), as.numeric(cc), tolerance = 1e-6)))
+})
+
+# `covmattransform` never reached the engine: every call passed a literal 0 and
+# the branch the other values select is commented out, so a 'cholesky' model
+# was fitted with the default transform and measured 3.76 log units away from
+# the same model on stan, silently. Refused rather than implemented.
+test_that("a non-default covmattransform is refused on the julia backend", {
+  skip_on_cran()
+
+  .m <- function() suppressWarnings(ctModel(
+    type = "ct",
+    LAMBDA = diag(1, 2),
+    DRIFT = matrix(c("drift11", 0, 0, "drift22"), 2, 2),
+    DIFFUSION = matrix(c("diff11", "diff21", 0, "diff22"), 2, 2),
+    MANIFESTMEANS = matrix(0, 2, 1),
+    T0MEANS = matrix(0, 2, 1)))
+  dat <- data.frame(id = rep(1:4, each = 2), time = rep(0:1, 4),
+    Y1 = 0, Y2 = 0)
+
+  for (tf in c("cholesky", "rawcorr_indep")) {
+    model <- .m()
+    model$covmattransform <- tf
+    expect_error(
+      suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE)),
+      regexp = "covmattransform")
+  }
+
+  # The default still passes the guard. `fit = FALSE` stops before Julia is
+  # needed, so this half does not depend on a Julia installation.
+  model <- .m()
+  expect_identical(model$covmattransform, "rawcorr")
+  expect_error(suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE)),
+    regexp = NA)
+})

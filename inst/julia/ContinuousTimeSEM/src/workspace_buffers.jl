@@ -127,7 +127,11 @@ Allocate a `ContinuousEKFWorkspace` for scalar type `T` and parameter metadata
 """
 function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
     # Storage for the fully materialized parameter vector (mutable + fixed entries).
-    all_params = Vector{T}(undef, length(sp.mutables))
+    # Zero, not undef: this buffer is filled at mutable and at fixed positions
+    # only, so a cell owned solely by a transform is covered by neither. A
+    # read before that transform runs is then a deterministic zero rather than
+    # a value that differs between runs and between machines.
+    all_params = zeros(T, length(sp.mutables))
     subject_values = Vector{T}(undef, maximum(vcat(sp.parnumber, sp.ti_coefficient_indices, [0])))
 
     # Structured parameter view used throughout the EKF loop.

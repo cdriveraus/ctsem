@@ -598,6 +598,21 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (any(!model$manifesttype %in% 0:4)) {
     failures <- c(failures, "manifest types beyond censored (manifesttype > 4)")
   }
+  # `covmattransform` reaches the engine nowhere: every call to
+  # `sdcovsqrt2cov!` passes a literal 0, and the branch the other values would
+  # select is commented out. R computes `standata$choleskymats` for both
+  # backends one dispatch above this, so the setting was validated and then
+  # ignored, which reads as support -- a 'cholesky' model measured 3.76 log
+  # units away from the same model on stan, with no error and no warning, and
+  # its summary matrices would be wrong too. Refused for every non-default
+  # value rather than only 'cholesky': 'rawcorr_indep' happens to be inert on
+  # the stan path as well, so nothing a user can rely on is removed, and the
+  # julia contract does not inherit that accident.
+  if (!is.null(model$covmattransform) &&
+      !identical(as.character(model$covmattransform)[1L], "rawcorr")) {
+    failures <- c(failures, paste0("covmattransform='",
+      as.character(model$covmattransform)[1L], "' (only 'rawcorr')"))
+  }
   if (isTRUE(vb)) failures <- c(failures, "variational Bayes")
   if (isTRUE(gendata)) failures <- c(failures, "generation")
   if (!is.na(stanmodeltext)[1] || length(compileArgs) > 0L || isTRUE(forcerecompile)) failures <- c(failures, "Stan compilation controls")

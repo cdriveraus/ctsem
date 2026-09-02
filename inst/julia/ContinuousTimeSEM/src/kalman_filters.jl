@@ -628,10 +628,8 @@ function _extended_kalman_filter_continuous!(
     ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferQ, pars.T0VAR, 0, ws.state_dim)
     copyto!(ws.P_predict.data, ws.bufferQ.out)
     _copy_lower_to_upper!(ws.P_predict.data, ws.state_dim)
-    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, 0, ws.manifest_dim)
     copyto!(ws.state, pars.T0MEANS)
     _record_init!(trace, pars, _val(ws.state_dim))
-    _record_theta!(trace, pars, _val(ws.manifest_dim))
 
     # Each row follows one contract: prediction, TD impulse, measurement.
     # The first row has no prediction interval but can still contain an impulse.
@@ -645,6 +643,13 @@ function _extended_kalman_filter_continuous!(
         timesteps[1], zero(eltype(params)), Int(subject), 1)
     _record_group!(trace, 3, ws.update_param_indices, all_params, update_context)
     apply_complex_transforms_at_indices!(all_params, ws.update_param_indices, sp.update_transforms, update_context)
+    # After the update-group transform, not before it: a MANIFESTVAR cell owned by
+    # a transform (an indvarying, state-dependent or tdpred-dependent cell) is
+    # written nowhere else, so building the covariance first read the parameter
+    # buffer before anything had filled that slot. Every later row already
+    # runs transform, covariance, record in this order.
+    ContinuousTimeSEM.sdcovsqrt2cov!(ws.bufferΘ, pars.MANIFESTVAR, 0, ws.manifest_dim)
+    _record_theta!(trace, pars, _val(ws.manifest_dim))
     log2π_const = log(2π)
     _record_row_prior!(trace, ws, pars, 1)
     ll = _ekf_update_observed!(ws, pars, data, 1, log2π_const, trace, generate)
