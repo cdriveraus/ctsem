@@ -90,21 +90,32 @@ the same `m` is asked for once per subject per evaluation.
 function _gauss_hermite(m::Integer)
     m >= 1 || throw(ArgumentError("need at least one quadrature node"))
     key = Int(m)
-    cached = get(_GH_CACHE, key, nothing)
-    cached === nothing || return cached
-    if key == 1
-        built = ([0.0], [sqrt(pi)])
-    else
-        offdiag = [sqrt(i / 2) for i in 1:(key - 1)]
-        decomposition = eigen(SymTridiagonal(zeros(key), offdiag))
-        built = (decomposition.values,
-            sqrt(pi) .* (decomposition.vectors[1, :] .^ 2))
+    # Locked, following `_TRANSFORM_CACHE` in `r_interface.jl`. Only the
+    # quadrature path warms this cache first; the binary measurement kernels
+    # (`binary_measurement.jl`, `kalman_filters.jl`, `kalman_trace.jl`) call it
+    # once per row from every threaded loop in the engine, so an ordinary fit
+    # with binary indicators can reach a cold cache from several threads at
+    # once, and a concurrent `setindex!` during a rehash corrupts a `Dict`. A
+    # node count is built once per session and an uncontended lock is tens of
+    # nanoseconds.
+    lock(_GH_CACHE_LOCK) do
+        cached = get(_GH_CACHE, key, nothing)
+        cached === nothing || return cached
+        if key == 1
+            built = ([0.0], [sqrt(pi)])
+        else
+            offdiag = [sqrt(i / 2) for i in 1:(key - 1)]
+            decomposition = eigen(SymTridiagonal(zeros(key), offdiag))
+            built = (decomposition.values,
+                sqrt(pi) .* (decomposition.vectors[1, :] .^ 2))
+        end
+        _GH_CACHE[key] = built
+        return built
     end
-    _GH_CACHE[key] = built
-    return built
 end
 
 const _GH_CACHE = Dict{Int,Tuple{Vector{Float64},Vector{Float64}}}()
+const _GH_CACHE_LOCK = ReentrantLock()
 
 """
     _gh_grid(k, m)
@@ -130,6 +141,11 @@ function _gh_grid(k::Integer, m::Integer)
     return built
 end
 
+# Unlocked, unlike `_GH_CACHE`: the only reader is `_quadrature_block`, which
+# runs strictly after `_quadrature_warm_caches` has asked for every
+# `(block.size, nodes)` key it will use, so the cache is read-only for the whole
+# threaded region. Any new caller reached from a thread needs the warm too, or
+# this needs a lock.
 const _GH_GRID_CACHE = Dict{Tuple{Int,Int},Tuple{Vector{Vector{Float64}},Vector{Float64}}}()
 
 """
@@ -378,11 +394,10 @@ function ctsem_laplace_quadrature(laplace::CTSEMLaplaceObjective,
     # numbers. There is nothing here that makes these two safer, only rarer:
     # they are hit by every thread on the first row it touches.
     #
-    # Warming rather than locking, because the read is on the per-row path and a
-    # lock there would be paid on every row of every subject for a write that
-    # happens at most a handful of times per session. After this loop the caches
-    # are read-only for the rest of the call, which needs no synchronisation at
-    # all.
+    # `_gauss_hermite` now takes a lock as well, because its other callers are
+    # on threaded paths that never reach this warm. Warming still matters here:
+    # after this loop `_GH_GRID_CACHE` is read-only for the rest of the call,
+    # which is what lets it stay unlocked on the per-block path.
     _quadrature_warm_caches(laplace, nodes)
 
     # A trial point can be invalid in ways that *throw* rather than return a
