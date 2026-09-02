@@ -62,10 +62,13 @@ one-effect study level over 40 subjects with two subject effects is
 Two different rules, for two different reasons. A leaf block re-solves its
 conditional mode at every outer node, because that mode moves a long way with
 the effect above it and the accuracy of the whole thing rests on it. An outer
-block reuses the joint Laplace mode and the corresponding diagonal block of the
-selected inverse, which is that effect's marginal covariance under the Gaussian
-approximation. The rule does not need the exact conditional mode to be *valid*,
-only to be efficient, and that centre and scale have already been paid for.
+block keeps the joint mode, and takes its scale from the *eliminated* diagonal
+the block factorization already produced: the curvature of that block after
+every block beneath it has been integrated out, which is the conditional
+precision of the block given its ancestors under the Gaussian approximation --
+exactly the distribution the recursion is standing in when it gets there. The
+rule does not need the exact conditional mode to be *valid*, only to be
+efficient, and that centre and scale have already been paid for.
 
 With one level the tree is a single leaf with no ancestors, the recursion is one
 call, and the result is identical to the flat rule this file started as -- which
