@@ -367,7 +367,9 @@ function _ctsem_subject_gradient_chunk!(scores::Matrix{T}, totals::Vector{T},
                 subject_objective.params, subject_objective.tdpreds,
                 subject_objective.tipreds, subject_objective.subject,
                 subject_objective.max_timestep, tape)
-            if !isfinite(loglik)
+            # _finite_deep, not isfinite: under ctsem_hessian this runs at Dual
+            # and isfinite tests the value alone, so a NaN partial would pass.
+            if !_finite_deep(loglik)
                 valid[c] = false
                 badvalue[c] = loglik
                 return nothing
@@ -424,7 +426,9 @@ function _ctsem_adjoint_chunk!(gradient::Vector{T}, totals::Vector{T},
             subject_objective.params, subject_objective.tdpreds,
             subject_objective.tipreds, subject_objective.subject,
             subject_objective.max_timestep, tape)
-        if !isfinite(loglik)
+        # _finite_deep, not isfinite: under ctsem_hessian this runs at Dual and
+        # isfinite tests the value alone, so a NaN partial would pass.
+        if !_finite_deep(loglik)
             valid[c] = false
             badvalue[c] = loglik
             return nothing

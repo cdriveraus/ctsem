@@ -758,8 +758,13 @@ function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄c
     # engine's own Cholesky plus `m` triangular solves is the same inverse
     # without the lock. See `small_linalg.jl`.
     copyto!(mm2, S)
-    if _ctsem_cholesky!(mm2, m)
-        F = CTSEMCholesky(mm2, m, true)
+    # The same size ternary the forward uses (`kalman_filters.jl`): above
+    # `_CTSEM_SMALL_CHOLESKY` LAPACK's blocking earns its lock back, and using a
+    # different factorization from the forward's is itself a way for the reverse
+    # to decline an `S` the forward accepted.
+    F = m <= _CTSEM_SMALL_CHOLESKY[] ? _ctsem_cholesky(mm2, m) :
+        cholesky!(mm2, check=false)
+    if issuccess(F)
         @inbounds for j in 1:m
             column = view(Sinv, :, j)
             fill!(column, zero(T))
@@ -767,7 +772,24 @@ function _reverse_update!(x̄::Vector{T}, P̄::Matrix{T}, Θ̄::Matrix{T}, θ̄c
             ldiv!(column, F, column)
         end
     else
-        copyto!(Sinv, inv(S))
+        # Not `inv(S)`. The reverse recomputes `S` with its own kernels rather
+        # than reusing the forward's factorization, so it can fail here on a
+        # marginally definite `S` the forward accepted -- and `inv` of a
+        # symmetric matrix that just failed to factorize returns something
+        # large but finite, so the whole reverse pass would run on to a finite,
+        # wrong gradient that `fg!` accepts and feeds to the L-BFGS curvature
+        # update. Poison instead, which is how the forward already treats this
+        # state: an invalid trial point.
+        #
+        # `θ̄ca` and not only `x̄`/`P̄`/`Θ̄`, because `_ctsem_regular_pullback!`
+        # drops cotangents at non-mutable positions -- a poison confined to the
+        # state cotangents could be filtered out of a model whose measurement
+        # matrices are all fixed.
+        fill!(x̄, T(NaN))
+        fill!(P̄, T(NaN))
+        fill!(Θ̄, T(NaN))
+        fill!(θ̄ca, T(NaN))
+        return nothing
     end
     copyto!(ỹ, record.manifestmeans)
     _ctsem_mulvec!(ỹ, Λ, x, one(T), one(T))                     # ỹ = Λ x + μ
