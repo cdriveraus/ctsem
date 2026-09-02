@@ -206,9 +206,15 @@
 #' Configure the Julia engine used by ctsem
 #'
 #' Prepares the copy of ContinuousTimeSEM.jl that ships inside this ctsem
-#' installation. No network access and no repository credentials are involved:
-#' the engine source is vendored in \code{inst/julia/}, and this only creates a
-#' Julia project for it and instantiates its dependencies.
+#' installation. The engine source itself is vendored in \code{inst/julia/} --
+#' no repository credentials and no network access are involved in getting
+#' that -- but its Julia package dependencies still have to be instantiated,
+#' which reaches the network on a machine where they are not already cached.
+#' That step is consent-gated exactly as in \code{\link{ctJuliaInstall}}: asked
+#' for interactively, skipped with a message when the environment is already
+#' instantiated, and declined by default in a non-interactive session unless
+#' \code{agree = TRUE} or \code{CTSEM_JULIA_AGREE=yes} said otherwise in
+#' advance.
 #'
 #' The first call downloads and precompiles those dependencies (roughly 120 MB
 #' and a minute or two); later calls in new sessions reuse them.
@@ -230,11 +236,15 @@
 #'   to restart one. \code{NULL} leaves it to Julia's own default (one thread
 #'   unless \code{JULIA_NUM_THREADS} is already set).
 #' @param force Reconfigure an existing Julia session.
+#' @param agree \code{TRUE} to consent to instantiating the engine's Julia
+#'   package dependencies without being asked, \code{FALSE} to refuse.
+#'   \code{NULL}, the default, asks in an interactive session and refuses
+#'   otherwise; see \code{\link{ctJuliaInstall}}.
 #' @return A Julia-engine status list, invisibly.
 #' @seealso \code{\link{ctJuliaInstall}}, \code{\link{ctJuliaStatus}}
 #' @export
 ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
-  threads = NULL, force = FALSE) {
+  threads = NULL, force = FALSE, agree = NULL) {
   .ctJuliaRequire()
   if (isTRUE(force)) .ctJuliaClearSession()
   julia_bin <- .ctJuliaBin(julia_bin)
@@ -292,31 +302,56 @@ ctJuliaSetup <- function(project = NULL, revision = "locked", julia_bin = NULL,
   # Failures are exceptions rather than logs, so they still propagate to the
   # fallback and to the user.
   activate <- sprintf("Pkg.activate(%s; io=devnull)", .ctJuliaString(env_dir))
-  # `Pkg.instantiate()` precompiles the environment, and then `using` precompiles
-  # the engine again -- two full builds of the same package on every fresh
-  # session with a cold cache. That was cheap until the engine started
-  # precompiling model shapes; now it is a hundred seconds paid twice.
-  # `JULIA_PKG_PRECOMPILE_AUTO` turns off only Pkg's automatic pass, so `using`
-  # still builds whatever is stale, and `withenv` puts it back rather than
-  # leaving the session's Pkg quietly reconfigured.
-  quiet_instantiate <- paste0('withenv("JULIA_PKG_PRECOMPILE_AUTO" => "0") do; ',
-    'Pkg.instantiate(io=devnull); end')
   silently <- function(code) paste0(
     "Logging.with_logger(Logging.NullLogger()) do; ", code, "; end")
-  instantiated <- tryCatch({
-    JuliaConnectoR::juliaEval(silently(paste0(activate, "; ", quiet_instantiate)))
+  JuliaConnectoR::juliaEval(silently(activate))
+
+  # `Pkg.instantiate()` is the network-touching step: it fetches whatever the
+  # manifest lists that is not already in the user's Julia depot. Consent-gated
+  # exactly like the other two installs `ctJuliaInstall()` offers (see
+  # `.ctJuliaAgreed()`), and skipped entirely -- no prompt, no network -- when
+  # the environment already loads, which is the ordinary case after the first
+  # session on a machine.
+  ready <- tryCatch({
+    JuliaConnectoR::juliaEval("using ContinuousTimeSEM")
     TRUE
   }, error = function(e) FALSE)
-  if (!instantiated) {
-    # The vendored manifest pins the versions this ctsem release was tested
-    # against, but it can be unsatisfiable on a different Julia version. Falling
-    # back to a fresh resolve is better than refusing to run; the compat bounds
-    # in Project.toml still apply.
-    unlink(file.path(env_dir, "Manifest.toml"))
-    JuliaConnectoR::juliaEval(silently(paste0(activate,
-      "; Pkg.resolve(io=devnull); ", quiet_instantiate)))
+
+  if (!ready) {
+    agreed <- .ctJuliaAgreed(agree, paste0(
+      "The julia backend needs to install the vendored engine's Julia package ",
+      "dependencies, which are not yet present.\n",
+      "  environment: ", env_dir, "\n",
+      "  This downloads packages from the Julia package registry."))
+    if (!agreed) {
+      stop("The julia backend needs its Julia package dependencies installed, ",
+        "and consent was not given.\n", .ctJuliaDeclined(), call. = FALSE)
+    }
+
+    # `Pkg.instantiate()` precompiles the environment, and then `using` precompiles
+    # the engine again -- two full builds of the same package on every fresh
+    # session with a cold cache. That was cheap until the engine started
+    # precompiling model shapes; now it is a hundred seconds paid twice.
+    # `JULIA_PKG_PRECOMPILE_AUTO` turns off only Pkg's automatic pass, so `using`
+    # still builds whatever is stale, and `withenv` puts it back rather than
+    # leaving the session's Pkg quietly reconfigured.
+    quiet_instantiate <- paste0('withenv("JULIA_PKG_PRECOMPILE_AUTO" => "0") do; ',
+      'Pkg.instantiate(io=devnull); end')
+    instantiated <- tryCatch({
+      JuliaConnectoR::juliaEval(silently(paste0(activate, "; ", quiet_instantiate)))
+      TRUE
+    }, error = function(e) FALSE)
+    if (!instantiated) {
+      # The vendored manifest pins the versions this ctsem release was tested
+      # against, but it can be unsatisfiable on a different Julia version. Falling
+      # back to a fresh resolve is better than refusing to run; the compat bounds
+      # in Project.toml still apply.
+      unlink(file.path(env_dir, "Manifest.toml"))
+      JuliaConnectoR::juliaEval(silently(paste0(activate,
+        "; Pkg.resolve(io=devnull); ", quiet_instantiate)))
+    }
+    JuliaConnectoR::juliaEval("using ContinuousTimeSEM")
   }
-  JuliaConnectoR::juliaEval("using ContinuousTimeSEM")
   .ctJuliaTuneBridge()
   .ct_julia_cache$project <- project
   .ct_julia_cache$engine <- engineversion

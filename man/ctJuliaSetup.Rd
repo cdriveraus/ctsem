@@ -9,7 +9,8 @@ ctJuliaSetup(
   revision = "locked",
   julia_bin = NULL,
   threads = NULL,
-  force = FALSE
+  force = FALSE,
+  agree = NULL
 )
 }
 \arguments{
@@ -30,15 +31,26 @@ to restart one. \code{NULL} leaves it to Julia's own default (one thread
 unless \code{JULIA_NUM_THREADS} is already set).}
 
 \item{force}{Reconfigure an existing Julia session.}
+
+\item{agree}{\code{TRUE} to consent to instantiating the engine's Julia
+package dependencies without being asked, \code{FALSE} to refuse.
+\code{NULL}, the default, asks in an interactive session and refuses
+otherwise; see \code{\link{ctJuliaInstall}}.}
 }
 \value{
 A Julia-engine status list, invisibly.
 }
 \description{
 Prepares the copy of ContinuousTimeSEM.jl that ships inside this ctsem
-installation. No network access and no repository credentials are involved:
-the engine source is vendored in \code{inst/julia/}, and this only creates a
-Julia project for it and instantiates its dependencies.
+installation. The engine source itself is vendored in \code{inst/julia/} --
+no repository credentials and no network access are involved in getting
+that -- but its Julia package dependencies still have to be instantiated,
+which reaches the network on a machine where they are not already cached.
+That step is consent-gated exactly as in \code{\link{ctJuliaInstall}}: asked
+for interactively, skipped with a message when the environment is already
+instantiated, and declined by default in a non-interactive session unless
+\code{agree = TRUE} or \code{CTSEM_JULIA_AGREE=yes} said otherwise in
+advance.
 }
 \details{
 The first call downloads and precompiles those dependencies (roughly 120 MB

@@ -146,13 +146,20 @@
 
 # Consent. isTRUE/isFALSE(agree) settle it outright; otherwise the environment
 # variable, and otherwise the user -- but only if there is a user to ask.
+#
+# "Is there a user to ask" is not `interactive()`: under Shiny that is TRUE
+# while stdout is being captured for a log pane, which is exactly the case
+# `.ctProgressConsole()` (R/ctJuliaBackend.R) exists to detect, for the same
+# underlying question -- can a blocking, console-reading call reach a human
+# here. Using raw `interactive()` here risked `askYesNo()` blocking a Shiny
+# server process with no console to read from.
 .ctJuliaAgreed <- function(agree, prompt) {
   if (isTRUE(agree)) return(TRUE)
   if (isFALSE(agree)) return(FALSE)
   configured <- tolower(trimws(Sys.getenv("CTSEM_JULIA_AGREE", unset = "")))
   if (configured %in% c("yes", "true", "1")) return(TRUE)
   if (configured %in% c("no", "false", "0")) return(FALSE)
-  if (!interactive()) return(FALSE)
+  if (!.ctProgressConsole()) return(FALSE)
   message(prompt)
   isTRUE(utils::askYesNo("Proceed?", default = TRUE))
 }
@@ -396,7 +403,7 @@ ctJuliaInstall <- function(threads = NULL, version = NULL, agree = NULL, force =
     message("Preparing the ctsem Julia engine",
       if (!length(done)) " (Julia is already installed)" else "", "...")
   }
-  status <- ctJuliaSetup(threads = threads, force = force)
+  status <- ctJuliaSetup(threads = threads, force = force, agree = agree)
   if (!quiet) {
     if (length(done)) message("Installed: ", paste(done, collapse = ", "), ".")
     message("The julia backend is ready. Use ctFit(..., backend = 'julia').")

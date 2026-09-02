@@ -69,6 +69,23 @@ test_that("consent can be given in advance by environment variable", {
   expect_false(ctsem:::.ctJuliaAgreed(FALSE, "prompt"))
 })
 
+test_that("consent is declined under a Shiny reactive domain, not gated on interactive()", {
+  # interactive() is TRUE inside a Shiny server process (stdout is captured for
+  # a log pane), which is exactly why .ctJuliaAgreed() must not gate on it
+  # directly: askYesNo() would block a server with no console to read from.
+  # .ctProgressConsole() already detects a Shiny reactive domain for the same
+  # underlying question, so this asserts .ctJuliaAgreed() reaches that check
+  # rather than interactive() -- true regardless of whether *this* test session
+  # happens to be interactive.
+  skip_if_not_installed("shiny")
+  withr::local_envvar(CTSEM_JULIA_AGREE = "")
+  requireNamespace("shiny", quietly = TRUE)
+  testthat::local_mocked_bindings(
+    getDefaultReactiveDomain = function() structure(list(), class = "ShinySession"),
+    .package = "shiny")
+  expect_false(ctsem:::.ctJuliaAgreed(NULL, "prompt"))
+})
+
 test_that("declining leaves an error that says how to proceed", {
   skip_if(interactive())
   skip_if_not_installed("JuliaConnectoR")
@@ -164,4 +181,33 @@ test_that("ctJuliaStatus reports rather than errors, and installs nothing", {
   expect_type(status$available, "logical")
   expect_type(status$connectoR, "logical")
   expect_match(status$engine, "^[0-9a-f]{12}$")
+})
+
+test_that("ctJuliaSetup declines to instantiate the engine's Julia dependencies without consent", {
+  # Pkg.instantiate() is the network-touching step inside ctJuliaSetup(), and on
+  # a machine that already has the environment instantiated -- every other test
+  # in this suite -- it is never reached at all, because the environment loads
+  # on the first try. To exercise the consent gate this test has to simulate an
+  # environment that does *not* yet load, and it does that with the smallest
+  # possible mock: every call to JuliaConnectoR::juliaEval() is real except the
+  # one ctJuliaSetup() uses to test readiness, which is made to report "not
+  # ready". Consent is explicitly declined (CTSEM_JULIA_AGREE="no"), so the
+  # function must stop before ever reaching Pkg.instantiate() -- this test
+  # cannot itself trigger a download either way.
+  skip_without_julia()
+  skip_if(interactive())
+  withr::local_envvar(CTSEM_JULIA_AGREE = "no")
+
+  real_juliaEval <- JuliaConnectoR::juliaEval
+  testthat::local_mocked_bindings(
+    juliaEval = function(code, ...) {
+      if (identical(code, "using ContinuousTimeSEM")) {
+        stop("simulated: engine not yet instantiated")
+      }
+      real_juliaEval(code, ...)
+    },
+    .package = "JuliaConnectoR")
+
+  expect_error(ctJuliaSetup(), "consent was not given")
+  expect_error(ctJuliaSetup(), "Julia package dependencies")
 })
