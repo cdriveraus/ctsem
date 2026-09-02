@@ -2979,20 +2979,41 @@ twice would cost `O(n^2)` and lose half the digits. Nesting `ForwardDiff` once
 more would be a fourth derivative of the process model; that is left until
 there is evidence the difference matters, and this route is the one whose
 error is at least bounded and reportable.
+
+A column whose two evaluations did not both solve their inner modes is `NaN`,
+for the reason `ctsem_laplace_optimize`'s `fg!` gives for rejecting such a
+point: a unit that has not reached its mode gives whatever its iteration
+stopped on, not the objective, so the difference is not a derivative of the
+objective either. The caller sees a non-finite Hessian and falls back.
 """
 function ctsem_laplace_hessian(laplace::CTSEMLaplaceObjective, values::AbstractVector;
     step::Real=1e-4)
     x = collect(Float64, values)
     n = length(x)
     H = zeros(Float64, n, n)
+    unconverged = Int[]
     for j in 1:n
         h = step * max(1.0, abs(x[j]))
         plus = copy(x); plus[j] += h
         minus = copy(x); minus[j] -= h
-        gp = ctsem_laplace_evaluate(laplace, plus; gradient=true).gradient
-        gm = ctsem_laplace_evaluate(laplace, minus; gradient=true).gradient
-        H[:, j] = (gp .- gm) ./ (2h)
+        ep = ctsem_laplace_evaluate(laplace, plus; gradient=true)
+        em = ctsem_laplace_evaluate(laplace, minus; gradient=true)
+        if !(ep.converged && em.converged)
+            # The same predicate `fg!` applies to a trial point, applied to the
+            # two points this column is differenced from. A gradient at a
+            # not-quite-mode is a gradient of a different function, and one that
+            # converged to 1e-9 instead of 1e-10 is finite, so nothing
+            # downstream would notice. NaN makes the column visible to the
+            # non-finite fallback callers already have.
+            push!(unconverged, j)
+            H[:, j] .= NaN
+            continue
+        end
+        H[:, j] = (ep.gradient .- em.gradient) ./ (2h)
     end
+    isempty(unconverged) || @warn string("Laplace inner solve did not converge ",
+        "at the Hessian step for parameter ", join(unconverged, ", "),
+        "; those columns are NaN.")
     return (H .+ transpose(H)) ./ 2
 end
 
