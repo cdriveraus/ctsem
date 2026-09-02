@@ -414,90 +414,6 @@ ctFitCovCheckPlot <- function(x, maxlag = 10,vars=NA,splitvar=NA,cor=FALSE,...) 
 }
 
 
-
-
-#create covariance matrix from raw data in ctfit object, by observation.
-#todo: add time discretization option using ctDiscretiseData
-ctLongtoWideFromFitted <- function(fit,time=FALSE,id=FALSE){
-  ctmb <- .ctFitModelObject(fit)
-  idname=ctmb$subjectIDname
-  dat <- data.frame(.ctFitLongData(fit))
-  dat <- dat[,c(ctmb$subjectIDname,
-    ctmb$timeName,
-    ctmb$manifestNames,
-    if(ctmb$n.TDpred > 0) ctmb$TDpredNames,
-    if(ctmb$n.TIpred > 0) ctmb$TIpredNames)]
-  dat=data.table(dat)
-  dat[ ,WhichObs:=0:(.N-1),by=eval(ctmb$subjectIDname)]
-  dat=melt(dat,id.vars = c(idname,'WhichObs'))
-  
-  dat$WhichObs <- paste0('T',dat$WhichObs);
-  dat=dcast(dat,paste0(idname,'~variable+WhichObs'))
-  lapply(ctmb$TIpredNames, function(x){
-    colnames(dat)[grep(paste0('\\b',x,'\\_T0'),colnames(dat))] <<- x
-  })
-  dat=data.frame(dat)
-  if(!time) dat <- dat[,-grep(paste0('\\b',ctmb$timeName,'_T'),colnames(dat))]
-  if(!id) dat <- dat[,-grep(paste0('\\b',ctmb$subjectIDname),colnames(dat))]
-  return(dat)
-}
-
-ctSaturatedFitConditional<-function(dat,ucols,reg,hmc=FALSE,covf=NA,verbose=0){
-  o1 = ucols
-  o2=(1:ncol(dat))[-o1]
-  
-  if(all(is.na(covf))) covf=covml(dat,reg = reg,hmc=hmc,verbose=verbose)
-  if(length(o2) > 0){
-    m=(covf$cp$mu)
-    m1=m[o1]
-    m2=m[o2]
-    s=covf$cp$covm
-    s12=s[o1,o2,drop=FALSE]
-    isig2=MASS::ginv(s[o2,o2,drop=FALSE])
-    sigma=s[o1,o1,drop=FALSE]-s[o1,o2,drop=FALSE] %*% isig2 %*% s[o2,o1,drop=FALSE]
-    sigma=solve(solve(s)[o1,o1,drop=FALSE])
-    llrow=sapply(1:nrow(dat),function(i){
-      llr=NA
-      a=as.numeric(c(dat[i,o2]))
-      d2=!is.na(a)
-      d1 = !is.na(dat[i,o1])
-      if(any(is.na(a))) isig2=MASS::ginv(s[o2,o2,drop=FALSE][d2,d2,drop=FALSE])
-      if(sum(d1)>0){
-        mu=c(m1[d1])
-        if(sum(d2)>0) mu=mu+s12[d1,d2,drop=FALSE] %*% isig2 %*% c(a[d2]-m2[d2])
-        
-        llr=mvtnorm::dmvnorm(x = dat[i,o1][d1],mean = mu,sigma = sigma[d1,d1,drop=FALSE],log=TRUE)
-      }
-      return(llr)
-    })
-    # covf$ll_unconditional <- covf$ll
-    covf$ll <- sum(llrow,na.rm=TRUE)
-  } else { #if not conditional
-    
-    covdat <- covdata(dat[,o1,drop=FALSE],reg=reg)
-    smf <- rstan::sampling(stanmodels$cov,data=covdat,chains=0)
-    cp <- rstan::constrain_pars(smf,covf$fit$par)
-    
-    #   covf$llrow <- sapply(1:nrow(dat),function(i){
-    #   llr=NA
-    #   d1 = !is.na(dat[i,o1])
-    #   if(sum(d1)>0){
-    #     mu=c(covf$cp$mu)[d1]
-    #     llr=try(mvtnorm::dmvnorm(x = as.numeric(dat[i,o1[d1]]),mean = mu,sigma = covf$cp$covm[d1,d1,drop=FALSE],log=TRUE))
-    #     if('try-error' %in% class(llr)) 
-    #   }
-    #   return(llr)
-    # })
-    covf$cp <- cp
-    covf$ll <- sum(cp$llrow,na.rm=TRUE)
-    # print( covf$ll)
-    # 
-  }
-  
-  return(covf)
-}
-
-
 ctDataMelt <- function(dat,id='id',by='time', combinevars=NULL){
   if(!is.null(combinevars)) {
     dat <- ctDataCombineSplit(dat = dat,idvars = c(id,by),vars = combinevars)
@@ -594,7 +510,7 @@ ctFitMelt <- function(fit, maxsamples='all'){
     }
     if(dsi=='PostPred'){
       dexists<-TRUE
-      d <- fit$generate
+      d <- fit$generated
     }
     
     if(dsi== 'StatePred'){ #use kalman predictions

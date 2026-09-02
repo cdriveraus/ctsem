@@ -68,7 +68,18 @@ ctModeltoNumeric <- function(ctmodelobj){
 #'}
 ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
   fullposterior=TRUE, nsamples=200, parsonly=FALSE,cores=2){
-  
+
+  # Named rather than asserted. "Not a ctStanModel object" (from ctFit(), further
+  # downstream) is opaque when the caller is plainly holding a fit; what it means
+  # is that this function reads stan fit structures (ctstanmodelbase, standata,
+  # args) that a julia fit does not carry.
+  if(inherits(cts, 'ctJuliaFit')) stop(
+    'This function is not available for julia backend fits yet: it reads the ',
+    'stan fit structures (ctstanmodelbase, standata, args) that a julia fit ',
+    'does not carry. ctFitCovCheck(), ctACFresiduals() and ctPostPredPlots() ',
+    'do work on a julia fit.',
+    call.=FALSE)
+
   # includePreds <- FALSE #old argument, could reinstate some day...
   #update this function to also generate posterior predictive
   
@@ -172,6 +183,19 @@ ctStanGenerate <- ctGenerateFromPriors
 #' any \code{Tpoints} stored in \code{ctmodelobj}. If not supplied, \code{ctGenerate}
 #' uses \code{ctmodelobj$Tpoints} when available.
 #' @param wide Logical. Output in wide format?
+#' @param backend Which generator to use: \code{'r'}, \code{'julia'}, or
+#' \code{'auto'} (the default). \code{'r'} integrates the linear system with a
+#' matrix exponential -- fast, and exact for a linear Gaussian model, but it has
+#' no measurement link, so a model with non-Gaussian indicators would silently
+#' get continuous values, and a nonlinear (state-dependent) model is refused
+#' outright. \code{'julia'} generates through the same filter that fits the
+#' model, so it handles nonlinear dynamics and non-Gaussian (binary, ordinal,
+#' count) indicators, and requires \code{ctmodelobj} to be a
+#' \code{ctStanModel} (as returned by \code{ctModel(type='ct'/'dt')}) rather
+#' than the matrix-list form. \code{'auto'} picks \code{'julia'} exactly when
+#' the model is nonlinear or declares a non-Gaussian indicator, and \code{'r'}
+#' otherwise -- the split is by capability, not preference, so linear Gaussian
+#' models keep the seed-for-seed output every existing caller already gets.
 #' @param intoverstates For \code{backend='julia'}: \code{'auto'} (the
 #' default), \code{TRUE} or \code{FALSE}, choosing how the latent states are
 #' handled while generating.

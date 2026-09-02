@@ -235,3 +235,21 @@ test_that("state dependent generation carries the dependence into the data", {
   slope <- function(rows) unname(stats::coef(stats::lm(y2 ~ y1, d[rows, ]))[2])
   expect_gt(slope(high), slope(!high) + 0.2)
 })
+
+test_that("ctPostPredict() refuses a julia backend fit with an informative message", {
+  skip_on_cran()
+  skip_without_julia()
+  model <- .generate_model()
+  data <- .generate_data()
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
+  expect_error(ctPostPredict(fit), regexp = "not available for julia backend fits")
+})
+
+test_that("ctGenerateFromPriors() refuses a julia backend fit with an informative message", {
+  skip_on_cran()
+  skip_without_julia()
+  model <- .generate_model()
+  data <- .generate_data()
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
+  expect_error(ctGenerateFromPriors(fit), regexp = "not available for julia backend fits")
+})

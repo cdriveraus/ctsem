@@ -300,7 +300,19 @@ ctPostPredPlots <- function(fit){
 #' }
 ctPostPredict <- function(fit,diffsize=1,jitter=.02, wait=TRUE,probs=c(.025,.5,.975),
   datarows='all',nsamples=500,resolution=100,plot=TRUE){
-  
+
+  # Named rather than asserted. "Not a ctStanFit object" is opaque when the
+  # caller is plainly holding a fit; what it means is that this function reads
+  # `standata` and `data$Y`, stan fit structures that a julia fit does not carry.
+  if(!'ctStanFit' %in% class(fit)){
+    if(inherits(fit, 'ctJuliaFit')) stop(
+      'This function is not available for julia backend fits yet: it reads the ',
+      'stan fit structures (standata, data$Y) that a julia fit does not carry. ',
+      'ctFitCovCheck(), ctACFresiduals() and ctPostPredPlots() do work on a julia fit.',
+      call.=FALSE)
+    stop('Not a ctStanFit object', call.=FALSE)
+  }
+
   plots <-list()
   if(datarows[1]=='all') datarows <- 1:nrow(fit$data$Y)
   xmeasure=data.table(id=fit$standata$subject[datarows])
