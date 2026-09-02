@@ -1,0 +1,66 @@
+# The Julia engine's own test suite, which R CMD check never reaches.
+#
+# The R suite skips every julia test unless NOT_CRAN is set, and even with it
+# set the engine's ~1250 assertions run inside Julia, not testthat. Nothing in
+# CI exercised them until this workflow existed.
+#
+# One platform, not five. The engine is pure Julia and the R-side integration
+# is covered by the R workflow; a matrix here would buy platform coverage of
+# Julia itself, which is not what changes in this repository.
+on:
+  push:
+    branches: [juliaFit, master]
+    paths:
+      - 'inst/julia/**'
+      - '.github/workflows/julia-engine.yaml'
+  pull_request:
+    branches: [juliaFit, master]
+    paths:
+      - 'inst/julia/**'
+      - '.github/workflows/julia-engine.yaml'
+  workflow_dispatch:
+
+name: julia-engine
+
+jobs:
+  engine-tests:
+    runs-on: ubuntu-latest
+    # The suite takes about 22 minutes on a 23-core box, single- or
+    # multi-threaded, so a hosted runner needs room beyond the 6-hour default
+    # only if it is much slower. This cap is a guard against a hang.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          # The version the vendored Manifest.toml was resolved under. Keep it
+          # in step with the pin in R/ctJuliaInstall.R.
+          version: '1.12'
+
+      - uses: julia-actions/cache@v2
+
+      # The engine's own Project.toml deliberately does not carry the
+      # test-only dependencies, so a --project run of the suite dies on
+      # "Package DataFrames not found". Build the environment the way
+      # CLAUDE.md documents for a local run.
+      - name: Test environment
+        run: |
+          julia -e '
+            using Pkg
+            Pkg.activate("ci-testenv")
+            Pkg.develop(path = "inst/julia/ContinuousTimeSEM")
+            Pkg.add(["DataFrames", "ForwardDiff", "ChainRulesCore", "Optim",
+                     "LineSearches", "ComponentArrays", "FiniteDiff"])
+            Pkg.precompile()
+            println("ENV_READY")'
+
+      # include() resolves against the including file, not the working
+      # directory, so the path is built from an absolute base.
+      - name: Run the engine suite
+        run: |
+          julia --project=ci-testenv -e '
+            engine = abspath("inst/julia/ContinuousTimeSEM")
+            cd(engine)
+            include(joinpath(engine, "test", "runtests.jl"))
+            println("DONE")'
