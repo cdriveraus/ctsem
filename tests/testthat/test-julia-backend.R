@@ -260,3 +260,36 @@ test_that("a state-dependent MANIFESTVAR is transformed before row 1 reads it", 
   cc <- ctJuliaEvaluate(specC, raw, gradient = FALSE)$value
   expect_false(isTRUE(all.equal(as.numeric(a), as.numeric(cc), tolerance = 1e-6)))
 })
+
+# `covmattransform` never reached the engine: every call passed a literal 0 and
+# the branch the other values select is commented out, so a 'cholesky' model
+# was fitted with the default transform and measured 3.76 log units away from
+# the same model on stan, silently. Refused rather than implemented.
+test_that("a non-default covmattransform is refused on the julia backend", {
+  skip_on_cran()
+
+  .m <- function() suppressWarnings(ctModel(
+    type = "ct",
+    LAMBDA = diag(1, 2),
+    DRIFT = matrix(c("drift11", 0, 0, "drift22"), 2, 2),
+    DIFFUSION = matrix(c("diff11", "diff21", 0, "diff22"), 2, 2),
+    MANIFESTMEANS = matrix(0, 2, 1),
+    T0MEANS = matrix(0, 2, 1)))
+  dat <- data.frame(id = rep(1:4, each = 2), time = rep(0:1, 4),
+    Y1 = 0, Y2 = 0)
+
+  for (tf in c("cholesky", "rawcorr_indep")) {
+    model <- .m()
+    model$covmattransform <- tf
+    expect_error(
+      suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE)),
+      regexp = "covmattransform")
+  }
+
+  # The default still passes the guard. `fit = FALSE` stops before Julia is
+  # needed, so this half does not depend on a Julia installation.
+  model <- .m()
+  expect_identical(model$covmattransform, "rawcorr")
+  expect_error(suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE)),
+    regexp = NA)
+})
