@@ -254,6 +254,39 @@ test_that("julia optimises with the imputed TI predictor values", {
   expect_equal(as.numeric(fit$model_spec$tipred_data)[1:5], group[1:5])
 })
 
+# Stan samples a missing TI predictor by writing 99999 and reading it back as a
+# free parameter. The engine has no such convention, so the same array would be
+# fitted as a covariate value of ninety-nine thousand. Refused, with the three
+# things a caller can do instead.
+test_that("the julia sampling path refuses a missing TI predictor", {
+  model <- suppressWarnings(ctModel(
+    type = "ct", LAMBDA = diag(1), DRIFT = matrix("drift", 1, 1),
+    DIFFUSION = matrix(.2, 1, 1), MANIFESTVAR = matrix(.1, 1, 1),
+    MANIFESTMEANS = matrix(0, 1, 1), T0VAR = matrix(1, 1, 1),
+    T0MEANS = matrix("t0m", 1, 1), n.TIpred = 1, TIpredNames = "group",
+    tipredDefault = FALSE
+  ))
+  model$pars$group_effect[model$pars$param == "t0m"] <- TRUE
+  dat <- data.frame(id = rep(1:3, each = 3), time = rep(0:2, 3), Y1 = 0,
+    group = rep(c(-1, 2, NA), each = 3))
+
+  told <- tryCatch({
+    suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
+      optimize = FALSE, fit = FALSE)))
+    NA_character_
+  }, error = function(e) conditionMessage(e))
+  expect_match(told, "cannot sample missing TI predictor")
+  expect_match(told, "Impute them before fitting", fixed = TRUE)
+  expect_match(told, "backend='stan'", fixed = TRUE)
+
+  # Complete data still prepares on the same path, so the refusal is about the
+  # missing cell and not about sampling with TI predictors at all.
+  dat$group[dat$id == 3] <- .5
+  prepared <- suppressMessages(ctFit(dat, model, backend = "julia",
+    optimize = FALSE, fit = FALSE))
+  expect_equal(as.numeric(prepared$tipred_data), c(-1, 2, .5))
+})
+
 test_that("Julia preparation expands individual differences into static states", {
   model <- ctModel(
     type = "ct", LAMBDA = diag(1), DRIFT = matrix("drift", 1, 1),
