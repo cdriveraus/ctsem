@@ -396,7 +396,7 @@ ctJuliaInstall <- function(threads = NULL, version = NULL, agree = NULL, force =
     message("Preparing the ctsem Julia engine",
       if (!length(done)) " (Julia is already installed)" else "", "...")
   }
-  status <- ctJuliaSetup(threads = threads, force = force)
+  status <- ctJuliaSetup(threads = threads, force = force, agree = agree)
   if (!quiet) {
     if (length(done)) message("Installed: ", paste(done, collapse = ", "), ".")
     message("The julia backend is ready. Use ctFit(..., backend = 'julia').")
