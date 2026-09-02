@@ -213,3 +213,59 @@ test_that("the bridge socket is tuned when the session starts", {
     expect_true(is.na(ctsem:::.ctJuliaTuneBridge()))
   })
 })
+
+# The warmed sampling worker pool (R/ctBackendWarmWorkers.R) had no test
+# coverage at all before this: .ctBackendWarmStop() was defined and never
+# called from anywhere in R/ or tests/, so nothing here proved the pool a
+# caller starts is ever actually released. `future::nbrOfWorkers()` is what
+# the pool itself is built on (a `multisession` plan), so it is what counts
+# the workers without needing to reach into `future`'s internals.
+test_that("starting and stopping the warmed pool leaves no workers behind", {
+  skip_without_julia()
+  skip_if_not_installed("future")
+
+  model <- suppressWarnings(ctModel(type = "ct", LAMBDA = diag(1),
+    DRIFT = matrix("drift", 1, 1), DIFFUSION = matrix("diffusion", 1, 1),
+    MANIFESTVAR = matrix("residual", 1, 1), MANIFESTMEANS = matrix(0, 1, 1),
+    T0VAR = matrix(1, 1, 1), T0MEANS = matrix(0, 1, 1)))
+  dat <- data.frame(id = rep(1:2, each = 3), time = rep(0:2, 2), Y1 = 0)
+  prepared <- suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE))
+
+  previous_plan <- future::plan()
+  on.exit(future::plan(previous_plan), add = TRUE)
+  future::plan(future::sequential)
+  expect_equal(future::nbrOfWorkers(), 1L)
+
+  handles <- ctsem:::.ctBackendWarmWorkers(prepared, workers = 2L)
+  skip_if(is.null(handles), "warming did not start on this machine")
+  expect_equal(future::nbrOfWorkers(), 2L)
+  expect_false(inherits(future::plan(), "sequential"))
+
+  # The exported release function, not the internal one directly: this is the
+  # documented way a caller gets the workers back.
+  ctJuliaWorkersStop()
+  expect_equal(future::nbrOfWorkers(), 1L)
+  expect_true(inherits(future::plan(), "sequential"))
+})
+
+test_that("a pool that fails to warm any worker is not left half-started", {
+  skip_if_not_installed("future")
+  # No live Julia needed: `future::future()` itself is made to fail for every
+  # worker, so `future::plan(multisession)` is set (a real, if pointless, pool
+  # of background R processes) and then nothing warms in it -- the branch
+  # `on.exit(if (!ok) .ctBackendWarmStop(NULL))` exists for. Without it this
+  # would return NULL having left the multisession plan and the
+  # connections-misuse override in place for a pool that warmed nothing.
+  previous_plan <- future::plan()
+  on.exit(future::plan(previous_plan), add = TRUE)
+  future::plan(future::sequential)
+  previous_option <- getOption("future.connections.onMisuse")
+
+  testthat::local_mocked_bindings(future = function(...) stop("boom"), .package = "future")
+  fake <- structure(list(parameter_table = data.frame(parnumber = 1)), class = "ctJuliaModel")
+  handles <- ctsem:::.ctBackendWarmWorkers(fake, workers = 2L)
+
+  expect_null(handles)
+  expect_true(inherits(future::plan(), "sequential"))
+  expect_identical(getOption("future.connections.onMisuse"), previous_option)
+})

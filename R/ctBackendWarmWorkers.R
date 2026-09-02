@@ -65,6 +65,17 @@
   }, error = function(e) FALSE)
   if (!isTRUE(started)) return(NULL)
 
+  # From here on a pool exists. If launching every worker below fails, or
+  # anything throws unexpectedly before this function returns, release it
+  # rather than leaving a `multisession` plan and an overridden
+  # connections-misuse option in place for a pool that never warmed anything --
+  # that would be exactly the undocumented state this function otherwise
+  # avoids. `ok` is set only once warming actually produced a usable worker; a
+  # *successful* warm is deliberately never torn down here, because the pool is
+  # meant to persist across fits (see the file header and `.ctBackendWarmStop`).
+  ok <- FALSE
+  on.exit(if (!ok) .ctBackendWarmStop(NULL), add = TRUE)
+
   # `future` warns when an expression leaves a connection open, because that is
   # usually a leak. Here it is the entire point: the worker opens a connection
   # to its Julia process and must keep it, so that the session which paid for
@@ -82,6 +93,22 @@
       error = function(e) NULL)
   })
   if (!length(handles) || all(vapply(handles, is.null, logical(1)))) return(NULL)
+  ok <- TRUE
+
+  # The pool outlives this call by design (see above), so nothing in this file
+  # stops it after an ordinary fit. What does: `ctJuliaWorkersStop()`, for a
+  # caller that wants the memory back sooner, and this finalizer -- registered
+  # once, on the environment this file already uses to remember what it
+  # changed -- which releases it when the R session ends, so a long-lived host
+  # process (a ctsemGUI/Shiny server, an interactive session left open) is not
+  # the only thing standing between a warmed pool and never being cleaned up.
+  if (!isTRUE(.ct_warm_state$finalizer_registered)) {
+    reg.finalizer(.ct_warm_state,
+      function(e) tryCatch(.ctBackendWarmStop(NULL), error = function(e) NULL),
+      onexit = TRUE)
+    .ct_warm_state$finalizer_registered <- TRUE
+  }
+
   attr(handles, "started") <- Sys.time()
   handles
 }
@@ -145,6 +172,29 @@
   # too. `sequential` releases the sessions.
   tryCatch(future::plan(future::sequential), error = function(e) NULL)
   invisible(NULL)
+}
+
+#' Release the warmed sampling worker pool
+#'
+#' \code{\link{ctSample}} and \code{ctFit(backend = 'julia', optimize = FALSE)}
+#' warm a pool of background R processes ahead of a multi-chain sample, each
+#' one compiled for the model's shape before its chain starts, so the compile
+#' cost overlaps the optimisation that runs first rather than being paid
+#' serially once sampling begins. That pool is deliberately left running
+#' afterwards: \pkg{future}'s \code{multisession} plan persists across calls,
+#' so a later multi-chain sample reuses the same warmed workers instead of
+#' recompiling. Each worker holds its own Julia session, so it is also memory a
+#' caller may want back sooner than the end of the R session, when it is
+#' released automatically.
+#'
+#' Calling this in the middle of a sample that is still using the pool stops
+#' the workers that sample is running in.
+#'
+#' @return \code{NULL}, invisibly.
+#' @seealso \code{\link{ctSample}}, \code{\link{ctJuliaSetup}}
+#' @export
+ctJuliaWorkersStop <- function() {
+  invisible(.ctBackendWarmStop(NULL))
 }
 
 # Was a sixth copy of the parameter count. `.ctBackendNpar` is the one
