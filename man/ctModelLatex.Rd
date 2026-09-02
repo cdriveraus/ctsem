@@ -8,7 +8,7 @@ ctModelLatex(
   x,
   matrixnames = TRUE,
   digits = 3,
-  linearise = class(x) \%in\% "ctStanFit",
+  linearise = inherits(x, "ctStanFit"),
   textsize = "normalsize",
   folder = tempdir(),
   filename = paste0("ctsemTex", as.numeric(Sys.time())),
