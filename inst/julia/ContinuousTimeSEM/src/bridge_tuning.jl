@@ -10,7 +10,7 @@
 # ms, eight writes 40.8 ms -- one stall per message, whatever the payload.
 #
 # That is where the bridge's cost was. A message cost 41 ms if one direction
-# split, 82 ms if both did; `ctJuliaEvaluate` sends five and paid ~370 ms, which
+# split, 82 ms if both did; `ctJuliaEvaluate` sends six and paid ~370 ms, which
 # had been read as nine round trips of 42 ms each. It is not nine of anything.
 #
 # Two options remove it, and they are not interchangeable:

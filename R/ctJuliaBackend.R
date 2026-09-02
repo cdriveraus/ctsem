@@ -376,9 +376,11 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 #
 # That is the whole of what looked like a per-round-trip latency. A bridge
 # message cost 41 ms when one direction split into several writes and 82 ms when
-# both did, which made `ctJuliaEvaluate`'s five messages ~370 ms and read as
-# "about nine round trips of 42 ms". There are five, and the unit is a TCP
-# stall rather than a round trip.
+# both did, which made `ctJuliaEvaluate` ~370 ms and read as "about nine round
+# trips of 42 ms". It sends six messages, not nine, and the unit is a TCP stall
+# rather than a round trip. (Six: marshal the parameter vector, release the
+# proxies R collected since the last call, evaluate, then three for `juliaGet`,
+# which sets a flag, fetches, and unsets it.)
 #
 # `ctsem_tune_bridge!` in the engine turns both halves off. Same box, per
 # message: 82 ms untuned, 41 ms with Nagle disabled, 2.5 ms with the quickack
