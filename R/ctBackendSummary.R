@@ -879,21 +879,51 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   predictor_names <- .ctBackendModel(fit)$TIpredNames
   parameter_names <- stats::setNames(.ctBackendParameterNames(cells), cells$parnumber)
 
-  linear <- lapply(sort(unique(effects$predictor)), function(predictor) {
-    rows <- effects[effects$predictor %in% predictor, , drop = FALSE]
+  predictors <- sort(unique(effects$predictor))
+  perpredictor <- lapply(predictors, function(predictor)
+    effects[effects$predictor %in% predictor, , drop = FALSE])
+  ndraws <- nrow(samples)
+
+  # One engine call for every predictor and both directions, for the same
+  # reason the random-effect quadrature takes one: the calls differ only in the
+  # numbers they send, and on this backend the cost is per call rather than per
+  # byte. This was two calls per predictor -- six on a three-predictor model,
+  # measured at 1.72 s, which was 67% of the whole constrain step.
+  #
+  # The reply is still narrowed by `rows`, now to the union of the cells any
+  # predictor asks for. In the ordinary case every predictor perturbs the same
+  # parameters, so that union is one predictor's set and the batched call
+  # returns exactly the bytes the separate calls did between them. A model
+  # whose predictors touch disjoint parameters would send more, which is the
+  # trade this makes knowingly: a round trip costs 40-80 ms before it carries
+  # anything, and the bridge moves about 1.7 MB/s.
+  parameters <- sort(unique(unlist(lapply(perpredictor, function(rows) rows$parameter))))
+  wanted <- cells[match(parameters, cells$parnumber), , drop = FALSE]
+
+  blocks <- vector("list", 2L * length(predictors))
+  position <- 0L
+  for (rows in perpredictor) {
     step <- samples[, rows$coefficient, drop = FALSE] * .01
-    # Narrowed before the call for the same reason as the random-effect
-    # quadrature: two full transfers of the whole parameter-matrix array per
-    # predictor, to keep this predictor's parameters out of them.
-    wanted <- cells[match(rows$parameter, cells$parnumber), , drop = FALSE]
-    displaced <- lapply(c(1, -1), function(direction) {
+    for (direction in c(1, -1)) {
       perturbed <- samples
       perturbed[, rows$parameter] <- perturbed[, rows$parameter, drop = FALSE] +
         direction * step
-      .ctBackendPopCellValues(fit, perturbed, wanted, layout)
-    })
-    values <- matrix((displaced[[1L]] - displaced[[2L]]) / .02, nrow = nrow(samples))
-    colnames(values) <- paste0("tip_", predictor_names[predictor], "_",
+      position <- position + 1L
+      blocks[[position]] <- perturbed
+    }
+  }
+  together <- .ctBackendPopCellValues(fit, do.call(rbind, blocks), wanted, layout)
+
+  # Block 2i-1 is predictor i displaced up and block 2i the same displaced
+  # down, in the order they were stacked. `take` puts the union's columns back
+  # into this predictor's own order, which is what the names below assume.
+  linear <- lapply(seq_along(predictors), function(index) {
+    rows <- perpredictor[[index]]
+    take <- match(rows$parameter, parameters)
+    up <- together[seq_len(ndraws) + (2L * index - 2L) * ndraws, take, drop = FALSE]
+    down <- together[seq_len(ndraws) + (2L * index - 1L) * ndraws, take, drop = FALSE]
+    values <- matrix((up - down) / .02, nrow = ndraws)
+    colnames(values) <- paste0("tip_", predictor_names[predictors[index]], "_",
       parameter_names[as.character(rows$parameter)])
     values
   })
