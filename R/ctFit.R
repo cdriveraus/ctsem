@@ -235,8 +235,9 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' settings: \code{maxiter}, \code{g_tol}, \code{f_tol}, \code{x_tol} for the
 #' optimizer's stopping rules, \code{lbfgs_memory} for how many curvature pairs
 #' L-BFGS keeps, \code{gradient} ('adjoint' or 'forward'), \code{julia_project}
-#' to point at a local engine checkout, and \code{restart_session} to clear the
-#' Julia session before fitting.
+#' to point at a local engine checkout, \code{restart_session} to clear the
+#' Julia session before fitting, and \code{progress} to force progress
+#' reporting on or off for this fit.
 #' @param control Used when \code{optimize=FALSE}. List of arguments sent to \code{\link[rstan]{stan}} control argument,
 #' regarding warmup / sampling behaviour. Unless specified, values used are:
 #' list(adapt_delta = .8, adapt_window=2, max_treedepth=10, adapt_init_buffer=2, stepsize = .001)
@@ -544,7 +545,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     .ctJuliaUnsupported(ctstanmodel, optimize=optimize, priors=priors,
       intoverpop=intoverpop, vb=vb, gendata=gendata,
       stanmodeltext=stanmodeltext, compileArgs=compileArgs,
-      forcerecompile=forcerecompile)
+      forcerecompile=forcerecompile, optimcontrol=optimcontrol)
     # Before any data preparation, so that a first-time user is asked about the
     # setup they need rather than being told about it after a wait. Only when
     # the fit will actually run: preparation is pure R, and stays usable -- and
@@ -1053,7 +1054,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
 
   # Resolved here rather than after the julia branch below, which returns before
   # ever reaching the old resolution site: `cores='maxneeded'` arrived at
-  # ctFitJuliaBackend() as a string, `as.integer()` made it NA, and the NA guard
+  # .ctFitJuliaBackend() as a string, `as.integer()` made it NA, and the NA guard
   # there turned it into 1. So the documented default whenever `optimize=FALSE`
   # silently meant single-core for the julia backend.
   #
@@ -1069,7 +1070,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     .ctJuliaUnsupported(ctm, optimize=optimize, priors=priors,
       intoverpop=intoverpop, vb=vb, gendata=gendata,
       stanmodeltext=stanmodeltext, compileArgs=compileArgs,
-      forcerecompile=forcerecompile, intoverstates=intoverstates)
+      forcerecompile=forcerecompile, intoverstates=intoverstates,
+      optimcontrol=optimcontrol)
     # `optimize` and `intoverpop` are orthogonal here. `intoverpop` says which
     # random effects are integrated out and how; `optimize` says whether the
     # remaining parameters are maximised or sampled. Every combination is
@@ -1090,7 +1092,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       if(intoverpop) 'augmented' else
         if(!optimize && any(ctm$pars$indvarying[is.na(ctm$pars$value)])) 'none' else
           'augmented'
-    juliafit <- ctFitJuliaBackend(datalong=datalong, model=ctm, prepared_data=standata, inits=inits,
+    juliafit <- .ctFitJuliaBackend(datalong=datalong, model=ctm, prepared_data=standata, inits=inits,
       cores=cores, backendcontrol=backendcontrol, optimcontrol=optimcontrol,
       verbose=verbose, fit=fit, priors=priors, optimize=optimize,
       chains=chains, iter=iter, control=control,

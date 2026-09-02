@@ -307,7 +307,7 @@
 # any time preparing data -- a user who declines should not have waited first.
 #
 # Deliberately does not start a Julia session, only checks that one could be:
-# ctFitJuliaBackend() still has to translate `cores` into JULIA_NUM_THREADS
+# .ctFitJuliaBackend() still has to translate `cores` into JULIA_NUM_THREADS
 # before the process exists, which is the only moment Julia will read it.
 .ctJuliaEnsureInstalled <- function() {
   .ctJuliaRequire()

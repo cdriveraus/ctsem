@@ -204,8 +204,9 @@ with \code{\link{ctSample}}. It needs a working Julia -- see
 settings: \code{maxiter}, \code{g_tol}, \code{f_tol}, \code{x_tol} for the
 optimizer's stopping rules, \code{lbfgs_memory} for how many curvature pairs
 L-BFGS keeps, \code{gradient} ('adjoint' or 'forward'), \code{julia_project}
-to point at a local engine checkout, and \code{restart_session} to clear the
-Julia session before fitting.}
+to point at a local engine checkout, \code{restart_session} to clear the
+Julia session before fitting, and \code{progress} to force progress
+reporting on or off for this fit.}
 
 \item{nlcontrol}{List of non-linear control parameters.
 \code{maxtimestep} must be a positive numeric,  specifying the largest time

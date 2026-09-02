@@ -184,7 +184,7 @@ ctIdentify <- function(datalong, model, inits = NULL, nstart = 3L,
   }
   ctstanmodel <- model
 
-  spec <- ctFitJuliaBackend(datalong, ctstanmodel, fit = FALSE,
+  spec <- .ctFitJuliaBackend(datalong, ctstanmodel, fit = FALSE,
     priors = priors, intoverpop = intoverpop, cores = cores, verbose = verbose)
   npar <- .ctBackendNpar(spec)
   if (!is.finite(npar) || npar < 1L) {

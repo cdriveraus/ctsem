@@ -568,8 +568,17 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 }
 
 .ctJuliaUnsupported <- function(model, optimize, priors, intoverpop, vb, gendata,
-  stanmodeltext, compileArgs, forcerecompile, intoverstates = TRUE) {
+  stanmodeltext, compileArgs, forcerecompile, intoverstates = TRUE,
+  optimcontrol = list()) {
   failures <- character()
+  # `optimcontrol$is` selects Stan's optimization-plus-importance-sampling
+  # route (see R/ctFit.R's estimation-method message); the julia path's only
+  # uncertainty methods are the Hessian and ctOptimUncertainty()'s sampling,
+  # neither of which is importance sampling, so silently ignoring it would
+  # leave the user told one thing happened when another did.
+  if (isTRUE(optimcontrol$is)) {
+    failures <- c(failures, "optimcontrol$is (importance sampling)")
+  }
   # `intoverstates=FALSE` fits over the joint density of parameters and states
   # (see `state_sampling.jl`), which composes with the default `intoverpop` --
   # augmented random effects are extra states, so they are sampled along with
@@ -1916,7 +1925,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 
 # Run the engine's optimizer over a prepared specification.
 #
-# Factored out of ctFitJuliaBackend() because cross-validation re-optimises the
+# Factored out of .ctFitJuliaBackend() because cross-validation re-optimises the
 # same model against held-out data (see .ctBackendLOO) and must do it exactly
 # the way a fit does -- same tolerances, same gradient method, same thread cap.
 # A second copy of this call would be a second set of defaults to keep in step.
@@ -1953,7 +1962,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # `verbose` defaults to 0 -- so the reporting existed and almost nobody
     # saw it. Keyed on the same console detection the overwriting uses, so a
     # script or a knitr chunk still gets nothing, and overridable with
-    # `optimcontrol$progress`.
+    # `backendcontrol$progress`.
     progress = isTRUE(.ctJuliaOr(backendcontrol$progress,
       verbose > 0L || .ctProgressConsole())))
   # A live callback into R, for a front end that wants to draw the trace as it
@@ -2021,7 +2030,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   result
 }
 
-ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NULL, cores = 1L,
+.ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NULL, cores = 1L,
   backendcontrol = list(), optimcontrol = list(), verbose = 0L, fit = TRUE,
   priors = FALSE, intoverpop = "augmented", optimize = TRUE, chains = 4L,
   iter = 2000L, control = list(), intoverstates = TRUE) {

@@ -55,7 +55,7 @@ test_that("the information used is positive semi-definite away from any mode", {
   # The reason this uses scores rather than the Hessian: at an arbitrary point
   # the Hessian is indefinite and its flat directions describe the point, not
   # the data. The score information cannot be.
-  spec <- ctFitJuliaBackend(.identify_data(), .identify_model(), fit = FALSE,
+  spec <- .ctFitJuliaBackend(.identify_data(), .identify_model(), fit = FALSE,
     priors = FALSE, intoverpop = "augmented", cores = 1, verbose = 0)
   npar <- max(spec$parameter_table$parnumber, na.rm = TRUE)
   set.seed(2)
