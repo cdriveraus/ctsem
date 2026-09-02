@@ -650,10 +650,6 @@ getcxxfun <- function(object) {
   }  else  return(object@.CXXDSOMISC$cxxfun)
 }
 
-flexsapply <- function(cl, X, fn,cores=1){
-  if(cores > 1) parallel::parSapply(cl,X,fn) else sapply(X, fn)
-}
-
 flexlapply <- function(cl, X, fn,cores=1,...){
   if(cores > 1) parallel::parLapply(cl,X,fn,...) else lapply(X, fn,...)
 }
