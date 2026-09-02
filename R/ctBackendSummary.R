@@ -77,10 +77,24 @@
 .ctBackendModel <- .ctFitModelObject
 
 # Names and dimensions of everything the engine can materialize, plus which
-# cells are state dependent. Cheap, but queried once per call rather than per
-# sample; it is a property of the model, not of the parameter values.
+# cells are state dependent. A property of the model, not of the parameter
+# values -- so it is computed once per objective and cached, rather than
+# re-asked every time something wants to know where a matrix lives.
+#
+# It is cheap engine-side and was described as cheap, but it is one to two
+# JuliaConnectoR round trips, and on this backend a round trip is 40-80 ms
+# whatever it carries. `.ctBackendConstrain` alone asks for it once per call:
+# measured on dev1 at 0.29 s on a 4-latent model and 0.33 s on a 2-latent one,
+# against a whole constrain step of 2.6 s and 2.1 s.
+#
+# The key is the objective's, so a model whose data or parameter table
+# changed gets a fresh layout for the same reason it gets a fresh objective.
 .ctBackendSummaryLayout <- function(fit) {
   spec <- .ctBackendSpec(fit)
+  key <- .ctJuliaObjectiveKey(spec)
+  if (exists(key, envir = .ct_julia_cache$layouts, inherits = FALSE)) {
+    return(get(key, envir = .ct_julia_cache$layouts, inherits = FALSE))
+  }
   module <- .ctJuliaModule(spec$project)
   objective <- .ctJuliaObjective(fit)
   raw <- .ctBackendJuliaValue(module$ctsem_parameter_layout(objective))
@@ -95,10 +109,12 @@
     data.frame(matrix = character(), row = integer(), col = integer(),
       stringsAsFactors = FALSE)
   }
-  list(matrix = as.character(raw$matrix), nrow = as.integer(raw$nrow),
+  layout <- list(matrix = as.character(raw$matrix), nrow = as.integer(raw$nrow),
     ncol = as.integer(raw$ncol), offset = as.integer(raw$offset),
     size = as.integer(raw$size)[1L], nlatent = as.integer(raw$nlatent)[1L],
     nmanifest = as.integer(raw$nmanifest)[1L], statedep = statedep)
+  assign(key, layout, envir = .ct_julia_cache$layouts)
+  layout
 }
 
 # `raw` is npar x nsamples; the result is (flat layout) x nsamples. The whole
@@ -635,10 +651,30 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   # `column` was five full transfers of the whole parameter-matrix array per
   # level, ~97% of it discarded on arrival.
   wanted <- cells[column, , drop = FALSE]
-  displaced <- lapply(quadrature$node, function(node) {
+  # One engine call for all five nodes, not one per node.
+  #
+  # Every node asks for the same cells of the same posterior, displaced by a
+  # different multiple of the same sd, so the five calls differ only in the
+  # numbers they send. `ctsem_parameter_matrices` already takes a matrix of
+  # raw vectors and treats each column independently, so stacking the five
+  # displaced posteriors and splitting the result afterwards computes exactly
+  # the same values in exactly the same way.
+  #
+  # It is worth doing because this phase is not compute bound. Measured on
+  # dev1: a `ctsem_parameter_matrices` call costs about 0.25 s of which about
+  # 0.01 s is the engine -- the rest is JuliaConnectoR round trips, whose cost
+  # is per call and nearly independent of how much is in each. Five narrow
+  # calls cost 1.27 s; one call five times as wide costs about a fifth of
+  # that. `rows` keeps the reply narrow either way.
+  ndraws <- nrow(samples)
+  stacked <- do.call(rbind, lapply(quadrature$node, function(node) {
     perturbed <- samples
     perturbed[, parnumber] <- perturbed[, parnumber, drop = FALSE] + rawsd * node
-    .ctBackendPopCellValues(fit, perturbed, wanted, layout)
+    perturbed
+  }))
+  together <- .ctBackendPopCellValues(fit, stacked, wanted, layout)
+  displaced <- lapply(seq_along(quadrature$node), function(index) {
+    together[seq_len(ndraws) + (index - 1L) * ndraws, , drop = FALSE]
   })
   centre <- Reduce(`+`, Map(function(value, weight) value * weight,
     displaced, quadrature$weight))
@@ -843,21 +879,51 @@ ctBackendParMatrices <- function(fit, raw = NULL, tipreds = NULL, state = NULL,
   predictor_names <- .ctBackendModel(fit)$TIpredNames
   parameter_names <- stats::setNames(.ctBackendParameterNames(cells), cells$parnumber)
 
-  linear <- lapply(sort(unique(effects$predictor)), function(predictor) {
-    rows <- effects[effects$predictor %in% predictor, , drop = FALSE]
+  predictors <- sort(unique(effects$predictor))
+  perpredictor <- lapply(predictors, function(predictor)
+    effects[effects$predictor %in% predictor, , drop = FALSE])
+  ndraws <- nrow(samples)
+
+  # One engine call for every predictor and both directions, for the same
+  # reason the random-effect quadrature takes one: the calls differ only in the
+  # numbers they send, and on this backend the cost is per call rather than per
+  # byte. This was two calls per predictor -- six on a three-predictor model,
+  # measured at 1.72 s, which was 67% of the whole constrain step.
+  #
+  # The reply is still narrowed by `rows`, now to the union of the cells any
+  # predictor asks for. In the ordinary case every predictor perturbs the same
+  # parameters, so that union is one predictor's set and the batched call
+  # returns exactly the bytes the separate calls did between them. A model
+  # whose predictors touch disjoint parameters would send more, which is the
+  # trade this makes knowingly: a round trip costs 40-80 ms before it carries
+  # anything, and the bridge moves about 1.7 MB/s.
+  parameters <- sort(unique(unlist(lapply(perpredictor, function(rows) rows$parameter))))
+  wanted <- cells[match(parameters, cells$parnumber), , drop = FALSE]
+
+  blocks <- vector("list", 2L * length(predictors))
+  position <- 0L
+  for (rows in perpredictor) {
     step <- samples[, rows$coefficient, drop = FALSE] * .01
-    # Narrowed before the call for the same reason as the random-effect
-    # quadrature: two full transfers of the whole parameter-matrix array per
-    # predictor, to keep this predictor's parameters out of them.
-    wanted <- cells[match(rows$parameter, cells$parnumber), , drop = FALSE]
-    displaced <- lapply(c(1, -1), function(direction) {
+    for (direction in c(1, -1)) {
       perturbed <- samples
       perturbed[, rows$parameter] <- perturbed[, rows$parameter, drop = FALSE] +
         direction * step
-      .ctBackendPopCellValues(fit, perturbed, wanted, layout)
-    })
-    values <- matrix((displaced[[1L]] - displaced[[2L]]) / .02, nrow = nrow(samples))
-    colnames(values) <- paste0("tip_", predictor_names[predictor], "_",
+      position <- position + 1L
+      blocks[[position]] <- perturbed
+    }
+  }
+  together <- .ctBackendPopCellValues(fit, do.call(rbind, blocks), wanted, layout)
+
+  # Block 2i-1 is predictor i displaced up and block 2i the same displaced
+  # down, in the order they were stacked. `take` puts the union's columns back
+  # into this predictor's own order, which is what the names below assume.
+  linear <- lapply(seq_along(predictors), function(index) {
+    rows <- perpredictor[[index]]
+    take <- match(rows$parameter, parameters)
+    up <- together[seq_len(ndraws) + (2L * index - 2L) * ndraws, take, drop = FALSE]
+    down <- together[seq_len(ndraws) + (2L * index - 1L) * ndraws, take, drop = FALSE]
+    values <- matrix((up - down) / .02, nrow = ndraws)
+    colnames(values) <- paste0("tip_", predictor_names[predictors[index]], "_",
       parameter_names[as.character(rows$parameter)])
     values
   })

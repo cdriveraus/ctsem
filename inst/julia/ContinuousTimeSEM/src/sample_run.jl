@@ -18,6 +18,12 @@ included, iterations capped at 15.
     fit      160.7 s  63.4 s   43.0 s   32.2 s   29.4 s
     speedup    --      1.72x    2.53x    3.38x    3.70x
 
+**Read that as a shape, not as a scaling curve.** It came off an i9-12900KS,
+8 P-cores with SMT plus 8 E-cores without, so "8 cores" is eight heterogeneous
+threads and the sixteenth is nothing like the first. On 23 homogeneous cores the
+same axis reaches 5.28x at eight chunks. See the end of this docstring; every
+timing here taken on that machine has the same flaw.
+
 Three repeats of `cores = 1` agreed to 7%, and the sweep was run *descending*
 so that a speedup could not be confused with having run later in the session.
 Both matter, and neither is a formality:
@@ -66,13 +72,38 @@ and milder imbalance is universal. And capping `maxdepth` at 3 to equalise the
 work also removes most of the natural per-draw variation, so at the default of
 10 the imbalance -- and the loss to it -- is larger than measured here.
 
-Splitting units across *processes* instead was tried and is not worth it. Eight
-processes on disjoint subject groups came out at 2.60x where eight threads give
-3.38x, so the ceiling is not the shared allocator -- separate heaps did not lift
-it -- and it is not worth a scatter/gather barrier per gradient to find out what
-else it is. That measurement was taken during the noisy window, so it is weak
-evidence for the exact figure and strong evidence for the sign: processes did
-not do dramatically better, and only dramatically better would justify them.
+**Two claims that stood here have been withdrawn, and why matters to whoever
+measures next.**
+
+This recorded eight processes on disjoint subject groups reaching 2.60x against
+3.38x for eight threads, concluding the ceiling was not the shared allocator.
+Both figures came from a development machine that is an i9-12900KS: 8 P-cores
+with SMT plus 8 E-cores without. "Eight threads" there is eight *heterogeneous*
+threads, an E-core being roughly half a P-core, so no curve measured on it can
+be read as N times one core. Every local timing in this file's history carries
+that flaw.
+
+Re-measured on 23 homogeneous cores, eight independent processes reach **8.19x**
+throughput: 0.14888 s per gradient alone, 0.14157-0.14548 s each with eight
+running. They do not interfere at all, though each allocates 544 MB per
+gradient.
+
+Nor is the subject loop bandwidth bound, which the 2.60x had been taken to
+suggest. Against two references measured in the same session -- a dependent FMA
+chain with no memory traffic, and a deliberately bandwidth-bound array sum --
+the real work lands near the arithmetic ceiling and beats the bandwidth one:
+
+    chunks    gradient   scores   Hessian   arithmetic   bandwidth
+    8           5.28x     5.00x    4.66x      7.76x        3.19x
+
+A bandwidth-bound workload cannot outrun the bandwidth-bound reference. By
+volume the loop uses about 3% of what the machine has, 3.3 GB/s against 110
+GB/s. What remains is garbage collection, 22-24% of gradient wall time.
+
+So threads versus processes on the unit axis is **open**, not settled against
+processes. What would settle it is the scatter/gather barrier a process split
+needs on every gradient -- not a scaling ceiling that turned out to be the
+measuring machine.
 
 Nothing needs deciding by the caller either way: `workspace_slot` on
 `ctsem_sample_density!` is present exactly when chains are running concurrently,
@@ -92,11 +123,26 @@ processes would pay, and it would cut per-worker memory rather than multiply it.
 
 `save_effects` defaults to false, and that is a bandwidth decision rather than a
 statistical one. A hundred subjects with two effects each and four chains of a
-thousand draws is 800,000 numbers -- 6.4 MB, which JuliaConnectoR moves at
-roughly 0.85 MB/s on Windows, so returning them costs longer than many fits do.
-The per-effect posterior mean and standard deviation come back always, because
-they are `ndim` numbers rather than `ndim * ndraws` and answer most of what the
-draws would be used for.
+thousand draws is 800,000 numbers -- 6.4 MB, and the bridge is slow enough
+inbound that returning them costs longer than many fits do. The per-effect
+posterior mean and standard deviation come back always, because they are `ndim`
+numbers rather than `ndim * ndraws` and answer most of what the draws would be
+used for.
+
+The bridge, measured directly rather than inferred from one transfer:
+
+  - **~41 ms fixed per round trip**, whatever it carries. A bare
+    `juliaEval("1+1")` costs 81 ms.
+  - **outbound ~870 MB/s** -- sending 32 MB costs 37 ms, so arguments are
+    effectively free.
+  - **inbound ~2.0 MB/s** -- the only per-byte term that matters.
+
+The fixed cost is the part that surprises. One gradient costs 0.417 s called
+from R and 0.005 s timed inside the engine, so anything R drives a call at a
+time is dominated by round trips rather than by arithmetic: the post-fit
+uncertainty phase measured ~99% bridge. The lever there is fewer calls, not more
+threads -- batching narrow calls cut that phase 1.48-1.90x while carrying the
+same bytes.
 """
 
 using LinearAlgebra

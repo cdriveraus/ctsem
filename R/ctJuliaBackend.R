@@ -5,6 +5,9 @@
 
 .ct_julia_cache <- new.env(parent = emptyenv())
 .ct_julia_cache$objectives <- new.env(parent = emptyenv())
+# Keyed with the same objective key: a layout describes the objective's model,
+# so it is stale in exactly the cases the objective is.
+.ct_julia_cache$layouts <- new.env(parent = emptyenv())
 .ctJuliaOr <- function(x, default) if (is.null(x)) default else x
 
 # Can a carriage return move the cursor here?
@@ -385,6 +388,7 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   .ct_julia_cache$project <- NULL
   .ct_julia_cache$engine <- NULL
   .ct_julia_cache$objectives <- new.env(parent = emptyenv())
+  .ct_julia_cache$layouts <- new.env(parent = emptyenv())
   # Two passes: the first frees the proxies, the second any proxy a finalizer
   # from the first pass happened to drop.
   gc(verbose = FALSE); gc(verbose = FALSE)
