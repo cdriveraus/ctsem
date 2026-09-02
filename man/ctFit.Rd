@@ -116,7 +116,10 @@ For genuinely live output use \code{optimcontrol$callback}.}
 \item{derrind}{deprecated, latents involved in dynamic error calculations are determined automatically now.}
 
 \item{optimize}{if TRUE, use \code{\link{stanoptimis}} function for maximum a posteriori / importance sampling estimates,
-otherwise use the HMC sampler from Stan, which is (much) slower, but generally more robust for complex individual differences.}
+otherwise use the HMC sampler from Stan, which is (much) slower, but generally more robust for complex individual differences.
+When \code{optimize=FALSE}, the stored point estimate (\code{stanfit$rawest}) is the per-parameter
+median of the posterior draws; the julia backend's sampled point estimate (see \code{\link{ctSample}})
+is the per-parameter mean instead.}
 
 \item{optimcontrol}{list of parameters sent to \code{\link{stanoptimis}} governing optimization / importance sampling.
 With \code{backend='julia'}, \code{optimcontrol$gradient} selects the
