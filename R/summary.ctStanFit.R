@@ -428,6 +428,7 @@ roundSummaryCtStanFitValue <- function(x,digits){
 summaryCtStanFitLabel <- function(x){
   labels <- c(
     residCovStd = 'Standardised residual covariance',
+    residCovStdConditioning = 'Note',
     rawpopcorr = 'Random-effects correlations',
     rawpopcorrNote = 'Note',
     priorcheck = 'Prior check',

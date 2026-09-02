@@ -301,6 +301,15 @@ ctBackendKalman <- function(fit, subjects = "all", timestep = "asdata",
   collapsefunc = NA, standardisederrors = FALSE, subjectpars = FALSE,
   indvarstates = FALSE, randomEffects = NULL, ...) {
 
+  # Same hazard as .ctBackendGenerateFromFit's statepath branch further down
+  # this file: a state-explicit fit's point estimate is the mode of the joint
+  # density of states and data, not of the marginal the filter below computes.
+  # Filtering through it at that estimate is a draw from a density this fit
+  # did not maximise, and it looks entirely reasonable.
+  if (isFALSE(fit$args$intoverstates)) {
+    warning('Kalman filter operation unreliable when states were sampled -- system noise represents prior while point estimates represent posterior / smoothed')
+  }
+
   spec <- .ctBackendKalmanSpec(fit, subjects = subjects, timestep = timestep,
     maxtime = maxtime, removeObs = removeObs)
   model <- .ctFitModelObject(fit)
