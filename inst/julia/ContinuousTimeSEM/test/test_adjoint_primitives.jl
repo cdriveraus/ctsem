@@ -76,14 +76,43 @@ end
     @test isapprox(asym_pull[3], sym_pull[3]; atol=1e-12)
 end
 
-@testset "linear solve adjoint" begin
-    A = [1.4 0.3 -0.2; 0.1 1.1 0.4; -0.3 0.2 1.7]
-    B = [0.5 -0.2; 1.1 0.3; -0.4 0.9]
-    @test isapprox(A * ContinuousTimeSEM._ctsem_linsolve(A, B), B; atol=1e-12)
-    _check_pullback(ContinuousTimeSEM._ctsem_linsolve, (A, B), randn(3, 2))
+@testset "discrete-intercept solve pullback matches production (adjoint_ekf.jl:591-599)" begin
+    # F4: production differentiates `dINT[D] = JAxd \ s` by hand at
+    # `adjoint_ekf.jl:591-599`, using `_solve_square_system_generic!` (the
+    # same LU kernel the forward pass uses, see `ksolve.jl`) rather than a
+    # tested primitive. The primitive that *was* tested here, `_ctsem_linsolve`,
+    # was called by nothing and has been deleted. This reproduces the block's
+    # exact two solves and its exact accumulation (`s̄ = M⁻ᵀ ȳ`, `M̄ = -s̄ yᵀ`)
+    # and checks the result directionally against ForwardDiff differentiating
+    # the forward solve itself.
+    k = 3
+    M = [1.4 0.3 -0.2; 0.1 1.1 0.4; -0.3 0.2 1.7]
+    s = [0.5, 1.1, -0.4]
+    piv = zeros(Int, k)
 
-    b = [0.5, 1.1, -0.4]
-    _check_pullback(ContinuousTimeSEM._ctsem_linsolve, (A, b), randn(3))
+    function _forward_solve(Min::AbstractMatrix, sin::AbstractVector)
+        T = promote_type(eltype(Min), eltype(sin))
+        Acopy = Matrix{T}(Min)
+        Bcopy = Vector{T}(sin)
+        ContinuousTimeSEM._solve_square_system_generic!(Acopy, Bcopy, piv, Val(k))
+        return Bcopy
+    end
+    y = _forward_solve(M, s)
+
+    ybar = [0.6, -0.9, 0.2]
+    Mt = permutedims(M)
+    sbar = copy(ybar)
+    ContinuousTimeSEM._solve_square_system_generic!(Mt, sbar, piv, Val(k))
+    Mbar = zeros(k, k)
+    ContinuousTimeSEM._ctsem_outer!(Mbar, sbar, y, -1.0, 1.0)
+
+    uM = randn(k, k)
+    dM = ForwardDiff.derivative(ε -> dot(ybar, _forward_solve(M .+ ε .* uM, s)), 0.0)
+    @test isapprox(dot(Mbar, uM), dM; atol=_PRIM_TOL, rtol=_PRIM_TOL)
+
+    us = randn(k)
+    ds = ForwardDiff.derivative(ε -> dot(ybar, _forward_solve(M, s .+ ε .* us)), 0.0)
+    @test isapprox(dot(sbar, us), ds; atol=_PRIM_TOL, rtol=_PRIM_TOL)
 end
 
 @testset "Frechet block identity" begin

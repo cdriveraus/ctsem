@@ -5,23 +5,31 @@ using ChainRulesCore
 # Adjoint primitive layer
 ################################################################################
 #
-# This file holds the *only* hand-derived reverse-mode mathematics in the
-# package. Everything else in the adjoint path is expressed as a composition of
-# these primitives, which is what `docs/src/adjoint-roadmap.md` calls
-# "primitive-level rrules composed by replay": if the forward filter changes
-# shape (extra substeps, a new predictor kind, a different missingness rule)
-# but keeps expressing its math as calls to these kernels, the reverse pass
-# stays correct without a matching hand-edit.
+# This file holds most of the hand-derived reverse-mode mathematics in the
+# package -- the exception is the discrete-intercept solve pulled back inline
+# at `adjoint_ekf.jl:591-599` (same math as the `linsolve` derivation below,
+# but run at every prediction substep, so it stays hand-inlined against the
+# scratch buffers rather than routed through a pure primitive here; see
+# `test_adjoint_primitives.jl` for its direct test). Everything else in the
+# adjoint path is expressed as a composition of these primitives, which is
+# what `docs/src/adjoint-roadmap.md` calls "primitive-level rrules composed by
+# replay": if the forward filter changes shape (extra substeps, a new
+# predictor kind, a different missingness rule) but keeps expressing its math
+# as calls to these kernels, the reverse pass stays correct without a matching
+# hand-edit.
 #
-# Three kernels need hand-written pullbacks because their forward
+# Two kernels need hand-written pullbacks here because their forward
 # implementations bottom out in LAPACK calls (`dgetrf`, `dtrsyl`) that no
 # reverse-mode AD in the Julia ecosystem differentiates today:
 #
 #   * the matrix exponential   `exp(A)`          -- Padé + scaling/squaring,
 #     whose inner Padé solve is an LU factorization;
 #   * the continuous Lyapunov solve `A X + X A' + Q = 0` -- either the packed
-#     `ksolve!` LU or the Schur/`trsyl!` path, depending on size;
-#   * the plain square solve  `A \ B`            -- LU again.
+#     `ksolve!` LU or the Schur/`trsyl!` path, depending on size.
+#
+# (The plain square solve `A \ B` is the same LAPACK situation, but see the
+# note above -- its one caller inlines the pullback rather than using a
+# primitive from this file.)
 #
 # Each is given here as a *pure* function plus a `ChainRulesCore.rrule`. The
 # pure form matters: the forward filter's kernels (`my_exp!`, `my_lyap!`,
@@ -48,6 +56,8 @@ using ChainRulesCore
 #
 #   linsolve: X = A^{-1} B, so B̄ = A^{-T} X̄ and Ā = -B̄ X'. Reusing the
 #             factorization from the forward solve makes the pullback cheap.
+#             (Hand-inlined at `adjoint_ekf.jl:591-599`, not a primitive here
+#             -- see the note at the top of this file.)
 #
 ################################################################################
 
@@ -169,13 +179,6 @@ function _ctsem_lyap(A::AbstractMatrix, Q::AbstractMatrix,
     return X
 end
 
-"""
-    _ctsem_linsolve(A, B)
-
-Solve `A * X = B`, as a pure function with a hand-written pullback.
-"""
-_ctsem_linsolve(A::AbstractMatrix, B::AbstractVecOrMat) = A \ B
-
 ################################################################################
 # Pullbacks
 ################################################################################
@@ -237,17 +240,6 @@ function ChainRulesCore.rrule(::typeof(_ctsem_lyap), A::AbstractMatrix, Q::Abstr
         return (NoTangent(), Ā, Q̄)
     end
     return X, _ctsem_lyap_rrule_pullback
-end
-
-function ChainRulesCore.rrule(::typeof(_ctsem_linsolve), A::AbstractMatrix, B::AbstractVecOrMat)
-    F = lu(A)
-    X = F \ B
-    function _ctsem_linsolve_pullback(X̄)
-        B̄ = adjoint(F) \ collect(unthunk(X̄))
-        Ā = -B̄ * adjoint(X)
-        return (NoTangent(), Matrix(Ā), B̄)
-    end
-    return X, _ctsem_linsolve_pullback
 end
 
 ################################################################################
