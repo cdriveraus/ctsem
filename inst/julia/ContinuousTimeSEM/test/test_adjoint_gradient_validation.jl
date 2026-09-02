@@ -121,7 +121,11 @@ end
 
 # A 2-latent, 2-manifest model with a free cross-effect, so the gradient
 # check exercises coupled dynamics, not just a diagonal system.
-function _adjoint_cross_effect_2d_parameters()
+#
+# `continuous` is threaded through to `ekf_from_data_frame` so
+# `test_discrete_time.jl` can reuse this exact cell layout for its discrete
+# variant (F5) instead of writing a new fixture.
+function _adjoint_cross_effect_2d_parameters(; continuous::Bool=true)
     df = _adjoint_test_dataframe(
         drift=[-0.5 0.3; 0.1 -0.3], jax=[-0.5 0.3; 0.1 -0.3],
         cint=[0.0; 0.0;;], diffusion=[0.2 0.0; 0.0 0.15],
@@ -137,7 +141,7 @@ function _adjoint_cross_effect_2d_parameters()
             (:JAx, 1, 2) => (3, "param[3]"),
         ),
     )
-    ekf_from_data_frame(df)
+    ekf_from_data_frame(df; continuous_time=continuous)
 end
 
 # PARS[1,1] is a free parameter feeding a state-dependent DRIFT/JAx
@@ -169,7 +173,16 @@ end
 # here, so the reverse paths through `sdcovsqrt2cov` (for all three covariance
 # matrices), the discrete-intercept solve, and the measurement-mean term are
 # actually exercised rather than multiplied by a structurally zero cotangent.
-function _adjoint_free_covariance_2d_parameters()
+#
+# `continuous` is threaded through for the same reason as in
+# `_adjoint_cross_effect_2d_parameters` above (F5).
+#
+# F6: LAMBDA[2,1] is also free (parameter 11), so `_reverse_update!`'s
+# `Λ̄` scatter (`adjoint_ekf.jl:842`) is multiplied by something. Before this,
+# LAMBDA and Jy carried `parnumber = missing` in every Julia test model, so a
+# transposition, sign or orientation error in the LAMBDA/Jy/Jtd cotangent
+# scatters was multiplied by nothing across the whole suite.
+function _adjoint_free_covariance_2d_parameters(; continuous::Bool=true)
     df = _adjoint_test_dataframe(
         drift=[-0.5 0.3; 0.1 -0.3], jax=[-0.5 0.3; 0.1 -0.3],
         cint=[0.0; 0.0;;], diffusion=[0.2 0.0; 0.05 0.15],
@@ -189,9 +202,10 @@ function _adjoint_free_covariance_2d_parameters()
             (:T0VAR, 1, 1) => (8, "log1p_exp(param[8])"),
             (:T0VAR, 2, 1) => (9, "param[9]"),
             (:T0MEANS, 2, 1) => (10, "param[10]"),
+            (:LAMBDA, 2, 1) => (11, "param[11]"),
         ),
     )
-    ekf_from_data_frame(df)
+    ekf_from_data_frame(df; continuous_time=continuous)
 end
 
 # A free TD-predictor effect, so `_apply_td_impulse!` and its reverse are
@@ -214,11 +228,36 @@ function _adjoint_td_ti_parameters()
     ekf_from_data_frame(df, ti_effects)
 end
 
+# F6: a 2-latent TD-predictor scenario with `Jtd[2,1]` free. The only other TD
+# scenario (`_adjoint_td_ti_parameters`, above) is 1-state with `Jtd` fixed, so
+# `_reverse_td!`'s `Jtd_bar = Ps Jtd P' + Ps' Jtd P` line
+# (`adjoint_ekf.jl:675`), where an operand-order or transpose error matters
+# most, was never checked at a dimension where `P` is not scalar.
+function _adjoint_td_cross_2d_parameters()
+    drift = [-0.5 0.3; 0.1 -0.3]
+    df = _adjoint_test_dataframe(
+        drift=drift, jax=drift, cint=[0.0; 0.0;;],
+        diffusion=[0.2 0.0; 0.0 0.15],
+        lambda=[1.0 0.0; 0.0 1.0], jy=[1.0 0.0; 0.0 1.0],
+        manifestmeans=[0.0; 0.0;;], manifestvar=[0.1 0.0; 0.0 0.1],
+        t0var=[1.0 0.0; 0.0 1.0], t0means=[0.0; 0.0;;],
+        tdpredeffect=[0.0; 0.0;;], jtd=[1.0 0.0; 0.0 1.0],
+        free=Dict(
+            (:DRIFT, 1, 1) => (1, "-log1p_exp(param[1])"),
+            (:JAx, 1, 1) => (1, "-log1p_exp(param[1])"),
+            (:TDPREDEFFECT, 1, 1) => (2, "param[2]"),
+            (:Jtd, 2, 1) => (3, "param[3]"),
+        ),
+    )
+    ekf_from_data_frame(df)
+end
+
 _ADJOINT_SP_LINEAR_1D = _adjoint_linear_1d_parameters()
 _ADJOINT_SP_CROSS_2D = _adjoint_cross_effect_2d_parameters()
 _ADJOINT_SP_STATE_DEPENDENT = _adjoint_state_dependent_1d_parameters()
 _ADJOINT_SP_FREE_COVARIANCE = _adjoint_free_covariance_2d_parameters()
 _ADJOINT_SP_TD_TI = _adjoint_td_ti_parameters()
+_ADJOINT_SP_TD_CROSS_2D = _adjoint_td_cross_2d_parameters()
 
 @testset "Forward-gradient validation: linear 1D" begin
     sp = _ADJOINT_SP_LINEAR_1D
@@ -275,7 +314,7 @@ end
     sp = _ADJOINT_SP_FREE_COVARIANCE
     data = reshape([0.1, -0.2, 0.15, 0.05, -0.1, 0.2, 0.3, -0.05], 2, :)
     objective = ContinuousTimeSEM.ctsem_objective(sp, [1], [0.0, 0.5, 1.2, 2.0], data)
-    values = [0.3, 0.2, -0.1, 0.4, 0.15, -0.2, 0.25, 0.1, -0.15, 0.35]
+    values = [0.3, 0.2, -0.1, 0.4, 0.15, -0.2, 0.25, 0.1, -0.15, 0.35, 0.2]
     _check_adjoint(objective, values)
 end
 
@@ -287,6 +326,18 @@ end
     objective = ContinuousTimeSEM.ctsem_objective(sp, [1, 4],
         [0.0, 0.5, 1.2, 0.0, 0.6, 1.4], data, tdpreds, tipreds)
     values = [0.3, -0.4, 0.25]
+    _check_adjoint(objective, values)
+end
+
+@testset "Forward-gradient validation: TD predictor with off-diagonal Jtd (2-state)" begin
+    # F6: `Jtd[2,1]` free at a 2-latent dimension, so `_reverse_td!`'s
+    # `Jtd_bar` line is checked where `P` is not scalar and the operand order
+    # actually matters.
+    sp = _ADJOINT_SP_TD_CROSS_2D
+    data = reshape([0.1, -0.2, 0.15, 0.05, -0.1, 0.2], 2, :)
+    tdpreds = reshape([0.0, 1.0, 0.0], 1, :)
+    objective = ContinuousTimeSEM.ctsem_objective(sp, [1], [0.0, 0.5, 1.2], data, tdpreds)
+    values = [0.2, -0.3, 0.15]
     _check_adjoint(objective, values)
 end
 
@@ -309,7 +360,7 @@ end
     sp = _ADJOINT_SP_FREE_COVARIANCE
     data = reshape([0.1, -0.2, 0.15, 0.05, -0.1, 0.2, 0.3, -0.05], 2, :)
     objective = ContinuousTimeSEM.ctsem_objective(sp, [1], [0.0, 0.5, 1.2, 2.0], data)
-    values = [0.3, 0.2, -0.1, 0.4, 0.15, -0.2, 0.25, 0.1, -0.15, 0.35]
+    values = [0.3, 0.2, -0.1, 0.4, 0.15, -0.2, 0.25, 0.1, -0.15, 0.35, 0.2]
 
     # Explicitly `:forward` -- the default is now `:adjoint`, so relying on
     # the default here would silently turn this into adjoint-vs-adjoint.

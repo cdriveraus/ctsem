@@ -76,14 +76,43 @@ end
     @test isapprox(asym_pull[3], sym_pull[3]; atol=1e-12)
 end
 
-@testset "linear solve adjoint" begin
-    A = [1.4 0.3 -0.2; 0.1 1.1 0.4; -0.3 0.2 1.7]
-    B = [0.5 -0.2; 1.1 0.3; -0.4 0.9]
-    @test isapprox(A * ContinuousTimeSEM._ctsem_linsolve(A, B), B; atol=1e-12)
-    _check_pullback(ContinuousTimeSEM._ctsem_linsolve, (A, B), randn(3, 2))
+@testset "discrete-intercept solve pullback matches production (adjoint_ekf.jl:591-599)" begin
+    # F4: production differentiates `dINT[D] = JAxd \ s` by hand at
+    # `adjoint_ekf.jl:591-599`, using `_solve_square_system_generic!` (the
+    # same LU kernel the forward pass uses, see `ksolve.jl`) rather than a
+    # tested primitive. The primitive that *was* tested here, `_ctsem_linsolve`,
+    # was called by nothing and has been deleted. This reproduces the block's
+    # exact two solves and its exact accumulation (`s̄ = M⁻ᵀ ȳ`, `M̄ = -s̄ yᵀ`)
+    # and checks the result directionally against ForwardDiff differentiating
+    # the forward solve itself.
+    k = 3
+    M = [1.4 0.3 -0.2; 0.1 1.1 0.4; -0.3 0.2 1.7]
+    s = [0.5, 1.1, -0.4]
+    piv = zeros(Int, k)
 
-    b = [0.5, 1.1, -0.4]
-    _check_pullback(ContinuousTimeSEM._ctsem_linsolve, (A, b), randn(3))
+    function _forward_solve(Min::AbstractMatrix, sin::AbstractVector)
+        T = promote_type(eltype(Min), eltype(sin))
+        Acopy = Matrix{T}(Min)
+        Bcopy = Vector{T}(sin)
+        ContinuousTimeSEM._solve_square_system_generic!(Acopy, Bcopy, piv, Val(k))
+        return Bcopy
+    end
+    y = _forward_solve(M, s)
+
+    ybar = [0.6, -0.9, 0.2]
+    Mt = permutedims(M)
+    sbar = copy(ybar)
+    ContinuousTimeSEM._solve_square_system_generic!(Mt, sbar, piv, Val(k))
+    Mbar = zeros(k, k)
+    ContinuousTimeSEM._ctsem_outer!(Mbar, sbar, y, -1.0, 1.0)
+
+    uM = randn(k, k)
+    dM = ForwardDiff.derivative(ε -> dot(ybar, _forward_solve(M .+ ε .* uM, s)), 0.0)
+    @test isapprox(dot(Mbar, uM), dM; atol=_PRIM_TOL, rtol=_PRIM_TOL)
+
+    us = randn(k)
+    ds = ForwardDiff.derivative(ε -> dot(ybar, _forward_solve(M, s .+ ε .* us)), 0.0)
+    @test isapprox(dot(sbar, us), ds; atol=_PRIM_TOL, rtol=_PRIM_TOL)
 end
 
 @testset "Frechet block identity" begin
@@ -125,6 +154,31 @@ end
                 error("row pullback mismatch for $label row $i")
         end
     end
+end
+
+@testset "sdcovsqrt2cov pullback composition matches ForwardDiff" begin
+    # F7: `_sdcovsqrt2cov_pullback!` (`adjoint_primitives.jl`) is consumed
+    # three times per row (DIFFUSION, MANIFESTVAR, T0VAR); the testset above
+    # only pins its inner row map (`_ctsem_corrsqrt_row_pullback!`). This
+    # checks the composition around it -- the `Csym = C̄ + C̄'` then
+    # `Bbar = Csym * B` step, the SD-diagonal accumulation, and the
+    # lower-triangle scatter -- where a factor-of-two error or a wrong
+    # triangle would live, against a non-symmetric cotangent on a
+    # non-diagonal 3x3 `mat`.
+    mat = [0.6 0.0 0.0; 0.25 0.5 0.0; -0.15 0.35 0.4]
+    Cbar = [0.3 -0.5 0.2; 0.7 0.1 -0.4; -0.6 0.45 0.9]  # non-symmetric on purpose
+
+    mat_bar = zeros(3, 3)
+    ContinuousTimeSEM._sdcovsqrt2cov_pullback!(mat_bar, mat, Matrix(Cbar), 3)
+
+    reference = ForwardDiff.gradient(
+        m -> dot(Cbar, ContinuousTimeSEM.sdcovsqrt2cov(m, 0)), mat)
+
+    # `mat_bar` only carries the lower triangle and diagonal, matching where
+    # the free parameters live; `reference`'s upper triangle should agree
+    # (both zero), since `sdcovsqrt2cov` reads `mat` through its lower
+    # triangle only.
+    @test isapprox(mat_bar, reference; atol=1e-8, rtol=1e-8)
 end
 
 @testset "cache guard depends on ForwardDiff comparing partials" begin

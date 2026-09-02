@@ -111,11 +111,35 @@ end
     @test !isapprox(continuous.value, plain.value; rtol=1e-6)
 end
 
+# F5: `_reverse_predict_discrete!` (`adjoint_ekf.jl:1005-1060`) is a second
+# implementation of the prediction reverse, and `_discrete_plain` /
+# `_discrete_stretched` above are 1-latent, where every matrix is 1x1 and its
+# four transposition-sensitive lines (`:1015,1017,1023,1024`) are all the
+# identity. These reuse the 2-latent scenario builders from
+# `test_adjoint_gradient_validation.jl` (non-diagonal DRIFT, and for the
+# second, free off-diagonal DIFFUSION/MANIFESTVAR/T0VAR) with
+# `continuous=false`, so a transposition or `Ps A P̃` swap in the discrete
+# branch would show up here where it cannot at one latent state.
+_discrete_cross_2d = (
+    objective=ctsem_objective(
+        _adjoint_cross_effect_2d_parameters(continuous=false), [1],
+        [0.0, 0.5, 1.2], reshape([0.1, -0.2, 0.15, 0.05, -0.1, 0.2], 2, :)),
+    values=[0.2, 0.1, -0.3],
+)
+_discrete_free_covariance = (
+    objective=ctsem_objective(
+        _adjoint_free_covariance_2d_parameters(continuous=false), [1],
+        [0.0, 0.5, 1.2, 2.0],
+        reshape([0.1, -0.2, 0.15, 0.05, -0.1, 0.2, 0.3, -0.05], 2, :)),
+    values=[0.3, 0.2, -0.1, 0.4, 0.15, -0.2, 0.25, 0.1, -0.15, 0.35, 0.2],
+)
+
 @testset "the discrete adjoint agrees with forward-mode differentiation" begin
     # The only independent check of a hand-written reverse pass. ForwardDiff
     # differentiates the primal itself, so an error in the discrete branch of
     # the adjoint cannot hide in both.
-    for setup in (_discrete_plain, _discrete_stretched)
+    for setup in (_discrete_plain, _discrete_stretched, _discrete_cross_2d,
+        _discrete_free_covariance)
         adjoint = ctsem_adjoint_gradient(setup.objective, setup.values)
         forward = ctsem_evaluate(setup.objective, setup.values; gradient=true,
             gradient_method="forward")
