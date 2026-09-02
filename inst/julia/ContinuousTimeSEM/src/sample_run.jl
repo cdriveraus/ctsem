@@ -131,18 +131,25 @@ used for.
 
 The bridge, measured directly rather than inferred from one transfer:
 
-  - **~41 ms fixed per round trip**, whatever it carries. A bare
-    `juliaEval("1+1")` costs 81 ms.
+  - **~0.8 ms per message on Linux once the socket is tuned**, and ~41 or ~82 ms
+    before it, depending on whether one direction split its writes or both did.
+    Windows was always ~0.3 ms.
   - **outbound ~870 MB/s** -- sending 32 MB costs 37 ms, so arguments are
     effectively free.
   - **inbound ~2.0 MB/s** -- the only per-byte term that matters.
 
-The fixed cost is the part that surprises. One gradient costs 0.417 s called
-from R and 0.005 s timed inside the engine, so anything R drives a call at a
-time is dominated by round trips rather than by arithmetic: the post-fit
-uncertainty phase measured ~99% bridge. The lever there is fewer calls, not more
-threads -- batching narrow calls cut that phase 1.48-1.90x while carrying the
-same bytes.
+The fixed cost used to be the part that surprised, and it was not a latency at
+all: JuliaConnectoR assembles a message from many small writes, and on Linux
+that write-write-read pattern met Nagle on the sender and a delayed ACK on the
+receiver, stalling ~40 ms per message whatever it carried. `ctJuliaSetup` now
+turns both halves off; see `bridge_tuning.jl`. **The figures that motivated
+call-count batching were taken before that fix**, so read them as history: one
+gradient cost 0.417 s from R against 0.005 s in the engine, and the post-fit
+uncertainty phase measured ~99% bridge on Linux -- of which almost all was the
+stall. Batching narrow calls cut that phase 1.48-1.90x and is still worth having,
+since fewer messages is still fewer messages, but it is now worth milliseconds
+rather than seconds, and nothing here justifies contorting an interface to save
+a call.
 """
 
 using LinearAlgebra
