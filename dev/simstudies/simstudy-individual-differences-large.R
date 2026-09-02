@@ -10,10 +10,11 @@
 # from sixty replications is only a claim if it is larger than the noise in the
 # estimate of it.
 
+# Run from the package root (Rscript dev/simstudies/<file>), or set CTSEM_TREE
+# to the package directory. Not part of the package build or its tests.
 Sys.setenv(NOT_CRAN = "true")
-Sys.setenv(JULIA_BINDIR = "/home/ubuntu/.julia/juliaup/julia-1.12.7+0.x64.linux.gnu/bin")
-suppressMessages(devtools::load_all("../..", compile = FALSE,
-  quiet = TRUE))
+# Set JULIA_BINDIR here if ctsem cannot find Julia on the machine.
+suppressMessages(devtools::load_all(Sys.getenv("CTSEM_TREE", "."), compile = FALSE, quiet = TRUE))
 library(parallel)
 
 TRUE_DRIFT <- -0.3

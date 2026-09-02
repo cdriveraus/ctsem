@@ -14,8 +14,10 @@
 # Both backends run on the same generated data, so the comparison is paired --
 # a seed that happens to be informative helps both.
 
+# Run from the package root (Rscript dev/simstudies/<file>), or set CTSEM_TREE
+# to the package directory. Not part of the package build or its tests.
 Sys.setenv(NOT_CRAN = "true")
-suppressMessages(devtools::load_all("/home/ubuntu/dev/ctsem", compile = FALSE, quiet = TRUE))
+suppressMessages(devtools::load_all(Sys.getenv("CTSEM_TREE", "."), compile = FALSE, quiet = TRUE))
 library(parallel)
 
 # Deliberately NOT connecting Julia in this process.
