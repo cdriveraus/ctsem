@@ -22,6 +22,20 @@ test_that("ctFit accepts model argument and deprecates ctstanmodel", {
     'Use only one')
 })
 
+test_that("ctFit stan backend rejects the retired optimcontrol$is flag with a clear error", {
+  model <- ctModel(type='ct',
+    n.latent=1, latentNames='eta1',
+    n.manifest=1, manifestNames='Y1',
+    LAMBDA=matrix(1),
+    silent=TRUE)
+  dat <- data.frame(id=1, time=1:2, Y1=c(0, NA))
+
+  expect_error(
+    ctFit(datalong=dat, model=model, fit=FALSE, backend='stan',
+      optimcontrol=list(is=TRUE)),
+    regexp="optimcontrol\\$uncertainty")
+})
+
 test_that("ctStan-prefixed helper names remain aliases", {
   expect_identical(ctStanModel, ctModelConvertOMX)
   expect_identical(ctStanContinuousPars, ctSummaryMatrices)
