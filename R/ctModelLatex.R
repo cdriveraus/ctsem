@@ -533,7 +533,7 @@ ctModelLatexMeasurementBlock <- function(ctmodel, matrixnames=TRUE,
 #'   
 #' l=ctModelLatex(ctmodel,compile=FALSE, open=FALSE)
 #' cat(l)
-ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=class(x) %in% 'ctStanFit',textsize='normalsize',folder=tempdir(),
+ctModelLatex<- function(x,matrixnames=TRUE,digits=3,linearise=inherits(x,'ctStanFit'),textsize='normalsize',folder=tempdir(),
   filename=paste0('ctsemTex',as.numeric(Sys.time())),tex=TRUE, equationonly=FALSE, compile=TRUE, open=TRUE, includeNote=TRUE,
   minimal=FALSE, splitDynamics=TRUE, splitMeasurement=TRUE, savepng=FALSE){
   #library(ctsem)

@@ -40,6 +40,9 @@ test_that("a sampled fit carries draws the summary machinery can read", {
     ctSample(fit, chains = 2, warmup = 80, draws = 80, cores = 1)))
 
   expect_s3_class(sampled, "ctJuliaFit")
+  # And as a fit, not as a model spec: "ctFitModel" marks an unfitted handle,
+  # and the optimised path gives its fits "ctFit".
+  expect_s3_class(sampled, "ctFit")
   # The draws are where an optimised fit's normal-approximation draws live, so
   # everything downstream reads them without knowing which produced them.
   expect_equal(dim(sampled$estimate$rawposterior), c(160L, npar))

@@ -877,7 +877,11 @@ print.ctSampleDiagnostics <- function(x, ...) {
       optimcontrol = optimcontrol, cores = cores, priors = priors,
       intoverpop = intoverpop, optimize = FALSE,
       intoverstates = isTRUE(intoverstates)))
-  class(out) <- c("ctJuliaFit", "ctFitModel")
+  # "ctFit", not "ctFitModel": the latter marks an unfitted model spec
+  # (see .ctFitModelObject), and the optimised path gives its fits "ctFit".
+  # Nothing dispatches on either today, so this is consistency rather than a
+  # behaviour change.
+  class(out) <- c("ctJuliaFit", "ctFit")
   # What the runner needs to know, and all a worker needs to rebuild it: the
   # state-explicit route samples the trajectory alongside the parameters, so
   # `estimate` is longer than `npar` there and the objective is the joint one.
