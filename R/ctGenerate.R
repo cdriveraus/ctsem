@@ -68,7 +68,18 @@ ctModeltoNumeric <- function(ctmodelobj){
 #'}
 ctGenerateFromPriors <- function(cts,datastruct=NA, is=FALSE,
   fullposterior=TRUE, nsamples=200, parsonly=FALSE,cores=2){
-  
+
+  # Named rather than asserted. "Not a ctStanModel object" (from ctFit(), further
+  # downstream) is opaque when the caller is plainly holding a fit; what it means
+  # is that this function reads stan fit structures (ctstanmodelbase, standata,
+  # args) that a julia fit does not carry.
+  if(inherits(cts, 'ctJuliaFit')) stop(
+    'This function is not available for julia backend fits yet: it reads the ',
+    'stan fit structures (ctstanmodelbase, standata, args) that a julia fit ',
+    'does not carry. ctFitCovCheck(), ctACFresiduals() and ctPostPredPlots() ',
+    'do work on a julia fit.',
+    call.=FALSE)
+
   # includePreds <- FALSE #old argument, could reinstate some day...
   #update this function to also generate posterior predictive
   

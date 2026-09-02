@@ -244,3 +244,12 @@ test_that("ctPostPredict() refuses a julia backend fit with an informative messa
   fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
   expect_error(ctPostPredict(fit), regexp = "not available for julia backend fits")
 })
+
+test_that("ctGenerateFromPriors() refuses a julia backend fit with an informative message", {
+  skip_on_cran()
+  skip_without_julia()
+  model <- .generate_model()
+  data <- .generate_data()
+  fit <- suppressMessages(ctFit(data, model, backend = "julia", verbose = 0))
+  expect_error(ctGenerateFromPriors(fit), regexp = "not available for julia backend fits")
+})
