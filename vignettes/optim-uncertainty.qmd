@@ -28,7 +28,7 @@ posteriori estimate and then refresh the approximate raw-parameter draws with
 
 For optimized fits, ctsem works on the raw unconstrained parameter scale.
 Let $ \hat\theta $ be the optimized raw parameter vector and let
-$\ell(\theta)$ be the active Stan log objective. For maximum likelihood fits
+$\ell(\theta)$ be the active log objective. For maximum likelihood fits
 this is the log likelihood plus transform adjustments; for MAP fits it also
 includes active priors. The same objective is used for log probabilities,
 gradients, Hessians, and score contributions. The default optimized-fit
@@ -52,6 +52,15 @@ optimized fit.
 - `bootstrap`: one-step score bootstrap draws.
 - `fullbootstrap`: subject-resampling bootstrap with full re-optimization.
 - `surrogate`: local quadratic surrogate around the optimum.
+- `is`: Hessian-based importance sampling, with uncertainty computed from the
+  weighted importance-sampling distribution.
+
+The same machinery applies to optimized `ctJuliaFit` objects from
+`ctFit(..., backend = 'julia')`: every method above is available except
+`fullbootstrap`, which re-optimizes each resample and so needs the model
+rebuilt rather than re-evaluated. See `JULIA-BACKEND.md` for backend-specific
+detail, including that the julia Hessian is exact rather than
+finite-differenced.
 
 ### Hessian
 
@@ -124,7 +133,7 @@ $$
 where $\Sigma_\theta$ is the Hessian covariance and $s^*$ is a resampled
 sum of centred score contributions. This preserves the local Hessian "bread"
 and perturbs the estimate using score variability. The score contributions are
-computed as Stan gradients of the same active objective used for fitting,
+computed as gradients of the same active objective used for fitting,
 including transform adjustments and active priors when present.
 
 This is the recommended bootstrap-style option for optimized fits. It is much
