@@ -77,10 +77,24 @@
 .ctBackendModel <- .ctFitModelObject
 
 # Names and dimensions of everything the engine can materialize, plus which
-# cells are state dependent. Cheap, but queried once per call rather than per
-# sample; it is a property of the model, not of the parameter values.
+# cells are state dependent. A property of the model, not of the parameter
+# values -- so it is computed once per objective and cached, rather than
+# re-asked every time something wants to know where a matrix lives.
+#
+# It is cheap engine-side and was described as cheap, but it is one to two
+# JuliaConnectoR round trips, and on this backend a round trip is 40-80 ms
+# whatever it carries. `.ctBackendConstrain` alone asks for it once per call:
+# measured on dev1 at 0.29 s on a 4-latent model and 0.33 s on a 2-latent one,
+# against a whole constrain step of 2.6 s and 2.1 s.
+#
+# The key is the objective's, so a model whose data or parameter table
+# changed gets a fresh layout for the same reason it gets a fresh objective.
 .ctBackendSummaryLayout <- function(fit) {
   spec <- .ctBackendSpec(fit)
+  key <- .ctJuliaObjectiveKey(spec)
+  if (exists(key, envir = .ct_julia_cache$layouts, inherits = FALSE)) {
+    return(get(key, envir = .ct_julia_cache$layouts, inherits = FALSE))
+  }
   module <- .ctJuliaModule(spec$project)
   objective <- .ctJuliaObjective(fit)
   raw <- .ctBackendJuliaValue(module$ctsem_parameter_layout(objective))
@@ -95,10 +109,12 @@
     data.frame(matrix = character(), row = integer(), col = integer(),
       stringsAsFactors = FALSE)
   }
-  list(matrix = as.character(raw$matrix), nrow = as.integer(raw$nrow),
+  layout <- list(matrix = as.character(raw$matrix), nrow = as.integer(raw$nrow),
     ncol = as.integer(raw$ncol), offset = as.integer(raw$offset),
     size = as.integer(raw$size)[1L], nlatent = as.integer(raw$nlatent)[1L],
     nmanifest = as.integer(raw$nmanifest)[1L], statedep = statedep)
+  assign(key, layout, envir = .ct_julia_cache$layouts)
+  layout
 }
 
 # `raw` is npar x nsamples; the result is (flat layout) x nsamples. The whole
