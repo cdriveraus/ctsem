@@ -61,6 +61,7 @@ A ggplot2 object. This can be modified by the various ggplot2 functions, or disp
 }
 \description{
 Plots the output from \code{\link{ctDiscretePars}}, for model implied regression strengths at specified times for continuous time models fit with ctStanFit.
+\code{ctStanDiscreteParsPlot} is maintained as a backward-compatible alias.
 }
 \examples{
 data.table::setDTthreads(1) #ignore this line

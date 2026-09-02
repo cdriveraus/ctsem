@@ -76,6 +76,7 @@ generated.
 \description{
 Computes and plots combined effects and quantiles for effects of time independent predictors
 on subject level parameters of a ctStanFit object.
+\code{ctStanTIpredeffects} is maintained as a backward-compatible alias.
 }
 \examples{
 ctTIpredEffects(ctstantestfit,

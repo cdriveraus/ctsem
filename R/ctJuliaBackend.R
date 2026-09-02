@@ -2532,7 +2532,11 @@ print.ctJuliaFit <- function(x, ...) {
 #' @method plot ctJuliaFit
 #' @examples
 #' \donttest{
-#' # plot(fit, wait=FALSE)
+#' data <- ctstantestdat
+#' model <- ctModel(type = 'ct', manifestNames = 'Y1', latentNames = 'eta1',
+#'   LAMBDA = matrix(1))
+#' fit <- ctFit(data, model, backend = 'julia')
+#' plot(fit, wait = FALSE)
 #' }
 #' @export
 plot.ctJuliaFit <- function(x, types = "all", wait = TRUE, ...) {

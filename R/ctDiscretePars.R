@@ -1,6 +1,7 @@
 #' ctRawParnames
 #'
 #' Gets internal stan parameter names of a ctStanFit object sampled via stan based on specified substrings.
+#' \code{ctStanParnames} is maintained as a backward-compatible alias.
 #'
 #' @param x ctStanFit object
 #' @param substrings vector of character strings, parameter names of the stan model
@@ -54,6 +55,7 @@ ctStanParnames <- ctRawParnames
 #'
 #'Calculate model implied regressions for a sequence of time intervals (if ct) or steps (if dt) based on
 #'a ctStanFit object, for specified subjects. Wrap with print() when used inside for loops!
+#'\code{ctStanDiscretePars} is maintained as a backward-compatible alias.
 #'
 #'@param fit model fit from \code{\link{ctFit}}
 #'@param ctstanfitobj Deprecated. Use \code{fit}.
@@ -373,6 +375,7 @@ ctStanDiscreteParsDrift <- ctDiscreteParsDrift
 #'ctDiscreteParsPlot
 #'
 #'Plots the output from \code{\link{ctDiscretePars}}, for model implied regression strengths at specified times for continuous time models fit with ctStanFit.
+#'\code{ctStanDiscreteParsPlot} is maintained as a backward-compatible alias.
 #'
 #'@param x list object returned from \code{\link{ctDiscretePars}}.
 #'@param indices Either a string specifying type of plot to create, or an n by 2

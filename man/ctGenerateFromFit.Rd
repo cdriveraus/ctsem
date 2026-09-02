@@ -28,7 +28,9 @@ ctGenerateFromFit(
 Matrix of generated data -- one dataset per iteration, according to original time and missingness structure.
 }
 \description{
-Add a \code{$generated} object to ctstanfit object, with random data generated from posterior of ctstanfit object
+Add a \code{$generated} object to ctstanfit object, with random data
+generated from posterior of ctstanfit object.
+\code{ctStanGenerateFromFit} is maintained as a backward-compatible alias.
 }
 \examples{
 gen <- ctGenerateFromFit(ctstantestfit, nsamples=3,fullposterior=TRUE,cores=1)

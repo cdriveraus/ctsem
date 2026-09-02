@@ -120,6 +120,24 @@ remotes::install_github('cdriveraus/ctsem', INSTALL_opts = "--no-multiarch", dep
 install.packages('ctsem')
 ```
 
+### Julia backend
+
+As well as the default Stan-based fitting, ctsem can fit models with an
+alternative Julia backend, under active development and generally faster,
+with support for non-Gaussian (binary, ordinal, count, censored) indicators
+that the Stan path lacks. Install and use it with:
+
+``` r
+ctJuliaInstall()
+fit <- ctFit(data, model, backend = 'julia')
+```
+
+`ctJuliaInstall()` installs whatever is missing (Julia itself, the
+JuliaConnectoR bridge package, and the engine’s own dependencies) and asks
+for confirmation before downloading anything. See `JULIA-BACKEND.md` in the
+package sources for what the Julia backend supports and how it differs from
+Stan.
+
 ### Troubleshooting Rstan / Rtools install for Windows:
 
 Ensure recent version of R and Rtools is installed. If the
@@ -233,8 +251,6 @@ ctDiscretePars(f,plot=T)
 
 \#’ Compare two fits: ctChisqTest()
 
-\#’ Fit and summarise / plot a list of models: ctFitMultiModel()
-
 \#’ Add samples to fit to increase estimate precision: ctAddSamples()
 
 \#’ Return dynamic system parameters in matrix forms:
@@ -258,4 +274,5 @@ priors: ctGenerateFromPriors()
 \#’ In samples, pop_DRIFT refers to the population drift matrix,
 subj_DRIFT refers to the subject matrix. Subject matrices only computed
 for max likelihood / posterior mode by default, and found in the
-$stanfit$transformedparsfull object.
+$stanfit$transformedparsfull object for stan fits, or the
+$transformedpars object for julia fits (or use ctExtract() on either).

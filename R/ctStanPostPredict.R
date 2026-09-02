@@ -277,7 +277,10 @@ ctPostPredPlots <- function(fit){
 
 #' Compares model implied density and values to observed, for a ctStanFit object.
 #'
-#' @param fit ctStanFit object. 
+#' Compares model implied density and values to observed, for a ctStanFit object.
+#' \code{ctStanPostPredict} is maintained as a backward-compatible alias.
+#'
+#' @param fit ctStanFit object.
 #' @param diffsize Integer > 0. Number of discrete time lags to use for data viz.
 #' @param probs Vector of length 3 containing quantiles to plot -- should be rising numeric values between 0 and 1. 
 #' @param wait Logical, if TRUE and \code{plot=TRUE}, waits for input before plotting next plot.

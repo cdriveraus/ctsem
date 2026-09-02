@@ -1,5 +1,10 @@
 # The Julia backend for ctsem
 
+This file is the maintainer reference for the julia backend and is kept up to
+date with the code. The vignettes are the user documentation. The report at
+`../juliaBackendReport/julia-backend-changes.qmd` is frozen as a dated record
+as of 2026-09-02 and is not updated; read this file or the vignettes instead.
+
 `ctFit(..., backend='julia')` fits with a Julia extended-Kalman-filter engine
 instead of Stan's generated C++, using a hand-written reverse-mode adjoint for
 the gradient. This document records what it can do, where it deliberately
@@ -125,8 +130,13 @@ accessor (`.ctFitModelObject`, `.ctFitLongData`, `.ctFitIdMap`,
 - **Generation**: `ctGenerateFromFit()`, and with it `ctPostPredData()`,
   `ctPostPredPlots()`, `ctFitCovCheck()`.
 
-**Not supported**: HMC (`optimize=FALSE`), non-Gaussian manifest variables,
-variational Bayes, `fullbootstrap` uncertainty, `summary(priorcheck=)`
+**Not supported**: `backend='julia'` refuses, rather than silently ignoring,
+variational Bayes (`vb=TRUE`), data generation through the fit call
+(`gendata=TRUE`), Stan compilation controls (`stanmodeltext`, `compileArgs`,
+`forcerecompile`), manifest types beyond continuous/binary/ordinal/count/censored
+(`manifesttype` outside `0:4`), and `intoverstates=FALSE` together with
+`intoverpop='laplace'`. Also unsupported, without a hard refusal:
+`fullbootstrap` uncertainty, `summary(priorcheck=)`
 (accepted and ignored — it compares posteriors against the *Stan* model's
 prior block), the prior/posterior-density, trace and interval panels of
 `plot()`, and multi-start/restart robustness in the optimizer — both

@@ -46,6 +46,9 @@ ctModeltoNumeric <- function(ctmodelobj){
 
 #' Generate data from a ctstanmodel object
 #'
+#' Generate data from a ctstanmodel object.
+#' \code{ctStanGenerate} is maintained as a backward-compatible alias.
+#'
 #' @param cts \code{\link{ctModelConvertOMX}}, \code{\link{ctModel}}, or
 #' \code{\link{ctStanFit}} object.
 #' @param datastruct long format data structure as used by ctsem. 
