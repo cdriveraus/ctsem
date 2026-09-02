@@ -1953,7 +1953,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
     # `verbose` defaults to 0 -- so the reporting existed and almost nobody
     # saw it. Keyed on the same console detection the overwriting uses, so a
     # script or a knitr chunk still gets nothing, and overridable with
-    # `optimcontrol$progress`.
+    # `backendcontrol$progress`.
     progress = isTRUE(.ctJuliaOr(backendcontrol$progress,
       verbose > 0L || .ctProgressConsole())))
   # A live callback into R, for a front end that wants to draw the trace as it
