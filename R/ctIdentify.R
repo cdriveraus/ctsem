@@ -112,7 +112,8 @@
 #' only parameters implicated at every one of them are reported as uninformed.
 #'
 #' @param datalong Long format data, as for \code{\link{ctFit}}.
-#' @param ctstanmodel Model from \code{\link{ctModel}}.
+#' @param model Model from \code{\link{ctModel}}.
+#' @param ctstanmodel Deprecated. Use \code{model}.
 #' @param inits Optional evaluation point. Supplying one uses that single point
 #'   and disables the comparison across points described above.
 #' @param nstart Number of points to evaluate. The first is the origin of the
@@ -150,10 +151,38 @@
 #' @seealso \code{\link{ctFit}} runs the equivalent check on a finished fit,
 #'   evaluated at the estimate and stored as \code{fit$identifiability}.
 #'
+#' @examples
+#' \donttest{
+#' # ctIdentify() always uses the julia backend internally, whatever the
+#' # eventual fit will use.
+#' gen <- suppressMessages(ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
+#'   manifestNames = 'Y1', latentNames = 'eta1', LAMBDA = matrix(1),
+#'   DRIFT = matrix(-0.4), DIFFUSION = matrix(0.6), MANIFESTVAR = matrix(0.3),
+#'   T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
+#'   MANIFESTMEANS = matrix(0), Tpoints = 8))
+#' datalong <- ctGenerate(gen, n.subjects = 40, Tpoints = 8, backend = 'r')
+#'
+#' model <- suppressMessages(ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
+#'   manifestNames = 'Y1', latentNames = 'eta1', LAMBDA = matrix(1),
+#'   T0MEANS = matrix(0), CINT = matrix(0), MANIFESTMEANS = matrix(0)))
+#'
+#' result <- ctIdentify(datalong, model, cores = 1)
+#' print(result)
+#' }
+#'
 #' @export
-ctIdentify <- function(datalong, ctstanmodel, inits = NULL, nstart = 3L,
+ctIdentify <- function(datalong, model, inits = NULL, nstart = 3L,
   spread = 0.5, priors = FALSE, intoverpop = "augmented", cores = 1L,
-  verbose = 0L, rtol = 1e-13) {
+  verbose = 0L, rtol = 1e-13, ctstanmodel) {
+
+  if(missing(model)){
+    if(missing(ctstanmodel)) stop('model must be supplied')
+    warning('ctstanmodel argument is deprecated, use model instead')
+    model <- ctstanmodel
+  } else if(!missing(ctstanmodel)) {
+    stop('Use only one of model or deprecated ctstanmodel')
+  }
+  ctstanmodel <- model
 
   spec <- ctFitJuliaBackend(datalong, ctstanmodel, fit = FALSE,
     priors = priors, intoverpop = intoverpop, cores = cores, verbose = verbose)

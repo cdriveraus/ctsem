@@ -1,11 +1,11 @@
-if(1==99 && .Machine$sizeof.pointer != 4){ #test is no longer useful with everything done via nonlinear
 library(ctsem)
 library(testthat)
 set.seed(1)
 
-context("nonlinearcheck") 
+context("nonlinearcheck")
 
-test_that("simplenonlinearcheck", { 
+test_that("simplenonlinearcheck", {
+testthat::skip("disabled: test is no longer useful with everything done via nonlinear; see review J1.6b F5")
 sunspots<-sunspot.year
  sunspots<-sunspots[50: (length(sunspots) - (1988-1924))]
  id <- 1
@@ -51,4 +51,3 @@ cbind(ssfitnl$stanfit$rawest,ssfitl$stanfit$rawest,ssfitnlm$stanfit$rawest)
 c(ssfitnl$stanfit$optimfit$value,ssfitl$stanfit$optimfit$value,ssfitnlm$stanfit$optimfit$value)
 
 })
-}
