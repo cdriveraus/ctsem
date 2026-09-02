@@ -4,3 +4,4 @@
 /staging
 /src/*
 .positai
+.claude/

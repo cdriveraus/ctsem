@@ -1,0 +1,19 @@
+# Line endings: LF in the repository and in every checkout, on every platform.
+# The index has always been LF. Windows checkouts with core.autocrlf=true were
+# CRLF, and a tool writing LF lines into one produces the mixed-ending files
+# that made scripted edits match in one region of a file and miss another.
+# An existing checkout keeps its current endings until a file is re-checked
+# out; `git status` stays clean either way.
+* text=auto eol=lf
+
+# Binary data and build products: never touch their bytes.
+*.pdf binary
+*.rda binary
+*.RData binary
+*.rds binary
+*.png binary
+*.jpg binary
+*.gz binary
+*.dll binary
+*.so binary
+*.o binary

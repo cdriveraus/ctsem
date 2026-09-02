@@ -58,10 +58,10 @@ if(identical(Sys.getenv("NOT_CRAN"), "true")& .Machine$sizeof.pointer != 4){
     lowmats <- ctSummaryMatrices(f,calcfuncargs = list(probs=.025))
     upmats <- ctSummaryMatrices(f,calcfuncargs = list(probs=.975))
     
-    # The generating matrices, read the way the current model object
-    # holds them: `pars`, not top-level fields. `gm$DIFFUSION` was NULL
-    # for years here and nobody saw it, because the file was named
-    # `ctBinaryGaussianMix.R` and testthat only runs `test-*`.
+    # The generating matrices, read the way the current model object
+    # holds them: `pars`, not top-level fields. `gm$DIFFUSION` was NULL
+    # for years here and nobody saw it, because the file was named
+    # `ctBinaryGaussianMix.R` and testthat only runs `test-*`.
     gmn <- ctModelMatrices(ctsem:::ctModeltoNumeric(gm))
     gmn$DIFFUSIONcov <- tcrossprod(gmn$DIFFUSION)
     
