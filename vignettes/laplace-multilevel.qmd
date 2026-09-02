@@ -110,6 +110,18 @@ transform (`DRIFT`, `DIFFUSION`, and any state-dependent parameter), and the
 approximation is better the more informative each subject's data is about its
 own effects.
 
+`ctLaplaceCheck()` measures that approximation error directly on a fitted
+model, by recomputing the same integral with adaptive Gauss-Hermite quadrature
+and reporting how far the estimate would move if the integral were taken
+exactly. Read `delta_se`: well below one says the approximation is not what
+limits the answer, and near or above one says it is. Read
+`dropped_directions` alongside it rather than on its own — a direction the
+data does not identify well enough to correct along is also reported as a
+zero correction, and the two look the same in `delta_se` even though one
+means "fine" and the other means "not estimable here". `ctLaplaceCorrect()`
+applies the correction (or refits against the quadrature objective) once
+`ctLaplaceCheck()` says it is worth doing.
+
 ## Nesting
 
 Subjects in the same study share that study's random effect, so their
