@@ -493,3 +493,91 @@ test_that("a PARS cell is transformed before row 1's update group reads it", {
   cc <- ctJuliaEvaluate(specC, raw, gradient = FALSE)$value
   expect_false(isTRUE(all.equal(as.numeric(a), as.numeric(cc), tolerance = 1e-6)))
 })
+
+# The same row-1 ordering defect a third time, in the state-explicit pass
+# (`_ctsem_state_pass!`) rather than in the filter. Its own docstring says the
+# pass materialises "the same three groups of state-dependent transforms at the
+# same three points" as the filter, and warns that a pass materialising them
+# elsewhere "would be fitting a different model and would still return a
+# perfectly plausible number"; row 1 ran the td group and the update group and
+# never the predict group. This is the path `intoverstates = FALSE` takes, and
+# `intoverstates = 'auto'` resolves to FALSE for a categorical model.
+#
+# Pinned like its two siblings above, and for the same reason: at one occasion
+# per subject the state at the measurement is T0MEANS, and with zero
+# innovations the T0VAR factor contributes nothing, so the state is exactly
+# T0MEANS. The PARS cell is indvarying, so intoverpop rewrites it to the
+# augmented population coordinate, whose T0MEANS is the raw parameter under the
+# identity transform -- a known value.
+#
+# MANIFESTMEANS is the consumer rather than MANIFESTVAR because the two agree
+# exactly here either way (the state pass reads LAMBDA and MANIFESTVAR
+# directly, with no Jacobian anywhere), and a MANIFESTVAR that took the
+# buffer's zero would be a zero measurement standard deviation, which returns
+# NaN and so announces itself. A MANIFESTMEANS that takes the zero returns a
+# finite, ordinary-looking number, 12.67 log units from the right one.
+test_that("a PARS cell is transformed before row 1 of the state pass reads it", {
+  skip_on_cran()
+  skip_without_julia()
+
+  t0 <- 1.5
+
+  .m <- function(manifestmeans) suppressWarnings(ctModel(
+    type = "ct",
+    LAMBDA = diag(1),
+    PARS = matrix("mvp||TRUE", 1, 1),
+    DRIFT = matrix("drift", 1, 1),
+    DIFFUSION = matrix("diffusion", 1, 1),
+    MANIFESTVAR = matrix(0.3, 1, 1),
+    MANIFESTMEANS = matrix(manifestmeans, 1, 1),
+    T0VAR = matrix(1, 1, 1),
+    T0MEANS = matrix(t0, 1, 1)))
+
+  # One row per subject, so every row is a row 1.
+  set.seed(11)
+  dat <- data.frame(id = 1:8, time = 0, Y1 = stats::rnorm(8, t0, 1))
+
+  prep <- function(cell) suppressWarnings(suppressMessages(
+    ctFit(dat, .m(cell), backend = "julia", fit = FALSE, intoverstates = FALSE)))
+
+  specA <- prep("PARS[1,1]")
+  ptab <- specA$parameter_table
+  npar <- max(ptab$parnumber, na.rm = TRUE)
+
+  # The two halves of "the value the transform yields at row 1": PARS[1,1] is
+  # the augmented state, and that state at row 1 is its own T0MEANS, which is
+  # the raw parameter untransformed.
+  augmented <- which(ptab$matrix == "T0MEANS" & ptab$row == 2)
+  expect_identical(ptab$predicttransform[ptab$matrix == "PARS"][1], "state[2]")
+  expect_identical(ptab$transform[augmented],
+    paste0("param[", ptab$parnumber[augmented], "]"))
+
+  raw <- rep(-.5, npar)
+  raw[ptab$parnumber[augmented]] <- .4
+
+  handleA <- structure(specA, class = c("ctJuliaModel", "ctFitModel"))
+  # Zero innovations, so the state is T0MEANS exactly at every subject's row.
+  z <- numeric(ctsem:::.ctBackendStateDimension(handleA))
+
+  specB <- prep("0.4")
+  expect_equal(npar, max(specB$parameter_table$parnumber, na.rm = TRUE))
+  handleB <- structure(specB, class = c("ctJuliaModel", "ctFitModel"))
+
+  a <- ctsem:::.ctBackendJointDensity(handleA, raw, z, gradient = FALSE)
+  b <- ctsem:::.ctBackendJointDensity(handleB, raw, z, gradient = FALSE)
+
+  expect_true(is.finite(as.numeric(a$value)))
+  # The observation term on its own, as well as the total: the innovations'
+  # density is identical between the two models by construction, so comparing
+  # only the total would let a difference hide inside a term that cannot vary.
+  expect_equal(as.numeric(a$observation), as.numeric(b$observation),
+    tolerance = 1e-10)
+  expect_equal(as.numeric(a$value), as.numeric(b$value), tolerance = 1e-10)
+
+  # And the cell has to matter, or the equality above would also hold on a
+  # model whose MANIFESTMEANS never varied.
+  handleC <- structure(prep("1.2"), class = c("ctJuliaModel", "ctFitModel"))
+  cc <- ctsem:::.ctBackendJointDensity(handleC, raw, z, gradient = FALSE)
+  expect_false(isTRUE(all.equal(as.numeric(a$value), as.numeric(cc$value),
+    tolerance = 1e-6)))
+})
