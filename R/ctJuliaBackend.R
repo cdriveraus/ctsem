@@ -405,9 +405,16 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   # what the tuning is worth: the options are set on the connection, so an A/B
   # needs two sessions rather than a switch inside one.
   if (!isTRUE(getOption("ctsem.julia.tunebridge", TRUE))) return(invisible(NA_integer_))
+  # `ctsem.julia.quickack` is how often the Julia task re-arms TCP_QUICKACK, in
+  # seconds; zero or less asks for no task at all, which leaves the Nagle half of
+  # the fix in place and the R->Julia half not. Floored at 0.1 ms rather than
+  # taken literally: the task's `sleep` becomes a spin below that, and the stall
+  # it is removing is 40 ms, so there is nothing to win by asking for less.
   interval <- getOption("ctsem.julia.quickack", 0.001)
-  if (!isTRUE(is.numeric(interval)) || length(interval) != 1L || is.na(interval)) {
+  if (!is.numeric(interval) || length(interval) != 1L || is.na(interval)) {
     interval <- 0.001
+  } else if (interval > 0) {
+    interval <- max(interval, 1e-4)
   }
   communicator <- .ctJuliaCommunicator()
   if (is.null(communicator)) return(invisible(NA_integer_))

@@ -184,3 +184,32 @@ test_that("a fit says so when the tuner used far fewer chunks than cores allowed
   # A different answer from the tuner is a different thing to say, though.
   expect_true(said(12L, 4L))
 })
+
+test_that("the bridge socket is tuned when the session starts", {
+  skip_without_julia()
+  # What this guards is the finding rather than the speed: JuliaConnectoR sends
+  # each message as a run of small writes, which on Linux costs a ~40 ms
+  # Nagle/delayed-ACK stall per message unless the socket says otherwise. The
+  # tuning is reached through JuliaConnectoR's private communicator object, so
+  # the thing most likely to break it is that package renaming something --
+  # which would be silent, because every failure path here is a tryCatch.
+  suppressMessages(ctJuliaSetup())
+  expect_false(is.null(ctsem:::.ctJuliaCommunicator()))
+
+  # 1 when the quickack task is running, 0 when only Nagle was disabled.
+  # TCP_QUICKACK is Linux-only, so 0 is the correct answer everywhere else.
+  state <- ctsem:::.ctJuliaTuneBridge()
+  expect_true(state %in% c(0L, 1L))
+  expect_equal(state, if (Sys.info()[["sysname"]] == "Linux") 1L else 0L)
+  expect_equal(as.logical(JuliaConnectoR::juliaEval(
+    "ContinuousTimeSEM.ctsem_bridge_tuned()")), state == 1L)
+
+  # Idempotent: a second call must not leave a second task re-arming the socket.
+  expect_equal(ctsem:::.ctJuliaTuneBridge(), state)
+
+  # And the option turns the whole thing off, for anyone who needs the socket
+  # left exactly as JuliaConnectoR opened it.
+  withr::with_options(list(ctsem.julia.tunebridge = FALSE), {
+    expect_true(is.na(ctsem:::.ctJuliaTuneBridge()))
+  })
+})
