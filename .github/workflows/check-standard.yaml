@@ -2,9 +2,9 @@
 # Need help debugging build failures? Start at https://github.com/r-lib/actions#where-to-find-help
 on:
   push:
-    branches: [main, master,rstantools]
+    branches: [main, master, rstantools, juliaFit]
   pull_request:
-    branches: [main, master,rstantools]
+    branches: [main, master, rstantools, juliaFit]
 name: R-CMD-check
 
 jobs:
