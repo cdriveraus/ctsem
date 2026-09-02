@@ -36,3 +36,5 @@
 ^\.gitattributes$
 ^\.codex$
 ^\.agents$
+^~
+^ci-testenv$
