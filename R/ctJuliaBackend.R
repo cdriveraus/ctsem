@@ -1446,6 +1446,28 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
   if (!ncol(tipred_data)) tipred_data <- matrix(numeric(), nrow = length(subject_starts), ncol = 0L)
   if (nrow(tdpred_data) != nrow(dat)) stop("Prepared TD predictor rows do not match the fitted data.", call. = FALSE)
   if (nrow(tipred_data) != length(subject_starts)) stop("Prepared TI predictor rows do not match the fitted subjects.", call. = FALSE)
+  # ctStanData() resolves a missing TI predictor for Stan, not for this engine:
+  # on the optimising path it regression-imputes (fine here, it is a number the
+  # engine can read), and on the sampling path it writes the literal 99999 that
+  # Stan's generated code recognises as "estimate this cell as a parameter"
+  # (ctModelWriter.R, `tipredsimputed`). The engine has no such convention --
+  # `tipreds` is fixed per-subject data copied into each subject objective at
+  # construction, and nothing indexes it from the parameter vector -- so the
+  # sentinel would be fitted as a covariate value of ninety-nine thousand.
+  # `nmissingtipreds` is Stan's own count of those cells, so this refuses
+  # exactly when Stan would have sampled them; without it, `.ctJuliaTIData()`'s
+  # equivalent refusal is unreachable, because it only runs when no prepared
+  # data was supplied and ctFit() always supplies some.
+  if (ncol(tipred_data) && !is.null(prepared_data)) {
+    missing_tipreds <- if (!is.null(prepared_data$nmissingtipreds)) {
+      as.integer(prepared_data$nmissingtipreds)[1L]
+    } else sum(tipred_data == 99999, na.rm = TRUE)
+    if (isTRUE(missing_tipreds > 0L)) {
+      stop("Julia backend cannot sample missing TI predictor values (",
+        missing_tipreds, " missing). Impute them before fitting, drop those ",
+        "subjects, or use backend='stan'.", call. = FALSE)
+    }
+  }
   max_timestep <- if (!is.null(prepared_data$maxtimestep)) {
     as.numeric(prepared_data$maxtimestep)[1L]
   } else if (!is.null(model$nlcontrol$maxtimestep)) {

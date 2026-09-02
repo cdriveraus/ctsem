@@ -144,13 +144,147 @@ test_that("Julia preparation receives ctFit predictor arrays and TI effect mappi
     dose = c(1, NA, 0, 0, 1, 0), group = rep(c(-1, 2), each = 3)
   )
 
-  prepared <- suppressMessages(ctFit(dat, model, backend = "julia", fit = FALSE))
+  # The NA `dose` is warned about and zeroed; that is asserted on its own
+  # below, and suppressed here so this test speaks only to the arrays.
+  prepared <- suppressWarnings(suppressMessages(
+    ctFit(dat, model, backend = "julia", fit = FALSE)))
   expect_equal(prepared$tdpred_data, matrix(c(1, 0, 0, 0, 1, 0), nrow = 1))
   expect_equal(unname(prepared$tipred_data), matrix(c(-1, 2), ncol = 1))
   expect_equal(prepared$ti_effects$parameter, 1L)
   expect_equal(prepared$ti_effects$predictor, 1L)
   expect_equal(prepared$ti_effects$coefficient,
     max(prepared$parameter_table$parnumber, na.rm = TRUE) + 1L)
+})
+
+# Collect warnings without letting them escape, so a test can say how many
+# there were as well as what they said -- one per fit is part of the claim.
+.ctWarnings <- function(expr) {
+  seen <- character()
+  value <- withCallingHandlers(expr, warning = function(w) {
+    seen <<- c(seen, conditionMessage(w))
+    invokeRestart("muffleWarning")
+  })
+  list(value = value, warnings = seen)
+}
+
+# A missing TD predictor becomes zero on both backends, which is a decision
+# rather than an accident, so what it needs is to be visible: one warning per
+# fit naming the count and the column. Asserted at the object the julia engine
+# consumes, since that is where the substituted value would otherwise arrive
+# unannounced.
+test_that("a missing TD predictor warns once and reaches the julia path as zero", {
+  model <- suppressWarnings(ctModel(
+    type = "ct", LAMBDA = diag(1), DRIFT = matrix("drift", 1, 1),
+    DIFFUSION = matrix(.2, 1, 1), MANIFESTVAR = matrix(.1, 1, 1),
+    MANIFESTMEANS = matrix(0, 1, 1), T0VAR = matrix(1, 1, 1),
+    T0MEANS = matrix(0, 1, 1), n.TDpred = 1, TDpredNames = "dose",
+    TDPREDEFFECT = matrix("impulse", 1, 1)
+  ))
+  dat <- data.frame(id = rep(1:2, each = 3), time = rep(0:2, 2), Y1 = 0,
+    dose = c(1, NA, 0, 0, NA, 1))
+
+  run <- .ctWarnings(suppressMessages(
+    ctFit(dat, model, backend = "julia", fit = FALSE)))
+  told <- grep("TDpreds", run$warnings, value = TRUE)
+  expect_length(told, 1L)
+  expect_match(told, "2 in dose", fixed = TRUE)
+  expect_match(told, "replaced by zeroes", fixed = TRUE)
+  expect_equal(run$value$tdpred_data, matrix(c(1, 0, 0, 0, 0, 1), nrow = 1))
+})
+
+# The optimising path imputes a missing TI predictor from the other variables,
+# as the Stan path does. What the warning has to carry is that the value was
+# manufactured and that it is the predictor's own effect estimate that pays for
+# it.
+test_that("a missing TI predictor is imputed for the julia optimising path, with a warning", {
+  model <- suppressWarnings(ctModel(
+    type = "ct", LAMBDA = diag(1), DRIFT = matrix("drift", 1, 1),
+    DIFFUSION = matrix(.2, 1, 1), MANIFESTVAR = matrix(.1, 1, 1),
+    MANIFESTMEANS = matrix(0, 1, 1), T0VAR = matrix(1, 1, 1),
+    T0MEANS = matrix("t0m", 1, 1), n.TIpred = 1, TIpredNames = "group",
+    tipredDefault = FALSE
+  ))
+  model$pars$group_effect[model$pars$param == "t0m"] <- TRUE
+  set.seed(20260902)
+  dat <- data.frame(id = rep(1:4, each = 3), time = rep(0:2, 4),
+    Y1 = stats::rnorm(12), group = rep(c(-1, 2, NA, .5), each = 3))
+
+  run <- .ctWarnings(suppressMessages(
+    ctFit(dat, model, backend = "julia", optimize = TRUE, fit = FALSE)))
+  told <- grep("TIpreds", run$warnings, value = TRUE)
+  expect_length(told, 1L)
+  expect_match(told, "1 in group", fixed = TRUE)
+  expect_match(told, "imputed", fixed = TRUE)
+  expect_match(told, "overly confident", fixed = TRUE)
+
+  values <- as.numeric(run$value$tipred_data)
+  expect_equal(values[c(1, 2, 4)], c(-1, 2, .5))
+  expect_true(is.finite(values[3]))
+  expect_false(values[3] == 99999)
+})
+
+test_that("julia optimises with the imputed TI predictor values", {
+  skip_on_cran()
+  skip_without_julia()
+
+  model <- suppressWarnings(ctModel(
+    type = "ct", LAMBDA = diag(1), DRIFT = matrix(-.4, 1, 1),
+    DIFFUSION = matrix(.5, 1, 1), MANIFESTVAR = matrix(.1, 1, 1),
+    MANIFESTMEANS = matrix(0, 1, 1), T0VAR = matrix(1, 1, 1),
+    T0MEANS = matrix("t0m", 1, 1), n.TIpred = 1, TIpredNames = "group",
+    tipredDefault = FALSE
+  ))
+  model$pars$group_effect[model$pars$param == "t0m"] <- TRUE
+  set.seed(20260902)
+  group <- c(-1, -.5, 0, .5, 1, NA)
+  dat <- do.call(rbind, lapply(seq_along(group), function(i) {
+    data.frame(id = i, time = 0:3,
+      Y1 = stats::rnorm(4, ifelse(is.na(group[i]), .5, group[i]), .5),
+      group = group[i])
+  }))
+
+  fit <- suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
+    optimize = TRUE, cores = 1, savescores = FALSE)))
+  expect_s3_class(fit, "ctJuliaFit")
+  expect_true(is.finite(fit$estimate$loglik))
+  # The imputed value is what the fit conditioned on -- not a sentinel, and not
+  # dropped.
+  expect_false(any(fit$model_spec$tipred_data == 99999))
+  expect_false(anyNA(fit$model_spec$tipred_data))
+  expect_equal(as.numeric(fit$model_spec$tipred_data)[1:5], group[1:5])
+})
+
+# Stan samples a missing TI predictor by writing 99999 and reading it back as a
+# free parameter. The engine has no such convention, so the same array would be
+# fitted as a covariate value of ninety-nine thousand. Refused, with the three
+# things a caller can do instead.
+test_that("the julia sampling path refuses a missing TI predictor", {
+  model <- suppressWarnings(ctModel(
+    type = "ct", LAMBDA = diag(1), DRIFT = matrix("drift", 1, 1),
+    DIFFUSION = matrix(.2, 1, 1), MANIFESTVAR = matrix(.1, 1, 1),
+    MANIFESTMEANS = matrix(0, 1, 1), T0VAR = matrix(1, 1, 1),
+    T0MEANS = matrix("t0m", 1, 1), n.TIpred = 1, TIpredNames = "group",
+    tipredDefault = FALSE
+  ))
+  model$pars$group_effect[model$pars$param == "t0m"] <- TRUE
+  dat <- data.frame(id = rep(1:3, each = 3), time = rep(0:2, 3), Y1 = 0,
+    group = rep(c(-1, 2, NA), each = 3))
+
+  told <- tryCatch({
+    suppressWarnings(suppressMessages(ctFit(dat, model, backend = "julia",
+      optimize = FALSE, fit = FALSE)))
+    NA_character_
+  }, error = function(e) conditionMessage(e))
+  expect_match(told, "cannot sample missing TI predictor")
+  expect_match(told, "Impute them before fitting", fixed = TRUE)
+  expect_match(told, "backend='stan'", fixed = TRUE)
+
+  # Complete data still prepares on the same path, so the refusal is about the
+  # missing cell and not about sampling with TI predictors at all.
+  dat$group[dat$id == 3] <- .5
+  prepared <- suppressMessages(ctFit(dat, model, backend = "julia",
+    optimize = FALSE, fit = FALSE))
+  expect_equal(as.numeric(prepared$tipred_data), c(-1, 2, .5))
 })
 
 test_that("Julia preparation expands individual differences into static states", {
