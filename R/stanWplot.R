@@ -94,7 +94,7 @@ colclasses[which(varnames %in% parameter)] <- NA
   observe({
     if (all(nsamps == iter)) {
       for(chaini in 1:chains){
-        system(paste0("rm ",tmpdir,"/",stanseed,"samples_",chaini,".csv"))
+        unlink(paste0(tmpdir,"/",stanseed,"samples_",chaini,".csv"))
       }
       runjs("window.close();")
       
@@ -155,8 +155,8 @@ colclasses[which(varnames %in% parameter)] <- NA
     stanseed<-floor(as.numeric(Sys.time()))
     
     on.exit({
-      for(chaini in 1:chains) system(paste0("rm ",tmpdir,'/',stanseed,"samples_",chaini,".csv"))
-      system(paste0('rm ',tmpdir,'/stanplottemp.R'))
+      for(chaini in 1:chains) unlink(paste0(tmpdir,'/',stanseed,"samples_",chaini,".csv"))
+      unlink(paste0(tmpdir,'/stanplottemp.R'))
     })
     
     

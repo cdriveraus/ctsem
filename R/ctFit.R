@@ -139,6 +139,9 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' @param derrind deprecated, latents involved in dynamic error calculations are determined automatically now.
 #' @param optimize if TRUE, use \code{\link{stanoptimis}} function for maximum a posteriori / importance sampling estimates,
 #' otherwise use the HMC sampler from Stan, which is (much) slower, but generally more robust for complex individual differences.
+#' When \code{optimize=FALSE}, the stored point estimate (\code{stanfit$rawest}) is the per-parameter
+#' median of the posterior draws; the julia backend's sampled point estimate (see \code{\link{ctSample}})
+#' is the per-parameter mean instead.
 #' @param optimcontrol list of parameters sent to \code{\link{stanoptimis}} governing optimization / importance sampling.
 #' With \code{backend='julia'}, \code{optimcontrol$gradient} selects the
 #' gradient method: \code{'adjoint'} (reverse mode, the default) or
@@ -238,9 +241,17 @@ T0VARredundancies <- function(ctm) { #check for redundant T0VAR parameters (beca
 #' to point at a local engine checkout, \code{restart_session} to clear the
 #' Julia session before fitting, and \code{progress} to force progress
 #' reporting on or off for this fit.
-#' @param control Used when \code{optimize=FALSE}. List of arguments sent to \code{\link[rstan]{stan}} control argument,
+#' @param control Used when \code{optimize=FALSE}. For \code{backend='stan'}, a list of arguments sent to \code{\link[rstan]{stan}} control argument,
 #' regarding warmup / sampling behaviour. Unless specified, values used are:
-#' list(adapt_delta = .8, adapt_window=2, max_treedepth=10, adapt_init_buffer=2, stepsize = .001)
+#' list(adapt_delta = .8, adapt_window=2, max_treedepth=10, adapt_init_buffer=2, stepsize = .001).
+#' For \code{backend='julia'}, the same argument instead carries the julia sampler's own settings:
+#' \code{maxdepth}/\code{max_treedepth} (default 10), \code{target_accept}/\code{adapt_delta} (0.8),
+#' \code{maxdelta} (1000), \code{init_scale} (1), \code{adapt_metric} (TRUE), \code{adapt_effects} (FALSE),
+#' and the optional effective-sample-size target \code{minEss}, \code{meanEss}, \code{maxDraws},
+#' \code{rhatTarget} (1.01) and \code{settleTol} -- all documented in full under \code{control} in
+#' \code{\link{ctSample}} -- plus \code{warmup} (default half of \code{iter}), \code{seed} (default
+#' 20260828) and \code{processes} (default TRUE), which \code{\link{ctSample}} instead takes as
+#' separate named arguments.
 #' @param nlcontrol List of non-linear control parameters.
 #' \code{maxtimestep} must be a positive numeric,  specifying the largest time
 #' span covered by the numerical integration. The large default ensures that for each observation time interval,

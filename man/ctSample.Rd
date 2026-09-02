@@ -91,6 +91,10 @@ detection is wrong for your front end, or \code{TRUE} to force it on.}
 The fit, with \code{estimate$rawposterior} holding the draws and
   \code{$sample} holding the diagnostics: split R-hat and effective sample
   size per parameter, divergences, tree depths, step sizes and E-BFMI.
+  \code{estimate$raw} is set to the per-parameter posterior mean of the
+  draws -- unlike \code{backend='stan'}'s sampled point estimate
+  (\code{ctFit(..., optimize=FALSE)}'s \code{stanfit$rawest}), which is the
+  per-parameter median.
 }
 \description{
 Draws from the joint posterior over population parameters and random effects
