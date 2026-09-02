@@ -131,7 +131,7 @@ _discrete_free_covariance = (
         _adjoint_free_covariance_2d_parameters(continuous=false), [1],
         [0.0, 0.5, 1.2, 2.0],
         reshape([0.1, -0.2, 0.15, 0.05, -0.1, 0.2, 0.3, -0.05], 2, :)),
-    values=[0.3, 0.2, -0.1, 0.4, 0.15, -0.2, 0.25, 0.1, -0.15, 0.35],
+    values=[0.3, 0.2, -0.1, 0.4, 0.15, -0.2, 0.25, 0.1, -0.15, 0.35, 0.2],
 )
 
 @testset "the discrete adjoint agrees with forward-mode differentiation" begin
