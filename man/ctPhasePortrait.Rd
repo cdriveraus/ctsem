@@ -82,9 +82,8 @@ one, but it shows nothing the DRIFT matrix did not already say. A nonlinear
 stan fit is refused rather than drawn as if it were linear.
 }
 \examples{
-\donttest{
-# ctPhasePortrait(fit, latents = c('eta1','eta2'))
-}
+# A linear stan fit needs no engine, so the bundled example fit is enough.
+ctPhasePortrait(ctstantestfit, gridsize = 7, plot = FALSE)
 }
 \seealso{
 \code{\link{ctContextDependence}}, \code{\link{ctDiscretePars}}

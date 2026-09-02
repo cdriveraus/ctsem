@@ -6,7 +6,7 @@
 \usage{
 ctIdentify(
   datalong,
-  ctstanmodel,
+  model,
   inits = NULL,
   nstart = 3L,
   spread = 0.5,
@@ -14,13 +14,14 @@ ctIdentify(
   intoverpop = "augmented",
   cores = 1L,
   verbose = 0L,
-  rtol = 1e-13
+  rtol = 1e-13,
+  ctstanmodel
 )
 }
 \arguments{
 \item{datalong}{Long format data, as for \code{\link{ctFit}}.}
 
-\item{ctstanmodel}{Model from \code{\link{ctModel}}.}
+\item{model}{Model from \code{\link{ctModel}}.}
 
 \item{inits}{Optional evaluation point. Supplying one uses that single point
 and disables the comparison across points described above.}
@@ -52,6 +53,8 @@ unidentified direction sits at machine precision (measured: 7e-17), while
 a weakly identified one on a comparable model sat at 3e-12. Raise it to
 catch weak directions too, at the cost of reporting some a fit would have
 settled.}
+
+\item{ctstanmodel}{Deprecated. Use \code{model}.}
 }
 \value{
 An object of class \code{ctIdentify} with \code{$parameters} (names
@@ -76,6 +79,26 @@ Requires the Julia backend, which is where the per-subject scores
   come from. The statistic has rank at most the number of subjects, so a
   model with more free parameters than subjects reports flat directions for
   that reason alone; the printed summary says when that applies.
+}
+\examples{
+\donttest{
+# ctIdentify() always uses the julia backend internally, whatever the
+# eventual fit will use.
+gen <- suppressMessages(ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
+  manifestNames = 'Y1', latentNames = 'eta1', LAMBDA = matrix(1),
+  DRIFT = matrix(-0.4), DIFFUSION = matrix(0.6), MANIFESTVAR = matrix(0.3),
+  T0VAR = matrix(1), T0MEANS = matrix(0), CINT = matrix(0),
+  MANIFESTMEANS = matrix(0), Tpoints = 8))
+datalong <- ctGenerate(gen, n.subjects = 40, Tpoints = 8, backend = 'r')
+
+model <- suppressMessages(ctModel(type = 'ct', n.latent = 1, n.manifest = 1,
+  manifestNames = 'Y1', latentNames = 'eta1', LAMBDA = matrix(1),
+  T0MEANS = matrix(0), CINT = matrix(0), MANIFESTMEANS = matrix(0)))
+
+result <- ctIdentify(datalong, model, cores = 1)
+print(result)
+}
+
 }
 \seealso{
 \code{\link{ctFit}} runs the equivalent check on a finished fit,

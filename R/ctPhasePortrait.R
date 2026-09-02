@@ -133,9 +133,8 @@
 #' @param ... Ignored.
 #' @return A ggplot, or a list of data frames when \code{plot=FALSE}.
 #' @examples
-#' \donttest{
-#' # ctPhasePortrait(fit, latents = c('eta1','eta2'))
-#' }
+#' # A linear stan fit needs no engine, so the bundled example fit is enough.
+#' ctPhasePortrait(ctstantestfit, gridsize = 7, plot = FALSE)
 #' @seealso \code{\link{ctContextDependence}}, \code{\link{ctDiscretePars}}
 #' @export
 ctPhasePortrait <- function(fit, latents = 1:2, extent = "data", gridsize = 15,
