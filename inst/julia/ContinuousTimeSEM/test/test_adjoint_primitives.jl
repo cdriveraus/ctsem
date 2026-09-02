@@ -156,6 +156,31 @@ end
     end
 end
 
+@testset "sdcovsqrt2cov pullback composition matches ForwardDiff" begin
+    # F7: `_sdcovsqrt2cov_pullback!` (`adjoint_primitives.jl`) is consumed
+    # three times per row (DIFFUSION, MANIFESTVAR, T0VAR); the testset above
+    # only pins its inner row map (`_ctsem_corrsqrt_row_pullback!`). This
+    # checks the composition around it -- the `Csym = C̄ + C̄'` then
+    # `Bbar = Csym * B` step, the SD-diagonal accumulation, and the
+    # lower-triangle scatter -- where a factor-of-two error or a wrong
+    # triangle would live, against a non-symmetric cotangent on a
+    # non-diagonal 3x3 `mat`.
+    mat = [0.6 0.0 0.0; 0.25 0.5 0.0; -0.15 0.35 0.4]
+    Cbar = [0.3 -0.5 0.2; 0.7 0.1 -0.4; -0.6 0.45 0.9]  # non-symmetric on purpose
+
+    mat_bar = zeros(3, 3)
+    ContinuousTimeSEM._sdcovsqrt2cov_pullback!(mat_bar, mat, Matrix(Cbar), 3)
+
+    reference = ForwardDiff.gradient(
+        m -> dot(Cbar, ContinuousTimeSEM.sdcovsqrt2cov(m, 0)), mat)
+
+    # `mat_bar` only carries the lower triangle and diagonal, matching where
+    # the free parameters live; `reference`'s upper triangle should agree
+    # (both zero), since `sdcovsqrt2cov` reads `mat` through its lower
+    # triangle only.
+    @test isapprox(mat_bar, reference; atol=1e-8, rtol=1e-8)
+end
+
 @testset "cache guard depends on ForwardDiff comparing partials" begin
     # `_blocks_identical` (discrete_time_form.jl) decides "these inputs are
     # unchanged, reuse the cached factorization" using plain `==`. Under
