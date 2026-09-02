@@ -159,7 +159,7 @@ test_that("a fit says so when the tuner used far fewer chunks than cores allowed
   cache$chunks_reported <- NULL
   expect_message(
     ctsem:::.ctBackendReportChunks(12L, 2L, threads = 12L),
-    "cores = 12.*2 chunk.*fit\\$estimate\\$chunks")
+    "cores = 12.*2 used")
 
   # The tuner used what it was given, or nearly, or the shortfall is one core:
   # nothing worth interrupting for.
