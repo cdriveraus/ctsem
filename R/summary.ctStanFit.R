@@ -86,6 +86,9 @@ ctStanRawSamples<-function(fit){
 #'For instance, with the default of calcfunc = quantile, 
 #'the probs argument is needed to ensure only a single value is returned.
 #'@param timeinterval time interval for discrete time parameter matrix computation.
+#'@param ... arguments passed to the method for the fit's backend. The julia
+#'method additionally takes \code{state}, the point at which state dependent
+#'matrices are evaluated.
 #'@examples
 #'\donttest{
 #'#posterior median over all subjects (also reflects mean of unconstrained pars)
@@ -98,7 +101,7 @@ ctSummaryMatrices <- function(fit,
 
 #' @export
 ctSummaryMatrices.ctStanFit <- function(fit,
-  calcfunc=quantile,calcfuncargs=list(probs=0.5),timeinterval=1){
+  calcfunc=quantile,calcfuncargs=list(probs=0.5),timeinterval=1, ...){
   
   if(!'ctStanFit' %in% class(fit)) stop(paste0('Not an object of class ctStanFit! Instead is ',paste0(class(fit),collapse=', ')))
   

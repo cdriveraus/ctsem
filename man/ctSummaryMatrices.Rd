@@ -25,6 +25,10 @@ For instance, with the default of calcfunc = quantile,
 the probs argument is needed to ensure only a single value is returned.}
 
 \item{timeinterval}{time interval for discrete time parameter matrix computation.}
+
+\item{...}{arguments passed to the method for the fit's backend. The julia
+method additionally takes \code{state}, the point at which state dependent
+matrices are evaluated.}
 }
 \description{
 Summarise model-implied parameter matrices from a ctsem fit object.
