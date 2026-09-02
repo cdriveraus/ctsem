@@ -54,7 +54,7 @@ trajectory from the process and then each observation from its conditional
 distribution given the state at its row -- a draw from the model rather than
 from the filter's approximation of it.
 
-\code{'auto'} picks \code{TRUE} exactly when the filter's predictive is
+\code{'auto'} picks \code{TRUE} exactly when the filter's predictive *is*
 the model's: linear dynamics and Gaussian indicators. There the two agree in
 distribution, and \code{TRUE} keeps the output every existing caller gets
 for a given seed. Otherwise it picks \code{FALSE}. A categorical indicator
@@ -70,7 +70,7 @@ prediction a moment approximation in the same way.
 This function generates data according to the specified ctsem model object.
 }
 \details{
-Covariance related matrices are treated as Cholesky factors. 
+Covariance related matrices are treated as Cholesky factors.
 TRAITTDPREDCOV and TIPREDCOV matrices are not accounted for, at present. 
 The first 1:n.TDpred rows and columns of TDPREDVAR are used for generating
 tdpreds at each time point.

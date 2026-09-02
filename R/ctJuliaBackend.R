@@ -1892,11 +1892,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   key <- paste0(limit, ":", picked)
   if (key %in% .ct_julia_cache$chunks_reported) return(invisible(NULL))
   .ct_julia_cache$chunks_reported <- c(.ct_julia_cache$chunks_reported, key)
-  message("cores = ", cores, " was requested, but ", picked, " chunk(s) of ",
-    "the subject loop timed fastest on this model, so that is what ran. The ",
-    "loop is not monotone in the chunk count -- past a point the threads queue ",
-    "on the allocator rather than on arithmetic -- so a wider split is not ",
-    "reliably faster; the count used is recorded at fit$estimate$chunks.")
+  message("cores = ", cores, " requested, ", picked, " used.")
   invisible(NULL)
 }
 

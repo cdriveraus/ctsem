@@ -55,7 +55,21 @@ models respectively.}
 
 \item{iter}{used when \code{optimize=FALSE}. number of iterations, half of which will be devoted to warmup by default when sampling.}
 
-\item{intoverstates}{logical indicating whether or not to integrate over latent states using a Kalman filter.
+\item{intoverstates}{logical indicating whether or not to integrate over
+latent states using a Kalman filter. \code{FALSE} instead makes the
+latent states part of what is estimated: the target becomes the joint
+density of the data and the states, and the fit reports the trajectory
+alongside the parameters in \code{fit$estimate$states}.
+
+With \code{backend='julia'} that route is exact -- no Gaussian
+assumption is made about the state anywhere, where the filter's update
+for a binary, ordinal or count indicator is an assumed-density
+projection. Pair it with \code{optimize=FALSE}: sampling the joint
+density gives the posterior of parameters and states together, while
+\code{optimize=TRUE} gives its joint mode, whose variance parameters
+are biased downward. Standard errors for an optimised fit come from the
+Hessian with the states profiled out, and \code{uncertainty} is
+restricted to \code{'hessian'} for that reason.
 Generally recommended to set TRUE unless using non-gaussian measurement model.}
 
 \item{binomial}{Deprecated. Logical indicating the use of binary rather than Gaussian data, as with IRT analyses.
@@ -75,15 +89,13 @@ with the number of varying parameters. 'laplace' requires
 \code{backend='julia'} and \code{optimize=TRUE}, and is exact whenever the
 varying parameters enter the state mean linearly; elsewhere it is an
 approximation, and \code{summary()} says so.
-
 \code{FALSE} is the other route, and the one \code{'auto'} chooses when
 \code{optimize=FALSE}: the individual parameters are sampled rather than
 integrated over, so HMC targets the joint posterior over the population
 parameters and every subject's random effects. That is exact whatever the
 model, and its dimension grows with the number of subjects rather than
 staying at the parameter count. \code{TRUE} and \code{FALSE} may be given
-in place of the character forms above.
-}
+in place of the character forms above.}
 
 \item{sameInitialTimes}{if TRUE, include an empty observation for every subject that has no observation
 at the earliest observation time of the dataset. This ensures that the T0MEANS occurs for every subject at the same time,
@@ -113,6 +125,31 @@ gradient method: \code{'adjoint'} (reverse mode, the default) or
 costs the same regardless of the number of free parameters, so it is
 dramatically faster for larger models and marginally slower for very small
 ones.
+\code{optimcontrol$datastart} (\code{backend='julia'}, default \code{TRUE})
+takes the starting values for the diagonals of \code{DRIFT},
+\code{DIFFUSION}, \code{T0VAR} and \code{MANIFESTVAR} from the data
+instead of from the fixed point every fit used to start at. That point put
+\code{DIFFUSION} at 6.93 and the variances at 3.47 whatever the data were
+measured in, and starting far above the data's scale lets the optimiser
+collapse the latent process to zero variance and call the whole signal
+measurement error. Each process's scale is read off the indicators loading
+on it -- on the scale its link puts them, so a count is read through
+\code{log1p} and a binary or ordinal indicator, whose logit fixes the
+latent scale by itself, contributes none -- and each cell's own transform is
+then inverted numerically to get the raw value. Everything is clamped, and a
+cell that cannot be solved keeps the old default.
+
+Measured on a three-indicator factor model with the data rescaled, over
+four starting-jitter seeds each: at x0.01 the fit converged 0 times out of
+4 with this off and 4 out of 4 with it on, reaching 4565.60 against
+4203.69-4237.21 and recovering the first free loading at 0.808 against
+-844 to -1206, for a generating value of 0.8. At x1 the two are identical.
+At x100 it is neutral: that model is near a basin boundary at that scale
+and converges twice in four either way, decided by the jitter on the
+parameters this does not set rather than by the derived ones. Supplied
+\code{inits} are never overridden, and \code{optimcontrol$datastart =
+FALSE} restores the fixed start.
+
 \code{optimcontrol$carefulfit} works for \code{backend='julia'} as it does
 for Stan: when \code{priors=FALSE}, a rough first pass is run \emph{with}
 ctsem's \code{normal(0,1)} raw priors to obtain starting values, and the

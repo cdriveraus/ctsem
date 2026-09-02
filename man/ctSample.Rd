@@ -13,7 +13,8 @@ ctSample(
   saveEffects = FALSE,
   seed = 20260828L,
   control = list(),
-  verbose = FALSE
+  verbose = FALSE,
+  processes = TRUE
 )
 }
 \arguments{
@@ -39,19 +40,52 @@ longer than many fits do.}
 \item{seed}{Random seed; each chain uses \code{seed + chain}.}
 
 \item{control}{A list of sampler settings: \code{maxdepth} (default 10),
-\code{target_accept} (0.8), \code{adapt_metric} (TRUE),
-\code{adapt_effects} (FALSE), \code{init_scale} (1), \code{maxdelta}
-(1000). \code{adapt_effects} controls whether warmup re-estimates the
-random-effect blocks of the metric as well as the population block; they
-start from a conditional covariance that is exact for a linear model, so
-replacing one with an estimate from a few hundred draws can add more noise
-than it removes.}
+  \code{target_accept} (0.8), \code{adapt_metric} (TRUE),
+  \code{adapt_effects} (FALSE), \code{init_scale} (1), \code{maxdelta}
+  (1000). Stan's spellings \code{max_treedepth} and \code{adapt_delta},
+  which \code{\link{ctFit}} takes for the same two settings, are
+  accepted here as well.
+
+  Sampling takes exactly the draws it was asked for unless it is given a
+  target to reach: \code{minEss} and \code{meanEss} are effective sample
+  sizes to keep drawing towards, \code{rhatTarget} (1.01) the R-hat to reach
+  alongside them, and \code{maxDraws} the budget that stops it. All are off
+  by default, so nothing runs longer than asked without being told to, and
+  setting \code{minEss} without \code{maxDraws} does nothing -- the budget
+  is what the loop checks it against. Worth setting when a draw count had to
+  be guessed at; not worth setting when a warning says a parameter is
+  unidentified, because no number of draws fixes an improper posterior.
+
+  \code{adapt_effects} controls whether warmup re-estimates the
+  random-effect blocks of the metric as well as the population block; they
+  start from a conditional covariance that is exact for a linear model, so
+  replacing one with an estimate from a few hundred draws can add more noise
+  than it removes.}
 
 \item{verbose}{Print the sampler's configuration before it starts, and
 report progress while it runs. Progress overwrites a single line where the
 output is going to a console and prints occasional separate lines where it
 is not; set \code{options(ctsem.progress.overwrite = FALSE)} if that
 detection is wrong for your front end, or \code{TRUE} to force it on.}
+
+\item{processes}{Run each chain in its own R process rather than its own
+  thread, so that chains share no allocator and no garbage collector.
+  \code{TRUE} by default whenever there is more than one chain.
+
+  A worker must start Julia and compile the engine for this model's
+  dimensions before it can draw anything -- 26-43 seconds, unavoidable per
+  process and not shareable between them. That is paid once against a
+  sampling run that is normally minutes to hours, so it is worth it for any
+  real run; set \code{FALSE} for very short ones, where it is the larger
+  cost. Note also that each worker holds its own copy of the data and the
+  adjoint tape, so memory scales with the number of chains.
+
+  Draws match the in-process path to about 1e-10 on the first draw and
+  diverge chaotically from there, which is inherent rather than a defect --
+  see \code{.ctBackendSampleProcesses} for why. Results will therefore not be
+  bit-identical to a run made before this became the default. Needs the
+  \pkg{future} package; without it, or if a worker fails, sampling falls back
+  to this session.}
 }
 \value{
 The fit, with \code{estimate$rawposterior} holding the draws and
