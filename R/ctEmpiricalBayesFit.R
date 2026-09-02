@@ -78,6 +78,15 @@ ctEBadjustModel <- function(model, rawstats, sdscale=c('unit','rawsd'), minsd=1e
 ctEBrawMatrix <- function(fits, parnames, use=c('rawest','rawposterior')){
   use <- match.arg(use)
 
+  # Named rather than asserted. ctEmpiricalBayesFit() currently requires
+  # backend='stan': this reads stan fit structures (stanfit$rawest, standata)
+  # that a julia fit does not carry.
+  if(inherits(fits[[1]], 'ctJuliaFit')) stop(
+    'ctEmpiricalBayesFit() is not available for julia backend fits yet: it reads the ',
+    'stan fit structures (stanfit$rawest, standata) that a julia fit does not carry. ',
+    'ctEmpiricalBayesFit() currently requires backend=\'stan\'.',
+    call.=FALSE)
+
   if(use == 'rawest'){
     raw <- do.call(rbind, lapply(fits, function(fit) fit$stanfit$rawest))
     if(ncol(raw) != length(parnames)) stop('Raw point estimates do not match parnames')
@@ -384,6 +393,9 @@ ctEBfitArgsOptimDefaults <- function(fitargs, stochastic=FALSE,
 #' Fits one ctsem model per subject using the model prior, estimates the
 #' empirical marginal distribution of the raw parameters, then fits each subject
 #' again using the resulting empirical Bayes prior.
+#'
+#' This function currently requires \code{backend='stan'}: its post-processing
+#' reads stan fit structures that a julia fit does not carry.
 #'
 #' @param datalong Long format data containing multiple subjects.
 #' @param model Model object from \code{\link{ctModel}}. Time independent
