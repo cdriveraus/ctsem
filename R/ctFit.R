@@ -617,8 +617,12 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
   }
 
   if(optimize && !priors) message("Maximum likelihood estimation requested")
-  if(optimize && priors && (is.null(optimcontrol$is)  || optimcontrol$is %in% FALSE)) message("Maximum a posteriori estimation requested")
-  if(optimize && priors && (!is.null(optimcontrol$is)  && optimcontrol$is %in% TRUE)) message("Bayesian estimation via optimization and importance sampling requested")
+  # `optimcontrol$is` is refused above, so it is NULL by the time we get here
+  # and the importance-sampling wording this used to choose is unreachable.
+  # Importance sampling is now `optimcontrol$uncertainty='is'`, which runs
+  # after optimization rather than instead of it, so the estimation this
+  # message describes is a posteriori either way.
+  if(optimize && priors) message("Maximum a posteriori estimation requested")
   # Naming stan here was wrong for half the fits it described: with
   # backend='julia' the engine runs its own NUTS over the joint posterior of
   # parameters and random effects, and a user reading "Stan's NUTS sampler" on a
