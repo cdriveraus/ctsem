@@ -69,6 +69,23 @@ test_that("consent can be given in advance by environment variable", {
   expect_false(ctsem:::.ctJuliaAgreed(FALSE, "prompt"))
 })
 
+test_that("consent is declined under a Shiny reactive domain, not gated on interactive()", {
+  # interactive() is TRUE inside a Shiny server process (stdout is captured for
+  # a log pane), which is exactly why .ctJuliaAgreed() must not gate on it
+  # directly: askYesNo() would block a server with no console to read from.
+  # .ctProgressConsole() already detects a Shiny reactive domain for the same
+  # underlying question, so this asserts .ctJuliaAgreed() reaches that check
+  # rather than interactive() -- true regardless of whether *this* test session
+  # happens to be interactive.
+  skip_if_not_installed("shiny")
+  withr::local_envvar(CTSEM_JULIA_AGREE = "")
+  requireNamespace("shiny", quietly = TRUE)
+  testthat::local_mocked_bindings(
+    getDefaultReactiveDomain = function() structure(list(), class = "ShinySession"),
+    .package = "shiny")
+  expect_false(ctsem:::.ctJuliaAgreed(NULL, "prompt"))
+})
+
 test_that("declining leaves an error that says how to proceed", {
   skip_if(interactive())
   skip_if_not_installed("JuliaConnectoR")
