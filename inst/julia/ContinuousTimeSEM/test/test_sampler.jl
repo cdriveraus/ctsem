@@ -244,6 +244,58 @@ end
     @test cov(draws; dims=2) ≈ S rtol = 0.06
 end
 
+@testset "closed-form targets stay this close at four times the draws" begin
+    # The three tests above run each target at one draw count, so a small,
+    # persistent bias close to their tolerance would pass unnoticed -- this
+    # file's own header comment names the diagnostic ("neither shrank with ten
+    # times the draws") without automating it. A consistent estimator's error
+    # falls as 1/sqrt(N); a bias does not. Rather than compare two random
+    # draws against each other, which is itself noisy enough to flip sign
+    # target to target (measured, on this exact setup: the correlated case's
+    # covariance error went *up* from 40k to 160k draws by chance, on a error
+    # an order of magnitude under either tolerance), each target here is run
+    # once more at four times its draw count and checked against half the
+    # tolerance the smaller-draw-count test above uses -- half being what
+    # 1/sqrt(4) predicts for noise, and tight enough that a bias sitting near
+    # the original tolerance has no room left to hide in.
+    ld1! = function (g, x)
+        g[1] = -x[1]
+        return -x[1]^2 / 2
+    end
+    draws1, divergent1 = _sample_target(ld1!, 1,
+        ContinuousTimeSEM.ctsem_identity_metric(1); ndraws=240_000, seed=4)
+    x = vec(draws1)
+    @test divergent1 == 0
+    @test mean(x) ≈ 0 atol = 0.01
+    @test std(x) ≈ 1 rtol = 0.0075
+    @test mean(x .^ 4) ≈ 3 rtol = 0.025
+    @test quantile(x, 0.975) ≈ 1.96 atol = 0.025
+
+    ld4! = function (g, x)
+        g .= .-x
+        return -dot(x, x) / 2
+    end
+    draws4, divergent4 = _sample_target(ld4!, 4,
+        ContinuousTimeSEM.ctsem_identity_metric(4); ndraws=240_000, seed=6)
+    @test divergent4 == 0
+    for j in 1:4
+        @test std(view(draws4, j, :)) ≈ 1 rtol = 0.01
+        @test mean(view(draws4, j, :)) ≈ 0 atol = 0.015
+    end
+
+    S = [1.0 0.8 0.3; 0.8 1.5 -0.2; 0.3 -0.2 0.6]
+    P = inv(S)
+    ld3! = function (g, x)
+        mul!(g, P, x)
+        g .= .-g
+        return -dot(x, P * x) / 2
+    end
+    metric3 = ContinuousTimeSEM._metric_from_covariances([1:3], [copy(S)])
+    draws3, divergent3 = _sample_target(ld3!, 3, metric3; ndraws=160_000, seed=8)
+    @test divergent3 == 0
+    @test cov(draws3; dims=2) ≈ S rtol = 0.03
+end
+
 ################################################################################
 # Diagnostics
 ################################################################################

@@ -1,11 +1,14 @@
 # Count manifest variables: `manifesttype = 3`, Poisson with a log link.
 #
-# The engine's own suite proves the kernel -- that the log likelihood, score and
-# information match the closed forms exactly, and that the 21-node rule matches
-# dense numerical integration. What is left for here is the R side: that the
-# model accepts and describes the type, that the data checks fire, that the
-# backend that cannot fit one refuses instead of returning a number, and that
-# the reverse-mode gradient is right on a real model.
+# Unlike test-julia-binary.R and test-julia-ordinal.R, there is no closed-form
+# single-observation check here, at this level or in the engine's own suite --
+# no file under inst/julia/ContinuousTimeSEM/test mentions count, censored, or
+# the quadrature functions that carry them (`_binary_moments`, `_binary_mode`,
+# `_ekf_binary_update!`) at all. What this file does check: that the model
+# accepts and describes the type, that the data checks fire, that the backend
+# that cannot fit one refuses instead of returning a number, that the
+# reverse-mode gradient is right on a real model, and that a fit recovers
+# generating parameters.
 
 .count_data <- function(nsubjects = 40, nobs = 8, nind = 2, seed = 5) {
   set.seed(seed)
