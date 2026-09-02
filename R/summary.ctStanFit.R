@@ -257,15 +257,15 @@ summary.ctStanFit<-function(object,timeinterval=1,digits=3,parmatrices=TRUE,prio
   e <- ctExtract(object) 
   
   if(residualcov){ #cov of residuals
-    obscov <- cov(object$data$Y,use='pairwise.complete.obs')
-    idobscov <- diag(1/sqrt(diag(obscov)),ncol(obscov))
-    rescov <- cov(matrix(object$stanfit$kalman$errprior,ncol=ncol(obscov)),use='pairwise.complete.obs')
-    narescov <- which(is.na(rescov))
-    rescov[narescov] <- 0
-    
-    out$residCovStd <- round(idobscov %*% rescov %*% idobscov ,digits)
-    out$residCovStd[narescov] <- NA
-    dimnames(out$residCovStd) <- list(object$ctstanmodel$manifestNames,object$ctstanmodel$manifestNames)
+    # Shared with the julia backend (.ctBackendResidCovStd in ctBackendSummary.R)
+    # rather than recomputed here -- same algorithm, reached through the
+    # backend-neutral accessors, and it also carries the conditioning note the
+    # julia summary already reports.
+    residCovStd <- .ctBackendResidCovStd(object, digits = digits)
+    if(!is.null(residCovStd)){
+      out$residCovStd <- residCovStd
+      out$residCovStdConditioning <- attr(residCovStd, 'conditioning')
+    }
   }
   
   ms=object$setup$matsetup

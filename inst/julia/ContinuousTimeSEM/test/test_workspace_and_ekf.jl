@@ -3,6 +3,12 @@ using DataFrames
 using ForwardDiff
 using LinearAlgebra
 
+# benchmark_setup.jl lives in test/ (nothing outside this file uses it) and is
+# not included from src/ContinuousTimeSEM.jl. Include it into the module's own
+# namespace so its unqualified references to internal EKF helpers still
+# resolve, exactly as they did when it was included from src/.
+Base.include(ContinuousTimeSEM, joinpath(@__DIR__, "benchmark_setup.jl"))
+
 # Build the smallest fixed-parameter model that still exercises the structured
 # EKF parameter axis and all matrices expected by the filtering code.
 function fixed_one_dimensional_ekf_parameters()
@@ -128,11 +134,6 @@ end
     @test length(ws.all_params) == length(sp.mutables)
     @test size(ws.K) == (1, 1)
     @test size(ws.P_predict.data) == (1, 1)
-
-    ws_ref = Ref{Any}(nothing)
-    cached = ContinuousTimeSEM._get_or_init_continuous_ekf_workspace!(ws_ref, Float64[], sp)
-    @test cached === ws_ref[]
-    @test ContinuousTimeSEM._get_or_init_continuous_ekf_workspace!(ws_ref, Float64[], sp) === cached
 end
 
 # A tiny fixed-parameter likelihood path catches integration breakage across

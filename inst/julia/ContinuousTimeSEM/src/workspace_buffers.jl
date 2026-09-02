@@ -218,24 +218,3 @@ function _init_continuous_ekf_workspace(::Type{T}, sp::EKFParameters) where {T}
         censormax,
     )
 end
-
-"""
-    _get_or_init_continuous_ekf_workspace!(ws_ref, params, sp)
-
-Return a cached continuous EKF workspace compatible with `params`.
-
-The cache is refreshed when it is empty or when the parameter scalar type has
-changed, for example between `Float64` and `ForwardDiff.Dual`.
-"""
-function _get_or_init_continuous_ekf_workspace!(ws_ref::Base.RefValue{Any}, params::AbstractVector, sp::EKFParameters)
-    ws = ws_ref[]
-    T = eltype(params)
-
-    # Reinitialize only when cache is missing, of the wrong workspace type,
-    # or built for a different scalar type (e.g., Float64 vs ForwardDiff.Dual).
-    if ws === nothing || !(ws isa ContinuousEKFWorkspace) || eltype(ws.all_params) != T
-        ws = _init_continuous_ekf_workspace(T, sp)
-        ws_ref[] = ws
-    end
-    return ws::ContinuousEKFWorkspace{T}
-end
