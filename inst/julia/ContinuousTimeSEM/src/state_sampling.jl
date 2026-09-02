@@ -557,8 +557,27 @@ function _ctsem_state_pass!(ws, params::AbstractVector{T}, data::AbstractMatrix,
     end
     at += n
 
+    # All three groups, in the loop's own order, even though row 1 has no
+    # interval to predict over: a group supplies *values* as well as a
+    # prediction. PARS is in the predict group, and an update-group or td-group
+    # cell -- LAMBDA, MANIFESTMEANS, MANIFESTVAR, Jy, TDPREDEFFECT, Jtd -- may
+    # be written by a transform that reads one. Running td and update only left
+    # that read pointing at a parameter slot nothing had written, so it took
+    # the zero the buffer is filled with: 6.0 log units on one row of a
+    # LAMBDA-reads-PARS model, and this is the path `intoverstates` takes for a
+    # categorical model. The filter's row 1 carries the same three groups in
+    # the same order, which is what the docstring above means by materialising
+    # them at the same three points.
+    #
+    # One context serves all three, as it already served two. Its interval is
+    # zero, which is the only thing about it a predict-group transform could
+    # object to, and none can: generate_complex_transform_string substitutes
+    # only state, PARS and the model matrices, so no transform expression can
+    # reference ctx.dt or ctx.time at all.
     first_context = CTSEMRowContext(ws.state, pars, view(tdpreds, :, 1), tipreds,
         timesteps[1], zero(T), subject, 1)
+    apply_complex_transforms_at_indices!(all_params, ws.predict_param_indices,
+        sp.predict_transforms, first_context)
     apply_complex_transforms_at_indices!(all_params, ws.td_param_indices,
         sp.td_transforms, first_context)
     _ctsem_td_impulse!(ws, pars, first_context.tdpreds)
