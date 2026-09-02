@@ -88,12 +88,19 @@ ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
   if(ctm$n.TIpred > 0) {
     tipreds <- datalong[match(unique(datalong[,ctm$subjectIDname]),datalong[,ctm$subjectIDname]),ctm$TIpredNames,drop=FALSE]
     if(any(is.na(tipreds))) {
+      #A warning, not a message: what follows substitutes a value the subject
+      #never reported into the very predictor whose effect is being estimated,
+      #and a message was easy to lose in a long fit log. One per fit, naming the
+      #count and the affected predictors, rather than one per subject.
+      nati <- sum(is.na(tipreds))
+      whichti <- paste0(colnames(tipreds)[apply(is.na(tipreds),2,any)],collapse=', ')
       if(!optimize){
-        message(paste0("NA's in TIpreds - sampling ", sum(is.na(tipreds)),' values'))
+        warning(paste0("NA's in TIpreds (",nati,' in ',whichti,') - sampling them.'),call.=FALSE)
         tipreds[is.na(tipreds)] = 99999
       }
       if(optimize){
-        message(paste0("NA's in TIpreds - imputing ", sum(is.na(tipreds)),'  NA\'s to allow optimization -- TIpred effect estimates may be overly confident.'))
+        warning(paste0("NA's in TIpreds (",nati,' in ',whichti,
+          ') - imputed from the other variables to allow optimization -- TIpred effect estimates may be overly confident.'),call.=FALSE)
         # tipreds[is.na(tipreds)] = 0
         timu <- apply(tipreds,2,mean,na.rm=TRUE)
         tisd <- apply(tipreds,2,sd,na.rm=TRUE)
@@ -198,7 +205,11 @@ ctStanData <- function(ctm, datalong,optimize,sameInitialTimes=FALSE){
     tdpreds <- datalong[,ctm$TDpredNames,drop=FALSE]
     if(any(is.na(tdpreds))) {
       # if(NAtdpreds == 'error'
-      message("NA's in TDpreds! Replaced by zeroes, consider appropriateness...")
+      #Warned rather than messaged for the same reason as the TIpred case above:
+      #a zero is a real predictor value, not an absent one.
+      warning(paste0("NA's in TDpreds (",sum(is.na(tdpreds)),' in ',
+        paste0(colnames(tdpreds)[apply(is.na(tdpreds),2,any)],collapse=', '),
+        ') - replaced by zeroes, consider appropriateness.'),call.=FALSE)
       tdpreds[is.na(tdpreds)] <-0 ## rough fix for missingness
     }
   }
