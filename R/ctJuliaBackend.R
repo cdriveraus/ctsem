@@ -1916,7 +1916,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
 
 # Run the engine's optimizer over a prepared specification.
 #
-# Factored out of ctFitJuliaBackend() because cross-validation re-optimises the
+# Factored out of .ctFitJuliaBackend() because cross-validation re-optimises the
 # same model against held-out data (see .ctBackendLOO) and must do it exactly
 # the way a fit does -- same tolerances, same gradient method, same thread cap.
 # A second copy of this call would be a second set of defaults to keep in step.
@@ -2021,7 +2021,7 @@ ctSummaryMatrices.ctJuliaFit <- function(fit, calcfunc = quantile,
   result
 }
 
-ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NULL, cores = 1L,
+.ctFitJuliaBackend <- function(datalong, model, prepared_data = NULL, inits = NULL, cores = 1L,
   backendcontrol = list(), optimcontrol = list(), verbose = 0L, fit = TRUE,
   priors = FALSE, intoverpop = "augmented", optimize = TRUE, chains = 4L,
   iter = 2000L, control = list(), intoverstates = TRUE) {

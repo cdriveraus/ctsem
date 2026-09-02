@@ -1053,7 +1053,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
 
   # Resolved here rather than after the julia branch below, which returns before
   # ever reaching the old resolution site: `cores='maxneeded'` arrived at
-  # ctFitJuliaBackend() as a string, `as.integer()` made it NA, and the NA guard
+  # .ctFitJuliaBackend() as a string, `as.integer()` made it NA, and the NA guard
   # there turned it into 1. So the documented default whenever `optimize=FALSE`
   # silently meant single-core for the julia backend.
   #
@@ -1090,7 +1090,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
       if(intoverpop) 'augmented' else
         if(!optimize && any(ctm$pars$indvarying[is.na(ctm$pars$value)])) 'none' else
           'augmented'
-    juliafit <- ctFitJuliaBackend(datalong=datalong, model=ctm, prepared_data=standata, inits=inits,
+    juliafit <- .ctFitJuliaBackend(datalong=datalong, model=ctm, prepared_data=standata, inits=inits,
       cores=cores, backendcontrol=backendcontrol, optimcontrol=optimcontrol,
       verbose=verbose, fit=fit, priors=priors, optimize=optimize,
       chains=chains, iter=iter, control=control,

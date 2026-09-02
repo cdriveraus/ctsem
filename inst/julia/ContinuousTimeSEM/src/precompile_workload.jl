@@ -172,7 +172,7 @@ using PrecompileTools: @compile_workload
 # path sends the simplified `10 * param[1]`, so the closures were `eval`ed from
 # different sources and were different types (`var"#317#318"` in the image
 # against `var"#365#366"` at runtime), and nothing in the image applied. The
-# generator was never at fault: `ctFitJuliaBackend(fit=FALSE)` returns the same
+# generator was never at fault: `.ctFitJuliaBackend(fit=FALSE)` returns the same
 # `model_spec` the fit path hands to `.ctJuliaObjective`, so it captures exactly
 # what is sent. `precompile_shapes.jl` was simply stale -- generated before
 # `.ctJuliaParameterTable` began substituting the model's own transform text
