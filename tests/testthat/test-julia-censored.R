@@ -2,10 +2,15 @@
 #
 # Censored is the one non-Gaussian type with a measurement error of its own, so
 # it is the one whose standard deviation stays free and has to be differentiated.
-# That is what most of this file is about: the engine's suite proves the kernel
-# against closed forms, and what is left for here is that the standard deviation
-# reaches the engine, comes back correctly in the gradient, and that everything
-# the R side has to know about limits is checked rather than assumed.
+# That is what most of this file is about. Unlike test-julia-binary.R and
+# test-julia-ordinal.R, there is no closed-form single-observation check here,
+# at this level or in the engine's own suite -- no file under
+# inst/julia/ContinuousTimeSEM/test mentions count, censored, or the quadrature
+# functions that carry them (`_binary_moments`, `_binary_mode`,
+# `_ekf_binary_update!`) at all. What this file does check: that the standard
+# deviation reaches the engine, comes back correctly in the gradient, and that
+# everything the R side has to know about limits is checked rather than
+# assumed.
 
 .censored_data <- function(nsubjects = 40, nobs = 8, lower = 0, upper = 5,
   seed = 7) {
