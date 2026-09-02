@@ -197,7 +197,9 @@
 #' @param control A list of sampler settings: \code{maxdepth} (default 10),
 #'   \code{target_accept} (0.8), \code{adapt_metric} (TRUE),
 #'   \code{adapt_effects} (FALSE), \code{init_scale} (1), \code{maxdelta}
-#'   (1000).
+#'   (1000). Stan's spellings \code{max_treedepth} and \code{adapt_delta},
+#'   which \code{\link{ctFit}} takes for the same two settings, are
+#'   accepted here as well.
 #'
 #'   Sampling takes exactly the draws it was asked for unless it is given a
 #'   target to reach: \code{minEss} and \code{meanEss} are effective sample
@@ -284,69 +286,47 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   draws <- max(1L, as.integer(draws)[1L])
   cores <- max(1L, as.integer(cores)[1L])
 
-  # Chains in separate processes, which is the default when there is more than
-  # one chain to separate. Dispatched here rather than deeper because the
-  # process path does not share the engine call below at all: each worker runs
-  # this same function with `chains = 1`, and the parent pools what comes back.
-  #
-  # On by default because the arithmetic is not close. A worker costs 26-43 s of
-  # Julia startup and engine compilation, against a sampling run that is
-  # normally minutes to hours -- the startup is noise at any realistic draw
-  # count, and only dominates on the short runs used for testing. What it buys
-  # is chains that contend for neither the allocator nor the garbage collector.
-  #
-  # A `NULL` back means it could not run and sampling continues here rather than
-  # failing -- a slower answer beats none. The missing-package case is checked
-  # separately because it is the only one that would otherwise be silent: a
-  # failing worker warns on its way out, but an absent `future` just returns
-  # nothing, and someone who asked for processes should be told why they did not
-  # get them.
-  if (isTRUE(processes) && chains > 1L) {
-    # Silent when `future` is simply absent and the default put us here: that
-    # is not the user's doing and there is nothing for them to act on. Said out
-    # loud only when they asked for processes explicitly, via a call that named
-    # the argument.
-    if (!.ctBackendCanWarm()) {
-      if ("processes" %in% names(match.call())) {
-        message("processes = TRUE needs the future package, which is not ",
-          "installed. Sampling in this session instead.")
-      }
-    } else {
-      out <- .ctBackendSampleProcesses(fit, chains = chains, warmup = warmup,
-        draws = draws, cores = cores, control = control,
-        saveEffects = saveEffects, seed = seed, verbose = verbose)
-      if (!is.null(out)) return(out)
-      message("Sampling in this session instead.")
-    }
+  # Whether the chains get processes is decided in `.ctBackendSampleRun()`,
+  # which both entry points share. The one part that cannot move is this
+  # message: it depends on whether *this* call named the argument. Silent when
+  # `future` is simply absent and the default put us here -- that is not the
+  # user's doing and there is nothing for them to act on -- and said out loud
+  # when they asked for processes and are not getting them.
+  if (isTRUE(processes) && chains > 1L && !.ctBackendCanWarm() &&
+      "processes" %in% names(match.call())) {
+    message("processes = TRUE needs the future package, which is not ",
+      "installed. Sampling in this session instead.")
   }
 
-  module <- .ctJuliaModule(fit$model_spec$project)
-  objective <- .ctJuliaObjective(fit)
-  estimate <- as.numeric(fit$estimate$raw)
-  npar <- length(estimate)
+  # The joint posterior over parameters and effects, started from the fit's own
+  # estimate and metered by its curvature -- the sampler would otherwise
+  # recompute that Hessian, at 2n gradient evaluations it need not spend.
+  # `ctSample()` samples a Laplace fit and this is the target it is the exact
+  # counterpart of; `ctFit(optimize = FALSE)` reaches the same runner with
+  # whichever target its `intoverpop` and `intoverstates` chose.
+  target <- .ctBackendSampleTarget(estimate = as.numeric(fit$estimate$raw),
+    npar = length(fit$estimate$raw), hessian = fit$uncertainty$hessian)
+  .ctBackendSampleRun(fit, target, chains = chains, warmup = warmup,
+    draws = draws, cores = cores, saveEffects = saveEffects, seed = seed,
+    control = control, verbose = verbose, processes = processes)
+}
 
-  # Chains are the parallel axis, and they can only be concurrent if the session
-  # was started with threads for them. Said once, here, because the alternative
-  # is a user concluding the sampler is slow when it is running four chains on
-  # one thread.
-  threads <- tryCatch(as.integer(JuliaConnectoR::juliaEval("Threads.nthreads()")),
-    error = function(e) NA_integer_)
-  if (!is.na(threads) && chains > 1L && threads < chains) {
-    message("The Julia session has ", threads, " thread(s) and ", chains,
-      " chains were asked for, so they will run one after another. ",
-      "ctJuliaSetup(threads = ", chains, ", force = TRUE) before fitting ",
-      "runs them together.")
-  }
-
-  # The fit's Hessian, when it has one: the sampler would otherwise recompute
-  # it to build the metric, at 2n gradient evaluations it need not spend.
-  hessian <- fit$uncertainty$hessian
-  arguments <- list(objective, .ctJuliaNumericVector(estimate),
-    npar = as.integer(npar), nchains = chains, nwarmup = warmup,
-    ndraws = draws, seed = as.integer(seed)[1L],
-    save_effects = isTRUE(saveEffects), verbose = isTRUE(verbose),
-    maxdepth = as.integer(.ctJuliaOr(control$maxdepth, 10L)),
-    target_accept = as.numeric(.ctJuliaOr(control$target_accept, 0.8)),
+# The sampler settings, from either spelling of the control list.
+#
+# `ctFit(optimize = FALSE)` took Stan's names for two of these and `ctSample()`
+# takes the engine's, so both are read here rather than each entry point
+# quietly ignoring what the other documents. The rest are spelled the same on
+# both, and the whole list is assembled in one place so that a knob added for
+# one cannot go missing from the other -- which is how `minEss` and its three
+# companions came to be documented on `ctSample()` and passed only by `ctFit()`.
+#' @keywords internal
+.ctBackendSampleControl <- function(control) {
+  control <- .ctJuliaOr(control, list())
+  settings <- list(
+    maxdepth = as.integer(.ctJuliaOr(control$maxdepth,
+      .ctJuliaOr(control$max_treedepth, 10L))),
+    target_accept = as.numeric(.ctJuliaOr(control$target_accept,
+      .ctJuliaOr(control$adapt_delta, 0.8))),
     maxdelta = as.numeric(.ctJuliaOr(control$maxdelta, 1000)),
     # 2, not 1. Chains are dispersed by drawing from the Laplace approximation,
     # which has the right shape and the wrong width: Laplace understates spread
@@ -367,15 +347,168 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
     init_scale = as.numeric(.ctJuliaOr(control$init_scale, 1)),
     adapt_metric = isTRUE(.ctJuliaOr(control$adapt_metric, TRUE)),
     adapt_effects = isTRUE(.ctJuliaOr(control$adapt_effects, FALSE)))
-  if (!is.null(hessian)) {
-    arguments$hessian <- JuliaConnectoR::juliaPut(as.matrix(hessian))
+
+  # Sampling targets, when asked for, and absent from the call when not: the
+  # engine reads zero as "no target", so an unset element here and an omitted
+  # argument there mean the same thing. Left unset the sampler takes exactly
+  # the draws it was told to; set, it keeps going until the effective sample
+  # size is there or the budget runs out, which is usually what a user wanted
+  # from a draw count they had to guess at.
+  #
+  # `settleTol` ends warmup early once the metric stops moving between windows.
+  # It is off by default and should stay off: measured on the N=200 augmented
+  # marginal route it cost 1795 s for min ESS 142.8 where the fixed schedule
+  # spent 559 s for min ESS 246.3, a factor of 5.5 against. A settled metric is
+  # not a good metric, and the sampling phase pays for the shortened warmup on
+  # every draw.
+  if (!is.null(control$minEss)) settings$min_ess <- as.numeric(control$minEss)
+  if (!is.null(control$meanEss)) settings$mean_ess <- as.numeric(control$meanEss)
+  if (!is.null(control$maxDraws)) settings$max_draws <- as.integer(control$maxDraws)
+  if (!is.null(control$rhatTarget)) settings$rhat_target <- as.numeric(control$rhatTarget)
+  if (!is.null(control$settleTol)) settings$settle_tol <- as.numeric(control$settleTol)
+  settings
+}
+
+# What to sample, in a form that survives a process boundary.
+#
+# A Julia objective is a handle into one session and cannot be sent anywhere, so
+# a worker has to build its own. A chain is therefore described by what that
+# rebuild needs -- where to start, how many of those coordinates are parameters,
+# which of the engine's two entry points, and whether the objective is the
+# state-explicit one -- and `.ctBackendSampleObjective()` turns the description
+# back into a handle wherever it lands. The Hessian travels as the plain matrix
+# it is, so the workers metre their chains with the parent's rather than each
+# spending 2n gradients recomputing it.
+#
+# `marginal` and `state_explicit` are separate because they are different
+# questions. `marginal` says the random effects are integrated out rather than
+# sampled, which selects the engine's marginal entry point; `state_explicit`
+# says the latent trajectory is sampled alongside the parameters, which changes
+# the objective rather than the entry. The second implies the first -- the state
+# route cannot be combined with the Laplace effect route at all -- but not the
+# reverse.
+#' @keywords internal
+.ctBackendSampleTarget <- function(estimate, npar, marginal = FALSE,
+  state_explicit = FALSE, hessian = NULL) {
+  list(estimate = as.numeric(estimate), npar = as.integer(npar)[1L],
+    marginal = isTRUE(marginal), state_explicit = isTRUE(state_explicit),
+    hessian = if (is.null(hessian)) NULL else as.matrix(hessian))
+}
+
+# The objective a target names, in whichever process asks for it. Both branches
+# are cached per process and keyed on content, so a worker pays for the build
+# once and the parent's own handle is reused rather than rebuilt.
+#' @keywords internal
+.ctBackendSampleObjective <- function(fit, target) {
+  if (isTRUE(target$state_explicit)) {
+    .ctJuliaJointObjective(fit, target$npar)
+  } else {
+    .ctJuliaObjective(fit)
+  }
+}
+
+# Call the engine's sampler, and return what it returned.
+#
+# The one place either entry point reaches the sampler from, and the one place a
+# worker reaches it from too. Everything above it was duplicated until it
+# drifted: the two argument lists had diverged over five settings, and the ones
+# only `ctFit()` passed were documented on `ctSample()` as though they worked.
+#
+# `progress` is separate from `verbose` because the two paths decide it
+# differently -- a flag on `ctSample()`, and on the fitting path anyone watching
+# a console, since sampling there follows an optimisation that has already been
+# printing and silence after it reads as a finished run rather than a running
+# one.
+#' @keywords internal
+.ctBackendSampleEngine <- function(fit, target, chains, warmup, draws, cores,
+  saveEffects, seed, control, verbose, progress = isTRUE(verbose)) {
+
+  settings <- .ctBackendSampleControl(control)
+  module <- .ctJuliaModule(fit$model_spec$project)
+  objective <- .ctBackendSampleObjective(fit, target)
+
+  # Chains are the parallel axis, and in one session they can only be concurrent
+  # if it was started with threads for them. Said once, here, because the
+  # alternative is a user concluding the sampler is slow when it is running four
+  # chains on one thread. Not said in a worker, which runs a single chain.
+  if (chains > 1L) {
+    threads <- tryCatch(as.integer(JuliaConnectoR::juliaEval("Threads.nthreads()")),
+      error = function(e) NA_integer_)
+    if (!is.na(threads) && threads < chains) {
+      message("The Julia session has ", threads, " thread(s) and ", chains,
+        " chains were asked for, so they will run one after another. ",
+        "ctJuliaSetup(threads = ", chains, ", force = TRUE) before fitting ",
+        "runs them together.")
+    }
   }
 
-  arguments$progress_overwrite <- .ctProgressOverwrite(verbose)
-  result <- .ctBackendWithMaxChunks(cores,
-    JuliaConnectoR::juliaGet(do.call(module$ctsem_sample, arguments)))
-  .ctBackendSampleAssemble(fit, result, npar, saveEffects, chains, warmup,
-    as.integer(result$ndraws), hessian, estimate)
+  arguments <- list(objective, .ctJuliaNumericVector(target$estimate),
+    nchains = as.integer(chains), nwarmup = as.integer(warmup),
+    ndraws = as.integer(draws), seed = as.integer(seed)[1L],
+    maxdepth = settings$maxdepth, target_accept = settings$target_accept,
+    maxdelta = settings$maxdelta, init_scale = settings$init_scale,
+    adapt_metric = settings$adapt_metric,
+    verbose = isTRUE(progress),
+    progress_overwrite = .ctProgressOverwrite(verbose))
+  for (name in c("min_ess", "mean_ess", "max_draws", "rhat_target", "settle_tol")) {
+    if (!is.null(settings[[name]])) arguments[[name]] <- settings[[name]]
+  }
+  # `npar`, `save_effects` and `adapt_effects` all describe an effect block the
+  # marginal entry does not have, which is the whole structural difference
+  # between the two calls.
+  if (!isTRUE(target$marginal)) {
+    arguments$npar <- as.integer(target$npar)
+    arguments$save_effects <- isTRUE(saveEffects)
+    arguments$adapt_effects <- settings$adapt_effects
+  }
+  if (!is.null(target$hessian)) {
+    arguments$hessian <- JuliaConnectoR::juliaPut(as.matrix(target$hessian))
+  }
+  entry <- if (isTRUE(target$marginal)) module$ctsem_sample_marginal else
+    module$ctsem_sample
+
+  .ctBackendWithMaxChunks(cores,
+    JuliaConnectoR::juliaGet(do.call(entry, arguments)))
+}
+
+# Sample, in this session or in one process per chain, and assemble the fit.
+#
+# The process branch returns a finished fit because the pooling has to happen
+# before the assembly can: R-hat and effective sample size are properties of the
+# whole run and cannot be averaged from per-chain values. A `NULL` back means
+# the workers could not be used and sampling continues here rather than failing
+# -- a slower answer beats none.
+#
+# `processes` is on by default above one chain because the arithmetic is not
+# close. A worker costs 26-43 s of Julia startup and engine compilation, against
+# a sampling run that is normally minutes to hours -- the startup is noise at
+# any realistic draw count, and only dominates on the short runs used for
+# testing. What it buys is chains that contend for neither the allocator nor the
+# garbage collector.
+#' @keywords internal
+.ctBackendSampleRun <- function(fit, target, chains, warmup, draws, cores,
+  saveEffects, seed, control, verbose, progress = isTRUE(verbose),
+  processes = FALSE, handles = NULL) {
+
+  if (isTRUE(processes) && chains > 1L && .ctBackendCanWarm()) {
+    out <- .ctBackendSampleProcesses(fit, target, chains = chains,
+      warmup = warmup, draws = draws, cores = cores, handles = handles,
+      control = control, saveEffects = saveEffects, seed = seed,
+      verbose = verbose)
+    if (!is.null(out)) return(out)
+    message("Sampling in this session instead.")
+  }
+
+  result <- .ctBackendSampleEngine(fit, target, chains = chains,
+    warmup = warmup, draws = draws, cores = cores, saveEffects = saveEffects,
+    seed = seed, control = control, verbose = verbose, progress = progress)
+  # `result$ndraws` rather than the count asked for: with an effective sample
+  # size target the sampler decides when to stop, and reporting the request
+  # would describe a run that did not happen.
+  .ctBackendSampleAssemble(fit, result, target$npar,
+    isTRUE(saveEffects) && !isTRUE(target$marginal), as.integer(chains), warmup,
+    as.integer(result$ndraws), target$hessian,
+    target$estimate[seq_len(target$npar)])
 }
 
 # Turn an engine sample result into a fit object.
@@ -646,8 +779,6 @@ print.ctSampleDiagnostics <- function(x, ...) {
   # and sampling together and warmup is half of it unless said otherwise.
   warmup <- as.integer(.ctJuliaOr(control$warmup, max(1L, floor(iter / 2))))
   draws <- max(1L, as.integer(iter) - warmup)
-  maxdepth <- as.integer(.ctJuliaOr(control$max_treedepth, 10L))
-  target <- as.numeric(.ctJuliaOr(control$adapt_delta, 0.8))
   seed <- as.integer(.ctJuliaOr(control$seed, 20260828L))
   saveEffects <- isTRUE(optimcontrol$saveEffects)
 
@@ -677,14 +808,28 @@ print.ctSampleDiagnostics <- function(x, ...) {
     nstate <- .ctJuliaStateDimension(model_spec)
     start <- c(start, numeric(nstate))
   }
+  # The workers, started before the optimisation rather than after it. A worker
+  # costs 26-43 s of Julia startup and engine compilation, and the optimisation
+  # that has to run first anyway is where that cost belongs: measured, workers
+  # warmed alongside a 39.8 s optimisation were ready with 0.0 s of waiting.
+  # This is the path `.ctBackendWarmWorkers()` was written for. `ctSample()`
+  # starts from a fit that is already optimised and so has nothing to overlap,
+  # and pays the compile serially.
+  #
+  # Any finite point compiles the same code, so the pre-optimisation start is as
+  # good as the estimate for this.
+  spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
+  processes <- isTRUE(.ctJuliaOr(control$processes, TRUE))
+  handles <- if (processes && chains > 1L && .ctBackendCanWarm()) {
+    .ctBackendWarmWorkers(spec, workers = chains, values = start)
+  } else NULL
+
   optimised <- .ctJuliaOptimise(model_spec, start, backendcontrol = backendcontrol,
     gradient = gradient, cores = cores, verbose = verbose,
     objective = jointobjective)
   estimate <- as.numeric(optimised$minimizer)
 
-  spec <- structure(model_spec, class = c("ctJuliaModel", "ctFitModel"))
   module <- .ctJuliaModule(model_spec$project)
-  objective <- .ctJuliaObjective(spec)
   # `spec`, not a bare list carrying `model_spec`: .ctBackendHessian() reaches
   # the objective through .ctJuliaObjective(), which requires a classed
   # ctJuliaModel/ctJuliaFit and errors on anything else. An unclassed list made
@@ -705,46 +850,7 @@ print.ctSampleDiagnostics <- function(x, ...) {
   }
   if (inherits(hessian, "try-error")) hessian <- NULL
 
-  arguments <- list(.ctJuliaOr(jointobjective, objective),
-    .ctJuliaNumericVector(estimate),
-    nchains = as.integer(chains), nwarmup = warmup, ndraws = draws,
-    maxdepth = maxdepth, target_accept = target, seed = seed,
-    # On when someone is watching, matching the optimiser rather than differing
-    # from it. The two run one after the other in this same call, and having the
-    # first print progress by default while the second stayed silent is what
-    # made a running sampler look like a finished optimisation: the visible
-    # output stopped at "Computing exact Hessian" and nothing followed it for
-    # several minutes.
-    verbose = verbose > 0L || .ctProgressConsole(),
-    progress_overwrite = .ctProgressOverwrite(verbose))
-  # Sampling targets, when asked for. Left at zero the sampler takes exactly the
-  # draws it was told to; set, it keeps going until the effective sample size is
-  # there or the budget runs out, which is usually what a user wanted from a
-  # draw count they had to guess at.
-  if (!is.null(control$minEss)) arguments$min_ess <- as.numeric(control$minEss)
-  if (!is.null(control$meanEss)) arguments$mean_ess <- as.numeric(control$meanEss)
-  if (!is.null(control$maxDraws)) arguments$max_draws <- as.integer(control$maxDraws)
-  if (!is.null(control$rhatTarget)) arguments$rhat_target <- as.numeric(control$rhatTarget)
-  # `settleTol` ends warmup early once the metric stops moving between windows.
-  # It is off by default and should stay off: measured on the N=200 augmented
-  # marginal route it cost 1795 s for min ESS 142.8 where the fixed schedule
-  # spent 559 s for min ESS 246.3, a factor of 5.5 against. A settled metric is
-  # not a good metric, and the sampling phase pays for the shortened warmup on
-  # every draw.
-  if (!is.null(control$settleTol)) arguments$settle_tol <- as.numeric(control$settleTol)
-  if (!is.null(hessian)) {
-    arguments$hessian <- JuliaConnectoR::juliaPut(as.matrix(hessian))
-  }
   joint <- identical(intoverpop, "none")
-  if (joint) {
-    arguments$npar <- as.integer(npar)
-    arguments$save_effects <- saveEffects
-    arguments$adapt_effects <- isTRUE(control$adapt_effects)
-  }
-  entry <- if (joint) module$ctsem_sample else module$ctsem_sample_marginal
-
-  result <- .ctBackendWithMaxChunks(cores,
-    JuliaConnectoR::juliaGet(do.call(entry, arguments)))
 
   # The shell the assembler fills, matching what an optimised fit carries so
   # that everything downstream reads a sampled fit the same way.
@@ -766,8 +872,23 @@ print.ctSampleDiagnostics <- function(x, ...) {
       intoverpop = intoverpop, optimize = FALSE,
       intoverstates = isTRUE(intoverstates)))
   class(out) <- c("ctJuliaFit", "ctFitModel")
-  out <- .ctBackendSampleAssemble(out, result, npar, saveEffects && joint,
-    as.integer(chains), warmup, draws, hessian, theta)
+  # What the runner needs to know, and all a worker needs to rebuild it: the
+  # state-explicit route samples the trajectory alongside the parameters, so
+  # `estimate` is longer than `npar` there and the objective is the joint one.
+  target <- .ctBackendSampleTarget(estimate = estimate, npar = npar,
+    marginal = !joint, state_explicit = !isTRUE(intoverstates),
+    hessian = hessian)
+  out <- .ctBackendSampleRun(out, target, chains = chains, warmup = warmup,
+    draws = draws, cores = cores, saveEffects = saveEffects, seed = seed,
+    control = control, verbose = verbose,
+    # On when someone is watching, matching the optimiser rather than
+    # differing from it. The two run one after the other in this same call,
+    # and having the first print progress by default while the second stayed
+    # silent is what made a running sampler look like a finished
+    # optimisation: the visible output stopped at "Computing exact Hessian"
+    # and nothing followed it for several minutes.
+    progress = verbose > 0L || .ctProgressConsole(),
+    processes = processes, handles = handles)
   # The identifiability report is about the parameters, so it is given the
   # parameter block's own curvature -- the profiled one on the state route,
   # not the corner of the joint matrix, which describes the parameters at a

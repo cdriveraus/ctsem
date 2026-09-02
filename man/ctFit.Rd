@@ -74,7 +74,16 @@ single-subject size, so the cost of a random effect stops growing cubically
 with the number of varying parameters. 'laplace' requires
 \code{backend='julia'} and \code{optimize=TRUE}, and is exact whenever the
 varying parameters enter the state mean linearly; elsewhere it is an
-approximation, and \code{summary()} says so.}
+approximation, and \code{summary()} says so.
+
+\code{FALSE} is the other route, and the one \code{'auto'} chooses when
+\code{optimize=FALSE}: the individual parameters are sampled rather than
+integrated over, so HMC targets the joint posterior over the population
+parameters and every subject's random effects. That is exact whatever the
+model, and its dimension grows with the number of subjects rather than
+staying at the parameter count. \code{TRUE} and \code{FALSE} may be given
+in place of the character forms above.
+}
 
 \item{sameInitialTimes}{if TRUE, include an empty observation for every subject that has no observation
 at the earliest observation time of the dataset. This ensures that the T0MEANS occurs for every subject at the same time,
