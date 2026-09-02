@@ -387,6 +387,16 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 # task as well. Windows and macOS are unaffected either way -- Windows measures
 # ~0.3 ms a message untuned, and TCP_QUICKACK does not exist there.
 #
+# What is left, quantified rather than guessed at: three of the six messages are
+# `juliaGet`, which exists only because the engine returns a NamedTuple and
+# JuliaConnectoR sends those by reference. A flat `Array{Float64}` comes back by
+# value in the call's own message, so a flattened R-facing return would drop
+# those three. That was worth ~220 ms a call before the socket fix and is worth
+# ~5 ms after it, which is why it has not been done -- and why it should not be
+# done for speed alone. The cleaner fix belongs upstream: if JuliaConnectoR
+# buffered each message into one `send()`, neither the stall nor the task below
+# would exist.
+#
 # Everything here is advisory: a failure costs the tuning, never the session.
 .ctJuliaCommunicator <- function() {
   # The Julia object that owns the socket. JuliaConnectoR keeps it in a
