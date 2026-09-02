@@ -85,6 +85,28 @@ test_that("the diagnostics come back per parameter and per chain", {
   # The Laplace estimate the chains started from.
   expect_equal(diagnostics$start, fit$estimate$raw)
   expect_output(print(diagnostics), "ctsem Hamiltonian sample")
+
+  # Everything above is asserted at chains > 1 on purpose, because that is the
+  # branch that runs each chain in its own process, and it is the branch whose
+  # result-assembly tail was once a separate copy that had lost the class, the
+  # start, the constrained draws and the effect summaries. The summaries were
+  # only ever checked at chains = 1, which is the one count that never reaches
+  # the process path -- so a fit could return no random effects at the default
+  # setting and the suite stayed green.
+  #
+  # `processes` records which path ran rather than gating the assertions on it:
+  # these hold either way, and a test that skipped when the path was not taken
+  # would go quiet in exactly the case worth watching. Note that under
+  # `load_all()` a worker cannot load the development tree, so the path falls
+  # back to this session and this runs against the in-process tail; an installed
+  # library, as `R CMD check` uses, exercises the other one.
+  expect_true(is.logical(diagnostics$processes) &&
+    length(diagnostics$processes) == 1L)
+  neffects <- length(fit$model_spec$subject_starts) *
+    length(fit$model_spec$laplace$re_index)
+  expect_length(diagnostics$effect_mean, neffects)
+  expect_length(diagnostics$effect_sd, neffects)
+  expect_true(all(diagnostics$effect_sd > 0))
 })
 
 test_that("the effects come back summarised, or in full when asked for", {

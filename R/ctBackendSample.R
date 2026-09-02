@@ -542,7 +542,8 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
   out$estimate$cov <- stats::cov(posterior)
   out$estimate$se <- sqrt(diag(out$estimate$cov))
   out$uncertainty <- list(method = "sampling", hessian = hessian,
-    settings = list(chains = chains, warmup = warmup, draws = draws))
+    settings = list(chains = chains, warmup = warmup, draws = draws,
+      processes = FALSE))
 
   out$sample <- list(
     chains = chains, warmup = warmup, draws = draws,
@@ -560,6 +561,7 @@ ctSample <- function(fit, chains = 4L, warmup = 500L, draws = 500L, cores = 1L,
     effect_mean = as.numeric(result$effect_mean),
     effect_sd = as.numeric(result$effect_sd),
     marginal = identical(as.integer(result$ndim), as.integer(result$npar)),
+    processes = FALSE,
     start = as.numeric(startvalues))
   if (length(out$sample$effect_mean)) {
     out$sample$effectIndex <- .ctBackendEffectIndex(fit)
