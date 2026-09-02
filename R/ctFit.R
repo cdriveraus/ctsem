@@ -545,7 +545,7 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     .ctJuliaUnsupported(ctstanmodel, optimize=optimize, priors=priors,
       intoverpop=intoverpop, vb=vb, gendata=gendata,
       stanmodeltext=stanmodeltext, compileArgs=compileArgs,
-      forcerecompile=forcerecompile)
+      forcerecompile=forcerecompile, optimcontrol=optimcontrol)
     # Before any data preparation, so that a first-time user is asked about the
     # setup they need rather than being told about it after a wait. Only when
     # the fit will actually run: preparation is pure R, and stays usable -- and
@@ -1070,7 +1070,8 @@ ctFit<-function(datalong, model, stanmodeltext=NA, iter=1000, intoverstates=TRUE
     .ctJuliaUnsupported(ctm, optimize=optimize, priors=priors,
       intoverpop=intoverpop, vb=vb, gendata=gendata,
       stanmodeltext=stanmodeltext, compileArgs=compileArgs,
-      forcerecompile=forcerecompile, intoverstates=intoverstates)
+      forcerecompile=forcerecompile, intoverstates=intoverstates,
+      optimcontrol=optimcontrol)
     # `optimize` and `intoverpop` are orthogonal here. `intoverpop` says which
     # random effects are integrated out and how; `optimize` says whether the
     # remaining parameters are maximised or sampled. Every combination is

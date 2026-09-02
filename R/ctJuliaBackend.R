@@ -568,8 +568,17 @@ ctJuliaStatus <- function(project = NULL, julia_bin = NULL) {
 }
 
 .ctJuliaUnsupported <- function(model, optimize, priors, intoverpop, vb, gendata,
-  stanmodeltext, compileArgs, forcerecompile, intoverstates = TRUE) {
+  stanmodeltext, compileArgs, forcerecompile, intoverstates = TRUE,
+  optimcontrol = list()) {
   failures <- character()
+  # `optimcontrol$is` selects Stan's optimization-plus-importance-sampling
+  # route (see R/ctFit.R's estimation-method message); the julia path's only
+  # uncertainty methods are the Hessian and ctOptimUncertainty()'s sampling,
+  # neither of which is importance sampling, so silently ignoring it would
+  # leave the user told one thing happened when another did.
+  if (isTRUE(optimcontrol$is)) {
+    failures <- c(failures, "optimcontrol$is (importance sampling)")
+  }
   # `intoverstates=FALSE` fits over the joint density of parameters and states
   # (see `state_sampling.jl`), which composes with the default `intoverpop` --
   # augmented random effects are extra states, so they are sampled along with
